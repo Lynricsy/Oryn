@@ -76,6 +76,147 @@ func (e ForkThreadRequestEnv) Valid() bool {
 	}
 }
 
+// Defines values for FsEntryTargetType.
+const (
+	FsEntryTargetTypeDir  FsEntryTargetType = "dir"
+	FsEntryTargetTypeFile FsEntryTargetType = "file"
+)
+
+// Valid indicates whether the value is a known member of the FsEntryTargetType enum.
+func (e FsEntryTargetType) Valid() bool {
+	switch e {
+	case FsEntryTargetTypeDir:
+		return true
+	case FsEntryTargetTypeFile:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FsEntryType.
+const (
+	FsEntryTypeDir     FsEntryType = "dir"
+	FsEntryTypeFile    FsEntryType = "file"
+	FsEntryTypeOther   FsEntryType = "other"
+	FsEntryTypeSymlink FsEntryType = "symlink"
+)
+
+// Valid indicates whether the value is a known member of the FsEntryType enum.
+func (e FsEntryType) Valid() bool {
+	switch e {
+	case FsEntryTypeDir:
+		return true
+	case FsEntryTypeFile:
+		return true
+	case FsEntryTypeOther:
+		return true
+	case FsEntryTypeSymlink:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitFileChangeStaged.
+const (
+	GitFileChangeStagedFull    GitFileChangeStaged = "full"
+	GitFileChangeStagedNone    GitFileChangeStaged = "none"
+	GitFileChangeStagedPartial GitFileChangeStaged = "partial"
+)
+
+// Valid indicates whether the value is a known member of the GitFileChangeStaged enum.
+func (e GitFileChangeStaged) Valid() bool {
+	switch e {
+	case GitFileChangeStagedFull:
+		return true
+	case GitFileChangeStagedNone:
+		return true
+	case GitFileChangeStagedPartial:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitFileChangeStatus.
+const (
+	GitFileChangeStatusAdded      GitFileChangeStatus = "added"
+	GitFileChangeStatusConflicted GitFileChangeStatus = "conflicted"
+	GitFileChangeStatusCopied     GitFileChangeStatus = "copied"
+	GitFileChangeStatusDeleted    GitFileChangeStatus = "deleted"
+	GitFileChangeStatusModified   GitFileChangeStatus = "modified"
+	GitFileChangeStatusRenamed    GitFileChangeStatus = "renamed"
+	GitFileChangeStatusTypechange GitFileChangeStatus = "typechange"
+	GitFileChangeStatusUntracked  GitFileChangeStatus = "untracked"
+)
+
+// Valid indicates whether the value is a known member of the GitFileChangeStatus enum.
+func (e GitFileChangeStatus) Valid() bool {
+	switch e {
+	case GitFileChangeStatusAdded:
+		return true
+	case GitFileChangeStatusConflicted:
+		return true
+	case GitFileChangeStatusCopied:
+		return true
+	case GitFileChangeStatusDeleted:
+		return true
+	case GitFileChangeStatusModified:
+		return true
+	case GitFileChangeStatusRenamed:
+		return true
+	case GitFileChangeStatusTypechange:
+		return true
+	case GitFileChangeStatusUntracked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitFileDiffKind.
+const (
+	Binary GitFileDiffKind = "binary"
+	Large  GitFileDiffKind = "large"
+	Text   GitFileDiffKind = "text"
+)
+
+// Valid indicates whether the value is a known member of the GitFileDiffKind enum.
+func (e GitFileDiffKind) Valid() bool {
+	switch e {
+	case Binary:
+		return true
+	case Large:
+		return true
+	case Text:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitScope.
+const (
+	All         GitScope = "all"
+	Commit      GitScope = "commit"
+	Uncommitted GitScope = "uncommitted"
+)
+
+// Valid indicates whether the value is a known member of the GitScope enum.
+func (e GitScope) Valid() bool {
+	switch e {
+	case All:
+		return true
+	case Commit:
+		return true
+	case Uncommitted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImageContentType.
 const (
 	Image ImageContentType = "image"
@@ -185,6 +326,7 @@ const (
 	MethodSetupResult       LinkCtlMethod = "setup.result"
 	MethodSetupRun          LinkCtlMethod = "setup.run"
 	MethodShutdown          LinkCtlMethod = "shutdown"
+	MethodTerminalGap       LinkCtlMethod = "terminal.gap"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlMethod enum.
@@ -229,6 +371,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodSetupRun:
 		return true
 	case MethodShutdown:
+		return true
+	case MethodTerminalGap:
 		return true
 	default:
 		return false
@@ -337,6 +481,21 @@ const (
 func (e LinkStreamEgressT) Valid() bool {
 	switch e {
 	case Egress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamFsT.
+const (
+	Fs LinkStreamFsT = "fs"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamFsT enum.
+func (e LinkStreamFsT) Valid() bool {
+	switch e {
+	case Fs:
 		return true
 	default:
 		return false
@@ -685,6 +844,21 @@ func (e WsClientSubType) Valid() bool {
 	}
 }
 
+// Defines values for WsClientTermWatchType.
+const (
+	TermWatch WsClientTermWatchType = "term.watch"
+)
+
+// Valid indicates whether the value is a known member of the WsClientTermWatchType enum.
+func (e WsClientTermWatchType) Valid() bool {
+	switch e {
+	case TermWatch:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsClientUIResponseType.
 const (
 	UIResponse WsClientUIResponseType = "ui.response"
@@ -865,6 +1039,36 @@ func (e WsServerResType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerTermLaggedType.
+const (
+	TermLagged WsServerTermLaggedType = "term.lagged"
+)
+
+// Valid indicates whether the value is a known member of the WsServerTermLaggedType enum.
+func (e WsServerTermLaggedType) Valid() bool {
+	switch e {
+	case TermLagged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerTermResizedType.
+const (
+	TermResized WsServerTermResizedType = "term.resized"
+)
+
+// Valid indicates whether the value is a known member of the WsServerTermResizedType enum.
+func (e WsServerTermResizedType) Valid() bool {
+	switch e {
+	case TermResized:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerThreadSnapshotType.
 const (
 	ThreadSnapshot WsServerThreadSnapshotType = "thread.snapshot"
@@ -1004,6 +1208,34 @@ type AgentLiveState struct {
 // AgentStatus 线程 agent 进程状态；`none` = 尚未启动或 orb 不可用
 type AgentStatus string
 
+// Attachment defines model for Attachment.
+type Attachment struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ID `att_<ulid>`
+	ID   AttachmentID `json:"id"`
+	Mime string       `json:"mime"`
+
+	// Name 净化后的文件名（≤200 字节）
+	Name string `json:"name"`
+
+	// Sha256 SHA-256 小写十六进制
+	Sha256 Sha256 `json:"sha256"`
+	Size   int64  `json:"size"`
+
+	// ThreadID 绑定的线程；尚未绑定时省略
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// AttachmentID `att_<ulid>`
+type AttachmentID = string
+
+// AttachmentList defines model for AttachmentList.
+type AttachmentList struct {
+	Attachments []Attachment `json:"attachments"`
+}
+
 // AuthLoginFinishRequest defines model for AuthLoginFinishRequest.
 type AuthLoginFinishRequest struct {
 	CeremonyID string `json:"ceremonyId"`
@@ -1053,6 +1285,9 @@ type AuthSetupFinishResponse struct {
 
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
+	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
+	Attachments []AttachmentID `json:"attachments,omitempty"`
+
 	// Executor 线程执行位置
 	Executor ThreadExecutor `json:"executor"`
 	Images   []ImageContent `json:"images,omitempty"`
@@ -1200,6 +1435,9 @@ type EntryPage struct {
 type Error struct {
 	// Code 机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
 	// `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
+	// M3（orb 文件 / 改动 / 附件，HTTP 状态见 docs/protocol.md）：`invalid_path`、`outside_home`、`protected_path`、`exists`、`is_a_directory`、
+	// `not_a_directory`、`not_a_repo`、`git_busy`、`modified`（412）、`too_large`（413）、`checksum_mismatch`（422）、`git_failed`、`no_space`（507）、
+	// `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`attachment_not_found`。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -1216,6 +1454,159 @@ type ForkThreadRequest struct {
 // ForkThreadRequestEnv `copy` 连环境分叉（快照出副本 orb）；`share` 共用当前 orb
 type ForkThreadRequestEnv string
 
+// FsEntry defines model for FsEntry.
+type FsEntry struct {
+	// Etag `"<mtimeUnixNano>-<size>"`（含引号，可直接用作 `If-Match`）；仅文件
+	Etag *string `json:"etag,omitempty"`
+
+	// Mime 仅 `stat` 返回：按扩展名推断，缺省按内容嗅探
+	Mime *string `json:"mime,omitempty"`
+
+	// Mode Unix 权限位（十进制，如 420 = 0644）
+	Mode int `json:"mode"`
+
+	// Mtime UTC 毫秒时间戳
+	Mtime TimestampMs `json:"mtime"`
+	Name  string      `json:"name"`
+
+	// Path 绝对路径
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+
+	// Target 符号链接的目标（`readlink` 原文）
+	Target *string `json:"target,omitempty"`
+
+	// TargetType 符号链接最终指向的类型；悬空或指向 `$HOME` 之外时省略
+	TargetType *FsEntryTargetType `json:"targetType,omitempty"`
+
+	// Text 仅 `stat` 返回：前 8KiB 无 NUL 且为合法 UTF-8（允许末尾截断的码点）
+	Text *bool `json:"text,omitempty"`
+
+	// Type `Lstat` 的类型；符号链接为 `symlink`，其指向见 `target` / `targetType`
+	Type FsEntryType `json:"type"`
+}
+
+// FsEntryTargetType 符号链接最终指向的类型；悬空或指向 `$HOME` 之外时省略
+type FsEntryTargetType string
+
+// FsEntryType `Lstat` 的类型；符号链接为 `symlink`，其指向见 `target` / `targetType`
+type FsEntryType string
+
+// FsListing defines model for FsListing.
+type FsListing struct {
+	// Entries 目录在前、按名不分大小写排序
+	Entries []FsEntry `json:"entries"`
+
+	// Path 目录的绝对路径
+	Path string `json:"path"`
+
+	// Truncated 超过 5000 条被截断
+	Truncated bool `json:"truncated"`
+}
+
+// FsPathRequest defines model for FsPathRequest.
+type FsPathRequest struct {
+	// Path 同 `FsPathQuery` 的路径规则
+	Path string `json:"path"`
+}
+
+// FsRenameRequest defines model for FsRenameRequest.
+type FsRenameRequest struct {
+	From string `json:"from"`
+
+	// Overwrite 目标已存在时是否替换
+	Overwrite *bool  `json:"overwrite,omitempty"`
+	To        string `json:"to"`
+}
+
+// FsRoots defines model for FsRoots.
+type FsRoots struct {
+	// Home orb 内 `$HOME` 的绝对路径
+	Home string `json:"home"`
+
+	// Workdir orb 当前工作目录的绝对路径（有仓库时为检出目录）
+	Workdir string `json:"workdir"`
+}
+
+// GitBase defines model for GitBase.
+type GitBase struct {
+	// Approximate merge-base 不可得（浅克隆 / 无共同祖先）时为真，`mergeBase` 取基线引用本身的 sha
+	Approximate bool `json:"approximate"`
+
+	// MergeBase HEAD 与基线的 merge-base 提交 sha
+	MergeBase string `json:"mergeBase"`
+
+	// Name 基线分支名（如 `main`）
+	Name string `json:"name"`
+
+	// Ref 解析到的引用（`refs/remotes/origin/<name>` 或 `refs/heads/<name>`）
+	Ref string `json:"ref"`
+}
+
+// GitCommit defines model for GitCommit.
+type GitCommit struct {
+	AuthorEmail string `json:"authorEmail"`
+	AuthorName  string `json:"authorName"`
+	Sha         string `json:"sha"`
+	ShortSha    string `json:"shortSha"`
+	Subject     string `json:"subject"`
+
+	// TS 作者时间
+	TS TimestampMs `json:"ts"`
+}
+
+// GitCommitList defines model for GitCommitList.
+type GitCommitList struct {
+	// Commits 新到旧
+	Commits []GitCommit `json:"commits"`
+
+	// Truncated 超出 `limit` 被截断
+	Truncated bool `json:"truncated"`
+}
+
+// GitFileChange defines model for GitFileChange.
+type GitFileChange struct {
+	// Additions 新增行数；二进制或过大的未跟踪文件省略
+	Additions *int `json:"additions,omitempty"`
+	Binary    bool `json:"binary"`
+
+	// Deletions 删除行数；二进制或过大的未跟踪文件省略
+	Deletions *int `json:"deletions,omitempty"`
+
+	// OldPath 重命名 / 复制前的路径
+	OldPath *string `json:"oldPath,omitempty"`
+
+	// Path 仓库内相对路径（重命名 / 复制后的路径）
+	Path string `json:"path"`
+
+	// Staged 暂存状态（仅 to 为工作区的范围有意义；`commit` 范围恒为 `none`）
+	Staged GitFileChangeStaged `json:"staged"`
+	Status GitFileChangeStatus `json:"status"`
+}
+
+// GitFileChangeStaged 暂存状态（仅 to 为工作区的范围有意义；`commit` 范围恒为 `none`）
+type GitFileChangeStaged string
+
+// GitFileChangeStatus defines model for GitFileChange.Status.
+type GitFileChangeStatus string
+
+// GitFileDiff defines model for GitFileDiff.
+type GitFileDiff struct {
+	// Kind `text` 有 patch；`binary` 二进制（patch 为空）；`large` 未跟踪且 >4MiB（patch 为空）
+	Kind    GitFileDiffKind `json:"kind"`
+	OldPath *string         `json:"oldPath,omitempty"`
+
+	// Patch unified diff（`-U3`），≤1MiB
+	Patch string `json:"patch"`
+	Path  string `json:"path"`
+
+	// Truncated patch 超过 1MiB，在最后一个换行处截断
+	Truncated bool `json:"truncated"`
+}
+
+// GitFileDiffKind `text` 有 patch；`binary` 二进制（patch 为空）；`large` 未跟踪且 >4MiB（patch 为空）
+type GitFileDiffKind string
+
 // GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
 type GitIdentity struct {
 	// Email 须包含 `@`
@@ -1227,6 +1618,47 @@ type GitIdentity struct {
 type GitIdentitySettings struct {
 	// Identity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
 	Identity *GitIdentity `json:"identity,omitempty"`
+}
+
+// GitPathsRequest defines model for GitPathsRequest.
+type GitPathsRequest struct {
+	// Paths 仓库内相对路径；拒绝空串、NUL、绝对路径与 `..` 段
+	Paths []string `json:"paths"`
+
+	// Root 同 `GitRootQuery`
+	Root *string `json:"root,omitempty"`
+}
+
+// GitScope 改动范围：`all` 基线 merge-base → 工作区（无基线时等同 `uncommitted`）；
+// `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
+type GitScope string
+
+// GitStatus defines model for GitStatus.
+type GitStatus struct {
+	Base *GitBase `json:"base,omitempty"`
+
+	// Branch 当前分支名；分离 HEAD 时省略
+	Branch *string `json:"branch,omitempty"`
+
+	// Candidates `repo=false` 时 `root` 下一层含 `.git` 的子目录（绝对路径）
+	Candidates []string        `json:"candidates,omitempty"`
+	Files      []GitFileChange `json:"files"`
+
+	// Head HEAD 提交 sha；未出生时省略
+	Head *string `json:"head,omitempty"`
+
+	// Repo `root` 是否位于 git 仓库内；为假时只有 `candidates`
+	Repo bool `json:"repo"`
+
+	// Root 仓库顶层目录的绝对路径
+	Root *string `json:"root,omitempty"`
+
+	// Scope 改动范围：`all` 基线 merge-base → 工作区（无基线时等同 `uncommitted`）；
+	// `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
+	Scope GitScope `json:"scope"`
+
+	// Truncated 超过 2000 个文件被截断
+	Truncated bool `json:"truncated"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -1454,11 +1886,15 @@ type LinkCtlFsMoveParams struct {
 
 // LinkCtlHelloParams defines model for LinkCtlHelloParams.
 type LinkCtlHelloParams struct {
-	AgentVersion string               `json:"agentVersion"`
-	Arch         string               `json:"arch"`
-	OrbdVersion  string               `json:"orbdVersion"`
-	Os           string               `json:"os"`
-	Threads      []LinkCtlHelloThread `json:"threads"`
+	AgentVersion string `json:"agentVersion"`
+	Arch         string `json:"arch"`
+
+	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）。
+	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件请求回 409 `orbd_outdated`。
+	Features    []string             `json:"features,omitempty"`
+	OrbdVersion string               `json:"orbdVersion"`
+	Os          string               `json:"os"`
+	Threads     []LinkCtlHelloThread `json:"threads"`
 }
 
 // LinkCtlHelloThread defines model for LinkCtlHelloThread.
@@ -1475,7 +1911,8 @@ type LinkCtlHelloThread struct {
 // `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 // `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 // `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
-// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
+// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
+// `terminal.gap`（orbd→orynd 通知，M3）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -1487,7 +1924,8 @@ type LinkCtlNotification struct {
 	// `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
-	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
+	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
+	// `terminal.gap`（orbd→orynd 通知，M3）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -1537,7 +1975,8 @@ type LinkCtlRequest struct {
 	// `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
-	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
+	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
+	// `terminal.gap`（orbd→orynd 通知，M3）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -1636,6 +2075,15 @@ type LinkCtlShutdownParams struct {
 	GraceSeconds int `json:"graceSeconds"`
 }
 
+// LinkCtlTerminalGapParams orbd 帧缓冲 ≥8MiB 时丢弃了该线程的 `terminal_output` 帧，缓冲回落到 ≤1MiB 后发送一次（M3）。
+// 控制面向该线程开启 `term.watch` 的连接发 `term.lagged`。
+type LinkCtlTerminalGapParams struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
 // LinkStreamAgent agent 启动时由 orbd 开；orbd→orynd 为重组后的 omp 逻辑帧，orynd→orbd 为写入 omp stdin 的命令帧（一行一个 JSON）
 type LinkStreamAgent struct {
 	T LinkStreamAgentT `json:"t"`
@@ -1676,7 +2124,16 @@ type LinkStreamEgress struct {
 // LinkStreamEgressT defines model for LinkStreamEgress.T.
 type LinkStreamEgressT string
 
-// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。`portal` / `fs` / `desk` 由 M3/M4/M8 定义。
+// LinkStreamFs 由 orynd 打开（M3）；流头之后是 HTTP/1.1，一条流一个请求（控制面 `Connection: close`），orbd 以本机 API 的
+// `http.Server` 服务（路由见 docs/protocol.md「orbd 本机 API」）。只有 hello `features` 含相应特性的 orbd 才接受。
+type LinkStreamFs struct {
+	T LinkStreamFsT `json:"t"`
+}
+
+// LinkStreamFsT defines model for LinkStreamFs.T.
+type LinkStreamFsT string
+
+// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。`portal` / `desk` 由 M4/M8 定义。
 type LinkStreamHeader struct {
 	union json.RawMessage
 }
@@ -1758,6 +2215,31 @@ type Orb struct {
 	StateChangedAt TimestampMs `json:"stateChangedAt"`
 	ThreadIds      []ThreadID  `json:"threadIds"`
 	Type           string      `json:"type"`
+}
+
+// OrbAttachmentEnsureRequest 仅 orbd 本机 API 使用（`POST /attachments/ensure`，经 `fs` 流），不经 REST 暴露
+type OrbAttachmentEnsureRequest struct {
+	// ID `att_<ulid>`
+	ID   AttachmentID `json:"id"`
+	Name string       `json:"name"`
+
+	// Sha256 SHA-256 小写十六进制
+	Sha256 Sha256 `json:"sha256"`
+	Size   int64  `json:"size"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// OrbAttachmentEnsureResult 仅 orbd 本机 API 使用（`POST /attachments/ensure` 与 `PUT /attachments/file` 的结果）
+type OrbAttachmentEnsureResult struct {
+	// Path `$HOME/.oryn/attachments/<threadId>/<id>/<safeName>` 的绝对路径
+	Path string `json:"path"`
+
+	// Present `path` 处已是大小相同的普通文件
+	Present bool `json:"present"`
 }
 
 // OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
@@ -2387,6 +2869,22 @@ type WsClientSub struct {
 // WsClientSubType defines model for WsClientSub.Type.
 type WsClientSubType string
 
+// WsClientTermWatch 开关本连接对该线程 `terminal_output` 帧的接收（须先 `sub`，否则回 `error{code:"not_subscribed"}`）。
+// `terminal_output` 默认不发给未开启的连接；其它终端帧（`terminal_opened|exit|closed`）照常随 `frame` 广播。
+// 待发超过阈值时服务端丢弃终端输出、关闭本开关并发 `term.lagged`：客户端应经 `terminal_snapshot` 重同步后重新开启。
+type WsClientTermWatch struct {
+	On bool `json:"on"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID              `json:"threadId"`
+	Type     WsClientTermWatchType `json:"type"`
+}
+
+// WsClientTermWatchType defines model for WsClientTermWatch.Type.
+type WsClientTermWatchType string
+
 // WsClientUIResponse 侧通道应答；`frame.type` 只能是 `extension_ui_response`、`host_tool_result`、`host_tool_update`、`host_uri_result`
 // 之一且带字符串 `id`（与 omp `dispatchRpcControlFrame` 的判定一致），否则回 `error{code:"invalid_frame"}`。
 // `extension_ui_response` 先到先得：只有对应请求仍待答且应答已成功交给 agent（或在 orb 暂停时入队）才广播 `ui.resolved`。
@@ -2551,6 +3049,35 @@ type WsServerRes struct {
 // WsServerResType defines model for WsServerRes.Type.
 type WsServerResType string
 
+// WsServerTermLagged 该线程的 `terminal_output` 有丢失（本连接待发超过阈值，或 orbd 帧缓冲溢出后的 `terminal.gap`）：
+// 客户端应以 `terminal_list` + `terminal_snapshot` 重同步，并重新 `term.watch{on:true}`。
+type WsServerTermLagged struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID               `json:"threadId"`
+	Type     WsServerTermLaggedType `json:"type"`
+}
+
+// WsServerTermLaggedType defines model for WsServerTermLagged.Type.
+type WsServerTermLaggedType string
+
+// WsServerTermResized 某个连接发出的 `terminal_resize` 已入队（发给该线程全部订阅者，含发起方）；omp 自身不为 resize 发帧
+type WsServerTermResized struct {
+	Cols       int    `json:"cols"`
+	Rows       int    `json:"rows"`
+	TerminalID string `json:"terminalId"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID                `json:"threadId"`
+	Type     WsServerTermResizedType `json:"type"`
+}
+
+// WsServerTermResizedType defines model for WsServerTermResized.Type.
+type WsServerTermResizedType string
+
 // WsServerThreadSnapshot `sub` 后的首条消息
 type WsServerThreadSnapshot struct {
 	// Agent 线程实时缓冲（只含未被条目覆盖的部分）
@@ -2620,11 +3147,39 @@ type WsTicket struct {
 // AgentConfigPath defines model for AgentConfigPath.
 type AgentConfigPath = string
 
+// AttachmentIDPath `att_<ulid>`
+type AttachmentIDPath = AttachmentID
+
 // DeviceIDPath `dev_<ulid>`
 type DeviceIDPath = DeviceID
 
 // FromQuery UTC 毫秒时间戳
 type FromQuery = TimestampMs
+
+// FsPathQuery defines model for FsPathQuery.
+type FsPathQuery = string
+
+// GitBaseQuery defines model for GitBaseQuery.
+type GitBaseQuery = string
+
+// GitCommitQuery defines model for GitCommitQuery.
+type GitCommitQuery = string
+
+// GitDiffOldPathQuery defines model for GitDiffOldPathQuery.
+type GitDiffOldPathQuery = string
+
+// GitDiffPathQuery defines model for GitDiffPathQuery.
+type GitDiffPathQuery = string
+
+// GitRootQuery defines model for GitRootQuery.
+type GitRootQuery = string
+
+// GitScopeQuery 改动范围：`all` 基线 merge-base → 工作区（无基线时等同 `uncommitted`）；
+// `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
+type GitScopeQuery = GitScope
+
+// OrbBackgroundQuery defines model for OrbBackgroundQuery.
+type OrbBackgroundQuery = bool
 
 // OrbIDPath `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 //
@@ -2654,10 +3209,114 @@ type PutAgentConfigFileParams struct {
 	Mode *int `form:"mode,omitempty" json:"mode,omitempty"`
 }
 
+// UploadAttachmentParams defines parameters for UploadAttachment.
+type UploadAttachmentParams struct {
+	// Name 原始文件名（服务端净化后 ≤200 字节）
+	Name string `form:"name" json:"name"`
+
+	// ThreadID 直接绑定到该线程；缺省 = 暂不绑定（随 `POST threads` 的 `attachments` 或 `prompt.orynAttachments` 绑定）
+	ThreadID *ThreadID `form:"threadId,omitempty" json:"threadId,omitempty"`
+}
+
+// GetAttachmentContentParams defines parameters for GetAttachmentContent.
+type GetAttachmentContentParams struct {
+	Inline *bool `form:"inline,omitempty" json:"inline,omitempty"`
+}
+
 // ListOrbsParams defines parameters for ListOrbs.
 type ListOrbsParams struct {
 	State          *OrbState `form:"state,omitempty" json:"state,omitempty"`
 	IncludeDeleted *bool     `form:"includeDeleted,omitempty" json:"includeDeleted,omitempty"`
+}
+
+// ReadOrbFileParams defines parameters for ReadOrbFile.
+type ReadOrbFileParams struct {
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	Path FsPathQuery `form:"path" json:"path"`
+
+	// Range 标准 HTTP Range（单区间）
+	Range *string `json:"Range,omitempty"`
+}
+
+// WriteOrbFileParams defines parameters for WriteOrbFile.
+type WriteOrbFileParams struct {
+	// Overwrite 目标已存在时是否覆盖
+	Overwrite *bool `form:"overwrite,omitempty" json:"overwrite,omitempty"`
+
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	Path FsPathQuery `form:"path" json:"path"`
+
+	// IfMatch 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified`
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+// ListOrbFsParams defines parameters for ListOrbFs.
+type ListOrbFsParams struct {
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	Path FsPathQuery `form:"path" json:"path"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+}
+
+// GetOrbFsRootsParams defines parameters for GetOrbFsRoots.
+type GetOrbFsRootsParams struct {
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+}
+
+// StatOrbFsParams defines parameters for StatOrbFs.
+type StatOrbFsParams struct {
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	Path FsPathQuery `form:"path" json:"path"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+}
+
+// ListOrbGitCommitsParams defines parameters for ListOrbGitCommits.
+type ListOrbGitCommitsParams struct {
+	// Root 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录
+	Root *GitRootQuery `form:"root,omitempty" json:"root,omitempty"`
+
+	// Base 基线分支名（如 `main`）
+	Base  *GitBaseQuery `form:"base,omitempty" json:"base,omitempty"`
+	Limit *int          `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetOrbGitDiffParams defines parameters for GetOrbGitDiff.
+type GetOrbGitDiffParams struct {
+	// Root 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录
+	Root  *GitRootQuery  `form:"root,omitempty" json:"root,omitempty"`
+	Scope *GitScopeQuery `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Commit `scope=commit` 时必填
+	Commit *GitCommitQuery `form:"commit,omitempty" json:"commit,omitempty"`
+
+	// Base 基线分支名（如 `main`）
+	Base *GitBaseQuery `form:"base,omitempty" json:"base,omitempty"`
+
+	// Path 仓库内相对路径（`GitFileChange.path`）
+	Path GitDiffPathQuery `form:"path" json:"path"`
+
+	// OldPath 重命名 / 复制前的路径（`GitFileChange.oldPath`）
+	OldPath *GitDiffOldPathQuery `form:"oldPath,omitempty" json:"oldPath,omitempty"`
+}
+
+// GetOrbGitStatusParams defines parameters for GetOrbGitStatus.
+type GetOrbGitStatusParams struct {
+	// Root 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录
+	Root  *GitRootQuery  `form:"root,omitempty" json:"root,omitempty"`
+	Scope *GitScopeQuery `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Commit `scope=commit` 时必填
+	Commit *GitCommitQuery `form:"commit,omitempty" json:"commit,omitempty"`
+
+	// Base 基线分支名（如 `main`）
+	Base *GitBaseQuery `form:"base,omitempty" json:"base,omitempty"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 }
 
 // GetOrbMetricsParams defines parameters for GetOrbMetrics.
@@ -2742,6 +3401,21 @@ type DevicePairPollJSONRequestBody = DevicePairPollRequest
 
 // DevicePairStartJSONRequestBody defines body for DevicePairStart for application/json ContentType.
 type DevicePairStartJSONRequestBody = DevicePairStartRequest
+
+// DeleteOrbFsJSONRequestBody defines body for DeleteOrbFs for application/json ContentType.
+type DeleteOrbFsJSONRequestBody = FsPathRequest
+
+// MkdirOrbFsJSONRequestBody defines body for MkdirOrbFs for application/json ContentType.
+type MkdirOrbFsJSONRequestBody = FsPathRequest
+
+// RenameOrbFsJSONRequestBody defines body for RenameOrbFs for application/json ContentType.
+type RenameOrbFsJSONRequestBody = FsRenameRequest
+
+// StageOrbGitJSONRequestBody defines body for StageOrbGit for application/json ContentType.
+type StageOrbGitJSONRequestBody = GitPathsRequest
+
+// UnstageOrbGitJSONRequestBody defines body for UnstageOrbGit for application/json ContentType.
+type UnstageOrbGitJSONRequestBody = GitPathsRequest
 
 // PauseOrbJSONRequestBody defines body for PauseOrb for application/json ContentType.
 type PauseOrbJSONRequestBody = OrbPauseRequest
@@ -2918,6 +3592,40 @@ func (t *LinkStreamHeader) MergeLinkStreamBlob(v LinkStreamBlob) error {
 	return err
 }
 
+// AsLinkStreamFs returns the union data inside the LinkStreamHeader as a LinkStreamFs
+func (t LinkStreamHeader) AsLinkStreamFs() (LinkStreamFs, error) {
+	var body LinkStreamFs
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamFs overwrites any union data inside the LinkStreamHeader as the provided LinkStreamFs
+func (t *LinkStreamHeader) FromLinkStreamFs(v LinkStreamFs) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"fs"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamFs performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamFs
+func (t *LinkStreamHeader) MergeLinkStreamFs(v LinkStreamFs) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"fs"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -2940,6 +3648,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamCtl()
 	case "egress":
 		return t.AsLinkStreamEgress()
+	case "fs":
+		return t.AsLinkStreamFs()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -3260,6 +3970,40 @@ func (t *WsClientMessage) MergeWsClientPing(v WsClientPing) error {
 	return err
 }
 
+// AsWsClientTermWatch returns the union data inside the WsClientMessage as a WsClientTermWatch
+func (t WsClientMessage) AsWsClientTermWatch() (WsClientTermWatch, error) {
+	var body WsClientTermWatch
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsClientTermWatch overwrites any union data inside the WsClientMessage as the provided WsClientTermWatch
+func (t *WsClientMessage) FromWsClientTermWatch(v WsClientTermWatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.watch"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsClientTermWatch performs a merge with any union data inside the WsClientMessage, using the provided WsClientTermWatch
+func (t *WsClientMessage) MergeWsClientTermWatch(v WsClientTermWatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.watch"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsClientMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -3282,6 +4026,8 @@ func (t WsClientMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsClientPing()
 	case "sub":
 		return t.AsWsClientSub()
+	case "term.watch":
+		return t.AsWsClientTermWatch()
 	case "ui.response":
 		return t.AsWsClientUIResponse()
 	case "unsub":
@@ -3743,6 +4489,74 @@ func (t *WsServerMessage) MergeWsServerPong(v WsServerPong) error {
 	return err
 }
 
+// AsWsServerTermLagged returns the union data inside the WsServerMessage as a WsServerTermLagged
+func (t WsServerMessage) AsWsServerTermLagged() (WsServerTermLagged, error) {
+	var body WsServerTermLagged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerTermLagged overwrites any union data inside the WsServerMessage as the provided WsServerTermLagged
+func (t *WsServerMessage) FromWsServerTermLagged(v WsServerTermLagged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.lagged"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerTermLagged performs a merge with any union data inside the WsServerMessage, using the provided WsServerTermLagged
+func (t *WsServerMessage) MergeWsServerTermLagged(v WsServerTermLagged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.lagged"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerTermResized returns the union data inside the WsServerMessage as a WsServerTermResized
+func (t WsServerMessage) AsWsServerTermResized() (WsServerTermResized, error) {
+	var body WsServerTermResized
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerTermResized overwrites any union data inside the WsServerMessage as the provided WsServerTermResized
+func (t *WsServerMessage) FromWsServerTermResized(v WsServerTermResized) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.resized"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerTermResized performs a merge with any union data inside the WsServerMessage, using the provided WsServerTermResized
+func (t *WsServerMessage) MergeWsServerTermResized(v WsServerTermResized) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"term.resized"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -3777,6 +4591,10 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerPong()
 	case "res":
 		return t.AsWsServerRes()
+	case "term.lagged":
+		return t.AsWsServerTermLagged()
+	case "term.resized":
+		return t.AsWsServerTermResized()
 	case "thread.snapshot":
 		return t.AsWsServerThreadSnapshot()
 	case "transcript.reset":
@@ -3815,6 +4633,15 @@ type ServerInterface interface {
 	// ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 	// (POST /api/v1/agent-config/import)
 	ImportAgentConfig(w http.ResponseWriter, r *http.Request)
+	// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
+	// (POST /api/v1/attachments)
+	UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams)
+	// DeleteAttachment 删除附件（控制面的副本；orb 可用时尽力删除 orb 内的投递副本）
+	// (DELETE /api/v1/attachments/{id})
+	DeleteAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath)
+	// GetAttachmentContent 下载附件（支持 `Range`）
+	// (GET /api/v1/attachments/{id}/content)
+	GetAttachmentContent(w http.ResponseWriter, r *http.Request, id AttachmentIDPath, params GetAttachmentContentParams)
 	// AuthLoginBegin 开始 Passkey 登录（可发现凭据）
 	// (POST /api/v1/auth/login/begin)
 	AuthLoginBegin(w http.ResponseWriter, r *http.Request)
@@ -3866,6 +4693,45 @@ type ServerInterface interface {
 	// GetOrb orb 详情
 	// (GET /api/v1/orbs/{id})
 	GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// DeleteOrbFs 删除文件或目录（递归）
+	// (POST /api/v1/orbs/{id}/fs/delete)
+	DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// ReadOrbFile 下载文件（支持 `Range`）
+	// (GET /api/v1/orbs/{id}/fs/file)
+	ReadOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ReadOrbFileParams)
+	// WriteOrbFile 写入文件（整文件覆盖，单文件 ≤512MiB）
+	// (PUT /api/v1/orbs/{id}/fs/file)
+	WriteOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath, params WriteOrbFileParams)
+	// ListOrbFs 列出目录（目录在前、按名不分大小写排序；≤5000 条）
+	// (GET /api/v1/orbs/{id}/fs/list)
+	ListOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ListOrbFsParams)
+	// MkdirOrbFs 新建目录（含缺失的上级目录，0755）
+	// (POST /api/v1/orbs/{id}/fs/mkdir)
+	MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// RenameOrbFs 移动 / 重命名
+	// (POST /api/v1/orbs/{id}/fs/rename)
+	RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// GetOrbFsRoots orb 内的文件根（`$HOME` 与当前工作目录）
+	// (GET /api/v1/orbs/{id}/fs/roots)
+	GetOrbFsRoots(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbFsRootsParams)
+	// StatOrbFs 文件或目录元数据（含 `mime` 与 `text`）
+	// (GET /api/v1/orbs/{id}/fs/stat)
+	StatOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params StatOrbFsParams)
+	// ListOrbGitCommits 基线（merge-base）到 HEAD 的提交，新到旧
+	// (GET /api/v1/orbs/{id}/git/commits)
+	ListOrbGitCommits(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ListOrbGitCommitsParams)
+	// GetOrbGitDiff 单个文件的 unified diff（≤1MiB，按行截断）
+	// (GET /api/v1/orbs/{id}/git/diff)
+	GetOrbGitDiff(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitDiffParams)
+	// StageOrbGit 暂存文件（`git add -A -- <paths>`）
+	// (POST /api/v1/orbs/{id}/git/stage)
+	StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// GetOrbGitStatus 相对基线 / HEAD / 单个 commit 的改动文件列表（≤2000 个）
+	// (GET /api/v1/orbs/{id}/git/status)
+	GetOrbGitStatus(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitStatusParams)
+	// UnstageOrbGit 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`）
+	// (POST /api/v1/orbs/{id}/git/unstage)
+	UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// GetOrbMetrics orb 资源采样（按 `step` 降采样，取窗口内均值；网络字节取窗口末值）
 	// (GET /api/v1/orbs/{id}/metrics)
 	GetOrbMetrics(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbMetricsParams)
@@ -3944,6 +4810,9 @@ type ServerInterface interface {
 	// UpdateThread 修改线程（改名时控制面同时向 agent 发 `set_session_name`）
 	// (PATCH /api/v1/threads/{id})
 	UpdateThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// ListThreadAttachments 线程的附件（按上传时间）
+	// (GET /api/v1/threads/{id}/attachments)
+	ListThreadAttachments(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// ListThreadEntries 分页读取已复制条目（按 `seq` 升序）
 	// (GET /api/v1/threads/{id}/entries)
 	ListThreadEntries(w http.ResponseWriter, r *http.Request, id ThreadIDPath, params ListThreadEntriesParams)
@@ -4004,6 +4873,24 @@ func (_ Unimplemented) PutAgentConfigFile(w http.ResponseWriter, r *http.Request
 // ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 // (POST /api/v1/agent-config/import)
 func (_ Unimplemented) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
+// (POST /api/v1/attachments)
+func (_ Unimplemented) UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteAttachment 删除附件（控制面的副本；orb 可用时尽力删除 orb 内的投递副本）
+// (DELETE /api/v1/attachments/{id})
+func (_ Unimplemented) DeleteAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAttachmentContent 下载附件（支持 `Range`）
+// (GET /api/v1/attachments/{id}/content)
+func (_ Unimplemented) GetAttachmentContent(w http.ResponseWriter, r *http.Request, id AttachmentIDPath, params GetAttachmentContentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4106,6 +4993,84 @@ func (_ Unimplemented) DeleteOrb(w http.ResponseWriter, r *http.Request, id OrbI
 // GetOrb orb 详情
 // (GET /api/v1/orbs/{id})
 func (_ Unimplemented) GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteOrbFs 删除文件或目录（递归）
+// (POST /api/v1/orbs/{id}/fs/delete)
+func (_ Unimplemented) DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReadOrbFile 下载文件（支持 `Range`）
+// (GET /api/v1/orbs/{id}/fs/file)
+func (_ Unimplemented) ReadOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ReadOrbFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// WriteOrbFile 写入文件（整文件覆盖，单文件 ≤512MiB）
+// (PUT /api/v1/orbs/{id}/fs/file)
+func (_ Unimplemented) WriteOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath, params WriteOrbFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOrbFs 列出目录（目录在前、按名不分大小写排序；≤5000 条）
+// (GET /api/v1/orbs/{id}/fs/list)
+func (_ Unimplemented) ListOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ListOrbFsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// MkdirOrbFs 新建目录（含缺失的上级目录，0755）
+// (POST /api/v1/orbs/{id}/fs/mkdir)
+func (_ Unimplemented) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RenameOrbFs 移动 / 重命名
+// (POST /api/v1/orbs/{id}/fs/rename)
+func (_ Unimplemented) RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbFsRoots orb 内的文件根（`$HOME` 与当前工作目录）
+// (GET /api/v1/orbs/{id}/fs/roots)
+func (_ Unimplemented) GetOrbFsRoots(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbFsRootsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StatOrbFs 文件或目录元数据（含 `mime` 与 `text`）
+// (GET /api/v1/orbs/{id}/fs/stat)
+func (_ Unimplemented) StatOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params StatOrbFsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOrbGitCommits 基线（merge-base）到 HEAD 的提交，新到旧
+// (GET /api/v1/orbs/{id}/git/commits)
+func (_ Unimplemented) ListOrbGitCommits(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ListOrbGitCommitsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbGitDiff 单个文件的 unified diff（≤1MiB，按行截断）
+// (GET /api/v1/orbs/{id}/git/diff)
+func (_ Unimplemented) GetOrbGitDiff(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitDiffParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StageOrbGit 暂存文件（`git add -A -- <paths>`）
+// (POST /api/v1/orbs/{id}/git/stage)
+func (_ Unimplemented) StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbGitStatus 相对基线 / HEAD / 单个 commit 的改动文件列表（≤2000 个）
+// (GET /api/v1/orbs/{id}/git/status)
+func (_ Unimplemented) GetOrbGitStatus(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitStatusParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UnstageOrbGit 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`）
+// (POST /api/v1/orbs/{id}/git/unstage)
+func (_ Unimplemented) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4262,6 +5227,12 @@ func (_ Unimplemented) GetThread(w http.ResponseWriter, r *http.Request, id Thre
 // UpdateThread 修改线程（改名时控制面同时向 agent 发 `set_session_name`）
 // (PATCH /api/v1/threads/{id})
 func (_ Unimplemented) UpdateThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListThreadAttachments 线程的附件（按上传时间）
+// (GET /api/v1/threads/{id}/attachments)
+func (_ Unimplemented) ListThreadAttachments(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4441,6 +5412,120 @@ func (siw *ServerInterfaceWrapper) ImportAgentConfig(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportAgentConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadAttachment operation middleware
+func (siw *ServerInterfaceWrapper) UploadAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadAttachmentParams
+
+	// ------------- Required query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "name"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadAttachment(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAttachment operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AttachmentIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAttachment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAttachmentContent operation middleware
+func (siw *ServerInterfaceWrapper) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AttachmentIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAttachmentContentParams
+
+	// ------------- Optional query parameter "inline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "inline", r.URL.Query(), &params.Inline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "inline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "inline", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAttachmentContent(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4771,6 +5856,696 @@ func (siw *ServerInterfaceWrapper) GetOrb(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOrb(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteOrbFs operation middleware
+func (siw *ServerInterfaceWrapper) DeleteOrbFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteOrbFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadOrbFile operation middleware
+func (siw *ServerInterfaceWrapper) ReadOrbFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadOrbFileParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadOrbFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WriteOrbFile operation middleware
+func (siw *ServerInterfaceWrapper) WriteOrbFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params WriteOrbFileParams
+
+	// ------------- Optional query parameter "overwrite" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "overwrite", r.URL.Query(), &params.Overwrite, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "overwrite"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "overwrite", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WriteOrbFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrbFs operation middleware
+func (siw *ServerInterfaceWrapper) ListOrbFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrbFsParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrbFs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MkdirOrbFs operation middleware
+func (siw *ServerInterfaceWrapper) MkdirOrbFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MkdirOrbFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameOrbFs operation middleware
+func (siw *ServerInterfaceWrapper) RenameOrbFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameOrbFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbFsRoots operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbFsRoots(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbFsRootsParams
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbFsRoots(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StatOrbFs operation middleware
+func (siw *ServerInterfaceWrapper) StatOrbFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StatOrbFsParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StatOrbFs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrbGitCommits operation middleware
+func (siw *ServerInterfaceWrapper) ListOrbGitCommits(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOrbGitCommitsParams
+
+	// ------------- Optional query parameter "root" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "root", r.URL.Query(), &params.Root, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "root"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "root", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "base" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "base", r.URL.Query(), &params.Base, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "base"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "base", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrbGitCommits(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbGitDiff operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbGitDiff(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbGitDiffParams
+
+	// ------------- Optional query parameter "root" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "root", r.URL.Query(), &params.Root, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "root"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "root", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "commit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "commit", r.URL.Query(), &params.Commit, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "commit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "commit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "base" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "base", r.URL.Query(), &params.Base, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "base"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "base", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "oldPath" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "oldPath", r.URL.Query(), &params.OldPath, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "oldPath"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "oldPath", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbGitDiff(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StageOrbGit operation middleware
+func (siw *ServerInterfaceWrapper) StageOrbGit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StageOrbGit(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbGitStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbGitStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbGitStatusParams
+
+	// ------------- Optional query parameter "root" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "root", r.URL.Query(), &params.Root, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "root"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "root", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "commit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "commit", r.URL.Query(), &params.Commit, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "commit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "commit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "base" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "base", r.URL.Query(), &params.Base, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "base"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "base", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbGitStatus(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnstageOrbGit operation middleware
+func (siw *ServerInterfaceWrapper) UnstageOrbGit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnstageOrbGit(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5517,6 +7292,32 @@ func (siw *ServerInterfaceWrapper) UpdateThread(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListThreadAttachments operation middleware
+func (siw *ServerInterfaceWrapper) ListThreadAttachments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListThreadAttachments(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListThreadEntries operation middleware
 func (siw *ServerInterfaceWrapper) ListThreadEntries(w http.ResponseWriter, r *http.Request) {
 
@@ -5924,6 +7725,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/threads/{id}/wake", wrapper.WakeThread)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/attachments", wrapper.ListThreadAttachments)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/orbs", wrapper.ListOrbs)
 	})
 	r.Group(func(r chi.Router) {
@@ -5948,7 +7752,55 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/orbs/{id}/setup-runs/{runId}/log", wrapper.GetOrbSetupRunLog)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/fs/roots", wrapper.GetOrbFsRoots)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/fs/list", wrapper.ListOrbFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/fs/stat", wrapper.StatOrbFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/fs/file", wrapper.ReadOrbFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/orbs/{id}/fs/file", wrapper.WriteOrbFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/fs/mkdir", wrapper.MkdirOrbFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/fs/rename", wrapper.RenameOrbFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/fs/delete", wrapper.DeleteOrbFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/git/status", wrapper.GetOrbGitStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/git/diff", wrapper.GetOrbGitDiff)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/git/commits", wrapper.ListOrbGitCommits)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/git/stage", wrapper.StageOrbGit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/git/unstage", wrapper.UnstageOrbGit)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/blobs/{sha256}", wrapper.GetBlob)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/attachments", wrapper.UploadAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/attachments/{id}", wrapper.DeleteAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/attachments/{id}/content", wrapper.GetAttachmentContent)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/secrets", wrapper.ListSecrets)

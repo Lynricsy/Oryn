@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/egress"
@@ -19,50 +18,9 @@ type EgressSecrets interface {
 	GitToken(host string) (string, bool)
 }
 
-// vListener 是由 egress 流喂入的虚拟 net.Listener。
-type vListener struct {
-	ch   chan net.Conn
-	done chan struct{}
-	once sync.Once
-}
-
-func newVListener() *vListener {
-	return &vListener{ch: make(chan net.Conn), done: make(chan struct{})}
-}
-
-func (l *vListener) Accept() (net.Conn, error) {
-	select {
-	case c := <-l.ch:
-		return c, nil
-	case <-l.done:
-		return nil, net.ErrClosed
-	}
-}
-
-func (l *vListener) Close() error {
-	l.once.Do(func() { close(l.done) })
-	return nil
-}
-
-func (l *vListener) Addr() net.Addr { return vAddr{} }
-
-// push 把一条 egress 流交给 http.Server；监听已关闭则关闭该流。
-func (l *vListener) push(c net.Conn) {
-	select {
-	case l.ch <- c:
-	case <-l.done:
-		_ = c.Close()
-	}
-}
-
-type vAddr struct{}
-
-func (vAddr) Network() string { return "oryn-egress" }
-func (vAddr) String() string  { return "oryn-egress" }
-
 // egressServer 是一台 orb 的出站代理服务。
 type egressServer struct {
-	l   *vListener
+	l   *link.StreamListener
 	srv *http.Server
 }
 
@@ -122,7 +80,7 @@ func (s *Service) serveEgress(orbID string, st *link.Stream) {
 	s.mu.Lock()
 	es := s.egress[orbID]
 	if es == nil {
-		es = &egressServer{l: newVListener()}
+		es = &egressServer{l: link.NewStreamListener("oryn-egress")}
 		es.srv = &http.Server{
 			Handler:           egress.NewHandler(orbID, egressResolver{s: s, orbID: orbID}),
 			ReadHeaderTimeout: 30 * time.Second,
@@ -136,7 +94,7 @@ func (s *Service) serveEgress(orbID string, st *link.Stream) {
 		}()
 	}
 	s.mu.Unlock()
-	es.l.push(st)
+	es.l.Push(st)
 }
 
 // closeEgress 关闭 orb 的代理服务（orb 删除时）。

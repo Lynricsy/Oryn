@@ -432,6 +432,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/threads/{id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 线程的附件（按上传时间） */
+        get: operations["listThreadAttachments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orbs": {
         parameters: {
             query?: never;
@@ -565,6 +584,260 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/fs/roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * orb 内的文件根（`$HOME` 与当前工作目录）
+         * @description 经 orb link 的 `fs` 流转发到 orbd 本机 API（`GET /fs/roots` 等，见 docs/protocol.md M3 节）。orb 冻结 / 停机时默认唤醒并至多等待 25s；`bg=true` 时不唤醒、不计用户交互。
+         */
+        get: operations["getOrbFsRoots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 列出目录（目录在前、按名不分大小写排序；≤5000 条） */
+        get: operations["listOrbFs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/stat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 文件或目录元数据（含 `mime` 与 `text`） */
+        get: operations["statOrbFs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/file": {
+        parameters: {
+            query: {
+                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                path: components["parameters"]["FsPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 下载文件（支持 `Range`）
+         * @description 一律以附件形式返回（`Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`）；目录 → 409 `is_a_directory`。
+         */
+        get: operations["readOrbFile"];
+        /**
+         * 写入文件（整文件覆盖，单文件 ≤512MiB）
+         * @description 父目录须存在。已存在且 `overwrite=false` → 409 `exists`；带 `If-Match` 且与当前 `etag` 不符（含文件不存在）→ 412 `modified`；
+         *     超过 512MiB → 413 `too_large`；磁盘满 → 507 `no_space`。写临时文件后原子替换，沿用原文件权限（新文件 0644）；目标是符号链接时写入其指向的文件。
+         */
+        put: operations["writeOrbFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/mkdir": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新建目录（含缺失的上级目录，0755） */
+        post: operations["mkdirOrbFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 移动 / 重命名
+         * @description 目标已存在且未 `overwrite` → 409 `exists`；不得移动当前工作目录本身。返回目标的元数据。
+         */
+        post: operations["renameOrbFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/fs/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 删除文件或目录（递归）
+         * @description 不得删除当前工作目录本身或 `$HOME/.oryn` 下的路径（403 `protected_path`）。
+         */
+        post: operations["deleteOrbFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/git/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 相对基线 / HEAD / 单个 commit 的改动文件列表（≤2000 个）
+         * @description `base` 缺省时控制面以 orb 所属项目的 `baseBranch` 补上；仍无则 orbd 依次取 `origin/HEAD`、`main`、`master`。`root` 不是 git 仓库时返回 `repo=false` 与 `candidates`。
+         */
+        get: operations["getOrbGitStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/git/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 单个文件的 unified diff（≤1MiB，按行截断） */
+        get: operations["getOrbGitDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/git/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 基线（merge-base）到 HEAD 的提交，新到旧 */
+        get: operations["listOrbGitCommits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/git/stage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 暂存文件（`git add -A -- <paths>`）
+         * @description `index.lock` 被占用 → 409 `git_busy`。
+         */
+        post: operations["stageOrbGit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/git/unstage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`） */
+        post: operations["unstageOrbGit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/blobs/{sha256}": {
         parameters: {
             query?: never;
@@ -579,6 +852,64 @@ export interface paths {
          * @description `Content-Type` 为入库时记录的 mime；内容寻址，可长期缓存。
          */
         get: operations["getBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理） */
+        post: operations["uploadAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除附件（控制面的副本；orb 可用时尽力删除 orb 内的投递副本） */
+        delete: operations["deleteAttachment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attachments/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 下载附件（支持 `Range`）
+         * @description 默认 `Content-Disposition: attachment`；仅当 `inline=true` 且 mime ∈ `image/png|jpeg|gif|webp` 时内联。始终带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。
+         */
+        get: operations["getAttachmentContent"];
         put?: never;
         post?: never;
         delete?: never;
@@ -906,6 +1237,8 @@ export interface components {
         SetupRunId: string;
         /** @description 快照 id，同时是 Docker 镜像名 */
         SnapshotId: string;
+        /** @description `att_<ulid>` */
+        AttachmentId: string;
         /** @description omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。 */
         OmpFrame: {
             [key: string]: unknown;
@@ -914,6 +1247,9 @@ export interface components {
             /**
              * @description 机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
              *     `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
+             *     M3（orb 文件 / 改动 / 附件，HTTP 状态见 docs/protocol.md）：`invalid_path`、`outside_home`、`protected_path`、`exists`、`is_a_directory`、
+             *     `not_a_directory`、`not_a_repo`、`git_busy`、`modified`（412）、`too_large`（413）、`checksum_mismatch`（422）、`git_failed`、`no_space`（507）、
+             *     `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`attachment_not_found`。
              */
             code: string;
             message: string;
@@ -1204,6 +1540,8 @@ export interface components {
             thinkingLevel?: string;
             title?: string;
             labels?: string[];
+            /** @description 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空 */
+            attachments?: components["schemas"]["AttachmentId"][];
         };
         Thread: {
             id: components["schemas"]["ThreadId"];
@@ -1471,6 +1809,178 @@ export interface components {
             to: components["schemas"]["TimestampMs"];
             types: components["schemas"]["OrbTypeStat"][];
         };
+        FsRoots: {
+            /** @description orb 内 `$HOME` 的绝对路径 */
+            home: string;
+            /** @description orb 当前工作目录的绝对路径（有仓库时为检出目录） */
+            workdir: string;
+        };
+        FsEntry: {
+            /** @description 绝对路径 */
+            path: string;
+            name: string;
+            /**
+             * @description `Lstat` 的类型；符号链接为 `symlink`，其指向见 `target` / `targetType`
+             * @enum {string}
+             */
+            type: "file" | "dir" | "symlink" | "other";
+            /** Format: int64 */
+            size: number;
+            mtime: components["schemas"]["TimestampMs"];
+            /** @description Unix 权限位（十进制，如 420 = 0644） */
+            mode: number;
+            /** @description 符号链接的目标（`readlink` 原文） */
+            target?: string;
+            /**
+             * @description 符号链接最终指向的类型；悬空或指向 `$HOME` 之外时省略
+             * @enum {string}
+             */
+            targetType?: "file" | "dir";
+            /** @description `"<mtimeUnixNano>-<size>"`（含引号，可直接用作 `If-Match`）；仅文件 */
+            etag?: string;
+            /** @description 仅 `stat` 返回：按扩展名推断，缺省按内容嗅探 */
+            mime?: string;
+            /** @description 仅 `stat` 返回：前 8KiB 无 NUL 且为合法 UTF-8（允许末尾截断的码点） */
+            text?: boolean;
+        };
+        FsListing: {
+            /** @description 目录的绝对路径 */
+            path: string;
+            /** @description 目录在前、按名不分大小写排序 */
+            entries: components["schemas"]["FsEntry"][];
+            /** @description 超过 5000 条被截断 */
+            truncated: boolean;
+        };
+        FsPathRequest: {
+            /** @description 同 `FsPathQuery` 的路径规则 */
+            path: string;
+        };
+        FsRenameRequest: {
+            from: string;
+            to: string;
+            /**
+             * @description 目标已存在时是否替换
+             * @default false
+             */
+            overwrite: boolean;
+        };
+        /**
+         * @description 改动范围：`all` 基线 merge-base → 工作区（无基线时等同 `uncommitted`）；
+         *     `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
+         * @default all
+         * @enum {string}
+         */
+        GitScope: "all" | "uncommitted" | "commit";
+        GitBase: {
+            /** @description 基线分支名（如 `main`） */
+            name: string;
+            /** @description 解析到的引用（`refs/remotes/origin/<name>` 或 `refs/heads/<name>`） */
+            ref: string;
+            /** @description HEAD 与基线的 merge-base 提交 sha */
+            mergeBase: string;
+            /** @description merge-base 不可得（浅克隆 / 无共同祖先）时为真，`mergeBase` 取基线引用本身的 sha */
+            approximate: boolean;
+        };
+        GitFileChange: {
+            /** @description 仓库内相对路径（重命名 / 复制后的路径） */
+            path: string;
+            /** @description 重命名 / 复制前的路径 */
+            oldPath?: string;
+            /** @enum {string} */
+            status: "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange" | "untracked" | "conflicted";
+            /** @description 新增行数；二进制或过大的未跟踪文件省略 */
+            additions?: number;
+            /** @description 删除行数；二进制或过大的未跟踪文件省略 */
+            deletions?: number;
+            binary: boolean;
+            /**
+             * @description 暂存状态（仅 to 为工作区的范围有意义；`commit` 范围恒为 `none`）
+             * @enum {string}
+             */
+            staged: "none" | "partial" | "full";
+        };
+        GitStatus: {
+            /** @description `root` 是否位于 git 仓库内；为假时只有 `candidates` */
+            repo: boolean;
+            /** @description 仓库顶层目录的绝对路径 */
+            root?: string;
+            /** @description `repo=false` 时 `root` 下一层含 `.git` 的子目录（绝对路径） */
+            candidates?: string[];
+            /** @description 当前分支名；分离 HEAD 时省略 */
+            branch?: string;
+            /** @description HEAD 提交 sha；未出生时省略 */
+            head?: string;
+            base?: components["schemas"]["GitBase"];
+            scope: components["schemas"]["GitScope"];
+            files: components["schemas"]["GitFileChange"][];
+            /** @description 超过 2000 个文件被截断 */
+            truncated: boolean;
+        };
+        GitFileDiff: {
+            path: string;
+            oldPath?: string;
+            /**
+             * @description `text` 有 patch；`binary` 二进制（patch 为空）；`large` 未跟踪且 >4MiB（patch 为空）
+             * @enum {string}
+             */
+            kind: "text" | "binary" | "large";
+            /** @description unified diff（`-U3`），≤1MiB */
+            patch: string;
+            /** @description patch 超过 1MiB，在最后一个换行处截断 */
+            truncated: boolean;
+        };
+        GitCommit: {
+            sha: string;
+            shortSha: string;
+            subject: string;
+            authorName: string;
+            authorEmail: string;
+            /** @description 作者时间 */
+            ts: components["schemas"]["TimestampMs"];
+        };
+        GitCommitList: {
+            /** @description 新到旧 */
+            commits: components["schemas"]["GitCommit"][];
+            /** @description 超出 `limit` 被截断 */
+            truncated: boolean;
+        };
+        GitPathsRequest: {
+            /** @description 同 `GitRootQuery` */
+            root?: string;
+            /** @description 仓库内相对路径；拒绝空串、NUL、绝对路径与 `..` 段 */
+            paths: string[];
+        };
+        Attachment: {
+            id: components["schemas"]["AttachmentId"];
+            /** @description 绑定的线程；尚未绑定时省略 */
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description 净化后的文件名（≤200 字节） */
+            name: string;
+            mime: string;
+            /** Format: int64 */
+            size: number;
+            sha256: components["schemas"]["Sha256"];
+            createdAt: components["schemas"]["TimestampMs"];
+        };
+        AttachmentList: {
+            attachments: components["schemas"]["Attachment"][];
+        };
+        /** @description 仅 orbd 本机 API 使用（`POST /attachments/ensure`，经 `fs` 流），不经 REST 暴露 */
+        OrbAttachmentEnsureRequest: {
+            threadId: components["schemas"]["ThreadId"];
+            id: components["schemas"]["AttachmentId"];
+            name: string;
+            /** Format: int64 */
+            size: number;
+            sha256: components["schemas"]["Sha256"];
+        };
+        /** @description 仅 orbd 本机 API 使用（`POST /attachments/ensure` 与 `PUT /attachments/file` 的结果） */
+        OrbAttachmentEnsureResult: {
+            /** @description `path` 处已是大小相同的普通文件 */
+            present: boolean;
+            /** @description `$HOME/.oryn/attachments/<threadId>/<id>/<safeName>` 的绝对路径 */
+            path: string;
+        };
         WsTicket: {
             ticket: string;
             /**
@@ -1480,7 +1990,7 @@ export interface components {
             expiresIn: number;
         };
         /** @description 客户端 → 服务端 WS 消息 */
-        WsClientMessage: components["schemas"]["WsClientFocus"] | components["schemas"]["WsClientSub"] | components["schemas"]["WsClientUnsub"] | components["schemas"]["WsClientCmd"] | components["schemas"]["WsClientUiResponse"] | components["schemas"]["WsClientPing"];
+        WsClientMessage: components["schemas"]["WsClientFocus"] | components["schemas"]["WsClientSub"] | components["schemas"]["WsClientUnsub"] | components["schemas"]["WsClientCmd"] | components["schemas"]["WsClientUiResponse"] | components["schemas"]["WsClientPing"] | components["schemas"]["WsClientTermWatch"];
         /** @description 当前正在看的线程（用于未读、通知抑制、唤醒）；记为一次用户交互 */
         WsClientFocus: {
             /**
@@ -1552,8 +2062,22 @@ export interface components {
              */
             type: "ping";
         };
+        /**
+         * @description 开关本连接对该线程 `terminal_output` 帧的接收（须先 `sub`，否则回 `error{code:"not_subscribed"}`）。
+         *     `terminal_output` 默认不发给未开启的连接；其它终端帧（`terminal_opened|exit|closed`）照常随 `frame` 广播。
+         *     待发超过阈值时服务端丢弃终端输出、关闭本开关并发 `term.lagged`：客户端应经 `terminal_snapshot` 重同步后重新开启。
+         */
+        WsClientTermWatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "term.watch";
+            threadId: components["schemas"]["ThreadId"];
+            on: boolean;
+        };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -1722,6 +2246,30 @@ export interface components {
              */
             type: "pong";
         };
+        /**
+         * @description 该线程的 `terminal_output` 有丢失（本连接待发超过阈值，或 orbd 帧缓冲溢出后的 `terminal.gap`）：
+         *     客户端应以 `terminal_list` + `terminal_snapshot` 重同步，并重新 `term.watch{on:true}`。
+         */
+        WsServerTermLagged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "term.lagged";
+            threadId: components["schemas"]["ThreadId"];
+        };
+        /** @description 某个连接发出的 `terminal_resize` 已入队（发给该线程全部订阅者，含发起方）；omp 自身不为 resize 发帧 */
+        WsServerTermResized: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "term.resized";
+            threadId: components["schemas"]["ThreadId"];
+            terminalId: string;
+            cols: number;
+            rows: number;
+        };
         ProviderHelloRequest: {
             /** @description 本进程实例的随机 id */
             instanceId: string;
@@ -1803,8 +2351,8 @@ export interface components {
         JobDeleteSnapshotParams: {
             snapshotId: components["schemas"]["SnapshotId"];
         };
-        /** @description yamux 流的第一行（JSON + `\n`）。`portal` / `fs` / `desk` 由 M3/M4/M8 定义。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"];
+        /** @description yamux 流的第一行（JSON + `\n`）。`portal` / `desk` 由 M4/M8 定义。 */
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -1842,14 +2390,26 @@ export interface components {
             size: number;
         };
         /**
+         * @description 由 orynd 打开（M3）；流头之后是 HTTP/1.1，一条流一个请求（控制面 `Connection: close`），orbd 以本机 API 的
+         *     `http.Server` 服务（路由见 docs/protocol.md「orbd 本机 API」）。只有 hello `features` 含相应特性的 orbd 才接受。
+         */
+        LinkStreamFs: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "fs";
+        };
+        /**
          * @description `ctl` 方法（括号内为方向与形态）：
          *     `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
          *     `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
          *     `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
-         *     `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
+         *     `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
+         *     `terminal.gap`（orbd→orynd 通知，M3）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -1894,6 +2454,11 @@ export interface components {
             os: string;
             arch: string;
             threads: components["schemas"]["LinkCtlHelloThread"][];
+            /**
+             * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）。
+             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件请求回 409 `orbd_outdated`。
+             */
+            features?: string[];
         };
         LinkCtlEntriesCursorsParams: {
             threadId: components["schemas"]["ThreadId"];
@@ -1951,6 +2516,13 @@ export interface components {
         };
         /** @description 断连期间帧缓冲溢出，实时状态不连续 */
         LinkCtlAgentGapParams: {
+            threadId: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description orbd 帧缓冲 ≥8MiB 时丢弃了该线程的 `terminal_output` 帧，缓冲回落到 ≤1MiB 后发送一次（M3）。
+         *     控制面向该线程开启 `term.watch` 的连接发 `term.lagged`。
+         */
+        LinkCtlTerminalGapParams: {
             threadId: components["schemas"]["ThreadId"];
         };
         LinkCtlSetupLogParams: {
@@ -2090,6 +2662,22 @@ export interface components {
         ProviderIdPath: components["schemas"]["ProviderId"];
         ThreadIdPath: components["schemas"]["ThreadId"];
         OrbIdPath: components["schemas"]["OrbId"];
+        AttachmentIdPath: components["schemas"]["AttachmentId"];
+        /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+        FsPathQuery: string;
+        /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+        OrbBackgroundQuery: boolean;
+        /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
+        GitRootQuery: string;
+        GitScopeQuery: components["schemas"]["GitScope"];
+        /** @description `scope=commit` 时必填 */
+        GitCommitQuery: string;
+        /** @description 基线分支名（如 `main`） */
+        GitBaseQuery: string;
+        /** @description 仓库内相对路径（`GitFileChange.path`） */
+        GitDiffPathQuery: string;
+        /** @description 重命名 / 复制前的路径（`GitFileChange.oldPath`） */
+        GitDiffOldPathQuery: string;
         /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
         SecretNamePath: string;
         /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
@@ -2828,6 +3416,29 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listThreadAttachments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 附件列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listOrbs: {
         parameters: {
             query?: {
@@ -3025,6 +3636,392 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getOrbFsRoots: {
+        parameters: {
+            query?: {
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsRoots"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOrbFs: {
+        parameters: {
+            query: {
+                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                path: components["parameters"]["FsPathQuery"];
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsListing"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    statOrbFs: {
+        parameters: {
+            query: {
+                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                path: components["parameters"]["FsPathQuery"];
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    readOrbFile: {
+        parameters: {
+            query: {
+                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                path: components["parameters"]["FsPathQuery"];
+            };
+            header?: {
+                /** @description 标准 HTTP Range（单区间） */
+                Range?: string;
+            };
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件字节 */
+            200: {
+                headers: {
+                    /** @description `"<mtimeUnixNano>-<size>"` */
+                    ETag?: string;
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Range 请求的部分字节 */
+            206: {
+                headers: {
+                    ETag?: string;
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    writeOrbFile: {
+        parameters: {
+            query: {
+                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                path: components["parameters"]["FsPathQuery"];
+                /** @description 目标已存在时是否覆盖 */
+                overwrite?: boolean;
+            };
+            header?: {
+                /** @description 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified` */
+                "If-Match"?: string;
+            };
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 写入后的文件元数据 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    mkdirOrbFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsPathRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameOrbFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOrbFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsPathRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbGitStatus: {
+        parameters: {
+            query?: {
+                /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
+                root?: components["parameters"]["GitRootQuery"];
+                scope?: components["parameters"]["GitScopeQuery"];
+                /** @description `scope=commit` 时必填 */
+                commit?: components["parameters"]["GitCommitQuery"];
+                /** @description 基线分支名（如 `main`） */
+                base?: components["parameters"]["GitBaseQuery"];
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbGitDiff: {
+        parameters: {
+            query: {
+                /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
+                root?: components["parameters"]["GitRootQuery"];
+                scope?: components["parameters"]["GitScopeQuery"];
+                /** @description `scope=commit` 时必填 */
+                commit?: components["parameters"]["GitCommitQuery"];
+                /** @description 基线分支名（如 `main`） */
+                base?: components["parameters"]["GitBaseQuery"];
+                /** @description 仓库内相对路径（`GitFileChange.path`） */
+                path: components["parameters"]["GitDiffPathQuery"];
+                /** @description 重命名 / 复制前的路径（`GitFileChange.oldPath`） */
+                oldPath?: components["parameters"]["GitDiffOldPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitFileDiff"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOrbGitCommits: {
+        parameters: {
+            query?: {
+                /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
+                root?: components["parameters"]["GitRootQuery"];
+                /** @description 基线分支名（如 `main`） */
+                base?: components["parameters"]["GitBaseQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitCommitList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stageOrbGit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitPathsRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    unstageOrbGit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitPathsRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getBlob: {
         parameters: {
             query?: never;
@@ -3040,6 +4037,91 @@ export interface operations {
             200: {
                 headers: {
                     "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    uploadAttachment: {
+        parameters: {
+            query: {
+                /** @description 原始文件名（服务端净化后 ≤200 字节） */
+                name: string;
+                /** @description 直接绑定到该线程；缺省 = 暂不绑定（随 `POST threads` 的 `attachments` 或 `prompt.orynAttachments` 绑定） */
+                threadId?: components["schemas"]["ThreadId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 已保存 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAttachmentContent: {
+        parameters: {
+            query?: {
+                inline?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 附件字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Range 请求的部分字节 */
+            206: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

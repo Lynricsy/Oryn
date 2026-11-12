@@ -4,6 +4,16 @@
 
 package db
 
+type Attachment struct {
+	ID        string  `json:"id"`
+	ThreadID  *string `json:"threadId"`
+	Name      string  `json:"name"`
+	Mime      string  `json:"mime"`
+	Size      int64   `json:"size"`
+	Sha256    string  `json:"sha256"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
 type Blob struct {
 	Sha256    string `json:"sha256"`
 	Size      int64  `json:"size"`

@@ -10,9 +10,9 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// m2Tables 是计划 D 节列出的全部 M2 表。
+// m2Tables 是计划 D 节列出的全部 M2 表，外加后续里程碑新增的表（M3：attachments）。
 var m2Tables = []string{
-	"blobs", "device_pairings", "devices", "entries", "entry_cursors", "jobs", "orb_events",
+	"attachments", "blobs", "device_pairings", "devices", "entries", "entry_cursors", "jobs", "orb_events",
 	"orb_samples", "orb_setup_runs", "orbs", "owner", "passkeys", "projects", "providers", "recovery_codes",
 	"secrets", "thread_labels", "threads", "tool_calls", "usage_records", "web_sessions",
 }

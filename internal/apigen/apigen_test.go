@@ -25,6 +25,7 @@ func TestWsClientMessageDispatch(t *testing.T) {
 		`{"type":"cmd","threadId":"` + threadID + `","id":"c1","frame":{"type":"prompt","message":"hi"}}`: "cmd",
 		`{"type":"ui.response","threadId":"` + threadID + `","frame":{"type":"extension_ui_response"}}`:   "ui.response",
 		`{"type":"ping"}`: "ping",
+		`{"type":"term.watch","threadId":"` + threadID + `","on":true}`: "term.watch",
 	}
 	for raw, want := range cases {
 		var msg apigen.WsClientMessage
@@ -48,6 +49,9 @@ func TestWsClientMessageDispatch(t *testing.T) {
 		case apigen.WsClientUIResponse:
 			assert.Equal(t, "extension_ui_response", m.Frame["type"])
 		case apigen.WsClientPing:
+		case apigen.WsClientTermWatch:
+			assert.Equal(t, threadID, m.ThreadID)
+			assert.True(t, m.On)
 		default:
 			t.Fatalf("未分派的类型 %T", v)
 		}
