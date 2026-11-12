@@ -1,1 +1,290 @@
 @import "tailwindcss";
+
+/* ---- 设计令牌：克制的中性色 + 单一强调色；明暗跟随系统 ---- */
+:root {
+	--bg: oklch(0.985 0.002 260);
+	--panel: oklch(1 0 0);
+	--raised: oklch(0.975 0.003 260);
+	--inset: oklch(0.96 0.004 260);
+	--hover: oklch(0.94 0.005 260);
+	--line: oklch(0.9 0.005 260);
+	--text: oklch(0.22 0.01 260);
+	--text-muted: oklch(0.45 0.012 260);
+	--text-faint: oklch(0.6 0.01 260);
+	--brand: oklch(0.62 0.17 42);
+	--brand-fg: oklch(0.99 0 0);
+	--good: oklch(0.6 0.14 150);
+	--caution: oklch(0.68 0.14 75);
+	--bad: oklch(0.58 0.2 27);
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: oklch(0.165 0.004 260);
+		--panel: oklch(0.195 0.005 260);
+		--raised: oklch(0.215 0.006 260);
+		--inset: oklch(0.15 0.004 260);
+		--hover: oklch(0.255 0.007 260);
+		--line: oklch(0.29 0.006 260);
+		--text: oklch(0.93 0.005 260);
+		--text-muted: oklch(0.72 0.01 260);
+		--text-faint: oklch(0.55 0.01 260);
+		--brand: oklch(0.72 0.15 45);
+		--brand-fg: oklch(0.18 0.01 45);
+		--good: oklch(0.74 0.14 150);
+		--caution: oklch(0.8 0.13 80);
+		--bad: oklch(0.68 0.18 25);
+		color-scheme: dark;
+	}
+}
+
+@theme inline {
+	--color-bg: var(--bg);
+	--color-panel: var(--panel);
+	--color-raised: var(--raised);
+	--color-inset: var(--inset);
+	--color-hover: var(--hover);
+	--color-border: var(--line);
+	--color-fg: var(--text);
+	--color-muted: var(--text-muted);
+	--color-faint: var(--text-faint);
+	--color-accent: var(--brand);
+	--color-accent-fg: var(--brand-fg);
+	--color-ok: var(--good);
+	--color-warn: var(--caution);
+	--color-err: var(--bad);
+	--font-sans:
+		ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+		"Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+	--font-mono:
+		ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas,
+		monospace;
+}
+
+/* 工具卡片（tool-render）桥接变量 */
+:root {
+	--fg: var(--text);
+	--fg-muted: var(--text-muted);
+	--fg-faint: var(--text-faint);
+	--accent: var(--brand);
+	--ok: var(--good);
+	--err: var(--bad);
+	--warn: var(--caution);
+	--border: var(--line);
+	--bg-inset: var(--inset);
+	--bg-raised: var(--raised);
+	--kb-inset: 0px;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	-webkit-tap-highlight-color: transparent;
+	overscroll-behavior: none;
+}
+
+@utility pt-safe {
+	padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+	padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pl-safe {
+	padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+	padding-right: env(safe-area-inset-right);
+}
+/* 输入区随软键盘上移 */
+@utility pb-keyboard {
+	padding-bottom: max(env(safe-area-inset-bottom), var(--kb-inset));
+}
+
+/* ---- Markdown ---- */
+.md {
+	font-size: 14px;
+	line-height: 1.65;
+	overflow-wrap: anywhere;
+}
+.md > :first-child {
+	margin-top: 0;
+}
+.md > :last-child {
+	margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md table {
+	margin: 0.6em 0;
+}
+.md ul {
+	list-style: disc;
+	padding-left: 1.4em;
+}
+.md ol {
+	list-style: decimal;
+	padding-left: 1.4em;
+}
+.md li + li {
+	margin-top: 0.2em;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+	font-weight: 600;
+	line-height: 1.3;
+	margin: 1em 0 0.4em;
+}
+.md h1 {
+	font-size: 1.3em;
+}
+.md h2 {
+	font-size: 1.15em;
+}
+.md h3 {
+	font-size: 1.05em;
+}
+.md a {
+	color: var(--brand);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.md blockquote {
+	border-left: 3px solid var(--line);
+	padding-left: 0.8em;
+	color: var(--text-muted);
+}
+.md hr {
+	border-color: var(--line);
+	margin: 1em 0;
+}
+.md img {
+	max-width: 100%;
+	border-radius: 6px;
+}
+.md table {
+	border-collapse: collapse;
+	display: block;
+	overflow-x: auto;
+	font-size: 13px;
+}
+.md th,
+.md td {
+	border: 1px solid var(--line);
+	padding: 0.3em 0.6em;
+}
+.md th {
+	background: var(--raised);
+	font-weight: 600;
+}
+.md-inline-code {
+	font-family: var(--font-mono);
+	font-size: 0.88em;
+	background: var(--inset);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 0.05em 0.3em;
+}
+.md-code {
+	margin: 0.6em 0;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--inset);
+	overflow: hidden;
+}
+.md-code-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 2px 4px 2px 10px;
+	font-size: 11px;
+	color: var(--text-faint);
+	border-bottom: 1px solid var(--line);
+	font-family: var(--font-mono);
+}
+.md-code pre {
+	margin: 0;
+	padding: 10px 12px;
+	overflow-x: auto;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+.md-mermaid {
+	margin: 0.6em 0;
+	overflow-x: auto;
+}
+.md-mermaid svg {
+	max-width: 100%;
+	height: auto;
+}
+.md .katex-display {
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+/* highlight.js：极简配色，明暗共用 */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-tag .hljs-name {
+	color: oklch(0.6 0.15 300);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-addition {
+	color: oklch(0.6 0.13 150);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+	color: oklch(0.65 0.14 55);
+}
+.hljs-comment,
+.hljs-quote {
+	color: var(--text-faint);
+	font-style: italic;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+	color: oklch(0.62 0.13 240);
+}
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-variable.language_ {
+	color: oklch(0.65 0.12 200);
+}
+.hljs-deletion {
+	color: var(--bad);
+}
+.hljs-meta {
+	color: var(--text-muted);
+}
+
+/* 思考块流式时的淡入光标 */
+@keyframes oryn-caret {
+	50% {
+		opacity: 0;
+	}
+}
+.stream-caret::after {
+	content: "▍";
+	margin-left: 1px;
+	animation: oryn-caret 1s steps(1) infinite;
+	color: var(--brand);
+}

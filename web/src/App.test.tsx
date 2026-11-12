@@ -1,35 +1,57 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-function renderApp() {
+function renderAt(path: string) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
 	return render(
 		<QueryClientProvider client={client}>
-			<App />
+			<MemoryRouter initialEntries={[path]}>
+				<App />
+			</MemoryRouter>
 		</QueryClientProvider>,
 	);
 }
 
-describe("首页", () => {
+describe("路由与鉴权", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
 
-	it("显示 /healthz 返回的版本号", async () => {
-		const fetchMock = vi.fn(async () =>
-			Response.json({ ok: true, version: "v1.2.3-test" }),
+	it("未登录访问首页时跳转登录页", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				Response.json(
+					{ code: "unauthorized", message: "no session" },
+					{ status: 401 },
+				),
+			),
 		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		renderApp();
-
+		renderAt("/");
 		expect(
-			await screen.findByRole("heading", { name: "Oryn v1.2.3-test" }),
+			await screen.findByRole("heading", { name: "登录" }),
 		).toBeInTheDocument();
-		expect(fetchMock).toHaveBeenCalledWith("/healthz", expect.anything());
+		expect(
+			screen.getByRole("button", { name: "使用 Passkey 登录" }),
+		).toBeInTheDocument();
+	});
+
+	it("配对页要求先登录", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				Response.json(
+					{ code: "unauthorized", message: "no session" },
+					{ status: 401 },
+				),
+			),
+		);
+		renderAt("/pair");
+		expect(await screen.findByText("请先登录再批准设备。")).toBeInTheDocument();
 	});
 });

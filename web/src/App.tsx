@@ -1,27 +1,65 @@
-import { useQuery } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { fetchHealth } from "./health";
+import { lazy, type ReactNode, Suspense } from "react";
+import { Navigate, Route, Routes } from "react-router";
+import { AppShell } from "./components/layout/AppShell";
+import { Spinner } from "./components/ui/primitives";
+import { HomePage } from "./pages/HomePage";
+import type { SettingsSection } from "./pages/SettingsPage";
+import { ThreadPage } from "./pages/ThreadPage";
 
-export function App() {
-	const { t } = useTranslation();
-	const health = useQuery({
-		queryKey: ["healthz"],
-		queryFn: ({ signal }) => fetchHealth(signal),
-	});
+// 不常用的页面（认证、设置）按需加载
+const SetupPage = lazy(() =>
+	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
+);
+const LoginPage = lazy(() =>
+	import("./pages/AuthPages").then((m) => ({ default: m.LoginPage })),
+);
+const PairPage = lazy(() =>
+	import("./pages/AuthPages").then((m) => ({ default: m.PairPage })),
+);
+const SettingsPage = lazy(() =>
+	import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+);
 
+const SETTINGS: SettingsSection[] = [
+	"devices",
+	"providers",
+	"projects",
+	"secrets",
+	"agent-config",
+	"about",
+];
+
+/** 路由表（SPA）；外层由 main.tsx 提供 BrowserRouter 与 QueryClient。 */
+export function App(): ReactNode {
 	return (
-		<main className="flex min-h-dvh flex-col items-center justify-center gap-2 bg-neutral-50 p-6 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-			<h1 className="font-semibold text-3xl tracking-tight">
-				{health.data
-					? `${t("app.name")} ${health.data.version}`
-					: t("app.name")}
-			</h1>
-			<p className="text-neutral-500 text-sm">{t("app.tagline")}</p>
-			<p className="text-neutral-500 text-sm" role="status">
-				{health.isPending && t("health.loading")}
-				{health.isError && t("health.error", { message: health.error.message })}
-				{health.data && t("health.version", { version: health.data.version })}
-			</p>
-		</main>
+		<Suspense
+			fallback={
+				<div className="flex h-dvh items-center justify-center text-muted">
+					<Spinner size={20} />
+				</div>
+			}
+		>
+			<Routes>
+				<Route path="/setup" element={<SetupPage />} />
+				<Route path="/login" element={<LoginPage />} />
+				<Route path="/pair" element={<PairPage />} />
+				<Route element={<AppShell />}>
+					<Route index element={<HomePage />} />
+					<Route path="t/:threadId" element={<ThreadPage />} />
+					<Route
+						path="settings"
+						element={<Navigate to="/settings/devices" replace />}
+					/>
+					{SETTINGS.map((s) => (
+						<Route
+							key={s}
+							path={`settings/${s}`}
+							element={<SettingsPage section={s} />}
+						/>
+					))}
+				</Route>
+				<Route path="*" element={<Navigate to="/" replace />} />
+			</Routes>
+		</Suspense>
 	);
 }

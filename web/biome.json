@@ -44,6 +44,26 @@
 				"indentStyle": "space",
 				"indentWidth": 2
 			}
+		},
+		{
+			"includes": ["src/tool-render/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noArrayIndexKey": "off",
+						"noControlCharactersInRegex": "off"
+					},
+					"style": {
+						"noNonNullAssertion": "off"
+					},
+					"security": {
+						"noDangerouslySetInnerHtml": "off"
+					},
+					"a11y": {
+						"useAriaPropsSupportedByRole": "off"
+					}
+				}
+			}
 		}
 	]
 }

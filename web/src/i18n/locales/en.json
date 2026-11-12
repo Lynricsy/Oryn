@@ -1,11 +1,555 @@
 {
 	"app": {
 		"name": "Oryn",
-		"tagline": "Advanced environments for omp"
+		"tagline": "An advanced environment system for omp"
 	},
 	"health": {
 		"loading": "Connecting to server…",
 		"version": "Version {{version}}",
 		"error": "Cannot reach server: {{message}}"
+	},
+	"common": {
+		"cancel": "Cancel",
+		"clear": "Clear",
+		"close": "Close",
+		"copied": "Copied",
+		"copy": "Copy",
+		"create": "Create",
+		"delete": "Delete",
+		"dismiss": "Dismiss",
+		"edit": "Edit",
+		"no": "No",
+		"save": "Save",
+		"send": "Send",
+		"submit": "Submit",
+		"yes": "Yes"
+	},
+	"nav": {
+		"infoPanel": "Info panel",
+		"settings": "Settings",
+		"sidebar": "Sidebar"
+	},
+	"connection": {
+		"idle": "Not connected",
+		"connecting": "Connecting…",
+		"open": "Connected",
+		"reconnecting": "Connection lost, reconnecting…",
+		"unauthorized": "Session expired"
+	},
+	"threadState": {
+		"provisioning": "Provisioning",
+		"awaiting_input": "Awaiting input",
+		"working": "Working",
+		"error": "Error",
+		"idle": "Idle"
+	},
+	"orbState": {
+		"requested": "Requested",
+		"spawning": "Spawning",
+		"connecting": "Connecting",
+		"setting_up": "Setting up",
+		"resuming": "Resuming",
+		"ready": "Ready",
+		"freezing": "Freezing",
+		"frozen": "Frozen",
+		"stopping": "Stopping",
+		"stopped": "Stopped",
+		"waking": "Waking",
+		"deleting": "Deleting",
+		"deleted": "Deleted",
+		"failed": "Failed"
+	},
+	"sidebar": {
+		"archiveAll": "Archive all",
+		"archiveAllConfirm": "Archive these {{count}} inactive threads?",
+		"archived": "Archived",
+		"empty": "Empty",
+		"inactive": "Inactive 72h",
+		"newThread": "New thread",
+		"noProject": "No project",
+		"noThreads": "No threads yet.",
+		"pinned": "Pinned",
+		"search": "Search threads",
+		"snoozed": "Snoozed",
+		"unread": "Unread"
+	},
+	"newThread": {
+		"heading": "What should we work on?",
+		"prompt": "Prompt",
+		"placeholder": "Describe the task… paste or drop images",
+		"start": "Start",
+		"newOrb": "New orb",
+		"newOrbDefault": "New orb (default)",
+		"existingOrbs": "Existing orbs",
+		"existingOrb": "Orb {{id}}",
+		"noProject": "No project",
+		"defaultModel": "Default model",
+		"defaultThinking": "Default",
+		"modelPlaceholder": "provider/model-id",
+		"hint": "Enter to start · Shift+Enter for newline · Ctrl+K to search"
+	},
+	"composer": {
+		"abort": "Interrupt",
+		"abortBash": "Abort bash",
+		"attach": "Attach images",
+		"commands": "Commands",
+		"imageFailed": "Could not read image {{name}}",
+		"imageTooLarge": "Image {{name}} is still {{size}} after compression but only {{remaining}} is left for this message — please shrink it",
+		"keyAbort": "interrupt",
+		"keyBash": "bash",
+		"keyCommands": "commands",
+		"keyInterrupt": "interrupt & send",
+		"keyQueue": "queue",
+		"keySteer": "steer",
+		"label": "Message",
+		"menuHint": "↑↓ select · Tab complete · Esc close",
+		"needsArgs": "/{{name}} needs an argument",
+		"noCommands": "No matching commands",
+		"placeholder": "Reply… (/ commands, ! bash)",
+		"placeholderBusy": "Steer the running turn…",
+		"removeImage": "Remove image",
+		"send": "Send",
+		"steer": "Steer",
+		"unavailable": "/{{name}} is not available in Oryn"
+	},
+	"slash": {
+		"desc": {
+			"plan": "Toggle plan mode",
+			"tree": "Session tree: jump to another branch",
+			"fork": "Fork the thread",
+			"new": "New thread",
+			"resume": "Search threads",
+			"clear": "Clear context",
+			"queue": "Queue a follow-up",
+			"btw": "Side question without interrupting",
+			"tan": "Run a tangent task",
+			"omfg": "Complain and correct the agent",
+			"vibe": "Toggle vibe mode",
+			"loop": "Loop mode",
+			"goal": "Set or view the goal",
+			"guided-goal": "Guided goal setup",
+			"pause": "Pause or resume all agents",
+			"handoff": "Hand off to a new session",
+			"compact": "Compact context",
+			"shake": "Shake context (elide / images / thinking)",
+			"fresh": "Start fresh",
+			"retry": "Retry last turn",
+			"model": "Switch model and thinking",
+			"fast": "Toggle fast mode",
+			"slow": "Toggle slow mode",
+			"context": "Context usage report",
+			"usage": "Usage report",
+			"jobs": "Background jobs",
+			"tools": "Active tools",
+			"session": "Session stats"
+		}
+	},
+	"transcript": {
+		"aborted": "Aborted",
+		"branchSummary": "Branch summary",
+		"cancelled": "cancelled",
+		"compaction": "Context compacted",
+		"developer": "System message",
+		"error": "Error: {{message}}",
+		"excluded": "excluded from context",
+		"forkHere": "Fork from here",
+		"ircFrom": "From {{from}}",
+		"jumpToEnd": "Jump to latest",
+		"label": "Label",
+		"messageActions": "Message actions",
+		"meta": {
+			"mode": "Mode: {{mode}}",
+			"model": "Model changed to {{model}}",
+			"thinking": "Thinking level: {{level}}",
+			"title": "Title: {{title}}",
+			"ttsr": "Rules injected: {{rules}}"
+		},
+		"newSession": "New session",
+		"redactedThinking": "(thinking redacted)",
+		"steer": "steer",
+		"synthetic": "injected",
+		"thinking": "Thinking",
+		"thinkingLive": "Thinking…",
+		"usageCache": "cache {{n}}",
+		"usageIn": "in {{n}}",
+		"usageOut": "out {{n}}",
+		"you": "You"
+	},
+	"notice": {
+		"notify": "Notice",
+		"open_url": "Open in browser",
+		"compaction": "Compaction incomplete",
+		"compaction_done": "Context compacted",
+		"compaction_skipped": "Nothing to compact",
+		"retry_failed": "Retry failed",
+		"cache_warming_start": "Warming cache",
+		"cache_warming_end": "Cache warming finished",
+		"retry_fallback_applied": "Fell back to another model",
+		"retry_fallback_succeeded": "Fallback model succeeded",
+		"config_warnings_changed": "Config warnings changed",
+		"ttsr_triggered": "Rules injected",
+		"todo_reminder": "Todo reminder",
+		"irc_message": "IRC message",
+		"notice": "Notice",
+		"prompt_error": "Turn failed",
+		"extension_error": "Extension error",
+		"command_output": "Command output",
+		"rpc_frame_error": "Frame dropped (too large)"
+	},
+	"thread": {
+		"agentExited": "Agent exited, waiting for restart…",
+		"archive": "Archive",
+		"clickToRename": "Click to rename",
+		"color": "Color",
+		"copyLink": "Copy link",
+		"debug": "Debug panel",
+		"delete": "Delete thread",
+		"deleteConfirm": "Delete this thread and its transcript?",
+		"fork": "Fork",
+		"labels": "Labels",
+		"labelsHint": "Comma separated",
+		"moreActions": "More actions",
+		"notFound": "Thread not found",
+		"orb": "Orb",
+		"orbDelete": "Delete orb",
+		"orbDeleteConfirm": "Delete the orb? Its threads keep their transcripts read-only.",
+		"orbFreeze": "Freeze",
+		"orbState": "State: {{state}}",
+		"orbWake": "Wake",
+		"pin": "Pin",
+		"provisioning": "Preparing the environment ({{state}})…",
+		"rename": "Rename",
+		"snooze": "Snooze",
+		"snoozeClear": "Unsnooze",
+		"snoozeFor": {
+			"1h": "1 hour",
+			"3h": "3 hours",
+			"tomorrow": "Tomorrow morning",
+			"week": "Next week"
+		},
+		"tree": "Session tree",
+		"unarchive": "Unarchive",
+		"unpin": "Unpin",
+		"untitled": "Untitled thread",
+		"working": "Working…"
+	},
+	"color": {
+		"none": "None",
+		"red": "Red",
+		"orange": "Orange",
+		"yellow": "Yellow",
+		"green": "Green",
+		"teal": "Teal",
+		"blue": "Blue",
+		"purple": "Purple",
+		"pink": "Pink"
+	},
+	"status": {
+		"context": "Context {{pct}}%",
+		"noModel": "Unknown model",
+		"tps": "{{n}} tok/s"
+	},
+	"mode": {
+		"compacting": "Compacting…",
+		"goal": "Goal",
+		"goalOn": "Goal · {{status}}",
+		"loop": "Loop",
+		"loopOn": "Loop · {{state}}",
+		"loopState": {
+			"off": "off",
+			"waiting": "waiting",
+			"running": "running",
+			"paused": "paused"
+		},
+		"pauseAgents": "Pause agents",
+		"plan": "Plan",
+		"prewalk": "Prewalk",
+		"retrying": "Retry {{attempt}}/{{max}}",
+		"vibe": "Vibe"
+	},
+	"queue": {
+		"clear": "Clear",
+		"edit": "Edit",
+		"promote": "Send now",
+		"remove": "Remove",
+		"title": "Queued ({{count}})",
+		"steering": "Steering",
+		"followUp": "Follow-up"
+	},
+	"ui": {
+		"askTitle": "The agent has a question",
+		"formTitle": "Please fill in",
+		"moreQueued": "{{count}} more pending",
+		"otherAnswer": "Other answer…",
+		"recommended": "Recommended",
+		"timeLeft": "{{s}}s"
+	},
+	"plan": {
+		"title": "Plan proposal: {{title}}",
+		"feedback": "What should change…",
+		"pending": "Plan awaiting review: {{title}}",
+		"review": "Review",
+		"option": {
+			"execute": "Execute",
+			"compact": "Compact & execute",
+			"keep_context": "Execute keeping context",
+			"save": "Save only",
+			"refine": "Request changes"
+		}
+	},
+	"tree": {
+		"abortSummary": "Abort summary",
+		"active": "Active branch",
+		"editLabel": "Edit label",
+		"filterAll": "All",
+		"filterLabeled": "Labeled",
+		"filterUser": "User messages",
+		"jump": "Jump",
+		"leaf": "leaf",
+		"search": "Search…",
+		"summarize": "Summarize branch",
+		"summaryInstructions": "Summary instructions (optional)",
+		"title": "Session tree",
+		"role": {
+			"user": "user",
+			"assistant": "assistant",
+			"system": "system"
+		}
+	},
+	"fork": {
+		"title": "Fork thread",
+		"submit": "Fork",
+		"fromEntry": "Fork from the selected message.",
+		"fromLeaf": "Fork from the current position.",
+		"share": "Share the current orb",
+		"shareHint": "The new thread runs on the same machine and sees the same files.",
+		"copy": "Fork the environment too",
+		"copyHint": "Snapshot the orb into a copy and run the new thread there."
+	},
+	"report": {
+		"get_context_report": "Context report",
+		"get_usage": "Usage",
+		"get_jobs": "Jobs",
+		"get_active_tools": "Active tools",
+		"get_session_stats": "Session stats",
+		"ctx": {
+			"instructions": "Instruction files",
+			"messages": "Messages",
+			"skills": "Skills",
+			"systemContext": "System context",
+			"systemPrompt": "System prompt",
+			"systemTools": "Tool definitions"
+		}
+	},
+	"model": {
+		"title": "Model",
+		"search": "Search models…",
+		"thinking": "Thinking",
+		"fast": "fast",
+		"slow": "slow"
+	},
+	"subagent": {
+		"title": "Subagent",
+		"abort": "Abort",
+		"cancel": "Cancel",
+		"revive": "Revive",
+		"steer": "Steer this subagent…"
+	},
+	"btw": {
+		"title": "Side questions",
+		"ask": "Ask",
+		"hint": "btw answers questions without interrupting the main run.",
+		"placeholder": "Ask something…",
+		"status": {
+			"running": "answering",
+			"complete": "done",
+			"cancelled": "cancelled",
+			"error": "error",
+			"interrupted": "interrupted"
+		}
+	},
+	"goal": {
+		"title": "Goal",
+		"budget": "Token budget (optional)",
+		"drop": "Drop",
+		"guided": "Guided setup",
+		"none": "No goal is set.",
+		"objective": "Objective",
+		"pause": "Pause",
+		"resume": "Resume",
+		"set": "Set goal",
+		"status": {
+			"active": "active",
+			"paused": "paused",
+			"budget-limited": "budget limited",
+			"complete": "complete",
+			"dropped": "dropped"
+		}
+	},
+	"label": {
+		"title": "Message label",
+		"placeholder": "Label (empty to clear)"
+	},
+	"debug": {
+		"title": "Debug: unrecognized frames",
+		"hint": "Frames the client did not recognize, for diagnosing protocol drift.",
+		"empty": "None yet."
+	},
+	"panel": {
+		"addTodo": "Add todo…",
+		"context": "Context",
+		"cpuChart": "CPU chart",
+		"memChart": "Memory chart",
+		"memory": "Memory",
+		"noOrb": "This thread has no orb (read-only).",
+		"noSubagents": "No subagents.",
+		"noTodos": "No todos.",
+		"orb": "Orb",
+		"orbSpec": "{{type}} · {{cpus}} CPU / {{mem}} GB",
+		"subagents": "Subagents",
+		"todos": "Todos"
+	},
+	"todo": {
+		"status": {
+			"pending": "pending",
+			"in_progress": "in progress",
+			"completed": "completed",
+			"abandoned": "abandoned"
+		}
+	},
+	"auth": {
+		"createPasskey": "Create passkey",
+		"loginTitle": "Sign in",
+		"loginWithPasskey": "Sign in with a passkey",
+		"passkeyName": "Passkey name",
+		"reRegisterHint": "Recovery code accepted. Register a new passkey for this device.",
+		"reRegisterTitle": "Register a new passkey",
+		"recover": "Recover",
+		"recoveryCode": "Recovery code",
+		"recoveryCodesHint": "Store these 10 recovery codes safely. Each works once and they won't be shown again.",
+		"recoveryCodesTitle": "Recovery codes",
+		"savedContinue": "Saved, continue",
+		"setupHint": "Register the owner passkey for this Oryn.",
+		"setupTitle": "Set up Oryn",
+		"useRecoveryCode": "Use a recovery code"
+	},
+	"errors": {
+		"rate_limited": "Too many attempts — please try again shortly",
+		"rate_limited_after": "Too many attempts — try again in {{s}}s",
+		"unauthorized": "Your session has expired — please sign in again",
+		"forbidden": "Not allowed",
+		"managed_by_oryn": "This action is managed by Oryn and can't be sent to the agent",
+		"use_oryn_fork": "Use Oryn's fork instead",
+		"queue_full": "The orb isn't ready and the queue is full — try again shortly",
+		"orb_unavailable": "The orb is unavailable",
+		"disconnected": "Not connected to the server",
+		"timeout": "Request timed out"
+	},
+	"pair": {
+		"title": "Approve device",
+		"lookup": "Look up",
+		"device": "Device",
+		"userAgent": "User agent",
+		"requestedAt": "Requested",
+		"expires": "Expires",
+		"verifyHint": "Approve only if you just started this pairing yourself.",
+		"notFound": "Unknown or expired pairing code",
+		"alreadyApproved": "This pairing was already approved",
+		"approve": "Approve",
+		"approved": "Approved — the device will finish pairing shortly.",
+		"code": "Pairing code",
+		"hint": "Type the 8-character code shown on the CLI or app, check the device details, then approve.",
+		"loginFirst": "Sign in first to approve a device."
+	},
+	"settings": {
+		"devices": "Devices",
+		"providers": "Providers",
+		"projects": "Projects",
+		"secrets": "Secrets",
+		"agent-config": "Agent config",
+		"about": "About"
+	},
+	"devices": {
+		"approveTitle": "Approve pairing",
+		"current": "current",
+		"empty": "No devices.",
+		"lastSeen": "last seen {{when}}",
+		"revoke": "Revoke",
+		"revokeConfirm": "Revoke device {{name}}?",
+		"revoked": "revoked",
+		"title": "Devices",
+		"kind": {
+			"cli": "CLI",
+			"desktop": "Desktop",
+			"mobile": "Mobile"
+		}
+	},
+	"providers": {
+		"capabilities": "freeze {{freeze}} · snapshot {{snapshot}}",
+		"create": "New provider",
+		"default": "default",
+		"deleteConfirm": "Delete provider {{name}}?",
+		"empty": "No providers yet.",
+		"namePlaceholder": "Name, e.g. local",
+		"offline": "offline",
+		"online": "online",
+		"title": "Providers",
+		"tokenOnce": "The provider token is shown only once — put it in the provider's token_file:"
+	},
+	"projects": {
+		"baseBranch": "Base branch",
+		"defaultOrbType": "Default orb type",
+		"defaultProvider": "Default provider",
+		"deleteConfirm": "Delete project {{name}}?",
+		"empty": "No projects yet.",
+		"inherit": "Inherit default",
+		"name": "Name",
+		"new": "New project",
+		"noRepo": "No repository",
+		"repoUrl": "Repository URL",
+		"resumeScript": "Resume script",
+		"setupHint": "Runs in the repository the first time an orb is created.",
+		"setupScript": "Setup script",
+		"shallowClone": "Shallow clone",
+		"title": "Projects"
+	},
+	"secrets": {
+		"deleteConfirm": "Delete secret {{name}}?",
+		"empty": "No secrets yet.",
+		"envNameHint": "Env-mode names must be valid environment variable names (A-Z, 0-9, _)",
+		"hosts": "Allowed hosts",
+		"hostsHint": "Comma separated; empty = derived from the name",
+		"mode": "Mode",
+		"modeEnv": "env: injected as an environment variable",
+		"modeProxy": "proxy: injected by the control plane (never enters the orb)",
+		"name": "Name",
+		"nameHint": "e.g. git/github.com/token",
+		"put": "Store a secret",
+		"title": "Secrets",
+		"value": "Value"
+	},
+	"agentConfig": {
+		"deleteConfirm": "Delete {{path}}?",
+		"empty": "No omp config yet",
+		"extracted": "Extracted into the secret store: {{names}}",
+		"hint": "omp's text config (config.yml, models.yml, AGENTS.md, skills/ …). Literal API keys in models.yml are moved into the secret store on save.",
+		"newPath": "New file path, e.g. AGENTS.md",
+		"pick": "Pick a file to edit.",
+		"pushHint": "Import from your machine with `oryn config push`.",
+		"title": "Agent config"
+	},
+	"about": {
+		"language": "Language",
+		"logout": "Sign out",
+		"owner": "Owner",
+		"session": "Signed in via",
+		"since": "Created",
+		"title": "About",
+		"version": "Version",
+		"authKind": {
+			"web": "web session",
+			"device": "device token",
+			"recovery": "recovery session"
+		}
 	}
 }

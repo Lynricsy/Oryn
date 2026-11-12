@@ -8,6 +8,10 @@ const orynd = "http://127.0.0.1:7600";
 
 export default defineConfig({
 	plugins: [react(), tailwindcss()],
+	build: {
+		// 超过 500KB 的只有按需加载的 mermaid 子图分块（elk、cytoscape 等），不在首屏
+		chunkSizeWarningLimit: 1600,
+	},
 	server: {
 		proxy: {
 			"/api": { target: orynd, ws: true, changeOrigin: true },
