@@ -389,6 +389,7 @@ stateDiagram-v2
 |---|---|---|
 | M1 | 协议骨架 | 见「M1 步骤」 |
 | M2 | 线程核心 | 见「Verification」 |
+| M2.5 | orb 环境自配置 | 见「M2.5 步骤」 |
 | M3 | 终端 / 文件 / 改动面板与附件 | 右侧面板出现 `Changes \| Files \| Terminal`；终端用 agent 的 `terminal_*` 命令（开启 `terminal_configure{interactiveCommands:true, agentTools:true}`），刷新页面后经 `terminal_snapshot` + `seq` 无重复无丢失地恢复；`pty:true` 的 agent 命令自动出现在终端面板并可作答；Files 可浏览 / 预览 / 文本编辑保存 / 新建 / 重命名 / 删除 / 拖拽上传（单文件 512MB）/ 下载；Changes 显示相对基线的文件列表与 diff、暂存、按 commit 查看；消息附件（单文件 100MB）随线程保存且不进仓库；agent 文本配置可在同一文件编辑器里改 |
 | M4 | Portal 与受管服务 | `.oryn/services.yaml`（字段 `command, cwd, port, env, health, portal, portals`；注入 `PORT`、`PUBLIC_URL`、`ORYN_THREAD_ID`）由 orbd 监督；orb 内 `oryn orb service start demo --command 'python3 -m http.server "$PORT"' --portal` 打印 `https://t-<线程短码>-p<端口>.<portal_domain>/`；未登录访问 302 到主域名授权后回跳；WebSocket 透传；可限时公开（1h/3h/1d/7d，可续期 / 终止，仅该端口）；已授权 portal 请求算用户交互并唤醒 orb；向应用注入 `X-Oryn-Authenticated: owner=yes\|no` |
 | M5 | 公开分享 + 通知 + CLI 补全 | `/s/<128 位 slug>` 匿名可读实时页与快照页，撤销后立即 404，页面带 `noindex`；`/s/<slug>.md` 导出；开启分享前列出密钥扫描命中项；附件可发布为公开 URL 并可撤回。通知：线程转入 `idle / awaiting_input / error` 且无设备 focus 时，按配置经 Web Push / Telegram / Webhook / ntfy / Bark 发送；Telegram 里回复即 steer / 作答 ask。CLI：`oryn thread new\|list\|show\|send\|attach\|archive`、`oryn sync <thread>`（把 orb 的提交与未提交改动镜像到本地干净检出，`--apply` 一次性）、`oryn orb …`、`oryn secrets …`、`oryn provider …` |
@@ -506,6 +507,49 @@ M1 完成标志：`make gen && make build && make test` 全绿；`./bin/orynd --
 1. `deploy/systemd/orynd.service`（`ExecStart=/usr/local/bin/orynd --config /etc/oryn/orynd.yaml`，`Restart=always`）与 `deploy/systemd/oryn-provider.service`（`ExecStart=/usr/local/bin/oryn provider run --config /etc/oryn/provider.yaml`，`After=docker.service`，`KillSignal=SIGTERM`，`TimeoutStopSec=60`）。
 2. `deploy/openresty/oryn.conf`：主域名 server 块反代到 `127.0.0.1:7600`，带 `proxy_http_version 1.1`、`Upgrade` / `Connection` 头、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`；泛域名 server 块（`server_name *.<portal_domain>`）同样反代并透传 `Host`（M4 启用）。
 3. `docs/deploy.md`：安装步骤、两个域名与通配证书在 1Panel 中的配置方法、首次初始化（setup 链接）、本机 Docker provider 的 `listen` / `orb_url` 写法。
+
+### I. M2.5 步骤（orb 环境自配置）
+
+目标：agent 能根据项目自己写出 orb 的环境配置（`.oryn/setup`、`.oryn/resume`，或不进仓库的项目脚本），在当前 orb 里试跑验证，提交后让以后的新 orb 自动配好环境；setup 失败、过慢、缺失时用户与 agent 都看得到，并能一键交给 agent 修复。参照 Amp 的 `orb-setup` 技能（要点见 `docs/research/amp-orb-setup-skill.md`；Oryn 仓库公开，不收录原文，技能文本由 Oryn 自行编写）与系统提示词中的 orb 段落。
+
+生命周期文件（Oryn 约定，读取时回退 `.agents/*`）：
+
+|文件|何时运行|用途|
+|---|---|---|
+|项目 setup 脚本（存在控制面项目设置里）|每次 setup 运行时，先于仓库内脚本|不能或不想提交进仓库的准备步骤|
+|`.oryn/setup`|新 orb 首次就绪时运行一次（`~/.oryn/setup.done` 标记存在则跳过；M11 后快照命中也跳过）|安装工具链、依赖、数据库等；必须非交互、可重复执行、不留常驻进程|
+|项目 resume 脚本 / `.oryn/resume`|首次激活与每次唤醒，最多等 10 秒后放到后台|快速、幂等的认证 / 重连 / 修复|
+
+1. **失败语义与线程状态**（setup 脚本失败已在 `e166b1d` 改为 `ok=false` 继续就绪）：
+   - orb 进入 `failed` 时，其全部线程进入 `error`，`thread.error = {kind:"orb_failed", reason}`（取自导致 failed 的 `orb_events.detail.reason`）；C4 状态表在 `error` 行加「所在 orb 为 `failed`」。
+   - `POST threads/{id}/wake` 对 `failed` 的 orb 触发 `failed → waking`（状态机已允许），线程回到 `provisioning`。
+   - resume 脚本在 10 秒内非零退出也算失败，与 setup 失败同样上报（不阻塞就绪）。
+2. **setup 运行记录**：新表 `orb_setup_runs(id, orb_id, phase(setup|resume), trigger(auto|manual), started_at, finished_at, ok, setup_ran, error, duration_ms, has_repo_script, has_project_script, log_tail BLOB)`；`log_tail` 为该次运行 `setup.log` 通知的末尾 256KiB。新增 ctl 通知 `setup.result{phase, trigger, ok, setupRan, durationMs, error?, hasRepoScript, hasProjectScript}`，orbd 在每次 setup / resume 结束（含手动重跑）时发送；控制面据此落库并推送 `orb` 更新。REST：`GET orbs/{id}/setup-runs`（最近 20 次，不含日志）、`GET orbs/{id}/setup-runs/{runId}/log`（`text/plain`）。`Orb` 模型新增 `lastSetup`（最近一次 `phase=setup` 的记录摘要）与 `lastResume`。
+3. **orbd 本地控制口**：`$HOME/.oryn/orbd.sock`（unix socket，0600，JSON 行协议），方法：
+   - `setup.rerun{resume?:bool}`：用最近一次 `setup.run` / `resume.run` 的参数（orbd 内存中保存）重跑 setup（忽略标记；不重新 clone）或 resume，输出流式写回调用方、写 `setup.log`、上报 `setup.log` 通知与 `setup.result{trigger:"manual"}`；成功时写标记。同一 orb 同时只允许一个 setup / resume 运行，其余返回 `busy`。
+   - `setup.status` → 最近一次各阶段的结果。
+   - `project.scripts.get` / `project.scripts.set{setup?, resume?}`：经 ctl 请求 `project.scripts.get|set` 读写**本 orb 所属项目**的项目脚本（无项目的 orb 返回 `no_project`）；控制面只接受该 orb 的项目，不提供其它项目或其它设置的写入。
+4. **orb 内 CLI**（`oryn orb setup …`，只在 `ORYN_ORB=1` 时可用，经 `orbd.sock`）：`run [--resume]`（实时输出，退出码 = 脚本结果）、`status [--json]`、`logs [--resume] [-n N]`（读 `~/.cache/oryn/logs/{setup,resume}.log`）、`project-script get|set setup|resume [--file <path>]`。
+5. **给 agent 的环境说明**：orbd 内嵌并写出 `$HOME/.oryn/core/extensions/oryn-orb.ts`，启动 omp 时加 `-e <该文件>`（不影响用户自己的扩展与 `APPEND_SYSTEM.md`）。扩展在 `before_agent_start` 里向系统提示词追加一段「Oryn orb 环境」：生命周期文件约定、`oryn orb setup` 命令、日志位置、「改动合入项目基线分支后才对新 orb 生效」、长期进程不要放 setup；并读取 `$HOME/.oryn/setup-status.json`（orbd 维护）在最近一次 setup / resume 失败或 ≥2 分钟时附上一行现状（错误摘要与日志路径）。
+6. **`oryn-setup` 技能**：orbd 内嵌并写出 `$HOME/.agents/skills/oryn-setup/SKILL.md`（omp 从用户主目录的 `.agents/skills` 发现技能；该目录不属于 omp-home，不受配置下发清理影响）。内容按 Amp `orb-setup` 的结构改写为 Oryn：调查仓库（锁文件、版本钉、env 模板、数据库、CI 安装步骤、已有脚本）→ 写 / 更新 `.oryn/setup`（已有 `.agents/setup` 则原地更新）→ 持久化开发环境（login shell 钩子）→ 写 `.oryn/resume` → `chmod +x`、`oryn orb setup run` 跑两次并计时（冷 / 暖）、`oryn orb setup run --resume`、用干净的 `bash -lc` 验证环境 → 提交并推送到基线分支（未推送不得宣称完成）；另有「不提交仓库文件」路径：脚本写临时文件 → `bash -n` → 在仓库根运行两次 → `oryn orb setup project-script set setup --file …`。orb 基础镜像为 Debian 13，用户 `user` 有免密 sudo。
+7. **Web 客户端**：线程页输入区上方的环境提示条（可按线程关闭）：
+   - setup / resume 失败：显示错误摘要 +「查看日志」（对话框，`GET …/setup-runs/{id}/log`）+「让 agent 修复」（发送预置提示词：附失败阶段、错误、日志末尾 80 行，要求使用 `oryn-setup` 技能修复并重跑验证）。
+   - 最近一次 setup ≥2 分钟：「环境配置耗时 N 分钟」+「让 agent 优化」。
+   - 项目有仓库、仓库与项目都没有 setup 脚本、且 setup 已完成过一次：「这个项目还没有环境配置」+「让 agent 生成」。
+   - orb `failed`：线程 `error` 横幅显示原因 +「重试」（`POST threads/{id}/wake`）。
+   - 信息面板的 orb 区加「环境」小节：最近 setup / resume 的结果、耗时、触发方式与日志入口。
+8. **项目设置页**：setup / resume 脚本的纯文本编辑（已有字段），并显示「仓库内脚本：有 / 无」（取最近一次 `setup.result`）。
+
+完成标志（M2.5 验收）：
+
+|#|输入|期望观察|
+|---|---|---|
+|S1 自动化|`make test`|新增测试全绿：项目 setup 失败 → 线程照常 `idle`、`orb_setup_runs` 一行 `ok=0`；orb `failed` → 线程 `error` 且 `wake` 后恢复；`oryn orb setup run` 经 socket 重跑并上报 `trigger=manual`；`project.scripts.set` 只能改本 orb 的项目；扩展与技能文件被写出且 omp 启动参数带 `-e`|
+|S2 真机自配置|私有沙盒仓库（含 Node + Python 依赖与一个需要的系统包，无任何 setup 脚本）建为项目；新线程提示「为这个项目配置 Oryn orb 环境」|agent 加载 `oryn-setup` 技能，写出 `.oryn/setup`（与按需的 `.oryn/resume`），`oryn orb setup run` 运行两次（第二次明显更快），提交并推送到基线分支|
+|S3 新 orb 生效|同一项目再开一个新线程|新 orb 的 `orb_setup_runs` 有 `trigger=auto, ok=1, setup_ran=1, has_repo_script=1`；agent 在其中直接运行项目测试成功，无需再装依赖|
+|S4 失败闭环|把 setup 改成必定失败的版本后新开线程|线程照常就绪；提示条显示错误与日志；点「让 agent 修复」后 agent 修好脚本、`oryn orb setup run` 成功，提示条消失|
+|S5 不进仓库路径|对另一个沙盒项目要求「配置环境但不要提交任何文件」|仓库无改动；项目设置里出现 setup 脚本；新 orb 自动执行它并成功|
+
 
 ## Critical files & anchors
 
