@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,10 +47,46 @@ func TestMain(m *testing.M) {
 
 type stack struct {
 	t      *testing.T
+	cfg    config.Orynd
 	srv    *Server
 	http   *httptest.Server
 	token  string // 设备令牌
 	cancel context.CancelFunc
+}
+
+// serve 在固定地址上启动 HTTP 服务（addr 为空时随机端口），便于模拟控制面重启。
+func serve(t *testing.T, h http.Handler, addr string) *httptest.Server {
+	t.Helper()
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	var ln net.Listener
+	var err error
+	for range 50 { // 刚关闭的端口可能短暂不可用
+		if ln, err = net.Listen("tcp", addr); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NoError(t, err)
+	hs := httptest.NewUnstartedServer(h)
+	hs.Listener = ln
+	hs.Start()
+	return hs
+}
+
+// restart 模拟 orynd 重启：关闭全部组件后用同一数据目录与地址重新组装。
+func (s *stack) restart() {
+	s.t.Helper()
+	addr := s.http.Listener.Addr().String()
+	s.http.CloseClientConnections()
+	s.http.Close()
+	s.srv.Close()
+	srv, err := New(context.Background(), s.cfg)
+	require.NoError(s.t, err)
+	s.srv = srv
+	s.http = serve(s.t, srv.Handler, addr)
+	s.t.Cleanup(func() { s.http.Close(); srv.Close() })
 }
 
 func newStack(t *testing.T, idle config.Idle) *stack {
@@ -63,9 +100,9 @@ func newStack(t *testing.T, idle config.Idle) *stack {
 	ctx, cancel := context.WithCancel(context.Background())
 	srv, err := New(ctx, cfg)
 	require.NoError(t, err)
-	hs := httptest.NewServer(srv.Handler)
-	s := &stack{t: t, srv: srv, http: hs, cancel: cancel}
-	t.Cleanup(func() { cancel(); hs.Close(); srv.Close() })
+	hs := serve(t, srv.Handler, "")
+	s := &stack{t: t, cfg: cfg, srv: srv, http: hs, cancel: cancel}
+	t.Cleanup(func() { cancel(); s.http.Close(); s.srv.Close() })
 
 	_, tok, err := auth.CreateDevice(ctx, srv.Store, "e2e", "cli", "linux")
 	require.NoError(t, err)
@@ -347,4 +384,48 @@ func subseq(xs []string, want ...string) []string {
 		}
 	}
 	return out
+}
+
+// 控制面重启后：待答的 UI 请求由 orbd 在新 agent 流上重放，作答后 agent 继续；条目不重复。
+func TestFullStackRestartKeepsPendingAsk(t *testing.T) {
+	s := newStack(t, config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(24 * time.Hour)})
+	var created struct {
+		Thread threadView `json:"thread"`
+	}
+	s.rest("POST", "/api/v1/threads", map[string]any{
+		"prompt":   "please ask me",
+		"executor": map[string]any{"kind": "new_orb", "provider": "local"},
+	}, &created, 201)
+	th := s.waitThread(created.Thread.ID, 60*time.Second, func(v threadView) bool { return v.State == "awaiting_input" })
+
+	s.restart()
+
+	a := s.dial()
+	a.send(map[string]any{"type": "sub", "threadId": th.ID})
+	var reqID string
+	a.until(60*time.Second, func(m wsMsg) bool {
+		frames := m.Agent.PendingUI
+		if m.Type == "frame" && m.frameType() == "extension_ui_request" {
+			frames = append(frames, m.Frame)
+		}
+		for _, f := range frames {
+			var r struct {
+				ID     string `json:"id"`
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(f, &r) == nil && r.Method == "select" {
+				reqID = r.ID
+				return true
+			}
+		}
+		return false
+	})
+	s.waitThread(th.ID, 30*time.Second, func(v threadView) bool { return v.State == "awaiting_input" })
+	a.send(map[string]any{"type": "ui.response", "threadId": th.ID, "frame": map[string]any{"type": "extension_ui_response", "id": reqID, "value": "yes"}})
+	s.waitThread(th.ID, 60*time.Second, func(v threadView) bool { return v.State == "idle" })
+
+	var dup int
+	require.NoError(t, s.srv.Store.DB.QueryRow(
+		`SELECT COUNT(*) - COUNT(DISTINCT file || '/' || entry_id) FROM entries WHERE thread_id = ?`, th.ID).Scan(&dup))
+	assert.Zero(t, dup, "重启后条目无重复")
 }

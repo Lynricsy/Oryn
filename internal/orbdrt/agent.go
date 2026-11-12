@@ -204,9 +204,13 @@ func (t *thread) forward(ctx context.Context) {
 			st = &agentStream{s: s, c: c, epoch: target}
 			sp := t.procForEpoch(target)
 			go t.pumpCommands(s, sp)
-			// 已就绪的 agent 换了新流（重连）：再报一次 ready，让控制面知道新流可用。
+			// 已就绪的 agent 换了新流（重连）：再报一次 ready，让控制面知道新流可用；
+			// 并重放仍待答的交互（控制面可能已重启、丢了它们）。重复的请求按 id 去重，无副作用。
 			if sp != nil && sp.isReady() {
 				t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusReady})
+				for _, f := range sp.ui.replay() {
+					t.out.push(outItem{epoch: sp.epoch, data: f})
+				}
 			}
 		}
 		if st != nil && t.out.takeGap() {
@@ -280,6 +284,7 @@ func (t *thread) pumpCommands(s *link.Stream, p *proc) {
 		case <-p.exited:
 			continue
 		}
+		p.ui.observeIn(line)
 		if err := p.w.WriteRaw(line); err != nil {
 			t.r.log.Debug("write omp stdin failed", "thread", t.id, "err", err)
 		}
@@ -724,6 +729,8 @@ type proc struct {
 
 	mu      sync.Mutex
 	waiters map[string]chan omprpc.Envelope
+
+	ui pendingUI // 待答交互，新 agent 流上重放
 }
 
 func (p *proc) isReady() bool {
@@ -770,6 +777,7 @@ func (p *proc) readStdout(t *thread, r io.Reader) {
 			}
 			continue
 		}
+		p.ui.observeOut(frame)
 		t.out.push(outItem{epoch: p.epoch, data: frame})
 		t.wake()
 	}
