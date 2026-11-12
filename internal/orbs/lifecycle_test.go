@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -171,7 +172,7 @@ type fakeSetup struct{ upstream string }
 func (f fakeSetup) Plan(context.Context, db.Orb) (SetupPlan, error) {
 	return SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{Env: map[string]string{"A": "1"}, GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}},
-		Routes: map[string]string{"anth": f.upstream},
+		Egress: egress.Policy{Routes: map[string]egress.Route{"anth": {Origin: f.upstream, SecretIDs: []string{"sid1"}}}},
 	}, nil
 }
 

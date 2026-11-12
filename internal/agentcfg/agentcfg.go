@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
 
@@ -106,20 +107,22 @@ type ImportResult struct {
 	Files map[string][]byte
 	// Secrets 是抽取出的密钥名 → 明文，调用方写入密钥库（mode=proxy）。
 	Secrets map[string]string
+	// SecretHosts 是密钥名 → 允许的上游主机（provider 的 baseUrl / 内置上游主机；未知时为 nil）。
+	SecretHosts map[string][]string
 	// Warnings 是给用户看的提示。
 	Warnings []string
 }
 
 // Import 处理一次 `oryn config push` 的全部文件。
 func Import(files map[string][]byte) (ImportResult, error) {
-	res := ImportResult{Files: map[string][]byte{}, Secrets: map[string]string{}}
+	res := ImportResult{Files: map[string][]byte{}, Secrets: map[string]string{}, SecretHosts: map[string][]string{}}
 	for _, p := range sortedKeys(files) {
 		content := files[p]
 		if Excluded(p) {
 			continue
 		}
 		if p == ModelsFile {
-			out, err := importModels(content, res.Secrets)
+			out, err := importModels(content, res.Secrets, res.SecretHosts)
 			if err != nil {
 				return res, fmt.Errorf("%s: %w", p, err)
 			}
@@ -134,7 +137,7 @@ func Import(files map[string][]byte) (ImportResult, error) {
 	return res, nil
 }
 
-func importModels(content []byte, out map[string]string) ([]byte, error) {
+func importModels(content []byte, out map[string]string, hosts map[string][]string) ([]byte, error) {
 	doc, providers, err := parseModels(content)
 	if err != nil || providers == nil {
 		return content, err
@@ -150,6 +153,9 @@ func importModels(content []byte, out map[string]string) ([]byte, error) {
 		}
 		name := ModelKeySecretName(key)
 		out[name] = ak.Value
+		if u, err := url.Parse(providerBase(key, prov)); err == nil && u.Hostname() != "" {
+			hosts[name] = []string{u.Hostname()}
+		}
 		ak.Value = SecretRef(name)
 		ak.Style = yaml.DoubleQuotedStyle
 	}
@@ -170,8 +176,8 @@ type Resolver interface {
 // Rendered 是下发到 orb 的配置。
 type Rendered struct {
 	Files map[string][]byte
-	// Routes 是 egress 路由键 → 上游前缀（scheme://host，不含路径）。
-	Routes map[string]string
+	// Routes 是 egress 路由键 → 上游前缀（scheme://host，不含路径）与允许在该路由上使用的密钥 id。
+	Routes map[string]egress.Route
 	// Env 是环境变量降级时注入 agent 进程的真实密钥。
 	Env map[string]string
 	// Warnings 是改写过程中的提示。
@@ -180,7 +186,7 @@ type Rendered struct {
 
 // Render 为一台 orb 生成 omp-home 文件。
 func Render(files map[string][]byte, r Resolver) (Rendered, error) {
-	out := Rendered{Files: map[string][]byte{}, Routes: map[string]string{}, Env: map[string]string{}}
+	out := Rendered{Files: map[string][]byte{}, Routes: map[string]egress.Route{}, Env: map[string]string{}}
 	for p, content := range files {
 		if p != ModelsFile {
 			out.Files[p] = content
@@ -205,6 +211,8 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 		if prov.Kind != yaml.MappingNode {
 			continue
 		}
+		origins := map[string]string{} // 本 provider 产生的路由键 → 上游前缀
+		var ids []string               // 本 provider 子树中用到的密钥 id（绑定到它的全部路由）
 		ak := mapGet(prov, "apiKey")
 		var secretName string
 		if ak != nil && ak.Kind == yaml.ScalarNode {
@@ -217,13 +225,8 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 			if !ok {
 				return nil, fmt.Errorf("provider %s 引用的密钥 %s 不存在", key, secretName)
 			}
+			base := providerBase(key, prov)
 			bu := mapGet(prov, "baseUrl")
-			base := ""
-			if bu != nil && bu.Kind == yaml.ScalarNode {
-				base = bu.Value
-			} else if b, ok := BuiltinBaseURLs[key]; ok {
-				base = b
-			}
 			if base == "" {
 				// 环境变量降级：omp 先把 apiKey 当环境变量名解析
 				env := EnvFallbackName(key)
@@ -238,7 +241,8 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 				}
 				ak.Value = Placeholder(id)
 				ak.Style = yaml.DoubleQuotedStyle
-				out.Routes[key] = origin
+				ids = append(ids, id)
+				origins[key] = origin
 				if bu == nil {
 					appendPair(prov, "baseUrl", local)
 				} else {
@@ -261,14 +265,32 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 						return nil, fmt.Errorf("provider %s models[%d].baseUrl: %w", key, i, err)
 					}
 					mb.Value = local
-					out.Routes[rk] = origin
+					origins[rk] = origin
 				}
 			}
 		}
+		// provider 子树内其余密钥引用（如自定义请求头）绑定到该 provider 的路由
+		more, err := replaceRefs(prov, r)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, more...)
+		for rk, origin := range origins {
+			out.Routes[rk] = egress.Route{Origin: origin, SecretIDs: ids}
+		}
 	}
-	// 其余字段里的密钥引用（如自定义请求头）同样换成占位符
+	// providers 之外的引用：换成占位符但不绑定任何路由（egress 会拒绝使用）
+	if _, err := replaceRefs(doc, r); err != nil {
+		return nil, err
+	}
+	return encode(doc)
+}
+
+// replaceRefs 把子树中的 ${oryn:secret:…} 换成占位符，返回用到的密钥 id。
+func replaceRefs(n *yaml.Node, r Resolver) ([]string, error) {
+	var ids []string
 	var walkErr error
-	walk(doc, func(n *yaml.Node) {
+	walk(n, func(n *yaml.Node) {
 		if n.Kind != yaml.ScalarNode || !refRe.MatchString(n.Value) {
 			return
 		}
@@ -279,13 +301,19 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 				walkErr = fmt.Errorf("引用的密钥 %s 不存在", name)
 				return s
 			}
+			ids = append(ids, id)
 			return Placeholder(id)
 		})
 	})
-	if walkErr != nil {
-		return nil, walkErr
+	return ids, walkErr
+}
+
+// providerBase 返回 provider 的上游 baseUrl（未写时取内置表；都没有返回空串）。
+func providerBase(key string, prov *yaml.Node) string {
+	if bu := mapGet(prov, "baseUrl"); bu != nil && bu.Kind == yaml.ScalarNode && bu.Value != "" {
+		return bu.Value
 	}
-	return encode(doc)
+	return BuiltinBaseURLs[key]
 }
 
 // rewriteBase 把上游 baseUrl 改写为经 orbd 出站代理的地址，返回新地址与上游前缀。

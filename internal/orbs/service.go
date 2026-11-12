@@ -16,6 +16,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -130,7 +131,7 @@ type Service struct {
 	timers    map[string]*time.Timer
 	wakeAfter map[string]bool
 	egress    map[string]*egressServer
-	routes    map[string]map[string]string
+	policies  map[string]egress.Policy
 
 	hmu       sync.RWMutex
 	reqs      map[string]RequestFunc
@@ -163,7 +164,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 	s := &Service{
 		cfg: cfg, st: st, jobs: q, setup: setup, secrets: secrets, now: time.Now,
 		links: map[string]*orbLink{}, timers: map[string]*time.Timer{},
-		wakeAfter: map[string]bool{}, egress: map[string]*egressServer{}, routes: map[string]map[string]string{},
+		wakeAfter: map[string]bool{}, egress: map[string]*egressServer{}, policies: map[string]egress.Policy{},
 		reqs: map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 	}
 	q.SetHooks(jobs.Hooks{OnClaimed: s.onJobClaimed, OnFinished: s.onJobFinished})

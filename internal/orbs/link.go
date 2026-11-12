@@ -320,7 +320,7 @@ func (s *Service) runPhase(l *orbLink) {
 	} else {
 		plan.Params = apigen.LinkCtlSetupRunParams{GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{}}
 	}
-	s.setRoutes(l.orbID, plan.Routes)
+	s.setPolicy(l.orbID, plan.Egress)
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.SetupTimeout)
 	defer cancel()
 	var res apigen.LinkCtlSetupRunResult

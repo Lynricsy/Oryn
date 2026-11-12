@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +49,10 @@ func TestImportAndRender(t *testing.T) {
 		"omp/models/anthropic/apiKey": "sk-ant-literal-abcdef",
 		"omp/models/exa/apiKey":       "exa-literal-xyz",
 	}, res.Secrets)
+	assert.Equal(t, map[string][]string{
+		"omp/models/custom/apiKey":    {"llm.example.com"},
+		"omp/models/anthropic/apiKey": {"api.anthropic.com"},
+	}, res.SecretHosts, "exa 无上游主机（环境变量降级），不绑定主机")
 	assert.NotContains(t, res.Files, "sessions/x.jsonl")
 	assert.NotContains(t, res.Files, "history.db")
 	assert.Contains(t, res.Files, "skills/a/SKILL.md")
@@ -84,10 +90,10 @@ func TestImportAndRender(t *testing.T) {
 	assert.Equal(t, "MY_PROVIDER_KEY", p["envform"].APIKey)
 	assert.Equal(t, "!pass show key", p["cmdform"].APIKey)
 	assert.Equal(t, "ORYN_MODEL_KEY_EXA", p["exa"].APIKey)
-	assert.Equal(t, map[string]string{
-		"custom":    "https://llm.example.com",
-		"custom.m0": "https://alt.example.com",
-		"anthropic": "https://api.anthropic.com",
+	assert.Equal(t, map[string]egress.Route{
+		"custom":    {Origin: "https://llm.example.com", SecretIDs: []string{"sec1"}},
+		"custom.m0": {Origin: "https://alt.example.com", SecretIDs: []string{"sec1"}},
+		"anthropic": {Origin: "https://api.anthropic.com", SecretIDs: []string{"sec2"}},
 	}, out.Routes)
 	assert.Equal(t, map[string]string{"ORYN_MODEL_KEY_EXA": "exa-literal-xyz"}, out.Env)
 	assert.Len(t, out.Warnings, 1)

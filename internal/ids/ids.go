@@ -16,13 +16,16 @@ import (
 func Thread() string { return "T-" + uuid.Must(uuid.NewV7()).String() }
 
 // Orb 返回 orb-<26 位小写 ULID>（同时用作容器名与 hostname）。
-func Orb() string { return "orb-" + strings.ToLower(ulid.Make().String()) }
+func Orb() string { return "orb-" + strings.ToLower(newULID()) }
 
 // Snapshot 返回 oryn-snap-<小写 ULID>（Docker 镜像名）。
-func Snapshot() string { return "oryn-snap-" + strings.ToLower(ulid.Make().String()) }
+func Snapshot() string { return "oryn-snap-" + strings.ToLower(newULID()) }
 
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
-func New(prefix string) string { return prefix + "_" + ulid.Make().String() }
+func New(prefix string) string { return prefix + "_" + newULID() }
+
+// newULID 用 crypto/rand 生成 ULID（ulid.Make 的熵源可预测，而部分 id 在 orb 内可见）。
+func newULID() string { return ulid.MustNew(ulid.Now(), rand.Reader).String() }
 
 // Token 返回 <prefix>_<32 字节随机 base64url>，如 opv_…。
 func Token(prefix string) string {

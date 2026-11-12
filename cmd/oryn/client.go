@@ -63,8 +63,26 @@ func saveCredentials(c credentials) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
+	_ = os.Chmod(filepath.Dir(p), 0o700)
 	b, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(p, append(b, '\n'), 0o600)
+	// 先写 0600 临时文件再改名：已有文件的宽松权限不会沿用
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".credentials-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
 }
 
 // apiClient 是对控制面 REST API 的最小封装。

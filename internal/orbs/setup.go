@@ -6,11 +6,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -18,8 +21,8 @@ import (
 // SetupPlan 是一次 setup.run / resume.run 的参数与随之生效的 egress 路由。
 type SetupPlan struct {
 	Params apigen.LinkCtlSetupRunParams
-	// Routes 是 egress 模型路由键 → 上游前缀（agentcfg.Rendered.Routes）。
-	Routes map[string]string
+	// Egress 是随之生效的出站策略（模型路由来自 agentcfg.Rendered.Routes，git 仓库限定来自项目 repo_url）。
+	Egress egress.Policy
 }
 
 // SetupSource 为 orb 生成 setup / resume 参数。
@@ -57,7 +60,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
 		},
-		Routes: map[string]string{},
+		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}},
 	}
 	p := &plan.Params
 	if orb.ProjectID != nil {
@@ -73,6 +76,9 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 					repo.Branch = prj.BaseBranch
 				}
 				p.Repo = repo
+				if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
+					plan.Egress.GitRepos[host] = []string{path}
+				}
 			}
 			p.Scripts.Setup = nonEmpty(prj.SetupScript)
 			p.Scripts.Resume = nonEmpty(prj.ResumeScript)
@@ -127,10 +133,23 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 			p.Env[k] = v
 		}
 		for k, v := range rendered.Routes {
-			plan.Routes[k] = v
+			plan.Egress.Routes[k] = v
 		}
 	}
 	return plan, nil
+}
+
+// httpsRepo 解析 https://host/owner/repo(.git) 形式的仓库地址。
+func httpsRepo(raw string) (host, path string, ok bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", "", false
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(segs) < 2 {
+		return "", "", false
+	}
+	return strings.ToLower(u.Hostname()), egress.NormalizeRepo(segs[0] + "/" + segs[1]), true
 }
 
 type emptyResolver struct{}

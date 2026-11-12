@@ -72,11 +72,7 @@ type egressResolver struct {
 	orbID string
 }
 
-func (r egressResolver) LLMRoute(key string) (string, bool) {
-	routes := r.s.routesFor(r.orbID)
-	origin, ok := routes[key]
-	return origin, ok
-}
+func (r egressResolver) Policy() egress.Policy { return r.s.policyFor(r.orbID) }
 
 func (r egressResolver) SecretByID(id string) (string, []string, bool) {
 	if r.s.secrets == nil {
@@ -92,35 +88,32 @@ func (r egressResolver) GitToken(host string) (string, bool) {
 	return r.s.secrets.GitToken(host)
 }
 
-// routesFor 返回 orb 的 egress 路由；缓存缺失（如 orynd 重启后）时按当前配置重新生成。
-func (s *Service) routesFor(orbID string) map[string]string {
+// policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启后）时按当前配置重新生成。
+func (s *Service) policyFor(orbID string) egress.Policy {
 	s.mu.Lock()
-	routes, ok := s.routes[orbID]
+	pol, ok := s.policies[orbID]
 	s.mu.Unlock()
 	if ok {
-		return routes
+		return pol
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	orb, err := s.st.Q.GetOrb(ctx, orbID)
 	if err != nil || s.setup == nil {
-		return nil
+		return egress.Policy{}
 	}
 	plan, err := s.setup.Plan(ctx, orb)
 	if err != nil {
-		slog.Warn("重建 egress 路由失败", "orb", orbID, "err", err)
-		return nil
+		slog.Warn("重建 egress 策略失败", "orb", orbID, "err", err)
+		return egress.Policy{}
 	}
-	s.setRoutes(orbID, plan.Routes)
-	return plan.Routes
+	s.setPolicy(orbID, plan.Egress)
+	return plan.Egress
 }
 
-func (s *Service) setRoutes(orbID string, routes map[string]string) {
-	if routes == nil {
-		routes = map[string]string{}
-	}
+func (s *Service) setPolicy(orbID string, pol egress.Policy) {
 	s.mu.Lock()
-	s.routes[orbID] = routes
+	s.policies[orbID] = pol
 	s.mu.Unlock()
 }
 
@@ -151,7 +144,7 @@ func (s *Service) closeEgress(orbID string) {
 	s.mu.Lock()
 	es := s.egress[orbID]
 	delete(s.egress, orbID)
-	delete(s.routes, orbID)
+	delete(s.policies, orbID)
 	s.mu.Unlock()
 	if es != nil {
 		_ = es.srv.Close()
