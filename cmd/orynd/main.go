@@ -48,6 +48,14 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if rest := fsFlags.Args(); len(rest) > 0 {
+		sub, ok := subcommands[rest[0]]
+		if !ok {
+			return fmt.Errorf("未知子命令 %q", rest[0])
+		}
+		return sub(ctx, cfg, rest[1:])
+	}
+
 	st, err := store.Open(ctx, cfg.DataDir)
 	if err != nil {
 		return err
@@ -55,6 +63,9 @@ func run(args []string) error {
 	defer st.Close()
 	return serve(ctx, cfg, api.NewRouter(api.Deps{Store: st}))
 }
+
+// subcommands 是 `orynd --config <file> <子命令> …` 的本机管理命令，由各文件在 init() 中注册。
+var subcommands = map[string]func(ctx context.Context, cfg config.Orynd, args []string) error{}
 
 func newLogger(level string) *slog.Logger {
 	var lv slog.Level
