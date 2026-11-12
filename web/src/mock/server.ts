@@ -669,15 +669,19 @@ export class MockServer {
 					},
 					leafEntryId: last?.entryId,
 					lastSeq: last?.seq ?? 0,
+					transcriptRev: 0,
+					fullReplay: false,
 				});
 				const rest = list.filter((e) => e.seq > after);
 				for (let i = 0; i < rest.length; i += 200) {
+					const batch = rest.slice(i, i + 200);
 					socket.deliver({
 						type: "entries",
 						threadId,
-						entries: rest.slice(i, i + 200),
+						entries: batch,
 						leafEntryId: last?.entryId,
-						lastSeq: last?.seq ?? 0,
+						// 本批覆盖到的最大 seq（可续传游标）
+						lastSeq: batch[batch.length - 1]?.seq ?? 0,
 					});
 				}
 				return;
@@ -687,6 +691,15 @@ export class MockServer {
 				return;
 			case "ui.response": {
 				const frame = msg.frame as Json;
+				if (frame?.type !== "extension_ui_response") {
+					socket.deliver({
+						type: "error",
+						code: "invalid_frame",
+						message: "ui.response only accepts extension_ui_response",
+						threadId,
+					});
+					return;
+				}
 				const reqId = String(frame.id ?? "");
 				const list = this.pendingUi.get(threadId) ?? [];
 				if (!list.some((r) => r.id === reqId)) return; // 已被别人先答
@@ -937,6 +950,7 @@ export class MockServer {
 				this.planProposals.delete(threadId);
 				this.waiters.get(`plan:${threadId}`)?.(frame);
 				this.waiters.delete(`plan:${threadId}`);
+				this.broadcast({ type: "plan.resolved", threadId }, threadId);
 				this.refreshThreadState(threadId);
 				return this.respond(socket, threadId, id, type, {
 					approved: frame.approved === true,

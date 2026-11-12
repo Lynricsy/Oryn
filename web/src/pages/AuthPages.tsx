@@ -9,7 +9,7 @@ import {
 	startRegistration,
 } from "@simplewebauthn/browser";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api, unwrap } from "../api/client";
@@ -49,12 +49,25 @@ function AuthCard({ title, children }: { title: string; children: ReactNode }) {
 	);
 }
 
+/** 初始化令牌放在 URL 片段（`/setup#token=ost_…`），不进反代访问日志。 */
+export function setupTokenFromHash(hash: string): string | undefined {
+	return new URLSearchParams(hash.replace(/^#/, "")).get("token") || undefined;
+}
+
 export function SetupPage(): ReactNode {
 	const { t } = useTranslation();
-	const [params] = useSearchParams();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
-	const token = params.get("token") ?? undefined;
+	const [token] = useState(() => setupTokenFromHash(window.location.hash));
+	// 读到令牌后从地址栏抹掉片段（不留在历史记录与截图里）
+	useEffect(() => {
+		if (!setupTokenFromHash(window.location.hash)) return;
+		window.history.replaceState(
+			window.history.state,
+			"",
+			window.location.pathname + window.location.search,
+		);
+	}, []);
 	const [name, setName] = useState(() => navigator.platform || "Passkey");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);

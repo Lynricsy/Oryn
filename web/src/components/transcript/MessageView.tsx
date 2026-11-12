@@ -11,6 +11,7 @@ import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
 import { isRecord, resultTextOf } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
+import { ImageViewer } from "../ui/ImageViewer";
 import { Icon } from "../ui/icons";
 import { Menu } from "../ui/primitives";
 import { useTranscriptContext } from "./context";
@@ -29,6 +30,8 @@ function textOfContent(content: unknown): string {
 }
 
 function Images({ content }: { content: unknown }): ReactNode {
+	const { t } = useTranslation();
+	const [viewing, setViewing] = useState<string | null>(null);
 	if (!Array.isArray(content)) return null;
 	const imgs = content.filter(
 		(b): b is { type: "image"; data: string; mimeType: string } =>
@@ -40,16 +43,39 @@ function Images({ content }: { content: unknown }): ReactNode {
 	if (imgs.length === 0) return null;
 	return (
 		<div className="mt-2 flex flex-wrap gap-2">
-			{imgs.map((img, i) => (
-				<img
-					// biome-ignore lint/suspicious/noArrayIndexKey: 图片块无稳定 id
-					key={i}
-					src={imageSrc(img.data, img.mimeType)}
-					alt=""
-					className="max-h-64 max-w-full rounded-md border border-border"
-					loading="lazy"
-				/>
-			))}
+			{imgs.map((img, i) => {
+				const src = imageSrc(img.data, img.mimeType);
+				if (!src)
+					return (
+						<span
+							// biome-ignore lint/suspicious/noArrayIndexKey: 图片块无稳定 id
+							key={i}
+							className="rounded-md border border-border px-2 py-1 text-faint text-xs"
+						>
+							{t("image.unsupported", { type: img.mimeType })}
+						</span>
+					);
+				return (
+					<button
+						// biome-ignore lint/suspicious/noArrayIndexKey: 图片块无稳定 id
+						key={i}
+						type="button"
+						className="rounded-md"
+						onClick={() => setViewing(src)}
+						aria-label={t("image.open", { n: i + 1 })}
+					>
+						<img
+							src={src}
+							alt=""
+							className="max-h-64 max-w-full rounded-md border border-border"
+							loading="lazy"
+						/>
+					</button>
+				);
+			})}
+			{viewing && (
+				<ImageViewer src={viewing} alt="" onClose={() => setViewing(null)} />
+			)}
 		</div>
 	);
 }

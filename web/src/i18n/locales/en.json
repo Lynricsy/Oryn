@@ -443,7 +443,8 @@
 		"queue_full": "The orb isn't ready and the queue is full — try again shortly",
 		"orb_unavailable": "The orb is unavailable",
 		"disconnected": "Not connected to the server",
-		"timeout": "Request timed out"
+		"timeout": "Request timed out",
+		"invalid_frame": "The server rejected that response — the request has been restored"
 	},
 	"pair": {
 		"title": "Approve device",
@@ -602,5 +603,22 @@
 		"repoScriptYes": "yes",
 		"repoScriptNo": "no",
 		"repoScriptUnknown": "unknown (no setup run yet)"
+	},
+	"alerts": {
+		"region": "Notifications",
+		"resync": "Resync"
+	},
+	"image": {
+		"viewer": "Image",
+		"unsupported": "Unsupported image type: {{type}}",
+		"open": "Open image {{n}}",
+		"alt": "Image {{n}}"
+	},
+	"toolRender": {
+		"collapse": "Collapse",
+		"moreLines_one": "⋯ {{count}} more line",
+		"moreLines_other": "⋯ {{count}} more lines",
+		"running": "Running",
+		"args": "Arguments"
 	}
 }

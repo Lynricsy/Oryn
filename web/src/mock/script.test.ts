@@ -25,7 +25,6 @@ class Client implements MockSocket {
 				type: "entries",
 				msg: {
 					entries: msg.entries as Entry[],
-					lastSeq: Number(msg.lastSeq),
 					leafEntryId: msg.leafEntryId as string,
 				},
 			});

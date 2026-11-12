@@ -198,7 +198,10 @@ export interface ThreadViewState {
 	orb?: Orb;
 	agentStatus: AgentStatus;
 	entries: Entry[];
+	/** 可续传游标：已并入本地的最大条目 seq（不取服务端补发目标）。 */
 	lastSeq: number;
+	/** 服务端转录版本（`thread.snapshot.transcriptRev`）；未知为 null。重订阅时带上，不一致则服务端全量重放。 */
+	transcriptRev: number | null;
 	leafEntryId?: string;
 	liveMessage: LiveMessage | null;
 	liveTools: Record<string, LiveTool>;
@@ -256,6 +259,7 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		agentStatus: "none",
 		entries: [],
 		lastSeq: 0,
+		transcriptRev: null,
 		liveMessage: null,
 		liveTools: {},
 		liveToolOrder: [],
@@ -433,16 +437,35 @@ export function mergeEntries(
 	return removeTools(next, toolIds);
 }
 
+/**
+ * 应用一批条目。游标只推进到实际并入的最大 seq：补发分批时若在中途断线，
+ * 重连后的 `afterSeq` 不会越过尚未收到的批次。
+ */
 export function applyEntries(
 	s: ThreadViewState,
-	msg: Pick<WsEntries, "entries" | "leafEntryId" | "lastSeq">,
+	msg: Pick<WsEntries, "entries" | "leafEntryId">,
 ): ThreadViewState {
 	const next = mergeEntries(s, msg.entries);
+	let lastSeq = next.lastSeq;
+	for (const e of msg.entries) if (e.seq > lastSeq) lastSeq = e.seq;
 	return {
 		...next,
-		lastSeq: Math.max(next.lastSeq, msg.lastSeq),
+		lastSeq,
 		leafEntryId: msg.leafEntryId ?? next.leafEntryId,
 	};
+}
+
+/** `transcript.reset`：服务端重写了转录，丢弃本地条目，随后以 `afterSeq=0` 重新订阅。 */
+export function applyTranscriptReset(
+	s: ThreadViewState,
+	transcriptRev: number,
+): ThreadViewState {
+	return { ...s, entries: [], lastSeq: 0, transcriptRev };
+}
+
+/** `plan.resolved`：计划提案已被任一客户端处理。 */
+export function applyPlanResolved(s: ThreadViewState): ThreadViewState {
+	return s.planProposal ? { ...s, planProposal: null } : s;
 }
 
 function queueFrom(frame: JsonRecord): QueueSnapshot {
@@ -898,7 +921,10 @@ export function applyFrame(
 	}
 }
 
-/** `live.reset`：丢弃叠加层，直到下一个 message_start。 */
+/**
+ * `live.reset`（agent 断档 / 重启）：服务端已清空在途帧、工作标志、待答 UI、计划提案与子 agent，
+ * 客户端同步作废这些状态（随后由 `refresh_state` 拉回权威 state）；叠加层抑制到下一个 message_start。
+ */
 export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 	return {
 		...s,
@@ -906,6 +932,12 @@ export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 		liveTools: {},
 		liveToolOrder: [],
 		liveSuppressed: true,
+		running: false,
+		pendingUi: [],
+		planProposal: null,
+		subagents: {},
+		compaction: null,
+		retry: null,
 	};
 }
 
@@ -923,11 +955,13 @@ export function applySnapshot(
 	s: ThreadViewState,
 	snap: WsThreadSnapshot,
 ): ThreadViewState {
-	const keepEntries = snap.lastSeq >= s.lastSeq;
+	// fullReplay：服务端因 transcriptRev 不一致改为全量补发，本地条目作废
+	const keepEntries = !snap.fullReplay && snap.lastSeq >= s.lastSeq;
 	let next: ThreadViewState = {
 		...initialThreadState(s.threadId),
 		entries: keepEntries ? s.entries : [],
 		lastSeq: keepEntries ? s.lastSeq : 0,
+		transcriptRev: snap.transcriptRev,
 		notices: s.notices,
 		noticeSeq: s.noticeSeq,
 		debug: s.debug,
@@ -981,6 +1015,19 @@ export function applySnapshot(
 			next = { ...next, liveMessage: null };
 	}
 	return removeTools(next, covered);
+}
+
+/** 收到 `thread.snapshot` 后需要主动拉取的数据：agent 就绪时补 state、命令表，以及恢复的队列的可编辑条目。 */
+export function snapshotEffects(snap: WsThreadSnapshot): FrameEffect[] {
+	if (snap.agent.status !== "ready") return [];
+	const effects: FrameEffect[] = ["refresh_commands"];
+	if (!snap.agent.state) effects.push("refresh_state");
+	if (isRecord(snap.agent.queue)) {
+		const q = queueFrom(snap.agent.queue);
+		if (q.steering.length > 0 || q.followUp.length > 0)
+			effects.push("refresh_queue");
+	}
+	return effects;
 }
 
 /** 某帧之后需要主动向 agent 拉取的数据（副作用由 store 执行）。 */

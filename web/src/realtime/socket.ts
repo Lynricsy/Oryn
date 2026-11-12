@@ -16,6 +16,7 @@ import {
 	effectsOf,
 	type FrameEffect,
 	type OmpFrame,
+	snapshotEffects,
 } from "../state/thread-reducer";
 
 export class OmpCommandError extends Error {
@@ -76,9 +77,30 @@ export class RealtimeClient {
 		this.opening = false;
 		clearTimeout(this.reconnectTimer ?? undefined);
 		this.reconnectTimer = null;
-		this.ws?.close();
-		this.ws = null;
+		const ws = this.ws;
+		if (ws) {
+			// 原生 close 事件是异步的：先同步清理，再关闭；旧 socket 的回调全部摘掉
+			this.teardown(ws, "connection closed");
+			ws.onopen = null;
+			ws.onmessage = null;
+			ws.onclose = null;
+			ws.close();
+		}
+		for (const timer of this.effectTimers.values()) clearTimeout(timer);
+		this.effectTimers.clear();
 		connectionStore.setState({ status: "idle" });
+	}
+
+	/** 连接作废时的统一清理：停 ping、拒绝在途命令、放开连接引用。 */
+	private teardown(ws: WebSocket, reason: string) {
+		if (this.ws === ws) this.ws = null;
+		clearInterval(this.pingTimer);
+		this.pingTimer = undefined;
+		for (const [id, p] of this.pending) {
+			clearTimeout(p.timer);
+			this.pending.delete(id);
+			p.reject(new OmpCommandError(p.command, "disconnected", reason));
+		}
 	}
 
 	private async open() {
@@ -135,16 +157,7 @@ export class RealtimeClient {
 		};
 		ws.onclose = () => {
 			if (this.ws !== ws) return;
-			this.ws = null;
-			clearInterval(this.pingTimer);
-			this.pingTimer = undefined;
-			for (const [id, p] of this.pending) {
-				clearTimeout(p.timer);
-				p.reject(
-					new OmpCommandError(p.command, "disconnected", "connection closed"),
-				);
-				this.pending.delete(id);
-			}
+			this.teardown(ws, "connection closed");
 			if (!this.closedByUser) this.scheduleReconnect("closed");
 		};
 	}
@@ -177,8 +190,21 @@ export class RealtimeClient {
 	}
 
 	private sendSub(threadId: string) {
-		const afterSeq = peekThreadStore(threadId)?.getState().lastSeq ?? 0;
-		this.send({ type: "sub", threadId, afterSeq });
+		const st = peekThreadStore(threadId)?.getState();
+		const afterSeq = st?.lastSeq ?? 0;
+		const transcriptRev = st?.transcriptRev;
+		this.send(
+			transcriptRev != null
+				? { type: "sub", threadId, afterSeq, transcriptRev }
+				: { type: "sub", threadId, afterSeq },
+		);
+	}
+
+	/** 重新订阅一个线程（拿权威快照恢复待答 UI 等状态）；未订阅则无操作。 */
+	resync(threadId: string) {
+		if (!this.subs.has(threadId)) return;
+		this.flush();
+		this.sendSub(threadId);
 	}
 
 	/** 订阅线程（引用计数）；连接恢复后自动以 afterSeq 补拉。 */
@@ -252,13 +278,22 @@ export class RealtimeClient {
 				indexStore.getState().upsertThread(msg.thread);
 				if (msg.orb) indexStore.getState().upsertOrb(msg.orb);
 				this.enqueue(msg.threadId, { type: "thread.snapshot", snapshot: msg });
-				if (!msg.agent.state && msg.agent.status === "ready")
-					this.scheduleEffect(msg.threadId, "refresh_state");
-				if (msg.agent.status === "ready")
-					this.scheduleEffect(msg.threadId, "refresh_commands");
+				for (const eff of snapshotEffects(msg))
+					this.scheduleEffect(msg.threadId, eff);
 				return;
 			case "entries":
 				this.enqueue(msg.threadId, { type: "entries", msg });
+				return;
+			case "transcript.reset":
+				// 先同步落地（清空条目、记下新 rev），再以 afterSeq=0 重新订阅
+				this.enqueue(msg.threadId, {
+					type: "transcript.reset",
+					transcriptRev: msg.transcriptRev,
+				});
+				this.resync(msg.threadId);
+				return;
+			case "plan.resolved":
+				this.enqueue(msg.threadId, { type: "plan.resolved" });
 				return;
 			case "frame": {
 				const frame = msg.frame as OmpFrame;
@@ -293,6 +328,8 @@ export class RealtimeClient {
 				return;
 			case "live.reset":
 				this.enqueue(msg.threadId, { type: "live.reset" });
+				// 工作标志与待答状态已作废，拉回权威 state
+				this.scheduleEffect(msg.threadId, "refresh_state");
 				return;
 			case "orb":
 				indexStore.getState().upsertOrb(msg.orb);
@@ -311,23 +348,32 @@ export class RealtimeClient {
 						return;
 					}
 				}
-				const errors = connectionStore.getState().errors;
-				connectionStore.setState({
-					errors: [
-						...errors.slice(-9),
-						{
-							key: Date.now() + Math.random(),
-							code: msg.code,
-							message: msg.message,
-							threadId: msg.threadId,
-						},
-					],
-				});
+				this.pushError(msg.code, msg.message, msg.threadId);
+				// ui.response 被拒（对话框已被乐观关闭）：重订阅取回权威的待答请求
+				if (msg.code === "invalid_frame" && msg.threadId)
+					this.resync(msg.threadId);
 				return;
 			}
 			case "pong":
 				return;
 		}
+	}
+
+	private pushError(code: string, message: string, threadId?: string) {
+		const errors = connectionStore.getState().errors;
+		connectionStore.setState({
+			errors: [
+				...errors.slice(-9),
+				{ key: Date.now() + Math.random(), code, message, threadId },
+			],
+		});
+	}
+
+	/** 关闭一条全局错误提示。 */
+	dismissError(key: number) {
+		connectionStore.setState({
+			errors: connectionStore.getState().errors.filter((e) => e.key !== key),
+		});
 	}
 
 	private enqueue(threadId: string, m: ThreadMessage) {

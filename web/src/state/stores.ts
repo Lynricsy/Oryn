@@ -10,7 +10,9 @@ import {
 	applyEntries,
 	applyFrame,
 	applyLiveReset,
+	applyPlanResolved,
 	applySnapshot,
+	applyTranscriptReset,
 	applyUiResolved,
 	initialThreadState,
 	type OmpFrame,
@@ -98,11 +100,13 @@ export type ThreadMessage =
 	| { type: "thread.snapshot"; snapshot: WsThreadSnapshot }
 	| {
 			type: "entries";
-			msg: Pick<WsEntries, "entries" | "leafEntryId" | "lastSeq">;
+			msg: Pick<WsEntries, "entries" | "leafEntryId">;
 	  }
 	| { type: "frame"; frame: OmpFrame }
 	| { type: "ui.resolved"; requestId: string }
 	| { type: "live.reset" }
+	| { type: "transcript.reset"; transcriptRev: number }
+	| { type: "plan.resolved" }
 	| { type: "orb"; orb: Orb }
 	| { type: "thread"; thread: Thread }
 	| { type: "state"; state: SessionState };
@@ -128,6 +132,10 @@ export function reduceThread(
 			return applyUiResolved(s, m.requestId);
 		case "live.reset":
 			return applyLiveReset(s);
+		case "transcript.reset":
+			return applyTranscriptReset(s, m.transcriptRev);
+		case "plan.resolved":
+			return applyPlanResolved(s);
 		case "orb":
 			return { ...s, orb: m.orb };
 		case "thread":

@@ -159,7 +159,13 @@ export function ThreadPage(): ReactNode {
 				</TranscriptContext.Provider>
 				<div className="shrink-0 px-3 pt-1 pb-keyboard sm:px-5">
 					<div className="pb-2">
-						{plan && <PlanProposalDialog threadId={threadId} proposal={plan} />}
+						{plan && (
+							<PlanProposalDialog
+								key={threadId}
+								threadId={threadId}
+								proposal={plan}
+							/>
+						)}
 						{firstUi && (
 							<UiRequestCard
 								key={firstUi.id}
@@ -171,7 +177,7 @@ export function ThreadPage(): ReactNode {
 						<EnvBanner key={threadId} threadId={threadId} />
 						<QueueBar threadId={threadId} />
 						<ModeBar threadId={threadId} />
-						<Composer threadId={threadId} disabled={orbGone} />
+						<Composer key={threadId} threadId={threadId} disabled={orbGone} />
 						<BelowEditorWidgets threadId={threadId} />
 						<StatusBar threadId={threadId} />
 					</div>

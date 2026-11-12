@@ -3,8 +3,9 @@
  */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { OmpCommand, SessionState } from "../../omp/types";
+import type { OmpCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
+import { runModeCommand } from "../../state/actions";
 import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Icon, type IconName } from "../ui/icons";
@@ -65,20 +66,7 @@ export function ModeBar({ threadId }: { threadId: string }): ReactNode {
 	const run = async (frame: OmpCommand) => {
 		setError(null);
 		try {
-			const data = await realtime.cmd(threadId, frame);
-			const store = getThreadStore(threadId);
-			if (
-				frame.type === "set_vibe_mode" &&
-				data &&
-				typeof data === "object" &&
-				"enabled" in data
-			) {
-				store.getState().patchLocal({ vibeEnabled: data.enabled === true });
-			}
-			const st = (await realtime.cmd(threadId, {
-				type: "get_state",
-			})) as SessionState;
-			store.getState().apply([{ type: "state", state: st }]);
+			await runModeCommand(threadId, frame);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		}

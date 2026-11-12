@@ -443,7 +443,8 @@
 		"queue_full": "orb 尚未就绪且排队已满，请稍后再发",
 		"orb_unavailable": "orb 不可用",
 		"disconnected": "未连接到服务器",
-		"timeout": "请求超时"
+		"timeout": "请求超时",
+		"invalid_frame": "服务端拒绝了这次应答，请求已恢复"
 	},
 	"pair": {
 		"title": "批准设备",
@@ -602,5 +603,22 @@
 		"repoScriptYes": "有",
 		"repoScriptNo": "无",
 		"repoScriptUnknown": "未知（尚无 setup 记录）"
+	},
+	"alerts": {
+		"region": "通知",
+		"resync": "重新同步"
+	},
+	"image": {
+		"viewer": "图片",
+		"unsupported": "不支持的图片类型：{{type}}",
+		"open": "打开图片 {{n}}",
+		"alt": "图片 {{n}}"
+	},
+	"toolRender": {
+		"collapse": "收起",
+		"moreLines_one": "⋯ 还有 {{count}} 行",
+		"moreLines_other": "⋯ 还有 {{count}} 行",
+		"running": "运行中",
+		"args": "参数"
 	}
 }

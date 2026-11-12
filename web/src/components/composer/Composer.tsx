@@ -14,9 +14,11 @@ import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import type { SlashAction } from "../../lib/slash";
 import { realtime } from "../../realtime/socket";
 import {
+	isModeCommand,
 	isThreadBusy,
 	promptFrame,
 	resolveSlashText,
+	runModeCommand,
 	type SendMode,
 } from "../../state/actions";
 import { useThread } from "../../state/stores";
@@ -71,16 +73,28 @@ export function Composer({
 		setActive(0);
 	}, [menu?.length]);
 
+	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）
+	const draftRef = useRef({ text, images: att.images });
+	draftRef.current = { text, images: att.images };
+	const inFlight = useRef<typeof draftRef.current | null>(null);
+
 	const reset = () => {
 		setText("");
 		att.clear();
 		setMenuDismissed(false);
 	};
 
+	const resetIfUnchanged = (sent: typeof draftRef.current) => {
+		const cur = draftRef.current;
+		if (cur.text === sent.text && cur.images === sent.images) reset();
+	};
+
 	const runSlash = async (action: SlashAction, mode: SendMode) => {
 		switch (action.kind) {
 			case "rpc":
-				await realtime.cmd(threadId, action.frame);
+				if (isModeCommand(action.frame))
+					await runModeCommand(threadId, action.frame);
+				else await realtime.cmd(threadId, action.frame);
 				return;
 			case "open_tree":
 				uiStore.getState().open({ kind: "tree" });
@@ -117,13 +131,19 @@ export function Composer({
 	};
 
 	const submit = async (mode: SendMode) => {
-		const parsed = parseComposerInput(text);
+		const sent = draftRef.current;
+		// 同一份草稿已在发送中：忽略重复提交
+		const pending = inFlight.current;
+		if (pending && pending.text === sent.text && pending.images === sent.images)
+			return;
+		const parsed = parseComposerInput(sent.text);
 		setError(null);
+		inFlight.current = sent;
 		try {
 			if (parsed.kind === "empty") {
 				if (att.contents.length === 0) return;
 				await realtime.cmd(threadId, promptFrame(mode, "", att.contents));
-				reset();
+				resetIfUnchanged(sent);
 				return;
 			}
 			if (parsed.kind === "bash") {
@@ -150,7 +170,7 @@ export function Composer({
 				const action = resolveSlashText(threadId, parsed.text);
 				if (action) {
 					await runSlash(action, mode);
-					reset();
+					resetIfUnchanged(sent);
 					return;
 				}
 			}
@@ -158,13 +178,15 @@ export function Composer({
 				threadId,
 				promptFrame(
 					mode,
-					parsed.kind === "text" ? parsed.text : text.trim(),
+					parsed.kind === "text" ? parsed.text : sent.text.trim(),
 					att.contents,
 				),
 			);
-			reset();
+			resetIfUnchanged(sent);
 		} catch (e) {
 			setError(e);
+		} finally {
+			if (inFlight.current === sent) inFlight.current = null;
 		}
 	};
 

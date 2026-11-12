@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, Thread } from "../api/client";
+import { isThreadBusy } from "./actions";
 import { parsePartialJson } from "./message-builder";
-import { reduceThread } from "./stores";
+import { reduceThread, type ThreadStore } from "./stores";
 import {
 	applyEntries,
 	applyFrame,
@@ -118,7 +119,6 @@ describe("帧 reducer：流式消息", () => {
 			entries: [
 				msgEntry("e0", { role: "assistant", content: [], timestamp: 1999 }),
 			],
-			lastSeq: seq,
 		});
 		expect(s.liveMessage).not.toBeNull();
 		s = applyEntries(s, {
@@ -129,7 +129,6 @@ describe("帧 reducer：流式消息", () => {
 					timestamp: 2000,
 				}),
 			],
-			lastSeq: seq,
 			leafEntryId: "e1",
 		});
 		expect(s.liveMessage).toBeNull();
@@ -200,7 +199,6 @@ describe("帧 reducer：工具生命周期", () => {
 					timestamp: 5,
 				}),
 			],
-			lastSeq: seq,
 		});
 		expect(s.liveTools.tc1).toBeUndefined();
 		expect(s.liveToolOrder).toEqual([]);
@@ -232,7 +230,6 @@ describe("帧 reducer：工具生命周期", () => {
 					timestamp: 6,
 				}),
 			],
-			lastSeq: seq,
 		});
 		expect(s.subagents).toEqual({});
 	});
@@ -261,6 +258,42 @@ describe("live.reset", () => {
 		});
 		expect(s.liveMessage?.messageId).toBe("m2");
 		expect(s.liveSuppressed).toBe(false);
+	});
+
+	it("live.reset 作废工作标志、待答 UI、计划提案与子 agent（W3）", () => {
+		let s = frames(initialThreadState(TID), [
+			{ type: "agent_start" },
+			{
+				type: "extension_ui_request",
+				id: "u1",
+				method: "select",
+				title: "approve?",
+				options: ["yes", "no"],
+			},
+			{
+				type: "plan_proposal",
+				title: "p",
+				plan: "x",
+				suggestedFileName: "p.md",
+				options: [],
+			},
+			{
+				type: "subagent_lifecycle",
+				payload: { index: 0, id: "a", status: "started" },
+			},
+		]);
+		expect(s.running).toBe(true);
+		expect(s.pendingUi).toHaveLength(1);
+		s = applyLiveReset(s);
+		s = reduceThread(s, {
+			type: "thread",
+			thread: { id: TID, state: "idle" } as unknown as Thread,
+		});
+		expect(s.running).toBe(false);
+		expect(isThreadBusy(s as ThreadStore)).toBe(false);
+		expect(s.pendingUi).toEqual([]);
+		expect(s.planProposal).toBeNull();
+		expect(s.subagents).toEqual({});
 	});
 });
 
@@ -396,6 +429,8 @@ describe("thread.snapshot", () => {
 				],
 			},
 			lastSeq: 0,
+			transcriptRev: 0,
+			fullReplay: false,
 		});
 		expect(s.snapshotReceived).toBe(true);
 		expect(s.liveMessage?.message.content).toEqual([
@@ -429,7 +464,6 @@ describe("转录推导", () => {
 		);
 		let s = applyEntries(initialThreadState(TID), {
 			entries: [e1, e2, e3],
-			lastSeq: 3,
 			leafEntryId: "a1",
 		});
 		s = applyFrame(s, {
@@ -487,7 +521,6 @@ describe("转录推导", () => {
 		};
 		const s = applyEntries(initialThreadState(TID), {
 			entries: [u1, a1, u2, a2, late],
-			lastSeq: seq,
 		});
 		const texts = buildTranscript(s).items.flatMap((i) =>
 			i.kind === "message" ? [JSON.stringify(i.message.content)] : [],
@@ -501,7 +534,6 @@ describe("线程摘要推送", () => {
 	it("index.patch 带来的 leafEntryId 更新活动分支（switch_leaf 后多端同步）", () => {
 		const base = applyEntries(initialThreadState(TID), {
 			entries: [],
-			lastSeq: 0,
 			leafEntryId: "old",
 		});
 		const thread = { id: TID, leafEntryId: "new" } as unknown as Thread;

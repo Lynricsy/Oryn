@@ -8,11 +8,14 @@ import {
 	type SelectHTMLAttributes,
 	type TextareaHTMLAttributes,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ApiError, type ThreadState } from "../../api/client";
+import { focusablesIn, isTopModal, pushModal, trapTab } from "../../lib/modal";
 import { Icon, type IconName } from "./icons";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -100,7 +103,10 @@ export function Spinner({ size = 14 }: { size?: number }) {
 	);
 }
 
-/** 模态对话框：Esc / 点遮罩关闭；compact 屏上为底部抽屉。 */
+/**
+ * 模态对话框：Esc / 点遮罩关闭；compact 屏上为底部抽屉。
+ * 渲染到 body 下；打开时把焦点移入对话框、Tab 在其中循环、背景 `inert`，关闭后焦点回到打开前的元素。
+ */
 export function Dialog({
 	open,
 	onClose,
@@ -117,28 +123,59 @@ export function Dialog({
 	wide?: boolean;
 }) {
 	const { t } = useTranslation();
-	useEffect(() => {
-		if (!open) return;
+	const hostRef = useRef<HTMLDivElement>(null);
+	const panelRef = useRef<HTMLDivElement>(null);
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	useLayoutEffect(() => {
+		const host = hostRef.current;
+		const panel = panelRef.current;
+		if (!open || !host || !panel) return;
+		const previous =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
+		const release = pushModal(host);
+		// 内容里的 autoFocus 已生效则不动；否则聚焦正文第一个可聚焦元素，再退到面板本身
+		if (!panel.contains(document.activeElement)) {
+			const first =
+				(bodyRef.current && focusablesIn(bodyRef.current)[0]) ??
+				focusablesIn(panel)[0];
+			(first ?? panel).focus();
+		}
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
+			if (!isTopModal(host)) return;
+			if (e.key === "Escape") onCloseRef.current();
+			else trapTab(e, panel);
 		};
 		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [open, onClose]);
+		return () => {
+			window.removeEventListener("keydown", onKey);
+			release();
+			if (previous?.isConnected) previous.focus();
+		};
+	}, [open]);
 	if (!open) return null;
-	return (
-		<div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+	return createPortal(
+		<div
+			ref={hostRef}
+			className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
+		>
 			<button
 				type="button"
+				tabIndex={-1}
 				aria-label={t("common.close")}
 				className="absolute inset-0 bg-black/40"
 				onClick={onClose}
 			/>
 			<div
+				ref={panelRef}
 				role="dialog"
 				aria-modal="true"
+				tabIndex={-1}
 				aria-label={typeof title === "string" ? title : undefined}
-				className={`relative flex max-h-[85dvh] w-full flex-col rounded-t-xl border border-border bg-panel shadow-xl sm:rounded-xl ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
+				className={`relative flex max-h-[85dvh] w-full flex-col rounded-t-xl border border-border bg-panel shadow-xl outline-none sm:rounded-xl ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
 			>
 				<div className="flex items-center justify-between gap-2 border-border border-b px-4 py-3">
 					<h2 className="truncate font-semibold text-sm">{title}</h2>
@@ -148,7 +185,7 @@ export function Dialog({
 						onClick={onClose}
 					/>
 				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+				<div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
 					{children}
 				</div>
 				{footer && (
@@ -157,7 +194,8 @@ export function Dialog({
 					</div>
 				)}
 			</div>
-		</div>
+		</div>,
+		document.body,
 	);
 }
 
@@ -442,6 +480,7 @@ const FRIENDLY_CODES = [
 	"orb_unavailable",
 	"disconnected",
 	"timeout",
+	"invalid_frame",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

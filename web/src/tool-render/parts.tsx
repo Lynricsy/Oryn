@@ -4,9 +4,11 @@
  */
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { ImageViewer } from "../components/ui/ImageViewer";
 import { useHighlighted } from "../lib/highlight";
 import { imageSrc } from "../lib/image-src";
-import type { ToolRenderHost, ToolResultImage, ToolResultLike } from "./types";
+import type { ToolRenderHost, ToolResultLike } from "./types";
 import {
 	replaceTabs,
 	resultImagesOf,
@@ -123,6 +125,26 @@ export interface OutputProps {
 	bare?: boolean;
 }
 
+/** 展开 / 收起按钮（界面文案走 i18n；工具输出本身不翻译）。 */
+function ExpandToggle({
+	expanded,
+	hidden,
+	onToggle,
+}: {
+	expanded: boolean;
+	hidden: number;
+	onToggle: () => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<button type="button" className="tv-expand" onClick={onToggle}>
+			{expanded
+				? t("toolRender.collapse")
+				: t("toolRender.moreLines", { count: hidden })}
+		</button>
+	);
+}
+
 /**
  * Expandable text block — the workhorse for command output, file previews,
  * search results. Tabs are widened, ANSI escapes stripped.
@@ -162,13 +184,11 @@ export function Output({
 				<pre className={classes.join(" ")}>{shown}</pre>
 			)}
 			{collapsible && (
-				<button
-					type="button"
-					className="tv-expand"
-					onClick={() => setExpanded((v) => !v)}
-				>
-					{expanded ? "collapse" : `⋯ ${lines.length - maxLines} more lines`}
-				</button>
+				<ExpandToggle
+					expanded={expanded}
+					hidden={lines.length - maxLines}
+					onToggle={() => setExpanded((v) => !v)}
+				/>
 			)}
 		</div>
 	);
@@ -228,45 +248,50 @@ export function ResultText({
 		/>
 	);
 }
-
-function openImage(img: ToolResultImage): void {
-	try {
-		const bin = atob(img.data);
-		const bytes = new Uint8Array(bin.length);
-		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-		const url = URL.createObjectURL(new Blob([bytes], { type: img.mimeType }));
-		window.open(url, "_blank", "noopener");
-		setTimeout(() => URL.revokeObjectURL(url), 60_000);
-	} catch {
-		// undecodable image data — the broken thumbnail already conveys it
-	}
-}
-
-/** Thumbnails for every image block in a result; click opens full size. */
+/** Thumbnails for every image block in a result; click opens the in-app viewer. */
 export function ResultImages({
 	result,
 }: {
 	result: ToolResultLike | undefined;
 }): ReactNode {
+	const { t } = useTranslation();
+	const [viewing, setViewing] = useState<number | null>(null);
 	const images = resultImagesOf(result);
 	if (images.length === 0) return null;
+	const viewSrc =
+		viewing !== null && images[viewing]
+			? imageSrc(images[viewing].data, images[viewing].mimeType)
+			: null;
 	return (
 		<div className="tv-imgs">
-			{images.map((img, i) => (
-				<button
-					key={i}
-					type="button"
-					style={{ all: "unset", display: "inline-flex" }}
-					onClick={() => openImage(img)}
-					aria-label={`Open tool result image ${i + 1}`}
-				>
-					<img
-						className="tv-img"
-						src={imageSrc(img.data, img.mimeType)}
-						alt={`tool result ${i + 1}`}
-					/>
-				</button>
-			))}
+			{images.map((img, i) => {
+				const src = imageSrc(img.data, img.mimeType);
+				const n = i + 1;
+				if (!src)
+					return (
+						<Badge key={i} tone="warn">
+							{t("image.unsupported", { type: img.mimeType })}
+						</Badge>
+					);
+				return (
+					<button
+						key={i}
+						type="button"
+						style={{ all: "unset", display: "inline-flex" }}
+						onClick={() => setViewing(i)}
+						aria-label={t("image.open", { n })}
+					>
+						<img className="tv-img" src={src} alt={t("image.alt", { n })} />
+					</button>
+				);
+			})}
+			{viewSrc && viewing !== null && (
+				<ImageViewer
+					src={viewSrc}
+					alt={t("image.alt", { n: viewing + 1 })}
+					onClose={() => setViewing(null)}
+				/>
+			)}
 		</div>
 	);
 }
@@ -346,13 +371,11 @@ export function DiffBlock({
 				})}
 			</div>
 			{collapsible && (
-				<button
-					type="button"
-					className="tv-expand"
-					onClick={() => setExpanded((v) => !v)}
-				>
-					{expanded ? "collapse" : `⋯ ${lines.length - maxLines} more lines`}
-				</button>
+				<ExpandToggle
+					expanded={expanded}
+					hidden={lines.length - maxLines}
+					onToggle={() => setExpanded((v) => !v)}
+				/>
 			)}
 		</div>
 	);

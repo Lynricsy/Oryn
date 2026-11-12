@@ -2,7 +2,13 @@
  * 线程操作：输入区发送、UI 应答、线程管理（REST）与 omp 命令的薄封装。
  * 组件只调这里，不直接拼命令帧。
  */
-import { api, rawFetch, type Schemas, unwrap } from "../api/client";
+import {
+	api,
+	rawFetch,
+	type Schemas,
+	type Thread,
+	unwrap,
+} from "../api/client";
 import type { ComposerAction } from "../lib/composer";
 import {
 	parseSlash,
@@ -14,6 +20,8 @@ import type {
 	ExtensionUiResponse,
 	ImageContent,
 	OmpCommand,
+	RpcLoopModeState,
+	SessionState,
 } from "../omp/types";
 import { realtime } from "../realtime/socket";
 import { getThreadStore, indexStore, type ThreadStore } from "./stores";
@@ -105,21 +113,91 @@ export function answerUi(
 	return ok;
 }
 
+/**
+ * REST 应答里只取本次 PATCH 改动的元数据字段并入当前线程：状态、叶子等由 WS 推送维护，
+ * 请求期间若已收到更新的 WS 摘要，不能被这份可能更旧的快照回滚。
+ */
+export function mergePatchedThread(
+	current: Thread | undefined,
+	patch: Schemas["ThreadPatch"],
+	res: Thread,
+): Thread {
+	if (!current) return res;
+	const next: Thread = { ...current };
+	if ("title" in patch) {
+		next.title = res.title;
+		next.titleSource = res.titleSource;
+	}
+	if ("color" in patch) next.color = res.color;
+	if ("pinned" in patch) next.pinned = res.pinned;
+	if ("labels" in patch) next.labels = res.labels;
+	if ("archived" in patch) next.archivedAt = res.archivedAt;
+	if ("snoozedUntil" in patch) next.snoozedUntil = res.snoozedUntil;
+	if ("unread" in patch) next.unread = res.unread;
+	return next;
+}
+
 export async function patchThread(
 	threadId: string,
 	patch: Schemas["ThreadPatch"],
 ) {
-	const thread = await unwrap(
+	const res = await unwrap(
 		api.PATCH("/api/v1/threads/{id}", {
 			params: { path: { id: threadId } },
 			body: patch,
 		}),
 	);
+	// 合并时取当下最新的摘要（await 期间可能已被 WS 更新）
+	const current =
+		indexStore.getState().threads[threadId] ??
+		getThreadStore(threadId).getState().thread;
+	const thread = mergePatchedThread(current, patch, res);
 	indexStore.getState().upsertThread(thread);
 	getThreadStore(threadId)
 		.getState()
 		.apply([{ type: "thread", thread }]);
 	return thread;
+}
+
+/** 结果会改变模式开关状态、需要随后对账的命令。 */
+const MODE_COMMANDS: Record<string, true> = {
+	set_plan_mode: true,
+	set_vibe_mode: true,
+	set_loop_mode: true,
+	set_goal: true,
+	guided_goal: true,
+	set_agents_paused: true,
+	set_fast_mode: true,
+	set_slow_mode: true,
+	set_prewalk: true,
+};
+
+export function isModeCommand(frame: OmpCommand): boolean {
+	return MODE_COMMANDS[frame.type] === true;
+}
+
+/**
+ * 发送一条模式类命令（计划 / vibe / loop / goal / 暂停等），并把结果并入线程状态：
+ * `set_vibe_mode` / `set_loop_mode` 的应答直接写回，随后刷新 `get_state`。模式条与斜杠命令共用。
+ */
+export async function runModeCommand(threadId: string, frame: OmpCommand) {
+	const data: unknown = await realtime.cmd(threadId, frame);
+	const store = getThreadStore(threadId);
+	if (frame.type === "set_vibe_mode" && isObject(data) && "enabled" in data)
+		store.getState().patchLocal({ vibeEnabled: data.enabled === true });
+	if (frame.type === "set_loop_mode" && isObject(data) && "enabled" in data)
+		store
+			.getState()
+			.patchLocal({ loopMode: data as unknown as RpcLoopModeState });
+	const state = (await realtime.cmd(threadId, {
+		type: "get_state",
+	})) as SessionState;
+	store.getState().apply([{ type: "state", state }]);
+	return data;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null;
 }
 
 /** 改名：PATCH 标题并同步给 agent（`set_session_name`）。 */

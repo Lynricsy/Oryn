@@ -11,6 +11,7 @@ import { useBreakpoint } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
 import { useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { ServerErrors } from "../ServerErrors";
 import { Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 
@@ -95,6 +96,7 @@ export function AppShell(): ReactNode {
 			<main className="flex h-full min-w-0 flex-1 flex-col pr-safe">
 				<Outlet />
 			</main>
+			<ServerErrors />
 		</div>
 	);
 }

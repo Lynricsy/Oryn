@@ -86,14 +86,18 @@ export function groupThreads(
 	return g;
 }
 
-function ThreadRow({
+export function ThreadRow({
 	thread,
-	childThreads,
+	childMap,
 	depth = 0,
+	ancestors,
 }: {
 	thread: Thread;
-	childThreads?: Thread[];
+	/** 父线程 id → 子线程；每一层都从这里取，fork 再 fork 的后代逐级缩进 */
+	childMap?: ReadonlyMap<string, Thread[]>;
 	depth?: number;
+	/** 已渲染的祖先（防止数据里出现环时无限递归） */
+	ancestors?: ReadonlySet<string>;
 }) {
 	const { t } = useTranslation();
 	// 抽屉（compact）在跳转后收起；medium 的推入式侧边栏保持用户的开关选择
@@ -133,9 +137,19 @@ function ThreadRow({
 					/>
 				)}
 			</NavLink>
-			{childThreads?.map((c) => (
-				<ThreadRow key={c.id} thread={c} depth={depth + 1} />
-			))}
+			{childMap?.get(thread.id)?.map((c) => {
+				const seen = new Set(ancestors);
+				seen.add(thread.id);
+				return seen.has(c.id) ? null : (
+					<ThreadRow
+						key={c.id}
+						thread={c}
+						childMap={childMap}
+						depth={depth + 1}
+						ancestors={seen}
+					/>
+				);
+			})}
 		</>
 	);
 }
@@ -230,11 +244,7 @@ export function Sidebar(): ReactNode {
 			: t("sidebar.noProject");
 	const rows = (list: Thread[]) =>
 		list.map((th) => (
-			<ThreadRow
-				key={th.id}
-				thread={th}
-				childThreads={groups.children.get(th.id)}
-			/>
+			<ThreadRow key={th.id} thread={th} childMap={groups.children} />
 		));
 	const empty = Object.keys(threads).length === 0;
 

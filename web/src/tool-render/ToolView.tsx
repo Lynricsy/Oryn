@@ -4,6 +4,7 @@
  */
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { resolveToolRenderer } from "./registry";
 import type { ToolRenderHost, ToolRenderProps, ToolResultLike } from "./types";
 import { isRecord, replaceTabs, stripAnsi } from "./util";
@@ -72,6 +73,7 @@ function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
 }
 
 export function ToolView(props: ToolViewProps): ReactNode {
+	const { t } = useTranslation();
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
 	const xdev = executeXdevDispatch(props);
 	const { args, intent: argIntent } = normalizeArgs(props.args);
@@ -116,7 +118,11 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				title={intent || undefined}
 			>
 				{status === "run" ? (
-					<span className="tv-spin" aria-label="running" />
+					<span
+						role="status"
+						className="tv-spin"
+						aria-label={t("toolRender.running")}
+					/>
 				) : (
 					<span
 						className={`tv-status tv-status--${status}`}

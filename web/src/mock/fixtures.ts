@@ -254,6 +254,14 @@ export const threads: Thread[] = [
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
 	}),
 	thread({
+		id: "T-0193a1b2-0000-7000-8000-00000000a0f1",
+		title: "fork 的 fork：快照恢复后再试冷启动",
+		projectId: projects[0]?.id,
+		parentThreadId: "T-0193a1b2-0000-7000-8000-00000000a003",
+		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
+		lastMessageAt: NOW - 2 * MIN,
+	}),
+	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a004",
 		title: "Docker provider 冻结后 orbd 重连",
 		projectId: projects[0]?.id,

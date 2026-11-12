@@ -1,5 +1,6 @@
 /** Fallback renderer for tools without a dedicated view. */
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Output, ResultImages, ResultText } from "./parts";
 import type { ToolRenderer, ToolRenderProps } from "./types";
 import { argsDigest } from "./util";
@@ -9,6 +10,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 }
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	let argText = "";
 	try {
 		argText = JSON.stringify(args, null, 2) ?? "";
@@ -23,7 +25,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					lang="json"
 					variant="code"
 					maxLines={12}
-					title="args"
+					title={t("toolRender.args")}
 				/>
 			)}
 			<ResultImages result={result} />
