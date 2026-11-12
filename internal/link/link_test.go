@@ -270,3 +270,59 @@ func TestCtlCallCancelAndClose(t *testing.T) {
 	<-ctl.Done()
 	assert.Error(t, ctl.Notify("x", nil))
 }
+
+// M5：一个 ctl 端点同时至多处理 MaxConcurrentCtlRequests 个对端请求，超出的立即以 busy 应答且不执行。
+func TestCtlConcurrentRequestCap(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, MaxConcurrentCtlRequests+1)
+	srv := startServer(t, func(s *Session) {
+		go func() {
+			st, err := s.AcceptStream(context.Background())
+			if err != nil {
+				return
+			}
+			NewCtl(st, CtlHandlers{OnRequest: func(ctx context.Context, _ string, _ json.RawMessage) (any, error) {
+				entered <- struct{}{}
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+				return map[string]bool{"ok": true}, nil
+			}})
+		}()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sess, err := Dial(ctx, URL(srv.URL), testToken)
+	require.NoError(t, err)
+	defer sess.Close()
+	st, err := sess.Open(ctx, StreamHeader{T: StreamCtl})
+	require.NoError(t, err)
+	ctl := NewCtl(st, CtlHandlers{})
+
+	errs := make(chan error, MaxConcurrentCtlRequests)
+	for range MaxConcurrentCtlRequests {
+		go func() { errs <- ctl.Call(ctx, "slow", nil, nil) }()
+	}
+	for range MaxConcurrentCtlRequests {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("handlers did not start")
+		}
+	}
+	// 名额已满：下一个请求得到 busy，处理器没有被调用。
+	err = ctl.Call(ctx, "slow", nil, nil)
+	var ce *CtlError
+	require.True(t, errors.As(err, &ce), "%v", err)
+	assert.Equal(t, CodeBusy, ce.Code)
+	assert.Len(t, entered, 0)
+
+	close(release)
+	for range MaxConcurrentCtlRequests {
+		assert.NoError(t, <-errs)
+	}
+	// 名额释放后恢复正常。
+	assert.NoError(t, ctl.Call(ctx, "slow", nil, nil))
+}

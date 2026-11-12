@@ -109,6 +109,17 @@ func (s *Service) waitLink(ctx context.Context, orbID string, wait time.Duration
 	}
 }
 
+// linkAcceptable 报告 orb 处于 state 时是否接受 link。frozen / stopped / failed / deleting / deleted 一律拒绝：
+// 唤醒只由 provider 的 spawn 驱动（spawn 同时轮换令牌），hello 不再能把 orb 拉回来。stopping 也接受，
+// 因为从 frozen 停机要先解冻、等 orbd 用新令牌重连后发 shutdown。
+func linkAcceptable(state string) bool {
+	switch state {
+	case StateSpawning, StateConnecting, StateSettingUp, StateResuming, StateReady, StateWaking, StateStopping:
+		return true
+	}
+	return false
+}
+
 // LinkHandler 返回 GET /orb/v1/link 的处理器（WebSocket + yamux，Bearer oot_…）。
 func (s *Service) LinkHandler() http.Handler {
 	return http.HandlerFunc(s.serveLink)
@@ -127,7 +138,7 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if o.State == StateDeleted || o.State == StateDeleting {
+		if !linkAcceptable(o.State) {
 			return fmt.Errorf("orb %s is %s", o.ID, o.State)
 		}
 		orb = o
@@ -145,18 +156,13 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("orb link 首条流不是 ctl", "orb", orb.ID, "err", err)
 		return
 	}
-	s.mu.Lock()
-	s.linkGen++
-	l := &orbLink{orbID: orb.ID, gen: s.linkGen, sess: sess, helloCh: make(chan struct{})}
-	old := s.links[orb.ID]
-	s.links[orb.ID] = l
-	s.mu.Unlock()
-	if old != nil {
-		slog.Info("orb link 被新连接替换", "orb", orb.ID)
-		_ = old.sess.Close()
-	}
+	// ctl 端点先完整构造、link 先发布，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
+	// hello 等回调也不会在发布之前运行。
+	published := make(chan struct{})
+	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{})}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+			<-published
 			s.hmu.RLock()
 			fn := s.reqs[method]
 			s.hmu.RUnlock()
@@ -166,9 +172,24 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 			return fn(ctx, orb.ID, params)
 		},
 		OnNotify: func(ctx context.Context, method string, params json.RawMessage) {
+			<-published
 			s.onNotify(ctx, l, method, params)
 		},
 	})
+	s.mu.Lock()
+	s.linkGen++
+	l.gen = s.linkGen
+	old := s.links[orb.ID]
+	s.links[orb.ID] = l
+	s.mu.Unlock()
+	if s.hookLinkPublished != nil {
+		s.hookLinkPublished(orb.ID)
+	}
+	close(published)
+	if old != nil {
+		slog.Info("orb link 被新连接替换", "orb", orb.ID)
+		_ = old.sess.Close()
+	}
 	slog.Info("orb link 已连接", "orb", orb.ID, "remote", r.RemoteAddr)
 
 	ctx, cancelStreams := context.WithCancel(context.Background())
@@ -262,27 +283,22 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 	}
 }
 
-// onHello 按 orb 当前状态推进：connecting → setup / resume；意外的重连（frozen / stopped / failed）经 waking 恢复。
+// onHello 按 orb 当前状态推进：connecting → setup / resume；其余可接受状态只记录 link 已连上
+// （spawning / waking 在 spawn 任务完成、进入 connecting 时由 advance 接手）。
 func (s *Service) onHello(l *orbLink) {
 	ctx := context.Background()
 	orb, err := s.Get(ctx, l.orbID)
 	if err != nil {
 		return
 	}
-	switch orb.State {
-	case StateConnecting:
-		s.runPhase(l)
-	case StateFrozen, StateStopped, StateFailed:
-		if _, moved, _ := s.transition(ctx, orb.ID, orb.State, StateWaking, map[string]any{"reason": "orbd reconnected"}); moved {
-			if _, moved, _ := s.transition(ctx, orb.ID, StateWaking, StateConnecting, nil); moved {
-				s.runPhase(l)
-			}
-		}
-	case StateDeleting, StateDeleted:
-		s.Kick(orb.ID, "orb is being deleted")
+	if !linkAcceptable(orb.State) {
+		s.Kick(orb.ID, "orb is "+orb.State)
 		return
 	}
-	s.emit(Event{OrbID: orb.ID, Kind: EventLinkUp, From: orb.State, To: orb.State, Orb: orb})
+	if orb.State == StateConnecting {
+		s.runPhase(l)
+	}
+	s.emitInfo(ctx, EventLinkUp, orb)
 }
 
 // advance 在 orb 进入 connecting 后检查是否已有完成 hello 的 link，有则开始 setup / resume。
@@ -362,9 +378,10 @@ func (s *Service) onLinkDown(l *orbLink) {
 	if !current {
 		return
 	}
-	orb, err := s.Get(context.Background(), l.orbID)
+	ctx := context.Background()
+	orb, err := s.Get(ctx, l.orbID)
 	if err != nil {
 		return
 	}
-	s.emit(Event{OrbID: l.orbID, Kind: EventLinkDown, From: orb.State, To: orb.State, Orb: orb})
+	s.emitInfo(ctx, EventLinkDown, orb)
 }

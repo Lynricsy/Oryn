@@ -124,6 +124,10 @@ func (p *Process) running(orbID string) *orbProc {
 func (p *Process) spawn(j Job, out io.Writer) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if j.Spawn == nil {
+		return errors.New("process: spawn 缺少参数")
+	}
+	home := p.HomeDir(j.OrbID)
 	if pr := p.running(j.OrbID); pr != nil {
 		if pr.frozen {
 			if err := pr.cmd.Process.Signal(syscall.SIGCONT); err != nil {
@@ -131,21 +135,23 @@ func (p *Process) spawn(j Job, out io.Writer) error {
 			}
 			pr.frozen = false
 			fmt.Fprintln(out, "SIGCONT")
-			// 与 docker 驱动一致：解冻后让 orbd 立即重建 link。
-			_ = pr.cmd.Process.Signal(syscall.SIGHUP)
 		}
-		return nil
+		// 与 docker 驱动一致：写入本次轮换后的令牌，再让 orbd 立即用它重建 link。
+		if err := writeTokenFile(home, j.Spawn.Env.OrynOrbToken); err != nil {
+			return err
+		}
+		return pr.cmd.Process.Signal(syscall.SIGHUP)
 	}
-	if j.Spawn == nil {
-		return errors.New("process: spawn 缺少参数")
-	}
-	home := p.HomeDir(j.OrbID)
 	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) && j.Spawn.SnapshotID != nil && *j.Spawn.SnapshotID != "" {
 		if err := copyTree(p.snapshotDir(*j.Spawn.SnapshotID), home); err != nil {
 			return fmt.Errorf("process: 从快照恢复: %w", err)
 		}
 	}
 	if err := os.MkdirAll(home, 0o755); err != nil {
+		return err
+	}
+	// orbd 优先读令牌文件：启动前写入（同时覆盖快照里带来的源 orb 令牌）。
+	if err := writeTokenFile(home, j.Spawn.Env.OrynOrbToken); err != nil {
 		return err
 	}
 	logf, err := os.OpenFile(filepath.Join(filepath.Dir(home), "orbd.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -175,6 +181,19 @@ func (p *Process) spawn(j Job, out io.Writer) error {
 	p.procs[j.OrbID] = pr
 	fmt.Fprintf(out, "started pid %d\n", cmd.Process.Pid)
 	return nil
+}
+
+// writeTokenFile 原子写入 <home>/.oryn/orb-token（0600）。
+func writeTokenFile(home, token string) error {
+	dir := filepath.Join(home, ".oryn")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, "orb-token.tmp")
+	if err := os.WriteFile(tmp, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, "orb-token"))
 }
 
 func (p *Process) pause(j Job, out io.Writer) error {

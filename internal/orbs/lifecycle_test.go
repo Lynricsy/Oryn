@@ -50,7 +50,10 @@ type fakeOrbd struct {
 func (o *fakeOrbd) connect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	sess, err := link.Dial(ctx, link.URL(o.url), o.token)
+	o.mu.Lock()
+	token := o.token
+	o.mu.Unlock()
+	sess, err := link.Dial(ctx, link.URL(o.url), token)
 	if err != nil {
 		return err
 	}
@@ -144,20 +147,20 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	switch j.Op {
 	case "spawn":
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, token: j.Spawn.Env.OrynOrbToken}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()
 		}
+		// 与真实驱动一致：每次 spawn 送达轮换后的令牌（令牌文件 + SIGHUP），orbd 用它重连。
+		o.mu.Lock()
+		o.token = j.Spawn.Env.OrynOrbToken
+		o.mu.Unlock()
 		if noConnect {
 			return nil
 		}
-		o.mu.Lock()
-		up := o.sess != nil && !o.sess.IsClosed()
-		o.mu.Unlock()
-		if !up {
-			return o.connect()
-		}
+		o.disconnect()
+		return o.connect()
 	case "pause", "delete":
 		if o != nil {
 			o.disconnect()
@@ -220,7 +223,7 @@ func newHarness(t *testing.T, drv providerrt.Driver, setup SetupSource, mod func
 	}
 	h.svc = New(cfg, st, h.q, setup, fakeSecrets{})
 	h.quiet.Store(true)
-	h.svc.SetQuiescence(func(string) bool { return h.quiet.Load() })
+	h.svc.SetQuiescence(func(_ string, commit func() bool) bool { return h.quiet.Load() && commit() })
 	h.svc.Subscribe(func(ev Event) {
 		h.evMu.Lock()
 		h.events = append(h.events, ev)

@@ -46,10 +46,10 @@ docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有
 ```bash
 sudo install -m 0644 deploy/systemd/orynd.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now orynd
-journalctl -u orynd | grep setup?token=
+journalctl -u orynd | grep 'setup#token='
 ```
 
-首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup?token=ost_…`。浏览器打开它注册 Passkey，并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。
+首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup#token=ost_…`（令牌在 URL 片段里，不会进入反代访问日志）。浏览器打开它注册 Passkey，并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。
 
 ## 5. 本机 Docker provider
 
@@ -86,3 +86,83 @@ oryn config push ~/.omp/agent
 ```
 
 `models.yml` 里的字面 API key 会被移入加密密钥库（`data_dir/master.key`，首次启动生成，务必备份），下发到 orb 的只有占位令牌。
+
+## 7. 安全
+
+orb 里的 agent 有 root（镜像给 `user` 配了免密 sudo），应把 orb 当作不可信代码来隔离。下面几项按需逐一启用。
+
+### orb 令牌
+
+- orb 用令牌 `oot_…` 建立 link。令牌 = `HMAC(orb-token.key, orbID ":" 代数)`，**每次入队 spawn（创建、唤醒、从冻结停机前的解冻）都会轮换**，旧令牌立即失效，现有 link 同时被关闭。
+- 控制面只在 orb 处于 `spawning / connecting / setting_up / resuming / ready / waking / stopping` 时接受 link；`frozen / stopped / failed / deleting / deleted` 一律拒绝。唤醒只能由 provider 执行 spawn 驱动，泄露的令牌无法把一台冻结或停机的 orb 拉起来，也活不过它的下一次唤醒。
+- 新令牌的下发：新建容器经环境变量 `ORYN_ORB_TOKEN`；已存在的机器写入 `$HOME/.oryn/orb-token`（orbd 每次拨号前优先读它）并向 orbd 发 `SIGHUP` 让它立即重连。docker 驱动对 unpause / start / 已在运行的容器执行 `docker exec -i <orb> sh -c 'umask 077; … cat > $HOME/.oryn/orb-token'`（令牌经 stdin，不进 argv 与任务输出），再 `docker exec <orb> pkill -HUP -x orbd`；从快照新建容器时，镜像里带着源 orb 的令牌文件，驱动在 `docker start` 之前用 `docker cp` 把它换成新 orb 的令牌。
+
+### dispatch 驱动的脚本契约（令牌轮换部分）
+
+`ORB_OPERATION=spawn` 时脚本必须保证机器内的 orbd 用本次的 `ORYN_ORB_TOKEN` 连接：
+
+1. 机器不存在：创建并以分离方式启动 `orbd run`，环境里带 `ORYN_URL`、`ORYN_ORB_ID`、`ORYN_ORB_TOKEN`。若机器来自快照，启动 orbd **之前**把 `$HOME/.oryn/orb-token` 覆盖为本次令牌（或删除它），否则 orbd 会读到源 orb 的令牌。
+2. 机器已存在（解冻、开机或已在运行）：恢复运行后，以 orbd 的用户原子写入 `$HOME/.oryn/orb-token`（内容 = `ORYN_ORB_TOKEN`，权限 0600，先写临时文件再 `mv`），然后向 orbd 发 `SIGHUP`。
+3. 脚本退出码 0 = 成功。脚本在独立进程组中运行，任务超时（5 分钟）时整组被 `SIGKILL`；脚本退出后仍有后代进程占着 stdout / stderr 时，provider 至多再等 5 秒就返回（退出码 0 仍算成功），所以后台启动的 orbd 应把输出重定向到日志文件。
+
+### 容器能力
+
+docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`：即使在容器内是 root，也不能发原始包（ARP 欺骗同网桥上其它 orb 的 link）或改路由与防火墙。
+
+### 网络隔离
+
+默认网桥上的 orb 能访问宿主上的所有服务（1Panel、数据库等）、局域网、云厂商元数据地址 `169.254.169.254`，以及彼此。建议给 orb 一个专用网桥，并用防火墙只放行 orb → 控制面：
+
+1. 创建关闭容器间通信（icc）的专用网桥：
+
+   ```bash
+   docker network create --driver bridge \
+     --subnet 172.30.0.0/24 --gateway 172.30.0.1 \
+     -o com.docker.network.bridge.name=oryn0 \
+     -o com.docker.network.bridge.enable_icc=false \
+     oryn-orbs
+   ```
+
+2. 让 orb 使用它，并把控制面地址改为该网桥的网关：
+
+   ```yaml
+   # /etc/oryn/orynd.yaml
+   listen: ["127.0.0.1:7600", "172.30.0.1:7600"]
+   # /etc/oryn/provider.yaml
+   orb_url: "http://172.30.0.1:7600"
+   docker:
+     extra_run_args: ["--network", "oryn-orbs"]
+   ```
+
+   orynd 要绑定 `172.30.0.1`，需在 Docker 建好 `oryn0` 之后启动（例如给 `orynd.service` 加 `After=docker.service`）。
+
+3. 防火墙。orb → 宿主自身地址走 `INPUT` 链，orb → 其它网络走 `FORWARD` 链（Docker 为用户规则预留了 `DOCKER-USER`）：
+
+   ```bash
+   # 宿主：只允许 orb 访问控制面 7600 端口（-I 逆序插入，最终顺序为 已建立 → 7600 → 丢弃）
+   iptables -I INPUT -i oryn0 -j DROP
+   iptables -I INPUT -i oryn0 -p tcp -d 172.30.0.1 --dport 7600 -j ACCEPT
+   iptables -I INPUT -i oryn0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+   # 转发：orb 不能访问私有网段、CGNAT 与链路本地地址（含元数据 169.254.169.254）；公网照常
+   for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
+     iptables -I DOCKER-USER -i oryn0 -d "$net" -j DROP
+   done
+   ```
+
+   DNS：容器经 Docker 内置解析器（`127.0.0.11`）转发到宿主配置的上游。上游若在私有网段（例如路由器 `192.168.1.1`），转发可能被上面的丢弃规则挡住——在 `extra_run_args` 里加 `--dns 1.1.1.1` 之类的公网解析器，或在丢弃规则之前放行该上游的 53 端口。规则重启后不保留：用 `iptables-persistent` / `netfilter-persistent save`，或写进 1Panel 使用的防火墙（firewalld / ufw）的对应配置。网桥启用了 IPv6 时，用 `ip6tables` 对 `fc00::/7`、`fe80::/10` 做同样的限制。
+
+4. 验证（在某个 orb 里）：`curl -m3 http://172.30.0.1:7600/healthz` 成功；`curl -m3 http://169.254.169.254/`、访问宿主其它端口、访问另一个 orb 的地址都超时。
+
+### git 出站策略
+
+orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811/git/<host>/…`）到达控制面，由控制面注入 `git/<host>/token` 密钥后转发到 `https://<host>/…`。令牌从不进入 orb。控制面按 orb 所属项目决定放行范围：
+
+- **有项目且项目 `repo_url` 为 `https://` 地址的 orb**：只放行该项目仓库，可读可写（`git-upload-pack` 与 `git-receive-pack`）。仓库路径须与 `repo_url` 完全一致（不区分大小写，忽略 `.git` 后缀）。同一主机上的其它仓库、其它主机一律拒绝（403）。orb 内的 `url.<代理>.insteadOf` 只覆盖项目仓库这一个地址前缀，其它 `https://` git 地址照常直连公网、不带令牌，公开仓库仍可匿名克隆。
+- **无项目的 orb**（以及项目没有 `https://` 仓库地址的 orb）：配置了 `git/<host>/token` 的主机上，任意仓库只读。只放行 `info/refs?service=git-upload-pack` 与 `git-upload-pack`，推送（`git-receive-pack`）一律拒绝（403）。这类 orb 的 `insteadOf` 覆盖整个主机。
+- **路径与端点**：只放行 git smart-HTTP 端点（`info/refs`、`git-upload-pack`、`git-receive-pack`），其它路径返回 404。路径里出现 `.` 或 `..` 段、空段（`//`），或 `path.Clean` 后与原路径不同，一律返回 400。这包括 `%2e%2e` 这类编码形式，因为校验针对解码后的路径。git 路由不接受任何 `oryn-ph-…` 占位符。
+- orbd 每次执行 setup / resume 时，先删掉自己以前写入的全部 `insteadOf` 条目，再按当前策略重写。项目设置变更后，在下一次唤醒时生效。
+
+### 模型密钥绑定
+
+`models.yml` 中，`providers.<key>.apiKey` 只能引用本 provider 自己的密钥 `omp/models/<key>/apiKey`。只有这一个密钥会走环境变量降级；它若已绑定上游主机（`hosts` 非空），就不允许降级。`models.yml` 里不允许引用 `git/*` 密钥。其它 `${oryn:secret:…}` 引用必须属于 `hosts` 非空的密钥，而且只绑定到 origin 主机与 `hosts` 匹配的路由。`hosts` 为空的密钥只能注入到它自己 provider 的路由，其它任何路由都不行。导入时，provider 密钥的 `hosts` 包括 provider `baseUrl` 与各模型 `baseUrl` 的全部主机。经代理的 WebSocket / Upgrade（101）连接只对响应头做真实值回显脱敏，不改写升级后的字节流，否则会破坏其分帧。

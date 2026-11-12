@@ -86,15 +86,27 @@ func (r *Runner) defaults() {
 func (r *Runner) InstanceID() string { return r.instanceID }
 
 // Run 运行到 ctx 结束（SIGTERM）：停止认领，等待在途任务（至多 ShutdownGrace），然后 bye。
+// 任一 worker 或心跳遇到不可重试的错误（令牌被吊销）时同样停止全部循环，并返回该错误。
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
 	if err := r.helloUntilOK(ctx); err != nil {
 		return err
 	}
-	// 在途任务使用的上下文：退出信号后再宽限 ShutdownGrace 才取消。
+	// runCtx 控制认领与心跳：外部退出信号或首个终止性错误都会取消它。
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	var (
+		errOnce sync.Once
+		runErr  error
+	)
+	fail := func(err error) {
+		errOnce.Do(func() { runErr = err })
+		cancelRun()
+	}
+	// 在途任务使用的上下文：runCtx 结束后再宽限 ShutdownGrace 才取消。
 	jobCtx, cancelJobs := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelJobs()
-	stopGrace := context.AfterFunc(ctx, func() {
+	stopGrace := context.AfterFunc(runCtx, func() {
 		t := time.NewTimer(r.ShutdownGrace)
 		defer t.Stop()
 		select {
@@ -109,19 +121,24 @@ func (r *Runner) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.heartbeat(ctx)
+		if err := r.heartbeat(runCtx); err != nil {
+			fail(err)
+		}
 	}()
-	errCh := make(chan error, r.Concurrency)
 	for range r.Concurrency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := r.worker(ctx, jobCtx); err != nil {
-				errCh <- err
+			if err := r.worker(runCtx, jobCtx); err != nil {
+				fail(err)
 			}
 		}()
 	}
 	wg.Wait()
+	if runErr != nil {
+		slog.Error("provider 停止：不可重试的错误", "err", runErr)
+		return runErr
+	}
 	byeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := r.post(byeCtx, "/provider/v1/bye", map[string]string{"instanceId": r.instanceID}, nil); err != nil {
@@ -129,12 +146,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	} else {
 		slog.Info("provider 已下线", "instance", r.instanceID)
 	}
-	select {
-	case err := <-errCh:
-		return err
-	default:
-		return nil
-	}
+	return nil
 }
 
 func (r *Runner) hello(ctx context.Context) error {
@@ -169,15 +181,20 @@ func (r *Runner) helloUntilOK(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) heartbeat(ctx context.Context) {
+// heartbeat 周期性重发 hello 续租，直到 ctx 结束；令牌被拒（不可重试）时返回 ErrUnauthorized。
+func (r *Runner) heartbeat(ctx context.Context) error {
 	t := time.NewTicker(r.HeartbeatInterval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-t.C:
-			if err := r.hello(ctx); err != nil && ctx.Err() == nil {
+			err := r.hello(ctx)
+			if errors.Is(err, ErrUnauthorized) {
+				return err
+			}
+			if err != nil && ctx.Err() == nil {
 				slog.Warn("provider 续租失败", "err", err)
 			}
 		}
@@ -244,7 +261,7 @@ func (r *Runner) execute(ctx context.Context, pj apigen.ProviderJob) {
 		err = r.Driver.Exec(jctx, j, out)
 		cancel()
 	}
-	req := apigen.ProviderCompleteRequest{Ok: err == nil, Output: out.String(), DurationMs: time.Since(start).Milliseconds()}
+	req := apigen.ProviderCompleteRequest{ClaimGen: pj.ClaimGen, Ok: err == nil, Output: out.String(), DurationMs: time.Since(start).Milliseconds()}
 	if err != nil {
 		msg := err.Error()
 		req.Error = &msg

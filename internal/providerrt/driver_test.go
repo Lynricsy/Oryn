@@ -1,11 +1,17 @@
 package providerrt
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +31,13 @@ case "$1 $2" in
   if [ -f "$FAKE_DOCKER_DIR/image" ]; then echo sha256:abc; exit 0; fi
   echo "Error: No such image: $5" >&2; exit 1;;
 esac
-if [ "$1" = run ]; then echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN" >> "$FAKE_DOCKER_DIR/log"; echo cid; fi
+if [ "$1" = create ]; then echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN" >> "$FAKE_DOCKER_DIR/log"; echo cid; fi
+if [ "$1" = cp ] && [ "$2" != -a ]; then
+  if [ -f "$FAKE_DOCKER_DIR/tokenfile.tar" ]; then cat "$FAKE_DOCKER_DIR/tokenfile.tar"; exit 0; fi
+  echo "Error response from daemon: Could not find the file /home/user/.oryn/orb-token in container x" >&2; exit 1
+fi
+if [ "$1" = cp ] && [ "$2" = -a ]; then cat > "$FAKE_DOCKER_DIR/cpin.tar"; fi
+if [ "$1" = exec ] && [ "$2" = -i ]; then cat > "$FAKE_DOCKER_DIR/stdin"; fi
 if [ "$1" = rmi ] && [ ! -f "$FAKE_DOCKER_DIR/image" ]; then echo "Error: No such image: $2" >&2; exit 1; fi
 exit 0
 `
@@ -44,8 +56,9 @@ func newFakeDocker(t *testing.T) *fakeDockerEnv {
 
 func (f *fakeDockerEnv) set(t *testing.T, state string, image bool) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, "state"), []byte(state), 0o644))
-	_ = os.Remove(filepath.Join(f.dir, "log"))
-	_ = os.Remove(filepath.Join(f.dir, "image"))
+	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin"} {
+		_ = os.Remove(filepath.Join(f.dir, n))
+	}
 	if image {
 		require.NoError(t, os.WriteFile(filepath.Join(f.dir, "image"), nil, 0o644))
 	}
@@ -71,11 +84,14 @@ func TestDockerDriverCommands(t *testing.T) {
 		return Job{ID: "job_1", Op: "spawn", OrbID: "orb-x", Spawn: p}
 	}
 	inspect := "container inspect --format {{.State.Status}} orb-x"
-	runArgs := func(image, cpus, mem string) string {
-		return "run -d --init --name orb-x --hostname orb-x --label oryn-orb=1 --cpus " + cpus + " --memory " + mem +
-			" --shm-size 1g --add-host host.docker.internal:host-gateway -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --runtime runc " +
-			image + " orbd run"
+	createArgs := func(image, cpus, mem string) string {
+		return "create --init --name orb-x --hostname orb-x --label oryn-orb=1 --cpus " + cpus + " --memory " + mem +
+			" --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN" +
+			" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --runtime runc " + image + " orbd run"
 	}
+	cpFrom := "cp orb-x:/home/user/.oryn/orb-token -"
+	writeToken := "exec -i orb-x sh -c " + writeTokenScript
+	hup := "exec orb-x pkill -HUP -x orbd"
 	cases := []struct {
 		name  string
 		state string
@@ -83,15 +99,15 @@ func TestDockerDriverCommands(t *testing.T) {
 		job   Job
 		want  []string
 	}{
-		{"spawn new", "missing", false, spawn(""), []string{inspect, runArgs("oryn-orb:dev", "2", "4g"), "ENV http://172.17.0.1:7600 orb-x oot_tok"}},
+		{"spawn new", "missing", false, spawn(""), []string{inspect, createArgs("oryn-orb:dev", "2", "4g"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
 		{"spawn new from snapshot, unknown type → default", "missing", false, func() Job {
 			j := spawn("oryn-snap-1")
 			j.Spawn.Type = "huge"
 			return j
-		}(), []string{inspect, runArgs("oryn-snap-1", "4.5", "8g"), "ENV http://172.17.0.1:7600 orb-x oot_tok"}},
-		{"spawn paused", "paused", false, spawn(""), []string{inspect, "unpause orb-x", "exec orb-x pkill -HUP -x orbd"}},
-		{"spawn exited", "exited", false, spawn(""), []string{inspect, "start orb-x"}},
-		{"spawn running", "running", false, spawn(""), []string{inspect}},
+		}(), []string{inspect, createArgs("oryn-snap-1", "4.5", "8g"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
+		{"spawn paused", "paused", false, spawn(""), []string{inspect, "unpause orb-x", writeToken, hup}},
+		{"spawn exited", "exited", false, spawn(""), []string{inspect, "start orb-x", writeToken, hup}},
+		{"spawn running", "running", false, spawn(""), []string{inspect, writeToken, hup}},
 		{"pause freeze", "running", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "freeze"}, []string{inspect, "pause orb-x"}},
 		{"pause freeze already paused", "paused", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "freeze"}, []string{inspect}},
 		{"pause stop paused", "paused", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "stop"}, []string{inspect, "unpause orb-x", "stop -t 30 orb-x"}},
@@ -111,6 +127,40 @@ func TestDockerDriverCommands(t *testing.T) {
 			assert.NotContains(t, out.String(), "oot_tok", "token must not appear in output/argv")
 		})
 	}
+
+	t.Run("existing container receives the rotated token on stdin", func(t *testing.T) {
+		fd.set(t, "paused", false)
+		require.NoError(t, d.Exec(context.Background(), spawn(""), newTailBuffer(1024)))
+		b, err := os.ReadFile(filepath.Join(fd.dir, "stdin"))
+		require.NoError(t, err)
+		assert.Equal(t, "oot_tok", string(b))
+	})
+
+	t.Run("snapshot image carrying the source orb token file gets it replaced before start", func(t *testing.T) {
+		fd.set(t, "missing", false)
+		var src bytes.Buffer
+		tw := tar.NewWriter(&src)
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: "orb-token", Mode: 0o600, Size: 8, Uid: 1000, Gid: 1000, Uname: "user", Gname: "user"}))
+		_, _ = tw.Write([]byte("oot_srcx"))
+		require.NoError(t, tw.Close())
+		require.NoError(t, os.WriteFile(filepath.Join(fd.dir, "tokenfile.tar"), src.Bytes(), 0o644))
+		out := newTailBuffer(1 << 16)
+		require.NoError(t, d.Exec(context.Background(), spawn("oryn-snap-1"), out), out.String())
+		log := fd.log(t)
+		assert.Equal(t, []string{cpFrom, "cp -a - orb-x:/home/user/.oryn", "start orb-x"}, log[len(log)-3:], "替换发生在 start 之前")
+		f, err := os.Open(filepath.Join(fd.dir, "cpin.tar"))
+		require.NoError(t, err)
+		defer f.Close()
+		tr := tar.NewReader(f)
+		hdr, err := tr.Next()
+		require.NoError(t, err)
+		assert.Equal(t, "orb-token", hdr.Name)
+		assert.EqualValues(t, 0o600, hdr.Mode)
+		assert.Equal(t, 1000, hdr.Uid, "沿用镜像内文件的属主")
+		body, _ := io.ReadAll(tr)
+		assert.Equal(t, "oot_tok", string(body))
+		assert.NotContains(t, out.String(), "oot_tok")
+	})
 
 	t.Run("pause missing container fails", func(t *testing.T) {
 		fd.set(t, "missing", false)
@@ -167,4 +217,47 @@ func TestParseJob(t *testing.T) {
 	j, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.DeleteSnapshot, Params: map[string]any{"snapshotId": "oryn-snap-1"}})
 	require.NoError(t, err)
 	assert.Equal(t, "oryn-snap-1", j.SnapshotID)
+}
+
+// CP16：任务超时时整个进程组被终止，且不会因后代进程占着输出管道而挂住 worker。
+func TestDispatchTimeoutKillsProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	script := filepath.Join(dir, "dispatch.sh")
+	// 子进程继承 stdout 并长时间运行；脚本自己也不退出。
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 300 &\necho $! > "+pidFile+"\nwait\n"), 0o755))
+	d := NewDispatch(script, config.Docker{})
+	d.WaitDelay = 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := d.Exec(ctx, Job{Op: "delete", OrbID: "orb-y"}, newTailBuffer(1024))
+	assert.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second, "超时后应在 WaitDelay 内返回")
+	b, rerr := os.ReadFile(pidFile)
+	require.NoError(t, rerr)
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) != nil }, 5*time.Second, 20*time.Millisecond, "子进程随进程组被终止")
+}
+
+// CP16：脚本以 0 退出但留下仍持有输出管道的后台进程（如未重定向输出的 orbd）时，至多 WaitDelay 后按成功返回。
+func TestDispatchSuccessWithLingeringChild(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	script := filepath.Join(dir, "dispatch.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 300 &\necho $! > "+pidFile+"\necho spawned\nexit 0\n"), 0o755))
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	d := NewDispatch(script, config.Docker{})
+	d.WaitDelay = 200 * time.Millisecond
+	start := time.Now()
+	out := newTailBuffer(1024)
+	require.NoError(t, d.Exec(context.Background(), Job{Op: "delete", OrbID: "orb-y"}, out))
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.Contains(t, out.String(), "spawned")
 }

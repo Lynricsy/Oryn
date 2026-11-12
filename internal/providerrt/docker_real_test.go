@@ -76,8 +76,26 @@ func TestDockerRealSmoke(t *testing.T) {
 		out, err := exec.Command("docker", "exec", orbID, "cat", "/tmp/hup").Output()
 		return err == nil && strings.Contains(string(out), "hup")
 	}, 10*time.Second, 200*time.Millisecond, "orbd 收到 SIGHUP")
+	tokenOf := func(id string) string {
+		out, err := exec.Command("docker", "exec", id, "sh", "-c", `stat -c '%U %a' "$HOME/.oryn/orb-token" && cat "$HOME/.oryn/orb-token"`).Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(out))
+	}
+	assert.Equal(t, "user 600\noot_smoke", tokenOf(orbID), "解冻时写入令牌文件")
+	capOut, err := exec.Command("docker", "container", "inspect", "--format", "{{.HostConfig.CapDrop}}", orbID).Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(capOut), "NET_RAW")
+	assert.Contains(t, string(capOut), "NET_ADMIN")
 	run(Job{Op: "snapshot", OrbID: orbID, SnapshotID: snap})
 	require.NoError(t, exec.Command("docker", "image", "inspect", snap).Run())
+
+	// 从快照派生：镜像里带着源 orb 的令牌文件，必须在启动前换成克隆自己的令牌。
+	cloneID := ids.Orb()
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", cloneID).Run() })
+	run(Job{Op: "spawn", OrbID: cloneID, Spawn: &apigen.JobSpawnParams{Type: "small", SnapshotID: &snap,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://127.0.0.1:9", OrynOrbID: cloneID, OrynOrbToken: "oot_clone"}}})
+	assert.Equal(t, "user 600\noot_clone", tokenOf(cloneID))
+	run(Job{Op: "delete", OrbID: cloneID})
 	run(Job{Op: "pause", OrbID: orbID, PauseMode: "freeze"})
 	run(Job{Op: "pause", OrbID: orbID, PauseMode: "stop"}) // paused → unpause → stop
 	assert.Equal(t, "exited", status())

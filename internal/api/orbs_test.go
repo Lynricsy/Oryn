@@ -121,7 +121,7 @@ func TestOrbsAndStatsAPI(t *testing.T) {
 	assert.Equal(t, apigen.OrbStateSpawning, got.State)
 	assert.Equal(t, 404, e.do("GET", "/api/v1/orbs/orb-nope", e.dev, nil, nil))
 
-	require.Equal(t, 204, e.do("POST", "/provider/v1/jobs/"+cr.Job.ID+"/complete", e.provT, apigen.ProviderCompleteRequest{Ok: true}, nil))
+	require.Equal(t, 204, e.do("POST", "/provider/v1/jobs/"+cr.Job.ID+"/complete", e.provT, apigen.ProviderCompleteRequest{Ok: true, ClaimGen: cr.Job.ClaimGen}, nil))
 	require.Equal(t, 200, e.do("GET", "/api/v1/orbs/"+orb.ID, e.dev, nil, &got))
 	assert.Equal(t, apigen.OrbStateConnecting, got.State)
 

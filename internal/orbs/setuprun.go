@@ -2,9 +2,12 @@ package orbs
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"unicode/utf8"
 
@@ -19,6 +22,15 @@ const SetupLogTail = 256 << 10
 
 // CodeNoProject 是 orb 不属于任何项目时 project.scripts.* 的 ctl 错误码。
 const CodeNoProject = "no_project"
+
+// CodeTooLarge 是 project.scripts.set 的脚本超过 MaxProjectScriptBytes 时的 ctl 错误码。
+const CodeTooLarge = "too_large"
+
+// MaxProjectScriptBytes 是 orb 经 project.scripts.set 写入的单个脚本上限。
+const MaxProjectScriptBytes = 256 << 10
+
+// MaxSetupRunsPerOrb 是每个 orb 保留的 setup / resume 运行记录条数（更早的在写入新记录时删除）。
+const MaxSetupRunsPerOrb = 50
 
 // setupLogs 是一个 orb 尚未归属到运行记录的 setup.log 输出（按阶段分开，各自只保留尾部）。
 type setupLogs struct {
@@ -124,7 +136,14 @@ func (s *Service) onSetupResult(ctx context.Context, orbID string, params json.R
 		DurationMs: p.DurationMs, HasRepoScript: b2i(p.HasRepoScript), HasProjectScript: b2i(p.HasProjectScript),
 		LogTail: s.takeSetupLog(orbID, p.Phase),
 	}
-	if err := s.st.Q.InsertOrbSetupRun(ctx, row); err != nil {
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := q.InsertOrbSetupRun(ctx, row); err != nil {
+			return err
+		}
+		_, err := q.PruneOrbSetupRuns(ctx, db.PruneOrbSetupRunsParams{OrbID: orbID, Keep: MaxSetupRunsPerOrb})
+		return err
+	})
+	if err != nil {
 		slog.Warn("写入 setup 运行记录失败", "orb", orbID, "err", err)
 		return
 	}
@@ -134,13 +153,22 @@ func (s *Service) onSetupResult(ctx context.Context, orbID string, params json.R
 	if err != nil {
 		return
 	}
-	s.emit(Event{OrbID: orbID, Kind: EventSetup, From: orb.State, To: orb.State, Orb: orb})
+	s.emitInfo(ctx, EventSetup, orb)
 }
 
 func (s *Service) dropSetupLogs(orbID string) {
 	s.mu.Lock()
 	delete(s.setupLogs, orbID)
 	s.mu.Unlock()
+}
+
+// scriptSHA 返回脚本内容的 SHA-256 十六进制（未设置时为空串）。
+func scriptSHA(v *string) string {
+	if v == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(*v))
+	return hex.EncodeToString(sum[:])
 }
 
 func b2i(b bool) int64 {
@@ -191,9 +219,18 @@ func (s *Service) onProjectScriptsSet(ctx context.Context, orbID string, params 
 			return nil, &link.CtlError{Code: "invalid_params", Message: err.Error()}
 		}
 	}
+	for _, v := range []*string{p.Setup, p.Resume} {
+		if v != nil && len(*v) > MaxProjectScriptBytes {
+			return nil, &link.CtlError{Code: CodeTooLarge, Message: fmt.Sprintf("script exceeds %d bytes", MaxProjectScriptBytes)}
+		}
+	}
 	var out db.Project
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		prj, err := orbProject(ctx, q, orbID)
+		if err != nil {
+			return err
+		}
+		orb, err := q.GetOrb(ctx, orbID)
 		if err != nil {
 			return err
 		}
@@ -209,6 +246,16 @@ func (s *Service) onProjectScriptsSet(ctx context.Context, orbID string, params 
 			Name: prj.Name, RepoUrl: prj.RepoUrl, BaseBranch: prj.BaseBranch, DefaultProvider: prj.DefaultProvider,
 			DefaultOrbType: prj.DefaultOrbType, SetupScript: prj.SetupScript, ResumeScript: prj.ResumeScript,
 			ShallowClone: prj.ShallowClone, Color: prj.Color, ArchivedAt: prj.ArchivedAt, UpdatedAt: prj.UpdatedAt, ID: prj.ID,
+		}); err != nil {
+			return err
+		}
+		// orb 内写入的脚本会在该项目以后的每个 orb 里执行：留下可审计的记录（脚本内容的哈希）。
+		detail, _ := json.Marshal(map[string]any{
+			"event": "project_scripts_set", "projectId": prj.ID,
+			"setupSha256": scriptSHA(prj.SetupScript), "resumeSha256": scriptSHA(prj.ResumeScript),
+		})
+		if _, err := q.InsertOrbEventSeq(ctx, db.InsertOrbEventSeqParams{
+			OrbID: orbID, Ts: prj.UpdatedAt, FromState: orb.State, ToState: orb.State, Detail: string(detail),
 		}); err != nil {
 			return err
 		}

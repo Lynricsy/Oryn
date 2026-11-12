@@ -41,7 +41,13 @@ const (
 	CodeMethodNotFound = "method_not_found"
 	CodeInvalidParams  = "invalid_params"
 	CodeInternal       = "internal"
+	// CodeBusy 表示对端同时在途的请求已达 MaxConcurrentCtlRequests，本请求未执行（可稍后重试）。
+	CodeBusy = "busy"
 )
+
+// MaxConcurrentCtlRequests 是一个 ctl 端点同时处理的对端请求上限（每个请求一个 goroutine、各自持有至多
+// MaxCtlLineBytes 的参数）；超出的请求立即以 busy 应答，不执行。
+const MaxConcurrentCtlRequests = 32
 
 // ErrMethodNotFound 可由请求处理器返回，应答错误码为 method_not_found。
 var ErrMethodNotFound = &CtlError{Code: CodeMethodNotFound, Message: "method not found"}
@@ -51,7 +57,7 @@ var ErrCtlClosed = errors.New("link: ctl closed")
 
 // CtlHandlers 处理对端发来的请求与通知。
 //
-//   - OnRequest 在独立 goroutine 中执行（长请求不阻塞读循环）；返回值编码为 result，
+//   - OnRequest 在独立 goroutine 中执行（长请求不阻塞读循环；同时至多 MaxConcurrentCtlRequests 个，超出回 busy）；返回值编码为 result，
 //     返回 *CtlError 时原样作为错误应答，其它错误映射为 code=internal。nil 时一律回 method_not_found。
 //   - OnNotify 在读循环中按到达顺序同步执行（保证 entries.append 等通知有序）；
 //     处理器不应长时间阻塞。
@@ -66,7 +72,9 @@ type Ctl struct {
 	w        *omprpc.Writer
 	handlers CtlHandlers
 
-	nextID  atomic.Uint64
+	nextID atomic.Uint64
+	// slots 是在途对端请求的信号量（容量 MaxConcurrentCtlRequests）。
+	slots   chan struct{}
 	mu      sync.Mutex
 	pending map[string]chan CtlMessage
 	closed  bool
@@ -84,6 +92,7 @@ func NewCtl(rwc io.ReadWriteCloser, h CtlHandlers) *Ctl {
 		w:        omprpc.NewWriter(rwc, MaxCtlLineBytes),
 		handlers: h,
 		pending:  make(map[string]chan CtlMessage),
+		slots:    make(chan struct{}, MaxConcurrentCtlRequests),
 		ctx:      ctx,
 		cancel:   cancel,
 		done:     make(chan struct{}),
@@ -223,7 +232,18 @@ func (c *Ctl) readLoop() {
 		}
 		switch {
 		case msg.Method != "" && msg.ID != "":
-			go c.serve(msg)
+			select {
+			case c.slots <- struct{}{}:
+				go func() {
+					defer func() { <-c.slots }()
+					c.serve(msg)
+				}()
+			default:
+				reply := CtlMessage{ID: msg.ID, Error: &CtlError{Code: CodeBusy, Message: "too many concurrent ctl requests"}}
+				if err := c.w.WriteFrame(reply); err != nil && c.ctx.Err() == nil {
+					slog.Warn("link: ctl busy reply write failed", "method", msg.Method, "err", err)
+				}
+			}
 		case msg.Method != "":
 			if c.handlers.OnNotify != nil {
 				c.handlers.OnNotify(c.ctx, msg.Method, msg.Params)

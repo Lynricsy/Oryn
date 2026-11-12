@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,7 +170,7 @@ func TestClaimCompleteAndWait(t *testing.T) {
 		waited <- j
 	}()
 	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, http.StatusNoContent, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{Ok: true, Output: "done", DurationMs: 5}, nil))
+	require.Equal(t, http.StatusNoContent, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{ClaimGen: c.res.Job.ClaimGen, Ok: true, Output: "done", DurationMs: 5}, nil))
 	select {
 	case j := <-waited:
 		assert.Equal(t, StateSucceeded, j.State)
@@ -179,7 +180,7 @@ func TestClaimCompleteAndWait(t *testing.T) {
 		t.Fatal("Wait did not return")
 	}
 	// 已完成的任务再上报 → 409；Wait 已终态任务立即返回。
-	assert.Equal(t, http.StatusConflict, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{Ok: true}, nil))
+	assert.Equal(t, http.StatusConflict, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{ClaimGen: c.res.Job.ClaimGen, Ok: true}, nil))
 	assert.Equal(t, http.StatusNotFound, f.post(t, "/provider/v1/jobs/job_nope/complete", apigen.ProviderCompleteRequest{Ok: true}, nil))
 	j, err := f.q.Wait(ctx, job.ID)
 	require.NoError(t, err)
@@ -203,7 +204,7 @@ func TestRetryUntilMaxAttempts(t *testing.T) {
 		require.Equal(t, http.StatusOK, f.post(t, "/provider/v1/jobs/claim", apigen.ProviderClaimRequest{InstanceID: "a", WaitSeconds: 1}, &r))
 		assert.Equal(t, attempt, r.Job.Attempt)
 		e := "boom"
-		require.Equal(t, http.StatusNoContent, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{Ok: false, Error: &e}, nil))
+		require.Equal(t, http.StatusNoContent, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete", apigen.ProviderCompleteRequest{ClaimGen: r.Job.ClaimGen, Ok: false, Error: &e}, nil))
 	}
 	j, err := f.q.Wait(ctx, job.ID)
 	require.NoError(t, err)
@@ -234,7 +235,7 @@ func TestLeaseExpiryRequeue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StateQueued, j.State)
 	// 过期后迟到的完成上报被拒绝。
-	assert.ErrorIs(t, f.q.Complete(ctx, f.prov.ID, job.ID, Result{OK: true}), ErrNotClaimed)
+	assert.ErrorIs(t, f.q.Complete(ctx, f.prov.ID, job.ID, c.ClaimGen, Result{OK: true}), ErrNotClaimed)
 
 	for range 2 {
 		_, ok, err = f.q.Claim(ctx, f.prov.ID, 0)
@@ -275,6 +276,7 @@ func TestPerOrbSerialization(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, a1.ID, j.ID)
+	a1Gen := j.ClaimGen
 	// orb-a 有在途任务：下一条应为 orb-b 的任务，而不是 a2。
 	j, ok, err = f.q.Claim(ctx, f.prov.ID, 0)
 	require.NoError(t, err)
@@ -295,11 +297,101 @@ func TestPerOrbSerialization(t *testing.T) {
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, f.q.Complete(ctx, f.prov.ID, a1.ID, Result{OK: true}))
+	require.NoError(t, f.q.Complete(ctx, f.prov.ID, a1.ID, a1Gen, Result{OK: true}))
 	select {
 	case id := <-got:
 		assert.Equal(t, a2.ID, id)
 	case <-time.After(5 * time.Second):
 		t.Fatal("a2 not claimed after a1 finished")
 	}
+}
+
+// 迟到的旧认领完成上报不能被当作新认领的结果（CP3）。
+func TestCompleteFencedByClaimGen(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	job, err := f.q.Enqueue(ctx, f.prov.ID, "", OpDelete, nil)
+	require.NoError(t, err)
+	first, ok, err := f.q.Claim(ctx, f.prov.ID, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.EqualValues(t, 1, first.ClaimGen)
+
+	// 第一次认领租约过期 → 重排 → 第二次认领。
+	f.q.Now = func() time.Time { return time.Now().Add(f.q.ClaimLease + time.Minute) }
+	require.NoError(t, f.q.Sweep(ctx))
+	f.q.Now = time.Now
+	second, ok, err := f.q.Claim(ctx, f.prov.ID, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.EqualValues(t, 2, second.ClaimGen)
+
+	// 第一次认领的迟到结果（HTTP 与直接调用都一样）被拒绝，任务仍是第二次认领。
+	assert.Equal(t, http.StatusConflict, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete",
+		apigen.ProviderCompleteRequest{ClaimGen: first.ClaimGen, Ok: true}, nil))
+	assert.ErrorIs(t, f.q.Complete(ctx, f.prov.ID, job.ID, first.ClaimGen, Result{OK: false, Error: "late"}), ErrNotClaimed)
+	j, err := f.st.Q.GetJob(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateClaimed, j.State)
+	assert.EqualValues(t, 2, j.ClaimGen)
+
+	require.Equal(t, http.StatusNoContent, f.post(t, "/provider/v1/jobs/"+job.ID+"/complete",
+		apigen.ProviderCompleteRequest{ClaimGen: second.ClaimGen, Ok: true}, nil))
+	j, err = f.st.Q.GetJob(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateSucceeded, j.State)
+}
+
+// 巡检读到过期认领后，该认领被重排并重新认领：巡检用读到的旧记录处理时不得动到新认领（CP3）。
+func TestSweepStaleReadDoesNotTouchNewerClaim(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	job, err := f.q.Enqueue(ctx, f.prov.ID, "", OpDelete, nil)
+	require.NoError(t, err)
+	_, ok, err := f.q.Claim(ctx, f.prov.ID, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+	f.q.Now = func() time.Time { return time.Now().Add(f.q.ClaimLease + time.Minute) }
+	now := f.q.nowMs()
+	expired, err := f.st.Q.ListExpiredClaimedJobs(ctx, &now)
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	stale := expired[0]
+
+	// 与巡检竞争：该认领先被（另一轮巡检）重排，再被重新认领。
+	require.NoError(t, f.q.Sweep(ctx))
+	f.q.Now = time.Now
+	newer, ok, err := f.q.Claim(ctx, f.prov.ID, 0)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	assert.ErrorIs(t, f.q.finishAttempt(ctx, stale, Result{OK: false, Error: "claim lease expired"}), ErrNotClaimed)
+	j, err := f.st.Q.GetJob(ctx, job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateClaimed, j.State)
+	assert.Equal(t, newer.ClaimGen, j.ClaimGen)
+	assert.EqualValues(t, 2, j.Attempt)
+}
+
+// 两个实例的 hello 交错：B 鉴权读到「无人持有」之后，A 拿到租约；B 必须得到 409（CP15）。
+func TestHelloLeaseAcquireIsAtomic(t *testing.T) {
+	f := newFixture(t)
+	var fired atomic.Bool
+	f.q.hookAfterAuth = func() {
+		if fired.CompareAndSwap(false, true) {
+			// 在 B 的请求处理途中插入 A 的 hello（A 的请求再次进入钩子时直接放行）。
+			assert.Equal(t, http.StatusOK, f.post(t, "/provider/v1/hello", hello("a"), nil))
+		}
+	}
+	assert.Equal(t, http.StatusConflict, f.post(t, "/provider/v1/hello", hello("b"), nil))
+	p, err := f.st.Q.GetProvider(context.Background(), f.prov.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "a", *p.InstanceID)
+
+	// claim 续租同理：A 持有未过期租约时，B 的 claim 即使鉴权时读到的是旧行也拿不到。
+	f.q.hookAfterAuth = nil
+	assert.Equal(t, http.StatusConflict, f.post(t, "/provider/v1/jobs/claim", apigen.ProviderClaimRequest{InstanceID: "b"}, nil))
+	p, err = f.st.Q.GetProvider(context.Background(), f.prov.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "a", *p.InstanceID)
 }

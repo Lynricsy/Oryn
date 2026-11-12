@@ -38,17 +38,6 @@ func (q *Queue) authProvider(r *http.Request) (db.Provider, error) {
 	return p, err
 }
 
-// leaseHeldByOther 判断 provider 租约是否被另一个未过期的实例持有（且未双方声明 allowMultiple）。
-func (q *Queue) leaseHeldByOther(p db.Provider, instanceID string, allowMultiple bool) bool {
-	if p.InstanceID == nil || *p.InstanceID == instanceID || p.LeaseUntil == nil {
-		return false
-	}
-	if *p.LeaseUntil <= q.nowMs() {
-		return false
-	}
-	return !(allowMultiple && p.AllowMultiple)
-}
-
 // Hello 处理 POST /provider/v1/hello。
 func (q *Queue) Hello(w http.ResponseWriter, r *http.Request) {
 	p, ok := q.authOrFail(w, r)
@@ -63,37 +52,39 @@ func (q *Queue) Hello(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "instanceId 必填")
 		return
 	}
-	if q.leaseHeldByOther(p, req.InstanceID, req.AllowMultiple) {
-		writeError(w, http.StatusConflict, "provider_already_connected", "另一个 provider 实例持有未过期的租约")
-		return
-	}
 	caps, _ := json.Marshal(req.Capabilities)
 	types := req.Types
 	if types == nil {
 		types = []apigen.OrbType{}
 	}
 	typesJSON, _ := json.Marshal(types)
-	lease := q.nowMs() + ProviderLease.Milliseconds()
+	now := q.nowMs()
+	lease := now + ProviderLease.Milliseconds()
 	inst := req.InstanceID
-	if err := q.st.Q.UpdateProviderHello(r.Context(), db.UpdateProviderHelloParams{
+	// 租约检查与写入是同一条条件 UPDATE：并发的两个 hello 只有一个能拿到租约。
+	n, err := q.st.Q.AcquireProviderHello(r.Context(), db.AcquireProviderHelloParams{
 		Driver: string(req.Driver), Version: req.Version, Capabilities: string(caps), OrbTypes: string(typesJSON),
-		DefaultType: req.DefaultType, AllowMultiple: req.AllowMultiple, InstanceID: &inst, LeaseUntil: &lease, ID: p.ID,
-	}); err != nil {
+		DefaultType: req.DefaultType, AllowMultiple: req.AllowMultiple, InstanceID: &inst, LeaseUntil: &lease, ID: p.ID, Now: &now,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if n == 0 {
+		writeError(w, http.StatusConflict, "provider_already_connected", "另一个 provider 实例持有未过期的租约")
 		return
 	}
 	slog.Info("provider 上线", "provider", p.Name, "instance", req.InstanceID, "driver", req.Driver, "version", req.Version)
 	writeJSON(w, http.StatusOK, apigen.ProviderHelloResponse{ProviderID: p.ID, LeaseSeconds: int(ProviderLease / time.Second)})
 }
 
-// renewLease 在认领时续租；租约被别的实例持有时返回 false。
+// renewLease 在认领时以条件 UPDATE 续租（或接管已过期的租约）；租约被别的实例持有时返回 false。
 func (q *Queue) renewLease(ctx context.Context, p db.Provider, instanceID string) (bool, error) {
-	if q.leaseHeldByOther(p, instanceID, p.AllowMultiple) {
-		return false, nil
-	}
-	lease := q.nowMs() + ProviderLease.Milliseconds()
+	now := q.nowMs()
+	lease := now + ProviderLease.Milliseconds()
 	inst := instanceID
-	return true, q.st.Q.SetProviderLease(ctx, db.SetProviderLeaseParams{InstanceID: &inst, LeaseUntil: &lease, ID: p.ID})
+	n, err := q.st.Q.AcquireProviderLease(ctx, db.AcquireProviderLeaseParams{InstanceID: &inst, LeaseUntil: &lease, ID: p.ID, Now: &now})
+	return n > 0, err
 }
 
 // ClaimHTTP 处理 POST /provider/v1/jobs/claim。
@@ -133,7 +124,7 @@ func (q *Queue) ClaimHTTP(w http.ResponseWriter, r *http.Request) {
 	params := map[string]any{}
 	_ = json.Unmarshal([]byte(job.Params), &params)
 	writeJSON(w, http.StatusOK, apigen.ProviderClaimResponse{Job: apigen.ProviderJob{
-		ID: job.ID, Op: apigen.JobOp(job.Op), OrbID: deref(job.OrbID), Params: params, Attempt: int(job.Attempt),
+		ID: job.ID, Op: apigen.JobOp(job.Op), OrbID: deref(job.OrbID), Params: params, Attempt: int(job.Attempt), ClaimGen: job.ClaimGen,
 	}})
 }
 
@@ -152,12 +143,12 @@ func (q *Queue) CompleteHTTP(w http.ResponseWriter, r *http.Request, jobID strin
 		res.Error = *req.Error
 	}
 	// 回调可能较慢（写库、入队后续任务）；不随 provider 断开而中止。
-	err := q.Complete(context.WithoutCancel(r.Context()), p.ID, jobID, res)
+	err := q.Complete(context.WithoutCancel(r.Context()), p.ID, jobID, req.ClaimGen, res)
 	switch {
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "任务不存在")
 	case errors.Is(err, ErrNotClaimed):
-		writeError(w, http.StatusConflict, "conflict", "任务不处于已认领状态（可能已因租约过期被重排）")
+		writeError(w, http.StatusConflict, "conflict", "任务不处于该次认领（可能已因租约过期被重排，或已有更新的认领）")
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	default:
@@ -200,6 +191,9 @@ func (q *Queue) Handler() http.Handler {
 
 func (q *Queue) authOrFail(w http.ResponseWriter, r *http.Request) (db.Provider, bool) {
 	p, err := q.authProvider(r)
+	if err == nil && q.hookAfterAuth != nil {
+		q.hookAfterAuth()
+	}
 	if errors.Is(err, errProviderUnauthorized) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "provider 令牌无效")
 		return p, false

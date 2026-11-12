@@ -77,6 +77,9 @@ type Queue struct {
 	hooksMu sync.RWMutex
 	hooks   Hooks
 
+	// hookAfterAuth（仅测试）在 /provider/v1/hello 与 claim 完成鉴权、尚未处理租约时调用。
+	hookAfterAuth func()
+
 	mu      sync.Mutex
 	signals map[string]chan struct{} // providerID → 有新任务时关闭并替换
 	waiters map[string][]chan db.Job // jobID → 等待终态的调用方
@@ -111,6 +114,17 @@ func (q *Queue) nowMs() int64 { return q.Now().UnixMilli() }
 
 // Enqueue 为 provider 入队一个任务；params 序列化为 JSON 对象（nil = {}）。
 func (q *Queue) Enqueue(ctx context.Context, providerID, orbID, op string, params any) (db.Job, error) {
+	job, err := q.EnqueueTx(ctx, q.st.Q, q.nowMs(), providerID, orbID, op, params)
+	if err != nil {
+		return db.Job{}, err
+	}
+	q.Signal(providerID)
+	return job, nil
+}
+
+// EnqueueTx 在调用方的事务 tx 中入队（created_at = now），用于把状态变化与它需要的任务一起提交。
+// 事务提交后调用方须调用 Signal(providerID) 唤醒长轮询。
+func (q *Queue) EnqueueTx(ctx context.Context, tx *db.Queries, now int64, providerID, orbID, op string, params any) (db.Job, error) {
 	raw := []byte("{}")
 	if params != nil {
 		b, err := json.Marshal(params)
@@ -124,17 +138,16 @@ func (q *Queue) Enqueue(ctx context.Context, providerID, orbID, op string, param
 		orbRef = &orbID
 	}
 	id := ids.New("job")
-	if err := q.st.Q.CreateJob(ctx, db.CreateJobParams{
-		ID: id, ProviderID: providerID, OrbID: orbRef, Op: op, Params: string(raw), CreatedAt: q.nowMs(),
+	if err := tx.CreateJob(ctx, db.CreateJobParams{
+		ID: id, ProviderID: providerID, OrbID: orbRef, Op: op, Params: string(raw), CreatedAt: now,
 	}); err != nil {
 		return db.Job{}, fmt.Errorf("jobs: enqueue %s: %w", op, err)
 	}
-	job, err := q.st.Q.GetJob(ctx, id)
+	job, err := tx.GetJob(ctx, id)
 	if err != nil {
 		return db.Job{}, err
 	}
 	slog.Debug("任务入队", "job", id, "op", op, "orb", orbID, "provider", providerID)
-	q.signal(providerID)
 	return job, nil
 }
 
@@ -183,8 +196,8 @@ func (q *Queue) removeWaiter(jobID string, ch chan db.Job) {
 
 func terminal(state string) bool { return state == StateSucceeded || state == StateFailed }
 
-// signal 唤醒该 provider 的长轮询。
-func (q *Queue) signal(providerID string) {
+// Signal 唤醒该 provider 的长轮询。
+func (q *Queue) Signal(providerID string) {
 	q.mu.Lock()
 	if ch, ok := q.signals[providerID]; ok {
 		close(ch)
@@ -216,7 +229,7 @@ func (q *Queue) claimOne(ctx context.Context, providerID string) (db.Job, bool, 
 	if err != nil {
 		return db.Job{}, false, err
 	}
-	slog.Info("任务已认领", "job", job.ID, "op", job.Op, "orb", deref(job.OrbID), "attempt", job.Attempt)
+	slog.Info("任务已认领", "job", job.ID, "op", job.Op, "orb", deref(job.OrbID), "attempt", job.Attempt, "claimGen", job.ClaimGen)
 	if h := q.getHooks().OnClaimed; h != nil {
 		h(ctx, job)
 	}
@@ -257,8 +270,9 @@ type Result struct {
 	DurationMs int64
 }
 
-// Complete 记录 provider 上报的结果：成功即终态；失败且未达上限则重排，否则终态 failed。
-func (q *Queue) Complete(ctx context.Context, providerID, jobID string, res Result) error {
+// Complete 记录 provider 对第 claimGen 次认领上报的结果：成功即终态；失败且未达上限则重排，否则终态 failed。
+// 任务已不处于该次认领（租约过期被重排 / 已被巡检判失败 / 已被更新的认领取代）时返回 ErrNotClaimed。
+func (q *Queue) Complete(ctx context.Context, providerID, jobID string, claimGen int64, res Result) error {
 	job, err := q.st.Q.GetJob(ctx, jobID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && job.ProviderID != providerID) {
 		return ErrNotFound
@@ -266,12 +280,13 @@ func (q *Queue) Complete(ctx context.Context, providerID, jobID string, res Resu
 	if err != nil {
 		return err
 	}
-	if job.State != StateClaimed {
+	if job.State != StateClaimed || job.ClaimGen != claimGen {
 		return ErrNotClaimed
 	}
 	return q.finishAttempt(ctx, job, res)
 }
 
+// finishAttempt 以 job.ClaimGen 为条件结束这一次认领（比较并交换）：认领已被重排或取代时返回 ErrNotClaimed。
 func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error {
 	out := TailOutput(res.Output)
 	var errPtr *string
@@ -283,7 +298,7 @@ func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error
 		errPtr = &msg
 	}
 	if !res.OK && int(job.Attempt) < q.MaxAttempts {
-		n, err := q.st.Q.RequeueFailedJob(ctx, db.RequeueFailedJobParams{Output: out, Error: errPtr, ID: job.ID})
+		n, err := q.st.Q.RequeueFailedJob(ctx, db.RequeueFailedJobParams{Output: out, Error: errPtr, ID: job.ID, ClaimGen: job.ClaimGen})
 		if err != nil {
 			return err
 		}
@@ -291,7 +306,7 @@ func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error
 			return ErrNotClaimed
 		}
 		slog.Warn("任务失败，重排", "job", job.ID, "op", job.Op, "orb", deref(job.OrbID), "attempt", job.Attempt, "err", deref(errPtr))
-		q.signal(job.ProviderID)
+		q.Signal(job.ProviderID)
 		return nil
 	}
 	state := StateSucceeded
@@ -299,7 +314,7 @@ func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error
 		state = StateFailed
 	}
 	now := q.nowMs()
-	n, err := q.st.Q.FinishJob(ctx, db.FinishJobParams{State: state, FinishedAt: &now, Output: out, Error: errPtr, ID: job.ID})
+	n, err := q.st.Q.FinishJob(ctx, db.FinishJobParams{State: state, FinishedAt: &now, Output: out, Error: errPtr, ID: job.ID, ClaimGen: job.ClaimGen})
 	if err != nil {
 		return err
 	}
@@ -326,7 +341,7 @@ func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error
 		ch <- final
 	}
 	// 同一 orb 的后续任务此前被串行规则挡住，现在可以认领。
-	q.signal(job.ProviderID)
+	q.Signal(job.ProviderID)
 	if h := q.getHooks().OnFinished; h != nil {
 		h(ctx, final, res.OK)
 	}
@@ -353,7 +368,8 @@ func (q *Queue) scrubToken(ctx context.Context, job db.Job) {
 	}
 }
 
-// Sweep 处理认领租约已过期的任务（视为一次失败尝试）。
+// Sweep 处理认领租约已过期的任务（视为一次失败尝试）。每条按读到的 claim_gen 比较并交换：
+// 读取之后该认领已完成、已重排或已被新认领取代时什么也不做。
 func (q *Queue) Sweep(ctx context.Context) error {
 	now := q.nowMs()
 	expired, err := q.st.Q.ListExpiredClaimedJobs(ctx, &now)
