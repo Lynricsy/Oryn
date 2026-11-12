@@ -3,15 +3,21 @@ package orbdrt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
-// loginEnvTimeout 是求登录 shell 环境的上限；超时或失败时沿用原环境。
-const loginEnvTimeout = 10 * time.Second
+// loginEnvTimeout 是求登录 shell 环境的上限；超时或失败时沿用原环境（测试可调小）。
+var loginEnvTimeout = 10 * time.Second
+
+// loginEnvWaitDelay 是 bash 退出后等待 stdout 关闭的上限：profile 里 `cmd &` 启动的后代进程会继承并
+// 一直持有 stdout 管道，不设上限时 Run 会等到它们退出为止，超时也拦不住（ctx 只杀 bash 本身）。
+var loginEnvWaitDelay = time.Second
 
 // loginShellSkip 是 bash 自己维护、不应从登录 shell 带出的变量。
 var loginShellSkip = map[string]bool{"_": true, "SHLVL": true, "PWD": true, "OLDPWD": true}
@@ -31,7 +37,17 @@ func loginEnv(ctx context.Context, dir string, base map[string]string) map[strin
 	cmd.Stdin = nil
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	// 独立进程组：超时时连同 profile 拉起的后代一起杀掉
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = loginEnvWaitDelay
+	err := cmd.Run()
+	if cmd.Process != nil {
+		// bash 已退出；组里剩下的只可能是 profile 留下的后台进程，它们不该随 agent / 脚本存活
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// ErrWaitDelay：bash 正常退出（`env -0` 已写完），只是后代仍占着 stdout，输出可用
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		slog.Warn("登录 shell 环境求值失败，沿用原环境", "dir", dir, "err", err)
 		return maps.Clone(base)
 	}
