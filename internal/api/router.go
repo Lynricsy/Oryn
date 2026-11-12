@@ -36,6 +36,7 @@ type Server struct {
 
 // publicPaths 是 /api/v1 下免鉴权的路径；另外 /provider/v1/ 前缀由 provider 令牌自行鉴权。
 var publicPaths = map[string]bool{
+	"/healthz":                   true,
 	"/api/v1/auth/setup/begin":   true,
 	"/api/v1/auth/setup/finish":  true,
 	"/api/v1/auth/login/begin":   true,
@@ -49,7 +50,6 @@ var publicPaths = map[string]bool{
 func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP, middleware.Recoverer)
-	r.Get("/healthz", Healthz)
 	for pattern, h := range s.Mounts {
 		r.Handle(pattern, h)
 	}
@@ -78,8 +78,8 @@ func NewRouter(s *Server) http.Handler {
 	return r
 }
 
-// Healthz 返回 {"ok":true,"version":"…"}，免鉴权。
-func Healthz(w http.ResponseWriter, _ *http.Request) {
+// GetHealthz 返回 {"ok":true,"version":"…"}，免鉴权（路由在 /api/v1 组外，不经鉴权中间件）。
+func (s *Server) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "version": version.Version})
 }
 
