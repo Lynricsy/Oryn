@@ -1,0 +1,12 @@
+{
+	"repo": "Lynricsy/oryn-agent",
+	"tag": "oryn-v18.19.0-1",
+	"commit": "d738afd41a4689498e9f52a19981a1a73706bf35",
+	"ompVersion": "18.19.0",
+	"build": "local",
+	"sha256": {
+		"linux-x64": "8e281500fdb10aa321db32091355a07f319f44ff418b59fd80152da7551a5182",
+		"linux-arm64": "b988b9eba47958e7091dce2e5df1e7816339949a788118dcadf4601959d72c8a",
+		"omp-rpc-types.d.ts": "440bca4ad6d5609c67b7125af77d79ce42090cefd7adcc7b70748015644e5a79"
+	}
+}
