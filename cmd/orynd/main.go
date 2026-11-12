@@ -14,9 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/config"
-	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/server"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
 
@@ -56,12 +55,15 @@ func run(args []string) error {
 		return sub(ctx, cfg, rest[1:])
 	}
 
-	st, err := store.Open(ctx, cfg.DataDir)
+	srv, err := server.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	return serve(ctx, cfg, api.NewRouter(&api.Server{Deps: api.Deps{Config: cfg, Store: st}}))
+	defer srv.Close()
+	if err := srv.AnnounceSetup(ctx); err != nil {
+		return err
+	}
+	return serve(ctx, cfg, srv.Handler)
 }
 
 // subcommands 是 `orynd --config <file> <子命令> …` 的本机管理命令，由各文件在 init() 中注册。
