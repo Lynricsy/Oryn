@@ -16,6 +16,7 @@ type turn struct {
 	promptID string
 	messages []any // 本回合新增的消息（agent_end.messages）
 	openMsgs []string
+	settled  bool // finish 已更新会话状态（defer 不再重复）
 }
 
 func nowMs() int64 { return time.Now().UnixMilli() }
@@ -26,16 +27,12 @@ func (s *server) runTurn(base context.Context, p promptReq) {
 	s.streaming = true
 	s.cancelTurn = cancel
 	s.mu.Unlock()
+	t := &turn{s: s, ctx: ctx, promptID: p.id}
 	defer func() {
 		cancel()
-		s.mu.Lock()
-		s.streaming = false
-		s.cancelTurn = nil
-		s.pending--
-		s.mu.Unlock()
+		t.settle()
 	}()
 
-	t := &turn{s: s, ctx: ctx, promptID: p.id}
 	if base.Err() != nil {
 		return
 	}
@@ -82,9 +79,24 @@ func (t *turn) nextMessageID() string {
 	return "msg-" + strconv.Itoa(t.s.msgSeq)
 }
 
+// settle 把会话标记为非流式、已静止；只生效一次。
+func (t *turn) settle() {
+	t.s.mu.Lock()
+	defer t.s.mu.Unlock()
+	if t.settled {
+		return
+	}
+	t.settled = true
+	t.s.streaming = false
+	t.s.cancelTurn = nil
+	t.s.pending--
+}
+
 // finish 发出回合结尾帧：agent_end → prompt_result → session_settled。
+// 状态在 prompt_result 之前更新：收到 session_settled 后的 get_state 必须已是静止态（与 omp 一致）。
 func (t *turn) finish(status string) {
 	t.s.emitEvent(map[string]any{"type": "agent_end", "messages": nonNil(t.messages), "isTerminal": true, "yielded": true})
+	t.settle()
 	pr := map[string]any{"type": "prompt_result", "agentInvoked": true, "status": status, "sessionSettled": true}
 	if t.promptID != "" {
 		pr["id"] = t.promptID
