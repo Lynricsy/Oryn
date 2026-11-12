@@ -45,10 +45,14 @@ export function TerminalView({
 		ro?.observe(el);
 		const vv = window.visualViewport;
 		vv?.addEventListener("resize", schedule);
+		// 非属主窗口按属主尺寸显示时 xterm 可能比容器小：点容器空白处也聚焦终端
+		const focus = () => term.focus?.();
+		el.addEventListener("click", focus);
 		return () => {
 			clearTimeout(timer);
 			ro?.disconnect();
 			vv?.removeEventListener("resize", schedule);
+			el.removeEventListener("click", focus);
 			if (session.refit === refit) session.refit = null;
 		};
 	}, [threadId, terminalId, autoFocus]);

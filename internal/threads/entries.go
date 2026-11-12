@@ -240,6 +240,10 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 	if len(entries) > 0 && main {
 		t.leaf = leaf
 	}
+	// 先登记缺失 blob 的拉取，再推送条目：客户端收到条目后立即请求的 GET blobs/{sha} 能等到在途的拉取
+	if len(blobs) > 0 {
+		s.fetchBlobs(orbID, blobs)
+	}
 	// 每批的 lastSeq 是该批覆盖到的游标：本次之前的条目早已推送，本次新条目的 seq 递增，
 	// 因此 ≤ max(prevLast, 本批及之前各批的最大 seq) 的条目都已送达（CP2）
 	covered := prevLast
@@ -254,9 +258,6 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 		s.publish(ctx, t.id)
 	}
 	s.recompute(ctx, t)
-	if len(blobs) > 0 {
-		s.fetchBlobs(orbID, blobs)
-	}
 	return apigen.LinkCtlEntriesAppendResult{Accepted: true, Offset: p.EndOffset}, nil
 }
 
@@ -496,14 +497,35 @@ func (s *Service) storeBlob(ctx context.Context, sha string, size int64, r io.Re
 	return s.st.Q.InsertBlob(ctx, db.InsertBlobParams{Sha256: sha, Size: size, Mime: http.DetectContentType(head[:n]), CreatedAt: s.now()})
 }
 
-// Blob 返回 blob 元数据与文件路径。
+// blobWaitMax 是 Blob 等待在途 blob.fetch 的上限。
+const blobWaitMax = 30 * time.Second
+
+// Blob 返回 blob 元数据与文件路径；库中尚无而该 blob 正在从 orb 拉取时，等拉取结束（≤blobWaitMax）再查。
 func (s *Service) Blob(ctx context.Context, sha string) (db.Blob, string, error) {
-	b, err := s.st.Q.GetBlob(ctx, sha)
-	if errors.Is(err, sql.ErrNoRows) {
-		return b, "", errf("not_found", "blob not found")
+	deadline := time.NewTimer(blobWaitMax)
+	defer deadline.Stop()
+	for {
+		b, err := s.st.Q.GetBlob(ctx, sha)
+		if err == nil {
+			return b, s.BlobPath(sha), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return b, "", err
+		}
+		s.mu.Lock()
+		f := s.blobs[sha]
+		s.mu.Unlock()
+		if f == nil {
+			return b, "", errf("not_found", "blob not found")
+		}
+		// done 只在收到 blob 流后关闭；orb 回 found=false 等失败路径只删登记，故兼以短轮询
+		select {
+		case <-f.done:
+		case <-time.After(200 * time.Millisecond):
+		case <-deadline.C:
+			return b, "", errf("not_found", "blob not found")
+		case <-ctx.Done():
+			return b, "", ctx.Err()
+		}
 	}
-	if err != nil {
-		return b, "", err
-	}
-	return b, s.BlobPath(sha), nil
 }

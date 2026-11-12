@@ -38,6 +38,7 @@ class FakeTerm implements TermLike {
 	cols = 100;
 	rows = 30;
 	buf = "";
+	pendingChars = 0;
 	resizes: [number, number][] = [];
 	write(d: string) {
 		this.buf += d;
@@ -56,6 +57,9 @@ class FakeTerm implements TermLike {
 	}
 	propose() {
 		return { cols: 120, rows: 40 };
+	}
+	backlog() {
+		return this.pendingChars;
 	}
 }
 
@@ -352,6 +356,46 @@ describe("TerminalHub 帧与尺寸", () => {
 		expect([term.cols, term.rows]).toEqual([80, 24]);
 	});
 
+	it("快速连发两次 resize：较早尺寸的回显不让出属主", async () => {
+		const h = setup();
+		h.omp.terminals = [info("t1")];
+		h.hub.setVisible(TID, true);
+		await vi.advanceTimersByTimeAsync(0);
+		h.hub.claimSize(TID, "t1"); // 发 120x40
+		h.hub.fitted(TID, "t1", { cols: 121, rows: 40 }); // 滚动条出现后再发一次
+		h.hub.onResized(TID, "t1", 120, 40); // 第一条的回显（迟到）
+		expect(h.hub.session(TID, "t1")?.owner).toBe(true);
+		expect(h.terms[0]?.cols).toBe(121);
+		h.hub.onResized(TID, "t1", 121, 40);
+		expect(h.hub.session(TID, "t1")?.owner).toBe(true);
+		h.hub.onResized(TID, "t1", 80, 24); // 另一窗口
+		expect(h.hub.session(TID, "t1")?.owner).toBe(false);
+		expect(h.terms[0]?.cols).toBe(80);
+	});
+
+	it("非属主窗口里输入即认领尺寸，之后的容器变化照常发 resize", async () => {
+		const h = setup();
+		h.omp.terminals = [info("t1")];
+		h.hub.setVisible(TID, true);
+		await vi.advanceTimersByTimeAsync(0);
+		h.hub.claimSize(TID, "t1");
+		h.hub.onResized(TID, "t1", 80, 24); // 另一窗口抢走属主
+		expect(h.hub.session(TID, "t1")?.owner).toBe(false);
+		h.hub.input(TID, "t1", "l");
+		expect(h.hub.session(TID, "t1")?.owner).toBe(true);
+		expect(h.omp.calls.at(-1)).toEqual({
+			type: "terminal_resize",
+			terminalId: "t1",
+			cols: 120,
+			rows: 40,
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.omp.calls.at(-1)).toMatchObject({ type: "terminal_input" });
+		const n = h.omp.count("terminal_resize");
+		h.hub.fitted(TID, "t1", { cols: 90, rows: 20 });
+		expect(h.omp.count("terminal_resize")).toBe(n + 1);
+	});
+
 	it("同一轮事件循环的输入合并为一条，超过 64KiB 分片", async () => {
 		const h = setup();
 		h.omp.terminals = [info("t1")];
@@ -383,5 +427,27 @@ describe("TerminalHub 帧与尺寸", () => {
 		await vi.advanceTimersByTimeAsync(200);
 		expect(h.omp.count("terminal_list")).toBe(2);
 		expect(h.watch).toEqual([true, true]);
+	});
+
+	it("xterm 写缓冲积压超限：丢弃新输出并经快照重同步", async () => {
+		const h = setup();
+		h.omp.terminals = [info("t1")];
+		h.omp.snapshots.set("t1", { data: "a", seq: 1 });
+		h.hub.setVisible(TID, true);
+		await vi.advanceTimersByTimeAsync(1100);
+		const term = h.terms[0];
+		if (!term) throw new Error("no term");
+		expect(term.buf).toBe("a");
+		term.pendingChars = 5 << 20;
+		h.hub.onFrame(TID, out("t1", 2, "b"));
+		expect(term.buf).toBe("a");
+		term.pendingChars = 0;
+		h.omp.snapshots.set("t1", { data: "abc", seq: 3 });
+		h.hub.onFrame(TID, out("t1", 3, "c")); // 同步前到达：缓冲，快照已覆盖
+		await vi.advanceTimersByTimeAsync(600);
+		expect(h.omp.count("terminal_snapshot")).toBe(2);
+		expect(term.buf).toBe("abc");
+		h.hub.onFrame(TID, out("t1", 4, "d"));
+		expect(term.buf).toBe("abcd");
 	});
 });

@@ -27,7 +27,10 @@ export interface TermLike {
 	readonly cols: number;
 	readonly rows: number;
 	write(data: string): void;
+	/** 清屏复位；须排在此前已 `write` 的数据之后生效（否则积压的旧输出会落在复位之后）。 */
 	reset(): void;
+	/** 已 `write` 但尚未被解析的字符数（xterm 的写缓冲积压）。 */
+	backlog?(): number;
 	resize(cols: number, rows: number): void;
 	dispose(): void;
 	/** 缓冲区全文（含回滚；软换行的行拼回一行）。 */
@@ -89,6 +92,8 @@ export interface TerminalDebugInfo extends RpcTerminalInfo {
 	/** xterm 实际尺寸（可能与 omp 的不同：非属主窗口按属主尺寸显示）。 */
 	termCols?: number;
 	termRows?: number;
+	/** 本窗口是否为尺寸属主。 */
+	owner?: boolean;
 }
 
 export interface ThreadTerminalsState {
@@ -112,6 +117,8 @@ const LAGGED_DELAY_MS = 500;
 const INPUT_CHUNK = 64 * 1024;
 /** 同步期间缓冲的输出上限（字符）；溢出则同步后再来一次。 */
 const SYNC_BUFFER_LIMIT = 4 << 20;
+/** 终端写缓冲积压上限（字符）：超过即丢弃新输出并经快照重同步（xterm 积压到 50MB 会抛错丢数据）。 */
+const TERM_BACKLOG_LIMIT = 4 << 20;
 const SYNC_RETRY_MS = 3000;
 const SYNC_MAX_RETRIES = 3;
 
@@ -145,6 +152,8 @@ export class TerminalSession {
 	owner = false;
 	/** 最近一次发出（或作为非属主时采纳）的尺寸。 */
 	lastSize: { cols: number; rows: number } | null = null;
+	/** 已发出、尚未收到 `term.resized` 回显的尺寸（按发送顺序）；快速连发时旧尺寸的回显不算别的窗口。 */
+	sentSizes: { cols: number; rows: number }[] = [];
 	/** 视图注册：同步完成后按容器重新 fit（属主时会发 resize）。 */
 	refit: (() => void) | null = null;
 	inputQueue = "";
@@ -411,6 +420,14 @@ export class TerminalHub {
 				s.buffer = [{ seq: chunk.seq, data: chunk.data }];
 				s.bufferChars = chunk.data.length;
 				this.requestSync(threadId);
+			}
+			return;
+		}
+		if ((s.term?.backlog?.() ?? 0) > TERM_BACKLOG_LIMIT) {
+			// xterm 解析跟不上（洪泛）：本块不写，转入同步（快照覆盖被丢弃的输出）
+			if (r.visible) {
+				s.syncing = true;
+				this.requestSync(threadId, LAGGED_DELAY_MS);
 			}
 			return;
 		}
@@ -751,13 +768,17 @@ export class TerminalHub {
 		return this.deps.wake(threadId);
 	}
 
-	/** xterm 的输入：同一事件循环内合并，超过 64KiB 分片顺序发送，不等应答。 */
+	/**
+	 * xterm 的输入：同一事件循环内合并，超过 64KiB 分片顺序发送，不等应答。
+	 * 在非属主窗口里输入即认领尺寸：焦点早已在 xterm 上时（别的窗口随后打开并抢走属主）不会再有 focus 事件。
+	 */
 	input(threadId: string, terminalId: string, data: string) {
 		const r = this.threads.get(threadId);
 		const s = r?.sessions.get(terminalId);
 		if (!r || !s || !data) return;
 		const e = r.store.getState().terminals[terminalId];
 		if (e?.status !== "live") return;
+		if (!s.owner) this.claimSize(threadId, terminalId);
 		s.inputQueue += s.transform ? s.transform(data) : data;
 		if (s.inputScheduled) return;
 		s.inputScheduled = true;
@@ -798,6 +819,7 @@ export class TerminalHub {
 		if (s.lastSize?.cols === size.cols && s.lastSize.rows === size.rows) return;
 		if (!this.deps.readiness(threadId).ready) return;
 		s.lastSize = size;
+		s.sentSizes.push(size);
 		this.deps
 			.cmd(threadId, {
 				type: "terminal_resize",
@@ -805,7 +827,11 @@ export class TerminalHub {
 				cols: size.cols,
 				rows: size.rows,
 			})
-			.catch(() => {});
+			.catch(() => {
+				// 未送达则不会有回显
+				const i = s.sentSizes.indexOf(size);
+				if (i >= 0) s.sentSizes.splice(i, 1);
+			});
 	}
 
 	/** 终端获得焦点 / 标签激活：成为属主并按容器尺寸发 resize。 */
@@ -829,8 +855,15 @@ export class TerminalHub {
 			});
 		const s = r.sessions.get(terminalId);
 		if (!s) return;
+		// 自己发出的尺寸的回显（含快速连发时较早尺寸的回显）：不让出属主
+		const own = s.sentSizes.findIndex(
+			(z) => z.cols === cols && z.rows === rows,
+		);
+		if (own >= 0) s.sentSizes.splice(0, own + 1);
 		if (s.lastSize?.cols === cols && s.lastSize.rows === rows) return;
+		if (own >= 0 && s.owner) return;
 		s.owner = false;
+		s.sentSizes = [];
 		s.lastSize = { cols, rows };
 		s.term?.resize(cols, rows);
 	}
@@ -856,6 +889,7 @@ export class TerminalHub {
 					lastSeq: s?.lastSeq ?? 0,
 					termCols: s?.term?.cols,
 					termRows: s?.term?.rows,
+					owner: s?.owner,
 				},
 			];
 		});

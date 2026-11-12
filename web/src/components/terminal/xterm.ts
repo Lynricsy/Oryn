@@ -49,6 +49,8 @@ class XtermTerm implements TermLike {
 	private readonly fit = new FitAddon();
 	private readonly onFocus: () => void;
 	private focusBound = false;
+	/** 已 write 但 xterm 尚未解析的字符数。 */
+	private pending = 0;
 
 	constructor(handlers: TermHandlers) {
 		const compact = typeof window !== "undefined" && window.innerWidth < 600;
@@ -96,10 +98,17 @@ class XtermTerm implements TermLike {
 		return this.term.rows;
 	}
 	write(data: string) {
-		this.term.write(data);
+		this.pending += data.length;
+		this.term.write(data, () => {
+			this.pending -= data.length;
+		});
 	}
 	reset() {
-		this.term.reset();
+		// xterm 的 reset 立即生效而写缓冲是异步的：排进写队列，避免积压的旧输出落在复位之后
+		this.term.write("", () => this.term.reset());
+	}
+	backlog() {
+		return this.pending;
 	}
 	resize(cols: number, rows: number) {
 		if (cols < 2 || rows < 1) return;
