@@ -54,7 +54,9 @@ func EnvFallbackName(providerKey string) string {
 var (
 	// ssh-keys/（私钥）、remote-pairing.json（配对令牌）、*.bak（常为含明文密钥的 models.yml 备份）同样不上传：
 	// 它们不是文本配置，却会把凭据带进 orb。
-	excludedDirs  = []string{"sessions", "blobs", "cache", "logs", "natives", "terminal-sessions", "ssh-keys"}
+	// memories/（记忆库运行时数据）与 skill-repositories/（按 agent-config-hub.json 克隆的技能仓库缓存，
+	// 可由配置重新拉取，体积常达上百 MiB）同样排除。
+	excludedDirs  = []string{"sessions", "blobs", "cache", "logs", "natives", "terminal-sessions", "ssh-keys", "memories", "skill-repositories"}
 	excludedGlobs = []string{"*.db", "*.db-*", "auth.json", "history*", "remote-pairing.json", "*.bak", "*.bak.*"}
 )
 
@@ -64,6 +66,12 @@ func Excluded(rel string) bool {
 	first, _, _ := strings.Cut(rel, "/")
 	for _, d := range excludedDirs {
 		if first == d {
+			return true
+		}
+	}
+	// 版本库元数据与依赖目录不是配置（且常含超大文件）
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == ".git" || seg == "node_modules" {
 			return true
 		}
 	}
@@ -80,7 +88,27 @@ var secretLikeRes = []*regexp.Regexp{
 	regexp.MustCompile(`sk-[A-Za-z0-9_-]{16,}`),
 	regexp.MustCompile(`ghp_[A-Za-z0-9]{20,}`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	regexp.MustCompile(`(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{32,}={0,2})(?:$|[^A-Za-z0-9+/=_-])`),
+	// 通用长串：≥32 位 base64url 字符；ScanSecretLike 只保留大小写字母与数字混排的命中，
+	// 排除 git 哈希、校验和、单词拼接等误报。
+	genericSecretRe,
+}
+
+var genericSecretRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+_-]{32,}={0,2})(?:$|[^A-Za-z0-9+/=_-])`)
+
+// mixedClasses 判断串同时含大写、小写与数字。
+func mixedClasses(s []byte) bool {
+	var up, lo, dg bool
+	for _, c := range s {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			up = true
+		case c >= 'a' && c <= 'z':
+			lo = true
+		case c >= '0' && c <= '9':
+			dg = true
+		}
+	}
+	return up && lo && dg
 }
 
 // ScanSecretLike 返回内容中形似密钥的片段（已脱敏，仅保留前 4 个字符），用于告警。
@@ -92,6 +120,9 @@ func ScanSecretLike(content []byte) []string {
 			s := m[0]
 			if len(m) > 1 && m[1] != nil {
 				s = m[1]
+			}
+			if re == genericSecretRe && !mixedClasses(s) {
+				continue
 			}
 			masked := string(s[:4]) + "…"
 			if !seen[masked] {

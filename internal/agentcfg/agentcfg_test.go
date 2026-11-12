@@ -108,8 +108,16 @@ func TestExcluded(t *testing.T) {
 	for p, want := range map[string]bool{
 		"sessions/a.jsonl": true, "blobs/x": true, "agent.db": true, "agent.db-wal": true,
 		"auth.json": true, "history.db": true, "config.yml": false, "skills/sessions/x": false,
+		"skill-repositories/x/.git/objects/pack/p.pack": true, "extensions/a/node_modules/b/index.js": true,
 		"ssh-keys/id_ed25519": true, "remote-pairing.json": true, "models.yml.bak.20260714-220351": true,
 	} {
 		assert.Equal(t, want, Excluded(p), p)
 	}
+}
+
+func TestScanSecretLikeNoise(t *testing.T) {
+	noisy := "a0162f1e3c4b5d6e7f8091a2b3c4d5e6f7081920 refs/heads/main\nsee https://github.com/owner/some-very-long-repository-name-here\nmax_completion_tokens_per_request_limit_value"
+	assert.Empty(t, ScanSecretLike([]byte(noisy)), "git 哈希、URL、单词拼接不告警")
+	assert.NotEmpty(t, ScanSecretLike([]byte("token: Xy7kP2mQ9vR4tL8nB3wE6sD1fG5hJ0aZ")))
+	assert.NotEmpty(t, ScanSecretLike([]byte("sk-abcdefghijklmnop1234")))
 }
