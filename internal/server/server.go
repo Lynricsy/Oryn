@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
@@ -13,9 +14,14 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
+
+// evalInterval 是 orb 空闲评估周期；0 = orbs 默认（30s）。测试可调小。
+var evalInterval time.Duration
 
 // Server 持有控制面全部组件。
 type Server struct {
@@ -27,6 +33,8 @@ type Server struct {
 	Tickets *auth.Tickets
 	Jobs    *jobs.Queue
 	Orbs    *orbs.Service
+	Threads *threads.Service
+	Hub     *realtime.Hub
 	API     *api.Server
 	Handler http.Handler
 
@@ -68,22 +76,26 @@ func (s *Server) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.Orbs = orbs.New(orbs.Config{Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key},
+	s.Orbs = orbs.New(orbs.Config{Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval},
 		s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
+	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
+	s.Threads = threads.New(threads.Config{DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus}, s.Store, orbsAdapter{s.Orbs})
+	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth})
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
 	go s.Auth.Run(runCtx)
-	s.closers = append(s.closers, func() { cancel(); s.Orbs.Close() })
+	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
 
 	s.API = &api.Server{Deps: api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
 		AuthMiddleware: auth.Middleware(s.Store),
-		Mounts:         map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler()},
+		Mounts:         map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub},
 	}}
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
+	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

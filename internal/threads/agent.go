@@ -587,7 +587,7 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		t.mu.Unlock()
 		return err
 	}
-	needWake := !t.agentReady()
+	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
 	t.mu.Unlock()
@@ -612,7 +612,7 @@ func (s *Service) call(ctx context.Context, t *thread, frame []byte) (omprpc.Env
 	}
 	_ = json.Unmarshal(frame, &typ)
 	err := s.enqueueLocked(t, frame, &pendingCmd{cmdType: typ.Type, internal: ch})
-	needWake := !t.agentReady()
+	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
 	t.mu.Unlock()
 	if err != nil {
 		return omprpc.Envelope{}, nil, err
