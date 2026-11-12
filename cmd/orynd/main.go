@@ -61,7 +61,7 @@ func run(args []string) error {
 		return err
 	}
 	defer st.Close()
-	return serve(ctx, cfg, api.NewRouter(api.Deps{Store: st}))
+	return serve(ctx, cfg, api.NewRouter(&api.Server{Deps: api.Deps{Config: cfg, Store: st}}))
 }
 
 // subcommands 是 `orynd --config <file> <子命令> …` 的本机管理命令，由各文件在 init() 中注册。

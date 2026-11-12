@@ -1,0 +1,2582 @@
+openapi: 3.0.3
+info:
+  title: Oryn 协议
+  version: 0.1.0
+  description: |
+    Oryn 的唯一协议源。覆盖：
+
+    - 客户端 REST（`/api/v1/...`）与客户端 WebSocket（`/api/v1/ws`，消息见 `WsClientMessage` / `WsServerMessage`）；
+    - provider 协议（`/provider/v1/...`，Bearer `opv_…`）；
+    - orb link（`/orb/v1/link`，WebSocket + yamux；流头见 `LinkStreamHeader`，`ctl` 流消息见 `LinkCtl*`）；
+    - 健康检查 `/healthz`。
+
+    约定：
+
+    - 时间一律为 UTC 毫秒整数（`TimestampMs`）。
+    - 错误体统一为 `Error`（`{code, message}`）。
+    - 网页会话 Cookie `oryn_session`；凡变更类请求（POST/PUT/PATCH/DELETE）使用 Cookie 鉴权时必须带头 `X-Oryn-CSRF: 1`，
+      使用设备令牌（`Authorization: Bearer odt_…`）时无需该头。
+    - 路径参数中的 `/` 须编码为 `%2F`（`agent-config/files/{path}`、`secrets/{name}`）。
+    - omp RPC 的命令与帧对控制面不透明（`OmpFrame`），其权威类型在 agent 仓库（`web/src/omp/rpc-types.d.ts`）。
+  license:
+    name: Proprietary
+    url: https://github.com/Lynricsy/Oryn
+servers:
+  - url: http://127.0.0.1:7600
+    description: 本机控制面（生产环境位于反代之后）
+security:
+  - cookieAuth: []
+  - deviceBearer: []
+tags:
+  - name: meta
+    description: 健康检查
+  - name: auth
+    description: Passkey 初始化、登录、恢复码
+  - name: devices
+    description: 设备配对与吊销
+  - name: projects
+    description: 项目
+  - name: providers
+    description: orb provider 管理（客户端侧）
+  - name: threads
+    description: 线程
+  - name: orbs
+    description: orb
+  - name: blobs
+    description: 内容寻址的二进制对象
+  - name: secrets
+    description: 密钥库（只返回元数据）
+  - name: agent-config
+    description: omp 文本配置（omp-home）
+  - name: stats
+    description: 统计
+  - name: realtime
+    description: 客户端实时通道
+  - name: provider-protocol
+    description: provider → 控制面（C1）
+  - name: websocket
+    description: WebSocket 升级端点（不进入 strict server，由手写处理器服务）
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      operationId: getHealthz
+      summary: 健康检查
+      security: []
+      responses:
+        '200':
+          description: 正常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- auth
+  /api/v1/auth/setup/begin:
+    post:
+      tags: [auth]
+      operationId: authSetupBegin
+      summary: 开始注册 Passkey
+      description: |
+        首次初始化：请求体带 `ost_` 初始化令牌。
+        恢复流程：`auth/recovery` 成功后持有的一次性会话 Cookie 也可调用本端点（此时 `token` 省略），用于重新注册 Passkey。
+      security:
+        - {}
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthSetupBeginRequest' }
+      responses:
+        '200':
+          description: WebAuthn 注册选项
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnCeremony' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/setup/finish:
+    post:
+      tags: [auth]
+      operationId: authSetupFinish
+      summary: 完成注册 Passkey
+      description: 成功后建立网页会话（Set-Cookie `oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）。
+      security:
+        - {}
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthSetupFinishRequest' }
+      responses:
+        '200':
+          description: 注册成功
+          headers:
+            Set-Cookie:
+              description: '`oryn_session=…; HttpOnly; Secure; SameSite=Lax`'
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSetupFinishResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/login/begin:
+    post:
+      tags: [auth]
+      operationId: authLoginBegin
+      summary: 开始 Passkey 登录（可发现凭据）
+      security: [{}]
+      responses:
+        '200':
+          description: WebAuthn 断言选项
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnCeremony' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/login/finish:
+    post:
+      tags: [auth]
+      operationId: authLoginFinish
+      summary: 完成 Passkey 登录
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthLoginFinishRequest' }
+      responses:
+        '200':
+          description: 登录成功（Set-Cookie `oryn_session`，有效期 30 天，滑动续期）
+          headers:
+            Set-Cookie:
+              description: '`oryn_session=…; HttpOnly; Secure; SameSite=Lax`'
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/recovery:
+    post:
+      tags: [auth]
+      operationId: authRecovery
+      summary: 用恢复码换取「重新注册 Passkey」的一次性会话
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRecoveryRequest' }
+      responses:
+        '200':
+          description: 恢复码有效且已作废；Set-Cookie 为仅能调用 `auth/setup/*` 的一次性会话
+          headers:
+            Set-Cookie:
+              description: 一次性恢复会话
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRecoveryResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: authLogout
+      summary: 注销当前网页会话
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      responses:
+        '204': { description: 已注销 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: 当前身份
+      responses:
+        '200':
+          description: 当前身份
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- devices
+  /api/v1/devices/pair/start:
+    post:
+      tags: [devices]
+      operationId: devicePairStart
+      summary: 发起设备配对（免鉴权）
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DevicePairStartRequest' }
+      responses:
+        '200':
+          description: 配对码；`verifier` 只给发起方
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevicePairStartResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/devices/pair/approve:
+    post:
+      tags: [devices]
+      operationId: devicePairApprove
+      summary: 在网页上批准配对（需网页会话）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DevicePairApproveRequest' }
+      responses:
+        '200':
+          description: 已批准，返回新设备
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/devices/pair/poll:
+    post:
+      tags: [devices]
+      operationId: devicePairPoll
+      summary: 发起方轮询配对结果（免鉴权，靠 verifier）
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DevicePairPollRequest' }
+      responses:
+        '200':
+          description: 已批准；设备令牌只返回这一次
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevicePairPollResponse' }
+        '202':
+          description: 尚未批准，按 `interval` 秒后重试
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: 设备列表
+      responses:
+        '200':
+          description: 设备列表（含已吊销）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/devices/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/DeviceIdPath' }
+    delete:
+      tags: [devices]
+      operationId: revokeDevice
+      summary: 吊销设备（之后该令牌请求返回 401）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已吊销 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- projects
+  /api/v1/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: 项目列表
+      parameters:
+        - name: archived
+          in: query
+          description: 为 true 时只返回已归档项目；缺省只返回未归档
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: 项目列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: 新建项目
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectCreate' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: 项目详情
+      responses:
+        '200':
+          description: 项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      summary: 修改项目
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPatch' }
+      responses:
+        '200':
+          description: 修改后的项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [projects]
+      operationId: deleteProject
+      summary: 删除项目（其线程保留，`projectId` 置空）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- providers
+  /api/v1/providers:
+    get:
+      tags: [providers]
+      operationId: listProviders
+      summary: provider 列表
+      responses:
+        '200':
+          description: provider 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [providers]
+      operationId: createProvider
+      summary: 新建 provider（令牌只显示一次）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderCreateRequest' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderCreateResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/providers/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ProviderIdPath' }
+    delete:
+      tags: [providers]
+      operationId: deleteProvider
+      summary: 删除（停用）provider，其令牌立即失效
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- threads
+  /api/v1/threads:
+    get:
+      tags: [threads]
+      operationId: listThreads
+      summary: 线程列表
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: '#/components/schemas/ThreadState' }
+        - name: project
+          in: query
+          description: 项目 id；传 `none` 只返回无项目线程
+          schema: { type: string }
+        - name: archived
+          in: query
+          description: 为 true 时只返回已归档线程；缺省只返回未归档
+          schema: { type: boolean }
+        - name: q
+          in: query
+          description: 标题 / 标签的模糊搜索
+          schema: { type: string }
+      responses:
+        '200':
+          description: 线程列表（按 `updatedAt` 降序）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [threads]
+      operationId: createThread
+      summary: 新建线程
+      description: 省略 `executor.provider` / `executor.type` 时依次取项目默认、`orb_defaults`、provider 的 `defaultType`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateThreadRequest' }
+      responses:
+        '201':
+          description: 已创建（通常处于 `provisioning`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [threads]
+      operationId: getThread
+      summary: 线程详情
+      responses:
+        '200':
+          description: 线程
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Thread' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [threads]
+      operationId: updateThread
+      summary: 修改线程（改名时控制面同时向 agent 发 `set_session_name`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThreadPatch' }
+      responses:
+        '200':
+          description: 修改后的线程
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Thread' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [threads]
+      operationId: deleteThread
+      summary: 删除线程（停止其 agent，删除条目）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/entries:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [threads]
+      operationId: listThreadEntries
+      summary: 分页读取已复制条目（按 `seq` 升序）
+      parameters:
+        - name: after
+          in: query
+          description: 只返回 `seq > after` 的条目
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: 条目页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryPage' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/fork:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    post:
+      tags: [threads]
+      operationId: forkThread
+      summary: fork 线程（共用 orb 或连环境分叉）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForkThreadRequest' }
+      responses:
+        '201':
+          description: 新线程（`env:"copy"` 时处于 `provisioning`，就绪后自动接续）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/wake:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    post:
+      tags: [threads]
+      operationId: wakeThread
+      summary: 唤醒线程所在 orb（异步）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202': { description: 已受理 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- orbs
+  /api/v1/orbs:
+    get:
+      tags: [orbs]
+      operationId: listOrbs
+      summary: orb 列表
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: '#/components/schemas/OrbState' }
+        - name: includeDeleted
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: orb 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    get:
+      tags: [orbs]
+      operationId: getOrb
+      summary: orb 详情
+      responses:
+        '200':
+          description: orb
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [orbs]
+      operationId: deleteOrb
+      summary: 删除 orb（先 shutdown 再 delete；其线程保留条目，`orbId` 置空）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202':
+          description: 已进入 `deleting`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/pause:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    post:
+      tags: [orbs]
+      operationId: pauseOrb
+      summary: 手动冻结或停机
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrbPauseRequest' }
+      responses:
+        '202':
+          description: 已进入 `freezing` / `stopping`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/resume:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    post:
+      tags: [orbs]
+      operationId: resumeOrb
+      summary: 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202':
+          description: 已进入 `waking`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/metrics:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    get:
+      tags: [orbs]
+      operationId: getOrbMetrics
+      summary: orb 资源采样（按 `step` 降采样，取窗口内均值；网络字节取窗口末值）
+      parameters:
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+        - name: step
+          in: query
+          description: 降采样步长（秒）；缺省 = 原始采样（15s）
+          schema: { type: integer, minimum: 15 }
+      responses:
+        '200':
+          description: 采样序列
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbMetrics' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- blobs
+  /api/v1/blobs/{sha256}:
+    parameters:
+      - name: sha256
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Sha256' }
+    get:
+      tags: [blobs]
+      operationId: getBlob
+      summary: 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
+      description: '`Content-Type` 为入库时记录的 mime；内容寻址，可长期缓存。'
+      responses:
+        '200':
+          description: 原始字节
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- secrets
+  /api/v1/secrets:
+    get:
+      tags: [secrets]
+      operationId: listSecrets
+      summary: 密钥列表（仅名称与元数据）
+      responses:
+        '200':
+          description: 密钥元数据列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/secrets/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/SecretNamePath' }
+    put:
+      tags: [secrets]
+      operationId: putSecret
+      summary: 写入密钥
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SecretPut' }
+      responses:
+        '200':
+          description: 写入后的元数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretMeta' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [secrets]
+      operationId: deleteSecret
+      summary: 删除密钥
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- agent-config
+  /api/v1/agent-config/files:
+    get:
+      tags: [agent-config]
+      operationId: listAgentConfigFiles
+      summary: omp-home 文件列表
+      responses:
+        '200':
+          description: 文件列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigFileList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/agent-config/files/{path}:
+    parameters:
+      - { $ref: '#/components/parameters/AgentConfigPath' }
+    get:
+      tags: [agent-config]
+      operationId: getAgentConfigFile
+      summary: 读取文件原文（`models.yml` 返回的是密钥已替换为 `${oryn:secret:…}` 的模板）
+      responses:
+        '200':
+          description: 文件原文
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [agent-config]
+      operationId: putAgentConfigFile
+      summary: 写入文件（`models.yml` 会做 C5 的密钥抽取）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: mode
+          in: query
+          description: 文件权限（八进制整数，如 420 = 0644）；缺省 0644
+          schema: { type: integer, minimum: 0, maximum: 511 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 写入结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigWriteResult' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [agent-config]
+      operationId: deleteAgentConfigFile
+      summary: 删除文件
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/agent-config/import:
+    post:
+      tags: [agent-config]
+      operationId: importAgentConfig
+      summary: 导入 tar 包（`oryn config push` 使用）
+      description: 包内路径相对 omp-home 根；整体替换现有 omp-home（不在包内的文件被删除）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 导入结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- stats
+  /api/v1/stats/usage:
+    get:
+      tags: [stats]
+      operationId: getUsageStats
+      summary: 模型用量分组聚合
+      parameters:
+        - name: groupBy
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [day, model, thread, project]
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+      responses:
+        '200':
+          description: 分组结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageStats' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/stats/orbs:
+    get:
+      tags: [stats]
+      operationId: getOrbStats
+      summary: orb 生命周期统计（由 `orb_events` 计算）
+      parameters:
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+      responses:
+        '200':
+          description: 按 orb 类型汇总
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbStats' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- realtime
+  /api/v1/ws-ticket:
+    post:
+      tags: [realtime]
+      operationId: createWsTicket
+      summary: 签发 WebSocket 票据（一次性，30 秒有效）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 票据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WsTicket' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ws:
+    get:
+      tags: [websocket, realtime]
+      operationId: connectWs
+      summary: 客户端实时通道（WebSocket，JSON 文本消息）
+      description: |
+        C→S 消息见 `WsClientMessage`，S→C 消息见 `WsServerMessage`。
+        `sub` 后服务端先发 `thread.snapshot`，再分批发 `entries`（每条 ≤200 个条目），之后转发实时 `frame`。
+        待发数据超过 8MiB 的慢消费者会被断开，客户端应重连并以 `afterSeq` 补拉。
+      security: [{}]
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          description: '`POST /api/v1/ws-ticket` 签发的票据'
+          schema: { type: string }
+      responses:
+        '101': { description: 切换到 WebSocket }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- provider protocol (C1)
+  /provider/v1/hello:
+    post:
+      tags: [provider-protocol]
+      operationId: providerHello
+      summary: provider 实例上线并取得租约
+      security:
+        - providerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderHelloRequest' }
+      responses:
+        '200':
+          description: 已登记；须在 `leaseSeconds` 内以 `jobs/claim` 续租
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderHelloResponse' }
+        '409':
+          description: 另一实例租约未过期且未声明 `allowMultiple`（`code:"provider_already_connected"`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /provider/v1/jobs/claim:
+    post:
+      tags: [provider-protocol]
+      operationId: providerClaimJob
+      summary: 长轮询认领任务（同时续租）
+      security:
+        - providerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderClaimRequest' }
+      responses:
+        '200':
+          description: 认领到任务（认领租约 6 分钟）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderClaimResponse' }
+        '204':
+          description: 等待超时，无任务
+        default: { $ref: '#/components/responses/Error' }
+  /provider/v1/jobs/{id}/complete:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/JobId' }
+    post:
+      tags: [provider-protocol]
+      operationId: providerCompleteJob
+      summary: 上报任务结果
+      security:
+        - providerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderCompleteRequest' }
+      responses:
+        '204': { description: 已记录 }
+        default: { $ref: '#/components/responses/Error' }
+  /provider/v1/bye:
+    post:
+      tags: [provider-protocol]
+      operationId: providerBye
+      summary: provider 实例下线，释放租约
+      security:
+        - providerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderByeRequest' }
+      responses:
+        '204': { description: 已下线 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- orb link (C2)
+  /orb/v1/link:
+    get:
+      tags: [websocket]
+      operationId: orbLink
+      summary: orb link（WebSocket 子协议 `oryn.orb.v1` + yamux）
+      description: |
+        升级后在 WS 二进制消息流上跑 yamux（orbd = client，orynd = server，keepalive 10s）。
+        每条 yamux 流的第一行是 `LinkStreamHeader` JSON + `\n`。
+        `ctl` 流（orbd 建连后第一条且唯一）为双向 JSON 行：`LinkCtlRequest` / `LinkCtlResponse` / `LinkCtlNotification`；
+        各方法的 params / result 见 `LinkCtlMethod` 与 `LinkCtl<Method>Params` / `LinkCtl<Method>Result`。
+        orb 令牌只对本 orb 有效：`threadId` 不属于该 orb 的 `entries.*`、`agent` 流、`egress` 流会导致 link 被关闭。
+      security:
+        - orbBearer: []
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: [oryn.orb.v1]
+      responses:
+        '101': { description: 切换到 WebSocket }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: oryn_session
+      description: 网页会话（HttpOnly、Secure、SameSite=Lax，30 天滑动续期）
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-Oryn-CSRF
+      description: 'Cookie 鉴权的变更类请求必须带 `X-Oryn-CSRF: 1`'
+    deviceBearer:
+      type: http
+      scheme: bearer
+      description: 设备令牌 `odt_…`
+    providerBearer:
+      type: http
+      scheme: bearer
+      description: provider 令牌 `opv_…`
+    orbBearer:
+      type: http
+      scheme: bearer
+      description: orb 令牌 `oot_…`
+
+  parameters:
+    DeviceIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/DeviceId' }
+    ProjectIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ProjectId' }
+    ProviderIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ProviderId' }
+    ThreadIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ThreadId' }
+    OrbIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/OrbId' }
+    SecretNamePath:
+      name: name
+      in: path
+      required: true
+      description: 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F`
+      schema: { type: string, minLength: 1, maxLength: 256 }
+    AgentConfigPath:
+      name: path
+      in: path
+      required: true
+      description: 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..`
+      schema: { type: string, minLength: 1, maxLength: 1024 }
+    FromQuery:
+      name: from
+      in: query
+      description: 起始时间（含，UTC 毫秒）；缺省 = 7 天前
+      schema: { $ref: '#/components/schemas/TimestampMs' }
+    ToQuery:
+      name: to
+      in: query
+      description: 结束时间（不含，UTC 毫秒）；缺省 = 现在
+      schema: { $ref: '#/components/schemas/TimestampMs' }
+
+  responses:
+    Error:
+      description: 错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ============================================================ 基础类型
+    TimestampMs:
+      type: integer
+      format: int64
+      description: UTC 毫秒时间戳
+    Sha256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: SHA-256 小写十六进制
+    ThreadId:
+      type: string
+      pattern: '^T-[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      description: '`T-<uuidv7>`'
+      example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+    OrbId:
+      type: string
+      pattern: '^orb-[0-9a-z]{26}$'
+      description: '`orb-<26 位小写 ULID>`（同时是容器名与 hostname）'
+      example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+    ProjectId:
+      type: string
+      pattern: '^prj_[0-9A-Z]{26}$'
+      description: '`prj_<ulid>`'
+    ProviderId:
+      type: string
+      pattern: '^prov_[0-9A-Z]{26}$'
+      description: '`prov_<ulid>`'
+    DeviceId:
+      type: string
+      pattern: '^dev_[0-9A-Z]{26}$'
+      description: '`dev_<ulid>`'
+    JobId:
+      type: string
+      pattern: '^job_[0-9A-Z]{26}$'
+      description: '`job_<ulid>`'
+    SnapshotId:
+      type: string
+      pattern: '^oryn-snap-[0-9a-z]{26}$'
+      description: 快照 id，同时是 Docker 镜像名
+    OmpFrame:
+      type: object
+      additionalProperties: true
+      description: omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
+            `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`internal`。
+        message:
+          type: string
+    HealthResponse:
+      type: object
+      required: [ok, version]
+      properties:
+        ok: { type: boolean }
+        version: { type: string }
+
+    # ============================================================ 状态枚举
+    ThreadState:
+      type: string
+      description: |
+        线程状态（全端统一，自上而下取首个成立）：
+        `provisioning` orb 未到 ready 且 agent 从未 ready；
+        `awaiting_input` 有待答 UI 或计划提案；
+        `working` 已见 agent_start 且尚无终结 agent_end，或 state.hasPendingAsyncWork；
+        `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
+        `idle` 其它。
+      enum: [provisioning, awaiting_input, working, error, idle]
+    OrbState:
+      type: string
+      description: orb 状态机（计划 E 节）
+      enum:
+        - requested
+        - spawning
+        - connecting
+        - setting_up
+        - resuming
+        - ready
+        - freezing
+        - frozen
+        - stopping
+        - stopped
+        - waking
+        - deleting
+        - deleted
+        - failed
+    AgentStatus:
+      type: string
+      description: 线程 agent 进程状态；`none` = 尚未启动或 orb 不可用
+      enum: [none, starting, ready, exited]
+    PauseMode:
+      type: string
+      enum: [freeze, stop]
+    DeviceKind:
+      type: string
+      enum: [cli, desktop, mobile]
+    SecretMode:
+      type: string
+      description: '`proxy` 经 egress 注入（不进 orb）；`env` 以同名环境变量注入 agent 进程'
+      enum: [proxy, env]
+    JobOp:
+      type: string
+      enum: [spawn, pause, snapshot, delete, delete_snapshot]
+    JobState:
+      type: string
+      enum: [queued, claimed, succeeded, failed]
+    ProviderDriver:
+      type: string
+      enum: [docker, dispatch, process]
+
+    # ============================================================ 认证
+    AuthSetupBeginRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: '`ost_…` 初始化令牌；恢复流程中省略'
+        name:
+          type: string
+          description: Passkey 显示名
+    WebAuthnCeremony:
+      type: object
+      required: [ceremonyId, options]
+      properties:
+        ceremonyId:
+          type: string
+          description: 本次仪式的服务端会话句柄，finish 时回传
+        options:
+          type: object
+          additionalProperties: true
+          description: '`PublicKeyCredentialCreationOptionsJSON` 或 `PublicKeyCredentialRequestOptionsJSON`（WebAuthn L3 JSON 形态）'
+    AuthSetupFinishRequest:
+      type: object
+      required: [ceremonyId, credential]
+      properties:
+        ceremonyId: { type: string }
+        credential:
+          type: object
+          additionalProperties: true
+          description: '`RegistrationResponseJSON`'
+    AuthSetupFinishResponse:
+      type: object
+      required: [me]
+      properties:
+        me: { $ref: '#/components/schemas/Me' }
+        recoveryCodes:
+          type: array
+          description: 首次初始化时返回 10 个恢复码（仅此一次）；恢复流程重新注册时为空
+          items: { type: string }
+    AuthLoginFinishRequest:
+      type: object
+      required: [ceremonyId, credential]
+      properties:
+        ceremonyId: { type: string }
+        credential:
+          type: object
+          additionalProperties: true
+          description: '`AuthenticationResponseJSON`'
+    AuthRecoveryRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+    AuthRecoveryResponse:
+      type: object
+      required: [expiresAt, remainingCodes]
+      properties:
+        expiresAt: { $ref: '#/components/schemas/TimestampMs' }
+        remainingCodes:
+          type: integer
+          description: 剩余未使用的恢复码数量
+    Me:
+      type: object
+      required: [displayName, createdAt, auth]
+      properties:
+        displayName: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        auth:
+          type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [web, device, recovery]
+            deviceId: { $ref: '#/components/schemas/DeviceId' }
+        passkeyCount: { type: integer }
+
+    # ============================================================ 设备
+    Device:
+      type: object
+      required: [id, name, kind, platform, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/DeviceId' }
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/DeviceKind' }
+        platform: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastSeenAt: { $ref: '#/components/schemas/TimestampMs' }
+        revokedAt: { $ref: '#/components/schemas/TimestampMs' }
+        current:
+          type: boolean
+          description: 是否为发起本请求的设备
+    DeviceList:
+      type: object
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/Device' }
+    DevicePairStartRequest:
+      type: object
+      required: [name, kind, platform]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        kind: { $ref: '#/components/schemas/DeviceKind' }
+        platform:
+          type: string
+          description: 如 `linux-x64`、`ios`、`windows`
+    DevicePairStartResponse:
+      type: object
+      required: [code, verifier, verifyUrl, expiresAt, interval]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z2-9]{4}-[A-Z2-9]{4}$'
+          description: 8 位配对码（去易混字符），10 分钟有效
+        verifier:
+          type: string
+          description: 仅发起方持有，轮询时回传
+        verifyUrl:
+          type: string
+          description: 网页批准地址（`<public_url>/pair?code=…`）
+        expiresAt: { $ref: '#/components/schemas/TimestampMs' }
+        interval:
+          type: integer
+          description: 建议轮询间隔（秒）
+          example: 2
+    DevicePairApproveRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+    DevicePairPollRequest:
+      type: object
+      required: [code, verifier]
+      properties:
+        code: { type: string }
+        verifier: { type: string }
+    DevicePairPollResponse:
+      type: object
+      required: [deviceToken, device]
+      properties:
+        deviceToken:
+          type: string
+          description: '`odt_…`，只返回这一次'
+        device: { $ref: '#/components/schemas/Device' }
+
+    # ============================================================ 项目
+    Project:
+      type: object
+      required: [id, name, shallowClone, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/ProjectId' }
+        name: { type: string }
+        repoUrl: { type: string }
+        baseBranch: { type: string }
+        defaultProvider:
+          type: string
+          description: provider 名称
+        defaultOrbType: { type: string }
+        setupScript: { type: string }
+        resumeScript: { type: string }
+        shallowClone: { type: boolean }
+        color: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+        archivedAt: { $ref: '#/components/schemas/TimestampMs' }
+    ProjectList:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items: { $ref: '#/components/schemas/Project' }
+    ProjectCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        repoUrl: { type: string }
+        baseBranch: { type: string }
+        defaultProvider: { type: string }
+        defaultOrbType: { type: string }
+        setupScript: { type: string }
+        resumeScript: { type: string }
+        shallowClone: { type: boolean, default: false }
+        color: { type: string }
+    ProjectPatch:
+      type: object
+      description: 只修改出现的字段；可选字符串字段传空串表示清除
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        repoUrl: { type: string }
+        baseBranch: { type: string }
+        defaultProvider: { type: string }
+        defaultOrbType: { type: string }
+        setupScript: { type: string }
+        resumeScript: { type: string }
+        shallowClone: { type: boolean }
+        color: { type: string }
+        archived: { type: boolean }
+
+    # ============================================================ provider（客户端视图）
+    OrbType:
+      type: object
+      required: [name, cpus, memoryMB]
+      properties:
+        name: { type: string }
+        cpus: { type: number }
+        memoryMB: { type: integer }
+    ProviderCapabilities:
+      type: object
+      required: [freeze, snapshot]
+      properties:
+        freeze: { type: boolean }
+        snapshot: { type: boolean }
+    Provider:
+      type: object
+      required: [id, name, online, orbTypes, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/ProviderId' }
+        name: { type: string }
+        driver: { $ref: '#/components/schemas/ProviderDriver' }
+        capabilities: { $ref: '#/components/schemas/ProviderCapabilities' }
+        orbTypes:
+          type: array
+          items: { $ref: '#/components/schemas/OrbType' }
+        defaultType: { type: string }
+        online:
+          type: boolean
+          description: 是否有实例持有未过期租约
+        instanceId: { type: string }
+        leaseUntil: { $ref: '#/components/schemas/TimestampMs' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        disabledAt: { $ref: '#/components/schemas/TimestampMs' }
+    ProviderList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items: { $ref: '#/components/schemas/Provider' }
+    ProviderCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9][a-z0-9_-]*$' }
+    ProviderCreateResponse:
+      type: object
+      required: [provider, token]
+      properties:
+        provider: { $ref: '#/components/schemas/Provider' }
+        token:
+          type: string
+          description: '`opv_…`，只显示这一次'
+
+    # ============================================================ 线程
+    ModelRef:
+      type: object
+      required: [provider, id]
+      properties:
+        provider: { type: string }
+        id: { type: string }
+    ImageContent:
+      type: object
+      required: [type, data, mimeType]
+      properties:
+        type:
+          type: string
+          enum: [image]
+        data:
+          type: string
+          description: base64
+        mimeType: { type: string }
+    ThreadExecutor:
+      description: 线程执行位置
+      oneOf:
+        - $ref: '#/components/schemas/ThreadExecutorNewOrb'
+        - $ref: '#/components/schemas/ThreadExecutorOrb'
+      discriminator:
+        propertyName: kind
+        mapping:
+          new_orb: '#/components/schemas/ThreadExecutorNewOrb'
+          orb: '#/components/schemas/ThreadExecutorOrb'
+    ThreadExecutorNewOrb:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [new_orb]
+        provider:
+          type: string
+          description: provider 名称
+        type:
+          type: string
+          description: orb 类型名
+    ThreadExecutorOrb:
+      type: object
+      required: [kind, orbId]
+      properties:
+        kind:
+          type: string
+          enum: [orb]
+        orbId: { $ref: '#/components/schemas/OrbId' }
+    CreateThreadRequest:
+      type: object
+      required: [prompt, executor]
+      properties:
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        prompt: { type: string }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/ImageContent' }
+        executor: { $ref: '#/components/schemas/ThreadExecutor' }
+        model: { $ref: '#/components/schemas/ModelRef' }
+        thinkingLevel: { type: string }
+        title: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+    Thread:
+      type: object
+      required: [id, title, titleSource, state, stateChangedAt, pinned, labels, unread, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/ThreadId' }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        orbId:
+          allOf:
+            - $ref: '#/components/schemas/OrbId'
+          description: 所在 orb；orb 被删除后省略（只读浏览）
+        title: { type: string }
+        titleSource:
+          type: string
+          enum: [auto, user]
+        state: { $ref: '#/components/schemas/ThreadState' }
+        stateChangedAt: { $ref: '#/components/schemas/TimestampMs' }
+        parentThreadId: { $ref: '#/components/schemas/ThreadId' }
+        forkedFromEntryId: { type: string }
+        leafEntryId: { type: string }
+        model: { $ref: '#/components/schemas/ModelRef' }
+        thinkingLevel: { type: string }
+        color: { type: string }
+        pinned: { type: boolean }
+        labels:
+          type: array
+          items: { type: string }
+        snoozedUntil: { $ref: '#/components/schemas/TimestampMs' }
+        archivedAt: { $ref: '#/components/schemas/TimestampMs' }
+        unread: { type: boolean }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastMessageAt: { $ref: '#/components/schemas/TimestampMs' }
+        childCount:
+          type: integer
+          description: 子线程（fork 产生）数量，侧边栏显示 `n/m` 用
+        childDoneCount:
+          type: integer
+          description: 处于 `idle` 的子线程数量
+    ThreadEnvelope:
+      type: object
+      required: [thread]
+      properties:
+        thread: { $ref: '#/components/schemas/Thread' }
+    ThreadList:
+      type: object
+      required: [threads]
+      properties:
+        threads:
+          type: array
+          items: { $ref: '#/components/schemas/Thread' }
+    ThreadPatch:
+      type: object
+      description: 只修改出现的字段；`color` 传空串清除，`snoozedUntil` 传 0 清除
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        color: { type: string }
+        pinned: { type: boolean }
+        labels:
+          type: array
+          items: { type: string }
+        archived: { type: boolean }
+        snoozedUntil: { $ref: '#/components/schemas/TimestampMs' }
+        unread: { type: boolean }
+    ForkThreadRequest:
+      type: object
+      required: [env]
+      properties:
+        entryId:
+          type: string
+          description: 从该条目分叉；缺省取当前叶子
+        env:
+          type: string
+          description: '`copy` 连环境分叉（快照出副本 orb）；`share` 共用当前 orb'
+          enum: [copy, share]
+    Entry:
+      type: object
+      description: 会话 JSONL 的一行（已复制入库）
+      required: [seq, file, entryId, type, payload]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: 线程内单调递增序号
+        file:
+          type: string
+          description: 相对会话目录的 JSONL 文件路径
+        entryId:
+          type: string
+          description: 行内 `id`；无 id 的行为合成 id `__title__` / `__session__`
+        parentId: { type: string }
+        type: { type: string }
+        ts:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 行内 `timestamp` 换算的毫秒；无则省略
+        payload:
+          $ref: '#/components/schemas/OmpFrame'
+    EntryPage:
+      type: object
+      required: [entries, lastSeq, hasMore]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/Entry' }
+        leafEntryId: { type: string }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 该线程当前最大 seq
+        hasMore: { type: boolean }
+
+    # ============================================================ orb
+    Orb:
+      type: object
+      required: [id, providerId, type, cpus, memoryMB, image, state, stateChangedAt, createdAt, threadIds]
+      properties:
+        id: { $ref: '#/components/schemas/OrbId' }
+        providerId: { $ref: '#/components/schemas/ProviderId' }
+        providerName: { type: string }
+        type: { type: string }
+        cpus: { type: number }
+        memoryMB: { type: integer }
+        image: { type: string }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        state: { $ref: '#/components/schemas/OrbState' }
+        stateChangedAt: { $ref: '#/components/schemas/TimestampMs' }
+        snapshotOf:
+          allOf:
+            - $ref: '#/components/schemas/SnapshotId'
+          description: 由哪个快照创建
+        lastAgentActivityAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastUserInteractionAt: { $ref: '#/components/schemas/TimestampMs' }
+        orbdVersion: { type: string }
+        agentVersion: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        deletedAt: { $ref: '#/components/schemas/TimestampMs' }
+        threadIds:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadId' }
+    OrbList:
+      type: object
+      required: [orbs]
+      properties:
+        orbs:
+          type: array
+          items: { $ref: '#/components/schemas/Orb' }
+    OrbPauseRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode: { $ref: '#/components/schemas/PauseMode' }
+    OrbMetricSample:
+      type: object
+      required: [ts, cpuPct, memUsedMB, memLimitMB, diskUsedMB, netRxBytes, netTxBytes]
+      properties:
+        ts: { $ref: '#/components/schemas/TimestampMs' }
+        cpuPct: { type: number }
+        memUsedMB: { type: number }
+        memLimitMB: { type: number }
+        diskUsedMB: { type: number }
+        netRxBytes: { type: integer, format: int64 }
+        netTxBytes: { type: integer, format: int64 }
+    OrbMetrics:
+      type: object
+      required: [orbId, step, samples]
+      properties:
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        step:
+          type: integer
+          description: 实际步长（秒）
+        samples:
+          type: array
+          items: { $ref: '#/components/schemas/OrbMetricSample' }
+
+    # ============================================================ 密钥与 agent 配置
+    SecretMeta:
+      type: object
+      required: [name, mode, createdAt, updatedAt]
+      properties:
+        name: { type: string }
+        mode: { $ref: '#/components/schemas/SecretMode' }
+        hosts:
+          type: array
+          description: '`proxy` 模式下允许注入的主机（为空 = 按名称约定推导）'
+          items: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    SecretList:
+      type: object
+      required: [secrets]
+      properties:
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/SecretMeta' }
+    SecretPut:
+      type: object
+      required: [value, mode]
+      description: '`mode:"env"` 时名称必须匹配 `[A-Z_][A-Z0-9_]*`'
+      properties:
+        value: { type: string }
+        mode: { $ref: '#/components/schemas/SecretMode' }
+        hosts:
+          type: array
+          items: { type: string }
+    AgentConfigFile:
+      type: object
+      required: [path, size, mode, sha256, updatedAt]
+      properties:
+        path: { type: string }
+        size: { type: integer, format: int64 }
+        mode:
+          type: integer
+          description: 文件权限（十进制表示的 Unix 权限位）
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    AgentConfigFileList:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConfigFile' }
+    AgentConfigWarning:
+      type: object
+      required: [path, kind, message]
+      properties:
+        path: { type: string }
+        line: { type: integer }
+        kind:
+          type: string
+          description: '`possible_secret`（非 models.yml 文件中形似密钥的串）、`env_fallback`（provider 走环境变量降级）等'
+        message: { type: string }
+    AgentConfigWriteResult:
+      type: object
+      required: [file, extractedSecrets, warnings]
+      properties:
+        file: { $ref: '#/components/schemas/AgentConfigFile' }
+        extractedSecrets:
+          type: array
+          description: 本次从 models.yml 抽取进密钥库的密钥名
+          items: { type: string }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConfigWarning' }
+    AgentConfigImportResult:
+      type: object
+      required: [files, extractedSecrets, warnings]
+      properties:
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConfigFile' }
+        extractedSecrets:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConfigWarning' }
+
+    # ============================================================ 统计
+    UsageStat:
+      type: object
+      required: [key, requests, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, toolCalls, toolErrors]
+      properties:
+        key:
+          type: string
+          description: 分组键：`YYYY-MM-DD`（UTC）/ `<provider>/<model>` / 线程 id / 项目 id（无项目为空串）
+        label:
+          type: string
+          description: 显示名（线程标题、项目名）
+        requests: { type: integer, format: int64 }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+        cacheReadTokens: { type: integer, format: int64 }
+        cacheWriteTokens: { type: integer, format: int64 }
+        costUsd: { type: number }
+        subagentCostUsd: { type: number }
+        avgTtftMs: { type: number }
+        tokensPerSecond: { type: number }
+        toolCalls: { type: integer, format: int64 }
+        toolErrors: { type: integer, format: int64 }
+    UsageStats:
+      type: object
+      required: [groupBy, from, to, groups]
+      properties:
+        groupBy:
+          type: string
+          enum: [day, model, thread, project]
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/UsageStat' }
+    OrbTypeStat:
+      type: object
+      required: [type, orbs, runningMs, frozenMs, stoppedMs, spawns, freezes, stops, wakes, failures]
+      properties:
+        type: { type: string }
+        orbs:
+          type: integer
+          description: 窗口内存在过的 orb 数
+        runningMs: { type: integer, format: int64 }
+        frozenMs: { type: integer, format: int64 }
+        stoppedMs: { type: integer, format: int64 }
+        spawns: { type: integer }
+        freezes: { type: integer }
+        stops: { type: integer }
+        wakes: { type: integer }
+        failures: { type: integer }
+    OrbStats:
+      type: object
+      required: [from, to, types]
+      properties:
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        types:
+          type: array
+          items: { $ref: '#/components/schemas/OrbTypeStat' }
+
+    # ============================================================ 客户端 WebSocket
+    WsTicket:
+      type: object
+      required: [ticket, expiresIn]
+      properties:
+        ticket: { type: string }
+        expiresIn:
+          type: integer
+          description: 秒
+          example: 30
+    WsClientMessage:
+      description: 客户端 → 服务端 WS 消息
+      oneOf:
+        - $ref: '#/components/schemas/WsClientFocus'
+        - $ref: '#/components/schemas/WsClientSub'
+        - $ref: '#/components/schemas/WsClientUnsub'
+        - $ref: '#/components/schemas/WsClientCmd'
+        - $ref: '#/components/schemas/WsClientUiResponse'
+        - $ref: '#/components/schemas/WsClientPing'
+      discriminator:
+        propertyName: type
+        mapping:
+          focus: '#/components/schemas/WsClientFocus'
+          sub: '#/components/schemas/WsClientSub'
+          unsub: '#/components/schemas/WsClientUnsub'
+          cmd: '#/components/schemas/WsClientCmd'
+          ui.response: '#/components/schemas/WsClientUiResponse'
+          ping: '#/components/schemas/WsClientPing'
+    WsClientFocus:
+      type: object
+      description: 当前正在看的线程（用于未读、通知抑制、唤醒）；记为一次用户交互
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [focus] }
+        threadId:
+          type: string
+          nullable: true
+          description: 线程 id；null 表示不看任何线程
+    WsClientSub:
+      type: object
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [sub] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        afterSeq:
+          type: integer
+          format: int64
+          description: 客户端已有的最大 seq；缺省 0 = 全量
+    WsClientUnsub:
+      type: object
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [unsub] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    WsClientCmd:
+      type: object
+      description: omp RPC 命令；控制面注入唯一 id 后下发，应答以 `res` 回到本连接
+      required: [type, threadId, id, frame]
+      properties:
+        type: { type: string, enum: [cmd] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        id:
+          type: string
+          description: 客户端侧请求 id（仅在本连接内唯一）
+        frame:
+          allOf:
+            - $ref: '#/components/schemas/OmpFrame'
+          description: 不带 `id` 的 omp RPC 命令对象
+    WsClientUiResponse:
+      type: object
+      description: '`extension_ui_response` 等侧通道应答；先到先得'
+      required: [type, threadId, frame]
+      properties:
+        type: { type: string, enum: [ui.response] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        frame: { $ref: '#/components/schemas/OmpFrame' }
+    WsClientPing:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [ping] }
+
+    WsServerMessage:
+      description: 服务端 → 客户端 WS 消息
+      oneOf:
+        - $ref: '#/components/schemas/WsServerIndex'
+        - $ref: '#/components/schemas/WsServerIndexPatch'
+        - $ref: '#/components/schemas/WsServerThreadSnapshot'
+        - $ref: '#/components/schemas/WsServerEntries'
+        - $ref: '#/components/schemas/WsServerFrame'
+        - $ref: '#/components/schemas/WsServerRes'
+        - $ref: '#/components/schemas/WsServerUiResolved'
+        - $ref: '#/components/schemas/WsServerLiveReset'
+        - $ref: '#/components/schemas/WsServerOrb'
+        - $ref: '#/components/schemas/WsServerError'
+        - $ref: '#/components/schemas/WsServerPong'
+      discriminator:
+        propertyName: type
+        mapping:
+          index: '#/components/schemas/WsServerIndex'
+          index.patch: '#/components/schemas/WsServerIndexPatch'
+          thread.snapshot: '#/components/schemas/WsServerThreadSnapshot'
+          entries: '#/components/schemas/WsServerEntries'
+          frame: '#/components/schemas/WsServerFrame'
+          res: '#/components/schemas/WsServerRes'
+          ui.resolved: '#/components/schemas/WsServerUiResolved'
+          live.reset: '#/components/schemas/WsServerLiveReset'
+          orb: '#/components/schemas/WsServerOrb'
+          error: '#/components/schemas/WsServerError'
+          pong: '#/components/schemas/WsServerPong'
+    WsServerIndex:
+      type: object
+      description: 线程摘要全量（连接建立后首条）
+      required: [type, threads, rev]
+      properties:
+        type: { type: string, enum: [index] }
+        threads:
+          type: array
+          items: { $ref: '#/components/schemas/Thread' }
+        rev: { type: integer, format: int64 }
+    WsServerIndexPatch:
+      type: object
+      required: [type, upsert, remove, rev]
+      properties:
+        type: { type: string, enum: [index.patch] }
+        upsert:
+          type: array
+          items: { $ref: '#/components/schemas/Thread' }
+        remove:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadId' }
+        rev: { type: integer, format: int64 }
+    AgentLiveState:
+      type: object
+      description: 线程实时缓冲（只含未被条目覆盖的部分）
+      required: [status, pendingUi, subagents, live]
+      properties:
+        status: { $ref: '#/components/schemas/AgentStatus' }
+        state:
+          allOf:
+            - $ref: '#/components/schemas/OmpFrame'
+          description: 最近一次 `get_state` 应答的 data
+        queue:
+          allOf:
+            - $ref: '#/components/schemas/OmpFrame'
+          description: 最新 `queue_update` 帧
+        pendingUi:
+          type: array
+          description: 未应答的 `extension_ui_request` 帧
+          items: { $ref: '#/components/schemas/OmpFrame' }
+        planProposal:
+          allOf:
+            - $ref: '#/components/schemas/OmpFrame'
+          description: 未决的 `plan_proposal` 帧
+        subagents:
+          type: array
+          description: 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧
+          items: { $ref: '#/components/schemas/OmpFrame' }
+        live:
+          type: array
+          description: 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序
+          items: { $ref: '#/components/schemas/OmpFrame' }
+    WsServerThreadSnapshot:
+      type: object
+      description: '`sub` 后的首条消息'
+      required: [type, threadId, thread, agent, lastSeq]
+      properties:
+        type: { type: string, enum: [thread.snapshot] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        thread: { $ref: '#/components/schemas/Thread' }
+        orb:
+          allOf:
+            - $ref: '#/components/schemas/Orb'
+          description: 线程所在 orb；无 orb 时省略
+        agent: { $ref: '#/components/schemas/AgentLiveState' }
+        leafEntryId: { type: string }
+        lastSeq: { type: integer, format: int64 }
+    WsServerEntries:
+      type: object
+      required: [type, threadId, entries, lastSeq]
+      properties:
+        type: { type: string, enum: [entries] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        entries:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/Entry' }
+        leafEntryId: { type: string }
+        lastSeq: { type: integer, format: int64 }
+    WsServerFrame:
+      type: object
+      description: 实时 omp 帧（`response` 以外的帧广播给该线程全部订阅者）
+      required: [type, threadId, frame]
+      properties:
+        type: { type: string, enum: [frame] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        frame: { $ref: '#/components/schemas/OmpFrame' }
+    WsServerRes:
+      type: object
+      description: '`cmd` 的应答，只发给发起连接；`id` 为客户端原始 id'
+      required: [type, threadId, id, response]
+      properties:
+        type: { type: string, enum: [res] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        id: { type: string }
+        response: { $ref: '#/components/schemas/OmpFrame' }
+    WsServerUiResolved:
+      type: object
+      required: [type, threadId, requestId]
+      properties:
+        type: { type: string, enum: [ui.resolved] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        requestId: { type: string }
+    WsServerLiveReset:
+      type: object
+      description: 丢弃叠加层，仅按条目渲染，直到下一个 `message_start`
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [live.reset] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    WsServerOrb:
+      type: object
+      required: [type, orb]
+      properties:
+        type: { type: string, enum: [orb] }
+        orb: { $ref: '#/components/schemas/Orb' }
+    WsServerError:
+      type: object
+      required: [type, code, message]
+      properties:
+        type: { type: string, enum: [error] }
+        code: { type: string }
+        message: { type: string }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        id:
+          type: string
+          description: 若由某条 `cmd` 引起，为其客户端 id
+    WsServerPong:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [pong] }
+
+    # ============================================================ provider 协议（C1）
+    ProviderHelloRequest:
+      type: object
+      required: [instanceId, driver, version, capabilities, types, defaultType, allowMultiple]
+      properties:
+        instanceId:
+          type: string
+          description: 本进程实例的随机 id
+        driver: { $ref: '#/components/schemas/ProviderDriver' }
+        version: { type: string }
+        capabilities: { $ref: '#/components/schemas/ProviderCapabilities' }
+        types:
+          type: array
+          items: { $ref: '#/components/schemas/OrbType' }
+        defaultType: { type: string }
+        allowMultiple: { type: boolean }
+    ProviderHelloResponse:
+      type: object
+      required: [providerId, leaseSeconds]
+      properties:
+        providerId: { $ref: '#/components/schemas/ProviderId' }
+        leaseSeconds:
+          type: integer
+          example: 45
+    ProviderClaimRequest:
+      type: object
+      required: [instanceId, waitSeconds]
+      properties:
+        instanceId: { type: string }
+        waitSeconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+          example: 30
+    ProviderJob:
+      type: object
+      required: [id, op, orbId, params, attempt]
+      properties:
+        id: { $ref: '#/components/schemas/JobId' }
+        op: { $ref: '#/components/schemas/JobOp' }
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        params:
+          type: object
+          additionalProperties: true
+          description: |
+            按 `op` 取：`spawn` → `JobSpawnParams`；`pause` → `JobPauseParams`；`snapshot` → `JobSnapshotParams`；
+            `delete` → `JobDeleteParams`；`delete_snapshot` → `JobDeleteSnapshotParams`。
+            每个操作必须幂等，5 分钟超时。
+        attempt:
+          type: integer
+          minimum: 1
+          maximum: 3
+    ProviderClaimResponse:
+      type: object
+      required: [job]
+      properties:
+        job: { $ref: '#/components/schemas/ProviderJob' }
+    ProviderCompleteRequest:
+      type: object
+      required: [ok, output, durationMs]
+      properties:
+        ok: { type: boolean }
+        output:
+          type: string
+          maxLength: 65536
+          description: 输出尾部（≤64KB）
+        error: { type: string }
+        durationMs: { type: integer, format: int64 }
+    ProviderByeRequest:
+      type: object
+      required: [instanceId]
+      properties:
+        instanceId: { type: string }
+    JobSpawnEnv:
+      type: object
+      required: [ORYN_URL, ORYN_ORB_ID, ORYN_ORB_TOKEN]
+      properties:
+        ORYN_URL:
+          type: string
+          x-go-name: OrynURL
+        ORYN_ORB_ID:
+          type: string
+          pattern: '^orb-[0-9a-z]{26}$'
+          x-go-name: OrynOrbID
+        ORYN_ORB_TOKEN:
+          type: string
+          description: '`oot_…`'
+          x-go-name: OrynOrbToken
+    JobSpawnParams:
+      type: object
+      required: [image, type, env]
+      properties:
+        image: { type: string }
+        snapshotId: { $ref: '#/components/schemas/SnapshotId' }
+        type:
+          type: string
+          description: orb 类型名
+        env: { $ref: '#/components/schemas/JobSpawnEnv' }
+    JobPauseParams:
+      type: object
+      required: [mode]
+      properties:
+        mode: { $ref: '#/components/schemas/PauseMode' }
+    JobSnapshotParams:
+      type: object
+      required: [snapshotId]
+      properties:
+        snapshotId: { $ref: '#/components/schemas/SnapshotId' }
+    JobDeleteParams:
+      type: object
+      properties: {}
+    JobDeleteSnapshotParams:
+      type: object
+      required: [snapshotId]
+      properties:
+        snapshotId: { $ref: '#/components/schemas/SnapshotId' }
+
+    # ============================================================ orb link（C2）
+    LinkStreamHeader:
+      description: yamux 流的第一行（JSON + `\n`）。`portal` / `fs` / `desk` 由 M3/M4/M8 定义。
+      oneOf:
+        - $ref: '#/components/schemas/LinkStreamCtl'
+        - $ref: '#/components/schemas/LinkStreamAgent'
+        - $ref: '#/components/schemas/LinkStreamEgress'
+        - $ref: '#/components/schemas/LinkStreamBlob'
+      discriminator:
+        propertyName: t
+        mapping:
+          ctl: '#/components/schemas/LinkStreamCtl'
+          agent: '#/components/schemas/LinkStreamAgent'
+          egress: '#/components/schemas/LinkStreamEgress'
+          blob: '#/components/schemas/LinkStreamBlob'
+    LinkStreamCtl:
+      type: object
+      description: orbd 建连后开的第一条且唯一的控制流
+      required: [t]
+      properties:
+        t: { type: string, enum: [ctl] }
+    LinkStreamAgent:
+      type: object
+      description: 'agent 启动时由 orbd 开；orbd→orynd 为重组后的 omp 逻辑帧，orynd→orbd 为写入 omp stdin 的命令帧（一行一个 JSON）'
+      required: [t, threadId]
+      properties:
+        t: { type: string, enum: [agent] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    LinkStreamEgress:
+      type: object
+      description: 每个出站代理连接一条；之后为裸 HTTP/1.1 字节流
+      required: [t]
+      properties:
+        t: { type: string, enum: [egress] }
+    LinkStreamBlob:
+      type: object
+      description: 应 `blob.fetch` 请求由 orbd 开；流头之后为 `size` 字节原始内容
+      required: [t, sha256, size]
+      properties:
+        t: { type: string, enum: [blob] }
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        size: { type: integer, format: int64 }
+
+    LinkCtlMethod:
+      type: string
+      description: |
+        `ctl` 方法（括号内为方向与形态）：
+        `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
+        `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
+        `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+      enum:
+        - hello
+        - entries.cursors
+        - entries.append
+        - entries.reset
+        - entries.reset_done
+        - agent.status
+        - agent.gap
+        - setup.log
+        - metrics.sample
+        - setup.run
+        - resume.run
+        - agent.start
+        - agent.stop
+        - blob.fetch
+        - fs.copyTree
+        - fs.move
+        - shutdown
+      x-enum-varnames:
+        - MethodHello
+        - MethodEntriesCursors
+        - MethodEntriesAppend
+        - MethodEntriesReset
+        - MethodEntriesResetDone
+        - MethodAgentStatus
+        - MethodAgentGap
+        - MethodSetupLog
+        - MethodMetricsSample
+        - MethodSetupRun
+        - MethodResumeRun
+        - MethodAgentStart
+        - MethodAgentStop
+        - MethodBlobFetch
+        - MethodFsCopyTree
+        - MethodFsMove
+        - MethodShutdown
+    LinkCtlRequest:
+      type: object
+      required: [id, method, params]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 发起方内单调递增；双方各自独立编号
+        method: { $ref: '#/components/schemas/LinkCtlMethod' }
+        params:
+          type: object
+          additionalProperties: true
+          description: 见 `LinkCtl<Method>Params`
+    LinkCtlResponse:
+      type: object
+      description: '`result` 与 `error` 二者恰有其一'
+      required: [id]
+      properties:
+        id: { type: integer, format: int64 }
+        result:
+          type: object
+          additionalProperties: true
+          description: 见 `LinkCtl<Method>Result`
+        error: { $ref: '#/components/schemas/LinkCtlError' }
+    LinkCtlError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: '`unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等'
+        message: { type: string }
+    LinkCtlNotification:
+      type: object
+      required: [method, params]
+      properties:
+        method: { $ref: '#/components/schemas/LinkCtlMethod' }
+        params:
+          type: object
+          additionalProperties: true
+          description: 见 `LinkCtl<Method>Params`
+
+    LinkCtlHelloThread:
+      type: object
+      required: [threadId, agentRunning]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        agentRunning: { type: boolean }
+    LinkCtlHelloParams:
+      type: object
+      required: [orbdVersion, agentVersion, os, arch, threads]
+      properties:
+        orbdVersion: { type: string }
+        agentVersion: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        threads:
+          type: array
+          items: { $ref: '#/components/schemas/LinkCtlHelloThread' }
+    LinkCtlEntriesCursorsParams:
+      type: object
+      required: [threadId]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    LinkCtlEntryCursor:
+      type: object
+      required: [file, offset]
+      properties:
+        file:
+          type: string
+          description: 相对会话目录的路径
+        offset:
+          type: integer
+          format: int64
+          description: 已入库的字节偏移（下一次 append 的 baseOffset）
+    LinkCtlEntriesCursorsResult:
+      type: object
+      required: [cursors]
+      properties:
+        cursors:
+          type: array
+          items: { $ref: '#/components/schemas/LinkCtlEntryCursor' }
+    LinkCtlEntriesAppendParams:
+      type: object
+      description: '`lines` 为 `[baseOffset, endOffset)` 内以 `\n` 结尾的完整行（不含 `\n`）'
+      required: [threadId, file, baseOffset, endOffset, lines]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        file: { type: string }
+        baseOffset: { type: integer, format: int64 }
+        endOffset: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { type: string }
+    LinkCtlEntriesAppendResult:
+      type: object
+      description: '`accepted=false` 表示 `baseOffset` 与服务端游标不符，orbd 应从 `offset` 重发'
+      required: [accepted, offset]
+      properties:
+        accepted: { type: boolean }
+        offset:
+          type: integer
+          format: int64
+          description: 服务端当前游标
+    LinkCtlEntriesResetParams:
+      type: object
+      description: 文件被重写（变小或 inode 变化）：之后从 0 重发
+      required: [threadId, file]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        file: { type: string }
+    LinkCtlEntriesResetDoneParams:
+      type: object
+      description: 全量重发完毕；服务端删除仍为 stale 的行
+      required: [threadId, file]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        file: { type: string }
+    LinkCtlAgentStatusParams:
+      type: object
+      required: [threadId, status]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        status:
+          type: string
+          enum: [starting, ready, exited]
+        exitCode: { type: integer }
+        stderrTail:
+          type: string
+          description: '`exited` 时 stderr 尾部 20 行'
+        restartsLeft:
+          type: integer
+          description: '`exited` 时剩余自动重启次数；0 表示不再重启'
+    LinkCtlAgentGapParams:
+      type: object
+      description: 断连期间帧缓冲溢出，实时状态不连续
+      required: [threadId]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    LinkCtlSetupLogParams:
+      type: object
+      required: [phase, stream, data]
+      properties:
+        phase:
+          type: string
+          enum: [omp_home, git, clone, setup, resume]
+        stream:
+          type: string
+          enum: [stdout, stderr, system]
+        data: { type: string }
+    LinkCtlMetricsSampleParams:
+      $ref: '#/components/schemas/OrbMetricSample'
+    LinkCtlSetupRepo:
+      type: object
+      required: [url, shallow]
+      properties:
+        url: { type: string }
+        branch: { type: string }
+        shallow: { type: boolean }
+    LinkCtlSetupScripts:
+      type: object
+      properties:
+        setup: { type: string }
+        resume: { type: string }
+    LinkCtlOmpHomeFile:
+      type: object
+      required: [path, mode, contentB64]
+      properties:
+        path:
+          type: string
+          description: 相对 `$HOME/.omp/agent/` 的路径
+        mode:
+          type: integer
+          description: Unix 权限位（十进制）
+        contentB64: { type: string }
+    LinkCtlSetupRunParams:
+      type: object
+      required: [workdir, gitHosts, scripts, ompHome, env]
+      properties:
+        workdir: { type: string }
+        repo: { $ref: '#/components/schemas/LinkCtlSetupRepo' }
+        gitHosts:
+          type: array
+          description: 为每个主机写 git `url."http://127.0.0.1:7811/git/<host>/".insteadOf "https://<host>/"`
+          items: { type: string }
+        scripts: { $ref: '#/components/schemas/LinkCtlSetupScripts' }
+        ompHome:
+          type: array
+          items: { $ref: '#/components/schemas/LinkCtlOmpHomeFile' }
+        env:
+          type: object
+          additionalProperties: { type: string }
+    LinkCtlSetupRunResult:
+      type: object
+      required: [ok, setupRan, durationMs]
+      properties:
+        ok: { type: boolean }
+        setupRan:
+          type: boolean
+          description: 本次是否实际执行了 setup（标记已存在则为 false）
+        durationMs: { type: integer, format: int64 }
+    LinkCtlResumeRunParams:
+      description: 同 `setup.run`，但不 clone、不跑 setup
+      allOf:
+        - $ref: '#/components/schemas/LinkCtlSetupRunParams'
+    LinkCtlResumeRunResult:
+      $ref: '#/components/schemas/LinkCtlSetupRunResult'
+    LinkCtlAgentStartParams:
+      type: object
+      required: [threadId, sessionDir, cwd, env, initFrames]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        sessionDir: { type: string }
+        cwd: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        initFrames:
+          type: array
+          description: '`ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧'
+          items: { $ref: '#/components/schemas/OmpFrame' }
+    LinkCtlAgentStartResult:
+      type: object
+      required: [pid]
+      properties:
+        pid: { type: integer }
+    LinkCtlAgentStopParams:
+      type: object
+      required: [threadId, graceSeconds]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        graceSeconds: { type: integer }
+    LinkCtlAgentStopResult:
+      type: object
+      required: [exitCode]
+      properties:
+        exitCode: { type: integer }
+    LinkCtlBlobFetchParams:
+      type: object
+      required: [sha256]
+      properties:
+        sha256: { $ref: '#/components/schemas/Sha256' }
+    LinkCtlBlobFetchResult:
+      type: object
+      description: '`found=true` 时 orbd 另开一条 `blob` 流'
+      required: [found]
+      properties:
+        found: { type: boolean }
+    LinkCtlFsCopyTreeParams:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string }
+        to: { type: string }
+    LinkCtlFsMoveParams:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string }
+        to: { type: string }
+    LinkCtlOkResult:
+      type: object
+      description: '`fs.copyTree` / `fs.move` / `shutdown` 的结果'
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+    LinkCtlShutdownParams:
+      type: object
+      required: [graceSeconds]
+      properties:
+        graceSeconds: { type: integer }

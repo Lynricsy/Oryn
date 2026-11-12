@@ -1,0 +1,14 @@
+# oapi-codegen v2 配置：由 doc.go 的 //go:generate 调用。
+package: apigen
+output: apigen.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: false
+output-options:
+  # LinkCtl* / Job*Params 等 schema 不被任何 operation 引用，仍需生成。
+  skip-prune: true
+  # WebSocket 升级端点由手写处理器服务，不进 ServerInterface。
+  exclude-tags: [websocket]
+  name-normalizer: ToCamelCaseWithInitialisms
+  prefer-skip-optional-pointer-on-container-types: true
