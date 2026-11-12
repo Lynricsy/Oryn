@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ type turn struct {
 }
 
 func nowMs() int64 { return time.Now().UnixMilli() }
+
+// ptyWordRe 匹配提示词中独立的单词 `pty`（不误伤 empty 之类的词）。
+var ptyWordRe = regexp.MustCompile(`(?i)\bpty\b`)
 
 func (s *server) runTurn(base context.Context, p promptReq) {
 	ctx, cancel := context.WithCancel(base)
@@ -142,6 +146,14 @@ func (t *turn) runDefault(p promptReq) {
 			return
 		}
 		intro = "You picked " + answer + ". " + intro
+	}
+	// 提示词含单词 `pty`：模拟一次 `pty: true` 的 bash 调用，等用户在 reveal 的 command 终端里作答。
+	if ptyWordRe.MatchString(p.message) {
+		if !t.ptyCommand() {
+			t.finish("aborted")
+			return
+		}
+		intro = "The interactive command finished. " + intro
 	}
 
 	callID := "call_" + randHex(8)

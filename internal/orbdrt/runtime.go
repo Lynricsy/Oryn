@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,6 +63,10 @@ type Config struct {
 	NetDir    string
 	MemInfo   string
 	DiskPath  string
+
+	// OnLocalRequest 仅供测试：本机 API（fs 流上的 HTTP）收到的每个请求在路由之前交给它（e2e 断言到达 orbd 的请求头）。
+	// ConfigFromEnv 在设置了 ORYN_ORBD_REQUEST_LOG=<文件> 时把它设为「每个请求追加一行 JSON」（process 驱动的子进程 orbd 用）。
+	OnLocalRequest func(*http.Request)
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -87,6 +92,9 @@ func ConfigFromEnv(version string) (Config, error) {
 	}
 	if len(missing) > 0 {
 		return cfg, fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
+	}
+	if p := os.Getenv("ORYN_ORBD_REQUEST_LOG"); p != "" {
+		cfg.OnLocalRequest = requestLogger(p)
 	}
 	return cfg, nil
 }
@@ -152,6 +160,13 @@ type Runtime struct {
 	pendingResults []apigen.LinkCtlSetupResultParams
 
 	metrics *metricsReader
+
+	// local 是本机 API 的虚拟监听：控制面打开的 fs 流经它交给 localSrv（http.Server）。
+	local    *link.StreamListener
+	localSrv *http.Server
+	// maxFileBytes / maxAttachmentBytes 是 PUT /fs/file 与 PUT /attachments/file 的上限（测试可调小）。
+	maxFileBytes       int64
+	maxAttachmentBytes int64
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -216,6 +231,10 @@ func New(cfg Config) (*Runtime, error) {
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
+	// 上传临时目录：上次运行中断留下的残片在启动时清空（上传不做断点续传）。
+	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
+		return nil, fmt.Errorf("orbdrt: %w", err)
+	}
 	ln, err := net.Listen("tcp", cfg.EgressAddr)
 	if err != nil {
 		return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
@@ -231,7 +250,12 @@ func New(cfg Config) (*Runtime, error) {
 		reg:      loadRegistry(filepath.Join(home, ".oryn", "orbd", "threads.json"), cfg.OrbID),
 		metrics:  newMetricsReader(cfg),
 		setupSem: make(chan struct{}, 1),
+
+		local:              link.NewStreamListener("oryn-fs"),
+		maxFileBytes:       MaxFileBytes,
+		maxAttachmentBytes: MaxAttachmentBytes,
 	}
+	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	if err := r.writeAgentAssets(); err != nil {
 		_ = ln.Close()
 		return nil, fmt.Errorf("orbdrt: %w", err)
@@ -273,12 +297,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); r.serveEgress(ctx) }()
 	go func() { defer wg.Done(); r.metricsLoop(ctx) }()
 	go func() { defer wg.Done(); r.serveSocket(ctx) }()
+	go func() { defer wg.Done(); _ = r.localSrv.Serve(r.local) }()
 	r.linkLoop(ctx)
 	_ = r.egressLn.Close()
+	_ = r.localSrv.Close()
+	_ = r.local.Close()
 	wg.Wait()
 	return nil
 }
@@ -443,7 +470,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	}
 }
 
-// acceptLoop 关闭控制面主动打开的流（M2 没有 orynd→orbd 的流类型）。
+// acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，其余类型直接关闭。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -453,6 +480,10 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 				continue
 			}
 			return
+		}
+		if st.Header.T == link.StreamFS {
+			r.local.Push(rollingConn{Conn: st, d: localWriteTimeout})
+			continue
 		}
 		r.log.Warn("unexpected stream from control plane", "t", st.Header.T)
 		_ = st.Close()
@@ -477,6 +508,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		Os:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		Threads:      threads,
+		Features:     []string{"fs", "git", "attachments"},
 	}
 }
 

@@ -120,6 +120,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		subLevel:       "off",
 		uiWait:         map[string]chan json.RawMessage{},
 		prompts:        make(chan promptReq, 100),
+		terms:          newTerminals(),
 	}
 	return s.serve(ctx, stdin, stderr)
 }
@@ -158,6 +159,7 @@ type server struct {
 	cancelTurn     context.CancelFunc
 
 	prompts chan promptReq
+	terms   *terminals
 }
 
 func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) int {
@@ -523,6 +525,9 @@ func (s *server) handle(line []byte) {
 		}
 
 	default:
+		if s.handleTerminal(env.Type, id, line) {
+			return
+		}
 		cmd := env.Type
 		if cmd == "" {
 			cmd = "unknown"

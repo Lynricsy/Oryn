@@ -23,6 +23,9 @@ import (
 const (
 	// maxBufferedFrames 是断连期间每线程排队的 omp 帧上限（C2）。
 	maxBufferedFrames = 32 << 20
+	// termHighWater / termLowWater：帧缓冲 ≥8MiB 时丢弃 terminal_output，回落到 ≤1MiB 后发一次 terminal.gap（M3 2.1）。
+	termHighWater = 8 << 20
+	termLowWater  = 1 << 20
 	// maxCommandLine 是 agent 流上单条命令帧的上限（含内联图片）。
 	maxCommandLine = 128 << 20
 	// stderrTailLines 是 `exited` 上报的 stderr 尾部行数。
@@ -39,10 +42,19 @@ type outItem struct {
 	seq   uint64
 	epoch int
 	data  []byte
+	// droppable：terminal_output 帧。积压时可丢弃，客户端靠 terminal_snapshot 重同步。
+	droppable bool
 }
+
+// terminalOutputPrefix 是 omp terminal_output 帧的固定开头（rpc-terminal.ts `#flush` 以 type 起头）。
+// 前缀不符只会退化为「不丢弃」。
+var terminalOutputPrefix = []byte(`{"type":"terminal_output"`)
+
+func isTerminalOutput(frame []byte) bool { return bytes.HasPrefix(frame, terminalOutputPrefix) }
 
 // outbox 是 omp → 控制面的帧队列；超过 32MiB 时整体丢弃并记录 gap。
 // 单帧本身超过整个预算时同样丢弃（连同已排队的帧）并记录 gap：预算对单帧同样生效。
+// 可丢弃帧（终端输出）在队列 ≥ termHighWater 时直接丢弃并记 termGap，不影响其它帧。
 type outbox struct {
 	mu    sync.Mutex
 	items []outItem
@@ -52,11 +64,17 @@ type outbox struct {
 	// 上报途中再次溢出不会被误清。
 	gapGen uint64
 	seq    uint64
+	// termGap：丢弃过终端输出、尚未发 terminal.gap。
+	termGap bool
 }
 
 func (o *outbox) push(it outItem) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if it.droppable && o.size >= termHighWater {
+		o.termGap = true
+		return
+	}
 	o.seq++
 	it.seq = o.seq
 	if len(it.data) > maxBufferedFrames {
@@ -70,6 +88,24 @@ func (o *outbox) push(it outItem) {
 	}
 	o.items = append(o.items, it)
 	o.size += len(it.data)
+}
+
+// takeTermGap 在丢弃过终端输出且队列已回落到 ≤ low 时清除标记并返回 true（调用方随即发 terminal.gap）。
+func (o *outbox) takeTermGap(low int) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.termGap && o.size <= low {
+		o.termGap = false
+		return true
+	}
+	return false
+}
+
+// markTermGap 恢复 termGap（terminal.gap 没能发出时，留到下一次再报）。
+func (o *outbox) markTermGap() {
+	o.mu.Lock()
+	o.termGap = true
+	o.mu.Unlock()
 }
 
 func (o *outbox) head() (outItem, bool) {
@@ -253,6 +289,12 @@ func (t *thread) forward(ctx context.Context) {
 				}
 				t.out.clearGap(gen)
 				continue
+			}
+		}
+		// 丢弃过终端输出且积压已回落：通知控制面（转为 term.lagged，客户端以快照重同步）。发不出去则留待下次。
+		if st != nil && t.out.takeTermGap(termLowWater) {
+			if err := c.ctl.Notify(string(apigen.MethodTerminalGap), apigen.LinkCtlTerminalGapParams{ThreadID: t.id}); err != nil {
+				t.out.markTermGap()
 			}
 		}
 		// 流属于当前进程代且该进程已完成初始化：在这条流上报 ready（每条流一次）。
@@ -492,7 +534,7 @@ func (q *cmdQueue) pop() ([]byte, bool) {
 // ---- agent.start / agent.stop ----
 
 func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAgentStartResult, error) {
-	if p.ThreadID == "" || strings.ContainsAny(p.ThreadID, "/\\") || p.ThreadID == "." || p.ThreadID == ".." {
+	if !validThreadID(p.ThreadID) {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "invalid threadId %q", p.ThreadID)
 	}
 	dir := filepath.Join(r.home, ".oryn", "threads", p.ThreadID)
@@ -983,7 +1025,7 @@ func (p *proc) readStdout(t *thread, r io.Reader) {
 			continue
 		}
 		p.ui.observeOut(frame)
-		t.out.push(outItem{epoch: p.epoch, data: frame})
+		t.out.push(outItem{epoch: p.epoch, data: frame, droppable: isTerminalOutput(frame)})
 		t.wake()
 	}
 }

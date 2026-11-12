@@ -465,6 +465,8 @@ func initFrames(thread string) []apigen.OmpFrame {
 		{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
 		{"type": "set_ask_dialog", "enabled": true, "form": true},
 		{"type": "set_subagent_subscription", "level": "progress"},
+		// M3：控制面在 set_subagent_subscription 之后开启终端（每个 initFrame 都必须成功）。
+		{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true},
 	}
 }
 

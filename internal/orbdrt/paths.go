@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// validThreadID 是 agent.start 与附件接口共用的线程 id 校验：非空、不含路径分隔符、不是 `.` / `..`
+// （线程 id 会成为 $HOME/.oryn 下的目录名）。
+func validThreadID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, "/\\\x00") && id != "." && id != ".."
+}
+
 // resolvePath 把控制面给出的路径落到本机：`~` / `~/x` / 相对路径以 $HOME 为根，绝对路径原样。
 // 控制面按约定发送 `~/…` 形式，这样 orb 内（HOME=/home/user）与 process 驱动的测试（HOME=临时目录）通用。
 func (r *Runtime) resolvePath(p string) string {
