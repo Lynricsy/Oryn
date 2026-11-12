@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,7 +31,10 @@ var configPushCmd = &cobra.Command{
 	Short: "打包上传本机 omp 配置目录（默认 ~/.omp/agent），整体替换控制面上的 omp-home",
 	Long: `排除 sessions/ blobs/ cache/ logs/ natives/ terminal-sessions/ *.db *.db-* auth.json history*。
 models.yml 中的字面 apiKey 会被控制面抽取进密钥库，磁盘上只留引用；其它文件原样保存，
-其中形似密钥的字符串只给出警告。`,
+其中形似密钥的字符串只给出警告。
+
+额外排除：--exclude <glob>（可重复），以及 dir/.orynignore 中每行一个 glob（# 开头为注释）。
+glob 按相对路径匹配，匹配到目录即排除整个目录，例如 extensions/omp-notify、omp-notify*。`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runConfigPush,
 }
@@ -44,12 +49,17 @@ var configPullCmd = &cobra.Command{
 	RunE: runConfigPull,
 }
 
+var configPushOpts struct {
+	exclude []string
+}
+
 var configPullOpts struct {
 	force  bool
 	dryRun bool
 }
 
 func init() {
+	configPushCmd.Flags().StringArrayVar(&configPushOpts.exclude, "exclude", nil, "额外排除的相对路径 glob（可重复）")
 	configPullCmd.Flags().BoolVar(&configPullOpts.force, "force", false, "直接覆盖 models.yml（其中只有密钥引用，没有真实值）")
 	configPullCmd.Flags().BoolVar(&configPullOpts.dryRun, "dry-run", false, "只列出将写入的文件")
 	configCmd.AddCommand(configPushCmd, configPullCmd)
@@ -210,7 +220,11 @@ func runConfigPush(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	files, err := collectPushFiles(dir)
+	ignore, err := readOrynIgnore(dir)
+	if err != nil {
+		return err
+	}
+	files, err := collectPushFiles(dir, append(ignore, configPushOpts.exclude...))
 	if err != nil {
 		return err
 	}
@@ -268,8 +282,44 @@ func runConfigPush(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// orynIgnoreFile 是推送目录中的额外排除表。
+const orynIgnoreFile = ".orynignore"
+
+// readOrynIgnore 读取 dir/.orynignore（不存在时为空）。
+func readOrynIgnore(dir string) ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, orynIgnoreFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			out = append(out, strings.Trim(line, "/"))
+		}
+	}
+	return out, nil
+}
+
+// userExcluded 判断相对路径是否命中用户排除 glob（任一前缀段匹配即命中）。
+func userExcluded(rel string, globs []string) bool {
+	segs := strings.Split(rel, "/")
+	for i := range segs {
+		prefix := strings.Join(segs[:i+1], "/")
+		for _, g := range globs {
+			if ok, _ := path.Match(g, prefix); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // collectPushFiles 遍历目录（跟随符号链接，防环），返回未被排除的普通文件。
-func collectPushFiles(root string) ([]pushFile, error) {
+func collectPushFiles(root string, exclude []string) ([]pushFile, error) {
 	var out []pushFile
 	visited := map[string]bool{}
 	var walk func(abs, rel string) error
@@ -291,7 +341,7 @@ func collectPushFiles(root string) ([]pushFile, error) {
 			if rel != "" {
 				childRel = rel + "/" + e.Name()
 			}
-			if agentcfg.Excluded(childRel) {
+			if agentcfg.Excluded(childRel) || childRel == orynIgnoreFile || userExcluded(childRel, exclude) {
 				continue
 			}
 			childAbs := filepath.Join(abs, e.Name())

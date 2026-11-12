@@ -3,6 +3,7 @@ package orbdrt
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -179,7 +180,37 @@ func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {
 			return fmt.Errorf("%s: %w", f.Path, err)
 		}
 	}
-	return nil
+	return r.pruneOmpHome(base, files)
+}
+
+// pruneOmpHome 删除上次由 Oryn 下发、这次已不在配置中的文件（配置删除要能传播到 orb，
+// 例如移除某个扩展）。只动清单里记录过的路径，omp 自己产生的文件不受影响。
+func (r *Runtime) pruneOmpHome(base string, files []apigen.LinkCtlOmpHomeFile) error {
+	manifest := filepath.Join(r.home, ".oryn", "omp-home.manifest.json")
+	var prev []string
+	if b, err := os.ReadFile(manifest); err == nil {
+		_ = json.Unmarshal(b, &prev)
+	}
+	cur := make(map[string]bool, len(files))
+	list := make([]string, 0, len(files))
+	for _, f := range files {
+		cur[f.Path] = true
+		list = append(list, f.Path)
+	}
+	for _, p := range prev {
+		if cur[p] {
+			continue
+		}
+		path, err := relUnder(base, p)
+		if err != nil {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("删除已移除的配置文件 %s: %w", p, err)
+		}
+	}
+	b, _ := json.Marshal(list)
+	return writeFileAtomic(manifest, b, 0o600)
 }
 
 // scriptCmds 列出某阶段要执行的命令：项目脚本（内容）+ 仓库内 `.oryn/<name>`，缺失时回退 `.agents/<name>`。

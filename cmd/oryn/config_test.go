@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,4 +30,22 @@ func TestPullTarget(t *testing.T) {
 		_, _, err := pullTarget(dir, bad, false)
 		assert.Error(t, err, bad)
 	}
+}
+
+func TestPushExclusions(t *testing.T) {
+	dir := t.TempDir()
+	for _, p := range []string{"config.yml", "extensions/omp-notify/index.ts", "extensions/keep.ts", "omp-notify.json", "sessions/x.jsonl"} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, p)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, p), []byte("x"), 0o644))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".orynignore"), []byte("# 通知插件\nextensions/omp-notify/\n"), 0o644))
+	ignore, err := readOrynIgnore(dir)
+	require.NoError(t, err)
+	files, err := collectPushFiles(dir, append(ignore, "omp-notify*"))
+	require.NoError(t, err)
+	var rels []string
+	for _, f := range files {
+		rels = append(rels, f.rel)
+	}
+	assert.Equal(t, []string{"config.yml", "extensions/keep.ts"}, rels)
 }
