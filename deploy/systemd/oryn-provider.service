@@ -1,0 +1,17 @@
+[Unit]
+Description=Oryn Docker orb provider
+After=docker.service orynd.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/oryn provider run --config /etc/oryn/provider.yaml
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+# 需要访问 /var/run/docker.sock
+SupplementaryGroups=docker
+
+[Install]
+WantedBy=multi-user.target

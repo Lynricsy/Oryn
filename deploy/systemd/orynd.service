@@ -1,0 +1,23 @@
+[Unit]
+Description=Oryn 控制面 (orynd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/orynd --config /etc/oryn/orynd.yaml
+Restart=always
+RestartSec=2
+User=oryn
+Group=oryn
+StateDirectory=oryn
+StateDirectoryMode=0700
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oryn
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
