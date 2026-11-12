@@ -11,6 +11,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 )
@@ -23,6 +25,8 @@ type Server struct {
 	Home    *agentcfg.Home
 	Auth    *auth.Service
 	Tickets *auth.Tickets
+	Jobs    *jobs.Queue
+	Orbs    *orbs.Service
 	API     *api.Server
 	Handler http.Handler
 
@@ -59,13 +63,26 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	s.Tickets = auth.NewTickets()
 
+	s.Jobs = jobs.New(s.Store)
+	key, err := orbs.LoadOrCreateTokenKey(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	s.Orbs = orbs.New(orbs.Config{Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key},
+		s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go s.Jobs.Run(runCtx)
+	go s.Orbs.Run(runCtx)
+	s.closers = append(s.closers, func() { cancel(); s.Orbs.Close() })
+
 	s.API = &api.Server{Deps: api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
 		AuthMiddleware: auth.Middleware(s.Store),
-		Mounts:         map[string]http.Handler{},
+		Mounts:         map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler()},
 	}}
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
+	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }
