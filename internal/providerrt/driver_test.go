@@ -135,7 +135,7 @@ func TestDockerInfo(t *testing.T) {
 func TestDispatchEnv(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "dispatch.sh")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nenv | grep -E '^(ORB_|ORYN_)' | sort > \""+dir+"/env\"\necho hello-from-dispatch\n[ \"$ORB_OPERATION\" != delete ]\n"), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nenv | grep -E '^(ORB_[A-Z_]*|ORYN_ORB_TOKEN|ORYN_URL)=' | sort > \""+dir+"/env\"\necho hello-from-dispatch\n[ \"$ORB_OPERATION\" != delete ]\n"), 0o755))
 	d := NewDispatch(script, config.Docker{Image: "oryn-orb:dev", DefaultType: "small"})
 	snap := "oryn-snap-2"
 	out := newTailBuffer(1024)

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/oklog/ulid/v2"
@@ -24,8 +25,18 @@ func Snapshot() string { return "oryn-snap-" + strings.ToLower(newULID()) }
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 
-// newULID 用 crypto/rand 生成 ULID（ulid.Make 的熵源可预测，而部分 id 在 orb 内可见）。
-func newULID() string { return ulid.MustNew(ulid.Now(), rand.Reader).String() }
+// newULID 用 crypto/rand 生成单调 ULID：熵源不可预测（ulid.Make 的熵源可预测，而部分 id 在 orb 内可见），
+// 同一毫秒内仍严格递增（任务队列等按 id 排序依赖这一点）。
+func newULID() string {
+	ulidMu.Lock()
+	defer ulidMu.Unlock()
+	return ulid.MustNew(ulid.Now(), ulidEntropy).String()
+}
+
+var (
+	ulidMu      sync.Mutex
+	ulidEntropy = ulid.Monotonic(rand.Reader, 0)
+)
 
 // Token 返回 <prefix>_<32 字节随机 base64url>，如 opv_…。
 func Token(prefix string) string {

@@ -17,3 +17,12 @@ func TestFormats(t *testing.T) {
 	assert.Equal(t, "opv", TokenPrefix(tok))
 	assert.Len(t, Hash(tok), 64)
 }
+
+func TestULIDMonotonic(t *testing.T) {
+	prev := New("job")
+	for range 1000 {
+		next := New("job")
+		assert.Greater(t, next, prev, "同一毫秒内也必须递增")
+		prev = next
+	}
+}
