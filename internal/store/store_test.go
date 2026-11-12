@@ -13,7 +13,7 @@ import (
 // m2Tables 是计划 D 节列出的全部 M2 表。
 var m2Tables = []string{
 	"blobs", "device_pairings", "devices", "entries", "entry_cursors", "jobs", "orb_events",
-	"orb_samples", "orbs", "owner", "passkeys", "projects", "providers", "recovery_codes",
+	"orb_samples", "orb_setup_runs", "orbs", "owner", "passkeys", "projects", "providers", "recovery_codes",
 	"secrets", "thread_labels", "threads", "tool_calls", "usage_records", "web_sessions",
 }
 
