@@ -172,7 +172,7 @@ func TestOrbStats(t *testing.T) {
 func TestWindow(t *testing.T) {
 	now := time.UnixMilli(1_000_000_000)
 	f, to := Window(nil, nil, now)
-	assert.Equal(t, int64(1_000_000_000), to)
+	assert.Equal(t, int64(1_000_000_001), to, "右开区间：当前毫秒计入")
 	assert.Equal(t, to-DefaultWindow.Milliseconds(), f)
 	x, y := int64(5), int64(9)
 	f, to = Window(&x, &y, now)

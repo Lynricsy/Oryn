@@ -20,7 +20,8 @@ const DefaultWindow = 7 * 24 * time.Hour
 
 // Window 按「from 缺省 = to − 7 天，to 缺省 = now」补全时间窗。
 func Window(from, to *int64, now time.Time) (int64, int64) {
-	t := now.UnixMilli()
+	// 区间右开：默认终点取 now+1ms，当前毫秒内写入的记录也计入
+	t := now.UnixMilli() + 1
 	if to != nil {
 		t = *to
 	}
