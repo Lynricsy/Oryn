@@ -79,30 +79,35 @@ func (t *turn) nextMessageID() string {
 	return "msg-" + strconv.Itoa(t.s.msgSeq)
 }
 
-// settle 把会话标记为非流式、已静止；只生效一次。
-func (t *turn) settle() {
+// settle 把会话标记为非流式并结束本回合的待办计数；只生效一次。返回此后会话是否静止
+// （没有已接受但未结束的回合）。
+func (t *turn) settle() bool {
 	t.s.mu.Lock()
 	defer t.s.mu.Unlock()
-	if t.settled {
-		return
+	if !t.settled {
+		t.settled = true
+		t.s.streaming = false
+		t.s.cancelTurn = nil
+		t.s.pending--
 	}
-	t.settled = true
-	t.s.streaming = false
-	t.s.cancelTurn = nil
-	t.s.pending--
+	return t.s.pending == 0
 }
 
-// finish 发出回合结尾帧：agent_end → prompt_result → session_settled。
+// finish 发出回合结尾帧：agent_end → prompt_result[→ session_settled]。
 // 状态在 prompt_result 之前更新：收到 session_settled 后的 get_state 必须已是静止态（与 omp 一致）。
+// 还有排队的回合时会话并未静止（omp rpc.md「Yield vs settled」）：sessionSettled=false 且不发 session_settled，
+// session_settled 只在最后一个排队回合结束时发出一次。
 func (t *turn) finish(status string) {
 	t.s.emitEvent(map[string]any{"type": "agent_end", "messages": nonNil(t.messages), "isTerminal": true, "yielded": true})
-	t.settle()
-	pr := map[string]any{"type": "prompt_result", "agentInvoked": true, "status": status, "sessionSettled": true}
+	settled := t.settle()
+	pr := map[string]any{"type": "prompt_result", "agentInvoked": true, "status": status, "sessionSettled": settled}
 	if t.promptID != "" {
 		pr["id"] = t.promptID
 	}
 	t.s.emit(pr)
-	t.s.emit(map[string]any{"type": "session_settled"})
+	if settled {
+		t.s.emit(map[string]any{"type": "session_settled"})
+	}
 }
 
 func nonNil(v []any) []any {

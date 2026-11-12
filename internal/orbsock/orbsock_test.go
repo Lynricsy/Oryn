@@ -101,3 +101,36 @@ func TestDisconnectCancelsHandler(t *testing.T) {
 	}
 	assert.ErrorIs(t, <-errc, context.Canceled)
 }
+
+// OD3：客户端连上后只写半行就停住，服务端 ctx 结束时 Serve 仍须返回（关闭该连接）。
+func TestServeReturnsWithIdleClient(t *testing.T) {
+	path := Path(t.TempDir())
+	ln, err := Listen(path)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Serve(ctx, ln, func(context.Context, string, json.RawMessage, *Responder) (any, error) { return nil, nil })
+	}()
+	c, err := net.Dial("unix", path)
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = c.Write([]byte(`{"method":"setup.st`))
+	require.NoError(t, err)
+	// 等服务端确实接受了该连接（读到数据之前它阻塞在 readLine）：再发一个完整请求到另一条连接并得到应答。
+	cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer ccancel()
+	_, err = Call(cctx, path, "ping", nil, nil)
+	require.NoError(t, err)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return while a client held an unfinished request")
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, err = c.Read(make([]byte, 1))
+	assert.Error(t, err, "服务端已关闭该连接")
+}

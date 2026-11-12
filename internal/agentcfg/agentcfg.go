@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -172,8 +173,14 @@ func Import(files map[string][]byte) (ImportResult, error) {
 
 func importModels(content []byte, out map[string]string, hosts map[string][]string) ([]byte, error) {
 	doc, providers, err := parseModels(content)
-	if err != nil || providers == nil {
+	if err != nil {
 		return content, err
+	}
+	if err := checkRefs(doc, providers); err != nil {
+		return nil, err
+	}
+	if providers == nil {
+		return content, nil
 	}
 	for _, kv := range mapPairs(providers) {
 		key, prov := kv[0].Value, kv[1]
@@ -186,13 +193,74 @@ func importModels(content []byte, out map[string]string, hosts map[string][]stri
 		}
 		name := ModelKeySecretName(key)
 		out[name] = ak.Value
-		if u, err := url.Parse(providerBase(key, prov)); err == nil && u.Hostname() != "" {
-			hosts[name] = []string{u.Hostname()}
+		if hs := upstreamHosts(key, prov); len(hs) > 0 {
+			hosts[name] = hs
 		}
 		ak.Value = SecretRef(name)
 		ak.Style = yaml.DoubleQuotedStyle
 	}
 	return encode(doc)
+}
+
+// upstreamHosts 返回 provider 密钥允许的上游主机：provider 的 baseUrl（或内置上游）以及各模型条目自带
+// baseUrl 的主机（去重、按出现顺序）。provider 本身没有上游时（环境变量降级）返回 nil：降级的密钥不绑定主机。
+func upstreamHosts(key string, prov *yaml.Node) []string {
+	u, err := url.Parse(providerBase(key, prov))
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	out := []string{strings.ToLower(u.Hostname())}
+	if models := mapGet(prov, "models"); models != nil && models.Kind == yaml.SequenceNode {
+		for _, m := range models.Content {
+			if m.Kind != yaml.MappingNode {
+				continue
+			}
+			mb := mapGet(m, "baseUrl")
+			if mb == nil || mb.Kind != yaml.ScalarNode {
+				continue
+			}
+			if mu, err := url.Parse(mb.Value); err == nil && mu.Hostname() != "" {
+				if h := strings.ToLower(mu.Hostname()); !slices.Contains(out, h) {
+					out = append(out, h)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// checkRefs 做不依赖密钥库的引用校验：models.yml 不得引用 git/* 密钥；provider 的 apiKey 只能整体引用
+// 它自己的密钥 omp/models/<key>/apiKey（防止把任意密钥经 apiKey 送进 orb 或送往任意上游）。
+func checkRefs(doc, providers *yaml.Node) error {
+	var err error
+	walk(doc, func(n *yaml.Node) {
+		if err != nil || n.Kind != yaml.ScalarNode {
+			return
+		}
+		for _, m := range refRe.FindAllStringSubmatch(n.Value, -1) {
+			if strings.HasPrefix(m[1], "git/") {
+				err = fmt.Errorf("models.yml 不能引用 git 密钥 %s", m[1])
+				return
+			}
+		}
+	})
+	if err != nil || providers == nil {
+		return err
+	}
+	for _, kv := range mapPairs(providers) {
+		key, prov := kv[0].Value, kv[1]
+		if prov.Kind != yaml.MappingNode {
+			continue
+		}
+		ak := mapGet(prov, "apiKey")
+		if ak == nil || ak.Kind != yaml.ScalarNode || !refRe.MatchString(ak.Value) {
+			continue
+		}
+		if ak.Value != SecretRef(ModelKeySecretName(key)) {
+			return fmt.Errorf("provider %s 的 apiKey 只能引用它自己的密钥 %s", key, ModelKeySecretName(key))
+		}
+	}
+	return nil
 }
 
 // isLiteralKey：不是 `!命令`、不是环境变量名、不是已有引用。
@@ -204,6 +272,8 @@ func isLiteralKey(v string) bool {
 type Resolver interface {
 	// Lookup 返回密钥 id 与明文值。
 	Lookup(name string) (id, value string, ok bool)
+	// SecretByID 按 id 返回明文与允许的上游主机（空 = 未绑定主机）。
+	SecretByID(id string) (value string, hosts []string, ok bool)
 }
 
 // Rendered 是下发到 orb 的配置。
@@ -234,10 +304,21 @@ func Render(files map[string][]byte, r Resolver) (Rendered, error) {
 	return out, nil
 }
 
+// renderModels 改写 models.yml 并生成 egress 路由。密钥绑定规则（防止改 models.yml 把密钥带出控制面）：
+//   - apiKey 只能引用本 provider 自己的密钥（checkRefs）；它绑定到本 provider 的全部路由；
+//   - 环境变量降级只用于该密钥，且仅当它没有绑定上游主机（绑定了主机的密钥只能经代理使用）；
+//   - provider 子树里的其它引用必须属于 hosts 非空的密钥，且只绑定到上游主机与 hosts 匹配的路由；
+//   - providers 之外的引用换成占位符但不绑定任何路由（egress 拒绝使用）；任何位置都不能引用 git/* 密钥。
 func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 	doc, providers, err := parseModels(content)
-	if err != nil || providers == nil {
+	if err != nil {
 		return content, err
+	}
+	if err := checkRefs(doc, providers); err != nil {
+		return nil, err
+	}
+	if providers == nil {
+		return content, nil
 	}
 	for _, kv := range mapPairs(providers) {
 		key, prov := kv[0].Value, kv[1]
@@ -245,15 +326,10 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 			continue
 		}
 		origins := map[string]string{} // 本 provider 产生的路由键 → 上游前缀
-		var ids []string               // 本 provider 子树中用到的密钥 id（绑定到它的全部路由）
+		var own []string               // 本 provider 自己的 apiKey 密钥 id
 		ak := mapGet(prov, "apiKey")
-		var secretName string
-		if ak != nil && ak.Kind == yaml.ScalarNode {
-			if m := refRe.FindStringSubmatch(ak.Value); m != nil && m[0] == ak.Value {
-				secretName = m[1]
-			}
-		}
-		if secretName != "" {
+		if ak != nil && ak.Kind == yaml.ScalarNode && ak.Value == SecretRef(ModelKeySecretName(key)) {
+			secretName := ModelKeySecretName(key)
 			id, value, ok := r.Lookup(secretName)
 			if !ok {
 				return nil, fmt.Errorf("provider %s 引用的密钥 %s 不存在", key, secretName)
@@ -262,6 +338,10 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 			bu := mapGet(prov, "baseUrl")
 			if base == "" {
 				// 环境变量降级：omp 先把 apiKey 当环境变量名解析
+				if _, hosts, _ := r.SecretByID(id); len(hosts) > 0 {
+					return nil, fmt.Errorf("provider %s 没有 baseUrl，而密钥 %s 已绑定上游主机（%s），不能以环境变量下发到 orb",
+						key, secretName, strings.Join(hosts, ", "))
+				}
 				env := EnvFallbackName(key)
 				ak.Value = env
 				ak.Style = 0
@@ -274,7 +354,7 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 				}
 				ak.Value = Placeholder(id)
 				ak.Style = yaml.DoubleQuotedStyle
-				ids = append(ids, id)
+				own = append(own, id)
 				origins[key] = origin
 				if bu == nil {
 					appendPair(prov, "baseUrl", local)
@@ -302,14 +382,32 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 				}
 			}
 		}
-		// provider 子树内其余密钥引用（如自定义请求头）绑定到该 provider 的路由
-		more, err := replaceRefs(prov, r)
+		// provider 子树内其余密钥引用（如自定义请求头）：只绑定到主机匹配的路由
+		refs, err := replaceRefs(prov, r)
 		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, more...)
+		bound := map[string][]string{}
+		for _, ref := range refs {
+			if len(ref.hosts) == 0 {
+				return nil, fmt.Errorf("provider %s 引用的密钥 %s 没有绑定上游主机（hosts），不能在 models.yml 中使用", key, ref.name)
+			}
+			matched := false
+			for rk, origin := range origins {
+				if u, err := url.Parse(origin); err == nil && egress.HostAllowed(ref.hosts, u.Hostname()) {
+					if !slices.Contains(bound[rk], ref.id) {
+						bound[rk] = append(bound[rk], ref.id)
+					}
+					matched = true
+				}
+			}
+			if !matched {
+				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 引用的密钥 %s 绑定的主机（%s）与该 provider 的上游都不匹配，不会被注入",
+					key, ref.name, strings.Join(ref.hosts, ", ")))
+			}
+		}
 		for rk, origin := range origins {
-			out.Routes[rk] = egress.Route{Origin: origin, SecretIDs: ids}
+			out.Routes[rk] = egress.Route{Origin: origin, SecretIDs: own, HostBoundIDs: bound[rk]}
 		}
 	}
 	// providers 之外的引用：换成占位符但不绑定任何路由（egress 会拒绝使用）
@@ -319,9 +417,15 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 	return encode(doc)
 }
 
-// replaceRefs 把子树中的 ${oryn:secret:…} 换成占位符，返回用到的密钥 id。
-func replaceRefs(n *yaml.Node, r Resolver) ([]string, error) {
-	var ids []string
+type secretUse struct {
+	name  string
+	id    string
+	hosts []string
+}
+
+// replaceRefs 把子树中的 ${oryn:secret:…} 换成占位符，返回用到的密钥（按出现顺序去重）。
+func replaceRefs(n *yaml.Node, r Resolver) ([]secretUse, error) {
+	var uses []secretUse
 	var walkErr error
 	walk(n, func(n *yaml.Node) {
 		if n.Kind != yaml.ScalarNode || !refRe.MatchString(n.Value) {
@@ -334,11 +438,14 @@ func replaceRefs(n *yaml.Node, r Resolver) ([]string, error) {
 				walkErr = fmt.Errorf("引用的密钥 %s 不存在", name)
 				return s
 			}
-			ids = append(ids, id)
+			if !slices.ContainsFunc(uses, func(u secretUse) bool { return u.id == id }) {
+				_, hosts, _ := r.SecretByID(id)
+				uses = append(uses, secretUse{name: name, id: id, hosts: hosts})
+			}
 			return Placeholder(id)
 		})
 	})
-	return ids, walkErr
+	return uses, walkErr
 }
 
 // providerBase 返回 provider 的上游 baseUrl（未写时取内置表；都没有返回空串）。

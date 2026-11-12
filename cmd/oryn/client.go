@@ -63,7 +63,11 @@ func saveCredentials(c credentials) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	_ = os.Chmod(filepath.Dir(p), 0o700)
+	// 只收紧默认的专用目录（~/.config/oryn）；ORYN_CREDENTIALS 指向的任意位置，其父目录可能是共享目录
+	// （如 /tmp），不能改它的权限。凭据文件本身总是以 0600 写入。
+	if os.Getenv("ORYN_CREDENTIALS") == "" {
+		_ = os.Chmod(filepath.Dir(p), 0o700)
+	}
 	b, _ := json.MarshalIndent(c, "", "  ")
 	// 先写 0600 临时文件再改名：已有文件的宽松权限不会沿用
 	tmp, err := os.CreateTemp(filepath.Dir(p), ".credentials-*.json")

@@ -23,16 +23,21 @@ import (
 	"github.com/Lynricsy/Oryn/internal/link"
 )
 
-// entries.append 批次上限：编码后字节与行数。单行 JSON 字符串编码后至多约为原文 2 倍
-// （SetEscapeHTML(false)），因此 ctl 行始终远低于 link.MaxCtlLineBytes。
+// entries.append 批次上限：编码后字节与行数。单行超过 maxBatchBytes 时单独成批。
 const (
 	maxBatchBytes = 4 << 20
 	maxBatchLines = 500
-	// maxEntryLine 是可复制的单行上限（编码后）；更长的行只推进偏移、不发送内容。
-	maxEntryLine = 40 << 20
+	// maxEntryLine 是可复制的单行上限（JSON 字符串编码后），取「单独一行成批仍能放进一条 ctl 行」的最大值。
+	// 更长的行无法经 entries.append 送达：复制在该行之前停住，游标不越过它（不丢、不确认），
+	// 并以 notice 帧告知线程（见 appendFrom）。直到该文件被重写（reset）之前，其后的行也不会复制——
+	// 保持「已确认的偏移之前的内容都已入库」这一条持久真相不变。
+	maxEntryLine = link.MaxCtlLineBytes - 2<<20
 	// artifactDepth 是会话产物子目录内查找 *.jsonl 的最大深度。
 	artifactDepth = 4
 )
+
+// entryLineLimit 是实际使用的单行上限（测试可调小）。
+var entryLineLimit = maxEntryLine
 
 // tailer 把线程会话目录下的 JSONL 行复制到控制面（计划 C2 entries.*、H4.2）。
 // 一个线程一个 goroutine，所有文件按序串行同步：同一 file 的 append 请求天然串行。
@@ -51,6 +56,14 @@ type tfile struct {
 	offset       int64 // 服务端已确认的偏移
 	ino          uint64
 	resetPending bool
+	// blocked 非 nil：offset 处是一条超过上限的行，复制停在这里，直到文件被重写。
+	blocked *blockedLine
+}
+
+// blockedLine 是复制停住的超长行。
+type blockedLine struct {
+	offset int64
+	size   int64
 }
 
 func newTailer(t *thread) *tailer {
@@ -284,9 +297,18 @@ func (tl *tailer) syncFile(ctx context.Context, c *conn, rel string) error {
 	if f.ino != ino {
 		f.ino = ino
 		f.resetPending = true
+		f.blocked = nil
 	}
 	if fi.Size() < f.offset {
 		f.resetPending = true
+		f.blocked = nil
+	}
+	// 停在超长行上：文件未被重写之前什么也不做（内容追加不会改变那一行）。
+	if b := f.blocked; b != nil {
+		if f.offset == b.offset {
+			return nil
+		}
+		f.blocked = nil // 游标被控制面改回更早的位置：重新同步到那一行
 	}
 	if f.resetPending {
 		return tl.reset(ctx, c, rel, abs, f)
@@ -298,7 +320,8 @@ func (tl *tailer) syncFile(ctx context.Context, c *conn, rel string) error {
 }
 
 // reset 通知服务端文件被重写，从 0 全量重发，完成后发 reset_done。
-// 中途断连时 resetPending 保持为真，重连后重新开始。
+// 中途断连时 resetPending 保持为真，重连后重新开始。重发途中停在超长行上时不发 reset_done
+// （否则控制面会删掉其后仍标为 stale 的旧行），保持 resetPending。
 func (tl *tailer) reset(ctx context.Context, c *conn, rel, abs string, f *tfile) error {
 	tl.t.r.log.Info("session file rewritten; resending", "thread", tl.t.id, "file", rel)
 	if err := c.ctl.Notify("entries.reset", apigen.LinkCtlEntriesResetParams{ThreadID: tl.t.id, File: rel}); err != nil {
@@ -308,6 +331,9 @@ func (tl *tailer) reset(ctx context.Context, c *conn, rel, abs string, f *tfile)
 	if err := tl.appendFrom(ctx, c, rel, abs, f); err != nil {
 		return err
 	}
+	if f.blocked != nil {
+		return nil
+	}
 	if err := c.ctl.Notify("entries.reset_done", apigen.LinkCtlEntriesResetDoneParams{ThreadID: tl.t.id, File: rel}); err != nil {
 		return err
 	}
@@ -315,7 +341,7 @@ func (tl *tailer) reset(ctx context.Context, c *conn, rel, abs string, f *tfile)
 	return nil
 }
 
-// appendFrom 从 f.offset 起把完整行分批发出，直到文件末尾（不含未以 \n 结尾的残行）。
+// appendFrom 从 f.offset 起把完整行分批发出，直到文件末尾（不含未以 \n 结尾的残行）或一条超长行。
 func (tl *tailer) appendFrom(ctx context.Context, c *conn, rel, abs string, f *tfile) error {
 	fh, err := os.Open(abs)
 	if err != nil {
@@ -323,11 +349,14 @@ func (tl *tailer) appendFrom(ctx context.Context, c *conn, rel, abs string, f *t
 	}
 	defer fh.Close()
 	for {
-		lines, end, err := readBatch(fh, f.offset)
+		lines, end, blocked, err := readBatch(fh, f.offset)
 		if err != nil {
 			return err
 		}
 		if end == f.offset {
+			if blocked != nil {
+				tl.block(rel, f, blocked)
+			}
 			return nil
 		}
 		params := encodeAppend(tl.t.id, rel, f.offset, end, lines)
@@ -354,43 +383,63 @@ func (tl *tailer) appendFrom(ctx context.Context, c *conn, rel, abs string, f *t
 	}
 }
 
+// block 把文件停在超长行上，记日志并向线程发一条 notice 帧（实时提示；条目本身不入库也不被确认）。
+func (tl *tailer) block(rel string, f *tfile, b *blockedLine) {
+	f.blocked = b
+	tl.t.r.log.Error("session entry exceeds the replication limit; replication of this file is paused at it",
+		"thread", tl.t.id, "file", rel, "offset", b.offset, "bytes", b.size, "limit", entryLineLimit)
+	msg, err := json.Marshal(map[string]any{
+		"type": "notice", "level": "error", "source": "oryn",
+		"message": fmt.Sprintf("Oryn: a transcript entry in %s (%.1f MiB at byte %d) exceeds the %d MiB replication limit. "+
+			"Replication of this session file is paused at that entry until the file is rewritten; later entries will not appear in Oryn.",
+			rel, float64(b.size)/(1<<20), b.offset, entryLineLimit>>20),
+	})
+	if err != nil {
+		return
+	}
+	tl.t.mu.Lock()
+	epoch := tl.t.epoch
+	tl.t.mu.Unlock()
+	tl.t.out.push(outItem{epoch: epoch, data: msg})
+	tl.t.wake()
+}
+
 // readBatch 从 off 起读取一批完整行，返回各行的 JSON 字符串编码与批末偏移。
-func readBatch(fh *os.File, off int64) ([][]byte, int64, error) {
+// 遇到编码后超过 entryLineLimit 的行时批次在它之前结束，并返回该行（不越过它）。
+func readBatch(fh *os.File, off int64) ([][]byte, int64, *blockedLine, error) {
 	if _, err := fh.Seek(off, io.SeekStart); err != nil {
-		return nil, off, err
+		return nil, off, nil, err
 	}
 	br := bufio.NewReaderSize(fh, 256<<10)
 	var lines [][]byte
 	end, size := off, 0
 	for len(lines) < maxBatchLines && size < maxBatchBytes {
-		line, n, complete, err := readLine(br, maxEntryLine/2)
+		line, n, complete, err := readLine(br, entryLineLimit)
 		if err != nil {
-			return nil, off, err
+			return nil, off, nil, err
 		}
 		if !complete {
 			break
 		}
-		if line == nil { // 超长行：跳过内容，只推进偏移
-			end += n
-			continue
+		if line == nil { // 原文已超上限
+			return lines, end, &blockedLine{offset: end, size: n}, nil
 		}
 		if len(bytes.TrimSpace(line)) == 0 {
 			end += n
 			continue
 		}
 		enc := encodeString(line)
+		if len(enc) > entryLineLimit { // 编码后超上限
+			return lines, end, &blockedLine{offset: end, size: n}, nil
+		}
 		if len(lines) > 0 && size+len(enc) > maxBatchBytes {
 			break // 留给下一批
-		}
-		if len(enc) > maxEntryLine {
-			end += n
-			continue
 		}
 		lines = append(lines, enc)
 		size += len(enc)
 		end += n
 	}
-	return lines, end, nil
+	return lines, end, nil, nil
 }
 
 // readLine 读取一行（含 \n 的字节数为 n）。行超过 limit 时返回 line=nil（内容被丢弃）；
@@ -458,5 +507,9 @@ func encodeAppend(threadID, file string, base, end int64, lines [][]byte) json.R
 	return out
 }
 
-// 编译期保证：最大单行（编码后）加批次开销仍低于 ctl 行上限。
-const _ = uint(link.MaxCtlLineBytes - maxEntryLine - maxBatchBytes - (1 << 20))
+// 编译期保证：单独成批的最大单行（编码后）加 params 与 ctl 信封开销（< 1MiB）仍低于 ctl 行上限；
+// 多行批次（≤ maxBatchBytes）同样如此。
+const (
+	_ = uint(link.MaxCtlLineBytes - maxEntryLine - (1 << 20))
+	_ = uint(maxEntryLine - maxBatchBytes)
+)

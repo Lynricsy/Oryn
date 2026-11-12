@@ -1,6 +1,12 @@
 package agentcfg
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,11 +34,25 @@ providers:
     apiKey: exa-literal-xyz
 `
 
-type fakeResolver map[string][2]string
+// fakeResolver：密钥名 → {id, 明文, 逗号分隔的 hosts}。
+type fakeResolver map[string][3]string
 
 func (f fakeResolver) Lookup(name string) (string, string, bool) {
 	v, ok := f[name]
 	return v[0], v[1], ok
+}
+
+func (f fakeResolver) SecretByID(id string) (string, []string, bool) {
+	for _, v := range f {
+		if v[0] == id {
+			var hosts []string
+			if v[2] != "" {
+				hosts = strings.Split(v[2], ",")
+			}
+			return v[1], hosts, true
+		}
+	}
+	return "", nil, false
 }
 
 func TestImportAndRender(t *testing.T) {
@@ -50,9 +70,9 @@ func TestImportAndRender(t *testing.T) {
 		"omp/models/exa/apiKey":       "exa-literal-xyz",
 	}, res.Secrets)
 	assert.Equal(t, map[string][]string{
-		"omp/models/custom/apiKey":    {"llm.example.com"},
+		"omp/models/custom/apiKey":    {"llm.example.com", "alt.example.com"},
 		"omp/models/anthropic/apiKey": {"api.anthropic.com"},
-	}, res.SecretHosts, "exa 无上游主机（环境变量降级），不绑定主机")
+	}, res.SecretHosts, "provider 与模型 baseUrl 的主机都绑定；exa 无上游主机（环境变量降级），不绑定主机")
 	assert.NotContains(t, res.Files, "sessions/x.jsonl")
 	assert.NotContains(t, res.Files, "history.db")
 	assert.Contains(t, res.Files, "skills/a/SKILL.md")
@@ -65,9 +85,9 @@ func TestImportAndRender(t *testing.T) {
 	assert.Contains(t, tmpl, "!pass show key")
 
 	r := fakeResolver{
-		"omp/models/custom/apiKey":    {"sec1", "sk-literal-custom-0123456789"},
-		"omp/models/anthropic/apiKey": {"sec2", "sk-ant-literal-abcdef"},
-		"omp/models/exa/apiKey":       {"sec3", "exa-literal-xyz"},
+		"omp/models/custom/apiKey":    {"sec1", "sk-literal-custom-0123456789", "llm.example.com,alt.example.com"},
+		"omp/models/anthropic/apiKey": {"sec2", "sk-ant-literal-abcdef", "api.anthropic.com"},
+		"omp/models/exa/apiKey":       {"sec3", "exa-literal-xyz", ""},
 	}
 	out, err := Render(res.Files, r)
 	require.NoError(t, err)
@@ -121,3 +141,81 @@ func TestScanSecretLikeNoise(t *testing.T) {
 	assert.NotEmpty(t, ScanSecretLike([]byte("token: Xy7kP2mQ9vR4tL8nB3wE6sD1fG5hJ0aZ")))
 	assert.NotEmpty(t, ScanSecretLike([]byte("sk-abcdefghijklmnop1234")))
 }
+
+// M1：models.yml 不能把任意密钥经 apiKey 送进 orb 或送往任意上游。
+func TestSecretRefPolicy(t *testing.T) {
+	r := fakeResolver{
+		"omp/models/x/apiKey":      {"own", "OWN", ""},
+		"omp/models/y/apiKey":      {"oy", "OY", "api.y.com"},
+		"git/github.com/token":     {"gh", "GHTOKEN", ""},
+		"other/free":               {"free", "FREE", ""},
+		"other/bound":              {"bound", "BOUND", "api.y.com"},
+		"omp/models/custom/apiKey": {"c", "C", "llm.example.com"},
+	}
+	bad := map[string]string{
+		"apiKey 引用别的 provider 的密钥": "providers:\n  x:\n    apiKey: \"${oryn:secret:omp/models/y/apiKey}\"\n",
+		"apiKey 引用任意密钥（环境变量降级）":    "providers:\n  x:\n    apiKey: \"${oryn:secret:other/free}\"\n",
+		"apiKey 部分引用":              "providers:\n  x:\n    apiKey: \"k-${oryn:secret:omp/models/x/apiKey}\"\n",
+		"引用 git 密钥":                "providers:\n  x:\n    apiKey: \"${oryn:secret:git/github.com/token}\"\n",
+		"providers 之外引用 git 密钥":    "foo: \"${oryn:secret:git/github.com/token}\"\n",
+		"其它引用未绑定主机":                "providers:\n  custom:\n    baseUrl: https://llm.example.com\n    apiKey: \"${oryn:secret:omp/models/custom/apiKey}\"\n    headers:\n      X-Extra: \"${oryn:secret:other/free}\"\n",
+		"绑定主机的密钥不能环境变量降级":          "providers:\n  y:\n    apiKey: \"${oryn:secret:omp/models/y/apiKey}\"\n",
+	}
+	for name, yml := range bad {
+		_, err := Render(map[string][]byte{ModelsFile: []byte(yml)}, r)
+		assert.Error(t, err, name)
+	}
+	_, err := Import(map[string][]byte{ModelsFile: []byte(bad["apiKey 引用别的 provider 的密钥"])})
+	assert.Error(t, err, "导入（PUT）时同样拒绝")
+	_, err = Import(map[string][]byte{ModelsFile: []byte(bad["引用 git 密钥"])})
+	assert.Error(t, err)
+
+	// 合法：自己的密钥（未绑定主机）可环境变量降级；绑定主机的其它引用只挂到主机匹配的路由。
+	ok := "providers:\n  x:\n    apiKey: \"${oryn:secret:omp/models/x/apiKey}\"\n" +
+		"  custom:\n    baseUrl: https://llm.example.com\n    apiKey: \"${oryn:secret:omp/models/custom/apiKey}\"\n" +
+		"    headers:\n      X-Extra: \"${oryn:secret:other/bound}\"\n    models:\n      - id: m\n        baseUrl: https://api.y.com/v1\n"
+	out, err := Render(map[string][]byte{ModelsFile: []byte(ok)}, r)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"ORYN_MODEL_KEY_X": "OWN"}, out.Env)
+	assert.Equal(t, egress.Route{Origin: "https://llm.example.com", SecretIDs: []string{"c"}}, out.Routes["custom"])
+	assert.Equal(t, egress.Route{Origin: "https://api.y.com", SecretIDs: []string{"c"}, HostBoundIDs: []string{"bound"}}, out.Routes["custom.m0"])
+}
+
+// OD5：provider 的模型条目 baseUrl 在另一台主机上：导入绑定的主机含它，经 egress 的请求能用上真实密钥。
+func TestModelBaseURLOnOtherHostAuthenticates(t *testing.T) {
+	var got string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer up.Close()
+	u, _ := url.Parse(up.URL)
+	// 同一上游，provider 用 127.0.0.1、模型条目用 localhost：两个不同的主机名。
+	yml := fmt.Sprintf("providers:\n  custom:\n    baseUrl: http://127.0.0.1:%s/api\n    apiKey: sk-real-key-0123456789\n"+
+		"    models:\n      - id: m\n        baseUrl: http://localhost:%s/v2\n", u.Port(), u.Port())
+	imp, err := Import(map[string][]byte{ModelsFile: []byte(yml)})
+	require.NoError(t, err)
+	name := ModelKeySecretName("custom")
+	r := fakeResolver{name: {"sid", imp.Secrets[name], strings.Join(imp.SecretHosts[name], ",")}}
+	out, err := Render(imp.Files, r)
+	require.NoError(t, err)
+
+	h := egress.NewHandler("orb-x", policyResolver{fakeResolver: r, pol: egress.Policy{Routes: out.Routes}})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	req, _ := http.NewRequest("POST", srv.URL+"/llm/custom.m0/v2/chat", nil)
+	req.Header.Set("Authorization", "Bearer "+Placeholder("sid"))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "Bearer sk-real-key-0123456789", got)
+}
+
+type policyResolver struct {
+	fakeResolver
+	pol egress.Policy
+}
+
+func (p policyResolver) Policy() egress.Policy          { return p.pol }
+func (p policyResolver) GitToken(string) (string, bool) { return "", false }

@@ -586,16 +586,52 @@ func TestOutboxOverflowGap(t *testing.T) {
 	for range 3 {
 		o.push(outItem{data: big})
 	}
-	assert.False(t, o.takeGap())
+	_, gap := o.pendingGap()
+	assert.False(t, gap)
 	o.push(outItem{data: big})
-	assert.True(t, o.takeGap())
+	gen, gap := o.pendingGap()
+	assert.True(t, gap)
 	assert.Len(t, o.items, 1)
-	assert.False(t, o.takeGap())
+	o.clearGap(gen)
+	_, gap = o.pendingGap()
+	assert.False(t, gap)
 	h, ok := o.head()
 	require.True(t, ok)
 	o.pop(h)
 	_, ok = o.head()
 	assert.False(t, ok)
+}
+
+// 单帧超过整个预算：空队列时也不入队，记 gap；已有队列时连同队列一起丢弃。
+func TestOutboxOversizedSingleFrame(t *testing.T) {
+	var o outbox
+	huge := make([]byte, maxBufferedFrames+1)
+	o.push(outItem{data: huge})
+	_, ok := o.head()
+	assert.False(t, ok, "超预算的单帧不得入队")
+	_, gap := o.pendingGap()
+	assert.True(t, gap)
+	assert.Zero(t, o.size)
+
+	var o2 outbox
+	o2.push(outItem{data: []byte("small")})
+	o2.push(outItem{data: huge})
+	_, ok = o2.head()
+	assert.False(t, ok)
+	assert.Zero(t, o2.size)
+	_, gap = o2.pendingGap()
+	assert.True(t, gap)
+}
+
+// 上报途中再次溢出：旧一代的确认不能清掉新的 gap。
+func TestOutboxGapGeneration(t *testing.T) {
+	var o outbox
+	o.push(outItem{data: make([]byte, maxBufferedFrames+1)})
+	gen, _ := o.pendingGap()
+	o.push(outItem{data: make([]byte, maxBufferedFrames+1)})
+	o.clearGap(gen)
+	_, gap := o.pendingGap()
+	assert.True(t, gap)
 }
 
 func TestMetricsSample(t *testing.T) {

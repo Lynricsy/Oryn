@@ -63,6 +63,8 @@ type fakeCP struct {
 	t       *testing.T
 	srv     *httptest.Server
 	blocked atomic.Bool
+	// token 是接受的 orb 令牌（缺省 testToken）。
+	token atomic.Value
 
 	mu     sync.Mutex
 	sess   *link.Session
@@ -89,6 +91,7 @@ func newFakeCP(t *testing.T) *fakeCP {
 		blobs:   make(chan *link.Stream, 4),
 		egress:  &streamListener{ch: make(chan net.Conn, 16), done: make(chan struct{})},
 	}
+	cp.token.Store(testToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc(link.Path, cp.handle)
 	cp.srv = httptest.NewServer(mux)
@@ -116,7 +119,7 @@ func (cp *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := link.Accept(w, r, func(_ *http.Request, tok string) error {
-		if tok != testToken {
+		if want, _ := cp.token.Load().(string); tok != want {
 			return errors.New("bad token")
 		}
 		return nil

@@ -64,7 +64,8 @@ type Config struct {
 	DiskPath  string
 }
 
-// ConfigFromEnv 从环境变量读取 orbd 配置。
+// ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
+// （控制面每次 spawn 轮换令牌，已存在的容器由 provider 写入该文件并发 SIGHUP）。
 func ConfigFromEnv(version string) (Config, error) {
 	cfg := Config{
 		URL:      os.Getenv("ORYN_URL"),
@@ -74,15 +75,40 @@ func ConfigFromEnv(version string) (Config, error) {
 		Version:  version,
 	}
 	var missing []string
-	for k, v := range map[string]string{"ORYN_URL": cfg.URL, "ORYN_ORB_ID": cfg.OrbID, "ORYN_ORB_TOKEN": cfg.Token} {
+	for k, v := range map[string]string{"ORYN_URL": cfg.URL, "ORYN_ORB_ID": cfg.OrbID} {
 		if v == "" {
 			missing = append(missing, k)
+		}
+	}
+	if cfg.Token == "" {
+		if home, err := os.UserHomeDir(); err != nil || readTokenFile(home) == "" {
+			missing = append(missing, "ORYN_ORB_TOKEN (or $HOME/.oryn/orb-token)")
 		}
 	}
 	if len(missing) > 0 {
 		return cfg, fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
 	}
 	return cfg, nil
+}
+
+// TokenFile 返回令牌文件路径（契约 §3：每次拨号前优先读取）。
+func TokenFile(home string) string { return filepath.Join(home, ".oryn", "orb-token") }
+
+// readTokenFile 读取令牌文件并去掉首尾空白；不存在或为空时返回空串。
+func readTokenFile(home string) string {
+	b, err := os.ReadFile(TokenFile(home))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// dialToken 返回本次拨号使用的令牌：令牌文件优先，缺省时用环境变量给出的令牌。
+func (r *Runtime) dialToken() string {
+	if tok := readTokenFile(r.home); tok != "" {
+		return tok
+	}
+	return r.cfg.Token
 }
 
 // Runtime 是一个 orbd 实例。
@@ -108,6 +134,10 @@ type Runtime struct {
 
 	// setupSem（容量 1）让自动 setup / resume（含转入后台的 resume）与手动重跑互斥。
 	setupSem chan struct{}
+	// autoOp 是最近一次自动 setup / resume 请求；semHolder 是当前持有 setupSem 的自动运行（手动重跑或空闲时为 nil）。
+	autoMu    sync.Mutex
+	autoOp    *autoSetup
+	semHolder *autoSetup
 	// 以下为最近一次 setup.run / resume.run 的参数（手动重跑用）。
 	envMu       sync.Mutex
 	setupEnv    map[string]string
@@ -133,8 +163,8 @@ type conn struct {
 
 // New 校验配置、绑定 egress 监听并探测 agent 版本。
 func New(cfg Config) (*Runtime, error) {
-	if cfg.URL == "" || cfg.OrbID == "" || cfg.Token == "" {
-		return nil, errors.New("orbdrt: URL, OrbID and Token are required")
+	if cfg.URL == "" || cfg.OrbID == "" {
+		return nil, errors.New("orbdrt: URL and OrbID are required")
 	}
 	if cfg.Home == "" {
 		h, err := os.UserHomeDir()
@@ -146,6 +176,9 @@ func New(cfg Config) (*Runtime, error) {
 	home, err := filepath.Abs(cfg.Home)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Token == "" && readTokenFile(home) == "" {
+		return nil, errors.New("orbdrt: Token is required (ORYN_ORB_TOKEN or $HOME/.oryn/orb-token)")
 	}
 	if cfg.AgentBin == "" {
 		cfg.AgentBin = "omp"
@@ -351,7 +384,8 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	default:
 	}
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	sess, err := link.Dial(dctx, link.URL(r.cfg.URL), r.cfg.Token)
+	// 令牌文件每次拨号重新读取：控制面每次 spawn 轮换令牌，provider 写文件后发 SIGHUP 触发重拨。
+	sess, err := link.Dial(dctx, link.URL(r.cfg.URL), r.dialToken())
 	if err != nil {
 		cancel()
 		return false, err

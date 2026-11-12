@@ -182,6 +182,9 @@ func Serve(ctx context.Context, ln net.Listener, h Handler) {
 
 func serveConn(ctx context.Context, c net.Conn, h Handler) {
 	defer c.Close()
+	// 服务端退出（ctx 结束）时关闭连接：解除阻塞在读请求行或写回应上的连接，Serve 才能返回。
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	defer stop()
 	out := &Responder{enc: json.NewEncoder(c)}
 	br := bufio.NewReaderSize(c, 64<<10)
 	line, err := readLine(br, maxRequestBytes)

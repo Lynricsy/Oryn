@@ -40,7 +40,13 @@ func (r *Runtime) tryAcquireSetup() bool {
 	}
 }
 
-func (r *Runtime) releaseSetup() { <-r.setupSem }
+// releaseSetup 释放 setup 互斥；此后已完成的自动运行不再接受合并（见 runSetup）。
+func (r *Runtime) releaseSetup() {
+	r.autoMu.Lock()
+	r.semHolder = nil
+	r.autoMu.Unlock()
+	<-r.setupSem
+}
 
 func cloneScripts(s apigen.LinkCtlSetupScripts) apigen.LinkCtlSetupScripts {
 	cp := func(p *string) *string {

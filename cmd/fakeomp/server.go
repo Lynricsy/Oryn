@@ -33,6 +33,10 @@ type options struct {
 	sessionDir string
 	script     string
 	delay      time.Duration
+	// startupDialog 非空时模拟一个 session_start 等待对话框的扩展（FAKEOMP_STARTUP_DIALOG=<标题>）：
+	// ready 之前先发一条 extension_ui_request(select)，等到应答才发 ready（与 omp 一样，启动期间只即时处理
+	// 侧通道应答与 set_ask_dialog，其余命令排到启动完成之后）。
+	startupDialog string
 }
 
 func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (options, bool, error) {
@@ -43,6 +47,7 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	fs.StringVar(&o.cwd, "cwd", "", "工作目录")
 	fs.StringVar(&o.sessionDir, "session-dir", "", "会话目录")
 	fs.StringVar(&o.script, "script", getenv("FAKEOMP_SCRIPT"), "替换默认 prompt 帧序列的脚本文件")
+	o.startupDialog = getenv("FAKEOMP_STARTUP_DIALOG")
 	delay := 20 * time.Millisecond
 	if v := getenv("FAKEOMP_DELAY_MS"); v != "" {
 		ms, err := strconv.Atoi(v)
@@ -156,13 +161,19 @@ type server struct {
 }
 
 func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) int {
-	s.emit(map[string]any{
-		"type":                      "ready",
-		"protocolVersion":           1,
-		"supportedProtocolVersions": []int{1, 2},
-		"maxFrameBytes":             omprpc.MaxFrameBytes,
-		"maxReassembledFrameBytes":  omprpc.MaxReassembledBytes,
-	})
+	ready := func() {
+		s.emit(map[string]any{
+			"type":                      "ready",
+			"protocolVersion":           1,
+			"supportedProtocolVersions": []int{1, 2},
+			"maxFrameBytes":             omprpc.MaxFrameBytes,
+			"maxReassembledFrameBytes":  omprpc.MaxReassembledBytes,
+		})
+	}
+	startup := s.opts.startupDialog != ""
+	if !startup {
+		ready()
+	}
 
 	turnCtx, cancelAll := context.WithCancel(ctx)
 	defer cancelAll()
@@ -174,8 +185,11 @@ func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) i
 		}
 	}()
 
+	// 唯一的读循环在 ready 之前就开始读（与 omp 相同）；处理协程按序处理，启动期间把普通命令排到启动完成之后。
+	lines := make(chan []byte, 64)
 	readDone := make(chan error, 1)
 	go func() {
+		defer close(lines)
 		r := omprpc.NewReader(stdin, 256<<20)
 		for {
 			line, err := r.ReadLine()
@@ -187,16 +201,64 @@ func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) i
 				readDone <- err
 				return
 			}
-			s.handle(line)
+			lines <- line
 		}
 	}()
-
+	started := make(chan struct{})
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		starting := startup
+		startedCh := started
+		var deferred [][]byte
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					return
+				}
+				if starting {
+					var h struct {
+						Type string `json:"type"`
+					}
+					_ = json.Unmarshal(line, &h)
+					if h.Type == "extension_ui_response" || h.Type == "set_ask_dialog" {
+						s.handle(line)
+					} else {
+						deferred = append(deferred, line)
+					}
+					continue
+				}
+				s.handle(line)
+			case <-startedCh:
+				starting, startedCh = false, nil
+				for _, l := range deferred {
+					s.handle(l)
+				}
+				deferred = nil
+			}
+		}
+	}()
+	if !startup {
+		close(started)
+	} else {
+		answer, err := s.startupAsk(ctx, readDone)
+		if err != nil {
+			fmt.Fprintln(stderr, "fakeomp: startup dialog:", err)
+			s.emit(response{Type: "response", Command: "startup", Error: err.Error()})
+			return 1
+		}
+		ready()
+		s.emit(map[string]any{"type": "notice", "level": "info", "message": "fakeomp startup dialog answered: " + answer})
+		close(started)
+	}
 	select {
 	case err := <-readDone:
 		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			fmt.Fprintln(stderr, "fakeomp: read stdin:", err)
 		}
-		// stdin 关闭：放弃进行中的回合并退出（omp 同样在 stdin EOF 时收尾退出）。
+		// stdin 关闭：处理完已读入的命令，放弃进行中的回合并退出（omp 同样在 stdin EOF 时收尾退出）。
+		<-handlerDone
 		cancelAll()
 		close(s.prompts)
 		<-workerDone
@@ -204,6 +266,34 @@ func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) i
 	case <-ctx.Done():
 		cancelAll()
 		return 143
+	}
+}
+
+// startupAsk 模拟扩展在 session_start 里等待一个 select 对话框：ready 之前发出请求，等到应答或 stdin 结束。
+func (s *server) startupAsk(ctx context.Context, readDone <-chan error) (string, error) {
+	const id = "startup-dialog"
+	ch := make(chan json.RawMessage, 1)
+	s.mu.Lock()
+	s.uiWait[id] = ch
+	s.mu.Unlock()
+	s.emit(map[string]any{
+		"type": "extension_ui_request", "id": id, "method": "select",
+		"title": s.opts.startupDialog, "options": []string{"continue", "abort"},
+	})
+	select {
+	case raw := <-ch:
+		var r struct {
+			Value *string `json:"value"`
+		}
+		_ = json.Unmarshal(raw, &r)
+		if r.Value == nil {
+			return "(cancelled)", nil
+		}
+		return *r.Value, nil
+	case err := <-readDone:
+		return "", fmt.Errorf("stdin closed before the startup dialog was answered: %v", err)
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
 }
 

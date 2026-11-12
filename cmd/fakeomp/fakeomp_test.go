@@ -424,3 +424,60 @@ func TestVersionAndBadMode(t *testing.T) {
 	code = run(context.Background(), []string{"--mode", "text"}, strings.NewReader(""), io.Discard, io.Discard, func(string) string { return "" })
 	assert.Equal(t, 2, code)
 }
+
+// 启动对话框模式：ready 之前先发对话框；启动期间 set_ask_dialog 与对话框应答即时处理，
+// 其余命令排到 ready 之后（与 omp rpc-mode 的启动语义一致）。
+func TestStartupDialogBeforeReady(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, []string{"--session-dir", dir, "--delay", "1ms"}, map[string]string{"FAKEOMP_STARTUP_DIALOG": "Trust this folder?"})
+	req := h.next()
+	require.Equal(t, "extension_ui_request", req["type"], "对话框先于 ready")
+	assert.Equal(t, "select", req["method"])
+	assert.Equal(t, "Trust this folder?", req["title"])
+
+	h.send(map[string]any{"id": "g0", "type": "get_state"})
+	r, others := h.call(map[string]any{"id": "a0", "type": "set_ask_dialog", "enabled": true})
+	assert.Equal(t, true, r["success"])
+	assert.Empty(t, others, "启动期间普通命令不被处理（也就没有应答）")
+
+	h.send(map[string]any{"type": "extension_ui_response", "id": req["id"], "value": "continue"})
+	ready := h.next()
+	assert.Equal(t, "ready", ready["type"])
+	notice := h.next()
+	assert.Equal(t, "notice", notice["type"])
+	assert.Contains(t, notice["message"], "continue")
+	g := h.next()
+	assert.Equal(t, "response", g["type"])
+	assert.Equal(t, "g0", g["id"], "排队的命令在 ready 之后处理")
+}
+
+// 排队的回合未结束前，前一个回合的 prompt_result.sessionSettled 为 false 且不发 session_settled；
+// 最后一个回合结束时才发一次 session_settled（omp rpc.md「Yield vs settled」）。
+func TestSettledOnlyAfterQueuedTurns(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, []string{"--session-dir", dir, "--delay", "50ms"}, nil)
+	handshake(t, h, dir)
+	r, _ := h.call(map[string]any{"id": "p1", "type": "prompt", "message": "one"})
+	require.Equal(t, true, r["success"])
+	r, _ = h.call(map[string]any{"id": "f1", "type": "follow_up", "message": "two"})
+	require.Equal(t, true, r["success"])
+
+	frames := h.until("session_settled")
+	var results []map[string]any
+	settledCount := 0
+	for _, f := range frames {
+		switch f["type"] {
+		case "prompt_result":
+			results = append(results, f)
+		case "session_settled":
+			settledCount++
+		}
+	}
+	require.Len(t, results, 2, "session_settled 只在两个回合都结束后出现")
+	assert.Equal(t, false, results[0]["sessionSettled"])
+	assert.Equal(t, "p1", results[0]["id"])
+	assert.Equal(t, true, results[1]["sessionSettled"])
+	assert.Equal(t, 1, settledCount)
+	st, _ := h.call(map[string]any{"id": "g", "type": "get_state"})
+	assert.Equal(t, true, st["data"].(map[string]any)["isSettled"])
+}

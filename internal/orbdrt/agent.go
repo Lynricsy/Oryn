@@ -42,12 +42,16 @@ type outItem struct {
 }
 
 // outbox 是 omp → 控制面的帧队列；超过 32MiB 时整体丢弃并记录 gap。
+// 单帧本身超过整个预算时同样丢弃（连同已排队的帧）并记录 gap：预算对单帧同样生效。
 type outbox struct {
 	mu    sync.Mutex
 	items []outItem
 	size  int
 	gap   bool
-	seq   uint64
+	// gapGen 每次溢出加一：gap 只在「上报成功时的那一代」仍是最新时才清除，
+	// 上报途中再次溢出不会被误清。
+	gapGen uint64
+	seq    uint64
 }
 
 func (o *outbox) push(it outItem) {
@@ -55,8 +59,14 @@ func (o *outbox) push(it outItem) {
 	defer o.mu.Unlock()
 	o.seq++
 	it.seq = o.seq
-	if o.size > 0 && o.size+len(it.data) > maxBufferedFrames {
+	if len(it.data) > maxBufferedFrames {
 		o.items, o.size, o.gap = nil, 0, true
+		o.gapGen++
+		return
+	}
+	if o.size+len(it.data) > maxBufferedFrames {
+		o.items, o.size, o.gap = nil, 0, true
+		o.gapGen++
 	}
 	o.items = append(o.items, it)
 	o.size += len(it.data)
@@ -82,12 +92,20 @@ func (o *outbox) pop(it outItem) {
 	}
 }
 
-func (o *outbox) takeGap() bool {
+// pendingGap 报告是否有未上报的 gap 及其代数；不清除标记（上报确认后由 clearGap 清除）。
+func (o *outbox) pendingGap() (uint64, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	g := o.gap
-	o.gap = false
-	return g
+	return o.gapGen, o.gap
+}
+
+// clearGap 在 gen 仍是最新一代时清除 gap 标记。
+func (o *outbox) clearGap(gen uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.gapGen == gen {
+		o.gap = false
+	}
 }
 
 // ---- 线程 ----
@@ -156,7 +174,17 @@ type agentStream struct {
 	s     *link.Stream
 	c     *conn
 	epoch int
+	// announced 表示已在这条流上报过 ready：ready 只在「当前进程代的流已打开、旧代帧已写完」之后上报，
+	// 控制面收到 ready 时下发的排队命令因此一定落到当前进程上。
+	announced bool
 }
+
+// 仅供测试的钩子：testHookBeforeGapReport 在上报 agent.gap 之前调用（可借此在上报途中断开 link）；
+// testHookAgentInitialized 在 agent 进程完成初始化之后调用。
+var (
+	testHookBeforeGapReport  func(c *conn)
+	testHookAgentInitialized func(t *thread)
+)
 
 // forward 维持 agent 流：有存活进程或待发帧且 link 可用时保持一条流，
 // 按序写出缓冲帧；进程换代（重启）或 link 重连时重开新流。
@@ -204,17 +232,35 @@ func (t *thread) forward(ctx context.Context) {
 			st = &agentStream{s: s, c: c, epoch: target}
 			sp := t.procForEpoch(target)
 			go t.pumpCommands(s, sp)
-			// 已就绪的 agent 换了新流（重连）：再报一次 ready，让控制面知道新流可用；
-			// 并重放仍待答的交互（控制面可能已重启、丢了它们）。重复的请求按 id 去重，无副作用。
+			// 已就绪的 agent 换了新流（重连）：重放仍待答的交互（控制面可能已重启、丢了它们）。
+			// 重复的请求按 id 去重，无副作用。ready 由下面的统一检查在这条流上重报。
 			if sp != nil && sp.isReady() {
-				t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusReady})
 				for _, f := range sp.ui.replay() {
 					t.out.push(outItem{epoch: sp.epoch, data: f})
 				}
 			}
 		}
-		if st != nil && t.out.takeGap() {
-			_ = c.ctl.Notify("agent.gap", apigen.LinkCtlAgentGapParams{ThreadID: t.id})
+		// gap 必须先于其后的帧被控制面处理：上报成功（含屏障确认）之前不写任何帧；失败则保留标记，重连后重报。
+		if st != nil {
+			if gen, gap := t.out.pendingGap(); gap {
+				if err := t.reportGap(ctx, c); err != nil {
+					t.r.log.Debug("agent.gap report failed; will retry", "thread", t.id, "err", err)
+					closeSt()
+					if !sleepOr(ctx, c.done, 200*time.Millisecond) {
+						return
+					}
+					continue
+				}
+				t.out.clearGap(gen)
+				continue
+			}
+		}
+		// 流属于当前进程代且该进程已完成初始化：在这条流上报 ready（每条流一次）。
+		if st != nil && !st.announced {
+			if sp := t.procForEpoch(st.epoch); sp != nil && sp.isReady() {
+				st.announced = true
+				t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusReady})
+			}
 		}
 		if st != nil && hasHead && head.epoch == st.epoch {
 			if err := writeLine(st.s, head.data); err != nil {
@@ -242,6 +288,25 @@ func (t *thread) forward(ctx context.Context) {
 	}
 }
 
+// reportGap 发出 agent.gap，并以一次 ctl 请求作屏障：控制面在读循环里同步处理通知，
+// 因此收到其后请求的应答（成功或 ctl 错误）即说明 gap 已被处理，之后写出的帧不会先于它生效。
+func (t *thread) reportGap(ctx context.Context, c *conn) error {
+	if h := testHookBeforeGapReport; h != nil {
+		h(c)
+	}
+	if err := c.ctl.Notify("agent.gap", apigen.LinkCtlAgentGapParams{ThreadID: t.id}); err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err := c.ctl.Call(cctx, "entries.cursors", apigen.LinkCtlEntriesCursorsParams{ThreadID: t.id}, nil)
+	var ce *link.CtlError
+	if err != nil && !errors.As(err, &ce) {
+		return err
+	}
+	return nil
+}
+
 // sleepOr 等待 d、done 关闭或 ctx 结束；ctx 结束时返回 false。
 func sleepOr(ctx context.Context, done <-chan struct{}, d time.Duration) bool {
 	tm := time.NewTimer(d)
@@ -263,10 +328,38 @@ func writeLine(w io.Writer, data []byte) error {
 	return err
 }
 
-// pumpCommands 把控制面写来的命令帧原样写入 omp stdin；进程就绪之前的命令等待就绪。
-// p 为 nil（流属于已退出的进程代）时丢弃。
+// sideChannelTypes 是 omp 在命令队列之外即时处理的侧通道应答（oryn-core rpc-mode.ts
+// `dispatchRpcControlFrame`：extension_ui_response、host_tool_result、host_tool_update、host_uri_result）。
+// omp 在启动期间（session_start 可能在等一个对话框）就已在读这些帧，因此它们不等初始化完成。
+var sideChannelTypes = map[string]bool{
+	"extension_ui_response": true,
+	"host_tool_result":      true,
+	"host_tool_update":      true,
+	"host_uri_result":       true,
+}
+
+type cmdHead struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+func parseCmdHead(line []byte) cmdHead {
+	var h cmdHead
+	_ = json.Unmarshal(line, &h)
+	return h
+}
+
+// pumpCommands 把控制面写来的命令帧原样写入 omp stdin。侧通道应答立即写入（启动期间也是）；
+// 普通命令按序排队，进程完成初始化后依次写入。读循环从不阻塞，因此排队的命令不会挡住其后的侧通道应答。
+// 流所属的进程代已退出（或 p 为 nil）时，普通命令得到一条合成的失败应答，而不是被静默丢弃。
 func (t *thread) pumpCommands(s *link.Stream, p *proc) {
 	rd := omprpc.NewReader(s, maxCommandLine)
+	var q *cmdQueue
+	if p != nil {
+		q = newCmdQueue()
+		defer q.close()
+		go t.drainCommands(p, q)
+	}
 	for {
 		line, err := rd.ReadLine()
 		if err != nil {
@@ -276,18 +369,123 @@ func (t *thread) pumpCommands(s *link.Stream, p *proc) {
 			}
 			return
 		}
+		h := parseCmdHead(line)
 		if p == nil {
+			t.rejectUndelivered(h)
 			continue
 		}
-		select {
-		case <-p.readyCh:
-		case <-p.exited:
+		if sideChannelTypes[h.Type] {
+			select {
+			case <-p.exited:
+				continue
+			default:
+			}
+			p.ui.observeIn(line)
+			if err := p.w.WriteRaw(line); err != nil {
+				t.r.log.Debug("write omp stdin failed", "thread", t.id, "err", err)
+			}
 			continue
+		}
+		q.push(line)
+	}
+}
+
+// drainCommands 等进程完成初始化后按序写入排队的普通命令；进程在此之前（或之后）退出时，
+// 剩余命令一律得到合成的失败应答。
+func (t *thread) drainCommands(p *proc, q *cmdQueue) {
+	select {
+	case <-p.readyCh:
+	case <-p.exited:
+	}
+	for {
+		line, ok := q.pop()
+		if !ok {
+			return
+		}
+		select {
+		case <-p.exited:
+			t.rejectUndelivered(parseCmdHead(line))
+			continue
+		default:
 		}
 		p.ui.observeIn(line)
 		if err := p.w.WriteRaw(line); err != nil {
 			t.r.log.Debug("write omp stdin failed", "thread", t.id, "err", err)
 		}
+	}
+}
+
+// rejectUndelivered 为没能送达进程的命令合成一条失败应答（经当前进程代的流回到控制面），
+// 让发起方得到明确结果而不是永远等待。侧通道应答与无 id 的帧没有应答可言，直接丢弃。
+func (t *thread) rejectUndelivered(h cmdHead) {
+	if h.ID == "" || sideChannelTypes[h.Type] {
+		return
+	}
+	resp, err := json.Marshal(map[string]any{
+		"type": "response", "id": h.ID, "command": h.Type, "success": false,
+		"error": undeliveredError,
+	})
+	if err != nil {
+		return
+	}
+	t.mu.Lock()
+	epoch := t.epoch
+	t.mu.Unlock()
+	t.out.push(outItem{epoch: epoch, data: resp})
+	t.wake()
+}
+
+// undeliveredError 是合成失败应答的错误文本。控制面（internal/threads durable.go 的 undeliveredError）按原文匹配它
+// 来重排启动 prompt：改动须两边同步。
+const undeliveredError = "agent process exited before the command was delivered"
+
+// cmdQueue 是不设上限的 FIFO（控制面侧已限制排队命令数）；close 之后 pop 在取完剩余项后返回 false。
+type cmdQueue struct {
+	mu     sync.Mutex
+	items  [][]byte
+	closed bool
+	signal chan struct{}
+}
+
+func newCmdQueue() *cmdQueue { return &cmdQueue{signal: make(chan struct{}, 1)} }
+
+func (q *cmdQueue) push(line []byte) {
+	q.mu.Lock()
+	q.items = append(q.items, line)
+	q.mu.Unlock()
+	q.notify()
+}
+
+func (q *cmdQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	q.mu.Unlock()
+	q.notify()
+}
+
+func (q *cmdQueue) notify() {
+	select {
+	case q.signal <- struct{}{}:
+	default:
+	}
+}
+
+func (q *cmdQueue) pop() ([]byte, bool) {
+	for {
+		q.mu.Lock()
+		if len(q.items) > 0 {
+			line := q.items[0]
+			q.items[0] = nil
+			q.items = q.items[1:]
+			q.mu.Unlock()
+			return line, true
+		}
+		closed := q.closed
+		q.mu.Unlock()
+		if closed {
+			return nil, false
+		}
+		<-q.signal
 	}
 }
 
@@ -499,7 +697,11 @@ func (s *supervisor) run(p *proc) {
 		if p != nil {
 			if err := s.initialize(p); err == nil {
 				readyAt = time.Now()
-				t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusReady})
+				// ready 由转发器在当前进程代的流上报（见 forward）：此处只唤醒它。
+				t.wake()
+				if h := testHookAgentInitialized; h != nil {
+					h(t)
+				}
 			} else if !s.stopped() {
 				t.r.log.Warn("agent init failed", "thread", t.id, "err", err)
 				p.stderr.add("orbd: agent init failed: " + err.Error())

@@ -2,6 +2,7 @@ package orbdrt
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,13 +47,68 @@ func (r *Runtime) currentWorkdir() string {
 	return filepath.Join(r.home, "workspace")
 }
 
+// autoSetup 是一次进行中的自动 setup.run / resume.run。link 重连后控制面会重发同样的请求：
+// 等价（同方法、同参数）的重试直接等这次运行的请求结果，而不是再跑一遍、也不排在转入后台的 resume 之后。
+type autoSetup struct {
+	key  [sha256.Size]byte
+	done chan struct{} // 请求结果就绪（不含转入后台的 resume）
+	res  apigen.LinkCtlSetupRunResult
+	err  error
+}
+
+func (op *autoSetup) finished() bool {
+	select {
+	case <-op.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func setupKey(p apigen.LinkCtlSetupRunParams, full bool) [sha256.Size]byte {
+	b, _ := json.Marshal(p)
+	if full {
+		b = append(b, "|setup"...)
+	} else {
+		b = append(b, "|resume"...)
+	}
+	return sha256.Sum256(b)
+}
+
 // runSetup 实现 setup.run（full=true）与 resume.run（H3.3）。与手动重跑互斥：已有 setup / resume
 // （含转入后台的 resume）运行时排队等待。每个阶段结束发一条 setup.result（trigger=auto）。
+// 与进行中（或其 resume 仍在后台占着互斥）的自动运行等价的请求合并到那次运行上。
 func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool) (apigen.LinkCtlSetupRunResult, error) {
-	res := apigen.LinkCtlSetupRunResult{}
-	if err := r.acquireSetup(ctx); err != nil {
-		return res, ctlErr("failed", "%v", err)
+	key := setupKey(p, full)
+	r.autoMu.Lock()
+	if op := r.autoOp; op != nil && op.key == key && (!op.finished() || r.semHolder == op) {
+		r.autoMu.Unlock()
+		r.log.Info("setup request repeated (link reconnected); joining the in-flight run", "full", full)
+		select {
+		case <-op.done:
+			return op.res, op.err
+		case <-ctx.Done():
+			return apigen.LinkCtlSetupRunResult{}, ctlErr("failed", "%v", ctx.Err())
+		}
 	}
+	op := &autoSetup{key: key, done: make(chan struct{})}
+	r.autoOp = op
+	r.autoMu.Unlock()
+	defer close(op.done)
+	if err := r.acquireSetup(ctx); err != nil {
+		op.err = ctlErr("failed", "%v", err)
+		return op.res, op.err
+	}
+	r.autoMu.Lock()
+	r.semHolder = op
+	r.autoMu.Unlock()
+	op.res, op.err = r.runSetupLocked(ctx, p, full)
+	return op.res, op.err
+}
+
+// runSetupLocked 是 runSetup 的主体；调用方已持有 setup 互斥。
+func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool) (apigen.LinkCtlSetupRunResult, error) {
+	res := apigen.LinkCtlSetupRunResult{}
 	// resume 交给后台时连同互斥一起移交，由它在脚本结束时释放。
 	handedOff := false
 	defer func() {
@@ -112,13 +169,23 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 	}
 	lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
 
-	// 2. git insteadOf：经本机 egress 代理访问 git 主机（控制面注入令牌）。
+	// 2. git insteadOf：经本机 egress 代理访问 git（控制面注入令牌）。条目为 `host`（整个主机，无项目的 orb 只读）
+	// 或 `host/owner/repo`（只覆盖项目仓库；同主机其它地址照常直连公网、不带令牌）。先清掉以前写过的全部条目，
+	// 策略收窄（如 orb 改属项目）后旧的整主机条目不会残留。
 	for _, h := range p.GitHosts {
-		if h == "" || strings.ContainsAny(h, "/ \t\n@") {
+		if !validGitEntry(h) {
 			return fail(ctlErr(link.CodeInvalidParams, "invalid git host %q", h))
 		}
-		key := fmt.Sprintf("url.http://%s/git/%s/.insteadOf", r.EgressAddr(), h)
-		if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", key, "https://"+h+"/"); err != nil {
+	}
+	if err := r.clearGitInsteadOf(ctx, env); err != nil {
+		return fail(ctlErr("failed", "git config cleanup: %v", err))
+	}
+	for _, h := range p.GitHosts {
+		from, to := "https://"+h, fmt.Sprintf("http://%s/git/%s", r.EgressAddr(), h)
+		if !strings.Contains(h, "/") {
+			from, to = from+"/", to+"/"
+		}
+		if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", "url."+to+".insteadOf", from); err != nil {
 			return fail(ctlErr("failed", "git config for %s: %v", h, err))
 		}
 	}
@@ -465,4 +532,59 @@ func (l *setupLogger) run(ctx context.Context, phase apigen.LinkCtlSetupLogParam
 		return fmt.Errorf("%w (%v)", ctx.Err(), err)
 	}
 	return err
+}
+
+// gitEntryRe 是 GitHosts 条目：主机（可带端口），可选地跟仓库路径段（不含 `.`/`..`、空段与引号等）。
+var (
+	gitHostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+	gitSegRe  = regexp.MustCompile(`^[A-Za-z0-9_~][A-Za-z0-9._~-]*$`)
+)
+
+// validGitEntry 校验 `host` 或 `host/seg/…` 形式的 GitHosts 条目（写进 git 配置键，不能夹带额外语法）。
+func validGitEntry(e string) bool {
+	host, rest, hasPath := strings.Cut(e, "/")
+	if !gitHostRe.MatchString(host) {
+		return false
+	}
+	if !hasPath {
+		return true
+	}
+	segs := strings.Split(rest, "/")
+	if len(segs) < 2 {
+		return false
+	}
+	for _, s := range segs {
+		if !gitSegRe.MatchString(s) || s == "." || s == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// clearGitInsteadOf 删除全局 git 配置里所有指向本机 egress 代理的 insteadOf 条目（Oryn 写入的那些）。
+func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) error {
+	re := `^url\.http://` + regexp.QuoteMeta(r.EgressAddr()) + `/git/.*\.insteadof$`
+	cmd := exec.CommandContext(ctx, "git", "config", "--global", "--name-only", "--get-regexp", re)
+	cmd.Dir, cmd.Env = r.home, envList(env)
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 { // 没有匹配项（或尚无 ~/.gitconfig）
+			return nil
+		}
+		return err
+	}
+	seen := map[string]bool{}
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		rm := exec.CommandContext(ctx, "git", "config", "--global", "--unset-all", name)
+		rm.Dir, rm.Env = r.home, envList(env)
+		if b, err := rm.CombinedOutput(); err != nil {
+			return fmt.Errorf("unset %s: %v: %s", name, err, strings.TrimSpace(string(b)))
+		}
+	}
+	return nil
 }

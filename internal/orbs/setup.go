@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -64,6 +65,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 	}
 	p := &plan.Params
 	var projectIdentity *apigen.GitIdentity
+	var projectRepo *gitRepo
 	if orb.ProjectID != nil {
 		prj, err := d.Store.Q.GetProject(ctx, *orb.ProjectID)
 		switch {
@@ -78,7 +80,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 				}
 				p.Repo = repo
 				if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
-					plan.Egress.GitRepos[host] = []string{path}
+					projectRepo = &gitRepo{host: host, path: path}
 				}
 			}
 			p.Scripts.Setup = nonEmpty(prj.SetupScript)
@@ -109,8 +111,11 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		if err != nil {
 			return plan, fmt.Errorf("读取 git 主机: %w", err)
 		}
-		p.GitHosts = append(p.GitHosts, hosts...)
-		sort.Strings(p.GitHosts)
+		p.GitHosts = gitInsteadOf(projectRepo, hosts)
+	}
+	// git 出站策略（契约 §5）：有 https 项目仓库的 orb 只放行该仓库（读写）；否则任意仓库只读（GitRepos 为空）。
+	if projectRepo != nil {
+		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
 	}
 	if d.Home != nil {
 		files, err := d.Home.LoadAll()
@@ -150,22 +155,53 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 	return plan, nil
 }
 
-// httpsRepo 解析 https://host/owner/repo(.git) 形式的仓库地址。
+// gitRepo 是项目的 https 仓库：主机（小写）与仓库路径（保留原大小写，去掉 .git 后缀）。
+type gitRepo struct{ host, path string }
+
+// gitInsteadOf 生成 setup 的 GitHosts 条目：有项目仓库时只覆盖该仓库地址（`host/owner/repo`，且仅当该主机
+// 配置了令牌），同主机其它地址照常直连公网；没有项目仓库时覆盖每个有令牌的主机（egress 只读放行）。
+func gitInsteadOf(repo *gitRepo, tokenHosts []string) []string {
+	out := []string{}
+	if repo != nil {
+		for _, h := range tokenHosts {
+			if strings.EqualFold(h, repo.host) {
+				out = append(out, repo.host+"/"+repo.path)
+				break
+			}
+		}
+		return out
+	}
+	out = append(out, tokenHosts...)
+	sort.Strings(out)
+	return out
+}
+
+// httpsRepo 解析 https://host/owner/repo(.git) 形式的仓库地址（GitLab 子组等多段路径整体作为仓库路径）。
+// 路径段含 `.`、`..`、空段或 git 配置键不能容纳的字符时不视为可放行的仓库。
 func httpsRepo(raw string) (host, path string, ok bool) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", "", false
 	}
-	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	p := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	segs := strings.Split(p, "/")
 	if len(segs) < 2 {
 		return "", "", false
 	}
-	return strings.ToLower(u.Hostname()), egress.NormalizeRepo(segs[0] + "/" + segs[1]), true
+	for _, s := range segs {
+		if !repoSegRe.MatchString(s) || s == "." || s == ".." {
+			return "", "", false
+		}
+	}
+	return strings.ToLower(u.Hostname()), p, true
 }
+
+var repoSegRe = regexp.MustCompile(`^[A-Za-z0-9_~][A-Za-z0-9._~-]*$`)
 
 type emptyResolver struct{}
 
-func (emptyResolver) Lookup(string) (string, string, bool) { return "", "", false }
+func (emptyResolver) Lookup(string) (string, string, bool)       { return "", "", false }
+func (emptyResolver) SecretByID(string) (string, []string, bool) { return "", nil, false }
 
 // gitIdentity 在名字与邮箱都非空时返回身份，否则 nil（半套覆盖不生效）。
 func gitIdentity(name, email *string) *apigen.GitIdentity {
