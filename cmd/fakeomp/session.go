@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// 会话文件格式取自 oryn-agent `packages/coding-agent/src/session/`：
+// 会话文件格式取自 oryn-core `packages/coding-agent/src/session/`：
 //   - 第 1 行：定宽标题槽（session-title-slot.ts serializeTitleSlot），恰好 256 字节含换行，
 //     `{"type":"title","v":1,"title":"","updatedAt":"<iso>","pad":"<空格>"}`；
 //   - 第 2 行：会话头（session-entries.ts SessionHeader），`{"type":"session","version":3,"id":<uuidv7>,"timestamp":<iso>,"cwd":…}`；

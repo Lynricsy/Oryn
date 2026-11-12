@@ -19,7 +19,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/omprpc"
 )
 
-// 帧与命令的形状取自 oryn-agent `packages/coding-agent/src/modes/rpc/`：
+// 帧与命令的形状取自 oryn-core `packages/coding-agent/src/modes/rpc/`：
 // rpc-types.ts（RpcCommand / RpcResponse / RpcReadyFrame / RpcPromptResultFrame /
 // RpcSessionSettledFrame / RpcExtensionUIRequest）、rpc-mode.ts（ready 帧、success/error 应答、
 // "Unknown command: X"）、rpc-session-events.ts（messageId 与 delta 投影），

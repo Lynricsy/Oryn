@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 按 agent/agent-source.json 下载 orb 内使用的 omp 二进制到 build/agent/<arch>/omp，并校验 sha256。
+# 按 core/source.json 下载 orb 内使用的 Oryn Core（omp）二进制到 build/core/<arch>/omp，并校验 sha256。
 #
-# 用法：scripts/fetch-agent.sh [x64|arm64]   （默认宿主架构）
-# 依赖：gh（已登录且能读取 agent 仓库）、jq、sha256sum。
+# 用法：scripts/fetch-core.sh [x64|arm64]   （默认宿主架构）
+# 依赖：gh（已登录且能读取 oryn-core 仓库）、jq、sha256sum。
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +22,7 @@ x64 | arm64) ;;
 *) echo "用法：$0 [x64|arm64]" >&2; exit 2 ;;
 esac
 
-source_json="agent/agent-source.json"
+source_json="core/source.json"
 repo="$(jq -r .repo "$source_json")"
 tag="$(jq -r .tag "$source_json")"
 want="$(jq -r --arg k "linux-${arch}" '.sha256[$k] // empty' "$source_json")"
@@ -31,7 +31,7 @@ if [[ -z "$want" ]]; then
 	exit 1
 fi
 
-dest_dir="build/agent/${arch}"
+dest_dir="build/core/${arch}"
 dest="${dest_dir}/omp"
 asset="omp-linux-${arch}"
 

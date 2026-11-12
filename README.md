@@ -1,6 +1,6 @@
 # Oryn
 
-为 [omp](https://github.com/can1357/oh-my-pi) 打造的高级环境系统与跨平台客户端：每个线程一台隔离机器（orb），对话能力按 omp 做全，外围（环境面板、Portal、分享、统计）参照 Amp 最新版。
+带高级环境与跨平台客户端的 agent 系统：每个线程一台隔离机器（orb），agent 内核为 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [omp](https://github.com/can1357/oh-my-pi)，MIT），客户端覆盖 Web / 桌面 / 移动 / CLI，外围（环境面板、Portal、分享、统计）参照 Amp 最新版。
 
 > 状态：M1（协议骨架）已完成，M2（线程核心）进行中。完整计划见 [`docs/plan-m1-m2.md`](docs/plan-m1-m2.md)。
 
@@ -9,10 +9,10 @@
 | 组件 | 说明 |
 |---|---|
 | `orynd` | 控制面：REST + WebSocket、SQLite 存储、Passkey/设备鉴权、orb 生命周期、密钥注入出站代理 |
-| `orbd` | orb 内守护进程：经出站长连接（WebSocket + yamux）与控制面通信，监督 omp 进程、复制会话 JSONL、提供本地出站代理 |
+| `orbd` | orb 内守护进程：经出站长连接（WebSocket + yamux）与控制面通信，监督 Oryn Core 进程、复制会话 JSONL、提供本地出站代理 |
 | `oryn` | 命令行客户端，含 `oryn provider run`（在 Docker 主机上执行 orb 任务） |
 | `web/` | React + TypeScript 客户端（Web/PWA；桌面与移动端以 Tauri 2 套壳，后续里程碑） |
-| `images/orb/` | orb 基础镜像（Debian 13 + Node/bun/Python/uv/Go/Rust/gh + omp） |
+| `images/orb/` | orb 基础镜像（Debian 13 + Node/bun/Python/uv/Go/Rust/gh + Oryn Core） |
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ flowchart LR
   P[oryn provider run] -- 长轮询拉任务 --> D
   P -- docker run/pause/commit --> O
   subgraph O[orb 容器]
-    B[orbd] -- JSONL --> A[omp --mode rpc-ui]
+    B[orbd] -- JSONL --> A[Oryn Core<br/>omp --mode rpc-ui]
   end
   B -- WS + yamux 出站长连接 --> D
   D -- 注入真实密钥 --> L[模型 API / git]
@@ -37,7 +37,7 @@ make gen          # 由 schema/openapi.yaml 与 SQL 生成 Go / TS 代码
 make web          # 构建前端并嵌入 orynd
 make build        # bin/orynd bin/orbd bin/oryn bin/fakeomp
 make test
-scripts/fetch-agent.sh && make image   # 拉取钉定的 omp 发行版并构建 oryn-orb:dev
+scripts/fetch-core.sh && make image    # 拉取钉定的 Oryn Core 发行版并构建 oryn-orb:dev
 ./bin/orynd --config dev/orynd.yaml    # 首次启动打印 Passkey 初始化链接
 ```
 
@@ -59,4 +59,4 @@ oryn secrets set git/github.com/token          # git 令牌，经出站代理注
 - [`docs/deploy.md`](docs/deploy.md)：部署到 1Panel OpenResty 反代之后
 - [`docs/protocol.md`](docs/protocol.md)：协议索引与相对计划的偏差
 - [`docs/research/`](docs/research/)：Amp / omp / 参考 GUI / Tauri 移动端调研
-- agent fork：[`Lynricsy/oryn-agent`](https://github.com/Lynricsy/oryn-agent)（钉定版本见 `agent/agent-source.json`）
+- agent 内核：[`Lynricsy/oryn-core`](https://github.com/Lynricsy/oryn-core)（钉定版本见 `core/source.json`；二进制与配置目录沿用 omp 的 `omp` / `~/.omp/agent`）

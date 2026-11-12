@@ -4,7 +4,7 @@
 # 用法：scripts/build-orb-image.sh [x64|arm64]   （默认宿主架构）
 # 环境变量：IMAGE（默认 oryn-orb:dev）、VERSION（默认 git describe）
 #
-# 前置：build/agent/<arch>/omp 已就位（scripts/fetch-agent.sh <arch>）。
+# 前置：build/core/<arch>/omp 已就位（scripts/fetch-core.sh <arch>）。
 # 构建上下文是 build/orb-context/<arch>/，只含 omp / orbd / oryn 三个文件，不把仓库与 node_modules 发给 docker。
 set -euo pipefail
 
@@ -28,11 +28,11 @@ esac
 
 image="${IMAGE:-oryn-orb:dev}"
 version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
-omp="build/agent/${arch}/omp"
+omp="build/core/${arch}/omp"
 ctx="build/orb-context/${arch}"
 
 if [[ ! -x "$omp" ]]; then
-	echo "缺少 $omp，先运行 scripts/fetch-agent.sh ${arch}" >&2
+	echo "缺少 $omp，先运行 scripts/fetch-core.sh ${arch}" >&2
 	exit 1
 fi
 

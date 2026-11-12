@@ -24,8 +24,8 @@ export const projects: Project[] = [
 	},
 	{
 		id: "prj_01JCZ00000000000000AGENT",
-		name: "oryn-agent",
-		repoUrl: "https://github.com/Lynricsy/oryn-agent",
+		name: "oryn-core",
+		repoUrl: "https://github.com/Lynricsy/oryn-core",
 		baseBranch: "oryn",
 		shallowClone: false,
 		createdAt: NOW - 20 * 24 * HOUR,

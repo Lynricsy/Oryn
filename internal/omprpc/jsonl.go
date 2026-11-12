@@ -1,7 +1,7 @@
 // Package omprpc 实现 omp `--mode rpc` / `rpc-ui` 的传输层：JSONL 分帧、
 // 协议 v2 的 `rpc_chunk` 重组以及最小的信封解析。
 //
-// 权威实现见 oryn-agent 仓库 `packages/coding-agent/src/modes/rpc/rpc-frame.ts`
+// 权威实现见 oryn-core 仓库 `packages/coding-agent/src/modes/rpc/rpc-frame.ts`
 // （MAX_RPC_FRAME_BYTES / MAX_RPC_REASSEMBLED_BYTES / RpcFrameDecoder）。
 package omprpc
 

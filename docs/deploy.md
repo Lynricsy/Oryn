@@ -8,7 +8,7 @@
 make web                        # 构建 Web 客户端，复制到 internal/webui/dist 以便嵌入
 make build                      # 产出 bin/orynd bin/orbd bin/oryn（嵌入上一步的前端）
 sudo install -m 0755 bin/orynd bin/oryn /usr/local/bin/
-make image                      # 构建 orb 镜像 oryn-orb:dev（需要 build/agent/x64/omp，见 scripts/fetch-agent.sh）
+make image                      # 构建 orb 镜像 oryn-orb:dev（需要 build/core/x64/omp，见 scripts/fetch-core.sh）
 ```
 
 创建服务用户与目录：

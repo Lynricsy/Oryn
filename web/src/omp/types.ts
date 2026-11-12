@@ -1,5 +1,5 @@
 /**
- * omp RPC 类型入口。权威类型在 `./rpc-types.d.ts`（由 oryn-agent `scripts/oryn/emit-rpc-dts.ts` 生成，不手改）；
+ * omp RPC 类型入口。权威类型在 `./rpc-types.d.ts`（由 oryn-core `scripts/oryn/emit-rpc-dts.ts` 生成，不手改）；
  * 本文件只做再导出，并派生出 rpc-types 未直接导出的常用类型。全前端一律从这里导入 omp 类型。
  */
 import type {
