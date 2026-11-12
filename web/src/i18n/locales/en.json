@@ -1,0 +1,11 @@
+{
+	"app": {
+		"name": "Oryn",
+		"tagline": "Advanced environments for omp"
+	},
+	"health": {
+		"loading": "Connecting to server…",
+		"version": "Version {{version}}",
+		"error": "Cannot reach server: {{message}}"
+	}
+}

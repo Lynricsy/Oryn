@@ -1,0 +1,11 @@
+{
+	"app": {
+		"name": "Oryn",
+		"tagline": "omp 的高级环境系统"
+	},
+	"health": {
+		"loading": "正在连接服务器…",
+		"version": "版本 {{version}}",
+		"error": "无法连接服务器：{{message}}"
+	}
+}
