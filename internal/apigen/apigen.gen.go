@@ -165,23 +165,26 @@ func (e LinkCtlAgentStatusParamsStatus) Valid() bool {
 
 // Defines values for LinkCtlMethod.
 const (
-	MethodAgentGap         LinkCtlMethod = "agent.gap"
-	MethodAgentStart       LinkCtlMethod = "agent.start"
-	MethodAgentStatus      LinkCtlMethod = "agent.status"
-	MethodAgentStop        LinkCtlMethod = "agent.stop"
-	MethodBlobFetch        LinkCtlMethod = "blob.fetch"
-	MethodEntriesAppend    LinkCtlMethod = "entries.append"
-	MethodEntriesCursors   LinkCtlMethod = "entries.cursors"
-	MethodEntriesReset     LinkCtlMethod = "entries.reset"
-	MethodEntriesResetDone LinkCtlMethod = "entries.reset_done"
-	MethodFsCopyTree       LinkCtlMethod = "fs.copyTree"
-	MethodFsMove           LinkCtlMethod = "fs.move"
-	MethodHello            LinkCtlMethod = "hello"
-	MethodMetricsSample    LinkCtlMethod = "metrics.sample"
-	MethodResumeRun        LinkCtlMethod = "resume.run"
-	MethodSetupLog         LinkCtlMethod = "setup.log"
-	MethodSetupRun         LinkCtlMethod = "setup.run"
-	MethodShutdown         LinkCtlMethod = "shutdown"
+	MethodAgentGap          LinkCtlMethod = "agent.gap"
+	MethodAgentStart        LinkCtlMethod = "agent.start"
+	MethodAgentStatus       LinkCtlMethod = "agent.status"
+	MethodAgentStop         LinkCtlMethod = "agent.stop"
+	MethodBlobFetch         LinkCtlMethod = "blob.fetch"
+	MethodEntriesAppend     LinkCtlMethod = "entries.append"
+	MethodEntriesCursors    LinkCtlMethod = "entries.cursors"
+	MethodEntriesReset      LinkCtlMethod = "entries.reset"
+	MethodEntriesResetDone  LinkCtlMethod = "entries.reset_done"
+	MethodFsCopyTree        LinkCtlMethod = "fs.copyTree"
+	MethodFsMove            LinkCtlMethod = "fs.move"
+	MethodHello             LinkCtlMethod = "hello"
+	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
+	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
+	MethodProjectScriptsSet LinkCtlMethod = "project.scripts.set"
+	MethodResumeRun         LinkCtlMethod = "resume.run"
+	MethodSetupLog          LinkCtlMethod = "setup.log"
+	MethodSetupResult       LinkCtlMethod = "setup.result"
+	MethodSetupRun          LinkCtlMethod = "setup.run"
+	MethodShutdown          LinkCtlMethod = "shutdown"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlMethod enum.
@@ -213,9 +216,15 @@ func (e LinkCtlMethod) Valid() bool {
 		return true
 	case MethodMetricsSample:
 		return true
+	case MethodProjectScriptsGet:
+		return true
+	case MethodProjectScriptsSet:
+		return true
 	case MethodResumeRun:
 		return true
 	case MethodSetupLog:
+		return true
+	case MethodSetupResult:
 		return true
 	case MethodSetupRun:
 		return true
@@ -466,18 +475,69 @@ func (e SecretMode) Valid() bool {
 	}
 }
 
+// Defines values for SetupPhase.
+const (
+	SetupPhaseResume SetupPhase = "resume"
+	SetupPhaseSetup  SetupPhase = "setup"
+)
+
+// Valid indicates whether the value is a known member of the SetupPhase enum.
+func (e SetupPhase) Valid() bool {
+	switch e {
+	case SetupPhaseResume:
+		return true
+	case SetupPhaseSetup:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetupTrigger.
+const (
+	SetupTriggerAuto   SetupTrigger = "auto"
+	SetupTriggerManual SetupTrigger = "manual"
+)
+
+// Valid indicates whether the value is a known member of the SetupTrigger enum.
+func (e SetupTrigger) Valid() bool {
+	switch e {
+	case SetupTriggerAuto:
+		return true
+	case SetupTriggerManual:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ThreadTitleSource.
 const (
-	Auto ThreadTitleSource = "auto"
-	User ThreadTitleSource = "user"
+	ThreadTitleSourceAuto ThreadTitleSource = "auto"
+	ThreadTitleSourceUser ThreadTitleSource = "user"
 )
 
 // Valid indicates whether the value is a known member of the ThreadTitleSource enum.
 func (e ThreadTitleSource) Valid() bool {
 	switch e {
-	case Auto:
+	case ThreadTitleSourceAuto:
 		return true
-	case User:
+	case ThreadTitleSourceUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ThreadErrorKind.
+const (
+	OrbFailed ThreadErrorKind = "orb_failed"
+)
+
+// Valid indicates whether the value is a known member of the ThreadErrorKind enum.
+func (e ThreadErrorKind) Valid() bool {
+	switch e {
+	case OrbFailed:
 		return true
 	default:
 		return false
@@ -1371,7 +1431,8 @@ type LinkCtlHelloThread struct {
 // LinkCtlMethod `ctl` 方法（括号内为方向与形态）：
 // `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 // `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
-// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
+// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -1382,7 +1443,8 @@ type LinkCtlNotification struct {
 	// Method `ctl` 方法（括号内为方向与形态）：
 	// `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
-	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
+	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -1405,6 +1467,24 @@ type LinkCtlOmpHomeFile struct {
 	Path string `json:"path"`
 }
 
+// LinkCtlProjectScripts 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果
+type LinkCtlProjectScripts struct {
+	// ProjectID `prj_<ulid>`
+	ProjectID   ProjectID `json:"projectId"`
+	ProjectName string    `json:"projectName"`
+	Resume      *string   `json:"resume,omitempty"`
+	Setup       *string   `json:"setup,omitempty"`
+}
+
+// LinkCtlProjectScriptsGetParams 无参数
+type LinkCtlProjectScriptsGetParams = map[string]interface{}
+
+// LinkCtlProjectScriptsSetParams 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`
+type LinkCtlProjectScriptsSetParams struct {
+	Resume *string `json:"resume,omitempty"`
+	Setup  *string `json:"setup,omitempty"`
+}
+
 // LinkCtlRequest defines model for LinkCtlRequest.
 type LinkCtlRequest struct {
 	// ID 发起方内单调递增；双方各自独立编号
@@ -1413,7 +1493,8 @@ type LinkCtlRequest struct {
 	// Method `ctl` 方法（括号内为方向与形态）：
 	// `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
-	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
+	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -1453,6 +1534,23 @@ type LinkCtlSetupRepo struct {
 	Branch  *string `json:"branch,omitempty"`
 	Shallow bool    `json:"shallow"`
 	URL     string  `json:"url"`
+}
+
+// LinkCtlSetupResultParams 每次 setup / resume 结束（含 orb 内手动重跑）时 orbd 发送；控制面写入 `orb_setup_runs`
+type LinkCtlSetupResultParams struct {
+	DurationMs       int64      `json:"durationMs"`
+	Error            *string    `json:"error,omitempty"`
+	HasProjectScript bool       `json:"hasProjectScript"`
+	HasRepoScript    bool       `json:"hasRepoScript"`
+	Ok               bool       `json:"ok"`
+	Phase            SetupPhase `json:"phase"`
+	SetupRan         bool       `json:"setupRan"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt TimestampMs `json:"startedAt"`
+
+	// Trigger `auto` = orb 就绪 / 唤醒时自动运行；`manual` = orb 内 `oryn orb setup run`
+	Trigger SetupTrigger `json:"trigger"`
 }
 
 // LinkCtlSetupRunParams defines model for LinkCtlSetupRunParams.
@@ -1574,6 +1672,9 @@ type Orb struct {
 	// DeletedAt UTC 毫秒时间戳
 	DeletedAt *TimestampMs `json:"deletedAt,omitempty"`
 
+	// FailureReason `state=failed` 时导致失败的原因
+	FailureReason *string `json:"failureReason,omitempty"`
+
 	// ID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 	//
 	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
@@ -1582,6 +1683,12 @@ type Orb struct {
 
 	// LastAgentActivityAt UTC 毫秒时间戳
 	LastAgentActivityAt *TimestampMs `json:"lastAgentActivityAt,omitempty"`
+
+	// LastResume 最近一次 `phase=resume` 的运行
+	LastResume *OrbSetupRun `json:"lastResume,omitempty"`
+
+	// LastSetup 最近一次 `phase=setup` 的运行
+	LastSetup *OrbSetupRun `json:"lastSetup,omitempty"`
 
 	// LastUserInteractionAt UTC 毫秒时间戳
 	LastUserInteractionAt *TimestampMs `json:"lastUserInteractionAt,omitempty"`
@@ -1645,6 +1752,49 @@ type OrbMetrics struct {
 // OrbPauseRequest defines model for OrbPauseRequest.
 type OrbPauseRequest struct {
 	Mode PauseMode `json:"mode"`
+}
+
+// OrbSetupRun defines model for OrbSetupRun.
+type OrbSetupRun struct {
+	DurationMs int64 `json:"durationMs"`
+
+	// Error `ok=false` 时的失败原因
+	Error *string `json:"error,omitempty"`
+
+	// FinishedAt UTC 毫秒时间戳
+	FinishedAt TimestampMs `json:"finishedAt"`
+
+	// HasProjectScript 项目设置里配置了该阶段脚本
+	HasProjectScript bool `json:"hasProjectScript"`
+
+	// HasRepoScript 仓库内存在可执行的 `.oryn/<phase>` 或 `.agents/<phase>`
+	HasRepoScript bool `json:"hasRepoScript"`
+
+	// ID setup / resume 运行记录 id
+	//
+	// Example: osr_01HZX3J9Q4W8E5R6T7Y8U9I0OP
+	ID SetupRunID `json:"id"`
+	Ok bool       `json:"ok"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID OrbID      `json:"orbId"`
+	Phase SetupPhase `json:"phase"`
+
+	// SetupRan `phase=setup` 时是否实际执行了脚本（`setup.done` 标记存在则为 false）
+	SetupRan bool `json:"setupRan"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt TimestampMs `json:"startedAt"`
+
+	// Trigger `auto` = orb 就绪 / 唤醒时自动运行；`manual` = orb 内 `oryn orb setup run`
+	Trigger SetupTrigger `json:"trigger"`
+}
+
+// OrbSetupRunList defines model for OrbSetupRunList.
+type OrbSetupRunList struct {
+	Runs []OrbSetupRun `json:"runs"`
 }
 
 // OrbState orb 状态机（计划 E 节）
@@ -1904,6 +2054,17 @@ type SecretPut struct {
 	Value string     `json:"value"`
 }
 
+// SetupPhase defines model for SetupPhase.
+type SetupPhase string
+
+// SetupRunID setup / resume 运行记录 id
+//
+// Example: osr_01HZX3J9Q4W8E5R6T7Y8U9I0OP
+type SetupRunID = string
+
+// SetupTrigger `auto` = orb 就绪 / 唤醒时自动运行；`manual` = orb 内 `oryn orb setup run`
+type SetupTrigger string
+
 // Sha256 SHA-256 小写十六进制
 type Sha256 = string
 
@@ -1923,8 +2084,11 @@ type Thread struct {
 	Color          *string `json:"color,omitempty"`
 
 	// CreatedAt UTC 毫秒时间戳
-	CreatedAt         TimestampMs `json:"createdAt"`
-	ForkedFromEntryID *string     `json:"forkedFromEntryId,omitempty"`
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Error `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）
+	Error             *ThreadError `json:"error,omitempty"`
+	ForkedFromEntryID *string      `json:"forkedFromEntryId,omitempty"`
 
 	// ID `T-<uuidv7>`
 	//
@@ -1978,6 +2142,15 @@ type ThreadTitleSource string
 type ThreadEnvelope struct {
 	Thread Thread `json:"thread"`
 }
+
+// ThreadError `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）
+type ThreadError struct {
+	Kind   ThreadErrorKind `json:"kind"`
+	Reason string          `json:"reason"`
+}
+
+// ThreadErrorKind defines model for ThreadError.Kind.
+type ThreadErrorKind string
 
 // ThreadExecutor 线程执行位置
 type ThreadExecutor struct {
@@ -3520,6 +3693,12 @@ type ServerInterface interface {
 	// ResumeOrb 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
 	// (POST /api/v1/orbs/{id}/resume)
 	ResumeOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// ListOrbSetupRuns 最近 20 次 setup / resume 运行（新到旧，不含日志）
+	// (GET /api/v1/orbs/{id}/setup-runs)
+	ListOrbSetupRuns(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// GetOrbSetupRunLog 一次 setup / resume 运行的输出（末尾至多 256KiB）
+	// (GET /api/v1/orbs/{id}/setup-runs/{runId}/log)
+	GetOrbSetupRunLog(w http.ResponseWriter, r *http.Request, id OrbIDPath, runID SetupRunID)
 	// ListProjects 项目列表
 	// (GET /api/v1/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams)
@@ -3754,6 +3933,18 @@ func (_ Unimplemented) PauseOrb(w http.ResponseWriter, r *http.Request, id OrbID
 // ResumeOrb 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
 // (POST /api/v1/orbs/{id}/resume)
 func (_ Unimplemented) ResumeOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOrbSetupRuns 最近 20 次 setup / resume 运行（新到旧，不含日志）
+// (GET /api/v1/orbs/{id}/setup-runs)
+func (_ Unimplemented) ListOrbSetupRuns(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbSetupRunLog 一次 setup / resume 运行的输出（末尾至多 256KiB）
+// (GET /api/v1/orbs/{id}/setup-runs/{runId}/log)
+func (_ Unimplemented) GetOrbSetupRunLog(w http.ResponseWriter, r *http.Request, id OrbIDPath, runID SetupRunID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4491,6 +4682,67 @@ func (siw *ServerInterfaceWrapper) ResumeOrb(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeOrb(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrbSetupRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListOrbSetupRuns(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrbSetupRuns(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbSetupRunLog operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbSetupRunLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "runId" -------------
+	var runID SetupRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runId", chi.URLParam(r, "runId"), &runID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbSetupRunLog(w, r, id, runID)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5437,6 +5689,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/orbs/{id}/metrics", wrapper.GetOrbMetrics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/setup-runs", wrapper.ListOrbSetupRuns)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/setup-runs/{runId}/log", wrapper.GetOrbSetupRunLog)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/blobs/{sha256}", wrapper.GetBlob)

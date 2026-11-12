@@ -109,6 +109,22 @@ type OrbSample struct {
 	NetTxBytes int64   `json:"netTxBytes"`
 }
 
+type OrbSetupRun struct {
+	ID               string  `json:"id"`
+	OrbID            string  `json:"orbId"`
+	Phase            string  `json:"phase"`
+	Trigger          string  `json:"trigger"`
+	StartedAt        int64   `json:"startedAt"`
+	FinishedAt       int64   `json:"finishedAt"`
+	Ok               int64   `json:"ok"`
+	SetupRan         int64   `json:"setupRan"`
+	Error            *string `json:"error"`
+	DurationMs       int64   `json:"durationMs"`
+	HasRepoScript    int64   `json:"hasRepoScript"`
+	HasProjectScript int64   `json:"hasProjectScript"`
+	LogTail          []byte  `json:"logTail"`
+}
+
 type Owner struct {
 	ID          int64  `json:"id"`
 	DisplayName string `json:"displayName"`

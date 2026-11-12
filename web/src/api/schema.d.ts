@@ -526,6 +526,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/setup-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 最近 20 次 setup / resume 运行（新到旧，不含日志） */
+        get: operations["listOrbSetupRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/setup-runs/{runId}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                runId: components["schemas"]["SetupRunId"];
+            };
+            cookie?: never;
+        };
+        /** 一次 setup / resume 运行的输出（末尾至多 256KiB） */
+        get: operations["getOrbSetupRunLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/blobs/{sha256}": {
         parameters: {
             query?: never;
@@ -841,6 +880,11 @@ export interface components {
         DeviceId: string;
         /** @description `job_<ulid>` */
         JobId: string;
+        /**
+         * @description setup / resume 运行记录 id
+         * @example osr_01HZX3J9Q4W8E5R6T7Y8U9I0OP
+         */
+        SetupRunId: string;
         /** @description 快照 id，同时是 Docker 镜像名 */
         SnapshotId: string;
         /** @description omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。 */
@@ -1151,6 +1195,13 @@ export interface components {
             childCount?: number;
             /** @description 处于 `idle` 的子线程数量 */
             childDoneCount?: number;
+            error?: components["schemas"]["ThreadError"];
+        };
+        /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
+        ThreadError: {
+            /** @enum {string} */
+            kind: "orb_failed";
+            reason: string;
         };
         ThreadEnvelope: {
             thread: components["schemas"]["Thread"];
@@ -1224,6 +1275,41 @@ export interface components {
             createdAt: components["schemas"]["TimestampMs"];
             deletedAt?: components["schemas"]["TimestampMs"];
             threadIds: components["schemas"]["ThreadId"][];
+            /** @description `state=failed` 时导致失败的原因 */
+            failureReason?: string;
+            /** @description 最近一次 `phase=setup` 的运行 */
+            lastSetup?: components["schemas"]["OrbSetupRun"];
+            /** @description 最近一次 `phase=resume` 的运行 */
+            lastResume?: components["schemas"]["OrbSetupRun"];
+        };
+        OrbSetupRun: {
+            id: components["schemas"]["SetupRunId"];
+            orbId: components["schemas"]["OrbId"];
+            phase: components["schemas"]["SetupPhase"];
+            trigger: components["schemas"]["SetupTrigger"];
+            startedAt: components["schemas"]["TimestampMs"];
+            finishedAt: components["schemas"]["TimestampMs"];
+            ok: boolean;
+            /** @description `phase=setup` 时是否实际执行了脚本（`setup.done` 标记存在则为 false） */
+            setupRan: boolean;
+            /** @description `ok=false` 时的失败原因 */
+            error?: string;
+            /** Format: int64 */
+            durationMs: number;
+            /** @description 仓库内存在可执行的 `.oryn/<phase>` 或 `.agents/<phase>` */
+            hasRepoScript: boolean;
+            /** @description 项目设置里配置了该阶段脚本 */
+            hasProjectScript: boolean;
+        };
+        /** @enum {string} */
+        SetupPhase: "setup" | "resume";
+        /**
+         * @description `auto` = orb 就绪 / 唤醒时自动运行；`manual` = orb 内 `oryn orb setup run`
+         * @enum {string}
+         */
+        SetupTrigger: "auto" | "manual";
+        OrbSetupRunList: {
+            runs: components["schemas"]["OrbSetupRun"][];
         };
         OrbList: {
             orbs: components["schemas"]["Orb"][];
@@ -1665,10 +1751,11 @@ export interface components {
          * @description `ctl` 方法（括号内为方向与形态）：
          *     `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
          *     `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
-         *     `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+         *     `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
+         *     `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -1778,6 +1865,33 @@ export interface components {
             /** @enum {string} */
             stream: "stdout" | "stderr" | "system";
             data: string;
+        };
+        /** @description 每次 setup / resume 结束（含 orb 内手动重跑）时 orbd 发送；控制面写入 `orb_setup_runs` */
+        LinkCtlSetupResultParams: {
+            phase: components["schemas"]["SetupPhase"];
+            trigger: components["schemas"]["SetupTrigger"];
+            startedAt: components["schemas"]["TimestampMs"];
+            ok: boolean;
+            setupRan: boolean;
+            error?: string;
+            /** Format: int64 */
+            durationMs: number;
+            hasRepoScript: boolean;
+            hasProjectScript: boolean;
+        };
+        /** @description 无参数 */
+        LinkCtlProjectScriptsGetParams: Record<string, never>;
+        /** @description 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果 */
+        LinkCtlProjectScripts: {
+            projectId: components["schemas"]["ProjectId"];
+            projectName: string;
+            setup?: string;
+            resume?: string;
+        };
+        /** @description 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project` */
+        LinkCtlProjectScriptsSetParams: {
+            setup?: string;
+            resume?: string;
         };
         LinkCtlMetricsSampleParams: components["schemas"]["OrbMetricSample"];
         LinkCtlSetupRepo: {
@@ -2763,6 +2877,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrbMetrics"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOrbSetupRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 运行记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbSetupRunList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbSetupRunLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                runId: components["schemas"]["SetupRunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 纯文本日志 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
             default: components["responses"]["Error"];

@@ -710,6 +710,39 @@ paths:
               schema: { $ref: '#/components/schemas/OrbMetrics' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/orbs/{id}/setup-runs:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    get:
+      tags: [orbs]
+      operationId: listOrbSetupRuns
+      summary: 最近 20 次 setup / resume 运行（新到旧，不含日志）
+      responses:
+        '200':
+          description: 运行记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbSetupRunList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/setup-runs/{runId}/log:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+      - name: runId
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/SetupRunId' }
+    get:
+      tags: [orbs]
+      operationId: getOrbSetupRunLog
+      summary: 一次 setup / resume 运行的输出（末尾至多 256KiB）
+      responses:
+        '200':
+          description: 纯文本日志
+          content:
+            text/plain:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- blobs
   /api/v1/blobs/{sha256}:
     parameters:
@@ -1166,6 +1199,11 @@ components:
       type: string
       pattern: '^job_[0-9A-Z]{26}$'
       description: '`job_<ulid>`'
+    SetupRunId:
+      type: string
+      description: setup / resume 运行记录 id
+      pattern: '^osr_[0-9A-Z]{26}$'
+      example: osr_01HZX3J9Q4W8E5R6T7Y8U9I0OP
     SnapshotId:
       type: string
       pattern: '^oryn-snap-[0-9a-z]{26}$'
@@ -1620,6 +1658,17 @@ components:
         childDoneCount:
           type: integer
           description: 处于 `idle` 的子线程数量
+        error:
+          $ref: '#/components/schemas/ThreadError'
+    ThreadError:
+      type: object
+      description: '`state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）'
+      required: [kind, reason]
+      properties:
+        kind:
+          type: string
+          enum: [orb_failed]
+        reason: { type: string }
     ThreadEnvelope:
       type: object
       required: [thread]
@@ -1721,6 +1770,56 @@ components:
         threadIds:
           type: array
           items: { $ref: '#/components/schemas/ThreadId' }
+        failureReason:
+          type: string
+          description: '`state=failed` 时导致失败的原因'
+        lastSetup:
+          allOf:
+            - $ref: '#/components/schemas/OrbSetupRun'
+          description: 最近一次 `phase=setup` 的运行
+        lastResume:
+          allOf:
+            - $ref: '#/components/schemas/OrbSetupRun'
+          description: 最近一次 `phase=resume` 的运行
+    OrbSetupRun:
+      type: object
+      required: [id, orbId, phase, trigger, startedAt, finishedAt, ok, setupRan, durationMs, hasRepoScript, hasProjectScript]
+      properties:
+        id: { $ref: '#/components/schemas/SetupRunId' }
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        phase: { $ref: '#/components/schemas/SetupPhase' }
+        trigger: { $ref: '#/components/schemas/SetupTrigger' }
+        startedAt: { $ref: '#/components/schemas/TimestampMs' }
+        finishedAt: { $ref: '#/components/schemas/TimestampMs' }
+        ok: { type: boolean }
+        setupRan:
+          type: boolean
+          description: '`phase=setup` 时是否实际执行了脚本（`setup.done` 标记存在则为 false）'
+        error:
+          type: string
+          description: '`ok=false` 时的失败原因'
+        durationMs: { type: integer, format: int64 }
+        hasRepoScript:
+          type: boolean
+          description: 仓库内存在可执行的 `.oryn/<phase>` 或 `.agents/<phase>`
+        hasProjectScript:
+          type: boolean
+          description: 项目设置里配置了该阶段脚本
+    SetupPhase:
+      type: string
+      enum: [setup, resume]
+      x-enum-varnames: [SetupPhaseSetup, SetupPhaseResume]
+    SetupTrigger:
+      type: string
+      description: '`auto` = orb 就绪 / 唤醒时自动运行；`manual` = orb 内 `oryn orb setup run`'
+      enum: [auto, manual]
+    OrbSetupRunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/OrbSetupRun' }
     OrbList:
       type: object
       required: [orbs]
@@ -2309,7 +2408,8 @@ components:
         `ctl` 方法（括号内为方向与形态）：
         `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
         `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
-        `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）。
+        `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
+        `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）。
       enum:
         - hello
         - entries.cursors
@@ -2328,6 +2428,9 @@ components:
         - fs.copyTree
         - fs.move
         - shutdown
+        - setup.result
+        - project.scripts.get
+        - project.scripts.set
       x-enum-varnames:
         - MethodHello
         - MethodEntriesCursors
@@ -2346,6 +2449,9 @@ components:
         - MethodFsCopyTree
         - MethodFsMove
         - MethodShutdown
+        - MethodSetupResult
+        - MethodProjectScriptsGet
+        - MethodProjectScriptsSet
     LinkCtlRequest:
       type: object
       required: [id, method, params]
@@ -2496,6 +2602,38 @@ components:
           type: string
           enum: [stdout, stderr, system]
         data: { type: string }
+    LinkCtlSetupResultParams:
+      type: object
+      description: 每次 setup / resume 结束（含 orb 内手动重跑）时 orbd 发送；控制面写入 `orb_setup_runs`
+      required: [phase, trigger, startedAt, ok, setupRan, durationMs, hasRepoScript, hasProjectScript]
+      properties:
+        phase: { $ref: '#/components/schemas/SetupPhase' }
+        trigger: { $ref: '#/components/schemas/SetupTrigger' }
+        startedAt: { $ref: '#/components/schemas/TimestampMs' }
+        ok: { type: boolean }
+        setupRan: { type: boolean }
+        error: { type: string }
+        durationMs: { type: integer, format: int64 }
+        hasRepoScript: { type: boolean }
+        hasProjectScript: { type: boolean }
+    LinkCtlProjectScriptsGetParams:
+      type: object
+      description: 无参数
+    LinkCtlProjectScripts:
+      type: object
+      description: 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果
+      required: [projectId, projectName]
+      properties:
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        projectName: { type: string }
+        setup: { type: string }
+        resume: { type: string }
+    LinkCtlProjectScriptsSetParams:
+      type: object
+      description: 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`
+      properties:
+        setup: { type: string }
+        resume: { type: string }
     LinkCtlMetricsSampleParams:
       $ref: '#/components/schemas/OrbMetricSample'
     LinkCtlSetupRepo:
