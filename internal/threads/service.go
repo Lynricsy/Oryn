@@ -422,9 +422,17 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		}
 		return
 	}
-	state := ev.Orb.State
-	if state == "" {
-		state = ev.To
+	// 状态缓存只信两个来源：状态变化事件的目标状态，或库里的当前行。link_up / link_down 事件携带的
+	// orb 快照可能早于其后的状态变化（例如 link 连上时还在 connecting，事件送达时已 failed），
+	// 用它覆盖缓存会把线程推回 provisioning。
+	state := ev.To
+	if ev.Kind != OrbEventState || state == "" {
+		o, err := s.st.Q.GetOrb(ctx, ev.OrbID)
+		if err != nil {
+			slog.Warn("threads: 读取 orb 失败", "orb", ev.OrbID, "err", err)
+			return
+		}
+		state = o.State
 	}
 	s.mu.Lock()
 	s.orbStates[ev.OrbID] = state
@@ -435,11 +443,10 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		slog.Warn("threads: 读取 orb 线程失败", "orb", ev.OrbID, "err", err)
 		return
 	}
-	o := ev.Orb
-	if o.ID == "" {
-		if o, err = s.st.Q.GetOrb(ctx, ev.OrbID); err != nil {
-			return
-		}
+	// 推送给客户端的 orb 同样取库里的当前行，不用事件携带的（可能过时的）快照
+	o, err := s.st.Q.GetOrb(ctx, ev.OrbID)
+	if err != nil {
+		return
 	}
 	s.out().Orb(s.orbAPI(ctx, o))
 	// 进入或离开 failed 时 Thread.error 随之出现 / 消失，即使线程状态本身没变（例如原本就是 error）也要推送

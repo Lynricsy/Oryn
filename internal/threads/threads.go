@@ -94,6 +94,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		frame, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": p.Title})
 		_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "set_session_name"})
 	}
+	// orb 先于线程行创建：在此之前到达的 orb 事件（例如 clone 立刻失败 → failed）找不到本线程，
+	// 绑定后补算一次状态。事件处理先写 orb 状态缓存再列线程，两种先后顺序都不会漏。
+	s.recompute(ctx, t)
 	t.mu.Unlock()
 	out, err := s.Get(ctx, id)
 	if err != nil {
@@ -640,7 +643,10 @@ func (s *Service) forkCopy(ctx context.Context, src *thread, child db.CreateThre
 		t.mu.Lock()
 		t.orbID = o.ID
 		_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: &o.ID, UpdatedAt: s.now(), ID: t.id})
-		s.publish(ctx, t.id)
+		// 同 Create：绑定前已发生的 orb 状态变化（如 failed）在此补算
+		if !s.recompute(ctx, t) {
+			s.publish(ctx, t.id)
+		}
 		t.mu.Unlock()
 		if s.orbState(o.ID) == orbStateReady {
 			s.startAgent(ctx, t.id)
