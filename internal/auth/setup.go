@@ -24,7 +24,7 @@ const setupTokenFile = "setup-token.sha256"
 var ErrAlreadyInitialized = errors.New("已完成初始化；丢失 Passkey 请在 /login 使用恢复码")
 
 // EnsureSetupToken 在尚无所有者时生成新的 ost_ 初始化令牌（覆盖旧令牌）并返回
-// `<public_url>/setup?token=…`，created=true；已有所有者时返回 created=false 且不改动任何东西。
+// `<public_url>/setup#token=…`（令牌放在 URL 片段里，不进反代访问日志；页面从 location.hash 读出后照旧放进请求体），created=true；已有所有者时返回 created=false 且不改动任何东西。
 func EnsureSetupToken(ctx context.Context, st *store.Store, dataDir, publicURL string) (string, bool, error) {
 	if _, err := st.Q.GetOwner(ctx); err == nil {
 		return "", false, nil
@@ -46,7 +46,7 @@ func RegenerateSetupToken(dataDir, publicURL string) (string, error) {
 	if err := os.Rename(tmp, p); err != nil {
 		return "", fmt.Errorf("写入初始化令牌: %w", err)
 	}
-	return strings.TrimSuffix(publicURL, "/") + "/setup?token=" + url.QueryEscape(tok), nil
+	return strings.TrimSuffix(publicURL, "/") + "/setup#token=" + url.QueryEscape(tok), nil
 }
 
 // currentSetupTokenHash 读取当前初始化令牌哈希；不存在返回空串。

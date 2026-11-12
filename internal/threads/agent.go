@@ -140,12 +140,23 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		err := ctl.Call(cctx, "fs.copyTree", apigen.LinkCtlFsCopyTreeParams{From: sessionDirOf(copyFrom), To: t.sessionDir}, nil)
 		if err != nil {
 			slog.Warn("threads: 复制会话目录失败", "thread", t.id, "from", copyFrom, "err", err)
-			s.markFailed(ctx, t)
+			if ctx.Err() == nil && !errors.Is(err, link.ErrCtlClosed) {
+				s.markFailed(ctx, t)
+			}
 			return
 		}
 		t.mu.Lock()
 		t.copyFrom = ""
+		// 复制完成才推进持久化阶段：重启在此之前发生时会重新复制（agent 尚未启动，覆盖是安全的）
+		var next *forkOp
+		if t.forkEntry != "" && t.forkOp != nil {
+			next = &forkOp{Stage: forkStageFork, Src: t.forkOp.Src, SrcOrb: t.forkOp.SrcOrb, ForkAt: t.forkEntry}
+		}
+		err = s.setForkOpLocked(ctx, t, next)
 		t.mu.Unlock()
+		if err != nil {
+			return
+		}
 	}
 	var res apigen.LinkCtlAgentStartResult
 	if err := ctl.Call(cctx, "agent.start", params, &res); err != nil {
@@ -161,6 +172,9 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 func (s *Service) markFailed(ctx context.Context, t *thread) {
 	t.mu.Lock()
 	t.failed = true
+	// agent 没能启动：不会有在跑的回合，也不会再有 get_state 来重新同步
+	t.live.SetWorking(false)
+	t.settled, t.unsynced = true, false
 	s.notifyReadyWaiters(t, apigen.AgentStatusExited)
 	s.recompute(ctx, t)
 	t.mu.Unlock()
@@ -228,8 +242,13 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		s.failPendingLocked(t, "agent exited", false)
 		t.live.Reset()
 		s.out().LiveReset(t.id)
-		if p.RestartsLeft != nil && *p.RestartsLeft == 0 {
+		if p.RestartsLeft != nil && *p.RestartsLeft > 0 {
+			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
+			t.unsynced = true
+		} else {
+			// 不会再有进程：没有在跑的回合
 			t.live.RestartExhausted()
+			t.settled, t.unsynced = true, false
 		}
 		s.notifyReadyWaiters(t, apigen.AgentStatusExited)
 		if p.StderrTail != nil {
@@ -250,7 +269,8 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 	}
 	t.mu.Lock()
 	t.live.Reset()
-	// 断连期间的帧（含应答）可能已丢失
+	// 断连期间的帧（含应答、agent_end / session_settled）可能已丢失：等 get_state 重新同步
+	t.unsynced = true
 	s.failPendingLocked(t, "agent frames lost while disconnected", false)
 	s.out().LiveReset(t.id)
 	s.recompute(ctx, t)
@@ -270,7 +290,24 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		entry := t.forkEntry
 		t.forkEntry = ""
 		frame, _ := json.Marshal(map[string]string{"type": "fork", "entryId": entry})
-		s.enqueueLocked(t, frame, &pendingCmd{cmdType: "fork"})
+		// 持久化的 fork 阶段在 agent 应答后才清除（重启前未应答则重发）
+		_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "fork", after: func(t *thread, env omprpc.Envelope, _ json.RawMessage) {
+			if undelivered(env) {
+				// 进程在 fork 到达前退出：重启后的进程就绪时重发
+				t.forkEntry = entry
+				return
+			}
+			_ = s.setForkOpLocked(context.Background(), t, nil)
+		}})
+	}
+	if st := s.orbState(t.orbID); st == "freezing" || st == "stopping" {
+		// 冻结闸门已提交、容器即将暂停：写进流的命令要等解冻才会被处理，而没有人会去唤醒。
+		// 排队并请求唤醒（orbs 在暂停完成后执行）；orb 回到非暂停状态时 handleOrbEvent 下发队列。
+		// 其余「暂停」状态出现在这里只可能是缓存滞后：agent 能上报就绪，说明进程在跑。
+		if len(t.queue) > 0 {
+			s.wake(t.id, t.orbID)
+		}
+		return
 	}
 	q := t.queue
 	t.queue = nil
@@ -424,6 +461,7 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	case "plan_approval":
 		if r.Success {
 			t.live.PlanProposal = nil
+			s.out().PlanResolved(t.id)
 		}
 	case "prompt", "abort_and_prompt":
 		var d struct {
@@ -515,7 +553,20 @@ func (s *Service) refreshStateLocked(t *thread) {
 		if !env.OK() || len(data) == 0 {
 			return
 		}
-		t.live.SetState(data)
+		rs := t.live.SetState(data)
+		if rs.IsStreaming != nil && *rs.IsStreaming {
+			t.settled = false
+		}
+		if t.unsynced {
+			// 重新同步（重启 / gap / agent 重启）后的第一份快照：以它恢复 working 与 settled（CP10）
+			if rs.IsStreaming != nil {
+				t.live.SetWorking(*rs.IsStreaming)
+			}
+			if rs.IsSettled != nil {
+				t.settled = *rs.IsSettled
+			}
+			t.unsynced = false
+		}
 		s.syncModelLocked(t, data)
 	}})
 }
@@ -677,14 +728,14 @@ func (s *Service) Wake(ctx context.Context, threadID string) error {
 // ErrUIResolved 表示 UI 请求已被其它客户端作答（先到先得）。
 var ErrUIResolved = &Error{Code: "ui_resolved", Message: "ui request already resolved"}
 
-// UIResponse 处理客户端 `ui.response`：extension_ui_response 先到先得，成功后广播 ui.resolved。
+// UIResponse 处理客户端 `ui.response`：只接受侧通道应答（RouteSideChannel），普通命令必须走 Command 的路由检查。
+// extension_ui_response 先到先得：请求仍待答、且应答已成功写入 agent 流或排队之后才移除请求并广播 ui.resolved。
+// agent 流已建立但仍在启动（未 ready）时直接写入：omp 在初始化期间就接受 UI 应答，扩展的 session_start
+// 可能正等着它才能就绪（OD1）。orb 暂停 / 恢复途中与命令一样排队并唤醒。
 func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.RawMessage) error {
-	var h struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}
-	if json.Unmarshal(frame, &h) != nil || h.Type == "" {
-		return errf(RouteInvalidFrame, "frame must be an omp object with a type")
+	typ, id, ok := RouteSideChannel(frame)
+	if !ok {
+		return errf(RouteInvalidFrame, "frame must be a side-channel response (extension_ui_response, host_tool_result, host_tool_update, host_uri_result) with an id")
 	}
 	t, err := s.get(ctx, threadID)
 	if err != nil {
@@ -692,28 +743,42 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 	}
 	t.mu.Lock()
 	orbID := t.orbID
-	if h.Type == "extension_ui_response" {
-		if !t.live.ResolveUI(h.ID) {
-			t.mu.Unlock()
-			return ErrUIResolved
-		}
-		s.out().UIResolved(t.id, h.ID)
+	if orbID == "" {
+		t.mu.Unlock()
+		return errf("no_orb", "thread has no orb")
 	}
-	var qerr error
-	if t.agentReady() {
-		if !t.agent.send(frame) {
-			qerr = errf("agent_busy", "agent stream busy")
+	isUI := typ == "extension_ui_response"
+	if isUI && !t.live.HasUI(id) {
+		t.mu.Unlock()
+		return ErrUIResolved
+	}
+	orbState := s.orbState(orbID)
+	needWake := false
+	switch {
+	case t.agent != nil && !orbSuspended(orbState):
+		if !t.agent.send(append([]byte(nil), frame...)) {
+			t.mu.Unlock()
+			return errf("agent_busy", "agent stream busy")
 		}
-	} else if len(t.queue) >= queueLimit {
-		qerr = errf("queue_full", "thread command queue is full")
-	} else {
+	case len(t.queue) >= queueLimit:
+		t.mu.Unlock()
+		return errf("queue_full", "thread command queue is full")
+	default:
 		t.queue = append(t.queue, append([]byte(nil), frame...))
+		needWake = !t.agentReady() || orbState != orbStateReady
+	}
+	if isUI {
+		t.live.ResolveUI(id)
+		s.out().UIResolved(t.id, id)
 	}
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
 	t.mu.Unlock()
 	s.touchUser(orbID)
-	return qerr
+	if needWake {
+		s.wake(threadID, orbID)
+	}
+	return nil
 }
 
 // Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。
@@ -735,10 +800,11 @@ func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	t.mu.Lock()
 	orbID := t.orbID
 	s.clearUnreadLocked(ctx, t)
-	ready := t.agentReady()
+	// 与命令准入相同的判定：冻结中的 orb 上 agent 流仍在、agentReady 仍为真，但进程已暂停
+	needWake := orbID != "" && (!t.agentReady() || s.orbState(orbID) != orbStateReady)
 	t.mu.Unlock()
 	s.touchUser(orbID)
-	if s.cfg.WakeOnFocus && orbID != "" && !ready {
+	if s.cfg.WakeOnFocus && needWake {
 		s.wake(threadID, orbID)
 	}
 }

@@ -70,7 +70,7 @@ func newEnv(t *testing.T) *env {
 	require.NoError(t, err)
 	svc := threads.New(threads.Config{DataDir: dir + "/data", WakeOnFocus: true}, st, orbs)
 	rev := &revocations{}
-	hub := realtime.New(svc, tickets{}, rev)
+	hub := realtime.New(svc, tickets{}, rev, nil)
 	srv := httptest.NewServer(hub)
 	t.Cleanup(func() {
 		srv.Close()
@@ -91,7 +91,10 @@ type msg struct {
 	Response  json.RawMessage `json:"response"`
 	Entries   []threads.Entry `json:"entries"`
 	LastSeq   int64           `json:"lastSeq"`
-	Upsert    []struct {
+	// thread.snapshot / transcript.reset
+	TranscriptRev int64 `json:"transcriptRev"`
+	FullReplay    bool  `json:"fullReplay"`
+	Upsert        []struct {
 		ID    string `json:"id"`
 		State string `json:"state"`
 	} `json:"upsert"`
@@ -463,7 +466,7 @@ func TestSlowConsumerDisconnected(t *testing.T) {
 	defer orbs.Close()
 	svc := threads.New(threads.Config{DataDir: dir}, st, orbs)
 	defer svc.Close()
-	hub := realtime.New(svc, tickets{}, nil)
+	hub := realtime.New(svc, tickets{}, nil, nil)
 	hub.MaxPending = 8
 	srv := httptest.NewServer(hub)
 	defer srv.Close()
@@ -507,4 +510,228 @@ func subsequence(xs []string, want ...string) []string {
 	return out
 }
 
-var _ = fmt.Sprintf
+// ---- M2.6 审查修复 ----
+
+// extraLines 构造 n 条主会话消息行。
+func extraLines(n int) []string {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = fmt.Sprintf(`{"type":"message","id":"x%04d","parentId":null,"message":{"role":"user","content":"x","timestamp":%d}}`, i, i+1)
+	}
+	return lines
+}
+
+func appendViaOrbd(t *testing.T, ctl interface {
+	Call(ctx context.Context, method string, params, result any) error
+}, threadID, file string, base int64, lines []string) int64 {
+	t.Helper()
+	end := base
+	for _, l := range lines {
+		end += int64(len(l) + 1)
+	}
+	var res struct {
+		Accepted bool `json:"accepted"`
+	}
+	require.NoError(t, ctl.Call(context.Background(), "entries.append", map[string]any{
+		"threadId": threadID, "file": file, "baseOffset": base, "endOffset": end, "lines": lines,
+	}, &res))
+	require.True(t, res.Accepted)
+	return end
+}
+
+// CP2：补发分批时每批的 lastSeq 只到该批覆盖的 seq；在两批之间断线后以它续传，拿到其余全部条目，无缺口。
+// CP11：客户端的 transcriptRev 与当前不同即从头补发（fullReplay）；reset_done 广播 transcript.reset 并递增版本。
+func TestCatchUpBatchCursorAndTranscriptRev(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hi"})
+	require.NoError(t, err)
+	e.waitState(th.ID, threads.StateIdle)
+	ctl := e.orbs.OrbdCtl(*th.OrbID)
+	require.NotNil(t, ctl)
+	lines := extraLines(450)
+	appendViaOrbd(t, ctl, th.ID, "extra.jsonl", 0, lines)
+	page, err := e.svc.Entries(ctx, th.ID, 0, 1)
+	require.NoError(t, err)
+	total := page.LastSeq
+	require.Greater(t, total, int64(400))
+
+	a := e.dial("dev_a")
+	a.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": 0})
+	snap := a.next(func(m msg) bool { return m.Type == "thread.snapshot" })
+	assert.Equal(t, total, snap.LastSeq)
+	assert.False(t, snap.FullReplay)
+	first := a.next(func(m msg) bool { return m.Type == "entries" })
+	require.Len(t, first.Entries, 200)
+	assert.Equal(t, first.Entries[199].Seq, first.LastSeq, "首批只覆盖到自己的最后一条")
+	require.Less(t, first.LastSeq, total)
+	_ = a.ws.CloseNow() // 两批之间断线
+
+	b := e.dial("dev_b")
+	b.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": first.LastSeq, "transcriptRev": snap.TranscriptRev})
+	bSnap := b.next(func(m msg) bool { return m.Type == "thread.snapshot" })
+	assert.False(t, bSnap.FullReplay)
+	next := first.LastSeq + 1
+	var last int64
+	b.next(func(m msg) bool {
+		if m.Type != "entries" {
+			return false
+		}
+		for _, en := range m.Entries {
+			require.Equal(t, next, en.Seq, "续传无缺口无重复")
+			next++
+		}
+		last = m.LastSeq
+		return last == total
+	})
+	assert.Equal(t, total+1, next)
+
+	// 版本不符：从头补发
+	c := e.dial("dev_c")
+	c.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": total, "transcriptRev": 7})
+	cSnap := c.next(func(m msg) bool { return m.Type == "thread.snapshot" })
+	assert.True(t, cSnap.FullReplay)
+	assert.Equal(t, int64(1), c.next(func(m msg) bool { return m.Type == "entries" }).Entries[0].Seq)
+
+	// 会话文件重写：只重发前 10 行，其余被删除 → transcript.reset{rev 1}
+	require.NoError(t, ctl.Notify("entries.reset", map[string]string{"threadId": th.ID, "file": "extra.jsonl"}))
+	appendViaOrbd(t, ctl, th.ID, "extra.jsonl", 0, lines[:10])
+	require.NoError(t, ctl.Notify("entries.reset_done", map[string]string{"threadId": th.ID, "file": "extra.jsonl"}))
+	reset := c.next(func(m msg) bool { return m.Type == "transcript.reset" })
+	assert.Equal(t, int64(1), reset.TranscriptRev)
+	// 缺省版本但 afterSeq > 0 且线程已被重写过：同样从头补发
+	d := e.dial("dev_d")
+	d.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": total})
+	dSnap := d.next(func(m msg) bool { return m.Type == "thread.snapshot" })
+	assert.True(t, dSnap.FullReplay)
+	assert.Equal(t, int64(1), dSnap.TranscriptRev)
+}
+
+// M5：orb 主动打开、没有对应 blob.fetch 的 blob 流被拒，内容不落盘。
+func TestUnsolicitedBlobRejected(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hi"})
+	require.NoError(t, err)
+	e.waitState(th.ID, threads.StateIdle)
+	data := []byte("unsolicited payload")
+	sum := sha256.Sum256(data)
+	sha := hex.EncodeToString(sum[:])
+	require.NoError(t, e.orbs.OpenBlob(ctx, *th.OrbID, sha, data))
+	_, _, err = e.svc.Blob(ctx, sha)
+	var te *threads.Error
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, "not_found", te.Code)
+}
+
+type denyAll struct{}
+
+func (denyAll) PrincipalValid(context.Context, auth.Principal) (bool, error) { return false, nil }
+
+// H3：票据兑换后、连接登记后复核主体；已吊销的主体拿不到连接。
+func TestRevokedPrincipalTicketRefused(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(context.Background(), dir)
+	require.NoError(t, err)
+	defer st.Close()
+	orbs, err := threadstest.NewOrbs(st, fakeompBin, dir+"/orbs")
+	require.NoError(t, err)
+	defer orbs.Close()
+	svc := threads.New(threads.Config{DataDir: dir}, st, orbs)
+	defer svc.Close()
+	srv := httptest.NewServer(realtime.New(svc, tickets{}, nil, denyAll{}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/?ticket=dev_gone", nil)
+	require.NoError(t, err)
+	_, _, err = ws.Read(ctx)
+	require.Error(t, err)
+	assert.Equal(t, websocket.StatusPolicyViolation, websocket.CloseStatus(err))
+}
+
+// CP5：fork copy 的阶段持久化。orb 已绑定、会话目录尚未复制时重启 → 新服务复制目录后再启动 agent。
+func TestForkCopyResumesAfterRestartBeforeCopy(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hi"})
+	require.NoError(t, err)
+	e.waitState(th.ID, threads.StateIdle)
+	require.Eventually(t, func() bool { g, _ := e.svc.Get(ctx, th.ID); return g.LeafEntryID != nil }, 5*time.Second, 10*time.Millisecond)
+
+	e.orbs.Hold(true)
+	child, err := e.svc.Fork(ctx, th.ID, nil, "copy")
+	require.NoError(t, err)
+	var childOrb string
+	require.Eventually(t, func() bool {
+		g, _ := e.svc.Get(ctx, child.ID)
+		if g.OrbID == nil {
+			return false
+		}
+		childOrb = *g.OrbID
+		return true
+	}, 10*time.Second, 10*time.Millisecond, "副本 orb 已绑定")
+
+	svc2 := restartThreads(t, e)
+	e.orbs.Hold(false)
+	e.orbs.Release(childOrb)
+	require.Eventually(t, func() bool {
+		g, _ := svc2.Get(ctx, child.ID)
+		page, _ := svc2.Entries(ctx, child.ID, 0, 500)
+		return g.State == threads.StateIdle && len(entryRoles(t, page.Entries)) >= 4
+	}, 20*time.Second, 20*time.Millisecond, "重启后复制了源会话目录")
+}
+
+// CP5：快照进行中重启 → 新服务从快照阶段续作（建 orb、复制、启动）。
+func TestForkCopyResumesAfterRestartDuringSnapshot(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hi"})
+	require.NoError(t, err)
+	e.waitState(th.ID, threads.StateIdle)
+	require.Eventually(t, func() bool { g, _ := e.svc.Get(ctx, th.ID); return g.LeafEntryID != nil }, 5*time.Second, 10*time.Millisecond)
+
+	e.orbs.GateSnapshots(true)
+	child, err := e.svc.Fork(ctx, th.ID, nil, "copy")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(e.orbs.Snapshots()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	e.orbs.GateSnapshots(false)
+	svc2 := restartThreads(t, e)
+	require.Eventually(t, func() bool {
+		g, _ := svc2.Get(ctx, child.ID)
+		page, _ := svc2.Entries(ctx, child.ID, 0, 500)
+		return g.OrbID != nil && *g.OrbID != *th.OrbID && g.State == threads.StateIdle && len(entryRoles(t, page.Entries)) >= 4
+	}, 20*time.Second, 20*time.Millisecond, "重启后从快照阶段续作")
+	assert.Len(t, e.orbs.Snapshots(), 2, "快照重做一次")
+}
+
+// CP5：orb 尚未就绪时重启，已受理的首条提示词照样执行。
+func TestStartupPromptRunsAfterRestart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.orbs.Hold(true)
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "durable hello"})
+	require.NoError(t, err)
+	svc2 := restartThreads(t, e)
+	e.orbs.Hold(false)
+	e.orbs.Release(*th.OrbID)
+	require.Eventually(t, func() bool {
+		page, _ := svc2.Entries(ctx, th.ID, 0, 500)
+		for _, en := range page.Entries {
+			if strings.Contains(string(en.Payload), "durable hello") {
+				return true
+			}
+		}
+		return false
+	}, 20*time.Second, 20*time.Millisecond, "重启后首条提示词被执行")
+}
+
+// restartThreads 关闭旧线程服务，在同一数据库与同一组 orb 上构造新服务（模拟控制面重启）。
+func restartThreads(t *testing.T, e *env) *threads.Service {
+	t.Helper()
+	e.svc.Close()
+	e.orbs.Rebind()
+	svc := threads.New(threads.Config{DataDir: t.TempDir(), WakeOnFocus: true}, e.st, e.orbs)
+	t.Cleanup(svc.Close)
+	return svc
+}

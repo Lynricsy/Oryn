@@ -166,7 +166,7 @@ func TestEnsureSetupToken(t *testing.T) {
 	u1, created, err := EnsureSetupToken(ctx, st, dir, "https://oryn.test/")
 	require.NoError(t, err)
 	require.True(t, created)
-	assert.True(t, strings.HasPrefix(u1, "https://oryn.test/setup?token=ost_"))
+	assert.True(t, strings.HasPrefix(u1, "https://oryn.test/setup#token=ost_"))
 	tok1 := tokenOf(t, u1)
 	h1, err := checkSetupToken(dir, tok1)
 	require.NoError(t, err)
@@ -201,5 +201,54 @@ func tokenOf(t *testing.T, setupURL string) string {
 	t.Helper()
 	u, err := url.Parse(setupURL)
 	require.NoError(t, err)
-	return u.Query().Get("token")
+	// 令牌在 URL 片段里（不进反代访问日志），查询串中不得出现
+	require.Empty(t, u.RawQuery)
+	q, err := url.ParseQuery(u.Fragment)
+	require.NoError(t, err)
+	return q.Get("token")
+}
+
+// H3：吊销主体时作废其囤积的未兑换票据；长连接据 PrincipalValid 复核主体。
+func TestTicketsRevokedWithPrincipal(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	tk := NewTickets()
+	svc.Subscribe(tk.Revoke)
+
+	dev, _, err := CreateDevice(ctx, svc.st, "d", "cli", "")
+	require.NoError(t, err)
+	other, _, err := CreateDevice(ctx, svc.st, "o", "cli", "")
+	require.NoError(t, err)
+	stolen := Principal{Kind: KindDevice, ID: dev.ID}
+	keep := Principal{Kind: KindDevice, ID: other.ID}
+	spare, _ := tk.Issue(stolen)
+	kept, _ := tk.Issue(keep)
+
+	ok, err := svc.PrincipalValid(ctx, stolen)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.NoError(t, svc.RevokeDevice(ctx, dev.ID))
+	_, ok = tk.Redeem(spare)
+	assert.False(t, ok, "吊销后囤积的票据不可兑换")
+	_, ok = tk.Redeem(kept)
+	assert.True(t, ok, "其它主体的票据不受影响")
+	ok, err = svc.PrincipalValid(ctx, stolen)
+	require.NoError(t, err)
+	assert.False(t, ok, "已吊销的设备")
+
+	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL)
+	require.NoError(t, err)
+	web := Principal{Kind: KindWeb, ID: ids.Hash(live)}
+	ok, err = svc.PrincipalValid(ctx, web)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.NoError(t, svc.Logout(ctx, web))
+	ok, err = svc.PrincipalValid(ctx, web)
+	require.NoError(t, err)
+	assert.False(t, ok, "已注销的网页会话")
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second)
+	require.NoError(t, err)
+	ok, err = svc.PrincipalValid(ctx, Principal{Kind: KindWeb, ID: ids.Hash(expired)})
+	require.NoError(t, err)
+	assert.False(t, ok, "已过期（尚未被清理）的网页会话")
 }

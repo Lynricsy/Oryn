@@ -62,6 +62,10 @@ type Orbs struct {
 	// Snapshots 记录 Snapshot 调用的源 orb。
 	snapshots []string
 	blobs     map[string][]byte
+	// hold 为真时新建 / 唤醒的 orb 停在 requested，直到 Release（模拟 provider 尚未执行 spawn）。
+	hold     bool
+	held     map[string]bool
+	snapGate chan struct{}
 }
 
 type serverLink struct {
@@ -79,6 +83,7 @@ func NewOrbs(st *store.Store, fakeompBin, home string, env ...string) (*Orbs, er
 		links:    map[string]*serverLink{},
 		orbds:    map[string]*Orbd{},
 		blobs:    map[string][]byte{},
+		held:     map[string]bool{},
 	}
 	o.provID = ids.New("prov")
 	if err := st.Q.CreateProvider(context.Background(), db.CreateProviderParams{ID: o.provID, Name: "test", TokenHash: ids.Hash("opv_test"), CreatedAt: time.Now().UnixMilli()}); err != nil {
@@ -184,8 +189,70 @@ func (o *Orbs) Create(ctx context.Context, p threads.OrbCreate) (db.Orb, error) 
 	if err != nil {
 		return db.Orb{}, err
 	}
-	go o.startOrbd(id)
+	o.mu.Lock()
+	hold := o.hold
+	if hold {
+		o.held[id] = true
+	}
+	o.mu.Unlock()
+	if !hold {
+		go o.startOrbd(id)
+	}
 	return orb, nil
+}
+
+// Hold 让之后新建的 orb 停在 requested，直到 Release。
+func (o *Orbs) Hold(on bool) {
+	o.mu.Lock()
+	o.hold = on
+	o.mu.Unlock()
+}
+
+// Release 放行被 Hold 住的 orb（拉起其 fake orbd）。
+func (o *Orbs) Release(orbID string) {
+	o.mu.Lock()
+	held := o.held[orbID]
+	delete(o.held, orbID)
+	o.mu.Unlock()
+	if held {
+		go o.startOrbd(orbID)
+	}
+}
+
+// GateSnapshots 让之后的 Snapshot 调用阻塞到 ctx 结束（模拟快照进行中控制面重启）；off 时恢复立即返回。
+func (o *Orbs) GateSnapshots(on bool) {
+	o.mu.Lock()
+	if on {
+		o.snapGate = make(chan struct{})
+	} else {
+		o.snapGate = nil
+	}
+	o.mu.Unlock()
+}
+
+// Rebind 让新的线程服务接管已有 link（模拟控制面重启：旧服务关闭后，新服务重新注册处理器并订阅事件）。
+// 只保留最后注册的订阅者。
+func (o *Orbs) Rebind() {
+	o.mu.Lock()
+	o.subs = nil
+	o.mu.Unlock()
+}
+
+// OpenBlob 以 orb 的身份主动打开一条 blob 流并写入 data，等服务端关闭该流后返回（用于测试未请求的 blob）。
+func (o *Orbs) OpenBlob(ctx context.Context, orbID, sha string, data []byte) error {
+	o.mu.Lock()
+	d := o.orbds[orbID]
+	o.mu.Unlock()
+	if d == nil {
+		return errors.New("no orbd")
+	}
+	st, err := d.sess.Open(ctx, link.StreamHeader{T: link.StreamBlob, SHA256: sha, Size: int64(len(data))})
+	if err != nil {
+		return err
+	}
+	_, _ = st.Write(data)
+	_, _ = io.Copy(io.Discard, st)
+	return st.Close()
 }
 
 func (o *Orbs) startOrbd(orbID string) {
@@ -276,15 +343,28 @@ func (o *Orbs) Wake(_ context.Context, orbID string) error {
 	if orb.State == "ready" {
 		return nil
 	}
-	go o.startOrbd(orbID)
+	o.mu.Lock()
+	held := o.held[orbID]
+	o.mu.Unlock()
+	if !held {
+		go o.startOrbd(orbID)
+	}
 	return nil
 }
 
-// Snapshot 记录调用并返回一个快照 id。
-func (o *Orbs) Snapshot(_ context.Context, orbID string) (string, error) {
+// Snapshot 记录调用并返回一个快照 id（GateSnapshots 打开时阻塞到 ctx 结束）。
+func (o *Orbs) Snapshot(ctx context.Context, orbID string) (string, error) {
 	o.mu.Lock()
 	o.snapshots = append(o.snapshots, orbID)
+	gate := o.snapGate
 	o.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	return ids.Snapshot(), nil
 }
 
@@ -334,7 +414,7 @@ func (o *Orbs) TouchUser(context.Context, string) {}
 func (o *Orbs) TouchAgent(context.Context, string) {}
 
 // SetQuiescence 实现 threads.Orbs。
-func (o *Orbs) SetQuiescence(func(string) bool) {}
+func (o *Orbs) SetQuiescence(func(string, func() bool) bool) {}
 
 // Kick 关闭 orb 的 link。
 func (o *Orbs) Kick(orbID, _ string) {

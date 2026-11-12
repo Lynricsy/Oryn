@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,10 @@ type Sink interface {
 	Frame(threadID string, frame json.RawMessage)
 	UIResolved(threadID, requestID string)
 	LiveReset(threadID string)
+	// TranscriptReset 表示线程转录被重写（旧条目被删除 / 改写）：客户端须丢弃缓存并以新版本重新订阅。
+	TranscriptReset(threadID string, transcriptRev int64)
+	// PlanResolved 表示计划提案已被成功处理：所有客户端清除 planProposal。
+	PlanResolved(threadID string)
 	Orb(o apigen.Orb)
 }
 
@@ -64,13 +69,29 @@ type Service struct {
 	mu        sync.Mutex
 	threads   map[string]*thread
 	focus     map[string]string // 连接 id → 正在看的线程
-	orbStates map[string]string
-	touched   map[string]time.Time // orb → 上次 TouchAgent（节流）
-	blobs     map[string]chan struct{}
+	orbStates map[string]orbCache
+	touched   map[string]time.Time  // orb → 上次 TouchAgent（节流）
+	blobs     map[string]*blobFetch // sha256 → 在途的 blob.fetch
 
 	nextID atomic.Uint64
 
 	events eventQueue
+
+	// afterIngestCommit（仅测试）在条目入库事务提交后、内存状态更新前调用。
+	afterIngestCommit func()
+}
+
+// orbCache 是 orb 状态缓存；seq 为得出该状态的 orb_events.id，用于丢弃乱序到达的过时事件（CP9）。
+type orbCache struct {
+	state string
+	seq   int64
+}
+
+// blobFetch 是一次在途的 blob.fetch：只接受该 orb 为它打开的 blob 流（M5）。
+type blobFetch struct {
+	orbID   string
+	done    chan struct{}
+	claimed bool // 已有 blob 流在接收（由 Service.mu 保护）
 }
 
 type sinkBox struct{ Sink }
@@ -84,6 +105,8 @@ func (nopSink) Entries(string, []Entry, *string, int64) {}
 func (nopSink) Frame(string, json.RawMessage)           {}
 func (nopSink) UIResolved(string, string)               {}
 func (nopSink) LiveReset(string)                        {}
+func (nopSink) TranscriptReset(string, int64)           {}
+func (nopSink) PlanResolved(string)                     {}
 func (nopSink) Orb(apigen.Orb)                          {}
 
 // New 创建线程服务并向 orbs 注册 entries.* / agent.* 处理器、agent 与 blob 流处理器、事件订阅与空闲判定。
@@ -99,9 +122,9 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		cfg: cfg, st: st, orbs: orbs, ctx: ctx, cancel: cancel,
 		threads:   map[string]*thread{},
 		focus:     map[string]string{},
-		orbStates: map[string]string{},
+		orbStates: map[string]orbCache{},
 		touched:   map[string]time.Time{},
-		blobs:     map[string]chan struct{}{},
+		blobs:     map[string]*blobFetch{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
 	s.events.init()
@@ -120,7 +143,9 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 	orbs.HandleStream("agent", s.onAgentStream)
 	orbs.HandleStream("blob", s.onBlobStream)
 	orbs.Subscribe(func(ev OrbEvent) { s.events.push(ev) })
-	orbs.SetQuiescence(s.Quiescent)
+	orbs.SetQuiescence(s.TryQuiesce)
+	// 控制面重启：续作未完成的 fork（快照 / 建 orb 阶段没有 orb 事件会驱动它们）
+	s.go_(s.recoverForks)
 	return s
 }
 
@@ -178,6 +203,15 @@ type thread struct {
 	forkEntry string
 	// readyWaiters 在 agent 就绪或退出时收到通知（fork share 回退检测用）。
 	readyWaiters []chan apigen.AgentStatus
+	// forkOp 是持久化的 fork 续作阶段（threads.fork_op），nil = 无。
+	forkOp *forkOp
+	// forkRunning 为真时 runForkCopy 正在推进本线程（启动时的恢复与新 fork 不会重复执行）。
+	forkRunning bool
+	// unsynced 为真表示运行 / 静止标志可能与 agent 实际状态不符（控制面重启时线程正忙、agent.gap、agent 退出后待重启）：
+	// 直到下一次 get_state 应答恢复 working / settled 之前，线程不算静止（不得冻结）。
+	unsynced bool
+	// transcriptRev 是转录版本（threads.transcript_rev）。
+	transcriptRev int64
 }
 
 const queueLimit = 100
@@ -210,12 +244,18 @@ func (s *Service) get(ctx context.Context, id string) (*thread, error) {
 	if err != nil {
 		return nil, err
 	}
+	t = newThread(row)
+	if startup := s.pendingStartup(ctx, row); len(startup) > 0 {
+		// 线程尚未对外可见：在登记前排好已受理的首批命令，保证它们先于任何其它命令下发
+		t.mu.Lock()
+		s.queueStartupLocked(t, startup)
+		t.mu.Unlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if t := s.threads[id]; t != nil {
-		return t, nil
+	if cur := s.threads[id]; cur != nil {
+		return cur, nil
 	}
-	t = newThread(row)
 	s.threads[id] = t
 	return t, nil
 }
@@ -235,6 +275,26 @@ func newThread(row db.Thread) *thread {
 		// 控制面重启前 agent 已就绪过
 		t.live.AgentReady()
 	}
+	t.transcriptRev = row.TranscriptRev
+	switch row.State {
+	case StateWorking:
+		// 重启前回合正在进行：agent_start 已在重启前送达、不会重放。先按库里的状态保持 working，
+		// 重连后的 get_state（isStreaming / isSettled）给出权威值（CP10）。
+		t.live.SetWorking(true)
+		t.settled, t.unsynced = false, true
+	case StateAwaitingInput:
+		// 待答 UI 由 orbd 在新 agent 流上重放；在 get_state 之前同样不算静止
+		t.settled, t.unsynced = false, true
+	}
+	if op := parseForkOp(row.ForkOp); op != nil {
+		t.forkOp = op
+		switch op.Stage {
+		case forkStageCopy:
+			t.copyFrom, t.forkEntry = op.Src, op.ForkAt
+		case forkStageFork:
+			t.forkEntry = op.ForkAt
+		}
+	}
 	return t
 }
 
@@ -250,22 +310,31 @@ func (s *Service) orbState(orbID string) string {
 		return ""
 	}
 	s.mu.Lock()
-	st, ok := s.orbStates[orbID]
+	c, ok := s.orbStates[orbID]
 	s.mu.Unlock()
 	if ok {
-		return st
+		return c.state
 	}
-	o, err := s.st.Q.GetOrb(context.Background(), orbID)
+	r, err := s.st.Q.GetOrbStateSeq(context.Background(), orbID)
 	if err != nil {
 		return ""
 	}
+	s.applyOrbState(orbID, r.State, r.Seq)
 	s.mu.Lock()
-	if _, ok := s.orbStates[orbID]; !ok {
-		s.orbStates[orbID] = o.State
-	}
-	st = s.orbStates[orbID]
+	c = s.orbStates[orbID]
 	s.mu.Unlock()
-	return st
+	return c.state
+}
+
+// applyOrbState 以 seq 为序更新 orb 状态缓存：seq 小于已应用值的（过时）不生效，返回是否生效。
+func (s *Service) applyOrbState(orbID, state string, seq int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.orbStates[orbID]; ok && seq < c.seq {
+		return false
+	}
+	s.orbStates[orbID] = orbCache{state: state, seq: seq}
+	return true
 }
 
 func (s *Service) focused(threadID string) bool {
@@ -327,25 +396,66 @@ func (s *Service) publish(ctx context.Context, id string) {
 	s.out().IndexUpsert(api)
 }
 
-// Quiescent 供 orbs 判定可否冻结 / 停机：该 orb 上全部线程已 settled、无待答 UI、无计划提案、无排队命令。
-func (s *Service) Quiescent(orbID string) bool {
-	rows, err := s.st.Q.ListThreadsByOrb(context.Background(), &orbID)
+// TryQuiesce 是 orbs 的冻结 / 停机闸门（契约 §1）：按线程 id 顺序锁住该 orb 的全部线程，确认它们都已 settled、
+// 无待答 UI / 计划提案、无排队或未决命令、运行状态已同步、没有在启动 agent，然后在仍持锁时调用 commit
+// （orbs 的状态 CAS）并返回其结果。命令准入（enqueueLocked）同样持线程锁，因此要么先于本闸门被看到
+// （不静止，不冻结），要么晚于 commit——此时缓存已被刷新为 commit 之后的状态，新命令排队并唤醒 orb。
+func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
+	ctx := context.Background()
+	rows, err := s.st.Q.ListThreadsByOrb(ctx, &orbID)
 	if err != nil {
 		return false
 	}
+	ts := make([]*thread, 0, len(rows))
 	for _, r := range rows {
-		t, err := s.get(context.Background(), r.ID)
+		t, err := s.get(ctx, r.ID)
 		if err != nil {
-			continue
+			return false
 		}
+		ts = append(ts, t)
+	}
+	sort.Slice(ts, func(i, j int) bool { return ts[i].id < ts[j].id })
+	for _, t := range ts {
 		t.mu.Lock()
-		ok := t.settled && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
-		t.mu.Unlock()
-		if !ok {
+	}
+	defer func() {
+		for _, t := range ts {
+			t.mu.Unlock()
+		}
+	}()
+	// 列表与加锁之间新绑定到该 orb 的线程不受这些锁保护：再核对一次，有变化则放弃本轮
+	again, err := s.st.Q.ListThreadsByOrb(ctx, &orbID)
+	if err != nil || len(again) != len(ts) {
+		return false
+	}
+	locked := make(map[string]bool, len(ts))
+	for _, t := range ts {
+		locked[t.id] = true
+	}
+	for _, r := range again {
+		if !locked[r.ID] {
 			return false
 		}
 	}
+	for _, t := range ts {
+		if !t.quiescentLocked() {
+			return false
+		}
+	}
+	if !commit() {
+		return false
+	}
+	if r, err := s.st.Q.GetOrbStateSeq(ctx, orbID); err == nil {
+		s.applyOrbState(orbID, r.State, r.Seq)
+	} else {
+		slog.Warn("threads: 冻结后读取 orb 状态失败", "orb", orbID, "err", err)
+	}
 	return true
+}
+
+// quiescentLocked 报告线程是否静止（冻结 / 停机的前提）。调用方持有 t.mu。
+func (t *thread) quiescentLocked() bool {
+	return t.settled && !t.unsynced && !t.starting && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
 }
 
 // touchAgent 节流地记录 agent 活动（每 orb 至多 5s 一次）。
@@ -425,18 +535,23 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 	// 状态缓存只信两个来源：状态变化事件的目标状态，或库里的当前行。link_up / link_down 事件携带的
 	// orb 快照可能早于其后的状态变化（例如 link 连上时还在 connecting，事件送达时已 failed），
 	// 用它覆盖缓存会把线程推回 provisioning。
-	state := ev.To
-	if ev.Kind != OrbEventState || state == "" {
-		o, err := s.st.Q.GetOrb(ctx, ev.OrbID)
+	// 状态事件按 Seq 排序：比已应用的旧的事件来自更早提交的变化，丢弃（CP9）。
+	var state string
+	if ev.Kind == OrbEventState && ev.To != "" {
+		if !s.applyOrbState(ev.OrbID, ev.To, ev.Seq) {
+			slog.Debug("threads: 丢弃过时的 orb 状态事件", "orb", ev.OrbID, "to", ev.To, "seq", ev.Seq)
+			return
+		}
+		state = ev.To
+	} else {
+		r, err := s.st.Q.GetOrbStateSeq(ctx, ev.OrbID)
 		if err != nil {
 			slog.Warn("threads: 读取 orb 失败", "orb", ev.OrbID, "err", err)
 			return
 		}
-		state = o.State
+		s.applyOrbState(ev.OrbID, r.State, r.Seq)
+		state = s.orbState(ev.OrbID)
 	}
-	s.mu.Lock()
-	s.orbStates[ev.OrbID] = state
-	s.mu.Unlock()
 
 	rows, err := s.st.Q.ListThreadsByOrb(ctx, &ev.OrbID)
 	if err != nil {
@@ -463,6 +578,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			t.orbID = ""
 			t.agent = nil
 			t.agentStatus = apigen.AgentStatusNone
+			t.unsynced = false
 			t.live.Reset()
 			_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: nil, UpdatedAt: s.now(), ID: t.id})
 			s.out().LiveReset(t.id)
@@ -473,6 +589,10 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 				t.agentStatus = apigen.AgentStatusStarting
 			}
 		}
+		if !orbSuspended(state) && t.agentReady() && len(t.queue) > 0 {
+			// orb 暂停期间（或缓存滞后时）就绪的 agent 留下的排队命令：现在可以下发
+			s.onReadyLocked(ctx, t)
+		}
 		if !s.recompute(ctx, t) && failedEdge {
 			s.publish(ctx, t.id)
 		}
@@ -480,7 +600,8 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 	}
 	if state == orbStateReady && (ev.Kind == OrbEventLinkUp || ev.To == orbStateReady) {
 		for _, r := range rows {
-			if r.ArchivedAt != nil {
+			// 归档线程不主动启动 agent，除非重启前它正忙（否则其 unsynced 永远不会清除、orb 无法冻结）
+			if r.ArchivedAt != nil && r.State != StateWorking && r.State != StateAwaitingInput {
 				continue
 			}
 			id := r.ID

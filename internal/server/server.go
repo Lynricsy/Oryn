@@ -80,7 +80,9 @@ func (s *Server) init(ctx context.Context) error {
 		s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus}, s.Store, orbsAdapter{s.Orbs})
-	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth})
+	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
+	s.Auth.Subscribe(s.Tickets.Revoke)
+	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)

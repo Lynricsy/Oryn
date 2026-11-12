@@ -362,7 +362,10 @@ func TestPasskeySetupLoginRecovery(t *testing.T) {
 	require.True(t, created)
 	u, err := url.Parse(setupURL)
 	require.NoError(t, err)
-	token := u.Query().Get("token")
+	require.Empty(t, u.RawQuery, "初始化令牌不进查询串（反代访问日志）")
+	frag, err := url.ParseQuery(u.Fragment)
+	require.NoError(t, err)
+	token := frag.Get("token")
 
 	r := e.do("POST", "/api/v1/auth/setup/begin", h2Cred{}, map[string]string{"token": "ost_bad"})
 	assert.Equal(t, 401, r.status)

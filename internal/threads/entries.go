@@ -120,18 +120,24 @@ func (s *Service) endForkLocked(ctx context.Context, t *thread, product string) 
 }
 
 // ingestLocked 把一批已通过游标校验的行入库并推送（持有 t.mu）。
+// 条目、游标、活动叶子、自动标题与最近消息时间在同一事务里提交（CP6）：tailer 只会从已推进的游标续传，
+// 叶子若在事务外单独写、写失败或在两者之间重启，就再也不会被补上。内存状态与推送在提交成功后才更新。
 func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p apigen.LinkCtlEntriesAppendParams) (apigen.LinkCtlEntriesAppendResult, error) {
 	type ingested struct {
 		parsed ParsedEntry
 		entry  Entry
-		isNew  bool
 	}
 	var out []ingested
 	main := isMainFile(p.File)
 	sub := IsSubagentFile(p.File)
 	resetting := t.resetting[p.File]
 	prevLast := t.lastSeq
+	now := s.now()
+	leaf := t.leaf
+	titled := false
+	var lastMsg *int64
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		out, leaf, titled, lastMsg = nil, t.leaf, false, nil
 		for _, line := range p.Lines {
 			pe, err := ParseLine(line)
 			if err != nil {
@@ -170,19 +176,55 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 					return err
 				}
 			}
-			out = append(out, ingested{parsed: pe, isNew: isNew, entry: Entry{
+			out = append(out, ingested{parsed: pe, entry: Entry{
 				Seq: seq, File: p.File, EntryID: pe.EntryID, ParentID: pe.ParentID, Type: pe.Type, TS: pe.TS, Payload: pe.Payload,
 			}})
+			if !main {
+				continue
+			}
+			if pe.Title != "" {
+				n, err := q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: pe.Title, UpdatedAt: now, ID: t.id})
+				if err != nil {
+					return err
+				}
+				titled = titled || n > 0
+			}
+			if isNew && !strings.HasPrefix(pe.EntryID, "__") {
+				if pe.OffBranch {
+					// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子
+					leaf = pe.ActiveLeaf
+				} else {
+					id := pe.EntryID
+					leaf = &id
+				}
+			}
+			if isNew && pe.Type == "message" {
+				ts := now
+				if pe.TS != nil {
+					ts = *pe.TS
+				}
+				lastMsg = &ts
+			}
+		}
+		if len(out) > 0 && main {
+			if err := q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: leaf, ID: t.id}); err != nil {
+				return err
+			}
+		}
+		if lastMsg != nil {
+			if err := q.TouchThreadLastMessage(ctx, db.TouchThreadLastMessageParams{LastMessageAt: lastMsg, ID: t.id}); err != nil {
+				return err
+			}
 		}
 		return q.UpsertEntryCursor(ctx, db.UpsertEntryCursorParams{ThreadID: t.id, File: p.File, ByteOffset: p.EndOffset})
 	})
 	if err != nil {
 		return apigen.LinkCtlEntriesAppendResult{}, err
 	}
+	if s.afterIngestCommit != nil {
+		s.afterIngestCommit()
+	}
 
-	now := s.now()
-	changed := false
-	var lastMsg *int64
 	var blobs []string
 	entries := make([]Entry, 0, len(out))
 	for _, in := range out {
@@ -191,43 +233,24 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			t.lastSeq = in.entry.Seq
 		}
 		blobs = append(blobs, in.parsed.BlobRefs...)
-		if !main {
-			continue
-		}
-		t.live.ApplyEntry(in.parsed.Type, in.parsed.Payload)
-		if in.parsed.Title != "" {
-			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: in.parsed.Title, UpdatedAt: now, ID: t.id}); err == nil && n > 0 {
-				changed = true
-			}
-		}
-		if in.isNew && !strings.HasPrefix(in.parsed.EntryID, "__") {
-			if in.parsed.OffBranch {
-				// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子
-				t.leaf = in.parsed.ActiveLeaf
-			} else {
-				id := in.parsed.EntryID
-				t.leaf = &id
-			}
-		}
-		if in.isNew && in.parsed.Type == "message" {
-			ts := now
-			if in.parsed.TS != nil {
-				ts = *in.parsed.TS
-			}
-			lastMsg = &ts
+		if main {
+			t.live.ApplyEntry(in.parsed.Type, in.parsed.Payload)
 		}
 	}
 	if len(entries) > 0 && main {
-		_ = s.st.Q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: t.leaf, ID: t.id})
+		t.leaf = leaf
 	}
-	if lastMsg != nil {
-		_ = s.st.Q.TouchThreadLastMessage(ctx, db.TouchThreadLastMessageParams{LastMessageAt: lastMsg, ID: t.id})
-		changed = true
-	}
+	// 每批的 lastSeq 是该批覆盖到的游标：本次之前的条目早已推送，本次新条目的 seq 递增，
+	// 因此 ≤ max(prevLast, 本批及之前各批的最大 seq) 的条目都已送达（CP2）
+	covered := prevLast
 	for i := 0; i < len(entries); i += entriesBatch {
-		s.out().Entries(t.id, entries[i:min(i+entriesBatch, len(entries))], t.leaf, t.lastSeq)
+		batch := entries[i:min(i+entriesBatch, len(entries))]
+		for _, e := range batch {
+			covered = max(covered, e.Seq)
+		}
+		s.out().Entries(t.id, batch, t.leaf, covered)
 	}
-	if changed {
+	if titled || lastMsg != nil {
 		s.publish(ctx, t.id)
 	}
 	s.recompute(ctx, t)
@@ -272,9 +295,61 @@ func (s *Service) onResetDone(ctx context.Context, orbID string, params json.Raw
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.resetting, p.File)
-	if _, err := s.st.Q.DeleteStaleEntries(ctx, db.DeleteStaleEntriesParams{ThreadID: t.id, File: p.File}); err != nil {
+	if err := s.rewriteTranscriptLocked(ctx, t, p.File, false); err != nil {
 		slog.Warn("threads: entries.reset_done 失败", "thread", t.id, "file", p.File, "err", err)
 	}
+}
+
+// rewriteTranscriptLocked 删除文件中仍为 stale 的条目（mark 为真时先把它的全部条目标为 stale，即整体移除），
+// 若活动叶子随之消失则改指最新的主会话条目，并把转录版本加一——同一事务内完成；随后广播 transcript.reset，
+// 已缓存旧条目（或在断线期间错过了改写）的客户端据此整线程重拉（CP11）。调用方持有 t.mu。
+func (s *Service) rewriteTranscriptLocked(ctx context.Context, t *thread, file string, mark bool) error {
+	leaf := t.leaf
+	var rev int64
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		leaf = t.leaf
+		if mark {
+			if _, err := q.MarkEntriesStale(ctx, db.MarkEntriesStaleParams{ThreadID: t.id, File: file}); err != nil {
+				return err
+			}
+		}
+		if _, err := q.DeleteStaleEntries(ctx, db.DeleteStaleEntriesParams{ThreadID: t.id, File: file}); err != nil {
+			return err
+		}
+		if leaf != nil {
+			n, err := q.EntryIDExists(ctx, db.EntryIDExistsParams{ThreadID: t.id, EntryID: *leaf})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				id, err := q.LastMainEntryID(ctx, t.id)
+				switch {
+				case errors.Is(err, sql.ErrNoRows):
+					leaf = nil
+				case err != nil:
+					return err
+				default:
+					leaf = &id
+				}
+				if err := q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: leaf, ID: t.id}); err != nil {
+					return err
+				}
+			}
+		}
+		var err error
+		rev, err = q.BumpTranscriptRev(ctx, t.id)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	leafChanged := !eqPtr(leaf, t.leaf)
+	t.leaf, t.transcriptRev = leaf, rev
+	s.out().TranscriptReset(t.id, rev)
+	if leafChanged {
+		s.publish(ctx, t.id)
+	}
+	return nil
 }
 
 // dropFile 删除线程中某文件的全部条目与游标，并丢弃之后对它的追加（fork share 回退时移走新线程里的产物）。
@@ -282,15 +357,9 @@ func (s *Service) dropFile(ctx context.Context, t *thread, file string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.ignored[file] = true
-	_ = s.st.Tx(ctx, func(q *db.Queries) error {
-		if _, err := q.MarkEntriesStale(ctx, db.MarkEntriesStaleParams{ThreadID: t.id, File: file}); err != nil {
-			return err
-		}
-		if _, err := q.DeleteStaleEntries(ctx, db.DeleteStaleEntriesParams{ThreadID: t.id, File: file}); err != nil {
-			return err
-		}
-		return nil
-	})
+	if err := s.rewriteTranscriptLocked(ctx, t, file, true); err != nil {
+		slog.Warn("threads: 移除会话文件条目失败", "thread", t.id, "file", file, "err", err)
+	}
 }
 
 // ---- blob ----
@@ -311,13 +380,14 @@ func (s *Service) fetchBlobs(orbID string, shas []string) {
 			s.mu.Unlock()
 			continue
 		}
-		done := make(chan struct{})
-		s.blobs[sha] = done
+		f := &blobFetch{orbID: orbID, done: make(chan struct{})}
+		done := f.done
+		s.blobs[sha] = f
 		s.mu.Unlock()
 		s.go_(func(ctx context.Context) {
 			defer func() {
 				s.mu.Lock()
-				if s.blobs[sha] == done {
+				if s.blobs[sha] == f {
 					delete(s.blobs, sha)
 				}
 				s.mu.Unlock()
@@ -347,15 +417,27 @@ func (s *Service) fetchBlobs(orbID string, shas []string) {
 // maxBlobBytes 是单个 blob 的上限。
 const maxBlobBytes = 1 << 30
 
-// onBlobStream 接收 blob 流：校验 sha256 与大小后写入 <data_dir>/blobs/<2>/<sha> 并登记 blobs 行。
+// onBlobStream 接收 blob 流：只接受本服务向该 orb 发出、仍在等待的 blob.fetch（M5：orb 不能主动往控制面
+// 磁盘塞内容）；校验 sha256 与大小后写入 <data_dir>/blobs/<2>/<sha> 并登记 blobs 行。
 func (s *Service) onBlobStream(ctx context.Context, orbID string, h link.StreamHeader, st *link.Stream) {
+	s.mu.Lock()
+	f := s.blobs[h.SHA256]
+	if f == nil || f.orbID != orbID || f.claimed {
+		s.mu.Unlock()
+		slog.Warn("threads: 拒绝未请求的 blob 流", "orb", orbID, "sha256", h.SHA256)
+		_ = st.Close()
+		return
+	}
+	// 同一 fetch 只收一条流；接收期间登记保留，避免重复拉取
+	f.claimed = true
+	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		if ch := s.blobs[h.SHA256]; ch != nil {
-			close(ch)
+		if s.blobs[h.SHA256] == f {
 			delete(s.blobs, h.SHA256)
 		}
 		s.mu.Unlock()
+		close(f.done)
 	}()
 	if err := s.storeBlob(ctx, h.SHA256, h.Size, st); err != nil {
 		slog.Warn("threads: 接收 blob 失败", "orb", orbID, "sha256", h.SHA256, "err", err)

@@ -69,6 +69,32 @@ func (s *Service) RevokeDevice(ctx context.Context, id string) error {
 	return nil
 }
 
+// PrincipalValid 复核主体当前是否仍有效：设备未吊销；网页会话仍存在且未过期。
+// 供长连接（WebSocket）在登记之后复核票据签发时的主体。
+func (s *Service) PrincipalValid(ctx context.Context, p Principal) (bool, error) {
+	switch p.Kind {
+	case KindDevice:
+		d, err := s.st.Q.GetDevice(ctx, p.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return d.RevokedAt == nil, nil
+	case KindWeb:
+		ws, err := s.st.Q.GetWebSession(ctx, p.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return ws.ExpiresAt > time.Now().UnixMilli(), nil
+	}
+	return false, nil
+}
+
 // sweepEvery 是清理循环的周期。
 const sweepEvery = time.Minute
 

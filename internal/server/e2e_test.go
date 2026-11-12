@@ -665,3 +665,56 @@ func TestE2ESetupSock(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, orbsock.CodeNoProject, se.Code)
 }
+
+// CP10：回合进行中控制面重启。agent_start 在重启前已送达、不会重放；重启后线程必须仍是 working、不得被判为静止
+// （否则会被冻结），由重连后的 get_state（isStreaming）确认，回合结束后照常进入 idle。
+func TestFullStackRestartDuringStreaming(t *testing.T) {
+	var script strings.Builder
+	script.WriteString(`{"entry":{"role":"user","content":[{"type":"text","text":"{{prompt}}"}]}}` + "\n")
+	script.WriteString(`{"emit":{"type":"agent_start"}}` + "\n")
+	script.WriteString(`{"emit":{"type":"message_start","message":{"role":"assistant","content":[],"timestamp":{{now}}}}}` + "\n")
+	for range 40 {
+		script.WriteString(`{"sleep":200}` + "\n")
+		script.WriteString(`{"emit":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}}` + "\n")
+	}
+	script.WriteString(`{"emit":{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"timestamp":{{now}}}}}` + "\n")
+	script.WriteString(`{"entry":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}` + "\n")
+	script.WriteString(`{"emit":{"type":"agent_end","messages":[],"isTerminal":true}}` + "\n")
+	script.WriteString(`{"emit":{"type":"prompt_result","status":"completed","agentInvoked":true,"sessionSettled":true}}` + "\n")
+	script.WriteString(`{"emit":{"type":"session_settled"}}` + "\n")
+	path := filepath.Join(t.TempDir(), "slow.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(script.String()), 0o644))
+	t.Setenv("FAKEOMP_SCRIPT", path)
+
+	s := newStack(t, config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(24 * time.Hour)})
+	var created struct {
+		Thread threadView `json:"thread"`
+	}
+	s.rest("POST", "/api/v1/threads", map[string]any{
+		"prompt":   "stream for a while",
+		"executor": map[string]any{"kind": "new_orb", "provider": "local"},
+	}, &created, 201)
+	th := s.waitThread(created.Thread.ID, 60*time.Second, func(v threadView) bool { return v.State == "working" && v.OrbID != "" })
+
+	s.restart()
+
+	a := s.dial()
+	a.send(map[string]any{"type": "sub", "threadId": th.ID})
+	// 重连后的实时帧到达：agent 流已在新控制面上恢复
+	a.until(60*time.Second, func(m wsMsg) bool { return m.Type == "frame" && m.frameType() == "message_update" })
+	var v threadView
+	s.rest("GET", "/api/v1/threads/"+th.ID, nil, &v, 200)
+	assert.Equal(t, "working", v.State, "重启后仍在回合中")
+	assert.False(t, s.srv.Threads.TryQuiesce(th.OrbID, func() bool {
+		t.Error("回合进行中不得冻结")
+		return false
+	}))
+
+	s.waitThread(th.ID, 60*time.Second, func(v threadView) bool { return v.State == "idle" })
+	// 回合结束后重新静止：闸门走到 commit
+	assert.Eventually(t, func() bool {
+		reached := false
+		s.srv.Threads.TryQuiesce(th.OrbID, func() bool { reached = true; return false })
+		return reached
+	}, 10*time.Second, 50*time.Millisecond, "回合结束后可冻结")
+}

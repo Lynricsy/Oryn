@@ -76,24 +76,29 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if p.ThinkingLevel != "" {
 		row.ThinkingLevel = &p.ThinkingLevel
 	}
-	if err := s.insertThread(ctx, row, p.Labels); err != nil {
-		return apigen.Thread{}, err
-	}
-	t, err := s.get(ctx, id)
-	if err != nil {
-		return apigen.Thread{}, err
-	}
 	prompt := map[string]any{"type": "prompt", "message": p.Prompt}
 	if len(p.Images) > 0 {
 		prompt["images"] = p.Images
 	}
 	frame, _ := json.Marshal(prompt)
-	t.mu.Lock()
-	_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "prompt"})
+	frames := [][]byte{frame}
 	if p.Title != "" {
-		frame, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": p.Title})
-		_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "set_session_name"})
+		f, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": p.Title})
+		frames = append(frames, f)
 	}
+	// 首批命令与线程行同一事务落库，应答 201 之前即已持久：重启不会丢掉已受理的提示词（CP5）
+	startup := startupFrames(frames...)
+	if err := s.insertThread(ctx, row, p.Labels, func(q *db.Queries) error {
+		return q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startup, ID: id})
+	}); err != nil {
+		return apigen.Thread{}, err
+	}
+	// 加载线程时按 startup_frames 排队（见 get / queueStartupLocked）
+	t, err := s.get(ctx, id)
+	if err != nil {
+		return apigen.Thread{}, err
+	}
+	t.mu.Lock()
 	// orb 先于线程行创建：在此之前到达的 orb 事件（例如 clone 立刻失败 → failed）找不到本线程，
 	// 绑定后补算一次状态。事件处理先写 orb 状态缓存再列线程，两种先后顺序都不会漏。
 	s.recompute(ctx, t)
@@ -111,12 +116,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	return out, nil
 }
 
-func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, labels []string) error {
+// insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。
+func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, labels []string, extra func(q *db.Queries) error) error {
 	now := s.now()
 	row.StateChangedAt, row.CreatedAt, row.UpdatedAt = now, now, now
 	return s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.CreateThread(ctx, row); err != nil {
 			return err
+		}
+		if extra != nil {
+			if err := extra(q); err != nil {
+				return err
+			}
 		}
 		for _, l := range labels {
 			if l = strings.TrimSpace(l); l != "" {
@@ -395,6 +406,9 @@ type Snapshot struct {
 	Agent       AgentSnapshot `json:"agent"`
 	LeafEntryID *string       `json:"leafEntryId,omitempty"`
 	LastSeq     int64         `json:"lastSeq"`
+	// TranscriptRev 是当前转录版本；FullReplay 由 hub 按客户端的版本决定（见 realtime.subscribe）。
+	TranscriptRev int64 `json:"transcriptRev"`
+	FullReplay    bool  `json:"fullReplay"`
 }
 
 // AgentSnapshot 对应规格 AgentLiveState（帧保持原始字节）。
@@ -428,7 +442,7 @@ func (s *Service) Subscribe(ctx context.Context, id string, fn func(Snapshot)) e
 	if err != nil {
 		return err
 	}
-	snap := Snapshot{Type: "thread.snapshot", ThreadID: id, Thread: api, LeafEntryID: t.leaf, LastSeq: t.lastSeq}
+	snap := Snapshot{Type: "thread.snapshot", ThreadID: id, Thread: api, LeafEntryID: t.leaf, LastSeq: t.lastSeq, TranscriptRev: t.transcriptRev}
 	if t.orbID != "" {
 		if o, err := s.st.Q.GetOrb(ctx, t.orbID); err == nil {
 			a := s.orbAPI(ctx, o)
@@ -536,7 +550,15 @@ func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThr
 	if moveErr != nil {
 		slog.Warn("threads: fork share 移动会话文件失败，改用目录副本", "thread", src.id, "err", moveErr)
 	}
-	if err := s.insertThread(ctx, child, nil); err != nil {
+	var extra func(q *db.Queries) error
+	if moveErr != nil {
+		// 回退：以源会话目录副本启动再 fork；阶段随线程行落库，重启后照样续作（加载时恢复 copyFrom / forkEntry）
+		op := forkOp{Stage: forkStageCopy, Src: src.id, SrcOrb: orbID, ForkAt: entry}
+		extra = func(q *db.Queries) error {
+			return q.SetThreadForkOp(ctx, db.SetThreadForkOpParams{ForkOp: op.bytes(), ID: child.ID})
+		}
+	}
+	if err := s.insertThread(ctx, child, nil, extra); err != nil {
 		return apigen.Thread{}, err
 	}
 	t, err := s.get(ctx, child.ID)
@@ -544,9 +566,6 @@ func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThr
 		return apigen.Thread{}, err
 	}
 	t.mu.Lock()
-	if moveErr != nil {
-		t.copyFrom, t.forkEntry = src.id, entry
-	}
 	waiter := make(chan apigen.AgentStatus, 1)
 	t.readyWaiters = append(t.readyWaiters, waiter)
 	t.mu.Unlock()
@@ -596,6 +615,7 @@ func (s *Service) forkShareFallback(ctx context.Context, t *thread, srcID, orbID
 	s.dropFile(ctx, t, base)
 	t.mu.Lock()
 	t.copyFrom, t.forkEntry, t.failed = srcID, entry, false
+	_ = s.setForkOpLocked(ctx, t, &forkOp{Stage: forkStageCopy, Src: srcID, SrcOrb: orbID, ForkAt: entry})
 	t.live.Reset()
 	t.mu.Unlock()
 	s.startAgent(ctx, t.id)
@@ -608,49 +628,25 @@ func (s *Service) forkCopy(ctx context.Context, src *thread, child db.CreateThre
 	if err != nil {
 		return apigen.Thread{}, err
 	}
-	if err := s.insertThread(ctx, child, nil); err != nil {
+	op := forkOp{Stage: forkStageSnapshot, Src: src.id, SrcOrb: orbID, ForkAt: entry, Type: srcOrb.Type}
+	if srcOrb.ProjectID != nil {
+		op.ProjectID = *srcOrb.ProjectID
+	}
+	// 后台阶段先落库再应答：重启后由 recoverForks 从快照阶段续作（CP5）
+	if err := s.insertThread(ctx, child, nil, func(q *db.Queries) error {
+		return q.SetThreadForkOp(ctx, db.SetThreadForkOpParams{ForkOp: op.bytes(), ID: child.ID})
+	}); err != nil {
 		return apigen.Thread{}, err
 	}
 	t, err := s.get(ctx, child.ID)
 	if err != nil {
 		return apigen.Thread{}, err
 	}
-	t.mu.Lock()
-	t.copyFrom, t.forkEntry = src.id, entry
-	t.mu.Unlock()
 	out, err := s.Get(ctx, child.ID)
 	if err != nil {
 		return apigen.Thread{}, err
 	}
 	s.out().IndexUpsert(out)
-	project := ""
-	if srcOrb.ProjectID != nil {
-		project = *srcOrb.ProjectID
-	}
-	s.go_(func(ctx context.Context) {
-		snap, err := s.orbs.Snapshot(ctx, orbID)
-		if err != nil {
-			slog.Warn("threads: fork copy 快照失败", "orb", orbID, "err", err)
-			s.markFailed(ctx, t)
-			return
-		}
-		o, err := s.orbs.Create(ctx, OrbCreate{Type: srcOrb.Type, ProjectID: project, SnapshotOf: orbID, SnapshotID: snap})
-		if err != nil {
-			slog.Warn("threads: fork copy 新建 orb 失败", "err", err)
-			s.markFailed(ctx, t)
-			return
-		}
-		t.mu.Lock()
-		t.orbID = o.ID
-		_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: &o.ID, UpdatedAt: s.now(), ID: t.id})
-		// 同 Create：绑定前已发生的 orb 状态变化（如 failed）在此补算
-		if !s.recompute(ctx, t) {
-			s.publish(ctx, t.id)
-		}
-		t.mu.Unlock()
-		if s.orbState(o.ID) == orbStateReady {
-			s.startAgent(ctx, t.id)
-		}
-	})
+	s.go_(func(ctx context.Context) { s.runForkCopy(ctx, t, op) })
 	return out, nil
 }

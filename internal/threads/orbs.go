@@ -38,13 +38,16 @@ type OrbCreate struct {
 	Provider, Type, ProjectID, SnapshotOf, SnapshotID string
 }
 
-// OrbEvent 是 orb 状态或 link 变化（对应 orbs.Event）。
+// OrbEvent 是 orb 状态或 link 变化（对应 orbs.Event，字段须与之逐一相同）。
 type OrbEvent struct {
 	OrbID string
 	Kind  string
 	From  string
 	To    string
 	Orb   db.Orb
+	// Seq 是该次状态变化写入的 orb_events.id（单调）；非状态事件为当时已知的最大值。
+	// 事件在事务提交后才发出、可能乱序到达：Seq 小于已应用值的状态事件是过时的。
+	Seq int64
 }
 
 // Orbs 是线程服务依赖的 orb 生命周期接口（契约 §2.1，由 internal/orbs.Service 经薄适配实现）。
@@ -60,6 +63,8 @@ type Orbs interface {
 	Subscribe(fn func(OrbEvent))
 	TouchUser(ctx context.Context, orbID string)
 	TouchAgent(ctx context.Context, orbID string)
-	SetQuiescence(fn func(orbID string) bool)
+	// SetQuiescence 注册冻结 / 停机闸门（契约 §1 TryQuiesce）：fn 持有该 orb 全部线程的锁确认静止后调用 commit
+	// （orbs 在其中做状态 CAS），返回 commit 的结果；命令准入同样持线程锁，因此与冻结串行。
+	SetQuiescence(fn func(orbID string, commit func() bool) bool)
 	Kick(orbID, reason string)
 }

@@ -219,6 +219,12 @@ func (l *Live) clearTool(id string) {
 	}
 }
 
+// HasUI 报告 UI 请求是否仍待答。
+func (l *Live) HasUI(id string) bool {
+	_, ok := l.pendingUI[id]
+	return ok
+}
+
 // ResolveUI 移除一个待答 UI 请求；返回是否存在（用于「先到先得」）。
 func (l *Live) ResolveUI(id string) bool {
 	if _, ok := l.pendingUI[id]; !ok {
@@ -228,15 +234,31 @@ func (l *Live) ResolveUI(id string) bool {
 	return true
 }
 
-// SetState 记录最新 get_state 应答的 data。
-func (l *Live) SetState(state json.RawMessage) {
+// RunState 是 get_state 应答里与运行 / 静止判定相关的字段（缺失为 nil）。
+type RunState struct {
+	IsStreaming *bool `json:"isStreaming"`
+	IsSettled   *bool `json:"isSettled"`
+}
+
+// SetState 记录最新 get_state 应答的 data，返回其中的运行 / 静止字段。
+// 正在流式输出时直接进入 working（这只会纠正漏掉的 agent_start，不会误判）；
+// 反方向（不在流式 → 结束 working）只在控制面重新同步时由线程服务决定（见 thread.unsynced）。
+func (l *Live) SetState(state json.RawMessage) RunState {
 	l.State = state
 	var s struct {
 		HasPendingAsyncWork bool `json:"hasPendingAsyncWork"`
+		RunState
 	}
 	_ = json.Unmarshal(state, &s)
 	l.pendingAsync = s.HasPendingAsyncWork
+	if s.IsStreaming != nil && *s.IsStreaming {
+		l.working = true
+	}
+	return s.RunState
 }
+
+// SetWorking 以权威快照（重新同步后的 get_state）覆盖「回合进行中」标志。
+func (l *Live) SetWorking(w bool) { l.working = w }
 
 // AgentReady 标记 agent 至少就绪过一次。
 func (l *Live) AgentReady() { l.agentEverReady = true; l.restartExhausted = false }

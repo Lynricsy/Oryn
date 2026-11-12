@@ -58,3 +58,15 @@ func (t *Tickets) Redeem(tk string) (Principal, bool) {
 	}
 	return v.p, true
 }
+
+// Revoke 作废主体 (kind, id) 名下全部未兑换的票据（订阅 Service.Subscribe 的吊销事件；H3：
+// 否则持有被盗令牌的一方可预先囤积票据，在设备被吊销后仍能建立新连接）。
+func (t *Tickets) Revoke(kind, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, v := range t.m {
+		if v.p.Kind == kind && v.p.ID == id {
+			delete(t.m, k)
+		}
+	}
+}

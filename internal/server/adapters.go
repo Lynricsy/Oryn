@@ -38,3 +38,7 @@ func (a orbsAdapter) Subscribe(fn func(threads.OrbEvent)) {
 type revocations struct{ s *auth.Service }
 
 func (r revocations) Subscribe(fn func(kind, id string)) { _ = r.s.Subscribe(fn) }
+
+func (a orbsAdapter) SetQuiescence(fn func(orbID string, commit func() bool) bool) {
+	a.Service.SetQuiescence(fn)
+}

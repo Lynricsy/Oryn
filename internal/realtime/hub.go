@@ -27,6 +27,11 @@ type TicketRedeemer interface {
 	Redeem(ticket string) (auth.Principal, bool)
 }
 
+// PrincipalChecker 复核主体当前是否仍有效（设备未吊销、网页会话存在且未过期）；auth.Service 实现。
+type PrincipalChecker interface {
+	PrincipalValid(ctx context.Context, p auth.Principal) (bool, error)
+}
+
 // Revocations 在设备吊销 / 登出时回调（kind、id 与 auth.Principal 对应）；hub 据此关闭相关连接。
 type Revocations interface {
 	Subscribe(fn func(kind, id string))
@@ -46,6 +51,7 @@ const (
 type Hub struct {
 	svc     *threads.Service
 	tickets TicketRedeemer
+	valid   PrincipalChecker
 	// MaxPending 可在测试中调小。
 	MaxPending int
 
@@ -57,9 +63,10 @@ type Hub struct {
 	subs  map[string]map[*conn]*sub
 }
 
-// New 创建 hub 并设为 svc 的 Sink；rev 可为 nil。
-func New(svc *threads.Service, tickets TicketRedeemer, rev Revocations) *Hub {
-	h := &Hub{svc: svc, tickets: tickets, MaxPending: MaxPendingBytes, conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{}}
+// New 创建 hub 并设为 svc 的 Sink；rev 可为 nil。valid 在连接登记后复核票据主体（H3：票据签发后、
+// 兑换前主体被吊销时，吊销事件发生在连接登记之前、关不掉它）。
+func New(svc *threads.Service, tickets TicketRedeemer, rev Revocations, valid PrincipalChecker) *Hub {
+	h := &Hub{svc: svc, tickets: tickets, valid: valid, MaxPending: MaxPendingBytes, conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{}}
 	svc.SetSink(h)
 	if rev != nil {
 		rev.Subscribe(h.revoke)
@@ -75,8 +82,9 @@ type conn struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 
-	mu      sync.Mutex
-	queue   [][]byte
+	mu    sync.Mutex
+	queue [][]byte
+	// pending 是已排队与暂存（补发期间的 sub.buf、index 发出前的 indexBuf）消息的总字节数，统一受 MaxPending 约束。
 	pending int
 	closed  bool
 	wake    chan struct{}
@@ -115,6 +123,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	go c.writeLoop()
 	defer h.drop(c)
+	// 登记之后再复核主体：此后的吊销会经 revoke 关闭本连接，此前的吊销在这里被发现
+	if h.valid != nil {
+		if ok, err := h.valid.PrincipalValid(ctx, p); err != nil || !ok {
+			c.close(websocket.StatusPolicyViolation, "revoked")
+			return
+		}
+	}
 
 	index, err := h.svc.Index(ctx)
 	if err != nil {
@@ -123,9 +138,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c.send(map[string]any{"type": "index", "rev": rev, "threads": index})
 	h.mu.Lock()
-	for _, m := range c.indexBuf {
-		c.enqueue(m)
-	}
+	c.release(c.indexBuf)
 	c.indexBuf, c.indexReady = nil, true
 	h.mu.Unlock()
 	c.readLoop()
@@ -170,26 +183,65 @@ func (c *conn) send(v any) {
 	c.enqueue(b)
 }
 
+// admit 把 n 字节计入待发预算；超过上限即断开并返回 false。
+func (c *conn) admit(n int) bool {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return false
+	}
+	c.pending += n
+	over := c.pending > c.h.MaxPending
+	c.mu.Unlock()
+	if over {
+		slog.Info("realtime: 慢消费者，断开", "conn", c.id)
+		c.close(websocket.StatusPolicyViolation, "slow consumer")
+		return false
+	}
+	return true
+}
+
 // enqueue 排入一条待发消息；超过待发上限即断开。
 func (c *conn) enqueue(b []byte) {
+	if c.admit(len(b)) {
+		c.release([][]byte{b})
+	}
+}
+
+// stash 把消息暂存到 dst（已计入预算，之后由 release 放进发送队列或由 discard 退回）；超限即断开。
+func (c *conn) stash(dst *[][]byte, b []byte) {
+	if c.admit(len(b)) {
+		*dst = append(*dst, b)
+	}
+}
+
+// release 把已计入预算的消息放进发送队列。
+func (c *conn) release(bs [][]byte) {
+	if len(bs) == 0 {
+		return
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
-	c.pending += len(b)
-	if c.pending > c.h.MaxPending {
-		c.mu.Unlock()
-		slog.Info("realtime: 慢消费者，断开", "conn", c.id)
-		c.close(websocket.StatusPolicyViolation, "slow consumer")
-		return
-	}
-	c.queue = append(c.queue, b)
+	c.queue = append(c.queue, bs...)
 	c.mu.Unlock()
 	select {
 	case c.wake <- struct{}{}:
 	default:
 	}
+}
+
+// discard 退回已暂存但不再发送的消息的预算。
+func (c *conn) discard(bs [][]byte) {
+	n := 0
+	for _, b := range bs {
+		n += len(b)
+	}
+	c.mu.Lock()
+	c.pending -= n
+	c.mu.Unlock()
 }
 
 func (c *conn) writeLoop() {
@@ -240,11 +292,12 @@ func (c *conn) close(code websocket.StatusCode, reason string) {
 // ---- 读方向 ----
 
 type clientMsg struct {
-	Type     string          `json:"type"`
-	ThreadID *string         `json:"threadId"`
-	ID       string          `json:"id"`
-	AfterSeq *int64          `json:"afterSeq"`
-	Frame    json.RawMessage `json:"frame"`
+	Type          string          `json:"type"`
+	ThreadID      *string         `json:"threadId"`
+	ID            string          `json:"id"`
+	AfterSeq      *int64          `json:"afterSeq"`
+	TranscriptRev *int64          `json:"transcriptRev"`
+	Frame         json.RawMessage `json:"frame"`
 }
 
 func (c *conn) readLoop() {
@@ -308,21 +361,14 @@ func (c *conn) handle(m clientMsg) {
 		if m.AfterSeq != nil {
 			after = *m.AfterSeq
 		}
-		if err := c.h.subscribe(c, tid, after); err != nil {
+		if err := c.h.subscribe(c, tid, after, m.TranscriptRev); err != nil {
 			c.fail(err, m.ThreadID, "")
 		}
 	case "unsub":
 		if !needThread() {
 			return
 		}
-		c.h.mu.Lock()
-		if s := c.h.subs[tid]; s != nil {
-			delete(s, c)
-			if len(s) == 0 {
-				delete(c.h.subs, tid)
-			}
-		}
-		c.h.mu.Unlock()
+		c.h.unsubscribe(c, tid, nil)
 	case "cmd":
 		if !needThread() {
 			return
@@ -352,10 +398,16 @@ func (c *conn) handle(m clientMsg) {
 }
 
 // subscribe：快照（与订阅登记在线程锁内原子完成）→ 补发 (afterSeq, lastSeq] 的条目 → 放出缓冲的实时事件。
-func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64) error {
+// 客户端的转录版本与当前不同（或缺省但 afterSeq > 0 且线程已被重写过）时从头补发并置 fullReplay（CP11）。
+// 每批补发的 lastSeq 只到该批实际覆盖的 seq（CP2）：在两批之间断线的客户端以它续传，不会跳过后续条目。
+func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64, clientRev *int64) error {
 	var snap threads.Snapshot
 	var mine *sub
+	after := afterSeq
 	err := h.svc.Subscribe(c.ctx, threadID, func(s threads.Snapshot) {
+		if (clientRev != nil && *clientRev != s.TranscriptRev) || (clientRev == nil && afterSeq > 0 && s.TranscriptRev > 0) {
+			s.FullReplay, after = true, 0
+		}
 		snap = s
 		mine = &sub{buffering: true}
 		h.mu.Lock()
@@ -364,6 +416,9 @@ func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64) error {
 			m = map[*conn]*sub{}
 			h.subs[threadID] = m
 		}
+		if old := m[c]; old != nil {
+			c.discard(old.buf)
+		}
 		m[c] = mine
 		h.mu.Unlock()
 		c.send(s)
@@ -371,27 +426,46 @@ func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64) error {
 	if err != nil {
 		return err
 	}
-	after := afterSeq
 	for after < snap.LastSeq {
 		es, err := h.svc.EntriesRange(c.ctx, threadID, after, snap.LastSeq, entriesBatch)
 		if err != nil {
+			h.unsubscribe(c, threadID, mine)
 			return err
 		}
 		if len(es) == 0 {
 			break
 		}
-		c.send(entriesMsg{Type: "entries", ThreadID: threadID, Entries: es, LeafEntryID: snap.LeafEntryID, LastSeq: snap.LastSeq})
-		after = es[len(es)-1].Seq
+		covered := es[len(es)-1].Seq
+		if len(es) < entriesBatch {
+			// 不满一批：(after, snap.LastSeq] 已全部取完（其余 seq 已被删除或超出快照）
+			covered = snap.LastSeq
+		}
+		c.send(entriesMsg{Type: "entries", ThreadID: threadID, Entries: es, LeafEntryID: snap.LeafEntryID, LastSeq: covered})
+		after = covered
 	}
 	h.mu.Lock()
 	if h.subs[threadID][c] == mine {
-		for _, b := range mine.buf {
-			c.enqueue(b)
-		}
+		c.release(mine.buf)
 		mine.buf, mine.buffering = nil, false
 	}
 	h.mu.Unlock()
 	return nil
+}
+
+// unsubscribe 移除连接对线程的订阅（仅当仍是 s），并退回其暂存消息的预算。
+func (h *Hub) unsubscribe(c *conn, threadID string, s *sub) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m := h.subs[threadID]
+	cur := m[c]
+	if cur == nil || (s != nil && cur != s) {
+		return
+	}
+	c.discard(cur.buf)
+	delete(m, c)
+	if len(m) == 0 {
+		delete(h.subs, threadID)
+	}
 }
 
 type entriesMsg struct {
@@ -414,7 +488,7 @@ func (h *Hub) toThread(threadID string, v any) {
 	defer h.mu.Unlock()
 	for c, s := range h.subs[threadID] {
 		if s.buffering {
-			s.buf = append(s.buf, b)
+			c.stash(&s.buf, b)
 			continue
 		}
 		c.enqueue(b)
@@ -435,7 +509,7 @@ func (h *Hub) toAll(v any) {
 func (h *Hub) broadcastLocked(b []byte) {
 	for c := range h.conns {
 		if !c.indexReady {
-			c.indexBuf = append(c.indexBuf, b)
+			c.stash(&c.indexBuf, b)
 			continue
 		}
 		c.enqueue(b)
@@ -488,6 +562,16 @@ func (h *Hub) UIResolved(threadID, requestID string) {
 // LiveReset 实现 threads.Sink。
 func (h *Hub) LiveReset(threadID string) {
 	h.toThread(threadID, map[string]string{"type": "live.reset", "threadId": threadID})
+}
+
+// TranscriptReset 实现 threads.Sink。
+func (h *Hub) TranscriptReset(threadID string, rev int64) {
+	h.toThread(threadID, map[string]any{"type": "transcript.reset", "threadId": threadID, "transcriptRev": rev})
+}
+
+// PlanResolved 实现 threads.Sink。
+func (h *Hub) PlanResolved(threadID string) {
+	h.toThread(threadID, map[string]string{"type": "plan.resolved", "threadId": threadID})
 }
 
 // Orb 实现 threads.Sink。
