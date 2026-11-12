@@ -3,7 +3,9 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -32,9 +34,169 @@ models.yml 中的字面 apiKey 会被控制面抽取进密钥库，磁盘上只�
 	RunE: runConfigPush,
 }
 
+var configPullCmd = &cobra.Command{
+	Use:   "pull [dir]",
+	Short: "把控制面上的 omp-home 下载到本机目录（默认 ~/.omp/agent）",
+	Long: `逐个下载 omp-home 文件并按服务端记录的权限写入 dir，不删除本地多出的文件。
+服务端的 models.yml 是模板（密钥已替换为 ${oryn:secret:…} 引用），默认写成 models.oryn.yml，
+避免覆盖本地带真实密钥的 models.yml；--force 时直接覆盖 models.yml。`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runConfigPull,
+}
+
+var configPullOpts struct {
+	force  bool
+	dryRun bool
+}
+
 func init() {
-	configCmd.AddCommand(configPushCmd)
+	configPullCmd.Flags().BoolVar(&configPullOpts.force, "force", false, "直接覆盖 models.yml（其中只有密钥引用，没有真实值）")
+	configPullCmd.Flags().BoolVar(&configPullOpts.dryRun, "dry-run", false, "只列出将写入的文件")
+	configCmd.AddCommand(configPushCmd, configPullCmd)
 	root.AddCommand(configCmd)
+}
+
+// pulledModelsFile 是不带 --force 时 models.yml 模板的落盘名。
+const pulledModelsFile = "models.oryn.yml"
+
+func defaultAgentDir(args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".omp", "agent"), nil
+}
+
+// pullTarget 计算服务端相对路径在本地的落盘位置；拒绝逃出 dir 的路径。
+// renamed 表示 models.yml 被改写为 models.oryn.yml。
+func pullTarget(dir, rel string, force bool) (dst string, renamed bool, err error) {
+	clean, err := agentcfg.CleanPath(rel)
+	if err != nil {
+		return "", false, fmt.Errorf("拒绝服务端路径 %q: %w", rel, err)
+	}
+	if clean == agentcfg.ModelsFile && !force {
+		clean, renamed = pulledModelsFile, true
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false, err
+	}
+	dst = filepath.Join(root, filepath.FromSlash(clean))
+	if r, err := filepath.Rel(root, dst); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Errorf("拒绝服务端路径 %q：逃出目标目录", rel)
+	}
+	return dst, renamed, nil
+}
+
+func runConfigPull(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	dir, err := defaultAgentDir(args)
+	if err != nil {
+		return err
+	}
+	c, err := newClient()
+	if err != nil {
+		return err
+	}
+	var list apigen.AgentConfigFileList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/agent-config/files", nil, &list); err != nil {
+		return err
+	}
+	type planned struct {
+		f       apigen.AgentConfigFile
+		dst     string
+		renamed bool
+	}
+	plan := make([]planned, 0, len(list.Files))
+	for _, f := range list.Files {
+		dst, renamed, err := pullTarget(dir, f.Path, configPullOpts.force)
+		if err != nil {
+			return err
+		}
+		plan = append(plan, planned{f: f, dst: dst, renamed: renamed})
+	}
+	for _, p := range plan {
+		mode := fs.FileMode(p.f.Mode).Perm()
+		if mode == 0 {
+			mode = 0o644
+		}
+		if configPullOpts.dryRun {
+			fmt.Printf("%s\t%d 字节\t%04o\n", p.dst, p.f.Size, mode)
+		} else {
+			b, err := getRaw(ctx, c, "/api/v1/agent-config/files/"+escapePathParam(p.f.Path))
+			if err != nil {
+				return fmt.Errorf("下载 %s: %w", p.f.Path, err)
+			}
+			if err := writeFileMode(p.dst, b, mode); err != nil {
+				return err
+			}
+		}
+		if p.renamed {
+			verb := "已写为"
+			if configPullOpts.dryRun {
+				verb = "将写为"
+			}
+			fmt.Fprintf(os.Stderr, "注意：服务端 models.yml 只含 ${oryn:secret:…} 引用，%s %s，本地 models.yml 不改动（--force 可直接覆盖）\n", verb, pulledModelsFile)
+		}
+	}
+	if configPullOpts.dryRun {
+		fmt.Fprintf(os.Stderr, "（dry-run）将写入 %d 个文件到 %s\n", len(plan), dir)
+	} else {
+		fmt.Fprintf(os.Stderr, "已下载 %d 个文件到 %s\n", len(plan), dir)
+	}
+	return nil
+}
+
+// getRaw 以 GET 读取原始响应体。
+func getRaw(ctx context.Context, c *apiClient, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, agentcfg.MaxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, &apiError{Status: resp.StatusCode, Message: strings.TrimSpace(string(b))}
+	}
+	return b, nil
+}
+
+// writeFileMode 原子写入文件并设置权限。
+func writeFileMode(dst string, b []byte, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(dst), ".oryn-pull-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 type pushFile struct {
@@ -44,15 +206,9 @@ type pushFile struct {
 }
 
 func runConfigPush(cmd *cobra.Command, args []string) error {
-	dir := ""
-	if len(args) == 1 {
-		dir = args[0]
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		dir = filepath.Join(home, ".omp", "agent")
+	dir, err := defaultAgentDir(args)
+	if err != nil {
+		return err
 	}
 	files, err := collectPushFiles(dir)
 	if err != nil {
