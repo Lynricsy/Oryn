@@ -1,0 +1,5 @@
+listen: ["127.0.0.1:7600", "172.18.0.1:7600"]
+public_url: "http://localhost:7600"
+data_dir: "./.dev/data"
+log_level: "debug"
+idle: { agent_idle: "30s", user_idle: "30s", stop_after_frozen: "24h", wake_on_focus: true }

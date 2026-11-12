@@ -1,0 +1,6 @@
+url: "http://127.0.0.1:7600"
+token_file: ".dev/provider.token"
+orb_url: "http://172.18.0.1:7600"
+driver: docker
+docker:
+  image: "oryn-orb:dev"
