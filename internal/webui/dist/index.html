@@ -1,8 +1,0 @@
-<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>Oryn</title></head>
-<body>
-<p>Oryn 控制面 <span id="v">…</span>（Web 客户端未构建，运行 <code>make web</code>）</p>
-<script>fetch("/healthz").then(r=>r.json()).then(j=>{document.getElementById("v").textContent=j.version})</script>
-</body>
-</html>

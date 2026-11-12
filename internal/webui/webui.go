@@ -18,6 +18,14 @@ func Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	if _, err := fs.Stat(sub, "index.html"); err != nil {
+		// 未执行 make web：返回内置占位页
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			_, _ = w.Write([]byte(placeholder))
+		})
+	}
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
@@ -40,3 +48,13 @@ func Handler() http.Handler {
 		files.ServeHTTP(w, r)
 	})
 }
+
+const placeholder = `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Oryn</title></head>
+<body>
+<p>Oryn 控制面 <span id="v">…</span>（Web 客户端未构建，运行 <code>make web</code>）</p>
+<script>fetch("/healthz").then(r=>r.json()).then(j=>{document.getElementById("v").textContent=j.version})</script>
+</body>
+</html>
+`
