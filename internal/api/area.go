@@ -4,4 +4,5 @@ package api
 // 并在此处加一个指针字段（这是唯一需要多方编辑的位置，改动只加行）。
 type area struct {
 	Auth *AuthDeps
+	Orbs *OrbsDeps
 }
