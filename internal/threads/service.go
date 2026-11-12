@@ -284,20 +284,21 @@ func (t *thread) agentReady() bool {
 	return t.agentStatus == apigen.AgentStatusReady && t.agent != nil
 }
 
-// status 推导线程状态。调用方持有 t.mu。
+// status 推导线程状态：所在 orb 为 failed 时一律 error（Thread.error 带原因），其余按 C4 规则。调用方持有 t.mu。
 func (s *Service) status(t *thread) string {
-	if t.failed {
+	orbState := s.orbState(t.orbID)
+	if t.failed || orbState == orbStateFailed {
 		return StateError
 	}
-	orbReady := s.orbState(t.orbID) == orbStateReady && t.agentReady()
+	orbReady := orbState == orbStateReady && t.agentReady()
 	return t.live.Status(orbReady)
 }
 
-// recompute 重新推导状态；变化时写库、处理未读并推送 index.patch。调用方持有 t.mu。
-func (s *Service) recompute(ctx context.Context, t *thread) {
+// recompute 重新推导状态；变化时写库、处理未读并推送 index.patch，返回是否变化。调用方持有 t.mu。
+func (s *Service) recompute(ctx context.Context, t *thread) bool {
 	st := s.status(t)
 	if st == t.state {
-		return
+		return false
 	}
 	prev := t.state
 	t.state = st
@@ -310,6 +311,7 @@ func (s *Service) recompute(ctx context.Context, t *thread) {
 		_ = s.st.Q.SetThreadUnread(ctx, db.SetThreadUnreadParams{Unread: true, ID: t.id})
 	}
 	s.publish(ctx, t.id)
+	return true
 }
 
 // publish 读出线程最新行并推送 index.patch。调用方持有 t.mu（或线程尚未对外可见）。
@@ -412,6 +414,14 @@ func (e *eventQueue) run(ctx context.Context, fn func(context.Context, OrbEvent)
 }
 
 func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
+	if ev.Kind == OrbEventSetup {
+		// 只有运行记录变化：线程状态不受影响。事件里的 orb 行可能早于随后的状态变化，重读一次再推送，
+		// 也不覆盖状态缓存。
+		if o, err := s.st.Q.GetOrb(ctx, ev.OrbID); err == nil {
+			s.out().Orb(s.orbAPI(ctx, o))
+		}
+		return
+	}
 	state := ev.Orb.State
 	if state == "" {
 		state = ev.To
@@ -432,6 +442,8 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		}
 	}
 	s.out().Orb(s.orbAPI(ctx, o))
+	// 进入或离开 failed 时 Thread.error 随之出现 / 消失，即使线程状态本身没变（例如原本就是 error）也要推送
+	failedEdge := ev.Kind == OrbEventState && (ev.To == orbStateFailed || ev.From == orbStateFailed)
 
 	for _, r := range rows {
 		t, err := s.get(ctx, r.ID)
@@ -454,7 +466,9 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 				t.agentStatus = apigen.AgentStatusStarting
 			}
 		}
-		s.recompute(ctx, t)
+		if !s.recompute(ctx, t) && failedEdge {
+			s.publish(ctx, t.id)
+		}
 		t.mu.Unlock()
 	}
 	if state == orbStateReady && (ev.Kind == OrbEventLinkUp || ev.To == orbStateReady) {

@@ -43,7 +43,7 @@ func (s *Service) HandleRequest(method string, fn RequestFunc) {
 	s.hmu.Unlock()
 }
 
-// HandleNotify 注册 ctl 通知处理器（如 agent.status）。hello / metrics.sample / setup.log 先由本包处理，
+// HandleNotify 注册 ctl 通知处理器（如 agent.status）。hello / metrics.sample / setup.log / setup.result 先由本包处理，
 // 再交给同名注册处理器（若有）。
 func (s *Service) HandleNotify(method string, fn NotifyFunc) {
 	s.hmu.Lock()
@@ -245,17 +245,19 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 			slog.Warn("写入 orb 采样失败", "orb", l.orbID, "err", err)
 		}
 	case string(apigen.MethodSetupLog):
-		var p apigen.LinkCtlSetupLogParams
-		if json.Unmarshal(params, &p) == nil {
-			slog.Debug("orb setup 日志", "orb", l.orbID, "phase", p.Phase, "stream", p.Stream, "data", p.Data)
-		}
+		s.onSetupLog(l.orbID, params)
+	case string(apigen.MethodSetupResult):
+		s.onSetupResult(ctx, l.orbID, params)
 	}
 	s.hmu.RLock()
 	fn := s.notifies[method]
 	s.hmu.RUnlock()
-	if fn != nil {
+	switch {
+	case fn != nil:
 		fn(ctx, l.orbID, params)
-	} else if method != string(apigen.MethodHello) && method != string(apigen.MethodMetricsSample) && method != string(apigen.MethodSetupLog) {
+	case method == string(apigen.MethodHello), method == string(apigen.MethodMetricsSample),
+		method == string(apigen.MethodSetupLog), method == string(apigen.MethodSetupResult):
+	default:
 		slog.Debug("未处理的 ctl 通知", "orb", l.orbID, "method", method)
 	}
 }

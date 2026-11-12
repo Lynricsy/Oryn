@@ -1,6 +1,6 @@
 // Package orbs 管理 orb 生命周期（计划 E 节）：状态机与 orb_events、spawn / pause / snapshot / delete 任务、
 // 30s 空闲评估（冻结 / 停机）、唤醒、connecting 超时；以及 /orb/v1/link 处理器（hello → setup / resume、
-// metrics.sample、setup.log、egress 流）。Threads 只经本包导出的 Service API 与 orb 交互。
+// metrics.sample、setup.log / setup.result 与 orb_setup_runs、project.scripts.*、egress 流）。Threads 经本包导出的 Service API 与 View 与 orb 交互。
 package orbs
 
 import (
@@ -56,6 +56,8 @@ const (
 	EventLinkUp = "link_up"
 	// EventLinkDown 表示 link 断开。
 	EventLinkDown = "link_down"
+	// EventSetup 表示 orb 新增了一条 setup / resume 运行记录（From == To == 当前状态）。
+	EventSetup = "setup"
 )
 
 var (
@@ -132,6 +134,8 @@ type Service struct {
 	wakeAfter map[string]bool
 	egress    map[string]*egressServer
 	policies  map[string]egress.Policy
+	// setupLogs 是各 orb 尚未写入运行记录的 setup.log 输出（见 setuprun.go）。
+	setupLogs map[string]*setupLogs
 
 	hmu       sync.RWMutex
 	reqs      map[string]RequestFunc
@@ -165,8 +169,11 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		cfg: cfg, st: st, jobs: q, setup: setup, secrets: secrets, now: time.Now,
 		links: map[string]*orbLink{}, timers: map[string]*time.Timer{},
 		wakeAfter: map[string]bool{}, egress: map[string]*egressServer{}, policies: map[string]egress.Policy{},
-		reqs: map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
+		setupLogs: map[string]*setupLogs{},
+		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 	}
+	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
+	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
 	q.SetHooks(jobs.Hooks{OnClaimed: s.onJobClaimed, OnFinished: s.onJobFinished})
 	return s
 }
@@ -712,6 +719,7 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 		if _, moved, _ := s.transition(ctx, orbID, StateDeleting, StateDeleted, detail); moved {
 			s.Kick(orbID, "orb deleted")
 			s.closeEgress(orbID)
+			s.dropSetupLogs(orbID)
 			if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
 				s.releaseSnapshot(ctx, orb.ProviderID, orbID, *orb.SnapshotOf)
 			}

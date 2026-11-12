@@ -167,6 +167,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		archived = *f.Archived
 	}
 	q := strings.ToLower(f.Q)
+	reasons := map[string]*apigen.ThreadError{}
 	out := make([]apigen.Thread, 0, len(all))
 	for _, t := range all {
 		if (t.ArchivedAt != nil) != archived || (f.State != "" && t.State != f.State) {
@@ -182,6 +183,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 			continue
 		}
 		api := ThreadToAPI(t, labels[t.ID])
+		api.Error = s.threadError(ctx, t, reasons)
 		if c, ok := children[t.ID]; ok {
 			api.ChildCount, api.ChildDoneCount = &c[0], &c[1]
 		}

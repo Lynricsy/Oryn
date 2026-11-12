@@ -12,6 +12,7 @@ import (
 const (
 	orbStateReady   = "ready"
 	orbStateDeleted = "deleted"
+	orbStateFailed  = "failed"
 )
 
 // orbSuspended 判断 orb 是否处于暂停或恢复途中（此时现有 agent 流不可用于下发命令）。
@@ -28,6 +29,8 @@ const (
 	OrbEventState    = "state"
 	OrbEventLinkUp   = "link_up"
 	OrbEventLinkDown = "link_down"
+	// OrbEventSetup 表示 orb 新增了一条 setup / resume 运行记录（只需推送 orb 更新）。
+	OrbEventSetup = "setup"
 )
 
 // OrbCreate 是新建 orb 的参数（对应 orbs.CreateParams）；空 Provider / Type 由 orbs 按 C3 规则取默认。

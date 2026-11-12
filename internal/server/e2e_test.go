@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 	"github.com/Lynricsy/Oryn/internal/providerrt"
 )
 
@@ -52,6 +53,7 @@ type stack struct {
 	http   *httptest.Server
 	token  string // 设备令牌
 	cancel context.CancelFunc
+	drv    *providerrt.Process
 }
 
 // serve 在固定地址上启动 HTTP 服务（addr 为空时随机端口），便于模拟控制面重启。
@@ -114,6 +116,7 @@ func newStack(t *testing.T, idle config.Idle) *stack {
 
 	drv := providerrt.NewProcess(t.TempDir(), filepath.Join(binDir, "orbd"), config.Docker{Types: config.DefaultDockerTypes(), DefaultType: "small"})
 	t.Cleanup(drv.Close)
+	s.drv = drv
 	r := &providerrt.Runner{URL: hs.URL, OrbURL: hs.URL, Token: prov.Token, Driver: drv, ClaimWait: time.Second, Version: "e2e"}
 	go func() { _ = r.Run(ctx) }()
 	require.Eventually(t, func() bool {
@@ -161,7 +164,9 @@ type wsMsg struct {
 		Live      []json.RawMessage `json:"live"`
 		PendingUI []json.RawMessage `json:"pendingUi"`
 	} `json:"agent"`
-	RequestID string `json:"requestId"`
+	RequestID string            `json:"requestId"`
+	Upsert    []json.RawMessage `json:"upsert"`
+	Orb       json.RawMessage   `json:"orb"`
 }
 
 func (m wsMsg) frameType() string {
@@ -231,6 +236,24 @@ type threadView struct {
 	ID    string `json:"id"`
 	State string `json:"state"`
 	OrbID string `json:"orbId"`
+	Error *struct {
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
+	} `json:"error"`
+}
+
+// upserted 返回 index.patch 中 id 线程的摘要。
+func (m wsMsg) upserted(id string) (threadView, bool) {
+	if m.Type != "index.patch" {
+		return threadView{}, false
+	}
+	for _, raw := range m.Upsert {
+		var v threadView
+		if json.Unmarshal(raw, &v) == nil && v.ID == id {
+			return v, true
+		}
+	}
+	return threadView{}, false
 }
 
 func (s *stack) waitThread(id string, timeout time.Duration, cond func(threadView) bool) threadView {
@@ -455,4 +478,190 @@ func TestFullStackSetupFailureStillStartsAgent(t *testing.T) {
 		`SELECT detail FROM orb_events WHERE orb_id = ? AND from_state = 'setting_up' AND to_state = 'ready'`, th.OrbID).Scan(&detail))
 	assert.Contains(t, detail, `"ok":false`)
 	assert.Contains(t, detail, "exit status 3")
+
+	// setup 运行记录：ok=0，日志含脚本输出，Orb.lastSetup 经 REST 可见
+	var orb struct {
+		LastSetup *struct {
+			ID      string `json:"id"`
+			Ok      bool   `json:"ok"`
+			Trigger string `json:"trigger"`
+			Error   string `json:"error"`
+		} `json:"lastSetup"`
+	}
+	require.Eventually(t, func() bool {
+		s.rest("GET", "/api/v1/orbs/"+th.OrbID, nil, &orb, 200)
+		return orb.LastSetup != nil
+	}, 10*time.Second, 50*time.Millisecond, "Orb.lastSetup")
+	assert.False(t, orb.LastSetup.Ok)
+	assert.Equal(t, "auto", orb.LastSetup.Trigger)
+	assert.Contains(t, orb.LastSetup.Error, "exit status 3")
+	req, _ := http.NewRequest("GET", s.http.URL+"/api/v1/orbs/"+th.OrbID+"/setup-runs/"+orb.LastSetup.ID+"/log", nil)
+	req.Header.Set("Authorization", "Bearer "+s.token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	logText, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Contains(t, string(logText), "boom")
+}
+
+// orb 进入 failed：线程 error 并带 orb_failed 原因（REST 与 index.patch 都可见）；修好配置后 wake → orb 离开 failed，
+// 线程按正常规则恢复并完成首条提示词。
+func TestFullStackOrbFailedThreadErrorAndWake(t *testing.T) {
+	s := newStack(t, config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(24 * time.Hour)})
+	var prj struct {
+		ID string `json:"id"`
+	}
+	// clone 不存在的仓库 → setup.run 失败 → orb failed
+	s.rest("POST", "/api/v1/projects", map[string]any{"name": "bad-repo", "repoUrl": "file://" + filepath.Join(t.TempDir(), "missing.git")}, &prj, 201)
+	a := s.dial()
+	var created struct {
+		Thread threadView `json:"thread"`
+	}
+	s.rest("POST", "/api/v1/threads", map[string]any{
+		"projectId": prj.ID,
+		"prompt":    "hello after repair",
+		"executor":  map[string]any{"kind": "new_orb", "provider": "local", "type": "small"},
+	}, &created, 201)
+	id := created.Thread.ID
+
+	var pushed threadView
+	a.until(60*time.Second, func(m wsMsg) bool {
+		v, ok := m.upserted(id)
+		if ok && v.State == "error" {
+			pushed = v
+			return true
+		}
+		return false
+	})
+	require.NotNil(t, pushed.Error, "index.patch 带 Thread.error")
+	assert.Equal(t, "orb_failed", pushed.Error.Kind)
+	assert.Contains(t, pushed.Error.Reason, "clone")
+
+	th := s.waitThread(id, 10*time.Second, func(v threadView) bool { return v.State == "error" })
+	require.NotNil(t, th.Error)
+	var orb struct {
+		State         string `json:"state"`
+		FailureReason string `json:"failureReason"`
+	}
+	s.rest("GET", "/api/v1/orbs/"+th.OrbID, nil, &orb, 200)
+	assert.Equal(t, "failed", orb.State)
+	assert.Equal(t, orb.FailureReason, th.Error.Reason, "线程错误原因与 Orb.failureReason 一致")
+
+	// 修好项目（去掉仓库）后重试
+	s.rest("PATCH", "/api/v1/projects/"+prj.ID, map[string]any{"repoUrl": ""}, nil, 200)
+	s.rest("POST", "/api/v1/threads/"+id+"/wake", nil, nil, 202)
+	a.until(60*time.Second, func(m wsMsg) bool {
+		v, ok := m.upserted(id)
+		return ok && v.State != "error" && v.Error == nil
+	})
+	done := s.waitThread(id, 60*time.Second, func(v threadView) bool { return v.State == "idle" })
+	assert.Nil(t, done.Error)
+	s.rest("GET", "/api/v1/orbs/"+th.OrbID, nil, &orb, 200)
+	assert.Equal(t, "ready", orb.State)
+
+	evs, err := s.srv.Store.Q.ListOrbEvents(context.Background(), th.OrbID)
+	require.NoError(t, err)
+	var seq []string
+	for _, e := range evs {
+		seq = append(seq, e.FromState+">"+e.ToState)
+	}
+	assert.Equal(t, []string{"setting_up>failed", "failed>waking", "setting_up>ready"}, subseq(seq, "setting_up>failed", "failed>waking", "setting_up>ready"))
+}
+
+// orb 内经 orbd.sock：手动重跑 setup 记为 trigger=manual 并推送 Orb.lastSetup；project.scripts.set 只改本 orb 的项目，
+// 无项目的 orb 得到 no_project。（测试名保持简短：unix socket 路径有长度上限。）
+func TestE2ESetupSock(t *testing.T) {
+	s := newStack(t, config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(24 * time.Hour)})
+	ctx := context.Background()
+	type project struct {
+		ID          string  `json:"id"`
+		SetupScript *string `json:"setupScript"`
+	}
+	var pa, pb project
+	s.rest("POST", "/api/v1/projects", map[string]any{"name": "a", "setupScript": "echo a-setup-ran"}, &pa, 201)
+	s.rest("POST", "/api/v1/projects", map[string]any{"name": "b", "setupScript": "echo b-setup"}, &pb, 201)
+	newThread := func(projectID string) threadView {
+		body := map[string]any{"prompt": "hi", "executor": map[string]any{"kind": "new_orb", "provider": "local", "type": "small"}}
+		if projectID != "" {
+			body["projectId"] = projectID
+		}
+		var created struct {
+			Thread threadView `json:"thread"`
+		}
+		s.rest("POST", "/api/v1/threads", body, &created, 201)
+		return s.waitThread(created.Thread.ID, 60*time.Second, func(v threadView) bool { return v.State == "idle" && v.OrbID != "" })
+	}
+	th := newThread(pa.ID)
+	sock := orbsock.Path(s.drv.HomeDir(th.OrbID))
+	a := s.dial()
+
+	var logs strings.Builder
+	raw, err := orbsock.Call(ctx, sock, orbsock.MethodSetupRerun, orbsock.RerunParams{}, func(_, data string) { logs.WriteString(data) })
+	require.NoError(t, err)
+	var res struct {
+		Ok      bool   `json:"ok"`
+		Trigger string `json:"trigger"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &res))
+	assert.True(t, res.Ok)
+	assert.Equal(t, "manual", res.Trigger)
+	assert.Contains(t, logs.String(), "a-setup-ran")
+
+	// WS 推送带新 lastSetup 的 orb，REST 同样可见
+	a.until(30*time.Second, func(m wsMsg) bool {
+		var o struct {
+			ID        string `json:"id"`
+			LastSetup *struct {
+				Trigger string `json:"trigger"`
+			} `json:"lastSetup"`
+		}
+		return m.Type == "orb" && json.Unmarshal(m.Orb, &o) == nil && o.ID == th.OrbID && o.LastSetup != nil && o.LastSetup.Trigger == "manual"
+	})
+	var runs struct {
+		Runs []struct {
+			ID      string `json:"id"`
+			Phase   string `json:"phase"`
+			Trigger string `json:"trigger"`
+			Ok      bool   `json:"ok"`
+		} `json:"runs"`
+	}
+	s.rest("GET", "/api/v1/orbs/"+th.OrbID+"/setup-runs", nil, &runs, 200)
+	require.NotEmpty(t, runs.Runs)
+	assert.Equal(t, "manual", runs.Runs[0].Trigger)
+	assert.Equal(t, "setup", runs.Runs[0].Phase)
+	assert.True(t, runs.Runs[0].Ok)
+
+	// project.scripts.set 只作用于本 orb 的项目
+	raw, err = orbsock.Call(ctx, sock, orbsock.MethodProjectScriptsSet, map[string]any{"setup": "echo a-v2"}, nil)
+	require.NoError(t, err)
+	var scripts struct {
+		ProjectID string  `json:"projectId"`
+		Setup     *string `json:"setup"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &scripts))
+	assert.Equal(t, pa.ID, scripts.ProjectID)
+	var got project
+	s.rest("GET", "/api/v1/projects/"+pa.ID, nil, &got, 200)
+	require.NotNil(t, got.SetupScript)
+	assert.Equal(t, "echo a-v2", *got.SetupScript)
+	got = project{}
+	s.rest("GET", "/api/v1/projects/"+pb.ID, nil, &got, 200)
+	require.NotNil(t, got.SetupScript)
+	assert.Equal(t, "echo b-setup", *got.SetupScript, "其它项目不受影响")
+
+	// 无项目的 orb（process 驱动下各 orbd 共用 egress 端口，先删掉第一台）
+	s.rest("DELETE", "/api/v1/orbs/"+th.OrbID, nil, nil, 202)
+	require.Eventually(t, func() bool {
+		var o struct {
+			State string `json:"state"`
+		}
+		s.rest("GET", "/api/v1/orbs/"+th.OrbID, nil, &o, 200)
+		return o.State == "deleted"
+	}, 30*time.Second, 100*time.Millisecond)
+	free := newThread("")
+	_, err = orbsock.Call(ctx, orbsock.Path(s.drv.HomeDir(free.OrbID)), orbsock.MethodProjectScriptsGet, nil, nil)
+	var se *orbsock.Error
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeNoProject, se.Code)
 }

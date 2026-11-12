@@ -17,13 +17,12 @@ func (s *Server) ListOrbs(w http.ResponseWriter, r *http.Request, params apigen.
 		writeOrbErr(w, err)
 		return
 	}
-	names := map[string]string{}
 	out := apigen.OrbList{Orbs: make([]apigen.Orb, 0, len(rows))}
 	for _, o := range rows {
 		if params.State != nil && o.State != string(*params.State) {
 			continue
 		}
-		v, err := s.orbView(ctx, o, names)
+		v, err := orbs.View(ctx, s.Store.Q, o)
 		if err != nil {
 			writeOrbErr(w, err)
 			return
@@ -48,7 +47,7 @@ func (s *Server) writeOrb(w http.ResponseWriter, r *http.Request, id string, sta
 		writeOrbErr(w, err)
 		return
 	}
-	v, err := s.orbView(r.Context(), o, map[string]string{})
+	v, err := orbs.View(r.Context(), s.Store.Q, o)
 	if err != nil {
 		writeOrbErr(w, err)
 		return

@@ -301,7 +301,7 @@ agent 启动序列（orbd 执行 `agent.start`）：
 | `provisioning` | orb 未到 `ready` 且 agent 从未 `ready` |
 | `awaiting_input` | `pendingUi` 非空或 `planProposal` 存在 |
 | `working` | 已见 `agent_start` 且尚无 `isTerminal !== false` 的 `agent_end`，或最新 `state.hasPendingAsyncWork` 为真 |
-| `error` | 最近一次 `prompt_result.status == "error"`，或 agent 重启耗尽 |
+| `error` | 所在 orb 为 `failed`（附 `Thread.error{kind:"orb_failed", reason}`），或最近一次 `prompt_result.status == "error"`，或 agent 重启耗尽 |
 | `idle` | 其它 |
 
 未读：线程由 `working` 转入 `idle / awaiting_input / error` 且当时没有任何连接 `focus` 于它 → `unread = 1`；被 `focus` 或收到该线程的 `cmd` → 清零。

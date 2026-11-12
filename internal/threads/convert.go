@@ -3,9 +3,11 @@ package threads
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -75,46 +77,36 @@ func ThreadToAPI(t db.Thread, labels []string) apigen.Thread {
 	}
 }
 
-// OrbToAPI 把 orb 行转换成 API 形态；threadIDs 为挂在该 orb 上的线程。
-func OrbToAPI(o db.Orb, providerName *string, threadIDs []string) apigen.Orb {
-	if threadIDs == nil {
-		threadIDs = []string{}
+// orbAPI 把 orb 行转换成 API 形态（orbs.View）；读库失败时记录并返回已有字段。
+func (s *Service) orbAPI(ctx context.Context, o db.Orb) apigen.Orb {
+	v, err := orbs.View(ctx, s.st.Q, o)
+	if err != nil {
+		slog.Warn("threads: 转换 orb 失败", "orb", o.ID, "err", err)
+		return apigen.Orb{ID: o.ID, ProviderID: o.ProviderID, Type: o.Type, Image: o.Image, ProjectID: o.ProjectID,
+			State: apigen.OrbState(o.State), StateChangedAt: o.StateChangedAt, CreatedAt: o.CreatedAt, ThreadIds: []string{}}
 	}
-	return apigen.Orb{
-		ID:                    o.ID,
-		ProviderID:            o.ProviderID,
-		ProviderName:          providerName,
-		Type:                  o.Type,
-		Cpus:                  float32(o.Cpus),
-		MemoryMB:              int(o.MemoryMb),
-		Image:                 o.Image,
-		ProjectID:             o.ProjectID,
-		State:                 apigen.OrbState(o.State),
-		StateChangedAt:        o.StateChangedAt,
-		SnapshotOf:            o.SnapshotOf,
-		LastAgentActivityAt:   o.LastAgentActivityAt,
-		LastUserInteractionAt: o.LastUserInteractionAt,
-		OrbdVersion:           o.OrbdVersion,
-		AgentVersion:          o.AgentVersion,
-		CreatedAt:             o.CreatedAt,
-		DeletedAt:             o.DeletedAt,
-		ThreadIds:             threadIDs,
-	}
+	return v
 }
 
-// orbAPI 读取 orb 及其 provider 名与线程列表。
-func (s *Service) orbAPI(ctx context.Context, o db.Orb) apigen.Orb {
-	var name *string
-	if p, err := s.st.Q.GetProvider(ctx, o.ProviderID); err == nil {
-		name = &p.Name
+// threadError 返回线程 state=error 的原因：所在 orb 为 failed 时为 {orb_failed, reason}。
+// reasons 缓存 orb id → 原因（nil = orb 未失败），供列表批量转换复用。
+func (s *Service) threadError(ctx context.Context, t db.Thread, reasons map[string]*apigen.ThreadError) *apigen.ThreadError {
+	if t.State != StateError || t.OrbID == nil {
+		return nil
 	}
-	var ids []string
-	if ts, err := s.st.Q.ListThreadsByOrb(ctx, &o.ID); err == nil {
-		for _, t := range ts {
-			ids = append(ids, t.ID)
+	if e, ok := reasons[*t.OrbID]; ok {
+		return e
+	}
+	var out *apigen.ThreadError
+	if o, err := s.st.Q.GetOrb(ctx, *t.OrbID); err == nil && o.State == orbStateFailed {
+		reason, err := orbs.FailureReason(ctx, s.st.Q, o.ID)
+		if err != nil {
+			slog.Warn("threads: 读取 orb 失败原因失败", "orb", o.ID, "err", err)
 		}
+		out = &apigen.ThreadError{Kind: apigen.OrbFailed, Reason: reason}
 	}
-	return OrbToAPI(o, name, ids)
+	reasons[*t.OrbID] = out
+	return out
 }
 
 // threadAPI 读取线程行、标签与子线程计数。
@@ -124,6 +116,7 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	out := ThreadToAPI(t, labels)
+	out.Error = s.threadError(ctx, t, map[string]*apigen.ThreadError{})
 	children, err := s.childCounts(ctx)
 	if err != nil {
 		return apigen.Thread{}, err
