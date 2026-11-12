@@ -52,6 +52,10 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 		delay = time.Duration(ms) * time.Millisecond
 	}
 	fs.DurationVar(&o.delay, "delay", delay, "流式帧间隔")
+	// omp 的扩展参数（orbd 以 `-e <path>` 加载 Oryn 扩展）：接受并忽略。
+	var extensions multiFlag
+	fs.Var(&extensions, "e", "扩展文件（忽略，可重复）")
+	fs.Var(&extensions, "extension", "扩展文件（忽略，可重复）")
 	version := fs.Bool("version", false, "打印版本")
 	if err := fs.Parse(args); err != nil {
 		return o, false, err
@@ -71,6 +75,12 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	}
 	return o, false, nil
 }
+
+// multiFlag 收集可重复的字符串参数。
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	opts, showVersion, err := parseOptions(args, getenv, stderr)

@@ -155,5 +155,6 @@ func init() {
 	orbMetricsCmd.Flags().Duration("since", time.Hour, "起始时间（距今）")
 	orbMetricsCmd.Flags().Int("step", 0, "降采样步长（秒）；0 = 原始采样")
 	orbCmd.AddCommand(orbLsCmd, orbShowCmd, orbPauseCmd, orbResumeCmd, orbRmCmd, orbMetricsCmd)
+	orbCmd.AddCommand(orbSetupCmd)
 	root.AddCommand(orbCmd)
 }

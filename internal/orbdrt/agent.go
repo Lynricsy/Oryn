@@ -327,6 +327,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	for k, v := range r.setupEnvSnapshot() {
 		env[k] = v
 	}
+	// agent 以登录 shell 的环境启动（setup 写进 ~/.profile 的开发环境由此生效）；Oryn 自己的变量与
+	// agent.start 下发的环境（env 模式密钥）在其后覆盖。
+	env = loginEnv(r.ctx, cwd, env)
 	env["PI_RPC_EMIT_TITLE"] = "1"
 	env["PI_NOTIFICATIONS"] = "off"
 	env["ORYN_THREAD_ID"] = p.ThreadID
@@ -334,7 +337,7 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env[k] = v
 	}
 	pid, err := t.start(startSpec{
-		args:       []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir},
+		args:       []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()},
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,

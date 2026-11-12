@@ -22,8 +22,10 @@ import (
 
 const (
 	setupTimeout = 20 * time.Minute
-	resumeWait   = 10 * time.Second
-	logChunk     = 16 << 10
+	// resumeTimeout 是 resume 脚本（含转入后台的部分）的总上限：resume 应在数秒内完成，
+	// 卡死的 resume 不能一直占住 setup 互斥。
+	resumeTimeout = 10 * time.Minute
+	logChunk      = 16 << 10
 )
 
 func (r *Runtime) setupEnvSnapshot() map[string]string {
@@ -42,23 +44,39 @@ func (r *Runtime) currentWorkdir() string {
 	return filepath.Join(r.home, "workspace")
 }
 
-// runSetup 实现 setup.run（full=true）与 resume.run（H3.3）。同一时刻只运行一个。
+// runSetup 实现 setup.run（full=true）与 resume.run（H3.3）。与手动重跑互斥：已有 setup / resume
+// （含转入后台的 resume）运行时排队等待。每个阶段结束发一条 setup.result（trigger=auto）。
 func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool) (apigen.LinkCtlSetupRunResult, error) {
-	r.setupMu.Lock()
-	defer r.setupMu.Unlock()
-	start := time.Now()
 	res := apigen.LinkCtlSetupRunResult{}
+	if err := r.acquireSetup(ctx); err != nil {
+		return res, ctlErr("failed", "%v", err)
+	}
+	// resume 交给后台时连同互斥一起移交，由它在脚本结束时释放。
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			r.releaseSetup()
+		}
+	}()
+	reqStart := time.Now()
+	phase, phaseStart := apigen.SetupPhaseResume, reqStart
+	if full {
+		phase = apigen.SetupPhaseSetup
+	}
+	// 中途出错（omp 配置、git、clone）也上报当前阶段的失败结果，控制面据此留下这次运行与日志。
+	fail := func(err *link.CtlError) (apigen.LinkCtlSetupRunResult, error) {
+		r.publishResult(apigen.LinkCtlSetupResultParams{
+			Phase: phase, Trigger: apigen.SetupTriggerAuto, Ok: false, Error: new(err.Message),
+			StartedAt: phaseStart.UnixMilli(), DurationMs: time.Since(phaseStart).Milliseconds(),
+		})
+		return res, err
+	}
 
-	logDir := filepath.Join(r.home, ".cache", "oryn", "logs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return res, ctlErr("failed", "%v", err)
-	}
-	setupLog, err := os.OpenFile(filepath.Join(logDir, "setup.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	lg, closeLog, err := r.openLogger("setup.log", nil)
 	if err != nil {
-		return res, ctlErr("failed", "%v", err)
+		return fail(ctlErr("failed", "%v", err))
 	}
-	defer setupLog.Close()
-	lg := &setupLogger{r: r, file: setupLog}
+	defer closeLog()
 
 	workdir := p.Workdir
 	switch {
@@ -71,33 +89,36 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 	}
 	env := r.baseEnv()
 	maps.Copy(env, p.Env)
+	// 记住本次参数，供 orb 内 `oryn orb setup run` 重跑。
 	r.envMu.Lock()
 	r.setupEnv = maps.Clone(p.Env)
 	r.workdir = workdir
+	r.lastScripts = cloneScripts(p.Scripts)
+	r.haveParams = true
 	r.envMu.Unlock()
 
 	// 1. omp 文本配置。
 	if err := r.writeOmpHome(p.OmpHome); err != nil {
 		lg.system(apigen.OmpHome, "error: "+err.Error())
-		return res, ctlErr("failed", "omp home: %v", err)
+		return fail(ctlErr("failed", "omp home: %v", err))
 	}
 	lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
 
 	// 2. git insteadOf：经本机 egress 代理访问 git 主机（控制面注入令牌）。
 	for _, h := range p.GitHosts {
 		if h == "" || strings.ContainsAny(h, "/ \t\n@") {
-			return res, ctlErr(link.CodeInvalidParams, "invalid git host %q", h)
+			return fail(ctlErr(link.CodeInvalidParams, "invalid git host %q", h))
 		}
 		key := fmt.Sprintf("url.http://%s/git/%s/.insteadOf", r.EgressAddr(), h)
 		if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", key, "https://"+h+"/"); err != nil {
-			return res, ctlErr("failed", "git config for %s: %v", h, err)
+			return fail(ctlErr("failed", "git config for %s: %v", h, err))
 		}
 	}
 
 	if full {
 		// 3. clone：仓库存在且工作目录尚无检出。
 		if err := os.MkdirAll(filepath.Dir(workdir), 0o755); err != nil {
-			return res, ctlErr("failed", "%v", err)
+			return fail(ctlErr("failed", "%v", err))
 		}
 		if p.Repo != nil && p.Repo.URL != "" && !hasCheckout(workdir) {
 			args := []string{"clone"}
@@ -112,45 +133,69 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 			err := lg.run(cctx, apigen.Clone, r.home, envList(env), "git", args...)
 			cancel()
 			if err != nil {
-				return res, ctlErr(errCode(err), "git clone: %v", err)
+				return fail(ctlErr(errCode(err), "git clone: %v", err))
 			}
 		}
 		if err := os.MkdirAll(workdir, 0o755); err != nil {
-			return res, ctlErr("failed", "%v", err)
+			return fail(ctlErr("failed", "%v", err))
 		}
 
 		// 4. setup 脚本（合计 20 分钟），成功后写标记。
-		marker := filepath.Join(r.home, ".oryn", "setup.done")
-		if _, err := os.Stat(marker); err != nil {
-			res.SetupRan = true
-			sctx, cancel := context.WithTimeout(ctx, setupTimeout)
-			err := r.runScripts(sctx, lg, apigen.Setup, workdir, env, p.Scripts.Setup, "setup")
-			cancel()
-			switch {
-			case err != nil:
-				// 脚本失败不让 orb 失败：agent 仍要启动，才能读日志并修复脚本。不写标记，下次 setup 重跑。
-				lg.system(apigen.Setup, "setup failed: "+err.Error())
-				msg := err.Error()
-				res.SetupError = &msg
-			default:
-				if err := writeFileAtomic(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
-					return res, ctlErr("failed", "%v", err)
-				}
-				lg.system(apigen.Setup, "setup completed")
+		sres := apigen.LinkCtlSetupResultParams{
+			Phase: apigen.SetupPhaseSetup, Trigger: apigen.SetupTriggerAuto,
+			StartedAt: phaseStart.UnixMilli(), HasProjectScript: nonEmpty(p.Scripts.Setup),
+			HasRepoScript: repoScript(workdir, "setup") != "",
+		}
+		if _, err := os.Stat(r.setupMarker()); err != nil {
+			res.SetupRan, sres.SetupRan = true, true
+			// 脚本失败不让 orb 失败：agent 仍要启动，才能读日志并修复脚本。不写标记，下次 setup 重跑。
+			if err := r.setupScripts(ctx, lg, workdir, env, p.Scripts.Setup); err != nil {
+				res.SetupError = new(err.Error())
 			}
 		} else {
 			lg.system(apigen.Setup, "setup already done; skipped")
 		}
+		sres.Ok, sres.Error = res.SetupError == nil, res.SetupError
+		sres.DurationMs = time.Since(phaseStart).Milliseconds()
+		r.publishResult(sres)
+		// 此后的失败属于 resume 阶段。
+		phase, phaseStart = apigen.SetupPhaseResume, time.Now()
 	} else if err := os.MkdirAll(workdir, 0o755); err != nil {
-		return res, ctlErr("failed", "%v", err)
+		return fail(ctlErr("failed", "%v", err))
 	}
 
-	// 5. resume 脚本：至多等 10 秒，其余放到后台继续。
-	r.startResume(lg, workdir, env, p.Scripts.Resume)
+	// 5. resume 脚本：至多等 ResumeWait，其余放到后台继续；结果在脚本真正结束时上报。
+	handedOff = true
+	r.runResume(r.ctx, lg, workdir, env, p.Scripts.Resume, apigen.SetupTriggerAuto, nil, false)
 
 	res.Ok = res.SetupError == nil
-	res.DurationMs = time.Since(start).Milliseconds()
+	res.DurationMs = time.Since(reqStart).Milliseconds()
 	return res, nil
+}
+
+func (r *Runtime) setupMarker() string { return filepath.Join(r.home, ".oryn", "setup.done") }
+
+// setupScripts 执行 setup 阶段的脚本（合计 20 分钟）；成功后写 setup.done 标记。
+func (r *Runtime) setupScripts(ctx context.Context, lg *setupLogger, workdir string, env map[string]string, project *string) error {
+	start := time.Now()
+	sctx, cancel := context.WithTimeout(ctx, setupTimeout)
+	defer cancel()
+	cmds, err := r.scriptCmds(workdir, project, "setup")
+	if err == nil {
+		if len(cmds) == 0 {
+			lg.system(apigen.Setup, "no setup script (project settings, .oryn/setup or .agents/setup)")
+		}
+		err = runCmds(sctx, lg, apigen.Setup, workdir, env, cmds)
+	}
+	if err == nil {
+		err = writeFileAtomic(r.setupMarker(), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+	}
+	if err != nil {
+		lg.system(apigen.Setup, "setup failed: "+err.Error())
+		return err
+	}
+	lg.system(apigen.Setup, fmt.Sprintf("setup completed in %s", time.Since(start).Round(time.Millisecond)))
+	return nil
 }
 
 func errCode(err error) string {
@@ -217,81 +262,138 @@ func (r *Runtime) pruneOmpHome(base string, files []apigen.LinkCtlOmpHomeFile) e
 	return writeFileAtomic(manifest, b, 0o600)
 }
 
-// scriptCmds 列出某阶段要执行的命令：项目脚本（内容）+ 仓库内 `.oryn/<name>`，缺失时回退 `.agents/<name>`。
-func (r *Runtime) scriptCmds(phase apigen.LinkCtlSetupLogParamsPhase, workdir string, project *string, name string) ([][]string, error) {
-	var cmds [][]string
-	if project != nil && strings.TrimSpace(*project) != "" {
-		dir := filepath.Join(r.home, ".cache", "oryn")
-		path := filepath.Join(dir, "project-"+name+".sh")
-		if err := writeFileAtomic(path, []byte(*project), 0o700); err != nil {
-			return nil, err
-		}
-		if strings.HasPrefix(*project, "#!") {
-			cmds = append(cmds, []string{path})
-		} else {
-			cmds = append(cmds, []string{"bash", path})
-		}
-	}
+func nonEmpty(s *string) bool { return s != nil && strings.TrimSpace(*s) != "" }
+
+// repoScript 返回工作目录内可执行的 `.oryn/<name>`，缺失时回退 `.agents/<name>`；都没有返回空串。
+func repoScript(workdir, name string) string {
 	for _, rel := range []string{".oryn/" + name, ".agents/" + name} {
 		p := filepath.Join(workdir, rel)
 		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
-			cmds = append(cmds, []string{p})
-			break
+			return p
 		}
 	}
-	_ = phase
+	return ""
+}
+
+// scriptCmd 是一条要执行的脚本命令；label 用于日志与错误信息。
+type scriptCmd struct {
+	label string
+	argv  []string
+}
+
+// scriptCmds 列出某阶段要执行的命令：项目脚本（内容）+ 仓库内 `.oryn/<name>`，缺失时回退 `.agents/<name>`。
+func (r *Runtime) scriptCmds(workdir string, project *string, name string) ([]scriptCmd, error) {
+	var cmds []scriptCmd
+	if nonEmpty(project) {
+		path := filepath.Join(r.home, ".cache", "oryn", "project-"+name+".sh")
+		if err := writeFileAtomic(path, []byte(*project), 0o700); err != nil {
+			return nil, err
+		}
+		argv := []string{"bash", path}
+		if strings.HasPrefix(*project, "#!") {
+			argv = []string{path}
+		}
+		cmds = append(cmds, scriptCmd{label: "project " + name + " script", argv: argv})
+	}
+	if p := repoScript(workdir, name); p != "" {
+		rel, _ := filepath.Rel(workdir, p)
+		cmds = append(cmds, scriptCmd{label: rel, argv: []string{p}})
+	}
 	return cmds, nil
 }
 
-func (r *Runtime) runScripts(ctx context.Context, lg *setupLogger, phase apigen.LinkCtlSetupLogParamsPhase, workdir string, env map[string]string, project *string, name string) error {
-	cmds, err := r.scriptCmds(phase, workdir, project, name)
-	if err != nil {
-		return err
-	}
+// runCmds 依次执行命令，遇错即停；错误带上脚本名。
+func runCmds(ctx context.Context, lg *setupLogger, phase apigen.LinkCtlSetupLogParamsPhase, workdir string, env map[string]string, cmds []scriptCmd) error {
 	for _, c := range cmds {
-		lg.system(phase, "running "+strings.Join(c, " "))
-		if err := lg.run(ctx, phase, workdir, envList(env), c[0], c[1:]...); err != nil {
-			return err
+		// 每个脚本都在登录 shell 环境下运行（逐个求值）：前一个脚本写进 profile 的 PATH 等对后面的脚本可见。
+		lg.system(phase, "running "+strings.Join(c.argv, " "))
+		if err := lg.run(ctx, phase, workdir, envList(loginEnv(ctx, workdir, env)), c.argv[0], c.argv[1:]...); err != nil {
+			return fmt.Errorf("%s: %w", c.label, err)
 		}
 	}
 	return nil
 }
 
-func (r *Runtime) startResume(setupLg *setupLogger, workdir string, env map[string]string, project *string) {
-	cmds, err := r.scriptCmds(apigen.Resume, workdir, project, "resume")
-	if err != nil {
-		setupLg.system(apigen.Resume, "resume: "+err.Error())
-		return
+// runResume 执行 resume 阶段并在脚本真正结束时上报 setup.result、释放 setup 互斥（调用方须已持有）。
+// foreground=false 时至多等 ResumeWait，超时把余下部分留在后台（"still running" 记入 setupLg，可为 nil）；
+// foreground=true 时等到结束（手动重跑）。返回值在后台情形下只是尚未完成的部分结果。
+func (r *Runtime) runResume(ctx context.Context, setupLg *setupLogger, workdir string, env map[string]string, project *string,
+	trigger apigen.SetupTrigger, tee teeFunc, foreground bool,
+) apigen.LinkCtlSetupResultParams {
+	start := time.Now()
+	res := apigen.LinkCtlSetupResultParams{
+		Phase: apigen.SetupPhaseResume, Trigger: trigger, StartedAt: start.UnixMilli(),
+		HasProjectScript: nonEmpty(project), HasRepoScript: repoScript(workdir, "resume") != "",
 	}
-	if len(cmds) == 0 {
-		return
-	}
-	f, err := os.OpenFile(filepath.Join(r.home, ".cache", "oryn", "logs", "resume.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		setupLg.system(apigen.Resume, "resume: "+err.Error())
-		return
-	}
-	lg := &setupLogger{r: r, file: f}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer f.Close()
-		for _, c := range cmds {
-			lg.system(apigen.Resume, "running "+strings.Join(c, " "))
-			// resume 脚本不受请求 ctx 约束：超过等待时间后在后台继续运行。
-			if err := lg.run(context.Background(), apigen.Resume, workdir, envList(env), c[0], c[1:]...); err != nil {
-				lg.system(apigen.Resume, "resume failed: "+err.Error())
-				return
-			}
+	finish := func(err error) apigen.LinkCtlSetupResultParams {
+		res.Ok = err == nil
+		if err != nil {
+			res.Error = new(err.Error())
 		}
+		res.DurationMs = time.Since(start).Milliseconds()
+		r.publishResult(res)
+		r.releaseSetup()
+		return res
+	}
+	lg, closeLog, err := r.openLogger("resume.log", tee)
+	if err != nil {
+		r.log.Warn("open resume log", "err", err)
+		return finish(err)
+	}
+	cmds, err := r.scriptCmds(workdir, project, "resume")
+	if err != nil || len(cmds) == 0 {
+		if err != nil {
+			lg.system(apigen.Resume, "resume: "+err.Error())
+		} else {
+			lg.system(apigen.Resume, "no resume script (project settings, .oryn/resume or .agents/resume)")
+		}
+		closeLog()
+		return finish(err)
+	}
+	done := make(chan apigen.LinkCtlSetupResultParams, 1)
+	go func() {
+		defer closeLog()
+		// 不受 ctl 请求约束：超过等待时间后在后台继续运行（上限 resumeTimeout）。
+		rctx, cancel := context.WithTimeout(ctx, resumeTimeout)
+		defer cancel()
+		err := runCmds(rctx, lg, apigen.Resume, workdir, env, cmds)
+		if err != nil {
+			lg.system(apigen.Resume, "resume failed: "+err.Error())
+		} else {
+			lg.system(apigen.Resume, fmt.Sprintf("resume completed in %s", time.Since(start).Round(time.Millisecond)))
+		}
+		done <- finish(err)
 	}()
-	tm := time.NewTimer(resumeWait)
+	if foreground {
+		return <-done
+	}
+	tm := time.NewTimer(r.cfg.ResumeWait)
 	defer tm.Stop()
 	select {
-	case <-done:
+	case res := <-done:
+		return res
 	case <-tm.C:
-		setupLg.system(apigen.Resume, "resume still running; continuing in background")
+		if setupLg != nil {
+			setupLg.system(apigen.Resume, "resume still running; continuing in background")
+		}
+		return res
 	}
+}
+
+// teeFunc 把日志另外交给一个调用方（orb 内 `oryn orb setup run` 的实时输出）。
+type teeFunc func(stream apigen.LinkCtlSetupLogParamsStream, data []byte)
+
+// openLogger 以追加方式打开 $HOME/.cache/oryn/logs/<name>。
+func (r *Runtime) openLogger(name string, tee teeFunc) (*setupLogger, func(), error) {
+	logDir := filepath.Join(r.home, ".cache", "oryn", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(logDir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &setupLogger{r: r, file: f, tee: tee}, func() { _ = f.Close() }, nil
 }
 
 // setupLogger 把输出写入日志文件并以 setup.log 通知流式上报。
@@ -299,11 +401,15 @@ type setupLogger struct {
 	r    *Runtime
 	mu   sync.Mutex
 	file io.Writer
+	tee  teeFunc
 }
 
 func (l *setupLogger) emit(phase apigen.LinkCtlSetupLogParamsPhase, stream apigen.LinkCtlSetupLogParamsStream, data []byte) {
 	l.mu.Lock()
 	_, _ = l.file.Write(data)
+	if l.tee != nil {
+		l.tee(stream, data)
+	}
 	l.mu.Unlock()
 	for len(data) > 0 {
 		n := min(len(data), logChunk)

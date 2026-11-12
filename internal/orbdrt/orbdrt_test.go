@@ -137,7 +137,7 @@ func TestSetupRun(t *testing.T) {
 
 func TestSetupFailureAndResumeBackground(t *testing.T) {
 	cp := newFakeCP(t)
-	rt := startRuntime(t, cp, nil)
+	rt := startRuntime(t, cp, func(c *Config) { c.ResumeWait = 500 * time.Millisecond })
 	bad := "echo boom; exit 3"
 	var failed apigen.LinkCtlSetupRunResult
 	require.NoError(t, cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{Scripts: apigen.LinkCtlSetupScripts{Setup: &bad}}, &failed),
@@ -148,15 +148,12 @@ func TestSetupFailureAndResumeBackground(t *testing.T) {
 	assert.Contains(t, *failed.SetupError, "exit status 3")
 	assert.NoFileExists(t, filepath.Join(rt.home, ".oryn", "setup.done"), "失败不写标记，下次重跑")
 
-	// resume 超过 10 秒的部分在后台继续：请求在 ~10s 内返回。
-	if testing.Short() {
-		t.Skip("slow")
-	}
-	slow := "sleep 12; echo late >> \"$HOME/late.txt\""
+	// resume 超过等待时间的部分在后台继续：请求在等待时间后即返回。
+	slow := "sleep 2; echo late >> \"$HOME/late.txt\""
 	start := time.Now()
 	var res apigen.LinkCtlSetupRunResult
 	require.NoError(t, cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{Scripts: apigen.LinkCtlSetupScripts{Resume: &slow}}, &res))
-	assert.Less(t, time.Since(start), 12*time.Second)
+	assert.Less(t, time.Since(start), 2*time.Second)
 	assert.NoFileExists(t, filepath.Join(rt.home, "late.txt"))
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(filepath.Join(rt.home, "late.txt"))

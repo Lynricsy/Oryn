@@ -22,6 +22,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
 // 计划中固定的默认值。
@@ -53,6 +54,8 @@ type Config struct {
 	RestartDelays []time.Duration
 	// InitTimeout 是等待 `ready` 与每个初始化命令应答的上限，默认 60s。
 	InitTimeout time.Duration
+	// ResumeWait 是 setup.run / resume.run 等待 resume 脚本的时长，超出后转入后台，默认 10s。
+	ResumeWait time.Duration
 
 	// 指标数据源（测试可替换）：默认 /sys/fs/cgroup、/sys/class/net/eth0、/proc/meminfo、/。
 	CgroupDir string
@@ -103,10 +106,20 @@ type Runtime struct {
 	threads   map[string]*thread
 	reg       *registry
 
-	setupMu  sync.Mutex
-	envMu    sync.Mutex
-	setupEnv map[string]string
-	workdir  string
+	// setupSem（容量 1）让自动 setup / resume（含转入后台的 resume）与手动重跑互斥。
+	setupSem chan struct{}
+	// 以下为最近一次 setup.run / resume.run 的参数（手动重跑用）。
+	envMu       sync.Mutex
+	setupEnv    map[string]string
+	workdir     string
+	lastScripts apigen.LinkCtlSetupScripts
+	haveParams  bool
+
+	statusMu sync.Mutex
+	status   orbsock.Status
+	// pendingResults 是尚未成功发出的 setup.result（断连期间结束的运行，重连后补发）。
+	resultsMu      sync.Mutex
+	pendingResults []apigen.LinkCtlSetupResultParams
 
 	metrics *metricsReader
 }
@@ -152,6 +165,9 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.InitTimeout <= 0 {
 		cfg.InitTimeout = 60 * time.Second
 	}
+	if cfg.ResumeWait <= 0 {
+		cfg.ResumeWait = 10 * time.Second
+	}
 	if cfg.CgroupDir == "" {
 		cfg.CgroupDir = "/sys/fs/cgroup"
 	}
@@ -181,7 +197,13 @@ func New(cfg Config) (*Runtime, error) {
 		threads:  map[string]*thread{},
 		reg:      loadRegistry(filepath.Join(home, ".oryn", "orbd", "threads.json"), cfg.OrbID),
 		metrics:  newMetricsReader(cfg),
+		setupSem: make(chan struct{}, 1),
 	}
+	if err := r.writeAgentAssets(); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("orbdrt: %w", err)
+	}
+	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	r.agentVersion = detectAgentVersion(cfg.AgentBin)
 	return r, nil
@@ -218,9 +240,10 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); r.serveEgress(ctx) }()
 	go func() { defer wg.Done(); r.metricsLoop(ctx) }()
+	go func() { defer wg.Done(); r.serveSocket(ctx) }()
 	r.linkLoop(ctx)
 	_ = r.egressLn.Close()
 	wg.Wait()
@@ -369,6 +392,9 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	}
 	r.log.Info("link up")
 	r.setConn(c)
+	r.resultsMu.Lock()
+	r.flushResultsLocked(c)
+	r.resultsMu.Unlock()
 	go r.acceptLoop(sess)
 
 	select {

@@ -72,6 +72,8 @@ type fakeCP struct {
 	hellos int
 	// foreign 中的线程对 entries.* 回 foreign_thread。
 	foreign map[string]bool
+	// project 是本 orb 所属项目的项目脚本；nil 表示 orb 不属于任何项目（no_project）。
+	project *apigen.LinkCtlProjectScripts
 
 	agents chan *link.Stream
 	blobs  chan *link.Stream
@@ -199,6 +201,23 @@ func (cp *fakeCP) onRequest(_ context.Context, method string, params json.RawMes
 		f.lines = append(f.lines, p.Lines...)
 		f.offset = p.EndOffset
 		return apigen.LinkCtlEntriesAppendResult{Accepted: true, Offset: f.offset}, nil
+	case "project.scripts.get", "project.scripts.set":
+		if cp.project == nil {
+			return nil, &link.CtlError{Code: "no_project", Message: "orb has no project"}
+		}
+		if method == "project.scripts.set" {
+			var p apigen.LinkCtlProjectScriptsSetParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, err
+			}
+			if p.Setup != nil {
+				cp.project.Setup = p.Setup
+			}
+			if p.Resume != nil {
+				cp.project.Resume = p.Resume
+			}
+		}
+		return *cp.project, nil
 	}
 	return nil, link.ErrMethodNotFound
 }

@@ -5,6 +5,7 @@
 //
 //	--script <file>   用脚本替换默认的 prompt 帧序列（也可用环境变量 FAKEOMP_SCRIPT）
 //	--delay <dur>     流式帧之间的间隔（默认 20ms；也可用 FAKEOMP_DELAY_MS）
+//	-e <path>         扩展文件（与 omp 同名参数，接受并忽略）
 package main
 
 import (
