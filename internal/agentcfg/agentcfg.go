@@ -52,8 +52,10 @@ func EnvFallbackName(providerKey string) string {
 
 // excludedDirs / excludedGlobs 是 `oryn config push` 不上传的路径。
 var (
-	excludedDirs  = []string{"sessions", "blobs", "cache", "logs", "natives", "terminal-sessions"}
-	excludedGlobs = []string{"*.db", "*.db-*", "auth.json", "history*"}
+	// ssh-keys/（私钥）、remote-pairing.json（配对令牌）、*.bak（常为含明文密钥的 models.yml 备份）同样不上传：
+	// 它们不是文本配置，却会把凭据带进 orb。
+	excludedDirs  = []string{"sessions", "blobs", "cache", "logs", "natives", "terminal-sessions", "ssh-keys"}
+	excludedGlobs = []string{"*.db", "*.db-*", "auth.json", "history*", "remote-pairing.json", "*.bak", "*.bak.*"}
 )
 
 // Excluded 判断相对路径（以 / 分隔）是否应排除在导入之外。

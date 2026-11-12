@@ -108,6 +108,7 @@ func TestExcluded(t *testing.T) {
 	for p, want := range map[string]bool{
 		"sessions/a.jsonl": true, "blobs/x": true, "agent.db": true, "agent.db-wal": true,
 		"auth.json": true, "history.db": true, "config.yml": false, "skills/sessions/x": false,
+		"ssh-keys/id_ed25519": true, "remote-pairing.json": true, "models.yml.bak.20260714-220351": true,
 	} {
 		assert.Equal(t, want, Excluded(p), p)
 	}
