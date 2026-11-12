@@ -3282,6 +3282,9 @@ type ListOrbGitCommitsParams struct {
 	// Base 基线分支名（如 `main`）
 	Base  *GitBaseQuery `form:"base,omitempty" json:"base,omitempty"`
 	Limit *int          `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 }
 
 // GetOrbGitDiffParams defines parameters for GetOrbGitDiff.
@@ -3301,6 +3304,9 @@ type GetOrbGitDiffParams struct {
 
 	// OldPath 重命名 / 复制前的路径（`GitFileChange.oldPath`）
 	OldPath *GitDiffOldPathQuery `form:"oldPath,omitempty" json:"oldPath,omitempty"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 }
 
 // GetOrbGitStatusParams defines parameters for GetOrbGitStatus.
@@ -6291,6 +6297,19 @@ func (siw *ServerInterfaceWrapper) ListOrbGitCommits(w http.ResponseWriter, r *h
 		return
 	}
 
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListOrbGitCommits(w, r, id, params)
 	}))
@@ -6394,6 +6413,19 @@ func (siw *ServerInterfaceWrapper) GetOrbGitDiff(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "oldPath"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "oldPath", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
 		}
 		return
 	}

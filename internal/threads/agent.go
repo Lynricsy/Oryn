@@ -88,7 +88,8 @@ type responseHead struct {
 
 // ---- agent 启动 ----
 
-// initFrames 按 C4 第 3 步构造 agent 初始化帧（M2 不发 terminal_configure）。
+// initFrames 按 C4 第 3 步构造 agent 初始化帧；M3 起在 set_subagent_subscription 之后开启终端
+// （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 func initFrames(t *thread) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
@@ -99,6 +100,7 @@ func initFrames(t *thread) []apigen.OmpFrame {
 		{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
 		{"type": "set_ask_dialog", "enabled": true, "form": true},
 		{"type": "set_subagent_subscription", "level": "progress"},
+		{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true},
 	}
 	if t.thinking != nil && *t.thinking != "" {
 		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
@@ -258,6 +260,20 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	s.recompute(ctx, t)
 }
 
+// onTerminalGap 处理 orbd 的 terminal.gap：其帧缓冲溢出时丢弃过该线程的 terminal_output，
+// 观看终端的客户端须经 terminal_snapshot 重同步。实时缓冲与线程状态不受影响。
+func (s *Service) onTerminalGap(ctx context.Context, orbID string, params json.RawMessage) {
+	var p apigen.LinkCtlTerminalGapParams
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	t, err := s.ownThread(ctx, orbID, p.ThreadID)
+	if err != nil {
+		return
+	}
+	s.out().TermLagged(t.id)
+}
+
 func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawMessage) {
 	var p apigen.LinkCtlAgentGapParams
 	if json.Unmarshal(params, &p) != nil {
@@ -402,6 +418,12 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		return
 	}
 	frame := json.RawMessage(line)
+	// 终端输出走热路径：不进实时缓冲、不算 agent 活动（开着 dev server 的 orb 仍能冻结）、不重算状态，
+	// 也不取线程锁——它是可丢弃、可经 terminal_snapshot 重同步的流。
+	if env.Type == "terminal_output" {
+		s.out().TermOutput(t.id, frame)
+		return
+	}
 	if env.IsResponse() {
 		s.onResponse(ctx, t, env, frame)
 		return
@@ -639,6 +661,17 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 	if err := s.enqueueLocked(t, line, &pendingCmd{cmdType: cmdType, reply: reply}); err != nil {
 		t.mu.Unlock()
 		return err
+	}
+	if cmdType == "terminal_resize" {
+		// omp 不为 resize 发帧：由控制面告知其它窗口（含发起方）当前尺寸归属
+		var rz struct {
+			TerminalID string `json:"terminalId"`
+			Cols       int    `json:"cols"`
+			Rows       int    `json:"rows"`
+		}
+		if json.Unmarshal(frame, &rz) == nil && rz.TerminalID != "" && rz.Cols > 0 && rz.Rows > 0 {
+			s.out().TermResized(t.id, rz.TerminalID, rz.Cols, rz.Rows)
+		}
 	}
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
 	s.clearUnreadLocked(ctx, t)

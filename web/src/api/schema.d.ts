@@ -3922,6 +3922,8 @@ export interface operations {
                 path: components["parameters"]["GitDiffPathQuery"];
                 /** @description 重命名 / 复制前的路径（`GitFileChange.oldPath`） */
                 oldPath?: components["parameters"]["GitDiffOldPathQuery"];
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
             };
             header?: never;
             path: {
@@ -3951,6 +3953,8 @@ export interface operations {
                 /** @description 基线分支名（如 `main`） */
                 base?: components["parameters"]["GitBaseQuery"];
                 limit?: number;
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
             };
             header?: never;
             path: {

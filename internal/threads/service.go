@@ -41,6 +41,12 @@ type Sink interface {
 	// PlanResolved 表示计划提案已被成功处理：所有客户端清除 planProposal。
 	PlanResolved(threadID string)
 	Orb(o apigen.Orb)
+	// TermOutput 是 terminal_output 帧（热路径，未持线程锁）：只发给开启了 term.watch 的连接，可丢弃。
+	TermOutput(threadID string, frame json.RawMessage)
+	// TermLagged 表示 orbd 丢弃过该线程的终端输出（terminal.gap）：观看终端的连接须重同步。
+	TermLagged(threadID string)
+	// TermResized 表示某个连接的 terminal_resize 已入队：广播给该线程全部订阅者。
+	TermResized(threadID, terminalID string, cols, rows int)
 }
 
 // Config 是线程服务参数。
@@ -71,6 +77,7 @@ type Service struct {
 	focus     map[string]string // 连接 id → 正在看的线程
 	orbStates map[string]orbCache
 	touched   map[string]time.Time  // orb → 上次 TouchAgent（节流）
+	userTouch map[string]time.Time  // orb → 上次 TouchUser（节流）
 	blobs     map[string]*blobFetch // sha256 → 在途的 blob.fetch
 
 	nextID atomic.Uint64
@@ -108,6 +115,9 @@ func (nopSink) LiveReset(string)                        {}
 func (nopSink) TranscriptReset(string, int64)           {}
 func (nopSink) PlanResolved(string)                     {}
 func (nopSink) Orb(apigen.Orb)                          {}
+func (nopSink) TermOutput(string, json.RawMessage)      {}
+func (nopSink) TermLagged(string)                       {}
+func (nopSink) TermResized(string, string, int, int)    {}
 
 // New 创建线程服务并向 orbs 注册 entries.* / agent.* 处理器、agent 与 blob 流处理器、事件订阅与空闲判定。
 func New(cfg Config, st *store.Store, orbs Orbs) *Service {
@@ -124,6 +134,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		focus:     map[string]string{},
 		orbStates: map[string]orbCache{},
 		touched:   map[string]time.Time{},
+		userTouch: map[string]time.Time{},
 		blobs:     map[string]*blobFetch{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
@@ -140,6 +151,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 	orbs.HandleNotify("entries.reset_done", s.onResetDone)
 	orbs.HandleNotify("agent.status", s.onAgentStatus)
 	orbs.HandleNotify("agent.gap", s.onAgentGap)
+	orbs.HandleNotify(string(apigen.MethodTerminalGap), s.onTerminalGap)
 	orbs.HandleStream("agent", s.onAgentStream)
 	orbs.HandleStream("blob", s.onBlobStream)
 	orbs.Subscribe(func(ev OrbEvent) { s.events.push(ev) })
@@ -474,11 +486,19 @@ func (s *Service) touchAgent(orbID string) {
 	s.go_(func(ctx context.Context) { s.orbs.TouchAgent(ctx, orbID) })
 }
 
-// touchUser 记录一次用户交互。
+// touchUser 节流地记录一次用户交互（每 orb 至多 1s 一次：终端按键每次都是一条 cmd）。
 func (s *Service) touchUser(orbID string) {
 	if orbID == "" {
 		return
 	}
+	s.mu.Lock()
+	now := time.Now()
+	if now.Sub(s.userTouch[orbID]) < time.Second {
+		s.mu.Unlock()
+		return
+	}
+	s.userTouch[orbID] = now
+	s.mu.Unlock()
 	s.go_(func(ctx context.Context) { s.orbs.TouchUser(ctx, orbID) })
 }
 

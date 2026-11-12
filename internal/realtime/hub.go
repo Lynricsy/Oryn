@@ -1,6 +1,7 @@
 // Package realtime 实现客户端 WebSocket hub（计划 C3 `GET /api/v1/ws?ticket=`）：
 // 连接建立后推 `index`，之后 `index.patch`；`sub` 时先发 `thread.snapshot`，再分批补发条目，
 // 然后转实时；`cmd` 的应答只回发起连接；`ui.response` 先到先得；待发超过 8MiB 的慢连接被断开。
+// 终端输出（M3）只发给 `term.watch` 开启的订阅，单连接待发超过 TermLag 时丢弃并改发 `term.lagged`，不断开。
 package realtime
 
 import (
@@ -41,6 +42,8 @@ type Revocations interface {
 const (
 	// MaxPendingBytes 是单连接待发字节上限，超过即断开让其重连补拉。
 	MaxPendingBytes = 8 << 20
+	// TermLagBytes 是终端输出的软上限：单连接待发超过它时丢弃 terminal_output 并发 term.lagged。
+	TermLagBytes = 1 << 20
 	// MaxMessageBytes 是客户端单条消息上限（带内联图片的 prompt）。
 	MaxMessageBytes = 16 << 20
 	writeTimeout    = 30 * time.Second
@@ -52,8 +55,9 @@ type Hub struct {
 	svc     *threads.Service
 	tickets TicketRedeemer
 	valid   PrincipalChecker
-	// MaxPending 可在测试中调小。
+	// MaxPending / TermLag 可在测试中调小。
 	MaxPending int
+	TermLag    int
 
 	nextConn atomic.Uint64
 
@@ -66,7 +70,7 @@ type Hub struct {
 // New 创建 hub 并设为 svc 的 Sink；rev 可为 nil。valid 在连接登记后复核票据主体（H3：票据签发后、
 // 兑换前主体被吊销时，吊销事件发生在连接登记之前、关不掉它）。
 func New(svc *threads.Service, tickets TicketRedeemer, rev Revocations, valid PrincipalChecker) *Hub {
-	h := &Hub{svc: svc, tickets: tickets, valid: valid, MaxPending: MaxPendingBytes, conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{}}
+	h := &Hub{svc: svc, tickets: tickets, valid: valid, MaxPending: MaxPendingBytes, TermLag: TermLagBytes, conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{}}
 	svc.SetSink(h)
 	if rev != nil {
 		rev.Subscribe(h.revoke)
@@ -95,9 +99,11 @@ type conn struct {
 }
 
 // sub 是连接对一个线程的订阅；补发条目期间实时事件先进 buf。由 Hub.mu 保护。
+// term 为真时接收该线程的 terminal_output（term.watch）。
 type sub struct {
 	buffering bool
 	buf       [][]byte
+	term      bool
 }
 
 // ServeHTTP 处理 `GET /api/v1/ws?ticket=…`。
@@ -208,6 +214,17 @@ func (c *conn) enqueue(b []byte) {
 	}
 }
 
+// admitSoft 在待发不超过 limit（及 MaxPending）时计入预算并返回 true；否则不计入、不断开，返回 false。
+func (c *conn) admitSoft(n, limit int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.pending+n > limit || c.pending+n > c.h.MaxPending {
+		return false
+	}
+	c.pending += n
+	return true
+}
+
 // stash 把消息暂存到 dst（已计入预算，之后由 release 放进发送队列或由 discard 退回）；超限即断开。
 func (c *conn) stash(dst *[][]byte, b []byte) {
 	if c.admit(len(b)) {
@@ -298,6 +315,7 @@ type clientMsg struct {
 	AfterSeq      *int64          `json:"afterSeq"`
 	TranscriptRev *int64          `json:"transcriptRev"`
 	Frame         json.RawMessage `json:"frame"`
+	On            *bool           `json:"on"`
 }
 
 func (c *conn) readLoop() {
@@ -392,6 +410,17 @@ func (c *conn) handle(m clientMsg) {
 		if err := c.h.svc.UIResponse(c.ctx, tid, m.Frame); err != nil {
 			c.fail(err, m.ThreadID, "")
 		}
+	case "term.watch":
+		if !needThread() {
+			return
+		}
+		if m.On == nil {
+			c.sendError("bad_message", "term.watch requires on", m.ThreadID, "")
+			return
+		}
+		if !c.h.setTermWatch(c, tid, *m.On) {
+			c.sendError("not_subscribed", "term.watch requires sub first", m.ThreadID, "")
+		}
 	default:
 		c.sendError("bad_message", "unknown message type "+m.Type, m.ThreadID, m.ID)
 	}
@@ -418,6 +447,8 @@ func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64, clientRev *int
 		}
 		if old := m[c]; old != nil {
 			c.discard(old.buf)
+			// 同一连接重新订阅（如 transcript.reset 后）不关掉已开启的终端观看
+			mine.term = old.term
 		}
 		m[c] = mine
 		h.mu.Unlock()
@@ -466,6 +497,18 @@ func (h *Hub) unsubscribe(c *conn, threadID string, s *sub) {
 	if len(m) == 0 {
 		delete(h.subs, threadID)
 	}
+}
+
+// setTermWatch 开关连接对线程终端输出的接收；未订阅该线程时返回 false。
+func (h *Hub) setTermWatch(c *conn, threadID string, on bool) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.subs[threadID][c]
+	if s == nil {
+		return false
+	}
+	s.term = on
+	return true
 }
 
 type entriesMsg struct {
@@ -576,3 +619,71 @@ func (h *Hub) PlanResolved(threadID string) {
 
 // Orb 实现 threads.Sink。
 func (h *Hub) Orb(o apigen.Orb) { h.toAll(map[string]any{"type": "orb", "orb": o}) }
+
+// TermOutput 实现 threads.Sink：线上仍是普通的 `frame` 消息，但只发给开启了 term.watch 的订阅。
+// 连接待发超过 TermLag 时丢弃本帧、关闭其观看并发一条 term.lagged（客户端经 terminal_snapshot 重同步后重新开启）。
+func (h *Hub) TermOutput(threadID string, frame json.RawMessage) {
+	// 热路径：frame 已由线程服务解析过，是一行合法 JSON，直接拼接，不再整帧重编码
+	tid, err := json.Marshal(threadID)
+	if err != nil {
+		return
+	}
+	b := make([]byte, 0, len(frame)+len(tid)+40)
+	b = append(b, `{"type":"frame","threadId":`...)
+	b = append(b, tid...)
+	b = append(b, `,"frame":`...)
+	b = append(b, frame...)
+	b = append(b, '}')
+	var lagged []byte
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c, s := range h.subs[threadID] {
+		if !s.term {
+			continue
+		}
+		if c.admitSoft(len(b), h.TermLag) {
+			if s.buffering {
+				s.buf = append(s.buf, b)
+			} else {
+				c.release([][]byte{b})
+			}
+			continue
+		}
+		s.term = false
+		if lagged == nil {
+			lagged = termLaggedMsg(threadID)
+		}
+		h.deliverLocked(c, s, lagged)
+	}
+}
+
+// TermLagged 实现 threads.Sink：orbd 丢弃过终端输出，通知该线程全部观看终端的连接（不改其观看开关）。
+func (h *Hub) TermLagged(threadID string) {
+	b := termLaggedMsg(threadID)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c, s := range h.subs[threadID] {
+		if s.term {
+			h.deliverLocked(c, s, b)
+		}
+	}
+}
+
+// TermResized 实现 threads.Sink。
+func (h *Hub) TermResized(threadID, terminalID string, cols, rows int) {
+	h.toThread(threadID, apigen.WsServerTermResized{Type: apigen.TermResized, ThreadID: threadID, TerminalID: terminalID, Cols: cols, Rows: rows})
+}
+
+func termLaggedMsg(threadID string) []byte {
+	b, _ := json.Marshal(apigen.WsServerTermLagged{Type: apigen.TermLagged, ThreadID: threadID})
+	return b
+}
+
+// deliverLocked 按订阅是否在补发中把消息暂存或排入发送队列（受 MaxPending 约束）。调用方持有 h.mu。
+func (h *Hub) deliverLocked(c *conn, s *sub, b []byte) {
+	if s.buffering {
+		c.stash(&s.buf, b)
+		return
+	}
+	c.enqueue(b)
+}

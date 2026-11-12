@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"sync"
 	"time"
 
@@ -143,6 +144,9 @@ type Service struct {
 	policies  map[string]egress.Policy
 	// setupLogs 是各 orb 尚未写入运行记录的 setup.log 输出（见 setuprun.go）。
 	setupLogs map[string]*setupLogs
+	// httpTr 是经 fs 流访问 orbd 本机 API 的共享 Transport（见 orbhttp.go）。
+	httpOnce sync.Once
+	httpTr   *http.Transport
 
 	hmu       sync.RWMutex
 	reqs      map[string]RequestFunc

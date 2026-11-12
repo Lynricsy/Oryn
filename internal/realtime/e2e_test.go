@@ -57,6 +57,7 @@ type env struct {
 	st   *store.Store
 	orbs *threadstest.Orbs
 	svc  *threads.Service
+	hub  *realtime.Hub
 	srv  *httptest.Server
 	rev  *revocations
 }
@@ -78,7 +79,7 @@ func newEnv(t *testing.T) *env {
 		svc.Close()
 		_ = st.Close()
 	})
-	return &env{t: t, st: st, orbs: orbs, svc: svc, srv: srv, rev: rev}
+	return &env{t: t, st: st, orbs: orbs, svc: svc, hub: hub, srv: srv, rev: rev}
 }
 
 type msg struct {
@@ -91,6 +92,10 @@ type msg struct {
 	Response  json.RawMessage `json:"response"`
 	Entries   []threads.Entry `json:"entries"`
 	LastSeq   int64           `json:"lastSeq"`
+	// term.resized
+	TerminalID string `json:"terminalId"`
+	Cols       int    `json:"cols"`
+	Rows       int    `json:"rows"`
 	// thread.snapshot / transcript.reset
 	TranscriptRev int64 `json:"transcriptRev"`
 	FullReplay    bool  `json:"fullReplay"`

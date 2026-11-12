@@ -40,6 +40,9 @@ type ctlCall struct {
 
 type fakeOrbd struct {
 	url, orbID, token string
+	// features 进 hello；fs 非空时服务控制面打开的 fs 流（M3）。
+	features []string
+	fs       http.Handler
 
 	mu    sync.Mutex
 	sess  *link.Session
@@ -77,7 +80,29 @@ func (o *fakeOrbd) connect() error {
 	o.mu.Lock()
 	o.sess, o.ctl = sess, ctl
 	o.mu.Unlock()
-	if err := ctl.Notify("hello", apigen.LinkCtlHelloParams{OrbdVersion: "fake-1", AgentVersion: "omp/test", Os: "linux", Arch: "amd64", Threads: []apigen.LinkCtlHelloThread{}}); err != nil {
+	if o.fs != nil {
+		l := link.NewStreamListener("fs")
+		srv := &http.Server{Handler: o.fs, ReadHeaderTimeout: 5 * time.Second}
+		go func() { _ = srv.Serve(l) }()
+		go func() {
+			defer srv.Close()
+			for {
+				st, err := sess.AcceptStream(context.Background())
+				if err != nil {
+					if sess.IsClosed() {
+						return
+					}
+					continue
+				}
+				if st.Header.T == link.StreamFS {
+					l.Push(st)
+				} else {
+					_ = st.Close()
+				}
+			}
+		}()
+	}
+	if err := ctl.Notify("hello", apigen.LinkCtlHelloParams{OrbdVersion: "fake-1", AgentVersion: "omp/test", Os: "linux", Arch: "amd64", Threads: []apigen.LinkCtlHelloThread{}, Features: o.features}); err != nil {
 		return err
 	}
 	return ctl.Notify("metrics.sample", apigen.OrbMetricSample{TS: time.Now().UnixMilli(), CPUPct: 12.5, MemUsedMB: 100, MemLimitMB: 4096, DiskUsedMB: 10, NetRxBytes: 1, NetTxBytes: 2})
@@ -121,6 +146,9 @@ type fakeDriver struct {
 	orbds     map[string]*fakeOrbd
 	noConnect bool
 	ops       []string
+	// features / fs 用于此后新建的假 orbd。
+	features []string
+	fs       http.Handler
 }
 
 func newFakeDriver() *fakeDriver { return &fakeDriver{orbds: map[string]*fakeOrbd{}} }
@@ -143,11 +171,12 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
+	features, fs := d.features, d.fs
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()
