@@ -54,6 +54,18 @@ oryn provider run --config /etc/oryn/provider.yaml
 oryn secrets set git/github.com/token          # git 令牌，经出站代理注入 clone/push
 ```
 
+## orb 环境自配置
+
+项目的 orb 环境由生命周期脚本配置：仓库内 `.oryn/setup`（新 orb 首次就绪时运行一次，兼容读取 `.agents/setup`）、`.oryn/resume`（每次唤醒，至多等 10 秒），或存在项目设置里、不进仓库的项目脚本。脚本失败不会阻止 orb 就绪，线程里会出现提示条，可查看日志并一键交给 agent 修复。
+
+orb 内的 agent 自带 `oryn-setup` 技能：让它「为这个项目配置 Oryn orb 环境」，它会调查仓库、写出脚本、试跑并推送到基线分支。orb 内可用：
+
+```bash
+oryn orb setup run [--resume]                         # 重跑 setup / resume（经 orbd，结果上报控制面）
+oryn orb setup status | logs [--resume]               # 最近结果与日志
+oryn orb setup project-script get|set setup --file f  # 读写本 orb 所属项目的项目脚本
+```
+
 ## 文档
 
 - [`docs/deploy.md`](docs/deploy.md)：部署到 1Panel OpenResty 反代之后
