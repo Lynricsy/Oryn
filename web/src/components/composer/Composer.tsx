@@ -14,6 +14,7 @@ import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import type { SlashAction } from "../../lib/slash";
 import { realtime } from "../../realtime/socket";
 import {
+	isThreadBusy,
 	promptFrame,
 	resolveSlashText,
 	type SendMode,
@@ -34,10 +35,7 @@ export function Composer({
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
-	const busy = useThread(
-		threadId,
-		(s) => s.running || s.thread?.state === "working",
-	);
+	const busy = useThread(threadId, isThreadBusy);
 	const commands = useThread(threadId, (s) => s.commands);
 	const editorText = useThread(threadId, (s) => s.editorText);
 	const [text, setText] = useState("");

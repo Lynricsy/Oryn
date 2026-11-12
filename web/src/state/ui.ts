@@ -1,6 +1,7 @@
 /** 界面状态（与协议无关）：当前打开的对话框、侧边栏 / 信息面板开关、搜索聚焦请求。 */
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import type { Schemas } from "../api/client";
 import type { ReportKind } from "../lib/slash";
 
 export type DialogState =
@@ -14,7 +15,8 @@ export type DialogState =
 	| { kind: "label"; entryId: string }
 	| { kind: "labels" }
 	| { kind: "rename" }
-	| { kind: "debug" };
+	| { kind: "debug" }
+	| { kind: "setupLog"; orbId: string; run: Schemas["OrbSetupRun"] };
 
 export interface UiState {
 	dialog: DialogState | null;

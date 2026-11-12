@@ -551,5 +551,41 @@
 			"device": "设备令牌",
 			"recovery": "恢复会话"
 		}
+	},
+	"env": {
+		"title": "环境",
+		"log": "日志",
+		"viewLog": "查看日志",
+		"logTitle": "{{phase}} 日志",
+		"logEmpty": "日志为空。",
+		"setupFailed": "环境 setup 失败",
+		"resumeFailed": "环境 resume 失败",
+		"slow": "环境配置耗时 {{min}} 分钟",
+		"slowHint": "setup 越快，新 orb 就绪越快。",
+		"missing": "这个项目还没有环境配置",
+		"missingHint": "新 orb 不会自动安装依赖；可以让 agent 调查仓库并写出 .oryn/setup。",
+		"orbFailed": "orb 启动失败",
+		"noReason": "未给出原因",
+		"askFix": "让 agent 修复",
+		"askOptimize": "让 agent 优化",
+		"askGenerate": "让 agent 生成",
+		"sent": "已交给 agent",
+		"retry": "重试",
+		"ok": "成功",
+		"failed": "失败",
+		"skipped": "已跳过（已配置过）",
+		"none": "还没有 setup / resume 记录。",
+		"phase": {
+			"setup": "setup",
+			"resume": "resume"
+		},
+		"trigger": {
+			"auto": "自动",
+			"manual": "手动"
+		},
+		"repoScript": "仓库内脚本：{{value}}",
+		"repoScriptYes": "有",
+		"repoScriptNo": "无",
+		"repoScriptUnknown": "未知（尚无 setup 记录）"
 	}
 }

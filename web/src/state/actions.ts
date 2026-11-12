@@ -2,7 +2,7 @@
  * 线程操作：输入区发送、UI 应答、线程管理（REST）与 omp 命令的薄封装。
  * 组件只调这里，不直接拼命令帧。
  */
-import { api, type Schemas, unwrap } from "../api/client";
+import { api, rawFetch, type Schemas, unwrap } from "../api/client";
 import type { ComposerAction } from "../lib/composer";
 import {
 	parseSlash,
@@ -16,7 +16,12 @@ import type {
 	OmpCommand,
 } from "../omp/types";
 import { realtime } from "../realtime/socket";
-import { getThreadStore, indexStore } from "./stores";
+import { getThreadStore, indexStore, type ThreadStore } from "./stores";
+
+/** agent 是否忙：忙时新消息按 steer / 排队处理，而不是直接 prompt。 */
+export function isThreadBusy(s: ThreadStore): boolean {
+	return s.running || s.thread?.state === "working";
+}
 
 export type SendMode = Extract<
 	ComposerAction,
@@ -40,6 +45,29 @@ export function promptFrame(
 		case "abort_and_prompt":
 			return { type: "abort_and_prompt", message, ...imgs };
 	}
+}
+
+/**
+ * 以普通消息发送一段程序生成的提示词（环境提示条的「让 agent …」）：
+ * agent 忙时排队（`follow_up`），不打断当前工作。
+ */
+export async function sendGeneratedPrompt(threadId: string, message: string) {
+	const busy = isThreadBusy(getThreadStore(threadId).getState());
+	await realtime.cmd(
+		threadId,
+		promptFrame(busy ? "follow_up" : "prompt", message, []),
+	);
+}
+
+/** 一次 setup / resume 运行的日志（`text/plain`，末尾 256KiB）。 */
+export async function fetchSetupRunLog(
+	orbId: string,
+	runId: string,
+): Promise<string> {
+	const res = await rawFetch(
+		`/api/v1/orbs/${encodeURIComponent(orbId)}/setup-runs/${encodeURIComponent(runId)}/log`,
+	);
+	return res.text();
 }
 
 export function slashContextOf(threadId: string): SlashContext {

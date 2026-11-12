@@ -1,5 +1,12 @@
 /** mock 模式的固定数据：项目、provider、orb、线程与一份信息量丰富的转录。 */
-import type { Entry, Orb, Project, Provider, Thread } from "../api/client";
+import type {
+	Entry,
+	Orb,
+	Project,
+	Provider,
+	Schemas,
+	Thread,
+} from "../api/client";
 import type { SessionState } from "../omp/types";
 
 export const NOW = Date.now();
@@ -92,6 +99,129 @@ function thread(p: Partial<Thread> & Pick<Thread, "id" | "title">): Thread {
 
 export const MAIN_THREAD = "T-0193a1b2-0000-7000-8000-00000000a001";
 
+// ---------------------------------------------------------------- orb 环境（M2.5）
+
+type SetupRun = Schemas["OrbSetupRun"];
+
+export const ORB_FAILED_REASON =
+	"spawn 任务失败 3 次：docker: Error response from daemon: pull access denied for oryn-orb:dev, repository does not exist";
+
+/** 各提示条对应的线程（mock 模式下可直接打开查看）。 */
+export const ENV_THREADS = {
+	setupFailed: "T-0193a1b2-0000-7000-8000-00000000a008",
+	slowSetup: "T-0193a1b2-0000-7000-8000-00000000a003",
+	missingConfig: "T-0193a1b2-0000-7000-8000-00000000a009",
+	orbFailed: "T-0193a1b2-0000-7000-8000-00000000a005",
+} as const;
+
+function setupRun(
+	orbId: string,
+	n: number,
+	p: Partial<SetupRun> & Pick<SetupRun, "phase">,
+): SetupRun {
+	const durationMs = p.durationMs ?? 42_000;
+	const finishedAt = p.finishedAt ?? NOW - 9 * MIN;
+	return {
+		id: `osr_01jcz9${orbId.slice(-6)}${String(n).padStart(4, "0")}`,
+		orbId,
+		trigger: "auto",
+		startedAt: finishedAt - durationMs,
+		finishedAt,
+		ok: true,
+		setupRan: p.phase === "setup",
+		durationMs,
+		hasRepoScript: true,
+		hasProjectScript: false,
+		...p,
+	};
+}
+
+const FAILED_SETUP_LOG = `${Array.from(
+	{ length: 120 },
+	(_, i) =>
+		`[setup] ${String(i + 1).padStart(3, "0")} Progress: resolved ${400 + i * 3}, reused ${380 + i * 3}, downloaded ${i}, added ${i * 2}`,
+).join("\n")}
+[setup] + sudo apt-get install -y libpq-dev postgresql-16
+[setup] Reading package lists...
+[setup] E: Unable to locate package postgresql-16
+[setup] .oryn/setup: line 14: exit status 100
+`;
+
+const SLOW_SETUP_LOG = `[setup] + rustup toolchain install 1.92.0 --profile minimal
+[setup] info: downloading component 'rustc'
+[setup] + cargo build --release --workspace
+[setup]    Compiling proc-macro2 v1.0.101
+[setup]    Compiling serde v1.0.228
+[setup]    …
+[setup]     Finished \`release\` profile [optimized] target(s) in 3m 41s
+[setup] + bun install --cwd web
+[setup] 1123 packages installed [18.42s]
+`;
+
+/** 每个 orb 的环境字段（覆盖 `makeOrb` 的默认值）。 */
+export const orbEnv: Record<string, Partial<Orb>> = {
+	"orb-01jcz8m3w4x5y6z7a8b9c0d1e2": {
+		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e2", 1, {
+			phase: "setup",
+			durationMs: 48_300,
+			finishedAt: NOW - 3 * HOUR + 2 * MIN,
+		}),
+		lastResume: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e2", 2, {
+			phase: "resume",
+			durationMs: 1_200,
+			finishedAt: NOW - 12 * MIN,
+		}),
+	},
+	"orb-01jcz8m3w4x5y6z7a8b9c0d1e3": {
+		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e3", 1, {
+			phase: "setup",
+			durationMs: 263_000,
+		}),
+	},
+	"orb-01jcz8m3w4x5y6z7a8b9c0d1e5": {
+		state: "failed",
+		failureReason: ORB_FAILED_REASON,
+	},
+	"orb-01jcz8m3w4x5y6z7a8b9c0d1e8": {
+		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e8", 1, {
+			phase: "setup",
+			ok: false,
+			durationMs: 71_500,
+			error:
+				".oryn/setup 退出码 100：E: Unable to locate package postgresql-16",
+		}),
+		lastResume: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e8", 2, {
+			phase: "resume",
+			durationMs: 800,
+			hasRepoScript: false,
+		}),
+	},
+	"orb-01jcz8m3w4x5y6z7a8b9c0d1e9": {
+		projectId: "prj_01JCZ00000000000000AGENT",
+		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e9", 1, {
+			phase: "setup",
+			durationMs: 4_100,
+			hasRepoScript: false,
+		}),
+	},
+};
+
+/** 运行记录 id → 日志全文。 */
+export const setupLogs: Record<string, string> = Object.fromEntries(
+	Object.values(orbEnv).flatMap((env) =>
+		[env.lastSetup, env.lastResume]
+			.filter((r): r is SetupRun => Boolean(r))
+			.map((r) => [
+				r.id,
+				!r.ok
+					? FAILED_SETUP_LOG
+					: r.durationMs >= 120_000
+						? SLOW_SETUP_LOG
+						: `[${r.phase}] + ${r.phase === "setup" ? "bun install --cwd web" : "gh auth status"}\n[${r.phase}] done\n`,
+			]),
+	),
+);
+
 export const threads: Thread[] = [
 	thread({
 		id: MAIN_THREAD,
@@ -137,6 +267,21 @@ export const threads: Thread[] = [
 		state: "error",
 		color: "red",
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e5",
+		error: { kind: "orb_failed", reason: ORB_FAILED_REASON },
+	}),
+	thread({
+		id: ENV_THREADS.setupFailed,
+		title: "接入 Postgres 测试数据库",
+		projectId: projects[0]?.id,
+		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e8",
+		lastMessageAt: NOW - 8 * MIN,
+	}),
+	thread({
+		id: ENV_THREADS.missingConfig,
+		title: "补全 CLI 的 shell 补全脚本",
+		projectId: projects[1]?.id,
+		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e9",
+		lastMessageAt: NOW - 20 * MIN,
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a006",

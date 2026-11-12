@@ -1,5 +1,5 @@
 /**
- * 右侧信息面板：orb 状态与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、todo（可编辑，`set_todos`）、
+ * 右侧信息面板：orb 状态与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、todo（可编辑，`set_todos`）、
  * 子 agent 列表、上下文占用，以及报告 / btw 入口。
  */
 import { type ReactNode, useEffect, useState } from "react";
@@ -12,6 +12,7 @@ import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Icon } from "../ui/icons";
 import { Button, IconButton, Sparkline, TextInput } from "../ui/primitives";
+import { EnvRuns } from "./EnvBanner";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -98,6 +99,12 @@ function OrbSection({ threadId }: { threadId: string }) {
 						label={t("panel.memChart")}
 					/>
 				</div>
+			</div>
+			<div className="mt-3">
+				<h4 className="mb-1 font-medium text-[11px] text-muted">
+					{t("env.title")}
+				</h4>
+				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
 			</div>
 		</Section>
 	);

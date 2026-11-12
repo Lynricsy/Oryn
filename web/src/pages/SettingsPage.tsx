@@ -21,6 +21,7 @@ import {
 	useDevices,
 	useHealth,
 	useMe,
+	useOrbs,
 	useProjects,
 	useProviders,
 	useSecrets,
@@ -40,6 +41,7 @@ import {
 	TextInput,
 	Toggle,
 } from "../components/ui/primitives";
+import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
 import { formatDateTime, formatRelative } from "../lib/format";
 import { formatBytes } from "../lib/images";
 import { useBreakpoint } from "../lib/viewport";
@@ -338,13 +340,29 @@ function formOf(p: Project): ProjectForm {
 	};
 }
 
+/** 「仓库内脚本：有 / 无」：取自该项目最近一次 setup 运行；无记录时为「未知」。 */
+function RepoScriptText({ run }: { run: SetupRun | undefined }) {
+	const { t } = useTranslation();
+	return (
+		<>
+			{t("env.repoScript", {
+				value: run
+					? t(run.hasRepoScript ? "env.repoScriptYes" : "env.repoScriptNo")
+					: t("env.repoScriptUnknown"),
+			})}
+		</>
+	);
+}
+
 function ProjectEditor({
 	initial,
 	id,
+	lastSetup,
 	onDone,
 }: {
 	initial: ProjectForm;
 	id?: string;
+	lastSetup?: SetupRun;
 	onDone: () => void;
 }) {
 	const { t } = useTranslation();
@@ -449,6 +467,11 @@ function ProjectEditor({
 					/>
 				</Field>
 			</div>
+			{id && (
+				<p className="text-muted text-xs sm:col-span-2">
+					<RepoScriptText run={lastSetup} />
+				</p>
+			)}
 			<div className="sm:col-span-2">
 				<Field label={t("projects.resumeScript")}>
 					<TextArea
@@ -477,6 +500,8 @@ function ProjectsSettings() {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const projects = useProjects();
+	const orbs = useOrbs();
+	const lastSetup = latestSetupByProject(orbs.data?.orbs ?? []);
 	const [editing, setEditing] = useState<string | "new" | null>(null);
 	const del = useAsync();
 	return (
@@ -507,6 +532,7 @@ function ProjectsSettings() {
 							<ProjectEditor
 								initial={formOf(p)}
 								id={p.id}
+								lastSetup={lastSetup.get(p.id)}
 								onDone={() => setEditing(null)}
 							/>
 						) : (
@@ -517,6 +543,11 @@ function ProjectsSettings() {
 									<div className="truncate text-faint text-xs">
 										{p.repoUrl ?? t("projects.noRepo")}
 									</div>
+									{p.repoUrl && (
+										<div className="text-faint text-xs">
+											<RepoScriptText run={lastSetup.get(p.id)} />
+										</div>
+									)}
 								</div>
 								<IconButton
 									icon="edit"

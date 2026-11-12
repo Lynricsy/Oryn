@@ -7,6 +7,7 @@ import {
 	PlanProposalDialog,
 	ThreadDialogs,
 } from "../components/thread/Dialogs";
+import { EnvBanner } from "../components/thread/EnvBanner";
 import { InfoPanel } from "../components/thread/InfoPanel";
 import { BelowEditorWidgets, ModeBar } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
@@ -167,6 +168,7 @@ export function ThreadPage(): ReactNode {
 								queued={pendingUi.length - 1}
 							/>
 						)}
+						<EnvBanner key={threadId} threadId={threadId} />
 						<QueueBar threadId={threadId} />
 						<ModeBar threadId={threadId} />
 						<Composer threadId={threadId} disabled={orbGone} />

@@ -551,5 +551,41 @@
 			"device": "device token",
 			"recovery": "recovery session"
 		}
+	},
+	"env": {
+		"title": "Environment",
+		"log": "Log",
+		"viewLog": "View log",
+		"logTitle": "{{phase}} log",
+		"logEmpty": "The log is empty.",
+		"setupFailed": "Environment setup failed",
+		"resumeFailed": "Environment resume failed",
+		"slow": "Environment setup took {{min}} min",
+		"slowHint": "A faster setup means new orbs are ready sooner.",
+		"missing": "This project has no environment setup yet",
+		"missingHint": "New orbs won't install dependencies automatically; the agent can inspect the repo and write .oryn/setup.",
+		"orbFailed": "The orb failed to start",
+		"noReason": "No reason given",
+		"askFix": "Ask agent to fix",
+		"askOptimize": "Ask agent to optimize",
+		"askGenerate": "Ask agent to create it",
+		"sent": "Sent to agent",
+		"retry": "Retry",
+		"ok": "succeeded",
+		"failed": "failed",
+		"skipped": "skipped (already set up)",
+		"none": "No setup / resume runs yet.",
+		"phase": {
+			"setup": "setup",
+			"resume": "resume"
+		},
+		"trigger": {
+			"auto": "automatic",
+			"manual": "manual"
+		},
+		"repoScript": "Script in repo: {{value}}",
+		"repoScriptYes": "yes",
+		"repoScriptNo": "no",
+		"repoScriptUnknown": "unknown (no setup run yet)"
 	}
 }

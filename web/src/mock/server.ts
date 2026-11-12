@@ -3,8 +3,10 @@
  * 发送提示词时按 fakeomp 的帧序列回放：agent_start → 用户消息 → 流式 assistant（思考 / 文本 / 工具调用）→
  * bash 工具生命周期 → 最终回答 → agent_end → prompt_result → session_settled，期间按序复制条目。
  * 提示词含 `ask` 时发一个 ask 对话框并等待作答；含 `plan` 时发计划提案并等待审批。
+ * 环境（M2.5）：orb 带 `lastSetup` / `lastResume`，提供 setup-runs 与日志接口；failed orb 的线程 `wake` 后恢复；
+ * 提示词点名 `oryn-setup` 技能时，回合结束后补一条手动重跑成功的记录（模拟 agent 修好环境）。
  */
-import type { Entry, Orb, Thread } from "../api/client";
+import type { Entry, Orb, Schemas, Thread } from "../api/client";
 import type { SessionState } from "../omp/types";
 import {
 	assistant,
@@ -14,9 +16,11 @@ import {
 	mainState,
 	makeOrb,
 	NOW,
+	orbEnv,
 	projects,
 	providers,
 	SESSION_FILE,
+	setupLogs,
 } from "./fixtures";
 
 type Json = Record<string, unknown>;
@@ -42,6 +46,9 @@ export class MockServer {
 	readonly states = new Map<string, SessionState>();
 	readonly orbs = new Map<string, Orb>();
 	readonly pendingUi = new Map<string, Json[]>();
+	/** setup / resume 运行记录（按 orb，新的在前）与日志。 */
+	readonly setupRuns = new Map<string, Schemas["OrbSetupRun"][]>();
+	readonly setupLogs = new Map<string, string>(Object.entries(setupLogs));
 	readonly planProposals = new Map<string, Json>();
 	readonly queues = new Map<
 		string,
@@ -69,9 +76,19 @@ export class MockServer {
 				const ids = fixtureThreads
 					.filter((x) => x.orbId === t.orbId)
 					.map((x) => x.id);
-				this.orbs.set(t.orbId, makeOrb(t.orbId, ids));
+				this.orbs.set(t.orbId, {
+					...makeOrb(t.orbId, ids),
+					...orbEnv[t.orbId],
+				});
 			}
 		}
+		for (const orb of this.orbs.values())
+			this.setupRuns.set(
+				orb.id,
+				[orb.lastResume, orb.lastSetup]
+					.filter((r): r is Schemas["OrbSetupRun"] => Boolean(r))
+					.sort((a, b) => b.finishedAt - a.finishedAt),
+			);
 		this.entries.set(MAIN_THREAD, buildMainTranscript());
 		for (const t of fixtureThreads)
 			this.states.set(t.id, {
@@ -250,6 +267,19 @@ export class MockServer {
 			});
 			return json({ orbId: metricsMatch[1], step: 30, samples });
 		}
+		const runsMatch = /^orbs\/([^/]+)\/setup-runs(?:\/([^/]+)\/log)?$/.exec(p);
+		if (runsMatch && m === "GET") {
+			const runs = this.setupRuns.get(runsMatch[1] ?? "") ?? [];
+			if (!runsMatch[2]) return json({ runs: runs.slice(0, 20) });
+			const log = runs.some((r) => r.id === runsMatch[2])
+				? this.setupLogs.get(runsMatch[2])
+				: undefined;
+			if (log === undefined)
+				return json({ code: "not_found", message: "setup run" }, 404);
+			return new Response(log, {
+				headers: { "Content-Type": "text/plain; charset=utf-8" },
+			});
+		}
 		const orbAction = /^orbs\/([^/]+)\/(pause|resume)$/.exec(p);
 		if (orbAction) {
 			const orb = this.orbs.get(orbAction[1] ?? "");
@@ -311,7 +341,11 @@ export class MockServer {
 				});
 				return json({ thread: copy }, 201);
 			}
-			if (threadMatch[2] === "wake") return new Response(null, { status: 202 });
+			if (threadMatch[2] === "wake") {
+				const orb = t.orbId ? this.orbs.get(t.orbId) : undefined;
+				if (orb?.state === "failed") void this.recoverOrb(orb);
+				return new Response(null, { status: 202 });
+			}
 			if (m === "PATCH") {
 				const b = await body();
 				const next: Thread = { ...t, updatedAt: Date.now() };
@@ -340,6 +374,59 @@ export class MockServer {
 			return json(t);
 		}
 		return json({ code: "not_found", message: `mock: ${m} ${p}` }, 404);
+	}
+
+	private setOrb(orb: Orb) {
+		this.orbs.set(orb.id, orb);
+		this.broadcast({ type: "orb", orb });
+	}
+
+	/** failed orb 重试：waking → connecting → resuming → ready，其线程回到 idle。 */
+	private async recoverOrb(orb: Orb) {
+		const { failureReason: _, ...rest } = orb;
+		for (const state of [
+			"waking",
+			"connecting",
+			"resuming",
+			"ready",
+		] as const) {
+			await sleep(this.delay * 8);
+			this.setOrb({ ...rest, state, stateChangedAt: Date.now() });
+			if (state === "waking")
+				for (const tid of orb.threadIds) {
+					const t = this.threads.get(tid);
+					if (!t) continue;
+					const { error: __, ...clean } = t;
+					this.upsertThread({ ...clean, state: "provisioning" });
+				}
+		}
+		for (const tid of orb.threadIds) {
+			const t = this.threads.get(tid);
+			if (t) this.upsertThread({ ...t, state: "idle" });
+		}
+	}
+
+	/** 记一条手动重跑成功的 setup 运行并推送 orb 更新。 */
+	private recordManualSetup(orbId: string) {
+		const orb = this.orbs.get(orbId);
+		if (!orb) return;
+		const now = Date.now();
+		const run: Schemas["OrbSetupRun"] = {
+			id: `osr_mock${(this.idSeq++).toString(16)}`,
+			orbId,
+			phase: "setup",
+			trigger: "manual",
+			startedAt: now - 38_000,
+			finishedAt: now,
+			ok: true,
+			setupRan: true,
+			durationMs: 38_000,
+			hasRepoScript: true,
+			hasProjectScript: orb.lastSetup?.hasProjectScript ?? false,
+		};
+		this.setupRuns.set(orbId, [run, ...(this.setupRuns.get(orbId) ?? [])]);
+		this.setupLogs.set(run.id, "[setup] + oryn orb setup run\n[setup] ok\n");
+		this.setOrb({ ...orb, lastSetup: run, stateChangedAt: now });
 	}
 
 	private upsertThread(t: Thread) {
@@ -1055,5 +1142,7 @@ export class MockServer {
 		const cur = this.threads.get(threadId);
 		if (cur)
 			this.upsertThread({ ...cur, state: "idle", lastMessageAt: Date.now() });
+		if (cur?.orbId && text.includes("oryn-setup"))
+			this.recordManualSetup(cur.orbId);
 	}
 }

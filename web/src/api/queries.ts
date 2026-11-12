@@ -15,6 +15,8 @@ export const qk = {
 	orbs: ["orbs"] as const,
 	orb: (id: string) => ["orbs", id] as const,
 	orbMetrics: (id: string) => ["orbs", id, "metrics"] as const,
+	setupRunLog: (orbId: string, runId: string) =>
+		["orbs", orbId, "setup-runs", runId, "log"] as const,
 	threads: (archived: boolean) => ["threads", { archived }] as const,
 	threadUsage: (id: string) => ["stats", "usage", "thread", id] as const,
 };

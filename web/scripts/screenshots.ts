@@ -4,14 +4,16 @@
  * 截 `/` 与 `/t/<id>`，输出到 `$ORYN_SHOTS_DIR`（默认 /tmp/oryn-shots）。
  *
  * 用法（web/ 目录）：bun run shots
+ *   `--m25`：改截 M2.5 环境提示条（setup 失败 + 日志对话框、orb 失败），390 / 1280 宽，输出到 `<目录>/m25/`
  * 环境变量：CHROMIUM=<可执行文件>（默认 /usr/bin/chromium）
  */
 import { mkdir } from "node:fs/promises";
-import { chromium } from "playwright-core";
-import { MAIN_THREAD } from "../src/mock/fixtures";
+import { type Browser, chromium } from "playwright-core";
+import { ENV_THREADS, MAIN_THREAD } from "../src/mock/fixtures";
 
 const PORT = 5179;
-const OUT = process.env.ORYN_SHOTS_DIR ?? "/tmp/oryn-shots";
+const M25 = process.argv.includes("--m25");
+const OUT = `${process.env.ORYN_SHOTS_DIR ?? "/tmp/oryn-shots"}${M25 ? "/m25" : ""}`;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WIDTHS = [
 	{ width: 390, height: 844 },
@@ -59,14 +61,54 @@ const server = Bun.spawn(
 	},
 );
 
+/** M2.5：setup 失败提示条 → 日志对话框；orb 失败提示条。 */
+async function shootEnv(browser: Browser): Promise<string[]> {
+	const written: string[] = [];
+	for (const size of WIDTHS.filter((w) => w.width !== 720)) {
+		const context = await browser.newContext({
+			viewport: size,
+			deviceScaleFactor: 2,
+			locale: "zh-CN",
+		});
+		const page = await context.newPage();
+		const shot = async (name: string) => {
+			const file = `${OUT}/${name}-${size.width}.png`;
+			await page.screenshot({ path: file });
+			written.push(file);
+		};
+		await page.goto(`${BASE}/t/${ENV_THREADS.setupFailed}`, {
+			waitUntil: "networkidle",
+		});
+		await page.waitForSelector("[data-testid=env-banner]", { timeout: 15_000 });
+		await page.waitForTimeout(800);
+		await shot("setup-failed");
+		await page
+			.locator("[data-testid=env-banner]")
+			.getByRole("button", { name: "查看日志" })
+			.click();
+		await page.waitForSelector("[data-testid=setup-log]", { timeout: 15_000 });
+		await page.waitForTimeout(500);
+		await shot("setup-log");
+		await page.keyboard.press("Escape");
+		await page.goto(`${BASE}/t/${ENV_THREADS.orbFailed}`, {
+			waitUntil: "networkidle",
+		});
+		await page.waitForSelector("[data-testid=env-banner]", { timeout: 15_000 });
+		await page.waitForTimeout(800);
+		await shot("orb-failed");
+		await context.close();
+	}
+	return written;
+}
+
 try {
 	await waitForServer(BASE, 30_000);
 	await mkdir(OUT, { recursive: true });
 	const browser = await chromium.launch({
 		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
 	});
-	const written: string[] = [];
-	for (const size of WIDTHS) {
+	const written: string[] = M25 ? await shootEnv(browser) : [];
+	for (const size of M25 ? [] : WIDTHS) {
 		const context = await browser.newContext({
 			viewport: size,
 			deviceScaleFactor: 2,

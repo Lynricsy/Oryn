@@ -1,4 +1,4 @@
-/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、计划提案、调试。 */
+/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、计划提案、调试、setup 日志。 */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -36,6 +36,7 @@ import {
 	Toggle,
 } from "../ui/primitives";
 import { StructuredView } from "../ui/StructuredView";
+import { SetupLogDialog } from "./EnvBanner";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
 const NO_LABELS: readonly string[] = [];
@@ -1190,5 +1191,14 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 			return <RenameDialog threadId={threadId} onClose={close} />;
 		case "debug":
 			return <DebugDialog threadId={threadId} onClose={close} />;
+		case "setupLog":
+			return (
+				<SetupLogDialog
+					threadId={threadId}
+					orbId={dialog.orbId}
+					run={dialog.run}
+					onClose={close}
+				/>
+			);
 	}
 }

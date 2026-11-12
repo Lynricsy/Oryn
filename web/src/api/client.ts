@@ -66,9 +66,10 @@ const csrf: Middleware = {
 	},
 };
 
-// 每次调用时取 globalThis.fetch，便于 mock 模式与测试替换
+// 每次调用时取 globalThis.fetch，便于 mock 模式与测试替换。
+// baseUrl 用当前 origin 拼成绝对地址：浏览器里与相对路径等价，Node（测试）的 Request 不接受相对 URL。
 export const api = createClient<paths>({
-	baseUrl: "",
+	baseUrl: globalThis.location?.origin ?? "",
 	credentials: "same-origin",
 	fetch: (input: Request) => globalThis.fetch(input),
 });
