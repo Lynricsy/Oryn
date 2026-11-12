@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -33,7 +34,7 @@ type Server struct {
 	area
 }
 
-// publicPaths 是 /api/v1 下免鉴权的路径。
+// publicPaths 是 /api/v1 下免鉴权的路径；另外 /provider/v1/ 前缀由 provider 令牌自行鉴权。
 var publicPaths = map[string]bool{
 	"/api/v1/auth/setup/begin":   true,
 	"/api/v1/auth/setup/finish":  true,
@@ -58,7 +59,7 @@ func NewRouter(s *Server) http.Handler {
 			r.Use(func(next http.Handler) http.Handler {
 				protected := authMW(next)
 				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					if publicPaths[req.URL.Path] {
+					if publicPaths[req.URL.Path] || strings.HasPrefix(req.URL.Path, "/provider/v1/") {
 						next.ServeHTTP(w, req)
 						return
 					}
