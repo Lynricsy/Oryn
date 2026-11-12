@@ -16,6 +16,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
 
@@ -46,7 +47,13 @@ func run(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return serve(ctx, cfg, api.NewRouter(api.Deps{}))
+
+	st, err := store.Open(ctx, cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return serve(ctx, cfg, api.NewRouter(api.Deps{Store: st}))
 }
 
 func newLogger(level string) *slog.Logger {

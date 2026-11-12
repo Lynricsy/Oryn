@@ -8,12 +8,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/version"
 	"github.com/Lynricsy/Oryn/internal/webui"
 )
 
 // Deps 是路由所需的依赖。
-type Deps struct{}
+type Deps struct {
+	Store *store.Store
+}
 
 // NewRouter 返回控制面根路由。
 func NewRouter(_ Deps) http.Handler {
