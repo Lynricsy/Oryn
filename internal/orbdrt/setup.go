@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/gitident"
 	"github.com/Lynricsy/Oryn/internal/link"
 )
 
@@ -78,6 +79,13 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 	}
 	defer closeLog()
 
+	// 纵深防御：身份写进 ~/.gitconfig，含换行 / 控制字符的值可能注入额外配置项。先于任何写入校验。
+	if id := p.GitIdentity; id != nil {
+		if err := gitident.Validate(id.Name, id.Email); err != nil {
+			return fail(ctlErr(link.CodeInvalidParams, "invalid gitIdentity: %v", err))
+		}
+	}
+
 	workdir := p.Workdir
 	switch {
 	case workdir != "":
@@ -112,6 +120,14 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 		key := fmt.Sprintf("url.http://%s/git/%s/.insteadOf", r.EgressAddr(), h)
 		if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", key, "https://"+h+"/"); err != nil {
 			return fail(ctlErr("failed", "git config for %s: %v", h, err))
+		}
+	}
+	// git 提交身份（setup 与 resume 都写，已有 orb 唤醒时也能拿到新设置）；缺省时不动现有配置。
+	if id := p.GitIdentity; id != nil {
+		for _, kv := range [][2]string{{"user.name", id.Name}, {"user.email", id.Email}} {
+			if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", "--", kv[0], kv[1]); err != nil {
+				return fail(ctlErr("failed", "git config %s: %v", kv[0], err))
+			}
 		}
 	}
 

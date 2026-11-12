@@ -48,6 +48,8 @@ tags:
     description: 密钥库（只返回元数据）
   - name: agent-config
     description: omp 文本配置（omp-home）
+  - name: settings
+    description: 所有者级设置（如 orb 内的 git 提交身份）
   - name: stats
     description: 统计
   - name: realtime
@@ -814,6 +816,51 @@ paths:
         '204': { description: 已删除 }
         default: { $ref: '#/components/responses/Error' }
 
+  # ---------------------------------------------------------------- settings
+  /api/v1/settings/git-identity:
+    get:
+      tags: [settings]
+      operationId: getGitIdentity
+      summary: orb 内 git 提交身份的全局默认值
+      responses:
+        '200':
+          description: 当前默认值（未设置时不含 identity）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitIdentitySettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putGitIdentity
+      summary: 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitIdentity' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitIdentitySettings' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [settings]
+      operationId: deleteGitIdentity
+      summary: 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已清除 }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- agent-config
   /api/v1/agent-config/files:
     get:
@@ -1463,6 +1510,10 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean }
         color: { type: string }
+        gitAuthorName:
+          type: string
+          description: 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
+        gitAuthorEmail: { type: string }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
         updatedAt: { $ref: '#/components/schemas/TimestampMs' }
         archivedAt: { $ref: '#/components/schemas/TimestampMs' }
@@ -1486,6 +1537,12 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean, default: false }
         color: { type: string }
+        gitAuthorName:
+          type: string
+          description: 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name
+        gitAuthorEmail:
+          type: string
+          description: 须与 gitAuthorName 同时给出；规则同 GitIdentity.email
     ProjectPatch:
       type: object
       description: 只修改出现的字段；可选字符串字段传空串表示清除
@@ -1499,7 +1556,28 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean }
         color: { type: string }
+        gitAuthorName:
+          type: string
+          description: 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
+        gitAuthorEmail: { type: string }
         archived: { type: boolean }
+
+    # ============================================================ 设置
+    GitIdentity:
+      type: object
+      required: [name, email]
+      description: orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        email:
+          type: string
+          minLength: 3
+          maxLength: 320
+          description: 须包含 `@`
+    GitIdentitySettings:
+      type: object
+      properties:
+        identity: { $ref: '#/components/schemas/GitIdentity' }
 
     # ============================================================ provider（客户端视图）
     OrbType:
@@ -2676,6 +2754,9 @@ components:
         env:
           type: object
           additionalProperties: { type: string }
+        gitIdentity:
+          $ref: '#/components/schemas/GitIdentity'
+          description: 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置
     LinkCtlSetupRunResult:
       type: object
       required: [ok, setupRan, durationMs]

@@ -52,6 +52,8 @@ oryn config pull                               # 拉回文本配置（models.yml
 oryn provider create local > provider.token    # 创建 orb provider，令牌只显示一次
 oryn provider run --config /etc/oryn/provider.yaml
 oryn secrets set git/github.com/token          # git 令牌，经出站代理注入 clone/push
+oryn git-identity set --name "Ada" --email ada@example.com   # orb 内 git 提交身份的默认值（下次 setup / 唤醒生效）
+oryn project update myproj --git-name Bot --git-email bot@example.com   # 项目级覆盖；--clear-git 清除
 ```
 
 ## orb 环境自配置

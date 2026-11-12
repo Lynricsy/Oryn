@@ -35,6 +35,8 @@ export const projects: Project[] = [
 		repoUrl: "https://github.com/Lynricsy/oryn-core",
 		baseBranch: "oryn",
 		shallowClone: false,
+		gitAuthorName: "Oryn Agent",
+		gitAuthorEmail: "agent@oryn.example",
 		createdAt: NOW - 20 * 24 * HOUR,
 		updatedAt: NOW - 5 * HOUR,
 	},

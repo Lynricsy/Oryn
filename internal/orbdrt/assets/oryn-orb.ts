@@ -14,6 +14,7 @@ orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\
 试跑：\`oryn orb setup run\`（setup）、\`oryn orb setup run --resume\`（resume）；查看日志：\`oryn orb setup logs [--resume]\`；项目脚本：\`oryn orb setup project-script get|set\`。
 需要持久的 PATH / 环境变量写进 \`~/.profile\`：agent 在启动时读取登录 shell 环境，所以只对之后启动的 agent 生效。
 仓库内脚本的改动只有合入项目基线分支后才对新 orb 生效。
+git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
 用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。`;
 
 interface SetupResult {

@@ -1,6 +1,6 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单）、
- * 密钥（名称列表、写入值）、agent 配置（omp-home 文件列表 + 纯文本编辑器，不做表单化）、关于。
+ * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（omp-home 文件列表 + 纯文本编辑器，不做表单化）、关于。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
@@ -19,6 +19,7 @@ import {
 	useAgentFile,
 	useAgentFiles,
 	useDevices,
+	useGitIdentity,
 	useHealth,
 	useMe,
 	useOrbs,
@@ -52,6 +53,7 @@ export type SettingsSection =
 	| "providers"
 	| "projects"
 	| "secrets"
+	| "git-identity"
 	| "agent-config"
 	| "about";
 
@@ -60,6 +62,7 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "providers", icon: "box" },
 	{ key: "projects", icon: "folder" },
 	{ key: "secrets", icon: "key" },
+	{ key: "git-identity", icon: "fork" },
 	{ key: "agent-config", icon: "file" },
 	{ key: "about", icon: "info" },
 ];
@@ -337,6 +340,8 @@ function formOf(p: Project): ProjectForm {
 		resumeScript: p.resumeScript,
 		shallowClone: p.shallowClone,
 		color: p.color,
+		gitAuthorName: p.gitAuthorName,
+		gitAuthorEmail: p.gitAuthorEmail,
 	};
 }
 
@@ -375,6 +380,8 @@ function ProjectEditor({
 	const provider = providers.data?.providers.find(
 		(p) => p.name === f.defaultProvider,
 	);
+	// 身份覆盖须两项同时填写或同时留空（服务端同样校验）。
+	const gitPairOk = !f.gitAuthorName?.trim() === !f.gitAuthorEmail?.trim();
 	return (
 		<form
 			className="grid gap-3 sm:grid-cols-2"
@@ -391,6 +398,8 @@ function ProjectEditor({
 							setupScript: f.setupScript ?? "",
 							resumeScript: f.resumeScript ?? "",
 							color: f.color ?? "",
+							gitAuthorName: f.gitAuthorName ?? "",
+							gitAuthorEmail: f.gitAuthorEmail ?? "",
 						};
 						await unwrap(
 							api.PATCH("/api/v1/projects/{id}", {
@@ -481,11 +490,31 @@ function ProjectEditor({
 					/>
 				</Field>
 			</div>
+			<Field label={t("projects.gitAuthorName")}>
+				<TextInput
+					autoComplete="off"
+					value={f.gitAuthorName ?? ""}
+					onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
+				/>
+			</Field>
+			<Field label={t("projects.gitAuthorEmail")}>
+				<TextInput
+					type="email"
+					autoComplete="off"
+					value={f.gitAuthorEmail ?? ""}
+					onChange={(e) => set("gitAuthorEmail", e.target.value || undefined)}
+				/>
+			</Field>
+			<p
+				className={`text-xs sm:col-span-2 ${gitPairOk ? "text-muted" : "text-err"}`}
+			>
+				{gitPairOk ? t("projects.gitHint") : t("projects.gitPairError")}
+			</p>
 			<div className="flex gap-2 sm:col-span-2">
 				<Button
 					type="submit"
 					variant="primary"
-					disabled={save.busy || !f.name.trim()}
+					disabled={save.busy || !f.name.trim() || !gitPairOk}
 				>
 					{t("common.save")}
 				</Button>
@@ -740,6 +769,120 @@ function SecretsSettings() {
 				)}
 			</Card>
 		</>
+	);
+}
+
+// ---------------------------------------------------------------- Git 身份
+
+function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const [name, setName] = useState(initial?.name ?? "");
+	const [email, setEmail] = useState(initial?.email ?? "");
+	const [saved, setSaved] = useState(false);
+	const save = useAsync();
+	const clear = useAsync();
+	const dirty =
+		name.trim() !== (initial?.name ?? "") ||
+		email.trim() !== (initial?.email ?? "");
+	return (
+		<form
+			className="grid gap-3 sm:grid-cols-2"
+			onSubmit={async (e) => {
+				e.preventDefault();
+				setSaved(false);
+				await save.run(async () => {
+					const res = await unwrap(
+						api.PUT("/api/v1/settings/git-identity", {
+							body: { name: name.trim(), email: email.trim() },
+						}),
+					);
+					qc.setQueryData(qk.gitIdentity, res);
+					setName(res.identity?.name ?? "");
+					setEmail(res.identity?.email ?? "");
+					setSaved(true);
+				});
+			}}
+		>
+			<Field label={t("gitIdentity.name")}>
+				<TextInput
+					required
+					maxLength={200}
+					autoComplete="name"
+					value={name}
+					onChange={(e) => {
+						setName(e.target.value);
+						setSaved(false);
+					}}
+				/>
+			</Field>
+			<Field label={t("gitIdentity.email")}>
+				<TextInput
+					required
+					type="email"
+					maxLength={320}
+					autoComplete="email"
+					value={email}
+					onChange={(e) => {
+						setEmail(e.target.value);
+						setSaved(false);
+					}}
+				/>
+			</Field>
+			<div className="flex items-center gap-2 sm:col-span-2">
+				<Button
+					type="submit"
+					variant="primary"
+					disabled={save.busy || !dirty || !name.trim() || !email.includes("@")}
+				>
+					{t("common.save")}
+				</Button>
+				{initial && (
+					<Button
+						disabled={clear.busy}
+						onClick={() => {
+							if (!window.confirm(t("gitIdentity.clearConfirm"))) return;
+							setSaved(false);
+							void clear.run(async () => {
+								await unwrap(api.DELETE("/api/v1/settings/git-identity"));
+								qc.setQueryData(qk.gitIdentity, {});
+								setName("");
+								setEmail("");
+							});
+						}}
+					>
+						{t("common.clear")}
+					</Button>
+				)}
+				{saved && !dirty && (
+					<span className="text-muted text-xs">{t("gitIdentity.saved")}</span>
+				)}
+			</div>
+			<ErrorText error={save.error ?? clear.error} />
+		</form>
+	);
+}
+
+function GitIdentitySettings() {
+	const { t } = useTranslation();
+	const q = useGitIdentity();
+	const id = q.data?.identity;
+	return (
+		<Card title={t("gitIdentity.title")}>
+			<p className="mb-3 text-muted text-xs">{t("gitIdentity.hint")}</p>
+			{q.isPending && <Spinner />}
+			<ErrorText error={q.error} />
+			{q.data && (
+				<>
+					<p className="mb-3 text-sm">
+						{id
+							? t("gitIdentity.current", { name: id.name, email: id.email })
+							: t("gitIdentity.notSet")}
+					</p>
+					<GitIdentityForm initial={id} />
+				</>
+			)}
+		</Card>
 	);
 }
 
@@ -1025,6 +1168,7 @@ export function SettingsPage({
 						{section === "providers" && <ProvidersSettings />}
 						{section === "projects" && <ProjectsSettings />}
 						{section === "secrets" && <SecretsSettings />}
+						{section === "git-identity" && <GitIdentitySettings />}
 						{section === "agent-config" && <AgentConfigSettings />}
 						{section === "about" && <AboutSettings />}
 					</div>

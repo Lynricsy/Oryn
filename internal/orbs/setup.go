@@ -63,6 +63,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}},
 	}
 	p := &plan.Params
+	var projectIdentity *apigen.GitIdentity
 	if orb.ProjectID != nil {
 		prj, err := d.Store.Q.GetProject(ctx, *orb.ProjectID)
 		switch {
@@ -82,7 +83,17 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 			}
 			p.Scripts.Setup = nonEmpty(prj.SetupScript)
 			p.Scripts.Resume = nonEmpty(prj.ResumeScript)
+			projectIdentity = gitIdentity(prj.GitAuthorName, prj.GitAuthorEmail)
 		}
+	}
+	// git 提交身份：项目覆盖（两项齐全）> 所有者默认 > 不下发（orb 现有配置不动）。
+	p.GitIdentity = projectIdentity
+	if p.GitIdentity == nil {
+		row, err := d.Store.Q.GetOwnerGitIdentity(ctx)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return plan, fmt.Errorf("读取 git 身份: %w", err)
+		}
+		p.GitIdentity = gitIdentity(row.GitName, row.GitEmail)
 	}
 	var resolver agentcfg.Resolver = emptyResolver{}
 	if d.Vault != nil {
@@ -155,6 +166,14 @@ func httpsRepo(raw string) (host, path string, ok bool) {
 type emptyResolver struct{}
 
 func (emptyResolver) Lookup(string) (string, string, bool) { return "", "", false }
+
+// gitIdentity 在名字与邮箱都非空时返回身份，否则 nil（半套覆盖不生效）。
+func gitIdentity(name, email *string) *apigen.GitIdentity {
+	if nonEmpty(name) == nil || nonEmpty(email) == nil {
+		return nil
+	}
+	return &apigen.GitIdentity{Name: *name, Email: *email}
+}
 
 func nonEmpty(s *string) *string {
 	if s == nil || *s == "" {

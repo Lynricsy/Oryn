@@ -625,6 +625,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/git-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** orb 内 git 提交身份的全局默认值 */
+        get: operations["getGitIdentity"];
+        /** 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb） */
+        put: operations["putGitIdentity"];
+        post?: never;
+        /** 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变） */
+        delete: operations["deleteGitIdentity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-config/files": {
         parameters: {
             query?: never;
@@ -1059,6 +1078,9 @@ export interface components {
             resumeScript?: string;
             shallowClone: boolean;
             color?: string;
+            /** @description 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省） */
+            gitAuthorName?: string;
+            gitAuthorEmail?: string;
             createdAt: components["schemas"]["TimestampMs"];
             updatedAt: components["schemas"]["TimestampMs"];
             archivedAt?: components["schemas"]["TimestampMs"];
@@ -1077,6 +1099,10 @@ export interface components {
             /** @default false */
             shallowClone: boolean;
             color?: string;
+            /** @description 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name */
+            gitAuthorName?: string;
+            /** @description 须与 gitAuthorName 同时给出；规则同 GitIdentity.email */
+            gitAuthorEmail?: string;
         };
         /** @description 只修改出现的字段；可选字符串字段传空串表示清除 */
         ProjectPatch: {
@@ -1089,7 +1115,19 @@ export interface components {
             resumeScript?: string;
             shallowClone?: boolean;
             color?: string;
+            /** @description 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖 */
+            gitAuthorName?: string;
+            gitAuthorEmail?: string;
             archived?: boolean;
+        };
+        /** @description orb 内 `git config --global user.name / user.email`；不得含换行或控制字符 */
+        GitIdentity: {
+            name: string;
+            /** @description 须包含 `@` */
+            email: string;
+        };
+        GitIdentitySettings: {
+            identity?: components["schemas"]["GitIdentity"];
         };
         OrbType: {
             name: string;
@@ -1920,6 +1958,8 @@ export interface components {
             env: {
                 [key: string]: string;
             };
+            /** @description 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置 */
+            gitIdentity?: components["schemas"]["GitIdentity"];
         };
         LinkCtlSetupRunResult: {
             /** @description setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本 */
@@ -3015,6 +3055,71 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGitIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前默认值（未设置时不含 identity） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitIdentitySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putGitIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitIdentity"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitIdentitySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGitIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已清除 */
             204: {
                 headers: {
                     [name: string]: unknown;

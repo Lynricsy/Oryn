@@ -13,6 +13,7 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 - 有仓库的项目检出在 `~/workspace/repo`（setup / resume 的工作目录就是仓库根）；没有仓库时为 `~/workspace`。
 - 基础镜像已带：git、curl、build-essential、python3 + uv、Node.js LTS、bun、Go、rustup（minimal）、gh、ripgrep、jq、tmux。没有 Docker daemon。
 - 访问 git 主机与模型 API 都经 orb 内的代理注入凭据，脚本里**不要**写令牌，也不需要 `gh auth login`。
+- git 提交身份（`user.name` / `user.email`）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
 
 ## 生命周期文件
 

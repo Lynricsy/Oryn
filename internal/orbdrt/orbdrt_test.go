@@ -135,6 +135,53 @@ func TestSetupRun(t *testing.T) {
 	assert.Equal(t, strings.Repeat("project-resume\nrepo-resume\n", 3), readFile("resume.txt"))
 }
 
+// TestSetupGitIdentity：setup.run 与 resume.run 都把身份写进 $HOME/.gitconfig；缺省时不动现有值；
+// 含换行的身份被拒绝且不写入任何东西。
+func TestSetupGitIdentity(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	gitconfig := filepath.Join(rt.home, ".gitconfig")
+	get := func(key string) string {
+		t.Helper()
+		out, err := exec.Command("git", "config", "--file", gitconfig, "--get", key).Output()
+		require.NoError(t, err, key)
+		return strings.TrimSuffix(string(out), "\n")
+	}
+	require.NoError(t, os.WriteFile(gitconfig, []byte("[user]\n\tname = Existing\n\temail = existing@example.com\n"), 0o644))
+
+	var res apigen.LinkCtlSetupRunResult
+	require.NoError(t, cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{}, &res))
+	assert.Equal(t, "Existing", get("user.name"), "缺省身份不改动现有配置")
+	assert.Equal(t, "existing@example.com", get("user.email"))
+
+	require.NoError(t, cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{
+		GitIdentity: &apigen.GitIdentity{Name: "Ada Lovelace", Email: "ada@example.com"},
+	}, &res))
+	assert.Equal(t, "Ada Lovelace", get("user.name"))
+	assert.Equal(t, "ada@example.com", get("user.email"))
+
+	// resume.run（唤醒）同样写入：已有 orb 也能拿到新设置。名字以 - 开头也不被当成选项。
+	require.NoError(t, cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{
+		GitIdentity: &apigen.GitIdentity{Name: "--Grace", Email: "grace@example.com"},
+	}, &res))
+	assert.Equal(t, "--Grace", get("user.name"))
+	assert.Equal(t, "grace@example.com", get("user.email"))
+
+	for _, id := range []apigen.GitIdentity{
+		{Name: "Evil\n[core]\n\tpager = sh", Email: "e@example.com"},
+		{Name: "Evil", Email: "e@example.com\r"},
+	} {
+		err := cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{GitIdentity: &id}, &res)
+		var ce *link.CtlError
+		require.ErrorAs(t, err, &ce)
+		assert.Equal(t, link.CodeInvalidParams, ce.Code)
+	}
+	assert.Equal(t, "--Grace", get("user.name"))
+	b, err := os.ReadFile(gitconfig)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "pager")
+}
+
 func TestSetupFailureAndResumeBackground(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, func(c *Config) { c.ResumeWait = 500 * time.Millisecond })

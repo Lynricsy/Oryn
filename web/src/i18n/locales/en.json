@@ -466,6 +466,7 @@
 		"providers": "Providers",
 		"projects": "Projects",
 		"secrets": "Secrets",
+		"git-identity": "Git identity",
 		"agent-config": "Agent config",
 		"about": "About"
 	},
@@ -502,6 +503,10 @@
 		"defaultProvider": "Default provider",
 		"deleteConfirm": "Delete project {{name}}?",
 		"empty": "No projects yet.",
+		"gitAuthorEmail": "Commit author email (override)",
+		"gitAuthorName": "Commit author name (override)",
+		"gitHint": "Identity for git commits in this project's orbs; leave empty to use the global Git identity (Settings → Git identity). Fill in both or neither.",
+		"gitPairError": "Fill in both the git author name and email, or leave both empty.",
 		"inherit": "Inherit default",
 		"name": "Name",
 		"new": "New project",
@@ -527,6 +532,16 @@
 		"put": "Store a secret",
 		"title": "Secrets",
 		"value": "Value"
+	},
+	"gitIdentity": {
+		"title": "Git commit identity",
+		"hint": "Default user.name / user.email for git commits inside orbs; projects can override it. Changes are written on the next setup or orb wake; running orbs are not updated immediately.",
+		"name": "Name",
+		"email": "Email",
+		"notSet": "Not set: git will complain about a missing identity when the agent commits.",
+		"current": "Current: {{name}} <{{email}}>",
+		"clearConfirm": "Clear the global Git identity? Existing orbs keep their git config.",
+		"saved": "Saved"
 	},
 	"agentConfig": {
 		"deleteConfirm": "Delete {{path}}?",

@@ -1186,6 +1186,19 @@ type ForkThreadRequest struct {
 // ForkThreadRequestEnv `copy` 连环境分叉（快照出副本 orb）；`share` 共用当前 orb
 type ForkThreadRequestEnv string
 
+// GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
+type GitIdentity struct {
+	// Email 须包含 `@`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// GitIdentitySettings defines model for GitIdentitySettings.
+type GitIdentitySettings struct {
+	// Identity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
+	Identity *GitIdentity `json:"identity,omitempty"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Ok      bool   `json:"ok"`
@@ -1558,11 +1571,14 @@ type LinkCtlSetupRunParams struct {
 	Env map[string]string `json:"env"`
 
 	// GitHosts 为每个主机写 git `url."http://127.0.0.1:7811/git/<host>/".insteadOf "https://<host>/"`
-	GitHosts []string             `json:"gitHosts"`
-	OmpHome  []LinkCtlOmpHomeFile `json:"ompHome"`
-	Repo     *LinkCtlSetupRepo    `json:"repo,omitempty"`
-	Scripts  LinkCtlSetupScripts  `json:"scripts"`
-	Workdir  string               `json:"workdir"`
+	GitHosts []string `json:"gitHosts"`
+
+	// GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
+	GitIdentity *GitIdentity         `json:"gitIdentity,omitempty"`
+	OmpHome     []LinkCtlOmpHomeFile `json:"ompHome"`
+	Repo        *LinkCtlSetupRepo    `json:"repo,omitempty"`
+	Scripts     LinkCtlSetupScripts  `json:"scripts"`
+	Workdir     string               `json:"workdir"`
 }
 
 // LinkCtlSetupRunResult defines model for LinkCtlSetupRunResult.
@@ -1849,6 +1865,10 @@ type Project struct {
 
 	// DefaultProvider provider 名称
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
+	GitAuthorEmail  *string `json:"gitAuthorEmail,omitempty"`
+
+	// GitAuthorName 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
+	GitAuthorName *string `json:"gitAuthorName,omitempty"`
 
 	// ID `prj_<ulid>`
 	ID           ProjectID `json:"id"`
@@ -1868,11 +1888,17 @@ type ProjectCreate struct {
 	Color           *string `json:"color,omitempty"`
 	DefaultOrbType  *string `json:"defaultOrbType,omitempty"`
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
-	Name            string  `json:"name"`
-	RepoURL         *string `json:"repoUrl,omitempty"`
-	ResumeScript    *string `json:"resumeScript,omitempty"`
-	SetupScript     *string `json:"setupScript,omitempty"`
-	ShallowClone    *bool   `json:"shallowClone,omitempty"`
+
+	// GitAuthorEmail 须与 gitAuthorName 同时给出；规则同 GitIdentity.email
+	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
+
+	// GitAuthorName 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name
+	GitAuthorName *string `json:"gitAuthorName,omitempty"`
+	Name          string  `json:"name"`
+	RepoURL       *string `json:"repoUrl,omitempty"`
+	ResumeScript  *string `json:"resumeScript,omitempty"`
+	SetupScript   *string `json:"setupScript,omitempty"`
+	ShallowClone  *bool   `json:"shallowClone,omitempty"`
 }
 
 // ProjectID `prj_<ulid>`
@@ -1890,11 +1916,15 @@ type ProjectPatch struct {
 	Color           *string `json:"color,omitempty"`
 	DefaultOrbType  *string `json:"defaultOrbType,omitempty"`
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
-	Name            *string `json:"name,omitempty"`
-	RepoURL         *string `json:"repoUrl,omitempty"`
-	ResumeScript    *string `json:"resumeScript,omitempty"`
-	SetupScript     *string `json:"setupScript,omitempty"`
-	ShallowClone    *bool   `json:"shallowClone,omitempty"`
+	GitAuthorEmail  *string `json:"gitAuthorEmail,omitempty"`
+
+	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
+	GitAuthorName *string `json:"gitAuthorName,omitempty"`
+	Name          *string `json:"name,omitempty"`
+	RepoURL       *string `json:"repoUrl,omitempty"`
+	ResumeScript  *string `json:"resumeScript,omitempty"`
+	SetupScript   *string `json:"setupScript,omitempty"`
+	ShallowClone  *bool   `json:"shallowClone,omitempty"`
 }
 
 // Provider defines model for Provider.
@@ -2650,6 +2680,9 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
+
+// PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
+type PutGitIdentityJSONRequestBody = GitIdentity
 
 // CreateThreadJSONRequestBody defines body for CreateThread for application/json ContentType.
 type CreateThreadJSONRequestBody = CreateThreadRequest
@@ -3732,6 +3765,15 @@ type ServerInterface interface {
 	// PutSecret 写入密钥
 	// (PUT /api/v1/secrets/{name})
 	PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath)
+	// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
+	// (DELETE /api/v1/settings/git-identity)
+	DeleteGitIdentity(w http.ResponseWriter, r *http.Request)
+	// GetGitIdentity orb 内 git 提交身份的全局默认值
+	// (GET /api/v1/settings/git-identity)
+	GetGitIdentity(w http.ResponseWriter, r *http.Request)
+	// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
+	// (PUT /api/v1/settings/git-identity)
+	PutGitIdentity(w http.ResponseWriter, r *http.Request)
 	// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 	// (GET /api/v1/stats/orbs)
 	GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams)
@@ -4011,6 +4053,24 @@ func (_ Unimplemented) DeleteSecret(w http.ResponseWriter, r *http.Request, name
 // PutSecret 写入密钥
 // (PUT /api/v1/secrets/{name})
 func (_ Unimplemented) PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
+// (DELETE /api/v1/settings/git-identity)
+func (_ Unimplemented) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetGitIdentity orb 内 git 提交身份的全局默认值
+// (GET /api/v1/settings/git-identity)
+func (_ Unimplemented) GetGitIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
+// (PUT /api/v1/settings/git-identity)
+func (_ Unimplemented) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4997,6 +5057,48 @@ func (siw *ServerInterfaceWrapper) PutSecret(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteGitIdentity operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGitIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetGitIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetGitIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGitIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutGitIdentity operation middleware
+func (siw *ServerInterfaceWrapper) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutGitIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOrbStats operation middleware
 func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Request) {
 
@@ -5707,6 +5809,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/secrets/{name}", wrapper.PutSecret)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/settings/git-identity", wrapper.DeleteGitIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/git-identity", wrapper.GetGitIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/git-identity", wrapper.PutGitIdentity)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/agent-config/files", wrapper.ListAgentConfigFiles)

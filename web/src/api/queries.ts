@@ -10,6 +10,7 @@ export const qk = {
 	projects: ["projects"] as const,
 	providers: ["providers"] as const,
 	secrets: ["secrets"] as const,
+	gitIdentity: ["settings", "git-identity"] as const,
 	agentFiles: ["agent-config", "files"] as const,
 	agentFile: (path: string) => ["agent-config", "file", path] as const,
 	orbs: ["orbs"] as const,
@@ -49,6 +50,13 @@ export function useProjects() {
 		queryKey: qk.projects,
 		queryFn: () => unwrap(api.GET("/api/v1/projects")),
 		staleTime: 30_000,
+	});
+}
+
+export function useGitIdentity() {
+	return useQuery({
+		queryKey: qk.gitIdentity,
+		queryFn: () => unwrap(api.GET("/api/v1/settings/git-identity")),
 	});
 }
 

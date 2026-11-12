@@ -5,19 +5,20 @@
  * 提示词含 `ask` 时发一个 ask 对话框并等待作答；含 `plan` 时发计划提案并等待审批。
  * 环境（M2.5）：orb 带 `lastSetup` / `lastResume`，提供 setup-runs 与日志接口；failed orb 的线程 `wake` 后恢复；
  * 提示词点名 `oryn-setup` 技能时，回合结束后补一条手动重跑成功的记录（模拟 agent 修好环境）。
+ * 设置：Git 身份（GET / PUT / DELETE）与项目的新建 / 修改（含 git 身份覆盖，空串清除）。
  */
-import type { Entry, Orb, Schemas, Thread } from "../api/client";
+import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import type { SessionState } from "../omp/types";
 import {
 	assistant,
 	buildMainTranscript,
+	projects as fixtureProjects,
 	threads as fixtureThreads,
 	MAIN_THREAD,
 	mainState,
 	makeOrb,
 	NOW,
 	orbEnv,
-	projects,
 	providers,
 	SESSION_FILE,
 	setupLogs,
@@ -36,6 +37,21 @@ function json(body: unknown, status = 200): Response {
 	});
 }
 
+/** 项目 git 身份覆盖须两项同时给出（与服务端一致）；两项都为空串表示清除。 */
+function badGitPair(name?: string, email?: string): Response | null {
+	if (name === undefined && email === undefined) return null;
+	const n = name?.trim() ?? "";
+	const e = email?.trim() ?? "";
+	if ((n === "" && e === "") || (n !== "" && e.includes("@"))) return null;
+	return json(
+		{
+			code: "invalid_request",
+			message: "gitAuthorName 与 gitAuthorEmail 须同时给出",
+		},
+		400,
+	);
+}
+
 function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
@@ -50,6 +66,11 @@ export class MockServer {
 	readonly setupRuns = new Map<string, Schemas["OrbSetupRun"][]>();
 	readonly setupLogs = new Map<string, string>(Object.entries(setupLogs));
 	readonly planProposals = new Map<string, Json>();
+	readonly projects: Project[] = fixtureProjects.map((p) => ({ ...p }));
+	gitIdentity: Schemas["GitIdentity"] | undefined = {
+		name: "Oryn Owner",
+		email: "owner@oryn.example",
+	};
 	readonly queues = new Map<
 		string,
 		{ steering: string[]; followUp: string[] }
@@ -131,7 +152,70 @@ export class MockServer {
 			});
 		if (p === "ws-ticket")
 			return json({ ticket: "mock-ticket", expiresIn: 30 });
-		if (p === "projects" && m === "GET") return json({ projects });
+		if (p === "projects" && m === "GET")
+			return json({
+				projects: this.projects.filter((x) => !x.archivedAt),
+			});
+		if (p === "projects" && m === "POST") {
+			const b = (await body()) as Schemas["ProjectCreate"];
+			const bad = badGitPair(b.gitAuthorName, b.gitAuthorEmail);
+			if (bad) return bad;
+			const created: Project = {
+				// 新建时空串等同缺省
+				...(Object.fromEntries(
+					Object.entries(b).filter(([, v]) => v !== ""),
+				) as Schemas["ProjectCreate"]),
+				id: `prj_mock${this.idSeq++}`,
+				shallowClone: Boolean(b.shallowClone),
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+			this.projects.push(created);
+			return json(created, 201);
+		}
+		const projectMatch = /^projects\/([^/]+)$/.exec(p);
+		if (projectMatch) {
+			const i = this.projects.findIndex((x) => x.id === projectMatch[1]);
+			const cur = this.projects[i];
+			if (!cur) return json({ code: "not_found", message: "project" }, 404);
+			if (m === "PATCH") {
+				const { archived, ...b } = (await body()) as Schemas["ProjectPatch"];
+				const bad = badGitPair(b.gitAuthorName, b.gitAuthorEmail);
+				if (bad) return bad;
+				const next: Project = { ...cur, updatedAt: Date.now() };
+				for (const [k, v] of Object.entries(b)) {
+					const key = k as keyof Project;
+					if (v === "") delete next[key];
+					else Object.assign(next, { [key]: v });
+				}
+				if (archived !== undefined)
+					next.archivedAt = archived ? Date.now() : undefined;
+				this.projects[i] = next;
+				return json(next);
+			}
+			if (m === "DELETE") {
+				this.projects.splice(i, 1);
+				return new Response(null, { status: 204 });
+			}
+			return json(cur);
+		}
+		if (p === "settings/git-identity") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["GitIdentity"];
+				const name = String(b.name ?? "").trim();
+				const email = String(b.email ?? "").trim();
+				if (!name || !email.includes("@"))
+					return json(
+						{ code: "invalid_request", message: "git 名字与邮箱无效" },
+						400,
+					);
+				this.gitIdentity = { name, email };
+			} else if (m === "DELETE") {
+				this.gitIdentity = undefined;
+				return new Response(null, { status: 204 });
+			}
+			return json(this.gitIdentity ? { identity: this.gitIdentity } : {});
+		}
 		if (p === "providers" && m === "GET") return json({ providers });
 		if (p === "providers" && m === "POST") {
 			const b = await body();

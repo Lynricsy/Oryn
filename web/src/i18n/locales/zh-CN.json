@@ -466,6 +466,7 @@
 		"providers": "Provider",
 		"projects": "项目",
 		"secrets": "密钥",
+		"git-identity": "Git 身份",
 		"agent-config": "agent 配置",
 		"about": "关于"
 	},
@@ -502,6 +503,10 @@
 		"defaultProvider": "默认 provider",
 		"deleteConfirm": "删除项目 {{name}}？",
 		"empty": "还没有项目。",
+		"gitAuthorEmail": "提交者邮箱（覆盖）",
+		"gitAuthorName": "提交者名字（覆盖）",
+		"gitHint": "本项目 orb 内 git 提交使用的身份；留空则使用全局 Git 身份（设置 → Git 身份）。两项须同时填写。",
+		"gitPairError": "git 提交者名字与邮箱须同时填写或同时留空。",
 		"inherit": "继承全局默认",
 		"name": "名称",
 		"new": "新建项目",
@@ -527,6 +532,16 @@
 		"put": "写入密钥",
 		"title": "密钥",
 		"value": "值"
+	},
+	"gitIdentity": {
+		"title": "Git 提交身份",
+		"hint": "orb 内 git 提交默认使用的 user.name / user.email；项目设置里可单独覆盖。修改在下次 setup 或 orb 唤醒时写入，已在运行的 orb 不会立即变化。",
+		"name": "名字",
+		"email": "邮箱",
+		"notSet": "尚未设置：agent 提交时 git 会提示缺少身份。",
+		"current": "当前：{{name}} <{{email}}>",
+		"clearConfirm": "清除全局 Git 身份？已有 orb 的 git 配置保持不变。",
+		"saved": "已保存"
 	},
 	"agentConfig": {
 		"deleteConfirm": "删除 {{path}}？",

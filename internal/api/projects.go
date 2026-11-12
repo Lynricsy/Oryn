@@ -15,12 +15,16 @@ import (
 )
 
 func projectJSON(p db.Project) apigen.Project {
-	return apigen.Project{
+	out := apigen.Project{
 		ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
 		SetupScript: p.SetupScript, ResumeScript: p.ResumeScript, ShallowClone: p.ShallowClone,
 		Color: p.Color, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ArchivedAt: p.ArchivedAt,
 	}
+	if id := gitIdentityJSON(p.GitAuthorName, p.GitAuthorEmail); id != nil {
+		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
+	}
+	return out
 }
 
 func validProjectName(name string) bool {
@@ -70,6 +74,11 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request", "项目名长度须为 1–100")
 		return
 	}
+	gitName, gitEmail, _, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
 		writeErr(w, r, err)
@@ -81,7 +90,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		DefaultProvider: optStr(req.DefaultProvider), DefaultOrbType: optStr(req.DefaultOrbType),
 		SetupScript: optStr(req.SetupScript), ResumeScript: optStr(req.ResumeScript),
 		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color),
-		CreatedAt: now, UpdatedAt: now,
+		GitAuthorName: gitName, GitAuthorEmail: gitEmail, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
 		WriteError(w, http.StatusConflict, "conflict", "已有同名项目")
@@ -117,6 +126,11 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	gitName, gitEmail, gitSet, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	if req.DefaultProvider != nil {
 		if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
@@ -125,7 +139,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		}
 	}
 	var out db.Project
-	err := s.Store.Tx(ctx, func(q *db.Queries) error {
+	err = s.Store.Tx(ctx, func(q *db.Queries) error {
 		p, err := q.GetProject(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errNotFound("项目不存在")
@@ -135,8 +149,11 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		u := db.UpdateProjectParams{
 			Name: p.Name, RepoUrl: p.RepoUrl, BaseBranch: p.BaseBranch, DefaultProvider: p.DefaultProvider,
 			DefaultOrbType: p.DefaultOrbType, SetupScript: p.SetupScript, ResumeScript: p.ResumeScript,
-			ShallowClone: p.ShallowClone, Color: p.Color, ArchivedAt: p.ArchivedAt,
-			UpdatedAt: time.Now().UnixMilli(), ID: id,
+			ShallowClone: p.ShallowClone, Color: p.Color, GitAuthorName: p.GitAuthorName,
+			GitAuthorEmail: p.GitAuthorEmail, ArchivedAt: p.ArchivedAt, UpdatedAt: time.Now().UnixMilli(), ID: id,
+		}
+		if gitSet {
+			u.GitAuthorName, u.GitAuthorEmail = gitName, gitEmail
 		}
 		if req.Name != nil {
 			u.Name = strings.TrimSpace(*req.Name)

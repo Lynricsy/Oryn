@@ -25,6 +25,7 @@ const SETTINGS: SettingsSection[] = [
 	"providers",
 	"projects",
 	"secrets",
+	"git-identity",
 	"agent-config",
 	"about",
 ];
