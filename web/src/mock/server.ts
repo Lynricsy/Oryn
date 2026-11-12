@@ -112,6 +112,11 @@ export class MockServer {
 		{ start: number; chars: number }
 	>();
 	private termSeq = 0;
+	/** 消息附件（控制面副本）：id → 元数据与内容。 */
+	readonly attachments = new Map<
+		string,
+		{ meta: Schemas["Attachment"]; data: Blob }
+	>();
 	/** 单连接 1s 内可收的终端输出（字符）；超出即模拟服务端丢帧并发 `term.lagged`。 */
 	termLag = 2 << 20;
 	/** 帧间隔（毫秒）；测试里设为 0。 */
@@ -450,8 +455,20 @@ export class MockServer {
 				),
 			});
 		}
-		if (p === "threads" && m === "POST")
-			return json({ thread: this.createThread(await body()) }, 201);
+		const attRes = await this.handleAttachmentFetch(req, p, m, url);
+		if (attRes) return attRes;
+		if (p === "threads" && m === "POST") {
+			const b = await body();
+			const ids = Array.isArray(b.attachments)
+				? (b.attachments as string[])
+				: [];
+			if (ids.some((a) => this.attachments.get(a)?.meta.threadId))
+				return json(
+					{ code: "attachment_not_found", message: "attachment" },
+					404,
+				);
+			return json({ thread: this.createThread(b) }, 201);
+		}
 		const threadMatch = /^threads\/([^/]+)(?:\/(fork|wake))?$/.exec(p);
 		if (threadMatch) {
 			const id = threadMatch[1] ?? "";
@@ -491,6 +508,8 @@ export class MockServer {
 			}
 			if (m === "DELETE") {
 				this.threads.delete(id);
+				for (const [aid, a] of this.attachments)
+					if (a.meta.threadId === id) this.attachments.delete(aid);
 				this.broadcast({
 					type: "index.patch",
 					upsert: [],
@@ -581,10 +600,102 @@ export class MockServer {
 		});
 	}
 
+	// ------------------------------------------------------------ 附件
+
+	private async handleAttachmentFetch(
+		req: Request,
+		p: string,
+		m: string,
+		url: URL,
+	): Promise<Response | null> {
+		if (p === "attachments" && m === "POST") {
+			const data = await req.blob();
+			if (data.size > 100 * 1024 * 1024)
+				return json({ code: "too_large", message: "attachment" }, 413);
+			const name = (url.searchParams.get("name") ?? "file")
+				.split("/")
+				.pop() as string;
+			const threadId = url.searchParams.get("threadId") ?? undefined;
+			const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+			const mimeByExt: Record<string, string> = {
+				png: "image/png",
+				jpg: "image/jpeg",
+				jpeg: "image/jpeg",
+				gif: "image/gif",
+				webp: "image/webp",
+				pdf: "application/pdf",
+				txt: "text/plain; charset=utf-8",
+				md: "text/markdown; charset=utf-8",
+			};
+			const meta: Schemas["Attachment"] = {
+				id: `att_${(this.idSeq++).toString(36).toUpperCase().padStart(26, "0")}`,
+				name,
+				mime: mimeByExt[ext] ?? "application/octet-stream",
+				size: data.size,
+				sha256: "0".repeat(64),
+				createdAt: Date.now(),
+				...(threadId ? { threadId } : {}),
+			};
+			this.attachments.set(meta.id, { meta, data });
+			return json(meta, 201);
+		}
+		const listMatch = /^threads\/([^/]+)\/attachments$/.exec(p);
+		if (listMatch && m === "GET") {
+			if (!this.threads.has(listMatch[1] ?? ""))
+				return json({ code: "not_found", message: "thread" }, 404);
+			return json({
+				attachments: [...this.attachments.values()]
+					.map((a) => a.meta)
+					.filter((a) => a.threadId === listMatch[1]),
+			});
+		}
+		const attMatch = /^attachments\/([^/]+)(\/content)?$/.exec(p);
+		if (!attMatch) return null;
+		const a = this.attachments.get(attMatch[1] ?? "");
+		if (!a) return json({ code: "not_found", message: "attachment" }, 404);
+		if (attMatch[2] && m === "GET")
+			return new Response(a.data, {
+				headers: { "Content-Type": "application/octet-stream" },
+			});
+		if (!attMatch[2] && m === "DELETE") {
+			this.attachments.delete(a.meta.id);
+			return new Response(null, { status: 204 });
+		}
+		return null;
+	}
+
+	/**
+	 * 模拟控制面投递：绑定到线程并在消息末尾追加 `<oryn-attachments>` 块（路径形如 orb 内的投递位置）。
+	 * 有附件属于别的线程时返回 null（投递失败）。
+	 */
+	private withAttachments(
+		threadId: string,
+		message: string,
+		ids: unknown,
+	): string | null {
+		if (!Array.isArray(ids) || ids.length === 0) return message;
+		const lines: string[] = [];
+		for (const id of ids) {
+			const a = this.attachments.get(String(id));
+			if (!a || (a.meta.threadId && a.meta.threadId !== threadId)) return null;
+			a.meta = { ...a.meta, threadId };
+			lines.push(
+				`- /home/user/.oryn/attachments/${threadId}/${a.meta.id}/${a.meta.name} (${a.meta.mime}, ${a.meta.size} bytes)`,
+			);
+		}
+		const block = `<oryn-attachments>\nThe user attached these files. They are stored outside the repository; read them when relevant and do not copy them into the repository unless asked.\n${lines.join("\n")}\n</oryn-attachments>`;
+		return message ? `${message}\n\n${block}` : block;
+	}
+
 	private createThread(b: Json): Thread {
 		const id = `T-mock-${(this.idSeq++).toString(16)}`;
 		const orbId = `orb-mock${this.idSeq.toString().padStart(22, "0")}`;
-		const prompt = typeof b.prompt === "string" ? b.prompt : "";
+		const prompt =
+			this.withAttachments(
+				id,
+				typeof b.prompt === "string" ? b.prompt : "",
+				b.attachments,
+			) ?? "";
 		const t: Thread = {
 			id,
 			title:
@@ -1330,10 +1441,25 @@ export class MockServer {
 					todoPhases: frame.phases,
 				});
 			case "prompt":
-			case "abort_and_prompt":
+			case "abort_and_prompt": {
+				const message = this.withAttachments(
+					threadId,
+					String(frame.message ?? ""),
+					frame.orynAttachments,
+				);
+				if (message === null)
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						"attachment delivery failed: attachment not found",
+					);
 				this.respond(socket, threadId, id, type, { agentInvoked: true });
-				await this.runPrompt(threadId, String(frame.message ?? ""));
+				await this.runPrompt(threadId, message);
 				return;
+			}
 			case "bash": {
 				this.appendEntry(threadId, {
 					role: "bashExecution",

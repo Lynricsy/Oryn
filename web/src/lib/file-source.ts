@@ -167,7 +167,9 @@ export function isDirEntry(e: FileEntry): boolean {
 
 // ---------------------------------------------------------------- XHR 写入
 
-interface XhrPut {
+export interface XhrUpload {
+	/** 缺省 PUT。 */
+	method?: "PUT" | "POST";
 	url: string;
 	body: Blob | string;
 	headers: Record<string, string>;
@@ -201,21 +203,22 @@ function xhrError(xhr: XMLHttpRequest): ApiError {
 	);
 }
 
-/** PUT 原始字节并报告上传进度；带 `X-Oryn-CSRF: 1`，响应体按 JSON 解析。 */
-function xhrPut<T>({
+/** 上传原始字节并报告进度（文件面板与消息附件共用）；带 `X-Oryn-CSRF: 1`，响应体按 JSON 解析。 */
+export function xhrUpload<T>({
+	method = "PUT",
 	url,
 	body,
 	headers,
 	signal,
 	onProgress,
-}: XhrPut): Promise<T> {
+}: XhrUpload): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		if (signal?.aborted) {
 			reject(new DOMException("aborted", "AbortError"));
 			return;
 		}
 		const xhr = new XMLHttpRequest();
-		xhr.open("PUT", url);
+		xhr.open(method, url);
 		xhr.withCredentials = true;
 		xhr.setRequestHeader("X-Oryn-CSRF", "1");
 		xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -320,7 +323,7 @@ export function orbFileSource(orbId: string): FileSource {
 			const headers: Record<string, string> = {};
 			if (opts.etag) headers["If-Match"] = opts.etag;
 			const overwrite = opts.overwrite ?? true;
-			return xhrPut<FileEntry>({
+			return xhrUpload<FileEntry>({
 				url: `${fileUrl(path)}&overwrite=${overwrite}`,
 				body,
 				headers,

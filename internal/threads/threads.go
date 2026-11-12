@@ -29,12 +29,26 @@ type CreateParams struct {
 	ThinkingLevel  string
 	Title          string
 	Labels         []string
+	// Attachments 是已上传附件的 id：建线程时绑定，首条提示词在 orb 与 agent 就绪、附件投递之后才下发。
+	Attachments []string
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
 func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, error) {
-	if strings.TrimSpace(p.Prompt) == "" && len(p.Images) == 0 {
-		return apigen.Thread{}, errf("invalid", "prompt or images required")
+	if strings.TrimSpace(p.Prompt) == "" && len(p.Images) == 0 && len(p.Attachments) == 0 {
+		return apigen.Thread{}, errf("invalid", "prompt, images or attachments required")
+	}
+	if len(p.Attachments) > 0 {
+		if s.attach == nil {
+			return apigen.Thread{}, errf("invalid", "attachments are not supported")
+		}
+		if len(p.Attachments) > maxAttachmentsPerMessage {
+			return apigen.Thread{}, errf("invalid", fmt.Sprintf("at most %d attachments per message", maxAttachmentsPerMessage))
+		}
+		// 预检在建 orb 之前：附件不存在或属于别的线程时不白建 orb
+		if err := s.attach.Check(ctx, p.Attachments); err != nil {
+			return apigen.Thread{}, asThreadErr(err)
+		}
 	}
 	if p.ProjectID != "" {
 		if _, err := s.st.Q.GetProject(ctx, p.ProjectID); err != nil {
@@ -80,6 +94,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if len(p.Images) > 0 {
 		prompt["images"] = p.Images
 	}
+	if len(p.Attachments) > 0 {
+		// 随首批命令持久化：重启后仍按「投递后再下发」续作（见 queueStartupFrameLocked）
+		prompt[orynAttachmentsKey] = p.Attachments
+	}
 	frame, _ := json.Marshal(prompt)
 	frames := [][]byte{frame}
 	if p.Title != "" {
@@ -89,9 +107,15 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	// 首批命令与线程行同一事务落库，应答 201 之前即已持久：重启不会丢掉已受理的提示词（CP5）
 	startup := startupFrames(frames...)
 	if err := s.insertThread(ctx, row, p.Labels, func(q *db.Queries) error {
-		return q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startup, ID: id})
+		if err := q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startup, ID: id}); err != nil {
+			return err
+		}
+		if len(p.Attachments) > 0 {
+			return s.attach.BindTx(ctx, q, id, p.Attachments)
+		}
+		return nil
 	}); err != nil {
-		return apigen.Thread{}, err
+		return apigen.Thread{}, asThreadErr(err)
 	}
 	// 加载线程时按 startup_frames 排队（见 get / queueStartupLocked）
 	t, err := s.get(ctx, id)
@@ -330,6 +354,12 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			slog.Debug("threads: agent.stop 失败", "thread", id, "err", err)
 		}
 		cancel()
+	}
+	if s.attach != nil {
+		// 先删附件文件与 orb 内副本（行随线程级联删除）；失败时孤儿文件由附件服务的清理回收
+		if err := s.attach.DeleteThread(ctx, id); err != nil {
+			slog.Warn("threads: 删除线程附件失败", "thread", id, "err", err)
+		}
 	}
 	n, err := s.st.Q.DeleteThread(ctx, id)
 	if err != nil {

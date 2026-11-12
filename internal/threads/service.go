@@ -57,8 +57,28 @@ type Config struct {
 	WakeOnFocus bool
 	// AgentStartTimeout 是 agent.start 的应答超时（默认 60s）。
 	AgentStartTimeout time.Duration
-	// CallTimeout 是内部 omp 命令（fork_from 等）的超时（默认 2 分钟，含唤醒时间）。
+	// CallTimeout 是内部 omp 命令（fork_from 等）的超时（默认 2 分钟，含唤醒时间）；也是带附件的命令等待 agent 就绪的上限。
 	CallTimeout time.Duration
+	// ProvisionTimeout 是新建线程的首条提示词（带附件）等待 orb 与 agent 就绪的上限（默认 30 分钟）。
+	ProvisionTimeout time.Duration
+}
+
+// DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。
+type DeliveredAttachment struct {
+	ID, Name, Mime, Path string
+	Size                 int64
+}
+
+// Attachments 是消息附件服务（internal/attachments 实现，M3 计划 5.3）。
+type Attachments interface {
+	// Check 在新建线程前预检附件（存在、未绑定、数量与去重），避免白建 orb。
+	Check(ctx context.Context, ids []string) error
+	// BindTx 在建线程的事务里把附件绑定到新线程。
+	BindTx(ctx context.Context, q *db.Queries, threadID string, ids []string) error
+	// Deliver 绑定附件并确保它们都在 orb 内（orb 须已可用，不唤醒）。
+	Deliver(ctx context.Context, orbID, threadID string, ids []string) ([]DeliveredAttachment, error)
+	// DeleteThread 删除线程的全部附件（线程行删除之前调用）。
+	DeleteThread(ctx context.Context, threadID string) error
 }
 
 // Service 是线程服务。
@@ -67,6 +87,8 @@ type Service struct {
 	st   *store.Store
 	orbs Orbs
 	sink atomic.Pointer[sinkBox]
+	// attach 由 SetAttachments 在服务对外可用之前设置；nil = 不支持附件。
+	attach Attachments
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -127,6 +149,9 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = 2 * time.Minute
 	}
+	if cfg.ProvisionTimeout <= 0 {
+		cfg.ProvisionTimeout = 30 * time.Minute
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
 		cfg: cfg, st: st, orbs: orbs, ctx: ctx, cancel: cancel,
@@ -163,6 +188,9 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 
 // SetSink 设置实时事件接收方（realtime hub）。
 func (s *Service) SetSink(k Sink) { s.sink.Store(&sinkBox{k}) }
+
+// SetAttachments 设置附件服务；须在 orb link 接入与 API 对外服务之前调用。
+func (s *Service) SetAttachments(a Attachments) { s.attach = a }
 
 func (s *Service) out() Sink { return s.sink.Load().Sink }
 
@@ -224,6 +252,8 @@ type thread struct {
 	unsynced bool
 	// transcriptRev 是转录版本（threads.transcript_rev）。
 	transcriptRev int64
+	// deliveries 是在途的附件投递数（命令在投递完成后才入队）：>0 时线程算 working、不静止。
+	deliveries int
 }
 
 const queueLimit = 100
@@ -372,7 +402,11 @@ func (s *Service) status(t *thread) string {
 		return StateError
 	}
 	orbReady := orbState == orbStateReady && t.agentReady()
-	return t.live.Status(orbReady)
+	st := t.live.Status(orbReady)
+	if st == StateIdle && t.deliveries > 0 {
+		return StateWorking
+	}
+	return st
 }
 
 // recompute 重新推导状态；变化时写库、处理未读并推送 index.patch，返回是否变化。调用方持有 t.mu。
@@ -467,7 +501,7 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 
 // quiescentLocked 报告线程是否静止（冻结 / 停机的前提）。调用方持有 t.mu。
 func (t *thread) quiescentLocked() bool {
-	return t.settled && !t.unsynced && !t.starting && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
+	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
 }
 
 // touchAgent 节流地记录 agent 活动（每 orb 至多 5s 一次）。

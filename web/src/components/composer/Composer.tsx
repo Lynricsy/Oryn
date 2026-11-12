@@ -1,5 +1,5 @@
 /**
- * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、图片附件。
+ * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、文件附件。
  */
 import {
 	type ReactNode,
@@ -25,7 +25,7 @@ import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, Kbd, Spinner } from "../ui/primitives";
-import { AttachmentStrip, useImageAttachments } from "./attachments";
+import { AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
 
 export function Composer({
@@ -47,7 +47,7 @@ export function Composer({
 	const [menuDismissed, setMenuDismissed] = useState(false);
 	const escAt = useRef<number | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
-	const att = useImageAttachments();
+	const att = useAttachments({ threadId });
 	const menu = useCommandMenu(threadId, text, commands);
 	const menuOpen = menu !== null && !menuDismissed;
 
@@ -74,8 +74,8 @@ export function Composer({
 	}, [menu?.length]);
 
 	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）
-	const draftRef = useRef({ text, images: att.images });
-	draftRef.current = { text, images: att.images };
+	const draftRef = useRef({ text, items: att.items });
+	draftRef.current = { text, items: att.items };
 	const inFlight = useRef<typeof draftRef.current | null>(null);
 
 	const reset = () => {
@@ -86,7 +86,7 @@ export function Composer({
 
 	const resetIfUnchanged = (sent: typeof draftRef.current) => {
 		const cur = draftRef.current;
-		if (cur.text === sent.text && cur.images === sent.images) reset();
+		if (cur.text === sent.text && cur.items === sent.items) reset();
 	};
 
 	const runSlash = async (action: SlashAction, mode: SendMode) => {
@@ -134,15 +134,22 @@ export function Composer({
 		const sent = draftRef.current;
 		// 同一份草稿已在发送中：忽略重复提交
 		const pending = inFlight.current;
-		if (pending && pending.text === sent.text && pending.images === sent.images)
+		if (pending && pending.text === sent.text && pending.items === sent.items)
 			return;
 		const parsed = parseComposerInput(sent.text);
 		setError(null);
+		if (att.uploading && parsed.kind !== "bash") {
+			setError(new Error(t("attachments.waitUpload")));
+			return;
+		}
 		inFlight.current = sent;
 		try {
 			if (parsed.kind === "empty") {
-				if (att.contents.length === 0) return;
-				await realtime.cmd(threadId, promptFrame(mode, "", att.contents));
+				if (att.attachmentIds.length === 0) return;
+				await realtime.cmd(
+					threadId,
+					promptFrame(mode, "", att.contents, att.attachmentIds),
+				);
 				resetIfUnchanged(sent);
 				return;
 			}
@@ -180,6 +187,7 @@ export function Composer({
 					mode,
 					parsed.kind === "text" ? parsed.text : sent.text.trim(),
 					att.contents,
+					att.attachmentIds,
 				),
 			);
 			resetIfUnchanged(sent);
@@ -253,7 +261,11 @@ export function Composer({
 		}
 	};
 
-	const canSend = !disabled && (text.trim() !== "" || att.images.length > 0);
+	// 上传未完成时不能发送（否则附件会被悄悄漏掉）；出错的文件不随消息发送
+	const canSend =
+		!disabled &&
+		!att.uploading &&
+		(text.trim() !== "" || att.attachmentIds.length > 0);
 	return (
 		<div className="relative mx-auto w-full max-w-3xl">
 			{menuOpen && (
@@ -265,10 +277,13 @@ export function Composer({
 				/>
 			)}
 			<div className="rounded-xl border border-border bg-panel shadow-sm focus-within:border-accent/60">
-				<AttachmentStrip images={att.images} onRemove={att.remove} />
+				<AttachmentStrip items={att.items} onRemove={att.remove} />
 				<textarea
-					onDragOver={(e) => e.preventDefault()}
+					onDragOver={(e) => {
+						if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+					}}
 					onDrop={(e) => {
+						if (e.dataTransfer.files.length === 0) return;
 						e.preventDefault();
 						void att.addFiles(e.dataTransfer.files);
 					}}
@@ -287,9 +302,7 @@ export function Composer({
 					}}
 					onKeyDown={onKeyDown}
 					onPaste={(e) => {
-						const files = [...e.clipboardData.files].filter((f) =>
-							f.type.startsWith("image/"),
-						);
+						const files = [...e.clipboardData.files];
 						if (files.length > 0) {
 							e.preventDefault();
 							void att.addFiles(files);
@@ -298,11 +311,10 @@ export function Composer({
 				/>
 				<div className="flex items-center gap-1 px-2 pb-2">
 					<label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg">
-						<Icon name="image" size={16} />
-						<span className="sr-only">{t("composer.attach")}</span>
+						<Icon name="file" size={16} />
+						<span className="sr-only">{t("attachments.attach")}</span>
 						<input
 							type="file"
-							accept="image/*"
 							multiple
 							className="hidden"
 							onChange={(e) => {

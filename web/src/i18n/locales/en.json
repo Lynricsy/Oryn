@@ -91,10 +91,7 @@
 	"composer": {
 		"abort": "Interrupt",
 		"abortBash": "Abort bash",
-		"attach": "Attach images",
 		"commands": "Commands",
-		"imageFailed": "Could not read image {{name}}",
-		"imageTooLarge": "Image {{name}} is still {{size}} after compression but only {{remaining}} is left for this message — please shrink it",
 		"keyAbort": "interrupt",
 		"keyBash": "bash",
 		"keyCommands": "commands",
@@ -107,7 +104,6 @@
 		"noCommands": "No matching commands",
 		"placeholder": "Reply… (/ commands, ! bash)",
 		"placeholderBusy": "Steer the running turn…",
-		"removeImage": "Remove image",
 		"send": "Send",
 		"steer": "Steer",
 		"unavailable": "/{{name}} is not available in Oryn"
@@ -784,5 +780,21 @@
 	"editor": {
 		"loading": "Loading editor…",
 		"saveHint": "Ctrl/⌘+S to save"
+	},
+	"attachments": {
+		"attach": "Attach files",
+		"tooMany": "At most {{max}} attachments per message",
+		"tooLarge": "Exceeds the {{max}} attachment limit",
+		"uploading": "Uploading {{percent}}%",
+		"fileOnly": "file only",
+		"remove": "Remove {{name}}",
+		"waitUpload": "Attachments are still uploading — send once they finish",
+		"inMessage": "Message attachments",
+		"title": "Attachments",
+		"empty": "This thread has no attachments yet",
+		"download": "Download",
+		"delete": "Delete",
+		"deleteConfirm": "Delete attachment {{name}}? The copy inside the orb is removed too.",
+		"hint": "Attachments are stored in Oryn with the thread and never enter the repository; they are deleted with the thread."
 	}
 }

@@ -1,5 +1,5 @@
 /**
- * 首页 = 新建线程框（居中卡片，按最新 Amp）：提示词 + 图片；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
+ * 首页 = 新建线程框（居中卡片，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
  * 模型与思考级别（Ctrl+S）、发送。省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
  */
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -9,7 +9,7 @@ import type { Schemas } from "../api/client";
 import { useOrbs, useProjects, useProviders } from "../api/queries";
 import {
 	AttachmentStrip,
-	useImageAttachments,
+	useAttachments,
 } from "../components/composer/attachments";
 import { Icon, type IconName } from "../components/ui/icons";
 import {
@@ -124,7 +124,7 @@ export function HomePage(): ReactNode {
 	const projects = useProjects();
 	const orbs = useOrbs();
 	const threads = useIndex((s) => s.threads);
-	const att = useImageAttachments();
+	const att = useAttachments();
 	const [prompt, setPrompt] = useState("");
 	const [pill, setPill] = useState<Pill | null>(null);
 	const [executor, setExecutor] = useState<Executor>({ kind: "new_orb" });
@@ -187,7 +187,11 @@ export function HomePage(): ReactNode {
 
 	const submit = async () => {
 		const text = prompt.trim();
-		if (!text && att.contents.length === 0) return;
+		if (!text && att.attachmentIds.length === 0) return;
+		if (att.uploading) {
+			setError(t("attachments.waitUpload"));
+			return;
+		}
 		setBusy(true);
 		setError(null);
 		try {
@@ -197,6 +201,9 @@ export function HomePage(): ReactNode {
 				executor,
 				...(projectId ? { projectId } : {}),
 				...(att.contents.length > 0 ? { images: att.contents } : {}),
+				...(att.attachmentIds.length > 0
+					? { attachments: att.attachmentIds }
+					: {}),
 				...(slash > 0
 					? {
 							model: {
@@ -238,10 +245,13 @@ export function HomePage(): ReactNode {
 						{t("newThread.heading")}
 					</h1>
 					<div className="relative rounded-2xl border border-border bg-panel shadow-sm focus-within:border-accent/60">
-						<AttachmentStrip images={att.images} onRemove={att.remove} />
+						<AttachmentStrip items={att.items} onRemove={att.remove} />
 						<textarea
-							onDragOver={(e) => e.preventDefault()}
+							onDragOver={(e) => {
+								if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+							}}
 							onDrop={(e) => {
+								if (e.dataTransfer.files.length === 0) return;
 								e.preventDefault();
 								void att.addFiles(e.dataTransfer.files);
 							}}
@@ -253,9 +263,7 @@ export function HomePage(): ReactNode {
 							className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm outline-none placeholder:text-faint"
 							onChange={(e) => setPrompt(e.target.value)}
 							onPaste={(e) => {
-								const files = [...e.clipboardData.files].filter((f) =>
-									f.type.startsWith("image/"),
-								);
+								const files = [...e.clipboardData.files];
 								if (files.length > 0) {
 									e.preventDefault();
 									void att.addFiles(files);
@@ -295,11 +303,10 @@ export function HomePage(): ReactNode {
 								onClick={() => setPill(pill === "model" ? null : "model")}
 							/>
 							<label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-muted hover:bg-hover hover:text-fg">
-								<Icon name="image" size={14} />
-								<span className="sr-only">{t("composer.attach")}</span>
+								<Icon name="file" size={14} />
+								<span className="sr-only">{t("attachments.attach")}</span>
 								<input
 									type="file"
-									accept="image/*"
 									multiple
 									className="hidden"
 									onChange={(e) => {
@@ -311,7 +318,11 @@ export function HomePage(): ReactNode {
 							<div className="flex-1" />
 							<button
 								type="button"
-								disabled={busy || (!prompt.trim() && att.images.length === 0)}
+								disabled={
+									busy ||
+									att.uploading ||
+									(!prompt.trim() && att.attachmentIds.length === 0)
+								}
 								onClick={() => void submit()}
 								aria-label={t("composer.send")}
 								className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-accent-fg text-sm disabled:opacity-40"

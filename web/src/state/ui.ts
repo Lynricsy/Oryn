@@ -16,6 +16,7 @@ export type DialogState =
 	| { kind: "labels" }
 	| { kind: "rename" }
 	| { kind: "debug" }
+	| { kind: "attachments" }
 	| { kind: "setupLog"; orbId: string; run: Schemas["OrbSetupRun"] };
 
 export type PanelTab = "info" | "changes" | "files" | "terminal";

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -644,9 +645,16 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 	case RouteUseOrynFork:
 		return errf(RouteUseOrynFork, "use POST /api/v1/threads/{id}/fork")
 	}
+	ids, frame, err := takeAttachments(cmdType, frame)
+	if err != nil {
+		return err
+	}
 	t, err := s.get(ctx, threadID)
 	if err != nil {
 		return err
+	}
+	if len(ids) > 0 {
+		return s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
 	}
 	line, err := omprpc.SetID(frame, s.newCmdID())
 	if err != nil {
@@ -682,6 +690,255 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		s.wake(threadID, orbID)
 	}
 	return nil
+}
+
+// ---- 消息附件（M3 计划 5.3）----
+
+// orynAttachmentsKey 是客户端在 prompt / steer / follow_up / abort_and_prompt 帧上携带附件 id 的 Oryn 扩展字段；
+// 控制面在下发前删除它（omp 永远看不到），投递完成后把附件块追加到 message 末尾。
+const orynAttachmentsKey = "orynAttachments"
+
+// maxAttachmentsPerMessage 是每条消息的附件数上限（与 internal/attachments.MaxPerMessage 一致）。
+const maxAttachmentsPerMessage = 20
+
+// deliverTimeout 是一次附件投递（最多 20 × 100MiB 经 link 上传）的上限：超时视为投递失败，避免线程永远不静止。
+const deliverTimeout = 30 * time.Minute
+
+// attachmentCommands 是可以带附件的命令（都有 message 字段）。
+var attachmentCommands = map[string]bool{"prompt": true, "steer": true, "follow_up": true, "abort_and_prompt": true}
+
+// takeAttachments 取出并删除帧上的 orynAttachments，返回附件 id 与去掉该字段后的帧；没有该字段时原样返回。
+func takeAttachments(cmdType string, frame json.RawMessage) ([]string, json.RawMessage, error) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(frame, &m) != nil {
+		return nil, frame, nil // RouteCommand 已校验过帧
+	}
+	raw, has := m[orynAttachmentsKey]
+	if !has {
+		return nil, frame, nil
+	}
+	delete(m, orynAttachmentsKey)
+	var ids []string
+	if string(raw) != "null" {
+		if err := json.Unmarshal(raw, &ids); err != nil {
+			return nil, nil, errf(RouteInvalidFrame, "orynAttachments must be an array of attachment ids")
+		}
+	}
+	if len(ids) > 0 && !attachmentCommands[cmdType] {
+		return nil, nil, errf(RouteInvalidFrame, cmdType+" does not accept orynAttachments")
+	}
+	if len(ids) > maxAttachmentsPerMessage {
+		return nil, nil, errf("invalid", fmt.Sprintf("at most %d attachments per message", maxAttachmentsPerMessage))
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			return nil, nil, errf("invalid", "orynAttachments must be distinct, non-empty attachment ids")
+		}
+		seen[id] = true
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, nil, errf(RouteInvalidFrame, err.Error())
+	}
+	return ids, out, nil
+}
+
+// attachmentBlockHead 是附件块的固定开头（前端据此识别并渲染为附件芯片）。
+const attachmentBlockHead = "<oryn-attachments>\nThe user attached these files. They are stored outside the repository; " +
+	"read them when relevant and do not copy them into the repository unless asked.\n"
+
+// attachmentBlock 构造追加到消息末尾的附件块。
+func attachmentBlock(d []DeliveredAttachment) string {
+	var b strings.Builder
+	b.WriteString("\n\n")
+	b.WriteString(attachmentBlockHead)
+	for _, a := range d {
+		m := a.Mime
+		if m == "" {
+			m = "application/octet-stream"
+		}
+		fmt.Fprintf(&b, "- %s (%s, %d bytes)\n", a.Path, m, a.Size)
+	}
+	b.WriteString("</oryn-attachments>")
+	return b.String()
+}
+
+// appendMessage 把 text 追加到帧的 message 字段（缺省为空串；空消息时去掉前导空行）。
+func appendMessage(frame []byte, text string) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(frame, &m); err != nil {
+		return nil, err
+	}
+	var msg string
+	if raw, ok := m["message"]; ok {
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return nil, fmt.Errorf("message must be a string")
+		}
+	}
+	if msg == "" {
+		text = strings.TrimLeft(text, "\n")
+	}
+	b, _ := json.Marshal(msg + text)
+	m["message"] = b
+	return json.Marshal(m)
+}
+
+// codedError 是带业务错误码的错误（internal/attachments.Error 实现）。
+type codedError interface{ Coded() (code, message string) }
+
+// asThreadErr 把附件服务的业务错误转成本包的 *Error（API 据错误码映射状态）。
+func asThreadErr(err error) error {
+	var c codedError
+	if errors.As(err, &c) {
+		code, msg := c.Coded()
+		return errf(code, msg)
+	}
+	return err
+}
+
+// commandWithAttachments 处理带附件的客户端命令：记用户交互、必要时唤醒，等 agent 就绪后投递附件、追加附件块再入队；
+// 投递失败时以合成的失败应答结束该命令，并向线程广播一条 notice。
+func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType string, frame []byte, ids []string, reply func(json.RawMessage)) error {
+	if s.attach == nil {
+		return errf("invalid", "attachments are not supported")
+	}
+	t.mu.Lock()
+	if t.orbID == "" {
+		t.mu.Unlock()
+		return errf("no_orb", "thread has no orb")
+	}
+	orbID := t.orbID
+	s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply}, false, s.cfg.CallTimeout)
+	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady
+	s.clearUnreadLocked(ctx, t)
+	s.recompute(ctx, t)
+	t.mu.Unlock()
+	s.touchUser(orbID)
+	if needWake {
+		s.wake(t.id, orbID)
+	}
+	return nil
+}
+
+// startDeliveryLocked 登记一次在途投递并在后台执行。fallback 为真（新建线程的首条提示词，没有发起方可回复）时
+// 投递失败仍发送命令，message 末尾注明失败原因。调用方持有 t.mu。
+func (s *Service) startDeliveryLocked(t *thread, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) {
+	t.deliveries++
+	t.settled = false
+	s.go_(func(ctx context.Context) { s.runDelivery(ctx, t, frame, ids, p, fallback, wait) })
+}
+
+func (s *Service) runDelivery(ctx context.Context, t *thread, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) {
+	text, err := s.deliverAttachments(ctx, t, ids, wait)
+	var reason string
+	if err != nil {
+		reason = "attachment delivery failed: " + err.Error()
+		slog.Warn("threads: 附件投递失败", "thread", t.id, "err", err)
+		if fallback {
+			text = "\n\n[Oryn: " + reason + "]"
+		}
+	}
+	final := frame
+	if err == nil || fallback {
+		if f, aerr := appendMessage(frame, text); aerr == nil {
+			final = f
+		} else if err == nil {
+			err, reason = aerr, "attachment delivery failed: "+aerr.Error()
+		}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.deliveries--
+	s.mu.Lock()
+	live := s.threads[t.id] == t
+	s.mu.Unlock()
+	if !live {
+		s.failCmd(p, "thread deleted")
+		return
+	}
+	if reason != "" {
+		notice, _ := json.Marshal(map[string]string{"type": "notice", "level": "error", "message": reason, "source": "oryn"})
+		s.out().Frame(t.id, notice)
+	}
+	if err != nil && !fallback {
+		s.failCmd(p, reason)
+		s.recompute(ctx, t)
+		return
+	}
+	if e := s.enqueueLocked(t, final, p); e != nil {
+		s.failCmd(p, e.Error())
+	}
+	needWake := !t.agentReady() || s.orbState(t.orbID) != orbStateReady
+	s.recompute(ctx, t)
+	if needWake && t.orbID != "" && (len(t.queue) > 0 || len(t.pending) > 0) {
+		s.wake(t.id, t.orbID)
+	}
+}
+
+// failCmd 以合成的失败应答结束尚未入队的命令。
+func (s *Service) failCmd(p *pendingCmd, reason string) {
+	resp, _ := json.Marshal(map[string]any{"type": "response", "id": s.newCmdID(), "command": p.cmdType, "success": false, "error": reason})
+	s.deliver(p, resp)
+}
+
+// deliverAttachments 等 agent 与 orb 就绪后把附件投递到 orb，返回要追加到消息末尾的附件块。
+func (s *Service) deliverAttachments(ctx context.Context, t *thread, ids []string, wait time.Duration) (string, error) {
+	if s.attach == nil {
+		return "", errors.New("attachments are not supported")
+	}
+	if err := s.waitAgentReady(ctx, t, wait); err != nil {
+		return "", err
+	}
+	t.mu.Lock()
+	orbID := t.orbID
+	t.mu.Unlock()
+	dctx, cancel := context.WithTimeout(ctx, deliverTimeout)
+	defer cancel()
+	d, err := s.attach.Deliver(dctx, orbID, t.id, ids)
+	if err != nil {
+		return "", err
+	}
+	return attachmentBlock(d), nil
+}
+
+// waitAgentReady 等到线程的 agent 可接收命令且 orb 为 ready（在途投递使线程不静止，此后 orb 不会被冻结）。
+// agent 就绪 / 退出时经 readyWaiters 提前醒来；orb 状态变化（解冻）靠周期复查。
+func (s *Service) waitAgentReady(ctx context.Context, t *thread, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	var ch chan apigen.AgentStatus
+	for {
+		t.mu.Lock()
+		st := s.orbState(t.orbID)
+		switch {
+		case t.orbID == "" || st == orbStateDeleted || st == "deleting":
+			t.mu.Unlock()
+			return errors.New("thread has no orb")
+		case st == orbStateFailed:
+			t.mu.Unlock()
+			return errors.New("orb failed")
+		case t.agentReady() && st == orbStateReady:
+			t.mu.Unlock()
+			return nil
+		}
+		if ch == nil {
+			ch = make(chan apigen.AgentStatus, 1)
+			t.readyWaiters = append(t.readyWaiters, ch)
+		}
+		t.mu.Unlock()
+		select {
+		case <-ch:
+			ch = nil
+		case <-tick.C:
+		case <-deadline.C:
+			return fmt.Errorf("agent not ready within %s", timeout)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // call 向线程 agent 发送一条内部命令并等待应答（必要时唤醒 orb）。

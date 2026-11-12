@@ -170,6 +170,12 @@ export function ThreadHeader({
 			onSelect: () => uiStore.getState().open({ kind: "fork" }),
 		},
 		{
+			key: "attachments",
+			icon: "file",
+			label: t("attachments.title"),
+			onSelect: () => uiStore.getState().open({ kind: "attachments" }),
+		},
+		{
 			key: "orb",
 			icon: "box",
 			label: t("thread.orb"),

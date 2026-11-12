@@ -4,8 +4,14 @@
  */
 import { memo, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	attachmentContentUrl,
+	type MessageAttachment,
+	parseAttachmentBlock,
+} from "../../lib/attachments";
 import { formatCost, formatDuration, formatTokens } from "../../lib/format";
 import { imageSrc } from "../../lib/image-src";
+import { formatBytes } from "../../lib/images";
 import type { JsonRecord } from "../../state/message-builder";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
@@ -80,6 +86,55 @@ function Images({ content }: { content: unknown }): ReactNode {
 	);
 }
 
+/** 用户消息附件块解析出的附件芯片：点击以附件形式下载（`attachments/{id}/content`）。 */
+export function AttachmentChips({
+	attachments,
+}: {
+	attachments: MessageAttachment[];
+}): ReactNode {
+	const { t } = useTranslation();
+	if (attachments.length === 0) return null;
+	return (
+		<ul
+			className="mt-2 flex flex-wrap gap-1.5"
+			aria-label={t("attachments.inMessage")}
+		>
+			{attachments.map((a) => {
+				const body = (
+					<>
+						<Icon
+							name={a.mime.startsWith("image/") ? "image" : "file"}
+							size={12}
+						/>
+						<span className="max-w-56 truncate">{a.name}</span>
+						<span className="text-faint">{formatBytes(a.size)}</span>
+					</>
+				);
+				const cls =
+					"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
+				return (
+					<li key={a.path}>
+						{a.id ? (
+							<a
+								href={attachmentContentUrl(a.id)}
+								download={a.name}
+								className={`${cls} hover:bg-hover`}
+								title={a.path}
+							>
+								{body}
+							</a>
+						) : (
+							<span className={cls} title={a.path}>
+								{body}
+							</span>
+						)}
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
 function MessageMenu({
 	entryId,
 	text,
@@ -141,7 +196,10 @@ function UserMessage({
 	live: boolean;
 }) {
 	const { t } = useTranslation();
-	const text = textOfContent(message.content);
+	// 控制面追加的附件块不按原文显示，渲染成附件芯片
+	const { text, attachments } = parseAttachmentBlock(
+		textOfContent(message.content),
+	);
 	const irc = isRecord(message.parentIrc) ? message.parentIrc : null;
 	return (
 		<div
@@ -167,6 +225,7 @@ function UserMessage({
 				{irc ? String(irc.body ?? text) : text}
 			</div>
 			<Images content={message.content} />
+			<AttachmentChips attachments={attachments} />
 			<MessageMenu entryId={entryId} text={text} />
 		</div>
 	);

@@ -20,6 +20,7 @@ import type {
 	ExtensionUiResponse,
 	ImageContent,
 	OmpCommand,
+	OrynPromptExtras,
 	RpcLoopModeState,
 	SessionState,
 } from "../omp/types";
@@ -36,22 +37,25 @@ export type SendMode = Extract<
 	"prompt" | "steer" | "follow_up" | "abort_and_prompt"
 >;
 
-/** 按发送方式构造命令帧。 */
+/** 按发送方式构造命令帧；attachmentIds 写入 Oryn 扩展字段 `orynAttachments`。 */
 export function promptFrame(
 	mode: SendMode,
 	message: string,
 	images: ImageContent[],
-): OmpCommand {
-	const imgs = images.length > 0 ? { images } : {};
+	attachmentIds: readonly string[] = [],
+): OmpCommand & OrynPromptExtras {
+	const extra: { images?: ImageContent[] } & OrynPromptExtras = {};
+	if (images.length > 0) extra.images = images;
+	if (attachmentIds.length > 0) extra.orynAttachments = [...attachmentIds];
 	switch (mode) {
 		case "prompt":
-			return { type: "prompt", message, ...imgs };
+			return { type: "prompt", message, ...extra };
 		case "steer":
-			return { type: "steer", message, ...imgs };
+			return { type: "steer", message, ...extra };
 		case "follow_up":
-			return { type: "follow_up", message, ...imgs };
+			return { type: "follow_up", message, ...extra };
 		case "abort_and_prompt":
-			return { type: "abort_and_prompt", message, ...imgs };
+			return { type: "abort_and_prompt", message, ...extra };
 	}
 }
 

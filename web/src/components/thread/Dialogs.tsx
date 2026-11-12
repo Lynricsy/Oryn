@@ -1,8 +1,15 @@
-/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、计划提案、调试、setup 日志。 */
+/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、附件、计划提案、调试、setup 日志。 */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import {
+	attachmentContentUrl,
+	deleteAttachment,
+	listThreadAttachments,
+} from "../../lib/attachments";
+import { formatDateTime } from "../../lib/format";
+import { formatBytes } from "../../lib/images";
 import type { ReportKind } from "../../lib/slash";
 import type {
 	OmpCommand,
@@ -996,6 +1003,85 @@ function LabelsDialog({
 	);
 }
 
+// ---------------------------------------------------------------- 附件
+
+function AttachmentsDialog({
+	threadId,
+	onClose,
+}: {
+	threadId: string;
+	onClose: () => void;
+}) {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const key = ["attachments", threadId];
+	const q = useQuery({
+		queryKey: key,
+		queryFn: () => listThreadAttachments(threadId),
+	});
+	const [error, setError] = useState<unknown>(null);
+	const [deleting, setDeleting] = useState<string | null>(null);
+	const list = q.data ?? [];
+	return (
+		<Dialog open wide onClose={onClose} title={t("attachments.title")}>
+			{q.isPending && <Spinner />}
+			<ErrorText error={q.error ?? error} />
+			{q.isSuccess && list.length === 0 && (
+				<p className="text-faint text-sm">{t("attachments.empty")}</p>
+			)}
+			<ul className="flex flex-col divide-y divide-border">
+				{list.map((a) => (
+					<li key={a.id} className="flex items-center gap-3 py-2 text-sm">
+						<Icon
+							name={a.mime.startsWith("image/") ? "image" : "file"}
+							size={14}
+						/>
+						<span className="min-w-0 flex-1">
+							<span className="block truncate">{a.name}</span>
+							<span className="block text-faint text-xs">
+								{formatBytes(a.size)} · {formatDateTime(a.createdAt)}
+							</span>
+						</span>
+						<a
+							href={attachmentContentUrl(a.id)}
+							download={a.name}
+							className="rounded px-2 py-1 text-muted text-xs hover:bg-hover hover:text-fg"
+						>
+							{t("attachments.download")}
+						</a>
+						<Button
+							size="sm"
+							variant="danger"
+							disabled={deleting === a.id}
+							onClick={async () => {
+								if (
+									!window.confirm(
+										t("attachments.deleteConfirm", { name: a.name }),
+									)
+								)
+									return;
+								setError(null);
+								setDeleting(a.id);
+								try {
+									await deleteAttachment(a.id);
+									await qc.invalidateQueries({ queryKey: key });
+								} catch (e) {
+									setError(e);
+								} finally {
+									setDeleting(null);
+								}
+							}}
+						>
+							{t("attachments.delete")}
+						</Button>
+					</li>
+				))}
+			</ul>
+			<p className="mt-3 text-faint text-xs">{t("attachments.hint")}</p>
+		</Dialog>
+	);
+}
+
 // ---------------------------------------------------------------- 调试
 
 function DebugDialog({
@@ -1191,6 +1277,8 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 			return <RenameDialog threadId={threadId} onClose={close} />;
 		case "debug":
 			return <DebugDialog threadId={threadId} onClose={close} />;
+		case "attachments":
+			return <AttachmentsDialog threadId={threadId} onClose={close} />;
 		case "setupLog":
 			return (
 				<SetupLogDialog

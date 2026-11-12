@@ -10,6 +10,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/jobs"
@@ -25,18 +26,19 @@ var evalInterval time.Duration
 
 // Server 持有控制面全部组件。
 type Server struct {
-	Config  config.Orynd
-	Store   *store.Store
-	Vault   *secrets.Vault
-	Home    *agentcfg.Home
-	Auth    *auth.Service
-	Tickets *auth.Tickets
-	Jobs    *jobs.Queue
-	Orbs    *orbs.Service
-	Threads *threads.Service
-	Hub     *realtime.Hub
-	API     *api.Server
-	Handler http.Handler
+	Config      config.Orynd
+	Store       *store.Store
+	Vault       *secrets.Vault
+	Home        *agentcfg.Home
+	Auth        *auth.Service
+	Tickets     *auth.Tickets
+	Jobs        *jobs.Queue
+	Orbs        *orbs.Service
+	Threads     *threads.Service
+	Attachments *attachments.Service
+	Hub         *realtime.Hub
+	API         *api.Server
+	Handler     http.Handler
 
 	closers []func()
 }
@@ -80,6 +82,10 @@ func (s *Server) init(ctx context.Context) error {
 		s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus}, s.Store, orbsAdapter{s.Orbs})
+	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
+		return err
+	}
+	s.Threads.SetAttachments(s.Attachments)
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
@@ -87,6 +93,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
 	go s.Auth.Run(runCtx)
+	go s.Attachments.Run(runCtx)
 	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
 
 	s.API = &api.Server{Deps: api.Deps{
@@ -98,6 +105,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
+	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

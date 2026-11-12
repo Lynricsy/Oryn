@@ -12,15 +12,16 @@ import (
 
 // threadErrStatus 把线程服务的错误码映射为 HTTP 状态。
 var threadErrStatus = map[string]int{
-	"not_found":         http.StatusNotFound,
-	"invalid":           http.StatusBadRequest,
-	"invalid_frame":     http.StatusBadRequest,
-	"orb_create_failed": http.StatusBadRequest,
-	"no_orb":            http.StatusConflict,
-	"orb_unavailable":   http.StatusConflict,
-	"queue_full":        http.StatusTooManyRequests,
-	"agent_error":       http.StatusBadGateway,
-	"timeout":           http.StatusGatewayTimeout,
+	"not_found":            http.StatusNotFound,
+	"attachment_not_found": http.StatusNotFound,
+	"invalid":              http.StatusBadRequest,
+	"invalid_frame":        http.StatusBadRequest,
+	"orb_create_failed":    http.StatusBadRequest,
+	"no_orb":               http.StatusConflict,
+	"orb_unavailable":      http.StatusConflict,
+	"queue_full":           http.StatusTooManyRequests,
+	"agent_error":          http.StatusBadGateway,
+	"timeout":              http.StatusGatewayTimeout,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {
@@ -79,7 +80,7 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 	if !decodeThreadBody(w, r, &req) {
 		return
 	}
-	p := threads.CreateParams{Prompt: req.Prompt, Images: req.Images, Model: req.Model, Labels: req.Labels}
+	p := threads.CreateParams{Prompt: req.Prompt, Images: req.Images, Model: req.Model, Labels: req.Labels, Attachments: req.Attachments}
 	if req.ProjectID != nil {
 		p.ProjectID = *req.ProjectID
 	}

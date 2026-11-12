@@ -135,6 +135,12 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 			slog.Warn("threads: 清除首批命令失败", "thread", t.id, "err", err)
 		}
 	}
+	// 带附件的首条提示词（Create 持久化时保留了 orynAttachments）：等 orb 与 agent 就绪、投递后再入队；
+	// 「未送达」重排时回到这里重新投递（orbd 侧幂等，已在的附件不重传）。
+	if ids, rest, err := takeAttachments(typ, f); err == nil && len(ids) > 0 {
+		s.startDeliveryLocked(t, rest, ids, p, true, s.cfg.ProvisionTimeout)
+		return
+	}
 	// 每次排队用新 id：frame 本身不带 id（SetID 只作用于副本）
 	if hold {
 		line, err := omprpc.SetID(append([]byte(nil), f...), s.newCmdID())
