@@ -139,11 +139,14 @@ func TestSetupFailureAndResumeBackground(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
 	bad := "echo boom; exit 3"
-	err := cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{Scripts: apigen.LinkCtlSetupScripts{Setup: &bad}}, nil)
-	var ce *link.CtlError
-	require.ErrorAs(t, err, &ce)
-	assert.Equal(t, "failed", ce.Code)
-	assert.NoFileExists(t, filepath.Join(rt.home, ".oryn", "setup.done"))
+	var failed apigen.LinkCtlSetupRunResult
+	require.NoError(t, cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{Scripts: apigen.LinkCtlSetupScripts{Setup: &bad}}, &failed),
+		"脚本失败不是 RPC 错误：orb 仍要就绪，agent 才能修复脚本")
+	assert.False(t, failed.Ok)
+	assert.True(t, failed.SetupRan)
+	require.NotNil(t, failed.SetupError)
+	assert.Contains(t, *failed.SetupError, "exit status 3")
+	assert.NoFileExists(t, filepath.Join(rt.home, ".oryn", "setup.done"), "失败不写标记，下次重跑")
 
 	// resume 超过 10 秒的部分在后台继续：请求在 ~10s 内返回。
 	if testing.Short() {

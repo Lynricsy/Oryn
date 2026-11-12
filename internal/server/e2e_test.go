@@ -429,3 +429,30 @@ func TestFullStackRestartKeepsPendingAsk(t *testing.T) {
 		`SELECT COUNT(*) - COUNT(DISTINCT file || '/' || entry_id) FROM entries WHERE thread_id = ?`, th.ID).Scan(&dup))
 	assert.Zero(t, dup, "重启后条目无重复")
 }
+
+// setup 脚本失败不让 orb 失败：orb 进入 ready、agent 照常回合（才能读日志并修复脚本），失败原因记入 orb_events。
+func TestFullStackSetupFailureStillStartsAgent(t *testing.T) {
+	s := newStack(t, config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(24 * time.Hour)})
+	var prj struct {
+		ID string `json:"id"`
+	}
+	s.rest("POST", "/api/v1/projects", map[string]any{"name": "broken-setup", "setupScript": "echo boom; exit 3"}, &prj, 201)
+	var created struct {
+		Thread threadView `json:"thread"`
+	}
+	s.rest("POST", "/api/v1/threads", map[string]any{
+		"projectId": prj.ID,
+		"prompt":    "hello despite broken setup",
+		"executor":  map[string]any{"kind": "new_orb", "provider": "local", "type": "small"},
+	}, &created, 201)
+	th := s.waitThread(created.Thread.ID, 60*time.Second, func(v threadView) bool { return v.State == "idle" || v.State == "error" })
+	require.Equal(t, "idle", th.State)
+
+	var orbState, detail string
+	require.NoError(t, s.srv.Store.DB.QueryRow(`SELECT state FROM orbs WHERE id = ?`, th.OrbID).Scan(&orbState))
+	assert.Equal(t, "ready", orbState)
+	require.NoError(t, s.srv.Store.DB.QueryRow(
+		`SELECT detail FROM orb_events WHERE orb_id = ? AND from_state = 'setting_up' AND to_state = 'ready'`, th.OrbID).Scan(&detail))
+	assert.Contains(t, detail, `"ok":false`)
+	assert.Contains(t, detail, "exit status 3")
+}

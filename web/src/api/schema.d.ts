@@ -1808,9 +1808,12 @@ export interface components {
             };
         };
         LinkCtlSetupRunResult: {
+            /** @description setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本 */
             ok: boolean;
             /** @description 本次是否实际执行了 setup（标记已存在则为 false） */
             setupRan: boolean;
+            /** @description setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log） */
+            setupError?: string;
             /** Format: int64 */
             durationMs: number;
         };

@@ -340,8 +340,11 @@ func (s *Service) runPhase(l *orbLink) {
 	}
 	detail := map[string]any{"ok": res.Ok, "setupRan": res.SetupRan, "durationMs": res.DurationMs}
 	if !res.Ok {
-		// 脚本失败不阻塞线程：orb 仍进入 ready，日志已经 setup.log 上报。
-		slog.Warn("orb setup / resume 脚本失败（继续）", "orb", l.orbID, "phase", phase)
+		// 脚本失败不阻塞线程：orb 仍进入 ready（agent 要启动才能修复脚本），日志已经 setup.log 上报。
+		if res.SetupError != nil {
+			detail["setupError"] = *res.SetupError
+		}
+		slog.Warn("orb setup 脚本失败（继续）", "orb", l.orbID, "phase", phase, "err", detail["setupError"])
 	}
 	_, _, _ = s.transition(ctx, l.orbID, phase, StateReady, detail)
 }

@@ -1470,7 +1470,12 @@ type LinkCtlSetupRunParams struct {
 // LinkCtlSetupRunResult defines model for LinkCtlSetupRunResult.
 type LinkCtlSetupRunResult struct {
 	DurationMs int64 `json:"durationMs"`
-	Ok         bool  `json:"ok"`
+
+	// Ok setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本
+	Ok bool `json:"ok"`
+
+	// SetupError setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log）
+	SetupError *string `json:"setupError,omitempty"`
 
 	// SetupRan 本次是否实际执行了 setup（标记已存在则为 false）
 	SetupRan bool `json:"setupRan"`

@@ -9,10 +9,10 @@ import (
 // 这些请求只存在于 omp 内存与控制面内存中：控制面重启后会丢失，agent 则会一直等待。
 // orbd 在新的 agent 流上重放它们，让新的控制面重建待答状态。
 type pendingUI struct {
-	mu    sync.Mutex
-	seq   int
-	reqs  map[string]pendingFrame // id → 请求帧
-	plan  []byte                  // 未决的 plan_proposal 帧
+	mu   sync.Mutex
+	seq  int
+	reqs map[string]pendingFrame // id → 请求帧
+	plan []byte                  // 未决的 plan_proposal 帧
 }
 
 type pendingFrame struct {

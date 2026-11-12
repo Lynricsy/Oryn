@@ -126,14 +126,18 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 			sctx, cancel := context.WithTimeout(ctx, setupTimeout)
 			err := r.runScripts(sctx, lg, apigen.Setup, workdir, env, p.Scripts.Setup, "setup")
 			cancel()
-			if err != nil {
+			switch {
+			case err != nil:
+				// 脚本失败不让 orb 失败：agent 仍要启动，才能读日志并修复脚本。不写标记，下次 setup 重跑。
 				lg.system(apigen.Setup, "setup failed: "+err.Error())
-				return res, ctlErr(errCode(err), "setup: %v", err)
+				msg := err.Error()
+				res.SetupError = &msg
+			default:
+				if err := writeFileAtomic(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+					return res, ctlErr("failed", "%v", err)
+				}
+				lg.system(apigen.Setup, "setup completed")
 			}
-			if err := writeFileAtomic(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
-				return res, ctlErr("failed", "%v", err)
-			}
-			lg.system(apigen.Setup, "setup completed")
 		} else {
 			lg.system(apigen.Setup, "setup already done; skipped")
 		}
@@ -144,7 +148,7 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 	// 5. resume 脚本：至多等 10 秒，其余放到后台继续。
 	r.startResume(lg, workdir, env, p.Scripts.Resume)
 
-	res.Ok = true
+	res.Ok = res.SetupError == nil
 	res.DurationMs = time.Since(start).Milliseconds()
 	return res, nil
 }
