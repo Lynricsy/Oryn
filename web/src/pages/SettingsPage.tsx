@@ -136,10 +136,15 @@ function DevicesSettings() {
 									)}
 								</div>
 								<div className="text-faint text-xs">
-									{t(`devices.kind.${d.kind}`)} · {d.platform} ·{" "}
-									{t("devices.lastSeen", {
-										when: d.lastSeenAt ? formatRelative(d.lastSeenAt) : "—",
-									})}
+									{[
+										t(`devices.kind.${d.kind}`),
+										d.platform,
+										t("devices.lastSeen", {
+											when: d.lastSeenAt ? formatRelative(d.lastSeenAt) : "—",
+										}),
+									]
+										.filter(Boolean)
+										.join(" · ")}
 								</div>
 							</div>
 							{!d.revokedAt && (

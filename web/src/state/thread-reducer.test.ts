@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Entry } from "../api/client";
+import type { Entry, Thread } from "../api/client";
 import { parsePartialJson } from "./message-builder";
+import { reduceThread } from "./stores";
 import {
 	applyEntries,
 	applyFrame,
@@ -443,6 +444,74 @@ describe("转录推导", () => {
 		expect(texts).toHaveLength(2);
 		expect(texts[1]).toContain("branch A");
 		expect(texts.join()).not.toContain("branch B");
+	});
+
+	it("无叶子指针时，带 activeLeafId 的分支外条目（迟到的 model_usage）不改变活动分支", () => {
+		const u1 = msgEntry("u1", { role: "user", content: "q1", timestamp: 1 });
+		const a1 = msgEntry(
+			"a1",
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "A1" }],
+				timestamp: 2,
+			},
+			"u1",
+		);
+		const u2 = msgEntry(
+			"u2",
+			{ role: "user", content: "q2", timestamp: 3 },
+			"a1",
+		);
+		const a2 = msgEntry(
+			"a2",
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "A2" }],
+				timestamp: 4,
+			},
+			"u2",
+		);
+		seq++;
+		const late: Entry = {
+			seq,
+			file: "s.jsonl",
+			entryId: "mu",
+			parentId: "a1",
+			type: "model_usage",
+			payload: {
+				type: "model_usage",
+				id: "mu",
+				parentId: "a1",
+				activeLeafId: "a2",
+			},
+		};
+		const s = applyEntries(initialThreadState(TID), {
+			entries: [u1, a1, u2, a2, late],
+			lastSeq: seq,
+		});
+		const texts = buildTranscript(s).items.flatMap((i) =>
+			i.kind === "message" ? [JSON.stringify(i.message.content)] : [],
+		);
+		expect(texts).toHaveLength(4);
+		expect(texts[3]).toContain("A2");
+	});
+});
+
+describe("线程摘要推送", () => {
+	it("index.patch 带来的 leafEntryId 更新活动分支（switch_leaf 后多端同步）", () => {
+		const base = applyEntries(initialThreadState(TID), {
+			entries: [],
+			lastSeq: 0,
+			leafEntryId: "old",
+		});
+		const thread = { id: TID, leafEntryId: "new" } as unknown as Thread;
+		expect(reduceThread(base, { type: "thread", thread }).leafEntryId).toBe(
+			"new",
+		);
+		const noLeaf = { id: TID } as unknown as Thread;
+		expect(
+			reduceThread(base, { type: "thread", thread: noLeaf }).leafEntryId,
+		).toBe("old");
 	});
 });
 

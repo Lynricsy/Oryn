@@ -1,5 +1,5 @@
 /**
- * Markdown 渲染：react-markdown + remark-gfm + rehype-sanitize；代码块按需高亮（highlight.js 懒加载），
+ * Markdown 渲染：react-markdown + remark-gfm + remark-breaks（单个换行即换行，与 omp 自带 Web 端的 `breaks: true` 一致）+ rehype-sanitize；代码块按需高亮（highlight.js 懒加载），
  * ```mermaid 图与 $…$ 数学公式在首次出现时才加载 mermaid / KaTeX。
  * `blob:sha256:<hex>` 图片引用改写为 `GET /api/v1/blobs/<hex>`。
  */
@@ -14,6 +14,7 @@ import {
 } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { useHighlighted } from "../../lib/highlight";
 import { CopyButton } from "../ui/CopyButton";
@@ -193,8 +194,8 @@ export const Markdown = memo(function Markdown({
 	const source = text.replace(BLOB_RE, "/api/v1/blobs/$1");
 	const math = useMath(MATH_RE.test(source));
 	const remarkPlugins: PluggableList = math
-		? [remarkGfm, ...math.remark]
-		: [remarkGfm];
+		? [remarkGfm, remarkBreaks, ...math.remark]
+		: [remarkGfm, remarkBreaks];
 	// 先清洗再交给 KaTeX，避免其输出被剥掉样式类
 	const rehypePlugins: PluggableList = math
 		? [[rehypeSanitize, schema], ...math.rehype]

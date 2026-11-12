@@ -97,7 +97,7 @@ export function SetupPage(): ReactNode {
 		return (
 			<AuthCard title={t("auth.recoveryCodesTitle")}>
 				<p className="mb-3 text-muted text-sm">{t("auth.recoveryCodesHint")}</p>
-				<ul className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-inset p-3 font-mono text-sm">
+				<ul className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 whitespace-nowrap rounded-lg bg-inset p-3 font-mono text-xs">
 					{codes.map((c) => (
 						<li key={c}>{c}</li>
 					))}

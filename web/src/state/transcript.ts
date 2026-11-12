@@ -92,10 +92,18 @@ export function branchPath(
 	for (const e of list) if (!SYNTHETIC_IDS[e.entryId]) byId.set(e.entryId, e);
 	let leaf = leafId ? byId.get(leafId) : undefined;
 	if (!leaf) {
+		// 与 omp 加载器一致：叶子 = 最后一条；写在活动分支之外的条目（带 `activeLeafId`，如迟到的
+		// model_usage）不移动叶子，而是指回它写入时的活动叶子
 		for (let i = list.length - 1; i >= 0; i--) {
 			const e = list[i];
 			if (e && !SYNTHETIC_IDS[e.entryId]) {
-				leaf = e;
+				const p = isRecord(e.payload) ? e.payload : undefined;
+				leaf =
+					p && "activeLeafId" in p
+						? typeof p.activeLeafId === "string"
+							? byId.get(p.activeLeafId)
+							: undefined
+						: e;
 				break;
 			}
 		}

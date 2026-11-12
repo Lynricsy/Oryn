@@ -131,7 +131,12 @@ export function reduceThread(
 		case "orb":
 			return { ...s, orb: m.orb };
 		case "thread":
-			return { ...s, thread: m.thread };
+			// 叶子也随线程摘要推送（switch_leaf / navigate_tree 由控制面改写叶子后经 index.patch 广播）
+			return {
+				...s,
+				thread: m.thread,
+				leafEntryId: m.thread.leafEntryId ?? s.leafEntryId,
+			};
 		case "state":
 			return {
 				...s,

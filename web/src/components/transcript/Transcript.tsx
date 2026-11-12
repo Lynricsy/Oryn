@@ -203,8 +203,15 @@ export function Transcript({
 					<div
 						key={v.key}
 						data-index={v.index}
+						data-kind={item?.kind}
+						data-role={
+							item?.kind === "message" ? String(item.message.role) : undefined
+						}
+						data-entry-id={item?.kind === "message" ? item.entryId : undefined}
+						data-live={item?.kind === "message" && item.live ? "1" : undefined}
 						ref={virtualizer.measureElement}
-						className="absolute left-0 w-full px-3 py-1.5 sm:px-5"
+						// 行内菜单（消息操作）会溢出到后面的行：悬停 / 聚焦时把本行抬到兄弟行之上
+						className="absolute left-0 w-full px-3 py-1.5 focus-within:z-10 hover:z-10 sm:px-5"
 						style={{ transform: `translateY(${v.start}px)` }}
 					>
 						<div className="mx-auto max-w-3xl">
