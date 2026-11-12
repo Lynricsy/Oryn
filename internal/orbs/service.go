@@ -314,7 +314,18 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 }
 
 // Create 新建 orb（requested）并入队 spawn 任务。
-func (s *Service) Create(ctx context.Context, p CreateParams) (db.Orb, error) {
+func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err error) {
+	if p.SnapshotID != "" && p.SnapshotOf != "" {
+		// 快照是专为这次创建拍的：创建失败时没有 orb 会用它，交给源 orb 的 provider 回收。
+		defer func() {
+			if err != nil {
+				bg := context.WithoutCancel(ctx)
+				if src, gerr := s.st.Q.GetOrb(bg, p.SnapshotOf); gerr == nil {
+					s.releaseSnapshot(bg, src.ProviderID, src.ID, p.SnapshotID)
+				}
+			}
+		}()
+	}
 	var prj *db.Project
 	if p.ProjectID != "" {
 		v, err := s.st.Q.GetProject(ctx, p.ProjectID)
@@ -563,6 +574,23 @@ func (s *Service) Delete(ctx context.Context, orbID string) error {
 	}
 }
 
+// releaseSnapshot 在没有未删除的 orb 使用快照 snap 时入队 delete_snapshot（使用它的容器删除后镜像才可删除）。
+func (s *Service) releaseSnapshot(ctx context.Context, providerID, orbID, snap string) {
+	n, err := s.st.Q.CountLiveOrbsBySnapshot(ctx, &snap)
+	if err != nil {
+		slog.Warn("查询快照引用失败", "snapshot", snap, "err", err)
+		return
+	}
+	if n > 0 {
+		return
+	}
+	if _, err := s.jobs.Enqueue(ctx, providerID, orbID, jobs.OpDeleteSnapshot, apigen.JobDeleteSnapshotParams{SnapshotID: snap}); err != nil {
+		slog.Warn("入队快照删除失败", "snapshot", snap, "err", err)
+		return
+	}
+	slog.Info("快照已无引用，入队删除", "snapshot", snap)
+}
+
 // Snapshot 为 orb 入队 snapshot 任务并等待完成，返回快照 id（Docker 镜像名）。
 func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 	orb, err := s.Get(ctx, orbID)
@@ -684,6 +712,9 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 		if _, moved, _ := s.transition(ctx, orbID, StateDeleting, StateDeleted, detail); moved {
 			s.Kick(orbID, "orb deleted")
 			s.closeEgress(orbID)
+			if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
+				s.releaseSnapshot(ctx, orb.ProviderID, orbID, *orb.SnapshotOf)
+			}
 		}
 	}
 }

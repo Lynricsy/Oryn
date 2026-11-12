@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countLiveOrbsBySnapshot = `-- name: CountLiveOrbsBySnapshot :one
+SELECT COUNT(*) FROM orbs WHERE snapshot_of = ?1 AND state != 'deleted'
+`
+
+func (q *Queries) CountLiveOrbsBySnapshot(ctx context.Context, snapshotOf *string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveOrbsBySnapshot, snapshotOf)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createOrb = `-- name: CreateOrb :exec
 
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,

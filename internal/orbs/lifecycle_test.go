@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -437,6 +438,61 @@ func TestStopSnapshotAndConnectTimeout(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoProvider)
 	_, err = h.svc.Create(ctx, CreateParams{Type: "huge"})
 	assert.ErrorIs(t, err, ErrBadType)
+}
+
+// 快照在最后一个使用它的 orb 删除后回收；为派生而拍、但派生失败的快照立即回收。
+func TestSnapshotRelease(t *testing.T) {
+	drv := newFakeDriver()
+	h := newHarness(t, drv, nil, nil)
+	ctx := context.Background()
+	deletes := func() int {
+		drv.mu.Lock()
+		defer drv.mu.Unlock()
+		n := 0
+		for _, op := range drv.ops {
+			if strings.HasPrefix(op, "delete_snapshot:") {
+				n++
+			}
+		}
+		return n
+	}
+
+	src, err := h.svc.Create(ctx, CreateParams{Provider: "local", Type: "small"})
+	require.NoError(t, err)
+	h.waitState(src.ID, StateReady, 10*time.Second)
+	snap, err := h.svc.Snapshot(ctx, src.ID)
+	require.NoError(t, err)
+	a, err := h.svc.Create(ctx, CreateParams{SnapshotOf: src.ID, SnapshotID: snap})
+	require.NoError(t, err)
+	b, err := h.svc.Create(ctx, CreateParams{SnapshotOf: src.ID, SnapshotID: snap})
+	require.NoError(t, err)
+	h.waitState(a.ID, StateReady, 10*time.Second)
+	h.waitState(b.ID, StateReady, 10*time.Second)
+
+	require.NoError(t, h.svc.Delete(ctx, a.ID))
+	h.waitState(a.ID, StateDeleted, 10*time.Second)
+	require.NoError(t, h.svc.Delete(ctx, src.ID))
+	h.waitState(src.ID, StateDeleted, 10*time.Second)
+	time.Sleep(200 * time.Millisecond)
+	assert.Zero(t, deletes(), "仍有 orb 使用快照时不回收")
+
+	require.NoError(t, h.svc.Delete(ctx, b.ID))
+	h.waitState(b.ID, StateDeleted, 10*time.Second)
+	require.Eventually(t, func() bool { return deletes() == 1 }, 10*time.Second, 20*time.Millisecond)
+	jl, err := h.st.Q.ListJobsByOrb(ctx, &b.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobs.OpDeleteSnapshot, jl[len(jl)-1].Op)
+	assert.Contains(t, jl[len(jl)-1].Params, snap)
+
+	// 派生失败：快照没有任何 orb 使用，立即回收。
+	src2, err := h.svc.Create(ctx, CreateParams{Provider: "local", Type: "small"})
+	require.NoError(t, err)
+	h.waitState(src2.ID, StateReady, 10*time.Second)
+	snap2, err := h.svc.Snapshot(ctx, src2.ID)
+	require.NoError(t, err)
+	_, err = h.svc.Create(ctx, CreateParams{SnapshotOf: src2.ID, SnapshotID: snap2, Type: "huge"})
+	require.ErrorIs(t, err, ErrBadType)
+	require.Eventually(t, func() bool { return deletes() == 2 }, 10*time.Second, 20*time.Millisecond)
 }
 
 // TestLifecycleRealOrbd 在设置 ORYN_TEST_ORBD=<orbd 可执行文件> 时，用 process 驱动跑真实 orbd。

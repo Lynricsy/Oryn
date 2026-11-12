@@ -57,3 +57,6 @@ SELECT * FROM orb_samples WHERE orb_id = @orb_id AND ts >= @from_ts AND ts < @to
 
 -- name: DeleteOrbSamplesBefore :execrows
 DELETE FROM orb_samples WHERE ts < @before;
+
+-- name: CountLiveOrbsBySnapshot :one
+SELECT COUNT(*) FROM orbs WHERE snapshot_of = @snapshot_of AND state != 'deleted';
