@@ -2124,7 +2124,13 @@ components:
         afterSeq:
           type: integer
           format: int64
-          description: 客户端已有的最大 seq；缺省 0 = 全量
+          description: 客户端已有条目的可续传游标（最近一条 `entries` 消息的 `lastSeq`）；缺省 0 = 全量
+        transcriptRev:
+          type: integer
+          format: int64
+          description: |
+            客户端缓存条目所属的转录版本（来自 `thread.snapshot` / `transcript.reset`）。与服务端当前版本不同，
+            或缺省但 `afterSeq > 0` 且服务端版本 > 0 时，服务端忽略 `afterSeq` 从头补发，并在快照中置 `fullReplay: true`。
     WsClientUnsub:
       type: object
       required: [type, threadId]
@@ -2147,7 +2153,10 @@ components:
           description: 不带 `id` 的 omp RPC 命令对象
     WsClientUiResponse:
       type: object
-      description: '`extension_ui_response` 等侧通道应答；先到先得'
+      description: |
+        侧通道应答；`frame.type` 只能是 `extension_ui_response`、`host_tool_result`、`host_tool_update`、`host_uri_result`
+        之一且带字符串 `id`（与 omp `dispatchRpcControlFrame` 的判定一致），否则回 `error{code:"invalid_frame"}`。
+        `extension_ui_response` 先到先得：只有对应请求仍待答且应答已成功交给 agent（或在 orb 暂停时入队）才广播 `ui.resolved`。
       required: [type, threadId, frame]
       properties:
         type: { type: string, enum: [ui.response] }
@@ -2170,6 +2179,8 @@ components:
         - $ref: '#/components/schemas/WsServerRes'
         - $ref: '#/components/schemas/WsServerUiResolved'
         - $ref: '#/components/schemas/WsServerLiveReset'
+        - $ref: '#/components/schemas/WsServerTranscriptReset'
+        - $ref: '#/components/schemas/WsServerPlanResolved'
         - $ref: '#/components/schemas/WsServerOrb'
         - $ref: '#/components/schemas/WsServerError'
         - $ref: '#/components/schemas/WsServerPong'
@@ -2184,6 +2195,8 @@ components:
           res: '#/components/schemas/WsServerRes'
           ui.resolved: '#/components/schemas/WsServerUiResolved'
           live.reset: '#/components/schemas/WsServerLiveReset'
+          transcript.reset: '#/components/schemas/WsServerTranscriptReset'
+          plan.resolved: '#/components/schemas/WsServerPlanResolved'
           orb: '#/components/schemas/WsServerOrb'
           error: '#/components/schemas/WsServerError'
           pong: '#/components/schemas/WsServerPong'
@@ -2242,7 +2255,7 @@ components:
     WsServerThreadSnapshot:
       type: object
       description: '`sub` 后的首条消息'
-      required: [type, threadId, thread, agent, lastSeq]
+      required: [type, threadId, thread, agent, lastSeq, transcriptRev, fullReplay]
       properties:
         type: { type: string, enum: [thread.snapshot] }
         threadId: { $ref: '#/components/schemas/ThreadId' }
@@ -2253,7 +2266,17 @@ components:
           description: 线程所在 orb；无 orb 时省略
         agent: { $ref: '#/components/schemas/AgentLiveState' }
         leafEntryId: { type: string }
-        lastSeq: { type: integer, format: int64 }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 快照时刻线程的最大 seq（补发的目标；不是可续传游标，游标以各条 `entries.lastSeq` 为准）
+        transcriptRev:
+          type: integer
+          format: int64
+          description: 当前转录版本；之后的 `sub` 应带上它
+        fullReplay:
+          type: boolean
+          description: 为真时服务端从 seq 0 补发：客户端须先丢弃该线程已缓存的全部条目
     WsServerEntries:
       type: object
       required: [type, threadId, entries, lastSeq]
@@ -2265,7 +2288,10 @@ components:
           maxItems: 200
           items: { $ref: '#/components/schemas/Entry' }
         leafEntryId: { type: string }
-        lastSeq: { type: integer, format: int64 }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 本条消息覆盖到的最大 seq（可续传游标：≤ 它的条目都已送达）；分批时每批各自填写
     WsServerFrame:
       type: object
       description: 实时 omp 帧（`response` 以外的帧广播给该线程全部订阅者）
@@ -2296,6 +2322,23 @@ components:
       required: [type, threadId]
       properties:
         type: { type: string, enum: [live.reset] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    WsServerTranscriptReset:
+      type: object
+      description: |
+        线程转录被重写（会话文件重写后删除了旧行，或 fork 回退移除了某文件）：客户端丢弃该线程的全部已缓存条目，
+        并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
+      required: [type, threadId, transcriptRev]
+      properties:
+        type: { type: string, enum: [transcript.reset] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        transcriptRev: { type: integer, format: int64 }
+    WsServerPlanResolved:
+      type: object
+      description: 计划提案已被成功批准 / 处理（`plan_approval` 成功应答）：所有客户端清除该线程的 `planProposal`
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [plan.resolved] }
         threadId: { $ref: '#/components/schemas/ThreadId' }
     WsServerOrb:
       type: object
@@ -2356,7 +2399,7 @@ components:
           example: 30
     ProviderJob:
       type: object
-      required: [id, op, orbId, params, attempt]
+      required: [id, op, orbId, params, attempt, claimGen]
       properties:
         id: { $ref: '#/components/schemas/JobId' }
         op: { $ref: '#/components/schemas/JobOp' }
@@ -2372,6 +2415,11 @@ components:
           type: integer
           minimum: 1
           maximum: 3
+        claimGen:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 本次认领的代数（每次认领 +1）；完成上报必须原样回传，控制面只接受与当前认领代数一致的结果。
     ProviderClaimResponse:
       type: object
       required: [job]
@@ -2379,8 +2427,12 @@ components:
         job: { $ref: '#/components/schemas/ProviderJob' }
     ProviderCompleteRequest:
       type: object
-      required: [ok, output, durationMs]
+      required: [claimGen, ok, output, durationMs]
       properties:
+        claimGen:
+          type: integer
+          format: int64
+          description: 认领应答中的 `job.claimGen`；与任务当前认领代数不一致（该次认领已过期被重排或被巡检判失败）时回 409。
         ok: { type: boolean }
         output:
           type: string
@@ -2560,7 +2612,7 @@ components:
       properties:
         code:
           type: string
-          description: '`unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等'
+          description: '`unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试'
         message: { type: string }
     LinkCtlNotification:
       type: object
@@ -2708,7 +2760,7 @@ components:
         resume: { type: string }
     LinkCtlProjectScriptsSetParams:
       type: object
-      description: 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`
+      description: 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`；单个脚本超过 256KiB 时返回错误 `too_large`。每次成功写入记一条 orb_events（`detail.event = project_scripts_set`，带两个脚本的 SHA-256）
       properties:
         setup: { type: string }
         resume: { type: string }

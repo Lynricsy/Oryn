@@ -9,8 +9,39 @@ import (
 	"context"
 )
 
+const acquireProviderLease = `-- name: AcquireProviderLease :execrows
+
+UPDATE providers SET instance_id = ?1, lease_until = ?2
+WHERE id = ?3 AND disabled_at IS NULL
+  AND (instance_id IS NULL OR instance_id = ?1 OR lease_until IS NULL OR lease_until <= ?4 OR allow_multiple)
+`
+
+type AcquireProviderLeaseParams struct {
+	InstanceID *string `json:"instanceId"`
+	LeaseUntil *int64  `json:"leaseUntil"`
+	ID         string  `json:"id"`
+	Now        *int64  `json:"now"`
+}
+
+// Lifecycle (jobs / providers / orbs / stats) helper queries.
+// Takes over or renews the provider lease for an instance, atomically: only when no other instance holds an
+// unexpired lease (or the stored provider allows multiple instances). 0 rows = lease held by another instance.
+func (q *Queries) AcquireProviderLease(ctx context.Context, arg AcquireProviderLeaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acquireProviderLease,
+		arg.InstanceID,
+		arg.LeaseUntil,
+		arg.ID,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimNextJobSerial = `-- name: ClaimNextJobSerial :one
-UPDATE jobs SET state = 'claimed', attempt = attempt + 1, claimed_at = ?1, lease_until = ?2
+UPDATE jobs SET state = 'claimed', attempt = attempt + 1, claim_gen = claim_gen + 1,
+    claimed_at = ?1, lease_until = ?2
 WHERE id = (
     SELECT j.id FROM jobs j
     WHERE j.provider_id = ?3 AND j.state = 'queued'
@@ -19,7 +50,7 @@ WHERE id = (
                       AND (e.created_at < j.created_at OR (e.created_at = j.created_at AND e.id < j.id)))
     ORDER BY j.created_at, j.id LIMIT 1
 )
-RETURNING id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at
+RETURNING id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen
 `
 
 type ClaimNextJobSerialParams struct {
@@ -47,12 +78,13 @@ func (q *Queries) ClaimNextJobSerial(ctx context.Context, arg ClaimNextJobSerial
 		&i.Output,
 		&i.Error,
 		&i.CreatedAt,
+		&i.ClaimGen,
 	)
 	return i, err
 }
 
 const listLiveOrbs = `-- name: ListLiveOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
 `
 
 func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
@@ -82,6 +114,7 @@ func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
 			&i.AgentVersion,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.TokenGen,
 		); err != nil {
 			return nil, err
 		}
@@ -174,7 +207,7 @@ func (q *Queries) ListThreadIDsByOrb(ctx context.Context, orbID *string) ([]stri
 }
 
 const listUnfinishedJobsByOrb = `-- name: ListUnfinishedJobsByOrb :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at FROM jobs WHERE orb_id = ?1 AND state IN ('queued', 'claimed') ORDER BY created_at, id
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE orb_id = ?1 AND state IN ('queued', 'claimed') ORDER BY created_at, id
 `
 
 func (q *Queries) ListUnfinishedJobsByOrb(ctx context.Context, orbID *string) ([]Job, error) {
@@ -200,6 +233,7 @@ func (q *Queries) ListUnfinishedJobsByOrb(ctx context.Context, orbID *string) ([
 			&i.Output,
 			&i.Error,
 			&i.CreatedAt,
+			&i.ClaimGen,
 		); err != nil {
 			return nil, err
 		}
@@ -227,18 +261,24 @@ func (q *Queries) OrbEverReady(ctx context.Context, orbID string) (bool, error) 
 
 const requeueFailedJob = `-- name: RequeueFailedJob :execrows
 UPDATE jobs SET state = 'queued', claimed_at = NULL, lease_until = NULL, output = ?1, error = ?2
-WHERE id = ?3 AND state = 'claimed'
+WHERE id = ?3 AND state = 'claimed' AND claim_gen = ?4
 `
 
 type RequeueFailedJobParams struct {
-	Output string  `json:"output"`
-	Error  *string `json:"error"`
-	ID     string  `json:"id"`
+	Output   string  `json:"output"`
+	Error    *string `json:"error"`
+	ID       string  `json:"id"`
+	ClaimGen int64   `json:"claimGen"`
 }
 
-// Requeues a claimed job after a failed attempt.
+// Requeues one specific claim after a failed attempt (fenced by claim_gen).
 func (q *Queries) RequeueFailedJob(ctx context.Context, arg RequeueFailedJobParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, requeueFailedJob, arg.Output, arg.Error, arg.ID)
+	result, err := q.db.ExecContext(ctx, requeueFailedJob,
+		arg.Output,
+		arg.Error,
+		arg.ID,
+		arg.ClaimGen,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -257,24 +297,6 @@ type SetJobParamsParams struct {
 // Replaces job params (used to scrub the orb token after a spawn job finishes).
 func (q *Queries) SetJobParams(ctx context.Context, arg SetJobParamsParams) error {
 	_, err := q.db.ExecContext(ctx, setJobParams, arg.Params, arg.ID)
-	return err
-}
-
-const setProviderLease = `-- name: SetProviderLease :exec
-
-UPDATE providers SET instance_id = ?1, lease_until = ?2 WHERE id = ?3
-`
-
-type SetProviderLeaseParams struct {
-	InstanceID *string `json:"instanceId"`
-	LeaseUntil *int64  `json:"leaseUntil"`
-	ID         string  `json:"id"`
-}
-
-// Lifecycle (jobs / providers / orbs / stats) helper queries.
-// Takes over or renews the provider lease for an instance.
-func (q *Queries) SetProviderLease(ctx context.Context, arg SetProviderLeaseParams) error {
-	_, err := q.db.ExecContext(ctx, setProviderLease, arg.InstanceID, arg.LeaseUntil, arg.ID)
 	return err
 }
 

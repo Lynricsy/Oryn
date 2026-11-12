@@ -1500,9 +1500,15 @@ export interface components {
             threadId: components["schemas"]["ThreadId"];
             /**
              * Format: int64
-             * @description 客户端已有的最大 seq；缺省 0 = 全量
+             * @description 客户端已有条目的可续传游标（最近一条 `entries` 消息的 `lastSeq`）；缺省 0 = 全量
              */
             afterSeq?: number;
+            /**
+             * Format: int64
+             * @description 客户端缓存条目所属的转录版本（来自 `thread.snapshot` / `transcript.reset`）。与服务端当前版本不同，
+             *     或缺省但 `afterSeq > 0` 且服务端版本 > 0 时，服务端忽略 `afterSeq` 从头补发，并在快照中置 `fullReplay: true`。
+             */
+            transcriptRev?: number;
         };
         WsClientUnsub: {
             /**
@@ -1525,7 +1531,11 @@ export interface components {
             /** @description 不带 `id` 的 omp RPC 命令对象 */
             frame: components["schemas"]["OmpFrame"];
         };
-        /** @description `extension_ui_response` 等侧通道应答；先到先得 */
+        /**
+         * @description 侧通道应答；`frame.type` 只能是 `extension_ui_response`、`host_tool_result`、`host_tool_update`、`host_uri_result`
+         *     之一且带字符串 `id`（与 omp `dispatchRpcControlFrame` 的判定一致），否则回 `error{code:"invalid_frame"}`。
+         *     `extension_ui_response` 先到先得：只有对应请求仍待答且应答已成功交给 agent（或在 orb 暂停时入队）才广播 `ui.resolved`。
+         */
         WsClientUiResponse: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1543,7 +1553,7 @@ export interface components {
             type: "ping";
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -1595,8 +1605,18 @@ export interface components {
             orb?: components["schemas"]["Orb"];
             agent: components["schemas"]["AgentLiveState"];
             leafEntryId?: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 快照时刻线程的最大 seq（补发的目标；不是可续传游标，游标以各条 `entries.lastSeq` 为准）
+             */
             lastSeq: number;
+            /**
+             * Format: int64
+             * @description 当前转录版本；之后的 `sub` 应带上它
+             */
+            transcriptRev: number;
+            /** @description 为真时服务端从 seq 0 补发：客户端须先丢弃该线程已缓存的全部条目 */
+            fullReplay: boolean;
         };
         WsServerEntries: {
             /**
@@ -1607,7 +1627,10 @@ export interface components {
             threadId: components["schemas"]["ThreadId"];
             entries: components["schemas"]["Entry"][];
             leafEntryId?: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 本条消息覆盖到的最大 seq（可续传游标：≤ 它的条目都已送达）；分批时每批各自填写
+             */
             lastSeq: number;
         };
         /** @description 实时 omp 帧（`response` 以外的帧广播给该线程全部订阅者） */
@@ -1647,6 +1670,29 @@ export interface components {
              * @enum {string}
              */
             type: "live.reset";
+            threadId: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description 线程转录被重写（会话文件重写后删除了旧行，或 fork 回退移除了某文件）：客户端丢弃该线程的全部已缓存条目，
+         *     并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
+         */
+        WsServerTranscriptReset: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "transcript.reset";
+            threadId: components["schemas"]["ThreadId"];
+            /** Format: int64 */
+            transcriptRev: number;
+        };
+        /** @description 计划提案已被成功批准 / 处理（`plan_approval` 成功应答）：所有客户端清除该线程的 `planProposal` */
+        WsServerPlanResolved: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "plan.resolved";
             threadId: components["schemas"]["ThreadId"];
         };
         WsServerOrb: {
@@ -1709,11 +1755,21 @@ export interface components {
                 [key: string]: unknown;
             };
             attempt: number;
+            /**
+             * Format: int64
+             * @description 本次认领的代数（每次认领 +1）；完成上报必须原样回传，控制面只接受与当前认领代数一致的结果。
+             */
+            claimGen: number;
         };
         ProviderClaimResponse: {
             job: components["schemas"]["ProviderJob"];
         };
         ProviderCompleteRequest: {
+            /**
+             * Format: int64
+             * @description 认领应答中的 `job.claimGen`；与任务当前认领代数不一致（该次认领已过期被重排或被巡检判失败）时回 409。
+             */
+            claimGen: number;
             ok: boolean;
             /** @description 输出尾部（≤64KB） */
             output: string;
@@ -1817,7 +1873,7 @@ export interface components {
             error?: components["schemas"]["LinkCtlError"];
         };
         LinkCtlError: {
-            /** @description `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等 */
+            /** @description `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试 */
             code: string;
             message: string;
         };
@@ -1926,7 +1982,7 @@ export interface components {
             setup?: string;
             resume?: string;
         };
-        /** @description 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project` */
+        /** @description 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`；单个脚本超过 256KiB 时返回错误 `too_large`。每次成功写入记一条 orb_events（`detail.event = project_scripts_set`，带两个脚本的 SHA-256） */
         LinkCtlProjectScriptsSetParams: {
             setup?: string;
             resume?: string;

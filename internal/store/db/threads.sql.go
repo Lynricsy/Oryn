@@ -93,7 +93,7 @@ func (q *Queries) DeleteThread(ctx context.Context, id string) (int64, error) {
 }
 
 const getThread = `-- name: GetThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at FROM threads WHERE id = ?1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads WHERE id = ?1
 `
 
 func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
@@ -122,6 +122,9 @@ func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastMessageAt,
+		&i.StartupFrames,
+		&i.ForkOp,
+		&i.TranscriptRev,
 	)
 	return i, err
 }
@@ -181,7 +184,7 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 }
 
 const listThreads = `-- name: ListThreads :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at FROM threads
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?3 AS BOOLEAN))
@@ -234,6 +237,9 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastMessageAt,
+			&i.StartupFrames,
+			&i.ForkOp,
+			&i.TranscriptRev,
 		); err != nil {
 			return nil, err
 		}
@@ -249,7 +255,7 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 }
 
 const listThreadsByOrb = `-- name: ListThreadsByOrb :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at FROM threads WHERE orb_id = ?1 ORDER BY created_at
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads WHERE orb_id = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread, error) {
@@ -284,6 +290,9 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastMessageAt,
+			&i.StartupFrames,
+			&i.ForkOp,
+			&i.TranscriptRev,
 		); err != nil {
 			return nil, err
 		}

@@ -169,3 +169,24 @@ func (q *Queries) ListOrbSetupRuns(ctx context.Context, orbID string) ([]ListOrb
 	}
 	return items, nil
 }
+
+const pruneOrbSetupRuns = `-- name: PruneOrbSetupRuns :execrows
+DELETE FROM orb_setup_runs
+WHERE orb_setup_runs.orb_id = ?1 AND orb_setup_runs.id NOT IN (
+    SELECT r.id FROM orb_setup_runs r WHERE r.orb_id = ?1 ORDER BY r.finished_at DESC, r.id DESC LIMIT ?2
+)
+`
+
+type PruneOrbSetupRunsParams struct {
+	OrbID string `json:"orbId"`
+	Keep  int64  `json:"keep"`
+}
+
+// Keeps only the newest @keep runs of an orb.
+func (q *Queries) PruneOrbSetupRuns(ctx context.Context, arg PruneOrbSetupRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneOrbSetupRuns, arg.OrbID, arg.Keep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

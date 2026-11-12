@@ -42,6 +42,18 @@ UPDATE orbs SET state = 'deleted', state_changed_at = @deleted_at, deleted_at = 
 -- name: InsertOrbEvent :exec
 INSERT INTO orb_events (orb_id, ts, from_state, to_state, detail) VALUES (@orb_id, @ts, @from_state, @to_state, @detail);
 
+-- Like InsertOrbEvent, returning the event id (orbs.Event.Seq: monotonic per database).
+-- name: InsertOrbEventSeq :one
+INSERT INTO orb_events (orb_id, ts, from_state, to_state, detail) VALUES (@orb_id, @ts, @from_state, @to_state, @detail)
+RETURNING id;
+
+-- name: MaxOrbEventID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) FROM orb_events WHERE orb_id = @orb_id;
+
+-- Rotates the orb token (compare-and-swap on the current generation).
+-- name: RotateOrbToken :execrows
+UPDATE orbs SET token_gen = token_gen + 1, token_hash = @token_hash WHERE id = @id AND token_gen = @token_gen;
+
 -- name: ListOrbEvents :many
 SELECT * FROM orb_events WHERE orb_id = @orb_id ORDER BY ts, id;
 

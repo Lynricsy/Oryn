@@ -9,6 +9,49 @@ import (
 	"context"
 )
 
+const acquireProviderHello = `-- name: AcquireProviderHello :execrows
+UPDATE providers SET driver = ?1, version = ?2, capabilities = ?3,
+    orb_types = ?4, default_type = ?5, allow_multiple = ?6,
+    instance_id = ?7, lease_until = ?8
+WHERE id = ?9 AND disabled_at IS NULL
+  AND (instance_id IS NULL OR instance_id = ?7 OR lease_until IS NULL OR lease_until <= ?10
+       OR (allow_multiple AND CAST(?6 AS BOOLEAN)))
+`
+
+type AcquireProviderHelloParams struct {
+	Driver        string  `json:"driver"`
+	Version       string  `json:"version"`
+	Capabilities  string  `json:"capabilities"`
+	OrbTypes      string  `json:"orbTypes"`
+	DefaultType   string  `json:"defaultType"`
+	AllowMultiple bool    `json:"allowMultiple"`
+	InstanceID    *string `json:"instanceId"`
+	LeaseUntil    *int64  `json:"leaseUntil"`
+	ID            string  `json:"id"`
+	Now           *int64  `json:"now"`
+}
+
+// Records a provider hello and takes its lease in one conditional update (same lease rule as
+// AcquireProviderLease, plus: both the stored row and this hello declare allowMultiple). 0 rows = lease conflict.
+func (q *Queries) AcquireProviderHello(ctx context.Context, arg AcquireProviderHelloParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acquireProviderHello,
+		arg.Driver,
+		arg.Version,
+		arg.Capabilities,
+		arg.OrbTypes,
+		arg.DefaultType,
+		arg.AllowMultiple,
+		arg.InstanceID,
+		arg.LeaseUntil,
+		arg.ID,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearProviderLease = `-- name: ClearProviderLease :exec
 UPDATE providers SET instance_id = NULL, lease_until = NULL WHERE id = ?1 AND instance_id = ?2
 `
@@ -189,24 +232,6 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-const renewProviderLease = `-- name: RenewProviderLease :execrows
-UPDATE providers SET lease_until = ?1 WHERE id = ?2 AND instance_id = ?3
-`
-
-type RenewProviderLeaseParams struct {
-	LeaseUntil *int64  `json:"leaseUntil"`
-	ID         string  `json:"id"`
-	InstanceID *string `json:"instanceId"`
-}
-
-func (q *Queries) RenewProviderLease(ctx context.Context, arg RenewProviderLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, renewProviderLease, arg.LeaseUntil, arg.ID, arg.InstanceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const updateProviderHello = `-- name: UpdateProviderHello :exec

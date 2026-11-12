@@ -820,6 +820,21 @@ func (e WsServerOrbType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerPlanResolvedType.
+const (
+	PlanResolved WsServerPlanResolvedType = "plan.resolved"
+)
+
+// Valid indicates whether the value is a known member of the WsServerPlanResolvedType enum.
+func (e WsServerPlanResolvedType) Valid() bool {
+	switch e {
+	case PlanResolved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerPongType.
 const (
 	Pong WsServerPongType = "pong"
@@ -859,6 +874,21 @@ const (
 func (e WsServerThreadSnapshotType) Valid() bool {
 	switch e {
 	case ThreadSnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerTranscriptResetType.
+const (
+	TranscriptReset WsServerTranscriptResetType = "transcript.reset"
+)
+
+// Valid indicates whether the value is a known member of the WsServerTranscriptResetType enum.
+func (e WsServerTranscriptResetType) Valid() bool {
+	switch e {
+	case TranscriptReset:
 		return true
 	default:
 		return false
@@ -1405,7 +1435,7 @@ type LinkCtlEntryCursor struct {
 
 // LinkCtlError defines model for LinkCtlError.
 type LinkCtlError struct {
-	// Code `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等
+	// Code `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -1492,7 +1522,7 @@ type LinkCtlProjectScripts struct {
 // LinkCtlProjectScriptsGetParams 无参数
 type LinkCtlProjectScriptsGetParams = map[string]interface{}
 
-// LinkCtlProjectScriptsSetParams 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`
+// LinkCtlProjectScriptsSetParams 省略的字段保持不变；空串表示清除该脚本。orb 不属于任何项目时返回错误 `no_project`；单个脚本超过 256KiB 时返回错误 `too_large`。每次成功写入记一条 orb_events（`detail.event = project_scripts_set`，带两个脚本的 SHA-256）
 type LinkCtlProjectScriptsSetParams struct {
 	Resume *string `json:"resume,omitempty"`
 	Setup  *string `json:"setup,omitempty"`
@@ -1978,6 +2008,8 @@ type ProviderClaimResponse struct {
 
 // ProviderCompleteRequest defines model for ProviderCompleteRequest.
 type ProviderCompleteRequest struct {
+	// ClaimGen 认领应答中的 `job.claimGen`；与任务当前认领代数不一致（该次认领已过期被重排或被巡检判失败）时回 409。
+	ClaimGen   int64   `json:"claimGen"`
 	DurationMs int64   `json:"durationMs"`
 	Error      *string `json:"error,omitempty"`
 	Ok         bool    `json:"ok"`
@@ -2030,6 +2062,9 @@ type ProviderID = string
 // ProviderJob defines model for ProviderJob.
 type ProviderJob struct {
 	Attempt int `json:"attempt"`
+
+	// ClaimGen 本次认领的代数（每次认领 +1）；完成上报必须原样回传，控制面只接受与当前认领代数一致的结果。
+	ClaimGen int64 `json:"claimGen"`
 
 	// ID `job_<ulid>`
 	ID JobID `json:"id"`
@@ -2335,20 +2370,26 @@ type WsClientPingType string
 
 // WsClientSub defines model for WsClientSub.
 type WsClientSub struct {
-	// AfterSeq 客户端已有的最大 seq；缺省 0 = 全量
+	// AfterSeq 客户端已有条目的可续传游标（最近一条 `entries` 消息的 `lastSeq`）；缺省 0 = 全量
 	AfterSeq *int64 `json:"afterSeq,omitempty"`
 
 	// ThreadID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
-	ThreadID ThreadID        `json:"threadId"`
-	Type     WsClientSubType `json:"type"`
+	ThreadID ThreadID `json:"threadId"`
+
+	// TranscriptRev 客户端缓存条目所属的转录版本（来自 `thread.snapshot` / `transcript.reset`）。与服务端当前版本不同，
+	// 或缺省但 `afterSeq > 0` 且服务端版本 > 0 时，服务端忽略 `afterSeq` 从头补发，并在快照中置 `fullReplay: true`。
+	TranscriptRev *int64          `json:"transcriptRev,omitempty"`
+	Type          WsClientSubType `json:"type"`
 }
 
 // WsClientSubType defines model for WsClientSub.Type.
 type WsClientSubType string
 
-// WsClientUIResponse `extension_ui_response` 等侧通道应答；先到先得
+// WsClientUIResponse 侧通道应答；`frame.type` 只能是 `extension_ui_response`、`host_tool_result`、`host_tool_update`、`host_uri_result`
+// 之一且带字符串 `id`（与 omp `dispatchRpcControlFrame` 的判定一致），否则回 `error{code:"invalid_frame"}`。
+// `extension_ui_response` 先到先得：只有对应请求仍待答且应答已成功交给 agent（或在 orb 暂停时入队）才广播 `ui.resolved`。
 type WsClientUIResponse struct {
 	// Frame omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
 	Frame OmpFrame `json:"frame"`
@@ -2377,7 +2418,9 @@ type WsClientUnsubType string
 
 // WsServerEntries defines model for WsServerEntries.
 type WsServerEntries struct {
-	Entries     []Entry `json:"entries"`
+	Entries []Entry `json:"entries"`
+
+	// LastSeq 本条消息覆盖到的最大 seq（可续传游标：≤ 它的条目都已送达）；分批时每批各自填写
 	LastSeq     int64   `json:"lastSeq"`
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
@@ -2471,6 +2514,18 @@ type WsServerOrb struct {
 // WsServerOrbType defines model for WsServerOrb.Type.
 type WsServerOrbType string
 
+// WsServerPlanResolved 计划提案已被成功批准 / 处理（`plan_approval` 成功应答）：所有客户端清除该线程的 `planProposal`
+type WsServerPlanResolved struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID                 `json:"threadId"`
+	Type     WsServerPlanResolvedType `json:"type"`
+}
+
+// WsServerPlanResolvedType defines model for WsServerPlanResolved.Type.
+type WsServerPlanResolvedType string
+
 // WsServerPong defines model for WsServerPong.
 type WsServerPong struct {
 	Type WsServerPongType `json:"type"`
@@ -2499,9 +2554,14 @@ type WsServerResType string
 // WsServerThreadSnapshot `sub` 后的首条消息
 type WsServerThreadSnapshot struct {
 	// Agent 线程实时缓冲（只含未被条目覆盖的部分）
-	Agent       AgentLiveState `json:"agent"`
-	LastSeq     int64          `json:"lastSeq"`
-	LeafEntryID *string        `json:"leafEntryId,omitempty"`
+	Agent AgentLiveState `json:"agent"`
+
+	// FullReplay 为真时服务端从 seq 0 补发：客户端须先丢弃该线程已缓存的全部条目
+	FullReplay bool `json:"fullReplay"`
+
+	// LastSeq 快照时刻线程的最大 seq（补发的目标；不是可续传游标，游标以各条 `entries.lastSeq` 为准）
+	LastSeq     int64   `json:"lastSeq"`
+	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
 	// Orb 线程所在 orb；无 orb 时省略
 	Orb    *Orb   `json:"orb,omitempty"`
@@ -2510,12 +2570,29 @@ type WsServerThreadSnapshot struct {
 	// ThreadID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
-	ThreadID ThreadID                   `json:"threadId"`
-	Type     WsServerThreadSnapshotType `json:"type"`
+	ThreadID ThreadID `json:"threadId"`
+
+	// TranscriptRev 当前转录版本；之后的 `sub` 应带上它
+	TranscriptRev int64                      `json:"transcriptRev"`
+	Type          WsServerThreadSnapshotType `json:"type"`
 }
 
 // WsServerThreadSnapshotType defines model for WsServerThreadSnapshot.Type.
 type WsServerThreadSnapshotType string
+
+// WsServerTranscriptReset 线程转录被重写（会话文件重写后删除了旧行，或 fork 回退移除了某文件）：客户端丢弃该线程的全部已缓存条目，
+// 并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
+type WsServerTranscriptReset struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID      ThreadID                    `json:"threadId"`
+	TranscriptRev int64                       `json:"transcriptRev"`
+	Type          WsServerTranscriptResetType `json:"type"`
+}
+
+// WsServerTranscriptResetType defines model for WsServerTranscriptReset.Type.
+type WsServerTranscriptResetType string
 
 // WsServerUIResolved defines model for WsServerUiResolved.
 type WsServerUIResolved struct {
@@ -3496,6 +3573,74 @@ func (t *WsServerMessage) MergeWsServerLiveReset(v WsServerLiveReset) error {
 	return err
 }
 
+// AsWsServerTranscriptReset returns the union data inside the WsServerMessage as a WsServerTranscriptReset
+func (t WsServerMessage) AsWsServerTranscriptReset() (WsServerTranscriptReset, error) {
+	var body WsServerTranscriptReset
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerTranscriptReset overwrites any union data inside the WsServerMessage as the provided WsServerTranscriptReset
+func (t *WsServerMessage) FromWsServerTranscriptReset(v WsServerTranscriptReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"transcript.reset"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerTranscriptReset performs a merge with any union data inside the WsServerMessage, using the provided WsServerTranscriptReset
+func (t *WsServerMessage) MergeWsServerTranscriptReset(v WsServerTranscriptReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"transcript.reset"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerPlanResolved returns the union data inside the WsServerMessage as a WsServerPlanResolved
+func (t WsServerMessage) AsWsServerPlanResolved() (WsServerPlanResolved, error) {
+	var body WsServerPlanResolved
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerPlanResolved overwrites any union data inside the WsServerMessage as the provided WsServerPlanResolved
+func (t *WsServerMessage) FromWsServerPlanResolved(v WsServerPlanResolved) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"plan.resolved"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerPlanResolved performs a merge with any union data inside the WsServerMessage, using the provided WsServerPlanResolved
+func (t *WsServerMessage) MergeWsServerPlanResolved(v WsServerPlanResolved) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"plan.resolved"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerOrb returns the union data inside the WsServerMessage as a WsServerOrb
 func (t WsServerMessage) AsWsServerOrb() (WsServerOrb, error) {
 	var body WsServerOrb
@@ -3626,12 +3771,16 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerLiveReset()
 	case "orb":
 		return t.AsWsServerOrb()
+	case "plan.resolved":
+		return t.AsWsServerPlanResolved()
 	case "pong":
 		return t.AsWsServerPong()
 	case "res":
 		return t.AsWsServerRes()
 	case "thread.snapshot":
 		return t.AsWsServerThreadSnapshot()
+	case "transcript.reset":
+		return t.AsWsServerTranscriptReset()
 	case "ui.resolved":
 		return t.AsWsServerUIResolved()
 	default:

@@ -9,43 +9,6 @@ import (
 	"context"
 )
 
-const claimNextJob = `-- name: ClaimNextJob :one
-UPDATE jobs SET state = 'claimed', attempt = attempt + 1, claimed_at = ?1, lease_until = ?2
-WHERE id = (
-    SELECT j.id FROM jobs j WHERE j.provider_id = ?3 AND j.state = 'queued'
-    ORDER BY j.created_at, j.id LIMIT 1
-)
-RETURNING id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at
-`
-
-type ClaimNextJobParams struct {
-	ClaimedAt  *int64 `json:"claimedAt"`
-	LeaseUntil *int64 `json:"leaseUntil"`
-	ProviderID string `json:"providerId"`
-}
-
-// Claims the provider's oldest queued job (attempt += 1); sql.ErrNoRows when none.
-func (q *Queries) ClaimNextJob(ctx context.Context, arg ClaimNextJobParams) (Job, error) {
-	row := q.db.QueryRowContext(ctx, claimNextJob, arg.ClaimedAt, arg.LeaseUntil, arg.ProviderID)
-	var i Job
-	err := row.Scan(
-		&i.ID,
-		&i.ProviderID,
-		&i.OrbID,
-		&i.Op,
-		&i.Params,
-		&i.State,
-		&i.Attempt,
-		&i.ClaimedAt,
-		&i.LeaseUntil,
-		&i.FinishedAt,
-		&i.Output,
-		&i.Error,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createJob = `-- name: CreateJob :exec
 
 INSERT INTO jobs (id, provider_id, orb_id, op, params, created_at)
@@ -76,7 +39,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 
 const finishJob = `-- name: FinishJob :execrows
 UPDATE jobs SET state = ?1, finished_at = ?2, output = ?3, error = ?4, lease_until = NULL
-WHERE id = ?5 AND state = 'claimed'
+WHERE id = ?5 AND state = 'claimed' AND claim_gen = ?6
 `
 
 type FinishJobParams struct {
@@ -85,8 +48,10 @@ type FinishJobParams struct {
 	Output     string  `json:"output"`
 	Error      *string `json:"error"`
 	ID         string  `json:"id"`
+	ClaimGen   int64   `json:"claimGen"`
 }
 
+// Finishes one specific claim (fenced by claim_gen): a late completion of an older claim matches no row.
 func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, finishJob,
 		arg.State,
@@ -94,6 +59,7 @@ func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (int64, er
 		arg.Output,
 		arg.Error,
 		arg.ID,
+		arg.ClaimGen,
 	)
 	if err != nil {
 		return 0, err
@@ -102,7 +68,7 @@ func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (int64, er
 }
 
 const getJob = `-- name: GetJob :one
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at FROM jobs WHERE id = ?1
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE id = ?1
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -122,12 +88,13 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.Output,
 		&i.Error,
 		&i.CreatedAt,
+		&i.ClaimGen,
 	)
 	return i, err
 }
 
 const listExpiredClaimedJobs = `-- name: ListExpiredClaimedJobs :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at FROM jobs WHERE state = 'claimed' AND lease_until < ?1 ORDER BY created_at
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE state = 'claimed' AND lease_until < ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job, error) {
@@ -153,6 +120,7 @@ func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job
 			&i.Output,
 			&i.Error,
 			&i.CreatedAt,
+			&i.ClaimGen,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +136,7 @@ func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at FROM jobs
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR provider_id = CAST(?2 AS TEXT))
 ORDER BY created_at, id
@@ -202,6 +170,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.Output,
 			&i.Error,
 			&i.CreatedAt,
+			&i.ClaimGen,
 		); err != nil {
 			return nil, err
 		}
@@ -217,7 +186,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listJobsByOrb = `-- name: ListJobsByOrb :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at FROM jobs WHERE orb_id = ?1 ORDER BY created_at, id
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE orb_id = ?1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListJobsByOrb(ctx context.Context, orbID *string) ([]Job, error) {
@@ -243,6 +212,7 @@ func (q *Queries) ListJobsByOrb(ctx context.Context, orbID *string) ([]Job, erro
 			&i.Output,
 			&i.Error,
 			&i.CreatedAt,
+			&i.ClaimGen,
 		); err != nil {
 			return nil, err
 		}
@@ -255,16 +225,4 @@ func (q *Queries) ListJobsByOrb(ctx context.Context, orbID *string) ([]Job, erro
 		return nil, err
 	}
 	return items, nil
-}
-
-const requeueJob = `-- name: RequeueJob :execrows
-UPDATE jobs SET state = 'queued', claimed_at = NULL, lease_until = NULL WHERE id = ?1 AND state = 'claimed'
-`
-
-func (q *Queries) RequeueJob(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, requeueJob, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }

@@ -16,3 +16,10 @@ FROM orb_setup_runs WHERE orb_id = @orb_id AND phase = @phase ORDER BY finished_
 
 -- name: GetOrbSetupRunLog :one
 SELECT log_tail FROM orb_setup_runs WHERE id = @id AND orb_id = @orb_id;
+
+-- Keeps only the newest @keep runs of an orb.
+-- name: PruneOrbSetupRuns :execrows
+DELETE FROM orb_setup_runs
+WHERE orb_setup_runs.orb_id = @orb_id AND orb_setup_runs.id NOT IN (
+    SELECT r.id FROM orb_setup_runs r WHERE r.orb_id = @orb_id ORDER BY r.finished_at DESC, r.id DESC LIMIT @keep
+);

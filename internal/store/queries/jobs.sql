@@ -7,24 +7,13 @@ VALUES (@id, @provider_id, @orb_id, @op, @params, @created_at);
 -- name: GetJob :one
 SELECT * FROM jobs WHERE id = @id;
 
--- Claims the provider's oldest queued job (attempt += 1); sql.ErrNoRows when none.
--- name: ClaimNextJob :one
-UPDATE jobs SET state = 'claimed', attempt = attempt + 1, claimed_at = @claimed_at, lease_until = @lease_until
-WHERE id = (
-    SELECT j.id FROM jobs j WHERE j.provider_id = @provider_id AND j.state = 'queued'
-    ORDER BY j.created_at, j.id LIMIT 1
-)
-RETURNING *;
-
+-- Finishes one specific claim (fenced by claim_gen): a late completion of an older claim matches no row.
 -- name: FinishJob :execrows
 UPDATE jobs SET state = @state, finished_at = @finished_at, output = @output, error = @error, lease_until = NULL
-WHERE id = @id AND state = 'claimed';
+WHERE id = @id AND state = 'claimed' AND claim_gen = @claim_gen;
 
 -- name: ListExpiredClaimedJobs :many
 SELECT * FROM jobs WHERE state = 'claimed' AND lease_until < @now ORDER BY created_at;
-
--- name: RequeueJob :execrows
-UPDATE jobs SET state = 'queued', claimed_at = NULL, lease_until = NULL WHERE id = @id AND state = 'claimed';
 
 -- name: ListJobsByOrb :many
 SELECT * FROM jobs WHERE orb_id = @orb_id ORDER BY created_at, id;

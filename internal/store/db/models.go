@@ -67,6 +67,7 @@ type Job struct {
 	Output     string  `json:"output"`
 	Error      *string `json:"error"`
 	CreatedAt  int64   `json:"createdAt"`
+	ClaimGen   int64   `json:"claimGen"`
 }
 
 type Orb struct {
@@ -87,6 +88,7 @@ type Orb struct {
 	AgentVersion          *string `json:"agentVersion"`
 	CreatedAt             int64   `json:"createdAt"`
 	DeletedAt             *int64  `json:"deletedAt"`
+	TokenGen              int64   `json:"tokenGen"`
 }
 
 type OrbEvent struct {
@@ -217,6 +219,9 @@ type Thread struct {
 	CreatedAt         int64   `json:"createdAt"`
 	UpdatedAt         int64   `json:"updatedAt"`
 	LastMessageAt     *int64  `json:"lastMessageAt"`
+	StartupFrames     []byte  `json:"startupFrames"`
+	ForkOp            []byte  `json:"forkOp"`
+	TranscriptRev     int64   `json:"transcriptRev"`
 }
 
 type ThreadLabel struct {
