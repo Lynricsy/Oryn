@@ -20,7 +20,7 @@ func TestParseLine(t *testing.T) {
 	require.NotNil(t, p.TS)
 	assert.Equal(t, int64(1794477600000), *p.TS)
 
-	line := `{"type":"message","id":"a1b2c3d4","parentId":"00000001","timestamp":"2026-11-12T10:00:01.000Z","message":{"role":"assistant","timestamp":1794477601000,"provider":"anthropic","model":"claude","duration":1200,"ttft":300,"usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.01}},"content":[{"type":"image","data":"blob:sha256:` + strings.Repeat("a", 64) + `"}]}}`
+	line := `{"type":"message","id":"a1b2c3d4","parentId":"00000001","timestamp":"2026-11-12T10:00:01.000Z","message":{"role":"assistant","timestamp":1794477601000,"provider":"anthropic","model":"claude","duration":1200.4,"ttft":300,"usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.01}},"content":[{"type":"image","data":"blob:sha256:` + strings.Repeat("a", 64) + `"}]}}`
 	p, err = ParseLine(line + "\n")
 	require.NoError(t, err)
 	assert.Equal(t, "a1b2c3d4", p.EntryID)

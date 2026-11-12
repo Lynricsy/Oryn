@@ -3,6 +3,7 @@ package threads
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -62,9 +63,10 @@ type lineHead struct {
 		Model     string `json:"model"`
 		ToolName  string `json:"toolName"`
 		IsError   bool   `json:"isError"`
-		Duration  *int64 `json:"duration"`
-		TTFT      *int64 `json:"ttft"`
-		Usage     *struct {
+		// duration / ttft 在 omp 中是毫秒浮点数
+		Duration *float64 `json:"duration"`
+		TTFT     *float64 `json:"ttft"`
+		Usage    *struct {
 			Input      int64 `json:"input"`
 			Output     int64 `json:"output"`
 			CacheRead  int64 `json:"cacheRead"`
@@ -124,7 +126,7 @@ func ParseLine(line string) (ParsedEntry, error) {
 			if m.Usage != nil {
 				u := &UsageRecord{TS: ts, Provider: m.Provider, Model: m.Model,
 					Input: m.Usage.Input, Output: m.Usage.Output, CacheRead: m.Usage.CacheRead, CacheWrt: m.Usage.CacheWrite,
-					DurationMs: m.Duration, TTFTMs: m.TTFT}
+					DurationMs: roundMs(m.Duration), TTFTMs: roundMs(m.TTFT)}
 				if m.Usage.Cost != nil {
 					u.CostUSD = m.Usage.Cost.Total
 				}
@@ -135,6 +137,14 @@ func ParseLine(line string) (ParsedEntry, error) {
 		}
 	}
 	return p, nil
+}
+
+func roundMs(v *float64) *int64 {
+	if v == nil {
+		return nil
+	}
+	n := int64(math.Round(*v))
+	return &n
 }
 
 // parseTS 接受 ISO 8601 字符串或毫秒数。
