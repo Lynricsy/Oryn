@@ -1,5 +1,7 @@
 /** `bash` — shell command execution: prompt line with env prefix, badges, output tail. */
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { revealTerminal } from "../../state/terminals";
 import {
 	Badge,
 	Badges,
@@ -49,18 +51,44 @@ function asyncDetailsOf(
 	return state ? { state, jobId: str(details.async.jobId) } : null;
 }
 
-function Summary({ args, result }: ToolRenderProps): ReactNode {
-	const command = args.command === undefined ? "…" : str(args.command);
-	if (command === null) return <InvalidArg what="command" />;
-	const text = truncate(normalizeWs(command) || "…", 80);
-	return result?.isError ? (
-		<span className="tv-err-text">{text}</span>
-	) : (
-		<span>{text}</span>
+/** `pty:true` 的调用在 orb 的终端里运行，agent 等用户作答：运行中提示并可打开 Terminal 面板。 */
+function PtyBadge({ running }: { running?: boolean }): ReactNode {
+	const { t } = useTranslation();
+	if (!running) return <Badge tone="accent">pty</Badge>;
+	return (
+		<button
+			type="button"
+			className="tv-badge tv-badge--warn tv-agent-link"
+			onClick={() => revealTerminal()}
+		>
+			{t("toolRender.terminal.awaitingInput")} ·{" "}
+			{t("toolRender.terminal.openTerminal")}
+		</button>
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Summary({ args, result, running }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const command = args.command === undefined ? "…" : str(args.command);
+	if (command === null) return <InvalidArg what="command" />;
+	const text = truncate(normalizeWs(command) || "…", 80);
+	const waiting = running && args.pty === true && (
+		<>
+			{" "}
+			<Badge tone="warn">{t("toolRender.terminal.awaitingInput")}</Badge>
+		</>
+	);
+	return result?.isError ? (
+		<span className="tv-err-text">{text}</span>
+	) : (
+		<span>
+			{text}
+			{waiting}
+		</span>
+	);
+}
+
+function Body({ args, result, running }: ToolRenderProps): ReactNode {
 	const command = args.command === undefined ? "…" : str(args.command);
 	const prefix = isRecord(args.env) ? envPrefix(args.env) : "";
 	const cwd = str(args.cwd);
@@ -105,7 +133,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				items={[
 					cwd && <Badge>cwd={shortenPath(cwd)}</Badge>,
 					timeoutSeconds !== null && <Badge>timeout={timeoutSeconds}s</Badge>,
-					args.pty === true && <Badge tone="accent">pty</Badge>,
+					args.pty === true && <PtyBadge running={running} />,
 					!job && args.async === true && <Badge tone="accent">async</Badge>,
 					head !== null && <Badge>head={head}</Badge>,
 					tail !== null && <Badge>tail={tail}</Badge>,

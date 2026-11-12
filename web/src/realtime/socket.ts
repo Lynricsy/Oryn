@@ -2,9 +2,16 @@
  * 客户端 WebSocket（计划 C3）：票据 → `/api/v1/ws?ticket=`；断线指数退避重连（0.5s→15s），
  * 重连后重发 `focus` 与各线程 `sub{afterSeq}` 补拉；`cmd` 以客户端 id 关联 `res`；
  * 收到的线程消息按动画帧批量写入线程 store，避免流式时逐帧重渲染。
+ * 终端（M3）：四种 `terminal_*` 帧不进 reducer，直接交给 `terminalHub`；`term.watch` 开关按线程记住，重连后重发；
+ * `term.lagged` / `term.resized` 转给 `terminalHub`。
  */
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
-import type { OmpCommand, ResponseData, SessionState } from "../omp/types";
+import type {
+	OmpCommand,
+	ResponseData,
+	RpcTerminalFrame,
+	SessionState,
+} from "../omp/types";
 import {
 	connectionStore,
 	getThreadStore,
@@ -12,6 +19,7 @@ import {
 	peekThreadStore,
 	type ThreadMessage,
 } from "../state/stores";
+import { terminalHub } from "../state/terminals";
 import {
 	effectsOf,
 	type FrameEffect,
@@ -41,6 +49,13 @@ interface PendingCmd {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+const TERMINAL_FRAMES: Record<string, true> = {
+	terminal_opened: true,
+	terminal_output: true,
+	terminal_exit: true,
+	terminal_closed: true,
+};
 const PING_INTERVAL_MS = 25_000;
 
 function backoffMs(attempt: number): number {
@@ -54,6 +69,8 @@ export class RealtimeClient {
 	private pingTimer: ReturnType<typeof setInterval> | undefined;
 	private readonly subs = new Map<string, number>();
 	private focused: string | null = null;
+	/** 已开启 `term.watch` 的线程。 */
+	private readonly watching = new Set<string>();
 	private readonly pending = new Map<string, PendingCmd>();
 	private seq = 0;
 	private batch = new Map<string, ThreadMessage[]>();
@@ -140,6 +157,9 @@ export class RealtimeClient {
 			});
 			this.send({ type: "focus", threadId: this.focused });
 			for (const [threadId] of this.subs) this.sendSub(threadId);
+			for (const threadId of this.watching)
+				if (this.subs.has(threadId))
+					this.send({ type: "term.watch", threadId, on: true });
 			this.pingTimer = setInterval(
 				() => this.send({ type: "ping" }),
 				PING_INTERVAL_MS,
@@ -222,6 +242,14 @@ export class RealtimeClient {
 		};
 	}
 
+	/** 开关某线程的实时终端输出（服务端要求已订阅该线程；未订阅时只记下）。 */
+	termWatch(threadId: string, on: boolean) {
+		if (on) this.watching.add(threadId);
+		else this.watching.delete(threadId);
+		if (this.subs.has(threadId))
+			this.send({ type: "term.watch", threadId, on });
+	}
+
 	focus(threadId: string | null) {
 		this.focused = threadId;
 		this.send({ type: "focus", threadId });
@@ -280,6 +308,9 @@ export class RealtimeClient {
 				this.enqueue(msg.threadId, { type: "thread.snapshot", snapshot: msg });
 				for (const eff of snapshotEffects(msg))
 					this.scheduleEffect(msg.threadId, eff);
+				// 终端同步读 store 里的就绪前提：先落地快照
+				this.flush();
+				terminalHub.onSnapshot(msg.threadId);
 				return;
 			case "entries":
 				this.enqueue(msg.threadId, { type: "entries", msg });
@@ -296,6 +327,13 @@ export class RealtimeClient {
 				this.enqueue(msg.threadId, { type: "plan.resolved" });
 				return;
 			case "frame": {
+				if (TERMINAL_FRAMES[String(msg.frame.type)]) {
+					terminalHub.onFrame(
+						msg.threadId,
+						msg.frame as unknown as RpcTerminalFrame,
+					);
+					return;
+				}
 				const frame = msg.frame as OmpFrame;
 				this.enqueue(msg.threadId, { type: "frame", frame });
 				for (const eff of effectsOf(frame))
@@ -330,6 +368,14 @@ export class RealtimeClient {
 				this.enqueue(msg.threadId, { type: "live.reset" });
 				// 工作标志与待答状态已作废，拉回权威 state
 				this.scheduleEffect(msg.threadId, "refresh_state");
+				this.flush();
+				terminalHub.onLiveReset(msg.threadId);
+				return;
+			case "term.lagged":
+				terminalHub.onLagged(msg.threadId);
+				return;
+			case "term.resized":
+				terminalHub.onResized(msg.threadId, msg.terminalId, msg.cols, msg.rows);
 				return;
 			case "orb":
 				indexStore.getState().upsertOrb(msg.orb);

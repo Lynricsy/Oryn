@@ -1,7 +1,7 @@
 /** TanStack Query 封装的 REST 读写（键统一在 `qk` 下，便于失效）。 */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchHealth } from "../health";
-import { api, encodePathParam, rawFetch, type Schemas, unwrap } from "./client";
+import { api, type Schemas, unwrap } from "./client";
 
 export const qk = {
 	health: ["healthz"] as const,
@@ -11,8 +11,6 @@ export const qk = {
 	providers: ["providers"] as const,
 	secrets: ["secrets"] as const,
 	gitIdentity: ["settings", "git-identity"] as const,
-	agentFiles: ["agent-config", "files"] as const,
-	agentFile: (path: string) => ["agent-config", "file", path] as const,
 	orbs: ["orbs"] as const,
 	orb: (id: string) => ["orbs", id] as const,
 	orbMetrics: (id: string) => ["orbs", id, "metrics"] as const,
@@ -72,26 +70,6 @@ export function useSecrets() {
 	return useQuery({
 		queryKey: qk.secrets,
 		queryFn: () => unwrap(api.GET("/api/v1/secrets")),
-	});
-}
-
-export function useAgentFiles() {
-	return useQuery({
-		queryKey: qk.agentFiles,
-		queryFn: () => unwrap(api.GET("/api/v1/agent-config/files")),
-	});
-}
-
-export function useAgentFile(path: string | null) {
-	return useQuery({
-		queryKey: qk.agentFile(path ?? ""),
-		enabled: path !== null,
-		queryFn: async () => {
-			const res = await rawFetch(
-				`/api/v1/agent-config/files/${encodePathParam(path ?? "")}`,
-			);
-			return res.text();
-		},
 	});
 }
 

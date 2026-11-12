@@ -8,6 +8,7 @@ import {
 	getThreadStore,
 	resetThreadStores,
 } from "../state/stores";
+import { terminalHub } from "../state/terminals";
 import { RealtimeClient } from "./socket";
 
 const TID = "T-0193a1b2-0000-7000-8000-0000000000c1";
@@ -286,5 +287,60 @@ describe("RealtimeClient", () => {
 		const key = connectionStore.getState().errors[0]?.key as number;
 		client.dismissError(key);
 		expect(connectionStore.getState().errors).toEqual([]);
+	});
+
+	it("终端：四种终端帧交给 terminalHub 不进 reducer；term.watch 未订阅时只记下，重连后在 sub 之后重发", async () => {
+		const onFrame = vi
+			.spyOn(terminalHub, "onFrame")
+			.mockImplementation(() => {});
+		const onLagged = vi
+			.spyOn(terminalHub, "onLagged")
+			.mockImplementation(() => {});
+		const onResized = vi
+			.spyOn(terminalHub, "onResized")
+			.mockImplementation(() => {});
+		const ws = await connected(client);
+		client.termWatch(TID, true);
+		expect(ws.sent.filter((m) => m.type === "term.watch")).toEqual([]);
+		client.subscribe(TID);
+		client.termWatch(TID, true);
+		expect(ws.sent.at(-1)).toEqual({
+			type: "term.watch",
+			threadId: TID,
+			on: true,
+		});
+		const out = {
+			type: "terminal_output",
+			terminalId: "t1",
+			data: "x",
+			seq: 1,
+		};
+		ws.recv({ type: "frame", threadId: TID, frame: out });
+		client.flush();
+		expect(onFrame).toHaveBeenCalledWith(TID, out);
+		expect(getThreadStore(TID).getState().debug).toEqual([]);
+		ws.recv({ type: "term.lagged", threadId: TID });
+		ws.recv({
+			type: "term.resized",
+			threadId: TID,
+			terminalId: "t1",
+			cols: 90,
+			rows: 20,
+		});
+		expect(onLagged).toHaveBeenCalledWith(TID);
+		expect(onResized).toHaveBeenCalledWith(TID, "t1", 90, 20);
+		ws.drop();
+		await vi.advanceTimersByTimeAsync(500);
+		await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+		const ws2 = FakeWS.instances[1] as FakeWS;
+		ws2.accept();
+		const types = ws2.sent.map((m) => m.type);
+		expect(types.indexOf("term.watch")).toBeGreaterThan(types.indexOf("sub"));
+		client.termWatch(TID, false);
+		expect(ws2.sent.at(-1)).toEqual({
+			type: "term.watch",
+			threadId: TID,
+			on: false,
+		});
 	});
 });

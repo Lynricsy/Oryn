@@ -333,21 +333,56 @@ export function InvalidArg({ what }: { what?: string }): ReactNode {
 	return <span className="tv-err-text">[invalid {what ?? "arg"}]</span>;
 }
 
+/** `git diff` 文件头（`diff --git` 与首个 `@@` 之间）里的元信息行。 */
+const GIT_META_RE =
+	/^(diff --git |index |--- |\+\+\+ |new file mode |deleted file mode |old mode |new mode |similarity index |dissimilarity index |rename from |rename to |copy from |copy to |Binary files )/;
+
+/** Per-row CSS modifier. Unified mode only treats header lines as meta while inside a file header. */
+function diffRowClasses(lines: string[], unified: boolean): string[] {
+	let inHeader = false;
+	return lines.map((line) => {
+		if (!unified) {
+			if (line.trim().length === 0) return "--gap";
+			if (line.startsWith("+")) return "--add";
+			if (line.startsWith("-")) return "--del";
+			return line.startsWith("@@") ? "--hunk" : "";
+		}
+		if (line.startsWith("diff --git ")) inHeader = true;
+		if (line.startsWith("@@")) {
+			inHeader = false;
+			return "--hunk";
+		}
+		if ((inHeader && GIT_META_RE.test(line)) || line.startsWith("\\ "))
+			return "--hunk";
+		if (line.startsWith("+")) return "--add";
+		if (line.startsWith("-")) return "--del";
+		return "";
+	});
+}
+
 /**
  * Unified-diff-ish block: `+` rows added, `-` rows removed, `@@` hunk headers
  * faint, blank rows render as `…` gaps (non-contiguous regions).
+ * `unified`: input is a real `git diff` patch — file headers render faint and
+ * blank rows are context lines, not gaps. `maxLines={Infinity}` disables collapsing.
  */
 export function DiffBlock({
 	diff,
 	maxLines = 80,
+	unified = false,
 }: {
 	diff: string;
 	maxLines?: number;
+	unified?: boolean;
 }): ReactNode {
 	const [expanded, setExpanded] = useState(false);
 	const lines = useMemo(
 		() => replaceTabs(stripAnsi(diff)).replace(/\n+$/, "").split("\n"),
 		[diff],
+	);
+	const classes = useMemo(
+		() => diffRowClasses(lines, unified),
+		[lines, unified],
 	);
 	const collapsible = lines.length > maxLines + 1;
 	const shown = collapsible && !expanded ? lines.slice(0, maxLines) : lines;
@@ -355,17 +390,14 @@ export function DiffBlock({
 		<div className="tv-out">
 			<div className="tv-diff">
 				{shown.map((line, i) => {
-					let cls = "";
-					if (line.trim().length === 0) cls = "--gap";
-					else if (line.startsWith("+")) cls = "--add";
-					else if (line.startsWith("-")) cls = "--del";
-					else if (line.startsWith("@@")) cls = "--hunk";
+					const cls = classes[i] ?? "";
+					const gap = cls === "--gap";
 					return (
 						<div
 							key={i}
 							className={`tv-diff-row${cls ? ` tv-diff-row${cls}` : ""}`}
 						>
-							{line.trim().length === 0 ? "…" : line}
+							{gap ? "…" : line || " "}
 						</div>
 					);
 				})}

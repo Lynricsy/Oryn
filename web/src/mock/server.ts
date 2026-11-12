@@ -6,9 +6,13 @@
  * 环境（M2.5）：orb 带 `lastSetup` / `lastResume`，提供 setup-runs 与日志接口；failed orb 的线程 `wake` 后恢复；
  * 提示词点名 `oryn-setup` 技能时，回合结束后补一条手动重跑成功的记录（模拟 agent 修好环境）。
  * 设置：Git 身份（GET / PUT / DELETE）与项目的新建 / 修改（含 git 身份覆盖，空串清除）。
+ * 终端（M3，同 fakeomp 2.4）：`terminal_*` 命令的替身 shell（回显；`flood <n>` 洪泛、`count <n>` 逐行输出、`echo …`、`exit`），
+ * `term.watch` 开关、`term.resized` 广播、按单连接 1s 窗口的输出量模拟背压（`term.lagged`）；提示词含 `pty` 时
+ * bash 工具以 `pty:true` 在 `kind:"command"` 终端里等用户输入 `y`。orb 的 fs / git REST 由 `./orbfs` 应答。
+ * `localStorage["oryn.debug"]==="1"` 时挂 `window.__orynMock`（验收脚本用：断线、重启 agent 等）。
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
-import type { SessionState } from "../omp/types";
+import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import {
 	assistant,
 	buildMainTranscript,
@@ -23,11 +27,32 @@ import {
 	SESSION_FILE,
 	setupLogs,
 } from "./fixtures";
+import { handleOrbFetch } from "./orbfs";
 
 type Json = Record<string, unknown>;
 
 export interface MockSocket {
 	deliver(msg: Json): void;
+	close?(): void;
+}
+
+/** omp 快照返回的回滚上限（字符）。 */
+const SNAPSHOT_CHARS = 262_144;
+const FLOOD_FRAME = 32_768;
+const PROMPT = "fake$ ";
+/** CSI 序列与其它 ESC 双字节序列。 */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 匹配终端转义序列必须用 ESC
+const ESCAPE_SEQ = /\u001b\[[0-9;]*[A-Za-z~]|\u001b./g;
+
+interface MockTerm {
+	info: RpcTerminalInfo;
+	data: string;
+	seq: number;
+	line: string;
+	/** 正在执行的命令被 ^C 中断。 */
+	aborted: boolean;
+	/** `kind:"command"` 终端的输入回调（pty 命令等待作答）。 */
+	onInput?: (data: string) => void;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -80,6 +105,15 @@ export class MockServer {
 	private readonly waiters = new Map<string, (value: Json) => void>();
 	private rev = 1;
 	private idSeq = 100;
+	private readonly terms = new Map<string, Map<string, MockTerm>>();
+	private readonly termWatch = new Map<MockSocket, Set<string>>();
+	private readonly termWindow = new Map<
+		MockSocket,
+		{ start: number; chars: number }
+	>();
+	private termSeq = 0;
+	/** 单连接 1s 内可收的终端输出（字符）；超出即模拟服务端丢帧并发 `term.lagged`。 */
+	termLag = 2 << 20;
 	/** 帧间隔（毫秒）；测试里设为 0。 */
 	delay = 45;
 	files: Record<string, string> = {
@@ -116,6 +150,12 @@ export class MockServer {
 				...mainState(),
 				todoPhases: t.id === MAIN_THREAD ? mainState().todoPhases : [],
 			});
+		try {
+			if (globalThis.localStorage?.getItem("oryn.debug") === "1")
+				(globalThis as { __orynMock?: MockServer }).__orynMock = this;
+		} catch {
+			// 无 localStorage
+		}
 		this.pendingUi.set("T-0193a1b2-0000-7000-8000-00000000a004", [
 			{
 				type: "extension_ui_request",
@@ -134,6 +174,8 @@ export class MockServer {
 		const path = url.pathname;
 		if (path === "/healthz") return json({ ok: true, version: "0.1.0-mock" });
 		if (!path.startsWith("/api/v1/")) return null;
+		const orbRes = await handleOrbFetch(req);
+		if (orbRes) return orbRes;
 		const p = path.slice("/api/v1/".length);
 		const m = req.method.toUpperCase();
 		const body = async (): Promise<Json> => {
@@ -428,6 +470,8 @@ export class MockServer {
 			if (threadMatch[2] === "wake") {
 				const orb = t.orbId ? this.orbs.get(t.orbId) : undefined;
 				if (orb?.state === "failed") void this.recoverOrb(orb);
+				else if (orb?.state === "frozen" || orb?.state === "stopped")
+					void this.wakeOrb(orb);
 				return new Response(null, { status: 202 });
 			}
 			if (m === "PATCH") {
@@ -487,6 +531,20 @@ export class MockServer {
 		for (const tid of orb.threadIds) {
 			const t = this.threads.get(tid);
 			if (t) this.upsertThread({ ...t, state: "idle" });
+		}
+	}
+
+	/** 冻结 / 停机的 orb 唤醒：waking → connecting → resuming → ready（终端随 omp 进程保留）。 */
+	private async wakeOrb(orb: Orb) {
+		for (const state of [
+			"waking",
+			"connecting",
+			"resuming",
+			"ready",
+		] as const) {
+			await sleep(this.delay * 6);
+			const cur = this.orbs.get(orb.id) ?? orb;
+			this.setOrb({ ...cur, state, stateChangedAt: Date.now() });
 		}
 	}
 
@@ -582,6 +640,276 @@ export class MockServer {
 	disconnect(socket: MockSocket) {
 		this.sockets.delete(socket);
 		this.subs.delete(socket);
+		this.termWatch.delete(socket);
+		this.termWindow.delete(socket);
+	}
+
+	/** 调试：断开全部连接（客户端会重连并补拉）。 */
+	dropConnections() {
+		for (const s of [...this.sockets]) s.close?.();
+	}
+
+	/** 调试：模拟 omp 进程重启——其终端全部销毁，线程收到 `live.reset`。 */
+	restartAgent(threadId: string) {
+		this.terms.delete(threadId);
+		this.broadcast({ type: "live.reset", threadId }, threadId);
+	}
+
+	/** 调试：某线程的终端列表。 */
+	terminalInfos(threadId: string): RpcTerminalInfo[] {
+		return [...(this.terms.get(threadId)?.values() ?? [])].map((t) => t.info);
+	}
+
+	// ------------------------------------------------------------ 终端替身
+
+	private termsOf(threadId: string): Map<string, MockTerm> {
+		let m = this.terms.get(threadId);
+		if (!m) {
+			m = new Map();
+			this.terms.set(threadId, m);
+		}
+		return m;
+	}
+
+	private openTerm(
+		threadId: string,
+		kind: RpcTerminalInfo["kind"],
+		title: string,
+		size: { cols?: unknown; rows?: unknown },
+		reveal?: boolean,
+	): MockTerm {
+		const terminalId = `term-fake-${++this.termSeq}`;
+		const term: MockTerm = {
+			info: {
+				terminalId,
+				kind,
+				title,
+				cwd: "/home/user/workspace",
+				running: true,
+				pid: 4000 + this.termSeq,
+				cols: typeof size.cols === "number" ? size.cols : 100,
+				rows: typeof size.rows === "number" ? size.rows : 30,
+			},
+			data: "",
+			seq: 0,
+			line: "",
+			aborted: false,
+		};
+		this.termsOf(threadId).set(terminalId, term);
+		this.frame(threadId, {
+			type: "terminal_opened",
+			terminal: term.info,
+			...(reveal ? { reveal: true } : {}),
+		});
+		return term;
+	}
+
+	private termOut(threadId: string, term: MockTerm, data: string) {
+		if (!this.terms.get(threadId)?.has(term.info.terminalId)) return;
+		term.seq += data.length;
+		term.data = (term.data + data).slice(-SNAPSHOT_CHARS);
+		const frame = {
+			type: "terminal_output",
+			terminalId: term.info.terminalId,
+			data,
+			seq: term.seq,
+		};
+		const now = Date.now();
+		for (const s of this.sockets) {
+			if (!this.subs.get(s)?.has(threadId)) continue;
+			const watching = this.termWatch.get(s);
+			if (!watching?.has(threadId)) continue;
+			let w = this.termWindow.get(s);
+			if (!w || now - w.start > 1000) {
+				w = { start: now, chars: 0 };
+				this.termWindow.set(s, w);
+			}
+			w.chars += data.length;
+			if (w.chars > this.termLag) {
+				watching.delete(threadId);
+				s.deliver({ type: "term.lagged", threadId });
+				continue;
+			}
+			s.deliver({ type: "frame", threadId, frame });
+		}
+	}
+
+	private termExit(threadId: string, term: MockTerm, exitCode: number) {
+		term.info = { ...term.info, running: false, exitCode };
+		this.frame(threadId, {
+			type: "terminal_exit",
+			terminalId: term.info.terminalId,
+			exitCode,
+			cancelled: false,
+			timedOut: false,
+		});
+	}
+
+	private termInput(threadId: string, term: MockTerm, data: string) {
+		if (!term.info.running) return;
+		if (term.onInput) {
+			term.onInput(data);
+			return;
+		}
+		// 方向键等转义序列不回显
+		const text = data.replace(ESCAPE_SEQ, "");
+		for (const ch of text) {
+			if (ch === "\r") {
+				const line = term.line;
+				term.line = "";
+				this.termOut(threadId, term, "\r\n");
+				void this.runLine(threadId, term, line.trim());
+			} else if (ch === "\x7f") {
+				if (term.line) {
+					term.line = term.line.slice(0, -1);
+					this.termOut(threadId, term, "\b \b");
+				}
+			} else if (ch === "\x03") {
+				term.line = "";
+				term.aborted = true;
+				this.termOut(threadId, term, `^C\r\n${PROMPT}`);
+			} else if (ch >= " ") {
+				term.line += ch;
+				this.termOut(threadId, term, ch);
+			}
+		}
+	}
+
+	private async runLine(threadId: string, term: MockTerm, line: string) {
+		term.aborted = false;
+		const flood = /^flood (\d+)$/.exec(line);
+		const count = /^count (\d+)$/.exec(line);
+		if (line === "exit") {
+			this.termExit(threadId, term, 0);
+			return;
+		}
+		if (flood) {
+			let left = Number(flood[1]);
+			let frames = 0;
+			while (left > 0 && !term.aborted) {
+				const n = Math.min(FLOOD_FRAME, left);
+				this.termOut(threadId, term, "x".repeat(n));
+				left -= n;
+				if (++frames % 8 === 0) await sleep(0);
+			}
+			this.termOut(threadId, term, `\r\n${PROMPT}`);
+			return;
+		}
+		if (count) {
+			const n = Number(count[1]);
+			for (let i = 1; i <= n && !term.aborted; i++) {
+				this.termOut(threadId, term, `line-${i}\r\n`);
+				await sleep(20);
+			}
+			if (!term.aborted) this.termOut(threadId, term, PROMPT);
+			return;
+		}
+		const echo = /^echo (.*)$/.exec(line);
+		const out = echo
+			? `${(echo[1] ?? "")
+					.replace(/^(['"])(.*)\1$/, "$2")
+					.replace(/\$TERM\b/g, "xterm-256color")
+					.replace(/\$\(\((\d+)\*(\d+)\)\)/g, (_, a, b) =>
+						String(Number(a) * Number(b)),
+					)}\r\n`
+			: "";
+		this.termOut(threadId, term, `${out}${PROMPT}`);
+	}
+
+	/** 终端命令的替身；不是终端命令时返回 false。 */
+	private termCmd(
+		socket: MockSocket,
+		threadId: string,
+		id: string,
+		type: string,
+		frame: Json,
+	): boolean {
+		const terms = this.termsOf(threadId);
+		const term =
+			typeof frame.terminalId === "string"
+				? terms.get(frame.terminalId)
+				: undefined;
+		const fail = () =>
+			this.respond(
+				socket,
+				threadId,
+				id,
+				type,
+				undefined,
+				`unknown terminal ${String(frame.terminalId)}`,
+			);
+		switch (type) {
+			case "terminal_configure":
+				this.respond(socket, threadId, id, type, {
+					interactiveCommands: frame.interactiveCommands === true,
+					agentTools: frame.agentTools === true,
+				});
+				return true;
+			case "terminal_open": {
+				const t = this.openTerm(threadId, "shell", "bash", frame);
+				this.respond(socket, threadId, id, type, t.info);
+				this.termOut(threadId, t, PROMPT);
+				return true;
+			}
+			case "terminal_input":
+				if (!term) fail();
+				else {
+					this.respond(socket, threadId, id, type);
+					this.termInput(threadId, term, String(frame.data ?? ""));
+				}
+				return true;
+			case "terminal_resize":
+				if (!term) {
+					fail();
+					return true;
+				}
+				term.info = {
+					...term.info,
+					cols: Number(frame.cols),
+					rows: Number(frame.rows),
+				};
+				this.respond(socket, threadId, id, type);
+				this.broadcast(
+					{
+						type: "term.resized",
+						threadId,
+						terminalId: term.info.terminalId,
+						cols: term.info.cols,
+						rows: term.info.rows,
+					},
+					threadId,
+				);
+				return true;
+			case "terminal_close":
+				if (!term) {
+					fail();
+					return true;
+				}
+				terms.delete(term.info.terminalId);
+				term.aborted = true;
+				this.frame(threadId, {
+					type: "terminal_closed",
+					terminalId: term.info.terminalId,
+				});
+				this.respond(socket, threadId, id, type);
+				return true;
+			case "terminal_list":
+				this.respond(socket, threadId, id, type, {
+					terminals: [...terms.values()].map((t) => t.info),
+				});
+				return true;
+			case "terminal_snapshot":
+				if (!term) fail();
+				else
+					this.respond(socket, threadId, id, type, {
+						terminal: term.info,
+						data: term.data,
+						seq: term.seq,
+					});
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	private broadcast(msg: Json, threadId?: string) {
@@ -688,6 +1016,7 @@ export class MockServer {
 			}
 			case "unsub":
 				this.subs.get(socket)?.delete(threadId);
+				this.termWatch.get(socket)?.delete(threadId);
 				return;
 			case "ui.response": {
 				const frame = msg.frame as Json;
@@ -714,6 +1043,27 @@ export class MockServer {
 				this.waiters.get(reqId)?.(frame);
 				this.waiters.delete(reqId);
 				this.refreshThreadState(threadId);
+				return;
+			}
+			case "term.watch": {
+				if (!this.subs.get(socket)?.has(threadId)) {
+					socket.deliver({
+						type: "error",
+						code: "not_subscribed",
+						message: "term.watch before sub",
+						threadId,
+					});
+					return;
+				}
+				let w = this.termWatch.get(socket);
+				if (!w) {
+					w = new Set();
+					this.termWatch.set(socket, w);
+				}
+				if (msg.on === true) {
+					w.add(threadId);
+					this.termWindow.delete(socket);
+				} else w.delete(threadId);
 				return;
 			}
 			case "cmd":
@@ -764,6 +1114,7 @@ export class MockServer {
 		frame: Json,
 	) {
 		const type = String(frame.type);
+		if (this.termCmd(socket, threadId, id, type, frame)) return;
 		const state = this.states.get(threadId) ?? mainState();
 		const list = this.entries.get(threadId) ?? [];
 		switch (type) {
@@ -1041,10 +1392,13 @@ export class MockServer {
 		const thinking =
 			"用户要我在 orb 里执行命令并汇报结果。先跑 uname -a 看看内核与架构。";
 		const intro = "我先在 orb 里执行一下命令。";
-		const callArgs = JSON.stringify({
-			command: "uname -a",
-			i: "Checking kernel",
-		});
+		const pty = /\bpty\b/i.test(text);
+		const ptyCommand = "read -p 'Continue? [y/N] ' a; echo $a";
+		const callArgs = JSON.stringify(
+			pty
+				? { command: ptyCommand, pty: true, i: "Asking in terminal" }
+				: { command: "uname -a", i: "Checking kernel" },
+		);
 		const toolCallId = `toolu_${this.idSeq++}`;
 		this.frame(threadId, {
 			type: "message_start",
@@ -1113,10 +1467,30 @@ export class MockServer {
 			intent: "Checking kernel",
 		});
 		let out = "";
-		for (const line of [
-			"Linux orb-01jcz8m3 6.12.0-oryn #1 SMP PREEMPT_DYNAMIC",
-			" x86_64 GNU/Linux",
-		]) {
+		if (pty) {
+			// pty:true：在 orb 的终端里运行，等用户作答
+			const term = this.openTerm(threadId, "command", ptyCommand, {}, true);
+			const ask = "Continue? [y/N] ";
+			this.termOut(threadId, term, ask);
+			const answer = await new Promise<string>((resolve) => {
+				let typed = "";
+				term.onInput = (data) => {
+					typed += data;
+					this.termOut(threadId, term, data.replace(/\r/g, "\r\n"));
+					if (/y/i.test(data)) resolve(typed.replace(/\r/g, ""));
+				};
+			});
+			term.onInput = undefined;
+			this.termOut(threadId, term, `\r\n${answer}\r\n`);
+			this.termExit(threadId, term, 0);
+			out = `${ask}${answer}\n${answer}`;
+		}
+		for (const line of pty
+			? []
+			: [
+					"Linux orb-01jcz8m3 6.12.0-oryn #1 SMP PREEMPT_DYNAMIC",
+					" x86_64 GNU/Linux",
+				]) {
 			await sleep(d * 4);
 			out += line;
 			this.frame(threadId, {

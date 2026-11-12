@@ -25,6 +25,7 @@ import { readRenderer } from "./tools/read";
 import { reportToolIssueRenderer } from "./tools/report-tool-issue";
 import { resolveRenderer } from "./tools/resolve";
 import { taskRenderer } from "./tools/task";
+import { terminalRenderer } from "./tools/terminal";
 import { todoRenderer } from "./tools/todo";
 import { waitRenderer } from "./tools/wait";
 import { webSearchRenderer } from "./tools/web-search";
@@ -65,6 +66,7 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	grep: grepRenderer,
 	search: grepRenderer,
 	task: taskRenderer,
+	terminal: terminalRenderer,
 	todo: todoRenderer,
 	web_search: webSearchRenderer,
 	write: writeRenderer,

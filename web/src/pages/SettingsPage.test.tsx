@@ -2,7 +2,28 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../i18n";
+import type { SettingsSection } from "./SettingsPage";
 import { SettingsPage } from "./SettingsPage";
+
+// 编辑器换成 textarea：这里测设置页接线，CodeMirror 本身另有测试
+vi.mock("../components/editor/CodeEditor", () => ({
+	default: ({
+		value,
+		path,
+		onChange,
+	}: {
+		value: string;
+		path: string;
+		onChange?(v: string): void;
+	}) => (
+		<textarea
+			aria-label={`editor:${path}`}
+			value={value}
+			onChange={(e) => onChange?.(e.target.value)}
+		/>
+	),
+}));
 
 interface Call {
 	method: string;
@@ -13,37 +34,85 @@ interface Call {
 
 let identity: { name: string; email: string } | undefined;
 let calls: Call[] = [];
+let agentFiles: Record<string, string> = {};
+let agentPuts: { path: string; body: string }[] = [];
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-	const req = input instanceof Request ? input : new Request(String(input));
-	const url = new URL(req.url, "http://x");
-	const text = await req.text();
-	calls.push({
-		method: req.method,
-		path: url.pathname,
-		body: text ? JSON.parse(text) : undefined,
-		csrf: req.headers.get("X-Oryn-CSRF"),
-	});
-	if (url.pathname === "/api/v1/settings/git-identity") {
-		if (req.method === "PUT") {
-			identity = JSON.parse(text);
-		} else if (req.method === "DELETE") {
-			identity = undefined;
-			return new Response(null, { status: 204 });
-		}
-		return Response.json(identity ? { identity } : {});
+async function agentConfig(req: Request, url: URL): Promise<Response> {
+	if (url.pathname === "/api/v1/agent-config/files")
+		return Response.json({
+			files: Object.entries(agentFiles).map(([path, c]) => ({
+				path,
+				size: c.length,
+				mode: 420,
+				sha256: "0".repeat(64),
+				updatedAt: 1,
+			})),
+		});
+	const path = decodeURIComponent(
+		url.pathname.slice("/api/v1/agent-config/files/".length),
+	);
+	if (req.method === "PUT") {
+		const body = await req.text();
+		agentPuts.push({ path, body });
+		agentFiles[path] = body;
+		return Response.json({
+			file: {
+				path,
+				size: body.length,
+				mode: 420,
+				sha256: "0".repeat(64),
+				updatedAt: 2,
+			},
+			extractedSecrets: ["omp/models/acme/apiKey"],
+			warnings: [
+				{ path, line: 3, kind: "possible_secret", message: "looks like a key" },
+			],
+		});
 	}
-	return Response.json({ code: "not_found", message: "" }, { status: 404 });
-});
+	const c = agentFiles[path];
+	return c === undefined
+		? Response.json({ code: "not_found", message: path }, { status: 404 })
+		: new Response(c);
+}
 
-function setup() {
+const fetchMock = vi.fn(
+	async (input: RequestInfo | URL, init?: RequestInit) => {
+		// rawFetch 传相对路径与 init；Node 的 Request 只收绝对地址
+		const req =
+			input instanceof Request
+				? input
+				: new Request(new URL(String(input), "http://x"), init);
+		const url = new URL(req.url, "http://x");
+		if (url.pathname.startsWith("/api/v1/agent-config/"))
+			return agentConfig(req, url);
+		const text = await req.text();
+		calls.push({
+			method: req.method,
+			path: url.pathname,
+			body: text ? JSON.parse(text) : undefined,
+			csrf: req.headers.get("X-Oryn-CSRF"),
+		});
+		if (url.pathname === "/api/v1/settings/git-identity") {
+			if (req.method === "PUT") {
+				identity = JSON.parse(text);
+			} else if (req.method === "DELETE") {
+				identity = undefined;
+				return new Response(null, { status: 204 });
+			}
+			return Response.json(identity ? { identity } : {});
+		}
+		return Response.json({ code: "not_found", message: "" }, { status: 404 });
+	},
+);
+
+function setup(section: SettingsSection = "git-identity") {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
 	return render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
-				<SettingsPage section="git-identity" />
+				<SettingsPage section={section} />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -120,5 +189,51 @@ describe("设置 → Git 身份", () => {
 		fireEvent.click(await screen.findByRole("button", { name: "清除" }));
 		await waitFor(() => expect(window.confirm).toHaveBeenCalled());
 		expect(writes()).toEqual([]);
+	});
+});
+
+describe("设置 → agent 配置", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		agentFiles = {
+			"AGENTS.md": "# rules\n",
+			"models.yml": "providers: {}\n",
+			"skills/foo/SKILL.md": "skill",
+		};
+		agentPuts = [];
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("用同一个文件浏览器：目录由扁平列表合成，打开、编辑、保存后显示抽取的密钥与警告", async () => {
+		setup("agent-config");
+		expect(await screen.findByText("skills")).toBeInTheDocument();
+		expect(screen.queryByText("SKILL.md")).toBeNull();
+		expect(
+			screen.queryByRole("button", {
+				name: i18n.t("files.actions.newFolder" as "common.save"),
+			}),
+		).toBeNull();
+		fireEvent.click(screen.getByText("models.yml"));
+		const editor = await screen.findByLabelText("editor:models.yml");
+		expect(editor).toHaveValue("providers: {}\n");
+		fireEvent.change(editor, {
+			target: { value: "providers:\n  acme: {apiKey: sk-1}\n" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		expect(
+			await screen.findByText("已抽取进密钥库：omp/models/acme/apiKey"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("models.yml:3 — looks like a key"),
+		).toBeInTheDocument();
+		expect(agentPuts).toEqual([
+			{ path: "models.yml", body: "providers:\n  acme: {apiKey: sk-1}\n" },
+		]);
+		// 旧的 textarea 编辑器已删除
+		expect(screen.queryByRole("textbox", { name: "models.yml" })).toBeNull();
 	});
 });

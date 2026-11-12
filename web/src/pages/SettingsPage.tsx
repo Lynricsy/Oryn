@@ -1,23 +1,14 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单）、
- * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（omp-home 文件列表 + 纯文本编辑器，不做表单化）、关于。
+ * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、关于。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
-import {
-	api,
-	encodePathParam,
-	type Project,
-	rawFetch,
-	type Schemas,
-	unwrap,
-} from "../api/client";
+import { api, type Project, type Schemas, unwrap } from "../api/client";
 import {
 	qk,
-	useAgentFile,
-	useAgentFiles,
 	useDevices,
 	useGitIdentity,
 	useHealth,
@@ -27,12 +18,12 @@ import {
 	useProviders,
 	useSecrets,
 } from "../api/queries";
+import { FileBrowser } from "../components/files/FileBrowser";
 import { PairApproval } from "../components/PairApproval";
 import { CopyButton } from "../components/ui/CopyButton";
 import { Icon, type IconName } from "../components/ui/icons";
 import {
 	Button,
-	EmptyState,
 	ErrorText,
 	Field,
 	IconButton,
@@ -43,8 +34,8 @@ import {
 	Toggle,
 } from "../components/ui/primitives";
 import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
+import { agentConfigSource } from "../lib/file-source";
 import { formatDateTime, formatRelative } from "../lib/format";
-import { formatBytes } from "../lib/images";
 import { useBreakpoint } from "../lib/viewport";
 import { uiStore } from "../state/ui";
 
@@ -888,90 +879,23 @@ function GitIdentitySettings() {
 
 // ---------------------------------------------------------------- agent 配置
 
-function AgentConfigEditor({
-	path,
-	onDeleted,
-}: {
-	path: string;
-	onDeleted: () => void;
-}) {
+function AgentConfigSettings() {
 	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const file = useAgentFile(path);
-	const [text, setText] = useState<string | null>(null);
 	const [result, setResult] = useState<
 		Schemas["AgentConfigWriteResult"] | null
 	>(null);
-	const save = useAsync();
-	const value = text ?? file.data ?? "";
+	// 来源须稳定：FileBrowser 以 sources 为依赖加载根
+	const sources = useMemo(() => [agentConfigSource(setResult)], []);
 	return (
-		<div className="flex min-h-0 flex-1 flex-col gap-2">
-			<div className="flex items-center gap-2">
-				<span className="min-w-0 flex-1 truncate font-mono text-sm">
-					{path}
-				</span>
-				<Button
-					size="sm"
-					variant="danger"
-					onClick={() => {
-						if (!window.confirm(t("agentConfig.deleteConfirm", { path })))
-							return;
-						void save
-							.run(() =>
-								rawFetch(
-									`/api/v1/agent-config/files/${encodePathParam(path)}`,
-									{ method: "DELETE" },
-								),
-							)
-							.then(async (ok) => {
-								if (!ok) return;
-								await qc.invalidateQueries({ queryKey: qk.agentFiles });
-								onDeleted();
-							});
-					}}
-				>
-					{t("common.delete")}
-				</Button>
-				<Button
-					size="sm"
-					variant="primary"
-					disabled={save.busy || text === null}
-					onClick={() =>
-						void save.run(async () => {
-							const res = await rawFetch(
-								`/api/v1/agent-config/files/${encodePathParam(path)}`,
-								{
-									method: "PUT",
-									headers: { "Content-Type": "application/octet-stream" },
-									body: value,
-								},
-							);
-							setResult(
-								(await res.json()) as Schemas["AgentConfigWriteResult"],
-							);
-							setText(null);
-							await qc.invalidateQueries({ queryKey: qk.agentFile(path) });
-							await qc.invalidateQueries({ queryKey: qk.agentFiles });
-						})
-					}
-				>
-					{t("common.save")}
-				</Button>
+		<Card title={t("agentConfig.title")}>
+			<p className="mb-3 text-muted text-xs">
+				{t("agentConfig.hint")} {t("agentConfig.pushHint")}
+			</p>
+			<div className="h-[32rem] overflow-hidden rounded-md border border-border">
+				<FileBrowser sources={sources} storageKey="settings.agent-config" />
 			</div>
-			{file.isPending ? (
-				<Spinner />
-			) : (
-				<TextArea
-					aria-label={path}
-					spellCheck={false}
-					className="min-h-96 flex-1 text-xs leading-relaxed"
-					value={value}
-					onChange={(e) => setText(e.target.value)}
-				/>
-			)}
-			<ErrorText error={file.error ?? save.error} />
 			{result && (
-				<div className="text-xs">
+				<div className="mt-2 text-xs">
 					{result.extractedSecrets.length > 0 && (
 						<p className="text-ok">
 							{t("agentConfig.extracted", {
@@ -986,91 +910,6 @@ function AgentConfigEditor({
 					))}
 				</div>
 			)}
-		</div>
-	);
-}
-
-function AgentConfigSettings() {
-	const { t } = useTranslation();
-	const files = useAgentFiles();
-	const [selected, setSelected] = useState<string | null>(null);
-	const [newPath, setNewPath] = useState("");
-	const create = useAsync();
-	const qc = useQueryClient();
-	return (
-		<Card title={t("agentConfig.title")}>
-			<p className="mb-3 text-muted text-xs">{t("agentConfig.hint")}</p>
-			<div className="flex flex-col gap-4 md:flex-row">
-				<div className="md:w-64 md:shrink-0">
-					{files.isPending && <Spinner />}
-					<ErrorText error={files.error} />
-					<ul className="flex max-h-[28rem] flex-col overflow-y-auto">
-						{files.data?.files.map((f) => (
-							<li key={f.path}>
-								<button
-									type="button"
-									onClick={() => setSelected(f.path)}
-									className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-hover ${selected === f.path ? "bg-hover" : ""}`}
-								>
-									<span className="min-w-0 flex-1 truncate font-mono text-xs">
-										{f.path}
-									</span>
-									<span className="shrink-0 text-[10px] text-faint">
-										{formatBytes(f.size)}
-									</span>
-								</button>
-							</li>
-						))}
-					</ul>
-					{files.data?.files.length === 0 && (
-						<EmptyState icon="file" title={t("agentConfig.empty")}>
-							{t("agentConfig.pushHint")}
-						</EmptyState>
-					)}
-					<form
-						className="mt-2 flex gap-1"
-						onSubmit={async (e) => {
-							e.preventDefault();
-							const p = newPath.trim().replace(/^\/+/, "");
-							if (!p || p.includes("..")) return;
-							const ok = await create.run(() =>
-								rawFetch(`/api/v1/agent-config/files/${encodePathParam(p)}`, {
-									method: "PUT",
-									headers: { "Content-Type": "application/octet-stream" },
-									body: "",
-								}),
-							);
-							if (ok) {
-								await qc.invalidateQueries({ queryKey: qk.agentFiles });
-								setSelected(p);
-								setNewPath("");
-							}
-						}}
-					>
-						<TextInput
-							className="h-7 py-0 font-mono text-xs"
-							placeholder={t("agentConfig.newPath")}
-							value={newPath}
-							onChange={(e) => setNewPath(e.target.value)}
-						/>
-						<Button size="sm" type="submit" disabled={!newPath.trim()}>
-							{t("common.create")}
-						</Button>
-					</form>
-					<ErrorText error={create.error} />
-				</div>
-				<div className="flex min-w-0 flex-1 flex-col">
-					{selected ? (
-						<AgentConfigEditor
-							key={selected}
-							path={selected}
-							onDeleted={() => setSelected(null)}
-						/>
-					) : (
-						<p className="text-faint text-sm">{t("agentConfig.pick")}</p>
-					)}
-				</div>
-			</div>
 		</Card>
 	);
 }

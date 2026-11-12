@@ -1,5 +1,11 @@
-/** 线程页：订阅线程、渲染转录 / 输入区 / 停靠对话框 / 信息面板。 */
-import { type ReactNode, useEffect, useMemo } from "react";
+/** 线程页：订阅线程、渲染转录 / 输入区 / 停靠对话框 / 右侧面板（Info / Changes / Files / Terminal）。 */
+import {
+	type KeyboardEvent,
+	type PointerEvent,
+	type ReactNode,
+	useEffect,
+	useMemo,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Composer } from "../components/composer/Composer";
@@ -8,9 +14,9 @@ import {
 	ThreadDialogs,
 } from "../components/thread/Dialogs";
 import { EnvBanner } from "../components/thread/EnvBanner";
-import { InfoPanel } from "../components/thread/InfoPanel";
 import { BelowEditorWidgets, ModeBar } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
+import { RightPanel } from "../components/thread/RightPanel";
 import {
 	StatusBar,
 	ThreadHeader,
@@ -26,8 +32,54 @@ import { Spinner } from "../components/ui/primitives";
 import { useBreakpoint } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useConnection, useIndex, useThread } from "../state/stores";
+import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
-import { uiStore, useUi } from "../state/ui";
+import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
+
+const INFO_PANEL_WIDTH = 320;
+
+/** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
+function PanelResizer() {
+	const { t } = useTranslation();
+	const width = useUi((s) => s.panelWidth);
+	const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+		e.preventDefault();
+		const el = e.currentTarget;
+		el.setPointerCapture(e.pointerId);
+		const move = (ev: globalThis.PointerEvent) =>
+			uiStore.getState().setPanelWidth(window.innerWidth - ev.clientX);
+		const up = () => {
+			el.removeEventListener("pointermove", move);
+			el.removeEventListener("pointerup", up);
+			el.removeEventListener("pointercancel", up);
+		};
+		el.addEventListener("pointermove", move);
+		el.addEventListener("pointerup", up);
+		el.addEventListener("pointercancel", up);
+	};
+	const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+		const step = e.shiftKey ? 64 : 16;
+		if (e.key === "ArrowLeft") uiStore.getState().setPanelWidth(width + step);
+		else if (e.key === "ArrowRight")
+			uiStore.getState().setPanelWidth(width - step);
+		else return;
+		e.preventDefault();
+	};
+	return (
+		// biome-ignore lint/a11y/useSemanticElements: 可聚焦的分隔条（WAI-ARIA window splitter），<hr> 不能交互
+		<div
+			role="separator"
+			aria-orientation="vertical"
+			aria-label={t("rightPanel.resize")}
+			aria-valuenow={width}
+			aria-valuemin={PANEL_MIN_WIDTH}
+			tabIndex={0}
+			className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none outline-none hover:bg-accent/30 focus-visible:bg-accent/40"
+			onPointerDown={onPointerDown}
+			onKeyDown={onKeyDown}
+		/>
+	);
+}
 
 function WorkingFooter({ threadId }: { threadId: string }) {
 	const { t } = useTranslation();
@@ -70,6 +122,9 @@ export function ThreadPage(): ReactNode {
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	const panelOpen = useUi((s) => s.panelOpen);
+	const panelTab = useUi((s) => s.panelTab);
+	const panelWidth = useUi((s) => s.panelWidth);
+	const panelMax = useUi((s) => s.panelMax);
 	const conn = useConnection((s) => s.status);
 	const known = useIndex((s) => Boolean(s.threads[threadId]));
 	const entries = useThread(threadId, (s) => s.entries);
@@ -89,9 +144,12 @@ export function ThreadPage(): ReactNode {
 
 	useEffect(() => {
 		if (!threadId) return;
+		// 先挂终端跟踪再订阅：快照到达时 terminalHub 已就位
+		const detach = terminalHub.attach(threadId);
 		const unsub = realtime.subscribe(threadId);
 		realtime.focus(threadId);
 		return () => {
+			detach();
 			unsub();
 			realtime.focus(null);
 		};
@@ -130,11 +188,14 @@ export function ThreadPage(): ReactNode {
 
 	const showPanelColumn = bp === "expanded" && panelOpen;
 	const showPanelDrawer = bp !== "expanded" && panelOpen;
+	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	const firstUi = pendingUi[0];
 
 	return (
 		<div className="flex h-full min-w-0 flex-1">
-			<div className="flex h-full min-w-0 flex-1 flex-col">
+			<div
+				className={`h-full min-w-0 flex-1 flex-col ${panelFull ? "hidden" : "flex"}`}
+			>
 				<ThreadHeader threadId={threadId} sidebarToggle={bp !== "expanded"} />
 				{conn !== "open" && (
 					<div className="border-border border-b bg-raised px-3 py-1 text-center text-muted text-xs">
@@ -184,8 +245,21 @@ export function ThreadPage(): ReactNode {
 				</div>
 			</div>
 			{showPanelColumn && (
-				<div className="h-full w-80 shrink-0 border-border border-l">
-					<InfoPanel threadId={threadId} />
+				<div
+					className={`relative h-full min-w-0 border-border border-l ${panelFull ? "flex-1" : "shrink-0"}`}
+					style={
+						panelFull
+							? undefined
+							: {
+									width: panelTab === "info" ? INFO_PANEL_WIDTH : panelWidth,
+								}
+					}
+				>
+					{panelTab !== "info" && !panelFull && <PanelResizer />}
+					<RightPanel
+						threadId={threadId}
+						onClose={() => uiStore.getState().setPanel(false)}
+					/>
 				</div>
 			)}
 			{showPanelDrawer && (
@@ -196,8 +270,14 @@ export function ThreadPage(): ReactNode {
 						className="absolute inset-0 bg-black/40"
 						onClick={() => uiStore.getState().setPanel(false)}
 					/>
-					<div className="relative h-full w-full max-w-sm pt-safe shadow-xl">
-						<InfoPanel
+					<div
+						className={
+							panelTab === "info"
+								? "relative h-full w-full max-w-sm pt-safe shadow-xl"
+								: "fixed inset-0 bg-panel pt-safe pr-safe pl-safe"
+						}
+					>
+						<RightPanel
 							threadId={threadId}
 							onClose={() => uiStore.getState().setPanel(false)}
 						/>

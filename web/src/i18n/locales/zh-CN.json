@@ -545,12 +545,8 @@
 		"saved": "已保存"
 	},
 	"agentConfig": {
-		"deleteConfirm": "删除 {{path}}？",
-		"empty": "还没有 omp 配置",
 		"extracted": "已抽取进密钥库：{{names}}",
 		"hint": "omp 的文本配置（config.yml、models.yml、AGENTS.md、skills/ …）。models.yml 里的明文 API key 保存时自动抽进密钥库。",
-		"newPath": "新文件路径，如 AGENTS.md",
-		"pick": "选择左侧文件进行编辑。",
 		"pushHint": "用 oryn config push 从本机导入。",
 		"title": "agent 配置"
 	},
@@ -619,6 +615,174 @@
 		"moreLines_one": "⋯ 还有 {{count}} 行",
 		"moreLines_other": "⋯ 还有 {{count}} 行",
 		"running": "运行中",
-		"args": "参数"
+		"args": "参数",
+		"terminal": {
+			"viewInPanel": "在终端面板查看",
+			"awaitingInput": "等待终端输入",
+			"openTerminal": "打开终端"
+		}
+	},
+	"rightPanel": {
+		"label": "右侧面板",
+		"tabs": {
+			"info": "信息",
+			"changes": "改动",
+			"files": "文件",
+			"terminal": "终端"
+		},
+		"attention": "有终端在等待输入",
+		"maximize": "面板最大化",
+		"restore": "还原面板",
+		"resize": "调整面板宽度"
+	},
+	"terminal": {
+		"title": "终端",
+		"newShell": "新建终端",
+		"close": "关闭终端",
+		"empty": "没有终端。",
+		"opening": "正在打开终端…",
+		"offline": "orb 未运行",
+		"offlineHint": "orb 当前{{state}}，唤醒后即可使用终端。",
+		"orbFailed": "orb 失败：{{reason}}",
+		"orbStarting": "orb {{state}}…",
+		"agentStarting": "等待 agent 启动…",
+		"orbGone": "该线程的 orb 已删除，终端不可用。",
+		"wake": "唤醒",
+		"exited": "进程已退出，退出码 {{code}}。",
+		"killed": "进程已被终止。",
+		"lost": "agent 进程已重启，终端会话已终止。",
+		"dismiss": "关闭",
+		"syncFailed": "终端同步失败：{{message}}",
+		"needsInput": "等待输入",
+		"keyBar": "终端按键",
+		"paste": "粘贴",
+		"kind": {
+			"shell": "shell",
+			"command": "agent 命令",
+			"background": "后台",
+			"session": "会话"
+		}
+	},
+	"files": {
+		"roots": {
+			"workspace": "工作区",
+			"home": "主目录",
+			"agentConfig": "Agent 配置"
+		},
+		"orbDeleted": "orb 已删除，只能查看 Agent 配置。",
+		"agentConfigSaved": "已保存。Agent 配置对新 orb 与下次唤醒生效。",
+		"waking": "正在唤醒 orb…",
+		"outdated": "这台 orb 创建于旧版本，不支持文件面板；新建线程即可。",
+		"retry": "重试",
+		"pick": "选择一个文件查看。",
+		"emptyDir": "空目录",
+		"listTruncated": "目录超过 {{n}} 项，仅显示前 {{n}} 项。",
+		"actions": {
+			"newFile": "新建文件",
+			"newFolder": "新建文件夹",
+			"upload": "上传",
+			"rename": "重命名",
+			"delete": "删除",
+			"download": "下载",
+			"copyPath": "复制路径",
+			"refresh": "刷新",
+			"more": "{{name}} 的操作"
+		},
+		"dialog": {
+			"newFileTitle": "新建文件",
+			"newFolderTitle": "新建文件夹",
+			"renameTitle": "重命名",
+			"name": "名称",
+			"nameIn": "位于 {{dir}}",
+			"nameRequired": "请输入名称",
+			"noSlash": "名称不能包含 /",
+			"invalidName": "名称不能包含空段、. 或 ..",
+			"deleteTitle": "删除",
+			"deleteBody": "删除 {{path}}？此操作不可撤销。",
+			"deleteDirBody": "删除文件夹 {{path}} 及其全部内容？此操作不可撤销。"
+		},
+		"viewer": {
+			"back": "返回列表",
+			"source": "源码",
+			"preview": "预览",
+			"previewTruncated": "文件较大（{{size}}），只读显示前 {{shown}}。",
+			"binaryInfo": "{{mime}} · {{size}}"
+		},
+		"conflict": {
+			"title": "文件已被修改",
+			"body": "{{path}} 在你打开之后被其他人修改过。覆盖会丢弃对方的改动；重新加载会丢弃你未保存的改动。",
+			"overwrite": "覆盖",
+			"reload": "重新加载"
+		},
+		"upload": {
+			"title": "上传：{{pending}} 个进行中 / 共 {{total}} 个",
+			"clear": "清除已完成",
+			"tooLarge": "超过单文件上限 {{max}}",
+			"tooMany": "一次最多上传 2000 个文件，另有 {{n}} 个未加入",
+			"conflictTitle": "文件已存在",
+			"conflictBody": "{{path}} 已存在。",
+			"replace": "替换",
+			"skip": "跳过",
+			"applyAll": "对其余冲突同样处理",
+			"status": {
+				"queued": "等待中",
+				"uploading": "上传中",
+				"conflict": "已存在",
+				"done": "完成",
+				"failed": "失败",
+				"skipped": "已跳过",
+				"rejected": "已拒绝",
+				"cancelled": "已取消"
+			}
+		}
+	},
+	"changes": {
+		"scope": {
+			"label": "改动范围",
+			"all": "全部改动",
+			"allBase": "全部改动（相对 {{base}}）",
+			"uncommitted": "仅未提交",
+			"commits": "单个提交",
+			"moreCommits": "更早的提交未列出"
+		},
+		"refresh": "刷新",
+		"approximateBase": "基线为近似值",
+		"noBase": "未找到基线分支，显示未提交的改动",
+		"summary": "{{n}} 个文件",
+		"resetRoot": "改回工作目录",
+		"stageAll": "全部暂存",
+		"unstageAll": "全部取消暂存",
+		"stageFile": "暂存 {{path}}",
+		"notRepo": "工作目录不是 git 仓库",
+		"pickRepo": "在以下仓库中查看改动：",
+		"clean": "没有改动",
+		"files": "改动的文件",
+		"rootDir": "（仓库根目录）",
+		"binary": "二进制",
+		"truncated": "文件过多，仅显示前 2000 个。",
+		"pick": "选择一个文件查看 diff。",
+		"back": "返回列表",
+		"orbDeleted": "orb 已删除，无法查看改动。",
+		"outdated": "这台 orb 创建于旧版本，不支持改动面板；新建线程即可。",
+		"diff": {
+			"binary": "二进制文件，不显示 diff。",
+			"large": "未跟踪的文件超过 4 MiB，不显示 diff。",
+			"truncated": "diff 超过 1 MiB，已截断。",
+			"empty": "没有文本改动（可能只是权限或类型变化）。"
+		},
+		"status": {
+			"added": "新增",
+			"modified": "修改",
+			"deleted": "删除",
+			"renamed": "重命名",
+			"copied": "复制",
+			"typechange": "类型变化",
+			"untracked": "未跟踪",
+			"conflicted": "冲突"
+		}
+	},
+	"editor": {
+		"loading": "正在加载编辑器…",
+		"saveHint": "Ctrl/⌘+S 保存"
 	}
 }

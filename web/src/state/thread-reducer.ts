@@ -71,7 +71,7 @@ export const SESSION_EVENT_TYPES = [
 	"queue_update",
 ] as const;
 
-/** 已知但 M2 界面不消费的非会话帧（语音、听写、终端、宿主工具等）；记为已识别，不进调试面板。 */
+/** 已知但界面不消费的非会话帧（语音、听写、宿主工具等）；记为已识别，不进调试面板。终端帧由 socket 直接交给 `terminalHub`，不经 reducer。 */
 const IGNORED_FRAME_TYPES: Record<string, true> = {
 	ready: true,
 	response: true,
@@ -87,10 +87,6 @@ const IGNORED_FRAME_TYPES: Record<string, true> = {
 	host_dictation_text: true,
 	host_dictation_notice: true,
 	host_dictation_download: true,
-	terminal_opened: true,
-	terminal_output: true,
-	terminal_exit: true,
-	terminal_closed: true,
 	host_tool_call: true,
 	host_tool_cancel: true,
 	host_uri_request: true,

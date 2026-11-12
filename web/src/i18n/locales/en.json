@@ -545,12 +545,8 @@
 		"saved": "Saved"
 	},
 	"agentConfig": {
-		"deleteConfirm": "Delete {{path}}?",
-		"empty": "No omp config yet",
 		"extracted": "Extracted into the secret store: {{names}}",
 		"hint": "omp's text config (config.yml, models.yml, AGENTS.md, skills/ …). Literal API keys in models.yml are moved into the secret store on save.",
-		"newPath": "New file path, e.g. AGENTS.md",
-		"pick": "Pick a file to edit.",
 		"pushHint": "Import from your machine with `oryn config push`.",
 		"title": "Agent config"
 	},
@@ -619,6 +615,174 @@
 		"moreLines_one": "⋯ {{count}} more line",
 		"moreLines_other": "⋯ {{count}} more lines",
 		"running": "Running",
-		"args": "Arguments"
+		"args": "Arguments",
+		"terminal": {
+			"viewInPanel": "View in terminal panel",
+			"awaitingInput": "Waiting for terminal input",
+			"openTerminal": "Open terminal"
+		}
+	},
+	"rightPanel": {
+		"label": "Right panel",
+		"tabs": {
+			"info": "Info",
+			"changes": "Changes",
+			"files": "Files",
+			"terminal": "Terminal"
+		},
+		"attention": "A terminal is waiting for input",
+		"maximize": "Maximize panel",
+		"restore": "Restore panel",
+		"resize": "Resize panel"
+	},
+	"terminal": {
+		"title": "Terminals",
+		"newShell": "New terminal",
+		"close": "Close terminal",
+		"empty": "No terminals.",
+		"opening": "Opening terminal…",
+		"offline": "The orb is not running",
+		"offlineHint": "The orb is {{state}}. Wake it to use its terminals.",
+		"orbFailed": "The orb failed: {{reason}}",
+		"orbStarting": "The orb is {{state}}…",
+		"agentStarting": "Waiting for the agent to start…",
+		"orbGone": "This thread's orb has been deleted; terminals are unavailable.",
+		"wake": "Wake",
+		"exited": "Process exited with code {{code}}.",
+		"killed": "Process was killed.",
+		"lost": "The agent process restarted; this terminal session has ended.",
+		"dismiss": "Close",
+		"syncFailed": "Terminal sync failed: {{message}}",
+		"needsInput": "waiting for input",
+		"keyBar": "Terminal keys",
+		"paste": "Paste",
+		"kind": {
+			"shell": "shell",
+			"command": "agent command",
+			"background": "background",
+			"session": "session"
+		}
+	},
+	"files": {
+		"roots": {
+			"workspace": "Workspace",
+			"home": "Home",
+			"agentConfig": "Agent config"
+		},
+		"orbDeleted": "The orb has been deleted; only the agent config is available.",
+		"agentConfigSaved": "Saved. Agent config applies to new orbs and on the next wake.",
+		"waking": "Waking the orb…",
+		"outdated": "This orb was created by an older version and has no file panel. Start a new thread to use it.",
+		"retry": "Retry",
+		"pick": "Select a file to view.",
+		"emptyDir": "Empty folder",
+		"listTruncated": "This folder has more than {{n}} entries; showing the first {{n}}.",
+		"actions": {
+			"newFile": "New file",
+			"newFolder": "New folder",
+			"upload": "Upload",
+			"rename": "Rename",
+			"delete": "Delete",
+			"download": "Download",
+			"copyPath": "Copy path",
+			"refresh": "Refresh",
+			"more": "Actions for {{name}}"
+		},
+		"dialog": {
+			"newFileTitle": "New file",
+			"newFolderTitle": "New folder",
+			"renameTitle": "Rename",
+			"name": "Name",
+			"nameIn": "In {{dir}}",
+			"nameRequired": "Enter a name",
+			"noSlash": "Names can't contain /",
+			"invalidName": "Names can't contain empty, . or .. segments",
+			"deleteTitle": "Delete",
+			"deleteBody": "Delete {{path}}? This can't be undone.",
+			"deleteDirBody": "Delete the folder {{path}} and everything in it? This can't be undone."
+		},
+		"viewer": {
+			"back": "Back to list",
+			"source": "Source",
+			"preview": "Preview",
+			"previewTruncated": "Large file ({{size}}); showing the first {{shown}} read-only.",
+			"binaryInfo": "{{mime}} · {{size}}"
+		},
+		"conflict": {
+			"title": "File changed",
+			"body": "{{path}} changed after you opened it. Overwrite discards the other changes; Reload discards your unsaved edits.",
+			"overwrite": "Overwrite",
+			"reload": "Reload"
+		},
+		"upload": {
+			"title": "Uploads: {{pending}} in progress / {{total}} total",
+			"clear": "Clear finished",
+			"tooLarge": "Larger than the {{max}} per-file limit",
+			"tooMany": "At most 2000 files per upload; {{n}} more were not added",
+			"conflictTitle": "File already exists",
+			"conflictBody": "{{path}} already exists.",
+			"replace": "Replace",
+			"skip": "Skip",
+			"applyAll": "Do the same for remaining conflicts",
+			"status": {
+				"queued": "Queued",
+				"uploading": "Uploading",
+				"conflict": "Exists",
+				"done": "Done",
+				"failed": "Failed",
+				"skipped": "Skipped",
+				"rejected": "Rejected",
+				"cancelled": "Cancelled"
+			}
+		}
+	},
+	"changes": {
+		"scope": {
+			"label": "Change scope",
+			"all": "All changes",
+			"allBase": "All changes (vs {{base}})",
+			"uncommitted": "Uncommitted only",
+			"commits": "Single commit",
+			"moreCommits": "Older commits not listed"
+		},
+		"refresh": "Refresh",
+		"approximateBase": "Base is approximate",
+		"noBase": "No base branch found; showing uncommitted changes",
+		"summary": "{{n}} files",
+		"resetRoot": "Back to working directory",
+		"stageAll": "Stage all",
+		"unstageAll": "Unstage all",
+		"stageFile": "Stage {{path}}",
+		"notRepo": "The working directory is not a git repository",
+		"pickRepo": "View changes in one of these repositories:",
+		"clean": "No changes",
+		"files": "Changed files",
+		"rootDir": "(repository root)",
+		"binary": "binary",
+		"truncated": "Too many files; showing the first 2000.",
+		"pick": "Select a file to view its diff.",
+		"back": "Back to list",
+		"orbDeleted": "The orb has been deleted; changes are unavailable.",
+		"outdated": "This orb was created by an older version and has no changes panel. Start a new thread to use it.",
+		"diff": {
+			"binary": "Binary file; no diff shown.",
+			"large": "Untracked file larger than 4 MiB; no diff shown.",
+			"truncated": "Diff larger than 1 MiB; truncated.",
+			"empty": "No text changes (possibly a mode or type change)."
+		},
+		"status": {
+			"added": "Added",
+			"modified": "Modified",
+			"deleted": "Deleted",
+			"renamed": "Renamed",
+			"copied": "Copied",
+			"typechange": "Type changed",
+			"untracked": "Untracked",
+			"conflicted": "Conflicted"
+		}
+	},
+	"editor": {
+		"loading": "Loading editor…",
+		"saveHint": "Ctrl/⌘+S to save"
 	}
 }
