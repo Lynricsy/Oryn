@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -26,6 +27,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 )
@@ -43,6 +45,7 @@ type h2Env struct {
 	dataDir string
 	vault   *secrets.Vault
 	tickets *auth.Tickets
+	svc     *auth.Service
 }
 
 func newH2Env(t *testing.T) *h2Env {
@@ -61,7 +64,7 @@ func newH2Env(t *testing.T) *h2Env {
 	cfg := config.DefaultOrynd()
 	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}
-	e := &h2Env{t: t, st: st, dataDir: dir, vault: secrets.NewVault(st, box), tickets: auth.NewTickets()}
+	e := &h2Env{t: t, st: st, dataDir: dir, vault: secrets.NewVault(st, box), tickets: auth.NewTickets(), svc: svc}
 	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home}
 	e.srv = httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(e.srv.Close)
@@ -169,7 +172,9 @@ func TestDeviceTokenAndRevoke(t *testing.T) {
 	}
 	r.json(t, &tk)
 	assert.Equal(t, 30, tk.ExpiresIn)
-	assert.True(t, e.tickets.Redeem(tk.Ticket))
+	who, ok := e.tickets.Redeem(tk.Ticket)
+	require.True(t, ok)
+	assert.Equal(t, auth.Principal{Kind: auth.KindDevice, ID: dev.ID}, who, "票据记录签发主体")
 
 	r = e.do("GET", "/api/v1/devices", h2Cred{bearer: tok}, nil)
 	require.Equal(t, 200, r.status)
@@ -205,7 +210,7 @@ func TestDevicePairing(t *testing.T) {
 	}
 	r.json(t, &start)
 	assert.Regexp(t, `^[A-Z2-9]{4}-[A-Z2-9]{4}$`, start.Code)
-	assert.Equal(t, h2PublicURL+"/pair?code="+start.Code, start.VerifyURL)
+	assert.Equal(t, h2PublicURL+"/pair", start.VerifyURL, "不预填配对码")
 	assert.Equal(t, 2, start.Interval)
 
 	poll := map[string]string{"code": start.Code, "verifier": start.Verifier}
@@ -218,6 +223,24 @@ func TestDevicePairing(t *testing.T) {
 	approve := map[string]string{"code": start.Code}
 	assert.Equal(t, 403, e.do("POST", "/api/v1/devices/pair/approve", h2Cred{bearer: devTok}, approve).status)
 	web := e.webSession()
+
+	// 批准前可查看发起方信息（仅网页会话）
+	assert.Equal(t, 403, e.do("GET", "/api/v1/devices/pair/"+start.Code, h2Cred{bearer: devTok}, nil).status)
+	assert.Equal(t, 401, e.do("GET", "/api/v1/devices/pair/"+start.Code, h2Cred{}, nil).status)
+	assert.Equal(t, 404, e.do("GET", "/api/v1/devices/pair/ZZZZ-ZZZZ", h2Cred{cookie: web}, nil).status)
+	r = e.do("GET", "/api/v1/devices/pair/"+strings.ToLower(start.Code), h2Cred{cookie: web}, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var pending struct {
+		Code, Name, Kind, Platform, IP, UserAgent string
+		CreatedAt, ExpiresAt                      int64
+	}
+	r.json(t, &pending)
+	assert.Equal(t, start.Code, pending.Code)
+	assert.Equal(t, "laptop", pending.Name)
+	assert.Equal(t, "127.0.0.1", pending.IP)
+	assert.Contains(t, pending.UserAgent, "Go-http-client")
+	assert.Equal(t, start.ExpiresAt, pending.ExpiresAt)
+
 	r = e.do("POST", "/api/v1/devices/pair/approve", h2Cred{cookie: web}, approve)
 	assert.Equal(t, 403, r.status)
 	assert.Equal(t, "forbidden", r.code(t))
@@ -225,6 +248,7 @@ func TestDevicePairing(t *testing.T) {
 	r = e.do("POST", "/api/v1/devices/pair/approve", h2Cred{cookie: web, csrf: true}, map[string]string{"code": "  " + start.Code[:4] + start.Code[5:]})
 	require.Equal(t, 200, r.status, string(r.body))
 	assert.Equal(t, 409, e.do("POST", "/api/v1/devices/pair/approve", h2Cred{cookie: web, csrf: true}, approve).status)
+	assert.Equal(t, 409, e.do("GET", "/api/v1/devices/pair/"+start.Code, h2Cred{cookie: web}, nil).status)
 
 	r = e.do("POST", "/api/v1/devices/pair/poll", h2Cred{}, poll)
 	require.Equal(t, 200, r.status, string(r.body))
@@ -424,6 +448,8 @@ func TestPasskeySetupLoginRecovery(t *testing.T) {
 	r.json(t, &rec)
 	assert.Equal(t, 9, rec.RemainingCodes)
 	recSess := r.session()
+	var revoked []string
+	e.svc.Subscribe(func(kind, id string) { revoked = append(revoked, kind+":"+id) })
 	assert.Equal(t, 401, e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": fin.RecoveryCodes[3]}).status, "恢复码只能用一次")
 
 	r = e.do("GET", "/api/v1/me", h2Cred{cookie: recSess}, nil)
@@ -445,6 +471,7 @@ func TestPasskeySetupLoginRecovery(t *testing.T) {
 	assert.Empty(t, fin.RecoveryCodes)
 	assert.Equal(t, 2, fin.Me.PasskeyCount)
 	assert.Equal(t, 401, e.do("GET", "/api/v1/me", h2Cred{cookie: recSess}, nil).status, "恢复会话已删除")
+	assert.Equal(t, []string{"web:" + ids.Hash(recSess)}, revoked, "删除恢复会话发布吊销事件")
 	assert.Equal(t, 200, e.do("GET", "/api/v1/me", h2Cred{cookie: r.session()}, nil).status)
 
 	// 新 Passkey 可以登录
@@ -452,4 +479,21 @@ func TestPasskeySetupLoginRecovery(t *testing.T) {
 	r.json(t, &cer)
 	r = e.do("POST", "/api/v1/auth/login/finish", h2Cred{}, map[string]any{"ceremonyId": cer.CeremonyID, "credential": phone.get(cer.Options)})
 	require.Equal(t, 200, r.status, string(r.body))
+}
+
+func TestPublicEndpointRateLimit(t *testing.T) {
+	e := newH2Env(t)
+	body := map[string]string{"name": "x", "kind": "cli", "platform": "linux"}
+	for i := range 5 {
+		require.Equal(t, 200, e.do("POST", "/api/v1/devices/pair/start", h2Cred{}, body).status, i)
+	}
+	r := e.do("POST", "/api/v1/devices/pair/start", h2Cred{}, body)
+	assert.Equal(t, 429, r.status)
+	assert.Equal(t, "rate_limited", r.code(t))
+	// 其它端点各自计数
+	assert.Equal(t, 409, e.do("POST", "/api/v1/auth/login/begin", h2Cred{}, nil).status)
+	for range 5 {
+		e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": "x"})
+	}
+	assert.Equal(t, 429, e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": "x"}).status)
 }

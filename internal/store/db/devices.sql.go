@@ -146,7 +146,7 @@ func (q *Queries) GetDeviceByTokenHash(ctx context.Context, tokenHash string) (D
 }
 
 const getDevicePairing = `-- name: GetDevicePairing :one
-SELECT code, verifier_hash, name, kind, platform, created_at, expires_at, approved_device_id FROM device_pairings WHERE code = ?1
+SELECT code, verifier_hash, name, kind, platform, created_at, expires_at, approved_device_id, requester_ip, user_agent FROM device_pairings WHERE code = ?1
 `
 
 func (q *Queries) GetDevicePairing(ctx context.Context, code string) (DevicePairing, error) {
@@ -161,6 +161,8 @@ func (q *Queries) GetDevicePairing(ctx context.Context, code string) (DevicePair
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.ApprovedDeviceID,
+		&i.RequesterIp,
+		&i.UserAgent,
 	)
 	return i, err
 }

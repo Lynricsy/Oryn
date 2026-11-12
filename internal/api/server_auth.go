@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
@@ -58,6 +59,9 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &se):
 		WriteError(w, se.status, se.code, se.msg)
 	case errors.As(err, &ae):
+		if ae.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(ae.RetryAfter))
+		}
 		WriteError(w, ae.Status, ae.Code, ae.Message)
 	case errors.Is(err, fs.ErrNotExist):
 		WriteError(w, http.StatusNotFound, "not_found", "不存在")
@@ -69,6 +73,15 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Error("处理请求失败", "method", r.Method, "path", r.URL.Path, "err", err)
 		WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
+}
+
+// rateLimit 对免鉴权端点按客户端 IP 限流；超限时已写出 429。
+func (s *Server) rateLimit(w http.ResponseWriter, r *http.Request, lim auth.Limit) bool {
+	if err := s.Auth.Service.RateLimit(r, lim); err != nil {
+		writeErr(w, r, err)
+		return false
+	}
+	return true
 }
 
 // principal 返回中间件写入的主体；缺失时写出 401。

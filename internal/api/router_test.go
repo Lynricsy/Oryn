@@ -27,4 +27,20 @@ func TestRouterPublicPaths(t *testing.T) {
 	assert.Equal(t, 401, get("GET", "/api/v1/threads").Code)
 	assert.NotEqual(t, 401, get("POST", "/provider/v1/bye").Code)
 	assert.Equal(t, 200, get("GET", "/t/some-thread").Code, "SPA 回退")
+	assert.Equal(t, 401, get("DELETE", "/api/v1/devices/pair%2Fstart").Code, "编码路径不得命中免鉴权表")
+}
+
+func TestTrustedProxyIP(t *testing.T) {
+	var got string
+	h := trustedProxyIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "172.18.0.5:1234"
+	req.Header.Set("X-Real-IP", "1.2.3.4")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, "172.18.0.5:1234", got, "非回环来源的转发头不可信")
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Del("X-Real-IP")
+	req.Header.Set("X-Forwarded-For", "6.6.6.6, 9.9.9.9")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, "9.9.9.9:0", got, "取反代追加的最后一跳")
 }

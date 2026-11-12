@@ -164,6 +164,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/devices/pair/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 配对码（大小写与分隔符不敏感） */
+                code: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 查看待批准的配对请求（需网页会话）
+         * @description 批准页展示发起方信息供所有者核对；已过期或不存在返回 404，已批准返回 409。
+         */
+        get: operations["getDevicePairing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/devices/pair/approve": {
         parameters: {
             query?: never;
@@ -827,7 +850,7 @@ export interface components {
         Error: {
             /**
              * @description 机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
-             *     `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`internal`。
+             *     `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
              */
             code: string;
             message: string;
@@ -947,7 +970,7 @@ export interface components {
             code: string;
             /** @description 仅发起方持有，轮询时回传 */
             verifier: string;
-            /** @description 网页批准地址（`<public_url>/pair?code=…`） */
+            /** @description 网页批准地址（`<public_url>/pair`，不预填配对码，所有者须手动输入设备上显示的码） */
             verifyUrl: string;
             expiresAt: components["schemas"]["TimestampMs"];
             /**
@@ -955,6 +978,18 @@ export interface components {
              * @example 2
              */
             interval: number;
+        };
+        DevicePairing: {
+            code: string;
+            name: string;
+            kind: components["schemas"]["DeviceKind"];
+            platform: string;
+            /** @description 发起方 IP */
+            ip: string;
+            /** @description 发起方 User-Agent */
+            userAgent: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            expiresAt: components["schemas"]["TimestampMs"];
         };
         DevicePairApproveRequest: {
             code: string;
@@ -2065,6 +2100,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DevicePairStartResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDevicePairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 配对码（大小写与分隔符不敏感） */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 待批准的配对请求 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevicePairing"];
                 };
             };
             default: components["responses"]["Error"];

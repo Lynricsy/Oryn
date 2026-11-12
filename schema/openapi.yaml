@@ -223,6 +223,27 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DevicePairStartResponse' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/devices/pair/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        description: 配对码（大小写与分隔符不敏感）
+        schema: { type: string }
+    get:
+      tags: [devices]
+      operationId: getDevicePairing
+      summary: 查看待批准的配对请求（需网页会话）
+      description: 批准页展示发起方信息供所有者核对；已过期或不存在返回 404，已批准返回 409。
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: 待批准的配对请求
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevicePairing' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/devices/pair/approve:
     post:
       tags: [devices]
@@ -1161,7 +1182,7 @@ components:
           type: string
           description: |
             机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
-            `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`internal`。
+            `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
         message:
           type: string
     HealthResponse:
@@ -1345,12 +1366,28 @@ components:
           description: 仅发起方持有，轮询时回传
         verifyUrl:
           type: string
-          description: 网页批准地址（`<public_url>/pair?code=…`）
+          description: 网页批准地址（`<public_url>/pair`，不预填配对码，所有者须手动输入设备上显示的码）
         expiresAt: { $ref: '#/components/schemas/TimestampMs' }
         interval:
           type: integer
           description: 建议轮询间隔（秒）
           example: 2
+    DevicePairing:
+      type: object
+      required: [code, name, kind, platform, ip, userAgent, createdAt, expiresAt]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/DeviceKind' }
+        platform: { type: string }
+        ip:
+          type: string
+          description: 发起方 IP
+        userAgent:
+          type: string
+          description: 发起方 User-Agent
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        expiresAt: { $ref: '#/components/schemas/TimestampMs' }
     DevicePairApproveRequest:
       type: object
       required: [code]

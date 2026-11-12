@@ -13,6 +13,9 @@ import (
 
 // AuthSetupBegin 开始注册 Passkey（初始化令牌或恢复会话）。
 func (s *Server) AuthSetupBegin(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r, auth.LimitSetup) {
+		return
+	}
 	var req apigen.AuthSetupBeginRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -34,6 +37,9 @@ func (s *Server) AuthSetupBegin(w http.ResponseWriter, r *http.Request) {
 
 // AuthSetupFinish 完成注册并建立网页会话。
 func (s *Server) AuthSetupFinish(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r, auth.LimitSetup) {
+		return
+	}
 	var req apigen.AuthSetupFinishRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -59,6 +65,9 @@ func (s *Server) AuthSetupFinish(w http.ResponseWriter, r *http.Request) {
 
 // AuthLoginBegin 开始可发现凭据登录。
 func (s *Server) AuthLoginBegin(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r, auth.LimitLogin) {
+		return
+	}
 	c, err := s.Auth.Service.BeginLogin(r.Context())
 	if err != nil {
 		writeErr(w, r, err)
@@ -69,6 +78,9 @@ func (s *Server) AuthLoginBegin(w http.ResponseWriter, r *http.Request) {
 
 // AuthLoginFinish 完成登录并建立网页会话。
 func (s *Server) AuthLoginFinish(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r, auth.LimitLogin) {
+		return
+	}
 	var req apigen.AuthLoginFinishRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -94,6 +106,9 @@ func (s *Server) AuthLoginFinish(w http.ResponseWriter, r *http.Request) {
 
 // AuthRecovery 用恢复码换取一次性恢复会话。
 func (s *Server) AuthRecovery(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r, auth.LimitRecovery) {
+		return
+	}
 	var req apigen.AuthRecoveryRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -113,7 +128,7 @@ func (s *Server) AuthLogout(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := auth.Logout(r.Context(), s.Store, p); err != nil {
+	if err := s.Auth.Service.Logout(r.Context(), p); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -163,9 +178,10 @@ func (s *Server) me(ctx context.Context, p auth.Principal) (apigen.Me, error) {
 
 // CreateWsTicket 签发 WebSocket 票据。
 func (s *Server) CreateWsTicket(w http.ResponseWriter, r *http.Request) {
-	if _, ok := principal(w, r); !ok {
+	p, ok := principal(w, r)
+	if !ok {
 		return
 	}
-	t, exp := s.Auth.Tickets.Issue()
+	t, exp := s.Auth.Tickets.Issue(p)
 	WriteJSON(w, http.StatusOK, apigen.WsTicket{Ticket: t, ExpiresIn: exp})
 }

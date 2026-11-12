@@ -31,6 +31,8 @@ type DevicePairing struct {
 	CreatedAt        int64   `json:"createdAt"`
 	ExpiresAt        int64   `json:"expiresAt"`
 	ApprovedDeviceID *string `json:"approvedDeviceId"`
+	RequesterIp      string  `json:"requesterIp"`
+	UserAgent        string  `json:"userAgent"`
 }
 
 type Entry struct {

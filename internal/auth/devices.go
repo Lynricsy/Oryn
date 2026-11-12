@@ -104,8 +104,14 @@ type PairStart struct {
 // 轮询时校验 verifier 并把令牌交给发起方 —— 明文令牌从不落库，重启也不丢批准结果。
 func tokenForVerifier(v string) string { return "odt_" + v }
 
-// StartPairing 创建配对请求（免鉴权）。
-func StartPairing(ctx context.Context, st *store.Store, name, kind, platform string) (PairStart, error) {
+// Requester 是配对发起方的网络信息，展示在批准页上供所有者核对。
+type Requester struct {
+	IP        string
+	UserAgent string
+}
+
+// StartPairing 创建配对请求（免鉴权；调用方负责限流）。
+func StartPairing(ctx context.Context, st *store.Store, name, kind, platform string, req Requester) (PairStart, error) {
 	if err := validateDeviceFields(name, kind, platform); err != nil {
 		return PairStart{}, err
 	}
@@ -115,9 +121,10 @@ func StartPairing(ctx context.Context, st *store.Store, name, kind, platform str
 	exp := now.Add(PairTTL)
 	for range 5 {
 		code := newPairCode()
-		err := st.Q.CreateDevicePairing(ctx, db.CreateDevicePairingParams{
+		err := st.Q.CreateDevicePairingWithMeta(ctx, db.CreateDevicePairingWithMetaParams{
 			Code: code, VerifierHash: ids.Hash(tokenForVerifier(verifier)), Name: strings.TrimSpace(name),
 			Kind: kind, Platform: platform, CreatedAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli(),
+			RequesterIp: truncate(req.IP, 64), UserAgent: truncate(req.UserAgent, 512),
 		})
 		if err == nil {
 			return PairStart{Code: code, Verifier: verifier, ExpiresAt: exp}, nil
@@ -131,7 +138,37 @@ func StartPairing(ctx context.Context, st *store.Store, name, kind, platform str
 
 var errPairNotFound = newErr(http.StatusNotFound, "not_found", "配对码不存在或已过期")
 
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// PendingPairing 返回待批准的配对请求（批准页展示设备名、发起方 IP、User-Agent 与时间）。
+// 已过期或不存在返回 404，已批准返回 409。
+func PendingPairing(ctx context.Context, st *store.Store, code string) (db.DevicePairing, error) {
+	p, err := st.Q.GetDevicePairing(ctx, NormalizePairCode(code))
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, errPairNotFound
+	}
+	if err != nil {
+		return p, err
+	}
+	if p.ExpiresAt <= time.Now().UnixMilli() {
+		return p, errPairNotFound
+	}
+	if p.ApprovedDeviceID != nil {
+		return p, newErr(http.StatusConflict, "conflict", "该配对码已被批准")
+	}
+	return p, nil
+}
+
 // ApprovePairing 批准配对并创建设备（需网页会话，由调用方校验）。
+//
+// 防钓鱼：verifyUrl 不预填配对码，所有者须手动输入设备上显示的码，批准页展示发起方 IP /
+// User-Agent / 时间（PendingPairing）。已知局限：批准时不要求重新做一次 WebAuthn 用户验证，
+// 已登录网页会话被劫持（如 XSS）时攻击者可批准自己的配对请求。
 func ApprovePairing(ctx context.Context, st *store.Store, code string) (db.Device, error) {
 	code = NormalizePairCode(code)
 	var dev db.Device

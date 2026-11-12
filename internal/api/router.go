@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 
@@ -49,7 +50,7 @@ var publicPaths = map[string]bool{
 // NewRouter 返回控制面根路由。
 func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer)
+	r.Use(trustedProxyIP, middleware.Recoverer)
 	for pattern, h := range s.Mounts {
 		r.Handle(pattern, h)
 	}
@@ -59,7 +60,11 @@ func NewRouter(s *Server) http.Handler {
 			r.Use(func(next http.Handler) http.Handler {
 				protected := authMW(next)
 				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					if publicPaths[req.URL.Path] || strings.HasPrefix(req.URL.Path, "/provider/v1/") {
+					// 含编码字符（如 %2F）的路径一律按受保护处理：chi 按 RawPath 路由，
+					// 解码后的 Path 与实际命中的路由可能不一致。
+					public := req.URL.RawPath == "" &&
+						(publicPaths[req.URL.Path] || strings.HasPrefix(req.URL.Path, "/provider/v1/"))
+					if public {
 						next.ServeHTTP(w, req)
 						return
 					}
@@ -78,7 +83,39 @@ func NewRouter(s *Server) http.Handler {
 	return r
 }
 
-// GetHealthz 返回 {"ok":true,"version":"…"}，免鉴权（路由在 /api/v1 组外，不经鉴权中间件）。
+// trustedProxyIP 只在请求来自本机反代（回环地址）时采信 X-Real-IP / X-Forwarded-For。
+// orb 经 docker 网桥直连控制面，其自报的转发头不可信。
+func trustedProxyIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil {
+			if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+				if real := forwardedClient(r); real != "" {
+					r.RemoteAddr = net.JoinHostPort(real, "0")
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// forwardedClient 优先取反代设置的 X-Real-IP，否则取 X-Forwarded-For 的最后一跳（由反代追加，客户端无法伪造）。
+func forwardedClient(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(v) != nil {
+		return v
+	}
+	xff := r.Header.Values("X-Forwarded-For")
+	if len(xff) == 0 {
+		return ""
+	}
+	parts := strings.Split(xff[len(xff)-1], ",")
+	if v := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(v) != nil {
+		return v
+	}
+	return ""
+}
+
+// GetHealthz 返回 {"ok":true,"version":"…"}，免鉴权（见 publicPaths）。
 func (s *Server) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "version": version.Version})
 }

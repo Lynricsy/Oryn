@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +26,6 @@ import (
 
 const (
 	ceremonyTTL     = 5 * time.Minute
-	maxCeremonies   = 1000
 	defaultOwner    = "Owner"
 	recoveryCodeNum = 10
 
@@ -31,26 +33,38 @@ const (
 	ceremonyLogin = "login"
 )
 
-// Service 持有 WebAuthn 依赖方配置与进行中的仪式（内存，5 分钟过期，一次性）。
+// Service 持有 WebAuthn 依赖方配置、限流表与吊销广播。
+//
+// 仪式状态是无状态的：begin 把 SessionData 等用进程内随机密钥以 AES-GCM 封装成 ceremonyId 交给客户端，
+// finish 时解封校验。服务端不为进行中的仪式保存任何东西，匿名请求无法把仪式表塞满挤掉所有者的登录；
+// 只有成功完成的仪式记入 used（5 分钟），防止同一 ceremonyId 被重放。重启后未完成的仪式失效。
 type Service struct {
 	st      *store.Store
 	dataDir string
 	wa      *webauthn.WebAuthn
+	aead    cipher.AEAD
 
-	mu         sync.Mutex
-	ceremonies map[string]*ceremony
+	limiter     *limiter
+	revocations revocations
+
+	mu   sync.Mutex
+	used map[string]time.Time
 }
 
+// ceremony 是封装进 ceremonyId 的仪式状态。
 type ceremony struct {
-	kind    string
-	session webauthn.SessionData
-	expires time.Time
+	Kind    string               `json:"k"`
+	Session webauthn.SessionData `json:"s"`
+	Expires int64                `json:"e"`
 	// 初始化：新用户句柄与所用初始化令牌的哈希；恢复：恢复会话 id 哈希。
-	handle          []byte
-	tokenHash       string
-	recoverySession string
-	passkeyName     string
+	Handle          []byte `json:"h,omitempty"`
+	TokenHash       string `json:"t,omitempty"`
+	RecoverySession string `json:"r,omitempty"`
+	PasskeyName     string `json:"n,omitempty"`
 }
+
+// ceremonyAD 是封装仪式状态时的附加数据。
+var ceremonyAD = []byte("oryn-webauthn-ceremony-v1")
 
 // NewService 以 public_url 构造 WebAuthn 依赖方：RP ID = 主机名，origin = public_url 的 scheme://host[:port]。
 func NewService(st *store.Store, dataDir, publicURL string) (*Service, error) {
@@ -66,7 +80,19 @@ func NewService(st *store.Store, dataDir, publicURL string) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 WebAuthn: %w", err)
 	}
-	return &Service{st: st, dataDir: dataDir, wa: wa, ceremonies: map[string]*ceremony{}}, nil
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{st: st, dataDir: dataDir, wa: wa, aead: aead, limiter: newLimiter(), used: map[string]time.Time{}}, nil
 }
 
 // Store 返回底层存储。
@@ -108,34 +134,70 @@ func loadOwner(ctx context.Context, q *db.Queries) (*waUser, db.Owner, bool, err
 	return u, o, true, nil
 }
 
+// putCeremony 封装仪式状态，返回 ceremonyId（wac_<base64url(nonce||密文)>）。
 func (s *Service) putCeremony(c *ceremony) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	for id, v := range s.ceremonies {
-		if now.After(v.expires) {
-			delete(s.ceremonies, id)
-		}
+	c.Expires = time.Now().Add(ceremonyTTL).UnixMilli()
+	plain, err := json.Marshal(c)
+	if err != nil {
+		return "", err
 	}
-	if len(s.ceremonies) >= maxCeremonies {
-		return "", newErr(http.StatusServiceUnavailable, "internal", "进行中的认证仪式过多，请稍后再试")
+	nonce := make([]byte, s.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
 	}
-	id := ids.Token("wac")
-	c.expires = now.Add(ceremonyTTL)
-	s.ceremonies[id] = c
-	return id, nil
+	return "wac_" + base64.RawURLEncoding.EncodeToString(s.aead.Seal(nonce, nonce, plain, ceremonyAD)), nil
 }
 
-// takeCeremony 取出并删除仪式（一次性）。
+var errCeremony = newErr(http.StatusBadRequest, "invalid_request", "认证仪式不存在或已过期，请重新开始")
+
+// takeCeremony 解封并校验仪式（类型、过期、未被成功使用过）。
 func (s *Service) takeCeremony(id, kind string) (*ceremony, error) {
+	raw, ok := strings.CutPrefix(id, "wac_")
+	if !ok || len(raw) > 16<<10 {
+		return nil, errCeremony
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(raw)
+	n := s.aead.NonceSize()
+	if err != nil || len(sealed) < n {
+		return nil, errCeremony
+	}
+	plain, err := s.aead.Open(nil, sealed[:n], sealed[n:], ceremonyAD)
+	if err != nil {
+		return nil, errCeremony
+	}
+	var c ceremony
+	if json.Unmarshal(plain, &c) != nil || c.Kind != kind || time.Now().UnixMilli() > c.Expires {
+		return nil, errCeremony
+	}
+	s.mu.Lock()
+	_, used := s.used[ids.Hash(id)]
+	s.mu.Unlock()
+	if used {
+		return nil, errCeremony
+	}
+	return &c, nil
+}
+
+// markUsed 在仪式校验成功后记录它，防止重放；已被使用返回错误。
+func (s *Service) markUsed(id string, c *ceremony) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.ceremonies[id]
-	delete(s.ceremonies, id)
-	if !ok || c.kind != kind || time.Now().After(c.expires) {
-		return nil, newErr(http.StatusBadRequest, "invalid_request", "认证仪式不存在或已过期，请重新开始")
+	h := ids.Hash(id)
+	if _, ok := s.used[h]; ok {
+		return errCeremony
 	}
-	return c, nil
+	s.used[h] = time.UnixMilli(c.Expires)
+	return nil
+}
+
+func (s *Service) pruneUsedCeremonies(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for h, exp := range s.used {
+		if now.After(exp) {
+			delete(s.used, h)
+		}
+	}
 }
 
 // optionsJSON 把 publicKey 选项转成通用对象（WebAuthn L3 JSON 形态，二进制字段为 base64url）。
@@ -156,7 +218,7 @@ type Ceremony struct {
 
 // BeginSetup 开始注册 Passkey。token 非空 = 首次初始化；为空 = 恢复流程（要求恢复会话 Cookie + CSRF 头）。
 func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name string) (Ceremony, error) {
-	c := &ceremony{kind: ceremonySetup, passkeyName: strings.TrimSpace(name)}
+	c := &ceremony{Kind: ceremonySetup, PasskeyName: strings.TrimSpace(name)}
 	var user *waUser
 	var opts []webauthn.RegistrationOption
 	if token != "" {
@@ -167,12 +229,12 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 		if exists {
 			return Ceremony{}, newErr(http.StatusConflict, "conflict", ErrAlreadyInitialized.Error())
 		}
-		if c.tokenHash, err = checkSetupToken(s.dataDir, token); err != nil {
+		if c.TokenHash, err = checkSetupToken(s.dataDir, token); err != nil {
 			return Ceremony{}, err
 		}
-		c.handle = make([]byte, 32)
-		_, _ = rand.Read(c.handle)
-		user = &waUser{handle: c.handle, display: defaultOwner}
+		c.Handle = make([]byte, 32)
+		_, _ = rand.Read(c.Handle)
+		user = &waUser{handle: c.Handle, display: defaultOwner}
 	} else {
 		ws, err := s.recoverySession(ctx, r)
 		if err != nil {
@@ -185,7 +247,7 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 		if !exists {
 			return Ceremony{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
 		}
-		user, c.recoverySession = u, ws.IDHash
+		user, c.RecoverySession = u, ws.IDHash
 		excl := make([]protocol.CredentialDescriptor, 0, len(u.creds))
 		for i := range u.creds {
 			excl = append(excl, u.creds[i].Descriptor())
@@ -204,7 +266,7 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 	if err != nil {
 		return Ceremony{}, fmt.Errorf("BeginRegistration: %w", err)
 	}
-	c.session = *session
+	c.Session = *session
 	options, err := optionsJSON(creation.Response)
 	if err != nil {
 		return Ceremony{}, err
@@ -243,12 +305,12 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 		return SetupResult{}, err
 	}
 	var user *waUser
-	if c.recoverySession != "" {
+	if c.RecoverySession != "" {
 		ws, err := s.recoverySession(ctx, r)
 		if err != nil {
 			return SetupResult{}, err
 		}
-		if ws.IDHash != c.recoverySession {
+		if ws.IDHash != c.RecoverySession {
 			return SetupResult{}, errUnauthorized
 		}
 		u, _, exists, err := loadOwner(ctx, s.st.Q)
@@ -262,18 +324,21 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 	} else {
 		if cur, err := currentSetupTokenHash(s.dataDir); err != nil {
 			return SetupResult{}, err
-		} else if cur != c.tokenHash {
+		} else if cur != c.TokenHash {
 			return SetupResult{}, newErr(http.StatusUnauthorized, "unauthorized", "初始化令牌已被重新生成")
 		}
-		user = &waUser{handle: c.handle, display: defaultOwner}
+		user = &waUser{handle: c.Handle, display: defaultOwner}
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(credential)
 	if err != nil {
 		return SetupResult{}, newErr(http.StatusBadRequest, "invalid_request", webauthnMsg("注册响应无法解析", err))
 	}
-	cred, err := s.wa.CreateCredential(user, c.session, parsed)
+	cred, err := s.wa.CreateCredential(user, c.Session, parsed)
 	if err != nil {
 		return SetupResult{}, newErr(http.StatusBadRequest, "invalid_request", webauthnMsg("注册校验失败", err))
+	}
+	if err := s.markUsed(ceremonyID, c); err != nil {
+		return SetupResult{}, err
 	}
 	credJSON, err := json.Marshal(cred)
 	if err != nil {
@@ -284,12 +349,12 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 		transports = append(transports, string(t))
 	}
 	transportsJSON, _ := json.Marshal(transports)
-	name := c.passkeyName
+	name := c.PasskeyName
 	if name == "" {
 		name = "Passkey"
 	}
 	var res SetupResult
-	initial := c.recoverySession == ""
+	initial := c.RecoverySession == ""
 	if initial {
 		res.RecoveryCodes = newRecoveryCodes()
 	}
@@ -301,7 +366,7 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if err := q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: defaultOwner, UserHandle: c.handle, CreatedAt: now}); err != nil {
+			if err := q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: defaultOwner, UserHandle: c.Handle, CreatedAt: now}); err != nil {
 				return err
 			}
 			if err := q.DeleteAllRecoveryCodes(ctx); err != nil {
@@ -312,7 +377,7 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 					return err
 				}
 			}
-		} else if err := q.DeleteWebSession(ctx, c.recoverySession); err != nil {
+		} else if err := q.DeleteWebSession(ctx, c.RecoverySession); err != nil {
 			return err
 		}
 		if err := q.CreatePasskey(ctx, db.CreatePasskeyParams{
@@ -328,7 +393,9 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 		return SetupResult{}, err
 	}
 	if initial {
-		consumeSetupToken(s.dataDir, c.tokenHash)
+		consumeSetupToken(s.dataDir, c.TokenHash)
+	} else {
+		s.revocations.publish(KindWeb, c.RecoverySession)
 	}
 	return res, nil
 }
@@ -350,7 +417,7 @@ func (s *Service) BeginLogin(ctx context.Context) (Ceremony, error) {
 	if err != nil {
 		return Ceremony{}, err
 	}
-	id, err := s.putCeremony(&ceremony{kind: ceremonyLogin, session: *session})
+	id, err := s.putCeremony(&ceremony{Kind: ceremonyLogin, Session: *session})
 	return Ceremony{ID: id, Options: options}, err
 }
 
@@ -377,12 +444,15 @@ func (s *Service) FinishLogin(ctx context.Context, r *http.Request, ceremonyID s
 		}
 		return owner, nil
 	}
-	_, cred, err := s.wa.ValidatePasskeyLogin(handler, c.session, parsed)
+	_, cred, err := s.wa.ValidatePasskeyLogin(handler, c.Session, parsed)
 	if err != nil {
 		return "", time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", webauthnMsg("Passkey 校验失败", err))
 	}
 	if cred.Authenticator.CloneWarning {
 		return "", time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", "Passkey 签名计数回退，疑似被克隆")
+	}
+	if err := s.markUsed(ceremonyID, c); err != nil {
+		return "", time.Time{}, err
 	}
 	credJSON, err := json.Marshal(cred)
 	if err != nil {

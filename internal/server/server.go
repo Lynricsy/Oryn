@@ -73,6 +73,7 @@ func (s *Server) init(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
+	go s.Auth.Run(runCtx)
 	s.closers = append(s.closers, func() { cancel(); s.Orbs.Close() })
 
 	s.API = &api.Server{Deps: api.Deps{

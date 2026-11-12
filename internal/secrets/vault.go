@@ -59,6 +59,7 @@ func decodeHosts(s string) []string {
 }
 
 // Put 写入或覆盖密钥（覆盖时保留原 id，已下发的占位符继续有效）。
+// hosts 为 nil 时保留已有记录的 hosts（新建则为空）；传空切片表示清空。
 func (v *Vault) Put(ctx context.Context, name, mode, value string, hosts []string) (Meta, error) {
 	if err := ValidName(name, mode); err != nil {
 		return Meta{}, err
@@ -70,11 +71,20 @@ func (v *Vault) Put(ctx context.Context, name, mode, value string, hosts []strin
 	if err != nil {
 		return Meta{}, err
 	}
-	hs := normalizeHosts(hosts)
-	hj, _ := json.Marshal(hs)
 	now := time.Now().UnixMilli()
 	var row db.Secret
 	err = v.st.Tx(ctx, func(q *db.Queries) error {
+		hs := normalizeHosts(hosts)
+		if hosts == nil {
+			old, err := q.GetSecretByName(ctx, name)
+			switch {
+			case err == nil:
+				hs = normalizeHosts(decodeHosts(old.Hosts))
+			case !errors.Is(err, sql.ErrNoRows):
+				return err
+			}
+		}
+		hj, _ := json.Marshal(hs)
 		if err := q.UpsertSecret(ctx, db.UpsertSecretParams{
 			ID: ids.New("sec"), Name: name, Mode: mode, ValueEnc: sealed, Hosts: string(hj), CreatedAt: now, UpdatedAt: now,
 		}); err != nil {

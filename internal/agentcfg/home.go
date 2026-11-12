@@ -402,7 +402,8 @@ func importOne(ctx context.Context, rel string, content []byte, vault *secrets.V
 		if vault == nil {
 			return nil, nil, nil, errors.New("密钥库不可用，无法导入 models.yml 中的密钥")
 		}
-		if _, err := vault.Put(ctx, name, secrets.ModeProxy, ir.Secrets[name], nil); err != nil {
+		// hosts 为 provider 上游主机；未知（nil）时 Put 保留密钥原有的 hosts
+		if _, err := vault.Put(ctx, name, secrets.ModeProxy, ir.Secrets[name], ir.SecretHosts[name]); err != nil {
 			return nil, nil, nil, fmt.Errorf("保存密钥 %s: %w", name, err)
 		}
 	}

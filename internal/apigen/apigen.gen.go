@@ -1052,8 +1052,28 @@ type DevicePairStartResponse struct {
 	// Verifier 仅发起方持有，轮询时回传
 	Verifier string `json:"verifier"`
 
-	// VerifyURL 网页批准地址（`<public_url>/pair?code=…`）
+	// VerifyURL 网页批准地址（`<public_url>/pair`，不预填配对码，所有者须手动输入设备上显示的码）
 	VerifyURL string `json:"verifyUrl"`
+}
+
+// DevicePairing defines model for DevicePairing.
+type DevicePairing struct {
+	Code string `json:"code"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ExpiresAt UTC 毫秒时间戳
+	ExpiresAt TimestampMs `json:"expiresAt"`
+
+	// IP 发起方 IP
+	IP       string     `json:"ip"`
+	Kind     DeviceKind `json:"kind"`
+	Name     string     `json:"name"`
+	Platform string     `json:"platform"`
+
+	// UserAgent 发起方 User-Agent
+	UserAgent string `json:"userAgent"`
 }
 
 // Entry 会话 JSONL 的一行（已复制入库）
@@ -1089,7 +1109,7 @@ type EntryPage struct {
 // Error defines model for Error.
 type Error struct {
 	// Code 机器可读错误码。已定义：`unauthorized`、`forbidden`、`not_found`、`invalid_request`、`conflict`、
-	// `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`internal`。
+	// `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -3468,6 +3488,9 @@ type ServerInterface interface {
 	// DevicePairStart 发起设备配对（免鉴权）
 	// (POST /api/v1/devices/pair/start)
 	DevicePairStart(w http.ResponseWriter, r *http.Request)
+	// GetDevicePairing 查看待批准的配对请求（需网页会话）
+	// (GET /api/v1/devices/pair/{code})
+	GetDevicePairing(w http.ResponseWriter, r *http.Request, code string)
 	// RevokeDevice 吊销设备（之后该令牌请求返回 401）
 	// (DELETE /api/v1/devices/{id})
 	RevokeDevice(w http.ResponseWriter, r *http.Request, id DeviceIDPath)
@@ -3672,6 +3695,12 @@ func (_ Unimplemented) DevicePairPoll(w http.ResponseWriter, r *http.Request) {
 // DevicePairStart 发起设备配对（免鉴权）
 // (POST /api/v1/devices/pair/start)
 func (_ Unimplemented) DevicePairStart(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetDevicePairing 查看待批准的配对请求（需网页会话）
+// (GET /api/v1/devices/pair/{code})
+func (_ Unimplemented) GetDevicePairing(w http.ResponseWriter, r *http.Request, code string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4173,6 +4202,32 @@ func (siw *ServerInterfaceWrapper) DevicePairStart(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DevicePairStart(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDevicePairing operation middleware
+func (siw *ServerInterfaceWrapper) GetDevicePairing(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "code" -------------
+	var code string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "code", chi.URLParam(r, "code"), &code, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDevicePairing(w, r, code)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5296,6 +5351,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/devices/pair/start", wrapper.DevicePairStart)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/devices/pair/{code}", wrapper.GetDevicePairing)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/devices/pair/approve", wrapper.DevicePairApprove)

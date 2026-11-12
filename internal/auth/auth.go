@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,8 @@ type Error struct {
 	Status  int
 	Code    string
 	Message string
+	// RetryAfter 非零时写出 Retry-After 头（秒）。
+	RetryAfter int
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -172,8 +175,9 @@ func sessionFromCookie(ctx context.Context, q *db.Queries, r *http.Request) (db.
 	if err != nil {
 		return db.WebSession{}, false, err
 	}
+	// 过期会话不在这里删除：由 Service.Run 的清理循环删除并发布吊销事件，
+	// 让持有该会话 WebSocket 的连接能被关闭。
 	if ws.ExpiresAt <= time.Now().UnixMilli() {
-		_ = q.DeleteWebSession(ctx, ws.IDHash)
 		return db.WebSession{}, false, nil
 	}
 	return ws, true, nil
@@ -225,18 +229,25 @@ func ClearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-// Logout 删除当前网页会话。
-func Logout(ctx context.Context, st *store.Store, p Principal) error {
+// Logout 删除当前网页会话并发布吊销事件。
+func (s *Service) Logout(ctx context.Context, p Principal) error {
 	if p.Kind != KindWeb {
 		return newErr(http.StatusBadRequest, "invalid_request", "只有网页会话可以注销；设备请吊销")
 	}
-	return st.Q.DeleteWebSession(ctx, p.ID)
+	if err := s.st.Q.DeleteWebSession(ctx, p.ID); err != nil {
+		return err
+	}
+	s.revocations.publish(KindWeb, p.ID)
+	return nil
 }
 
 func writeErr(w http.ResponseWriter, err error) {
 	var e *Error
 	if !errors.As(err, &e) {
 		e = newErr(http.StatusInternalServerError, "internal", err.Error())
+	}
+	if e.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(e.RetryAfter))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.Status)

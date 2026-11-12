@@ -34,7 +34,7 @@ func TestVaultCRUD(t *testing.T) {
 	m2, err := v.Put(ctx, "omp/models/openai/apiKey", secrets.ModeProxy, "sk-two", nil)
 	require.NoError(t, err)
 	assert.Equal(t, m.ID, m2.ID)
-	assert.Empty(t, m2.Hosts)
+	assert.Equal(t, []string{"api.openai.com"}, m2.Hosts, "hosts=nil 保留原有 hosts")
 
 	id, val, ok := v.Lookup("omp/models/openai/apiKey")
 	require.True(t, ok)
@@ -44,7 +44,12 @@ func TestVaultCRUD(t *testing.T) {
 	val, hosts, ok := v.SecretByID(m.ID)
 	require.True(t, ok)
 	assert.Equal(t, "sk-two", val)
-	assert.Empty(t, hosts)
+	assert.Equal(t, []string{"api.openai.com"}, hosts)
+
+	// 空切片显式清空
+	m3, err := v.Put(ctx, "omp/models/openai/apiKey", secrets.ModeProxy, "sk-two", []string{})
+	require.NoError(t, err)
+	assert.Empty(t, m3.Hosts)
 
 	_, _, ok = v.SecretByID("sec_missing")
 	assert.False(t, ok)

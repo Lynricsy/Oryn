@@ -72,9 +72,11 @@ func TestHomePutGetDelete(t *testing.T) {
 	assert.NotContains(t, string(b), "sk-literal")
 	assert.Contains(t, string(b), "${oryn:secret:omp/models/mine/apiKey}")
 	assert.Equal(t, res.File.SHA256, fi.SHA256)
-	_, val, ok := v.Lookup("omp/models/mine/apiKey")
+	val, meta, ok, err := v.Get(ctx, "omp/models/mine/apiKey")
+	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "sk-literal-abcdefghijklmnop", val)
+	assert.Equal(t, []string{"llm.example.com"}, meta.Hosts, "hosts 取自 provider 的 baseUrl")
 
 	res, err = h.Put(ctx, "agents/AGENTS.md", []byte("token ghp_abcdefghijklmnopqrstuvwx\n"), 0o600, v)
 	require.NoError(t, err)
