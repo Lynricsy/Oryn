@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -333,7 +334,11 @@ func TestAbortDuringAsk(t *testing.T) {
 	h.until("extension_ui_request")
 	r, others := h.call(map[string]any{"id": "x1", "type": "abort"})
 	assert.Equal(t, true, r["success"])
-	frames := append(others, h.until("session_settled")...)
+	// abort 的应答与 session_settled 先后不定：已在应答前到达则不再等待
+	frames := others
+	if !slices.ContainsFunc(others, func(f map[string]any) bool { return f["type"] == "session_settled" }) {
+		frames = append(frames, h.until("session_settled")...)
+	}
 	var result map[string]any
 	var cancel bool
 	for _, f := range frames {
