@@ -14,6 +14,15 @@ const (
 	orbStateDeleted = "deleted"
 )
 
+// orbSuspended 判断 orb 是否处于暂停或恢复途中（此时现有 agent 流不可用于下发命令）。
+func orbSuspended(state string) bool {
+	switch state {
+	case "freezing", "frozen", "stopping", "stopped", "waking", "failed", "deleting":
+		return true
+	}
+	return false
+}
+
 // Orb 事件种类（与 internal/orbs 的 Event.Kind 一致）。
 const (
 	OrbEventState    = "state"

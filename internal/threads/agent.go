@@ -483,7 +483,9 @@ func (s *Service) enqueueLocked(t *thread, frame []byte, p *pendingCmd) error {
 		}
 		h.ID = id
 	}
-	if t.agentReady() {
+	// orb 冻结 / 停机 / 唤醒途中，现有 agent 流即将随 link 重建而作废，写入的命令会丢失：先排队，
+	// 新流上报 agent.status ready 后由 onReadyLocked 下发。
+	if t.agentReady() && !orbSuspended(s.orbState(t.orbID)) {
 		if p != nil {
 			t.pending[h.ID] = p
 		}
