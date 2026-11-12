@@ -32,6 +32,10 @@ type ParsedEntry struct {
 	Tool *ToolCall
 	// Title 非空时为标题槽中的标题。
 	Title string
+	// OffBranch 为真时该条目写在活动分支之外（omp 的 `activeLeafId` 字段，如迟到的 model_usage）：
+	// 叶子应取 ActiveLeaf 而不是该条目本身；ActiveLeaf 为 nil 表示叶子被清空。
+	OffBranch  bool
+	ActiveLeaf *string
 }
 
 // UsageRecord 对应 usage_records 的一行（不含 thread / seq）。
@@ -56,7 +60,9 @@ type lineHead struct {
 	ParentID  *string         `json:"parentId"`
 	Timestamp json.RawMessage `json:"timestamp"`
 	Title     string          `json:"title"`
-	Message   *struct {
+	// ActiveLeafID 存在（含 null）即表示该条目不在活动分支上。
+	ActiveLeafID json.RawMessage `json:"activeLeafId"`
+	Message      *struct {
 		Role      string `json:"role"`
 		Timestamp int64  `json:"timestamp"`
 		Provider  string `json:"provider"`
@@ -106,6 +112,13 @@ func ParseLine(line string) (ParsedEntry, error) {
 	}
 	if h.Type == "title" {
 		p.Title = h.Title
+	}
+	if len(h.ActiveLeafID) > 0 {
+		p.OffBranch = true
+		var leaf *string
+		if json.Unmarshal(h.ActiveLeafID, &leaf) == nil {
+			p.ActiveLeaf = leaf
+		}
 	}
 	p.TS = parseTS(h.Timestamp)
 	seen := map[string]bool{}

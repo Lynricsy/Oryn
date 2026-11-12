@@ -14,8 +14,9 @@ const (
 	StateIdle          = "idle"
 )
 
-// pendingMethods 是需要用户作答、进入 pendingUi 槽的 extension_ui_request 方法。
-var pendingMethods = map[string]bool{"select": true, "confirm": true, "input": true, "editor": true, "ask": true}
+// pendingMethods 是需要用户作答、进入 pendingUi 槽的 extension_ui_request 方法
+// （`askDialog` / `form` 是 set_ask_dialog{enabled, form} 开启后 ask 工具与表单的请求形态）。
+var pendingMethods = map[string]bool{"select": true, "confirm": true, "input": true, "editor": true, "ask": true, "askDialog": true, "form": true}
 
 type msgKey struct {
 	role string

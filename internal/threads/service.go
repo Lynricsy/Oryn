@@ -165,10 +165,13 @@ type thread struct {
 	lastSeq     int64
 	resetting   map[string]bool
 	ignored     map[string]bool // fork_from 产物：移出前被 tail 到的文件，丢弃
-	starting    bool
-	failed      bool
-	model       *string
-	thinking    *string
+	// forking > 0 时有 fork_from 在途：其间新出现的主会话文件暂存在 held，不入库（见 onAppend / endForkLocked）。
+	forking  int
+	held     map[string][]apigen.LinkCtlEntriesAppendParams
+	starting bool
+	failed   bool
+	model    *string
+	thinking *string
 	// copyFrom 非空时，agent 首次启动前先 fs.copyTree ~/.oryn/threads/<copyFrom> → 本线程会话目录（fork copy）。
 	copyFrom string
 	// forkEntry 非空时，agent 就绪后向其发送 fork{entryId}（fork copy / 回退路径）。
@@ -221,7 +224,7 @@ func newThread(row db.Thread) *thread {
 	t := &thread{
 		id: row.ID, sessionDir: row.SessionDir,
 		live: NewLive(), agentStatus: apigen.AgentStatusNone,
-		pending: map[string]*pendingCmd{}, resetting: map[string]bool{}, ignored: map[string]bool{},
+		pending: map[string]*pendingCmd{}, resetting: map[string]bool{}, ignored: map[string]bool{}, held: map[string][]apigen.LinkCtlEntriesAppendParams{},
 		settled: true, state: row.State, unread: row.Unread, leaf: row.LeafEntryID, lastSeq: row.LastSeq,
 		model: row.Model, thinking: row.ThinkingLevel,
 	}

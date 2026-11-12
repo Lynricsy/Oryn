@@ -498,29 +498,37 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 // 改为以源会话目录的副本启动（fs.copyTree）再发 fork{entryId}。
 func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThreadParams, orbID, entry string) (apigen.Thread, error) {
 	frame, _ := json.Marshal(map[string]string{"type": "fork_from", "entryId": entry})
+	// fork_from 把新会话文件写进源会话目录：在途期间暂存新出现的主文件，免得产物被当成源线程的新会话入库
+	src.mu.Lock()
+	src.forking++
+	src.mu.Unlock()
 	_, data, err := s.call(ctx, src, frame)
-	if err != nil {
-		return apigen.Thread{}, err
-	}
 	var res struct {
 		SessionPath string `json:"sessionPath"`
 	}
-	if json.Unmarshal(data, &res) != nil || res.SessionPath == "" {
-		return apigen.Thread{}, errf("agent_error", "fork_from returned no sessionPath")
+	if err == nil && (json.Unmarshal(data, &res) != nil || res.SessionPath == "") {
+		err = errf("agent_error", "fork_from returned no sessionPath")
+	}
+	product := ""
+	if err == nil {
+		product = path.Base(res.SessionPath)
+	}
+	src.mu.Lock()
+	s.endForkLocked(ctx, src, product)
+	src.mu.Unlock()
+	if err != nil {
+		return apigen.Thread{}, err
 	}
 	ctl, ok := s.orbs.Ctl(orbID)
 	if !ok {
 		return apigen.Thread{}, errf("orb_unavailable", "orb link is not connected")
 	}
-	base := path.Base(res.SessionPath)
+	base := product
 	child.OrbID = &orbID
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	moveErr := ctl.Call(cctx, "fs.move", apigen.LinkCtlFsMoveParams{From: res.SessionPath, To: child.SessionDir + "/" + base}, nil)
 	cancel()
-	if moveErr == nil {
-		// fork_from 的产物写在源会话目录里，源 tailer 可能已在移走前读到它
-		s.dropFile(ctx, src, base)
-	} else {
+	if moveErr != nil {
 		slog.Warn("threads: fork share 移动会话文件失败，改用目录副本", "thread", src.id, "err", moveErr)
 	}
 	if err := s.insertThread(ctx, child, nil); err != nil {

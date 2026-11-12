@@ -70,6 +70,20 @@ func (s *Service) onAppend(ctx context.Context, orbID string, params json.RawMes
 	if err != nil {
 		return nil, err
 	}
+	if h, held := t.held[p.File]; held || (t.forking > 0 && isMainFile(p.File) && cur == 0 && p.BaseOffset == 0 && !t.resetting[p.File]) {
+		// fork_from 在途时新出现的主会话文件多半是其产物：先暂存（不推进游标），应答后再决定丢弃或入库
+		switch {
+		case p.BaseOffset == 0:
+			h = []apigen.LinkCtlEntriesAppendParams{p}
+		case len(h) > 0 && p.BaseOffset == h[len(h)-1].EndOffset:
+			h = append(h, p)
+		default:
+			delete(t.held, p.File)
+			return apigen.LinkCtlEntriesAppendResult{Accepted: false, Offset: 0}, nil
+		}
+		t.held[p.File] = h
+		return apigen.LinkCtlEntriesAppendResult{Accepted: true, Offset: p.EndOffset}, nil
+	}
 	if p.BaseOffset != cur {
 		return apigen.LinkCtlEntriesAppendResult{Accepted: false, Offset: cur}, nil
 	}
@@ -77,7 +91,36 @@ func (s *Service) onAppend(ctx context.Context, orbID string, params json.RawMes
 		err := s.st.Q.UpsertEntryCursor(ctx, db.UpsertEntryCursorParams{ThreadID: t.id, File: p.File, ByteOffset: p.EndOffset})
 		return apigen.LinkCtlEntriesAppendResult{Accepted: err == nil, Offset: p.EndOffset}, err
 	}
+	return s.ingestLocked(ctx, t, orbID, p)
+}
 
+// endForkLocked 在 fork_from 结束（成功或失败）后调用（持有 t.mu）：产物文件 product 此后一律丢弃；
+// 最后一个在途 fork 结束时，其余暂存的文件按序补入库。
+func (s *Service) endForkLocked(ctx context.Context, t *thread, product string) {
+	t.forking--
+	if product != "" {
+		t.ignored[product] = true
+		if h := t.held[product]; len(h) > 0 {
+			_ = s.st.Q.UpsertEntryCursor(ctx, db.UpsertEntryCursorParams{ThreadID: t.id, File: product, ByteOffset: h[len(h)-1].EndOffset})
+		}
+		delete(t.held, product)
+	}
+	if t.forking > 0 {
+		return
+	}
+	for file, h := range t.held {
+		delete(t.held, file)
+		for _, p := range h {
+			if _, err := s.ingestLocked(ctx, t, t.orbID, p); err != nil {
+				slog.Warn("threads: 补入暂存的会话文件失败", "thread", t.id, "file", file, "err", err)
+				break
+			}
+		}
+	}
+}
+
+// ingestLocked 把一批已通过游标校验的行入库并推送（持有 t.mu）。
+func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p apigen.LinkCtlEntriesAppendParams) (apigen.LinkCtlEntriesAppendResult, error) {
 	type ingested struct {
 		parsed ParsedEntry
 		entry  Entry
@@ -88,7 +131,7 @@ func (s *Service) onAppend(ctx context.Context, orbID string, params json.RawMes
 	sub := IsSubagentFile(p.File)
 	resetting := t.resetting[p.File]
 	prevLast := t.lastSeq
-	err = s.st.Tx(ctx, func(q *db.Queries) error {
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		for _, line := range p.Lines {
 			pe, err := ParseLine(line)
 			if err != nil {
@@ -134,7 +177,7 @@ func (s *Service) onAppend(ctx context.Context, orbID string, params json.RawMes
 		return q.UpsertEntryCursor(ctx, db.UpsertEntryCursorParams{ThreadID: t.id, File: p.File, ByteOffset: p.EndOffset})
 	})
 	if err != nil {
-		return nil, err
+		return apigen.LinkCtlEntriesAppendResult{}, err
 	}
 
 	now := s.now()
@@ -158,8 +201,13 @@ func (s *Service) onAppend(ctx context.Context, orbID string, params json.RawMes
 			}
 		}
 		if in.isNew && !strings.HasPrefix(in.parsed.EntryID, "__") {
-			id := in.parsed.EntryID
-			t.leaf = &id
+			if in.parsed.OffBranch {
+				// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子
+				t.leaf = in.parsed.ActiveLeaf
+			} else {
+				id := in.parsed.EntryID
+				t.leaf = &id
+			}
 		}
 		if in.isNew && in.parsed.Type == "message" {
 			ts := now
@@ -229,7 +277,7 @@ func (s *Service) onResetDone(ctx context.Context, orbID string, params json.Raw
 	}
 }
 
-// dropFile 删除线程中某文件的全部条目与游标，并丢弃之后对它的追加（fork_from 产物被移走时）。
+// dropFile 删除线程中某文件的全部条目与游标，并丢弃之后对它的追加（fork share 回退时移走新线程里的产物）。
 func (s *Service) dropFile(ctx context.Context, t *thread, file string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
