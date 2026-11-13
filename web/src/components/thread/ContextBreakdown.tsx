@@ -65,10 +65,13 @@ function usePartLabel() {
 	};
 }
 
-/** 非零项按占比从大到小（图例与分类表的顺序；量表本身保持固定的语义顺序）。 */
+/** 非零项按占比从大到小：量表、图例、分类表都用这个顺序，条上的分段与图例一一对上。 */
 function bySize(parts: readonly ContextPart[]): ContextPart[] {
 	return parts.filter((p) => p.tokens > 0).sort((a, b) => b.tokens - a.tokens);
 }
+
+/** 信息面板图例只列最大的几类，其余并成「其他」，保证图例不超过两行。 */
+const LEGEND_TOP = 3;
 
 function Swatch({ id }: { id: ContextPartId }) {
 	return (
@@ -80,7 +83,7 @@ function Swatch({ id }: { id: ContextPartId }) {
 	);
 }
 
-/** 彩色堆叠量表：每段宽度 = tokens / 上下文窗口，剩余部分露出轨道。`compact`（卡片收起时的迷你条）段间不留缝。 */
+/** 彩色堆叠量表：分段按占比从大到小，每段宽度 = tokens / 上下文窗口，剩余部分露出轨道。`compact`（卡片收起时的迷你条）段间不留缝。 */
 export function ContextBar({
 	parts,
 	contextWindow,
@@ -109,24 +112,25 @@ export function ContextBar({
 			aria-valuemax={100}
 			className={`flex h-1.5 overflow-hidden rounded-full bg-inset ${compact ? "" : "gap-px"} ${BAR_RING[tone]} ${className}`}
 		>
-			{parts
-				.filter((p) => p.tokens > 0)
-				.map((p) => (
-					<span
-						key={p.id}
-						title={describe(p, win).title}
-						className="h-full"
-						style={{
-							width: `${(p.tokens / win) * 100}%`,
-							background: PART_COLOR[p.id],
-						}}
-					/>
-				))}
+			{bySize(parts).map((p) => (
+				<span
+					key={p.id}
+					title={describe(p, win).title}
+					className="h-full"
+					style={{
+						width: `${(p.tokens / win) * 100}%`,
+						background: PART_COLOR[p.id],
+					}}
+				/>
+			))}
 		</div>
 	);
 }
 
-/** 图例（信息面板）：色点 + 名称 + 数值，只列非零项、按占比从大到小；估算值带「≈」并在末尾注明。 */
+/**
+ * 图例（信息面板）：最大的 3 类（色点 + 名称 + 数值）加「其他」合计，≤2 行；估算值带「≈」，「估算」写在各项 title 里。
+ * 「其他」的色点是被合并各类的颜色条纹，title 列出它们的名字。
+ */
 export function ContextLegend({
 	parts,
 	contextWindow,
@@ -134,9 +138,26 @@ export function ContextLegend({
 	parts: readonly ContextPart[];
 	contextWindow: number;
 }): ReactNode {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const describe = usePartLabel();
-	const shown = bySize(parts);
+	const sorted = bySize(parts);
+	const top = sorted.slice(0, LEGEND_TOP);
+	const rest = sorted.slice(LEGEND_TOP);
+	// 只剩一类时不必合并
+	const shown = rest.length === 1 ? sorted : top;
+	const merged = rest.length > 1 ? rest : [];
+	const restTokens = merged.reduce((a, p) => a + p.tokens, 0);
+	const restNames = new Intl.ListFormat(i18n.language, {
+		type: "unit",
+	}).format(merged.map((p) => t(`report.ctx.${p.id}`)));
+	const stripes = merged
+		.slice(0, 4)
+		.map((p, i, all) => {
+			const from = (i / all.length) * 100;
+			const to = ((i + 1) / all.length) * 100;
+			return `${PART_COLOR[p.id]} ${from}% ${to}%`;
+		})
+		.join(", ");
 	return (
 		<ul className="mt-[9px] flex flex-wrap gap-x-3 gap-y-1 text-2xs text-faint">
 			{shown.map((p) => {
@@ -156,8 +177,27 @@ export function ContextLegend({
 					</li>
 				);
 			})}
-			{shown.some((p) => p.estimated) && (
-				<li className="whitespace-nowrap">≈ {t("report.ctx.estimated")}</li>
+			{merged.length > 0 && (
+				<li
+					title={partTitle(
+						t("report.ctx.other"),
+						restTokens,
+						contextWindow,
+						restNames,
+					)}
+					className="inline-flex items-center gap-1.5 whitespace-nowrap"
+				>
+					<i
+						aria-hidden
+						className="inline-block h-[7px] w-[7px] shrink-0 rounded-[2px]"
+						style={{ background: `linear-gradient(90deg, ${stripes})` }}
+					/>
+					{t("report.ctx.other")}
+					<b className="font-medium text-muted tabular-nums">
+						{merged.some((p) => p.estimated) && "≈"}
+						{formatTokens(restTokens)}
+					</b>
+				</li>
 			)}
 		</ul>
 	);

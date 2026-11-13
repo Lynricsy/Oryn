@@ -50,24 +50,27 @@ function EmptyLine({
 	);
 }
 
-/** 空的小节不再单独占一张卡：只留卡头一行（图标 + 标题 + 右侧一行小字）。外观与 `Card` 的卡头一致。 */
+/** 空的小节不单独占一张卡：只留卡头一行（图标 + 标题 + 右侧小字与可选的动作）。外观与 `Card` 的卡头一致。 */
 function EmptyCard({
 	title,
 	icon,
 	children,
+	action,
 }: {
 	title: string;
 	icon: IconName;
 	children: ReactNode;
+	action?: ReactNode;
 }) {
 	return (
-		<section className="rounded-lg border border-border bg-panel">
+		<section className="shrink-0 rounded-lg border border-border bg-panel">
 			<header className="flex h-9 items-center gap-2 px-3 font-medium text-muted text-xs">
 				<Icon name={icon} size={14} aria-hidden className="text-faint" />
 				<h3 className="shrink-0">{title}</h3>
 				<p className="min-w-0 flex-1 truncate text-right font-normal text-2xs text-faint">
 					{children}
 				</p>
+				{action}
 			</header>
 		</section>
 	);
@@ -318,6 +321,12 @@ function TodoSection({ threadId }: { threadId: string }) {
 	const phases = useThread(threadId, (s) => s.state?.todoPhases) ?? NO_PHASES;
 	const [draft, setDraft] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	// 没有待办时卡片只占一行；点「+」才展开出输入框并聚焦，空着离开就收回一行
+	const [adding, setAdding] = useState(false);
+	const inputRef = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (adding) inputRef.current?.focus();
+	}, [adding]);
 	const save = async (next: TodoPhase[]) => {
 		setError(null);
 		try {
@@ -354,6 +363,28 @@ function TodoSection({ threadId }: { threadId: string }) {
 	const total = tasks.filter((x) => x.status !== "abandoned").length;
 	const done = tasks.filter((x) => x.status === "completed").length;
 	const fold = useCardFold("todos");
+	if (tasks.length === 0 && !adding)
+		return (
+			<EmptyCard
+				title={t("panel.todos")}
+				icon="list"
+				action={
+					<IconButton
+						icon="plus"
+						size={13}
+						box="xs"
+						className="-mr-1.5"
+						label={t("panel.addTodo")}
+						onClick={() => {
+							if (fold.collapsed) fold.onToggle();
+							setAdding(true);
+						}}
+					/>
+				}
+			>
+				{t("panel.noTodos")}
+			</EmptyCard>
+		);
 	return (
 		<Card
 			title={t("panel.todos")}
@@ -457,9 +488,13 @@ function TodoSection({ threadId }: { threadId: string }) {
 			>
 				{/* 卡片里的输入框只用内嵌底色，不再画第三层边框；焦点环由全局 :focus-visible 给 */}
 				<input
+					ref={inputRef}
 					className="h-7 w-full rounded-md bg-inset px-2.5 text-fg text-xs placeholder:text-faint"
 					placeholder={t("panel.addTodo")}
 					value={draft}
+					onBlur={() => {
+						if (!draft.trim()) setAdding(false);
+					}}
 					onChange={(e) => setDraft(e.target.value)}
 				/>
 			</form>
@@ -497,13 +532,8 @@ function SubagentSection({ threadId }: { threadId: string }) {
 	const running = rows.filter(
 		(s) => s.status === "started" || s.status === "running",
 	).length;
-	// 没有子 agent 时卡片本身就只有一行（说明写在卡头），无可收起的内容
-	if (rows.length === 0)
-		return (
-			<EmptyCard title={t("panel.subagents")} icon="robot">
-				{t("panel.noSubagents")}
-			</EmptyCard>
-		);
+	// 没有子 agent 时不占位，等有了再出现
+	if (rows.length === 0) return null;
 	return (
 		<Card
 			title={t("panel.subagents")}

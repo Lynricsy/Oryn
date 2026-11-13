@@ -61,7 +61,7 @@ function RoleRow({
 					className={`h-2 w-2 shrink-0 rounded-full bg-[var(--role-solid)] ${ok ? "" : "opacity-40"}`}
 				/>
 				<span
-					className={`w-24 shrink-0 truncate font-medium ${ok ? "" : "text-ghost"}`}
+					className={`w-20 shrink-0 truncate font-medium sm:w-24 ${ok ? "" : "text-ghost"}`}
 				>
 					{roleLabel(slot)}
 				</span>
@@ -73,19 +73,20 @@ function RoleRow({
 							size={13}
 							className="shrink-0"
 						/>
-						<span className="min-w-0 flex-1 truncate text-muted text-xs">
-							{model}
+						{/* 预设级别被手动改过时，说明放在模型名下面一行，窄屏下也不挤掉模型名 */}
+						<span className="flex min-w-0 flex-1 flex-col">
+							<span className="truncate text-muted text-xs">{model}</span>
+							{overridden && (
+								<span
+									title={t("model.effectiveLevel")}
+									className="truncate text-2xs text-faint"
+								>
+									{t("model.currentLevel", { level: currentLevel })}
+								</span>
+							)}
 						</span>
 						{slot.thinkingLevel && (
 							<Badge title={t("model.presetLevel")}>{slot.thinkingLevel}</Badge>
-						)}
-						{overridden && (
-							<span
-								title={t("model.effectiveLevel")}
-								className="shrink-0 whitespace-nowrap text-2xs text-muted"
-							>
-								→ {t("model.currentLevel", { level: currentLevel })}
-							</span>
 						)}
 					</>
 				) : (

@@ -24,7 +24,6 @@
 			"fox": "Fox",
 			"graphite": "Graphite"
 		},
-		"desc": "Appearance is saved in this browser only.",
 		"theme": "Theme",
 		"avatar": "Agent avatar",
 		"avatarKind": {
@@ -54,8 +53,9 @@
 			"custom": "Custom"
 		},
 		"wallpaperUpload": "Upload image",
+		"wallpaperReplace": "Replace image",
 		"wallpaperRemove": "Remove image",
-		"wallpaperHint": "The image is saved in this browser only and is automatically blurred.",
+		"wallpaperHint": "Appearance and the wallpaper image are saved in this browser only; the image is automatically blurred.",
 		"wallpaperError": "Couldn't use this image: it failed to load or browser storage is full. Wallpaper unchanged."
 	},
 	"stat": {
@@ -395,7 +395,8 @@
 			"toolCalls": "Tool Calls",
 			"toolOutput": "Tool Output",
 			"free": "Free Space",
-			"estimated": "estimated"
+			"estimated": "estimated",
+			"other": "Other"
 		}
 	},
 	"model": {
@@ -408,7 +409,7 @@
 		"allModels": "All models",
 		"moreRoles": "More roles ({{n}})",
 		"presetLevel": "Level preset by this role",
-		"currentLevel": "now {{level}}",
+		"currentLevel": "changed to {{level}}",
 		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)",
 		"levelLabel": "Thinking: {{level}}",
 		"levels": {
@@ -498,7 +499,6 @@
 		"memChart": "Memory chart",
 		"memory": "Memory",
 		"noOrb": "This thread has no orb (read-only).",
-		"noSubagents": "No subagents.",
 		"noTodos": "No todos.",
 		"orb": "Orb",
 		"subagents": "Subagents",

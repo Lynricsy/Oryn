@@ -37,6 +37,7 @@ import { ModelLogo } from "../ui/ModelLogo";
 import {
 	Button,
 	Dialog,
+	EmptyState,
 	ErrorText,
 	Field,
 	Radio,
@@ -1140,7 +1141,9 @@ function AttachmentsDialog({
 			{q.isPending && <Spinner />}
 			<ErrorText error={q.error ?? error} />
 			{q.isSuccess && list.length === 0 && (
-				<p className="text-faint text-sm">{t("attachments.empty")}</p>
+				<EmptyState icon="attach" title={t("attachments.empty")}>
+					{t("attachments.hint")}
+				</EmptyState>
 			)}
 			<ul className="flex flex-col divide-y divide-border">
 				{list.map((a) => (
@@ -1192,7 +1195,9 @@ function AttachmentsDialog({
 					</li>
 				))}
 			</ul>
-			<p className="mt-3 text-faint text-xs">{t("attachments.hint")}</p>
+			{list.length > 0 && (
+				<p className="mt-3 text-faint text-xs">{t("attachments.hint")}</p>
+			)}
 		</Dialog>
 	);
 }

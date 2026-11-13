@@ -24,7 +24,6 @@
 			"fox": "狐橙",
 			"graphite": "石墨"
 		},
-		"desc": "外观设置只保存在这台设备的浏览器里。",
 		"theme": "主题",
 		"avatar": "Agent 头像",
 		"avatarKind": {
@@ -54,8 +53,9 @@
 			"custom": "自定义"
 		},
 		"wallpaperUpload": "上传图片",
+		"wallpaperReplace": "更换图片",
 		"wallpaperRemove": "移除图片",
-		"wallpaperHint": "图片只保存在这台设备的浏览器里，并会自动做强模糊处理。",
+		"wallpaperHint": "外观设置与壁纸图片只保存在这台设备的浏览器里，图片会自动做强模糊处理。",
 		"wallpaperError": "无法使用这张图片：读取失败，或浏览器存储空间不足。壁纸保持不变。"
 	},
 	"stat": {
@@ -395,7 +395,8 @@
 			"toolCalls": "工具调用",
 			"toolOutput": "工具输出",
 			"free": "剩余",
-			"estimated": "估算"
+			"estimated": "估算",
+			"other": "其他"
 		}
 	},
 	"model": {
@@ -408,7 +409,7 @@
 		"allModels": "全部模型",
 		"moreRoles": "更多角色（{{n}}）",
 		"presetLevel": "这个 role 预设的级别",
-		"currentLevel": "当前 {{level}}",
+		"currentLevel": "已改为 {{level}}",
 		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）",
 		"levelLabel": "思考级别：{{level}}",
 		"levels": {
@@ -498,7 +499,6 @@
 		"memChart": "内存曲线",
 		"memory": "内存",
 		"noOrb": "线程没有 orb（只读）。",
-		"noSubagents": "没有子 agent。",
 		"noTodos": "没有待办。",
 		"orb": "orb",
 		"subagents": "子 agent",

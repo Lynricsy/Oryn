@@ -1139,14 +1139,17 @@ function AgentConfigSettings() {
 
 // ---------------------------------------------------------------- 外观
 
-/** 主题色色块：各预设浅色 accent 的固定值（全站唯一允许的颜色字面量，另见 favicon）。 */
+/**
+ * 主题色色块：各预设 accent 在浅色 / 深色下的实际取值（与 index.css 的 `--accent-*` 一致），用 `light-dark()`
+ * 随当前明暗显示。全站唯一允许的颜色字面量（另见 favicon）。
+ */
 const SWATCH: Record<AccentName, string> = {
-	teal: "oklch(0.53 0.105 205)",
-	cobalt: "oklch(0.53 0.17 258)",
-	violet: "oklch(0.53 0.17 295)",
-	berry: "oklch(0.53 0.17 358)",
-	fox: "oklch(0.55 0.16 48)",
-	graphite: "oklch(0.3 0.015 260)",
+	teal: "light-dark(oklch(0.53 0.105 205), oklch(0.78 0.105 205))",
+	cobalt: "light-dark(oklch(0.53 0.17 258), oklch(0.78 0.17 258))",
+	violet: "light-dark(oklch(0.53 0.17 295), oklch(0.78 0.17 295))",
+	berry: "light-dark(oklch(0.53 0.17 358), oklch(0.78 0.17 358))",
+	fox: "light-dark(oklch(0.55 0.16 48), oklch(0.78 0.16 48))",
+	graphite: "light-dark(oklch(0.3 0.015 260), oklch(0.9 0.015 260))",
 };
 
 const MODE_ICON: Record<ThemeMode, IconName> = {
@@ -1202,7 +1205,7 @@ function ThemeSettings() {
 						role="radiogroup"
 						aria-label={t("appearance.accent")}
 						onKeyDown={radioKeys}
-						className="flex flex-wrap gap-x-4 gap-y-3"
+						className="grid w-fit grid-cols-6 gap-x-1 gap-y-3 sm:gap-x-4"
 					>
 						{ACCENTS.map((a) => {
 							const on = accent === a;
@@ -1222,7 +1225,7 @@ function ThemeSettings() {
 									{/* 细内描边：色块和卡片底色接近时（深色下的石墨）也能一眼分辨边界 */}
 									<span
 										aria-hidden
-										className={`grid h-7 w-7 place-items-center rounded-full text-white shadow-xs inset-ring-1 inset-ring-fg/20 ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
+										className={`grid h-7 w-7 place-items-center rounded-full text-ink-fg shadow-xs inset-ring-1 inset-ring-fg/20 ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
 										style={{ background: SWATCH[a] }}
 									>
 										{on && <Icon name="check" size={14} weight="bold" />}
@@ -1234,7 +1237,6 @@ function ThemeSettings() {
 					</div>
 				</div>
 				<WallpaperPicker />
-				<p className="text-faint text-xs">{t("appearance.desc")}</p>
 			</div>
 		</Card>
 	);
@@ -1335,33 +1337,42 @@ function WallpaperPicker() {
 					);
 				})}
 			</div>
-			<div className="flex flex-wrap items-center gap-2">
-				<label className="inline-flex h-7 cursor-pointer select-none items-center gap-1 rounded-md border border-border bg-panel px-2.5 font-medium text-fg text-xs shadow-xs transition-colors duration-150 hover:bg-hover has-[:disabled]:pointer-events-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--ring)] has-[:focus-visible]:outline-offset-2 has-[:disabled]:opacity-50">
-					<Icon name="upload" size={13} />
-					{t("appearance.wallpaperUpload")}
-					<input
-						ref={fileRef}
-						type="file"
-						accept="image/*"
-						className="sr-only"
+			{/* 没有图片时「自定义」磁贴就是上传入口；有图片后才出现「更换 / 移除」 */}
+			<input
+				ref={fileRef}
+				type="file"
+				accept="image/*"
+				className="sr-only"
+				tabIndex={-1}
+				aria-hidden
+				disabled={busy}
+				onChange={onFile}
+			/>
+			{image && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button
+						size="sm"
+						icon="upload"
 						disabled={busy}
-						onChange={onFile}
-					/>
-				</label>
-				<Button
-					size="sm"
-					variant="ghost"
-					icon="trash"
-					disabled={!image || busy}
-					onClick={() => {
-						themeStore.getState().removeCustomWallpaper();
-						setImage(null);
-						setError(null);
-					}}
-				>
-					{t("appearance.wallpaperRemove")}
-				</Button>
-			</div>
+						onClick={() => fileRef.current?.click()}
+					>
+						{t("appearance.wallpaperReplace")}
+					</Button>
+					<Button
+						size="sm"
+						variant="ghost"
+						icon="trash"
+						disabled={busy}
+						onClick={() => {
+							themeStore.getState().removeCustomWallpaper();
+							setImage(null);
+							setError(null);
+						}}
+					>
+						{t("appearance.wallpaperRemove")}
+					</Button>
+				</div>
+			)}
 			<p className="text-faint text-xs">{t("appearance.wallpaperHint")}</p>
 			<ErrorText error={error} />
 		</div>

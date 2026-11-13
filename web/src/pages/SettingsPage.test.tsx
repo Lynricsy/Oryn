@@ -336,7 +336,9 @@ describe("设置 → 外观", () => {
 			accent: "teal",
 			wallpaper: "waves",
 		});
-		expect(screen.getByRole("button", { name: "移除图片" })).toBeDisabled();
+		// 没有图片时上传只有「自定义」磁贴一个入口，不再另有上传 / 移除按钮
+		expect(screen.queryByRole("button", { name: "移除图片" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "上传图片" })).toBeNull();
 	});
 
 	it("方向键在主题色之间移动并选中", () => {
