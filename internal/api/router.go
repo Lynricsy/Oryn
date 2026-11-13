@@ -40,7 +40,8 @@ type Server struct {
 	area
 }
 
-// publicPaths 是 /api/v1 下免鉴权的路径；另外 /provider/v1/ 前缀由 provider 令牌自行鉴权。
+// publicPaths 是 /api/v1 下免鉴权的路径；另外 /provider/v1/ 前缀由 provider 令牌自行鉴权，
+// /api/v1/public/ 前缀是公开分享的匿名只读接口（以 slug 为能力令牌）。
 var publicPaths = map[string]bool{
 	"/healthz":                   true,
 	"/api/v1/auth/setup/begin":   true,
@@ -71,7 +72,8 @@ func NewRouter(s *Server) http.Handler {
 					// 含编码字符（如 %2F）的路径一律按受保护处理：chi 按 RawPath 路由，
 					// 解码后的 Path 与实际命中的路由可能不一致。
 					public := req.URL.RawPath == "" &&
-						(publicPaths[req.URL.Path] || strings.HasPrefix(req.URL.Path, "/provider/v1/"))
+						(publicPaths[req.URL.Path] || strings.HasPrefix(req.URL.Path, "/provider/v1/") ||
+							strings.HasPrefix(req.URL.Path, "/api/v1/public/"))
 					if public {
 						next.ServeHTTP(w, req)
 						return

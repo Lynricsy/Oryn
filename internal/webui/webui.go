@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
 	"strings"
@@ -13,6 +14,11 @@ import (
 
 //go:embed all:dist
 var dist embed.FS
+
+func init() {
+	// Go 内置 MIME 表没有 .webmanifest；配合 nosniff，错误的类型会让浏览器拒收 PWA 清单
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // ContentSecurityPolicy 是 SPA 页面与静态资源的 CSP：脚本只许同源（Vite 产物无内联脚本），
 // 样式允许内联（mermaid 生成的 SVG 带 <style>、KaTeX 与 React 的 style 属性），图片放行 data: / blob:

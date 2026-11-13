@@ -14,17 +14,23 @@ import (
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/portal"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/secrets"
+	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/threads"
+	"github.com/Lynricsy/Oryn/internal/webui"
 )
 
 // evalInterval 是 orb 空闲评估周期；0 = orbs 默认（30s）。测试可调小。
 var evalInterval time.Duration
+
+// notifyDoneDelay / notifyInputDelay 是通知去抖时长；0 = notify 默认（3s / 2s）。测试可调小。
+var notifyDoneDelay, notifyInputDelay time.Duration
 
 // Server 持有控制面全部组件。
 type Server struct {
@@ -39,6 +45,8 @@ type Server struct {
 	Threads     *threads.Service
 	Attachments *attachments.Service
 	Hub         *realtime.Hub
+	Notify      *notify.Service
+	Share       *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
@@ -109,12 +117,25 @@ func (s *Server) init(ctx context.Context) error {
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
+	s.Notify, err = notify.New(notify.Config{
+		PublicURL: cfg.PublicURL, DataDir: cfg.DataDir, Box: box, DoneDelay: notifyDoneDelay, InputDelay: notifyInputDelay,
+	}, s.Store, s.Threads, s.Hub)
+	if err != nil {
+		return err
+	}
+	s.Threads.SetObserver(s.Notify)
+	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
+	go s.Notify.Run(runCtx)
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub}
+	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
+	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
+	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
+	mounts["/f/*"] = s.Share.FileHandler()
 	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
@@ -136,6 +157,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}
+	s.API.Shares = &api.ShareDeps{Service: s.Share}
+	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

@@ -2,6 +2,7 @@
 // 连接建立后推 `index`，之后 `index.patch`；`sub` 时先发 `thread.snapshot`，再分批补发条目，
 // 然后转实时；`cmd` 的应答只回发起连接；`ui.response` 先到先得；待发超过 8MiB 的慢连接被断开。
 // 终端输出（M3）只发给 `term.watch` 开启的订阅，单连接待发超过 TermLag 时丢弃并改发 `term.lagged`，不断开。
+// 公开分享（M5）的匿名连接在独立的 pubs 表里（public.go），只收到显式写给它的消息。
 package realtime
 
 import (
@@ -58,6 +59,9 @@ type Hub struct {
 	// MaxPending / TermLag 可在测试中调小。
 	MaxPending int
 	TermLag    int
+	// MaxPublicPerShare / MaxPublicTotal 是匿名连接名额（默认 64 / 512），可在测试中调小。
+	MaxPublicPerShare int
+	MaxPublicTotal    int
 
 	nextConn atomic.Uint64
 
@@ -65,12 +69,24 @@ type Hub struct {
 	rev   int64
 	conns map[*conn]struct{}
 	subs  map[string]map[*conn]*sub
+	// pubs 是公开分享的匿名连接（线程 id → 连接），与 conns / subs 互不相交：
+	// 只有显式写给它的消息（public.go）才到得了匿名连接。
+	pubs        map[string]map[*conn]*pubSub
+	pubTotal    int
+	pubPerShare map[string]int
+	// revokedShares 是已撤销的分享 id：撤销不可逆，晚到的连接据此在登记前被拒（条目数 = 撤销次数）。
+	revokedShares map[string]bool
 }
 
 // New 创建 hub 并设为 svc 的 Sink；rev 可为 nil。valid 在连接登记后复核票据主体（H3：票据签发后、
 // 兑换前主体被吊销时，吊销事件发生在连接登记之前、关不掉它）。
 func New(svc *threads.Service, tickets TicketRedeemer, rev Revocations, valid PrincipalChecker) *Hub {
-	h := &Hub{svc: svc, tickets: tickets, valid: valid, MaxPending: MaxPendingBytes, TermLag: TermLagBytes, conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{}}
+	h := &Hub{
+		svc: svc, tickets: tickets, valid: valid, MaxPending: MaxPendingBytes, TermLag: TermLagBytes,
+		MaxPublicPerShare: MaxPublicPerShare, MaxPublicTotal: MaxPublicTotal,
+		conns: map[*conn]struct{}{}, subs: map[string]map[*conn]*sub{},
+		pubs: map[string]map[*conn]*pubSub{}, pubPerShare: map[string]int{}, revokedShares: map[string]bool{},
+	}
 	svc.SetSink(h)
 	if rev != nil {
 		rev.Subscribe(h.revoke)
@@ -86,12 +102,19 @@ type conn struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 
+	// public 为真表示公开分享的匿名连接（不在 conns / subs 里，无主体）。
+	public bool
+
 	mu    sync.Mutex
 	queue [][]byte
 	// pending 是已排队与暂存（补发期间的 sub.buf、index 发出前的 indexBuf）消息的总字节数，统一受 MaxPending 约束。
 	pending int
 	closed  bool
-	wake    chan struct{}
+	// closing 为真时不再接受新消息，队列写完后以 closeCode 关闭（finish）。
+	closing     bool
+	closeCode   websocket.StatusCode
+	closeReason string
+	wake        chan struct{}
 
 	// 以下由 Hub.mu 保护
 	indexReady bool
@@ -161,7 +184,9 @@ func (h *Hub) drop(c *conn) {
 		}
 	}
 	h.mu.Unlock()
-	h.svc.Focus(context.Background(), c.id, "")
+	if !c.public {
+		h.svc.Focus(context.Background(), c.id, "")
+	}
 }
 
 func (h *Hub) revoke(kind, id string) {
@@ -238,7 +263,7 @@ func (c *conn) release(bs [][]byte) {
 		return
 	}
 	c.mu.Lock()
-	if c.closed {
+	if c.closed || c.closing {
 		c.mu.Unlock()
 		return
 	}
@@ -266,7 +291,12 @@ func (c *conn) writeLoop() {
 		c.mu.Lock()
 		q := c.queue
 		c.queue = nil
+		done := c.closing && len(q) == 0
 		c.mu.Unlock()
+		if done {
+			c.close(c.closeCode, c.closeReason)
+			return
+		}
 		for _, b := range q {
 			wctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
 			err := c.ws.Write(wctx, websocket.MessageText, b)
@@ -289,6 +319,26 @@ func (c *conn) writeLoop() {
 		}
 	}
 }
+
+// finish 排入最后一条消息，写完后以 code 关闭连接；此后的消息一律丢弃。
+func (c *conn) finish(b []byte, code websocket.StatusCode, reason string) {
+	c.mu.Lock()
+	if c.closed || c.closing {
+		c.mu.Unlock()
+		return
+	}
+	c.closing, c.closeCode, c.closeReason = true, code, reason
+	c.pending += len(b)
+	c.queue = append(c.queue, b)
+	c.mu.Unlock()
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// waitClosed 等到连接关闭（writeLoop 写完 finish 的消息并完成关闭握手）。
+func (c *conn) waitClosed() { <-c.ctx.Done() }
 
 func (c *conn) close(code websocket.StatusCode, reason string) {
 	c.mu.Lock()
@@ -576,25 +626,45 @@ func (h *Hub) patch(upsert []apigen.Thread, remove []string) {
 	h.broadcastLocked(b)
 }
 
-// IndexUpsert 实现 threads.Sink。
-func (h *Hub) IndexUpsert(t apigen.Thread) { h.patch([]apigen.Thread{t}, nil) }
+// IndexUpsert 实现 threads.Sink；状态或标题变化时匿名连接另收 share.state。
+func (h *Hub) IndexUpsert(t apigen.Thread) {
+	h.patch([]apigen.Thread{t}, nil)
+	h.mu.Lock()
+	h.publicStateLocked(t)
+	h.mu.Unlock()
+}
 
-// IndexRemove 实现 threads.Sink。
+// IndexRemove 实现 threads.Sink；线程删除时它的匿名连接收到 share.revoked 后关闭。
 func (h *Hub) IndexRemove(id string) {
 	h.patch(nil, []string{id})
 	h.mu.Lock()
 	delete(h.subs, id)
+	h.closeThreadPublicLocked(id)
 	h.mu.Unlock()
 }
 
 // Entries 实现 threads.Sink。
 func (h *Hub) Entries(threadID string, es []threads.Entry, leaf *string, lastSeq int64) {
 	h.toThread(threadID, entriesMsg{Type: "entries", ThreadID: threadID, Entries: es, LeafEntryID: leaf, LastSeq: lastSeq})
+	h.mu.Lock()
+	if len(h.pubs[threadID]) > 0 {
+		h.publicEntriesLocked(threadID, es, leaf, lastSeq)
+	}
+	h.mu.Unlock()
 }
 
-// Frame 实现 threads.Sink。
+// Frame 实现 threads.Sink；白名单内的帧另发给匿名连接（不带 threadId）。
 func (h *Hub) Frame(threadID string, frame json.RawMessage) {
 	h.toThread(threadID, map[string]any{"type": "frame", "threadId": threadID, "frame": frame})
+	h.mu.Lock()
+	if len(h.pubs[threadID]) > 0 && publicFrameTypes[frameType(frame)] {
+		b := make([]byte, 0, len(frame)+28)
+		b = append(b, `{"type":"frame","frame":`...)
+		b = append(b, frame...)
+		b = append(b, '}')
+		h.toPublicLocked(threadID, b)
+	}
+	h.mu.Unlock()
 }
 
 // UIResolved 实现 threads.Sink。
@@ -605,11 +675,21 @@ func (h *Hub) UIResolved(threadID, requestID string) {
 // LiveReset 实现 threads.Sink。
 func (h *Hub) LiveReset(threadID string) {
 	h.toThread(threadID, map[string]string{"type": "live.reset", "threadId": threadID})
+	h.mu.Lock()
+	if len(h.pubs[threadID]) > 0 {
+		h.toPublicLocked(threadID, marshal(apigen.WsPublicLiveReset{Type: apigen.WsPublicLiveResetTypeLiveReset}))
+	}
+	h.mu.Unlock()
 }
 
 // TranscriptReset 实现 threads.Sink。
 func (h *Hub) TranscriptReset(threadID string, rev int64) {
 	h.toThread(threadID, map[string]any{"type": "transcript.reset", "threadId": threadID, "transcriptRev": rev})
+	h.mu.Lock()
+	if len(h.pubs[threadID]) > 0 {
+		h.toPublicLocked(threadID, marshal(apigen.WsPublicTranscriptReset{Type: apigen.WsPublicTranscriptResetTypeTranscriptReset, TranscriptRev: rev}))
+	}
+	h.mu.Unlock()
 }
 
 // PlanResolved 实现 threads.Sink。

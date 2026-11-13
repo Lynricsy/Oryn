@@ -140,6 +140,31 @@ func (v *Vault) List(ctx context.Context) ([]Meta, error) {
 	return out, nil
 }
 
+// All 返回全部密钥的明文（名称 → 值），供公开分享的密钥扫描使用；解密失败的跳过并记日志。
+func (v *Vault) All(ctx context.Context) (map[string]string, error) {
+	rows, err := v.st.Q.ListSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		row, err := v.st.Q.GetSecretByName(ctx, r.Name)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue // 列出之后被删除
+		}
+		if err != nil {
+			return nil, err
+		}
+		val, err := v.open(row)
+		if err != nil {
+			slog.Warn("密钥扫描：解密失败，跳过", "name", r.Name, "err", err)
+			continue
+		}
+		out[r.Name] = val
+	}
+	return out, nil
+}
+
 // Delete 删除密钥；不存在时返回 false。
 func (v *Vault) Delete(ctx context.Context, name string) (bool, error) {
 	n, err := v.st.Q.DeleteSecretByName(ctx, name)

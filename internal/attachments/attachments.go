@@ -146,6 +146,29 @@ func truncateUTF8(s string, n int) string {
 	return s[:n]
 }
 
+// Disposition 构造 RFC 6266 的附件头，文件名按 RFC 5987 以 UTF-8 百分号编码放进 filename*。
+// 附件下载、orb 文件下载与公开文件共用这一处。
+func Disposition(name string) string {
+	if name == "" || name == "." || name == "/" {
+		name = "download"
+	}
+	const attrChar = "!#$&+-.^_`|~"
+	var b strings.Builder
+	b.WriteString("attachment; filename*=UTF-8''")
+	for i := range len(name) {
+		c := name[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte(attrChar, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		const hex = "0123456789ABCDEF"
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0xf])
+	}
+	return b.String()
+}
+
 var idRe = regexp.MustCompile(`^att_[0-9A-Z]{26}$`)
 
 // ValidID 报告 id 是否为附件 id 形态。

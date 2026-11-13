@@ -11,6 +11,9 @@ type area struct {
 	Attachments *AttachmentsDeps
 	// PortalShares 为 nil（未配置 portal_domain）时分享接口回 409 portal_disabled。
 	PortalShares *PortalDeps
+	// Shares 是线程公开分享与文件发布（shares.go）；Notify 是通知与渠道（notifications.go）。
+	Shares *ShareDeps
+	Notify *NotifyDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

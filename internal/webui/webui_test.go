@@ -84,3 +84,14 @@ func TestFrameSrc(t *testing.T) {
 		t.Fatalf("未启用 portal 时 CSP 应不变：%q", got)
 	}
 }
+
+func TestManifestContentType(t *testing.T) {
+	h := handler(fstest.MapFS{
+		"index.html":           {Data: []byte(`<!doctype html>`)},
+		"manifest.webmanifest": {Data: []byte(`{"name":"Oryn"}`)},
+	}, "")
+	rec := get(t, h, "/manifest.webmanifest")
+	if got := rec.Header().Get("Content-Type"); got != "application/manifest+json" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -58,6 +59,27 @@ func (s *Server) attachmentsSvc(w http.ResponseWriter) (*attachments.Service, bo
 	return s.Attachments.Service, true
 }
 
+// fillPublicURLs 为已发布的附件填 publicUrl（分享服务未装配或查询失败时省略）。
+func (s *Server) fillPublicURLs(ctx context.Context, list []*apigen.Attachment) {
+	if s.Shares == nil || s.Shares.Service == nil || len(list) == 0 {
+		return
+	}
+	idList := make([]string, len(list))
+	for i, a := range list {
+		idList[i] = a.ID
+	}
+	urls, err := s.Shares.Service.PublicURLs(ctx, idList)
+	if err != nil {
+		slog.Warn("api: 读取附件公开 URL 失败", "err", err)
+		return
+	}
+	for _, a := range list {
+		if u, ok := urls[a.ID]; ok {
+			a.PublicURL = &u
+		}
+	}
+}
+
 func attachmentAPI(a db.Attachment) apigen.Attachment {
 	return apigen.Attachment{ID: a.ID, ThreadID: a.ThreadID, Name: a.Name, Mime: a.Mime, Size: a.Size, Sha256: a.Sha256, CreatedAt: a.CreatedAt}
 }
@@ -81,7 +103,9 @@ func (s *Server) UploadAttachment(w http.ResponseWriter, r *http.Request, params
 		writeAttachErr(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusCreated, attachmentAPI(a))
+	out := attachmentAPI(a)
+	s.fillPublicURLs(r.Context(), []*apigen.Attachment{&out})
+	WriteJSON(w, http.StatusCreated, out)
 }
 
 // ListThreadAttachments 对应 `GET threads/{id}/attachments`。
@@ -99,6 +123,11 @@ func (s *Server) ListThreadAttachments(w http.ResponseWriter, r *http.Request, i
 	for _, a := range list {
 		out.Attachments = append(out.Attachments, attachmentAPI(a))
 	}
+	ptrs := make([]*apigen.Attachment, len(out.Attachments))
+	for i := range out.Attachments {
+		ptrs[i] = &out.Attachments[i]
+	}
+	s.fillPublicURLs(r.Context(), ptrs)
 	WriteJSON(w, http.StatusOK, out)
 }
 
@@ -121,7 +150,7 @@ func (s *Server) GetAttachmentContent(w http.ResponseWriter, r *http.Request, id
 		h.Set("Content-Disposition", "inline")
 	} else {
 		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Content-Disposition", attachmentDisposition(a.Name))
+		h.Set("Content-Disposition", attachments.Disposition(a.Name))
 	}
 	h.Set("Cache-Control", "private, no-cache")
 	h.Set("X-Content-Type-Options", "nosniff")
