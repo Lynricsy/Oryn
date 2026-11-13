@@ -356,7 +356,7 @@ export function Composer({
 						</button>
 					)}
 					{/* 手机上模型名多截一点：agent 工作时多出停止钮，仍能一行放下，输入坞不随每轮工作忽高忽低 */}
-					<span className="contents max-sm:[&>button]:max-w-28">
+					<span className="contents max-sm:[&>button]:max-w-32">
 						<ModelChip threadId={threadId} />
 					</span>
 					<ContextRing threadId={threadId} />
