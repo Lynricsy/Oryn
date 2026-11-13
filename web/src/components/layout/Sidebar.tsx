@@ -419,7 +419,6 @@ export function Sidebar(): ReactNode {
 				<Button
 					variant="primary"
 					size="sm"
-					icon="plus"
 					className="w-7 px-0"
 					aria-label={t("sidebar.newThread")}
 					title={t("sidebar.newThread")}
@@ -427,7 +426,9 @@ export function Sidebar(): ReactNode {
 						uiStore.getState().setSidebar(false);
 						navigate("/");
 					}}
-				/>
+				>
+					<Icon name="plus" size={15} weight="bold" />
+				</Button>
 			</div>
 			<div className="shrink-0 px-2.5 pb-2">
 				<div className="flex h-8 items-center gap-2 rounded-md border border-border bg-inset pr-1 pl-2.5 text-faint transition-colors duration-150 focus-within:border-accent/60">
