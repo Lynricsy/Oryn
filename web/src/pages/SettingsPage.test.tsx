@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	fireEvent,
 	render,
 	screen,
@@ -17,9 +18,16 @@ import {
 	vi,
 } from "vitest";
 import i18n from "../i18n";
+import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
 import type { SettingsSection } from "./SettingsPage";
 import { SettingsPage } from "./SettingsPage";
+
+// 壁纸处理要真解码图片，jsdom 做不到：换成测试里手动兑现的 promise，其余（存取图片）用真实现
+vi.mock("../lib/wallpaper", async (importOriginal) => ({
+	...(await importOriginal<object>()),
+	processWallpaper: vi.fn(),
+}));
 
 // 编辑器换成 textarea：这里测设置页接线，CodeMirror 本身另有测试
 vi.mock("../components/editor/CodeEditor", () => ({
@@ -52,6 +60,9 @@ let calls: Call[] = [];
 let agentFiles: Record<string, string> = {};
 let agentPuts: { path: string; body: string }[] = [];
 let avatars: Record<string, { avatarIcon?: string; avatarImage?: string }> = {};
+/** 非空时头像 GET 先取当时的值再等它兑现：模拟 PUT 之前发出、之后才到的旧读取。 */
+let avatarGetGate: Promise<void> | null = null;
+let avatarGetsServed = 0;
 
 async function agentConfig(req: Request, url: URL): Promise<Response> {
 	if (url.pathname === "/api/v1/agent-config/files")
@@ -133,7 +144,12 @@ const fetchMock = vi.fn(
 		if (avatarPath) {
 			const who = avatarPath[1] ?? "";
 			if (req.method === "PUT") avatars[who] = JSON.parse(text);
-			return Response.json(avatars[who] ?? {});
+			const snapshot = avatars[who] ?? {};
+			if (req.method === "GET" && avatarGetGate) {
+				await avatarGetGate;
+				avatarGetsServed++;
+			}
+			return Response.json(snapshot);
 		}
 		if (url.pathname === "/api/v1/projects")
 			return Response.json({ projects: [PROJECT] });
@@ -157,6 +173,15 @@ function setup(section: SettingsSection = "git-identity") {
 }
 
 const writes = () => calls.filter((c) => c.method !== "GET");
+
+/** 手动兑现的 promise（tsconfig 的 lib 没有 `Promise.withResolvers`）。 */
+function deferred<T>() {
+	let resolve: (v: T) => void = () => undefined;
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
 
 describe("设置 → Git 身份", () => {
 	beforeEach(() => {
@@ -287,6 +312,8 @@ describe("设置 → 外观", () => {
 			tone: undefined,
 		});
 		avatars = {};
+		avatarGetGate = null;
+		avatarGetsServed = 0;
 		calls = [];
 		vi.stubGlobal("fetch", fetchMock);
 	});
@@ -383,6 +410,68 @@ describe("设置 → 外观", () => {
 			]);
 		},
 	);
+
+	it("头像保存时在途的旧读取后到，也不会把头像还原成旧值", async () => {
+		const gate = deferred<void>();
+		avatarGetGate = gate.promise;
+		setup("appearance");
+		const grid = (
+			await screen.findAllByRole("group", {
+				name: i18n.t("appearance.avatarGlyphs"),
+			})
+		)[0] as HTMLElement;
+		const fox = () => within(grid).getByRole("button", { name: "🦊" });
+		fireEvent.click(fox());
+		await waitFor(() => expect(fox()).toHaveAttribute("aria-pressed", "true"));
+		// 页面打开时发出的两个 GET（读到的是保存前的 {}）这时才到
+		await act(async () => {
+			gate.resolve();
+			await gate.promise;
+		});
+		await waitFor(() => expect(avatarGetsServed).toBe(2));
+		await act(async () => {});
+		expect(fox()).toHaveAttribute("aria-pressed", "true");
+		expect(writes().map((c) => c.body)).toEqual([{ avatarIcon: "🦊" }]);
+	});
+
+	const IMAGE = "data:image/png;base64,AAAA";
+	const pick = (container: HTMLElement) => {
+		const input = container.querySelector<HTMLInputElement>(
+			'input[type="file"][accept="image/*"]',
+		);
+		if (!input) throw new Error("没有壁纸上传入口");
+		fireEvent.change(input, {
+			target: { files: [new File(["x"], "bg.png", { type: "image/png" })] },
+		});
+	};
+
+	it("壁纸上传途中改选了内置壁纸：上传结果不再覆盖这次选择", async () => {
+		const done = deferred<ProcessedWallpaper>();
+		vi.mocked(processWallpaper).mockReturnValueOnce(done.promise);
+		const { container } = setup("appearance");
+		pick(container);
+		fireEvent.click(screen.getByRole("radio", { name: "Tahoe 波" }));
+		await act(async () => {
+			done.resolve({ url: IMAGE, tone: [0.2, 0.8], width: 1, height: 1 });
+			await done.promise;
+		});
+		expect(themeStore.getState().wallpaper).toBe("waves");
+		expect(document.documentElement.dataset.wallpaper).toBe("waves");
+	});
+
+	it("上传途中离开设置页、期间没有别的选择：上传完成后仍换成自定义壁纸", async () => {
+		const done = deferred<ProcessedWallpaper>();
+		vi.mocked(processWallpaper).mockReturnValueOnce(done.promise);
+		const view = setup("appearance");
+		pick(view.container);
+		view.unmount();
+		await act(async () => {
+			done.resolve({ url: IMAGE, tone: [0.2, 0.8], width: 1, height: 1 });
+			await done.promise;
+		});
+		expect(themeStore.getState().wallpaper).toBe("custom");
+		expect(document.documentElement.dataset.wallpaper).toBe("custom");
+	});
 });
 
 describe("设置 → 项目图标", () => {

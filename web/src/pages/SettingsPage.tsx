@@ -18,9 +18,8 @@ import { NavLink, useNavigate } from "react-router";
 import { api, type Project, type Schemas, unwrap } from "../api/client";
 import {
 	type AvatarOwner,
-	avatarIdentityKey,
-	putAvatarIdentity,
 	qk,
+	saveAvatarIdentity,
 	useAvatarIdentity,
 	useDevices,
 	useGitIdentity,
@@ -1002,6 +1001,8 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 							body: { name: name.trim(), email: email.trim() },
 						}),
 					);
+					// 页面打开时发出的旧读取后到会把缓存还原，先取消再写回
+					await qc.cancelQueries({ queryKey: qk.gitIdentity });
 					qc.setQueryData(qk.gitIdentity, res);
 					setName(res.identity?.name ?? "");
 					setEmail(res.identity?.email ?? "");
@@ -1050,6 +1051,7 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 							setSaved(false);
 							void clear.run(async () => {
 								await unwrap(api.DELETE("/api/v1/settings/git-identity"));
+								await qc.cancelQueries({ queryKey: qk.gitIdentity });
 								qc.setQueryData(qk.gitIdentity, {});
 								setName("");
 								setEmail("");
@@ -1262,13 +1264,19 @@ function WallpaperPicker() {
 		if (!file) return;
 		setBusy(true);
 		setError(null);
+		// 代次记在 theme store 里：上传途中改选了别的壁纸，结果就作废；离开设置页（卸载）不影响
+		const gen = themeStore.getState().beginWallpaperUpload();
 		void processWallpaper(file)
 			.then(({ url, tone }) => {
 				// 存储失败时抛错，壁纸保持原样
-				themeStore.getState().setCustomWallpaper(url, tone);
-				setImage(url);
+				if (themeStore.getState().setCustomWallpaper(url, tone, gen))
+					setImage(url);
 			})
-			.catch(() => setError(new Error(t("appearance.wallpaperError"))))
+			.catch(() => {
+				// 已被新的壁纸选择取代的上传，失败也不再提示
+				if (themeStore.getState().wallpaperGen === gen)
+					setError(new Error(t("appearance.wallpaperError")));
+			})
 			.finally(() => setBusy(false));
 	};
 	const thumb = (w: (typeof WALLPAPERS)[number], on: boolean) => (
@@ -1421,12 +1429,7 @@ function AvatarSettings({ who }: { who: AvatarOwner }) {
 			: "default";
 	// PUT 整体替换：头像图片与图标字形互斥，`{}` = 恢复默认
 	const put = (body: Schemas["AvatarIdentity"]) =>
-		save.run(async () => {
-			qc.setQueryData(
-				avatarIdentityKey(who),
-				await putAvatarIdentity(who, body),
-			);
-		});
+		save.run(() => saveAvatarIdentity(qc, who, body));
 	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		e.target.value = "";
@@ -1442,10 +1445,7 @@ function AvatarSettings({ who }: { who: AvatarOwner }) {
 						: t("appearance.avatarDecodeFailed"),
 				);
 			}
-			qc.setQueryData(
-				avatarIdentityKey(who),
-				await putAvatarIdentity(who, { avatarImage }),
-			);
+			await saveAvatarIdentity(qc, who, { avatarImage });
 		});
 	};
 	return (

@@ -45,12 +45,22 @@ export interface StoredTheme {
 }
 
 export interface ThemeState extends StoredTheme {
+	/**
+	 * 壁纸选择代次（不持久化）：每次选择壁纸（内置、自定义、移除、开始上传）加一。
+	 * 上传是异步的，完成时代次没变才应用，免得覆盖用户上传途中做的新选择。
+	 */
+	wallpaperGen: number;
 	setMode(m: ThemeMode): void;
 	setAccent(a: AccentName): void;
 	/** 选内置壁纸；选 custom 时本机须已有图片，否则忽略 */
 	setWallpaper(w: WallpaperName): void;
-	/** 存入处理好的图片并切到 custom；存储失败抛 WallpaperStorageError，状态不变 */
-	setCustomWallpaper(url: string, tone: WallpaperTone): void;
+	/** 开始一次自定义壁纸上传，返回它的代次，交给完成时的 {@link ThemeState.setCustomWallpaper} */
+	beginWallpaperUpload(): number;
+	/**
+	 * 存入处理好的图片并切到 custom；存储失败抛 WallpaperStorageError，状态不变。
+	 * 传了 `gen` 且之后已有新的壁纸选择时什么也不做，返回 false。
+	 */
+	setCustomWallpaper(url: string, tone: WallpaperTone, gen?: number): boolean;
 	/** 删除图片并回到默认壁纸 */
 	removeCustomWallpaper(): void;
 	cycleMode(): void;
@@ -184,20 +194,32 @@ export const themeStore: StoreApi<ThemeState> = createStore<ThemeState>(
 			set(patch);
 			save(get());
 		};
+		const nextGen = () => {
+			const wallpaperGen = get().wallpaperGen + 1;
+			set({ wallpaperGen });
+			return wallpaperGen;
+		};
 		return {
 			...load(),
+			wallpaperGen: 0,
 			setMode: (mode) => commit({ mode }),
 			setAccent: (accent) => commit({ accent }),
 			setWallpaper(wallpaper) {
 				if (wallpaper === "custom" && !readWallpaperImage()) return;
+				nextGen();
 				commit({ wallpaper });
 			},
-			setCustomWallpaper(url, tone) {
+			beginWallpaperUpload: nextGen,
+			setCustomWallpaper(url, tone, gen) {
+				if (gen !== undefined && gen !== get().wallpaperGen) return false;
 				storeWallpaperImage(url);
+				nextGen();
 				commit({ wallpaper: "custom", tone });
+				return true;
 			},
 			removeCustomWallpaper() {
 				clearWallpaperImage();
+				nextGen();
 				commit({ wallpaper: DEFAULT.wallpaper, tone: undefined });
 			},
 			cycleMode() {

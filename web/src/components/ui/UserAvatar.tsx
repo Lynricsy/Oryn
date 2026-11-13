@@ -9,26 +9,30 @@ import { firstGrapheme } from "./data";
 import { Icon } from "./icons";
 
 export function UserAvatar({ size = 20 }: { size?: number }): ReactNode {
-	const { data } = useUserIdentity();
-	const name = useGitIdentity().data?.identity?.name.trim();
+	const { data, isPending } = useUserIdentity();
 	return (
 		<AvatarTile
 			of="user"
 			identity={data}
 			size={size}
 			tone="neutral"
-			fallback={
-				name ? (
-					<span
-						className="font-semibold"
-						style={{ fontSize: Math.round(size * 0.5) }}
-					>
-						{firstGrapheme(name)}
-					</span>
-				) : (
-					<Icon name="user" size={Math.round(size * 0.65)} />
-				)
-			}
+			// 头像设置还没读到时先留空：设置了头像的用户不必去读 git 身份
+			fallback={isPending ? null : <DefaultGlyph size={size} />}
 		/>
+	);
+}
+
+/** 默认头像的内容；git 身份只在这里读，设置了头像时不发请求。 */
+function DefaultGlyph({ size }: { size: number }): ReactNode {
+	const name = useGitIdentity().data?.identity?.name.trim();
+	return name ? (
+		<span
+			className="font-semibold"
+			style={{ fontSize: Math.round(size * 0.5) }}
+		>
+			{firstGrapheme(name)}
+		</span>
+	) : (
+		<Icon name="user" size={Math.round(size * 0.65)} />
 	);
 }

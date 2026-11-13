@@ -1,5 +1,10 @@
 /** TanStack Query 封装的 REST 读写（键统一在 `qk` 下，便于失效）。 */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	type QueryClient,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { fetchHealth } from "../health";
 import { api, type Schemas, unwrap } from "./client";
 
@@ -53,17 +58,25 @@ export function useProjects() {
 	});
 }
 
+/**
+ * 单用户设置（git 身份、头像）的新鲜期：转录里每条消息都挂头像，虚拟列表滚动时反复挂载，
+ * 默认的 0 会让每次挂载都重新请求。写入方（设置页）成功后直接写回缓存，不靠重新拉取。
+ * queryFn 故意不接 `signal`：接了之后最后一个观察者卸载（滚出视口）就会中止在途请求，下次挂载又重发。
+ */
+const SETTINGS_STALE_MS = 5 * 60_000;
+
 export function useGitIdentity() {
 	return useQuery({
 		queryKey: qk.gitIdentity,
 		queryFn: () => unwrap(api.GET("/api/v1/settings/git-identity")),
+		staleTime: SETTINGS_STALE_MS,
 	});
 }
 
 /** 头像归属：agent 头像（助手回合）与用户头像（用户回合、侧栏页脚）同一套契约。 */
 export type AvatarOwner = "agent" | "user";
 
-export const avatarIdentityKey = (who: AvatarOwner) =>
+const avatarIdentityKey = (who: AvatarOwner) =>
 	who === "agent" ? qk.agentIdentity : qk.userIdentity;
 
 /** 读取某个身份的头像（单用户设置）。 */
@@ -76,20 +89,28 @@ export function useAvatarIdentity(who: AvatarOwner) {
 					? api.GET("/api/v1/settings/agent-identity")
 					: api.GET("/api/v1/settings/user-identity"),
 			),
-		staleTime: 5 * 60_000,
+		staleTime: SETTINGS_STALE_MS,
 	});
 }
 
-/** 整体替换某个身份的头像：`{}` = 恢复默认。 */
-export function putAvatarIdentity(
+/**
+ * 整体替换某个身份的头像（`{}` = 恢复默认）并写回缓存。所有头像写入都走这里：
+ * 写入前后都取消在途的读取，否则 PUT 之前发出的旧 GET 后到会把缓存还原成旧头像。
+ */
+export async function saveAvatarIdentity(
+	qc: QueryClient,
 	who: AvatarOwner,
 	body: Schemas["AvatarIdentity"],
-): Promise<Schemas["AvatarIdentity"]> {
-	return unwrap(
+): Promise<void> {
+	const queryKey = avatarIdentityKey(who);
+	await qc.cancelQueries({ queryKey });
+	const saved = await unwrap(
 		who === "agent"
 			? api.PUT("/api/v1/settings/agent-identity", { body })
 			: api.PUT("/api/v1/settings/user-identity", { body }),
 	);
+	await qc.cancelQueries({ queryKey });
+	qc.setQueryData(queryKey, saved);
 }
 
 /** agent 头像；助手回合头像与外观设置用。 */
