@@ -678,19 +678,22 @@ func TestServicesStateReport(t *testing.T) {
 	// 收到的快照里 a 的状态按生命周期单调前进（中间态可能被合并，但不会倒退）。
 	order := map[apigen.OrbServiceStatus]int{"": 0, apigen.OrbServiceStatusStarting: 1, apigen.OrbServiceStatusRunning: 2}
 	last := 0
+	// 先在锁内拷出再断言：require 失败会 FailNow，持锁退出会让后台通知写入方永远卡住。
 	e.cp.mu.Lock()
-	for _, n := range e.cp.notifs[:iRun+1] {
+	notifs := append([]notif(nil), e.cp.notifs[:iRun+1]...)
+	e.cp.mu.Unlock()
+	for _, n := range notifs {
 		if n.method != "services.state" {
 			continue
 		}
 		var p apigen.LinkCtlServicesStateParams
 		require.NoError(t, json.Unmarshal(n.params, &p))
-		rank, ok := order[find(p.Services, "a").Status]
-		require.True(t, ok)
+		st := find(p.Services, "a").Status
+		rank, ok := order[st]
+		require.True(t, ok, "意外状态 %q", st)
 		assert.GreaterOrEqual(t, rank, last)
 		last = rank
 	}
-	e.cp.mu.Unlock()
 
 	// 状态文件与快照一致。
 	b, err := os.ReadFile(filepath.Join(e.home, ".oryn", "services-status.json"))
