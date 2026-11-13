@@ -146,6 +146,8 @@ type Owner struct {
 	GitEmail         *string `json:"gitEmail"`
 	AgentAvatarIcon  *string `json:"agentAvatarIcon"`
 	AgentAvatarImage *string `json:"agentAvatarImage"`
+	UserAvatarIcon   *string `json:"userAvatarIcon"`
+	UserAvatarImage  *string `json:"userAvatarImage"`
 }
 
 type Passkey struct {

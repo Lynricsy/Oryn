@@ -1253,7 +1253,7 @@ paths:
           description: 当前设置（都省略 = 默认品牌标）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AgentIdentity' }
+              schema: { $ref: '#/components/schemas/AvatarIdentity' }
         default: { $ref: '#/components/responses/Error' }
     put:
       tags: [settings]
@@ -1270,13 +1270,49 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AgentIdentity' }
+            schema: { $ref: '#/components/schemas/AvatarIdentity' }
       responses:
         '200':
           description: 写入后的设置
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AgentIdentity' }
+              schema: { $ref: '#/components/schemas/AvatarIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/settings/user-identity:
+    get:
+      tags: [settings]
+      operationId: getUserIdentity
+      summary: 用户头像（用户回合右侧与侧栏页脚显示）
+      responses:
+        '200':
+          description: 当前设置（都省略 = 默认：git 身份名字首字或 User 图标）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvatarIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putUserIdentity
+      summary: 设置用户头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+      description: |
+        规则同 agent 头像：`avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
+        `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AvatarIdentity' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AvatarIdentity' }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- agent-config
@@ -2060,9 +2096,9 @@ components:
       type: object
       properties:
         identity: { $ref: '#/components/schemas/GitIdentity' }
-    AgentIdentity:
+    AvatarIdentity:
       type: object
-      description: agent 头像；两个字段至多出现一个，都省略表示默认（品牌标）
+      description: 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认
       properties:
         avatarIcon:
           type: string

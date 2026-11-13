@@ -61,10 +61,16 @@ func TestProjectIconAPI(t *testing.T) {
 	assert.Nil(t, row.Icon)
 }
 
-func TestAgentIdentityAPI(t *testing.T) {
+// agent 头像与用户头像共用同一套校验与 handler，两条路由跑同一组用例。
+func TestAvatarIdentityAPI(t *testing.T) {
+	for _, path := range []string{"/api/v1/settings/agent-identity", "/api/v1/settings/user-identity"} {
+		t.Run(path, func(t *testing.T) { testAvatarIdentityAPI(t, path) })
+	}
+}
+
+func testAvatarIdentityAPI(t *testing.T, path string) {
 	e := newH2Env(t)
 	c := h2DeviceToken(t, e)
-	const path = "/api/v1/settings/agent-identity"
 	png := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG fake"))
 
 	assert.Equal(t, 401, e.do("GET", path, h2Cred{}, nil).status)
@@ -113,4 +119,30 @@ func TestAgentIdentityAPI(t *testing.T) {
 	require.Equal(t, 200, e.do("PUT", path, c, map[string]any{}).status)
 	r = e.do("GET", path, c, nil)
 	assert.JSONEq(t, `{}`, string(r.body))
+}
+
+// 两组列互不覆盖：写一个不影响另一个，恢复默认也只清自己那组。
+func TestAvatarIdentitiesIndependent(t *testing.T) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+	require.NoError(t, e.st.Q.CreateOwner(context.Background(), db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
+	const agent, user = "/api/v1/settings/agent-identity", "/api/v1/settings/user-identity"
+	jpeg := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte("\xff\xd8 fake"))
+
+	require.Equal(t, 200, e.do("PUT", agent, c, map[string]any{"avatarIcon": "🤖"}).status)
+	assert.JSONEq(t, `{}`, string(e.do("GET", user, c, nil).body), "写 agent 头像不影响用户头像")
+
+	require.Equal(t, 200, e.do("PUT", user, c, map[string]any{"avatarImage": jpeg}).status)
+	assert.JSONEq(t, `{"avatarIcon":"🤖"}`, string(e.do("GET", agent, c, nil).body), "写用户头像不影响 agent 头像")
+	assert.JSONEq(t, `{"avatarImage":"`+jpeg+`"}`, string(e.do("GET", user, c, nil).body))
+
+	require.Equal(t, 200, e.do("PUT", agent, c, map[string]any{}).status)
+	assert.JSONEq(t, `{}`, string(e.do("GET", agent, c, nil).body))
+	assert.JSONEq(t, `{"avatarImage":"`+jpeg+`"}`, string(e.do("GET", user, c, nil).body), "恢复 agent 默认不清用户头像")
+
+	row, err := e.st.Q.GetOwnerUserIdentity(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, row.UserAvatarIcon)
+	require.NotNil(t, row.UserAvatarImage)
+	assert.Equal(t, jpeg, *row.UserAvatarImage)
 }

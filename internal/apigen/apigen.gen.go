@@ -1181,15 +1181,6 @@ type AgentConfigWriteResult struct {
 	Warnings         []AgentConfigWarning `json:"warnings"`
 }
 
-// AgentIdentity agent 头像；两个字段至多出现一个，都省略表示默认（品牌标）
-type AgentIdentity struct {
-	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
-	AvatarIcon *string `json:"avatarIcon,omitempty"`
-
-	// AvatarImage `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略
-	AvatarImage *string `json:"avatarImage,omitempty"`
-}
-
 // AgentLiveState 线程实时缓冲（只含未被条目覆盖的部分）
 type AgentLiveState struct {
 	// Live 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序
@@ -1290,6 +1281,15 @@ type AuthSetupFinishResponse struct {
 
 	// RecoveryCodes 首次初始化时返回 10 个恢复码（仅此一次）；恢复流程重新注册时为空
 	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
+}
+
+// AvatarIdentity 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认
+type AvatarIdentity struct {
+	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
+	AvatarIcon *string `json:"avatarIcon,omitempty"`
+
+	// AvatarImage `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略
+	AvatarImage *string `json:"avatarImage,omitempty"`
 }
 
 // CreateThreadRequest defines model for CreateThreadRequest.
@@ -3461,10 +3461,13 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 type PutSecretJSONRequestBody = SecretPut
 
 // PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
-type PutAgentIdentityJSONRequestBody = AgentIdentity
+type PutAgentIdentityJSONRequestBody = AvatarIdentity
 
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
+
+// PutUserIdentityJSONRequestBody defines body for PutUserIdentity for application/json ContentType.
+type PutUserIdentityJSONRequestBody = AvatarIdentity
 
 // CreateThreadJSONRequestBody defines body for CreateThread for application/json ContentType.
 type CreateThreadJSONRequestBody = CreateThreadRequest
@@ -4826,6 +4829,12 @@ type ServerInterface interface {
 	// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 	// (PUT /api/v1/settings/git-identity)
 	PutGitIdentity(w http.ResponseWriter, r *http.Request)
+	// GetUserIdentity 用户头像（用户回合右侧与侧栏页脚显示）
+	// (GET /api/v1/settings/user-identity)
+	GetUserIdentity(w http.ResponseWriter, r *http.Request)
+	// PutUserIdentity 设置用户头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+	// (PUT /api/v1/settings/user-identity)
+	PutUserIdentity(w http.ResponseWriter, r *http.Request)
 	// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 	// (GET /api/v1/stats/orbs)
 	GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams)
@@ -5234,6 +5243,18 @@ func (_ Unimplemented) GetGitIdentity(w http.ResponseWriter, r *http.Request) {
 // PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 // (PUT /api/v1/settings/git-identity)
 func (_ Unimplemented) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetUserIdentity 用户头像（用户回合右侧与侧栏页脚显示）
+// (GET /api/v1/settings/user-identity)
+func (_ Unimplemented) GetUserIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutUserIdentity 设置用户头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+// (PUT /api/v1/settings/user-identity)
+func (_ Unimplemented) PutUserIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7126,6 +7147,34 @@ func (siw *ServerInterfaceWrapper) PutGitIdentity(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetUserIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetUserIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUserIdentity operation middleware
+func (siw *ServerInterfaceWrapper) PutUserIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUserIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOrbStats operation middleware
 func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Request) {
 
@@ -7928,6 +7977,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/agent-identity", wrapper.PutAgentIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/user-identity", wrapper.GetUserIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/user-identity", wrapper.PutUserIdentity)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/agent-config/files", wrapper.ListAgentConfigFiles)
