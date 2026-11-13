@@ -16,6 +16,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // rawOrbd 是只会照脚本写原始字节的恶意 orbd：每条连接读一个请求，记下它，再交给 respond 处理连接。
@@ -219,4 +228,201 @@ func TestOrbProxyJSONResponseCap(t *testing.T) {
 	got, err := io.ReadAll(cb)
 	assert.ErrorIs(t, err, errOrbBadResponse)
 	assert.LessOrEqual(t, len(got), 4)
+}
+
+// ---- M4 §3.5：服务接口经 orb link 的 fs 流转发到 orbd 本机 API /services/* ----
+
+// servicesEnv 是带真实 orbs.Service 与 /orb/v1/link 的 API 服务，加上经 link 接入的假 orbd。
+type servicesEnv struct {
+	t   *testing.T
+	st  *store.Store
+	svc *orbs.Service
+	srv *httptest.Server
+	// seen 收到假 orbd 本机 API 的请求（"METHOD /path?query"）。
+	seen chan string
+}
+
+func newServicesEnv(t *testing.T) *servicesEnv {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, dir)
+	require.NoError(t, err)
+	svc := orbs.New(orbs.Config{
+		Idle:      config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(time.Hour)},
+		PublicURL: "http://x", TokenKey: make([]byte, 32),
+	}, st, jobs.New(st), nil, nil)
+	cfg := config.DefaultOrynd()
+	cfg.PublicURL, cfg.DataDir = "https://oryn.test", dir
+	s := &Server{Deps: Deps{Config: cfg, Store: st, Mounts: map[string]http.Handler{link.Path: svc.LinkHandler()}}}
+	s.Orbs = &OrbsDeps{Service: svc}
+	e := &servicesEnv{t: t, st: st, svc: svc, srv: httptest.NewServer(NewRouter(s)), seen: make(chan string, 16)}
+	t.Cleanup(func() {
+		e.srv.Close()
+		svc.Close()
+		_ = st.Close()
+	})
+	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	return e
+}
+
+// orbd 本机 API 的假实现：start / stop / restart 回 OrbService，未知服务 404，日志以错误的 Content-Type 回纯文本。
+func (e *servicesEnv) orbdAPI(w http.ResponseWriter, r *http.Request) {
+	e.seen <- r.Method + " " + r.URL.RequestURI()
+	name, op, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/services/"), "/")
+	switch {
+	case name == "nope":
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"code":"service_not_found","message":"no such service"}`)
+	case op == "log":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "[orbd] starting web (port 3000)\n<script>x</script>\n")
+	default:
+		status := apigen.OrbServiceStatusRunning
+		if op == "stop" {
+			status = apigen.OrbServiceStatusStopped
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apigen.OrbService{Name: name, Source: apigen.OrbServiceSourceFile, Command: "c", Status: status, Links: []apigen.OrbPortalLink{}})
+	}
+}
+
+// readyOrb 插入一个 ready 的 orb，并以 features 接入一个假 orbd（服务 fs 流）。
+func (e *servicesEnv) readyOrb(features ...string) string {
+	e.t.Helper()
+	ctx := context.Background()
+	id, tok := ids.Orb(), ids.Token("oot")
+	require.NoError(e.t, e.st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", State: orbs.StateReady, StateChangedAt: 1, TokenHash: ids.Hash(tok), CreatedAt: 1}))
+	sess, err := link.Dial(ctx, link.URL(e.srv.URL), tok)
+	require.NoError(e.t, err)
+	e.t.Cleanup(func() { _ = sess.Close() })
+	st, err := sess.Open(ctx, link.StreamHeader{T: link.StreamCtl})
+	require.NoError(e.t, err)
+	ctl := link.NewCtl(st, link.CtlHandlers{OnRequest: func(context.Context, string, json.RawMessage) (any, error) {
+		return apigen.LinkCtlOkResult{Ok: true}, nil
+	}})
+	l := link.NewStreamListener("fs")
+	hs := &http.Server{Handler: http.HandlerFunc(e.orbdAPI), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = hs.Serve(l) }()
+	e.t.Cleanup(func() { _ = hs.Close() })
+	go func() {
+		for {
+			st, err := sess.AcceptStream(context.Background())
+			if err != nil {
+				if sess.IsClosed() {
+					return
+				}
+				continue
+			}
+			l.Push(st)
+		}
+	}()
+	require.NoError(e.t, ctl.Notify("hello", apigen.LinkCtlHelloParams{OrbdVersion: "fake", AgentVersion: "omp/test", Os: "linux", Arch: "amd64", Threads: []apigen.LinkCtlHelloThread{}, Features: features}))
+	require.Eventually(e.t, func() bool { return e.svc.Connected(id) }, 5*time.Second, 10*time.Millisecond)
+	return id
+}
+
+func (e *servicesEnv) do(method, path string) (*http.Response, []byte) {
+	e.t.Helper()
+	req, err := http.NewRequest(method, e.srv.URL+path, nil)
+	require.NoError(e.t, err)
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(e.t, err)
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	return res, body
+}
+
+func TestOrbServicesAPI(t *testing.T) {
+	e := newServicesEnv(t)
+	orb := e.readyOrb("fs", "services")
+	base := "/api/v1/orbs/" + orb + "/services/"
+
+	for _, op := range []string{"start", "stop", "restart"} {
+		res, body := e.do(http.MethodPost, base+"web/"+op)
+		require.Equal(t, http.StatusOK, res.StatusCode, string(body))
+		assert.Equal(t, "application/json", res.Header.Get("Content-Type"))
+		var sv apigen.OrbService
+		require.NoError(t, json.Unmarshal(body, &sv))
+		assert.Equal(t, "web", sv.Name)
+		assert.Equal(t, "POST /services/web/"+op, <-e.seen)
+	}
+	cur, err := e.svc.Get(context.Background(), orb)
+	require.NoError(t, err)
+	assert.NotNil(t, cur.LastUserInteractionAt, "启停是前台请求：计用户交互")
+
+	// orbd 的错误码原样回给客户端
+	res, body := e.do(http.MethodPost, base+"nope/stop")
+	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+	assert.Equal(t, "service_not_found", errCode(t, body))
+	<-e.seen
+
+	// 日志：text/plain，bg 不转发，tail 原样转发
+	res, body = e.do(http.MethodGet, base+"web/log?tail=100&bg=1")
+	require.Equal(t, http.StatusOK, res.StatusCode, string(body))
+	assert.Equal(t, "text/plain; charset=utf-8", res.Header.Get("Content-Type"))
+	assert.Equal(t, "nosniff", res.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "no-store", res.Header.Get("Cache-Control"))
+	assert.Equal(t, "[orbd] starting web (port 3000)\n<script>x</script>\n", string(body))
+	assert.Equal(t, "GET /services/web/log?tail=100", <-e.seen)
+
+	// 参数校验在控制面完成，不到达 orbd
+	for _, p := range []string{base + "web/log?tail=0", base + "web/log?tail=1048577", base + "Bad_Name/log"} {
+		res, body = e.do(http.MethodGet, p)
+		assert.Equal(t, http.StatusBadRequest, res.StatusCode, p+": "+string(body))
+	}
+	res, _ = e.do(http.MethodPost, base+"-x/start")
+	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+	assert.Empty(t, e.seen)
+
+	// 旧 orbd（hello 无 services）：409 orbd_outdated
+	old := e.readyOrb("fs")
+	res, body = e.do(http.MethodPost, "/api/v1/orbs/"+old+"/services/web/start")
+	assert.Equal(t, http.StatusConflict, res.StatusCode)
+	assert.Equal(t, "orbd_outdated", errCode(t, body))
+	res, body = e.do(http.MethodGet, "/api/v1/orbs/"+old+"/services/web/log?bg=1")
+	assert.Equal(t, http.StatusConflict, res.StatusCode)
+	assert.Equal(t, "orbd_outdated", errCode(t, body))
+	assert.Empty(t, e.seen)
+}
+
+// GET services 读控制面镜像（不经 orbd）；分享接口在未配置 portal_domain 时 409 portal_disabled。
+func TestOrbServicesListAndShareDisabled(t *testing.T) {
+	e := newServicesEnv(t)
+	ctx := context.Background()
+	orb := ids.Orb()
+	require.NoError(t, e.st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: orb, ProviderID: "prov_1", Type: "small", State: orbs.StateFrozen, StateChangedAt: 1, TokenHash: "h-" + orb, CreatedAt: 1}))
+	doc, _ := json.Marshal(apigen.OrbService{Name: "web", Source: apigen.OrbServiceSourceFile, Command: "c", Status: apigen.OrbServiceStatusRunning, Port: new(3000), Links: []apigen.OrbPortalLink{{Title: "web", Path: "/"}}})
+	require.NoError(t, e.st.Q.InsertOrbService(ctx, db.InsertOrbServiceParams{OrbID: orb, Name: "web", Port: new(int64(3000)), HasPortal: 1, Doc: string(doc), UpdatedAt: 1}))
+	exp := time.Now().Add(time.Hour).UnixMilli()
+	require.NoError(t, e.st.Q.UpsertPortalShare(ctx, db.UpsertPortalShareParams{OrbID: orb, Port: 3000, CreatedAt: 1, ExpiresAt: exp}))
+
+	res, body := e.do(http.MethodGet, "/api/v1/orbs/"+orb+"/services")
+	require.Equal(t, http.StatusOK, res.StatusCode, string(body))
+	var list apigen.OrbServiceList
+	require.NoError(t, json.Unmarshal(body, &list))
+	require.Len(t, list.Services, 1)
+	require.Len(t, list.Portals, 1)
+	assert.Equal(t, 3000, list.Portals[0].Port)
+	require.NotNil(t, list.Portals[0].Public)
+	assert.Equal(t, exp, list.Portals[0].Public.ExpiresAt)
+	cur, err := e.svc.Get(ctx, orb)
+	require.NoError(t, err)
+	assert.Equal(t, orbs.StateFrozen, cur.State, "读镜像不唤醒")
+	assert.Nil(t, cur.LastUserInteractionAt)
+
+	res, _ = e.do(http.MethodGet, "/api/v1/orbs/orb-missing/services")
+	assert.Equal(t, http.StatusNotFound, res.StatusCode)
+
+	req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/v1/orbs/"+orb+"/portals/3000/share", strings.NewReader(`{"duration":"1h"}`))
+	r2, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	b2, _ := io.ReadAll(r2.Body)
+	_ = r2.Body.Close()
+	assert.Equal(t, http.StatusConflict, r2.StatusCode)
+	assert.Equal(t, "portal_disabled", errCode(t, b2))
+	res, body = e.do(http.MethodDelete, "/api/v1/orbs/"+orb+"/portals/3000/share")
+	assert.Equal(t, http.StatusConflict, res.StatusCode)
+	assert.Equal(t, "portal_disabled", errCode(t, body))
 }

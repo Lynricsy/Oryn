@@ -61,6 +61,9 @@ type Config struct {
 	CallTimeout time.Duration
 	// ProvisionTimeout 是新建线程的首条提示词（带附件）等待 orb 与 agent 就绪的上限（默认 30 分钟）。
 	ProvisionTimeout time.Duration
+	// PortalURLTemplate 返回线程的 portal 地址模板（短码已代入、保留 `{port}`）；返回空串或为 nil 时
+	// Thread.portalUrlTemplate 省略（未配置 portal_domain）。
+	PortalURLTemplate func(threadID string) string
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。
@@ -596,8 +599,8 @@ func (e *eventQueue) run(ctx context.Context, fn func(context.Context, OrbEvent)
 }
 
 func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
-	if ev.Kind == OrbEventSetup {
-		// 只有运行记录变化：线程状态不受影响。事件里的 orb 行可能早于随后的状态变化，重读一次再推送，
+	if ev.Kind == OrbEventSetup || ev.Kind == OrbEventServices {
+		// 只有运行记录 / 服务镜像变化：线程状态不受影响。事件里的 orb 行可能早于随后的状态变化，重读一次再推送，
 		// 也不覆盖状态缓存。
 		if o, err := s.st.Q.GetOrb(ctx, ev.OrbID); err == nil {
 			s.out().Orb(s.orbAPI(ctx, o))

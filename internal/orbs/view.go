@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// View 把 orb 行转换成 API 形态：附 provider 名、挂在其上的线程、失败原因与最近一次 setup / resume 运行。
+// View 把 orb 行转换成 API 形态：附 provider 名、挂在其上的线程、失败原因、最近一次 setup / resume 运行，
+// 以及服务镜像与 portal（orb 已删除时省略）。
 // REST（GET orbs…）与实时推送（WS `orb`、thread.snapshot）共用这一个转换。
 func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	threadIDs, err := q.ListThreadIDsByOrb(ctx, &o.ID)
@@ -57,6 +59,13 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 		} else {
 			v.LastResume = &run
 		}
+	}
+	if o.State != StateDeleted {
+		services, portals, err := ServicesView(ctx, q, o.ID, time.Now().UnixMilli())
+		if err != nil {
+			return apigen.Orb{}, err
+		}
+		v.Services, v.Portals = services, portals
 	}
 	return v, nil
 }

@@ -40,9 +40,10 @@ type ctlCall struct {
 
 type fakeOrbd struct {
 	url, orbID, token string
-	// features 进 hello；fs 非空时服务控制面打开的 fs 流（M3）。
+	// features 进 hello；fs 非空时服务控制面打开的 fs 流（M3）；portal 非空时服务 portal 流（M4）。
 	features []string
 	fs       http.Handler
+	portal   func(st *link.Stream)
 
 	mu    sync.Mutex
 	sess  *link.Session
@@ -72,7 +73,7 @@ func (o *fakeOrbd) connect() error {
 		switch method {
 		case "setup.run", "resume.run":
 			return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: method == "setup.run", DurationMs: 3}, nil
-		case "shutdown":
+		case "shutdown", "portal.configure":
 			return apigen.LinkCtlOkResult{Ok: true}, nil
 		}
 		return nil, link.ErrMethodNotFound
@@ -80,9 +81,13 @@ func (o *fakeOrbd) connect() error {
 	o.mu.Lock()
 	o.sess, o.ctl = sess, ctl
 	o.mu.Unlock()
-	if o.fs != nil {
+	if o.fs != nil || o.portal != nil {
 		l := link.NewStreamListener("fs")
-		srv := &http.Server{Handler: o.fs, ReadHeaderTimeout: 5 * time.Second}
+		fsH := o.fs
+		if fsH == nil {
+			fsH = http.NotFoundHandler()
+		}
+		srv := &http.Server{Handler: fsH, ReadHeaderTimeout: 5 * time.Second}
 		go func() { _ = srv.Serve(l) }()
 		go func() {
 			defer srv.Close()
@@ -94,9 +99,12 @@ func (o *fakeOrbd) connect() error {
 					}
 					continue
 				}
-				if st.Header.T == link.StreamFS {
+				switch {
+				case st.Header.T == link.StreamFS && o.fs != nil:
 					l.Push(st)
-				} else {
+				case st.Header.T == link.StreamPortal && o.portal != nil:
+					go o.portal(st)
+				default:
 					_ = st.Close()
 				}
 			}
@@ -146,9 +154,10 @@ type fakeDriver struct {
 	orbds     map[string]*fakeOrbd
 	noConnect bool
 	ops       []string
-	// features / fs 用于此后新建的假 orbd。
+	// features / fs / portal 用于此后新建的假 orbd。
 	features []string
 	fs       http.Handler
+	portal   func(st *link.Stream)
 }
 
 func newFakeDriver() *fakeDriver { return &fakeDriver{orbds: map[string]*fakeOrbd{}} }
@@ -171,12 +180,12 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
-	features, fs := d.features, d.fs
+	features, fs, portal := d.features, d.fs, d.portal
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()

@@ -2,6 +2,7 @@ package orbs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -163,4 +165,109 @@ func (s *Service) usable(ctx context.Context, orbID, feature string) (db.Orb, bo
 		return orb, false, ErrOrbdOutdated
 	}
 	return orb, usableState(orb.State), nil
+}
+
+// portal 流（M4 §3.3）：控制面在 orb link 上开 `portal` 流（流头带端口），orbd 先回一行 LinkPortalReply，
+// ok=true 之后流上是与 orb 内 127.0.0.1:<port> 之间的原始字节。控制面不解析其上的 HTTP。
+
+const (
+	// portalReplyMax 是 portal 应答行的字节上限。
+	portalReplyMax = 4096
+	// portalConfigureTimeout 是 portal.configure 的应答超时。
+	portalConfigureTimeout = 10 * time.Second
+)
+
+// portalDialTimeout 是开 portal 流加读到应答行的上限（变量仅为测试可缩短；生产代码不修改）。
+var portalDialTimeout = 10 * time.Second
+
+// PortalDialError 是 orbd 对 portal 流的拒绝；Code ∈ not_exposed | forbidden_port | connection_refused | timeout | failed。
+// 应答行在 portalDialTimeout 内未到达同样以 Code=timeout 报告。
+type PortalDialError struct{ Code, Message string }
+
+func (e *PortalDialError) Error() string {
+	if e.Message == "" {
+		return "orbs: portal dial rejected: " + e.Code
+	}
+	return "orbs: portal dial rejected: " + e.Code + ": " + e.Message
+}
+
+// DialPortal 在 orb 当前 link 上打开一条到 port 的 portal 流，读出 orbd 的应答行后返回该流（之后是原始字节）。
+// 无已 hello 的 link → ErrOrbNotReady；hello 未声明 portal → ErrOrbdOutdated；orbd 拒绝或应答超时 → *PortalDialError。
+// 不检查 orb 状态（调用方先 EnsureUsable）。
+func (s *Service) DialPortal(ctx context.Context, orbID string, port int) (net.Conn, error) {
+	s.mu.Lock()
+	l := s.links[orbID]
+	s.mu.Unlock()
+	if l == nil || !l.helloSeen() {
+		return nil, fmt.Errorf("%w: orb %s has no link", ErrOrbNotReady, orbID)
+	}
+	if !slices.Contains(l.hello.Features, FeaturePortal) {
+		return nil, ErrOrbdOutdated
+	}
+	deadline := time.Now().Add(portalDialTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	octx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	st, err := l.sess.Open(octx, link.StreamHeader{T: link.StreamPortal, Port: port})
+	if err != nil {
+		if ctx.Err() == nil && octx.Err() != nil {
+			return nil, &PortalDialError{Code: "timeout", Message: "opening the portal stream timed out"}
+		}
+		return nil, err
+	}
+	_ = st.SetReadDeadline(deadline)
+	// 调用方取消：立即解除阻塞的读
+	stop := context.AfterFunc(ctx, func() { _ = st.SetReadDeadline(time.Now()) })
+	line, err := st.ReadLine(portalReplyMax)
+	if !stop() {
+		_ = st.Close()
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		_ = st.Close()
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return nil, &PortalDialError{Code: "timeout", Message: "orbd did not answer the portal stream in time"}
+		}
+		return nil, fmt.Errorf("orbs: read portal reply: %w", err)
+	}
+	var rep apigen.LinkPortalReply
+	if err := json.Unmarshal(line, &rep); err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("orbs: invalid portal reply: %w", err)
+	}
+	if !rep.Ok {
+		_ = st.Close()
+		e := &PortalDialError{Code: "failed"}
+		if rep.Code != nil && *rep.Code != "" {
+			e.Code = *rep.Code
+		}
+		if rep.Message != nil {
+			e.Message = *rep.Message
+		}
+		return nil, e
+	}
+	_ = st.SetReadDeadline(time.Time{})
+	return st, nil
+}
+
+// TouchUserCoalesced 记一次用户交互；同一 orb 在 min(1s, user_idle/2) 内至多写库一次（写库是同步的）。
+// portal 数据面每个已授权请求都调用它，合并后不会让每个子资源请求都写一次库。
+func (s *Service) TouchUserCoalesced(ctx context.Context, orbID string) {
+	window := time.Second
+	if half := s.cfg.Idle.UserIdle.D() / 2; half < window {
+		window = half
+	}
+	now := s.now()
+	s.mu.Lock()
+	last, seen := s.userTouched[orbID]
+	if seen && now.Sub(last) < window && !now.Before(last) {
+		s.mu.Unlock()
+		return
+	}
+	s.userTouched[orbID] = now
+	s.mu.Unlock()
+	s.TouchUser(ctx, orbID)
 }

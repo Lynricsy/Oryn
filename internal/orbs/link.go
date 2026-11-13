@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -269,6 +270,8 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 		s.onSetupLog(l.orbID, params)
 	case string(apigen.MethodSetupResult):
 		s.onSetupResult(ctx, l.orbID, params)
+	case string(apigen.MethodServicesState):
+		s.onServicesState(ctx, l.orbID, params)
 	}
 	s.hmu.RLock()
 	fn := s.notifies[method]
@@ -277,14 +280,16 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 	case fn != nil:
 		fn(ctx, l.orbID, params)
 	case method == string(apigen.MethodHello), method == string(apigen.MethodMetricsSample),
-		method == string(apigen.MethodSetupLog), method == string(apigen.MethodSetupResult):
+		method == string(apigen.MethodSetupLog), method == string(apigen.MethodSetupResult),
+		method == string(apigen.MethodServicesState):
 	default:
 		slog.Debug("未处理的 ctl 通知", "orb", l.orbID, "method", method)
 	}
 }
 
 // onHello 按 orb 当前状态推进：connecting → setup / resume；其余可接受状态只记录 link 已连上
-// （spawning / waking 在 spawn 任务完成、进入 connecting 时由 advance 接手）。
+// （spawning / waking 在 spawn 任务完成、进入 connecting 时由 advance 接手）。支持 portal 的 orbd
+// 先收到 portal.configure（setup / resume 结束时 orbd 会拉起受管服务，届时已有 PUBLIC_URL 模板）。
 func (s *Service) onHello(l *orbLink) {
 	ctx := context.Background()
 	orb, err := s.Get(ctx, l.orbID)
@@ -294,6 +299,9 @@ func (s *Service) onHello(l *orbLink) {
 	if !linkAcceptable(orb.State) {
 		s.Kick(orb.ID, "orb is "+orb.State)
 		return
+	}
+	if slices.Contains(l.hello.Features, FeaturePortal) {
+		s.portalConfigure(ctx, l)
 	}
 	if orb.State == StateConnecting {
 		s.runPhase(l)

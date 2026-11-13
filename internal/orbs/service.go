@@ -1,6 +1,7 @@
 // Package orbs 管理 orb 生命周期（计划 E 节）：状态机与 orb_events、spawn / pause / snapshot / delete 任务、
 // 30s 空闲评估（冻结 / 停机）、唤醒、connecting 超时；以及 /orb/v1/link 处理器（hello → setup / resume、
-// metrics.sample、setup.log / setup.result 与 orb_setup_runs、project.scripts.*、egress 流）。Threads 经本包导出的 Service API 与 View 与 orb 交互。
+// metrics.sample、setup.log / setup.result 与 orb_setup_runs、project.scripts.*、egress 流）、
+// M4 的服务镜像（services.state → orb_services）、portal.configure 与 portal 流拨号。Threads 经本包导出的 Service API 与 View 与 orb 交互。
 package orbs
 
 import (
@@ -102,6 +103,9 @@ type Config struct {
 	ShutdownGrace int
 	// SetupTimeout 是 setup.run 的应答超时（默认 25 分钟；orbd 侧合计 20 分钟）。
 	SetupTimeout time.Duration
+	// PortalURLTemplate 是下发给 orbd 的 portal 地址模板（portalhost.Base.Template()，如
+	// `https://t-{code}-p{port}.orb.example.com/`）；空串 = 未配置 portal_domain。
+	PortalURLTemplate string
 }
 
 // CreateParams 是新建 orb 的参数。空 Provider / Type 按 C3 规则取默认。
@@ -147,6 +151,8 @@ type Service struct {
 	// httpTr 是经 fs 流访问 orbd 本机 API 的共享 Transport（见 orbhttp.go）。
 	httpOnce sync.Once
 	httpTr   *http.Transport
+	// userTouched 是各 orb 上次经 TouchUserCoalesced 写库的时间（见 orbhttp.go）。
+	userTouched map[string]time.Time
 
 	hmu       sync.RWMutex
 	reqs      map[string]RequestFunc
@@ -193,6 +199,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		wakeAfter: map[string]bool{}, egress: map[string]*egressServer{}, policies: map[string]egress.Policy{},
 		setupLogs: map[string]*setupLogs{},
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
+		userTouched: map[string]time.Time{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
@@ -932,6 +939,7 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 			s.Kick(orbID, "orb deleted")
 			s.closeEgress(orbID)
 			s.dropSetupLogs(orbID)
+			s.dropPortalState(ctx, orbID)
 			if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
 				s.releaseSnapshot(ctx, orb.ProviderID, orbID, *orb.SnapshotOf)
 			}

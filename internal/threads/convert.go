@@ -8,6 +8,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -88,6 +89,25 @@ func (s *Service) orbAPI(ctx context.Context, o db.Orb) apigen.Orb {
 	return v
 }
 
+// portalTemplate 返回线程的 portal 地址模板（Config.PortalURLTemplate）；未配置或为空时 nil。
+func (s *Service) portalTemplate(threadID string) *string {
+	if s.cfg.PortalURLTemplate == nil {
+		return nil
+	}
+	if v := s.cfg.PortalURLTemplate(threadID); v != "" {
+		return &v
+	}
+	return nil
+}
+
+// shortCode 返回线程 portal 主机名里的短码（threads.short_code）；id 不是 UUIDv7 形态时为 nil。
+func shortCode(threadID string) *string {
+	if code, ok := portalhost.Code(threadID); ok {
+		return &code
+	}
+	return nil
+}
+
 // threadError 返回线程 state=error 的原因：所在 orb 为 failed 时为 {orb_failed, reason}。
 // reasons 缓存 orb id → 原因（nil = orb 未失败），供列表批量转换复用。
 func (s *Service) threadError(ctx context.Context, t db.Thread, reasons map[string]*apigen.ThreadError) *apigen.ThreadError {
@@ -116,6 +136,7 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	out := ThreadToAPI(t, labels)
+	out.PortalURLTemplate = s.portalTemplate(t.ID)
 	out.Error = s.threadError(ctx, t, map[string]*apigen.ThreadError{})
 	children, err := s.childCounts(ctx)
 	if err != nil {

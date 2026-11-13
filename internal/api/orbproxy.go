@@ -61,6 +61,8 @@ type orbProxyOpt struct {
 	injectBase bool
 	// filename 是 raw 响应的下载文件名。
 	filename string
+	// text：成功响应是纯文本（服务日志），Content-Type 置 text/plain; charset=utf-8；其余同 JSON 路由。
+	text bool
 }
 
 // proxyRequestHeaders 是转发给 orbd 的请求头（其余一律丢弃：Cookie、Authorization、前置代理加的身份头、
@@ -173,6 +175,8 @@ func serveOrbProxy(w http.ResponseWriter, r *http.Request, rt http.RoundTripper,
 				hdr.Set("Content-Type", "application/octet-stream")
 				hdr.Set("Content-Disposition", attachmentDisposition(opt.filename))
 				hdr.Set("Content-Security-Policy", "sandbox")
+			} else if opt.text && ok {
+				hdr.Set("Content-Type", "text/plain; charset=utf-8")
 			} else if res.StatusCode != http.StatusNoContent && res.StatusCode != http.StatusNotModified {
 				hdr.Set("Content-Type", "application/json")
 			}

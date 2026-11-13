@@ -79,7 +79,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	id := ids.Thread()
 	row := db.CreateThreadParams{
 		ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
-		Model: modelString(p.Model),
+		Model: modelString(p.Model), ShortCode: shortCode(id),
 	}
 	if p.ProjectID != "" {
 		row.ProjectID = &p.ProjectID
@@ -221,6 +221,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 			continue
 		}
 		api := ThreadToAPI(t, labels[t.ID])
+		api.PortalURLTemplate = s.portalTemplate(t.ID)
 		api.Error = s.threadError(ctx, t, reasons)
 		if c, ok := children[t.ID]; ok {
 			api.ChildCount, api.ChildDoneCount = &c[0], &c[1]
@@ -527,7 +528,7 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 	child := db.CreateThreadParams{
 		ID: newID, ProjectID: row.ProjectID, Title: row.Title, TitleSource: "auto", State: StateProvisioning,
 		ParentThreadID: &row.ID, ForkedFromEntryID: &entry, SessionDir: sessionDirOf(newID),
-		Model: row.Model, ThinkingLevel: row.ThinkingLevel, Color: row.Color,
+		Model: row.Model, ThinkingLevel: row.ThinkingLevel, Color: row.Color, ShortCode: shortCode(newID),
 	}
 	switch env {
 	case "share":

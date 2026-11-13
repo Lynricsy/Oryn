@@ -31,6 +31,8 @@ const (
 	OrbEventLinkDown = "link_down"
 	// OrbEventSetup 表示 orb 新增了一条 setup / resume 运行记录（只需推送 orb 更新）。
 	OrbEventSetup = "setup"
+	// OrbEventServices 表示 orb 的服务镜像、portal 或公开分享变化（只需推送 orb 更新，与 orbs.EventServices 同值）。
+	OrbEventServices = "services"
 )
 
 // OrbCreate 是新建 orb 的参数（对应 orbs.CreateParams）；空 Provider / Type 由 orbs 按 C3 规则取默认。
