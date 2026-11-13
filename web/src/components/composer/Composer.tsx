@@ -301,7 +301,7 @@ export function Composer({
 				placeholder={
 					busy ? t("composer.placeholderBusy") : t("composer.placeholder")
 				}
-				className="block max-h-[40vh] min-h-[46px] w-full resize-none bg-transparent px-4 pt-3 pb-1.5 text-sm leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+				className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-4 pt-[13px] pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
 				onChange={(e) => {
 					setText(e.target.value);
 					setMenuDismissed(false);
@@ -331,7 +331,7 @@ export function Composer({
 				</label>
 				<span
 					aria-hidden
-					className="mx-1 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
+					className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
 				/>
 				<ModeStrip threadId={threadId} />
 				{bashRunning && (
@@ -366,7 +366,8 @@ export function Composer({
 					aria-label={busy ? t("composer.steer") : t("composer.send")}
 					disabled={!canSend}
 					onClick={() => void submit(busy ? "steer" : "prompt")}
-					className="ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,background-color,color] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:bg-inset disabled:text-faint disabled:shadow-none"
+					// 空态只降不透明度，仍是强调色实心方块（D 稿）
+					className="ml-1.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-60 disabled:shadow-none"
 				>
 					<Icon name="send" size={16} weight="bold" />
 				</button>
@@ -376,33 +377,25 @@ export function Composer({
 					{error ? describeError(error, t) : att.error}
 				</p>
 			)}
-			<div className="flex min-h-8 items-center gap-3 border-[var(--glass-line)] border-t px-3 py-1.5 text-2xs text-faint">
-				<div className="hidden min-w-0 items-center gap-3 truncate sm:pointer-fine:flex">
-					{busy ? (
-						<>
-							<span>
-								<Kbd>Enter</Kbd> {t("composer.keySteer")}
-							</span>
-							<span>
-								<Kbd>Ctrl+Enter</Kbd> {t("composer.keyQueue")}
-							</span>
-							<span>
-								<Kbd>Alt+Enter</Kbd> {t("composer.keyInterrupt")}
-							</span>
-							<span>
-								<Kbd>Esc Esc</Kbd> {t("composer.keyAbort")}
-							</span>
-						</>
-					) : (
-						<>
-							<span>
-								<Kbd>/</Kbd> {t("composer.keyCommands")}
-							</span>
-							<span>
-								<Kbd>!</Kbd> {t("composer.keyBash")}
-							</span>
-						</>
-					)}
+			<div className="@container/foot flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4">
+				{/* 按键提示照 D 稿：引导 · 排队 · 中断 · 命令；托盘窄时按 中断 → 排队 的顺序整段收起，手机与触屏不显示 */}
+				<div className="hidden min-w-0 items-center gap-3.5 overflow-hidden whitespace-nowrap sm:pointer-fine:flex">
+					<span className="inline-flex items-center gap-[5px]">
+						<Kbd>Enter</Kbd>
+						{t("composer.keySteer")}
+					</span>
+					<span className="hidden items-center gap-[5px] @md/foot:inline-flex">
+						<Kbd>Ctrl+Enter</Kbd>
+						{t("composer.keyQueue")}
+					</span>
+					<span className="hidden items-center gap-[5px] @lg/foot:inline-flex">
+						<Kbd>Esc Esc</Kbd>
+						{t("composer.keyAbort")}
+					</span>
+					<span className="inline-flex items-center gap-[5px]">
+						<Kbd>/</Kbd>
+						{t("composer.keyCommands")}
+					</span>
 				</div>
 				<ModeStatus threadId={threadId} />
 				<span className="flex-1" />

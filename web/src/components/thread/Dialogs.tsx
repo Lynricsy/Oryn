@@ -47,6 +47,7 @@ import {
 	Toggle,
 } from "../ui/primitives";
 import { StructuredView } from "../ui/StructuredView";
+import { ContextBar, ContextTable, useContextParts } from "./ContextBreakdown";
 import { SetupLogDialog } from "./EnvBanner";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -390,23 +391,23 @@ function ForkDialog({
 
 // ---------------------------------------------------------------- 报告
 
-function ContextReport({ data }: { data: ResponseData<"get_context_report"> }) {
+function ContextReport({
+	threadId,
+	data,
+}: {
+	threadId: string;
+	data: ResponseData<"get_context_report">;
+}) {
 	const { t } = useTranslation();
 	const b = data.breakdown;
-	if (!b) return <StructuredView value={data} />;
-	const rows: [string, number][] = [
-		[t("report.ctx.systemPrompt"), b.systemPromptTokens],
-		[t("report.ctx.systemTools"), b.systemToolsTokens],
-		[t("report.ctx.systemContext"), b.systemContextTokens],
-		[t("report.ctx.instructions"), b.instructionFilesTokens],
-		[t("report.ctx.skills"), b.skillsTokens],
-		[t("report.ctx.messages"), b.messagesTokens],
-	];
-	const ctxWindow = Math.max(1, b.contextWindow);
-	const percent = (b.usedTokens / ctxWindow) * 100;
+	// 与信息面板的上下文卡同一套分段（ContextBreakdown.tsx）
+	const parts = useContextParts(threadId, b);
+	if (!b || !parts) return <StructuredView value={data} />;
+	const percent = (b.usedTokens / Math.max(1, b.contextWindow)) * 100;
+	const tone = thresholdTone(percent);
 	return (
 		<div className="flex flex-col gap-3 text-sm">
-			{/* 总览：模型 + 已用 / 窗口 + 总量表 */}
+			{/* 总览：模型 + 已用 / 窗口 + 彩色分段量表 */}
 			<div className="rounded-lg border border-border bg-raised p-3">
 				<div className="flex flex-wrap items-center gap-2">
 					{data.model && (
@@ -415,32 +416,24 @@ function ContextReport({ data }: { data: ResponseData<"get_context_report"> }) {
 						</Badge>
 					)}
 					<span className="flex-1" />
-					<span className="font-semibold text-lg tabular-nums leading-none">
+					<span
+						className={`font-semibold text-lg tabular-nums leading-none ${tone === "err" ? "text-err" : tone === "warn" ? "text-warn" : ""}`}
+					>
 						{Math.round(percent)}%
 					</span>
 					<span className="text-faint text-xs tabular-nums">
 						{formatCount(b.usedTokens)} / {formatCount(b.contextWindow)}
 					</span>
 				</div>
-				<Meter
+				<ContextBar
 					className="mt-2.5"
-					value={b.usedTokens}
-					max={ctxWindow}
-					tone={thresholdTone(percent)}
+					parts={parts}
+					contextWindow={b.contextWindow}
+					tone={tone}
 					label={t("panel.context")}
 				/>
 			</div>
-			<ul className="flex flex-col gap-2.5">
-				{rows.map(([label, n]) => (
-					<li key={label}>
-						<div className="flex items-baseline justify-between gap-3 text-xs">
-							<span className="text-muted">{label}</span>
-							<span className="text-faint tabular-nums">{formatCount(n)}</span>
-						</div>
-						<Meter className="mt-1" value={n} max={ctxWindow} label={label} />
-					</li>
-				))}
-			</ul>
+			<ContextTable parts={parts} contextWindow={b.contextWindow} />
 		</div>
 	);
 }
@@ -462,7 +455,10 @@ function ReportDialog({
 			{q.isPending && <Spinner />}
 			{q.data !== undefined &&
 				(report === "get_context_report" ? (
-					<ContextReport data={q.data as ResponseData<"get_context_report">} />
+					<ContextReport
+						threadId={threadId}
+						data={q.data as ResponseData<"get_context_report">}
+					/>
 				) : (
 					<StructuredView value={q.data} />
 				))}
@@ -571,12 +567,13 @@ function ModelDialog({
 									{m.name || m.id}
 								</span>
 								<span className="min-w-0 truncate font-mono text-faint text-xs">{`${m.provider}/${m.id}`}</span>
+								{/* 与角色列表同一种选中样式：灰底 + 行尾中性勾 */}
 								{current && (
 									<Icon
 										name="check"
-										size={14}
+										size={13}
 										weight="bold"
-										className="shrink-0 text-accent"
+										className="shrink-0 text-fg"
 									/>
 								)}
 							</button>

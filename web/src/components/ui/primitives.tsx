@@ -11,6 +11,7 @@ import {
 	type TextareaHTMLAttributes,
 	useCallback,
 	useEffect,
+	useId,
 	useLayoutEffect,
 	useRef,
 	useState,
@@ -467,7 +468,7 @@ export function tabClass(selected: boolean): string {
 	return `relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 ${selected ? "text-fg" : "text-muted hover:text-fg"}`;
 }
 
-/** SVG 迷你曲线；values 为 0..max。 */
+/** SVG 迷你曲线；values 为 0..max。横向拉伸铺满容器宽度（描边不随拉伸变粗），下方渐隐填充，颜色取 currentColor。 */
 export function Sparkline({
 	values,
 	max,
@@ -479,8 +480,9 @@ export function Sparkline({
 	className?: string;
 	label: string;
 }) {
+	const fillId = useId();
 	const w = 120;
-	const h = 28;
+	const h = 24;
 	const top = max ?? Math.max(1, ...values);
 	const points = values.map((v, i) => {
 		const x = values.length > 1 ? (i / (values.length - 1)) * w : w;
@@ -490,23 +492,32 @@ export function Sparkline({
 	return (
 		<svg
 			viewBox={`0 0 ${w} ${h}`}
-			className={`h-7 w-full ${className}`}
+			preserveAspectRatio="none"
+			className={`block h-6 w-full ${className}`}
 			role="img"
 			aria-label={label}
 		>
 			{points.length > 1 && (
 				<>
+					<defs>
+						<linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0" stopColor="currentColor" stopOpacity={0.28} />
+							<stop offset="1" stopColor="currentColor" stopOpacity={0} />
+						</linearGradient>
+					</defs>
 					<polyline
 						points={`0,${h} ${points.join(" ")} ${w},${h}`}
-						fill="currentColor"
-						opacity={0.12}
+						fill={`url(#${fillId})`}
 						stroke="none"
 					/>
 					<polyline
 						points={points.join(" ")}
 						fill="none"
 						stroke="currentColor"
-						strokeWidth={1.5}
+						strokeWidth={1.6}
+						strokeLinejoin="round"
+						strokeLinecap="round"
+						vectorEffect="non-scaling-stroke"
 					/>
 				</>
 			)}

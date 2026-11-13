@@ -217,7 +217,9 @@ export function Card({
 		>
 			{(title || action) && (
 				<header className="flex h-9 items-center gap-2 px-3 font-medium text-muted text-xs">
-					{icon && <Icon name={icon} size={13} aria-hidden />}
+					{icon && (
+						<Icon name={icon} size={14} aria-hidden className="text-faint" />
+					)}
 					<h3 className="min-w-0 flex-1 truncate">{title}</h3>
 					{action}
 				</header>

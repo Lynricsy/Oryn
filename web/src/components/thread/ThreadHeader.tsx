@@ -1,4 +1,4 @@
-/** 线程页头（玻璃）：项目徽标与名称、状态、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。 */
+/** 线程页头（渐进模糊纱）：项目徽标与名称、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。 */
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
@@ -18,12 +18,10 @@ import { uiStore, useUi } from "../../state/ui";
 import { Badge, nameHue, ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
-import {
-	IconButton,
-	Menu,
-	type MenuItem,
-	ThreadStateIcon,
-} from "../ui/primitives";
+import { IconButton, Menu, type MenuItem } from "../ui/primitives";
+
+/** 页头背后渐进模糊纱的高度（px）：比 48px 的页头更高，模糊在页头下方逐渐减到 0；转录顶部留白取同一个值。 */
+export const HEADER_VEIL = 80;
 
 export const THREAD_COLORS = [
 	"red",
@@ -88,7 +86,7 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 			type="button"
 			aria-label={t("thread.orbState", { state })}
 			title={orb.id}
-			className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @xl/header:pr-2.5"
+			className="ml-1.5 inline-flex h-[26px] shrink-0 items-center gap-[7px] rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @lg/header:pr-2.5 @lg/header:pl-[9px]"
 			onClick={() => {
 				const ui = uiStore.getState();
 				ui.setPanelTab("info");
@@ -96,7 +94,7 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 			}}
 		>
 			<OrbBead state={orb.state} active={working} size={12} label={state} />
-			<span aria-hidden className="hidden @xl/header:inline">
+			<span aria-hidden className="hidden @lg/header:inline">
 				{state}
 			</span>
 		</button>
@@ -281,7 +279,15 @@ export function ThreadHeader({
 	];
 
 	return (
-		<header className="glass glass-bar @container/header flex h-12 shrink-0 items-center gap-1.5 rounded-none border-0 border-b px-2 shadow-none sm:px-3">
+		<header className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3">
+			<div aria-hidden className="veil" style={{ height: HEADER_VEIL }}>
+				<i />
+				<i />
+				<i />
+				<i />
+				<i />
+				<i />
+			</div>
 			{sidebarToggle && (
 				<IconButton
 					icon="menu"
@@ -292,13 +298,13 @@ export function ThreadHeader({
 				/>
 			)}
 			{project && (
-				// 项目段整段显示或整段隐藏：页头够宽才带项目名，中等宽度只留徽标，再窄连徽标一起隐藏
+				// 项目段整段显示或整段隐藏：页头够宽（D 稿）带项目名，中等宽度只留徽标，再窄连徽标一起隐藏
 				<span
 					className="hidden shrink-0 items-center gap-2 text-sm @md/header:inline-flex"
 					title={project.name}
 				>
 					<ProjectBadge name={project.name} icon={project.icon} />
-					<span className="hidden max-w-40 truncate text-muted @2xl/header:inline">
+					<span className="hidden max-w-40 truncate text-muted @lg/header:inline">
 						{project.name}
 					</span>
 					<span aria-hidden className="text-ghost">
@@ -306,8 +312,7 @@ export function ThreadHeader({
 					</span>
 				</span>
 			)}
-			{/* 标题前最多两个标记：状态 + 标题图标（有线程色时图标底色取线程色）；没有标题图标时线程色是一根短竖条 */}
-			{thread && <ThreadStateIcon state={thread.state} />}
+			{/* 面包屑只有 项目 / 标题卡 / 标题；没有标题图标时线程色是一根短竖条 */}
 			{!card.icon && hue !== undefined && editing === null && (
 				<span
 					aria-hidden
@@ -360,7 +365,7 @@ export function ThreadHeader({
 					{card.code && (
 						<span
 							aria-hidden
-							className="hidden shrink-0 font-normal @lg/header:inline-flex"
+							className="hidden shrink-0 font-normal @2xl/header:inline-flex"
 						>
 							<Badge>{card.code}</Badge>
 						</span>

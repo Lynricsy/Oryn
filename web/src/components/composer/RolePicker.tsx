@@ -21,15 +21,25 @@ function RoleRow({
 	slot,
 	hue,
 	current,
+	currentLevel,
 	onPick,
 }: {
 	slot: RoleSlot;
 	hue: string;
 	current: boolean;
+	/** 当前实际生效的思考级别；只对当前角色有意义 */
+	currentLevel?: string;
 	onPick: (slot: RoleSlot) => void;
 }): ReactNode {
+	const { t } = useTranslation();
 	const ok = slot.status === "ok";
 	const model = slot.model?.name || slot.model?.id;
+	// 当前角色的预设级别被手动改过：写成「预设 → 当前 实际」，免得和下方思考级别下拉框对不上
+	const overridden =
+		current &&
+		!!slot.thinkingLevel &&
+		!!currentLevel &&
+		currentLevel !== slot.thinkingLevel;
 	return (
 		<li>
 			<button
@@ -38,25 +48,20 @@ function RoleRow({
 				aria-disabled={!ok || undefined}
 				title={ok ? undefined : slotProblem(slot)}
 				className={`role-tone flex w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 ${
-					current
-						? "bg-[var(--role-fill)]"
-						: ok
-							? "hover:bg-hover"
-							: "cursor-not-allowed"
+					current ? "bg-hover" : ok ? "hover:bg-hover" : "cursor-not-allowed"
 				}`}
 				style={{ "--role-h": hue } as React.CSSProperties}
 				onClick={() => {
 					if (ok) onPick(slot);
 				}}
 			>
+				{/* 角色色只用在这个色点上；选中态与下方模型列表同一种（灰底 + 行尾中性勾） */}
 				<span
 					aria-hidden
 					className={`h-2 w-2 shrink-0 rounded-full bg-[var(--role-solid)] ${ok ? "" : "opacity-40"}`}
 				/>
 				<span
-					className={`w-24 shrink-0 truncate font-medium ${
-						current ? "text-[var(--role-ink)]" : ok ? "" : "text-ghost"
-					}`}
+					className={`w-24 shrink-0 truncate font-medium ${ok ? "" : "text-ghost"}`}
 				>
 					{roleLabel(slot)}
 				</span>
@@ -71,7 +76,17 @@ function RoleRow({
 						<span className="min-w-0 flex-1 truncate text-muted text-xs">
 							{model}
 						</span>
-						{slot.thinkingLevel && <Badge>{slot.thinkingLevel}</Badge>}
+						{slot.thinkingLevel && (
+							<Badge title={t("model.presetLevel")}>{slot.thinkingLevel}</Badge>
+						)}
+						{overridden && (
+							<span
+								title={t("model.effectiveLevel")}
+								className="shrink-0 whitespace-nowrap text-2xs text-muted"
+							>
+								→ {t("model.currentLevel", { level: currentLevel })}
+							</span>
+						)}
 					</>
 				) : (
 					<span className="min-w-0 flex-1 truncate text-ghost text-xs">
@@ -83,7 +98,7 @@ function RoleRow({
 					size={13}
 					weight="bold"
 					aria-hidden
-					className={`shrink-0 ${current ? "text-[var(--role-ink)]" : "invisible"}`}
+					className={`shrink-0 ${current ? "text-fg" : "invisible"}`}
 				/>
 			</button>
 		</li>
@@ -108,8 +123,9 @@ export function RoleList({
 		<RoleRow
 			key={slot.id}
 			slot={slot}
-			hue={slotHue(slot, view.cycle)}
+			hue={slotHue(slot, view)}
 			current={slot.id === view.currentId}
+			currentLevel={view.currentLevel}
 			onPick={pick}
 		/>
 	);

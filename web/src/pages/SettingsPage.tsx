@@ -57,7 +57,8 @@ import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
 import { agentConfigSource } from "../lib/file-source";
 import { formatDateTime, formatMemoryMB, formatRelative } from "../lib/format";
 import {
-	AVATAR_GLYPHS,
+	AVATAR_EMOJI,
+	AVATAR_NERD,
 	type Glyph,
 	isSingleGlyph,
 	PROJECT_GLYPHS,
@@ -1209,9 +1210,10 @@ function ThemeSettings() {
 									onClick={() => setAccent(a)}
 									className={`flex w-12 flex-col items-center gap-1.5 rounded-md py-1 text-2xs transition-colors duration-150 ${on ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
 								>
+									{/* 细内描边：色块和卡片底色接近时（深色下的石墨）也能一眼分辨边界 */}
 									<span
 										aria-hidden
-										className={`grid h-7 w-7 place-items-center rounded-full text-white shadow-xs ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
+										className={`grid h-7 w-7 place-items-center rounded-full text-white shadow-xs inset-ring-1 inset-ring-fg/20 ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
 										style={{ background: SWATCH[a] }}
 									>
 										{on && <Icon name="check" size={14} weight="bold" />}
@@ -1301,18 +1303,34 @@ function AgentAvatarSettings() {
 					{t("appearance.avatarReset")}
 				</Button>
 			</div>
-			<div className="mt-4 flex flex-col gap-2">
+			{/* 彩色 emoji 与单色字形分两组，不交替混排；外层保留整体的组名 */}
+			<fieldset
+				aria-label={t("appearance.avatarGlyphs")}
+				className="m-0 mt-4 flex min-w-0 flex-col gap-2 border-0 p-0"
+			>
 				<span aria-hidden className="font-medium text-muted text-xs">
 					{t("appearance.avatarGlyphs")}
 				</span>
-				<GlyphGrid
-					glyphs={AVATAR_GLYPHS}
-					value={cur?.avatarIcon}
-					label={t("appearance.avatarGlyphs")}
-					disabled={save.busy}
-					onPick={(avatarIcon) => void put({ avatarIcon })}
-				/>
-			</div>
+				{(
+					[
+						["avatarEmoji", AVATAR_EMOJI],
+						["avatarNerd", AVATAR_NERD],
+					] as const
+				).map(([key, glyphs]) => (
+					<div key={key} className="flex flex-col gap-1">
+						<span aria-hidden className="text-2xs text-faint">
+							{t(`appearance.${key}`)}
+						</span>
+						<GlyphGrid
+							glyphs={glyphs}
+							value={cur?.avatarIcon}
+							label={t(`appearance.${key}`)}
+							disabled={save.busy}
+							onPick={(avatarIcon) => void put({ avatarIcon })}
+						/>
+					</div>
+				))}
+			</fieldset>
 			<form
 				className="mt-3 flex items-end gap-2"
 				onSubmit={(e) => {
@@ -1326,9 +1344,9 @@ function AgentAvatarSettings() {
 			>
 				<Field label={t("appearance.avatarCustom")}>
 					<TextInput
-						className="w-28 text-center"
+						className="w-40 text-center"
 						maxLength={16}
-						placeholder="🦊"
+						placeholder={t("appearance.avatarCustomPlaceholder")}
 						value={custom}
 						onChange={(e) => setCustom(e.target.value)}
 					/>

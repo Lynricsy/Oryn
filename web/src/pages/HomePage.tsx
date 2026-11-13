@@ -24,7 +24,6 @@ import { Icon, type IconName } from "../components/ui/icons";
 import { ModelLogo } from "../components/ui/ModelLogo";
 import { OrbBead } from "../components/ui/OrbBead";
 import {
-	Button,
 	IconButton,
 	Kbd,
 	Spinner,
@@ -188,16 +187,16 @@ function Option({
 	);
 }
 
-/** 提示行：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。只在有键盘鼠标的桌面宽度显示。 */
+/** 托盘页脚（同线程页输入坞页脚）：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。只在有键盘鼠标的桌面宽度显示。 */
 function HintLine({ text }: { text: string }) {
 	return (
-		<p className="mt-3 hidden flex-wrap items-center justify-center gap-x-3 gap-y-1 text-faint text-xs sm:pointer-fine:flex">
+		<p className="hidden min-h-8 flex-wrap items-center gap-x-3.5 gap-y-1 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4 sm:pointer-fine:flex">
 			{text.split(/\s*·\s*/).map((seg) => {
 				const sp = seg.indexOf(" ");
 				const key = sp > 0 ? seg.slice(0, sp) : seg;
 				const rest = sp > 0 ? seg.slice(sp + 1) : "";
 				return (
-					<span key={seg} className="inline-flex items-center gap-1">
+					<span key={seg} className="inline-flex items-center gap-[5px]">
 						<Kbd>{key}</Kbd>
 						{rest}
 					</span>
@@ -365,8 +364,11 @@ export function HomePage(): ReactNode {
 					>
 						{t("newThread.heading")}
 					</h1>
-					<div className={rise("delay-[120ms]")}>
-						<div className="glass rounded-2xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同一团主题色晕（dock-glow）、同样的分行 */}
+					<div
+						className={`dock-glow relative isolate ${rise("delay-[120ms]")}`}
+					>
+						<div className="glass glass-dock rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
 							<AttachmentStrip items={att.items} onRemove={att.remove} />
 							<textarea
 								onDragOver={(e) => {
@@ -383,7 +385,7 @@ export function HomePage(): ReactNode {
 								value={prompt}
 								aria-label={t("newThread.prompt")}
 								placeholder={t("newThread.placeholder")}
-								className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm leading-6 outline-none placeholder:text-faint focus-visible:outline-none"
+								className="block w-full resize-none bg-transparent px-4 pt-[13px] pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
 								onChange={(e) => setPrompt(e.target.value)}
 								onPaste={(e) => {
 									const files = [...e.clipboardData.files];
@@ -403,31 +405,8 @@ export function HomePage(): ReactNode {
 									}
 								}}
 							/>
-							<div className="relative flex flex-wrap items-center gap-1.5 px-3 pb-3">
-								<PillButton
-									icon="box"
-									text={executorText}
-									shortcut="Ctrl+M"
-									active={pill === "executor"}
-									onClick={() =>
-										setPill(pill === "executor" ? null : "executor")
-									}
-								/>
-								<PillButton
-									icon="folder"
-									text={{ label: projectLabel, main: projectLabel }}
-									shortcut="Ctrl+J"
-									active={pill === "project"}
-									onClick={() => setPill(pill === "project" ? null : "project")}
-								/>
-								<PillButton
-									icon={<ModelLogo model={model} size={13} />}
-									text={modelText}
-									shortcut="Ctrl+S"
-									active={pill === "model"}
-									onClick={() => setPill(pill === "model" ? null : "model")}
-								/>
-								<label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-muted transition-colors duration-150 hover:bg-hover hover:text-fg">
+							<div className="relative flex flex-wrap items-center gap-0.5 px-2 pb-2">
+								<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
 									<Icon name="attach" size={15} />
 									<span className="sr-only">{t("attachments.attach")}</span>
 									<input
@@ -440,23 +419,57 @@ export function HomePage(): ReactNode {
 										}}
 									/>
 								</label>
+								<span
+									aria-hidden
+									className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
+								/>
+								<div className="flex min-w-0 flex-wrap items-center gap-1.5">
+									<PillButton
+										icon="box"
+										text={executorText}
+										shortcut="Ctrl+M"
+										active={pill === "executor"}
+										onClick={() =>
+											setPill(pill === "executor" ? null : "executor")
+										}
+									/>
+									<PillButton
+										icon="folder"
+										text={{ label: projectLabel, main: projectLabel }}
+										shortcut="Ctrl+J"
+										active={pill === "project"}
+										onClick={() =>
+											setPill(pill === "project" ? null : "project")
+										}
+									/>
+									<PillButton
+										icon={<ModelLogo model={model} size={13} />}
+										text={modelText}
+										shortcut="Ctrl+S"
+										active={pill === "model"}
+										onClick={() => setPill(pill === "model" ? null : "model")}
+									/>
+								</div>
 								<div className="flex-1" />
-								<Button
-									variant="accent"
-									// 空态与 Button 的禁用规则一致：中性底 + faint 字，不靠透明度去淡化强调色
-									className="disabled:bg-inset disabled:text-faint disabled:opacity-100! disabled:shadow-none"
-									icon={busy ? undefined : "send"}
+								<button
+									type="button"
+									title={t("newThread.start")}
+									aria-label={t("composer.send")}
 									disabled={
 										busy ||
 										att.uploading ||
 										(!prompt.trim() && att.attachmentIds.length === 0)
 									}
 									onClick={() => void submit()}
-									aria-label={t("composer.send")}
+									// 与线程页发送钮相同：强调色实心圆角方块，空态只降不透明度
+									className="ml-1.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none"
 								>
-									{busy && <Spinner size={13} />}
-									<span>{t("newThread.start")}</span>
-								</Button>
+									{busy ? (
+										<Spinner size={14} />
+									) : (
+										<Icon name="send" size={16} weight="bold" />
+									)}
+								</button>
 								{pill === "executor" && (
 									<Popover onClose={() => setPill(null)}>
 										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
@@ -603,6 +616,7 @@ export function HomePage(): ReactNode {
 									</Popover>
 								)}
 							</div>
+							<HintLine text={t("newThread.hint")} />
 						</div>
 						{(error || att.error) && (
 							<p
@@ -613,7 +627,6 @@ export function HomePage(): ReactNode {
 								{error ?? att.error}
 							</p>
 						)}
-						<HintLine text={t("newThread.hint")} />
 					</div>
 				</div>
 			</div>

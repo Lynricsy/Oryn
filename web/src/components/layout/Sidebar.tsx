@@ -152,7 +152,7 @@ export function ThreadRow({
 				to={`/t/${thread.id}`}
 				onClick={onNavigate}
 				className={({ isActive }) =>
-					`relative flex flex-col rounded-md pr-2 text-sm transition-colors duration-150 ${isActive ? "bg-hover/70 font-medium text-fg ring-1 ring-border ring-inset" : `${depth ? "text-muted" : "text-fg"} hover:bg-hover/60 hover:text-fg`}`
+					`relative flex flex-col rounded-lg pr-2 text-sm transition-colors duration-150 ${isActive ? "bg-[var(--sb-sel)] font-medium text-fg" : `${depth ? "text-muted" : "text-fg"} hover:bg-[var(--sb-hover)] hover:text-fg`}`
 				}
 				style={{ paddingLeft: `${0.5 + depth}rem` }}
 			>
@@ -176,7 +176,7 @@ export function ThreadRow({
 					{thread.childCount ? (
 						<span
 							data-count={`${thread.childDoneCount ?? 0}/${thread.childCount}`}
-							className="inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-sm border border-border bg-panel pr-1.5 pl-1 font-semibold text-2xs text-muted tabular-nums leading-none after:content-[attr(data-count)]"
+							className="inline-flex h-[18px] shrink-0 items-center gap-0.5 rounded-sm border border-fg/12 pr-1.5 pl-1 font-semibold text-2xs text-muted tabular-nums leading-none after:content-[attr(data-count)]"
 						>
 							<Icon name="fork" size={11} aria-hidden />
 						</span>
@@ -232,7 +232,7 @@ export function ThreadRow({
 
 function CountPill({ n }: { n: number }) {
 	return (
-		<span className="inline-grid h-[18px] min-w-5 shrink-0 place-items-center rounded-sm border border-border bg-inset px-1.5 font-semibold text-2xs text-muted tabular-nums leading-none">
+		<span className="inline-grid h-[18px] min-w-5 shrink-0 place-items-center rounded-sm border border-fg/12 px-1.5 font-semibold text-2xs text-muted tabular-nums leading-none">
 			{n}
 		</span>
 	);
@@ -280,11 +280,11 @@ function Group({
 	return (
 		<div className={fold ? "" : "mb-2"}>
 			<div
-				className={`group/head flex items-center gap-1 rounded-md pr-1 ${fold ? "transition-colors duration-150 hover:bg-hover/60" : ""}`}
+				className={`group/head flex items-center gap-1 rounded-lg pr-1 ${fold ? "transition-colors duration-150 hover:bg-[var(--sb-hover)]" : ""}`}
 			>
 				<button
 					type="button"
-					className={`flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left font-medium text-muted text-xs hover:text-fg ${fold ? "h-8" : "h-[30px]"}`}
+					className={`flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left font-semibold text-muted text-xs hover:text-fg ${fold ? "h-8" : "h-[30px]"}`}
 					onClick={toggle}
 					aria-expanded={open}
 				>
@@ -429,7 +429,7 @@ export function Sidebar(): ReactNode {
 				</Button>
 			</div>
 			<div className="shrink-0 px-2.5 pb-2">
-				<div className="flex h-8 items-center gap-2 rounded-md border border-border bg-inset pr-1 pl-2.5 text-faint transition-colors duration-150 focus-within:border-accent/60">
+				<div className="flex h-8 items-center gap-2 rounded-lg border border-transparent bg-[var(--sb-field)] pr-1 pl-2.5 text-faint transition-colors duration-150 focus-within:border-accent/60">
 					<Icon name="search" size={14} aria-hidden className="shrink-0" />
 					<input
 						ref={searchRef}
@@ -444,7 +444,7 @@ export function Sidebar(): ReactNode {
 							type="button"
 							aria-label={t("common.clear")}
 							onClick={() => setQ("")}
-							className="grid h-6 w-6 shrink-0 place-items-center rounded-sm hover:bg-hover hover:text-fg"
+							className="grid h-6 w-6 shrink-0 place-items-center rounded-sm hover:bg-[var(--sb-hover)] hover:text-fg"
 						>
 							<Icon name="close" size={12} />
 						</button>
@@ -479,7 +479,7 @@ export function Sidebar(): ReactNode {
 						</Group>
 					);
 				})}
-				<div className="mt-1 border-border border-t border-dashed pt-2">
+				<div className="mt-3">
 					{groups.inactive.length > 0 && (
 						<Group
 							fold
@@ -490,7 +490,7 @@ export function Sidebar(): ReactNode {
 							action={
 								<button
 									type="button"
-									className="shrink-0 rounded-sm px-1.5 py-0.5 text-2xs text-faint hover:bg-hover hover:text-fg"
+									className="shrink-0 rounded-sm px-1.5 py-0.5 text-2xs text-faint hover:bg-[var(--sb-hover)] hover:text-fg"
 									onClick={() => {
 										if (
 											!window.confirm(
@@ -532,7 +532,7 @@ export function Sidebar(): ReactNode {
 					<ArchivedGroup now={now} />
 				</div>
 			</div>
-			<div className="flex min-h-[46px] shrink-0 items-center gap-1 border-border border-t pr-2 pb-safe pl-4">
+			<div className="flex min-h-[46px] shrink-0 items-center gap-1 pr-2 pb-safe pl-4">
 				<span className="flex min-w-0 flex-1 items-center gap-2 text-muted text-xs">
 					<StatusDot tone={tone} pulse={tone === "warn"} />
 					<span className="truncate">{t(`connection.${conn}`)}</span>
@@ -550,7 +550,7 @@ export function Sidebar(): ReactNode {
 				<NavLink
 					to="/settings/devices"
 					onClick={() => uiStore.getState().setSidebar(false)}
-					className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+					className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-[var(--sb-hover)] hover:text-fg"
 					aria-label={t("nav.settings")}
 					title={t("nav.settings")}
 				>

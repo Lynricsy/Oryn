@@ -3,6 +3,7 @@
  * omp 的 RPC 没有「按角色循环」的命令（`cycle_model` 循环的是 scoped models），所以由网页端照
  * `resolveRoleModelCycle` / `resolveModelRoleValue`（omp `config/model-resolver.ts`）的规则自己算。
  */
+import type { AccentName } from "../state/theme";
 
 /** omp `cycleOrder` 的默认值（`config/model-settings.ts`）。 */
 export const DEFAULT_CYCLE_ORDER: readonly string[] = [
@@ -416,10 +417,41 @@ export function slotSelector(slot: RoleSlot): string | undefined {
 // ---------------------------------------------------------------- 颜色
 
 /**
- * 轨道色板（`index.css` 的 `--role-h-0..7`）：8 个色相、相邻 ≥40°，尽量远离语义色带（红 25、琥珀 78、绿 152）。
+ * 轨道色板（`index.css` 的 `--role-h-0..7`，下标即变量序号）：8 个色相、相邻 ≥40°，尽量远离语义色带（红 25、琥珀 78、绿 152）。
  * 8×40° 已占 320°，三条色带最多只能各让出约 17–20°。排列顺序让相邻位置色相相差最大。
  */
-export const ROLE_PALETTE_SIZE = 8;
+export const ROLE_PALETTE: readonly number[] = [
+	270, 50, 180, 315, 225, 95, 5, 135,
+];
+
+/**
+ * 各主题色预设的强调色色相（`index.css` 的 `:root` / `[data-accent]` 块里的 `--accent-h`）。
+ * 石墨几乎无彩度（c=0.015），看不出色相，不和任何角色色撞。
+ */
+export const ACCENT_HUE: Record<AccentName, number | undefined> = {
+	teal: 205,
+	cobalt: 258,
+	violet: 295,
+	berry: 358,
+	fox: 48,
+	graphite: undefined,
+};
+
+/** 角色色与强调色色相相差不超过这么多度就跳过：否则托盘描边闪角色色时会被误读成焦点。 */
+export const ACCENT_HUE_GAP = 25;
+
+function hueDistance(a: number, b: number): number {
+	const d = Math.abs(a - b) % 360;
+	return Math.min(d, 360 - d);
+}
+
+/** 当前主题色下可用的色板序号（跳过和强调色撞色的色相）；不传 `accent` 时整板可用。 */
+export function rolePalette(accent?: AccentName): number[] {
+	const ah = accent === undefined ? undefined : ACCENT_HUE[accent];
+	return ROLE_PALETTE.flatMap((h, i) =>
+		ah !== undefined && hueDistance(h, ah) <= ACCENT_HUE_GAP ? [] : [i],
+	);
+}
 
 /** 内置角色的固定色相（`index.css` 的 `--role-h-<id>`）。 */
 const BUILTIN_HUE_ROLES: Record<string, true> = {
@@ -444,11 +476,17 @@ export function hashHue(name: string): number {
 
 /**
  * 角色色相（CSS 值，写进 `--role-h`）。在轨道里传 `position`（cycleOrder 里的位置），从色板取，同一条轨道不撞色；
- * 否则内置角色用固定色相，未知角色按名字哈希。
+ * 传 `accent` 时跳过和当前强调色相近的色板项。否则内置角色用固定色相，未知角色按名字哈希。
  */
-export function roleHue(id: string, position?: number): string {
-	if (position !== undefined && position >= 0)
-		return `var(--role-h-${position % ROLE_PALETTE_SIZE})`;
+export function roleHue(
+	id: string,
+	position?: number,
+	accent?: AccentName,
+): string {
+	if (position !== undefined && position >= 0) {
+		const palette = rolePalette(accent);
+		return `var(--role-h-${palette[position % palette.length]})`;
+	}
 	if (Object.hasOwn(BUILTIN_HUE_ROLES, id)) return `var(--role-h-${id})`;
 	return String(hashHue(id));
 }

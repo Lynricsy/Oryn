@@ -281,7 +281,8 @@ export const threads: Thread[] = [
 		title: "同步上游 can1357/oh-my-pi",
 		projectId: projects[1]?.id,
 		state: "error",
-		color: "red",
+		// 用户标的线程色；不用红色，免得和出错状态的红色图标叠成同一个信号
+		color: "purple",
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e5",
 		error: { kind: "orb_failed", reason: ORB_FAILED_REASON },
 	}),

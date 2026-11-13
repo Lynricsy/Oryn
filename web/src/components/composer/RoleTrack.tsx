@@ -41,6 +41,7 @@ import {
 import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
+import { type AccentName, useTheme } from "../../state/theme";
 import { uiStore } from "../../state/ui";
 import { ModelLogo } from "../ui/ModelLogo";
 import { describeError } from "../ui/primitives";
@@ -397,6 +398,10 @@ export interface RoleView extends RoleGroups {
 	currentId?: string;
 	/** 轨道里当前高亮的格：在途目标优先，否则当前角色。 */
 	trackId?: string;
+	/** 当前实际生效的思考级别（与模型对话框的思考级别下拉框同源），可能被手动改得和角色预设不同。 */
+	currentLevel?: string;
+	/** 当前主题色：轨道色板据此跳过和强调色相近的色相。 */
+	accent: AccentName;
 }
 
 /** 角色视图：`withExtras` 时额外列出 cycleOrder 以外的可见 chat 角色（模型对话框用）。 */
@@ -443,6 +448,7 @@ export function useRoleView(
 		);
 	}, [ready, entries, settings.data, models.data, state, withExtras]);
 	const cur = currentOf(state);
+	const accent = useTheme((s) => s.accent);
 	const memory = readMemory(threadId);
 	const all = [...groups.cycle, ...groups.others, ...groups.more];
 	const currentId = all[currentRoleIndex(all, cur, memory, lastRole)]?.id;
@@ -454,12 +460,17 @@ export function useRoleView(
 		error: roles.error,
 		currentId,
 		trackId: pending ?? cycleCurrent,
+		currentLevel: cur?.thinkingLevel,
+		accent,
 	};
 }
 
-/** 一格的角色色：轨道里按 cycleOrder 位置取色板，其余用固定或哈希色相。 */
-export function slotHue(slot: RoleSlot, cycle: readonly RoleSlot[]): string {
-	return roleHue(slot.id, cycle.indexOf(slot));
+/** 一格的角色色：轨道里按 cycleOrder 位置取色板（跳过和当前强调色相近的色相），其余用固定或哈希色相。 */
+export function slotHue(
+	slot: RoleSlot,
+	view: Pick<RoleView, "cycle" | "accent">,
+): string {
+	return roleHue(slot.id, view.cycle.indexOf(slot), view.accent);
 }
 
 // ---------------------------------------------------------------- 快捷键与轨道
@@ -533,7 +544,7 @@ export function RoleTrack({
 	useEffect(() => () => clearTimeout(timer.current), []);
 
 	const target = view.cycle.find((s) => s.id === thread.pending);
-	const targetHue = target ? slotHue(target, view.cycle) : undefined;
+	const targetHue = target ? slotHue(target, view) : undefined;
 
 	// 托盘描边闪一下目标角色色（CSS 动画结束即回到默认描边，不留痕）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 每次切换请求都重播
@@ -643,7 +654,7 @@ export function RoleTrack({
 							style={
 								{
 									"--role-h": activeSlot
-										? slotHue(activeSlot, view.cycle)
+										? slotHue(activeSlot, view)
 										: undefined,
 								} as React.CSSProperties
 							}
@@ -670,7 +681,7 @@ export function RoleTrack({
 									}`}
 									style={
 										{
-											"--role-h": slotHue(slot, view.cycle),
+											"--role-h": slotHue(slot, view),
 										} as React.CSSProperties
 									}
 									onClick={() => {

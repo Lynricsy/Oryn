@@ -696,6 +696,8 @@ try {
 	await mkdir(OUT, { recursive: true });
 	const browser = await chromium.launch({
 		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
+		// 软件合成器下模拟 DPR（deviceScaleFactor）时 backdrop-filter 会部分失效，改走 SwiftShader 的 GPU 合成
+		args: ["--use-gl=angle", "--use-angle=swiftshader"],
 	});
 	if (ALL) ok = await shootAll(browser);
 	else {

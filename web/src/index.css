@@ -51,6 +51,22 @@
 	--cat-web: oklch(0.53 0.14 295);
 	--cat-agent: oklch(0.53 0.105 205);
 	--cat-other: var(--text-muted);
+	/*
+	 * 上下文分段色（lib/context-segments.ts 的分段，色相语义照 omp CONTEXT_PRESENTATION）：系统类蓝紫、技能绿、
+	 * 工具定义琥珀、消息类青蓝、思考品红、工具调用橙、工具输出低彩度灰蓝。按量表顺序相邻两段色相或明度都拉开，
+	 * 避开错误红（h≈25）；剩余空间不着色（轨道底色）。
+	 */
+	--ctx-system-prompt: oklch(0.5 0.16 285);
+	--ctx-system-context: oklch(0.64 0.12 258);
+	--ctx-instructions: oklch(0.75 0.09 305);
+	--ctx-skills: oklch(0.6 0.14 152);
+	--ctx-system-tools: oklch(0.75 0.15 80);
+	--ctx-user-messages: oklch(0.54 0.13 232);
+	--ctx-assistant-messages: oklch(0.72 0.11 198);
+	--ctx-thinking: oklch(0.58 0.19 340);
+	--ctx-tool-calls: oklch(0.68 0.16 52);
+	--ctx-tool-output: oklch(0.64 0.045 245);
+	--ctx-messages: oklch(0.6 0.12 215);
 	color-scheme: light;
 }
 
@@ -94,6 +110,17 @@
 	--cat-exec: oklch(0.76 0.15 152);
 	--cat-web: oklch(0.78 0.11 295);
 	--cat-agent: oklch(0.78 0.09 205);
+	--ctx-system-prompt: oklch(0.66 0.15 285);
+	--ctx-system-context: oklch(0.77 0.1 258);
+	--ctx-instructions: oklch(0.86 0.07 305);
+	--ctx-skills: oklch(0.74 0.14 152);
+	--ctx-system-tools: oklch(0.84 0.13 82);
+	--ctx-user-messages: oklch(0.67 0.12 232);
+	--ctx-assistant-messages: oklch(0.83 0.1 198);
+	--ctx-thinking: oklch(0.71 0.17 340);
+	--ctx-tool-calls: oklch(0.76 0.14 52);
+	--ctx-tool-output: oklch(0.58 0.04 245);
+	--ctx-messages: oklch(0.74 0.1 215);
 	color-scheme: dark;
 }
 
@@ -299,6 +326,21 @@ body {
 		-webkit-backdrop-filter: blur(18px) saturate(1.5);
 		backdrop-filter: blur(18px) saturate(1.5);
 	}
+	/*
+	 * 输入托盘玻璃（线程页输入坞与首页输入卡共用）：底色更薄、模糊更重，
+	 * 再用 brightness/contrast 把透上来的转录压平，托盘里的字和控件稳定在 4.5:1 以上。
+	 */
+	.glass-dock {
+		--dock-tone: brightness(1.05) contrast(0.82);
+	}
+	:root[data-theme="dark"] .glass-dock {
+		--dock-tone: brightness(0.82) contrast(0.82);
+	}
+	.glass-dock::before {
+		background: color-mix(in oklab, var(--panel) 42%, transparent);
+		-webkit-backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
+		backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
+	}
 	@supports not (
 			(backdrop-filter: blur(1px)) or
 			(-webkit-backdrop-filter: blur(1px))
@@ -315,34 +357,125 @@ body {
 		}
 	}
 	/*
-	 * 页头玻璃：盖在转录上沿，底下常有密集正文（表格、代码），所以底色更实、模糊稍重，
-	 * 下沿再接一段渐隐，滚到页头下的字认不出来。只给页头用，菜单、弹层仍用 .glass。
-	 * 不靠模糊单独遮字：实测 Chromium 截图里这一窄条的模糊有时只褪色、字形仍清楚，所以底色要足够实。
+	 * 页头渐进模糊（iOS 式）：页头本身不再有底色和硬边，背后是一块比页头更高的「纱」。
+	 * 纱由 6 层 backdrop-filter 叠成，模糊自上而下 32→1px，每层只经 mask 露出一条带、
+	 * 与相邻层交叠，顶边最糊、往下逐渐清楚到 0，没有分界线；最上面再盖一层从顶部淡着色到透明的底。
+	 * 高度由 ThreadHeader 的 HEADER_VEIL 内联给出，转录的 insetTop 用同一个值。
 	 */
-	.glass-bar::before {
-		background: color-mix(in oklab, var(--panel) 92%, transparent);
-		-webkit-backdrop-filter: blur(20px) saturate(1.4);
-		backdrop-filter: blur(20px) saturate(1.4);
-	}
-	.glass-bar::after {
-		content: "";
+	.veil {
 		position: absolute;
 		inset-inline: 0;
-		top: 100%;
-		height: 20px;
+		top: 0;
+		z-index: -1;
 		pointer-events: none;
+	}
+	.veil > i,
+	.veil::after {
+		position: absolute;
+		inset: 0;
+	}
+	.veil > i:nth-child(1) {
+		--b: 32px;
+		--m: linear-gradient(to bottom, #000 0%, #000 35%, transparent 50%);
+	}
+	.veil > i:nth-child(2) {
+		--b: 16px;
+		--m: linear-gradient(
+			to bottom,
+			transparent 20%,
+			#000 35%,
+			#000 50%,
+			transparent 62%
+		);
+	}
+	.veil > i:nth-child(3) {
+		--b: 8px;
+		--m: linear-gradient(
+			to bottom,
+			transparent 35%,
+			#000 50%,
+			#000 62%,
+			transparent 74%
+		);
+	}
+	.veil > i:nth-child(4) {
+		--b: 4px;
+		--m: linear-gradient(
+			to bottom,
+			transparent 50%,
+			#000 62%,
+			#000 74%,
+			transparent 86%
+		);
+	}
+	.veil > i:nth-child(5) {
+		--b: 2px;
+		--m: linear-gradient(
+			to bottom,
+			transparent 62%,
+			#000 74%,
+			#000 86%,
+			transparent 96%
+		);
+	}
+	.veil > i:nth-child(6) {
+		--b: 1px;
+		--m: linear-gradient(
+			to bottom,
+			transparent 74%,
+			#000 86%,
+			transparent 100%
+		);
+	}
+	.veil > i {
+		-webkit-backdrop-filter: blur(var(--b));
+		backdrop-filter: blur(var(--b));
+		-webkit-mask-image: var(--m);
+		mask-image: var(--m);
+	}
+	.veil::after {
+		content: "";
 		background: linear-gradient(
 			to bottom,
-			color-mix(in oklab, var(--panel) 90%, transparent),
+			color-mix(in oklab, var(--panel) 66%, transparent),
+			color-mix(in oklab, var(--panel) 38%, transparent) 45%,
 			transparent
 		);
 	}
-	@media (prefers-reduced-transparency: reduce) {
-		.glass-bar::before {
-			background: var(--panel);
-			-webkit-backdrop-filter: none;
-			backdrop-filter: none;
+	/* 无模糊或要求减少透明度：纱撤掉，页头回到不透明纸面 + 一条细线 */
+	@supports not (
+			(backdrop-filter: blur(1px)) or
+			(-webkit-backdrop-filter: blur(1px))
+		) {
+		.veil {
+			display: none;
 		}
+		.veil-host {
+			background: var(--panel);
+			border-bottom: 1px solid var(--line);
+		}
+	}
+	@media (prefers-reduced-transparency: reduce) {
+		.veil {
+			display: none;
+		}
+		.veil-host {
+			background: var(--panel);
+			border-bottom: 1px solid var(--line);
+		}
+	}
+	/* 输入托盘坐着的那团主题色晕（线程页输入坞与首页输入卡相同），让玻璃底下有东西可透 */
+	.dock-glow::before {
+		content: "";
+		position: absolute;
+		inset: -1.75rem -8% -0.75rem;
+		z-index: -1;
+		pointer-events: none;
+		background: radial-gradient(
+			closest-side,
+			color-mix(in oklab, var(--brand) 10%, transparent),
+			transparent
+		);
 	}
 	/* 浮层进入：只做进入，退出不做动画 */
 	.pop-in {
@@ -354,22 +487,205 @@ body {
 			transform: translateY(6px) scale(0.98);
 		}
 	}
-	/* L0 桌面：两处极淡的主题色晕染，让玻璃有东西可透 */
+	/*
+	 * L0 桌面壁纸：铺在三栏背后，主要透过左栏玻璃与栏间 8px 缝露出来，让各处模糊有东西可透。
+	 * <html data-wallpaper="aurora|waves|grain"> 切换（缺省 aurora，候选期由 theme-init.js 从
+	 * localStorage["oryn.wallpaper"] 读出）。全部是静态渐变 / 一次性栅格化的图块，色相随 --accent-h，
+	 * 明度与彩度按明暗各一套；彩度跟着主题色走，石墨主题的壁纸也近乎无彩。
+	 */
 	.shell-wash {
+		--wp-l: 0.91;
+		--wp-c: clamp(0.02, calc(var(--accent-c) * 0.62), 0.075);
+		--wp-warm-h: 68;
+		/* 极光网格：四团大而柔的晕——主题色压在左上、+60° 在左下、-40° 在右上缝里、暖色落在左栏中段 */
 		background:
 			radial-gradient(
-				1100px 560px at 0% 0%,
-				color-mix(in oklab, var(--brand) 8%, transparent),
-				transparent 62%
+				62% 58% at 2% 6%,
+				oklch(var(--wp-l) var(--wp-c) var(--accent-h)),
+				transparent 72%
 			),
 			radial-gradient(
-				900px 480px at 100% 100%,
-				color-mix(in oklab, var(--brand) 5%, transparent),
-				transparent 60%
+				52% 62% at 10% 100%,
+				oklch(calc(var(--wp-l) - 0.02) var(--wp-c) calc(var(--accent-h) + 60)),
+				transparent 72%
+			),
+			radial-gradient(
+				46% 56% at 100% 0%,
+				oklch(
+					calc(var(--wp-l) + 0.01) calc(var(--wp-c) * 0.9)
+						calc(var(--accent-h) - 40)
+				),
+				transparent 72%
+			),
+			radial-gradient(
+				48% 52% at 34% 58%,
+				oklch(
+					calc(var(--wp-l) + 0.02) calc(var(--wp-c) * 0.85) var(--wp-warm-h)
+				),
+				transparent 72%
 			),
 			var(--bg);
 	}
-	/* 输入坞下方到纸面底边：转录渐隐到纸面色 */
+	:root[data-theme="dark"] .shell-wash {
+		--wp-l: 0.32;
+		--wp-c: clamp(0.025, calc(var(--accent-c) * 0.78), 0.09);
+	}
+	/*
+	 * Tahoe 波：三条大弧色带（中心各不相同的椭圆环）斜穿左栏背后，汇向左下与底边；
+	 * 每条带内先深后浅像一段缎带，两侧柔边。椭圆中心都在视口左下之外，弧线自然流动。
+	 */
+	:root[data-wallpaper="waves"] .shell-wash {
+		--wp-deep: calc(var(--wp-l) - 0.08);
+		--wp-lift: calc(var(--wp-l) + 0.02);
+		background:
+			radial-gradient(
+				160% 150% at -50% 150%,
+				transparent 80%,
+				oklch(var(--wp-deep) calc(var(--wp-c) * 1.3) calc(var(--accent-h) - 40))
+					87%,
+				oklch(var(--wp-lift) calc(var(--wp-c) * 0.8) calc(var(--accent-h) - 40))
+					92%,
+				transparent 99%
+			),
+			radial-gradient(
+				130% 120% at -40% 140%,
+				transparent 70%,
+				oklch(var(--wp-deep) calc(var(--wp-c) * 1.4) var(--accent-h)) 78%,
+				oklch(var(--wp-lift) calc(var(--wp-c) * 0.9) var(--accent-h)) 84%,
+				transparent 91%
+			),
+			radial-gradient(
+				110% 100% at -25% 130%,
+				transparent 56%,
+				oklch(var(--wp-deep) calc(var(--wp-c) * 1.3) calc(var(--accent-h) + 60))
+					64%,
+				oklch(var(--wp-lift) calc(var(--wp-c) * 0.8) calc(var(--accent-h) + 60))
+					69%,
+				transparent 76%
+			),
+			radial-gradient(
+				60% 50% at 0% 0%,
+				oklch(var(--wp-lift) calc(var(--wp-c) * 0.6) var(--wp-warm-h)),
+				transparent 70%
+			),
+			var(--bg);
+	}
+	/* 纸纹光斑：两团光斑 + 极淡的细颗粒（feTurbulence 只在加载时栅格化一次，按 160px 图块平铺；中灰颗粒在明暗两套上都成立） */
+	:root[data-wallpaper="grain"] .shell-wash {
+		background:
+			url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .3 -.08'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")
+			0 0 / 160px 160px,
+			radial-gradient(
+				58% 54% at 4% 10%,
+				oklch(var(--wp-l) calc(var(--wp-c) * 0.75) var(--accent-h)),
+				transparent 72%
+			),
+			radial-gradient(
+				50% 54% at 96% 96%,
+				oklch(
+					calc(var(--wp-l) + 0.01) calc(var(--wp-c) * 0.6) var(--wp-warm-h)
+				),
+				transparent 72%
+			),
+			var(--bg);
+	}
+	/*
+	 * 左栏悬浮玻璃（macOS Tahoe 式侧栏）：桌面端浮在壁纸上，沿用 8px 外边距、18px 圆角；手机抽屉同材质、只圆右侧。
+	 * 模糊放在 ::before（同 .glass 的理由）；::after 是 1px 渐变镜面边，左上最亮、往右下淡去，右下角再回一点光。
+	 * 栏内的选中、悬停、输入框底色都是正文色的低透明叠加（--sb-*），落在任何壁纸上都只是压暗一点。
+	 */
+	.glass-sidebar {
+		--sb-tint: color-mix(in oklab, var(--panel) 56%, transparent);
+		--sb-sel: color-mix(in oklab, var(--text) 7%, transparent);
+		--sb-hover: color-mix(in oklab, var(--text) 4.5%, transparent);
+		--sb-field: color-mix(in oklab, var(--text) 5%, transparent);
+		--sb-rim: color-mix(in oklab, var(--text) 8%, transparent);
+		--sb-spec: oklch(1 0 0 / 0.9);
+		--sb-spec-lo: oklch(1 0 0 / 0.25);
+		position: relative;
+		isolation: isolate;
+		border-radius: var(--r-2xl);
+		box-shadow:
+			0 0 0 1px var(--sb-rim),
+			0 1px 2px oklch(var(--shadow-color) / calc(0.04 * var(--shadow-k))),
+			0 12px 32px -12px
+			oklch(var(--shadow-color) / calc(0.16 * var(--shadow-k)));
+	}
+	:root[data-theme="dark"] .glass-sidebar {
+		--sb-tint: color-mix(in oklab, var(--bg) 60%, transparent);
+		--sb-sel: color-mix(in oklab, var(--text) 10%, transparent);
+		--sb-hover: color-mix(in oklab, var(--text) 6%, transparent);
+		--sb-field: color-mix(in oklab, var(--text) 7%, transparent);
+		--sb-rim: oklch(0 0 0 / 0.4);
+		--sb-spec: oklch(1 0 0 / 0.24);
+		--sb-spec-lo: oklch(1 0 0 / 0.06);
+		/* 深色玻璃底下透着较亮的壁纸，次要文字提一档才稳在 4.5:1 以上 */
+		--text-faint: oklch(0.69 0.012 var(--tint-h));
+	}
+	.glass-sidebar::before,
+	.glass-sidebar::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+	}
+	.glass-sidebar::before {
+		z-index: -1;
+		background: var(--sb-tint);
+		-webkit-backdrop-filter: blur(30px) saturate(1.8);
+		backdrop-filter: blur(30px) saturate(1.8);
+	}
+	.glass-sidebar::after {
+		padding: 1px;
+		background: linear-gradient(
+			160deg,
+			var(--sb-spec) 0%,
+			var(--sb-spec-lo) 24%,
+			transparent 55%,
+			var(--sb-spec-lo) 100%
+		);
+		-webkit-mask:
+			linear-gradient(#000 0 0) content-box,
+			linear-gradient(#000 0 0);
+		-webkit-mask-composite: xor;
+		mask:
+			linear-gradient(#000 0 0) content-box exclude,
+			linear-gradient(#000 0 0);
+	}
+	/* 无模糊或要求减少透明度：退回不透明纸面 + 1px 线，镜面边撤掉 */
+	@supports not (
+			(backdrop-filter: blur(1px)) or
+			(-webkit-backdrop-filter: blur(1px))
+		) {
+		.glass-sidebar {
+			box-shadow:
+				0 0 0 1px var(--line),
+				var(--sh-sm);
+		}
+		.glass-sidebar::before {
+			background: var(--panel);
+		}
+		.glass-sidebar::after {
+			display: none;
+		}
+	}
+	@media (prefers-reduced-transparency: reduce) {
+		.glass-sidebar {
+			box-shadow:
+				0 0 0 1px var(--line),
+				var(--sh-sm);
+		}
+		.glass-sidebar::before {
+			background: var(--panel);
+			-webkit-backdrop-filter: none;
+			backdrop-filter: none;
+		}
+		.glass-sidebar::after {
+			display: none;
+		}
+	}
+	/* 输入坞下方到纸面底边：转录渐隐到纸面色；渐隐止于托盘下沿，托盘背后仍是转录本身 */
 	.dock-fade {
 		--dock-pad: calc(
 			0.75rem +
@@ -377,8 +693,8 @@ body {
 		);
 		background: linear-gradient(
 			to top,
-			var(--panel) var(--dock-pad),
-			transparent calc(var(--dock-pad) + 2.5rem)
+			var(--panel) calc(var(--dock-pad) - 0.25rem),
+			transparent calc(var(--dock-pad) + 1rem)
 		);
 	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */

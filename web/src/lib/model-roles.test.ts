@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { ACCENTS } from "../state/theme";
 import {
+	ACCENT_HUE,
 	buildRoleSlots,
 	type CurrentModel,
 	currentRoleIndex,
@@ -9,9 +11,11 @@ import {
 	type ModelRef,
 	parseCycleOrder,
 	parseThinkingLevel,
+	ROLE_PALETTE,
 	type RoleEntry,
 	resolveRoleValue,
 	roleHue,
+	rolePalette,
 	slotSelector,
 	splitThinkingSuffix,
 	stepRole,
@@ -423,5 +427,25 @@ describe("其余", () => {
 		expect(roleHue("Hyacinthia")).toBe(String(hashHue("Hyacinthia")));
 		expect(roleHue("Hyacinthia")).toBe(roleHue("Hyacinthia"));
 		expect(roleHue("constructor")).toBe(String(hashHue("constructor")));
+	});
+
+	it("色相：轨道色板跳过和当前强调色相差 ≤25° 的色相，石墨不跳", () => {
+		// 青碧 205：跳过 180（差 25）与 225（差 20），可用序号 0 1 3 5 6 7
+		expect(rolePalette("teal")).toEqual([0, 1, 3, 5, 6, 7]);
+		expect(roleHue("Mare", 2, "teal")).toBe("var(--role-h-3)");
+		expect(roleHue("Mare", 6, "teal")).toBe("var(--role-h-0)");
+		expect(rolePalette("cobalt")).not.toContain(0);
+		expect(rolePalette("violet")).toEqual([1, 2, 4, 5, 6, 7]);
+		expect(rolePalette("berry")).not.toContain(6);
+		expect(rolePalette("fox")).not.toContain(1);
+		expect(rolePalette("graphite")).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+		for (const accent of ACCENTS) {
+			const ah = ACCENT_HUE[accent];
+			if (ah === undefined) continue;
+			for (const i of rolePalette(accent)) {
+				const d = Math.abs((ROLE_PALETTE[i] ?? 0) - ah) % 360;
+				expect(Math.min(d, 360 - d)).toBeGreaterThan(25);
+			}
+		}
 	});
 });

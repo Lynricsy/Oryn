@@ -74,8 +74,8 @@ export const PROJECT_GLYPHS: readonly Glyph[] = [
 	nf("md-gamepad_variant", "f0297"),
 ];
 
-/** agent 头像：12 个 emoji + 12 个 Nerd 字形。 */
-export const AVATAR_GLYPHS: readonly Glyph[] = [
+/** agent 头像·彩色 emoji，12 个。 */
+export const AVATAR_EMOJI: readonly Glyph[] = [
 	emoji("🦊"),
 	emoji("🤖"),
 	emoji("🐱"),
@@ -88,6 +88,10 @@ export const AVATAR_GLYPHS: readonly Glyph[] = [
 	emoji("👾"),
 	emoji("✨"),
 	emoji("🔮"),
+];
+
+/** agent 头像·单色 Nerd 字形，12 个；和 emoji 分组显示，避免彩色与单色交替混排。 */
+export const AVATAR_NERD: readonly Glyph[] = [
 	nf("md-robot", "f06a9"),
 	nf("md-face_agent", "f0d70"),
 	nf("md-head_cog", "f133c"),

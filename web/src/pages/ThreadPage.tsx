@@ -26,7 +26,7 @@ import {
 } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
 import { RightPanel } from "../components/thread/RightPanel";
-import { ThreadHeader } from "../components/thread/ThreadHeader";
+import { HEADER_VEIL, ThreadHeader } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
 	TranscriptContext,
@@ -42,9 +42,6 @@ import { useConnection, useIndex, useThread } from "../state/stores";
 import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
-
-/** 玻璃页头盖住的转录顶部留白（页头 48px + 8px）。 */
-const HEADER_INSET = 56;
 
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
 function PanelResizer() {
@@ -196,7 +193,7 @@ export function ThreadPage(): ReactNode {
 						<Transcript
 							items={model.items}
 							footer={<WorkingFooter threadId={threadId} />}
-							insetTop={HEADER_INSET}
+							insetTop={HEADER_VEIL}
 							insetBottom={dockH + 16}
 						/>
 					)}
@@ -216,9 +213,9 @@ export function ThreadPage(): ReactNode {
 					ref={dockRef}
 					className="dock-fade pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
 				>
-					<div className="pointer-events-auto mx-auto w-full max-w-3xl pb-3">
+					<div className="dock-glow pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
 						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
-						<div className="glass divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+						<div className="glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
 							{plan && (
 								<PlanProposalDialog
 									key={`plan:${threadId}`}

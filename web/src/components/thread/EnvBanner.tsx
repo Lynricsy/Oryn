@@ -247,16 +247,26 @@ function runResult(
 /** 一次运行的元信息：耗时、触发方式、结束时间（结果由调用方另行表达，只出现一次）。 */
 function RunMeta({ run }: { run: SetupRun }): ReactNode {
 	const { t } = useTranslation();
+	// 耗时、触发方式、相对时间各带图标，用间距分开，不再用点号拼接
 	return (
-		<>
+		<span className="inline-flex min-w-0 items-center gap-3 whitespace-nowrap">
 			<Stat icon="timer" label={t("stat.duration")}>
 				{formatDuration(run.durationMs)}
 			</Stat>
-			<span aria-hidden>·</span>
-			<span>{t(`env.trigger.${run.trigger}`)}</span>
-			<span aria-hidden>·</span>
-			<span className="tabular-nums">{formatRelative(run.finishedAt)}</span>
-		</>
+			<span className="inline-flex items-center gap-1">
+				<Icon
+					name={run.trigger === "manual" ? "user" : "bolt"}
+					size={12}
+					aria-hidden
+					className="shrink-0"
+				/>
+				{t(`env.trigger.${run.trigger}`)}
+			</span>
+			<span className="inline-flex items-center gap-1 tabular-nums">
+				<Icon name="clock" size={12} aria-hidden className="shrink-0" />
+				{formatRelative(run.finishedAt)}
+			</span>
+		</span>
 	);
 }
 

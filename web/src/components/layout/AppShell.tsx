@@ -1,6 +1,7 @@
 /**
- * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，且三栏都是纸面，8px 缝里露出桌面晕染；
- * medium（600–839）侧边栏可折叠推入，透明坐在桌面上；compact（<600）单栏 + 玻璃抽屉侧边栏。
+ * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，是浮在壁纸上的悬浮玻璃（macOS Tahoe 式），
+ * 中栏与右栏是纸面，8px 缝里露出壁纸；medium（600–839）侧边栏可折叠推入，同样是悬浮玻璃；
+ * compact（<600）单栏 + 同材质的玻璃抽屉侧边栏（只圆右侧）。壁纸见 index.css 的 `.shell-wash`。
  * 右侧信息面板由线程页自行处理。
  */
 import { type ReactNode, useEffect } from "react";
@@ -13,7 +14,6 @@ import { realtime } from "../../realtime/socket";
 import { useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { ServerErrors } from "../ServerErrors";
-import { Sheet } from "../ui/data";
 import { Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 
@@ -82,17 +82,19 @@ export function AppShell(): ReactNode {
 		>
 			{column &&
 				(expanded ? (
-					<Sheet inset className="h-full w-64 shrink-0 lg:w-72">
+					<div className="glass-sidebar h-full w-64 shrink-0 lg:w-72">
 						<Sidebar />
-					</Sheet>
+					</div>
 				) : (
-					<div className="h-full w-64 shrink-0 lg:w-72">
-						<Sidebar />
+					<div className="h-full w-64 shrink-0 p-2 lg:w-72">
+						<div className="glass-sidebar h-full">
+							<Sidebar />
+						</div>
 					</div>
 				))}
 			{bp === "compact" && sidebarOpen && (
 				<div className="fixed inset-0 z-40 flex">
-					<div className="glass h-full w-[85vw] max-w-xs rounded-r-xl shadow-xl transition-[translate] duration-[260ms] ease-out starting:-translate-x-full">
+					<div className="glass-sidebar h-full w-[85vw] max-w-xs rounded-l-none transition-[translate] duration-[260ms] ease-out starting:-translate-x-full">
 						<Sidebar />
 					</div>
 					<button
