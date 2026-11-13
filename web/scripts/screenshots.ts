@@ -619,6 +619,8 @@ async function shootLane(
 				deviceScaleFactor: dsf,
 				locale: "zh-CN",
 				colorScheme: scheme,
+				// 截静态图：关掉动效，品牌标的光标不会恰好闪到熄灭帧，过渡也不会停在半途
+				reducedMotion: "reduce",
 			});
 			if (ACCENT) {
 				await context.addInitScript(

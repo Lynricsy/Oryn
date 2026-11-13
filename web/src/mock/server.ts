@@ -147,7 +147,9 @@ export class MockServer {
 		email: "owner@oryn.example",
 	};
 	/** agent 头像（内存态）；都缺省 = 默认品牌标。 */
-	agentIdentity: Schemas["AgentIdentity"] = {};
+	agentIdentity: Schemas["AvatarIdentity"] = {};
+	/** 用户头像（内存态）；默认给一个 emoji，截图里能看到效果。 */
+	userIdentity: Schemas["AvatarIdentity"] = { avatarIcon: "🦊" };
 	readonly queues = new Map<
 		string,
 		{ steering: string[]; followUp: string[] }
@@ -302,9 +304,11 @@ export class MockServer {
 			}
 			return json(cur);
 		}
-		if (p === "settings/agent-identity") {
+		const avatarMatch = /^settings\/(agent|user)-identity$/.exec(p);
+		if (avatarMatch) {
+			const key = avatarMatch[1] === "agent" ? "agentIdentity" : "userIdentity";
 			if (m === "PUT") {
-				const b = (await body()) as Schemas["AgentIdentity"];
+				const b = (await body()) as Schemas["AvatarIdentity"];
 				const avatarIcon = b.avatarIcon?.trim() || undefined;
 				const avatarImage = b.avatarImage || undefined;
 				if (avatarIcon && avatarImage)
@@ -328,9 +332,9 @@ export class MockServer {
 						{ code: "too_large", message: "avatarImage 超过 128KiB" },
 						413,
 					);
-				this.agentIdentity = { avatarIcon, avatarImage };
+				this[key] = { avatarIcon, avatarImage };
 			}
-			return json(this.agentIdentity);
+			return json(this[key]);
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {

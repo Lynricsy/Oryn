@@ -42,7 +42,21 @@
 		"avatarCustomPlaceholder": "Paste one character",
 		"avatarUse": "Use",
 		"avatarTooLarge": "The image is still over 128 KiB after compression; try a simpler one.",
-		"avatarDecodeFailed": "Couldn't read this image; use PNG, WebP or JPEG."
+		"avatarDecodeFailed": "Couldn't read this image; use PNG, WebP or JPEG.",
+		"userAvatar": "My avatar",
+		"userAvatarHint": "Shown next to your messages and at the bottom of the sidebar; synced across devices. Images are resized to 128×128.",
+		"userAvatarDefault": "Default (initial of your Git name, or a person icon)",
+		"wallpaper": "Wallpaper",
+		"wallpapers": {
+			"aurora": "Aurora",
+			"waves": "Tahoe waves",
+			"grain": "Paper grain",
+			"custom": "Custom"
+		},
+		"wallpaperUpload": "Upload image",
+		"wallpaperRemove": "Remove image",
+		"wallpaperHint": "The image is saved in this browser only and is automatically blurred.",
+		"wallpaperError": "Couldn't use this image: it failed to load or browser storage is full. Wallpaper unchanged."
 	},
 	"stat": {
 		"input": "Input",
@@ -106,6 +120,7 @@
 	},
 	"sidebar": {
 		"theme": "Toggle theme",
+		"collapse": "Collapse sidebar",
 		"archiveAll": "Archive all",
 		"archiveAllConfirm": "Archive these {{count}} inactive threads?",
 		"archived": "Archived",
@@ -485,7 +500,9 @@
 		"orb": "Orb",
 		"subagents": "Subagents",
 		"todos": "Todos",
-		"uptime": "Up {{d}}"
+		"uptime": "Up {{d}}",
+		"subagentsRunning": "{{n}} running",
+		"subagentsTotal": "{{n}} total"
 	},
 	"todo": {
 		"status": {

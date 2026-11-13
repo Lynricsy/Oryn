@@ -35,14 +35,23 @@ function unwrapOptions<T>(options: Record<string, unknown>): T {
 	return (inner && typeof inner === "object" ? inner : options) as T;
 }
 
-function AuthCard({ title, children }: { title: string; children: ReactNode }) {
+/** `blink`：品牌标的插入符闪烁，表示在等你操作（登录、配对页用）。 */
+function AuthCard({
+	title,
+	blink = false,
+	children,
+}: {
+	title: string;
+	blink?: boolean;
+	children: ReactNode;
+}) {
 	const { t } = useTranslation();
 	return (
 		<div className="shell-wash flex min-h-dvh items-center justify-center px-4 pt-safe pb-safe">
 			<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
-				<div className="mb-4 flex items-center gap-2">
-					<BrandMark size={32} />
-					<span className="font-semibold text-muted text-sm">
+				<div className="mb-4 flex items-center gap-2.5">
+					<BrandMark size={32} blink={blink} />
+					<span className="wordmark text-[28px] text-fg leading-none">
 						{t("app.name")}
 					</span>
 				</div>
@@ -210,7 +219,7 @@ export function LoginPage(): ReactNode {
 	};
 
 	return (
-		<AuthCard title={t("auth.loginTitle")}>
+		<AuthCard title={t("auth.loginTitle")} blink>
 			<div className="flex flex-col gap-3">
 				<Button variant="primary" disabled={busy} onClick={() => void login()}>
 					{busy && recovery === null ? <Spinner /> : t("auth.loginWithPasskey")}
@@ -254,14 +263,14 @@ export function PairPage(): ReactNode {
 	const me = useMe();
 	if (me.isPending) {
 		return (
-			<AuthCard title={t("pair.title")}>
+			<AuthCard title={t("pair.title")} blink>
 				<Spinner />
 			</AuthCard>
 		);
 	}
 	if (me.isError) {
 		return (
-			<AuthCard title={t("pair.title")}>
+			<AuthCard title={t("pair.title")} blink>
 				<p className="mb-3 text-muted text-sm">{t("pair.loginFirst")}</p>
 				<Link
 					className="text-accent text-sm underline underline-offset-3"
@@ -273,7 +282,7 @@ export function PairPage(): ReactNode {
 		);
 	}
 	return (
-		<AuthCard title={t("pair.title")}>
+		<AuthCard title={t("pair.title")} blink>
 			<p className="mb-3 text-muted text-sm">{t("pair.hint")}</p>
 			<PairApproval />
 		</AuthCard>

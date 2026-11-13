@@ -89,6 +89,7 @@ describe("上下文分段", () => {
 			toolCalls: 4 + JSON.stringify({ path: "src/a.ts" }).length,
 			toolOutput: 377 + 5,
 		});
+		if (!w) throw new Error("纯文本转录应能计量");
 		for (const total of [10_000, 7, 12_345, 1]) {
 			const split = splitMessages(total, w);
 			expect(split).not.toBeNull();
@@ -120,7 +121,7 @@ describe("上下文分段", () => {
 		]);
 		const ctx = contextPath(path, "e4");
 		expect(ctx?.map((e) => e.entryId)).toEqual(["e3", "e2", "e4"]);
-		expect(messageWeights(ctx ?? []).userMessages).toBe(50 + 40 + 30);
+		expect(messageWeights(ctx ?? [])?.userMessages).toBe(50 + 40 + 30);
 	});
 
 	it("/clear 晚于压缩时只算边界之后；保留段起点不在分支上时认不出边界", () => {
@@ -152,6 +153,80 @@ describe("上下文分段", () => {
 				tokens: 10_000,
 				estimated: false,
 			});
+		}
+	});
+
+	const WHOLE = { id: "messages", tokens: 10_000, estimated: false };
+
+	it("含 redacted 思考或加密推理载荷时不拆分", () => {
+		const redacted = chain([
+			user("hi"),
+			[
+				"message",
+				{
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "redactedThinking", data: "x".repeat(5000) },
+							{ type: "text", text: "ok" },
+						],
+					},
+				},
+			],
+		]);
+		expect(messageWeights(redacted)).toBeNull();
+		expect(contextParts(BREAKDOWN, redacted).at(-1)).toEqual(WHOLE);
+		const payload = chain([
+			user("hi"),
+			[
+				"message",
+				{
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "ok" }],
+						providerPayload: { encrypted: "…" },
+					},
+				},
+			],
+		]);
+		expect(contextParts(BREAKDOWN, payload).at(-1)).toEqual(WHOLE);
+	});
+
+	it("用户消息、工具结果或执行输出里有图片时不拆分", () => {
+		const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+		const cases = [
+			chain([
+				[
+					"message",
+					{
+						message: {
+							role: "user",
+							content: [{ type: "text", text: "看图" }, image],
+						},
+					},
+				],
+			]),
+			chain([
+				user("hi"),
+				["message", { message: { role: "toolResult", content: [image] } }],
+			]),
+			chain([
+				[
+					"message",
+					{
+						message: {
+							role: "bashExecution",
+							command: "shot",
+							output: "",
+							images: [image],
+						},
+					},
+				],
+			]),
+		];
+		for (const path of cases) {
+			expect(messageWeights(path)).toBeNull();
+			expect(contextParts(BREAKDOWN, path).at(-1)).toEqual(WHOLE);
 		}
 	});
 });

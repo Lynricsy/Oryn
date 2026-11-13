@@ -143,6 +143,7 @@
 	height: 13px;
 	margin: 0 0.5px;
 	border-radius: 50%;
+	corner-shape: round;
 	border: 1.5px solid color-mix(in oklab, var(--tv-faint) 40%, transparent);
 	border-top-color: var(--tv-accent);
 	animation: tv-rot 0.7s linear infinite;

@@ -26,7 +26,7 @@ export function ServerErrors(): ReactNode {
 					<div
 						key={e.key}
 						role="alert"
-						className="glass pop-in pointer-events-auto rounded-xl px-3 py-2.5 text-sm"
+						className="glass pop-in pointer-events-auto rounded-lg px-3 py-2.5 text-sm"
 					>
 						<div className="flex items-start gap-2">
 							<Icon

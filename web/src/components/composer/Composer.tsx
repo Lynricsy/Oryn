@@ -315,41 +315,52 @@ export function Composer({
 					}
 				}}
 			/>
-			<div className="flex items-center gap-0.5 px-2 pb-2">
-				<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
-					<Icon name="attach" size={15} />
-					<span className="sr-only">{t("attachments.attach")}</span>
-					<input
-						type="file"
-						multiple
-						className="hidden"
-						onChange={(e) => {
-							if (e.target.files) void att.addFiles(e.target.files);
-							e.target.value = "";
-						}}
+			{/*
+			 * 工具行：附件 + 分隔、可换行的选项（模式、模型、上下文）、停止 + 发送。停止与发送始终在第一行最右；
+			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
+			 */}
+			<div className="flex items-start gap-0.5 px-2 pb-2">
+				<div className="flex h-8 shrink-0 items-center">
+					<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
+						<Icon name="attach" size={15} />
+						<span className="sr-only">{t("attachments.attach")}</span>
+						<input
+							type="file"
+							multiple
+							className="hidden"
+							onChange={(e) => {
+								if (e.target.files) void att.addFiles(e.target.files);
+								e.target.value = "";
+							}}
+						/>
+					</label>
+					<span
+						aria-hidden
+						className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
 					/>
-				</label>
-				<span
-					aria-hidden
-					className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
-				/>
-				<ModeStrip threadId={threadId} />
-				{bashRunning && (
-					<button
-						type="button"
-						className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-muted text-xs hover:bg-hover"
-						onClick={() =>
-							void realtime
-								.cmd(threadId, { type: "abort_bash" })
-								.catch(() => undefined)
-						}
-					>
-						<Spinner size={11} />
-						{t("composer.abortBash")}
-					</button>
-				)}
-				<ModelChip threadId={threadId} />
-				<ContextRing threadId={threadId} />
+				</div>
+				<div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-0.5">
+					<ModeStrip threadId={threadId} />
+					{bashRunning && (
+						<button
+							type="button"
+							className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-muted text-xs hover:bg-hover"
+							onClick={() =>
+								void realtime
+									.cmd(threadId, { type: "abort_bash" })
+									.catch(() => undefined)
+							}
+						>
+							<Spinner size={11} />
+							{t("composer.abortBash")}
+						</button>
+					)}
+					{/* 手机上模型名多截一点：agent 工作时多出停止钮，仍能一行放下，输入坞不随每轮工作忽高忽低 */}
+					<span className="contents max-sm:[&>button]:max-w-28">
+						<ModelChip threadId={threadId} />
+					</span>
+					<ContextRing threadId={threadId} />
+				</div>
 				{busy && (
 					<IconButton
 						icon="stop"

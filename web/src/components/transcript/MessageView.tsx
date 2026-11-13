@@ -27,14 +27,42 @@ import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { Menu } from "../ui/primitives";
+import { UserAvatar } from "../ui/UserAvatar";
 import { useTranscriptContext } from "./context";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
 
 /** 用户气泡外观（真实消息与「发送中」的待发任务共用）。 */
-export const USER_BUBBLE =
-	"w-fit min-w-0 max-w-[85%] rounded-2xl rounded-br-sm border border-border bg-raised px-3.5 py-2";
+const USER_BUBBLE =
+	"w-fit min-w-0 max-w-[85%] rounded-lg rounded-br-xs border border-border bg-raised px-3.5 py-2";
+
+/**
+ * 用户气泡一行：气泡靠右；`avatar` 为真（用户回合起点）时在右侧头像列放用户头像，
+ * 与助手回合左侧的头像对称——外层须用 `pr-8` 让出这一列。头像只作装饰（aria-hidden）。
+ */
+export function UserBubble({
+	avatar,
+	dim,
+	children,
+}: {
+	avatar: boolean;
+	dim: boolean;
+	children: ReactNode;
+}): ReactNode {
+	return (
+		<div className="relative flex w-full justify-end">
+			{avatar && (
+				<span aria-hidden className="absolute top-2.5 -right-8 flex">
+					<UserAvatar size={20} />
+				</span>
+			)}
+			<div className={`${USER_BUBBLE} ${dim ? "opacity-80" : ""}`}>
+				{children}
+			</div>
+		</div>
+	);
+}
 
 /** 用户气泡正文排版。 */
 export const USER_BUBBLE_TEXT =
@@ -265,10 +293,13 @@ function UserMessage({
 	message,
 	entryId,
 	live,
+	turnStart,
 }: {
 	message: JsonRecord;
 	entryId?: string;
 	live: boolean;
+	/** 连续用户消息中的第一条：右侧放用户头像。 */
+	turnStart: boolean;
 }) {
 	const { t } = useTranslation();
 	// 控制面追加的附件块不按原文显示，渲染成附件芯片
@@ -293,11 +324,12 @@ function UserMessage({
 				</div>
 			)}
 			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
-			<div className={`${USER_BUBBLE} ${live ? "opacity-80" : ""}`}>
+			{/* 别的 agent 经 irc 发来的消息不是「你」说的，不放用户头像 */}
+			<UserBubble avatar={turnStart && !irc} dim={live}>
 				{body && <div className={USER_BUBBLE_TEXT}>{body}</div>}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
-			</div>
+			</UserBubble>
 			<MessageMenu entryId={entryId} text={text} />
 		</div>
 	);
@@ -817,13 +849,20 @@ export function MessageView({
 	live: boolean;
 	/** 只在回合最后一条助手消息上传入：整回合的累计用量脚注。 */
 	turn?: TurnUsage;
-	/** 这条消息是回合起点（头像列里已有头像）。 */
+	/** 这条消息是回合起点（助手：头像列里已有头像；用户：右侧放用户头像）。 */
 	turnStart?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	switch (message.role) {
 		case "user":
-			return <UserMessage message={message} entryId={entryId} live={live} />;
+			return (
+				<UserMessage
+					message={message}
+					entryId={entryId}
+					live={live}
+					turnStart={turnStart === true}
+				/>
+			);
 		case "assistant":
 			return (
 				<AssistantMessage

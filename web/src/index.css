@@ -176,12 +176,15 @@
 	--mono:
 		"JetBrains Mono Variable", "Symbols Nerd Font Mono",
 		"Noto Sans SC Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-	--r-xs: 4px;
-	--r-sm: 6px;
-	--r-md: 8px;
-	--r-lg: 10px;
-	--r-xl: 14px;
-	--r-2xl: 18px;
+	/* 字标专用：Fraunces 的 opsz 文件只有 opsz、wght 两轴（SOFT 固定 0；WONK 歪斜字形只在小光学尺寸触发，opsz 72 下不出现），见 .wordmark */
+	--display: "Fraunces Variable", ui-serif, Georgia, serif;
+	/* 圆角整体加大一档，配合下面的超椭圆角形（同半径下超椭圆更「收」，放大后体量与原圆角相当） */
+	--r-xs: 6px;
+	--r-sm: 9px;
+	--r-md: 12px;
+	--r-lg: 18px;
+	--r-xl: 32px;
+	--r-2xl: 36px;
 	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--sh-xs: 0 1px 1px oklch(var(--shadow-color) / calc(0.05 * var(--shadow-k)));
 	--sh-sm:
@@ -341,6 +344,197 @@ body {
 		-webkit-backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
 		backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
 	}
+	/*
+	 * ---- 首条消息过渡（components/composer/DockTray.tsx）----
+	 * 首页居中托盘 → 线程页底部输入坞，用 View Transitions 让它看上去始终是同一块玻璃：
+	 * 外壳的位置与宽高由 ::view-transition-group 插值，模糊也在 group 上、实时模糊底下的页面快照；底色与描边画在 image-pair 上；
+	 * 新旧内容按原尺寸锚在左下角（不拉伸文字），早段快速交叉淡化。变形期间两边托盘自身不画玻璃，免得快照里叠两层。
+	 * --ease-spring：带初速度的临界阻尼弹簧（无回弹）：一出手就走、收尾长，落位时速度已近 0，结束不跳。
+	 */
+	:root {
+		--ease-spring: linear(
+			0,
+			0.141,
+			0.292,
+			0.433,
+			0.556,
+			0.657,
+			0.739,
+			0.803,
+			0.853,
+			0.892,
+			0.921,
+			0.943,
+			0.959,
+			0.971,
+			0.98,
+			0.986,
+			0.991,
+			0.994,
+			0.997,
+			0.999,
+			1
+		);
+		--morph-dur: 480ms;
+	}
+	/* 排在 .glass / .glass-dock 之后，同权重即可压过；只有焦点描边色来自 utilities 层，须 !important */
+	.dock-morphing {
+		view-transition-name: composer-dock;
+		/* biome-ignore lint/complexity/noImportantStyles: 压过 utilities 层的 has-[textarea:focus]:border-* */
+		border-color: transparent !important;
+		box-shadow: none;
+	}
+	.dock-morphing::before {
+		background: transparent;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+	}
+	/*
+	 * 模糊放在 group 上：image-pair 自带 isolation，backdrop-filter 在它身上取不到底下的页面。
+	 * UA 给 group 的关键帧里带 backdrop-filter（从旧元素的 none 起），须 !important 才不被动画盖掉。
+	 */
+	::view-transition-group(composer-dock) {
+		animation-duration: var(--morph-dur);
+		animation-timing-function: var(--ease-spring);
+		border-radius: var(--r-xl);
+		/* biome-ignore lint/complexity/noImportantStyles: 压过 UA 关键帧里的 backdrop-filter */
+		backdrop-filter: var(--morph-blur) !important;
+	}
+	/* 与 .glass-dock::before 相同的模糊与压色（--dock-tone 只定义在托盘上，这里照抄一份） */
+	:root {
+		--morph-blur: blur(28px) saturate(1.6) brightness(1.05) contrast(0.82);
+	}
+	:root[data-theme="dark"] {
+		--morph-blur: blur(28px) saturate(1.6) brightness(0.82) contrast(0.82);
+	}
+	/* 底色、描边、内高光与投影画在 image-pair 上，并按圆角裁住新旧内容 */
+	::view-transition-image-pair(composer-dock) {
+		overflow: clip;
+		border-radius: var(--r-xl);
+		background: color-mix(in oklab, var(--panel) 42%, transparent);
+		box-shadow:
+			var(--sh-md),
+			inset 0 1px 0 var(--glass-hi),
+			inset 0 0 0 1px var(--glass-line);
+		/* 首页托盘是 18px 圆角，输入坞是 14px */
+		animation: morph-radius var(--morph-dur) var(--ease-spring) both;
+	}
+	::view-transition-old(composer-dock),
+	::view-transition-new(composer-dock) {
+		width: 100%;
+		height: 100%;
+		object-fit: none;
+		object-position: left bottom;
+	}
+	/* 内容早段交叉淡化：旧内容（首页胶囊、提示行）160ms 内退场，新内容 60ms 起 200ms 入场，中途不留空玻璃 */
+	::view-transition-old(composer-dock) {
+		animation: morph-out 160ms ease-out both;
+	}
+	::view-transition-new(composer-dock) {
+		animation: morph-in 200ms ease-out 60ms both;
+	}
+	/* 整页：首页标题与胶囊在前 150ms 淡出；侧栏两边相同，交叉淡化看不出 */
+	:root[data-morph]::view-transition-old(root) {
+		animation: morph-out 150ms ease-out both;
+	}
+	:root[data-morph]::view-transition-new(root) {
+		animation: morph-in 150ms ease-out both;
+	}
+	/* 减少动效：不做位移，只留 120ms 淡入（root 的 group 没有几何变化，同步缩短，过渡早点结束） */
+	:root[data-morph="fade"]::view-transition-group(root),
+	:root[data-morph="fade"]::view-transition-old(root),
+	:root[data-morph="fade"]::view-transition-new(root) {
+		animation-duration: 120ms;
+	}
+	/* 转录（用户气泡、「正在启动 agent…」）在托盘走完约七成路程时（时间 30%）从托盘上方淡入；新状态是实时画面，普通动画即可 */
+	:root[data-morph="dock"] .morph-late {
+		animation: morph-late var(--morph-dur) ease-out both;
+	}
+	@keyframes morph-radius {
+		from {
+			border-radius: var(--r-2xl);
+		}
+	}
+	@keyframes morph-out {
+		to {
+			opacity: 0;
+		}
+	}
+	@keyframes morph-in {
+		from {
+			opacity: 0;
+		}
+	}
+	@keyframes morph-late {
+		0%,
+		30% {
+			opacity: 0;
+			translate: 0 12px;
+		}
+		75%,
+		100% {
+			opacity: 1;
+			translate: 0 0;
+		}
+	}
+	/*
+	 * 首页居中托盘背后的光场：一圈很宽、很淡的椭圆主题色光晕从托盘两端底下穿过，两团晕压在托盘两头；
+	 * 托盘玻璃把它模糊成柔光，看得出是玻璃，但看不出环的轮廓。四周与上半截渐隐，不压标题、不出硬边。
+	 * 颜色全取 --brand / --accent-h，随主题色与明暗变。
+	 */
+	.home-field {
+		--halo-in: 44%;
+		--halo-mid: 64%;
+		--halo-out: 84%;
+		--halo-a: 15%;
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		z-index: -1;
+		width: 150%;
+		aspect-ratio: 2 / 1;
+		translate: -50% -50%;
+		pointer-events: none;
+		background:
+			radial-gradient(
+				closest-side,
+				transparent var(--halo-in),
+				color-mix(in oklab, var(--brand) var(--halo-a), transparent)
+					var(--halo-mid),
+				transparent var(--halo-out)
+			),
+			radial-gradient(
+				22% 40% at 25% 60%,
+				color-mix(in oklab, var(--brand) 14%, transparent),
+				transparent
+			),
+			radial-gradient(
+				20% 36% at 76% 42%,
+				oklch(
+					var(--wp-l) calc(var(--wp-c) * 1.6) calc(var(--accent-h) + 60) /
+					0.5
+				),
+				transparent
+			);
+		-webkit-mask-image:
+			linear-gradient(to bottom, transparent 12%, #000 45%),
+			radial-gradient(closest-side, #000 72%, transparent);
+		-webkit-mask-composite: source-in;
+		mask-image:
+			linear-gradient(to bottom, transparent 12%, #000 45%),
+			radial-gradient(closest-side, #000 72%, transparent);
+		mask-composite: intersect;
+	}
+	/* 窄屏托盘更高更窄：光晕改成近圆、更宽更淡，只剩一团柔光 */
+	@media (width < 40rem) {
+		.home-field {
+			--halo-in: 10%;
+			--halo-mid: 50%;
+			--halo-out: 95%;
+			--halo-a: 11%;
+			aspect-ratio: 5 / 4;
+		}
+	}
 	@supports not (
 			(backdrop-filter: blur(1px)) or
 			(-webkit-backdrop-filter: blur(1px))
@@ -489,14 +683,23 @@ body {
 	}
 	/*
 	 * L0 桌面壁纸：铺在三栏背后，主要透过左栏玻璃与栏间 8px 缝露出来，让各处模糊有东西可透。
-	 * <html data-wallpaper="aurora|waves|grain"> 切换（缺省 aurora，候选期由 theme-init.js 从
-	 * localStorage["oryn.wallpaper"] 读出）。全部是静态渐变 / 一次性栅格化的图块，色相随 --accent-h，
-	 * 明度与彩度按明暗各一套；彩度跟着主题色走，石墨主题的壁纸也近乎无彩。
+	 * <html data-wallpaper="aurora|waves|grain|custom"> 切换（state/theme.ts，首帧由 theme-init.js 写）。
+	 * 内置三种是静态渐变 / 一次性栅格化的图块，色相随 --accent-h，明度与彩度按明暗各一套；彩度跟着主题色走，
+	 * 石墨主题的壁纸也近乎无彩。每种同时挂一个 `.wp-<名>` 类，设置页的缩略卡用它按当前主题真实渲染。
 	 */
-	.shell-wash {
+	:root {
 		--wp-l: 0.91;
 		--wp-c: clamp(0.02, calc(var(--accent-c) * 0.62), 0.075);
 		--wp-warm-h: 68;
+		--wp-deep: calc(var(--wp-l) - 0.08);
+		--wp-lift: calc(var(--wp-l) + 0.02);
+	}
+	:root[data-theme="dark"] {
+		--wp-l: 0.32;
+		--wp-c: clamp(0.025, calc(var(--accent-c) * 0.78), 0.09);
+	}
+	.shell-wash,
+	.wp-aurora {
 		/* 极光网格：四团大而柔的晕——主题色压在左上、+60° 在左下、-40° 在右上缝里、暖色落在左栏中段 */
 		background:
 			radial-gradient(
@@ -526,17 +729,12 @@ body {
 			),
 			var(--bg);
 	}
-	:root[data-theme="dark"] .shell-wash {
-		--wp-l: 0.32;
-		--wp-c: clamp(0.025, calc(var(--accent-c) * 0.78), 0.09);
-	}
 	/*
 	 * Tahoe 波：三条大弧色带（中心各不相同的椭圆环）斜穿左栏背后，汇向左下与底边；
 	 * 每条带内先深后浅像一段缎带，两侧柔边。椭圆中心都在视口左下之外，弧线自然流动。
 	 */
-	:root[data-wallpaper="waves"] .shell-wash {
-		--wp-deep: calc(var(--wp-l) - 0.08);
-		--wp-lift: calc(var(--wp-l) + 0.02);
+	:root[data-wallpaper="waves"] .shell-wash,
+	.wp-waves {
 		background:
 			radial-gradient(
 				160% 150% at -50% 150%,
@@ -571,7 +769,8 @@ body {
 			var(--bg);
 	}
 	/* 纸纹光斑：两团光斑 + 极淡的细颗粒（feTurbulence 只在加载时栅格化一次，按 160px 图块平铺；中灰颗粒在明暗两套上都成立） */
-	:root[data-wallpaper="grain"] .shell-wash {
+	:root[data-wallpaper="grain"] .shell-wash,
+	.wp-grain {
 		background:
 			url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .3 -.08'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")
 			0 0 / 160px 160px,
@@ -587,6 +786,29 @@ body {
 				),
 				transparent 72%
 			),
+			var(--bg);
+	}
+	/*
+	 * 自定义图片：上传时已在 canvas 上强模糊（lib/wallpaper.ts），这里只铺满并盖一层主题底色纱。
+	 * 纱的厚度按图片亮度分位（--wp-lo / --wp-hi，上传时量出、由主题运行时写在 <html> 上）自适应：
+	 * 浅色下怕暗图，按暗部 p10 加厚；深色下怕亮图，按亮部 p90 加厚，保证侧栏文字 ≥ 4.5:1。
+	 */
+	:root {
+		--wp-veil: clamp(0.35, calc(0.35 + (0.8 - var(--wp-lo, 0.8)) * 1.1), 0.9);
+	}
+	:root[data-theme="dark"] {
+		--wp-veil: clamp(0.45, calc(0.45 + (var(--wp-hi, 0.3) - 0.55) * 1.1), 0.88);
+	}
+	:root[data-wallpaper="custom"] .shell-wash,
+	.wp-custom {
+		--wp-veil-color: color-mix(
+			in oklab,
+			var(--bg) calc(var(--wp-veil) * 100%),
+			transparent
+		);
+		background:
+			linear-gradient(var(--wp-veil-color), var(--wp-veil-color)),
+			var(--wallpaper-image, none) center / cover no-repeat,
 			var(--bg);
 	}
 	/*
@@ -725,6 +947,24 @@ body {
 	.focus-inset :focus-visible {
 		outline-offset: -2px;
 	}
+	/*
+	 * 角形：带圆角的表面一律超椭圆 1.6（主人在 6 种 demo 里选定）；Chromium 139+ 原生支持，
+	 * Safari / Firefox 不认 corner-shape，自动退回普通圆角。
+	 */
+	*,
+	::before,
+	::after {
+		corner-shape: superellipse(1.6);
+	}
+	/*
+	 * 正圆与胶囊保持 round：rounded-full（含 after:rounded-full 这类变体，以及玻璃 ::before 继承来的胶囊圆角）。
+	 * CSS 里写 50% 的圆（.tv-spin）在各自规则里单独声明；OrbBead、Ring 是 SVG，不受影响。
+	 */
+	[class*="rounded-full"],
+	[class*="rounded-full"]::before,
+	[class*="rounded-full"]::after {
+		corner-shape: round;
+	}
 }
 
 /* orb 状态珠 */
@@ -763,6 +1003,31 @@ body {
 }
 .orb-fade {
 	animation: orb-fade 1.6s var(--ease) infinite;
+}
+
+/* 品牌标「O|」的插入符：像文本光标一样硬切闪烁，周期 1.06s */
+@keyframes caret-blink {
+	50% {
+		opacity: 0;
+	}
+}
+.caret-blink {
+	animation: caret-blink 1.06s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.caret-blink {
+		animation: none;
+	}
+}
+
+@layer components {
+	/* 「Oryn」字标：Fraunces 显示光学尺寸（opsz 72），字重与字距固定，字号由调用处给 */
+	.wordmark {
+		font-family: var(--display);
+		font-variation-settings: "opsz" 72;
+		font-weight: 500;
+		letter-spacing: -0.01em;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -42,7 +42,21 @@
 		"avatarCustomPlaceholder": "粘贴一个字符",
 		"avatarUse": "使用",
 		"avatarTooLarge": "图片压缩后仍超过 128 KiB，请换一张更简单的图片。",
-		"avatarDecodeFailed": "无法读取这张图片，请使用 PNG、WebP 或 JPEG。"
+		"avatarDecodeFailed": "无法读取这张图片，请使用 PNG、WebP 或 JPEG。",
+		"userAvatar": "我的头像",
+		"userAvatarHint": "显示在你的消息旁和侧栏底部；跨设备同步。图片会缩放到 128×128。",
+		"userAvatarDefault": "默认（Git 名字首字，未设置时为人像图标）",
+		"wallpaper": "壁纸",
+		"wallpapers": {
+			"aurora": "极光",
+			"waves": "Tahoe 波",
+			"grain": "纸纹",
+			"custom": "自定义"
+		},
+		"wallpaperUpload": "上传图片",
+		"wallpaperRemove": "移除图片",
+		"wallpaperHint": "图片只保存在这台设备的浏览器里，并会自动做强模糊处理。",
+		"wallpaperError": "无法使用这张图片：读取失败，或浏览器存储空间不足。壁纸保持不变。"
 	},
 	"stat": {
 		"input": "输入",
@@ -106,6 +120,7 @@
 	},
 	"sidebar": {
 		"theme": "切换明暗",
+		"collapse": "收起侧边栏",
 		"archiveAll": "全部归档",
 		"archiveAllConfirm": "归档这 {{count}} 个不活跃线程？",
 		"archived": "已归档",
@@ -485,7 +500,9 @@
 		"orb": "orb",
 		"subagents": "子 agent",
 		"todos": "待办",
-		"uptime": "已运行 {{d}}"
+		"uptime": "已运行 {{d}}",
+		"subagentsRunning": "{{n}} 个运行中",
+		"subagentsTotal": "共 {{n}} 个"
 	},
 	"todo": {
 		"status": {

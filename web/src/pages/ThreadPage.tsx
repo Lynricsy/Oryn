@@ -16,6 +16,11 @@ import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Composer } from "../components/composer/Composer";
 import {
+	dockArrived,
+	takeArrival,
+	useDockMorph,
+} from "../components/composer/DockTray";
+import {
 	PlanProposalDialog,
 	ThreadDialogs,
 } from "../components/thread/Dialogs";
@@ -174,6 +179,21 @@ export function ThreadPage(): ReactNode {
 		return () => ro.disconnect();
 	}, []);
 
+	// 首条消息过渡（DockTray）：挂载即告诉过渡新状态已就绪；变形期间托盘挂 view-transition-name，
+	// 结束后在有键盘鼠标的设备上把焦点交给输入框（触屏不抢焦点，免得软键盘收起又弹出）
+	const morph = useDockMorph();
+	const arrival = useRef(false);
+	useLayoutEffect(() => {
+		if (takeArrival()) arrival.current = true;
+		dockArrived();
+	}, []);
+	useEffect(() => {
+		if (!arrival.current || morph !== "idle") return;
+		arrival.current = false;
+		if (!window.matchMedia?.("(pointer: fine)").matches) return;
+		dockRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
+	}, [morph]);
+
 	return (
 		<div className={`flex h-full min-w-0 flex-1 ${expanded ? "gap-2" : ""}`}>
 			<Sheet
@@ -181,22 +201,25 @@ export function ThreadPage(): ReactNode {
 				className={`relative h-full min-w-0 flex-1 flex-col ${panelFull ? "hidden" : "flex"}`}
 			>
 				<TranscriptContext.Provider value={ctx}>
-					{!snapshotReceived && entries.length === 0 ? (
-						<div className="flex flex-1 items-center justify-center text-muted">
-							{known || conn !== "open" ? (
-								<Spinner size={18} />
-							) : (
-								t("thread.notFound")
-							)}
-						</div>
-					) : (
-						<Transcript
-							items={model.items}
-							footer={<WorkingFooter threadId={threadId} />}
-							insetTop={HEADER_VEIL}
-							insetBottom={dockH + 16}
-						/>
-					)}
+					{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
+					<div className="morph-late flex min-h-0 flex-1 flex-col">
+						{!snapshotReceived && entries.length === 0 ? (
+							<div className="flex flex-1 items-center justify-center text-muted">
+								{known || conn !== "open" ? (
+									<Spinner size={18} />
+								) : (
+									t("thread.notFound")
+								)}
+							</div>
+						) : (
+							<Transcript
+								items={model.items}
+								footer={<WorkingFooter threadId={threadId} />}
+								insetTop={HEADER_VEIL}
+								insetBottom={dockH + 16}
+							/>
+						)}
+					</div>
 				</TranscriptContext.Provider>
 				<div className="absolute inset-x-0 top-0 z-30">
 					<ThreadHeader threadId={threadId} sidebarToggle={!expanded} />
@@ -215,7 +238,9 @@ export function ThreadPage(): ReactNode {
 				>
 					<div className="dock-glow pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
 						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
-						<div className="glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+						<div
+							className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)] ${morph === "dock" ? "dock-morphing" : ""}`}
+						>
 							{plan && (
 								<PlanProposalDialog
 									key={`plan:${threadId}`}

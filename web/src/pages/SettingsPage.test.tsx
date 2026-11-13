@@ -51,7 +51,7 @@ let identity: { name: string; email: string } | undefined;
 let calls: Call[] = [];
 let agentFiles: Record<string, string> = {};
 let agentPuts: { path: string; body: string }[] = [];
-let agentIdentity: { avatarIcon?: string; avatarImage?: string } = {};
+let avatars: Record<string, { avatarIcon?: string; avatarImage?: string }> = {};
 
 async function agentConfig(req: Request, url: URL): Promise<Response> {
 	if (url.pathname === "/api/v1/agent-config/files")
@@ -127,9 +127,13 @@ const fetchMock = vi.fn(
 			}
 			return Response.json(identity ? { identity } : {});
 		}
-		if (url.pathname === "/api/v1/settings/agent-identity") {
-			if (req.method === "PUT") agentIdentity = JSON.parse(text);
-			return Response.json(agentIdentity);
+		const avatarPath = /^\/api\/v1\/settings\/(agent|user)-identity$/.exec(
+			url.pathname,
+		);
+		if (avatarPath) {
+			const who = avatarPath[1] ?? "";
+			if (req.method === "PUT") avatars[who] = JSON.parse(text);
+			return Response.json(avatars[who] ?? {});
 		}
 		if (url.pathname === "/api/v1/projects")
 			return Response.json({ projects: [PROJECT] });
@@ -276,8 +280,13 @@ describe("设置 → 外观", () => {
 	beforeAll(() => installTheme());
 	beforeEach(() => {
 		localStorage.clear();
-		themeStore.setState({ mode: "system", accent: "teal" });
-		agentIdentity = {};
+		themeStore.setState({
+			mode: "system",
+			accent: "teal",
+			wallpaper: "aurora",
+			tone: undefined,
+		});
+		avatars = {};
 		calls = [];
 		vi.stubGlobal("fetch", fetchMock);
 	});
@@ -300,11 +309,34 @@ describe("设置 → 外观", () => {
 		expect({ ...document.documentElement.dataset }).toEqual({
 			theme: "dark",
 			accent: "fox",
+			wallpaper: "aurora",
 		});
 		expect(JSON.parse(localStorage.getItem(THEME_KEY) ?? "null")).toEqual({
 			mode: "dark",
 			accent: "fox",
+			wallpaper: "aurora",
 		});
+	});
+
+	it("壁纸：选 Tahoe 波写到根元素并存进同一个 JSON；没有图片时自定义只是上传入口", () => {
+		setup("appearance");
+		const group = screen.getByRole("radiogroup", { name: "壁纸" });
+		expect(
+			within(group)
+				.getAllByRole("radio")
+				.map((r) => r.getAttribute("aria-label")),
+		).toEqual(["极光", "Tahoe 波", "纸纹"]);
+		expect(
+			within(group).getByRole("button", { name: "自定义：上传图片" }),
+		).toBeInTheDocument();
+		fireEvent.click(within(group).getByRole("radio", { name: "Tahoe 波" }));
+		expect(document.documentElement.dataset.wallpaper).toBe("waves");
+		expect(JSON.parse(localStorage.getItem(THEME_KEY) ?? "null")).toEqual({
+			mode: "system",
+			accent: "teal",
+			wallpaper: "waves",
+		});
+		expect(screen.getByRole("button", { name: "移除图片" })).toBeDisabled();
 	});
 
 	it("方向键在主题色之间移动并选中", () => {
@@ -318,30 +350,37 @@ describe("设置 → 外观", () => {
 		expect(document.documentElement.dataset.accent).toBe("cobalt");
 	});
 
-	it("agent 头像：选内置字形以 PUT 整体替换，恢复默认发送空对象", async () => {
-		setup("appearance");
-		// 新文案 key 由集成时统一补进 locale：按 key 取，补齐前后都成立
-		const grid = await screen.findByRole("group", {
-			name: i18n.t("appearance.avatarGlyphs" as "common.save"),
-		});
-		fireEvent.click(within(grid).getByRole("button", { name: "🦊" }));
-		await waitFor(() =>
-			expect(within(grid).getByRole("button", { name: "🦊" })).toHaveAttribute(
-				"aria-pressed",
-				"true",
-			),
-		);
-		const reset = screen.getByRole("button", {
-			name: i18n.t("appearance.avatarReset" as "common.save"),
-		});
-		await waitFor(() => expect(reset).toBeEnabled());
-		fireEvent.click(reset);
-		await waitFor(() => expect(reset).toBeDisabled());
-		expect(writes().map((c) => [c.method, c.path, c.body])).toEqual([
-			["PUT", "/api/v1/settings/agent-identity", { avatarIcon: "🦊" }],
-			["PUT", "/api/v1/settings/agent-identity", {}],
-		]);
-	});
+	// 外观里依次是 agent 头像与我的头像两张卡，交互相同、各写各的接口
+	it.each([
+		["agent", 0],
+		["user", 1],
+	] as const)(
+		"%s 头像：选内置字形以 PUT 整体替换，恢复默认发送空对象",
+		async (who, idx) => {
+			setup("appearance");
+			const grids = await screen.findAllByRole("group", {
+				name: i18n.t("appearance.avatarGlyphs"),
+			});
+			expect(grids).toHaveLength(2);
+			const grid = grids[idx] as HTMLElement;
+			fireEvent.click(within(grid).getByRole("button", { name: "🦊" }));
+			await waitFor(() =>
+				expect(
+					within(grid).getByRole("button", { name: "🦊" }),
+				).toHaveAttribute("aria-pressed", "true"),
+			);
+			const reset = screen.getAllByRole("button", {
+				name: i18n.t("appearance.avatarReset"),
+			})[idx] as HTMLElement;
+			await waitFor(() => expect(reset).toBeEnabled());
+			fireEvent.click(reset);
+			await waitFor(() => expect(reset).toBeDisabled());
+			expect(writes().map((c) => [c.method, c.path, c.body])).toEqual([
+				["PUT", `/api/v1/settings/${who}-identity`, { avatarIcon: "🦊" }],
+				["PUT", `/api/v1/settings/${who}-identity`, {}],
+			]);
+		},
+	);
 });
 
 describe("设置 → 项目图标", () => {

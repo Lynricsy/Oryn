@@ -92,6 +92,8 @@ const ICONS = {
 	stop: Stop,
 	settings: GearSix,
 	panel: SidebarSimple,
+	/** 左侧栏开关（不镜像，栏在左） */
+	sidebar: SidebarSimple,
 	chevronDown: CaretDown,
 	chevronRight: CaretRight,
 	close: X,

@@ -96,7 +96,7 @@ function BannerShell({
 		<div
 			role={tone === "err" ? "alert" : "status"}
 			data-testid="env-banner"
-			className={`flex gap-2.5 px-3.5 py-2.5 text-sm first:rounded-t-[13px] ${TONE[tone]}`}
+			className={`flex gap-2.5 px-3.5 py-2.5 text-sm first:rounded-t-[calc(var(--r-xl)-1px)] ${TONE[tone]}`}
 		>
 			<Icon
 				name="alert"

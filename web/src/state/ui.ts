@@ -1,8 +1,9 @@
-/** 界面状态（与协议无关）：当前打开的对话框、侧边栏 / 右侧面板（标签、宽度、最大化、改动标签的未看签名）、搜索聚焦请求。 */
+/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、搜索聚焦请求。 */
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { Schemas } from "../api/client";
 import type { ReportKind } from "../lib/slash";
+import { breakpointFor, useBreakpoint } from "../lib/viewport";
 
 export type DialogState =
 	| { kind: "tree" }
@@ -62,9 +63,40 @@ export function hasUnseenChanges(sig: ChangesSig | undefined): boolean {
 	return !!sig && sig.current !== "" && sig.current !== sig.seen;
 }
 
+export const COLLAPSED_CARDS_KEY = "oryn.panel.collapsed";
+
+/** 同步读取（store 创建时），首帧就按存储的收起状态渲染；非法值回落为全部展开。 */
+export function loadCollapsedCards(): Record<string, boolean> {
+	try {
+		const raw = globalThis.localStorage?.getItem(COLLAPSED_CARDS_KEY);
+		const parsed: unknown = raw ? JSON.parse(raw) : null;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+			return {};
+		return Object.fromEntries(
+			Object.entries(parsed).filter(([, v]) => v === true),
+		);
+	} catch {
+		return {};
+	}
+}
+
+export const SIDEBAR_COLLAPSED_KEY = "oryn.sidebar.collapsed";
+
+/** 同步读取（store 创建时），桌面端首帧就按存储的收起状态渲染。 */
+function loadSidebarCollapsed(): boolean {
+	try {
+		return globalThis.localStorage?.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+	} catch {
+		return false;
+	}
+}
+
 export interface UiState {
 	dialog: DialogState | null;
+	/** 侧边栏打开：medium 是推入式列、compact 是抽屉（不持久化）。 */
 	sidebarOpen: boolean;
+	/** expanded 布局下侧边栏收起（存 localStorage）。 */
+	sidebarCollapsed: boolean;
 	panelOpen: boolean;
 	panelTab: PanelTab;
 	/** expanded 布局下的面板列宽（px），所有标签共用。 */
@@ -76,6 +108,9 @@ export interface UiState {
 	open(d: DialogState): void;
 	close(): void;
 	setSidebar(open: boolean): void;
+	setSidebarCollapsed(collapsed: boolean): void;
+	/** 页头开关与 Ctrl/⌘+B：expanded 收起 / 展开，medium 推入 / 收回，compact 开关抽屉。 */
+	toggleSidebar(): void;
 	setPanel(open: boolean): void;
 	setPanelTab(tab: PanelTab): void;
 	setPanelWidth(width: number): void;
@@ -86,11 +121,15 @@ export interface UiState {
 	noteChanges(threadId: string, sig: string, seen: boolean): void;
 	/** 用户正在看改动标签：最新签名记为已看。 */
 	markChangesSeen(threadId: string): void;
+	/** 信息面板里收起的卡片（按卡片 key，所有线程共用），存 localStorage。 */
+	collapsedCards: Record<string, boolean>;
+	toggleCard(key: string): void;
 }
 
-export const uiStore = createStore<UiState>((set) => ({
+export const uiStore = createStore<UiState>((set, get) => ({
 	dialog: null,
 	sidebarOpen: false,
+	sidebarCollapsed: loadSidebarCollapsed(),
 	panelOpen: typeof window === "undefined" || window.innerWidth >= 840,
 	panelTab: "info",
 	panelWidth: loadPanelWidth(),
@@ -99,6 +138,23 @@ export const uiStore = createStore<UiState>((set) => ({
 	open: (dialog) => set({ dialog }),
 	close: () => set({ dialog: null }),
 	setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+	setSidebarCollapsed: (sidebarCollapsed) => {
+		try {
+			globalThis.localStorage?.setItem(
+				SIDEBAR_COLLAPSED_KEY,
+				sidebarCollapsed ? "1" : "0",
+			);
+		} catch {
+			// 隐私模式下静默
+		}
+		set({ sidebarCollapsed });
+	},
+	toggleSidebar: () => {
+		const s = get();
+		if (breakpointFor(viewportWidth()) === "expanded")
+			s.setSidebarCollapsed(!s.sidebarCollapsed);
+		else set({ sidebarOpen: !s.sidebarOpen });
+	},
 	setPanel: (panelOpen) => set({ panelOpen }),
 	setPanelTab: (panelTab) =>
 		set((s) => ({
@@ -116,8 +172,11 @@ export const uiStore = createStore<UiState>((set) => ({
 		set({ panelWidth });
 	},
 	togglePanelMax: () => set((s) => ({ panelMax: !s.panelMax })),
-	focusSearch: () =>
-		set((s) => ({ searchNonce: s.searchNonce + 1, sidebarOpen: true })),
+	focusSearch: () => {
+		// 侧栏收起时先展开，搜索框才可聚焦
+		if (get().sidebarCollapsed) get().setSidebarCollapsed(false);
+		set((s) => ({ searchNonce: s.searchNonce + 1, sidebarOpen: true }));
+	},
 	changesSig: {},
 	noteChanges: (threadId, sig, seen) =>
 		set((s) => {
@@ -138,8 +197,31 @@ export const uiStore = createStore<UiState>((set) => ({
 				},
 			};
 		}),
+	collapsedCards: loadCollapsedCards(),
+	toggleCard: (key) =>
+		set((s) => {
+			const collapsedCards = { ...s.collapsedCards };
+			if (collapsedCards[key]) delete collapsedCards[key];
+			else collapsedCards[key] = true;
+			try {
+				globalThis.localStorage?.setItem(
+					COLLAPSED_CARDS_KEY,
+					JSON.stringify(collapsedCards),
+				);
+			} catch {
+				// 忽略
+			}
+			return { collapsedCards };
+		}),
 }));
 
 export function useUi<T>(selector: (s: UiState) => T): T {
 	return useStore(uiStore, selector);
+}
+
+/** 页头左上角的侧栏开关是否显示：非 expanded 时总在（开抽屉 / 推入列），expanded 时只在侧栏收起后出现。 */
+export function useSidebarToggleShown(): boolean {
+	const bp = useBreakpoint();
+	const collapsed = useUi((s) => s.sidebarCollapsed);
+	return bp !== "expanded" || collapsed;
 }

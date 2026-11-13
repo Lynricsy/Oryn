@@ -997,6 +997,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/user-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 用户头像（用户回合右侧与侧栏页脚显示） */
+        get: operations["getUserIdentity"];
+        /**
+         * 设置用户头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+         * @description 规则同 agent 头像：`avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
+         *     `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+         */
+        put: operations["putUserIdentity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-config/files": {
         parameters: {
             query?: never;
@@ -1493,8 +1515,8 @@ export interface components {
         GitIdentitySettings: {
             identity?: components["schemas"]["GitIdentity"];
         };
-        /** @description agent 头像；两个字段至多出现一个，都省略表示默认（品牌标） */
-        AgentIdentity: {
+        /** @description 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认 */
+        AvatarIdentity: {
             /** @description 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略 */
             avatarIcon?: string;
             /** @description `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略 */
@@ -4326,7 +4348,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentIdentity"];
+                    "application/json": components["schemas"]["AvatarIdentity"];
                 };
             };
             default: components["responses"]["Error"];
@@ -4341,7 +4363,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgentIdentity"];
+                "application/json": components["schemas"]["AvatarIdentity"];
             };
         };
         responses: {
@@ -4351,7 +4373,53 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentIdentity"];
+                    "application/json": components["schemas"]["AvatarIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getUserIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（都省略 = 默认：git 身份名字首字或 User 图标） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvatarIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putUserIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AvatarIdentity"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvatarIdentity"];
                 };
             };
             default: components["responses"]["Error"];

@@ -1,22 +1,27 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
  * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
- * 外观（明暗、主题色、agent 头像）、关于。
+ * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、关于。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import {
 	type ChangeEvent,
+	type CSSProperties,
 	type KeyboardEvent,
 	type ReactNode,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
 import { api, type Project, type Schemas, unwrap } from "../api/client";
 import {
+	type AvatarOwner,
+	avatarIdentityKey,
+	putAvatarIdentity,
 	qk,
-	useAgentIdentity,
+	useAvatarIdentity,
 	useDevices,
 	useGitIdentity,
 	useHealth,
@@ -52,6 +57,7 @@ import {
 	TextInput,
 	Toggle,
 } from "../components/ui/primitives";
+import { UserAvatar } from "../components/ui/UserAvatar";
 import { AvatarTooLargeError, avatarDataUrl } from "../lib/avatar-image";
 import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
 import { agentConfigSource } from "../lib/file-source";
@@ -64,14 +70,17 @@ import {
 	PROJECT_GLYPHS,
 } from "../lib/glyphs";
 import { useBreakpoint } from "../lib/viewport";
+import { processWallpaper, readWallpaperImage } from "../lib/wallpaper";
 import {
 	ACCENTS,
 	type AccentName,
 	MODES,
 	type ThemeMode,
+	themeStore,
 	useTheme,
+	WALLPAPERS,
 } from "../state/theme";
-import { uiStore } from "../state/ui";
+import { uiStore, useSidebarToggleShown } from "../state/ui";
 
 export type SettingsSection =
 	| "devices"
@@ -1224,18 +1233,175 @@ function ThemeSettings() {
 						})}
 					</div>
 				</div>
+				<WallpaperPicker />
 				<p className="text-faint text-xs">{t("appearance.desc")}</p>
 			</div>
 		</Card>
 	);
 }
 
-function AgentAvatarSettings() {
+/**
+ * 壁纸：内置三种 + 自定义图片。缩略卡挂 `.wp-<名>` 类，按当前主题色与明暗真实渲染；
+ * 自定义卡的图片与纱厚度经内联变量传入（壁纸不是 custom 时 <html> 上没有这些变量）。
+ * 还没有图片时「自定义」是上传入口而不是单选项，方向键不会停在它上面。
+ */
+function WallpaperPicker() {
+	const { t } = useTranslation();
+	const wallpaper = useTheme((s) => s.wallpaper);
+	const tone = useTheme((s) => s.tone);
+	const setWallpaper = useTheme((s) => s.setWallpaper);
+	const [image, setImage] = useState(readWallpaperImage);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<Error | null>(null);
+	const fileRef = useRef<HTMLInputElement>(null);
+	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		e.target.value = "";
+		if (!file) return;
+		setBusy(true);
+		setError(null);
+		void processWallpaper(file)
+			.then(({ url, tone }) => {
+				// 存储失败时抛错，壁纸保持原样
+				themeStore.getState().setCustomWallpaper(url, tone);
+				setImage(url);
+			})
+			.catch(() => setError(new Error(t("appearance.wallpaperError"))))
+			.finally(() => setBusy(false));
+	};
+	const thumb = (w: (typeof WALLPAPERS)[number], on: boolean) => (
+		<span
+			aria-hidden
+			className={`wp-${w} block h-[60px] w-24 rounded-lg inset-ring-1 inset-ring-fg/15 ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
+			style={
+				w === "custom" && image
+					? ({
+							"--wallpaper-image": `url("${image}")`,
+							"--wp-lo": tone?.[0] ?? 0.5,
+							"--wp-hi": tone?.[1] ?? 0.5,
+						} as CSSProperties)
+					: undefined
+			}
+		/>
+	);
+	return (
+		<div className="flex flex-col gap-2">
+			<span aria-hidden className="font-medium text-muted text-xs">
+				{t("appearance.wallpaper")}
+			</span>
+			<div
+				role="radiogroup"
+				aria-label={t("appearance.wallpaper")}
+				onKeyDown={radioKeys}
+				className="flex flex-wrap gap-x-3 gap-y-3"
+			>
+				{WALLPAPERS.map((w) => {
+					const label = t(`appearance.wallpapers.${w}`);
+					if (w === "custom" && !image)
+						return (
+							<button
+								key={w}
+								type="button"
+								aria-label={`${label}：${t("appearance.wallpaperUpload")}`}
+								disabled={busy}
+								onClick={() => fileRef.current?.click()}
+								className="flex flex-col items-center gap-1.5 rounded-md py-1 text-2xs text-muted transition-colors duration-150 hover:text-fg disabled:opacity-50"
+							>
+								<span
+									aria-hidden
+									className="grid h-[60px] w-24 place-items-center rounded-lg border border-border-strong border-dashed text-faint"
+								>
+									{busy ? <Spinner /> : <Icon name="upload" size={16} />}
+								</span>
+								<span aria-hidden>{label}</span>
+							</button>
+						);
+					const on = wallpaper === w;
+					return (
+						// biome-ignore lint/a11y/useSemanticElements: 缩略卡外观的单选（WAI-ARIA radio），原生 radio 画不出
+						<button
+							key={w}
+							type="button"
+							role="radio"
+							aria-checked={on}
+							aria-label={label}
+							tabIndex={on ? 0 : -1}
+							onClick={() => setWallpaper(w)}
+							className={`flex flex-col items-center gap-1.5 rounded-md py-1 text-2xs transition-colors duration-150 ${on ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
+						>
+							{thumb(w, on)}
+							<span aria-hidden>{label}</span>
+						</button>
+					);
+				})}
+			</div>
+			<div className="flex flex-wrap items-center gap-2">
+				<label className="inline-flex h-7 cursor-pointer select-none items-center gap-1 rounded-md border border-border bg-panel px-2.5 font-medium text-fg text-xs shadow-xs transition-colors duration-150 hover:bg-hover has-[:disabled]:pointer-events-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--ring)] has-[:focus-visible]:outline-offset-2 has-[:disabled]:opacity-50">
+					<Icon name="upload" size={13} />
+					{t("appearance.wallpaperUpload")}
+					<input
+						ref={fileRef}
+						type="file"
+						accept="image/*"
+						className="sr-only"
+						disabled={busy}
+						onChange={onFile}
+					/>
+				</label>
+				<Button
+					size="sm"
+					variant="ghost"
+					icon="trash"
+					disabled={!image || busy}
+					onClick={() => {
+						themeStore.getState().removeCustomWallpaper();
+						setImage(null);
+						setError(null);
+					}}
+				>
+					{t("appearance.wallpaperRemove")}
+				</Button>
+			</div>
+			<p className="text-faint text-xs">{t("appearance.wallpaperHint")}</p>
+			<ErrorText error={error} />
+		</div>
+	);
+}
+
+/** 两种头像在设置里的差异：标题、说明、默认头像的描述与预览组件；其余交互完全相同。 */
+const AVATAR_SETTINGS = {
+	agent: {
+		title: "appearance.avatar",
+		hint: "appearance.avatarHint",
+		defaultKind: "appearance.avatarKind.default",
+		icon: "robot",
+		Preview: AgentAvatar,
+	},
+	user: {
+		title: "appearance.userAvatar",
+		hint: "appearance.userAvatarHint",
+		defaultKind: "appearance.userAvatarDefault",
+		icon: "user",
+		Preview: UserAvatar,
+	},
+} as const satisfies Record<
+	AvatarOwner,
+	{
+		title: string;
+		hint: string;
+		defaultKind: string;
+		icon: IconName;
+		Preview: (p: { size?: number }) => ReactNode;
+	}
+>;
+
+function AvatarSettings({ who }: { who: AvatarOwner }) {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
-	const q = useAgentIdentity();
+	const q = useAvatarIdentity(who);
 	const save = useAsync();
 	const [custom, setCustom] = useState("");
+	const cfg = AVATAR_SETTINGS[who];
 	const cur = q.data;
 	const kind = cur?.avatarImage
 		? "image"
@@ -1243,12 +1409,12 @@ function AgentAvatarSettings() {
 			? "icon"
 			: "default";
 	// PUT 整体替换：头像图片与图标字形互斥，`{}` = 恢复默认
-	const put = (body: Schemas["AgentIdentity"]) =>
+	const put = (body: Schemas["AvatarIdentity"]) =>
 		save.run(async () => {
-			const res = await unwrap(
-				api.PUT("/api/v1/settings/agent-identity", { body }),
+			qc.setQueryData(
+				avatarIdentityKey(who),
+				await putAvatarIdentity(who, body),
 			);
-			qc.setQueryData(qk.agentIdentity, res);
 		});
 	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
@@ -1265,19 +1431,25 @@ function AgentAvatarSettings() {
 						: t("appearance.avatarDecodeFailed"),
 				);
 			}
-			const res = await unwrap(
-				api.PUT("/api/v1/settings/agent-identity", { body: { avatarImage } }),
+			qc.setQueryData(
+				avatarIdentityKey(who),
+				await putAvatarIdentity(who, { avatarImage }),
 			);
-			qc.setQueryData(qk.agentIdentity, res);
 		});
 	};
 	return (
-		<Card title={t("appearance.avatar")} icon="robot">
+		<Card title={t(cfg.title)} icon={cfg.icon}>
 			<div className="flex items-center gap-3">
-				<AgentAvatar size={40} />
+				<cfg.Preview size={40} />
 				<div className="min-w-0 flex-1">
-					<p className="text-sm">{t(`appearance.avatarKind.${kind}`)}</p>
-					<p className="text-faint text-xs">{t("appearance.avatarHint")}</p>
+					<p className="text-sm">
+						{t(
+							kind === "default"
+								? cfg.defaultKind
+								: `appearance.avatarKind.${kind}`,
+						)}
+					</p>
+					<p className="text-faint text-xs">{t(cfg.hint)}</p>
 				</div>
 				{(save.busy || q.isPending) && <Spinner />}
 			</div>
@@ -1366,7 +1538,8 @@ function AppearanceSettings() {
 	return (
 		<>
 			<ThemeSettings />
-			<AgentAvatarSettings />
+			<AvatarSettings who="agent" />
+			<AvatarSettings who="user" />
 		</>
 	);
 }
@@ -1453,16 +1626,15 @@ export function SettingsPage({
 }): ReactNode {
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
+	const sidebarToggle = useSidebarToggleShown();
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
 			<header className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3">
-				{bp !== "expanded" && (
+				{sidebarToggle && (
 					<IconButton
-						icon="menu"
+						icon={bp === "expanded" ? "sidebar" : "menu"}
 						label={t("nav.sidebar")}
-						onClick={() =>
-							uiStore.getState().setSidebar(!uiStore.getState().sidebarOpen)
-						}
+						onClick={() => uiStore.getState().toggleSidebar()}
 					/>
 				)}
 				<Icon name="settings" size={16} className="text-faint" />

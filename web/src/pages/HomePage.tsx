@@ -1,6 +1,7 @@
 /**
  * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
  * 模型与思考级别（Ctrl+S）、发送。省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
+ * 托盘背后是一层主题色光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  */
 import {
 	type ReactElement,
@@ -18,6 +19,7 @@ import {
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
+import { morphToThread } from "../components/composer/DockTray";
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
@@ -33,7 +35,7 @@ import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { useIndex } from "../state/stores";
-import { uiStore } from "../state/ui";
+import { uiStore, useSidebarToggleShown } from "../state/ui";
 
 type Pill = "executor" | "project" | "model";
 
@@ -115,7 +117,7 @@ function Popover({
 	return (
 		<div
 			ref={ref}
-			className="glass pop-in absolute bottom-full left-0 z-30 mb-2 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl p-1"
+			className="glass pop-in absolute bottom-full left-0 z-30 mb-2 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-1"
 		>
 			{children}
 		</div>
@@ -155,7 +157,7 @@ function Option({
 		<button
 			type="button"
 			onClick={onClick}
-			className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${selected ? "bg-hover text-fg" : "text-fg"}`}
+			className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${selected ? "bg-hover text-fg" : "text-fg"}`}
 		>
 			{leading && (
 				<span
@@ -210,6 +212,7 @@ export function HomePage(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const bp = useBreakpoint();
+	const sidebarToggle = useSidebarToggleShown();
 	const providers = useProviders();
 	const projects = useProjects();
 	const orbs = useOrbs();
@@ -224,6 +227,7 @@ export function HomePage(): ReactNode {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
+	const trayRef = useRef<HTMLDivElement>(null);
 	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
 	const [intro] = useState(() => !introPlayed);
 
@@ -330,9 +334,14 @@ export function HomePage(): ReactNode {
 			};
 			const thread = await createThread(body);
 			setPendingPrompt(thread.id, text);
-			setPrompt("");
-			att.clear();
-			navigate(`/t/${thread.id}`);
+			// 触屏：发送即收起软键盘，线程页也不再抢焦点（否则键盘会先收后弹闪一下）
+			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
+			// 托盘连续变形到线程页输入坞；旧快照里仍是刚发出的文字，清空放到导航那一刻
+			morphToThread(trayRef.current, () => {
+				setPrompt("");
+				att.clear();
+				navigate(`/t/${thread.id}`);
+			});
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -342,33 +351,42 @@ export function HomePage(): ReactNode {
 
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full flex-col">
-			{bp !== "expanded" && (
-				<header className="flex h-12 shrink-0 items-center gap-2 px-2">
+			{sidebarToggle && (
+				<header className="flex h-12 shrink-0 items-center gap-1.5 px-2">
 					<IconButton
-						icon="menu"
+						icon={bp === "expanded" ? "sidebar" : "menu"}
 						label={t("nav.sidebar")}
-						onClick={() =>
-							uiStore.getState().setSidebar(!uiStore.getState().sidebarOpen)
-						}
+						onClick={() => uiStore.getState().toggleSidebar()}
 					/>
-					<span className="font-semibold text-sm">{t("app.name")}</span>
+					{/* 与桌面侧栏顶部同一套品牌：品牌标 + 衬线字标，按 48px 顶栏缩到 20px */}
+					<span className="flex items-center gap-1.5">
+						<BrandMark size={20} />
+						<span className="wordmark text-[20px] text-fg leading-none">
+							{t("app.name")}
+						</span>
+					</span>
 				</header>
 			)}
-			<div className="flex flex-1 items-start justify-center overflow-y-auto px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
+			<div className="flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
 				<div className="w-full max-w-2xl">
 					<div className={`mb-3 flex justify-center ${rise("")}`}>
-						<BrandMark size={32} />
+						<BrandMark size={32} blink />
 					</div>
 					<h1
 						className={`mb-5 text-center font-semibold text-fg text-xl tracking-tight ${rise("delay-[60ms]")}`}
 					>
 						{t("newThread.heading")}
 					</h1>
-					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同一团主题色晕（dock-glow）、同样的分行 */}
+					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同一团主题色晕（dock-glow）、同样的分行；首页大一档圆角（18px） */}
 					<div
 						className={`dock-glow relative isolate ${rise("delay-[120ms]")}`}
 					>
-						<div className="glass glass-dock rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+						{/* 托盘背后的光场（一圈宽而淡的光晕 + 两团晕）：玻璃底下有东西可模糊，居中态也看得出是玻璃 */}
+						<div aria-hidden className="home-field" />
+						<div
+							ref={trayRef}
+							className="glass glass-dock rounded-2xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]"
+						>
 							<AttachmentStrip items={att.items} onRemove={att.remove} />
 							<textarea
 								onDragOver={(e) => {
@@ -405,25 +423,31 @@ export function HomePage(): ReactNode {
 									}
 								}}
 							/>
-							<div className="relative flex flex-wrap items-center gap-0.5 px-2 pb-2">
-								<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
-									<Icon name="attach" size={15} />
-									<span className="sr-only">{t("attachments.attach")}</span>
-									<input
-										type="file"
-										multiple
-										className="hidden"
-										onChange={(e) => {
-											if (e.target.files) void att.addFiles(e.target.files);
-											e.target.value = "";
-										}}
+							{/*
+							 * 工具行：附件 + 分隔、可换行的选项胶囊、发送钮。发送钮始终在第一行最右；
+							 * 宽屏一行放下，窄屏放不下的胶囊在自己的容器里折到下一行（items-start 让发送钮钉在首行）。
+							 */}
+							<div className="relative flex items-start gap-0.5 px-2 pb-2">
+								<div className="flex h-8 shrink-0 items-center">
+									<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
+										<Icon name="attach" size={15} />
+										<span className="sr-only">{t("attachments.attach")}</span>
+										<input
+											type="file"
+											multiple
+											className="hidden"
+											onChange={(e) => {
+												if (e.target.files) void att.addFiles(e.target.files);
+												e.target.value = "";
+											}}
+										/>
+									</label>
+									<span
+										aria-hidden
+										className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
 									/>
-								</label>
-								<span
-									aria-hidden
-									className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
-								/>
-								<div className="flex min-w-0 flex-wrap items-center gap-1.5">
+								</div>
+								<div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-1.5">
 									<PillButton
 										icon="box"
 										text={executorText}
@@ -450,7 +474,6 @@ export function HomePage(): ReactNode {
 										onClick={() => setPill(pill === "model" ? null : "model")}
 									/>
 								</div>
-								<div className="flex-1" />
 								<button
 									type="button"
 									title={t("newThread.start")}

@@ -18,6 +18,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { JsonRecord } from "../../state/message-builder";
+import { useIndex } from "../../state/stores";
 import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
 import { AgentAvatar } from "../ui/AgentAvatar";
@@ -36,8 +37,8 @@ import {
 	summarizeTurn,
 	ToolCard,
 	type TurnUsage,
-	USER_BUBBLE,
 	USER_BUBBLE_TEXT,
+	UserBubble,
 } from "./MessageView";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 
@@ -211,15 +212,21 @@ function isUserRow(item: TranscriptItem): boolean {
 /**
  * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行放头像；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
+ * 连续的用户消息只有第一条放用户头像（`userStarts`）。
+ * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
  */
 export function layoutTurns(items: readonly TranscriptItem[]): {
 	starts: Set<number>;
+	userStarts: Set<number>;
 	footers: Map<number, TurnUsage>;
+	openStart: number | undefined;
 } {
 	const starts = new Set<number>();
+	const userStarts = new Set<number>();
 	const footers = new Map<number, TurnUsage>();
 	let messages: JsonRecord[] = [];
 	let last = -1;
+	let openStart: number | undefined;
 	const close = () => {
 		const tail = items[last];
 		if (tail?.kind === "message" && !tail.live && messages.length > 0)
@@ -228,17 +235,28 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 		last = -1;
 	};
 	items.forEach((it, i) => {
-		if (it.kind === "session_divider" || isUserRow(it)) {
+		if (isUserRow(it)) {
+			const prev = items[i - 1];
+			if (prev === undefined || !isUserRow(prev)) userStarts.add(i);
 			close();
+			openStart = undefined;
+			return;
+		}
+		if (it.kind === "session_divider") {
+			close();
+			openStart = undefined;
 			return;
 		}
 		if (!isAgentRow(it)) return;
-		if (last < 0) starts.add(i);
+		if (last < 0) {
+			starts.add(i);
+			openStart = i;
+		}
 		last = i;
 		if (it.kind === "message") messages.push(it.message);
 	});
 	close();
-	return { starts, footers };
+	return { starts, userStarts, footers, openStart };
 }
 
 /** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
@@ -280,11 +298,11 @@ export function rowGaps(
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex flex-col items-end gap-1 pb-3">
+		<div className="flex flex-col items-end gap-1 pr-8 pb-3">
 			<span className="sr-only">{t("transcript.you")}</span>
-			<div className={`${USER_BUBBLE} opacity-80`}>
+			<UserBubble avatar dim>
 				<div className={USER_BUBBLE_TEXT}>{text}</div>
-			</div>
+			</UserBubble>
 			<span className="inline-flex items-center gap-1 text-2xs text-faint">
 				<Icon name="clock" size={11} aria-hidden />
 				{t("transcript.sending")}
@@ -316,6 +334,9 @@ export function Transcript({
 	}, [hasUser, pending, threadId]);
 	const pendingText = hasUser ? undefined : pending;
 	const turns = useMemo(() => layoutTurns(items), [items]);
+	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）
+	const working = useIndex((s) => s.threads[threadId]?.state === "working");
+	const liveStart = working ? turns.openStart : undefined;
 	const gaps = useMemo(() => rowGaps(items, turns.footers), [items, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
@@ -361,11 +382,10 @@ export function Transcript({
 		() =>
 			virtualItems.map((v) => {
 				const item = v.index < items.length ? items[v.index] : undefined;
-				// 用户气泡与会话分隔线铺满整行；其余块都从正文列开始
+				// 会话分隔线铺满整行；用户气泡右侧让出头像列（pr-8），其余块从左侧头像列之后的正文列开始
+				const userRow = item !== undefined && isUserRow(item);
 				const bodyCol =
-					item !== undefined &&
-					item.kind !== "session_divider" &&
-					!isUserRow(item);
+					item !== undefined && item.kind !== "session_divider" && !userRow;
 				return (
 					<div
 						key={v.key}
@@ -387,19 +407,21 @@ export function Transcript({
 						}}
 					>
 						<div
-							className={`group/row relative mx-auto max-w-3xl ${bodyCol ? "pl-8" : ""}`}
+							className={`group/row relative mx-auto max-w-3xl ${bodyCol ? "pl-8" : userRow ? "pr-8" : ""}`}
 						>
 							{turns.starts.has(v.index) && (
 								// 本行消息自带左侧菜单时，悬停 / 聚焦让出头像位置（细指针）
 								<span className="absolute top-1 left-0 transition-opacity duration-150 pointer-fine:group-has-[.msg-gutter:focus-within]/row:opacity-0 pointer-fine:group-has-[.msg-gutter:hover]/row:opacity-0">
-									<AgentAvatar size={20} />
+									<AgentAvatar size={20} working={liveStart === v.index} />
 								</span>
 							)}
 							{item ? (
 								<ItemView
 									item={item}
 									turn={turns.footers.get(v.index)}
-									turnStart={turns.starts.has(v.index)}
+									turnStart={
+										turns.starts.has(v.index) || turns.userStarts.has(v.index)
+									}
 								/>
 							) : (
 								<>
@@ -421,6 +443,7 @@ export function Transcript({
 			turns,
 			gaps,
 			pendingText,
+			liveStart,
 		],
 	);
 

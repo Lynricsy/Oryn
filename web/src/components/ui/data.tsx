@@ -1,5 +1,5 @@
 /** 数据呈现元件：徽标、读数、量表、圆环、状态点、卡片、键值、列表行、提示条、头像、纸面、品牌标。 */
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useId } from "react";
 import { Icon, type IconName } from "./icons";
 
 export type Tone = "neutral" | "accent" | "ok" | "warn" | "err" | "frost";
@@ -197,35 +197,97 @@ export function StatusDot({
 	);
 }
 
-/** 纸面内的分组卡片。 */
+/**
+ * 纸面内的分组卡片。`collapsible` 时整条标题行可点（标题是 button，`::after` 铺满整行），不显示箭头；
+ * 正文用 grid 行高 1fr ↔ 0fr 过渡收起，同时渐隐上移，`summary` 在标题行右侧淡入。收起后正文 `inert`。
+ * `action` 叠在 `::after` 之上，独立可点。不传 `collapsible` 时与普通卡片完全一样。
+ */
 export function Card({
 	title,
 	icon,
 	action,
 	children,
 	className = "",
+	collapsible = false,
+	collapsed = false,
+	onToggle,
+	summary,
 }: {
 	title?: ReactNode;
 	icon?: IconName;
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
+	collapsible?: boolean;
+	collapsed?: boolean;
+	onToggle?: () => void;
+	/** 收起时显示在标题行右侧的关键信息 */
+	summary?: ReactNode;
 }): ReactNode {
+	const bodyId = useId();
+	const hasHead = !!(title || action);
+	if (!collapsible) {
+		return (
+			<section
+				className={`rounded-lg border border-border bg-panel ${className}`}
+			>
+				{hasHead && (
+					<header className="flex h-9 items-center gap-2 px-3 font-medium text-muted text-xs">
+						{icon && (
+							<Icon name={icon} size={14} aria-hidden className="text-faint" />
+						)}
+						<h3 className="min-w-0 flex-1 truncate">{title}</h3>
+						{action}
+					</header>
+				)}
+				<div className={`px-3 pb-3 ${hasHead ? "" : "pt-3"}`}>{children}</div>
+			</section>
+		);
+	}
+	// overflow-hidden（裁圆角与收起动画）会让 flex 子项的自动最小高度变成 0：在纵向 flex 容器里不加 shrink-0
+	// 就会被压扁裁掉内容，而不是让外层滚动
 	return (
 		<section
-			className={`rounded-lg border border-border bg-panel ${className}`}
+			className={`shrink-0 overflow-hidden rounded-lg border border-border bg-panel ${className}`}
 		>
-			{(title || action) && (
-				<header className="flex h-9 items-center gap-2 px-3 font-medium text-muted text-xs">
-					{icon && (
-						<Icon name={icon} size={14} aria-hidden className="text-faint" />
-					)}
-					<h3 className="min-w-0 flex-1 truncate">{title}</h3>
-					{action}
-				</header>
-			)}
-			<div className={`px-3 pb-3 ${title || action ? "" : "pt-3"}`}>
-				{children}
+			<header className="relative flex h-9 items-center gap-2 px-3 font-medium text-muted text-xs transition-colors duration-150 hover:bg-hover has-[>h3>button:focus-visible]:outline-2 has-[>h3>button:focus-visible]:outline-[var(--ring)] has-[>h3>button:focus-visible]:-outline-offset-2">
+				{icon && (
+					<Icon name={icon} size={14} aria-hidden className="text-faint" />
+				)}
+				<h3 className="min-w-0 shrink truncate">
+					<button
+						type="button"
+						aria-expanded={!collapsed}
+						aria-controls={bodyId}
+						onClick={onToggle}
+						className="cursor-pointer outline-none after:absolute after:inset-0 after:content-['']"
+					>
+						{title}
+					</button>
+				</h3>
+				{/* 摘要：收起时淡入，展开时淡出并退出无障碍树；点在摘要上同样落到整行的 ::after */}
+				<span
+					aria-hidden={!collapsed}
+					className={`flex min-w-0 flex-1 items-center justify-end overflow-hidden whitespace-nowrap font-normal text-xs tabular-nums transition-[opacity,visibility] duration-[240ms] ease-[var(--ease)] ${collapsed ? "visible opacity-100" : "invisible opacity-0"}`}
+				>
+					{summary}
+				</span>
+				{action && (
+					<span className="relative z-10 flex shrink-0">{action}</span>
+				)}
+			</header>
+			<div
+				id={bodyId}
+				inert={collapsed}
+				className={`grid transition-[grid-template-rows] duration-[240ms] ease-[var(--ease)] ${collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]"}`}
+			>
+				<div className="min-h-0 overflow-hidden">
+					<div
+						className={`px-3 pb-3 transition-[opacity,translate] duration-[240ms] ease-[var(--ease)] ${collapsed ? "-translate-y-1 opacity-0" : "translate-y-0 opacity-100"}`}
+					>
+						{children}
+					</div>
+				</div>
 			</div>
 		</section>
 	);
@@ -336,7 +398,7 @@ export function Callout({
 	return (
 		<div
 			role={role}
-			className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${CALLOUT_TONE[tone]}`}
+			className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${CALLOUT_TONE[tone]}`}
 		>
 			<Icon
 				name={icon ?? CALLOUT_ICON[tone]}
@@ -357,7 +419,8 @@ export function Callout({
 	);
 }
 
-function firstGrapheme(name: string): string {
+/** 名字的第一个字素（大写）；空名返回「?」。 */
+export function firstGrapheme(name: string): string {
 	const s = name.trim();
 	if (!s) return "?";
 	if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
@@ -391,7 +454,7 @@ export function Avatar({
 	return (
 		<span
 			aria-hidden
-			className="avatar inline-flex shrink-0 items-center justify-center rounded font-semibold text-[9px]"
+			className="avatar inline-flex shrink-0 items-center justify-center rounded-xs font-semibold text-[9px]"
 			style={hueStyle(hue ?? nameHue(name), size)}
 		>
 			{firstGrapheme(name)}
@@ -412,7 +475,7 @@ export function ProjectBadge({
 	return (
 		<span
 			aria-hidden
-			className="avatar inline-flex shrink-0 items-center justify-center rounded-[5px] font-semibold leading-none"
+			className={`avatar inline-flex shrink-0 items-center justify-center font-semibold leading-none ${size >= 28 ? "rounded-sm" : "rounded-xs"}`}
 			style={{
 				...hueStyle(nameHue(name), size),
 				fontSize: Math.round(size * (icon ? 0.66 : 0.56)),
@@ -437,7 +500,7 @@ export function TitleGlyph({
 	return (
 		<span
 			aria-hidden
-			className="avatar inline-flex shrink-0 items-center justify-center rounded-[4px] leading-none"
+			className="avatar inline-flex shrink-0 items-center justify-center rounded-xs leading-none"
 			style={{
 				...hueStyle(nameHue(seed), size),
 				fontSize: Math.round(size * 0.68),
@@ -465,20 +528,32 @@ export function Sheet({
 	);
 }
 
-/** 品牌标：外环 + 圆心。 */
-export function BrandMark({ size = 16 }: { size?: number }): ReactNode {
+/**
+ * 品牌标「O|」：左半个 orb + 一根插入符。`blink` 时插入符像文本光标一样硬切闪烁
+ * （`.caret-blink`，见 index.css；减少动效时常亮）。
+ */
+export function BrandMark({
+	size = 16,
+	blink = false,
+}: {
+	size?: number;
+	blink?: boolean;
+}): ReactNode {
 	return (
-		<span aria-hidden className="inline-flex shrink-0 text-accent">
-			<svg viewBox="0 0 32 32" width={size} height={size} aria-hidden>
-				<circle
-					cx={16}
-					cy={16}
-					r={11}
-					fill="none"
-					stroke="currentColor"
-					strokeWidth={3.5}
+		<span aria-hidden className="inline-flex shrink-0 text-ink">
+			<svg
+				viewBox="0 0 32 32"
+				width={size}
+				height={size}
+				fill="currentColor"
+				aria-hidden
+			>
+				<path d="M20.1 4.52A12 12 0 1 0 20.1 27.48Z" />
+				<path
+					data-brand-caret=""
+					className={blink ? "caret-blink" : undefined}
+					d="M24.5 4H25.9A1.1 1.1 0 0 1 27 5.1V26.9A1.1 1.1 0 0 1 25.9 28H24.5A1.1 1.1 0 0 1 23.4 26.9V5.1A1.1 1.1 0 0 1 24.5 4Z"
 				/>
-				<circle cx={16} cy={16} r={4.5} fill="currentColor" />
 			</svg>
 		</span>
 	);

@@ -80,18 +80,20 @@ function Swatch({ id }: { id: ContextPartId }) {
 	);
 }
 
-/** 彩色堆叠量表：每段宽度 = tokens / 上下文窗口，剩余部分露出轨道。 */
+/** 彩色堆叠量表：每段宽度 = tokens / 上下文窗口，剩余部分露出轨道。`compact`（卡片收起时的迷你条）段间不留缝。 */
 export function ContextBar({
 	parts,
 	contextWindow,
 	tone,
 	label,
+	compact = false,
 	className = "",
 }: {
 	parts: readonly ContextPart[];
 	contextWindow: number;
 	tone: Tone;
 	label: string;
+	compact?: boolean;
 	className?: string;
 }): ReactNode {
 	const describe = usePartLabel();
@@ -105,7 +107,7 @@ export function ContextBar({
 			aria-valuenow={Math.round((used / win) * 100)}
 			aria-valuemin={0}
 			aria-valuemax={100}
-			className={`flex h-1.5 gap-px overflow-hidden rounded-full bg-inset ${BAR_RING[tone]} ${className}`}
+			className={`flex h-1.5 overflow-hidden rounded-full bg-inset ${compact ? "" : "gap-px"} ${BAR_RING[tone]} ${className}`}
 		>
 			{parts
 				.filter((p) => p.tokens > 0)

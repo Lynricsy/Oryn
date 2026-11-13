@@ -496,7 +496,7 @@ function ContextMenu({
 			role="menu"
 			tabIndex={-1}
 			onKeyDown={onMenuKeyDown}
-			className="glass pop-in fixed z-50 min-w-48 rounded-xl p-1"
+			className="glass pop-in fixed z-50 min-w-48 rounded-lg p-1"
 			style={{ left, top }}
 		>
 			{actions.map((a) => (
@@ -504,7 +504,7 @@ function ContextMenu({
 					key={a}
 					type="button"
 					role="menuitem"
-					className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:bg-hover ${a === "delete" ? "text-err" : "text-fg"}`}
+					className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:bg-hover ${a === "delete" ? "text-err" : "text-fg"}`}
 					onClick={() => onAction(a)}
 				>
 					<Icon

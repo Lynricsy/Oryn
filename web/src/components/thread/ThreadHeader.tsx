@@ -106,13 +106,14 @@ export function ThreadHeader({
 	sidebarToggle,
 }: {
 	threadId: string;
-	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关 */
+	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
 	sidebarToggle: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const thread = useThread(threadId, (s) => s.thread);
 	const panelOpen = useUi((s) => s.panelOpen);
+	const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
 	const orb = useOrbOf(threadId);
 	const projects = useProjects();
 	// 只认线程自己的项目，和侧栏分组一致；「无项目」线程不显示项目段（即使 orb 属于某个项目）
@@ -288,13 +289,11 @@ export function ThreadHeader({
 				<i />
 				<i />
 			</div>
-			{sidebarToggle && (
+			{(sidebarToggle || sidebarCollapsed) && (
 				<IconButton
-					icon="menu"
+					icon={sidebarToggle ? "menu" : "sidebar"}
 					label={t("nav.sidebar")}
-					onClick={() =>
-						uiStore.getState().setSidebar(!uiStore.getState().sidebarOpen)
-					}
+					onClick={() => uiStore.getState().toggleSidebar()}
 				/>
 			)}
 			{project && (
@@ -353,7 +352,7 @@ export function ThreadHeader({
 					{card.icon && (
 						<span
 							aria-hidden
-							className="avatar inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] text-xs leading-none"
+							className="avatar inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-xs text-xs leading-none"
 							style={hueVar(hue ?? nameHue(card.text))}
 						>
 							{card.icon}

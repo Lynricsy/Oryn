@@ -1,7 +1,7 @@
 /**
  * 上下文分段：omp `get_context_report` 的 `breakdown` 给出 5 项非消息部分的精确 token 数和消息总数；
- * 消息总数再按当前生效上下文（活动分支、最后一次压缩 / `/clear` 之后）里各类内容的字符量按比例分摊成 5 类，
- * 与 omp 上下文查看器「unscaled replay 估算再缩放」同一思路。分摊出来的 5 类是估算值。
+ * 消息总数再按当前生效上下文（活动分支、最后一次压缩 / `/clear` 之后）里可见文本的字符比例粗略估算成 5 类。
+ * 生效范围里只要有无法按字符计量的内容（图片、加密或 redacted 思考、未知块），就不拆分，整段显示「消息」。
  */
 import type { Entry } from "../api/client";
 import type { ResponseData } from "../omp/types";
@@ -37,7 +37,7 @@ export type ContextPartId =
 export interface ContextPart {
 	id: ContextPartId;
 	tokens: number;
-	/** 由转录字符量按比例分摊，非 omp 精确计数 */
+	/** 按可见文本字符比例粗略分摊的估算值，不是 token 计数 */
 	estimated: boolean;
 }
 
@@ -83,18 +83,43 @@ function str(v: unknown): number {
 	return typeof v === "string" ? v.length : 0;
 }
 
-/** 消息内容的字符量：字符串或文本块（图片不计，omp 另算，网页端拿不到）。 */
-function contentChars(content: unknown): number {
+/** 消息内容的字符量：字符串或纯文本块；含任何非文本块（图片等）时无法计量，返回 null。 */
+function contentChars(content: unknown): number | null {
 	if (typeof content === "string") return content.length;
-	if (!Array.isArray(content)) return 0;
+	if (content === undefined || content === null) return 0;
+	if (!Array.isArray(content)) return null;
 	let n = 0;
-	for (const b of content)
-		if (isRecord(b) && b.type === "text") n += str(b.text);
+	for (const b of content) {
+		if (!isRecord(b) || b.type !== "text") return null;
+		n += str(b.text);
+	}
 	return n;
 }
 
-/** 各类内容的字符量（分类照 omp `session/context-view.ts`：bash / python 执行算工具输出，其余非 assistant 消息算用户消息）。 */
-export function messageWeights(path: readonly Entry[]): MessageWeights {
+/** assistant 内容按块归类；遇到 redacted 思考或未知块时无法计量，返回 null。 */
+function assistantChars(
+	content: unknown,
+): Pick<MessageWeights, "assistantMessages" | "thinking" | "toolCalls"> | null {
+	if (!Array.isArray(content)) return null;
+	const w = { assistantMessages: 0, thinking: 0, toolCalls: 0 };
+	for (const b of content) {
+		if (!isRecord(b)) return null;
+		if (b.type === "text") w.assistantMessages += str(b.text);
+		else if (b.type === "thinking") w.thinking += str(b.thinking);
+		else if (b.type === "toolCall")
+			w.toolCalls +=
+				str(b.name) + (JSON.stringify(b.arguments ?? {})?.length ?? 0);
+		else return null;
+	}
+	return w;
+}
+
+/**
+ * 各类可见文本的字符量。bash / python 执行算工具输出，其余非 assistant 消息算用户消息。
+ * 生效范围里出现无法按字符计量的内容时返回 null（调用方不拆分）：图片（用户消息、工具结果、执行输出、附件）、
+ * redacted 思考、带 `providerPayload` 的 assistant（加密推理载荷），以及其他非文本块。
+ */
+export function messageWeights(path: readonly Entry[]): MessageWeights | null {
 	const w: MessageWeights = {
 		userMessages: 0,
 		assistantMessages: 0,
@@ -109,34 +134,43 @@ export function messageWeights(path: readonly Entry[]): MessageWeights {
 			continue;
 		}
 		if (e.type === "custom_message") {
-			w.userMessages += contentChars(p.content);
+			const n = contentChars(p.content);
+			if (n === null) return null;
+			w.userMessages += n;
 			continue;
 		}
 		if (e.type !== "message" || !isRecord(p.message)) continue;
 		const m = p.message;
 		switch (m.role) {
-			case "assistant":
-				if (m.retryRecovery || !Array.isArray(m.content)) break;
-				for (const b of m.content) {
-					if (!isRecord(b)) continue;
-					if (b.type === "text") w.assistantMessages += str(b.text);
-					else if (b.type === "thinking") w.thinking += str(b.thinking);
-					else if (b.type === "redactedThinking") w.thinking += str(b.data);
-					else if (b.type === "toolCall")
-						w.toolCalls +=
-							str(b.name) + (JSON.stringify(b.arguments ?? {})?.length ?? 0);
-				}
+			case "assistant": {
+				if (m.retryRecovery) break;
+				if (m.providerPayload != null) return null;
+				const a = assistantChars(m.content);
+				if (!a) return null;
+				w.assistantMessages += a.assistantMessages;
+				w.thinking += a.thinking;
+				w.toolCalls += a.toolCalls;
 				break;
-			case "toolResult":
-				w.toolOutput += contentChars(m.content);
+			}
+			case "toolResult": {
+				const n = contentChars(m.content);
+				if (n === null) return null;
+				w.toolOutput += n;
 				break;
+			}
 			case "bashExecution":
 			case "pythonExecution":
 				if (m.excludeFromContext) break;
+				if (Array.isArray(m.images) && m.images.length > 0) return null;
 				w.toolOutput += str(m.command) + str(m.code) + str(m.output);
 				break;
-			default:
-				w.userMessages += contentChars(m.content) + str(m.summary);
+			default: {
+				if (Array.isArray(m.attachments) && m.attachments.length > 0)
+					return null;
+				const n = contentChars(m.content);
+				if (n === null) return null;
+				w.userMessages += n + str(m.summary);
+			}
 		}
 	}
 	return w;
@@ -167,8 +201,8 @@ export function splitMessages(
 }
 
 /**
- * 量表分段（固定顺序：系统类 → 技能 → 工具定义 → 消息类）。`entries` 为 null（没有转录）或认不出上下文边界、
- * 或转录里没有可计字符时，消息部分退回一整段「消息」。
+ * 量表分段（固定顺序：系统类 → 技能 → 工具定义 → 消息类）。`entries` 为 null（没有转录）、认不出上下文边界、
+ * 生效范围里有无法按字符计量的内容，或没有可计字符时，消息部分退回一整段「消息」。
  */
 export function contextParts(
 	b: ContextBreakdown,
@@ -188,9 +222,8 @@ export function contextParts(
 		exact("systemTools", b.systemToolsTokens),
 	];
 	const path = entries ? contextPath(entries, leafEntryId) : null;
-	const split = path
-		? splitMessages(b.messagesTokens, messageWeights(path))
-		: null;
+	const weights = path ? messageWeights(path) : null;
+	const split = weights ? splitMessages(b.messagesTokens, weights) : null;
 	if (!split) return [...parts, exact("messages", b.messagesTokens)];
 	return [
 		...parts,
@@ -201,7 +234,8 @@ export function contextParts(
 /** 一段占上下文窗口的百分比文字：<1% 保留一位小数。 */
 export function formatShare(tokens: number, contextWindow: number): string {
 	const pct = contextWindow > 0 ? (tokens / contextWindow) * 100 : 0;
-	return `${pct < 1 ? pct.toFixed(1) : Math.round(pct)}%`;
+	const tenth = Math.round(pct * 10) / 10;
+	return `${tenth < 1 ? tenth.toFixed(1) : Math.round(pct)}%`;
 }
 
 /** 分段悬停提示：「名称 · tokens · 百分比」，估算项末尾再加 `note`。 */

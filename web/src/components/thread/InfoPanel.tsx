@@ -12,11 +12,12 @@ import { keyed } from "../../lib/keys";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
-import { uiStore } from "../../state/ui";
+import { uiStore, useUi } from "../../state/ui";
 import {
 	Card,
 	ListRow,
 	Meter,
+	Stat,
 	StatusDot,
 	type Tone,
 	thresholdTone,
@@ -143,14 +144,30 @@ function formatUptime(ms: number, lang: string): string {
 	}).format(n);
 }
 
+/** 卡片收起状态（`uiStore.collapsedCards`，所有线程共用并存 localStorage）→ `Card` 的可收起属性。 */
+function useCardFold(key: string) {
+	const collapsed = useUi((s) => !!s.collapsedCards[key]);
+	return {
+		collapsible: true,
+		collapsed,
+		onToggle: () => uiStore.getState().toggleCard(key),
+	};
+}
+
 function OrbSection({ threadId }: { threadId: string }) {
 	const { t, i18n } = useTranslation();
 	const orb = useOrbOf(threadId);
 	const working = useThread(threadId, (s) => s.thread?.state === "working");
 	const metrics = useOrbMetrics(orb?.state === "deleted" ? undefined : orb?.id);
+	const fold = useCardFold("orb");
 	if (!orb) {
 		return (
-			<Card title={t("panel.orb")} icon="box">
+			<Card
+				title={t("panel.orb")}
+				icon="box"
+				{...fold}
+				summary={<span className="truncate">{t("common.none")}</span>}
+			>
 				<EmptyLine icon="box">{t("panel.noOrb")}</EmptyLine>
 			</Card>
 		);
@@ -171,6 +188,28 @@ function OrbSection({ threadId }: { threadId: string }) {
 		<Card
 			title={t("panel.orb")}
 			icon="box"
+			{...fold}
+			summary={
+				// 收起时：状态珠 + 状态文字、CPU、内存（环境小节随 orb 卡一起收起）
+				<span className="flex min-w-0 items-center gap-3">
+					<span className="inline-flex min-w-0 items-center gap-1.5">
+						<OrbBead state={orb.state} active={working} size={12} />
+						<span className="truncate text-fg">
+							{t(`orbState.${orb.state}`)}
+						</span>
+					</span>
+					{last && (
+						<>
+							<Stat icon="cpu" label={t("panel.cpu")}>
+								{formatPercent(last.cpuPct)}
+							</Stat>
+							<Stat icon="memory" label={t("panel.memory")}>
+								{formatMemoryMB(last.memUsedMB)}
+							</Stat>
+						</>
+					)}
+				</span>
+			}
 			action={
 				orb.state !== "deleted" && (
 					<IconButton
@@ -314,10 +353,13 @@ function TodoSection({ threadId }: { threadId: string }) {
 	const tasks = phases.flatMap((p) => p.tasks);
 	const total = tasks.filter((x) => x.status !== "abandoned").length;
 	const done = tasks.filter((x) => x.status === "completed").length;
+	const fold = useCardFold("todos");
 	return (
 		<Card
 			title={t("panel.todos")}
 			icon="list"
+			// 进度（2/4 + 小进度条）本来就在卡头动作位，收起时原位保留，不再另给摘要
+			{...fold}
 			action={
 				total > 0 ? (
 					<span className="flex items-center gap-2 text-2xs text-faint tabular-nums">
@@ -440,6 +482,7 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			() => undefined,
 		);
 	}, [ready, threadId]);
+	const fold = useCardFold("subagents");
 	const live = Object.values(subs).filter((s) => s.id);
 	const ids = new Set(live.map((s) => s.id));
 	const rows = [
@@ -451,6 +494,10 @@ function SubagentSection({ threadId }: { threadId: string }) {
 		})),
 		...snapshots.filter((s) => !ids.has(s.id)),
 	];
+	const running = rows.filter(
+		(s) => s.status === "started" || s.status === "running",
+	).length;
+	// 没有子 agent 时卡片本身就只有一行（说明写在卡头），无可收起的内容
 	if (rows.length === 0)
 		return (
 			<EmptyCard title={t("panel.subagents")} icon="robot">
@@ -458,7 +505,21 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			</EmptyCard>
 		);
 	return (
-		<Card title={t("panel.subagents")} icon="robot">
+		<Card
+			title={t("panel.subagents")}
+			icon="robot"
+			{...fold}
+			summary={
+				running > 0 ? (
+					<span className="inline-flex items-center gap-1.5">
+						<StatusDot tone="accent" pulse />
+						{t("panel.subagentsRunning", { n: running })}
+					</span>
+				) : (
+					t("panel.subagentsTotal", { n: rows.length })
+				)
+			}
+		>
 			<ul className="-mx-1.5 flex flex-col gap-px">
 				{rows.map((s) => {
 					const running = s.status === "started" || s.status === "running";
@@ -548,10 +609,38 @@ function ContextSection({ threadId }: { threadId: string }) {
 	const breakdown = useContextBreakdown(threadId);
 	const parts = useContextParts(threadId, breakdown);
 	const tone = ctx ? thresholdTone(ctx.percent) : "neutral";
+	const fold = useCardFold("context");
 	return (
 		<Card
 			title={t("panel.context")}
 			icon="database"
+			{...fold}
+			summary={
+				ctx && (
+					<span className="inline-flex items-center gap-2">
+						<span className={PERCENT_TONE[tone] ?? "text-fg"}>
+							{formatPercent(ctx.percent)}
+						</span>
+						{parts && breakdown ? (
+							<ContextBar
+								parts={parts}
+								contextWindow={breakdown.contextWindow}
+								tone={tone}
+								label={t("panel.context")}
+								compact
+								className="w-12 shrink-0"
+							/>
+						) : (
+							<Meter
+								value={ctx.percent}
+								tone={tone}
+								label={t("panel.context")}
+								className="w-12 shrink-0"
+							/>
+						)}
+					</span>
+				)
+			}
 			action={
 				<IconButton
 					icon="info"
@@ -620,8 +709,10 @@ const TOOL_ROWS: readonly {
 
 function ToolsSection() {
 	const { t } = useTranslation();
+	const fold = useCardFold("tools");
+	// 工具卡是固定的入口列表，条数不随会话变，收起时不给摘要
 	return (
-		<Card title={t("panel.tools")} icon="wrench">
+		<Card title={t("panel.tools")} icon="wrench" {...fold}>
 			<ul className="-mx-2 -mt-px -mb-2 flex flex-col">
 				{TOOL_ROWS.map(({ icon, report }) => (
 					<li key={icon}>

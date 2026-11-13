@@ -1,11 +1,19 @@
 /**
- * 外观主题：明暗模式（跟随系统 / 浅色 / 深色）与主题色预设。
- * 只存本机浏览器（localStorage），写到 `<html data-theme data-accent>`；令牌值在 index.css。
+ * 外观主题：明暗模式（跟随系统 / 浅色 / 深色）、主题色预设与壁纸。
+ * 只存本机浏览器（localStorage `oryn.theme`），写到 `<html data-theme data-accent data-wallpaper>`；令牌值在 index.css。
+ * 自定义壁纸的图片另存 `oryn.wallpaper.image`（模糊后的 data URL，见 lib/wallpaper），经 `<html>` 的内联变量
+ * `--wallpaper-image` 交给 `.shell-wash`；亮度分位 `tone` 写成 `--wp-lo / --wp-hi`，index.css 据此加厚壁纸上的纱。
  * `public/theme-init.js` 在首帧前按同样规则写一次，避免闪色。
  */
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { cssColor } from "../lib/css-color";
+import {
+	clearWallpaperImage,
+	readWallpaperImage,
+	storeWallpaperImage,
+	type WallpaperTone,
+} from "../lib/wallpaper";
 
 export type ThemeMode = "system" | "light" | "dark";
 export const MODES = [
@@ -22,19 +30,37 @@ export const ACCENTS = [
 	"graphite",
 ] as const;
 export type AccentName = (typeof ACCENTS)[number];
+export const WALLPAPERS = ["aurora", "waves", "grain", "custom"] as const;
+export type WallpaperName = (typeof WALLPAPERS)[number];
 export const THEME_KEY = "oryn.theme";
 /** 主题实际应用后在 window 上派发；mermaid、xterm 据此重绘。 */
 export const THEME_EVENT = "oryn:themechange";
 
-export interface ThemeState {
+export interface StoredTheme {
 	mode: ThemeMode;
 	accent: AccentName;
+	wallpaper: WallpaperName;
+	/** 自定义壁纸的亮度分位，仅 wallpaper=custom 时有意义 */
+	tone?: WallpaperTone;
+}
+
+export interface ThemeState extends StoredTheme {
 	setMode(m: ThemeMode): void;
 	setAccent(a: AccentName): void;
+	/** 选内置壁纸；选 custom 时本机须已有图片，否则忽略 */
+	setWallpaper(w: WallpaperName): void;
+	/** 存入处理好的图片并切到 custom；存储失败抛 WallpaperStorageError，状态不变 */
+	setCustomWallpaper(url: string, tone: WallpaperTone): void;
+	/** 删除图片并回到默认壁纸 */
+	removeCustomWallpaper(): void;
 	cycleMode(): void;
 }
 
-const DEFAULT = { mode: "system", accent: "teal" } as const;
+const DEFAULT = {
+	mode: "system",
+	accent: "teal",
+	wallpaper: "aurora",
+} as const;
 
 function isMode(v: unknown): v is ThemeMode {
 	return (MODES as readonly unknown[]).includes(v);
@@ -44,20 +70,32 @@ function isAccent(v: unknown): v is AccentName {
 	return (ACCENTS as readonly unknown[]).includes(v);
 }
 
-/** 解析存储值；非法 JSON 或字段逐项回落默认。 */
-export function parseTheme(raw: string | null): {
-	mode: ThemeMode;
-	accent: AccentName;
-} {
+function isWallpaper(v: unknown): v is WallpaperName {
+	return (WALLPAPERS as readonly unknown[]).includes(v);
+}
+
+function isTone(v: unknown): v is WallpaperTone {
+	return (
+		Array.isArray(v) &&
+		v.length === 2 &&
+		v.every((x) => typeof x === "number" && x >= 0 && x <= 1)
+	);
+}
+
+/** 解析存储值；非法 JSON 或字段逐项回落默认（旧数据没有 wallpaper 时为 aurora）。 */
+export function parseTheme(raw: string | null): StoredTheme {
 	if (!raw) return { ...DEFAULT };
 	try {
 		const v: unknown = JSON.parse(raw);
 		if (!v || typeof v !== "object") return { ...DEFAULT };
 		const o = v as Record<string, unknown>;
-		return {
+		const out: StoredTheme = {
 			mode: isMode(o.mode) ? o.mode : DEFAULT.mode,
 			accent: isAccent(o.accent) ? o.accent : DEFAULT.accent,
+			wallpaper: isWallpaper(o.wallpaper) ? o.wallpaper : DEFAULT.wallpaper,
 		};
+		if (isTone(o.tone)) out.tone = o.tone;
+		return out;
 	} catch {
 		return { ...DEFAULT };
 	}
@@ -77,13 +115,31 @@ function darkQuery(): MediaQueryList | null {
 	return window.matchMedia("(prefers-color-scheme: dark)");
 }
 
-/** 把主题写到根元素并同步 `<meta name="theme-color">`，然后派发 THEME_EVENT。 */
-export function applyTheme(mode: ThemeMode, accent: AccentName): void {
+/**
+ * 把主题写到根元素并同步 `<meta name="theme-color">`，然后派发 THEME_EVENT。
+ * custom 壁纸在本机没有图片时按 aurora 写。
+ */
+export function applyTheme(
+	mode: ThemeMode,
+	accent: AccentName,
+	wallpaper: WallpaperName = DEFAULT.wallpaper,
+	tone?: WallpaperTone,
+): void {
 	if (typeof document === "undefined") return;
 	const root = document.documentElement;
 	root.dataset.theme = resolveMode(mode, darkQuery()?.matches ?? false);
 	if (accent === "teal") delete root.dataset.accent;
 	else root.dataset.accent = accent;
+	const image = wallpaper === "custom" ? readWallpaperImage() : null;
+	if (image) {
+		root.style.setProperty("--wallpaper-image", `url("${image}")`);
+		root.style.setProperty("--wp-lo", String(tone?.[0] ?? 0.5));
+		root.style.setProperty("--wp-hi", String(tone?.[1] ?? 0.5));
+	} else
+		for (const p of ["--wallpaper-image", "--wp-lo", "--wp-hi"])
+			root.style.removeProperty(p);
+	root.dataset.wallpaper =
+		wallpaper === "custom" && !image ? DEFAULT.wallpaper : wallpaper;
 	const meta = document.querySelector<HTMLMetaElement>(
 		'meta[name="theme-color"]',
 	);
@@ -91,20 +147,25 @@ export function applyTheme(mode: ThemeMode, accent: AccentName): void {
 	window.dispatchEvent(new Event(THEME_EVENT));
 }
 
-function load(): { mode: ThemeMode; accent: AccentName } {
+function load(): StoredTheme {
+	let stored: StoredTheme;
 	try {
-		return parseTheme(globalThis.localStorage?.getItem(THEME_KEY) ?? null);
+		stored = parseTheme(globalThis.localStorage?.getItem(THEME_KEY) ?? null);
 	} catch {
 		// 隐私模式下 localStorage 不可用
 		return { ...DEFAULT };
 	}
+	// 图片被清掉（或从未存成）时不停在 custom
+	if (stored.wallpaper === "custom" && !readWallpaperImage())
+		return { mode: stored.mode, accent: stored.accent, wallpaper: "aurora" };
+	return stored;
 }
 
-function save(mode: ThemeMode, accent: AccentName): void {
+function save({ mode, accent, wallpaper, tone }: StoredTheme): void {
 	try {
 		globalThis.localStorage?.setItem(
 			THEME_KEY,
-			JSON.stringify({ mode, accent }),
+			JSON.stringify({ mode, accent, wallpaper, tone }),
 		);
 	} catch {
 		// 隐私模式下静默
@@ -118,20 +179,32 @@ const NEXT_MODE: Record<ThemeMode, ThemeMode> = {
 };
 
 export const themeStore: StoreApi<ThemeState> = createStore<ThemeState>(
-	(set, get) => ({
-		...load(),
-		setMode(mode) {
-			set({ mode });
-			save(mode, get().accent);
-		},
-		setAccent(accent) {
-			set({ accent });
-			save(get().mode, accent);
-		},
-		cycleMode() {
-			get().setMode(NEXT_MODE[get().mode]);
-		},
-	}),
+	(set, get) => {
+		const commit = (patch: Partial<StoredTheme>) => {
+			set(patch);
+			save(get());
+		};
+		return {
+			...load(),
+			setMode: (mode) => commit({ mode }),
+			setAccent: (accent) => commit({ accent }),
+			setWallpaper(wallpaper) {
+				if (wallpaper === "custom" && !readWallpaperImage()) return;
+				commit({ wallpaper });
+			},
+			setCustomWallpaper(url, tone) {
+				storeWallpaperImage(url);
+				commit({ wallpaper: "custom", tone });
+			},
+			removeCustomWallpaper() {
+				clearWallpaperImage();
+				commit({ wallpaper: DEFAULT.wallpaper, tone: undefined });
+			},
+			cycleMode() {
+				get().setMode(NEXT_MODE[get().mode]);
+			},
+		};
+	},
 );
 
 export function useTheme<T>(selector: (s: ThemeState) => T): T {
@@ -144,14 +217,20 @@ let installed = false;
 export function installTheme(): void {
 	if (installed) return;
 	installed = true;
-	const { mode, accent } = themeStore.getState();
-	applyTheme(mode, accent);
+	const apply = (s: StoredTheme) =>
+		applyTheme(s.mode, s.accent, s.wallpaper, s.tone);
+	apply(themeStore.getState());
 	themeStore.subscribe((s, prev) => {
-		if (s.mode !== prev.mode || s.accent !== prev.accent)
-			applyTheme(s.mode, s.accent);
+		if (
+			s.mode !== prev.mode ||
+			s.accent !== prev.accent ||
+			s.wallpaper !== prev.wallpaper ||
+			s.tone !== prev.tone
+		)
+			apply(s);
 	});
 	darkQuery()?.addEventListener("change", () => {
 		const s = themeStore.getState();
-		if (s.mode === "system") applyTheme(s.mode, s.accent);
+		if (s.mode === "system") apply(s);
 	});
 }

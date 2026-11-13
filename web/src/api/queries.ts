@@ -12,6 +12,7 @@ export const qk = {
 	secrets: ["secrets"] as const,
 	gitIdentity: ["settings", "git-identity"] as const,
 	agentIdentity: ["settings", "agent-identity"] as const,
+	userIdentity: ["settings", "user-identity"] as const,
 	orbs: ["orbs"] as const,
 	orb: (id: string) => ["orbs", id] as const,
 	orbMetrics: (id: string) => ["orbs", id, "metrics"] as const,
@@ -59,14 +60,43 @@ export function useGitIdentity() {
 	});
 }
 
-/** agent 头像（单用户设置）；助手回合头像与外观设置用。 */
-export function useAgentIdentity() {
+/** 头像归属：agent 头像（助手回合）与用户头像（用户回合、侧栏页脚）同一套契约。 */
+export type AvatarOwner = "agent" | "user";
+
+export const avatarIdentityKey = (who: AvatarOwner) =>
+	who === "agent" ? qk.agentIdentity : qk.userIdentity;
+
+/** 读取某个身份的头像（单用户设置）。 */
+export function useAvatarIdentity(who: AvatarOwner) {
 	return useQuery({
-		queryKey: qk.agentIdentity,
-		queryFn: () => unwrap(api.GET("/api/v1/settings/agent-identity")),
+		queryKey: avatarIdentityKey(who),
+		queryFn: () =>
+			unwrap(
+				who === "agent"
+					? api.GET("/api/v1/settings/agent-identity")
+					: api.GET("/api/v1/settings/user-identity"),
+			),
 		staleTime: 5 * 60_000,
 	});
 }
+
+/** 整体替换某个身份的头像：`{}` = 恢复默认。 */
+export function putAvatarIdentity(
+	who: AvatarOwner,
+	body: Schemas["AvatarIdentity"],
+): Promise<Schemas["AvatarIdentity"]> {
+	return unwrap(
+		who === "agent"
+			? api.PUT("/api/v1/settings/agent-identity", { body })
+			: api.PUT("/api/v1/settings/user-identity", { body }),
+	);
+}
+
+/** agent 头像；助手回合头像与外观设置用。 */
+export const useAgentIdentity = () => useAvatarIdentity("agent");
+
+/** 用户头像；用户回合头像、侧栏页脚与外观设置用。 */
+export const useUserIdentity = () => useAvatarIdentity("user");
 
 export function useProviders() {
 	return useQuery({

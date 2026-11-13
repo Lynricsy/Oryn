@@ -28,6 +28,7 @@ import {
 } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { Button, IconButton, Kbd, ThreadStateIcon } from "../ui/primitives";
+import { UserAvatar } from "../ui/UserAvatar";
 
 const INACTIVE_MS = 72 * 3600_000;
 
@@ -105,7 +106,7 @@ function CardGlyph({ icon, hue }: { icon: string; hue: number }) {
 		<span
 			aria-hidden
 			data-glyph={icon}
-			className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-[11px] leading-none before:content-[attr(data-glyph)]"
+			className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none before:content-[attr(data-glyph)]"
 			style={hueVar(hue)}
 		/>
 	);
@@ -409,11 +410,18 @@ export function Sidebar(): ReactNode {
 			className="flex h-full w-full flex-col pt-safe pl-safe"
 			aria-label={t("nav.sidebar")}
 		>
-			<div className="flex h-[52px] shrink-0 items-center gap-2 pr-2.5 pl-4">
-				<BrandMark size={18} />
-				<span className="min-w-0 flex-1 truncate font-semibold text-[15px] tracking-tight">
+			<div className="flex h-14 shrink-0 items-center gap-2 pr-2.5 pl-4">
+				<BrandMark size={24} />
+				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
+				<span className="wordmark min-w-0 flex-1 text-[24px] leading-none">
 					{t("app.name")}
 				</span>
+				<IconButton
+					icon="sidebar"
+					box="sm"
+					label={t("sidebar.collapse")}
+					onClick={() => uiStore.getState().toggleSidebar()}
+				/>
 				<Button
 					variant="primary"
 					size="sm"
@@ -547,6 +555,15 @@ export function Sidebar(): ReactNode {
 					title={t(`appearance.modes.${mode}`)}
 					onClick={() => themeStore.getState().cycleMode()}
 				/>
+				<NavLink
+					to="/settings/appearance"
+					onClick={() => uiStore.getState().setSidebar(false)}
+					className="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-150 hover:bg-[var(--sb-hover)]"
+					aria-label={t("appearance.userAvatar")}
+					title={t("appearance.userAvatar")}
+				>
+					<UserAvatar size={18} />
+				</NavLink>
 				<NavLink
 					to="/settings/devices"
 					onClick={() => uiStore.getState().setSidebar(false)}

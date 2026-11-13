@@ -1,3 +1,5 @@
+// 字标「Oryn」专用；按 unicode-range 只会下载 latin 分片
+import "@fontsource-variable/fraunces/opsz.css";
 import "@fontsource-variable/jetbrains-mono/index.css";
 import "@fontsource-variable/mona-sans/index.css";
 import "@fontsource-variable/noto-sans-sc/index.css";

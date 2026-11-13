@@ -269,12 +269,12 @@ export function Menu({
 			{open && (
 				<div
 					role="menu"
-					className={`glass pop-in absolute z-40 min-w-52 max-w-72 rounded-xl p-1 ${side === "top" ? "bottom-full mb-1" : "mt-1"} ${align === "right" ? "right-0" : "left-0"}`}
+					className={`glass pop-in absolute z-40 min-w-52 max-w-72 rounded-lg p-1 ${side === "top" ? "bottom-full mb-1" : "mt-1"} ${align === "right" ? "right-0" : "left-0"}`}
 				>
 					{sub && (
 						<button
 							type="button"
-							className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-faint text-xs hover:bg-hover"
+							className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-faint text-xs hover:bg-hover"
 							onClick={() => setSub(null)}
 						>
 							<Icon name="back" size={13} />
@@ -287,7 +287,7 @@ export function Menu({
 							type="button"
 							role="menuitem"
 							disabled={item.disabled}
-							className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"}`}
+							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"}`}
 							onClick={() => {
 								if (item.children) {
 									setSub(item.key);

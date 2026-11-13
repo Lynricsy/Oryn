@@ -13,7 +13,7 @@
 |层|用在|做法|
 |---|---|---|
 |L0 桌面|`AppShell` 根|`--bg` + 两处极淡的主题色晕染（`.shell-wash`），让玻璃有东西可透|
-|L1 纸面|对话区、右面板、首页、设置的主容器|`.sheet`：`--panel` 底、1px `--line`、圆角 14、`--sh-sm`|
+|L1 纸面|对话区、右面板、首页、设置的主容器|`.sheet`：`--panel` 底、1px `--line`、圆角 32（`--r-xl`）、`--sh-sm`|
 |L2 玻璃|线程页头、输入坞、回到底部、菜单、弹层、命令菜单、toast、移动端抽屉、登录卡|`.glass`：半透明 + `backdrop-filter`（放在 `::before` 上）+ 内高光 + `--sh-md`|
 |内嵌井|代码块、输入框、终端、量表轨道|`--inset` 底|
 
@@ -36,15 +36,20 @@
 
 |令牌|用途|
 |---|---|
-|`rounded`(4)/`rounded-xs`|徽标、Kbd、行内代码、复选框|
-|`rounded-sm`(6)|菜单项、树行、小 chip|
-|`rounded-md`(8)|按钮、输入框、侧栏行、标签页|
-|`rounded-lg`(10)|纸面内的卡片、工具卡展开体、代码块、表格外框|
-|`rounded-xl`(14)|纸面、输入坞卡、对话框、菜单/弹层、用户气泡|
-|`rounded-2xl`(18)|首页输入卡、登录卡|
+|`rounded`(4)|Kbd、行内徽标（Badge）、复选框|
+|`rounded-xs`(6)|项目徽标、标题图标、头像方块、行内代码|
+|`rounded-sm`(9)|树行、小 chip、计数胶囊；28px 以上的项目徽标|
+|`rounded-md`(12)|按钮、输入框、标签页、菜单项、Callout|
+|`rounded-lg`(18)|纸面内的卡片、工具卡、代码块、表格外框、侧栏行、菜单/弹层/toast、用户气泡|
+|`rounded-xl`(32)|纸面、输入坞托盘、对话框、命令菜单|
+|`rounded-2xl`(36)|侧栏玻璃、首页输入卡、登录卡|
 |`text-2xs`(11px)|最小字号；替代全部 `text-[11px]` 与 `text-[10px]`|
 |`text-xs`(12)/`text-sm`(13)|界面正文；转录散文在 `.md` 里单独设 14.5px/1.7|
 |`shadow-xs/sm/md/lg/xl`|按钮与选中行 / 纸面 / 玻璃浮层 / 菜单弹层 toast / 对话框与抽屉|
+
+**角形**：带圆角的表面一律 `corner-shape: superellipse(1.6)`（`index.css` 的 `@layer base` 全局规则），半径随之整体加大一档（同半径下超椭圆更「收」）。这是主人在 6 种 demo（圆角 / squircle / 超椭圆 × 两档半径）里选定的「h」。正圆与胶囊（`rounded-full` 及其 `after:` 等变体、`.tv-spin`）保持 `round`；OrbBead、Ring 是 SVG，不受影响。Chromium 139+ 原生支持；Safari、Firefox 不认 `corner-shape`，自动退回普通圆角。
+
+**同心**：外层圆角里套内层表面时，贴近外角的内层半径 ≈ 外层半径 − 间距。对话框 32 − 内边距 20 → 输入框 12；菜单 18 − 4 → 菜单项 12；输入坞托盘 32 里第一节带色调底时取 `calc(var(--r-xl) - 1px)`；右面板纸面 32 − 8 内的卡片取 18（与全站卡片同一令牌，卡片不贴角，24 并不更协调）。
 
 非 Tailwind 的 CSS/JS（`tool-render.css`、`markdown.css`、`CodeEditor.tsx`、`xterm.ts`）只引用原始变量 `--r-*`、`--sans`、`--mono`、`--sh-*`、`--ease`。
 

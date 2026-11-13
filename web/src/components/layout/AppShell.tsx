@@ -1,7 +1,8 @@
 /**
  * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，是浮在壁纸上的悬浮玻璃（macOS Tahoe 式），
- * 中栏与右栏是纸面，8px 缝里露出壁纸；medium（600–839）侧边栏可折叠推入，同样是悬浮玻璃；
- * compact（<600）单栏 + 同材质的玻璃抽屉侧边栏（只圆右侧）。壁纸见 index.css 的 `.shell-wash`。
+ * 中栏与右栏是纸面，8px 缝里露出壁纸，侧栏可收起（存 localStorage）；medium（600–839）侧边栏可折叠推入，
+ * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的玻璃抽屉侧边栏（只圆右侧）。壁纸见 index.css 的 `.shell-wash`。
+ * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。
  */
 import { type ReactNode, useEffect } from "react";
@@ -17,17 +18,37 @@ import { ServerErrors } from "../ServerErrors";
 import { Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 
+/** 焦点在可编辑区域（输入框、文本域、CodeMirror、contenteditable）时不抢快捷键：macOS 下 Ctrl+B 是光标左移。 */
+function inEditable(target: EventTarget | null): boolean {
+	return (
+		target instanceof Element &&
+		!!target.closest(
+			'input, textarea, select, [contenteditable=""], [contenteditable="true"], .cm-editor',
+		)
+	);
+}
+
 function useGlobalShortcuts() {
 	const navigate = useNavigate();
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			const mod = e.ctrlKey || e.metaKey;
-			if (mod && e.key.toLowerCase() === "k") {
+			const key = e.key.toLowerCase();
+			if (mod && key === "k") {
 				e.preventDefault();
 				uiStore.getState().focusSearch();
-			} else if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+			} else if (mod && e.shiftKey && key === "o") {
 				e.preventDefault();
 				navigate("/");
+			} else if (
+				mod &&
+				!e.shiftKey &&
+				!e.altKey &&
+				key === "b" &&
+				!inEditable(e.target)
+			) {
+				e.preventDefault();
+				uiStore.getState().toggleSidebar();
 			}
 		};
 		window.addEventListener("keydown", onKey);
@@ -42,6 +63,7 @@ export function AppShell(): ReactNode {
 	const navigate = useNavigate();
 	const bp = useBreakpoint();
 	const sidebarOpen = useUi((s) => s.sidebarOpen);
+	const collapsed = useUi((s) => s.sidebarCollapsed);
 	const conn = useConnection((s) => s.status);
 	useGlobalShortcuts();
 
@@ -75,23 +97,29 @@ export function AppShell(): ReactNode {
 	}
 
 	const expanded = bp === "expanded";
-	const column = expanded || (bp === "medium" && sidebarOpen);
+	// 列侧栏（expanded / medium）是否展开；compact 走下面的抽屉
+	const shown = expanded ? !collapsed : bp === "medium" && sidebarOpen;
 	return (
 		<div
-			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${expanded ? "gap-2 p-2" : ""}`}
+			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${expanded ? "p-2" : ""}`}
 		>
-			{column &&
-				(expanded ? (
-					<div className="glass-sidebar h-full w-64 shrink-0 lg:w-72">
-						<Sidebar />
-					</div>
-				) : (
-					<div className="h-full w-64 shrink-0 p-2 lg:w-72">
+			{bp !== "compact" && (
+				// 外层只负责占位宽度与右侧 8px 缝；内层固定宽度，translate 与列宽同时长同缓动，
+				// 右缘始终贴着列右缘，所以外层不必 overflow-hidden（那会裁掉玻璃的描边与投影）
+				<div
+					inert={!shown}
+					data-sidebar={shown ? "shown" : "collapsed"}
+					className={`h-full shrink-0 transition-[width,margin-right] duration-[260ms] ease-out ${shown ? `w-64 lg:w-72 ${expanded ? "mr-2" : ""}` : "mr-0 w-0"}`}
+				>
+					<div
+						className={`h-full w-64 transition-[translate,opacity] duration-[260ms] ease-out lg:w-72 ${expanded ? "" : "p-2"} ${shown ? "" : "-translate-x-full opacity-0"}`}
+					>
 						<div className="glass-sidebar h-full">
 							<Sidebar />
 						</div>
 					</div>
-				))}
+				</div>
+			)}
 			{bp === "compact" && sidebarOpen && (
 				<div className="fixed inset-0 z-40 flex">
 					<div className="glass-sidebar h-full w-[85vw] max-w-xs rounded-l-none transition-[translate] duration-[260ms] ease-out starting:-translate-x-full">

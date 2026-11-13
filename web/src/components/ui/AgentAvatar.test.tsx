@@ -44,7 +44,7 @@ describe("AgentAvatar", () => {
 	it("未设置时显示品牌标", async () => {
 		renderAvatar();
 		await waitFor(() =>
-			expect(host()?.getAttribute("data-agent-avatar")).toBe("default"),
+			expect(host()?.getAttribute("data-avatar")).toBe("default"),
 		);
 	});
 
@@ -56,7 +56,7 @@ describe("AgentAvatar", () => {
 		);
 		renderAvatar();
 		await waitFor(() =>
-			expect(host()?.getAttribute("data-agent-avatar")).toBe("icon"),
+			expect(host()?.getAttribute("data-avatar")).toBe("icon"),
 		);
 		expect(host()?.textContent).toBe("🦊");
 	});
@@ -71,7 +71,7 @@ describe("AgentAvatar", () => {
 		);
 		renderAvatar();
 		await waitFor(() =>
-			expect(host()?.getAttribute("data-agent-avatar")).toBe("image"),
+			expect(host()?.getAttribute("data-avatar")).toBe("image"),
 		);
 		expect(host()?.getAttribute("src")).toBe(png);
 	});
