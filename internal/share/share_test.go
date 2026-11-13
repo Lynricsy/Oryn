@@ -719,3 +719,152 @@ func TestSlugShape(t *testing.T) {
 	assert.False(t, share.ValidSlug(strings.Repeat("A", 32)))
 	assert.False(t, share.ValidSlug(strings.Repeat("a", 31)))
 }
+
+// ---- 审查修复回归 ----
+
+// blobImg 是带一张 blob 图片的用户消息 payload。
+func blobImg(sha string) map[string]any {
+	return map[string]any{"message": map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": "look"}, map[string]any{"type": "image", "data": "blob:sha256:" + sha, "mimeType": "image/png"},
+	}}}
+}
+
+func (e *env) blobFile(sha string) {
+	e.t.Helper()
+	p := filepath.Join(e.dir, "blob-"+sha[:8])
+	require.NoError(e.t, os.WriteFile(p, []byte("png-"+sha[:4]), 0o600))
+	e.th.blobs[sha] = p
+}
+
+// B8：活动分支上的隐藏条目（display:false 的 custom_message / hookMessage、白名单外的类型）在公开面上被清空，
+// 它们原始 payload 里引用的 blob 不得因此获得授权。
+func TestPublicBlobFollowsSanitizedPayload(t *testing.T) {
+	e := newEnv(t)
+	e.thread(tid, "Pics", nil)
+	sha := func(c byte) string { return strings.Repeat(string(c), 64) }
+	e.add(tid, "s1.jsonl", "u1", "", "message", blobImg(sha('a')))
+	e.add(tid, "s1.jsonl", "cm", "u1", "custom_message", map[string]any{"customType": "x", "display": false,
+		"content": []any{map[string]any{"type": "image", "data": "blob:sha256:" + sha('b'), "mimeType": "image/png"}}})
+	e.add(tid, "s1.jsonl", "hk", "cm", "message", map[string]any{"message": map[string]any{"role": "hookMessage", "display": false,
+		"content": []any{map[string]any{"type": "image", "data": "blob:sha256:" + sha('c'), "mimeType": "image/png"}}}})
+	e.add(tid, "s1.jsonl", "lb", "hk", "label", map[string]any{"label": "blob:sha256:" + sha('d')})
+	e.add(tid, "s1.jsonl", "a1", "lb", "message", msg("assistant", "ok"))
+	e.leaf(tid, "a1")
+	for _, c := range []byte("abcd") {
+		e.blobFile(sha(c))
+	}
+	for _, mode := range []apigen.ShareMode{apigen.ShareModeSnapshot, apigen.ShareModeLive} {
+		sh, err := e.svc.Create(e.ctx, tid, mode, false)
+		require.NoError(t, err)
+		_, f, err := e.svc.PublicBlob(e.ctx, sh.Slug, sha('a'))
+		require.NoError(t, err, "可见条目引用的图片照常放行（%s）", mode)
+		_ = f.Close()
+		for _, c := range []byte("bcd") {
+			_, _, err := e.svc.PublicBlob(e.ctx, sh.Slug, sha(c))
+			assert.ErrorIs(t, err, share.ErrNotFound, "隐藏条目引用的 blob %c 不得公开（%s）", c, mode)
+		}
+	}
+}
+
+// F4：标题与将要列出的附件名也在扫描范围内；公开面只列已发布或被公开条目引用的附件。
+func TestScanTitleAndAttachmentNames(t *testing.T) {
+	e := newEnv(t)
+	e.thread(tid, "deploy with ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", nil)
+	ref, err := e.att.Upload(e.ctx, "sk-namenamenamenamename1234.txt", tid, strings.NewReader("r"))
+	require.NoError(t, err)
+	hidden, err := e.att.Upload(e.ctx, "AKIAABCDEFGHIJKLMNOP.txt", tid, strings.NewReader("h"))
+	require.NoError(t, err)
+	hiddenRef, err := e.att.Upload(e.ctx, "injected.txt", tid, strings.NewReader("i"))
+	require.NoError(t, err)
+	pubAtt, err := e.att.Upload(e.ctx, "published.txt", tid, strings.NewReader("p"))
+	require.NoError(t, err)
+	_, err = e.svc.Publish(e.ctx, pubAtt.ID)
+	require.NoError(t, err)
+	e.now = time.UnixMilli(pubAtt.CreatedAt) // 附件服务用真实时钟：分享时刻取在全部附件之后
+	e.add(tid, "s1.jsonl", "u1", "", "message", msg("user", "see attachment "+ref.ID))
+	e.add(tid, "s1.jsonl", "cm", "u1", "custom_message", map[string]any{"customType": "x", "content": "file " + hiddenRef.ID, "display": false})
+	e.add(tid, "s1.jsonl", "a1", "cm", "message", msg("assistant", "ok"))
+	e.leaf(tid, "a1")
+
+	_, err = e.svc.Create(e.ctx, tid, apigen.ShareModeSnapshot, false)
+	var se *share.ScanError
+	require.ErrorAs(t, err, &se)
+	type hit struct {
+		rule    apigen.ShareFindingRule
+		entryID string
+		seq     int64
+	}
+	var got []hit
+	for _, f := range se.Scan.Findings {
+		got = append(got, hit{f.Rule, f.EntryID, f.Seq})
+	}
+	assert.Equal(t, []hit{
+		{apigen.ShareFindingRuleGithubToken, "__title__", 0},
+		{apigen.ShareFindingRuleAPIKeySk, "attachment:" + ref.ID, 0},
+	}, got, "标题与被引用的附件名命中；未公开附件的名字不扫也不出")
+	assert.Equal(t, 3, se.Scan.Scanned)
+
+	sh, err := e.svc.Create(e.ctx, tid, apigen.ShareModeSnapshot, true)
+	require.NoError(t, err)
+	assert.Equal(t, 2, sh.Findings)
+	ps, err := e.svc.PublicShare(e.ctx, sh.Slug)
+	require.NoError(t, err)
+	var names []string
+	for _, a := range ps.Attachments {
+		names = append(names, a.Name)
+	}
+	assert.ElementsMatch(t, []string{ref.Name, pubAtt.Name}, names, "只列已发布或被公开条目引用的附件")
+	b, _ := json.Marshal(ps)
+	assert.NotContains(t, string(b), hidden.Name)
+	assert.NotContains(t, string(b), hiddenRef.ID)
+}
+
+// F5：快照固化创建时扫描过的条目集合与内容；条目被改写、叶子被删后，快照不回落到别的分支，
+// 也不出现改写后的内容；标题同样冻结在创建时。
+func TestSnapshotFrozenAfterRewrite(t *testing.T) {
+	e := newEnv(t)
+	e.thread(tid, "Original title", nil)
+	e.add(tid, "s1.jsonl", "u1", "", "message", msg("user", "question"))
+	e.add(tid, "s1.jsonl", "a1", "u1", "message", msg("assistant", "first answer"))
+	e.add(tid, "s1.jsonl", "u2", "a1", "message", msg("user", "follow up"))
+	// 被回退的旁支（创建时不在分支上、没被扫描），在文件里排在最后
+	e.add(tid, "s1.jsonl", "x1", "a1", "message", msg("user", "side sk-sidesidesidesideside1234"))
+	e.leaf(tid, "u2")
+	sh, err := e.svc.Create(e.ctx, tid, apigen.ShareModeSnapshot, false)
+	require.NoError(t, err, "旁支不在扫描范围内")
+	want := []string{"u1", "a1", "u2"}
+	require.Equal(t, want, ids(e.allEntries(sh.Slug, 500)))
+
+	// 改写：a1 内容换成未经扫描的文本（并引用一张图片）
+	sha := strings.Repeat("e", 64)
+	e.blobFile(sha)
+	rewritten := blobImg(sha)
+	rewritten["message"].(map[string]any)["content"] = append(rewritten["message"].(map[string]any)["content"].([]any),
+		map[string]any{"type": "text", "text": "rewritten sk-rewrittenrewritten1234"})
+	e.add(tid, "s1.jsonl", "a1", "u1", "message", rewritten)
+	got := e.allEntries(sh.Slug, 1)
+	assert.Equal(t, []string{"u1", "u2"}, ids(got), "被改写的行从快照里消失，而不是换成新内容")
+	b, _ := json.Marshal(got)
+	assert.NotContains(t, string(b), "rewritten")
+	_, _, err = e.svc.PublicBlob(e.ctx, sh.Slug, sha)
+	assert.ErrorIs(t, err, share.ErrNotFound, "改写后才出现的图片引用不授权")
+
+	// 叶子被删：不回落到旁支
+	_, err = e.st.DB.Exec(`DELETE FROM entries WHERE thread_id = ? AND entry_id = 'u2'`, tid)
+	require.NoError(t, err)
+	_, err = e.st.DB.Exec(`UPDATE threads SET title = 'Renamed sk-titletitletitletitle1234' WHERE id = ?`, tid)
+	require.NoError(t, err)
+	got = e.allEntries(sh.Slug, 500)
+	assert.Equal(t, []string{"u1"}, ids(got))
+	b, _ = json.Marshal(got)
+	assert.NotContains(t, string(b), "side", "叶子被删后不回落到未扫描的旁支")
+	ps, err := e.svc.PublicShare(e.ctx, sh.Slug)
+	require.NoError(t, err)
+	assert.Equal(t, "Original title", ps.Title, "快照标题冻结在创建时")
+	md := do(t, e.svc.PageHandler(spa()), http.MethodGet, "/s/"+sh.Slug+".md")
+	require.Equal(t, http.StatusOK, md.Code)
+	assert.Contains(t, md.Body.String(), "Original title")
+	assert.NotContains(t, md.Body.String(), "side")
+	assert.NotContains(t, md.Body.String(), "rewritten")
+	assert.NotContains(t, md.Body.String(), "Renamed")
+}

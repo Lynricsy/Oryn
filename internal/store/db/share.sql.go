@@ -70,7 +70,7 @@ func (q *Queries) GetActivePublishedFileBySlug(ctx context.Context, slug string)
 }
 
 const getActiveThreadShareBySlug = `-- name: GetActiveThreadShareBySlug :one
-SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at FROM thread_shares WHERE slug = ?1 AND revoked_at IS NULL
+SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at, title FROM thread_shares WHERE slug = ?1 AND revoked_at IS NULL
 `
 
 func (q *Queries) GetActiveThreadShareBySlug(ctx context.Context, slug string) (ThreadShare, error) {
@@ -86,12 +86,13 @@ func (q *Queries) GetActiveThreadShareBySlug(ctx context.Context, slug string) (
 		&i.Findings,
 		&i.CreatedAt,
 		&i.RevokedAt,
+		&i.Title,
 	)
 	return i, err
 }
 
 const getThreadShare = `-- name: GetThreadShare :one
-SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at FROM thread_shares WHERE id = ?1
+SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at, title FROM thread_shares WHERE id = ?1
 `
 
 func (q *Queries) GetThreadShare(ctx context.Context, id string) (ThreadShare, error) {
@@ -107,6 +108,7 @@ func (q *Queries) GetThreadShare(ctx context.Context, id string) (ThreadShare, e
 		&i.Findings,
 		&i.CreatedAt,
 		&i.RevokedAt,
+		&i.Title,
 	)
 	return i, err
 }
@@ -135,8 +137,8 @@ func (q *Queries) InsertPublishedFile(ctx context.Context, arg InsertPublishedFi
 
 const insertThreadShare = `-- name: InsertThreadShare :exec
 
-INSERT INTO thread_shares (id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+INSERT INTO thread_shares (id, thread_id, slug, mode, until_seq, leaf_entry_id, title, findings, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 `
 
 type InsertThreadShareParams struct {
@@ -146,6 +148,7 @@ type InsertThreadShareParams struct {
 	Mode        string  `json:"mode"`
 	UntilSeq    *int64  `json:"untilSeq"`
 	LeafEntryID *string `json:"leafEntryId"`
+	Title       *string `json:"title"`
 	Findings    int64   `json:"findings"`
 	CreatedAt   int64   `json:"createdAt"`
 }
@@ -159,8 +162,32 @@ func (q *Queries) InsertThreadShare(ctx context.Context, arg InsertThreadSharePa
 		arg.Mode,
 		arg.UntilSeq,
 		arg.LeafEntryID,
+		arg.Title,
 		arg.Findings,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertThreadShareEntry = `-- name: InsertThreadShareEntry :exec
+INSERT INTO thread_share_entries (share_id, pos, seq, payload_sha256)
+VALUES (?1, ?2, ?3, ?4)
+`
+
+type InsertThreadShareEntryParams struct {
+	ShareID       string `json:"shareId"`
+	Pos           int64  `json:"pos"`
+	Seq           int64  `json:"seq"`
+	PayloadSha256 []byte `json:"payloadSha256"`
+}
+
+// Frozen public scope of a snapshot share (branch order + SHA-256 of the raw payload at creation).
+func (q *Queries) InsertThreadShareEntry(ctx context.Context, arg InsertThreadShareEntryParams) error {
+	_, err := q.db.ExecContext(ctx, insertThreadShareEntry,
+		arg.ShareID,
+		arg.Pos,
+		arg.Seq,
+		arg.PayloadSha256,
 	)
 	return err
 }
@@ -339,7 +366,7 @@ func (q *Queries) ListActiveThreadShareCounts(ctx context.Context) ([]ListActive
 }
 
 const listActiveThreadShares = `-- name: ListActiveThreadShares :many
-SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at FROM thread_shares WHERE revoked_at IS NULL ORDER BY created_at DESC, id DESC
+SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at, title FROM thread_shares WHERE revoked_at IS NULL ORDER BY created_at DESC, id DESC
 `
 
 func (q *Queries) ListActiveThreadShares(ctx context.Context) ([]ThreadShare, error) {
@@ -361,6 +388,7 @@ func (q *Queries) ListActiveThreadShares(ctx context.Context) ([]ThreadShare, er
 			&i.Findings,
 			&i.CreatedAt,
 			&i.RevokedAt,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -376,7 +404,7 @@ func (q *Queries) ListActiveThreadShares(ctx context.Context) ([]ThreadShare, er
 }
 
 const listActiveThreadSharesByThread = `-- name: ListActiveThreadSharesByThread :many
-SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at FROM thread_shares WHERE thread_id = ?1 AND revoked_at IS NULL ORDER BY created_at DESC, id DESC
+SELECT id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at, revoked_at, title FROM thread_shares WHERE thread_id = ?1 AND revoked_at IS NULL ORDER BY created_at DESC, id DESC
 `
 
 func (q *Queries) ListActiveThreadSharesByThread(ctx context.Context, threadID string) ([]ThreadShare, error) {
@@ -398,6 +426,7 @@ func (q *Queries) ListActiveThreadSharesByThread(ctx context.Context, threadID s
 			&i.Findings,
 			&i.CreatedAt,
 			&i.RevokedAt,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -538,6 +567,38 @@ func (q *Queries) ListMainEntryLinks(ctx context.Context, arg ListMainEntryLinks
 			&i.ParentID,
 			&i.Type,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadShareEntries = `-- name: ListThreadShareEntries :many
+SELECT seq, payload_sha256 FROM thread_share_entries WHERE share_id = ?1 ORDER BY pos
+`
+
+type ListThreadShareEntriesRow struct {
+	Seq           int64  `json:"seq"`
+	PayloadSha256 []byte `json:"payloadSha256"`
+}
+
+func (q *Queries) ListThreadShareEntries(ctx context.Context, shareID string) ([]ListThreadShareEntriesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadShareEntries, shareID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadShareEntriesRow{}
+	for rows.Next() {
+		var i ListThreadShareEntriesRow
+		if err := rows.Scan(&i.Seq, &i.PayloadSha256); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

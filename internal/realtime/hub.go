@@ -653,16 +653,18 @@ func (h *Hub) Entries(threadID string, es []threads.Entry, leaf *string, lastSeq
 	h.mu.Unlock()
 }
 
-// Frame 实现 threads.Sink；白名单内的帧另发给匿名连接（不带 threadId）。
+// Frame 实现 threads.Sink；白名单内、通过内容过滤（publicFrame）的帧另发给匿名连接（不带 threadId）。
 func (h *Hub) Frame(threadID string, frame json.RawMessage) {
 	h.toThread(threadID, map[string]any{"type": "frame", "threadId": threadID, "frame": frame})
 	h.mu.Lock()
-	if len(h.pubs[threadID]) > 0 && publicFrameTypes[frameType(frame)] {
-		b := make([]byte, 0, len(frame)+28)
-		b = append(b, `{"type":"frame","frame":`...)
-		b = append(b, frame...)
-		b = append(b, '}')
-		h.toPublicLocked(threadID, b)
+	if len(h.pubs[threadID]) > 0 {
+		if pf, ok := publicFrame(frame); ok {
+			b := make([]byte, 0, len(pf)+28)
+			b = append(b, `{"type":"frame","frame":`...)
+			b = append(b, pf...)
+			b = append(b, '}')
+			h.toPublicLocked(threadID, b)
+		}
 	}
 	h.mu.Unlock()
 }
@@ -686,8 +688,12 @@ func (h *Hub) LiveReset(threadID string) {
 func (h *Hub) TranscriptReset(threadID string, rev int64) {
 	h.toThread(threadID, map[string]any{"type": "transcript.reset", "threadId": threadID, "transcriptRev": rev})
 	h.mu.Lock()
-	if len(h.pubs[threadID]) > 0 {
+	if m := h.pubs[threadID]; len(m) > 0 {
 		h.toPublicLocked(threadID, marshal(apigen.WsPublicTranscriptReset{Type: apigen.WsPublicTranscriptResetTypeTranscriptReset, TranscriptRev: rev}))
+		// 客户端会以新版本整段重拉：分支跟踪随之作废
+		for _, ps := range m {
+			ps.rev, ps.resetSent = rev, true
+		}
 	}
 	h.mu.Unlock()
 }

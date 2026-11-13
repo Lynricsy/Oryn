@@ -9,6 +9,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/attachments"
+	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -29,9 +30,6 @@ var attachErrStatus = map[string]int{
 	attachments.CodeOrbGone:         http.StatusGone,
 	attachments.CodeOrbdUnreachable: http.StatusBadGateway,
 }
-
-// inlineAttachmentMimes 是允许 `inline=1` 内联显示的附件类型（安全的栅格图片；SVG 等可执行脚本的类型一律下载）。
-var inlineAttachmentMimes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 func writeAttachErr(w http.ResponseWriter, err error) {
 	var ae *attachments.Error
@@ -144,9 +142,9 @@ func (s *Server) GetAttachmentContent(w http.ResponseWriter, r *http.Request, id
 	}
 	defer f.Close()
 	h := w.Header()
-	inline := params.Inline != nil && *params.Inline && inlineAttachmentMimes[a.Mime]
-	if inline {
-		h.Set("Content-Type", a.Mime)
+	mt, img := share.InlineImage(a.Mime)
+	if params.Inline != nil && *params.Inline && img {
+		h.Set("Content-Type", mt)
 		h.Set("Content-Disposition", "inline")
 	} else {
 		h.Set("Content-Type", "application/octet-stream")

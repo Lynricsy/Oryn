@@ -200,7 +200,8 @@ func (s *Server) ListPublicShareEntries(w http.ResponseWriter, r *http.Request, 
 	WriteJSON(w, http.StatusOK, page)
 }
 
-// GetPublicShareBlob 对应 `GET public/shares/{slug}/blobs/{sha256}`：只放行范围内活动分支上引用的图片。
+// GetPublicShareBlob 对应 `GET public/shares/{slug}/blobs/{sha256}`：只放行范围内公开条目引用的图片。
+// 与 `/f` 同一白名单（F7）：安全栅格图片按原类型内联，其余（类型由内容探测，可能是 text/html）一律附件下载。
 func (s *Server) GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug apigen.ShareSlugPath, sha256 apigen.Sha256) {
 	setPublicNoIndex(w)
 	svc, ok := s.shareSvc(w)
@@ -213,12 +214,15 @@ func (s *Server) GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug
 		return
 	}
 	defer f.Close()
-	mime := b.Mime
-	if mime == "" {
-		mime = "application/octet-stream"
+	h := w.Header()
+	if mt, img := share.InlineImage(b.Mime); img {
+		h.Set("Content-Type", mt)
+		h.Set("Content-Disposition", "inline")
+	} else {
+		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", "attachment")
 	}
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "sandbox")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox")
 	http.ServeContent(w, r, "", time.UnixMilli(b.CreatedAt), f)
 }

@@ -343,6 +343,14 @@ type ThreadShare struct {
 	Findings    int64   `json:"findings"`
 	CreatedAt   int64   `json:"createdAt"`
 	RevokedAt   *int64  `json:"revokedAt"`
+	Title       *string `json:"title"`
+}
+
+type ThreadShareEntry struct {
+	ShareID       string `json:"shareId"`
+	Pos           int64  `json:"pos"`
+	Seq           int64  `json:"seq"`
+	PayloadSha256 []byte `json:"payloadSha256"`
 }
 
 type ToolCall struct {

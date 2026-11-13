@@ -25,11 +25,12 @@ const (
 	closeRevoked websocket.StatusCode = 4001
 )
 
-// publicFrameTypes 是匿名连接能收到的 omp 帧类型（其余帧——待答请求、终端、队列、状态等——一律不发）。
+// publicFrameTypes 是匿名连接能收到的 omp 帧类型（其余帧——待答请求、终端、队列、状态、子 agent 进度等——一律不发）；
+// 白名单内的帧还要过 publicFrame 的内容过滤。
 var publicFrameTypes = map[string]bool{
 	"message_start": true, "message_update": true, "message_end": true,
 	"tool_execution_start": true, "tool_execution_update": true, "tool_stream_update": true, "tool_execution_end": true,
-	"agent_start": true, "agent_end": true, "subagent_lifecycle": true, "subagent_progress": true,
+	"agent_start": true, "agent_end": true,
 }
 
 // PublicSub 描述一条匿名连接要看的分享。Backfill 返回公开范围内 after < seq ≤ upTo 的条目（升序），
@@ -40,7 +41,7 @@ type PublicSub struct {
 	Filter            func(threads.Entry) (threads.Entry, bool)
 }
 
-// pubSub 是匿名连接对线程的订阅；由 Hub.mu 保护。补发期间实时事件先进 buf。
+// pubSub 是匿名连接对线程的订阅；由 Hub.mu 保护。补发期间实时事件先进 buf，分支事件先进 pending。
 type pubSub struct {
 	shareID   string
 	filter    func(threads.Entry) (threads.Entry, bool)
@@ -48,6 +49,14 @@ type pubSub struct {
 	buf       [][]byte
 	lastState string
 	lastTitle string
+	// branch 跟踪客户端手里的活动分支；叶子跳到它之外时发 transcript.reset 让客户端整段重拉（B7）。
+	branch branchView
+	// pending 是补发期间到达的分支事件：补发完成、branch 以补发内容初始化之后按序重放。
+	pending []branchEvent
+	// rev 是客户端当前的转录版本（transcript.reset 要带上它）。
+	rev int64
+	// resetSent 为真表示已让客户端重连（之后的分支事件不再处理）。
+	resetSent bool
 }
 
 type publicSnapshot struct {
@@ -74,14 +83,6 @@ func publicTitle(t string) string {
 		return "Untitled"
 	}
 	return t
-}
-
-func frameType(frame json.RawMessage) string {
-	var f struct {
-		Type string `json:"type"`
-	}
-	_ = json.Unmarshal(frame, &f)
-	return f.Type
 }
 
 func marshal(v any) []byte {
@@ -152,13 +153,8 @@ func (h *Hub) ServePublic(w http.ResponseWriter, r *http.Request, sub PublicSub,
 		snap = s
 		title := publicTitle(s.Thread.Title)
 		state := string(s.Thread.State)
-		mine = &pubSub{shareID: sub.ShareID, filter: sub.Filter, buffering: true, lastState: state, lastTitle: title}
-		live := make([]json.RawMessage, 0, len(s.Agent.Live))
-		for _, f := range s.Agent.Live {
-			if publicFrameTypes[frameType(f)] {
-				live = append(live, f)
-			}
-		}
+		mine = &pubSub{shareID: sub.ShareID, filter: sub.Filter, buffering: true, lastState: state, lastTitle: title, rev: s.TranscriptRev}
+		live := publicLive(s.Agent.Live)
 		h.mu.Lock()
 		if h.revokedShares[sub.ShareID] {
 			// 撤销发生在占名额之后、登记之前：不登记，直接以撤销收尾
@@ -174,9 +170,10 @@ func (h *Hub) ServePublic(w http.ResponseWriter, r *http.Request, sub PublicSub,
 		}
 		m[c] = mine
 		h.mu.Unlock()
+		// 子 agent 的进度不公开（F3）：subagents 恒为空
 		c.send(publicSnapshot{
 			Type: string(apigen.ShareSnapshot), Title: title, State: state, LeafEntryID: s.LeafEntryID, LastSeq: s.LastSeq,
-			TranscriptRev: s.TranscriptRev, FullReplay: full, Live: live, Subagents: s.Agent.Subagents,
+			TranscriptRev: s.TranscriptRev, FullReplay: full, Live: live, Subagents: []json.RawMessage{},
 		})
 	})
 	if errors.Is(err, threads.ErrNotFound) {
@@ -194,6 +191,7 @@ func (h *Hub) ServePublic(w http.ResponseWriter, r *http.Request, sub PublicSub,
 		c.waitClosed()
 		return
 	}
+	var backfilled []threads.Entry
 	if after < snap.LastSeq {
 		es, err := sub.Backfill(ctx, after, snap.LastSeq)
 		if err != nil {
@@ -201,6 +199,7 @@ func (h *Hub) ServePublic(w http.ResponseWriter, r *http.Request, sub PublicSub,
 			c.close(websocket.StatusInternalError, "backfill failed")
 			return
 		}
+		backfilled = es
 		for i := 0; i < len(es); i += entriesBatch {
 			batch := es[i:min(i+entriesBatch, len(es))]
 			last := batch[len(batch)-1].Seq
@@ -210,10 +209,26 @@ func (h *Hub) ServePublic(w http.ResponseWriter, r *http.Request, sub PublicSub,
 			c.send(publicEntries{Type: string(apigen.WsPublicEntriesTypeEntries), Entries: batch, LeafEntryID: snap.LeafEntryID, LastSeq: last})
 		}
 	}
+	// 客户端手里的分支 = 补发内容（全量补发）或此前已持有的、以快照叶子为末端的分支（续传）
+	fallback := ""
+	if after > 0 {
+		fallback = deref(snap.LeafEntryID)
+	}
 	h.mu.Lock()
 	if h.pubs[sub.ThreadID][c] == mine {
+		mine.branch.init(linksOf(backfilled), fallback, deref(snap.LeafEntryID))
+		reset := false
+		for _, ev := range mine.pending {
+			if reset = mine.branch.apply(ev); reset {
+				break
+			}
+		}
+		mine.pending = nil
 		c.release(mine.buf)
 		mine.buf, mine.buffering = nil, false
+		if reset && !mine.resetSent {
+			h.resetPublicLocked(c, mine)
+		}
 	}
 	h.mu.Unlock()
 	c.publicReadLoop()
@@ -301,8 +316,10 @@ func (h *Hub) toPublicLocked(threadID string, b []byte) {
 	}
 }
 
-// publicEntriesLocked 把新条目逐条过各连接的过滤后发 entries（不带 threadId）。调用方持有 h.mu。
+// publicEntriesLocked 把新条目逐条过各连接的过滤后发 entries（不带 threadId），再把这批条目交给分支跟踪。
+// 调用方持有 h.mu。
 func (h *Hub) publicEntriesLocked(threadID string, es []threads.Entry, leaf *string, lastSeq int64) {
+	ev := branchEvent{entries: true, links: linksOf(es), leaf: deref(leaf)}
 	for c, ps := range h.pubs[threadID] {
 		out := make([]threads.Entry, 0, len(es))
 		for _, e := range es {
@@ -313,42 +330,42 @@ func (h *Hub) publicEntriesLocked(threadID string, es []threads.Entry, leaf *str
 				out = append(out, pe)
 			}
 		}
-		if len(out) == 0 {
-			continue
+		if len(out) > 0 {
+			if b := marshal(publicEntries{Type: string(apigen.WsPublicEntriesTypeEntries), Entries: out, LeafEntryID: leaf, LastSeq: lastSeq}); b != nil {
+				if ps.buffering {
+					c.stash(&ps.buf, b)
+				} else {
+					c.enqueue(b)
+				}
+			}
 		}
-		b := marshal(publicEntries{Type: string(apigen.WsPublicEntriesTypeEntries), Entries: out, LeafEntryID: leaf, LastSeq: lastSeq})
-		if b == nil {
-			continue
-		}
-		if ps.buffering {
-			c.stash(&ps.buf, b)
-		} else {
-			c.enqueue(b)
-		}
+		h.branchLocked(c, ps, ev)
 	}
 }
 
-// publicStateLocked 在线程状态或标题变化时发 share.state。调用方持有 h.mu。
+// publicStateLocked 在线程状态或标题变化时发 share.state；叶子变化交给分支跟踪（切分支不产生新条目，
+// 只经 index.patch 体现，B7）。调用方持有 h.mu。
 func (h *Hub) publicStateLocked(t apigen.Thread) {
 	m := h.pubs[t.ID]
 	if len(m) == 0 {
 		return
 	}
 	state, title := string(t.State), publicTitle(t.Title)
+	ev := branchEvent{leaf: deref(t.LeafEntryID)}
 	var b []byte
 	for c, ps := range m {
-		if ps.lastState == state && ps.lastTitle == title {
-			continue
+		if ps.lastState != state || ps.lastTitle != title {
+			ps.lastState, ps.lastTitle = state, title
+			if b == nil {
+				b = marshal(apigen.WsPublicState{Type: apigen.ShareState, State: t.State, Title: title})
+			}
+			if ps.buffering {
+				c.stash(&ps.buf, b)
+			} else {
+				c.enqueue(b)
+			}
 		}
-		ps.lastState, ps.lastTitle = state, title
-		if b == nil {
-			b = marshal(apigen.WsPublicState{Type: apigen.ShareState, State: t.State, Title: title})
-		}
-		if ps.buffering {
-			c.stash(&ps.buf, b)
-		} else {
-			c.enqueue(b)
-		}
+		h.branchLocked(c, ps, ev)
 	}
 }
 

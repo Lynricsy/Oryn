@@ -163,8 +163,10 @@ func (s *Service) shareAPI(sh db.ThreadShare, title string) apigen.ThreadShare {
 	}
 }
 
-// Create 为线程创建公开分享：先以创建时刻的范围扫描密钥，有命中且 ack=false 时返回 *ScanError（ErrSecretsFound）。
-// 快照写入 until_seq / leaf_entry_id（= 创建时线程的 last_seq 与叶子）；实时两者为 NULL。
+// Create 为线程创建公开分享：先以创建时刻的范围扫描密钥（条目、标题与将要列出的附件名），
+// 有命中且 ack=false 时返回 *ScanError（ErrSecretsFound）。
+// 快照写入 until_seq / leaf_entry_id / title（= 创建时线程的 last_seq、叶子与标题），并在同一事务里固化扫描过的
+// 条目集合与每行内容摘要（thread_share_entries）；实时三者为 NULL、不固化。
 func (s *Service) Create(ctx context.Context, threadID string, mode apigen.ShareMode, ack bool) (apigen.ThreadShare, error) {
 	if mode != apigen.ShareModeLive && mode != apigen.ShareModeSnapshot {
 		return apigen.ThreadShare{}, errf(http.StatusBadRequest, "invalid", "mode must be live or snapshot")
@@ -182,15 +184,21 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 	}
 	until := th.LastSeq
 	row := db.InsertThreadShareParams{ID: ids.New("shr"), ThreadID: threadID, Slug: newSlug(), Mode: string(mode), CreatedAt: s.now()}
-	if mode == apigen.ShareModeSnapshot {
-		row.UntilSeq, row.LeafEntryID = &until, th.LeafEntryID
+	leaf := ""
+	if th.LeafEntryID != nil {
+		leaf = *th.LeafEntryID
 	}
-	// 扫描的范围与快照即将冻结的范围相同（实时分享同样以此刻为界扫描）
-	sc, err := s.scopeFor(ctx, db.ThreadShare{ThreadID: threadID, Mode: string(apigen.ShareModeSnapshot), UntilSeq: &until, LeafEntryID: th.LeafEntryID}, th)
+	// 扫描的范围与快照即将固化的范围相同（实时分享同样以此刻为界扫描）；accept 记下扫过的每行摘要
+	sc, err := s.branchScope(ctx, db.ThreadShare{ThreadID: threadID, Mode: string(mode), CreatedAt: row.CreatedAt}, th, until, leaf)
 	if err != nil {
 		return apigen.ThreadShare{}, err
 	}
-	scan, err := s.scan(ctx, sc)
+	sc.record = map[int64][]byte{}
+	atts, err := s.publicAttachments(ctx, sc)
+	if err != nil {
+		return apigen.ThreadShare{}, err
+	}
+	scan, err := s.scan(ctx, sc, atts)
 	if err != nil {
 		return apigen.ThreadShare{}, err
 	}
@@ -198,13 +206,38 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 		return apigen.ThreadShare{}, &ScanError{Scan: scan}
 	}
 	row.Findings = int64(len(scan.Findings))
-	if err := s.st.Q.InsertThreadShare(ctx, row); err != nil {
+	if mode == apigen.ShareModeSnapshot {
+		title := th.Title
+		row.UntilSeq, row.LeafEntryID, row.Title = &until, th.LeafEntryID, &title
+	}
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := q.InsertThreadShare(ctx, row); err != nil {
+			return err
+		}
+		if mode != apigen.ShareModeSnapshot {
+			return nil
+		}
+		// 只固化扫描时确实读到并放行的行（按分支顺序）；扫描之后才出现或改写的内容进不了快照
+		pos := int64(0)
+		for _, seq := range sc.branch {
+			sum, ok := sc.record[seq]
+			if !ok {
+				continue
+			}
+			if err := q.InsertThreadShareEntry(ctx, db.InsertThreadShareEntryParams{ShareID: row.ID, Pos: pos, Seq: seq, PayloadSha256: sum}); err != nil {
+				return err
+			}
+			pos++
+		}
+		return nil
+	})
+	if err != nil {
 		return apigen.ThreadShare{}, err
 	}
 	s.th.Publish(ctx, threadID)
 	return s.shareAPI(db.ThreadShare{
 		ID: row.ID, ThreadID: row.ThreadID, Slug: row.Slug, Mode: row.Mode, UntilSeq: row.UntilSeq,
-		LeafEntryID: row.LeafEntryID, Findings: row.Findings, CreatedAt: row.CreatedAt,
+		LeafEntryID: row.LeafEntryID, Title: row.Title, Findings: row.Findings, CreatedAt: row.CreatedAt,
 	}, th.Title), nil
 }
 

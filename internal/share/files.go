@@ -27,8 +27,16 @@ const (
 	orbWait = 25 * time.Second
 )
 
-// inlineFileMimes 是公开文件按原类型内联的安全栅格图片。
-var inlineFileMimes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+// inlineImageMimes 是可按原类型内联显示的安全栅格图片（SVG 等能执行脚本的类型不在内）。
+var inlineImageMimes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+
+// InlineImage 返回 mime 去掉参数、转小写后的媒体类型，以及它是否在可内联的栅格图片白名单里。
+// 公开文件、公开 blob 与私有附件的内联判定都只用它（F7）。
+func InlineImage(mime string) (string, bool) {
+	mt, _, _ := strings.Cut(mime, ";")
+	mt = strings.ToLower(strings.TrimSpace(mt))
+	return mt, inlineImageMimes[mt]
+}
 
 // encodeURIComponent 与 JS 同名函数一致：除 A-Z a-z 0-9 - _ . ! ~ * ' ( ) 外按 UTF-8 字节百分号编码。
 func encodeURIComponent(s string) string {
@@ -262,10 +270,9 @@ func (s *Service) FileHandler() http.Handler {
 			return
 		}
 		defer f.Close()
-		mt, _, _ := strings.Cut(a.Mime, ";")
-		mt = strings.ToLower(strings.TrimSpace(mt))
+		mt, img := InlineImage(a.Mime)
 		switch {
-		case inlineFileMimes[mt]:
+		case img:
 			h.Set("Content-Type", mt)
 			h.Set("Content-Disposition", inlineDisposition(a.Name))
 		case strings.HasPrefix(mt, "text/") && mt != "text/html":

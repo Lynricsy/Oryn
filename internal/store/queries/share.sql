@@ -1,8 +1,16 @@
 -- M5: public thread shares, scope reads over entries, published attachments.
 
 -- name: InsertThreadShare :exec
-INSERT INTO thread_shares (id, thread_id, slug, mode, until_seq, leaf_entry_id, findings, created_at)
-VALUES (@id, @thread_id, @slug, @mode, @until_seq, @leaf_entry_id, @findings, @created_at);
+INSERT INTO thread_shares (id, thread_id, slug, mode, until_seq, leaf_entry_id, title, findings, created_at)
+VALUES (@id, @thread_id, @slug, @mode, @until_seq, @leaf_entry_id, @title, @findings, @created_at);
+
+-- Frozen public scope of a snapshot share (branch order + SHA-256 of the raw payload at creation).
+-- name: InsertThreadShareEntry :exec
+INSERT INTO thread_share_entries (share_id, pos, seq, payload_sha256)
+VALUES (@share_id, @pos, @seq, @payload_sha256);
+
+-- name: ListThreadShareEntries :many
+SELECT seq, payload_sha256 FROM thread_share_entries WHERE share_id = @share_id ORDER BY pos;
 
 -- name: GetThreadShare :one
 SELECT * FROM thread_shares WHERE id = @id;

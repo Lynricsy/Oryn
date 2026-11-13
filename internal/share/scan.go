@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/transcript"
 )
 
@@ -102,10 +103,28 @@ func redact(s string) string {
 	return string(r[:4]) + "…" + string(r[len(r)-2:])
 }
 
-// scan 对范围内每条公开条目的 payload 跑全部规则；每个 (规则, 条目) 合并成一项。
-func (s *Service) scan(ctx context.Context, sc *scope) (apigen.ShareScan, error) {
+// 标题与附件名命中项的 entryId（seq 为 0：不对应任何条目）。
+const (
+	titleFindingID          = "__title__"
+	attachmentFindingPrefix = "attachment:"
+)
+
+// scan 扫描公开面上的全部文本：标题、范围内每条公开条目的 payload、将要列出的附件名（F4）。
+// 每个 (规则, 条目) 合并成一项；标题与附件名的命中以 entryId `__title__` / `attachment:<id>`、seq 0 报告。
+// 范围内的条目总是读完（即使命中已截断）：创建快照时 accept 要据此固化每一行的摘要。
+func (s *Service) scan(ctx context.Context, sc *scope, atts []db.Attachment) (apigen.ShareScan, error) {
 	res := apigen.ShareScan{Findings: []apigen.ShareFinding{}}
 	needles := s.vaultNeedles(ctx)
+	push := func(fs []apigen.ShareFinding) {
+		for _, f := range fs {
+			if len(res.Findings) >= MaxFindings {
+				res.Truncated = true
+				return
+			}
+			res.Findings = append(res.Findings, f)
+		}
+	}
+	push(scanText(titleFindingID, sc.title, needles))
 	after := int64(0)
 	for {
 		es, more, err := sc.page(ctx, s.st.Q, after, sc.until, rangeBatch)
@@ -114,48 +133,54 @@ func (s *Service) scan(ctx context.Context, sc *scope) (apigen.ShareScan, error)
 		}
 		for _, e := range es {
 			res.Scanned++
-			for _, f := range scanEntry(e, needles) {
-				if len(res.Findings) >= MaxFindings {
-					res.Truncated = true
-					break
-				}
-				res.Findings = append(res.Findings, f)
-			}
+			push(scanEntry(e, needles))
 		}
 		if !more || len(es) == 0 {
-			return res, nil
+			break
 		}
 		after = es[len(es)-1].Seq
 	}
+	for _, a := range atts {
+		push(scanText(attachmentFindingPrefix+a.ID, a.Name, needles))
+	}
+	return res, nil
 }
 
 // scanEntry 返回一条条目的全部命中（先 vault_secret，再按规则表顺序）。
 func scanEntry(e transcript.Entry, needles []vaultNeedle) []apigen.ShareFinding {
-	var out []apigen.ShareFinding
 	var role, tool *string
 	located := false
-	locate := func() {
-		if located {
-			return
-		}
-		located = true
-		if m, ok := transcript.ParseMessage(e); ok {
-			if m.Role != "" {
-				role = &m.Role
+	return scanBytes([]byte(e.Payload), needles, func(f apigen.ShareFinding) apigen.ShareFinding {
+		if !located {
+			located = true
+			if m, ok := transcript.ParseMessage(e); ok {
+				if m.Role != "" {
+					role = &m.Role
+				}
+				if m.Role == "toolResult" && m.ToolName != "" {
+					tool = &m.ToolName
+				}
 			}
-			if m.Role == "toolResult" && m.ToolName != "" {
-				tool = &m.ToolName
-			}
 		}
+		f.Seq, f.EntryID, f.Role, f.Tool = e.Seq, e.EntryID, role, tool
+		return f
+	})
+}
+
+// scanText 扫描一段纯文本（标题、附件名），命中项的 entryId 为 id、seq 为 0。
+func scanText(id, text string, needles []vaultNeedle) []apigen.ShareFinding {
+	if text == "" {
+		return nil
 	}
-	add := func(rule apigen.ShareFindingRule, preview string, count int, secretName *string) {
-		locate()
-		out = append(out, apigen.ShareFinding{
-			Rule: rule, Seq: e.Seq, EntryID: e.EntryID, Preview: preview, Count: count,
-			SecretName: secretName, Role: role, Tool: tool,
-		})
-	}
-	p := []byte(e.Payload)
+	return scanBytes([]byte(text), needles, func(f apigen.ShareFinding) apigen.ShareFinding {
+		f.EntryID = id
+		return f
+	})
+}
+
+// scanBytes 对 p 跑 vault_secret 与规则表，每条命中的规则经 locate 补上位置信息后返回。
+func scanBytes(p []byte, needles []vaultNeedle, locate func(apigen.ShareFinding) apigen.ShareFinding) []apigen.ShareFinding {
+	var out []apigen.ShareFinding
 	for _, nd := range needles {
 		n := bytes.Count(p, nd.raw)
 		if nd.escaped != nil {
@@ -163,14 +188,14 @@ func scanEntry(e transcript.Entry, needles []vaultNeedle) []apigen.ShareFinding 
 		}
 		if n > 0 {
 			name := nd.name
-			add(apigen.ShareFindingRuleVaultSecret, nd.preview, n, &name)
+			out = append(out, locate(apigen.ShareFinding{Rule: apigen.ShareFindingRuleVaultSecret, Preview: nd.preview, Count: n, SecretName: &name}))
 		}
 	}
 	for _, r := range scanRules {
 		ms := r.re.FindAllSubmatchIndex(p, -1)
 		if len(ms) > 0 {
 			m := ms[0]
-			add(r.name, redact(string(p[m[2*r.group]:m[2*r.group+1]])), len(ms), nil)
+			out = append(out, locate(apigen.ShareFinding{Rule: r.name, Preview: redact(string(p[m[2*r.group]:m[2*r.group+1]])), Count: len(ms)}))
 		}
 	}
 	return out

@@ -120,7 +120,7 @@ func (s *Service) serveMarkdown(w http.ResponseWriter, r *http.Request, sh db.Th
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	title := publicTitle(sc.thread.Title)
+	title := publicTitle(sc.title)
 	var buf bytes.Buffer
 	meta := transcript.MarkdownMeta{Title: title, Mode: sh.Mode, SharedAt: time.UnixMilli(sh.CreatedAt).UTC()}
 	if err := transcript.Markdown(&buf, meta, branch); err != nil {

@@ -13,13 +13,13 @@ import (
 
 // m2Tables 是计划 D 节列出的全部 M2 表，外加后续里程碑新增的表
 // （M3：attachments；M4：orb_services、portal_shares、portal_sessions；
-// M5：thread_shares、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries）。
+// M5：thread_shares、thread_share_entries、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries）。
 var m2Tables = []string{
 	"attachments", "blobs", "device_pairings", "devices", "entries", "entry_cursors", "jobs",
 	"notification_channels", "notification_deliveries", "notifications", "orb_events",
 	"orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "secrets", "thread_labels",
-	"thread_shares", "threads", "tool_calls", "usage_records", "web_sessions",
+	"thread_share_entries", "thread_shares", "threads", "tool_calls", "usage_records", "web_sessions",
 }
 
 func openTemp(t *testing.T, dir string) *Store {
