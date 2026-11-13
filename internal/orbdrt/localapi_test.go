@@ -153,7 +153,7 @@ func TestLocalFSRoundTrip(t *testing.T) {
 	assert.Nil(t, dir.Etag, "目录没有 etag")
 
 	content := []byte("hello\nworld\n")
-	resp, b := o.put("~/workspace/a/file.txt", content, nil, map[string]string{"Cookie": "oryn_session=x"})
+	resp, b := o.put("~/workspace/a/file.txt", content, nil, map[string]string{"Cookie": "__Host-oryn_session=x"})
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
 	var written apigen.FsEntry
 	require.NoError(t, json.Unmarshal(b, &written))
@@ -245,7 +245,7 @@ func TestLocalFSRoundTrip(t *testing.T) {
 	defer mu.Unlock()
 	found := false
 	for _, h := range seen {
-		if h.Get("Cookie") == "oryn_session=x" {
+		if h.Get("Cookie") == "__Host-oryn_session=x" {
 			found = true
 		}
 	}

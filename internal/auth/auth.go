@@ -2,7 +2,8 @@
 // 设备配对与设备令牌、WebSocket 票据，以及保护 /api/v1 的中间件。
 //
 // 凭据形态：
-//   - 网页会话：Cookie `oryn_session`（HttpOnly、Secure、SameSite=Lax），30 天有效、滑动续期；
+//   - 网页会话：Cookie `__Host-oryn_session`（Path=/、无 Domain、HttpOnly、Secure、SameSite=Lax），30 天有效、滑动续期；
+//     `__Host-` 前缀让浏览器拒绝任何带 Domain 的同名 Cookie，portal 子域无法从父域写入覆盖它；
 //     变更类请求必须带头 `X-Oryn-CSRF: 1`。kind=recovery 的会话只能调用 `auth/setup/*`、`me`、`auth/logout`。
 //   - 设备令牌：`Authorization: Bearer odt_…`，可逐台吊销。
 //
@@ -26,7 +27,8 @@ import (
 
 // 常量。
 const (
-	CookieName = "oryn_session"
+	// CookieName 是网页会话 Cookie；`__Host-` 前缀要求 Secure、Path=/ 且不得带 Domain。
+	CookieName = "__Host-oryn_session"
 	CSRFHeader = "X-Oryn-CSRF"
 
 	// SessionTTL 是网页会话有效期（滑动续期）。
@@ -131,7 +133,7 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 		}
 		return p, nil
 	}
-	ws, ok, err := sessionFromCookie(ctx, st.Q, r)
+	ws, cookie, ok, err := sessionFromCookie(ctx, st.Q, r)
 	if err != nil {
 		return Principal{}, err
 	}
@@ -148,9 +150,7 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 			if err := st.Q.TouchWebSession(ctx, db.TouchWebSessionParams{
 				LastSeenAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli(), IDHash: ws.IDHash,
 			}); err == nil {
-				if c, err := r.Cookie(CookieName); err == nil {
-					SetSessionCookie(w, c.Value, exp)
-				}
+				SetSessionCookie(w, cookie, exp)
 			}
 		}
 	}
@@ -175,25 +175,29 @@ func DeviceByToken(ctx context.Context, st *store.Store, tok string) (Principal,
 	return Principal{Kind: KindDevice, ID: dev.ID}, true
 }
 
-// sessionFromCookie 读取并校验 Cookie 会话；会话不存在或过期返回 ok=false。
-func sessionFromCookie(ctx context.Context, q *db.Queries, r *http.Request) (db.WebSession, bool, error) {
-	c, err := r.Cookie(CookieName)
-	if err != nil || c.Value == "" {
-		return db.WebSession{}, false, nil
+// sessionFromCookie 读取并校验 Cookie 会话，返回会话与命中的 Cookie 值；没有有效会话返回 ok=false。
+// 同名 Cookie 可能有多条（浏览器按 Path 长度排序发送，旧的或被写坏的可能排在前面），
+// 逐条校验并取第一条有效的，而不是只看第一条。
+func sessionFromCookie(ctx context.Context, q *db.Queries, r *http.Request) (db.WebSession, string, bool, error) {
+	for _, c := range r.CookiesNamed(CookieName) {
+		if c.Value == "" {
+			continue
+		}
+		ws, err := q.GetWebSession(ctx, ids.Hash(c.Value))
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return db.WebSession{}, "", false, err
+		}
+		// 过期会话不在这里删除：由 Service.Run 的清理循环删除并发布吊销事件，
+		// 让持有该会话 WebSocket 的连接能被关闭。
+		if ws.ExpiresAt <= time.Now().UnixMilli() {
+			continue
+		}
+		return ws, c.Value, true, nil
 	}
-	ws, err := q.GetWebSession(ctx, ids.Hash(c.Value))
-	if errors.Is(err, sql.ErrNoRows) {
-		return db.WebSession{}, false, nil
-	}
-	if err != nil {
-		return db.WebSession{}, false, err
-	}
-	// 过期会话不在这里删除：由 Service.Run 的清理循环删除并发布吊销事件，
-	// 让持有该会话 WebSocket 的连接能被关闭。
-	if ws.ExpiresAt <= time.Now().UnixMilli() {
-		return db.WebSession{}, false, nil
-	}
-	return ws, true, nil
+	return db.WebSession{}, "", false, nil
 }
 
 func isMutation(method string) bool {

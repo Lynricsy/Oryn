@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -236,7 +237,7 @@ func TestHandshakeStepB(t *testing.T) {
 	require.NoError(t, e.st.Q.CreateWebSession(e.ctx, db.CreateWebSessionParams{
 		IDHash: hashOf(tok), Kind: "recovery", CreatedAt: now.UnixMilli(), ExpiresAt: now.Add(time.Hour).UnixMilli(), LastSeenAt: now.UnixMilli(),
 	}))
-	rec = e.stepB("t="+e.code+"&p=3000", &http.Cookie{Name: "oryn_session", Value: tok})
+	rec = e.stepB("t="+e.code+"&p=3000", &http.Cookie{Name: auth.CookieName, Value: tok})
 	assert.Equal(t, http.StatusFound, rec.Code)
 	assert.True(t, strings.HasPrefix(rec.Header().Get("Location"), "/login?next="))
 
@@ -332,7 +333,15 @@ func TestProxyHeaders(t *testing.T) {
 		AuthenticatedHeader, "owner=forged",
 		"X-Oryn-Other", "x",
 		"X-Forwarded-Host", "evil.example",
+		// F3：下划线变体（CGI 风格服务器会把它们与 X-Oryn-* / X-Forwarded-* 当成同一个头）
+		"X_Oryn_Authenticated", "owner=yes",
+		"X_Forwarded_Host", "evil.example",
+		"X_Forwarded_Proto", "http",
+		"App_Custom", "1",
 	))
+	for k := range ec.Header {
+		assert.NotContains(t, k, "_", "名字含下划线的入站头一律丢弃")
+	}
 	assert.Equal(t, e.host(portA), ec.Host, "应用看到公开主机名")
 	assert.Equal(t, []string{"owner=yes"}, ec.Header.Values(AuthenticatedHeader))
 	assert.Empty(t, ec.Header.Values("X-Oryn-Other"))
@@ -351,6 +360,7 @@ func TestProxyHeaders(t *testing.T) {
 		setCookies = append(setCookies, c.Name)
 	}
 	assert.Equal(t, []string{"app"}, setCookies, "应用不能设置 portal Cookie")
+	assert.Equal(t, []string{"app=1; Path=/; Secure"}, resp.Header.Values("Set-Cookie"), "应用 Cookie 去掉 Domain，只落在 portal 主机")
 	assert.Empty(t, resp.Header.Get("X-Robots-Tag"), "所有者的响应不加 noindex")
 	ec = readEcho(t, resp)
 	assert.Equal(t, []string{"a=1"}, ec.Header.Values("Cookie"), "portal Cookie 不给应用")
@@ -377,6 +387,8 @@ func TestStripCookieAndCSP(t *testing.T) {
 	assert.Equal(t, "x"+CookieName+"=1", stripCookie("x"+CookieName+"=1", CookieName))
 	assert.Equal(t, "default-src 'self'; img-src *", dropDirective("default-src 'self'; FRAME-ANCESTORS 'none' ; img-src *", "frame-ancestors"))
 	assert.Equal(t, "", dropDirective("frame-ancestors 'none'", "frame-ancestors"))
+	assert.Equal(t, "a=1; Path=/; HttpOnly", dropCookieDomain("a=1; Domain=example.com; Path=/; DOMAIN = .example.com; HttpOnly"))
+	assert.Equal(t, "domain=x", dropCookieDomain("domain=x"), "名值对本身叫 domain 不受影响")
 }
 
 // 透传：SSE 逐块到达（上游用通道控制节奏）；WebSocket 回显。

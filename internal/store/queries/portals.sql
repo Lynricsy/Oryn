@@ -31,6 +31,12 @@ SELECT * FROM portal_shares ORDER BY orb_id, port;
 -- name: DeletePortalShare :execrows
 DELETE FROM portal_shares WHERE orb_id = @orb_id AND port = @port;
 
+-- Expiry deletes only the generation it read: the row must still carry that expires_at and be past due,
+-- so a concurrent renewal is never removed.
+-- name: DeleteExpiredPortalShare :execrows
+DELETE FROM portal_shares
+WHERE orb_id = @orb_id AND port = @port AND expires_at = @expires_at AND expires_at <= @now;
+
 -- name: DeletePortalSharesByOrb :exec
 DELETE FROM portal_shares WHERE orb_id = @orb_id;
 

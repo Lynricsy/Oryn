@@ -81,7 +81,11 @@ type Service struct {
 	codes     *codes
 	reg       *registry
 	timers    *shareTimers
+	locks     *shareLocks
 	wakeWait  time.Duration
+
+	// 仅供测试的屏障：EndShare 删行之后、停定时器之前；到期回调读到过期行之后、删除之前；清理列出分享之后。
+	hookEndShareDeleted, hookFireRead, hookSweepListed func()
 }
 
 // New 构造 portal 服务。
@@ -95,6 +99,7 @@ func New(cfg Config, st *store.Store, o Orbs) *Service {
 		codes:     newCodes(),
 		reg:       newRegistry(maxOrbConns, maxAnonConns),
 		timers:    &shareTimers{m: map[shareKey]*shareTimer{}},
+		locks:     &shareLocks{m: map[shareKey]*shareLock{}},
 		wakeWait:  WakeWait,
 	}
 	if s.now == nil {

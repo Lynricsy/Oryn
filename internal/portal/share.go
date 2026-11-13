@@ -44,6 +44,47 @@ type shareTimers struct {
 	m  map[shareKey]*shareTimer
 }
 
+// shareLocks 按 (orb, 端口) 串行化分享的生命周期：库变更、定时器换代与匿名连接取消在同一把键锁内完成，
+// 旧操作（终止、到期回调、清理）因此不会停掉或删除新一代分享。条目按引用计数回收。
+type shareLocks struct {
+	mu sync.Mutex
+	m  map[shareKey]*shareLock
+	// contended 仅供测试：拿锁时发现已被占用、即将阻塞等待时调用。
+	contended func(shareKey)
+}
+
+type shareLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock 取 k 的键锁，返回解锁函数。
+func (l *shareLocks) lock(k shareKey) (unlock func()) {
+	l.mu.Lock()
+	e := l.m[k]
+	if e == nil {
+		e = &shareLock{}
+		l.m[k] = e
+	}
+	e.refs++
+	hook := l.contended
+	l.mu.Unlock()
+	if !e.mu.TryLock() {
+		if hook != nil {
+			hook(k)
+		}
+		e.mu.Lock()
+	}
+	return func() {
+		e.mu.Unlock()
+		l.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(l.m, k)
+		}
+		l.mu.Unlock()
+	}
+}
+
 // SetShare 公开或续期 (orb, 端口)：expires_at = now + d。端口不是已声明的 portal → ErrNotFound。
 func (s *Service) SetShare(ctx context.Context, orbID string, port int, d time.Duration) (apigen.OrbPortal, error) {
 	if d <= 0 {
@@ -56,14 +97,20 @@ func (s *Service) SetShare(ctx context.Context, orbID string, port int, d time.D
 	if !ok {
 		return apigen.OrbPortal{}, ErrNotFound
 	}
+	k := shareKey{orbID, port}
+	unlock := s.locks.lock(k)
 	now := s.now()
 	exp := now.Add(d).UnixMilli()
-	if err := s.st.Q.UpsertPortalShare(ctx, db.UpsertPortalShareParams{
+	err = s.st.Q.UpsertPortalShare(ctx, db.UpsertPortalShareParams{
 		OrbID: orbID, Port: int64(port), CreatedAt: now.UnixMilli(), ExpiresAt: exp,
-	}); err != nil {
+	})
+	if err == nil {
+		s.arm(k, exp)
+	}
+	unlock()
+	if err != nil {
 		return apigen.OrbPortal{}, err
 	}
-	s.arm(shareKey{orbID, port}, exp)
 	s.orbs.Refresh(ctx, orbID)
 	links := svc.Links
 	if links == nil {
@@ -74,17 +121,25 @@ func (s *Service) SetShare(ctx context.Context, orbID string, port int, d time.D
 
 // EndShare 终止公开（幂等）：删除分享行、停定时器、立即断开该端口的全部匿名连接。
 func (s *Service) EndShare(ctx context.Context, orbID string, port int) error {
-	if _, err := s.st.Q.DeletePortalShare(ctx, db.DeletePortalShareParams{OrbID: orbID, Port: int64(port)}); err != nil {
+	k := shareKey{orbID, port}
+	unlock := s.locks.lock(k)
+	_, err := s.st.Q.DeletePortalShare(ctx, db.DeletePortalShareParams{OrbID: orbID, Port: int64(port)})
+	if err == nil {
+		if h := s.hookEndShareDeleted; h != nil {
+			h()
+		}
+		s.disarm(k)
+		s.reg.cancelKey(anonKey(orbID, port))
+	}
+	unlock()
+	if err != nil {
 		return err
 	}
-	k := shareKey{orbID, port}
-	s.disarm(k)
-	s.reg.cancelKey(anonKey(orbID, port))
 	s.orbs.Refresh(ctx, orbID)
 	return nil
 }
 
-// arm 为 k 装（或重装）到期定时器。
+// arm 为 k 装（或重装）到期定时器。调用方持有 k 的键锁。
 func (s *Service) arm(k shareKey, expMs int64) {
 	s.timers.mu.Lock()
 	defer s.timers.mu.Unlock()
@@ -97,6 +152,7 @@ func (s *Service) arm(k shareKey, expMs int64) {
 	s.timers.m[k] = t
 }
 
+// disarm 停掉 k 的定时器。调用方持有 k 的键锁。
 func (s *Service) disarm(k shareKey) {
 	s.timers.mu.Lock()
 	defer s.timers.mu.Unlock()
@@ -106,11 +162,13 @@ func (s *Service) disarm(k shareKey) {
 	}
 }
 
-// fire 是到期回调：被续期则按新到期时间重装；否则删除分享行、断开匿名连接并推送 orb 更新。
+// fire 是到期回调：被续期则按新到期时间重装；否则只删除它读到的那一代分享行、断开匿名连接并推送 orb 更新。
 func (s *Service) fire(k shareKey, t *shareTimer) {
+	unlock := s.locks.lock(k)
 	s.timers.mu.Lock()
 	if s.timers.m[k] != t {
 		s.timers.mu.Unlock()
+		unlock()
 		return // 已被重装或停止
 	}
 	delete(s.timers.m, k)
@@ -118,20 +176,46 @@ func (s *Service) fire(k shareKey, t *shareTimer) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timerCtxTimeout)
 	defer cancel()
-	sh, err := s.st.Q.GetPortalShare(ctx, db.GetPortalShareParams{OrbID: k.orbID, Port: int64(k.port)})
-	switch {
-	case err == nil && sh.ExpiresAt > s.now().UnixMilli():
-		s.arm(k, sh.ExpiresAt)
-		return
-	case err == nil:
-		if _, err := s.st.Q.DeletePortalShare(ctx, db.DeletePortalShareParams{OrbID: k.orbID, Port: int64(k.port)}); err != nil {
-			slog.Warn("portal: 删除到期分享失败", "orb", k.orbID, "port", k.port, "err", err)
+	ended := s.expire(ctx, k)
+	unlock()
+	if ended {
+		s.orbs.Refresh(ctx, k.orbID)
+	}
+}
+
+// expire 在持有 k 的键锁时处理到期：行未到期则按其 expires_at 重装定时器；已到期则带 expires_at 条件删除
+// （行在读与删之间被改写时删不到，重读后再判定）；分享已不存在时断开匿名连接。返回分享是否已结束。
+func (s *Service) expire(ctx context.Context, k shareKey) bool {
+	for range 3 {
+		sh, err := s.st.Q.GetPortalShare(ctx, db.GetPortalShareParams{OrbID: k.orbID, Port: int64(k.port)})
+		if errors.Is(err, sql.ErrNoRows) {
+			break
 		}
-	case !errors.Is(err, sql.ErrNoRows):
-		slog.Warn("portal: 读取分享失败", "orb", k.orbID, "port", k.port, "err", err)
+		if err != nil {
+			slog.Warn("portal: 读取分享失败", "orb", k.orbID, "port", k.port, "err", err)
+			break
+		}
+		now := s.now().UnixMilli()
+		if sh.ExpiresAt > now {
+			s.arm(k, sh.ExpiresAt)
+			return false
+		}
+		if h := s.hookFireRead; h != nil {
+			h()
+		}
+		n, err := s.st.Q.DeleteExpiredPortalShare(ctx, db.DeleteExpiredPortalShareParams{
+			OrbID: k.orbID, Port: int64(k.port), ExpiresAt: sh.ExpiresAt, Now: now,
+		})
+		if err != nil {
+			slog.Warn("portal: 删除到期分享失败", "orb", k.orbID, "port", k.port, "err", err)
+			break
+		}
+		if n > 0 {
+			break
+		}
 	}
 	s.reg.cancelKey(anonKey(k.orbID, k.port))
-	s.orbs.Refresh(ctx, k.orbID)
+	return true
 }
 
 // Run 启动时为库里每个未过期的分享装定时器、删除已过期的行；之后每小时清理过期的分享、portal 会话与一次性码，
@@ -164,26 +248,46 @@ func (s *Service) sweep(ctx context.Context, load bool) {
 		}
 		return
 	}
+	if h := s.hookSweepListed; h != nil {
+		h()
+	}
 	refresh := map[string]bool{}
 	for _, sh := range shares {
 		k := shareKey{sh.OrbID, int(sh.Port)}
 		if sh.ExpiresAt > now.UnixMilli() {
 			if load {
+				unlock := s.locks.lock(k)
 				s.arm(k, sh.ExpiresAt)
+				unlock()
 			}
 			continue
 		}
-		if _, err := s.st.Q.DeletePortalShare(ctx, db.DeletePortalShareParams{OrbID: sh.OrbID, Port: sh.Port}); err != nil {
-			slog.Warn("portal: 删除到期分享失败", "orb", sh.OrbID, "port", sh.Port, "err", err)
-			continue
+		if s.sweepExpired(ctx, k, sh.ExpiresAt, now.UnixMilli()) {
+			refresh[sh.OrbID] = true
 		}
-		s.disarm(k)
-		s.reg.cancelKey(anonKey(sh.OrbID, int(sh.Port)))
-		refresh[sh.OrbID] = true
 	}
 	for orbID := range refresh {
 		s.orbs.Refresh(ctx, orbID)
 	}
+}
+
+// sweepExpired 在 k 的键锁内删除列表里读到的那一代过期分享；行已被续期或删除则什么都不做。
+func (s *Service) sweepExpired(ctx context.Context, k shareKey, expMs, nowMs int64) bool {
+	unlock := s.locks.lock(k)
+	defer unlock()
+	n, err := s.st.Q.DeleteExpiredPortalShare(ctx, db.DeleteExpiredPortalShareParams{
+		OrbID: k.orbID, Port: int64(k.port), ExpiresAt: expMs, Now: nowMs,
+	})
+	if err != nil {
+		slog.Warn("portal: 删除到期分享失败", "orb", k.orbID, "port", k.port, "err", err)
+		return false
+	}
+	if n == 0 {
+		return false
+	}
+	s.disarm(k)
+	s.reg.cancelKey(anonKey(k.orbID, k.port))
+	return true
 }
 
 func (s *Service) stopTimers() {

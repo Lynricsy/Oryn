@@ -344,3 +344,145 @@ func TestShareDuration(t *testing.T) {
 	_, ok := ShareDuration("2h")
 	assert.False(t, ok)
 }
+
+// contention 让 lock 在键锁被占用、即将阻塞时发信号（屏障：证明并发操作已排在键锁后面）。
+func contention(e *env) <-chan struct{} {
+	ch := make(chan struct{}, 1)
+	e.svc.locks.contended = func(shareKey) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	return ch
+}
+
+// renewAsync 在后台续期 portA，返回结果通道。
+func renewAsync(e *env, d time.Duration) chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.SetShare(e.ctx, e.orbID, portA, d)
+		done <- err
+	}()
+	return done
+}
+
+// waitContendedOrDone 等到续期排在键锁后面；若续期直接完成（没有串行化），把结果放回通道。
+func waitContendedOrDone(t *testing.T, contended <-chan struct{}, done chan error) {
+	t.Helper()
+	select {
+	case <-contended:
+	case err := <-done:
+		done <- err
+	case <-time.After(5 * time.Second):
+		t.Fatal("续期既没有完成也没有等键锁")
+	}
+}
+
+// B1：终止删行之后、停定时器之前并发续期。续期必须排在终止之后，新一代定时器不被旧终止停掉，
+// 新一代的匿名 WebSocket 到新期限立即断开。
+func TestShareEndRenewSerialized(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.svc.SetShare(e.ctx, e.orbID, portA, time.Hour)
+	require.NoError(t, err)
+	contended := contention(e)
+	var done chan error
+	e.svc.hookEndShareDeleted = func() {
+		done = renewAsync(e, 3*time.Hour)
+		waitContendedOrDone(t, contended, done)
+	}
+	require.NoError(t, e.svc.EndShare(e.ctx, e.orbID, portA))
+	e.svc.hookEndShareDeleted = nil
+	require.NoError(t, <-done)
+
+	exp := e.clock.Now().Add(3 * time.Hour).UnixMilli()
+	sh, ok := e.share(portA)
+	require.True(t, ok, "续期排在终止之后：分享存在")
+	assert.Equal(t, exp, sh.ExpiresAt)
+	tm := e.timers.last()
+	assert.Equal(t, 3*time.Hour, tm.d)
+	require.False(t, tm.isStopped(), "旧终止不能停掉新一代定时器")
+
+	ws, _, err := e.dialWS(portA, nil)
+	require.NoError(t, err)
+	defer ws.CloseNow()
+	echoOnce(t, ws, "new")
+	e.clock.Advance(3 * time.Hour)
+	tm.f()
+	requireClosed(t, ws)
+	_, ok = e.share(portA)
+	assert.False(t, ok)
+}
+
+// B2：到期回调读到过期行后、删除之前，行被改写为新期限：只删读到的那一代，新行、定时器与匿名连接保留。
+func TestShareExpiryKeepsRenewedRow(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.svc.SetShare(e.ctx, e.orbID, portA, time.Hour)
+	require.NoError(t, err)
+	tm := e.timers.last()
+	ws, _, err := e.dialWS(portA, nil)
+	require.NoError(t, err)
+	defer ws.CloseNow()
+	echoOnce(t, ws, "x")
+
+	e.clock.Advance(time.Hour)
+	exp := e.clock.Now().Add(2 * time.Hour).UnixMilli()
+	e.svc.hookFireRead = func() {
+		e.svc.hookFireRead = nil
+		require.NoError(t, e.st.Q.UpsertPortalShare(e.ctx, db.UpsertPortalShareParams{
+			OrbID: e.orbID, Port: portA, CreatedAt: 1, ExpiresAt: exp,
+		}))
+	}
+	tm.f()
+	sh, ok := e.share(portA)
+	require.True(t, ok, "改写后的新一代不被删除")
+	assert.Equal(t, exp, sh.ExpiresAt)
+	next := e.timers.last()
+	assert.NotSame(t, tm, next)
+	assert.Equal(t, 2*time.Hour, next.d, "按新期限重装")
+	assert.False(t, next.isStopped())
+	echoOnce(t, ws, "still")
+}
+
+// B1/B2：到期回调读到过期行后并发续期：续期排在回调之后，最终库与定时器都是新一代。
+func TestShareExpiryRenewSerialized(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.svc.SetShare(e.ctx, e.orbID, portA, time.Hour)
+	require.NoError(t, err)
+	tm := e.timers.last()
+	e.clock.Advance(time.Hour)
+	contended := contention(e)
+	var done chan error
+	e.svc.hookFireRead = func() {
+		e.svc.hookFireRead = nil
+		done = renewAsync(e, time.Hour)
+		waitContendedOrDone(t, contended, done)
+	}
+	tm.f()
+	require.NoError(t, <-done)
+	sh, ok := e.share(portA)
+	require.True(t, ok)
+	assert.Equal(t, e.clock.Now().Add(time.Hour).UnixMilli(), sh.ExpiresAt)
+	next := e.timers.last()
+	assert.NotSame(t, tm, next)
+	assert.False(t, next.isStopped())
+}
+
+// B2：清理列出分享后行被续期：带 expires_at 条件的删除不删新一代。
+func TestSweepKeepsRenewedRow(t *testing.T) {
+	e := newEnv(t)
+	now := e.clock.Now()
+	require.NoError(t, e.st.Q.UpsertPortalShare(e.ctx, db.UpsertPortalShareParams{OrbID: e.orbID, Port: portA, CreatedAt: 1, ExpiresAt: now.Add(-time.Second).UnixMilli()}))
+	require.NoError(t, e.st.Q.UpsertPortalShare(e.ctx, db.UpsertPortalShareParams{OrbID: e.orbID, Port: portB, CreatedAt: 1, ExpiresAt: now.Add(-time.Second).UnixMilli()}))
+	exp := now.Add(time.Hour).UnixMilli()
+	e.svc.hookSweepListed = func() {
+		require.NoError(t, e.st.Q.UpsertPortalShare(e.ctx, db.UpsertPortalShareParams{OrbID: e.orbID, Port: portA, CreatedAt: 1, ExpiresAt: exp}))
+	}
+	e.svc.sweep(e.ctx, false)
+	sh, ok := e.share(portA)
+	require.True(t, ok, "续期后的行保留")
+	assert.Equal(t, exp, sh.ExpiresAt)
+	_, ok = e.share(portB)
+	assert.False(t, ok, "真正过期的行被删除")
+	assert.Empty(t, e.svc.locks.m, "键锁条目回收")
+}

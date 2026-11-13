@@ -90,9 +90,18 @@ func (c *portalConn) CloseWrite() error {
 const AuthenticatedHeader = "X-Oryn-Authenticated"
 
 // rewrite 构造发给应用的请求：目标 `http://<orbID>:<端口>` + 原路径与查询，Host 保持公开主机名；
-// 剥掉全部 X-Oryn-* 入站头、portal Cookie 与设备令牌，再写入身份头。
+// 剥掉名字含 `_` 的入站头、全部 X-Oryn-* 入站头、portal Cookie 与设备令牌，再写入身份头。
+//
+// 名字含 `_` 的头一律丢弃（与 nginx 默认的 underscores_in_headers off 一致）：CGI 风格的应用服务器把 `-`
+// 与 `_` 都映射成 HTTP_X_…，`X_Oryn_Authenticated` / `X_Forwarded_Host` 这类变体会覆盖网关写的头。
+// 整类丢弃不依赖逐个枚举敏感头名，以后新增的身份头也不会漏；而 orb 可以绕过 nginx 直连 orynd，不能指望反代先挡。
 func (s *Service) rewrite(pr *httputil.ProxyRequest) {
 	t := targetFrom(pr.In)
+	for k := range pr.Out.Header {
+		if strings.ContainsRune(k, '_') || strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Oryn-") {
+			delete(pr.Out.Header, k)
+		}
+	}
 	pr.Out.URL.Scheme = "http"
 	pr.Out.URL.Host = net.JoinHostPort(t.orbID, strconv.Itoa(t.port))
 	pr.Out.Host = pr.In.Host
@@ -100,11 +109,6 @@ func (s *Service) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.Header.Set("X-Forwarded-Proto", s.base.Scheme)
 	pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 
-	for k := range pr.Out.Header {
-		if strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Oryn-") {
-			delete(pr.Out.Header, k)
-		}
-	}
 	if t.owner {
 		pr.Out.Header.Set(AuthenticatedHeader, "owner=yes")
 	} else {
@@ -143,7 +147,8 @@ func stripCookie(header, name string) string {
 }
 
 // modifyResponse 让 portal 能被主站内嵌：删除 X-Frame-Options、各条 CSP 去掉 frame-ancestors 后
-// 追加 `frame-ancestors 'self' <主域名>`；丢弃应用试图设置的 portal Cookie；匿名响应加 noindex。
+// 追加 `frame-ancestors 'self' <主域名>`；丢弃应用试图设置的 portal Cookie，其余 Set-Cookie 去掉 Domain 属性
+// （变成 portal 主机的 host-only Cookie，应用不能经响应头往父域或兄弟 portal 写 Cookie）；匿名响应加 noindex。
 func (s *Service) modifyResponse(res *http.Response) error {
 	h := res.Header
 	h.Del("X-Frame-Options")
@@ -161,7 +166,7 @@ func (s *Service) modifyResponse(res *http.Response) error {
 		for _, v := range vals {
 			n, _, _ := strings.Cut(v, "=")
 			if strings.TrimSpace(n) != CookieName {
-				h.Add("Set-Cookie", v)
+				h.Add("Set-Cookie", dropCookieDomain(v))
 			}
 		}
 	}
@@ -169,6 +174,20 @@ func (s *Service) modifyResponse(res *http.Response) error {
 		h.Set("X-Robots-Tag", "noindex, nofollow")
 	}
 	return nil
+}
+
+// dropCookieDomain 删除一条 Set-Cookie 的 Domain 属性（大小写不敏感），其余部分原样保留。
+func dropCookieDomain(v string) string {
+	parts := strings.Split(v, ";")
+	kept := parts[:1]
+	for _, a := range parts[1:] {
+		n, _, _ := strings.Cut(a, "=")
+		if strings.EqualFold(strings.TrimSpace(n), "domain") {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return strings.Join(kept, ";")
 }
 
 // dropDirective 从一条 CSP 中删除名为 name 的指令（大小写不敏感），其余指令原样保留。

@@ -64,7 +64,7 @@ orb 里带 portal 的受管服务经 `https://t-<线程短码>-p<端口>.<portal
 7. **访问控制**：portal 默认只有所有者能打开（网页会话经一次性码换取 portal Cookie；CLI / App 直接带 `Authorization: Bearer odt_…`）。线程页 Portal 标签可按端口限时公开（1 小时 / 3 小时 / 1 天 / 7 天），到期或终止时立即断开匿名连接。应用可读请求头 `X-Oryn-Authenticated: owner=yes|no` 区分访问者。
 8. **唤醒**：已授权的 portal 请求（含公开访客）计为用户交互；orb 冻结或停机时，浏览器打开 portal 先看到「正在唤醒」过渡页并自动刷新，其它请求最多等待 25 秒。
 
-开发环境（`dev/orynd.yaml`）用 `public_url: "http://localhost:7600"` + `portal_domain: "localhost"`，portal 地址形如 `http://t-<短码>-p<端口>.localhost:7600/`：Chromium 把 `*.localhost` 解析到回环并视为安全上下文，`Secure` Cookie 可用。命令行验证时可直接 `curl -H "Host: t-<短码>-p<端口>.localhost:7600" http://127.0.0.1:7600/`；`orynd --config dev/orynd.yaml admin create-web-session` 在 stdout 打印一个网页会话 Cookie（`oryn_session`）的值，供脚本走真实的鉴权握手。
+开发环境（`dev/orynd.yaml`）用 `public_url: "http://localhost:7600"` + `portal_domain: "localhost"`，portal 地址形如 `http://t-<短码>-p<端口>.localhost:7600/`：Chromium 把 `*.localhost` 解析到回环并视为安全上下文，`Secure` Cookie 可用。命令行验证时可直接 `curl -H "Host: t-<短码>-p<端口>.localhost:7600" http://127.0.0.1:7600/`；`orynd --config dev/orynd.yaml admin create-web-session` 在 stdout 打印一个网页会话 Cookie（`__Host-oryn_session`）的值，供脚本走真实的鉴权握手。
 
 ## 5. 本机 Docker provider
 

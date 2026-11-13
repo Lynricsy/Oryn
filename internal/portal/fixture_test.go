@@ -212,7 +212,7 @@ type env struct {
 
 	threadID, code, orbID string
 	device                string // odt_…
-	webCookie             string // oryn_session 的值
+	webCookie             string // 主站会话 Cookie（__Host-oryn_session）的值
 }
 
 func newEnv(t *testing.T) *env {
@@ -269,7 +269,7 @@ func (e *env) app(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Add("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
 		w.Header().Add("Content-Security-Policy", "Frame-Ancestors 'none'")
-		w.Header().Add("Set-Cookie", "app=1; Path=/")
+		w.Header().Add("Set-Cookie", "app=1; Domain=oryn.test; Path=/; domain=.test; Secure")
 		w.Header().Add("Set-Cookie", CookieName+"=evil; Path=/")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"host": r.Host, "header": r.Header})

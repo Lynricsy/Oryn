@@ -138,8 +138,8 @@ func TestOrbProxyRejectsUnexpectedStatus(t *testing.T) {
 // 1xx 中间响应（如带 Set-Cookie 的 103）不得绕过响应头白名单到达客户端。
 func TestOrbProxyDrops1xx(t *testing.T) {
 	o := newRawOrbd(t, func(c net.Conn) {
-		writeRaw(c, "HTTP/1.1 103 Early Hints\nSet-Cookie: oryn_session=evil\nLink: <https://evil/>; rel=preconnect\n\n"+
-			"HTTP/1.1 200 OK\nContent-Type: application/json\nSet-Cookie: oryn_session=evil2\nContent-Length: 2\n\n{}")
+		writeRaw(c, "HTTP/1.1 103 Early Hints\nSet-Cookie: __Host-oryn_session=evil\nLink: <https://evil/>; rel=preconnect\n\n"+
+			"HTTP/1.1 200 OK\nContent-Type: application/json\nSet-Cookie: __Host-oryn_session=evil2\nContent-Length: 2\n\n{}")
 	})
 	srv := proxyServer(t, o, "/fs/list", orbProxyOpt{})
 	var got1xx []textproto.MIMEHeader
@@ -166,7 +166,7 @@ func TestOrbProxyRequestHeaderAllowlist(t *testing.T) {
 	})
 	srv := proxyServer(t, o, "/fs/file", orbProxyOpt{raw: true, filename: "a.txt"})
 	res, _ := doGet(t, srv.URL+"/x?path=a", map[string]string{
-		"Cookie": "oryn_session=s", "Authorization": "Bearer x", "Cf-Access-Jwt-Assertion": "jwt", "Cf-Connecting-Ip": "1.2.3.4",
+		"Cookie": "__Host-oryn_session=s", "Authorization": "Bearer x", "Cf-Access-Jwt-Assertion": "jwt", "Cf-Connecting-Ip": "1.2.3.4",
 		"True-Client-Ip": "1.2.3.4", "User-Agent": "Mozilla/5.0", "Accept-Language": "zh", "Sec-Fetch-Site": "same-origin",
 		"X-Oryn-Csrf": "c", "X-Forwarded-For": "1.2.3.4", "Range": "bytes=0-1", "If-Range": `"e"`, "Accept": "*/*",
 	})

@@ -277,7 +277,7 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 
 // recoverySession 要求请求带未过期的恢复会话 Cookie 与 CSRF 头。
 func (s *Service) recoverySession(ctx context.Context, r *http.Request) (db.WebSession, error) {
-	ws, ok, err := sessionFromCookie(ctx, s.st.Q, r)
+	ws, _, ok, err := sessionFromCookie(ctx, s.st.Q, r)
 	if err != nil {
 		return ws, err
 	}

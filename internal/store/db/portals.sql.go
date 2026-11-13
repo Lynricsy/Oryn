@@ -21,6 +21,33 @@ func (q *Queries) DeleteExpiredPortalSessions(ctx context.Context, now int64) (i
 	return result.RowsAffected()
 }
 
+const deleteExpiredPortalShare = `-- name: DeleteExpiredPortalShare :execrows
+DELETE FROM portal_shares
+WHERE orb_id = ?1 AND port = ?2 AND expires_at = ?3 AND expires_at <= ?4
+`
+
+type DeleteExpiredPortalShareParams struct {
+	OrbID     string `json:"orbId"`
+	Port      int64  `json:"port"`
+	ExpiresAt int64  `json:"expiresAt"`
+	Now       int64  `json:"now"`
+}
+
+// Expiry deletes only the generation it read: the row must still carry that expires_at and be past due,
+// so a concurrent renewal is never removed.
+func (q *Queries) DeleteExpiredPortalShare(ctx context.Context, arg DeleteExpiredPortalShareParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteExpiredPortalShare,
+		arg.OrbID,
+		arg.Port,
+		arg.ExpiresAt,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteOrbServices = `-- name: DeleteOrbServices :exec
 
 DELETE FROM orb_services WHERE orb_id = ?1

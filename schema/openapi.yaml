@@ -14,7 +14,7 @@ info:
 
     - 时间一律为 UTC 毫秒整数（`TimestampMs`）。
     - 错误体统一为 `Error`（`{code, message}`）。
-    - 网页会话 Cookie `oryn_session`；凡变更类请求（POST/PUT/PATCH/DELETE）使用 Cookie 鉴权时必须带头 `X-Oryn-CSRF: 1`，
+    - 网页会话 Cookie `__Host-oryn_session`；凡变更类请求（POST/PUT/PATCH/DELETE）使用 Cookie 鉴权时必须带头 `X-Oryn-CSRF: 1`，
       使用设备令牌（`Authorization: Bearer odt_…`）时无需该头。
     - 路径参数中的 `/` 须编码为 `%2F`（`agent-config/files/{path}`、`secrets/{name}`）。
     - omp RPC 的命令与帧对控制面不透明（`OmpFrame`），其权威类型在 agent 仓库（`web/src/omp/rpc-types.d.ts`）。
@@ -106,7 +106,7 @@ paths:
       tags: [auth]
       operationId: authSetupFinish
       summary: 完成注册 Passkey
-      description: 成功后建立网页会话（Set-Cookie `oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）。
+      description: 成功后建立网页会话（Set-Cookie `__Host-oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）。
       security:
         - {}
         - cookieAuth: []
@@ -121,7 +121,7 @@ paths:
           description: 注册成功
           headers:
             Set-Cookie:
-              description: '`oryn_session=…; HttpOnly; Secure; SameSite=Lax`'
+              description: '`__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax`'
               schema: { type: string }
           content:
             application/json:
@@ -153,10 +153,10 @@ paths:
             schema: { $ref: '#/components/schemas/AuthLoginFinishRequest' }
       responses:
         '200':
-          description: 登录成功（Set-Cookie `oryn_session`，有效期 30 天，滑动续期）
+          description: 登录成功（Set-Cookie `__Host-oryn_session`，有效期 30 天，滑动续期）
           headers:
             Set-Cookie:
-              description: '`oryn_session=…; HttpOnly; Secure; SameSite=Lax`'
+              description: '`__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax`'
               schema: { type: string }
           content:
             application/json:
@@ -1724,8 +1724,8 @@ components:
     cookieAuth:
       type: apiKey
       in: cookie
-      name: oryn_session
-      description: 网页会话（HttpOnly、Secure、SameSite=Lax，30 天滑动续期）
+      name: __Host-oryn_session
+      description: 网页会话（`__Host-` 前缀：Path=/、无 Domain；HttpOnly、Secure、SameSite=Lax，30 天滑动续期）
     csrfHeader:
       type: apiKey
       in: header

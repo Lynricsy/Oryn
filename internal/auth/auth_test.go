@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -251,4 +253,43 @@ func TestTicketsRevokedWithPrincipal(t *testing.T) {
 	ok, err = svc.PrincipalValid(ctx, Principal{Kind: KindWeb, ID: ids.Hash(expired)})
 	require.NoError(t, err)
 	assert.False(t, ok, "已过期（尚未被清理）的网页会话")
+}
+
+// F1：会话 Cookie 带 `__Host-` 前缀（Path=/、无 Domain、Secure、HttpOnly、Lax）；
+// 请求里有多条同名 Cookie 时取第一条有效的（父域抛掷的假 Cookie 排在前面也不影响登录），续期重发的是命中的那条。
+func TestSessionCookie(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	rec := httptest.NewRecorder()
+	SetSessionCookie(rec, "ows_x", time.Now().Add(time.Hour))
+	sc := rec.Header().Get("Set-Cookie")
+	assert.True(t, strings.HasPrefix(sc, "__Host-oryn_session=ows_x;"), sc)
+	for _, attr := range []string{"Path=/", "HttpOnly", "Secure", "SameSite=Lax"} {
+		assert.Contains(t, sc, attr)
+	}
+	assert.NotContains(t, strings.ToLower(sc), "domain")
+
+	valid, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL)
+	require.NoError(t, err)
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second)
+	require.NoError(t, err)
+	old := time.Now().Add(-2 * sessionTouchEvery).UnixMilli()
+	require.NoError(t, svc.st.Q.TouchWebSession(ctx, db.TouchWebSessionParams{
+		LastSeenAt: old, ExpiresAt: time.Now().Add(SessionTTL).UnixMilli(), IDHash: ids.Hash(valid),
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Header.Set("Cookie", CookieName+"=; "+CookieName+"=ows_bogus; "+CookieName+"="+expired+"; "+CookieName+"="+valid)
+	rec = httptest.NewRecorder()
+	p, err := Authenticate(rec, req, svc.st)
+	require.NoError(t, err)
+	assert.Equal(t, Principal{Kind: KindWeb, ID: ids.Hash(valid)}, p)
+	assert.True(t, strings.HasPrefix(rec.Header().Get("Set-Cookie"), CookieName+"="+valid+";"), "续期重发命中的有效 Cookie")
+
+	// 旧名字不再被接受（清一刀切换）
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Header.Set("Cookie", "oryn_session="+valid)
+	_, err = Authenticate(httptest.NewRecorder(), req, svc.st)
+	assert.ErrorIs(t, err, errUnauthorized)
 }

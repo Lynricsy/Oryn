@@ -79,7 +79,7 @@ func cmdAdmin(ctx context.Context, cfg config.Orynd, args []string) error {
 		if err != nil {
 			return err
 		}
-		// stdout 只输出 Cookie（oryn_session）的值，便于 SESSION=$(orynd … admin create-web-session)
+		// stdout 只输出 Cookie（__Host-oryn_session）的值，便于 SESSION=$(orynd … admin create-web-session)
 		_, err = fmt.Fprintln(os.Stdout, tok)
 		return err
 	default:
