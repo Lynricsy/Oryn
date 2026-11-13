@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/share"
 )
 
-// GetBlob 对应 `GET blobs/{sha256}`：内容寻址，可长期缓存。
+// GetBlob 对应 `GET blobs/{sha256}`：内容寻址，可长期缓存；仅安全栅格图片内联（F7）。
 func (s *Server) GetBlob(w http.ResponseWriter, r *http.Request, sha256 apigen.Sha256) {
 	svc, ok := s.threadsSvc(w)
 	if !ok {
@@ -29,13 +30,18 @@ func (s *Server) GetBlob(w http.ResponseWriter, r *http.Request, sha256 apigen.S
 		return
 	}
 	defer f.Close()
-	mime := b.Mime
-	if mime == "" {
-		mime = "application/octet-stream"
+	h := w.Header()
+	// 与公开 blob、/f 同一白名单：类型由内容探测（orb 提供的字节可能被探测成 text/html），
+	// 只有安全栅格图片按原类型内联，其余一律附件下载
+	if mt, img := share.InlineImage(b.Mime); img {
+		h.Set("Content-Type", mt)
+		h.Set("Content-Disposition", "inline")
+	} else {
+		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", "attachment")
 	}
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "sandbox")
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox")
 	http.ServeContent(w, r, "", time.UnixMilli(b.CreatedAt), f)
 }

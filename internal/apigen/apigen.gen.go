@@ -1770,7 +1770,7 @@ type CreateThreadShareRequest struct {
 	// AcknowledgeFindings 已检查扫描命中项，仍然分享
 	AcknowledgeFindings *bool `json:"acknowledgeFindings,omitempty"`
 
-	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	// Mode `snapshot` 固化创建时刻扫描过的条目集合与标题（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
 	Mode ShareMode `json:"mode"`
 }
 
@@ -3435,7 +3435,8 @@ type PublicEntryPage struct {
 
 // PublicShare 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置
 type PublicShare struct {
-	// Attachments 线程的附件元数据（快照只含分享创建时已存在的）
+	// Attachments 公开的附件元数据：已发布的附件，以及被范围内公开（过滤后）条目引用的附件（按附件 id 匹配）；
+	// 快照只考虑分享创建时已存在的附件。其余附件的名字与元数据不出控制面
 	Attachments []PublicAttachment `json:"attachments"`
 
 	// LastSeq 范围上界（快照 = `untilSeq`；实时 = 线程当前 `last_seq`）
@@ -3444,7 +3445,7 @@ type PublicShare struct {
 	// LeafEntryID 范围的叶子（快照 = 创建时的叶子；实时 = 当前叶子）
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
-	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	// Mode `snapshot` 固化创建时刻扫描过的条目集合与标题（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
 	Mode ShareMode `json:"mode"`
 
 	// SharedAt UTC 毫秒时间戳
@@ -3456,7 +3457,7 @@ type PublicShare struct {
 	// ThreadCreatedAt UTC 毫秒时间戳
 	ThreadCreatedAt TimestampMs `json:"threadCreatedAt"`
 
-	// Title 线程标题（空则 `Untitled`）
+	// Title 线程标题（空则 `Untitled`）；快照为创建时的标题
 	Title         string `json:"title"`
 	TranscriptRev int64  `json:"transcriptRev"`
 }
@@ -3587,7 +3588,7 @@ type SetupTrigger string
 // Sha256 SHA-256 小写十六进制
 type Sha256 = string
 
-// ShareFinding 一个 `(规则, 条目)` 的命中
+// ShareFinding 一个 `(规则, 条目)` 的命中。标题与附件名的命中不对应条目：`entryId` 分别为 `__title__` 与 `attachment:<附件 id>`，`seq` 为 0
 type ShareFinding struct {
 	// Count 该条目内同一规则的命中次数
 	Count   int    `json:"count"`
@@ -3616,7 +3617,7 @@ type ShareFindingRule string
 // ShareID `shr_<ulid>`
 type ShareID = string
 
-// ShareMode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+// ShareMode `snapshot` 固化创建时刻扫描过的条目集合与标题（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
 type ShareMode string
 
 // ShareOverview defines model for ShareOverview.
@@ -3833,7 +3834,7 @@ type ThreadShare struct {
 	// ID `shr_<ulid>`
 	ID ShareID `json:"id"`
 
-	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	// Mode `snapshot` 固化创建时刻扫描过的条目集合与标题（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
 	Mode ShareMode `json:"mode"`
 
 	// Slug 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
@@ -4047,7 +4048,9 @@ type WsPublicEntries struct {
 type WsPublicEntriesType string
 
 // WsPublicFrame 实时 omp 帧，仅限 `message_start` / `message_update` / `message_end` / `tool_execution_start` / `tool_execution_update` /
-// `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end` / `subagent_lifecycle` / `subagent_progress`
+// `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end`，且与条目共用公开过滤：
+// `display:false` 的注入消息不发；`message_update` 只发 assistant 的；`agent_end` 只留 `{type, isTerminal?}`；
+// 子 agent 工具（`task`）的 `tool_execution_update` / `tool_stream_update` 不发。`subagent_*` 帧一律不发
 type WsPublicFrame struct {
 	// Frame omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
 	Frame OmpFrame          `json:"frame"`
@@ -4088,7 +4091,7 @@ type WsPublicSnapshot struct {
 	LastSeq     int64   `json:"lastSeq"`
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
-	// Live 在途消息与运行中工具的帧（只含公开白名单内的帧类型）
+	// Live 在途消息与运行中工具的帧（与 `WsPublicFrame` 同一过滤）
 	Live []OmpFrame `json:"live"`
 
 	// State 线程状态（全端统一，自上而下取首个成立）：
@@ -4099,7 +4102,7 @@ type WsPublicSnapshot struct {
 	// `idle` 其它。
 	State ThreadState `json:"state"`
 
-	// Subagents 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧
+	// Subagents 恒为空：子 agent 的进度与转录不公开
 	Subagents     []OmpFrame           `json:"subagents"`
 	Title         string               `json:"title"`
 	TranscriptRev int64                `json:"transcriptRev"`
@@ -4125,7 +4128,8 @@ type WsPublicState struct {
 // WsPublicStateType defines model for WsPublicState.Type.
 type WsPublicStateType string
 
-// WsPublicTranscriptReset 转录被重写：客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连
+// WsPublicTranscriptReset 转录版本递增（同 `WsServerTranscriptReset`），或所有者把叶子移到了客户端未持有的分支上：
+// 客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连
 type WsPublicTranscriptReset struct {
 	TranscriptRev int64                       `json:"transcriptRev"`
 	Type          WsPublicTranscriptResetType `json:"type"`
@@ -4346,8 +4350,8 @@ type WsServerThreadSnapshot struct {
 // WsServerThreadSnapshotType defines model for WsServerThreadSnapshot.Type.
 type WsServerThreadSnapshotType string
 
-// WsServerTranscriptReset 线程转录被重写（会话文件重写后删除了旧行，或 fork 回退移除了某文件）：客户端丢弃该线程的全部已缓存条目，
-// 并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
+// WsServerTranscriptReset 线程转录版本递增（会话文件重写后删除了旧行、fork 回退移除了某文件，或 `switch_leaf` / `navigate_tree` 成功把叶子移离
+// 受理时的位置）：客户端丢弃该线程的全部已缓存条目，并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
 type WsServerTranscriptReset struct {
 	// ThreadID `T-<uuidv7>`
 	//
@@ -6588,7 +6592,7 @@ type ServerInterface interface {
 	// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
 	// (GET /api/v1/public/shares/{slug})
 	GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
-	// GetPublicShareBlob 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+	// GetPublicShareBlob 分享范围内公开条目引用的 blob（范围外 / 别的线程 / 只被隐藏条目引用 / 不存在 → 404）
 	// (GET /api/v1/public/shares/{slug}/blobs/{sha256})
 	GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, sha256 Sha256)
 	// ListPublicShareEntries 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload）
@@ -7134,7 +7138,7 @@ func (_ Unimplemented) GetPublicShare(w http.ResponseWriter, r *http.Request, sl
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetPublicShareBlob 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+// GetPublicShareBlob 分享范围内公开条目引用的 blob（范围外 / 别的线程 / 只被隐藏条目引用 / 不存在 → 404）
 // (GET /api/v1/public/shares/{slug}/blobs/{sha256})
 func (_ Unimplemented) GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, sha256 Sha256) {
 	w.WriteHeader(http.StatusNotImplemented)

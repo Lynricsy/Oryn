@@ -481,3 +481,37 @@ func TestSettledOnlyAfterQueuedTurns(t *testing.T) {
 	st, _ := h.call(map[string]any{"id": "g", "type": "get_state"})
 	assert.Equal(t, true, st["data"].(map[string]any)["isSettled"])
 }
+
+// switch_leaf / navigate_tree：已知条目 → 成功应答带 activeLeafId，之后的条目接在新叶子后面；未知条目 → entry_not_found。
+func TestSwitchLeafMovesParent(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, []string{"--mode", "rpc-ui", "--session-dir", dir, "--delay", "1ms"}, nil)
+	open := handshake(t, h, dir)
+	sessionFile := open["sessionFile"].(string)
+	r, _ := h.call(map[string]any{"id": "p1", "type": "prompt", "message": "one"})
+	require.Equal(t, true, r["success"], r)
+	h.until("session_settled")
+	_, entries := readSession(t, sessionFile)
+	u1 := entries[2].ID
+
+	r, _ = h.call(map[string]any{"id": "s1", "type": "switch_leaf", "entryId": u1})
+	require.Equal(t, true, r["success"], r)
+	assert.Equal(t, map[string]any{"cancelled": false, "activeLeafId": u1}, r["data"])
+	r, _ = h.call(map[string]any{"id": "p2", "type": "prompt", "message": "two"})
+	require.Equal(t, true, r["success"], r)
+	h.until("session_settled")
+	_, entries = readSession(t, sessionFile)
+	next := entries[6]
+	require.NotNil(t, next.ParentID)
+	assert.Equal(t, u1, *next.ParentID, "切换后的新条目接在 u1 后面")
+
+	r, _ = h.call(map[string]any{"id": "n1", "type": "navigate_tree", "entryId": entries[3].ID})
+	require.Equal(t, true, r["success"], r)
+	assert.Equal(t, map[string]any{"cancelled": false, "activeLeafId": entries[3].ID}, r["data"])
+	for _, typ := range []string{"switch_leaf", "navigate_tree"} {
+		r, _ = h.call(map[string]any{"id": "x-" + typ, "type": typ, "entryId": "ffffffff"})
+		assert.Equal(t, false, r["success"])
+		assert.Equal(t, "entry_not_found", r["code"])
+		assert.Equal(t, typ, r["command"])
+	}
+}

@@ -465,8 +465,11 @@ export interface paths {
         put?: never;
         /**
          * 创建公开分享（快照 / 实时）
-         * @description 创建前对分享范围（活动分支上的主会话条目经公开过滤之后的内容）做密钥扫描：有命中且未给 `acknowledgeFindings: true`
+         * @description 创建前对公开面上的全部文本做密钥扫描：线程标题、分享范围（活动分支上的主会话条目经公开过滤之后的内容）、
+         *     将要列出的附件名（见 `PublicShare.attachments`）。有命中且未给 `acknowledgeFindings: true`
          *     → 409 `ShareScanConflict{code:"secrets_found"}`；确认后创建并把命中数记入 `findings`。
+         *     快照在同一事务里固化扫描过的条目集合（按分支顺序，连同每行原始内容的 SHA-256）与当时的标题：
+         *     此后被改写或删除的行不再公开（不回落到别的分支、不出现新内容），标题也不随线程改名变化。
          *     每线程未撤销分享 ≤20（超出 409 `invalid`）；`mode` 非法 → 400 `invalid`。
          */
         post: operations["createThreadShare"];
@@ -1088,7 +1091,8 @@ export interface paths {
         };
         /**
          * 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
-         * @description `Content-Type` 为入库时记录的 mime；内容寻址，可长期缓存。
+         * @description 内容寻址，可长期缓存。入库时记录的 mime 由内容探测得出：只有安全栅格图片（png / jpeg / gif / webp）按该类型
+         *     `Content-Disposition: inline` 返回，其余一律 `application/octet-stream` + `attachment`（与 `/f` 同一白名单）。
          */
         get: operations["getBlob"];
         put?: never;
@@ -1654,8 +1658,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
-         * @description 头同 `getBlob`（`nosniff` + `Content-Security-Policy: sandbox`），但 `Cache-Control: no-store`。
+         * 分享范围内公开条目引用的 blob（范围外 / 别的线程 / 只被隐藏条目引用 / 不存在 → 404）
+         * @description 授权以公开过滤之后的内容为准：`display:false` 的注入消息、非渲染类型条目里的引用不算；快照只认创建时固化且未被改写的行。
+         *     头同 `getBlob`（类型白名单、`nosniff` + `Content-Security-Policy: sandbox`），但 `Cache-Control: no-store`。
          */
         get: operations["getPublicShareBlob"];
         put?: never;
@@ -2720,7 +2725,7 @@ export interface components {
             path: string;
         };
         /**
-         * @description `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+         * @description `snapshot` 固化创建时刻扫描过的条目集合与标题（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
          * @enum {string}
          */
         ShareMode: "live" | "snapshot";
@@ -2757,7 +2762,7 @@ export interface components {
          * @enum {string}
          */
         ShareFindingRule: "vault_secret" | "private_key" | "api_key_sk" | "github_token" | "aws_access_key" | "google_api_key" | "slack_token" | "jwt" | "oryn_token" | "bearer_header" | "url_credentials";
-        /** @description 一个 `(规则, 条目)` 的命中 */
+        /** @description 一个 `(规则, 条目)` 的命中。标题与附件名的命中不对应条目：`entryId` 分别为 `__title__` 与 `attachment:<附件 id>`，`seq` 为 0 */
         ShareFinding: {
             rule: components["schemas"]["ShareFindingRule"];
             /** @description 仅 `vault_secret`：命中的密钥名 */
@@ -2822,7 +2827,7 @@ export interface components {
         /** @description 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置 */
         PublicShare: {
             mode: components["schemas"]["ShareMode"];
-            /** @description 线程标题（空则 `Untitled`） */
+            /** @description 线程标题（空则 `Untitled`）；快照为创建时的标题 */
             title: string;
             /** @description 仅实时：线程当前状态 */
             state?: components["schemas"]["ThreadState"];
@@ -2837,7 +2842,10 @@ export interface components {
             leafEntryId?: string;
             /** Format: int64 */
             transcriptRev: number;
-            /** @description 线程的附件元数据（快照只含分享创建时已存在的） */
+            /**
+             * @description 公开的附件元数据：已发布的附件，以及被范围内公开（过滤后）条目引用的附件（按附件 id 匹配）；
+             *     快照只考虑分享创建时已存在的附件。其余附件的名字与元数据不出控制面
+             */
             attachments: components["schemas"]["PublicAttachment"][];
         };
         PublicEntryPage: {
@@ -3278,8 +3286,8 @@ export interface components {
             threadId: components["schemas"]["ThreadId"];
         };
         /**
-         * @description 线程转录被重写（会话文件重写后删除了旧行，或 fork 回退移除了某文件）：客户端丢弃该线程的全部已缓存条目，
-         *     并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
+         * @description 线程转录版本递增（会话文件重写后删除了旧行、fork 回退移除了某文件，或 `switch_leaf` / `navigate_tree` 成功把叶子移离
+         *     受理时的位置）：客户端丢弃该线程的全部已缓存条目，并以 `sub{afterSeq: 0, transcriptRev}` 重新订阅
          */
         WsServerTranscriptReset: {
             /**
@@ -3394,9 +3402,9 @@ export interface components {
             transcriptRev: number;
             /** @description 为真时从 seq 0 补发：客户端先丢弃已缓存的全部条目 */
             fullReplay: boolean;
-            /** @description 在途消息与运行中工具的帧（只含公开白名单内的帧类型） */
+            /** @description 在途消息与运行中工具的帧（与 `WsPublicFrame` 同一过滤） */
             live: components["schemas"]["OmpFrame"][];
-            /** @description 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧 */
+            /** @description 恒为空：子 agent 的进度与转录不公开 */
             subagents: components["schemas"]["OmpFrame"][];
         };
         WsPublicEntries: {
@@ -3415,7 +3423,9 @@ export interface components {
         };
         /**
          * @description 实时 omp 帧，仅限 `message_start` / `message_update` / `message_end` / `tool_execution_start` / `tool_execution_update` /
-         *     `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end` / `subagent_lifecycle` / `subagent_progress`
+         *     `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end`，且与条目共用公开过滤：
+         *     `display:false` 的注入消息不发；`message_update` 只发 assistant 的；`agent_end` 只留 `{type, isTerminal?}`；
+         *     子 agent 工具（`task`）的 `tool_execution_update` / `tool_stream_update` 不发。`subagent_*` 帧一律不发
          */
         WsPublicFrame: {
             /**
@@ -3432,7 +3442,10 @@ export interface components {
              */
             type: "live.reset";
         };
-        /** @description 转录被重写：客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连 */
+        /**
+         * @description 转录版本递增（同 `WsServerTranscriptReset`），或所有者把叶子移到了客户端未持有的分支上：
+         *     客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连
+         */
         WsPublicTranscriptReset: {
             /**
              * @description discriminator enum property added by openapi-typescript

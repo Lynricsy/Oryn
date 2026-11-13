@@ -647,3 +647,56 @@ func TestStartupPromptRequeuedWhenUndelivered(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, row.StartupFrames)
 }
+
+// B7：switch_leaf / navigate_tree 成功且叶子离开了受理时的位置 → 与转录重写同一条路径：叶子与转录版本同事务落库、
+// 广播 transcript.reset；叶子没动、应答失败或未知条目都不递增。分支摘要先于应答入库（叶子已是新条目）也算切换。
+func TestLeafSwitchBumpsTranscriptRev(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("ready")
+	th := f.thread(orb, StateIdle)
+	a := fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	u1, a1 := msgLine("u1", "", "user", 1), msgLine("a1", "u1", "assistant", 2)
+	_, end := f.appendLines(th, orb, "main.jsonl", 0, u1, a1)
+
+	cmd := func(typ, entry string, success bool, data string) {
+		t.Helper()
+		require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(fmt.Sprintf(`{"type":%q,"entryId":%q}`, typ, entry)), func(json.RawMessage) {}))
+		frames := sent(a)
+		require.Len(t, frames, 1)
+		f.respond(th, frames[0], success, data)
+	}
+	rowState := func() (int64, string) {
+		row, err := f.st.Q.GetThread(f.ctx, th.id)
+		require.NoError(t, err)
+		require.NotNil(t, row.LeafEntryID)
+		return row.TranscriptRev, *row.LeafEntryID
+	}
+
+	cmd("switch_leaf", "u1", true, `{"cancelled":false,"activeLeafId":"u1"}`)
+	assert.Equal(t, []int64{1}, f.sink.resets)
+	rev, leaf := rowState()
+	assert.Equal(t, int64(1), rev)
+	assert.Equal(t, "u1", leaf)
+	var snap Snapshot
+	require.NoError(t, f.s.Subscribe(f.ctx, th.id, func(s Snapshot) { snap = s }))
+	assert.Equal(t, int64(1), snap.TranscriptRev)
+	require.NotNil(t, snap.LeafEntryID)
+	assert.Equal(t, "u1", *snap.LeafEntryID)
+
+	// 叶子没动 / 应答失败：不递增
+	cmd("navigate_tree", "u1", true, `{"cancelled":false,"activeLeafId":"u1"}`)
+	cmd("switch_leaf", "zz", false, "")
+	assert.Equal(t, []int64{1}, f.sink.resets)
+
+	// 带摘要的跳转：应答前摘要条目已入库并成为叶子；相对受理时的叶子（u1）仍是切换
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"navigate_tree","entryId":"a1","summarize":true}`), func(json.RawMessage) {}))
+	frames := sent(a)
+	require.Len(t, frames, 1)
+	f.appendLines(th, orb, "main.jsonl", end, `{"type":"branch_summary","id":"bs","parentId":"a1","summary":"s"}`)
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"bs"}`)
+	assert.Equal(t, []int64{1, 2}, f.sink.resets)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(2), rev)
+	assert.Equal(t, "bs", leaf)
+}

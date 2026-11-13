@@ -335,7 +335,7 @@ Sec-Fetch-Site 不存在：
 
 ## M5：公开分享、通知与 sync
 
-公开面是一条独立、默认拒绝的出口：匿名 REST 全在 `/api/v1/public/` 前缀下（`security: [{}]`，tag `public`），匿名 WebSocket 在 hub 里走单独的连接表，只有显式写给它的消息才到得了；私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上够不着它。公开范围 = **分享范围内活动分支上的主会话条目**（快照：创建时的 `until_seq` + 叶子；实时：当前叶子）；子 agent 转录、被回退的分支、`display:false` 的注入消息与非渲染类型条目的内容一律不出控制面。密钥扫描、`.md` 导出、图片授权与公开条目用同一个范围函数，所以「扫过的」与「公开的」恒等。通知由线程状态转换（`done` / `error`）与新的待答请求（`input`）驱动，去抖后落库并经库驱动的投递队列发出。`oryn sync` 用「工作区快照提交 + git bundle」一条通道带走提交与未提交改动。
+公开面是一条独立、默认拒绝的出口：匿名 REST 全在 `/api/v1/public/` 前缀下（`security: [{}]`，tag `public`），匿名 WebSocket 在 hub 里走单独的连接表，只有显式写给它的消息才到得了；私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上够不着它。公开范围 = **分享范围内活动分支上的主会话条目**（实时：每次请求按当前叶子现算；快照：创建时扫描过的条目集合，按分支顺序连同每行原始 payload 的 SHA-256 固化在 `thread_share_entries`，之后被改写或删除的行不再公开——不回落到别的分支、不出现新内容，标题也冻结在创建时）；子 agent 转录与进度、被回退的分支、`display:false` 的注入消息与非渲染类型条目的内容一律不出控制面。密钥扫描（另含标题与将要列出的附件名）、`.md` 导出、图片与附件授权（以公开过滤之后的内容为准）、公开条目用同一个范围函数，所以「扫过的」与「公开的」恒等；实时帧走同一条隐藏规则。通知由线程状态转换（`done` / `error`）与新的待答请求（`input`）驱动，去抖后落库并经库驱动的投递队列发出。`oryn sync` 用「工作区快照提交 + git bundle」一条通道带走提交与未提交改动。
 
 ### 共享纯函数
 
@@ -393,7 +393,7 @@ Sec-Fetch-Site 不存在：
 模型要点：
 
 - `ThreadShare{id, threadId, threadTitle, mode, slug, url, createdAt, findings, untilSeq?}`：`url = <public_url>/s/<slug>`；`untilSeq` 仅快照（创建时的 `threads.last_seq`）；`findings` = 创建时确认过的命中数。`Thread.publicShares`（未撤销分享数，0 时省略）与 `Attachment.publicUrl`（已发布时）为新增的可选字段。
-- `ShareFinding{rule, seq, entryId, preview, count, secretName?, role?, tool?}`：`preview` 为脱敏片段（前 4 字符 + `…` + 后 2 字符，命中短于 12 字符只留前 2 字符）；`ShareScan{findings ≤200, scanned, truncated}`。
+- `ShareFinding{rule, seq, entryId, preview, count, secretName?, role?, tool?}`：`preview` 为脱敏片段（前 4 字符 + `…` + 后 2 字符，命中短于 12 字符只留前 2 字符）；标题与附件名的命中不对应条目，`entryId` 分别为 `__title__` 与 `attachment:<附件 id>`、`seq` 为 0；`ShareScan{findings ≤200, scanned, truncated}`。
 - `PublishedFile{id, attachmentId, threadId?, name, mime, size, url, createdAt}`：`url = <public_url>/f/<slug>/<encodeURIComponent(name)>`。
 - `Notification{id, kind, threadId?, title, body, url, createdAt, readAt?, resolvedAt?, deliveries[]}`：`url` 为站内路径 `/t/<threadId>`；`NotificationDelivery{target, channelId?, channelName?, status, attempts, at, error?}`，`at` 在 `pending` 时为下次尝试时间、其余为完成时间。
 - `NotificationChannelInput{kind, name, enabled?, events?, locale?}` + 与 `kind` 同名的**恰好一个**配置对象：`telegram{botToken, apiBase?}`、`webhook{url, secret?, headers?≤16}`、`ntfy{server?, topic, token?}`、`bark{server?, deviceKey}`。`NotificationChannelPatch` 给出配置对象 = 整体替换（Telegram 换 token 会清掉绑定）。`NotificationChannel` 只回脱敏的 `summary`、`telegram?{botUsername, linked, chatTitle?}`、`lastError?`、`lastDelivery?{status, at, error?}`，**机密字段只写不读**。
@@ -405,9 +405,9 @@ Sec-Fetch-Site 不存在：
 
 |方法与路径|operationId|参数|响应|
 |---|---|---|---|
-|`GET /api/v1/public/shares/{slug}`|`getPublicShare`|—|`PublicShare{mode, title, state?, sharedAt, threadCreatedAt, lastSeq, leafEntryId?, transcriptRev, attachments: PublicAttachment[]}`（`state` 仅实时；快照的附件只含分享创建时已存在的）|
+|`GET /api/v1/public/shares/{slug}`|`getPublicShare`|—|`PublicShare{mode, title, state?, sharedAt, threadCreatedAt, lastSeq, leafEntryId?, transcriptRev, attachments: PublicAttachment[]}`（`state` 仅实时；`title` 快照为创建时的标题；`attachments` 只列已发布的附件与被范围内公开条目引用（按附件 id）的附件，快照只考虑创建时已存在的）|
 |`GET /api/v1/public/shares/{slug}/entries`|`listPublicShareEntries`|`after?`、`limit?`（默认 200，≤500）|`PublicEntryPage{entries, hasMore, lastSeq, leafEntryId?}`（`lastSeq` = 范围上界）|
-|`GET /api/v1/public/shares/{slug}/blobs/{sha256}`|`getPublicShareBlob`|—|字节；只放行被范围内活动分支条目引用的 sha（头同 `getBlob`，但 `no-store`）|
+|`GET /api/v1/public/shares/{slug}/blobs/{sha256}`|`getPublicShareBlob`|—|字节；只放行被范围内公开条目（过滤之后的内容；快照只认未被改写的固化行）引用的 sha。类型白名单同 `/f`：`image/png\|jpeg\|gif\|webp` 内联，其余 `application/octet-stream` + `attachment`；`nosniff`、`sandbox`、`no-store`（私有 `getBlob` 同一白名单，可长期缓存）|
 |`GET /api/v1/public/shares/{slug}/ws`|`connectPublicShareWs`|`after?`、`rev?`|`101`（仅 `mode=live`；快照 → 404）|
 |`GET /s/<slug>`|—（SPA）|—|存在 → `index.html`（200，带 noindex 头）；否则 404 极简 HTML（含 `<meta name="robots" content="noindex">`）。只接受 GET / HEAD|
 |`GET /s/<slug>.md`|—|—|`text/markdown; charset=utf-8`，`Content-Disposition: inline; filename*=UTF-8''<标题>.md`；内容 = `transcript.Markdown`|
@@ -417,10 +417,10 @@ Sec-Fetch-Site 不存在：
 
 |`type`|模型|语义|
 |---|---|---|
-|`share.snapshot`|`WsPublicSnapshot{title, state, leafEntryId?, lastSeq, transcriptRev, fullReplay, live, subagents}`|连接后首条；`live` 只含白名单内的帧；`fullReplay` 判定与私有订阅相同|
+|`share.snapshot`|`WsPublicSnapshot{title, state, leafEntryId?, lastSeq, transcriptRev, fullReplay, live, subagents}`|连接后首条；`live` 与 `frame` 同一过滤；`subagents` 恒为空；`fullReplay` 判定与私有订阅相同|
 |`entries`|`WsPublicEntries{entries ≤200, leafEntryId?, lastSeq}`|补发与实时条目（实时条目经 `transcript.Public` 过滤）；补发各批 `lastSeq` 单调，最后一批 = 快照的 `lastSeq`|
-|`frame`|`WsPublicFrame{frame}`|仅 `message_start / message_update / message_end / tool_execution_start / tool_execution_update / tool_stream_update / tool_execution_end / agent_start / agent_end / subagent_lifecycle / subagent_progress`|
-|`live.reset` / `transcript.reset`|`WsPublicLiveReset` / `WsPublicTranscriptReset{transcriptRev}`|同私有通道；`transcript.reset` 后客户端以 `after=0&rev=<transcriptRev>` 重连|
+|`frame`|`WsPublicFrame{frame}`|仅 `message_start / message_update / message_end / tool_execution_start / tool_execution_update / tool_stream_update / tool_execution_end / agent_start / agent_end`，且按条目同一隐藏规则过滤：`display:false` 的注入消息不发；`message_update` 只发 assistant 的（delta 投影不带 `display`）；`agent_end` 只留 `{type, isTerminal?}`；`task` 工具的 `tool_execution_update` / `tool_stream_update` 不发；`subagent_*` 一律不发|
+|`live.reset` / `transcript.reset`|`WsPublicLiveReset` / `WsPublicTranscriptReset{transcriptRev}`|同私有通道；另外所有者把叶子移到客户端未持有的分支上（hub 为每条匿名连接跟踪其分支末端）时也发 `transcript.reset`。客户端收到后以 `after=0&rev=<transcriptRev>` 重连。`switch_leaf` / `navigate_tree` 成功把叶子移离受理时的位置时，控制面与会话文件重写同一条路径递增 `threads.transcript_rev` 并广播 `transcript.reset`，断线期间错过切换的客户端带旧 `rev` 重连即整段重拉|
 |`share.state`|`WsPublicState{state, title}`|线程状态或标题变化时|
 |`share.revoked`|`WsPublicRevoked`|撤销或线程删除；随后以 4001 关闭|
 |`pong`|`WsServerPong`|客户端只许发 `WsClientPing`，其它消息以 1008 关闭|
@@ -488,6 +488,8 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 
 - `thread_shares(id, thread_id → threads ON DELETE CASCADE, slug UNIQUE, mode ∈ {live, snapshot}, until_seq?, leaf_entry_id?, findings, created_at, revoked_at?)`，索引 `(thread_id, revoked_at)`。
 - `published_files(id, attachment_id → attachments ON DELETE CASCADE, slug UNIQUE, created_at, revoked_at?)`，部分唯一索引 `(attachment_id) WHERE revoked_at IS NULL`（同一附件至多一条未撤回发布）。
+
+`0012_share_snapshot.sql`：`thread_shares` 增列 `title?`（快照创建时的标题）；`thread_share_entries(share_id → thread_shares ON DELETE CASCADE, pos, seq, payload_sha256, PK(share_id, pos))` 固化快照扫描过的条目集合（`pos` = 分支顺序，`payload_sha256` = 创建时原始 payload 的 SHA-256）。迁移撤销此前创建的快照分享（没有固化集合，无法保证内容不变）。
 - `notification_channels(id, kind, name, enabled, events JSON, locale, config_enc, state JSON, last_error?, created_at, updated_at)`：`config_enc = secrets.Box.Seal("notify/" || id, 配置 JSON)`（不进 `secrets` 表）；`state` 为非机密运行状态。
 - `push_subscriptions(id, kind, endpoint UNIQUE, p256dh, auth, web_session_hash → web_sessions ON DELETE CASCADE, device_id → devices ON DELETE CASCADE, user_agent, created_at, last_success_at?, last_error?)`。
 - `notifications(id, thread_id → threads ON DELETE CASCADE, kind, title, body, request_id?, request?, created_at, read_at?, resolved_at?)`，索引 `created_at`、`(thread_id, read_at)`，部分唯一索引 `(thread_id, request_id) WHERE request_id IS NOT NULL AND resolved_at IS NULL`（`InsertNotification` 用 `ON CONFLICT DO NOTHING`，影响 0 行 = 已通知过）。

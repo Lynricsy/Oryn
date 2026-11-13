@@ -80,6 +80,8 @@ type pendingCmd struct {
 	internal chan json.RawMessage
 	// after 在应答到达后、持有线程锁时执行（如 get_state 刷新缓冲）。
 	after func(t *thread, resp omprpc.Envelope, data json.RawMessage)
+	// leafBefore 是 switch_leaf / navigate_tree 受理时的叶子：应答的新叶子与它不同即视为切换了分支。
+	leafBefore *string
 }
 
 // responseHead 是应答中本包关心的字段。
@@ -538,9 +540,7 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 			ActiveLeafID *string `json:"activeLeafId"`
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && d.ActiveLeafID != nil {
-			t.leaf = d.ActiveLeafID
-			_ = s.st.Q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: t.leaf, ID: t.id})
-			s.publish(ctx, t.id)
+			s.switchLeafLocked(ctx, t, d.ActiveLeafID, !eqPtr(d.ActiveLeafID, p.leafBefore))
 		}
 	case "plan_approval":
 		if r.Success {
@@ -783,6 +783,9 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		return err
 	}
 	p := &pendingCmd{cmdType: cmdType, reply: reply}
+	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
+		p.leafBefore = copyStr(t.leaf)
+	}
 	if messageCommands[cmdType] && len(t.msgOrder) > 0 {
 		// 前面有仍在投递附件的消息：按受理顺序排在它后面
 		sl, err := s.reserveMsgLocked(t, false)

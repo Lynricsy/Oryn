@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -197,4 +198,37 @@ func TestGetBlob(t *testing.T) {
 	assert.Equal(t, data, b)
 	assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
 	assert.Contains(t, resp.Header.Get("Cache-Control"), "immutable")
+}
+
+// F7：私有 blob 与公开 blob、/f 同一白名单——安全栅格图片内联，探测为 text/html、SVG 等一律附件下载。
+func TestGetBlobContentTypeWhitelist(t *testing.T) {
+	e := newThreadsEnv(t)
+	cases := []struct {
+		mime, ctype, disp string
+	}{
+		{"image/png", "image/png", "inline"},
+		{"IMAGE/JPEG; q=1", "image/jpeg", "inline"},
+		{"text/html; charset=utf-8", "application/octet-stream", "attachment"},
+		{"image/svg+xml", "application/octet-stream", "attachment"},
+		{"", "application/octet-stream", "attachment"},
+	}
+	for i, c := range cases {
+		data := []byte(fmt.Sprintf("blob %d", i))
+		sum := sha256.Sum256(data)
+		sha := hex.EncodeToString(sum[:])
+		path := filepath.Join(e.dir, "data", "blobs", sha[:2], sha)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		require.NoError(t, e.st.Q.InsertBlob(context.Background(), db.InsertBlobParams{Sha256: sha, Size: int64(len(data)), Mime: c.mime, CreatedAt: 1}))
+		resp, err := http.Get(e.srv.URL + "/api/v1/blobs/" + sha)
+		require.NoError(t, err)
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, 200, resp.StatusCode, c.mime)
+		assert.Equal(t, data, b)
+		assert.Equal(t, c.ctype, resp.Header.Get("Content-Type"), c.mime)
+		assert.Equal(t, c.disp, resp.Header.Get("Content-Disposition"), c.mime)
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "sandbox", resp.Header.Get("Content-Security-Policy"))
+	}
 }

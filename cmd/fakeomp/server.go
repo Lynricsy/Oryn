@@ -307,6 +307,7 @@ type response struct {
 	Success bool   `json:"success"`
 	Data    any    `json:"data,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Code    string `json:"code,omitempty"`
 }
 
 func (s *server) ok(id, command string, data any) {
@@ -315,6 +316,10 @@ func (s *server) ok(id, command string, data any) {
 
 func (s *server) fail(id, command, msg string) {
 	s.emit(response{ID: id, Type: "response", Command: command, Success: false, Error: msg})
+}
+
+func (s *server) failCode(id, command, code, msg string) {
+	s.emit(response{ID: id, Type: "response", Command: command, Success: false, Error: msg, Code: code})
 }
 
 // emit 写出一个帧；协议 v2 下超过物理行上限的帧按 rpc_chunk 分块连续写出。
@@ -506,6 +511,28 @@ func (s *server) handle(line []byte) {
 			s.ok(id, env.Type, nil)
 		}
 		s.prompts <- promptReq{id: id, message: c.Message, images: c.Images}
+
+	case "switch_leaf", "navigate_tree":
+		// 只移动内存里的叶子（之后的条目接在它后面），不写会话文件、不生成分支摘要
+		var c struct {
+			EntryID string `json:"entryId"`
+		}
+		_ = json.Unmarshal(line, &c)
+		if err := s.ensureSession(); err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.mu.Lock()
+		known := c.EntryID != "" && s.sess.ids[c.EntryID]
+		if known {
+			s.sess.leaf = c.EntryID
+		}
+		s.mu.Unlock()
+		if !known {
+			s.failCode(id, env.Type, "entry_not_found", "Entry not found: "+c.EntryID)
+			return
+		}
+		s.ok(id, env.Type, map[string]any{"cancelled": false, "activeLeafId": c.EntryID})
 
 	case "abort":
 		s.mu.Lock()

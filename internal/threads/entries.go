@@ -344,13 +344,55 @@ func (s *Service) rewriteTranscriptLocked(ctx context.Context, t *thread, file s
 	if err != nil {
 		return err
 	}
+	s.announceTranscriptLocked(ctx, t, leaf, rev)
+	return nil
+}
+
+// announceTranscriptLocked 在转录版本加一的事务提交后更新内存状态并广播 transcript.reset（叶子变了再推 index.patch）。
+// 调用方持有 t.mu。
+func (s *Service) announceTranscriptLocked(ctx context.Context, t *thread, leaf *string, rev int64) {
 	leafChanged := !eqPtr(leaf, t.leaf)
 	t.leaf, t.transcriptRev = leaf, rev
 	s.out().TranscriptReset(t.id, rev)
 	if leafChanged {
 		s.publish(ctx, t.id)
 	}
-	return nil
+}
+
+// switchLeafLocked 记下 switch_leaf / navigate_tree 成功应答给出的叶子。moved 为真（叶子离开了命令受理时的位置：
+// 切到别的分支或退回祖先）时与转录重写走同一条路径：同一事务里写叶子并把转录版本加一，随后广播 transcript.reset——
+// 只持有旧分支条目的客户端（其它窗口、断线中的匿名观众）重订阅 / 重连时版本不符，整线程按新分支重拉（B7）。
+// 调用方持有 t.mu。
+func (s *Service) switchLeafLocked(ctx context.Context, t *thread, leaf *string, moved bool) {
+	if moved {
+		var rev int64
+		err := s.st.Tx(ctx, func(q *db.Queries) error {
+			if err := q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: leaf, ID: t.id}); err != nil {
+				return err
+			}
+			var err error
+			rev, err = q.BumpTranscriptRev(ctx, t.id)
+			return err
+		})
+		if err == nil {
+			s.announceTranscriptLocked(ctx, t, leaf, rev)
+			return
+		}
+		slog.Warn("threads: 切换分支后递增转录版本失败", "thread", t.id, "err", err)
+	}
+	t.leaf = leaf
+	if err := s.st.Q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: leaf, ID: t.id}); err != nil {
+		slog.Warn("threads: 写入叶子失败", "thread", t.id, "err", err)
+	}
+	s.publish(ctx, t.id)
+}
+
+func copyStr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // dropFile 删除线程中某文件的全部条目与游标，并丢弃之后对它的追加（fork share 回退时移走新线程里的产物）。

@@ -183,3 +183,94 @@ func TestPublicFramesHideInjectedAndSubagent(t *testing.T) {
 	assert.Contains(t, got, `{"type":"agent_end","isTerminal":true}`, "agent_end 只留 type 与 isTerminal")
 	p.assertClean()
 }
+
+// B7 重连缺口：观众断线期间所有者经 switch_leaf 切换分支（真实应答路径），转录版本随之递增；
+// 观众带旧 rev 与旧游标重连时收到 fullReplay 与新 rev，按 after=0 补发到完整的新分支。
+func TestPublicReconnectAfterLeafSwitch(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	svc := share.New(share.Config{PublicURL: "http://oryn.test"}, e.st, e.svc, e.hub, nil, nil, nil)
+	srv := e.shareServer(svc)
+	a := e.dial("dev_a")
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "one"})
+	require.NoError(t, err)
+	a.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": 0})
+
+	var order []string
+	seen := map[string]bool{}
+	take := func(n int) {
+		t.Helper()
+		a.next(func(m msg) bool {
+			if m.Type == "entries" && m.ThreadID == th.ID {
+				for _, en := range m.Entries {
+					if !strings.Contains(en.File, "/") && !strings.HasPrefix(en.EntryID, "__") && !seen[en.EntryID] {
+						seen[en.EntryID] = true
+						order = append(order, en.EntryID)
+					}
+				}
+			}
+			return len(order) >= n
+		})
+	}
+	n := 0
+	// cmd 发命令并收集到其应答为止的全部消息（transcript.reset 在应答之前广播）
+	cmd := func(frame map[string]any) []msg {
+		t.Helper()
+		n++
+		id := "c" + strconv.Itoa(n)
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": id, "frame": frame})
+		return a.collect(func(m msg) bool { return m.Type == "res" && m.ID == id })
+	}
+	ok := func(ms []msg) []msg {
+		t.Helper()
+		var resp struct {
+			Success bool `json:"success"`
+		}
+		require.NoError(t, json.Unmarshal(ms[len(ms)-1].Response, &resp))
+		require.True(t, resp.Success, string(ms[len(ms)-1].Response))
+		return ms
+	}
+	resetRev := func(ms []msg) int64 {
+		t.Helper()
+		for _, m := range ms {
+			if m.Type == "transcript.reset" {
+				return m.TranscriptRev
+			}
+		}
+		t.Fatal("owner did not receive transcript.reset")
+		return 0
+	}
+	take(4)
+	e.waitState(th.ID, threads.StateIdle)
+	ok(cmd(map[string]any{"type": "prompt", "message": "two"}))
+	take(8)
+	e.waitState(th.ID, threads.StateIdle)
+	// 分支 B：从第一轮末尾另起一轮
+	assert.EqualValues(t, 1, resetRev(ok(cmd(map[string]any{"type": "switch_leaf", "entryId": order[3]}))))
+	ok(cmd(map[string]any{"type": "prompt", "message": "three"}))
+	take(12)
+	e.waitState(th.ID, threads.StateIdle)
+	branchA := append(append([]string{}, order[:4]...), order[4:8]...)
+	branchB := append(append([]string{}, order[:4]...), order[8:12]...)
+
+	sh, err := svc.Create(ctx, th.ID, apigen.ShareModeLive, true)
+	require.NoError(t, err)
+	p, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after=0")
+	require.NoError(t, err)
+	snap, got := collectBackfill(p)
+	require.Equal(t, branchB, got)
+	assert.EqualValues(t, 1, snap.TranscriptRev)
+	require.NoError(t, p.ws.Close(4000, "offline"))
+
+	// 断线期间所有者切回分支 A（不产生新条目）
+	assert.EqualValues(t, 2, resetRev(ok(cmd(map[string]any{"type": "switch_leaf", "entryId": order[7]}))))
+
+	// 观众按 feed.ts 带旧游标与旧 rev 重连：版本不符 → 从头补发新分支
+	p2, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after="+strconv.FormatInt(snap.LastSeq, 10)+"&rev=1")
+	require.NoError(t, err)
+	snap2, got := collectBackfill(p2)
+	assert.True(t, snap2.FullReplay)
+	assert.EqualValues(t, 2, snap2.TranscriptRev)
+	assert.Equal(t, branchA, got)
+	p2.assertClean()
+}
