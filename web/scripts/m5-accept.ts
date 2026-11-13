@@ -1873,7 +1873,8 @@ async function N10() {
 	const countUser = async () =>
 		(await privateEntries(THREAD)).entries.filter((e) => {
 			const m = msgOf(e);
-			return m?.role === "user" && m.text.includes(mark);
+			// 只认原文：omp 旁路会话会在别的分支写「### Session update」摘要，里面也引用这句
+			return m?.role === "user" && m.text.trim() === text;
 		}).length;
 	const before = seqOf(THREAD);
 	const t0 = Date.now();
@@ -1900,6 +1901,23 @@ async function N10() {
 		60_000,
 	);
 	note(`回复「${tgText(sent)}」`);
+	// done 通知可能先于上一回合条目落库到达：不能只等「before 之后有 assistant 条目」，要先等标记消息本身
+	await waitFor(
+		"线程出现含标记的用户消息",
+		async () => ((await countUser()) > 0 ? true : undefined),
+		60_000,
+	);
+	await waitFor(
+		"含标记的回复",
+		async () =>
+			(await privateEntries(THREAD)).entries.some((e) => {
+				const m = msgOf(e);
+				return m?.role === "assistant" && m.text.includes(mark);
+			})
+				? true
+				: undefined,
+		120_000,
+	);
 	await waitTurn(THREAD, before);
 	check((await countUser()) === 1, "线程出现一条含 TG-STEER-OK 的用户消息");
 	const priv = (await privateEntries(THREAD)).entries;
@@ -1923,7 +1941,11 @@ async function N10() {
 		},
 	});
 	await sleep(10_000);
-	check((await countUser()) === 1, "另一 chat.id 注入后没有新的用户消息");
+	const after = await countUser();
+	check(
+		after === 1,
+		`另一 chat.id 注入后没有新的用户消息（含标记的用户消息 ${after} 条）`,
+	);
 	check(
 		tgSends(t1).every((c) => c.body.chat_id !== TG_OTHER_CHAT),
 		"也没有回复那个 chat",
