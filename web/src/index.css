@@ -1038,8 +1038,10 @@ body {
 		animation-duration: 1ms !important;
 		/* biome-ignore lint/complexity/noImportantStyles: 同上 */
 		animation-iteration-count: 1 !important;
+		/* 过渡直接归零而不是 1ms：transition-property 默认是 all，1ms 会让每个元素的高度、内边距变化都延后一帧生效，
+		 * 转录在输入坞变高后立刻贴底时会被旧高度钳住（--check 的软键盘断言就是这样失败的）。代码里没有依赖 transitionend。 */
 		/* biome-ignore lint/complexity/noImportantStyles: 同上 */
-		transition-duration: 1ms !important;
+		transition-duration: 0s !important;
 	}
 }
 
