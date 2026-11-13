@@ -140,9 +140,11 @@ export function SessionReadout({ threadId }: { threadId: string }): ReactNode {
 	return (
 		<span className="inline-flex shrink-0 items-center gap-3 font-medium text-muted">
 			<ContextRing threadId={threadId} />
-			<Stat icon="coin" label={t("stat.cost")}>
+			{/* 成本不配图标：formatCost 自带 $，本身就是读数的记号，再加货币图标会读成「$ $0.24」 */}
+			<span title={t("stat.cost")} className="tabular-nums">
+				<span className="sr-only">{t("stat.cost")}</span>
 				{formatCost(cost)}
-			</Stat>
+			</span>
 			{typeof tps === "number" && tps > 0 && (
 				<Stat icon="bolt" label={t("stat.speed")}>
 					{t("status.tps", { n: tps.toFixed(0) })}
