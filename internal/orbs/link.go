@@ -26,6 +26,9 @@ type orbLink struct {
 	// helloCh 在收到 hello 后关闭。
 	helloCh chan struct{}
 	hello   apigen.LinkCtlHelloParams
+	// prepared 在 onHello 完成本 link 的准备工作（portal.configure）之后关闭：任何 setup / resume
+	// （onHello 自己或 spawn 完成后的 advance）都等它，保证受管服务拉起时已有 PUBLIC_URL 模板。
+	prepared chan struct{}
 }
 
 func (l *orbLink) helloSeen() bool {
@@ -160,7 +163,7 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 	// ctl 端点先完整构造、link 先发布，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
 	// hello 等回调也不会在发布之前运行。
 	published := make(chan struct{})
-	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{})}
+	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{})}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 			<-published
@@ -289,19 +292,24 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 
 // onHello 按 orb 当前状态推进：connecting → setup / resume；其余可接受状态只记录 link 已连上
 // （spawning / waking 在 spawn 任务完成、进入 connecting 时由 advance 接手）。支持 portal 的 orbd
-// 先收到 portal.configure（setup / resume 结束时 orbd 会拉起受管服务，届时已有 PUBLIC_URL 模板）。
+// 先收到 portal.configure，之后才关闭 prepared 放行 setup / resume（setup / resume 结束时 orbd 会拉起
+// 受管服务，届时已有 PUBLIC_URL 模板）；无论成败 prepared 都会关闭。
 func (s *Service) onHello(l *orbLink) {
+	if s.hookHelloStart != nil {
+		s.hookHelloStart(l.orbID)
+	}
 	ctx := context.Background()
 	orb, err := s.Get(ctx, l.orbID)
+	if err == nil && linkAcceptable(orb.State) && slices.Contains(l.hello.Features, FeaturePortal) {
+		s.portalConfigure(ctx, l)
+	}
+	close(l.prepared)
 	if err != nil {
 		return
 	}
 	if !linkAcceptable(orb.State) {
 		s.Kick(orb.ID, "orb is "+orb.State)
 		return
-	}
-	if slices.Contains(l.hello.Features, FeaturePortal) {
-		s.portalConfigure(ctx, l)
 	}
 	if orb.State == StateConnecting {
 		s.runPhase(l)
@@ -319,8 +327,21 @@ func (s *Service) advance(orbID string) {
 	}
 }
 
-// runPhase 执行 connecting → setting_up（首次）/ resuming（唤醒）→ ready。
+// runPhase 执行 connecting → setting_up（首次）/ resuming（唤醒）→ ready。先等本 link 准备完成
+// （见 orbLink.prepared）；link 在此期间断开则放弃，由新 link 的 hello 重来。
 func (s *Service) runPhase(l *orbLink) {
+	select {
+	case <-l.prepared:
+	default:
+		if s.hookAwaitPrepared != nil {
+			s.hookAwaitPrepared(l.orbID)
+		}
+		select {
+		case <-l.prepared:
+		case <-l.ctl.Done():
+			return
+		}
+	}
 	ctx := context.Background()
 	everReady, err := s.st.Q.OrbEverReady(ctx, l.orbID)
 	if err != nil {

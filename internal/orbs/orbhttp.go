@@ -253,21 +253,65 @@ func (s *Service) DialPortal(ctx context.Context, orbID string, port int) (net.C
 	return st, nil
 }
 
+// userTouch 是一个 orb 的交互合并状态（由 Service.mu 保护）。
+type userTouch struct {
+	// last 是最近一次成功写库的交互时间；ok=false 表示还没有成功写过。
+	last time.Time
+	ok   bool
+	// inflight 非 nil 时有一次写库正在进行，完成（无论成败）时关闭。
+	inflight chan struct{}
+}
+
 // TouchUserCoalesced 记一次用户交互；同一 orb 在 min(1s, user_idle/2) 内至多写库一次（写库是同步的）。
 // portal 数据面每个已授权请求都调用它，合并后不会让每个子资源请求都写一次库。
+//
+// 返回即保证「窗口内的某次交互已持久化」：合并时间只在写库成功后发布；有写入在途时，后来者先等它完成
+// （此后才去判定可用性，空闲冻结因此能看到这次交互），在途写入失败则由等待者之一重新写；ctx 结束时不再等。
+// 不同 orb 的写入互不阻塞。
 func (s *Service) TouchUserCoalesced(ctx context.Context, orbID string) {
 	window := time.Second
 	if half := s.cfg.Idle.UserIdle.D() / 2; half < window {
 		window = half
 	}
-	now := s.now()
-	s.mu.Lock()
-	last, seen := s.userTouched[orbID]
-	if seen && now.Sub(last) < window && !now.Before(last) {
+	for {
+		now := s.now()
+		s.mu.Lock()
+		ut := s.userTouched[orbID]
+		if ut == nil {
+			ut = &userTouch{}
+			s.userTouched[orbID] = ut
+		}
+		if ch := ut.inflight; ch != nil {
+			s.mu.Unlock()
+			if s.hookTouchWait != nil {
+				s.hookTouchWait(orbID)
+			}
+			select {
+			case <-ch:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+		if ut.ok && now.Sub(ut.last) < window && !now.Before(ut.last) {
+			s.mu.Unlock()
+			return
+		}
+		ch := make(chan struct{})
+		ut.inflight = ch
+		s.mu.Unlock()
+
+		if s.hookTouchWrite != nil {
+			s.hookTouchWrite(ctx, orbID)
+		}
+		err := s.touchUser(ctx, orbID, now)
+		s.mu.Lock()
+		if err == nil {
+			ut.last, ut.ok = now, true
+		}
+		ut.inflight = nil
+		close(ch)
 		s.mu.Unlock()
 		return
 	}
-	s.userTouched[orbID] = now
-	s.mu.Unlock()
-	s.TouchUser(ctx, orbID)
 }

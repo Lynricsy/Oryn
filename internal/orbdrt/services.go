@@ -117,13 +117,22 @@ type svc struct {
 
 // svcRun 是一个服务的一段监督生命周期（进程 + 退避重启），直到被停止或判定 failed。
 type svcRun struct {
+	// name 是创建时的服务名快照：runLoop 只用它，不在 mu 之外读会被 reload 整体替换的 sv.spec。
+	name  string
 	stop  chan struct{}
 	done  chan struct{}
 	once  sync.Once
 	grace time.Duration // requestStop 写入，close(stop) 之后可读
+
+	// 以下由 mu 保护：本段生命周期最近一次拉起进程时算出的环境（refreshPublicURLs 据此判断是否需要重启）。
+	envSet      bool   // 已为进程算过环境
+	url         string // 进程拿到的 PUBLIC_URL
+	refsMissing bool   // env 里有 ${services.X.publicURL} 引用被替换成了空串
 }
 
-func newRun() *svcRun { return &svcRun{stop: make(chan struct{}), done: make(chan struct{})} }
+func newRun(name string) *svcRun {
+	return &svcRun{name: name, stop: make(chan struct{}), done: make(chan struct{})}
+}
 
 // requestStop 请求停止：grace > 0 先对进程组 SIGTERM，超时再 SIGKILL；grace = 0 直接 SIGKILL。
 func (run *svcRun) requestStop(grace time.Duration) {
@@ -142,6 +151,8 @@ type serviceSupervisor struct {
 	backoff    func(int) time.Duration
 	probeEvery time.Duration
 	onStatus   func(apigen.OrbService)
+	// hookRunExited 仅供测试：runLoop 在进程自然退出、决定是否重启之前调用（在此替换定义以固定交错）。
+	hookRunExited func(sv *svc)
 
 	opMu sync.Mutex
 
@@ -395,12 +406,15 @@ func (s *serviceSupervisor) Exposed(port int) bool {
 	return false
 }
 
-// configure 记下 portal.configure 给的地址模板与主线程（已在运行的服务不因此重启）。
+// configure 记下 portal.configure 给的地址模板与主线程，并在后台补齐「进程拉起时还算不出 PUBLIC_URL /
+// 被引用服务的 URL、现在能算出来」的服务（重启它们；见 refreshPublicURLs）。portal.configure 可能晚于
+// setup / resume 结束时的 Ensure 与 agent.start 到达，不能只靠 agent.start 的那次检查。
 func (s *serviceSupervisor) configure(tmpl, primary string) {
 	s.mu.Lock()
 	s.urlTemplate, s.primary = tmpl, primary
 	s.mu.Unlock()
 	s.markDirty()
+	go s.refreshPublicURLs()
 }
 
 // reportLoop 是上报 goroutine：每次被唤醒时取最新快照，原子写 services-status.json 并发 services.state。
@@ -912,8 +926,9 @@ func (s *serviceSupervisor) killAll() {
 	s.closeLogs()
 }
 
-// refreshPublicURLs 重启「有 portal、进程没拿到 PUBLIC_URL、现在却能算出来」的服务（首个线程登记之前
-// 已启动的文件服务；计划「假设与预案」）。
+// refreshPublicURLs 重启这样的服务：进程拉起时算出的环境缺了 PUBLIC_URL（有 portal）或某个
+// ${services.X.publicURL} 引用被替换成空串，而现在都能算出来了（首个线程登记、或 portal.configure
+// 晚于服务启动到达；计划「假设与预案」）。还没为进程算过环境的 run 不动：它拉起时自然用上最新配置。
 func (s *serviceSupervisor) refreshPublicURLs() {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -921,21 +936,24 @@ func (s *serviceSupervisor) refreshPublicURLs() {
 	var svcs []*svc
 	var runs []*svcRun
 	for _, sv := range s.svcs {
-		if sv.run == nil || len(sv.spec.Links) == 0 || sv.publicURL != "" {
+		run := sv.run
+		if run == nil || !run.envSet {
 			continue
 		}
-		if s.urlForLocked(sv.spec, s.threadLocked(sv.spec)) == "" {
+		needURL := len(sv.spec.Links) > 0 && run.url == "" && s.urlForLocked(sv.spec, s.threadLocked(sv.spec)) != ""
+		needRefs := run.refsMissing && !s.refsMissingLocked(sv.spec)
+		if !needURL && !needRefs {
 			continue
 		}
-		svcs, runs = append(svcs, sv), append(runs, sv.run)
+		svcs, runs = append(svcs, sv), append(runs, run)
 		sv.run = nil
 	}
 	s.mu.Unlock()
 	if len(svcs) == 0 {
 		return
 	}
-	for _, sv := range svcs {
-		s.sysLine(sv.spec.Name, "restarting to pick up PUBLIC_URL")
+	for _, run := range runs {
+		s.sysLine(run.name, "restarting to pick up PUBLIC_URL")
 	}
 	stopRuns(runs, serviceStopGrace)
 	for _, sv := range svcs {
@@ -961,7 +979,7 @@ func (s *serviceSupervisor) launch(sv *svc) bool {
 		s.mu.Unlock()
 		return false
 	}
-	run := newRun()
+	run := newRun(sv.spec.Name)
 	sv.run = run
 	sv.status, sv.pid, sv.exitCode, sv.errMsg = apigen.OrbServiceStatusStarting, 0, nil, ""
 	snap := s.snapshotLocked(sv)
@@ -985,7 +1003,10 @@ func (s *serviceSupervisor) runLoop(sv *svc, run *svcRun) {
 		} else {
 			short = 0
 		}
-		name := sv.spec.Name
+		if s.hookRunExited != nil {
+			s.hookRunExited(sv)
+		}
+		name := run.name
 		if short >= serviceMaxShort {
 			msg := fmt.Sprintf("exited %d times in a row within %s (last exit code %d)", short, serviceMinLife, code)
 			s.sysLine(name, "giving up: "+msg)
@@ -1022,7 +1043,8 @@ func (s *serviceSupervisor) runOnce(sv *svc, run *svcRun) (code int, lived time.
 		return 0, 0, true
 	}
 	spec := sv.spec
-	env, thread, url := s.envLocked(spec)
+	env, thread, url, refsMissing := s.envLocked(spec)
+	run.envSet, run.url, run.refsMissing = true, url, refsMissing
 	s.mu.Unlock()
 	name := spec.Name
 
@@ -1210,17 +1232,36 @@ func (s *serviceSupervisor) urlForLocked(spec serviceSpec, thread string) string
 	return strings.TrimSuffix(portalhost.Expand(s.urlTemplate, code, spec.Port), "/")
 }
 
-// envLocked 返回服务进程的环境：baseEnv + setup 环境 + 服务 env（引用已替换）+ PORT / ORYN_THREAD_ID / PUBLIC_URL。
-func (s *serviceSupervisor) envLocked(spec serviceSpec) (env map[string]string, thread, url string) {
+// refURLLocked 返回被 ${services.<ref>.publicURL} 引用的服务当前的 PUBLIC_URL；算不出时为空。
+func (s *serviceSupervisor) refURLLocked(ref string) string {
+	if t := s.svcs[ref]; t != nil {
+		return s.urlForLocked(t.spec, s.threadLocked(t.spec))
+	}
+	return ""
+}
+
+// refsMissingLocked 报告 spec 的 env 里是否有引用此刻算不出 URL。
+func (s *serviceSupervisor) refsMissingLocked(spec serviceSpec) bool {
+	for _, ref := range publicURLRefs(spec.Env) {
+		if s.refURLLocked(ref) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// envLocked 返回服务进程的环境：baseEnv + setup 环境 + 服务 env（引用已替换）+ PORT / ORYN_THREAD_ID / PUBLIC_URL；
+// refsMissing 表示有引用被替换成了空串。
+func (s *serviceSupervisor) envLocked(spec serviceSpec) (env map[string]string, thread, url string, refsMissing bool) {
 	env = s.r.baseEnv()
 	maps.Copy(env, s.r.setupEnvSnapshot())
 	for k, v := range spec.Env {
 		env[k] = publicURLRefRe.ReplaceAllStringFunc(v, func(m string) string {
-			ref := publicURLRefRe.FindStringSubmatch(m)[1]
-			if t := s.svcs[ref]; t != nil {
-				return s.urlForLocked(t.spec, s.threadLocked(t.spec))
+			u := s.refURLLocked(publicURLRefRe.FindStringSubmatch(m)[1])
+			if u == "" {
+				refsMissing = true
 			}
-			return ""
+			return u
 		})
 	}
 	delete(env, "PUBLIC_URL")
@@ -1233,7 +1274,7 @@ func (s *serviceSupervisor) envLocked(spec serviceSpec) (env map[string]string, 
 	if url = s.urlForLocked(spec, thread); url != "" {
 		env["PUBLIC_URL"] = url
 	}
-	return env, thread, url
+	return env, thread, url, refsMissing
 }
 
 // isSvcError 报告 err 是否为服务操作错误。

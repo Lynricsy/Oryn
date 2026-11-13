@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -331,4 +333,139 @@ func TestTouchUserCoalesced(t *testing.T) {
 			assert.Equal(t, now.UnixMilli(), lastTouch(a), "窗口过后再写一次")
 		})
 	}
+}
+
+// B3：spawn 完成后 advance 发起的 setup 也要等本 link 的 portal.configure。onHello 被钩子卡在 configure
+// 之前时，advance 的 runPhase 必须停在准备屏障上，而不是先发 setup.run。
+func TestPortalConfigureBarrierOnAdvance(t *testing.T) {
+	drv := newFakeDriver()
+	drv.features = []string{FeatureServices, FeaturePortal}
+	setupSeen := make(chan struct{}, 1)
+	drv.onCall = func(method string) {
+		if method == "setup.run" {
+			select {
+			case setupSeen <- struct{}{}:
+			default:
+			}
+		}
+	}
+	h := newHarness(t, drv, nil, func(c *Config) { c.PortalURLTemplate = "https://t-{code}-p{port}.orb.test/" })
+	helloBlocked, release := make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	h.svc.hookHelloStart = func(string) {
+		if first.CompareAndSwap(false, true) {
+			close(helloBlocked)
+			<-release
+		}
+	}
+	phaseWaiting := make(chan struct{}, 1)
+	h.svc.hookAwaitPrepared = func(string) {
+		select {
+		case phaseWaiting <- struct{}{}:
+		default:
+		}
+	}
+	orb, err := h.svc.Create(context.Background(), CreateParams{})
+	require.NoError(t, err)
+	<-helloBlocked
+	select {
+	case <-phaseWaiting:
+	case <-setupSeen:
+		t.Fatal("setup.run 在 portal.configure 之前发出")
+	case <-time.After(10 * time.Second):
+		t.Fatal("advance 没有进入 runPhase")
+	}
+	cur, err := h.st.Q.GetOrb(context.Background(), orb.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateConnecting, cur.State, "屏障之前不进入 setting_up")
+	close(release)
+	h.waitState(orb.ID, StateReady, 10*time.Second)
+	methods := drv.orbd(orb.ID).methods()
+	require.GreaterOrEqual(t, len(methods), 2)
+	assert.Equal(t, []string{"portal.configure", "setup.run"}, methods[:2])
+}
+
+// B5：合并时间只在写库成功后发布；窗口内的后来者等在途写入完成才返回；写失败不算已写，由后来者重写。
+func TestTouchUserCoalescedInflight(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	mkOrb := func() string {
+		id := ids.Orb()
+		require.NoError(t, st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", State: StateReady, StateChangedAt: 1, TokenHash: "h-" + id, CreatedAt: 1}))
+		return id
+	}
+	lastTouch := func(orbID string) int64 {
+		o, err := st.Q.GetOrb(ctx, orbID)
+		if err != nil || o.LastUserInteractionAt == nil {
+			return 0
+		}
+		return *o.LastUserInteractionAt
+	}
+	svc := New(Config{
+		Idle:     config.Idle{AgentIdle: config.Duration(time.Hour), UserIdle: config.Duration(time.Hour), StopAfterFrozen: config.Duration(time.Hour)},
+		TokenKey: make([]byte, 32),
+	}, st, jobs.New(st), nil, nil)
+	t.Cleanup(svc.Close)
+	t0 := time.UnixMilli(1_700_000_000_000)
+	svc.now = func() time.Time { return t0 }
+
+	// blockFirstWrite 让 orbID 的第一次写库停在写之前，直到 release 关闭；onBlocked 在停住时调用。
+	var blocked sync.Map
+	blockFirstWrite := func(orbID string, release <-chan struct{}, onBlocked func()) {
+		blocked.Store(orbID, func() { onBlocked(); <-release })
+	}
+	svc.hookTouchWrite = func(_ context.Context, orbID string) {
+		if fn, ok := blocked.LoadAndDelete(orbID); ok {
+			fn.(func())()
+		}
+	}
+	waiting := make(chan string, 4)
+	svc.hookTouchWait = func(orbID string) { waiting <- orbID }
+
+	// 首个写入在途时，后来者在写库成功之前不返回。
+	a := mkOrb()
+	entered, release := make(chan struct{}), make(chan struct{})
+	blockFirstWrite(a, release, func() { close(entered) })
+	aDone := make(chan struct{})
+	go func() { svc.TouchUserCoalesced(ctx, a); close(aDone) }()
+	<-entered
+	bSaw := make(chan int64, 1)
+	go func() { svc.TouchUserCoalesced(ctx, a); bSaw <- lastTouch(a) }()
+	select {
+	case id := <-waiting:
+		assert.Equal(t, a, id)
+	case v := <-bSaw:
+		t.Fatalf("后来者在交互写库之前就返回了（库中为 %d）", v)
+	}
+	close(release)
+	assert.Equal(t, t0.UnixMilli(), <-bSaw, "后来者返回时交互已持久化")
+	<-aDone
+
+	// 在途写入失败（ctx 取消）：等待者重新写库。
+	b := mkOrb()
+	cctx, cancel := context.WithCancel(ctx)
+	entered2, release2 := make(chan struct{}), make(chan struct{})
+	blockFirstWrite(b, release2, func() { close(entered2) })
+	b1Done := make(chan struct{})
+	go func() { svc.TouchUserCoalesced(cctx, b); close(b1Done) }()
+	<-entered2
+	b2Saw := make(chan int64, 1)
+	go func() { svc.TouchUserCoalesced(ctx, b); b2Saw <- lastTouch(b) }()
+	assert.Equal(t, b, <-waiting)
+	cancel()
+	close(release2)
+	<-b1Done
+	assert.Equal(t, t0.UnixMilli(), <-b2Saw, "在途写入失败后由等待者写库")
+
+	// 写失败不记为已写：同一窗口内的下一次调用照常写库。
+	c := mkOrb()
+	dead, kill := context.WithCancel(ctx)
+	kill()
+	svc.TouchUserCoalesced(dead, c)
+	assert.Zero(t, lastTouch(c))
+	svc.TouchUserCoalesced(ctx, c)
+	assert.Equal(t, t0.UnixMilli(), lastTouch(c), "失败的写入没有占用合并窗口")
 }

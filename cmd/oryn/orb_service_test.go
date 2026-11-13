@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,6 +255,60 @@ func TestOrbServiceLogs(t *testing.T) {
 	require.NoError(t, os.Rename(path, path+".1"))
 	require.NoError(t, os.WriteFile(path, []byte("new\n"), 0o644))
 	require.Eventually(t, func() bool { return fo.String() == "line b\nline c\nnew\n" }, 10*time.Second, 5*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+}
+
+// logs -f 以文件身份识别轮转：新文件与旧文件等长或更长时也从新文件开头读，旧文件轮转前的尾部不丢。
+// tick 通道无缓冲：下一次发送成功即上一轮读取已完成，断言不依赖调度时机。
+func TestFollowLogRotationByIdentity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web.log")
+	require.NoError(t, os.WriteFile(path, []byte("aaaa\n"), 0o644))
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+	_, err = io.ReadAll(f)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tick := make(chan time.Time)
+	var out syncBuffer
+	done := make(chan error, 1)
+	go func() { done <- followLog(ctx, path, f, tick, &out) }()
+	poll := func() {
+		tick <- time.Time{}
+		tick <- time.Time{} // 第二次发送被接收 = 第一次的那一轮已读完
+	}
+	rotate := func(content string) {
+		require.NoError(t, os.Rename(path, path+".1"))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+	appendTo := func(p, s string) {
+		fh, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+		require.NoError(t, err)
+		_, err = fh.WriteString(s)
+		require.NoError(t, err)
+		require.NoError(t, fh.Close())
+	}
+
+	rotate("bbbb\n") // 与旧文件等长
+	poll()
+	assert.Equal(t, "bbbb\n", out.String(), "等长的新文件从头读")
+
+	rotate("cccccccccccccccc\n") // 比已读位置更长
+	poll()
+	assert.Equal(t, "bbbb\ncccccccccccccccc\n", out.String(), "更长的新文件从头读，不跳过开头")
+
+	appendTo(path, "tail\n") // 轮转前写进旧文件、还没读到的尾部
+	rotate("dd\n")
+	poll()
+	assert.Equal(t, "bbbb\ncccccccccccccccc\ntail\ndd\n", out.String())
+
+	appendTo(path, "more\n")
+	poll()
+	assert.Equal(t, "bbbb\ncccccccccccccccc\ntail\ndd\nmore\n", out.String(), "同一文件追加照常读")
+
 	cancel()
 	require.NoError(t, <-done)
 }

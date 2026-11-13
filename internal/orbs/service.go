@@ -151,8 +151,8 @@ type Service struct {
 	// httpTr 是经 fs 流访问 orbd 本机 API 的共享 Transport（见 orbhttp.go）。
 	httpOnce sync.Once
 	httpTr   *http.Transport
-	// userTouched 是各 orb 上次经 TouchUserCoalesced 写库的时间（见 orbhttp.go）。
-	userTouched map[string]time.Time
+	// userTouched 是各 orb 经 TouchUserCoalesced 的写库状态：已成功写库的时间与在途写入（见 orbhttp.go）。
+	userTouched map[string]*userTouch
 
 	hmu       sync.RWMutex
 	reqs      map[string]RequestFunc
@@ -164,9 +164,16 @@ type Service struct {
 	bg sync.WaitGroup
 
 	// 测试钩子（生产为 nil）：hookWakeDeferred 在 Wake 读到 freezing / stopping 之后、登记延迟唤醒之前调用；
-	// hookLinkPublished 在新 link 发布到 links 之后、开始处理其 ctl 消息之前调用。
+	// hookLinkPublished 在新 link 发布到 links 之后、开始处理其 ctl 消息之前调用；hookHelloStart 在 onHello
+	// 开头（portal.configure 之前）调用；hookAwaitPrepared 在 runPhase 发现 link 尚未准备完成、开始等待时调用；
+	// hookTouchWrite 在 TouchUserCoalesced 登记在途写入之后、写库之前调用；hookTouchWait 在调用方开始等
+	// 在途写入时调用。
 	hookWakeDeferred  func()
 	hookLinkPublished func(orbID string)
+	hookHelloStart    func(orbID string)
+	hookAwaitPrepared func(orbID string)
+	hookTouchWrite    func(ctx context.Context, orbID string)
+	hookTouchWait     func(orbID string)
 }
 
 // QuiesceFunc 是冻结 / 停机闸门（Threads 提供）：持有该 orb 全部线程的锁，确认全部 settled、无待发命令、
@@ -199,7 +206,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		wakeAfter: map[string]bool{}, egress: map[string]*egressServer{}, policies: map[string]egress.Policy{},
 		setupLogs: map[string]*setupLogs{},
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
-		userTouched: map[string]time.Time{},
+		userTouched: map[string]*userTouch{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
@@ -845,10 +852,17 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 
 // TouchUser 记录一次用户交互。
 func (s *Service) TouchUser(ctx context.Context, orbID string) {
-	ts := s.nowMs()
-	if err := s.st.Q.TouchOrbUserInteraction(ctx, db.TouchOrbUserInteractionParams{Ts: &ts, ID: orbID}); err != nil {
+	_ = s.touchUser(ctx, orbID, s.now())
+}
+
+// touchUser 把 at 写为 orb 最近一次用户交互的时间；失败记日志并返回错误。
+func (s *Service) touchUser(ctx context.Context, orbID string, at time.Time) error {
+	ts := at.UnixMilli()
+	err := s.st.Q.TouchOrbUserInteraction(ctx, db.TouchOrbUserInteractionParams{Ts: &ts, ID: orbID})
+	if err != nil {
 		slog.Warn("记录用户交互失败", "orb", orbID, "err", err)
 	}
+	return err
 }
 
 // TouchAgent 记录一次 agent 活动。

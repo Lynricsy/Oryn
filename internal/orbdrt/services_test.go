@@ -30,7 +30,8 @@ import (
 var testBin string
 
 // runServiceHelper 是测试二进制的辅助模式（TestMain 见到 ORBD_TEST_HELPER 时调用，不返回）：
-// serve 在 127.0.0.1:$PORT 上起 HTTP 服务；crash 立即以 3 退出；env 把环境写到 $ORBD_TEST_ENV_OUT 后照常 serve。
+// serve 在 127.0.0.1:$PORT 上起 HTTP 服务；crash 立即以 3 退出；env 把环境写到 $ORBD_TEST_ENV_OUT 后照常 serve；
+// gated 先以只读打开 FIFO $ORBD_TEST_GATE（测试以写打开它之前一直阻塞），之后照常 serve。
 func runServiceHelper(mode string) {
 	switch mode {
 	case "crash":
@@ -43,6 +44,13 @@ func runServiceHelper(mode string) {
 		if err := os.Rename(out+".tmp", out); err != nil {
 			os.Exit(1)
 		}
+		serveHelper()
+	case "gated":
+		f, err := os.Open(os.Getenv("ORBD_TEST_GATE"))
+		if err != nil {
+			os.Exit(1)
+		}
+		_ = f.Close()
 		serveHelper()
 	case "serve":
 		serveHelper()
@@ -389,9 +397,16 @@ func TestServiceSupervision(t *testing.T) {
 	e := newSvcEnv(t, nil, "")
 	e.setup()
 
-	// TCP 探测：有 portal 的服务先 starting，端口连通后 running。
-	o := e.start(orbsock.ServiceStartParams{Name: "tcp", Command: new(helperCmd("serve")), Portal: true})
+	// TCP 探测：有 portal 的服务先 starting，端口连通后 running。helper 在测试打开门控 FIFO 之前不监听端口，
+	// 因此 Start 返回时一定仍是 starting；starting → running 的顺序由状态回调验证。
+	gate := filepath.Join(t.TempDir(), "gate")
+	require.NoError(t, syscall.Mkfifo(gate, 0o600))
+	o := e.start(orbsock.ServiceStartParams{Name: "tcp", Command: new(helperCmd("gated", "ORBD_TEST_GATE="+shellQuote(gate))), Portal: true})
 	assert.Equal(t, apigen.OrbServiceStatusStarting, o.Status)
+	e.wait("tcp", statusIsSvc(apigen.OrbServiceStatusStarting))
+	gw, err := os.OpenFile(gate, os.O_WRONLY, 0) // 阻塞到 helper 以读打开
+	require.NoError(t, err)
+	require.NoError(t, gw.Close())
 	o = e.wait("tcp", statusIsSvc(apigen.OrbServiceStatusRunning))
 	require.NotNil(t, o.Port)
 	assert.GreaterOrEqual(t, *o.Port, servicePortMin)
@@ -915,4 +930,79 @@ func TestServiceLocalAPI(t *testing.T) {
 	assert.Equal(t, "invalid_service", h.errCode(resp, b, http.StatusBadRequest))
 	resp, b = h.do(http.MethodGet, "/services/..%2Fx/log", nil, nil, nil)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(b))
+}
+
+// B3：portal.configure 晚于 setup 拉起服务到达（且没有之后的 agent.start）时，迟到的配置自己补齐：
+// 有 portal 却没拿到 PUBLIC_URL 的服务、以及 ${services.X.publicURL} 被替换成空串的服务都被重启并拿到 URL。
+func TestServiceLatePortalConfigure(t *testing.T) {
+	e := newSvcEnv(t, nil, "")
+	out := t.TempDir()
+	webCmd := helperCmd("env", "ORBD_TEST_ENV_OUT="+shellQuote(filepath.Join(out, "web.env")))
+	workerCmd := helperCmd("env", "ORBD_TEST_ENV_OUT="+shellQuote(filepath.Join(out, "worker.env")))
+	e.writeServices(fmt.Sprintf(`services:
+  web:
+    command: %s
+    portal: true
+  worker:
+    command: %s
+    health: /healthz
+    env:
+      API: "${services.web.publicURL}/api"
+`, strconv.Quote(webCmd), strconv.Quote(workerCmd)))
+	e.setup() // 还没有 portal.configure，也没有线程：两个服务都拿不到 URL
+	web1 := e.wait("web", runningWithPid)
+	worker1 := e.wait("worker", runningWithPid)
+	assert.Nil(t, web1.PublicURL)
+	readEnv := func(name string) map[string]string {
+		b, err := os.ReadFile(filepath.Join(out, name+".env"))
+		require.NoError(t, err)
+		m := map[string]string{}
+		for _, kv := range strings.Split(string(b), "\n") {
+			k, v, _ := strings.Cut(kv, "=")
+			m[k] = v
+		}
+		return m
+	}
+	assert.NotContains(t, readEnv("web"), "PUBLIC_URL")
+	assert.Equal(t, "/api", readEnv("worker")["API"])
+
+	require.NoError(t, e.cp.call(t, "portal.configure", apigen.LinkCtlPortalConfigureParams{
+		URLTemplate: "https://t-{code}-p{port}.orb.test/", PrimaryThreadID: new(testThread),
+	}, nil))
+	wantURL := "https://t-0123456789ab-p" + strconv.Itoa(*web1.Port) + ".orb.test"
+	web2 := e.wait("web", func(o apigen.OrbService) bool { return runningWithPid(o) && *o.Pid != *web1.Pid })
+	require.NotNil(t, web2.PublicURL)
+	assert.Equal(t, wantURL, *web2.PublicURL)
+	assert.Equal(t, wantURL, readEnv("web")["PUBLIC_URL"])
+	e.wait("worker", func(o apigen.OrbService) bool { return runningWithPid(o) && *o.Pid != *worker1.Pid })
+	assert.Equal(t, wantURL+"/api", readEnv("worker")["API"], "引用的 URL 迟到后也补上")
+}
+
+// B4：runLoop 不再读可被 reload 整体替换的 sv.spec，只用 run 创建时的名字快照。钩子在进程自然退出后、
+// 决定重启之前把定义换成另一个名字（模拟并发的定义替换），退避与放弃的日志仍写到原服务名下。
+func TestServiceRunLoopUsesRunSnapshot(t *testing.T) {
+	e := newSvcEnv(t, nil, "")
+	e.setup()
+	var once sync.Once
+	e.rt.svc.hookRunExited = func(sv *svc) {
+		once.Do(func() {
+			e.rt.svc.mu.Lock()
+			sp := sv.spec
+			sp.Name = "replaced"
+			sv.spec = sp
+			e.rt.svc.mu.Unlock()
+		})
+	}
+	e.start(orbsock.ServiceStartParams{Name: "exiter", Command: new("exit 3")})
+	// 定义被换掉之后状态快照以新名字出现；放弃之前的日志行都已写出。
+	e.wait("replaced", statusIsSvc(apigen.OrbServiceStatusFailed))
+	logDir := filepath.Join(e.home, ".cache", "oryn", "logs", "services")
+	orig, err := os.ReadFile(filepath.Join(logDir, "exiter.log"))
+	require.NoError(t, err)
+	assert.Equal(t, serviceMaxShort-1, strings.Count(string(orig), "restarting in"))
+	assert.Contains(t, string(orig), "giving up")
+	if b, err := os.ReadFile(filepath.Join(logDir, "replaced.log")); err == nil {
+		assert.NotContains(t, string(b), "restarting in", "runLoop 读了被替换的定义")
+		assert.NotContains(t, string(b), "giving up", "runLoop 读了被替换的定义")
+	}
 }

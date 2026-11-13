@@ -272,12 +272,20 @@ func serviceLogs(ctx context.Context, name string, n int, follow bool, stdout io
 		return err
 	}
 	path := filepath.Join(home, ".cache", "oryn", "logs", "services", name+".log")
-	b, err := os.ReadFile(path)
+	// 末尾 n 行与之后的跟随读同一个文件描述符：跟随从这次读到的位置接着读，文件身份也以它为准。
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) && !follow {
 		return fmt.Errorf("还没有服务 %s 的日志", name)
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	var b []byte
+	if f != nil {
+		defer func() { _ = f.Close() }()
+		if b, err = io.ReadAll(f); err != nil {
+			return err
+		}
 	}
 	if _, err := io.WriteString(stdout, tailLines(string(b), n)); err != nil {
 		return err
@@ -285,34 +293,69 @@ func serviceLogs(ctx context.Context, name string, n int, follow bool, stdout io
 	if !follow {
 		return nil
 	}
-	off := int64(len(b))
 	t := time.NewTicker(serviceLogPoll)
 	defer t.Stop()
+	return followLog(ctx, path, f, t.C, stdout)
+}
+
+// followLog 每收到一次 tick 就把 f 上的新增内容写到 stdout，直到 ctx 结束；f 为 nil 表示文件尚不存在。
+// 轮转（path 已指向另一个文件，以 os.SameFile 判定）时先读完旧文件剩余内容，再从新文件开头读；
+// 同一文件被截短时从头读。新文件的身份取自打开后的描述符，stat 与 open 之间再次轮转也不会错位。
+// 返回时关闭跟随过程中打开的文件（不关闭传入的 f）。
+func followLog(ctx context.Context, path string, f *os.File, tick <-chan time.Time, stdout io.Writer) error {
+	cur := f
+	defer func() {
+		if cur != nil && cur != f {
+			_ = cur.Close()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
+		case <-tick:
+		}
+		if cur != nil {
+			if _, err := io.Copy(stdout, cur); err != nil {
+				return err
+			}
 		}
 		st, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-		if st.Size() < off {
-			off = 0
+		if cur != nil {
+			cst, err := cur.Stat()
+			if err == nil && os.SameFile(cst, st) {
+				if pos, err := cur.Seek(0, io.SeekCurrent); err == nil && cst.Size() < pos {
+					// 同一文件被截短：从头读
+					if _, err := cur.Seek(0, io.SeekStart); err == nil {
+						if _, err := io.Copy(stdout, cur); err != nil {
+							return err
+						}
+					}
+				}
+				continue
+			}
 		}
-		if st.Size() == off {
-			continue
-		}
-		f, err := os.Open(path)
+		nf, err := os.Open(path)
 		if err != nil {
 			continue
 		}
-		if _, err := f.Seek(off, io.SeekStart); err == nil {
-			m, _ := io.Copy(stdout, f)
-			off += m
+		if cur != nil {
+			// 轮转之前写进旧文件、本轮开头还没读到的内容
+			if _, err := io.Copy(stdout, cur); err != nil {
+				_ = nf.Close()
+				return err
+			}
+			if cur != f {
+				_ = cur.Close()
+			}
 		}
-		_ = f.Close()
+		cur = nf
+		if _, err := io.Copy(stdout, cur); err != nil {
+			return err
+		}
 	}
 }
 

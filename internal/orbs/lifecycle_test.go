@@ -44,6 +44,8 @@ type fakeOrbd struct {
 	features []string
 	fs       http.Handler
 	portal   func(st *link.Stream)
+	// onCall 非 nil 时在记下每个 ctl 请求之后调用。
+	onCall func(method string)
 
 	mu    sync.Mutex
 	sess  *link.Session
@@ -70,6 +72,9 @@ func (o *fakeOrbd) connect() error {
 		o.mu.Lock()
 		o.calls = append(o.calls, ctlCall{method, params})
 		o.mu.Unlock()
+		if o.onCall != nil {
+			o.onCall(method)
+		}
 		switch method {
 		case "setup.run", "resume.run":
 			return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: method == "setup.run", DurationMs: 3}, nil
@@ -154,10 +159,11 @@ type fakeDriver struct {
 	orbds     map[string]*fakeOrbd
 	noConnect bool
 	ops       []string
-	// features / fs / portal 用于此后新建的假 orbd。
+	// features / fs / portal / onCall 用于此后新建的假 orbd。
 	features []string
 	fs       http.Handler
 	portal   func(st *link.Stream)
+	onCall   func(method string)
 }
 
 func newFakeDriver() *fakeDriver { return &fakeDriver{orbds: map[string]*fakeOrbd{}} }
@@ -180,12 +186,12 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
-	features, fs, portal := d.features, d.fs, d.portal
+	features, fs, portal, onCall := d.features, d.fs, d.portal, d.onCall
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, onCall: onCall}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()
