@@ -1702,7 +1702,7 @@ components:
             `provider_already_connected`、`managed_by_oryn`、`use_oryn_fork`、`queue_full`、`orb_unavailable`、`rate_limited`（429，带 `Retry-After`）、`internal`。
             M3（orb 文件 / 改动 / 附件，HTTP 状态见 docs/protocol.md）：`invalid_path`、`outside_home`、`protected_path`、`exists`、`is_a_directory`、
             `not_a_directory`、`not_a_repo`、`git_busy`、`modified`（412）、`too_large`（413）、`checksum_mismatch`（422）、`git_failed`、`no_space`（507）、
-            `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`attachment_not_found`。
+            `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`orbd_bad_response`（502，orbd 返回了非预期状态）、`orbd_timeout`（504）、`attachment_not_found`。
         message:
           type: string
     HealthResponse:

@@ -562,7 +562,8 @@ func (r *Runtime) changedFiles(ctx context.Context, top string, rng gitRange) ([
 }
 
 // mergeIndexState 以 `git status --porcelain=v2` 补上暂存状态：X≠. 且 Y=. → full；二者都≠. → partial；
-// `u` 记录 → conflicted（不在列表中的冲突文件也加入）。
+// `u` 记录 → conflicted（不在列表中的冲突文件也加入）。净差异里没有、但索引或工作区相对 HEAD 有改动的文件
+// （如暂存了修改、又把工作区改回 HEAD 的内容）同样加入，行数省略：它们仍有可撤销的暂存内容。
 func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[string]*apigen.GitFileChange, add func(*apigen.GitFileChange)) error {
 	out, _, err := r.gitOK(ctx, top, nil, maxGitOutput, "status", "--porcelain=v2", "-z", "--untracked-files=no")
 	if err != nil {
@@ -574,7 +575,7 @@ func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[st
 		if len(tok) < 2 {
 			continue
 		}
-		var path, xy string
+		var path, xy, orig string
 		conflicted := false
 		switch tok[0] {
 		case '1':
@@ -590,6 +591,9 @@ func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[st
 				continue
 			}
 			xy, path = f[1], f[9]
+			if i < len(toks) {
+				orig = toks[i]
+			}
 		case 'u':
 			f := strings.SplitN(tok, " ", 11)
 			if len(f) != 11 {
@@ -608,10 +612,25 @@ func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[st
 			c.Status = apigen.GitFileChangeStatusConflicted
 			continue
 		}
-		if c == nil || len(xy) != 2 {
+		if len(xy) != 2 {
 			continue
 		}
-		switch x, y := xy[0], xy[1]; {
+		x, y := xy[0], xy[1]
+		if c == nil {
+			code := x
+			if code == '.' {
+				code = y
+			}
+			c = &apigen.GitFileChange{Path: path, Staged: apigen.GitFileChangeStagedNone, Status: apigen.GitFileChangeStatusModified}
+			if s, ok := nameStatusMap[code]; ok {
+				c.Status = s
+			}
+			if orig != "" && orig != path {
+				c.OldPath = &orig
+			}
+			add(c)
+		}
+		switch {
 		case x != '.' && y == '.':
 			c.Staged = apigen.GitFileChangeStagedFull
 		case x != '.' && y != '.':
@@ -754,6 +773,14 @@ func (r *Runtime) handleGitDiff(w http.ResponseWriter, req *http.Request) {
 			writeErr(w, err)
 			return
 		}
+		if st.rng.worktree && len(out) == 0 {
+			// 净差异为空但索引与工作区各有改动（暂存后又把工作区改回）：依次给出暂存（HEAD→索引）与
+			// 未暂存（索引→工作区）两段 patch，二者互相抵消；都为空时仍是空 patch。
+			if out, truncated, err = r.indexPatches(ctx, top, st.head, path, oldPath); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
 	}
 	if truncated {
 		if i := bytes.LastIndexByte(out, '\n'); i >= 0 {
@@ -769,6 +796,27 @@ func (r *Runtime) handleGitDiff(w http.ResponseWriter, req *http.Request) {
 	}
 	res.Patch = string(out)
 	writeJSON(w, http.StatusOK, res)
+}
+
+// indexPatches 返回 path 的暂存 patch（HEAD→索引，HEAD 未出生时相对空树）与未暂存 patch（索引→工作区）
+// 的拼接，总长受 maxPatchBytes 限制。
+func (r *Runtime) indexPatches(ctx context.Context, top, head, path, oldPath string) ([]byte, bool, error) {
+	if head == "" {
+		head = emptyTree
+	}
+	paths := []string{"--", literal(path)}
+	if oldPath != "" && oldPath != path {
+		paths = append(paths, literal(oldPath))
+	}
+	staged, truncated, err := r.gitOK(ctx, top, nil, maxPatchBytes, append([]string{"diff", "--no-ext-diff", "-M", "-U3", "--cached", head}, paths...)...)
+	if err != nil || truncated {
+		return staged, truncated, err
+	}
+	unstaged, truncated, err := r.gitOK(ctx, top, nil, maxPatchBytes-len(staged), append([]string{"diff", "--no-ext-diff", "-M", "-U3"}, paths...)...)
+	if err != nil {
+		return nil, false, err
+	}
+	return append(staged, unstaged...), truncated, nil
 }
 
 // isBinaryPatch 识别 git 对二进制文件输出的 `Binary files … differ` 行。

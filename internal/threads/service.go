@@ -254,6 +254,17 @@ type thread struct {
 	transcriptRev int64
 	// deliveries 是在途的附件投递数（命令在投递完成后才入队）：>0 时线程算 working、不静止。
 	deliveries int
+	// msgOrder 是已受理、尚未入队的消息命令（prompt / steer / follow_up / abort_and_prompt），按受理顺序排列：
+	// 带附件的消息受理时即占位，投递完成后才可下发；其后的消息排在它后面，不得越过。非消息命令不经过这里。
+	msgOrder []*msgSlot
+}
+
+// msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
+// （已以合成应答结束），出队时跳过。
+type msgSlot struct {
+	frame []byte
+	p     *pendingCmd
+	ready bool
 }
 
 const queueLimit = 100
@@ -501,7 +512,7 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 
 // quiescentLocked 报告线程是否静止（冻结 / 停机的前提）。调用方持有 t.mu。
 func (t *thread) quiescentLocked() bool {
-	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
+	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && len(t.msgOrder) == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
 }
 
 // touchAgent 节流地记录 agent 活动（每 orb 至多 5s 一次）。

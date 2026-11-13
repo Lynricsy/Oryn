@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -480,4 +481,144 @@ func TestNonFSStreamClosed(t *testing.T) {
 	_ = st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, err = st.Read(make([]byte, 1))
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+// mutatingBody 在第一次被读取时（handleFsWrite 已做完预检、开始接收上传）执行 f，模拟上传期间的并发改动。
+type mutatingBody struct {
+	f    func()
+	r    io.Reader
+	once sync.Once
+}
+
+func (b *mutatingBody) Read(p []byte) (int, error) { b.once.Do(b.f); return b.r.Read(p) }
+func (*mutatingBody) Close() error                 { return nil }
+
+func serveLocal(rt *Runtime, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	rt.localHandler().ServeHTTP(rec, req)
+	return rec
+}
+
+// 上传期间目标被别的编辑者改动：收完上传后复核 If-Match，412 且不覆盖并发的改动。
+func TestFsWriteRechecksIfMatchAfterUpload(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	p := filepath.Join(rt.home, "doc.txt")
+	require.NoError(t, os.WriteFile(p, []byte("original"), 0o600))
+	fi, err := os.Stat(p)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "/fs/file?path="+url.QueryEscape(p), nil)
+	req.Header.Set("If-Match", etagFor(fi))
+	req.Body = &mutatingBody{f: func() { require.NoError(t, os.WriteFile(p, []byte("concurrent edit"), 0o600)) }, r: strings.NewReader("stale upload")}
+	rec := serveLocal(rt, req)
+	assert.Equal(t, http.StatusPreconditionFailed, rec.Code, rec.Body.String())
+	data, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "concurrent edit", string(data))
+	left, _ := os.ReadDir(rt.tmpDir())
+	assert.Empty(t, left, "被拒的上传不留临时文件")
+}
+
+// overwrite=false 的上传期间目标被创建：复核后 409，不覆盖。
+func TestFsWriteCreateOnlyRechecksAfterUpload(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	p := filepath.Join(rt.home, "new.txt")
+	req := httptest.NewRequest(http.MethodPut, "/fs/file?overwrite=false&path="+url.QueryEscape(p), nil)
+	req.Body = &mutatingBody{f: func() { require.NoError(t, os.WriteFile(p, []byte("concurrent new file"), 0o600)) }, r: strings.NewReader("upload")}
+	rec := serveLocal(rt, req)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	data, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "concurrent new file", string(data))
+}
+
+// 复核之后、提交之前（锁外的 agent）创建了目标：RENAME_NOREPLACE 提交失败为 409，不覆盖。
+func TestFsWriteCreateOnlyCommitDoesNotReplace(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	p := filepath.Join(rt.home, "race.txt")
+	fsCommitHook = func(dst string) { require.NoError(t, os.WriteFile(dst, []byte("agent wrote this"), 0o600)) }
+	t.Cleanup(func() { fsCommitHook = nil })
+	rec := serveLocal(rt, httptest.NewRequest(http.MethodPut, "/fs/file?overwrite=false&path="+url.QueryEscape(p), strings.NewReader("upload")))
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"exists"`)
+	data, err := os.ReadFile(p)
+	require.NoError(t, err)
+	assert.Equal(t, "agent wrote this", string(data))
+	left, _ := os.ReadDir(rt.tmpDir())
+	assert.Empty(t, left)
+
+	// 没有竞争时只创建照常成功
+	fsCommitHook = nil
+	q := filepath.Join(rt.home, "fresh.txt")
+	rec = serveLocal(rt, httptest.NewRequest(http.MethodPut, "/fs/file?overwrite=false&path="+url.QueryEscape(q), strings.NewReader("hello")))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data, err = os.ReadFile(q)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data))
+}
+
+// RENAME_NOREPLACE 不可用时的 link + unlink 退路同样不覆盖已存在的目标。
+func TestLinkNoReplace(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
+	require.NoError(t, os.WriteFile(src, []byte("new"), 0o600))
+	require.NoError(t, os.WriteFile(dst, []byte("old"), 0o600))
+	err := linkNoReplace(src, dst)
+	require.ErrorIs(t, err, os.ErrExist)
+	data, _ := os.ReadFile(dst)
+	assert.Equal(t, "old", string(data))
+	require.FileExists(t, src)
+	require.NoError(t, os.Remove(dst))
+	require.NoError(t, linkNoReplace(src, dst))
+	assert.NoFileExists(t, src)
+	data, _ = os.ReadFile(dst)
+	assert.Equal(t, "new", string(data))
+}
+
+// 经符号链接父目录把文件改名到它自己：是同一目录项，不得先删除再移动。
+func TestFsRenameThroughAliasedParent(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	parent := filepath.Join(rt.home, "parent")
+	src := filepath.Join(parent, "doc.txt")
+	alias := filepath.Join(rt.home, "alias")
+	require.NoError(t, os.MkdirAll(parent, 0o755))
+	require.NoError(t, os.WriteFile(src, []byte("irreplaceable"), 0o600))
+	require.NoError(t, os.Symlink(parent, alias))
+	body, _ := json.Marshal(map[string]any{"from": src, "to": filepath.Join(alias, "doc.txt"), "overwrite": true})
+	rec := serveLocal(rt, httptest.NewRequest(http.MethodPost, "/fs/rename", bytes.NewReader(body)))
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data, err := os.ReadFile(src)
+	require.NoError(t, err)
+	assert.Equal(t, "irreplaceable", string(data))
+
+	// 经别名移进自身子目录同样被拒
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, "sub"), 0o755))
+	body, _ = json.Marshal(map[string]any{"from": parent, "to": filepath.Join(alias, "sub", "moved")})
+	rec = serveLocal(rt, httptest.NewRequest(http.MethodPost, "/fs/rename", bytes.NewReader(body)))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.DirExists(t, parent)
+}
+
+// ~/.oryn 下指向别处的链接：按目标判断不在 .oryn 下，但 delete / rename 作用于链接本身，必须拒绝。
+func TestFsMutateRejectsOrynEntryLink(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	work := filepath.Join(rt.home, "work")
+	require.NoError(t, os.MkdirAll(work, 0o755))
+	link := filepath.Join(rt.home, ".oryn", "foo")
+	require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
+	require.NoError(t, os.Symlink(work, link))
+	for _, c := range []struct{ path, body string }{
+		{"/fs/delete", `{"path":"~/.oryn/foo"}`},
+		{"/fs/rename", `{"from":"~/.oryn/foo","to":"~/moved"}`},
+	} {
+		rec := serveLocal(rt, httptest.NewRequest(http.MethodPost, c.path, strings.NewReader(c.body)))
+		assert.Equal(t, http.StatusForbidden, rec.Code, c.path)
+		assert.Contains(t, rec.Body.String(), "protected_path", c.path)
+	}
+	_, err := os.Lstat(link)
+	require.NoError(t, err, "链接仍在")
 }

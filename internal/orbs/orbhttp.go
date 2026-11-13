@@ -89,22 +89,25 @@ func (s *Service) Do(ctx context.Context, orbID string, req *http.Request) (*htt
 // 状态 ∈ {ready, setting_up, resuming}。
 //
 // wake=false（后台轮询，bg=1）：不计用户交互、不唤醒，不可用即返回 ErrOrbNotReady。
-// wake=true：记一次用户交互并唤醒，然后每 100ms 复查至多 wait；进入 failed 立即返回 ErrOrbNotReady。
+// wake=true：先记一次用户交互，再判定可用性并按需唤醒，然后每 100ms 复查至多 wait；进入 failed 立即返回 ErrOrbNotReady。
+// 交互必须先于判定写入：空闲冻结在事务内复核交互时间，因此冻结要么先于交互提交（此处看到 freezing / frozen 而唤醒），
+// 要么因看到新交互而放弃；先判定后记交互会让中间提交的冻结被一个过期的「可用」掩盖。
 // 已 failed 的 orb 不会因文件请求被重试（重试走 threads/{id}/wake）。
 func (s *Service) EnsureUsable(ctx context.Context, orbID, feature string, wake bool, wait time.Duration) error {
-	orb, ok, err := s.usable(ctx, orbID, feature)
-	if err != nil {
-		return err
-	}
 	if !wake {
-		if ok {
-			return nil
+		orb, ok, err := s.usable(ctx, orbID, feature)
+		if err != nil || ok {
+			return err
 		}
 		return fmt.Errorf("%w: orb %s is %s", ErrOrbNotReady, orbID, orb.State)
 	}
 	s.TouchUser(ctx, orbID)
-	if ok {
-		return nil
+	if hookAfterTouch != nil {
+		hookAfterTouch(orbID)
+	}
+	orb, ok, err := s.usable(ctx, orbID, feature)
+	if err != nil || ok {
+		return err
 	}
 	if orb.State == StateFailed {
 		return fmt.Errorf("%w: orb %s failed", ErrOrbNotReady, orbID)
@@ -136,6 +139,9 @@ func (s *Service) EnsureUsable(ctx context.Context, orbID, feature string, wake 
 		}
 	}
 }
+
+// hookAfterTouch 仅供测试：前台 EnsureUsable 记下用户交互之后立即调用（在此提交并发的冻结）。
+var hookAfterTouch func(orbID string)
 
 // usable 读取 orb 并判定可用性。已删除 → ErrOrbGone；有已 hello 的 link 但缺少 feature → ErrOrbdOutdated
 // （即使 orb 已冻结也据此提前判定，避免为旧版 orbd 白白唤醒）。

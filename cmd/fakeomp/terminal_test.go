@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,4 +232,30 @@ func TestTerminalOutputFramePrefix(t *testing.T) {
 			t.Fatal("no terminal_output")
 		}
 	}
+}
+
+// seq 与快照回滚按 JavaScript 字符串长度（UTF-16 码元）计，与 omp 的 rpc-terminal.ts 一致：
+// 非 ASCII 输入不得造成 seq 空洞。
+func TestTerminalSeqUsesUTF16Units(t *testing.T) {
+	h := start(t, []string{"--mode", "rpc-ui"}, nil)
+	handshake(t, h, t.TempDir())
+	r, _ := h.call(map[string]any{"id": "t1", "type": "terminal_open"})
+	id := r["data"].(map[string]any)["terminalId"].(string)
+	_, frames := h.call(map[string]any{"id": "i1", "type": "terminal_input", "terminalId": id, "data": "你好🙂\x7f"})
+	r, _ = h.call(map[string]any{"id": "s1", "type": "terminal_snapshot", "terminalId": id})
+	snap := r["data"].(map[string]any)
+	data, seq := termOutputs(frames, id)
+	want := "fake$ 你好🙂\b \b"
+	assert.Equal(t, want, snap["data"])
+	assert.Equal(t, "你好🙂\b \b", data, "退格删掉整个字符")
+	assert.EqualValues(t, len(utf16.Encode([]rune(want))), seq)
+	assert.EqualValues(t, 13, snap["seq"])
+}
+
+func TestTailUnitsKeepsCharacterBoundaries(t *testing.T) {
+	rs := []rune("a🙂b")
+	assert.EqualValues(t, 4, utf16Len(rs))
+	assert.Equal(t, "b", string(tailUnits(rs, 2)), "不拆开代理对")
+	assert.Equal(t, "🙂b", string(tailUnits(rs, 3)))
+	assert.Equal(t, "a🙂b", string(tailUnits(rs, 10)))
 }

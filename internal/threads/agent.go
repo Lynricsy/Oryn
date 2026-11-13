@@ -345,7 +345,7 @@ func (s *Service) notifyReadyWaiters(t *thread, st apigen.AgentStatus) {
 }
 
 // failPendingLocked 以合成的失败应答结束已下发的未决命令（agent 退出或流断开后它们不会再有应答）；
-// all 为真时连同排队中的命令一起结束（线程删除）。
+// all 为真时连同排队中的命令与消息顺序队列里等待的消息一起结束（线程删除；仍在投递的消息由 runDelivery 结束）。
 func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 	for id, p := range t.pending {
 		if !p.sent && !all {
@@ -354,6 +354,14 @@ func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 		resp, _ := json.Marshal(map[string]any{"type": "response", "id": id, "command": p.cmdType, "success": false, "error": reason})
 		s.deliver(p, resp)
 		delete(t.pending, id)
+	}
+	if all {
+		for _, sl := range t.msgOrder {
+			if sl.ready && sl.frame != nil {
+				s.failCmd(sl.p, reason)
+			}
+		}
+		t.msgOrder = nil
 	}
 }
 
@@ -666,7 +674,16 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		return errf("no_orb", "thread has no orb")
 	}
 	orbID := t.orbID
-	if err := s.enqueueLocked(t, line, &pendingCmd{cmdType: cmdType, reply: reply}); err != nil {
+	p := &pendingCmd{cmdType: cmdType, reply: reply}
+	if messageCommands[cmdType] && len(t.msgOrder) > 0 {
+		// 前面有仍在投递附件的消息：按受理顺序排在它后面
+		sl, err := s.reserveMsgLocked(t, false)
+		if err != nil {
+			t.mu.Unlock()
+			return err
+		}
+		s.readyMsgLocked(t, sl, line, p)
+	} else if err := s.enqueueLocked(t, line, p); err != nil {
 		t.mu.Unlock()
 		return err
 	}
@@ -704,8 +721,8 @@ const maxAttachmentsPerMessage = 20
 // deliverTimeout 是一次附件投递（最多 20 × 100MiB 经 link 上传）的上限：超时视为投递失败，避免线程永远不静止。
 const deliverTimeout = 30 * time.Minute
 
-// attachmentCommands 是可以带附件的命令（都有 message 字段）。
-var attachmentCommands = map[string]bool{"prompt": true, "steer": true, "follow_up": true, "abort_and_prompt": true}
+// messageCommands 是消息命令（都有 message 字段）：可以带附件，且按受理顺序下发（见 thread.msgOrder）。
+var messageCommands = map[string]bool{"prompt": true, "steer": true, "follow_up": true, "abort_and_prompt": true}
 
 // takeAttachments 取出并删除帧上的 orynAttachments，返回附件 id 与去掉该字段后的帧；没有该字段时原样返回。
 func takeAttachments(cmdType string, frame json.RawMessage) ([]string, json.RawMessage, error) {
@@ -724,7 +741,7 @@ func takeAttachments(cmdType string, frame json.RawMessage) ([]string, json.RawM
 			return nil, nil, errf(RouteInvalidFrame, "orynAttachments must be an array of attachment ids")
 		}
 	}
-	if len(ids) > 0 && !attachmentCommands[cmdType] {
+	if len(ids) > 0 && !messageCommands[cmdType] {
 		return nil, nil, errf(RouteInvalidFrame, cmdType+" does not accept orynAttachments")
 	}
 	if len(ids) > maxAttachmentsPerMessage {
@@ -797,8 +814,8 @@ func asThreadErr(err error) error {
 	return err
 }
 
-// commandWithAttachments 处理带附件的客户端命令：记用户交互、必要时唤醒，等 agent 就绪后投递附件、追加附件块再入队；
-// 投递失败时以合成的失败应答结束该命令，并向线程广播一条 notice。
+// commandWithAttachments 处理带附件的客户端命令：受理时即在消息顺序队列里占位，记用户交互、必要时唤醒，
+// 等 agent 就绪后投递附件、追加附件块，再按受理顺序入队；投递失败时以合成的失败应答结束该命令，并向线程广播一条 notice。
 func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType string, frame []byte, ids []string, reply func(json.RawMessage)) error {
 	if s.attach == nil {
 		return errf("invalid", "attachments are not supported")
@@ -809,7 +826,10 @@ func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType
 		return errf("no_orb", "thread has no orb")
 	}
 	orbID := t.orbID
-	s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply}, false, s.cfg.CallTimeout)
+	if err := s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply}, false, s.cfg.CallTimeout); err != nil {
+		t.mu.Unlock()
+		return err
+	}
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
@@ -821,16 +841,64 @@ func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType
 	return nil
 }
 
-// startDeliveryLocked 登记一次在途投递并在后台执行。fallback 为真（新建线程的首条提示词，没有发起方可回复）时
-// 投递失败仍发送命令，message 末尾注明失败原因。调用方持有 t.mu。
-func (s *Service) startDeliveryLocked(t *thread, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) {
-	t.deliveries++
-	t.settled = false
-	s.go_(func(ctx context.Context) { s.runDelivery(ctx, t, frame, ids, p, fallback, wait) })
+// reserveMsgLocked 在消息顺序队列里占一个位置（front 时插到最前：重排的首条提示词先于其后受理的消息）。
+// 调用方持有 t.mu。
+func (s *Service) reserveMsgLocked(t *thread, front bool) (*msgSlot, error) {
+	if !front && len(t.queue)+len(t.msgOrder) >= queueLimit {
+		return nil, errf("queue_full", fmt.Sprintf("thread command queue is full (%d)", queueLimit))
+	}
+	sl := &msgSlot{}
+	if front {
+		t.msgOrder = append([]*msgSlot{sl}, t.msgOrder...)
+	} else {
+		t.msgOrder = append(t.msgOrder, sl)
+	}
+	return sl, nil
 }
 
-func (s *Service) runDelivery(ctx context.Context, t *thread, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) {
+// readyMsgLocked 让 sl 可下发（frame 为 nil 表示该消息已失败、出队时跳过），并按受理顺序把队首起连续就绪的
+// 消息交给 enqueueLocked（下发或进 t.queue）。调用方持有 t.mu。
+func (s *Service) readyMsgLocked(t *thread, sl *msgSlot, frame []byte, p *pendingCmd) {
+	sl.frame, sl.p, sl.ready = frame, p, true
+	for len(t.msgOrder) > 0 && t.msgOrder[0].ready {
+		head := t.msgOrder[0]
+		t.msgOrder[0] = nil
+		t.msgOrder = t.msgOrder[1:]
+		if head.frame == nil {
+			continue
+		}
+		if err := s.enqueueLocked(t, head.frame, head.p); err != nil {
+			s.failCmd(head.p, err.Error())
+		}
+	}
+}
+
+// startDeliveryLocked 在消息顺序队列里占位、登记一次在途投递并在后台执行。fallback 为真（新建线程的首条提示词，
+// 没有发起方可回复）时占最前的位置，投递失败仍发送命令，message 末尾注明失败原因。调用方持有 t.mu。
+// 不在这里清 settled：在途投递由 deliveries 阻止静止，命令入队 / 下发时各自维护 settled。
+func (s *Service) startDeliveryLocked(t *thread, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) error {
+	sl, err := s.reserveMsgLocked(t, fallback)
+	if err != nil {
+		return err
+	}
+	t.deliveries++
+	s.go_(func(ctx context.Context) { s.runDelivery(ctx, t, sl, frame, ids, p, fallback, wait) })
+	return nil
+}
+
+func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame []byte, ids []string, p *pendingCmd, fallback bool, wait time.Duration) {
 	text, err := s.deliverAttachments(ctx, t, ids, wait)
+	if err != nil && ctx.Err() != nil {
+		// 服务关闭取消了投递（不是投递失败）：不发降级提示词、不确认首批命令——持久化的首批命令留待重启后续作；
+		// 槽位保持占用，其后的消息不会越过它。
+		t.mu.Lock()
+		t.deliveries--
+		t.mu.Unlock()
+		if !fallback {
+			s.failCmd(p, "control plane is shutting down")
+		}
+		return
+	}
 	var reason string
 	if err != nil {
 		reason = "attachment delivery failed: " + err.Error()
@@ -863,11 +931,9 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, frame []byte, ids 
 	}
 	if err != nil && !fallback {
 		s.failCmd(p, reason)
-		s.recompute(ctx, t)
-		return
-	}
-	if e := s.enqueueLocked(t, final, p); e != nil {
-		s.failCmd(p, e.Error())
+		s.readyMsgLocked(t, sl, nil, nil)
+	} else {
+		s.readyMsgLocked(t, sl, final, p)
 	}
 	needWake := !t.agentReady() || s.orbState(t.orbID) != orbStateReady
 	s.recompute(ctx, t)

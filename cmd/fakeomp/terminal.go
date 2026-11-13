@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf16"
 )
 
 // 终端替身（M3 计划 2.4），形状取自 oryn-core `rpc-types.ts` 的 RpcTerminalInfo / RpcTerminal*Frame /
-// RpcTerminalSnapshot 与 `rpc-terminal.ts`：`seq` = 该终端累计输出的字符数（替身只输出 ASCII，字节数即字符数），
-// 快照保留最近 262144 个字符。帧一律以 `type` 为第一个键（与 omp 相同；orbd 按 `{"type":"terminal_output"` 前缀分流）。
+// RpcTerminalSnapshot 与 `rpc-terminal.ts`：`seq` = 该终端累计输出的 JavaScript 字符串长度（UTF-16 码元，
+// 增补平面字符计 2），快照保留最近 262144 个码元（不拆开字符）。帧一律以 `type` 为第一个键（与 omp 相同；
+// orbd 按 `{"type":"terminal_output"` 前缀分流）。
 
 const (
 	termScrollback = 262144
@@ -72,9 +74,10 @@ type fakeTerm struct {
 
 	mu     sync.Mutex
 	info   termInfo
-	buf    []byte // 最近的输出（超过 2×回滚时压缩）
+	buf    []rune // 最近的输出（超过 2×回滚时压缩）
+	units  int64  // buf 的 UTF-16 码元数
 	seq    int64
-	line   []byte        // shell：当前输入行
+	line   []rune        // shell：当前输入行
 	answer chan struct{} // command：收到含 `y` 的输入时关闭
 	closed chan struct{} // terminal_close 时关闭
 }
@@ -145,12 +148,45 @@ func (t *fakeTerm) outputLocked(data string) {
 	if data == "" {
 		return
 	}
-	t.buf = append(t.buf, data...)
-	if len(t.buf) > 2*termScrollback {
-		t.buf = append(t.buf[:0:0], t.buf[len(t.buf)-termScrollback:]...)
+	rs := []rune(data)
+	n := utf16Len(rs)
+	t.buf = append(t.buf, rs...)
+	t.units += n
+	if t.units > 2*termScrollback {
+		tail := tailUnits(t.buf, termScrollback)
+		t.units = utf16Len(tail)
+		t.buf = append(t.buf[:0:0], tail...)
 	}
-	t.seq += int64(len(data))
+	t.seq += n
 	t.s.emit(termOutputFrame{Type: "terminal_output", TerminalID: t.info.TerminalID, Data: data, Seq: t.seq})
+}
+
+// utf16Len 是 rs 的 UTF-16 码元数（JavaScript 的 string.length）。
+func utf16Len(rs []rune) int64 {
+	var n int64
+	for _, r := range rs {
+		if utf16.RuneLen(r) == 2 {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// tailUnits 返回 rs 末尾至多 max 个 UTF-16 码元的完整字符。
+func tailUnits(rs []rune, max int64) []rune {
+	var n int64
+	i := len(rs)
+	for i > 0 {
+		w := utf16Len(rs[i-1 : i])
+		if n+w > max {
+			break
+		}
+		n += w
+		i--
+	}
+	return rs[i:]
 }
 
 func (t *fakeTerm) output(data string) {
@@ -174,11 +210,7 @@ func (t *fakeTerm) exit(code *int, cancelled bool) {
 func (t *fakeTerm) snapshot() termSnapshot {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	data := t.buf
-	if len(data) > termScrollback {
-		data = data[len(data)-termScrollback:]
-	}
-	return termSnapshot{Terminal: t.info, Data: string(data), Seq: t.seq}
+	return termSnapshot{Terminal: t.info, Data: string(tailUnits(t.buf, termScrollback)), Seq: t.seq}
 }
 
 func (t *fakeTerm) infoCopy() termInfo {
@@ -211,8 +243,7 @@ func (t *fakeTerm) input(data string) error {
 		t.outputLocked(echo.String())
 		echo.Reset()
 	}
-	for i := range len(data) {
-		c := data[i]
+	for _, c := range data {
 		switch c {
 		case '\r':
 			echo.WriteString("\r\n")
@@ -236,14 +267,14 @@ func (t *fakeTerm) input(data string) error {
 			default:
 				echo.WriteString(termPrompt)
 			}
-		case 0x7f: // 退格
+		case 0x7f: // 退格：删掉一个字符
 			if len(t.line) > 0 {
 				t.line = t.line[:len(t.line)-1]
 				echo.WriteString("\b \b")
 			}
 		default:
 			t.line = append(t.line, c)
-			echo.WriteByte(c)
+			echo.WriteRune(c)
 		}
 	}
 	flush()

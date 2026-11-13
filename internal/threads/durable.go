@@ -138,7 +138,10 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 	// 带附件的首条提示词（Create 持久化时保留了 orynAttachments）：等 orb 与 agent 就绪、投递后再入队；
 	// 「未送达」重排时回到这里重新投递（orbd 侧幂等，已在的附件不重传）。
 	if ids, rest, err := takeAttachments(typ, f); err == nil && len(ids) > 0 {
-		s.startDeliveryLocked(t, rest, ids, p, true, s.cfg.ProvisionTimeout)
+		// 首条提示词在队首占位、不受队列上限约束，这里不会失败；保险起见仍记录。
+		if err := s.startDeliveryLocked(t, rest, ids, p, true, s.cfg.ProvisionTimeout); err != nil {
+			slog.Warn("threads: 首条提示词附件投递未能开始", "thread", t.id, "err", err)
+		}
 		return
 	}
 	// 每次排队用新 id：frame 本身不带 id（SetID 只作用于副本）

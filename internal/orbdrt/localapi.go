@@ -226,12 +226,23 @@ func (r *Runtime) relHome(real string) (string, bool) {
 }
 
 // mutablePath 是变更类操作的路径检查：userPath 之外再拒绝 $HOME/.oryn/**（Oryn 自己的状态，只读）。
+// 展开后的目标、词法路径与（父目录展开后的）目录项三者任一落在 .oryn 下即拒绝：delete / rename 作用于
+// 目录项本身，`~/.oryn/foo -> ~/work` 这样的链接按目标判断会被放行。
 func (r *Runtime) mutablePath(p string) (abs, real string, err error) {
 	abs, real, err = r.userPath(p, false)
 	if err != nil {
 		return "", "", err
 	}
-	if rel, _ := r.relHome(real); rel == ".oryn" || strings.HasPrefix(rel, ".oryn/") {
+	inOryn := func(rel string) bool { return rel == ".oryn" || strings.HasPrefix(rel, ".oryn/") }
+	rel, _ := r.relHome(real)
+	lex, lerr := filepath.Rel(r.home, abs)
+	protected := inOryn(rel) || (lerr == nil && inOryn(lex))
+	if entry, eerr := entryPath(abs); eerr == nil {
+		if erel, ok := r.relHome(entry); ok && inOryn(erel) {
+			protected = true
+		}
+	}
+	if protected {
 		return "", "", errf(http.StatusForbidden, "protected_path", "%q is managed by Oryn and read-only", p)
 	}
 	return abs, real, nil

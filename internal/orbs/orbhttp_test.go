@@ -91,3 +91,25 @@ func TestOrbHTTPOutdatedOrbd(t *testing.T) {
 	_, err = h.svc.Do(ctx, orb.ID, req)
 	assert.ErrorIs(t, err, ErrOrbdOutdated)
 }
+
+// 前台请求与并发冻结：可用性必须在记下用户交互之后判定。交互写入前后提交的冻结都要被看到并唤醒，
+// 不得用记交互之前读到的「可用」放行一个正在冻结的 orb。
+func TestEnsureUsableSeesFreezeAroundTouch(t *testing.T) {
+	drv := newFakeDriver()
+	drv.features = []string{FeatureFS}
+	h := newHarness(t, drv, fakeSetup{upstream: "http://127.0.0.1:1"}, nil)
+	ctx := context.Background()
+	orb, err := h.svc.Create(ctx, CreateParams{})
+	require.NoError(t, err)
+	h.waitState(orb.ID, StateReady, 10*time.Second)
+
+	hookAfterTouch = func(id string) {
+		hookAfterTouch = nil
+		require.NoError(t, h.svc.Pause(ctx, id, PauseFreeze))
+	}
+	t.Cleanup(func() { hookAfterTouch = nil })
+	require.NoError(t, h.svc.EnsureUsable(ctx, orb.ID, FeatureFS, true, 10*time.Second))
+	cur, err := h.svc.Get(ctx, orb.ID)
+	require.NoError(t, err)
+	assert.True(t, usableState(cur.State), "EnsureUsable 成功时 orb 必须可用，实际 %s", cur.State)
+}

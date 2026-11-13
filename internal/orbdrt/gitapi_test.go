@@ -415,3 +415,39 @@ func TestGitNotARepoAndValidation(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "%s: %s", body, b)
 	}
 }
+
+// 暂存了修改、又把工作区改回 HEAD 的内容：净差异为空，但文件仍有暂存与未暂存改动，必须出现在列表里
+// （partial，可撤销暂存），diff 给出暂存与未暂存两段 patch。
+func TestGitIndexOnlyChangeVisible(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	o := newOrbHTTP(t, cp, rt)
+	repo := filepath.Join(rt.home, "idx-repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	gitIn(t, rt.home, repo, "init", "-q", "-b", "main")
+	p := filepath.Join(repo, "a.txt")
+	writeFile(t, p, "HEAD contents\n")
+	gitIn(t, rt.home, repo, "add", "a.txt")
+	gitIn(t, rt.home, repo, "commit", "-q", "-m", "initial")
+	writeFile(t, p, "staged contents\n")
+	gitIn(t, rt.home, repo, "add", "a.txt")
+	writeFile(t, p, "HEAD contents\n")
+	require.Equal(t, "MM a.txt", gitIn(t, rt.home, repo, "status", "--porcelain"))
+
+	q := url.Values{"root": {repo}, "scope": {"uncommitted"}}
+	files := filesByPath(statusOf(t, o, q))
+	require.Contains(t, files, "a.txt")
+	assert.Equal(t, apigen.GitFileChangeStatusModified, files["a.txt"].Status)
+	assert.Equal(t, apigen.GitFileChangeStagedPartial, files["a.txt"].Staged)
+
+	var d apigen.GitFileDiff
+	q.Set("path", "a.txt")
+	o.json(http.MethodGet, "/git/diff", q, nil, http.StatusOK, &d)
+	assert.Equal(t, apigen.Text, d.Kind)
+	assert.Contains(t, d.Patch, "-HEAD contents\n+staged contents\n", "暂存段")
+	assert.Contains(t, d.Patch, "-staged contents\n+HEAD contents\n", "未暂存段")
+
+	// 撤销暂存后不再有任何改动
+	o.json(http.MethodPost, "/git/unstage", nil, map[string]any{"root": repo, "paths": []string{"a.txt"}}, http.StatusNoContent, nil)
+	assert.Empty(t, statusOf(t, o, url.Values{"root": {repo}, "scope": {"uncommitted"}}).Files)
+}

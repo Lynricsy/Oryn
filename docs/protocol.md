@@ -82,9 +82,11 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 |`DELETE /api/v1/attachments/{id}`|`deleteAttachment`|—|`204`|
 
 - `bg=1`：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互（Changes 面板的 10s 轮询用）。缺省：记一次用户交互并唤醒，至多等 25s。
-- 代理不向 orbd 转发 `Cookie`、`Authorization`、`X-Oryn-CSRF`、`X-Forwarded-*`，删除 orbd 响应中的 `Set-Cookie`；`fs/file` 的 GET 强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`，其余强制 `Content-Type: application/json`。
+- 代理只向 orbd 转发白名单内的请求头（`Content-Type`、`Content-Length`、`Range`、`If-Range`、`If-Match`、`If-None-Match`、`If-Modified-Since`、`Accept`），`Cookie`、`Authorization`、`X-Oryn-CSRF`、`X-Forwarded-*`、前置代理加的身份头与浏览器指纹头一律丢弃；orbd 响应只放行 `Content-Type`、`Content-Length`、`Content-Range`、`Accept-Ranges`、`Etag`、`Last-Modified`（`Set-Cookie` 等一律删除）；`fs/file` 的 GET 强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`，其余强制 `Content-Type: application/json`。
+- orbd 一律视为不可信：只接受 orbd 本机 API 会返回的状态码（200、204、206、304、400、403、404、409、412、413、416、422、500、507），其余（1xx / 101、3xx、401 等）回 502 `orbd_bad_response`；1xx 中间响应不转发；JSON 响应体上限 32MiB（声明长度超限回 502 `orbd_bad_response`，未声明长度的读到上限即中止响应）。
+- 截止时间：JSON 路由一次 orbd 调用（含响应体）45s，`fs/rename` / `fs/delete` 5min；`fs/file` 的 GET 等响应头 30s，之后下载不限时；`fs/file` 的 PUT（上传）不设截止时间，由客户端取消。超时回 504 `orbd_timeout`。
 - `git/*` 的 `base` 缺省时控制面以 orb 所属项目的 `baseBranch` 补上。
-- `CreateThreadRequest.attachments`（≤20 个 `att_…`）：建线程的事务中绑定并投递；`prompt`、`images`、`attachments` 至少其一非空。WS `cmd` 的 `prompt` / `steer` / `follow_up` / `abort_and_prompt` 帧可带 Oryn 扩展字段 `orynAttachments: string[]`，控制面投递后从帧里删除该字段，并在 `message` 末尾追加 `<oryn-attachments>` 块。
+- `CreateThreadRequest.attachments`（≤20 个 `att_…`）：建线程的事务中绑定并投递；`prompt`、`images`、`attachments` 至少其一非空。WS `cmd` 的 `prompt` / `steer` / `follow_up` / `abort_and_prompt` 帧可带 Oryn 扩展字段 `orynAttachments: string[]`，控制面投递后从帧里删除该字段，并在 `message` 末尾追加 `<oryn-attachments>` 块。这四类消息命令按受理顺序下发：带附件的消息受理时即占位，投递完成后才下发，其后受理的消息不越过它；其它命令（终端输入、`abort` 等）不等投递。客户端消息投递失败以失败应答结束该命令；控制面关闭打断的投递不算失败，新建线程的首条提示词留待重启后重新投递。
 - `FsEntry.etag` = `"<mtimeUnixNano>-<size>"`（含引号，直接用作 `If-Match`），仅文件；`mime` / `text` 仅 `stat` 返回。
 
 ### 限额
@@ -118,11 +120,13 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 |`orb_deleted` / `no_orb`|410 / 409|控制面|
 |`orb_unavailable`（唤醒超时，带 `Retry-After: 3`）|503|控制面|
 |`orbd_unreachable`（流打开或传输失败）|502|控制面|
+|`orbd_bad_response`（状态码不在白名单、JSON 响应体超长）|502|控制面|
+|`orbd_timeout`（orbd 未在截止时间内应答）|504|控制面|
 |`attachment_not_found`（附件不存在或已绑定到其它线程）|404|控制面|
 
 ### orbd 本机 API（`fs` 流上的 HTTP 路由）
 
-`http.ServeMux`，错误体 `{code, message}`。路径接受 `~/…` 与绝对路径，响应一律为绝对路径；跟随符号链接后必须位于 `$HOME` 之下（`outside_home`），`$HOME` 本身只允许 list / stat；变更类操作拒绝 `$HOME/.oryn/**`（`protected_path`），`delete` / `rename` 拒绝当前工作目录本身。查询参数与 REST 同名（控制面已删去 `bg`）。
+`http.ServeMux`，错误体 `{code, message}`。路径接受 `~/…` 与绝对路径，响应一律为绝对路径；跟随符号链接后必须位于 `$HOME` 之下（`outside_home`），`$HOME` 本身只允许 list / stat；变更类操作拒绝 `$HOME/.oryn/**`（`protected_path`；展开后的目标、词法路径与目录项本身任一落在其下即拒绝，`~/.oryn/foo -> ~/work` 这样的链接也不能删除或移走），`delete` / `rename` 拒绝当前工作目录本身。查询参数与 REST 同名（控制面已删去 `bg`）。
 
 文件（`fs` 特性）：
 
