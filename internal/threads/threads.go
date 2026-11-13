@@ -135,7 +135,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if p.OrbID != "" {
 		s.wake(id, orb.ID)
 	} else if s.orbState(orb.ID) == orbStateReady {
-		s.go_(func(ctx context.Context) { s.startAgent(ctx, id) })
+		s.scheduleStart(id)
 	}
 	return out, nil
 }
@@ -200,6 +200,14 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		labels[l.ThreadID] = append(labels[l.ThreadID], l.Label)
 	}
 	children := childCountsOf(all)
+	shareRows, err := s.st.Q.ListActiveThreadShareCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	shares := make(map[string]int, len(shareRows))
+	for _, r := range shareRows {
+		shares[r.ThreadID] = int(r.N)
+	}
 	archived := false
 	if f.Archived != nil {
 		archived = *f.Archived
@@ -227,6 +235,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 			api.ChildCount, api.ChildDoneCount = &c[0], &c[1]
 		}
 		api.Activity = s.activityPtr(t.ID)
+		if n := shares[t.ID]; n > 0 {
+			api.PublicShares = &n
+		}
 		out = append(out, api)
 	}
 	return out, nil
@@ -648,7 +659,7 @@ func (s *Service) forkShareFallback(ctx context.Context, t *thread, srcID, orbID
 	t.mu.Lock()
 	t.copyFrom, t.forkEntry, t.failed = srcID, entry, false
 	_ = s.setForkOpLocked(ctx, t, &forkOp{Stage: forkStageCopy, Src: srcID, SrcOrb: orbID, ForkAt: entry})
-	t.live.Reset()
+	s.resetLiveLocked(t)
 	t.mu.Unlock()
 	s.startAgent(ctx, t.id)
 }

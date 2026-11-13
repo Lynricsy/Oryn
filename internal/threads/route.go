@@ -32,8 +32,9 @@ var sideChannelTypes = map[string]bool{
 }
 
 // passiveCommand 报告 cmd 是否为只读查询（`get_*`、终端列表 / 快照）。客户端在收到帧、快照或 live.reset 后
-// 会自动发这类查询来刷新界面，它们不代表用户交互：不唤醒 orb、不记用户交互、不清未读；orb 正在或已经挂起时直接拒绝
-// （code agent_unavailable），orb 正在恢复且 agent 会自行就绪时排队等就绪后下发。
+// 会自动发这类查询来刷新界面，它们不代表用户交互：不唤醒 orb、不记用户交互、不清未读；agent 尚未就绪但会自行就绪时
+// （新线程 provisioning、orb 恢复途中、agent 启动 / 重启中）排队等就绪后下发，确定不会就绪时（orb 正在或已经挂起 /
+// 失败 / 删除、agent 重启耗尽）直接拒绝（code agent_unavailable），见 Service.passiveLocked。
 func passiveCommand(cmdType string) bool {
 	return strings.HasPrefix(cmdType, "get_") || cmdType == "terminal_list" || cmdType == "terminal_snapshot"
 }

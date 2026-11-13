@@ -90,6 +90,7 @@ type Service struct {
 	st   *store.Store
 	orbs Orbs
 	sink atomic.Pointer[sinkBox]
+	obs  atomic.Pointer[observerBox]
 	// attach 由 SetAttachments 在服务对外可用之前设置；nil = 不支持附件。
 	attach Attachments
 
@@ -169,6 +170,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		activity:  map[string]string{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
+	s.obs.Store(&observerBox{nopObserver{}})
 	s.events.init()
 	s.wg.Add(1)
 	go func() {
@@ -397,7 +399,8 @@ func (s *Service) applyOrbState(orbID, state string, seq int64) bool {
 	return true
 }
 
-func (s *Service) focused(threadID string) bool {
+// Focused 报告是否有连接正在看该线程。
+func (s *Service) Focused(threadID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.focus {
@@ -442,10 +445,16 @@ func (s *Service) recompute(ctx context.Context, t *thread) bool {
 	if err := s.st.Q.SetThreadState(ctx, db.SetThreadStateParams{State: st, StateChangedAt: now, ID: t.id}); err != nil {
 		slog.Warn("threads: 写入线程状态失败", "thread", t.id, "err", err)
 	}
-	if prev == StateWorking && st != StateWorking && st != StateProvisioning && !t.unread && !s.focused(t.id) {
+	focused := s.Focused(t.id)
+	if prev == StateWorking && st != StateWorking && st != StateProvisioning && !t.unread && !focused {
 		t.unread = true
 		_ = s.st.Q.SetThreadUnread(ctx, db.SetThreadUnreadParams{Unread: true, ID: t.id})
 	}
+	ev := StateEvent{ThreadID: t.id, Prev: prev, State: st, Focused: focused}
+	if st == StateError {
+		ev.Reason = s.errorReason(ctx, t)
+	}
+	s.observer().StateChanged(ev)
 	s.publish(ctx, t.id)
 	return true
 }
@@ -658,7 +667,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			t.agent = nil
 			t.agentStatus = apigen.AgentStatusNone
 			t.unsynced = false
-			t.live.Reset()
+			s.resetLiveLocked(t)
 			_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: nil, UpdatedAt: s.now(), ID: t.id})
 			s.out().LiveReset(t.id)
 			s.publish(ctx, t.id)
@@ -667,6 +676,9 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			if t.agentStatus == apigen.AgentStatusReady {
 				t.agentStatus = apigen.AgentStatusStarting
 			}
+		}
+		if orbGoingDown(state) && len(t.queue) > 0 {
+			s.dropPassiveLocked(t, state)
 		}
 		if !orbSuspended(state) && t.agentReady() && len(t.queue) > 0 {
 			// orb 暂停期间（或缓存滞后时）就绪的 agent 留下的排队命令：现在可以下发
@@ -683,8 +695,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			if r.ArchivedAt != nil && r.State != StateWorking && r.State != StateAwaitingInput {
 				continue
 			}
-			id := r.ID
-			s.go_(func(ctx context.Context) { s.startAgent(ctx, id) })
+			s.scheduleStart(r.ID)
 		}
 	}
 }

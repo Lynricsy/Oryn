@@ -146,6 +146,7 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		out.ChildCount, out.ChildDoneCount = &c[0], &c[1]
 	}
 	out.Activity = s.activityPtr(t.ID)
+	out.PublicShares = s.publicShares(ctx, t.ID)
 	return out, nil
 }
 

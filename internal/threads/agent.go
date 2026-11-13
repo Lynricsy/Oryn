@@ -244,7 +244,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	case "exited":
 		t.agentStatus = apigen.AgentStatusExited
 		s.failPendingLocked(t, "agent exited", false)
-		t.live.Reset()
+		s.resetLiveLocked(t)
 		s.out().LiveReset(t.id)
 		if p.RestartsLeft != nil && *p.RestartsLeft > 0 {
 			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
@@ -286,7 +286,7 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 		return
 	}
 	t.mu.Lock()
-	t.live.Reset()
+	s.resetLiveLocked(t)
 	// 断连期间的帧（含应答、agent_end / session_settled）可能已丢失：等 get_state 重新同步
 	t.unsynced = true
 	s.failPendingLocked(t, "agent frames lost while disconnected", false)
@@ -365,6 +365,27 @@ func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 		}
 		t.msgOrder = nil
 	}
+}
+
+// dropPassiveLocked 以 agent_unavailable 结束排队中的只读查询：它们在 provisioning / 恢复途中排队，orb 随后却进入
+// 挂起 / 失败 / 删除，不会再有 agent 处理它们（也不让它们阻止静止）。用户命令留在队列里等唤醒。调用方持有 t.mu。
+func (s *Service) dropPassiveLocked(t *thread, orbState string) {
+	kept := t.queue[:0]
+	for _, f := range t.queue {
+		typ, id, ok := frameHeader(f)
+		if !ok || !passiveCommand(typ) {
+			kept = append(kept, f)
+			continue
+		}
+		if p := t.pending[id]; p != nil {
+			delete(t.pending, id)
+			resp, _ := json.Marshal(map[string]any{"type": "response", "id": id, "command": typ, "success": false, "code": "agent_unavailable",
+				"error": fmt.Sprintf("%s: agent is not running (orb %s); read-only queries do not wake the orb", typ, orbState)})
+			s.deliver(p, resp)
+		}
+	}
+	clear(t.queue[len(kept):])
+	t.queue = kept
 }
 
 func (s *Service) deliver(p *pendingCmd, resp json.RawMessage) {
@@ -460,6 +481,13 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 	s.out().Frame(t.id, frame)
 	if eff.UIResolved != "" {
 		s.out().UIResolved(t.id, eff.UIResolved)
+		s.observer().InputResolved(t.id, eff.UIResolved)
+	}
+	if eff.UIRequested != "" {
+		s.observer().InputRequested(InputEvent{ThreadID: t.id, RequestID: eff.UIRequested, Frame: frame, Focused: s.Focused(t.id)})
+	}
+	if eff.PlanProposed {
+		s.observer().InputRequested(InputEvent{ThreadID: t.id, RequestID: PlanRequestID, Frame: frame, Plan: true, Focused: s.Focused(t.id)})
 	}
 	if eff.RefreshState {
 		s.refreshStateLocked(t)
@@ -513,6 +541,7 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		if r.Success {
 			t.live.PlanProposal = nil
 			s.out().PlanResolved(t.id)
+			s.observer().InputResolved(t.id, PlanRequestID)
 		}
 	case "prompt", "abort_and_prompt":
 		var d struct {
@@ -604,17 +633,38 @@ func (t *thread) queueNeedsWake() bool {
 	return false
 }
 
-// passiveLocked 处理客户端的只读查询（见 passiveCommand）：agent 可接收命令时直接下发；orb 在恢复途中、agent 正在启动
-// 或等 link 重连（agentStatus 为 starting / ready）时排队，就绪后由 onReadyLocked 下发；其余情况（orb 正在或已经挂起、
-// agent 未运行）立即拒绝，免得查询在队列里滞留、阻止静止。从不唤醒 orb、不记用户交互、不清未读。调用方持有 t.mu。
+// passiveLocked 处理客户端的只读查询（见 passiveCommand）：agent 可接收命令时直接下发；agent 尚未就绪但会自行就绪时
+// 排队，就绪后由 onReadyLocked 下发——包括新线程的 orb 仍在 provisioning 各阶段（requested / spawning / connecting /
+// setting_up / resuming）、orb 在恢复途中、agent 正在启动或等 link 重连、agent 退出后等 orbd 重启它。只有确定不会自行
+// 就绪时才立即拒绝（agentWontStart），免得查询在队列里滞留、阻止静止。从不唤醒 orb、不记用户交互、不清未读。
+// 调用方持有 t.mu。
 func (s *Service) passiveLocked(t *thread, line []byte, p *pendingCmd) error {
 	st := s.orbState(t.orbID)
-	if !t.agentReady() || orbSuspended(st) {
-		if orbGoingDown(st) || (t.agentStatus != apigen.AgentStatusStarting && t.agentStatus != apigen.AgentStatusReady) {
-			return errf("agent_unavailable", fmt.Sprintf("%s: agent is not running (orb %s); read-only queries do not wake the orb", p.cmdType, st))
-		}
+	if (!t.agentReady() || orbSuspended(st)) && s.agentWontStart(t, st) {
+		return errf("agent_unavailable", fmt.Sprintf("%s: agent is not running (orb %s); read-only queries do not wake the orb", p.cmdType, st))
 	}
 	return s.enqueueLocked(t, line, p)
+}
+
+// agentWontStart 报告在没有用户交互（唤醒 / 重试）的情况下 agent 是否不会再就绪：orb 正在或已经挂起 / 失败 / 删除，
+// 线程 failed 或 agent 重启耗尽，或 orb 已就绪却没有任何人在启动 agent（例如未自动启动的归档线程、agent 已退出且不再重启）。
+// 调用方持有 t.mu。
+func (s *Service) agentWontStart(t *thread, orbState string) bool {
+	if orbGoingDown(orbState) || t.failed || t.live.restartExhausted {
+		return true
+	}
+	if orbState != orbStateReady || t.starting || t.queueNeedsWake() {
+		// orb 尚未就绪（provisioning / 恢复途中）、agent 正在启动，或队列里有用户命令（已请求唤醒）：会自行就绪
+		return false
+	}
+	switch t.agentStatus {
+	case apigen.AgentStatusStarting, apigen.AgentStatusReady:
+		return false
+	case apigen.AgentStatusExited:
+		// 退出后仍有重启次数时 orbd 会重启它（onAgentStatus 置 unsynced）
+		return !t.unsynced
+	}
+	return true
 }
 
 func (s *Service) newCmdID() string { return fmt.Sprintf("oryn-%d", s.nextID.Add(1)) }
@@ -752,6 +802,7 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
+	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)
 	if needWake {
@@ -884,6 +935,7 @@ func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
+	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)
 	if needWake {
@@ -1099,7 +1151,7 @@ func (s *Service) call(ctx context.Context, t *thread, frame []byte) (omprpc.Env
 	}
 }
 
-// wake 唤醒线程所在 orb；orb 已就绪但 agent 未运行时直接启动 agent。
+// wake 唤醒线程所在 orb；orb 已就绪但 agent 未运行时直接启动 agent。调用方可能持有 t.mu，因此全部在后台进行。
 func (s *Service) wake(threadID, orbID string) {
 	s.go_(func(ctx context.Context) {
 		if s.orbState(orbID) == orbStateReady {
@@ -1110,6 +1162,19 @@ func (s *Service) wake(threadID, orbID string) {
 			slog.Warn("threads: 唤醒 orb 失败", "orb", orbID, "err", err)
 		}
 	})
+}
+
+// scheduleStart 在后台启动线程的 agent。先同步把 agentStatus 标为 starting：从此刻到 startAgent 取得线程锁之间
+// 到达的只读查询（新线程页面打开时的 terminal_list 等）排队等就绪，而不是被当作「没人在启动 agent」拒绝。
+func (s *Service) scheduleStart(threadID string) {
+	if t, err := s.get(s.ctx, threadID); err == nil {
+		t.mu.Lock()
+		if t.orbID != "" && t.agentStatus != apigen.AgentStatusReady {
+			t.agentStatus = apigen.AgentStatusStarting
+		}
+		t.mu.Unlock()
+	}
+	s.go_(func(ctx context.Context) { s.startAgent(ctx, threadID) })
 }
 
 // Wake 对应 `POST threads/{id}/wake`。
@@ -1126,7 +1191,7 @@ func (s *Service) Wake(ctx context.Context, threadID string) error {
 	}
 	s.touchUser(orbID)
 	if s.orbState(orbID) == orbStateReady {
-		s.go_(func(ctx context.Context) { s.startAgent(ctx, threadID) })
+		s.scheduleStart(threadID)
 		return nil
 	}
 	return s.orbs.Wake(ctx, orbID)
@@ -1177,9 +1242,11 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 	if isUI {
 		t.live.ResolveUI(id)
 		s.out().UIResolved(t.id, id)
+		s.observer().InputResolved(t.id, id)
 	}
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)
+	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)
 	if needWake {
@@ -1209,6 +1276,7 @@ func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	s.clearUnreadLocked(ctx, t)
 	// 与命令准入相同的判定：冻结中的 orb 上 agent 流仍在、agentReady 仍为真，但进程已暂停
 	needWake := orbID != "" && (!t.agentReady() || s.orbState(orbID) != orbStateReady)
+	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)
 	if s.cfg.WakeOnFocus && needWake {

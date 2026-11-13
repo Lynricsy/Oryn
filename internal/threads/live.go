@@ -94,6 +94,10 @@ type messageHead struct {
 type Effect struct {
 	// UIResolved 为被 cancel 撤销的 pendingUi id。
 	UIResolved string
+	// UIRequested 为本帧新加入 pendingUi 的请求 id（已存在的 id 重复到达不算）。
+	UIRequested string
+	// PlanProposed 为真表示本帧是 plan_proposal 且此前没有未决提案。
+	PlanProposed bool
 	// RefreshState 为真时应向 agent 发 get_state 刷新 State。
 	RefreshState bool
 	// AgentActivity 为真表示 agent 有活动（用于 orb 空闲计时）。
@@ -158,6 +162,9 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 	case "extension_ui_request":
 		switch {
 		case pendingMethods[h.Method] && h.ID != "":
+			if _, ok := l.pendingUI[h.ID]; !ok {
+				eff.UIRequested = h.ID
+			}
 			l.pendingUI[h.ID] = uiSlot{seq: l.seq, frame: frame}
 		case h.Method == "cancel" && h.TargetID != "":
 			if _, ok := l.pendingUI[h.TargetID]; ok {
@@ -166,6 +173,7 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 			}
 		}
 	case "plan_proposal":
+		eff.PlanProposed = l.PlanProposal == nil
 		l.PlanProposal = frame
 	case "queue_update":
 		l.Queue = frame
@@ -232,6 +240,15 @@ func (l *Live) ResolveUI(id string) bool {
 	}
 	delete(l.pendingUI, id)
 	return true
+}
+
+// PendingUIIDs 返回全部待答请求 id（无序）。
+func (l *Live) PendingUIIDs() []string {
+	out := make([]string, 0, len(l.pendingUI))
+	for id := range l.pendingUI {
+		out = append(out, id)
+	}
+	return out
 }
 
 // RunState 是 get_state 应答里与运行 / 静止判定相关的字段（缺失为 nil）。
