@@ -506,6 +506,10 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 	}
 	for _, t := range ts {
 		if !t.quiescentLocked() {
+			slog.Debug("threads: 冻结闸门未通过", "orb", orbID, "thread", t.id,
+				"settled", t.settled, "unsynced", t.unsynced, "starting", t.starting,
+				"deliveries", t.deliveries, "msgOrder", len(t.msgOrder), "liveQuiescent", t.live.Quiescent(),
+				"queue", len(t.queue), "pending", len(t.pending))
 			return false
 		}
 	}

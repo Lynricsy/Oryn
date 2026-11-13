@@ -152,8 +152,8 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 		}
 		_, id, _ := frameHeader(line)
 		t.pending[id] = p
+		// 不清 settled：排队的命令由 len(t.queue) 阻止静止，prompt 下发时（dispatchLocked）才清
 		t.queue = append([][]byte{line}, t.queue...)
-		t.settled = false
 		return
 	}
 	if err := s.enqueueLocked(t, append([]byte(nil), f...), p); err != nil {

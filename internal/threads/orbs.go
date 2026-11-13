@@ -24,6 +24,16 @@ func orbSuspended(state string) bool {
 	return false
 }
 
+// orbGoingDown 判断 orb 是否正在或已经挂起 / 失败 / 删除（不会自行恢复，只有唤醒才能让 agent 再次可用）。
+// 与 orbSuspended 的区别：waking 等恢复途中的状态不算（agent 会自行就绪）。
+func orbGoingDown(state string) bool {
+	switch state {
+	case "freezing", "frozen", "stopping", "stopped", "failed", "deleting", orbStateDeleted:
+		return true
+	}
+	return false
+}
+
 // Orb 事件种类（与 internal/orbs 的 Event.Kind 一致）。
 const (
 	OrbEventState    = "state"

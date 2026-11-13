@@ -31,6 +31,13 @@ var sideChannelTypes = map[string]bool{
 	"host_uri_result":       true,
 }
 
+// passiveCommand 报告 cmd 是否为只读查询（`get_*`、终端列表 / 快照）。客户端在收到帧、快照或 live.reset 后
+// 会自动发这类查询来刷新界面，它们不代表用户交互：不唤醒 orb、不记用户交互、不清未读；orb 正在或已经挂起时直接拒绝
+// （code agent_unavailable），orb 正在恢复且 agent 会自行就绪时排队等就绪后下发。
+func passiveCommand(cmdType string) bool {
+	return strings.HasPrefix(cmdType, "get_") || cmdType == "terminal_list" || cmdType == "terminal_snapshot"
+}
+
 // frameHeader 严格读取帧的 `type` 与 `id`：只认精确的小写键，出现大小写不同的同名键（如 `Type`、`ID`）即判为非法。
 // Go 的结构体解码对键名大小写不敏感（且取最后一个），而 omp（JS）只认精确键：二者对同一帧可能读出不同的类型，
 // 例如 `{"type":"login","Type":"prompt"}` 在 Go 里是 prompt、在 omp 里是 login。重复的精确键两边都取最后一个，一致。

@@ -319,10 +319,11 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		}})
 	}
 	if st := s.orbState(t.orbID); st == "freezing" || st == "stopping" {
-		// 冻结闸门已提交、容器即将暂停：写进流的命令要等解冻才会被处理，而没有人会去唤醒。
-		// 排队并请求唤醒（orbs 在暂停完成后执行）；orb 回到非暂停状态时 handleOrbEvent 下发队列。
+		// 冻结闸门已提交、容器即将暂停：写进流的命令要等解冻才会被处理。排队；队列里有用户命令时请求唤醒
+		// （orbs 在暂停完成后执行）；orb 回到非暂停状态时 handleOrbEvent 下发队列。只有只读查询时不唤醒：
+		// 它们不是用户交互，唤醒会让停机 / 冻结刚完成就被撤销。
 		// 其余「暂停」状态出现在这里只可能是缓存滞后：agent 能上报就绪，说明进程在跑。
-		if len(t.queue) > 0 {
+		if t.queueNeedsWake() {
 			s.wake(t.id, t.orbID)
 		}
 		return
@@ -586,9 +587,34 @@ func (s *Service) enqueueLocked(t *thread, frame []byte, p *pendingCmd) error {
 	if p != nil {
 		t.pending[h.ID] = p
 	}
+	// 不在这里清 settled：排队的命令由 len(t.queue) 阻止静止；会开启回合的 prompt / abort_and_prompt 在下发时
+	// （dispatchLocked）清 settled。其余命令（get_state 等查询）下发后不会有回合，也就不会有 session_settled——
+	// 在这里清 settled 会让它永远为 false，orb 永不冻结。
 	t.queue = append(t.queue, frame)
-	t.settled = false
 	return nil
+}
+
+// queueNeedsWake 报告排队的命令里是否有值得唤醒 orb 的（只读查询之外的命令）。调用方持有 t.mu。
+func (t *thread) queueNeedsWake() bool {
+	for _, f := range t.queue {
+		if typ, _, ok := frameHeader(f); !ok || !passiveCommand(typ) {
+			return true
+		}
+	}
+	return false
+}
+
+// passiveLocked 处理客户端的只读查询（见 passiveCommand）：agent 可接收命令时直接下发；orb 在恢复途中、agent 正在启动
+// 或等 link 重连（agentStatus 为 starting / ready）时排队，就绪后由 onReadyLocked 下发；其余情况（orb 正在或已经挂起、
+// agent 未运行）立即拒绝，免得查询在队列里滞留、阻止静止。从不唤醒 orb、不记用户交互、不清未读。调用方持有 t.mu。
+func (s *Service) passiveLocked(t *thread, line []byte, p *pendingCmd) error {
+	st := s.orbState(t.orbID)
+	if !t.agentReady() || orbSuspended(st) {
+		if orbGoingDown(st) || (t.agentStatus != apigen.AgentStatusStarting && t.agentStatus != apigen.AgentStatusReady) {
+			return errf("agent_unavailable", fmt.Sprintf("%s: agent is not running (orb %s); read-only queries do not wake the orb", p.cmdType, st))
+		}
+	}
+	return s.enqueueLocked(t, line, p)
 }
 
 func (s *Service) newCmdID() string { return fmt.Sprintf("oryn-%d", s.nextID.Add(1)) }
@@ -660,7 +686,8 @@ func eqPtr(a, b *string) bool {
 	return *a == *b
 }
 
-// Command 处理客户端 `cmd`：路由检查、注入 id、下发或排队（orb 未就绪时触发唤醒）。
+// Command 处理客户端 `cmd`：路由检查、注入 id、下发或排队（orb 未就绪时触发唤醒）。只读查询（passiveCommand）
+// 不算用户交互：从不唤醒 orb，orb 挂起时直接拒绝（见 passiveLocked）。
 // reply 收到 omp 应答（id 仍为注入值，由调用方换回客户端 id）。
 func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage)) error {
 	route, cmdType := RouteCommand(frame)
@@ -693,6 +720,11 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		return errf("no_orb", "thread has no orb")
 	}
 	orbID := t.orbID
+	if passiveCommand(cmdType) {
+		err := s.passiveLocked(t, line, &pendingCmd{cmdType: cmdType, reply: reply})
+		t.mu.Unlock()
+		return err
+	}
 	p := &pendingCmd{cmdType: cmdType, reply: reply}
 	if messageCommands[cmdType] && len(t.msgOrder) > 0 {
 		// 前面有仍在投递附件的消息：按受理顺序排在它后面
