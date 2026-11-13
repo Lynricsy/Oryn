@@ -80,6 +80,48 @@ type Job struct {
 	ClaimGen   int64   `json:"claimGen"`
 }
 
+type Notification struct {
+	ID         string  `json:"id"`
+	ThreadID   *string `json:"threadId"`
+	Kind       string  `json:"kind"`
+	Title      string  `json:"title"`
+	Body       string  `json:"body"`
+	RequestID  *string `json:"requestId"`
+	Request    *string `json:"request"`
+	CreatedAt  int64   `json:"createdAt"`
+	ReadAt     *int64  `json:"readAt"`
+	ResolvedAt *int64  `json:"resolvedAt"`
+}
+
+type NotificationChannel struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	Name      string  `json:"name"`
+	Enabled   bool    `json:"enabled"`
+	Events    string  `json:"events"`
+	Locale    string  `json:"locale"`
+	ConfigEnc []byte  `json:"configEnc"`
+	State     string  `json:"state"`
+	LastError *string `json:"lastError"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+type NotificationDelivery struct {
+	ID             string  `json:"id"`
+	NotificationID string  `json:"notificationId"`
+	ChannelID      *string `json:"channelId"`
+	SubscriptionID *string `json:"subscriptionId"`
+	Target         string  `json:"target"`
+	Status         string  `json:"status"`
+	Attempts       int64   `json:"attempts"`
+	NextAttemptAt  *int64  `json:"nextAttemptAt"`
+	LastError      *string `json:"lastError"`
+	ExternalRef    *string `json:"externalRef"`
+	CreatedAt      int64   `json:"createdAt"`
+	FinishedAt     *int64  `json:"finishedAt"`
+}
+
 type Orb struct {
 	ID                    string  `json:"id"`
 	ProviderID            string  `json:"providerId"`
@@ -220,6 +262,28 @@ type Provider struct {
 	DisabledAt    *int64  `json:"disabledAt"`
 }
 
+type PublishedFile struct {
+	ID           string `json:"id"`
+	AttachmentID string `json:"attachmentId"`
+	Slug         string `json:"slug"`
+	CreatedAt    int64  `json:"createdAt"`
+	RevokedAt    *int64 `json:"revokedAt"`
+}
+
+type PushSubscription struct {
+	ID             string  `json:"id"`
+	Kind           string  `json:"kind"`
+	Endpoint       string  `json:"endpoint"`
+	P256dh         string  `json:"p256dh"`
+	Auth           string  `json:"auth"`
+	WebSessionHash *string `json:"webSessionHash"`
+	DeviceID       *string `json:"deviceId"`
+	UserAgent      string  `json:"userAgent"`
+	CreatedAt      int64   `json:"createdAt"`
+	LastSuccessAt  *int64  `json:"lastSuccessAt"`
+	LastError      *string `json:"lastError"`
+}
+
 type RecoveryCode struct {
 	CodeHash string `json:"codeHash"`
 	UsedAt   *int64 `json:"usedAt"`
@@ -267,6 +331,18 @@ type Thread struct {
 type ThreadLabel struct {
 	ThreadID string `json:"threadId"`
 	Label    string `json:"label"`
+}
+
+type ThreadShare struct {
+	ID          string  `json:"id"`
+	ThreadID    string  `json:"threadId"`
+	Slug        string  `json:"slug"`
+	Mode        string  `json:"mode"`
+	UntilSeq    *int64  `json:"untilSeq"`
+	LeafEntryID *string `json:"leafEntryId"`
+	Findings    int64   `json:"findings"`
+	CreatedAt   int64   `json:"createdAt"`
+	RevokedAt   *int64  `json:"revokedAt"`
 }
 
 type ToolCall struct {

@@ -77,6 +77,30 @@ func TestWsServerMessageEncode(t *testing.T) {
 	assert.JSONEq(t, `{"type":"frame","threadId":"`+threadID+`","frame":{"type":"agent_start"}}`, string(b))
 }
 
+// 匿名分享通道的消息联合：与私有通道同名的 type（entries / frame）各自编码，且不带 threadId。
+func TestWsPublicServerMessageEncode(t *testing.T) {
+	var msg apigen.WsPublicServerMessage
+	require.NoError(t, msg.FromWsPublicEntries(apigen.WsPublicEntries{Entries: []apigen.Entry{}, LastSeq: 7}))
+	b, err := json.Marshal(msg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"entries","entries":[],"lastSeq":7}`, string(b))
+	v, err := msg.ValueByDiscriminator()
+	require.NoError(t, err)
+	_, ok := v.(apigen.WsPublicEntries)
+	assert.True(t, ok, "got %T", v)
+
+	require.NoError(t, msg.FromWsPublicRevoked(apigen.WsPublicRevoked{}))
+	b, err = json.Marshal(msg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"share.revoked"}`, string(b))
+
+	var srv apigen.WsServerMessage
+	require.NoError(t, srv.FromWsServerNotificationsRead(apigen.WsServerNotificationsRead{}))
+	b, err = json.Marshal(srv)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"notifications.read"}`, string(b))
+}
+
 // link 流头按 t 判别。
 func TestLinkStreamHeaderDispatch(t *testing.T) {
 	var h apigen.LinkStreamHeader

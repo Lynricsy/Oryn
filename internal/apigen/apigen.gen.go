@@ -544,6 +544,123 @@ func (e MeAuthKind) Valid() bool {
 	}
 }
 
+// Defines values for NotificationChannelKind.
+const (
+	NotificationChannelKindBark     NotificationChannelKind = "bark"
+	NotificationChannelKindNtfy     NotificationChannelKind = "ntfy"
+	NotificationChannelKindTelegram NotificationChannelKind = "telegram"
+	NotificationChannelKindWebhook  NotificationChannelKind = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the NotificationChannelKind enum.
+func (e NotificationChannelKind) Valid() bool {
+	switch e {
+	case NotificationChannelKindBark:
+		return true
+	case NotificationChannelKindNtfy:
+		return true
+	case NotificationChannelKindTelegram:
+		return true
+	case NotificationChannelKindWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationDeliveryStatus.
+const (
+	NotificationDeliveryStatusFailed  NotificationDeliveryStatus = "failed"
+	NotificationDeliveryStatusPending NotificationDeliveryStatus = "pending"
+	NotificationDeliveryStatusSent    NotificationDeliveryStatus = "sent"
+)
+
+// Valid indicates whether the value is a known member of the NotificationDeliveryStatus enum.
+func (e NotificationDeliveryStatus) Valid() bool {
+	switch e {
+	case NotificationDeliveryStatusFailed:
+		return true
+	case NotificationDeliveryStatusPending:
+		return true
+	case NotificationDeliveryStatusSent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationDeliveryTarget.
+const (
+	NotificationDeliveryTargetApns     NotificationDeliveryTarget = "apns"
+	NotificationDeliveryTargetBark     NotificationDeliveryTarget = "bark"
+	NotificationDeliveryTargetFcm      NotificationDeliveryTarget = "fcm"
+	NotificationDeliveryTargetNtfy     NotificationDeliveryTarget = "ntfy"
+	NotificationDeliveryTargetTelegram NotificationDeliveryTarget = "telegram"
+	NotificationDeliveryTargetWebhook  NotificationDeliveryTarget = "webhook"
+	NotificationDeliveryTargetWebpush  NotificationDeliveryTarget = "webpush"
+)
+
+// Valid indicates whether the value is a known member of the NotificationDeliveryTarget enum.
+func (e NotificationDeliveryTarget) Valid() bool {
+	switch e {
+	case NotificationDeliveryTargetApns:
+		return true
+	case NotificationDeliveryTargetBark:
+		return true
+	case NotificationDeliveryTargetFcm:
+		return true
+	case NotificationDeliveryTargetNtfy:
+		return true
+	case NotificationDeliveryTargetTelegram:
+		return true
+	case NotificationDeliveryTargetWebhook:
+		return true
+	case NotificationDeliveryTargetWebpush:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationKind.
+const (
+	NotificationKindDone  NotificationKind = "done"
+	NotificationKindError NotificationKind = "error"
+	NotificationKindInput NotificationKind = "input"
+)
+
+// Valid indicates whether the value is a known member of the NotificationKind enum.
+func (e NotificationKind) Valid() bool {
+	switch e {
+	case NotificationKindDone:
+		return true
+	case NotificationKindError:
+		return true
+	case NotificationKindInput:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationLocale.
+const (
+	NotificationLocaleEn   NotificationLocale = "en"
+	NotificationLocaleZhCN NotificationLocale = "zh-CN"
+)
+
+// Valid indicates whether the value is a known member of the NotificationLocale enum.
+func (e NotificationLocale) Valid() bool {
+	switch e {
+	case NotificationLocaleEn:
+		return true
+	case NotificationLocaleZhCN:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbServiceSource.
 const (
 	OrbServiceSourceDynamic OrbServiceSource = "dynamic"
@@ -709,6 +826,27 @@ func (e ProviderDriver) Valid() bool {
 	}
 }
 
+// Defines values for PushSubscriptionKind.
+const (
+	PushSubscriptionKindApns    PushSubscriptionKind = "apns"
+	PushSubscriptionKindFcm     PushSubscriptionKind = "fcm"
+	PushSubscriptionKindWebpush PushSubscriptionKind = "webpush"
+)
+
+// Valid indicates whether the value is a known member of the PushSubscriptionKind enum.
+func (e PushSubscriptionKind) Valid() bool {
+	switch e {
+	case PushSubscriptionKindApns:
+		return true
+	case PushSubscriptionKindFcm:
+		return true
+	case PushSubscriptionKindWebpush:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SecretMode.
 const (
 	Env   SecretMode = "env"
@@ -757,6 +895,84 @@ func (e SetupTrigger) Valid() bool {
 	case SetupTriggerAuto:
 		return true
 	case SetupTriggerManual:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ShareFindingRule.
+const (
+	ShareFindingRuleAPIKeySk       ShareFindingRule = "api_key_sk"
+	ShareFindingRuleAwsAccessKey   ShareFindingRule = "aws_access_key"
+	ShareFindingRuleBearerHeader   ShareFindingRule = "bearer_header"
+	ShareFindingRuleGithubToken    ShareFindingRule = "github_token"
+	ShareFindingRuleGoogleAPIKey   ShareFindingRule = "google_api_key"
+	ShareFindingRuleJwt            ShareFindingRule = "jwt"
+	ShareFindingRuleOrynToken      ShareFindingRule = "oryn_token"
+	ShareFindingRulePrivateKey     ShareFindingRule = "private_key"
+	ShareFindingRuleSlackToken     ShareFindingRule = "slack_token"
+	ShareFindingRuleURLCredentials ShareFindingRule = "url_credentials"
+	ShareFindingRuleVaultSecret    ShareFindingRule = "vault_secret"
+)
+
+// Valid indicates whether the value is a known member of the ShareFindingRule enum.
+func (e ShareFindingRule) Valid() bool {
+	switch e {
+	case ShareFindingRuleAPIKeySk:
+		return true
+	case ShareFindingRuleAwsAccessKey:
+		return true
+	case ShareFindingRuleBearerHeader:
+		return true
+	case ShareFindingRuleGithubToken:
+		return true
+	case ShareFindingRuleGoogleAPIKey:
+		return true
+	case ShareFindingRuleJwt:
+		return true
+	case ShareFindingRuleOrynToken:
+		return true
+	case ShareFindingRulePrivateKey:
+		return true
+	case ShareFindingRuleSlackToken:
+		return true
+	case ShareFindingRuleURLCredentials:
+		return true
+	case ShareFindingRuleVaultSecret:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ShareMode.
+const (
+	ShareModeLive     ShareMode = "live"
+	ShareModeSnapshot ShareMode = "snapshot"
+)
+
+// Valid indicates whether the value is a known member of the ShareMode enum.
+func (e ShareMode) Valid() bool {
+	switch e {
+	case ShareModeLive:
+		return true
+	case ShareModeSnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ShareScanConflictCode.
+const (
+	ShareScanConflictCodeSecretsFound ShareScanConflictCode = "secrets_found"
+)
+
+// Valid indicates whether the value is a known member of the ShareScanConflictCode enum.
+func (e ShareScanConflictCode) Valid() bool {
+	switch e {
+	case ShareScanConflictCodeSecretsFound:
 		return true
 	default:
 		return false
@@ -982,6 +1198,111 @@ func (e WsClientUnsubType) Valid() bool {
 	}
 }
 
+// Defines values for WsPublicEntriesType.
+const (
+	WsPublicEntriesTypeEntries WsPublicEntriesType = "entries"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicEntriesType enum.
+func (e WsPublicEntriesType) Valid() bool {
+	switch e {
+	case WsPublicEntriesTypeEntries:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicFrameType.
+const (
+	WsPublicFrameTypeFrame WsPublicFrameType = "frame"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicFrameType enum.
+func (e WsPublicFrameType) Valid() bool {
+	switch e {
+	case WsPublicFrameTypeFrame:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicLiveResetType.
+const (
+	WsPublicLiveResetTypeLiveReset WsPublicLiveResetType = "live.reset"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicLiveResetType enum.
+func (e WsPublicLiveResetType) Valid() bool {
+	switch e {
+	case WsPublicLiveResetTypeLiveReset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicRevokedType.
+const (
+	ShareRevoked WsPublicRevokedType = "share.revoked"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicRevokedType enum.
+func (e WsPublicRevokedType) Valid() bool {
+	switch e {
+	case ShareRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicSnapshotType.
+const (
+	ShareSnapshot WsPublicSnapshotType = "share.snapshot"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicSnapshotType enum.
+func (e WsPublicSnapshotType) Valid() bool {
+	switch e {
+	case ShareSnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicStateType.
+const (
+	ShareState WsPublicStateType = "share.state"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicStateType enum.
+func (e WsPublicStateType) Valid() bool {
+	switch e {
+	case ShareState:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsPublicTranscriptResetType.
+const (
+	WsPublicTranscriptResetTypeTranscriptReset WsPublicTranscriptResetType = "transcript.reset"
+)
+
+// Valid indicates whether the value is a known member of the WsPublicTranscriptResetType enum.
+func (e WsPublicTranscriptResetType) Valid() bool {
+	switch e {
+	case WsPublicTranscriptResetTypeTranscriptReset:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerEntriesType.
 const (
 	Entries WsServerEntriesType = "entries"
@@ -1066,6 +1387,36 @@ const (
 func (e WsServerLiveResetType) Valid() bool {
 	switch e {
 	case LiveReset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerNotificationType.
+const (
+	WsServerNotificationTypeNotification WsServerNotificationType = "notification"
+)
+
+// Valid indicates whether the value is a known member of the WsServerNotificationType enum.
+func (e WsServerNotificationType) Valid() bool {
+	switch e {
+	case WsServerNotificationTypeNotification:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerNotificationsReadType.
+const (
+	NotificationsRead WsServerNotificationsReadType = "notifications.read"
+)
+
+// Valid indicates whether the value is a known member of the WsServerNotificationsReadType enum.
+func (e WsServerNotificationsReadType) Valid() bool {
+	switch e {
+	case NotificationsRead:
 		return true
 	default:
 		return false
@@ -1313,6 +1664,9 @@ type Attachment struct {
 	// Name 净化后的文件名（≤200 字节）
 	Name string `json:"name"`
 
+	// PublicURL 已发布时的公开 URL（`<public_url>/f/<slug>/<文件名>`）；未发布省略
+	PublicURL *string `json:"publicUrl,omitempty"`
+
 	// Sha256 SHA-256 小写十六进制
 	Sha256 Sha256 `json:"sha256"`
 	Size   int64  `json:"size"`
@@ -1385,6 +1739,14 @@ type AvatarIdentity struct {
 	AvatarImage *string `json:"avatarImage,omitempty"`
 }
 
+// BarkChannelConfig defines model for BarkChannelConfig.
+type BarkChannelConfig struct {
+	DeviceKey string `json:"deviceKey"`
+
+	// Server 默认 `https://api.day.app`
+	Server *string `json:"server,omitempty"`
+}
+
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
 	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
@@ -1401,6 +1763,15 @@ type CreateThreadRequest struct {
 	Prompt        string     `json:"prompt"`
 	ThinkingLevel *string    `json:"thinkingLevel,omitempty"`
 	Title         *string    `json:"title,omitempty"`
+}
+
+// CreateThreadShareRequest defines model for CreateThreadShareRequest.
+type CreateThreadShareRequest struct {
+	// AcknowledgeFindings 已检查扫描命中项，仍然分享
+	AcknowledgeFindings *bool `json:"acknowledgeFindings,omitempty"`
+
+	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	Mode ShareMode `json:"mode"`
 }
 
 // Device defines model for Device.
@@ -1543,6 +1914,9 @@ type Error struct {
 	// M4（受管服务与 portal，HTTP 状态见 docs/protocol.md）：`portal_disabled`（409，未配置 `portal_domain`）、`portal_not_found`（404）、`portal_unauthorized`（401）、
 	// `cross_site_blocked`（403）、`forbidden_port`（403）、`service_unreachable`（502）、`portal_unreachable`（502）、`portal_timeout`（504）、`portal_busy`（503）、
 	// `service_not_found`（404）、`invalid_service`（400）、`name_conflict`（409）、`services_not_ready`（409）。
+	// M5（分享、通知与 sync，HTTP 状态见 docs/protocol.md）：`invalid`（400 / 409）、`secrets_found`（409，体为 `ShareScanConflict`）、
+	// `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
+	// `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -1995,8 +2369,8 @@ type LinkCtlHelloParams struct {
 	Arch         string `json:"arch"`
 
 	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
-	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）。
-	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal 请求回 409 `orbd_outdated`。
+	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）。
+	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync 请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
 	Os          string               `json:"os"`
@@ -2302,6 +2676,183 @@ type ModelRef struct {
 	Provider string `json:"provider"`
 }
 
+// Notification defines model for Notification.
+type Notification struct {
+	Body string `json:"body"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt  TimestampMs            `json:"createdAt"`
+	Deliveries []NotificationDelivery `json:"deliveries"`
+
+	// ID `ntf_<ulid>`
+	ID NotificationID `json:"id"`
+
+	// Kind `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+	Kind NotificationKind `json:"kind"`
+
+	// ReadAt UTC 毫秒时间戳
+	ReadAt *TimestampMs `json:"readAt,omitempty"`
+
+	// ResolvedAt 仅 `input`：请求已被作答 / 取消 / 随 agent 重启消失
+	ResolvedAt *TimestampMs `json:"resolvedAt,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+	Title    string    `json:"title"`
+
+	// URL 站内路径 `/t/<threadId>`
+	URL string `json:"url"`
+}
+
+// NotificationChannel 机密字段（token、secret、topic、deviceKey、URL 全文）只写不读
+type NotificationChannel struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs        `json:"createdAt"`
+	Enabled   bool               `json:"enabled"`
+	Events    []NotificationKind `json:"events"`
+
+	// ID `nch_<ulid>`
+	ID           NotificationChannelID            `json:"id"`
+	Kind         NotificationChannelKind          `json:"kind"`
+	LastDelivery *NotificationChannelLastDelivery `json:"lastDelivery,omitempty"`
+	LastError    *string                          `json:"lastError,omitempty"`
+
+	// Locale 渠道消息的固定文案语言
+	Locale NotificationLocale `json:"locale"`
+	Name   string             `json:"name"`
+
+	// Summary 脱敏展示串（如 `@bot_name`、`hooks.example.com/…ab12`、`ntfy.sh/…9f3c`、`api.day.app`）
+	Summary  string                       `json:"summary"`
+	Telegram *NotificationChannelTelegram `json:"telegram,omitempty"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// NotificationChannelID `nch_<ulid>`
+type NotificationChannelID = string
+
+// NotificationChannelInput 恰好给出与 `kind` 同名的一个配置对象
+type NotificationChannelInput struct {
+	Bark    *BarkChannelConfig `json:"bark,omitempty"`
+	Enabled *bool              `json:"enabled,omitempty"`
+
+	// Events 缺省 = 三者全选
+	Events []NotificationKind      `json:"events,omitempty"`
+	Kind   NotificationChannelKind `json:"kind"`
+
+	// Locale 渠道消息的固定文案语言
+	Locale   *NotificationLocale    `json:"locale,omitempty"`
+	Name     string                 `json:"name"`
+	Ntfy     *NtfyChannelConfig     `json:"ntfy,omitempty"`
+	Telegram *TelegramChannelConfig `json:"telegram,omitempty"`
+	Webhook  *WebhookChannelConfig  `json:"webhook,omitempty"`
+}
+
+// NotificationChannelKind defines model for NotificationChannelKind.
+type NotificationChannelKind string
+
+// NotificationChannelLastDelivery defines model for NotificationChannelLastDelivery.
+type NotificationChannelLastDelivery struct {
+	// At UTC 毫秒时间戳
+	At     TimestampMs                `json:"at"`
+	Error  *string                    `json:"error,omitempty"`
+	Status NotificationDeliveryStatus `json:"status"`
+}
+
+// NotificationChannelList defines model for NotificationChannelList.
+type NotificationChannelList struct {
+	Channels []NotificationChannel `json:"channels"`
+}
+
+// NotificationChannelPatch 只修改出现的字段；给出与渠道 `kind` 同名的配置对象 = 整体替换该渠道配置
+type NotificationChannelPatch struct {
+	Bark    *BarkChannelConfig `json:"bark,omitempty"`
+	Enabled *bool              `json:"enabled,omitempty"`
+	Events  []NotificationKind `json:"events,omitempty"`
+
+	// Locale 渠道消息的固定文案语言
+	Locale   *NotificationLocale    `json:"locale,omitempty"`
+	Name     *string                `json:"name,omitempty"`
+	Ntfy     *NtfyChannelConfig     `json:"ntfy,omitempty"`
+	Telegram *TelegramChannelConfig `json:"telegram,omitempty"`
+	Webhook  *WebhookChannelConfig  `json:"webhook,omitempty"`
+}
+
+// NotificationChannelTelegram defines model for NotificationChannelTelegram.
+type NotificationChannelTelegram struct {
+	BotUsername string  `json:"botUsername"`
+	ChatTitle   *string `json:"chatTitle,omitempty"`
+
+	// Linked 已绑定私聊
+	Linked bool `json:"linked"`
+}
+
+// NotificationDelivery defines model for NotificationDelivery.
+type NotificationDelivery struct {
+	// At `pending` = 下次尝试时间；`sent` / `failed` = 完成时间
+	At       TimestampMs `json:"at"`
+	Attempts int         `json:"attempts"`
+
+	// ChannelID `nch_<ulid>`
+	ChannelID   *NotificationChannelID `json:"channelId,omitempty"`
+	ChannelName *string                `json:"channelName,omitempty"`
+
+	// Error 最近一次失败原因（≤500 字符）
+	Error  *string                    `json:"error,omitempty"`
+	Status NotificationDeliveryStatus `json:"status"`
+
+	// Target 投递目标（`apns` / `fcm` 为 M7 预留）
+	Target NotificationDeliveryTarget `json:"target"`
+}
+
+// NotificationDeliveryStatus defines model for NotificationDeliveryStatus.
+type NotificationDeliveryStatus string
+
+// NotificationDeliveryTarget 投递目标（`apns` / `fcm` 为 M7 预留）
+type NotificationDeliveryTarget string
+
+// NotificationID `ntf_<ulid>`
+type NotificationID = string
+
+// NotificationKind `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+type NotificationKind string
+
+// NotificationList defines model for NotificationList.
+type NotificationList struct {
+	Notifications []Notification `json:"notifications"`
+
+	// Unread 全部未读通知数
+	Unread int `json:"unread"`
+}
+
+// NotificationLocale 渠道消息的固定文案语言
+type NotificationLocale string
+
+// NotificationTestResult defines model for NotificationTestResult.
+type NotificationTestResult struct {
+	Error *string `json:"error,omitempty"`
+	Ok    bool    `json:"ok"`
+}
+
+// NotificationsReadRequest defines model for NotificationsReadRequest.
+type NotificationsReadRequest struct {
+	// ThreadID 只标该线程的通知；省略 = 全部
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// NtfyChannelConfig defines model for NtfyChannelConfig.
+type NtfyChannelConfig struct {
+	// Server 默认 `https://ntfy.sh`
+	Server *string `json:"server,omitempty"`
+
+	// Token 给出时带 `Authorization: Bearer <token>`
+	Token *string `json:"token,omitempty"`
+	Topic string  `json:"topic"`
+}
+
 // OmpFrame omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
 type OmpFrame map[string]interface{}
 
@@ -2568,6 +3119,48 @@ type OrbStats struct {
 	Types []OrbTypeStat `json:"types"`
 }
 
+// OrbSyncBundle defines model for OrbSyncBundle.
+type OrbSyncBundle struct {
+	ID   string `json:"id"`
+	Size int64  `json:"size"`
+}
+
+// OrbSyncPrepareRequest defines model for OrbSyncPrepareRequest.
+type OrbSyncPrepareRequest struct {
+	// Force 无共同提交时仍打包完整历史（浅克隆仍会 409 `sync_shallow`）
+	Force *bool `json:"force,omitempty"`
+
+	// Have 本地已有的提交（用于确定 bundle 的边界）
+	Have []string `json:"have,omitempty"`
+
+	// Root 仓库所在目录（同 `GitRootQuery` 的路径规则）；缺省 = orb 当前工作目录
+	Root *string `json:"root,omitempty"`
+}
+
+// OrbSyncState defines model for OrbSyncState.
+type OrbSyncState struct {
+	// Branch 当前分支短名；游离 HEAD 时省略
+	Branch *string `json:"branch,omitempty"`
+
+	// Bundle `snapshot ∉ have` 时打出的 bundle（含 `refs/oryn/sync/snapshot` 与 `refs/oryn/sync/head`）
+	Bundle *OrbSyncBundle `json:"bundle,omitempty"`
+
+	// Common `have` 中本仓库已有的提交
+	Common []string `json:"common"`
+
+	// Dirty 有未提交改动（`snapshot != head`）
+	Dirty bool `json:"dirty"`
+
+	// Head HEAD 提交
+	Head string `json:"head"`
+
+	// Root 仓库顶层的绝对路径
+	Root string `json:"root"`
+
+	// Snapshot 工作区快照提交（无未提交改动时等于 `head`）
+	Snapshot string `json:"snapshot"`
+}
+
 // OrbType defines model for OrbType.
 type OrbType struct {
 	Cpus     float32 `json:"cpus"`
@@ -2816,6 +3409,137 @@ type ProviderList struct {
 	Providers []Provider `json:"providers"`
 }
 
+// PublicAttachment defines model for PublicAttachment.
+type PublicAttachment struct {
+	// ID `att_<ulid>`
+	ID   AttachmentID `json:"id"`
+	Mime string       `json:"mime"`
+	Name string       `json:"name"`
+	Size int64        `json:"size"`
+
+	// URL 仅已发布：公开 URL
+	URL *string `json:"url,omitempty"`
+}
+
+// PublicEntryPage defines model for PublicEntryPage.
+type PublicEntryPage struct {
+	Entries []Entry `json:"entries"`
+
+	// HasMore 为假时已到达范围末尾
+	HasMore bool `json:"hasMore"`
+
+	// LastSeq 范围上界（同 `PublicShare.lastSeq`）
+	LastSeq     int64   `json:"lastSeq"`
+	LeafEntryID *string `json:"leafEntryId,omitempty"`
+}
+
+// PublicShare 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置
+type PublicShare struct {
+	// Attachments 线程的附件元数据（快照只含分享创建时已存在的）
+	Attachments []PublicAttachment `json:"attachments"`
+
+	// LastSeq 范围上界（快照 = `untilSeq`；实时 = 线程当前 `last_seq`）
+	LastSeq int64 `json:"lastSeq"`
+
+	// LeafEntryID 范围的叶子（快照 = 创建时的叶子；实时 = 当前叶子）
+	LeafEntryID *string `json:"leafEntryId,omitempty"`
+
+	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	Mode ShareMode `json:"mode"`
+
+	// SharedAt UTC 毫秒时间戳
+	SharedAt TimestampMs `json:"sharedAt"`
+
+	// State 仅实时：线程当前状态
+	State *ThreadState `json:"state,omitempty"`
+
+	// ThreadCreatedAt UTC 毫秒时间戳
+	ThreadCreatedAt TimestampMs `json:"threadCreatedAt"`
+
+	// Title 线程标题（空则 `Untitled`）
+	Title         string `json:"title"`
+	TranscriptRev int64  `json:"transcriptRev"`
+}
+
+// PublishOrbFileRequest defines model for PublishOrbFileRequest.
+type PublishOrbFileRequest struct {
+	// Path orb 内路径（同 `FsPathQuery` 的路径规则）
+	Path string `json:"path"`
+
+	// ThreadID 附件归属的线程（须在该 orb 上）
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// PublishedFile defines model for PublishedFile.
+type PublishedFile struct {
+	// AttachmentID `att_<ulid>`
+	AttachmentID AttachmentID `json:"attachmentId"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ID `pub_<ulid>`
+	ID   PublishedFileID `json:"id"`
+	Mime string          `json:"mime"`
+	Name string          `json:"name"`
+	Size int64           `json:"size"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// URL `<public_url>/f/<slug>/<encodeURIComponent(name)>`
+	URL string `json:"url"`
+}
+
+// PublishedFileID `pub_<ulid>`
+type PublishedFileID = string
+
+// PushSubscription defines model for PushSubscription.
+type PushSubscription struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+	Endpoint  string      `json:"endpoint"`
+
+	// ID `psub_<ulid>`
+	ID PushSubscriptionID `json:"id"`
+
+	// Kind `apns` / `fcm` 为 M7 预留
+	Kind      PushSubscriptionKind `json:"kind"`
+	LastError *string              `json:"lastError,omitempty"`
+
+	// LastSuccessAt UTC 毫秒时间戳
+	LastSuccessAt *TimestampMs `json:"lastSuccessAt,omitempty"`
+	UserAgent     string       `json:"userAgent"`
+}
+
+// PushSubscriptionID `psub_<ulid>`
+type PushSubscriptionID = string
+
+// PushSubscriptionInput 浏览器 `PushSubscription.toJSON()` 的子集
+type PushSubscriptionInput struct {
+	Endpoint string               `json:"endpoint"`
+	Keys     PushSubscriptionKeys `json:"keys"`
+}
+
+// PushSubscriptionKeys defines model for PushSubscriptionKeys.
+type PushSubscriptionKeys struct {
+	// Auth base64url，解码后 16 字节
+	Auth string `json:"auth"`
+
+	// P256Dh base64url，解码后 65 字节且以 0x04 开头
+	P256Dh string `json:"p256dh"`
+}
+
+// PushSubscriptionKind `apns` / `fcm` 为 M7 预留
+type PushSubscriptionKind string
+
+// PushSubscriptionList defines model for PushSubscriptionList.
+type PushSubscriptionList struct {
+	Subscriptions []PushSubscription `json:"subscriptions"`
+}
+
 // SecretList defines model for SecretList.
 type SecretList struct {
 	Secrets []SecretMeta `json:"secrets"`
@@ -2863,8 +3587,90 @@ type SetupTrigger string
 // Sha256 SHA-256 小写十六进制
 type Sha256 = string
 
+// ShareFinding 一个 `(规则, 条目)` 的命中
+type ShareFinding struct {
+	// Count 该条目内同一规则的命中次数
+	Count   int    `json:"count"`
+	EntryID string `json:"entryId"`
+
+	// Preview 脱敏片段：前 4 字符 + `…` + 后 2 字符；命中短于 12 字符时只留前 2 字符 + `…`
+	Preview string `json:"preview"`
+
+	// Role 所在消息的角色（`user` / `assistant` / `toolResult` …）；非消息条目省略
+	Role *string `json:"role,omitempty"`
+
+	// Rule 密钥扫描规则名（规则表见 docs/protocol.md M5 节）
+	Rule ShareFindingRule `json:"rule"`
+
+	// SecretName 仅 `vault_secret`：命中的密钥名
+	SecretName *string `json:"secretName,omitempty"`
+	Seq        int64   `json:"seq"`
+
+	// Tool 所在工具结果的工具名
+	Tool *string `json:"tool,omitempty"`
+}
+
+// ShareFindingRule 密钥扫描规则名（规则表见 docs/protocol.md M5 节）
+type ShareFindingRule string
+
+// ShareID `shr_<ulid>`
+type ShareID = string
+
+// ShareMode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+type ShareMode string
+
+// ShareOverview defines model for ShareOverview.
+type ShareOverview struct {
+	Files  []PublishedFile `json:"files"`
+	Shares []ThreadShare   `json:"shares"`
+}
+
+// ShareScan defines model for ShareScan.
+type ShareScan struct {
+	Findings []ShareFinding `json:"findings"`
+
+	// Scanned 扫描过的条目数
+	Scanned int `json:"scanned"`
+
+	// Truncated 命中超过 200 项，只返回前 200 项
+	Truncated bool `json:"truncated"`
+}
+
+// ShareScanConflict `createThreadShare` 的 409 体：扫描有命中且未确认
+type ShareScanConflict struct {
+	Code    ShareScanConflictCode `json:"code"`
+	Message string                `json:"message"`
+	Scan    ShareScan             `json:"scan"`
+}
+
+// ShareScanConflictCode defines model for ShareScanConflict.Code.
+type ShareScanConflictCode string
+
+// ShareSlug 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
+type ShareSlug = string
+
 // SnapshotID 快照 id，同时是 Docker 镜像名
 type SnapshotID = string
+
+// TelegramChannelConfig defines model for TelegramChannelConfig.
+type TelegramChannelConfig struct {
+	// APIBase Bot API 根地址，默认 `https://api.telegram.org`（自建 Bot API 服务器与测试用）
+	APIBase  *string `json:"apiBase,omitempty"`
+	BotToken string  `json:"botToken"`
+}
+
+// TelegramLink defines model for TelegramLink.
+type TelegramLink struct {
+	BotUsername string `json:"botUsername"`
+
+	// Code 8 位绑定码，显示为 `ABCD-EFGH`
+	//
+	// Example: ABCD-EFGH
+	Code string `json:"code"`
+
+	// ExpiresAt UTC 毫秒时间戳
+	ExpiresAt TimestampMs `json:"expiresAt"`
+}
 
 // Thread defines model for Thread.
 type Thread struct {
@@ -2918,6 +3724,9 @@ type Thread struct {
 
 	// ProjectID `prj_<ulid>`
 	ProjectID *ProjectID `json:"projectId,omitempty"`
+
+	// PublicShares 未撤销的公开分享数；为 0 时省略
+	PublicShares *int `json:"publicShares,omitempty"`
 
 	// SnoozedUntil UTC 毫秒时间戳
 	SnoozedUntil *TimestampMs `json:"snoozedUntil,omitempty"`
@@ -3013,6 +3822,41 @@ type ThreadPatch struct {
 	Unread       *bool        `json:"unread,omitempty"`
 }
 
+// ThreadShare defines model for ThreadShare.
+type ThreadShare struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Findings 创建时确认过的密钥扫描命中数
+	Findings int `json:"findings"`
+
+	// ID `shr_<ulid>`
+	ID ShareID `json:"id"`
+
+	// Mode `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+	Mode ShareMode `json:"mode"`
+
+	// Slug 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
+	Slug ShareSlug `json:"slug"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID    ThreadID `json:"threadId"`
+	ThreadTitle string   `json:"threadTitle"`
+
+	// UntilSeq 仅快照：创建时线程的 `last_seq`
+	UntilSeq *int64 `json:"untilSeq,omitempty"`
+
+	// URL `<public_url>/s/<slug>`
+	URL string `json:"url"`
+}
+
+// ThreadShareList defines model for ThreadShareList.
+type ThreadShareList struct {
+	Shares []ThreadShare `json:"shares"`
+}
+
 // ThreadState 线程状态（全端统一，自上而下取首个成立）：
 // `provisioning` orb 未到 ready 且 agent 从未 ready；
 // `awaiting_input` 有待答 UI 或计划提案；
@@ -3059,6 +3903,12 @@ type UsageStats struct {
 // UsageStatsGroupBy defines model for UsageStats.GroupBy.
 type UsageStatsGroupBy string
 
+// VapidKey defines model for VapidKey.
+type VapidKey struct {
+	// PublicKey base64url（无填充）的 65 字节未压缩 P-256 点
+	PublicKey string `json:"publicKey"`
+}
+
 // WebAuthnCeremony defines model for WebAuthnCeremony.
 type WebAuthnCeremony struct {
 	// CeremonyID 本次仪式的服务端会话句柄，finish 时回传
@@ -3066,6 +3916,16 @@ type WebAuthnCeremony struct {
 
 	// Options `PublicKeyCredentialCreationOptionsJSON` 或 `PublicKeyCredentialRequestOptionsJSON`（WebAuthn L3 JSON 形态）
 	Options map[string]interface{} `json:"options"`
+}
+
+// WebhookChannelConfig defines model for WebhookChannelConfig.
+type WebhookChannelConfig struct {
+	// Headers 自定义请求头（名不得是 `Host` / `Content-Length` / `Content-Type`）
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Secret 给出时请求带 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`
+	Secret *string `json:"secret,omitempty"`
+	URL    string  `json:"url"`
 }
 
 // WsClientCmd omp RPC 命令；控制面注入唯一 id 后下发，应答以 `res` 回到本连接
@@ -3173,6 +4033,107 @@ type WsClientUnsub struct {
 // WsClientUnsubType defines model for WsClientUnsub.Type.
 type WsClientUnsubType string
 
+// WsPublicEntries defines model for WsPublicEntries.
+type WsPublicEntries struct {
+	Entries []Entry `json:"entries"`
+
+	// LastSeq 本条消息覆盖到的最大 seq（可续传游标）
+	LastSeq     int64               `json:"lastSeq"`
+	LeafEntryID *string             `json:"leafEntryId,omitempty"`
+	Type        WsPublicEntriesType `json:"type"`
+}
+
+// WsPublicEntriesType defines model for WsPublicEntries.Type.
+type WsPublicEntriesType string
+
+// WsPublicFrame 实时 omp 帧，仅限 `message_start` / `message_update` / `message_end` / `tool_execution_start` / `tool_execution_update` /
+// `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end` / `subagent_lifecycle` / `subagent_progress`
+type WsPublicFrame struct {
+	// Frame omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
+	Frame OmpFrame          `json:"frame"`
+	Type  WsPublicFrameType `json:"type"`
+}
+
+// WsPublicFrameType defines model for WsPublicFrame.Type.
+type WsPublicFrameType string
+
+// WsPublicLiveReset defines model for WsPublicLiveReset.
+type WsPublicLiveReset struct {
+	Type WsPublicLiveResetType `json:"type"`
+}
+
+// WsPublicLiveResetType defines model for WsPublicLiveReset.Type.
+type WsPublicLiveResetType string
+
+// WsPublicRevoked 分享已撤销或线程已删除；随后服务端以 4001 关闭连接
+type WsPublicRevoked struct {
+	Type WsPublicRevokedType `json:"type"`
+}
+
+// WsPublicRevokedType defines model for WsPublicRevoked.Type.
+type WsPublicRevokedType string
+
+// WsPublicServerMessage `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。
+// 私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上到不了匿名连接。客户端只许发 `WsClientPing`。
+type WsPublicServerMessage struct {
+	union json.RawMessage
+}
+
+// WsPublicSnapshot 连接后的首条消息
+type WsPublicSnapshot struct {
+	// FullReplay 为真时从 seq 0 补发：客户端先丢弃已缓存的全部条目
+	FullReplay bool `json:"fullReplay"`
+
+	// LastSeq 快照时刻线程的最大 seq（补发的目标）
+	LastSeq     int64   `json:"lastSeq"`
+	LeafEntryID *string `json:"leafEntryId,omitempty"`
+
+	// Live 在途消息与运行中工具的帧（只含公开白名单内的帧类型）
+	Live []OmpFrame `json:"live"`
+
+	// State 线程状态（全端统一，自上而下取首个成立）：
+	// `provisioning` orb 未到 ready 且 agent 从未 ready；
+	// `awaiting_input` 有待答 UI 或计划提案；
+	// `working` 已见 agent_start 且尚无终结 agent_end，或 state.hasPendingAsyncWork；
+	// `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
+	// `idle` 其它。
+	State ThreadState `json:"state"`
+
+	// Subagents 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧
+	Subagents     []OmpFrame           `json:"subagents"`
+	Title         string               `json:"title"`
+	TranscriptRev int64                `json:"transcriptRev"`
+	Type          WsPublicSnapshotType `json:"type"`
+}
+
+// WsPublicSnapshotType defines model for WsPublicSnapshot.Type.
+type WsPublicSnapshotType string
+
+// WsPublicState 线程状态或标题变化
+type WsPublicState struct {
+	// State 线程状态（全端统一，自上而下取首个成立）：
+	// `provisioning` orb 未到 ready 且 agent 从未 ready；
+	// `awaiting_input` 有待答 UI 或计划提案；
+	// `working` 已见 agent_start 且尚无终结 agent_end，或 state.hasPendingAsyncWork；
+	// `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
+	// `idle` 其它。
+	State ThreadState       `json:"state"`
+	Title string            `json:"title"`
+	Type  WsPublicStateType `json:"type"`
+}
+
+// WsPublicStateType defines model for WsPublicState.Type.
+type WsPublicStateType string
+
+// WsPublicTranscriptReset 转录被重写：客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连
+type WsPublicTranscriptReset struct {
+	TranscriptRev int64                       `json:"transcriptRev"`
+	Type          WsPublicTranscriptResetType `json:"type"`
+}
+
+// WsPublicTranscriptResetType defines model for WsPublicTranscriptReset.Type.
+type WsPublicTranscriptResetType string
+
 // WsServerEntries defines model for WsServerEntries.
 type WsServerEntries struct {
 	Entries []Entry `json:"entries"`
@@ -3261,6 +4222,25 @@ type WsServerLiveResetType string
 type WsServerMessage struct {
 	union json.RawMessage
 }
+
+// WsServerNotification 新通知（发给全部私有连接）
+type WsServerNotification struct {
+	Notification Notification             `json:"notification"`
+	Type         WsServerNotificationType `json:"type"`
+}
+
+// WsServerNotificationType defines model for WsServerNotification.Type.
+type WsServerNotificationType string
+
+// WsServerNotificationsRead 通知已读（发给全部私有连接）
+type WsServerNotificationsRead struct {
+	// ThreadID 只该线程的通知已读；省略 = 全部已读
+	ThreadID *ThreadID                     `json:"threadId,omitempty"`
+	Type     WsServerNotificationsReadType `json:"type"`
+}
+
+// WsServerNotificationsReadType defines model for WsServerNotificationsRead.Type.
+type WsServerNotificationsReadType string
 
 // WsServerOrb defines model for WsServerOrb.
 type WsServerOrb struct {
@@ -3437,6 +4417,9 @@ type GitRootQuery = string
 // `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
 type GitScopeQuery = GitScope
 
+// NotificationChannelIDPath `nch_<ulid>`
+type NotificationChannelIDPath = NotificationChannelID
+
 // OrbBackgroundQuery defines model for OrbBackgroundQuery.
 type OrbBackgroundQuery = bool
 
@@ -3454,11 +4437,23 @@ type ProjectIDPath = ProjectID
 // ProviderIDPath `prov_<ulid>`
 type ProviderIDPath = ProviderID
 
+// PublishedFileIDPath `pub_<ulid>`
+type PublishedFileIDPath = PublishedFileID
+
+// PushSubscriptionIDPath `psub_<ulid>`
+type PushSubscriptionIDPath = PushSubscriptionID
+
 // SecretNamePath defines model for SecretNamePath.
 type SecretNamePath = string
 
 // ServiceNamePath defines model for ServiceNamePath.
 type ServiceNamePath = string
+
+// ShareIDPath `shr_<ulid>`
+type ShareIDPath = ShareID
+
+// ShareSlugPath 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
+type ShareSlugPath = ShareSlug
 
 // ThreadIDPath `T-<uuidv7>`
 //
@@ -3486,6 +4481,14 @@ type UploadAttachmentParams struct {
 // GetAttachmentContentParams defines parameters for GetAttachmentContent.
 type GetAttachmentContentParams struct {
 	Inline *bool `form:"inline,omitempty" json:"inline,omitempty"`
+}
+
+// ListNotificationsParams defines parameters for ListNotifications.
+type ListNotificationsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before 只返回 `createdAt < before` 的通知（翻页游标）
+	Before *TimestampMs `form:"before,omitempty" json:"before,omitempty"`
 }
 
 // ListOrbsParams defines parameters for ListOrbs.
@@ -3611,10 +4614,29 @@ type GetOrbServiceLogParams struct {
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 }
 
+// GetOrbSyncBundleParams defines parameters for GetOrbSyncBundle.
+type GetOrbSyncBundleParams struct {
+	// ID `OrbSyncState.bundle.id`
+	ID string `form:"id" json:"id"`
+}
+
+// PrepareOrbSyncParams defines parameters for PrepareOrbSync.
+type PrepareOrbSyncParams struct {
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+}
+
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
 	// Archived 为 true 时只返回已归档项目；缺省只返回未归档
 	Archived *bool `form:"archived,omitempty" json:"archived,omitempty"`
+}
+
+// ListPublicShareEntriesParams defines parameters for ListPublicShareEntries.
+type ListPublicShareEntriesParams struct {
+	// After 只返回 `seq > after` 的条目
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
+	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetOrbStatsParams defines parameters for GetOrbStats.
@@ -3682,11 +4704,23 @@ type DevicePairPollJSONRequestBody = DevicePairPollRequest
 // DevicePairStartJSONRequestBody defines body for DevicePairStart for application/json ContentType.
 type DevicePairStartJSONRequestBody = DevicePairStartRequest
 
+// CreateNotificationChannelJSONRequestBody defines body for CreateNotificationChannel for application/json ContentType.
+type CreateNotificationChannelJSONRequestBody = NotificationChannelInput
+
+// UpdateNotificationChannelJSONRequestBody defines body for UpdateNotificationChannel for application/json ContentType.
+type UpdateNotificationChannelJSONRequestBody = NotificationChannelPatch
+
+// MarkNotificationsReadJSONRequestBody defines body for MarkNotificationsRead for application/json ContentType.
+type MarkNotificationsReadJSONRequestBody = NotificationsReadRequest
+
 // DeleteOrbFsJSONRequestBody defines body for DeleteOrbFs for application/json ContentType.
 type DeleteOrbFsJSONRequestBody = FsPathRequest
 
 // MkdirOrbFsJSONRequestBody defines body for MkdirOrbFs for application/json ContentType.
 type MkdirOrbFsJSONRequestBody = FsPathRequest
+
+// PublishOrbFileJSONRequestBody defines body for PublishOrbFile for application/json ContentType.
+type PublishOrbFileJSONRequestBody = PublishOrbFileRequest
 
 // RenameOrbFsJSONRequestBody defines body for RenameOrbFs for application/json ContentType.
 type RenameOrbFsJSONRequestBody = FsRenameRequest
@@ -3703,6 +4737,9 @@ type PauseOrbJSONRequestBody = OrbPauseRequest
 // SetOrbPortalShareJSONRequestBody defines body for SetOrbPortalShare for application/json ContentType.
 type SetOrbPortalShareJSONRequestBody = PortalShareRequest
 
+// PrepareOrbSyncJSONRequestBody defines body for PrepareOrbSync for application/json ContentType.
+type PrepareOrbSyncJSONRequestBody = OrbSyncPrepareRequest
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = ProjectCreate
 
@@ -3711,6 +4748,9 @@ type UpdateProjectJSONRequestBody = ProjectPatch
 
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreateRequest
+
+// CreatePushSubscriptionJSONRequestBody defines body for CreatePushSubscription for application/json ContentType.
+type CreatePushSubscriptionJSONRequestBody = PushSubscriptionInput
 
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
@@ -3732,6 +4772,9 @@ type UpdateThreadJSONRequestBody = ThreadPatch
 
 // ForkThreadJSONRequestBody defines body for ForkThread for application/json ContentType.
 type ForkThreadJSONRequestBody = ForkThreadRequest
+
+// CreateThreadShareJSONRequestBody defines body for CreateThreadShare for application/json ContentType.
+type CreateThreadShareJSONRequestBody = CreateThreadShareRequest
 
 // ProviderByeJSONRequestBody defines body for ProviderBye for application/json ContentType.
 type ProviderByeJSONRequestBody = ProviderByeRequest
@@ -4372,6 +5415,323 @@ func (t *WsClientMessage) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsWsPublicSnapshot returns the union data inside the WsPublicServerMessage as a WsPublicSnapshot
+func (t WsPublicServerMessage) AsWsPublicSnapshot() (WsPublicSnapshot, error) {
+	var body WsPublicSnapshot
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicSnapshot overwrites any union data inside the WsPublicServerMessage as the provided WsPublicSnapshot
+func (t *WsPublicServerMessage) FromWsPublicSnapshot(v WsPublicSnapshot) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.snapshot"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicSnapshot performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicSnapshot
+func (t *WsPublicServerMessage) MergeWsPublicSnapshot(v WsPublicSnapshot) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.snapshot"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicEntries returns the union data inside the WsPublicServerMessage as a WsPublicEntries
+func (t WsPublicServerMessage) AsWsPublicEntries() (WsPublicEntries, error) {
+	var body WsPublicEntries
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicEntries overwrites any union data inside the WsPublicServerMessage as the provided WsPublicEntries
+func (t *WsPublicServerMessage) FromWsPublicEntries(v WsPublicEntries) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"entries"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicEntries performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicEntries
+func (t *WsPublicServerMessage) MergeWsPublicEntries(v WsPublicEntries) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"entries"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicFrame returns the union data inside the WsPublicServerMessage as a WsPublicFrame
+func (t WsPublicServerMessage) AsWsPublicFrame() (WsPublicFrame, error) {
+	var body WsPublicFrame
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicFrame overwrites any union data inside the WsPublicServerMessage as the provided WsPublicFrame
+func (t *WsPublicServerMessage) FromWsPublicFrame(v WsPublicFrame) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"frame"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicFrame performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicFrame
+func (t *WsPublicServerMessage) MergeWsPublicFrame(v WsPublicFrame) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"frame"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicLiveReset returns the union data inside the WsPublicServerMessage as a WsPublicLiveReset
+func (t WsPublicServerMessage) AsWsPublicLiveReset() (WsPublicLiveReset, error) {
+	var body WsPublicLiveReset
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicLiveReset overwrites any union data inside the WsPublicServerMessage as the provided WsPublicLiveReset
+func (t *WsPublicServerMessage) FromWsPublicLiveReset(v WsPublicLiveReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"live.reset"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicLiveReset performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicLiveReset
+func (t *WsPublicServerMessage) MergeWsPublicLiveReset(v WsPublicLiveReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"live.reset"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicTranscriptReset returns the union data inside the WsPublicServerMessage as a WsPublicTranscriptReset
+func (t WsPublicServerMessage) AsWsPublicTranscriptReset() (WsPublicTranscriptReset, error) {
+	var body WsPublicTranscriptReset
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicTranscriptReset overwrites any union data inside the WsPublicServerMessage as the provided WsPublicTranscriptReset
+func (t *WsPublicServerMessage) FromWsPublicTranscriptReset(v WsPublicTranscriptReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"transcript.reset"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicTranscriptReset performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicTranscriptReset
+func (t *WsPublicServerMessage) MergeWsPublicTranscriptReset(v WsPublicTranscriptReset) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"transcript.reset"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicState returns the union data inside the WsPublicServerMessage as a WsPublicState
+func (t WsPublicServerMessage) AsWsPublicState() (WsPublicState, error) {
+	var body WsPublicState
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicState overwrites any union data inside the WsPublicServerMessage as the provided WsPublicState
+func (t *WsPublicServerMessage) FromWsPublicState(v WsPublicState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.state"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicState performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicState
+func (t *WsPublicServerMessage) MergeWsPublicState(v WsPublicState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.state"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsPublicRevoked returns the union data inside the WsPublicServerMessage as a WsPublicRevoked
+func (t WsPublicServerMessage) AsWsPublicRevoked() (WsPublicRevoked, error) {
+	var body WsPublicRevoked
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsPublicRevoked overwrites any union data inside the WsPublicServerMessage as the provided WsPublicRevoked
+func (t *WsPublicServerMessage) FromWsPublicRevoked(v WsPublicRevoked) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.revoked"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsPublicRevoked performs a merge with any union data inside the WsPublicServerMessage, using the provided WsPublicRevoked
+func (t *WsPublicServerMessage) MergeWsPublicRevoked(v WsPublicRevoked) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"share.revoked"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerPong returns the union data inside the WsPublicServerMessage as a WsServerPong
+func (t WsPublicServerMessage) AsWsServerPong() (WsServerPong, error) {
+	var body WsServerPong
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerPong overwrites any union data inside the WsPublicServerMessage as the provided WsServerPong
+func (t *WsPublicServerMessage) FromWsServerPong(v WsServerPong) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"pong"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerPong performs a merge with any union data inside the WsPublicServerMessage, using the provided WsServerPong
+func (t *WsPublicServerMessage) MergeWsServerPong(v WsServerPong) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"pong"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t WsPublicServerMessage) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t WsPublicServerMessage) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "entries":
+		return t.AsWsPublicEntries()
+	case "frame":
+		return t.AsWsPublicFrame()
+	case "live.reset":
+		return t.AsWsPublicLiveReset()
+	case "pong":
+		return t.AsWsServerPong()
+	case "share.revoked":
+		return t.AsWsPublicRevoked()
+	case "share.snapshot":
+		return t.AsWsPublicSnapshot()
+	case "share.state":
+		return t.AsWsPublicState()
+	case "transcript.reset":
+		return t.AsWsPublicTranscriptReset()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t WsPublicServerMessage) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *WsPublicServerMessage) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsWsServerIndex returns the union data inside the WsServerMessage as a WsServerIndex
 func (t WsServerMessage) AsWsServerIndex() (WsServerIndex, error) {
 	var body WsServerIndex
@@ -4882,6 +6242,74 @@ func (t *WsServerMessage) MergeWsServerTermResized(v WsServerTermResized) error 
 	return err
 }
 
+// AsWsServerNotification returns the union data inside the WsServerMessage as a WsServerNotification
+func (t WsServerMessage) AsWsServerNotification() (WsServerNotification, error) {
+	var body WsServerNotification
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerNotification overwrites any union data inside the WsServerMessage as the provided WsServerNotification
+func (t *WsServerMessage) FromWsServerNotification(v WsServerNotification) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notification"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerNotification performs a merge with any union data inside the WsServerMessage, using the provided WsServerNotification
+func (t *WsServerMessage) MergeWsServerNotification(v WsServerNotification) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notification"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerNotificationsRead returns the union data inside the WsServerMessage as a WsServerNotificationsRead
+func (t WsServerMessage) AsWsServerNotificationsRead() (WsServerNotificationsRead, error) {
+	var body WsServerNotificationsRead
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerNotificationsRead overwrites any union data inside the WsServerMessage as the provided WsServerNotificationsRead
+func (t *WsServerMessage) FromWsServerNotificationsRead(v WsServerNotificationsRead) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notifications.read"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerNotificationsRead performs a merge with any union data inside the WsServerMessage, using the provided WsServerNotificationsRead
+func (t *WsServerMessage) MergeWsServerNotificationsRead(v WsServerNotificationsRead) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notifications.read"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -4908,6 +6336,10 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerIndexPatch()
 	case "live.reset":
 		return t.AsWsServerLiveReset()
+	case "notification":
+		return t.AsWsServerNotification()
+	case "notifications.read":
+		return t.AsWsServerNotificationsRead()
 	case "orb":
 		return t.AsWsServerOrb()
 	case "plan.resolved":
@@ -4967,6 +6399,9 @@ type ServerInterface interface {
 	// GetAttachmentContent 下载附件（支持 `Range`）
 	// (GET /api/v1/attachments/{id}/content)
 	GetAttachmentContent(w http.ResponseWriter, r *http.Request, id AttachmentIDPath, params GetAttachmentContentParams)
+	// PublishAttachment 把附件发布为公开 URL（幂等：已发布则返回现有发布）
+	// (POST /api/v1/attachments/{id}/publish)
+	PublishAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath)
 	// AuthLoginBegin 开始 Passkey 登录（可发现凭据）
 	// (POST /api/v1/auth/login/begin)
 	AuthLoginBegin(w http.ResponseWriter, r *http.Request)
@@ -5009,6 +6444,30 @@ type ServerInterface interface {
 	// GetMe 当前身份
 	// (GET /api/v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// ListNotificationChannels 通知渠道（机密字段只写不读）
+	// (GET /api/v1/notification-channels)
+	ListNotificationChannels(w http.ResponseWriter, r *http.Request)
+	// CreateNotificationChannel 新建通知渠道
+	// (POST /api/v1/notification-channels)
+	CreateNotificationChannel(w http.ResponseWriter, r *http.Request)
+	// DeleteNotificationChannel 删除通知渠道（其投递记录一并删除）
+	// (DELETE /api/v1/notification-channels/{id})
+	DeleteNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath)
+	// UpdateNotificationChannel 修改通知渠道（给出配置对象 = 整体替换该渠道配置；Telegram 换 token 会清掉绑定）
+	// (PATCH /api/v1/notification-channels/{id})
+	UpdateNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath)
+	// LinkTelegramChannel 生成 Telegram 绑定码（10 分钟有效；在 Telegram 里向 bot 私聊发送 `/start <码>` 完成绑定）
+	// (POST /api/v1/notification-channels/{id}/telegram/link)
+	LinkTelegramChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath)
+	// TestNotificationChannel 同步发送一条测试消息（不写通知表；结果写入渠道的 `lastError`）
+	// (POST /api/v1/notification-channels/{id}/test)
+	TestNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath)
+	// ListNotifications 最近的通知（按创建时间降序，含各渠道的投递状态）
+	// (GET /api/v1/notifications)
+	ListNotifications(w http.ResponseWriter, r *http.Request, params ListNotificationsParams)
+	// MarkNotificationsRead 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+	// (POST /api/v1/notifications/read)
+	MarkNotificationsRead(w http.ResponseWriter, r *http.Request)
 	// ListOrbs orb 列表
 	// (GET /api/v1/orbs)
 	ListOrbs(w http.ResponseWriter, r *http.Request, params ListOrbsParams)
@@ -5033,6 +6492,9 @@ type ServerInterface interface {
 	// MkdirOrbFs 新建目录（含缺失的上级目录，0755）
 	// (POST /api/v1/orbs/{id}/fs/mkdir)
 	MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// PublishOrbFile 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
+	// (POST /api/v1/orbs/{id}/fs/publish)
+	PublishOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// RenameOrbFs 移动 / 重命名
 	// (POST /api/v1/orbs/{id}/fs/rename)
 	RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
@@ -5093,6 +6555,12 @@ type ServerInterface interface {
 	// GetOrbSetupRunLog 一次 setup / resume 运行的输出（末尾至多 256KiB）
 	// (GET /api/v1/orbs/{id}/setup-runs/{runId}/log)
 	GetOrbSetupRunLog(w http.ResponseWriter, r *http.Request, id OrbIDPath, runID SetupRunID)
+	// GetOrbSyncBundle 下载 `prepareOrbSync` 打出的 bundle（保留 10 分钟；过期 404 `sync_bundle_gone`）
+	// (GET /api/v1/orbs/{id}/sync/bundle)
+	GetOrbSyncBundle(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbSyncBundleParams)
+	// PrepareOrbSync 生成工作区快照提交并按需打包 git bundle
+	// (POST /api/v1/orbs/{id}/sync/prepare)
+	PrepareOrbSync(w http.ResponseWriter, r *http.Request, id OrbIDPath, params PrepareOrbSyncParams)
 	// ListProjects 项目列表
 	// (GET /api/v1/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams)
@@ -5117,6 +6585,30 @@ type ServerInterface interface {
 	// DeleteProvider 删除（停用）provider，其令牌立即失效
 	// (DELETE /api/v1/providers/{id})
 	DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
+	// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
+	// (GET /api/v1/public/shares/{slug})
+	GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
+	// GetPublicShareBlob 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+	// (GET /api/v1/public/shares/{slug}/blobs/{sha256})
+	GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, sha256 Sha256)
+	// ListPublicShareEntries 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload）
+	// (GET /api/v1/public/shares/{slug}/entries)
+	ListPublicShareEntries(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, params ListPublicShareEntriesParams)
+	// RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
+	// (DELETE /api/v1/published-files/{id})
+	RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath)
+	// ListPushSubscriptions 推送订阅（所有浏览器 / 设备）
+	// (GET /api/v1/push/subscriptions)
+	ListPushSubscriptions(w http.ResponseWriter, r *http.Request)
+	// CreatePushSubscription 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+	// (POST /api/v1/push/subscriptions)
+	CreatePushSubscription(w http.ResponseWriter, r *http.Request)
+	// DeletePushSubscription 删除推送订阅
+	// (DELETE /api/v1/push/subscriptions/{id})
+	DeletePushSubscription(w http.ResponseWriter, r *http.Request, id PushSubscriptionIDPath)
+	// GetVapidKey Web Push 的 VAPID 公钥（`applicationServerKey`）
+	// (GET /api/v1/push/vapid-key)
+	GetVapidKey(w http.ResponseWriter, r *http.Request)
 	// ListSecrets 密钥列表（仅名称与元数据）
 	// (GET /api/v1/secrets)
 	ListSecrets(w http.ResponseWriter, r *http.Request)
@@ -5147,6 +6639,12 @@ type ServerInterface interface {
 	// PutUserIdentity 设置用户头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
 	// (PUT /api/v1/settings/user-identity)
 	PutUserIdentity(w http.ResponseWriter, r *http.Request)
+	// ListShares 全部未撤销的线程分享与已发布文件（设置页总览）
+	// (GET /api/v1/shares)
+	ListShares(w http.ResponseWriter, r *http.Request)
+	// RevokeShare 撤销线程分享（页面、接口、图片立即 404，已连接的匿名 WebSocket 收到 `share.revoked` 后以 4001 关闭）
+	// (DELETE /api/v1/shares/{id})
+	RevokeShare(w http.ResponseWriter, r *http.Request, id ShareIDPath)
 	// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 	// (GET /api/v1/stats/orbs)
 	GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams)
@@ -5177,6 +6675,12 @@ type ServerInterface interface {
 	// ForkThread fork 线程（共用 orb 或连环境分叉）
 	// (POST /api/v1/threads/{id}/fork)
 	ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// ListThreadShares 该线程未撤销的公开分享（按创建时间降序）
+	// (GET /api/v1/threads/{id}/shares)
+	ListThreadShares(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// CreateThreadShare 创建公开分享（快照 / 实时）
+	// (POST /api/v1/threads/{id}/shares)
+	CreateThreadShare(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// WakeThread 唤醒线程所在 orb（异步）
 	// (POST /api/v1/threads/{id}/wake)
 	WakeThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
@@ -5249,6 +6753,12 @@ func (_ Unimplemented) DeleteAttachment(w http.ResponseWriter, r *http.Request, 
 // GetAttachmentContent 下载附件（支持 `Range`）
 // (GET /api/v1/attachments/{id}/content)
 func (_ Unimplemented) GetAttachmentContent(w http.ResponseWriter, r *http.Request, id AttachmentIDPath, params GetAttachmentContentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PublishAttachment 把附件发布为公开 URL（幂等：已发布则返回现有发布）
+// (POST /api/v1/attachments/{id}/publish)
+func (_ Unimplemented) PublishAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5336,6 +6846,54 @@ func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListNotificationChannels 通知渠道（机密字段只写不读）
+// (GET /api/v1/notification-channels)
+func (_ Unimplemented) ListNotificationChannels(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateNotificationChannel 新建通知渠道
+// (POST /api/v1/notification-channels)
+func (_ Unimplemented) CreateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteNotificationChannel 删除通知渠道（其投递记录一并删除）
+// (DELETE /api/v1/notification-channels/{id})
+func (_ Unimplemented) DeleteNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateNotificationChannel 修改通知渠道（给出配置对象 = 整体替换该渠道配置；Telegram 换 token 会清掉绑定）
+// (PATCH /api/v1/notification-channels/{id})
+func (_ Unimplemented) UpdateNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// LinkTelegramChannel 生成 Telegram 绑定码（10 分钟有效；在 Telegram 里向 bot 私聊发送 `/start <码>` 完成绑定）
+// (POST /api/v1/notification-channels/{id}/telegram/link)
+func (_ Unimplemented) LinkTelegramChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TestNotificationChannel 同步发送一条测试消息（不写通知表；结果写入渠道的 `lastError`）
+// (POST /api/v1/notification-channels/{id}/test)
+func (_ Unimplemented) TestNotificationChannel(w http.ResponseWriter, r *http.Request, id NotificationChannelIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListNotifications 最近的通知（按创建时间降序，含各渠道的投递状态）
+// (GET /api/v1/notifications)
+func (_ Unimplemented) ListNotifications(w http.ResponseWriter, r *http.Request, params ListNotificationsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// MarkNotificationsRead 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+// (POST /api/v1/notifications/read)
+func (_ Unimplemented) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListOrbs orb 列表
 // (GET /api/v1/orbs)
 func (_ Unimplemented) ListOrbs(w http.ResponseWriter, r *http.Request, params ListOrbsParams) {
@@ -5381,6 +6939,12 @@ func (_ Unimplemented) ListOrbFs(w http.ResponseWriter, r *http.Request, id OrbI
 // MkdirOrbFs 新建目录（含缺失的上级目录，0755）
 // (POST /api/v1/orbs/{id}/fs/mkdir)
 func (_ Unimplemented) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PublishOrbFile 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
+// (POST /api/v1/orbs/{id}/fs/publish)
+func (_ Unimplemented) PublishOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5504,6 +7068,18 @@ func (_ Unimplemented) GetOrbSetupRunLog(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetOrbSyncBundle 下载 `prepareOrbSync` 打出的 bundle（保留 10 分钟；过期 404 `sync_bundle_gone`）
+// (GET /api/v1/orbs/{id}/sync/bundle)
+func (_ Unimplemented) GetOrbSyncBundle(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbSyncBundleParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PrepareOrbSync 生成工作区快照提交并按需打包 git bundle
+// (POST /api/v1/orbs/{id}/sync/prepare)
+func (_ Unimplemented) PrepareOrbSync(w http.ResponseWriter, r *http.Request, id OrbIDPath, params PrepareOrbSyncParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListProjects 项目列表
 // (GET /api/v1/projects)
 func (_ Unimplemented) ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams) {
@@ -5549,6 +7125,54 @@ func (_ Unimplemented) CreateProvider(w http.ResponseWriter, r *http.Request) {
 // DeleteProvider 删除（停用）provider，其令牌立即失效
 // (DELETE /api/v1/providers/{id})
 func (_ Unimplemented) DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
+// (GET /api/v1/public/shares/{slug})
+func (_ Unimplemented) GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetPublicShareBlob 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+// (GET /api/v1/public/shares/{slug}/blobs/{sha256})
+func (_ Unimplemented) GetPublicShareBlob(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, sha256 Sha256) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListPublicShareEntries 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload）
+// (GET /api/v1/public/shares/{slug}/entries)
+func (_ Unimplemented) ListPublicShareEntries(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, params ListPublicShareEntriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
+// (DELETE /api/v1/published-files/{id})
+func (_ Unimplemented) RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListPushSubscriptions 推送订阅（所有浏览器 / 设备）
+// (GET /api/v1/push/subscriptions)
+func (_ Unimplemented) ListPushSubscriptions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreatePushSubscription 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+// (POST /api/v1/push/subscriptions)
+func (_ Unimplemented) CreatePushSubscription(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeletePushSubscription 删除推送订阅
+// (DELETE /api/v1/push/subscriptions/{id})
+func (_ Unimplemented) DeletePushSubscription(w http.ResponseWriter, r *http.Request, id PushSubscriptionIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetVapidKey Web Push 的 VAPID 公钥（`applicationServerKey`）
+// (GET /api/v1/push/vapid-key)
+func (_ Unimplemented) GetVapidKey(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5612,6 +7236,18 @@ func (_ Unimplemented) PutUserIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListShares 全部未撤销的线程分享与已发布文件（设置页总览）
+// (GET /api/v1/shares)
+func (_ Unimplemented) ListShares(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RevokeShare 撤销线程分享（页面、接口、图片立即 404，已连接的匿名 WebSocket 收到 `share.revoked` 后以 4001 关闭）
+// (DELETE /api/v1/shares/{id})
+func (_ Unimplemented) RevokeShare(w http.ResponseWriter, r *http.Request, id ShareIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 // (GET /api/v1/stats/orbs)
 func (_ Unimplemented) GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams) {
@@ -5669,6 +7305,18 @@ func (_ Unimplemented) ListThreadEntries(w http.ResponseWriter, r *http.Request,
 // ForkThread fork 线程（共用 orb 或连环境分叉）
 // (POST /api/v1/threads/{id}/fork)
 func (_ Unimplemented) ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListThreadShares 该线程未撤销的公开分享（按创建时间降序）
+// (GET /api/v1/threads/{id}/shares)
+func (_ Unimplemented) ListThreadShares(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateThreadShare 创建公开分享（快照 / 实时）
+// (POST /api/v1/threads/{id}/shares)
+func (_ Unimplemented) CreateThreadShare(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5959,6 +7607,32 @@ func (siw *ServerInterfaceWrapper) GetAttachmentContent(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// PublishAttachment operation middleware
+func (siw *ServerInterfaceWrapper) PublishAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AttachmentIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PublishAttachment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AuthLoginBegin operation middleware
 func (siw *ServerInterfaceWrapper) AuthLoginBegin(w http.ResponseWriter, r *http.Request) {
 
@@ -6182,6 +7856,198 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNotificationChannels operation middleware
+func (siw *ServerInterfaceWrapper) ListNotificationChannels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNotificationChannels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNotificationChannel operation middleware
+func (siw *ServerInterfaceWrapper) CreateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNotificationChannel(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNotificationChannel operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNotificationChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id NotificationChannelIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNotificationChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateNotificationChannel operation middleware
+func (siw *ServerInterfaceWrapper) UpdateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id NotificationChannelIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateNotificationChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LinkTelegramChannel operation middleware
+func (siw *ServerInterfaceWrapper) LinkTelegramChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id NotificationChannelIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LinkTelegramChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestNotificationChannel operation middleware
+func (siw *ServerInterfaceWrapper) TestNotificationChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id NotificationChannelIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestNotificationChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNotifications operation middleware
+func (siw *ServerInterfaceWrapper) ListNotifications(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListNotificationsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNotifications(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkNotificationsRead operation middleware
+func (siw *ServerInterfaceWrapper) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkNotificationsRead(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6526,6 +8392,32 @@ func (siw *ServerInterfaceWrapper) MkdirOrbFs(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MkdirOrbFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PublishOrbFile operation middleware
+func (siw *ServerInterfaceWrapper) PublishOrbFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PublishOrbFile(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7451,6 +9343,90 @@ func (siw *ServerInterfaceWrapper) GetOrbSetupRunLog(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetOrbSyncBundle operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbSyncBundle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbSyncBundleParams
+
+	// ------------- Required query parameter "id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "id", r.URL.Query(), &params.ID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbSyncBundle(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PrepareOrbSync operation middleware
+func (siw *ServerInterfaceWrapper) PrepareOrbSync(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PrepareOrbSyncParams
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PrepareOrbSync(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjects operation middleware
 func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.Request) {
 
@@ -7630,6 +9606,216 @@ func (siw *ServerInterfaceWrapper) DeleteProvider(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetPublicShare operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ShareSlugPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicShare(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublicShareBlob operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicShareBlob(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ShareSlugPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "sha256" -------------
+	var sha256 Sha256
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sha256", chi.URLParam(r, "sha256"), &sha256, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha256", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicShareBlob(w, r, slug, sha256)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPublicShareEntries operation middleware
+func (siw *ServerInterfaceWrapper) ListPublicShareEntries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ShareSlugPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPublicShareEntriesParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPublicShareEntries(w, r, slug, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokePublishedFile operation middleware
+func (siw *ServerInterfaceWrapper) RevokePublishedFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id PublishedFileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokePublishedFile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPushSubscriptions operation middleware
+func (siw *ServerInterfaceWrapper) ListPushSubscriptions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPushSubscriptions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePushSubscription operation middleware
+func (siw *ServerInterfaceWrapper) CreatePushSubscription(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePushSubscription(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePushSubscription operation middleware
+func (siw *ServerInterfaceWrapper) DeletePushSubscription(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id PushSubscriptionIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePushSubscription(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVapidKey operation middleware
+func (siw *ServerInterfaceWrapper) GetVapidKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVapidKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSecrets operation middleware
 func (siw *ServerInterfaceWrapper) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
@@ -7785,6 +9971,46 @@ func (siw *ServerInterfaceWrapper) PutUserIdentity(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutUserIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListShares operation middleware
+func (siw *ServerInterfaceWrapper) ListShares(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListShares(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeShare operation middleware
+func (siw *ServerInterfaceWrapper) RevokeShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ShareIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeShare(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8170,6 +10396,58 @@ func (siw *ServerInterfaceWrapper) ForkThread(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListThreadShares operation middleware
+func (siw *ServerInterfaceWrapper) ListThreadShares(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListThreadShares(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateThreadShare operation middleware
+func (siw *ServerInterfaceWrapper) CreateThreadShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateThreadShare(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // WakeThread operation middleware
 func (siw *ServerInterfaceWrapper) WakeThread(w http.ResponseWriter, r *http.Request) {
 
@@ -8499,6 +10777,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/threads/{id}/attachments", wrapper.ListThreadAttachments)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/shares", wrapper.ListThreadShares)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/threads/{id}/shares", wrapper.CreateThreadShare)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/orbs", wrapper.ListOrbs)
 	})
 	r.Group(func(r chi.Router) {
@@ -8547,6 +10831,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/orbs/{id}/fs/delete", wrapper.DeleteOrbFs)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/fs/publish", wrapper.PublishOrbFile)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/orbs/{id}/git/status", wrapper.GetOrbGitStatus)
 	})
 	r.Group(func(r chi.Router) {
@@ -8560,6 +10847,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/orbs/{id}/git/unstage", wrapper.UnstageOrbGit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/sync/prepare", wrapper.PrepareOrbSync)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/sync/bundle", wrapper.GetOrbSyncBundle)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/orbs/{id}/services", wrapper.ListOrbServices)
@@ -8593,6 +10886,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/attachments/{id}/content", wrapper.GetAttachmentContent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/attachments/{id}/publish", wrapper.PublishAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/shares", wrapper.ListShares)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/shares/{id}", wrapper.RevokeShare)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/published-files/{id}", wrapper.RevokePublishedFile)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/secrets", wrapper.ListSecrets)
@@ -8644,6 +10949,51 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/stats/orbs", wrapper.GetOrbStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/notifications", wrapper.ListNotifications)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/notifications/read", wrapper.MarkNotificationsRead)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/notification-channels", wrapper.ListNotificationChannels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/notification-channels", wrapper.CreateNotificationChannel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/notification-channels/{id}", wrapper.DeleteNotificationChannel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/notification-channels/{id}", wrapper.UpdateNotificationChannel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/notification-channels/{id}/test", wrapper.TestNotificationChannel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/notification-channels/{id}/telegram/link", wrapper.LinkTelegramChannel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/push/vapid-key", wrapper.GetVapidKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/push/subscriptions", wrapper.ListPushSubscriptions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/push/subscriptions", wrapper.CreatePushSubscription)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/push/subscriptions/{id}", wrapper.DeletePushSubscription)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}", wrapper.GetPublicShare)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}/entries", wrapper.ListPublicShareEntries)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}/blobs/{sha256}", wrapper.GetPublicShareBlob)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/ws-ticket", wrapper.CreateWsTicket)

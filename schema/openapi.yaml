@@ -60,6 +60,12 @@ tags:
     description: provider → 控制面（C1）
   - name: websocket
     description: WebSocket 升级端点（不进入 strict server，由手写处理器服务）
+  - name: shares
+    description: 线程公开分享与文件发布（M5）
+  - name: notifications
+    description: 通知、通知渠道与推送订阅（M5）
+  - name: public
+    description: '匿名只读（免鉴权；响应一律带 `X-Robots-Tag: noindex, nofollow` 与 `Cache-Control: no-store`）'
 
 paths:
   /healthz:
@@ -616,6 +622,49 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AttachmentList' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/shares:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [shares]
+      operationId: listThreadShares
+      summary: 该线程未撤销的公开分享（按创建时间降序）
+      responses:
+        '200':
+          description: 分享列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadShareList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [shares]
+      operationId: createThreadShare
+      summary: 创建公开分享（快照 / 实时）
+      description: |
+        创建前对分享范围（活动分支上的主会话条目经公开过滤之后的内容）做密钥扫描：有命中且未给 `acknowledgeFindings: true`
+        → 409 `ShareScanConflict{code:"secrets_found"}`；确认后创建并把命中数记入 `findings`。
+        每线程未撤销分享 ≤20（超出 409 `invalid`）；`mode` 非法 → 400 `invalid`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateThreadShareRequest' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadShare' }
+        '409':
+          description: '`secrets_found`：扫描有命中且未确认（其它 409 为普通 `Error`）'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareScanConflict' }
+        default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- orbs
   /api/v1/orbs:
@@ -950,6 +999,32 @@ paths:
       responses:
         '204': { description: 成功 }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/fs/publish:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    post:
+      tags: [shares]
+      operationId: publishOrbFile
+      summary: 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
+      description: |
+        线程须在该 orb 上；必须是普通文件且 ≤100MiB（目录 409 `is_a_directory`，超限 413 `too_large`）。
+        orb 冻结 / 停机时唤醒并至多等待 25s。之后 orb 里的修改不影响已发布的副本。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishOrbFileRequest' }
+      responses:
+        '201':
+          description: 已发布
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishedFile' }
+        default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- orb 改动（M3，git，经 fs 流代理到 orbd）
   /api/v1/orbs/{id}/git/status:
@@ -1054,6 +1129,59 @@ paths:
             schema: { $ref: '#/components/schemas/GitPathsRequest' }
       responses:
         '204': { description: 成功 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- oryn sync（M5，经 fs 流代理到 orbd，特性 `sync`）
+  /api/v1/orbs/{id}/sync/prepare:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    post:
+      tags: [orbs]
+      operationId: prepareOrbSync
+      summary: 生成工作区快照提交并按需打包 git bundle
+      description: |
+        orbd 用临时 index 把工作区（含未跟踪、遵守 `.gitignore`）写成以 HEAD 为父的快照提交（同树同父 → 同 sha），
+        更新 `refs/oryn/sync/{head,snapshot}`；`snapshot ∉ have` 时以 `have` 中本仓库已有的提交为界打包 bundle。
+        错误：HEAD 未出生 409 `sync_no_commits`；无共同提交且未给 `force` 409 `sync_no_common`；
+        无共同提交、给了 `force` 但仓库是浅克隆 409 `sync_shallow`；bundle 超过 1GiB 413 `too_large`；
+        旧版 orbd 409 `orbd_outdated`。截止 6 分钟。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - { $ref: '#/components/parameters/OrbBackgroundQuery' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrbSyncPrepareRequest' }
+      responses:
+        '200':
+          description: 同步状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbSyncState' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/sync/bundle:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    get:
+      tags: [orbs]
+      operationId: getOrbSyncBundle
+      summary: 下载 `prepareOrbSync` 打出的 bundle（保留 10 分钟；过期 404 `sync_bundle_gone`）
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: '`OrbSyncState.bundle.id`'
+          schema: { type: string, pattern: '^[0-9a-f]{16}$' }
+      responses:
+        '200':
+          description: bundle 字节
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- 受管服务与 portal（M4）
@@ -1284,6 +1412,67 @@ paths:
           content:
             '*/*':
               schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/attachments/{id}/publish:
+    parameters:
+      - { $ref: '#/components/parameters/AttachmentIdPath' }
+    post:
+      tags: [shares]
+      operationId: publishAttachment
+      summary: 把附件发布为公开 URL（幂等：已发布则返回现有发布）
+      description: 附件须已绑定线程（未绑定 → 400 `invalid`）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 发布记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishedFile' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- shares（M5）
+  /api/v1/shares:
+    get:
+      tags: [shares]
+      operationId: listShares
+      summary: 全部未撤销的线程分享与已发布文件（设置页总览）
+      responses:
+        '200':
+          description: 总览
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareOverview' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/shares/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ShareIdPath' }
+    delete:
+      tags: [shares]
+      operationId: revokeShare
+      summary: 撤销线程分享（页面、接口、图片立即 404，已连接的匿名 WebSocket 收到 `share.revoked` 后以 4001 关闭）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已撤销 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/published-files/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/PublishedFileIdPath' }
+    delete:
+      tags: [shares]
+      operationId: revokePublishedFile
+      summary: 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已撤回 }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- secrets
@@ -1575,6 +1764,313 @@ paths:
               schema: { $ref: '#/components/schemas/OrbStats' }
         default: { $ref: '#/components/responses/Error' }
 
+  # ---------------------------------------------------------------- notifications（M5）
+  /api/v1/notifications:
+    get:
+      tags: [notifications]
+      operationId: listNotifications
+      summary: 最近的通知（按创建时间降序，含各渠道的投递状态）
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          description: 只返回 `createdAt < before` 的通知（翻页游标）
+          schema: { $ref: '#/components/schemas/TimestampMs' }
+      responses:
+        '200':
+          description: 通知列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/notifications/read:
+    post:
+      tags: [notifications]
+      operationId: markNotificationsRead
+      summary: 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationsReadRequest' }
+      responses:
+        '204': { description: 成功 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/notification-channels:
+    get:
+      tags: [notifications]
+      operationId: listNotificationChannels
+      summary: 通知渠道（机密字段只写不读）
+      responses:
+        '200':
+          description: 渠道列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [notifications]
+      operationId: createNotificationChannel
+      summary: 新建通知渠道
+      description: |
+        恰好给出与 `kind` 同名的一个配置对象；URL 须是 http(s)，自定义头名不得是 `Host` / `Content-Length` / `Content-Type`
+        （否则 400 `invalid_channel`）。Telegram：创建时以 `getMe` 校验 token（失败 400 `invalid_channel`），至多一个（409 `channel_exists`）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationChannelInput' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannel' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/notification-channels/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/NotificationChannelIdPath' }
+    patch:
+      tags: [notifications]
+      operationId: updateNotificationChannel
+      summary: 修改通知渠道（给出配置对象 = 整体替换该渠道配置；Telegram 换 token 会清掉绑定）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationChannelPatch' }
+      responses:
+        '200':
+          description: 修改后的渠道
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannel' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [notifications]
+      operationId: deleteNotificationChannel
+      summary: 删除通知渠道（其投递记录一并删除）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/notification-channels/{id}/test:
+    post:
+      tags: [notifications]
+      operationId: testNotificationChannel
+      summary: 同步发送一条测试消息（不写通知表；结果写入渠道的 `lastError`）
+      description: Telegram 未绑定私聊 → 409 `channel_not_linked`。
+      parameters:
+        - { $ref: '#/components/parameters/NotificationChannelIdPath' }
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 发送结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationTestResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/notification-channels/{id}/telegram/link:
+    post:
+      tags: [notifications]
+      operationId: linkTelegramChannel
+      summary: 生成 Telegram 绑定码（10 分钟有效；在 Telegram 里向 bot 私聊发送 `/start <码>` 完成绑定）
+      description: 渠道不是 Telegram → 400 `invalid_channel`。
+      parameters:
+        - { $ref: '#/components/parameters/NotificationChannelIdPath' }
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 绑定码
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelegramLink' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/push/vapid-key:
+    get:
+      tags: [notifications]
+      operationId: getVapidKey
+      summary: Web Push 的 VAPID 公钥（`applicationServerKey`）
+      responses:
+        '200':
+          description: 公钥
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VapidKey' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/push/subscriptions:
+    get:
+      tags: [notifications]
+      operationId: listPushSubscriptions
+      summary: 推送订阅（所有浏览器 / 设备）
+      responses:
+        '200':
+          description: 订阅列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushSubscriptionList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [notifications]
+      operationId: createPushSubscription
+      summary: 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+      description: |
+        `endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
+        `keys.auth` 解码后须为 16 字节，否则 400 `push_invalid`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushSubscriptionInput' }
+      responses:
+        '201':
+          description: 订阅
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushSubscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/push/subscriptions/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/PushSubscriptionIdPath' }
+    delete:
+      tags: [notifications]
+      operationId: deletePushSubscription
+      summary: 删除推送订阅
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- public（M5，匿名只读）
+  /api/v1/public/shares/{slug}:
+    parameters:
+      - { $ref: '#/components/parameters/ShareSlugPath' }
+    get:
+      tags: [public]
+      operationId: getPublicShare
+      summary: 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
+      description: slug 不存在或已撤销一律 404 `not_found`。
+      security: [{}]
+      responses:
+        '200':
+          description: 分享
+          headers:
+            X-Robots-Tag:
+              schema: { type: string, example: 'noindex, nofollow' }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicShare' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/shares/{slug}/entries:
+    parameters:
+      - { $ref: '#/components/parameters/ShareSlugPath' }
+    get:
+      tags: [public]
+      operationId: listPublicShareEntries
+      summary: 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload）
+      security: [{}]
+      parameters:
+        - name: after
+          in: query
+          description: 只返回 `seq > after` 的条目
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: 条目页
+          headers:
+            X-Robots-Tag:
+              schema: { type: string, example: 'noindex, nofollow' }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicEntryPage' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/shares/{slug}/blobs/{sha256}:
+    parameters:
+      - { $ref: '#/components/parameters/ShareSlugPath' }
+      - name: sha256
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Sha256' }
+    get:
+      tags: [public]
+      operationId: getPublicShareBlob
+      summary: 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+      description: '头同 `getBlob`（`nosniff` + `Content-Security-Policy: sandbox`），但 `Cache-Control: no-store`。'
+      security: [{}]
+      responses:
+        '200':
+          description: 原始字节
+          headers:
+            X-Robots-Tag:
+              schema: { type: string, example: 'noindex, nofollow' }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/shares/{slug}/ws:
+    parameters:
+      - { $ref: '#/components/parameters/ShareSlugPath' }
+    get:
+      tags: [websocket, public]
+      operationId: connectPublicShareWs
+      summary: 实时分享的匿名 WebSocket（仅 `mode=live`；快照分享 → 404）
+      description: |
+        S→C 消息见 `WsPublicServerMessage`（都不带 `threadId`）；客户端只许发 `WsClientPing`，其它消息以 1008 关闭。
+        连接后先收到 `share.snapshot`，再分批收到 `entries`（每批 ≤200 条），之后转发实时 `frame`。
+        撤销时收到 `share.revoked` 并以 4001 关闭。名额：每分享 ≤64、全局 ≤512，已满 503 `share_busy`；读上限 4KiB。
+      security: [{}]
+      parameters:
+        - name: after
+          in: query
+          description: 已缓存条目的最大 seq（补发从其后开始）
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: rev
+          in: query
+          description: 客户端缓存的 `transcriptRev`；与当前不同时服务端从 0 补发（`fullReplay`）
+          schema: { type: integer, format: int64 }
+      responses:
+        '101': { description: 切换到 WebSocket }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- realtime
   /api/v1/ws-ticket:
     post:
@@ -1850,6 +2346,31 @@ components:
       required: true
       description: portal 端口（服务的 `PORT`）
       schema: { type: integer, minimum: 1, maximum: 65535 }
+    ShareIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ShareId' }
+    ShareSlugPath:
+      name: slug
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ShareSlug' }
+    PublishedFileIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/PublishedFileId' }
+    NotificationChannelIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/NotificationChannelId' }
+    PushSubscriptionIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/PushSubscriptionId' }
 
   responses:
     Error:
@@ -1907,6 +2428,30 @@ components:
       type: string
       pattern: '^att_[0-9A-Z]{26}$'
       description: '`att_<ulid>`'
+    ShareId:
+      type: string
+      pattern: '^shr_[0-9A-Z]{26}$'
+      description: '`shr_<ulid>`'
+    ShareSlug:
+      type: string
+      pattern: '^[0-9a-f]{32}$'
+      description: 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
+    PublishedFileId:
+      type: string
+      pattern: '^pub_[0-9A-Z]{26}$'
+      description: '`pub_<ulid>`'
+    NotificationId:
+      type: string
+      pattern: '^ntf_[0-9A-Z]{26}$'
+      description: '`ntf_<ulid>`'
+    NotificationChannelId:
+      type: string
+      pattern: '^nch_[0-9A-Z]{26}$'
+      description: '`nch_<ulid>`'
+    PushSubscriptionId:
+      type: string
+      pattern: '^psub_[0-9A-Z]{26}$'
+      description: '`psub_<ulid>`'
     OmpFrame:
       type: object
       additionalProperties: true
@@ -1926,6 +2471,9 @@ components:
             M4（受管服务与 portal，HTTP 状态见 docs/protocol.md）：`portal_disabled`（409，未配置 `portal_domain`）、`portal_not_found`（404）、`portal_unauthorized`（401）、
             `cross_site_blocked`（403）、`forbidden_port`（403）、`service_unreachable`（502）、`portal_unreachable`（502）、`portal_timeout`（504）、`portal_busy`（503）、
             `service_not_found`（404）、`invalid_service`（400）、`name_conflict`（409）、`services_not_ready`（409）。
+            M5（分享、通知与 sync，HTTP 状态见 docs/protocol.md）：`invalid`（400 / 409）、`secrets_found`（409，体为 `ShareScanConflict`）、
+            `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
+            `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
         message:
           type: string
     HealthResponse:
@@ -2437,6 +2985,11 @@ components:
             该线程的 portal 地址模板：线程短码已代入、保留 `{port}`（如 `https://t-3f9a1c0b7e2d-p{port}.orb.example.com/`）。
             控制面未配置 `portal_domain` 时省略。
           example: 'https://t-3f9a1c0b7e2d-p{port}.orb.example.com/'
+        publicShares:
+          type: integer
+          minimum: 1
+          readOnly: true
+          description: 未撤销的公开分享数；为 0 时省略
     ThreadError:
       type: object
       description: '`state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）'
@@ -3112,6 +3665,9 @@ components:
           format: int64
         sha256: { $ref: '#/components/schemas/Sha256' }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        publicUrl:
+          type: string
+          description: 已发布时的公开 URL（`<public_url>/f/<slug>/<文件名>`）；未发布省略
     AttachmentList:
       type: object
       required: [attachments]
@@ -3142,6 +3698,530 @@ components:
         path:
           type: string
           description: '`$HOME/.oryn/attachments/<threadId>/<id>/<safeName>` 的绝对路径'
+
+    # ============================================================ 公开分享与文件发布（M5）
+    ShareMode:
+      type: string
+      description: '`snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子'
+      enum: [live, snapshot]
+      # 显式常量名：避免与 JobOp 的 `snapshot` 冲突导致 oapi-codegen 给既有常量加前缀
+      x-enum-varnames: [ShareModeLive, ShareModeSnapshot]
+    ThreadShare:
+      type: object
+      required: [id, threadId, threadTitle, mode, slug, url, createdAt, findings]
+      properties:
+        id: { $ref: '#/components/schemas/ShareId' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadTitle: { type: string }
+        mode: { $ref: '#/components/schemas/ShareMode' }
+        slug: { $ref: '#/components/schemas/ShareSlug' }
+        url:
+          type: string
+          description: '`<public_url>/s/<slug>`'
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        untilSeq:
+          type: integer
+          format: int64
+          description: 仅快照：创建时线程的 `last_seq`
+        findings:
+          type: integer
+          description: 创建时确认过的密钥扫描命中数
+    ThreadShareList:
+      type: object
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadShare' }
+    CreateThreadShareRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode: { $ref: '#/components/schemas/ShareMode' }
+        acknowledgeFindings:
+          type: boolean
+          default: false
+          description: 已检查扫描命中项，仍然分享
+    ShareFindingRule:
+      type: string
+      description: 密钥扫描规则名（规则表见 docs/protocol.md M5 节）
+      enum:
+        - vault_secret
+        - private_key
+        - api_key_sk
+        - github_token
+        - aws_access_key
+        - google_api_key
+        - slack_token
+        - jwt
+        - oryn_token
+        - bearer_header
+        - url_credentials
+      x-enum-varnames:
+        - ShareFindingRuleVaultSecret
+        - ShareFindingRulePrivateKey
+        - ShareFindingRuleApiKeySk
+        - ShareFindingRuleGithubToken
+        - ShareFindingRuleAwsAccessKey
+        - ShareFindingRuleGoogleApiKey
+        - ShareFindingRuleSlackToken
+        - ShareFindingRuleJwt
+        - ShareFindingRuleOrynToken
+        - ShareFindingRuleBearerHeader
+        - ShareFindingRuleUrlCredentials
+    ShareFinding:
+      type: object
+      description: 一个 `(规则, 条目)` 的命中
+      required: [rule, seq, entryId, preview, count]
+      properties:
+        rule: { $ref: '#/components/schemas/ShareFindingRule' }
+        secretName:
+          type: string
+          description: 仅 `vault_secret`：命中的密钥名
+        seq:
+          type: integer
+          format: int64
+        entryId: { type: string }
+        role:
+          type: string
+          description: 所在消息的角色（`user` / `assistant` / `toolResult` …）；非消息条目省略
+        tool:
+          type: string
+          description: 所在工具结果的工具名
+        preview:
+          type: string
+          description: 脱敏片段：前 4 字符 + `…` + 后 2 字符；命中短于 12 字符时只留前 2 字符 + `…`
+        count:
+          type: integer
+          description: 该条目内同一规则的命中次数
+    ShareScan:
+      type: object
+      required: [findings, scanned, truncated]
+      properties:
+        findings:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/ShareFinding' }
+        scanned:
+          type: integer
+          description: 扫描过的条目数
+        truncated:
+          type: boolean
+          description: 命中超过 200 项，只返回前 200 项
+    ShareScanConflict:
+      type: object
+      description: '`createThreadShare` 的 409 体：扫描有命中且未确认'
+      required: [code, message, scan]
+      properties:
+        code:
+          type: string
+          enum: [secrets_found]
+          x-enum-varnames: [ShareScanConflictCodeSecretsFound]
+        message: { type: string }
+        scan: { $ref: '#/components/schemas/ShareScan' }
+    PublishedFile:
+      type: object
+      required: [id, attachmentId, name, mime, size, url, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/PublishedFileId' }
+        attachmentId: { $ref: '#/components/schemas/AttachmentId' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        name: { type: string }
+        mime: { type: string }
+        size:
+          type: integer
+          format: int64
+        url:
+          type: string
+          description: '`<public_url>/f/<slug>/<encodeURIComponent(name)>`'
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+    ShareOverview:
+      type: object
+      required: [shares, files]
+      properties:
+        shares:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadShare' }
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/PublishedFile' }
+    PublishOrbFileRequest:
+      type: object
+      required: [path, threadId]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: orb 内路径（同 `FsPathQuery` 的路径规则）
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 附件归属的线程（须在该 orb 上）
+    PublicAttachment:
+      type: object
+      required: [id, name, size, mime]
+      properties:
+        id: { $ref: '#/components/schemas/AttachmentId' }
+        name: { type: string }
+        size:
+          type: integer
+          format: int64
+        mime: { type: string }
+        url:
+          type: string
+          description: 仅已发布：公开 URL
+    PublicShare:
+      type: object
+      description: 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置
+      required: [mode, title, sharedAt, threadCreatedAt, lastSeq, transcriptRev, attachments]
+      properties:
+        mode: { $ref: '#/components/schemas/ShareMode' }
+        title:
+          type: string
+          description: 线程标题（空则 `Untitled`）
+        state:
+          allOf:
+            - $ref: '#/components/schemas/ThreadState'
+          description: 仅实时：线程当前状态
+        sharedAt: { $ref: '#/components/schemas/TimestampMs' }
+        threadCreatedAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 范围上界（快照 = `untilSeq`；实时 = 线程当前 `last_seq`）
+        leafEntryId:
+          type: string
+          description: 范围的叶子（快照 = 创建时的叶子；实时 = 当前叶子）
+        transcriptRev: { type: integer, format: int64 }
+        attachments:
+          type: array
+          description: 线程的附件元数据（快照只含分享创建时已存在的）
+          items: { $ref: '#/components/schemas/PublicAttachment' }
+    PublicEntryPage:
+      type: object
+      required: [entries, hasMore, lastSeq]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/Entry' }
+        hasMore:
+          type: boolean
+          description: 为假时已到达范围末尾
+        lastSeq:
+          type: integer
+          format: int64
+          description: 范围上界（同 `PublicShare.lastSeq`）
+        leafEntryId: { type: string }
+
+    # ============================================================ 通知（M5）
+    NotificationKind:
+      type: string
+      description: '`done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素'
+      enum: [done, input, error]
+    NotificationDeliveryTarget:
+      type: string
+      description: 投递目标（`apns` / `fcm` 为 M7 预留）
+      enum: [telegram, webhook, ntfy, bark, webpush, apns, fcm]
+    NotificationDeliveryStatus:
+      type: string
+      enum: [pending, sent, failed]
+    NotificationDelivery:
+      type: object
+      required: [target, status, attempts, at]
+      properties:
+        target: { $ref: '#/components/schemas/NotificationDeliveryTarget' }
+        channelId: { $ref: '#/components/schemas/NotificationChannelId' }
+        channelName: { type: string }
+        status: { $ref: '#/components/schemas/NotificationDeliveryStatus' }
+        attempts: { type: integer }
+        at:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: '`pending` = 下次尝试时间；`sent` / `failed` = 完成时间'
+        error:
+          type: string
+          description: 最近一次失败原因（≤500 字符）
+    Notification:
+      type: object
+      required: [id, kind, title, body, url, createdAt, deliveries]
+      properties:
+        id: { $ref: '#/components/schemas/NotificationId' }
+        kind: { $ref: '#/components/schemas/NotificationKind' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        title: { type: string }
+        body: { type: string }
+        url:
+          type: string
+          description: 站内路径 `/t/<threadId>`
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        readAt: { $ref: '#/components/schemas/TimestampMs' }
+        resolvedAt:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 仅 `input`：请求已被作答 / 取消 / 随 agent 重启消失
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationDelivery' }
+    NotificationList:
+      type: object
+      required: [notifications, unread]
+      properties:
+        notifications:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        unread:
+          type: integer
+          description: 全部未读通知数
+    NotificationsReadRequest:
+      type: object
+      properties:
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 只标该线程的通知；省略 = 全部
+    NotificationChannelKind:
+      type: string
+      enum: [telegram, webhook, ntfy, bark]
+    NotificationLocale:
+      type: string
+      description: 渠道消息的固定文案语言
+      enum: [zh-CN, en]
+      x-enum-varnames: [NotificationLocaleZhCN, NotificationLocaleEn]
+    TelegramChannelConfig:
+      type: object
+      required: [botToken]
+      properties:
+        botToken: { type: string, minLength: 1 }
+        apiBase:
+          type: string
+          description: Bot API 根地址，默认 `https://api.telegram.org`（自建 Bot API 服务器与测试用）
+    WebhookChannelConfig:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, minLength: 1 }
+        secret:
+          type: string
+          description: '给出时请求带 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`'
+        headers:
+          type: object
+          maxProperties: 16
+          description: 自定义请求头（名不得是 `Host` / `Content-Length` / `Content-Type`）
+          additionalProperties: { type: string }
+    NtfyChannelConfig:
+      type: object
+      required: [topic]
+      properties:
+        server:
+          type: string
+          description: 默认 `https://ntfy.sh`
+        topic: { type: string, minLength: 1 }
+        token:
+          type: string
+          description: '给出时带 `Authorization: Bearer <token>`'
+    BarkChannelConfig:
+      type: object
+      required: [deviceKey]
+      properties:
+        server:
+          type: string
+          description: 默认 `https://api.day.app`
+        deviceKey: { type: string, minLength: 1 }
+    NotificationChannelInput:
+      type: object
+      description: 恰好给出与 `kind` 同名的一个配置对象
+      required: [kind, name]
+      properties:
+        kind: { $ref: '#/components/schemas/NotificationChannelKind' }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        enabled:
+          type: boolean
+          default: true
+        events:
+          type: array
+          description: 缺省 = 三者全选
+          items: { $ref: '#/components/schemas/NotificationKind' }
+        locale: { $ref: '#/components/schemas/NotificationLocale' }
+        telegram: { $ref: '#/components/schemas/TelegramChannelConfig' }
+        webhook: { $ref: '#/components/schemas/WebhookChannelConfig' }
+        ntfy: { $ref: '#/components/schemas/NtfyChannelConfig' }
+        bark: { $ref: '#/components/schemas/BarkChannelConfig' }
+    NotificationChannelPatch:
+      type: object
+      description: 只修改出现的字段；给出与渠道 `kind` 同名的配置对象 = 整体替换该渠道配置
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        enabled: { type: boolean }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationKind' }
+        locale: { $ref: '#/components/schemas/NotificationLocale' }
+        telegram: { $ref: '#/components/schemas/TelegramChannelConfig' }
+        webhook: { $ref: '#/components/schemas/WebhookChannelConfig' }
+        ntfy: { $ref: '#/components/schemas/NtfyChannelConfig' }
+        bark: { $ref: '#/components/schemas/BarkChannelConfig' }
+    NotificationChannelTelegram:
+      type: object
+      required: [botUsername, linked]
+      properties:
+        botUsername: { type: string }
+        linked:
+          type: boolean
+          description: 已绑定私聊
+        chatTitle: { type: string }
+    NotificationChannelLastDelivery:
+      type: object
+      required: [status, at]
+      properties:
+        status: { $ref: '#/components/schemas/NotificationDeliveryStatus' }
+        at: { $ref: '#/components/schemas/TimestampMs' }
+        error: { type: string }
+    NotificationChannel:
+      type: object
+      description: 机密字段（token、secret、topic、deviceKey、URL 全文）只写不读
+      required: [id, kind, name, enabled, events, locale, summary, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/NotificationChannelId' }
+        kind: { $ref: '#/components/schemas/NotificationChannelKind' }
+        name: { type: string }
+        enabled: { type: boolean }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationKind' }
+        locale: { $ref: '#/components/schemas/NotificationLocale' }
+        summary:
+          type: string
+          description: 脱敏展示串（如 `@bot_name`、`hooks.example.com/…ab12`、`ntfy.sh/…9f3c`、`api.day.app`）
+        telegram: { $ref: '#/components/schemas/NotificationChannelTelegram' }
+        lastError: { type: string }
+        lastDelivery: { $ref: '#/components/schemas/NotificationChannelLastDelivery' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    NotificationChannelList:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationChannel' }
+    NotificationTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+    TelegramLink:
+      type: object
+      required: [code, botUsername, expiresAt]
+      properties:
+        code:
+          type: string
+          description: 8 位绑定码，显示为 `ABCD-EFGH`
+          example: ABCD-EFGH
+        botUsername: { type: string }
+        expiresAt: { $ref: '#/components/schemas/TimestampMs' }
+    VapidKey:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: string
+          description: base64url（无填充）的 65 字节未压缩 P-256 点
+    PushSubscriptionKind:
+      type: string
+      description: '`apns` / `fcm` 为 M7 预留'
+      enum: [webpush, apns, fcm]
+    PushSubscription:
+      type: object
+      required: [id, kind, endpoint, userAgent, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/PushSubscriptionId' }
+        kind: { $ref: '#/components/schemas/PushSubscriptionKind' }
+        endpoint: { type: string }
+        userAgent: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastSuccessAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastError: { type: string }
+    PushSubscriptionList:
+      type: object
+      required: [subscriptions]
+      properties:
+        subscriptions:
+          type: array
+          items: { $ref: '#/components/schemas/PushSubscription' }
+    PushSubscriptionKeys:
+      type: object
+      required: [p256dh, auth]
+      properties:
+        p256dh:
+          type: string
+          description: base64url，解码后 65 字节且以 0x04 开头
+        auth:
+          type: string
+          description: base64url，解码后 16 字节
+    PushSubscriptionInput:
+      type: object
+      description: 浏览器 `PushSubscription.toJSON()` 的子集
+      required: [endpoint, keys]
+      properties:
+        endpoint: { type: string, minLength: 1, maxLength: 2048 }
+        keys: { $ref: '#/components/schemas/PushSubscriptionKeys' }
+
+    # ============================================================ oryn sync（M5）
+    OrbSyncPrepareRequest:
+      type: object
+      properties:
+        root:
+          type: string
+          maxLength: 4096
+          description: 仓库所在目录（同 `GitRootQuery` 的路径规则）；缺省 = orb 当前工作目录
+        have:
+          type: array
+          maxItems: 256
+          description: 本地已有的提交（用于确定 bundle 的边界）
+          items: { type: string, pattern: '^[0-9a-f]{40}$' }
+        force:
+          type: boolean
+          default: false
+          description: 无共同提交时仍打包完整历史（浅克隆仍会 409 `sync_shallow`）
+    OrbSyncBundle:
+      type: object
+      required: [id, size]
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9a-f]{16}$'
+        size:
+          type: integer
+          format: int64
+    OrbSyncState:
+      type: object
+      required: [root, head, snapshot, dirty, common]
+      properties:
+        root:
+          type: string
+          description: 仓库顶层的绝对路径
+        branch:
+          type: string
+          description: 当前分支短名；游离 HEAD 时省略
+        head:
+          type: string
+          description: HEAD 提交
+        snapshot:
+          type: string
+          description: 工作区快照提交（无未提交改动时等于 `head`）
+        dirty:
+          type: boolean
+          description: 有未提交改动（`snapshot != head`）
+        common:
+          type: array
+          description: '`have` 中本仓库已有的提交'
+          items: { type: string }
+        bundle:
+          allOf:
+            - $ref: '#/components/schemas/OrbSyncBundle'
+          description: '`snapshot ∉ have` 时打出的 bundle（含 `refs/oryn/sync/snapshot` 与 `refs/oryn/sync/head`）'
 
     WsTicket:
       type: object
@@ -3264,6 +4344,8 @@ components:
         - $ref: '#/components/schemas/WsServerPong'
         - $ref: '#/components/schemas/WsServerTermLagged'
         - $ref: '#/components/schemas/WsServerTermResized'
+        - $ref: '#/components/schemas/WsServerNotification'
+        - $ref: '#/components/schemas/WsServerNotificationsRead'
       discriminator:
         propertyName: type
         mapping:
@@ -3282,6 +4364,8 @@ components:
           pong: '#/components/schemas/WsServerPong'
           term.lagged: '#/components/schemas/WsServerTermLagged'
           term.resized: '#/components/schemas/WsServerTermResized'
+          notification: '#/components/schemas/WsServerNotification'
+          notifications.read: '#/components/schemas/WsServerNotificationsRead'
     WsServerIndex:
       type: object
       description: 线程摘要全量（连接建立后首条）
@@ -3463,6 +4547,123 @@ components:
         terminalId: { type: string }
         cols: { type: integer }
         rows: { type: integer }
+    WsServerNotification:
+      type: object
+      description: 新通知（发给全部私有连接）
+      required: [type, notification]
+      properties:
+        type: { type: string, enum: [notification] }
+        notification: { $ref: '#/components/schemas/Notification' }
+    WsServerNotificationsRead:
+      type: object
+      description: 通知已读（发给全部私有连接）
+      required: [type]
+      properties:
+        type: { type: string, enum: [notifications.read] }
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 只该线程的通知已读；省略 = 全部已读
+
+    # ============================================================ 匿名分享 WebSocket（M5）
+    WsPublicServerMessage:
+      description: |
+        `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。
+        私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上到不了匿名连接。客户端只许发 `WsClientPing`。
+      oneOf:
+        - $ref: '#/components/schemas/WsPublicSnapshot'
+        - $ref: '#/components/schemas/WsPublicEntries'
+        - $ref: '#/components/schemas/WsPublicFrame'
+        - $ref: '#/components/schemas/WsPublicLiveReset'
+        - $ref: '#/components/schemas/WsPublicTranscriptReset'
+        - $ref: '#/components/schemas/WsPublicState'
+        - $ref: '#/components/schemas/WsPublicRevoked'
+        - $ref: '#/components/schemas/WsServerPong'
+      discriminator:
+        propertyName: type
+        mapping:
+          share.snapshot: '#/components/schemas/WsPublicSnapshot'
+          entries: '#/components/schemas/WsPublicEntries'
+          frame: '#/components/schemas/WsPublicFrame'
+          live.reset: '#/components/schemas/WsPublicLiveReset'
+          transcript.reset: '#/components/schemas/WsPublicTranscriptReset'
+          share.state: '#/components/schemas/WsPublicState'
+          share.revoked: '#/components/schemas/WsPublicRevoked'
+          pong: '#/components/schemas/WsServerPong'
+    WsPublicSnapshot:
+      type: object
+      description: 连接后的首条消息
+      required: [type, title, state, lastSeq, transcriptRev, fullReplay, live, subagents]
+      properties:
+        type: { type: string, enum: [share.snapshot] }
+        title: { type: string }
+        state: { $ref: '#/components/schemas/ThreadState' }
+        leafEntryId: { type: string }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 快照时刻线程的最大 seq（补发的目标）
+        transcriptRev: { type: integer, format: int64 }
+        fullReplay:
+          type: boolean
+          description: 为真时从 seq 0 补发：客户端先丢弃已缓存的全部条目
+        live:
+          type: array
+          description: 在途消息与运行中工具的帧（只含公开白名单内的帧类型）
+          items: { $ref: '#/components/schemas/OmpFrame' }
+        subagents:
+          type: array
+          description: 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧
+          items: { $ref: '#/components/schemas/OmpFrame' }
+    WsPublicEntries:
+      type: object
+      required: [type, entries, lastSeq]
+      properties:
+        type: { type: string, enum: [entries], x-enum-varnames: [WsPublicEntriesTypeEntries] }
+        entries:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/Entry' }
+        leafEntryId: { type: string }
+        lastSeq:
+          type: integer
+          format: int64
+          description: 本条消息覆盖到的最大 seq（可续传游标）
+    WsPublicFrame:
+      type: object
+      description: |
+        实时 omp 帧，仅限 `message_start` / `message_update` / `message_end` / `tool_execution_start` / `tool_execution_update` /
+        `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end` / `subagent_lifecycle` / `subagent_progress`
+      required: [type, frame]
+      properties:
+        type: { type: string, enum: [frame], x-enum-varnames: [WsPublicFrameTypeFrame] }
+        frame: { $ref: '#/components/schemas/OmpFrame' }
+    WsPublicLiveReset:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [live.reset], x-enum-varnames: [WsPublicLiveResetTypeLiveReset] }
+    WsPublicTranscriptReset:
+      type: object
+      description: 转录被重写：客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连
+      required: [type, transcriptRev]
+      properties:
+        type: { type: string, enum: [transcript.reset], x-enum-varnames: [WsPublicTranscriptResetTypeTranscriptReset] }
+        transcriptRev: { type: integer, format: int64 }
+    WsPublicState:
+      type: object
+      description: 线程状态或标题变化
+      required: [type, state, title]
+      properties:
+        type: { type: string, enum: [share.state] }
+        state: { $ref: '#/components/schemas/ThreadState' }
+        title: { type: string }
+    WsPublicRevoked:
+      type: object
+      description: 分享已撤销或线程已删除；随后服务端以 4001 关闭连接
+      required: [type]
+      properties:
+        type: { type: string, enum: [share.revoked] }
 
     # ============================================================ provider 协议（C1）
     ProviderHelloRequest:
@@ -3785,8 +4986,8 @@ components:
           type: array
           description: |
             orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
-            M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）。
-            缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal 请求回 409 `orbd_outdated`。
+            M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）。
+            缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync 请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkCtlEntriesCursorsParams:
       type: object

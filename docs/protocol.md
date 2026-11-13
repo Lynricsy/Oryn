@@ -332,3 +332,166 @@ Sec-Fetch-Site 不存在：
 - `portal_sessions(id_hash, web_session_hash → web_sessions ON DELETE CASCADE, label, created_at, expires_at)`，索引 `web_session_hash`；`id_hash` = SHA-256(Cookie 值 `ops_…`)。
 
 查询见 `internal/store/queries/portals.sql` 与 `threads.sql` 的 `GetThreadByShortCode`。`GetPortalSession` 只返回自身与所属网页会话都未过期、且网页会话 `kind='full'` 的行。注意：sqlc 的 SQLite 引擎在查询文件含非 ASCII 字符时会错位改写参数，`internal/store/queries/*.sql` 的注释一律用英文。
+
+## M5：公开分享、通知与 sync
+
+公开面是一条独立、默认拒绝的出口：匿名 REST 全在 `/api/v1/public/` 前缀下（`security: [{}]`，tag `public`），匿名 WebSocket 在 hub 里走单独的连接表，只有显式写给它的消息才到得了；私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上够不着它。公开范围 = **分享范围内活动分支上的主会话条目**（快照：创建时的 `until_seq` + 叶子；实时：当前叶子）；子 agent 转录、被回退的分支、`display:false` 的注入消息与非渲染类型条目的内容一律不出控制面。密钥扫描、`.md` 导出、图片授权与公开条目用同一个范围函数，所以「扫过的」与「公开的」恒等。通知由线程状态转换（`done` / `error`）与新的待答请求（`input`）驱动，去抖后落库并经库驱动的投递队列发出。`oryn sync` 用「工作区快照提交 + git bundle」一条通道带走提交与未提交改动。
+
+### 共享纯函数
+
+|包|导出|用途|
+|---|---|---|
+|`internal/transcript`|`Entry`、`IsMainFile`、`ActiveBranch`、`Message` / `ToolCall` / `ParseMessage`、`LineText`、`Public`、`MarkdownMeta` / `Markdown`、`Snippet`|活动分支（主会话文件按首次出现的 seq 拼接；含叶子的文件从叶子沿 `parentId` 回溯，其余从最后一条回溯；合成 id 与子 agent 文件除外）、公开视图、`.md` 导出、通知正文。CLI、分享、通知共用|
+|`internal/uiprompt`|`Prompt`、`Labels`、`Describe`、`AnswerOption`、`AnswerText`、`ErrUnsupported`、`ErrNeedOption`|待答请求的纯文本呈现与文本作答（Telegram、`oryn thread attach`）|
+
+`transcript.Public(e)`：子 agent 文件 → 不公开；类型不在 `{message, compaction, branch_summary, custom_message, model_change, thinking_level_change, mode_change, ttsr_injection, title_change}`，或 `role ∈ {custom, hookMessage}` 且 `display:false` 的消息，或 `display:false` 的 `custom_message` → payload 换成 `{"type":"<type>"}`（**保留链、清空内容**：活动分支沿 `parentId` 回溯，丢掉条目会断链）；其余原样。
+
+`uiprompt` 支持的请求与应答帧（都带 `type:"extension_ui_response", id`）：
+
+|`method`|呈现|应答|
+|---|---|---|
+|`select`|`title` + `options`|`value: <选项原文>`|
+|`confirm`|`title` / `message` + `[Yes, No]`（按渠道语言）；文字另认 `y yes 是 好 确认` / `n no 否 不 取消`|`confirmed`|
+|`input` / `editor`|自由文本；`input` 带 `secret` / `authCodeFor` / `loginPromptFor` → 不支持|`value`|
+|`form`|全部分节恰好一个字段：单选 choice（问题 = 字段 label，空则取其前最近的 `text` 块；`other` → 接受自由文本）或 text 字段；多字段 / 多选 → 不支持|`formData: {<name>: <选项 value 或文本>}`|
+|`ask`|恰好一个非多选问题；总接受自由文本|`answers: [{id, selectedOptions: [label]}]` 或 `[{id, selectedOptions: [], customInput}]`|
+|`askDialog`|同 `ask`|`askDialog: {kind:"submit", results:[{id, question, options, multi:false, selectedOptions, customInput?}]}`|
+|其它 / `plan_proposal`|不支持（引导到 Web）|—|
+
+文字作答：全为数字且在 1..选项数内 = 该选项；与某选项文字相等（忽略首尾空白与大小写）= 该选项；否则接受自由文本时按自由文本，不接受时 `ErrNeedOption`。
+
+### REST（已鉴权）
+
+鉴权同 C3（变更类在 Cookie 鉴权下要 `X-Oryn-CSRF: 1`）。
+
+|方法与路径|operationId|参数 / 请求体|响应|
+|---|---|---|---|
+|`GET /api/v1/threads/{id}/shares`|`listThreadShares`|—|`ThreadShareList{shares}`|
+|`POST /api/v1/threads/{id}/shares`|`createThreadShare`|`CreateThreadShareRequest{mode, acknowledgeFindings?}`|`201 ThreadShare`；扫描有命中且未确认 → `409 ShareScanConflict{code:"secrets_found", message, scan}`|
+|`GET /api/v1/shares`|`listShares`|—|`ShareOverview{shares, files}`|
+|`DELETE /api/v1/shares/{id}`|`revokeShare`|—|`204`|
+|`POST /api/v1/attachments/{id}/publish`|`publishAttachment`|—|`PublishedFile`（幂等：已发布则返回现有）|
+|`POST /api/v1/orbs/{id}/fs/publish`|`publishOrbFile`|`PublishOrbFileRequest{path, threadId}`|`201 PublishedFile`（发布的是此刻的副本，落成该线程的附件）|
+|`DELETE /api/v1/published-files/{id}`|`revokePublishedFile`|—|`204`|
+|`GET /api/v1/notifications`|`listNotifications`|`limit?`（默认 50，≤100）、`before?`（ms）|`NotificationList{notifications, unread}`|
+|`POST /api/v1/notifications/read`|`markNotificationsRead`|`NotificationsReadRequest{threadId?}`（省略 = 全部）|`204`；随后广播 `notifications.read`|
+|`GET /api/v1/notification-channels`|`listNotificationChannels`|—|`NotificationChannelList{channels}`|
+|`POST /api/v1/notification-channels`|`createNotificationChannel`|`NotificationChannelInput`|`201 NotificationChannel`|
+|`PATCH /api/v1/notification-channels/{id}`|`updateNotificationChannel`|`NotificationChannelPatch`|`NotificationChannel`|
+|`DELETE /api/v1/notification-channels/{id}`|`deleteNotificationChannel`|—|`204`|
+|`POST /api/v1/notification-channels/{id}/test`|`testNotificationChannel`|—|`NotificationTestResult{ok, error?}`|
+|`POST /api/v1/notification-channels/{id}/telegram/link`|`linkTelegramChannel`|—|`TelegramLink{code, botUsername, expiresAt}`|
+|`GET /api/v1/push/vapid-key`|`getVapidKey`|—|`VapidKey{publicKey}`（base64url 的 65 字节未压缩点）|
+|`GET /api/v1/push/subscriptions`|`listPushSubscriptions`|—|`PushSubscriptionList{subscriptions}`|
+|`POST /api/v1/push/subscriptions`|`createPushSubscription`|`PushSubscriptionInput{endpoint, keys:{p256dh, auth}}`（`userAgent` 取请求头）|`201 PushSubscription`（按 endpoint upsert）|
+|`DELETE /api/v1/push/subscriptions/{id}`|`deletePushSubscription`|—|`204`|
+|`POST /api/v1/orbs/{id}/sync/prepare`|`prepareOrbSync`|`bg?`；`OrbSyncPrepareRequest{root?, have?≤256, force?}`|`OrbSyncState{root, branch?, head, snapshot, dirty, common, bundle?{id, size}}`|
+|`GET /api/v1/orbs/{id}/sync/bundle`|`getOrbSyncBundle`|`id`（`^[0-9a-f]{16}$`）|`application/octet-stream`|
+
+路径参数：`ShareIdPath`（`^shr_[0-9A-Z]{26}$`）、`ShareSlugPath`（`^[0-9a-f]{32}$`）、`PublishedFileIdPath`（`^pub_…`）、`NotificationChannelIdPath`（`^nch_…`）、`PushSubscriptionIdPath`（`^psub_…`）。
+
+模型要点：
+
+- `ThreadShare{id, threadId, threadTitle, mode, slug, url, createdAt, findings, untilSeq?}`：`url = <public_url>/s/<slug>`；`untilSeq` 仅快照（创建时的 `threads.last_seq`）；`findings` = 创建时确认过的命中数。`Thread.publicShares`（未撤销分享数，0 时省略）与 `Attachment.publicUrl`（已发布时）为新增的可选字段。
+- `ShareFinding{rule, seq, entryId, preview, count, secretName?, role?, tool?}`：`preview` 为脱敏片段（前 4 字符 + `…` + 后 2 字符，命中短于 12 字符只留前 2 字符）；`ShareScan{findings ≤200, scanned, truncated}`。
+- `PublishedFile{id, attachmentId, threadId?, name, mime, size, url, createdAt}`：`url = <public_url>/f/<slug>/<encodeURIComponent(name)>`。
+- `Notification{id, kind, threadId?, title, body, url, createdAt, readAt?, resolvedAt?, deliveries[]}`：`url` 为站内路径 `/t/<threadId>`；`NotificationDelivery{target, channelId?, channelName?, status, attempts, at, error?}`，`at` 在 `pending` 时为下次尝试时间、其余为完成时间。
+- `NotificationChannelInput{kind, name, enabled?, events?, locale?}` + 与 `kind` 同名的**恰好一个**配置对象：`telegram{botToken, apiBase?}`、`webhook{url, secret?, headers?≤16}`、`ntfy{server?, topic, token?}`、`bark{server?, deviceKey}`。`NotificationChannelPatch` 给出配置对象 = 整体替换（Telegram 换 token 会清掉绑定）。`NotificationChannel` 只回脱敏的 `summary`、`telegram?{botUsername, linked, chatTitle?}`、`lastError?`、`lastDelivery?{status, at, error?}`，**机密字段只写不读**。
+- 枚举：`ShareMode`（`live | snapshot`）、`ShareFindingRule`、`NotificationKind`（`done | input | error`）、`NotificationChannelKind`、`NotificationLocale`（`zh-CN | en`）、`NotificationDeliveryTarget`（`telegram | webhook | ntfy | bark | webpush`，`apns | fcm` 预留）、`NotificationDeliveryStatus`、`PushSubscriptionKind`（`webpush`，`apns | fcm` 预留）。为避免 oapi-codegen 在常量名冲突时给既有常量加前缀，`ShareMode` 与匿名 WS 消息的 `type` 枚举用 `x-enum-varnames` 显式命名（`ShareModeSnapshot` 与 `JobOp` 的 `Snapshot` 共存）。
+
+### 匿名面
+
+全部响应带 `X-Robots-Tag: noindex, nofollow` 与 `Cache-Control: no-store`；slug 不存在或已撤销一律 `404 {code:"not_found"}`。`PublicShare` 与条目里**不含**线程 id、orb、项目、标签、模型配置。
+
+|方法与路径|operationId|参数|响应|
+|---|---|---|---|
+|`GET /api/v1/public/shares/{slug}`|`getPublicShare`|—|`PublicShare{mode, title, state?, sharedAt, threadCreatedAt, lastSeq, leafEntryId?, transcriptRev, attachments: PublicAttachment[]}`（`state` 仅实时；快照的附件只含分享创建时已存在的）|
+|`GET /api/v1/public/shares/{slug}/entries`|`listPublicShareEntries`|`after?`、`limit?`（默认 200，≤500）|`PublicEntryPage{entries, hasMore, lastSeq, leafEntryId?}`（`lastSeq` = 范围上界）|
+|`GET /api/v1/public/shares/{slug}/blobs/{sha256}`|`getPublicShareBlob`|—|字节；只放行被范围内活动分支条目引用的 sha（头同 `getBlob`，但 `no-store`）|
+|`GET /api/v1/public/shares/{slug}/ws`|`connectPublicShareWs`|`after?`、`rev?`|`101`（仅 `mode=live`；快照 → 404）|
+|`GET /s/<slug>`|—（SPA）|—|存在 → `index.html`（200，带 noindex 头）；否则 404 极简 HTML（含 `<meta name="robots" content="noindex">`）。只接受 GET / HEAD|
+|`GET /s/<slug>.md`|—|—|`text/markdown; charset=utf-8`，`Content-Disposition: inline; filename*=UTF-8''<标题>.md`；内容 = `transcript.Markdown`|
+|`GET /f/<slug>/<name>`|—|`Range`|发布文件；`name` 须与附件名一致。`nosniff`、`Content-Security-Policy: sandbox`、noindex、`no-store`；`image/png\|jpeg\|gif\|webp` 内联，`text/*`（非 `text/html`）以 `text/plain; charset=utf-8` 内联，其余附件下载|
+
+匿名 WebSocket（`WsPublicServerMessage`，按 `type` 判别，**都不带 `threadId`**）：
+
+|`type`|模型|语义|
+|---|---|---|
+|`share.snapshot`|`WsPublicSnapshot{title, state, leafEntryId?, lastSeq, transcriptRev, fullReplay, live, subagents}`|连接后首条；`live` 只含白名单内的帧；`fullReplay` 判定与私有订阅相同|
+|`entries`|`WsPublicEntries{entries ≤200, leafEntryId?, lastSeq}`|补发与实时条目（实时条目经 `transcript.Public` 过滤）；补发各批 `lastSeq` 单调，最后一批 = 快照的 `lastSeq`|
+|`frame`|`WsPublicFrame{frame}`|仅 `message_start / message_update / message_end / tool_execution_start / tool_execution_update / tool_stream_update / tool_execution_end / agent_start / agent_end / subagent_lifecycle / subagent_progress`|
+|`live.reset` / `transcript.reset`|`WsPublicLiveReset` / `WsPublicTranscriptReset{transcriptRev}`|同私有通道；`transcript.reset` 后客户端以 `after=0&rev=<transcriptRev>` 重连|
+|`share.state`|`WsPublicState{state, title}`|线程状态或标题变化时|
+|`share.revoked`|`WsPublicRevoked`|撤销或线程删除；随后以 4001 关闭|
+|`pong`|`WsServerPong`|客户端只许发 `WsClientPing`，其它消息以 1008 关闭|
+
+匿名连接不算 focus、不记用户交互、不唤醒 orb；沿用 8MiB 待发预算（超出断开，客户端重连补拉）。
+
+私有 WS 新增：`notification`（`WsServerNotification{notification}`）与 `notifications.read`（`WsServerNotificationsRead{threadId?}`，省略 = 全部已读），发给全部私有连接。
+
+### 通知与投递
+
+- 触发：`done`（`idle` 且上一状态 ∈ `working / awaiting_input`）与 `error`（转入 `error`）来自线程状态转换；`input` 来自新进入实时缓冲的待答请求（计划提案的 `request_id = "plan"`）。触发时有设备 focus 于该线程则不通知；去抖期间线程回到 `working`、被 focus / 操作、请求被作答都会取消。`(thread_id, request_id)` 的未决通知唯一（控制面重启后 orbd 重放待答请求时去重）。
+- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410 删除订阅。
+- Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: thread.<kind>`（测试为 `test`）、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。体 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`。
+- ntfy：`POST <server>` JSON 发布 `{"topic","title","message","click","tags","priority"}`（`input` priority 4，其余 3）；有 `token` 时 `Authorization: Bearer`。Bark：`POST <server>/push` `{"device_key","title","body","url","group":"Oryn","level"}`，HTTP 200 且 `code == 200` 才算成功。
+- Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url":"/t/<threadId>","tag":"oryn-<threadId 末 12 位>"}`，`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
+- Telegram：`getUpdates` 长轮询（不需要公网入站）；至多一个渠道、只接受绑定的那一个私聊（`/start <码>` 绑定，码 8 位、10 分钟）。`input` 且有选项时带 inline 按钮（`callback_data = "o:<deliveryID>:<序号>"`）；点按钮或回复通知作答待答请求，回复其它通知即以 `prompt{streamingBehavior:"steer"}` 发给该线程；请求在别处被作答后撤回按钮。
+
+### orbd 本机 API（`sync` 特性，`fs` 流上）
+
+|路由|行为|
+|---|---|
+|`POST /sync/prepare`|体 `OrbSyncPrepareRequest`。用临时 index（`<git-dir>/oryn-sync.index`，不碰真实 index、不跑钩子）`git add -A` + `write-tree`；树与 HEAD 相同 → `snapshot = head`、`dirty=false`，否则 `commit-tree <tree> -p <head>`（作者 / 提交者固定为 `Oryn Sync <sync@oryn.invalid>`、时间 `@0 +0000`：同树同父 → 同 sha）；更新 `refs/oryn/sync/{snapshot,head}`；`common` = `have` 中本仓库已有的提交；`snapshot ∉ have` 时 `git bundle create $HOME/.oryn/tmp/sync-<16 hex>.bundle refs/oryn/sync/snapshot refs/oryn/sync/head --not <common…>`|
+|`GET /sync/bundle?id=`|`http.ServeContent`；文件不存在 → 404 `sync_bundle_gone`|
+
+hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面代理：`prepare` 截止 6 分钟（`bg=1` 时 orb 不可用直接 409 `orb_not_ready`，不唤醒、不计交互），`bundle` 以原始字节转发。
+
+### 限额
+
+|项|值|
+|---|---|
+|slug|16 字节 `crypto/rand` → 32 位小写十六进制（明文存储）|
+|每线程未撤销分享|≤20（超出 409 `invalid`）|
+|匿名 WS|每分享 ≤64、全局 ≤512；读上限 4KiB；只接受 `ping`|
+|扫描命中|≤200 项（`truncated`）|
+|`.md` 导出|单个工具结果截到 4000 字符|
+|发布 orb 文件|单文件 ≤100MiB|
+|通知去抖|`done` / `error` 3s，`input` 2s|
+|投递|单次 HTTP 超时 15s；重试间隔 10s、60s、5min（共 4 次尝试）；创建超过 1h 仍未送达 → `failed: expired`|
+|通知保留|30 天（每小时清理）|
+|Web Push 载荷|JSON ≤3000 字节（`body` 截到 300 字符）|
+|Telegram|长轮询 `timeout=50`（HTTP 超时 70s）；按钮 ≤8 个、每个 ≤40 字符；正文 ≤3500 字符|
+|sync|`have` ≤256；bundle ≤1GiB；orbd 侧 git 超时 5 分钟；bundle 文件保留 10 分钟|
+
+### 错误码
+
+|code|HTTP|来源|
+|---|---|---|
+|`not_found`（slug 不存在 / 已撤销）|404|匿名面|
+|`invalid`（`mode` 非法 / 未绑定线程的附件 / 分享数已满）|400 / 409|控制面|
+|`secrets_found`（体为 `ShareScanConflict`）|409|`createThreadShare`|
+|`share_busy`（匿名连接名额已满）|503|匿名 WS|
+|`channel_exists`（已有 Telegram 渠道）|409|控制面|
+|`invalid_channel`（配置非法、Telegram `getMe` 失败、非 Telegram 渠道上的绑定）|400|控制面|
+|`channel_not_linked`（Telegram 未绑定时测试）|409|控制面|
+|`push_invalid`|400|`createPushSubscription`|
+|`is_a_directory` / `too_large`|409 / 413|`publishOrbFile`|
+|`sync_no_commits` / `sync_no_common` / `sync_shallow`|409|orbd `/sync/prepare`|
+|`too_large`（bundle 超过 1GiB）|413|orbd `/sync/prepare`|
+|`sync_bundle_gone`|404|orbd `/sync/bundle`|
+|`orbd_outdated`（orbd 无 `sync` 特性）|409|控制面|
+
+### 存储
+
+`0011_share_notify.sql`：
+
+- `thread_shares(id, thread_id → threads ON DELETE CASCADE, slug UNIQUE, mode ∈ {live, snapshot}, until_seq?, leaf_entry_id?, findings, created_at, revoked_at?)`，索引 `(thread_id, revoked_at)`。
+- `published_files(id, attachment_id → attachments ON DELETE CASCADE, slug UNIQUE, created_at, revoked_at?)`，部分唯一索引 `(attachment_id) WHERE revoked_at IS NULL`（同一附件至多一条未撤回发布）。
+- `notification_channels(id, kind, name, enabled, events JSON, locale, config_enc, state JSON, last_error?, created_at, updated_at)`：`config_enc = secrets.Box.Seal("notify/" || id, 配置 JSON)`（不进 `secrets` 表）；`state` 为非机密运行状态。
+- `push_subscriptions(id, kind, endpoint UNIQUE, p256dh, auth, web_session_hash → web_sessions ON DELETE CASCADE, device_id → devices ON DELETE CASCADE, user_agent, created_at, last_success_at?, last_error?)`。
+- `notifications(id, thread_id → threads ON DELETE CASCADE, kind, title, body, request_id?, request?, created_at, read_at?, resolved_at?)`，索引 `created_at`、`(thread_id, read_at)`，部分唯一索引 `(thread_id, request_id) WHERE request_id IS NOT NULL AND resolved_at IS NULL`（`InsertNotification` 用 `ON CONFLICT DO NOTHING`，影响 0 行 = 已通知过）。
+- `notification_deliveries(id, notification_id → notifications ON DELETE CASCADE, channel_id → notification_channels ON DELETE CASCADE, subscription_id → push_subscriptions ON DELETE CASCADE, target, status ∈ {pending, sent, failed}, attempts, next_attempt_at?, last_error?, external_ref?, created_at, finished_at?)`，索引 `(status, next_attempt_at)`、`(target, external_ref)`、`notification_id`、`(channel_id, created_at)`；`external_ref` 为 Telegram 的 `"<chat_id>:<message_id>"`。
+- VAPID 私钥存 `<data_dir>/vapid.key`（32 字节标量，0600，首次启动生成；与 `master.key` 一起备份）。
+
+查询见 `internal/store/queries/share.sql`（含范围读取 `ListMainEntryLinks`、`ListEntriesBySeqRange`、`ListEntrySeqsContaining`，均以 `instr(file, '/') = 0` 排除子 agent 文件）与 `notify.sql`（含投递队列 `ListDueNotificationDeliveries`、`GetNextNotificationDeliveryAt`）。

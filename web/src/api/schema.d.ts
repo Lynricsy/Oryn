@@ -451,6 +451,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/threads/{id}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 该线程未撤销的公开分享（按创建时间降序） */
+        get: operations["listThreadShares"];
+        put?: never;
+        /**
+         * 创建公开分享（快照 / 实时）
+         * @description 创建前对分享范围（活动分支上的主会话条目经公开过滤之后的内容）做密钥扫描：有命中且未给 `acknowledgeFindings: true`
+         *     → 409 `ShareScanConflict{code:"secrets_found"}`；确认后创建并把命中数记入 `findings`。
+         *     每线程未撤销分享 ≤20（超出 409 `invalid`）；`mode` 非法 → 400 `invalid`。
+         */
+        post: operations["createThreadShare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orbs": {
         parameters: {
             query?: never;
@@ -737,6 +762,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/fs/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
+         * @description 线程须在该 orb 上；必须是普通文件且 ≤100MiB（目录 409 `is_a_directory`，超限 413 `too_large`）。
+         *     orb 冻结 / 停机时唤醒并至多等待 25s。之后 orb 里的修改不影响已发布的副本。
+         */
+        post: operations["publishOrbFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orbs/{id}/git/status": {
         parameters: {
             query?: never;
@@ -832,6 +880,51 @@ export interface paths {
         put?: never;
         /** 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`） */
         post: operations["unstageOrbGit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/sync/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 生成工作区快照提交并按需打包 git bundle
+         * @description orbd 用临时 index 把工作区（含未跟踪、遵守 `.gitignore`）写成以 HEAD 为父的快照提交（同树同父 → 同 sha），
+         *     更新 `refs/oryn/sync/{head,snapshot}`；`snapshot ∉ have` 时以 `have` 中本仓库已有的提交为界打包 bundle。
+         *     错误：HEAD 未出生 409 `sync_no_commits`；无共同提交且未给 `force` 409 `sync_no_common`；
+         *     无共同提交、给了 `force` 但仓库是浅克隆 409 `sync_shallow`；bundle 超过 1GiB 413 `too_large`；
+         *     旧版 orbd 409 `orbd_outdated`。截止 6 分钟。
+         */
+        post: operations["prepareOrbSync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/sync/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 下载 `prepareOrbSync` 打出的 bundle（保留 10 分钟；过期 404 `sync_bundle_gone`） */
+        get: operations["getOrbSyncBundle"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1064,6 +1157,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attachments/{id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 把附件发布为公开 URL（幂等：已发布则返回现有发布）
+         * @description 附件须已绑定线程（未绑定 → 400 `invalid`）。
+         */
+        post: operations["publishAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部未撤销的线程分享与已发布文件（设置页总览） */
+        get: operations["listShares"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/shares/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ShareIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤销线程分享（页面、接口、图片立即 404，已连接的匿名 WebSocket 收到 `share.revoked` 后以 4001 关闭） */
+        delete: operations["revokeShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/published-files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PublishedFileIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤回已发布的文件（公开 URL 立即 404；附件本身保留） */
+        delete: operations["revokePublishedFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/secrets": {
         parameters: {
             query?: never;
@@ -1258,6 +1428,268 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 最近的通知（按创建时间降序，含各渠道的投递状态） */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read` */
+        post: operations["markNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notification-channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 通知渠道（机密字段只写不读） */
+        get: operations["listNotificationChannels"];
+        put?: never;
+        /**
+         * 新建通知渠道
+         * @description 恰好给出与 `kind` 同名的一个配置对象；URL 须是 http(s)，自定义头名不得是 `Host` / `Content-Length` / `Content-Type`
+         *     （否则 400 `invalid_channel`）。Telegram：创建时以 `getMe` 校验 token（失败 400 `invalid_channel`），至多一个（409 `channel_exists`）。
+         */
+        post: operations["createNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notification-channels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationChannelIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除通知渠道（其投递记录一并删除） */
+        delete: operations["deleteNotificationChannel"];
+        options?: never;
+        head?: never;
+        /** 修改通知渠道（给出配置对象 = 整体替换该渠道配置；Telegram 换 token 会清掉绑定） */
+        patch: operations["updateNotificationChannel"];
+        trace?: never;
+    };
+    "/api/v1/notification-channels/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 同步发送一条测试消息（不写通知表；结果写入渠道的 `lastError`）
+         * @description Telegram 未绑定私聊 → 409 `channel_not_linked`。
+         */
+        post: operations["testNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notification-channels/{id}/telegram/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 生成 Telegram 绑定码（10 分钟有效；在 Telegram 里向 bot 私聊发送 `/start <码>` 完成绑定）
+         * @description 渠道不是 Telegram → 400 `invalid_channel`。
+         */
+        post: operations["linkTelegramChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/vapid-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web Push 的 VAPID 公钥（`applicationServerKey`） */
+        get: operations["getVapidKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 推送订阅（所有浏览器 / 设备） */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        /**
+         * 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+         * @description `endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
+         *     `keys.auth` 解码后须为 16 字节，否则 400 `push_invalid`。
+         */
+        post: operations["createPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PushSubscriptionIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除推送订阅 */
+        delete: operations["deletePushSubscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/shares/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
+         * @description slug 不存在或已撤销一律 404 `not_found`。
+         */
+        get: operations["getPublicShare"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/shares/{slug}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        /** 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload） */
+        get: operations["listPublicShareEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/shares/{slug}/blobs/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+                sha256: components["schemas"]["Sha256"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 分享范围内条目引用的 blob（范围外 / 别的线程 / 不存在 → 404）
+         * @description 头同 `getBlob`（`nosniff` + `Content-Security-Policy: sandbox`），但 `Cache-Control: no-store`。
+         */
+        get: operations["getPublicShareBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/shares/{slug}/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 实时分享的匿名 WebSocket（仅 `mode=live`；快照分享 → 404）
+         * @description S→C 消息见 `WsPublicServerMessage`（都不带 `threadId`）；客户端只许发 `WsClientPing`，其它消息以 1008 关闭。
+         *     连接后先收到 `share.snapshot`，再分批收到 `entries`（每批 ≤200 条），之后转发实时 `frame`。
+         *     撤销时收到 `share.revoked` 并以 4001 关闭。名额：每分享 ≤64、全局 ≤512，已满 503 `share_busy`；读上限 4KiB。
+         */
+        get: operations["connectPublicShareWs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ws-ticket": {
         parameters: {
             query?: never;
@@ -1429,6 +1861,18 @@ export interface components {
         SnapshotId: string;
         /** @description `att_<ulid>` */
         AttachmentId: string;
+        /** @description `shr_<ulid>` */
+        ShareId: string;
+        /** @description 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储） */
+        ShareSlug: string;
+        /** @description `pub_<ulid>` */
+        PublishedFileId: string;
+        /** @description `ntf_<ulid>` */
+        NotificationId: string;
+        /** @description `nch_<ulid>` */
+        NotificationChannelId: string;
+        /** @description `psub_<ulid>` */
+        PushSubscriptionId: string;
         /** @description omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。 */
         OmpFrame: {
             [key: string]: unknown;
@@ -1443,6 +1887,9 @@ export interface components {
              *     M4（受管服务与 portal，HTTP 状态见 docs/protocol.md）：`portal_disabled`（409，未配置 `portal_domain`）、`portal_not_found`（404）、`portal_unauthorized`（401）、
              *     `cross_site_blocked`（403）、`forbidden_port`（403）、`service_unreachable`（502）、`portal_unreachable`（502）、`portal_timeout`（504）、`portal_busy`（503）、
              *     `service_not_found`（404）、`invalid_service`（400）、`name_conflict`（409）、`services_not_ready`（409）。
+             *     M5（分享、通知与 sync，HTTP 状态见 docs/protocol.md）：`invalid`（400 / 409）、`secrets_found`（409，体为 `ShareScanConflict`）、
+             *     `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
+             *     `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
              */
             code: string;
             message: string;
@@ -1789,6 +2236,8 @@ export interface components {
              * @example https://t-3f9a1c0b7e2d-p{port}.orb.example.com/
              */
             portalUrlTemplate?: string;
+            /** @description 未撤销的公开分享数；为 0 时省略 */
+            readonly publicShares?: number;
         };
         /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
         ThreadError: {
@@ -2248,6 +2697,8 @@ export interface components {
             size: number;
             sha256: components["schemas"]["Sha256"];
             createdAt: components["schemas"]["TimestampMs"];
+            /** @description 已发布时的公开 URL（`<public_url>/f/<slug>/<文件名>`）；未发布省略 */
+            publicUrl?: string;
         };
         AttachmentList: {
             attachments: components["schemas"]["Attachment"][];
@@ -2267,6 +2718,349 @@ export interface components {
             present: boolean;
             /** @description `$HOME/.oryn/attachments/<threadId>/<id>/<safeName>` 的绝对路径 */
             path: string;
+        };
+        /**
+         * @description `snapshot` 冻结在创建时刻（`untilSeq` + 当时的叶子）；`live` 持续跟随当前叶子
+         * @enum {string}
+         */
+        ShareMode: "live" | "snapshot";
+        ThreadShare: {
+            id: components["schemas"]["ShareId"];
+            threadId: components["schemas"]["ThreadId"];
+            threadTitle: string;
+            mode: components["schemas"]["ShareMode"];
+            slug: components["schemas"]["ShareSlug"];
+            /** @description `<public_url>/s/<slug>` */
+            url: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 仅快照：创建时线程的 `last_seq`
+             */
+            untilSeq?: number;
+            /** @description 创建时确认过的密钥扫描命中数 */
+            findings: number;
+        };
+        ThreadShareList: {
+            shares: components["schemas"]["ThreadShare"][];
+        };
+        CreateThreadShareRequest: {
+            mode: components["schemas"]["ShareMode"];
+            /**
+             * @description 已检查扫描命中项，仍然分享
+             * @default false
+             */
+            acknowledgeFindings: boolean;
+        };
+        /**
+         * @description 密钥扫描规则名（规则表见 docs/protocol.md M5 节）
+         * @enum {string}
+         */
+        ShareFindingRule: "vault_secret" | "private_key" | "api_key_sk" | "github_token" | "aws_access_key" | "google_api_key" | "slack_token" | "jwt" | "oryn_token" | "bearer_header" | "url_credentials";
+        /** @description 一个 `(规则, 条目)` 的命中 */
+        ShareFinding: {
+            rule: components["schemas"]["ShareFindingRule"];
+            /** @description 仅 `vault_secret`：命中的密钥名 */
+            secretName?: string;
+            /** Format: int64 */
+            seq: number;
+            entryId: string;
+            /** @description 所在消息的角色（`user` / `assistant` / `toolResult` …）；非消息条目省略 */
+            role?: string;
+            /** @description 所在工具结果的工具名 */
+            tool?: string;
+            /** @description 脱敏片段：前 4 字符 + `…` + 后 2 字符；命中短于 12 字符时只留前 2 字符 + `…` */
+            preview: string;
+            /** @description 该条目内同一规则的命中次数 */
+            count: number;
+        };
+        ShareScan: {
+            findings: components["schemas"]["ShareFinding"][];
+            /** @description 扫描过的条目数 */
+            scanned: number;
+            /** @description 命中超过 200 项，只返回前 200 项 */
+            truncated: boolean;
+        };
+        /** @description `createThreadShare` 的 409 体：扫描有命中且未确认 */
+        ShareScanConflict: {
+            /** @enum {string} */
+            code: "secrets_found";
+            message: string;
+            scan: components["schemas"]["ShareScan"];
+        };
+        PublishedFile: {
+            id: components["schemas"]["PublishedFileId"];
+            attachmentId: components["schemas"]["AttachmentId"];
+            threadId?: components["schemas"]["ThreadId"];
+            name: string;
+            mime: string;
+            /** Format: int64 */
+            size: number;
+            /** @description `<public_url>/f/<slug>/<encodeURIComponent(name)>` */
+            url: string;
+            createdAt: components["schemas"]["TimestampMs"];
+        };
+        ShareOverview: {
+            shares: components["schemas"]["ThreadShare"][];
+            files: components["schemas"]["PublishedFile"][];
+        };
+        PublishOrbFileRequest: {
+            /** @description orb 内路径（同 `FsPathQuery` 的路径规则） */
+            path: string;
+            /** @description 附件归属的线程（须在该 orb 上） */
+            threadId: components["schemas"]["ThreadId"];
+        };
+        PublicAttachment: {
+            id: components["schemas"]["AttachmentId"];
+            name: string;
+            /** Format: int64 */
+            size: number;
+            mime: string;
+            /** @description 仅已发布：公开 URL */
+            url?: string;
+        };
+        /** @description 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置 */
+        PublicShare: {
+            mode: components["schemas"]["ShareMode"];
+            /** @description 线程标题（空则 `Untitled`） */
+            title: string;
+            /** @description 仅实时：线程当前状态 */
+            state?: components["schemas"]["ThreadState"];
+            sharedAt: components["schemas"]["TimestampMs"];
+            threadCreatedAt: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 范围上界（快照 = `untilSeq`；实时 = 线程当前 `last_seq`）
+             */
+            lastSeq: number;
+            /** @description 范围的叶子（快照 = 创建时的叶子；实时 = 当前叶子） */
+            leafEntryId?: string;
+            /** Format: int64 */
+            transcriptRev: number;
+            /** @description 线程的附件元数据（快照只含分享创建时已存在的） */
+            attachments: components["schemas"]["PublicAttachment"][];
+        };
+        PublicEntryPage: {
+            entries: components["schemas"]["Entry"][];
+            /** @description 为假时已到达范围末尾 */
+            hasMore: boolean;
+            /**
+             * Format: int64
+             * @description 范围上界（同 `PublicShare.lastSeq`）
+             */
+            lastSeq: number;
+            leafEntryId?: string;
+        };
+        /**
+         * @description `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+         * @enum {string}
+         */
+        NotificationKind: "done" | "input" | "error";
+        /**
+         * @description 投递目标（`apns` / `fcm` 为 M7 预留）
+         * @enum {string}
+         */
+        NotificationDeliveryTarget: "telegram" | "webhook" | "ntfy" | "bark" | "webpush" | "apns" | "fcm";
+        /** @enum {string} */
+        NotificationDeliveryStatus: "pending" | "sent" | "failed";
+        NotificationDelivery: {
+            target: components["schemas"]["NotificationDeliveryTarget"];
+            channelId?: components["schemas"]["NotificationChannelId"];
+            channelName?: string;
+            status: components["schemas"]["NotificationDeliveryStatus"];
+            attempts: number;
+            /** @description `pending` = 下次尝试时间；`sent` / `failed` = 完成时间 */
+            at: components["schemas"]["TimestampMs"];
+            /** @description 最近一次失败原因（≤500 字符） */
+            error?: string;
+        };
+        Notification: {
+            id: components["schemas"]["NotificationId"];
+            kind: components["schemas"]["NotificationKind"];
+            threadId?: components["schemas"]["ThreadId"];
+            title: string;
+            body: string;
+            /** @description 站内路径 `/t/<threadId>` */
+            url: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            readAt?: components["schemas"]["TimestampMs"];
+            /** @description 仅 `input`：请求已被作答 / 取消 / 随 agent 重启消失 */
+            resolvedAt?: components["schemas"]["TimestampMs"];
+            deliveries: components["schemas"]["NotificationDelivery"][];
+        };
+        NotificationList: {
+            notifications: components["schemas"]["Notification"][];
+            /** @description 全部未读通知数 */
+            unread: number;
+        };
+        NotificationsReadRequest: {
+            /** @description 只标该线程的通知；省略 = 全部 */
+            threadId?: components["schemas"]["ThreadId"];
+        };
+        /** @enum {string} */
+        NotificationChannelKind: "telegram" | "webhook" | "ntfy" | "bark";
+        /**
+         * @description 渠道消息的固定文案语言
+         * @enum {string}
+         */
+        NotificationLocale: "zh-CN" | "en";
+        TelegramChannelConfig: {
+            botToken: string;
+            /** @description Bot API 根地址，默认 `https://api.telegram.org`（自建 Bot API 服务器与测试用） */
+            apiBase?: string;
+        };
+        WebhookChannelConfig: {
+            url: string;
+            /** @description 给出时请求带 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>` */
+            secret?: string;
+            /** @description 自定义请求头（名不得是 `Host` / `Content-Length` / `Content-Type`） */
+            headers?: {
+                [key: string]: string;
+            };
+        };
+        NtfyChannelConfig: {
+            /** @description 默认 `https://ntfy.sh` */
+            server?: string;
+            topic: string;
+            /** @description 给出时带 `Authorization: Bearer <token>` */
+            token?: string;
+        };
+        BarkChannelConfig: {
+            /** @description 默认 `https://api.day.app` */
+            server?: string;
+            deviceKey: string;
+        };
+        /** @description 恰好给出与 `kind` 同名的一个配置对象 */
+        NotificationChannelInput: {
+            kind: components["schemas"]["NotificationChannelKind"];
+            name: string;
+            /** @default true */
+            enabled: boolean;
+            /** @description 缺省 = 三者全选 */
+            events?: components["schemas"]["NotificationKind"][];
+            locale?: components["schemas"]["NotificationLocale"];
+            telegram?: components["schemas"]["TelegramChannelConfig"];
+            webhook?: components["schemas"]["WebhookChannelConfig"];
+            ntfy?: components["schemas"]["NtfyChannelConfig"];
+            bark?: components["schemas"]["BarkChannelConfig"];
+        };
+        /** @description 只修改出现的字段；给出与渠道 `kind` 同名的配置对象 = 整体替换该渠道配置 */
+        NotificationChannelPatch: {
+            name?: string;
+            enabled?: boolean;
+            events?: components["schemas"]["NotificationKind"][];
+            locale?: components["schemas"]["NotificationLocale"];
+            telegram?: components["schemas"]["TelegramChannelConfig"];
+            webhook?: components["schemas"]["WebhookChannelConfig"];
+            ntfy?: components["schemas"]["NtfyChannelConfig"];
+            bark?: components["schemas"]["BarkChannelConfig"];
+        };
+        NotificationChannelTelegram: {
+            botUsername: string;
+            /** @description 已绑定私聊 */
+            linked: boolean;
+            chatTitle?: string;
+        };
+        NotificationChannelLastDelivery: {
+            status: components["schemas"]["NotificationDeliveryStatus"];
+            at: components["schemas"]["TimestampMs"];
+            error?: string;
+        };
+        /** @description 机密字段（token、secret、topic、deviceKey、URL 全文）只写不读 */
+        NotificationChannel: {
+            id: components["schemas"]["NotificationChannelId"];
+            kind: components["schemas"]["NotificationChannelKind"];
+            name: string;
+            enabled: boolean;
+            events: components["schemas"]["NotificationKind"][];
+            locale: components["schemas"]["NotificationLocale"];
+            /** @description 脱敏展示串（如 `@bot_name`、`hooks.example.com/…ab12`、`ntfy.sh/…9f3c`、`api.day.app`） */
+            summary: string;
+            telegram?: components["schemas"]["NotificationChannelTelegram"];
+            lastError?: string;
+            lastDelivery?: components["schemas"]["NotificationChannelLastDelivery"];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        NotificationChannelList: {
+            channels: components["schemas"]["NotificationChannel"][];
+        };
+        NotificationTestResult: {
+            ok: boolean;
+            error?: string;
+        };
+        TelegramLink: {
+            /**
+             * @description 8 位绑定码，显示为 `ABCD-EFGH`
+             * @example ABCD-EFGH
+             */
+            code: string;
+            botUsername: string;
+            expiresAt: components["schemas"]["TimestampMs"];
+        };
+        VapidKey: {
+            /** @description base64url（无填充）的 65 字节未压缩 P-256 点 */
+            publicKey: string;
+        };
+        /**
+         * @description `apns` / `fcm` 为 M7 预留
+         * @enum {string}
+         */
+        PushSubscriptionKind: "webpush" | "apns" | "fcm";
+        PushSubscription: {
+            id: components["schemas"]["PushSubscriptionId"];
+            kind: components["schemas"]["PushSubscriptionKind"];
+            endpoint: string;
+            userAgent: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            lastSuccessAt?: components["schemas"]["TimestampMs"];
+            lastError?: string;
+        };
+        PushSubscriptionList: {
+            subscriptions: components["schemas"]["PushSubscription"][];
+        };
+        PushSubscriptionKeys: {
+            /** @description base64url，解码后 65 字节且以 0x04 开头 */
+            p256dh: string;
+            /** @description base64url，解码后 16 字节 */
+            auth: string;
+        };
+        /** @description 浏览器 `PushSubscription.toJSON()` 的子集 */
+        PushSubscriptionInput: {
+            endpoint: string;
+            keys: components["schemas"]["PushSubscriptionKeys"];
+        };
+        OrbSyncPrepareRequest: {
+            /** @description 仓库所在目录（同 `GitRootQuery` 的路径规则）；缺省 = orb 当前工作目录 */
+            root?: string;
+            /** @description 本地已有的提交（用于确定 bundle 的边界） */
+            have?: string[];
+            /**
+             * @description 无共同提交时仍打包完整历史（浅克隆仍会 409 `sync_shallow`）
+             * @default false
+             */
+            force: boolean;
+        };
+        OrbSyncBundle: {
+            id: string;
+            /** Format: int64 */
+            size: number;
+        };
+        OrbSyncState: {
+            /** @description 仓库顶层的绝对路径 */
+            root: string;
+            /** @description 当前分支短名；游离 HEAD 时省略 */
+            branch?: string;
+            /** @description HEAD 提交 */
+            head: string;
+            /** @description 工作区快照提交（无未提交改动时等于 `head`） */
+            snapshot: string;
+            /** @description 有未提交改动（`snapshot != head`） */
+            dirty: boolean;
+            /** @description `have` 中本仓库已有的提交 */
+            common: string[];
+            /** @description `snapshot ∉ have` 时打出的 bundle（含 `refs/oryn/sync/snapshot` 与 `refs/oryn/sync/head`） */
+            bundle?: components["schemas"]["OrbSyncBundle"];
         };
         WsTicket: {
             ticket: string;
@@ -2364,7 +3158,7 @@ export interface components {
             on: boolean;
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -2556,6 +3350,115 @@ export interface components {
             terminalId: string;
             cols: number;
             rows: number;
+        };
+        /** @description 新通知（发给全部私有连接） */
+        WsServerNotification: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "notification";
+            notification: components["schemas"]["Notification"];
+        };
+        /** @description 通知已读（发给全部私有连接） */
+        WsServerNotificationsRead: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "notifications.read";
+            /** @description 只该线程的通知已读；省略 = 全部已读 */
+            threadId?: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。
+         *     私有通道的 `index` / `orb` / `ui.*` / 终端 / 应答 / 通知消息在结构上到不了匿名连接。客户端只许发 `WsClientPing`。
+         */
+        WsPublicServerMessage: components["schemas"]["WsPublicSnapshot"] | components["schemas"]["WsPublicEntries"] | components["schemas"]["WsPublicFrame"] | components["schemas"]["WsPublicLiveReset"] | components["schemas"]["WsPublicTranscriptReset"] | components["schemas"]["WsPublicState"] | components["schemas"]["WsPublicRevoked"] | components["schemas"]["WsServerPong"];
+        /** @description 连接后的首条消息 */
+        WsPublicSnapshot: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "share.snapshot";
+            title: string;
+            state: components["schemas"]["ThreadState"];
+            leafEntryId?: string;
+            /**
+             * Format: int64
+             * @description 快照时刻线程的最大 seq（补发的目标）
+             */
+            lastSeq: number;
+            /** Format: int64 */
+            transcriptRev: number;
+            /** @description 为真时从 seq 0 补发：客户端先丢弃已缓存的全部条目 */
+            fullReplay: boolean;
+            /** @description 在途消息与运行中工具的帧（只含公开白名单内的帧类型） */
+            live: components["schemas"]["OmpFrame"][];
+            /** @description 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧 */
+            subagents: components["schemas"]["OmpFrame"][];
+        };
+        WsPublicEntries: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "entries";
+            entries: components["schemas"]["Entry"][];
+            leafEntryId?: string;
+            /**
+             * Format: int64
+             * @description 本条消息覆盖到的最大 seq（可续传游标）
+             */
+            lastSeq: number;
+        };
+        /**
+         * @description 实时 omp 帧，仅限 `message_start` / `message_update` / `message_end` / `tool_execution_start` / `tool_execution_update` /
+         *     `tool_stream_update` / `tool_execution_end` / `agent_start` / `agent_end` / `subagent_lifecycle` / `subagent_progress`
+         */
+        WsPublicFrame: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "frame";
+            frame: components["schemas"]["OmpFrame"];
+        };
+        WsPublicLiveReset: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "live.reset";
+        };
+        /** @description 转录被重写：客户端丢弃全部已缓存条目，以 `after=0&rev=<transcriptRev>` 重连 */
+        WsPublicTranscriptReset: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "transcript.reset";
+            /** Format: int64 */
+            transcriptRev: number;
+        };
+        /** @description 线程状态或标题变化 */
+        WsPublicState: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "share.state";
+            state: components["schemas"]["ThreadState"];
+            title: string;
+        };
+        /** @description 分享已撤销或线程已删除；随后服务端以 4001 关闭连接 */
+        WsPublicRevoked: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "share.revoked";
         };
         ProviderHelloRequest: {
             /** @description 本进程实例的随机 id */
@@ -2763,8 +3666,8 @@ export interface components {
             threads: components["schemas"]["LinkCtlHelloThread"][];
             /**
              * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
-             *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）。
-             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal 请求回 409 `orbd_outdated`。
+             *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）。
+             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync 请求回 409 `orbd_outdated`。
              */
             features?: string[];
         };
@@ -3009,6 +3912,11 @@ export interface components {
         ServiceNamePath: string;
         /** @description portal 端口（服务的 `PORT`） */
         PortalPortPath: number;
+        ShareIdPath: components["schemas"]["ShareId"];
+        ShareSlugPath: components["schemas"]["ShareSlug"];
+        PublishedFileIdPath: components["schemas"]["PublishedFileId"];
+        NotificationChannelIdPath: components["schemas"]["NotificationChannelId"];
+        PushSubscriptionIdPath: components["schemas"]["PushSubscriptionId"];
     };
     requestBodies: never;
     headers: never;
@@ -3762,6 +4670,65 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listThreadShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分享列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadShareList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createThreadShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateThreadShareRequest"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadShare"];
+                };
+            };
+            /** @description `secrets_found`：扫描有命中且未确认（其它 409 为普通 `Error`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareScanConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listOrbs: {
         parameters: {
             query?: {
@@ -4198,6 +5165,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    publishOrbFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishOrbFileRequest"];
+            };
+        };
+        responses: {
+            /** @description 已发布 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getOrbGitStatus: {
         parameters: {
             query?: {
@@ -4345,6 +5339,62 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    prepareOrbSync: {
+        parameters: {
+            query?: {
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrbSyncPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description 同步状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbSyncState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbSyncBundle: {
+        parameters: {
+            query: {
+                /** @description `OrbSyncState.bundle.id` */
+                id: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description bundle 字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
             };
             default: components["responses"]["Error"];
         };
@@ -4634,6 +5684,92 @@ export interface operations {
                 content: {
                     "*/*": string;
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    publishAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AttachmentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发布记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 总览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareOverview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ShareIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已撤销 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokePublishedFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PublishedFileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已撤回 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -5038,6 +6174,388 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OrbStats"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description 只返回 `createdAt < before` 的通知（翻页游标） */
+                before?: components["schemas"]["TimestampMs"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 通知列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    markNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NotificationsReadRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listNotificationChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 渠道列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannelList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelInput"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationChannelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationChannelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的渠道 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    testNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationChannelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发送结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    linkTelegramChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationChannelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 绑定码 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramLink"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getVapidKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 公钥 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VapidKey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 订阅列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscriptionInput"];
+            };
+        };
+        responses: {
+            /** @description 订阅 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deletePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PushSubscriptionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPublicShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分享 */
+            200: {
+                headers: {
+                    "X-Robots-Tag"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicShare"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listPublicShareEntries: {
+        parameters: {
+            query?: {
+                /** @description 只返回 `seq > after` 的条目 */
+                after?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 条目页 */
+            200: {
+                headers: {
+                    "X-Robots-Tag"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicEntryPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPublicShareBlob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+                sha256: components["schemas"]["Sha256"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原始字节 */
+            200: {
+                headers: {
+                    "X-Robots-Tag"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    connectPublicShareWs: {
+        parameters: {
+            query?: {
+                /** @description 已缓存条目的最大 seq（补发从其后开始） */
+                after?: number;
+                /** @description 客户端缓存的 `transcriptRev`；与当前不同时服务端从 0 补发（`fullReplay`） */
+                rev?: number;
+            };
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 切换到 WebSocket */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
