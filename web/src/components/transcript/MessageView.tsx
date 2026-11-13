@@ -40,6 +40,7 @@ const USER_BUBBLE =
 /**
  * 用户气泡一行：气泡靠右；`avatar` 为真（用户回合起点）时在右侧头像列放用户头像，
  * 与助手回合左侧的头像对称——外层须用 `pr-8` 让出这一列。头像只作装饰（aria-hidden）。
+ * 这一行只含气泡本身（徽标、消息菜单都在行外），头像贴底即与气泡底边对齐，正对右下角的小圆角。
  */
 export function UserBubble({
 	avatar,
@@ -53,7 +54,7 @@ export function UserBubble({
 	return (
 		<div className="relative flex w-full justify-end">
 			{avatar && (
-				<span aria-hidden className="absolute top-2.5 -right-8 flex">
+				<span aria-hidden className="absolute -right-8 bottom-0 flex">
 					<UserAvatar size={20} />
 				</span>
 			)}

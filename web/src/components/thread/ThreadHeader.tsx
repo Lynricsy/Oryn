@@ -349,14 +349,26 @@ export function ThreadHeader({
 					title={t("thread.clickToRename")}
 					onClick={() => setEditing(card.text)}
 				>
-					{card.icon && (
+					{/* 标题前的图标：有标题卡图标用它；没有时窄页头（项目段已隐藏）退到项目徽标，都没有就留空 */}
+					{card.icon ? (
 						<span
 							aria-hidden
+							data-title-glyph="card"
 							className="avatar inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-xs text-xs leading-none"
 							style={hueVar(hue ?? nameHue(card.text))}
 						>
 							{card.icon}
 						</span>
+					) : (
+						project && (
+							<span
+								aria-hidden
+								data-title-glyph="project"
+								className="inline-flex shrink-0 @md/header:hidden"
+							>
+								<ProjectBadge name={project.name} icon={project.icon} />
+							</span>
+						)
 					)}
 					<span className="min-w-0 truncate">
 						{card.text || t("thread.untitled")}
