@@ -6,7 +6,9 @@
 import {
 	type ReactElement,
 	type ReactNode,
+	type Ref,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -63,17 +65,21 @@ interface PillText {
 
 /**
  * 底部选项按钮；快捷键只放进悬停提示，输入框里不显示按键提示。
- * `pill`：图标 + 名字，放不下时文字截断；`circle`：窄屏上 orb、模型（以及以后的浏览器 profile）
- * 只留一个 32px 小圆圈，名字靠 aria-label 与悬停提示，把横向空间让给项目名。
+ * `pill`：图标 + 名字，放不下时文字截断；`circle`：窄屏上 orb（以及以后的浏览器 profile）只留一个
+ * 32px 小圆圈，模型在空间不够时也缩成圆圈；名字靠 aria-label 与悬停提示，把横向空间让给项目名。
  */
 function PillButton({
+	ref,
 	icon,
 	text,
 	shortcut,
 	onClick,
 	active,
 	shape = "pill",
+	grow = false,
+	trailOnIcon = false,
 }: {
+	ref?: Ref<HTMLButtonElement>;
 	/** 图标名，或现成的装饰节点（如模型 logo） */
 	icon: IconName | ReactElement;
 	text: PillText;
@@ -81,22 +87,33 @@ function PillButton({
 	onClick: () => void;
 	active: boolean;
 	shape?: "pill" | "circle";
+	/** 不设 240px 上限，有多少剩余宽度用多少（窄屏的项目名） */
+	grow?: boolean;
+	/** trail 缩成图标右下角的角标（窄屏模型的思考级别）；圆形按钮总是如此 */
+	trailOnIcon?: boolean;
 }) {
 	const circle = shape === "circle";
+	const corner = circle || trailOnIcon;
 	return (
 		<button
+			ref={ref}
 			type="button"
 			onClick={onClick}
 			aria-expanded={active}
 			aria-label={text.label}
 			title={`${text.label} (${shortcut})`}
-			className={`relative inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : "min-w-0 max-w-60 shrink gap-1.5 px-3"} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
+			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink px-3 ${corner ? "gap-2.5" : "gap-1.5"} ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
-			<span className="inline-flex shrink-0">
+			<span className="relative inline-flex shrink-0">
 				{typeof icon === "string" ? (
 					<Icon name={icon} size={circle ? 15 : 13} />
 				) : (
 					icon
+				)}
+				{corner && text.trail && (
+					<span className="-right-1.5 -bottom-1.5 absolute inline-flex rounded-full bg-panel p-px">
+						{text.trail}
+					</span>
 				)}
 			</span>
 			{!circle && <span className="min-w-0 truncate">{text.main}</span>}
@@ -105,14 +122,7 @@ function PillButton({
 					<Badge>{text.badge}</Badge>
 				</span>
 			)}
-			{text.trail &&
-				(circle ? (
-					<span className="-right-0.5 -bottom-0.5 absolute inline-flex rounded-full bg-panel p-px">
-						{text.trail}
-					</span>
-				) : (
-					text.trail
-				))}
+			{!corner && text.trail}
 		</button>
 	);
 }
@@ -302,9 +312,41 @@ export function HomePage(): ReactNode {
 			? shortModelName(modelId, modelBrand(model))
 			: t("newThread.defaultModel"),
 		trail: thinking ? (
-			<ThinkingDial level={thinking} className="text-muted" />
+			<ThinkingDial
+				level={thinking}
+				size={compact ? 10 : undefined}
+				className="text-muted"
+			/>
 		) : undefined,
 	};
+	// 窄屏选项行：项目名先拿够自然宽度，剩下的还放得下模型名才展开模型，否则模型只留圆圈。
+	// 模型名的自然宽度量一个不可见的同款胶囊（ghost），避免展开/收起来回抖动。
+	const pillsRef = useRef<HTMLDivElement>(null);
+	const projectPillRef = useRef<HTMLButtonElement>(null);
+	const modelGhostRef = useRef<HTMLSpanElement>(null);
+	const [modelFolded, setModelFolded] = useState(true);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 项目名或模型名变了要重新测量（ResizeObserver 不报文字截断量变化）
+	useLayoutEffect(() => {
+		const row = pillsRef.current;
+		const proj = projectPillRef.current;
+		const ghost = modelGhostRef.current;
+		if (!compact || !row || !proj || !ghost) return;
+		const measure = () => {
+			const text = proj.querySelector<HTMLElement>(".truncate");
+			if (!text) return;
+			const projNatural =
+				proj.offsetWidth - text.clientWidth + text.scrollWidth;
+			const gap = Number.parseFloat(getComputedStyle(row).columnGap) || 0;
+			const orb = row.firstElementChild as HTMLElement | null;
+			const need =
+				(orb?.offsetWidth ?? 0) + gap + projNatural + gap + ghost.offsetWidth;
+			setModelFolded(need > row.clientWidth);
+		};
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(row);
+		return () => ro.disconnect();
+	}, [compact, projectText.main, modelText.main]);
 	const rise = (delay: string) =>
 		intro
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
@@ -432,8 +474,8 @@ export function HomePage(): ReactNode {
 							/>
 							{/*
 							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊、发送钮。
-							 * 窄屏两行：附件与发送钮在第一行两端；选项单独占第二行
-							 * （orb、模型是小圆圈，项目名占剩下的宽度），互不挤占。
+							 * 窄屏两行：附件与发送钮在第一行两端；分隔线下选项单独占第二行——orb 是小圆圈，
+							 * 项目名先拿够宽度，剩余空间放得下才显示模型名，否则模型也缩成圆圈；思考级别始终是模型图标右下角的角标。
 							 */}
 							<div
 								className={`relative flex px-2 pb-2 ${compact ? "flex-wrap items-center gap-y-1.5" : "items-start gap-0.5"}`}
@@ -460,7 +502,8 @@ export function HomePage(): ReactNode {
 									)}
 								</div>
 								<div
-									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "order-last w-full" : "flex-1"}`}
+									ref={pillsRef}
+									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-2 relative order-last w-[calc(100%+1rem)] border-[var(--glass-line)] border-t px-2 pt-2" : "flex-1"}`}
 								>
 									<PillButton
 										icon="box"
@@ -473,6 +516,7 @@ export function HomePage(): ReactNode {
 										shape={compact ? "circle" : "pill"}
 									/>
 									<PillButton
+										ref={projectPillRef}
 										icon="folder"
 										text={projectText}
 										shortcut="Ctrl+J"
@@ -480,15 +524,33 @@ export function HomePage(): ReactNode {
 										onClick={() =>
 											setPill(pill === "project" ? null : "project")
 										}
+										grow={compact}
 									/>
 									<PillButton
-										icon={<ModelLogo model={model} size={compact ? 16 : 13} />}
+										icon={
+											<ModelLogo
+												model={model}
+												size={compact && modelFolded ? 16 : 13}
+											/>
+										}
 										text={modelText}
 										shortcut="Ctrl+S"
 										active={pill === "model"}
 										onClick={() => setPill(pill === "model" ? null : "model")}
-										shape={compact ? "circle" : "pill"}
+										shape={compact && modelFolded ? "circle" : "pill"}
+										trailOnIcon={compact}
 									/>
+									{compact && (
+										// 只用来量模型名胶囊的自然宽度，与展开态同款内边距与间距
+										<span
+											ref={modelGhostRef}
+											aria-hidden
+											className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-8 items-center gap-2.5 whitespace-nowrap rounded-full border px-3 text-xs"
+										>
+											<ModelLogo model={model} size={13} />
+											{modelText.main}
+										</span>
+									)}
 								</div>
 								<button
 									type="button"
