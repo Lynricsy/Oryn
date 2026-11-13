@@ -240,9 +240,10 @@ export function ThreadPage(): ReactNode {
 				)}
 				<div
 					ref={dockRef}
-					className={`dock-fade pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5 ${expanded ? "rounded-b-[calc(var(--r-xl)-1px)]" : ""}`}
+					// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
+					className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
 				>
-					<div className="dock-glow pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
+					<div className="pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
 						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
 						<div
 							className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)] ${morph === "dock" ? "dock-morphing" : ""}`}

@@ -297,12 +297,6 @@ const AVATAR_GAP = GAP_PROC;
 /** `insetBottom` 里输入坞上方的留白（ThreadPage 传 `dockH + 16`）；据此找到托盘顶边。 */
 const DOCK_GAP = 16;
 
-/** 「回到底部」出现时托盘顶边上方淡出正文的净空带高度（28px 圆钮上下各留 8px）。 */
-const CLEAR_BAND = 44;
-
-/** 净空带的遮罩切口压进托盘顶边以内的距离（托盘圆角半径 14px）。 */
-const TRAY_TUCK = 14;
-
 /** 行首 / 行尾的节奏类别；`turn` 是不属于 agent 过程流的行。 */
 type Edge = FlowKind | "turn";
 
@@ -530,14 +524,8 @@ export function Transcript({
 		],
 	);
 
-	// 「回到底部」悬在托盘上方：按钮出现时，托盘顶边以上 CLEAR_BAND 内的正文淡出（遮罩只盖这一条，
-	// 托盘背后的内容照常透过玻璃），按钮后面没有正文、表格边框或图形，也不压在托盘里的控件上。
-	// 遮罩切口压进托盘里 TRAY_TUCK：托盘顶边的圆角与发丝描边处玻璃最薄，切口正落在边上会露出半行清晰文字
+	// 「回到底部」是悬在托盘顶边上方 8px 的独立小圆钮；输入坞整体独立悬浮，不遮罩、不淡出周围正文
 	const trayTop = Math.max(0, insetBottom - DOCK_GAP);
-	const cut = Math.max(0, trayTop - TRAY_TUCK);
-	const clearMask = atBottom
-		? undefined
-		: `linear-gradient(to top, #000 ${cut}px, transparent ${cut}px, transparent ${trayTop + CLEAR_BAND}px, #000 ${trayTop + CLEAR_BAND + 24}px)`;
 
 	return (
 		<div className="relative min-h-0 flex-1">
@@ -548,8 +536,6 @@ export function Transcript({
 				style={{
 					scrollPaddingTop: insetTop,
 					scrollPaddingBottom: insetBottom,
-					maskImage: clearMask,
-					WebkitMaskImage: clearMask,
 				}}
 				data-testid="transcript"
 			>
@@ -564,7 +550,7 @@ export function Transcript({
 					aria-label={t("transcript.jumpToEnd")}
 					title={t("transcript.jumpToEnd")}
 					className="glass pop-in absolute left-1/2 z-20 inline-grid h-7 w-7 -translate-x-1/2 place-items-center rounded-full text-muted hover:text-fg"
-					style={{ bottom: trayTop + (CLEAR_BAND - 28) / 2 }}
+					style={{ bottom: trayTop + 8 }}
 					onClick={() => {
 						stick.current = true;
 						scrollToEnd();

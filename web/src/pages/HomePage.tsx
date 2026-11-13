@@ -432,10 +432,8 @@ export function HomePage(): ReactNode {
 					>
 						{t("newThread.heading")}
 					</h1>
-					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同一团主题色晕（dock-glow）、同样的分行；首页大一档圆角（18px） */}
-					<div
-						className={`dock-glow relative isolate ${rise("delay-[120ms]")}`}
-					>
+					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同样的分行；首页大一档圆角（18px） */}
+					<div className={`relative isolate ${rise("delay-[120ms]")}`}>
 						{/* 托盘背后的光场（一圈宽而淡的光晕 + 两团晕）：玻璃底下有东西可模糊，居中态也看得出是玻璃 */}
 						<div aria-hidden className="home-field" />
 						<div

@@ -670,19 +670,6 @@ body {
 			border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
 		}
 	}
-	/* 输入托盘坐着的那团主题色晕（线程页输入坞与首页输入卡相同），让玻璃底下有东西可透 */
-	.dock-glow::before {
-		content: "";
-		position: absolute;
-		inset: -1.75rem -8% -0.75rem;
-		z-index: -1;
-		pointer-events: none;
-		background: radial-gradient(
-			closest-side,
-			color-mix(in oklab, var(--brand) 10%, transparent),
-			transparent
-		);
-	}
 	/* 浮层进入：只做进入，退出不做动画 */
 	.pop-in {
 		transition:
@@ -918,18 +905,6 @@ body {
 		.glass-sidebar::after {
 			display: none;
 		}
-	}
-	/* 输入坞下方到纸面底边：转录渐隐到纸面色；渐隐止于托盘下沿，托盘背后仍是转录本身 */
-	.dock-fade {
-		--dock-pad: calc(
-			0.75rem +
-			max(env(safe-area-inset-bottom), var(--kb-inset))
-		);
-		background: linear-gradient(
-			to top,
-			var(--panel) calc(var(--dock-pad) - 0.25rem),
-			transparent calc(var(--dock-pad) + 1rem)
-		);
 	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {
