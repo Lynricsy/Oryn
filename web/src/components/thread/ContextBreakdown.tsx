@@ -157,7 +157,7 @@ export function ContextLegend({
 				);
 			})}
 			{shown.some((p) => p.estimated) && (
-				<li className="whitespace-nowrap text-ghost">
+				<li className="whitespace-nowrap">
 					≈ {t("report.ctx.estimated")}
 				</li>
 			)}
