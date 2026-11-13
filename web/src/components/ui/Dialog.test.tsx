@@ -56,3 +56,46 @@ describe("Dialog 焦点管理（W9）", () => {
 		expect(document.activeElement).toBe(opener);
 	});
 });
+
+/** 对话框内容带 autoFocus（如模型对话框的搜索框）；`mountOnOpen` 时对话框随打开才挂载（`open` 恒为 true）。 */
+function AutoFocusHarness({ mountOnOpen }: { mountOnOpen: boolean }) {
+	const [open, setOpen] = useState(false);
+	const dialog = (
+		<Dialog
+			open={mountOnOpen || open}
+			onClose={() => setOpen(false)}
+			title="Model"
+		>
+			<input aria-label="search" autoFocus />
+		</Dialog>
+	);
+	return (
+		<div>
+			<button type="button" onClick={() => setOpen(true)}>
+				open
+			</button>
+			{mountOnOpen ? open && dialog : dialog}
+		</div>
+	);
+}
+
+describe("Dialog 焦点还原（内容 autoFocus）", () => {
+	it.each([
+		["open 由假变真", false],
+		["随打开挂载", true],
+	])("%s：Esc 关闭后焦点回到触发按钮", (_name, mountOnOpen) => {
+		render(<AutoFocusHarness mountOnOpen={mountOnOpen} />);
+		const opener = screen.getByRole("button", { name: "open" });
+		opener.focus();
+		fireEvent.click(opener);
+		expect(document.activeElement).toBe(
+			screen.getByRole("textbox", { name: "search" }),
+		);
+
+		fireEvent.keyDown(document.activeElement as HTMLElement, {
+			key: "Escape",
+		});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(document.activeElement).toBe(opener);
+	});
+});

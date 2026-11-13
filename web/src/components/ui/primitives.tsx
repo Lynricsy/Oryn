@@ -153,14 +153,22 @@ export function Dialog({
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+	// 触发者要在提交之前取：内容里的 autoFocus 在子元素提交时就抢走焦点，早于下面的 layout effect。
+	// 打开那次渲染里记下（关闭时清掉），对话框随打开才挂载（`open` 恒为 true）也成立。
+	const openerRef = useRef<HTMLElement | null | undefined>(undefined);
+	if (!open) openerRef.current = undefined;
+	else if (openerRef.current === undefined)
+		openerRef.current =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
 	useLayoutEffect(() => {
 		const host = hostRef.current;
 		const panel = panelRef.current;
 		if (!open || !host || !panel) return;
-		const previous =
-			document.activeElement instanceof HTMLElement
-				? document.activeElement
-				: null;
+		// 兜底：记下的元素已在对话框里（不该发生），就不还原到它
+		const opener = openerRef.current;
+		const previous = opener && !host.contains(opener) ? opener : null;
 		const release = pushModal(host);
 		// 内容里的 autoFocus 已生效则不动；否则聚焦正文第一个可聚焦元素，再退到面板本身
 		if (!panel.contains(document.activeElement)) {

@@ -79,12 +79,13 @@ export function useOrbOf(threadId: string): Orb | undefined {
 
 /**
  * orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。
- * orb 本身就绪、但最近一次 setup / resume 失败时，胶囊改报环境失败（错误色圆点 + 文案），与托盘里的提示条一致。
+ * orb 本身就绪、但最近一次 setup / resume 失败时，胶囊改报环境失败（错误色圆点 + 文案），与托盘里的提示条一致；
+ * 其它状态（冻结、停机、唤醒、恢复、失败等）照实呈现生命周期，历史失败不覆盖。
  */
 function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 	const { t } = useTranslation();
 	const failedRun =
-		orb.state === "failed"
+		orb.state !== "ready"
 			? undefined
 			: orb.lastSetup && !orb.lastSetup.ok
 				? orb.lastSetup

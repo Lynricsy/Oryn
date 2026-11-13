@@ -589,10 +589,17 @@ function SubagentSection({ threadId }: { threadId: string }) {
 const CONTEXT_FRAME = { type: "get_context_report" } as const;
 /** 上下文分项随 token 变化重取的最短间隔。 */
 const CONTEXT_REFRESH_MS = 15_000;
+type ContextReport = ResponseData<"get_context_report">;
+/**
+ * 每份报告请求发出时的 `contextUsage.tokens`：随报告数据（缓存里的同一对象）一起记，面板重新挂载时也能判断
+ * 缓存报告是否对得上当前上下文。报告对话框（`useRpc`）取到的报告不在表里，按「对不上」处理。
+ */
+const reportTokens = new WeakMap<ContextReport, number | undefined>();
 
 /**
- * 上下文报告（`get_context_report`，omp 本地计算，不调 LLM）：面板打开时请求一次，之后 `contextUsage.tokens`
- * 变了就节流重取（距上次取到 ≥15 秒，期间的变化合并成一次）。与报告对话框共用同一个查询 key（`Dialogs.tsx` 的 `useRpc`）。
+ * 上下文报告（`get_context_report`，omp 本地计算，不调 LLM）：面板打开时请求一次；之后报告对应的 token 数
+ * 与当前 `contextUsage.tokens` 不一致就节流重取（距上次取到 ≥15 秒，期间的变化合并成一次）——包括关面板期间
+ * 上下文变了、重开时缓存报告仍在保鲜期内的情况。与报告对话框共用同一个查询 key（`Dialogs.tsx` 的 `useRpc`）。
  */
 function useContextBreakdown(threadId: string) {
 	const ready = useThread(threadId, (s) => s.agentStatus === "ready");
@@ -603,28 +610,31 @@ function useContextBreakdown(threadId: string) {
 		retry: false,
 		staleTime: CONTEXT_REFRESH_MS,
 		refetchOnWindowFocus: false,
-		queryFn: () =>
-			realtime.cmd(threadId, CONTEXT_FRAME) as Promise<
-				ResponseData<"get_context_report">
-			>,
+		// 快照按数据对象记：结构共享会把内容相同的新报告换回旧对象（带着旧快照），这里关掉
+		structuralSharing: false,
+		queryFn: async () => {
+			const sentAt =
+				getThreadStore(threadId).getState().state?.contextUsage?.tokens;
+			const data = (await realtime.cmd(
+				threadId,
+				CONTEXT_FRAME,
+			)) as ContextReport;
+			reportTokens.set(data, sentAt);
+			return data;
+		},
 	});
-	const { dataUpdatedAt, refetch } = report;
-	// 上次请求时的 token 数；首次请求由 useQuery 在挂载时发出
-	const fetchedTokens = useRef(tokens);
+	const { data, dataUpdatedAt, errorUpdatedAt, isFetching, refetch } = report;
 	useEffect(() => {
-		if (!ready || dataUpdatedAt === 0 || tokens === fetchedTokens.current)
-			return;
-		const wait = dataUpdatedAt + CONTEXT_REFRESH_MS - Date.now();
-		const timer = window.setTimeout(
-			() => {
-				fetchedTokens.current = tokens;
-				void refetch();
-			},
-			Math.max(0, wait),
-		);
+		// 请求在途时等它落地再比较，避免重复发
+		if (!ready || !data || isFetching) return;
+		if (reportTokens.has(data) && reportTokens.get(data) === tokens) return;
+		// 节流从上次请求落地（成功或失败）算起，失败后不会立刻重发
+		const wait =
+			Math.max(dataUpdatedAt, errorUpdatedAt) + CONTEXT_REFRESH_MS - Date.now();
+		const timer = window.setTimeout(() => void refetch(), Math.max(0, wait));
 		return () => window.clearTimeout(timer);
-	}, [ready, tokens, dataUpdatedAt, refetch]);
-	return report.data?.breakdown;
+	}, [ready, tokens, data, dataUpdatedAt, errorUpdatedAt, isFetching, refetch]);
+	return data?.breakdown;
 }
 
 /** 占用偏高时百分比数字用阈值色（与量表外圈描边同一信号）。 */

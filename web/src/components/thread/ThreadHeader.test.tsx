@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Thread } from "../../api/client";
+import type { Orb, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
 import { getThreadStore } from "../../state/stores";
@@ -67,5 +67,45 @@ describe("ThreadHeader 标题图标", () => {
 	it("既无标题卡图标也无项目时不放图标", () => {
 		const title = renderHeader("T-hdr3", { title: "无图标的线程" });
 		expect(title.querySelector("[data-title-glyph]")).toBeNull();
+	});
+});
+
+describe("ThreadHeader orb 状态胶囊", () => {
+	const FAILED_SETUP = { ok: false, phase: "setup" };
+
+	function renderWithOrb(id: string, orb: Partial<Orb>) {
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				orb: {
+					id: `orb-${id}`,
+					stateChangedAt: "2026-01-01T00:00:00Z",
+					...orb,
+				} as Orb,
+			});
+		renderHeader(id, { title: "无图标的线程", orbId: `orb-${id}` });
+		return screen.getByRole("button", { name: /^状态：/ });
+	}
+
+	it("orb 就绪而最近 setup 失败时，胶囊报环境失败", () => {
+		const chip = renderWithOrb("T-orb1", {
+			state: "ready",
+			lastSetup: FAILED_SETUP as Orb["lastSetup"],
+		});
+		expect(chip).toHaveAccessibleName("状态：环境 setup 失败");
+	});
+
+	it.each([
+		["frozen", "已冻结"],
+		["stopped", "已停机"],
+		["waking", "唤醒中"],
+		["resuming", "恢复中"],
+		["failed", "失败"],
+	] as const)("orb %s 时历史 setup 失败不覆盖生命周期状态", (state, label) => {
+		const chip = renderWithOrb(`T-orb-${state}`, {
+			state,
+			lastSetup: FAILED_SETUP as Orb["lastSetup"],
+		});
+		expect(chip).toHaveAccessibleName(`状态：${label}`);
 	});
 });
