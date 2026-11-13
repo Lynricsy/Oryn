@@ -5,11 +5,12 @@ use std::sync::Mutex;
 
 use serde::Deserialize;
 use serde_json::json;
-use tauri::{AppHandle, Runtime};
+use tauri::AppHandle;
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_notification::NotificationExt;
 
-use crate::eventlog;
 use crate::session::valid_app_path;
+use crate::{eventlog, host};
 
 /// 标题与正文的最大字符数。
 pub const TITLE_MAX: usize = 120;
@@ -19,6 +20,15 @@ pub const REGISTRY_CAP: usize = 64;
 /// 令牌桶：突发 5，每 6 秒补 1。
 pub const BURST: f64 = 5.0;
 pub const REFILL_MS: f64 = 6_000.0;
+
+/// Linux 通知的应用名（通知中心显示的名字、dunst 的 `appname`）。
+pub const APP_NAME: &str = "Oryn";
+/// 安装包里 `.desktop` 文件的名字（deb / rpm / AppImage 都是 `Oryn.desktop`，= `productName`）。
+pub const DESKTOP_ENTRY: &str = "Oryn";
+/// 已安装的图标名（hicolor 下的 `oryn-desktop.png`，= `mainBinaryName`）。
+pub const ICON: &str = "oryn-desktop";
+/// XDG 通知规范里「点击通知本体」对应的动作；只有声明了它的通知，服务器才会上报点击。
+pub const DEFAULT_ACTION: &str = "default";
 
 /// `host_notify` 的参数（来自远程页面）。
 #[derive(Debug, Clone, Deserialize)]
@@ -130,6 +140,7 @@ impl Notifier {
     }
 
     /// 分配下一个通知号（从 1 递增，溢出回绕）。
+    #[cfg(not(target_os = "linux"))]
     pub fn next_id(&self) -> i32 {
         let mut g = self.lock();
         g.next = g.next.checked_add(1).unwrap_or(1);
@@ -164,7 +175,7 @@ impl Notifier {
 }
 
 /// `host_notify`：净化、限流后显示系统通知。
-pub fn show<R: Runtime>(app: &AppHandle<R>, notifier: &Notifier, n: HostNotification) {
+pub fn show(app: &AppHandle, notifier: &Notifier, n: HostNotification) {
     let id = n.id.clone();
     let Some(p) = notifier.prepare(n, eventlog::now_ms()) else {
         eventlog::log(
@@ -173,6 +184,76 @@ pub fn show<R: Runtime>(app: &AppHandle<R>, notifier: &Notifier, n: HostNotifica
         );
         return;
     };
+    deliver(app, id, p);
+}
+
+fn log_shown(id: &str, p: &Prepared) {
+    eventlog::log(
+        "notify.shown",
+        json!({"id": id, "n": p.n, "title": p.title, "path": p.path}),
+    );
+}
+
+fn log_error(id: &str, e: impl ToString) {
+    eventlog::log("notify.error", json!({"id": id, "error": e.to_string()}));
+}
+
+/// 点击通知本体：回查通知号 → 记录 `notify.clicked` → 显示主窗口并打开对应路径。
+/// macOS / Windows 由插件的 `on_action` 调到这里，Linux 由 [`deliver`] 的等待线程调到这里。
+pub fn clicked(app: &AppHandle, n: i32) {
+    let Some(d) = host::desktop(app) else { return };
+    if let Some((id, path)) = d.notifier.lookup(n) {
+        eventlog::log("notify.clicked", json!({"id": id, "n": n, "path": path}));
+        host::open_path(app, &path);
+    }
+}
+
+/// 构建 Linux 通知：应用名 `Oryn`、`desktop-entry` 提示指向安装的 `.desktop`；
+/// `clickable` 时声明 `default` 动作，服务器才会上报点击。
+#[cfg(target_os = "linux")]
+pub fn linux_notification(title: &str, body: &str, clickable: bool) -> notify_rust::Notification {
+    let mut n = notify_rust::Notification::new();
+    n.appname(APP_NAME)
+        .summary(title)
+        .body(body)
+        .icon(ICON)
+        .hint(notify_rust::Hint::DesktopEntry(DESKTOP_ENTRY.into()));
+    if clickable {
+        n.action(DEFAULT_ACTION, "");
+    }
+    n
+}
+
+/// Linux：在单独线程里发送，并用同一连接等待用户动作（dunst 只把信号发给发送通知的连接）。
+/// 不设 notify-rust 的 `id`：那是 D-Bus 的 `replaces_id`（服务器全局编号），设成我们的通知号会顶掉别的通知。
+#[cfg(target_os = "linux")]
+fn deliver(app: &AppHandle, id: String, p: Prepared) {
+    let app = app.clone();
+    let log_id = id.clone();
+    let spawned = std::thread::Builder::new()
+        .name("notification".into())
+        .spawn(move || {
+            match linux_notification(&p.title, &p.body, true).show() {
+                Ok(handle) => {
+                    log_shown(&id, &p);
+                    // 关闭时回调收到 `__closed`，只处理点击
+                    handle.wait_for_action(|action| {
+                        if action == DEFAULT_ACTION {
+                            clicked(&app, p.n);
+                        }
+                    });
+                }
+                Err(e) => log_error(&id, e),
+            }
+        });
+    if let Err(e) = spawned {
+        log_error(&log_id, e);
+    }
+}
+
+/// macOS / Windows（及移动端）：走官方插件，点击经 `on_action` 回到 [`clicked`]。
+#[cfg(not(target_os = "linux"))]
+fn deliver(app: &AppHandle, id: String, p: Prepared) {
     let result = app
         .notification()
         .builder()
@@ -181,23 +262,35 @@ pub fn show<R: Runtime>(app: &AppHandle<R>, notifier: &Notifier, n: HostNotifica
         .body(&p.body)
         .show();
     match result {
-        Ok(()) => eventlog::log(
-            "notify.shown",
-            json!({"id": id, "n": p.n, "title": p.title, "path": p.path}),
-        ),
-        Err(e) => eventlog::log("notify.error", json!({"id": id, "error": e.to_string()})),
+        Ok(()) => log_shown(&id, &p),
+        Err(e) => log_error(&id, e),
     }
 }
 
 /// 显示一条不可点击跳转的提示（如下载完成）。
-pub fn show_plain<R: Runtime>(app: &AppHandle<R>, notifier: &Notifier, title: &str, body: &str) {
-    let _ = app
-        .notification()
-        .builder()
-        .id(notifier.next_id())
-        .title(truncate(title, TITLE_MAX))
-        .body(truncate(body, BODY_MAX))
-        .show();
+pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str) {
+    let (title, body) = (truncate(title, TITLE_MAX), truncate(body, BODY_MAX));
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (app, notifier);
+        let _ = std::thread::Builder::new()
+            .name("notification".into())
+            .spawn(move || {
+                if let Err(e) = linux_notification(&title, &body, false).show() {
+                    log_error("", e);
+                }
+            });
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app
+            .notification()
+            .builder()
+            .id(notifier.next_id())
+            .title(title)
+            .body(body)
+            .show();
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +350,33 @@ mod tests {
             .unwrap();
         assert_eq!(p.title.chars().count(), TITLE_MAX);
         assert_eq!(p.body.chars().count(), BODY_MAX);
+    }
+
+    #[test]
+    fn linux_identity_matches_bundle() {
+        // .desktop 文件名取 productName、图标名取 mainBinaryName：改配置时这里一起改
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["productName"], DESKTOP_ENTRY);
+        assert_eq!(conf["mainBinaryName"], ICON);
+        assert_eq!(APP_NAME, "Oryn");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_fields() {
+        let n = linux_notification("标题", "正文", true);
+        assert_eq!(n.appname, "Oryn");
+        assert_eq!(n.summary, "标题");
+        assert_eq!(n.body, "正文");
+        assert_eq!(n.icon, "oryn-desktop");
+        assert!(n
+            .hints
+            .contains(&notify_rust::Hint::DesktopEntry("Oryn".into())));
+        assert_eq!(n.actions, ["default", ""]);
+        let plain = linux_notification("t", "b", false);
+        assert!(plain.actions.is_empty());
+        assert_eq!(plain.appname, "Oryn");
     }
 
     #[test]

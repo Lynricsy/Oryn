@@ -212,9 +212,11 @@ impl Vault {
     pub fn set(&mut self, server: &str, token: &str) -> Result<TokenStoreKind, StoreError> {
         match self.store.set(server, token) {
             Ok(()) => Ok(self.kind),
-            Err(StoreError::Unavailable(_))
+            Err(StoreError::Unavailable(reason))
                 if self.fallback_allowed && self.kind == TokenStoreKind::Keyring =>
             {
+                // 回退原因只进事件日志（不含令牌），便于排查凭据库为何不可用
+                crate::eventlog::log("token.fallback", serde_json::json!({ "reason": reason }));
                 let file = FileStore::new(&self.dir);
                 file.set(server, token)?;
                 self.store = Box::new(file);

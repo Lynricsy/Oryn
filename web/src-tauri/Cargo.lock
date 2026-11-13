@@ -3103,6 +3103,7 @@ name = "oryn-desktop"
 version = "0.1.0"
 dependencies = [
  "keyring",
+ "notify-rust",
  "reqwest",
  "serde",
  "serde_json",

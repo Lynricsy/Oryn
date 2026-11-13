@@ -29,7 +29,6 @@ use std::time::Duration;
 
 use serde_json::json;
 use tauri::{App, AppHandle, Manager, RunEvent};
-use tauri_plugin_notification::NotificationExt;
 
 use crate::api::HttpApi;
 use crate::config::Config;
@@ -187,23 +186,20 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let d = Arc::new(Desktop::new(core, nav, args.smoke));
     app.manage(d.clone());
 
-    // 通知点击：回查通知号 → 打开对应路径
-    let click = handle.clone();
-    handle.notification().on_action(move |p| {
-        if p.action_id() != "tap" {
-            return;
-        }
-        let Some(n) = p.notification().map(|n| n.id()) else {
-            return;
-        };
-        let Some(d) = host::desktop(&click) else {
-            return;
-        };
-        if let Some((id, path)) = d.notifier.lookup(n) {
-            eventlog::log("notify.clicked", json!({"id": id, "n": n, "path": path}));
-            host::open_path(&click, &path);
-        }
-    })?;
+    // 通知点击（macOS / Windows 经插件；Linux 由 notify::deliver 的等待线程直接调 notify::clicked）
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let click = handle.clone();
+        handle.notification().on_action(move |p| {
+            if p.action_id() != "tap" {
+                return;
+            }
+            if let Some(n) = p.notification().map(|n| n.id()) {
+                notify::clicked(&click, n);
+            }
+        })?;
+    }
 
     #[cfg(desktop)]
     {
