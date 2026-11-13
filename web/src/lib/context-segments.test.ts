@@ -229,4 +229,112 @@ describe("上下文分段", () => {
 			expect(contextParts(BREAKDOWN, path).at(-1)).toEqual(WHOLE);
 		}
 	});
+
+	const assistant = (
+		content: unknown[],
+		extra: Record<string, unknown> = {},
+	): [string, Record<string, unknown>] => [
+		"message",
+		{ message: { role: "assistant", content, ...extra } },
+	];
+	const result = (
+		toolCallId: string,
+		text: string,
+	): [string, Record<string, unknown>] => [
+		"message",
+		{
+			message: {
+				role: "toolResult",
+				toolCallId,
+				content: [{ type: "text", text }],
+			},
+		},
+	];
+
+	it("中断或出错的助手回合及其配对工具结果不计入（omp 不把它们放回模型上下文）", () => {
+		for (const stopReason of ["aborted", "error"]) {
+			const path = chain([
+				user("u".repeat(10)),
+				assistant(
+					[
+						{ type: "thinking", thinking: "t".repeat(500) },
+						{ type: "text", text: "a".repeat(500) },
+						{ type: "toolCall", id: "c1", name: "bash", arguments: {} },
+					],
+					{ stopReason },
+				),
+				result("c1", "o".repeat(500)),
+				user("v".repeat(5)),
+				assistant([{ type: "text", text: "b".repeat(20) }], {
+					stopReason: "stop",
+				}),
+			]);
+			expect(messageWeights(path)).toEqual({
+				userMessages: 15,
+				assistantMessages: 20,
+				thinking: 0,
+				toolCalls: 0,
+				toolOutput: 0,
+			});
+		}
+	});
+
+	it("后面紧跟 interrupted-thinking 续接消息的中断回合保留，但去掉末尾未签名的思考", () => {
+		const path = chain([
+			user("u".repeat(10)),
+			assistant(
+				[
+					{
+						type: "thinking",
+						thinking: "s".repeat(30),
+						thinkingSignature: "sig",
+					},
+					{ type: "text", text: "a".repeat(40) },
+					{ type: "thinking", thinking: "t".repeat(500) },
+					{ type: "text", text: "  " },
+				],
+				{ stopReason: "aborted" },
+			),
+			["label", { label: "x" }],
+			[
+				"custom_message",
+				{ customType: "interrupted-thinking", content: "c".repeat(7) },
+			],
+		]);
+		expect(messageWeights(path)).toEqual({
+			userMessages: 17,
+			// 末尾空白文本块随思考一起去掉（omp 取 content.slice(0, runStart)）
+			assistantMessages: 40,
+			thinking: 30,
+			toolCalls: 0,
+			toolOutput: 0,
+		});
+	});
+
+	it("生效压缩带原生载荷或图像归档时不拆分", () => {
+		for (const preserveData of [
+			{
+				openaiRemoteCompaction: { provider: "openai", replacementHistory: [] },
+			},
+			{ anthropicCompaction: { provider: "anthropic", content: "x" } },
+			{ snapcompact: { frames: [], text: "archived" } },
+		]) {
+			const path = chain([
+				user("a"),
+				[
+					"compaction",
+					{ summary: "s".repeat(50), firstKeptEntryId: "", preserveData },
+				],
+				user("b"),
+			]);
+			const ctx = contextPath(path, "e3");
+			expect(messageWeights(ctx ?? [])).toBeNull();
+			expect(contextParts(BREAKDOWN, path, "e3").at(-1)).toEqual(WHOLE);
+		}
+		// 只有扩展钩子写的其他键时照常按摘要计量
+		const plain = chain([
+			["compaction", { summary: "s".repeat(50), preserveData: { hook: 1 } }],
+		]);
+		expect(messageWeights(plain)?.userMessages).toBe(50);
+	});
 });
