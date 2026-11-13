@@ -18,7 +18,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { JsonRecord } from "../../state/message-builder";
-import { useIndex } from "../../state/stores";
+import { useIndex, useThread } from "../../state/stores";
 import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
 import { AgentAvatar } from "../ui/AgentAvatar";
@@ -41,6 +41,7 @@ import {
 	USER_BUBBLE_TEXT,
 	UserBubble,
 } from "./MessageView";
+import { type KnownModel, modelLabel } from "./model-label";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 
 const META_ICON: Record<string, IconName> = {
@@ -52,11 +53,18 @@ const META_ICON: Record<string, IconName> = {
 
 function MetaLine({ entry }: { entry: JsonRecord }) {
 	const { t } = useTranslation();
+	const { threadId } = useTranscriptContext();
+	const known = useThread(threadId, (s) => s.state?.model);
 	let text = "";
+	let title: string | undefined;
 	switch (entry.type) {
-		case "model_change":
-			text = t("transcript.meta.model", { model: String(entry.model ?? "") });
+		case "model_change": {
+			// 条目里是 "provider/modelId"：界面写短名（与头像行、输入坞一致），完整 id 进悬停提示
+			const label = modelLabel(String(entry.model ?? ""), undefined, known);
+			text = t("transcript.meta.model", { model: label?.short ?? "" });
+			title = label?.full;
 			break;
+		}
 		case "thinking_level_change":
 			text = t("transcript.meta.thinking", {
 				level: String(entry.thinkingLevel ?? entry.configured ?? "off"),
@@ -92,7 +100,9 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 					<Icon name={icon} size={11} />
 				)}
 			</span>
-			<span className="min-w-0 truncate">{text}</span>
+			<span className="min-w-0 truncate" title={title}>
+				{text}
+			</span>
 		</div>
 	);
 }
@@ -210,8 +220,15 @@ function isUserRow(item: TranscriptItem): boolean {
 	return item.kind === "message" && item.message.role === "user";
 }
 
+/** 回合的模型（第一条带模型字段的助手消息），用于头像行的身份文字。 */
+export interface TurnModel {
+	model: string;
+	provider: string;
+}
+
 /**
- * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像；
+ * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像
+ * （`models` 给出该回合的模型，作为头像旁的身份文字）；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
@@ -220,13 +237,16 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 	starts: Set<number>;
 	userStarts: Set<number>;
 	footers: Map<number, TurnUsage>;
+	models: Map<number, TurnModel>;
 	openStart: number | undefined;
 } {
 	const starts = new Set<number>();
 	const userStarts = new Set<number>();
 	const footers = new Map<number, TurnUsage>();
+	const models = new Map<number, TurnModel>();
 	let messages: JsonRecord[] = [];
 	let last = -1;
+	let start = -1;
 	let openStart: number | undefined;
 	const close = () => {
 		const tail = items[last];
@@ -252,12 +272,20 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 		if (last < 0) {
 			starts.add(i);
 			openStart = i;
+			start = i;
 		}
 		last = i;
-		if (it.kind === "message") messages.push(it.message);
+		if (it.kind !== "message") return;
+		messages.push(it.message);
+		const { model, provider } = it.message;
+		if (!models.has(start) && typeof model === "string" && model)
+			models.set(start, {
+				model,
+				provider: typeof provider === "string" ? provider : "",
+			});
 	});
 	close();
-	return { starts, userStarts, footers, openStart };
+	return { starts, userStarts, footers, models, openStart };
 }
 
 /** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
@@ -265,6 +293,15 @@ const GAP_TURN = 16;
 
 /** 回合头像行与回合第一块内容之间的距离：头像是这一回合的题头，贴着内容用近档。 */
 const AVATAR_GAP = GAP_PROC;
+
+/** `insetBottom` 里输入坞上方的留白（ThreadPage 传 `dockH + 16`）；据此找到托盘顶边。 */
+const DOCK_GAP = 16;
+
+/** 「回到底部」出现时托盘顶边上方淡出正文的净空带高度（28px 圆钮上下各留 8px）。 */
+const CLEAR_BAND = 44;
+
+/** 净空带的遮罩切口压进托盘顶边以内的距离（托盘圆角半径 14px）。 */
+const TRAY_TUCK = 14;
 
 /** 行首 / 行尾的节奏类别；`turn` 是不属于 agent 过程流的行。 */
 type Edge = FlowKind | "turn";
@@ -317,6 +354,44 @@ function PendingPrompt({ text }: { text: string }) {
 	);
 }
 
+/**
+ * 回合头像行：agent 头像 → 模型品牌 logo（与输入坞模型胶囊同款）→ 该回合模型的短名（淡色，悬停给完整 id）；
+ * 消息里没有模型信息时只放头像。
+ */
+function TurnHead({
+	working,
+	model,
+	known,
+}: {
+	working: boolean;
+	model?: TurnModel;
+	known?: KnownModel;
+}): ReactNode {
+	const label = model ? modelLabel(model.model, model.provider, known) : null;
+	return (
+		<div
+			className="flex h-5 min-w-0 items-center gap-2"
+			style={{ marginBottom: AVATAR_GAP }}
+		>
+			<AgentAvatar size={20} working={working} />
+			{model && label && (
+				<span
+					className="flex min-w-0 items-center gap-1.5 font-medium text-faint text-xs"
+					title={label.full}
+				>
+					<ModelLogo
+						model={model.model}
+						provider={model.provider || undefined}
+						size={14}
+						className="shrink-0"
+					/>
+					<span className="min-w-0 truncate">{label.short}</span>
+				</span>
+			)}
+		</div>
+	);
+}
+
 export function Transcript({
 	items,
 	footer,
@@ -327,7 +402,7 @@ export function Transcript({
 	footer?: ReactNode;
 	/** 顶部被玻璃页头覆盖的高度（px）。 */
 	insetTop?: number;
-	/** 底部被玻璃输入坞覆盖的高度（px）。 */
+	/** 底部被玻璃输入坞覆盖的高度（px）：输入坞高度 + `DOCK_GAP` 留白（ThreadPage 传入 `dockH + 16`）。 */
 	insetBottom?: number;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -343,6 +418,7 @@ export function Transcript({
 	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）
 	const working = useIndex((s) => s.threads[threadId]?.state === "working");
 	const liveStart = working ? turns.openStart : undefined;
+	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const gaps = useMemo(() => rowGaps(items, turns.footers), [items, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
@@ -415,12 +491,11 @@ export function Transcript({
 						>
 							{turns.starts.has(v.index) && (
 								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
-								<div
-									className="flex h-5 items-center"
-									style={{ marginBottom: AVATAR_GAP }}
-								>
-									<AgentAvatar size={20} working={liveStart === v.index} />
-								</div>
+								<TurnHead
+									working={liveStart === v.index}
+									model={turns.models.get(v.index)}
+									known={sessionModel}
+								/>
 							)}
 							{item ? (
 								<ItemView
@@ -451,8 +526,18 @@ export function Transcript({
 			gaps,
 			pendingText,
 			liveStart,
+			sessionModel,
 		],
 	);
+
+	// 「回到底部」悬在托盘上方：按钮出现时，托盘顶边以上 CLEAR_BAND 内的正文淡出（遮罩只盖这一条，
+	// 托盘背后的内容照常透过玻璃），按钮后面没有正文、表格边框或图形，也不压在托盘里的控件上。
+	// 遮罩切口压进托盘里 TRAY_TUCK：托盘顶边的圆角与发丝描边处玻璃最薄，切口正落在边上会露出半行清晰文字
+	const trayTop = Math.max(0, insetBottom - DOCK_GAP);
+	const cut = Math.max(0, trayTop - TRAY_TUCK);
+	const clearMask = atBottom
+		? undefined
+		: `linear-gradient(to top, #000 ${cut}px, transparent ${cut}px, transparent ${trayTop + CLEAR_BAND}px, #000 ${trayTop + CLEAR_BAND + 24}px)`;
 
 	return (
 		<div className="relative min-h-0 flex-1">
@@ -463,6 +548,8 @@ export function Transcript({
 				style={{
 					scrollPaddingTop: insetTop,
 					scrollPaddingBottom: insetBottom,
+					maskImage: clearMask,
+					WebkitMaskImage: clearMask,
 				}}
 				data-testid="transcript"
 			>
@@ -471,17 +558,19 @@ export function Transcript({
 				</div>
 			</div>
 			{!atBottom && (
+				// 水平居中、悬在托盘顶边上方留白里的小圆钮
 				<button
 					type="button"
-					className="glass pop-in absolute right-[max(1rem,calc(50%-24rem))] z-20 inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-muted text-xs hover:text-fg"
-					style={{ bottom: insetBottom + 8 }}
+					aria-label={t("transcript.jumpToEnd")}
+					title={t("transcript.jumpToEnd")}
+					className="glass pop-in absolute left-1/2 z-20 inline-grid h-7 w-7 -translate-x-1/2 place-items-center rounded-full text-muted hover:text-fg"
+					style={{ bottom: trayTop + (CLEAR_BAND - 28) / 2 }}
 					onClick={() => {
 						stick.current = true;
 						scrollToEnd();
 					}}
 				>
-					<Icon name="arrowDown" size={13} />
-					{t("transcript.jumpToEnd")}
+					<Icon name="arrowDown" size={14} />
 				</button>
 			)}
 		</div>

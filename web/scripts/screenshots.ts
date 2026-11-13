@@ -289,37 +289,62 @@ async function openTerminal(page: Page) {
 	await page.waitForTimeout(800);
 }
 
-/** 拉高视口直到转录无需滚动（虚拟列表随之挂载全部行）；`expand` 时同时展开全部折叠的卡片。 */
+/**
+ * 拉高视口直到转录无需滚动（虚拟列表随之挂载全部行）；`expand` 时同时展开全部折叠的卡片。
+ * 视口拉高后新挂载的行又是折叠的，展开后的卡片（高亮、图表）也要晚一步才长高：每轮点完都等
+ * 转录高度稳定下来再量，且要连续两轮「没点到新折叠项、无需滚动」才算完；否则视口停在半高，
+ * 贴底跟随把转录滚到中段，截图缺了前半段。
+ */
 async function growToTranscript(s: Shot, expand: boolean) {
 	const transcript = s.page.locator("[data-testid=transcript]");
-	for (let round = 0; round < 8; round++) {
+	let stable = 0;
+	for (let round = 0; round < 16 && stable < 2; round++) {
+		let clicked = 0;
 		if (expand) {
 			// 虚拟列表会重挂载行，逐个用 locator 点击容易等到超时；直接在页面里点掉全部折叠项
-			await transcript.evaluate((el) => {
-				for (const b of el.querySelectorAll<HTMLButtonElement>(
+			clicked = await transcript.evaluate((el) => {
+				const buttons = el.querySelectorAll<HTMLButtonElement>(
 					"button[aria-expanded=false]",
-				))
-					b.click();
+				);
+				for (const b of buttons) b.click();
+				return buttons.length;
 			});
 		}
-		await s.page.waitForTimeout(400);
-		const { scroll, client } = await transcript.evaluate((el) => ({
-			scroll: el.scrollHeight,
-			client: el.clientHeight,
-		}));
+		const scroll = await settledHeight(s.page);
+		const client = await transcript.evaluate((el) => el.clientHeight);
 		const vp = s.page.viewportSize();
 		if (!vp) return;
 		const missing = scroll - client;
 		const more = expand
 			? await transcript.locator("button[aria-expanded=false]").count()
 			: 0;
-		if (missing <= 1 && more === 0) break;
-		const height = Math.min(TALL_MAX, vp.height + Math.max(0, missing));
-		if (height === vp.height && more === 0) break;
+		if (clicked === 0 && missing <= 1 && more === 0) {
+			stable++;
+			continue;
+		}
+		stable = 0;
+		// 刚点开的卡片可能还没长高：不拉视口，下一轮再量（不能就此收手，否则停在半高）
+		if (missing <= 1) continue;
+		const height = Math.min(TALL_MAX, vp.height + missing);
+		if (height === vp.height) break; // 已到截图高度上限
 		await s.page.setViewportSize({ width: vp.width, height });
 	}
 	await scrollTranscript(s.page, 0);
 	await settle(s.page, 1200);
+}
+
+/** 等转录的 scrollHeight 连续 600ms 不再变化（最多 4 秒），返回稳定后的值。 */
+async function settledHeight(page: Page): Promise<number> {
+	const transcript = page.locator("[data-testid=transcript]");
+	let last = await transcript.evaluate((el) => el.scrollHeight);
+	let still = 0;
+	for (let t = 0; t < 4000 && still < 600; t += 150) {
+		await page.waitForTimeout(150);
+		const now = await transcript.evaluate((el) => el.scrollHeight);
+		still = now === last ? still + 150 : 0;
+		last = now;
+	}
+	return last;
 }
 
 /** 输入坞断言：最后一条转录行的底边不得低于输入框所在托盘的顶边。 */

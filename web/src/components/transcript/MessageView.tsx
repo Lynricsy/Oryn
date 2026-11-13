@@ -25,7 +25,6 @@ import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
-import { ModelLogo } from "../ui/ModelLogo";
 import { Menu } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { useTranscriptContext } from "./context";
@@ -446,11 +445,8 @@ export function ToolCard({
 	);
 }
 
-/** 一个回合（两条用户消息之间）的累计用量：各条助手消息的读数相加，模型取最后一条。 */
+/** 一个回合（两条用户消息之间）的累计用量：各条助手消息的读数相加。模型名在回合顶部的头像行里。 */
 export interface TurnUsage {
-	model: string;
-	/** 最后一条助手消息的 provider，帮 ModelLogo 识别认不出的模型 id。 */
-	provider: string;
 	hasUsage: boolean;
 	input: number;
 	output: number;
@@ -465,8 +461,6 @@ export interface TurnUsage {
 export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 	const n = (v: unknown) => (typeof v === "number" ? v : 0);
 	const sum: TurnUsage = {
-		model: "",
-		provider: "",
 		hasUsage: false,
 		input: 0,
 		output: 0,
@@ -477,10 +471,6 @@ export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 	};
 	const texts: string[] = [];
 	for (const m of messages) {
-		if (typeof m.model === "string" && m.model) {
-			sum.model = m.model;
-			sum.provider = typeof m.provider === "string" ? m.provider : "";
-		}
 		if (isRecord(m.usage)) {
 			sum.hasUsage = true;
 			sum.input += n(m.usage.input);
@@ -502,23 +492,14 @@ const META_CHIP =
 	"inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 tabular-nums [&_svg]:text-faint";
 
 /**
- * 回合脚注：整回合的模型与累计用量（每项一个细描边胶囊）+ 消息操作；只挂在回合最后一条助手消息下。
- * 始终单行：按自身宽度（容器查询）先藏缓存、再藏耗时，模型名最后截断。
+ * 回合脚注：整回合的累计用量（每项一个细描边胶囊）+ 消息操作；只挂在回合最后一条助手消息下。
+ * 始终单行：按自身宽度（容器查询）先藏缓存、再藏耗时。模型名不在这里重复（见回合顶部的头像行）。
  */
 function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 	const { t } = useTranslation();
 	return (
 		<div className="@container mt-2">
 			<div className="flex min-w-0 flex-nowrap items-center gap-1.5 text-2xs text-muted">
-				{turn.model && (
-					<span
-						className={`${META_CHIP} min-w-0 shrink font-medium text-fg`}
-						title={turn.model}
-					>
-						<ModelLogo model={turn.model} provider={turn.provider} size={12} />
-						<span className="min-w-0 truncate">{turn.model}</span>
-					</span>
-				)}
 				{turn.hasUsage && (
 					<>
 						<span className={META_CHIP}>
@@ -539,10 +520,10 @@ function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 							</span>
 						)}
 						{turn.cost > 0 && (
-							<span className={META_CHIP}>
-								<Stat icon="coin" label={t("stat.cost")}>
-									{formatCost(turn.cost)}
-								</Stat>
+							// 成本不配图标：formatCost 自带 $（与输入坞页脚同一写法），再加货币图标会读成「$ $0.18」
+							<span className={META_CHIP} title={t("stat.cost")}>
+								<span className="sr-only">{t("stat.cost")}</span>
+								{formatCost(turn.cost)}
 							</span>
 						)}
 					</>

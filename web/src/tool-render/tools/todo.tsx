@@ -1,16 +1,18 @@
 /** `todo` — phased task-list ops and the resulting board. */
 import type { ReactNode } from "react";
+import { Icon, type IconName } from "../../components/ui/icons";
 import { Badges, ResultText, Row } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { detailsRecord, isRecord, normalizeWs, str, truncate } from "../util";
 
 type TaskStatus = "pending" | "in_progress" | "completed" | "abandoned";
 
-const TASK_ICONS: Record<TaskStatus, string> = {
-	completed: "✓",
-	in_progress: "→",
-	abandoned: "✕",
-	pending: "○",
+/** 与右栏待办卡同一套图标（颜色在 tool-render.css 的 `.tv-task--*`）。 */
+const TASK_ICONS: Record<TaskStatus, { name: IconName; fill?: boolean }> = {
+	completed: { name: "checkCircle", fill: true },
+	in_progress: { name: "circleHalf" },
+	abandoned: { name: "minusCircle" },
+	pending: { name: "circle" },
 };
 
 const ROMAN_PAIRS: ReadonlyArray<readonly [number, string]> = [
@@ -138,7 +140,13 @@ function Board({ phases }: { phases: unknown[] }): ReactNode {
 					: "pending";
 			rendered.push(
 				<div key={`p${i}t${t}`} className={`tv-task tv-task--${status}`}>
-					<span className="tv-task-icon">{TASK_ICONS[status]}</span>
+					<span className="tv-task-icon" aria-hidden>
+						<Icon
+							name={TASK_ICONS[status].name}
+							size={13}
+							weight={TASK_ICONS[status].fill ? "fill" : "regular"}
+						/>
+					</span>
 					<span>{str(task.content) ?? ""}</span>
 				</div>,
 			);

@@ -3,8 +3,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
 import { qk } from "../../api/queries";
+import type { SessionState } from "../../omp/types";
 import type { JsonRecord } from "../../state/message-builder";
-import { indexStore } from "../../state/stores";
+import { getThreadStore, indexStore } from "../../state/stores";
 import type { TranscriptItem } from "../../state/transcript";
 import { TranscriptContext, type TranscriptContextValue } from "./context";
 import { MessageView, summarizeTurn } from "./MessageView";
@@ -49,7 +50,7 @@ const user = (seq: number) =>
 	msg(seq, { role: "user", content: [{ type: "text", text: "hi" }] });
 
 describe("summarizeTurn", () => {
-	it("累加同一回合各条助手消息的用量，模型取最后一条", () => {
+	it("累加同一回合各条助手消息的用量", () => {
 		const sum = summarizeTurn([
 			assistant("a", { input: 1000, output: 10, cacheRead: 0, cost: 0.01 }),
 			assistant(
@@ -59,7 +60,6 @@ describe("summarizeTurn", () => {
 			),
 		]);
 		expect(sum).toMatchObject({
-			model: "other",
 			hasUsage: true,
 			input: 3000,
 			output: 30,
@@ -117,6 +117,23 @@ describe("layoutTurns", () => {
 		]);
 		expect(tool.footers.size).toBe(0);
 	});
+
+	it("回合模型取第一条带模型的助手消息，挂在回合起点", () => {
+		const { models } = layoutTurns([
+			user(1),
+			{ kind: "tool", key: "lt", seq: 2, toolCallId: "x", toolName: "bash" },
+			msg(
+				3,
+				assistant("a", u, { model: "claude-opus-5-5", provider: "anthropic" }),
+			),
+			msg(4, assistant("b", u, { model: "other" })),
+			user(5),
+			msg(6, { role: "assistant", content: [] }, true),
+		]);
+		expect([...models.entries()]).toEqual([
+			[1, { model: "claude-opus-5-5", provider: "anthropic" }],
+		]);
+	});
 });
 
 const ctx: TranscriptContextValue = {
@@ -155,6 +172,20 @@ describe("MessageView 回合脚注与消息菜单", () => {
 		expect(screen.getByText("20k")).toBeTruthy();
 		expect(screen.getByText("1.0k")).toBeTruthy();
 		expect(screen.getAllByRole("button", { name: "消息操作" })).toHaveLength(2);
+	});
+
+	it("回合脚注的成本只有一个 $，也不再重复写模型名", () => {
+		const u = { input: 1, output: 1, cacheRead: 0, cost: 0.18 };
+		const turn = summarizeTurn([assistant("x", u)]);
+		const { container } = render(
+			<TranscriptContext.Provider value={ctx}>
+				<MessageView message={assistant("x", u)} live={false} turn={turn} />
+			</TranscriptContext.Provider>,
+		);
+		const cost = screen.getByTitle("成本");
+		expect(cost.textContent).toBe("成本$0.18");
+		expect(cost.querySelector("svg")).toBeNull();
+		expect(container.textContent).not.toContain("claude-sonnet-5");
 	});
 
 	it("中间的助手消息的菜单作用于它自己的 entry", () => {
@@ -298,6 +329,31 @@ describe("助手头像闪烁", () => {
 		// 回合中间的行（第二个回合的流式消息）没有头像
 		const mid = container.querySelector('[data-index="4"]');
 		expect(mid?.querySelector('[data-avatar-of="agent"]')).toBeNull();
+	});
+
+	it("头像行旁写该回合模型的短名，完整 id 在悬停提示里", () => {
+		getThreadStore(ctx.threadId)
+			.getState()
+			.patchLocal({
+				state: {
+					model: {
+						id: "claude-sonnet-5",
+						name: "Claude Sonnet 5",
+						provider: "anthropic",
+					},
+				} as SessionState,
+			});
+		const { container } = renderTranscript("idle");
+		const names = [
+			...container.querySelectorAll(
+				'[data-index="1"] [title], [data-index="3"] [title]',
+			),
+		].filter((el) => el.textContent === "Sonnet 5");
+		expect(names).toHaveLength(2);
+		expect(names[0]?.getAttribute("title")).toBe(
+			"Claude Sonnet 5 (anthropic/claude-sonnet-5)",
+		);
+		getThreadStore(ctx.threadId).getState().patchLocal({ state: undefined });
 	});
 
 	it("最后一行是用户消息时没有进行中的回合", () => {

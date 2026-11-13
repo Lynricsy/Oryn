@@ -1,6 +1,7 @@
 /** `task` — spawn subagents: batch shape, streamed progress, per-agent results. */
 import type { ReactNode } from "react";
 import { formatDuration, formatTokens } from "../../lib/format";
+import { modelBrand, shortModelName } from "../../lib/model-brand";
 import {
 	AgentLink,
 	Badge,
@@ -107,7 +108,7 @@ function AgentResult({
 	const { label, tone } = resultStatus(res);
 	const id = str(res.id) ?? "agent";
 	const description = str(res.description);
-	const stats: string[] = [];
+	const stats: ReactNode[] = [];
 	const tokens = num(res.tokens);
 	if (tokens) stats.push(`${formatTokens(tokens)} tok`);
 	const requests = num(res.requests);
@@ -115,7 +116,15 @@ function AgentResult({
 	const durationMs = num(res.durationMs);
 	if (durationMs != null) stats.push(formatDuration(durationMs));
 	const model = str(res.resolvedModel);
-	if (model) stats.push(model);
+	// 与转录、输入坞一致：写短名，完整 id 进悬停提示
+	if (model)
+		stats.push(
+			<span title={model}>
+				<Badge>
+					{shortModelName(model.split("/").pop() ?? model, modelBrand(model))}
+				</Badge>
+			</span>,
+		);
 
 	// The runtime prepends a one-line warning when a subagent never called
 	// yield; lift it out of the output preview like the TUI does.

@@ -661,10 +661,14 @@
 	color: var(--tv-fg);
 }
 
+/* 图标框与首行等高，13px 图标垂直居中在第一行文字上 */
 .tv-task-icon {
 	flex: none;
-	width: 12px;
-	text-align: center;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 1.5em;
 	color: var(--tv-faint);
 }
 
