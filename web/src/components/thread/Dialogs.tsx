@@ -8,7 +8,7 @@ import {
 	deleteAttachment,
 	listThreadAttachments,
 } from "../../lib/attachments";
-import { formatBytes, formatDateTime } from "../../lib/format";
+import { formatBytes, formatCount, formatDateTime } from "../../lib/format";
 import type { ReportKind } from "../../lib/slash";
 import type {
 	OmpCommand,
@@ -29,12 +29,14 @@ import {
 	type TranscriptContextValue,
 } from "../transcript/context";
 import { MessageView } from "../transcript/MessageView";
-import { Icon } from "../ui/icons";
+import { Badge, Meter, type Tone, thresholdTone } from "../ui/data";
+import { Icon, type IconName } from "../ui/icons";
 import {
 	Button,
 	Dialog,
 	ErrorText,
 	Field,
+	Radio,
 	Select,
 	Spinner,
 	TextArea,
@@ -238,11 +240,11 @@ function SessionTreeDialog({
 			)}
 			<ErrorText error={error ?? tree.error} />
 			{tree.isPending && <Spinner />}
-			<ul className="flex flex-col">
+			<ul className="flex flex-col gap-px">
 				{visible.map(({ node, depth }) => (
 					<li key={node.entryId}>
 						<div
-							className={`flex items-center gap-2 rounded px-2 py-1 text-sm ${selected === node.entryId ? "bg-hover" : ""}`}
+							className={`flex min-h-8 items-center gap-2 rounded-sm px-2 py-1 text-sm transition-colors duration-150 ${selected === node.entryId ? "bg-hover" : "hover:bg-hover/60"}`}
 							style={{ paddingLeft: `${0.5 + Math.min(depth, 8) * 1}rem` }}
 						>
 							<button
@@ -251,22 +253,20 @@ function SessionTreeDialog({
 								onClick={() => setSelected(node.entryId)}
 							>
 								<span
-									className={`h-2 w-2 shrink-0 rounded-full ${node.onActiveBranch ? "bg-accent" : "bg-border"}`}
+									className={`h-2 w-2 shrink-0 rounded-full ${node.onActiveBranch ? "bg-accent" : "bg-border-strong"}`}
 									title={node.onActiveBranch ? t("tree.active") : undefined}
 								/>
-								<span className="shrink-0 text-faint text-xs">
+								<span className="w-8 shrink-0 text-faint text-xs">
 									{t(`tree.role.${node.role}`)}
 								</span>
 								<span className="min-w-0 flex-1 truncate">
 									{node.textPreview || "…"}
 								</span>
-								{node.isLeaf && (
-									<span className="text-faint text-xs">{t("tree.leaf")}</span>
-								)}
+								{node.isLeaf && <Badge>{t("tree.leaf")}</Badge>}
 								{node.label && (
-									<span className="rounded bg-accent/15 px-1 text-accent text-xs">
+									<Badge tone="accent" icon="pin">
 										{node.label}
-									</span>
+									</Badge>
 								)}
 							</button>
 							{labelDraft !== null && selected === node.entryId ? (
@@ -290,7 +290,7 @@ function SessionTreeDialog({
 							) : (
 								<button
 									type="button"
-									className="text-faint hover:text-fg"
+									className="grid h-6 w-6 shrink-0 place-items-center rounded-sm text-faint transition-colors duration-150 hover:bg-hover hover:text-fg"
 									aria-label={t("tree.editLabel")}
 									onClick={() => {
 										setSelected(node.entryId);
@@ -358,16 +358,16 @@ function ForkDialog({
 			</p>
 			<div className="flex flex-col gap-2">
 				{(["share", "copy"] as const).map((v) => (
+					// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Radio 组件（内含原生 input）
 					<label
 						key={v}
-						className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${env === v ? "border-accent bg-hover" : "border-border"}`}
+						className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors duration-150 ${env === v ? "border-accent bg-accent-soft" : "border-border bg-panel/60 hover:bg-hover"}`}
 					>
-						<input
-							type="radio"
+						<Radio
 							name="env"
 							checked={env === v}
 							onChange={() => setEnv(v)}
-							className="mt-1"
+							className="mt-0.5"
 						/>
 						<span>
 							<span className="block font-medium text-sm">
@@ -399,28 +399,45 @@ function ContextReport({ data }: { data: ResponseData<"get_context_report"> }) {
 		[t("report.ctx.skills"), b.skillsTokens],
 		[t("report.ctx.messages"), b.messagesTokens],
 	];
+	const ctxWindow = Math.max(1, b.contextWindow);
+	const percent = (b.usedTokens / ctxWindow) * 100;
 	return (
-		<div className="flex flex-col gap-2 text-sm">
-			<div className="text-muted">
-				{data.model} · {b.usedTokens.toLocaleString()} /{" "}
-				{b.contextWindow.toLocaleString()}
-			</div>
-			{rows.map(([label, n]) => (
-				<div key={label}>
-					<div className="flex justify-between text-xs">
-						<span>{label}</span>
-						<span className="font-mono text-muted">{n.toLocaleString()}</span>
-					</div>
-					<div className="mt-0.5 h-1.5 rounded bg-inset">
-						<div
-							className="h-full rounded bg-accent"
-							style={{
-								width: `${Math.min(100, (n / Math.max(1, b.contextWindow)) * 100)}%`,
-							}}
-						/>
-					</div>
+		<div className="flex flex-col gap-3 text-sm">
+			{/* 总览：模型 + 已用 / 窗口 + 总量表 */}
+			<div className="rounded-lg border border-border bg-raised p-3">
+				<div className="flex flex-wrap items-center gap-2">
+					{data.model && (
+						<Badge icon="sparkle" title={data.model}>
+							{data.model}
+						</Badge>
+					)}
+					<span className="flex-1" />
+					<span className="font-semibold text-lg tabular-nums leading-none">
+						{Math.round(percent)}%
+					</span>
+					<span className="text-faint text-xs tabular-nums">
+						{formatCount(b.usedTokens)} / {formatCount(b.contextWindow)}
+					</span>
 				</div>
-			))}
+				<Meter
+					className="mt-2.5"
+					value={b.usedTokens}
+					max={ctxWindow}
+					tone={thresholdTone(percent)}
+					label={t("panel.context")}
+				/>
+			</div>
+			<ul className="flex flex-col gap-2.5">
+				{rows.map(([label, n]) => (
+					<li key={label}>
+						<div className="flex items-baseline justify-between gap-3 text-xs">
+							<span className="text-muted">{label}</span>
+							<span className="text-faint tabular-nums">{formatCount(n)}</span>
+						</div>
+						<Meter className="mt-1" value={n} max={ctxWindow} label={label} />
+					</li>
+				))}
+			</ul>
 		</div>
 	);
 }
@@ -517,7 +534,7 @@ function ModelDialog({
 			/>
 			<ErrorText error={error ?? models.error} />
 			{models.isPending && <Spinner />}
-			<ul className="flex flex-col">
+			<ul className="flex flex-col gap-px">
 				{list.map((m) => {
 					const current =
 						state?.model?.provider === m.provider && state?.model?.id === m.id;
@@ -525,7 +542,7 @@ function ModelDialog({
 						<li key={`${m.provider}/${m.id}`}>
 							<button
 								type="button"
-								className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-hover ${current ? "text-accent" : ""}`}
+								className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${current ? "bg-hover font-medium" : ""}`}
 								onClick={() =>
 									void run({
 										type: "set_model",
@@ -534,11 +551,24 @@ function ModelDialog({
 									}).then(onClose)
 								}
 							>
+								<Icon
+									name="sparkle"
+									size={13}
+									aria-hidden
+									className="shrink-0 text-faint"
+								/>
 								<span className="min-w-0 flex-1 truncate">
 									{m.name || m.id}
 								</span>
-								<span className="font-mono text-faint text-xs">{`${m.provider}/${m.id}`}</span>
-								{current && <Icon name="check" size={14} />}
+								<span className="min-w-0 truncate font-mono text-faint text-xs">{`${m.provider}/${m.id}`}</span>
+								{current && (
+									<Icon
+										name="check"
+										size={14}
+										weight="bold"
+										className="shrink-0 text-accent"
+									/>
+								)}
 							</button>
 						</li>
 					);
@@ -549,6 +579,30 @@ function ModelDialog({
 }
 
 // ---------------------------------------------------------------- 子 agent
+
+/** 子 agent 状态 → 徽标色调：运行中需要关注，失败为错误。 */
+function subagentTone(status: string): Tone {
+	if (status === "started" || status === "running") return "accent";
+	if (status === "failed" || status === "error" || status === "aborted")
+		return "err";
+	if (status === "completed" || status === "done") return "ok";
+	return "neutral";
+}
+
+// btw 记录与 goal 的状态色调（未列出的状态用中性）
+const BTW_TONE: Record<string, Tone> = {
+	running: "accent",
+	complete: "ok",
+	error: "err",
+	interrupted: "warn",
+};
+
+const GOAL_TONE: Record<string, Tone> = {
+	active: "accent",
+	paused: "warn",
+	"budget-limited": "warn",
+	complete: "ok",
+};
 
 function SubagentDialog({
 	threadId,
@@ -629,6 +683,17 @@ function SubagentDialog({
 				</>
 			}
 		>
+			{sub && (
+				<div className="mb-3 flex flex-wrap items-center gap-1.5">
+					{sub.agent && <Badge icon="robot">{sub.agent}</Badge>}
+					{sub.status && (
+						<Badge tone={subagentTone(sub.status)}>{sub.status}</Badge>
+					)}
+					<span className="min-w-0 truncate font-mono text-2xs text-faint">
+						{id}
+					</span>
+				</div>
+			)}
 			<ErrorText error={error ?? msgs.error} />
 			{msgs.isPending && <Spinner />}
 			<TranscriptContext.Provider value={ctx}>
@@ -703,12 +768,21 @@ function BtwDialog({
 					const r = btw[id];
 					if (!r) return null;
 					return (
-						<div key={id} className="rounded-lg border border-border p-3">
-							<div className="mb-1 flex items-center gap-2 text-sm">
+						<div
+							key={id}
+							className="rounded-lg border border-border bg-panel p-3"
+						>
+							<div className="mb-1.5 flex items-center gap-2 text-sm">
+								<Icon
+									name="message"
+									size={13}
+									aria-hidden
+									className="shrink-0 text-faint"
+								/>
 								<span className="min-w-0 flex-1 font-medium">{r.question}</span>
-								<span className="text-faint text-xs">
+								<Badge tone={BTW_TONE[r.status] ?? "neutral"}>
 									{t(`btw.status.${r.status}`)}
-								</span>
+								</Badge>
 								{r.status === "running" && (
 									<Button
 										size="sm"
@@ -725,7 +799,12 @@ function BtwDialog({
 								)}
 							</div>
 							<Markdown text={r.answer} streaming={r.status === "running"} />
-							{r.error && <p className="text-err text-xs">{r.error}</p>}
+							{r.error && (
+								<p className="mt-1 flex items-center gap-1 text-err text-xs">
+									<Icon name="alert" size={12} aria-hidden />
+									{r.error}
+								</p>
+							)}
 						</div>
 					);
 				})}
@@ -785,15 +864,35 @@ function GoalDialog({
 	return (
 		<Dialog open onClose={onClose} title={t("goal.title")}>
 			{g?.enabled ? (
-				<div className="mb-3 rounded-lg border border-border p-3 text-sm">
-					<div className="font-medium">{g.objective}</div>
-					<div className="mt-1 text-muted text-xs">
-						{t(`goal.status.${g.status ?? "active"}`)}
-						{g.tokenBudget
-							? ` · ${(g.tokensUsed ?? 0).toLocaleString()} / ${g.tokenBudget.toLocaleString()}`
-							: ""}
+				<div className="mb-3 rounded-lg border border-border bg-raised p-3 text-sm">
+					<div className="flex items-start gap-2">
+						<Icon
+							name="target"
+							size={15}
+							aria-hidden
+							className="mt-0.5 shrink-0 text-faint"
+						/>
+						<div className="min-w-0 flex-1 font-medium">{g.objective}</div>
+						<Badge tone={GOAL_TONE[g.status ?? "active"] ?? "neutral"}>
+							{t(`goal.status.${g.status ?? "active"}`)}
+						</Badge>
 					</div>
-					<div className="mt-2 flex gap-2">
+					{g.tokenBudget ? (
+						<div className="mt-2.5">
+							<div className="mb-1 flex justify-end text-faint text-xs tabular-nums">
+								{formatCount(g.tokensUsed ?? 0)} / {formatCount(g.tokenBudget)}
+							</div>
+							<Meter
+								value={g.tokensUsed ?? 0}
+								max={g.tokenBudget}
+								tone={thresholdTone(
+									((g.tokensUsed ?? 0) / g.tokenBudget) * 100,
+								)}
+								label={`${formatCount(g.tokensUsed ?? 0)} / ${formatCount(g.tokenBudget)}`}
+							/>
+						</div>
+					) : null}
+					<div className="mt-3 flex gap-2">
 						{g.status === "paused" ? (
 							<Button
 								size="sm"
@@ -1004,6 +1103,14 @@ function LabelsDialog({
 
 // ---------------------------------------------------------------- 附件
 
+/** 附件图标：按 MIME 大类。 */
+function attachmentIcon(mime: string): IconName {
+	if (mime.startsWith("image/")) return "fileImage";
+	if (mime.startsWith("text/") || mime === "application/pdf") return "fileText";
+	if (mime === "application/json") return "fileCode";
+	return "file";
+}
+
 function AttachmentsDialog({
 	threadId,
 	onClose,
@@ -1031,26 +1138,28 @@ function AttachmentsDialog({
 			<ul className="flex flex-col divide-y divide-border">
 				{list.map((a) => (
 					<li key={a.id} className="flex items-center gap-3 py-2 text-sm">
-						<Icon
-							name={a.mime.startsWith("image/") ? "image" : "file"}
-							size={14}
-						/>
+						<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset text-faint">
+							<Icon name={attachmentIcon(a.mime)} size={15} aria-hidden />
+						</span>
 						<span className="min-w-0 flex-1">
-							<span className="block truncate">{a.name}</span>
-							<span className="block text-faint text-xs">
-								{formatBytes(a.size)} · {formatDateTime(a.createdAt)}
+							<span className="block truncate font-medium">{a.name}</span>
+							<span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-faint text-xs tabular-nums">
+								<Badge>{formatBytes(a.size)}</Badge>
+								<span>{formatDateTime(a.createdAt)}</span>
 							</span>
 						</span>
 						<a
 							href={attachmentContentUrl(a.id)}
 							download={a.name}
-							className="rounded px-2 py-1 text-muted text-xs hover:bg-hover hover:text-fg"
+							className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
 						>
+							<Icon name="download" size={13} aria-hidden />
 							{t("attachments.download")}
 						</a>
 						<Button
 							size="sm"
 							variant="danger"
+							icon="trash"
 							disabled={deleting === a.id}
 							onClick={async () => {
 								if (
@@ -1100,12 +1209,19 @@ function DebugDialog({
 			)}
 			<div className="flex flex-col gap-2">
 				{[...debug].reverse().map((d) => (
-					<pre
+					<section
 						key={d.key}
-						className="overflow-auto rounded bg-inset p-2 font-mono text-2xs"
+						className="overflow-hidden rounded-lg border border-border bg-inset"
 					>
-						{`${new Date(d.ts).toLocaleTimeString()} ${d.source}\n${JSON.stringify(d.frame, null, 2)}`}
-					</pre>
+						<header className="flex items-center gap-2 border-border border-b px-2.5 py-1.5 text-faint text-xs">
+							<Icon name="clock" size={12} aria-hidden />
+							<span className="tabular-nums">{formatDateTime(d.ts)}</span>
+							<Badge>{d.source}</Badge>
+						</header>
+						<pre className="overflow-auto px-2.5 py-2 font-mono text-2xs leading-relaxed">
+							{JSON.stringify(d.frame, null, 2)}
+						</pre>
+					</section>
 				))}
 			</div>
 		</Dialog>
@@ -1161,13 +1277,20 @@ export function PlanProposalDialog({
 		}
 	};
 	if (hidden) {
+		// 输入坞玻璃托盘里的一节：透明、无边框、无外边距
 		return (
-			<div className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 rounded-lg border border-accent/50 bg-panel px-3 py-2 text-sm">
-				<Icon name="list" size={14} className="text-accent" />
+			<div className="flex items-center gap-2.5 px-3.5 py-2 text-sm">
+				<Icon
+					name="list"
+					size={15}
+					weight="bold"
+					aria-hidden
+					className="shrink-0 text-accent"
+				/>
 				<span className="min-w-0 flex-1 truncate">
 					{t("plan.pending", { title: proposal.title })}
 				</span>
-				<Button size="sm" onClick={() => setHidden(false)}>
+				<Button size="sm" variant="accent" onClick={() => setHidden(false)}>
 					{t("plan.review")}
 				</Button>
 			</div>
@@ -1201,7 +1324,7 @@ export function PlanProposalDialog({
 						{options.map((o) => (
 							<Button
 								key={o}
-								variant={o === "execute" ? "primary" : "secondary"}
+								variant={o === "execute" ? "accent" : "secondary"}
 								disabled={
 									busy || (choice === o && o === "refine" && !feedback.trim())
 								}
@@ -1220,8 +1343,11 @@ export function PlanProposalDialog({
 				</div>
 			}
 		>
-			<div className="mb-2 font-mono text-faint text-xs">
-				{proposal.planFilePath}
+			<div className="mb-3 flex min-w-0 items-center gap-1.5 font-mono text-faint text-xs">
+				<Icon name="fileText" size={13} aria-hidden className="shrink-0" />
+				<span className="min-w-0 truncate" title={proposal.planFilePath}>
+					{proposal.planFilePath}
+				</span>
 			</div>
 			<Markdown text={proposal.planContent} />
 		</Dialog>

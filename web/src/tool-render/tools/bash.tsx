@@ -1,15 +1,9 @@
 /** `bash` — shell command execution: prompt line with env prefix, badges, output tail. */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { formatDuration } from "../../lib/format";
 import { revealTerminal } from "../../state/terminals";
-import {
-	Badge,
-	Badges,
-	InvalidArg,
-	ResultImages,
-	ResultText,
-	Row,
-} from "../parts";
+import { Badge, Badges, InvalidArg, ResultImages, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -104,13 +98,7 @@ function Body({ args, result, running }: ToolRenderProps): ReactNode {
 	const artifactId = ARTIFACT_NOTICE.exec(resultTextOf(result))?.[1] ?? null;
 
 	const stats: string[] = [];
-	if (wallTimeMs !== null) {
-		stats.push(
-			wallTimeMs < 1000
-				? `wall ${Math.round(wallTimeMs)}ms`
-				: `wall ${(wallTimeMs / 1000).toFixed(1)}s`,
-		);
-	}
+	if (wallTimeMs !== null) stats.push(`wall ${formatDuration(wallTimeMs)}`);
 	if (
 		requestedTimeoutSeconds !== null &&
 		requestedTimeoutSeconds !== timeoutSeconds
@@ -155,7 +143,7 @@ function Body({ args, result, running }: ToolRenderProps): ReactNode {
 			/>
 			<ResultImages result={result} />
 			<ResultText result={result} maxLines={12} />
-			{stats.length > 0 && <Row>{stats.join(" · ")}</Row>}
+			<Badges items={stats} />
 		</>
 	);
 }

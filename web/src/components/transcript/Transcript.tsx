@@ -1,6 +1,8 @@
 /**
  * 虚拟滚动转录（@tanstack/react-virtual，动态测量高度）。
  * 贴底跟随：用户停在底部时随新内容自动滚动；上翻后停止跟随并显示「回到底部」。
+ * 页头与输入坞以玻璃盖在转录上方：`insetTop` / `insetBottom` 走 virtualizer 的
+ * `paddingStart` / `paddingEnd`（不给滚动容器加 CSS padding，否则会破坏贴底判断）。
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -16,13 +18,23 @@ import { useTranslation } from "react-i18next";
 import type { JsonRecord } from "../../state/message-builder";
 import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
-import { Icon } from "../ui/icons";
+import { AgentAvatar } from "../ui/AgentAvatar";
+import { Badge, Callout, type Tone } from "../ui/data";
+import { Icon, type IconName } from "../ui/icons";
 import {
 	BranchSummaryCard,
 	CompactionCard,
 	MemoMessageView,
 	ToolCard,
 } from "./MessageView";
+
+const META_ICON: Record<string, IconName> = {
+	model_change: "sparkle",
+	thinking_level_change: "brain",
+	mode_change: "list",
+	title_change: "edit",
+	ttsr_injection: "bolt",
+};
 
 function MetaLine({ entry }: { entry: JsonRecord }) {
 	const { t } = useTranslation();
@@ -52,13 +64,24 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 		default:
 			text = String(entry.type ?? "");
 	}
-	return <div className="py-0.5 text-center text-2xs text-faint">{text}</div>;
+	const icon = META_ICON[String(entry.type)] ?? "info";
+	return (
+		<div className="flex min-w-0 items-center gap-2 py-0.5 text-2xs text-faint">
+			<span
+				aria-hidden
+				className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded bg-inset text-muted"
+			>
+				<Icon name={icon} size={11} />
+			</span>
+			<span className="min-w-0 truncate">{text}</span>
+		</div>
+	);
 }
 
-const NOTICE_TONE: Record<Notice["level"], string> = {
-	info: "border-border text-muted",
-	warning: "border-warn/40 text-warn",
-	error: "border-err/40 text-err",
+const NOTICE_TONE: Record<Notice["level"], Tone> = {
+	info: "neutral",
+	warning: "warn",
+	error: "err",
 };
 
 function NoticeLine({ notice }: { notice: Notice }) {
@@ -71,23 +94,15 @@ function NoticeLine({ notice }: { notice: Notice }) {
 		"url" in notice.detail
 			? String(notice.detail.url)
 			: null;
-	return (
-		<div
-			className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs ${NOTICE_TONE[notice.level]}`}
-		>
-			<Icon
-				name={notice.level === "info" ? "info" : "alert"}
-				size={13}
-				className="mt-0.5 shrink-0"
-			/>
-			<div className="min-w-0 flex-1">
-				<span className="font-medium">{label}</span>
+	const body =
+		notice.text || url ? (
+			<>
 				{notice.text && (
 					<span
 						className={
 							notice.kind === "command_output"
-								? "mt-1 block whitespace-pre-wrap font-mono"
-								: "ml-1.5"
+								? "block whitespace-pre-wrap break-words font-mono"
+								: "break-words"
 						}
 					>
 						{notice.text}
@@ -95,7 +110,7 @@ function NoticeLine({ notice }: { notice: Notice }) {
 				)}
 				{url && (
 					<a
-						className="ml-1.5 text-accent underline"
+						className="break-all text-accent underline underline-offset-2"
 						href={url}
 						target="_blank"
 						rel="noopener noreferrer"
@@ -103,8 +118,16 @@ function NoticeLine({ notice }: { notice: Notice }) {
 						{url}
 					</a>
 				)}
-			</div>
-		</div>
+			</>
+		) : undefined;
+	return (
+		<Callout
+			tone={NOTICE_TONE[notice.level]}
+			icon={notice.level === "info" ? "info" : "alert"}
+			title={label}
+		>
+			{body}
+		</Callout>
 	);
 }
 
@@ -113,9 +136,9 @@ function ItemView({ item }: { item: TranscriptItem }): ReactNode {
 	switch (item.kind) {
 		case "session_divider":
 			return (
-				<div className="flex items-center gap-3 py-2 text-2xs text-faint">
+				<div className="flex items-center gap-3 py-2">
 					<div className="h-px flex-1 bg-border" />
-					{t("transcript.newSession")}
+					<Badge icon="chats">{t("transcript.newSession")}</Badge>
 					<div className="h-px flex-1 bg-border" />
 				</div>
 			);
@@ -147,12 +170,25 @@ function ItemView({ item }: { item: TranscriptItem }): ReactNode {
 	}
 }
 
+/** 属于 agent 回合的行：助手消息与独立的运行中工具卡；连续的这类行构成一个回合。 */
+function isAgentRow(item: TranscriptItem | undefined): boolean {
+	if (!item) return false;
+	if (item.kind === "tool") return true;
+	return item.kind === "message" && item.message.role === "assistant";
+}
+
 export function Transcript({
 	items,
 	footer,
+	insetTop = 0,
+	insetBottom = 0,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
+	/** 顶部被玻璃页头覆盖的高度（px）。 */
+	insetTop?: number;
+	/** 底部被玻璃输入坞覆盖的高度（px）。 */
+	insetBottom?: number;
 }): ReactNode {
 	const { t } = useTranslation();
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -164,6 +200,8 @@ export function Transcript({
 		getScrollElement: () => scrollRef.current,
 		estimateSize: () => 96,
 		overscan: 6,
+		paddingStart: insetTop,
+		paddingEnd: insetBottom,
 		getItemKey: (i) => (i < items.length ? (items[i]?.key ?? i) : "__footer__"),
 	});
 	const total = virtualizer.getTotalSize();
@@ -181,11 +219,11 @@ export function Transcript({
 		if (el) el.scrollTop = el.scrollHeight;
 	}, []);
 
-	// 内容增长（新条目 / 流式增量 / 高度重测）时，贴底则跟随
-	// biome-ignore lint/correctness/useExhaustiveDependencies: items 与 total 变化即需要重新贴底
+	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随
+	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 与 insetBottom 变化即需要重新贴底
 	useLayoutEffect(() => {
 		if (stick.current) scrollToEnd();
-	}, [items, total, scrollToEnd]);
+	}, [items, total, insetBottom, scrollToEnd]);
 
 	useEffect(() => {
 		stick.current = true;
@@ -197,6 +235,9 @@ export function Transcript({
 		() =>
 			virtualItems.map((v) => {
 				const item = v.index < items.length ? items[v.index] : undefined;
+				const agent = isAgentRow(item);
+				// 回合起点（前一行不属于 agent 回合）放头像；回合内各行统一缩进到头像右侧
+				const turnStart = agent && !isAgentRow(items[v.index - 1]);
 				return (
 					<div
 						key={v.key}
@@ -208,11 +249,18 @@ export function Transcript({
 						data-entry-id={item?.kind === "message" ? item.entryId : undefined}
 						data-live={item?.kind === "message" && item.live ? "1" : undefined}
 						ref={virtualizer.measureElement}
-						// 行内菜单（消息操作）会溢出到后面的行：悬停 / 聚焦时把本行抬到兄弟行之上
+						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上
 						className="absolute left-0 w-full px-3 py-1.5 focus-within:z-10 hover:z-10 sm:px-5"
 						style={{ transform: `translateY(${v.start}px)` }}
 					>
-						<div className="mx-auto max-w-3xl">
+						<div
+							className={`relative mx-auto max-w-3xl ${agent ? "pl-8" : ""}`}
+						>
+							{turnStart && (
+								<span className="absolute top-1.5 left-0">
+									<AgentAvatar size={20} />
+								</span>
+							)}
 							{item ? <ItemView item={item} /> : footer}
 						</div>
 					</div>
@@ -229,20 +277,21 @@ export function Transcript({
 				className="h-full overflow-y-auto overscroll-contain"
 				data-testid="transcript"
 			>
-				<div className="relative w-full" style={{ height: total + 24 }}>
+				<div className="relative w-full" style={{ height: total }}>
 					{rendered}
 				</div>
 			</div>
 			{!atBottom && (
 				<button
 					type="button"
-					className="absolute right-4 bottom-3 inline-flex items-center gap-1 rounded-full border border-border bg-panel px-3 py-1 text-muted text-xs shadow hover:text-fg"
+					className="glass pop-in absolute right-[max(1rem,calc(50%-24rem))] z-20 inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-muted text-xs hover:text-fg"
+					style={{ bottom: insetBottom + 8 }}
 					onClick={() => {
 						stick.current = true;
 						scrollToEnd();
 					}}
 				>
-					<Icon name="chevronDown" size={12} />
+					<Icon name="arrowDown" size={13} />
 					{t("transcript.jumpToEnd")}
 				</button>
 			)}

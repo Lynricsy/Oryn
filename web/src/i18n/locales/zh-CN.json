@@ -24,7 +24,21 @@
 			"fox": "狐橙",
 			"graphite": "石墨"
 		},
-		"desc": "外观设置只保存在这台设备的浏览器里。"
+		"desc": "外观设置只保存在这台设备的浏览器里。",
+		"avatar": "Agent 头像",
+		"avatarKind": {
+			"default": "默认品牌标",
+			"image": "自定义图片",
+			"icon": "图标字形"
+		},
+		"avatarHint": "显示在助手回合起点；跨设备同步。图片会缩放到 128×128。",
+		"avatarUpload": "上传图片",
+		"avatarReset": "恢复默认",
+		"avatarGlyphs": "内置图标",
+		"avatarCustom": "自定义（单个 emoji 或 Nerd 字形）",
+		"avatarUse": "使用",
+		"avatarTooLarge": "图片压缩后仍超过 128 KiB，请换一张更简单的图片。",
+		"avatarDecodeFailed": "无法读取这张图片，请使用 PNG、WebP 或 JPEG。"
 	},
 	"stat": {
 		"input": "输入",
@@ -194,9 +208,6 @@
 		"synthetic": "系统注入",
 		"thinking": "思考",
 		"thinkingLive": "思考中…",
-		"usageCache": "缓存 {{n}}",
-		"usageIn": "输入 {{n}}",
-		"usageOut": "输出 {{n}}",
 		"you": "你"
 	},
 	"notice": {
@@ -296,7 +307,7 @@
 		"edit": "编辑",
 		"promote": "提前发送",
 		"remove": "删除",
-		"title": "排队中（{{count}}）",
+		"heading": "排队中",
 		"steering": "引导",
 		"followUp": "排队"
 	},
@@ -432,7 +443,6 @@
 		"noSubagents": "没有子 agent。",
 		"noTodos": "没有 todo。",
 		"orb": "orb",
-		"orbSpec": "{{type}} · {{cpus}} 核 / {{mem}} GB",
 		"subagents": "子 agent",
 		"todos": "Todo"
 	},
@@ -518,7 +528,6 @@
 		}
 	},
 	"providers": {
-		"capabilities": "冻结 {{freeze}} · 快照 {{snapshot}}",
 		"create": "新建 provider",
 		"default": "默认",
 		"deleteConfirm": "删除 provider {{name}}？",
@@ -527,7 +536,11 @@
 		"offline": "离线",
 		"online": "在线",
 		"title": "Provider",
-		"tokenOnce": "provider 令牌只显示这一次，请写入 provider 的 token_file："
+		"tokenOnce": "provider 令牌只显示这一次，请写入 provider 的 token_file：",
+		"supported": "支持",
+		"unsupported": "不支持",
+		"freeze": "冻结",
+		"snapshot": "快照"
 	},
 	"projects": {
 		"baseBranch": "基线分支",
@@ -548,6 +561,9 @@
 		"setupHint": "首次创建 orb 时在仓库目录执行。",
 		"setupScript": "setup 脚本",
 		"shallowClone": "浅克隆",
+		"icon": "项目图标",
+		"iconAuto": "自动",
+		"iconAutoHint": "自动：取首个会话标题卡上的图标，没有时用名称首字。",
 		"title": "项目"
 	},
 	"secrets": {
@@ -664,7 +680,8 @@
 		"attention": "有终端在等待输入",
 		"maximize": "面板最大化",
 		"restore": "还原面板",
-		"resize": "调整面板宽度"
+		"resize": "调整面板宽度",
+		"unseenChanges": "有未查看的新改动"
 	},
 	"terminal": {
 		"title": "终端",
@@ -777,8 +794,17 @@
 			"allBase": "全部改动（相对 {{base}}）",
 			"uncommitted": "仅未提交",
 			"commits": "单个提交",
-			"moreCommits": "更早的提交未列出"
+			"moreCommits": "更早的提交未列出",
+			"compareBranch": "与分支比较…"
 		},
+		"base": {
+			"label": "基线分支",
+			"placeholder": "分支名，如 main",
+			"apply": "比较",
+			"reset": "恢复默认基线",
+			"invalid": "分支名须以字母或数字开头，只能包含字母、数字与 . _ / -"
+		},
+		"modified": "{{n}} 个修改",
 		"refresh": "刷新",
 		"approximateBase": "基线为近似值",
 		"noBase": "未找到基线分支，显示未提交的改动",

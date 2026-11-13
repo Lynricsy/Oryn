@@ -1,5 +1,5 @@
 /**
- * 停靠在输入区上方的 extension UI 对话框（select / confirm / input / editor / ask / askDialog / form）。
+ * 停靠在输入坞托盘里的 extension UI 对话框（select / confirm / input / editor / ask / askDialog / form）。
  * 多端镜像：每个订阅者都显示同一请求；任一端作答后控制面广播 `ui.resolved`，其余端自动关闭（先答者生效）。
  * `ask` 超时：回 `{cancelled, timedOut}`，由 omp 取 recommended。
  */
@@ -16,7 +16,15 @@ import type {
 	FormSpan,
 } from "../../omp/types";
 import { answerUi } from "../../state/actions";
-import { Button, TextArea, TextInput } from "../ui/primitives";
+import { Badge } from "../ui/data";
+import { Icon } from "../ui/icons";
+import { Button, Checkbox, Radio, TextArea, TextInput } from "../ui/primitives";
+
+/** 选项行：细描边半透明底，选中时强调色描边 + 浅强调底。 */
+const OPTION =
+	"rounded-lg border px-3 py-2 text-left text-sm transition-colors duration-150";
+const OPTION_IDLE = "border-border bg-panel/60 hover:bg-hover";
+const OPTION_ON = "border-accent bg-accent-soft";
 
 type Answer = (response: ExtensionUiResponse) => void;
 
@@ -81,7 +89,7 @@ function SelectBody({
 				<button
 					key={opt}
 					type="button"
-					className="rounded-md border border-border px-3 py-2 text-left text-sm hover:border-accent hover:bg-hover"
+					className={`${OPTION} ${OPTION_IDLE}`}
 					onClick={() =>
 						answer({ type: "extension_ui_response", id: req.id, value: opt })
 					}
@@ -122,7 +130,7 @@ function ConfirmBody({
 					{t("common.no")}
 				</Button>
 				<Button
-					variant="primary"
+					variant="accent"
 					onClick={() =>
 						answer({
 							type: "extension_ui_response",
@@ -168,7 +176,7 @@ function InputBody({
 			/>
 			<Button
 				type="submit"
-				variant="primary"
+				variant="accent"
 				disabled={!value && !req.allowEmpty}
 			>
 				{t("common.submit")}
@@ -196,7 +204,7 @@ function EditorBody({
 			/>
 			<div className="flex justify-end">
 				<Button
-					variant="primary"
+					variant="accent"
 					onClick={() =>
 						answer({ type: "extension_ui_response", id: req.id, value })
 					}
@@ -226,22 +234,21 @@ function QuestionBlock({
 	return (
 		<fieldset className="flex flex-col gap-1.5">
 			{q.header && (
-				<div className="text-faint text-xs uppercase tracking-wide">
-					{q.header}
-				</div>
+				<div className="font-medium text-2xs text-faint">{q.header}</div>
 			)}
 			<legend className="mb-1 font-medium text-sm">{q.question}</legend>
 			{q.options.map((opt, i) => {
 				const checked = value.selected.includes(opt.label);
+				const Control = q.multi ? Checkbox : Radio;
 				return (
+					// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Checkbox / Radio 组件（内含原生 input）
 					<label
 						key={opt.label}
-						className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${checked ? "border-accent bg-hover" : "border-border"}`}
+						className={`flex cursor-pointer items-start gap-2.5 ${OPTION} ${checked ? OPTION_ON : OPTION_IDLE}`}
 					>
-						<input
-							type={q.multi ? "checkbox" : "radio"}
+						<Control
 							name={q.id}
-							className="mt-1"
+							className="mt-0.5"
 							checked={checked}
 							onChange={() =>
 								onChange({
@@ -257,8 +264,8 @@ function QuestionBlock({
 						<span className="min-w-0 flex-1">
 							<span>{opt.label}</span>
 							{q.recommended === i && (
-								<span className="ml-2 rounded bg-accent/15 px-1 text-2xs text-accent">
-									{t("ui.recommended")}
+								<span className="ml-2 inline-flex align-middle">
+									<Badge tone="accent">{t("ui.recommended")}</Badge>
 								</span>
 							)}
 							{opt.description && (
@@ -267,7 +274,7 @@ function QuestionBlock({
 								</span>
 							)}
 							{opt.preview && (
-								<pre className="mt-1 max-h-32 overflow-auto rounded bg-inset p-2 font-mono text-2xs">
+								<pre className="mt-1.5 max-h-32 overflow-auto rounded-md bg-inset p-2 font-mono text-2xs">
 									{opt.preview}
 								</pre>
 							)}
@@ -350,7 +357,7 @@ function AskBody({
 				/>
 			))}
 			<div className="flex justify-end">
-				<Button variant="primary" disabled={!complete} onClick={submit}>
+				<Button variant="accent" disabled={!complete} onClick={submit}>
 					{t("common.submit")}
 				</Button>
 			</div>
@@ -412,10 +419,11 @@ function FieldInput({
 			)}
 			{field.options.map((o) => {
 				const checked = selected.includes(o.value);
+				const Control = field.multi ? Checkbox : Radio;
 				return (
+					// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Checkbox / Radio 组件（内含原生 input）
 					<label key={o.value} className="flex items-center gap-2">
-						<input
-							type={field.multi ? "checkbox" : "radio"}
+						<Control
 							name={field.name}
 							checked={checked}
 							disabled={o.disabled}
@@ -523,32 +531,38 @@ function FormBody({
 								return (
 									<pre
 										key={key}
-										className="overflow-auto rounded bg-inset p-2 font-mono text-xs"
+										className="overflow-auto rounded-md bg-inset p-2 font-mono text-xs"
 									>
 										{b.text}
 									</pre>
 								);
 							case "table":
 								return (
-									<table key={key} className="text-xs">
-										<tbody>
-											{keyed(b.rows, "r").map(({ key: rk, item: row }, ri) => (
-												<tr
-													key={rk}
-													className={ri < b.headerRows ? "font-medium" : ""}
-												>
-													{keyed(row, "c").map(({ key: ck, item: cell }) => (
-														<td
-															key={ck}
-															className="border border-border px-2 py-1"
+									<div
+										key={key}
+										className="overflow-x-auto rounded-lg border border-border"
+									>
+										<table className="text-xs">
+											<tbody>
+												{keyed(b.rows, "r").map(
+													({ key: rk, item: row }, ri) => (
+														<tr
+															key={rk}
+															className={`${ri < b.headerRows ? "bg-raised font-medium" : ""} ${ri > 0 ? "border-border border-t" : ""}`}
 														>
-															<Spans spans={cell} />
-														</td>
-													))}
-												</tr>
-											))}
-										</tbody>
-									</table>
+															{keyed(row, "c").map(
+																({ key: ck, item: cell }) => (
+																	<td key={ck} className="px-2.5 py-1.5">
+																		<Spans spans={cell} />
+																	</td>
+																),
+															)}
+														</tr>
+													),
+												)}
+											</tbody>
+										</table>
+									</div>
 								);
 							case "field":
 								return (
@@ -568,7 +582,7 @@ function FormBody({
 				</section>
 			))}
 			<div className="flex justify-end">
-				<Button type="submit" variant="primary">
+				<Button type="submit" variant="accent">
 					{t("common.submit")}
 				</Button>
 			</div>
@@ -636,10 +650,13 @@ export function UiRequestCard({
 		<div
 			role="dialog"
 			aria-label={titleOf(req, t)}
-			className="mx-auto mb-2 max-h-[55dvh] w-full max-w-3xl overflow-y-auto rounded-xl border border-accent/50 bg-panel p-3 shadow-lg"
+			className="max-h-[55dvh] overflow-y-auto px-3.5 py-3"
 		>
-			<div className="mb-2 flex items-center gap-2">
-				<h3 className="min-w-0 flex-1 font-medium text-sm">
+			<div className="mb-2.5 flex items-center gap-2">
+				<span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-accent-soft text-accent">
+					<Icon name="message" size={12} weight="fill" />
+				</span>
+				<h3 className="min-w-0 flex-1 truncate font-medium text-sm">
 					{titleOf(req, t)}
 				</h3>
 				{queued > 0 && (
@@ -648,9 +665,9 @@ export function UiRequestCard({
 					</span>
 				)}
 				{left !== null && (
-					<span className="font-mono text-faint text-xs">
+					<Badge icon="timer" tone={left <= 10 ? "warn" : "neutral"}>
 						{t("ui.timeLeft", { s: left })}
-					</span>
+					</Badge>
 				)}
 				<Button
 					size="sm"

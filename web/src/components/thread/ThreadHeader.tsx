@@ -1,10 +1,10 @@
-/** 线程标题栏（状态、可编辑标题、More Actions）与底部状态栏（模型、思考、上下文、成本、tokens/s、orb）。 */
+/** 线程页头（玻璃）：项目徽标与名称、状态、标题卡（图标 + 代码 + 可编辑标题）、orb 胶囊、会话树 / 面板 / More Actions。 */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
-import { useThreadUsage } from "../../api/queries";
-import { formatCost } from "../../lib/format";
+import { useProjects } from "../../api/queries";
+import { parseTitleCard, withTitleCard } from "../../lib/title";
 import {
 	deleteOrb,
 	deleteThread,
@@ -14,9 +14,10 @@ import {
 	wakeThread,
 } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
-import { threadCost } from "../../state/transcript";
 import { uiStore, useUi } from "../../state/ui";
+import { Badge, ProjectBadge, TitleGlyph } from "../ui/data";
 import { Icon } from "../ui/icons";
+import { OrbBead } from "../ui/OrbBead";
 import {
 	IconButton,
 	Menu,
@@ -67,6 +68,30 @@ export function useOrbOf(threadId: string): Orb | undefined {
 	return fromIndex ?? fromThread;
 }
 
+/** orb 状态胶囊：状态珠 + 状态文字（compact 只留状态珠）；点击打开信息面板。 */
+function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
+	const { t } = useTranslation();
+	const state = t(`orbState.${orb.state}`);
+	return (
+		<button
+			type="button"
+			aria-label={t("thread.orbState", { state })}
+			title={orb.id}
+			className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover sm:pr-2.5"
+			onClick={() => {
+				const ui = uiStore.getState();
+				ui.setPanelTab("info");
+				ui.setPanel(true);
+			}}
+		>
+			<OrbBead state={orb.state} active={working} size={12} label={state} />
+			<span aria-hidden className="hidden sm:inline">
+				{state}
+			</span>
+		</button>
+	);
+}
+
 export function ThreadHeader({
 	threadId,
 	sidebarToggle,
@@ -80,6 +105,12 @@ export function ThreadHeader({
 	const thread = useThread(threadId, (s) => s.thread);
 	const panelOpen = useUi((s) => s.panelOpen);
 	const orb = useOrbOf(threadId);
+	const projects = useProjects();
+	const projectId = thread?.projectId ?? orb?.projectId;
+	const project = projectId
+		? projects.data?.projects.find((p) => p.id === projectId)
+		: undefined;
+	const card = parseTitleCard(thread?.title ?? "");
 	const [editing, setEditing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const act = (fn: () => Promise<unknown>) => () => {
@@ -235,7 +266,7 @@ export function ThreadHeader({
 	];
 
 	return (
-		<header className="flex h-12 shrink-0 items-center gap-1.5 border-border border-b px-2 sm:px-3">
+		<header className="glass flex h-12 shrink-0 items-center gap-1.5 rounded-none border-0 border-b px-2 shadow-none sm:px-3">
 			{sidebarToggle && (
 				<IconButton
 					icon="menu"
@@ -245,10 +276,19 @@ export function ThreadHeader({
 					}
 				/>
 			)}
+			{project && (
+				<span className="hidden min-w-0 shrink items-center gap-2 text-sm sm:inline-flex">
+					<ProjectBadge name={project.name} icon={project.icon} />
+					<span className="max-w-40 truncate text-muted">{project.name}</span>
+					<span aria-hidden className="text-ghost">
+						/
+					</span>
+				</span>
+			)}
 			{thread && <ThreadStateIcon state={thread.state} />}
 			{thread?.color && (
 				<span
-					className={`h-2 w-2 shrink-0 rounded-full ${COLOR_CLASS[thread.color] ?? ""}`}
+					className={`h-1.5 w-1.5 shrink-0 rounded-full ${COLOR_CLASS[thread.color] ?? ""}`}
 				/>
 			)}
 			{editing !== null ? (
@@ -256,16 +296,19 @@ export function ThreadHeader({
 					className="min-w-0 flex-1"
 					onSubmit={(e) => {
 						e.preventDefault();
-						const title = editing.trim();
+						const text = editing.trim();
 						setEditing(null);
-						if (title && title !== thread?.title)
+						if (!text || !thread) return;
+						// 原标题带 omp 标题卡时保留 `<图标> <代码>: ` 前缀
+						const title = withTitleCard(thread.title, text);
+						if (title !== thread.title)
 							act(() => renameThread(threadId, title))();
 					}}
 				>
 					<input
 						ref={(el) => el?.focus()}
 						aria-label={t("thread.rename")}
-						className="w-full rounded bg-inset px-2 py-1 font-medium text-sm outline-none"
+						className="w-full rounded-md bg-inset px-2 py-1 font-medium text-sm"
 						value={editing}
 						onChange={(e) => setEditing(e.target.value)}
 						onBlur={(e) => e.currentTarget.form?.requestSubmit()}
@@ -274,13 +317,27 @@ export function ThreadHeader({
 			) : (
 				<button
 					type="button"
-					className="min-w-0 flex-1 truncate rounded px-1 py-1 text-left font-medium text-sm hover:bg-hover"
+					className="flex min-w-0 shrink items-center gap-1.5 rounded-md px-1 py-1 text-left font-semibold text-sm tracking-tight transition-colors duration-150 hover:bg-hover"
 					title={t("thread.clickToRename")}
-					onClick={() => setEditing(thread?.title ?? "")}
+					onClick={() => setEditing(card.text)}
 				>
-					{thread?.title || t("thread.untitled")}
+					{card.icon && (
+						<TitleGlyph icon={card.icon} seed={card.text} size={18} />
+					)}
+					{card.code && (
+						<span aria-hidden className="hidden sm:inline-flex">
+							<Badge>{card.code}</Badge>
+						</span>
+					)}
+					<span className="min-w-0 truncate">
+						{card.text || t("thread.untitled")}
+					</span>
 				</button>
 			)}
+			{editing === null && orb && (
+				<OrbChip orb={orb} working={thread?.state === "working"} />
+			)}
+			<span className="min-w-0 flex-1" />
 			{error && (
 				<span className="max-w-40 truncate text-err text-xs" title={error}>
 					{error}
@@ -303,7 +360,7 @@ export function ThreadHeader({
 					<button
 						type="button"
 						aria-label={t("thread.moreActions")}
-						className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
+						className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
 						{...p}
 					>
 						<Icon name="more" size={16} />
@@ -311,61 +368,5 @@ export function ThreadHeader({
 				)}
 			/>
 		</header>
-	);
-}
-
-export function StatusBar({ threadId }: { threadId: string }): ReactNode {
-	const { t } = useTranslation();
-	const state = useThread(threadId, (s) => s.state);
-	const createdAt = useThread(threadId, (s) => s.thread?.createdAt);
-	const entries = useThread(threadId, (s) => s.entries);
-	const orb = useOrbOf(threadId);
-	const usage = useThreadUsage(threadId, createdAt);
-	const cost = usage.data
-		? usage.data.costUsd + (usage.data.subagentCostUsd ?? 0)
-		: threadCost(entries);
-	const ctx = state?.contextUsage;
-	const tps = state?.tokensPerSecond ?? usage.data?.tokensPerSecond;
-	return (
-		<div className="mx-auto flex w-full max-w-3xl items-center gap-3 overflow-x-auto px-1 pt-1 text-2xs text-faint">
-			<button
-				type="button"
-				className="inline-flex shrink-0 items-center gap-1 hover:text-fg"
-				onClick={() => uiStore.getState().open({ kind: "model" })}
-			>
-				<Icon name="sparkle" size={11} />
-				{state?.model
-					? state.model.name || state.model.id
-					: t("status.noModel")}
-				<span className="text-faint">
-					· {state?.thinkingConfigured ?? state?.thinkingLevel ?? "—"}
-				</span>
-				{state?.fastModeEnabled && (
-					<span className="text-accent">{t("model.fast")}</span>
-				)}
-				{state?.slowModeEnabled && <span>{t("model.slow")}</span>}
-			</button>
-			{ctx && (
-				<span
-					className="shrink-0"
-					title={`${ctx.tokens.toLocaleString()} / ${ctx.contextWindow.toLocaleString()}`}
-				>
-					{t("status.context", { pct: Math.round(ctx.percent) })}
-				</span>
-			)}
-			<span className="shrink-0">{formatCost(cost)}</span>
-			{typeof tps === "number" && tps > 0 && (
-				<span className="shrink-0">
-					{t("status.tps", { n: tps.toFixed(0) })}
-				</span>
-			)}
-			<span className="flex-1" />
-			{orb && (
-				<span className="inline-flex shrink-0 items-center gap-1">
-					<Icon name="box" size={11} />
-					{t(`orbState.${orb.state}`)}
-				</span>
-			)}
-		</div>
 	);
 }

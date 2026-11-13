@@ -1,5 +1,5 @@
 /**
- * 转录中的单条消息渲染：按 omp 的信息量全量展示（思考块、工具卡片、用量行、错误、bash 执行、自定义消息等）。
+ * 转录中的单条消息渲染：按 omp 的信息量全量展示（思考块、工具卡片、回合脚注、错误、bash 执行、自定义消息等）。
  * 所有字段都按「可能残缺」处理——条目与流式帧都是外部 JSON。
  */
 import { memo, type ReactNode, useState } from "react";
@@ -9,6 +9,7 @@ import {
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
+import { fileIcon } from "../../lib/file-icon";
 import {
 	formatBytes,
 	formatCost,
@@ -21,10 +22,14 @@ import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
 import { isRecord, resultTextOf } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
+import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
-import { Icon } from "../ui/icons";
+import { Icon, type IconName } from "../ui/icons";
 import { Menu } from "../ui/primitives";
 import { useTranscriptContext } from "./context";
+
+const CHIP =
+	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
 
 function textOfContent(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -107,15 +112,17 @@ export function AttachmentChips({
 				const body = (
 					<>
 						<Icon
-							name={a.mime.startsWith("image/") ? "image" : "file"}
-							size={12}
+							name={fileIcon(a.name, a.mime)}
+							size={13}
+							className="shrink-0 text-faint"
 						/>
 						<span className="max-w-56 truncate">{a.name}</span>
-						<span className="text-faint">{formatBytes(a.size)}</span>
+						<span className="text-faint tabular-nums">
+							{formatBytes(a.size)}
+						</span>
 					</>
 				);
-				const cls =
-					"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
+				const cls = CHIP;
 				return (
 					<li key={a.path}>
 						{a.id ? (
@@ -139,6 +146,7 @@ export function AttachmentChips({
 	);
 }
 
+/** 消息操作菜单：行内渲染，悬停 / 聚焦时显现；贴近输入坞，向上展开。 */
 function MessageMenu({
 	entryId,
 	text,
@@ -149,12 +157,13 @@ function MessageMenu({
 	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
 	return (
-		<div className="absolute top-1 right-1 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
+		<div className="opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100">
 			<Menu
+				side="top"
 				trigger={(p) => (
 					<button
 						type="button"
-						className="rounded p-1 text-faint hover:bg-hover hover:text-fg"
+						className="inline-grid h-6 w-6 place-items-center rounded-md text-ghost hover:bg-hover hover:text-fg"
 						aria-label={t("transcript.messageActions")}
 						{...p}
 					>
@@ -205,34 +214,44 @@ function UserMessage({
 		textOfContent(message.content),
 	);
 	const irc = isRecord(message.parentIrc) ? message.parentIrc : null;
+	const synthetic = message.synthetic === true;
+	const steer = message.steering === true || message.liveSteered === true;
+	const body = irc ? String(irc.body ?? text) : text;
 	return (
-		<div
-			className={`group/msg relative rounded-lg border border-border bg-raised px-3.5 py-2.5 ${live ? "opacity-80" : ""}`}
-		>
-			<div className="mb-1 flex items-center gap-2 text-faint text-xs">
-				<Icon name="user" size={12} />
-				<span>
-					{irc
-						? t("transcript.ircFrom", { from: String(irc.from ?? "") })
-						: t("transcript.you")}
-				</span>
-				{message.synthetic === true && (
-					<span className="rounded bg-inset px-1">
-						{t("transcript.synthetic")}
-					</span>
+		<div className="group/msg flex flex-col items-end gap-1">
+			{(irc || synthetic || steer) && (
+				<div className="flex flex-wrap justify-end gap-1">
+					{irc && (
+						<Badge icon="chats">
+							{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
+						</Badge>
+					)}
+					{synthetic && <Badge icon="bolt">{t("transcript.synthetic")}</Badge>}
+					{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
+				</div>
+			)}
+			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
+			<div
+				className={`w-fit min-w-0 max-w-[85%] rounded-2xl rounded-br-sm border border-border bg-raised px-3.5 py-2 ${live ? "opacity-80" : ""}`}
+			>
+				{body && (
+					<div className="whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]">
+						{body}
+					</div>
 				)}
-				{(message.steering === true || message.liveSteered === true) && (
-					<span className="rounded bg-inset px-1">{t("transcript.steer")}</span>
-				)}
+				<Images content={message.content} />
+				<AttachmentChips attachments={attachments} />
 			</div>
-			<div className="whitespace-pre-wrap break-words text-sm">
-				{irc ? String(irc.body ?? text) : text}
-			</div>
-			<Images content={message.content} />
-			<AttachmentChips attachments={attachments} />
 			<MessageMenu entryId={entryId} text={text} />
 		</div>
 	);
+}
+
+/** 思考块文本压成一行预览：完成后取开头，流式中取末尾。 */
+function thinkingPreview(text: string, streaming: boolean): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	if (flat.length <= 240) return flat;
+	return streaming ? `…${flat.slice(-240)}` : flat.slice(0, 240);
 }
 
 function ThinkingBlock({
@@ -243,21 +262,31 @@ function ThinkingBlock({
 	streaming: boolean;
 }) {
 	const { t } = useTranslation();
-	const [open, setOpen] = useState(true);
+	const [open, setOpen] = useState(false);
 	return (
-		<div className="my-1.5 border-border border-l-2 pl-3">
+		<div className="my-0.5">
 			<button
 				type="button"
-				className="flex items-center gap-1 text-faint text-xs hover:text-muted"
+				className="group/think flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-left text-muted text-xs hover:text-fg"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 			>
-				<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
-				{streaming ? t("transcript.thinkingLive") : t("transcript.thinking")}
+				<Icon name="brain" size={14} className="shrink-0 text-faint" />
+				<span className="shrink-0 whitespace-nowrap">
+					{streaming ? t("transcript.thinkingLive") : t("transcript.thinking")}
+				</span>
+				<span className="min-w-0 flex-1 truncate text-faint italic">
+					{open ? "" : thinkingPreview(text, streaming)}
+				</span>
+				<Icon
+					name="chevronRight"
+					size={12}
+					className={`shrink-0 text-ghost transition-transform duration-150 group-hover/think:text-faint ${open ? "rotate-90" : ""}`}
+				/>
 			</button>
 			{open && (
 				<div
-					className={`mt-1 whitespace-pre-wrap text-muted text-xs leading-relaxed ${streaming ? "stream-caret" : ""}`}
+					className={`mt-0.5 mb-1.5 whitespace-pre-wrap break-words pl-[22px] text-muted text-xs leading-relaxed ${streaming ? "stream-caret" : ""}`}
 				>
 					{text}
 				</div>
@@ -306,48 +335,89 @@ export function ToolCard({
 			? resultTextOf(toolResultLike(live.partialResult))
 			: undefined;
 	return (
-		<div className="my-1.5">
-			<ToolView
-				name={live?.toolName ?? name}
-				args={args ?? live?.args}
-				result={
-					result
-						? { ...result, isError: result.isError || live?.isError }
-						: undefined
-				}
-				running={running}
-				intent={intent ?? live?.intent}
-				partial={partial}
-				host={{
-					hasAgent: () => true,
-					openAgent: (id) => ctx.openSubagent(id),
-				}}
-			/>
-		</div>
+		<ToolView
+			name={live?.toolName ?? name}
+			args={args ?? live?.args}
+			result={
+				result
+					? { ...result, isError: result.isError || live?.isError }
+					: undefined
+			}
+			running={running}
+			intent={intent ?? live?.intent}
+			partial={partial}
+			host={{
+				hasAgent: () => true,
+				openAgent: (id) => ctx.openSubagent(id),
+			}}
+		/>
 	);
 }
 
-function UsageLine({ message }: { message: JsonRecord }) {
+/** 回合脚注里的单个读数胶囊。 */
+const META_CHIP =
+	"inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 tabular-nums [&_svg]:text-faint";
+
+/** 回合脚注：模型与用量读数（每项一个细描边胶囊）+ 消息操作。 */
+function TurnMeta({
+	message,
+	entryId,
+	text,
+}: {
+	message: JsonRecord;
+	entryId?: string;
+	text: string;
+}) {
 	const { t } = useTranslation();
 	const usage = isRecord(message.usage) ? message.usage : null;
-	if (!usage) return null;
 	const n = (v: unknown) => (typeof v === "number" ? v : 0);
-	const cost = isRecord(usage.cost) ? n(usage.cost.total) : 0;
-	const parts = [
-		typeof message.model === "string" ? message.model : "",
-		t("transcript.usageIn", { n: formatTokens(n(usage.input)) }),
-		t("transcript.usageOut", { n: formatTokens(n(usage.output)) }),
-		n(usage.cacheRead) > 0
-			? t("transcript.usageCache", { n: formatTokens(n(usage.cacheRead)) })
-			: "",
-		cost > 0 ? formatCost(cost) : "",
-		typeof message.duration === "number"
-			? formatDuration(message.duration)
-			: "",
-	].filter(Boolean);
+	const cost = usage && isRecord(usage.cost) ? n(usage.cost.total) : 0;
+	const model = typeof message.model === "string" ? message.model : "";
 	return (
-		<div className="mt-1.5 font-mono text-2xs text-faint">
-			{parts.join(" · ")}
+		<div className="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-muted">
+			{model && (
+				<span className={`${META_CHIP} min-w-0 max-w-full font-medium text-fg`}>
+					<Icon name="sparkle" size={12} aria-hidden className="shrink-0" />
+					<span className="min-w-0 truncate">{model}</span>
+				</span>
+			)}
+			{usage && (
+				<>
+					<span className={META_CHIP}>
+						<Stat icon="send" label={t("stat.input")}>
+							{formatTokens(n(usage.input))}
+						</Stat>
+					</span>
+					<span className={META_CHIP}>
+						<Stat icon="arrowDown" label={t("stat.output")}>
+							{formatTokens(n(usage.output))}
+						</Stat>
+					</span>
+					{n(usage.cacheRead) > 0 && (
+						<span className={META_CHIP}>
+							<Stat icon="database" label={t("stat.cache")}>
+								{formatTokens(n(usage.cacheRead))}
+							</Stat>
+						</span>
+					)}
+					{cost > 0 && (
+						<span className={META_CHIP}>
+							<Stat icon="coin" label={t("stat.cost")}>
+								{formatCost(cost)}
+							</Stat>
+						</span>
+					)}
+				</>
+			)}
+			{typeof message.duration === "number" && (
+				<span className={META_CHIP}>
+					<Stat icon="timer" label={t("stat.duration")}>
+						{formatDuration(message.duration)}
+					</Stat>
+				</span>
+			)}
+			<span className="flex-1" />
+			<MessageMenu entryId={entryId} text={text} />
 		</div>
 	);
 }
@@ -391,7 +461,11 @@ function AssistantMessage({
 						) : null;
 					case "redactedThinking":
 						return (
-							<div key={key} className="my-1 text-faint text-xs italic">
+							<div
+								key={key}
+								className="my-0.5 flex h-7 items-center gap-2 text-faint text-xs italic"
+							>
+								<Icon name="brain" size={14} className="shrink-0" />
 								{t("transcript.redactedThinking")}
 							</div>
 						);
@@ -416,16 +490,24 @@ function AssistantMessage({
 				<div className="stream-caret text-faint text-sm" />
 			)}
 			{(stop === "error" || stop === "aborted") && (
-				<div
-					className={`mt-1.5 rounded-md px-2 py-1 text-xs ${stop === "error" ? "bg-err/10 text-err" : "bg-inset text-muted"}`}
-				>
-					{stop === "aborted"
-						? t("transcript.aborted")
-						: t("transcript.error", { message: error ?? "" })}
+				<div className="mt-1.5">
+					<Callout
+						tone={stop === "error" ? "err" : "neutral"}
+						icon={stop === "error" ? "alert" : "stop"}
+					>
+						{stop === "aborted"
+							? t("transcript.aborted")
+							: t("transcript.error", { message: error ?? "" })}
+					</Callout>
 				</div>
 			)}
-			{!live && <UsageLine message={message} />}
-			{!live && <MessageMenu entryId={entryId} text={textOfContent(content)} />}
+			{!live && (
+				<TurnMeta
+					message={message}
+					entryId={entryId}
+					text={textOfContent(content)}
+				/>
+			)}
 		</div>
 	);
 }
@@ -437,25 +519,27 @@ function ExecutionMessage({ message }: { message: JsonRecord }) {
 	const exit =
 		typeof message.exitCode === "number" ? message.exitCode : undefined;
 	return (
-		<div className="rounded-lg border border-border bg-inset font-mono text-xs">
-			<div className="flex items-center gap-2 border-border border-b px-3 py-1.5 text-muted">
-				<Icon name="terminal" size={12} />
-				<span className="min-w-0 flex-1 truncate">
-					{isBash ? `$ ${code}` : code.split("\n")[0]}
+		<div className="overflow-hidden rounded-lg border border-border bg-inset text-xs">
+			<div className="flex min-w-0 items-center gap-2 border-border border-b px-3 py-1.5">
+				<Icon
+					name={isBash ? "terminal" : "code"}
+					size={13}
+					className="shrink-0 text-faint"
+				/>
+				<span className="min-w-0 flex-1 truncate font-mono text-fg">
+					{isBash ? code : code.split("\n")[0]}
 				</span>
 				{message.excludeFromContext === true && (
-					<span className="text-faint">{t("transcript.excluded")}</span>
+					<Badge>{t("transcript.excluded")}</Badge>
 				)}
 				{message.cancelled === true && (
-					<span className="text-warn">{t("transcript.cancelled")}</span>
+					<Badge tone="warn">{t("transcript.cancelled")}</Badge>
 				)}
 				{exit !== undefined && (
-					<span
-						className={exit === 0 ? "text-ok" : "text-err"}
-					>{`exit ${exit}`}</span>
+					<Badge tone={exit === 0 ? "ok" : "err"}>{`exit ${exit}`}</Badge>
 				)}
 			</div>
-			<pre className="max-h-72 overflow-auto whitespace-pre-wrap px-3 py-2 text-fg">
+			<pre className="max-h-72 overflow-auto whitespace-pre-wrap px-3 py-2 font-mono text-fg">
 				{String(message.output ?? "")}
 			</pre>
 		</div>
@@ -464,9 +548,11 @@ function ExecutionMessage({ message }: { message: JsonRecord }) {
 
 function CustomMessage({ message }: { message: JsonRecord }) {
 	return (
-		<div className="rounded-lg border border-border border-dashed px-3 py-2">
-			<div className="mb-1 text-faint text-xs">
-				{String(message.customType ?? message.role ?? "")}
+		<div className="rounded-lg border border-border-strong border-dashed px-3 py-2">
+			<div className="mb-1.5">
+				<Badge icon="message">
+					{String(message.customType ?? message.role ?? "")}
+				</Badge>
 			</div>
 			<Markdown text={textOfContent(message.content)} />
 			<Images content={message.content} />
@@ -475,33 +561,41 @@ function CustomMessage({ message }: { message: JsonRecord }) {
 }
 
 function SummaryCard({
+	icon,
 	label,
 	summary,
 	extra,
 }: {
+	icon: IconName;
 	label: string;
 	summary: string;
 	extra?: string;
 }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="my-1 rounded-lg border border-border bg-raised">
+		<section className="my-1 overflow-hidden rounded-lg border border-border bg-panel">
 			<button
 				type="button"
-				className="flex w-full items-center gap-2 px-3 py-2 text-left text-muted text-xs"
+				className="flex h-9 w-full min-w-0 items-center gap-2 px-3 text-left text-muted text-xs hover:bg-hover/60"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 			>
-				<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
-				<span className="font-medium">{label}</span>
-				{extra && <span className="text-faint">{extra}</span>}
+				<Icon name={icon} size={13} className="shrink-0 text-faint" />
+				<span className="truncate font-medium">{label}</span>
+				{extra && <Badge>{extra}</Badge>}
+				<span className="flex-1" />
+				<Icon
+					name="chevronRight"
+					size={12}
+					className={`shrink-0 text-ghost transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+				/>
 			</button>
 			{open && (
 				<div className="border-border border-t px-3 py-2">
 					<Markdown text={summary} />
 				</div>
 			)}
-		</div>
+		</section>
 	);
 }
 
@@ -517,6 +611,7 @@ export function CompactionCard({ entry }: { entry: JsonRecord }) {
 			: "?";
 	return (
 		<SummaryCard
+			icon="minimize"
 			label={t("transcript.compaction")}
 			extra={`${before} → ${after}`}
 			summary={String(entry.shortSummary ?? entry.summary ?? "")}
@@ -528,6 +623,7 @@ export function BranchSummaryCard({ entry }: { entry: JsonRecord }) {
 	const { t } = useTranslation();
 	return (
 		<SummaryCard
+			icon="fork"
 			label={t("transcript.branchSummary")}
 			summary={String(entry.summary ?? "")}
 		/>
@@ -564,23 +660,32 @@ export function MessageView({
 		case "fileMention": {
 			const files = Array.isArray(message.files) ? message.files : [];
 			return (
-				<div className="flex flex-wrap gap-1.5 text-xs">
-					{files.map((f, i) => (
-						<span
-							// biome-ignore lint/suspicious/noArrayIndexKey: 文件列表无稳定 id
-							key={i}
-							className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-muted"
-						>
-							<Icon name="file" size={11} />
-							{isRecord(f) ? String(f.path ?? "") : ""}
-						</span>
-					))}
+				<div className="flex flex-wrap gap-1.5">
+					{files.map((f, i) => {
+						const path = isRecord(f) ? String(f.path ?? "") : "";
+						return (
+							<span
+								// biome-ignore lint/suspicious/noArrayIndexKey: 文件列表无稳定 id
+								key={i}
+								className={`${CHIP} text-muted`}
+								title={path}
+							>
+								<Icon
+									name={fileIcon(path)}
+									size={13}
+									className="shrink-0 text-faint"
+								/>
+								<span className="max-w-72 truncate">{path}</span>
+							</span>
+						);
+					})}
 				</div>
 			);
 		}
 		case "developer":
 			return (
 				<SummaryCard
+					icon="info"
 					label={t("transcript.developer")}
 					summary={textOfContent(message.content)}
 				/>

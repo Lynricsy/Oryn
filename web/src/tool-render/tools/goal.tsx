@@ -1,5 +1,6 @@
 /** `goal` — goal-mode lifecycle: set/check/complete/resume/drop an objective with an optional token budget. */
 import type { ReactNode } from "react";
+import { formatDuration, formatTokens } from "../../lib/format";
 import type { Tone } from "../parts";
 import {
 	Badge,
@@ -70,35 +71,12 @@ function statusTone(status: string): Tone | undefined {
 	}
 }
 
-/** Compact count: 999, 1.5K, 25K, 1.5M, 2B. */
-function fmtNum(n: number): string {
-	if (n < 1_000) return `${n}`;
-	const scaled = (v: number): string => {
-		const s = v < 10 ? v.toFixed(1) : `${Math.round(v)}`;
-		return s.endsWith(".0") ? s.slice(0, -2) : s;
-	};
-	if (n < 1_000_000) return `${scaled(n / 1_000)}K`;
-	if (n < 1_000_000_000) return `${scaled(n / 1_000_000)}M`;
-	return `${scaled(n / 1_000_000_000)}B`;
-}
-
-/** Coarse duration label from seconds: 45s, 12m, 3h, 2d. */
-function fmtDuration(seconds: number): string {
-	const s = Math.max(0, Math.round(seconds));
-	if (s < 60) return `${s}s`;
-	const m = Math.round(s / 60);
-	if (m < 60) return `${m}m`;
-	const h = Math.round(m / 60);
-	if (h < 48) return `${h}h`;
-	return `${Math.round(h / 24)}d`;
-}
-
-/** "12K / 100K tokens (88K left)" or "12K tokens" without a budget. */
+/** "12k / 100k tokens (88k left)" or "12k tokens" without a budget. */
 function tokensLine(goal: GoalView): string {
-	const used = fmtNum(goal.tokensUsed ?? 0);
+	const used = formatTokens(goal.tokensUsed ?? 0);
 	if (goal.tokenBudget === null) return `${used} tokens`;
 	const left = Math.max(0, goal.tokenBudget - (goal.tokensUsed ?? 0));
-	return `${used} / ${fmtNum(goal.tokenBudget)} tokens (${fmtNum(left)} left)`;
+	return `${used} / ${formatTokens(goal.tokenBudget)} tokens (${formatTokens(left)} left)`;
 }
 
 function Summary({ args, result }: ToolRenderProps): ReactNode {
@@ -121,7 +99,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 				</span>
 			)}
 			{budget !== null && (
-				<span className="tv-faint">budget {fmtNum(budget)}</span>
+				<span className="tv-faint">budget {formatTokens(budget)}</span>
 			)}
 		</>
 	);
@@ -151,12 +129,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				{hasTokens && goal ? (
 					<Kv k="tokens">{tokensLine(goal)}</Kv>
 				) : (
-					budgetArg !== null && <Kv k="budget">{fmtNum(budgetArg)} tokens</Kv>
+					budgetArg !== null && (
+						<Kv k="budget">{formatTokens(budgetArg)} tokens</Kv>
+					)
 				)}
 				{goal !== null &&
 					goal.timeUsedSeconds !== null &&
 					goal.timeUsedSeconds > 0 && (
-						<Kv k="elapsed">{fmtDuration(goal.timeUsedSeconds)}</Kv>
+						<Kv k="elapsed">{formatDuration(goal.timeUsedSeconds * 1000)}</Kv>
 					)}
 			</KvGrid>
 			{details !== null && goal === null && !result?.isError && (

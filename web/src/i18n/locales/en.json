@@ -24,7 +24,21 @@
 			"fox": "Fox",
 			"graphite": "Graphite"
 		},
-		"desc": "Appearance is saved in this browser only."
+		"desc": "Appearance is saved in this browser only.",
+		"avatar": "Agent avatar",
+		"avatarKind": {
+			"default": "Default mark",
+			"image": "Custom image",
+			"icon": "Glyph"
+		},
+		"avatarHint": "Shown at the start of assistant turns; synced across devices. Images are scaled to 128×128.",
+		"avatarUpload": "Upload image",
+		"avatarReset": "Reset",
+		"avatarGlyphs": "Built-in glyphs",
+		"avatarCustom": "Custom (one emoji or Nerd glyph)",
+		"avatarUse": "Use",
+		"avatarTooLarge": "The image is still over 128 KiB after compression; try a simpler one.",
+		"avatarDecodeFailed": "Couldn't read this image; use PNG, WebP or JPEG."
 	},
 	"stat": {
 		"input": "Input",
@@ -194,9 +208,6 @@
 		"synthetic": "injected",
 		"thinking": "Thinking",
 		"thinkingLive": "Thinking…",
-		"usageCache": "cache {{n}}",
-		"usageIn": "in {{n}}",
-		"usageOut": "out {{n}}",
 		"you": "You"
 	},
 	"notice": {
@@ -296,7 +307,7 @@
 		"edit": "Edit",
 		"promote": "Send now",
 		"remove": "Remove",
-		"title": "Queued ({{count}})",
+		"heading": "Queued",
 		"steering": "Steering",
 		"followUp": "Follow-up"
 	},
@@ -432,7 +443,6 @@
 		"noSubagents": "No subagents.",
 		"noTodos": "No todos.",
 		"orb": "Orb",
-		"orbSpec": "{{type}} · {{cpus}} CPU / {{mem}} GB",
 		"subagents": "Subagents",
 		"todos": "Todos"
 	},
@@ -518,7 +528,6 @@
 		}
 	},
 	"providers": {
-		"capabilities": "freeze {{freeze}} · snapshot {{snapshot}}",
 		"create": "New provider",
 		"default": "default",
 		"deleteConfirm": "Delete provider {{name}}?",
@@ -527,7 +536,11 @@
 		"offline": "offline",
 		"online": "online",
 		"title": "Providers",
-		"tokenOnce": "The provider token is shown only once — put it in the provider's token_file:"
+		"tokenOnce": "The provider token is shown only once — put it in the provider's token_file:",
+		"supported": "supported",
+		"unsupported": "not supported",
+		"freeze": "Freeze",
+		"snapshot": "Snapshot"
 	},
 	"projects": {
 		"baseBranch": "Base branch",
@@ -548,6 +561,9 @@
 		"setupHint": "Runs in the repository the first time an orb is created.",
 		"setupScript": "Setup script",
 		"shallowClone": "Shallow clone",
+		"icon": "Project icon",
+		"iconAuto": "Auto",
+		"iconAutoHint": "Auto: uses the icon from the first thread's title card, else the name's first letter.",
 		"title": "Projects"
 	},
 	"secrets": {
@@ -664,7 +680,8 @@
 		"attention": "A terminal is waiting for input",
 		"maximize": "Maximize panel",
 		"restore": "Restore panel",
-		"resize": "Resize panel"
+		"resize": "Resize panel",
+		"unseenChanges": "New changes"
 	},
 	"terminal": {
 		"title": "Terminals",
@@ -777,8 +794,17 @@
 			"allBase": "All changes (vs {{base}})",
 			"uncommitted": "Uncommitted only",
 			"commits": "Single commit",
-			"moreCommits": "Older commits not listed"
+			"moreCommits": "Older commits not listed",
+			"compareBranch": "Compare with branch…"
 		},
+		"base": {
+			"label": "Base branch",
+			"placeholder": "Branch name, e.g. main",
+			"apply": "Compare",
+			"reset": "Use default base",
+			"invalid": "Branch names must start with a letter or digit and contain only letters, digits, and . _ / -"
+		},
+		"modified": "{{n}} modified",
 		"refresh": "Refresh",
 		"approximateBase": "Base is approximate",
 		"noBase": "No base branch found; showing uncommitted changes",

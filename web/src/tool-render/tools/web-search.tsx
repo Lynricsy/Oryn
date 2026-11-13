@@ -134,7 +134,11 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				<KvGrid>
 					{query !== null && <Kv k="query">{query}</Kv>}
 					{providerInfo && <Kv k="provider">{providerInfo}</Kv>}
-					{usageParts.length > 0 && <Kv k="usage">{usageParts.join(" · ")}</Kv>}
+					{usageParts.length > 0 && (
+						<Kv k="usage">
+							<Badges items={usageParts} />
+						</Kv>
+					)}
 				</KvGrid>
 			)}
 			{errorMsg && !resultTextOf(result) && <Note tone="err">{errorMsg}</Note>}

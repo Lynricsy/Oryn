@@ -1,6 +1,15 @@
 /** `task` — spawn subagents: batch shape, streamed progress, per-agent results. */
 import type { ReactNode } from "react";
-import { AgentLink, Badge, Note, Output, ResultText, Row } from "../parts";
+import { formatDuration, formatTokens } from "../../lib/format";
+import {
+	AgentLink,
+	Badge,
+	Badges,
+	Note,
+	Output,
+	ResultText,
+	Row,
+} from "../parts";
 import type { ToolRenderer, ToolRenderHost, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -57,17 +66,6 @@ function taskIdLabel(id: string): string {
 	return id.includes(".") ? id.split(".").join(">") : id;
 }
 
-function fmtDuration(ms: number): string {
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	const s = ms / 1000;
-	if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
-	return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-}
-
-function fmtCount(n: number): string {
-	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
-
 /** Outcome of one agent, mirroring the TUI's aborted / merge-failed / done / failed split. */
 function resultStatus(res: Record<string, unknown>): {
 	label: string;
@@ -111,11 +109,11 @@ function AgentResult({
 	const description = str(res.description);
 	const stats: string[] = [];
 	const tokens = num(res.tokens);
-	if (tokens) stats.push(`${fmtCount(tokens)} tok`);
+	if (tokens) stats.push(`${formatTokens(tokens)} tok`);
 	const requests = num(res.requests);
 	if (requests) stats.push(`${requests} req`);
 	const durationMs = num(res.durationMs);
-	if (durationMs != null) stats.push(fmtDuration(durationMs));
+	if (durationMs != null) stats.push(formatDuration(durationMs));
 	const model = str(res.resolvedModel);
 	if (model) stats.push(model);
 
@@ -146,9 +144,7 @@ function AgentResult({
 				<Badge tone={tone}>{label}</Badge>{" "}
 				{res.truncated === true && <Badge tone="warn">truncated</Badge>}{" "}
 				{description && <span>{truncate(normalizeWs(description), 96)}</span>}{" "}
-				{stats.length > 0 && (
-					<span className="tv-faint">{stats.join(" · ")}</span>
-				)}
+				<Badges items={stats} />
 			</Row>
 			{warning && <Note tone="warn">{warning}</Note>}
 			{aborted && abortReason && <Note tone="err">{abortReason}</Note>}
@@ -190,9 +186,9 @@ function AgentProgressRow({
 	const toolCount = num(p.toolCount);
 	if (toolCount) bits.push(`${toolCount} tools`);
 	const tokens = num(p.tokens);
-	if (tokens) bits.push(`${fmtCount(tokens)} tok`);
+	if (tokens) bits.push(`${formatTokens(tokens)} tok`);
 	const durationMs = num(p.durationMs);
-	if (durationMs) bits.push(fmtDuration(durationMs));
+	if (durationMs) bits.push(formatDuration(durationMs));
 	return (
 		<Row
 			k={
@@ -206,7 +202,7 @@ function AgentProgressRow({
 			{intent && (
 				<span className="tv-muted">{truncate(normalizeWs(intent), 64)}</span>
 			)}{" "}
-			{bits.length > 0 && <span className="tv-faint">{bits.join(" · ")}</span>}
+			<Badges items={bits} />
 		</Row>
 	);
 }
@@ -249,7 +245,7 @@ function Body({ args, result, host }: ToolRenderProps): ReactNode {
 				{failed > 0 && <Badge tone="err">{failed} failed</Badge>}{" "}
 				{aborted > 0 && <Badge tone="err">{aborted} aborted</Badge>}{" "}
 				{total != null && (
-					<span className="tv-faint">{fmtDuration(total)}</span>
+					<span className="tv-faint">{formatDuration(total)}</span>
 				)}
 			</Row>
 		);

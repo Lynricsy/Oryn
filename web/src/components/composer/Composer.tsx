@@ -1,5 +1,6 @@
 /**
  * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、文件附件。
+ * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、上下文、发送）、页脚行（快捷键、模式状态、会话读数）。
  */
 import {
 	type ReactNode,
@@ -23,10 +24,12 @@ import {
 } from "../../state/actions";
 import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, Kbd, Spinner } from "../ui/primitives";
 import { AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
+import { ContextRing, ModelChip, SessionReadout } from "./ComposerMeta";
 
 export function Composer({
 	threadId,
@@ -267,7 +270,7 @@ export function Composer({
 		!att.uploading &&
 		(text.trim() !== "" || att.attachmentIds.length > 0);
 	return (
-		<div className="relative mx-auto w-full max-w-3xl">
+		<div className="relative">
 			{menuOpen && (
 				<CommandMenu
 					entries={menu}
@@ -276,122 +279,132 @@ export function Composer({
 					hint={menu.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
-			<div className="rounded-xl border border-border bg-panel shadow-sm focus-within:border-accent/60">
-				<AttachmentStrip items={att.items} onRemove={att.remove} />
-				<textarea
-					onDragOver={(e) => {
-						if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-					}}
-					onDrop={(e) => {
-						if (e.dataTransfer.files.length === 0) return;
+			<AttachmentStrip items={att.items} onRemove={att.remove} />
+			<textarea
+				onDragOver={(e) => {
+					if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+				}}
+				onDrop={(e) => {
+					if (e.dataTransfer.files.length === 0) return;
+					e.preventDefault();
+					void att.addFiles(e.dataTransfer.files);
+				}}
+				ref={ref}
+				rows={1}
+				value={text}
+				disabled={disabled}
+				aria-label={t("composer.label")}
+				placeholder={
+					busy ? t("composer.placeholderBusy") : t("composer.placeholder")
+				}
+				className="block max-h-[40vh] min-h-[46px] w-full resize-none bg-transparent px-4 pt-3 pb-1.5 text-sm leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+				onChange={(e) => {
+					setText(e.target.value);
+					setMenuDismissed(false);
+				}}
+				onKeyDown={onKeyDown}
+				onPaste={(e) => {
+					const files = [...e.clipboardData.files];
+					if (files.length > 0) {
 						e.preventDefault();
-						void att.addFiles(e.dataTransfer.files);
-					}}
-					ref={ref}
-					rows={1}
-					value={text}
-					disabled={disabled}
-					aria-label={t("composer.label")}
-					placeholder={
-						busy ? t("composer.placeholderBusy") : t("composer.placeholder")
+						void att.addFiles(files);
 					}
-					className="block max-h-[40vh] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm outline-none placeholder:text-faint"
-					onChange={(e) => {
-						setText(e.target.value);
-						setMenuDismissed(false);
-					}}
-					onKeyDown={onKeyDown}
-					onPaste={(e) => {
-						const files = [...e.clipboardData.files];
-						if (files.length > 0) {
-							e.preventDefault();
-							void att.addFiles(files);
-						}
-					}}
+				}}
+			/>
+			<div className="flex items-center gap-0.5 px-2 pb-2">
+				<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
+					<Icon name="attach" size={15} />
+					<span className="sr-only">{t("attachments.attach")}</span>
+					<input
+						type="file"
+						multiple
+						className="hidden"
+						onChange={(e) => {
+							if (e.target.files) void att.addFiles(e.target.files);
+							e.target.value = "";
+						}}
+					/>
+				</label>
+				<span
+					aria-hidden
+					className="mx-1 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
 				/>
-				<div className="flex items-center gap-1 px-2 pb-2">
-					<label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg">
-						<Icon name="file" size={16} />
-						<span className="sr-only">{t("attachments.attach")}</span>
-						<input
-							type="file"
-							multiple
-							className="hidden"
-							onChange={(e) => {
-								if (e.target.files) void att.addFiles(e.target.files);
-								e.target.value = "";
-							}}
-						/>
-					</label>
-					{bashRunning && (
-						<button
-							type="button"
-							className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-muted text-xs hover:bg-hover"
-							onClick={() =>
-								void realtime
-									.cmd(threadId, { type: "abort_bash" })
-									.catch(() => undefined)
-							}
-						>
-							<Spinner size={11} />
-							{t("composer.abortBash")}
-						</button>
-					)}
-					<div className="hidden min-w-0 flex-1 items-center gap-2 truncate text-2xs text-faint sm:flex">
-						{busy ? (
-							<>
-								<span>
-									<Kbd>Enter</Kbd> {t("composer.keySteer")}
-								</span>
-								<span>
-									<Kbd>Ctrl+Enter</Kbd> {t("composer.keyQueue")}
-								</span>
-								<span>
-									<Kbd>Alt+Enter</Kbd> {t("composer.keyInterrupt")}
-								</span>
-								<span>
-									<Kbd>Esc Esc</Kbd> {t("composer.keyAbort")}
-								</span>
-							</>
-						) : (
-							<>
-								<span>
-									<Kbd>/</Kbd> {t("composer.keyCommands")}
-								</span>
-								<span>
-									<Kbd>!</Kbd> {t("composer.keyBash")}
-								</span>
-							</>
-						)}
-					</div>
-					<div className="flex-1 sm:hidden" />
-					{busy && (
-						<IconButton
-							icon="stop"
-							label={t("composer.abort")}
-							onClick={() =>
-								void realtime
-									.cmd(threadId, { type: "abort" })
-									.catch(() => undefined)
-							}
-						/>
-					)}
+				<ModeStrip threadId={threadId} />
+				{bashRunning && (
 					<button
 						type="button"
-						aria-label={busy ? t("composer.steer") : t("composer.send")}
-						disabled={!canSend}
-						onClick={() => void submit(busy ? "steer" : "prompt")}
-						className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-accent-fg disabled:opacity-40"
+						className="inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-muted text-xs hover:bg-hover"
+						onClick={() =>
+							void realtime
+								.cmd(threadId, { type: "abort_bash" })
+								.catch(() => undefined)
+						}
 					>
-						<Icon name="send" size={16} />
+						<Spinner size={11} />
+						{t("composer.abortBash")}
 					</button>
-				</div>
+				)}
+				<span className="min-w-1 flex-1" />
+				<ModelChip threadId={threadId} />
+				<ContextRing threadId={threadId} />
+				{busy && (
+					<IconButton
+						icon="stop"
+						label={t("composer.abort")}
+						onClick={() =>
+							void realtime
+								.cmd(threadId, { type: "abort" })
+								.catch(() => undefined)
+						}
+					/>
+				)}
+				<button
+					type="button"
+					aria-label={busy ? t("composer.steer") : t("composer.send")}
+					disabled={!canSend}
+					onClick={() => void submit(busy ? "steer" : "prompt")}
+					className="ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+				>
+					<Icon name="send" size={16} weight="bold" />
+				</button>
 			</div>
 			{(error || att.error) && (
-				<p role="alert" className="mt-1 px-1 text-err text-xs">
+				<p role="alert" className="px-4 pb-2 text-err text-xs">
 					{error ? describeError(error, t) : att.error}
 				</p>
 			)}
+			<div className="flex min-h-8 items-center gap-3 border-[var(--glass-line)] border-t px-3 py-1.5 text-2xs text-faint">
+				<div className="hidden min-w-0 items-center gap-3 truncate sm:flex">
+					{busy ? (
+						<>
+							<span>
+								<Kbd>Enter</Kbd> {t("composer.keySteer")}
+							</span>
+							<span>
+								<Kbd>Ctrl+Enter</Kbd> {t("composer.keyQueue")}
+							</span>
+							<span>
+								<Kbd>Alt+Enter</Kbd> {t("composer.keyInterrupt")}
+							</span>
+							<span>
+								<Kbd>Esc Esc</Kbd> {t("composer.keyAbort")}
+							</span>
+						</>
+					) : (
+						<>
+							<span>
+								<Kbd>/</Kbd> {t("composer.keyCommands")}
+							</span>
+							<span>
+								<Kbd>!</Kbd> {t("composer.keyBash")}
+							</span>
+						</>
+					)}
+				</div>
+				<ModeStatus threadId={threadId} />
+				<span className="flex-1" />
+				<SessionReadout threadId={threadId} />
+			</div>
 		</div>
 	);
 }

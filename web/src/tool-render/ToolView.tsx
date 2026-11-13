@@ -5,10 +5,92 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Icon, type IconName } from "../components/ui/icons";
 import { resolveToolRenderer } from "./registry";
 import type { ToolRenderHost, ToolRenderProps, ToolResultLike } from "./types";
 import { isRecord, replaceTabs, stripAnsi } from "./util";
 import "./tool-render.css";
+
+/** 工具图标：键是 `registry.ts` 的注册名，同一渲染器的别名共用图标；未列出的名字用 wrench。 */
+const TOOL_ICON: Record<string, IconName> = {
+	read: "fileText",
+	write: "filePlus",
+	edit: "edit",
+	apply_patch: "edit",
+	ast_edit: "code",
+	ast_grep: "search",
+	grep: "search",
+	search: "search",
+	glob: "folderOpen",
+	find: "folderOpen",
+	bash: "terminal",
+	terminal: "terminal",
+	eval: "code",
+	js: "code",
+	python: "code",
+	notebook: "code",
+	fetch: "globe",
+	web_search: "globe",
+	browser: "browser",
+	puppeteer: "browser",
+	task: "robot",
+	todo: "list",
+	ask: "message",
+	goal: "target",
+	github: "github",
+	lsp: "code",
+	debug: "bug",
+	recall: "brain",
+	reflect: "brain",
+	retain: "brain",
+	generate_image: "image",
+	wait: "hourglass",
+	yield: "checkCircle",
+	resolve: "checkCircle",
+	reject: "checkCircle",
+	propose: "checkCircle",
+	report_tool_issue: "alert",
+};
+
+type ToolCat = "read" | "edit" | "exec" | "web" | "agent" | "other";
+
+/** 工具类别：只决定图标方块的低彩度色调（`--cat-*`），不表达状态。 */
+const TOOL_CAT: Record<string, ToolCat> = {
+	read: "read",
+	grep: "read",
+	search: "read",
+	ast_grep: "read",
+	glob: "read",
+	find: "read",
+	lsp: "read",
+	write: "edit",
+	edit: "edit",
+	apply_patch: "edit",
+	ast_edit: "edit",
+	bash: "exec",
+	terminal: "exec",
+	eval: "exec",
+	js: "exec",
+	python: "exec",
+	notebook: "exec",
+	debug: "exec",
+	fetch: "web",
+	web_search: "web",
+	browser: "web",
+	puppeteer: "web",
+	github: "web",
+	task: "agent",
+	ask: "agent",
+	goal: "agent",
+	wait: "agent",
+	recall: "agent",
+	reflect: "agent",
+	retain: "agent",
+	yield: "agent",
+	resolve: "agent",
+	reject: "agent",
+	propose: "agent",
+};
 
 /** omp 线路上工具参数里的意图字段名（原为 `@oh-my-pi/pi-wire` 的 INTENT_FIELD）。 */
 const INTENT_FIELD = "i";
@@ -117,6 +199,16 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				onClick={() => setOpen((v) => !v)}
 				title={intent || undefined}
 			>
+				<span
+					className={`tv-cat tv-cat--${TOOL_CAT[name] ?? "other"}`}
+					aria-hidden="true"
+				>
+					<Icon name={TOOL_ICON[name] ?? "wrench"} size={13} />
+				</span>
+				<span className="tv-name">{xdev ? `xd://${name}` : name}</span>
+				<span className="tv-sum">
+					<renderer.Summary {...renderProps} />
+				</span>
 				{status === "run" ? (
 					<span
 						role="status"
@@ -124,16 +216,22 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						aria-label={t("toolRender.running")}
 					/>
 				) : (
-					<span
-						className={`tv-status tv-status--${status}`}
-						aria-hidden="true"
-					/>
+					<span className={`tv-status tv-status--${status}`} aria-hidden="true">
+						<Icon
+							name={
+								status === "ok"
+									? "checkCircle"
+									: status === "err"
+										? "xCircle"
+										: "circle"
+							}
+							size={14}
+						/>
+					</span>
 				)}
-				<span className="tv-name">{xdev ? `xd://${name}` : name}</span>
-				<span className="tv-sum">
-					<renderer.Summary {...renderProps} />
+				<span className="tv-chev" aria-hidden="true">
+					<Icon name="chevronRight" size={12} />
 				</span>
-				<span className="tv-chev" aria-hidden="true" />
 			</button>
 			{open && (
 				<div className="tv-body">

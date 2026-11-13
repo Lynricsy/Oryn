@@ -15,7 +15,7 @@ export function CopyButton({
 	return (
 		<button
 			type="button"
-			className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-faint text-xs hover:bg-hover hover:text-fg"
+			className={`inline-flex h-6 items-center gap-1 rounded-sm px-1.5 text-xs transition-colors duration-150 hover:bg-hover ${done ? "text-ok" : "text-faint hover:text-fg"}`}
 			onClick={() => {
 				void navigator.clipboard?.writeText(text).then(() => {
 					setDone(true);
@@ -24,7 +24,12 @@ export function CopyButton({
 			}}
 			aria-label={label ?? t("common.copy")}
 		>
-			<Icon name={done ? "check" : "copy"} size={13} />
+			<Icon
+				name={done ? "check" : "copy"}
+				size={13}
+				weight={done ? "bold" : "regular"}
+				aria-hidden
+			/>
 			{label && <span>{done ? t("common.copied") : label}</span>}
 		</button>
 	);

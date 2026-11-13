@@ -14,6 +14,7 @@ import {
 	MAX_ATTACHMENTS_PER_MESSAGE,
 	uploadAttachment,
 } from "../../lib/attachments";
+import { fileIcon } from "../../lib/file-icon";
 import { formatBytes } from "../../lib/format";
 import {
 	checkBudget,
@@ -21,6 +22,7 @@ import {
 	prepareImage,
 } from "../../lib/images";
 import type { ImageContent } from "../../omp/types";
+import { Badge, Meter } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError } from "../ui/primitives";
 
@@ -207,60 +209,62 @@ export function AttachmentStrip({
 	const { t } = useTranslation();
 	if (items.length === 0) return null;
 	return (
-		<ul className="flex flex-wrap gap-2 px-3 pt-2">
-			{items.map((it) => (
-				<li
-					key={it.key}
-					className={`relative flex max-w-60 items-center gap-2 rounded-md border px-1.5 py-1 text-xs ${
-						it.status === "error" ? "border-err/60" : "border-border"
-					}`}
-					title={it.error ?? it.name}
-				>
-					{it.image ? (
-						<img
-							src={`data:${it.image.mimeType};base64,${it.image.data}`}
-							alt={it.name}
-							className="h-10 w-10 shrink-0 rounded object-cover"
-						/>
-					) : (
-						<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-hover text-muted">
-							<Icon name={it.fileOnly ? "image" : "file"} size={16} />
-						</span>
-					)}
-					<span className="min-w-0">
-						<span className="block truncate text-fg">{it.name}</span>
-						<span className="block truncate text-faint">
+		<ul className="flex flex-wrap gap-2 px-3 pt-3">
+			{items.map((it) => {
+				const percent = Math.round(it.progress * 100);
+				return (
+					<li
+						key={it.key}
+						className={`relative flex max-w-60 items-center gap-2 rounded-lg border bg-panel py-1 pr-2.5 pl-1 text-xs shadow-xs ${
+							it.status === "error" ? "border-err/50" : "border-border"
+						}`}
+						title={it.error ?? it.name}
+					>
+						{it.image ? (
+							<img
+								src={`data:${it.image.mimeType};base64,${it.image.data}`}
+								alt={it.name}
+								className="h-10 w-10 shrink-0 rounded-md object-cover"
+							/>
+						) : (
+							<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
+								<Icon name={fileIcon(it.name)} size={18} />
+							</span>
+						)}
+						<span className="flex min-w-0 flex-col gap-1">
+							<span className="block truncate font-medium text-fg">
+								{it.name}
+							</span>
 							{it.status === "error" ? (
-								<span className="text-err">{it.error}</span>
+								<span className="block truncate text-err">{it.error}</span>
 							) : it.status === "uploading" ? (
-								t("attachments.uploading", {
-									percent: Math.round(it.progress * 100),
-								})
+								<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
+									<Meter
+										value={percent}
+										tone="accent"
+										label={t("attachments.uploading", { percent })}
+										className="w-16"
+									/>
+									{t("attachments.uploading", { percent })}
+								</span>
 							) : (
-								<>
+								<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
 									{formatBytes(it.size)}
-									{it.fileOnly && ` · ${t("attachments.fileOnly")}`}
-								</>
+									{it.fileOnly && <Badge>{t("attachments.fileOnly")}</Badge>}
+								</span>
 							)}
 						</span>
-					</span>
-					{it.status === "uploading" && (
-						<span
-							aria-hidden
-							className="absolute bottom-0 left-0 h-0.5 rounded bg-accent"
-							style={{ width: `${Math.round(it.progress * 100)}%` }}
-						/>
-					)}
-					<button
-						type="button"
-						aria-label={t("attachments.remove", { name: it.name })}
-						className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-fg text-bg"
-						onClick={() => onRemove(it.key)}
-					>
-						<Icon name="close" size={11} />
-					</button>
-				</li>
-			))}
+						<button
+							type="button"
+							aria-label={t("attachments.remove", { name: it.name })}
+							className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-ink-fg shadow-xs transition-[scale] duration-150 hover:scale-110"
+							onClick={() => onRemove(it.key)}
+						>
+							<Icon name="close" size={11} weight="bold" />
+						</button>
+					</li>
+				);
+			})}
 		</ul>
 	);
 }

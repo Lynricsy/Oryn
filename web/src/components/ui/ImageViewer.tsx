@@ -18,11 +18,14 @@ export function ImageViewer({
 	const { t } = useTranslation();
 	return (
 		<Dialog open wide title={t("image.viewer")} onClose={onClose}>
-			<img
-				src={src}
-				alt={alt}
-				className="mx-auto block max-h-[70dvh] max-w-full object-contain"
-			/>
+			{/* 内嵌井衬底：透明图与浅色图都有边界 */}
+			<div className="grid place-items-center rounded-lg border border-border bg-inset p-2">
+				<img
+					src={src}
+					alt={alt}
+					className="block max-h-[70dvh] max-w-full rounded-md object-contain"
+				/>
+			</div>
 		</Dialog>
 	);
 }

@@ -1,4 +1,8 @@
-/** 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb。 */
+/**
+ * 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb；
+ * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除。
+ */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
 	fireEvent,
@@ -6,12 +10,15 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Thread } from "../../api/client";
+import type { Orb, Thread } from "../../api/client";
 import i18n from "../../i18n";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
+import type { ThreadViewState } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
+import type { GitFileChange } from "../changes/git";
 import { RightPanel } from "./RightPanel";
 
 vi.mock("../../state/terminals", () => ({
@@ -23,11 +30,33 @@ const ORB_A = "orb-rp00000000000000000000a1";
 const ORB_B = "orb-rp00000000000000000000b2";
 const SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
 let statusQueries: { orb: string; query: URLSearchParams }[];
+// 非空时，后台（bg）状态请求直接返回这些文件
+let bgFiles: GitFileChange[] | null;
+
+function withQuery(node: ReactNode) {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	return <QueryClientProvider client={client}>{node}</QueryClientProvider>;
+}
+
+function file(path: string, additions: number): GitFileChange {
+	return {
+		path,
+		status: "modified",
+		additions,
+		deletions: 0,
+		binary: false,
+		staged: "none",
+	};
+}
 
 beforeEach(() => {
 	resetOrbFs();
 	localStorage.clear();
 	statusQueries = [];
+	bgFiles = null;
+	uiStore.setState({ changesSig: {} });
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -40,6 +69,17 @@ beforeEach(() => {
 				statusQueries.push({
 					orb: url.pathname.split("/")[4] ?? "",
 					query: url.searchParams,
+				});
+			if (
+				bgFiles &&
+				url.pathname.endsWith("/git/status") &&
+				url.searchParams.has("bg")
+			)
+				return Response.json({
+					repo: true,
+					scope: "all",
+					files: bgFiles,
+					truncated: false,
 				});
 			return (await handleOrbFetch(req)) ?? new Response(null, { status: 404 });
 		}),
@@ -86,5 +126,58 @@ describe("RightPanel", () => {
 		expect(
 			screen.getByRole("combobox", { name: i18n.t("changes.scope.label") }),
 		).toHaveValue("all");
+	});
+
+	it("新改动亮点，切到改动标签即清除并记为已看", async () => {
+		uiStore.getState().noteChanges("T-rpA", "a", false);
+		uiStore.getState().noteChanges("T-rpA", "b", false);
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId="T-rpA" />));
+		const tab = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.changes"),
+		});
+		expect(tab).toHaveAttribute("data-panel-tab", "changes");
+		expect(screen.getByTestId("changes-unseen")).toBeInTheDocument();
+		await act(async () => {
+			fireEvent.click(tab);
+		});
+		expect(tab).toHaveAttribute("aria-selected", "true");
+		expect(screen.queryByTestId("changes-unseen")).toBeNull();
+		expect(uiStore.getState().changesSig["T-rpA"]).toEqual({
+			current: "b",
+			seen: "b",
+		});
+	});
+
+	it("其它标签下后台检查改动：首次为基线，agent 活动后出现新改动则亮点", async () => {
+		const id = "T-rpC";
+		const orbId = "orb-rp00000000000000000000c3";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				thread: { id, orbId } as Thread,
+				orb: { id: orbId, state: "ready", stateChangedAt: 0 } as Orb,
+			});
+		bgFiles = [file("a.ts", 1)];
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId={id} />));
+		await waitFor(() =>
+			expect(uiStore.getState().changesSig[id]?.current).toContain("a.ts"),
+		);
+		expect(statusQueries.filter((q) => q.orb === orbId)).toHaveLength(1);
+		expect(statusQueries[0]?.query.get("scope")).toBe("all");
+		expect(screen.queryByTestId("changes-unseen")).toBeNull();
+
+		// agent 回合里新增条目 → 1s 防抖后再查
+		bgFiles = [file("a.ts", 1), file("b.ts", 3)];
+		act(() => {
+			const s = getThreadStore(id).getState();
+			s.patchLocal({
+				entries: [...s.entries, {} as ThreadViewState["entries"][number]],
+			});
+		});
+		expect(
+			await screen.findByTestId("changes-unseen", {}, { timeout: 3000 }),
+		).toBeInTheDocument();
 	});
 });

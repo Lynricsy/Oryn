@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { OmpCommandError, realtime } from "../realtime/socket";
 import { useConnection, useIndex } from "../state/stores";
+import { Icon } from "./ui/icons";
 import { Button, describeError, IconButton } from "./ui/primitives";
 
 export function ServerErrors(): ReactNode {
@@ -25,20 +26,29 @@ export function ServerErrors(): ReactNode {
 					<div
 						key={e.key}
 						role="alert"
-						className="pointer-events-auto rounded-lg border border-err/50 bg-panel px-3 py-2 text-sm shadow-lg"
+						className="glass pop-in pointer-events-auto rounded-xl px-3 py-2.5 text-sm"
 					>
 						<div className="flex items-start gap-2">
-							<p className="min-w-0 flex-1 break-words text-err">
+							<Icon
+								name="alert"
+								size={16}
+								weight="fill"
+								aria-hidden
+								className="mt-0.5 shrink-0 text-err"
+							/>
+							<p className="min-w-0 flex-1 break-words pt-px">
 								{describeError(new OmpCommandError("", e.code, e.message), t)}
 							</p>
 							<IconButton
 								icon="close"
 								label={t("common.dismiss")}
+								size={14}
+								className="-my-1.5 -mr-2"
 								onClick={() => realtime.dismissError(e.key)}
 							/>
 						</div>
 						{e.threadId && (
-							<div className="mt-1 flex items-center gap-2 text-xs">
+							<div className="mt-1.5 flex items-center gap-2 pl-6 text-xs">
 								<Link
 									to={`/t/${e.threadId}`}
 									className="min-w-0 flex-1 truncate text-muted hover:text-fg"

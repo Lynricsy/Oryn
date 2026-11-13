@@ -1,9 +1,11 @@
-/* Markdown 渲染样式（自 index.css 迁出），由 Markdown.tsx 导入。 */
+/* Markdown 渲染样式（自 index.css 迁出），由 Markdown.tsx 导入。
+ * 非 Tailwind 文件：圆角、字体只用原始变量 --r-* / --sans / --mono。 */
 /* ---- Markdown ---- */
 .md {
-	font-size: 14px;
-	line-height: 1.65;
+	font-size: 14.5px;
+	line-height: 1.7;
 	overflow-wrap: anywhere;
+	text-wrap: pretty;
 }
 .md > :first-child {
 	margin-top: 0;
@@ -14,83 +16,139 @@
 .md p,
 .md ul,
 .md ol,
-.md blockquote,
-.md table {
-	margin: 0.6em 0;
+.md blockquote {
+	margin: 0.55em 0;
+}
+.md strong {
+	font-weight: 620;
 }
 .md ul {
 	list-style: disc;
 	padding-left: 1.4em;
 }
+.md ul > li::marker {
+	color: var(--text-faint);
+}
+/* 有序列表：编号画成 accent-soft 底的小方块 */
 .md ol {
-	list-style: decimal;
-	padding-left: 1.4em;
+	list-style: none;
+	padding-left: 0;
+	counter-reset: md-ol;
+}
+.md ol > li {
+	position: relative;
+	padding-left: 28px;
+	counter-increment: md-ol;
+}
+.md ol > li::before {
+	content: counter(md-ol);
+	position: absolute;
+	left: 0;
+	top: calc((1.7em - 18px) / 2);
+	display: grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 3px;
+	border-radius: var(--r-sm);
+	background: var(--accent-soft);
+	color: var(--accent-ink);
+	font: 650 11px / 1 var(--sans);
+	font-variant-numeric: tabular-nums;
 }
 .md li + li {
-	margin-top: 0.2em;
+	margin-top: 0.25em;
+}
+.md li > ul,
+.md li > ol {
+	margin: 0.25em 0;
 }
 .md h1,
 .md h2,
 .md h3,
 .md h4 {
-	font-weight: 600;
+	font-weight: 640;
 	line-height: 1.3;
-	margin: 1em 0 0.4em;
+	letter-spacing: -0.01em;
+	margin: 1.1em 0 0.45em;
 }
 .md h1 {
-	font-size: 1.3em;
+	font-size: 1.35em;
 }
 .md h2 {
-	font-size: 1.15em;
+	font-size: 1.18em;
 }
 .md h3 {
-	font-size: 1.05em;
+	font-size: 1.06em;
 }
 .md a {
 	color: var(--brand);
 	text-decoration: underline;
-	text-underline-offset: 2px;
+	text-decoration-color: color-mix(in oklab, var(--brand) 45%, transparent);
+	text-underline-offset: 3px;
+}
+.md a:hover {
+	text-decoration-color: currentColor;
 }
 .md blockquote {
-	border-left: 3px solid var(--line);
-	padding-left: 0.8em;
+	border-left: 3px solid var(--line-strong);
+	padding-left: 0.85em;
 	color: var(--text-muted);
 }
 .md hr {
-	border-color: var(--line);
-	margin: 1em 0;
+	border: 0;
+	border-top: 1px solid var(--line);
+	margin: 1.1em 0;
 }
 .md img {
 	max-width: 100%;
-	border-radius: 6px;
+	border-radius: var(--r-lg);
+}
+/* 表格：圆角外框、表头 --raised、首列加粗、只留行间发丝线 */
+.md-table {
+	margin: 0.6em 0;
+	border: 1px solid var(--line);
+	border-radius: var(--r-lg);
+	background: var(--panel);
+	overflow-x: auto;
 }
 .md table {
+	width: 100%;
 	border-collapse: collapse;
-	display: block;
-	overflow-x: auto;
-	font-size: 13px;
-}
-.md th,
-.md td {
-	border: 1px solid var(--line);
-	padding: 0.3em 0.6em;
+	font-size: 13.5px;
+	line-height: 1.5;
 }
 .md th {
+	text-align: left;
+	font-size: 12.5px;
+	font-weight: 580;
+	color: var(--text-muted);
 	background: var(--raised);
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--line);
+}
+.md td {
+	padding: 8px 14px;
+	vertical-align: top;
+}
+.md tr + tr td {
+	border-top: 1px solid var(--line);
+}
+.md td:first-child {
 	font-weight: 600;
 }
 .md-inline-code {
 	font-family: var(--mono);
-	font-size: 0.88em;
+	font-size: 0.84em;
 	background: var(--inset);
 	border: 1px solid var(--line);
-	border-radius: 4px;
-	padding: 0.05em 0.3em;
+	border-radius: var(--r-xs);
+	padding: 0.1em 0.35em;
 }
 .md-code {
 	margin: 0.6em 0;
 	border: 1px solid var(--line);
-	border-radius: 6px;
+	border-radius: var(--r-lg);
 	background: var(--inset);
 	overflow: hidden;
 }
@@ -98,11 +156,12 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 2px 4px 2px 10px;
+	height: 30px;
+	padding: 0 4px 0 12px;
+	font-family: var(--mono);
 	font-size: 11px;
 	color: var(--text-faint);
 	border-bottom: 1px solid var(--line);
-	font-family: var(--mono);
 }
 .md-code pre {
 	margin: 0;
@@ -110,7 +169,7 @@
 	overflow-x: auto;
 	font-family: var(--mono);
 	font-size: 12.5px;
-	line-height: 1.55;
+	line-height: 1.6;
 }
 .md-mermaid {
 	margin: 0.6em 0;
@@ -125,23 +184,23 @@
 	overflow-y: hidden;
 }
 
-/* highlight.js：极简配色，明暗共用 */
+/* highlight.js：配色取 --syn-* 令牌，随明暗与主题切换 */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-built_in,
 .hljs-tag .hljs-name {
-	color: oklch(0.6 0.15 300);
+	color: var(--syn-keyword);
 }
 .hljs-string,
 .hljs-attr,
 .hljs-template-tag,
 .hljs-addition {
-	color: oklch(0.6 0.13 150);
+	color: var(--syn-string);
 }
 .hljs-number,
 .hljs-literal,
 .hljs-symbol {
-	color: oklch(0.65 0.14 55);
+	color: var(--syn-number);
 }
 .hljs-comment,
 .hljs-quote {
@@ -151,12 +210,12 @@
 .hljs-title,
 .hljs-title.function_,
 .hljs-section {
-	color: oklch(0.62 0.13 240);
+	color: var(--syn-title);
 }
 .hljs-type,
 .hljs-class .hljs-title,
 .hljs-variable.language_ {
-	color: oklch(0.65 0.12 200);
+	color: var(--syn-type);
 }
 .hljs-deletion {
 	color: var(--bad);

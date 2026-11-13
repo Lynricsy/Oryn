@@ -2,10 +2,10 @@
  * Shared UI primitives for tool renderers. Every renderer composes these
  * instead of inventing new CSS — see tool-render.css for the `tv-` classes.
  */
-import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { isValidElement, type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ImageViewer } from "../components/ui/ImageViewer";
+import { Icon } from "../components/ui/icons";
 import { useHighlighted } from "../lib/highlight";
 import { imageSrc } from "../lib/image-src";
 import type { ToolRenderHost, ToolResultLike } from "./types";
@@ -35,7 +35,7 @@ export function Badge({
 	);
 }
 
-/** Chip row; falsy items are skipped. Usable inline (summaries) and in bodies. */
+/** Chip row; falsy items are skipped. Element items are already chips and render as-is. */
 export function Badges({
 	items,
 }: {
@@ -47,9 +47,13 @@ export function Badges({
 	if (visible.length === 0) return null;
 	return (
 		<span className="tv-badges">
-			{visible.map((item, i) => (
-				<Badge key={i}>{item}</Badge>
-			))}
+			{visible.map((item, i) =>
+				isValidElement(item) ? (
+					<span key={i}>{item}</span>
+				) : (
+					<Badge key={i}>{item}</Badge>
+				),
+			)}
 		</span>
 	);
 }
@@ -443,7 +447,7 @@ export function AgentLink({
 		>
 			{children ?? id}
 			<span className="tv-agent-link-arrow" aria-hidden="true">
-				{" ↗"}
+				<Icon name="external" size={10} />
 			</span>
 		</button>
 	);

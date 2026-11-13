@@ -5,6 +5,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { revealTerminal } from "../../state/terminals";
+import type { Tone } from "../parts";
 import { Badge, Badges, Kv, KvGrid, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
@@ -46,6 +47,12 @@ function termInfo(value: unknown): TermInfo | null {
 function stateText(info: TermInfo): string {
 	if (info.running) return info.state ?? "running";
 	return info.exitCode === null ? "killed" : `exit ${info.exitCode}`;
+}
+
+/** 状态徽标色：运行中 accent，退出码 0 为 ok，其余（非零退出、被杀）为 err。 */
+function stateTone(info: TermInfo): Tone {
+	if (info.running) return "accent";
+	return info.exitCode === 0 ? "ok" : "err";
 }
 
 function OpenInPanel({ id }: { id?: string }): ReactNode {
@@ -127,7 +134,11 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				<KvGrid>
 					{list.map((x) => (
 						<Kv key={x.terminalId} k={x.terminalId}>
-							{`${x.kind} · ${stateText(x)} · ${x.title || x.cwd}`}
+							<span className="tv-badges">
+								<Badge>{x.kind}</Badge>
+								<Badge tone={stateTone(x)}>{stateText(x)}</Badge>
+							</span>{" "}
+							{x.title || x.cwd}
 						</Kv>
 					))}
 				</KvGrid>

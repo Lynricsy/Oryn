@@ -1,12 +1,13 @@
 /**
  * 排队条：显示 steering / follow-up 队列，支持编辑、删除、拖动排序（跨队列）、提前发送、清空。
- * 带 id 的队列项来自 `get_queue`（`queue_update` 后自动刷新）。
+ * 带 id 的队列项来自 `get_queue`（`queue_update` 后自动刷新）。是输入坞玻璃托盘里的一节。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { OmpCommand, RpcQueuedMessage } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
+import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { Button, IconButton, TextInput } from "../ui/primitives";
 
@@ -54,10 +55,10 @@ function Item({
 						toLane: lane,
 					});
 			}}
-			className="flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs"
+			className="flex items-center gap-1.5 rounded-lg border border-border bg-panel/60 py-1 pr-1 pl-2 text-xs"
 		>
 			{item.editable && (
-				<span className="cursor-grab text-faint" aria-hidden="true">
+				<span className="cursor-grab select-none text-ghost" aria-hidden="true">
 					⋮⋮
 				</span>
 			)}
@@ -92,7 +93,7 @@ function Item({
 						<IconButton
 							icon="bolt"
 							size={13}
-							className="h-6 w-6"
+							box="xs"
 							label={t("queue.promote")}
 							onClick={() =>
 								void run(threadId, {
@@ -105,14 +106,14 @@ function Item({
 					<IconButton
 						icon="edit"
 						size={13}
-						className="h-6 w-6"
+						box="xs"
 						label={t("queue.edit")}
 						onClick={() => setEditing(item.text)}
 					/>
 					<IconButton
 						icon="close"
 						size={13}
-						className="h-6 w-6"
+						box="xs"
 						label={t("queue.remove")}
 						onClick={() =>
 							void run(threadId, { type: "queue_remove", queueId: item.id })
@@ -156,16 +157,17 @@ export function QueueBar({ threadId }: { threadId: string }): ReactNode {
 		},
 	];
 	return (
-		<div className="mx-auto mb-2 w-full max-w-3xl rounded-lg border border-border bg-raised px-2 py-1.5">
+		<div className="px-3 py-2">
 			<div className="flex items-center gap-2 text-muted text-xs">
 				<button
 					type="button"
-					className="flex items-center gap-1"
+					className="-ml-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 font-medium hover:bg-hover hover:text-fg"
 					onClick={() => setOpen((v) => !v)}
 					aria-expanded={open}
 				>
 					<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
-					{t("queue.title", { count: total })}
+					{t("queue.heading")}
+					<Badge>{total}</Badge>
 				</button>
 				<div className="flex-1" />
 				<Button
@@ -177,11 +179,11 @@ export function QueueBar({ threadId }: { threadId: string }): ReactNode {
 				</Button>
 			</div>
 			{open && (
-				<div className="mt-1 flex flex-col gap-1.5">
+				<div className="mt-1.5 flex flex-col gap-2">
 					{lanes.map(({ lane, list }) =>
 						list.length === 0 ? null : (
 							<div key={lane}>
-								<div className="mb-0.5 text-2xs text-faint uppercase tracking-wide">
+								<div className="mb-1 font-medium text-2xs text-faint">
 									{t(`queue.${lane}`)}
 								</div>
 								<ul className="flex flex-col gap-1">

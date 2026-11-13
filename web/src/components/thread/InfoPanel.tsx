@@ -1,112 +1,149 @@
 /**
- * 右侧信息面板：orb 状态与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、todo（可编辑，`set_todos`）、
- * 子 agent 列表、上下文占用，以及报告 / btw 入口。
+ * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、
+ * 上下文占用（已有上下文报告时显示分项）、todo（可编辑，`set_todos`）、子 agent 列表，以及报告 / btw 入口。
  */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useOrbMetrics } from "../../api/queries";
+import { formatMemoryMB, formatPercent, formatTokens } from "../../lib/format";
 import { keyed } from "../../lib/keys";
 import type { TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
-import { Icon } from "../ui/icons";
-import { Button, IconButton, Sparkline, TextInput } from "../ui/primitives";
+import { Card, ListRow, Meter, StatusDot, thresholdTone } from "../ui/data";
+import { Icon, type IconName } from "../ui/icons";
+import { OrbBead } from "../ui/OrbBead";
+import { IconButton, Sparkline, TextInput } from "../ui/primitives";
+import { useRpc } from "./Dialogs";
 import { EnvRuns } from "./EnvBanner";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
 const NO_PHASES: readonly TodoPhase[] = [];
 
-function Section({
-	title,
+/** 卡片内的紧凑空态：圆底图标 + 一行说明。 */
+function EmptyLine({
+	icon,
 	children,
-	action,
 }: {
-	title: string;
+	icon: IconName;
 	children: ReactNode;
-	action?: ReactNode;
 }) {
 	return (
-		<section className="border-border border-b px-4 py-3">
-			<div className="mb-2 flex items-center justify-between">
-				<h3 className="font-medium text-faint text-xs uppercase tracking-wide">
-					{title}
-				</h3>
-				{action}
-			</div>
+		<p className="flex items-center gap-2 text-faint text-xs">
+			<span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full bg-inset">
+				<Icon name={icon} size={12} aria-hidden />
+			</span>
 			{children}
-		</section>
+		</p>
+	);
+}
+
+/** 规格胶囊：图标 + 值。 */
+function Spec({ icon, children }: { icon: IconName; children: ReactNode }) {
+	return (
+		<span className="inline-flex h-6 items-center gap-1.5 rounded-sm border border-border bg-inset px-2 text-2xs text-muted">
+			<Icon name={icon} size={12} aria-hidden className="text-faint" />
+			<span className="font-medium text-fg">{children}</span>
+		</span>
+	);
+}
+
+/** 内嵌井里的一行读数：图标 + 标签、数值、着色迷你曲线（颜色由 `className` 的文字色决定）。 */
+function MetricWell({
+	icon,
+	label,
+	value,
+	chart,
+	className,
+}: {
+	icon: IconName;
+	label: string;
+	value: string;
+	chart: ReactNode;
+	className: string;
+}) {
+	return (
+		<div className="grid h-10 grid-cols-[4.25rem_4.5rem_minmax(0,1fr)] items-center rounded-md border border-border bg-inset px-2.5">
+			<span className="flex items-center gap-1.5 font-medium text-2xs text-muted">
+				<Icon name={icon} size={13} aria-hidden className="text-faint" />
+				{label}
+			</span>
+			<span className="font-semibold text-base tabular-nums tracking-tight">
+				{value}
+			</span>
+			<span className={className}>{chart}</span>
+		</div>
 	);
 }
 
 function OrbSection({ threadId }: { threadId: string }) {
 	const { t } = useTranslation();
 	const orb = useOrbOf(threadId);
+	const working = useThread(threadId, (s) => s.thread?.state === "working");
 	const metrics = useOrbMetrics(orb?.state === "deleted" ? undefined : orb?.id);
 	if (!orb) {
 		return (
-			<Section title={t("panel.orb")}>
-				<p className="text-faint text-sm">{t("panel.noOrb")}</p>
-			</Section>
+			<Card title={t("panel.orb")} icon="box">
+				<EmptyLine icon="box">{t("panel.noOrb")}</EmptyLine>
+			</Card>
 		);
 	}
 	const samples = metrics.data?.samples ?? [];
 	const last = samples[samples.length - 1];
 	return (
-		<Section title={t("panel.orb")}>
-			<div className="flex items-center gap-2 text-sm">
-				<span
-					className={`h-2 w-2 rounded-full ${orb.state === "ready" ? "bg-ok" : orb.state === "failed" ? "bg-err" : orb.state === "frozen" || orb.state === "stopped" ? "bg-faint" : "bg-warn"}`}
-				/>
-				<span>{t(`orbState.${orb.state}`)}</span>
-				<span className="ml-auto font-mono text-faint text-xs">
+		<Card title={t("panel.orb")} icon="box">
+			<div className="flex items-center gap-2.5">
+				<OrbBead state={orb.state} active={working} size={18} />
+				<span className="font-medium text-sm">
+					{t(`orbState.${orb.state}`)}
+				</span>
+				<span className="ml-auto font-mono text-2xs text-faint">
 					{orb.id.slice(0, 12)}
 				</span>
 			</div>
-			<div className="mt-1 text-muted text-xs">
-				{t("panel.orbSpec", {
-					type: orb.type,
-					cpus: orb.cpus,
-					mem: Math.round(orb.memoryMB / 1024),
-				})}
-				{orb.providerName ? ` · ${orb.providerName}` : ""}
+			<div className="mt-3 mb-2.5 flex flex-wrap gap-1.5">
+				<Spec icon="box">{orb.type}</Spec>
+				<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
+				<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
+				{orb.providerName && <Spec icon="hardDrives">{orb.providerName}</Spec>}
 			</div>
-			<div className="mt-3 grid grid-cols-2 gap-3">
-				<div className="text-accent">
-					<div className="flex justify-between text-2xs text-muted">
-						<span>CPU</span>
-						<span className="font-mono">
-							{last ? `${last.cpuPct.toFixed(0)}%` : "—"}
-						</span>
-					</div>
-					<Sparkline
-						values={samples.map((s) => s.cpuPct)}
-						max={100}
-						label={t("panel.cpuChart")}
-					/>
-				</div>
-				<div className="text-ok">
-					<div className="flex justify-between text-2xs text-muted">
-						<span>{t("panel.memory")}</span>
-						<span className="font-mono">
-							{last ? `${(last.memUsedMB / 1024).toFixed(1)}G` : "—"}
-						</span>
-					</div>
-					<Sparkline
-						values={samples.map((s) => s.memUsedMB)}
-						max={last?.memLimitMB || undefined}
-						label={t("panel.memChart")}
-					/>
-				</div>
+			<div className="flex flex-col gap-1.5">
+				<MetricWell
+					icon="cpu"
+					label={t("panel.cpu")}
+					value={last ? formatPercent(last.cpuPct) : "—"}
+					className="text-accent"
+					chart={
+						<Sparkline
+							values={samples.map((s) => s.cpuPct)}
+							max={100}
+							label={t("panel.cpuChart")}
+						/>
+					}
+				/>
+				<MetricWell
+					icon="memory"
+					label={t("panel.memory")}
+					value={last ? formatMemoryMB(last.memUsedMB) : "—"}
+					className="text-ok"
+					chart={
+						<Sparkline
+							values={samples.map((s) => s.memUsedMB)}
+							max={last?.memLimitMB || undefined}
+							label={t("panel.memChart")}
+						/>
+					}
+				/>
 			</div>
 			<div className="mt-3">
-				<h4 className="mb-1 font-medium text-2xs text-muted">
+				<h4 className="mb-1 font-medium text-2xs text-faint">
 					{t("env.title")}
 				</h4>
 				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
 			</div>
-		</Section>
+		</Card>
 	);
 }
 
@@ -117,11 +154,21 @@ const NEXT_STATUS: Record<TodoItem["status"], TodoItem["status"]> = {
 	abandoned: "pending",
 };
 
-const STATUS_MARK: Record<TodoItem["status"], string> = {
-	pending: "○",
-	in_progress: "◐",
-	completed: "●",
-	abandoned: "⊘",
+const STATUS_ICON: Record<
+	TodoItem["status"],
+	{ icon: IconName; fill?: boolean; className: string }
+> = {
+	pending: { icon: "circle", className: "text-ghost" },
+	in_progress: { icon: "circleHalf", className: "text-accent" },
+	completed: { icon: "checkCircle", fill: true, className: "text-ok" },
+	abandoned: { icon: "minusCircle", className: "text-faint" },
+};
+
+const STATUS_TEXT: Record<TodoItem["status"], string> = {
+	pending: "text-muted",
+	in_progress: "font-medium text-fg",
+	completed: "text-faint",
+	abandoned: "text-faint line-through",
 };
 
 function TodoSection({ threadId }: { threadId: string }) {
@@ -160,52 +207,85 @@ function TodoSection({ threadId }: { threadId: string }) {
 									),
 					},
 		);
+	// 进度不计已放弃的条目
+	const tasks = phases.flatMap((p) => p.tasks);
+	const total = tasks.filter((x) => x.status !== "abandoned").length;
+	const done = tasks.filter((x) => x.status === "completed").length;
 	return (
-		<Section title={t("panel.todos")}>
+		<Card
+			title={t("panel.todos")}
+			icon="list"
+			action={
+				total > 0 && (
+					<span className="flex items-center gap-2 text-2xs text-faint tabular-nums">
+						{done}/{total}
+						<Meter
+							value={done}
+							max={total}
+							tone="ok"
+							label={t("panel.todos")}
+							className="w-11"
+						/>
+					</span>
+				)
+			}
+		>
 			{phases.length === 0 && (
-				<p className="text-faint text-sm">{t("panel.noTodos")}</p>
+				<EmptyLine icon="list">{t("panel.noTodos")}</EmptyLine>
 			)}
 			{keyed(phases, "p").map(({ key: pk, item: phase }, pi) => (
-				<div key={pk} className="mb-2">
+				<div key={pk} className="-mx-1.5 mb-1.5">
 					{phase.name && (
-						<div className="mb-1 text-muted text-xs">{phase.name}</div>
+						<div className="mb-0.5 px-1.5 font-medium text-2xs text-faint">
+							{phase.name}
+						</div>
 					)}
-					<ul className="flex flex-col gap-0.5">
-						{keyed(phase.tasks, "t").map(({ key: tk, item: task }, ti) => (
-							<li key={tk} className="group flex items-start gap-1.5 text-sm">
-								<button
-									type="button"
-									className={`mt-0.5 w-4 shrink-0 text-center ${task.status === "completed" ? "text-ok" : task.status === "in_progress" ? "text-accent" : "text-faint"}`}
-									aria-label={t(`todo.status.${task.status}`)}
-									title={t(`todo.status.${task.status}`)}
-									onClick={() =>
-										void save(
-											update(pi, ti, { status: NEXT_STATUS[task.status] }),
-										)
-									}
+					<ul className="flex flex-col gap-px">
+						{keyed(phase.tasks, "t").map(({ key: tk, item: task }, ti) => {
+							const mark = STATUS_ICON[task.status];
+							return (
+								<li
+									key={tk}
+									className={`group flex items-start gap-2 rounded-sm px-1.5 py-1 text-sm transition-colors duration-150 ${task.status === "in_progress" ? "bg-accent-soft/60" : "hover:bg-hover/60"}`}
 								>
-									{STATUS_MARK[task.status]}
-								</button>
-								<span
-									className={`min-w-0 flex-1 ${task.status === "completed" || task.status === "abandoned" ? "text-faint line-through" : ""}`}
-								>
-									{task.content}
-								</span>
-								<button
-									type="button"
-									className="hidden text-faint hover:text-err group-hover:block"
-									aria-label={t("common.delete")}
-									onClick={() => void save(update(pi, ti, null))}
-								>
-									<Icon name="close" size={12} />
-								</button>
-							</li>
-						))}
+									<button
+										type="button"
+										className={`mt-0.5 shrink-0 rounded-full ${mark.className}`}
+										aria-label={t(`todo.status.${task.status}`)}
+										title={t(`todo.status.${task.status}`)}
+										onClick={() =>
+											void save(
+												update(pi, ti, { status: NEXT_STATUS[task.status] }),
+											)
+										}
+									>
+										<Icon
+											name={mark.icon}
+											size={15}
+											weight={mark.fill ? "fill" : "regular"}
+										/>
+									</button>
+									<span
+										className={`min-w-0 flex-1 break-words ${STATUS_TEXT[task.status]}`}
+									>
+										{task.content}
+									</span>
+									<button
+										type="button"
+										className="mt-0.5 shrink-0 text-faint opacity-0 transition-opacity duration-150 hover:text-err focus-visible:opacity-100 group-hover:opacity-100"
+										aria-label={t("common.delete")}
+										onClick={() => void save(update(pi, ti, null))}
+									>
+										<Icon name="close" size={12} />
+									</button>
+								</li>
+							);
+						})}
 					</ul>
 				</div>
 			))}
 			<form
-				className="mt-1 flex gap-1"
+				className="mt-1.5 flex gap-1"
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (!draft.trim()) return;
@@ -234,7 +314,7 @@ function TodoSection({ threadId }: { threadId: string }) {
 				/>
 			</form>
 			{error && <p className="mt-1 text-err text-xs">{error}</p>}
-		</Section>
+		</Card>
 	);
 }
 
@@ -264,46 +344,97 @@ function SubagentSection({ threadId }: { threadId: string }) {
 		...snapshots.filter((s) => !ids.has(s.id)),
 	];
 	return (
-		<Section title={t("panel.subagents")}>
+		<Card title={t("panel.subagents")} icon="robot">
 			{rows.length === 0 && (
-				<p className="text-faint text-sm">{t("panel.noSubagents")}</p>
+				<EmptyLine icon="robot">{t("panel.noSubagents")}</EmptyLine>
 			)}
-			<ul className="flex flex-col gap-1">
-				{rows.map((s) => (
-					<li key={s.id}>
-						<button
-							type="button"
-							className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-hover"
-							onClick={() =>
-								uiStore.getState().open({ kind: "subagent", id: s.id })
-							}
-						>
-							<span
-								className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.status === "started" || s.status === "running" ? "bg-accent" : s.status === "failed" ? "bg-err" : "bg-faint"}`}
-							/>
-							<span className="shrink-0 font-medium">{s.agent}</span>
-							<span className="min-w-0 flex-1 truncate text-muted text-xs">
-								{s.description}
-							</span>
-						</button>
-					</li>
-				))}
-			</ul>
-		</Section>
+			{rows.length > 0 && (
+				<ul className="-mx-1.5 flex flex-col gap-px">
+					{rows.map((s) => {
+						const running = s.status === "started" || s.status === "running";
+						return (
+							<li key={s.id}>
+								<ListRow
+									leading={
+										<StatusDot
+											tone={
+												running
+													? "accent"
+													: s.status === "failed"
+														? "err"
+														: "neutral"
+											}
+											pulse={running}
+										/>
+									}
+									title={
+										<span className="truncate font-medium">{s.agent}</span>
+									}
+									meta={
+										s.description && (
+											<span className="min-w-0 truncate">{s.description}</span>
+										)
+									}
+									onClick={() =>
+										uiStore.getState().open({ kind: "subagent", id: s.id })
+									}
+								/>
+							</li>
+						);
+					})}
+				</ul>
+			)}
+		</Card>
 	);
+}
+
+/** 上下文报告的分项（只读取已有缓存，不主动请求）：消息、工具定义、其余合计为系统提示词。 */
+function useContextSegments(threadId: string) {
+	const { t } = useTranslation();
+	const report = useRpc(threadId, { type: "get_context_report" }, false);
+	const b = report.data?.breakdown;
+	if (!b || !(b.usedTokens > 0)) return null;
+	return [
+		{
+			key: "messages",
+			label: t("report.ctx.messages"),
+			tokens: b.messagesTokens,
+			className: "bg-fg/80",
+		},
+		{
+			key: "tools",
+			label: t("report.ctx.systemTools"),
+			tokens: b.systemToolsTokens,
+			className: "bg-fg/45",
+		},
+		{
+			key: "system",
+			label: t("report.ctx.systemPrompt"),
+			tokens:
+				b.systemPromptTokens +
+				b.systemContextTokens +
+				b.instructionFilesTokens +
+				b.skillsTokens,
+			className: "bg-fg/25",
+		},
+	].map((s) => ({ ...s, share: s.tokens / b.usedTokens }));
 }
 
 function ContextSection({ threadId }: { threadId: string }) {
 	const { t } = useTranslation();
 	const ctx = useThread(threadId, (s) => s.state?.contextUsage);
+	const segments = useContextSegments(threadId);
+	const percent = ctx ? Math.min(100, Math.max(0, ctx.percent)) : 0;
 	return (
-		<Section
+		<Card
 			title={t("panel.context")}
+			icon="database"
 			action={
 				<IconButton
 					icon="info"
 					size={13}
-					className="h-6 w-6"
+					box="xs"
+					className="-mr-1.5"
 					label={t("report.get_context_report")}
 					onClick={() =>
 						uiStore
@@ -315,81 +446,128 @@ function ContextSection({ threadId }: { threadId: string }) {
 		>
 			{ctx ? (
 				<>
-					<div className="flex justify-between text-xs">
-						<span>{t("status.context", { pct: Math.round(ctx.percent) })}</span>
-						<span className="font-mono text-muted">
-							{ctx.tokens.toLocaleString()} /{" "}
-							{ctx.contextWindow.toLocaleString()}
+					<div className="mb-2 flex items-baseline gap-2">
+						<span className="font-semibold text-lg tabular-nums tracking-tight">
+							{formatPercent(ctx.percent)}
+						</span>
+						<span className="ml-auto text-faint text-xs tabular-nums">
+							<span className="font-medium text-muted">
+								{formatTokens(ctx.tokens)}
+							</span>{" "}
+							/ {formatTokens(ctx.contextWindow)}
 						</span>
 					</div>
-					<div className="mt-1 h-1.5 rounded bg-inset">
-						<div
-							className={`h-full rounded ${ctx.percent > 85 ? "bg-err" : ctx.percent > 65 ? "bg-warn" : "bg-accent"}`}
-							style={{ width: `${Math.min(100, ctx.percent)}%` }}
+					{/* 占用偏高时改用带阈值色的单段量表，分段的灰阶表达不了警示 */}
+					{segments && thresholdTone(ctx.percent) === "neutral" ? (
+						<>
+							{/* biome-ignore lint/a11y/useSemanticElements: 原生 <meter> 无法画分段 */}
+							<div
+								role="meter"
+								aria-label={t("panel.context")}
+								aria-valuenow={Math.round(ctx.percent)}
+								aria-valuemin={0}
+								aria-valuemax={100}
+								className="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-inset"
+							>
+								{segments.map((s) => (
+									<span
+										key={s.key}
+										className={`h-full ${s.className}`}
+										style={{ width: `${s.share * percent}%` }}
+									/>
+								))}
+							</div>
+							<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-2xs text-faint">
+								{segments.map((s) => (
+									<span
+										key={s.key}
+										className="inline-flex items-center gap-1.5 whitespace-nowrap"
+									>
+										<i
+											aria-hidden
+											className={`h-[7px] w-[7px] rounded-[2px] ${s.className}`}
+										/>
+										{s.label}
+										<b className="font-medium text-muted tabular-nums">
+											{formatTokens(s.tokens)}
+										</b>
+									</span>
+								))}
+							</div>
+						</>
+					) : (
+						<Meter
+							value={ctx.percent}
+							tone={thresholdTone(ctx.percent)}
+							label={t("panel.context")}
 						/>
-					</div>
+					)}
 				</>
 			) : (
-				<p className="text-faint text-sm">—</p>
+				<EmptyLine icon="database">{t("common.none")}</EmptyLine>
 			)}
-		</Section>
+		</Card>
 	);
 }
 
-export function InfoPanel({
-	threadId,
-	onClose,
-}: {
-	threadId: string;
-	onClose?: () => void;
-}): ReactNode {
+const TOOL_ROWS: readonly {
+	icon: IconName;
+	report?: "get_usage" | "get_session_stats" | "get_jobs" | "get_active_tools";
+}[] = [
+	{ icon: "message" },
+	{ icon: "coin", report: "get_usage" },
+	{ icon: "list", report: "get_session_stats" },
+	{ icon: "clock", report: "get_jobs" },
+	{ icon: "wrench", report: "get_active_tools" },
+];
+
+function ToolsSection() {
+	const { t } = useTranslation();
+	return (
+		<Card title={t("panel.tools")} icon="wrench">
+			<ul className="-mx-1.5 flex flex-col gap-px">
+				{TOOL_ROWS.map(({ icon, report }) => (
+					<li key={icon}>
+						<ListRow
+							leading={
+								<span className="grid h-6 w-6 place-items-center rounded-sm border border-border bg-inset text-muted">
+									<Icon name={icon} size={13} aria-hidden />
+								</span>
+							}
+							title={report ? t(`report.${report}`) : t("btw.title")}
+							trailing={
+								<Icon
+									name="chevronRight"
+									size={12}
+									aria-hidden
+									className="text-ghost"
+								/>
+							}
+							onClick={() =>
+								uiStore
+									.getState()
+									.open(report ? { kind: "report", report } : { kind: "btw" })
+							}
+						/>
+					</li>
+				))}
+			</ul>
+		</Card>
+	);
+}
+
+export function InfoPanel({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	return (
 		<aside
-			className="flex h-full w-full flex-col overflow-y-auto bg-panel"
+			className="flex h-full w-full flex-col gap-2 overflow-y-auto bg-raised p-2"
 			aria-label={t("nav.infoPanel")}
 		>
-			{onClose && (
-				<div className="flex items-center justify-between border-border border-b px-3 py-2">
-					<span className="font-medium text-sm">{t("nav.infoPanel")}</span>
-					<IconButton
-						icon="close"
-						label={t("common.close")}
-						onClick={onClose}
-					/>
-				</div>
-			)}
 			<OrbSection threadId={threadId} />
 			<ContextSection threadId={threadId} />
 			<TodoSection threadId={threadId} />
 			<SubagentSection threadId={threadId} />
-			<section className="flex flex-wrap gap-1.5 px-4 py-3">
-				<Button
-					size="sm"
-					icon="message"
-					onClick={() => uiStore.getState().open({ kind: "btw" })}
-				>
-					{t("btw.title")}
-				</Button>
-				{(
-					[
-						"get_usage",
-						"get_session_stats",
-						"get_jobs",
-						"get_active_tools",
-					] as const
-				).map((r) => (
-					<Button
-						key={r}
-						size="sm"
-						onClick={() =>
-							uiStore.getState().open({ kind: "report", report: r })
-						}
-					>
-						{t(`report.${r}`)}
-					</Button>
-				))}
-			</section>
+			<ToolsSection />
 		</aside>
 	);
 }

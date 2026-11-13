@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { CLIENT_COMMANDS, UNAVAILABLE_COMMANDS } from "../../lib/slash";
 import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
+import { Badge } from "../ui/data";
 
 export interface MenuEntry {
 	/** 选中后输入框的新内容 */
@@ -139,38 +140,41 @@ export function CommandMenu({
 }): ReactNode {
 	const { t } = useTranslation();
 	return (
-		<div
-			role="listbox"
-			aria-label={t("composer.commands")}
-			className="absolute right-0 bottom-full left-0 z-30 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-panel p-1 shadow-lg"
-		>
-			{hint && <div className="px-2 py-1 text-faint text-xs">{hint}</div>}
-			{entries.length === 0 && (
-				<div className="px-2 py-1.5 text-faint text-sm">
-					{t("composer.noCommands")}
-				</div>
-			)}
-			{entries.map((e, i) => (
-				<button
-					key={`${e.label}-${e.insert}`}
-					type="button"
-					role="option"
-					aria-selected={i === active}
-					className={`flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left text-sm ${i === active ? "bg-hover" : ""}`}
-					onMouseDown={(ev) => {
-						ev.preventDefault();
-						onPick(e);
-					}}
-				>
-					<span className="shrink-0 font-mono text-fg">{e.label}</span>
-					<span className="min-w-0 flex-1 truncate text-muted text-xs">
-						{e.description}
-					</span>
-					{e.badge && (
-						<span className="shrink-0 text-2xs text-faint">{e.badge}</span>
-					)}
-				</button>
-			))}
+		// 玻璃放在外层、滚动放在内层：玻璃的模糊底是伪元素，放进滚动容器会随内容滚走
+		<div className="glass pop-in absolute right-0 bottom-full left-0 z-30 mb-2 overflow-hidden rounded-xl">
+			<div
+				role="listbox"
+				aria-label={t("composer.commands")}
+				className="max-h-72 overflow-y-auto p-1"
+			>
+				{hint && <div className="px-2 py-1 text-2xs text-faint">{hint}</div>}
+				{entries.length === 0 && (
+					<div className="px-2 py-1.5 text-faint text-sm">
+						{t("composer.noCommands")}
+					</div>
+				)}
+				{entries.map((e, i) => (
+					<button
+						key={`${e.label}-${e.insert}`}
+						type="button"
+						role="option"
+						aria-selected={i === active}
+						className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${i === active ? "bg-hover" : ""}`}
+						onMouseDown={(ev) => {
+							ev.preventDefault();
+							onPick(e);
+						}}
+					>
+						<span className="shrink-0 font-medium font-mono text-fg text-xs">
+							{e.label}
+						</span>
+						<span className="min-w-0 flex-1 truncate text-muted text-xs">
+							{e.description}
+						</span>
+						{e.badge && <Badge>{e.badge}</Badge>}
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }

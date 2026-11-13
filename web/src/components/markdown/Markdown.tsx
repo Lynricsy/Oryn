@@ -2,6 +2,7 @@
  * Markdown 渲染：react-markdown + remark-gfm + remark-breaks（单个换行即换行，与 omp 自带 Web 端的 `breaks: true` 一致）+ rehype-sanitize；代码块按需高亮（highlight.js 懒加载），
  * ```mermaid 图与 $…$ 数学公式在首次出现时才加载 mermaid / KaTeX。
  * `blob:sha256:<hex>` 图片引用改写为 `GET /api/v1/blobs/<hex>`。
+ * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
  */
 import {
 	type ComponentProps,
@@ -16,7 +17,9 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { cssColor } from "../../lib/css-color";
 import { useHighlighted } from "../../lib/highlight";
+import { THEME_EVENT } from "../../state/theme";
 import { CopyButton } from "../ui/CopyButton";
 import "./markdown.css";
 
@@ -86,22 +89,51 @@ function SvgHost({ svg }: { svg: string }): ReactNode {
 	return <div ref={ref} className="md-mermaid" />;
 }
 
+/** 主题切换计数：每次 THEME_EVENT 加一，作为 mermaid 重渲染的依赖。 */
+function useThemeVersion(): number {
+	const [version, setVersion] = useState(0);
+	useEffect(() => {
+		const onTheme = () => setVersion((v) => v + 1);
+		window.addEventListener(THEME_EVENT, onTheme);
+		return () => window.removeEventListener(THEME_EVENT, onTheme);
+	}, []);
+	return version;
+}
+
+/** 从当前令牌读出 mermaid `base` 主题变量（mermaid 只认 hex）。 */
+function mermaidThemeVariables(): Record<string, string | boolean> {
+	const root = document.documentElement;
+	const sans = getComputedStyle(root).getPropertyValue("--sans").trim();
+	return {
+		darkMode: root.dataset.theme === "dark",
+		background: cssColor("--panel", "#fcfcfd"),
+		primaryColor: cssColor("--raised", "#f5f6f8"),
+		primaryBorderColor: cssColor("--line-strong", "#cfd2d8"),
+		primaryTextColor: cssColor("--text", "#202329"),
+		secondaryColor: cssColor("--inset", "#f1f2f5"),
+		tertiaryColor: cssColor("--panel", "#fcfcfd"),
+		lineColor: cssColor("--text-muted", "#5a5f6b"),
+		textColor: cssColor("--text", "#202329"),
+		fontFamily: sans || "sans-serif",
+	};
+}
+
 function MermaidBlock({ code }: { code: string }): ReactNode {
 	const id = useId().replace(/[^a-zA-Z0-9]/g, "");
+	const version = useThemeVersion();
 	const [svg, setSvg] = useState<string | null>(null);
 	const [failed, setFailed] = useState(false);
 	useEffect(() => {
 		let alive = true;
 		void import("mermaid")
 			.then(async ({ default: mermaid }) => {
-				const dark =
-					window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
 				mermaid.initialize({
 					startOnLoad: false,
 					securityLevel: "strict",
-					theme: dark ? "dark" : "neutral",
+					theme: "base",
+					themeVariables: mermaidThemeVariables(),
 				});
-				const out = await mermaid.render(`m${id}`, code);
+				const out = await mermaid.render(`m${id}v${version}`, code);
 				if (alive) setSvg(out.svg);
 			})
 			.catch(() => {
@@ -110,7 +142,7 @@ function MermaidBlock({ code }: { code: string }): ReactNode {
 		return () => {
 			alive = false;
 		};
-	}, [code, id]);
+	}, [code, id, version]);
 	if (failed || svg === null) return <CodeBlock code={code} lang="mermaid" />;
 	return <SvgHost svg={svg} />;
 }
@@ -175,6 +207,25 @@ function makeComponents(streaming: boolean): Components {
 				alt={alt ?? ""}
 				loading="lazy"
 			/>
+		),
+		// 表格外包一层圆角描边容器，窄屏横向滚动
+		table: ({ children }) => (
+			<div className="md-table">
+				<table>{children}</table>
+			</div>
+		),
+		// 有序列表编号用 CSS 计数器画成小方块；`start` 要落到计数器起点上
+		ol: ({ start, children }) => (
+			<ol
+				start={start}
+				style={
+					typeof start === "number" && start !== 1
+						? { counterReset: `md-ol ${start - 1}` }
+						: undefined
+				}
+			>
+				{children}
+			</ol>
 		),
 	};
 }

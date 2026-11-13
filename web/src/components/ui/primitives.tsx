@@ -60,12 +60,17 @@ export function Button({
 	);
 }
 
+const BOX = { xs: "h-6 w-6", sm: "h-7 w-7", md: "h-8 w-8" } as const;
+
 export interface IconButtonProps
 	extends ButtonHTMLAttributes<HTMLButtonElement> {
 	icon: IconName;
 	label: string;
 	active?: boolean;
+	/** 图标尺寸（px） */
 	size?: number;
+	/** 按钮外框：md=32px（默认）、sm=28px、xs=24px。className 里的 h-/w- 不能覆盖它，需改尺寸时用这个 */
+	box?: "xs" | "sm" | "md";
 }
 
 export function IconButton({
@@ -73,6 +78,7 @@ export function IconButton({
 	label,
 	active,
 	size = 16,
+	box = "md",
 	className = "",
 	...rest
 }: IconButtonProps) {
@@ -82,7 +88,7 @@ export function IconButton({
 			aria-label={label}
 			title={label}
 			aria-pressed={active}
-			className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-hover hover:text-fg active:scale-95 disabled:opacity-40 ${active ? "bg-active text-fg" : ""} ${className}`}
+			className={`inline-flex ${BOX[box]} shrink-0 items-center justify-center rounded-md text-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-hover hover:text-fg active:scale-95 disabled:opacity-40 ${active ? "bg-active text-fg" : ""} ${className}`}
 			{...rest}
 		>
 			<Icon name={icon} size={size} />

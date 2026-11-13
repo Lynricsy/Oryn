@@ -1,9 +1,8 @@
 /**
- * orb 环境（计划 I.7）：输入区上方的提示条、setup / resume 日志对话框、信息面板「环境」小节的运行摘要。
+ * orb 环境（计划 I.7）：输入坞托盘里的提示条、setup / resume 日志对话框、信息面板「环境」小节的运行记录。
  * 提示条的选择与提示词在 `lib/env-banner.ts`。
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { qk, useProjects } from "../../api/queries";
@@ -24,6 +23,7 @@ import {
 import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { CopyButton } from "../ui/CopyButton";
+import { Badge, ListRow, Stat, StatusDot, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -73,10 +73,11 @@ function useAskAgent(threadId: string) {
 }
 
 const TONE = {
-	err: "border-err/40 bg-err/5",
-	warn: "border-warn/40 bg-warn/5",
+	err: "bg-err/5",
+	warn: "bg-warn/8",
 } as const;
 
+/** 托盘里的一节：无边框无圆角，带色调底（作为托盘第一节时随托盘圆角）。 */
 function BannerShell({
 	tone,
 	title,
@@ -95,11 +96,12 @@ function BannerShell({
 		<div
 			role={tone === "err" ? "alert" : "status"}
 			data-testid="env-banner"
-			className={`mb-2 flex gap-2 rounded-lg border px-3 py-2 text-sm ${TONE[tone]}`}
+			className={`flex gap-2.5 px-3.5 py-2.5 text-sm first:rounded-t-[13px] ${TONE[tone]}`}
 		>
 			<Icon
 				name="alert"
-				size={15}
+				size={16}
+				weight="fill"
 				className={`mt-0.5 shrink-0 ${tone === "err" ? "text-err" : "text-warn"}`}
 			/>
 			<div className="min-w-0 flex-1">
@@ -109,12 +111,15 @@ function BannerShell({
 						{detail}
 					</div>
 				)}
-				<div className="mt-2 flex flex-wrap gap-1.5">{actions}</div>
+				<div className="mt-2 flex flex-wrap items-center gap-1.5">
+					{actions}
+				</div>
 			</div>
 			{onDismiss && (
 				<IconButton
 					icon="close"
 					size={14}
+					box="sm"
 					className="-mt-1 -mr-1.5"
 					label={t("common.dismiss")}
 					onClick={onDismiss}
@@ -209,7 +214,7 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 			actions={
 				<>
 					{banner.kind !== "missing_config" && (
-						<Button size="sm" icon="file" onClick={openLog}>
+						<Button size="sm" icon="fileText" onClick={openLog}>
 							{t("env.viewLog")}
 						</Button>
 					)}
@@ -230,21 +235,30 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	);
 }
 
-/** 一次运行的摘要：阶段 · 结果 · 耗时 · 触发方式 · 时间。 */
-function runSummary(run: SetupRun, t: TFunction): string {
-	return [
-		t(`env.phase.${run.phase}`),
-		!run.ok
-			? t("env.failed")
-			: run.phase === "setup" && !run.setupRan
-				? t("env.skipped")
-				: t("env.ok"),
-		formatDuration(run.durationMs),
-		t(`env.trigger.${run.trigger}`),
-		formatRelative(run.finishedAt),
-	]
-		.filter(Boolean)
-		.join(" · ");
+/** 一次运行的结果徽标：失败 / 跳过 / 成功。 */
+function RunResult({ run }: { run: SetupRun }): ReactNode {
+	const { t } = useTranslation();
+	const [tone, label]: [Tone, string] = !run.ok
+		? ["err", t("env.failed")]
+		: run.phase === "setup" && !run.setupRan
+			? ["neutral", t("env.skipped")]
+			: ["ok", t("env.ok")];
+	return <Badge tone={tone}>{label}</Badge>;
+}
+
+/** 一次运行的元信息：结果、耗时、触发方式、结束时间。 */
+function RunMeta({ run }: { run: SetupRun }): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<>
+			<RunResult run={run} />
+			<Stat icon="timer" label={t("stat.duration")}>
+				{formatDuration(run.durationMs)}
+			</Stat>
+			<span>{t(`env.trigger.${run.trigger}`)}</span>
+			<span className="tabular-nums">{formatRelative(run.finishedAt)}</span>
+		</>
+	);
 }
 
 export function SetupLogDialog({
@@ -311,11 +325,11 @@ export function SetupLogDialog({
 				</>
 			}
 		>
-			<div className="mb-2 flex items-center gap-2 text-muted text-xs">
-				<span
-					className={`h-2 w-2 shrink-0 rounded-full ${run.ok ? "bg-ok" : "bg-err"}`}
-				/>
-				<span className="min-w-0 flex-1">{runSummary(run, t)}</span>
+			<div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-faint text-xs">
+				<StatusDot tone={run.ok ? "ok" : "err"} />
+				<Badge>{t(`env.phase.${run.phase}`)}</Badge>
+				<RunMeta run={run} />
+				<span className="flex-1" />
 				{log.data && <CopyButton text={log.data} label={t("common.copy")} />}
 			</div>
 			{run.error && (
@@ -329,7 +343,7 @@ export function SetupLogDialog({
 				<pre
 					ref={pre}
 					data-testid="setup-log"
-					className="max-h-[55dvh] overflow-auto rounded-md border border-border bg-inset p-2 font-mono text-2xs leading-snug"
+					className="max-h-[55dvh] overflow-auto rounded-lg border border-border bg-inset p-2.5 font-mono text-2xs leading-snug"
 				>
 					{log.data}
 				</pre>
@@ -353,24 +367,25 @@ export function EnvRuns({
 	if (present.length === 0)
 		return <p className="text-faint text-xs">{t("env.none")}</p>;
 	return (
-		<ul className="space-y-1">
+		<ul className="-mx-2 flex flex-col">
 			{present.map((run) => (
-				<li key={run.id} className="flex items-center gap-2 text-xs">
-					<span
-						className={`h-1.5 w-1.5 shrink-0 rounded-full ${run.ok ? "bg-ok" : "bg-err"}`}
-					/>
-					<span className="min-w-0 flex-1 truncate text-muted">
-						{runSummary(run, t)}
-					</span>
-					<button
-						type="button"
-						className="shrink-0 text-accent hover:underline"
-						onClick={() =>
-							uiStore.getState().open({ kind: "setupLog", orbId, run })
+				<li key={run.id}>
+					<ListRow
+						leading={<StatusDot tone={run.ok ? "ok" : "err"} />}
+						title={<Badge>{t(`env.phase.${run.phase}`)}</Badge>}
+						meta={<RunMeta run={run} />}
+						trailing={
+							<Button
+								size="sm"
+								variant="ghost"
+								onClick={() =>
+									uiStore.getState().open({ kind: "setupLog", orbId, run })
+								}
+							>
+								{t("env.log")}
+							</Button>
 						}
-					>
-						{t("env.log")}
-					</button>
+					/>
 				</li>
 			))}
 		</ul>

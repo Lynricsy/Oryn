@@ -1,23 +1,26 @@
 /* Tool renderer design system — `tv-` namespace.
  *
- * Host-adaptive tokens: collab-web defines --fg/--fg-muted/…, the HTML export
- * page defines --text/--muted/--dim/… from the active theme. Every color used
- * below resolves through the `--tv-*` bridge with a static fallback so the
- * bundle also works standalone. Dense devtool aesthetic: mono type, hairlines,
- * 4px radii, whisper hovers. */
+ * Oryn 改版（R1）：每张工具卡是一张细描边圆角卡（--r-lg），头部左侧 22px 类别色图标方块
+ * （--cat-*，低彩度，只表达工具类别），工具名加粗 + 等宽参数摘要，右侧读数、状态图标、折叠箭头；
+ * 展开体在卡内，上方一条发丝线。颜色一律经 `--tv-*` 桥接到全站令牌（index.css 的桥接块），
+ * 圆角、字体、缓动只用原始变量 --r-* / --mono / --sans / --ease。 */
 
 .tv-card {
 	--tv-fg: var(--fg, var(--text, oklch(0.92 0.01 307)));
 	--tv-muted: var(--fg-muted, var(--muted, oklch(0.71 0.016 307)));
 	--tv-faint: var(--fg-faint, var(--dim, oklch(0.53 0.018 307)));
+	--tv-ghost: var(--text-ghost, var(--tv-faint));
 	--tv-accent: var(--accent, oklch(0.674 0.23 341));
 	--tv-ok: var(--ok, var(--success, oklch(0.76 0.14 150)));
 	--tv-err: var(--err, var(--error, oklch(0.66 0.19 25)));
 	--tv-warn: var(--warn, var(--warning, oklch(0.79 0.14 85)));
 	--tv-border: var(--border, oklch(1 0 0 / 9%));
+	--tv-panel: var(--panel, transparent);
+	--tv-hover: var(--hover, oklch(0.5 0 0 / 6%));
 	--tv-inset: var(--bg-inset, var(--info-bg, oklch(0 0 0 / 22%)));
 	--tv-raised: var(--bg-raised, var(--container-bg, oklch(1 0 0 / 4%)));
 	--tv-ring: var(--ring, oklch(0.817 0.112 205 / 70%));
+	--tv-sans: var(--sans, ui-sans-serif, system-ui, sans-serif);
 	--tv-mono: var(
 		--mono,
 		ui-monospace,
@@ -28,8 +31,10 @@
 		monospace
 	);
 
+	margin: 3px 0;
 	border: 1px solid var(--tv-border);
-	border-radius: 6px;
+	border-radius: var(--r-lg, 10px);
+	background: var(--tv-panel);
 	font-family: var(--tv-mono);
 	font-size: 12px;
 	line-height: 1.5;
@@ -39,7 +44,7 @@
 }
 
 .tv-card--error {
-	border-color: color-mix(in oklch, var(--tv-err) 40%, var(--tv-border));
+	border-color: color-mix(in oklab, var(--tv-err) 35%, var(--tv-border));
 }
 
 /* ---- header ---- */
@@ -47,9 +52,10 @@
 .tv-head {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	width: 100%;
-	padding: 5px 10px;
+	min-height: 38px;
+	padding: 0 10px 0 7px;
 	background: none;
 	border: 0;
 	font: inherit;
@@ -58,10 +64,11 @@
 	cursor: pointer;
 	touch-action: manipulation;
 	-webkit-tap-highlight-color: transparent;
+	transition: background-color 150ms var(--ease, ease);
 }
 
 .tv-head:hover {
-	background: color-mix(in oklch, var(--tv-fg) 4%, transparent);
+	background: color-mix(in oklab, var(--tv-hover) 55%, var(--tv-panel));
 }
 
 .tv-head:focus-visible {
@@ -69,41 +76,80 @@
 	outline-offset: -2px;
 }
 
-.tv-status {
+/* 类别色图标方块：底 = 类别色 12%，图标 = 类别色 */
+.tv-cat {
+	--tv-cat: var(--cat-other, var(--tv-muted));
+	display: grid;
+	place-items: center;
 	flex: none;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
+	width: 22px;
+	height: 22px;
+	border-radius: var(--r-sm, 6px);
+	background: color-mix(in oklab, var(--tv-cat) 12%, var(--tv-panel));
+	color: var(--tv-cat);
+}
+
+.tv-cat--read {
+	--tv-cat: var(--cat-read, var(--tv-muted));
+}
+
+.tv-cat--edit {
+	--tv-cat: var(--cat-edit, var(--tv-muted));
+}
+
+.tv-cat--exec {
+	--tv-cat: var(--cat-exec, var(--tv-muted));
+}
+
+.tv-cat--web {
+	--tv-cat: var(--cat-web, var(--tv-muted));
+}
+
+.tv-cat--agent {
+	--tv-cat: var(--cat-agent, var(--tv-muted));
+}
+
+.tv-status {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 14px;
+	height: 14px;
 }
 
 .tv-status--ok {
-	background: var(--tv-ok);
+	color: var(--tv-ok);
 }
 
 .tv-status--err {
-	background: var(--tv-err);
+	color: var(--tv-err);
 }
 
 .tv-status--pending {
-	background: var(--tv-faint);
+	color: var(--tv-ghost);
 }
 
 .tv-spin {
 	flex: none;
-	width: 9px;
-	height: 9px;
+	box-sizing: border-box;
+	width: 13px;
+	height: 13px;
+	margin: 0 0.5px;
 	border-radius: 50%;
-	border: 1.5px solid color-mix(in oklch, var(--tv-faint) 50%, transparent);
+	border: 1.5px solid color-mix(in oklab, var(--tv-faint) 40%, transparent);
 	border-top-color: var(--tv-accent);
 	animation: tv-rot 0.7s linear infinite;
 }
 
 .tv-name {
+	position: relative;
+	top: -0.5px;
 	flex: none;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.02em;
-	color: var(--tv-muted);
+	font-family: var(--tv-sans);
+	font-size: 12.5px;
+	line-height: 20px;
+	font-weight: 640;
+	color: var(--tv-fg);
 }
 
 .tv-sum {
@@ -112,8 +158,10 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 11.5px;
+	font-size: 12px;
+	line-height: 20px;
 	color: var(--tv-muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .tv-sum > * {
@@ -121,18 +169,19 @@
 }
 
 .tv-chev {
+	display: inline-grid;
+	place-items: center;
 	flex: none;
-	width: 7px;
-	height: 7px;
-	margin-left: 2px;
-	border-right: 1.5px solid var(--tv-faint);
-	border-bottom: 1.5px solid var(--tv-faint);
-	transform: rotate(-45deg) translateY(-1px);
-	transition: transform 0.15s ease;
+	color: var(--tv-ghost);
+	transition: rotate 150ms var(--ease, ease);
+}
+
+.tv-head:hover .tv-chev {
+	color: var(--tv-faint);
 }
 
 .tv-head[aria-expanded="true"] .tv-chev {
-	transform: rotate(45deg);
+	rotate: 90deg;
 }
 
 /* ---- body ---- */
@@ -141,20 +190,22 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	padding: 8px 10px 10px;
+	padding: 10px 12px;
 	border-top: 1px solid var(--tv-border);
 }
 
 .tv-intent {
+	font-family: var(--tv-sans);
 	font-style: italic;
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--tv-faint);
 }
 
 .tv-partial {
 	margin: 0;
-	padding: 6px 10px;
+	padding: 8px 12px;
 	border-top: 1px solid var(--tv-border);
+	background: var(--tv-inset);
 	font-size: 11px;
 	line-height: 1.45;
 	color: var(--tv-faint);
@@ -168,32 +219,42 @@
 
 .tv-badge {
 	display: inline-block;
-	padding: 0 5px;
-	border-radius: 3px;
-	background: var(--tv-raised);
-	font-size: 10px;
-	line-height: 16px;
+	padding: 0 6px;
+	border-radius: var(--r-xs, 4px);
+	background: var(--tv-inset);
+	box-shadow: inset 0 0 0 1px var(--tv-border);
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 17px;
 	color: var(--tv-muted);
 	vertical-align: 1px;
 }
 
 .tv-badge--accent {
-	background: color-mix(in oklch, var(--tv-accent) 16%, transparent);
-	color: color-mix(in oklch, var(--tv-accent) 80%, var(--tv-fg));
+	background: color-mix(in oklab, var(--tv-accent) 12%, var(--tv-panel));
+	box-shadow: none;
+	color: var(
+		--accent-ink,
+		color-mix(in oklab, var(--tv-accent) 80%, var(--tv-fg))
+	);
 }
 
 .tv-badge--ok {
-	background: color-mix(in oklch, var(--tv-ok) 14%, transparent);
-	color: var(--tv-ok);
+	background: color-mix(in oklab, var(--tv-ok) 12%, transparent);
+	box-shadow: none;
+	color: var(--good-ink, var(--tv-ok));
 }
 
 .tv-badge--err {
-	background: color-mix(in oklch, var(--tv-err) 14%, transparent);
+	background: color-mix(in oklab, var(--tv-err) 10%, transparent);
+	box-shadow: none;
 	color: var(--tv-err);
 }
 
 .tv-badge--warn {
-	background: color-mix(in oklch, var(--tv-warn) 14%, transparent);
+	background: color-mix(in oklab, var(--tv-warn) 15%, transparent);
+	box-shadow: none;
 	color: var(--tv-warn);
 }
 
@@ -212,7 +273,7 @@
 }
 
 .tv-pattern {
-	color: color-mix(in oklch, var(--tv-accent) 75%, var(--tv-fg));
+	color: color-mix(in oklab, var(--tv-accent) 75%, var(--tv-fg));
 }
 
 .tv-muted {
@@ -234,12 +295,13 @@
 .tv-agent-link {
 	border: 0;
 	font: inherit;
-	font-size: 10px;
+	font-family: var(--tv-sans);
+	font-size: 11px;
 	cursor: pointer;
 }
 
 .tv-agent-link:hover {
-	background: color-mix(in oklch, var(--tv-accent) 26%, transparent);
+	background: color-mix(in oklab, var(--tv-accent) 22%, var(--tv-panel));
 	text-decoration: underline;
 }
 
@@ -249,6 +311,9 @@
 }
 
 .tv-agent-link-arrow {
+	display: inline-block;
+	margin-left: 3px;
+	vertical-align: -1px;
 	opacity: 0.7;
 }
 
@@ -267,8 +332,8 @@
 .tv-kv {
 	display: grid;
 	grid-template-columns: max-content 1fr;
-	gap: 2px 10px;
-	font-size: 11.5px;
+	gap: 3px 12px;
+	font-size: 12px;
 }
 
 .tv-kv-key {
@@ -291,12 +356,12 @@
 
 .tv-pre {
 	margin: 0;
-	padding: 7px 9px;
-	border-radius: 4px;
+	padding: 8px 10px;
+	border-radius: var(--r-sm, 6px);
 	background: var(--tv-inset);
 	font-family: var(--tv-mono);
-	font-size: 11.5px;
-	line-height: 1.5;
+	font-size: 12px;
+	line-height: 1.55;
 	overflow-x: auto;
 	tab-size: 3;
 }
@@ -316,42 +381,42 @@
 }
 
 .tv-out-title {
-	padding: 0 1px 3px;
-	font-size: 10px;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
+	padding: 0 1px 4px;
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	font-weight: 500;
 	color: var(--tv-faint);
 }
 
 .tv-expand {
 	align-self: flex-start;
-	margin-top: 3px;
-	padding: 0 1px;
+	margin-top: 4px;
+	padding: 1px 4px;
 	background: none;
 	border: 0;
-	font-family: var(--tv-mono);
-	font-size: 10.5px;
+	border-radius: var(--r-xs, 4px);
+	font-family: var(--tv-sans);
+	font-size: 11px;
 	color: var(--tv-faint);
 	cursor: pointer;
 }
 
 .tv-expand:hover {
+	background: var(--tv-hover);
 	color: var(--tv-fg);
-	text-decoration: underline;
 }
 
 .tv-expand:focus-visible {
 	outline: 2px solid var(--tv-ring);
 	outline-offset: 1px;
-	border-radius: 2px;
 }
 
 /* ---- command line (bash/ssh) ---- */
 
 .tv-cmd {
 	display: flex;
-	gap: 7px;
-	font-size: 11.5px;
+	gap: 8px;
+	font-size: 12px;
 }
 
 .tv-cmd-prompt {
@@ -374,27 +439,27 @@
 
 .tv-diff {
 	margin: 0;
-	border-radius: 4px;
+	border-radius: var(--r-sm, 6px);
 	background: var(--tv-inset);
-	font-size: 11.5px;
-	line-height: 1.5;
+	font-size: 12px;
+	line-height: 1.6;
 	overflow-x: auto;
-	padding: 5px 0;
+	padding: 6px 0;
 }
 
 .tv-diff-row {
-	padding: 0 9px;
+	padding: 0 10px;
 	white-space: pre;
 }
 
 .tv-diff-row--add {
-	background: color-mix(in oklch, var(--tv-ok) 11%, transparent);
-	color: color-mix(in oklch, var(--tv-ok) 70%, var(--tv-fg));
+	background: color-mix(in oklab, var(--tv-ok) 12%, transparent);
+	color: color-mix(in oklab, var(--tv-ok) 55%, var(--tv-fg));
 }
 
 .tv-diff-row--del {
-	background: color-mix(in oklch, var(--tv-err) 11%, transparent);
-	color: color-mix(in oklch, var(--tv-err) 70%, var(--tv-fg));
+	background: color-mix(in oklab, var(--tv-err) 12%, transparent);
+	color: color-mix(in oklab, var(--tv-err) 55%, var(--tv-fg));
 }
 
 .tv-diff-row--hunk {
@@ -421,10 +486,10 @@
 }
 
 .tv-cell-title {
-	padding: 0 1px 3px;
-	font-size: 10px;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
+	padding: 0 1px 4px;
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	font-weight: 500;
 	color: var(--tv-faint);
 }
 
@@ -434,7 +499,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 3px;
-	font-size: 11.5px;
+	font-size: 12px;
 }
 
 .tv-row {
@@ -459,16 +524,15 @@
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	font-size: 11.5px;
+	font-family: var(--tv-sans);
+	font-size: 12.5px;
 }
 
 .tv-todo-phase {
-	margin-top: 4px;
+	margin-top: 6px;
 	color: var(--tv-muted);
 	font-weight: 600;
-	font-size: 10.5px;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+	font-size: 11px;
 }
 
 .tv-todo-phase:first-child {
@@ -512,27 +576,34 @@
 /* ---- notes ---- */
 
 .tv-note {
-	padding: 6px 9px;
-	border-radius: 4px;
+	padding: 7px 10px;
+	border-radius: var(--r-sm, 6px);
 	background: var(--tv-raised);
-	font-size: 11.5px;
+	box-shadow: inset 0 0 0 1px var(--tv-border);
+	font-family: var(--tv-sans);
+	font-size: 12px;
 	color: var(--tv-muted);
 	overflow-wrap: anywhere;
 }
 
 .tv-note--err {
-	background: color-mix(in oklch, var(--tv-err) 10%, transparent);
+	background: color-mix(in oklab, var(--tv-err) 6%, transparent);
+	box-shadow: inset 0 0 0 1px
+		color-mix(in oklab, var(--tv-err) 25%, transparent);
 	color: var(--tv-err);
 }
 
 .tv-note--warn {
-	background: color-mix(in oklch, var(--tv-warn) 10%, transparent);
+	background: color-mix(in oklab, var(--tv-warn) 8%, transparent);
+	box-shadow: inset 0 0 0 1px
+		color-mix(in oklab, var(--tv-warn) 30%, transparent);
 	color: var(--tv-warn);
 }
 
 .tv-note--ok {
-	background: color-mix(in oklch, var(--tv-ok) 10%, transparent);
-	color: var(--tv-ok);
+	background: color-mix(in oklab, var(--tv-ok) 6%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tv-ok) 25%, transparent);
+	color: var(--good-ink, var(--tv-ok));
 }
 
 /* ---- images ---- */
@@ -546,7 +617,7 @@
 .tv-img {
 	max-height: 180px;
 	max-width: 100%;
-	border-radius: 4px;
+	border-radius: var(--r-sm, 6px);
 	border: 1px solid var(--tv-border);
 	cursor: zoom-in;
 	background: var(--tv-inset);
@@ -555,16 +626,16 @@
 /* ---- markdown-ish prose (plain text bodies) ---- */
 
 .tv-prose {
-	font-size: 11.5px;
-	line-height: 1.55;
+	font-family: var(--tv-sans);
+	font-size: 13px;
+	line-height: 1.6;
 	color: var(--tv-fg);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 
 /* ---- syntax tokens (highlight.js, scoped) ----
- * Minimal monochrome-plus-accent palette; only applies when the host exposes
- * a global hljs (the HTML export page). */
+ * 与 Markdown 代码块共用 --syn-* 令牌，随明暗与主题切换。 */
 
 .tv-pre .hljs-comment,
 .tv-pre .hljs-quote {
@@ -577,32 +648,38 @@
 .tv-pre .hljs-section,
 .tv-pre .hljs-name,
 .tv-pre .hljs-tag {
-	color: color-mix(in oklch, var(--tv-accent) 72%, var(--tv-fg));
+	color: var(--syn-keyword, var(--tv-accent));
 }
 
 .tv-pre .hljs-string,
 .tv-pre .hljs-regexp,
 .tv-pre .hljs-addition {
-	color: var(--tv-ok);
+	color: var(--syn-string, var(--tv-ok));
 }
 
 .tv-pre .hljs-number,
 .tv-pre .hljs-literal,
 .tv-pre .hljs-symbol,
 .tv-pre .hljs-bullet,
-.tv-pre .hljs-link,
+.tv-pre .hljs-link {
+	color: var(--syn-number, var(--tv-warn));
+}
+
 .tv-pre .hljs-meta {
-	color: var(--tv-warn);
+	color: var(--tv-muted);
 }
 
 .tv-pre .hljs-title,
 .tv-pre .hljs-attr,
 .tv-pre .hljs-attribute,
 .tv-pre .hljs-selector-id,
-.tv-pre .hljs-selector-class,
+.tv-pre .hljs-selector-class {
+	color: var(--syn-title, var(--tv-fg));
+}
+
 .tv-pre .hljs-type,
 .tv-pre .hljs-built_in {
-	color: color-mix(in oklch, var(--tv-fg) 80%, var(--tv-accent));
+	color: var(--syn-type, var(--tv-fg));
 }
 
 .tv-pre .hljs-deletion {

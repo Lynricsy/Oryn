@@ -362,13 +362,16 @@ body {
 	}
 }
 
-:focus-visible {
-	outline: 2px solid var(--ring);
-	outline-offset: 2px;
-}
-/* overflow 容器里的按钮：焦点环向内画，避免被裁掉 */
-.focus-inset :focus-visible {
-	outline-offset: -2px;
+/* 全局焦点环放在 base 层：组件上的 Tailwind 工具类（如 focus-visible:outline-none）能覆盖它 */
+@layer base {
+	:focus-visible {
+		outline: 2px solid var(--ring);
+		outline-offset: 2px;
+	}
+	/* overflow 容器里的按钮：焦点环向内画，避免被裁掉 */
+	.focus-inset :focus-visible {
+		outline-offset: -2px;
+	}
 }
 
 /* orb 状态珠 */

@@ -8,6 +8,7 @@
  */
 import type { ReactNode } from "react";
 import { Markdown } from "../../components/markdown/Markdown";
+import { formatDuration } from "../../lib/format";
 import {
 	Badges,
 	CodeBlock,
@@ -590,14 +591,8 @@ function Body({ name, args, result }: ToolRenderProps): ReactNode {
 					titleParts.push(cell.lang);
 					titleParts.push(...cell.attrs);
 					if (dc) {
-						if (dc.durationMs !== null) {
-							const ms = dc.durationMs;
-							titleParts.push(
-								ms < 1000
-									? `${Math.round(ms)}ms`
-									: `${(ms / 1000).toFixed(1)}s`,
-							);
-						}
+						if (dc.durationMs !== null)
+							titleParts.push(formatDuration(dc.durationMs));
 						if (dc.status === "error")
 							titleParts.push(
 								dc.exitCode !== null ? `error (exit ${dc.exitCode})` : "error",

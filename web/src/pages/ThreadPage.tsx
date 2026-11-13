@@ -1,10 +1,16 @@
-/** 线程页：订阅线程、渲染转录 / 输入区 / 停靠对话框 / 右侧面板（Info / Changes / Files / Terminal）。 */
+/**
+ * 线程页：订阅线程；对话纸面里转录铺满，玻璃页头与玻璃输入坞绝对定位盖在其上（内容从玻璃下方透出），
+ * 输入坞高度驱动转录底部留白；右侧面板（Info / Changes / Files / Terminal）是另一张纸面。
+ */
 import {
 	type KeyboardEvent,
 	type PointerEvent,
 	type ReactNode,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
+	useRef,
+	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -14,20 +20,21 @@ import {
 	ThreadDialogs,
 } from "../components/thread/Dialogs";
 import { EnvBanner } from "../components/thread/EnvBanner";
-import { BelowEditorWidgets, ModeBar } from "../components/thread/ModeBar";
+import {
+	AboveEditorWidgets,
+	BelowEditorWidgets,
+} from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
 import { RightPanel } from "../components/thread/RightPanel";
-import {
-	StatusBar,
-	ThreadHeader,
-	useOrbOf,
-} from "../components/thread/ThreadHeader";
+import { ThreadHeader, useOrbOf } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
 } from "../components/transcript/context";
 import { Transcript } from "../components/transcript/Transcript";
+import { Callout, Sheet } from "../components/ui/data";
+import { OrbBead } from "../components/ui/OrbBead";
 import { Spinner } from "../components/ui/primitives";
 import { useBreakpoint } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
@@ -37,6 +44,8 @@ import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
 
 const INFO_PANEL_WIDTH = 320;
+/** 玻璃页头盖住的转录顶部留白（页头 48px + 8px）。 */
+const HEADER_INSET = 56;
 
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
 function PanelResizer() {
@@ -74,7 +83,7 @@ function PanelResizer() {
 			aria-valuenow={width}
 			aria-valuemin={PANEL_MIN_WIDTH}
 			tabIndex={0}
-			className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none outline-none hover:bg-accent/30 focus-visible:bg-accent/40"
+			className="absolute inset-y-0 -left-2 z-10 w-2 cursor-col-resize touch-none rounded-full hover:bg-accent/30 focus-visible:bg-accent/40"
 			onPointerDown={onPointerDown}
 			onKeyDown={onKeyDown}
 		/>
@@ -89,12 +98,13 @@ function WorkingFooter({ threadId }: { threadId: string }) {
 		(s) => s.liveMessage && !s.liveMessage.ended,
 	);
 	const state = useThread(threadId, (s) => s.thread?.state);
+	const activity = useThread(threadId, (s) => s.thread?.activity);
 	const agentStatus = useThread(threadId, (s) => s.agentStatus);
 	const orb = useOrbOf(threadId);
 	if (state === "provisioning") {
 		return (
 			<div className="flex items-center gap-2 py-3 text-muted text-sm">
-				<Spinner />
+				{orb ? <OrbBead state={orb.state} size={16} /> : <Spinner />}
 				{t("thread.provisioning", {
 					state: orb ? t(`orbState.${orb.state}`) : "…",
 				})}
@@ -103,14 +113,21 @@ function WorkingFooter({ threadId }: { threadId: string }) {
 	}
 	if (agentStatus === "exited") {
 		return (
-			<div className="py-3 text-sm text-warn">{t("thread.agentExited")}</div>
+			<div className="py-3">
+				<Callout tone="warn">{t("thread.agentExited")}</Callout>
+			</div>
 		);
 	}
 	if (running && !live) {
 		return (
-			<div className="flex items-center gap-2 py-3 text-muted text-sm">
+			<div className="flex min-w-0 items-center gap-2 py-3 text-muted text-sm">
 				<Spinner />
-				{t("thread.working")}
+				<span className="shrink-0">{t("thread.working")}</span>
+				{state === "working" && activity && (
+					<span className="min-w-0 truncate text-faint text-xs">
+						{activity}
+					</span>
+				)}
 			</div>
 		);
 	}
@@ -186,22 +203,31 @@ export function ThreadPage(): ReactNode {
 		[threadId, model.toolResults, model.liveTools, subagents],
 	);
 
-	const showPanelColumn = bp === "expanded" && panelOpen;
-	const showPanelDrawer = bp !== "expanded" && panelOpen;
+	const expanded = bp === "expanded";
+	const showPanelColumn = expanded && panelOpen;
+	const showPanelDrawer = !expanded && panelOpen;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	const firstUi = pendingUi[0];
 
+	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
+	const dockRef = useRef<HTMLDivElement>(null);
+	const [dockH, setDockH] = useState(0);
+	useLayoutEffect(() => {
+		const el = dockRef.current;
+		if (!el) return;
+		setDockH(el.offsetHeight);
+		if (typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => setDockH(el.offsetHeight));
+		ro.observe(el, { box: "border-box" });
+		return () => ro.disconnect();
+	}, []);
+
 	return (
-		<div className="flex h-full min-w-0 flex-1">
-			<div
-				className={`h-full min-w-0 flex-1 flex-col ${panelFull ? "hidden" : "flex"}`}
+		<div className={`flex h-full min-w-0 flex-1 ${expanded ? "gap-2" : ""}`}>
+			<Sheet
+				inset={expanded}
+				className={`relative h-full min-w-0 flex-1 flex-col ${panelFull ? "hidden" : "flex"}`}
 			>
-				<ThreadHeader threadId={threadId} sidebarToggle={bp !== "expanded"} />
-				{conn !== "open" && (
-					<div className="border-border border-b bg-raised px-3 py-1 text-center text-muted text-xs">
-						{t(`connection.${conn}`)}
-					</div>
-				)}
 				<TranscriptContext.Provider value={ctx}>
 					{!snapshotReceived && entries.length === 0 ? (
 						<div className="flex flex-1 items-center justify-center text-muted">
@@ -215,38 +241,60 @@ export function ThreadPage(): ReactNode {
 						<Transcript
 							items={model.items}
 							footer={<WorkingFooter threadId={threadId} />}
+							insetTop={HEADER_INSET}
+							insetBottom={dockH + 16}
 						/>
 					)}
 				</TranscriptContext.Provider>
-				<div className="shrink-0 px-3 pt-1 pb-keyboard sm:px-5">
-					<div className="pb-2">
-						{plan && (
-							<PlanProposalDialog
-								key={threadId}
+				<div className="absolute inset-x-0 top-0 z-30">
+					<ThreadHeader threadId={threadId} sidebarToggle={!expanded} />
+				</div>
+				{conn !== "open" && (
+					<div className="pointer-events-none absolute inset-x-0 top-14 z-20 flex justify-center px-3">
+						<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
+							<Spinner size={11} />
+							{t(`connection.${conn}`)}
+						</div>
+					</div>
+				)}
+				<div
+					ref={dockRef}
+					className="dock-fade pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
+				>
+					<div className="pointer-events-auto mx-auto w-full max-w-3xl pb-3">
+						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
+						<div className="glass divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+							{plan && (
+								<PlanProposalDialog
+									key={`plan:${threadId}`}
+									threadId={threadId}
+									proposal={plan}
+								/>
+							)}
+							{firstUi && (
+								<UiRequestCard
+									key={firstUi.id}
+									threadId={threadId}
+									req={firstUi}
+									queued={pendingUi.length - 1}
+								/>
+							)}
+							<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+							<QueueBar threadId={threadId} />
+							<AboveEditorWidgets threadId={threadId} />
+							<Composer
+								key={`composer:${threadId}`}
 								threadId={threadId}
-								proposal={plan}
+								disabled={orbGone}
 							/>
-						)}
-						{firstUi && (
-							<UiRequestCard
-								key={firstUi.id}
-								threadId={threadId}
-								req={firstUi}
-								queued={pendingUi.length - 1}
-							/>
-						)}
-						<EnvBanner key={threadId} threadId={threadId} />
-						<QueueBar threadId={threadId} />
-						<ModeBar threadId={threadId} />
-						<Composer key={threadId} threadId={threadId} disabled={orbGone} />
-						<BelowEditorWidgets threadId={threadId} />
-						<StatusBar threadId={threadId} />
+							<BelowEditorWidgets threadId={threadId} />
+						</div>
 					</div>
 				</div>
-			</div>
+			</Sheet>
 			{showPanelColumn && (
 				<div
-					className={`relative h-full min-w-0 border-border border-l ${panelFull ? "flex-1" : "shrink-0"}`}
+					className={`relative h-full min-w-0 ${panelFull ? "flex-1" : "shrink-0"}`}
 					style={
 						panelFull
 							? undefined
@@ -256,10 +304,12 @@ export function ThreadPage(): ReactNode {
 					}
 				>
 					{panelTab !== "info" && !panelFull && <PanelResizer />}
-					<RightPanel
-						threadId={threadId}
-						onClose={() => uiStore.getState().setPanel(false)}
-					/>
+					<Sheet inset className="h-full">
+						<RightPanel
+							threadId={threadId}
+							onClose={() => uiStore.getState().setPanel(false)}
+						/>
+					</Sheet>
 				</div>
 			)}
 			{showPanelDrawer && (
@@ -267,7 +317,7 @@ export function ThreadPage(): ReactNode {
 					<button
 						type="button"
 						aria-label={t("common.close")}
-						className="absolute inset-0 bg-black/40"
+						className="absolute inset-0 bg-scrim"
 						onClick={() => uiStore.getState().setPanel(false)}
 					/>
 					<div
