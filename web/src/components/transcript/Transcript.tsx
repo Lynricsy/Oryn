@@ -335,7 +335,7 @@ export function rowGaps(
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex flex-col items-end gap-1 pr-8 pb-3">
+		<div className="flex flex-col items-end gap-1 pr-10 pb-3">
 			<span className="sr-only">{t("transcript.you")}</span>
 			<UserBubble avatar dim>
 				<div className={USER_BUBBLE_TEXT}>{text}</div>
@@ -364,19 +364,19 @@ function TurnHead({
 	const label = model ? modelLabel(model.model, model.provider, known) : null;
 	return (
 		<div
-			className="flex h-5 min-w-0 items-center gap-2"
+			className="flex h-7 min-w-0 items-center gap-2"
 			style={{ marginBottom: AVATAR_GAP }}
 		>
-			<AgentAvatar size={20} working={working} />
+			<AgentAvatar size={28} working={working} />
 			{model && label && (
 				<span
-					className="flex min-w-0 items-center gap-1.5 font-medium text-faint text-xs"
+					className="flex min-w-0 items-center gap-1.5 font-medium text-faint text-sm"
 					title={label.full}
 				>
 					<ModelLogo
 						model={model.model}
 						provider={model.provider || undefined}
-						size={14}
+						size={16}
 						className="shrink-0"
 					/>
 					<span className="min-w-0 truncate">{label.short}</span>
@@ -458,7 +458,7 @@ export function Transcript({
 		() =>
 			virtualItems.map((v) => {
 				const item = v.index < items.length ? items[v.index] : undefined;
-				// 会话分隔线与 agent 各块都铺满正文列；用户气泡右侧让出头像列（pr-8）
+				// 会话分隔线与 agent 各块都铺满正文列；用户气泡右侧让出头像列（pr-10）
 				const userRow = item !== undefined && isUserRow(item);
 				return (
 					<div
@@ -481,7 +481,7 @@ export function Transcript({
 						}}
 					>
 						<div
-							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-8" : ""}`}
+							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""}`}
 						>
 							{turns.starts.has(v.index) && (
 								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
