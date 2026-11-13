@@ -2085,23 +2085,28 @@ async function N12() {
 				tag: "oryn-x",
 			}),
 		});
-		await page.bringToFront();
+		// 在 SW 里查通知、且等它出现后才把应用页切回前台：推送处理是异步的（先向聚焦窗口发 probe），
+		// 过早切回前台会让应用页应答「能弹站内提示」，系统通知按设计被抑制。
+		if (!sw) throw new Error("没有 service worker 句柄");
 		const ns = await waitFor(
 			"registration.getNotifications() 有 1 条",
 			async () => {
-				const l = await page.evaluate(async () => {
-					const r = await navigator.serviceWorker.ready;
-					return (await r.getNotifications({ tag: "oryn-x" })).map((n) => ({
-						title: n.title,
-						tag: n.tag,
-						url: (n.data as { url?: string } | null)?.url,
-					}));
+				const l = await sw.evaluate(async () => {
+					const g = self as unknown as ServiceWorkerGlobalScope;
+					return (await g.registration.getNotifications({ tag: "oryn-x" })).map(
+						(n) => ({
+							title: n.title,
+							tag: n.tag,
+							url: (n.data as { url?: string } | null)?.url,
+						}),
+					);
 				});
 				return l.length > 0 ? l : undefined;
 			},
 			10_000,
 			300,
 		);
+		await page.bringToFront();
 		note(`notifications ${JSON.stringify(ns)}`);
 		const n = ns[0];
 		check(ns.length === 1, "恰好 1 条");
