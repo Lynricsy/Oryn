@@ -25,6 +25,7 @@ import {
 	joinPath,
 	parentPath,
 } from "../../lib/file-source";
+import { Icon } from "../ui/icons";
 import {
 	Button,
 	Dialog,
@@ -33,6 +34,7 @@ import {
 	IconButton,
 	Spinner,
 	TextInput,
+	tabClass,
 } from "../ui/primitives";
 import { dropDrafts, moveDrafts, useDraftPaths } from "./drafts";
 import { type DirState, type FileAction, FileTree } from "./FileTree";
@@ -372,49 +374,59 @@ export function FileBrowser({
 	const dialogErr = dialog ? nameError(name, dialog.kind === "newFile") : null;
 
 	const header = (
-		<div className="flex shrink-0 flex-wrap items-center gap-1 border-border border-b px-2 py-1">
-			<div role="tablist" className="flex min-w-0 flex-1 flex-wrap gap-1">
-				{allRoots.map((r) => (
-					<button
-						key={r.key}
-						type="button"
-						role="tab"
-						aria-selected={r.key === root?.key}
-						title={r.path || undefined}
-						className={`rounded-md px-2 py-1 text-xs ${r.key === root?.key ? "bg-hover text-fg" : "text-muted hover:text-fg"}`}
-						onClick={() => persist({ root: r.key, selected: null })}
-					>
-						{t(r.label as "files.roots.home")}
-					</button>
-				))}
+		<div className="flex h-10 shrink-0 items-center gap-1 border-border border-b px-2">
+			<div
+				role="tablist"
+				className="focus-inset flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+			>
+				{allRoots.map((r) => {
+					const on = r.key === root?.key;
+					return (
+						<button
+							key={r.key}
+							type="button"
+							role="tab"
+							aria-selected={on}
+							title={r.path || undefined}
+							className={`${tabClass(on)} ${on ? "bg-hover" : ""}`}
+							onClick={() => persist({ root: r.key, selected: null })}
+						>
+							{t(r.label as "files.roots.home")}
+						</button>
+					);
+				})}
 			</div>
 			{source && rootPath !== undefined && (
-				<>
+				<div className="flex shrink-0 items-center">
 					<IconButton
-						icon="file"
+						icon="filePlus"
+						size={15}
 						label={t("files.actions.newFile")}
 						onClick={() => onAction("newFile", null)}
 					/>
 					{source.caps.mkdir && (
 						<IconButton
-							icon="folder"
+							icon="folderPlus"
+							size={15}
 							label={t("files.actions.newFolder")}
 							onClick={() => onAction("newFolder", null)}
 						/>
 					)}
 					{source.caps.upload && (
 						<IconButton
-							icon="plus"
+							icon="upload"
+							size={15}
 							label={t("files.actions.upload")}
 							onClick={() => onAction("upload", null)}
 						/>
 					)}
 					<IconButton
-						icon="clock"
+						icon="refresh"
+						size={15}
 						label={t("files.actions.refresh")}
 						onClick={refreshAll}
 					/>
-				</>
+				</div>
 			)}
 		</div>
 	);
@@ -462,8 +474,8 @@ export function FileBrowser({
 				onSaved={() => void loadDir(parentPath(selected) || (rootPath ?? ""))}
 			/>
 		) : (
-			<div className="flex h-full items-center justify-center p-6 text-faint text-sm">
-				{t("files.pick")}
+			<div className="flex h-full items-center justify-center">
+				<EmptyState icon="fileText" title={t("files.pick")} />
 			</div>
 		);
 
@@ -512,15 +524,20 @@ export function FileBrowser({
 		<div ref={hostRef} className="flex h-full min-h-0 flex-col">
 			{header}
 			{waking && sourceRoots && (
-				<p className="shrink-0 bg-warn/10 px-3 py-1 text-warn text-xs">
+				<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
+					<Spinner size={12} />
 					{t("files.waking")}
 				</p>
 			)}
 			{failed.length > 0 && root && (
-				<div className="shrink-0 px-3 py-1 text-xs">
+				<div className="shrink-0 px-3 py-1.5 text-xs">
 					{failed.map((f) =>
 						isOrbdOutdated(f.error) ? (
-							<p key={f.source.id} className="text-warn">
+							<p
+								key={f.source.id}
+								className="flex items-center gap-1.5 text-warn"
+							>
+								<Icon name="alert" size={13} className="shrink-0" />
 								{t("files.outdated")}
 							</p>
 						) : (

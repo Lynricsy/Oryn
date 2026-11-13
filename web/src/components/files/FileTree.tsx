@@ -14,6 +14,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { fileIcon } from "../../lib/file-icon";
 import { type FileEntry, isDirEntry, isWithin } from "../../lib/file-source";
 import { formatBytes } from "../../lib/format";
 import { Icon, type IconName } from "../ui/icons";
@@ -61,12 +62,12 @@ export function actionsFor(
 }
 
 const ACTION_ICON: Record<FileAction, IconName> = {
-	newFile: "file",
-	newFolder: "folder",
-	upload: "plus",
+	newFile: "filePlus",
+	newFolder: "folderPlus",
+	upload: "upload",
 	rename: "edit",
 	delete: "trash",
-	download: "back",
+	download: "download",
 	copyPath: "copy",
 };
 
@@ -317,7 +318,7 @@ export function FileTree({
 					aria-setsize={item?.setsize}
 					tabIndex={tabIndex}
 					data-path={e.path}
-					className={`group flex h-7 cursor-pointer select-none items-center gap-1 rounded pr-1 text-sm outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-accent ${selected ? "bg-hover text-fg" : "text-fg"} ${dropTarget === e.path ? "ring-1 ring-accent" : ""}`}
+					className={`group flex h-7 cursor-pointer select-none items-center gap-1.5 rounded-sm pr-1 text-sm transition-colors duration-150 ${selected ? "bg-hover font-medium text-fg" : "text-fg hover:bg-hover/60"} ${dropTarget === e.path ? "ring-1 ring-accent ring-inset" : ""}`}
 					style={{ paddingLeft: 4 + depth * 14 }}
 					onClick={() => {
 						setFocusPath(e.path);
@@ -341,20 +342,21 @@ export function FileTree({
 					onPointerMove={() => clearTimeout(press.current)}
 					{...(dir ? dropProps(e.path) : {})}
 				>
-					<span className="flex w-3.5 shrink-0 justify-center text-faint">
+					<span className="flex w-3 shrink-0 justify-center text-faint">
 						{dir && (
-							<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
+							<Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
 						)}
 					</span>
 					<Icon
-						name={dir ? "folder" : "file"}
+						name={dir ? (open ? "folderOpen" : "folder") : fileIcon(e.name)}
 						size={14}
-						className="shrink-0 text-muted"
+						weight={dir ? "fill" : "regular"}
+						className={`shrink-0 ${dir ? "text-faint" : "text-muted"}`}
 					/>
 					<span className="min-w-0 flex-1 truncate">
 						{e.name}
 						{e.type === "symlink" && (
-							<span className="text-faint text-xs">{` → ${e.target ?? ""}`}</span>
+							<span className="font-normal text-faint text-xs">{` → ${e.target ?? ""}`}</span>
 						)}
 					</span>
 					{dirty(e) && (
@@ -362,13 +364,11 @@ export function FileTree({
 							role="img"
 							aria-label={t("files.unsaved")}
 							title={t("files.unsaved")}
-							className="shrink-0 text-accent text-xs"
-						>
-							●
-						</span>
+							className="mx-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+						/>
 					)}
 					{!dir && (
-						<span className="shrink-0 text-2xs text-faint">
+						<span className="shrink-0 font-normal text-2xs text-faint tabular-nums">
 							{formatBytes(e.size)}
 						</span>
 					)}
@@ -376,7 +376,7 @@ export function FileTree({
 						type="button"
 						tabIndex={tabIndex}
 						aria-label={t("files.actions.more", { name: e.name })}
-						className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint opacity-60 hover:bg-raised hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
+						className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-faint opacity-60 transition-colors duration-150 hover:bg-active hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
 						onClick={(ev) => {
 							ev.stopPropagation();
 							const r = ev.currentTarget.getBoundingClientRect();
@@ -400,7 +400,7 @@ export function FileTree({
 		<div
 			role="tree"
 			aria-label={rootPath || "/"}
-			className={`min-h-full p-1 pb-8 ${dropTarget === rootPath ? "bg-accent/5 ring-1 ring-accent ring-inset" : ""}`}
+			className={`focus-inset min-h-full p-1 pb-8 ${dropTarget === rootPath ? "bg-accent/5 ring-1 ring-accent ring-inset" : ""}`}
 			onContextMenu={(ev) => {
 				if (ev.target !== ev.currentTarget) return;
 				ev.preventDefault();
@@ -496,7 +496,7 @@ function ContextMenu({
 			role="menu"
 			tabIndex={-1}
 			onKeyDown={onMenuKeyDown}
-			className="fixed z-50 min-w-48 rounded-lg border border-border bg-panel p-1 shadow-lg"
+			className="glass pop-in fixed z-50 min-w-48 rounded-xl p-1"
 			style={{ left, top }}
 		>
 			{actions.map((a) => (
@@ -504,13 +504,13 @@ function ContextMenu({
 					key={a}
 					type="button"
 					role="menuitem"
-					className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-hover ${a === "delete" ? "text-err" : "text-fg"}`}
+					className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:bg-hover ${a === "delete" ? "text-err" : "text-fg"}`}
 					onClick={() => onAction(a)}
 				>
 					<Icon
 						name={ACTION_ICON[a]}
 						size={14}
-						className={`shrink-0 text-muted ${a === "download" ? "-rotate-90" : ""}`}
+						className={`shrink-0 ${a === "delete" ? "" : "text-muted"}`}
 					/>
 					{t(`files.actions.${a}`)}
 				</button>

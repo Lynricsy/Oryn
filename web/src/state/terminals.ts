@@ -42,6 +42,10 @@ export interface TermLike {
 	focus?(): void;
 	/** 粘贴（走 xterm 的括号粘贴，经 onInput 发出）。 */
 	paste?(text: string): void;
+	/** 字体加载完成后强制重新测量单元格尺寸。 */
+	refont?(): void;
+	/** 明暗 / 主题色切换后重取配色。 */
+	retheme?(): void;
 }
 
 export interface TermHandlers {

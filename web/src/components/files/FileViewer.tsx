@@ -19,6 +19,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
+import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileEntry,
 	type FileSource,
@@ -29,6 +30,7 @@ import {
 } from "../../lib/file-source";
 import { formatBytes, formatDateTime } from "../../lib/format";
 import { Markdown } from "../markdown/Markdown";
+import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -36,6 +38,7 @@ import {
 	ErrorText,
 	IconButton,
 	Spinner,
+	tabClass,
 } from "../ui/primitives";
 import {
 	discardDraft,
@@ -185,10 +188,13 @@ export function FileViewer({
 
 	const isMarkdown = /\.(md|markdown)$/i.test(path);
 	const entry = loaded?.entry;
+	const cut = path.lastIndexOf("/") + 1;
+	const dirPart = path.slice(0, cut);
+	const namePart = path.slice(cut);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			<div className="flex h-9 shrink-0 items-center gap-1 border-border border-b px-2">
+			<div className="flex h-10 shrink-0 items-center gap-1.5 border-border border-b px-2">
 				{onBack && (
 					<IconButton
 						icon="back"
@@ -196,28 +202,47 @@ export function FileViewer({
 						onClick={onBack}
 					/>
 				)}
+				<Icon
+					name={fileIcon(namePart, entry?.mime)}
+					size={14}
+					className="shrink-0 text-faint"
+				/>
+				{/* 路径拆段：目录先截断，文件名尽量完整 */}
 				<span
-					className="min-w-0 flex-1 truncate font-mono text-xs"
+					className="flex min-w-0 flex-1 items-center font-mono text-xs"
 					title={path}
 				>
+					{dirPart && (
+						<span className="min-w-0 shrink-[1000] truncate text-faint">
+							{dirPart}
+						</span>
+					)}
+					<span className="min-w-0 truncate font-medium text-fg">
+						{namePart}
+					</span>
 					{dirty && (
 						<span
-							className="text-accent"
+							className="ml-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
 							role="img"
 							aria-label={t("files.unsaved")}
 							title={t("files.unsaved")}
-						>
-							{"● "}
-						</span>
+						/>
 					)}
-					{path}
 				</span>
+				{entry && (
+					<span className="flex min-w-0 shrink items-center gap-1">
+						{entry.mime && !onBack && (
+							<Badge title={entry.mime}>{entry.mime}</Badge>
+						)}
+						<Badge>{formatBytes(entry.size)}</Badge>
+					</span>
+				)}
 				{text && isMarkdown && (
-					<div className="flex rounded-md border border-border text-xs">
+					<div className="flex shrink-0 items-center gap-0.5">
 						<button
 							type="button"
 							aria-pressed={!mdPreview}
-							className={`px-2 py-0.5 ${!mdPreview ? "bg-hover" : "text-muted"}`}
+							className={`${tabClass(!mdPreview)} ${!mdPreview ? "bg-hover" : ""}`}
 							onClick={() => setMdPreview(false)}
 						>
 							{t("files.viewer.source")}
@@ -225,7 +250,7 @@ export function FileViewer({
 						<button
 							type="button"
 							aria-pressed={mdPreview}
-							className={`px-2 py-0.5 ${mdPreview ? "bg-hover" : "text-muted"}`}
+							className={`${tabClass(mdPreview)} ${mdPreview ? "bg-hover" : ""}`}
 							onClick={() => setMdPreview(true)}
 						>
 							{t("files.viewer.preview")}
@@ -255,14 +280,17 @@ export function FileViewer({
 				)}
 				{entry && onDownload && source.caps.download && (
 					<IconButton
-						icon="back"
-						className="-rotate-90"
+						icon="download"
 						label={t("files.actions.download")}
 						onClick={() => onDownload(path)}
 					/>
 				)}
 			</div>
-			<ErrorText error={saveError} />
+			{saveError ? (
+				<div className="shrink-0 px-3 py-1.5">
+					<ErrorText error={saveError} />
+				</div>
+			) : null}
 			<div className="min-h-0 flex-1 overflow-hidden">
 				{loadError ? (
 					<div className="p-3">
@@ -275,12 +303,14 @@ export function FileViewer({
 				) : loaded.kind === "text" ? (
 					<div className="flex h-full min-h-0 flex-col">
 						{draftStale && (
-							<p className="shrink-0 bg-warn/10 px-3 py-1 text-warn text-xs">
+							<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
+								<Icon name="alert" size={13} className="shrink-0" />
 								{t("files.viewer.draftStale")}
 							</p>
 						)}
 						{loaded.readOnly && (
-							<p className="shrink-0 bg-warn/10 px-3 py-1 text-warn text-xs">
+							<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
+								<Icon name="info" size={13} className="shrink-0" />
 								{t("files.viewer.previewTruncated", {
 									shown: formatBytes(PREVIEW_BYTES),
 									size: formatBytes(loaded.entry.size),
@@ -288,7 +318,7 @@ export function FileViewer({
 							</p>
 						)}
 						{isMarkdown && mdPreview ? (
-							<div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+							<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
 								<Markdown text={dirty ? draft.text : loaded.text} />
 							</div>
 						) : (
@@ -321,19 +351,32 @@ export function FileViewer({
 					</div>
 				) : (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
-						<Icon name="file" size={28} className="text-faint" />
-						<div className="font-medium">{loaded.entry.name}</div>
+						<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">
+							<Icon
+								name={fileIcon(loaded.entry.name, loaded.entry.mime)}
+								size={20}
+								className="text-faint"
+							/>
+						</span>
+						<div className="max-w-full truncate font-medium">
+							{loaded.entry.name}
+						</div>
 						<div className="text-muted text-xs">
 							{t("files.viewer.binaryInfo", {
 								mime: loaded.entry.mime || "application/octet-stream",
 								size: formatBytes(loaded.entry.size),
 							})}
 						</div>
-						<div className="text-faint text-xs">
+						<div className="text-faint text-xs tabular-nums">
 							{formatDateTime(loaded.entry.mtime)}
 						</div>
 						{onDownload && source.caps.download && (
-							<Button size="sm" onClick={() => onDownload(path)}>
+							<Button
+								size="sm"
+								icon="download"
+								className="mt-1"
+								onClick={() => onDownload(path)}
+							>
 								{t("files.actions.download")}
 							</Button>
 						)}

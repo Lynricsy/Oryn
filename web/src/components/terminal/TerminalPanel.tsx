@@ -12,8 +12,16 @@ import {
 	useTerminals,
 } from "../../state/terminals";
 import { useOrbOf } from "../thread/ThreadHeader";
+import { Callout, StatusDot, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { Button, describeError, Spinner } from "../ui/primitives";
+import { OrbBead } from "../ui/OrbBead";
+import {
+	Button,
+	EmptyState,
+	ErrorText,
+	Spinner,
+	tabClass,
+} from "../ui/primitives";
 import { TerminalKeyBar, useCoarsePointer } from "./TerminalKeyBar";
 import { TerminalView } from "./TerminalView";
 import { createXterm } from "./xterm";
@@ -32,19 +40,27 @@ const TRANSIENT_ORB_STATES: Record<string, true> = {
 	deleting: true,
 };
 
+/** 状态珠自带动画（旋转弧 / 霜脉冲）的状态：不再叠 Spinner。 */
+const BEAD_ANIMATED: Record<string, true> = {
+	requested: true,
+	spawning: true,
+	connecting: true,
+	setting_up: true,
+	resuming: true,
+	waking: true,
+	freezing: true,
+};
+
 function titleOf(info: RpcTerminalInfo): string {
 	return info.title || info.kind;
 }
 
-function StatusDot({ entry }: { entry: TerminalEntry }) {
-	const cls = entry.attention
-		? "bg-warn animate-pulse"
-		: entry.status === "live"
-			? "bg-ok"
-			: entry.status === "lost"
-				? "bg-err"
-				: "bg-faint";
-	return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${cls}`} />;
+/** 标签上的状态点：等待输入→琥珀脉冲，运行→绿，失联→红，其余→中性。 */
+function tabTone(entry: TerminalEntry): { tone: Tone; pulse?: boolean } {
+	if (entry.attention) return { tone: "warn", pulse: true };
+	if (entry.status === "live") return { tone: "ok" };
+	if (entry.status === "lost") return { tone: "err" };
+	return { tone: "neutral" };
 }
 
 function Offline({ threadId }: { threadId: string }) {
@@ -64,32 +80,42 @@ function Offline({ threadId }: { threadId: string }) {
 	};
 	let body: ReactNode;
 	const state = orb?.state ?? "deleted";
+	const transient = TRANSIENT_ORB_STATES[state] === true;
+	const beadAnimated = BEAD_ANIMATED[state] === true;
 	if (!orb || state === "deleted") {
 		body = <p className="text-muted text-sm">{t("terminal.orbGone")}</p>;
-	} else if (busy || TRANSIENT_ORB_STATES[state]) {
+	} else if (busy || transient) {
+		// 状态珠自带动画的过渡态不再叠 Spinner
 		body = (
 			<p className="flex items-center gap-2 text-muted text-sm">
-				<Spinner />
+				{!beadAnimated && <Spinner size={12} />}
 				{t("terminal.orbStarting", { state: t(`orbState.${state}`) })}
 			</p>
 		);
 	} else if (state === "ready") {
 		body = (
 			<p className="flex items-center gap-2 text-muted text-sm">
-				<Spinner />
+				<Spinner size={12} />
 				{t("terminal.agentStarting")}
 			</p>
 		);
 	} else {
 		body = (
 			<>
-				<p className="font-medium text-sm">{t("terminal.offline")}</p>
-				<p className="text-muted text-xs">
-					{state === "failed" && orb.failureReason
-						? t("terminal.orbFailed", { reason: orb.failureReason })
-						: t("terminal.offlineHint", { state: t(`orbState.${state}`) })}
-				</p>
-				<Button variant="primary" icon="play" onClick={() => void wake()}>
+				<div className="space-y-1">
+					<p className="font-medium text-fg text-sm">{t("terminal.offline")}</p>
+					<p className="max-w-xs text-muted text-xs">
+						{state === "failed" && orb.failureReason
+							? t("terminal.orbFailed", { reason: orb.failureReason })
+							: t("terminal.offlineHint", { state: t(`orbState.${state}`) })}
+					</p>
+				</div>
+				<Button
+					variant="accent"
+					icon="play"
+					className="mt-1"
+					onClick={() => void wake()}
+				>
 					{t("terminal.wake")}
 				</Button>
 			</>
@@ -98,13 +124,17 @@ function Offline({ threadId }: { threadId: string }) {
 	return (
 		<div
 			data-testid="terminal-offline"
-			className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-panel/85 p-6 text-center backdrop-blur-sm"
+			className="absolute inset-2 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-panel/85 p-6 text-center backdrop-blur-sm"
 		>
-			<Icon name="terminal" size={22} className="text-faint" />
-			{body}
-			{error != null && (
-				<p className="text-err text-xs">{describeError(error, t)}</p>
+			{orb && state !== "deleted" ? (
+				<OrbBead state={state} size={40} />
+			) : (
+				<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">
+					<Icon name="terminal" size={20} className="text-faint" />
+				</span>
 			)}
+			{body}
+			<ErrorText error={error} />
 		</div>
 	);
 }
@@ -120,26 +150,30 @@ function Notice({
 }) {
 	const { t } = useTranslation();
 	if (entry.status === "live") return null;
-	const text =
-		entry.status === "lost"
-			? t("terminal.lost")
-			: entry.info.exitCode === undefined
-				? t("terminal.killed")
-				: t("terminal.exited", { code: entry.info.exitCode });
+	const lost = entry.status === "lost";
+	const text = lost
+		? t("terminal.lost")
+		: entry.info.exitCode === undefined
+			? t("terminal.killed")
+			: t("terminal.exited", { code: entry.info.exitCode });
 	return (
-		<div
-			data-testid="terminal-notice"
-			className={`flex shrink-0 items-center gap-2 border-border border-b px-3 py-1.5 text-xs ${entry.status === "lost" ? "bg-err/10 text-err" : "bg-raised text-muted"}`}
-		>
-			<Icon name={entry.status === "lost" ? "alert" : "info"} size={13} />
-			<span className="min-w-0 flex-1">{text}</span>
-			<Button
-				size="sm"
-				variant="ghost"
-				onClick={() => void terminalHub.close(threadId, terminalId)}
+		<div data-testid="terminal-notice" className="shrink-0 px-2 pt-2">
+			<Callout
+				tone={lost ? "err" : "neutral"}
+				icon={lost ? "alert" : "info"}
+				actions={
+					<Button
+						size="sm"
+						variant="ghost"
+						className="-my-1"
+						onClick={() => void terminalHub.close(threadId, terminalId)}
+					>
+						{t("terminal.dismiss")}
+					</Button>
+				}
 			>
-				{t("terminal.dismiss")}
-			</Button>
+				{text}
+			</Callout>
 		</div>
 	);
 }
@@ -176,16 +210,17 @@ export default function TerminalPanel({
 			<div
 				role="tablist"
 				aria-label={t("terminal.title")}
-				className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-border border-b px-1.5 py-1"
+				className="focus-inset flex shrink-0 items-center gap-0.5 overflow-x-auto border-border border-b px-1.5 py-1.5"
 			>
 				{order.map((id) => {
 					const e = terminals[id];
 					if (!e) return null;
 					const selected = id === activeId;
+					const dot = tabTone(e);
 					return (
 						<div
 							key={id}
-							className={`group flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md pr-0.5 pl-2 text-xs ${selected ? "bg-hover text-fg" : "text-muted hover:bg-hover/60"}`}
+							className={`group flex shrink-0 items-center rounded-md transition-colors duration-150 ${selected ? "bg-hover" : "hover:bg-hover/60"}`}
 						>
 							<button
 								type="button"
@@ -193,17 +228,17 @@ export default function TerminalPanel({
 								aria-selected={selected}
 								data-terminal-tab={id}
 								title={`${titleOf(e.info)} · ${t(`terminal.kind.${e.info.kind}`)}${e.attention ? ` · ${t("terminal.needsInput")}` : ""}`}
-								className="flex min-w-0 items-center gap-1.5"
+								className={tabClass(selected)}
 								onClick={() => terminalHub.activate(threadId, id)}
 							>
-								<StatusDot entry={e} />
-								<span className="truncate">{titleOf(e.info)}</span>
+								<StatusDot tone={dot.tone} pulse={dot.pulse} />
+								<span className="max-w-36 truncate">{titleOf(e.info)}</span>
 							</button>
 							<button
 								type="button"
 								aria-label={t("terminal.close")}
 								title={t("terminal.close")}
-								className="inline-flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-panel hover:text-fg"
+								className={`-ml-1.5 mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded text-faint transition-opacity hover:bg-active hover:text-fg ${selected ? "" : "opacity-60 group-hover:opacity-100"}`}
 								onClick={() => void terminalHub.close(threadId, id)}
 							>
 								<Icon name="close" size={11} />
@@ -216,7 +251,7 @@ export default function TerminalPanel({
 					aria-label={t("terminal.newShell")}
 					title={t("terminal.newShell")}
 					disabled={offline}
-					className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
+					className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-hover hover:text-fg active:scale-95 disabled:opacity-40"
 					onClick={() => void terminalHub.newShell(threadId)}
 				>
 					<Icon name="plus" size={14} />
@@ -228,29 +263,38 @@ export default function TerminalPanel({
 				)}
 			</div>
 			{error && !offline && (
-				<div className="shrink-0 border-border border-b bg-err/10 px-3 py-1 text-err text-xs">
-					{t("terminal.syncFailed", { message: error })}
+				<div className="shrink-0 px-2 pt-2">
+					<Callout tone="err">
+						{t("terminal.syncFailed", { message: error })}
+					</Callout>
 				</div>
 			)}
 			{active && activeId && (
 				<Notice threadId={threadId} terminalId={activeId} entry={active} />
 			)}
-			<div className="relative min-h-0 flex-1 bg-inset p-1.5">
-				{active && activeId ? (
-					<TerminalView
-						key={activeId}
-						threadId={threadId}
-						terminalId={activeId}
-						autoFocus={!coarse}
-					/>
-				) : (
-					!offline && (
-						<div className="flex h-full items-center justify-center gap-2 text-faint text-sm">
-							{syncing ? <Spinner /> : null}
-							{syncing ? t("terminal.opening") : t("terminal.empty")}
-						</div>
-					)
-				)}
+			<div className="relative min-h-0 flex-1 p-2">
+				<div className="h-full overflow-hidden rounded-lg border border-border bg-inset p-1.5">
+					{active && activeId ? (
+						<TerminalView
+							key={activeId}
+							threadId={threadId}
+							terminalId={activeId}
+							autoFocus={!coarse}
+						/>
+					) : (
+						!offline &&
+						(syncing ? (
+							<div className="flex h-full items-center justify-center gap-2 text-faint text-sm">
+								<Spinner />
+								{t("terminal.opening")}
+							</div>
+						) : (
+							<div className="flex h-full items-center justify-center">
+								<EmptyState icon="terminal" title={t("terminal.empty")} />
+							</div>
+						))
+					)}
+				</div>
 				{offline && <Offline threadId={threadId} />}
 			</div>
 			{coarse && active?.status === "live" && activeId && (

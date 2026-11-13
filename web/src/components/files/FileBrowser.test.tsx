@@ -149,7 +149,10 @@ describe("FileBrowser", () => {
 		fireEvent.click(
 			within(dialog).getByRole("button", { name: t("common.create") }),
 		);
-		expect(await screen.findByText("notes.md")).toBeInTheDocument();
+		// 查树项：文件已打开时查看器头部也会显示文件名
+		expect(
+			await screen.findByRole("treeitem", { name: "notes.md" }),
+		).toBeInTheDocument();
 		expect(write).toHaveBeenCalledWith("/r/notes.md", "", { overwrite: false });
 		expect(await screen.findByLabelText("editor:/r/notes.md")).toHaveValue("");
 		expect(screen.queryByRole("dialog")).toBeNull();
@@ -202,8 +205,10 @@ describe("FileBrowser", () => {
 		fireEvent.click(
 			within(dialog).getByRole("button", { name: t("files.actions.rename") }),
 		);
-		expect(await screen.findByText("b.txt")).toBeInTheDocument();
-		expect(screen.queryByText("a.txt")).toBeNull();
+		expect(
+			await screen.findByRole("treeitem", { name: "b.txt" }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("treeitem", { name: "a.txt" })).toBeNull();
 		expect(mem.files.has("/r/b.txt")).toBe(true);
 		expect(await screen.findByLabelText("editor:/r/b.txt")).toHaveValue(
 			"alpha",

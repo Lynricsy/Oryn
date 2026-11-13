@@ -14,6 +14,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { diffRows } from "../../tool-render/parts";
 import "../../tool-render/tool-render.css";
+import { Callout } from "../ui/data";
+import { Icon } from "../ui/icons";
 import { ErrorText, IconButton, Spinner } from "../ui/primitives";
 import {
 	type GitFileChange,
@@ -73,37 +75,79 @@ export function FileDiff({
 
 	const diff = loaded?.key === key ? loaded.diff : null;
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const slash = file.path.lastIndexOf("/");
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			<div className="flex h-9 shrink-0 items-center gap-1 border-border border-b px-2">
+			<div className="flex h-9 shrink-0 items-center gap-1.5 border-border border-b px-2">
 				{onBack && (
 					<IconButton icon="back" label={t("changes.back")} onClick={onBack} />
 				)}
+				<Icon
+					name="fileCode"
+					size={14}
+					aria-hidden
+					className="ml-1 shrink-0 text-faint"
+				/>
 				<span
 					className="min-w-0 flex-1 truncate font-mono text-xs"
-					title={file.path}
+					title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
 				>
-					{file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+					{file.oldPath && (
+						<span className="text-faint">{`${file.oldPath} → `}</span>
+					)}
+					<span className="text-faint">{file.path.slice(0, slash + 1)}</span>
+					<span className="font-medium text-fg">
+						{file.path.slice(slash + 1)}
+					</span>
 				</span>
+				{!file.binary &&
+					(file.additions !== undefined || file.deletions !== undefined) && (
+						<span className="shrink-0 font-mono text-2xs tabular-nums">
+							{file.additions !== undefined && (
+								<span className="text-ok">{`+${file.additions}`}</span>
+							)}
+							{file.deletions !== undefined && (
+								<span className="ml-1.5 text-err">{`−${file.deletions}`}</span>
+							)}
+						</span>
+					)}
 			</div>
 			<div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-2">
 				{error ? (
 					<ErrorText error={error} />
 				) : !diff ? (
-					<Spinner />
+					<div className="p-2">
+						<Spinner />
+					</div>
 				) : diff.kind === "binary" ? (
-					<p className="text-muted text-sm">{t("changes.diff.binary")}</p>
+					<Callout tone="neutral" icon="info">
+						{t("changes.diff.binary")}
+					</Callout>
 				) : diff.kind === "large" ? (
-					<p className="text-muted text-sm">{t("changes.diff.large")}</p>
+					<Callout tone="neutral" icon="info">
+						{t("changes.diff.large")}
+					</Callout>
 				) : diff.patch === "" ? (
-					<p className="text-muted text-sm">{t("changes.diff.empty")}</p>
+					<Callout tone="neutral" icon="info">
+						{t("changes.diff.empty")}
+					</Callout>
 				) : (
-					<div className="tv-card">
+					// `.tv-card` 只为提供 `--tv-*` 配色变量；外框交给 `.tv-diff` 的内嵌井，
+					// 且不能裁切：长行由外层滚动容器横向滚动
+					<div
+						className="tv-card flex flex-col gap-2"
+						style={{
+							margin: 0,
+							border: 0,
+							background: "transparent",
+							overflow: "visible",
+						}}
+					>
 						<VirtualPatch patch={diff.patch} scrollRef={scrollRef} />
 						{diff.truncated && (
-							<p className="px-2 py-1 text-warn text-xs">
+							<Callout tone="neutral" icon="info">
 								{t("changes.diff.truncated")}
-							</p>
+							</Callout>
 						)}
 					</div>
 				)}

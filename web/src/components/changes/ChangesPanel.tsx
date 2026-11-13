@@ -9,10 +9,10 @@
  * 面板卸载即停止请求。不做 hunk 级暂存、提交与丢弃。
  */
 import {
+	type FormEvent,
 	type ReactNode,
 	useCallback,
 	useEffect,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -25,24 +25,31 @@ import {
 	useElementWidth,
 	useWorkspaceActivity,
 } from "../files/hooks";
+import { Badge } from "../ui/data";
+import { Icon } from "../ui/icons";
 import {
 	Button,
+	Checkbox,
 	EmptyState,
 	ErrorText,
 	IconButton,
 	Spinner,
+	TextInput,
 } from "../ui/primitives";
 import { CommitPicker } from "./CommitPicker";
 import { FileDiff } from "./FileDiff";
 import {
 	type ChangeScope,
+	changesRootKey,
 	type GitCommit,
 	type GitFileChange,
 	type GitStatus,
 	type GitTarget,
 	getGitStatus,
 	isAbort,
+	isValidBranch,
 	listGitCommits,
+	readChangesRoot,
 	setStaged,
 } from "./git";
 
@@ -61,28 +68,17 @@ const STATUS_LETTER: Record<GitFileChange["status"], string> = {
 	conflicted: "!",
 };
 
+/** 状态字母方块的底色与字色（语义色 12–15% 底）。 */
 const STATUS_TONE: Record<GitFileChange["status"], string> = {
-	added: "text-ok",
-	untracked: "text-ok",
-	modified: "text-warn",
-	typechange: "text-warn",
-	renamed: "text-accent",
-	copied: "text-accent",
-	deleted: "text-err",
-	conflicted: "text-err",
+	added: "bg-ok/12 text-ok-ink",
+	modified: "bg-warn/15 text-warn",
+	deleted: "bg-err/10 text-err",
+	conflicted: "bg-err/10 text-err",
+	renamed: "bg-frost/12 text-frost",
+	copied: "bg-frost/12 text-frost",
+	typechange: "bg-inset text-muted",
+	untracked: "bg-inset text-muted",
 };
-
-function rootKey(threadId: string) {
-	return `oryn.changes.root.${threadId}`;
-}
-
-function readRoot(threadId: string): string | undefined {
-	try {
-		return localStorage.getItem(rootKey(threadId)) ?? undefined;
-	} catch {
-		return undefined;
-	}
-}
 
 function dirOf(path: string): string {
 	const i = path.lastIndexOf("/");
@@ -103,32 +99,90 @@ export function groupByDir(
 	return [...groups.entries()];
 }
 
-function StageBox({
-	file,
-	disabled,
-	onToggle,
+/** 「与分支比较…」弹出的分支名输入；提交前按服务端的分支名规则校验。 */
+function BaseBranchForm({
+	initial,
+	custom,
+	onApply,
+	onReset,
+	onClose,
 }: {
-	file: GitFileChange;
-	disabled: boolean;
-	onToggle(): void;
+	initial: string;
+	/** 当前是否为手动指定的基线（是则提供「恢复默认基线」） */
+	custom: boolean;
+	onApply(name: string): void;
+	onReset(): void;
+	onClose(): void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const ref = useRef<HTMLInputElement>(null);
-	// 绘制前同步 DOM 属性：避免先画出非半选态再跳变
-	useLayoutEffect(() => {
-		if (ref.current) ref.current.indeterminate = file.staged === "partial";
-	}, [file.staged]);
+	const [name, setName] = useState(initial);
+	const [invalid, setInvalid] = useState(false);
+	const submit = (e: FormEvent) => {
+		e.preventDefault();
+		const v = name.trim();
+		if (!isValidBranch(v)) {
+			setInvalid(true);
+			return;
+		}
+		onApply(v);
+	};
 	return (
-		<input
-			ref={ref}
-			type="checkbox"
-			aria-label={t("changes.stageFile", { path: file.path })}
-			checked={file.staged === "full"}
-			data-staged={file.staged}
-			disabled={disabled}
-			onChange={onToggle}
-			className="shrink-0"
-		/>
+		<form
+			onSubmit={submit}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") {
+					e.stopPropagation();
+					onClose();
+				}
+			}}
+			className="pop-in flex flex-col gap-1.5 rounded-lg border border-border bg-raised p-2 shadow-xs"
+		>
+			<div className="flex items-center gap-1.5">
+				<Icon
+					name="branch"
+					size={14}
+					aria-hidden
+					className="shrink-0 text-faint"
+				/>
+				<TextInput
+					autoFocus
+					aria-label={t("changes.base.label")}
+					aria-invalid={invalid || undefined}
+					placeholder={t("changes.base.placeholder")}
+					spellCheck={false}
+					autoCapitalize="off"
+					autoCorrect="off"
+					value={name}
+					onChange={(e) => {
+						setName(e.target.value);
+						setInvalid(false);
+					}}
+					className="h-7 min-w-0 flex-1 py-0 font-mono text-xs"
+				/>
+			</div>
+			{invalid && (
+				<p className="text-2xs text-err">{t("changes.base.invalid")}</p>
+			)}
+			<div className="flex items-center gap-1">
+				{custom && (
+					<Button type="button" size="sm" variant="ghost" onClick={onReset}>
+						{t("changes.base.reset")}
+					</Button>
+				)}
+				<span className="flex-1" />
+				<Button type="button" size="sm" variant="ghost" onClick={onClose}>
+					{t("common.cancel")}
+				</Button>
+				<Button
+					type="submit"
+					size="sm"
+					variant="primary"
+					disabled={name.trim() === ""}
+				>
+					{t("changes.base.apply")}
+				</Button>
+			</div>
+		</form>
 	);
 }
 
@@ -142,8 +196,11 @@ export default function ChangesPanel({
 	const { t } = useTranslation();
 	const orbState = useThread(threadId, (s) => s.orb?.state);
 	const [root, setRootState] = useState<string | undefined>(() =>
-		readRoot(threadId),
+		readChangesRoot(threadId),
 	);
+	// 手动指定的基线分支（「与分支比较…」）；缺省由服务端推定
+	const [base, setBase] = useState<string | undefined>(undefined);
+	const [basePrompt, setBasePrompt] = useState(false);
 	const [scope, setScope] = useState<ChangeScope>({ scope: "all" });
 	const [status, setStatus] = useState<GitStatus | null>(null);
 	const [error, setError] = useState<unknown>(null);
@@ -161,8 +218,8 @@ export default function ChangesPanel({
 	const split = useElementWidth(hostRef, SPLIT_MIN_WIDTH) >= SPLIT_MIN_WIDTH;
 
 	const target = useMemo<GitTarget | null>(
-		() => (orbId ? { orbId, root, scope } : null),
-		[orbId, root, scope],
+		() => (orbId ? { orbId, root, base, scope } : null),
+		[orbId, root, base, scope],
 	);
 	const seq = useRef(0);
 	const commitSeq = useRef(0);
@@ -185,6 +242,7 @@ export default function ChangesPanel({
 				const r = await listGitCommits(
 					orbId,
 					root,
+					base,
 					bg,
 					lifetime.current?.signal,
 				);
@@ -194,7 +252,7 @@ export default function ChangesPanel({
 				// 列表只是选择器的辅助数据；失败时保留旧值，错误由 status 呈现
 			}
 		},
-		[orbId, root],
+		[orbId, root, base],
 	);
 
 	const load = useCallback(
@@ -259,14 +317,25 @@ export default function ChangesPanel({
 
 	const setRoot = (r: string | undefined) => {
 		try {
-			if (r) localStorage.setItem(rootKey(threadId), r);
-			else localStorage.removeItem(rootKey(threadId));
+			if (r) localStorage.setItem(changesRootKey(threadId), r);
+			else localStorage.removeItem(changesRootKey(threadId));
 		} catch {
 			// 不可写时只保留在内存
 		}
 		setSelected(null);
 		setStatus(null);
+		// 分支名属于原来的仓库，换仓库后回到服务端推定的基线
+		setBase(undefined);
+		setBasePrompt(false);
 		setRootState(r);
+	};
+
+	/** 换基线（`undefined` = 恢复默认）：回到「全部改动」范围查看相对它的改动。 */
+	const applyBase = (b: string | undefined) => {
+		setBasePrompt(false);
+		setSelected(null);
+		setScope({ scope: "all" });
+		setBase(b);
 	};
 
 	const stage = async (files: GitFileChange[], on: boolean) => {
@@ -293,9 +362,12 @@ export default function ChangesPanel({
 	const groups = groupByDir(files);
 	const additions = files.reduce((n, f) => n + (f.additions ?? 0), 0);
 	const deletions = files.reduce((n, f) => n + (f.deletions ?? 0), 0);
+	const modified = files.filter((f) => f.status === "modified").length;
+	const linkClass =
+		"rounded-xs text-2xs text-muted underline-offset-2 hover:text-fg hover:underline";
 
 	const header = (
-		<div className="flex shrink-0 flex-col gap-1 border-border border-b px-2 py-1.5">
+		<div className="flex shrink-0 flex-col gap-1.5 border-border border-b px-2 py-2">
 			<div className="flex items-center gap-1">
 				<CommitPicker
 					value={scope}
@@ -303,12 +375,13 @@ export default function ChangesPanel({
 						setSelected(null);
 						setScope(s);
 					}}
-					baseName={status?.base?.name}
+					onCompareBranch={() => setBasePrompt(true)}
+					baseName={status?.base?.name ?? base}
 					commits={commits.list}
 					truncated={commits.truncated}
 				/>
 				<IconButton
-					icon="clock"
+					icon="refresh"
 					label={t("changes.refresh")}
 					onClick={() => {
 						void load(false);
@@ -316,33 +389,65 @@ export default function ChangesPanel({
 					}}
 				/>
 			</div>
+			{basePrompt && (
+				<BaseBranchForm
+					initial={base ?? status?.base?.name ?? ""}
+					custom={base !== undefined}
+					onApply={applyBase}
+					onReset={() => applyBase(undefined)}
+					onClose={() => setBasePrompt(false)}
+				/>
+			)}
 			{status?.repo && (
-				<div className="flex flex-wrap items-center gap-x-2 text-faint text-xs">
-					{status.branch && <span className="font-mono">{status.branch}</span>}
-					{status.base?.approximate && scope.scope === "all" && (
-						<span className="text-warn">{t("changes.approximateBase")}</span>
-					)}
-					{scope.scope === "all" && !status.base && (
-						<span>{t("changes.noBase")}</span>
-					)}
-					<span>
-						{t("changes.summary", { n: files.length })}
-						<span className="ml-1 text-ok">{`+${additions}`}</span>
-						<span className="ml-1 text-err">{`−${deletions}`}</span>
-					</span>
-					{root && (
-						<button
-							type="button"
-							className="underline hover:text-fg"
-							onClick={() => setRoot(undefined)}
-						>
-							{t("changes.resetRoot")}
-						</button>
-					)}
+				// 摘要在左、动作在右：Review / Ship ▾ / Sync ▾ 动作簇（见设计文档「未来功能落位」）
+				// 将作为本行的第二个子元素靠右排列，左侧摘要随之收窄换行
+				<div className="flex items-center gap-2">
+					<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-0.5 text-faint text-xs">
+						{status.branch && (
+							<Badge icon="branch" title={status.branch}>
+								<span className="font-mono">{status.branch}</span>
+							</Badge>
+						)}
+						{status.base?.approximate && scope.scope === "all" && (
+							<Badge tone="warn">{t("changes.approximateBase")}</Badge>
+						)}
+						{scope.scope === "all" && !status.base && (
+							<span>{t("changes.noBase")}</span>
+						)}
+						<span className="inline-flex items-center gap-1.5 tabular-nums">
+							<span>{t("changes.summary", { n: files.length })}</span>
+							{modified > 0 && (
+								<span
+									className="text-warn"
+									title={t("changes.modified", { n: modified })}
+								>{`~${modified}`}</span>
+							)}
+							<span className="text-ok">{`+${additions}`}</span>
+							<span className="text-err">{`−${deletions}`}</span>
+						</span>
+						{base !== undefined && (
+							<button
+								type="button"
+								className={linkClass}
+								onClick={() => applyBase(undefined)}
+							>
+								{t("changes.base.reset")}
+							</button>
+						)}
+						{root && (
+							<button
+								type="button"
+								className={linkClass}
+								onClick={() => setRoot(undefined)}
+							>
+								{t("changes.resetRoot")}
+							</button>
+						)}
+					</div>
 				</div>
 			)}
 			{stageable && files.length > 0 && (
-				<div className="flex gap-1">
+				<div className="-mx-1 flex items-center gap-1">
 					<Button
 						size="sm"
 						variant="ghost"
@@ -388,7 +493,7 @@ export default function ChangesPanel({
 	} else if (!status.repo) {
 		list = (
 			<div className="p-3 text-sm">
-				<EmptyState icon="fork" title={t("changes.notRepo")} />
+				<EmptyState icon="branch" title={t("changes.notRepo")} />
 				{(status.candidates?.length ?? 0) > 0 && (
 					<div className="flex flex-col gap-1">
 						<p className="text-muted text-xs">{t("changes.pickRepo")}</p>
@@ -396,6 +501,8 @@ export default function ChangesPanel({
 							<Button
 								key={c}
 								size="sm"
+								variant="secondary"
+								icon="folder"
 								className="justify-start font-mono"
 								onClick={() => setRoot(c)}
 							>
@@ -417,36 +524,43 @@ export default function ChangesPanel({
 			</div>
 		);
 	} else if (files.length === 0) {
-		list = <EmptyState icon="check" title={t("changes.clean")} />;
+		list = <EmptyState icon="checkCircle" title={t("changes.clean")} />;
 	} else {
 		list = (
-			<ul aria-label={t("changes.files")} className="p-1 text-sm">
+			<ul aria-label={t("changes.files")} className="p-1.5 text-sm">
 				{groups.map(([dir, group]) => (
 					<li key={dir}>
-						<div className="truncate px-2 pt-2 pb-0.5 font-mono text-2xs text-faint">
-							{dir || t("changes.rootDir")}
+						<div className="flex items-center gap-1.5 px-2 pt-2 pb-1 text-2xs text-faint">
+							<Icon name="folder" size={12} aria-hidden className="shrink-0" />
+							<span className="min-w-0 truncate font-mono">
+								{dir || t("changes.rootDir")}
+							</span>
 						</div>
 						<ul>
 							{group.map((f) => (
 								<li key={f.path}>
 									<div
-										className={`flex h-7 items-center gap-2 rounded px-2 hover:bg-hover ${selected === f.path ? "bg-hover" : ""}`}
+										className={`flex h-8 items-center gap-2 rounded-md px-2 transition-colors duration-150 ${selected === f.path ? "bg-hover text-fg" : "hover:bg-hover/60"}`}
 									>
 										{stageable && (
-											<StageBox
-												file={f}
+											<Checkbox
+												aria-label={t("changes.stageFile", { path: f.path })}
+												checked={f.staged === "full"}
+												indeterminate={f.staged === "partial"}
+												data-staged={f.staged}
 												disabled={staging}
-												onToggle={() => void stage([f], f.staged !== "full")}
+												onChange={() => void stage([f], f.staged !== "full")}
 											/>
 										)}
+										{/* 三个直接子 span 依次为状态字母、名称、统计（验收脚本按此读取） */}
 										<button
 											type="button"
 											aria-current={selected === f.path}
-											className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm text-left"
 											onClick={() => setSelected(f.path)}
 										>
 											<span
-												className={`w-3 shrink-0 text-center font-mono font-semibold text-xs ${STATUS_TONE[f.status]}`}
+												className={`inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded font-mono font-semibold text-2xs ${STATUS_TONE[f.status]}`}
 												title={t(`changes.status.${f.status}`)}
 											>
 												{STATUS_LETTER[f.status]}
@@ -460,16 +574,16 @@ export default function ChangesPanel({
 													: f.path.slice(dir ? dir.length + 1 : 0)}
 											</span>
 											{f.binary ? (
-												<span className="shrink-0 text-2xs text-faint">
+												<span className="inline-flex h-[18px] shrink-0 items-center rounded bg-inset px-1.5 font-medium text-2xs text-muted">
 													{t("changes.binary")}
 												</span>
 											) : (
-												<span className="shrink-0 font-mono text-2xs">
+												<span className="shrink-0 font-mono text-2xs tabular-nums">
 													{f.additions !== undefined && (
 														<span className="text-ok">{`+${f.additions}`}</span>
 													)}
 													{f.deletions !== undefined && (
-														<span className="ml-1 text-err">{`−${f.deletions}`}</span>
+														<span className="ml-1.5 text-err">{`−${f.deletions}`}</span>
 													)}
 												</span>
 											)}
@@ -481,7 +595,7 @@ export default function ChangesPanel({
 					</li>
 				))}
 				{status.truncated && (
-					<li className="px-2 py-1 text-warn text-xs">
+					<li className="px-2 py-1.5 text-warn text-xs">
 						{t("changes.truncated")}
 					</li>
 				)}
@@ -498,8 +612,8 @@ export default function ChangesPanel({
 				onBack={split ? undefined : () => setSelected(null)}
 			/>
 		) : (
-			<div className="flex h-full items-center justify-center p-6 text-faint text-sm">
-				{t("changes.pick")}
+			<div className="flex h-full items-center justify-center p-6">
+				<EmptyState icon="diff" title={t("changes.pick")} />
 			</div>
 		);
 

@@ -16,15 +16,39 @@ export interface GitTarget {
 	orbId: string;
 	/** 仓库所在目录；缺省 = orb 当前工作目录 */
 	root?: string;
+	/** 基线分支名；缺省由服务端按项目 `baseBranch` / `origin/HEAD` / `main` / `master` 推定 */
+	base?: string;
 	scope: ChangeScope;
 }
 
-function scopeQuery({ root, scope }: GitTarget) {
+function scopeQuery({ root, base, scope }: GitTarget) {
 	return {
 		root,
+		base,
 		scope: scope.scope,
 		commit: scope.scope === "commit" ? scope.sha : undefined,
 	};
+}
+
+/** 与 `GitBaseQuery` 的 pattern 一致：先在前端拦下服务端必然拒绝的分支名。 */
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/;
+
+export function isValidBranch(name: string): boolean {
+	return BRANCH_RE.test(name);
+}
+
+/** 线程在改动面板里选定的仓库目录（`repo=false` 时从候选里挑的）存在 localStorage 的键。 */
+export function changesRootKey(threadId: string): string {
+	return `oryn.changes.root.${threadId}`;
+}
+
+/** 读取线程选定的仓库目录；未选或 localStorage 不可用时为 `undefined`。 */
+export function readChangesRoot(threadId: string): string | undefined {
+	try {
+		return localStorage.getItem(changesRootKey(threadId)) ?? undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** 单次 git 请求的上限；超时以 `TimeoutError` 结束（服务端 45s 后回 504）。 */
@@ -87,12 +111,16 @@ export function getGitDiff(
 export function listGitCommits(
 	orbId: string,
 	root: string | undefined,
+	base: string | undefined,
 	bg = false,
 	signal?: AbortSignal,
 ): Promise<Schemas["GitCommitList"]> {
 	return unwrap(
 		api.GET("/api/v1/orbs/{id}/git/commits", {
-			params: { path: { id: orbId }, query: { root, bg: bg || undefined } },
+			params: {
+				path: { id: orbId },
+				query: { root, base, bg: bg || undefined },
+			},
 			signal: requestSignal(signal),
 		}),
 	);

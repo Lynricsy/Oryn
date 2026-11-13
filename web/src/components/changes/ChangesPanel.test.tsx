@@ -165,6 +165,48 @@ describe("ChangesPanel", () => {
 		).toBeNull();
 	});
 
+	it("与分支比较…：输入分支名后以 base 查询参数重拉状态与提交列表；非法分支名不发请求", async () => {
+		render(<ChangesPanel threadId="T-c20" orbId={ORB} />);
+		await filesList();
+		const picker = screen.getByRole("combobox", {
+			name: t("changes.scope.label"),
+		}) as HTMLSelectElement;
+		fireEvent.change(picker, { target: { value: "base:pick" } });
+		// 受控下拉框保持原范围，只弹出分支名输入
+		expect(picker.value).toBe("all");
+		const input = await screen.findByRole("textbox");
+		const before = statusReqs().length;
+		fireEvent.change(input, { target: { value: "-bad" } });
+		fireEvent.click(
+			screen.getByRole("button", { name: t("changes.base.apply") }),
+		);
+		expect(statusReqs().length).toBe(before);
+		fireEvent.change(input, { target: { value: "release/1.0" } });
+		fireEvent.click(
+			screen.getByRole("button", { name: t("changes.base.apply") }),
+		);
+		await waitFor(() =>
+			expect(statusReqs().at(-1)?.query.get("base")).toBe("release/1.0"),
+		);
+		expect(statusReqs().at(-1)?.query.get("scope")).toBe("all");
+		await waitFor(() =>
+			expect(
+				requests
+					.filter((r) => r.path.endsWith("/git/commits"))
+					.at(-1)
+					?.query.get("base"),
+			).toBe("release/1.0"),
+		);
+		expect(screen.queryByRole("textbox")).toBeNull();
+		// 恢复默认基线：请求不再带 base
+		fireEvent.click(
+			screen.getByRole("button", { name: t("changes.base.reset") }),
+		);
+		await waitFor(() =>
+			expect(statusReqs().at(-1)?.query.has("base")).toBe(false),
+		);
+	});
+
 	it("点文件显示 git patch：增删行着色，文件头不当作增删", async () => {
 		const { container } = render(<ChangesPanel threadId="T-c4" orbId={ORB} />);
 		await filesList();

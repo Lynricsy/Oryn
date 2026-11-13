@@ -8,11 +8,13 @@ import {
 	type ReactNode,
 	useCallback,
 	useEffect,
+	useId,
 	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
+import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileSource,
 	joinPath,
@@ -20,7 +22,15 @@ import {
 	parentPath,
 } from "../../lib/file-source";
 import { formatBytes } from "../../lib/format";
-import { Button, Dialog, describeError, IconButton } from "../ui/primitives";
+import { Badge, ListRow, Meter, type Tone } from "../ui/data";
+import { Icon } from "../ui/icons";
+import {
+	Button,
+	Checkbox,
+	Dialog,
+	describeError,
+	IconButton,
+} from "../ui/primitives";
 
 export const UPLOAD_CONCURRENCY = 3;
 export const MAX_UPLOAD_FILES = 2000;
@@ -164,6 +174,17 @@ const FINISHED: Record<UploadStatus, boolean> = {
 	cancelled: true,
 };
 
+const STATUS_TONE: Record<UploadStatus, Tone> = {
+	queued: "neutral",
+	uploading: "accent",
+	conflict: "warn",
+	done: "ok",
+	failed: "err",
+	skipped: "neutral",
+	rejected: "err",
+	cancelled: "neutral",
+};
+
 /** 上传队列状态机。`onUploaded(dir)` 在每个文件写入成功后调用（刷新所在目录）。 */
 export function useUploads(onUploaded: (dir: string) => void): Uploads {
 	const { t } = useTranslation();
@@ -297,12 +318,14 @@ export function useUploads(onUploaded: (dir: string) => void): Uploads {
 export function UploadQueue({ uploads }: { uploads: Uploads }): ReactNode {
 	const { t } = useTranslation();
 	const [applyAll, setApplyAll] = useState(false);
+	const applyAllId = useId();
 	const { items, conflict } = uploads;
 	if (items.length === 0) return null;
 	const pending = items.filter((i) => !FINISHED[i.status]).length;
 	return (
-		<div className="border-border border-t bg-raised text-xs">
-			<div className="flex items-center gap-2 px-2 py-1">
+		<div className="border-border border-t bg-raised/60">
+			<div className="flex h-9 items-center gap-2 px-3 text-xs">
+				<Icon name="upload" size={13} className="shrink-0 text-faint" />
 				<span className="min-w-0 flex-1 truncate font-medium text-muted">
 					{t("files.upload.title", { pending, total: items.length })}
 				</span>
@@ -310,40 +333,65 @@ export function UploadQueue({ uploads }: { uploads: Uploads }): ReactNode {
 					{t("files.upload.clear")}
 				</Button>
 			</div>
-			<ul className="max-h-40 overflow-y-auto px-2 pb-1">
+			<ul className="max-h-48 overflow-y-auto px-1 pb-1">
 				{items.map((it) => (
-					<li key={it.id} className="flex items-center gap-2 py-0.5">
-						<span className="min-w-0 flex-1 truncate font-mono" title={it.path}>
-							{it.file.name}
-						</span>
-						{it.status === "uploading" ? (
-							<progress
-								className="h-1.5 w-20"
-								max={it.file.size || 1}
-								value={it.sent}
-								aria-label={it.file.name}
-							/>
-						) : (
-							<span
-								className={
-									it.status === "failed" || it.status === "rejected"
-										? "text-err"
-										: "text-faint"
-								}
-								title={it.error}
-							>
-								{t(`files.upload.status.${it.status}`)}
-							</span>
-						)}
-						{!FINISHED[it.status] && (
-							<IconButton
-								icon="close"
-								size={12}
-								className="h-5 w-5"
-								label={t("common.cancel")}
-								onClick={() => uploads.cancel(it.id)}
-							/>
-						)}
+					<li key={it.id}>
+						<ListRow
+							leading={
+								<Icon
+									name={fileIcon(it.file.name, it.file.type)}
+									size={14}
+									className="text-faint"
+								/>
+							}
+							title={
+								<span
+									className="min-w-0 truncate font-mono text-xs"
+									title={it.path}
+								>
+									{it.file.name}
+								</span>
+							}
+							meta={
+								<>
+									<span className="tabular-nums">
+										{it.status === "uploading"
+											? `${formatBytes(it.sent)} / ${formatBytes(it.file.size)}`
+											: formatBytes(it.file.size)}
+									</span>
+									{it.error && (
+										<span className="min-w-0 truncate text-err">
+											{it.error}
+										</span>
+									)}
+								</>
+							}
+							trailing={
+								<>
+									{it.status === "uploading" ? (
+										<Meter
+											value={it.sent}
+											max={it.file.size || 1}
+											tone="accent"
+											label={it.file.name}
+											className="w-20"
+										/>
+									) : (
+										<Badge tone={STATUS_TONE[it.status]} title={it.error}>
+											{t(`files.upload.status.${it.status}`)}
+										</Badge>
+									)}
+									{!FINISHED[it.status] && (
+										<IconButton
+											icon="close"
+											size={12}
+											label={t("common.cancel")}
+											onClick={() => uploads.cancel(it.id)}
+										/>
+									)}
+								</>
+							}
+						/>
 					</li>
 				))}
 			</ul>
@@ -368,14 +416,14 @@ export function UploadQueue({ uploads }: { uploads: Uploads }): ReactNode {
 				<p className="text-sm">
 					{t("files.upload.conflictBody", { path: conflict?.path ?? "" })}
 				</p>
-				<label className="mt-3 flex items-center gap-2 text-sm">
-					<input
-						type="checkbox"
+				<div className="mt-3 flex items-center gap-2 text-sm">
+					<Checkbox
+						id={applyAllId}
 						checked={applyAll}
 						onChange={(e) => setApplyAll(e.target.checked)}
 					/>
-					{t("files.upload.applyAll")}
-				</label>
+					<label htmlFor={applyAllId}>{t("files.upload.applyAll")}</label>
+				</div>
 			</Dialog>
 		</div>
 	);

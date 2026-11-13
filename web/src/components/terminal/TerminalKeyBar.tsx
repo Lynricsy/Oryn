@@ -10,6 +10,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { terminalHub } from "../../state/terminals";
+import { Icon } from "../ui/icons";
+
+/** 键帽：放大版 Kbd（按钮不抢焦点，靠按下缩放给反馈）。 */
+const KEYCAP =
+	"inline-flex h-8 shrink-0 items-center justify-center rounded-md border text-xs shadow-xs transition-[background-color,color,scale] duration-150 ease-out active:scale-95";
 
 const COARSE = "(pointer: coarse)";
 
@@ -122,14 +127,14 @@ export function TerminalKeyBar({
 		<div
 			role="toolbar"
 			aria-label={t("terminal.keyBar")}
-			className="flex shrink-0 gap-1 overflow-x-auto border-border border-t bg-raised px-1.5 py-1"
+			className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-t bg-raised px-2 py-1.5"
 		>
 			{KEYS.map((k) => (
 				<button
 					key={k.id}
 					type="button"
 					aria-pressed={k.id === "ctrl" ? ctrl : undefined}
-					className={`h-8 min-w-9 shrink-0 rounded-md border border-border px-2 font-mono text-xs ${k.id === "ctrl" && ctrl ? "bg-accent text-accent-fg" : "bg-panel text-fg"}`}
+					className={`${KEYCAP} min-w-8 px-2 font-mono ${k.id === "ctrl" && ctrl ? "border-accent/40 bg-accent-soft text-accent-ink" : "border-border bg-panel text-fg"}`}
 					onPointerDown={(e) => e.preventDefault()}
 					onClick={() => send(k)}
 				>
@@ -138,10 +143,11 @@ export function TerminalKeyBar({
 			))}
 			<button
 				type="button"
-				className="h-8 shrink-0 rounded-md border border-border bg-panel px-2 text-xs"
+				className={`${KEYCAP} gap-1 border-border bg-panel px-2.5 text-fg`}
 				onPointerDown={(e) => e.preventDefault()}
 				onClick={() => void paste()}
 			>
+				<Icon name="copy" size={13} className="text-faint" />
 				{t("terminal.paste")}
 			</button>
 		</div>

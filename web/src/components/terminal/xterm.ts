@@ -14,6 +14,11 @@ import type {
 	TermLike,
 } from "../../state/terminals";
 
+/** 与 index.css 的 `--mono` 同栈（xterm 不解析 CSS 变量，只能写字面量）。 */
+const FONT_FAMILY =
+	'"JetBrains Mono Variable", "Symbols Nerd Font Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+/** 主题取当前令牌（明暗 / 主题色切换后经 `retheme` 重取）。 */
 function theme(): ITheme {
 	const bg = cssColor("--inset", "#1e1e1e");
 	const fg = cssColor("--text", "#e6e6e6");
@@ -41,8 +46,7 @@ class XtermTerm implements TermLike {
 			allowProposedApi: true,
 			macOptionIsMeta: true,
 			fontSize: compact ? 12 : 13,
-			fontFamily:
-				'"JetBrains Mono Variable", "Symbols Nerd Font Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+			fontFamily: FONT_FAMILY,
 			cols: 100,
 			rows: 30,
 			theme: theme(),
@@ -115,6 +119,15 @@ class XtermTerm implements TermLike {
 			this.focusBound = true;
 			this.term.textarea.addEventListener("focus", () => this.onFocus());
 		}
+	}
+	refont() {
+		// 字体异步到位后单元格宽度会变：先换成别的字体再换回，强制 xterm 重新测量
+		const family = this.term.options.fontFamily ?? FONT_FAMILY;
+		this.term.options.fontFamily = "monospace";
+		this.term.options.fontFamily = family;
+	}
+	retheme() {
+		this.term.options.theme = theme();
 	}
 	propose() {
 		if (!this.term.element?.parentElement) return undefined;

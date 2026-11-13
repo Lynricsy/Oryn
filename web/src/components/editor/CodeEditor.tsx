@@ -5,7 +5,11 @@
  * CodeMirror 自带界面（搜索 / 替换面板、跳转行、折叠提示等）的文案经 `EditorState.phrases` 跟随界面语言。
  */
 import { indentWithTab } from "@codemirror/commands";
-import { LanguageDescription } from "@codemirror/language";
+import {
+	HighlightStyle,
+	LanguageDescription,
+	syntaxHighlighting,
+} from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
 	Annotation,
@@ -15,6 +19,7 @@ import {
 	Prec,
 } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useRef } from "react";
@@ -72,6 +77,14 @@ function phrasesFor(t: TFunction): Extension {
 /** 由外部 `value` 引起的整体替换（不是用户编辑）。 */
 const external = Annotation.define<boolean>();
 
+// 只引原始令牌变量（--r-* / --mono / --sans / --sh-*），Tailwind 的 inline 主题变量不保证输出到 :root
+const FIELD = {
+	border: "1px solid var(--line)",
+	borderRadius: "var(--r-md)",
+	fontFamily: "var(--sans)",
+	fontSize: "12px",
+};
+
 const theme = EditorView.theme({
 	"&": {
 		height: "100%",
@@ -89,8 +102,119 @@ const theme = EditorView.theme({
 	".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--hover)" },
 	"&.cm-focused": { outline: "none" },
 	"&.cm-focused .cm-cursor": { borderLeftColor: "var(--brand)" },
-	".cm-panels": { backgroundColor: "var(--panel)", color: "var(--text)" },
+	"&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+		{ backgroundColor: "color-mix(in oklab, var(--brand) 22%, transparent)" },
+	".cm-searchMatch": {
+		backgroundColor: "color-mix(in oklab, var(--caution) 28%, transparent)",
+		outline: "none",
+		borderRadius: "var(--r-xs)",
+	},
+	".cm-searchMatch.cm-searchMatch-selected": {
+		backgroundColor: "color-mix(in oklab, var(--caution) 55%, transparent)",
+	},
+	".cm-selectionMatch": {
+		backgroundColor: "color-mix(in oklab, var(--brand) 12%, transparent)",
+	},
+	".cm-foldPlaceholder": {
+		backgroundColor: "var(--raised)",
+		border: "1px solid var(--line)",
+		borderRadius: "var(--r-xs)",
+		color: "var(--text-muted)",
+	},
+	".cm-panels": {
+		backgroundColor: "var(--panel)",
+		color: "var(--text)",
+		fontFamily: "var(--sans)",
+	},
+	".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--line)" },
+	".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--line)" },
+	".cm-panel.cm-search": { padding: "6px 28px 6px 8px" },
+	".cm-panel.cm-search label": {
+		fontSize: "12px",
+		color: "var(--text-muted)",
+	},
+	".cm-textfield": {
+		...FIELD,
+		backgroundColor: "var(--inset)",
+		color: "var(--text)",
+		padding: "3px 8px",
+	},
+	".cm-textfield:focus-visible": {
+		outline: "2px solid var(--ring)",
+		outlineOffset: "0",
+	},
+	".cm-button": {
+		...FIELD,
+		backgroundImage: "none",
+		backgroundColor: "var(--panel)",
+		color: "var(--text)",
+		padding: "3px 10px",
+		boxShadow: "var(--sh-xs)",
+	},
+	".cm-button:hover": { backgroundColor: "var(--hover)" },
+	".cm-button:active": {
+		backgroundImage: "none",
+		backgroundColor: "var(--active)",
+	},
+	".cm-tooltip": {
+		backgroundColor: "var(--panel)",
+		color: "var(--text)",
+		border: "1px solid var(--line)",
+		borderRadius: "var(--r-md)",
+		boxShadow: "var(--sh-lg)",
+		overflow: "hidden",
+	},
+	".cm-tooltip-autocomplete > ul": { fontFamily: "var(--mono)" },
+	".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+		backgroundColor: "var(--active)",
+		color: "var(--text)",
+	},
 });
+
+/** 语法配色走 `--syn-*` 令牌,随明暗主题切换;覆盖 basicSetup 自带的 fallback 配色。 */
+const highlight = HighlightStyle.define([
+	{
+		tag: [
+			tags.keyword,
+			tags.operatorKeyword,
+			tags.modifier,
+			tags.controlKeyword,
+		],
+		color: "var(--syn-keyword)",
+	},
+	{
+		tag: [tags.string, tags.special(tags.string), tags.regexp, tags.inserted],
+		color: "var(--syn-string)",
+	},
+	{
+		tag: [tags.number, tags.bool, tags.null, tags.atom],
+		color: "var(--syn-number)",
+	},
+	{
+		tag: [
+			tags.function(tags.variableName),
+			tags.function(tags.propertyName),
+			tags.definition(tags.function(tags.variableName)),
+			tags.heading,
+		],
+		color: "var(--syn-title)",
+	},
+	{
+		tag: [tags.typeName, tags.className, tags.namespace, tags.tagName],
+		color: "var(--syn-type)",
+	},
+	{ tag: [tags.attributeName, tags.propertyName], color: "var(--syn-type)" },
+	{
+		tag: [tags.comment, tags.meta],
+		color: "var(--text-faint)",
+		fontStyle: "italic",
+	},
+	{ tag: tags.deleted, color: "var(--bad)" },
+	{ tag: tags.invalid, color: "var(--bad)" },
+	{ tag: tags.link, textDecoration: "underline" },
+	{ tag: tags.strong, fontWeight: "600" },
+	{ tag: tags.emphasis, fontStyle: "italic" },
+]);
 
 export default function CodeEditor({
 	value,
@@ -134,6 +258,7 @@ export default function CodeEditor({
 					basicSetup,
 					keymap.of([indentWithTab]),
 					theme,
+					syntaxHighlighting(highlight),
 					EditorView.lineWrapping,
 					language.current.of([]),
 					editable.current.of([

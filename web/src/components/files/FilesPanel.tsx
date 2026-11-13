@@ -5,6 +5,8 @@
 import { type ReactNode, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { agentConfigSource, orbFileSource } from "../../lib/file-source";
+import { Icon } from "../ui/icons";
+import { Button } from "../ui/primitives";
 import { FileBrowser } from "./FileBrowser";
 import { useWorkspaceActivity } from "./hooks";
 
@@ -26,20 +28,22 @@ export default function FilesPanel({
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			{!orbId && (
-				<p className="shrink-0 bg-raised px-3 py-1.5 text-muted text-xs">
+				<p className="flex shrink-0 items-center gap-1.5 bg-raised px-3 py-1.5 text-muted text-xs">
+					<Icon name="info" size={13} className="shrink-0" />
 					{t("files.orbDeleted")}
 				</p>
 			)}
 			{agentSaved && (
-				<div className="flex shrink-0 items-center gap-2 bg-ok/10 px-3 py-1.5 text-ok text-xs">
+				<div className="flex shrink-0 items-center gap-2 bg-ok/10 py-1 pr-1 pl-3 text-ok-ink text-xs">
+					<Icon name="checkCircle" size={13} className="shrink-0 text-ok" />
 					<span className="min-w-0 flex-1">{t("files.agentConfigSaved")}</span>
-					<button
-						type="button"
-						className="text-muted hover:text-fg"
+					<Button
+						size="sm"
+						variant="ghost"
 						onClick={() => setAgentSaved(false)}
 					>
 						{t("common.dismiss")}
-					</button>
+					</Button>
 				</div>
 			)}
 			<div className="min-h-0 flex-1">
