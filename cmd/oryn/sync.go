@@ -28,9 +28,9 @@ const (
 )
 
 type syncOptions struct {
-	apply, detach, force, restore bool
-	interval                      time.Duration
-	root                          string
+	apply, detach, force, restore, discard bool
+	interval                               time.Duration
+	root                                   string
 }
 
 var syncOpts syncOptions
@@ -39,10 +39,15 @@ var syncCmd = &cobra.Command{
 	Use:   "sync <thread>",
 	Short: "把线程 orb 里的提交与未提交改动镜像到当前目录的干净检出（Ctrl-C 还原；--apply 一次性应用）",
 	Long: "持续镜像：本地 HEAD 游离在 orb 的提交上，工作区 = orb 的工作区；Ctrl-C / SIGTERM 后还原到原分支原提交。\n" +
-		"镜像期间本地文件被改动时停止且不覆盖（退出码 3），处理后用 `oryn sync --restore` 还原。\n" +
+		"每次覆盖本地文件前都会复核：本地文件被改动（含下载期间）时停止且不覆盖；退出时有本地改动则不还原（退出码 3），\n" +
+		"保存好需要的改动后用 `oryn sync --restore --discard` 丢弃改动并还原。\n" +
+		"本地被忽略的文件（如 .env）与 orb 的文件路径冲突时拒绝（退出码 3），不会覆盖。\n" +
 		"--apply：一次性挂到与 orb 同名的分支（能快进时）并带上未提交改动。\n" +
-		"退出码：0 成功；1 运行或接口错误；2 前置条件不满足（不在仓库、检出不干净、有未还原的状态）；3 本地改动。",
+		"退出码：0 成功；1 运行或接口错误；2 前置条件不满足（不在仓库、检出不干净、有未还原的状态）；3 本地改动或被忽略文件冲突。",
 	Args: func(cmd *cobra.Command, args []string) error {
+		if syncOpts.discard && !syncOpts.restore {
+			return errors.New("--discard 只能与 --restore 一起使用")
+		}
 		if syncOpts.restore {
 			return cobra.MaximumNArgs(1)(cmd, args)
 		}
@@ -65,7 +70,7 @@ func runSync(ctx context.Context, threadID string, o syncOptions, errw io.Writer
 		return syncExit(err, errw)
 	}
 	if o.restore {
-		if err := syncclient.Restore(dir); err != nil {
+		if err := syncclient.Restore(dir, syncclient.RestoreOptions{Discard: o.discard}); err != nil {
 			return syncExit(err, errw)
 		}
 		fmt.Fprintln(errw, "已还原")
@@ -119,7 +124,7 @@ func syncExit(err error, errw io.Writer) int {
 	switch {
 	case errors.Is(err, syncclient.ErrNotARepo), errors.Is(err, syncclient.ErrDirty), errors.Is(err, syncclient.ErrStaleState):
 		return exitSyncPrecondition
-	case errors.Is(err, syncclient.ErrLocalEdits):
+	case errors.Is(err, syncclient.ErrLocalEdits), errors.Is(err, syncclient.ErrIgnoredConflict):
 		return exitSyncLocalEdits
 	}
 	return 1
@@ -170,6 +175,7 @@ func init() {
 	f.DurationVar(&syncOpts.interval, "interval", 3*time.Second, "镜像模式的轮询间隔")
 	f.StringVar(&syncOpts.root, "root", "", "orb 内仓库路径（缺省 = orb 当前工作目录）")
 	f.BoolVar(&syncOpts.force, "force", false, "本地与 orb 没有共同提交时仍同步（传输完整历史）")
-	f.BoolVar(&syncOpts.restore, "restore", false, "按状态文件还原上一次中断的镜像")
+	f.BoolVar(&syncOpts.restore, "restore", false, "按状态文件还原上一次中断的镜像（有本地改动时拒绝）")
+	f.BoolVar(&syncOpts.discard, "discard", false, "与 --restore 一起：丢弃镜像期间的本地改动后还原")
 	root.AddCommand(syncCmd)
 }

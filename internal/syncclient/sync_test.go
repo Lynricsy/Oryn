@@ -71,12 +71,16 @@ func read(t *testing.T, path string) string {
 }
 
 // orbRemote 在一个临时「orb 仓库」上按计划 4.3 的命令生成同步状态与 bundle（orbd /sync/prepare 的测试替身）。
-// gate 非空时每次 Prepare 先发 entered 再等 gate（镜像测试据此逐轮推进）。
+// gate 非空时每次 Prepare 先发 entered 再等 gate（镜像测试据此逐轮推进）；
+// onBundle 非空时在下载 bundle 的过程中（已写出一部分字节、尚未写完）同步调用一次，模拟「下载期间本地被改动」。
 type orbRemote struct {
 	dir, bundles string
 	n            atomic.Int64
 	gate         chan struct{}
 	entered      chan bool
+	onBundle     func()
+	// mutate 非空时改写返回的状态（模拟恶意 / 有缺陷的 orb）。
+	mutate func(*apigen.OrbSyncState)
 }
 
 func (o *orbRemote) Prepare(ctx context.Context, req apigen.OrbSyncPrepareRequest, bg bool) (apigen.OrbSyncState, error) {
@@ -125,8 +129,16 @@ func (o *orbRemote) Prepare(ctx context.Context, req apigen.OrbSyncPrepareReques
 		return st, &APIError{Status: 409, Code: "sync_no_common", Message: "no common commits"}
 	}
 	id := fmt.Sprintf("%016x", o.n.Add(1))
-	g(nil, append([]string{"bundle", "create", "--quiet", filepath.Join(o.bundles, id), "refs/oryn/sync/snapshot", "refs/oryn/sync/head", "--not"}, st.Common...)...)
-	st.Bundle = &apigen.OrbSyncBundle{ID: id}
+	file := filepath.Join(o.bundles, id)
+	g(nil, append([]string{"bundle", "create", "--quiet", file, "refs/oryn/sync/snapshot", "refs/oryn/sync/head", "--not"}, st.Common...)...)
+	fi, err := os.Stat(file)
+	if err != nil {
+		return st, err
+	}
+	st.Bundle = &apigen.OrbSyncBundle{ID: id, Size: fi.Size()}
+	if o.mutate != nil {
+		o.mutate(&st)
+	}
 	return st, nil
 }
 
@@ -136,6 +148,12 @@ func (o *orbRemote) Bundle(_ context.Context, id string, w io.Writer) error {
 		return err
 	}
 	defer f.Close()
+	if o.onBundle != nil {
+		if _, err := io.CopyN(w, f, 16); err != nil {
+			return err
+		}
+		o.onBundle()
+	}
 	_, err = io.Copy(w, f)
 	return err
 }
@@ -361,7 +379,11 @@ func TestMirrorStopsOnLocalEdits(t *testing.T) {
 	f.remote.gate = nil
 	require.ErrorIs(t, Apply(context.Background(), f.remote, f.opts()), ErrStaleState)
 	require.ErrorIs(t, Mirror(context.Background(), f.remote, f.opts()), ErrStaleState)
-	require.NoError(t, Restore(f.local))
+	// 不带 --discard 的还原同样拒绝覆盖本地改动
+	require.ErrorIs(t, Restore(f.local, RestoreOptions{}), ErrLocalEdits)
+	assert.Equal(t, "edited locally\n", read(t, filepath.Join(f.local, "a.txt")))
+	assert.FileExists(t, filepath.Join(f.local, ".git", stateName))
+	require.NoError(t, Restore(f.local, RestoreOptions{Discard: true}))
 	assert.Equal(t, f.base, gitT(t, f.local, "rev-parse", "HEAD"))
 	assert.Empty(t, gitT(t, f.local, "status", "--porcelain"))
 	assert.Empty(t, syncRefs(t, f.local))
