@@ -1,8 +1,7 @@
-/** agent 头像：设置里上传的图片或选的图标；未设置时为品牌标。助手回合起点使用。 */
+/** agent 头像：设置里上传的图片或选的单个字形（emoji / Nerd Font）；未设置时为品牌标。助手回合起点使用。 */
 import type { ReactNode } from "react";
 import { useAgentIdentity } from "../../api/queries";
 import { BrandMark } from "./data";
-import { Icon, type IconName, isIconName } from "./icons";
 
 export function AgentAvatar({ size = 20 }: { size?: number }): ReactNode {
 	const { data } = useAgentIdentity();
@@ -12,28 +11,28 @@ export function AgentAvatar({ size = 20 }: { size?: number }): ReactNode {
 			<img
 				src={data.avatarImage}
 				alt=""
-				aria-hidden
+				data-agent-avatar="image"
 				width={size}
 				height={size}
 				className="shrink-0 rounded-md object-cover ring-1 ring-border"
 				style={box}
 			/>
 		);
-	const icon: IconName | null =
-		data?.avatarIcon && isIconName(data.avatarIcon) ? data.avatarIcon : null;
-	if (icon)
+	if (data?.avatarIcon)
 		return (
 			<span
 				aria-hidden
-				className="inline-grid shrink-0 place-items-center rounded-md bg-accent-soft text-accent-ink"
-				style={box}
+				data-agent-avatar="icon"
+				className="inline-grid shrink-0 place-items-center rounded-md bg-accent-soft text-accent-ink leading-none"
+				style={{ ...box, fontSize: Math.round(size * 0.66) }}
 			>
-				<Icon name={icon} size={Math.round(size * 0.65)} weight="fill" />
+				{data.avatarIcon}
 			</span>
 		);
 	return (
 		<span
 			aria-hidden
+			data-agent-avatar="default"
 			className="inline-grid shrink-0 place-items-center rounded-md bg-accent-soft"
 			style={box}
 		>
