@@ -5,7 +5,7 @@
  *
  * 三个浏览器上下文：
  *   A：`extraHTTPHeaders` 带设备令牌，驱动主站界面；
- *   B：只带主站会话 Cookie `oryn_session`（`orynd admin create-web-session` 现签），走真实握手；
+ *   B：只带主站会话 Cookie `__Host-oryn_session`（`orynd admin create-web-session` 现签），走真实握手；
  *   C：什么都不带（匿名访客）。
  * 命令行请求一律 `curl -H "Host: <portal 主机>" http://127.0.0.1:7600/…`，不依赖本机对 *.localhost 的解析。
  *
@@ -49,7 +49,10 @@ const ONLY =
 
 const sleep = (ms: number) => Bun.sleep(ms);
 
-function sh(cmd: string, stdin?: string): { code: number; out: string } {
+function sh(
+	cmd: string,
+	stdin?: string,
+): { code: number; out: string; stdout: string } {
 	const r = Bun.spawnSync(["bash", "-c", cmd], {
 		cwd: ROOT,
 		stdin: stdin !== undefined ? new TextEncoder().encode(stdin) : undefined,
@@ -57,6 +60,7 @@ function sh(cmd: string, stdin?: string): { code: number; out: string } {
 	return {
 		code: r.exitCode ?? -1,
 		out: (r.stdout.toString() + r.stderr.toString()).trim(),
+		stdout: r.stdout.toString().trim(),
 	};
 }
 
@@ -283,10 +287,11 @@ async function waitRunning(name: string, timeoutMs = 60_000) {
 function startService(name: string, command: string, portal = true) {
 	const r = dexec(
 		ORB,
-		`oryn orb service start ${name} --command ${JSON.stringify(command)}${portal ? " --portal" : ""}`,
+		`oryn orb service start ${name} --command '${command.replaceAll("'", "'\\''")}'${portal ? " --portal" : ""}`,
 		THREAD,
 	);
-	const last = r.out.trim().split("\n").pop() ?? "";
+	// URL 打在 stdout，状态行在 stderr
+	const last = r.stdout.split("\n").pop() ?? "";
 	return { code: r.code, out: r.out, last };
 }
 
@@ -490,7 +495,7 @@ async function P4() {
 		timeout: 60_000,
 	});
 	check(true, "iframe 内看到目录列表");
-	const pill = await page.locator("[data-testid=portal-url]").textContent();
+	const pill = await page.locator("[data-testid=portal-host]").textContent();
 	check(!!pill?.includes(`t-${CODE}-p`), `URL 胶囊「${pill?.trim()}」`);
 	const sandbox =
 		(await page
@@ -606,23 +611,41 @@ async function P6() {
 	}
 }
 
-async function shareViaUI(page: Page, port: number, label: string) {
+/** 经链接菜单切到某端口（多个 portal 时菜单项提示 `:<端口>`）。 */
+async function selectPort(page: Page, port: number) {
 	await openPortalTab(page);
-	// 切到对应端口的服务
-	const pick = page.locator("[data-testid=portal-service-select]");
-	if (await pick.isVisible().catch(() => false)) {
-		await pick.click();
-		await page.locator(`[data-portal-port="${port}"]`).first().click();
-	}
-	await page.locator("[data-testid=portal-access]").click();
-	await page.getByRole("button", { name: label }).click();
-	const confirm = page.locator("[data-testid=portal-share-confirm]");
+	const host = await page.locator("[data-testid=portal-host]").textContent();
+	if (host?.includes(`-p${port}.`)) return;
+	await page.getByRole("button", { name: "链接", exact: true }).click();
+	await page
+		.getByRole("menuitem")
+		.filter({ hasText: `:${port}` })
+		.first()
+		.click();
+	await waitFor(
+		`地址栏切到 :${port}`,
+		async () =>
+			(await page.locator("[data-testid=portal-host]").textContent())?.includes(
+				`-p${port}.`,
+			),
+		10_000,
+	);
+}
+
+/** 齿轮 → 访问弹层；`label` 是按钮的无障碍名（「公开 1 小时」「续期为从现在起 3 小时」）。 */
+async function shareViaUI(page: Page, port: number, label: string) {
+	await selectPort(page, port);
+	const dlg = page.getByRole("dialog", { name: `端口 ${port} 的访问权限` });
+	if (!(await dlg.isVisible().catch(() => false)))
+		await page.getByRole("button", { name: "访问权限" }).click();
+	await dlg.getByRole("button", { name: label }).click();
+	const confirm = dlg.getByRole("button", { name: "确认公开" });
 	if (await confirm.isVisible().catch(() => false)) await confirm.click();
 }
 
 async function P7() {
 	const page = await mainPage();
-	await shareViaUI(page, HDR_PORT, "1 小时");
+	await shareViaUI(page, HDR_PORT, "公开 1 小时");
 	const row = await waitFor(
 		"portal_shares 有 hdr",
 		() =>
@@ -672,7 +695,7 @@ async function P8() {
 		const e0 = sql<{ expires_at: number }>(
 			`select expires_at from portal_shares where orb_id='${ORB}' and port=${WS_PORT}`,
 		)[0].expires_at;
-		await shareViaUI(page, WS_PORT, "3 小时");
+		await shareViaUI(page, WS_PORT, "续期为从现在起 3 小时");
 		const e1 = await waitFor(
 			"expires_at 变大",
 			() => {
@@ -685,8 +708,10 @@ async function P8() {
 		);
 		note(`续期 ${e0} → ${e1}`);
 		check(!(await wsState(pageC, "c1")).closed, "续期后 WebSocket 不断");
-		await page.locator("[data-testid=portal-access]").click();
-		await page.locator("[data-testid=portal-share-end]").click();
+		await page
+			.getByRole("dialog", { name: `端口 ${WS_PORT} 的访问权限` })
+			.getByRole("button", { name: "终止公开" })
+			.click();
 		const t0 = Date.now();
 		await waitFor(
 			"C 的 WebSocket 关闭",
@@ -793,8 +818,8 @@ async function P11() {
 	check(web.source === "file", "web source=file");
 	const page = await mainPage();
 	await openPortalTab(page);
-	await page.locator("[data-testid=portal-links]").click();
-	const items = await page.locator("[data-portal-link]").allTextContents();
+	await page.getByRole("button", { name: "链接", exact: true }).click();
+	const items = await page.getByRole("menuitem").allTextContents();
 	note(`链接菜单 ${items.join(" | ")}`);
 	check(
 		items.some((t) => t.includes("web")) &&
@@ -838,10 +863,10 @@ async function P12() {
 	const row = page.locator('[data-service="web"]');
 	await row.waitFor({ timeout: 15_000 });
 	note(`信息面板行「${(await row.textContent())?.trim()}」`);
-	await row.locator("[data-testid=service-log]").click();
-	const dlg = page.getByRole("dialog");
-	await dlg.waitFor();
-	const txt = (await dlg.textContent()) ?? "";
+	await row.getByRole("button", { name: "web 的日志" }).click();
+	const pre = page.getByRole("dialog").locator("[data-testid=service-log]");
+	await pre.waitFor({ timeout: 15_000 });
+	const txt = (await pre.textContent()) ?? "";
 	check(txt.includes("[orbd]"), "日志对话框有内容");
 	await shot(page, "P12-log");
 	await page.keyboard.press("Escape");
@@ -908,7 +933,7 @@ async function P15() {
 	);
 	// ③ 非法参数
 	const bad = await api("GET", "/portal/auth?t=zz&p=1", undefined, {
-		Cookie: `oryn_session=${SESSION}`,
+		Cookie: `__Host-oryn_session=${SESSION}`,
 	});
 	check(bad.status === 400, `③ 400（${bad.status}）`);
 	// ④ 开放重定向
@@ -945,7 +970,7 @@ async function P14() {
 		await page.goto(portalURL(WS_PORT));
 		await openWs(page, `ws://${H(WS_PORT)}/`, "b1");
 		const r = await api("POST", "/api/v1/auth/logout", undefined, {
-			Cookie: `oryn_session=${SESSION}`,
+			Cookie: `__Host-oryn_session=${SESSION}`,
 		});
 		note(`logout ${r.status}`);
 		const t0 = Date.now();
@@ -1020,6 +1045,8 @@ const TESTS: [string, () => Promise<void>][] = [
 
 THREAD = await ensureThread();
 CODE = THREAD.slice(-12);
+// 上次跑完可能已空闲冻结 / 停机：先唤醒
+await api("POST", `/api/v1/threads/${THREAD}/wake`);
 await waitFor(
 	"线程有 orb 且 orb ready",
 	() => {
@@ -1060,10 +1087,9 @@ await ctxA.addInitScript(() => {
 ctxB = await browser.newContext({ locale: "zh-CN" });
 await ctxB.addCookies([
 	{
-		name: "oryn_session",
+		name: "__Host-oryn_session",
 		value: SESSION,
-		domain: "localhost",
-		path: "/",
+		url: BASE, // __Host- 前缀：host-only，不能带 Domain
 		secure: true,
 		httpOnly: true,
 		sameSite: "Lax",
