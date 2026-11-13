@@ -1,8 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import i18n from "../i18n";
+import { installTheme, THEME_KEY, themeStore } from "../state/theme";
 import type { SettingsSection } from "./SettingsPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -36,6 +51,7 @@ let identity: { name: string; email: string } | undefined;
 let calls: Call[] = [];
 let agentFiles: Record<string, string> = {};
 let agentPuts: { path: string; body: string }[] = [];
+let agentIdentity: { avatarIcon?: string; avatarImage?: string } = {};
 
 async function agentConfig(req: Request, url: URL): Promise<Response> {
 	if (url.pathname === "/api/v1/agent-config/files")
@@ -75,6 +91,16 @@ async function agentConfig(req: Request, url: URL): Promise<Response> {
 		: new Response(c);
 }
 
+const PROJECT = {
+	id: "p1",
+	name: "oryn",
+	repoUrl: "https://github.com/x/oryn",
+	shallowClone: false,
+	icon: "\u{f07d3}",
+	createdAt: 1,
+	updatedAt: 1,
+};
+
 const fetchMock = vi.fn(
 	async (input: RequestInfo | URL, init?: RequestInit) => {
 		// rawFetch 传相对路径与 init；Node 的 Request 只收绝对地址
@@ -101,6 +127,14 @@ const fetchMock = vi.fn(
 			}
 			return Response.json(identity ? { identity } : {});
 		}
+		if (url.pathname === "/api/v1/settings/agent-identity") {
+			if (req.method === "PUT") agentIdentity = JSON.parse(text);
+			return Response.json(agentIdentity);
+		}
+		if (url.pathname === "/api/v1/projects")
+			return Response.json({ projects: [PROJECT] });
+		if (url.pathname === `/api/v1/projects/${PROJECT.id}`)
+			return Response.json({ ...PROJECT, ...JSON.parse(text) });
 		return Response.json({ code: "not_found", message: "" }, { status: 404 });
 	},
 );
@@ -235,5 +269,115 @@ describe("设置 → agent 配置", () => {
 		]);
 		// 旧的 textarea 编辑器已删除
 		expect(screen.queryByRole("textbox", { name: "models.yml" })).toBeNull();
+	});
+});
+
+describe("设置 → 外观", () => {
+	beforeAll(() => installTheme());
+	beforeEach(() => {
+		localStorage.clear();
+		themeStore.setState({ mode: "system", accent: "teal" });
+		agentIdentity = {};
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("切到深色 + 狐橙：写到根元素并存进 localStorage", async () => {
+		setup("appearance");
+		const mode = screen.getByRole("radiogroup", { name: "明暗" });
+		const dark = within(mode).getByRole("radio", { name: "深色" });
+		expect(dark).toHaveAttribute("aria-checked", "false");
+		fireEvent.click(dark);
+		expect(dark).toHaveAttribute("aria-checked", "true");
+		fireEvent.click(screen.getByRole("radio", { name: "狐橙" }));
+		expect(screen.getByRole("radio", { name: "狐橙" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		expect({ ...document.documentElement.dataset }).toEqual({
+			theme: "dark",
+			accent: "fox",
+		});
+		expect(JSON.parse(localStorage.getItem(THEME_KEY) ?? "null")).toEqual({
+			mode: "dark",
+			accent: "fox",
+		});
+	});
+
+	it("方向键在主题色之间移动并选中", () => {
+		setup("appearance");
+		const teal = screen.getByRole("radio", { name: "青碧" });
+		teal.focus();
+		fireEvent.keyDown(teal, { key: "ArrowRight" });
+		const cobalt = screen.getByRole("radio", { name: "钴蓝" });
+		expect(cobalt).toHaveFocus();
+		expect(cobalt).toHaveAttribute("aria-checked", "true");
+		expect(document.documentElement.dataset.accent).toBe("cobalt");
+	});
+
+	it("agent 头像：选内置字形以 PUT 整体替换，恢复默认发送空对象", async () => {
+		setup("appearance");
+		// 新文案 key 由集成时统一补进 locale：按 key 取，补齐前后都成立
+		const grid = await screen.findByRole("group", {
+			name: i18n.t("appearance.avatarGlyphs" as "common.save"),
+		});
+		fireEvent.click(within(grid).getByRole("button", { name: "🦊" }));
+		await waitFor(() =>
+			expect(within(grid).getByRole("button", { name: "🦊" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			),
+		);
+		const reset = screen.getByRole("button", {
+			name: i18n.t("appearance.avatarReset" as "common.save"),
+		});
+		await waitFor(() => expect(reset).toBeEnabled());
+		fireEvent.click(reset);
+		await waitFor(() => expect(reset).toBeDisabled());
+		expect(writes().map((c) => [c.method, c.path, c.body])).toEqual([
+			["PUT", "/api/v1/settings/agent-identity", { avatarIcon: "🦊" }],
+			["PUT", "/api/v1/settings/agent-identity", {}],
+		]);
+	});
+});
+
+describe("设置 → 项目图标", () => {
+	beforeEach(() => {
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("选字形后保存发送该字形；选「自动」发送空串清除", async () => {
+		setup("projects");
+		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+		const grid = screen.getByRole("group", {
+			name: i18n.t("projects.icon" as "common.save"),
+		});
+		expect(
+			within(grid).getByRole("button", { name: "language go" }),
+		).toHaveAttribute("aria-pressed", "true");
+		fireEvent.click(
+			within(grid).getByRole("button", { name: "language rust" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes()).toHaveLength(1));
+		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: i18n.t("projects.iconAuto" as "common.save"),
+			}),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes()).toHaveLength(2));
+		expect(writes().map((c) => c.body)).toEqual([
+			expect.objectContaining({ icon: "\u{f1617}" }),
+			expect.objectContaining({ icon: "" }),
+		]);
 	});
 });

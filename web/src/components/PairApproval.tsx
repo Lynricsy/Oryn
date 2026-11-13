@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, api, type Schemas, unwrap } from "../api/client";
 import { qk } from "../api/queries";
 import { formatDateTime, formatRelative } from "../lib/format";
+import { Badge, Callout, Card, KeyValue } from "./ui/data";
 import { Button, ErrorText, Spinner, TextInput } from "./ui/primitives";
 
 /** 统一配对码格式：去空白、大写、补上中间的连字符（ABCD-EFGH）。 */
@@ -107,20 +108,59 @@ export function PairApproval({
 				</Button>
 			</form>
 			{pairing && (
-				<div className="rounded-lg border border-border bg-raised p-3 text-sm">
-					<dl className="grid grid-cols-[6rem_1fr] gap-y-1">
-						<dt className="text-muted">{t("pair.device")}</dt>
-						<dd className="font-medium">{`${pairing.name} · ${t(`devices.kind.${pairing.kind}`)} · ${pairing.platform}`}</dd>
-						<dt className="text-muted">IP</dt>
-						<dd className="font-mono text-xs">{pairing.ip}</dd>
-						<dt className="text-muted">{t("pair.userAgent")}</dt>
-						<dd className="break-all text-xs">{pairing.userAgent}</dd>
-						<dt className="text-muted">{t("pair.requestedAt")}</dt>
-						<dd className="text-xs">{formatDateTime(pairing.createdAt)}</dd>
-						<dt className="text-muted">{t("pair.expires")}</dt>
-						<dd className="text-xs">{formatRelative(pairing.expiresAt)}</dd>
-					</dl>
-					<p className="mt-2 text-muted text-xs">{t("pair.verifyHint")}</p>
+				<Card>
+					<KeyValue
+						rows={[
+							{
+								key: "device",
+								label: t("pair.device"),
+								value: (
+									<span className="flex flex-wrap items-center gap-1.5">
+										<span className="font-medium">{pairing.name}</span>
+										<Badge icon="device">
+											{t(`devices.kind.${pairing.kind}`)}
+										</Badge>
+										<Badge>{pairing.platform}</Badge>
+									</span>
+								),
+							},
+							{
+								key: "ip",
+								label: t("pair.ip"),
+								value: <span className="font-mono text-xs">{pairing.ip}</span>,
+							},
+							{
+								key: "ua",
+								label: t("pair.userAgent"),
+								value: (
+									<span className="break-all text-muted text-xs">
+										{pairing.userAgent}
+									</span>
+								),
+							},
+							{
+								key: "requested",
+								label: t("pair.requestedAt"),
+								value: (
+									<span className="text-xs tabular-nums">
+										{formatDateTime(pairing.createdAt)}
+									</span>
+								),
+							},
+							{
+								key: "expires",
+								label: t("pair.expires"),
+								value: (
+									<Badge tone="warn" icon="timer">
+										{formatRelative(pairing.expiresAt)}
+									</Badge>
+								),
+							},
+						]}
+					/>
+					<div className="mt-3">
+						<Callout tone="neutral">{t("pair.verifyHint")}</Callout>
+					</div>
 					<div className="mt-3 flex gap-2">
 						<Button
 							variant="primary"
@@ -133,9 +173,13 @@ export function PairApproval({
 							{t("common.cancel")}
 						</Button>
 					</div>
-				</div>
+				</Card>
 			)}
-			{done && <p className="text-ok text-sm">{t("pair.approved")}</p>}
+			{done && (
+				<Callout tone="ok" role="status">
+					{t("pair.approved")}
+				</Callout>
+			)}
 			<ErrorText error={error} />
 		</div>
 	);

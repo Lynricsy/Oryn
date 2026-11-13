@@ -16,6 +16,7 @@ import { api, unwrap } from "../api/client";
 import { qk, useMe } from "../api/queries";
 import { PairApproval } from "../components/PairApproval";
 import { CopyButton } from "../components/ui/CopyButton";
+import { BrandMark } from "../components/ui/data";
 import {
 	Button,
 	ErrorText,
@@ -37,12 +38,15 @@ function unwrapOptions<T>(options: Record<string, unknown>): T {
 function AuthCard({ title, children }: { title: string; children: ReactNode }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex min-h-dvh items-center justify-center bg-bg px-4 pt-safe pb-safe">
-			<div className="w-full max-w-sm rounded-2xl border border-border bg-panel p-6 shadow-sm">
-				<div className="mb-1 font-semibold text-muted text-sm">
-					{t("app.name")}
+		<div className="shell-wash flex min-h-dvh items-center justify-center px-4 pt-safe pb-safe">
+			<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
+				<div className="mb-4 flex items-center gap-2">
+					<BrandMark size={32} />
+					<span className="font-semibold text-muted text-sm">
+						{t("app.name")}
+					</span>
 				</div>
-				<h1 className="mb-4 font-semibold text-lg">{title}</h1>
+				<h1 className="mb-4 font-semibold text-lg tracking-tight">{title}</h1>
 				{children}
 			</div>
 		</div>
@@ -110,9 +114,14 @@ export function SetupPage(): ReactNode {
 		return (
 			<AuthCard title={t("auth.recoveryCodesTitle")}>
 				<p className="mb-3 text-muted text-sm">{t("auth.recoveryCodesHint")}</p>
-				<ul className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 whitespace-nowrap rounded-lg bg-inset p-3 font-mono text-xs">
+				<ul className="mb-3 grid grid-cols-2 gap-1.5 whitespace-nowrap font-mono text-xs">
 					{codes.map((c) => (
-						<li key={c}>{c}</li>
+						<li
+							key={c}
+							className="rounded-md bg-inset px-2 py-1 text-center tabular-nums"
+						>
+							{c}
+						</li>
 					))}
 				</ul>
 				<div className="flex items-center justify-between">
@@ -255,7 +264,7 @@ export function PairPage(): ReactNode {
 			<AuthCard title={t("pair.title")}>
 				<p className="mb-3 text-muted text-sm">{t("pair.loginFirst")}</p>
 				<Link
-					className="text-accent text-sm underline"
+					className="text-accent text-sm underline underline-offset-3"
 					to={`/login?next=${encodeURIComponent("/pair")}`}
 				>
 					{t("auth.loginTitle")}

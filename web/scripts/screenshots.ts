@@ -211,7 +211,6 @@ interface Screen {
 	verify?(s: Shot): Promise<string | null>;
 }
 
-/** Step 5 集成时父 agent 往这里加 "appearance"。 */
 const SETTINGS_SECTIONS = [
 	"devices",
 	"providers",
@@ -219,6 +218,7 @@ const SETTINGS_SECTIONS = [
 	"secrets",
 	"git-identity",
 	"agent-config",
+	"appearance",
 	"about",
 ];
 

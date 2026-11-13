@@ -27,6 +27,7 @@ const SETTINGS: SettingsSection[] = [
 	"secrets",
 	"git-identity",
 	"agent-config",
+	"appearance",
 	"about",
 ];
 

@@ -1,14 +1,22 @@
 /**
- * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单）、
- * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、关于。
+ * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
+ * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
+ * 外观（明暗、主题色、agent 头像）、关于。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+	type ChangeEvent,
+	type KeyboardEvent,
+	type ReactNode,
+	useMemo,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
 import { api, type Project, type Schemas, unwrap } from "../api/client";
 import {
 	qk,
+	useAgentIdentity,
 	useDevices,
 	useGitIdentity,
 	useHealth,
@@ -20,7 +28,18 @@ import {
 } from "../api/queries";
 import { FileBrowser } from "../components/files/FileBrowser";
 import { PairApproval } from "../components/PairApproval";
+import { AgentAvatar } from "../components/ui/AgentAvatar";
 import { CopyButton } from "../components/ui/CopyButton";
+import {
+	Badge,
+	Callout,
+	Card,
+	KeyValue,
+	ListRow,
+	ProjectBadge,
+	Sheet,
+	StatusDot,
+} from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
 import {
 	Button,
@@ -33,10 +52,24 @@ import {
 	TextInput,
 	Toggle,
 } from "../components/ui/primitives";
+import { AvatarTooLargeError, avatarDataUrl } from "../lib/avatar-image";
 import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
 import { agentConfigSource } from "../lib/file-source";
-import { formatDateTime, formatRelative } from "../lib/format";
+import { formatDateTime, formatMemoryMB, formatRelative } from "../lib/format";
+import {
+	AVATAR_GLYPHS,
+	type Glyph,
+	isSingleGlyph,
+	PROJECT_GLYPHS,
+} from "../lib/glyphs";
 import { useBreakpoint } from "../lib/viewport";
+import {
+	ACCENTS,
+	type AccentName,
+	MODES,
+	type ThemeMode,
+	useTheme,
+} from "../state/theme";
 import { uiStore } from "../state/ui";
 
 export type SettingsSection =
@@ -46,6 +79,7 @@ export type SettingsSection =
 	| "secrets"
 	| "git-identity"
 	| "agent-config"
+	| "appearance"
 	| "about";
 
 const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
@@ -55,6 +89,7 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "secrets", icon: "key" },
 	{ key: "git-identity", icon: "fork" },
 	{ key: "agent-config", icon: "file" },
+	{ key: "appearance", icon: "palette" },
 	{ key: "about", icon: "info" },
 ];
 
@@ -77,27 +112,88 @@ function useAsync() {
 	return { busy, error, run };
 }
 
-function Card({
-	title,
-	children,
-	action,
+/** 卡片内的列表：行自带内边距，向两侧各收 2 个单位与卡片标题对齐。 */
+function RowList({ children }: { children: ReactNode }) {
+	return <ul className="-mx-2 flex flex-col">{children}</ul>;
+}
+
+/** 列表行前置的细描边图标方块。 */
+function LeadIcon({ name }: { name: IconName }) {
+	return (
+		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
+			<Icon name={name} size={15} />
+		</span>
+	);
+}
+
+/** 单选组的方向键：在组内的 `role=radio` 之间移动焦点并选中。 */
+function radioKeys(e: KeyboardEvent<HTMLElement>) {
+	const step: Record<string, number> = {
+		ArrowRight: 1,
+		ArrowDown: 1,
+		ArrowLeft: -1,
+		ArrowUp: -1,
+	};
+	const d = step[e.key];
+	if (!d) return;
+	const radios = Array.from(
+		e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+	);
+	const i = radios.indexOf(document.activeElement as HTMLButtonElement);
+	if (i < 0) return;
+	e.preventDefault();
+	const next = radios[(i + d + radios.length) % radios.length];
+	next?.focus();
+	next?.click();
+}
+
+/** 字形选择网格：项目图标与 agent 头像共用。 */
+function GlyphGrid({
+	glyphs,
+	value,
+	label,
+	disabled,
+	onPick,
 }: {
-	title: ReactNode;
-	children: ReactNode;
-	action?: ReactNode;
+	glyphs: readonly Glyph[];
+	value?: string;
+	label: string;
+	disabled?: boolean;
+	onPick: (char: string) => void;
 }) {
 	return (
-		<section className="mb-6 rounded-xl border border-border bg-panel">
-			<div className="flex items-center justify-between gap-2 border-border border-b px-4 py-2.5">
-				<h2 className="font-medium text-sm">{title}</h2>
-				{action}
-			</div>
-			<div className="p-4">{children}</div>
-		</section>
+		<fieldset
+			aria-label={label}
+			className="m-0 grid min-w-0 grid-cols-[repeat(auto-fill,minmax(2rem,1fr))] gap-1 border-0 p-0"
+		>
+			{glyphs.map((g) => {
+				const on = g.char === value;
+				return (
+					<button
+						key={g.char}
+						type="button"
+						title={g.label}
+						aria-label={g.label}
+						aria-pressed={on}
+						disabled={disabled}
+						onClick={() => onPick(g.char)}
+						className={`grid h-8 place-items-center rounded-md border text-lg leading-none transition-colors duration-150 disabled:opacity-50 ${on ? "border-accent bg-accent-soft text-accent-ink" : "border-transparent text-muted hover:bg-hover hover:text-fg"}`}
+					>
+						{g.char}
+					</button>
+				);
+			})}
+		</fieldset>
 	);
 }
 
 // ---------------------------------------------------------------- 设备
+
+const DEVICE_ICON: Record<Schemas["Device"]["kind"], IconName> = {
+	cli: "terminal",
+	desktop: "monitor",
+	mobile: "device",
+};
 
 function DevicesSettings() {
 	const { t } = useTranslation();
@@ -106,74 +202,74 @@ function DevicesSettings() {
 	const revoke = useAsync();
 	return (
 		<>
-			<Card title={t("devices.approveTitle")}>
+			<Card title={t("devices.approveTitle")} icon="key">
 				<p className="mb-3 text-muted text-xs">{t("pair.hint")}</p>
 				<PairApproval />
 			</Card>
-			<Card title={t("devices.title")}>
+			<Card title={t("devices.title")} icon="device">
 				{devices.isPending && <Spinner />}
 				<ErrorText error={devices.error ?? revoke.error} />
-				<ul className="divide-y divide-border">
+				<RowList>
 					{devices.data?.devices.map((d) => (
-						<li key={d.id} className="flex items-center gap-3 py-2">
-							<Icon name="device" size={16} className="text-muted" />
-							<div className="min-w-0 flex-1">
-								<div className="flex items-center gap-2 text-sm">
-									<span className="truncate font-medium">{d.name}</span>
-									{d.current && (
-										<span className="rounded bg-accent/15 px-1 text-2xs text-accent">
-											{t("devices.current")}
+						<li key={d.id}>
+							<ListRow
+								leading={<LeadIcon name={DEVICE_ICON[d.kind] ?? "device"} />}
+								title={
+									<>
+										<span className="truncate font-medium">{d.name}</span>
+										{d.current && (
+											<Badge tone="accent">{t("devices.current")}</Badge>
+										)}
+										{d.revokedAt && (
+											<Badge tone="err">{t("devices.revoked")}</Badge>
+										)}
+									</>
+								}
+								meta={
+									<>
+										<Badge>{t(`devices.kind.${d.kind}`)}</Badge>
+										{d.platform && <Badge>{d.platform}</Badge>}
+										<span>
+											{t("devices.lastSeen", {
+												when: d.lastSeenAt ? formatRelative(d.lastSeenAt) : "—",
+											})}
 										</span>
-									)}
-									{d.revokedAt && (
-										<span className="rounded bg-err/10 px-1 text-2xs text-err">
-											{t("devices.revoked")}
-										</span>
-									)}
-								</div>
-								<div className="text-faint text-xs">
-									{[
-										t(`devices.kind.${d.kind}`),
-										d.platform,
-										t("devices.lastSeen", {
-											when: d.lastSeenAt ? formatRelative(d.lastSeenAt) : "—",
-										}),
-									]
-										.filter(Boolean)
-										.join(" · ")}
-								</div>
-							</div>
-							{!d.revokedAt && (
-								<Button
-									size="sm"
-									variant="danger"
-									disabled={revoke.busy}
-									onClick={() => {
-										if (
-											!window.confirm(
-												t("devices.revokeConfirm", { name: d.name }),
-											)
-										)
-											return;
-										void revoke
-											.run(() =>
-												unwrap(
-													api.DELETE("/api/v1/devices/{id}", {
-														params: { path: { id: d.id } },
-													}),
-												),
-											)
-											.then(() =>
-												qc.invalidateQueries({ queryKey: qk.devices }),
-											);
-									}}
-								>
-									{t("devices.revoke")}
-								</Button>
-							)}
+									</>
+								}
+								trailing={
+									!d.revokedAt && (
+										<Button
+											size="sm"
+											variant="danger"
+											disabled={revoke.busy}
+											onClick={() => {
+												if (
+													!window.confirm(
+														t("devices.revokeConfirm", { name: d.name }),
+													)
+												)
+													return;
+												void revoke
+													.run(() =>
+														unwrap(
+															api.DELETE("/api/v1/devices/{id}", {
+																params: { path: { id: d.id } },
+															}),
+														),
+													)
+													.then(() =>
+														qc.invalidateQueries({ queryKey: qk.devices }),
+													);
+											}}
+										>
+											{t("devices.revoke")}
+										</Button>
+									)
+								}
+							/>
 						</li>
 					))}
-				</ul>
+				</RowList>
 				{devices.data?.devices.length === 0 && (
 					<p className="text-faint text-sm">{t("devices.empty")}</p>
 				)}
@@ -183,6 +279,22 @@ function DevicesSettings() {
 }
 
 // ---------------------------------------------------------------- provider
+
+/** provider 能力：支持为绿底勾、不支持为中性叉；读屏另读「支持 / 不支持」。 */
+function Capability({ on, label }: { on: boolean; label: string }) {
+	const { t } = useTranslation();
+	const state = on ? t("providers.supported") : t("providers.unsupported");
+	return (
+		<Badge
+			tone={on ? "ok" : "neutral"}
+			icon={on ? "check" : "close"}
+			title={state}
+		>
+			{label}
+			<span className="sr-only">{`：${state}`}</span>
+		</Badge>
+	);
+}
 
 function ProvidersSettings() {
 	const { t } = useTranslation();
@@ -194,7 +306,7 @@ function ProvidersSettings() {
 	const del = useAsync();
 	return (
 		<>
-			<Card title={t("providers.create")}>
+			<Card title={t("providers.create")} icon="plus">
 				<form
 					className="flex flex-wrap gap-2"
 					onSubmit={async (e) => {
@@ -224,88 +336,111 @@ function ProvidersSettings() {
 					</Button>
 				</form>
 				{token && (
-					<div className="mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3">
-						<p className="mb-2 text-sm">{t("providers.tokenOnce")}</p>
-						<div className="flex items-center gap-2">
-							<code className="min-w-0 flex-1 break-all rounded bg-inset px-2 py-1 font-mono text-xs">
-								{token}
-							</code>
-							<CopyButton text={token} />
-						</div>
+					<div className="mt-3">
+						<Callout tone="warn" title={t("providers.tokenOnce")}>
+							<div className="mt-1.5 flex items-center gap-2">
+								<code className="min-w-0 flex-1 break-all rounded-sm bg-inset px-2 py-1 font-mono text-fg text-xs">
+									{token}
+								</code>
+								<CopyButton text={token} />
+							</div>
+						</Callout>
 					</div>
 				)}
 				<ErrorText error={create.error} />
 			</Card>
-			<Card title={t("providers.title")}>
+			<Card title={t("providers.title")} icon="box">
 				{providers.isPending && <Spinner />}
 				<ErrorText error={providers.error ?? del.error} />
-				<ul className="divide-y divide-border">
+				<RowList>
 					{providers.data?.providers.map((p) => (
-						<li key={p.id} className="py-2.5">
-							<div className="flex items-center gap-2">
-								<span
-									className={`h-2 w-2 rounded-full ${p.online ? "bg-ok" : "bg-faint"}`}
-								/>
-								<span className="font-medium text-sm">{p.name}</span>
-								<span className="text-faint text-xs">
-									{p.online ? t("providers.online") : t("providers.offline")}
-								</span>
-								{p.driver && (
-									<span className="rounded bg-inset px-1 text-2xs text-muted">
-										{p.driver}
+						<li key={p.id}>
+							<ListRow
+								leading={
+									<span className="grid h-8 w-8 place-items-center">
+										<StatusDot tone={p.online ? "ok" : "neutral"} />
 									</span>
-								)}
-								<div className="flex-1" />
-								<IconButton
-									icon="trash"
-									label={t("common.delete")}
-									onClick={() => {
-										if (
-											!window.confirm(
-												t("providers.deleteConfirm", { name: p.name }),
-											)
-										)
-											return;
-										void del
-											.run(() =>
-												unwrap(
-													api.DELETE("/api/v1/providers/{id}", {
-														params: { path: { id: p.id } },
-													}),
-												),
-											)
-											.then(() =>
-												qc.invalidateQueries({ queryKey: qk.providers }),
-											);
-									}}
-								/>
-							</div>
-							{p.orbTypes.length > 0 && (
-								<div className="mt-1 flex flex-wrap gap-1.5 pl-4">
-									{p.orbTypes.map((ot) => (
-										<span
-											key={ot.name}
-											className="rounded border border-border px-1.5 py-0.5 text-muted text-xs"
-										>
-											{`${ot.name} · ${ot.cpus}C/${Math.round(ot.memoryMB / 1024)}G`}
-											{p.defaultType === ot.name
-												? ` · ${t("providers.default")}`
-												: ""}
+								}
+								title={
+									<>
+										<span className="truncate font-medium">{p.name}</span>
+										{p.driver && <Badge icon="box">{p.driver}</Badge>}
+									</>
+								}
+								meta={
+									<>
+										<span>
+											{p.online
+												? t("providers.online")
+												: t("providers.offline")}
 										</span>
-									))}
-								</div>
-							)}
-							{p.capabilities && (
-								<div className="mt-1 pl-4 text-faint text-xs">
-									{t("providers.capabilities", {
-										freeze: p.capabilities.freeze ? "✓" : "✗",
-										snapshot: p.capabilities.snapshot ? "✓" : "✗",
-									})}
-								</div>
-							)}
+										{p.orbTypes.map((ot) => {
+											const isDefault = p.defaultType === ot.name;
+											return (
+												<span
+													key={ot.name}
+													className="inline-flex items-center gap-0.5"
+												>
+													<Badge tone={isDefault ? "accent" : "neutral"}>
+														{ot.name}
+													</Badge>
+													<Badge icon="cpu">
+														{t("panel.cores", { n: ot.cpus })}
+													</Badge>
+													<Badge icon="memory">
+														{formatMemoryMB(ot.memoryMB)}
+													</Badge>
+													{isDefault && (
+														<Badge tone="accent">
+															{t("providers.default")}
+														</Badge>
+													)}
+												</span>
+											);
+										})}
+										{p.capabilities && (
+											<>
+												<Capability
+													on={p.capabilities.freeze}
+													label={t("providers.freeze")}
+												/>
+												<Capability
+													on={p.capabilities.snapshot}
+													label={t("providers.snapshot")}
+												/>
+											</>
+										)}
+									</>
+								}
+								trailing={
+									<IconButton
+										icon="trash"
+										label={t("common.delete")}
+										onClick={() => {
+											if (
+												!window.confirm(
+													t("providers.deleteConfirm", { name: p.name }),
+												)
+											)
+												return;
+											void del
+												.run(() =>
+													unwrap(
+														api.DELETE("/api/v1/providers/{id}", {
+															params: { path: { id: p.id } },
+														}),
+													),
+												)
+												.then(() =>
+													qc.invalidateQueries({ queryKey: qk.providers }),
+												);
+										}}
+									/>
+								}
+							/>
 						</li>
 					))}
-				</ul>
+				</RowList>
 				{providers.data?.providers.length === 0 && (
 					<p className="text-faint text-sm">{t("providers.empty")}</p>
 				)}
@@ -331,6 +466,7 @@ function formOf(p: Project): ProjectForm {
 		resumeScript: p.resumeScript,
 		shallowClone: p.shallowClone,
 		color: p.color,
+		icon: p.icon,
 		gitAuthorName: p.gitAuthorName,
 		gitAuthorEmail: p.gitAuthorEmail,
 	};
@@ -347,6 +483,46 @@ function RepoScriptText({ run }: { run: SetupRun | undefined }) {
 					: t("env.repoScriptUnknown"),
 			})}
 		</>
+	);
+}
+
+/** 项目图标：当前徽标 + 「自动」（清空，之后由首个线程标题卡的图标自动填入）+ 精选字形网格。 */
+function ProjectIconPicker({
+	name,
+	icon,
+	onChange,
+}: {
+	name: string;
+	icon?: string;
+	onChange: (icon: string | undefined) => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex flex-col gap-2 sm:col-span-2">
+			<span className="font-medium text-muted text-xs">
+				{t("projects.icon")}
+			</span>
+			<div className="flex flex-wrap items-center gap-3">
+				<ProjectBadge name={name || "?"} icon={icon} size={32} />
+				<Button
+					size="sm"
+					variant={icon ? "ghost" : "secondary"}
+					aria-pressed={!icon}
+					onClick={() => onChange(undefined)}
+				>
+					{t("projects.iconAuto")}
+				</Button>
+				<span className="min-w-0 flex-1 text-faint text-xs">
+					{t("projects.iconAutoHint")}
+				</span>
+			</div>
+			<GlyphGrid
+				glyphs={PROJECT_GLYPHS}
+				value={icon}
+				label={t("projects.icon")}
+				onPick={(c) => onChange(c)}
+			/>
+		</div>
 	);
 }
 
@@ -389,6 +565,8 @@ function ProjectEditor({
 							setupScript: f.setupScript ?? "",
 							resumeScript: f.resumeScript ?? "",
 							color: f.color ?? "",
+							// 空串 = 清除，回到自动采用
+							icon: f.icon ?? "",
 							gitAuthorName: f.gitAuthorName ?? "",
 							gitAuthorEmail: f.gitAuthorEmail ?? "",
 						};
@@ -418,6 +596,11 @@ function ProjectEditor({
 					onChange={(e) => set("repoUrl", e.target.value || undefined)}
 				/>
 			</Field>
+			<ProjectIconPicker
+				name={f.name}
+				icon={f.icon}
+				onChange={(icon) => set("icon", icon)}
+			/>
 			<Field label={t("projects.baseBranch")}>
 				<TextInput
 					placeholder="main"
@@ -527,6 +710,7 @@ function ProjectsSettings() {
 	return (
 		<Card
 			title={t("projects.title")}
+			icon="folder"
 			action={
 				editing === null && (
 					<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
@@ -536,7 +720,7 @@ function ProjectsSettings() {
 			}
 		>
 			{editing === "new" && (
-				<div className="mb-4 rounded-lg border border-border p-3">
+				<div className="mb-3 rounded-lg border border-border bg-raised p-3">
 					<ProjectEditor
 						initial={EMPTY_PROJECT}
 						onDone={() => setEditing(null)}
@@ -545,63 +729,71 @@ function ProjectsSettings() {
 			)}
 			{projects.isPending && <Spinner />}
 			<ErrorText error={projects.error ?? del.error} />
-			<ul className="divide-y divide-border">
+			<RowList>
 				{projects.data?.projects.map((p) => (
-					<li key={p.id} className="py-2.5">
+					<li key={p.id}>
 						{editing === p.id ? (
-							<ProjectEditor
-								initial={formOf(p)}
-								id={p.id}
-								lastSetup={lastSetup.get(p.id)}
-								onDone={() => setEditing(null)}
-							/>
-						) : (
-							<div className="flex items-center gap-2">
-								<Icon name="folder" size={15} className="text-muted" />
-								<div className="min-w-0 flex-1">
-									<div className="font-medium text-sm">{p.name}</div>
-									<div className="truncate text-faint text-xs">
-										{p.repoUrl ?? t("projects.noRepo")}
-									</div>
-									{p.repoUrl && (
-										<div className="text-faint text-xs">
-											<RepoScriptText run={lastSetup.get(p.id)} />
-										</div>
-									)}
-								</div>
-								<IconButton
-									icon="edit"
-									label={t("common.edit")}
-									onClick={() => setEditing(p.id)}
-								/>
-								<IconButton
-									icon="trash"
-									label={t("common.delete")}
-									onClick={() => {
-										if (
-											!window.confirm(
-												t("projects.deleteConfirm", { name: p.name }),
-											)
-										)
-											return;
-										void del
-											.run(() =>
-												unwrap(
-													api.DELETE("/api/v1/projects/{id}", {
-														params: { path: { id: p.id } },
-													}),
-												),
-											)
-											.then(() =>
-												qc.invalidateQueries({ queryKey: qk.projects }),
-											);
-									}}
+							<div className="my-1 rounded-lg border border-border bg-raised p-3">
+								<ProjectEditor
+									initial={formOf(p)}
+									id={p.id}
+									lastSetup={lastSetup.get(p.id)}
+									onDone={() => setEditing(null)}
 								/>
 							</div>
+						) : (
+							<ListRow
+								leading={<ProjectBadge name={p.name} icon={p.icon} size={28} />}
+								title={<span className="truncate font-medium">{p.name}</span>}
+								meta={
+									<>
+										<span className="min-w-0 max-w-full truncate">
+											{p.repoUrl ?? t("projects.noRepo")}
+										</span>
+										{p.repoUrl && (
+											<span>
+												<RepoScriptText run={lastSetup.get(p.id)} />
+											</span>
+										)}
+									</>
+								}
+								trailing={
+									<>
+										<IconButton
+											icon="edit"
+											label={t("common.edit")}
+											onClick={() => setEditing(p.id)}
+										/>
+										<IconButton
+											icon="trash"
+											label={t("common.delete")}
+											onClick={() => {
+												if (
+													!window.confirm(
+														t("projects.deleteConfirm", { name: p.name }),
+													)
+												)
+													return;
+												void del
+													.run(() =>
+														unwrap(
+															api.DELETE("/api/v1/projects/{id}", {
+																params: { path: { id: p.id } },
+															}),
+														),
+													)
+													.then(() =>
+														qc.invalidateQueries({ queryKey: qk.projects }),
+													);
+											}}
+										/>
+									</>
+								}
+							/>
 						)}
 					</li>
 				))}
-			</ul>
+			</RowList>
 			{projects.data?.projects.length === 0 && editing !== "new" && (
 				<p className="text-faint text-sm">{t("projects.empty")}</p>
 			)}
@@ -624,7 +816,7 @@ function SecretsSettings() {
 	const envNameOk = mode !== "env" || /^[A-Z_][A-Z0-9_]*$/.test(name);
 	return (
 		<>
-			<Card title={t("secrets.put")}>
+			<Card title={t("secrets.put")} icon="plus">
 				<form
 					className="grid gap-3 sm:grid-cols-2"
 					onSubmit={async (e) => {
@@ -710,51 +902,61 @@ function SecretsSettings() {
 					<ErrorText error={save.error} />
 				</form>
 			</Card>
-			<Card title={t("secrets.title")}>
+			<Card title={t("secrets.title")} icon="key">
 				{secrets.isPending && <Spinner />}
 				<ErrorText error={secrets.error ?? del.error} />
-				<ul className="divide-y divide-border">
+				<RowList>
 					{secrets.data?.secrets.map((s) => (
-						<li key={s.name} className="flex items-center gap-2 py-2">
-							<Icon name="key" size={14} className="text-muted" />
-							<span className="min-w-0 flex-1 truncate font-mono text-sm">
-								{s.name}
-							</span>
-							<span className="rounded bg-inset px-1 text-2xs text-muted">
-								{s.mode}
-							</span>
-							{s.hosts && s.hosts.length > 0 && (
-								<span className="hidden text-faint text-xs sm:inline">
-									{s.hosts.join(", ")}
-								</span>
-							)}
-							<span className="hidden text-faint text-xs sm:inline">
-								{formatRelative(s.updatedAt)}
-							</span>
-							<IconButton
-								icon="trash"
-								label={t("common.delete")}
-								onClick={() => {
-									if (
-										!window.confirm(
-											t("secrets.deleteConfirm", { name: s.name }),
-										)
-									)
-										return;
-									void del
-										.run(() =>
-											unwrap(
-												api.DELETE("/api/v1/secrets/{name}", {
-													params: { path: { name: s.name } },
-												}),
-											),
-										)
-										.then(() => qc.invalidateQueries({ queryKey: qk.secrets }));
-								}}
+						<li key={s.name}>
+							<ListRow
+								leading={<LeadIcon name="key" />}
+								title={
+									<>
+										<span className="truncate font-mono">{s.name}</span>
+										<Badge tone={s.mode === "env" ? "frost" : "neutral"}>
+											{s.mode}
+										</Badge>
+									</>
+								}
+								meta={
+									<>
+										{s.hosts?.map((h) => (
+											<Badge key={h} icon="globe">
+												{h}
+											</Badge>
+										))}
+										<span>{formatRelative(s.updatedAt)}</span>
+									</>
+								}
+								trailing={
+									<IconButton
+										icon="trash"
+										label={t("common.delete")}
+										onClick={() => {
+											if (
+												!window.confirm(
+													t("secrets.deleteConfirm", { name: s.name }),
+												)
+											)
+												return;
+											void del
+												.run(() =>
+													unwrap(
+														api.DELETE("/api/v1/secrets/{name}", {
+															params: { path: { name: s.name } },
+														}),
+													),
+												)
+												.then(() =>
+													qc.invalidateQueries({ queryKey: qk.secrets }),
+												);
+										}}
+									/>
+								}
 							/>
 						</li>
 					))}
-				</ul>
+				</RowList>
 				{secrets.data?.secrets.length === 0 && (
 					<p className="text-faint text-sm">{t("secrets.empty")}</p>
 				)}
@@ -846,7 +1048,10 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 					</Button>
 				)}
 				{saved && !dirty && (
-					<span className="text-muted text-xs">{t("gitIdentity.saved")}</span>
+					<span className="inline-flex items-center gap-1 text-ok text-xs">
+						<Icon name="check" size={13} weight="bold" />
+						<span>{t("gitIdentity.saved")}</span>
+					</span>
 				)}
 			</div>
 			<ErrorText error={save.error ?? clear.error} />
@@ -859,17 +1064,23 @@ function GitIdentitySettings() {
 	const q = useGitIdentity();
 	const id = q.data?.identity;
 	return (
-		<Card title={t("gitIdentity.title")}>
+		<Card title={t("gitIdentity.title")} icon="fork">
 			<p className="mb-3 text-muted text-xs">{t("gitIdentity.hint")}</p>
 			{q.isPending && <Spinner />}
 			<ErrorText error={q.error} />
 			{q.data && (
 				<>
-					<p className="mb-3 text-sm">
-						{id
-							? t("gitIdentity.current", { name: id.name, email: id.email })
-							: t("gitIdentity.notSet")}
-					</p>
+					<div className="mb-3">
+						{/* 「当前：name <email>」须是同一个文本节点（测试与验收脚本按整句查找） */}
+						<Callout
+							tone={id ? "neutral" : "warn"}
+							icon={id ? "user" : undefined}
+						>
+							{id
+								? t("gitIdentity.current", { name: id.name, email: id.email })
+								: t("gitIdentity.notSet")}
+						</Callout>
+					</div>
 					<GitIdentityForm initial={id} />
 				</>
 			)}
@@ -887,30 +1098,256 @@ function AgentConfigSettings() {
 	// 来源须稳定：FileBrowser 以 sources 为依赖加载根
 	const sources = useMemo(() => [agentConfigSource(setResult)], []);
 	return (
-		<Card title={t("agentConfig.title")}>
+		<Card title={t("agentConfig.title")} icon="file">
 			<p className="mb-3 text-muted text-xs">
 				{t("agentConfig.hint")} {t("agentConfig.pushHint")}
 			</p>
-			<div className="h-[32rem] overflow-hidden rounded-md border border-border">
+			<div className="h-[32rem] overflow-hidden rounded-lg border border-border">
 				<FileBrowser sources={sources} storageKey="settings.agent-config" />
 			</div>
 			{result && (
-				<div className="mt-2 text-xs">
+				<div className="mt-2 flex flex-col gap-1.5">
 					{result.extractedSecrets.length > 0 && (
-						<p className="text-ok">
+						<Callout tone="ok">
 							{t("agentConfig.extracted", {
 								names: result.extractedSecrets.join(", "),
 							})}
-						</p>
+						</Callout>
 					)}
 					{result.warnings.map((w) => (
-						<p key={`${w.path}:${w.line ?? 0}:${w.kind}`} className="text-warn">
+						<Callout key={`${w.path}:${w.line ?? 0}:${w.kind}`} tone="warn">
 							{`${w.path}${w.line ? `:${w.line}` : ""} — ${w.message}`}
-						</p>
+						</Callout>
 					))}
 				</div>
 			)}
 		</Card>
+	);
+}
+
+// ---------------------------------------------------------------- 外观
+
+/** 主题色色块：各预设浅色 accent 的固定值（全站唯一允许的颜色字面量，另见 favicon）。 */
+const SWATCH: Record<AccentName, string> = {
+	teal: "oklch(0.53 0.105 205)",
+	cobalt: "oklch(0.53 0.17 258)",
+	violet: "oklch(0.53 0.17 295)",
+	berry: "oklch(0.53 0.17 358)",
+	fox: "oklch(0.55 0.16 48)",
+	graphite: "oklch(0.3 0.015 260)",
+};
+
+const MODE_ICON: Record<ThemeMode, IconName> = {
+	system: "monitor",
+	light: "sun",
+	dark: "moon",
+};
+
+function ThemeSettings() {
+	const { t } = useTranslation();
+	const mode = useTheme((s) => s.mode);
+	const accent = useTheme((s) => s.accent);
+	const setMode = useTheme((s) => s.setMode);
+	const setAccent = useTheme((s) => s.setAccent);
+	return (
+		<Card title={t("settings.appearance")} icon="palette">
+			<div className="flex flex-col gap-5">
+				<div className="flex flex-col gap-2">
+					<span aria-hidden className="font-medium text-muted text-xs">
+						{t("appearance.mode")}
+					</span>
+					<div
+						role="radiogroup"
+						aria-label={t("appearance.mode")}
+						onKeyDown={radioKeys}
+						className="inline-flex w-fit max-w-full rounded-lg border border-border bg-inset p-0.5"
+					>
+						{MODES.map((m) => {
+							const on = mode === m;
+							return (
+								// biome-ignore lint/a11y/useSemanticElements: 分段按钮外观的单选（WAI-ARIA radio），原生 radio 画不出
+								<button
+									key={m}
+									type="button"
+									role="radio"
+									aria-checked={on}
+									tabIndex={on ? 0 : -1}
+									onClick={() => setMode(m)}
+									className={`inline-flex h-7 items-center gap-1.5 rounded-md px-3 font-medium text-xs transition-[background-color,color,box-shadow] duration-150 ${on ? "bg-panel text-fg shadow-xs ring-1 ring-border" : "text-muted hover:text-fg"}`}
+								>
+									<Icon name={MODE_ICON[m]} size={14} />
+									{t(`appearance.modes.${m}`)}
+								</button>
+							);
+						})}
+					</div>
+				</div>
+				<div className="flex flex-col gap-2">
+					<span aria-hidden className="font-medium text-muted text-xs">
+						{t("appearance.accent")}
+					</span>
+					<div
+						role="radiogroup"
+						aria-label={t("appearance.accent")}
+						onKeyDown={radioKeys}
+						className="flex flex-wrap gap-x-4 gap-y-3"
+					>
+						{ACCENTS.map((a) => {
+							const on = accent === a;
+							const label = t(`appearance.accents.${a}`);
+							return (
+								// biome-ignore lint/a11y/useSemanticElements: 色块外观的单选（WAI-ARIA radio），原生 radio 画不出
+								<button
+									key={a}
+									type="button"
+									role="radio"
+									aria-checked={on}
+									aria-label={label}
+									tabIndex={on ? 0 : -1}
+									onClick={() => setAccent(a)}
+									className={`flex w-12 flex-col items-center gap-1.5 rounded-md py-1 text-2xs transition-colors duration-150 ${on ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
+								>
+									<span
+										aria-hidden
+										className={`grid h-7 w-7 place-items-center rounded-full text-white shadow-xs ring-offset-2 ring-offset-panel transition-shadow duration-150 ${on ? "ring-2 ring-[var(--ring)]" : ""}`}
+										style={{ background: SWATCH[a] }}
+									>
+										{on && <Icon name="check" size={14} weight="bold" />}
+									</span>
+									<span aria-hidden>{label}</span>
+								</button>
+							);
+						})}
+					</div>
+				</div>
+				<p className="text-faint text-xs">{t("appearance.desc")}</p>
+			</div>
+		</Card>
+	);
+}
+
+function AgentAvatarSettings() {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const q = useAgentIdentity();
+	const save = useAsync();
+	const [custom, setCustom] = useState("");
+	const cur = q.data;
+	const kind = cur?.avatarImage
+		? "image"
+		: cur?.avatarIcon
+			? "icon"
+			: "default";
+	// PUT 整体替换：头像图片与图标字形互斥，`{}` = 恢复默认
+	const put = (body: Schemas["AgentIdentity"]) =>
+		save.run(async () => {
+			const res = await unwrap(
+				api.PUT("/api/v1/settings/agent-identity", { body }),
+			);
+			qc.setQueryData(qk.agentIdentity, res);
+		});
+	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		e.target.value = "";
+		if (!file) return;
+		void save.run(async () => {
+			let avatarImage: string;
+			try {
+				avatarImage = await avatarDataUrl(file);
+			} catch (err) {
+				throw new Error(
+					err instanceof AvatarTooLargeError
+						? t("appearance.avatarTooLarge")
+						: t("appearance.avatarDecodeFailed"),
+				);
+			}
+			const res = await unwrap(
+				api.PUT("/api/v1/settings/agent-identity", { body: { avatarImage } }),
+			);
+			qc.setQueryData(qk.agentIdentity, res);
+		});
+	};
+	return (
+		<Card title={t("appearance.avatar")} icon="robot">
+			<div className="flex items-center gap-3">
+				<AgentAvatar size={40} />
+				<div className="min-w-0 flex-1">
+					<p className="text-sm">{t(`appearance.avatarKind.${kind}`)}</p>
+					<p className="text-faint text-xs">{t("appearance.avatarHint")}</p>
+				</div>
+				{(save.busy || q.isPending) && <Spinner />}
+			</div>
+			<div className="mt-3 flex flex-wrap items-center gap-2">
+				<label className="inline-flex h-7 cursor-pointer select-none items-center gap-1 rounded-md border border-border bg-panel px-2.5 font-medium text-fg text-xs shadow-xs transition-colors duration-150 hover:bg-hover has-[:disabled]:pointer-events-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--ring)] has-[:focus-visible]:outline-offset-2 has-[:disabled]:opacity-50">
+					<Icon name="upload" size={13} />
+					{t("appearance.avatarUpload")}
+					<input
+						type="file"
+						accept="image/png,image/webp,image/jpeg"
+						className="sr-only"
+						disabled={save.busy}
+						onChange={onFile}
+					/>
+				</label>
+				<Button
+					size="sm"
+					variant="ghost"
+					icon="refresh"
+					disabled={kind === "default" || save.busy}
+					onClick={() => void put({})}
+				>
+					{t("appearance.avatarReset")}
+				</Button>
+			</div>
+			<div className="mt-4 flex flex-col gap-2">
+				<span aria-hidden className="font-medium text-muted text-xs">
+					{t("appearance.avatarGlyphs")}
+				</span>
+				<GlyphGrid
+					glyphs={AVATAR_GLYPHS}
+					value={cur?.avatarIcon}
+					label={t("appearance.avatarGlyphs")}
+					disabled={save.busy}
+					onPick={(avatarIcon) => void put({ avatarIcon })}
+				/>
+			</div>
+			<form
+				className="mt-3 flex items-end gap-2"
+				onSubmit={(e) => {
+					e.preventDefault();
+					const avatarIcon = custom.trim();
+					if (!isSingleGlyph(avatarIcon)) return;
+					void put({ avatarIcon }).then((ok) => {
+						if (ok) setCustom("");
+					});
+				}}
+			>
+				<Field label={t("appearance.avatarCustom")}>
+					<TextInput
+						className="w-28 text-center"
+						maxLength={16}
+						placeholder="🦊"
+						value={custom}
+						onChange={(e) => setCustom(e.target.value)}
+					/>
+				</Field>
+				<Button type="submit" disabled={save.busy || !isSingleGlyph(custom)}>
+					{t("appearance.avatarUse")}
+				</Button>
+			</form>
+			<div className="mt-2">
+				<ErrorText error={save.error ?? q.error} />
+			</div>
+		</Card>
+	);
+}
+
+function AppearanceSettings() {
+	return (
+		<>
+			<ThemeSettings />
+			<AgentAvatarSettings />
+		</>
 	);
 }
 
@@ -923,29 +1360,53 @@ function AboutSettings() {
 	const navigate = useNavigate();
 	const logout = useAsync();
 	return (
-		<Card title={t("about.title")}>
-			<dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
-				<dt className="text-muted">{t("about.version")}</dt>
-				<dd className="font-mono">{health.data?.version ?? "—"}</dd>
-				<dt className="text-muted">{t("about.owner")}</dt>
-				<dd>{me.data?.displayName ?? "—"}</dd>
-				<dt className="text-muted">{t("about.since")}</dt>
-				<dd>{me.data ? formatDateTime(me.data.createdAt) : "—"}</dd>
-				<dt className="text-muted">{t("about.session")}</dt>
-				<dd>{me.data ? t(`about.authKind.${me.data.auth.kind}`) : "—"}</dd>
-				<dt className="text-muted">{t("about.language")}</dt>
-				<dd>
-					<Select
-						wrapperClassName="max-w-40"
-						value={i18n.language}
-						onChange={(e) => void i18n.changeLanguage(e.target.value)}
-					>
-						<option value="zh-CN">简体中文</option>
-						<option value="en">English</option>
-					</Select>
-				</dd>
-			</dl>
-			<div className="mt-4">
+		<Card title={t("about.title")} icon="info">
+			<KeyValue
+				rows={[
+					{
+						key: "version",
+						label: t("about.version"),
+						value: (
+							<span className="font-mono">{health.data?.version ?? "—"}</span>
+						),
+					},
+					{
+						key: "owner",
+						label: t("about.owner"),
+						value: me.data?.displayName ?? "—",
+					},
+					{
+						key: "since",
+						label: t("about.since"),
+						value: me.data ? formatDateTime(me.data.createdAt) : "—",
+					},
+					{
+						key: "session",
+						label: t("about.session"),
+						value: me.data ? (
+							<Badge>{t(`about.authKind.${me.data.auth.kind}`)}</Badge>
+						) : (
+							"—"
+						),
+					},
+					{
+						key: "language",
+						label: t("about.language"),
+						value: (
+							<Select
+								wrapperClassName="max-w-40"
+								aria-label={t("about.language")}
+								value={i18n.language}
+								onChange={(e) => void i18n.changeLanguage(e.target.value)}
+							>
+								<option value="zh-CN">简体中文</option>
+								<option value="en">English</option>
+							</Select>
+						),
+					},
+				]}
+			/>
+			<div className="mt-4 border-border border-t pt-3">
 				<Button
 					variant="danger"
 					disabled={logout.busy}
@@ -973,7 +1434,7 @@ export function SettingsPage({
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	return (
-		<div className="flex h-full min-h-0 flex-col">
+		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
 			<header className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3">
 				{bp !== "expanded" && (
 					<IconButton
@@ -984,35 +1445,43 @@ export function SettingsPage({
 						}
 					/>
 				)}
-				<h1 className="font-medium text-sm">{t("nav.settings")}</h1>
+				<Icon name="settings" size={16} className="text-faint" />
+				<h1 className="font-semibold text-sm">{t("nav.settings")}</h1>
+				<span aria-hidden className="text-ghost text-sm">
+					/
+				</span>
+				<span className="truncate text-muted text-sm">
+					{t(`settings.${section}`)}
+				</span>
 			</header>
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
-				<nav className="flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">
+				<nav className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">
 					{SECTIONS.map((s) => (
 						<NavLink
 							key={s.key}
 							to={`/settings/${s.key}`}
 							className={({ isActive }) =>
-								`inline-flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm ${isActive ? "bg-hover text-fg" : "text-muted hover:text-fg"}`
+								`inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2.5 text-sm transition-colors duration-150 ${isActive ? "bg-hover text-fg ring-1 ring-border" : "text-muted hover:bg-hover/60 hover:text-fg"}`
 							}
 						>
-							<Icon name={s.icon} size={14} />
+							<Icon name={s.icon} size={15} />
 							{t(`settings.${s.key}`)}
 						</NavLink>
 					))}
 				</nav>
-				<div className="min-h-0 flex-1 overflow-y-auto p-4 pb-safe">
-					<div className="mx-auto max-w-3xl">
+				<div className="min-h-0 flex-1 overflow-y-auto p-3 pb-safe sm:p-5">
+					<div className="mx-auto flex max-w-3xl flex-col gap-3">
 						{section === "devices" && <DevicesSettings />}
 						{section === "providers" && <ProvidersSettings />}
 						{section === "projects" && <ProjectsSettings />}
 						{section === "secrets" && <SecretsSettings />}
 						{section === "git-identity" && <GitIdentitySettings />}
 						{section === "agent-config" && <AgentConfigSettings />}
+						{section === "appearance" && <AppearanceSettings />}
 						{section === "about" && <AboutSettings />}
 					</div>
 				</div>
 			</div>
-		</div>
+		</Sheet>
 	);
 }

@@ -1,5 +1,5 @@
 /**
- * 首页 = 新建线程框（居中卡片，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
+ * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
  * 模型与思考级别（Ctrl+S）、发送。省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
  */
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -11,13 +11,17 @@ import {
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
+import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
+import { OrbBead } from "../components/ui/OrbBead";
 import {
+	Button,
 	IconButton,
 	Kbd,
 	Spinner,
 	TextInput,
 } from "../components/ui/primitives";
+import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { useIndex } from "../state/stores";
@@ -38,15 +42,25 @@ const THINKING_LEVELS = [
 
 type Executor = Schemas["ThreadExecutor"];
 
+/** 首次出场动效只在本次页面会话里第一次挂载首页时播放 */
+let introPlayed = false;
+
+/** 胶囊文案：主文字 + 可选徽标；`label` 是整体无障碍名（保持原拼接字符串）。 */
+interface PillText {
+	label: string;
+	main: string;
+	badge?: string;
+}
+
 function PillButton({
 	icon,
-	label,
+	text,
 	shortcut,
 	onClick,
 	active,
 }: {
 	icon: IconName;
-	label: ReactNode;
+	text: PillText;
 	shortcut: string;
 	onClick: () => void;
 	active: boolean;
@@ -56,11 +70,14 @@ function PillButton({
 			type="button"
 			onClick={onClick}
 			aria-expanded={active}
-			className={`inline-flex h-7 max-w-56 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${active ? "border-accent/60 bg-hover text-fg" : "border-border text-muted hover:text-fg"}`}
+			aria-label={text.label}
+			title={text.label}
+			className={`inline-flex h-8 max-w-60 items-center gap-1.5 rounded-full border px-3 text-xs shadow-xs transition-colors duration-150 ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
-			<Icon name={icon} size={12} />
-			<span className="truncate">{label}</span>
-			<span className="hidden sm:inline">
+			<Icon name={icon} size={13} className="shrink-0" />
+			<span className="min-w-0 truncate">{text.main}</span>
+			{text.badge && <Badge>{text.badge}</Badge>}
+			<span className="hidden shrink-0 sm:inline">
 				<Kbd>{shortcut}</Kbd>
 			</span>
 		</button>
@@ -85,34 +102,94 @@ function Popover({
 	return (
 		<div
 			ref={ref}
-			className="absolute bottom-full left-0 z-30 mb-2 max-h-80 w-72 overflow-y-auto rounded-lg border border-border bg-panel p-1 shadow-lg"
+			className="glass pop-in absolute bottom-full left-0 z-30 mb-2 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl p-1"
 		>
 			{children}
 		</div>
 	);
 }
 
+function PopoverLabel({ children }: { children: ReactNode }) {
+	return (
+		<div className="px-2 pt-2 pb-1 font-medium text-2xs text-faint first:pt-1">
+			{children}
+		</div>
+	);
+}
+
+/**
+ * 弹层选项：主文字紧跟 hint 文字、同在一个按钮里（项目选项的无障碍名 = 项目名 + 仓库地址，验收脚本按此匹配）。
+ * `leading` 只能放无文字的图标，一律 aria-hidden；`trailing` 放徽标组。
+ */
 function Option({
 	selected,
 	onClick,
 	children,
+	leading,
 	hint,
+	trailing,
+	mono,
 }: {
 	selected: boolean;
 	onClick: () => void;
 	children: ReactNode;
+	leading?: ReactNode;
 	hint?: ReactNode;
+	trailing?: ReactNode;
+	mono?: boolean;
 }) {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-hover ${selected ? "text-accent" : ""}`}
+			className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${selected ? "bg-hover text-fg" : "text-fg"}`}
 		>
-			<span className="min-w-0 flex-1 truncate">{children}</span>
-			{hint && <span className="shrink-0 text-faint text-xs">{hint}</span>}
-			{selected && <Icon name="check" size={13} />}
+			{leading && (
+				<span
+					aria-hidden
+					className="inline-flex w-[18px] shrink-0 justify-center text-faint"
+				>
+					{leading}
+				</span>
+			)}
+			<span className="flex min-w-0 flex-1 items-baseline gap-2">
+				<span
+					className={`min-w-0 shrink truncate ${mono ? "font-mono text-xs" : ""}`}
+				>
+					{children}
+				</span>
+				{hint && (
+					<span className="min-w-0 shrink-[2] truncate text-faint text-xs">
+						{hint}
+					</span>
+				)}
+			</span>
+			{trailing && (
+				<span className="flex shrink-0 items-center gap-1">{trailing}</span>
+			)}
+			{selected && (
+				<Icon name="check" size={13} className="shrink-0 text-muted" />
+			)}
 		</button>
+	);
+}
+
+/** 提示行：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。 */
+function HintLine({ text }: { text: string }) {
+	return (
+		<p className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-faint text-xs">
+			{text.split(/\s*·\s*/).map((seg) => {
+				const sp = seg.indexOf(" ");
+				const key = sp > 0 ? seg.slice(0, sp) : seg;
+				const rest = sp > 0 ? seg.slice(sp + 1) : "";
+				return (
+					<span key={seg} className="inline-flex items-center gap-1">
+						<Kbd>{key}</Kbd>
+						{rest}
+					</span>
+				);
+			})}
+		</p>
 	);
 }
 
@@ -134,8 +211,11 @@ export function HomePage(): ReactNode {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
+	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
+	const [intro] = useState(() => !introPlayed);
 
 	useEffect(() => {
+		introPlayed = true;
 		ref.current?.focus();
 	}, []);
 
@@ -169,21 +249,42 @@ export function HomePage(): ReactNode {
 		(o) =>
 			o.state !== "deleted" && o.state !== "deleting" && o.state !== "failed",
 	);
-	const executorLabel =
+	// 胶囊的无障碍名保持原拼接字符串；视觉上把「·」后的部分拆成徽标
+	const existingOrbLabel =
 		executor.kind === "orb"
 			? t("newThread.existingOrb", { id: executor.orbId.slice(0, 12) })
+			: "";
+	const executorText: PillText =
+		executor.kind === "orb"
+			? { label: existingOrbLabel, main: existingOrbLabel }
 			: executor.provider
-				? `${executor.provider}${executor.type ? ` · ${executor.type}` : ""}`
-				: t("newThread.newOrbDefault");
+				? {
+						label: `${executor.provider}${executor.type ? ` · ${executor.type}` : ""}`,
+						main: executor.provider,
+						badge: executor.type,
+					}
+				: {
+						label: t("newThread.newOrbDefault"),
+						main: t("newThread.newOrbDefault"),
+					};
 	const projectLabel = projectId
 		? (projects.data?.projects.find((p) => p.id === projectId)?.name ??
 			projectId)
 		: t("newThread.noProject");
-	const modelLabel = model
-		? `${model}${thinking ? ` · ${thinking}` : ""}`
-		: thinking
-			? thinking
-			: t("newThread.defaultModel");
+	const modelText: PillText = model
+		? {
+				label: `${model}${thinking ? ` · ${thinking}` : ""}`,
+				main: model,
+				badge: thinking || undefined,
+			}
+		: {
+				label: thinking || t("newThread.defaultModel"),
+				main: thinking || t("newThread.defaultModel"),
+			};
+	const rise = (delay: string) =>
+		intro
+			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
+			: "";
 
 	const submit = async () => {
 		const text = prompt.trim();
@@ -226,7 +327,7 @@ export function HomePage(): ReactNode {
 	};
 
 	return (
-		<div className="flex h-full flex-col">
+		<Sheet inset={bp === "expanded"} className="flex h-full flex-col">
 			{bp !== "expanded" && (
 				<header className="flex h-12 shrink-0 items-center gap-2 px-2">
 					<IconButton
@@ -239,235 +340,266 @@ export function HomePage(): ReactNode {
 					<span className="font-semibold text-sm">{t("app.name")}</span>
 				</header>
 			)}
-			<div className="flex flex-1 items-start justify-center overflow-y-auto px-3 pt-[12vh] pb-keyboard sm:items-center sm:pt-0">
+			<div className="flex flex-1 items-start justify-center overflow-y-auto px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
 				<div className="w-full max-w-2xl">
-					<h1 className="mb-4 text-center font-semibold text-muted text-xl tracking-tight">
+					<div className={`mb-3 flex justify-center ${rise("")}`}>
+						<BrandMark size={32} />
+					</div>
+					<h1
+						className={`mb-5 text-center font-semibold text-fg text-xl tracking-tight ${rise("delay-[60ms]")}`}
+					>
 						{t("newThread.heading")}
 					</h1>
-					<div className="relative rounded-2xl border border-border bg-panel shadow-sm focus-within:border-accent/60">
-						<AttachmentStrip items={att.items} onRemove={att.remove} />
-						<textarea
-							onDragOver={(e) => {
-								if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-							}}
-							onDrop={(e) => {
-								if (e.dataTransfer.files.length === 0) return;
-								e.preventDefault();
-								void att.addFiles(e.dataTransfer.files);
-							}}
-							ref={ref}
-							rows={4}
-							value={prompt}
-							aria-label={t("newThread.prompt")}
-							placeholder={t("newThread.placeholder")}
-							className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm outline-none placeholder:text-faint"
-							onChange={(e) => setPrompt(e.target.value)}
-							onPaste={(e) => {
-								const files = [...e.clipboardData.files];
-								if (files.length > 0) {
+					<div className={rise("delay-[120ms]")}>
+						<div className="glass rounded-2xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]">
+							<AttachmentStrip items={att.items} onRemove={att.remove} />
+							<textarea
+								onDragOver={(e) => {
+									if (e.dataTransfer.types.includes("Files"))
+										e.preventDefault();
+								}}
+								onDrop={(e) => {
+									if (e.dataTransfer.files.length === 0) return;
 									e.preventDefault();
-									void att.addFiles(files);
-								}
-							}}
-							onKeyDown={(e) => {
-								if (
-									e.key === "Enter" &&
-									!e.shiftKey &&
-									!e.nativeEvent.isComposing
-								) {
-									e.preventDefault();
-									void submit();
-								}
-							}}
-						/>
-						<div className="relative flex flex-wrap items-center gap-1.5 px-3 pb-3">
-							<PillButton
-								icon="box"
-								label={executorLabel}
-								shortcut="Ctrl+M"
-								active={pill === "executor"}
-								onClick={() => setPill(pill === "executor" ? null : "executor")}
+									void att.addFiles(e.dataTransfer.files);
+								}}
+								ref={ref}
+								rows={4}
+								value={prompt}
+								aria-label={t("newThread.prompt")}
+								placeholder={t("newThread.placeholder")}
+								className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-sm leading-6 outline-none placeholder:text-faint focus-visible:outline-none"
+								onChange={(e) => setPrompt(e.target.value)}
+								onPaste={(e) => {
+									const files = [...e.clipboardData.files];
+									if (files.length > 0) {
+										e.preventDefault();
+										void att.addFiles(files);
+									}
+								}}
+								onKeyDown={(e) => {
+									if (
+										e.key === "Enter" &&
+										!e.shiftKey &&
+										!e.nativeEvent.isComposing
+									) {
+										e.preventDefault();
+										void submit();
+									}
+								}}
 							/>
-							<PillButton
-								icon="folder"
-								label={projectLabel}
-								shortcut="Ctrl+J"
-								active={pill === "project"}
-								onClick={() => setPill(pill === "project" ? null : "project")}
-							/>
-							<PillButton
-								icon="sparkle"
-								label={modelLabel}
-								shortcut="Ctrl+S"
-								active={pill === "model"}
-								onClick={() => setPill(pill === "model" ? null : "model")}
-							/>
-							<label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-muted hover:bg-hover hover:text-fg">
-								<Icon name="file" size={14} />
-								<span className="sr-only">{t("attachments.attach")}</span>
-								<input
-									type="file"
-									multiple
-									className="hidden"
-									onChange={(e) => {
-										if (e.target.files) void att.addFiles(e.target.files);
-										e.target.value = "";
-									}}
+							<div className="relative flex flex-wrap items-center gap-1.5 px-3 pb-3">
+								<PillButton
+									icon="box"
+									text={executorText}
+									shortcut="Ctrl+M"
+									active={pill === "executor"}
+									onClick={() =>
+										setPill(pill === "executor" ? null : "executor")
+									}
 								/>
-							</label>
-							<div className="flex-1" />
-							<button
-								type="button"
-								disabled={
-									busy ||
-									att.uploading ||
-									(!prompt.trim() && att.attachmentIds.length === 0)
-								}
-								onClick={() => void submit()}
-								aria-label={t("composer.send")}
-								className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-accent-fg text-sm disabled:opacity-40"
-							>
-								{busy ? <Spinner size={13} /> : <Icon name="send" size={14} />}
-								<span>{t("newThread.start")}</span>
-							</button>
-							{pill === "executor" && (
-								<Popover onClose={() => setPill(null)}>
-									<div className="px-2 py-1 text-2xs text-faint uppercase">
-										{t("newThread.newOrb")}
-									</div>
-									<Option
-										selected={executor.kind === "new_orb" && !executor.provider}
-										onClick={() => {
-											setExecutor({ kind: "new_orb" });
-											setPill(null);
+								<PillButton
+									icon="folder"
+									text={{ label: projectLabel, main: projectLabel }}
+									shortcut="Ctrl+J"
+									active={pill === "project"}
+									onClick={() => setPill(pill === "project" ? null : "project")}
+								/>
+								<PillButton
+									icon="sparkle"
+									text={modelText}
+									shortcut="Ctrl+S"
+									active={pill === "model"}
+									onClick={() => setPill(pill === "model" ? null : "model")}
+								/>
+								<label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-muted transition-colors duration-150 hover:bg-hover hover:text-fg">
+									<Icon name="attach" size={15} />
+									<span className="sr-only">{t("attachments.attach")}</span>
+									<input
+										type="file"
+										multiple
+										className="hidden"
+										onChange={(e) => {
+											if (e.target.files) void att.addFiles(e.target.files);
+											e.target.value = "";
 										}}
-									>
-										{t("newThread.newOrbDefault")}
-									</Option>
-									{(providers.data?.providers ?? []).map((p) =>
-										p.orbTypes.map((ot) => (
-											<Option
-												key={`${p.id}-${ot.name}`}
-												selected={
-													executor.kind === "new_orb" &&
-													executor.provider === p.name &&
-													executor.type === ot.name
-												}
-												hint={`${ot.cpus}C/${Math.round(ot.memoryMB / 1024)}G${p.online ? "" : ` · ${t("providers.offline")}`}`}
-												onClick={() => {
-													setExecutor({
-														kind: "new_orb",
-														provider: p.name,
-														type: ot.name,
-													});
-													setPill(null);
-												}}
-											>
-												{`${p.name} · ${ot.name}`}
-											</Option>
-										)),
-									)}
-									{liveOrbs.length > 0 && (
-										<div className="px-2 pt-2 pb-1 text-2xs text-faint uppercase">
-											{t("newThread.existingOrbs")}
-										</div>
-									)}
-									{liveOrbs.map((o) => (
+									/>
+								</label>
+								<div className="flex-1" />
+								<Button
+									variant="accent"
+									icon={busy ? undefined : "send"}
+									disabled={
+										busy ||
+										att.uploading ||
+										(!prompt.trim() && att.attachmentIds.length === 0)
+									}
+									onClick={() => void submit()}
+									aria-label={t("composer.send")}
+								>
+									{busy && <Spinner size={13} />}
+									<span>{t("newThread.start")}</span>
+								</Button>
+								{pill === "executor" && (
+									<Popover onClose={() => setPill(null)}>
+										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
 										<Option
-											key={o.id}
 											selected={
-												executor.kind === "orb" && executor.orbId === o.id
+												executor.kind === "new_orb" && !executor.provider
 											}
-											hint={t(`orbState.${o.state}`)}
+											leading={<Icon name="box" size={14} />}
 											onClick={() => {
-												setExecutor({ kind: "orb", orbId: o.id });
+												setExecutor({ kind: "new_orb" });
 												setPill(null);
 											}}
 										>
-											{`${o.id.slice(0, 16)} · ${o.type}`}
+											{t("newThread.newOrbDefault")}
 										</Option>
-									))}
-								</Popover>
-							)}
-							{pill === "project" && (
-								<Popover onClose={() => setPill(null)}>
-									<Option
-										selected={!projectId}
-										onClick={() => {
-											setProjectId(undefined);
-											setPill(null);
-										}}
-									>
-										{t("newThread.noProject")}
-									</Option>
-									{(projects.data?.projects ?? [])
-										.filter((p) => !p.archivedAt)
-										.map((p) => (
+										{(providers.data?.providers ?? []).map((p) =>
+											p.orbTypes.map((ot) => (
+												<Option
+													key={`${p.id}-${ot.name}`}
+													selected={
+														executor.kind === "new_orb" &&
+														executor.provider === p.name &&
+														executor.type === ot.name
+													}
+													leading={<Icon name="cpu" size={14} />}
+													hint={ot.name}
+													trailing={
+														<>
+															<Badge>{t("panel.cores", { n: ot.cpus })}</Badge>
+															<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
+															{!p.online && (
+																<Badge tone="warn">
+																	{t("providers.offline")}
+																</Badge>
+															)}
+														</>
+													}
+													onClick={() => {
+														setExecutor({
+															kind: "new_orb",
+															provider: p.name,
+															type: ot.name,
+														});
+														setPill(null);
+													}}
+												>
+													{p.name}
+												</Option>
+											)),
+										)}
+										{liveOrbs.length > 0 && (
+											<PopoverLabel>{t("newThread.existingOrbs")}</PopoverLabel>
+										)}
+										{liveOrbs.map((o) => (
 											<Option
-												key={p.id}
-												selected={projectId === p.id}
-												hint={p.repoUrl?.replace(/^https?:\/\//, "")}
+												key={o.id}
+												selected={
+													executor.kind === "orb" && executor.orbId === o.id
+												}
+												leading={<OrbBead state={o.state} />}
+												mono
+												trailing={<Badge>{o.type}</Badge>}
 												onClick={() => {
-													setProjectId(p.id);
+													setExecutor({ kind: "orb", orbId: o.id });
 													setPill(null);
 												}}
 											>
-												{p.name}
+												{o.id.slice(0, 16)}
 											</Option>
 										))}
-								</Popover>
-							)}
-							{pill === "model" && (
-								<Popover onClose={() => setPill(null)}>
-									<div className="p-1">
-										<TextInput
-											autoFocus
-											placeholder={t("newThread.modelPlaceholder")}
-											value={model}
-											onChange={(e) => setModel(e.target.value)}
-										/>
-									</div>
-									<Option selected={!model} onClick={() => setModel("")}>
-										{t("newThread.defaultModel")}
-									</Option>
-									{recentModels.map((m) => (
+									</Popover>
+								)}
+								{pill === "project" && (
+									<Popover onClose={() => setPill(null)}>
 										<Option
-											key={m}
-											selected={model === m}
-											onClick={() => setModel(m)}
+											selected={!projectId}
+											leading={<Icon name="folder" size={14} />}
+											onClick={() => {
+												setProjectId(undefined);
+												setPill(null);
+											}}
 										>
-											{m}
+											{t("newThread.noProject")}
 										</Option>
-									))}
-									<div className="px-2 pt-2 pb-1 text-2xs text-faint uppercase">
-										{t("model.thinking")}
-									</div>
-									<div className="flex flex-wrap gap-1 px-2 pb-2">
-										{["", ...THINKING_LEVELS].map((l) => (
-											<button
-												key={l || "default"}
-												type="button"
-												onClick={() => setThinking(l)}
-												className={`rounded border px-1.5 py-0.5 text-xs ${thinking === l ? "border-accent text-accent" : "border-border text-muted"}`}
+										{(projects.data?.projects ?? [])
+											.filter((p) => !p.archivedAt)
+											.map((p) => (
+												<Option
+													key={p.id}
+													selected={projectId === p.id}
+													leading={<ProjectBadge name={p.name} icon={p.icon} />}
+													hint={p.repoUrl?.replace(/^https?:\/\//, "")}
+													onClick={() => {
+														setProjectId(p.id);
+														setPill(null);
+													}}
+												>
+													{p.name}
+												</Option>
+											))}
+									</Popover>
+								)}
+								{pill === "model" && (
+									<Popover onClose={() => setPill(null)}>
+										<div className="p-1">
+											<TextInput
+												autoFocus
+												placeholder={t("newThread.modelPlaceholder")}
+												value={model}
+												onChange={(e) => setModel(e.target.value)}
+											/>
+										</div>
+										<Option
+											selected={!model}
+											leading={<Icon name="sparkle" size={14} />}
+											onClick={() => setModel("")}
+										>
+											{t("newThread.defaultModel")}
+										</Option>
+										{recentModels.map((m) => (
+											<Option
+												key={m}
+												selected={model === m}
+												leading={<Icon name="sparkle" size={14} />}
+												onClick={() => setModel(m)}
 											>
-												{l || t("newThread.defaultThinking")}
-											</button>
+												{m}
+											</Option>
 										))}
-									</div>
-								</Popover>
-							)}
+										<PopoverLabel>{t("model.thinking")}</PopoverLabel>
+										<div className="flex flex-wrap gap-1 px-2 pb-2">
+											{["", ...THINKING_LEVELS].map((l) => (
+												<button
+													key={l || "default"}
+													type="button"
+													aria-pressed={thinking === l}
+													onClick={() => setThinking(l)}
+													className={`h-6 rounded-md border px-2 text-xs transition-colors duration-150 ${thinking === l ? "border-border-strong bg-hover text-fg" : "border-border text-muted hover:bg-hover hover:text-fg"}`}
+												>
+													{l || t("newThread.defaultThinking")}
+												</button>
+											))}
+										</div>
+									</Popover>
+								)}
+							</div>
 						</div>
+						{(error || att.error) && (
+							<p
+								role="alert"
+								className="mt-2 flex items-center justify-center gap-1.5 text-err text-sm"
+							>
+								<Icon name="alert" size={13} className="shrink-0" />
+								{error ?? att.error}
+							</p>
+						)}
+						<HintLine text={t("newThread.hint")} />
 					</div>
-					{(error || att.error) && (
-						<p className="mt-2 text-center text-err text-sm">
-							{error ?? att.error}
-						</p>
-					)}
-					<p className="mt-3 text-center text-faint text-xs">
-						{t("newThread.hint")}
-					</p>
 				</div>
 			</div>
-		</div>
+		</Sheet>
 	);
 }
