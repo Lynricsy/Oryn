@@ -3,6 +3,7 @@
  * 输入坞高度驱动转录底部留白；右侧面板（Info / Changes / Files / Terminal）是另一张纸面。
  */
 import {
+	type CSSProperties,
 	type KeyboardEvent,
 	type PointerEvent,
 	type ReactNode,
@@ -48,6 +49,9 @@ import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
 
+/** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
+const PANEL_ANIM_MS = 260;
+
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
 function PanelResizer() {
 	const { t } = useTranslation();
@@ -56,9 +60,13 @@ function PanelResizer() {
 		e.preventDefault();
 		const el = e.currentTarget;
 		el.setPointerCapture(e.pointerId);
+		// 拖动期间关掉面板列的宽度过渡，宽度跟手
+		const column = el.parentElement;
+		column?.classList.add("is-resizing");
 		const move = (ev: globalThis.PointerEvent) =>
 			uiStore.getState().setPanelWidth(window.innerWidth - ev.clientX);
 		const up = () => {
+			column?.classList.remove("is-resizing");
 			el.removeEventListener("pointermove", move);
 			el.removeEventListener("pointerup", up);
 			el.removeEventListener("pointercancel", up);
@@ -164,6 +172,16 @@ export function ThreadPage(): ReactNode {
 	const showPanelColumn = expanded && panelOpen;
 	const showPanelDrawer = !expanded && panelOpen;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
+	// 收起时面板列先走完 260ms 的收窄 + 淡出再卸载（与左栏同一套时长与缓动）
+	const [panelMounted, setPanelMounted] = useState(showPanelColumn);
+	useEffect(() => {
+		if (showPanelColumn) {
+			setPanelMounted(true);
+			return;
+		}
+		const id = setTimeout(() => setPanelMounted(false), PANEL_ANIM_MS);
+		return () => clearTimeout(id);
+	}, [showPanelColumn]);
 	const firstUi = pendingUi[0];
 
 	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
@@ -195,7 +213,7 @@ export function ThreadPage(): ReactNode {
 	}, [morph]);
 
 	return (
-		<div className={`flex h-full min-w-0 flex-1 ${expanded ? "gap-2" : ""}`}>
+		<div className="flex h-full min-w-0 flex-1">
 			{/*
 			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
 			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。
@@ -246,7 +264,7 @@ export function ThreadPage(): ReactNode {
 					<div className="pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
 						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
 						<div
-							className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)] ${morph === "dock" ? "dock-morphing" : ""}`}
+							className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl ${morph === "dock" ? "dock-morphing" : ""}`}
 						>
 							{plan && (
 								<PlanProposalDialog
@@ -276,18 +294,32 @@ export function ThreadPage(): ReactNode {
 					</div>
 				</div>
 			</Sheet>
-			{showPanelColumn && (
+			{(showPanelColumn || panelMounted) && (
+				// 与左栏同一做法：外层宽度与左侧 8px 缝一起过渡（出现时由 @starting-style 从 0 展开），
+				// 内层固定宽度，左缘贴着外层左缘随之滑入 / 滑出并淡入淡出；外层不裁剪，免得裁掉纸面描边与投影
 				<div
-					className={`relative h-full min-w-0 ${panelFull ? "flex-1" : "shrink-0"}`}
-					style={panelFull ? undefined : { width: panelWidth }}
+					inert={!showPanelColumn}
+					data-panel={showPanelColumn ? "shown" : "collapsed"}
+					className={`relative h-full min-w-0 transition-[width,margin-left] duration-[260ms] ease-out starting:ml-0 starting:w-0 [&.is-resizing]:transition-none ${
+						!showPanelColumn
+							? "ml-0 w-0 shrink-0"
+							: panelFull
+								? "ml-2 flex-1"
+								: "ml-2 w-[var(--pw)] shrink-0"
+					}`}
+					style={{ "--pw": `${panelWidth}px` } as CSSProperties}
 				>
-					{!panelFull && <PanelResizer />}
-					<Sheet inset className="h-full">
-						<RightPanel
-							threadId={threadId}
-							onClose={() => uiStore.getState().setPanel(false)}
-						/>
-					</Sheet>
+					{showPanelColumn && !panelFull && <PanelResizer />}
+					<div
+						className={`h-full transition-opacity duration-[260ms] ease-out starting:opacity-0 ${panelFull ? "w-full" : "w-[var(--pw)]"} ${showPanelColumn ? "" : "opacity-0"}`}
+					>
+						<Sheet inset className="h-full">
+							<RightPanel
+								threadId={threadId}
+								onClose={() => uiStore.getState().setPanel(false)}
+							/>
+						</Sheet>
+					</div>
 				</div>
 			)}
 			{showPanelDrawer && (
@@ -295,11 +327,11 @@ export function ThreadPage(): ReactNode {
 					<button
 						type="button"
 						aria-label={t("common.close")}
-						className="absolute inset-0 bg-scrim"
+						className="absolute inset-0 bg-scrim transition-opacity duration-[260ms] ease-out starting:opacity-0"
 						onClick={() => uiStore.getState().setPanel(false)}
 					/>
-					{/* 抽屉宽度与标签无关：手机上铺满，平板上停在 36rem，切标签不跳 */}
-					<div className="relative h-full w-full max-w-xl bg-panel pt-safe pr-safe shadow-xl">
+					{/* 抽屉宽度与标签无关：手机上铺满，平板上停在 36rem，切标签不跳；与左抽屉一样从所在侧滑入 */}
+					<div className="relative h-full w-full max-w-xl bg-panel pt-safe pr-safe shadow-xl transition-[translate] duration-[260ms] ease-out starting:translate-x-full">
 						<RightPanel
 							threadId={threadId}
 							onClose={() => uiStore.getState().setPanel(false)}

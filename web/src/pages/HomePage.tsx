@@ -436,10 +436,7 @@ export function HomePage(): ReactNode {
 					<div className={`relative isolate ${rise("delay-[120ms]")}`}>
 						{/* 托盘背后的光场（一圈宽而淡的光晕 + 两团晕）：玻璃底下有东西可模糊，居中态也看得出是玻璃 */}
 						<div aria-hidden className="home-field" />
-						<div
-							ref={trayRef}
-							className="glass glass-dock rounded-2xl transition-[border-color] duration-150 has-[textarea:focus]:border-[var(--ring)]"
-						>
+						<div ref={trayRef} className="glass glass-dock rounded-2xl">
 							<AttachmentStrip items={att.items} onRemove={att.remove} />
 							<textarea
 								onDragOver={(e) => {
