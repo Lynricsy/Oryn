@@ -205,6 +205,78 @@ describe("选择器解析", () => {
 			"gemini-4-carbon",
 		);
 	});
+
+	it("裸模型名部分匹配（omp 子串回退）：sonnet:high 解析到唯一的 sonnet，级别照带", () => {
+		const roles = rolesMap(REAL_ROLES);
+		expect(resolveRoleValue("sonnet:high", roles, CANDIDATES)).toEqual({
+			model: CANDIDATES[2],
+			thinkingLevel: "high",
+		});
+		// 显示名也参与，大小写不敏感
+		expect(resolveRoleValue("Carbon", roles, CANDIDATES).model?.id).toBe(
+			"gemini-4-carbon",
+		);
+		// 多个命中：取池里最先出现的（候选在前）
+		expect(resolveRoleValue("opus", roles, CANDIDATES).model).toEqual(
+			CANDIDATES[1],
+		);
+	});
+
+	it("部分匹配的候选优先：别名优先于定版；全是定版取 id 最大的", () => {
+		const roles = new Map<string, RoleEntry>();
+		const dated = [
+			{ provider: "a", id: "claude-x-20250101" },
+			{ provider: "a", id: "claude-x-20251201" },
+		];
+		expect(resolveRoleValue("claude-x", roles, dated).model?.id).toBe(
+			"claude-x-20251201",
+		);
+		expect(
+			resolveRoleValue("claude-x", roles, [
+				...dated,
+				{ provider: "a", id: "claude-x-latest" },
+			]).model?.id,
+		).toBe("claude-x-latest");
+	});
+
+	it("部分匹配不吞思考后缀；字面档位 id 优先；provider/id 仍严格", () => {
+		const roles = new Map<string, RoleEntry>();
+		const pool = [
+			{ provider: "k", id: "kimi-for-coding-highspeed" },
+			{ provider: "r", id: "auto-router:low" },
+		];
+		// `:high` 被切成级别，不会把 kimi-for-coding:high 部分匹配成 …-highspeed 后丢掉级别
+		expect(resolveRoleValue("kimi-for-coding:high", roles, pool)).toEqual({
+			model: pool[0],
+			thinkingLevel: "high",
+		});
+		// 部分匹配到的 id 恰好以 `:low` 结尾：是字面档位模型，不当级别
+		expect(resolveRoleValue("router:low", roles, pool)).toEqual({
+			model: pool[1],
+		});
+		// provider 存在时 provider/id 不做部分匹配
+		expect(
+			resolveRoleValue("anthropic/sonnet", roles, CANDIDATES).model,
+		).toBeUndefined();
+		// 非法后缀当噪音切掉后，外层级别也不采用
+		expect(resolveRoleValue("sonnet:bogus:high", roles, CANDIDATES)).toEqual({
+			model: CANDIDATES[2],
+		});
+	});
+
+	it("buildRoleSlots：只写裸模型名的角色可用，不再标 unresolved", () => {
+		const [s] = buildRoleSlots(
+			["fast"],
+			[{ id: "fast", name: "fast", model: "sonnet:high" }],
+			[{ provider: "anthropic", id: "claude-sonnet-5" }],
+			SOL_HIGH,
+		);
+		expect(s).toMatchObject({
+			status: "ok",
+			model: { provider: "anthropic", id: "claude-sonnet-5" },
+			thinkingLevel: "high",
+		});
+	});
 });
 
 describe("buildRoleSlots", () => {
@@ -370,6 +442,24 @@ describe("当前角色", () => {
 		);
 		const i = currentRoleIndex(list, OPUS_HIGH, undefined, "default");
 		expect(list[i]?.id).toBe("Cyrene");
+	});
+
+	it("记忆里的角色已改配到别的模型：不再信它，按当前模型认出真正的角色，Ctrl+P 从那里轮换", () => {
+		// 记下时 Hyacinthia 配的是 gemini-4-carbon:high；之后改成 claude-fable-5-2，Nahida 仍是 gemini，会话仍跑 gemini
+		const cycle = buildRoleSlots(REAL_ORDER, REAL_ROLES, [], undefined);
+		const cur: CurrentModel = {
+			provider: "google",
+			id: "gemini-4-carbon",
+			thinkingLevel: "high",
+		};
+		const i = currentRoleIndex(cycle, cur, {
+			role: "Hyacinthia",
+			provider: "google",
+			id: "gemini-4-carbon",
+			thinkingLevel: "high",
+		});
+		expect(cycle[i]?.id).toBe("Nahida");
+		expect(cycle[stepRole(cycle, i, 1) ?? -1]?.id).toBe("Mare");
 	});
 });
 

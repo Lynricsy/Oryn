@@ -281,7 +281,10 @@ async function refreshState(threadId: string) {
 		.apply([{ type: "state", state }]);
 }
 
-/** 每个线程一个串行的切换工作者：连按时只保留最新目标，在途的一次做完后再切到它（不乱序、不堆积）。 */
+/**
+ * 每个线程一个串行的切换工作者：连按时只保留最新目标，在途的一次做完后再切到它（不乱序、不堆积）。
+ * 刷新状态也在循环里：刷新期间排入的新目标在刷新返回后接着处理，队列确实为空才结束并清 `pending`。
+ */
 const workers = new Map<string, { want?: RoleSlot; running: boolean }>();
 
 async function drain(threadId: string) {
@@ -290,36 +293,41 @@ async function drain(threadId: string) {
 	w.running = true;
 	let last: RoleSlot | undefined;
 	try {
-		while (w.want) {
+		for (;;) {
 			const slot = w.want;
-			w.want = undefined;
-			const model = slot.model;
-			if (!model) continue;
-			await realtime.cmd(threadId, {
-				type: "set_model",
-				provider: model.provider,
-				modelId: model.id,
-			});
-			if (slot.thinkingLevel)
+			if (slot) {
+				w.want = undefined;
+				const model = slot.model;
+				if (!model) continue;
 				await realtime.cmd(threadId, {
-					type: "set_thinking_level",
-					level: slot.thinkingLevel as "auto",
+					type: "set_model",
+					provider: model.provider,
+					modelId: model.id,
 				});
-			writeMemory(threadId, {
-				role: slot.id,
-				provider: model.provider,
-				id: model.id,
-				thinkingLevel: slot.thinkingLevel,
-			});
-			last = slot;
-		}
-		await refreshState(threadId);
-		if (last) {
+				if (slot.thinkingLevel)
+					await realtime.cmd(threadId, {
+						type: "set_thinking_level",
+						level: slot.thinkingLevel as "auto",
+					});
+				writeMemory(threadId, {
+					role: slot.id,
+					provider: model.provider,
+					id: model.id,
+					thinkingLevel: slot.thinkingLevel,
+				});
+				last = slot;
+				continue;
+			}
+			if (!last) break;
+			await refreshState(threadId);
+			// 刷新期间又排入了新目标：先切过去，最后再刷新一次
+			if (w.want) continue;
 			const role = roleLabel(last);
 			const model = last.model?.name || last.model?.id || "";
 			patchThread(threadId, () => ({
 				announce: i18n.t("roles.switched", { role, model }),
 			}));
+			break;
 		}
 	} catch (e) {
 		w.want = undefined;

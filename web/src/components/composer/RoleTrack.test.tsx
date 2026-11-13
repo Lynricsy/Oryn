@@ -173,6 +173,64 @@ describe("Ctrl+P 角色轮换", () => {
 			}),
 		);
 	});
+
+	it("刷新状态期间再按 Ctrl+P，新目标不会丢：放行后接着切过去，轨道停在新角色", async () => {
+		// 第一次 set_model 之后的 get_state 挂起，直到手动放行
+		// tsconfig lib 为 ES2023，没有 Promise.withResolvers 的类型
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let held = false;
+		const base = cmd.getMockImplementation();
+		cmd.mockImplementation(async (t: string, f: Record<string, unknown>) => {
+			if (f.type === "get_state" && framesOf("set_model").length === 1) {
+				held = true;
+				await gate;
+			}
+			return base?.(t, f);
+		});
+		wrap(
+			<div className="glass">
+				<Composer threadId={T} />
+			</div>,
+		);
+		// Nahida → Mare，刷新挂起
+		await act(async () => {
+			fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+		});
+		await vi.waitFor(() => expect(held).toBe(true));
+		// 刷新期间再按：在途目标 Mare → Cyrene
+		await act(async () => {
+			fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+		});
+		await act(async () => {
+			release();
+		});
+		await vi.waitFor(() =>
+			expect(framesOf("set_model").at(-1)).toEqual({
+				type: "set_model",
+				provider: "anthropic",
+				modelId: "claude-opus-5-5",
+			}),
+		);
+		const track = await screen.findByRole("radiogroup", {
+			name: i18n.t("roles.track"),
+		});
+		await vi.waitFor(() =>
+			expect(
+				within(track)
+					.getByRole("radio", { name: "Cyrene" })
+					.getAttribute("aria-checked"),
+			).toBe("true"),
+		);
+		// 最后一次刷新拿到的是 Cyrene 的状态
+		expect(current).toEqual({
+			provider: "anthropic",
+			id: "claude-opus-5-5",
+			level: "high",
+		});
+	});
 });
 
 describe("模型对话框里的角色列表", () => {

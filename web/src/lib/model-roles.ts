@@ -189,24 +189,66 @@ function matchExact(
 	);
 }
 
+/** 带日期后缀（`-YYYYMMDD`）的是定版 id，其余（含 `-latest`）视为别名（omp `isAlias`）。 */
+const isAliasId = (id: string) => id.endsWith("-latest") || !/-\d{8}$/.test(id);
+
 /**
- * 单个选择器 → 模型（omp `parseModelPatternWithContext` 的精确匹配部分）：
- * 先整串精确匹配（字面 id 里带 `:max` 的模型优先），再切合法的 `:level` 递归，最后把非法后缀当噪音切掉。
+ * 部分匹配（omp `matchModel` 的子串回退）：id 或显示名包含选择器即命中，大小写不敏感。
+ * 多个命中时别名优先、取池里最先出现的；全是定版时取 id 字典序最大的（同 id 再按池顺序）。
+ * `provider/…` 且 provider 在池里存在时保持严格：只认精确匹配（同 omp 18.19；17.x 曾在 provider 内模糊匹配）。
+ * omp 还把内置目录里的 provider 视为已知，网页端拿不到目录，只按池判断；provider 不在池里时斜杠当作 id 的一部分
+ * （OpenRouter 式原始 id），照常部分匹配。
+ */
+function matchPartial(
+	pattern: string,
+	pool: readonly ModelRef[],
+): ModelRef | undefined {
+	const slash = pattern.indexOf("/");
+	if (slash !== -1) {
+		const provider = lower(pattern.slice(0, slash));
+		if (pool.some((m) => lower(m.provider) === provider)) return undefined;
+	}
+	const p = lower(pattern);
+	const hits = pool.filter(
+		(m) =>
+			lower(m.id).includes(p) ||
+			(m.name !== undefined && lower(m.name).includes(p)),
+	);
+	const alias = hits.find((m) => isAliasId(m.id));
+	if (alias) return alias;
+	// sort 稳定：同 id 保持池顺序
+	return [...hits].sort((a, b) => b.id.localeCompare(a.id))[0];
+}
+
+/**
+ * 单个选择器 → 模型（omp `parseModelPatternWithContext`）：
+ * 1. 整串精确匹配（字面 id 里带 `:max` 的模型优先）；
+ * 2. 有合法 `:level` 时：整串部分匹配到的模型 id 恰好以 `:level` 结尾就用它（字面档位模型）；
+ *    否则切掉后缀递归，后缀不会被部分匹配吞进更长的兄弟 id；
+ * 3. 没有合法后缀：整串部分匹配；
+ * 4. 仍不中且有冒号：把非法后缀当噪音切掉递归（`warned`，此后外层的 `:level` 也不再采用）。
  */
 function matchPattern(
 	pattern: string,
 	pool: readonly ModelRef[],
-): { model?: ModelRef; level?: string } {
+): { model?: ModelRef; level?: string; warned?: boolean } {
 	const exact = matchExact(pattern, pool);
 	if (exact) return { model: exact };
 	const { base, level } = splitThinkingSuffix(pattern);
 	if (level) {
+		const literal = matchPartial(pattern, pool);
+		if (literal && lower(literal.id).endsWith(`:${level}`))
+			return { model: literal };
 		const inner = matchPattern(base, pool);
-		return inner.model ? { model: inner.model, level } : {};
+		if (!inner.model) return {};
+		return inner.warned ? inner : { model: inner.model, level };
 	}
+	const partial = matchPartial(pattern, pool);
+	if (partial) return { model: partial };
 	const colon = pattern.lastIndexOf(":");
 	if (colon === -1) return {};
-	return { model: matchPattern(pattern.slice(0, colon), pool).model };
+	const inner = matchPattern(pattern.slice(0, colon), pool);
+	return inner.model ? { model: inner.model, warned: true } : {};
 }
 
 /** 去重合并候选与可用模型（按 `provider/id`），候选优先。 */
@@ -352,7 +394,8 @@ export function lastModelChangeRole(
 
 /**
  * 当前角色在 `slots` 里的下标，认不出时返回 -1。优先级：
- * 1. 客户端记住的选择，只要它记录的模型与级别仍等于当前状态（网页 `set_model` 会让 omp 记成 `default`，所以它排第一）；
+ * 1. 客户端记住的选择，只要它记录的模型与级别仍等于当前状态，且该角色现在的配置仍解析到当前模型
+ *    （网页 `set_model` 会让 omp 记成 `default`，所以它排第一；角色改配后记忆作废，同 omp 对 lastRole 的处理）；
  * 2. 最后一条 `model_change` 的 role，且该角色的模型仍是当前模型（认出 TUI 在别处的切换）；
  *    `default` 不可信：网页 `set_model` 一律被 omp 记成它，交给第 3 步按 cycleOrder 顺序匹配；
  * 3. 模型 + 级别都一致的第一格；再退到只看模型的第一格。
@@ -372,7 +415,8 @@ export function currentRoleIndex(
 			memory.thinkingLevel === current.thinkingLevel)
 	) {
 		const i = slots.findIndex((s) => s.id === memory.role);
-		if (slots[i]?.status === "ok") return i;
+		if (slots[i]?.status === "ok" && sameModel(slots[i]?.model, current))
+			return i;
 	}
 	if (lastChangeRole && lastChangeRole !== "default") {
 		const i = slots.findIndex((s) => s.id === lastChangeRole);
