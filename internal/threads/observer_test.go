@@ -226,3 +226,60 @@ func TestThreadPublicShares(t *testing.T) {
 	assert.Equal(t, 1, *sink.index[0].PublicShares)
 	sink.mu.Unlock()
 }
+
+// 回归（B5）：agent.gap 只是帧不连续，同一进程会在新流上重放仍待答的交互。gap 不得立即对待答请求发 InputResolved
+// （否则通知被标为已处理、重放后又生成一条）；gap 后第一份真实 get_state 应答到达时（重放必然先于它），
+// 只对没有重现的请求（断连期间已作答 / 取消）发 InputResolved，重现的仍可作答。
+func TestObserverAgentGapDefersInputResolution(t *testing.T) {
+	f := newFixture(t, Config{})
+	th, a, o := readyThread(f)
+	ask := func(id string) string {
+		return `{"type":"extension_ui_request","id":"` + id + `","method":"select","title":"pick","options":["a","b"]}`
+	}
+	f.frame(th, ask("u1"))
+	f.frame(th, ask("u2"))
+	f.frame(th, `{"type":"plan_proposal","title":"p"}`)
+	f.frame(th, `{"type":"plan_proposal","title":"p2"}`)
+	sent(a)
+
+	raw, _ := json.Marshal(apigen.LinkCtlAgentGapParams{ThreadID: th.id})
+	f.s.onAgentGap(f.ctx, th.orbID, raw)
+	assert.Empty(t, o.snapshot().resolved, "gap 不解决待答请求")
+
+	// 新流上重放：u1 与计划提案仍待答；u2 在断连期间已作答
+	f.frame(th, ask("u1"))
+	f.frame(th, `{"type":"plan_proposal","title":"p2"}`)
+	assert.Empty(t, o.snapshot().resolved)
+
+	// gap 后的 state 刷新应答：核对差集
+	var getState string
+	for _, s := range sent(a) {
+		if typ, _, _ := frameHeader(json.RawMessage(s)); typ == "get_state" {
+			getState = s
+		}
+	}
+	require.NotEmpty(t, getState, "gap 后刷新 state")
+	f.respond(th, getState, true, `{"isStreaming":false,"isSettled":true}`)
+	assert.Equal(t, []string{"u2"}, o.snapshot().resolved, "只解决没有重现的请求")
+
+	// 重现的请求仍可作答
+	require.NoError(t, f.s.UIResponse(f.ctx, th.id, json.RawMessage(`{"type":"extension_ui_response","id":"u1","value":"a"}`)))
+	assert.Equal(t, []string{"u2", "u1"}, o.snapshot().resolved)
+}
+
+// B5：gap 后尚未核对时 agent 退出（实时缓冲真正丢弃），挂起的请求一并解决；gap / 退出时合成的失败应答不触发核对。
+func TestObserverAgentGapThenExitResolvesSuspended(t *testing.T) {
+	f := newFixture(t, Config{})
+	th, a, o := readyThread(f)
+	f.frame(th, `{"type":"extension_ui_request","id":"u1","method":"confirm","title":"ok?"}`)
+	sent(a)
+	raw, _ := json.Marshal(apigen.LinkCtlAgentGapParams{ThreadID: th.id})
+	f.s.onAgentGap(f.ctx, th.orbID, raw)
+	// 第二次 gap：上一次的 get_state 以合成失败结束，不得据空缓冲解决 u1
+	f.s.onAgentGap(f.ctx, th.orbID, raw)
+	assert.Empty(t, o.snapshot().resolved)
+
+	st, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited"})
+	f.s.onAgentStatus(f.ctx, th.orbID, st)
+	assert.Equal(t, []string{"u1"}, o.snapshot().resolved)
+}

@@ -119,9 +119,17 @@ type fakeThreads struct {
 	cmds     []uiCall
 	uiErr    error
 	cmdReply json.RawMessage
+	// getHook 非空时在 Get 读库之前调用（测试用它在 emit 预登记未读之后、落库之前暂停）。
+	getHook func()
 }
 
 func (f *fakeThreads) Get(ctx context.Context, id string) (apigen.Thread, error) {
+	f.mu.Lock()
+	hook := f.getHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	row, err := f.st.Q.GetThread(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apigen.Thread{}, threads.ErrNotFound

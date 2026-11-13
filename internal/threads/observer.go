@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 
 	"github.com/Lynricsy/Oryn/internal/orbs"
 )
@@ -66,18 +67,61 @@ func (s *Service) Publish(ctx context.Context, threadID string) {
 	t.mu.Unlock()
 }
 
-// resetLiveLocked 丢弃实时缓冲，并对随之消失的待答请求与计划提案逐个发 InputResolved。调用方持有 t.mu。
+// resetLiveLocked 丢弃实时缓冲，并对随之消失的待答请求与计划提案（含 gap 后尚未核对的）逐个发 InputResolved。调用方持有 t.mu。
 func (s *Service) resetLiveLocked(t *thread) {
 	ids := t.live.PendingUIIDs()
-	plan := t.live.PlanProposal != nil
+	if t.live.PlanProposal != nil {
+		ids = append(ids, PlanRequestID)
+	}
 	t.live.Reset()
+	for id := range t.gapUI {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	t.gapUI = nil
 	o := s.observer()
 	for _, id := range ids {
 		o.InputResolved(t.id, id)
 	}
-	if plan {
-		o.InputResolved(t.id, PlanRequestID)
+}
+
+// suspendLiveLocked 是 agent.gap 时的实时缓冲丢弃：仍待答的请求只记入 gapUI、不发 InputResolved——同一进程会在新流上
+// 重放它们，提前解决会让通知被标为已处理、重放后又生成一条。调用方持有 t.mu。
+func (s *Service) suspendLiveLocked(t *thread) {
+	ids := t.live.PendingUIIDs()
+	if t.live.PlanProposal != nil {
+		ids = append(ids, PlanRequestID)
 	}
+	t.live.Reset()
+	if len(ids) == 0 {
+		return
+	}
+	if t.gapUI == nil {
+		t.gapUI = make(map[string]bool, len(ids))
+	}
+	for _, id := range ids {
+		t.gapUI[id] = true
+	}
+}
+
+// reconcileGapUILocked 在 gap 之后的重新同步完成时，对没有重现的待答请求发 InputResolved（它们在断连期间已作答或取消）。
+// 调用方持有 t.mu。
+func (s *Service) reconcileGapUILocked(t *thread) {
+	if len(t.gapUI) == 0 {
+		return
+	}
+	o := s.observer()
+	for id := range t.gapUI {
+		still := t.live.HasUI(id)
+		if id == PlanRequestID {
+			still = t.live.PlanProposal != nil
+		}
+		if !still {
+			o.InputResolved(t.id, id)
+		}
+	}
+	t.gapUI = nil
 }
 
 // errorReason 返回 error 状态的原因：所在 orb 为 failed 时取导致失败的原因，其余为空。调用方持有 t.mu。

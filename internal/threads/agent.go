@@ -180,6 +180,8 @@ func (s *Service) markFailed(ctx context.Context, t *thread) {
 	t.live.SetWorking(false)
 	t.settled, t.unsynced = true, false
 	s.notifyReadyWaiters(t, apigen.AgentStatusExited)
+	// 排队等它就绪的只读查询不会再有应答，也不能让它们阻止静止
+	s.dropPassiveLocked(t, "agent failed to start")
 	s.recompute(ctx, t)
 	t.mu.Unlock()
 }
@@ -250,9 +252,10 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
 			t.unsynced = true
 		} else {
-			// 不会再有进程：没有在跑的回合
+			// 不会再有进程：没有在跑的回合；排队等它就绪的只读查询随之结束
 			t.live.RestartExhausted()
 			t.settled, t.unsynced = true, false
+			s.dropPassiveLocked(t, "agent restarts exhausted")
 		}
 		s.notifyReadyWaiters(t, apigen.AgentStatusExited)
 		if p.StderrTail != nil {
@@ -286,7 +289,8 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 		return
 	}
 	t.mu.Lock()
-	s.resetLiveLocked(t)
+	// 同一进程会在新流上重放仍待答的交互：只挂起、不解决，重新同步后再核对
+	s.suspendLiveLocked(t)
 	// 断连期间的帧（含应答、agent_end / session_settled）可能已丢失：等 get_state 重新同步
 	t.unsynced = true
 	s.failPendingLocked(t, "agent frames lost while disconnected", false)
@@ -367,9 +371,10 @@ func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 	}
 }
 
-// dropPassiveLocked 以 agent_unavailable 结束排队中的只读查询：它们在 provisioning / 恢复途中排队，orb 随后却进入
-// 挂起 / 失败 / 删除，不会再有 agent 处理它们（也不让它们阻止静止）。用户命令留在队列里等唤醒。调用方持有 t.mu。
-func (s *Service) dropPassiveLocked(t *thread, orbState string) {
+// dropPassiveLocked 以 agent_unavailable 结束排队中的只读查询：它们在 provisioning / 恢复途中排队，随后 orb 进入
+// 挂起 / 失败 / 删除，或 agent 最终没能启动 / 重启耗尽，不会再有 agent 处理它们（也不让它们阻止静止）。
+// 用户命令留在队列里等唤醒 / 重试。why 说明原因（如 "orb frozen"）。调用方持有 t.mu。
+func (s *Service) dropPassiveLocked(t *thread, why string) {
 	kept := t.queue[:0]
 	for _, f := range t.queue {
 		typ, id, ok := frameHeader(f)
@@ -380,7 +385,7 @@ func (s *Service) dropPassiveLocked(t *thread, orbState string) {
 		if p := t.pending[id]; p != nil {
 			delete(t.pending, id)
 			resp, _ := json.Marshal(map[string]any{"type": "response", "id": id, "command": typ, "success": false, "code": "agent_unavailable",
-				"error": fmt.Sprintf("%s: agent is not running (orb %s); read-only queries do not wake the orb", typ, orbState)})
+				"error": fmt.Sprintf("%s: agent is not running (%s); read-only queries do not wake the orb", typ, why)})
 			s.deliver(p, resp)
 		}
 	}
@@ -679,6 +684,8 @@ func (s *Service) refreshStateLocked(t *thread) {
 		if !env.OK() || len(data) == 0 {
 			return
 		}
+		// 真实应答（不是 gap / 退出时合成的失败）：gap 后重放的交互必然先于它到达
+		s.reconcileGapUILocked(t)
 		rs := t.live.SetState(data)
 		if rs.IsStreaming != nil && *rs.IsStreaming {
 			t.settled = false

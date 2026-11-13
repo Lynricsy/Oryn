@@ -258,6 +258,10 @@ type thread struct {
 	// unsynced 为真表示运行 / 静止标志可能与 agent 实际状态不符（控制面重启时线程正忙、agent.gap、agent 退出后待重启）：
 	// 直到下一次 get_state 应答恢复 working / settled 之前，线程不算静止（不得冻结）。
 	unsynced bool
+	// gapUI 是 agent.gap 时实时缓冲里仍待答的请求 id（含 PlanRequestID）：gap 只是帧不连续，同一进程会在新流上重放
+	// 仍待答的交互，因此不立即对它们发 InputResolved；gap 之后第一份成功的 get_state 应答到达时（重放帧必然先于它）
+	// 对没有重现的发 InputResolved（reconcileGapUILocked）；实时缓冲真正丢弃（resetLiveLocked）时一并解决。
+	gapUI map[string]bool
 	// transcriptRev 是转录版本（threads.transcript_rev）。
 	transcriptRev int64
 	// deliveries 是在途的附件投递数（命令在投递完成后才入队）：>0 时线程算 working、不静止。
@@ -678,7 +682,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			}
 		}
 		if orbGoingDown(state) && len(t.queue) > 0 {
-			s.dropPassiveLocked(t, state)
+			s.dropPassiveLocked(t, "orb "+state)
 		}
 		if !orbSuspended(state) && t.agentReady() && len(t.queue) > 0 {
 			// orb 暂停期间（或缓存滞后时）就绪的 agent 留下的排队命令：现在可以下发

@@ -115,3 +115,60 @@ func TestQueuedPassiveDroppedWhenOrbFails(t *testing.T) {
 	assert.Equal(t, "set_thinking_level", typ)
 	th.mu.Unlock()
 }
+
+// 回归（B6）：orb 已 ready，但 agent 最终没能启动（agent.start 失败 → markFailed，或启动中的 agent 退出且重启耗尽）：
+// provisioning 期间排队的只读查询须以 agent_unavailable 结束，不得滞留在队列 / pending 里阻止静止；用户命令留下等重试。
+func TestQueuedPassiveDroppedWhenAgentNeverStarts(t *testing.T) {
+	cases := map[string]func(f *fixture, th *thread){
+		"agent.start failed": func(f *fixture, th *thread) { f.s.markFailed(f.ctx, th) },
+		"restart exhausted": func(f *fixture, th *thread) {
+			raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited", RestartsLeft: new(0)})
+			f.s.onAgentStatus(f.ctx, th.orbID, raw)
+		},
+	}
+	for name, fail := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, Config{})
+			orb := f.orb("spawning")
+			th := f.thread(orb, StateProvisioning)
+			var got json.RawMessage
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"terminal_list"}`), func(r json.RawMessage) { got = r }))
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"get_state"}`), noReply))
+
+			// orb 就绪（不经 handleOrbEvent：它会异步 startAgent），agent 正在启动
+			f.setOrbState(orb, "ready")
+			f.s.applyOrbState(orb, "ready", 10)
+			th.mu.Lock()
+			th.agentStatus = apigen.AgentStatusStarting
+			th.mu.Unlock()
+
+			fail(f, th)
+			assert.Contains(t, string(got), `"code":"agent_unavailable"`)
+			assert.Contains(t, string(got), `"success":false`)
+			th.mu.Lock()
+			assert.Empty(t, th.queue)
+			assert.Empty(t, th.pending)
+			assert.True(t, th.quiescentLocked(), "已拒绝的查询不再阻止静止")
+			th.mu.Unlock()
+			f.s.Close()
+			assert.Empty(t, f.orbs.wakes)
+		})
+	}
+}
+
+// B6 负向：agent 失败只清只读查询，排队的用户命令保留（等用户重试）。
+func TestAgentStartFailureKeepsUserCommands(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("spawning")
+	th := f.thread(orb, StateProvisioning)
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"terminal_list"}`), noReply))
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"set_thinking_level","level":"low"}`), noReply))
+	f.setOrbState(orb, "ready")
+	f.s.applyOrbState(orb, "ready", 10)
+	f.s.markFailed(f.ctx, th)
+	th.mu.Lock()
+	require.Len(t, th.queue, 1)
+	typ, _, _ := frameHeader(th.queue[0])
+	assert.Equal(t, "set_thinking_level", typ)
+	th.mu.Unlock()
+}

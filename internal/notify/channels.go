@@ -454,7 +454,7 @@ func (s *Service) TestChannel(ctx context.Context, id string) (apigen.Notificati
 	}
 	r := sender.Send(ctx, Message{Kind: KindTest, Title: text(ch.Locale, "testTitle"), URL: strings.TrimRight(s.cfg.PublicURL, "/"), Locale: ch.Locale, CreatedAt: s.now()})
 	if r.Err != nil {
-		msg := truncate(r.Err.Error(), maxErrorLen)
+		msg := errorText(r.Err)
 		_ = s.st.Q.SetNotificationChannelError(ctx, db.SetNotificationChannelErrorParams{LastError: &msg, ID: id})
 		return apigen.NotificationTestResult{Ok: false, Error: &msg}, nil
 	}

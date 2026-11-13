@@ -97,6 +97,32 @@ func (q *Queries) FinishNotificationDelivery(ctx context.Context, arg FinishNoti
 	return err
 }
 
+const getDeliverablePushSubscription = `-- name: GetDeliverablePushSubscription :one
+SELECT s.id, s.kind, s.endpoint, s.p256dh, s.auth, s.web_session_hash, s.device_id, s.user_agent, s.created_at, s.last_success_at, s.last_error FROM push_subscriptions s
+LEFT JOIN devices d ON d.id = s.device_id
+WHERE s.id = ?1 AND (s.device_id IS NULL OR d.revoked_at IS NULL)
+`
+
+// One subscription, only if its owning device (if any) is not revoked (re-checked right before each delivery).
+func (q *Queries) GetDeliverablePushSubscription(ctx context.Context, id string) (PushSubscription, error) {
+	row := q.db.QueryRowContext(ctx, getDeliverablePushSubscription, id)
+	var i PushSubscription
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Endpoint,
+		&i.P256dh,
+		&i.Auth,
+		&i.WebSessionHash,
+		&i.DeviceID,
+		&i.UserAgent,
+		&i.CreatedAt,
+		&i.LastSuccessAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
 const getLastDeliveryByChannel = `-- name: GetLastDeliveryByChannel :one
 SELECT id, notification_id, channel_id, subscription_id, target, status, attempts, next_attempt_at, last_error, external_ref, created_at, finished_at FROM notification_deliveries WHERE channel_id = CAST(?1 AS TEXT) ORDER BY created_at DESC, id DESC LIMIT 1
 `

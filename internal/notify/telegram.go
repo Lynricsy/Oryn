@@ -91,7 +91,8 @@ func tgCall(ctx context.Context, hc *http.Client, cfg tgConfig, method string, b
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.APIBase+"/bot"+cfg.BotToken+"/"+method, bytes.NewReader(b))
 	if err != nil {
-		return err
+		// URL 含 token：解析错误同样脱敏
+		return redactURLError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := hc.Do(req)
@@ -538,7 +539,18 @@ func (s *Service) handleUpdate(ctx context.Context, id string, cfg tgConfig, loc
 		}
 		return
 	}
-	frame, _ := json.Marshal(map[string]string{"type": "prompt", "message": txt, "streamingBehavior": "steer"})
+	// 与 Web 输入区一致：线程正在跑回合时 steer（插入当前回合），否则 prompt 开启新回合——
+	// 回合已结束时带 streamingBehavior 的消息可能被排进队列而不开启回合，线程里看不到它。
+	th, err := s.th.Get(ctx, threadID)
+	if err != nil {
+		reply(m.Chat.ID, "failed", err.Error())
+		return
+	}
+	cmdType := "prompt"
+	if th.State == apigen.ThreadStateWorking {
+		cmdType = "steer"
+	}
+	frame, _ := json.Marshal(map[string]string{"type": cmdType, "message": txt})
 	chat := m.Chat.ID
 	// 应答回调在线程锁内调用：只起 goroutine 回消息，不在回调里做网络请求
 	onReply := func(resp json.RawMessage) {

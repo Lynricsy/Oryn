@@ -1,15 +1,20 @@
 package notify
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/webpush/webpushtest"
@@ -477,4 +483,94 @@ func TestPushSubscriptionValidation(t *testing.T) {
 	require.Len(t, subs, 3)
 	require.NoError(t, f.s.DeletePushSubscription(f.ctx, subs[0].ID))
 	assert.ErrorIs(t, f.s.DeletePushSubscription(f.ctx, subs[0].ID), ErrNotFound)
+}
+
+// 回归（B4）：设备归属的推送订阅首次投递失败排队重试，其间设备被吊销（auth.RevokeDevice 只写 revoked_at，
+// 订阅与投递行不会级联删除）：重试到期时不得再向端点发送，投递以失败结束。
+func TestWebPushRetrySkipsRevokedDevice(t *testing.T) {
+	f := newFixture(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c, err := webpushtest.NewClient(srv.URL + "/push/dev")
+	require.NoError(t, err)
+	dev := ids.New("dev")
+	require.NoError(t, f.st.Q.CreateDevice(f.ctx, db.CreateDeviceParams{ID: dev, Name: "phone", Kind: "mobile", Platform: "ios", TokenHash: ids.Hash(dev), CreatedAt: 1}))
+	_, err = f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: c.Sub.Endpoint, Keys: apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{DeviceID: &dev}, "UA")
+	require.NoError(t, err)
+
+	d := f.onlyDelivery(f.thread("私密标题"))
+	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+	require.EqualValues(t, 1, hits.Load(), "首次投递到达端点（503 → 重排）")
+	d = f.delivery(d.ID)
+	require.Equal(t, statusPending, d.Status)
+
+	now := f.clock.Now().UnixMilli()
+	n, err := f.st.Q.RevokeDevice(f.ctx, db.RevokeDeviceParams{RevokedAt: &now, ID: dev})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	f.clock.Advance(10 * time.Second)
+	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+	assert.EqualValues(t, 1, hits.Load(), "吊销后不再推送")
+	d = f.delivery(d.ID)
+	assert.Equal(t, statusFailed, d.Status)
+	require.NotNil(t, d.LastError)
+	assert.Equal(t, "subscription owner revoked", *d.LastError)
+	assert.Equal(t, 0, f.s.DeliverDue(f.ctx))
+}
+
+// 回归（F6）：Webhook 网络错误（*url.Error）里的完整 URL 路径与查询串是凭据：落库的 last_error、渠道的 lastError /
+// lastDelivery.error、通知列表里的投递错误与测试接口的回显都只保留 scheme + host。
+func TestNetworkErrorRedactsChannelURL(t *testing.T) {
+	f := newFixture(t)
+	dead := httptest.NewServer(http.NotFoundHandler())
+	base := dead.URL
+	dead.Close() // 连接被拒：请求得不到响应
+	const secretPath, secretQuery = "T0001/B0002/XsecretTokenX", "sig=QsecretQ"
+	ch := f.webhookChannel(base+"/services/"+secretPath+"?"+secretQuery, "")
+	d := f.onlyDelivery(f.thread("t"))
+	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+
+	check := func(what string, s *string) {
+		t.Helper()
+		require.NotNil(t, s, what)
+		assert.NotContains(t, *s, "XsecretTokenX", what)
+		assert.NotContains(t, *s, "QsecretQ", what)
+		assert.Contains(t, *s, base, what+"：保留 scheme + host 便于排查")
+	}
+	row := f.delivery(d.ID)
+	assert.Equal(t, statusPending, row.Status, "网络错误可重试")
+	check("delivery.last_error", row.LastError)
+	chRow, err := f.st.Q.GetNotificationChannel(f.ctx, ch.ID)
+	require.NoError(t, err)
+	check("channel.last_error", chRow.LastError)
+	list, err := f.s.List(f.ctx, 10, 0)
+	require.NoError(t, err)
+	check("notification.deliveries[].error", list.Notifications[0].Deliveries[0].Error)
+	chs, err := f.s.ListChannels(f.ctx)
+	require.NoError(t, err)
+	require.Len(t, chs, 1)
+	check("channel.lastError", chs[0].LastError)
+	require.NotNil(t, chs[0].LastDelivery)
+	check("channel.lastDelivery.error", chs[0].LastDelivery.Error)
+	res, err := f.s.TestChannel(f.ctx, ch.ID)
+	require.NoError(t, err)
+	assert.False(t, res.Ok)
+	check("test.error", res.Error)
+}
+
+// redactURLError 对被包装的 *url.Error 同样生效，且保留错误链。
+func TestRedactURLError(t *testing.T) {
+	ue := &url.Error{Op: "Post", URL: "https://hooks.example.com/services/XsecretX?token=QsecretQ", Err: context.DeadlineExceeded}
+	err := redactURLError(fmt.Errorf("send: %w", ue))
+	assert.Equal(t, `send: Post "https://hooks.example.com": context deadline exceeded`, err.Error())
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	var got *url.Error
+	assert.ErrorAs(t, err, &got)
+	plain := errors.New("HTTP 500: boom")
+	assert.Same(t, plain, redactURLError(plain), "没有 URL 的错误原样返回")
+	assert.Equal(t, `Post "[redacted-url]": x`, redactURLError(&url.Error{Op: "Post", URL: "::bad", Err: errors.New("x")}).Error())
 }

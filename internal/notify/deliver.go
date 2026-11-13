@@ -2,11 +2,13 @@ package notify
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -112,7 +114,7 @@ func (s *Service) DeliverDue(ctx context.Context) int {
 		slog.Warn("notify: 读取待投递失败", "err", err)
 		return 0
 	}
-	var subs map[string]db.PushSubscription
+	// 推送订阅不做批次缓存：每条投递发送前按当前设备有效性重取，排队 / 重试期间被吊销的设备不再收到推送
 	for _, d := range due {
 		if ctx.Err() != nil {
 			return 0
@@ -144,19 +146,18 @@ func (s *Service) DeliverDue(ctx context.Context) int {
 				continue
 			}
 		case d.SubscriptionID != nil:
-			if subs == nil {
-				subs = map[string]db.PushSubscription{}
-				all, err := s.st.Q.ListPushSubscriptions(ctx)
-				if err != nil {
-					continue
-				}
-				for _, sub := range all {
-					subs[sub.ID] = sub
-				}
+			sub, err := s.st.Q.GetDeliverablePushSubscription(ctx, *d.SubscriptionID)
+			if errors.Is(err, sql.ErrNoRows) {
+				// 订阅仍在却查不到 = 所属设备已吊销（订阅被删时投递行已级联删除）：取消，不再发送
+				s.finish(ctx, d, statusFailed, d.Attempts, "subscription owner revoked", "")
+				continue
 			}
-			sub, ok := subs[*d.SubscriptionID]
+			if err != nil {
+				slog.Warn("notify: 读取推送订阅失败", "subscription", *d.SubscriptionID, "err", err)
+				continue
+			}
 			mk := s.pushSenders[sub.Kind]
-			if !ok || mk == nil {
+			if mk == nil {
 				s.finish(ctx, d, statusFailed, d.Attempts, "unsupported subscription", "")
 				continue
 			}
@@ -212,7 +213,7 @@ func (s *Service) applyResult(ctx context.Context, d db.NotificationDelivery, r 
 		}
 		return
 	}
-	msg := truncate(r.Err.Error(), maxErrorLen)
+	msg := errorText(r.Err)
 	if d.ChannelID != nil {
 		_ = s.st.Q.SetNotificationChannelError(ctx, db.SetNotificationChannelErrorParams{LastError: &msg, ID: *d.ChannelID})
 	}
@@ -272,13 +273,49 @@ func httpResult(resp *http.Response, body []byte) Result {
 	return r
 }
 
-// netResult 是请求未得到响应（网络错误 / 超时）的结果：可重试。
+// netResult 是请求未得到响应（网络错误 / 超时）的结果：可重试。错误里的 URL 已脱敏（见 redactURLError）。
 func netResult(err error) Result {
+	err = redactURLError(err)
 	if errors.Is(err, context.Canceled) {
 		return Result{Err: err}
 	}
 	return Result{Err: err, Retry: true}
 }
+
+// errorText 是写入 last_error 并回显给客户端的错误文本：URL 脱敏后截断。
+func errorText(err error) string {
+	return truncate(redactURLError(err).Error(), maxErrorLen)
+}
+
+// redactURLError 把错误链里 *url.Error 携带的 URL 换成只有 scheme + host 的形式：Webhook / ntfy / Bark /
+// Web Push 的 URL 路径与查询串本身就是凭据（Go 只去掉 userinfo 里的密码）。错误链保留（errors.Is / As 仍可用）。
+func redactURLError(err error) error {
+	var ue *url.Error
+	if err == nil || !errors.As(err, &ue) || ue.URL == "" {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), strconv.Quote(ue.URL), strconv.Quote(schemeHost(ue.URL)))
+	// 兜底：URL 未经引号出现在消息里（外层包装自行拼接）
+	msg = strings.ReplaceAll(msg, ue.URL, schemeHost(ue.URL))
+	return &redactedError{msg: msg, err: err}
+}
+
+// schemeHost 返回 URL 的 "scheme://host"；无法解析时返回占位符。
+func schemeHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "[redacted-url]"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
 
 // truncate 按字符截断到 n 个字符（超出时以 "…" 结尾）。
 func truncate(s string, n int) string {

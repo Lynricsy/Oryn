@@ -161,7 +161,8 @@ func isPlanFrame(frame json.RawMessage) bool {
 func (s *Service) postJSON(ctx context.Context, u string, body []byte, hdr map[string]string) (Result, []byte) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
-		return Result{Err: err}, nil
+		// 解析错误同样是携带完整 URL 的 *url.Error
+		return Result{Err: redactURLError(err)}, nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Oryn/"+version.Version)

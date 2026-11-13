@@ -1,5 +1,5 @@
 // Package notify 是通知服务（M5 计划 3.2–3.6）：把线程事件（Observer）去抖成通知，落库后按渠道与推送订阅投递，
-// 失败重试并留记录；Telegram 渠道另做长轮询，支持在 Telegram 里作答 ask 与回复即 steer。
+// 失败重试并留记录；Telegram 渠道另做长轮询，支持在 Telegram 里作答 ask 与回复即发消息（忙时 steer、否则 prompt）。
 //
 // 并发约定：
 //   - Observer 回调在线程服务持有线程锁时同步调用：只操作内存（定时器、未读集合）并入队，不碰库、不回调线程服务。
@@ -114,8 +114,12 @@ type Service struct {
 	timers map[string]map[timerKey]*pendingTimer
 	// unread 是有未读通知的线程（Seen 的 O(1) 快速路径）。
 	unread map[string]bool
-	queue  []event
-	wake   chan struct{}
+	// emitGen 在每次 emit 预登记未读时递增；emitting 是已预登记、尚未结束的 emit 数。REST 的 MarkRead 据此判断
+	// 它的 SQL 是否可能早于某条新通知落库：可能时不清内存未读（宁可多一次 Seen 标读，不能让库里的未读失去登记）。
+	emitGen  uint64
+	emitting int
+	queue    []event
+	wake     chan struct{}
 	// deliverWake 唤醒投递循环。
 	deliverWake chan struct{}
 
@@ -402,11 +406,16 @@ func (s *Service) processEvents(ctx context.Context) {
 			s.cancelLocked(ev.threadID, ev.key)
 			// 先登记未读：此后到达的 Seen 会在本通知落库之后把它标为已读
 			s.unread[ev.threadID] = true
+			s.emitGen++
+			s.emitting++
 		}
 		s.mu.Unlock()
 		switch ev.kind {
 		case evEmit:
 			s.emit(ctx, ev.threadID, ev.key, ev.timer)
+			s.mu.Lock()
+			s.emitting--
+			s.mu.Unlock()
 		case evResolve:
 			s.resolve(ctx, ev.threadID, ev.requestID)
 		case evRead:
@@ -604,7 +613,13 @@ func (s *Service) List(ctx context.Context, limit int, before int64) (apigen.Not
 }
 
 // MarkRead 标记已读：threadID 为空 = 全部；随后广播。
+//
+// 与 emit 交错时（emit 已预登记未读、尚未落库，或在本次 SQL 与清集合之间落库），SQL 可能没标到那条新通知：
+// 这时保留内存未读登记，之后的 Seen 会把它读掉，库与集合不失配。
 func (s *Service) MarkRead(ctx context.Context, threadID string) error {
+	s.mu.Lock()
+	gen, busy := s.emitGen, s.emitting > 0
+	s.mu.Unlock()
 	var err error
 	if threadID == "" {
 		_, err = s.st.Q.MarkAllNotificationsRead(ctx, s.now())
@@ -615,10 +630,12 @@ func (s *Service) MarkRead(ctx context.Context, threadID string) error {
 		return err
 	}
 	s.mu.Lock()
-	if threadID == "" {
-		clear(s.unread)
-	} else {
-		delete(s.unread, threadID)
+	if !busy && gen == s.emitGen {
+		if threadID == "" {
+			clear(s.unread)
+		} else {
+			delete(s.unread, threadID)
+		}
 	}
 	s.mu.Unlock()
 	s.out.NotificationsRead(threadID)

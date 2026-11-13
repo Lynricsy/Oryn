@@ -14,6 +14,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/notify/notifytest"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
@@ -222,7 +223,7 @@ func TestTelegramTextAnswerAndSteer(t *testing.T) {
 	c = next(t, b, "sendMessage")
 	assert.Equal(t, text("zh-CN", "answered"), c.Str("text"))
 
-	// 回复 done 通知 → steer
+	// 回复 done 通知：线程已空闲 → prompt（开启新回合；带 streamingBehavior 的消息在回合结束后不会开启回合）
 	f.done(id)
 	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
 	c = next(t, b, "sendMessage")
@@ -235,9 +236,19 @@ func TestTelegramTextAnswerAndSteer(t *testing.T) {
 	cmds := f.th.Commands()
 	require.Len(t, cmds, 1)
 	assert.Equal(t, id, cmds[0].ThreadID)
-	assert.JSONEq(t, `{"type":"prompt","message":"再输出一行 TG-STEER-OK","streamingBehavior":"steer"}`, string(cmds[0].Frame))
+	assert.JSONEq(t, `{"type":"prompt","message":"再输出一行 TG-STEER-OK"}`, string(cmds[0].Frame))
 	c = next(t, b, "sendMessage")
 	assert.Equal(t, text("zh-CN", "sent"), c.Str("text"))
+
+	// 线程正在跑回合 → steer（与 Web 输入区「忙时 Enter = steer」一致）
+	require.NoError(t, f.st.Q.SetThreadState(f.ctx, db.SetThreadStateParams{State: threads.StateWorking, StateChangedAt: 2, ID: id}))
+	f.push(b, ch.ID, notifytest.Reply(linkedChat, doneMsg, "顺便看看日志"))
+	cmds = f.th.Commands()
+	require.Len(t, cmds, 2)
+	assert.JSONEq(t, `{"type":"steer","message":"顺便看看日志"}`, string(cmds[1].Frame))
+	c = next(t, b, "sendMessage")
+	assert.Equal(t, text("zh-CN", "sent"), c.Str("text"))
+	require.NoError(t, f.st.Q.SetThreadState(f.ctx, db.SetThreadStateParams{State: threads.StateIdle, StateChangedAt: 3, ID: id}))
 
 	// 应答失败 → failed: <error>
 	f.th.mu.Lock()
@@ -249,7 +260,7 @@ func TestTelegramTextAnswerAndSteer(t *testing.T) {
 
 	// 另一个聊天回复同一条通知：忽略
 	f.push(b, ch.ID, notifytest.Reply(999, doneMsg, "evil"))
-	assert.Len(t, f.th.Commands(), 2)
+	assert.Len(t, f.th.Commands(), 3)
 	assert.Empty(t, b.Drain())
 }
 

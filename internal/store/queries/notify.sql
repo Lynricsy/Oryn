@@ -55,6 +55,12 @@ LEFT JOIN devices d ON d.id = s.device_id
 WHERE s.device_id IS NULL OR d.revoked_at IS NULL
 ORDER BY s.created_at, s.id;
 
+-- One subscription, only if its owning device (if any) is not revoked (re-checked right before each delivery).
+-- name: GetDeliverablePushSubscription :one
+SELECT s.* FROM push_subscriptions s
+LEFT JOIN devices d ON d.id = s.device_id
+WHERE s.id = @id AND (s.device_id IS NULL OR d.revoked_at IS NULL);
+
 -- name: DeletePushSubscription :execrows
 DELETE FROM push_subscriptions WHERE id = @id;
 

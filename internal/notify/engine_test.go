@@ -224,3 +224,57 @@ func TestRetentionCleanup(t *testing.T) {
 	assert.Empty(t, f.s.unread)
 	f.s.mu.Unlock()
 }
+
+// 回归（B9）：emit 已预登记未读、尚未落库时（此处在 Threads.Get 里暂停），REST MarkRead 的 SQL 标不到那条新通知；
+// 它不得据此清掉内存未读集合，否则之后的 Seen 走快速路径，库里的未读永远读不掉。
+func TestMarkReadInterleavedWithEmit(t *testing.T) {
+	for _, all := range []bool{false, true} {
+		t.Run(map[bool]string{false: "thread", true: "all"}[all], func(t *testing.T) {
+			f := newFixture(t)
+			id := f.thread("t")
+			entered, release := make(chan struct{}), make(chan struct{})
+			f.th.mu.Lock()
+			f.th.getHook = func() {
+				f.th.mu.Lock()
+				f.th.getHook = nil
+				f.th.mu.Unlock()
+				close(entered)
+				<-release
+			}
+			f.th.mu.Unlock()
+
+			f.s.StateChanged(threads.StateEvent{ThreadID: id, Prev: threads.StateWorking, State: threads.StateIdle})
+			f.timers.FireAll()
+			processed := make(chan struct{})
+			go func() {
+				defer close(processed)
+				f.s.processEvents(f.ctx)
+			}()
+			<-entered // 未读已预登记，通知尚未落库
+			target := id
+			if all {
+				target = ""
+			}
+			require.NoError(t, f.s.MarkRead(f.ctx, target))
+			close(release)
+			<-processed
+
+			ns := f.notifications()
+			require.Len(t, ns, 1)
+			require.Nil(t, ns[0].ReadAt, "通知在 MarkRead 的 SQL 之后落库，仍未读")
+			f.s.mu.Lock()
+			assert.True(t, f.s.unread[id], "库里有未读时集合必须登记")
+			f.s.mu.Unlock()
+
+			// Seen 能把它读掉：库与集合一致
+			f.s.Seen(id)
+			f.s.processEvents(f.ctx)
+			unread, err := f.st.Q.CountUnreadNotifications(f.ctx)
+			require.NoError(t, err)
+			assert.EqualValues(t, 0, unread)
+			f.s.mu.Lock()
+			assert.False(t, f.s.unread[id])
+			f.s.mu.Unlock()
+		})
+	}
+}
