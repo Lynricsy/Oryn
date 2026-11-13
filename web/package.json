@@ -14,6 +14,7 @@
     "gen:api": "openapi-typescript ../schema/openapi.yaml -o src/api/schema.d.ts",
     "shots": "bun scripts/screenshots.ts",
     "shots:m25": "bun scripts/screenshots.ts --m25",
+    "shots:all": "bun scripts/screenshots.ts --all",
     "accept:m3": "bun scripts/m3-accept.ts"
   },
   "dependencies": {

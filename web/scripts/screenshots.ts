@@ -1,18 +1,70 @@
 #!/usr/bin/env bun
 /**
- * mock 模式截图：起 `VITE_MOCK=1` 的 vite 开发服务器，用本机 Chromium 在 390 / 720 / 1280 宽度下
- * 截 `/` 与 `/t/<id>`，输出到 `$ORYN_SHOTS_DIR`（默认 /tmp/oryn-shots）。
+ * mock 模式截图：起 `VITE_MOCK=1` 的 vite 开发服务器，用本机 Chromium 截图，输出到 `$ORYN_SHOTS_DIR`（默认 /tmp/oryn-shots）。
  *
- * 用法（web/ 目录）：bun run shots
- *   `--m25`：改截 M2.5 环境提示条（setup 失败 + 日志对话框、orb 失败），390 / 1280 宽，输出到 `<目录>/m25/`
+ * 用法（web/ 目录）：
+ *   `bun run shots`：390 / 720 / 1280 宽下截 `/` 与 `/t/<id>`（仅浅色）。
+ *   `--m25`：改截 M2.5 环境提示条（setup 失败 + 日志对话框、orb 失败），390 / 1280 宽，输出到 `<目录>/m25/`。
+ *   `--all`（`bun run shots:all`）：全界面矩阵 = 明暗 × 宽度 {390, 1280} × 界面清单（见 `SCREENS`），
+ *     文件名 `<界面>-<宽>-<scheme>.png`。仅 `--all` 可用的参数：
+ *     `--scheme light|dark|both`（默认 both，经 `browser.newContext({ colorScheme })` 设置）；
+ *     `--accent <名>`（经 `addInitScript` 写 `localStorage["oryn.theme"] = {mode: <scheme>, accent}`）；
+ *     `--only <前缀>[,<前缀>…]`（只截界面名以其开头的项）；
+ *     `--check`（在 `thread-bottom` 上断言输入坞不遮挡最后一条转录行，含模拟软键盘的第二次断言）。
+ *   任一界面失败或断言不通过时打印原因并以非零码退出（其余界面照常截完）。
  * 环境变量：CHROMIUM=<可执行文件>（默认 /usr/bin/chromium）
  */
 import { mkdir } from "node:fs/promises";
-import { type Browser, chromium } from "playwright-core";
-import { ENV_THREADS, MAIN_THREAD } from "../src/mock/fixtures";
+import {
+	type Browser,
+	type BrowserContext,
+	chromium,
+	type Page,
+} from "playwright-core";
+import {
+	ENV_THREADS,
+	MAIN_THREAD,
+	TOOL_ZOO_THREAD,
+} from "../src/mock/fixtures";
+
+const ARGS = process.argv.slice(2);
+const flag = (name: string) => ARGS.includes(name);
+function option(name: string): string | undefined {
+	const i = ARGS.indexOf(name);
+	if (i === -1) return undefined;
+	const v = ARGS[i + 1];
+	if (v === undefined || v.startsWith("--")) {
+		console.error(`${name} 需要一个值`);
+		process.exit(2);
+	}
+	return v;
+}
 
 const PORT = 5179;
-const M25 = process.argv.includes("--m25");
+const M25 = flag("--m25");
+const ALL = flag("--all");
+const SCHEME_ARG = option("--scheme") ?? "both";
+const ACCENT = option("--accent");
+const ONLY = option("--only")
+	?.split(",")
+	.map((s) => s.trim())
+	.filter(Boolean);
+const CHECK = flag("--check");
+
+const ACCENTS = ["teal", "cobalt", "violet", "berry", "fox", "graphite"];
+if (!ALL && (ACCENT || ONLY || CHECK || ARGS.includes("--scheme"))) {
+	console.error("--scheme / --accent / --only / --check 只能与 --all 一起用");
+	process.exit(2);
+}
+if (!["light", "dark", "both"].includes(SCHEME_ARG)) {
+	console.error(`--scheme 只接受 light|dark|both，收到 ${SCHEME_ARG}`);
+	process.exit(2);
+}
+if (ACCENT && !ACCENTS.includes(ACCENT)) {
+	console.error(`--accent 只接受 ${ACCENTS.join("|")}，收到 ${ACCENT}`);
+	process.exit(2);
+}
+
 const OUT = `${process.env.ORYN_SHOTS_DIR ?? "/tmp/oryn-shots"}${M25 ? "/m25" : ""}`;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WIDTHS = [
@@ -101,14 +153,10 @@ async function shootEnv(browser: Browser): Promise<string[]> {
 	return written;
 }
 
-try {
-	await waitForServer(BASE, 30_000);
-	await mkdir(OUT, { recursive: true });
-	const browser = await chromium.launch({
-		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
-	});
-	const written: string[] = M25 ? await shootEnv(browser) : [];
-	for (const size of M25 ? [] : WIDTHS) {
+/** 默认模式：390 / 720 / 1280 宽下的首页与线程页（含一张转录中部）。 */
+async function shootDefault(browser: Browser): Promise<string[]> {
+	const written: string[] = [];
+	for (const size of WIDTHS) {
 		const context = await browser.newContext({
 			viewport: size,
 			deviceScaleFactor: 2,
@@ -139,8 +187,523 @@ try {
 		}
 		await context.close();
 	}
+	return written;
+}
+
+// ---------------------------------------------------------------- --all 矩阵
+
+type Scheme = "light" | "dark";
+
+interface Shot {
+	page: Page;
+	width: number;
+	scheme: Scheme;
+}
+
+interface Screen {
+	name: string;
+	/** 只在这些宽度下截（缺省两种宽度都截）。 */
+	widths?: readonly number[];
+	/** 视口拉高到能装下整条转录（用 1 倍像素比，避免超出位图上限）。 */
+	tall?: boolean;
+	prepare(s: Shot): Promise<void>;
+	/** 截图之后的断言（仅 `--check`）；返回失败原因或 null。 */
+	verify?(s: Shot): Promise<string | null>;
+}
+
+/** Step 5 集成时父 agent 往这里加 "appearance"。 */
+const SETTINGS_SECTIONS = [
+	"devices",
+	"providers",
+	"projects",
+	"secrets",
+	"git-identity",
+	"agent-config",
+	"about",
+];
+
+const ALL_SIZES = [
+	{ width: 390, height: 844 },
+	{ width: 1280, height: 860 },
+] as const;
+/** 高截图的最大高度（CSS 像素）。 */
+const TALL_MAX = 16_000;
+
+async function settle(page: Page, ms = 800) {
+	await page.evaluate(() => document.fonts.ready.then(() => undefined));
+	await page.waitForTimeout(ms);
+}
+
+async function open(page: Page, path: string, ready: string, ms = 800) {
+	await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
+	await page.waitForSelector(ready, { timeout: 20_000 });
+	await settle(page, ms);
+}
+
+/** 打开线程页；等转录与懒加载的高亮 / mermaid / KaTeX。 */
+async function openThread(page: Page, id: string) {
+	await open(page, `/t/${id}`, "[data-testid=transcript]", 1800);
+}
+
+/** 把转录滚到 `frac`（0 顶部，1 底部）处。 */
+async function scrollTranscript(page: Page, frac: number) {
+	await page.evaluate((f) => {
+		const el = document.querySelector<HTMLElement>("[data-testid=transcript]");
+		if (el) el.scrollTop = (el.scrollHeight - el.clientHeight) * f;
+	}, frac);
+	await page.waitForTimeout(600);
+}
+
+const composer = (page: Page) => page.getByLabel("消息", { exact: true });
+
+async function sendPrompt(page: Page, text: string) {
+	await composer(page).fill(text);
+	await composer(page).press("Enter");
+}
+
+/** 打开右侧面板（窄屏是抽屉）并切到指定标签。 */
+async function openPanel(
+	page: Page,
+	tab: "info" | "changes" | "files" | "terminal",
+) {
+	const btn = page.locator(`[data-panel-tab=${tab}]`);
+	if (!(await btn.isVisible().catch(() => false)))
+		await page.getByRole("button", { name: "信息面板", exact: true }).click();
+	await btn.waitFor({ timeout: 10_000 });
+	if ((await btn.getAttribute("aria-selected")) !== "true") await btn.click();
+	await page.waitForTimeout(400);
+}
+
+async function openTerminal(page: Page) {
+	await openPanel(page, "terminal");
+	const wake = page.locator("[data-testid=terminal-offline] button");
+	if (await wake.isVisible().catch(() => false)) await wake.click();
+	const view = page.locator("[data-testid=terminal-view]");
+	await page.waitForTimeout(800);
+	if ((await page.locator("[data-terminal-tab]").count()) === 0)
+		await page.getByRole("button", { name: "新建终端", exact: true }).click();
+	await view.first().waitFor({ timeout: 15_000 });
+	await view.first().click();
+	await page.keyboard.type("echo hi", { delay: 10 });
+	await page.keyboard.press("Enter");
+	await page.waitForTimeout(800);
+}
+
+/** 拉高视口直到转录无需滚动（虚拟列表随之挂载全部行）；`expand` 时同时展开全部折叠的卡片。 */
+async function growToTranscript(s: Shot, expand: boolean) {
+	const transcript = s.page.locator("[data-testid=transcript]");
+	for (let round = 0; round < 8; round++) {
+		if (expand) {
+			// 虚拟列表会重挂载行，逐个用 locator 点击容易等到超时；直接在页面里点掉全部折叠项
+			await transcript.evaluate((el) => {
+				for (const b of el.querySelectorAll<HTMLButtonElement>(
+					"button[aria-expanded=false]",
+				))
+					b.click();
+			});
+		}
+		await s.page.waitForTimeout(400);
+		const { scroll, client } = await transcript.evaluate((el) => ({
+			scroll: el.scrollHeight,
+			client: el.clientHeight,
+		}));
+		const vp = s.page.viewportSize();
+		if (!vp) return;
+		const missing = scroll - client;
+		const more = expand
+			? await transcript.locator("button[aria-expanded=false]").count()
+			: 0;
+		if (missing <= 1 && more === 0) break;
+		const height = Math.min(TALL_MAX, vp.height + Math.max(0, missing));
+		if (height === vp.height && more === 0) break;
+		await s.page.setViewportSize({ width: vp.width, height });
+	}
+	await scrollTranscript(s.page, 0);
+	await settle(s.page, 1200);
+}
+
+/** 输入坞断言：最后一条转录行的底边不得低于输入框所在托盘的顶边。 */
+async function dockOverlap(page: Page): Promise<string | null> {
+	return page.evaluate(() => {
+		const ta =
+			document.querySelector<HTMLTextAreaElement>(
+				'textarea[aria-label="消息"]',
+			) ?? document.querySelector<HTMLTextAreaElement>("textarea");
+		if (!ta) return "找不到输入框 textarea";
+		const tray = ta.closest(".glass") ?? ta.parentElement;
+		const rows = document.querySelectorAll(
+			"[data-testid=transcript] [data-role]",
+		);
+		const last = rows[rows.length - 1];
+		if (!tray || !last) return "找不到托盘或转录行";
+		const bottom = last.getBoundingClientRect().bottom;
+		const top = tray.getBoundingClientRect().top;
+		return bottom <= top + 0.5
+			? null
+			: `最后一条转录行底边 ${bottom.toFixed(1)} 低于托盘顶边 ${top.toFixed(1)}`;
+	});
+}
+
+async function nextFrames(page: Page) {
+	await page.evaluate(() => {
+		const { promise, resolve } = Promise.withResolvers<void>();
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+		return promise;
+	});
+}
+
+const SCREENS: Screen[] = [
+	{
+		name: "home",
+		prepare: ({ page }) => open(page, "/", "textarea", 1200),
+	},
+	{
+		name: "thread-top",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await scrollTranscript(page, 0);
+		},
+	},
+	{
+		name: "thread-mid",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await scrollTranscript(page, 0.5);
+		},
+	},
+	{
+		name: "thread-bottom",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await scrollTranscript(page, 1);
+		},
+		verify: async ({ page }) => {
+			const first = await dockOverlap(page);
+			if (first) return first;
+			// 模拟软键盘弹出 300px
+			await page.evaluate(() =>
+				document.documentElement.style.setProperty("--kb-inset", "300px"),
+			);
+			await nextFrames(page);
+			await scrollTranscript(page, 1);
+			await nextFrames(page);
+			const second = await dockOverlap(page);
+			return second ? `软键盘 300px 时：${second}` : null;
+		},
+	},
+	{
+		name: "panel-info",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "info");
+		},
+	},
+	{
+		name: "panel-changes",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "changes");
+			const file = page
+				.locator("ul[aria-label=改动的文件] button[aria-current]")
+				.filter({ hasText: "main.ts" });
+			await file.waitFor({ timeout: 15_000 });
+			await file.click();
+			await page
+				.locator("[data-testid=diff-rows]")
+				.waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "panel-files",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "files");
+			const item = page.locator('[role=treeitem][data-path$="/src/main.ts"]');
+			if (!(await item.isVisible().catch(() => false))) {
+				const src = page.locator('[role=treeitem][data-path$="/src"]');
+				await src.waitFor({ timeout: 15_000 });
+				await src.click();
+			}
+			await item.waitFor({ timeout: 15_000 });
+			await item.click();
+			await page.locator(".cm-editor").waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "panel-terminal",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openTerminal(page);
+		},
+	},
+	{
+		name: "thread-ask",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await sendPrompt(page, "跑一下 uname -a，ask 我要不要保留主机名");
+			await page
+				.getByText("输出要包含主机名吗？")
+				.first()
+				.waitFor({ timeout: 30_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "thread-plan",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await sendPrompt(page, "先跑 uname -a，再给我一份计划");
+			await page.getByText("重连改造").first().waitFor({ timeout: 30_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "thread-slash",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await composer(page).fill("/");
+			await page.getByRole("listbox").waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "thread-menu",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await page.getByRole("button", { name: "更多操作" }).first().click();
+			await page.getByRole("menu").waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "tools",
+		tall: true,
+		prepare: async (s) => {
+			await openThread(s.page, TOOL_ZOO_THREAD);
+			await growToTranscript(s, false);
+		},
+	},
+	{
+		name: "tools-expanded",
+		tall: true,
+		prepare: async (s) => {
+			await openThread(s.page, TOOL_ZOO_THREAD);
+			await growToTranscript(s, true);
+		},
+	},
+	...(
+		[
+			["env-setup-failed", ENV_THREADS.setupFailed],
+			["env-orb-failed", ENV_THREADS.orbFailed],
+			["env-missing-config", ENV_THREADS.missingConfig],
+			["env-slow-setup", ENV_THREADS.slowSetup],
+		] as const
+	).map(
+		([name, id]): Screen => ({
+			name,
+			prepare: async ({ page }) => {
+				await openThread(page, id);
+				await page
+					.locator("[data-testid=env-banner]")
+					.waitFor({ timeout: 15_000 });
+				await settle(page);
+			},
+		}),
+	),
+	...SETTINGS_SECTIONS.map(
+		(section): Screen => ({
+			name: `settings-${section}`,
+			prepare: async ({ page }) => {
+				await open(page, `/settings/${section}`, "main", 400);
+				await page.getByRole("heading").first().waitFor({ timeout: 15_000 });
+				await settle(page);
+			},
+		}),
+	),
+	{
+		name: "login",
+		prepare: async ({ page }) => {
+			await open(page, "/login", "body");
+			await page.getByRole("button").first().waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "setup",
+		prepare: async ({ page }) => {
+			await open(page, "/setup", "body");
+			await page.getByRole("button").first().waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "pair",
+		prepare: async ({ page }) => {
+			await open(page, "/pair", "body");
+			const code = page.getByLabel("配对码", { exact: true });
+			await code.waitFor({ timeout: 15_000 });
+			await code.fill("ABCD-EFGH");
+			await page.getByRole("button", { name: "查看", exact: true }).click();
+			await page
+				.getByRole("button", { name: "批准", exact: true })
+				.waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "dialog-model",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await composer(page).fill("/model");
+			await composer(page).press("Enter");
+			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "dialog-tree",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await page.getByRole("button", { name: "会话树", exact: true }).click();
+			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "dialog-attachments",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await page.getByRole("button", { name: "更多操作" }).first().click();
+			await page.getByRole("menuitem", { name: "附件" }).click();
+			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "drawer-sidebar",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await page.getByRole("button", { name: "侧边栏", exact: true }).click();
+			await settle(page, 600);
+		},
+	},
+	{
+		name: "drawer-panel",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "info");
+			await settle(page, 600);
+		},
+	},
+];
+
+/** 一条宽度 × 明暗的流水线：依次截完全部界面。 */
+async function shootLane(
+	browser: Browser,
+	size: (typeof ALL_SIZES)[number],
+	scheme: Scheme,
+	screens: Screen[],
+	failures: string[],
+): Promise<string[]> {
+	const written: string[] = [];
+	const contexts = new Map<number, BrowserContext>();
+	const pageFor = async (dsf: number): Promise<Page> => {
+		let context = contexts.get(dsf);
+		if (!context) {
+			context = await browser.newContext({
+				viewport: { width: size.width, height: size.height },
+				deviceScaleFactor: dsf,
+				locale: "zh-CN",
+				colorScheme: scheme,
+			});
+			if (ACCENT) {
+				await context.addInitScript(
+					(value) => {
+						try {
+							localStorage.setItem("oryn.theme", value);
+						} catch {
+							// 无 localStorage
+						}
+					},
+					JSON.stringify({ mode: scheme, accent: ACCENT }),
+				);
+			}
+			contexts.set(dsf, context);
+		}
+		return context.pages()[0] ?? context.newPage();
+	};
+	for (const screen of screens) {
+		if (screen.widths && !screen.widths.includes(size.width)) continue;
+		const id = `${screen.name}-${size.width}-${scheme}`;
+		const page = await pageFor(screen.tall ? 1 : 2);
+		await page.setViewportSize({ width: size.width, height: size.height });
+		const shot: Shot = { page, width: size.width, scheme };
+		try {
+			await screen.prepare(shot);
+			const file = `${OUT}/${id}.png`;
+			await page.screenshot({ path: file });
+			written.push(file);
+			console.log(file);
+			if (CHECK && screen.verify) {
+				const problem = await screen.verify(shot);
+				if (problem) failures.push(`${id}：断言失败：${problem}`);
+				else console.log(`${id}：断言通过`);
+			}
+		} catch (e) {
+			failures.push(`${id}：${e instanceof Error ? e.message : String(e)}`);
+			// 失败现场另存到 failed/，不计入矩阵
+			await mkdir(`${OUT}/failed`, { recursive: true });
+			await page
+				.screenshot({ path: `${OUT}/failed/${id}.png` })
+				.catch(() => {});
+		}
+	}
+	for (const context of contexts.values()) await context.close();
+	return written;
+}
+
+async function shootAll(browser: Browser): Promise<boolean> {
+	const screens = SCREENS.filter(
+		(s) => !ONLY || ONLY.some((prefix) => s.name.startsWith(prefix)),
+	);
+	if (screens.length === 0) {
+		console.error(`--only ${ONLY?.join(",")} 没有匹配任何界面`);
+		return false;
+	}
+	const schemes: Scheme[] =
+		SCHEME_ARG === "both" ? ["light", "dark"] : [SCHEME_ARG as Scheme];
+	const failures: string[] = [];
+	const lanes = schemes.flatMap((scheme) =>
+		ALL_SIZES.map((size) =>
+			shootLane(browser, size, scheme, screens, failures),
+		),
+	);
+	const written = (await Promise.all(lanes)).flat();
+	console.log(`共 ${written.length} 张，输出到 ${OUT}`);
+	if (CHECK && !screens.some((s) => s.verify))
+		console.warn("--check：所选界面里没有带断言的项（thread-bottom）");
+	for (const f of failures) console.error(`✗ ${f}`);
+	return failures.length === 0;
+}
+
+let ok = true;
+try {
+	await waitForServer(BASE, 30_000);
+	await mkdir(OUT, { recursive: true });
+	const browser = await chromium.launch({
+		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
+	});
+	if (ALL) ok = await shootAll(browser);
+	else {
+		const written = M25 ? await shootEnv(browser) : await shootDefault(browser);
+		for (const f of written) console.log(f);
+	}
 	await browser.close();
-	for (const f of written) console.log(f);
 } finally {
 	server.kill();
 }
+if (!ok) process.exit(1);

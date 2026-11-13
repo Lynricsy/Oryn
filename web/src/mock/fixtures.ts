@@ -100,6 +100,9 @@ function thread(p: Partial<Thread> & Pick<Thread, "id" | "title">): Thread {
 }
 
 export const MAIN_THREAD = "T-0193a1b2-0000-7000-8000-00000000a001";
+/** 工具样例线程：`tool-render/registry.ts` 注册的每个工具各一次调用（截图矩阵用）。 */
+export const TOOL_ZOO_THREAD = "T-0193a1b2-0000-7000-8000-00000000a0aa";
+const TOOL_ZOO_ORB = "orb-01jcz8m3w4x5y6z7a8b9c0d1ea";
 
 // ---------------------------------------------------------------- orb 环境（M2.5）
 
@@ -303,6 +306,15 @@ export const threads: Thread[] = [
 		id: "T-0193a1b2-0000-7000-8000-00000000a007",
 		title: "写部署文档（1Panel 泛域名证书）",
 		snoozedUntil: NOW + 20 * HOUR,
+	}),
+	thread({
+		id: TOOL_ZOO_THREAD,
+		title: "工具样例",
+		projectId: projects[0]?.id,
+		orbId: TOOL_ZOO_ORB,
+		model: { provider: "anthropic", id: "claude-sonnet-5" },
+		thinkingLevel: "high",
+		lastMessageAt: NOW - 30 * MIN,
 	}),
 ];
 
@@ -673,4 +685,723 @@ export function mainState(): SessionState {
 		agentsPaused: false,
 		goal: null,
 	};
+}
+
+// ---------------------------------------------------------------- 工具样例（TOOL_ZOO_THREAD）
+
+/** 96×64 的小图（圆环品牌标），供 browser / generate_image 的结果图片。 */
+const ZOO_PNG =
+	"iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAB10lEQVR42u3XWVICQQyA4ZzAU3sE76YoqAMMsy+ABxBLH7RmJr0m6SlT9T92N8nHgwjN+KEhQT1cNSQFUqBAoGq4akhQ9VcNSYFMQGV/0ZAUyAjUXTQkKLqLhqRAawO6u39IC+jUngW7cdgkOCEkTiPOBKugEWSCFdGIMEHennmKqPMdz9iQN2eGouv8GNFPDuI61NdDgY7NSBqym8g7rokByT7lAlSPdC2ulMyDxuBQj3TNLpPgm0iwLh1+I1agtTz+B2hfDRTNfsmWF0nfd40PKPrC/wgI+Y0jD5RVA0XT6e1Pel+kWASycqBoZnrrk94XKRZRIAkg+z0t/2sP/JQgoPeyp2g6uv1J74sUiyiQEajoKZqZ3vqk90WKReCt6CmaTu902O8WxSJJAC0Zxf2I1IEsF7A/xgT0euqImi6wlsd/xwoUaw26l1mBiDbh1PkC2p06upb+NqXzoDHY5R1piyuJPmWfGJDrYrHecQba5i11+A9l6uuBcQAZl/SOYXLYHlue4uuwjM0HFNeIbWZ4ObbMBdIwTysA5M0kMqcYkBOT4ITwfGiS6saR1DzJAaWWApmANodGQ4LNvtGQFMgE9LSvNSQFMgJltYYEj1mtISmQAoX1CdOvjQj2s62vAAAAAElFTkSuQmCC";
+
+const REPO_DIR = "/home/user/workspace/repo";
+
+interface ZooCall {
+	name: string;
+	args: Record<string, unknown>;
+	text?: string;
+	details?: unknown;
+	isError?: boolean;
+	image?: boolean;
+}
+
+/** 一组工具调用：一条 assistant 消息（文字 + 多个 toolCall），随后逐个 toolResult。 */
+const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
+	{
+		text: "先读代码、搜索调用点：",
+		calls: [
+			{
+				name: "read",
+				args: { path: "web/src/realtime/socket.ts:40-52", i: "读取重连逻辑" },
+				text: '40|\tprivate scheduleReconnect() {\n41|\t\tsetTimeout(() => this.open(), 1000);\n42|\t}\n43|\n44|\tsubscribe(threadId: string) {\n45|\t\tthis.subs.add(threadId);\n46|\t\tthis.send({ type: "sub", threadId });\n47|\t}',
+				details: { resolvedPath: `${REPO_DIR}/web/src/realtime/socket.ts` },
+			},
+			{
+				name: "grep",
+				args: { pattern: "afterSeq", path: "web/src", type: "ts" },
+				text: 'web/src/realtime/socket.ts:52:\t\tthis.send({ type: "sub", threadId, afterSeq });\nweb/src/state/thread-reducer.ts:955:\tconst keepEntries = !snap.fullReplay && snap.lastSeq >= s.lastSeq;\nweb/src/mock/server.ts:1093:\t\tconst after = typeof msg.afterSeq === "number" ? msg.afterSeq : 0;',
+				details: { matchCount: 3, fileCount: 3 },
+			},
+			{
+				name: "search",
+				args: { pattern: "scheduleReconnect", paths: ["web/src", "internal"] },
+				text: "web/src/realtime/socket.ts:40:\tprivate scheduleReconnect() {\nweb/src/realtime/socket.ts:88:\t\tthis.scheduleReconnect();",
+				details: { matchCount: 2, fileCount: 1 },
+			},
+			{
+				name: "glob",
+				args: { path: "web/src/realtime/**/*.ts" },
+				text: "web/src/realtime/socket.ts\nweb/src/realtime/socket.test.ts\nweb/src/realtime/backoff.ts",
+				details: { fileCount: 3 },
+			},
+			{
+				name: "find",
+				args: { paths: ["internal/**/*_test.go"], limit: 4 },
+				text: "internal/realtime/hub_test.go\ninternal/realtime/sub_test.go\ninternal/orb/spawn_test.go\ninternal/webui/webui_test.go",
+				details: { fileCount: 4, resultLimitReached: 4 },
+			},
+			{
+				name: "ast_grep",
+				args: {
+					pat: "setTimeout($FN, $MS)",
+					paths: ["web/src/realtime"],
+					lang: "typescript",
+				},
+				text: "web/src/realtime/socket.ts\n  41:\t\tsetTimeout(() => this.open(), 1000);\n  97:\t\tsetTimeout(() => this.ping(), 25_000);",
+				details: { matchCount: 2, fileCount: 1, filesSearched: 6 },
+			},
+			{
+				name: "lsp",
+				args: { action: "diagnostics", file: "web/src/realtime/socket.ts" },
+				text: "web/src/realtime/socket.ts:57:9 [error] Property 'reconnectTimer' does not exist on type 'RealtimeClient'.\nweb/src/realtime/socket.ts:61:7 [warning] 'attempt' is declared but its value is never read.\n1 error(s), 1 warning(s)",
+				details: {
+					serverName: "typescript-language-server",
+					action: "diagnostics",
+				},
+			},
+		],
+	},
+	{
+		text: "改文件：",
+		calls: [
+			{
+				name: "write",
+				args: {
+					path: "web/src/realtime/backoff.ts",
+					content:
+						"/** 指数退避：0.5s 起步，每次翻倍，15s 封顶。 */\nexport function backoffMs(attempt: number): number {\n\tconst base = Math.min(15_000, 500 * 2 ** attempt);\n\treturn Math.round(base * (0.8 + Math.random() * 0.4));\n}\n",
+				},
+				text: "Wrote 5 lines to web/src/realtime/backoff.ts",
+				details: {},
+			},
+			{
+				name: "edit",
+				args: { path: "web/src/realtime/socket.ts" },
+				text: "Updated web/src/realtime/socket.ts",
+				details: {
+					path: "web/src/realtime/socket.ts",
+					diff: DIFF,
+					firstChangedLine: 42,
+				},
+			},
+			{
+				name: "apply_patch",
+				args: {
+					input:
+						'*** Begin Patch\n*** Update File: web/src/realtime/pending.ts\n@@\n-\tpending.clear();\n+\tfor (const p of pending.values()) p.reject(new Error("disconnected"));\n+\tpending.clear();\n*** End Patch',
+				},
+				text: "Updated web/src/realtime/pending.ts",
+				details: {
+					path: "web/src/realtime/pending.ts",
+					diff: '@@ -18,3 +18,4 @@ export function failAll() {\n-\tpending.clear();\n+\tfor (const p of pending.values()) p.reject(new Error("disconnected"));\n+\tpending.clear();\n }',
+					firstChangedLine: 18,
+				},
+			},
+			{
+				name: "ast_edit",
+				args: {
+					paths: ["web/src/realtime"],
+					ops: [{ pat: "console.log($A)", out: "log.debug($A)" }],
+				},
+				text: "3 replacements in 2 files (preview)",
+				details: {
+					totalReplacements: 3,
+					filesTouched: 2,
+					filesSearched: 6,
+					fileReplacements: [
+						{ path: "web/src/realtime/socket.ts", count: 2 },
+						{ path: "web/src/realtime/pending.ts", count: 1 },
+					],
+					displayContent:
+						'--- a/web/src/realtime/socket.ts\n+++ b/web/src/realtime/socket.ts\n@@ -70,1 +70,1 @@\n-\t\tconsole.log("reconnect", attempt);\n+\t\tlog.debug("reconnect", attempt);',
+				},
+			},
+			{
+				name: "resolve",
+				args: { action: "apply", reason: "预览确认无误，应用替换" },
+				text: "Applied 3 replacements.",
+				details: {
+					action: "apply",
+					sourceToolName: "ast_edit",
+					label: "3 replacements in 2 files",
+				},
+			},
+			{
+				name: "reject",
+				args: { reason: "改动波及测试快照，放弃" },
+				text: "Discarded preview.",
+				details: {
+					action: "discard",
+					sourceToolName: "ast_edit",
+					label: "1 replacement in 1 file",
+				},
+			},
+		],
+	},
+	{
+		text: "跑测试与脚本：",
+		calls: [
+			{
+				name: "bash",
+				args: {
+					command: "cd web && bun run test -- realtime",
+					cwd: REPO_DIR,
+					timeout: 120,
+				},
+				text: " ✓ src/realtime/socket.test.ts (6 tests) 41ms\n ✓ src/realtime/backoff.test.ts (3 tests) 4ms\n\n Test Files  2 passed (2)\n      Tests  9 passed (9)",
+				details: { wallTimeMs: 2140 },
+			},
+			{
+				name: "bash",
+				args: { command: "cd web && bun run lint" },
+				text: 'src/realtime/socket.ts:61:7 lint/correctness/noUnusedVariables  ━━━━━━━━━━\n  ✖ This variable attempt is unused.\n\nFound 1 error.\nerror: script "lint" exited with code 1',
+				details: { exitCode: 1, wallTimeMs: 870 },
+				isError: true,
+			},
+			{
+				name: "terminal",
+				args: { action: "run", command: "bun run dev:mock" },
+				text: "  VITE v8.0.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/",
+				details: {
+					terminal: {
+						terminalId: "t3",
+						kind: "command",
+						title: "bun run dev:mock",
+						cwd: `${REPO_DIR}/web`,
+						running: true,
+						state: "running",
+					},
+				},
+			},
+			{
+				name: "eval",
+				args: {
+					cells: [
+						{
+							language: "py",
+							title: "退避序列",
+							code: "[min(15, 0.5 * 2**n) for n in range(7)]",
+						},
+					],
+				},
+				details: {
+					cells: [
+						{
+							index: 0,
+							title: "退避序列",
+							code: "[min(15, 0.5 * 2**n) for n in range(7)]",
+							language: "py",
+							output: "[0.5, 1.0, 2.0, 4.0, 8.0, 15, 15]",
+							status: "ok",
+							durationMs: 38,
+						},
+					],
+				},
+				text: "[0.5, 1.0, 2.0, 4.0, 8.0, 15, 15]",
+			},
+			{
+				name: "js",
+				args: {
+					language: "js",
+					code: "const total = [500, 1000, 2000, 4000].reduce((a, b) => a + b, 0);\ntotal / 1000;",
+				},
+				details: {
+					cells: [
+						{
+							index: 0,
+							code: "",
+							language: "js",
+							output: "7.5",
+							status: "ok",
+							durationMs: 6,
+						},
+					],
+				},
+				text: "7.5",
+			},
+			{
+				name: "python",
+				args: {
+					language: "py",
+					code: "import statistics\nstatistics.mean([0.41, 0.52, 0.47])",
+				},
+				details: {
+					cells: [
+						{
+							index: 0,
+							code: "",
+							language: "py",
+							output: "0.4666666666666666",
+							status: "ok",
+							durationMs: 12,
+						},
+					],
+				},
+				text: "0.4666666666666666",
+			},
+			{
+				name: "notebook",
+				args: {
+					cells: [
+						{
+							language: "py",
+							title: "加载",
+							code: 'import json\nrows = json.load(open("latency.json"))',
+						},
+						{
+							language: "py",
+							title: "P95",
+							code: 'sorted(r["ms"] for r in rows)[int(len(rows) * 0.95)]',
+						},
+					],
+				},
+				details: {
+					cells: [
+						{ index: 0, output: "", status: "ok", durationMs: 21 },
+						{ index: 1, output: "184", status: "ok", durationMs: 3 },
+					],
+				},
+				text: "184",
+			},
+			{
+				name: "wait",
+				args: {},
+				text: "1 job completed.",
+				details: {
+					jobs: [
+						{
+							id: "bg_3",
+							type: "bash",
+							status: "completed",
+							label: "go test ./internal/realtime/...",
+							intent: "后台跑 Go 端测试",
+							durationMs: 48_200,
+							resultText: "ok  \toryn/internal/realtime\t1.92s",
+						},
+					],
+				},
+			},
+		],
+	},
+	{
+		text: "查资料、看页面：",
+		calls: [
+			{
+				name: "fetch",
+				args: { url: "https://pkg.go.dev/nhooyr.io/websocket", timeout: 20 },
+				text: "# websocket\n\nPackage websocket implements the RFC 6455 WebSocket protocol.\n\n## Deprecated\n\nUse github.com/coder/websocket instead.",
+				details: {
+					url: "https://pkg.go.dev/nhooyr.io/websocket",
+					finalUrl: "https://pkg.go.dev/github.com/coder/websocket",
+					contentType: "text/html; charset=utf-8",
+					method: "readability",
+					notes: ["已跟随 1 次重定向"],
+				},
+			},
+			{
+				name: "web_search",
+				args: {
+					query: "websocket reconnect exponential backoff jitter",
+					recency: "year",
+					limit: 3,
+				},
+				text: "常见做法是**指数退避 + 全抖动**：等待时间取 `random(0, min(cap, base·2^n))`，避免大量客户端同时重连。",
+				details: {
+					response: {
+						provider: "exa",
+						model: "exa-research",
+						sources: [
+							{
+								url: "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/",
+								title: "Exponential Backoff And Jitter",
+								ageSeconds: 86_400 * 200,
+							},
+							{
+								url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSocket",
+								title: "WebSocket - Web APIs | MDN",
+								ageSeconds: 86_400 * 12,
+							},
+						],
+						usage: { inputTokens: 1840, outputTokens: 212, searchRequests: 1 },
+					},
+				},
+			},
+			{
+				name: "github",
+				args: {
+					op: "search_issues",
+					query: "reconnect afterSeq",
+					repo: "can1357/oh-my-pi",
+				},
+				text: "#412 rpc: resume subscription after reconnect (open)\n#388 ws: replay entries after seq (closed)",
+			},
+			{
+				name: "browser",
+				args: {
+					action: "open",
+					url: "http://localhost:5173/t/demo",
+					viewport: { width: 1280, height: 800 },
+				},
+				text: "Opened tab main at http://localhost:5173/t/demo",
+				details: {
+					action: "open",
+					name: "main",
+					url: "http://localhost:5173/t/demo",
+					browser: "chromium 140",
+				},
+				image: true,
+			},
+			{
+				name: "puppeteer",
+				args: {
+					action: "run",
+					name: "main",
+					code: 'await page.getByRole("button", { name: "断开" }).click();\nreturn await page.title();',
+				},
+				text: '"重构 WebSocket 重连与 afterSeq 补拉 · Oryn"',
+				details: { action: "run", name: "main" },
+			},
+			{
+				name: "generate_image",
+				args: {
+					subject: "Oryn 品牌标：青碧色圆环与圆点",
+					style: "flat vector",
+					aspect_ratio: "3:2",
+				},
+				text: "Generated 1 image.",
+				details: {
+					provider: "openai",
+					model: "gpt-image-2",
+					imagePaths: [`${REPO_DIR}/assets/mark.png`],
+				},
+				image: true,
+			},
+		],
+	},
+	{
+		text: "分派子任务、记录进度：",
+		calls: [
+			{
+				name: "task",
+				args: {
+					agent: "explore",
+					context: "重连改造：确认服务端补拉与客户端订阅表一致。",
+					tasks: [
+						{
+							name: "HubAudit",
+							task: "审计 internal/realtime/hub.go 的 afterSeq 补拉边界",
+						},
+						{ name: "QueueCheck", task: "检查断线时在途命令是否全部被拒绝" },
+					],
+				},
+				text: "2 agents finished.",
+				details: {
+					results: [
+						{
+							id: "HubAudit",
+							description: "afterSeq 补拉边界",
+							exitCode: 0,
+							output: "补拉从 seq+1 开始，批大小 200，无遗漏。",
+							tokens: 12_400,
+							requests: 6,
+							durationMs: 41_000,
+							resolvedModel: "claude-haiku-5",
+						},
+						{
+							id: "QueueCheck",
+							description: "在途命令拒绝",
+							exitCode: 0,
+							output: "pending.ts 的 failAll 覆盖全部在途命令。",
+							tokens: 8_900,
+							requests: 4,
+							durationMs: 27_000,
+							resolvedModel: "claude-haiku-5",
+						},
+					],
+					totalDurationMs: 43_000,
+				},
+			},
+			{
+				name: "todo",
+				args: {
+					ops: [
+						{ op: "done", task: "指数退避（0.5s → 15s）" },
+						{ op: "start", task: "断线时拒绝在途命令" },
+					],
+				},
+				text: "Updated 2 tasks.",
+				details: {
+					phases: [
+						{
+							name: "重连",
+							tasks: [
+								{ content: "指数退避（0.5s → 15s）", status: "completed" },
+								{ content: "重连后 afterSeq 补拉", status: "completed" },
+								{ content: "断线时拒绝在途命令", status: "in_progress" },
+								{ content: "补端到端测试", status: "pending" },
+							],
+						},
+					],
+				},
+			},
+			{
+				name: "ask",
+				args: {
+					html: "<p>要保留旧的固定间隔作为降级开关吗？</p><label><input type=radio name=q1 value=keep>保留</label><label><input type=radio name=q1 value=drop>删除</label>",
+				},
+				text: "User answered.",
+				details: {
+					answers: [
+						{
+							name: "q1",
+							question: "要保留旧的固定间隔作为降级开关吗？",
+							answer: "保留，默认关闭",
+						},
+					],
+				},
+			},
+			{
+				name: "goal",
+				args: {
+					op: "create",
+					objective: "完成重连改造并补齐端到端测试",
+					token_budget: 400_000,
+				},
+				text: "Goal set.",
+				details: {
+					op: "create",
+					goal: {
+						objective: "完成重连改造并补齐端到端测试",
+						status: "active",
+						tokenBudget: 400_000,
+						tokensUsed: 86_000,
+						timeUsedSeconds: 1260,
+					},
+				},
+			},
+			{
+				name: "recall",
+				args: { query: "WebSocket 重连的既有约定" },
+				text: "Found 2 relevant memories (as of 2026-11-12 09:00 UTC)\n\n- 重连退避上限 15s，带 ±20% 抖动 [decision] (2026-11-02)\n\n- 订阅恢复用 afterSeq，不重放全量 [convention] (2026-10-28)",
+			},
+			{
+				name: "reflect",
+				args: {
+					query: "这次重连改造有哪些值得记住的坑？",
+					context:
+						"改造过程中 lint 报了未使用变量，ast_edit 预览曾被放弃一次。",
+				},
+				text: "1. 断线时必须先拒绝在途命令再重置订阅表，否则会重复发送。\n2. 退避计数要在 onopen 成功后归零。",
+			},
+			{
+				name: "retain",
+				args: {
+					items: [
+						{
+							content: "重连成功后在 onopen 里把退避计数归零",
+							context: "web/src/realtime/socket.ts",
+						},
+					],
+				},
+				text: "1 memory retained.",
+				details: { count: 1 },
+			},
+			{
+				name: "debug",
+				args: {
+					action: "launch",
+					program: "bin/orynd",
+					args: ["serve", "--dev"],
+					adapter: "dlv",
+				},
+				text: "Stopped at breakpoint in realtime.(*Hub).Resume",
+				details: {
+					snapshot: {
+						id: "1",
+						adapter: "dlv",
+						status: "stopped",
+						program: "bin/orynd",
+						stopReason: "breakpoint",
+						frameName: "realtime.(*Hub).Resume",
+						source: { path: "internal/realtime/hub.go" },
+						line: 118,
+						column: 2,
+					},
+				},
+			},
+			{
+				name: "report_tool_issue",
+				args: { tool: "grep", report: "type=ts 过滤漏掉了 .tsx 文件" },
+				text: "Reported.",
+			},
+			{
+				name: "propose",
+				args: {
+					title: "重连改造计划",
+					planFilePath: "local://reconnect-plan.md",
+				},
+				text: "Plan proposed.",
+			},
+			{
+				name: "yield",
+				args: {
+					data: {
+						summary: "重连改造完成",
+						files: [
+							"web/src/realtime/socket.ts",
+							"web/src/realtime/backoff.ts",
+						],
+					},
+				},
+				text: "Result submitted.",
+			},
+		],
+	},
+];
+
+/** 工具样例线程里仍在运行的工具调用（快照的 `agent.live` 帧与之对应）。 */
+const ZOO_LIVE_CALL = "toolu_zoo_live";
+const ZOO_LIVE_ARGS = {
+	command: "cd web && bun run test -- --watch=false e2e",
+	i: "跑端到端测试",
+};
+
+/** 工具样例转录：每个注册工具一次调用 + 一次失败 + 一次运行中，外加 bashExecution、compaction、model_change。 */
+export function buildToolZooTranscript(): Entry[] {
+	seq = 0;
+	lastId = null;
+	const out: Entry[] = [];
+	const t0 = NOW - 35 * MIN;
+	let ts = t0;
+	let n = 0;
+	const id = () => `z${(++n).toString(16).padStart(7, "0")}`;
+	const push = (type: string, body: Record<string, unknown>) => {
+		ts += 4000;
+		out.push(entry(type, body, ts, id()));
+	};
+	push("message", {
+		message: {
+			role: "user",
+			content: "把工具渲染器挨个跑一遍，看看每种卡片长什么样。",
+			timestamp: ts + 4000,
+		},
+	});
+	push("model_change", { model: "anthropic/claude-sonnet-5" });
+	ZOO_GROUPS.forEach((group, gi) => {
+		const calls = group.calls.map((c, ci) => ({
+			...c,
+			toolCallId: `toolu_zoo_${gi}_${ci}`,
+		}));
+		push("message", {
+			message: assistant(
+				[
+					{ type: "text", text: group.text },
+					...calls.map((c) => ({
+						type: "toolCall",
+						id: c.toolCallId,
+						name: c.name,
+						arguments: c.args,
+					})),
+				],
+				ts + 4000,
+			),
+		});
+		for (const c of calls) {
+			const content: unknown[] = c.text ? [{ type: "text", text: c.text }] : [];
+			if (c.image)
+				content.push({ type: "image", data: ZOO_PNG, mimeType: "image/png" });
+			push("message", {
+				message: {
+					role: "toolResult",
+					toolCallId: c.toolCallId,
+					toolName: c.name,
+					content,
+					details: c.details ?? {},
+					isError: c.isError === true,
+					timestamp: ts + 4000,
+				},
+			});
+		}
+		if (gi === 0) {
+			push("message", {
+				message: {
+					role: "bashExecution",
+					command: "git status --short",
+					output:
+						" M web/src/realtime/socket.ts\n?? web/src/realtime/backoff.ts",
+					exitCode: 0,
+					cancelled: false,
+					truncated: false,
+					timestamp: ts + 4000,
+				},
+			});
+		}
+		if (gi === 1) {
+			push("compaction", {
+				summary:
+					"## 目标\n重构 WebSocket 重连。\n\n## 进展\n- 已加入指数退避与 afterSeq 补拉\n- ast_edit 预览一次应用、一次放弃",
+				shortSummary: "重连改造：退避与补拉已完成，正在验证。",
+				firstKeptEntryId: out[0]?.entryId,
+				tokensBefore: 142_000,
+				tokensAfter: 31_500,
+			});
+		}
+	});
+	push("message", {
+		message: assistant(
+			[
+				{ type: "text", text: "最后跑一遍端到端测试：" },
+				{
+					type: "toolCall",
+					id: ZOO_LIVE_CALL,
+					name: "bash",
+					arguments: ZOO_LIVE_ARGS,
+				},
+			],
+			ts + 4000,
+		),
+	});
+	return out;
+}
+
+/** 工具样例线程快照里的 `agent.live`：一个仍在运行、已有部分输出的 bash 调用。 */
+export function toolZooLiveFrames(): Record<string, unknown>[] {
+	return [
+		{
+			type: "tool_execution_start",
+			toolCallId: ZOO_LIVE_CALL,
+			toolName: "bash",
+			args: ZOO_LIVE_ARGS,
+			intent: ZOO_LIVE_ARGS.i,
+		},
+		{
+			type: "tool_execution_update",
+			toolCallId: ZOO_LIVE_CALL,
+			toolName: "bash",
+			partialResult: {
+				content: [
+					{
+						type: "text",
+						text: " RUN  v4.0.0 /home/user/workspace/repo/web\n\n ✓ e2e/reconnect.spec.ts > 断线后自动重连 1.2s\n ✓ e2e/reconnect.spec.ts > 重连后补拉缺失条目 0.9s\n ⠙ e2e/reconnect.spec.ts > 断线期间命令被拒绝",
+					},
+				],
+			},
+		},
+	];
+}
+
+/** 工具样例线程首次订阅时按位置插入的帧（`afterSeq` 之后投递）：一条 warning 提示。 */
+export function toolZooReplayFrames(
+	entries: readonly Entry[],
+): { afterSeq: number; frame: Record<string, unknown> }[] {
+	const compaction = entries.find((e) => e.type === "compaction");
+	return [
+		{
+			afterSeq: (compaction?.seq ?? 1) - 1,
+			frame: {
+				type: "notice",
+				level: "warning",
+				message: "上下文已用 71%，即将自动压缩。",
+			},
+		},
+	];
 }

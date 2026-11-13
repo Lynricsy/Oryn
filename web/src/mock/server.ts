@@ -16,6 +16,7 @@ import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import {
 	assistant,
 	buildMainTranscript,
+	buildToolZooTranscript,
 	projects as fixtureProjects,
 	threads as fixtureThreads,
 	MAIN_THREAD,
@@ -26,6 +27,9 @@ import {
 	providers,
 	SESSION_FILE,
 	setupLogs,
+	TOOL_ZOO_THREAD,
+	toolZooLiveFrames,
+	toolZooReplayFrames,
 } from "./fixtures";
 import { handleOrbFetch } from "./orbfs";
 
@@ -91,6 +95,13 @@ export class MockServer {
 	readonly setupRuns = new Map<string, Schemas["OrbSetupRun"][]>();
 	readonly setupLogs = new Map<string, string>(Object.entries(setupLogs));
 	readonly planProposals = new Map<string, Json>();
+	/** 快照 `agent.live` 里的在途帧（按线程）。 */
+	readonly liveFrames = new Map<string, Json[]>();
+	/** 首次订阅（afterSeq=0）时按位置插在条目之间投递的帧（按线程）。 */
+	readonly replayFrames = new Map<
+		string,
+		{ afterSeq: number; frame: Json }[]
+	>();
 	readonly projects: Project[] = fixtureProjects.map((p) => ({ ...p }));
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
@@ -150,6 +161,10 @@ export class MockServer {
 					.sort((a, b) => b.finishedAt - a.finishedAt),
 			);
 		this.entries.set(MAIN_THREAD, buildMainTranscript());
+		const zoo = buildToolZooTranscript();
+		this.entries.set(TOOL_ZOO_THREAD, zoo);
+		this.liveFrames.set(TOOL_ZOO_THREAD, toolZooLiveFrames());
+		this.replayFrames.set(TOOL_ZOO_THREAD, toolZooReplayFrames(zoo));
 		for (const t of fixtureThreads)
 			this.states.set(t.id, {
 				...mainState(),
@@ -1104,7 +1119,7 @@ export class MockServer {
 						pendingUi: this.pendingUi.get(threadId) ?? [],
 						planProposal: this.planProposals.get(threadId),
 						subagents: [],
-						live: [],
+						live: this.liveFrames.get(threadId) ?? [],
 					},
 					leafEntryId: last?.entryId,
 					lastSeq: last?.seq ?? 0,
@@ -1112,8 +1127,13 @@ export class MockServer {
 					fullReplay: false,
 				});
 				const rest = list.filter((e) => e.seq > after);
-				for (let i = 0; i < rest.length; i += 200) {
-					const batch = rest.slice(i, i + 200);
+				// 重放帧只在首次订阅时投递，续传（afterSeq>0）不重复
+				const frames =
+					after === 0 ? (this.replayFrames.get(threadId) ?? []) : [];
+				let fi = 0;
+				let batch: Entry[] = [];
+				const flush = () => {
+					if (batch.length === 0) return;
 					socket.deliver({
 						type: "entries",
 						threadId,
@@ -1122,7 +1142,29 @@ export class MockServer {
 						// 本批覆盖到的最大 seq（可续传游标）
 						lastSeq: batch[batch.length - 1]?.seq ?? 0,
 					});
+					batch = [];
+				};
+				const replayUpTo = (seq: number) => {
+					for (
+						;
+						fi < frames.length && (frames[fi]?.afterSeq ?? 0) < seq;
+						fi++
+					) {
+						flush();
+						socket.deliver({
+							type: "frame",
+							threadId,
+							frame: frames[fi]?.frame,
+						});
+					}
+				};
+				for (const e of rest) {
+					replayUpTo(e.seq);
+					batch.push(e);
+					if (batch.length === 200) flush();
 				}
+				flush();
+				replayUpTo(Number.POSITIVE_INFINITY);
 				return;
 			}
 			case "unsub":
