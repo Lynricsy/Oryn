@@ -3,6 +3,9 @@ bin/
 .dev/
 web/node_modules/
 web/dist/
+web/dist-launcher/
+web/src-tauri/target/
+web/src-tauri/gen/schemas/
 internal/webui/dist/*
 !internal/webui/dist/.gitkeep
 build/

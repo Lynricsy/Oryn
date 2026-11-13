@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-change-server"
+description = "Enables the host_change_server command without any pre-configured scope."
+commands.allow = ["host_change_server"]
+
+[[permission]]
+identifier = "deny-host-change-server"
+description = "Denies the host_change_server command without any pre-configured scope."
+commands.deny = ["host_change_server"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-notify"
+description = "Enables the host_notify command without any pre-configured scope."
+commands.allow = ["host_notify"]
+
+[[permission]]
+identifier = "deny-host-notify"
+description = "Denies the host_notify command without any pre-configured scope."
+commands.deny = ["host_notify"]

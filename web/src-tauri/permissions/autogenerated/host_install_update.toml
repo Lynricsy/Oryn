@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-install-update"
+description = "Enables the host_install_update command without any pre-configured scope."
+commands.allow = ["host_install_update"]
+
+[[permission]]
+identifier = "deny-host-install-update"
+description = "Denies the host_install_update command without any pre-configured scope."
+commands.deny = ["host_install_update"]

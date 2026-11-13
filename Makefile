@@ -7,7 +7,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
 BINS    := orynd orbd oryn fakeomp
 
-.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web image dev
+.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop image dev
 
 all: build
 
@@ -53,6 +53,10 @@ web:
 	cd web && $(BUN) install && $(BUN) run build
 	find internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
 	cp -R web/dist/. internal/webui/dist/
+
+## desktop：构建桌面 App 安装包（Tauri 2，产物在 web/src-tauri/target/release/bundle/）
+desktop:
+	cd web && $(BUN) install && $(BUN) run tauri build
 
 image:
 	scripts/build-orb-image.sh

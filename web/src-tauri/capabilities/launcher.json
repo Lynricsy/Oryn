@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "launcher",
+  "description": "内置连接页：只允许连接与配对相关的六个命令；不引用任何插件权限（插件都只在 Rust 侧调用）",
+  "windows": ["main"],
+  "local": true,
+  "permissions": [
+    "allow-launcher-state",
+    "allow-launcher-connect",
+    "allow-launcher-cancel",
+    "allow-launcher-retry",
+    "allow-launcher-open-browser",
+    "allow-launcher-change-server"
+  ]
+}

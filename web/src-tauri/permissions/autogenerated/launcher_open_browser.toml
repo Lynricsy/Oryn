@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launcher-open-browser"
+description = "Enables the launcher_open_browser command without any pre-configured scope."
+commands.allow = ["launcher_open_browser"]
+
+[[permission]]
+identifier = "deny-launcher-open-browser"
+description = "Denies the launcher_open_browser command without any pre-configured scope."
+commands.deny = ["launcher_open_browser"]
