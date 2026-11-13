@@ -657,12 +657,7 @@ async function T7() {
 		60_000,
 		300,
 	);
-	await activate(page, old).catch(() => undefined);
-	const notice = await page
-		.locator("[data-testid=terminal-notice]")
-		.textContent();
-	check(notice.includes("终端会话已终止"), `旧终端提示「${notice.trim()}」`);
-	await shot(page, "T7-lost");
+	// 新 shell 创建后面板会自动切到它：先等新 shell 出现，再切回旧终端读提示，避免两者竞态。
 	const fresh = await waitFor(
 		"新 shell 出现",
 		async () =>
@@ -674,6 +669,12 @@ async function T7() {
 		500,
 	);
 	note(`新 shell ${fresh}`);
+	await activate(page, old).catch(() => undefined);
+	const notice = await page
+		.locator("[data-testid=terminal-notice]")
+		.textContent({ timeout: 10_000 });
+	check(notice.includes("终端会话已终止"), `旧终端提示「${notice.trim()}」`);
+	await shot(page, "T7-lost");
 	await sendPrompt(page, `只回复 pong-${RUN}`);
 	await waitTurn(THREAD);
 	const reply = await waitFor(
