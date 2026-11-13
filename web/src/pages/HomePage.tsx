@@ -432,8 +432,8 @@ export function HomePage(): ReactNode {
 							/>
 							{/*
 							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊、发送钮。
-							 * 窄屏两行：选项单独占第一行（orb、模型是小圆圈，项目名占剩下的宽度），
-							 * 附件与发送钮在第二行两端，互不挤占。
+							 * 窄屏两行：附件与发送钮在第一行两端；选项单独占第二行
+							 * （orb、模型是小圆圈，项目名占剩下的宽度），互不挤占。
 							 */}
 							<div
 								className={`relative flex px-2 pb-2 ${compact ? "flex-wrap items-center gap-y-1.5" : "items-start gap-0.5"}`}
@@ -460,7 +460,7 @@ export function HomePage(): ReactNode {
 									)}
 								</div>
 								<div
-									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "order-first w-full" : "flex-1"}`}
+									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "order-last w-full" : "flex-1"}`}
 								>
 									<PillButton
 										icon="box"
