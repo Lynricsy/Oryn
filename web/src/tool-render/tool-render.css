@@ -271,7 +271,8 @@
 .tv-badge--err {
 	background: color-mix(in oklab, var(--tv-err) 10%, transparent);
 	box-shadow: none;
-	color: var(--tv-err);
+	/* 淡红底上的红字向正文色混一些，小字号也到 4.5:1 */
+	color: color-mix(in oklab, var(--tv-err) 82%, var(--text));
 }
 
 .tv-badge--warn {
