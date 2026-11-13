@@ -84,7 +84,7 @@ M3.5 重设计之后的长期约定，目的是防止后续开发让设计变差
 
 - 只做三类动效：主操作反馈、状态切换的来路、首页首次出场。
 - 转录消息、列表行、悬停**不加入场动画**。退出不做动画，例外是左右栏和抽屉：同一套 260ms 收窄或滑动（先走完动画再卸载），拖动改宽度时关掉过渡。一侧有动画，另一侧也必须有。
-- 进出场用 `lib/presence.ts` 的 `usePresence`（挂载后下一帧切换、播完退出再卸载），不要用 `@starting-style`：旧版 Safari 不认它。
+- 进出场用 `lib/presence.ts` 的 `usePresence`（挂载后强制一次样式计算再切 shown，播完退出再卸载），不要用 `@starting-style`（旧版 Safari 不认），也不要靠 rAF 等帧（节流页面里会被推迟到秒级）。
 - **玻璃滑动只动 `translate`，不动 `opacity`**：opacity<1 的元素是 backdrop root，滑动途中模糊失效、落位才突然糊上。
 - 手机左栏与右抽屉都是悬浮圆角矩形（四周 8px + 安全区），背后整屏模糊 + 轻度压暗（`bg-scrim/70 backdrop-blur-sm`），不是只盖一侧的矩形。
 - `prefers-reduced-motion` 时，所有动画和过渡一律压到 1ms。新动画必须走 `--ease` 和这条规则。
