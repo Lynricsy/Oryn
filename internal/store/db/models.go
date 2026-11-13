@@ -121,6 +121,15 @@ type OrbSample struct {
 	NetTxBytes int64   `json:"netTxBytes"`
 }
 
+type OrbService struct {
+	OrbID     string `json:"orbId"`
+	Name      string `json:"name"`
+	Port      *int64 `json:"port"`
+	HasPortal int64  `json:"hasPortal"`
+	Doc       string `json:"doc"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 type OrbSetupRun struct {
 	ID               string  `json:"id"`
 	OrbID            string  `json:"orbId"`
@@ -159,6 +168,21 @@ type Passkey struct {
 	Name       string `json:"name"`
 	CreatedAt  int64  `json:"createdAt"`
 	LastUsedAt *int64 `json:"lastUsedAt"`
+}
+
+type PortalSession struct {
+	IDHash         string `json:"idHash"`
+	WebSessionHash string `json:"webSessionHash"`
+	Label          string `json:"label"`
+	CreatedAt      int64  `json:"createdAt"`
+	ExpiresAt      int64  `json:"expiresAt"`
+}
+
+type PortalShare struct {
+	OrbID     string `json:"orbId"`
+	Port      int64  `json:"port"`
+	CreatedAt int64  `json:"createdAt"`
+	ExpiresAt int64  `json:"expiresAt"`
 }
 
 type Project struct {
@@ -237,6 +261,7 @@ type Thread struct {
 	StartupFrames     []byte  `json:"startupFrames"`
 	ForkOp            []byte  `json:"forkOp"`
 	TranscriptRev     int64   `json:"transcriptRev"`
+	ShortCode         *string `json:"shortCode"`
 }
 
 type ThreadLabel struct {

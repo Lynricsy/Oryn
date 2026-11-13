@@ -253,4 +253,28 @@ type Stream struct {
 // Read 实现 io.Reader。
 func (s *Stream) Read(p []byte) (int, error) { return s.br.Read(p) }
 
+// ErrLineTooLong 表示 ReadLine 读到的行超过了上限。
+var ErrLineTooLong = errors.New("link: line too long")
+
+// ReadLine 读出一行（含结尾 `\n`，不含则表示流在换行前结束并返回错误），
+// 行长超过 max 字节即返回 ErrLineTooLong。经内部缓冲读取，之后的 Read 从该行之后继续，
+// 供读 portal 流的应答行（LinkPortalReply）后再读原始字节。
+func (s *Stream) ReadLine(max int) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := s.br.ReadSlice('\n')
+		if len(buf)+len(chunk) > max {
+			return nil, ErrLineTooLong
+		}
+		buf = append(buf, chunk...)
+		if err == nil {
+			return buf, nil
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return nil, err
+	}
+}
+
 var _ io.ReadWriteCloser = (*Stream)(nil)

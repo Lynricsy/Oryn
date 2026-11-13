@@ -26,7 +26,7 @@
 |分区|规格位置|说明|
 |---|---|---|
 |C1 provider 协议|`/provider/v1/{hello,jobs/claim,jobs/{id}/complete,bye}`；`Provider*Request/Response`、`ProviderJob`、`Job{Spawn,Pause,Snapshot,Delete,DeleteSnapshot}Params`、`JobOp`、`JobState`|`ProviderJob.params` 是任意对象，按 `op` 解析为对应 `Job*Params`|
-|C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs`）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
+|C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs / portal`）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown`、`portal.configure` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
 |C3 REST|`/api/v1/...` 全部端点|列表统一包一层对象（`{threads}`、`{orbs}`…）|
 |C3 WebSocket|`/api/v1/ws?ticket=`；`WsClientMessage`、`WsServerMessage`（按 `type` 判别）；`AgentLiveState`|Go：`msg.ValueByDiscriminator()` 后类型分派；构造用 `FromWsServerXxx` 自动带 `type`|
 |状态枚举|`ThreadState`（C4）、`OrbState`（E）、`AgentStatus`、`PauseMode`、`DeviceKind`、`SecretMode`、`ProviderDriver`|—|
@@ -173,3 +173,162 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 ### 存储
 
 `0007_attachments.sql`：`attachments(id, thread_id → threads ON DELETE CASCADE, name, mime, size, sha256, created_at)`，索引 `(thread_id, created_at)`；`thread_id` 为 NULL 表示尚未绑定。查询见 `internal/store/queries/attachments.sql`（`BindAttachment` 为 `:execrows`：未绑定或已绑定同一线程时影响 1 行）。附件字节存 `<data_dir>/attachments/<id>`，不与转录 blob 共用 `blobs/`。
+
+## M4：Portal 与受管服务
+
+orbd 监督 `.oryn/services.yaml`（回退 `.amp/services.yaml`）里的服务与 `oryn orb service start --command` 起的临时服务；有 portal 的服务端口经 `<scheme>://t-<线程短码>-p<端口>.<portal_domain>[:<端口>]/` 从浏览器访问。数据面只新增一种流（`portal`，透明 TCP），控制面不解析被代理的 HTTP 以外的任何东西。服务定义与运行状态的真相在 orbd，控制面只存镜像；公开分享与 portal 会话的真相在控制面。
+
+### 主机名
+
+- **线程短码** = 线程 id（`T-<uuidv7>`）末 12 位十六进制（UUIDv7 随机段），orbd 可离线算出；控制面存 `threads.short_code`（唯一索引）反查。portal 实体是 `(orb, 端口)`，短码只是找 orb 的别名：共用 orb 的多个线程各自的主机名指向同一端口。
+- 标签 `t-<code>-p<port>`：`^t-([0-9a-f]{12})-p([1-9][0-9]{0,4})$` 且端口 ≤65535。portal 与主域名（`public_url`）**同协议、同端口**（`public_url` 的端口非默认时原样带上）。主机匹配：去端口、转小写、去尾点后恰为 `<单标签>.<portal_domain>`，不比较端口。允许 `portal_domain` 等于主域名本身（开发：`localhost` + `*.localhost`）。
+- 纯函数在 `internal/portalhost`（orbd 与 orynd 共用）：`Code`、`Label`、`ParseLabel`、`Expand`、`NewBase`、`Base.{Enabled,Match,URL,Template,FrameSrc}`。地址模板形如 `https://t-{code}-p{port}.orb.example.com/`；未配置 `portal_domain` 时为空串。
+
+### 流与 ctl 消息
+
+|项|规格位置|语义|
+|---|---|---|
+|`portal` 流|`LinkStreamPortal{t, port}`、`LinkPortalReply`|**由 orynd 打开**，每个代理连接一条。orbd 先回一行 `{"ok":true}` 或 `{"ok":false,"code":…,"message":…}` + `\n`；`ok=true` 之后流上是与 `127.0.0.1:<port>` 之间的原始字节（被拒绝时再试 `[::1]:<port>`）。拒绝码：`forbidden_port`（egress 端口）、`not_exposed`（端口不属于有 portal 的服务）、`connection_refused`、`timeout`（连本机端口 5s）、`failed`。一个方向结束后对另一端半关闭，剩下的方向 30s 截止后两边都关。控制面读应答行用 `(*link.Stream).ReadLine(4096)`，开流 + 应答行合计 10s|
+|hello `features`|`LinkCtlHelloParams.features`|M4 的 orbd 发 `["fs","git","attachments","services","portal"]`。缺 `services` → 服务接口 409 `orbd_outdated`；缺 `portal` → 不发 `portal.configure`，portal 请求 409 `orbd_outdated`|
+|`services.state`|`LinkCtlServicesStateParams{services: OrbService[]}`|orbd→orynd 通知，**全量快照**。发送时机：每次定义或状态变化、link 建立后、收到 `portal.configure` 之后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面逐项校验清洗（名字正则、≤32 个、`command` ≤4096 字节、`links` ≤20 且 `path` 以 `/` 开头、端口范围；不合规项丢弃），在一个事务里整体替换镜像并撤掉不再声明 portal 的端口的分享，随后经 WS `orb` 消息推送|
+|`portal.configure`|`LinkCtlPortalConfigureParams{urlTemplate, primaryThreadId?}` → `LinkCtlOkResult`|orynd→orbd 请求，hello 之后发送（仅对 `features` 含 `portal` 的 orbd，10s，失败只记日志）。`primaryThreadId` = 本 orb 最早创建的线程。orbd 保存在内存；已在运行的服务不因模板变化而重启|
+
+### 服务模型
+
+- `OrbService`：`name`（`^[a-z0-9][a-z0-9-]{0,31}$`）、`source`（`file` / `dynamic`）、`command`、`cwd?`、`port?`、`health?`、`links: OrbPortalLink[]`（非空 = 有 portal）、`threadId?`、`publicUrl?`、`status`、`pid?`、`restarts`、`exitCode?`、`error?`、`startedAt?`。
+- `OrbServiceStatus`：`starting`（已拉起、未通过就绪探测）→ `running`；`unhealthy`（60s 未就绪，继续每 5s 探测）；`backoff`（退出后等待重启）；`stopped`；`failed`（定义无效、`port_conflict`、`forbidden_port`，或连续 5 次存活 <60s）。
+- `OrbPortalLink{title ≤80, path 以 / 开头 ≤512, folder? ≤80}`：Amp 语义的「链接」（`portal: true|<路径>|{url,title}` 与 `portals[{url,title,folder?}]`），不是额外端口；一个服务只暴露它自己的 `PORT`。
+- `OrbPortal{port, service, links, public?: OrbPortalPublic{expiresAt}}`；`Orb.services` / `Orb.portals` 为可选字段（orb 已删除时省略），`Thread.portalUrlTemplate`（短码已代入、保留 `{port}`；未配置 `portal_domain` 时省略）。服务 / portal / 分享的变化都经现有 WS `orb` 消息推送，不新增 WS 消息类型。
+- 服务进程环境：`PORT`、`ORYN_THREAD_ID`（所属线程）、`PUBLIC_URL`（仅有 portal 且模板非空时；值 = 模板展开后去掉结尾 `/`）；`env` 中 `${services.<name>.publicURL}` 启动前替换。
+
+### REST
+
+鉴权同 C3（变更类在 Cookie 鉴权下要 `X-Oryn-CSRF: 1`）。服务操作经 `fs` 流转发到 orbd 本机 API（同 M3 的代理规则；特性名 `services`，截止 90s）。
+
+|方法与路径|operationId|参数 / 请求体|响应|
+|---|---|---|---|
+|`GET /api/v1/orbs/{id}/services`|`listOrbServices`|—|`OrbServiceList`（读库镜像，不唤醒、不计交互）|
+|`POST /api/v1/orbs/{id}/services/{name}/start`|`startOrbService`|—|`OrbService`|
+|`POST /api/v1/orbs/{id}/services/{name}/stop`|`stopOrbService`|—|`OrbService`|
+|`POST /api/v1/orbs/{id}/services/{name}/restart`|`restartOrbService`|—|`OrbService`|
+|`GET /api/v1/orbs/{id}/services/{name}/log`|`getOrbServiceLog`|`tail?`（字节，默认 65536，≤1048576）、`bg?`|`text/plain; charset=utf-8`|
+|`PUT /api/v1/orbs/{id}/portals/{port}/share`|`setOrbPortalShare`|`PortalShareRequest{duration: 1h\|3h\|1d\|7d}`|`OrbPortal`（首次公开与续期同一接口：`expiresAt = now + duration`）|
+|`DELETE /api/v1/orbs/{id}/portals/{port}/share`|`endOrbPortalShare`|—|`204`|
+
+路径参数：`ServiceNamePath`（`^[a-z0-9][a-z0-9-]{0,31}$`）、`PortalPortPath`（1–65535）。未配置 `portal_domain` 时两个分享接口回 409 `portal_disabled`。
+
+### orbd 本机 API（`services` 特性，`fs` 流上）
+
+|路由|行为|
+|---|---|
+|`POST /services/{name}/start`|启动已声明的服务并等待至多 60s 离开 `starting` → `OrbService`|
+|`POST /services/{name}/stop`|停止（进程组 SIGTERM，10s 后 SIGKILL），之后不再自动拉起 → `OrbService`|
+|`POST /services/{name}/restart`|重读 services.yaml 后重启，等待至多 60s → `OrbService`|
+|`GET /services/{name}/log?tail=`|日志文件 `$HOME/.cache/oryn/logs/services/<name>.log` 末尾 `tail` 字节（从整行开始），`text/plain; charset=utf-8`；无日志返回空体|
+
+orb 内对应 `orbd.sock` 方法 `service.ensure` / `service.start` / `service.stop` / `service.restart` / `service.list` 与 CLI `oryn orb service start|stop|restart|ls|logs`（`start --portal` 在 stdout 打印 `PUBLIC_URL` + `/`）。
+
+### 数据面（portal 主机上的请求）
+
+portal 主机的请求在路由最前面被分流，**永远到不了** `/api/v1`、link 与 SPA。**导航请求** = `GET` 且（`Sec-Fetch-Mode: navigate`，或没有 `Sec-Fetch-Mode` 而 `Accept` 含 `text/html`）；导航请求的错误收到同状态码的极简 HTML 页，其余收到 `{code, message}`。
+
+1. `Host` 不匹配 / 标签非法 → 404 `portal_not_found`。
+2. 短码无对应线程或线程无 orb → 404；orb 为 `deleting` / `deleted` → 410 `orb_deleted`。
+3. `/__oryn/` 前缀是保留端点（见握手），其余保留路径 404；应用永远收不到这个前缀。
+4. 身份（先所有者后公开）：`Authorization: Bearer odt_…`（有效设备令牌）→ 所有者，无效 `odt_` → 401 `portal_unauthorized`；其它形态的 `Authorization` 属于应用，原样透传、不参与判定。Cookie `__Host-oryn_portal` 有效、标签与本主机一致且通过跨站检查 → 所有者。否则端口处于公开期（`expires_at > now`，每个匿名请求都按主键重读）→ 匿名访客。都不是：被跨站检查拦下 → 403 `cross_site_blocked`；导航 → `302 <主域名>/portal/auth?t=<code>&p=<port>&next=<RequestURI>`；其余 → 401 `portal_unauthorized`。均带 `Cache-Control: no-store`。
+5. 已授权（所有者或匿名访客）：先记一次用户交互（同一 orb 每秒至多写库一次），再判可用性。旧 orbd → 409 `orbd_outdated`。orb 不可用时：镜像里该端口没有 portal → 404 且**不唤醒**；orb `failed` → 503 `orb_unavailable`；导航请求 → 触发唤醒后立即回 503 过渡页（`Retry-After: 2` + `<meta http-equiv="refresh" content="2">`）；其余请求 → 唤醒并至多等 25s，超时 503 `orb_unavailable`（`Retry-After: 3`）。orb 可用时不查镜像，直接代理（由 orbd 裁决端口）。
+6. 并发名额：每台 orb ≤256 条 portal 流；每个公开端口匿名并发 ≤64；超出 503 `portal_busy`。
+
+计交互并可唤醒：通过第 4 步的每个请求（所有者与公开访客都算）。不计、不唤醒：未授权请求（302 / 401 / 403）、握手端点、未声明端口。因此开着 portal 页面（HMR 重连、轮询）会让 orb 保持唤醒。
+
+### 鉴权握手
+
+|步|主机|端点|行为|
+|---|---|---|---|
+|A|portal|任意路径，未授权的导航请求|`302 <Origin>/portal/auth?t=<code>&p=<port>&next=<path?query>`|
+|B|主域名|`GET /portal/auth`|`t`（12 位十六进制）或 `p`（1–65535）非法 → 400。网页会话（非恢复会话）已登录：短码不存在 → 404；否则签发一次性码 `opc_…`（内存，绑定标签与网页会话哈希，60s，单次）→ `302 <portal 根地址>__oryn/auth?code=<码>&next=<next>`（回跳主机由配置按 `(短码, 端口)` 重算，不接受调用方给的主机名）。未登录 → `302 /login?next=<本请求 path?query 的 URL 编码>`（登录页对 `/portal/auth?` 开头的 `next` 做整页跳转）。设备令牌主体 → 400|
+|C|portal|`GET /__oryn/auth?code=&next=`|码存在、未过期、标签一致 → 写 `portal_sessions`（`expires_at = min(now+30d, 网页会话到期)`，不滑动）→ `Set-Cookie: __Host-oryn_portal=ops_…; Path=/; Max-Age=<秒>; Secure; HttpOnly; SameSite=None; Partitioned` → `302 /__oryn/auth/check?next=<next>`。码无效 → 回到 A|
+|D|portal|`GET /__oryn/auth/check?next=`|Cookie 有效 → `302 <next>`；Cookie 没带回来（被浏览器拦截）→ 200 说明页 + `target="_blank"` 的本 portal 链接（握手不会循环）|
+|E|portal|`GET /__oryn/login?next=`|已是所有者 → `302 <next>`；否则等同 A。主站 iframe 与「新窗口」从这里进入，公开中的 portal 也先认出所有者|
+
+- `next`（B–E 共用）：以单个 `/` 开头、第二个字符不是 `/` 或 `\`、不含控制字符、≤2048 字节，否则取 `/`。没有任何参数能把人带到 portal 域之外。
+- B–E 的响应带 `Cache-Control: no-store` 与 `Referrer-Policy: no-referrer`。
+- 不需要 `state`：只有一个所有者，攻击者拿不到可兑换的码；B 是无副作用的 GET。
+- portal Cookie 用 `SameSite=None; Partitioned` 是因为开发环境 `localhost` 与 `*.localhost` 互为跨站，`Lax` 的 Cookie 在内嵌 iframe 里设不上；CSRF 由下面的跨站策略负责。
+- 吊销：网页会话登出 / 过期 / 恢复、设备吊销 → 取消该主体在 portal 上的全部连接（含已升级的 WebSocket）；`portal_sessions` 随 `web_sessions` 行级联删除，新请求回到握手。
+
+### 跨站请求策略（只约束「凭 Cookie 成为所有者」这一步）
+
+```text
+Sec-Fetch-Site 存在：
+  same-origin / none                         → 放行
+  same-site / cross-site                     → 仅当 GET/HEAD 且 Sec-Fetch-Mode=navigate 且 Sec-Fetch-Dest ∈ {document, iframe} 放行
+Sec-Fetch-Site 不存在：
+  有 Origin 且 ≠ 本 portal 的 origin          → 拒绝
+  其它（非浏览器客户端、老浏览器的同源请求）   → 放行
+```
+
+别的站点发来的带 Cookie 的 POST / fetch / WebSocket 拿不到所有者身份（公开端口上降为匿名，否则 403 `cross_site_blocked`）；顶层打开链接与被主站 iframe 内嵌的导航照常。设备令牌不受此约束。
+
+### 反向代理与头
+
+`httputil.ReverseProxy{FlushInterval: -1}`，每个请求一条 `portal` 流（禁用 keep-alive 与压缩，等待响应头 10 分钟，响应头 ≤1MiB）；WebSocket / SSE / 分块由标准库透传，请求 ctx 取消即断开两端。
+
+|方向|处理|
+|---|---|
+|发给应用|`Host` 保持公开主机名；`X-Forwarded-For` 照常追加，`X-Forwarded-Proto` = portal 协议、`X-Forwarded-Host` = 公开主机名；删除全部入站 `X-Oryn-*` 后设 `X-Oryn-Authenticated: owner=yes`（所有者）或 `owner=no`（匿名）；`Cookie` 里去掉 `__Host-oryn_portal` 那一段（其余原样，剩空则删头）；`Authorization: Bearer odt_…` 删除，其它 `Authorization` 不动|
+|回给浏览器|删除 `X-Frame-Options`；去掉各条 `Content-Security-Policy` 中的 `frame-ancestors` 指令，再追加 `Content-Security-Policy: frame-ancestors 'self' <主域名 origin>`；丢弃名为 `__Host-oryn_portal` 的 `Set-Cookie`；匿名请求的响应加 `X-Robots-Tag: noindex, nofollow`；其余头、状态码、响应体不动|
+
+拨号错误映射：`not_exposed` → 404 `portal_not_found`；`forbidden_port` → 403；`connection_refused` → 502 `service_unreachable`；`timeout` → 504 `portal_timeout`；orb 不可用 → 503 `orb_unavailable`；其它 → 502 `portal_unreachable`（导航请求的 502 页带 3s 自动刷新）。
+
+主站 SPA 的 CSP 在启用 portal 时把 `frame-src 'none'` 换成 `frame-src <scheme>://*.<portal_domain>[:端口]`（`Base.FrameSrc()`）；`frame-ancestors 'none'` 与 `X-Frame-Options: DENY` 不变。
+
+### 公开分享
+
+- 键是 `(orb, 端口)`：同一 orb 的其它端口、线程页面与 `/api/v1` 不受影响。端口未声明 portal → 404 `portal_not_found`。时长 `1h` / `3h` / `1d` / `7d` = 3600 / 10800 / 86400 / 604800 秒；续期只改 `expires_at`。
+- 终止或到期：删除分享行，立即取消该端口全部匿名连接（含已升级的 WebSocket），经 `orb` 消息推送。每个匿名请求都比较 `expires_at`，定时器迟到也不会多放行。控制面启动时为未过期分享重建定时器、删除已过期的行；每小时清理过期分享与 portal 会话。
+- orbd 的 `services.state` 不再声明某端口的 portal 时，该端口的分享随镜像替换一并删除；orb 删除时镜像与分享清空。
+
+### 限额
+
+|项|值|
+|---|---|
+|每台 orb 的服务数|≤32；服务名 `^[a-z0-9][a-z0-9-]{0,31}$`|
+|自动分配端口|20000–29999，按服务名持久化在 `$HOME/.oryn/services/state.json`（跨停机 / 唤醒不变）|
+|orbd 自身端口|egress 端口（默认 7811）永不暴露|
+|就绪探测|间隔 500ms、单次 2s；60s 未就绪标 `unhealthy`，之后每 5s 一次直到成功；通过后不再持续探活|
+|重启退避|1s、2s、4s、8s、16s、30s（封顶）；单次存活 ≥60s 清零；连续 5 次存活 <60s → `failed`|
+|停止|进程组 SIGTERM，10s 后 SIGKILL|
+|服务日志|10MiB 轮转为 `.log.1`（只留一份）|
+|portal 流拨号|开流 + 应答行 10s；orbd 连本机端口 5s|
+|等待响应头|10 分钟（之后不限时，由客户端与反代的 3600s 兜底）|
+|并发|每台 orb ≤256 条 portal 流；每个公开端口匿名并发 ≤64|
+|唤醒等待|非导航请求 25s；导航请求立即回过渡页（每 2s 自动刷新）|
+|一次性码 / portal 会话|60s 单次 / 30 天（不滑动，且不长于其网页会话）|
+
+### 错误码
+
+|code|HTTP|来源|
+|---|---|---|
+|`portal_disabled`（未配置 `portal_domain` 时的分享接口）|409|控制面|
+|`portal_not_found`（短码不存在、线程无 orb、端口未声明 portal）|404|控制面 / orbd `not_exposed`|
+|`portal_unauthorized`|401|控制面（非导航请求）|
+|`cross_site_blocked`|403|控制面|
+|`forbidden_port`|403|orbd|
+|`orbd_outdated`|409|控制面|
+|`orb_deleted`|410|控制面|
+|`service_unreachable`（端口无人监听）|502|orbd `connection_refused`|
+|`portal_unreachable` / `portal_timeout`|502 / 504|控制面|
+|`orb_unavailable`（带 `Retry-After: 3`）/ `portal_busy`|503|控制面|
+|`service_not_found` / `invalid_service` / `name_conflict` / `services_not_ready`|404 / 400 / 409 / 409|orbd 本机 API 与 orbd.sock|
+
+### 存储
+
+`0010_services_portals.sql`：
+
+- `threads.short_code`（唯一索引 `threads_short_code`；迁移时为既有 `T-<uuid>` 线程回填末 12 位）。
+- `orb_services(orb_id → orbs ON DELETE CASCADE, name, port, has_portal, doc, updated_at)`，主键 `(orb_id, name)`，索引 `(orb_id, port)`；`doc` 为 `OrbService` 的 JSON；`has_portal = len(links)>0 && port != nil`。
+- `portal_shares(orb_id → orbs ON DELETE CASCADE, port, created_at, expires_at)`，主键 `(orb_id, port)`。
+- `portal_sessions(id_hash, web_session_hash → web_sessions ON DELETE CASCADE, label, created_at, expires_at)`，索引 `web_session_hash`；`id_hash` = SHA-256(Cookie 值 `ops_…`)。
+
+查询见 `internal/store/queries/portals.sql` 与 `threads.sql` 的 `GetThreadByShortCode`。`GetPortalSession` 只返回自身与所属网页会话都未过期、且网页会话 `kind='full'` 的行。注意：sqlc 的 SQLite 引擎在查询文件含非 ASCII 字符时会错位改写参数，`internal/store/queries/*.sql` 的注释一律用英文。

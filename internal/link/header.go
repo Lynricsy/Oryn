@@ -31,6 +31,8 @@ type StreamHeader struct {
 	// SHA256 / Size：blob 流的内容摘要与字节数。
 	SHA256 string `json:"sha256,omitempty"`
 	Size   int64  `json:"size,omitempty"`
+	// Port：portal 流要对接的 orb 内本机端口（M4）。
+	Port int `json:"port,omitempty"`
 	// Raw 是解码时读到的完整流头 JSON（编码时若非空则原样发送，忽略上面的字段）。
 	Raw json.RawMessage `json:"-"`
 }

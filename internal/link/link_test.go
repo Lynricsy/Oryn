@@ -326,3 +326,126 @@ func TestCtlConcurrentRequestCap(t *testing.T) {
 	// 名额释放后恢复正常。
 	assert.NoError(t, ctl.Call(ctx, "slow", nil, nil))
 }
+
+func TestHeaderCodecPort(t *testing.T) {
+	line, err := EncodeHeader(StreamHeader{T: StreamPortal, Port: 8080})
+	require.NoError(t, err)
+	assert.Equal(t, `{"t":"portal","port":8080}`+"\n", string(line))
+
+	h, err := DecodeHeader(line)
+	require.NoError(t, err)
+	assert.Equal(t, StreamPortal, h.T)
+	assert.Equal(t, 8080, h.Port)
+
+	// 非 portal 流不输出 port。
+	line, err = EncodeHeader(StreamHeader{T: StreamFS})
+	require.NoError(t, err)
+	assert.Equal(t, `{"t":"fs"}`+"\n", string(line))
+}
+
+// TestPortalStreamReplyThenRaw：orynd（服务端）打开带端口的 portal 流，orbd（客户端）回一行应答后
+// 紧跟原始字节写出；服务端 ReadLine 读出应答行后，Read 从其后继续得到完整原始字节。
+func TestPortalStreamReplyThenRaw(t *testing.T) {
+	raw := make([]byte, 256<<10)
+	_, _ = rand.Read(raw)
+
+	type got struct {
+		reply []byte
+		sum   [32]byte
+		err   error
+	}
+	res := make(chan got, 1)
+	srv := startServer(t, func(s *Session) {
+		go func() {
+			ctx := context.Background()
+			st, err := s.Open(ctx, StreamHeader{T: StreamPortal, Port: 3000})
+			if err != nil {
+				res <- got{err: err}
+				return
+			}
+			defer st.Close()
+			reply, err := st.ReadLine(4096)
+			if err != nil {
+				res <- got{err: err}
+				return
+			}
+			h := sha256.New()
+			if _, err := io.Copy(h, st); err != nil {
+				res <- got{err: err}
+				return
+			}
+			var sum [32]byte
+			copy(sum[:], h.Sum(nil))
+			res <- got{reply: reply, sum: sum}
+		}()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	sess, err := Dial(ctx, URL(srv.URL), testToken)
+	require.NoError(t, err)
+	defer sess.Close()
+
+	st, err := sess.AcceptStream(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, StreamPortal, st.Header.T)
+	assert.Equal(t, 3000, st.Header.Port)
+	// 应答行与原始字节一次写出，确保服务端的缓冲里同时有两者。
+	_, err = st.Write(append([]byte(`{"ok":true}`+"\n"), raw...))
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	select {
+	case g := <-res:
+		require.NoError(t, g.err)
+		assert.Equal(t, `{"ok":true}`+"\n", string(g.reply))
+		assert.Equal(t, sha256.Sum256(raw), g.sum)
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for portal stream")
+	}
+}
+
+func TestStreamReadLineLimits(t *testing.T) {
+	type got struct {
+		first, second []byte
+		err1, err2    error
+	}
+	res := make(chan got, 1)
+	srv := startServer(t, func(s *Session) {
+		go func() {
+			st, err := s.AcceptStream(context.Background())
+			if err != nil {
+				res <- got{err1: err}
+				return
+			}
+			defer st.Close()
+			var g got
+			g.first, g.err1 = st.ReadLine(16)
+			if g.err1 == nil {
+				g.second, g.err2 = st.ReadLine(16)
+			}
+			res <- g
+		}()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	sess, err := Dial(ctx, URL(srv.URL), testToken)
+	require.NoError(t, err)
+	defer sess.Close()
+
+	st, err := sess.Open(ctx, StreamHeader{T: StreamPortal, Port: 1})
+	require.NoError(t, err)
+	_, err = st.Write([]byte("short\n" + "this line is far too long\n"))
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	select {
+	case g := <-res:
+		require.NoError(t, g.err1)
+		assert.Equal(t, "short\n", string(g.first))
+		assert.ErrorIs(t, g.err2, ErrLineTooLong)
+	case <-ctx.Done():
+		t.Fatal("timeout")
+	}
+}

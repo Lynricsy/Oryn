@@ -319,9 +319,11 @@ const (
 	MethodFsMove            LinkCtlMethod = "fs.move"
 	MethodHello             LinkCtlMethod = "hello"
 	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
+	MethodPortalConfigure   LinkCtlMethod = "portal.configure"
 	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
 	MethodProjectScriptsSet LinkCtlMethod = "project.scripts.set"
 	MethodResumeRun         LinkCtlMethod = "resume.run"
+	MethodServicesState     LinkCtlMethod = "services.state"
 	MethodSetupLog          LinkCtlMethod = "setup.log"
 	MethodSetupResult       LinkCtlMethod = "setup.result"
 	MethodSetupRun          LinkCtlMethod = "setup.run"
@@ -358,11 +360,15 @@ func (e LinkCtlMethod) Valid() bool {
 		return true
 	case MethodMetricsSample:
 		return true
+	case MethodPortalConfigure:
+		return true
 	case MethodProjectScriptsGet:
 		return true
 	case MethodProjectScriptsSet:
 		return true
 	case MethodResumeRun:
+		return true
+	case MethodServicesState:
 		return true
 	case MethodSetupLog:
 		return true
@@ -502,6 +508,21 @@ func (e LinkStreamFsT) Valid() bool {
 	}
 }
 
+// Defines values for LinkStreamPortalT.
+const (
+	Portal LinkStreamPortalT = "portal"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamPortalT enum.
+func (e LinkStreamPortalT) Valid() bool {
+	switch e {
+	case Portal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MeAuthKind.
 const (
 	MeAuthKindDevice   MeAuthKind = "device"
@@ -517,6 +538,54 @@ func (e MeAuthKind) Valid() bool {
 	case MeAuthKindRecovery:
 		return true
 	case MeAuthKindWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbServiceSource.
+const (
+	OrbServiceSourceDynamic OrbServiceSource = "dynamic"
+	OrbServiceSourceFile    OrbServiceSource = "file"
+)
+
+// Valid indicates whether the value is a known member of the OrbServiceSource enum.
+func (e OrbServiceSource) Valid() bool {
+	switch e {
+	case OrbServiceSourceDynamic:
+		return true
+	case OrbServiceSourceFile:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbServiceStatus.
+const (
+	OrbServiceStatusBackoff   OrbServiceStatus = "backoff"
+	OrbServiceStatusFailed    OrbServiceStatus = "failed"
+	OrbServiceStatusRunning   OrbServiceStatus = "running"
+	OrbServiceStatusStarting  OrbServiceStatus = "starting"
+	OrbServiceStatusStopped   OrbServiceStatus = "stopped"
+	OrbServiceStatusUnhealthy OrbServiceStatus = "unhealthy"
+)
+
+// Valid indicates whether the value is a known member of the OrbServiceStatus enum.
+func (e OrbServiceStatus) Valid() bool {
+	switch e {
+	case OrbServiceStatusBackoff:
+		return true
+	case OrbServiceStatusFailed:
+		return true
+	case OrbServiceStatusRunning:
+		return true
+	case OrbServiceStatusStarting:
+		return true
+	case OrbServiceStatusStopped:
+		return true
+	case OrbServiceStatusUnhealthy:
 		return true
 	default:
 		return false
@@ -589,6 +658,30 @@ func (e PauseMode) Valid() bool {
 	case Freeze:
 		return true
 	case Stop:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PortalShareDuration.
+const (
+	PortalShareDuration1D PortalShareDuration = "1d"
+	PortalShareDuration1H PortalShareDuration = "1h"
+	PortalShareDuration3H PortalShareDuration = "3h"
+	PortalShareDuration7D PortalShareDuration = "7d"
+)
+
+// Valid indicates whether the value is a known member of the PortalShareDuration enum.
+func (e PortalShareDuration) Valid() bool {
+	switch e {
+	case PortalShareDuration1D:
+		return true
+	case PortalShareDuration1H:
+		return true
+	case PortalShareDuration3H:
+		return true
+	case PortalShareDuration7D:
 		return true
 	default:
 		return false
@@ -1447,6 +1540,9 @@ type Error struct {
 	// M3（orb 文件 / 改动 / 附件，HTTP 状态见 docs/protocol.md）：`invalid_path`、`outside_home`、`protected_path`、`exists`、`is_a_directory`、
 	// `not_a_directory`、`not_a_repo`、`git_busy`、`modified`（412）、`too_large`（413）、`checksum_mismatch`（422）、`git_failed`、`no_space`（507）、
 	// `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`orbd_bad_response`（502，orbd 返回了非预期状态）、`orbd_timeout`（504）、`attachment_not_found`。
+	// M4（受管服务与 portal，HTTP 状态见 docs/protocol.md）：`portal_disabled`（409，未配置 `portal_domain`）、`portal_not_found`（404）、`portal_unauthorized`（401）、
+	// `cross_site_blocked`（403）、`forbidden_port`（403）、`service_unreachable`（502）、`portal_unreachable`（502）、`portal_timeout`（504）、`portal_busy`（503）、
+	// `service_not_found`（404）、`invalid_service`（400）、`name_conflict`（409）、`services_not_ready`（409）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -1898,8 +1994,9 @@ type LinkCtlHelloParams struct {
 	AgentVersion string `json:"agentVersion"`
 	Arch         string `json:"arch"`
 
-	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）。
-	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件请求回 409 `orbd_outdated`。
+	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
+	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）。
+	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal 请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
 	Os          string               `json:"os"`
@@ -1921,7 +2018,8 @@ type LinkCtlHelloThread struct {
 // `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 // `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
 // `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
-// `terminal.gap`（orbd→orynd 通知，M3）。
+// `terminal.gap`（orbd→orynd 通知，M3）；
+// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -1934,14 +2032,15 @@ type LinkCtlNotification struct {
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
 	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
-	// `terminal.gap`（orbd→orynd 通知，M3）。
+	// `terminal.gap`（orbd→orynd 通知，M3）；
+	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
 	Params map[string]interface{} `json:"params"`
 }
 
-// LinkCtlOkResult `fs.copyTree` / `fs.move` / `shutdown` 的结果
+// LinkCtlOkResult `fs.copyTree` / `fs.move` / `shutdown` / `portal.configure` 的结果
 type LinkCtlOkResult struct {
 	Ok bool `json:"ok"`
 }
@@ -1955,6 +2054,15 @@ type LinkCtlOmpHomeFile struct {
 
 	// Path 相对 `$HOME/.omp/agent/` 的路径
 	Path string `json:"path"`
+}
+
+// LinkCtlPortalConfigureParams hello 之后由 orynd 下发（仅对 `features` 含 `portal` 的 orbd）；结果为 `LinkCtlOkResult`
+type LinkCtlPortalConfigureParams struct {
+	// PrimaryThreadID 文件服务与未指定线程的服务归属的线程（本 orb 最早创建的线程）
+	PrimaryThreadID *ThreadID `json:"primaryThreadId,omitempty"`
+
+	// URLTemplate portal 地址模板，如 `https://t-{code}-p{port}.orb.example.com/`；空串 = 控制面未配置 `portal_domain`
+	URLTemplate string `json:"urlTemplate"`
 }
 
 // LinkCtlProjectScripts 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果
@@ -1985,7 +2093,8 @@ type LinkCtlRequest struct {
 	// `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
 	// `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
 	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
-	// `terminal.gap`（orbd→orynd 通知，M3）。
+	// `terminal.gap`（orbd→orynd 通知，M3）；
+	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -2006,6 +2115,11 @@ type LinkCtlResumeRunParams = LinkCtlSetupRunParams
 
 // LinkCtlResumeRunResult defines model for LinkCtlResumeRunResult.
 type LinkCtlResumeRunResult = LinkCtlSetupRunResult
+
+// LinkCtlServicesStateParams orbd 的受管服务全量快照；每次定义或状态变化、link 建立后、收到 `portal.configure` 后发送
+type LinkCtlServicesStateParams struct {
+	Services []OrbService `json:"services"`
+}
 
 // LinkCtlSetupLogParams defines model for LinkCtlSetupLogParams.
 type LinkCtlSetupLogParams struct {
@@ -2093,6 +2207,14 @@ type LinkCtlTerminalGapParams struct {
 	ThreadID ThreadID `json:"threadId"`
 }
 
+// LinkPortalReply orbd 对 `portal` 流的应答行
+type LinkPortalReply struct {
+	// Code `ok=false` 时：`not_exposed`（端口不属于有 portal 的服务）、`forbidden_port`（egress 端口）、`connection_refused`、`timeout`、`failed`
+	Code    *string `json:"code,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Ok      bool    `json:"ok"`
+}
+
 // LinkStreamAgent agent 启动时由 orbd 开；orbd→orynd 为重组后的 omp 逻辑帧，orynd→orbd 为写入 omp stdin 的命令帧（一行一个 JSON）
 type LinkStreamAgent struct {
 	T LinkStreamAgentT `json:"t"`
@@ -2142,10 +2264,20 @@ type LinkStreamFs struct {
 // LinkStreamFsT defines model for LinkStreamFs.T.
 type LinkStreamFsT string
 
-// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。`portal` / `desk` 由 M4/M8 定义。
+// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。`desk` 由 M8 定义。
 type LinkStreamHeader struct {
 	union json.RawMessage
 }
+
+// LinkStreamPortal 由 orynd 打开（M4），每个代理连接一条。orbd 先回一行 `LinkPortalReply` + `\n`；`ok=true` 之后流上是与
+// `127.0.0.1:<port>`（被拒绝时回退 `[::1]:<port>`）之间的原始字节。只有 hello `features` 含 `portal` 的 orbd 才接受。
+type LinkStreamPortal struct {
+	Port int               `json:"port"`
+	T    LinkStreamPortalT `json:"t"`
+}
+
+// LinkStreamPortalT defines model for LinkStreamPortal.T.
+type LinkStreamPortalT string
 
 // Me defines model for Me.
 type Me struct {
@@ -2207,12 +2339,18 @@ type Orb struct {
 	MemoryMB              int          `json:"memoryMB"`
 	OrbdVersion           *string      `json:"orbdVersion,omitempty"`
 
+	// Portals 有 portal 的服务端口（M4）；orb 已删除时省略
+	Portals []OrbPortal `json:"portals,omitempty"`
+
 	// ProjectID `prj_<ulid>`
 	ProjectID *ProjectID `json:"projectId,omitempty"`
 
 	// ProviderID `prov_<ulid>`
 	ProviderID   ProviderID `json:"providerId"`
 	ProviderName *string    `json:"providerName,omitempty"`
+
+	// Services orbd 上报的受管服务（控制面镜像，M4）；orb 已删除时省略
+	Services []OrbService `json:"services,omitempty"`
 
 	// SnapshotOf 由哪个快照创建
 	SnapshotOf *SnapshotID `json:"snapshotOf,omitempty"`
@@ -2290,6 +2428,89 @@ type OrbMetrics struct {
 type OrbPauseRequest struct {
 	Mode PauseMode `json:"mode"`
 }
+
+// OrbPortal defines model for OrbPortal.
+type OrbPortal struct {
+	Links []OrbPortalLink `json:"links"`
+	Port  int             `json:"port"`
+
+	// Public 限时公开中（省略 = 仅所有者可访问）
+	Public *OrbPortalPublic `json:"public,omitempty"`
+
+	// Service 提供该端口的服务名
+	Service string `json:"service"`
+}
+
+// OrbPortalLink 服务的 portal 链接（`services.yaml` 的 `portal` / `portals[]`）：同一端口上的一个路径
+type OrbPortalLink struct {
+	// Folder 链接菜单中的分组
+	Folder *string `json:"folder,omitempty"`
+
+	// Path 以 `/` 开头的路径（可带查询）
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
+// OrbPortalPublic 限时公开中（省略 = 仅所有者可访问）
+type OrbPortalPublic struct {
+	// ExpiresAt UTC 毫秒时间戳
+	ExpiresAt TimestampMs `json:"expiresAt"`
+}
+
+// OrbService defines model for OrbService.
+type OrbService struct {
+	Command string `json:"command"`
+
+	// Cwd 相对工作区根的目录
+	Cwd *string `json:"cwd,omitempty"`
+
+	// Error `failed` 的原因（如 `port_conflict`、`forbidden_port`、定义校验错误）
+	Error *string `json:"error,omitempty"`
+
+	// ExitCode 最近一次退出码
+	ExitCode *int `json:"exitCode,omitempty"`
+
+	// Health 就绪探测的 HTTP 路径
+	Health *string `json:"health,omitempty"`
+
+	// Links portal 链接；非空 = 该服务的端口有 portal
+	Links []OrbPortalLink `json:"links"`
+	Name  string          `json:"name"`
+	Pid   *int            `json:"pid,omitempty"`
+	Port  *int            `json:"port,omitempty"`
+
+	// PublicURL 该服务进程拿到的 `PUBLIC_URL`（不带结尾 `/`）
+	PublicURL *string `json:"publicUrl,omitempty"`
+
+	// Restarts 自动重启次数
+	Restarts int `json:"restarts"`
+
+	// Source `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+	Source OrbServiceSource `json:"source"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt *TimestampMs `json:"startedAt,omitempty"`
+
+	// Status `starting` 已拉起、尚未通过就绪探测；`running` 运行中（需要探测的服务已通过探测）；`unhealthy` 60s 内未就绪（仍在探测）；
+	// `backoff` 进程退出、等待退避后重启；`stopped` 已被停止；`failed` 定义无效或连续 5 次短命。
+	Status OrbServiceStatus `json:"status"`
+
+	// ThreadID 所属线程（决定 `PUBLIC_URL` 用哪个线程短码）
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// OrbServiceSource `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+type OrbServiceSource string
+
+// OrbServiceList defines model for OrbServiceList.
+type OrbServiceList struct {
+	Portals  []OrbPortal  `json:"portals"`
+	Services []OrbService `json:"services"`
+}
+
+// OrbServiceStatus `starting` 已拉起、尚未通过就绪探测；`running` 运行中（需要探测的服务已通过探测）；`unhealthy` 60s 内未就绪（仍在探测）；
+// `backoff` 进程退出、等待退避后重启；`stopped` 已被停止；`failed` 定义无效或连续 5 次短命。
+type OrbServiceStatus string
 
 // OrbSetupRun defines model for OrbSetupRun.
 type OrbSetupRun struct {
@@ -2372,6 +2593,15 @@ type OrbTypeStat struct {
 
 // PauseMode defines model for PauseMode.
 type PauseMode string
+
+// PortalShareDuration 公开时长（3600 / 10800 / 86400 / 604800 秒）
+type PortalShareDuration string
+
+// PortalShareRequest defines model for PortalShareRequest.
+type PortalShareRequest struct {
+	// Duration 公开时长（3600 / 10800 / 86400 / 604800 秒）
+	Duration PortalShareDuration `json:"duration"`
+}
 
 // Project defines model for Project.
 type Project struct {
@@ -2678,6 +2908,13 @@ type Thread struct {
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ParentThreadID *ThreadID `json:"parentThreadId,omitempty"`
 	Pinned         bool      `json:"pinned"`
+
+	// PortalURLTemplate 该线程的 portal 地址模板：线程短码已代入、保留 `{port}`（如 `https://t-3f9a1c0b7e2d-p{port}.orb.example.com/`）。
+	// 控制面未配置 `portal_domain` 时省略。
+	//
+	//
+	// Example: https://t-3f9a1c0b7e2d-p{port}.orb.example.com/
+	PortalURLTemplate *string `json:"portalUrlTemplate,omitempty"`
 
 	// ProjectID `prj_<ulid>`
 	ProjectID *ProjectID `json:"projectId,omitempty"`
@@ -3208,6 +3445,9 @@ type OrbBackgroundQuery = bool
 // Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 type OrbIDPath = OrbID
 
+// PortalPortPath defines model for PortalPortPath.
+type PortalPortPath = int
+
 // ProjectIDPath `prj_<ulid>`
 type ProjectIDPath = ProjectID
 
@@ -3216,6 +3456,9 @@ type ProviderIDPath = ProviderID
 
 // SecretNamePath defines model for SecretNamePath.
 type SecretNamePath = string
+
+// ServiceNamePath defines model for ServiceNamePath.
+type ServiceNamePath = string
 
 // ThreadIDPath `T-<uuidv7>`
 //
@@ -3359,6 +3602,15 @@ type GetOrbMetricsParams struct {
 	Step *int `form:"step,omitempty" json:"step,omitempty"`
 }
 
+// GetOrbServiceLogParams defines parameters for GetOrbServiceLog.
+type GetOrbServiceLogParams struct {
+	// Tail 返回末尾至多多少字节
+	Tail *int `form:"tail,omitempty" json:"tail,omitempty"`
+
+	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
+	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+}
+
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
 	// Archived 为 true 时只返回已归档项目；缺省只返回未归档
@@ -3447,6 +3699,9 @@ type UnstageOrbGitJSONRequestBody = GitPathsRequest
 
 // PauseOrbJSONRequestBody defines body for PauseOrb for application/json ContentType.
 type PauseOrbJSONRequestBody = OrbPauseRequest
+
+// SetOrbPortalShareJSONRequestBody defines body for SetOrbPortalShare for application/json ContentType.
+type SetOrbPortalShareJSONRequestBody = PortalShareRequest
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = ProjectCreate
@@ -3660,6 +3915,40 @@ func (t *LinkStreamHeader) MergeLinkStreamFs(v LinkStreamFs) error {
 	return err
 }
 
+// AsLinkStreamPortal returns the union data inside the LinkStreamHeader as a LinkStreamPortal
+func (t LinkStreamHeader) AsLinkStreamPortal() (LinkStreamPortal, error) {
+	var body LinkStreamPortal
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamPortal overwrites any union data inside the LinkStreamHeader as the provided LinkStreamPortal
+func (t *LinkStreamHeader) FromLinkStreamPortal(v LinkStreamPortal) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"portal"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamPortal performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamPortal
+func (t *LinkStreamHeader) MergeLinkStreamPortal(v LinkStreamPortal) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"portal"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -3684,6 +3973,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamEgress()
 	case "fs":
 		return t.AsLinkStreamFs()
+	case "portal":
+		return t.AsLinkStreamPortal()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -4772,9 +5063,30 @@ type ServerInterface interface {
 	// PauseOrb 手动冻结或停机
 	// (POST /api/v1/orbs/{id}/pause)
 	PauseOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// EndOrbPortalShare 终止公开（立即断开该端口的全部匿名连接）
+	// (DELETE /api/v1/orbs/{id}/portals/{port}/share)
+	EndOrbPortalShare(w http.ResponseWriter, r *http.Request, id OrbIDPath, port PortalPortPath)
+	// SetOrbPortalShare 限时公开该端口的 portal（首次公开与续期同一接口：`expiresAt = now + duration`）
+	// (PUT /api/v1/orbs/{id}/portals/{port}/share)
+	SetOrbPortalShare(w http.ResponseWriter, r *http.Request, id OrbIDPath, port PortalPortPath)
 	// ResumeOrb 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
 	// (POST /api/v1/orbs/{id}/resume)
 	ResumeOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// ListOrbServices orb 的受管服务与 portal（读控制面镜像，不唤醒、不计用户交互）
+	// (GET /api/v1/orbs/{id}/services)
+	ListOrbServices(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// GetOrbServiceLog 服务日志末尾（从整行开始）
+	// (GET /api/v1/orbs/{id}/services/{name}/log)
+	GetOrbServiceLog(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath, params GetOrbServiceLogParams)
+	// RestartOrbService 重读 services.yaml 后重启服务（等待至多 60s 离开 `starting`）
+	// (POST /api/v1/orbs/{id}/services/{name}/restart)
+	RestartOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath)
+	// StartOrbService 启动已声明的服务（等待至多 60s 离开 `starting`）
+	// (POST /api/v1/orbs/{id}/services/{name}/start)
+	StartOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath)
+	// StopOrbService 停止服务（之后不再自动拉起，直到再次 start / restart）
+	// (POST /api/v1/orbs/{id}/services/{name}/stop)
+	StopOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath)
 	// ListOrbSetupRuns 最近 20 次 setup / resume 运行（新到旧，不含日志）
 	// (GET /api/v1/orbs/{id}/setup-runs)
 	ListOrbSetupRuns(w http.ResponseWriter, r *http.Request, id OrbIDPath)
@@ -5132,9 +5444,51 @@ func (_ Unimplemented) PauseOrb(w http.ResponseWriter, r *http.Request, id OrbID
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// EndOrbPortalShare 终止公开（立即断开该端口的全部匿名连接）
+// (DELETE /api/v1/orbs/{id}/portals/{port}/share)
+func (_ Unimplemented) EndOrbPortalShare(w http.ResponseWriter, r *http.Request, id OrbIDPath, port PortalPortPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetOrbPortalShare 限时公开该端口的 portal（首次公开与续期同一接口：`expiresAt = now + duration`）
+// (PUT /api/v1/orbs/{id}/portals/{port}/share)
+func (_ Unimplemented) SetOrbPortalShare(w http.ResponseWriter, r *http.Request, id OrbIDPath, port PortalPortPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ResumeOrb 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
 // (POST /api/v1/orbs/{id}/resume)
 func (_ Unimplemented) ResumeOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOrbServices orb 的受管服务与 portal（读控制面镜像，不唤醒、不计用户交互）
+// (GET /api/v1/orbs/{id}/services)
+func (_ Unimplemented) ListOrbServices(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbServiceLog 服务日志末尾（从整行开始）
+// (GET /api/v1/orbs/{id}/services/{name}/log)
+func (_ Unimplemented) GetOrbServiceLog(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath, params GetOrbServiceLogParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RestartOrbService 重读 services.yaml 后重启服务（等待至多 60s 离开 `starting`）
+// (POST /api/v1/orbs/{id}/services/{name}/restart)
+func (_ Unimplemented) RestartOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartOrbService 启动已声明的服务（等待至多 60s 离开 `starting`）
+// (POST /api/v1/orbs/{id}/services/{name}/start)
+func (_ Unimplemented) StartOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StopOrbService 停止服务（之后不再自动拉起，直到再次 start / restart）
+// (POST /api/v1/orbs/{id}/services/{name}/stop)
+func (_ Unimplemented) StopOrbService(w http.ResponseWriter, r *http.Request, id OrbIDPath, name ServiceNamePath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -6745,6 +7099,76 @@ func (siw *ServerInterfaceWrapper) PauseOrb(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// EndOrbPortalShare operation middleware
+func (siw *ServerInterfaceWrapper) EndOrbPortalShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "port" -------------
+	var port PortalPortPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "port", chi.URLParam(r, "port"), &port, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "port", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EndOrbPortalShare(w, r, id, port)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetOrbPortalShare operation middleware
+func (siw *ServerInterfaceWrapper) SetOrbPortalShare(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "port" -------------
+	var port PortalPortPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "port", chi.URLParam(r, "port"), &port, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "port", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetOrbPortalShare(w, r, id, port)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResumeOrb operation middleware
 func (siw *ServerInterfaceWrapper) ResumeOrb(w http.ResponseWriter, r *http.Request) {
 
@@ -6762,6 +7186,201 @@ func (siw *ServerInterfaceWrapper) ResumeOrb(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeOrb(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOrbServices operation middleware
+func (siw *ServerInterfaceWrapper) ListOrbServices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrbServices(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbServiceLog operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbServiceLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name ServiceNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbServiceLogParams
+
+	// ------------- Optional query parameter "tail" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tail", r.URL.Query(), &params.Tail, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tail"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tail", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbServiceLog(w, r, id, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestartOrbService operation middleware
+func (siw *ServerInterfaceWrapper) RestartOrbService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name ServiceNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartOrbService(w, r, id, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOrbService operation middleware
+func (siw *ServerInterfaceWrapper) StartOrbService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name ServiceNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOrbService(w, r, id, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopOrbService operation middleware
+func (siw *ServerInterfaceWrapper) StopOrbService(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name ServiceNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopOrbService(w, r, id, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7941,6 +8560,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/orbs/{id}/git/unstage", wrapper.UnstageOrbGit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/services", wrapper.ListOrbServices)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/services/{name}/start", wrapper.StartOrbService)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/services/{name}/stop", wrapper.StopOrbService)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/services/{name}/restart", wrapper.RestartOrbService)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/services/{name}/log", wrapper.GetOrbServiceLog)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/orbs/{id}/portals/{port}/share", wrapper.EndOrbPortalShare)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/orbs/{id}/portals/{port}/share", wrapper.SetOrbPortalShare)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/blobs/{sha256}", wrapper.GetBlob)

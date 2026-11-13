@@ -838,6 +838,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * orb 的受管服务与 portal（读控制面镜像，不唤醒、不计用户交互）
+         * @description 镜像来自 orbd 的 `services.state` 通知；orb 已删除或旧版 orbd 时两个列表为空。
+         */
+        get: operations["listOrbServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/services/{name}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 启动已声明的服务（等待至多 60s 离开 `starting`）
+         * @description 经 `fs` 流转发到 orbd 本机 API `POST /services/{name}/start`。orb 不可用时唤醒并至多等待 25s；旧版 orbd → 409 `orbd_outdated`；未知服务 → 404 `service_not_found`。
+         */
+        post: operations["startOrbService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/services/{name}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 停止服务（之后不再自动拉起，直到再次 start / restart）
+         * @description 经 `fs` 流转发到 orbd 本机 API `POST /services/{name}/stop`；进程组先 SIGTERM，10s 后 SIGKILL。
+         */
+        post: operations["stopOrbService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/services/{name}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重读 services.yaml 后重启服务（等待至多 60s 离开 `starting`）
+         * @description 经 `fs` 流转发到 orbd 本机 API `POST /services/{name}/restart`。
+         */
+        post: operations["restartOrbService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/services/{name}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 服务日志末尾（从整行开始）
+         * @description 经 `fs` 流转发到 orbd 本机 API `GET /services/{name}/log`；没有日志时返回空体。
+         */
+        get: operations["getOrbServiceLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/portals/{port}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description portal 端口（服务的 `PORT`） */
+                port: components["parameters"]["PortalPortPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 限时公开该端口的 portal（首次公开与续期同一接口：`expiresAt = now + duration`）
+         * @description 只影响该 `(orb, 端口)`。端口未声明 portal → 404 `portal_not_found`；控制面未配置 `portal_domain` → 409 `portal_disabled`。
+         */
+        put: operations["setOrbPortalShare"];
+        post?: never;
+        /**
+         * 终止公开（立即断开该端口的全部匿名连接）
+         * @description 未公开时同样返回 204；控制面未配置 `portal_domain` → 409 `portal_disabled`。
+         */
+        delete: operations["endOrbPortalShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/blobs/{sha256}": {
         parameters: {
             query?: never;
@@ -1294,6 +1440,9 @@ export interface components {
              *     M3（orb 文件 / 改动 / 附件，HTTP 状态见 docs/protocol.md）：`invalid_path`、`outside_home`、`protected_path`、`exists`、`is_a_directory`、
              *     `not_a_directory`、`not_a_repo`、`git_busy`、`modified`（412）、`too_large`（413）、`checksum_mismatch`（422）、`git_failed`、`no_space`（507）、
              *     `orb_not_ready`、`orbd_outdated`、`orb_deleted`（410）、`no_orb`、`orb_unavailable`（503，带 `Retry-After: 3`）、`orbd_unreachable`（502）、`orbd_bad_response`（502，orbd 返回了非预期状态）、`orbd_timeout`（504）、`attachment_not_found`。
+             *     M4（受管服务与 portal，HTTP 状态见 docs/protocol.md）：`portal_disabled`（409，未配置 `portal_domain`）、`portal_not_found`（404）、`portal_unauthorized`（401）、
+             *     `cross_site_blocked`（403）、`forbidden_port`（403）、`service_unreachable`（502）、`portal_unreachable`（502）、`portal_timeout`（504）、`portal_busy`（503）、
+             *     `service_not_found`（404）、`invalid_service`（400）、`name_conflict`（409）、`services_not_ready`（409）。
              */
             code: string;
             message: string;
@@ -1634,6 +1783,12 @@ export interface components {
              *     单行、至多 120 字符；只在内存中维护（不落库，控制面重启后为空），离开 `working` 即省略。变化时随 index.patch 推送
              */
             readonly activity?: string;
+            /**
+             * @description 该线程的 portal 地址模板：线程短码已代入、保留 `{port}`（如 `https://t-3f9a1c0b7e2d-p{port}.orb.example.com/`）。
+             *     控制面未配置 `portal_domain` 时省略。
+             * @example https://t-3f9a1c0b7e2d-p{port}.orb.example.com/
+             */
+            portalUrlTemplate?: string;
         };
         /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
         ThreadError: {
@@ -1719,6 +1874,10 @@ export interface components {
             lastSetup?: components["schemas"]["OrbSetupRun"];
             /** @description 最近一次 `phase=resume` 的运行 */
             lastResume?: components["schemas"]["OrbSetupRun"];
+            /** @description orbd 上报的受管服务（控制面镜像，M4）；orb 已删除时省略 */
+            services?: components["schemas"]["OrbService"][];
+            /** @description 有 portal 的服务端口（M4）；orb 已删除时省略 */
+            portals?: components["schemas"]["OrbPortal"][];
         };
         OrbSetupRun: {
             id: components["schemas"]["SetupRunId"];
@@ -1748,6 +1907,72 @@ export interface components {
         SetupTrigger: "auto" | "manual";
         OrbSetupRunList: {
             runs: components["schemas"]["OrbSetupRun"][];
+        };
+        /**
+         * @description `starting` 已拉起、尚未通过就绪探测；`running` 运行中（需要探测的服务已通过探测）；`unhealthy` 60s 内未就绪（仍在探测）；
+         *     `backoff` 进程退出、等待退避后重启；`stopped` 已被停止；`failed` 定义无效或连续 5 次短命。
+         * @enum {string}
+         */
+        OrbServiceStatus: "starting" | "running" | "unhealthy" | "backoff" | "stopped" | "failed";
+        /** @description 服务的 portal 链接（`services.yaml` 的 `portal` / `portals[]`）：同一端口上的一个路径 */
+        OrbPortalLink: {
+            title: string;
+            /** @description 以 `/` 开头的路径（可带查询） */
+            path: string;
+            /** @description 链接菜单中的分组 */
+            folder?: string;
+        };
+        OrbService: {
+            name: string;
+            /**
+             * @description `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+             * @enum {string}
+             */
+            source: "file" | "dynamic";
+            command: string;
+            /** @description 相对工作区根的目录 */
+            cwd?: string;
+            port?: number;
+            /** @description 就绪探测的 HTTP 路径 */
+            health?: string;
+            /** @description portal 链接；非空 = 该服务的端口有 portal */
+            links: components["schemas"]["OrbPortalLink"][];
+            /** @description 所属线程（决定 `PUBLIC_URL` 用哪个线程短码） */
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description 该服务进程拿到的 `PUBLIC_URL`（不带结尾 `/`） */
+            publicUrl?: string;
+            status: components["schemas"]["OrbServiceStatus"];
+            pid?: number;
+            /** @description 自动重启次数 */
+            restarts: number;
+            /** @description 最近一次退出码 */
+            exitCode?: number;
+            /** @description `failed` 的原因（如 `port_conflict`、`forbidden_port`、定义校验错误） */
+            error?: string;
+            startedAt?: components["schemas"]["TimestampMs"];
+        };
+        OrbPortal: {
+            port: number;
+            /** @description 提供该端口的服务名 */
+            service: string;
+            links: components["schemas"]["OrbPortalLink"][];
+            public?: components["schemas"]["OrbPortalPublic"];
+        };
+        /** @description 限时公开中（省略 = 仅所有者可访问） */
+        OrbPortalPublic: {
+            expiresAt: components["schemas"]["TimestampMs"];
+        };
+        OrbServiceList: {
+            services: components["schemas"]["OrbService"][];
+            portals: components["schemas"]["OrbPortal"][];
+        };
+        /**
+         * @description 公开时长（3600 / 10800 / 86400 / 604800 秒）
+         * @enum {string}
+         */
+        PortalShareDuration: "1h" | "3h" | "1d" | "7d";
+        PortalShareRequest: {
+            duration: components["schemas"]["PortalShareDuration"];
         };
         OrbList: {
             orbs: components["schemas"]["Orb"][];
@@ -2413,8 +2638,8 @@ export interface components {
         JobDeleteSnapshotParams: {
             snapshotId: components["schemas"]["SnapshotId"];
         };
-        /** @description yamux 流的第一行（JSON + `\n`）。`portal` / `desk` 由 M4/M8 定义。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"];
+        /** @description yamux 流的第一行（JSON + `\n`）。`desk` 由 M8 定义。 */
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -2463,15 +2688,35 @@ export interface components {
             t: "fs";
         };
         /**
+         * @description 由 orynd 打开（M4），每个代理连接一条。orbd 先回一行 `LinkPortalReply` + `\n`；`ok=true` 之后流上是与
+         *     `127.0.0.1:<port>`（被拒绝时回退 `[::1]:<port>`）之间的原始字节。只有 hello `features` 含 `portal` 的 orbd 才接受。
+         */
+        LinkStreamPortal: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "portal";
+            port: number;
+        };
+        /** @description orbd 对 `portal` 流的应答行 */
+        LinkPortalReply: {
+            ok: boolean;
+            /** @description `ok=false` 时：`not_exposed`（端口不属于有 portal 的服务）、`forbidden_port`（egress 端口）、`connection_refused`、`timeout`、`failed` */
+            code?: string;
+            message?: string;
+        };
+        /**
          * @description `ctl` 方法（括号内为方向与形态）：
          *     `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
          *     `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
          *     `setup.run`、`resume.run`、`agent.start`、`agent.stop`、`blob.fetch`、`fs.copyTree`、`fs.move`、`shutdown`（orynd→orbd 请求）；
          *     `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
-         *     `terminal.gap`（orbd→orynd 通知，M3）。
+         *     `terminal.gap`（orbd→orynd 通知，M3）；
+         *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -2517,8 +2762,9 @@ export interface components {
             arch: string;
             threads: components["schemas"]["LinkCtlHelloThread"][];
             /**
-             * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）。
-             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件请求回 409 `orbd_outdated`。
+             * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
+             *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）。
+             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal 请求回 409 `orbd_outdated`。
              */
             features?: string[];
         };
@@ -2699,12 +2945,23 @@ export interface components {
             from: string;
             to: string;
         };
-        /** @description `fs.copyTree` / `fs.move` / `shutdown` 的结果 */
+        /** @description `fs.copyTree` / `fs.move` / `shutdown` / `portal.configure` 的结果 */
         LinkCtlOkResult: {
             ok: boolean;
         };
         LinkCtlShutdownParams: {
             graceSeconds: number;
+        };
+        /** @description orbd 的受管服务全量快照；每次定义或状态变化、link 建立后、收到 `portal.configure` 后发送 */
+        LinkCtlServicesStateParams: {
+            services: components["schemas"]["OrbService"][];
+        };
+        /** @description hello 之后由 orynd 下发（仅对 `features` 含 `portal` 的 orbd）；结果为 `LinkCtlOkResult` */
+        LinkCtlPortalConfigureParams: {
+            /** @description portal 地址模板，如 `https://t-{code}-p{port}.orb.example.com/`；空串 = 控制面未配置 `portal_domain` */
+            urlTemplate: string;
+            /** @description 文件服务与未指定线程的服务归属的线程（本 orb 最早创建的线程） */
+            primaryThreadId?: components["schemas"]["ThreadId"];
         };
     };
     responses: {
@@ -2748,6 +3005,10 @@ export interface components {
         FromQuery: components["schemas"]["TimestampMs"];
         /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
         ToQuery: components["schemas"]["TimestampMs"];
+        /** @description 受管服务名 */
+        ServiceNamePath: string;
+        /** @description portal 端口（服务的 `PORT`） */
+        PortalPortPath: number;
     };
     requestBodies: never;
     headers: never;
@@ -4077,6 +4338,186 @@ export interface operations {
                 "application/json": components["schemas"]["GitPathsRequest"];
             };
         };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOrbServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbServiceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startOrbService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作后的服务状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbService"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopOrbService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作后的服务状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbService"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restartOrbService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作后的服务状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbService"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbServiceLog: {
+        parameters: {
+            query?: {
+                /** @description 返回末尾至多多少字节 */
+                tail?: number;
+                /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
+                bg?: components["parameters"]["OrbBackgroundQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description 受管服务名 */
+                name: components["parameters"]["ServiceNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 纯文本日志 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOrbPortalShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description portal 端口（服务的 `PORT`） */
+                port: components["parameters"]["PortalPortPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortalShareRequest"];
+            };
+        };
+        responses: {
+            /** @description 公开后的 portal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbPortal"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    endOrbPortalShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+                /** @description portal 端口（服务的 `PORT`） */
+                port: components["parameters"]["PortalPortPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description 成功 */
             204: {

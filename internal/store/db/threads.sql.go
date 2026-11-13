@@ -35,9 +35,9 @@ func (q *Queries) ClearThreadLabels(ctx context.Context, threadID string) error 
 const createThread = `-- name: CreateThread :exec
 
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
-                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at)
+                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-        ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
 `
 
 type CreateThreadParams struct {
@@ -56,6 +56,7 @@ type CreateThreadParams struct {
 	Color             *string `json:"color"`
 	CreatedAt         int64   `json:"createdAt"`
 	UpdatedAt         int64   `json:"updatedAt"`
+	ShortCode         *string `json:"shortCode"`
 }
 
 // Threads and labels.
@@ -76,6 +77,7 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) erro
 		arg.Color,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.ShortCode,
 	)
 	return err
 }
@@ -93,7 +95,7 @@ func (q *Queries) DeleteThread(ctx context.Context, id string) (int64, error) {
 }
 
 const getThread = `-- name: GetThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads WHERE id = ?1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE id = ?1
 `
 
 func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
@@ -125,6 +127,46 @@ func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
 		&i.StartupFrames,
 		&i.ForkOp,
 		&i.TranscriptRev,
+		&i.ShortCode,
+	)
+	return i, err
+}
+
+const getThreadByShortCode = `-- name: GetThreadByShortCode :one
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE short_code = CAST(?1 AS TEXT)
+`
+
+// Thread short code (last 12 hex of the id) in portal host names -> thread (M4).
+func (q *Queries) GetThreadByShortCode(ctx context.Context, shortCode string) (Thread, error) {
+	row := q.db.QueryRowContext(ctx, getThreadByShortCode, shortCode)
+	var i Thread
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OrbID,
+		&i.Title,
+		&i.TitleSource,
+		&i.State,
+		&i.StateChangedAt,
+		&i.ParentThreadID,
+		&i.ForkedFromEntryID,
+		&i.SessionDir,
+		&i.LeafEntryID,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.Color,
+		&i.Pinned,
+		&i.SnoozedUntil,
+		&i.ArchivedAt,
+		&i.Unread,
+		&i.LastSeq,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastMessageAt,
+		&i.StartupFrames,
+		&i.ForkOp,
+		&i.TranscriptRev,
+		&i.ShortCode,
 	)
 	return i, err
 }
@@ -184,7 +226,7 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 }
 
 const listThreads = `-- name: ListThreads :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?3 AS BOOLEAN))
@@ -240,6 +282,7 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 			&i.StartupFrames,
 			&i.ForkOp,
 			&i.TranscriptRev,
+			&i.ShortCode,
 		); err != nil {
 			return nil, err
 		}
@@ -255,7 +298,7 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 }
 
 const listThreadsByOrb = `-- name: ListThreadsByOrb :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev FROM threads WHERE orb_id = ?1 ORDER BY created_at
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE orb_id = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread, error) {
@@ -293,6 +336,7 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 			&i.StartupFrames,
 			&i.ForkOp,
 			&i.TranscriptRev,
+			&i.ShortCode,
 		); err != nil {
 			return nil, err
 		}

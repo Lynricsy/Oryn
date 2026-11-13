@@ -2,12 +2,16 @@
 
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
-                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at)
+                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
-        @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at);
+        @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code);
 
 -- name: GetThread :one
 SELECT * FROM threads WHERE id = @id;
+
+-- Thread short code (last 12 hex of the id) in portal host names -> thread (M4).
+-- name: GetThreadByShortCode :one
+SELECT * FROM threads WHERE short_code = CAST(@short_code AS TEXT);
 
 -- GET threads?state=&project=&archived=&q= ; a NULL filter means unrestricted.
 -- name: ListThreads :many
