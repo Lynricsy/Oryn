@@ -38,7 +38,7 @@ func cmdSetupToken(ctx context.Context, cfg config.Orynd, _ []string) error {
 // cmdAdmin 是本机管理命令：直接打开同一 SQLite 库（WAL + busy_timeout 允许与运行中的 orynd 并存）。
 func cmdAdmin(ctx context.Context, cfg config.Orynd, args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法：orynd --config <file> admin create-device --name <名称> --kind cli|desktop|mobile [--platform <平台>]")
+		return errors.New("用法：orynd --config <file> admin create-device --name <名称> --kind cli|desktop|mobile [--platform <平台>] | admin create-web-session [--user-agent <UA>]")
 	}
 	switch args[0] {
 	case "create-device":
@@ -62,6 +62,24 @@ func cmdAdmin(ctx context.Context, cfg config.Orynd, args []string) error {
 			return err
 		}
 		// stdout 只输出令牌，便于 TOKEN=$(orynd … admin create-device …)
+		_, err = fmt.Fprintln(os.Stdout, tok)
+		return err
+	case "create-web-session":
+		fs := flag.NewFlagSet("admin create-web-session", flag.ContinueOnError)
+		ua := fs.String("user-agent", "orynd admin", "记录在会话上的 User-Agent")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		st, err := store.Open(ctx, cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		tok, err := auth.CreateWebSession(ctx, st, *ua)
+		if err != nil {
+			return err
+		}
+		// stdout 只输出 Cookie（oryn_session）的值，便于 SESSION=$(orynd … admin create-web-session)
 		_, err = fmt.Fprintln(os.Stdout, tok)
 		return err
 	default:

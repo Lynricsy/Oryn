@@ -122,19 +122,14 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 	ctx := r.Context()
 	if h := r.Header.Get("Authorization"); h != "" {
 		tok, ok := strings.CutPrefix(h, "Bearer ")
-		if !ok || ids.TokenPrefix(tok) != "odt" {
+		if !ok {
 			return Principal{}, errUnauthorized
 		}
-		dev, err := st.Q.GetDeviceByTokenHash(ctx, ids.Hash(tok))
-		if err != nil || dev.RevokedAt != nil {
+		p, ok := DeviceByToken(ctx, st, tok)
+		if !ok {
 			return Principal{}, errUnauthorized
 		}
-		now := time.Now()
-		if dev.LastSeenAt == nil || now.Sub(time.UnixMilli(*dev.LastSeenAt)) >= deviceTouchEvery {
-			ms := now.UnixMilli()
-			_ = st.Q.TouchDevice(ctx, db.TouchDeviceParams{LastSeenAt: &ms, ID: dev.ID})
-		}
-		return Principal{Kind: KindDevice, ID: dev.ID}, nil
+		return p, nil
 	}
 	ws, ok, err := sessionFromCookie(ctx, st.Q, r)
 	if err != nil {
@@ -160,6 +155,24 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 		}
 	}
 	return Principal{Kind: KindWeb, ID: ws.IDHash, Recovery: ws.Kind == sessionKindRecovery}, nil
+}
+
+// DeviceByToken 校验设备令牌 `odt_…`（存在且未吊销），按 deviceTouchEvery 节流更新 last_seen_at。
+// 供 Authenticate 与 portal 主机上的 `Authorization: Bearer odt_…` 共用。
+func DeviceByToken(ctx context.Context, st *store.Store, tok string) (Principal, bool) {
+	if ids.TokenPrefix(tok) != "odt" {
+		return Principal{}, false
+	}
+	dev, err := st.Q.GetDeviceByTokenHash(ctx, ids.Hash(tok))
+	if err != nil || dev.RevokedAt != nil {
+		return Principal{}, false
+	}
+	now := time.Now()
+	if dev.LastSeenAt == nil || now.Sub(time.UnixMilli(*dev.LastSeenAt)) >= deviceTouchEvery {
+		ms := now.UnixMilli()
+		_ = st.Q.TouchDevice(ctx, db.TouchDeviceParams{LastSeenAt: &ms, ID: dev.ID})
+	}
+	return Principal{Kind: KindDevice, ID: dev.ID}, true
 }
 
 // sessionFromCookie 读取并校验 Cookie 会话；会话不存在或过期返回 ok=false。

@@ -1,5 +1,6 @@
 listen: ["127.0.0.1:7600", "172.18.0.1:7600"]
 public_url: "http://localhost:7600"
+portal_domain: "localhost"   # portal 形如 http://t-<短码>-p<端口>.localhost:7600/（Chromium 把 *.localhost 解析到回环并视为安全上下文）
 data_dir: "./.dev/data"
 log_level: "debug"
 idle: { agent_idle: "30s", user_idle: "30s", stop_after_frozen: "24h", wake_on_focus: true }

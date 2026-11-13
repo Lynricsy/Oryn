@@ -15,6 +15,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/portal"
+	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -37,8 +39,10 @@ type Server struct {
 	Threads     *threads.Service
 	Attachments *attachments.Service
 	Hub         *realtime.Hub
-	API         *api.Server
-	Handler     http.Handler
+	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
+	Portal  *portal.Service
+	API     *api.Server
+	Handler http.Handler
 
 	closers []func()
 }
@@ -60,6 +64,18 @@ func New(ctx context.Context, cfg config.Orynd) (*Server, error) {
 
 func (s *Server) init(ctx context.Context) error {
 	cfg := s.Config
+	base, err := portalhost.NewBase(cfg.PublicURL, cfg.PortalDomain)
+	if err != nil {
+		return err
+	}
+	// threadPortalTemplate 是线程的 portal 地址模板（短码已代入、保留 {port}）；未启用 portal 时为空。
+	threadPortalTemplate := func(threadID string) string {
+		code, ok := portalhost.Code(threadID)
+		if !base.Enabled() || !ok {
+			return ""
+		}
+		return portalhost.Expand(base.Template(), code, 0)
+	}
 	box, err := secrets.LoadOrCreate(cfg.DataDir)
 	if err != nil {
 		return err
@@ -78,10 +94,14 @@ func (s *Server) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.Orbs = orbs.New(orbs.Config{Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval},
-		s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
+	s.Orbs = orbs.New(orbs.Config{
+		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
+		PortalURLTemplate: base.Template(),
+	}, s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
-	s.Threads = threads.New(threads.Config{DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus}, s.Store, orbsAdapter{s.Orbs})
+	s.Threads = threads.New(threads.Config{
+		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate,
+	}, s.Store, orbsAdapter{s.Orbs})
 	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
 		return err
 	}
@@ -94,18 +114,31 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Orbs.Run(runCtx)
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
-	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
-
-	s.API = &api.Server{Deps: api.Deps{
+	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub}
+	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
 		AuthMiddleware: auth.Middleware(s.Store),
-		Mounts:         map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub},
-	}}
+		Mounts:         mounts,
+		FrameSrc:       base.FrameSrc(),
+	}
+	if base.Enabled() {
+		s.Portal = portal.New(portal.Config{Base: base}, s.Store, s.Orbs)
+		go s.Portal.Run(runCtx)
+		s.Auth.Subscribe(s.Portal.Revoke)
+		deps.Portal = s.Portal.Middleware
+		mounts["/portal/auth"] = s.Portal.AuthHandler()
+	}
+	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
+
+	s.API = &api.Server{Deps: deps}
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}
+	if s.Portal != nil {
+		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
+	}
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

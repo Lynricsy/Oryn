@@ -44,3 +44,37 @@ func TestTrustedProxyIP(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	assert.Equal(t, "9.9.9.9:0", got, "取反代追加的最后一跳")
 }
+
+// portal 中间件先于全部路由：portal 主机的请求到不了 /api/v1、挂载点与 SPA；其余主机照常。
+// FrameSrc 写进 SPA 的 CSP。
+func TestRouterPortalFirst(t *testing.T) {
+	portal := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Host == "t-0123456789ab-p3000.portal.test" {
+				_, _ = w.Write([]byte("PORTAL"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	mount := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("LINK")) })
+	h := NewRouter(&Server{Deps: Deps{
+		Portal: portal, FrameSrc: "https://*.portal.test",
+		Mounts: map[string]http.Handler{"/orb/v1/link": mount},
+	}})
+	get := func(host, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", path, nil)
+		req.Host = host
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, p := range []string{"/api/v1/me", "/healthz", "/orb/v1/link", "/", "/t/x"} {
+		assert.Equal(t, "PORTAL", get("t-0123456789ab-p3000.portal.test", p).Body.String(), p)
+	}
+	assert.Equal(t, "LINK", get("oryn.test", "/orb/v1/link").Body.String())
+	assert.Contains(t, get("oryn.test", "/healthz").Body.String(), `"ok":true`)
+	csp := get("oryn.test", "/t/x").Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "frame-src https://*.portal.test;")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
+}

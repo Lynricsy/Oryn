@@ -32,12 +32,22 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'"
 
 // Handler 提供静态文件；找不到的非 API 路径回退到 index.html（客户端路由）。
-func Handler() http.Handler {
+// frameSrc 非空（启用 portal 时为 `<scheme>://*.<portal_domain>[:port]`）时，CSP 的 `frame-src 'none'`
+// 换成 `frame-src <frameSrc>`，让线程页能内嵌 portal；`frame-ancestors 'none'` 与 X-Frame-Options 不变。
+func Handler(frameSrc string) http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err)
 	}
-	return handler(sub)
+	return handler(sub, frameSrc)
+}
+
+// withFrameSrc 按 frameSrc 改写 CSP 的 frame-src 指令。
+func withFrameSrc(csp, frameSrc string) string {
+	if frameSrc == "" {
+		return csp
+	}
+	return strings.Replace(csp, "frame-src 'none'", "frame-src "+frameSrc, 1)
 }
 
 func setSecurityHeaders(h http.Header, csp string) {
@@ -47,19 +57,21 @@ func setSecurityHeaders(h http.Header, csp string) {
 	h.Set("Referrer-Policy", "same-origin")
 }
 
-func handler(sub fs.FS) http.Handler {
+func handler(sub fs.FS, frameSrc string) http.Handler {
 	if _, err := fs.Stat(sub, "index.html"); err != nil {
 		// 未执行 make web：返回内置占位页；其内联脚本以哈希放行
+		csp := withFrameSrc(placeholderCSP, frameSrc)
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			setSecurityHeaders(w.Header(), placeholderCSP)
+			setSecurityHeaders(w.Header(), csp)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
 			_, _ = w.Write([]byte(placeholder))
 		})
 	}
+	csp := withFrameSrc(ContentSecurityPolicy, frameSrc)
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setSecurityHeaders(w.Header(), ContentSecurityPolicy)
+		setSecurityHeaders(w.Header(), csp)
 		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if p == "" {
 			p = "index.html"

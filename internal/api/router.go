@@ -23,8 +23,13 @@ type Deps struct {
 	Store  *store.Store
 	// AuthMiddleware 保护 /api/v1 下除免鉴权路径外的全部端点；为 nil 时不鉴权（仅测试）。
 	AuthMiddleware func(http.Handler) http.Handler
-	// Mounts 是额外挂载的非 REST 处理器（provider 协议、orb link、WebSocket），键为 chi 路由模式。
+	// Mounts 是额外挂载的非 REST 处理器（provider 协议、orb link、WebSocket、portal 握手），键为 chi 路由模式。
 	Mounts map[string]http.Handler
+	// Portal 是 portal 数据面的主机分流中间件（未配置 portal_domain 时为 nil）：先于全部路由执行，
+	// portal 主机的请求永远到不了 /api/v1、link 与 SPA。
+	Portal func(http.Handler) http.Handler
+	// FrameSrc 是 SPA CSP 的 frame-src 源（portal 泛域名；未启用为空）。
+	FrameSrc string
 }
 
 // Server 实现 apigen.ServerInterface。各领域在自己的文件里为 *Server 实现方法，
@@ -51,6 +56,9 @@ var publicPaths = map[string]bool{
 func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
 	r.Use(trustedProxyIP, middleware.Recoverer)
+	if s.Portal != nil {
+		r.Use(s.Portal)
+	}
 	for pattern, h := range s.Mounts {
 		r.Handle(pattern, h)
 	}
@@ -79,7 +87,7 @@ func NewRouter(s *Server) http.Handler {
 			},
 		})
 	})
-	r.Handle("/*", webui.Handler())
+	r.Handle("/*", webui.Handler(s.FrameSrc))
 	return r
 }
 

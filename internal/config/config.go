@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -104,6 +106,8 @@ func (c Orynd) Validate() error {
 	}
 	if u, err := url.Parse(c.PublicURL); err != nil || u.Scheme == "" || u.Host == "" {
 		errs = append(errs, fmt.Errorf("public_url %q 必须是绝对 URL", c.PublicURL))
+	} else if err := validatePortalDomain(c.PortalDomain, u); err != nil {
+		errs = append(errs, err)
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data_dir 不能为空"))
@@ -117,6 +121,26 @@ func (c Orynd) Validate() error {
 		errs = append(errs, errors.New("idle 的各项时长必须为正"))
 	}
 	return errors.Join(errs...)
+}
+
+// portalDomainRe 是 portal_domain 允许的形态：小写主机名，不带端口与尾点。
+var portalDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// validatePortalDomain 校验 portal_domain（空 = 不启用 portal）。public_url 的主机名不得是
+// `<单标签>.<portal_domain>`，否则主域名的请求会被当成 portal 主机分流；主域名等于 portal_domain 本身是允许的
+// （开发：localhost + *.localhost）。
+func validatePortalDomain(domain string, public *url.URL) error {
+	if domain == "" {
+		return nil
+	}
+	if !portalDomainRe.MatchString(domain) {
+		return fmt.Errorf("portal_domain %q 必须是小写主机名（如 orb.example.com）", domain)
+	}
+	host := strings.TrimSuffix(strings.ToLower(public.Hostname()), ".")
+	if label, ok := strings.CutSuffix(host, "."+domain); ok && label != "" && !strings.Contains(label, ".") {
+		return fmt.Errorf("public_url 的主机名 %q 落在 portal_domain %q 的单级子域上，会被当成 portal 主机", host, domain)
+	}
+	return nil
 }
 
 // DockerType 是一种 orb 规格。

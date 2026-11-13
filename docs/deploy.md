@@ -24,7 +24,7 @@ sudo install -d -m 0755 /etc/oryn
 ```yaml
 listen: ["127.0.0.1:7600", "172.17.0.1:7600"]   # 第二项 = docker0 网桥地址，供本机 orb 直连
 public_url: "https://oryn.example.com"          # WebAuthn RP ID 取其主机名，必须与浏览器访问地址一致
-portal_domain: ""                               # M4 起使用，如 orb.example.com
+portal_domain: "orb.example.com"               # portal 泛域名；留空则不启用 portal（见下文「Portal」）
 data_dir: "/var/lib/oryn"
 log_level: "info"
 idle: { agent_idle: "5m", user_idle: "20m", stop_after_frozen: "24h", wake_on_focus: true }
@@ -37,7 +37,7 @@ docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有
 
 1. 在 1Panel「网站」中创建两个反向代理站点，或直接把 `deploy/openresty/oryn.conf` 放进 OpenResty 的 `conf.d`，把示例域名替换为实际域名：
    - 主域名 `oryn.example.com` → `http://127.0.0.1:7600`
-   - 泛域名 `*.orb.example.com` → `http://127.0.0.1:7600`（M4 Portal 启用后才用到，需透传 `Host`）
+   - 泛域名 `*.orb.example.com` → `http://127.0.0.1:7600`（Portal：必须透传 `Host`，不得缓存）
 2. 证书：主域名普通证书；泛域名在 1Panel「证书」里用 DNS 账号申请 `*.orb.example.com` 通配证书（ACME DNS-01）。
 3. 配置要点（示例文件已包含）：`proxy_http_version 1.1`、`Upgrade`/`Connection` 头（WebSocket 与 orb link）、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`。
 
@@ -50,6 +50,21 @@ journalctl -u orynd | grep 'setup#token='
 ```
 
 首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup#token=ost_…`（令牌在 URL 片段里，不会进入反代访问日志）。浏览器打开它注册 Passkey，并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。
+
+## Portal（受管服务的浏览器入口）
+
+orb 里带 portal 的受管服务经 `https://t-<线程短码>-p<端口>.<portal_domain>/` 从浏览器访问。orynd 按 `Host` 分流：落在 `portal_domain` 单级子域上的请求只走 portal 数据面，永远到不了 `/api/v1`、orb link 与 Web 客户端。
+
+1. **DNS**：给 `portal_domain` 加通配记录，如 `*.orb.example.com` 指向反代所在主机（A / AAAA 或 CNAME）。
+2. **证书**：`*.orb.example.com` 通配证书（ACME DNS-01，见第 3 节）。通配证书只覆盖一级子域，portal 主机名恰好是一级。
+3. **`orynd.yaml`**：`portal_domain: "orb.example.com"`（小写主机名，不带协议、端口与尾点）。`public_url` 的主机名不得是 `<单标签>.<portal_domain>`（否则主域名会被当成 portal 主机，启动时报错）；主域名等于 `portal_domain` 本身是允许的。
+4. **同协议、同端口**：portal 地址沿用 `public_url` 的协议与端口（`public_url` 带非默认端口时 portal 地址也带同一端口），反代必须在同一端口上同时服务主域名与泛域名。
+5. **反代**：泛域名 server 块原样透传 `Host`，开启 WebSocket 升级、关闭缓冲与缓存（`deploy/openresty/oryn.conf` 已包含）。
+6. **内嵌与第三方 Cookie**：线程页的 Portal 标签以 iframe 内嵌 portal，登录态是 portal 主机自己的 host-only Cookie（`__Host-oryn_portal`，`SameSite=None; Secure; Partitioned`）。主域名与 portal 域名放在同一注册域下（如 `oryn.example.com` + `*.orb.example.com`）时，两者同站，拦截第三方 Cookie 的浏览器里内嵌也可用；放在不同注册域下时，部分浏览器会拦截内嵌页的 Cookie，此时 portal 页面给出「在新窗口打开」的链接。
+7. **访问控制**：portal 默认只有所有者能打开（网页会话经一次性码换取 portal Cookie；CLI / App 直接带 `Authorization: Bearer odt_…`）。线程页 Portal 标签可按端口限时公开（1 小时 / 3 小时 / 1 天 / 7 天），到期或终止时立即断开匿名连接。应用可读请求头 `X-Oryn-Authenticated: owner=yes|no` 区分访问者。
+8. **唤醒**：已授权的 portal 请求（含公开访客）计为用户交互；orb 冻结或停机时，浏览器打开 portal 先看到「正在唤醒」过渡页并自动刷新，其它请求最多等待 25 秒。
+
+开发环境（`dev/orynd.yaml`）用 `public_url: "http://localhost:7600"` + `portal_domain: "localhost"`，portal 地址形如 `http://t-<短码>-p<端口>.localhost:7600/`：Chromium 把 `*.localhost` 解析到回环并视为安全上下文，`Secure` Cookie 可用。命令行验证时可直接 `curl -H "Host: t-<短码>-p<端口>.localhost:7600" http://127.0.0.1:7600/`；`orynd --config dev/orynd.yaml admin create-web-session` 在 stdout 打印一个网页会话 Cookie（`oryn_session`）的值，供脚本走真实的鉴权握手。
 
 ## 5. 本机 Docker provider
 

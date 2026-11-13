@@ -91,7 +91,7 @@ func (s *stack) restart() {
 	s.t.Cleanup(func() { s.http.Close(); srv.Close() })
 }
 
-func newStack(t *testing.T, idle config.Idle) *stack {
+func newStack(t *testing.T, idle config.Idle, opts ...func(*config.Orynd)) *stack {
 	t.Helper()
 	t.Setenv("ORYN_AGENT_BIN", filepath.Join(binDir, "fakeomp"))
 	t.Setenv("FAKEOMP_DELAY_MS", "15")
@@ -99,6 +99,9 @@ func newStack(t *testing.T, idle config.Idle) *stack {
 	cfg.DataDir = t.TempDir()
 	cfg.PublicURL = "http://localhost"
 	cfg.Idle = idle
+	for _, o := range opts {
+		o(&cfg)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	srv, err := New(ctx, cfg)
 	require.NoError(t, err)
