@@ -337,4 +337,62 @@ describe("上下文分段", () => {
 		]);
 		expect(messageWeights(plain)?.userMessages).toBe(50);
 	});
+
+	it("没有配对结果的悬空工具调用不计入；只剩悬空调用的回合整条去掉（连同其 redacted 思考）", () => {
+		const path = chain([
+			user("u".repeat(10)),
+			assistant([
+				{ type: "text", text: "a".repeat(10) },
+				{ type: "toolCall", id: "c1", name: "bash", arguments: {} },
+				{ type: "toolCall", id: "c2", name: "read", arguments: { path: "x" } },
+			]),
+			result("c1", "o".repeat(30)),
+			assistant([
+				{ type: "redactedThinking", data: "x".repeat(5000) },
+				{ type: "toolCall", id: "c3", name: "bash", arguments: {} },
+			]),
+		]);
+		expect(messageWeights(path)).toEqual({
+			userMessages: 10,
+			assistantMessages: 10,
+			thinking: 0,
+			toolCalls: "bash".length + "{}".length,
+			toolOutput: 30,
+		});
+	});
+
+	it("prewalk 计划、vibe 模式上下文与已有 rewind 报告的分支摘要不计入", () => {
+		const custom = (
+			customType: string,
+			n: number,
+		): [string, Record<string, unknown>] => [
+			"custom_message",
+			{ customType, content: "c".repeat(n) },
+		];
+		const path = chain([
+			user("u".repeat(10)),
+			custom("prewalk-plan", 100),
+			custom("vibe-mode-context", 200),
+			["branch_summary", { summary: "r".repeat(300) }],
+			custom("rewind-report", 7),
+			["branch_summary", { summary: "b".repeat(5) }],
+		]);
+		// 只剩用户消息、rewind 报告与后一条（没有报告跟随的）分支摘要
+		expect(messageWeights(path)?.userMessages).toBe(10 + 7 + 5);
+	});
+
+	it("rewind 报告只认紧跟在分支摘要之后的那条（按 parentId，而不是压缩重排后的相邻）", () => {
+		const path = chain([
+			user("u"),
+			["branch_summary", { summary: "r".repeat(300) }],
+			["compaction", { summary: "s".repeat(20), firstKeptEntryId: "e2" }],
+			[
+				"custom_message",
+				{ customType: "rewind-report", content: "c".repeat(7) },
+			],
+		]);
+		const ctx = contextPath(path, "e4");
+		expect(ctx?.map((e) => e.entryId)).toEqual(["e3", "e2", "e4"]);
+		expect(messageWeights(ctx ?? [])?.userMessages).toBe(20 + 300 + 7);
+	});
 });

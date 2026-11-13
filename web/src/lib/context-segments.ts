@@ -117,6 +117,15 @@ function assistantChars(
 /** omp 中断续接消息的 customType（`INTERRUPTED_THINKING_MESSAGE_TYPE`）。 */
 const INTERRUPTED_THINKING = "interrupted-thinking";
 
+/** omp 不放进模型上下文的 custom 消息（`PREWALK_PLAN_MESSAGE_TYPE`、`VIBE_MODE_CONTEXT_MESSAGE_TYPE`）。 */
+const HIDDEN_CUSTOM_TYPES: readonly unknown[] = [
+	"prewalk-plan",
+	"vibe-mode-context",
+];
+
+/** omp rewind 报告的 customType（`REWIND_REPORT_MESSAGE_TYPE`）；它的父条目分支摘要不再重复进上下文。 */
+const REWIND_REPORT = "rewind-report";
+
 /**
  * 压缩条目 `preserveData` 里会替代或附加到摘要上一并进入模型上下文的载荷：OpenAI 远端压缩的 replacement history、
  * Anthropic 原生压缩块、snapcompact 图像归档。它们的 token 量无法按摘要文本计量。
@@ -168,17 +177,67 @@ function stripInterruptedThinking(content: unknown[]): unknown[] {
 }
 
 /**
- * 按 omp `buildSessionContext` 的规则得出真正进入模型上下文的消息条目：去掉 retryRecovery 回合；
- * 中断（aborted）或出错（error）的助手回合连同其配对的工具结果一并移除，
- * 例外是紧跟中断续接消息的回合（保留，见 {@link stripInterruptedThinking}）。
+ * 剥掉没有配对结果的悬空工具调用（照 omp `buildSessionContext` 的 dangling tool_use 处理）：
+ * 被改写的回合同时丢掉 redacted 思考；改写后没有内容的回合整条去掉。
+ */
+function stripDanglingToolCalls(msgs: Entry[]): Entry[] {
+	const paired = new Set<unknown>();
+	for (const e of msgs) {
+		const m = messageOf(e);
+		if (m?.role === "toolResult") paired.add(m.toolCallId);
+	}
+	const dangling = (b: unknown) =>
+		isRecord(b) && b.type === "toolCall" && !paired.has(b.id);
+	const out: Entry[] = [];
+	for (const e of msgs) {
+		const m = messageOf(e);
+		if (
+			m?.role !== "assistant" ||
+			!Array.isArray(m.content) ||
+			!m.content.some(dangling)
+		) {
+			out.push(e);
+			continue;
+		}
+		const content = m.content.filter(
+			(b) => !dangling(b) && !(isRecord(b) && b.type === "redactedThinking"),
+		);
+		if (content.length > 0)
+			out.push({
+				...e,
+				payload: { ...payloadOf(e), message: { ...m, content } },
+			});
+	}
+	return out;
+}
+
+/**
+ * 按 omp `buildSessionContext` 的规则得出真正进入模型上下文的消息条目：
+ * - 去掉 retryRecovery 回合、prewalk 计划与 vibe 模式上下文消息，以及后面紧跟 rewind 报告的分支摘要；
+ * - 剥掉悬空工具调用（见 {@link stripDanglingToolCalls}）；
+ * - 中断（aborted）或出错（error）的助手回合连同其配对的工具结果一并移除，
+ *   例外是紧跟中断续接消息的回合（保留，见 {@link stripInterruptedThinking}）。
  */
 function contextMessages(path: readonly Entry[]): Entry[] {
-	const msgs = path.filter((e) => {
-		if (e.type === "compaction" || e.type === "custom_message") return true;
-		if (e.type === "branch_summary") return !!payloadOf(e).summary;
+	// rewind 报告的父条目（omp 在完整分支上看相邻，即 parentId）若是分支摘要，摘要不进上下文
+	const rewound = new Set<string>();
+	for (const e of path)
+		if (
+			e.type === "custom_message" &&
+			payloadOf(e).customType === REWIND_REPORT &&
+			e.parentId
+		)
+			rewound.add(e.parentId);
+	let msgs = path.filter((e) => {
+		if (e.type === "compaction") return true;
+		if (e.type === "custom_message")
+			return !HIDDEN_CUSTOM_TYPES.includes(payloadOf(e).customType);
+		if (e.type === "branch_summary")
+			return !!payloadOf(e).summary && !rewound.has(e.entryId);
 		const m = messageOf(e);
 		return m !== null && !(m.role === "assistant" && m.retryRecovery);
 	});
+	msgs = stripDanglingToolCalls(msgs);
 	// 倒序逐条移除，与 omp 一致：「下一条」取的是移除后的相邻消息
 	for (let i = msgs.length - 1; i >= 0; i--) {
 		const m = messageOf(msgs[i]);
