@@ -25,6 +25,7 @@ import {
 	MOCK_PORTAL_TEMPLATE,
 	mainState,
 	makeOrb,
+	mockSpeedCaps,
 	NOW,
 	orbEnv,
 	providers,
@@ -1602,20 +1603,67 @@ export class MockServer {
 				this.states.set(threadId, {
 					...state,
 					model: { ...m, api: "mock" } as unknown as SessionState["model"],
+					...mockSpeedCaps(m.provider),
 				});
 				return this.respond(socket, threadId, id, type, m);
 			}
 			case "set_thinking_level": {
-				const level = String(frame.level) as SessionState["thinkingLevel"];
+				const level = String(frame.level);
+				// auto 时实际生效的级别不变（真实 omp 由模型自己挑），只改配置值
 				this.states.set(threadId, {
 					...state,
-					thinkingLevel: level,
+					...(level === "auto"
+						? {}
+						: { thinkingLevel: level as SessionState["thinkingLevel"] }),
 					thinkingConfigured: level as SessionState["thinkingConfigured"],
 				});
 				return this.respond(socket, threadId, id, type, {
 					thinkingLevel: level,
 					thinkingConfigured: level,
 				});
+			}
+			// 速度档位：与 omp 一致，fast / ultrafast 共用 fastModeEnabled，关 fast 同时清掉 ultrafast
+			case "set_fast_mode":
+			case "set_ultrafast_mode": {
+				const on = frame.enabled === true;
+				const ultra = type === "set_ultrafast_mode";
+				if (on && !(ultra ? state.ultrafastSupported : state.fastModeSupported))
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						`${ultra ? "Ultrafast" : "Fast mode"} is unavailable for the current model.`,
+					);
+				const fast = ultra
+					? on || (state.fastModeEnabled && !state.ultrafastEnabled)
+					: on;
+				const next = {
+					...state,
+					fastModeEnabled: fast,
+					fastModeActive: fast,
+					ultrafastEnabled: ultra ? on : false,
+				};
+				this.states.set(threadId, next);
+				return this.respond(socket, threadId, id, type, {
+					enabled: ultra ? next.ultrafastEnabled : next.fastModeEnabled,
+					active: next.fastModeActive,
+				});
+			}
+			case "set_slow_mode": {
+				const on = frame.enabled === true;
+				if (on && !state.slowModeSupported)
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						"Slow mode is unavailable for the current model.",
+					);
+				this.states.set(threadId, { ...state, slowModeEnabled: on });
+				return this.respond(socket, threadId, id, type, { enabled: on });
 			}
 			case "get_available_models":
 				return this.respond(socket, threadId, id, type, {

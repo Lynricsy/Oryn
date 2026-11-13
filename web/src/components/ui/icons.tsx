@@ -42,6 +42,7 @@ import { Fire } from "@phosphor-icons/react/dist/csr/Fire";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { FolderPlus } from "@phosphor-icons/react/dist/csr/FolderPlus";
+import { Gauge } from "@phosphor-icons/react/dist/csr/Gauge";
 import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 import { GitDiff } from "@phosphor-icons/react/dist/csr/GitDiff";
@@ -71,6 +72,7 @@ import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
+import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
@@ -175,6 +177,9 @@ const ICONS = {
 	hardDrives: HardDrives,
 	fire: Fire,
 	fastForward: FastForward,
+	/** 速度档位：标准 / 极速（快速 = fastForward，慢速 = hourglass） */
+	gauge: Gauge,
+	rocket: RocketLaunch,
 	/** 仅自己可访问（Portal 的 URL 胶囊） */
 	lock: LockSimple,
 	/** 重启（受管服务）；刷新页面 / 数据用 `refresh` */

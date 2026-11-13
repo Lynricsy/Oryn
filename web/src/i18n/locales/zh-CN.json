@@ -403,8 +403,7 @@
 		"title": "模型",
 		"search": "搜索模型…",
 		"thinking": "思考级别",
-		"fastMode": "快速模式（fast）",
-		"slowMode": "慢速模式（slow）",
+		"thinkingButton": "思考级别：{{level}}，点击调整",
 		"roles": "角色",
 		"allModels": "全部模型",
 		"moreRoles": "更多角色（{{n}}）",
@@ -413,6 +412,7 @@
 		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）",
 		"levelLabel": "思考级别：{{level}}",
 		"levels": {
+			"auto": "自动",
 			"off": "关闭",
 			"minimal": "最低",
 			"low": "低",
@@ -421,6 +421,16 @@
 			"xhigh": "超高",
 			"max": "极限"
 		}
+	},
+	"speed": {
+		"label": "速度：{{tier}}",
+		"button": "速度：{{tier}}，点击调整",
+		"buttonRate": "速度：{{tier}}，{{rate}}，点击调整",
+		"standard": "标准",
+		"fast": "快速",
+		"ultrafast": "极速",
+		"slow": "慢速",
+		"global": "所有会话"
 	},
 	"roles": {
 		"track": "角色模型",

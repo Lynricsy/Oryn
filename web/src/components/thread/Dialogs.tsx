@@ -495,44 +495,14 @@ function ModelDialog({
 			setError(e);
 		}
 	};
-	const levels = state?.availableThinkingLevels ?? [];
 	return (
 		<Dialog open wide onClose={onClose} title={t("model.title")}>
 			<RoleList threadId={threadId} onPicked={onClose} />
-			<div className="mb-3 flex flex-wrap items-end gap-3">
-				<Field label={t("model.thinking")}>
-					<Select
-						value={state?.thinkingConfigured ?? state?.thinkingLevel ?? ""}
-						onChange={(e) =>
-							void run({
-								type: "set_thinking_level",
-								level: e.target.value as "auto",
-							})
-						}
-					>
-						{["auto", ...levels].map((l) => (
-							<option key={l} value={l}>
-								{l}
-							</option>
-						))}
-					</Select>
-				</Field>
-				<Toggle
-					checked={state?.fastModeEnabled ?? false}
-					onChange={(v) => void run({ type: "set_fast_mode", enabled: v })}
-					label={t("model.fastMode")}
-				/>
-				<Toggle
-					checked={state?.slowModeEnabled ?? false}
-					disabled={!state?.slowModeSupported}
-					onChange={(v) => void run({ type: "set_slow_mode", enabled: v })}
-					label={t("model.slowMode")}
-				/>
-			</div>
+			{/* 思考级别在输入坞的圆圈菜单里调，速度在页脚的速度读数里调；这里只选模型 */}
 			<h3 className="mb-1 px-2 font-medium text-2xs text-faint">
 				{t("model.allModels")}
 			</h3>
-			{/* 桌面打开即可输入筛选；否则 Dialog 会把焦点给思考级别下拉框，它顶着焦点环出现 */}
+			{/* 桌面打开即可输入筛选；手机上不自动聚焦，免得软键盘把角色列表挤出视野 */}
 			<TextInput
 				autoFocus={!compact}
 				placeholder={t("model.search")}

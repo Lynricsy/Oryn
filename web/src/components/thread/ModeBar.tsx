@@ -31,6 +31,25 @@ const modeErrorStore = createStore<{
 		set((s) => ({ errors: { ...s.errors, [threadId]: error } })),
 }));
 
+/**
+ * 托盘里的设置类命令（模式开关、思考级别、速度）：执行后刷新状态；失败写进 modeErrorStore，
+ * 由 ModeStatus 在托盘里显示，下一次命令开始时清掉。返回是否成功，供连续几步的操作在失败处停下。
+ */
+export async function runTrayCommand(
+	threadId: string,
+	frame: OmpCommand,
+): Promise<boolean> {
+	const setError = modeErrorStore.getState().set;
+	setError(threadId, undefined);
+	try {
+		await runModeCommand(threadId, frame);
+		return true;
+	} catch (e) {
+		setError(threadId, e instanceof Error ? e.message : String(e));
+		return false;
+	}
+}
+
 interface ModeDef {
 	key: string;
 	on: boolean;
@@ -126,15 +145,7 @@ export function ModeStrip({ threadId }: { threadId: string }): ReactNode {
 		return () => ro.disconnect();
 	}, []);
 
-	const run = async (frame: OmpCommand) => {
-		const setError = modeErrorStore.getState().set;
-		setError(threadId, undefined);
-		try {
-			await runModeCommand(threadId, frame);
-		} catch (e) {
-			setError(threadId, e instanceof Error ? e.message : String(e));
-		}
-	};
+	const run = (frame: OmpCommand) => runTrayCommand(threadId, frame);
 
 	const goal = state?.goal;
 	const modes: ModeDef[] = [

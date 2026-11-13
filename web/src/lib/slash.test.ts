@@ -53,6 +53,28 @@ describe("斜杠命令拦截映射", () => {
 		expect(resolve("/queue")).toEqual({ kind: "needs_args", name: "queue" });
 	});
 
+	it("/thinking 带级别直接设置，不带时要求参数（模型对话框里已没有思考级别）", () => {
+		expect(resolve("/thinking High")).toEqual({
+			kind: "rpc",
+			frame: { type: "set_thinking_level", level: "high" },
+		});
+		expect(resolve("/thinking")).toEqual({
+			kind: "needs_args",
+			name: "thinking",
+		});
+	});
+
+	it("/fast ultra 选极速档，其余参数照旧开关快速档", () => {
+		expect(resolve("/fast ultra")).toEqual({
+			kind: "rpc",
+			frame: { type: "set_ultrafast_mode", enabled: true },
+		});
+		expect(resolve("/fast off", { ...ctx, fastModeEnabled: true })).toEqual({
+			kind: "rpc",
+			frame: { type: "set_fast_mode", enabled: false },
+		});
+	});
+
 	it("btw / tan / omfg / vibe / loop / goal / guided-goal / pause 走对应 RPC", () => {
 		expect(resolve("/btw 这是什么")).toEqual({
 			kind: "rpc",

@@ -28,7 +28,7 @@ import { Icon, type IconName } from "../components/ui/icons";
 import { ModelLogo } from "../components/ui/ModelLogo";
 import { OrbBead } from "../components/ui/OrbBead";
 import { IconButton, Spinner, TextInput } from "../components/ui/primitives";
-import { ThinkingDial } from "../components/ui/ThinkingDial";
+import { ThinkingMenu } from "../components/ui/ThinkingDial";
 import { formatMemoryMB } from "../lib/format";
 import { modelBrand, shortModelName } from "../lib/model-brand";
 import { useBreakpoint } from "../lib/viewport";
@@ -59,8 +59,6 @@ interface PillText {
 	label: string;
 	main: string;
 	badge?: string;
-	/** 主文字后的图标（模型胶囊的思考级别圆圈）；圆形按钮里缩成右下角角标 */
-	trail?: ReactNode;
 }
 
 /**
@@ -77,7 +75,7 @@ function PillButton({
 	active,
 	shape = "pill",
 	grow = false,
-	trailOnIcon = false,
+	reserveEnd = false,
 }: {
 	ref?: Ref<HTMLButtonElement>;
 	/** 图标名，或现成的装饰节点（如模型 logo） */
@@ -89,11 +87,10 @@ function PillButton({
 	shape?: "pill" | "circle";
 	/** 不设 240px 上限，有多少剩余宽度用多少（窄屏的项目名） */
 	grow?: boolean;
-	/** trail 缩成图标右下角的角标（窄屏模型的思考级别）；圆形按钮总是如此 */
-	trailOnIcon?: boolean;
+	/** 右端给叠在胶囊里的思考级别按钮留位置（ModelPill） */
+	reserveEnd?: boolean;
 }) {
 	const circle = shape === "circle";
-	const corner = circle || trailOnIcon;
 	return (
 		<button
 			ref={ref}
@@ -102,18 +99,13 @@ function PillButton({
 			aria-expanded={active}
 			aria-label={text.label}
 			title={`${text.label} (${shortcut})`}
-			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink px-3 ${corner ? "gap-2.5" : "gap-1.5"} ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
+			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink gap-1.5 pl-3 ${reserveEnd ? "pr-8" : "pr-3"} ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
-			<span className="relative inline-flex shrink-0">
+			<span className="inline-flex shrink-0">
 				{typeof icon === "string" ? (
 					<Icon name={icon} size={circle ? 15 : 13} />
 				) : (
 					icon
-				)}
-				{corner && text.trail && (
-					<span className="-right-1.5 -bottom-1.5 absolute inline-flex rounded-full bg-panel p-px">
-						{text.trail}
-					</span>
 				)}
 			</span>
 			{!circle && <span className="min-w-0 truncate">{text.main}</span>}
@@ -122,8 +114,50 @@ function PillButton({
 					<Badge>{text.badge}</Badge>
 				</span>
 			)}
-			{!corner && text.trail}
 		</button>
+	);
+}
+
+/** 新线程可选的思考级别：空串 = 跟随 role / 默认；模型还没定，按 omp 的全集列 */
+const HOME_THINKING = ["", ...THINKING_LEVELS] as const;
+
+/**
+ * 模型胶囊 + 思考级别圆圈：圆圈是单独的按钮（点开选级别），不放在模型弹层里。
+ * 宽屏叠在胶囊右端（胶囊留出位置）；窄屏是模型图标右下角的角标，不占行宽，选项行的折叠测量不受影响。
+ */
+function ModelPill({
+	pill,
+	corner,
+	thinking,
+	onThinking,
+}: {
+	pill: ReactElement;
+	corner: boolean;
+	thinking: string;
+	onThinking: (level: string) => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<span className="relative inline-flex min-w-0 shrink">
+			{pill}
+			<span
+				className={
+					corner
+						? "-right-1 -bottom-1 absolute rounded-full bg-panel"
+						: "-translate-y-1/2 absolute top-1/2 right-1"
+				}
+			>
+				<ThinkingMenu
+					value={thinking}
+					options={HOME_THINKING}
+					defaultLabel={t("newThread.defaultThinking")}
+					onSelect={onThinking}
+					size={corner ? 12 : 14}
+					badge={corner}
+					className="text-muted"
+				/>
+			</span>
+		</span>
 	);
 }
 
@@ -299,25 +333,14 @@ export function HomePage(): ReactNode {
 			projectId)
 		: t("newThread.noProject");
 	const projectText: PillText = { label: projectName, main: projectName };
-	// 与线程输入坞的 ModelChip 同一套省空间规则：认得出品牌时去掉系列名（logo 已说明），思考级别画成圆圈；
-	// 胶囊的无障碍名与悬停提示仍是全名加级别
+	// 与线程输入坞的 ModelChip 同一套省空间规则：认得出品牌时去掉系列名（logo 已说明）；
+	// 思考级别是胶囊旁的独立圆圈按钮（ModelPill），胶囊的无障碍名与悬停提示只写模型全名
 	const modelId = model.trim().split("/").pop()?.replace(/:.*$/, "") || model;
 	const modelText: PillText = {
-		label: model
-			? `${model}${thinking ? ` · ${thinking}` : ""}`
-			: thinking
-				? `${t("newThread.defaultModel")} · ${thinking}`
-				: t("newThread.defaultModel"),
+		label: model || t("newThread.defaultModel"),
 		main: model
 			? shortModelName(modelId, modelBrand(model))
 			: t("newThread.defaultModel"),
-		trail: thinking ? (
-			<ThinkingDial
-				level={thinking}
-				size={compact ? 10 : undefined}
-				className="text-muted"
-			/>
-		) : undefined,
 	};
 	// 窄屏选项行：项目名先拿够自然宽度，剩下的还放得下模型名才展开模型，否则模型只留圆圈。
 	// 模型名的自然宽度量一个不可见的同款胶囊（ghost），避免展开/收起来回抖动。
@@ -527,26 +550,35 @@ export function HomePage(): ReactNode {
 										}
 										grow={compact}
 									/>
-									<PillButton
-										icon={
-											<ModelLogo
-												model={model}
-												size={compact && modelFolded ? 16 : 13}
+									<ModelPill
+										corner={compact}
+										thinking={thinking}
+										onThinking={setThinking}
+										pill={
+											<PillButton
+												icon={
+													<ModelLogo
+														model={model}
+														size={compact && modelFolded ? 16 : 13}
+													/>
+												}
+												text={modelText}
+												shortcut="Ctrl+S"
+												active={pill === "model"}
+												onClick={() =>
+													setPill(pill === "model" ? null : "model")
+												}
+												shape={compact && modelFolded ? "circle" : "pill"}
+												reserveEnd={!compact}
 											/>
 										}
-										text={modelText}
-										shortcut="Ctrl+S"
-										active={pill === "model"}
-										onClick={() => setPill(pill === "model" ? null : "model")}
-										shape={compact && modelFolded ? "circle" : "pill"}
-										trailOnIcon={compact}
 									/>
 									{compact && (
 										// 只用来量模型名胶囊的自然宽度，与展开态同款内边距与间距
 										<span
 											ref={modelGhostRef}
 											aria-hidden
-											className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-8 items-center gap-2.5 whitespace-nowrap rounded-full border px-3 text-xs"
+											className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs"
 										>
 											<ModelLogo model={model} size={13} />
 											{modelText.main}
@@ -701,20 +733,6 @@ export function HomePage(): ReactNode {
 												{m}
 											</Option>
 										))}
-										<PopoverLabel>{t("model.thinking")}</PopoverLabel>
-										<div className="flex flex-wrap gap-1 px-2 pb-2">
-											{["", ...THINKING_LEVELS].map((l) => (
-												<button
-													key={l || "default"}
-													type="button"
-													aria-pressed={thinking === l}
-													onClick={() => setThinking(l)}
-													className={`h-6 rounded-md border px-2 text-xs transition-colors duration-150 ${thinking === l ? "border-border-strong bg-hover text-fg" : "border-border text-muted hover:bg-hover hover:text-fg"}`}
-												>
-													{l || t("newThread.defaultThinking")}
-												</button>
-											))}
-										</div>
 									</Popover>
 								)}
 							</div>

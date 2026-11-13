@@ -716,6 +716,37 @@ export function buildMainTranscript(): Entry[] {
 	return out;
 }
 
+/**
+ * 各厂商的速度档位能力（与 omp 一致）：Anthropic 有 fast（speed: fast）与订阅全局慢速，没有 ultrafast；
+ * OpenAI 有 priority / ultrafast / flex（会话级慢速）；其余厂商只有标准档。换模型时已开的档位一并清掉。
+ */
+export function mockSpeedCaps(
+	provider: string,
+): Pick<
+	SessionState,
+	| "fastModeSupported"
+	| "fastModeEnabled"
+	| "fastModeActive"
+	| "ultrafastSupported"
+	| "ultrafastEnabled"
+	| "slowModeSupported"
+	| "slowModeEnabled"
+	| "slowModeScope"
+> {
+	const anthropic = provider === "anthropic";
+	const openai = provider === "openai";
+	return {
+		fastModeSupported: anthropic || openai,
+		fastModeEnabled: false,
+		fastModeActive: false,
+		ultrafastSupported: openai,
+		ultrafastEnabled: false,
+		slowModeSupported: anthropic || openai,
+		slowModeEnabled: false,
+		slowModeScope: anthropic ? "global" : openai ? "session" : undefined,
+	};
+}
+
 export function mainState(): SessionState {
 	return {
 		model: {
@@ -743,10 +774,7 @@ export function mainState(): SessionState {
 		sessionId: "s1",
 		autoCompactionEnabled: true,
 		autoRetryEnabled: true,
-		fastModeEnabled: false,
-		fastModeActive: false,
-		slowModeSupported: false,
-		slowModeEnabled: false,
+		...mockSpeedCaps("anthropic"),
 		tokensPerSecond: 64,
 		messageCount: 9,
 		queuedMessageCount: 0,

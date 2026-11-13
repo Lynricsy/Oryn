@@ -237,6 +237,10 @@ export interface MenuItem {
 	key: string;
 	label: ReactNode;
 	icon?: IconName;
+	/** 自定义前置图形（如思考级别圆圈）；与 `icon` 二选一 */
+	leading?: ReactNode;
+	/** 单选菜单项：给出时为 `menuitemradio`，选中项右侧打勾 */
+	checked?: boolean;
 	danger?: boolean;
 	disabled?: boolean;
 	onSelect?: () => void;
@@ -307,9 +311,11 @@ export function Menu({
 						<button
 							key={item.key}
 							type="button"
-							role="menuitem"
+							{...(item.checked === undefined
+								? { role: "menuitem" }
+								: { role: "menuitemradio", "aria-checked": item.checked })}
 							disabled={item.disabled}
-							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"}`}
+							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"} ${item.checked ? "font-medium" : ""}`}
 							onClick={() => {
 								if (item.children) {
 									setSub(item.key);
@@ -319,12 +325,22 @@ export function Menu({
 								item.onSelect?.();
 							}}
 						>
-							{item.icon && (
-								<Icon
-									name={item.icon}
-									size={14}
-									className="shrink-0 text-muted"
-								/>
+							{item.leading ? (
+								// 前置图形只是装饰（如思考级别圆圈自带 role=img），菜单项的名字就是文案
+								<span
+									aria-hidden
+									className="inline-flex w-[14px] shrink-0 justify-center text-muted"
+								>
+									{item.leading}
+								</span>
+							) : (
+								item.icon && (
+									<Icon
+										name={item.icon}
+										size={14}
+										className="shrink-0 text-muted"
+									/>
+								)
 							)}
 							<span className="min-w-0 flex-1 truncate">{item.label}</span>
 							{item.hint && (
@@ -332,6 +348,14 @@ export function Menu({
 							)}
 							{item.children && (
 								<Icon name="chevronRight" size={13} className="text-faint" />
+							)}
+							{item.checked && (
+								<Icon
+									name="check"
+									size={13}
+									weight="bold"
+									className="shrink-0 text-accent-ink"
+								/>
 							)}
 						</button>
 					))}

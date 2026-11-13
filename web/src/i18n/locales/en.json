@@ -403,8 +403,7 @@
 		"title": "Model",
 		"search": "Search models…",
 		"thinking": "Thinking",
-		"fastMode": "Fast mode",
-		"slowMode": "Slow mode",
+		"thinkingButton": "Thinking: {{level}}. Click to change",
 		"roles": "Roles",
 		"allModels": "All models",
 		"moreRoles": "More roles ({{n}})",
@@ -413,6 +412,7 @@
 		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)",
 		"levelLabel": "Thinking: {{level}}",
 		"levels": {
+			"auto": "Auto",
 			"off": "Off",
 			"minimal": "Minimal",
 			"low": "Low",
@@ -421,6 +421,16 @@
 			"xhigh": "Extra high",
 			"max": "Max"
 		}
+	},
+	"speed": {
+		"label": "Speed: {{tier}}",
+		"button": "Speed: {{tier}}. Click to change",
+		"buttonRate": "Speed: {{tier}}, {{rate}}. Click to change",
+		"standard": "Standard",
+		"fast": "Fast",
+		"ultrafast": "Ultrafast",
+		"slow": "Slow",
+		"global": "All sessions"
 	},
 	"roles": {
 		"track": "Role models",

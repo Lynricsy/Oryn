@@ -212,16 +212,32 @@ export function resolveSlash(
 		case "retry":
 			return { kind: "rpc", frame: { type: "retry" } };
 		case "model":
-		case "thinking":
 			return { kind: "open_model" };
+		// 思考级别不在模型对话框里了：`/thinking <级别>` 直接设置，校验交给 omp
+		case "thinking":
+			return args
+				? {
+						kind: "rpc",
+						frame: {
+							type: "set_thinking_level",
+							level: args.toLowerCase() as "auto",
+						},
+					}
+				: { kind: "needs_args", name };
+		// 与 omp 的 `/fast [on|ultra|off]` 一致：ultra 选 OpenAI ultrafast 档
 		case "fast":
-			return {
-				kind: "rpc",
-				frame: {
-					type: "set_fast_mode",
-					enabled: onOff(args, ctx.fastModeEnabled),
-				},
-			};
+			return /^ultra(?:fast)?$/i.test(args)
+				? {
+						kind: "rpc",
+						frame: { type: "set_ultrafast_mode", enabled: true },
+					}
+				: {
+						kind: "rpc",
+						frame: {
+							type: "set_fast_mode",
+							enabled: onOff(args, ctx.fastModeEnabled),
+						},
+					};
 		case "slow":
 			return {
 				kind: "rpc",
