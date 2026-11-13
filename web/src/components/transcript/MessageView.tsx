@@ -9,9 +9,13 @@ import {
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
-import { formatCost, formatDuration, formatTokens } from "../../lib/format";
+import {
+	formatBytes,
+	formatCost,
+	formatDuration,
+	formatTokens,
+} from "../../lib/format";
 import { imageSrc } from "../../lib/image-src";
-import { formatBytes } from "../../lib/images";
 import type { JsonRecord } from "../../state/message-builder";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
@@ -342,7 +346,7 @@ function UsageLine({ message }: { message: JsonRecord }) {
 			: "",
 	].filter(Boolean);
 	return (
-		<div className="mt-1.5 font-mono text-[11px] text-faint">
+		<div className="mt-1.5 font-mono text-2xs text-faint">
 			{parts.join(" · ")}
 		</div>
 	);

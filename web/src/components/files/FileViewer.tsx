@@ -27,8 +27,7 @@ import {
 	MAX_IMAGE_PREVIEW_BYTES,
 	PREVIEW_BYTES,
 } from "../../lib/file-source";
-import { formatDateTime } from "../../lib/format";
-import { formatBytes } from "../../lib/images";
+import { formatBytes, formatDateTime } from "../../lib/format";
 import { Markdown } from "../markdown/Markdown";
 import { Icon } from "../ui/icons";
 import {

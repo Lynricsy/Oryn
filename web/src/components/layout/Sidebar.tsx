@@ -127,7 +127,7 @@ export function ThreadRow({
 					{thread.title || t("thread.untitled")}
 				</span>
 				{thread.childCount ? (
-					<span className="font-mono text-[10px] text-faint">{`${thread.childDoneCount ?? 0}/${thread.childCount}`}</span>
+					<span className="font-mono text-2xs text-faint">{`${thread.childDoneCount ?? 0}/${thread.childCount}`}</span>
 				) : null}
 				{thread.unread && (
 					<span
@@ -173,7 +173,7 @@ function Group({
 			<div className="flex items-center gap-1 px-2">
 				<button
 					type="button"
-					className="flex min-w-0 flex-1 items-center gap-1 text-left font-medium text-[11px] text-faint uppercase tracking-wide hover:text-muted"
+					className="flex min-w-0 flex-1 items-center gap-1 text-left font-medium text-2xs text-faint uppercase tracking-wide hover:text-muted"
 					onClick={() => setOpen((v) => !v)}
 					aria-expanded={open}
 				>
@@ -196,7 +196,7 @@ function ArchivedGroup() {
 		<div className="mt-3">
 			<button
 				type="button"
-				className="flex w-full items-center gap-1 px-2 text-left font-medium text-[11px] text-faint uppercase tracking-wide hover:text-muted"
+				className="flex w-full items-center gap-1 px-2 text-left font-medium text-2xs text-faint uppercase tracking-wide hover:text-muted"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 			>
@@ -315,7 +315,7 @@ export function Sidebar(): ReactNode {
 						action={
 							<button
 								type="button"
-								className="text-[11px] text-faint hover:text-fg"
+								className="text-2xs text-faint hover:text-fg"
 								onClick={() => {
 									if (
 										!window.confirm(
@@ -345,7 +345,7 @@ export function Sidebar(): ReactNode {
 						{groups.snoozed.map((th) => (
 							<div key={th.id} className="relative">
 								<ThreadRow thread={th} />
-								<span className="pointer-events-none absolute top-2 right-2 text-[10px] text-faint">
+								<span className="pointer-events-none absolute top-2 right-2 text-2xs text-faint">
 									{formatRelative(th.snoozedUntil ?? now, now)}
 								</span>
 							</div>

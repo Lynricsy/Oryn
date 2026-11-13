@@ -30,7 +30,7 @@ function Chip({
 			aria-pressed={on}
 			title={title}
 			onClick={onClick}
-			className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors ${on ? "border-accent/60 bg-accent/10 text-accent" : "border-border text-muted hover:text-fg"}`}
+			className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-2xs transition-colors ${on ? "border-accent/60 bg-accent/10 text-accent" : "border-border text-muted hover:text-fg"}`}
 		>
 			<Icon name={icon} size={11} />
 			{label}
@@ -81,7 +81,7 @@ export function ModeBar({ threadId }: { threadId: string }): ReactNode {
 			{above.map(([key, w]) => (
 				<pre
 					key={key}
-					className="mb-1 overflow-x-auto rounded-md bg-inset px-2 py-1 font-mono text-[11px] text-muted"
+					className="mb-1 overflow-x-auto rounded-md bg-inset px-2 py-1 font-mono text-2xs text-muted"
 				>
 					{w.lines.join("\n")}
 				</pre>
@@ -155,14 +155,14 @@ export function ModeBar({ threadId }: { threadId: string }): ReactNode {
 					}
 				/>
 				{compaction && (
-					<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted">
+					<span className="inline-flex shrink-0 items-center gap-1 text-2xs text-muted">
 						<Spinner size={10} />
 						{t("mode.compacting")}
 					</span>
 				)}
 				{retry && (
 					<span
-						className="inline-flex shrink-0 items-center gap-1 text-[11px] text-warn"
+						className="inline-flex shrink-0 items-center gap-1 text-2xs text-warn"
 						title={retry.errorMessage}
 					>
 						<Spinner size={10} />
@@ -175,7 +175,7 @@ export function ModeBar({ threadId }: { threadId: string }): ReactNode {
 				{Object.entries(statuses).map(([k, v]) => (
 					<span
 						key={k}
-						className="shrink-0 rounded bg-inset px-1.5 text-[11px] text-muted"
+						className="shrink-0 rounded bg-inset px-1.5 text-2xs text-muted"
 					>
 						{v}
 					</span>
@@ -201,7 +201,7 @@ export function BelowEditorWidgets({
 			{below.map(([key, w]) => (
 				<pre
 					key={key}
-					className="overflow-x-auto rounded-md bg-inset px-2 py-1 font-mono text-[11px] text-muted"
+					className="overflow-x-auto rounded-md bg-inset px-2 py-1 font-mono text-2xs text-muted"
 				>
 					{w.lines.join("\n")}
 				</pre>

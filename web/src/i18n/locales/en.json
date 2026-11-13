@@ -8,7 +8,34 @@
 		"version": "Version {{version}}",
 		"error": "Cannot reach server: {{message}}"
 	},
+	"appearance": {
+		"mode": "Mode",
+		"modes": {
+			"system": "System",
+			"light": "Light",
+			"dark": "Dark"
+		},
+		"accent": "Accent",
+		"accents": {
+			"teal": "Teal",
+			"cobalt": "Cobalt",
+			"violet": "Violet",
+			"berry": "Berry",
+			"fox": "Fox",
+			"graphite": "Graphite"
+		},
+		"desc": "Appearance is saved in this browser only."
+	},
+	"stat": {
+		"input": "Input",
+		"output": "Output",
+		"cache": "Cache",
+		"cost": "Cost",
+		"duration": "Duration",
+		"speed": "Speed"
+	},
 	"common": {
+		"none": "None",
 		"cancel": "Cancel",
 		"clear": "Clear",
 		"close": "Close",
@@ -60,6 +87,7 @@
 		"failed": "Failed"
 	},
 	"sidebar": {
+		"theme": "Toggle theme",
 		"archiveAll": "Archive all",
 		"archiveAllConfirm": "Archive these {{count}} inactive threads?",
 		"archived": "Archived",
@@ -392,6 +420,9 @@
 		"empty": "None yet."
 	},
 	"panel": {
+		"tools": "Tools",
+		"cpu": "CPU",
+		"cores": "{{n}} cores",
 		"addTodo": "Add todo…",
 		"context": "Context",
 		"cpuChart": "CPU chart",
@@ -445,6 +476,7 @@
 		"orbd_timeout": "The orb didn't respond in time"
 	},
 	"pair": {
+		"ip": "IP",
 		"title": "Approve device",
 		"lookup": "Look up",
 		"device": "Device",
@@ -461,6 +493,7 @@
 		"loginFirst": "Sign in first to approve a device."
 	},
 	"settings": {
+		"appearance": "Appearance",
 		"devices": "Devices",
 		"providers": "Providers",
 		"projects": "Projects",

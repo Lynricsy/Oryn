@@ -337,7 +337,7 @@ export function Composer({
 							{t("composer.abortBash")}
 						</button>
 					)}
-					<div className="hidden min-w-0 flex-1 items-center gap-2 truncate text-[11px] text-faint sm:flex">
+					<div className="hidden min-w-0 flex-1 items-center gap-2 truncate text-2xs text-faint sm:flex">
 						{busy ? (
 							<>
 								<span>

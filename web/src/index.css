@@ -1,42 +1,174 @@
 @import "tailwindcss";
 
-/* ---- 设计令牌：克制的中性色 + 单一强调色；明暗跟随系统 ---- */
+/* ---- 设计令牌：冷灰蓝中性色 + 单一主题色；明暗与主题色由 <html data-theme data-accent> 决定（state/theme.ts） ---- */
 :root {
-	--bg: oklch(0.985 0.002 260);
-	--panel: oklch(1 0 0);
-	--raised: oklch(0.975 0.003 260);
-	--inset: oklch(0.96 0.004 260);
-	--hover: oklch(0.94 0.005 260);
-	--line: oklch(0.9 0.005 260);
-	--text: oklch(0.22 0.01 260);
-	--text-muted: oklch(0.45 0.012 260);
-	--text-faint: oklch(0.6 0.01 260);
-	--brand: oklch(0.62 0.17 42);
-	--brand-fg: oklch(0.99 0 0);
-	--good: oklch(0.6 0.14 150);
-	--caution: oklch(0.68 0.14 75);
-	--bad: oklch(0.58 0.2 27);
+	/* 主题色预设只改这五个 */
+	--tint-h: 235;
+	--accent-h: 205;
+	--accent-c: 0.105;
+	--accent-l: 0.53;
+	--accent-fg-l: 0.99;
+	--bg: oklch(0.955 0.008 var(--tint-h));
+	--panel: oklch(0.992 0.003 var(--tint-h));
+	--raised: oklch(0.972 0.005 var(--tint-h));
+	--inset: oklch(0.962 0.006 var(--tint-h));
+	--hover: oklch(0.935 0.008 var(--tint-h));
+	--active: oklch(0.91 0.01 var(--tint-h));
+	--line: oklch(0.905 0.008 var(--tint-h));
+	--line-strong: oklch(0.84 0.01 var(--tint-h));
+	--text: oklch(0.21 0.015 var(--tint-h));
+	--text-muted: oklch(0.42 0.015 var(--tint-h));
+	--text-faint: oklch(0.49 0.012 var(--tint-h));
+	--text-ghost: oklch(0.66 0.01 var(--tint-h));
+	--ink: oklch(0.24 0.015 var(--tint-h));
+	--ink-fg: oklch(0.985 0.003 var(--tint-h));
+	--brand: oklch(var(--accent-l) var(--accent-c) var(--accent-h));
+	--brand-fg: oklch(var(--accent-fg-l) 0.01 var(--accent-h));
+	--accent-soft: color-mix(in oklab, var(--brand) 12%, var(--panel));
+	--good: oklch(0.56 0.14 152);
+	--caution: oklch(0.66 0.15 78);
+	--bad: oklch(0.56 0.2 25);
+	--frost: oklch(0.62 0.09 235);
+	--ring: color-mix(in oklab, var(--brand) 60%, transparent);
+	--glass: color-mix(in oklab, var(--panel) 58%, transparent);
+	--glass-line: color-mix(in oklab, var(--text) 10%, transparent);
+	--glass-hi: oklch(1 0 0 / 0.5);
+	--scrim: oklch(0.2 0.02 var(--tint-h) / 0.35);
+	--shadow-color: 0.25 0.03 var(--tint-h);
+	--shadow-k: 1;
+	--syn-keyword: oklch(0.5 0.17 300);
+	--syn-string: oklch(0.48 0.12 150);
+	--syn-number: oklch(0.5 0.15 55);
+	--syn-title: oklch(0.47 0.14 250);
+	--syn-type: oklch(0.52 0.1 200);
+	/* accent / 成功色作为文字落在浅底上时混入正文色，保证 4.5:1 */
+	--accent-ink: color-mix(in oklab, var(--brand) 80%, var(--text));
+	--good-ink: color-mix(in oklab, var(--good) 82%, var(--text));
+	/* 工具类别色：只给工具图标方块，低彩度，不表达「需要你」 */
+	--cat-read: oklch(0.53 0.13 255);
+	--cat-edit: oklch(0.56 0.12 72);
+	--cat-exec: oklch(0.56 0.14 152);
+	--cat-web: oklch(0.53 0.14 295);
+	--cat-agent: oklch(0.53 0.105 205);
+	--cat-other: var(--text-muted);
 	color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--bg: oklch(0.165 0.004 260);
-		--panel: oklch(0.195 0.005 260);
-		--raised: oklch(0.215 0.006 260);
-		--inset: oklch(0.15 0.004 260);
-		--hover: oklch(0.255 0.007 260);
-		--line: oklch(0.29 0.006 260);
-		--text: oklch(0.93 0.005 260);
-		--text-muted: oklch(0.72 0.01 260);
-		--text-faint: oklch(0.55 0.01 260);
-		--brand: oklch(0.72 0.15 45);
-		--brand-fg: oklch(0.18 0.01 45);
-		--good: oklch(0.74 0.14 150);
-		--caution: oklch(0.8 0.13 80);
-		--bad: oklch(0.68 0.18 25);
-		color-scheme: dark;
-	}
+:root[data-theme="dark"] {
+	--accent-l: 0.78;
+	--accent-fg-l: 0.2;
+	--bg: oklch(0.155 0.01 var(--tint-h));
+	--panel: oklch(0.195 0.012 var(--tint-h));
+	--raised: oklch(0.225 0.013 var(--tint-h));
+	--inset: oklch(0.165 0.01 var(--tint-h));
+	--hover: oklch(0.255 0.014 var(--tint-h));
+	--active: oklch(0.29 0.015 var(--tint-h));
+	--line: oklch(0.28 0.012 var(--tint-h));
+	--line-strong: oklch(0.36 0.014 var(--tint-h));
+	--text: oklch(0.94 0.006 var(--tint-h));
+	--text-muted: oklch(0.74 0.012 var(--tint-h));
+	--text-faint: oklch(0.63 0.012 var(--tint-h));
+	--text-ghost: oklch(0.46 0.012 var(--tint-h));
+	--ink: oklch(0.93 0.006 var(--tint-h));
+	--ink-fg: oklch(0.18 0.012 var(--tint-h));
+	--accent-soft: color-mix(in oklab, var(--brand) 18%, var(--panel));
+	--good: oklch(0.76 0.15 152);
+	--caution: oklch(0.82 0.14 82);
+	--bad: oklch(0.7 0.18 25);
+	--frost: oklch(0.78 0.08 235);
+	--glass: color-mix(in oklab, var(--raised) 58%, transparent);
+	--glass-line: oklch(1 0 0 / 0.09);
+	--glass-hi: oklch(1 0 0 / 0.06);
+	--scrim: oklch(0.05 0.01 var(--tint-h) / 0.6);
+	--shadow-color: 0 0 0;
+	--shadow-k: 2.6;
+	--syn-keyword: oklch(0.78 0.12 300);
+	--syn-string: oklch(0.78 0.12 150);
+	--syn-number: oklch(0.8 0.12 65);
+	--syn-title: oklch(0.78 0.11 250);
+	--syn-type: oklch(0.8 0.09 200);
+	--accent-ink: var(--brand);
+	--good-ink: var(--good);
+	--cat-read: oklch(0.78 0.1 255);
+	--cat-edit: oklch(0.82 0.12 80);
+	--cat-exec: oklch(0.76 0.15 152);
+	--cat-web: oklch(0.78 0.11 295);
+	--cat-agent: oklch(0.78 0.09 205);
+	color-scheme: dark;
+}
+
+:root[data-accent="cobalt"] {
+	--tint-h: 258;
+	--accent-h: 258;
+	--accent-c: 0.17;
+}
+:root[data-accent="violet"] {
+	--tint-h: 285;
+	--accent-h: 295;
+	--accent-c: 0.17;
+}
+:root[data-accent="berry"] {
+	--tint-h: 350;
+	--accent-h: 358;
+	--accent-c: 0.17;
+}
+:root[data-accent="fox"] {
+	--tint-h: 55;
+	--accent-h: 48;
+	--accent-c: 0.16;
+}
+:root[data-accent="graphite"] {
+	--tint-h: 260;
+	--accent-h: 260;
+	--accent-c: 0.015;
+}
+:root[data-accent="fox"]:not([data-theme="dark"]) {
+	--accent-l: 0.55;
+}
+:root[data-accent="graphite"]:not([data-theme="dark"]) {
+	--accent-l: 0.3;
+}
+:root[data-accent="graphite"][data-theme="dark"] {
+	--accent-l: 0.9;
+}
+
+/* Nerd Font 符号（omp 标题卡图标等私有区字形）：只覆盖私有区，出现时才下载 */
+@font-face {
+	font-family: "Symbols Nerd Font Mono";
+	src: url("./assets/fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+	font-display: swap;
+	unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}
+
+/* 明暗共用的原始变量：非 Tailwind 的 CSS/JS 只引用这些 */
+:root {
+	--sans:
+		"Mona Sans Variable", "Symbols Nerd Font Mono", "Noto Sans SC Variable",
+		ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif,
+		"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+	--mono:
+		"JetBrains Mono Variable", "Symbols Nerd Font Mono",
+		"Noto Sans SC Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	--r-xs: 4px;
+	--r-sm: 6px;
+	--r-md: 8px;
+	--r-lg: 10px;
+	--r-xl: 14px;
+	--r-2xl: 18px;
+	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--sh-xs: 0 1px 1px oklch(var(--shadow-color) / calc(0.05 * var(--shadow-k)));
+	--sh-sm:
+		0 1px 2px oklch(var(--shadow-color) / calc(0.05 * var(--shadow-k))),
+		0 8px 24px -12px oklch(var(--shadow-color) / calc(0.1 * var(--shadow-k)));
+	--sh-md:
+		0 2px 6px oklch(var(--shadow-color) / calc(0.06 * var(--shadow-k))),
+		0 12px 32px -8px oklch(var(--shadow-color) / calc(0.16 * var(--shadow-k)));
+	--sh-lg:
+		0 4px 10px oklch(var(--shadow-color) / calc(0.08 * var(--shadow-k))),
+		0 20px 48px -12px oklch(var(--shadow-color) / calc(0.22 * var(--shadow-k)));
+	--sh-xl:
+		0 8px 20px oklch(var(--shadow-color) / calc(0.1 * var(--shadow-k))),
+		0 32px 80px -16px oklch(var(--shadow-color) / calc(0.3 * var(--shadow-k)));
 }
 
 @theme inline {
@@ -45,21 +177,49 @@
 	--color-raised: var(--raised);
 	--color-inset: var(--inset);
 	--color-hover: var(--hover);
+	--color-active: var(--active);
 	--color-border: var(--line);
+	--color-border-strong: var(--line-strong);
 	--color-fg: var(--text);
 	--color-muted: var(--text-muted);
 	--color-faint: var(--text-faint);
+	--color-ghost: var(--text-ghost);
+	--color-ink: var(--ink);
+	--color-ink-fg: var(--ink-fg);
 	--color-accent: var(--brand);
 	--color-accent-fg: var(--brand-fg);
+	--color-accent-soft: var(--accent-soft);
+	--color-accent-ink: var(--accent-ink);
 	--color-ok: var(--good);
+	--color-ok-ink: var(--good-ink);
+	--color-cat-read: var(--cat-read);
+	--color-cat-edit: var(--cat-edit);
+	--color-cat-exec: var(--cat-exec);
+	--color-cat-web: var(--cat-web);
+	--color-cat-agent: var(--cat-agent);
+	--color-cat-other: var(--cat-other);
 	--color-warn: var(--caution);
 	--color-err: var(--bad);
-	--font-sans:
-		ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
-		"Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-	--font-mono:
-		ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas,
-		monospace;
+	--color-frost: var(--frost);
+	--color-scrim: var(--scrim);
+	--font-sans: var(--sans);
+	--font-mono: var(--mono);
+	--radius-xs: var(--r-xs);
+	--radius-sm: var(--r-sm);
+	--radius-md: var(--r-md);
+	--radius-lg: var(--r-lg);
+	--radius-xl: var(--r-xl);
+	--radius-2xl: var(--r-2xl);
+	--text-2xs: 0.6875rem;
+	--text-2xs--line-height: 1rem;
+	--text-sm: 0.8125rem;
+	--text-sm--line-height: 1.25rem;
+	--shadow-xs: var(--sh-xs);
+	--shadow-sm: var(--sh-sm);
+	--shadow-md: var(--sh-md);
+	--shadow-lg: var(--sh-lg);
+	--shadow-xl: var(--sh-xl);
+	--ease-out: var(--ease);
 }
 
 /* 工具卡片（tool-render）桥接变量 */
@@ -87,7 +247,7 @@ body {
 	margin: 0;
 	background: var(--bg);
 	color: var(--text);
-	font-family: var(--font-sans);
+	font-family: var(--sans);
 	-webkit-font-smoothing: antialiased;
 	-webkit-tap-highlight-color: transparent;
 	overscroll-behavior: none;
@@ -110,181 +270,154 @@ body {
 	padding-bottom: max(env(safe-area-inset-bottom), var(--kb-inset));
 }
 
-/* ---- Markdown ---- */
-.md {
-	font-size: 14px;
-	line-height: 1.65;
-	overflow-wrap: anywhere;
-}
-.md > :first-child {
-	margin-top: 0;
-}
-.md > :last-child {
-	margin-bottom: 0;
-}
-.md p,
-.md ul,
-.md ol,
-.md blockquote,
-.md table {
-	margin: 0.6em 0;
-}
-.md ul {
-	list-style: disc;
-	padding-left: 1.4em;
-}
-.md ol {
-	list-style: decimal;
-	padding-left: 1.4em;
-}
-.md li + li {
-	margin-top: 0.2em;
-}
-.md h1,
-.md h2,
-.md h3,
-.md h4 {
-	font-weight: 600;
-	line-height: 1.3;
-	margin: 1em 0 0.4em;
-}
-.md h1 {
-	font-size: 1.3em;
-}
-.md h2 {
-	font-size: 1.15em;
-}
-.md h3 {
-	font-size: 1.05em;
-}
-.md a {
-	color: var(--brand);
-	text-decoration: underline;
-	text-underline-offset: 2px;
-}
-.md blockquote {
-	border-left: 3px solid var(--line);
-	padding-left: 0.8em;
-	color: var(--text-muted);
-}
-.md hr {
-	border-color: var(--line);
-	margin: 1em 0;
-}
-.md img {
-	max-width: 100%;
-	border-radius: 6px;
-}
-.md table {
-	border-collapse: collapse;
-	display: block;
-	overflow-x: auto;
-	font-size: 13px;
-}
-.md th,
-.md td {
-	border: 1px solid var(--line);
-	padding: 0.3em 0.6em;
-}
-.md th {
-	background: var(--raised);
-	font-weight: 600;
-}
-.md-inline-code {
-	font-family: var(--font-mono);
-	font-size: 0.88em;
-	background: var(--inset);
-	border: 1px solid var(--line);
-	border-radius: 4px;
-	padding: 0.05em 0.3em;
-}
-.md-code {
-	margin: 0.6em 0;
-	border: 1px solid var(--line);
-	border-radius: 6px;
-	background: var(--inset);
-	overflow: hidden;
-}
-.md-code-bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 2px 4px 2px 10px;
-	font-size: 11px;
-	color: var(--text-faint);
-	border-bottom: 1px solid var(--line);
-	font-family: var(--font-mono);
-}
-.md-code pre {
-	margin: 0;
-	padding: 10px 12px;
-	overflow-x: auto;
-	font-family: var(--font-mono);
-	font-size: 12.5px;
-	line-height: 1.55;
-}
-.md-mermaid {
-	margin: 0.6em 0;
-	overflow-x: auto;
-}
-.md-mermaid svg {
-	max-width: 100%;
-	height: auto;
-}
-.md .katex-display {
-	overflow-x: auto;
-	overflow-y: hidden;
-}
-
-/* highlight.js：极简配色，明暗共用 */
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-built_in,
-.hljs-tag .hljs-name {
-	color: oklch(0.6 0.15 300);
-}
-.hljs-string,
-.hljs-attr,
-.hljs-template-tag,
-.hljs-addition {
-	color: oklch(0.6 0.13 150);
-}
-.hljs-number,
-.hljs-literal,
-.hljs-symbol {
-	color: oklch(0.65 0.14 55);
-}
-.hljs-comment,
-.hljs-quote {
-	color: var(--text-faint);
-	font-style: italic;
-}
-.hljs-title,
-.hljs-title.function_,
-.hljs-section {
-	color: oklch(0.62 0.13 240);
-}
-.hljs-type,
-.hljs-class .hljs-title,
-.hljs-variable.language_ {
-	color: oklch(0.65 0.12 200);
-}
-.hljs-deletion {
-	color: var(--bad);
-}
-.hljs-meta {
-	color: var(--text-muted);
-}
-
-/* 思考块流式时的淡入光标 */
-@keyframes oryn-caret {
-	50% {
-		opacity: 0;
+/* ---- 材质与全局类 ---- */
+@layer components {
+	/* L1 纸面 */
+	.sheet {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: var(--r-xl);
+		box-shadow: var(--sh-sm);
+		overflow: hidden;
+	}
+	/* L2 玻璃：模糊放在伪元素上，宿主不成为 backdrop root，也不成为 fixed 后代的包含块，嵌套玻璃才模糊得出来 */
+	.glass {
+		position: relative;
+		isolation: isolate;
+		border: 1px solid var(--glass-line);
+		box-shadow:
+			var(--sh-md),
+			inset 0 1px 0 var(--glass-hi);
+	}
+	.glass::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		border-radius: inherit;
+		background: var(--glass);
+		-webkit-backdrop-filter: blur(18px) saturate(1.5);
+		backdrop-filter: blur(18px) saturate(1.5);
+	}
+	@supports not (
+			(backdrop-filter: blur(1px)) or
+			(-webkit-backdrop-filter: blur(1px))
+		) {
+		.glass::before {
+			background: var(--panel);
+		}
+	}
+	@media (prefers-reduced-transparency: reduce) {
+		.glass::before {
+			background: var(--panel);
+			-webkit-backdrop-filter: none;
+			backdrop-filter: none;
+		}
+	}
+	/* 浮层进入：只做进入，退出不做动画 */
+	.pop-in {
+		transition:
+			opacity 180ms var(--ease),
+			transform 180ms var(--ease);
+		@starting-style {
+			opacity: 0;
+			transform: translateY(6px) scale(0.98);
+		}
+	}
+	/* L0 桌面：两处极淡的主题色晕染，让玻璃有东西可透 */
+	.shell-wash {
+		background:
+			radial-gradient(
+				1100px 560px at 0% 0%,
+				color-mix(in oklab, var(--brand) 8%, transparent),
+				transparent 62%
+			),
+			radial-gradient(
+				900px 480px at 100% 100%,
+				color-mix(in oklab, var(--brand) 5%, transparent),
+				transparent 60%
+			),
+			var(--bg);
+	}
+	/* 输入坞下方到纸面底边：转录渐隐到纸面色 */
+	.dock-fade {
+		--dock-pad: calc(
+			0.75rem +
+			max(env(safe-area-inset-bottom), var(--kb-inset))
+		);
+		background: linear-gradient(
+			to top,
+			var(--panel) var(--dock-pad),
+			transparent calc(var(--dock-pad) + 2.5rem)
+		);
+	}
+	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
+	.avatar {
+		background: oklch(0.89 0.075 var(--h));
+		color: oklch(0.4 0.13 var(--h));
+	}
+	:root[data-theme="dark"] .avatar {
+		background: oklch(0.34 0.08 var(--h));
+		color: oklch(0.87 0.1 var(--h));
 	}
 }
-.stream-caret::after {
-	content: "▍";
-	margin-left: 1px;
-	animation: oryn-caret 1s steps(1) infinite;
-	color: var(--brand);
+
+:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+/* overflow 容器里的按钮：焦点环向内画，避免被裁掉 */
+.focus-inset :focus-visible {
+	outline-offset: -2px;
+}
+
+/* orb 状态珠 */
+@keyframes orb-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@keyframes orb-breathe {
+	0%,
+	100% {
+		transform: scale(0.9);
+		opacity: 0.2;
+	}
+	50% {
+		transform: scale(1.1);
+		opacity: 0.5;
+	}
+}
+@keyframes orb-fade {
+	0%,
+	100% {
+		opacity: 0.5;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.orb-spin {
+	transform-origin: 8px 8px;
+	animation: orb-spin 1.2s linear infinite;
+}
+.orb-breathe {
+	transform-origin: 8px 8px;
+	animation: orb-breathe 2.4s var(--ease) infinite;
+}
+.orb-fade {
+	animation: orb-fade 1.6s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		/* biome-ignore lint/complexity/noImportantStyles: 减少动效须压过组件内的任意过渡与动画 */
+		animation-duration: 1ms !important;
+		/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+		animation-iteration-count: 1 !important;
+		/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+		transition-duration: 1ms !important;
+	}
 }

@@ -52,9 +52,7 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 		default:
 			text = String(entry.type ?? "");
 	}
-	return (
-		<div className="py-0.5 text-center text-[11px] text-faint">{text}</div>
-	);
+	return <div className="py-0.5 text-center text-2xs text-faint">{text}</div>;
 }
 
 const NOTICE_TONE: Record<Notice["level"], string> = {
@@ -115,7 +113,7 @@ function ItemView({ item }: { item: TranscriptItem }): ReactNode {
 	switch (item.kind) {
 		case "session_divider":
 			return (
-				<div className="flex items-center gap-3 py-2 text-[11px] text-faint">
+				<div className="flex items-center gap-3 py-2 text-2xs text-faint">
 					<div className="h-px flex-1 bg-border" />
 					{t("transcript.newSession")}
 					<div className="h-px flex-1 bg-border" />

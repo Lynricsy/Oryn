@@ -332,7 +332,7 @@ export function HomePage(): ReactNode {
 							</button>
 							{pill === "executor" && (
 								<Popover onClose={() => setPill(null)}>
-									<div className="px-2 py-1 text-[11px] text-faint uppercase">
+									<div className="px-2 py-1 text-2xs text-faint uppercase">
 										{t("newThread.newOrb")}
 									</div>
 									<Option
@@ -368,7 +368,7 @@ export function HomePage(): ReactNode {
 										)),
 									)}
 									{liveOrbs.length > 0 && (
-										<div className="px-2 pt-2 pb-1 text-[11px] text-faint uppercase">
+										<div className="px-2 pt-2 pb-1 text-2xs text-faint uppercase">
 											{t("newThread.existingOrbs")}
 										</div>
 									)}
@@ -439,7 +439,7 @@ export function HomePage(): ReactNode {
 											{m}
 										</Option>
 									))}
-									<div className="px-2 pt-2 pb-1 text-[11px] text-faint uppercase">
+									<div className="px-2 pt-2 pb-1 text-2xs text-faint uppercase">
 										{t("model.thinking")}
 									</div>
 									<div className="flex flex-wrap gap-1 px-2 pb-2">

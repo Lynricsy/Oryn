@@ -8,8 +8,7 @@ import {
 	deleteAttachment,
 	listThreadAttachments,
 } from "../../lib/attachments";
-import { formatDateTime } from "../../lib/format";
-import { formatBytes } from "../../lib/images";
+import { formatBytes, formatDateTime } from "../../lib/format";
 import type { ReportKind } from "../../lib/slash";
 import type {
 	OmpCommand,
@@ -215,7 +214,7 @@ function SessionTreeDialog({
 					onChange={(e) => setQ(e.target.value)}
 				/>
 				<Select
-					className="max-w-36"
+					wrapperClassName="max-w-36"
 					value={filter}
 					onChange={(e) => setFilter(e.target.value as typeof filter)}
 				>
@@ -1103,7 +1102,7 @@ function DebugDialog({
 				{[...debug].reverse().map((d) => (
 					<pre
 						key={d.key}
-						className="overflow-auto rounded bg-inset p-2 font-mono text-[11px]"
+						className="overflow-auto rounded bg-inset p-2 font-mono text-2xs"
 					>
 						{`${new Date(d.ts).toLocaleTimeString()} ${d.source}\n${JSON.stringify(d.frame, null, 2)}`}
 					</pre>

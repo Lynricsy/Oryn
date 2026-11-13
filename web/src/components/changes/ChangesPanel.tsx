@@ -423,7 +423,7 @@ export default function ChangesPanel({
 			<ul aria-label={t("changes.files")} className="p-1 text-sm">
 				{groups.map(([dir, group]) => (
 					<li key={dir}>
-						<div className="truncate px-2 pt-2 pb-0.5 font-mono text-[11px] text-faint">
+						<div className="truncate px-2 pt-2 pb-0.5 font-mono text-2xs text-faint">
 							{dir || t("changes.rootDir")}
 						</div>
 						<ul>
@@ -460,11 +460,11 @@ export default function ChangesPanel({
 													: f.path.slice(dir ? dir.length + 1 : 0)}
 											</span>
 											{f.binary ? (
-												<span className="shrink-0 text-[10px] text-faint">
+												<span className="shrink-0 text-2xs text-faint">
 													{t("changes.binary")}
 												</span>
 											) : (
-												<span className="shrink-0 font-mono text-[10px]">
+												<span className="shrink-0 font-mono text-2xs">
 													{f.additions !== undefined && (
 														<span className="text-ok">{`+${f.additions}`}</span>
 													)}

@@ -15,7 +15,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { type FileEntry, isDirEntry, isWithin } from "../../lib/file-source";
-import { formatBytes } from "../../lib/images";
+import { formatBytes } from "../../lib/format";
 import { Icon, type IconName } from "../ui/icons";
 import { describeError, Spinner } from "../ui/primitives";
 
@@ -368,7 +368,7 @@ export function FileTree({
 						</span>
 					)}
 					{!dir && (
-						<span className="shrink-0 text-[10px] text-faint">
+						<span className="shrink-0 text-2xs text-faint">
 							{formatBytes(e.size)}
 						</span>
 					)}

@@ -45,7 +45,7 @@ export function StructuredView({
 		const entries = Object.entries(value).filter(([, v]) => v !== undefined);
 		if (depth > 3)
 			return (
-				<pre className="overflow-auto font-mono text-[11px]">
+				<pre className="overflow-auto font-mono text-2xs">
 					{JSON.stringify(value, null, 2)}
 				</pre>
 			);

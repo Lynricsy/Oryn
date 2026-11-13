@@ -19,7 +19,7 @@ import {
 	MAX_FILE_BYTES,
 	parentPath,
 } from "../../lib/file-source";
-import { formatBytes } from "../../lib/images";
+import { formatBytes } from "../../lib/format";
 import { Button, Dialog, describeError, IconButton } from "../ui/primitives";
 
 export const UPLOAD_CONCURRENCY = 3;

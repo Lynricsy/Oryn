@@ -51,3 +51,27 @@ export function formatDateTime(ts: number): string {
 		timeStyle: "short",
 	}).format(ts);
 }
+
+/** 字节数：<1KiB 为 B，<1MiB 为 KB，<1GiB 为 MB（一位小数），否则 GB。 */
+export function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+	if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+	return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/** 百分比取整；非有限数显示「—」。 */
+export function formatPercent(n: number): string {
+	return Number.isFinite(n) ? `${Math.round(n)}%` : "—";
+}
+
+/** 内存（MB 输入）：<1024 显示 MB，否则 GB 至多一位小数并去掉 `.0`。 */
+export function formatMemoryMB(mb: number): string {
+	if (mb < 1024) return `${Math.round(mb)} MB`;
+	return `${Number((mb / 1024).toFixed(1))} GB`;
+}
+
+/** 计数按界面语言分组（如 48,200）。 */
+export function formatCount(n: number): string {
+	return new Intl.NumberFormat(i18n.language).format(n);
+}

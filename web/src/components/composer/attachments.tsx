@@ -14,9 +14,9 @@ import {
 	MAX_ATTACHMENTS_PER_MESSAGE,
 	uploadAttachment,
 } from "../../lib/attachments";
+import { formatBytes } from "../../lib/format";
 import {
 	checkBudget,
-	formatBytes,
 	type PreparedImage,
 	prepareImage,
 } from "../../lib/images";

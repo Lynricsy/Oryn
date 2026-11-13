@@ -74,7 +74,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 			</div>
 			<div className="mt-3 grid grid-cols-2 gap-3">
 				<div className="text-accent">
-					<div className="flex justify-between text-[11px] text-muted">
+					<div className="flex justify-between text-2xs text-muted">
 						<span>CPU</span>
 						<span className="font-mono">
 							{last ? `${last.cpuPct.toFixed(0)}%` : "—"}
@@ -87,7 +87,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 					/>
 				</div>
 				<div className="text-ok">
-					<div className="flex justify-between text-[11px] text-muted">
+					<div className="flex justify-between text-2xs text-muted">
 						<span>{t("panel.memory")}</span>
 						<span className="font-mono">
 							{last ? `${(last.memUsedMB / 1024).toFixed(1)}G` : "—"}
@@ -101,7 +101,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 				</div>
 			</div>
 			<div className="mt-3">
-				<h4 className="mb-1 font-medium text-[11px] text-muted">
+				<h4 className="mb-1 font-medium text-2xs text-muted">
 					{t("env.title")}
 				</h4>
 				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />

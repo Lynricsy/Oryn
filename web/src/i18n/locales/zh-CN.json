@@ -8,7 +8,34 @@
 		"version": "版本 {{version}}",
 		"error": "无法连接服务器：{{message}}"
 	},
+	"appearance": {
+		"mode": "明暗",
+		"modes": {
+			"system": "跟随系统",
+			"light": "浅色",
+			"dark": "深色"
+		},
+		"accent": "主题色",
+		"accents": {
+			"teal": "青碧",
+			"cobalt": "钴蓝",
+			"violet": "堇紫",
+			"berry": "莓红",
+			"fox": "狐橙",
+			"graphite": "石墨"
+		},
+		"desc": "外观设置只保存在这台设备的浏览器里。"
+	},
+	"stat": {
+		"input": "输入",
+		"output": "输出",
+		"cache": "缓存",
+		"cost": "成本",
+		"duration": "耗时",
+		"speed": "速度"
+	},
 	"common": {
+		"none": "无",
 		"cancel": "取消",
 		"clear": "清除",
 		"close": "关闭",
@@ -60,6 +87,7 @@
 		"failed": "失败"
 	},
 	"sidebar": {
+		"theme": "切换明暗",
 		"archiveAll": "全部归档",
 		"archiveAllConfirm": "归档这 {{count}} 个不活跃线程？",
 		"archived": "已归档",
@@ -392,6 +420,9 @@
 		"empty": "暂无。"
 	},
 	"panel": {
+		"tools": "工具",
+		"cpu": "CPU",
+		"cores": "{{n}} 核",
 		"addTodo": "添加 todo…",
 		"context": "上下文",
 		"cpuChart": "CPU 曲线",
@@ -445,6 +476,7 @@
 		"orbd_timeout": "orb 响应超时"
 	},
 	"pair": {
+		"ip": "IP",
 		"title": "批准设备",
 		"lookup": "查看",
 		"device": "设备",
@@ -461,6 +493,7 @@
 		"loginFirst": "请先登录再批准设备。"
 	},
 	"settings": {
+		"appearance": "外观",
 		"devices": "设备",
 		"providers": "Provider",
 		"projects": "项目",

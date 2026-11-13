@@ -121,12 +121,12 @@ function DevicesSettings() {
 								<div className="flex items-center gap-2 text-sm">
 									<span className="truncate font-medium">{d.name}</span>
 									{d.current && (
-										<span className="rounded bg-accent/15 px-1 text-[10px] text-accent">
+										<span className="rounded bg-accent/15 px-1 text-2xs text-accent">
 											{t("devices.current")}
 										</span>
 									)}
 									{d.revokedAt && (
-										<span className="rounded bg-err/10 px-1 text-[10px] text-err">
+										<span className="rounded bg-err/10 px-1 text-2xs text-err">
 											{t("devices.revoked")}
 										</span>
 									)}
@@ -251,7 +251,7 @@ function ProvidersSettings() {
 									{p.online ? t("providers.online") : t("providers.offline")}
 								</span>
 								{p.driver && (
-									<span className="rounded bg-inset px-1 text-[10px] text-muted">
+									<span className="rounded bg-inset px-1 text-2xs text-muted">
 										{p.driver}
 									</span>
 								)}
@@ -720,7 +720,7 @@ function SecretsSettings() {
 							<span className="min-w-0 flex-1 truncate font-mono text-sm">
 								{s.name}
 							</span>
-							<span className="rounded bg-inset px-1 text-[10px] text-muted">
+							<span className="rounded bg-inset px-1 text-2xs text-muted">
 								{s.mode}
 							</span>
 							{s.hosts && s.hosts.length > 0 && (
@@ -936,7 +936,7 @@ function AboutSettings() {
 				<dt className="text-muted">{t("about.language")}</dt>
 				<dd>
 					<Select
-						className="max-w-40"
+						wrapperClassName="max-w-40"
 						value={i18n.language}
 						onChange={(e) => void i18n.changeLanguage(e.target.value)}
 					>

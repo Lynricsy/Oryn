@@ -257,7 +257,7 @@ function QuestionBlock({
 						<span className="min-w-0 flex-1">
 							<span>{opt.label}</span>
 							{q.recommended === i && (
-								<span className="ml-2 rounded bg-accent/15 px-1 text-[10px] text-accent">
+								<span className="ml-2 rounded bg-accent/15 px-1 text-2xs text-accent">
 									{t("ui.recommended")}
 								</span>
 							)}
@@ -267,7 +267,7 @@ function QuestionBlock({
 								</span>
 							)}
 							{opt.preview && (
-								<pre className="mt-1 max-h-32 overflow-auto rounded bg-inset p-2 font-mono text-[11px]">
+								<pre className="mt-1 max-h-32 overflow-auto rounded bg-inset p-2 font-mono text-2xs">
 									{opt.preview}
 								</pre>
 							)}

@@ -18,6 +18,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { useHighlighted } from "../../lib/highlight";
 import { CopyButton } from "../ui/CopyButton";
+import "./markdown.css";
 
 type PluggableList = NonNullable<Options["remarkPlugins"]>;
 

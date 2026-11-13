@@ -79,7 +79,7 @@ const theme = EditorView.theme({
 		backgroundColor: "var(--inset)",
 		color: "var(--text)",
 	},
-	".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.55" },
+	".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.55" },
 	".cm-content": { caretColor: "var(--brand)" },
 	".cm-gutters": {
 		backgroundColor: "var(--raised)",

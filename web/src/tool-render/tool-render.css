@@ -19,7 +19,7 @@
 	--tv-raised: var(--bg-raised, var(--container-bg, oklch(1 0 0 / 4%)));
 	--tv-ring: var(--ring, oklch(0.817 0.112 205 / 70%));
 	--tv-mono: var(
-		--font-mono,
+		--mono,
 		ui-monospace,
 		"SF Mono",
 		"Cascadia Mono",

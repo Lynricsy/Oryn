@@ -329,7 +329,7 @@ export function SetupLogDialog({
 				<pre
 					ref={pre}
 					data-testid="setup-log"
-					className="max-h-[55dvh] overflow-auto rounded-md border border-border bg-inset p-2 font-mono text-[11px] leading-snug"
+					className="max-h-[55dvh] overflow-auto rounded-md border border-border bg-inset p-2 font-mono text-2xs leading-snug"
 				>
 					{log.data}
 				</pre>

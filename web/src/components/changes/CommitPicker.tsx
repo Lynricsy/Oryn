@@ -35,7 +35,8 @@ export function CommitPicker({
 	return (
 		<Select
 			aria-label={t("changes.scope.label")}
-			className="h-7 min-w-0 flex-1 py-0 text-xs"
+			wrapperClassName="min-w-0 flex-1"
+			className="h-7 py-0 text-xs"
 			value={encode(value)}
 			onChange={(e) => onChange(decode(e.target.value))}
 		>

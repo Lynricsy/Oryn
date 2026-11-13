@@ -167,7 +167,7 @@ export function CommandMenu({
 						{e.description}
 					</span>
 					{e.badge && (
-						<span className="shrink-0 text-[10px] text-faint">{e.badge}</span>
+						<span className="shrink-0 text-2xs text-faint">{e.badge}</span>
 					)}
 				</button>
 			))}

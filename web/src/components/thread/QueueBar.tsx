@@ -181,7 +181,7 @@ export function QueueBar({ threadId }: { threadId: string }): ReactNode {
 					{lanes.map(({ lane, list }) =>
 						list.length === 0 ? null : (
 							<div key={lane}>
-								<div className="mb-0.5 text-[10px] text-faint uppercase tracking-wide">
+								<div className="mb-0.5 text-2xs text-faint uppercase tracking-wide">
 									{t(`queue.${lane}`)}
 								</div>
 								<ul className="flex flex-col gap-1">

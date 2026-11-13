@@ -327,7 +327,7 @@ export function StatusBar({ threadId }: { threadId: string }): ReactNode {
 	const ctx = state?.contextUsage;
 	const tps = state?.tokensPerSecond ?? usage.data?.tokensPerSecond;
 	return (
-		<div className="mx-auto flex w-full max-w-3xl items-center gap-3 overflow-x-auto px-1 pt-1 text-[11px] text-faint">
+		<div className="mx-auto flex w-full max-w-3xl items-center gap-3 overflow-x-auto px-1 pt-1 text-2xs text-faint">
 			<button
 				type="button"
 				className="inline-flex shrink-0 items-center gap-1 hover:text-fg"

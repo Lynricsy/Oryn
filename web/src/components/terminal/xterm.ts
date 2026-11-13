@@ -7,30 +7,12 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { cssColor } from "../../lib/css-color";
 import type {
 	TermFactory,
 	TermHandlers,
 	TermLike,
 } from "../../state/terminals";
-
-/** CSS 变量（oklch 等任意格式）→ xterm 能解析的 `#rrggbb`：画到 1×1 画布上读回像素。 */
-function cssColor(name: string, fallback: string): string {
-	if (typeof document === "undefined") return fallback;
-	const raw = getComputedStyle(document.documentElement)
-		.getPropertyValue(name)
-		.trim();
-	if (!raw) return fallback;
-	const canvas = document.createElement("canvas");
-	canvas.width = 1;
-	canvas.height = 1;
-	const ctx = canvas.getContext("2d", { willReadFrequently: true });
-	if (!ctx) return fallback;
-	ctx.fillStyle = fallback;
-	ctx.fillStyle = raw;
-	ctx.fillRect(0, 0, 1, 1);
-	const [r = 0, g = 0, b = 0] = ctx.getImageData(0, 0, 1, 1).data;
-	return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-}
 
 function theme(): ITheme {
 	const bg = cssColor("--inset", "#1e1e1e");
@@ -60,7 +42,7 @@ class XtermTerm implements TermLike {
 			macOptionIsMeta: true,
 			fontSize: compact ? 12 : 13,
 			fontFamily:
-				'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+				'"JetBrains Mono Variable", "Symbols Nerd Font Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 			cols: 100,
 			rows: 30,
 			theme: theme(),
