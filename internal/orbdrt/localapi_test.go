@@ -124,7 +124,7 @@ func TestHelloAdvertisesFeatures(t *testing.T) {
 	_, raw := cp.waitNotif(t, 0, "hello", nil)
 	var h apigen.LinkCtlHelloParams
 	require.NoError(t, json.Unmarshal(raw, &h))
-	assert.Equal(t, []string{"fs", "git", "attachments", "services", "portal"}, h.Features)
+	assert.Equal(t, []string{"fs", "git", "attachments", "services", "portal", "sync"}, h.Features)
 }
 
 func TestLocalFSRoundTrip(t *testing.T) {

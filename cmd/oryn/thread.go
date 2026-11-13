@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/spf13/cobra"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/transcript"
 )
 
 var threadCmd = &cobra.Command{
@@ -24,27 +24,54 @@ var threadCmd = &cobra.Command{
 	Short: "线程",
 }
 
-var threadNewOpts struct {
-	project, provider, orbType string
-	noProject, json            bool
+// threadNewOptions 是 `thread new` 的参数。
+type threadNewOptions struct {
+	project, provider, orbType, orb, title string
+	labels                                 []string
+	noProject, json                        bool
 }
+
+var threadNewOpts threadNewOptions
 
 var threadNewCmd = &cobra.Command{
 	Use:   "new <prompt>",
-	Short: "新建线程（默认新建 orb）",
+	Short: "新建线程（默认新建 orb；--orb 挂到已有 orb）",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		o := threadNewOpts
-		if o.project != "" && o.noProject {
-			return errors.New("--project 与 --no-project 不能同时使用")
-		}
 		c, err := newClient()
 		if err != nil {
 			return err
 		}
-		ctx := cmd.Context()
-		req := apigen.CreateThreadRequest{Prompt: args[0]}
-		exec := apigen.ThreadExecutorNewOrb{Kind: "new_orb"}
+		t, err := threadNew(cmd.Context(), c, args[0], threadNewOpts)
+		if err != nil {
+			return err
+		}
+		if threadNewOpts.json {
+			return printJSON(t)
+		}
+		fmt.Println(t.ID)
+		return nil
+	},
+}
+
+// threadNew 按参数组装 `POST threads` 并返回新线程。
+func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOptions) (apigen.Thread, error) {
+	if o.project != "" && o.noProject {
+		return apigen.Thread{}, errors.New("--project 与 --no-project 不能同时使用")
+	}
+	if o.orb != "" && (o.provider != "" || o.orbType != "") {
+		return apigen.Thread{}, errors.New("--orb 与 --provider / --type 不能同时使用")
+	}
+	req := apigen.CreateThreadRequest{Prompt: prompt, Labels: o.labels}
+	if o.title != "" {
+		req.Title = &o.title
+	}
+	if o.orb != "" {
+		if err := req.Executor.FromThreadExecutorOrb(apigen.ThreadExecutorOrb{Kind: apigen.ThreadExecutorOrbKindOrb, OrbID: o.orb}); err != nil {
+			return apigen.Thread{}, err
+		}
+	} else {
+		exec := apigen.ThreadExecutorNewOrb{Kind: apigen.NewOrb}
 		if o.provider != "" {
 			exec.Provider = &o.provider
 		}
@@ -52,25 +79,21 @@ var threadNewCmd = &cobra.Command{
 			exec.Type = &o.orbType
 		}
 		if err := req.Executor.FromThreadExecutorNewOrb(exec); err != nil {
-			return err
+			return apigen.Thread{}, err
 		}
-		if o.project != "" {
-			id, err := resolveProject(ctx, c, o.project)
-			if err != nil {
-				return err
-			}
-			req.ProjectID = &id
+	}
+	if o.project != "" {
+		id, err := resolveProject(ctx, c, o.project)
+		if err != nil {
+			return apigen.Thread{}, err
 		}
-		var env apigen.ThreadEnvelope
-		if err := c.do(ctx, http.MethodPost, "/api/v1/threads", req, &env); err != nil {
-			return err
-		}
-		if o.json {
-			return printJSON(env.Thread)
-		}
-		fmt.Println(env.Thread.ID)
-		return nil
-	},
+		req.ProjectID = &id
+	}
+	var env apigen.ThreadEnvelope
+	if err := c.do(ctx, http.MethodPost, "/api/v1/threads", req, &env); err != nil {
+		return apigen.Thread{}, err
+	}
+	return env.Thread, nil
 }
 
 // resolveProject 把项目名（或 id）解析为项目 id。
@@ -87,27 +110,33 @@ func resolveProject(ctx context.Context, c *apiClient, name string) (string, err
 	return "", fmt.Errorf("项目 %q 不存在", name)
 }
 
-var threadListJSON bool
+// threadListOptions 对应 `GET threads` 的查询参数。
+type threadListOptions struct {
+	state, project, query string
+	archived, json        bool
+}
+
+var threadListOpts threadListOptions
 
 var threadListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "列出未归档线程",
+	Short: "列出线程（默认未归档）",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := newClient()
 		if err != nil {
 			return err
 		}
-		var list apigen.ThreadList
-		if err := c.do(cmd.Context(), http.MethodGet, "/api/v1/threads", nil, &list); err != nil {
+		list, err := threadList(cmd.Context(), c, threadListOpts)
+		if err != nil {
 			return err
 		}
-		if threadListJSON {
-			return printJSON(list.Threads)
+		if threadListOpts.json {
+			return printJSON(list)
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tSTATE\tUNREAD\tUPDATED\tTITLE")
-		for _, t := range list.Threads {
+		for _, t := range list {
 			unread := ""
 			if t.Unread {
 				unread = "●"
@@ -116,6 +145,83 @@ var threadListCmd = &cobra.Command{
 		}
 		return tw.Flush()
 	},
+}
+
+// threadList 调 `GET threads`；--project 接受项目名、id 或 none。
+func threadList(ctx context.Context, c *apiClient, o threadListOptions) ([]apigen.Thread, error) {
+	q := url.Values{}
+	if o.archived {
+		q.Set("archived", "true")
+	}
+	if o.state != "" {
+		if !apigen.ThreadState(o.state).Valid() {
+			return nil, fmt.Errorf("未知状态 %q（provisioning / working / awaiting_input / idle / error）", o.state)
+		}
+		q.Set("state", o.state)
+	}
+	switch o.project {
+	case "":
+	case "none":
+		q.Set("project", "none")
+	default:
+		id, err := resolveProject(ctx, c, o.project)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("project", id)
+	}
+	if o.query != "" {
+		q.Set("q", o.query)
+	}
+	path := "/api/v1/threads"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var list apigen.ThreadList
+	if err := c.do(ctx, http.MethodGet, path, nil, &list); err != nil {
+		return nil, err
+	}
+	return list.Threads, nil
+}
+
+var threadArchiveOpts struct{ undo, json bool }
+
+var threadArchiveCmd = &cobra.Command{
+	Use:   "archive <id>…",
+	Short: "归档线程（--undo 取消归档）",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		out, err := threadArchive(cmd.Context(), c, args, threadArchiveOpts.undo, os.Stderr)
+		if threadArchiveOpts.json && len(out) > 0 {
+			if jerr := printJSON(out); err == nil {
+				err = jerr
+			}
+		}
+		return err
+	},
+}
+
+// threadArchive 逐个 `PATCH threads/{id} {archived}`，每个成功的打一行到 errw；遇错即停。
+func threadArchive(ctx context.Context, c *apiClient, ids []string, undo bool, errw io.Writer) ([]apigen.Thread, error) {
+	archived := !undo
+	verb := "已归档"
+	if undo {
+		verb = "已取消归档"
+	}
+	out := []apigen.Thread{}
+	for _, id := range ids {
+		var t apigen.Thread
+		if err := c.do(ctx, http.MethodPatch, "/api/v1/threads/"+url.PathEscape(id), apigen.ThreadPatch{Archived: &archived}, &t); err != nil {
+			return out, fmt.Errorf("%s: %w", id, err)
+		}
+		out = append(out, t)
+		fmt.Fprintln(errw, verb, t.ID)
+	}
+	return out, nil
 }
 
 var threadShowOpts struct{ json, entries bool }
@@ -140,8 +246,8 @@ var threadShowCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			for _, e := range activeBranch(entries, leaf) {
-				role, text := entryText(e)
+			for _, e := range transcript.ActiveBranch(entries, leaf) {
+				role, text := transcript.LineText(e)
 				if role == "" {
 					continue
 				}
@@ -172,25 +278,15 @@ var threadShowCmd = &cobra.Command{
 	},
 }
 
-// cliEntry 是 `GET threads/{id}/entries` 的条目。
-type cliEntry struct {
-	Seq      int64           `json:"seq"`
-	File     string          `json:"file"`
-	EntryID  string          `json:"entryId"`
-	ParentID *string         `json:"parentId"`
-	Type     string          `json:"type"`
-	Payload  json.RawMessage `json:"payload"`
-}
-
-func fetchEntries(ctx context.Context, c *apiClient, id string) ([]cliEntry, string, error) {
-	var all []cliEntry
+func fetchEntries(ctx context.Context, c *apiClient, id string) ([]transcript.Entry, string, error) {
+	var all []transcript.Entry
 	var after int64
 	leaf := ""
 	for {
 		var page struct {
-			Entries     []cliEntry `json:"entries"`
-			HasMore     bool       `json:"hasMore"`
-			LeafEntryID *string    `json:"leafEntryId"`
+			Entries     []transcript.Entry `json:"entries"`
+			HasMore     bool               `json:"hasMore"`
+			LeafEntryID *string            `json:"leafEntryId"`
 		}
 		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/threads/%s/entries?after=%d&limit=500", id, after), nil, &page); err != nil {
 			return nil, "", err
@@ -204,108 +300,6 @@ func fetchEntries(ctx context.Context, c *apiClient, id string) ([]cliEntry, str
 		}
 		after = page.Entries[len(page.Entries)-1].Seq
 	}
-}
-
-// activeBranch 返回活动分支上的条目：主会话文件按首次出现顺序拼接；
-// 叶子所在文件从叶子沿 parentId 回溯，其余文件从其最后一条条目回溯。子 agent 转录不含在内。
-func activeBranch(entries []cliEntry, leaf string) []cliEntry {
-	type fileEntries struct {
-		first int64
-		byID  map[string]cliEntry
-		last  string
-	}
-	files := map[string]*fileEntries{}
-	for _, e := range entries {
-		if strings.Contains(e.File, "/") || strings.HasPrefix(e.EntryID, "__") {
-			continue
-		}
-		f := files[e.File]
-		if f == nil {
-			f = &fileEntries{first: e.Seq, byID: map[string]cliEntry{}}
-			files[e.File] = f
-		}
-		f.byID[e.EntryID] = e
-		f.last = e.EntryID
-	}
-	names := make([]string, 0, len(files))
-	for n := range files {
-		names = append(names, n)
-	}
-	sort.Slice(names, func(i, j int) bool { return files[names[i]].first < files[names[j]].first })
-	var out []cliEntry
-	for _, n := range names {
-		f := files[n]
-		start := f.last
-		if _, ok := f.byID[leaf]; ok {
-			start = leaf
-		}
-		var chain []cliEntry
-		seen := map[string]bool{}
-		for id := start; id != "" && !seen[id]; {
-			e, ok := f.byID[id]
-			if !ok {
-				break
-			}
-			seen[id] = true
-			chain = append(chain, e)
-			if e.ParentID == nil {
-				break
-			}
-			id = *e.ParentID
-		}
-		for i := len(chain) - 1; i >= 0; i-- {
-			out = append(out, chain[i])
-		}
-	}
-	return out
-}
-
-// entryText 提取消息条目的角色与文本；非消息条目返回空角色。
-func entryText(e cliEntry) (string, string) {
-	if e.Type != "message" {
-		return "", ""
-	}
-	var p struct {
-		Message struct {
-			Role     string          `json:"role"`
-			ToolName string          `json:"toolName"`
-			Content  json.RawMessage `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(e.Payload, &p) != nil {
-		return "", ""
-	}
-	m := p.Message
-	var text string
-	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
-		text = s
-	} else {
-		var blocks []struct {
-			Type      string          `json:"type"`
-			Text      string          `json:"text"`
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		}
-		_ = json.Unmarshal(m.Content, &blocks)
-		var parts []string
-		for _, b := range blocks {
-			switch b.Type {
-			case "text":
-				parts = append(parts, b.Text)
-			case "toolCall":
-				parts = append(parts, fmt.Sprintf("<tool %s %s>", b.Name, b.Arguments))
-			case "image":
-				parts = append(parts, "<image>")
-			}
-		}
-		text = strings.Join(parts, "\n")
-	}
-	role := m.Role
-	if role == "toolResult" && m.ToolName != "" {
-		role += ":" + m.ToolName
-	}
-	return role, text
 }
 
 var threadSendOpts struct {
@@ -346,72 +340,28 @@ var threadSendCmd = &cobra.Command{
 	},
 }
 
-// wsCommand 经 WebSocket 下发一条 omp 命令并等待其应答。
-func wsCommand(ctx context.Context, c *apiClient, threadID string, frame any) (json.RawMessage, error) {
-	var tk apigen.WsTicket
-	if err := c.do(ctx, http.MethodPost, "/api/v1/ws-ticket", nil, &tk); err != nil {
-		return nil, err
-	}
-	u, err := url.Parse(c.base)
-	if err != nil {
-		return nil, err
-	}
-	switch u.Scheme {
-	case "https":
-		u.Scheme = "wss"
-	default:
-		u.Scheme = "ws"
-	}
-	u.Path = strings.TrimSuffix(u.Path, "/") + "/api/v1/ws"
-	u.RawQuery = url.Values{"ticket": {tk.Ticket}}.Encode()
-	ws, _, err := websocket.Dial(ctx, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer ws.CloseNow()
-	ws.SetReadLimit(64 << 20)
-	const id = "cli-1"
-	msg, _ := json.Marshal(map[string]any{"type": "cmd", "threadId": threadID, "id": id, "frame": frame})
-	if err := ws.Write(ctx, websocket.MessageText, msg); err != nil {
-		return nil, err
-	}
-	for {
-		_, b, err := ws.Read(ctx)
-		if err != nil {
-			return nil, err
-		}
-		var m struct {
-			Type     string          `json:"type"`
-			ID       string          `json:"id"`
-			Code     string          `json:"code"`
-			Message  string          `json:"message"`
-			Response json.RawMessage `json:"response"`
-		}
-		if json.Unmarshal(b, &m) != nil || m.ID != id {
-			continue
-		}
-		switch m.Type {
-		case "res":
-			_ = ws.Close(websocket.StatusNormalClosure, "")
-			return m.Response, nil
-		case "error":
-			return nil, &apiError{Code: m.Code, Message: m.Message}
-		}
-	}
-}
-
 func init() {
 	f := threadNewCmd.Flags()
 	f.StringVar(&threadNewOpts.project, "project", "", "项目名")
 	f.BoolVar(&threadNewOpts.noProject, "no-project", false, "不关联项目")
 	f.StringVar(&threadNewOpts.provider, "provider", "", "orb provider 名称")
 	f.StringVar(&threadNewOpts.orbType, "type", "", "orb 类型")
+	f.StringVar(&threadNewOpts.orb, "orb", "", "挂到已有 orb（orb-…；与 --provider / --type 互斥）")
+	f.StringVar(&threadNewOpts.title, "title", "", "线程标题")
+	f.StringArrayVar(&threadNewOpts.labels, "label", nil, "标签（可重复）")
 	f.BoolVar(&threadNewOpts.json, "json", false, "以 JSON 输出线程")
-	threadListCmd.Flags().BoolVar(&threadListJSON, "json", false, "以 JSON 输出")
+	lf := threadListCmd.Flags()
+	lf.BoolVar(&threadListOpts.json, "json", false, "以 JSON 输出")
+	lf.BoolVar(&threadListOpts.archived, "archived", false, "只列已归档线程")
+	lf.StringVar(&threadListOpts.state, "state", "", "按状态过滤（provisioning / working / awaiting_input / idle / error）")
+	lf.StringVar(&threadListOpts.project, "project", "", "按项目过滤（项目名、id 或 none）")
+	lf.StringVarP(&threadListOpts.query, "query", "q", "", "标题 / 标签关键字")
+	threadArchiveCmd.Flags().BoolVar(&threadArchiveOpts.undo, "undo", false, "取消归档")
+	threadArchiveCmd.Flags().BoolVar(&threadArchiveOpts.json, "json", false, "以 JSON 输出线程")
 	threadShowCmd.Flags().BoolVar(&threadShowOpts.json, "json", false, "以 JSON 输出线程")
 	threadShowCmd.Flags().BoolVar(&threadShowOpts.entries, "entries", false, "按活动分支打印条目")
 	threadSendCmd.Flags().BoolVar(&threadSendOpts.steer, "steer", false, "插入当前回合（steer）")
 	threadSendCmd.Flags().DurationVar(&threadSendOpts.timeout, "timeout", 5*time.Minute, "等待 agent 应答的时长（含唤醒 orb）")
-	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd)
+	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd, threadArchiveCmd)
 	root.AddCommand(threadCmd)
 }

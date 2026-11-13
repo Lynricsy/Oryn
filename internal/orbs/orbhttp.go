@@ -33,6 +33,8 @@ const (
 	FeatureFS          = "fs"
 	FeatureGit         = "git"
 	FeatureAttachments = "attachments"
+	// FeatureSync：/sync/prepare 与 /sync/bundle（M5 `oryn sync`）。
+	FeatureSync = "sync"
 )
 
 // usableState 报告 orb 处于 state 时 orbd 是否在跑、可服务 fs 流。

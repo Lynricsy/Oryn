@@ -177,6 +177,9 @@ type Runtime struct {
 
 	// svc 是受管服务监督器（M4）。
 	svc *serviceSupervisor
+
+	// syncMu 串行化 /sync/prepare（共用仓库里的临时 index 与 refs/oryn/sync/*）。
+	syncMu sync.Mutex
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -532,7 +535,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		Os:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		Threads:      threads,
-		Features:     []string{"fs", "git", "attachments", "services", "portal"},
+		Features:     []string{"fs", "git", "attachments", "services", "portal", "sync"},
 	}
 }
 

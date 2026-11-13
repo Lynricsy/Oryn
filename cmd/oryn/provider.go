@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -82,8 +85,39 @@ var providerLsCmd = &cobra.Command{
 	},
 }
 
+var providerRmCmd = &cobra.Command{
+	Use:   "rm <名称|id>",
+	Short: "删除 provider（其令牌随即失效）",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		return providerRm(cmd.Context(), c, args[0], os.Stderr)
+	},
+}
+
+// providerRm 按名称或 id 找到 provider 并删除。
+func providerRm(ctx context.Context, c *apiClient, nameOrID string, errw io.Writer) error {
+	var list apigen.ProviderList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/providers", nil, &list); err != nil {
+		return err
+	}
+	for _, p := range list.Providers {
+		if p.Name == nameOrID || p.ID == nameOrID {
+			if err := c.do(ctx, http.MethodDelete, "/api/v1/providers/"+url.PathEscape(p.ID), nil, nil); err != nil {
+				return err
+			}
+			fmt.Fprintln(errw, "已删除", p.Name)
+			return nil
+		}
+	}
+	return fmt.Errorf("provider %q 不存在", nameOrID)
+}
+
 func init() {
 	providerLsCmd.Flags().BoolVar(&providerLsJSON, "json", false, "输出 JSON")
-	providerCmd.AddCommand(providerCreateCmd, providerLsCmd)
+	providerCmd.AddCommand(providerCreateCmd, providerLsCmd, providerRmCmd)
 	root.AddCommand(providerCmd)
 }

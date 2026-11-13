@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 )
 
@@ -173,7 +174,7 @@ func serveOrbProxy(w http.ResponseWriter, r *http.Request, rt http.RoundTripper,
 			ok := res.StatusCode >= 200 && res.StatusCode < 300
 			if opt.raw && ok {
 				hdr.Set("Content-Type", "application/octet-stream")
-				hdr.Set("Content-Disposition", attachmentDisposition(opt.filename))
+				hdr.Set("Content-Disposition", attachments.Disposition(opt.filename))
 				hdr.Set("Content-Security-Policy", "sandbox")
 			} else if opt.text && ok {
 				hdr.Set("Content-Type", "text/plain; charset=utf-8")
@@ -266,28 +267,6 @@ func (s *Server) orbBaseBranch(ctx context.Context, orbID string) string {
 	return strings.TrimSpace(*p.BaseBranch)
 }
 
-// attachmentDisposition 构造 RFC 6266 的附件头，文件名按 RFC 5987 以 UTF-8 百分号编码放进 filename*。
-func attachmentDisposition(name string) string {
-	if name == "" || name == "." || name == "/" {
-		name = "download"
-	}
-	const attrChar = "!#$&+-.^_`|~"
-	var b strings.Builder
-	b.WriteString("attachment; filename*=UTF-8''")
-	for i := range len(name) {
-		c := name[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte(attrChar, c) >= 0 {
-			b.WriteByte(c)
-			continue
-		}
-		const hex = "0123456789ABCDEF"
-		b.WriteByte('%')
-		b.WriteByte(hex[c>>4])
-		b.WriteByte(hex[c&0xf])
-	}
-	return b.String()
-}
-
 func bgFlag(p *apigen.OrbBackgroundQuery) bool { return p != nil && *p }
 
 // ---- fs ----
@@ -357,4 +336,19 @@ func (s *Server) StageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.O
 // UnstageOrbGit 实现 POST /api/v1/orbs/{id}/git/unstage。
 func (s *Server) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
 	s.proxyOrb(w, r, id, "/git/unstage", orbProxyOpt{maxBody: maxOrbJSONBody})
+}
+
+// ---- sync（特性名即上游路径首段 orbs.FeatureSync：旧版 orbd → 409 orbd_outdated）----
+
+// orbSyncTimeout 是 sync/prepare 的上限（orbd 侧单次 git 调用限 5 分钟）。
+const orbSyncTimeout = 6 * time.Minute
+
+// PrepareOrbSync 实现 POST /api/v1/orbs/{id}/sync/prepare。
+func (s *Server) PrepareOrbSync(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, params apigen.PrepareOrbSyncParams) {
+	s.proxyOrb(w, r, id, "/sync/prepare", orbProxyOpt{bg: bgFlag(params.Bg), maxBody: maxOrbJSONBody, timeout: orbSyncTimeout})
+}
+
+// GetOrbSyncBundle 实现 GET /api/v1/orbs/{id}/sync/bundle（原始字节，以附件返回）。
+func (s *Server) GetOrbSyncBundle(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.GetOrbSyncBundleParams) {
+	s.proxyOrb(w, r, id, "/sync/bundle", orbProxyOpt{raw: true, filename: "oryn-sync.bundle"})
 }
