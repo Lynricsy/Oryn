@@ -57,17 +57,22 @@ interface PillText {
 	label: string;
 	main: string;
 	badge?: string;
-	/** 主文字后的图标（模型胶囊的思考级别圆圈） */
+	/** 主文字后的图标（模型胶囊的思考级别圆圈）；圆形按钮里缩成右下角角标 */
 	trail?: ReactNode;
 }
 
-/** 底部胶囊；快捷键只放进悬停提示，输入框里不显示按键提示。 */
+/**
+ * 底部选项按钮；快捷键只放进悬停提示，输入框里不显示按键提示。
+ * `pill`：图标 + 名字，放不下时文字截断；`circle`：窄屏上 orb、模型（以及以后的浏览器 profile）
+ * 只留一个 32px 小圆圈，名字靠 aria-label 与悬停提示，把横向空间让给项目名。
+ */
 function PillButton({
 	icon,
 	text,
 	shortcut,
 	onClick,
 	active,
+	shape = "pill",
 }: {
 	/** 图标名，或现成的装饰节点（如模型 logo） */
 	icon: IconName | ReactElement;
@@ -75,7 +80,9 @@ function PillButton({
 	shortcut: string;
 	onClick: () => void;
 	active: boolean;
+	shape?: "pill" | "circle";
 }) {
+	const circle = shape === "circle";
 	return (
 		<button
 			type="button"
@@ -83,16 +90,29 @@ function PillButton({
 			aria-expanded={active}
 			aria-label={text.label}
 			title={`${text.label} (${shortcut})`}
-			className={`inline-flex h-8 max-w-60 items-center gap-1.5 rounded-full border px-3 text-xs shadow-xs transition-colors duration-150 ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
+			className={`relative inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : "min-w-0 max-w-60 shrink gap-1.5 px-3"} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
-			{typeof icon === "string" ? (
-				<Icon name={icon} size={13} className="shrink-0" />
-			) : (
-				icon
+			<span className="inline-flex shrink-0">
+				{typeof icon === "string" ? (
+					<Icon name={icon} size={circle ? 15 : 13} />
+				) : (
+					icon
+				)}
+			</span>
+			{!circle && <span className="min-w-0 truncate">{text.main}</span>}
+			{!circle && text.badge && (
+				<span className="inline-flex shrink-0">
+					<Badge>{text.badge}</Badge>
+				</span>
 			)}
-			<span className="min-w-0 truncate">{text.main}</span>
-			{text.badge && <Badge>{text.badge}</Badge>}
-			{text.trail}
+			{text.trail &&
+				(circle ? (
+					<span className="-right-0.5 -bottom-0.5 absolute inline-flex rounded-full bg-panel p-px">
+						{text.trail}
+					</span>
+				) : (
+					text.trail
+				))}
 		</button>
 	);
 }
@@ -191,6 +211,7 @@ export function HomePage(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const bp = useBreakpoint();
+	const compact = bp === "compact";
 	const sidebarToggle = useSidebarToggleShown();
 	const providers = useProviders();
 	const projects = useProjects();
@@ -263,10 +284,11 @@ export function HomePage(): ReactNode {
 						label: t("newThread.newOrbDefault"),
 						main: t("newThread.newOrbDefault"),
 					};
-	const projectLabel = projectId
+	const projectName = projectId
 		? (projects.data?.projects.find((p) => p.id === projectId)?.name ??
 			projectId)
 		: t("newThread.noProject");
+	const projectText: PillText = { label: projectName, main: projectName };
 	// 与线程输入坞的 ModelChip 同一套省空间规则：认得出品牌时去掉系列名（logo 已说明），思考级别画成圆圈；
 	// 胶囊的无障碍名与悬停提示仍是全名加级别
 	const modelId = model.trim().split("/").pop()?.replace(/:.*$/, "") || model;
@@ -409,10 +431,13 @@ export function HomePage(): ReactNode {
 								}}
 							/>
 							{/*
-							 * 工具行：附件 + 分隔、可换行的选项胶囊、发送钮。发送钮始终在第一行最右；
-							 * 宽屏一行放下，窄屏放不下的胶囊在自己的容器里折到下一行（items-start 让发送钮钉在首行）。
+							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊、发送钮。
+							 * 窄屏两行：选项单独占第一行（orb、模型是小圆圈，项目名占剩下的宽度），
+							 * 附件与发送钮在第二行两端，互不挤占。
 							 */}
-							<div className="relative flex items-start gap-0.5 px-2 pb-2">
+							<div
+								className={`relative flex px-2 pb-2 ${compact ? "flex-wrap items-center gap-y-1.5" : "items-start gap-0.5"}`}
+							>
 								<div className="flex h-8 shrink-0 items-center">
 									<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
 										<Icon name="attach" size={15} />
@@ -427,12 +452,16 @@ export function HomePage(): ReactNode {
 											}}
 										/>
 									</label>
-									<span
-										aria-hidden
-										className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
-									/>
+									{!compact && (
+										<span
+											aria-hidden
+											className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
+										/>
+									)}
 								</div>
-								<div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-1.5">
+								<div
+									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "order-first w-full" : "flex-1"}`}
+								>
 									<PillButton
 										icon="box"
 										text={executorText}
@@ -441,10 +470,11 @@ export function HomePage(): ReactNode {
 										onClick={() =>
 											setPill(pill === "executor" ? null : "executor")
 										}
+										shape={compact ? "circle" : "pill"}
 									/>
 									<PillButton
 										icon="folder"
-										text={{ label: projectLabel, main: projectLabel }}
+										text={projectText}
 										shortcut="Ctrl+J"
 										active={pill === "project"}
 										onClick={() =>
@@ -452,11 +482,12 @@ export function HomePage(): ReactNode {
 										}
 									/>
 									<PillButton
-										icon={<ModelLogo model={model} size={13} />}
+										icon={<ModelLogo model={model} size={compact ? 16 : 13} />}
 										text={modelText}
 										shortcut="Ctrl+S"
 										active={pill === "model"}
 										onClick={() => setPill(pill === "model" ? null : "model")}
+										shape={compact ? "circle" : "pill"}
 									/>
 								</div>
 								<button
@@ -470,7 +501,7 @@ export function HomePage(): ReactNode {
 									}
 									onClick={() => void submit()}
 									// 与线程页发送钮相同：强调色实心圆角方块，空态只降不透明度
-									className="ml-1.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none"
+									className={`${compact ? "ml-auto" : "ml-1.5"} inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none`}
 								>
 									{busy ? (
 										<Spinner size={14} />
