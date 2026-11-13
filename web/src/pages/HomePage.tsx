@@ -336,11 +336,17 @@ export function HomePage(): ReactNode {
 			if (!text) return;
 			const projNatural =
 				proj.offsetWidth - text.clientWidth + text.scrollWidth;
-			const gap = Number.parseFloat(getComputedStyle(row).columnGap) || 0;
+			const cs = getComputedStyle(row);
+			const gap = Number.parseFloat(cs.columnGap) || 0;
+			// clientWidth 含左右内边距，子元素实际能用的是内容盒宽度
+			const avail =
+				row.clientWidth -
+				(Number.parseFloat(cs.paddingLeft) || 0) -
+				(Number.parseFloat(cs.paddingRight) || 0);
 			const orb = row.firstElementChild as HTMLElement | null;
 			const need =
 				(orb?.offsetWidth ?? 0) + gap + projNatural + gap + ghost.offsetWidth;
-			setModelFolded(need > row.clientWidth);
+			setModelFolded(need > avail);
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
