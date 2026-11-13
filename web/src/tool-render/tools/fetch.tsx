@@ -70,7 +70,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const url = str(args.url) ?? str(args.path);
-	const method = (str(args.method) ?? "").toUpperCase();
+	// 地址（折叠行截到 90 字）、非 GET 方法、raw 与截断都已在折叠行里
 	const timeout = num(args.timeout);
 	const details = fetchDetails(detailsRecord(result));
 	const redirected = Boolean(
@@ -79,20 +79,15 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	return (
 		<>
 			<KvGrid>
-				<Kv k="url">{url ?? <InvalidArg what="url" />}</Kv>
-				<Kv k="method">
-					{method && method !== "GET" && <Badge tone="accent">{method}</Badge>}
+				<Kv k="url">
+					{url === null ? <InvalidArg what="url" /> : url.length > 90 && url}
 				</Kv>
-				<Kv k="raw">{args.raw === true && <Badge>raw</Badge>}</Kv>
 				<Kv k="timeout">{timeout != null && `${timeout}s`}</Kv>
 				<Kv k="final url">{redirected && details?.finalUrl}</Kv>
 				<Kv k="content-type">{details?.contentType}</Kv>
 				<Kv k="via">{details?.method}</Kv>
 				<Kv k="notes">
 					{details && details.notes.length > 0 && details.notes.join("; ")}
-				</Kv>
-				<Kv k="truncated">
-					{details?.truncated && <Badge tone="warn">output truncated</Badge>}
 				</Kv>
 			</KvGrid>
 			<ResultText result={result} maxLines={12} lang="markdown" />

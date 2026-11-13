@@ -7,6 +7,7 @@ import {
 	InvalidArg,
 	Kv,
 	KvGrid,
+	MetaCount,
 	Output,
 	PathText,
 	ResultText,
@@ -14,9 +15,11 @@ import {
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
+	fitsSummary,
 	normalizeWs,
 	num,
 	scopePaths,
+	shortenPath,
 	str,
 	truncate,
 } from "../util";
@@ -59,7 +62,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const skip = num(args.skip);
 
 	const details = detailsRecord(result);
-	const matchCount = num(details?.matchCount);
 	const fileCount = num(details?.fileCount);
 	const filesSearched = num(details?.filesSearched);
 	const limitReached = details?.limitReached === true;
@@ -69,24 +71,24 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		: [];
 	const parseErrorsTotal = num(details?.parseErrorsTotal) ?? parseErrors.length;
 
+	// 语言、首个模式与首个路径已在折叠行里；这里只补折叠行没有的参数
 	const argBadges: ReactNode[] = [
-		lang && (
-			<Badge key="lang" tone="accent">
-				{lang}
-			</Badge>
-		),
 		glob && <Badge key="glob">glob={glob}</Badge>,
 		sel && <Badge key="sel">sel={sel}</Badge>,
 		skip !== null && skip > 0 && <Badge key="skip">skip:{skip}</Badge>,
 	];
+	const showPatterns =
+		patterns.length > 1 ||
+		(patterns[0] !== undefined && !fitsSummary(patterns[0]));
+	const showPaths =
+		paths.length > 1 || (paths[0] !== undefined && !fitsSummary(paths[0]));
+	const showScope =
+		scopePath !== null &&
+		(paths.length !== 1 || shortenPath(scopePath) !== shortenPath(paths[0]!));
+	// 匹配数在头部读数里
 	const resultBadges: ReactNode[] =
 		result && !result.isError
 			? [
-					matchCount !== null && (
-						<Badge key="matches" tone={matchCount === 0 ? "warn" : "ok"}>
-							{matchCount} {matchCount === 1 ? "match" : "matches"}
-						</Badge>
-					),
 					fileCount !== null && fileCount > 0 && (
 						<Badge key="files">
 							{fileCount} {fileCount === 1 ? "file" : "files"}
@@ -109,6 +111,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			{patterns.length === 0 ? (
 				<InvalidArg what="pat" />
 			) : (
+				showPatterns &&
 				patterns.map((pat, i) => (
 					<CodeBlock
 						key={i}
@@ -119,9 +122,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					/>
 				))
 			)}
-			{(paths.length > 0 || scopePath) && (
+			{(showPaths || showScope) && (
 				<KvGrid>
-					{paths.length > 0 && (
+					{showPaths && (
 						<Kv k={paths.length === 1 ? "path" : "paths"}>
 							{paths.map((p, i) => (
 								<span key={i}>
@@ -131,7 +134,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 							))}
 						</Kv>
 					)}
-					{scopePath && (
+					{showScope && scopePath && (
 						<Kv k="scope">
 							<PathText path={scopePath} />
 						</Kv>
@@ -154,4 +157,17 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const astGrepRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：匹配数（0 处时提示）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	if (!result || result.isError) return null;
+	const matchCount = num(detailsRecord(result)?.matchCount);
+	return (
+		<MetaCount
+			unit="matches"
+			count={matchCount}
+			tone={matchCount === 0 ? "warn" : undefined}
+		/>
+	);
+}
+
+export const astGrepRenderer: ToolRenderer = { Summary, Meta, Body };

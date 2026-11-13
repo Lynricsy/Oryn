@@ -1,6 +1,13 @@
 /** `glob` (legacy `find`) — glob-based file finder; results are paths sorted by mtime. */
 import type { ReactNode } from "react";
-import { Badge, Badges, InvalidArg, Note, ResultText } from "../parts";
+import {
+	Badge,
+	Badges,
+	InvalidArg,
+	MetaCount,
+	Note,
+	ResultText,
+} from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -24,7 +31,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const limit = num(args.limit);
 	const timeout = num(args.timeout);
-	const fileCount = num(details?.fileCount);
 	const resultLimit = num(details?.resultLimitReached);
 	const scopePath = str(details?.scopePath);
 	const error = str(details?.error);
@@ -48,11 +54,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					args.gitignore === false && <Badge>no-gitignore</Badge>,
 					args.hidden === false && <Badge>no-hidden</Badge>,
 					timeout !== null && <Badge>timeout {timeout}s</Badge>,
-					fileCount !== null && (
-						<Badge tone="accent">
-							{fileCount} file{fileCount === 1 ? "" : "s"}
-						</Badge>
-					),
 					scopePath !== null && <Badge>in {shortenPath(scopePath)}</Badge>,
 					truncated && (
 						<Badge tone="warn">
@@ -74,4 +75,12 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const globRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：找到的文件数。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	if (!result || result.isError) return null;
+	return (
+		<MetaCount unit="files" count={num(detailsRecord(result)?.fileCount)} />
+	);
+}
+
+export const globRenderer: ToolRenderer = { Summary, Meta, Body };

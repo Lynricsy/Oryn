@@ -1,9 +1,17 @@
 /** `grep` (legacy `search`) — ripgrep content search across workspace files. */
 import type { ReactNode } from "react";
-import { Badge, Badges, InvalidArg, Note, ResultText } from "../parts";
+import {
+	Badge,
+	Badges,
+	InvalidArg,
+	MetaCount,
+	Note,
+	ResultText,
+} from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
+	fitsSummary,
 	num,
 	resultTextOf,
 	scopePaths,
@@ -50,7 +58,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
-	const matchCount = num(details?.matchCount);
+	// 匹配数在头部读数里，这里只补文件数与截断
 	const fileCount = num(details?.fileCount);
 	const truncated = details?.truncated === true;
 	const error = str(details?.error);
@@ -60,24 +68,27 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			if (typeof p === "string") missing.push(shortenPath(p));
 		}
 	}
-	const badges = argBadges(args);
-	if (matchCount !== null)
-		badges.push(`${matchCount} ${matchCount === 1 ? "match" : "matches"}`);
+	const counts: ReactNode[] = [];
 	if (fileCount !== null)
-		badges.push(`${fileCount} ${fileCount === 1 ? "file" : "files"}`);
+		counts.push(`${fileCount} ${fileCount === 1 ? "file" : "files"}`);
+	if (truncated)
+		counts.push(
+			<Badge key="truncated" tone="warn">
+				truncated
+			</Badge>,
+		);
+	// 模式、范围与参数徽标已在折叠行里；只有折叠行放不下时才在这里给出全文
+	const pattern = str(args.pattern) ?? "";
+	const paths = pathsOf(args).join(", ");
 	return (
 		<>
-			<div>
-				<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
-				<span className="tv-path">{pathsOf(args).join(", ")}</span>{" "}
-				<Badges items={badges} />
-				{truncated && (
-					<>
-						{" "}
-						<Badge tone="warn">truncated</Badge>
-					</>
-				)}
-			</div>
+			{!fitsSummary(`/${pattern}/ in ${paths}`) && (
+				<div>
+					<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
+					<span className="tv-path">{paths}</span>
+				</div>
+			)}
+			<Badges items={counts} />
 			{missing.length > 0 && (
 				<Note tone="warn">skipped missing: {missing.join(", ")}</Note>
 			)}
@@ -89,4 +100,17 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const grepRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：匹配数（0 处时提示）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	if (!result || result.isError) return null;
+	const matchCount = num(detailsRecord(result)?.matchCount);
+	return (
+		<MetaCount
+			unit="matches"
+			count={matchCount}
+			tone={matchCount === 0 ? "warn" : undefined}
+		/>
+	);
+}
+
+export const grepRenderer: ToolRenderer = { Summary, Meta, Body };

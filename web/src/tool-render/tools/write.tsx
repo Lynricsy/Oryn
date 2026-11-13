@@ -5,6 +5,7 @@ import {
 	Badges,
 	CodeBlock,
 	InvalidArg,
+	MetaCount,
 	Note,
 	Output,
 	PathText,
@@ -42,19 +43,15 @@ function diagnosticsOf(
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const path = str(args.file_path ?? args.path);
+	return path === null ? <InvalidArg what="path" /> : <PathText path={path} />;
+}
+
+/** 右侧读数：写入的行数。 */
+function Meta({ args }: ToolRenderProps): ReactNode {
 	const content = str(args.content);
-	const lines = content ? content.split("\n").length : 0;
-	return (
-		<>
-			{path === null ? <InvalidArg what="path" /> : <PathText path={path} />}
-			{lines > 1 && (
-				<>
-					{" "}
-					<Badge>{lines} lines</Badge>
-				</>
-			)}
-		</>
-	);
+	return content ? (
+		<MetaCount unit="lines" count={content.split("\n").length} />
+	) : null;
 }
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
@@ -103,4 +100,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const writeRenderer: ToolRenderer = { Summary, Body };
+export const writeRenderer: ToolRenderer = { Summary, Meta, Body };

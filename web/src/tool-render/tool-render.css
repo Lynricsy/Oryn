@@ -2,8 +2,9 @@
  *
  * Oryn 改版（Step 6）：工具调用是「过程」，要退到页边。折叠态是一行没有外框的灰度文字：
  * 13px 小图标（灰；悬停/展开时才染上 --cat-* 类别色）+ 工具名 + 等宽摘要，悬停时整行出现底色；
- * 成功只留一枚 ghost 色的小勾，只有失败与运行中才有颜色。展开体是一张细描边圆角卡，
- * 左缘对齐工具名。颜色一律经 `--tv-*` 桥接到全站令牌（index.css 的桥接块），
+ * 成功只留一枚 ghost 色的小勾，只有失败与运行中才有颜色。图标左缘与转录正文左缘对齐（悬停底色
+ * 向左多出 6px），工具名与思考行的标签同在「图标 + 8px」处；展开体是一层内嵌井，左缘对齐工具名。
+ * 颜色一律经 `--tv-*` 桥接到全站令牌（index.css 的桥接块），
  * 圆角、字体、缓动只用原始变量 --r-* / --mono / --sans / --ease。 */
 
 .tv-card {
@@ -33,12 +34,19 @@
 	);
 
 	margin: 0;
-	border-radius: var(--r-md, 8px);
+	border: 1px solid var(--tv-border);
+	border-radius: var(--r-lg, 10px);
+	background: var(--tv-panel);
 	font-family: var(--tv-mono);
 	font-size: 12px;
 	line-height: 1.5;
 	color: var(--tv-fg);
 	isolation: isolate;
+	overflow: hidden;
+}
+
+.tv-card--error {
+	border-color: color-mix(in oklab, var(--tv-err) 35%, var(--tv-border));
 }
 
 /* ---- header ---- */
@@ -46,15 +54,14 @@
 .tv-head {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	width: 100%;
-	min-height: 28px;
-	padding: 0 8px 0 6px;
+	min-height: 38px;
+	padding: 0 10px 0 7px;
 	background: none;
 	border: 0;
-	border-radius: var(--r-md, 8px);
 	font: inherit;
-	color: var(--tv-muted);
+	color: inherit;
 	text-align: left;
 	cursor: pointer;
 	touch-action: manipulation;
@@ -63,7 +70,7 @@
 }
 
 .tv-head:hover {
-	background: var(--tv-hover);
+	background: color-mix(in oklab, var(--tv-hover) 55%, var(--tv-panel));
 }
 
 .tv-head:focus-visible {
@@ -71,20 +78,21 @@
 	outline-offset: -2px;
 }
 
-/* 工具小图标：平时灰，悬停或展开时染上类别色（--cat-*，低彩度，只表达工具类别） */
-.tv-cat {
-	--tv-cat: var(--cat-other, var(--tv-muted));
-	display: inline-grid;
-	place-items: center;
-	flex: none;
-	width: 14px;
-	height: 14px;
-	color: var(--tv-faint);
-	transition: color 150ms var(--ease, ease);
+/* 展开后头部与卡内展开体之间一条发丝线 */
+.tv-head[aria-expanded="true"] {
+	border-bottom: 1px solid var(--tv-border);
 }
 
-.tv-head:hover .tv-cat,
-.tv-head[aria-expanded="true"] .tv-cat {
+/* 类别色图标方块：底 = 类别色 12%，图标 = 类别色（--cat-*，低彩度，只表达工具类别） */
+.tv-cat {
+	--tv-cat: var(--cat-other, var(--tv-muted));
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	border-radius: var(--r-sm, 6px);
+	background: color-mix(in oklab, var(--tv-cat) 12%, var(--tv-panel));
 	color: var(--tv-cat);
 }
 
@@ -116,9 +124,8 @@
 	height: 14px;
 }
 
-/* 成功是常态，只留一枚很弱的勾；失败才用红 */
 .tv-status--ok {
-	color: var(--tv-ghost);
+	color: var(--tv-ok);
 }
 
 .tv-status--err {
@@ -142,12 +149,14 @@
 }
 
 .tv-name {
+	position: relative;
+	top: -0.5px;
 	flex: none;
 	font-family: var(--tv-sans);
 	font-size: 12.5px;
 	line-height: 20px;
-	font-weight: 550;
-	color: var(--tv-muted);
+	font-weight: 640;
+	color: var(--tv-fg);
 }
 
 /* 摘要：各渲染器拼出的片段（路径、模式、徽标……）是这里的 flex 子项，
@@ -162,7 +171,7 @@
 	white-space: nowrap;
 	font-size: 12px;
 	line-height: 20px;
-	color: var(--tv-faint);
+	color: var(--tv-muted);
 	font-variant-numeric: tabular-nums;
 }
 
@@ -174,27 +183,62 @@
 	white-space: nowrap;
 }
 
+/* 右侧读数（行数、+N −M、通过数与耗时……）：各渲染器的 Meta，按语义着色 */
+.tv-meta {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	font-family: var(--tv-sans);
+	font-size: 11.5px;
+	line-height: 20px;
+	color: var(--tv-faint);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.tv-meta:empty {
+	display: none;
+}
+
+.tv-meta-add,
+.tv-meta-del {
+	font-family: var(--tv-mono);
+	font-weight: 600;
+}
+
+.tv-meta-add,
+.tv-meta-ok {
+	color: var(--good-ink, var(--tv-ok));
+}
+
+.tv-meta-ok {
+	font-weight: 600;
+}
+
+.tv-meta-del,
+.tv-meta-err {
+	color: color-mix(in oklab, var(--tv-err) 82%, var(--text));
+}
+
+.tv-meta-err {
+	font-weight: 600;
+}
+
+.tv-meta-warn {
+	color: var(--tv-warn);
+}
+
 .tv-chev {
 	display: inline-grid;
 	place-items: center;
 	flex: none;
+	color: var(--tv-ghost);
+	transition: rotate 150ms var(--ease, ease);
+}
+
+.tv-head:hover .tv-chev {
 	color: var(--tv-faint);
-	opacity: 0;
-	transition:
-		rotate 150ms var(--ease, ease),
-		opacity 150ms var(--ease, ease);
-}
-
-.tv-head:hover .tv-chev,
-.tv-head:focus-visible .tv-chev,
-.tv-head[aria-expanded="true"] .tv-chev {
-	opacity: 1;
-}
-
-@media (hover: none) {
-	.tv-chev {
-		opacity: 1;
-	}
 }
 
 .tv-head[aria-expanded="true"] .tv-chev {
@@ -203,16 +247,14 @@
 
 /* ---- body ---- */
 
-/* 展开体：左缘对齐工具名（6px 内边距 + 14px 图标 + 8px gap） */
+/* 展开体在卡内（头部下方一条发丝线），整块是一层内嵌井：输出块不再各自套底色 */
 .tv-body {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	margin: 2px 0 6px 28px;
+	min-width: 0;
 	padding: 10px 12px;
-	border: 1px solid var(--tv-border);
-	border-radius: var(--r-lg, 10px);
-	background: var(--tv-panel);
+	background: var(--tv-inset);
 }
 
 .tv-intent {
@@ -223,10 +265,9 @@
 }
 
 .tv-partial {
-	margin: 2px 0 6px 28px;
+	margin: 0;
 	padding: 8px 12px;
-	border: 1px solid var(--tv-border);
-	border-radius: var(--r-lg, 10px);
+	border-top: 1px solid var(--tv-border);
 	background: var(--tv-inset);
 	font-size: 11px;
 	line-height: 1.45;
@@ -235,6 +276,34 @@
 	overflow-wrap: anywhere;
 	max-height: 160px;
 	overflow-y: auto;
+}
+
+/* 横向溢出的代码 / diff：被裁掉的一侧渐隐（parts.tsx 的 useOverflowX 写 data-overflow）。
+ * 遮罩只取渐变的不透明度，currentColor 只是一个不透明值，不表达颜色。 */
+.tv-scroll-x[data-overflow="end"] {
+	mask-image: linear-gradient(
+		to right,
+		currentColor calc(100% - 32px),
+		transparent
+	);
+}
+
+.tv-scroll-x[data-overflow="start"] {
+	mask-image: linear-gradient(
+		to left,
+		currentColor calc(100% - 32px),
+		transparent
+	);
+}
+
+.tv-scroll-x[data-overflow="both"] {
+	mask-image: linear-gradient(
+		to right,
+		transparent,
+		currentColor 32px,
+		currentColor calc(100% - 32px),
+		transparent
+	);
 }
 
 /* ---- inline atoms ---- */
@@ -678,6 +747,38 @@
 	color: var(--tv-fg);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+}
+
+/* ---- 展开体（井）里的覆盖（须排在原子样式之后） ---- */
+
+.tv-body .tv-pre,
+.tv-body .tv-diff {
+	padding: 0;
+	border-radius: 0;
+	background: none;
+}
+
+/* diff 的增删底色铺到井的左右边缘；横向滚动时每行至少和最长行一样宽，底色不会断在半截 */
+.tv-body .tv-diff {
+	display: grid;
+	grid-template-columns: minmax(100%, max-content);
+	margin: 0 -12px;
+}
+
+.tv-body .tv-diff-row {
+	padding: 0 12px;
+}
+
+/* 井里的中性徽标用纸面底，免得和井同色只剩一圈描边 */
+.tv-body .tv-badge:not([class*="tv-badge--"]) {
+	background: var(--tv-panel);
+}
+
+/* 井里相邻的两段输出（如写入内容与结果、各个单元格）之间用发丝线分开 */
+.tv-body > .tv-out + .tv-out,
+.tv-body .tv-cell + .tv-cell {
+	padding-top: 8px;
+	border-top: 1px solid var(--tv-border);
 }
 
 /* ---- syntax tokens (highlight.js, scoped) ----

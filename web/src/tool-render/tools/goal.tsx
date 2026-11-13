@@ -108,31 +108,20 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const goal = goalOf(details);
-	const op = str(details?.op) ?? str(args.op);
+	// 动作、状态、目标（64 字以内）与预算参数都已在折叠行里
 	const objective = goal?.objective ?? str(args.objective);
-	const budgetArg = num(args.token_budget);
 	const report = str(details?.completionBudgetReport);
 	const hasTokens =
 		goal !== null && (goal.tokensUsed !== null || goal.tokenBudget !== null);
 	return (
 		<>
 			<KvGrid>
-				<Kv k="op">{describeOp(op)}</Kv>
-				{goal && (
-					<Kv k="status">
-						<Badge tone={statusTone(goal.status)}>{goal.status}</Badge>
-					</Kv>
-				)}
-				{objective !== null && objective.trim() !== "" && (
-					<Kv k="objective">{objective.trim()}</Kv>
-				)}
-				{hasTokens && goal ? (
-					<Kv k="tokens">{tokensLine(goal)}</Kv>
-				) : (
-					budgetArg !== null && (
-						<Kv k="budget">{formatTokens(budgetArg)} tokens</Kv>
-					)
-				)}
+				{objective !== null &&
+					objective.trim() !== "" &&
+					normalizeWs(objective).length > 64 && (
+						<Kv k="objective">{objective.trim()}</Kv>
+					)}
+				{hasTokens && goal && <Kv k="tokens">{tokensLine(goal)}</Kv>}
 				{goal !== null &&
 					goal.timeUsedSeconds !== null &&
 					goal.timeUsedSeconds > 0 && (

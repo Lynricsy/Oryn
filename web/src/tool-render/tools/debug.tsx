@@ -129,14 +129,8 @@ function Body(props: ToolRenderProps): ReactNode {
 		? args.args.filter((a) => typeof a === "string")
 		: [];
 
+	// 折叠行已写出 program（没有 program 时写的是 file:line），这里不再重复
 	const argRows: ReactNode[] = [];
-	if (program !== null) {
-		argRows.push(
-			<Kv key="program" k="program">
-				<PathText path={program} />
-			</Kv>,
-		);
-	}
 	if (programArgs.length > 0) {
 		argRows.push(
 			<Kv key="args" k="args">
@@ -144,13 +138,13 @@ function Body(props: ToolRenderProps): ReactNode {
 			</Kv>,
 		);
 	}
-	if (file !== null) {
+	if (file !== null && program !== null) {
 		argRows.push(
 			<Kv key="file" k="file">
 				<PathText path={file} from={line ?? undefined} />
 			</Kv>,
 		);
-	} else if (line !== null) {
+	} else if (file === null && line !== null) {
 		argRows.push(
 			<Kv key="line" k="line">
 				{line}

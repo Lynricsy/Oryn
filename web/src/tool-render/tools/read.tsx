@@ -5,6 +5,7 @@ import {
 	Badges,
 	Kv,
 	KvGrid,
+	MetaCount,
 	PathText,
 	ResultImages,
 	ResultText,
@@ -15,6 +16,7 @@ import {
 	isRecord,
 	languageFromPath,
 	num,
+	resultTextOf,
 	shortenPath,
 	str,
 } from "../util";
@@ -98,7 +100,12 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		</Badge>
 	);
 	const truncatedBadge = d.truncated && <Badge tone="warn">truncated</Badge>;
-	const resolved = d.suffixTo ?? d.resolvedPath;
+	// 解析后的路径只是头部相对路径的绝对形式时不再重复
+	const raw = d.suffixTo ?? d.resolvedPath;
+	const resolved =
+		raw !== null && path && (raw === path || raw.endsWith(`/${path}`))
+			? null
+			: raw;
 	return (
 		<>
 			{(resolved !== null || d.suffixFrom !== null) && (
@@ -125,4 +132,13 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const readRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：读到的行数（图片等无文本结果不显示）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	if (!result || result.isError) return null;
+	const text = resultTextOf(result).replace(/\n+$/, "");
+	return text ? (
+		<MetaCount unit="lines" count={text.split("\n").length} />
+	) : null;
+}
+
+export const readRenderer: ToolRenderer = { Summary, Meta, Body };

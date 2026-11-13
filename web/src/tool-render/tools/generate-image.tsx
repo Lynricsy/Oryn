@@ -104,6 +104,15 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			<KvGrid>
 				{PROMPT_FIELDS.map(([arg, label]) => {
 					const value = args[arg];
+					const text = str(value);
+					// 折叠行已写出比例与（80 字以内的单行）主体
+					const inHead =
+						text !== null &&
+						(arg === "aspect_ratio" ||
+							(arg === "subject" &&
+								!text.includes("\n") &&
+								text.trim().length <= 80));
+					if (inHead) return null;
 					return (
 						<Kv key={arg} k={label}>
 							{value === undefined

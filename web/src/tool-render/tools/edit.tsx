@@ -3,9 +3,11 @@ import type { ReactNode } from "react";
 import {
 	Badge,
 	DiffBlock,
+	diffStats,
 	InvalidArg,
 	Kv,
 	KvGrid,
+	MetaDiff,
 	Note,
 	Output,
 	PathText,
@@ -63,16 +65,6 @@ function countOps(input: string): number {
 	return count;
 }
 
-function diffStats(diff: string): { added: number; removed: number } {
-	let added = 0;
-	let removed = 0;
-	for (const line of diff.split("\n")) {
-		if (line.startsWith("+")) added++;
-		else if (line.startsWith("-")) removed++;
-	}
-	return { added, removed };
-}
-
 interface DiagnosticsEntry {
 	summary: string | null;
 	messages: string[];
@@ -123,9 +115,6 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 		}
 	}
 	const opCount = input ? countOps(input) : 0;
-	const details = detailsRecord(result);
-	const diff = details && result?.isError !== true ? str(details.diff) : null;
-	const stats = diff ? diffStats(diff) : null;
 	const firstLine = input
 		? truncate(normalizeWs(input.split("\n", 1)[0] ?? ""), 80)
 		: "";
@@ -148,18 +137,6 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 					<Badge>
 						{opCount} op{opCount === 1 ? "" : "s"}
 					</Badge>
-				</>
-			)}
-			{stats !== null && stats.added > 0 && (
-				<>
-					{" "}
-					<Badge tone="ok">+{stats.added}</Badge>
-				</>
-			)}
-			{stats !== null && stats.removed > 0 && (
-				<>
-					{" "}
-					<Badge tone="err">−{stats.removed}</Badge>
 				</>
 			)}
 			{result?.isError === true && (
@@ -298,4 +275,13 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const editRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：本次改动的增删行数。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
+	const diff = details && result?.isError !== true ? str(details.diff) : null;
+	if (!diff) return null;
+	const { added, removed } = diffStats(diff);
+	return <MetaDiff added={added} removed={removed} />;
+}
+
+export const editRenderer: ToolRenderer = { Summary, Meta, Body };

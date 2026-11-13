@@ -64,6 +64,11 @@ export interface ToolRenderProps {
 export interface ToolRenderer {
 	/** Inline single-line header summary. Must not render block elements. */
 	Summary: ComponentType<ToolRenderProps>;
+	/**
+	 * 头部右侧的结果读数（行数、+N −M、匹配数、通过数与耗时……），用 `tv-meta-*` 类按语义着色。
+	 * 读数只在这里出现一次：Summary 与 Body 不再重复。Omit when there is nothing to read out.
+	 */
+	Meta?: ComponentType<ToolRenderProps>;
 	/** Expanded body. Omit when the summary already says everything. */
 	Body?: ComponentType<ToolRenderProps>;
 }

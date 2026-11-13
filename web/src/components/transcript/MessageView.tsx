@@ -320,10 +320,10 @@ function ThinkingBlock({
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="my-0.5">
+		<div>
 			<button
 				type="button"
-				className="group/think flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-left text-muted text-xs hover:text-fg"
+				className="group/think flex h-7 w-full min-w-0 items-center gap-2 rounded-md pr-[11px] text-left text-[12.5px] text-muted hover:text-fg"
 				onClick={() => setOpen((v) => !v)}
 				aria-expanded={open}
 			>
@@ -526,11 +526,60 @@ function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 }
 
 /**
+ * 转录的纵向节奏只有两档（数值取自 D 稿）：连续的过程块（思考行、工具卡）之间 `GAP_PROC`（D 稿
+ * `.tools` 的 gap 6px），正文与过程块之间、以及正文段与正文段之间 `GAP_FLOW`（D 稿工具组下方 12px）。
+ * 消息内的块与虚拟列表的相邻行（Transcript 按行首行尾的块类型给行加上边距）用同一套规则。
+ */
+export const GAP_PROC = 6;
+export const GAP_FLOW = 12;
+
+/** 块在节奏里的类别：过程行或正文。 */
+export type FlowKind = "proc" | "prose";
+
+export function flowGap(prev: FlowKind, next: FlowKind): number {
+	return prev === "proc" && next === "proc" ? GAP_PROC : GAP_FLOW;
+}
+
+/** 助手消息内容块的节奏类别；不渲染的块返回 null（与 AssistantMessage 的渲染条件一致）。 */
+function blockKind(b: unknown): FlowKind | null {
+	if (!isRecord(b)) return null;
+	switch (b.type) {
+		case "text":
+			return typeof b.text === "string" && b.text ? "prose" : null;
+		case "thinking":
+			return typeof b.thinking === "string" && b.thinking ? "proc" : null;
+		case "redactedThinking":
+		case "toolCall":
+			return "proc";
+		case "image":
+			return "prose";
+		default:
+			return null;
+	}
+}
+
+/** 助手消息首尾两块的节奏类别（Transcript 用来定相邻行的间距）。 */
+export function assistantEdges(
+	message: JsonRecord,
+	live: boolean,
+	hasFooter: boolean,
+): [FlowKind, FlowKind] {
+	const content = Array.isArray(message.content) ? message.content : [];
+	const kinds = content.map(blockKind).filter((k) => k !== null);
+	const first = kinds[0] ?? "prose";
+	const stop = message.stopReason;
+	// 停止提示与回合脚注都是正文层的块
+	const tailProse = hasFooter || stop === "error" || stop === "aborted";
+	const last = tailProse ? "prose" : (kinds[kinds.length - 1] ?? "prose");
+	return [first, live && kinds.length === 0 ? "prose" : last];
+}
+
+/**
  * 回合中间的助手消息自己的操作菜单：放在头像列里（与头像同一位置），悬停 / 聚焦时显现，
  * 粗指针常显弱化按钮。回合起点那条消息的头像在悬停时让位；粗指针下按钮挪到头像下方。
  */
-const GUTTER_MENU = "absolute top-1 -left-[34px]";
-const GUTTER_MENU_UNDER_AVATAR = "pointer-coarse:top-[30px]";
+const GUTTER_MENU = "absolute top-0.5 -left-[34px]";
+const GUTTER_MENU_UNDER_AVATAR = "pointer-coarse:top-[28px]";
 
 function AssistantMessage({
 	message,
@@ -554,8 +603,61 @@ function AssistantMessage({
 		typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 	// 回合末尾的消息由脚注承载整回合菜单；其余已结束的消息各自带一个菜单
 	const ownMenu = !live && !turn;
+	let prev: FlowKind | null = null;
+	const blocks: ReactNode[] = [];
+	content.forEach((b, i) => {
+		const kind = blockKind(b);
+		if (kind === null || !isRecord(b)) return;
+		const key = `${i}-${String(b.type)}`;
+		const streaming = live && i === lastIdx;
+		const marginTop = prev === null ? 0 : flowGap(prev, kind);
+		prev = kind;
+		let node: ReactNode;
+		switch (b.type) {
+			case "text":
+				node = <Markdown text={String(b.text)} streaming={streaming} />;
+				break;
+			case "thinking":
+				node = (
+					<ThinkingBlock text={String(b.thinking)} streaming={streaming} />
+				);
+				break;
+			case "redactedThinking":
+				node = (
+					<div className="flex h-7 items-center gap-2 text-faint text-xs italic">
+						<Icon name="brain" size={14} className="shrink-0" />
+						{t("transcript.redactedThinking")}
+					</div>
+				);
+				break;
+			case "toolCall":
+				node = (
+					<ToolCard
+						toolCallId={typeof b.id === "string" ? b.id : ""}
+						name={typeof b.name === "string" ? b.name : "tool"}
+						args={b.arguments}
+						intent={typeof b.intent === "string" ? b.intent : undefined}
+						streamingArgs={streaming}
+					/>
+				);
+				break;
+			default:
+				node = <Images content={[b]} />;
+		}
+		blocks.push(
+			<div
+				key={
+					b.type === "toolCall" && typeof b.id === "string" && b.id ? b.id : key
+				}
+				className={b.type === "text" && streaming ? "stream-caret" : undefined}
+				style={marginTop ? { marginTop } : undefined}
+			>
+				{node}
+			</div>,
+		);
+	});
 	return (
-		<div className={`group/msg relative py-1 ${ownMenu ? "msg-gutter" : ""}`}>
+		<div className={`group/msg relative ${ownMenu ? "msg-gutter" : ""}`}>
 			{ownMenu && (
 				<MessageMenu
 					entryId={entryId}
@@ -564,57 +666,12 @@ function AssistantMessage({
 					className={`${GUTTER_MENU} ${turnStart ? GUTTER_MENU_UNDER_AVATAR : ""}`}
 				/>
 			)}
-			{content.map((b, i) => {
-				if (!isRecord(b)) return null;
-				const key = `${i}-${String(b.type)}`;
-				const streaming = live && i === lastIdx;
-				switch (b.type) {
-					case "text":
-						return typeof b.text === "string" && b.text ? (
-							<div key={key} className={streaming ? "stream-caret" : ""}>
-								<Markdown text={b.text} streaming={streaming} />
-							</div>
-						) : null;
-					case "thinking":
-						return typeof b.thinking === "string" && b.thinking ? (
-							<ThinkingBlock
-								key={key}
-								text={b.thinking}
-								streaming={streaming}
-							/>
-						) : null;
-					case "redactedThinking":
-						return (
-							<div
-								key={key}
-								className="my-0.5 flex h-7 items-center gap-2 text-faint text-xs italic"
-							>
-								<Icon name="brain" size={14} className="shrink-0" />
-								{t("transcript.redactedThinking")}
-							</div>
-						);
-					case "toolCall":
-						return (
-							<ToolCard
-								key={typeof b.id === "string" && b.id ? b.id : key}
-								toolCallId={typeof b.id === "string" ? b.id : ""}
-								name={typeof b.name === "string" ? b.name : "tool"}
-								args={b.arguments}
-								intent={typeof b.intent === "string" ? b.intent : undefined}
-								streamingArgs={streaming}
-							/>
-						);
-					case "image":
-						return <Images key={key} content={[b]} />;
-					default:
-						return null;
-				}
-			})}
+			{blocks}
 			{live && content.length === 0 && (
 				<div className="stream-caret text-faint text-sm" />
 			)}
 			{(stop === "error" || stop === "aborted") && (
-				<div className="mt-1.5">
+				<div style={blocks.length > 0 ? { marginTop: GAP_FLOW } : undefined}>
 					<Callout
 						tone={stop === "error" ? "err" : "neutral"}
 						icon={stop === "error" ? "alert" : "stop"}

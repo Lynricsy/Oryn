@@ -84,7 +84,6 @@ function SourceRow({
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const query = str(args.query);
-	const recency = str(args.recency);
 	const limit = num(args.limit);
 	const numResults = num(args.num_search_results);
 
@@ -119,20 +118,22 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		if (searchReqs !== null) usageParts.push(`search ${searchReqs}`);
 	}
 
+	// recency 与查询（折叠行截到 80 字）已在折叠行里
+	const longQuery =
+		query !== null && normalizeWs(query).length > 80 ? query : null;
 	return (
 		<>
 			<Badges
 				items={[
-					recency && `recency=${recency}`,
 					limit !== null && `limit=${limit}`,
 					numResults !== null && `results=${numResults}`,
 					response &&
 						`${sources.length} source${sources.length === 1 ? "" : "s"}`,
 				]}
 			/>
-			{(query !== null || providerInfo || usageParts.length > 0) && (
+			{(longQuery !== null || providerInfo || usageParts.length > 0) && (
 				<KvGrid>
-					{query !== null && <Kv k="query">{query}</Kv>}
+					{longQuery !== null && <Kv k="query">{longQuery}</Kv>}
 					{providerInfo && <Kv k="provider">{providerInfo}</Kv>}
 					{usageParts.length > 0 && (
 						<Kv k="usage">

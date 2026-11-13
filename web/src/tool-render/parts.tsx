@@ -2,7 +2,14 @@
  * Shared UI primitives for tool renderers. Every renderer composes these
  * instead of inventing new CSS — see tool-render.css for the `tv-` classes.
  */
-import { isValidElement, type ReactNode, useMemo, useState } from "react";
+import {
+	isValidElement,
+	type ReactNode,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { ImageViewer } from "../components/ui/ImageViewer";
 import { Icon } from "../components/ui/icons";
@@ -58,6 +65,54 @@ export function Badges({
 	);
 }
 
+/** 头部右侧读数里的一个计数（`212 行`、`3 处`……）；`count` 为 null 时不渲染。 */
+export function MetaCount({
+	unit,
+	count,
+	tone,
+}: {
+	unit: "lines" | "matches" | "files" | "replacements";
+	count: number | null;
+	tone?: "ok" | "warn" | "err";
+}): ReactNode {
+	const { t } = useTranslation();
+	if (count === null) return null;
+	return (
+		<span className={tone ? `tv-meta-${tone}` : undefined}>
+			{t(`toolRender.meta.${unit}`, { count })}
+		</span>
+	);
+}
+
+/** 头部右侧读数里的增删行数（绿 `+N`、红 `−N`）；都为 0 时不渲染。 */
+export function MetaDiff({
+	added,
+	removed,
+}: {
+	added: number;
+	removed: number;
+}): ReactNode {
+	if (added === 0 && removed === 0) return null;
+	return (
+		<>
+			{added > 0 && <span className="tv-meta-add">+{added}</span>}
+			{removed > 0 && <span className="tv-meta-del">−{removed}</span>}
+		</>
+	);
+}
+
+/** 统一 diff 文本的增删行数（跳过 `+++` / `---` 文件头）。 */
+export function diffStats(diff: string): { added: number; removed: number } {
+	let added = 0;
+	let removed = 0;
+	for (const line of diff.split("\n")) {
+		if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+		if (line.startsWith("+")) added++;
+		else if (line.startsWith("-")) removed++;
+	}
+	return { added, removed };
+}
+
 /** File path with optional `:start-end` line range or raw selector suffix. */
 export function PathText({
 	path,
@@ -111,6 +166,37 @@ function useHighlight(
 ): string | null {
 	// Oryn：highlight.js 与各语言按需懒加载，加载完成后重新渲染
 	return useHighlighted(code, lang);
+}
+
+/**
+ * 横向可滚动的块：内容溢出时在 `data-overflow` 写上被裁掉的一侧（`end` / `start` / `both`），
+ * 配合 `.tv-scroll-x` 的遮罩在那一侧渐隐，提示还能横向滚动。`content` 变化（展开、高亮完成）时重算。
+ */
+function useOverflowX<T extends HTMLElement>(content: unknown) {
+	const ref = useRef<T>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: content 变化即需要重新测量
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		const update = () => {
+			const max = el.scrollWidth - el.clientWidth;
+			const x = el.scrollLeft;
+			const side =
+				max <= 1 ? "" : x <= 1 ? "end" : x >= max - 1 ? "start" : "both";
+			if (side) el.dataset.overflow = side;
+			else delete el.dataset.overflow;
+		};
+		update();
+		el.addEventListener("scroll", update, { passive: true });
+		const ro =
+			typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+		ro?.observe(el);
+		return () => {
+			el.removeEventListener("scroll", update);
+			ro?.disconnect();
+		};
+	}, [content]);
+	return ref;
 }
 
 export interface OutputProps {
@@ -172,7 +258,8 @@ export function Output({
 	const shown =
 		collapsible && !expanded ? lines.slice(0, maxLines).join("\n") : clean;
 	const html = useHighlight(shown, error ? null : lang);
-	const classes = ["tv-pre"];
+	const scrollRef = useOverflowX<HTMLPreElement>(html ?? shown);
+	const classes = ["tv-pre", "tv-scroll-x"];
 	if (variant === "plain") classes.push("tv-pre--wrap");
 	if (error) classes.push("tv-pre--error");
 	if (bare) classes.push("tv-pre--bare");
@@ -181,11 +268,14 @@ export function Output({
 			{title && <div className="tv-out-title">{title}</div>}
 			{html !== null ? (
 				<pre
+					ref={scrollRef}
 					className={classes.join(" ")}
 					dangerouslySetInnerHTML={{ __html: html }}
 				/>
 			) : (
-				<pre className={classes.join(" ")}>{shown}</pre>
+				<pre ref={scrollRef} className={classes.join(" ")}>
+					{shown}
+				</pre>
 			)}
 			{collapsible && (
 				<ExpandToggle
@@ -344,12 +434,24 @@ const GIT_META_RE =
 /** Per-row CSS modifier. Unified mode only treats header lines as meta while inside a file header. */
 function diffRowClasses(lines: string[], unified: boolean): string[] {
 	let inHeader = false;
-	return lines.map((line) => {
+	let seenHunk = false;
+	return lines.map((line, i) => {
 		if (!unified) {
+			if (line.startsWith("@@")) {
+				seenHunk = true;
+				return "--hunk";
+			}
+			// 首个 `@@` 之前成对出现的 `--- ` / `+++ ` 是文件头，按元信息弱化，不当作增删行
+			if (
+				!seenHunk &&
+				((line.startsWith("--- ") && lines[i + 1]?.startsWith("+++ ")) ||
+					(line.startsWith("+++ ") && lines[i - 1]?.startsWith("--- ")))
+			)
+				return "--hunk";
 			if (line.trim().length === 0) return "--gap";
 			if (line.startsWith("+")) return "--add";
 			if (line.startsWith("-")) return "--del";
-			return line.startsWith("@@") ? "--hunk" : "";
+			return "";
 		}
 		if (line.startsWith("diff --git ")) inHeader = true;
 		if (line.startsWith("@@")) {
@@ -395,9 +497,10 @@ export function DiffBlock({
 	);
 	const collapsible = lines.length > maxLines + 1;
 	const shown = collapsible && !expanded ? lines.slice(0, maxLines) : lines;
+	const diffRef = useOverflowX<HTMLDivElement>(shown);
 	return (
 		<div className="tv-out">
-			<div className="tv-diff">
+			<div ref={diffRef} className="tv-diff tv-scroll-x">
 				{shown.map((line, i) => {
 					const cls = classes[i] ?? "";
 					const gap = cls === "--gap";

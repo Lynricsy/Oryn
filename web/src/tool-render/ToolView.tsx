@@ -209,6 +209,11 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				<span className="tv-sum">
 					<renderer.Summary {...renderProps} />
 				</span>
+				{renderer.Meta && (
+					<span className="tv-meta">
+						<renderer.Meta {...renderProps} />
+					</span>
+				)}
 				{status === "run" ? (
 					<span
 						role="status"
@@ -217,11 +222,16 @@ export function ToolView(props: ToolViewProps): ReactNode {
 					/>
 				) : (
 					<span className={`tv-status tv-status--${status}`} aria-hidden="true">
-						{status === "ok" ? (
-							<Icon name="check" size={12} />
-						) : (
-							<Icon name={status === "err" ? "xCircle" : "circle"} size={14} />
-						)}
+						<Icon
+							name={
+								status === "ok"
+									? "checkCircle"
+									: status === "err"
+										? "xCircle"
+										: "circle"
+							}
+							size={14}
+						/>
 					</span>
 				)}
 				<span className="tv-chev" aria-hidden="true">

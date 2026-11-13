@@ -2,9 +2,11 @@
 import type { ReactNode } from "react";
 import {
 	Badge,
+	Badges,
 	CodeBlock,
 	DiffBlock,
 	InvalidArg,
+	MetaCount,
 	Note,
 	Output,
 	PathText,
@@ -94,7 +96,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	const first = paths[0];
 	const opCount = Array.isArray(args.ops) ? args.ops.length : 0;
 	const details = detailsOf(result);
-	const total = details?.totalReplacements;
+	// 替换数在头部右侧读数里
 	return (
 		<>
 			{first ? <PathText path={first} /> : <InvalidArg what="paths" />}
@@ -104,11 +106,6 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 			<Badge tone="accent">
 				{opCount} op{opCount === 1 ? "" : "s"}
 			</Badge>
-			{total != null && (
-				<Badge tone={total > 0 ? "ok" : "warn"}>
-					{total} replacement{total === 1 ? "" : "s"}
-				</Badge>
-			)}
 			{details?.limitReached && <Badge tone="warn">limit</Badge>}
 		</>
 	);
@@ -169,27 +166,19 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					))}
 				</div>
 			)}
+			{/* 替换总数与 limit 已在折叠行里（limit 另有下面的提示），这里只补文件数与搜索范围 */}
 			{details && (
-				<span className="tv-badges">
-					{details.totalReplacements != null && (
-						<Badge tone={details.totalReplacements > 0 ? "ok" : "warn"}>
-							{details.totalReplacements} replacement
-							{details.totalReplacements === 1 ? "" : "s"}
-						</Badge>
-					)}
-					{details.filesTouched != null && (
-						<Badge>
-							{details.filesTouched} file{details.filesTouched === 1 ? "" : "s"}
-						</Badge>
-					)}
-					{details.filesSearched != null && (
-						<Badge>searched {details.filesSearched}</Badge>
-					)}
-					{details.scopePath && (
-						<Badge>in {shortenPath(details.scopePath)}</Badge>
-					)}
-					{details.limitReached && <Badge tone="warn">limit reached</Badge>}
-				</span>
+				<Badges
+					items={[
+						details.filesTouched != null &&
+							`${details.filesTouched} file${details.filesTouched === 1 ? "" : "s"}`,
+						details.filesSearched != null &&
+							`searched ${details.filesSearched}`,
+						details.scopePath &&
+							shortenPath(details.scopePath) !== shortenPath(first ?? "") &&
+							`in ${shortenPath(details.scopePath)}`,
+					]}
+				/>
 			)}
 			{details && details.fileReplacements.length > 0 && (
 				<div className="tv-list">
@@ -220,4 +209,16 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const astEditRenderer: ToolRenderer = { Summary, Body };
+/** 右侧读数：替换数（0 处时提示）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	const total = detailsOf(result)?.totalReplacements ?? null;
+	return (
+		<MetaCount
+			unit="replacements"
+			count={total}
+			tone={total === 0 ? "warn" : undefined}
+		/>
+	);
+}
+
+export const astEditRenderer: ToolRenderer = { Summary, Meta, Body };

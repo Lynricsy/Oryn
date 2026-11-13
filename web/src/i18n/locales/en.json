@@ -36,7 +36,10 @@
 		"avatarUpload": "Upload image",
 		"avatarReset": "Reset",
 		"avatarGlyphs": "Built-in glyphs",
+		"avatarEmoji": "Emoji",
+		"avatarNerd": "Glyphs",
 		"avatarCustom": "Custom (one emoji or Nerd glyph)",
+		"avatarCustomPlaceholder": "Paste one character",
 		"avatarUse": "Use",
 		"avatarTooLarge": "The image is still over 128 KiB after compression; try a simpler one.",
 		"avatarDecodeFailed": "Couldn't read this image; use PNG, WebP or JPEG."
@@ -136,9 +139,7 @@
 		"abortBash": "Abort bash",
 		"commands": "Commands",
 		"keyAbort": "interrupt",
-		"keyBash": "bash",
 		"keyCommands": "commands",
-		"keyInterrupt": "interrupt & send",
 		"keyQueue": "queue",
 		"keySteer": "steer",
 		"label": "Message",
@@ -377,7 +378,14 @@
 			"skills": "Skills",
 			"systemContext": "System context",
 			"systemPrompt": "System prompt",
-			"systemTools": "Tool definitions"
+			"systemTools": "Tool definitions",
+			"userMessages": "User / Developer Messages",
+			"assistantMessages": "Assistant Messages",
+			"thinking": "Assistant Thinking",
+			"toolCalls": "Tool Calls",
+			"toolOutput": "Tool Output",
+			"free": "Free Space",
+			"estimated": "estimated"
 		}
 	},
 	"model": {
@@ -390,7 +398,10 @@
 		"slowMode": "Slow mode",
 		"roles": "Roles",
 		"allModels": "All models",
-		"moreRoles": "More roles ({{n}})"
+		"moreRoles": "More roles ({{n}})",
+		"presetLevel": "Level preset by this role",
+		"currentLevel": "now {{level}}",
+		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)"
 	},
 	"roles": {
 		"track": "Role models",
@@ -473,7 +484,8 @@
 		"noTodos": "No todos.",
 		"orb": "Orb",
 		"subagents": "Subagents",
-		"todos": "Todos"
+		"todos": "Todos",
+		"uptime": "Up {{d}}"
 	},
 	"todo": {
 		"status": {
@@ -696,6 +708,19 @@
 			"viewInPanel": "View in terminal panel",
 			"awaitingInput": "Waiting for terminal input",
 			"openTerminal": "Open terminal"
+		},
+		"meta": {
+			"lines_one": "{{count}} line",
+			"lines_other": "{{count}} lines",
+			"matches_one": "{{count}} match",
+			"matches_other": "{{count}} matches",
+			"files_one": "{{count}} file",
+			"files_other": "{{count}} files",
+			"replacements_one": "{{count}} replacement",
+			"replacements_other": "{{count}} replacements",
+			"passed": "{{count}} passed",
+			"failed": "{{count}} failed",
+			"exit": "exit {{code}}"
 		}
 	},
 	"rightPanel": {

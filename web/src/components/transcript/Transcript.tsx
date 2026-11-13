@@ -26,8 +26,12 @@ import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { useTranscriptContext } from "./context";
 import {
+	assistantEdges,
 	BranchSummaryCard,
 	CompactionCard,
+	type FlowKind,
+	flowGap,
+	GAP_FLOW,
 	MemoMessageView,
 	summarizeTurn,
 	ToolCard,
@@ -237,6 +241,41 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 	return { starts, footers };
 }
 
+/** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
+const GAP_TURN = 16;
+
+/** 行首 / 行尾的节奏类别；`turn` 是不属于 agent 过程流的行。 */
+type Edge = FlowKind | "turn";
+
+function rowEdges(item: TranscriptItem, hasFooter: boolean): [Edge, Edge] {
+	if (item.kind === "tool") return ["proc", "proc"];
+	if (item.kind === "message" && item.message.role === "assistant")
+		return assistantEdges(item.message, item.live, hasFooter);
+	return ["turn", "turn"];
+}
+
+/**
+ * 每行的上边距：由上一行行尾与本行行首的类别决定（见 MessageView 的 `flowGap`），
+ * 与消息内块之间的间距同一规则，虚拟行之间不再叠加各自的内边距。
+ */
+export function rowGaps(
+	items: readonly TranscriptItem[],
+	footers: ReadonlyMap<number, TurnUsage>,
+): number[] {
+	let prev: Edge | null = null;
+	return items.map((it, i) => {
+		const [first, last] = rowEdges(it, footers.has(i));
+		const gap =
+			prev === null
+				? GAP_FLOW
+				: prev === "turn" || first === "turn"
+					? GAP_TURN
+					: flowGap(prev, first);
+		prev = last;
+		return gap;
+	});
+}
+
 /** 环境准备阶段先显示的首条任务（客户端暂存，转录里出现 user 消息即清除）。 */
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
@@ -277,6 +316,7 @@ export function Transcript({
 	}, [hasUser, pending, threadId]);
 	const pendingText = hasUser ? undefined : pending;
 	const turns = useMemo(() => layoutTurns(items), [items]);
+	const gaps = useMemo(() => rowGaps(items, turns.footers), [items, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
 	const stick = useRef(true);
@@ -338,15 +378,20 @@ export function Transcript({
 						data-live={item?.kind === "message" && item.live ? "1" : undefined}
 						ref={virtualizer.measureElement}
 						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上
-						className="absolute left-0 w-full px-3 py-1.5 focus-within:z-10 hover:z-10 sm:px-5"
-						style={{ transform: `translateY(${v.start}px)` }}
+						className="absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5"
+						style={{
+							transform: `translateY(${v.start}px)`,
+							// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底
+							paddingTop: item ? gaps[v.index] : GAP_FLOW,
+							paddingBottom: item ? 0 : 6,
+						}}
 					>
 						<div
 							className={`group/row relative mx-auto max-w-3xl ${bodyCol ? "pl-8" : ""}`}
 						>
 							{turns.starts.has(v.index) && (
 								// 本行消息自带左侧菜单时，悬停 / 聚焦让出头像位置（细指针）
-								<span className="absolute top-1.5 left-0 transition-opacity duration-150 pointer-fine:group-has-[.msg-gutter:focus-within]/row:opacity-0 pointer-fine:group-has-[.msg-gutter:hover]/row:opacity-0">
+								<span className="absolute top-1 left-0 transition-opacity duration-150 pointer-fine:group-has-[.msg-gutter:focus-within]/row:opacity-0 pointer-fine:group-has-[.msg-gutter:hover]/row:opacity-0">
 									<AgentAvatar size={20} />
 								</span>
 							)}
@@ -374,6 +419,7 @@ export function Transcript({
 			footer,
 			virtualizer.measureElement,
 			turns,
+			gaps,
 			pendingText,
 		],
 	);

@@ -3,7 +3,7 @@
  * 命令名后输入空格进入参数补全：静态子命令 + 动态候选（`get_command_arg_completions`）。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CLIENT_COMMANDS, UNAVAILABLE_COMMANDS } from "../../lib/slash";
 import type { RpcAvailableSlashCommand } from "../../omp/types";
@@ -146,17 +146,31 @@ export function CommandMenu({
 	// 只给 omp 公布的命令标出来源（builtin、skill…），避免每行都挂同一个「Oryn」
 	const showBadges =
 		new Set(entries.map((e) => e.badge).filter(Boolean)).size > 1;
+	const listRef = useRef<HTMLDivElement>(null);
+	// 键盘移到可见区之外的项时把它滚进来（滚动区带 scroll-padding，不会贴边）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: active 变化即需要滚动
+	useEffect(() => {
+		listRef.current
+			?.querySelector<HTMLElement>("[aria-selected=true]")
+			?.scrollIntoView?.({ block: "nearest" });
+	}, [active]);
 	return (
-		// 玻璃放在外层、滚动放在内层：玻璃的模糊底是伪元素，放进滚动容器会随内容滚走
+		// 玻璃放在外层、滚动放在内层：玻璃的模糊底是伪元素，放进滚动容器会随内容滚走。
+		// 提示行放在滚动区外；滚动区高度正好 9 行（每行 h-7）加上下内边距，底部不会露出半行
 		<div className="glass pop-in absolute right-0 bottom-full left-0 z-30 mb-2 overflow-hidden rounded-xl">
+			{hint && (
+				<div className="border-[var(--glass-line)] border-b px-3 py-1 text-2xs text-faint">
+					{hint}
+				</div>
+			)}
 			<div
+				ref={listRef}
 				role="listbox"
 				aria-label={t("composer.commands")}
-				className="max-h-72 overflow-y-auto p-1"
+				className="max-h-[calc(9*1.75rem+0.5rem)] overflow-y-auto scroll-py-1 p-1"
 			>
-				{hint && <div className="px-2 py-1 text-2xs text-faint">{hint}</div>}
 				{entries.length === 0 && (
-					<div className="px-2 py-1.5 text-faint text-sm">
+					<div className="flex h-7 items-center px-2 text-faint text-sm">
 						{t("composer.noCommands")}
 					</div>
 				)}
@@ -166,7 +180,7 @@ export function CommandMenu({
 						type="button"
 						role="option"
 						aria-selected={i === active}
-						className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${i === active ? "bg-hover" : ""}`}
+						className={`flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-sm transition-colors duration-150 hover:bg-hover ${i === active ? "bg-hover" : ""}`}
 						onMouseDown={(ev) => {
 							ev.preventDefault();
 							onPick(e);

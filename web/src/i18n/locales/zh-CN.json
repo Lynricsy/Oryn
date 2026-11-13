@@ -36,7 +36,10 @@
 		"avatarUpload": "上传图片",
 		"avatarReset": "恢复默认",
 		"avatarGlyphs": "内置图标",
+		"avatarEmoji": "Emoji",
+		"avatarNerd": "字形",
 		"avatarCustom": "自定义（单个 emoji 或 Nerd 字形）",
+		"avatarCustomPlaceholder": "粘贴一个字符",
 		"avatarUse": "使用",
 		"avatarTooLarge": "图片压缩后仍超过 128 KiB，请换一张更简单的图片。",
 		"avatarDecodeFailed": "无法读取这张图片，请使用 PNG、WebP 或 JPEG。"
@@ -136,9 +139,7 @@
 		"abortBash": "中止 bash",
 		"commands": "命令",
 		"keyAbort": "中断",
-		"keyBash": "bash",
 		"keyCommands": "命令",
-		"keyInterrupt": "中断并发送",
 		"keyQueue": "排队",
 		"keySteer": "引导",
 		"label": "消息",
@@ -377,7 +378,14 @@
 			"skills": "技能",
 			"systemContext": "系统上下文",
 			"systemPrompt": "系统提示词",
-			"systemTools": "工具定义"
+			"systemTools": "工具定义",
+			"userMessages": "用户消息",
+			"assistantMessages": "助手消息",
+			"thinking": "思考",
+			"toolCalls": "工具调用",
+			"toolOutput": "工具输出",
+			"free": "剩余",
+			"estimated": "估算"
 		}
 	},
 	"model": {
@@ -390,7 +398,10 @@
 		"slowMode": "慢速模式（slow）",
 		"roles": "角色",
 		"allModels": "全部模型",
-		"moreRoles": "更多角色（{{n}}）"
+		"moreRoles": "更多角色（{{n}}）",
+		"presetLevel": "这个 role 预设的级别",
+		"currentLevel": "当前 {{level}}",
+		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）"
 	},
 	"roles": {
 		"track": "角色模型",
@@ -473,7 +484,8 @@
 		"noTodos": "没有待办。",
 		"orb": "orb",
 		"subagents": "子 agent",
-		"todos": "待办"
+		"todos": "待办",
+		"uptime": "已运行 {{d}}"
 	},
 	"todo": {
 		"status": {
@@ -696,6 +708,19 @@
 			"viewInPanel": "在终端面板查看",
 			"awaitingInput": "等待终端输入",
 			"openTerminal": "打开终端"
+		},
+		"meta": {
+			"lines_one": "{{count}} 行",
+			"lines_other": "{{count}} 行",
+			"matches_one": "{{count}} 处",
+			"matches_other": "{{count}} 处",
+			"files_one": "{{count}} 个文件",
+			"files_other": "{{count}} 个文件",
+			"replacements_one": "替换 {{count}} 处",
+			"replacements_other": "替换 {{count}} 处",
+			"passed": "{{count}} passed",
+			"failed": "{{count}} failed",
+			"exit": "exit {{code}}"
 		}
 	},
 	"rightPanel": {
