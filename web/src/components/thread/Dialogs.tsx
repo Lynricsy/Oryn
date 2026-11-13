@@ -31,6 +31,7 @@ import {
 import { MessageView } from "../transcript/MessageView";
 import { Badge, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { ModelLogo } from "../ui/ModelLogo";
 import {
 	Button,
 	Dialog,
@@ -553,11 +554,10 @@ function ModelDialog({
 									}).then(onClose)
 								}
 							>
-								<Icon
-									name="sparkle"
-									size={13}
-									aria-hidden
-									className="shrink-0 text-faint"
+								<ModelLogo
+									model={m.id}
+									provider={m.provider}
+									className="text-muted"
 								/>
 								<span className="min-w-0 flex-1 truncate">
 									{m.name || m.id}

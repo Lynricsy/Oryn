@@ -23,6 +23,7 @@ import type { TranscriptItem } from "../../state/transcript";
 import { AgentAvatar } from "../ui/AgentAvatar";
 import { Badge, Callout, type Tone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { ModelLogo } from "../ui/ModelLogo";
 import { useTranscriptContext } from "./context";
 import {
 	BranchSummaryCard,
@@ -37,7 +38,6 @@ import {
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 
 const META_ICON: Record<string, IconName> = {
-	model_change: "sparkle",
 	thinking_level_change: "brain",
 	mode_change: "list",
 	title_change: "edit",
@@ -79,7 +79,12 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 				aria-hidden
 				className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded bg-inset text-muted"
 			>
-				<Icon name={icon} size={11} />
+				{entry.type === "model_change" ? (
+					// model 是 "provider/modelId"，ModelLogo 会按路径识别
+					<ModelLogo model={String(entry.model ?? "")} size={11} />
+				) : (
+					<Icon name={icon} size={11} />
+				)}
 			</span>
 			<span className="min-w-0 truncate">{text}</span>
 		</div>

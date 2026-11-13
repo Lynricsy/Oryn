@@ -25,6 +25,7 @@ import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
+import { ModelLogo } from "../ui/ModelLogo";
 import { Menu } from "../ui/primitives";
 import { useTranscriptContext } from "./context";
 
@@ -412,6 +413,8 @@ export function ToolCard({
 /** 一个回合（两条用户消息之间）的累计用量：各条助手消息的读数相加，模型取最后一条。 */
 export interface TurnUsage {
 	model: string;
+	/** 最后一条助手消息的 provider，帮 ModelLogo 识别认不出的模型 id。 */
+	provider: string;
 	hasUsage: boolean;
 	input: number;
 	output: number;
@@ -427,6 +430,7 @@ export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 	const n = (v: unknown) => (typeof v === "number" ? v : 0);
 	const sum: TurnUsage = {
 		model: "",
+		provider: "",
 		hasUsage: false,
 		input: 0,
 		output: 0,
@@ -437,7 +441,10 @@ export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 	};
 	const texts: string[] = [];
 	for (const m of messages) {
-		if (typeof m.model === "string" && m.model) sum.model = m.model;
+		if (typeof m.model === "string" && m.model) {
+			sum.model = m.model;
+			sum.provider = typeof m.provider === "string" ? m.provider : "";
+		}
 		if (isRecord(m.usage)) {
 			sum.hasUsage = true;
 			sum.input += n(m.usage.input);
@@ -472,7 +479,7 @@ function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 						className={`${META_CHIP} min-w-0 shrink font-medium text-fg`}
 						title={turn.model}
 					>
-						<Icon name="sparkle" size={12} aria-hidden className="shrink-0" />
+						<ModelLogo model={turn.model} provider={turn.provider} size={12} />
 						<span className="min-w-0 truncate">{turn.model}</span>
 					</span>
 				)}

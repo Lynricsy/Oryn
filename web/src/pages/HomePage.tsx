@@ -2,7 +2,14 @@
  * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
  * 模型与思考级别（Ctrl+S）、发送。省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
  */
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ReactElement,
+	type ReactNode,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Schemas } from "../api/client";
@@ -14,6 +21,7 @@ import {
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
+import { ModelLogo } from "../components/ui/ModelLogo";
 import { OrbBead } from "../components/ui/OrbBead";
 import {
 	Button,
@@ -60,7 +68,8 @@ function PillButton({
 	onClick,
 	active,
 }: {
-	icon: IconName;
+	/** 图标名，或现成的装饰节点（如模型 logo） */
+	icon: IconName | ReactElement;
 	text: PillText;
 	shortcut: string;
 	onClick: () => void;
@@ -75,7 +84,11 @@ function PillButton({
 			title={text.label}
 			className={`inline-flex h-8 max-w-60 items-center gap-1.5 rounded-full border px-3 text-xs shadow-xs transition-colors duration-150 ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
-			<Icon name={icon} size={13} className="shrink-0" />
+			{typeof icon === "string" ? (
+				<Icon name={icon} size={13} className="shrink-0" />
+			) : (
+				icon
+			)}
 			<span className="min-w-0 truncate">{text.main}</span>
 			{text.badge && <Badge>{text.badge}</Badge>}
 			<span className="hidden shrink-0 sm:pointer-fine:inline">
@@ -408,7 +421,7 @@ export function HomePage(): ReactNode {
 									onClick={() => setPill(pill === "project" ? null : "project")}
 								/>
 								<PillButton
-									icon="sparkle"
+									icon={<ModelLogo model={model} size={13} />}
 									text={modelText}
 									shortcut="Ctrl+S"
 									active={pill === "model"}
@@ -567,7 +580,7 @@ export function HomePage(): ReactNode {
 											<Option
 												key={m}
 												selected={model === m}
-												leading={<Icon name="sparkle" size={14} />}
+												leading={<ModelLogo model={m} />}
 												onClick={() => setModel(m)}
 											>
 												{m}
