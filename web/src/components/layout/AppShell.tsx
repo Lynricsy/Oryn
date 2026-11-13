@@ -1,7 +1,7 @@
 /**
  * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，是浮在壁纸上的悬浮玻璃（macOS Tahoe 式），
  * 中栏与右栏是纸面，8px 缝里露出壁纸，侧栏可收起（存 localStorage）；medium（600–839）侧边栏可折叠推入，
- * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的玻璃抽屉侧边栏（只圆右侧）。壁纸见 index.css 的 `.shell-wash`。
+ * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。
  * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker，
@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { UNAUTHORIZED_EVENT } from "../../api/client";
 import { useMe } from "../../api/queries";
+import { usePresence } from "../../lib/presence";
 import { currentSubscription, registerServiceWorker } from "../../lib/push";
 import { useBreakpoint } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
@@ -26,6 +27,8 @@ import { ServerErrors } from "../ServerErrors";
 import { Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 
+/** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
+const DRAWER_MS = 260;
 /** 焦点在可编辑区域（输入框、文本域、CodeMirror、contenteditable）时不抢快捷键：macOS 下 Ctrl+B 是光标左移。 */
 function inEditable(target: EventTarget | null): boolean {
 	return (
@@ -74,6 +77,8 @@ export function AppShell(): ReactNode {
 	const collapsed = useUi((s) => s.sidebarCollapsed);
 	const conn = useConnection((s) => s.status);
 	useGlobalShortcuts();
+	// 手机抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前
+	const drawer = usePresence(bp === "compact" && sidebarOpen, DRAWER_MS);
 
 	useEffect(() => {
 		if (!me.data) return;
@@ -140,8 +145,9 @@ export function AppShell(): ReactNode {
 					data-sidebar={shown ? "shown" : "collapsed"}
 					className={`h-full shrink-0 transition-[width,margin-right] duration-[260ms] ease-out ${shown ? `w-64 lg:w-72 ${expanded ? "mr-2" : ""}` : "mr-0 w-0"}`}
 				>
+					{/* 只动 translate、不动 opacity（opacity<1 会让玻璃的模糊在收起途中失效，见下面抽屉的注释）；多移 1rem 越过 8px 外边距，完全藏住 */}
 					<div
-						className={`h-full w-64 transition-[translate,opacity] duration-[260ms] ease-out lg:w-72 ${expanded ? "" : "p-2"} ${shown ? "" : "-translate-x-full opacity-0"}`}
+						className={`h-full w-64 transition-[translate] duration-[260ms] ease-out lg:w-72 ${expanded ? "" : "p-2"} ${shown ? "" : "-translate-x-[calc(100%+1rem)]"}`}
 					>
 						<div className="glass-sidebar h-full">
 							<Sidebar />
@@ -149,17 +155,25 @@ export function AppShell(): ReactNode {
 					</div>
 				</div>
 			)}
-			{bp === "compact" && sidebarOpen && (
-				<div className="fixed inset-0 z-40 flex">
-					<div className="glass-sidebar h-full w-[85vw] max-w-xs rounded-l-none transition-[translate] duration-[260ms] ease-out starting:-translate-x-full">
-						<Sidebar />
-					</div>
+			{drawer.mounted && (
+				<div className="fixed inset-0 z-40">
+					{/* 背景整屏铺满（不是抽屉右边的一块矩形，抽屉圆角外也压暗），模糊 + 轻度压暗 */}
 					<button
 						type="button"
 						aria-label={t("common.close")}
-						className="flex-1 bg-scrim transition-opacity duration-[260ms] ease-out starting:opacity-0"
+						className={`absolute inset-0 bg-scrim/70 backdrop-blur-sm transition-opacity duration-[260ms] ease-out ${drawer.shown ? "opacity-100" : "opacity-0"}`}
 						onClick={() => uiStore.getState().setSidebar(false)}
 					/>
+					{/*
+					 * 只动 translate、不动 opacity：opacity<1 的元素是 backdrop root，玻璃的 backdrop-filter 只能模糊它自己的内容，
+					 * 滑入途中整块玻璃会变成「透明不模糊」、落位才突然糊上。滑出量多 1rem，阴影也完全移出屏外。
+					 */}
+					<div
+						inert={!sidebarOpen}
+						className={`glass-sidebar absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] transition-[translate] duration-[260ms] ease-out ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
+					>
+						<Sidebar floating />
+					</div>
 				</div>
 			)}
 			<main className="flex h-full min-w-0 flex-1 flex-col pr-safe">

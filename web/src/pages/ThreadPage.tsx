@@ -42,6 +42,7 @@ import { Transcript } from "../components/transcript/Transcript";
 import { WorkingFooter } from "../components/transcript/WorkingFooter";
 import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
+import { usePresence } from "../lib/presence";
 import { useBreakpoint } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useConnection, useIndex, useThread } from "../state/stores";
@@ -172,16 +173,9 @@ export function ThreadPage(): ReactNode {
 	const showPanelColumn = expanded && panelOpen;
 	const showPanelDrawer = !expanded && panelOpen;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
-	// 收起时面板列先走完 260ms 的收窄 + 淡出再卸载（与左栏同一套时长与缓动）
-	const [panelMounted, setPanelMounted] = useState(showPanelColumn);
-	useEffect(() => {
-		if (showPanelColumn) {
-			setPanelMounted(true);
-			return;
-		}
-		const id = setTimeout(() => setPanelMounted(false), PANEL_ANIM_MS);
-		return () => clearTimeout(id);
-	}, [showPanelColumn]);
+	// 面板列与抽屉的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄 / 滑出再卸载（与左栏同一套时长与缓动）
+	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
+	const drawer = usePresence(showPanelDrawer, PANEL_ANIM_MS);
 	const firstUi = pendingUi[0];
 
 	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
@@ -294,14 +288,14 @@ export function ThreadPage(): ReactNode {
 					</div>
 				</div>
 			</Sheet>
-			{(showPanelColumn || panelMounted) && (
-				// 与左栏同一做法：外层宽度与左侧 8px 缝一起过渡（出现时由 @starting-style 从 0 展开），
-				// 内层固定宽度，左缘贴着外层左缘随之滑入 / 滑出并淡入淡出；外层不裁剪，免得裁掉纸面描边与投影
+			{column.mounted && (
+				// 与左栏同一做法：外层宽度与左侧 8px 缝一起过渡，内层固定宽度，左缘贴着外层左缘随之滑入 / 滑出并淡入淡出；
+				// 外层不裁剪，免得裁掉纸面描边与投影
 				<div
 					inert={!showPanelColumn}
-					data-panel={showPanelColumn ? "shown" : "collapsed"}
-					className={`relative h-full min-w-0 transition-[width,margin-left] duration-[260ms] ease-out starting:ml-0 starting:w-0 [&.is-resizing]:transition-none ${
-						!showPanelColumn
+					data-panel={column.shown ? "shown" : "collapsed"}
+					className={`relative h-full min-w-0 transition-[width,margin-left] duration-[260ms] ease-out [&.is-resizing]:transition-none ${
+						!column.shown
 							? "ml-0 w-0 shrink-0"
 							: panelFull
 								? "ml-2 flex-1"
@@ -309,9 +303,9 @@ export function ThreadPage(): ReactNode {
 					}`}
 					style={{ "--pw": `${panelWidth}px` } as CSSProperties}
 				>
-					{showPanelColumn && !panelFull && <PanelResizer />}
+					{column.shown && !panelFull && <PanelResizer />}
 					<div
-						className={`h-full transition-opacity duration-[260ms] ease-out starting:opacity-0 ${panelFull ? "w-full" : "w-[var(--pw)]"} ${showPanelColumn ? "" : "opacity-0"}`}
+						className={`h-full transition-opacity duration-[260ms] ease-out ${panelFull ? "w-full" : "w-[var(--pw)]"} ${column.shown ? "opacity-100" : "opacity-0"}`}
 					>
 						<Sheet inset className="h-full">
 							<RightPanel
@@ -322,16 +316,22 @@ export function ThreadPage(): ReactNode {
 					</div>
 				</div>
 			)}
-			{showPanelDrawer && (
-				<div className="fixed inset-0 z-40 flex justify-end">
+			{drawer.mounted && (
+				<div className="fixed inset-0 z-40">
 					<button
 						type="button"
 						aria-label={t("common.close")}
-						className="absolute inset-0 bg-scrim transition-opacity duration-[260ms] ease-out starting:opacity-0"
+						className={`absolute inset-0 bg-scrim/70 backdrop-blur-sm transition-opacity duration-[260ms] ease-out ${drawer.shown ? "opacity-100" : "opacity-0"}`}
 						onClick={() => uiStore.getState().setPanel(false)}
 					/>
-					{/* 抽屉宽度与标签无关：手机上铺满，平板上停在 36rem，切标签不跳；与左抽屉一样从所在侧滑入 */}
-					<div className="relative h-full w-full max-w-xl bg-panel pt-safe pr-safe shadow-xl transition-[translate] duration-[260ms] ease-out starting:translate-x-full">
+					{/*
+					 * 与左抽屉同一形态：悬浮圆角纸面，四周留 8px 与安全区，从右侧滑入 / 滑出。
+					 * 宽度与标签无关：手机上铺满（减去边距），平板上停在 36rem，切标签不跳。
+					 */}
+					<div
+						inert={!showPanelDrawer}
+						className={`absolute top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-2 ml-auto max-w-xl overflow-hidden rounded-2xl border border-border bg-panel shadow-xl transition-[translate,opacity] duration-[260ms] ease-out ${drawer.shown ? "translate-x-0 opacity-100" : "translate-x-[calc(100%+1rem)] opacity-0"}`}
+					>
 						<RightPanel
 							threadId={threadId}
 							onClose={() => uiStore.getState().setPanel(false)}

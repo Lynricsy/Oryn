@@ -145,11 +145,7 @@ function ModelPill({
 		<span className="relative inline-flex min-w-0 shrink">
 			{pill}
 			<span
-				className={
-					corner
-						? "-right-1 -bottom-1 absolute rounded-full bg-panel"
-						: "-translate-y-1/2 absolute top-1/2 right-1"
-				}
+				className={`absolute flex ${corner ? "-right-1 -bottom-1" : "-translate-y-1/2 top-1/2 right-0.5"}`}
 			>
 				<ThinkingMenu
 					value={thinking}
@@ -487,7 +483,8 @@ export function HomePage(): ReactNode {
 								value={prompt}
 								aria-label={t("newThread.prompt")}
 								placeholder={t("newThread.placeholder")}
-								className="block w-full resize-none bg-transparent px-4 pt-[13px] pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+								// 托盘是 36px 大圆角：文字离边 20px，才不显得贴着弧线
+								className="block w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
 								onChange={(e) => setPrompt(e.target.value)}
 								onPaste={(e) => {
 									const files = [...e.clipboardData.files];
@@ -513,7 +510,7 @@ export function HomePage(): ReactNode {
 							 * 项目名先拿够宽度，剩余空间放得下才显示模型名，否则模型也缩成圆圈；思考级别始终是模型图标右下角的角标。
 							 */}
 							<div
-								className={`relative flex px-2 pb-2 ${compact ? "flex-wrap items-center gap-y-1.5" : "items-start gap-0.5"}`}
+								className={`relative flex px-3 pb-3 ${compact ? "flex-wrap items-center gap-y-2" : "items-start gap-0.5"}`}
 							>
 								<div className="flex h-8 shrink-0 items-center">
 									<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
@@ -538,7 +535,7 @@ export function HomePage(): ReactNode {
 								</div>
 								<div
 									ref={pillsRef}
-									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-2 relative order-last w-[calc(100%+1rem)] border-[var(--glass-line)] border-t px-2 pt-2" : "flex-1"}`}
+									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-3 relative order-last w-[calc(100%+1.5rem)] border-[var(--glass-line)] border-t px-3 pt-2.5" : "flex-1"}`}
 								>
 									<PillButton
 										icon="box"

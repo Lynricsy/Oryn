@@ -184,20 +184,24 @@ export function ThinkingMenu({
 			side={side}
 			align={align}
 			items={items}
+			// 根元素默认是块级 div，行高会把角标撑成竖向椭圆；inline-flex 让它只有按钮那么大
+			className="inline-flex"
 			trigger={(p) => (
 				<button
 					type="button"
 					aria-label={t("model.thinkingButton", { level })}
 					title={t("model.levelLabel", { level })}
+					// 触发器固定为正方形 + rounded-full：任何浏览器、任何行高下都是正圆
+					style={badge ? { width: size + 4, height: size + 4 } : undefined}
 					className={
 						badge
-							? `relative inline-flex rounded-full p-px transition-colors duration-150 after:absolute after:-inset-2 after:content-[''] hover:text-fg ${className}`
-							: `inline-flex h-[30px] w-6 shrink-0 items-center justify-center rounded-md transition-colors duration-150 hover:bg-hover hover:text-fg ${className}`
+							? `relative grid shrink-0 place-items-center rounded-full bg-panel leading-none transition-colors duration-150 after:absolute after:-inset-2 after:content-[''] hover:text-fg ${className}`
+							: `grid h-7 w-7 shrink-0 place-items-center rounded-full leading-none transition-colors duration-150 hover:bg-hover hover:text-fg ${className}`
 					}
 					{...p}
 				>
 					{/* 圆圈自身的读屏名由按钮给出，这里只画 */}
-					<span aria-hidden className="inline-flex">
+					<span aria-hidden className="flex">
 						{known ? (
 							<ThinkingDial level={drawn} size={size} />
 						) : (

@@ -347,20 +347,22 @@ body {
 	}
 	/*
 	 * 输入托盘获得焦点：不加描边，而是再浮起一点（上移 2px、投影加深一档），
-	 * 底边像被下方的光照亮——托盘内底部一抹主题色的径向光，加上托盘正下方一团贴身的主题色投影。
-	 * 光只在托盘自身和紧贴它的投影里，不往周围的正文铺色。
+	 * 底边像被下方的白光照亮——托盘内底部一抹白色径向光与一层贴着底边的柔光（不是 1px 细线），加上托盘正下方一团贴身的白色光晕。
+	 * 用白光而不是主题色（主题色只给「需要你」的东西）；光只在托盘自身和紧贴它的投影里，不往周围的正文铺色。
 	 */
 	.glass-dock {
-		/* 底部光的强度：深色底上同样的混色比例几乎看不见，提一档 */
-		--dock-lit: 16%;
-		--dock-lit-glow: 55%;
+		/* 浅色底上白光本身看不出，靠底边高光与加深的投影；深色底上白光要收着，否则发灰 */
+		--dock-lit: oklch(1 0 0 / 0.75);
+		--dock-lit-edge: oklch(1 0 0 / 0.9);
+		--dock-lit-glow: oklch(1 0 0 / 0.6);
 		transition:
 			translate 220ms var(--ease),
 			box-shadow 220ms var(--ease);
 	}
 	:root[data-theme="dark"] .glass-dock {
-		--dock-lit: 30%;
-		--dock-lit-glow: 80%;
+		--dock-lit: oklch(1 0 0 / 0.1);
+		--dock-lit-edge: oklch(1 0 0 / 0.22);
+		--dock-lit-glow: oklch(1 0 0 / 0.14);
 	}
 	.glass-dock::after {
 		content: "";
@@ -371,7 +373,7 @@ body {
 		pointer-events: none;
 		background: radial-gradient(
 			110% 60% at 50% 100%,
-			color-mix(in oklab, var(--brand) var(--dock-lit), transparent),
+			var(--dock-lit),
 			transparent 72%
 		);
 		opacity: 0;
@@ -381,9 +383,9 @@ body {
 		translate: 0 -2px;
 		box-shadow:
 			var(--sh-lg),
-			0 14px 30px -16px
-			color-mix(in oklab, var(--brand) var(--dock-lit-glow), transparent),
-			inset 0 1px 0 var(--glass-hi);
+			0 14px 30px -16px var(--dock-lit-glow),
+			inset 0 1px 0 var(--glass-hi),
+			inset 0 -12px 18px -14px var(--dock-lit-edge);
 	}
 	.glass-dock:has(textarea:focus)::after {
 		opacity: 1;

@@ -12,7 +12,8 @@
  *     `--only <前缀>[,<前缀>…]`（只截界面名以其开头的项）；
  *     `--check`（在 `thread-bottom` 上断言输入坞不遮挡最后一条转录行，含模拟软键盘的第二次断言）。
  *   任一界面失败或断言不通过时打印原因并以非零码退出（其余界面照常截完）。
- * 环境变量：CHROMIUM=<可执行文件>（默认 /usr/bin/chromium）
+ * 环境变量：CHROMIUM=<可执行文件>（默认 /usr/bin/chromium）；WEBKIT=<Playwright WebKit 启动脚本> 时改用 WebKit 截图
+ *   （近似 Safari：核对 iOS 上的动画、圆角、backdrop-filter 等差异；需与 playwright-core 版本匹配的 WebKit 构建）。
  */
 import { mkdir } from "node:fs/promises";
 import {
@@ -20,6 +21,7 @@ import {
 	type BrowserContext,
 	chromium,
 	type Page,
+	webkit,
 } from "playwright-core";
 import {
 	ENV_THREADS,
@@ -908,11 +910,13 @@ let ok = true;
 try {
 	await waitForServer(BASE, 30_000);
 	await mkdir(OUT, { recursive: true });
-	const browser = await chromium.launch({
-		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
-		// 软件合成器下模拟 DPR（deviceScaleFactor）时 backdrop-filter 会部分失效，改走 SwiftShader 的 GPU 合成
-		args: ["--use-gl=angle", "--use-angle=swiftshader"],
-	});
+	const browser = process.env.WEBKIT
+		? await webkit.launch({ executablePath: process.env.WEBKIT })
+		: await chromium.launch({
+				executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
+				// 软件合成器下模拟 DPR（deviceScaleFactor）时 backdrop-filter 会部分失效，改走 SwiftShader 的 GPU 合成
+				args: ["--use-gl=angle", "--use-angle=swiftshader"],
+			});
 	if (ALL) ok = await shootAll(browser);
 	else {
 		const written = M25 ? await shootEnv(browser) : await shootDefault(browser);

@@ -345,7 +345,14 @@ const MODE_ICON = {
 	dark: "moon",
 } as const satisfies Record<ThemeMode, IconName>;
 
-export function Sidebar(): ReactNode {
+/**
+ * `floating`：手机上的悬浮抽屉自己按安全区留了外边距，栏内就不再加 safe-area 内边距（否则刘海下空两次）。
+ */
+export function Sidebar({
+	floating = false,
+}: {
+	floating?: boolean;
+} = {}): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const threads = useIndex((s) => s.threads);
@@ -408,7 +415,7 @@ export function Sidebar(): ReactNode {
 
 	return (
 		<nav
-			className="flex h-full w-full flex-col pt-safe pl-safe"
+			className={`flex h-full w-full flex-col ${floating ? "" : "pt-safe pl-safe"}`}
 			aria-label={t("nav.sidebar")}
 		>
 			<div className="flex h-14 shrink-0 items-center gap-2 pr-2.5 pl-4">
@@ -542,7 +549,9 @@ export function Sidebar(): ReactNode {
 					<ArchivedGroup now={now} />
 				</div>
 			</div>
-			<div className="flex min-h-[46px] shrink-0 items-center gap-1 pr-2 pb-safe pl-4">
+			<div
+				className={`flex min-h-[46px] shrink-0 items-center gap-1 pr-2 pl-4 ${floating ? "" : "pb-safe"}`}
+			>
 				<span className="flex min-w-0 flex-1 items-center gap-2 text-muted text-xs">
 					<StatusDot tone={tone} pulse={tone === "warn"} />
 					<span className="truncate">{t(`connection.${conn}`)}</span>

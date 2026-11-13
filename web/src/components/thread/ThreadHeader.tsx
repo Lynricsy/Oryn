@@ -410,14 +410,22 @@ export function ThreadHeader({
 				</button>
 			)}
 			{editing === null && (thread?.publicShares ?? 0) > 0 && (
-				// 有未撤销的公开链接：中性徽标，点开分享对话框管理
+				// 有未撤销的公开链接：中性徽标，点开分享对话框管理；窄页头只留地球图标，把宽度让给标题
 				<button
 					type="button"
 					className="inline-flex shrink-0 rounded-sm"
+					aria-label={t("share.header.badgeTitle", {
+						n: thread?.publicShares ?? 0,
+					})}
 					title={t("share.header.badgeTitle", { n: thread?.publicShares ?? 0 })}
 					onClick={() => uiStore.getState().open({ kind: "share" })}
 				>
-					<Badge icon="globe">{t("share.header.badge")}</Badge>
+					<span className="hidden @md/header:inline-flex">
+						<Badge icon="globe">{t("share.header.badge")}</Badge>
+					</span>
+					<span className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted @md/header:hidden">
+						<Icon name="globe" size={14} />
+					</span>
 				</button>
 			)}
 			{editing === null && orb && (

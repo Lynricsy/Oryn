@@ -134,6 +134,16 @@
 .md tr + tr td {
 	border-top: 1px solid var(--line);
 }
+/*
+ * 窄屏上自动表格布局会把中文列挤到一字一行（「服/务/端/重/启」）：表格单元格的 min-width / max-width 浏览器不认，
+ * 改用 keep-all 让中文词不在字间断开（只在空格与标点处换行），列的最小宽度就是最长的词；
+ * 放不下时由 .md-table 横向滚动，而不是压扁列宽。
+ */
+.md th,
+.md td {
+	word-break: keep-all;
+	overflow-wrap: break-word;
+}
 .md td:first-child {
 	font-weight: 600;
 }

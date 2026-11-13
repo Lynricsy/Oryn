@@ -301,7 +301,8 @@ export function Composer({
 				placeholder={
 					busy ? t("composer.placeholderBusy") : t("composer.placeholder")
 				}
-				className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-4 pt-[13px] pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+				// 与首页托盘同一套内边距：文字离边 20px（32px 大圆角下不贴弧线），工具行图标中心、页脚读数都对齐这条线
+				className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
 				onChange={(e) => {
 					setText(e.target.value);
 					setMenuDismissed(false);
@@ -319,7 +320,7 @@ export function Composer({
 			 * 工具行：附件 + 分隔、可换行的选项（模式、模型）、停止 + 发送。停止与发送始终在第一行最右；
 			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
 			 */}
-			<div className="flex items-start gap-0.5 px-2 pb-2">
+			<div className="flex items-start gap-0.5 px-3 pb-2">
 				<div className="flex h-8 shrink-0 items-center">
 					<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
 						<Icon name="attach" size={15} />
@@ -383,11 +384,11 @@ export function Composer({
 				</button>
 			</div>
 			{(error || att.error) && (
-				<p role="alert" className="px-4 pb-2 text-err text-xs">
+				<p role="alert" className="px-5 pb-2 text-err text-xs">
 					{error ? describeError(error, t) : att.error}
 				</p>
 			)}
-			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4">
+			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-5 py-[7px] text-2xs text-faint leading-4">
 				<ModeStatus threadId={threadId} />
 				<span className="flex-1" />
 				<SessionReadout threadId={threadId} />

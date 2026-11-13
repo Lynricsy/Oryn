@@ -250,7 +250,7 @@ export interface MenuItem {
 
 /**
  * 下拉菜单（支持一级子菜单）；`side="top"` 时向上展开（贴近输入坞的消息菜单）。
- * `footer`：菜单项之下的一段说明（不可点，只在顶层显示）。
+ * `footer`：菜单项之下的一段说明（不可点，只在顶层显示）。`className` 加在根元素上（默认是块级的 relative 容器）。
  */
 export function Menu({
 	trigger,
@@ -258,6 +258,7 @@ export function Menu({
 	align = "right",
 	side = "bottom",
 	footer,
+	className = "",
 }: {
 	trigger: (props: {
 		onClick: () => void;
@@ -267,6 +268,7 @@ export function Menu({
 	align?: "left" | "right";
 	side?: "top" | "bottom";
 	footer?: ReactNode;
+	className?: string;
 }) {
 	const [open, setOpen] = useState(false);
 	const [sub, setSub] = useState<string | null>(null);
@@ -289,7 +291,7 @@ export function Menu({
 	}, [open]);
 	const list = sub ? (items.find((i) => i.key === sub)?.children ?? []) : items;
 	return (
-		<div ref={ref} className="relative">
+		<div ref={ref} className={`relative ${className}`}>
 			{trigger({
 				onClick: () => {
 					setOpen((v) => !v);
