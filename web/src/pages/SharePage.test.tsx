@@ -3,14 +3,14 @@
  * 全程只请求 `/api/v1/public/…`，不碰 `/api/v1/me`、`/api/v1/ws-ticket` 等私有接口。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry } from "../api/client";
 import i18n from "../i18n";
 import type { PublicShare } from "../share/feed";
 import { resetThreadStores } from "../state/stores";
-import { SharePage } from "./SharePage";
+import { ATTACHMENT_POLL_MS, SharePage } from "./SharePage";
 
 const SLUG = "fedcba9876543210fedcba9876543210";
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -149,5 +149,146 @@ describe("SharePage", () => {
 		for (const u of urls) expect(u.startsWith("/api/v1/public/")).toBe(true);
 		expect(urls).not.toContain("/api/v1/me");
 		expect(urls).not.toContain("/api/v1/ws-ticket");
+	});
+
+	it("读取元数据失败（非 404）：说明哪一步、为什么，并给出重试", async () => {
+		stubFetch(() =>
+			Response.json(
+				{ code: "internal", message: "db locked" },
+				{ status: 500 },
+			),
+		);
+		renderAt(SLUG);
+		expect(
+			await screen.findByText(
+				"读取分享失败：服务器出错",
+				{},
+				{ timeout: 8000 },
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("稍后重试；一直失败时查看 orynd 日志。"),
+		).toBeInTheDocument();
+		expect(screen.getByText("db locked")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: T("share.page.retry") }),
+		).toBeInTheDocument();
+	}, 10_000);
+
+	it("实时分享工作中：状态用中性的转圈，不用成功绿", () => {
+		stubFetch(() => new Promise<Response>(() => {}));
+		vi.stubGlobal(
+			"WebSocket",
+			class {
+				static OPEN = 1;
+				close() {}
+			},
+		);
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		client.setQueryData(["public-share", SLUG], {
+			...SHARE,
+			mode: "live",
+			state: "working",
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/s/${SLUG}`]}>
+					<Routes>
+						<Route path="/s/:slug" element={<SharePage />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		const state = screen.getByRole("img", { name: "工作中" });
+		expect(state.className).toContain("text-muted");
+		expect(state.querySelector("[class*='bg-ok']")).toBeNull();
+	});
+});
+
+describe("SharePage 附件的公开地址", () => {
+	const ATT = "att_01ABCDEFGHJKMNPQRSTVWXYZ01";
+	const withAttachment: Entry = {
+		...entry(1, "user", ""),
+		payload: {
+			type: "message",
+			id: "e1",
+			message: {
+				role: "user",
+				timestamp: 1,
+				content: [
+					{
+						type: "text",
+						text: `看附件\n\n<oryn-attachments>\nThe user attached these files.\n- /home/user/.oryn/attachments/${ATT}/a.txt (text/plain, 12 bytes)\n</oryn-attachments>`,
+					},
+				],
+			},
+		},
+	};
+	const page = {
+		entries: [withAttachment],
+		hasMore: false,
+		lastSeq: 1,
+		leafEntryId: "e1",
+	};
+	const published = {
+		id: ATT,
+		name: "a.txt",
+		size: 12,
+		mime: "text/plain",
+		url: `/f/${ATT}`,
+	};
+
+	it("打开后才出现的附件：元数据里没有 → 立即复查，拿到公开地址后可下载", async () => {
+		let metaCalls = 0;
+		stubFetch((path) => {
+			if (path === `/api/v1/public/shares/${SLUG}`) {
+				metaCalls++;
+				return Response.json(
+					metaCalls === 1 ? SHARE : { ...SHARE, attachments: [published] },
+				);
+			}
+			if (path === `/api/v1/public/shares/${SLUG}/entries`)
+				return Response.json(page);
+			return Response.json({ code: "unauthorized" }, { status: 401 });
+		});
+		renderAt(SLUG);
+		expect(await screen.findByText("看附件")).toBeInTheDocument();
+		const link = await screen.findByRole("link", { name: /a\.txt/ });
+		expect(link).toHaveAttribute("href", `/f/${ATT}`);
+		expect(metaCalls).toBe(2);
+	});
+
+	it("之后才被发布的附件：定期复查元数据；未发布前只显示名称", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			let isPublic = false;
+			stubFetch((path) => {
+				if (path === `/api/v1/public/shares/${SLUG}`)
+					return Response.json({
+						...SHARE,
+						attachments: [
+							isPublic ? published : { ...published, url: undefined },
+						],
+					});
+				if (path === `/api/v1/public/shares/${SLUG}/entries`)
+					return Response.json(page);
+				return Response.json({ code: "unauthorized" }, { status: 401 });
+			});
+			renderAt(SLUG);
+			expect(await screen.findByText("a.txt")).toBeInTheDocument();
+			expect(screen.queryByRole("link", { name: /a\.txt/ })).toBeNull();
+			isPublic = true;
+			await vi.advanceTimersByTimeAsync(ATTACHMENT_POLL_MS);
+			await waitFor(() =>
+				expect(screen.getByRole("link", { name: /a\.txt/ })).toHaveAttribute(
+					"href",
+					`/f/${ATT}`,
+				),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

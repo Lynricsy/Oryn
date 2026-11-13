@@ -42,6 +42,11 @@ class FakeNotification {
 
 let visibility: DocumentVisibilityState;
 
+/** 推进微任务直到条件成立（请求经 openapi-fetch 的中间件后才真正调用 fetch）。 */
+async function until(cond: () => boolean) {
+	for (let i = 0; i < 100 && !cond(); i++) await Promise.resolve();
+}
+
 beforeEach(() => {
 	vi.useFakeTimers();
 	visibility = "visible";
@@ -134,6 +139,10 @@ describe("通知 store", () => {
 	});
 
 	it("notifications.read：按线程或全部清未读与 toast", () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => new Promise<Response>(() => {})),
+		);
 		const other = "T-0193a1b2-0000-7000-8000-0000000000n2";
 		s().onNotification(note({ id: "a" }));
 		s().onNotification(note({ id: "b", threadId: other, url: `/t/${other}` }));
@@ -148,16 +157,89 @@ describe("通知 store", () => {
 		expect(s().toasts).toEqual([]);
 	});
 
-	it("markRead：乐观清零并 POST notifications/read", async () => {
-		const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+	it("markRead：乐观清零并 POST notifications/read，之后重新取权威未读数", async () => {
+		const fetch = vi.fn(async (req: Request) =>
+			new URL(req.url).pathname === "/api/v1/notifications/read"
+				? new Response(null, { status: 204 })
+				: Response.json({ notifications: [], unread: 0 }),
+		);
 		vi.stubGlobal("fetch", fetch);
 		s().onNotification(note());
 		await s().markRead(TID);
 		expect(s().unread).toBe(0);
-		const req = (fetch.mock.calls[0] as unknown as [Request])[0];
+		const reqs = fetch.mock.calls.map((c) => (c as unknown as [Request])[0]);
+		const req = reqs[0] as Request;
 		expect(new URL(req.url).pathname).toBe("/api/v1/notifications/read");
 		expect(req.headers.get("X-Oryn-CSRF")).toBe("1");
 		expect(await req.json()).toEqual({ threadId: TID });
+		expect(reqs.map((r) => `${r.method} ${new URL(r.url).pathname}`)).toEqual([
+			"POST /api/v1/notifications/read",
+			"GET /api/v1/notifications",
+		]);
+	});
+
+	it("按线程已读：本地最近 50 条之外还有该线程的未读时，以服务端的总数为准", async () => {
+		// 同一线程 60 条未读，本地只持有最近 50 条
+		const local = Array.from({ length: 50 }, (_, i) => note({ id: `n${i}` }));
+		notificationsStore.setState({ items: local, unread: 60 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				Response.json({
+					notifications: local.map((n) => ({ ...n, readAt: 5 })),
+					unread: 0,
+				}),
+			),
+		);
+		s().onRead(TID);
+		await vi.waitFor(() => expect(s().unread).toBe(0));
+	});
+
+	it("load 期间经 WS 到达的通知并入结果，不被较早的应答覆盖", async () => {
+		let respond: (r: Response) => void = () => {};
+		const old = note({ id: "old" });
+		let asked = false;
+		const fetch = vi.fn(
+			() =>
+				new Promise<Response>((r) => {
+					asked = true;
+					respond = r;
+				}),
+		);
+		vi.stubGlobal("fetch", fetch);
+		const pending = s().load();
+		await until(() => asked);
+		s().onNotification(note({ id: "live" }));
+		respond(Response.json({ notifications: [old], unread: 3 }));
+		await pending;
+		expect(s().items.map((n) => n.id)).toEqual(["live", "old"]);
+		expect(s().unread).toBe(4);
+	});
+
+	it("load 期间又有已读：丢弃可能过期的应答，再取一次", async () => {
+		const answers = [
+			{ notifications: [note({ id: "a" })], unread: 9 },
+			{ notifications: [note({ id: "a", readAt: 1 })], unread: 0 },
+		];
+		const resolvers: ((r: Response) => void)[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				() =>
+					new Promise<Response>((r) => {
+						resolvers.push(r);
+					}),
+			),
+		);
+		const pending = s().load();
+		await until(() => resolvers.length === 1);
+		s().onRead();
+		resolvers[0]?.(Response.json(answers[0]));
+		await until(() => resolvers.length === 2);
+		expect(resolvers).toHaveLength(2);
+		resolvers[1]?.(Response.json(answers[1]));
+		await pending;
+		expect(s().unread).toBe(0);
 	});
 
 	it("load：取最近 50 条与未读数", async () => {

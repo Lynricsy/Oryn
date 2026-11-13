@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
 import { qk } from "../../api/queries";
@@ -408,5 +414,202 @@ describe("助手头像闪烁", () => {
 	it("最后一行是用户消息时没有进行中的回合", () => {
 		expect(layoutTurns(items).openStart).toBe(3);
 		expect(layoutTurns([...items, user(6)]).openStart).toBeUndefined();
+	});
+});
+
+describe("贴底跟随", () => {
+	const u = { input: 1, output: 1, cacheRead: 0, cost: 0 };
+	const base: TranscriptItem[] = [
+		user(1),
+		msg(2, assistant("a", u)),
+		user(3),
+		msg(4, assistant("b", u)),
+	];
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		indexStore.setState({ threads: {} });
+	});
+
+	/** 给滚动容器一个可控的滚动模型：jsdom 没有布局，scrollHeight / scrollTop 由测试决定。 */
+	function scrollModel(el: HTMLElement, client = 500) {
+		const m = { height: 1000, top: 0 };
+		Object.defineProperty(el, "scrollHeight", {
+			configurable: true,
+			get: () => m.height,
+		});
+		Object.defineProperty(el, "clientHeight", {
+			configurable: true,
+			get: () => client,
+		});
+		Object.defineProperty(el, "scrollTop", {
+			configurable: true,
+			get: () => m.top,
+			set: (v: number) => {
+				m.top = Math.max(0, Math.min(v, m.height - client));
+			},
+		});
+		return m;
+	}
+
+	function mount(items: TranscriptItem[], startAtTop = false) {
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+			4000,
+		);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+			},
+		});
+		client.setQueryData(qk.agentIdentity, {});
+		client.setQueryData(qk.userIdentity, {});
+		client.setQueryData(qk.gitIdentity, {});
+		const tree = (list: TranscriptItem[]) => (
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider value={ctx}>
+					<Transcript items={list} startAtTop={startAtTop} />
+				</TranscriptContext.Provider>
+			</QueryClientProvider>
+		);
+		const r = render(tree(items));
+		const el = screen.getByTestId("transcript");
+		const m = scrollModel(el);
+		return {
+			el,
+			m,
+			rerender: (list: TranscriptItem[]) => r.rerender(tree(list)),
+		};
+	}
+
+	const jump = () => screen.queryByRole("button", { name: "回到底部" });
+
+	it("首轮补发期间的非用户滚动（测高补偿 / 内容先长高）不会让转录退出跟随", () => {
+		const { el, m } = mount(base);
+		m.top = 500;
+		fireEvent.scroll(el);
+		expect(jump()).toBeNull();
+		// 后续批次与测高让内容长高，浏览器在贴底纠偏之前先派发了一次滚动事件：距底 2000px
+		m.height = 3000;
+		fireEvent.scroll(el);
+		expect(jump()).toBeNull();
+		expect(m.top).toBe(2500);
+	});
+
+	it("用户真的往上翻（滚轮）才退出跟随；之后内容增长不抢回底部，「回到底部」恢复跟随", () => {
+		const { el, m, rerender } = mount(base);
+		m.top = 500;
+		fireEvent.scroll(el);
+		m.height = 3000;
+		fireEvent.wheel(el, { deltaY: -120 });
+		m.top = 400;
+		fireEvent.scroll(el);
+		expect(jump()).not.toBeNull();
+		m.height = 3400;
+		rerender([...base, user(5)]);
+		expect(m.top).toBe(400);
+		fireEvent.click(jump() as HTMLElement);
+		expect(m.top).toBe(2900);
+		expect(jump()).toBeNull();
+	});
+
+	it("触摸往下拖（内容上翻）同样算用户意图", () => {
+		const { el, m } = mount(base);
+		m.top = 500;
+		fireEvent.scroll(el);
+		fireEvent.touchStart(el, { touches: [{ clientY: 100 }] });
+		fireEvent.touchMove(el, { touches: [{ clientY: 180 }] });
+		m.top = 300;
+		fireEvent.scroll(el);
+		expect(jump()).not.toBeNull();
+	});
+
+	it("startAtTop（快照）：非用户滚动不会开始跟随", () => {
+		const { el, m } = mount(base, true);
+		m.height = 3000;
+		fireEvent.scroll(el);
+		expect(m.top).toBe(0);
+		expect(jump()).not.toBeNull();
+	});
+});
+
+describe("定位条目", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		getThreadStore(ctx.threadId).setState({ entries: [] });
+	});
+
+	it("revealEntry：滚到该行、退出跟随并描边；工具输出描边对应工具卡", async () => {
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+			4000,
+		);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		const call = {
+			role: "assistant",
+			content: [
+				{ type: "toolCall", id: "call_9", name: "bash", arguments: {} },
+			],
+		};
+		getThreadStore(ctx.threadId).setState({
+			entries: [
+				{
+					seq: 1,
+					file: "s.jsonl",
+					entryId: "E1",
+					type: "message",
+					payload: {
+						type: "message",
+						message: { role: "user", content: "hi" },
+					},
+				},
+				{
+					seq: 3,
+					file: "s.jsonl",
+					entryId: "E3",
+					type: "message",
+					payload: {
+						type: "message",
+						message: { role: "toolResult", toolCallId: "call_9", content: [] },
+					},
+				},
+			],
+		});
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+			},
+		});
+		client.setQueryData(qk.agentIdentity, {});
+		client.setQueryData(qk.userIdentity, {});
+		client.setQueryData(qk.gitIdentity, {});
+		const { container } = render(
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider value={ctx}>
+					<Transcript items={[user(1), msg(2, call)]} />
+				</TranscriptContext.Provider>
+			</QueryClientProvider>,
+		);
+		const { revealEntry } = await import("./reveal");
+		expect(revealEntry(ctx.threadId, { entryId: "E9", seq: 9 })).toBe(false);
+		let ok = false;
+		act(() => {
+			ok = revealEntry(ctx.threadId, { entryId: "E1", seq: 1 });
+		});
+		expect(ok).toBe(true);
+		const row = container.querySelector('[data-index="0"] > div');
+		expect(row?.className).toContain("outline-warn");
+		expect(screen.getByRole("button", { name: "回到底部" })).not.toBeNull();
+
+		act(() => {
+			revealEntry(ctx.threadId, { entryId: "E3", seq: 3 });
+		});
+		await waitFor(() =>
+			expect(
+				container.querySelector('[data-tool-call-id="call_9"]')?.className,
+			).toContain("outline-warn"),
+		);
+		expect(
+			container.querySelector('[data-index="1"] > div')?.className,
+		).not.toContain("outline-warn");
 	});
 });

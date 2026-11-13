@@ -18,7 +18,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { JsonRecord } from "../../state/message-builder";
-import { useIndex, useThread } from "../../state/stores";
+import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
 import { AgentAvatar } from "../ui/AgentAvatar";
@@ -43,6 +43,26 @@ import {
 } from "./MessageView";
 import { type KnownModel, modelLabel } from "./model-label";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
+import { findRevealHit, registerRevealer } from "./reveal";
+
+/** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在往上翻（含平滑滚动的余程）。 */
+const INTENT_MS = 600;
+/** 往上翻的按键（Shift+空格另判）。 */
+const UP_KEYS: Record<string, true> = {
+	ArrowUp: true,
+	PageUp: true,
+	Home: true,
+};
+/** 定位条目后描边的时长与寻找工具卡的最多帧数。 */
+const REVEAL_MS = 2400;
+const REVEAL_TRIES = 30;
+/** 定位描边：警示色细线，不改变布局（outline 不占位）。 */
+const REVEAL_RING = [
+	"outline-2",
+	"outline-offset-4",
+	"outline-warn",
+	"rounded-md",
+];
 
 const META_ICON: Record<string, IconName> = {
 	thinking_level_change: "brain",
@@ -448,6 +468,12 @@ export function Transcript({
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
 	const stick = useRef(!startAtTop);
+	// 用户向上阅读的意图：滚轮 / 键盘 / 触摸之后 INTENT_MS 内，或按住滚动条往上拖。
+	// 只有它能让转录退出跟随；测高补偿、程序写 scrollTop 等非用户滚动不改变跟随状态
+	const intentUntil = useRef(0);
+	const dragging = useRef(false);
+	const touchY = useRef<number | null>(null);
+	const lastTop = useRef(0);
 	const count = items.length + 1; // 末尾一项放 footer（工作中指示等）
 	const virtualizer = useVirtualizer({
 		count,
@@ -460,17 +486,75 @@ export function Transcript({
 	});
 	const total = virtualizer.getTotalSize();
 
-	const onScroll = useCallback(() => {
-		const el = scrollRef.current;
-		if (!el) return;
-		const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-		stick.current = bottom;
-		setAtBottom(bottom);
-	}, []);
-
 	const scrollToEnd = useCallback(() => {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
+	}, []);
+
+	const onScroll = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const top = el.scrollTop;
+		const movedUp = top < lastTop.current - 1;
+		lastTop.current = top;
+		const bottom = el.scrollHeight - top - el.clientHeight < 48;
+		if (bottom) stick.current = true;
+		else if (
+			performance.now() < intentUntil.current ||
+			(dragging.current && movedUp)
+		)
+			stick.current = false;
+		else if (stick.current) scrollToEnd();
+		setAtBottom(stick.current || bottom);
+	}, [scrollToEnd]);
+
+	// 只观察、不拦截（被动监听）：哪些滚动出自用户往上翻的动作
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const markUp = () => {
+			intentUntil.current = performance.now() + INTENT_MS;
+		};
+		const onWheel = (e: WheelEvent) => {
+			if (e.deltaY < 0) markUp();
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (UP_KEYS[e.key] || (e.key === " " && e.shiftKey)) markUp();
+		};
+		const onTouchStart = (e: TouchEvent) => {
+			touchY.current = e.touches[0]?.clientY ?? null;
+		};
+		const onTouchMove = (e: TouchEvent) => {
+			const y = e.touches[0]?.clientY;
+			if (y === undefined) return;
+			// 手指往下拖 = 内容往上翻
+			if (touchY.current !== null && y > touchY.current + 2) markUp();
+			touchY.current = y;
+		};
+		const onPointerDown = (e: PointerEvent) => {
+			// 直接按在滚动容器上（而不是某一行里）= 拖滚动条
+			if (e.target === el) dragging.current = true;
+		};
+		const onPointerUp = () => {
+			dragging.current = false;
+		};
+		const passive = { passive: true };
+		el.addEventListener("wheel", onWheel, passive);
+		el.addEventListener("keydown", onKey);
+		el.addEventListener("touchstart", onTouchStart, passive);
+		el.addEventListener("touchmove", onTouchMove, passive);
+		el.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("pointerup", onPointerUp);
+		window.addEventListener("pointercancel", onPointerUp);
+		return () => {
+			el.removeEventListener("wheel", onWheel);
+			el.removeEventListener("keydown", onKey);
+			el.removeEventListener("touchstart", onTouchStart);
+			el.removeEventListener("touchmove", onTouchMove);
+			el.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("pointerup", onPointerUp);
+			window.removeEventListener("pointercancel", onPointerUp);
+		};
 	}, []);
 
 	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随
@@ -485,6 +569,60 @@ export function Transcript({
 		stick.current = true;
 		scrollToEnd();
 	}, [scrollToEnd]);
+
+	// 定位某条条目（分享前的密钥扫描命中）：滚到该行居中、退出跟随，并短暂描边该行或对应工具卡
+	const [revealed, setRevealed] = useState<{
+		key: string;
+		toolCallId?: string;
+	} | null>(null);
+	const itemsRef = useRef(items);
+	itemsRef.current = items;
+	useEffect(
+		() =>
+			registerRevealer(threadId, (target) => {
+				const list = itemsRef.current;
+				const hit = findRevealHit(
+					list,
+					getThreadStore(threadId).getState().entries,
+					target,
+				);
+				const item = hit ? list[hit.index] : undefined;
+				if (!hit || !item) return false;
+				stick.current = false;
+				setAtBottom(false);
+				virtualizer.scrollToIndex(hit.index, { align: "center" });
+				setRevealed({ key: item.key, toolCallId: hit.toolCallId });
+				return true;
+			}),
+		[threadId, virtualizer],
+	);
+	useEffect(() => {
+		if (!revealed) return;
+		const id = revealed.toolCallId;
+		let card: HTMLElement | null = null;
+		let frame = 0;
+		let tries = 0;
+		// 工具卡在行挂载、测高之后才在 DOM 里：逐帧找，最多 REVEAL_TRIES 帧
+		const findCard = () => {
+			if (!id) return;
+			card =
+				scrollRef.current?.querySelector<HTMLElement>(
+					`[data-tool-call-id="${id.replace(/["\\]/g, "\\$&")}"]`,
+				) ?? null;
+			if (card) {
+				card.scrollIntoView?.({ block: "center" });
+				card.classList.add(...REVEAL_RING);
+			} else if (++tries < REVEAL_TRIES)
+				frame = requestAnimationFrame(findCard);
+		};
+		frame = requestAnimationFrame(findCard);
+		const timer = setTimeout(() => setRevealed(null), REVEAL_MS);
+		return () => {
+			cancelAnimationFrame(frame);
+			clearTimeout(timer);
+			card?.classList.remove(...REVEAL_RING);
+		};
+	}, [revealed]);
 
 	const virtualItems = virtualizer.getVirtualItems();
 	const rendered = useMemo(
@@ -514,7 +652,7 @@ export function Transcript({
 						}}
 					>
 						<div
-							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""}`}
+							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""} ${revealed && !revealed.toolCallId && item?.key === revealed.key ? REVEAL_RING.join(" ") : ""}`}
 						>
 							{turns.starts.has(v.index) && (
 								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
@@ -554,6 +692,7 @@ export function Transcript({
 			pendingText,
 			liveStart,
 			sessionModel,
+			revealed,
 		],
 	);
 
@@ -586,6 +725,7 @@ export function Transcript({
 					style={{ bottom: trayTop + 8 }}
 					onClick={() => {
 						stick.current = true;
+						setAtBottom(true);
 						scrollToEnd();
 					}}
 				>

@@ -5,6 +5,8 @@
  *   页面隐藏 → 有通知权限且本浏览器没有推送订阅时弹系统通知（有订阅时交给 service worker，页面不重复弹）；
  *   没有权限时什么都不弹，回到页面后在铃铛里看到。
  * - WS `notifications.read` → `onRead`；`markRead` 先乐观更新再 `POST notifications/read`。
+ *   按线程已读之后都要重新 `load()`：未读数是全库总数，本地只有最近 50 条，乐观扣减算不出其余部分。
+ *   `load()` 期间经 WS 到达的通知合并回结果（应答可能早于它们生成）；期间又有已读则丢弃这次应答、再取一次。
  */
 import type { TFunction } from "i18next";
 import { useStore } from "zustand";
@@ -59,6 +61,10 @@ export function setNotificationNavigator(fn: (url: string) => void) {
 }
 
 const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** 各个进行中的 `load()` 期间经 WS 到达的通知。 */
+const arrivedDuringLoad = new Set<AppNotification[]>();
+/** 每次已读（本地或其它设备）加一；`load()` 据此判断应答是否可能已过期。 */
+let readGeneration = 0;
 
 function pageVisible(): boolean {
 	return (
@@ -80,48 +86,10 @@ function showSystemNotification(n: AppNotification) {
 }
 
 export const notificationsStore = createStore<NotificationsState>(
-	(set, get) => ({
-		items: [],
-		unread: 0,
-		toasts: [],
-		loaded: false,
-		pushActive: false,
-		load: async () => {
-			try {
-				const res = await unwrap(
-					api.GET("/api/v1/notifications", {
-						params: { query: { limit: LIST_LIMIT } },
-					}),
-				);
-				set({ items: res.notifications, unread: res.unread, loaded: true });
-			} catch {
-				// 加载失败只影响铃铛里的历史；实时到达的通知照常显示
-			}
-		},
-		onNotification: (n) => {
-			const s = get();
-			if (s.items.some((x) => x.id === n.id)) return;
-			set({
-				items: [n, ...s.items].slice(0, LIST_LIMIT),
-				unread: n.readAt ? s.unread : s.unread + 1,
-			});
-			if (pageVisible()) {
-				if (n.threadId && location.pathname === `/t/${n.threadId}`) return;
-				set({ toasts: [...get().toasts, n].slice(-MAX_TOASTS) });
-				toastTimers.set(
-					n.id,
-					setTimeout(() => get().dismissToast(n.id), TOAST_MS),
-				);
-				return;
-			}
-			if (
-				typeof Notification !== "undefined" &&
-				Notification.permission === "granted" &&
-				!s.pushActive
-			)
-				showSystemNotification(n);
-		},
-		onRead: (threadId) => {
+	(set, get) => {
+		/** 乐观已读：本地列表里的条目标已读并扣减；按线程时只是近似值，随后由 load() 校正。 */
+		const applyRead = (threadId: string | undefined) => {
+			readGeneration++;
 			const now = Date.now();
 			const s = get();
 			let cleared = 0;
@@ -135,22 +103,85 @@ export const notificationsStore = createStore<NotificationsState>(
 				unread: threadId ? Math.max(0, s.unread - cleared) : 0,
 				toasts: threadId ? s.toasts.filter((n) => n.threadId !== threadId) : [],
 			});
-		},
-		markRead: async (threadId) => {
-			get().onRead(threadId);
-			await unwrap(
-				api.POST("/api/v1/notifications/read", {
-					body: threadId ? { threadId } : {},
-				}),
-			);
-		},
-		dismissToast: (id) => {
-			clearTimeout(toastTimers.get(id));
-			toastTimers.delete(id);
-			set({ toasts: get().toasts.filter((n) => n.id !== id) });
-		},
-		setPushActive: (on) => set({ pushActive: on }),
-	}),
+		};
+		return {
+			items: [],
+			unread: 0,
+			toasts: [],
+			loaded: false,
+			pushActive: false,
+			load: async () => {
+				const arrived: AppNotification[] = [];
+				const gen = readGeneration;
+				arrivedDuringLoad.add(arrived);
+				let res: Schemas["NotificationList"];
+				try {
+					res = await unwrap(
+						api.GET("/api/v1/notifications", {
+							params: { query: { limit: LIST_LIMIT } },
+						}),
+					);
+				} catch {
+					// 加载失败只影响铃铛里的历史；实时到达的通知照常显示
+					return;
+				} finally {
+					arrivedDuringLoad.delete(arrived);
+				}
+				// 请求期间有过已读：应答未必反映它，再取一次
+				if (gen !== readGeneration) return get().load();
+				const ids = new Set(res.notifications.map((n) => n.id));
+				const extra = arrived.filter((n) => !ids.has(n.id));
+				set({
+					items: [...extra, ...res.notifications].slice(0, LIST_LIMIT),
+					unread: res.unread + extra.filter((n) => !n.readAt).length,
+					loaded: true,
+				});
+			},
+			onNotification: (n) => {
+				const s = get();
+				if (s.items.some((x) => x.id === n.id)) return;
+				for (const list of arrivedDuringLoad) list.push(n);
+				set({
+					items: [n, ...s.items].slice(0, LIST_LIMIT),
+					unread: n.readAt ? s.unread : s.unread + 1,
+				});
+				if (pageVisible()) {
+					if (n.threadId && location.pathname === `/t/${n.threadId}`) return;
+					set({ toasts: [...get().toasts, n].slice(-MAX_TOASTS) });
+					toastTimers.set(
+						n.id,
+						setTimeout(() => get().dismissToast(n.id), TOAST_MS),
+					);
+					return;
+				}
+				if (
+					typeof Notification !== "undefined" &&
+					Notification.permission === "granted" &&
+					!s.pushActive
+				)
+					showSystemNotification(n);
+			},
+			onRead: (threadId) => {
+				applyRead(threadId);
+				if (threadId) void get().load();
+			},
+			markRead: async (threadId) => {
+				applyRead(threadId);
+				await unwrap(
+					api.POST("/api/v1/notifications/read", {
+						body: threadId ? { threadId } : {},
+					}),
+				);
+				if (threadId) await get().load();
+			},
+			dismissToast: (id) => {
+				clearTimeout(toastTimers.get(id));
+				toastTimers.delete(id);
+				set({ toasts: get().toasts.filter((n) => n.id !== id) });
+			},
+			setPushActive: (on) => set({ pushActive: on }),
+		};
+	},
 );
 
 export function useNotifications<T>(selector: (s: NotificationsState) => T): T {

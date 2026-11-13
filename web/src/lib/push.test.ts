@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	base64UrlToBytes,
+	pushRegistration,
 	pushSupported,
+	registerServiceWorker,
 	subscribePush,
 	unsubscribePush,
 } from "./push";
@@ -148,5 +150,101 @@ describe("订阅与退订", () => {
 	it("没有订阅时退订无操作", async () => {
 		await unsubscribePush();
 		expect(requests).toEqual([]);
+	});
+
+	it("pushRegistration：本地有订阅且服务端登记着同一 endpoint 才算有效", async () => {
+		expect(await pushRegistration()).toEqual({
+			endpoint: null,
+			registered: false,
+		});
+		expect(requests).toEqual([]);
+		await subscribePush();
+		requests = [];
+		expect(await pushRegistration()).toEqual({
+			endpoint: "https://push.example/ep1",
+			registered: true,
+		});
+	});
+
+	it("pushRegistration：服务端登记已被别的设备移除 → 无效，且不擅自重新登记", async () => {
+		await subscribePush();
+		requests = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (req: Request) => {
+				requests.push({
+					method: req.method,
+					path: new URL(req.url).pathname,
+					body: undefined,
+				});
+				return Response.json({
+					subscriptions: [
+						{ id: "psub_0", endpoint: "https://push.example/other" },
+					],
+				});
+			}),
+		);
+		expect(await pushRegistration()).toEqual({
+			endpoint: "https://push.example/ep1",
+			registered: false,
+		});
+		expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+			"GET /api/v1/push/subscriptions",
+		]);
+	});
+});
+
+describe("registerServiceWorker：应答 service worker 的握手", () => {
+	let onMessage: ((ev: MessageEvent) => void) | null;
+	beforeEach(() => {
+		onMessage = null;
+		Object.defineProperty(navigator, "serviceWorker", {
+			configurable: true,
+			value: {
+				register: vi.fn(async () => ({})),
+				addEventListener: (_: string, fn: (ev: MessageEvent) => void) => {
+					onMessage = fn;
+				},
+				removeEventListener: () => {
+					onMessage = null;
+				},
+			},
+		});
+	});
+	afterEach(() => {
+		Reflect.deleteProperty(navigator, "serviceWorker");
+	});
+
+	const send = (data: unknown) => {
+		const port = { postMessage: vi.fn() };
+		onMessage?.({ data, ports: [port] } as unknown as MessageEvent);
+		return port;
+	};
+
+	it("探询：表明这里是应用窗口，并如实回答此刻能否弹站内提示", () => {
+		let toasts = true;
+		const off = registerServiceWorker({
+			navigate: vi.fn(),
+			showsToasts: () => toasts,
+		});
+		expect(send({ type: "oryn.probe" }).postMessage).toHaveBeenCalledWith({
+			app: true,
+			toasts: true,
+		});
+		toasts = false;
+		expect(send({ type: "oryn.probe" }).postMessage).toHaveBeenCalledWith({
+			app: true,
+			toasts: false,
+		});
+		off();
+		expect(send({ type: "oryn.probe" }).postMessage).not.toHaveBeenCalled();
+	});
+
+	it("跳转：交给站内路由，完成后回 ok", () => {
+		const navigate = vi.fn();
+		registerServiceWorker({ navigate, showsToasts: () => true });
+		const port = send({ type: "oryn.navigate", url: "/t/x" });
+		expect(navigate).toHaveBeenCalledWith("/t/x");
+		expect(port.postMessage).toHaveBeenCalledWith({ ok: true });
 	});
 });

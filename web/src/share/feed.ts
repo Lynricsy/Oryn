@@ -5,7 +5,8 @@
  * - 快照：`GET …/entries?after=` 循环到 `hasMore=false`，首页与一条合成的 `thread.snapshot` 一起落地。
  * - 实时：匿名 WebSocket。`share.snapshot` 合成为 `thread.snapshot`；`entries` / `frame` / `live.reset` 原样映射；
  *   `transcript.reset` 清空后以 `after=0` 重连；`share.state` 更新线程摘要；`share.revoked` 或关闭码 4001 → `onGone`；
- *   其它断开按 0.5s→15s 退避重连；每 25s 发 `ping`。
+ *   其它断开先用公开 GET 复核链接（握手被 404 拒绝时浏览器拿不到 4001，只能这样发现撤销）：404 → `onGone`，
+ *   成功则把新元数据交给 `onShare`（附件的公开地址可能变了），再按 0.5s→15s 退避重连；每 25s 发 `ping`。
  */
 import {
 	ApiError,
@@ -80,6 +81,7 @@ export class ShareFeed {
 	private readonly slug: string;
 	private readonly share: PublicShare;
 	private readonly onGone: () => void;
+	private readonly onShare: ((share: PublicShare) => void) | undefined;
 	private readonly key: string;
 	private stopped = true;
 	private ws: WebSocket | null = null;
@@ -87,10 +89,16 @@ export class ShareFeed {
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private pingTimer: ReturnType<typeof setInterval> | undefined;
 
-	constructor(slug: string, share: PublicShare, onGone: () => void) {
+	constructor(
+		slug: string,
+		share: PublicShare,
+		onGone: () => void,
+		onShare?: (share: PublicShare) => void,
+	) {
 		this.slug = slug;
 		this.share = share;
 		this.onGone = onGone;
+		this.onShare = onShare;
 		this.key = shareKey(slug);
 	}
 
@@ -223,9 +231,22 @@ export class ShareFeed {
 			clearInterval(this.pingTimer);
 			if (this.stopped) return;
 			if (ev.code === SHARE_REVOKED_CLOSE) return this.gone();
-			const n = this.attempts++;
-			this.timer = setTimeout(() => this.connect(), backoffMs(n));
+			void this.recheck();
 		};
+	}
+
+	/** 断开后复核链接：已撤销 → onGone；仍有效 → 交出新元数据；之后（含网络错误）按退避重连。 */
+	private async recheck(): Promise<void> {
+		const n = this.attempts++;
+		try {
+			const fresh = await fetchShare(this.slug);
+			if (this.stopped) return;
+			this.onShare?.(fresh);
+		} catch (e) {
+			if (this.stopped) return;
+			if (e instanceof ShareGoneError) return this.gone();
+		}
+		this.timer = setTimeout(() => this.connect(), backoffMs(n));
 	}
 
 	/** 立即断开并重连（不计退避）。 */

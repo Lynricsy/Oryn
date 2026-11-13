@@ -147,6 +147,41 @@ describe("ChangesPanel", () => {
 		Reflect.deleteProperty(navigator, "clipboard");
 	});
 
+	it("同步 ▾：复制成功时按钮短暂显示已复制；剪贴板被拒绝时弹出可选中的命令，不静默收起", async () => {
+		const writeText = vi.fn(async () => {});
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		render(<ChangesPanel threadId="T-sync2" orbId={ORB} />);
+		await filesList();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("changes.sync.button") }),
+		);
+		fireEvent.click(
+			screen.getByRole("menuitem", { name: t("changes.sync.copyMirror") }),
+		);
+		expect(
+			await screen.findByRole("button", { name: t("common.copied") }),
+		).toBeInTheDocument();
+
+		writeText.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+		fireEvent.click(screen.getByRole("button", { name: t("common.copied") }));
+		fireEvent.click(
+			screen.getByRole("menuitem", { name: t("changes.sync.copyApply") }),
+		);
+		const dialog = await screen.findByRole("dialog");
+		expect(
+			within(dialog).getByText(t("changes.sync.copyFailed")),
+		).toBeInTheDocument();
+		expect(
+			within(dialog).getByRole("textbox", {
+				name: t("changes.sync.commandLabel"),
+			}),
+		).toHaveValue("oryn sync --apply T-sync2");
+		Reflect.deleteProperty(navigator, "clipboard");
+	});
+
 	it("勾选未暂存文件 → stage；重命名把新旧路径一起提交；勾掉已暂存 → unstage", async () => {
 		render(<ChangesPanel threadId="T-c2" orbId={ORB} />);
 		await filesList();

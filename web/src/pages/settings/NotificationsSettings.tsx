@@ -9,7 +9,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ApiError, type Schemas } from "../../api/client";
+import type { Schemas } from "../../api/client";
 import {
 	type NotificationChannel,
 	notifyKeys,
@@ -24,6 +24,7 @@ import {
 	useUpdateChannel,
 } from "../../api/notify-queries";
 import { KIND_ICON } from "../../components/notify/NotificationBell";
+import { ActionError, DeliveryFailure } from "../../components/ui/ActionError";
 import { CopyButton } from "../../components/ui/CopyButton";
 import {
 	Badge,
@@ -37,7 +38,6 @@ import {
 	Button,
 	Checkbox,
 	Dialog,
-	describeError,
 	ErrorText,
 	Field,
 	IconButton,
@@ -48,10 +48,11 @@ import {
 	TextInput,
 	Toggle,
 } from "../../components/ui/primitives";
+import type { ActionStep } from "../../lib/action-error";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import {
-	currentSubscription,
 	needsHomeScreen,
+	pushRegistration,
 	pushSupported,
 	subscribePush,
 	unsubscribePush,
@@ -199,18 +200,22 @@ function DeviceCard() {
 	const [ownEndpoint, setOwnEndpoint] = useState<string | null>(null);
 	const pushActive = useNotifications((s) => s.pushActive);
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<unknown>(null);
+	const [error, setError] = useState<{
+		step: ActionStep;
+		error: unknown;
+	} | null>(null);
 	const subs = usePushSubscriptions();
 	const remove = useDeletePushSubscription();
 	const supported = pushSupported();
 
 	useEffect(() => {
 		let live = true;
-		void currentSubscription().then(
-			(sub) => {
+		// 开关只在服务端也登记着本浏览器的 endpoint 时显示为开（另一台设备可能已移除它）
+		void pushRegistration().then(
+			(r) => {
 				if (!live) return;
-				setOwnEndpoint(sub?.endpoint ?? null);
-				notificationsStore.getState().setPushActive(sub !== null);
+				setOwnEndpoint(r.endpoint);
+				notificationsStore.getState().setPushActive(r.registered);
 			},
 			() => undefined,
 		);
@@ -241,7 +246,7 @@ function DeviceCard() {
 			notificationsStore.getState().setPushActive(on);
 			await qc.invalidateQueries({ queryKey: notifyKeys.subscriptions });
 		} catch (e) {
-			setError(e);
+			setError({ step: on ? "pushEnable" : "pushDisable", error: e });
 		} finally {
 			setBusy(false);
 		}
@@ -297,7 +302,13 @@ function DeviceCard() {
 						</p>
 					</div>
 				)}
-				<ErrorText error={error ?? subs.error ?? remove.error} />
+				{error ? (
+					<ActionError step={error.step} error={error.error} />
+				) : subs.error ? (
+					<ActionError step="pushList" error={subs.error} />
+				) : (
+					<ActionError step="pushRemove" error={remove.error} />
+				)}
 				{others.length > 0 && (
 					<div>
 						<h4 className="mb-1 font-medium text-muted text-xs">
@@ -544,7 +555,7 @@ function ChannelDialog({
 						{t("notifySettings.telegramHint")}
 					</p>
 				)}
-				<ErrorText error={create.error ?? update.error} />
+				<ActionError step="channelSave" error={create.error ?? update.error} />
 			</form>
 		</Dialog>
 	);
@@ -624,7 +635,11 @@ function channelTone(ch: NotificationChannel) {
 	return ch.lastError ? ("err" as const) : ("ok" as const);
 }
 
-type TestResult = { ok: boolean; error?: string };
+/** 测试结果：送达 / 渠道投递失败（服务端回传的发送错误）/ 请求本身失败（未绑定、网络等）。 */
+type TestResult =
+	| { ok: true }
+	| { ok: false; delivery: string }
+	| { ok: false; request: unknown };
 
 function ChannelRow({
 	ch,
@@ -643,15 +658,10 @@ function ChannelRow({
 	const runTest = async () => {
 		setResult(null);
 		try {
-			setResult(await test.mutateAsync(ch.id));
+			const r = await test.mutateAsync(ch.id);
+			setResult(r.ok ? { ok: true } : { ok: false, delivery: r.error ?? "" });
 		} catch (e) {
-			setResult({
-				ok: false,
-				error:
-					e instanceof ApiError && e.code === "channel_not_linked"
-						? t("notifySettings.notLinked")
-						: describeError(e, t),
-			});
+			setResult({ ok: false, request: e });
 		}
 	};
 	const tg = ch.telegram;
@@ -734,21 +744,31 @@ function ChannelRow({
 				}
 			/>
 			{(result || test.isPending) && (
-				<p
-					role="status"
-					className={`flex items-center gap-1.5 pb-1.5 pl-[3.25rem] text-xs ${result?.ok ? "text-ok-ink" : "text-err"}`}
-				>
-					{test.isPending ? (
-						<Spinner size={11} />
+				<div className="pb-1.5 pl-[3.25rem]">
+					{test.isPending || result?.ok ? (
+						<p
+							role="status"
+							className={`flex items-center gap-1.5 text-xs ${test.isPending ? "text-muted" : "text-ok-ink"}`}
+						>
+							{test.isPending ? (
+								<Spinner size={11} />
+							) : (
+								<Icon name="checkCircle" size={12} />
+							)}
+							{test.isPending
+								? t("notifySettings.testing")
+								: t("notifySettings.testOk")}
+						</p>
+					) : result && "delivery" in result ? (
+						<DeliveryFailure message={result.delivery} />
 					) : (
-						<Icon name={result?.ok ? "checkCircle" : "alert"} size={12} />
+						<ActionError
+							step="channelTest"
+							error={result && "request" in result ? result.request : null}
+							compact
+						/>
 					)}
-					{test.isPending
-						? t("notifySettings.testing")
-						: result?.ok
-							? t("notifySettings.testOk")
-							: t("notifySettings.testFailed", { error: result?.error ?? "" })}
-				</p>
+				</div>
 			)}
 			<ErrorText error={update.error ?? del.error} />
 		</li>

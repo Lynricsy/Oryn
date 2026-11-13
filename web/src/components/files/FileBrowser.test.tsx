@@ -504,4 +504,62 @@ describe("FileBrowser 过期的目录应答", () => {
 		await flushMicrotasks();
 		expect(screen.getByText("new.txt")).toBeInTheDocument();
 	});
+
+	describe("发布为公开链接", () => {
+		const PUBLIC_URL =
+			"https://oryn.example/f/0123456789abcdef0123456789abcdef";
+		const publish = async (writeText: unknown) => {
+			Object.defineProperty(navigator, "clipboard", {
+				value: writeText === undefined ? undefined : { writeText },
+				configurable: true,
+			});
+			const run = vi.fn(async () => PUBLIC_URL);
+			render(
+				<FileBrowser
+					sources={[mem.src]}
+					storageKey="test"
+					publisher={{ sourceId: "mem", run }}
+				/>,
+			);
+			const menu = await openMenu("a.txt");
+			fireEvent.click(
+				within(menu).getByRole("menuitem", { name: t("publish.orbFile") }),
+			);
+			await waitFor(() => expect(run).toHaveBeenCalledWith("/r/a.txt"));
+		};
+
+		it("复制成功才说已复制", async () => {
+			const writeText = vi.fn(async () => {});
+			await publish(writeText);
+			expect(
+				await screen.findByText(t("publish.orbFileDone")),
+			).toBeInTheDocument();
+			expect(writeText).toHaveBeenCalledWith(PUBLIC_URL);
+			expect(screen.queryByText(t("publish.copyFailed"))).toBeNull();
+		});
+
+		it("复制被拒绝：说已发布但没复制，留下可选中的完整链接", async () => {
+			await publish(
+				vi.fn(async () => {
+					throw new DOMException("denied", "NotAllowedError");
+				}),
+			);
+			expect(
+				await screen.findByText(t("publish.orbFilePublished")),
+			).toBeInTheDocument();
+			expect(screen.queryByText(t("publish.orbFileDone"))).toBeNull();
+			expect(screen.getByText(t("publish.copyFailed"))).toBeInTheDocument();
+			expect(
+				screen.getByRole("textbox", { name: t("publish.urlLabel") }),
+			).toHaveValue(PUBLIC_URL);
+		});
+
+		it("Clipboard API 不可用（普通 HTTP）：同样留下链接", async () => {
+			await publish(undefined);
+			expect(
+				await screen.findByRole("textbox", { name: t("publish.urlLabel") }),
+			).toHaveValue(PUBLIC_URL);
+			expect(screen.queryByText(t("publish.orbFileDone"))).toBeNull();
+		});
+	});
 });

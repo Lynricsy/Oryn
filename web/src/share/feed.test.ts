@@ -151,20 +151,30 @@ describe("ShareFeed 快照", () => {
 
 describe("ShareFeed 实时", () => {
 	let onGone: Mock<() => void>;
+	let onShare: Mock<(s: PublicShare) => void>;
 	let feed: ShareFeed;
+	/** 断开后复核元数据（`GET public/shares/<slug>`）的应答；其它 REST 请求一律视为错误。 */
+	let meta: () => Response;
+	let metaCalls: number;
 	beforeEach(() => {
 		vi.stubGlobal("WebSocket", FakeWS);
+		meta = () => Response.json(LIVE);
+		metaCalls = 0;
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => {
-				throw new Error("实时分享不应发 REST 请求");
+			vi.fn(async (req: Request) => {
+				if (new URL(req.url).pathname !== `/api/v1/public/shares/${SLUG}`)
+					throw new Error("实时分享只许复核元数据");
+				metaCalls++;
+				return meta();
 			}),
 		);
 		vi.useFakeTimers({
 			toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
 		});
 		onGone = vi.fn<() => void>();
-		feed = new ShareFeed(SLUG, LIVE, onGone);
+		onShare = vi.fn<(s: PublicShare) => void>();
+		feed = new ShareFeed(SLUG, LIVE, onGone, onShare);
 		feed.start();
 	});
 	afterEach(() => feed.stop());
@@ -252,22 +262,74 @@ describe("ShareFeed 实时", () => {
 		expect(ws(0).closed).toBe(true);
 	});
 
-	it("其它断开按 0.5s 起的退避重连，从已有的 lastSeq 续传", () => {
+	it("其它断开先复核链接，再按 0.5s 起的退避重连，从已有的 lastSeq 续传", async () => {
 		ws(0).accept();
 		ws(0).recv(snapshot());
 		ws(0).recv({ type: "entries", entries: [entry(1), entry(2)], lastSeq: 2 });
 		ws(0).drop(1006);
-		vi.advanceTimersByTime(499);
+		await vi.advanceTimersByTimeAsync(499);
+		expect(metaCalls).toBe(1);
 		expect(FakeWS.instances).toHaveLength(1);
-		vi.advanceTimersByTime(1);
+		await vi.advanceTimersByTimeAsync(1);
 		expect(FakeWS.instances).toHaveLength(2);
 		expect(ws(1).url).toContain("?after=2&rev=1");
 		// 第二次失败退避翻倍
 		ws(1).drop(1006);
-		vi.advanceTimersByTime(999);
+		await vi.advanceTimersByTimeAsync(999);
 		expect(FakeWS.instances).toHaveLength(2);
-		vi.advanceTimersByTime(1);
+		await vi.advanceTimersByTimeAsync(1);
 		expect(FakeWS.instances).toHaveLength(3);
+		expect(onGone).not.toHaveBeenCalled();
+	});
+
+	it("断连期间被撤销：复核得到 404 → onGone，不再重连", async () => {
+		ws(0).accept();
+		ws(0).recv(snapshot());
+		meta = () =>
+			Response.json({ code: "not_found", message: "x" }, { status: 404 });
+		ws(0).drop(1006);
+		await vi.waitFor(() => expect(onGone).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(FakeWS.instances).toHaveLength(1);
+	});
+
+	it("元数据成功之后 WS 握手被 404 拒绝（浏览器只给 1006，拿不到 4001）→ 复核 404 → onGone", async () => {
+		meta = () =>
+			Response.json({ code: "not_found", message: "x" }, { status: 404 });
+		// 握手失败：从未 open 就关闭
+		ws(0).drop(1006);
+		await vi.waitFor(() => expect(onGone).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(FakeWS.instances).toHaveLength(1);
+	});
+
+	it("复核成功：新元数据（附件的公开地址）交给 onShare", async () => {
+		const fresh: PublicShare = {
+			...LIVE,
+			attachments: [
+				{
+					id: "att_1",
+					name: "a.txt",
+					size: 1,
+					mime: "text/plain",
+					url: "/f/x",
+				},
+			],
+		};
+		meta = () => Response.json(fresh);
+		ws(0).accept();
+		ws(0).drop(1006);
+		await vi.waitFor(() => expect(onShare).toHaveBeenCalledWith(fresh));
+		expect(onGone).not.toHaveBeenCalled();
+	});
+
+	it("复核遇到网络错误：不当作撤销，照常退避重连", async () => {
+		meta = () => {
+			throw new TypeError("Failed to fetch");
+		};
+		ws(0).drop(1006);
+		await vi.advanceTimersByTimeAsync(500);
+		expect(FakeWS.instances).toHaveLength(2);
 		expect(onGone).not.toHaveBeenCalled();
 	});
 

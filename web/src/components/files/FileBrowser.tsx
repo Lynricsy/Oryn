@@ -16,6 +16,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { copyToClipboard } from "../../lib/clipboard";
 import {
 	baseName,
 	type FileEntry,
@@ -26,6 +27,7 @@ import {
 	parentPath,
 } from "../../lib/file-source";
 import { Icon } from "../ui/icons";
+import { ManualCopy } from "../ui/ManualCopy";
 import {
 	Button,
 	Dialog,
@@ -129,7 +131,11 @@ export function FileBrowser({
 	const [confirmDelete, setConfirmDelete] = useState<FileEntry | null>(null);
 	const [opError, setOpError] = useState<unknown>(null);
 	/** 操作成功后的一行提示（发布后「已复制公开链接」） */
-	const [notice, setNotice] = useState<string | null>(null);
+	// 最近一次发布：公开链接，以及自动复制是否真的成功（失败时留下链接手动复制）
+	const [published, setPublished] = useState<{
+		url: string;
+		copied: boolean;
+	} | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [rootsKey, setRootsKey] = useState(0);
 	const fileInput = useRef<HTMLInputElement>(null);
@@ -279,7 +285,7 @@ export function FileBrowser({
 	const run = async (fn: () => Promise<void>) => {
 		setBusy(true);
 		setOpError(null);
-		setNotice(null);
+		setPublished(null);
 		try {
 			await fn();
 			return true;
@@ -322,8 +328,7 @@ export function FileBrowser({
 				if (!entry || !publisher) return;
 				void run(async () => {
 					const url = await publisher.run(entry.path);
-					await navigator.clipboard?.writeText(url).catch(() => {});
-					setNotice(t("publish.orbFileDone"));
+					setPublished({ url, copied: await copyToClipboard(url) });
 				});
 				return;
 			case "upload":
@@ -570,16 +575,35 @@ export function FileBrowser({
 					<ErrorText error={opError} />
 				</div>
 			) : null}
-			{notice && (
-				<div
-					role="status"
-					className="flex shrink-0 items-center gap-2 bg-ok/10 py-1 pr-1 pl-3 text-ok-ink text-xs"
-				>
-					<Icon name="checkCircle" size={13} className="shrink-0 text-ok" />
-					<span className="min-w-0 flex-1">{notice}</span>
-					<Button size="sm" variant="ghost" onClick={() => setNotice(null)}>
-						{t("common.dismiss")}
-					</Button>
+			{published && (
+				<div className="flex shrink-0 flex-col gap-1.5 bg-ok/10 py-1 pr-1 pl-3">
+					<div
+						role="status"
+						className="flex items-center gap-2 text-ok-ink text-xs"
+					>
+						<Icon name="checkCircle" size={13} className="shrink-0 text-ok" />
+						<span className="min-w-0 flex-1">
+							{published.copied
+								? t("publish.orbFileDone")
+								: t("publish.orbFilePublished")}
+						</span>
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={() => setPublished(null)}
+						>
+							{t("common.dismiss")}
+						</Button>
+					</div>
+					{!published.copied && (
+						<div className="pr-2 pb-1.5">
+							<ManualCopy
+								text={published.url}
+								label={t("publish.urlLabel")}
+								message={t("publish.copyFailed")}
+							/>
+						</div>
+					)}
 				</div>
 			)}
 			{body}

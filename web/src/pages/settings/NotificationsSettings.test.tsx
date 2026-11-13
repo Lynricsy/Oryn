@@ -18,7 +18,12 @@ import NotificationsSettings, {
 const push = vi.hoisted(() => ({
 	pushSupported: vi.fn(() => true),
 	needsHomeScreen: vi.fn(() => false),
-	currentSubscription: vi.fn(async () => null),
+	pushRegistration: vi.fn(
+		async (): Promise<{ endpoint: string | null; registered: boolean }> => ({
+			endpoint: null,
+			registered: false,
+		}),
+	),
 	subscribePush: vi.fn(async () => ({
 		id: "psub_me",
 		kind: "webpush",
@@ -253,8 +258,19 @@ describe("NotificationsSettings 渠道", () => {
 
 		const ntfy = await rowOf("手机 ntfy");
 		fireEvent.click(within(ntfy).getByRole("button", { name: "测试" }));
+		// 哪一步 + 为什么 + 下一步；渠道原文收进「详细信息」
 		expect(
-			await within(ntfy).findByText("测试失败：HTTP 500: upstream unavailable"),
+			await within(ntfy).findByText("发送测试消息失败：目标服务出错"),
+		).toBeInTheDocument();
+		expect(
+			within(ntfy).getByText(
+				"多半是对方暂时故障，稍后再测；一直失败时检查对方服务。",
+			),
+		).toBeInTheDocument();
+		expect(
+			within(ntfy).getByText("HTTP 500: upstream unavailable", {
+				selector: "details code",
+			}),
 		).toBeInTheDocument();
 	});
 
@@ -278,7 +294,12 @@ describe("NotificationsSettings 渠道", () => {
 		).toBeInTheDocument();
 		fireEvent.click(within(tg).getByRole("button", { name: "测试" }));
 		expect(
-			await within(tg).findByText("测试失败：还没绑定私聊，先完成绑定再测试。"),
+			await within(tg).findByText(
+				"发送测试消息失败：Telegram 渠道还没绑定聊天",
+			),
+		).toBeInTheDocument();
+		expect(
+			within(tg).getByText("先完成绑定，再发送测试消息。"),
 		).toBeInTheDocument();
 	});
 });
@@ -298,6 +319,46 @@ describe("NotificationsSettings 此设备", () => {
 		fireEvent.click(toggle);
 		await waitFor(() => expect(push.unsubscribePush).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(toggle).not.toBeChecked());
+	});
+
+	it("本地还留着订阅、服务端登记已被另一台设备移除：开关显示未开启，重新开启会再登记", async () => {
+		push.pushRegistration.mockResolvedValueOnce({
+			endpoint: "https://push.example/me",
+			registered: false,
+		});
+		notificationsStore.setState({ pushActive: true });
+		mount();
+		const toggle = await screen.findByRole("checkbox", {
+			name: "后台推送（标签页关闭时也能收到）",
+		});
+		await waitFor(() =>
+			expect(notificationsStore.getState().pushActive).toBe(false),
+		);
+		expect(toggle).not.toBeChecked();
+		fireEvent.click(toggle);
+		await waitFor(() => expect(push.subscribePush).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(toggle).toBeChecked());
+	});
+
+	it("开启推送失败：说明哪一步、为什么与下一步，开关保持未开启", async () => {
+		push.subscribePush.mockRejectedValueOnce(
+			new DOMException(
+				"Registration failed - permission denied",
+				"NotAllowedError",
+			),
+		);
+		mount();
+		const toggle = await screen.findByRole("checkbox", {
+			name: "后台推送（标签页关闭时也能收到）",
+		});
+		fireEvent.click(toggle);
+		expect(
+			await screen.findByText("开启推送失败：浏览器拒绝了通知权限"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("在浏览器的网站设置里允许通知，然后再开启。"),
+		).toBeInTheDocument();
+		expect(toggle).not.toBeChecked();
 	});
 
 	it("其它已订阅的浏览器：UA 摘要与移除", async () => {

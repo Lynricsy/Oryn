@@ -68,7 +68,7 @@ export function UserBubble({
 export const USER_BUBBLE_TEXT =
 	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
 
-function textOfContent(content: unknown): string {
+export function textOfContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
@@ -690,6 +690,9 @@ function AssistantMessage({
 					b.type === "toolCall" && typeof b.id === "string" && b.id ? b.id : key
 				}
 				className={b.type === "text" && streaming ? "stream-caret" : undefined}
+				data-tool-call-id={
+					b.type === "toolCall" && typeof b.id === "string" ? b.id : undefined
+				}
 				style={marginTop ? { marginTop } : undefined}
 			>
 				{node}

@@ -29,6 +29,7 @@ import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { Code } from "@phosphor-icons/react/dist/csr/Code";
 import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
 import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
+import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
 import { Cube } from "@phosphor-icons/react/dist/csr/Cube";
 import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
 import { Database } from "@phosphor-icons/react/dist/csr/Database";
@@ -181,6 +182,8 @@ const ICONS = {
 	browser: Browser,
 	wrench: Wrench,
 	link: Link,
+	/** 在转录里定位某条消息（分享前的密钥扫描命中） */
+	locate: Crosshair,
 	bell: Bell,
 	memory: Memory,
 	hardDrives: HardDrives,

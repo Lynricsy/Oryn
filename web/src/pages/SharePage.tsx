@@ -8,18 +8,22 @@ import {
 	QueryClient,
 	QueryClientProvider,
 	useQuery,
+	useQueryClient,
 } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
+import type { Entry } from "../api/client";
 import { qk } from "../api/queries";
 import { HEADER_VEIL } from "../components/thread/ThreadHeader";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
 } from "../components/transcript/context";
+import { textOfContent } from "../components/transcript/MessageView";
 import { Transcript } from "../components/transcript/Transcript";
 import { WorkingFooter } from "../components/transcript/WorkingFooter";
+import { ActionError } from "../components/ui/ActionError";
 import { CopyButton } from "../components/ui/CopyButton";
 import {
 	Badge,
@@ -27,16 +31,11 @@ import {
 	Sheet,
 	StatusDot,
 	TitleGlyph,
-	type Tone,
 } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
-import {
-	Button,
-	EmptyState,
-	ErrorText,
-	Spinner,
-} from "../components/ui/primitives";
+import { Button, EmptyState, Spinner } from "../components/ui/primitives";
 import { AssetUrlContext, type AssetUrls } from "../lib/asset-urls";
+import { parseAttachmentBlock } from "../lib/attachments";
 import { formatDateTime } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
 import { useBreakpoint } from "../lib/viewport";
@@ -51,6 +50,33 @@ import { useThread } from "../state/stores";
 import { buildTranscript } from "../state/transcript";
 
 const SLUG_RE = /^[0-9a-f]{32}$/;
+/** 转录里有尚未公开的附件时，多久复查一次公开元数据（所有者可能刚发布了它）。 */
+export const ATTACHMENT_POLL_MS = 30_000;
+
+const shareQueryKey = (slug: string) => ["public-share", slug] as const;
+
+/** 公开元数据查询（页面与转录视图共用同一个 key 与选项）。 */
+function shareQuery(slug: string) {
+	return {
+		queryKey: shareQueryKey(slug),
+		queryFn: () => fetchShare(slug),
+		retry: (n: number, e: unknown) => !(e instanceof ShareGoneError) && n < 2,
+		staleTime: Number.POSITIVE_INFINITY,
+	};
+}
+
+/** 转录里用户消息附件块引用的附件 id（按出现顺序去重）。 */
+function referencedAttachments(entries: readonly Entry[]): string[] {
+	const ids = new Set<string>();
+	for (const e of entries) {
+		const p = e.payload as { message?: { role?: unknown; content?: unknown } };
+		if (p?.message?.role !== "user") continue;
+		for (const a of parseAttachmentBlock(textOfContent(p.message.content))
+			.attachments)
+			if (a.id) ids.add(a.id);
+	}
+	return [...ids];
+}
 
 const noop = () => {};
 
@@ -74,11 +100,27 @@ function isolatedClient(): QueryClient {
 	return client;
 }
 
-/** 实时分享的状态点：工作中脉动（绿 = 正在直播），出错为红，其余中性。 */
-function stateTone(state: string | undefined): Tone {
-	if (state === "working") return "ok";
-	if (state === "error") return "err";
-	return "neutral";
+/**
+ * 实时分享的线程状态：工作中沿用侧栏的转圈（中性色，绿 / 黄 / 红只表示成功 / 警告 / 错误），
+ * 出错为红点，其余中性点。
+ */
+function LiveState({ state }: { state: string }): ReactNode {
+	const { t } = useTranslation();
+	const label = t(`threadState.${state as "idle"}`);
+	if (state === "working")
+		return (
+			<span
+				role="img"
+				aria-label={label}
+				title={label}
+				className="inline-flex shrink-0 text-muted"
+			>
+				<Spinner size={11} />
+			</span>
+		);
+	return (
+		<StatusDot tone={state === "error" ? "err" : "neutral"} label={label} />
+	);
 }
 
 function Frame({ children }: { children: ReactNode }): ReactNode {
@@ -156,13 +198,7 @@ function ShareHeader({
 			) : (
 				<span className="inline-flex shrink-0 items-center gap-1.5">
 					<Badge icon="broadcast">{t("share.mode.live")}</Badge>
-					{state && (
-						<StatusDot
-							tone={stateTone(state)}
-							pulse={state === "working"}
-							label={t(`threadState.${state as "idle"}`)}
-						/>
-					)}
+					{state && <LiveState state={state} />}
 				</span>
 			)}
 			<span className="min-w-0 flex-1" />
@@ -205,6 +241,25 @@ function ShareView({
 	const state = useThread(key, (s) => s.thread?.state);
 	const live = share.mode === "live";
 	const [client] = useState(isolatedClient);
+	const qc = useQueryClient();
+
+	// 附件的公开地址随元数据更新：转录里出现元数据里没有的附件 → 立即复查一次；
+	// 还有未公开的附件 → 定期复查（所有者可能之后才发布它）。未公开的附件始终不给下载地址
+	const referenced = useMemo(() => referencedAttachments(entries), [entries]);
+	const unknown = referenced
+		.filter((id) => !share.attachments.some((a) => a.id === id))
+		.join(",");
+	const pending = referenced.some(
+		(id) => !share.attachments.find((a) => a.id === id)?.url,
+	);
+	useQuery({
+		...shareQuery(slug),
+		refetchInterval: pending ? ATTACHMENT_POLL_MS : false,
+	});
+	useEffect(() => {
+		if (unknown)
+			void qc.refetchQueries({ queryKey: shareQueryKey(slug), exact: true });
+	}, [unknown, qc, slug]);
 
 	useEffect(() => {
 		const prev = document.title;
@@ -297,31 +352,35 @@ function ShareView({
 export function SharePage(): ReactNode {
 	const { slug = "" } = useParams();
 	const { t } = useTranslation();
+	const qc = useQueryClient();
 	const valid = SLUG_RE.test(slug);
-	const q = useQuery({
-		queryKey: ["public-share", slug],
-		queryFn: () => fetchShare(slug),
-		enabled: valid,
-		retry: (n, e) => !(e instanceof ShareGoneError) && n < 2,
-		staleTime: Number.POSITIVE_INFINITY,
-	});
-	const [gone, setGone] = useState(false);
+	const q = useQuery({ ...shareQuery(slug), enabled: valid });
+	const [goneSlug, setGoneSlug] = useState<string | null>(null);
 	const share = q.data;
+	const loaded = share !== undefined;
+	const gone = !valid || goneSlug === slug || q.error instanceof ShareGoneError;
 
+	// 数据源只随 slug 建一次：元数据之后的刷新（附件的公开地址）不重连；链接失效即停
 	useEffect(() => {
-		if (!share) return;
-		setGone(false);
-		const feed = new ShareFeed(slug, share, () => setGone(true));
+		const initial = qc.getQueryData<PublicShare>(shareQueryKey(slug));
+		if (!loaded || gone || !initial) return;
+		const feed = new ShareFeed(
+			slug,
+			initial,
+			() => setGoneSlug(slug),
+			(fresh) => qc.setQueryData(shareQueryKey(slug), fresh),
+		);
 		feed.start();
 		return () => feed.stop();
-	}, [slug, share]);
+	}, [slug, loaded, gone, qc]);
 
-	if (!valid || gone || q.error instanceof ShareGoneError) return <Gone />;
-	if (q.error)
+	if (gone) return <Gone />;
+	// 已有内容时后台复查失败（非 404）不打断阅读
+	if (q.error && !share)
 		return (
 			<Frame>
 				<div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
-					<ErrorText error={q.error} />
+					<ActionError step="shareLoad" error={q.error} />
 					<Button size="sm" onClick={() => void q.refetch()}>
 						{t("share.page.retry")}
 					</Button>

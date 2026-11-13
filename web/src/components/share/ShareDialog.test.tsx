@@ -2,7 +2,13 @@
  * 分享对话框：无命中直接创建（新链接置顶并复制）、有命中 → 勾选确认 → 带 `acknowledgeFindings` 重发、撤销两步确认。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import {
 	afterEach,
 	beforeEach,
@@ -14,6 +20,7 @@ import {
 } from "vitest";
 import type { ShareScan, ThreadShare } from "../../api/share-queries";
 import i18n from "../../i18n";
+import { registerRevealer } from "../transcript/reveal";
 import { ShareDialog } from "./ShareDialog";
 
 const TID = "T-0193a1b2-0000-7000-8000-0000000000d1";
@@ -54,7 +61,15 @@ let posts: Record<string, unknown>[];
 let deletes: string[];
 let writeText: Mock<(text: string) => Promise<void>>;
 
-function setup({ findings }: { findings: boolean }) {
+function setup({
+	findings,
+	onClose = () => {},
+	scan = SCAN,
+}: {
+	findings: boolean;
+	onClose?: () => void;
+	scan?: ShareScan;
+}) {
 	posts = [];
 	deletes = [];
 	const existing = [share("aaaa", "live")];
@@ -72,13 +87,25 @@ function setup({ findings }: { findings: boolean }) {
 				posts.push(body);
 				if (findings && body.acknowledgeFindings !== true)
 					return Response.json(
-						{ code: "secrets_found", message: "x", scan: SCAN },
+						{ code: "secrets_found", message: "x", scan },
 						{ status: 409 },
 					);
 				const created = share("bbbb", "snapshot");
 				existing.unshift(created);
 				return Response.json(created, { status: 201 });
 			}
+			if (u.pathname === `/api/v1/threads/${TID}/attachments`)
+				return Response.json({
+					attachments: [
+						{
+							id: "att_01ABCDEFGHJKMNPQRSTVWXYZ01",
+							name: "keys-sk-live.txt",
+							size: 3,
+							mime: "text/plain",
+							createdAt: 1,
+						},
+					],
+				});
 			if (
 				u.pathname.startsWith("/api/v1/shares/") &&
 				input.method === "DELETE"
@@ -95,7 +122,7 @@ function setup({ findings }: { findings: boolean }) {
 				new QueryClient({ defaultOptions: { queries: { retry: false } } })
 			}
 		>
-			<ShareDialog threadId={TID} onClose={() => {}} />
+			<ShareDialog threadId={TID} onClose={onClose} />
 		</QueryClientProvider>,
 	);
 }
@@ -177,5 +204,115 @@ describe("ShareDialog", () => {
 			screen.getByRole("button", { name: T("share.dialog.revokeConfirm") }),
 		);
 		await waitFor(() => expect(deletes).toEqual(["/api/v1/shares/aaaa"]));
+	});
+
+	it("复制被拒绝：仍说已创建（不说已复制），并给出完整链接与重试", async () => {
+		writeText.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+		setup({ findings: false });
+		await screen.findByTitle(share("aaaa", "live").url);
+		fireEvent.click(createButton());
+		const created = share("bbbb", "snapshot").url;
+		expect(
+			await screen.findByText(T("publish.copyFailed")),
+		).toBeInTheDocument();
+		expect(screen.getByText(T("share.dialog.created"))).toBeInTheDocument();
+		expect(screen.queryByText(T("share.dialog.createdCopied"))).toBeNull();
+		expect(
+			screen.getByRole("textbox", { name: T("publish.urlLabel") }),
+		).toHaveValue(created);
+	});
+
+	it("Clipboard API 不可用（普通 HTTP）：同样给出手动复制的出口", async () => {
+		Object.defineProperty(navigator, "clipboard", {
+			value: undefined,
+			configurable: true,
+		});
+		setup({ findings: false });
+		await screen.findByTitle(share("aaaa", "live").url);
+		fireEvent.click(createButton());
+		expect(
+			await screen.findByText(T("publish.copyFailed")),
+		).toBeInTheDocument();
+		expect(screen.queryByText(T("share.dialog.createdCopied"))).toBeNull();
+	});
+
+	it("命中项写明所在条目；「定位」找到就关闭对话框，找不到就地说明", async () => {
+		const onClose = vi.fn();
+		setup({ findings: true, onClose });
+		fireEvent.click(createButton());
+		expect(
+			await screen.findByText(T("share.findings.where", { seq: 3 })),
+		).toHaveAttribute("title", "e3");
+		const locate = screen.getByRole("button", {
+			name: T("share.findings.locate"),
+		});
+
+		fireEvent.click(locate);
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.getByText(T("share.findings.notShown"))).toBeInTheDocument();
+
+		const seen: unknown[] = [];
+		const off = registerRevealer(TID, (target) => {
+			seen.push(target);
+			return true;
+		});
+		fireEvent.click(locate);
+		off();
+		expect(seen).toEqual([{ entryId: "e3", seq: 3 }]);
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it("标题与附件名的命中（seq 都是 0）：各自成行、写成「标题」/「附件 <名>」，没有「定位」", async () => {
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		const base = SCAN.findings[0] as ShareScan["findings"][number];
+		setup({
+			findings: true,
+			scan: {
+				findings: [
+					base,
+					{
+						...base,
+						seq: 0,
+						entryId: "__title__",
+						role: undefined,
+						tool: undefined,
+						count: 1,
+					},
+					{
+						...base,
+						seq: 0,
+						entryId: "attachment:att_01ABCDEFGHJKMNPQRSTVWXYZ01",
+						role: undefined,
+						tool: undefined,
+						count: 1,
+					},
+				],
+				scanned: 4,
+				truncated: false,
+			},
+		});
+		fireEvent.click(createButton());
+		expect(
+			await screen.findByText(T("share.findings.inTitle")),
+		).toBeInTheDocument();
+		expect(
+			await screen.findByText(
+				T("share.findings.inAttachment", { name: "keys-sk-live.txt" }),
+			),
+		).toBeInTheDocument();
+		const rows = within(screen.getByTestId("share-findings")).getAllByRole(
+			"listitem",
+		);
+		expect(rows).toHaveLength(3);
+		expect(
+			screen.getAllByRole("button", { name: T("share.findings.locate") }),
+		).toHaveLength(1);
+		expect(
+			screen.queryByText(T("share.findings.where", { seq: 0 })),
+		).toBeNull();
+		expect(
+			errors.mock.calls.some((c) => String(c[0]).includes("same key")),
+		).toBe(false);
+		errors.mockRestore();
 	});
 });

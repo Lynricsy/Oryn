@@ -957,7 +957,10 @@
 			"button": "同步",
 			"copyMirror": "复制持续镜像命令",
 			"copyApply": "复制一次性应用命令",
-			"hint": "在这个项目的本地检出里运行；本地须无未提交改动。"
+			"hint": "在这个项目的本地检出里运行；本地须无未提交改动。",
+			"copied": "已复制命令，到本地检出里运行它。",
+			"copyFailed": "没能复制到剪贴板（浏览器不允许访问剪贴板）。选中下面的命令手动复制。",
+			"commandLabel": "同步命令"
 		}
 	},
 	"editor": {
@@ -1184,8 +1187,6 @@
 		"test": "测试",
 		"testing": "正在发送测试消息…",
 		"testOk": "测试消息已发送",
-		"testFailed": "测试失败：{{error}}",
-		"notLinked": "还没绑定私聊，先完成绑定再测试。",
 		"linkedTo": "已绑定 {{chat}}",
 		"linkNow": "绑定私聊",
 		"deleteConfirm": "删除渠道「{{name}}」？它的投递记录也会删除。",
@@ -1231,7 +1232,8 @@
 			"liveHint": "之后的新内容也会公开",
 			"scope": "公开内容包括消息、思考、工具调用及其输出、图片与用量；不含子 agent 转录与被回退的分支。图片内容不会被扫描。",
 			"create": "创建链接",
-			"createdCopied": "已创建，链接已复制"
+			"createdCopied": "已创建，链接已复制",
+			"created": "已创建"
 		},
 		"findings": {
 			"title": "发现 {{n}} 处疑似密钥",
@@ -1240,7 +1242,13 @@
 			"ack": "我已检查，仍然分享",
 			"createAnyway": "仍然创建",
 			"count": "{{n}} 处",
-			"secretName": "密钥 {{name}}"
+			"secretName": "密钥 {{name}}",
+			"where": "条目 #{{seq}}",
+			"locate": "定位",
+			"locateTitle": "关闭对话框并滚动到这条消息",
+			"notShown": "这条不在当前显示的转录里，无法定位。",
+			"inTitle": "标题",
+			"inAttachment": "附件 {{name}}"
 		},
 		"role": {
 			"user": "用户消息",
@@ -1285,6 +1293,74 @@
 		"published": "已公开",
 		"orbFile": "发布为公开链接",
 		"orbFileDone": "已复制公开链接。发布的是当前内容的副本，之后在 orb 里的修改不会同步。",
-		"hint": "发布后，拿到链接的任何人都能下载；撤回后链接立即失效。"
+		"hint": "发布后，拿到链接的任何人都能下载；撤回后链接立即失效。",
+		"copyFailed": "没能复制到剪贴板（浏览器不允许访问剪贴板）。选中下面的链接手动复制，或再点一次复制。",
+		"urlLabel": "公开链接",
+		"orbFilePublished": "已发布。发布的是当前内容的副本，之后在 orb 里的修改不会同步。"
+	},
+	"actionError": {
+		"failed": "{{step}}失败：{{reason}}",
+		"detail": "详细信息",
+		"step": {
+			"shareLoad": "读取分享",
+			"pushEnable": "开启推送",
+			"pushDisable": "关闭推送",
+			"pushList": "读取已订阅的浏览器",
+			"pushRemove": "移除订阅",
+			"channelSave": "保存渠道",
+			"channelTest": "发送测试消息"
+		},
+		"reason": {
+			"offline": "连不上 Oryn 服务器",
+			"unauthorized": "登录已失效",
+			"notFound": "要找的对象已不存在",
+			"rateLimited": "请求过于频繁",
+			"server": "服务器出错",
+			"invalidChannel": "渠道配置有误",
+			"channelExists": "已经有一个 Telegram 渠道",
+			"channelNotLinked": "Telegram 渠道还没绑定聊天",
+			"pushInvalid": "浏览器给出的推送订阅无效",
+			"permission": "浏览器拒绝了通知权限",
+			"pushService": "浏览器的推送服务不可用",
+			"unsupported": "这个浏览器不支持后台推送",
+			"unknown": "出现了未预料的错误"
+		},
+		"hint": {
+			"offline": "检查网络连接后重试。",
+			"unauthorized": "重新登录后再试。",
+			"notFound": "刷新页面看看最新状态。",
+			"rateLimited": "稍等片刻再试。",
+			"server": "稍后重试；一直失败时查看 orynd 日志。",
+			"invalidChannel": "检查必填项是否填全、地址是否以 http:// 或 https:// 开头，改好后再保存。",
+			"channelExists": "Telegram 只能有一个渠道，请编辑已有的那个。",
+			"channelNotLinked": "先完成绑定，再发送测试消息。",
+			"pushInvalid": "关闭推送后重新开启一次。",
+			"permission": "在浏览器的网站设置里允许通知，然后再开启。",
+			"pushService": "稍后重试；隐私窗口和关闭了推送服务的浏览器无法订阅。",
+			"unsupported": "换用支持 Web Push 的浏览器；iPhone / iPad 需要先添加到主屏幕。",
+			"unknown": "稍后重试；一直失败时展开详细信息排查。"
+		}
+	},
+	"deliveryError": {
+		"reason": {
+			"rejected": "目标服务拒绝了请求",
+			"notFound": "目标地址不存在",
+			"rateLimited": "目标服务限流",
+			"server": "目标服务出错",
+			"timeout": "等待目标服务超时",
+			"unreachable": "连不上目标服务",
+			"tls": "目标服务的证书无效",
+			"unknown": "消息没有送达"
+		},
+		"hint": {
+			"rejected": "检查令牌、密钥或请求头是否正确，改好后再测一次。",
+			"notFound": "检查 URL、主题或设备密钥是否写对。",
+			"rateLimited": "稍等片刻再测。",
+			"server": "多半是对方暂时故障，稍后再测；一直失败时检查对方服务。",
+			"timeout": "确认 orynd 所在主机能访问该地址，稍后再测。",
+			"unreachable": "检查地址拼写，以及 orynd 所在主机的网络与 DNS。",
+			"tls": "确认地址使用有效的 HTTPS 证书；自签名证书不受信任。",
+			"unknown": "展开详细信息查看原因，改好配置后再测。"
+		}
 	}
 }

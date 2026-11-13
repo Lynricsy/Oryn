@@ -19,6 +19,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
+import { copyToClipboard } from "../../lib/clipboard";
 import { useThread } from "../../state/stores";
 import {
 	isOrbdOutdated,
@@ -27,9 +28,11 @@ import {
 } from "../files/hooks";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
+import { ManualCopy } from "../ui/ManualCopy";
 import {
 	Button,
 	Checkbox,
+	Dialog,
 	EmptyState,
 	ErrorText,
 	IconButton,
@@ -57,40 +60,75 @@ import {
 /**
  * 「同步 ▾」：复制在本地检出里运行的 `oryn sync` 命令（持续镜像 / 一次性应用）。
  * 菜单底部一行说明前提：在这个项目的本地检出里运行，且本地没有未提交改动。
+ * 复制成功时按钮短暂显示「已复制」；剪贴板不可用或被拒绝时弹出对话框，给出可选中的命令与重试。
  */
 export function SyncMenu({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
-	const copy = (text: string) => {
-		void navigator.clipboard?.writeText(text).catch(() => {});
+	const [copied, setCopied] = useState(false);
+	const [failed, setFailed] = useState<string | null>(null);
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1200);
+		return () => clearTimeout(timer);
+	}, [copied]);
+	const copy = async (text: string) => {
+		if (await copyToClipboard(text)) setCopied(true);
+		else setFailed(text);
 	};
 	return (
-		<Menu
-			trigger={(p) => (
-				<Button size="sm" variant="ghost" icon="pull" {...p}>
-					{t("changes.sync.button")}
-					<Icon name="chevronDown" size={11} className="text-faint" />
-				</Button>
+		<>
+			<Menu
+				trigger={(p) => (
+					<Button
+						size="sm"
+						variant="ghost"
+						icon={copied ? "check" : "pull"}
+						{...p}
+					>
+						{copied ? t("common.copied") : t("changes.sync.button")}
+						<Icon name="chevronDown" size={11} className="text-faint" />
+					</Button>
+				)}
+				items={[
+					{
+						key: "mirror",
+						icon: "copy",
+						label: t("changes.sync.copyMirror"),
+						onSelect: () => void copy(`oryn sync ${threadId}`),
+					},
+					{
+						key: "apply",
+						icon: "copy",
+						label: t("changes.sync.copyApply"),
+						onSelect: () => void copy(`oryn sync --apply ${threadId}`),
+					},
+				]}
+				footer={
+					<p className="px-2 pt-1 pb-1.5 text-2xs text-faint">
+						{t("changes.sync.hint")}
+					</p>
+				}
+			/>
+			{failed !== null && (
+				<Dialog
+					open
+					onClose={() => setFailed(null)}
+					title={t("changes.sync.button")}
+					footer={
+						<Button onClick={() => setFailed(null)}>{t("common.close")}</Button>
+					}
+				>
+					<div className="flex flex-col gap-2">
+						<ManualCopy
+							text={failed}
+							label={t("changes.sync.commandLabel")}
+							message={t("changes.sync.copyFailed")}
+						/>
+						<p className="text-faint text-xs">{t("changes.sync.hint")}</p>
+					</div>
+				</Dialog>
 			)}
-			items={[
-				{
-					key: "mirror",
-					icon: "copy",
-					label: t("changes.sync.copyMirror"),
-					onSelect: () => copy(`oryn sync ${threadId}`),
-				},
-				{
-					key: "apply",
-					icon: "copy",
-					label: t("changes.sync.copyApply"),
-					onSelect: () => copy(`oryn sync --apply ${threadId}`),
-				},
-			]}
-			footer={
-				<p className="px-2 pt-1 pb-1.5 text-2xs text-faint">
-					{t("changes.sync.hint")}
-				</p>
-			}
-		/>
+		</>
 	);
 }
 

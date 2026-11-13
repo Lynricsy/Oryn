@@ -957,7 +957,10 @@
 			"button": "Sync",
 			"copyMirror": "Copy live mirror command",
 			"copyApply": "Copy one-time apply command",
-			"hint": "Run it in a local checkout of this project; the checkout must have no uncommitted changes."
+			"hint": "Run it in a local checkout of this project; the checkout must have no uncommitted changes.",
+			"copied": "Command copied. Run it in your local checkout.",
+			"copyFailed": "Couldn't copy to the clipboard (the browser didn't allow it). Select the command below to copy it by hand.",
+			"commandLabel": "Sync command"
 		}
 	},
 	"editor": {
@@ -1184,8 +1187,6 @@
 		"test": "Test",
 		"testing": "Sending a test message…",
 		"testOk": "Test message sent",
-		"testFailed": "Test failed: {{error}}",
-		"notLinked": "No private chat linked yet; link one before testing.",
 		"linkedTo": "Linked to {{chat}}",
 		"linkNow": "Link private chat",
 		"deleteConfirm": "Delete the channel \"{{name}}\"? Its delivery records are deleted too.",
@@ -1231,7 +1232,8 @@
 			"liveHint": "New content will be public too",
 			"scope": "Public content includes messages, thinking, tool calls and their output, images, and usage. Subagent transcripts and abandoned branches are excluded. Image content is not scanned.",
 			"create": "Create link",
-			"createdCopied": "Created — link copied"
+			"createdCopied": "Created — link copied",
+			"created": "Created"
 		},
 		"findings": {
 			"title": "Possible secrets found: {{n}}",
@@ -1240,7 +1242,13 @@
 			"ack": "I've checked; share anyway",
 			"createAnyway": "Create anyway",
 			"count": "×{{n}}",
-			"secretName": "Secret {{name}}"
+			"secretName": "Secret {{name}}",
+			"where": "Entry #{{seq}}",
+			"locate": "Show",
+			"locateTitle": "Close this dialog and scroll to the message",
+			"notShown": "This entry isn't in the transcript shown right now, so it can't be located.",
+			"inTitle": "Title",
+			"inAttachment": "Attachment {{name}}"
 		},
 		"role": {
 			"user": "User message",
@@ -1285,6 +1293,74 @@
 		"published": "Public",
 		"orbFile": "Publish as public link",
 		"orbFileDone": "Public link copied. This is a copy of the file as it is now; later changes in the orb won't sync.",
-		"hint": "Anyone with the link can download a published file; unpublishing disables the link immediately."
+		"hint": "Anyone with the link can download a published file; unpublishing disables the link immediately.",
+		"copyFailed": "Couldn't copy to the clipboard (the browser didn't allow it). Select the link below to copy it by hand, or press Copy again.",
+		"urlLabel": "Public link",
+		"orbFilePublished": "Published. This is a copy of the file as it is now; later changes in the orb won't sync."
+	},
+	"actionError": {
+		"failed": "Couldn't {{step}}: {{reason}}",
+		"detail": "Details",
+		"step": {
+			"shareLoad": "load this share",
+			"pushEnable": "turn on push",
+			"pushDisable": "turn off push",
+			"pushList": "load subscribed browsers",
+			"pushRemove": "remove the subscription",
+			"channelSave": "save the channel",
+			"channelTest": "send the test message"
+		},
+		"reason": {
+			"offline": "can't reach the Oryn server",
+			"unauthorized": "your session has expired",
+			"notFound": "it no longer exists",
+			"rateLimited": "too many requests",
+			"server": "the server ran into an error",
+			"invalidChannel": "the channel settings are invalid",
+			"channelExists": "a Telegram channel already exists",
+			"channelNotLinked": "the Telegram channel isn't linked to a chat yet",
+			"pushInvalid": "the browser returned an invalid push subscription",
+			"permission": "the browser denied notification permission",
+			"pushService": "the browser's push service is unavailable",
+			"unsupported": "this browser doesn't support background push",
+			"unknown": "something unexpected went wrong"
+		},
+		"hint": {
+			"offline": "Check your connection and try again.",
+			"unauthorized": "Sign in again, then retry.",
+			"notFound": "Reload the page to see the current state.",
+			"rateLimited": "Wait a moment and try again.",
+			"server": "Try again later; if it keeps failing, check the orynd log.",
+			"invalidChannel": "Make sure the required fields are filled in and URLs start with http:// or https://, then save again.",
+			"channelExists": "Only one Telegram channel is allowed; edit the existing one instead.",
+			"channelNotLinked": "Finish linking first, then send the test message.",
+			"pushInvalid": "Turn push off and on again.",
+			"permission": "Allow notifications in the browser's site settings, then try again.",
+			"pushService": "Try again later; private windows and browsers with push disabled can't subscribe.",
+			"unsupported": "Use a browser that supports Web Push; on iPhone or iPad, add Oryn to the Home Screen first.",
+			"unknown": "Try again later; if it keeps failing, open the details."
+		}
+	},
+	"deliveryError": {
+		"reason": {
+			"rejected": "the service rejected the request",
+			"notFound": "the target address wasn't found",
+			"rateLimited": "the service is rate limiting",
+			"server": "the service returned an error",
+			"timeout": "the service timed out",
+			"unreachable": "can't reach the service",
+			"tls": "the service's certificate isn't valid",
+			"unknown": "the message wasn't delivered"
+		},
+		"hint": {
+			"rejected": "Check the token, key, or headers, then test again.",
+			"notFound": "Check the URL, topic, or device key.",
+			"rateLimited": "Wait a moment, then test again.",
+			"server": "It's most likely a temporary problem on their side; test again later, and check the service if it keeps failing.",
+			"timeout": "Make sure the orynd host can reach this address, then test again.",
+			"unreachable": "Check the address for typos and the orynd host's network and DNS.",
+			"tls": "Make sure the address uses a valid HTTPS certificate; self-signed certificates aren't trusted.",
+			"unknown": "Open the details to see why, fix the settings, then test again."
+		}
 	}
 }
