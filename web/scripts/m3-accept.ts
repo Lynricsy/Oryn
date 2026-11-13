@@ -288,7 +288,7 @@ const termText = (page: Page, id: string, tid = THREAD) =>
 
 async function openTab(
 	page: Page,
-	tab: "info" | "changes" | "files" | "terminal",
+	tab: "info" | "changes" | "files" | "terminal" | "portal",
 ) {
 	const btn = page.locator(`[data-panel-tab=${tab}]`);
 	await btn.waitFor({ timeout: 30_000 });

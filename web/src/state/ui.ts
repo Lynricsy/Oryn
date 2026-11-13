@@ -20,10 +20,10 @@ export type DialogState =
 	| { kind: "attachments" }
 	| { kind: "setupLog"; orbId: string; run: Schemas["OrbSetupRun"] };
 
-export type PanelTab = "info" | "changes" | "files" | "terminal";
+export type PanelTab = "info" | "changes" | "files" | "terminal" | "portal";
 
 export const PANEL_WIDTH_KEY = "oryn.panel.width";
-/** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下。 */
+/** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下（第五个 Portal 标签出现且放不下时，未选中的标签只显示图标）。 */
 export const PANEL_MIN_WIDTH = 360;
 const PANEL_DEFAULT_WIDTH = 420;
 
@@ -124,6 +124,9 @@ export interface UiState {
 	/** 信息面板里收起的卡片（按卡片 key，所有线程共用），存 localStorage。 */
 	collapsedCards: Record<string, boolean>;
 	toggleCard(key: string): void;
+	/** Portal 标签里选中的端口（按线程，不持久化）；缺省 = 第一个 portal。 */
+	portalPort: Record<string, number>;
+	setPortalPort(threadId: string, port: number): void;
 }
 
 export const uiStore = createStore<UiState>((set, get) => ({
@@ -213,6 +216,13 @@ export const uiStore = createStore<UiState>((set, get) => ({
 			}
 			return { collapsedCards };
 		}),
+	portalPort: {},
+	setPortalPort: (threadId, port) =>
+		set((s) =>
+			s.portalPort[threadId] === port
+				? s
+				: { portalPort: { ...s.portalPort, [threadId]: port } },
+		),
 }));
 
 export function useUi<T>(selector: (s: UiState) => T): T {

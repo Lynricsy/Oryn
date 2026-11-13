@@ -1,6 +1,7 @@
 /**
  * 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb；
- * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除。
+ * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除；
+ * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -96,6 +97,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 describe("RightPanel", () => {
@@ -179,5 +181,110 @@ describe("RightPanel", () => {
 		expect(
 			await screen.findByTestId("changes-unseen", {}, { timeout: 3000 }),
 		).toBeInTheDocument();
+	});
+
+	it("orb 有 portal 时在终端之后出现 Portal 标签，点开加载 Portal 面板", async () => {
+		const id = "T-rpP";
+		const orbId = "orb-rp00000000000000000000p1";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				thread: {
+					id,
+					orbId,
+					portalUrlTemplate: "https://t-3f9a1c0b7e2d-p{port}.orb.example.com/",
+				} as Thread,
+				orb: {
+					id: orbId,
+					state: "frozen",
+					stateChangedAt: 0,
+					threadIds: [id],
+					portals: [
+						{
+							port: 5173,
+							service: "web",
+							links: [{ title: "web", path: "/" }],
+						},
+					],
+				} as unknown as Orb,
+			});
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId={id} />));
+		const tabs = screen
+			.getAllByRole("tab")
+			.map((b) => b.getAttribute("data-panel-tab"));
+		expect(tabs).toEqual(["info", "changes", "files", "terminal", "portal"]);
+		const tab = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.portal"),
+		});
+		await act(async () => {
+			fireEvent.click(tab);
+		});
+		expect(tab).toHaveAttribute("aria-selected", "true");
+		const frame = await screen.findByTestId(
+			"portal-frame",
+			{},
+			{ timeout: 5000 },
+		);
+		expect(frame.getAttribute("src")).toBe(
+			"https://t-3f9a1c0b7e2d-p5173.orb.example.com/__oryn/login?next=%2F",
+		);
+	});
+
+	it("没有 portal 时没有 Portal 标签；正看着 Portal 时 portal 消失则退回信息标签", async () => {
+		const id = "T-rpQ";
+		const orbId = "orb-rp00000000000000000000q1";
+		const base = {
+			id: orbId,
+			state: "frozen",
+			stateChangedAt: 0,
+			threadIds: [id],
+		} as unknown as Orb;
+		const store = getThreadStore(id).getState();
+		store.patchLocal({
+			thread: {
+				id,
+				orbId,
+				portalUrlTemplate: "https://x-p{port}.e/",
+			} as Thread,
+			orb: {
+				...base,
+				portals: [
+					{ port: 80, service: "web", links: [{ title: "w", path: "/" }] },
+				],
+			},
+		});
+		uiStore.getState().setPanelTab("portal");
+		render(withQuery(<RightPanel threadId={id} />));
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.portal") }),
+		).toHaveAttribute("aria-selected", "true");
+
+		act(() => {
+			getThreadStore(id)
+				.getState()
+				.patchLocal({ orb: { ...base, services: [], portals: [] } });
+		});
+		await waitFor(() => expect(uiStore.getState().panelTab).toBe("info"));
+		expect(document.querySelector("[data-panel-tab=portal]")).toBeNull();
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.info") }),
+		).toHaveAttribute("aria-selected", "true");
+	});
+
+	it("标签条放不下全部文字时只有选中的标签保留文字，其余只显示图标（保留读屏名）", () => {
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(250);
+		vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(330);
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId="T-rpA" />));
+		const info = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.info"),
+		});
+		const files = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.files"),
+		});
+		expect(info).toHaveTextContent(i18n.t("rightPanel.tabs.info"));
+		expect(files.textContent).toBe("");
+		expect(files).toHaveAttribute("title", i18n.t("rightPanel.tabs.files"));
 	});
 });

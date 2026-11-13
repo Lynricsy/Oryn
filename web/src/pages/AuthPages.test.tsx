@@ -1,9 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
-import { SetupPage, setupTokenFromHash } from "./AuthPages";
+import {
+	fullPage,
+	goAfterLogin,
+	SetupPage,
+	setupTokenFromHash,
+} from "./AuthPages";
 
 describe("初始化令牌走 URL 片段（L3）", () => {
 	afterEach(() => window.history.replaceState(null, "", "/"));
@@ -29,5 +34,33 @@ describe("初始化令牌走 URL 片段（L3）", () => {
 		).toBeInTheDocument();
 		expect(window.location.hash).toBe("");
 		expect(window.location.search).toBe("?x=1");
+	});
+});
+
+describe("登录后的去处（M4 4.3）", () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	it("next 是 portal 授权端点：整页跳转到服务端（location.replace），不走路由", () => {
+		const replace = vi.spyOn(fullPage, "replace").mockImplementation(() => {});
+		const navigate = vi.fn();
+		const next = "/portal/auth?t=3f9a1c0b7e2d&p=5173&next=%2Fa%3Fb%3D1";
+		goAfterLogin(next, navigate);
+		expect(replace).toHaveBeenCalledWith(next);
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it("站内路径走路由内跳转，非站内地址回首页", () => {
+		const replace = vi.spyOn(fullPage, "replace").mockImplementation(() => {});
+		const navigate = vi.fn();
+		goAfterLogin("/t/T-1", navigate);
+		goAfterLogin("https://evil.example/portal/auth?t=1", navigate);
+		// 只认 `/portal/auth?` 前缀：别的 portal 开头的站内路径照常走路由
+		goAfterLogin("/portal/authx", navigate);
+		expect(navigate.mock.calls).toEqual([
+			["/t/T-1", { replace: true }],
+			["/", { replace: true }],
+			["/portal/authx", { replace: true }],
+		]);
+		expect(replace).not.toHaveBeenCalled();
 	});
 });

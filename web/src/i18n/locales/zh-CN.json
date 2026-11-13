@@ -774,7 +774,8 @@
 			"info": "信息",
 			"changes": "改动",
 			"files": "文件",
-			"terminal": "终端"
+			"terminal": "终端",
+			"portal": "Portal"
 		},
 		"attention": "有终端在等待输入",
 		"maximize": "面板最大化",
@@ -990,5 +991,70 @@
 		"delete": "删除",
 		"deleteConfirm": "删除附件 {{name}}？orb 内的副本也会被删除。",
 		"hint": "附件保存在 Oryn 中、随线程保留，不会进入仓库；删除线程时一并删除。"
+	},
+	"portal": {
+		"toolbar": "Portal 工具条",
+		"back": "后退",
+		"forward": "前进",
+		"reload": "刷新",
+		"path": "路径",
+		"links": "链接",
+		"copyUrl": "复制链接",
+		"openNew": "在新窗口打开",
+		"access": "访问权限",
+		"private": "仅你可访问",
+		"publicUntil": "公开至 {{at}}",
+		"frameTitle": "Portal：{{title}}",
+		"disabledTitle": "Portal 未启用",
+		"disabledHint": "控制面没有配置 portal_domain，服务无法从浏览器访问。在 orynd.yaml 里设置 portal_domain 后重启 orynd。",
+		"orbGone": "这个线程没有 orb",
+		"orbGoneHint": "它的 orb 已删除，上面的服务也随之消失。",
+		"none": "没有服务开放 portal",
+		"accessTitle": "端口 {{port}} 的访问权限",
+		"privateHint": "只有登录了 Oryn 的你能打开。可以限时公开给拿到链接的人。",
+		"publishTitle": "限时公开",
+		"publishFor": "公开 {{d}}",
+		"confirmPublish": "任何拿到链接的人都能访问端口 {{port}}，无需登录，持续 {{d}}。",
+		"confirm": "确认公开",
+		"publicTitle": "公开中",
+		"publicHint": "任何拿到链接的人都能打开这个端口；其它端口与线程本身仍只有你能访问。",
+		"expiresAt": "{{at}} 到期",
+		"remaining": "剩余 {{left}}",
+		"renewTitle": "续期（从现在起算）",
+		"renewFor": "续期为从现在起 {{d}}",
+		"end": "终止公开",
+		"duration": {
+			"1h": "1 小时",
+			"3h": "3 小时",
+			"1d": "1 天",
+			"7d": "7 天"
+		}
+	},
+	"services": {
+		"title": "服务",
+		"status": {
+			"starting": "启动中",
+			"running": "运行中",
+			"unhealthy": "未就绪",
+			"backoff": "等待重启",
+			"stopped": "已停止",
+			"failed": "失败"
+		},
+		"restarts": "重启 {{count}} 次",
+		"start": "启动 {{name}}",
+		"stop": "停止 {{name}}",
+		"restart": "重启 {{name}}",
+		"log": "{{name}} 的日志",
+		"open": "在 Portal 中打开 {{name}}",
+		"notReady": "orb 未就绪，暂不能操作服务",
+		"logTitle": "服务日志 · {{name}}",
+		"logEmpty": "还没有输出",
+		"logRefresh": "刷新日志",
+		"logLive": "每 3 秒自动刷新",
+		"errors": {
+			"port_conflict": "端口已被其它服务占用",
+			"forbidden_port": "端口被 orbd 保留"
+		},
+		"errorHint": "详情见日志。"
 	}
 }

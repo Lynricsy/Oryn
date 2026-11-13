@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// 开发时把 API 与健康检查转发到本机 orynd（dev/orynd.yaml 监听 127.0.0.1:7600）
+// 开发时把 API、健康检查与 portal 授权端点（`/portal/auth`）转发到本机 orynd（dev/orynd.yaml 监听 127.0.0.1:7600）
 const orynd = "http://127.0.0.1:7600";
 
 export default defineConfig({
@@ -16,6 +16,7 @@ export default defineConfig({
 		proxy: {
 			"/api": { target: orynd, ws: true, changeOrigin: true },
 			"/healthz": { target: orynd, changeOrigin: true },
+			"/portal": { target: orynd, changeOrigin: true },
 		},
 	},
 	test: {

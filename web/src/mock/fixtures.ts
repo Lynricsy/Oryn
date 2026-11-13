@@ -165,9 +165,89 @@ const SLOW_SETUP_LOG = `[setup] + rustup toolchain install 1.92.0 --profile mini
 [setup] 1123 packages installed [18.42s]
 `;
 
+// ---------------------------------------------------------------- 受管服务与 portal（M4）
+
+/** 主线程 orb 上有 portal 的服务端口。 */
+export const PORTAL_PORT = 5173;
+
+/**
+ * mock 的 portal 地址模板（真实后端是 `https://t-<短码>-p{port}.<portal_domain>/`）：一张 `data:` 页面，
+ * iframe 里能直接显示；颜色只用系统色（`color-scheme`），随明暗切换。
+ */
+export const MOCK_PORTAL_TEMPLATE = `data:text/html;charset=utf-8,${encodeURIComponent(
+	`<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>web</title><style>body{font:14px/1.6 system-ui,sans-serif;margin:0;padding:28px 32px}h1{font-size:20px;margin:0 0 4px}p{margin:0 0 16px;opacity:.7}code{font-family:ui-monospace,monospace}ul{padding-left:18px}</style><h1>Oryn web (dev)</h1><p>Vite dev server · port <code>`,
+)}{port}${encodeURIComponent(
+	"</code></p><ul><li>/ — app shell</li><li>/docs — component docs</li><li>HMR connected</li></ul>",
+)}`;
+
+const MAIN_ORB_SERVICES: Schemas["OrbService"][] = [
+	{
+		name: "web",
+		source: "file",
+		command: 'bun run dev --port "$PORT" --host 127.0.0.1',
+		cwd: "web",
+		port: PORTAL_PORT,
+		health: "/",
+		links: [
+			{ title: "web", path: "/" },
+			{ title: "Docs", path: "/docs" },
+		],
+		threadId: MAIN_THREAD,
+		publicUrl: `https://t-00000000a001-p${PORTAL_PORT}.orb.example.com`,
+		status: "running",
+		pid: 4121,
+		restarts: 0,
+		startedAt: NOW - 40 * MIN,
+	},
+	{
+		name: "worker",
+		source: "dynamic",
+		command: "bun run worker",
+		port: 20000,
+		links: [],
+		threadId: MAIN_THREAD,
+		status: "failed",
+		restarts: 5,
+		exitCode: 1,
+		// 与 orbd 的格式一致（`internal/orbdrt/services.go` 连续短命后的失败原因）
+		error: "exited 5 times in a row within 1m0s (last exit code 1)",
+		startedAt: NOW - 6 * MIN,
+	},
+];
+
+/** 服务日志（服务名 → 文本）；`[orbd]` 行与 orbd 写入日志文件的状态行同形。 */
+export const serviceLogs: Record<string, string> = {
+	web: `[orbd] starting web (port ${PORTAL_PORT})
+$ vite --port ${PORTAL_PORT} --host 127.0.0.1
+
+  VITE v7.1.4  ready in 412 ms
+
+  ➜  Local:   http://127.0.0.1:${PORTAL_PORT}/
+[orbd] web is ready on port ${PORTAL_PORT}
+10:41:07 [vite] hmr update /src/components/thread/RightPanel.tsx
+10:42:31 [vite] hmr update /src/realtime/socket.ts
+`,
+	worker: Array.from(
+		{ length: 5 },
+		() => `[orbd] starting worker (port 20000)
+error: Cannot find module "./jobs/index.ts" from "/home/user/workspace/repo/worker.ts"
+[orbd] exited code=1`,
+	)
+		.join("\n[orbd] restarting in 2s\n")
+		.concat("\n"),
+};
+
 /** 每个 orb 的环境字段（覆盖 `makeOrb` 的默认值）。 */
 export const orbEnv: Record<string, Partial<Orb>> = {
 	"orb-01jcz8m3w4x5y6z7a8b9c0d1e2": {
+		services: MAIN_ORB_SERVICES,
+		portals: [
+			{
+				port: PORTAL_PORT,
+				service: "web",
+				links: MAIN_ORB_SERVICES[0]?.links ?? [],
+			},
+		],
 		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e2", 1, {
 			phase: "setup",
 			durationMs: 48_300,

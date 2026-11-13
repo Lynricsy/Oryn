@@ -264,7 +264,7 @@ async function sendPrompt(page: Page, text: string) {
 /** 打开右侧面板（窄屏是抽屉）并切到指定标签。 */
 async function openPanel(
 	page: Page,
-	tab: "info" | "changes" | "files" | "terminal",
+	tab: "info" | "changes" | "files" | "terminal" | "portal",
 ) {
 	const btn = page.locator(`[data-panel-tab=${tab}]`);
 	if (!(await btn.isVisible().catch(() => false)))
@@ -624,7 +624,88 @@ const SCREENS: Screen[] = [
 			await settle(page, 600);
 		},
 	},
+	// M4：Portal 标签、访问弹层两种状态、信息面板的服务小节与日志对话框
+	{
+		name: "portal-panel",
+		prepare: async ({ page }) => {
+			await openPortal(page);
+		},
+	},
+	{
+		name: "portal-access",
+		prepare: async ({ page }) => {
+			await openPortal(page);
+			await page.getByRole("button", { name: "访问权限", exact: true }).click();
+			await page
+				.locator("[data-testid=portal-access][data-state=private]")
+				.waitFor({ timeout: 10_000 });
+			await page
+				.getByRole("button", { name: "公开 1 小时", exact: true })
+				.click();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "portal-access-public",
+		prepare: async ({ page }) => {
+			await openPortal(page);
+			await page.getByRole("button", { name: "访问权限", exact: true }).click();
+			await page
+				.getByRole("button", { name: "公开 1 天", exact: true })
+				.click();
+			await page.getByRole("button", { name: "确认公开", exact: true }).click();
+			await page
+				.locator("[data-testid=portal-access][data-state=public]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "portal-services",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "info");
+			const section = page.locator("[data-testid=orb-services]");
+			await section.waitFor({ timeout: 10_000 });
+			await section.scrollIntoViewIfNeeded();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "portal-service-log",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openPanel(page, "info");
+			await page
+				.getByRole("button", { name: "worker 的日志", exact: true })
+				.click();
+			await page
+				.locator("[data-testid=service-log]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		// 面板最窄（360px）时五个标签只显示图标、不换行；放在最后：它改了本条流水线的面板宽度
+		name: "portal-narrow",
+		widths: [1280],
+		prepare: async ({ page }) => {
+			await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+			await page.evaluate(() =>
+				localStorage.setItem("oryn.panel.width", "360"),
+			);
+			await openPortal(page);
+		},
+	},
 ];
+
+/** 打开主线程的 Portal 标签并等 iframe 出现。 */
+async function openPortal(page: Page) {
+	await openThread(page, MAIN_THREAD);
+	await openPanel(page, "portal");
+	await page.locator("[data-testid=portal-frame]").waitFor({ timeout: 15_000 });
+	await settle(page, 600);
+}
 
 /** 一条宽度 × 明暗的流水线：依次截完全部界面。 */
 async function shootLane(

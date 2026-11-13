@@ -6,9 +6,13 @@ import { Icon } from "./icons";
 export function CopyButton({
 	text,
 	label,
+	ariaLabel,
 }: {
 	text: string;
+	/** 可见文字（同时作读屏名） */
 	label?: string;
+	/** 只给读屏与悬停提示的名字（无可见文字时用） */
+	ariaLabel?: string;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [done, setDone] = useState(false);
@@ -22,7 +26,8 @@ export function CopyButton({
 					setTimeout(() => setDone(false), 1200);
 				});
 			}}
-			aria-label={label ?? t("common.copy")}
+			aria-label={ariaLabel ?? label ?? t("common.copy")}
+			title={label ? undefined : (ariaLabel ?? t("common.copy"))}
 		>
 			<Icon
 				name={done ? "check" : "copy"}

@@ -1,8 +1,10 @@
 /** 图标：Phosphor（MIT）按名映射，逐个深导入避免桶导入。 */
 import type { Icon as PhosphorIcon } from "@phosphor-icons/react";
 import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
 import { ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
 import { ArrowsInSimple } from "@phosphor-icons/react/dist/csr/ArrowsInSimple";
@@ -55,6 +57,7 @@ import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { Memory } from "@phosphor-icons/react/dist/csr/Memory";
 import { MinusCircle } from "@phosphor-icons/react/dist/csr/MinusCircle";
@@ -127,6 +130,7 @@ const ICONS = {
 	target: Target,
 	user: User,
 	back: ArrowLeft,
+	forward: ArrowRight,
 	sparkle: Sparkle,
 	refresh: ArrowsClockwise,
 	download: DownloadSimple,
@@ -171,6 +175,10 @@ const ICONS = {
 	hardDrives: HardDrives,
 	fire: Fire,
 	fastForward: FastForward,
+	/** 仅自己可访问（Portal 的 URL 胶囊） */
+	lock: LockSimple,
+	/** 重启（受管服务）；刷新页面 / 数据用 `refresh` */
+	restart: ArrowClockwise,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

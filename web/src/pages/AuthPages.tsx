@@ -165,6 +165,25 @@ export function SetupPage(): ReactNode {
 	);
 }
 
+/** 整页跳转（测试里替换）：服务端端点不在 SPA 路由里，不能走 `navigate`。 */
+export const fullPage = {
+	replace(url: string): void {
+		window.location.replace(url);
+	},
+};
+
+/**
+ * 登录成功后的去处：`/portal/auth?…`（portal 握手的主域名端点，计划 M4 4.3）整页跳转到服务端，
+ * 由它签发一次性码并回跳 portal 主机；其余站内路径走路由内跳转，非站内路径回首页。
+ */
+export function goAfterLogin(
+	next: string,
+	navigate: (to: string, opts: { replace: boolean }) => void,
+): void {
+	if (next.startsWith("/portal/auth?")) fullPage.replace(next);
+	else navigate(next.startsWith("/") ? next : "/", { replace: true });
+}
+
 export function LoginPage(): ReactNode {
 	const { t } = useTranslation();
 	const [params] = useSearchParams();
@@ -194,7 +213,7 @@ export function LoginPage(): ReactNode {
 				}),
 			);
 			await qc.invalidateQueries({ queryKey: qk.me });
-			navigate(next.startsWith("/") ? next : "/", { replace: true });
+			goAfterLogin(next, navigate);
 		} catch (e) {
 			setError(e);
 		} finally {

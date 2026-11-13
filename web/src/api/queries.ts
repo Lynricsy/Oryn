@@ -6,7 +6,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { fetchHealth } from "../health";
-import { api, type Schemas, unwrap } from "./client";
+import { api, rawFetch, type Schemas, unwrap } from "./client";
 
 export const qk = {
 	health: ["healthz"] as const,
@@ -23,6 +23,8 @@ export const qk = {
 	orbMetrics: (id: string) => ["orbs", id, "metrics"] as const,
 	setupRunLog: (orbId: string, runId: string) =>
 		["orbs", orbId, "setup-runs", runId, "log"] as const,
+	serviceLog: (orbId: string, name: string) =>
+		["orbs", orbId, "services", name, "log"] as const,
 	threads: (archived: boolean) => ["threads", { archived }] as const,
 	threadUsage: (id: string) => ["stats", "usage", "thread", id] as const,
 };
@@ -209,4 +211,70 @@ export function usePatchThread() {
 export function useInvalidate() {
 	const qc = useQueryClient();
 	return (key: readonly unknown[]) => qc.invalidateQueries({ queryKey: key });
+}
+
+// ---------------------------------------------------------------- 受管服务与 portal（M4）
+// 列表不另行请求：`orb.services` / `orb.portals` 随 WS `orb` 消息到达；以下变更成功后控制面同样经 `orb` 消息推送新状态。
+
+export type ServiceAction = "start" | "stop" | "restart";
+
+/** 启动 / 停止 / 重启受管服务（orb 不可用时控制面会唤醒并等待）。 */
+export function useServiceAction(orbId: string) {
+	return useMutation({
+		mutationFn: ({ name, action }: { name: string; action: ServiceAction }) => {
+			const params = { params: { path: { id: orbId, name } } };
+			return unwrap(
+				action === "start"
+					? api.POST("/api/v1/orbs/{id}/services/{name}/start", params)
+					: action === "stop"
+						? api.POST("/api/v1/orbs/{id}/services/{name}/stop", params)
+						: api.POST("/api/v1/orbs/{id}/services/{name}/restart", params),
+			);
+		},
+	});
+}
+
+/** 限时公开某个端口的 portal；已公开时即续期（到期时间从现在重新算）。 */
+export function useSetPortalShare(orbId: string) {
+	return useMutation({
+		mutationFn: ({
+			port,
+			duration,
+		}: {
+			port: number;
+			duration: Schemas["PortalShareDuration"];
+		}) =>
+			unwrap(
+				api.PUT("/api/v1/orbs/{id}/portals/{port}/share", {
+					params: { path: { id: orbId, port } },
+					body: { duration },
+				}),
+			),
+	});
+}
+
+/** 终止公开（立即断开匿名访客）。 */
+export function useEndPortalShare(orbId: string) {
+	return useMutation({
+		mutationFn: async ({ port }: { port: number }) => {
+			await unwrap(
+				api.DELETE("/api/v1/orbs/{id}/portals/{port}/share", {
+					params: { path: { id: orbId, port } },
+				}),
+			);
+		},
+	});
+}
+
+/** 服务日志末尾（纯文本）；`bg` = 后台轮询：orb 不可用时直接失败，不唤醒、不计用户交互。 */
+export async function fetchServiceLog(
+	orbId: string,
+	name: string,
+	{ bg = false, signal }: { bg?: boolean; signal?: AbortSignal } = {},
+): Promise<string> {
+	const res = await rawFetch(
+		`/api/v1/orbs/${encodeURIComponent(orbId)}/services/${encodeURIComponent(name)}/log${bg ? "?bg=1" : ""}`,
+		{ signal },
+	);
+	return res.text();
 }

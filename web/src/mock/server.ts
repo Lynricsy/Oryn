@@ -6,6 +6,8 @@
  * 环境（M2.5）：orb 带 `lastSetup` / `lastResume`，提供 setup-runs 与日志接口；failed orb 的线程 `wake` 后恢复；
  * 提示词点名 `oryn-setup` 技能时，回合结束后补一条手动重跑成功的记录（模拟 agent 修好环境）。
  * 设置：Git 身份（GET / PUT / DELETE）与项目的新建 / 修改（含 git 身份覆盖，空串清除）。
+ * 受管服务与 portal（M4）：主线程的 orb 带两个服务（`web` 有 portal、`worker` 失败）；线程带 `data:` 形态的
+ * `portalUrlTemplate`；服务启停 / 重启 / 日志与 portal 公开 / 终止改内存状态并广播 `orb`。
  * 终端（M3，同 fakeomp 2.4）：`terminal_*` 命令的替身 shell（回显；`flood <n>` 洪泛、`count <n>` 逐行输出、`echo …`、`exit`），
  * `term.watch` 开关、`term.resized` 广播、按单连接 1s 窗口的输出量模拟背压（`term.lagged`）；提示词含 `pty` 时
  * bash 工具以 `pty:true` 在 `kind:"command"` 终端里等用户输入 `y`。orb 的 fs / git REST 由 `./orbfs` 应答。
@@ -20,12 +22,14 @@ import {
 	projects as fixtureProjects,
 	threads as fixtureThreads,
 	MAIN_THREAD,
+	MOCK_PORTAL_TEMPLATE,
 	mainState,
 	makeOrb,
 	NOW,
 	orbEnv,
 	providers,
 	SESSION_FILE,
+	serviceLogs,
 	setupLogs,
 	TOOL_ZOO_THREAD,
 	toolZooLiveFrames,
@@ -133,6 +137,8 @@ export class MockServer {
 	/** setup / resume 运行记录（按 orb，新的在前）与日志。 */
 	readonly setupRuns = new Map<string, Schemas["OrbSetupRun"][]>();
 	readonly setupLogs = new Map<string, string>(Object.entries(setupLogs));
+	/** 受管服务日志（服务名 → 文本）。 */
+	readonly serviceLogs = new Map<string, string>(Object.entries(serviceLogs));
 	readonly planProposals = new Map<string, Json>();
 	/** 快照 `agent.live` 里的在途帧（按线程）。 */
 	readonly liveFrames = new Map<string, Json[]>();
@@ -184,7 +190,7 @@ export class MockServer {
 
 	constructor() {
 		for (const t of fixtureThreads) {
-			this.threads.set(t.id, { ...t });
+			this.threads.set(t.id, { ...t, portalUrlTemplate: MOCK_PORTAL_TEMPLATE });
 			this.entries.set(t.id, []);
 			if (t.orbId && !this.orbs.has(t.orbId)) {
 				const ids = fixtureThreads
@@ -515,6 +521,8 @@ export class MockServer {
 			this.broadcast({ type: "orb", orb: next });
 			return json(next, 202);
 		}
+		const svcRes = await this.handleServiceFetch(req, p, m, url);
+		if (svcRes) return svcRes;
 		if (p === "stats/usage") {
 			const groups = [...this.threads.values()].map((t) => ({
 				key: t.id,
@@ -611,6 +619,88 @@ export class MockServer {
 			return json(t);
 		}
 		return json({ code: "not_found", message: `mock: ${m} ${p}` }, 404);
+	}
+
+	/** 受管服务（列表、启停、重启、日志）与 portal 公开 / 终止（计划 M4 1.1）。 */
+	private async handleServiceFetch(
+		req: Request,
+		p: string,
+		m: string,
+		url: URL,
+	): Promise<Response | null> {
+		const svc =
+			/^orbs\/([^/]+)\/services(?:\/([^/]+)\/(start|stop|restart|log))?$/.exec(
+				p,
+			);
+		const share = /^orbs\/([^/]+)\/portals\/(\d+)\/share$/.exec(p);
+		const orb = this.orbs.get((svc ?? share)?.[1] ?? "");
+		if (!svc && !share) return null;
+		if (!orb) return json({ code: "not_found", message: "orb" }, 404);
+		if (svc) {
+			const [, , name, op] = svc;
+			if (!name)
+				return json({
+					services: orb.services ?? [],
+					portals: orb.portals ?? [],
+				});
+			const cur = orb.services?.find((s) => s.name === name);
+			if (!cur)
+				return json(
+					{ code: "service_not_found", message: `service ${name}` },
+					404,
+				);
+			if (op === "log") {
+				if (url.searchParams.has("bg") && orb.state !== "ready")
+					return json({ code: "orb_not_ready", message: orb.state }, 409);
+				return new Response(this.serviceLogs.get(name) ?? "", {
+					headers: { "Content-Type": "text/plain; charset=utf-8" },
+				});
+			}
+			if (m !== "POST") return null;
+			const running = op !== "stop";
+			const { pid: _, error: __, exitCode: ___, ...rest } = cur;
+			const next: Schemas["OrbService"] = running
+				? {
+						...rest,
+						status: "running",
+						pid: 5000 + this.idSeq++,
+						restarts: op === "restart" ? cur.restarts : 0,
+						startedAt: Date.now(),
+					}
+				: { ...rest, status: "stopped" };
+			const log = this.serviceLogs.get(name) ?? "";
+			this.serviceLogs.set(
+				name,
+				`${log}${running ? `[orbd] starting ${name} (port ${cur.port ?? 0})` : "[orbd] exited code=143 (signal: terminated)"}\n`,
+			);
+			this.setOrb({
+				...orb,
+				services: orb.services?.map((s) => (s.name === name ? next : s)),
+			});
+			return json(next);
+		}
+		const port = Number(share?.[2]);
+		const portal = orb.portals?.find((x) => x.port === port);
+		if (!portal)
+			return json({ code: "portal_not_found", message: `port ${port}` }, 404);
+		let next: Schemas["OrbPortal"];
+		if (m === "PUT") {
+			const b = (await req.json()) as Schemas["PortalShareRequest"];
+			const sec = { "1h": 3600, "3h": 10_800, "1d": 86_400, "7d": 604_800 }[
+				b.duration
+			];
+			if (!sec)
+				return json({ code: "invalid_request", message: "duration" }, 400);
+			next = { ...portal, public: { expiresAt: Date.now() + sec * 1000 } };
+		} else if (m === "DELETE") {
+			const { public: _, ...rest } = portal;
+			next = rest;
+		} else return null;
+		this.setOrb({
+			...orb,
+			portals: orb.portals?.map((x) => (x.port === port ? next : x)),
+		});
+		return m === "PUT" ? json(next) : new Response(null, { status: 204 });
 	}
 
 	private setOrb(orb: Orb) {
@@ -805,6 +895,7 @@ export class MockServer {
 			orbId,
 			projectId: typeof b.projectId === "string" ? b.projectId : undefined,
 			parentThreadId: typeof b.parent === "string" ? b.parent : undefined,
+			portalUrlTemplate: MOCK_PORTAL_TEMPLATE,
 		};
 		this.entries.set(id, []);
 		this.states.set(id, {

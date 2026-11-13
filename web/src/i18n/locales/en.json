@@ -774,7 +774,8 @@
 			"info": "Info",
 			"changes": "Changes",
 			"files": "Files",
-			"terminal": "Terminal"
+			"terminal": "Terminal",
+			"portal": "Portal"
 		},
 		"attention": "A terminal is waiting for input",
 		"maximize": "Maximize panel",
@@ -990,5 +991,70 @@
 		"delete": "Delete",
 		"deleteConfirm": "Delete attachment {{name}}? The copy inside the orb is removed too.",
 		"hint": "Attachments are stored in Oryn with the thread and never enter the repository; they are deleted with the thread."
+	},
+	"portal": {
+		"toolbar": "Portal toolbar",
+		"back": "Back",
+		"forward": "Forward",
+		"reload": "Reload",
+		"path": "Path",
+		"links": "Links",
+		"copyUrl": "Copy link",
+		"openNew": "Open in new window",
+		"access": "Access",
+		"private": "Only you can access this",
+		"publicUntil": "Public until {{at}}",
+		"frameTitle": "Portal: {{title}}",
+		"disabledTitle": "Portal isn't enabled",
+		"disabledHint": "The control plane has no portal_domain, so services can't be opened from a browser. Set portal_domain in orynd.yaml and restart orynd.",
+		"orbGone": "This thread has no orb",
+		"orbGoneHint": "Its orb was deleted, so its services are gone too.",
+		"none": "No service exposes a portal",
+		"accessTitle": "Access to port {{port}}",
+		"privateHint": "Only you, signed in to Oryn, can open it. You can make it public for a limited time.",
+		"publishTitle": "Make public for",
+		"publishFor": "Make public for {{d}}",
+		"confirmPublish": "Anyone with the link can open port {{port}} for {{d}}, without signing in.",
+		"confirm": "Make public",
+		"publicTitle": "Public",
+		"publicHint": "Anyone with the link can open this port. Other ports and the thread stay private.",
+		"expiresAt": "Expires {{at}}",
+		"remaining": "{{left}} left",
+		"renewTitle": "Extend (from now)",
+		"renewFor": "Extend to {{d}} from now",
+		"end": "Stop sharing",
+		"duration": {
+			"1h": "1 hour",
+			"3h": "3 hours",
+			"1d": "1 day",
+			"7d": "7 days"
+		}
+	},
+	"services": {
+		"title": "Services",
+		"status": {
+			"starting": "Starting",
+			"running": "Running",
+			"unhealthy": "Not ready",
+			"backoff": "Restarting",
+			"stopped": "Stopped",
+			"failed": "Failed"
+		},
+		"restarts": "Restarted {{count}}×",
+		"start": "Start {{name}}",
+		"stop": "Stop {{name}}",
+		"restart": "Restart {{name}}",
+		"log": "Log of {{name}}",
+		"open": "Open {{name}} in Portal",
+		"notReady": "The orb isn't ready; service actions are unavailable",
+		"logTitle": "Service log · {{name}}",
+		"logEmpty": "No output yet",
+		"logRefresh": "Refresh log",
+		"logLive": "Refreshes every 3 seconds",
+		"errors": {
+			"port_conflict": "Its port is already used by another service",
+			"forbidden_port": "Its port is reserved by orbd"
+		},
+		"errorHint": "Check the log for details."
 	}
 }

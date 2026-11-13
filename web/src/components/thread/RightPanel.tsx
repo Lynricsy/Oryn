@@ -1,16 +1,18 @@
 /**
- * 右侧面板（计划 M3 2.5）：标签 `Info | Changes | Files | Terminal`。Info 为原信息面板；其余三个按需加载。
- * 标签条可横向滚动，选中项下有一块滑动底板。
+ * 右侧面板（计划 M3 2.5）：标签 `Info | Changes | Files | Terminal`，orb 有 portal 时在终端之后追加 `Portal`（M4）。
+ * Info 为原信息面板；其余按需加载。标签条可横向滚动，选中项下有一块滑动底板；放不下全部文字时只有选中项保留文字。
  * Terminal 标签在有终端等待用户（agent 的 `pty:true` 命令、会话要密码）时亮注意点；
  * Changes 标签在有未查看的新改动时亮 accent 小点。
  */
 import {
 	lazy,
 	type ReactNode,
+	type RefObject,
 	Suspense,
 	useEffect,
 	useLayoutEffect,
 	useRef,
+	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useBreakpoint } from "../../lib/viewport";
@@ -32,14 +34,17 @@ import { useOrbOf } from "./ThreadHeader";
 const ChangesPanel = lazy(() => import("../changes/ChangesPanel"));
 const FilesPanel = lazy(() => import("../files/FilesPanel"));
 const TerminalPanel = lazy(() => import("../terminal/TerminalPanel"));
+const PortalPanel = lazy(() => import("../portal/PortalPanel"));
 
-const TABS: readonly PanelTab[] = ["info", "changes", "files", "terminal"];
+const BASE_TABS: readonly PanelTab[] = ["info", "changes", "files", "terminal"];
+const PORTAL_TABS: readonly PanelTab[] = [...BASE_TABS, "portal"];
 
 const TAB_ICON: Record<PanelTab, IconName> = {
 	info: "info",
 	changes: "diff",
 	files: "folder",
 	terminal: "terminal",
+	portal: "globe",
 };
 
 /** 改动标签后台检查的间隔（与 Changes 面板的后台轮询同频）。 */
@@ -121,6 +126,45 @@ function useUnseenChanges(
 	return !viewing && hasUnseenChanges(sig);
 }
 
+/**
+ * 标签条放不下全部文字时只有选中的标签保留文字，其余只显示图标（保留 `aria-label` 与悬停提示）。
+ * 带文字时量出所需宽度并记住，之后按可用宽度与它比较；标签集合或语言变化时先回到带文字状态重新量。
+ * `reserve`：此刻没显示、但切到别的标签就会出现的页头按钮宽度（信息标签下隐藏的「最大化」），
+ * 按它出现时的宽度判断，免得切标签时文字忽隐忽现。
+ */
+function useCompactTabs(
+	ref: RefObject<HTMLDivElement | null>,
+	tabs: readonly PanelTab[],
+	lang: string,
+	reserve: number,
+): boolean {
+	const sig = `${tabs.join(",")}|${lang}`;
+	const [state, setState] = useState({ sig, compact: false });
+	const compact = state.sig === sig && state.compact;
+	const full = useRef(0);
+	const current = useRef(compact);
+	current.current = compact;
+	useLayoutEffect(() => {
+		const list = ref.current;
+		if (!list) return;
+		const measure = () => {
+			// 带文字时 scrollWidth 就是全部标签所需的宽度
+			if (!current.current) full.current = list.scrollWidth;
+			const next = list.clientWidth - reserve + 1 < full.current;
+			if (next !== current.current) {
+				current.current = next;
+				setState({ sig, compact: next });
+			}
+		};
+		measure();
+		if (typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(measure);
+		ro.observe(list);
+		return () => ro.disconnect();
+	}, [sig, ref, reserve]);
+	return compact;
+}
+
 export function RightPanel({
 	threadId,
 	onClose,
@@ -133,15 +177,32 @@ export function RightPanel({
 	const max = useUi((s) => s.panelMax);
 	const bp = useBreakpoint();
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
+	const loaded = useThread(threadId, (s) => s.thread !== undefined);
+	const orb = useOrbOf(threadId);
+	const hasPortal = orb?.state !== "deleted" && (orb?.portals?.length ?? 0) > 0;
+	const tabs = hasPortal ? PORTAL_TABS : BASE_TABS;
+	// portal 消失（服务停掉、orb 删除、换到没有 portal 的线程）时退回信息标签；orb 还没到时先不动
+	const portalGone = !hasPortal && (orb !== undefined || (loaded && !orbId));
+	const shown: PanelTab = tab === "portal" && !hasPortal ? "info" : tab;
+	useEffect(() => {
+		if (tab === "portal" && portalGone) uiStore.getState().setPanelTab("info");
+	}, [tab, portalGone]);
 	const attention = useTerminals(threadId, (s) => s.attention);
-	const unseen = useUnseenChanges(threadId, orbId, tab === "changes");
+	const unseen = useUnseenChanges(threadId, orbId, shown === "changes");
 
 	// 滑动底板：读选中标签的 offsetLeft/offsetWidth（相对可滚动的 tablist，随内容一起滚动）。
 	// 首次定位与尺寸变化（窗口缩放、字体加载）直接到位，只有切换标签时滑动。
 	const listRef = useRef<HTMLDivElement>(null);
+	// 信息标签下不显示「最大化」（IconButton 32px + 间距 4px），按它在时的宽度判断
+	const compact = useCompactTabs(
+		listRef,
+		tabs,
+		i18n.language,
+		bp === "expanded" && shown === "info" ? 36 : 0,
+	);
 	const plateRef = useRef<HTMLSpanElement>(null);
 	const placed = useRef(false);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 标签与语言变化后按钮位置 / 宽度改变，需要重新定位
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 标签（含增减与只显示图标）与语言变化后按钮位置 / 宽度改变，需要重新定位
 	useLayoutEffect(() => {
 		const list = listRef.current;
 		const plate = plateRef.current;
@@ -170,7 +231,7 @@ export function RightPanel({
 			window.removeEventListener("resize", settle);
 			ro?.disconnect();
 		};
-	}, [tab, i18n.language]);
+	}, [shown, tabs, compact, i18n.language]);
 
 	return (
 		<aside
@@ -189,19 +250,23 @@ export function RightPanel({
 						aria-hidden
 						className="absolute top-0 left-0 h-7 rounded-md bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
 					/>
-					{TABS.map((id) => (
+					{tabs.map((id) => (
 						<button
 							key={id}
 							type="button"
 							role="tab"
-							aria-selected={tab === id}
+							aria-selected={shown === id}
+							aria-label={t(`rightPanel.tabs.${id}`)}
+							title={
+								compact && shown !== id ? t(`rightPanel.tabs.${id}`) : undefined
+							}
 							data-panel-tab={id}
-							className={tabClass(tab === id)}
+							className={tabClass(shown === id)}
 							onClick={() => uiStore.getState().setPanelTab(id)}
 						>
 							<Icon name={TAB_ICON[id]} size={14} aria-hidden />
-							{t(`rightPanel.tabs.${id}`)}
-							{id === "terminal" && attention && tab !== "terminal" && (
+							{(!compact || shown === id) && t(`rightPanel.tabs.${id}`)}
+							{id === "terminal" && attention && shown !== "terminal" && (
 								<span
 									data-testid="terminal-attention"
 									title={t("rightPanel.attention")}
@@ -218,7 +283,7 @@ export function RightPanel({
 						</button>
 					))}
 				</div>
-				{bp === "expanded" && tab !== "info" && (
+				{bp === "expanded" && shown !== "info" && (
 					<IconButton
 						icon={max ? "minimize" : "maximize"}
 						size={14}
@@ -237,7 +302,7 @@ export function RightPanel({
 				)}
 			</div>
 			<div className="min-h-0 flex-1">
-				{tab === "info" ? (
+				{shown === "info" ? (
 					<InfoPanel threadId={threadId} />
 				) : (
 					<Suspense
@@ -247,14 +312,17 @@ export function RightPanel({
 							</div>
 						}
 					>
-						{tab === "changes" && (
+						{shown === "changes" && (
 							// 换线程即重建：根目录、范围（含所选 commit）与所选文件都属于该线程
 							<ChangesPanel key={threadId} threadId={threadId} orbId={orbId} />
 						)}
-						{tab === "files" && (
+						{shown === "files" && (
 							<FilesPanel threadId={threadId} orbId={orbId} />
 						)}
-						{tab === "terminal" && <TerminalPanel threadId={threadId} />}
+						{shown === "terminal" && <TerminalPanel threadId={threadId} />}
+						{shown === "portal" && (
+							<PortalPanel threadId={threadId} orbId={orbId} />
+						)}
 					</Suspense>
 				)}
 			</div>

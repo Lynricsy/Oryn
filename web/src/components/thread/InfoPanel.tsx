@@ -1,5 +1,5 @@
 /**
- * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、
+ * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、受管服务（M4）、
  * 上下文占用（主动请求上下文报告，分消息 / 工具定义 / 系统提示词三段）、todo（可编辑，`set_todos`）、子 agent 列表，
  * 以及报告 / btw 入口。外观以 D 稿（`.dev/design/explore/d.html` 的右栏）为准。
  */
@@ -27,6 +27,7 @@ import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Sparkline } from "../ui/primitives";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
 import { EnvRuns } from "./EnvBanner";
+import { ServicesSection } from "./ServicesSection";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -288,6 +289,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 				</h4>
 				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
 			</div>
+			<ServicesSection threadId={threadId} orb={orb} />
 		</Card>
 	);
 }
