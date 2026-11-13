@@ -5,6 +5,8 @@ import {
 	Badges,
 	CodeBlock,
 	InvalidArg,
+	Kv,
+	KvGrid,
 	MetaCount,
 	Note,
 	Output,
@@ -61,6 +63,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const diagnostics = diagnosticsOf(details);
 	return (
 		<>
+			{/* 折叠行里的路径只是摘要（窄屏会被省略号截断），展开体顶部始终给出完整路径 */}
+			{path !== null && (
+				<KvGrid>
+					<Kv k="path">
+						<PathText path={path} />
+					</Kv>
+				</KvGrid>
+			)}
 			<Badges
 				items={[
 					details?.madeExecutable === true && (

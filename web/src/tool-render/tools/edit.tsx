@@ -103,8 +103,11 @@ function fileEntry(d: Record<string, unknown>): FileEntry {
 	};
 }
 
-function Summary({ args, result }: ToolRenderProps): ReactNode {
-	const input = str(args.input) ?? str(args._input);
+/** 本次调用涉及的文件：补丁段头（hashline / apply_patch）→ path 参数 → edits[].path，去重保序。 */
+function editPaths(
+	args: Record<string, unknown>,
+	input: string | null,
+): string[] {
 	const paths = input ? inputPaths(input) : [];
 	const argPath = str(args.file_path) ?? str(args.path);
 	if (paths.length === 0 && argPath) paths.push(argPath);
@@ -114,6 +117,13 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 			if (p && !paths.includes(p)) paths.push(p);
 		}
 	}
+	// 同一文件的多个段只算一次
+	return [...new Set(paths)];
+}
+
+function Summary({ args, result }: ToolRenderProps): ReactNode {
+	const input = str(args.input) ?? str(args._input);
+	const paths = editPaths(args, input);
 	const opCount = input ? countOps(input) : 0;
 	const firstLine = input
 		? truncate(normalizeWs(input.split("\n", 1)[0] ?? ""), 80)
@@ -223,27 +233,46 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		(input ? (inputPaths(input)[0] ?? null) : null);
 
 	let outcome: ReactNode;
+	// 逐文件小节自己带路径行；其余文件在顶部补路径
+	const sectionPaths: string[] = [];
 	if (perFile.length > 0) {
 		outcome = perFile.map((f, i) => (
 			<FileSection key={`${f.path ?? ""}:${i}`} entry={f} />
 		));
+		for (const f of perFile) if (f.path) sectionPaths.push(f.path);
 	} else if (result?.isError === true) {
 		// Failed matches embed numbered file context — keep a generous window.
 		outcome = <ResultText result={result} maxLines={15} />;
 	} else if (details) {
 		const top = fileEntry(details);
-		outcome =
-			top.diff !== null || top.diagnostics !== null || top.move !== null ? (
-				<FileSection entry={top} fallbackPath={fallbackPath} />
-			) : (
-				<ResultText result={result} maxLines={8} />
-			);
+		const sectioned =
+			top.diff !== null || top.diagnostics !== null || top.move !== null;
+		outcome = sectioned ? (
+			<FileSection entry={top} fallbackPath={fallbackPath} />
+		) : (
+			<ResultText result={result} maxLines={8} />
+		);
+		const topPath = top.path ?? fallbackPath;
+		if (sectioned && topPath) sectionPaths.push(topPath);
 	} else {
 		outcome = <ResultText result={result} maxLines={8} />;
 	}
+	// 折叠行只写第一个文件（且窄屏会被省略号截断），展开体按文件给出完整路径；结果里可能是绝对路径
+	const headPaths = editPaths(args, input).filter(
+		(p) => !sectionPaths.some((s) => s === p || s.endsWith(`/${p}`)),
+	);
 
 	return (
 		<>
+			{headPaths.length > 0 && (
+				<KvGrid>
+					{headPaths.map((p, i) => (
+						<Kv key={`${p}:${i}`} k="path">
+							<PathText path={p} />
+						</Kv>
+					))}
+				</KvGrid>
+			)}
 			{outcome}
 			{Array.isArray(args.edits) && args.edits.length > 0 && (
 				<KvGrid>

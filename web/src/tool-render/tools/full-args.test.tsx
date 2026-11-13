@@ -110,3 +110,71 @@ describe("github 展开体只省掉折叠行无损写出的参数", () => {
 		expect(text).toContain("can1357/oh-my-pi");
 	});
 });
+
+/** 展开体里以路径样式（`.tv-path`）给出的路径文字，按出现顺序。 */
+function bodyPaths(
+	name: string,
+	args: Record<string, unknown>,
+	result?: ToolResultLike,
+): string[] {
+	const { container } = render(
+		<ToolView name={name} args={args} result={result} defaultOpen />,
+	);
+	return [...container.querySelectorAll(".tv-body .tv-path")].map(
+		(el) => el.textContent ?? "",
+	);
+}
+
+describe("read / edit / write 的展开体顶部给出完整文件路径", () => {
+	const FILE = "web/src/components/transcript/MessageView.tsx";
+
+	it("read：路径连同行范围", () => {
+		expect(
+			bodyPaths("read", { path: FILE, offset: 40, limit: 8 }, ok("x")),
+		).toEqual([`${FILE}:40-47`]);
+	});
+
+	it("write：写入的文件路径", () => {
+		expect(bodyPaths("write", { path: FILE, content: "x" }, ok())).toEqual([
+			FILE,
+		]);
+	});
+
+	it("edit：结果里没有逐文件 diff 时按文件列出路径", () => {
+		expect(
+			bodyPaths(
+				"edit",
+				{ path: FILE, edits: [{ op: "replace", sel: "42" }] },
+				ok(),
+			),
+		).toEqual([FILE]);
+		// 多文件补丁失败（没有 details）：每个文件一行
+		const input =
+			"[web/src/a.ts#AB12]\nreplace 1\n+x\n[web/src/b.ts]\nreplace 2\n+y";
+		expect(
+			bodyPaths(
+				"edit",
+				{ input },
+				{ content: [{ type: "text", text: "no match" }], isError: true },
+			),
+		).toEqual(["web/src/a.ts", "web/src/b.ts"]);
+	});
+
+	it("edit：逐文件结果已带路径时不在顶部重复", () => {
+		const diff = "@@ -1 +1 @@\n-a\n+b";
+		expect(
+			bodyPaths(
+				"edit",
+				{
+					input: "[web/src/a.ts]\nreplace 1\n+b\n[web/src/b.ts]\nreplace 1\n+b",
+				},
+				ok("done", {
+					perFileResults: [
+						{ path: "web/src/a.ts", diff },
+						{ path: "web/src/b.ts", diff },
+					],
+				}),
+			),
+		).toEqual(["web/src/a.ts", "web/src/b.ts"]);
+	});
+});

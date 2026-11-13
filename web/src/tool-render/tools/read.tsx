@@ -87,7 +87,7 @@ function Summary(props: ToolRenderProps): ReactNode {
 }
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
-	const { path } = readArgs(args);
+	const { path, sel, from, to } = readArgs(args);
 	const d = readDetails(detailsRecord(result));
 	const conflictBadge = d.conflictCount !== null && d.conflictCount > 0 && (
 		<Badge tone="warn">
@@ -100,7 +100,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		</Badge>
 	);
 	const truncatedBadge = d.truncated && <Badge tone="warn">truncated</Badge>;
-	// 解析后的路径只是头部相对路径的绝对形式时不再重复
+	// 解析后的路径只是请求路径的绝对形式时不再重复
 	const raw = d.suffixTo ?? d.resolvedPath;
 	const resolved =
 		raw !== null && path && (raw === path || raw.endsWith(`/${path}`))
@@ -108,8 +108,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			: raw;
 	return (
 		<>
-			{(resolved !== null || d.suffixFrom !== null) && (
+			{/* 折叠行里的路径只是摘要（窄屏会被省略号截断），展开体顶部始终给出完整路径与范围 */}
+			{(path || resolved !== null || d.suffixFrom !== null) && (
 				<KvGrid>
+					{path && (
+						<Kv k="path">
+							<PathText path={path} from={from} to={to} sel={sel} />
+						</Kv>
+					)}
 					{resolved !== null && (
 						<Kv k="resolved">
 							<PathText path={resolved} />
