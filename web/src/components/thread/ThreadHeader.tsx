@@ -410,13 +410,12 @@ export function ThreadHeader({
 				</button>
 			)}
 			{editing === null && (thread?.publicShares ?? 0) > 0 && (
-				// 有未撤销的公开链接：中性徽标，点开分享对话框管理；窄页头只留地球图标，把宽度让给标题
+				// 有未撤销的公开链接：中性徽标，点开分享对话框管理；窄页头只留地球图标，把宽度让给标题。
+				// 读屏名固定为「已公开」（与宽页头上看得见的字一致），链接数量在悬停提示里
 				<button
 					type="button"
 					className="inline-flex shrink-0 rounded-sm"
-					aria-label={t("share.header.badgeTitle", {
-						n: thread?.publicShares ?? 0,
-					})}
+					aria-label={t("share.header.badge")}
 					title={t("share.header.badgeTitle", { n: thread?.publicShares ?? 0 })}
 					onClick={() => uiStore.getState().open({ kind: "share" })}
 				>
