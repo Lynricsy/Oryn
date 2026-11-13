@@ -1,7 +1,8 @@
 /**
  * 转录里的模型名：界面上一律写短名（与输入坞的模型胶囊同一规则），完整 id 放进悬停提示。
- * 消息与 model_change 条目只带 id（可能是 `provider/id` 路径）；id 与当前会话模型相同时借用它的显示名，
- * 这样头像行、模型切换提示和输入坞写法一致（`Sonnet 5`）。
+ * 两种输入形状：助手消息带原始模型 id 与单独的 provider 字段（id 本身可能带命名空间，如 `qwen/qwen3-max`）；
+ * model_change 条目是 `provider/modelId` 路径（只有第一段是 provider）。
+ * id 与当前会话模型相同时借用它的显示名，这样头像行、模型切换提示和输入坞写法一致（`Sonnet 5`）。
  */
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 
@@ -19,16 +20,27 @@ export interface KnownModel {
 	provider?: string;
 }
 
+/** `id`：原始模型 id（整段都是 id）+ 可选 provider；`path`：`provider/modelId`。 */
+export type ModelRef = { id: string; provider?: string } | { path: string };
+
 export function modelLabel(
-	ref: string,
-	provider?: string,
+	ref: ModelRef,
 	known?: KnownModel,
 ): ModelLabel | null {
-	const segs = ref.trim().split("/").filter(Boolean);
-	const id = segs.pop();
+	let id: string;
+	let provider: string;
+	if ("path" in ref) {
+		const path = ref.path.trim();
+		const slash = path.indexOf("/");
+		provider = slash < 0 ? "" : path.slice(0, slash);
+		id = slash < 0 ? path : path.slice(slash + 1);
+	} else {
+		id = ref.id.trim();
+		provider = ref.provider?.trim() ?? "";
+	}
 	if (!id) return null;
 	const same = known?.id === id;
-	const prov = provider || segs.join("/") || (same ? known?.provider : "");
+	const prov = provider || (same ? (known?.provider ?? "") : "");
 	const name = same && known?.name ? known.name : id;
 	const path = prov ? `${prov}/${id}` : id;
 	return {

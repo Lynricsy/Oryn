@@ -60,7 +60,7 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 	switch (entry.type) {
 		case "model_change": {
 			// 条目里是 "provider/modelId"：界面写短名（与头像行、输入坞一致），完整 id 进悬停提示
-			const label = modelLabel(String(entry.model ?? ""), undefined, known);
+			const label = modelLabel({ path: String(entry.model ?? "") }, known);
 			text = t("transcript.meta.model", { model: label?.short ?? "" });
 			title = label?.full;
 			break;
@@ -227,11 +227,33 @@ export interface TurnModel {
 }
 
 /**
+ * 已结束回合的用量汇总，以回合最后一条助手消息对象为键。历史条目的 message 对象在流式增量之间引用不变
+ * （buildTranscript 只重建 item 外壳），命中缓存即复用同一个 TurnUsage，历史行的 memo 不被打破；
+ * 回合内消息列表有任何一项换了对象（重新拉取、尾回合刚结束）才重算。
+ */
+const turnUsageCache = new WeakMap<JsonRecord, TurnUsage>();
+
+function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
+	const tail = messages[messages.length - 1] as JsonRecord;
+	const hit = turnUsageCache.get(tail);
+	if (
+		hit &&
+		hit.messages.length === messages.length &&
+		hit.messages.every((m, i) => m === messages[i])
+	)
+		return hit;
+	const usage = summarizeTurn(messages);
+	turnUsageCache.set(tail, usage);
+	return usage;
+}
+
+/**
  * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像
  * （`models` 给出该回合的模型，作为头像旁的身份文字）；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
+ * 流式时每个增量都会重跑：已结束回合的汇总走 `cachedTurnUsage`，引用保持不变。
  */
 export function layoutTurns(items: readonly TranscriptItem[]): {
 	starts: Set<number>;
@@ -251,7 +273,7 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 	const close = () => {
 		const tail = items[last];
 		if (tail?.kind === "message" && !tail.live && messages.length > 0)
-			footers.set(last, summarizeTurn(messages));
+			footers.set(last, cachedTurnUsage(messages));
 		messages = [];
 		last = -1;
 	};
@@ -361,7 +383,10 @@ function TurnHead({
 	model?: TurnModel;
 	known?: KnownModel;
 }): ReactNode {
-	const label = model ? modelLabel(model.model, model.provider, known) : null;
+	// 助手消息的 model 是原始模型 id（可能自带 `qwen/` 这类命名空间），provider 单独给出
+	const label = model
+		? modelLabel({ id: model.model, provider: model.provider }, known)
+		: null;
 	return (
 		<div
 			className="flex h-7 min-w-0 items-center gap-2"

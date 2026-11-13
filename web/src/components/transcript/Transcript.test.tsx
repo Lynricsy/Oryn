@@ -65,7 +65,6 @@ describe("summarizeTurn", () => {
 			output: 30,
 			cacheRead: 500,
 			duration: 1500,
-			text: "a\n\nb",
 		});
 		expect(sum.cost).toBeCloseTo(0.03);
 	});
@@ -133,6 +132,37 @@ describe("layoutTurns", () => {
 		expect([...models.entries()]).toEqual([
 			[1, { model: "claude-opus-5-5", provider: "anthropic" }],
 		]);
+	});
+
+	it("流式增量只重算进行中的回合：历史回合的汇总对象引用不变，尾回合结束后汇总正确", () => {
+		// buildTranscript 每次都新建 item 包装，但历史条目的 message 对象引用稳定
+		const history = [
+			{ role: "user", content: [{ type: "text", text: "hi" }] },
+			assistant("a", u),
+			assistant("b", { input: 200, output: 2, cacheRead: 0, cost: 0 }),
+			{ role: "user", content: [{ type: "text", text: "again" }] },
+			assistant("c", { input: 5, output: 5, cacheRead: 0, cost: 0 }),
+		];
+		const build = (tail: JsonRecord, live: boolean): TranscriptItem[] => [
+			...history.map((m, i) => msg(i + 1, m)),
+			msg(history.length + 1, tail, live),
+		];
+		const first = layoutTurns(build(assistant("d", u), true));
+		// 下一个流式增量：尾消息换成新对象（message-builder 每次克隆）
+		const second = layoutTurns(build(assistant("de", u), true));
+		expect(first.footers.get(2)).toBeDefined();
+		expect(second.footers.get(2)).toBe(first.footers.get(2));
+		expect(second.footers.get(2)?.input).toBe(300);
+		expect(second.footers.has(5)).toBe(false);
+
+		const ended = layoutTurns(
+			build(
+				assistant("def", { input: 7, output: 1, cacheRead: 0, cost: 0 }),
+				false,
+			),
+		);
+		expect(ended.footers.get(2)).toBe(first.footers.get(2));
+		expect(ended.footers.get(5)).toMatchObject({ input: 12, output: 6 });
 	});
 });
 
@@ -207,6 +237,25 @@ describe("MessageView 回合脚注与消息菜单", () => {
 		open();
 		fireEvent.click(screen.getByRole("menuitem", { name: "加标签" }));
 		expect(labelEntry).toHaveBeenCalledWith("E-mid");
+	});
+
+	it("回合脚注的「复制」在点击时给出整回合的助手正文", () => {
+		const writeText = vi.fn(() => Promise.resolve());
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		Element.prototype.scrollIntoView = vi.fn();
+		const u = { input: 1, output: 1, cacheRead: 0, cost: 0 };
+		const turn = summarizeTurn([assistant("a", u), assistant("b", u)]);
+		render(
+			<TranscriptContext.Provider value={ctx}>
+				<MessageView message={assistant("b", u)} live={false} turn={turn} />
+			</TranscriptContext.Provider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "消息操作" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+		expect(writeText).toHaveBeenCalledWith("a\n\nb");
 	});
 
 	it("用户回合起点的气泡右侧有头像，但头像不进入无障碍树", () => {

@@ -215,12 +215,13 @@ function pickMenuSide(el: HTMLElement | null, items: number): "top" | "bottom" {
  */
 function MessageMenu({
 	entryId,
-	text,
+	copyText,
 	className = "",
 	touchVisible = true,
 }: {
 	entryId?: string;
-	text: string;
+	/** 「复制」的文本：点击时才生成（回合脚注要拼接整回合正文，不在每次渲染时做）。 */
+	copyText: () => string;
 	/** 追加到外包元素上的定位类（例如回合中间消息右上角的浮动槽位）。 */
 	className?: string;
 	/**
@@ -268,7 +269,7 @@ function MessageMenu({
 						key: "copy",
 						icon: "copy",
 						label: t("common.copy"),
-						onSelect: () => void navigator.clipboard?.writeText(text),
+						onSelect: () => void navigator.clipboard?.writeText(copyText()),
 					},
 					...(entryId
 						? [
@@ -333,7 +334,7 @@ function UserMessage({
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
 			</UserBubble>
-			<MessageMenu entryId={entryId} text={text} />
+			<MessageMenu entryId={entryId} copyText={() => text} />
 		</div>
 	);
 }
@@ -454,8 +455,8 @@ export interface TurnUsage {
 	cost: number;
 	/** 各条消息 `duration` 之和；没有任何一条带耗时时为 null。 */
 	duration: number | null;
-	/** 回合内全部助手正文，供「复制」。 */
-	text: string;
+	/** 回合内的助手消息；「复制」时才从中拼出正文。 */
+	messages: readonly JsonRecord[];
 }
 
 export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
@@ -467,9 +468,8 @@ export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 		cacheRead: 0,
 		cost: 0,
 		duration: null,
-		text: "",
+		messages,
 	};
-	const texts: string[] = [];
 	for (const m of messages) {
 		if (isRecord(m.usage)) {
 			sum.hasUsage = true;
@@ -480,11 +480,18 @@ export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
 		}
 		if (typeof m.duration === "number")
 			sum.duration = (sum.duration ?? 0) + m.duration;
+	}
+	return sum;
+}
+
+/** 回合内全部助手正文（段间空一行），供回合脚注的「复制」。 */
+function turnText(turn: TurnUsage): string {
+	const texts: string[] = [];
+	for (const m of turn.messages) {
 		const text = textOfContent(m.content);
 		if (text) texts.push(text);
 	}
-	sum.text = texts.join("\n\n");
-	return sum;
+	return texts.join("\n\n");
 }
 
 /** 回合脚注里的单个读数胶囊。 */
@@ -536,7 +543,7 @@ function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 					</span>
 				)}
 				<span className="flex-1" />
-				<MessageMenu entryId={entryId} text={turn.text} />
+				<MessageMenu entryId={entryId} copyText={() => turnText(turn)} />
 			</div>
 		</div>
 	);
@@ -582,13 +589,18 @@ export function assistantEdges(
 	hasFooter: boolean,
 ): [FlowKind, FlowKind] {
 	const content = Array.isArray(message.content) ? message.content : [];
-	const kinds = content.map(blockKind).filter((k) => k !== null);
-	const first = kinds[0] ?? "prose";
+	// 只从两端找第一个会渲染的块：流式时每个增量都要重算全部行的间距，不能逐块遍历
+	let head: FlowKind | null = null;
+	for (let i = 0; i < content.length && head === null; i++)
+		head = blockKind(content[i]);
+	let tail: FlowKind | null = null;
+	for (let i = content.length - 1; i >= 0 && tail === null; i--)
+		tail = blockKind(content[i]);
 	const stop = message.stopReason;
 	// 停止提示与回合脚注都是正文层的块
 	const tailProse = hasFooter || stop === "error" || stop === "aborted";
-	const last = tailProse ? "prose" : (kinds[kinds.length - 1] ?? "prose");
-	return [first, live && kinds.length === 0 ? "prose" : last];
+	const last = tailProse ? "prose" : (tail ?? "prose");
+	return [head ?? "prose", live && head === null ? "prose" : last];
 }
 
 /**
@@ -680,7 +692,7 @@ function AssistantMessage({
 			{ownMenu && (
 				<MessageMenu
 					entryId={entryId}
-					text={textOfContent(content)}
+					copyText={() => textOfContent(content)}
 					touchVisible={false}
 					className={FLOAT_MENU}
 				/>
