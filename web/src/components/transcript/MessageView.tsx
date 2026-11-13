@@ -224,7 +224,11 @@ function MessageMenu({
 	text: string;
 	/** 追加到外包元素上的定位类（例如回合中间消息右上角的浮动槽位）。 */
 	className?: string;
-	/** 粗指针下常显（弱化按钮）；浮在内容上的槽位关掉，只在点按消息（触屏模拟悬停）或聚焦时显现。 */
+	/**
+	 * 粗指针下常显（弱化按钮）。浮在内容上的槽位关掉：改为点按消息后显现——
+	 * 外层 `group/msg` 可被点按聚焦（tabIndex=-1），靠 `group-focus-within` 显示；
+	 * 不能依赖 `group-hover`，Tailwind 4 把它包在 `@media (hover: hover)` 里，触屏不触发。
+	 */
 	touchVisible?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -235,7 +239,7 @@ function MessageMenu({
 	return (
 		<div
 			ref={wrapRef}
-			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : ""} ${className}`}
+			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : "group-focus-within/msg:opacity-100"} ${className}`}
 		>
 			<Menu
 				side={side}
@@ -687,7 +691,11 @@ function AssistantMessage({
 		);
 	});
 	return (
-		<div className="group/msg relative">
+		// 有浮动菜单时，外层可被点按聚焦（不进 Tab 顺序），触屏点正文即显出菜单，点别处收起
+		<div
+			className="group/msg relative outline-none"
+			tabIndex={ownMenu ? -1 : undefined}
+		>
 			{ownMenu && (
 				<MessageMenu
 					entryId={entryId}
