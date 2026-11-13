@@ -124,7 +124,7 @@ func TestHelloAdvertisesFeatures(t *testing.T) {
 	_, raw := cp.waitNotif(t, 0, "hello", nil)
 	var h apigen.LinkCtlHelloParams
 	require.NoError(t, json.Unmarshal(raw, &h))
-	assert.Equal(t, []string{"fs", "git", "attachments"}, h.Features)
+	assert.Equal(t, []string{"fs", "git", "attachments", "services", "portal"}, h.Features)
 }
 
 func TestLocalFSRoundTrip(t *testing.T) {
@@ -466,7 +466,7 @@ func TestRequestLogger(t *testing.T) {
 	assert.NotNil(t, cfg.OnLocalRequest)
 }
 
-// 控制面打开的其它类型流仍被关闭，fs 流之外不受影响。
+// 控制面打开的未知类型流（fs / portal 之外）被关闭，fs 流之外不受影响。
 func TestNonFSStreamClosed(t *testing.T) {
 	cp := newFakeCP(t)
 	startRuntime(t, cp, nil)
@@ -476,7 +476,7 @@ func TestNonFSStreamClosed(t *testing.T) {
 	cp.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	st, err := sess.Open(ctx, link.StreamHeader{T: link.StreamPortal})
+	st, err := sess.Open(ctx, link.StreamHeader{T: link.StreamDesk})
 	require.NoError(t, err)
 	_ = st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, err = st.Read(make([]byte, 1))

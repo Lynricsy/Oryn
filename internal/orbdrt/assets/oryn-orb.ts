@@ -1,5 +1,5 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
-// 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 的异常现状。
+// 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状。
 import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -15,7 +15,14 @@ orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\
 需要持久的 PATH / 环境变量写进 \`~/.profile\`：agent 在启动时读取登录 shell 环境，所以只对之后启动的 agent 生效。
 仓库内脚本的改动只有合入项目基线分支后才对新 orb 生效。
 git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
-用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。`;
+用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。
+长驻进程（dev server、watcher、队列消费者）用受管服务，不要用 nohup / setsid / & / tmux 保活：
+- 仓库里的服务写进 \`.oryn/services.yaml\`（\`services.<名字>: {command, cwd, port, env, health, portal, portals}\`），用 \`oryn orb service start\` 按文件确保全部运行；临时服务用 \`oryn orb service start <名字> --command '<命令>' --portal\`。
+- 服务必须监听 \`$PORT\`（127.0.0.1 或 0.0.0.0）；对外地址只从 \`$PUBLIC_URL\` 或命令打印的 URL 取，不要自己拼域名，也不要把 localhost 地址给用户。
+- dev server 若校验 Host / Origin，要放行 \`$PUBLIC_URL\` 的主机名（如 Vite 的 \`server.allowedHosts\`）。前端需要调另一个服务时在 dev server 里做代理，不要跨 portal 主机发请求。
+- portal 默认只有所有者能打开；限时公开只能由用户在 Portal 面板里设置。应用可读请求头 \`X-Oryn-Authenticated: owner=yes|no\` 区分访问者。
+- 在 orb 内自测用 \`http://127.0.0.1:<端口>\`（portal URL 需要登录，orb 内 curl 只会得到 302）。WebSocket 可用，但控制面重启或 orb 冻结会断开，客户端要能重连。
+- 查看：\`oryn orb service ls\`、\`oryn orb service logs <名字>\`；停止：\`oryn orb service stop <名字>\`。服务在 setup 之后、每次唤醒后由 Oryn 自动确保运行，不要在 setup / resume 里启动它们。`;
 
 interface SetupResult {
 	ok: boolean;
@@ -24,11 +31,23 @@ interface SetupResult {
 	setupRan: boolean;
 }
 
-function statusLine(): string | undefined {
-	let st: { setup?: SetupResult | null; resume?: SetupResult | null };
+interface ServiceStatus {
+	name: string;
+	status: string;
+	error?: string;
+}
+
+function readOryn<T>(name: string): T | undefined {
 	try {
-		st = JSON.parse(readFileSync(join(homedir(), ".oryn", "setup-status.json"), "utf8"));
+		return JSON.parse(readFileSync(join(homedir(), ".oryn", name), "utf8")) as T;
 	} catch {
+		return undefined;
+	}
+}
+
+function setupLine(): string | undefined {
+	const st = readOryn<{ setup?: SetupResult | null; resume?: SetupResult | null }>("setup-status.json");
+	if (!st) {
 		return undefined;
 	}
 	for (const [phase, r] of [["setup", st.setup], ["resume", st.resume]] as const) {
@@ -42,9 +61,20 @@ function statusLine(): string | undefined {
 	return undefined;
 }
 
+function serviceLines(): string[] {
+	const st = readOryn<{ services?: ServiceStatus[] }>("services-status.json");
+	return (st?.services ?? [])
+		.filter((s) => s.status === "failed")
+		.map((s) => `当前现状：服务 ${s.name} 启动失败（${s.error ?? "未知错误"}），用 \`oryn orb service logs ${s.name}\` 查看。`);
+}
+
+function statusLines(): string[] {
+	const setup = setupLine();
+	return [...(setup ? [setup] : []), ...serviceLines()];
+}
+
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
-		const line = statusLine();
-		return { systemPrompt: [...event.systemPrompt, line ? `${GUIDE}\n${line}` : GUIDE] };
+		return { systemPrompt: [...event.systemPrompt, [GUIDE, ...statusLines()].join("\n")] };
 	});
 }

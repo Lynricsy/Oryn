@@ -28,6 +28,14 @@ import (
 var fakeompBin string
 
 func TestMain(m *testing.M) {
+	// 受管服务测试把测试二进制自身当作服务进程（见 services_test.go 的 runServiceHelper）。
+	if mode := os.Getenv("ORBD_TEST_HELPER"); mode != "" {
+		runServiceHelper(mode)
+		return
+	}
+	if exe, err := os.Executable(); err == nil {
+		testBin = exe
+	}
 	dir, err := os.MkdirTemp("", "orbdrt-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

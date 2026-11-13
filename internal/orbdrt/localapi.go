@@ -44,7 +44,7 @@ func (c rollingConn) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
-// localHandler 返回本机 API 的路由：文件（fs）、改动（git）与附件（attachments）。
+// localHandler 返回本机 API 的路由：文件（fs）、改动（git）、附件（attachments）与受管服务（services）。
 func (r *Runtime) localHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /fs/roots", r.handleFsRoots)
@@ -63,6 +63,10 @@ func (r *Runtime) localHandler() http.Handler {
 	mux.HandleFunc("POST /attachments/ensure", r.handleAttachEnsure)
 	mux.HandleFunc("PUT /attachments/file", r.handleAttachPut)
 	mux.HandleFunc("DELETE /attachments", r.handleAttachDelete)
+	mux.HandleFunc("POST /services/{name}/start", r.handleServiceStart)
+	mux.HandleFunc("POST /services/{name}/stop", r.handleServiceStop)
+	mux.HandleFunc("POST /services/{name}/restart", r.handleServiceRestart)
+	mux.HandleFunc("GET /services/{name}/log", r.handleServiceLog)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "no such route"})
 	})

@@ -253,6 +253,8 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 
 	res.Ok = res.SetupError == nil
 	res.DurationMs = time.Since(reqStart).Milliseconds()
+	// 受管服务：setup 与 resume 之后（脚本失败也一样）按 services.yaml 与 state.json 确保运行。
+	go r.svc.Ensure()
 	return res, nil
 }
 

@@ -1,5 +1,5 @@
-// Package orbsock 是 orbd 本地控制口（M2.5）：`$HOME/.oryn/orbd.sock` 上的 JSON 行协议，
-// orbd（服务端）与 orb 内的 `oryn orb setup …`（客户端）共用。
+// Package orbsock 是 orbd 本地控制口（M2.5 / M4）：`$HOME/.oryn/orbd.sock` 上的 JSON 行协议，
+// orbd（服务端）与 orb 内的 `oryn orb setup …` / `oryn orb service …`（客户端）共用。
 //
 // 每个连接一个请求：客户端写一行 `{"method": "...", "params": {...}}`，服务端回若干行：
 // 零或多条 `{"type":"log","stream":"stdout|stderr|system","data":"..."}`，
@@ -30,6 +30,14 @@ const (
 	MethodSetupStatus       = "setup.status"
 	MethodProjectScriptsGet = "project.scripts.get"
 	MethodProjectScriptsSet = "project.scripts.set"
+
+	// 受管服务（M4）：service.start / service.restart / service.ensure 在拉起后等待状态离开 starting
+	// （上限 60s，调用方断开即返回），期间把 `[orbd] …` 状态行作为 system 日志流回。
+	MethodServiceEnsure  = "service.ensure" // 无参数：按 services.yaml 确保全部服务运行
+	MethodServiceStart   = "service.start"
+	MethodServiceStop    = "service.stop"
+	MethodServiceRestart = "service.restart"
+	MethodServiceList    = "service.list"
 )
 
 // 消息类型。
@@ -55,6 +63,10 @@ const (
 	CodeInvalidParams  = "invalid_params"
 	CodeMethodNotFound = "method_not_found"
 	CodeInternal       = "internal"
+
+	CodeServiceNotFound = "service_not_found" // 没有该名字的服务
+	CodeInvalidService  = "invalid_service"   // 服务定义无效（或对文件服务给了 remove）
+	CodeNameConflict    = "name_conflict"     // 动态服务与 services.yaml 里的服务同名
 )
 
 // maxRequestBytes 是请求行上限（项目脚本随 project.scripts.set 传入）。
@@ -101,6 +113,42 @@ type RerunParams struct {
 type Status struct {
 	Setup  *apigen.LinkCtlSetupResultParams `json:"setup"`
 	Resume *apigen.LinkCtlSetupResultParams `json:"resume"`
+}
+
+// ServiceStartParams 是 service.start 的参数。Command 为 nil 时启动已声明的服务（文件或已有的动态服务），
+// 否则建立 / 替换名为 Name 的动态服务。Portal=true 且无其它链接时链接为 `[{title: Name, path: "/"}]`。
+type ServiceStartParams struct {
+	Name     string            `json:"name"`
+	Command  *string           `json:"command,omitempty"`
+	Cwd      string            `json:"cwd,omitempty"`
+	Port     int               `json:"port,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	Health   string            `json:"health,omitempty"`
+	Portal   bool              `json:"portal,omitempty"`
+	ThreadID string            `json:"threadId,omitempty"`
+}
+
+// ServiceStopParams 是 service.stop 的参数；Remove 同时删除动态服务的定义与端口分配。
+type ServiceStopParams struct {
+	Name   string `json:"name"`
+	Remove bool   `json:"remove,omitempty"`
+}
+
+// ServiceNameParams 是 service.restart 的参数。
+type ServiceNameParams struct {
+	Name string `json:"name"`
+}
+
+// ServiceResult 是 service.start / stop / restart 的结果。
+type ServiceResult struct {
+	Service apigen.OrbService `json:"service"`
+}
+
+// ServiceListResult 是 service.list / service.ensure 的结果；FileError 是 services.yaml 的语法错误
+// （此时文件服务保持上一次成功解析的定义）。
+type ServiceListResult struct {
+	Services  []apigen.OrbService `json:"services"`
+	FileError string              `json:"fileError,omitempty"`
 }
 
 // ---- 服务端 ----

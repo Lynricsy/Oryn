@@ -585,6 +585,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if err != nil {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "start agent: %v", err)
 	}
+	// 线程登记之前已启动、因此没拿到 PUBLIC_URL 的 portal 服务，此时重启一次补上。
+	go r.svc.refreshPublicURLs()
 	return apigen.LinkCtlAgentStartResult{Pid: pid}, nil
 }
 

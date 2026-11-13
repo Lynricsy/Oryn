@@ -67,6 +67,13 @@ type Config struct {
 	// OnLocalRequest 仅供测试：本机 API（fs 流上的 HTTP）收到的每个请求在路由之前交给它（e2e 断言到达 orbd 的请求头）。
 	// ConfigFromEnv 在设置了 ORYN_ORBD_REQUEST_LOG=<文件> 时把它设为「每个请求追加一行 JSON」（process 驱动的子进程 orbd 用）。
 	OnLocalRequest func(*http.Request)
+
+	// 受管服务的测试钩子（生产为零值）：ServiceBackoff 是第 n 次（从 1 起）连续短命退出后的重启等待
+	// （缺省 1s/2s/4s/8s/16s/30s）；ServiceProbeInterval 是就绪探测间隔（缺省 500ms，unhealthy 判定与
+	// 慢速探测按它的倍数缩放）；OnServiceStatus 在每次服务状态变化时同步回调。
+	ServiceBackoff       func(n int) time.Duration
+	ServiceProbeInterval time.Duration
+	OnServiceStatus      func(apigen.OrbService)
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -167,6 +174,9 @@ type Runtime struct {
 	// maxFileBytes / maxAttachmentBytes 是 PUT /fs/file 与 PUT /attachments/file 的上限（测试可调小）。
 	maxFileBytes       int64
 	maxAttachmentBytes int64
+
+	// svc 是受管服务监督器（M4）。
+	svc *serviceSupervisor
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -256,6 +266,7 @@ func New(cfg Config) (*Runtime, error) {
 		maxAttachmentBytes: MaxAttachmentBytes,
 	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
+	r.svc = newServiceSupervisor(r)
 	if err := r.writeAgentAssets(); err != nil {
 		_ = ln.Close()
 		return nil, fmt.Errorf("orbdrt: %w", err)
@@ -297,12 +308,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go func() { defer wg.Done(); r.serveEgress(ctx) }()
 	go func() { defer wg.Done(); r.metricsLoop(ctx) }()
 	go func() { defer wg.Done(); r.serveSocket(ctx) }()
 	go func() { defer wg.Done(); _ = r.localSrv.Serve(r.local) }()
+	go func() { defer wg.Done(); r.svc.reportLoop(ctx) }()
 	r.linkLoop(ctx)
+	// 仍存活的服务进程组直接 SIGKILL（优雅停止由 Shutdown 负责）。
+	r.svc.killAll()
 	_ = r.egressLn.Close()
 	_ = r.localSrv.Close()
 	_ = r.local.Close()
@@ -318,9 +332,13 @@ func (r *Runtime) Redial() {
 	}
 }
 
-// Shutdown 优雅停止全部 agent（关闭 stdin、读完输出，超时 SIGKILL），然后在 link 可用时冲刷 tailer。
+// Shutdown 优雅停止全部 agent（关闭 stdin、读完输出，超时 SIGKILL）并行停掉全部受管服务（不改期望状态），
+// 然后在 link 可用时冲刷 tailer。
 func (r *Runtime) Shutdown(grace time.Duration) {
+	var wg sync.WaitGroup
+	wg.Go(func() { r.svc.StopAll(grace) })
 	r.stopAllAgents(grace)
+	wg.Wait()
 	r.flushTailers(5 * time.Second)
 }
 
@@ -456,6 +474,8 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	r.resultsMu.Lock()
 	r.flushResultsLocked(c)
 	r.resultsMu.Unlock()
+	// 服务快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
+	r.svc.markDirty()
 	go r.acceptLoop(sess)
 
 	select {
@@ -470,7 +490,8 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	}
 }
 
-// acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，其余类型直接关闭。
+// acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，`portal` 流对接本机端口，
+// 其余类型直接关闭。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -481,12 +502,15 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 			}
 			return
 		}
-		if st.Header.T == link.StreamFS {
+		switch st.Header.T {
+		case link.StreamFS:
 			r.local.Push(rollingConn{Conn: st, d: localWriteTimeout})
-			continue
+		case link.StreamPortal:
+			go r.servePortal(st)
+		default:
+			r.log.Warn("unexpected stream from control plane", "t", st.Header.T)
+			_ = st.Close()
 		}
-		r.log.Warn("unexpected stream from control plane", "t", st.Header.T)
-		_ = st.Close()
 	}
 }
 
@@ -508,7 +532,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		Os:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		Threads:      threads,
-		Features:     []string{"fs", "git", "attachments"},
+		Features:     []string{"fs", "git", "attachments", "services", "portal"},
 	}
 }
 
@@ -579,6 +603,17 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 			grace = DefaultStopGrace
 		}
 		r.Shutdown(grace)
+		return apigen.LinkCtlOkResult{Ok: true}, nil
+	case string(apigen.MethodPortalConfigure):
+		p, err := decode[apigen.LinkCtlPortalConfigureParams](params)
+		if err != nil {
+			return nil, err
+		}
+		primary := ""
+		if p.PrimaryThreadID != nil && validThreadID(*p.PrimaryThreadID) {
+			primary = *p.PrimaryThreadID
+		}
+		r.svc.configure(p.URLTemplate, primary)
 		return apigen.LinkCtlOkResult{Ok: true}, nil
 	default:
 		return nil, link.ErrMethodNotFound

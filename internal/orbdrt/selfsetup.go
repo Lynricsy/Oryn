@@ -153,6 +153,9 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		}
 		return r.projectScripts(ctx, apigen.MethodProjectScriptsSet, p)
 	default:
+		if res, ok, err := r.handleServiceSock(ctx, method, params, out); ok {
+			return res, err
+		}
 		return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "unknown method %q", method)
 	}
 }

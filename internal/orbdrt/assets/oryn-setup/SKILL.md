@@ -26,7 +26,7 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 硬约束：
 
 - setup **非交互**（不读 stdin、`apt-get -y`、`DEBIAN_FRONTEND=noninteractive`）、**可重复执行**（第二次运行应快且无副作用）、20 分钟内结束，目标 2 分钟内。
-- setup 结束时不要留下常驻进程：脚本退出后残留进程不保证继续存在。需要的数据库等服务在 resume 里确保已启动（快速、幂等）。
+- setup 结束时不要留下常驻进程：脚本退出后残留进程不保证继续存在。dev server、数据库等长驻进程写进 `.oryn/services.yaml`（见下文「受管服务」），由 Oryn 在 setup 之后与每次唤醒后自动拉起。
 - setup 里不做任何用户 / 线程级认证：setup 的产物以后可能被其它线程复用。
 - resume 必须在 10 秒内返回且保持前台运行；不要在 resume 里装依赖，也不要把慢步骤丢到后台（会掩盖失败）。
 - 仓库内脚本要带可执行位提交（`chmod +x`），否则不会被运行。
@@ -39,6 +39,23 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 - `oryn orb setup status [--json]`：最近一次 setup / resume 的结果与耗时。
 - `oryn orb setup logs [--resume] [-n N]`：查看日志末尾。
 - `oryn orb setup project-script get [setup|resume]`、`oryn orb setup project-script set setup|resume --file <路径>`：读写本 orb 所属项目的项目脚本（空文件 = 清除）。
+
+## 受管服务
+
+长驻进程由 orbd 监督（崩溃自动重启，端口与 portal 地址跨唤醒不变），不要在 setup / resume 里启动，也不要用 nohup / tmux 保活。写进 `.oryn/services.yaml`：
+
+```yaml
+services:
+  web:
+    command: pnpm dev --host 127.0.0.1 --port "$PORT"
+    cwd: app
+    health: /
+    portal: true
+```
+
+- `oryn orb service start`：按文件确保全部服务运行，打印 portal 地址。
+- `oryn orb service ls`、`oryn orb service logs <名字>`：查看状态与日志。
+- `oryn orb service stop <名字>`：停止。
 
 ## 第 0 步：先决定放在哪
 

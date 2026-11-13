@@ -93,10 +93,13 @@ var orbSetupProjectScriptSetCmd = &cobra.Command{
 	},
 }
 
+// errNotInOrb 是 orb 内专用命令（`oryn orb setup / service`）在 orb 外调用时的错误。
+var errNotInOrb = errors.New("`oryn orb setup / service` 只能在 Oryn orb 内使用（ORYN_ORB 不是 1）")
+
 // orbSocket 返回 orbd 控制口路径；不在 orb 内时给出明确的错误。
 func orbSocket() (string, error) {
 	if os.Getenv("ORYN_ORB") != "1" {
-		return "", errors.New("`oryn orb setup` 只能在 Oryn orb 内使用（ORYN_ORB 不是 1）")
+		return "", errNotInOrb
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -203,7 +206,7 @@ func setupStatus(ctx context.Context, asJSON bool, stdout io.Writer) error {
 
 func setupLogs(resume bool, n int, stdout io.Writer) error {
 	if os.Getenv("ORYN_ORB") != "1" {
-		return errors.New("`oryn orb setup` 只能在 Oryn orb 内使用（ORYN_ORB 不是 1）")
+		return errNotInOrb
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
