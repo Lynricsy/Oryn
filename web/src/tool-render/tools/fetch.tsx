@@ -70,7 +70,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const url = str(args.url) ?? str(args.path);
-	// 地址（折叠行截到 90 字）、非 GET 方法、raw 与截断都已在折叠行里
+	// 非 GET 方法、raw 与截断已在折叠行里；地址在折叠行里只是摘要（会被截断），这里始终给出全文
 	const timeout = num(args.timeout);
 	const details = fetchDetails(detailsRecord(result));
 	const redirected = Boolean(
@@ -79,9 +79,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	return (
 		<>
 			<KvGrid>
-				<Kv k="url">
-					{url === null ? <InvalidArg what="url" /> : url.length > 90 && url}
-				</Kv>
+				<Kv k="url">{url === null ? <InvalidArg what="url" /> : url}</Kv>
 				<Kv k="timeout">{timeout != null && `${timeout}s`}</Kv>
 				<Kv k="final url">{redirected && details?.finalUrl}</Kv>
 				<Kv k="content-type">{details?.contentType}</Kv>

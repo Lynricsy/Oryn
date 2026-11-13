@@ -138,32 +138,14 @@ function argValue(value: unknown): ReactNode {
 	return <InvalidArg />;
 }
 
-/** 折叠行（Salient）已完整写出的参数：展开体的参数表里不再重复。 */
-function argsInHead(args: Record<string, unknown>): Set<string> {
-	const op = str(args.op) ?? "";
-	const fits = (key: string) => {
-		const v = str(args[key]);
-		return v !== null && !v.includes("\n") && v.trim().length <= 60;
-	};
-	const keys = new Set<string>(["op", "body"]);
-	if (op.startsWith("search_")) {
-		keys.add("repo");
-		if (fits("query")) keys.add("query");
-	} else if (op === "pr_checkout" || op === "pr_push") {
-		keys.add("repo");
-		if (formatPr(args.pr)) keys.add("pr");
-		else keys.add("branch");
-	} else if (op === "pr_create" && fits("title")) {
-		keys.add("title");
-	}
-	return keys;
-}
-
+/**
+ * 展开体参数表不重复的只有 op（折叠行徽标）与 body（下面另有输出块）。
+ * 其余参数（仓库、查询、PR、分支、标题……）在折叠行里只是摘要（会被截断、PR 超过 3 个写成 +N more），这里始终给出全文。
+ */
 function ArgsGrid({ args }: { args: Record<string, unknown> }): ReactNode {
 	const rows: ReactNode[] = [];
-	const skip = argsInHead(args);
 	for (const key in args) {
-		if (skip.has(key)) continue;
+		if (key === "op" || key === "body") continue;
 		const value = args[key];
 		if (value === undefined || value === null) continue;
 		rows.push(

@@ -10,7 +10,6 @@ import { Badge, Badges, Kv, KvGrid, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
-	fitsSummary,
 	isRecord,
 	normalizeWs,
 	num,
@@ -104,8 +103,8 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const command = str(args.command);
 	return (
 		<>
-			{/* 动作与命令已在折叠行里；命令放不下（过长 / 多行）时才给出全文 */}
-			{command && !fitsSummary(command) && (
+			{/* 折叠行只是摘要（会被截断、压成一行），展开体始终给出完整命令 */}
+			{command && (
 				<div className="tv-cmd">
 					<span className="tv-cmd-prompt">$</span>
 					<span className="tv-cmd-text">{command}</span>

@@ -8,7 +8,6 @@ import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	display,
-	fitsSummary,
 	isRecord,
 	normalizeWs,
 	num,
@@ -108,16 +107,14 @@ function Body({ args, result, running }: ToolRenderProps): ReactNode {
 
 	return (
 		<>
-			{/* 命令已在折叠行里；只有带环境变量前缀、或折叠行放不下（过长 / 多行）时才给出全文 */}
-			{(prefix || command === null || !fitsSummary(command)) && (
-				<div className="tv-cmd">
-					<span className="tv-cmd-prompt">$</span>
-					<span className="tv-cmd-text">
-						{prefix && <span className="tv-cmd-env">{`${prefix} `}</span>}
-						{command ?? <InvalidArg what="command" />}
-					</span>
-				</div>
-			)}
+			{/* 折叠行只是摘要（会被截断、压成一行），展开体始终给出完整命令 */}
+			<div className="tv-cmd">
+				<span className="tv-cmd-prompt">$</span>
+				<span className="tv-cmd-text">
+					{prefix && <span className="tv-cmd-env">{`${prefix} `}</span>}
+					{command ?? <InvalidArg what="command" />}
+				</span>
+			</div>
 			<Badges
 				items={[
 					cwd && <Badge>cwd={shortenPath(cwd)}</Badge>,

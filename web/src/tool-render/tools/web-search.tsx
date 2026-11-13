@@ -118,9 +118,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		if (searchReqs !== null) usageParts.push(`search ${searchReqs}`);
 	}
 
-	// recency 与查询（折叠行截到 80 字）已在折叠行里
-	const longQuery =
-		query !== null && normalizeWs(query).length > 80 ? query : null;
+	// recency 已在折叠行里；查询在折叠行里只是摘要（会被截断），这里始终给出全文
 	return (
 		<>
 			<Badges
@@ -131,9 +129,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 						`${sources.length} source${sources.length === 1 ? "" : "s"}`,
 				]}
 			/>
-			{(longQuery !== null || providerInfo || usageParts.length > 0) && (
+			{(query !== null || providerInfo || usageParts.length > 0) && (
 				<KvGrid>
-					{longQuery !== null && <Kv k="query">{longQuery}</Kv>}
+					{query !== null && <Kv k="query">{query}</Kv>}
 					{providerInfo && <Kv k="provider">{providerInfo}</Kv>}
 					{usageParts.length > 0 && (
 						<Kv k="usage">

@@ -11,7 +11,6 @@ import {
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
-	fitsSummary,
 	num,
 	resultTextOf,
 	scopePaths,
@@ -77,17 +76,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				truncated
 			</Badge>,
 		);
-	// 模式、范围与参数徽标已在折叠行里；只有折叠行放不下时才在这里给出全文
-	const pattern = str(args.pattern) ?? "";
+	// 折叠行只是摘要（会被截断），展开体始终给出完整的模式与范围
 	const paths = pathsOf(args).join(", ");
 	return (
 		<>
-			{!fitsSummary(`/${pattern}/ in ${paths}`) && (
-				<div>
-					<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
-					<span className="tv-path">{paths}</span>
-				</div>
-			)}
+			<div>
+				<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
+				<span className="tv-path">{paths}</span>
+			</div>
 			<Badges items={counts} />
 			{missing.length > 0 && (
 				<Note tone="warn">skipped missing: {missing.join(", ")}</Note>

@@ -129,8 +129,17 @@ function Body(props: ToolRenderProps): ReactNode {
 		? args.args.filter((a) => typeof a === "string")
 		: [];
 
-	// 折叠行已写出 program（没有 program 时写的是 file:line），这里不再重复
+	// 折叠行里的 program / file:line 只是摘要（会被截断），这里始终给出全文；
+	// 结果快照里已有同一个 program 时由快照那一行给出，不再重复
+	const snapshot = snapshotOf(result);
 	const argRows: ReactNode[] = [];
+	if (program !== null && snapshot?.program !== program) {
+		argRows.push(
+			<Kv key="program" k="program">
+				<PathText path={program} />
+			</Kv>,
+		);
+	}
 	if (programArgs.length > 0) {
 		argRows.push(
 			<Kv key="args" k="args">
@@ -138,13 +147,13 @@ function Body(props: ToolRenderProps): ReactNode {
 			</Kv>,
 		);
 	}
-	if (file !== null && program !== null) {
+	if (file !== null) {
 		argRows.push(
 			<Kv key="file" k="file">
 				<PathText path={file} from={line ?? undefined} />
 			</Kv>,
 		);
-	} else if (file === null && line !== null) {
+	} else if (line !== null) {
 		argRows.push(
 			<Kv key="line" k="line">
 				{line}
@@ -175,7 +184,6 @@ function Body(props: ToolRenderProps): ReactNode {
 		}
 	}
 
-	const snapshot = snapshotOf(result);
 	return (
 		<>
 			{argRows.length > 0 && <KvGrid>{argRows}</KvGrid>}

@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import { Badge, Badges, InvalidArg, Output, ResultText, Row } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { fitsSummary, normalizeWs, resultTextOf, str, truncate } from "../util";
+import { normalizeWs, resultTextOf, str, truncate } from "../util";
 
 function foundCount(props: ToolRenderProps): number | null {
 	const { result } = props;
@@ -80,10 +80,8 @@ function Body(props: ToolRenderProps): ReactNode {
 	}
 	return (
 		<>
-			{/* 查询已在折叠行里，放不下时才给出全文 */}
-			{query && !fitsSummary(query) && (
-				<Output text={query} title="query" maxLines={4} />
-			)}
+			{/* 折叠行只是摘要（会被截断），展开体始终给出完整查询 */}
+			{query && <Output text={query} title="query" maxLines={4} />}
 			{entries.length > 0 ? (
 				<>
 					{asOf && <Badges items={[`as of ${asOf} UTC`]} />}

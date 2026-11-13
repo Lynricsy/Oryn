@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { Badge, InvalidArg, Note, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { fitsSummary, normalizeWs, str, truncate } from "../util";
+import { normalizeWs, str, truncate } from "../util";
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const tool = str(args.tool);
@@ -20,8 +20,8 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const report = str(args.report);
 	return (
 		<>
-			{/* 报告已在折叠行里，放不下时才给出全文 */}
-			{report && !fitsSummary(report) && <Note tone="warn">{report}</Note>}
+			{/* 折叠行只是摘要（会被截断），展开体始终给出完整报告 */}
+			{report && <Note tone="warn">{report}</Note>}
 			<ResultText result={result} maxLines={4} />
 		</>
 	);

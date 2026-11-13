@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import { Note, Output, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { fitsSummary, normalizeWs, resultTextOf, str, truncate } from "../util";
+import { normalizeWs, resultTextOf, str, truncate } from "../util";
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const query = str(args.query);
@@ -18,10 +18,8 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const failedSilently = result?.isError === true && !resultTextOf(result);
 	return (
 		<>
-			{/* 查询已在折叠行里，放不下时才给出全文 */}
-			{query && !fitsSummary(query) && (
-				<Output text={query} title="query" maxLines={4} />
-			)}
+			{/* 折叠行只是摘要（会被截断），展开体始终给出完整查询 */}
+			{query && <Output text={query} title="query" maxLines={4} />}
 			{context && <Output text={context} title="context" maxLines={6} />}
 			{failedSilently ? (
 				<Note tone="err">Reflect failed</Note>

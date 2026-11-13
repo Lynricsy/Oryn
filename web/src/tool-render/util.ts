@@ -81,17 +81,6 @@ export function normalizeWs(s: string): string {
 	return s.replace(/\s+/g, " ").trim();
 }
 
-/**
- * 折叠行摘要能完整放下的大致字符数（等宽 12px，窄栏下摘要列约 60 个字符宽）。
- * 展开体不重复头部已写出的参数；只有参数超过这个长度、或含换行（头部会被截断或压成一行）时才在展开体里给出全文。
- */
-export const SUMMARY_FITS = 60;
-
-/** `text` 在折叠行里是否已经完整可见（单行且不超过 SUMMARY_FITS）。 */
-export function fitsSummary(text: string): boolean {
-	return !/\n/.test(text.trim()) && text.trim().length <= SUMMARY_FITS;
-}
-
 export function replaceTabs(s: string): string {
 	return s.replace(/\t/g, "   ");
 }

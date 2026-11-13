@@ -108,7 +108,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const goal = goalOf(details);
-	// 动作、状态、目标（64 字以内）与预算参数都已在折叠行里
+	// 动作、状态与预算参数已在折叠行里；目标在折叠行里只是摘要（会被截断），这里始终给出全文
 	const objective = goal?.objective ?? str(args.objective);
 	const report = str(details?.completionBudgetReport);
 	const hasTokens =
@@ -116,11 +116,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	return (
 		<>
 			<KvGrid>
-				{objective !== null &&
-					objective.trim() !== "" &&
-					normalizeWs(objective).length > 64 && (
-						<Kv k="objective">{objective.trim()}</Kv>
-					)}
+				{objective !== null && objective.trim() !== "" && (
+					<Kv k="objective">{objective.trim()}</Kv>
+				)}
 				{hasTokens && goal && <Kv k="tokens">{tokensLine(goal)}</Kv>}
 				{goal !== null &&
 					goal.timeUsedSeconds !== null &&

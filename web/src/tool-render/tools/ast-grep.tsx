@@ -15,7 +15,6 @@ import {
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
-	fitsSummary,
 	normalizeWs,
 	num,
 	scopePaths,
@@ -71,17 +70,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		: [];
 	const parseErrorsTotal = num(details?.parseErrorsTotal) ?? parseErrors.length;
 
-	// 语言、首个模式与首个路径已在折叠行里；这里只补折叠行没有的参数
+	// 语言在折叠行里；模式与路径在折叠行里只是摘要（会被截断），这里始终给出全文
 	const argBadges: ReactNode[] = [
 		glob && <Badge key="glob">glob={glob}</Badge>,
 		sel && <Badge key="sel">sel={sel}</Badge>,
 		skip !== null && skip > 0 && <Badge key="skip">skip:{skip}</Badge>,
 	];
-	const showPatterns =
-		patterns.length > 1 ||
-		(patterns[0] !== undefined && !fitsSummary(patterns[0]));
-	const showPaths =
-		paths.length > 1 || (paths[0] !== undefined && !fitsSummary(paths[0]));
+	const showPatterns = patterns.length > 0;
+	const showPaths = paths.length > 0;
 	const showScope =
 		scopePath !== null &&
 		(paths.length !== 1 || shortenPath(scopePath) !== shortenPath(paths[0]!));

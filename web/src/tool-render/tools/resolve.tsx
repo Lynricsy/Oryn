@@ -13,14 +13,7 @@ import type { ReactNode } from "react";
 import type { Tone } from "../parts";
 import { Badge, Badges, Kv, KvGrid, Note, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import {
-	detailsRecord,
-	fitsSummary,
-	isRecord,
-	normalizeWs,
-	str,
-	truncate,
-} from "../util";
+import { detailsRecord, isRecord, normalizeWs, str, truncate } from "../util";
 
 type ResolveKind = "apply" | "discard" | "propose";
 
@@ -134,15 +127,13 @@ function Body(props: ToolRenderProps): ReactNode {
 					card.label && (
 						<span key="label">{truncate(normalizeWs(card.label), 120)}</span>
 					),
-					// 计划标题与理由是折叠行的尾文，放不下时才在这里给出全文
-					card.kind === "propose" && card.title && !fitsSummary(card.title) && (
-						<span key="title">{truncate(normalizeWs(card.title), 120)}</span>
+					// 计划标题与理由在折叠行里只是摘要（会被截断），展开体始终给出全文
+					card.kind === "propose" && card.title && (
+						<span key="title">{card.title}</span>
 					),
 				]}
 			/>
-			{card.kind !== "propose" && card.reason && !fitsSummary(card.reason) && (
-				<Note>{card.reason}</Note>
-			)}
+			{card.kind !== "propose" && card.reason && <Note>{card.reason}</Note>}
 			{card.kind === "propose" && card.planFilePath && (
 				<KvGrid>
 					<Kv k="plan">{card.planFilePath}</Kv>

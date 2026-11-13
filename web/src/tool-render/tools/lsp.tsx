@@ -219,11 +219,6 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-/** 折叠行把符号 / 查询 / 新名字截到 48 字：在这以内且单行就算已完整显示过（三处同一规则）。 */
-function inHead(v: string | null): boolean {
-	return v !== null && !v.includes("\n") && v.trim().length <= 48;
-}
-
 function Body({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const file = str(args.file);
@@ -249,7 +244,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 
 	return (
 		<>
-			{/* 动作、文件与较短的符号 / 查询 / 新名字已在折叠行里，这里只在无效或被截断时再写一遍 */}
+			{/* 动作已在折叠行里；文件与符号 / 查询 / 新名字在折叠行里只是摘要（会被截断），这里始终给出全文 */}
 			<KvGrid>
 				<ArgKv
 					k="action"
@@ -258,25 +253,19 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				/>
 				<ArgKv
 					k="file"
-					raw={file === null ? args.file : undefined}
-					val={null}
+					raw={args.file}
+					val={
+						file === "*" ? (
+							"workspace"
+						) : file === null ? null : (
+							<PathText path={file} from={line} />
+						)
+					}
 				/>
 				{!file && <ArgKv k="line" raw={args.line} val={line} />}
-				<ArgKv
-					k="symbol"
-					raw={inHead(symbol) ? undefined : args.symbol}
-					val={symbol && truncate(normalizeWs(symbol), 120)}
-				/>
-				<ArgKv
-					k="query"
-					raw={inHead(query) ? undefined : args.query}
-					val={query && truncate(normalizeWs(query), 120)}
-				/>
-				<ArgKv
-					k="new name"
-					raw={inHead(newName) ? undefined : args.new_name}
-					val={newName && truncate(normalizeWs(newName), 120)}
-				/>
+				<ArgKv k="symbol" raw={args.symbol} val={symbol} />
+				<ArgKv k="query" raw={args.query} val={query} />
+				<ArgKv k="new name" raw={args.new_name} val={newName} />
 				<ArgKv
 					k="apply"
 					raw={args.apply}
