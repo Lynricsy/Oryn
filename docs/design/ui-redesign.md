@@ -103,6 +103,8 @@ Amp 右栏里尚未实现的能力先定好位置，后续里程碑按此接入�
 |Ship / Review / Sync|Ship/Review 待定、Sync M5|「改动」面板摘要行右侧动作簇：Review（ghost）、Ship ▾（primary 分体按钮，默认动作取项目 Ship Behavior）、Sync ▾（ghost）|Ship Behavior 进设置→项目表单|
 |Space 空间|M9|侧栏顶部新分组「空间」（置顶之前）；页头面包屑扩展为 空间 / 项目 / 标题|不进右面板|
 |Artifacts 文档|未排期|页头动作区「视图 ▾」菜单（面板开关左侧）→ 右面板「文档」标签|编辑器 + 底部「问 agent」输入|
+|桌面 App 连接页|M6|壳内置的独立页面（`web/launcher.html`），与 `/login`、`/pair` 共用 `AuthCard`|三态：填服务器地址 → 配对码与「在浏览器中打开」→ 错误与重试；配对成功后壳直接导航到服务器的 Web UI|
+|桌面设置|M6|设置→「桌面」分区，仅在 App 里出现（浏览器访问跳设备页）|关闭时隐藏到托盘、全局快捷键、自动更新与「检查更新」；通知设置里「此设备」卡只留说明与测试通知|
 
 右面板标签条可横向滚动（`focus-inset overflow-x-auto`）并带滑块，六个标签时窄屏仍可用。
 

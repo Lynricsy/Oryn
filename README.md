@@ -2,7 +2,7 @@
 
 带高级环境与跨平台客户端的 agent 系统：每个线程一台隔离机器（orb），agent 内核为 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [omp](https://github.com/can1357/oh-my-pi)，MIT），客户端覆盖 Web / 桌面 / 移动 / CLI，外围（环境面板、Portal、分享、统计）参照 Amp 最新版。
 
-> 状态：M1（协议骨架）已完成，M2（线程核心）进行中。完整计划见 [`docs/plan-m1-m2.md`](docs/plan-m1-m2.md)。
+> 状态：M1–M5（协议骨架、线程核心、终端/文件/改动、Portal 与受管服务、公开分享/通知/CLI 同步）已完成，M6 桌面 App 实现中。早期计划见 [`docs/plan-m1-m2.md`](docs/plan-m1-m2.md)。
 
 ## 组成
 
@@ -11,7 +11,7 @@
 | `orynd` | 控制面：REST + WebSocket、SQLite 存储、Passkey/设备鉴权、orb 生命周期、密钥注入出站代理 |
 | `orbd` | orb 内守护进程：经出站长连接（WebSocket + yamux）与控制面通信，监督 Oryn Core 进程、复制会话 JSONL、提供本地出站代理 |
 | `oryn` | 命令行客户端，含 `oryn provider run`（在 Docker 主机上执行 orb 任务） |
-| `web/` | React + TypeScript 客户端（Web/PWA；桌面与移动端以 Tauri 2 套壳，后续里程碑） |
+| `web/` | React + TypeScript 客户端（Web/PWA）；`web/src-tauri` 为 Tauri 2 桌面壳（加载服务器 Web UI，壳内只有连接页），移动端在后续里程碑 |
 | `images/orb/` | orb 基础镜像（Debian 13 + Node/bun/Python/uv/Go/Rust/gh + Oryn Core） |
 
 ```mermaid
@@ -71,6 +71,7 @@ oryn orb setup project-script get|set setup --file f  # 读写本 orb 所属项�
 ## 文档
 
 - [`docs/deploy.md`](docs/deploy.md)：部署到 1Panel OpenResty 反代之后
+- [`docs/desktop.md`](docs/desktop.md)：桌面 App 安装、配对、托盘、深链接、更新与发版
 - [`docs/protocol.md`](docs/protocol.md)：协议索引与相对计划的偏差
 - [`docs/research/`](docs/research/)：Amp / omp / 参考 GUI / Tauri 移动端调研
 - [`docs/design/ui-redesign.md`](docs/design/ui-redesign.md)：Web 界面设计说明（方向、令牌、评审记录）

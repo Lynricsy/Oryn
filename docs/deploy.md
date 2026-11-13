@@ -51,6 +51,8 @@ journalctl -u orynd | grep 'setup#token='
 
 首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup#token=ost_…`（令牌在 URL 片段里，不会进入反代访问日志）。浏览器打开它注册 Passkey，并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。
 
+桌面 App（Windows / macOS / Linux）连接的就是这个 `public_url`，安装、配对与发版见 [desktop.md](desktop.md)。App 要求服务器走 HTTPS：会话 Cookie 带 `Secure`，Linux 上的 WebKitGTK 连 `http://localhost` 也不接受，本机试用时用 `dev/tlsproxy` 在 orynd 前面加一层 TLS。
+
 ## Portal（受管服务的浏览器入口）
 
 orb 里带 portal 的受管服务经 `https://t-<线程短码>-p<端口>.<portal_domain>/` 从浏览器访问。orynd 按 `Host` 分流：落在 `portal_domain` 单级子域上的请求只走 portal 数据面，永远到不了 `/api/v1`、orb link 与 Web 客户端。

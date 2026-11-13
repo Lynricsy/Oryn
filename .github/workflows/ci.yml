@@ -47,3 +47,30 @@ jobs:
       - run: bun run check
       - run: bun run test
       - run: bun run build
+
+  desktop:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: 安装 Tauri 的 Linux 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/package.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "web/src-tauri -> target"
+      - name: 构建连接页（generate_context! 编译期需要 dist-launcher）
+        working-directory: web
+        run: bun install --frozen-lockfile && bun run build:launcher
+      - working-directory: web/src-tauri
+        run: cargo fmt --check
+      - working-directory: web/src-tauri
+        run: cargo clippy --locked -- -D warnings
+      - working-directory: web/src-tauri
+        run: cargo test --locked
