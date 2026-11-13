@@ -33,6 +33,19 @@ const VARIANT: Record<Variant, string> = {
 	danger: "border border-err/30 bg-err/5 text-err hover:bg-err/10",
 };
 
+/**
+ * 禁用态：墨色主按钮半透明后在深色下成了浑浊的灰块，改成内嵌井底 + 细描边 + faint 字（明暗都读作「暂不可用」）；
+ * 强调色按钮只降不透明度，保留强调色身份；其余照常半透明。
+ */
+const DISABLED: Record<Variant, string> = {
+	primary:
+		"disabled:bg-inset disabled:text-faint disabled:shadow-none disabled:inset-ring-1 disabled:inset-ring-border",
+	accent: "disabled:opacity-50",
+	secondary: "disabled:opacity-50",
+	ghost: "disabled:opacity-50",
+	danger: "disabled:opacity-50",
+};
+
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	variant?: Variant;
 	size?: "sm" | "md";
@@ -52,7 +65,7 @@ export function Button({
 	return (
 		<button
 			type="button"
-			className={`inline-flex select-none items-center justify-center rounded-md font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${sz} ${VARIANT[variant]} ${className}`}
+			className={`inline-flex select-none items-center justify-center rounded-md font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none ${sz} ${VARIANT[variant]} ${DISABLED[variant]} ${className}`}
 			{...rest}
 		>
 			{icon && <Icon name={icon} size={size === "sm" ? 13 : 15} />}

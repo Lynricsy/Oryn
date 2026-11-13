@@ -330,19 +330,20 @@ body {
 		backdrop-filter: blur(18px) saturate(1.5);
 	}
 	/*
-	 * 输入托盘玻璃（线程页输入坞与首页输入卡共用）：底色更薄、模糊更重，
-	 * 再用 brightness/contrast 把透上来的转录压平，托盘里的字和控件稳定在 4.5:1 以上。
+	 * 输入托盘玻璃（线程页输入坞与首页输入卡共用）：底色薄、模糊中等，底下的表格线与文字块读得出轮廓；
+	 * brightness/contrast 把透上来的转录压平一档，托盘里的字和控件保持 4.5:1 以上。
+	 * 滤镜写在 :root，首条消息过渡（--morph-blur）同用一份。
 	 */
-	.glass-dock {
-		--dock-tone: brightness(1.05) contrast(0.82);
+	:root {
+		--dock-filter: blur(14px) saturate(1.5) brightness(1.04) contrast(0.86);
 	}
-	:root[data-theme="dark"] .glass-dock {
-		--dock-tone: brightness(0.82) contrast(0.82);
+	:root[data-theme="dark"] {
+		--dock-filter: blur(14px) saturate(1.4) brightness(0.76) contrast(0.95);
 	}
 	.glass-dock::before {
-		background: color-mix(in oklab, var(--panel) 42%, transparent);
-		-webkit-backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
-		backdrop-filter: blur(28px) saturate(1.6) var(--dock-tone);
+		background: color-mix(in oklab, var(--panel) 46%, transparent);
+		-webkit-backdrop-filter: var(--dock-filter);
+		backdrop-filter: var(--dock-filter);
 	}
 	/*
 	 * ---- 首条消息过渡（components/composer/DockTray.tsx）----
@@ -400,18 +401,15 @@ body {
 		/* biome-ignore lint/complexity/noImportantStyles: 压过 UA 关键帧里的 backdrop-filter */
 		backdrop-filter: var(--morph-blur) !important;
 	}
-	/* 与 .glass-dock::before 相同的模糊与压色（--dock-tone 只定义在托盘上，这里照抄一份） */
+	/* 与 .glass-dock::before 相同的模糊与压色 */
 	:root {
-		--morph-blur: blur(28px) saturate(1.6) brightness(1.05) contrast(0.82);
-	}
-	:root[data-theme="dark"] {
-		--morph-blur: blur(28px) saturate(1.6) brightness(0.82) contrast(0.82);
+		--morph-blur: var(--dock-filter);
 	}
 	/* 底色、描边、内高光与投影画在 image-pair 上，并按圆角裁住新旧内容 */
 	::view-transition-image-pair(composer-dock) {
 		overflow: clip;
 		border-radius: var(--r-xl);
-		background: color-mix(in oklab, var(--panel) 42%, transparent);
+		background: color-mix(in oklab, var(--panel) 46%, transparent);
 		box-shadow:
 			var(--sh-md),
 			inset 0 1px 0 var(--glass-hi),
@@ -551,10 +549,13 @@ body {
 		}
 	}
 	/*
-	 * 页头渐进模糊（iOS 式）：页头本身不再有底色和硬边，背后是一块比页头更高的「纱」。
-	 * 纱由 6 层 backdrop-filter 叠成，模糊自上而下 32→1px，每层只经 mask 露出一条带、
-	 * 与相邻层交叠，顶边最糊、往下逐渐清楚到 0，没有分界线；最上面再盖一层从顶部淡着色到透明的底。
-	 * 高度由 ThreadHeader 的 HEADER_VEIL 内联给出，转录的 insetTop 用同一个值。
+	 * 页头渐进模糊（iOS 式）：页头本身不再有底色和硬边，背后是一块比页头略高的「纱」（48px 页头 + 16px 渐隐）。
+	 * 纱由 6 层 backdrop-filter 叠成，模糊自上而下 16→0.75px，每层只经 mask 露出一条带、与相邻层交叠，
+	 * 页头一行底下最糊（表格线、文字块仍看得出轮廓），过了页头下沿 16px 内清楚到 0，没有分界线；
+	 * 最上面再盖一层从顶部淡着色到透明的底。高度由 ThreadHeader 的 HEADER_VEIL 内联给出，转录的 insetTop 用同一个值。
+	 * 注意：Chromium 里祖先若是「圆角 + overflow 裁剪」，后代 backdrop-filter 上的 mask-image 会被忽略
+	 * （整条纱按最重的模糊铺满、底边一刀硬切）。所以对话纸面不裁剪（ThreadPage 只给转录单独套圆角裁剪），
+	 * 纱自己按纸面内圆角收顶角。
 	 */
 	.veil {
 		position: absolute;
@@ -569,55 +570,55 @@ body {
 		inset: 0;
 	}
 	.veil > i:nth-child(1) {
-		--b: 32px;
-		--m: linear-gradient(to bottom, #000 0%, #000 35%, transparent 50%);
+		--b: 16px;
+		--m: linear-gradient(to bottom, #000 0%, #000 40%, transparent 58%);
 	}
 	.veil > i:nth-child(2) {
-		--b: 16px;
+		--b: 10px;
 		--m: linear-gradient(
 			to bottom,
-			transparent 20%,
-			#000 35%,
-			#000 50%,
-			transparent 62%
+			transparent 30%,
+			#000 45%,
+			#000 58%,
+			transparent 70%
 		);
 	}
 	.veil > i:nth-child(3) {
-		--b: 8px;
+		--b: 6px;
 		--m: linear-gradient(
 			to bottom,
-			transparent 35%,
-			#000 50%,
-			#000 62%,
-			transparent 74%
+			transparent 45%,
+			#000 58%,
+			#000 70%,
+			transparent 80%
 		);
 	}
 	.veil > i:nth-child(4) {
-		--b: 4px;
+		--b: 3px;
 		--m: linear-gradient(
 			to bottom,
-			transparent 50%,
-			#000 62%,
-			#000 74%,
-			transparent 86%
+			transparent 58%,
+			#000 70%,
+			#000 80%,
+			transparent 90%
 		);
 	}
 	.veil > i:nth-child(5) {
-		--b: 2px;
+		--b: 1.5px;
 		--m: linear-gradient(
 			to bottom,
-			transparent 62%,
-			#000 74%,
-			#000 86%,
+			transparent 70%,
+			#000 80%,
+			#000 88%,
 			transparent 96%
 		);
 	}
 	.veil > i:nth-child(6) {
-		--b: 1px;
+		--b: 0.75px;
 		--m: linear-gradient(
 			to bottom,
-			transparent 74%,
-			#000 86%,
+			transparent 80%,
+			#000 90%,
 			transparent 100%
 		);
 	}
@@ -631,10 +632,14 @@ body {
 		content: "";
 		background: linear-gradient(
 			to bottom,
-			color-mix(in oklab, var(--panel) 66%, transparent),
-			color-mix(in oklab, var(--panel) 38%, transparent) 45%,
+			color-mix(in oklab, var(--panel) 62%, transparent),
+			color-mix(in oklab, var(--panel) 34%, transparent) 60%,
 			transparent
 		);
+	}
+	.sheet .veil > i,
+	.sheet .veil::after {
+		border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
 	}
 	/* 无模糊或要求减少透明度：纱撤掉，页头回到不透明纸面 + 一条细线 */
 	@supports not (
@@ -648,6 +653,10 @@ body {
 			background: var(--panel);
 			border-bottom: 1px solid var(--line);
 		}
+		/* 纸面不裁剪，回退底色自己收顶角 */
+		.sheet .veil-host {
+			border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
+		}
 	}
 	@media (prefers-reduced-transparency: reduce) {
 		.veil {
@@ -656,6 +665,9 @@ body {
 		.veil-host {
 			background: var(--panel);
 			border-bottom: 1px solid var(--line);
+		}
+		.sheet .veil-host {
+			border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
 		}
 	}
 	/* 输入托盘坐着的那团主题色晕（线程页输入坞与首页输入卡相同），让玻璃底下有东西可透 */

@@ -196,13 +196,19 @@ export function ThreadPage(): ReactNode {
 
 	return (
 		<div className={`flex h-full min-w-0 flex-1 ${expanded ? "gap-2" : ""}`}>
+			{/*
+			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
+			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。
+			 */}
 			<Sheet
 				inset={expanded}
-				className={`relative h-full min-w-0 flex-1 flex-col ${panelFull ? "hidden" : "flex"}`}
+				className={`relative h-full min-w-0 flex-1 flex-col overflow-visible ${panelFull ? "hidden" : "flex"}`}
 			>
 				<TranscriptContext.Provider value={ctx}>
 					{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
-					<div className="morph-late flex min-h-0 flex-1 flex-col">
+					<div
+						className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""}`}
+					>
 						{!snapshotReceived && entries.length === 0 ? (
 							<div className="flex flex-1 items-center justify-center text-muted">
 								{known || conn !== "open" ? (
@@ -234,7 +240,7 @@ export function ThreadPage(): ReactNode {
 				)}
 				<div
 					ref={dockRef}
-					className="dock-fade pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
+					className={`dock-fade pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5 ${expanded ? "rounded-b-[calc(var(--r-xl)-1px)]" : ""}`}
 				>
 					<div className="dock-glow pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
 						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}

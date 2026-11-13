@@ -15,13 +15,13 @@ import {
 } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
-import { Badge, nameHue, ProjectBadge } from "../ui/data";
+import { Badge, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Menu, type MenuItem } from "../ui/primitives";
 
-/** 页头背后渐进模糊纱的高度（px）：比 48px 的页头更高，模糊在页头下方逐渐减到 0；转录顶部留白取同一个值。 */
-export const HEADER_VEIL = 80;
+/** 页头背后渐进模糊纱的高度（px）：48px 页头 + 16px 渐隐，模糊在页头下沿之后 16px 内减到 0；转录顶部留白取同一个值。 */
+export const HEADER_VEIL = 64;
 
 export const THREAD_COLORS = [
 	"red",
@@ -77,23 +77,42 @@ export function useOrbOf(threadId: string): Orb | undefined {
 	return fromIndex ?? fromThread;
 }
 
-/** orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。 */
+/**
+ * orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。
+ * orb 本身就绪、但最近一次 setup / resume 失败时，胶囊改报环境失败（错误色圆点 + 文案），与托盘里的提示条一致。
+ */
 function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 	const { t } = useTranslation();
-	const state = t(`orbState.${orb.state}`);
+	const failedRun =
+		orb.state === "failed"
+			? undefined
+			: orb.lastSetup && !orb.lastSetup.ok
+				? orb.lastSetup
+				: orb.lastResume && !orb.lastResume.ok
+					? orb.lastResume
+					: undefined;
+	const state = failedRun
+		? t(failedRun.phase === "resume" ? "env.resumeFailed" : "env.setupFailed")
+		: t(`orbState.${orb.state}`);
 	return (
 		<button
 			type="button"
 			aria-label={t("thread.orbState", { state })}
 			title={orb.id}
-			className="ml-1.5 inline-flex h-[26px] shrink-0 items-center gap-[7px] rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @lg/header:pr-2.5 @lg/header:pl-[9px]"
+			className={`ml-1.5 inline-flex h-[26px] shrink-0 items-center gap-[7px] rounded-full border px-2 font-medium text-xs transition-colors duration-150 @lg/header:pr-2.5 @lg/header:pl-[9px] ${failedRun ? "border-err/30 bg-err/5 text-err hover:bg-err/10" : "border-border bg-panel/60 text-fg hover:bg-hover"}`}
 			onClick={() => {
 				const ui = uiStore.getState();
 				ui.setPanelTab("info");
 				ui.setPanel(true);
 			}}
 		>
-			<OrbBead state={orb.state} active={working} size={12} label={state} />
+			{failedRun ? (
+				<span aria-hidden className="inline-grid h-3 w-3 place-items-center">
+					<StatusDot tone="err" />
+				</span>
+			) : (
+				<OrbBead state={orb.state} active={working} size={12} label={state} />
+			)}
 			<span aria-hidden className="hidden @lg/header:inline">
 				{state}
 			</span>
