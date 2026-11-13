@@ -85,6 +85,34 @@ function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/** 同 orynd（internal/threads/activity.go）：工具调用的意图，缺省时取 path / pattern / command，再缺省取工具名。 */
+function toolActivity(name: string, args: unknown, intent?: unknown): string {
+	const a = (args && typeof args === "object" ? args : {}) as Json;
+	const pick = (...keys: string[]) =>
+		[intent, ...keys.map((k) => a[k])]
+			.map((v) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim() : ""))
+			.find(Boolean);
+	const v = pick("i", "intent", "path", "pattern", "command") || name;
+	return v.length > 120 ? `${v.slice(0, 119)}…` : v;
+}
+
+/** 帧里的线程活动：tool_execution_start，或 message_update 的 toolcall_end（带完整 toolCall）。 */
+function frameActivity(frame: Json): string | undefined {
+	if (frame.type === "tool_execution_start")
+		return toolActivity(String(frame.toolName), frame.args, frame.intent);
+	const ev = frame.assistantMessageEvent as Json | undefined;
+	if (frame.type !== "message_update" || ev?.type !== "toolcall_end") return;
+	const call = ev.toolCall as Json | undefined;
+	return call && toolActivity(String(call.name), call.arguments, call.intent);
+}
+
+/** 离开 working 的线程不带活动。 */
+function settleActivity(t: Thread): Thread {
+	if (t.state === "working" || t.activity === undefined) return t;
+	const { activity: _, ...rest } = t;
+	return rest;
+}
+
 export class MockServer {
 	readonly threads = new Map<string, Thread>();
 	readonly entries = new Map<string, Entry[]>();
@@ -107,6 +135,8 @@ export class MockServer {
 		name: "Oryn Owner",
 		email: "owner@oryn.example",
 	};
+	/** agent 头像（内存态）；都缺省 = 默认品牌标。 */
+	agentIdentity: Schemas["AgentIdentity"] = {};
 	readonly queues = new Map<
 		string,
 		{ steering: string[]; followUp: string[] }
@@ -260,6 +290,36 @@ export class MockServer {
 				return new Response(null, { status: 204 });
 			}
 			return json(cur);
+		}
+		if (p === "settings/agent-identity") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["AgentIdentity"];
+				const avatarIcon = b.avatarIcon?.trim() || undefined;
+				const avatarImage = b.avatarImage || undefined;
+				if (avatarIcon && avatarImage)
+					return json(
+						{
+							code: "invalid_request",
+							message: "avatarIcon 与 avatarImage 至多给一个",
+						},
+						400,
+					);
+				if (
+					avatarImage &&
+					!/^data:image\/(png|webp|jpeg);base64,/.test(avatarImage)
+				)
+					return json(
+						{ code: "invalid_request", message: "avatarImage 格式无效" },
+						400,
+					);
+				if (avatarImage && avatarImage.length > 128 << 10)
+					return json(
+						{ code: "too_large", message: "avatarImage 超过 128KiB" },
+						413,
+					);
+				this.agentIdentity = { avatarIcon, avatarImage };
+			}
+			return json(this.agentIdentity);
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {
@@ -605,7 +665,9 @@ export class MockServer {
 		this.setOrb({ ...orb, lastSetup: run, stateChangedAt: now });
 	}
 
-	private upsertThread(t: Thread) {
+	private upsertThread(input: Thread) {
+		// 同 orynd：离开 working 即清空活动
+		const t = settleActivity(input);
 		this.threads.set(t.id, t);
 		this.broadcast({
 			type: "index.patch",
@@ -1047,6 +1109,11 @@ export class MockServer {
 
 	private frame(threadId: string, frame: Json) {
 		this.broadcast({ type: "frame", threadId, frame }, threadId);
+		// 同 orynd：working 时最近一次工具调用的意图即线程活动，变化时推 index.patch
+		const activity = frameActivity(frame);
+		const t = this.threads.get(threadId);
+		if (activity && t?.state === "working" && t.activity !== activity)
+			this.upsertThread({ ...t, activity });
 	}
 
 	private appendEntry(threadId: string, message: Json) {

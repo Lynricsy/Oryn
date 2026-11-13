@@ -138,12 +138,14 @@ type OrbSetupRun struct {
 }
 
 type Owner struct {
-	ID          int64   `json:"id"`
-	DisplayName string  `json:"displayName"`
-	UserHandle  []byte  `json:"userHandle"`
-	CreatedAt   int64   `json:"createdAt"`
-	GitName     *string `json:"gitName"`
-	GitEmail    *string `json:"gitEmail"`
+	ID               int64   `json:"id"`
+	DisplayName      string  `json:"displayName"`
+	UserHandle       []byte  `json:"userHandle"`
+	CreatedAt        int64   `json:"createdAt"`
+	GitName          *string `json:"gitName"`
+	GitEmail         *string `json:"gitEmail"`
+	AgentAvatarIcon  *string `json:"agentAvatarIcon"`
+	AgentAvatarImage *string `json:"agentAvatarImage"`
 }
 
 type Passkey struct {
@@ -173,6 +175,7 @@ type Project struct {
 	ArchivedAt      *int64  `json:"archivedAt"`
 	GitAuthorName   *string `json:"gitAuthorName"`
 	GitAuthorEmail  *string `json:"gitAuthorEmail"`
+	Icon            *string `json:"icon"`
 }
 
 type Provider struct {

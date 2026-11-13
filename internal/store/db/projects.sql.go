@@ -9,14 +9,34 @@ import (
 	"context"
 )
 
+const adoptProjectIcon = `-- name: AdoptProjectIcon :execrows
+UPDATE projects SET icon = ?1, updated_at = ?2
+WHERE id = ?3 AND (icon IS NULL OR icon = '')
+`
+
+type AdoptProjectIconParams struct {
+	Icon      *string `json:"icon"`
+	UpdatedAt int64   `json:"updatedAt"`
+	ID        string  `json:"id"`
+}
+
+// Fill the icon only while the project has none (auto-adopted from a title card; never overrides a manual pick).
+func (q *Queries) AdoptProjectIcon(ctx context.Context, arg AdoptProjectIconParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, adoptProjectIcon, arg.Icon, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createProject = `-- name: CreateProject :exec
 
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
-                      setup_script, resume_script, shallow_clone, color, git_author_name, git_author_email,
+                      setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
                       created_at, updated_at)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6,
-        ?7, ?8, ?9, ?10, ?11, ?12,
-        ?13, ?14)
+        ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+        ?14, ?15)
 `
 
 type CreateProjectParams struct {
@@ -30,6 +50,7 @@ type CreateProjectParams struct {
 	ResumeScript    *string `json:"resumeScript"`
 	ShallowClone    bool    `json:"shallowClone"`
 	Color           *string `json:"color"`
+	Icon            *string `json:"icon"`
 	GitAuthorName   *string `json:"gitAuthorName"`
 	GitAuthorEmail  *string `json:"gitAuthorEmail"`
 	CreatedAt       int64   `json:"createdAt"`
@@ -49,6 +70,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) er
 		arg.ResumeScript,
 		arg.ShallowClone,
 		arg.Color,
+		arg.Icon,
 		arg.GitAuthorName,
 		arg.GitAuthorEmail,
 		arg.CreatedAt,
@@ -70,7 +92,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) (int64, error) {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email FROM projects WHERE id = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon FROM projects WHERE id = ?1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -92,12 +114,13 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.ArchivedAt,
 		&i.GitAuthorName,
 		&i.GitAuthorEmail,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const getProjectByName = `-- name: GetProjectByName :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email FROM projects WHERE name = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon FROM projects WHERE name = ?1
 `
 
 func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, error) {
@@ -119,12 +142,13 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 		&i.ArchivedAt,
 		&i.GitAuthorName,
 		&i.GitAuthorEmail,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon FROM projects
 WHERE (CAST(?1 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?1 AS BOOLEAN))
 ORDER BY name
 `
@@ -154,6 +178,7 @@ func (q *Queries) ListProjects(ctx context.Context, archived *bool) ([]Project, 
 			&i.ArchivedAt,
 			&i.GitAuthorName,
 			&i.GitAuthorEmail,
+			&i.Icon,
 		); err != nil {
 			return nil, err
 		}
@@ -172,9 +197,9 @@ const updateProject = `-- name: UpdateProject :execrows
 UPDATE projects SET name = ?1, repo_url = ?2, base_branch = ?3,
     default_provider = ?4, default_orb_type = ?5,
     setup_script = ?6, resume_script = ?7, shallow_clone = ?8,
-    color = ?9, git_author_name = ?10, git_author_email = ?11,
-    archived_at = ?12, updated_at = ?13
-WHERE id = ?14
+    color = ?9, icon = ?10, git_author_name = ?11, git_author_email = ?12,
+    archived_at = ?13, updated_at = ?14
+WHERE id = ?15
 `
 
 type UpdateProjectParams struct {
@@ -187,6 +212,7 @@ type UpdateProjectParams struct {
 	ResumeScript    *string `json:"resumeScript"`
 	ShallowClone    bool    `json:"shallowClone"`
 	Color           *string `json:"color"`
+	Icon            *string `json:"icon"`
 	GitAuthorName   *string `json:"gitAuthorName"`
 	GitAuthorEmail  *string `json:"gitAuthorEmail"`
 	ArchivedAt      *int64  `json:"archivedAt"`
@@ -205,6 +231,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (i
 		arg.ResumeScript,
 		arg.ShallowClone,
 		arg.Color,
+		arg.Icon,
 		arg.GitAuthorName,
 		arg.GitAuthorEmail,
 		arg.ArchivedAt,

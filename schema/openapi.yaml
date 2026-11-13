@@ -1243,6 +1243,42 @@ paths:
         '204': { description: 已清除 }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/agent-identity:
+    get:
+      tags: [settings]
+      operationId: getAgentIdentity
+      summary: agent 头像（助手回合左侧显示）
+      responses:
+        '200':
+          description: 当前设置（都省略 = 默认品牌标）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putAgentIdentity
+      summary: 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+      description: |
+        `avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
+        `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentIdentity' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- agent-config
   /api/v1/agent-config/files:
     get:
@@ -1945,6 +1981,9 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean }
         color: { type: string }
+        icon:
+          type: string
+          description: 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次
         gitAuthorName:
           type: string
           description: 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
@@ -1972,6 +2011,10 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean, default: false }
         color: { type: string }
+        icon:
+          type: string
+          maxLength: 16
+          description: 单个字形（一个字素，≤16 字节）；空串等同省略
         gitAuthorName:
           type: string
           description: 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name
@@ -1991,6 +2034,10 @@ components:
         resumeScript: { type: string }
         shallowClone: { type: boolean }
         color: { type: string }
+        icon:
+          type: string
+          maxLength: 16
+          description: 单个字形（一个字素，≤16 字节）；空串表示清除（之后可再被自动标题的卡片图标填入）
         gitAuthorName:
           type: string
           description: 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
@@ -2013,6 +2060,18 @@ components:
       type: object
       properties:
         identity: { $ref: '#/components/schemas/GitIdentity' }
+    AgentIdentity:
+      type: object
+      description: agent 头像；两个字段至多出现一个，都省略表示默认（品牌标）
+      properties:
+        avatarIcon:
+          type: string
+          maxLength: 64
+          description: 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
+        avatarImage:
+          type: string
+          maxLength: 131072
+          description: '`data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略'
 
     # ============================================================ provider（客户端视图）
     OrbType:
@@ -2178,6 +2237,13 @@ components:
           description: 处于 `idle` 的子线程数量
         error:
           $ref: '#/components/schemas/ThreadError'
+        activity:
+          type: string
+          maxLength: 120
+          readOnly: true
+          description: |
+            线程 `working` 时 agent 最近一次工具调用的意图（工具调用的 `i` / `intent` 参数，缺省时取 path / pattern / command 摘要），
+            单行、至多 120 字符；只在内存中维护（不落库，控制面重启后为空），离开 `working` 即省略。变化时随 index.patch 推送
     ThreadError:
       type: object
       description: '`state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）'

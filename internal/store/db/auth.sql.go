@@ -144,7 +144,7 @@ func (q *Queries) DeleteWebSession(ctx context.Context, idHash string) error {
 
 const getOwner = `-- name: GetOwner :one
 
-SELECT id, display_name, user_handle, created_at, git_name, git_email FROM owner WHERE id = 1
+SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image FROM owner WHERE id = 1
 `
 
 // Owner, passkeys, recovery codes, web sessions.
@@ -158,6 +158,8 @@ func (q *Queries) GetOwner(ctx context.Context) (Owner, error) {
 		&i.CreatedAt,
 		&i.GitName,
 		&i.GitEmail,
+		&i.AgentAvatarIcon,
+		&i.AgentAvatarImage,
 	)
 	return i, err
 }

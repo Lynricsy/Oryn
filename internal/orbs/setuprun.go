@@ -242,10 +242,13 @@ func (s *Service) onProjectScriptsSet(ctx context.Context, orbID string, params 
 			prj.ResumeScript = nonEmpty(p.Resume)
 		}
 		prj.UpdatedAt = s.nowMs()
+		// 必须回填全部列：UpdateProject 整行覆盖，漏掉的字段会被清成 NULL
 		if _, err := q.UpdateProject(ctx, db.UpdateProjectParams{
 			Name: prj.Name, RepoUrl: prj.RepoUrl, BaseBranch: prj.BaseBranch, DefaultProvider: prj.DefaultProvider,
 			DefaultOrbType: prj.DefaultOrbType, SetupScript: prj.SetupScript, ResumeScript: prj.ResumeScript,
-			ShallowClone: prj.ShallowClone, Color: prj.Color, ArchivedAt: prj.ArchivedAt, UpdatedAt: prj.UpdatedAt, ID: prj.ID,
+			ShallowClone: prj.ShallowClone, Color: prj.Color, Icon: prj.Icon,
+			GitAuthorName: prj.GitAuthorName, GitAuthorEmail: prj.GitAuthorEmail,
+			ArchivedAt: prj.ArchivedAt, UpdatedAt: prj.UpdatedAt, ID: prj.ID,
 		}); err != nil {
 			return err
 		}

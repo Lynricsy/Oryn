@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -452,6 +453,7 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: *x.Title, UpdatedAt: s.now(), ID: t.id}); err == nil && n > 0 {
 				s.publish(ctx, t.id)
 			}
+			s.adoptProjectIcon(ctx, t.id, *x.Title)
 		}
 	}
 	s.out().Frame(t.id, frame)
@@ -462,9 +464,26 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		s.refreshStateLocked(t)
 	}
 	s.recompute(ctx, t)
+	s.setActivityLocked(ctx, t, frameActivity(x.Type, line))
 	t.mu.Unlock()
 	if eff.AgentActivity {
 		s.touchAgent(orbID)
+	}
+}
+
+// adoptProjectIcon 在 omp 自动标题带卡片图标（`<图标> <代码>: <标题>`）且线程所属项目尚无图标时，
+// 把该图标写入项目（只填一次，不覆盖手选）。项目没有实时推送：前端在项目列表下次刷新时看到。
+func (s *Service) adoptProjectIcon(ctx context.Context, threadID, title string) {
+	card, ok := glyph.ParseTitleCard(title)
+	if !ok {
+		return
+	}
+	row, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil || row.ProjectID == nil {
+		return
+	}
+	if _, err := s.st.Q.AdoptProjectIcon(ctx, db.AdoptProjectIconParams{Icon: &card.Icon, UpdatedAt: s.now(), ID: *row.ProjectID}); err != nil {
+		slog.Warn("threads: 写入项目图标失败", "thread", threadID, "project", *row.ProjectID, "err", err)
 	}
 }
 

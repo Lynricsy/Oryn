@@ -231,6 +231,28 @@ func TestProjectScriptsScopedToOrbProject(t *testing.T) {
 	assert.Equal(t, pb.SetupScript, pb2.SetupScript)
 }
 
+// project.scripts.set 整行改写项目：图标、git 身份覆盖等与脚本无关的列必须原样保留。
+func TestProjectScriptsSetKeepsOtherColumns(t *testing.T) {
+	drv := newFakeDriver()
+	h := newHarness(t, drv, nil, nil)
+	ctx := context.Background()
+	str := func(s string) *string { return &s }
+	p := db.CreateProjectParams{ID: ids.New("prj"), Name: "keep", SetupScript: str("echo old"), Color: str("teal"), Icon: str("🧪"),
+		GitAuthorName: str("Bot"), GitAuthorEmail: str("bot@example.com"), CreatedAt: 1, UpdatedAt: 1}
+	require.NoError(t, h.st.Q.CreateProject(ctx, p))
+	_, c := h.readyOrb(drv, p.ID)
+	require.NoError(t, c.Call(ctx, "project.scripts.set", map[string]any{"setup": "echo new"}, nil))
+	got, err := h.st.Q.GetProject(ctx, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "echo new", *got.SetupScript)
+	require.NotNil(t, got.Icon)
+	assert.Equal(t, "🧪", *got.Icon)
+	assert.Equal(t, "teal", *got.Color)
+	require.NotNil(t, got.GitAuthorName)
+	assert.Equal(t, "Bot", *got.GitAuthorName)
+	assert.Equal(t, "bot@example.com", *got.GitAuthorEmail)
+}
+
 // failed 的 orb：View 带失败原因；Wake 把它移出 failed。
 func TestFailedOrbReasonAndWake(t *testing.T) {
 	drv := newFakeDriver()

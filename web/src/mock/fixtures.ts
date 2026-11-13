@@ -20,6 +20,8 @@ export const projects: Project[] = [
 	{
 		id: "prj_01JCZ0000000000000000ORYN",
 		name: "Oryn",
+		// 有图标的项目；oryn-core 留空（前端回退为名字首字）
+		icon: "\u{F14DE}",
 		repoUrl: "https://github.com/Lynricsy/Oryn",
 		baseBranch: "main",
 		defaultProvider: "local",
@@ -230,7 +232,7 @@ export const setupLogs: Record<string, string> = Object.fromEntries(
 export const threads: Thread[] = [
 	thread({
 		id: MAIN_THREAD,
-		title: "重构 WebSocket 重连与 afterSeq 补拉",
+		title: "\u{F0668} WS: 重构 WebSocket 重连与 afterSeq 补拉",
 		projectId: projects[0]?.id,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e2",
 		model: { provider: "anthropic", id: "claude-sonnet-5" },
@@ -242,16 +244,17 @@ export const threads: Thread[] = [
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a002",
-		title: "fork：共用 orb 试另一种退避策略",
+		title: "\u{F0453} RETRY: 共用 orb 试另一种退避策略",
 		projectId: projects[0]?.id,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e2",
 		parentThreadId: MAIN_THREAD,
 		state: "working",
 		lastMessageAt: NOW - MIN,
+		activity: "读 socket.ts 定位重连逻辑",
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a003",
-		title: "fork：连环境验证快照恢复",
+		title: "🧪 SNAP: 连环境验证快照恢复",
 		projectId: projects[0]?.id,
 		parentThreadId: MAIN_THREAD,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
@@ -266,7 +269,7 @@ export const threads: Thread[] = [
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a004",
-		title: "Docker provider 冻结后 orbd 重连",
+		title: "🐳 DOCKER: Docker provider 冻结后 orbd 重连",
 		projectId: projects[0]?.id,
 		pinned: true,
 		state: "awaiting_input",
@@ -284,7 +287,7 @@ export const threads: Thread[] = [
 	}),
 	thread({
 		id: ENV_THREADS.setupFailed,
-		title: "接入 Postgres 测试数据库",
+		title: "🐘 PG: 接入 Postgres 测试数据库",
 		projectId: projects[0]?.id,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e8",
 		lastMessageAt: NOW - 8 * MIN,

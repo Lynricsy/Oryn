@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -19,7 +20,7 @@ func projectJSON(p db.Project) apigen.Project {
 		ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
 		SetupScript: p.SetupScript, ResumeScript: p.ResumeScript, ShallowClone: p.ShallowClone,
-		Color: p.Color, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ArchivedAt: p.ArchivedAt,
+		Color: p.Color, Icon: p.Icon, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ArchivedAt: p.ArchivedAt,
 	}
 	if id := gitIdentityJSON(p.GitAuthorName, p.GitAuthorEmail); id != nil {
 		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
@@ -30,6 +31,18 @@ func projectJSON(p db.Project) apigen.Project {
 func validProjectName(name string) bool {
 	n := utf8.RuneCountInString(name)
 	return n >= 1 && n <= 100
+}
+
+// projectIcon 校验项目图标：nil 或空串 → nil（未设置 / 清除）；否则须是单个字形且不超过 16 字节。
+func projectIcon(v *string) (*string, error) {
+	if v == nil || strings.TrimSpace(*v) == "" {
+		return nil, nil
+	}
+	icon := strings.TrimSpace(*v)
+	if !glyph.Single(icon, glyph.MaxIconBytes) {
+		return nil, errInvalid("icon 须是单个字形（≤16 字节）")
+	}
+	return &icon, nil
 }
 
 // checkProviderName 校验 defaultProvider 指向已存在的 provider。
@@ -79,6 +92,11 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	icon, err := projectIcon(req.Icon)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
 		writeErr(w, r, err)
@@ -89,7 +107,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		ID: ids.New("prj"), Name: name, RepoUrl: optStr(req.RepoURL), BaseBranch: optStr(req.BaseBranch),
 		DefaultProvider: optStr(req.DefaultProvider), DefaultOrbType: optStr(req.DefaultOrbType),
 		SetupScript: optStr(req.SetupScript), ResumeScript: optStr(req.ResumeScript),
-		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color),
+		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color), Icon: icon,
 		GitAuthorName: gitName, GitAuthorEmail: gitEmail, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
@@ -131,6 +149,11 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		writeErr(w, r, err)
 		return
 	}
+	icon, err := projectIcon(req.Icon)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	if req.DefaultProvider != nil {
 		if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
@@ -149,11 +172,14 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		u := db.UpdateProjectParams{
 			Name: p.Name, RepoUrl: p.RepoUrl, BaseBranch: p.BaseBranch, DefaultProvider: p.DefaultProvider,
 			DefaultOrbType: p.DefaultOrbType, SetupScript: p.SetupScript, ResumeScript: p.ResumeScript,
-			ShallowClone: p.ShallowClone, Color: p.Color, GitAuthorName: p.GitAuthorName,
+			ShallowClone: p.ShallowClone, Color: p.Color, Icon: p.Icon, GitAuthorName: p.GitAuthorName,
 			GitAuthorEmail: p.GitAuthorEmail, ArchivedAt: p.ArchivedAt, UpdatedAt: time.Now().UnixMilli(), ID: id,
 		}
 		if gitSet {
 			u.GitAuthorName, u.GitAuthorEmail = gitName, gitEmail
+		}
+		if req.Icon != nil {
+			u.Icon = icon
 		}
 		if req.Name != nil {
 			u.Name = strings.TrimSpace(*req.Name)

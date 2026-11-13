@@ -1181,6 +1181,15 @@ type AgentConfigWriteResult struct {
 	Warnings         []AgentConfigWarning `json:"warnings"`
 }
 
+// AgentIdentity agent 头像；两个字段至多出现一个，都省略表示默认（品牌标）
+type AgentIdentity struct {
+	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
+	AvatarIcon *string `json:"avatarIcon,omitempty"`
+
+	// AvatarImage `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略
+	AvatarImage *string `json:"avatarImage,omitempty"`
+}
+
 // AgentLiveState 线程实时缓冲（只含未被条目覆盖的部分）
 type AgentLiveState struct {
 	// Live 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序
@@ -2382,6 +2391,9 @@ type Project struct {
 	// GitAuthorName 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
 
+	// Icon 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次
+	Icon *string `json:"icon,omitempty"`
+
 	// ID `prj_<ulid>`
 	ID           ProjectID `json:"id"`
 	Name         string    `json:"name"`
@@ -2406,11 +2418,14 @@ type ProjectCreate struct {
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
-	Name          string  `json:"name"`
-	RepoURL       *string `json:"repoUrl,omitempty"`
-	ResumeScript  *string `json:"resumeScript,omitempty"`
-	SetupScript   *string `json:"setupScript,omitempty"`
-	ShallowClone  *bool   `json:"shallowClone,omitempty"`
+
+	// Icon 单个字形（一个字素，≤16 字节）；空串等同省略
+	Icon         *string `json:"icon,omitempty"`
+	Name         string  `json:"name"`
+	RepoURL      *string `json:"repoUrl,omitempty"`
+	ResumeScript *string `json:"resumeScript,omitempty"`
+	SetupScript  *string `json:"setupScript,omitempty"`
+	ShallowClone *bool   `json:"shallowClone,omitempty"`
 }
 
 // ProjectID `prj_<ulid>`
@@ -2432,11 +2447,14 @@ type ProjectPatch struct {
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
-	Name          *string `json:"name,omitempty"`
-	RepoURL       *string `json:"repoUrl,omitempty"`
-	ResumeScript  *string `json:"resumeScript,omitempty"`
-	SetupScript   *string `json:"setupScript,omitempty"`
-	ShallowClone  *bool   `json:"shallowClone,omitempty"`
+
+	// Icon 单个字形（一个字素，≤16 字节）；空串表示清除（之后可再被自动标题的卡片图标填入）
+	Icon         *string `json:"icon,omitempty"`
+	Name         *string `json:"name,omitempty"`
+	RepoURL      *string `json:"repoUrl,omitempty"`
+	ResumeScript *string `json:"resumeScript,omitempty"`
+	SetupScript  *string `json:"setupScript,omitempty"`
+	ShallowClone *bool   `json:"shallowClone,omitempty"`
 }
 
 // Provider defines model for Provider.
@@ -2620,6 +2638,10 @@ type SnapshotID = string
 
 // Thread defines model for Thread.
 type Thread struct {
+	// Activity 线程 `working` 时 agent 最近一次工具调用的意图（工具调用的 `i` / `intent` 参数，缺省时取 path / pattern / command 摘要），
+	// 单行、至多 120 字符；只在内存中维护（不落库，控制面重启后为空），离开 `working` 即省略。变化时随 index.patch 推送
+	Activity *string `json:"activity,omitempty"`
+
 	// ArchivedAt UTC 毫秒时间戳
 	ArchivedAt *TimestampMs `json:"archivedAt,omitempty"`
 
@@ -3437,6 +3459,9 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
+
+// PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
+type PutAgentIdentityJSONRequestBody = AgentIdentity
 
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
@@ -4786,6 +4811,12 @@ type ServerInterface interface {
 	// PutSecret 写入密钥
 	// (PUT /api/v1/secrets/{name})
 	PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath)
+	// GetAgentIdentity agent 头像（助手回合左侧显示）
+	// (GET /api/v1/settings/agent-identity)
+	GetAgentIdentity(w http.ResponseWriter, r *http.Request)
+	// PutAgentIdentity 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+	// (PUT /api/v1/settings/agent-identity)
+	PutAgentIdentity(w http.ResponseWriter, r *http.Request)
 	// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
 	// (DELETE /api/v1/settings/git-identity)
 	DeleteGitIdentity(w http.ResponseWriter, r *http.Request)
@@ -5173,6 +5204,18 @@ func (_ Unimplemented) DeleteSecret(w http.ResponseWriter, r *http.Request, name
 // PutSecret 写入密钥
 // (PUT /api/v1/secrets/{name})
 func (_ Unimplemented) PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAgentIdentity agent 头像（助手回合左侧显示）
+// (GET /api/v1/settings/agent-identity)
+func (_ Unimplemented) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAgentIdentity 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+// (PUT /api/v1/settings/agent-identity)
+func (_ Unimplemented) PutAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7013,6 +7056,34 @@ func (siw *ServerInterfaceWrapper) PutSecret(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// GetAgentIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAgentIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAgentIdentity operation middleware
+func (siw *ServerInterfaceWrapper) PutAgentIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAgentIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteGitIdentity operation middleware
 func (siw *ServerInterfaceWrapper) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -7851,6 +7922,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/git-identity", wrapper.PutGitIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/agent-identity", wrapper.GetAgentIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/agent-identity", wrapper.PutAgentIdentity)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/agent-config/files", wrapper.ListAgentConfigFiles)

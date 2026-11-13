@@ -2,10 +2,10 @@
 
 -- name: CreateProject :exec
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
-                      setup_script, resume_script, shallow_clone, color, git_author_name, git_author_email,
+                      setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
                       created_at, updated_at)
 VALUES (@id, @name, @repo_url, @base_branch, @default_provider, @default_orb_type,
-        @setup_script, @resume_script, @shallow_clone, @color, @git_author_name, @git_author_email,
+        @setup_script, @resume_script, @shallow_clone, @color, @icon, @git_author_name, @git_author_email,
         @created_at, @updated_at);
 
 -- name: GetProject :one
@@ -23,9 +23,14 @@ ORDER BY name;
 UPDATE projects SET name = @name, repo_url = @repo_url, base_branch = @base_branch,
     default_provider = @default_provider, default_orb_type = @default_orb_type,
     setup_script = @setup_script, resume_script = @resume_script, shallow_clone = @shallow_clone,
-    color = @color, git_author_name = @git_author_name, git_author_email = @git_author_email,
+    color = @color, icon = @icon, git_author_name = @git_author_name, git_author_email = @git_author_email,
     archived_at = @archived_at, updated_at = @updated_at
 WHERE id = @id;
+
+-- Fill the icon only while the project has none (auto-adopted from a title card; never overrides a manual pick).
+-- name: AdoptProjectIcon :execrows
+UPDATE projects SET icon = @icon, updated_at = @updated_at
+WHERE id = @id AND (icon IS NULL OR icon = '');
 
 -- name: DeleteProject :execrows
 DELETE FROM projects WHERE id = @id;

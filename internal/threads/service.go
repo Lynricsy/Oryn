@@ -101,6 +101,8 @@ type Service struct {
 	touched   map[string]time.Time  // orb → 上次 TouchAgent（节流）
 	userTouch map[string]time.Time  // orb → 上次 TouchUser（节流）
 	blobs     map[string]*blobFetch // sha256 → 在途的 blob.fetch
+	// activity 是 working 线程的当前活动（最近一次工具调用的意图，见 activity.go）；只在内存中，不落库。
+	activity map[string]string
 
 	nextID atomic.Uint64
 
@@ -161,6 +163,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		touched:   map[string]time.Time{},
 		userTouch: map[string]time.Time{},
 		blobs:     map[string]*blobFetch{},
+		activity:  map[string]string{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
 	s.events.init()
@@ -354,6 +357,7 @@ func newThread(row db.Thread) *thread {
 func (s *Service) forget(id string) {
 	s.mu.Lock()
 	delete(s.threads, id)
+	delete(s.activity, id)
 	s.mu.Unlock()
 }
 
@@ -428,6 +432,9 @@ func (s *Service) recompute(ctx context.Context, t *thread) bool {
 	}
 	prev := t.state
 	t.state = st
+	if st != StateWorking {
+		s.clearActivity(t.id) // 下面的 publish 一并推送清空
+	}
 	now := s.now()
 	if err := s.st.Q.SetThreadState(ctx, db.SetThreadStateParams{State: st, StateChangedAt: now, ID: t.id}); err != nil {
 		slog.Warn("threads: 写入线程状态失败", "thread", t.id, "err", err)

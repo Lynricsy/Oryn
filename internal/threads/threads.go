@@ -225,6 +225,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		if c, ok := children[t.ID]; ok {
 			api.ChildCount, api.ChildDoneCount = &c[0], &c[1]
 		}
+		api.Activity = s.activityPtr(t.ID)
 		out = append(out, api)
 	}
 	return out, nil

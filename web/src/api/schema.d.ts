@@ -975,6 +975,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/agent-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** agent 头像（助手回合左侧显示） */
+        get: operations["getAgentIdentity"];
+        /**
+         * 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+         * @description `avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
+         *     `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+         */
+        put: operations["putAgentIdentity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent-config/files": {
         parameters: {
             query?: never;
@@ -1414,6 +1436,8 @@ export interface components {
             resumeScript?: string;
             shallowClone: boolean;
             color?: string;
+            /** @description 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次 */
+            icon?: string;
             /** @description 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省） */
             gitAuthorName?: string;
             gitAuthorEmail?: string;
@@ -1435,6 +1459,8 @@ export interface components {
             /** @default false */
             shallowClone: boolean;
             color?: string;
+            /** @description 单个字形（一个字素，≤16 字节）；空串等同省略 */
+            icon?: string;
             /** @description 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name */
             gitAuthorName?: string;
             /** @description 须与 gitAuthorName 同时给出；规则同 GitIdentity.email */
@@ -1451,6 +1477,8 @@ export interface components {
             resumeScript?: string;
             shallowClone?: boolean;
             color?: string;
+            /** @description 单个字形（一个字素，≤16 字节）；空串表示清除（之后可再被自动标题的卡片图标填入） */
+            icon?: string;
             /** @description 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖 */
             gitAuthorName?: string;
             gitAuthorEmail?: string;
@@ -1464,6 +1492,13 @@ export interface components {
         };
         GitIdentitySettings: {
             identity?: components["schemas"]["GitIdentity"];
+        };
+        /** @description agent 头像；两个字段至多出现一个，都省略表示默认（品牌标） */
+        AgentIdentity: {
+            /** @description 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略 */
+            avatarIcon?: string;
+            /** @description `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略 */
+            avatarImage?: string;
         };
         OrbType: {
             name: string;
@@ -1572,6 +1607,11 @@ export interface components {
             /** @description 处于 `idle` 的子线程数量 */
             childDoneCount?: number;
             error?: components["schemas"]["ThreadError"];
+            /**
+             * @description 线程 `working` 时 agent 最近一次工具调用的意图（工具调用的 `i` / `intent` 参数，缺省时取 path / pattern / command 摘要），
+             *     单行、至多 120 字符；只在内存中维护（不落库，控制面重启后为空），离开 `working` 即省略。变化时随 index.patch 推送
+             */
+            readonly activity?: string;
         };
         /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
         ThreadError: {
@@ -4267,6 +4307,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAgentIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（都省略 = 默认品牌标） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAgentIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentIdentity"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentIdentity"];
+                };
             };
             default: components["responses"]["Error"];
         };

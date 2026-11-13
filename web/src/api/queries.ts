@@ -11,6 +11,7 @@ export const qk = {
 	providers: ["providers"] as const,
 	secrets: ["secrets"] as const,
 	gitIdentity: ["settings", "git-identity"] as const,
+	agentIdentity: ["settings", "agent-identity"] as const,
 	orbs: ["orbs"] as const,
 	orb: (id: string) => ["orbs", id] as const,
 	orbMetrics: (id: string) => ["orbs", id, "metrics"] as const,
@@ -55,6 +56,15 @@ export function useGitIdentity() {
 	return useQuery({
 		queryKey: qk.gitIdentity,
 		queryFn: () => unwrap(api.GET("/api/v1/settings/git-identity")),
+	});
+}
+
+/** agent 头像（单用户设置）；助手回合头像与外观设置用。 */
+export function useAgentIdentity() {
+	return useQuery({
+		queryKey: qk.agentIdentity,
+		queryFn: () => unwrap(api.GET("/api/v1/settings/agent-identity")),
+		staleTime: 5 * 60_000,
 	});
 }
 

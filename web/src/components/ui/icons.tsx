@@ -169,6 +169,11 @@ const ICONS = {
 
 export type IconName = keyof typeof ICONS;
 
+/** 服务端存的图标名（如 agent 头像）是否为已知图标。 */
+export function isIconName(s: string): s is IconName {
+	return Object.hasOwn(ICONS, s);
+}
+
 /** 默认实心的图标（停止）。 */
 const DEFAULT_WEIGHT: Partial<Record<IconName, IconProps["weight"]>> = {
 	stop: "fill",

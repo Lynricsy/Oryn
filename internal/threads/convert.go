@@ -124,6 +124,7 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	if c, ok := children[t.ID]; ok {
 		out.ChildCount, out.ChildDoneCount = &c[0], &c[1]
 	}
+	out.Activity = s.activityPtr(t.ID)
 	return out, nil
 }
 
