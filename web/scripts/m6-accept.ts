@@ -585,8 +585,13 @@ async function setup() {
 			stdin: "pipe",
 		},
 	);
+	// 口令必须非空：空口令时守护进程不会自建 login 集合，而是去调图形提示器（Xvfb 下无显示可用），
+	// 结果 Secret Service 没有默认集合，App 只能回退到文件。
 	const stdin = keyring.proc.stdin;
-	if (stdin && typeof stdin !== "number") stdin.end();
+	if (stdin && typeof stdin !== "number") {
+		stdin.write("oryn-accept");
+		stdin.end();
+	}
 	// 名字没被我们的守护进程占上就停：否则 App 的调用会经 D-Bus 激活一个读写真实 HOME 的实例
 	await waitFor(
 		"gnome-keyring 占用 org.freedesktop.secrets",
@@ -779,10 +784,22 @@ function orbOf(tid: string): string {
 // ---------------------------------------------------------------- D1–D15
 
 async function D1() {
+	// tauri.conf.json 里配了更新公钥，打包时必须有对应私钥才能产出 .sig；本机用 .dev/ 下那把（CI 用 secrets）
+	const keyFile = `${ROOT}/.dev/desktop-updater.key`;
+	const signing = existsSync(keyFile)
+		? {
+				TAURI_SIGNING_PRIVATE_KEY: readFileSync(keyFile, "utf8"),
+				TAURI_SIGNING_PRIVATE_KEY_PASSWORD: readFileSync(
+					`${keyFile}.password`,
+					"utf8",
+				),
+			}
+		: {};
 	const r = sh("bun run tauri build", {
 		cwd: `${ROOT}/web`,
 		env: {
 			...ENV,
+			...signing,
 			...(process.env.M6_NO_STRIP === "1" ? { NO_STRIP: "true" } : {}),
 		},
 		timeoutMs: 60 * 60_000,
@@ -1041,6 +1058,20 @@ async function D7() {
 	await ensureMain();
 	await ensureVisible();
 	const tid = await ensureThread();
+	// 托盘图标按「待处理 + 未读 > 0」切换：先让 $T 被页面打开（清未读），单跑 D7 时图标才会从 normal 起步
+	if ((await getThread(tid)).unread) {
+		await once("app", [`oryn://thread/${tid}`], { timeoutMs: 10_000 });
+		await waitFor(
+			"$T 未读被清",
+			async () => ((await getThread(tid)).unread ? undefined : true),
+			10_000,
+		);
+	}
+	await waitFor(
+		"托盘当前为 normal",
+		() => (since(0, "tray").at(-1)?.icon === "normal" ? true : undefined),
+		10_000,
+	);
 	const a = mark();
 	sh(`xdotool windowquit ${windowId()}`);
 	await ev("window", { after: a, where: (e) => e.visible === false });
@@ -1163,7 +1194,10 @@ async function D9() {
 	await ensureMain();
 	await ensureVisible();
 	const w = windowId();
-	sh(`xdotool windowraise ${w} windowfocus ${w}`);
+	// 有窗口管理器时要经 _NET_ACTIVE_WINDOW 激活（openbox 会忽略直接设焦点）；没有 WM 时退回 windowfocus
+	sh(
+		`xdotool windowactivate --sync ${w} 2>/dev/null || xdotool windowraise ${w} windowfocus ${w}`,
+	);
 	await sleep(500);
 	const a = mark();
 	sh("xdotool key ctrl+alt+space");
