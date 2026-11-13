@@ -130,7 +130,8 @@ function LevelGlyph({ level, size }: { level: string; size: number }) {
 
 /**
  * 思考级别菜单：触发器就是圆圈本身，点开列出可选级别，每项左侧画该级别的圆圈。
- * `options` 由调用方按模型能力给出（线程里是 omp 的 `availableThinkingLevels`），空串表示「跟随默认」。
+ * `options` 由调用方按模型能力给出（线程里是 omp 的 `availableThinkingLevels`），空串表示「跟随默认」；
+ * 能力未知、只能给出「跟随默认」时，用 `defaultHint` 在该项右侧说明原因。
  * `shown` 是触发器上画的级别（auto 时传实际生效的级别）；缺省时画 `value`。
  */
 export function ThinkingMenu({
@@ -144,6 +145,7 @@ export function ThinkingMenu({
 	side = "top",
 	align = "right",
 	badge = false,
+	defaultHint,
 }: {
 	value: string;
 	shown?: string;
@@ -157,6 +159,8 @@ export function ThinkingMenu({
 	align?: "left" | "right";
 	/** 角标形态（窄屏首页模型图标右下角）：圆形小触发器，点击区向外扩到约 28px */
 	badge?: boolean;
+	/** 「跟随默认」项右侧的说明 */
+	defaultHint?: string;
 }): ReactNode {
 	const { t } = useTranslation();
 	// 级别来自 omp（`ThinkingLevel` 加上 auto），文案键按同名取
@@ -169,6 +173,7 @@ export function ThinkingMenu({
 		label: label(l),
 		leading: <LevelGlyph level={l} size={14} />,
 		checked: l === value,
+		hint: l === "" ? defaultHint : undefined,
 		onSelect: () => onSelect(l),
 	}));
 	const drawn = shown ?? value;

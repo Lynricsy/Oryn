@@ -6,6 +6,7 @@ import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { Orb, Thread, WsEntries, WsThreadSnapshot } from "../api/client";
 import type { SessionState } from "../omp/types";
+import { recordModelCaps } from "./model-caps";
 import {
 	applyEntries,
 	applyFrame,
@@ -162,9 +163,12 @@ export function getThreadStore(threadId: string): StoreApi<ThreadStore> {
 		store = createStore<ThreadStore>((set, get) => ({
 			...initialThreadState(threadId),
 			apply(messages) {
+				const before = get().state;
 				let s: ThreadViewState = get();
 				for (const m of messages) s = reduceThread(s, m);
 				set(s);
+				// 会话报告的模型能力记进缓存，首页新线程据此列可选思考级别
+				if (s.state && s.state !== before) recordModelCaps(s.state);
 			},
 			patchLocal(patch) {
 				set(patch);

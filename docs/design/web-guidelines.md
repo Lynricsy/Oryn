@@ -71,7 +71,7 @@ M3.5 重设计之后的长期约定，目的是防止后续开发让设计变差
 - 失败提示要说清楚「哪一步、为什么、下一步怎么做」。setup/resume 失败统一走 `lib/setup-diagnosis.ts`：原因加建议各一句，orbd 原文留在日志对话框里备查。不要直接把原始错误串扔给用户。
 - 所有新增文案都要**同时**写进 `zh-CN.json` 和 `en.json`。
 - **模型选择器只选模型**。思考级别通过点输入坞里的级别圆圈弹出菜单来调，菜单每项左侧画该级别的圆圈（`ThinkingMenu`）；速度通过点页脚的速度读数弹出菜单来调（`SpeedControl`），也可以用 `/fast [on|ultra|off]`、`/slow`、`/thinking <级别>`。首页的模型胶囊同样如此：圆圈是独立按钮，宽屏叠在胶囊右端，窄屏是右下角角标。
-- **档位菜单按模型能力列出，不写死**：思考级别取 omp 的 `availableThinkingLevels`（另加 auto）；速度只列 `fastModeSupported` / `ultrafastSupported` / `slowModeSupported` 为真的档位（`lib/speed-tier.ts`）。只剩一档时不做成按钮。每个档位有自己的图标：标准 gauge、快速 fastForward、极速 rocket、慢速 hourglass。
+- **档位菜单按模型能力列出，不写死**：思考级别取 omp 的 `availableThinkingLevels`（另加 auto）；速度只列 `fastModeSupported` / `ultrafastSupported` / `slowModeSupported` 为真的档位（`lib/speed-tier.ts`）。只剩一档时不做成按钮。每个档位有自己的图标：标准 gauge、快速 fastForward、极速 rocket、慢速 hourglass。首页还没有会话，思考级别取 `state/model-caps.ts` 的缓存（每次收到会话状态时按 `provider/id` 记下）；没见过的模型（包括 role 默认模型）只给「默认」并写明能力未知，不假装全部级别都可用；模型不推理时不显示圆圈；换模型时，新模型不支持的已选级别退回「默认」。
 
 ### 图标与字体
 

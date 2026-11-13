@@ -146,6 +146,7 @@
 		"noProject": "无项目",
 		"defaultModel": "默认模型",
 		"defaultThinking": "默认",
+		"thinkingUnknown": "还不知道这个模型支持哪些级别",
 		"modelPlaceholder": "provider/模型 id"
 	},
 	"composer": {

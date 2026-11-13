@@ -33,21 +33,11 @@ import { formatMemoryMB } from "../lib/format";
 import { modelBrand, shortModelName } from "../lib/model-brand";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
+import { type ModelCaps, useModelCaps } from "../state/model-caps";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
 
 type Pill = "executor" | "project" | "model";
-
-const THINKING_LEVELS = [
-	"auto",
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-] as const;
 
 type Executor = Schemas["ThreadExecutor"];
 
@@ -118,8 +108,17 @@ function PillButton({
 	);
 }
 
-/** 新线程可选的思考级别：空串 = 跟随 role / 默认；模型还没定，按 omp 的全集列 */
-const HOME_THINKING = ["", ...THINKING_LEVELS] as const;
+/**
+ * 新线程可选的思考级别：空串 = 跟随 role / 默认。新线程还没有会话，级别取模型能力缓存（会话里见过该模型时记下）；
+ * 没见过的模型（含 role 默认模型）能力未知，只给「跟随默认」，不假装全部级别都可用；模型不推理时为 null（不显示圆圈）。
+ */
+function homeThinkingOptions(
+	caps: ModelCaps | undefined,
+): readonly string[] | null {
+	if (!caps) return [""];
+	if (caps.thinking.length === 0) return null;
+	return ["", "auto", ...caps.thinking];
+}
 
 /**
  * 模型胶囊 + 思考级别圆圈：圆圈是单独的按钮（点开选级别），不放在模型弹层里。
@@ -129,11 +128,16 @@ function ModelPill({
 	pill,
 	corner,
 	thinking,
+	options,
+	known,
 	onThinking,
 }: {
 	pill: ReactElement;
 	corner: boolean;
 	thinking: string;
+	options: readonly string[];
+	/** 模型能力已知；未知时「跟随默认」项写明原因 */
+	known: boolean;
 	onThinking: (level: string) => void;
 }) {
 	const { t } = useTranslation();
@@ -149,8 +153,9 @@ function ModelPill({
 			>
 				<ThinkingMenu
 					value={thinking}
-					options={HOME_THINKING}
+					options={options}
 					defaultLabel={t("newThread.defaultThinking")}
+					defaultHint={known ? undefined : t("newThread.thinkingUnknown")}
 					onSelect={onThinking}
 					size={corner ? 12 : 14}
 					badge={corner}
@@ -342,6 +347,12 @@ export function HomePage(): ReactNode {
 			? shortModelName(modelId, modelBrand(model))
 			: t("newThread.defaultModel"),
 	};
+	const modelCaps = useModelCaps(model);
+	const thinkingOptions = homeThinkingOptions(modelCaps);
+	// 换了模型、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
+	useEffect(() => {
+		if (thinking && !thinkingOptions?.includes(thinking)) setThinking("");
+	}, [thinking, thinkingOptions]);
 	// 窄屏选项行：项目名先拿够自然宽度，剩下的还放得下模型名才展开模型，否则模型只留圆圈。
 	// 模型名的自然宽度量一个不可见的同款胶囊（ghost），避免展开/收起来回抖动。
 	const pillsRef = useRef<HTMLDivElement>(null);
@@ -550,11 +561,8 @@ export function HomePage(): ReactNode {
 										}
 										grow={compact}
 									/>
-									<ModelPill
-										corner={compact}
-										thinking={thinking}
-										onThinking={setThinking}
-										pill={
+									{(() => {
+										const modelPill = (
 											<PillButton
 												icon={
 													<ModelLogo
@@ -569,10 +577,23 @@ export function HomePage(): ReactNode {
 													setPill(pill === "model" ? null : "model")
 												}
 												shape={compact && modelFolded ? "circle" : "pill"}
-												reserveEnd={!compact}
+												reserveEnd={!compact && thinkingOptions !== null}
 											/>
-										}
-									/>
+										);
+										// 模型不推理：只有胶囊，没有思考级别圆圈
+										return thinkingOptions ? (
+											<ModelPill
+												corner={compact}
+												thinking={thinking}
+												options={thinkingOptions}
+												known={modelCaps !== undefined}
+												onThinking={setThinking}
+												pill={modelPill}
+											/>
+										) : (
+											modelPill
+										);
+									})()}
 									{compact && (
 										// 只用来量模型名胶囊的自然宽度，与展开态同款内边距与间距
 										<span

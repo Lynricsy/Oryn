@@ -146,6 +146,7 @@
 		"noProject": "No project",
 		"defaultModel": "Default model",
 		"defaultThinking": "Default",
+		"thinkingUnknown": "Supported levels not known yet",
 		"modelPlaceholder": "provider/model-id"
 	},
 	"composer": {
