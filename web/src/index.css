@@ -924,6 +924,21 @@ body {
 			backdrop-filter: none;
 		}
 	}
+	/*
+	 * 手机左抽屉的压暗：不用整屏遮罩（遮罩铺在抽屉下面，玻璃会把压暗的底色透上来，整块灰蒙蒙），
+	 * 而是抽屉外壳上一圈超大的外投影。外投影只画在边框盒之外、跟着圆角走，所以抽屉底下不变暗、其余区域变暗，
+	 * 并且随抽屉一起滑动。展开时颜色从透明过渡到遮罩色，与模糊层同时长。
+	 */
+	.drawer-spot {
+		border-radius: var(--r-2xl);
+		box-shadow: 0 0 0 100vmax transparent;
+		transition:
+			translate 260ms ease-out,
+			box-shadow 260ms ease-out;
+	}
+	.drawer-spot[data-shown] {
+		box-shadow: 0 0 0 100vmax color-mix(in oklab, var(--scrim) 70%, transparent);
+	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {
 		background: oklch(0.89 0.075 var(--h));

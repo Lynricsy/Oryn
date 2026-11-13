@@ -4,8 +4,8 @@
  * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。
- * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker，
- * 它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
+ * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker 并作为应用接收器
+ * 应答它的探询，它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
  */
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,14 +13,14 @@ import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { UNAUTHORIZED_EVENT } from "../../api/client";
 import { useMe } from "../../api/queries";
 import { usePresence } from "../../lib/presence";
-import { currentSubscription, registerServiceWorker } from "../../lib/push";
+import { pushRegistration, registerServiceWorker } from "../../lib/push";
 import { useBreakpoint } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
 import {
 	notificationsStore,
 	setNotificationNavigator,
 } from "../../state/notifications";
-import { useConnection } from "../../state/stores";
+import { connectionStore, useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { NotificationToasts } from "../notify/NotificationToasts";
 import { ServerErrors } from "../ServerErrors";
@@ -99,9 +99,16 @@ export function AppShell(): ReactNode {
 
 	useEffect(() => {
 		if (!me.data || import.meta.env.VITE_MOCK === "1") return;
-		const off = registerServiceWorker((url) => navRef.current(url));
-		void currentSubscription().then(
-			(sub) => notificationsStore.getState().setPushActive(sub !== null),
+		const off = registerServiceWorker({
+			navigate: (url) => navRef.current(url),
+			// 页面可见且实时连接在线时，通知会经 WS 弹成站内 toast（见 state/notifications）
+			showsToasts: () =>
+				document.visibilityState === "visible" &&
+				connectionStore.getState().status === "open",
+		});
+		// 推送有效 = 本地订阅 + 服务端登记；另一台设备移除了登记时显示未开启，由用户重新开启
+		void pushRegistration().then(
+			(r) => notificationsStore.getState().setPushActive(r.registered),
 			() => undefined,
 		);
 		return off;
@@ -157,11 +164,11 @@ export function AppShell(): ReactNode {
 			)}
 			{drawer.mounted && (
 				<div className="fixed inset-0 z-40">
-					{/* 背景整屏铺满（不是抽屉右边的一块矩形，抽屉圆角外也压暗），模糊 + 轻度压暗 */}
+					{/* 背景整屏只做模糊、点击关闭；压暗在抽屉外壳的 .drawer-spot 外投影上，抽屉底下不压暗（否则玻璃透上来发灰） */}
 					<button
 						type="button"
 						aria-label={t("common.close")}
-						className={`absolute inset-0 bg-scrim/70 backdrop-blur-sm transition-opacity duration-[260ms] ease-out ${drawer.shown ? "opacity-100" : "opacity-0"}`}
+						className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-[260ms] ease-out ${drawer.shown ? "opacity-100" : "opacity-0"}`}
 						onClick={() => uiStore.getState().setSidebar(false)}
 					/>
 					{/*
@@ -170,9 +177,12 @@ export function AppShell(): ReactNode {
 					 */}
 					<div
 						inert={!sidebarOpen}
-						className={`glass-sidebar absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] transition-[translate] duration-[260ms] ease-out ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
+						data-shown={drawer.shown ? "" : undefined}
+						className={`drawer-spot absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
 					>
-						<Sidebar floating />
+						<div className="glass-sidebar h-full">
+							<Sidebar floating />
+						</div>
 					</div>
 				</div>
 			)}
