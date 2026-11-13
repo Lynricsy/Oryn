@@ -212,6 +212,45 @@ interface Screen {
 	prepare(s: Shot): Promise<void>;
 	/** 截图之后的断言（仅 `--check`）；返回失败原因或 null。 */
 	verify?(s: Shot): Promise<string | null>;
+	/** 页面脚本之前注入的脚本源码（假桌面壳）；有它的界面在独立的 context 里截，不污染流水线里的其它界面。 */
+	init?: string;
+}
+
+/**
+ * 假桌面壳（M6）：`window.__TAURI__.core.invoke` 按命令表应答，`handlers` 是 `{命令: 应答}` 的 JSON；
+ * `host` 为真时另注入 `__ORYN_HOST__`（远程页面里的宿主适配），连接页不需要它。
+ */
+function fakeTauri(handlers: Record<string, unknown>, host = false): string {
+	return `(() => {
+		const replies = ${JSON.stringify(handlers)};
+		${host ? `window.__ORYN_HOST__ = { kind: "tauri", platform: "linux", version: "0.1.0", bridge: 1 };` : ""}
+		// 配对码按截图时刻起算 9 分 30 秒后过期
+		const state = replies.launcher_state && replies.launcher_state.state;
+		if (state && state.step === "pairing") state.expiresAt = Date.now() + 570000;
+		window.__TAURI__ = { core: { invoke: async (cmd) => {
+			if (!(cmd in replies)) throw new Error("unexpected " + cmd);
+			return replies[cmd];
+		} } };
+	})();`;
+}
+
+const LAUNCHER_SERVER = "https://oryn.example.com";
+
+function launcherScreen(name: string, state: Record<string, unknown>): Screen {
+	return {
+		name,
+		init: fakeTauri({
+			launcher_state: {
+				state,
+				lang: "zh-CN",
+				version: "0.1.0",
+				tokenStore: "keyring",
+			},
+		}),
+		prepare: async ({ page }) => {
+			await open(page, "/launcher.html", "h1");
+		},
+	};
 }
 
 const SETTINGS_SECTIONS = [
@@ -785,6 +824,53 @@ const SCREENS: Screen[] = [
 			await settle(page, 400);
 		},
 	},
+	launcherScreen("launcher-connect", {
+		step: "connect",
+		serverUrl: "",
+	}),
+	launcherScreen("launcher-pairing", {
+		step: "pairing",
+		serverUrl: LAUNCHER_SERVER,
+		code: "K7QM-W3XP",
+		verifyUrl: `${LAUNCHER_SERVER}/pair`,
+		expiresAt: 0, // fakeTauri 改成截图时刻 + 9:30
+	}),
+	launcherScreen("launcher-error", {
+		step: "error",
+		serverUrl: LAUNCHER_SERVER,
+		error: { code: "unreachable", message: "error sending request" },
+	}),
+	{
+		// 设置 → 桌面应用：已下载新版本、令牌存在文件里（两种提示都在图上）
+		name: "settings-desktop",
+		init: fakeTauri(
+			{
+				host_ready: { bridge: 1, visible: true },
+				host_set_status: null,
+				host_set_language: null,
+				host_info: {
+					version: "0.1.0",
+					settings: {
+						shortcut: "Control+Alt+Space",
+						closeToTray: true,
+						autoUpdate: false,
+					},
+					shortcutError: null,
+					tokenStore: "file",
+					update: { state: "ready", version: "0.2.0" },
+				},
+			},
+			true,
+		),
+		prepare: async ({ page }) => {
+			await open(page, "/settings/desktop", "main", 400);
+			await page
+				.getByRole("heading", { name: "桌面应用" })
+				.first()
+				.waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
 	{
 		// 面板最窄（360px）时五个标签只显示图标、不换行；放在最后：它改了本条流水线的面板宽度
 		name: "portal-narrow",
@@ -855,7 +941,25 @@ async function shootLane(
 	for (const screen of screens) {
 		if (screen.widths && !screen.widths.includes(size.width)) continue;
 		const id = `${screen.name}-${size.width}-${scheme}`;
-		const page = await pageFor(screen.tall ? 1 : 2);
+		const isolated = screen.init
+			? await browser.newContext({
+					viewport: { width: size.width, height: size.height },
+					deviceScaleFactor: 2,
+					locale: "zh-CN",
+					colorScheme: scheme,
+					reducedMotion: "reduce",
+				})
+			: null;
+		if (isolated && screen.init) {
+			if (ACCENT)
+				await isolated.addInitScript({
+					content: `localStorage.setItem("oryn.theme", ${JSON.stringify(JSON.stringify({ mode: scheme, accent: ACCENT }))});`,
+				});
+			await isolated.addInitScript({ content: screen.init });
+		}
+		const page = isolated
+			? await isolated.newPage()
+			: await pageFor(screen.tall ? 1 : 2);
 		await page.setViewportSize({ width: size.width, height: size.height });
 		const shot: Shot = { page, width: size.width, scheme };
 		try {
@@ -876,6 +980,8 @@ async function shootLane(
 			await page
 				.screenshot({ path: `${OUT}/failed/${id}.png` })
 				.catch(() => {});
+		} finally {
+			await isolated?.close();
 		}
 	}
 	for (const context of contexts.values()) await context.close();

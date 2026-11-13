@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:mock": "VITE_MOCK=1 vite",
     "build": "tsc -b && vite build",
+    "build:launcher": "tsc -b && vite build --mode launcher",
     "preview": "vite preview",
     "check": "biome check . && tsc --noEmit",
     "format": "biome check --write .",
@@ -17,7 +18,9 @@
     "shots:all": "bun scripts/screenshots.ts --all",
     "accept:m3": "bun scripts/m3-accept.ts",
     "accept:m4": "bun scripts/m4-accept.ts",
-    "accept:m5": "bun scripts/m5-accept.ts"
+    "accept:m5": "bun scripts/m5-accept.ts",
+    "accept:m6": "dbus-run-session -- xvfb-run -a -s '-screen 0 1440x900x24' bun scripts/m6-accept.ts",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -60,6 +63,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.6.7",
     "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "2.12.4",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

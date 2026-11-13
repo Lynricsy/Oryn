@@ -7,13 +7,23 @@ import { defineConfig } from "vite";
 // 转发到本机 orynd（dev/orynd.yaml 监听 127.0.0.1:7600）；分享页 `/s/<slug>` 本身由 vite 提供
 const orynd = "http://127.0.0.1:7600";
 
-export default defineConfig({
+// `--mode launcher`（`bun run build:launcher`）只构建桌面壳内置的连接页（launcher.html → dist-launcher/），其余不变
+export default defineConfig(({ mode }) => ({
 	plugins: [react(), tailwindcss()],
-	build: {
-		// 超过 500KB 的只有按需加载的 mermaid 子图分块（elk、cytoscape 等），不在首屏
-		chunkSizeWarningLimit: 1600,
-	},
+	build:
+		mode === "launcher"
+			? {
+					outDir: "dist-launcher",
+					emptyOutDir: true,
+					rolldownOptions: { input: "launcher.html" },
+				}
+			: {
+					// 超过 500KB 的只有按需加载的 mermaid 子图分块（elk、cytoscape 等），不在首屏
+					chunkSizeWarningLimit: 1600,
+				},
 	server: {
+		// 壳工程的 Rust 构建产物（src-tauri/target）不需要 vite 监视
+		watch: { ignored: ["**/src-tauri/**"] },
 		proxy: {
 			"/api": { target: orynd, ws: true, changeOrigin: true },
 			"/healthz": { target: orynd, changeOrigin: true },
@@ -27,4 +37,4 @@ export default defineConfig({
 		globals: true,
 		setupFiles: ["./src/test/setup.ts"],
 	},
-});
+}));

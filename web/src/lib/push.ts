@@ -5,8 +5,10 @@
  * 「推送有效」= 本浏览器有订阅 **且** 服务端登记里有同一 endpoint（另一台设备可能已移除它，本地对象却还在）。
  * 与 service worker 的握手见 `public/sw.js`：应答 `oryn.probe`（表明这里有应用接收器、此刻能否自己弹站内提示），
  * 执行 `oryn.navigate` 后回 `{ok: true}`。
+ * 桌面壳（M6）里不注册 service worker、不订阅推送：App 常驻托盘，通知经 WebSocket 到达后由壳弹系统通知。
  */
 import { api, type Schemas, unwrap } from "../api/client";
+import { host } from "./host";
 
 export const SW_URL = "/sw.js";
 /** service worker 发给页面的跳转消息（点击系统通知时）。 */
@@ -17,6 +19,7 @@ export const PROBE_MESSAGE = "oryn.probe";
 /** 浏览器具备 Web Push 的全部前提（安全上下文 + service worker + PushManager + Notification）。 */
 export function pushSupported(): boolean {
 	return (
+		host.kind !== "tauri" &&
 		typeof window !== "undefined" &&
 		window.isSecureContext === true &&
 		"serviceWorker" in navigator &&
@@ -72,10 +75,14 @@ function onWorkerMessage(ev: MessageEvent) {
 
 /**
  * 注册 service worker，并作为应用接收器应答它的 `oryn.probe` / `oryn.navigate`。
- * 不支持 service worker 时无操作；返回注销监听的函数（注销后本页不再被当作应用窗口）。
+ * 不支持 service worker 或在桌面壳里时无操作；返回注销监听的函数（注销后本页不再被当作应用窗口）。
  */
 export function registerServiceWorker(r: WorkerReceiver): () => void {
-	if (typeof navigator === "undefined" || !("serviceWorker" in navigator))
+	if (
+		host.kind === "tauri" ||
+		typeof navigator === "undefined" ||
+		!("serviceWorker" in navigator)
+	)
 		return () => {};
 	receiver = r;
 	navigator.serviceWorker.addEventListener("message", onWorkerMessage);

@@ -1,6 +1,7 @@
 /**
  * 设置 → 通知（M5 计划 6.3）：三张卡片。
  * 1. 此设备：系统通知权限、「后台推送」开关（Web Push 订阅 / 退订）、其它已订阅的浏览器。
+ *    桌面壳（M6）里系统通知由壳发送：只有一句说明与「发送测试通知」，不渲染权限与推送开关。
  * 2. 渠道：Telegram / Webhook / ntfy / Bark 的列表、启停、测试、编辑、删除与「添加渠道 ▾」。
  *    机密字段只写不读：编辑时整组配置留空 = 不变（不提交配置对象），填了任一项 = 整体替换。
  *    Telegram 创建后进入绑定向导：显示 `/start <码>`，每 2s 拉一次渠道列表直到已绑定。
@@ -50,6 +51,7 @@ import {
 } from "../../components/ui/primitives";
 import type { ActionStep } from "../../lib/action-error";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { host } from "../../lib/host";
 import {
 	needsHomeScreen,
 	pushRegistration,
@@ -349,6 +351,40 @@ function DeviceCard() {
 							))}
 						</ul>
 					</div>
+				)}
+			</div>
+		</Card>
+	);
+}
+
+/** 桌面壳里的「此设备」：系统通知由壳发送（窗口隐藏或最小化时），这里只能发一条测试通知。 */
+function DesktopDeviceCard() {
+	const { t } = useTranslation();
+	const [sent, setSent] = useState(false);
+	return (
+		<Card title={t("notifySettings.device.title")} icon="monitor">
+			<p className="mb-3 text-muted text-sm">
+				{t("notifySettings.device.desktopApp")}
+			</p>
+			<div className="flex items-center gap-2">
+				<Button
+					size="sm"
+					onClick={() => {
+						host.notify({
+							id: `test-${Date.now()}`,
+							title: t("notifySettings.device.testTitle"),
+							body: t("notifySettings.device.testBody"),
+							path: "/settings/notifications",
+						});
+						setSent(true);
+					}}
+				>
+					{t("notifySettings.device.testSend")}
+				</Button>
+				{sent && (
+					<span role="status" className="text-faint text-xs">
+						{t("notifySettings.device.testSent")}
+					</span>
 				)}
 			</div>
 		</Card>
@@ -933,7 +969,7 @@ function RecentCard() {
 export default function NotificationsSettings(): ReactNode {
 	return (
 		<>
-			<DeviceCard />
+			{host.kind === "tauri" ? <DesktopDeviceCard /> : <DeviceCard />}
 			<ChannelsCard />
 			<RecentCard />
 		</>

@@ -584,7 +584,8 @@
 		"agent-config": "Agent config",
 		"about": "About",
 		"notifications": "Notifications",
-		"shares": "Public sharing"
+		"shares": "Public sharing",
+		"desktop": "Desktop app"
 	},
 	"devices": {
 		"approveTitle": "Approve pairing",
@@ -599,7 +600,9 @@
 			"cli": "CLI",
 			"desktop": "Desktop",
 			"mobile": "Mobile"
-		}
+		},
+		"pairInBrowser": "Pairing has to be approved in a browser after signing in with your passkey.",
+		"pairInBrowserLink": "Open in browser"
 	},
 	"providers": {
 		"create": "New provider",
@@ -1123,7 +1126,12 @@
 			"pushHint": "Delivered through the browser's push service. When off, this device only gets notifications while the page is open.",
 			"others": "Other subscribed browsers",
 			"subscribedAt": "Subscribed {{when}}",
-			"remove": "Remove subscription"
+			"remove": "Remove subscription",
+			"desktopApp": "The desktop app sends system notifications: while the window is hidden or minimized, finished, waiting or failed threads pop up a notification that opens the thread.",
+			"testSend": "Send test notification",
+			"testTitle": "Oryn test notification",
+			"testBody": "Desktop notifications are working.",
+			"testSent": "Sent"
 		},
 		"channels": "Channels",
 		"add": "Add channel",
@@ -1362,5 +1370,105 @@
 			"tls": "Make sure the address uses a valid HTTPS certificate; self-signed certificates aren't trusted.",
 			"unknown": "Open the details to see why, fix the settings, then test again."
 		}
+	},
+	"launcher": {
+		"title": {
+			"connect": "Connect to a server",
+			"pairing": "Approve in your browser",
+			"connecting": "Connecting",
+			"error": "Can't get in right now",
+			"confirmChange": "Change server"
+		},
+		"intro": "Enter your Oryn server address. The pairing page opens in your system browser: sign in with your passkey and approve this device.",
+		"serverUrl": "Server address",
+		"serverUrlHint": "Use HTTPS; http://localhost works for local testing.",
+		"connect": "Connect",
+		"pairingHint": "{{host}} is open in your browser. Sign in, enter the pairing code below, and approve.",
+		"code": "Pairing code",
+		"expiresIn": "Expires in {{time}}",
+		"waiting": "Waiting for approval…",
+		"reopenBrowser": "Reopen browser",
+		"connectingTo": "Opening {{host}}…",
+		"reconnecting": "Reconnecting…",
+		"retry": "Retry",
+		"changeServer": "Change server…",
+		"changeHint": "This removes the sign-in for {{host}} on this device. You will need to pair again.",
+		"changeConfirm": "Remove and change",
+		"fileStore": "No system keyring found; the token is stored in a file only you can read.",
+		"version": "Oryn Desktop {{version}}",
+		"error": {
+			"invalid_url": {
+				"reason": "That server address isn't valid.",
+				"hint": "Check the spelling; it should look like https://oryn.example.com."
+			},
+			"insecure_url": {
+				"reason": "Servers must be reached over HTTPS.",
+				"hint": "Use an https:// address; plain http is only allowed for localhost."
+			},
+			"unreachable": {
+				"reason": "Can't reach the server.",
+				"hint": "Check your network and the address; the app reconnects automatically once the server is back."
+			},
+			"not_oryn": {
+				"reason": "That address isn't an Oryn server.",
+				"hint": "Make sure it's Oryn's main domain, not a portal subdomain or another service."
+			},
+			"server_too_old": {
+				"reason": "The server is too old to support the desktop app.",
+				"hint": "Upgrade the server to the latest version, then click Retry."
+			},
+			"pair_expired": {
+				"reason": "The pairing code expired.",
+				"hint": "Connect again for a new code and approve it within 10 minutes."
+			},
+			"pair_failed": {
+				"reason": "Pairing didn't complete.",
+				"hint": "Connect again; if it keeps failing, check the server logs."
+			},
+			"revoked": {
+				"reason": "This device's sign-in was revoked.",
+				"hint": "Connect again and approve the pairing in your browser."
+			},
+			"keyring": {
+				"reason": "Couldn't save the token to the system keyring.",
+				"hint": "Unlock your keychain or credential manager, then click Retry."
+			},
+			"session_loop": {
+				"reason": "Your sign-in keeps expiring.",
+				"hint": "Click Retry in a moment; if it keeps happening, change server and pair again."
+			},
+			"web_timeout": {
+				"reason": "The server's web app didn't respond to the desktop app.",
+				"hint": "Make sure the server runs a version with desktop support, then click Retry."
+			},
+			"unknown": {
+				"reason": "Connection failed.",
+				"hint": "Click Retry; if it keeps failing, change server."
+			}
+		}
+	},
+	"desktop": {
+		"title": "Desktop app",
+		"version": "Version",
+		"update": "Updates",
+		"checkUpdate": "Check for updates",
+		"upToDate": "You're up to date",
+		"available": "v{{version}} found, downloading…",
+		"downloading": "Downloading v{{version}}…",
+		"restartToUpdate": "Restart to update to v{{version}}",
+		"updateError": "Update check failed: {{error}}",
+		"autoUpdate": "Install and restart automatically after downloading",
+		"shortcut": "Global shortcut",
+		"shortcutHint": "Format like Control+Alt+Space; leave empty to turn off. Shows or hides the window.",
+		"shortcutError": "The shortcut isn't active: {{error}}",
+		"closeToTray": "Hide to tray when closing the window",
+		"tokenStore": "Token storage",
+		"tokenStoreKind": {
+			"keyring": "System keyring",
+			"file": "Local file"
+		},
+		"fileStore": "No system keyring found; the token is stored in a file only you can read.",
+		"changeServer": "Change server…",
+		"changeServerHint": "Takes you to the connect page; after you confirm, this device's sign-in on the current server is removed."
 	}
 }

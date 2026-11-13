@@ -584,7 +584,8 @@
 		"agent-config": "agent 配置",
 		"about": "关于",
 		"notifications": "通知",
-		"shares": "公开分享"
+		"shares": "公开分享",
+		"desktop": "桌面应用"
 	},
 	"devices": {
 		"approveTitle": "批准配对",
@@ -599,7 +600,9 @@
 			"cli": "CLI",
 			"desktop": "桌面",
 			"mobile": "移动"
-		}
+		},
+		"pairInBrowser": "配对需要在浏览器里用 Passkey 登录后批准。",
+		"pairInBrowserLink": "在浏览器中打开"
 	},
 	"providers": {
 		"create": "新建 provider",
@@ -1123,7 +1126,12 @@
 			"pushHint": "经浏览器的推送服务送达；关闭后这台设备只在页面打开时收到通知。",
 			"others": "其它已订阅的浏览器",
 			"subscribedAt": "订阅于 {{when}}",
-			"remove": "移除订阅"
+			"remove": "移除订阅",
+			"desktopApp": "系统通知由桌面应用发送：窗口隐藏或最小化时，线程完成、待答或出错会弹出系统通知，点击直达线程。",
+			"testSend": "发送测试通知",
+			"testTitle": "Oryn 测试通知",
+			"testBody": "桌面通知工作正常。",
+			"testSent": "已发送"
 		},
 		"channels": "渠道",
 		"add": "添加渠道",
@@ -1362,5 +1370,105 @@
 			"tls": "确认地址使用有效的 HTTPS 证书；自签名证书不受信任。",
 			"unknown": "展开详细信息查看原因，改好配置后再测。"
 		}
+	},
+	"launcher": {
+		"title": {
+			"connect": "连接服务器",
+			"pairing": "在浏览器中批准",
+			"connecting": "正在连接",
+			"error": "暂时无法进入",
+			"confirmChange": "更换服务器"
+		},
+		"intro": "输入 Oryn 服务器地址。连接后会在系统浏览器里打开配对页，用 Passkey 登录并批准这台设备。",
+		"serverUrl": "服务器地址",
+		"serverUrlHint": "使用 HTTPS；本机调试可用 http://localhost。",
+		"connect": "连接",
+		"pairingHint": "已在浏览器打开 {{host}}，登录后输入下面的配对码并批准。",
+		"code": "配对码",
+		"expiresIn": "{{time}} 后失效",
+		"waiting": "等待批准…",
+		"reopenBrowser": "重新打开浏览器",
+		"connectingTo": "正在进入 {{host}}…",
+		"reconnecting": "正在重连…",
+		"retry": "重试",
+		"changeServer": "更换服务器…",
+		"changeHint": "将在这台设备上移除 {{host}} 的登录，之后要重新配对。",
+		"changeConfirm": "移除并更换",
+		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。",
+		"version": "Oryn Desktop {{version}}",
+		"error": {
+			"invalid_url": {
+				"reason": "无法识别这个服务器地址。",
+				"hint": "检查拼写，地址形如 https://oryn.example.com。"
+			},
+			"insecure_url": {
+				"reason": "只能经 HTTPS 连接服务器。",
+				"hint": "改用 https:// 开头的地址；http 只允许 localhost。"
+			},
+			"unreachable": {
+				"reason": "连不上服务器。",
+				"hint": "检查网络与地址是否正确；服务器恢复后会自动重连。"
+			},
+			"not_oryn": {
+				"reason": "这个地址上不是 Oryn 服务器。",
+				"hint": "确认填的是 Oryn 的主域名，而不是 portal 子域名或其它服务。"
+			},
+			"server_too_old": {
+				"reason": "服务器版本太旧，还不支持桌面应用。",
+				"hint": "把服务器升级到最新版后点「重试」。"
+			},
+			"pair_expired": {
+				"reason": "配对码已过期。",
+				"hint": "重新连接获取新的配对码，并在 10 分钟内批准。"
+			},
+			"pair_failed": {
+				"reason": "配对没有完成。",
+				"hint": "重新连接再试一次；仍失败时查看服务器日志。"
+			},
+			"revoked": {
+				"reason": "这台设备的登录已被吊销。",
+				"hint": "重新连接，并在浏览器里再次批准配对。"
+			},
+			"keyring": {
+				"reason": "无法把令牌存进系统凭据库。",
+				"hint": "解锁钥匙串或凭据管理器后点「重试」。"
+			},
+			"session_loop": {
+				"reason": "登录反复失效。",
+				"hint": "稍后点「重试」；仍失败时更换服务器并重新配对。"
+			},
+			"web_timeout": {
+				"reason": "服务器的页面没有响应桌面应用。",
+				"hint": "确认服务器已升级到支持桌面应用的版本，然后点「重试」。"
+			},
+			"unknown": {
+				"reason": "连接失败。",
+				"hint": "点「重试」；仍失败时更换服务器。"
+			}
+		}
+	},
+	"desktop": {
+		"title": "桌面应用",
+		"version": "版本",
+		"update": "更新",
+		"checkUpdate": "检查更新",
+		"upToDate": "已是最新版本",
+		"available": "发现 v{{version}}，正在下载…",
+		"downloading": "正在下载 v{{version}}…",
+		"restartToUpdate": "重启以更新到 v{{version}}",
+		"updateError": "检查更新失败：{{error}}",
+		"autoUpdate": "下载后自动安装并重启",
+		"shortcut": "全局快捷键",
+		"shortcutHint": "格式如 Control+Alt+Space，留空 = 关闭；按下时显示或隐藏窗口。",
+		"shortcutError": "快捷键没有生效：{{error}}",
+		"closeToTray": "关闭窗口时隐藏到托盘",
+		"tokenStore": "令牌存储",
+		"tokenStoreKind": {
+			"keyring": "系统凭据库",
+			"file": "本地文件"
+		},
+		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。",
+		"changeServer": "更换服务器…",
+		"changeServerHint": "回到连接页确认后，移除这台设备在当前服务器上的登录。"
 	}
 }

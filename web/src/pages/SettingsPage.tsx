@@ -1,7 +1,9 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
  * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
- * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、关于。
+ * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、
+ * 桌面应用（M6，仅桌面壳内出现）、关于。
+ * 桌面壳里的会话是设备换来的 App 会话：不能批准配对（改为引导到浏览器）、不显示退出登录（由「更换服务器」代替）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,7 +16,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, useNavigate } from "react-router";
+import { Navigate, NavLink, useNavigate } from "react-router";
 import { api, type Project, type Schemas, unwrap } from "../api/client";
 import {
 	type AvatarOwner,
@@ -68,6 +70,7 @@ import {
 	isSingleGlyph,
 	PROJECT_GLYPHS,
 } from "../lib/glyphs";
+import { host } from "../lib/host";
 import { useBreakpoint } from "../lib/viewport";
 import { processWallpaper, readWallpaperImage } from "../lib/wallpaper";
 import {
@@ -80,6 +83,7 @@ import {
 	WALLPAPERS,
 } from "../state/theme";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
+import DesktopSettings from "./settings/DesktopSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
 import SharesSettings from "./settings/SharesSettings";
 
@@ -93,6 +97,7 @@ export type SettingsSection =
 	| "appearance"
 	| "notifications"
 	| "shares"
+	| "desktop"
 	| "about";
 
 const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
@@ -105,6 +110,7 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "appearance", icon: "palette" },
 	{ key: "notifications", icon: "bell" },
 	{ key: "shares", icon: "share" },
+	{ key: "desktop", icon: "monitor" },
 	{ key: "about", icon: "info" },
 ];
 
@@ -214,12 +220,31 @@ function DevicesSettings() {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const devices = useDevices();
+	const me = useMe();
 	const revoke = useAsync();
+	// App 会话（设备令牌换来的网页会话）不能批准配对：设备令牌不能再签发设备
+	const appSession = me.data?.auth.kind === "web" && !!me.data.auth.deviceId;
 	return (
 		<>
 			<Card title={t("devices.approveTitle")} icon="key">
-				<p className="mb-3 text-muted text-xs">{t("pair.hint")}</p>
-				<PairApproval />
+				{appSession ? (
+					<p className="text-muted text-xs">
+						{t("devices.pairInBrowser")}{" "}
+						<a
+							href="/pair"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-accent-ink underline underline-offset-3"
+						>
+							{t("devices.pairInBrowserLink")}
+						</a>
+					</p>
+				) : (
+					<>
+						<p className="mb-3 text-muted text-xs">{t("pair.hint")}</p>
+						<PairApproval />
+					</>
+				)}
 			</Card>
 			<Card title={t("devices.title")} icon="device">
 				{devices.isPending && <Spinner />}
@@ -1616,22 +1641,24 @@ function AboutSettings() {
 					},
 				]}
 			/>
-			<div className="mt-4 border-border border-t pt-3">
-				<Button
-					variant="danger"
-					disabled={logout.busy}
-					onClick={() =>
-						void logout
-							.run(() => unwrap(api.POST("/api/v1/auth/logout")))
-							.then((ok) => {
-								if (ok) navigate("/login");
-							})
-					}
-				>
-					{t("about.logout")}
-				</Button>
-				<ErrorText error={logout.error} />
-			</div>
+			{host.kind !== "tauri" && (
+				<div className="mt-4 border-border border-t pt-3">
+					<Button
+						variant="danger"
+						disabled={logout.busy}
+						onClick={() =>
+							void logout
+								.run(() => unwrap(api.POST("/api/v1/auth/logout")))
+								.then((ok) => {
+									if (ok) navigate("/login");
+								})
+						}
+					>
+						{t("about.logout")}
+					</Button>
+					<ErrorText error={logout.error} />
+				</div>
+			)}
 		</Card>
 	);
 }
@@ -1644,6 +1671,9 @@ export function SettingsPage({
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	const sidebarToggle = useSidebarToggleShown();
+	const tauri = host.kind === "tauri";
+	if (section === "desktop" && !tauri)
+		return <Navigate to="/settings/devices" replace />;
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
 			<header className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3">
@@ -1665,7 +1695,7 @@ export function SettingsPage({
 			</header>
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				<nav className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">
-					{SECTIONS.map((s) => (
+					{SECTIONS.filter((s) => s.key !== "desktop" || tauri).map((s) => (
 						<NavLink
 							key={s.key}
 							to={`/settings/${s.key}`}
@@ -1689,6 +1719,7 @@ export function SettingsPage({
 						{section === "appearance" && <AppearanceSettings />}
 						{section === "notifications" && <NotificationsSettings />}
 						{section === "shares" && <SharesSettings />}
+						{section === "desktop" && <DesktopSettings />}
 						{section === "about" && <AboutSettings />}
 					</div>
 				</div>

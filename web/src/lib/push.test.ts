@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { host } from "./host";
 import {
 	base64UrlToBytes,
 	pushRegistration,
@@ -115,6 +116,16 @@ describe("订阅与退订", () => {
 		expect(pushSupported()).toBe(true);
 		vi.stubGlobal("isSecureContext", false);
 		expect(pushSupported()).toBe(false);
+	});
+
+	it("桌面壳里不支持推送（M6）", () => {
+		const h = host as { kind: "web" | "tauri" };
+		h.kind = "tauri";
+		try {
+			expect(pushSupported()).toBe(false);
+		} finally {
+			h.kind = "web";
+		}
 	});
 
 	it("subscribePush：取 VAPID 公钥订阅，再把 endpoint 与密钥 POST 给服务端", async () => {
@@ -238,6 +249,22 @@ describe("registerServiceWorker：应答 service worker 的握手", () => {
 		});
 		off();
 		expect(send({ type: "oryn.probe" }).postMessage).not.toHaveBeenCalled();
+	});
+
+	it("桌面壳里不注册 service worker、也不应答握手（M6）", () => {
+		const h = host as { kind: "web" | "tauri" };
+		h.kind = "tauri";
+		try {
+			const off = registerServiceWorker({
+				navigate: vi.fn(),
+				showsToasts: () => true,
+			});
+			expect(navigator.serviceWorker.register).not.toHaveBeenCalled();
+			expect(onMessage).toBeNull();
+			off();
+		} finally {
+			h.kind = "web";
+		}
 	});
 
 	it("跳转：交给站内路由，完成后回 ok", () => {

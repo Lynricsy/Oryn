@@ -7,7 +7,14 @@
 	},
 	"files": {
 		"ignoreUnknown": true,
-		"includes": ["**", "!dist", "!src/api/schema.d.ts", "!src/omp"]
+		"includes": [
+			"**",
+			"!dist",
+			"!dist-launcher",
+			"!src-tauri",
+			"!src/api/schema.d.ts",
+			"!src/omp"
+		]
 	},
 	"formatter": {
 		"enabled": true,

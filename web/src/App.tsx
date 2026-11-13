@@ -33,6 +33,7 @@ const SETTINGS: SettingsSection[] = [
 	"notifications",
 	"shares",
 	"appearance",
+	"desktop",
 	"about",
 ];
 

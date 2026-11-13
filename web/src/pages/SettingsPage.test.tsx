@@ -7,7 +7,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import {
 	afterEach,
 	beforeAll,
@@ -17,7 +17,9 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { qk } from "../api/queries";
 import i18n from "../i18n";
+import { host } from "../lib/host";
 import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
 import type { SettingsSection } from "./SettingsPage";
@@ -538,5 +540,97 @@ describe("设置 → 通知 / 公开分享（M5）", () => {
 		expect(
 			screen.getByRole("heading", { name: "最近通知" }),
 		).toBeInTheDocument();
+	});
+});
+
+describe("设置 → 桌面壳（M6）", () => {
+	const h = host as { kind: "web" | "tauri" };
+	beforeEach(() => {
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+		fetchMock.mockClear();
+	});
+	afterEach(() => {
+		h.kind = "web";
+		vi.unstubAllGlobals();
+	});
+
+	function mount(
+		section: SettingsSection,
+		auth: { kind: "web" | "device" | "recovery"; deviceId?: string } = {
+			kind: "web",
+		},
+	) {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		client.setQueryData(qk.me, { displayName: "Ada", createdAt: 1, auth });
+		return render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/settings/${section}`]}>
+					<Routes>
+						<Route
+							path="/settings/devices"
+							element={
+								section === "desktop" ? (
+									<p>DEVICES</p>
+								) : (
+									<SettingsPage section="devices" />
+								)
+							}
+						/>
+						<Route
+							path={`/settings/${section}`}
+							element={<SettingsPage section={section} />}
+						/>
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+	}
+
+	it("「桌面应用」分区只在桌面壳里出现；浏览器里访问该路由回到设备页", () => {
+		const web = mount("about");
+		expect(
+			within(screen.getByRole("navigation")).queryByRole("link", {
+				name: "桌面应用",
+			}),
+		).toBeNull();
+		web.unmount();
+		mount("desktop");
+		expect(screen.getByText("DEVICES")).toBeInTheDocument();
+	});
+
+	it("桌面壳里导航出现「桌面应用」，关于页没有「退出登录」", () => {
+		h.kind = "tauri";
+		mount("about");
+		expect(
+			within(screen.getByRole("navigation")).getByRole("link", {
+				name: "桌面应用",
+			}),
+		).toHaveAttribute("href", "/settings/desktop");
+		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
+	});
+
+	it("浏览器里关于页有「退出登录」", () => {
+		mount("about");
+		expect(
+			screen.getByRole("button", { name: "退出登录" }),
+		).toBeInTheDocument();
+	});
+
+	it("App 会话（设备换来的网页会话）：批准配对卡改为引导到浏览器", () => {
+		mount("devices", { kind: "web", deviceId: "dev_1" });
+		const link = screen.getByRole("link", { name: "在浏览器中打开" });
+		expect(link).toHaveAttribute("href", "/pair");
+		expect(link).toHaveAttribute("target", "_blank");
+		expect(link).toHaveAttribute("rel", "noopener noreferrer");
+		expect(screen.queryByLabelText("配对码")).toBeNull();
+	});
+
+	it("普通网页会话：批准配对卡照常显示配对码输入", () => {
+		mount("devices");
+		expect(screen.getByLabelText("配对码")).toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "在浏览器中打开" })).toBeNull();
 	});
 });

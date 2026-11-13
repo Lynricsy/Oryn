@@ -3,6 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry, Thread } from "../api/client";
+import { host } from "../lib/host";
 import { makeOrb } from "../mock/fixtures";
 import { notificationsStore } from "../state/notifications";
 import {
@@ -389,6 +390,29 @@ describe("RealtimeClient", () => {
 			client.focus(null);
 			setVisibility("visible");
 			expect(focuses(ws)).toEqual([null, TID, null]);
+		});
+
+		it("桌面壳报告窗口不可见（标签页仍可见）→ 发 focus null，恢复后重发（M6）", async () => {
+			let windowVisible = true;
+			let notify: (() => void) | undefined;
+			vi.spyOn(host, "isForeground").mockImplementation(
+				() => visibility === "visible" && windowVisible,
+			);
+			vi.spyOn(host, "onForegroundChange").mockImplementation((cb) => {
+				notify = cb;
+				return () => {
+					notify = undefined;
+				};
+			});
+			const ws = await connected(client);
+			client.focus(TID);
+			windowVisible = false;
+			notify?.();
+			windowVisible = true;
+			notify?.();
+			expect(focuses(ws)).toEqual([null, TID, null, TID]);
+			client.close();
+			expect(notify).toBeUndefined();
 		});
 	});
 

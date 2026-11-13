@@ -4,11 +4,14 @@
  * 收到的线程消息按动画帧批量写入线程 store，避免流式时逐帧重渲染。
  * 终端（M3）：四种 `terminal_*` 帧不进 reducer，直接交给 `terminalHub`；`term.watch` 开关按线程记住，重连后重发；
  * `term.lagged` / `term.resized` 转给 `terminalHub`。
- * focus（M5）：`focus()` 只记「想看的线程」，实际发出的随标签页可见性变化——隐藏时发 `focus null`，
- * 否则后台标签页会一直占着 focus，通知永远被抑制。`notification` / `notifications.read` 交给通知 store。
+ * focus（M5）：`focus()` 只记「想看的线程」，实际发出的随页面是否在前台变化（`host.isForeground()`：浏览器里 = 标签页可见，
+ * 桌面壳里另要求窗口未隐藏 / 最小化，M6）——不在前台时发 `focus null`，否则后台页面会一直占着 focus，通知永远被抑制。
+ * `notification` / `notifications.read` 交给通知 store。
  * orb 从挂起回到 `ready` 时重取 state 与命令列表：挂起期间的只读查询被控制面以 `agent_unavailable` 拒绝，不会自行重放。
  */
+
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
+import { host } from "../lib/host";
 import type {
 	OmpCommand,
 	ResponseData,
@@ -76,7 +79,8 @@ export class RealtimeClient {
 	private focused: string | null = null;
 	/** 最近一次发出的 focus（`undefined` = 本连接尚未发过）。 */
 	private sentFocus: string | null | undefined = undefined;
-	private visibilityBound = false;
+	/** 取消前台变化监听（连接期间有效）。 */
+	private offForeground: (() => void) | null = null;
 	/** 已开启 `term.watch` 的线程。 */
 	private readonly watching = new Set<string>();
 	private readonly pending = new Map<string, PendingCmd>();
@@ -99,20 +103,16 @@ export class RealtimeClient {
 	private readonly onVisibility = () => this.sendFocus(false);
 
 	private bindVisibility(on: boolean) {
-		if (typeof document === "undefined" || this.visibilityBound === on) return;
-		this.visibilityBound = on;
-		if (on) document.addEventListener("visibilitychange", this.onVisibility);
-		else document.removeEventListener("visibilitychange", this.onVisibility);
+		if (on) this.offForeground ??= host.onForegroundChange(this.onVisibility);
+		else {
+			this.offForeground?.();
+			this.offForeground = null;
+		}
 	}
 
-	/** 标签页隐藏时不 focus 任何线程。 */
+	/** 页面不在前台时不 focus 任何线程。 */
 	private effectiveFocus(): string | null {
-		if (
-			typeof document !== "undefined" &&
-			document.visibilityState !== "visible"
-		)
-			return null;
-		return this.focused;
+		return host.isForeground() ? this.focused : null;
 	}
 
 	/** 发出当前应有的 focus；`force` = 不管与上次是否相同（新连接）。 */

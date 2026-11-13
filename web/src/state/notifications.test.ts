@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { host } from "../lib/host";
 import {
 	type AppNotification,
 	notificationsStore,
@@ -252,5 +253,43 @@ describe("通知 store", () => {
 		const req = (fetch.mock.calls[0] as unknown as [Request])[0];
 		expect(new URL(req.url).search).toBe("?limit=50");
 		expect(s()).toMatchObject({ items: [n], unread: 7, loaded: true });
+	});
+});
+
+describe("桌面壳里（M6）", () => {
+	const h = host as { kind: "web" | "tauri" };
+	let foreground: boolean;
+	beforeEach(() => {
+		h.kind = "tauri";
+		foreground = true;
+		vi.spyOn(host, "isForeground").mockImplementation(() => foreground);
+	});
+	afterEach(() => {
+		h.kind = "web";
+	});
+
+	it("窗口不在前台：交给 host.notify（正文为空时用该 kind 的缺省文案），不构造 Notification", () => {
+		const notify = vi.spyOn(host, "notify").mockImplementation(() => {});
+		foreground = false;
+		// 即使浏览器侧已授权、没有推送订阅，壳里也不走 Notification API
+		const n = note({ kind: "input", title: "部署", body: "" });
+		s().onNotification(n);
+		expect(notify).toHaveBeenCalledWith({
+			id: n.id,
+			title: "部署",
+			body: "等待你的回答",
+			path: `/t/${TID}`,
+		});
+		expect(FakeNotification.created).toHaveLength(0);
+		expect(s().toasts).toEqual([]);
+		expect(s().unread).toBe(1);
+	});
+
+	it("窗口在前台：照常弹 toast，不发系统通知", () => {
+		const notify = vi.spyOn(host, "notify").mockImplementation(() => {});
+		s().onNotification(note());
+		expect(s().toasts).toHaveLength(1);
+		expect(notify).not.toHaveBeenCalled();
+		expect(FakeNotification.created).toHaveLength(0);
 	});
 });

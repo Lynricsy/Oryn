@@ -6,12 +6,17 @@
  * 右侧信息面板由线程页自行处理。
  * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker 并作为应用接收器
  * 应答它的探询，它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
+ * 桌面壳（M6）：挂载时 `host.ready` 握手（壳里待开的路径随返回值交出），壳推来的 `navigate` 走路由跳转；
+ * 未授权时交给 `host.reauth` 由壳重新换取 App 会话（壳里没有可用的 Passkey，不去 `/login`）；
+ * 线程索引变化后 300ms 去抖把待处理 / 未读计数交给托盘（`host.setStatus`），界面语言变化同步给壳。
  */
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { UNAUTHORIZED_EVENT } from "../../api/client";
 import { useMe } from "../../api/queries";
+import { host } from "../../lib/host";
+import { computeHostStatus } from "../../lib/host-status";
 import { usePresence } from "../../lib/presence";
 import { pushRegistration, registerServiceWorker } from "../../lib/push";
 import { useBreakpoint } from "../../lib/viewport";
@@ -20,7 +25,7 @@ import {
 	notificationsStore,
 	setNotificationNavigator,
 } from "../../state/notifications";
-import { connectionStore, useConnection } from "../../state/stores";
+import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { NotificationToasts } from "../notify/NotificationToasts";
 import { ServerErrors } from "../ServerErrors";
@@ -29,6 +34,60 @@ import { Sidebar } from "./Sidebar";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
 const DRAWER_MS = 260;
+/** 托盘状态的去抖间隔：流式期间索引频繁变化（activity），不逐次打扰壳。 */
+const HOST_STATUS_DEBOUNCE_MS = 300;
+
+/** 桌面壳：启动握手、壳发起的跳转、托盘状态与界面语言（web 下全部无操作）。 */
+function useHostBridge() {
+	const { t, i18n } = useTranslation();
+	const navigate = useNavigate();
+	const location = useLocation();
+	const navRef = useRef(navigate);
+	navRef.current = navigate;
+	const tRef = useRef(t);
+	tRef.current = t;
+	// 握手只在挂载时做一次，路径取挂载时的
+	const startPath = useRef(location.pathname + location.search);
+
+	useEffect(() => {
+		void host.ready(i18n.language, startPath.current).then((p) => {
+			if (p) navRef.current(p);
+		});
+	}, [i18n]);
+
+	useEffect(() => host.onNavigate((path) => navRef.current(path)), []);
+
+	useEffect(() => {
+		if (host.kind !== "tauri") return;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let last = "";
+		const push = () => {
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				const status = computeHostStatus(
+					Object.values(indexStore.getState().threads),
+					tRef.current("thread.untitled"),
+				);
+				const key = JSON.stringify(status);
+				if (key === last) return;
+				last = key;
+				host.setStatus(status);
+			}, HOST_STATUS_DEBOUNCE_MS);
+		};
+		const onLanguage = (lang: string) => {
+			host.setLanguage(lang);
+			push();
+		};
+		const offIndex = indexStore.subscribe(push);
+		i18n.on("languageChanged", onLanguage);
+		push();
+		return () => {
+			clearTimeout(timer);
+			offIndex();
+			i18n.off("languageChanged", onLanguage);
+		};
+	}, [i18n]);
+}
 /** 焦点在可编辑区域（输入框、文本域、CodeMirror、contenteditable）时不抢快捷键：macOS 下 Ctrl+B 是光标左移。 */
 function inEditable(target: EventTarget | null): boolean {
 	return (
@@ -77,6 +136,9 @@ export function AppShell(): ReactNode {
 	const collapsed = useUi((s) => s.sidebarCollapsed);
 	const conn = useConnection((s) => s.status);
 	useGlobalShortcuts();
+	useHostBridge();
+	const here = useRef("");
+	here.current = location.pathname + location.search;
 	// 手机抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前
 	const drawer = usePresence(bp === "compact" && sidebarOpen, DRAWER_MS);
 
@@ -103,8 +165,7 @@ export function AppShell(): ReactNode {
 			navigate: (url) => navRef.current(url),
 			// 页面可见且实时连接在线时，通知会经 WS 弹成站内 toast（见 state/notifications）
 			showsToasts: () =>
-				document.visibilityState === "visible" &&
-				connectionStore.getState().status === "open",
+				host.isForeground() && connectionStore.getState().status === "open",
 		});
 		// 推送有效 = 本地订阅 + 服务端登记；另一台设备移除了登记时显示未开启，由用户重新开启
 		void pushRegistration().then(
@@ -115,20 +176,28 @@ export function AppShell(): ReactNode {
 	}, [me.data]);
 
 	useEffect(() => {
-		const onUnauthorized = () =>
-			navigate(`/login?next=${encodeURIComponent(location.pathname)}`);
+		const onUnauthorized = () => {
+			if (host.kind === "tauri") host.reauth(here.current);
+			else navigate(`/login?next=${encodeURIComponent(location.pathname)}`);
+		};
 		window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
 		return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
 	}, [navigate, location.pathname]);
 
-	if (me.isPending) {
+	const unauthorized = me.isError || conn === "unauthorized";
+	// 壳里：交给壳重新换取 App 会话（成功后整页重新加载，带着当前路径回来）
+	useEffect(() => {
+		if (unauthorized && host.kind === "tauri") host.reauth(here.current);
+	}, [unauthorized]);
+
+	if (me.isPending || (unauthorized && host.kind === "tauri")) {
 		return (
 			<div className="flex h-dvh items-center justify-center text-muted">
 				<Spinner size={20} />
 			</div>
 		);
 	}
-	if (me.isError || conn === "unauthorized") {
+	if (unauthorized) {
 		return (
 			<Navigate
 				to={`/login?next=${encodeURIComponent(location.pathname)}`}

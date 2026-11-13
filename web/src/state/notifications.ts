@@ -1,9 +1,10 @@
 /**
  * 应用内通知（M5 计划 6.2）：最近通知、未读数与 toast。
  * - `load()`：`GET notifications?limit=50`（连接建立 / 重连后各一次，见 AppShell）。
- * - WS `notification` → `onNotification`：页面可见 → toast（6s 自动消失；正停在该线程页时不弹）；
- *   页面隐藏 → 有通知权限且本浏览器没有推送订阅时弹系统通知（有订阅时交给 service worker，页面不重复弹）；
+ * - WS `notification` → `onNotification`：页面在前台（`host.isForeground()`）→ toast（6s 自动消失；正停在该线程页时不弹）；
+ *   浏览器里不在前台 → 有通知权限且本浏览器没有推送订阅时弹系统通知（有订阅时交给 service worker，页面不重复弹）；
  *   没有权限时什么都不弹，回到页面后在铃铛里看到。
+ *   桌面壳（M6）里不在前台 → `host.notify` 交给壳弹系统通知（点击直达线程），不碰 `Notification` 与推送订阅。
  * - WS `notifications.read` → `onRead`；`markRead` 先乐观更新再 `POST notifications/read`。
  *   按线程已读之后都要重新 `load()`：未读数是全库总数，本地只有最近 50 条，乐观扣减算不出其余部分。
  *   `load()` 期间经 WS 到达的通知合并回结果（应答可能早于它们生成）；期间又有已读则丢弃这次应答、再取一次。
@@ -13,6 +14,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { api, type Schemas, unwrap } from "../api/client";
 import i18n from "../i18n";
+import { host } from "../lib/host";
 
 export type AppNotification = Schemas["Notification"];
 
@@ -65,12 +67,6 @@ const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const arrivedDuringLoad = new Set<AppNotification[]>();
 /** 每次已读（本地或其它设备）加一；`load()` 据此判断应答是否可能已过期。 */
 let readGeneration = 0;
-
-function pageVisible(): boolean {
-	return (
-		typeof document === "undefined" || document.visibilityState === "visible"
-	);
-}
 
 function showSystemNotification(n: AppNotification) {
 	const { title, body } = notificationText(n, i18n.t);
@@ -145,13 +141,21 @@ export const notificationsStore = createStore<NotificationsState>(
 					items: [n, ...s.items].slice(0, LIST_LIMIT),
 					unread: n.readAt ? s.unread : s.unread + 1,
 				});
-				if (pageVisible()) {
+				if (host.isForeground()) {
 					if (n.threadId && location.pathname === `/t/${n.threadId}`) return;
 					set({ toasts: [...get().toasts, n].slice(-MAX_TOASTS) });
 					toastTimers.set(
 						n.id,
 						setTimeout(() => get().dismissToast(n.id), TOAST_MS),
 					);
+					return;
+				}
+				if (host.kind === "tauri") {
+					host.notify({
+						id: n.id,
+						...notificationText(n, i18n.t),
+						path: n.url,
+					});
 					return;
 				}
 				if (

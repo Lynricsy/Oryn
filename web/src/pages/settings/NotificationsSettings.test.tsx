@@ -8,6 +8,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { host } from "../../lib/host";
 import { handleNotifyFetch, resetNotifyMock } from "../../mock/notify";
 import { notificationsStore } from "../../state/notifications";
 import NotificationsSettings, {
@@ -388,6 +389,36 @@ describe("NotificationsSettings 此设备", () => {
 		).toBeInTheDocument();
 		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
 		push.pushSupported.mockReturnValue(true);
+	});
+});
+
+describe("NotificationsSettings 此设备（桌面壳，M6）", () => {
+	const h = host as { kind: "web" | "tauri" };
+	beforeEach(() => {
+		h.kind = "tauri";
+	});
+	afterEach(() => {
+		h.kind = "web";
+	});
+
+	it("只有一句说明与「发送测试通知」，不渲染权限与推送开关", async () => {
+		const notify = vi.spyOn(host, "notify").mockImplementation(() => {});
+		mount();
+		expect(
+			await screen.findByText(/系统通知由桌面应用发送/),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
+		expect(screen.queryByText("允许系统通知")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "发送测试通知" }));
+		expect(notify).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: "Oryn 测试通知",
+				body: "桌面通知工作正常。",
+				path: "/settings/notifications",
+			}),
+		);
+		expect(screen.getByText("已发送")).toBeInTheDocument();
+		notify.mockRestore();
 	});
 });
 

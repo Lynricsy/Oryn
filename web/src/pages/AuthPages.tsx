@@ -14,9 +14,9 @@ import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { api, unwrap } from "../api/client";
 import { qk, useMe } from "../api/queries";
+import { AuthCard } from "../components/AuthCard";
 import { PairApproval } from "../components/PairApproval";
 import { CopyButton } from "../components/ui/CopyButton";
-import { BrandMark } from "../components/ui/data";
 import {
 	Button,
 	ErrorText,
@@ -33,33 +33,6 @@ import {
 function unwrapOptions<T>(options: Record<string, unknown>): T {
 	const inner = options.publicKey;
 	return (inner && typeof inner === "object" ? inner : options) as T;
-}
-
-/** `blink`：品牌标的插入符闪烁，表示在等你操作（登录、配对页用）。 */
-function AuthCard({
-	title,
-	blink = false,
-	children,
-}: {
-	title: string;
-	blink?: boolean;
-	children: ReactNode;
-}) {
-	const { t } = useTranslation();
-	return (
-		<div className="shell-wash flex min-h-dvh items-center justify-center px-4 pt-safe pb-safe">
-			<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
-				<div className="mb-4 flex items-center gap-2.5">
-					<BrandMark size={32} blink={blink} />
-					<span className="wordmark text-[28px] text-fg leading-none">
-						{t("app.name")}
-					</span>
-				</div>
-				<h1 className="mb-4 font-semibold text-lg tracking-tight">{title}</h1>
-				{children}
-			</div>
-		</div>
-	);
 }
 
 /** 初始化令牌放在 URL 片段（`/setup#token=ost_…`），不进反代访问日志。 */
