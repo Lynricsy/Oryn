@@ -3,6 +3,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry, Thread } from "../api/client";
+import { makeOrb } from "../mock/fixtures";
+import { notificationsStore } from "../state/notifications";
 import {
 	connectionStore,
 	getThreadStore,
@@ -342,5 +344,98 @@ describe("RealtimeClient", () => {
 			threadId: TID,
 			on: false,
 		});
+	});
+
+	describe("focus 随标签页可见性（M5）", () => {
+		let visibility: DocumentVisibilityState;
+		beforeEach(() => {
+			visibility = "visible";
+			vi.spyOn(document, "visibilityState", "get").mockImplementation(
+				() => visibility,
+			);
+		});
+		const setVisibility = (v: DocumentVisibilityState) => {
+			visibility = v;
+			document.dispatchEvent(new Event("visibilitychange"));
+		};
+		const focuses = (ws: FakeWS) =>
+			ws.sent.filter((m) => m.type === "focus").map((m) => m.threadId);
+
+		it("隐藏时发 focus null，恢复可见时重发想看的线程；连接建立时按可见性发", async () => {
+			const ws = await connected(client);
+			client.focus(TID);
+			setVisibility("hidden");
+			// 重复的同值事件不重复发
+			setVisibility("hidden");
+			setVisibility("visible");
+			expect(focuses(ws)).toEqual([null, TID, null, TID]);
+
+			// 后台标签页断线重连：onopen 按可见性发 null；可见后才 focus
+			setVisibility("hidden");
+			ws.drop();
+			await vi.advanceTimersByTimeAsync(500);
+			await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+			const ws2 = FakeWS.instances[1] as FakeWS;
+			ws2.accept();
+			expect(focuses(ws2)).toEqual([null]);
+			setVisibility("visible");
+			expect(focuses(ws2)).toEqual([null, TID]);
+		});
+
+		it("隐藏期间离开线程页：恢复可见时 focus null 不重发", async () => {
+			const ws = await connected(client);
+			client.focus(TID);
+			setVisibility("hidden");
+			client.focus(null);
+			setVisibility("visible");
+			expect(focuses(ws)).toEqual([null, TID, null]);
+		});
+	});
+
+	it("notification / notifications.read 交给通知 store（M5）", async () => {
+		const store = notificationsStore.getState();
+		const onNotification = vi
+			.spyOn(store, "onNotification")
+			.mockImplementation(() => {});
+		const onRead = vi.spyOn(store, "onRead").mockImplementation(() => {});
+		const ws = await connected(client);
+		const n = {
+			id: "ntf_1",
+			kind: "done",
+			threadId: TID,
+			title: "t",
+			body: "",
+			url: `/t/${TID}`,
+			createdAt: 1,
+			deliveries: [],
+		};
+		ws.recv({ type: "notification", notification: n });
+		ws.recv({ type: "notifications.read", threadId: TID });
+		ws.recv({ type: "notifications.read" });
+		expect(onNotification).toHaveBeenCalledWith(n);
+		expect(onRead.mock.calls).toEqual([[TID], [undefined]]);
+	});
+
+	it("orb 从挂起回到 ready：重取 state 与命令列表（挂起期间的只读查询被拒、不会重放）", async () => {
+		const ws = await connected(client);
+		client.subscribe(TID);
+		const frozen = makeOrb("orb-x", [TID], "frozen");
+		ws.recv(snapshot({ orb: frozen }, { status: "ready" }));
+		vi.advanceTimersByTime(250);
+		const before = {
+			state: ws.cmds("get_state").length,
+			commands: ws.cmds("get_available_commands").length,
+		};
+		ws.recv({ type: "orb", orb: makeOrb("orb-x", [TID], "waking") });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(before.state);
+		ws.recv({ type: "orb", orb: makeOrb("orb-x", [TID], "ready") });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(before.state + 1);
+		expect(ws.cmds("get_available_commands")).toHaveLength(before.commands + 1);
+		// 已就绪时的 orb 更新（如采样、服务状态）不重取
+		ws.recv({ type: "orb", orb: makeOrb("orb-x", [TID], "ready") });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(before.state + 1);
 	});
 });

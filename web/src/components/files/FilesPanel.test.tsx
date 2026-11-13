@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
 	fireEvent,
@@ -56,11 +57,21 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+/** 面板里的「发布为公开链接」用到 TanStack Query 的 mutation，需要 QueryClient。 */
+function renderPanel(threadId: string, orbId?: string) {
+	const client = new QueryClient();
+	return render(
+		<QueryClientProvider client={client}>
+			<FilesPanel threadId={threadId} orbId={orbId} />
+		</QueryClientProvider>,
+	);
+}
+
 const tab = (key: string) => screen.findByRole("tab", { name: t(key) });
 
 describe("FilesPanel", () => {
 	it("有 orb：根切换器为 Workspace | Home | Agent 配置，默认打开工作区", async () => {
-		render(<FilesPanel threadId="T-f1" orbId={ORB} />);
+		renderPanel("T-f1", ORB);
 		expect(await tab("files.roots.workspace")).toHaveAttribute(
 			"aria-selected",
 			"true",
@@ -73,7 +84,7 @@ describe("FilesPanel", () => {
 	});
 
 	it("orb 已删除：只剩 Agent 配置并提示", async () => {
-		render(<FilesPanel threadId="T-f2" />);
+		renderPanel("T-f2");
 		expect(await screen.findByText(t("files.orbDeleted"))).toBeInTheDocument();
 		expect(await tab("files.roots.agentConfig")).toBeInTheDocument();
 		expect(
@@ -83,15 +94,13 @@ describe("FilesPanel", () => {
 	});
 
 	it("旧版 orbd：提示新建线程，Agent 配置仍可用", async () => {
-		render(
-			<FilesPanel threadId="T-f3" orbId="orb-old00000000000000000000e4" />,
-		);
+		renderPanel("T-f3", "orb-old00000000000000000000e4");
 		expect(await screen.findByText(t("files.outdated"))).toBeInTheDocument();
 		expect(await tab("files.roots.agentConfig")).toBeInTheDocument();
 	});
 
 	it("agent 回合结束后 1s 防抖刷新已展开的目录", async () => {
-		render(<FilesPanel threadId="T-f4" orbId={ORB} />);
+		renderPanel("T-f4", ORB);
 		await screen.findByText("README.md");
 		await waitFor(() =>
 			expect(listCalls).toEqual(["/home/user/workspace/repo"]),

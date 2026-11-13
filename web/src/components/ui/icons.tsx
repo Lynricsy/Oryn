@@ -4,6 +4,7 @@ import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
 import { ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowLineDown } from "@phosphor-icons/react/dist/csr/ArrowLineDown";
 import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
@@ -12,8 +13,10 @@ import { ArrowsOutSimple } from "@phosphor-icons/react/dist/csr/ArrowsOutSimple"
 import { ArrowUp } from "@phosphor-icons/react/dist/csr/ArrowUp";
 import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
 import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
+import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { Browser } from "@phosphor-icons/react/dist/csr/Browser";
 import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
+import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
@@ -29,6 +32,7 @@ import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
 import { Cube } from "@phosphor-icons/react/dist/csr/Cube";
 import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
 import { Database } from "@phosphor-icons/react/dist/csr/Database";
+import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 import { Devices } from "@phosphor-icons/react/dist/csr/Devices";
 import { DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
@@ -60,6 +64,7 @@ import { List } from "@phosphor-icons/react/dist/csr/List";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { Megaphone } from "@phosphor-icons/react/dist/csr/Megaphone";
 import { Memory } from "@phosphor-icons/react/dist/csr/Memory";
 import { MinusCircle } from "@phosphor-icons/react/dist/csr/MinusCircle";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
@@ -71,13 +76,16 @@ import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
+import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
+import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
+import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
 import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
 import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
@@ -85,6 +93,7 @@ import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { User } from "@phosphor-icons/react/dist/csr/User";
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { WebhooksLogo } from "@phosphor-icons/react/dist/csr/WebhooksLogo";
 import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 import { XCircle } from "@phosphor-icons/react/dist/csr/XCircle";
@@ -184,6 +193,21 @@ const ICONS = {
 	lock: LockSimple,
 	/** 重启（受管服务）；刷新页面 / 数据用 `refresh` */
 	restart: ArrowClockwise,
+	/** 公开分享（线程只读链接） */
+	share: ShareNetwork,
+	/** 实时分享 */
+	broadcast: Broadcast,
+	/** 快照分享 */
+	camera: Camera,
+	/** 把 orb 的改动同步到本地检出（改动面板「同步 ▾」） */
+	pull: ArrowLineDown,
+	/** 通知：等待作答 */
+	question: Question,
+	/** 通知渠道：Telegram / Webhook / ntfy / Bark（iOS 推送） */
+	telegram: TelegramLogo,
+	webhook: WebhooksLogo,
+	megaphone: Megaphone,
+	phone: DeviceMobile,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -511,3 +511,32 @@ describe("设置 → 项目图标", () => {
 		]);
 	});
 });
+
+describe("设置 → 通知 / 公开分享（M5）", () => {
+	beforeEach(() => {
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+		fetchMock.mockClear();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("侧边导航含「通知」与「公开分享」，通知页渲染三张卡片", async () => {
+		setup("notifications");
+		const nav = screen.getByRole("navigation");
+		expect(within(nav).getByRole("link", { name: "通知" })).toHaveAttribute(
+			"href",
+			"/settings/notifications",
+		);
+		expect(within(nav).getByRole("link", { name: "公开分享" })).toHaveAttribute(
+			"href",
+			"/settings/shares",
+		);
+		expect(screen.getByRole("heading", { name: "此设备" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "渠道" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "最近通知" }),
+		).toBeInTheDocument();
+	});
+});

@@ -4,6 +4,9 @@
  * 收到的线程消息按动画帧批量写入线程 store，避免流式时逐帧重渲染。
  * 终端（M3）：四种 `terminal_*` 帧不进 reducer，直接交给 `terminalHub`；`term.watch` 开关按线程记住，重连后重发；
  * `term.lagged` / `term.resized` 转给 `terminalHub`。
+ * focus（M5）：`focus()` 只记「想看的线程」，实际发出的随标签页可见性变化——隐藏时发 `focus null`，
+ * 否则后台标签页会一直占着 focus，通知永远被抑制。`notification` / `notifications.read` 交给通知 store。
+ * orb 从挂起回到 `ready` 时重取 state 与命令列表：挂起期间的只读查询被控制面以 `agent_unavailable` 拒绝，不会自行重放。
  */
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
 import type {
@@ -12,6 +15,7 @@ import type {
 	RpcTerminalFrame,
 	SessionState,
 } from "../omp/types";
+import { notificationsStore } from "../state/notifications";
 import {
 	connectionStore,
 	getThreadStore,
@@ -68,7 +72,11 @@ export class RealtimeClient {
 	private reconnectTimer: Timer | null = null;
 	private pingTimer: ReturnType<typeof setInterval> | undefined;
 	private readonly subs = new Map<string, number>();
+	/** 想看的线程（线程页挂载时设置）；实际发出的见 `effectiveFocus`。 */
 	private focused: string | null = null;
+	/** 最近一次发出的 focus（`undefined` = 本连接尚未发过）。 */
+	private sentFocus: string | null | undefined = undefined;
+	private visibilityBound = false;
 	/** 已开启 `term.watch` 的线程。 */
 	private readonly watching = new Set<string>();
 	private readonly pending = new Map<string, PendingCmd>();
@@ -83,12 +91,40 @@ export class RealtimeClient {
 
 	connect() {
 		this.closedByUser = false;
+		this.bindVisibility(true);
 		if (this.ws || this.reconnectTimer || this.opening) return;
 		void this.open();
 	}
 
+	private readonly onVisibility = () => this.sendFocus(false);
+
+	private bindVisibility(on: boolean) {
+		if (typeof document === "undefined" || this.visibilityBound === on) return;
+		this.visibilityBound = on;
+		if (on) document.addEventListener("visibilitychange", this.onVisibility);
+		else document.removeEventListener("visibilitychange", this.onVisibility);
+	}
+
+	/** 标签页隐藏时不 focus 任何线程。 */
+	private effectiveFocus(): string | null {
+		if (
+			typeof document !== "undefined" &&
+			document.visibilityState !== "visible"
+		)
+			return null;
+		return this.focused;
+	}
+
+	/** 发出当前应有的 focus；`force` = 不管与上次是否相同（新连接）。 */
+	private sendFocus(force: boolean) {
+		const threadId = this.effectiveFocus();
+		if (!force && threadId === this.sentFocus) return;
+		if (this.send({ type: "focus", threadId })) this.sentFocus = threadId;
+	}
+
 	close() {
 		this.closedByUser = true;
+		this.bindVisibility(false);
 		// 作废仍在等票据的 open()，避免 close→connect 快速交替时建出两条连接
 		this.generation++;
 		this.opening = false;
@@ -110,7 +146,10 @@ export class RealtimeClient {
 
 	/** 连接作废时的统一清理：停 ping、拒绝在途命令、放开连接引用。 */
 	private teardown(ws: WebSocket, reason: string) {
-		if (this.ws === ws) this.ws = null;
+		if (this.ws === ws) {
+			this.ws = null;
+			this.sentFocus = undefined;
+		}
 		clearInterval(this.pingTimer);
 		this.pingTimer = undefined;
 		for (const [id, p] of this.pending) {
@@ -155,7 +194,7 @@ export class RealtimeClient {
 				attempts: 0,
 				lastError: undefined,
 			});
-			this.send({ type: "focus", threadId: this.focused });
+			this.sendFocus(true);
 			for (const [threadId] of this.subs) this.sendSub(threadId);
 			for (const threadId of this.watching)
 				if (this.subs.has(threadId))
@@ -250,9 +289,10 @@ export class RealtimeClient {
 			this.send({ type: "term.watch", threadId, on });
 	}
 
+	/** 记下正在看的线程（`null` = 不在任何线程页）；标签页可见时才真正 focus。 */
 	focus(threadId: string | null) {
 		this.focused = threadId;
-		this.send({ type: "focus", threadId });
+		this.sendFocus(false);
 	}
 
 	/** 发送 omp 命令；成功返回应答 `data`，失败抛 OmpCommandError。 */
@@ -377,12 +417,33 @@ export class RealtimeClient {
 			case "term.resized":
 				terminalHub.onResized(msg.threadId, msg.terminalId, msg.cols, msg.rows);
 				return;
-			case "orb":
+			case "orb": {
+				const prev = indexStore.getState().orbs[msg.orb.id]?.state;
 				indexStore.getState().upsertOrb(msg.orb);
 				for (const tid of msg.orb.threadIds) {
-					if (peekThreadStore(tid))
-						this.enqueue(tid, { type: "orb", orb: msg.orb });
+					const store = peekThreadStore(tid);
+					if (!store) continue;
+					// 线程 store 按帧批量落地，可能还没写入上一条 orb 消息：以同步更新的索引为准
+					const before = prev ?? store.getState().orb?.state;
+					this.enqueue(tid, { type: "orb", orb: msg.orb });
+					// 挂起 → 就绪：挂起期间被拒的只读查询不会重放，主动重取（组件里的查询随 orb 状态自行重发）
+					if (
+						msg.orb.state === "ready" &&
+						before !== undefined &&
+						before !== "ready" &&
+						store.getState().agentStatus === "ready"
+					) {
+						this.scheduleEffect(tid, "refresh_state");
+						this.scheduleEffect(tid, "refresh_commands");
+					}
 				}
+				return;
+			}
+			case "notification":
+				notificationsStore.getState().onNotification(msg.notification);
+				return;
+			case "notifications.read":
+				notificationsStore.getState().onRead(msg.threadId);
 				return;
 			case "error": {
 				if (msg.id) {

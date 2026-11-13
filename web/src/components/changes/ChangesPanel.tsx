@@ -33,6 +33,7 @@ import {
 	EmptyState,
 	ErrorText,
 	IconButton,
+	Menu,
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
@@ -52,6 +53,46 @@ import {
 	readChangesRoot,
 	setStaged,
 } from "./git";
+
+/**
+ * 「同步 ▾」：复制在本地检出里运行的 `oryn sync` 命令（持续镜像 / 一次性应用）。
+ * 菜单底部一行说明前提：在这个项目的本地检出里运行，且本地没有未提交改动。
+ */
+export function SyncMenu({ threadId }: { threadId: string }): ReactNode {
+	const { t } = useTranslation();
+	const copy = (text: string) => {
+		void navigator.clipboard?.writeText(text).catch(() => {});
+	};
+	return (
+		<Menu
+			trigger={(p) => (
+				<Button size="sm" variant="ghost" icon="pull" {...p}>
+					{t("changes.sync.button")}
+					<Icon name="chevronDown" size={11} className="text-faint" />
+				</Button>
+			)}
+			items={[
+				{
+					key: "mirror",
+					icon: "copy",
+					label: t("changes.sync.copyMirror"),
+					onSelect: () => copy(`oryn sync ${threadId}`),
+				},
+				{
+					key: "apply",
+					icon: "copy",
+					label: t("changes.sync.copyApply"),
+					onSelect: () => copy(`oryn sync --apply ${threadId}`),
+				},
+			]}
+			footer={
+				<p className="px-2 pt-1 pb-1.5 text-2xs text-faint">
+					{t("changes.sync.hint")}
+				</p>
+			}
+		/>
+	);
+}
 
 /** 后台轮询间隔。 */
 export const POLL_MS = 10_000;
@@ -399,8 +440,7 @@ export default function ChangesPanel({
 				/>
 			)}
 			{status?.repo && (
-				// 摘要在左、动作在右：Review / Ship ▾ / Sync ▾ 动作簇（见设计文档「未来功能落位」）
-				// 将作为本行的第二个子元素靠右排列，左侧摘要随之收窄换行
+				// 摘要在左、动作在右：动作簇是本行的第二个子元素，左侧摘要随之收窄换行（Review / Ship 未排期）
 				<div className="flex items-center gap-2">
 					<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-0.5 text-faint text-xs">
 						{status.branch && (
@@ -451,6 +491,7 @@ export default function ChangesPanel({
 							</button>
 						)}
 					</div>
+					<SyncMenu threadId={threadId} />
 				</div>
 			)}
 			{stageable && files.length > 0 && (

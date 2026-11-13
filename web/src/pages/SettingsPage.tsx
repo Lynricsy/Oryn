@@ -1,7 +1,7 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
  * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
- * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、关于。
+ * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、关于。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -80,6 +80,8 @@ import {
 	WALLPAPERS,
 } from "../state/theme";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
+import NotificationsSettings from "./settings/NotificationsSettings";
+import SharesSettings from "./settings/SharesSettings";
 
 export type SettingsSection =
 	| "devices"
@@ -89,6 +91,8 @@ export type SettingsSection =
 	| "git-identity"
 	| "agent-config"
 	| "appearance"
+	| "notifications"
+	| "shares"
 	| "about";
 
 const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
@@ -99,6 +103,8 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "git-identity", icon: "fork" },
 	{ key: "agent-config", icon: "file" },
 	{ key: "appearance", icon: "palette" },
+	{ key: "notifications", icon: "bell" },
+	{ key: "shares", icon: "share" },
 	{ key: "about", icon: "info" },
 ];
 
@@ -1681,6 +1687,8 @@ export function SettingsPage({
 						{section === "git-identity" && <GitIdentitySettings />}
 						{section === "agent-config" && <AgentConfigSettings />}
 						{section === "appearance" && <AppearanceSettings />}
+						{section === "notifications" && <NotificationsSettings />}
+						{section === "shares" && <SharesSettings />}
 						{section === "about" && <AboutSettings />}
 					</div>
 				</div>

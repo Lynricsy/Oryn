@@ -32,13 +32,16 @@ export type FileAction =
 	| "rename"
 	| "delete"
 	| "download"
-	| "copyPath";
+	| "copyPath"
+	| "publish";
 
 export interface TreeCaps {
 	mkdir: boolean;
 	rename: boolean;
 	upload: boolean;
 	download: boolean;
+	/** 文件可发布为公开链接（仅 orb 来源） */
+	publish?: boolean;
 }
 
 /** 某个目标（`entry` 为空 = 当前根）可用的操作。 */
@@ -56,6 +59,7 @@ export function actionsFor(
 	if (entry) {
 		if (caps.rename) out.push("rename");
 		if (!dir && caps.download) out.push("download");
+		if (!dir && caps.publish) out.push("publish");
 		out.push("copyPath", "delete");
 	}
 	return out;
@@ -69,6 +73,7 @@ const ACTION_ICON: Record<FileAction, IconName> = {
 	delete: "trash",
 	download: "download",
 	copyPath: "copy",
+	publish: "globe",
 };
 
 /** 目录列表上限（与 orbd 一致）；恰好达到时提示可能被截断。 */
@@ -512,7 +517,7 @@ function ContextMenu({
 						size={14}
 						className={`shrink-0 ${a === "delete" ? "" : "text-muted"}`}
 					/>
-					{t(`files.actions.${a}`)}
+					{a === "publish" ? t("publish.orbFile") : t(`files.actions.${a}`)}
 				</button>
 			))}
 		</div>

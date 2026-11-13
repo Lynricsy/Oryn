@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import type { FileEntry } from "../../lib/file-source";
-import { type DirState, FileTree } from "./FileTree";
+import { actionsFor, type DirState, FileTree } from "./FileTree";
 
 const file = (path: string): FileEntry => ({
 	path,
@@ -149,5 +149,22 @@ describe("FileTree 键盘", () => {
 			item("src").querySelector(`[aria-label="${unsaved}"]`),
 		).not.toBeNull();
 		expect(item("a.txt").querySelector(`[aria-label="${unsaved}"]`)).toBeNull();
+	});
+});
+
+describe("actionsFor 发布", () => {
+	const caps = { mkdir: true, rename: true, upload: true, download: true };
+	const file = {
+		name: "a.txt",
+		path: "/home/user/a.txt",
+		type: "file",
+	} as FileEntry;
+	const dir = { name: "d", path: "/home/user/d", type: "dir" } as FileEntry;
+	it("只有开了 publish 的来源、且只对文件提供「发布为公开链接」", () => {
+		expect(actionsFor(file, caps)).not.toContain("publish");
+		expect(actionsFor(file, { ...caps, publish: true })).toContain("publish");
+		expect(actionsFor(dir, { ...caps, publish: true })).not.toContain(
+			"publish",
+		);
 	});
 });

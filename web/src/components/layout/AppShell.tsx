@@ -4,16 +4,24 @@
  * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的玻璃抽屉侧边栏（只圆右侧）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。
+ * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker，
+ * 它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
  */
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { UNAUTHORIZED_EVENT } from "../../api/client";
 import { useMe } from "../../api/queries";
+import { currentSubscription, registerServiceWorker } from "../../lib/push";
 import { useBreakpoint } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
+import {
+	notificationsStore,
+	setNotificationNavigator,
+} from "../../state/notifications";
 import { useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { NotificationToasts } from "../notify/NotificationToasts";
 import { ServerErrors } from "../ServerErrors";
 import { Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
@@ -71,6 +79,27 @@ export function AppShell(): ReactNode {
 		if (!me.data) return;
 		realtime.connect();
 		return () => realtime.close();
+	}, [me.data]);
+
+	// navigate 随路由变化换实例：经 ref 调用，service worker 只在鉴权通过时注册一次
+	const navRef = useRef(navigate);
+	navRef.current = navigate;
+	useEffect(() => {
+		setNotificationNavigator((url) => navRef.current(url));
+	}, []);
+
+	useEffect(() => {
+		if (conn === "open") void notificationsStore.getState().load();
+	}, [conn]);
+
+	useEffect(() => {
+		if (!me.data || import.meta.env.VITE_MOCK === "1") return;
+		const off = registerServiceWorker((url) => navRef.current(url));
+		void currentSubscription().then(
+			(sub) => notificationsStore.getState().setPushActive(sub !== null),
+			() => undefined,
+		);
+		return off;
 	}, [me.data]);
 
 	useEffect(() => {
@@ -137,6 +166,7 @@ export function AppShell(): ReactNode {
 				<Outlet />
 			</main>
 			<ServerErrors />
+			<NotificationToasts />
 		</div>
 	);
 }

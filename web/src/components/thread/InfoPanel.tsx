@@ -11,7 +11,7 @@ import { formatMemoryMB, formatPercent, formatTokens } from "../../lib/format";
 import { keyed } from "../../lib/keys";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
-import { getThreadStore, useThread } from "../../state/stores";
+import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import {
 	Card,
@@ -508,7 +508,7 @@ function TodoSection({ threadId }: { threadId: string }) {
 function SubagentSection({ threadId }: { threadId: string }) {
 	const { t } = useTranslation();
 	const subs = useThread(threadId, (s) => s.subagents);
-	const ready = useThread(threadId, (s) => s.agentStatus === "ready");
+	const ready = useThread(threadId, agentQueryable);
 	const [snapshots, setSnapshots] = useState<
 		{ id: string; agent: string; status: string; description?: string }[]
 	>([]);
@@ -604,7 +604,7 @@ const reportTokens = new WeakMap<ContextReport, number | undefined>();
  * 上下文变了、重开时缓存报告仍在保鲜期内的情况。与报告对话框共用同一个查询 key（`Dialogs.tsx` 的 `useRpc`）。
  */
 function useContextBreakdown(threadId: string) {
-	const ready = useThread(threadId, (s) => s.agentStatus === "ready");
+	const ready = useThread(threadId, agentQueryable);
 	const tokens = useThread(threadId, (s) => s.state?.contextUsage?.tokens);
 	const report = useQuery({
 		queryKey: ["rpc", threadId, CONTEXT_FRAME],

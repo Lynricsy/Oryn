@@ -13,6 +13,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { ImageViewer } from "../components/ui/ImageViewer";
 import { Icon } from "../components/ui/icons";
+import { useAssetUrls } from "../lib/asset-urls";
 import { useHighlighted } from "../lib/highlight";
 import { imageSrc } from "../lib/image-src";
 import type { ToolRenderHost, ToolResultLike } from "./types";
@@ -350,16 +351,17 @@ export function ResultImages({
 }): ReactNode {
 	const { t } = useTranslation();
 	const [viewing, setViewing] = useState<number | null>(null);
+	const assets = useAssetUrls();
 	const images = resultImagesOf(result);
 	if (images.length === 0) return null;
 	const viewSrc =
 		viewing !== null && images[viewing]
-			? imageSrc(images[viewing].data, images[viewing].mimeType)
+			? imageSrc(images[viewing].data, images[viewing].mimeType, assets.blob)
 			: null;
 	return (
 		<div className="tv-imgs">
 			{images.map((img, i) => {
-				const src = imageSrc(img.data, img.mimeType);
+				const src = imageSrc(img.data, img.mimeType, assets.blob);
 				const n = i + 1;
 				if (!src)
 					return (

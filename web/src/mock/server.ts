@@ -12,9 +12,13 @@
  * `term.watch` 开关、`term.resized` 广播、按单连接 1s 窗口的输出量模拟背压（`term.lagged`）；提示词含 `pty` 时
  * bash 工具以 `pty:true` 在 `kind:"command"` 终端里等用户输入 `y`。orb 的 fs / git REST 由 `./orbfs` 应答。
  * `localStorage["oryn.debug"]==="1"` 时挂 `window.__orynMock`（验收脚本用：断线、重启 agent 等）。
+ * 公开分享（M5）：主线程带一条快照分享与一条实时分享（固定 slug 见 `MOCK_SHARE_SLUGS`）与一个已发布的附件；
+ * 分享 / 发布的增删查、匿名 REST（`public/shares/*`）与匿名 WS（按 URL 识别，只转发公开白名单内的消息），
+ * 创建分享前按服务端同一套正则扫描疑似密钥（409 `secrets_found`）。通知相关接口交给 `./notify`。
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
+import { activeBranch, isMainFile } from "../state/transcript";
 import {
 	assistant,
 	buildMainTranscript,
@@ -36,14 +40,93 @@ import {
 	toolZooLiveFrames,
 	toolZooReplayFrames,
 } from "./fixtures";
+import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 
 type Json = Record<string, unknown>;
 
 export interface MockSocket {
+	/** FakeWebSocket 的连接地址：匿名分享 WS 据此分流。 */
+	readonly url?: string;
 	deliver(msg: Json): void;
 	close?(): void;
 }
+
+/** 主线程上的两条固定分享（截图脚本直接打开 `/s/<slug>`）。 */
+export const MOCK_SHARE_SLUGS = {
+	snapshot: "5a0c1e7f3b9d42a8c6e1f0b2d4a69c3e",
+	live: "c3e9a14b7d2f4e6a8b0c5d1e9f2a7b64",
+} as const;
+
+/** 匿名 WS 转发的帧类型（同 orynd `internal/realtime/public.go` 的白名单）。 */
+const PUBLIC_FRAMES: Record<string, true> = {
+	message_start: true,
+	message_update: true,
+	message_end: true,
+	tool_execution_start: true,
+	tool_execution_update: true,
+	tool_stream_update: true,
+	tool_execution_end: true,
+	agent_start: true,
+	agent_end: true,
+	subagent_lifecycle: true,
+	subagent_progress: true,
+};
+
+/** 分享前的密钥扫描规则（同 orynd `internal/share/scan.go`；mock 没有密钥库明文，不做 `vault_secret`）。 */
+const SHARE_RULES: { rule: Schemas["ShareFindingRule"]; re: RegExp }[] = [
+	{ rule: "private_key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+	{ rule: "api_key_sk", re: /sk-[A-Za-z0-9_-]{20,}/g },
+	{
+		rule: "github_token",
+		re: /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{22,}/g,
+	},
+	{ rule: "aws_access_key", re: /AKIA[0-9A-Z]{16}/g },
+	{ rule: "google_api_key", re: /AIza[0-9A-Za-z_-]{35}/g },
+	{ rule: "slack_token", re: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
+	{
+		rule: "jwt",
+		re: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+	},
+	{ rule: "oryn_token", re: /(?:opv|oot|odt|ost|ows|owt)_[A-Za-z0-9_-]{43}/g },
+	{
+		rule: "bearer_header",
+		re: /authorization["':\s]+bearer\s+[A-Za-z0-9._~+/-]{20,}/gi,
+	},
+	{
+		rule: "url_credentials",
+		re: /[a-z][a-z0-9+.-]{1,15}:\/\/[^/\s:@"]+:[^/\s:@"]{6,}@/g,
+	},
+];
+
+/** 脱敏预览：前 4 字符 + `…` + 后 2 字符；短于 12 字符只留前 2。 */
+function redact(s: string): string {
+	return s.length < 12
+		? `${s.slice(0, 2)}…`
+		: `${s.slice(0, 4)}…${s.slice(-2)}`;
+}
+
+/** 16 字节随机 → 32 位小写十六进制（同 orynd 的 slug）。 */
+function newSlug(): string {
+	const b = new Uint8Array(16);
+	crypto.getRandomValues(b);
+	return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/** 匿名接口的响应：一律 noindex、不缓存。 */
+function publicJson(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: {
+			"Content-Type": "application/json",
+			"X-Robots-Tag": "noindex, nofollow",
+			"Cache-Control": "no-store",
+		},
+	});
+}
+
+type MockShare = Schemas["ThreadShare"] & { leafEntryId?: string };
+type MockPublished = Schemas["PublishedFile"] & { slug: string };
 
 /** omp 快照返回的回滚上限（字符）。 */
 const SNAPSHOT_CHARS = 262_144;
@@ -178,6 +261,15 @@ export class MockServer {
 		string,
 		{ meta: Schemas["Attachment"]; data: Blob }
 	>();
+	/** 公开分享（未撤销的）：id → 分享；撤销即删除。 */
+	readonly shares = new Map<string, MockShare>();
+	/** 已发布的附件：id → 发布记录。 */
+	readonly published = new Map<string, MockPublished>();
+	/** 匿名分享 WS：连接 → 所属分享与上次推送的状态 / 标题。 */
+	private readonly publicSockets = new Map<
+		MockSocket,
+		{ shareId: string; threadId: string; state: string; title: string }
+	>();
 	/** 单连接 1s 内可收的终端输出（字符）；超出即模拟服务端丢帧并发 `term.lagged`。 */
 	termLag = 2 << 20;
 	/** 帧间隔（毫秒）；测试里设为 0。 */
@@ -235,6 +327,362 @@ export class MockServer {
 				options: ["允许一次", "本会话总是允许", "拒绝"],
 			},
 		]);
+		this.seedShares();
+	}
+
+	/** 主线程：一条快照分享（2 小时前）、一条实时分享（20 分钟前）与一个已发布的附件。 */
+	private seedShares() {
+		const main = (this.entries.get(MAIN_THREAD) ?? []).filter((e) =>
+			isMainFile(e.file),
+		);
+		const last = main[main.length - 1];
+		this.addShare(MAIN_THREAD, "snapshot", NOW - 2 * 3_600_000, {
+			slug: MOCK_SHARE_SLUGS.snapshot,
+			untilSeq: last?.seq ?? 0,
+			leafEntryId: last?.entryId,
+		});
+		this.addShare(MAIN_THREAD, "live", NOW - 20 * 60_000, {
+			slug: MOCK_SHARE_SLUGS.live,
+		});
+		const meta: Schemas["Attachment"] = {
+			id: "att_01JCZ8MOCKRECONNECTTRACE00",
+			threadId: MAIN_THREAD,
+			name: "reconnect-trace.log",
+			mime: "text/plain; charset=utf-8",
+			size: 1834,
+			sha256: "0".repeat(64),
+			createdAt: NOW - 3 * 3_600_000,
+		};
+		this.attachments.set(meta.id, {
+			meta,
+			data: new Blob(["ws open\nws close 1006\nretry in 500ms\n"]),
+		});
+		this.publishAttachment(meta.id, NOW - 90 * 60_000);
+	}
+
+	private origin(): string {
+		return globalThis.location?.origin ?? "http://localhost";
+	}
+
+	private addShare(
+		threadId: string,
+		mode: Schemas["ShareMode"],
+		createdAt: number,
+		opts: {
+			slug?: string;
+			untilSeq?: number;
+			leafEntryId?: string;
+			findings?: number;
+		} = {},
+	): MockShare {
+		const slug = opts.slug ?? newSlug();
+		const share: MockShare = {
+			id: `shr_${(this.idSeq++).toString(36).toUpperCase().padStart(26, "0")}`,
+			threadId,
+			threadTitle: this.threads.get(threadId)?.title ?? "",
+			mode,
+			slug,
+			url: `${this.origin()}/s/${slug}`,
+			createdAt,
+			findings: opts.findings ?? 0,
+			...(mode === "snapshot"
+				? { untilSeq: opts.untilSeq, leafEntryId: opts.leafEntryId }
+				: {}),
+		};
+		this.shares.set(share.id, share);
+		this.syncPublicShares(threadId);
+		return share;
+	}
+
+	/** 线程摘要里的未撤销分享数（0 时省略），变化经 index.patch 推送。 */
+	private syncPublicShares(threadId: string) {
+		const t = this.threads.get(threadId);
+		if (!t) return;
+		const n = [...this.shares.values()].filter(
+			(s) => s.threadId === threadId,
+		).length;
+		if ((t.publicShares ?? 0) === n) return;
+		const { publicShares: _, ...rest } = t;
+		this.upsertThread(n > 0 ? { ...rest, publicShares: n } : rest);
+	}
+
+	private publishAttachment(id: string, createdAt = Date.now()): MockPublished {
+		const existing = [...this.published.values()].find(
+			(f) => f.attachmentId === id,
+		);
+		if (existing) return existing;
+		const a = this.attachments.get(id);
+		if (!a) throw new Error(`mock: 附件 ${id} 不存在`);
+		const slug = newSlug();
+		const file: MockPublished = {
+			id: `pub_${(this.idSeq++).toString(36).toUpperCase().padStart(26, "0")}`,
+			attachmentId: id,
+			threadId: a.meta.threadId,
+			name: a.meta.name,
+			mime: a.meta.mime,
+			size: a.meta.size,
+			url: `${this.origin()}/f/${slug}/${encodeURIComponent(a.meta.name)}`,
+			createdAt,
+			slug,
+		};
+		this.published.set(file.id, file);
+		a.meta = { ...a.meta, publicUrl: file.url };
+		return file;
+	}
+
+	private revokeShare(share: MockShare) {
+		this.shares.delete(share.id);
+		for (const [s, sub] of this.publicSockets) {
+			if (sub.shareId !== share.id) continue;
+			s.deliver({ type: "share.revoked" });
+			this.publicSockets.delete(s);
+			setTimeout(() => s.close?.(), 10);
+		}
+		this.syncPublicShares(share.threadId);
+	}
+
+	/** 公开范围：活动分支上、`until` 之内的主会话条目（快照取创建时的上界与叶子，实时取当前）。 */
+	private shareScope(share: MockShare): {
+		until: number;
+		leaf?: string;
+		entries: Entry[];
+	} {
+		const main = (this.entries.get(share.threadId) ?? []).filter((e) =>
+			isMainFile(e.file),
+		);
+		const until =
+			share.mode === "snapshot"
+				? (share.untilSeq ?? 0)
+				: (main[main.length - 1]?.seq ?? 0);
+		const within = main.filter((e) => e.seq <= until);
+		const leaf =
+			share.mode === "snapshot"
+				? share.leafEntryId
+				: within[within.length - 1]?.entryId;
+		const entries = activeBranch(within, leaf)
+			.flat()
+			.sort((a, b) => a.seq - b.seq);
+		return { until, leaf, entries };
+	}
+
+	private scanShare(share: MockShare): Schemas["ShareScan"] {
+		const { entries } = this.shareScope(share);
+		const findings: Schemas["ShareFinding"][] = [];
+		for (const e of entries) {
+			const text = JSON.stringify(e.payload);
+			const p = (e.payload ?? {}) as Json;
+			const msg = (p.message ?? {}) as Json;
+			for (const { rule, re } of SHARE_RULES) {
+				const hits = text.match(re);
+				if (!hits) continue;
+				findings.push({
+					rule,
+					seq: e.seq,
+					entryId: e.entryId,
+					preview: redact(hits[0] ?? ""),
+					count: hits.length,
+					...(typeof msg.role === "string" ? { role: msg.role } : {}),
+					...(typeof msg.toolName === "string" ? { tool: msg.toolName } : {}),
+				});
+			}
+		}
+		return {
+			findings: findings.slice(0, 200),
+			scanned: entries.length,
+			truncated: findings.length > 200,
+		};
+	}
+
+	private activeShareBySlug(slug: string): MockShare | undefined {
+		return [...this.shares.values()].find((s) => s.slug === slug);
+	}
+
+	/** 分享、文件发布与匿名接口（计划 M5 1.1）。 */
+	private async handleShareFetch(
+		req: Request,
+		p: string,
+		m: string,
+		url: URL,
+	): Promise<Response | null> {
+		const pub =
+			/^public\/shares\/([0-9a-f]{32})(?:\/(entries|blobs\/[0-9a-f]{64}))?$/.exec(
+				p,
+			);
+		if (pub) {
+			const share = this.activeShareBySlug(pub[1] ?? "");
+			const t = share && this.threads.get(share.threadId);
+			if (!share || !t || m !== "GET")
+				return publicJson({ code: "not_found", message: "share" }, 404);
+			const scope = this.shareScope(share);
+			if (pub[2] === "entries") {
+				const after = Number(url.searchParams.get("after") ?? 0);
+				const limit = Math.min(
+					500,
+					Math.max(1, Number(url.searchParams.get("limit") ?? 200)),
+				);
+				const rest = scope.entries.filter((e) => e.seq > after);
+				return publicJson({
+					entries: rest.slice(0, limit),
+					hasMore: rest.length > limit,
+					lastSeq: scope.until,
+					leafEntryId: scope.leaf,
+				});
+			}
+			// mock 的转录图片都是内联 base64，没有 blob 存储
+			if (pub[2])
+				return publicJson({ code: "not_found", message: "blob" }, 404);
+			const attachments = [...this.attachments.values()]
+				.map((a) => a.meta)
+				.filter(
+					(a) =>
+						a.threadId === t.id &&
+						(share.mode === "live" || a.createdAt <= share.createdAt),
+				)
+				.map((a) => ({
+					id: a.id,
+					name: a.name,
+					size: a.size,
+					mime: a.mime,
+					...(a.publicUrl ? { url: a.publicUrl } : {}),
+				}));
+			const body: Schemas["PublicShare"] = {
+				mode: share.mode,
+				title: t.title || "Untitled",
+				sharedAt: share.createdAt,
+				threadCreatedAt: t.createdAt,
+				lastSeq: scope.until,
+				leafEntryId: scope.leaf,
+				transcriptRev: 0,
+				attachments,
+				...(share.mode === "live" ? { state: t.state } : {}),
+			};
+			return publicJson(body);
+		}
+		const body = async (): Promise<Json> => {
+			try {
+				return (await req.json()) as Json;
+			} catch {
+				return {};
+			}
+		};
+		const strip = ({ leafEntryId: _, ...s }: MockShare) => s;
+		const newest = <T extends { createdAt: number }>(a: T, b: T) =>
+			b.createdAt - a.createdAt;
+		const threadShares = /^threads\/([^/]+)\/shares$/.exec(p);
+		if (threadShares) {
+			const tid = threadShares[1] ?? "";
+			if (!this.threads.has(tid))
+				return json({ code: "not_found", message: "thread" }, 404);
+			if (m === "GET")
+				return json({
+					shares: [...this.shares.values()]
+						.filter((s) => s.threadId === tid)
+						.sort(newest)
+						.map(strip),
+				});
+			if (m === "POST") {
+				const b = await body();
+				const mode = b.mode === "live" ? "live" : "snapshot";
+				const main = (this.entries.get(tid) ?? []).filter((e) =>
+					isMainFile(e.file),
+				);
+				const last = main[main.length - 1];
+				const draft: MockShare = {
+					id: "",
+					threadId: tid,
+					threadTitle: "",
+					mode,
+					slug: "",
+					url: "",
+					createdAt: Date.now(),
+					findings: 0,
+					untilSeq: last?.seq ?? 0,
+					leafEntryId: last?.entryId,
+				};
+				const scan = this.scanShare(draft);
+				const hits = scan.findings.reduce((n, f) => n + f.count, 0);
+				if (hits > 0 && b.acknowledgeFindings !== true)
+					return json(
+						{
+							code: "secrets_found",
+							message: `发现 ${hits} 处疑似密钥`,
+							scan,
+						},
+						409,
+					);
+				const share = this.addShare(tid, mode, Date.now(), {
+					untilSeq: last?.seq ?? 0,
+					leafEntryId: last?.entryId,
+					findings: hits,
+				});
+				return json(strip(share), 201);
+			}
+		}
+		if (p === "shares" && m === "GET")
+			return json({
+				shares: [...this.shares.values()].sort(newest).map(strip),
+				files: [...this.published.values()]
+					.sort(newest)
+					.map(({ slug: _, ...f }) => f),
+			});
+		const shareMatch = /^shares\/([^/]+)$/.exec(p);
+		if (shareMatch && m === "DELETE") {
+			const share = this.shares.get(shareMatch[1] ?? "");
+			if (!share) return json({ code: "not_found", message: "share" }, 404);
+			this.revokeShare(share);
+			return new Response(null, { status: 204 });
+		}
+		const attPublish = /^attachments\/([^/]+)\/publish$/.exec(p);
+		if (attPublish && m === "POST") {
+			const a = this.attachments.get(attPublish[1] ?? "");
+			if (!a) return json({ code: "not_found", message: "attachment" }, 404);
+			if (!a.meta.threadId)
+				return json({ code: "invalid", message: "附件尚未绑定线程" }, 400);
+			const { slug: _, ...f } = this.publishAttachment(a.meta.id);
+			return json(f);
+		}
+		const orbPublish = /^orbs\/([^/]+)\/fs\/publish$/.exec(p);
+		if (orbPublish && m === "POST") {
+			const b = await body();
+			const path = typeof b.path === "string" ? b.path : "";
+			const threadId = typeof b.threadId === "string" ? b.threadId : "";
+			const t = this.threads.get(threadId);
+			if (!t || t.orbId !== orbPublish[1])
+				return json({ code: "not_found", message: "thread" }, 404);
+			const file = await handleOrbFetch(
+				new Request(
+					`${this.origin()}/api/v1/orbs/${orbPublish[1]}/fs/file?path=${encodeURIComponent(path)}`,
+				),
+			);
+			if (!file?.ok) return file ?? json({ code: "not_found" }, 404);
+			const data = await file.blob();
+			const name = path.slice(path.lastIndexOf("/") + 1) || "file";
+			const meta: Schemas["Attachment"] = {
+				id: `att_${(this.idSeq++).toString(36).toUpperCase().padStart(26, "0")}`,
+				threadId,
+				name,
+				mime: data.type || "application/octet-stream",
+				size: data.size,
+				sha256: "0".repeat(64),
+				createdAt: Date.now(),
+			};
+			this.attachments.set(meta.id, { meta, data });
+			const { slug: _, ...f } = this.publishAttachment(meta.id);
+			return json(f, 201);
+		}
+		const pubFile = /^published-files\/([^/]+)$/.exec(p);
+		if (pubFile && m === "DELETE") {
+			const f = this.published.get(pubFile[1] ?? "");
+			if (!f) return json({ code: "not_found", message: "file" }, 404);
+			this.published.delete(f.id);
+			const a = this.attachments.get(f.attachmentId);
+			if (a) {
+				const { publicUrl: __, ...meta } = a.meta;
+				a.meta = meta;
+			}
+			return new Response(null, { status: 204 });
+		}
+		return null;
 	}
 
 	// ------------------------------------------------------------ REST
@@ -244,6 +692,15 @@ export class MockServer {
 		const path = url.pathname;
 		if (path === "/healthz") return json({ ok: true, version: "0.1.0-mock" });
 		if (!path.startsWith("/api/v1/")) return null;
+		const notifyRes = await handleNotifyFetch(req);
+		if (notifyRes) return notifyRes;
+		const shareRes = await this.handleShareFetch(
+			req,
+			path.slice("/api/v1/".length),
+			req.method.toUpperCase(),
+			url,
+		);
+		if (shareRes) return shareRes;
 		const orbRes = await handleOrbFetch(req);
 		if (orbRes) return orbRes;
 		const p = path.slice("/api/v1/".length);
@@ -607,6 +1064,9 @@ export class MockServer {
 			}
 			if (m === "DELETE") {
 				this.threads.delete(id);
+				// 线程删除即撤销其全部分享（同 orynd 的级联删除）
+				for (const s of [...this.shares.values()])
+					if (s.threadId === id) this.revokeShare(s);
 				for (const [aid, a] of this.attachments)
 					if (a.meta.threadId === id) this.attachments.delete(aid);
 				this.broadcast({
@@ -781,6 +1241,14 @@ export class MockServer {
 			remove: [],
 			rev: ++this.rev,
 		});
+		// 匿名分享连接只收标题 / 状态的变化
+		for (const [s, sub] of this.publicSockets) {
+			if (sub.threadId !== t.id) continue;
+			if (sub.state === t.state && sub.title === t.title) continue;
+			sub.state = t.state;
+			sub.title = t.title;
+			s.deliver({ type: "share.state", state: t.state, title: t.title });
+		}
 	}
 
 	// ------------------------------------------------------------ 附件
@@ -923,6 +1391,10 @@ export class MockServer {
 	// ------------------------------------------------------------ WS
 
 	connect(socket: MockSocket) {
+		if (socket.url?.includes("/api/v1/public/shares/")) {
+			this.connectPublic(socket, socket.url);
+			return;
+		}
 		this.sockets.add(socket);
 		this.subs.set(socket, new Set());
 		socket.deliver({
@@ -932,11 +1404,91 @@ export class MockServer {
 		});
 	}
 
+	/**
+	 * 匿名分享 WS（同 orynd `ServePublic`）：只接受未撤销的实时分享；先发 `share.snapshot`，
+	 * 再按 200 条一批补发 `after` 之后的公开条目，之后只转发白名单内的消息。
+	 */
+	private connectPublic(socket: MockSocket, raw: string) {
+		const u = new URL(raw, this.origin());
+		const slug = /^\/api\/v1\/public\/shares\/([0-9a-f]{32})\/ws$/.exec(
+			u.pathname,
+		)?.[1];
+		const share = slug ? this.activeShareBySlug(slug) : undefined;
+		const t = share && this.threads.get(share.threadId);
+		if (!share || !t || share.mode !== "live") {
+			setTimeout(() => socket.close?.(), 0);
+			return;
+		}
+		this.publicSockets.set(socket, {
+			shareId: share.id,
+			threadId: t.id,
+			state: t.state,
+			title: t.title,
+		});
+		const scope = this.shareScope(share);
+		socket.deliver({
+			type: "share.snapshot",
+			title: t.title,
+			state: t.state,
+			leafEntryId: scope.leaf,
+			lastSeq: scope.until,
+			transcriptRev: 0,
+			fullReplay: false,
+			live: (this.liveFrames.get(t.id) ?? []).filter(
+				(f) => PUBLIC_FRAMES[String(f.type)],
+			),
+			subagents: [],
+		});
+		const after = Number(u.searchParams.get("after") ?? 0);
+		const rest = scope.entries.filter((e) => e.seq > after);
+		for (let i = 0; i < rest.length; i += 200) {
+			const batch = rest.slice(i, i + 200);
+			const end = i + 200 >= rest.length;
+			socket.deliver({
+				type: "entries",
+				entries: batch,
+				leafEntryId: scope.leaf,
+				lastSeq: end ? scope.until : (batch[batch.length - 1]?.seq ?? 0),
+			});
+		}
+	}
+
+	/** 把线程消息转成匿名连接能收的形态（不带 threadId；帧只放白名单内的类型）。 */
+	private toPublic(threadId: string, msg: Json) {
+		for (const [s, sub] of this.publicSockets) {
+			if (sub.threadId !== threadId) continue;
+			switch (msg.type) {
+				case "entries":
+					s.deliver({
+						type: "entries",
+						entries: msg.entries,
+						leafEntryId: msg.leafEntryId,
+						lastSeq: msg.lastSeq,
+					});
+					break;
+				case "frame":
+					if (PUBLIC_FRAMES[String((msg.frame as Json | undefined)?.type)])
+						s.deliver({ type: "frame", frame: msg.frame });
+					break;
+				case "live.reset":
+					s.deliver({ type: "live.reset" });
+					break;
+				case "transcript.reset":
+					s.deliver({
+						type: "transcript.reset",
+						transcriptRev: msg.transcriptRev,
+					});
+					break;
+			}
+		}
+	}
+
 	disconnect(socket: MockSocket) {
 		this.sockets.delete(socket);
 		this.subs.delete(socket);
 		this.termWatch.delete(socket);
 		this.termWindow.delete(socket);
+		this.publicSockets.delete(socket);
 	}
 
 	/** 调试：断开全部连接（客户端会重连并补拉）。 */
@@ -1212,6 +1764,7 @@ export class MockServer {
 			if (threadId && !this.subs.get(s)?.has(threadId)) continue;
 			s.deliver(msg);
 		}
+		if (threadId && this.publicSockets.size > 0) this.toPublic(threadId, msg);
 	}
 
 	private frame(threadId: string, frame: Json) {

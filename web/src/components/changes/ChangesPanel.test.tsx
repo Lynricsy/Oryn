@@ -120,6 +120,33 @@ describe("ChangesPanel", () => {
 		expect(statusReqs()[0]?.query.has("bg")).toBe(false);
 	});
 
+	it("同步 ▾：两个菜单项把对应的 oryn sync 命令写进剪贴板，底部有前提说明", async () => {
+		const writeText = vi.fn(async () => {});
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		render(<ChangesPanel threadId="T-sync1" orbId={ORB} />);
+		await filesList();
+		const trigger = screen.getByRole("button", {
+			name: t("changes.sync.button"),
+		});
+		fireEvent.click(trigger);
+		expect(screen.getByText(t("changes.sync.hint"))).toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("menuitem", { name: t("changes.sync.copyMirror") }),
+		);
+		expect(writeText).toHaveBeenLastCalledWith("oryn sync T-sync1");
+		// 选中后菜单收起
+		expect(screen.queryByRole("menu")).toBeNull();
+		fireEvent.click(trigger);
+		fireEvent.click(
+			screen.getByRole("menuitem", { name: t("changes.sync.copyApply") }),
+		);
+		expect(writeText).toHaveBeenLastCalledWith("oryn sync --apply T-sync1");
+		Reflect.deleteProperty(navigator, "clipboard");
+	});
+
 	it("勾选未暂存文件 → stage；重命名把新旧路径一起提交；勾掉已暂存 → unstage", async () => {
 		render(<ChangesPanel threadId="T-c2" orbId={ORB} />);
 		await filesList();

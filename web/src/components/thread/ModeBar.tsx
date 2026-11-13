@@ -15,7 +15,7 @@ import { createStore } from "zustand/vanilla";
 import type { OmpCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { runModeCommand } from "../../state/actions";
-import { getThreadStore, useThread } from "../../state/stores";
+import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Badge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
@@ -107,7 +107,7 @@ function fitCount(widths: number[], avail: number): number {
 export function ModeStrip({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
-	const ready = useThread(threadId, (s) => s.agentStatus === "ready");
+	const ready = useThread(threadId, agentQueryable);
 	const vibe = useThread(threadId, (s) => s.vibeEnabled);
 	const loop = useThread(threadId, (s) => s.loopMode);
 	const outerRef = useRef<HTMLDivElement>(null);

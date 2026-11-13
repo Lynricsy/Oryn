@@ -4,13 +4,14 @@
  * jsdom 不算容器查询，这里只核对渲染了哪种图标、是否带窄屏才显示的类。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
 import { getThreadStore } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { ThreadHeader } from "./ThreadHeader";
 
 const PROJECT = { id: "P-hdr", name: "oryn", icon: "" };
@@ -107,5 +108,28 @@ describe("ThreadHeader orb 状态胶囊", () => {
 			lastSetup: FAILED_SETUP as Orb["lastSetup"],
 		});
 		expect(chip).toHaveAccessibleName(`状态：${label}`);
+	});
+});
+
+describe("ThreadHeader 公开徽标", () => {
+	it("有未撤销的公开链接时显示「已公开」，点击打开分享对话框", () => {
+		uiStore.getState().close();
+		renderHeader("T-hdr-pub", { title: "重连", publicShares: 2 });
+		const badge = screen.getByRole("button", {
+			name: i18n.t("share.header.badge"),
+		});
+		expect(badge).toHaveAttribute(
+			"title",
+			i18n.t("share.header.badgeTitle", { n: 2 }),
+		);
+		fireEvent.click(badge);
+		expect(uiStore.getState().dialog).toEqual({ kind: "share" });
+	});
+
+	it("没有公开链接时不显示", () => {
+		renderHeader("T-hdr-nopub", { title: "重连" });
+		expect(
+			screen.queryByRole("button", { name: i18n.t("share.header.badge") }),
+		).toBeNull();
 	});
 });

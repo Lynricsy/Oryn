@@ -26,6 +26,7 @@ import {
 	MAIN_THREAD,
 	TOOL_ZOO_THREAD,
 } from "../src/mock/fixtures";
+import { MOCK_SHARE_SLUGS } from "../src/mock/server";
 
 const ARGS = process.argv.slice(2);
 const flag = (name: string) => ARGS.includes(name);
@@ -218,6 +219,8 @@ const SETTINGS_SECTIONS = [
 	"secrets",
 	"git-identity",
 	"agent-config",
+	"notifications",
+	"shares",
 	"appearance",
 	"about",
 ];
@@ -548,6 +551,47 @@ const SCREENS: Screen[] = [
 		}),
 	),
 	{
+		// 侧栏铃铛：未读计数 + 打开的通知弹层（compact 档是 Dialog，先开侧栏抽屉）
+		name: "notify-bell",
+		prepare: async ({ page, width }) => {
+			await open(page, "/", "textarea");
+			if (width < 600)
+				await page.getByRole("button", { name: "侧边栏", exact: true }).click();
+			await page.getByRole("button", { name: /^通知（/ }).click();
+			await page
+				.getByRole("dialog", { name: "通知" })
+				.waitFor({ timeout: 10_000 });
+			await settle(page);
+		},
+	},
+	{
+		// 应用内 toast：与 socket 收到 WS `notification` 走同一个 store 入口
+		name: "notify-toast",
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page.evaluate(async (threadId) => {
+				const m = await import(
+					/* @vite-ignore */ "/src/state/notifications.ts"
+				);
+				m.notificationsStore.getState().onNotification({
+					id: "ntf_shot",
+					kind: "input",
+					threadId,
+					title: "🐳 DOCKER: Docker provider 冻结后 orbd 重连",
+					body: "允许执行 `docker exec orb-… pkill -HUP -x orbd`？",
+					url: `/t/${threadId}`,
+					createdAt: Date.now(),
+					deliveries: [],
+				});
+			}, "T-0193a1b2-0000-7000-8000-00000000a004");
+			await page
+				.locator("[role=status].glass")
+				.first()
+				.waitFor({ timeout: 5_000 });
+			await settle(page, 400);
+		},
+	},
+	{
 		name: "login",
 		prepare: async ({ page }) => {
 			await open(page, "/login", "body");
@@ -603,6 +647,60 @@ const SCREENS: Screen[] = [
 			await page.getByRole("button", { name: "更多操作" }).first().click();
 			await page.getByRole("menuitem", { name: "附件" }).click();
 			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+			await settle(page);
+		},
+	},
+	{
+		// 匿名分享页（快照）：只读转录，从开头读起
+		name: "share-page",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/s/${MOCK_SHARE_SLUGS.snapshot}`,
+				"[data-testid=transcript]",
+				1800,
+			),
+	},
+	{
+		// 匿名分享页（实时）：经匿名 WS 补发，贴底跟随
+		name: "share-page-live",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/s/${MOCK_SHARE_SLUGS.live}`,
+				"[data-testid=transcript]",
+				1800,
+			),
+	},
+	{
+		name: "share-dialog",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await openShareDialog(page);
+		},
+	},
+	{
+		// 先发一条含疑似密钥的消息，再创建链接：对话框列出扫描命中项，「仍然创建」在勾选前禁用
+		name: "share-dialog-findings",
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await sendPrompt(
+				page,
+				"原样输出这一行：sk-test-abcdefghijklmnopqrstuvwx0123",
+			);
+			await page
+				.locator("[data-testid=transcript] [data-role=user]")
+				.filter({ hasText: "sk-test-" })
+				.last()
+				.waitFor({ timeout: 15_000 });
+			await openShareDialog(page);
+			await page
+				.getByRole("dialog")
+				.getByRole("button", { name: "创建链接", exact: true })
+				.click();
+			await page
+				.locator("[data-testid=share-findings]")
+				.waitFor({ timeout: 10_000 });
 			await settle(page);
 		},
 	},
@@ -698,6 +796,14 @@ const SCREENS: Screen[] = [
 		},
 	},
 ];
+
+/** 线程页「更多操作 → 分享…」。 */
+async function openShareDialog(page: Page) {
+	await page.getByRole("button", { name: "更多操作" }).first().click();
+	await page.getByRole("menuitem", { name: "分享…" }).click();
+	await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+	await settle(page);
+}
 
 /** 打开主线程的 Portal 标签并等 iframe 出现。 */
 async function openPortal(page: Page) {

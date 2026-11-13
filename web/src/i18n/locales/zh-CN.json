@@ -582,7 +582,9 @@
 		"secrets": "密钥",
 		"git-identity": "Git 身份",
 		"agent-config": "agent 配置",
-		"about": "关于"
+		"about": "关于",
+		"notifications": "通知",
+		"shares": "公开分享"
 	},
 	"devices": {
 		"approveTitle": "批准配对",
@@ -950,6 +952,12 @@
 			"typechange": "类型变化",
 			"untracked": "未跟踪",
 			"conflicted": "冲突"
+		},
+		"sync": {
+			"button": "同步",
+			"copyMirror": "复制持续镜像命令",
+			"copyApply": "复制一次性应用命令",
+			"hint": "在这个项目的本地检出里运行；本地须无未提交改动。"
 		}
 	},
 	"editor": {
@@ -1071,5 +1079,212 @@
 			"dynamic": "用 oryn orb service start {{name}} 重新启动它，换一个 --port（或不带 --port 让 orbd 自动分配）。"
 		},
 		"errorHint": "详情见日志。"
+	},
+	"notify": {
+		"title": "通知",
+		"bell": "通知",
+		"bellUnread": "通知（{{n}} 条未读）",
+		"unread": "未读",
+		"markAllRead": "全部已读",
+		"empty": "还没有通知",
+		"emptyHint": "线程完成、需要你作答或出错时，会在这里提醒你。",
+		"untitled": "未命名线程",
+		"toastRegion": "通知提示",
+		"kind": {
+			"done": "完成",
+			"input": "需要输入",
+			"error": "出错"
+		},
+		"kindBody": {
+			"done": "回合已完成",
+			"input": "等待你的回答",
+			"error": "线程出错了"
+		}
+	},
+	"notifySettings": {
+		"device": {
+			"title": "此设备",
+			"permission": "系统通知",
+			"perm": {
+				"granted": "已允许",
+				"denied": "已拒绝",
+				"default": "未设置",
+				"unsupported": "不支持"
+			},
+			"allow": "允许系统通知",
+			"deniedHint": "已被浏览器拒绝，请在网站设置里重新允许。",
+			"unsupported": "这个浏览器不支持系统通知；通知仍会出现在侧栏铃铛里。",
+			"insecure": "系统通知与后台推送需要 HTTPS；当前不是安全连接，通知只会出现在侧栏铃铛里。",
+			"homeScreen": "在 iPhone / iPad 上，先用 Safari 的「分享 → 添加到主屏幕」，再从主屏幕打开 Oryn 才能开启后台推送。",
+			"push": "后台推送（标签页关闭时也能收到）",
+			"pushHint": "经浏览器的推送服务送达；关闭后这台设备只在页面打开时收到通知。",
+			"others": "其它已订阅的浏览器",
+			"subscribedAt": "订阅于 {{when}}",
+			"remove": "移除订阅"
+		},
+		"channels": "渠道",
+		"add": "添加渠道",
+		"onlyOne": "只能有一个",
+		"noChannels": "还没有渠道。添加后，没在看的线程完成、待答或出错时会推送到这里。",
+		"kind": {
+			"telegram": "Telegram",
+			"webhook": "Webhook",
+			"ntfy": "ntfy",
+			"bark": "Bark"
+		},
+		"addTitle": "添加 {{kind}} 渠道",
+		"editTitle": "编辑 {{kind}} 渠道",
+		"name": "名称",
+		"events": "发送哪些事件",
+		"locale": "消息语言",
+		"localeHint": "渠道里固定文案（如「回复即可继续」）的语言。",
+		"localeName": {
+			"zhCN": "简体中文",
+			"en": "English"
+		},
+		"keepConfig": "出于安全，已保存的配置不会回显。全部留空 = 保持不变；填写任一项则整组替换（必填项要填全）。",
+		"unchanged": "留空保持不变",
+		"headersHint": "每行一个，格式 Name: value。",
+		"telegramHint": "向 @BotFather 创建机器人得到 token；创建后会引导你把它绑定到你的私聊。",
+		"field": {
+			"telegram": {
+				"botToken": "Bot token",
+				"apiBase": "Bot API 地址（可选）"
+			},
+			"webhook": {
+				"url": "URL",
+				"secret": "签名密钥（可选）",
+				"headers": "自定义请求头（可选）"
+			},
+			"ntfy": {
+				"server": "服务器（可选）",
+				"topic": "Topic",
+				"token": "访问令牌（可选）"
+			},
+			"bark": {
+				"server": "服务器（可选）",
+				"deviceKey": "Device key"
+			}
+		},
+		"link": {
+			"title": "绑定 Telegram",
+			"step": "在 Telegram 里打开 {{bot}}，发送下面这条消息：",
+			"waiting": "等待绑定…（码在 {{when}} 前有效）",
+			"renew": "重新获取绑定码",
+			"linked": "已绑定",
+			"linkedChat": "通知会发到「{{chat}}」。在 Telegram 里点按钮或回复通知即可作答。",
+			"done": "完成"
+		},
+		"status": {
+			"ok": "正常",
+			"err": "最近一次投递失败",
+			"neutral": "已停用"
+		},
+		"enabled": "启用",
+		"test": "测试",
+		"testing": "正在发送测试消息…",
+		"testOk": "测试消息已发送",
+		"testFailed": "测试失败：{{error}}",
+		"notLinked": "还没绑定私聊，先完成绑定再测试。",
+		"linkedTo": "已绑定 {{chat}}",
+		"linkNow": "绑定私聊",
+		"deleteConfirm": "删除渠道「{{name}}」？它的投递记录也会删除。",
+		"recent": "最近通知",
+		"target": {
+			"telegram": "Telegram",
+			"webhook": "Webhook",
+			"ntfy": "ntfy",
+			"bark": "Bark",
+			"webpush": "浏览器推送",
+			"apns": "APNs",
+			"fcm": "FCM"
+		},
+		"delivery": {
+			"sent": "已送达 · {{when}}",
+			"pending": "待重试（已尝试 {{n}} 次）· 下次 {{when}}",
+			"failed": "失败（共 {{n}} 次）· {{when}}"
+		}
+	},
+	"share": {
+		"page": {
+			"snapshotBadge": "快照 · {{date}}",
+			"copyLink": "复制链接",
+			"markdown": "Markdown",
+			"footer": "由 Oryn 分享 · 只读",
+			"gone": "链接不存在或已被撤销",
+			"goneHint": "请向分享者索取新的链接。",
+			"retry": "重试"
+		},
+		"mode": {
+			"snapshot": "快照",
+			"live": "实时"
+		},
+		"dialog": {
+			"title": "分享线程",
+			"existing": "公开链接",
+			"none": "还没有公开链接。",
+			"open": "打开",
+			"revoke": "撤销",
+			"revokeConfirm": "确认撤销",
+			"newTitle": "新建链接",
+			"snapshotHint": "冻结在当前内容",
+			"liveHint": "之后的新内容也会公开",
+			"scope": "公开内容包括消息、思考、工具调用及其输出、图片与用量；不含子 agent 转录与被回退的分支。图片内容不会被扫描。",
+			"create": "创建链接",
+			"createdCopied": "已创建，链接已复制"
+		},
+		"findings": {
+			"title": "发现 {{n}} 处疑似密钥",
+			"hint": "这些内容会随链接公开。确认可以公开再继续；否则先在线程里处理，再重新创建。",
+			"truncated": "仅显示前 200 处",
+			"ack": "我已检查，仍然分享",
+			"createAnyway": "仍然创建",
+			"count": "{{n}} 处",
+			"secretName": "密钥 {{name}}"
+		},
+		"role": {
+			"user": "用户消息",
+			"assistant": "助手消息",
+			"toolResult": "工具输出"
+		},
+		"rule": {
+			"vault_secret": "已保存的密钥",
+			"private_key": "私钥",
+			"api_key_sk": "API 密钥（sk-）",
+			"github_token": "GitHub 令牌",
+			"aws_access_key": "AWS 访问密钥",
+			"google_api_key": "Google API 密钥",
+			"slack_token": "Slack 令牌",
+			"jwt": "JWT",
+			"oryn_token": "Oryn 令牌",
+			"bearer_header": "Authorization 头",
+			"url_credentials": "URL 内嵌凭据"
+		},
+		"header": {
+			"action": "分享…",
+			"badge": "已公开",
+			"badgeTitle": "{{n}} 个公开链接，点击管理"
+		},
+		"settings": {
+			"threads": "公开的线程",
+			"files": "公开的文件",
+			"empty": "没有公开的内容",
+			"emptyHint": "在线程的「更多操作 → 分享…」里创建链接；附件可在附件对话框发布，orb 里的文件可在 Files 面板的右键菜单发布。",
+			"createdAt": "{{when}}公开",
+			"findings": "确认过 {{n}} 处疑似密钥",
+			"fileThread": "所属线程",
+			"noThreads": "没有公开的线程。",
+			"noFiles": "没有公开的文件。"
+		}
+	},
+	"publish": {
+		"publish": "发布",
+		"unpublish": "撤回",
+		"unpublishConfirm": "确认撤回",
+		"copyUrl": "复制公开链接",
+		"published": "已公开",
+		"orbFile": "发布为公开链接",
+		"orbFileDone": "已复制公开链接。发布的是当前内容的副本，之后在 orb 里的修改不会同步。",
+		"hint": "发布后，拿到链接的任何人都能下载；撤回后链接立即失效。"
 	}
 }

@@ -18,6 +18,7 @@ import { patchThread } from "../../state/actions";
 import { useConnection, useIndex } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
 import { uiStore, useUi } from "../../state/ui";
+import { NotificationBell } from "../notify/NotificationBell";
 import { hueVar, threadHue } from "../thread/ThreadHeader";
 import {
 	BrandMark,
@@ -416,6 +417,7 @@ export function Sidebar(): ReactNode {
 				<span className="wordmark min-w-0 flex-1 text-[24px] leading-none">
 					{t("app.name")}
 				</span>
+				<NotificationBell />
 				<IconButton
 					icon="sidebar"
 					box="sm"

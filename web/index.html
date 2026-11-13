@@ -3,9 +3,13 @@
 	<head>
 		<meta charset="UTF-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<link rel="apple-touch-icon" href="/icon-192.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 		<meta name="theme-color" content="#eef0f4" />
 		<meta name="color-scheme" content="light dark" />
+		<!-- 整个实例都不该被收录（含匿名分享页 /s/<slug>） -->
+		<meta name="robots" content="noindex, nofollow" />
 		<title>Oryn</title>
 		<!-- 首帧前写入明暗与主题色，避免闪色（经典脚本，CSP script-src 'self' 放行） -->
 		<script src="/theme-init.js"></script>

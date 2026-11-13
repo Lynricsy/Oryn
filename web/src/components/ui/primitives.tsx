@@ -248,12 +248,16 @@ export interface MenuItem {
 	hint?: ReactNode;
 }
 
-/** 下拉菜单（支持一级子菜单）；`side="top"` 时向上展开（贴近输入坞的消息菜单）。 */
+/**
+ * 下拉菜单（支持一级子菜单）；`side="top"` 时向上展开（贴近输入坞的消息菜单）。
+ * `footer`：菜单项之下的一段说明（不可点，只在顶层显示）。
+ */
 export function Menu({
 	trigger,
 	items,
 	align = "right",
 	side = "bottom",
+	footer,
 }: {
 	trigger: (props: {
 		onClick: () => void;
@@ -262,6 +266,7 @@ export function Menu({
 	items: MenuItem[];
 	align?: "left" | "right";
 	side?: "top" | "bottom";
+	footer?: ReactNode;
 }) {
 	const [open, setOpen] = useState(false);
 	const [sub, setSub] = useState<string | null>(null);
@@ -359,6 +364,9 @@ export function Menu({
 							)}
 						</button>
 					))}
+					{footer && !sub && (
+						<div className="mt-1 border-border border-t pt-1">{footer}</div>
+					)}
 				</div>
 			)}
 		</div>

@@ -192,6 +192,18 @@ export function useThread<T>(
 	return useStore(getThreadStore(threadId), selector);
 }
 
+/**
+ * agent 此刻能应答只读查询（`get_*`）：agent 就绪且所在 orb 为 `ready`。orb 挂起（冻结 / 停机）期间 agent 状态
+ * 仍是 ready，但控制面会以 `agent_unavailable` 拒绝只读查询且不会重放；以此为条件的查询在 orb 恢复后自然重发。
+ * 线程 store 还没有 orb（尚未收到快照）时只看 agent 状态。
+ */
+export function agentQueryable(s: ThreadViewState): boolean {
+	return (
+		s.agentStatus === "ready" &&
+		(s.orb === undefined || s.orb.state === "ready")
+	);
+}
+
 /** 仅测试用：清空所有线程 store。 */
 export function resetThreadStores() {
 	threadStores.clear();

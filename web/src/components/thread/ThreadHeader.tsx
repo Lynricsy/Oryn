@@ -229,6 +229,12 @@ export function ThreadHeader({
 				void navigator.clipboard?.writeText(`${location.origin}/t/${threadId}`),
 		},
 		{
+			key: "share",
+			icon: "share",
+			label: t("share.header.action"),
+			onSelect: () => uiStore.getState().open({ kind: "share" }),
+		},
+		{
 			key: "fork",
 			icon: "fork",
 			label: t("thread.fork"),
@@ -401,6 +407,17 @@ export function ThreadHeader({
 							<Badge>{card.code}</Badge>
 						</span>
 					)}
+				</button>
+			)}
+			{editing === null && (thread?.publicShares ?? 0) > 0 && (
+				// 有未撤销的公开链接：中性徽标，点开分享对话框管理
+				<button
+					type="button"
+					className="inline-flex shrink-0 rounded-sm"
+					title={t("share.header.badgeTitle", { n: thread?.publicShares ?? 0 })}
+					onClick={() => uiStore.getState().open({ kind: "share" })}
+				>
+					<Badge icon="globe">{t("share.header.badge")}</Badge>
 				</button>
 			)}
 			{editing === null && orb && (

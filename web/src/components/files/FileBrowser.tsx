@@ -94,15 +94,23 @@ function nameError(name: string, allowSlash: boolean): string | null {
 	return null;
 }
 
+/** 「发布为公开链接」：只对 `sourceId` 这个来源（orb）的文件开放；`run` 返回公开 URL。 */
+export interface FilePublisher {
+	sourceId: string;
+	run(path: string): Promise<string>;
+}
+
 export function FileBrowser({
 	sources,
 	storageKey,
 	refreshKey = 0,
+	publisher,
 }: {
 	sources: FileSource[];
 	storageKey: string;
 	/** 变化时刷新已展开的目录 */
 	refreshKey?: number;
+	publisher?: FilePublisher;
 }): ReactNode {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -120,6 +128,8 @@ export function FileBrowser({
 	const [name, setName] = useState("");
 	const [confirmDelete, setConfirmDelete] = useState<FileEntry | null>(null);
 	const [opError, setOpError] = useState<unknown>(null);
+	/** 操作成功后的一行提示（发布后「已复制公开链接」） */
+	const [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [rootsKey, setRootsKey] = useState(0);
 	const fileInput = useRef<HTMLInputElement>(null);
@@ -269,6 +279,7 @@ export function FileBrowser({
 	const run = async (fn: () => Promise<void>) => {
 		setBusy(true);
 		setOpError(null);
+		setNotice(null);
 		try {
 			await fn();
 			return true;
@@ -306,6 +317,14 @@ export function FileBrowser({
 				return;
 			case "copyPath":
 				if (entry) void navigator.clipboard?.writeText(entry.path);
+				return;
+			case "publish":
+				if (!entry || !publisher) return;
+				void run(async () => {
+					const url = await publisher.run(entry.path);
+					await navigator.clipboard?.writeText(url).catch(() => {});
+					setNotice(t("publish.orbFileDone"));
+				});
 				return;
 			case "upload":
 				uploadDir.current = dir;
@@ -439,7 +458,7 @@ export function FileBrowser({
 				expanded={expanded}
 				selectedPath={selected}
 				dirtyPaths={draftPaths}
-				caps={source.caps}
+				caps={{ ...source.caps, publish: publisher?.sourceId === source.id }}
 				onToggle={(e) => {
 					const open = !expanded[e.path];
 					setExpanded((x) => ({ ...x, [e.path]: open }));
@@ -551,6 +570,18 @@ export function FileBrowser({
 					<ErrorText error={opError} />
 				</div>
 			) : null}
+			{notice && (
+				<div
+					role="status"
+					className="flex shrink-0 items-center gap-2 bg-ok/10 py-1 pr-1 pl-3 text-ok-ink text-xs"
+				>
+					<Icon name="checkCircle" size={13} className="shrink-0 text-ok" />
+					<span className="min-w-0 flex-1">{notice}</span>
+					<Button size="sm" variant="ghost" onClick={() => setNotice(null)}>
+						{t("common.dismiss")}
+					</Button>
+				</div>
+			)}
 			{body}
 			<UploadQueue uploads={uploads} />
 			<input

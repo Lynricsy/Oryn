@@ -4,8 +4,8 @@
  */
 import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useAssetUrls } from "../../lib/asset-urls";
 import {
-	attachmentContentUrl,
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
@@ -83,6 +83,7 @@ function textOfContent(content: unknown): string {
 
 function Images({ content }: { content: unknown }): ReactNode {
 	const { t } = useTranslation();
+	const assets = useAssetUrls();
 	const [viewing, setViewing] = useState<string | null>(null);
 	if (!Array.isArray(content)) return null;
 	const imgs = content.filter(
@@ -96,7 +97,7 @@ function Images({ content }: { content: unknown }): ReactNode {
 	return (
 		<div className="mt-2 flex flex-wrap gap-2">
 			{imgs.map((img, i) => {
-				const src = imageSrc(img.data, img.mimeType);
+				const src = imageSrc(img.data, img.mimeType, assets.blob);
 				if (!src)
 					return (
 						<span
@@ -132,13 +133,17 @@ function Images({ content }: { content: unknown }): ReactNode {
 	);
 }
 
-/** 用户消息附件块解析出的附件芯片：点击以附件形式下载（`attachments/{id}/content`）。 */
+/**
+ * 用户消息附件块解析出的附件芯片：有下载地址（站内 `attachments/{id}/content`、分享页里已发布的公开 URL）
+ * 时点击以附件形式下载，否则是不可点的芯片。
+ */
 export function AttachmentChips({
 	attachments,
 }: {
 	attachments: MessageAttachment[];
 }): ReactNode {
 	const { t } = useTranslation();
+	const assets = useAssetUrls();
 	if (attachments.length === 0) return null;
 	return (
 		<ul
@@ -160,11 +165,12 @@ export function AttachmentChips({
 					</>
 				);
 				const cls = CHIP;
+				const url = a.id ? assets.attachment(a.id) : null;
 				return (
 					<li key={a.path}>
-						{a.id ? (
+						{url ? (
 							<a
-								href={attachmentContentUrl(a.id)}
+								href={url}
 								download={a.name}
 								className={`${cls} hover:bg-hover`}
 								title={a.path}
@@ -235,7 +241,9 @@ function MessageMenu({
 	const ctx = useTranscriptContext();
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const [side, setSide] = useState<"top" | "bottom">("top");
-	const itemCount = entryId ? 3 : 1;
+	// 只读（分享页）：只有「复制」；fork / 标签都要改动线程
+	const editable = entryId !== undefined && !ctx.readOnly;
+	const itemCount = editable ? 3 : 1;
 	return (
 		<div
 			ref={wrapRef}
@@ -271,7 +279,7 @@ function MessageMenu({
 						label: t("common.copy"),
 						onSelect: () => void navigator.clipboard?.writeText(copyText()),
 					},
-					...(entryId
+					...(editable && entryId
 						? [
 								{
 									key: "fork",
@@ -438,10 +446,15 @@ export function ToolCard({
 			running={running}
 			intent={intent ?? live?.intent}
 			partial={partial}
-			host={{
-				hasAgent: () => true,
-				openAgent: (id) => ctx.openSubagent(id),
-			}}
+			host={
+				// 只读（分享页）不提供子 agent 转录查看
+				ctx.readOnly
+					? {}
+					: {
+							hasAgent: () => true,
+							openAgent: (id) => ctx.openSubagent(id),
+						}
+			}
 		/>
 	);
 }

@@ -1,8 +1,9 @@
-/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、附件、计划提案、调试、setup 日志。 */
+/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、附件（含公开发布）、分享、计划提案、调试、setup 日志。 */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import { useShareOverview } from "../../api/share-queries";
 import {
 	attachmentContentUrl,
 	deleteAttachment,
@@ -26,11 +27,14 @@ import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
 import { RoleList } from "../composer/RolePicker";
 import { Markdown } from "../markdown/Markdown";
+import { AttachmentPublishButton } from "../share/AttachmentPublish";
+import { ShareDialog } from "../share/ShareDialog";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
 } from "../transcript/context";
 import { MessageView } from "../transcript/MessageView";
+import { CopyButton } from "../ui/CopyButton";
 import { Badge, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
@@ -1105,6 +1109,8 @@ function AttachmentsDialog({
 	});
 	const [error, setError] = useState<unknown>(null);
 	const [deleting, setDeleting] = useState<string | null>(null);
+	// 已发布附件的撤回要用发布记录的 id（附件列表只带 publicUrl）
+	const overview = useShareOverview();
 	const list = q.data ?? [];
 	return (
 		<Dialog open wide onClose={onClose} title={t("attachments.title")}>
@@ -1117,7 +1123,10 @@ function AttachmentsDialog({
 			)}
 			<ul className="flex flex-col divide-y divide-border">
 				{list.map((a) => (
-					<li key={a.id} className="flex items-center gap-3 py-2 text-sm">
+					<li
+						key={a.id}
+						className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+					>
 						<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset text-faint">
 							<Icon name={attachmentIcon(a.mime)} size={15} aria-hidden />
 						</span>
@@ -1126,47 +1135,67 @@ function AttachmentsDialog({
 							<span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-faint text-xs tabular-nums">
 								<Badge>{formatBytes(a.size)}</Badge>
 								<span>{formatDateTime(a.createdAt)}</span>
+								{a.publicUrl && (
+									<>
+										<Badge icon="globe">{t("publish.published")}</Badge>
+										<CopyButton
+											text={a.publicUrl}
+											ariaLabel={t("publish.copyUrl")}
+										/>
+									</>
+								)}
 							</span>
 						</span>
-						<a
-							href={attachmentContentUrl(a.id)}
-							download={a.name}
-							className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
-						>
-							<Icon name="download" size={13} aria-hidden />
-							{t("attachments.download")}
-						</a>
-						<Button
-							size="sm"
-							variant="danger"
-							icon="trash"
-							disabled={deleting === a.id}
-							onClick={async () => {
-								if (
-									!window.confirm(
-										t("attachments.deleteConfirm", { name: a.name }),
+						<span className="ml-auto flex shrink-0 items-center gap-1">
+							<AttachmentPublishButton
+								attachment={a}
+								published={overview.data?.files.find(
+									(f) => f.attachmentId === a.id,
+								)}
+								onError={setError}
+							/>
+							<a
+								href={attachmentContentUrl(a.id)}
+								download={a.name}
+								className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
+							>
+								<Icon name="download" size={13} aria-hidden />
+								{t("attachments.download")}
+							</a>
+							<Button
+								size="sm"
+								variant="danger"
+								icon="trash"
+								disabled={deleting === a.id}
+								onClick={async () => {
+									if (
+										!window.confirm(
+											t("attachments.deleteConfirm", { name: a.name }),
+										)
 									)
-								)
-									return;
-								setError(null);
-								setDeleting(a.id);
-								try {
-									await deleteAttachment(a.id);
-									await qc.invalidateQueries({ queryKey: key });
-								} catch (e) {
-									setError(e);
-								} finally {
-									setDeleting(null);
-								}
-							}}
-						>
-							{t("attachments.delete")}
-						</Button>
+										return;
+									setError(null);
+									setDeleting(a.id);
+									try {
+										await deleteAttachment(a.id);
+										await qc.invalidateQueries({ queryKey: key });
+									} catch (e) {
+										setError(e);
+									} finally {
+										setDeleting(null);
+									}
+								}}
+							>
+								{t("attachments.delete")}
+							</Button>
+						</span>
 					</li>
 				))}
 			</ul>
 			{list.length > 0 && (
-				<p className="mt-3 text-faint text-xs">{t("attachments.hint")}</p>
+				<p className="mt-3 text-faint text-xs">
+					{t("attachments.hint")} {t("publish.hint")}
+				</p>
 			)}
 		</Dialog>
 	);
@@ -1392,6 +1421,8 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 			return <DebugDialog threadId={threadId} onClose={close} />;
 		case "attachments":
 			return <AttachmentsDialog threadId={threadId} onClose={close} />;
+		case "share":
+			return <ShareDialog threadId={threadId} onClose={close} />;
 		case "setupLog":
 			return (
 				<SetupLogDialog

@@ -582,7 +582,9 @@
 		"secrets": "Secrets",
 		"git-identity": "Git identity",
 		"agent-config": "Agent config",
-		"about": "About"
+		"about": "About",
+		"notifications": "Notifications",
+		"shares": "Public sharing"
 	},
 	"devices": {
 		"approveTitle": "Approve pairing",
@@ -950,6 +952,12 @@
 			"typechange": "Type changed",
 			"untracked": "Untracked",
 			"conflicted": "Conflicted"
+		},
+		"sync": {
+			"button": "Sync",
+			"copyMirror": "Copy live mirror command",
+			"copyApply": "Copy one-time apply command",
+			"hint": "Run it in a local checkout of this project; the checkout must have no uncommitted changes."
 		}
 	},
 	"editor": {
@@ -1071,5 +1079,212 @@
 			"dynamic": "Start it again with oryn orb service start {{name}} and a different --port (or no --port to get one assigned automatically)."
 		},
 		"errorHint": "Check the log for details."
+	},
+	"notify": {
+		"title": "Notifications",
+		"bell": "Notifications",
+		"bellUnread": "Notifications ({{n}} unread)",
+		"unread": "Unread",
+		"markAllRead": "Mark all read",
+		"empty": "No notifications yet",
+		"emptyHint": "You'll be reminded here when a thread finishes, needs your answer, or fails.",
+		"untitled": "Untitled thread",
+		"toastRegion": "Notification alerts",
+		"kind": {
+			"done": "Done",
+			"input": "Needs input",
+			"error": "Error"
+		},
+		"kindBody": {
+			"done": "The turn finished",
+			"input": "Waiting for your answer",
+			"error": "The thread hit an error"
+		}
+	},
+	"notifySettings": {
+		"device": {
+			"title": "This device",
+			"permission": "System notifications",
+			"perm": {
+				"granted": "Allowed",
+				"denied": "Blocked",
+				"default": "Not set",
+				"unsupported": "Unsupported"
+			},
+			"allow": "Allow system notifications",
+			"deniedHint": "The browser blocked them; allow notifications again in the site settings.",
+			"unsupported": "This browser doesn't support system notifications; they still show up in the sidebar bell.",
+			"insecure": "System notifications and background push need HTTPS. This connection isn't secure, so notifications only show up in the sidebar bell.",
+			"homeScreen": "On iPhone / iPad, use Safari's Share → Add to Home Screen first, then open Oryn from the home screen to turn on background push.",
+			"push": "Background push (works even with the tab closed)",
+			"pushHint": "Delivered through the browser's push service. When off, this device only gets notifications while the page is open.",
+			"others": "Other subscribed browsers",
+			"subscribedAt": "Subscribed {{when}}",
+			"remove": "Remove subscription"
+		},
+		"channels": "Channels",
+		"add": "Add channel",
+		"onlyOne": "Only one allowed",
+		"noChannels": "No channels yet. Once added, threads you aren't watching notify here when they finish, need input, or fail.",
+		"kind": {
+			"telegram": "Telegram",
+			"webhook": "Webhook",
+			"ntfy": "ntfy",
+			"bark": "Bark"
+		},
+		"addTitle": "Add {{kind}} channel",
+		"editTitle": "Edit {{kind}} channel",
+		"name": "Name",
+		"events": "Events to send",
+		"locale": "Message language",
+		"localeHint": "Language of the fixed text in channel messages (such as \"Reply to continue\").",
+		"localeName": {
+			"zhCN": "简体中文",
+			"en": "English"
+		},
+		"keepConfig": "For safety, saved settings aren't shown. Leave every field empty to keep them; filling in any field replaces the whole set (fill in all required fields).",
+		"unchanged": "Leave empty to keep",
+		"headersHint": "One per line, as Name: value.",
+		"telegramHint": "Create a bot with @BotFather to get a token. After creating the channel you'll link it to your private chat.",
+		"field": {
+			"telegram": {
+				"botToken": "Bot token",
+				"apiBase": "Bot API URL (optional)"
+			},
+			"webhook": {
+				"url": "URL",
+				"secret": "Signing secret (optional)",
+				"headers": "Custom headers (optional)"
+			},
+			"ntfy": {
+				"server": "Server (optional)",
+				"topic": "Topic",
+				"token": "Access token (optional)"
+			},
+			"bark": {
+				"server": "Server (optional)",
+				"deviceKey": "Device key"
+			}
+		},
+		"link": {
+			"title": "Link Telegram",
+			"step": "Open {{bot}} in Telegram and send this message:",
+			"waiting": "Waiting for the link… (code valid until {{when}})",
+			"renew": "Get a new code",
+			"linked": "Linked",
+			"linkedChat": "Notifications go to \"{{chat}}\". Tap a button or reply to a notification in Telegram to answer.",
+			"done": "Done"
+		},
+		"status": {
+			"ok": "Working",
+			"err": "Last delivery failed",
+			"neutral": "Disabled"
+		},
+		"enabled": "Enabled",
+		"test": "Test",
+		"testing": "Sending a test message…",
+		"testOk": "Test message sent",
+		"testFailed": "Test failed: {{error}}",
+		"notLinked": "No private chat linked yet; link one before testing.",
+		"linkedTo": "Linked to {{chat}}",
+		"linkNow": "Link private chat",
+		"deleteConfirm": "Delete the channel \"{{name}}\"? Its delivery records are deleted too.",
+		"recent": "Recent notifications",
+		"target": {
+			"telegram": "Telegram",
+			"webhook": "Webhook",
+			"ntfy": "ntfy",
+			"bark": "Bark",
+			"webpush": "Browser push",
+			"apns": "APNs",
+			"fcm": "FCM"
+		},
+		"delivery": {
+			"sent": "Delivered · {{when}}",
+			"pending": "Retrying ({{n}} attempts so far) · next {{when}}",
+			"failed": "Failed ({{n}} attempts) · {{when}}"
+		}
+	},
+	"share": {
+		"page": {
+			"snapshotBadge": "Snapshot · {{date}}",
+			"copyLink": "Copy link",
+			"markdown": "Markdown",
+			"footer": "Shared from Oryn · read-only",
+			"gone": "This link doesn't exist or has been revoked",
+			"goneHint": "Ask the person who shared it for a new link.",
+			"retry": "Retry"
+		},
+		"mode": {
+			"snapshot": "Snapshot",
+			"live": "Live"
+		},
+		"dialog": {
+			"title": "Share thread",
+			"existing": "Public links",
+			"none": "No public links yet.",
+			"open": "Open",
+			"revoke": "Revoke",
+			"revokeConfirm": "Confirm revoke",
+			"newTitle": "New link",
+			"snapshotHint": "Frozen at the current content",
+			"liveHint": "New content will be public too",
+			"scope": "Public content includes messages, thinking, tool calls and their output, images, and usage. Subagent transcripts and abandoned branches are excluded. Image content is not scanned.",
+			"create": "Create link",
+			"createdCopied": "Created — link copied"
+		},
+		"findings": {
+			"title": "Possible secrets found: {{n}}",
+			"hint": "These will be public with the link. Continue only if that's fine; otherwise deal with them in the thread and create the link again.",
+			"truncated": "Showing the first 200 only",
+			"ack": "I've checked; share anyway",
+			"createAnyway": "Create anyway",
+			"count": "×{{n}}",
+			"secretName": "Secret {{name}}"
+		},
+		"role": {
+			"user": "User message",
+			"assistant": "Assistant message",
+			"toolResult": "Tool output"
+		},
+		"rule": {
+			"vault_secret": "Stored secret",
+			"private_key": "Private key",
+			"api_key_sk": "API key (sk-)",
+			"github_token": "GitHub token",
+			"aws_access_key": "AWS access key",
+			"google_api_key": "Google API key",
+			"slack_token": "Slack token",
+			"jwt": "JWT",
+			"oryn_token": "Oryn token",
+			"bearer_header": "Authorization header",
+			"url_credentials": "Credentials in URL"
+		},
+		"header": {
+			"action": "Share…",
+			"badge": "Public",
+			"badgeTitle": "{{n}} public links — click to manage"
+		},
+		"settings": {
+			"threads": "Public threads",
+			"files": "Public files",
+			"empty": "Nothing is public",
+			"emptyHint": "Create links from a thread's More actions → Share…; publish attachments from the attachments dialog and orb files from the Files panel's context menu.",
+			"createdAt": "Made public {{when}}",
+			"findings": "{{n}} findings acknowledged",
+			"fileThread": "Thread",
+			"noThreads": "No public threads.",
+			"noFiles": "No public files."
+		}
+	},
+	"publish": {
+		"publish": "Publish",
+		"unpublish": "Unpublish",
+		"unpublishConfirm": "Confirm unpublish",
+		"copyUrl": "Copy public link",
+		"published": "Public",
+		"orbFile": "Publish as public link",
+		"orbFileDone": "Public link copied. This is a copy of the file as it is now; later changes in the orb won't sync.",
+		"hint": "Anyone with the link can download a published file; unpublishing disables the link immediately."
 	}
 }

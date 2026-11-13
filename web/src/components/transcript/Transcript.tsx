@@ -416,6 +416,7 @@ export function Transcript({
 	footer,
 	insetTop = 0,
 	insetBottom = 0,
+	startAtTop = false,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
@@ -423,6 +424,8 @@ export function Transcript({
 	insetTop?: number;
 	/** 底部被玻璃输入坞覆盖的高度（px）：输入坞高度 + `DOCK_GAP` 留白（ThreadPage 传入 `dockH + 16`）。 */
 	insetBottom?: number;
+	/** 从开头读起（快照分享页）：不贴底，内容增长时不跟随，直到读者自己滚到底。 */
+	startAtTop?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId } = useTranscriptContext();
@@ -434,14 +437,17 @@ export function Transcript({
 	}, [hasUser, pending, threadId]);
 	const pendingText = hasUser ? undefined : pending;
 	const turns = useMemo(() => layoutTurns(items), [items]);
-	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）
-	const working = useIndex((s) => s.threads[threadId]?.state === "working");
+	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）。
+	// 状态以线程索引为准；不在索引里的线程（分享页）取线程 store 自己的摘要
+	const indexState = useIndex((s) => s.threads[threadId]?.state);
+	const ownState = useThread(threadId, (s) => s.thread?.state);
+	const working = (indexState ?? ownState) === "working";
 	const liveStart = working ? turns.openStart : undefined;
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const gaps = useMemo(() => rowGaps(items, turns.footers), [items, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
-	const stick = useRef(true);
+	const stick = useRef(!startAtTop);
 	const count = items.length + 1; // 末尾一项放 footer（工作中指示等）
 	const virtualizer = useVirtualizer({
 		count,
@@ -473,7 +479,9 @@ export function Transcript({
 		if (stick.current) scrollToEnd();
 	}, [items, total, insetBottom, scrollToEnd]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时定一次起始位置
 	useEffect(() => {
+		if (startAtTop) return;
 		stick.current = true;
 		scrollToEnd();
 	}, [scrollToEnd]);

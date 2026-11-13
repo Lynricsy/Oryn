@@ -1,13 +1,15 @@
 /**
  * 线程右侧面板的 Files 标签：根切换器 `Workspace | Home | Agent 配置`。
  * orb 已删除（`orbId` 为空）时只剩 Agent 配置并提示；Agent 配置保存成功后提示「对新 orb 与下次唤醒生效」。
+ * orb 里的文件可「发布为公开链接」（复制成附件后发布，见 `usePublishOrbFile`）。
  */
 import { type ReactNode, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { usePublishOrbFile } from "../../api/share-queries";
 import { agentConfigSource, orbFileSource } from "../../lib/file-source";
 import { Icon } from "../ui/icons";
 import { Button } from "../ui/primitives";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, type FilePublisher } from "./FileBrowser";
 import { useWorkspaceActivity } from "./hooks";
 
 export default function FilesPanel({
@@ -24,6 +26,14 @@ export default function FilesPanel({
 		return orbId ? [orbFileSource(orbId), agent] : [agent];
 	}, [orbId]);
 	const [refreshKey, bump] = useReducer((n: number) => n + 1, 0);
+	const publishFile = usePublishOrbFile(orbId ?? "");
+	const publisher: FilePublisher | undefined = orbId
+		? {
+				sourceId: `orb:${orbId}`,
+				run: async (path) =>
+					(await publishFile.mutateAsync({ path, threadId })).url,
+			}
+		: undefined;
 	useWorkspaceActivity(orbId ? threadId : undefined, bump);
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -53,6 +63,7 @@ export default function FilesPanel({
 					sources={sources}
 					storageKey={`thread.${threadId}`}
 					refreshKey={refreshKey}
+					publisher={publisher}
 				/>
 			</div>
 		</div>

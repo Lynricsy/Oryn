@@ -1,7 +1,7 @@
 /**
  * Markdown 渲染：react-markdown + remark-gfm + remark-breaks（单个换行即换行，与 omp 自带 Web 端的 `breaks: true` 一致）+ rehype-sanitize；代码块按需高亮（highlight.js 懒加载），
  * ```mermaid 图与 $…$ 数学公式在首次出现时才加载 mermaid / KaTeX。
- * `blob:sha256:<hex>` 图片引用改写为 `GET /api/v1/blobs/<hex>`。
+ * `blob:sha256:<hex>` 图片引用改写为 `AssetUrlContext` 给出的地址（站内 `GET /api/v1/blobs/<hex>`，分享页为公开接口）。
  * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
  */
 
@@ -19,6 +19,7 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { useAssetUrls } from "../../lib/asset-urls";
 import { cssColor } from "../../lib/css-color";
 import { useHighlighted } from "../../lib/highlight";
 import { THEME_EVENT } from "../../state/theme";
@@ -336,7 +337,8 @@ export const Markdown = memo(function Markdown({
 	text,
 	streaming = false,
 }: MarkdownProps): ReactNode {
-	const source = text.replace(BLOB_RE, "/api/v1/blobs/$1");
+	const assets = useAssetUrls();
+	const source = text.replace(BLOB_RE, (_, sha: string) => assets.blob(sha));
 	const math = useMath(MATH_RE.test(source));
 	const remarkPlugins: PluggableList = math
 		? [remarkGfm, remarkBreaks, ...math.remark]
