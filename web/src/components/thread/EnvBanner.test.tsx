@@ -77,6 +77,9 @@ function urlOf(input: unknown): string {
 		: String(input);
 }
 
+/** 日志接口返回的正文；个别用例换成带特定报错的日志 */
+let logBody = LOG;
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 	const url = new URL(urlOf(input), "http://x");
 	if (url.pathname === "/api/v1/projects")
@@ -94,7 +97,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			],
 		});
 	if (url.pathname.endsWith("/log"))
-		return new Response(LOG, { headers: { "Content-Type": "text/plain" } });
+		return new Response(logBody, { headers: { "Content-Type": "text/plain" } });
 	if (url.pathname.endsWith("/wake"))
 		return new Response(null, { status: 202 });
 	return Response.json({ code: "not_found", message: "" }, { status: 404 });
@@ -121,6 +124,7 @@ describe("环境提示条", () => {
 		uiStore.getState().close();
 		vi.stubGlobal("fetch", fetchMock);
 		fetchMock.mockClear();
+		logBody = LOG;
 	});
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -179,6 +183,31 @@ describe("环境提示条", () => {
 				urlOf(u).endsWith(`/orbs/${ORB}/setup-runs/osr_log/log`),
 			),
 		).toBe(true);
+	});
+
+	it("失败原因：按退出码与日志尾部写出「哪一步、为什么」和下一步建议，原文留在日志对话框里", async () => {
+		logBody =
+			"running .oryn/setup\n+ pnpm install\n.oryn/setup: line 4: pnpm: command not found\n";
+		setup(
+			orb({
+				lastSetup: run({
+					id: "osr_127",
+					error: ".oryn/setup: exit status 127",
+				}),
+			}),
+		);
+		// 日志到达前就能按退出码判断，到达后补上具体命令名
+		expect(
+			await screen.findByText("「.oryn/setup」调用的命令 pnpm 不存在"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("在脚本里先安装它，或确认它在 PATH 里。"),
+		).toBeInTheDocument();
+		expect(screen.queryByText(".oryn/setup: exit status 127")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: /查看日志/ }));
+		const dialog = await screen.findByRole("dialog");
+		expect(dialog).toHaveTextContent("「.oryn/setup」调用的命令 pnpm 不存在");
+		expect(dialog).toHaveTextContent(".oryn/setup: exit status 127");
 	});
 
 	it("orb 失败：显示原因，没有关闭按钮，「重试」调用 wake", async () => {

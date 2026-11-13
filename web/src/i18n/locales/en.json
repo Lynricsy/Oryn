@@ -706,7 +706,32 @@
 		"repoScript": "Script in repo: {{value}}",
 		"repoScriptYes": "yes",
 		"repoScriptNo": "no",
-		"repoScriptUnknown": "unknown (no setup run yet)"
+		"repoScriptUnknown": "unknown (no setup run yet)",
+		"diag": {
+			"projectScript": "The project {{phase}} script",
+			"repoScript": "{{path}}",
+			"thisScript": "The script",
+			"timeout": "Stopped after exceeding the {{min}}-minute limit",
+			"timeoutHint": "Cache slow downloads and builds, or ask the agent to optimize the script.",
+			"cancelled": "Interrupted while running (the orb stopped or restarted)",
+			"cancelledHint": "It reruns when the orb is ready again; you can also run oryn orb setup run in the orb terminal.",
+			"oom": "{{script}} was killed by the system, usually from running out of memory",
+			"oomHint": "Use an orb type with more memory, or run fewer builds and installs at once.",
+			"notFound": "{{script}} calls {{command}}, which isn't installed",
+			"notFoundAny": "{{script}} calls a command that isn't installed",
+			"notFoundHint": "Install it earlier in the script, or make sure it's on PATH.",
+			"package": "{{script}} installs {{pkg}}, which isn't in the package sources",
+			"packageHint": "Check the package name and version exist for this system (run apt-get update first for apt), or install it another way.",
+			"permission": "{{script}} hit a permission error",
+			"permissionHint": "Make sure the script is executable (chmod +x) and the directories it writes to are writable.",
+			"network": "{{script}} couldn't reach the network",
+			"networkHint": "Check that package sources are reachable (mirror, proxy or egress rules), then rerun.",
+			"disk": "{{script}} ran out of disk space",
+			"diskHint": "Clear caches and build output, or use an orb type with a larger disk.",
+			"exit": "{{script}} exited with code {{code}}",
+			"exitHint": "The error is usually at the end of the log.",
+			"unknownHint": "Check the log for the cause."
+		}
 	},
 	"alerts": {
 		"region": "Notifications",

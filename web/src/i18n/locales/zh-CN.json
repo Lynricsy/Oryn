@@ -706,7 +706,32 @@
 		"repoScript": "仓库内脚本：{{value}}",
 		"repoScriptYes": "有",
 		"repoScriptNo": "无",
-		"repoScriptUnknown": "未知（尚无 setup 记录）"
+		"repoScriptUnknown": "未知（尚无 setup 记录）",
+		"diag": {
+			"projectScript": "项目设置里的 {{phase}} 脚本",
+			"repoScript": "「{{path}}」",
+			"thisScript": "脚本",
+			"timeout": "运行超过 {{min}} 分钟上限，被中止",
+			"timeoutHint": "把耗时的下载、编译换成缓存，或让 agent 优化脚本。",
+			"cancelled": "运行中途被中断（orb 停止或重启）",
+			"cancelledHint": "orb 下次就绪时会自动重跑；也可以在 orb 终端里运行 oryn orb setup run。",
+			"oom": "{{script}}被系统强制结束，通常是内存不足",
+			"oomHint": "换内存更大的 orb 规格，或减少同时进行的编译、安装任务。",
+			"notFound": "{{script}}调用的命令 {{command}} 不存在",
+			"notFoundAny": "{{script}}调用了不存在的命令",
+			"notFoundHint": "在脚本里先安装它，或确认它在 PATH 里。",
+			"package": "{{script}}要安装的软件包 {{pkg}} 在软件源里找不到",
+			"packageHint": "确认包名与版本在当前系统的软件源里存在（apt 先 apt-get update），或换一种安装方式。",
+			"permission": "{{script}}遇到权限不足",
+			"permissionHint": "确认脚本可执行（chmod +x），以及它要写入的目录允许写。",
+			"network": "{{script}}访问网络失败",
+			"networkHint": "确认依赖源能访问（镜像、代理或出网限制），稍后重跑。",
+			"disk": "{{script}}写入时磁盘空间不足",
+			"diskHint": "清理缓存与构建产物，或换磁盘更大的 orb 规格。",
+			"exit": "{{script}}以退出码 {{code}} 结束",
+			"exitHint": "日志末尾通常就是报错原因。",
+			"unknownHint": "查看日志找出原因。"
+		}
 	},
 	"alerts": {
 		"region": "通知",

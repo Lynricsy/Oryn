@@ -194,8 +194,8 @@ export const orbEnv: Record<string, Partial<Orb>> = {
 			phase: "setup",
 			ok: false,
 			durationMs: 71_500,
-			error:
-				".oryn/setup 退出码 100：E: Unable to locate package postgresql-16",
+			// 与 orbd 上报的格式一致（`<label>: exit status N`），原因在日志尾部
+			error: ".oryn/setup: exit status 100",
 		}),
 		lastResume: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e8", 2, {
 			phase: "resume",

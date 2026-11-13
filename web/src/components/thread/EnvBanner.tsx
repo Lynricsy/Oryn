@@ -16,6 +16,10 @@ import {
 } from "../../lib/env-banner";
 import { formatDuration, formatRelative } from "../../lib/format";
 import {
+	diagnoseSetupRun,
+	type SetupDiagnosis,
+} from "../../lib/setup-diagnosis";
+import {
 	fetchSetupRunLog,
 	sendGeneratedPrompt,
 	wakeThread,
@@ -23,7 +27,7 @@ import {
 import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, Stat, StatusDot, type Tone } from "../ui/data";
+import { Badge, Callout, Stat, StatusDot, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -43,6 +47,69 @@ function useProjectOf(threadId: string) {
 	const projects = useProjects();
 	const id = projectId ?? orbProjectId;
 	return id ? projects.data?.projects.find((p) => p.id === id) : undefined;
+}
+
+/**
+ * 失败运行的「原因 + 建议」两句话（`run` 成功或缺省时为 null）；认不出原因时原因就是 orbd 给的原文。
+ * `log` 未到达时只按错误串判断，日志到达后再细化。
+ */
+function useDiagnosisText(
+	run: SetupRun | undefined,
+	log?: string,
+): { cause: string; hint: string } | null {
+	const { t } = useTranslation();
+	const diag: SetupDiagnosis | null = run ? diagnoseSetupRun(run, log) : null;
+	if (!run || !diag) return null;
+	const script =
+		diag.script === null
+			? t("env.diag.projectScript", { phase: t(`env.phase.${run.phase}`) })
+			: diag.script
+				? t("env.diag.repoScript", { path: diag.script })
+				: t("env.diag.thisScript");
+	switch (diag.kind) {
+		case "timeout":
+			return {
+				cause: t("env.diag.timeout", { min: diag.limitMin }),
+				hint: t("env.diag.timeoutHint"),
+			};
+		case "cancelled":
+			return {
+				cause: t("env.diag.cancelled"),
+				hint: t("env.diag.cancelledHint"),
+			};
+		case "notFound":
+			return {
+				cause: diag.command
+					? t("env.diag.notFound", { script, command: diag.command })
+					: t("env.diag.notFoundAny", { script }),
+				hint: t("env.diag.notFoundHint"),
+			};
+		case "exit":
+			return {
+				cause: t("env.diag.exit", { script, code: diag.code }),
+				hint: t("env.diag.exitHint"),
+			};
+		case "unknown":
+			return {
+				cause: run.error || t("env.noReason"),
+				hint: t("env.diag.unknownHint"),
+			};
+		default:
+			return {
+				cause: t(`env.diag.${diag.kind}`, { script, pkg: diag.pkg }),
+				hint: t(`env.diag.${diag.kind}Hint`),
+			};
+	}
+}
+
+/** 失败运行的日志（与日志对话框共用缓存）；只在需要时取。 */
+function useRunLog(orbId: string | undefined, run: SetupRun | undefined) {
+	return useQuery({
+		queryKey: qk.setupRunLog(orbId ?? "", run?.id ?? ""),
+		queryFn: () => fetchSetupRunLog(orbId ?? "", run?.id ?? ""),
+		staleTime: Number.POSITIVE_INFINITY,
+		enabled: Boolean(orbId && run && !run.ok),
+	});
 }
 
 /** 「让 agent 修复 / 优化 / 生成」：取日志尾部、拼提示词、按忙闲以 prompt / follow_up 发送。 */
@@ -106,8 +173,9 @@ function BannerShell({
 			/>
 			<div className="min-w-0 flex-1">
 				<div className="font-medium">{title}</div>
+				{/* 失败时是「原因 + 建议」两句，窄屏各占两行：留 4 行 */}
 				{detail && (
-					<div className="mt-0.5 line-clamp-3 break-words text-muted text-xs">
+					<div className="mt-0.5 line-clamp-4 break-words text-muted text-xs">
 						{detail}
 					</div>
 				)}
@@ -141,6 +209,9 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	const [sent, setSent] = useState<string | null>(null);
 	const [error, setError] = useState<unknown>(null);
 	const banner = selectEnvBanner({ thread, orb, project }, dismissed);
+	const failedRun = banner?.kind === "run_failed" ? banner.run : undefined;
+	const failedLog = useRunLog(orb?.id, failedRun);
+	const diag = useDiagnosisText(failedRun, failedLog.data);
 	if (!banner) return null;
 
 	const act = async (key: string, fn: () => Promise<void>) => {
@@ -200,7 +271,12 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 				: t("env.missing");
 	const detail =
 		banner.kind === "run_failed"
-			? run.error || t("env.noReason")
+			? diag && (
+					<>
+						<div className="text-muted">{diag.cause}</div>
+						<div className="text-faint">{diag.hint}</div>
+					</>
+				)
 			: banner.kind === "slow_setup"
 				? t("env.slowHint")
 				: t("env.missingHint");
@@ -291,6 +367,7 @@ export function SetupLogDialog({
 		queryFn: () => fetchSetupRunLog(orbId, run.id),
 		staleTime: Number.POSITIVE_INFINITY,
 	});
+	const diag = useDiagnosisText(run, log.data);
 	const pre = useRef<HTMLPreElement>(null);
 	// 日志加载后滚到末尾（失败原因通常在最后）
 	useEffect(() => {
@@ -341,8 +418,18 @@ export function SetupLogDialog({
 				<span className="flex-1" />
 				{log.data && <CopyButton text={log.data} label={t("common.copy")} />}
 			</div>
-			{run.error && (
-				<p className="mb-2 break-words text-err text-sm">{run.error}</p>
+			{diag && (
+				<div className="mb-2">
+					<Callout tone="err" title={diag.cause}>
+						{diag.hint}
+						{/* 已归纳出原因时，orbd 的原文仍留着备查 */}
+						{run.error && run.error !== diag.cause && (
+							<div className="mt-1 break-words font-mono text-2xs opacity-80">
+								{run.error}
+							</div>
+						)}
+					</Callout>
+				</div>
 			)}
 			{log.isPending ? (
 				<Spinner />
