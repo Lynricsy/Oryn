@@ -153,6 +153,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
 
 	s.API = &api.Server{Deps: deps}
+	// App 会话兑换（M6）：不在 /api/v1 下，壳以顶层导航到达
+	mounts[api.AppSessionPath] = s.API.AppSessionHandler()
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}

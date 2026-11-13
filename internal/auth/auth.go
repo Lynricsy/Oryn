@@ -58,6 +58,8 @@ type Principal struct {
 	ID string
 	// Recovery 为真表示恢复码换来的一次性会话（只能重新注册 Passkey）。
 	Recovery bool
+	// DeviceID 在 Kind == KindWeb 且会话由设备换取（App 会话，M6）时为 dev_…，其余为空。
+	DeviceID string
 }
 
 type ctxKey struct{}
@@ -143,6 +145,10 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 	if isMutation(r.Method) && r.Header.Get(CSRFHeader) != "1" {
 		return Principal{}, errCSRF
 	}
+	p := Principal{Kind: KindWeb, ID: ws.IDHash, Recovery: ws.Kind == sessionKindRecovery}
+	if ws.DeviceID != nil {
+		p.DeviceID = *ws.DeviceID
+	}
 	if ws.Kind == sessionKindFull {
 		now := time.Now()
 		if now.Sub(time.UnixMilli(ws.LastSeenAt)) >= sessionTouchEvery {
@@ -151,10 +157,15 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 				LastSeenAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli(), IDHash: ws.IDHash,
 			}); err == nil {
 				SetSessionCookie(w, cookie, exp)
+				// App 会话：让设备列表的「最近活跃」对 App 有效
+				if p.DeviceID != "" {
+					ms := now.UnixMilli()
+					_ = st.Q.TouchDevice(ctx, db.TouchDeviceParams{LastSeenAt: &ms, ID: p.DeviceID})
+				}
 			}
 		}
 	}
-	return Principal{Kind: KindWeb, ID: ws.IDHash, Recovery: ws.Kind == sessionKindRecovery}, nil
+	return p, nil
 }
 
 // DeviceByToken 校验设备令牌 `odt_…`（存在且未吊销），按 deviceTouchEvery 节流更新 last_seen_at。

@@ -31,6 +31,32 @@ func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const createDeviceWebSession = `-- name: CreateDeviceWebSession :exec
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, device_id)
+VALUES (?1, 'full', ?2, ?3, ?4, ?5, ?6)
+`
+
+type CreateDeviceWebSessionParams struct {
+	IDHash     string  `json:"idHash"`
+	CreatedAt  int64   `json:"createdAt"`
+	ExpiresAt  int64   `json:"expiresAt"`
+	LastSeenAt int64   `json:"lastSeenAt"`
+	UserAgent  string  `json:"userAgent"`
+	DeviceID   *string `json:"deviceId"`
+}
+
+func (q *Queries) CreateDeviceWebSession(ctx context.Context, arg CreateDeviceWebSessionParams) error {
+	_, err := q.db.ExecContext(ctx, createDeviceWebSession,
+		arg.IDHash,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.LastSeenAt,
+		arg.UserAgent,
+		arg.DeviceID,
+	)
+	return err
+}
+
 const createOwner = `-- name: CreateOwner :exec
 INSERT INTO owner (id, display_name, user_handle, created_at) VALUES (1, ?1, ?2, ?3)
 `
@@ -142,6 +168,33 @@ func (q *Queries) DeleteWebSession(ctx context.Context, idHash string) error {
 	return err
 }
 
+const deleteWebSessionsByDevice = `-- name: DeleteWebSessionsByDevice :many
+DELETE FROM web_sessions WHERE device_id = ?1 RETURNING id_hash
+`
+
+func (q *Queries) DeleteWebSessionsByDevice(ctx context.Context, deviceID *string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, deleteWebSessionsByDevice, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id_hash string
+		if err := rows.Scan(&id_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, id_hash)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOwner = `-- name: GetOwner :one
 
 SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image FROM owner WHERE id = 1
@@ -187,7 +240,7 @@ func (q *Queries) GetPasskey(ctx context.Context, id []byte) (Passkey, error) {
 }
 
 const getWebSession = `-- name: GetWebSession :one
-SELECT id_hash, kind, created_at, expires_at, last_seen_at, user_agent FROM web_sessions WHERE id_hash = ?1
+SELECT id_hash, kind, created_at, expires_at, last_seen_at, user_agent, device_id FROM web_sessions WHERE id_hash = ?1
 `
 
 func (q *Queries) GetWebSession(ctx context.Context, idHash string) (WebSession, error) {
@@ -200,6 +253,7 @@ func (q *Queries) GetWebSession(ctx context.Context, idHash string) (WebSession,
 		&i.ExpiresAt,
 		&i.LastSeenAt,
 		&i.UserAgent,
+		&i.DeviceID,
 	)
 	return i, err
 }

@@ -497,3 +497,40 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 - VAPID 私钥存 `<data_dir>/vapid.key`（32 字节标量，0600，首次启动生成；与 `master.key` 一起备份）。
 
 查询见 `internal/store/queries/share.sql`（含范围读取 `ListMainEntryLinks`、`ListEntriesBySeqRange`、`ListEntrySeqsContaining`，均以 `instr(file, '/') = 0` 排除子 agent 文件）与 `notify.sql`（含投递队列 `ListDueNotificationDeliveries`、`GetNextNotificationDeliveryAt`）。
+
+## M6：App 会话
+
+桌面（M6）与移动（M7）App 的壳加载所配对服务器自己的 Web UI。Web 客户端全部按同源写（REST、`/api/v1/blobs/…` 图片、下载链接、WS、portal 握手都靠主域名会话 Cookie），所以壳不把设备令牌交给页面，而是用它换一条**设备名下的网页会话**：令牌只留在壳进程与系统凭据库里，控制面不需要任何 CORS 改动。换取方式照搬 portal 握手的「一次性码 + 顶层跳转」，不依赖任何 WebView 的 Cookie API。
+
+### 端点
+
+|方法与路径|operationId|鉴权|行为|
+|---|---|---|---|
+|`POST /api/v1/auth/app-session`|`createAppSession`|Bearer `odt_…`（设备 `kind ∈ {desktop, mobile}`）|`200 AppSessionCode{code, expiresIn}`：`code = oac_…`；其它主体（网页会话 / App 会话 / `cli` 设备）→ `403 app_session_unsupported`；令牌无效或已吊销 → `401 unauthorized`|
+|`GET /auth/app?code=<oac_…>&next=<站内路径>`|—（不在 `/api/v1` 下，经 `Deps.Mounts` 挂载）|码本身|只接受 GET / HEAD（其余 `405` + `Allow: GET, HEAD`）；按 `login` 桶限流（每 IP 突发 10、每 6s 补 1）；响应头 `Cache-Control: no-store`、`Referrer-Policy: no-referrer`；兑换成功写 `__Host-oryn_session`（属性同登录：`Path=/; HttpOnly; Secure; SameSite=Lax`，30 天）；**无论成败都 `302 next`**——失败时 SPA 的 `GET me` 得 401，由壳重新换取|
+
+`next` 只放行站内绝对路径：以 `/` 开头、第二个字符不是 `/` 或 `\`、不含任何 ASCII 控制字符（浏览器会删掉 Tab / CR / LF，`/\t/evil` 会变成 `//evil`）、长度 ≤2048；否则跳到 `/`。
+
+### 码的寿命
+
+- 只在内存中（`auth.NewCodes("oac")`，与 WS 票据同一实现），`TicketTTL` = 30 秒、只能兑换一次；控制面重启即失效。
+- 吊销设备时作废该设备全部未兑换的码；兑换在写事务（`BEGIN IMMEDIATE`）内复核设备未吊销且类型仍为 desktop / mobile，与吊销串行，不会留下吊销之后才建成的会话。
+
+### 会话与设备的绑定
+
+- 会话就是 `web_sessions(kind='full')` 加一列 `device_id`（`0013_app_sessions.sql`，部分索引 `WHERE device_id IS NOT NULL`；不声明外键——SQLite 的 `DROP COLUMN` 删不了带外键的列，设备行只吊销不删除）。所以 WS 票据、CSRF、portal 握手（`ws.kind = 'full'`）、Web Push 订阅与普通网页会话完全一样。
+- 兑换时在同一事务里删除该设备已有的网页会话（事务后逐个发布 `(web, 哈希)` 吊销事件）再新建一条：**每台设备至多一条 App 会话**，重新换取即顶掉旧的。兑换与滑动续期都更新设备的 `last_seen_at`。
+- 鉴权主体：`Principal{Kind: "web", ID: <会话哈希>, DeviceID: "dev_…"}`；`GET me` 返回 `auth.kind = "web"` 且带 `auth.deviceId`；`GET devices` 里该设备 `current = true`。
+- 吊销设备（`DELETE /api/v1/devices/{id}`）：标记吊销 → 作废未兑换的码 → 删除其全部网页会话 → 先发布 `(device, id)`，再逐个发布 `(web, 哈希)`；实时通道、portal（portal 会话随网页会话级联删除）与票据表都已订阅吊销事件，连接立即断开。
+
+### 权限边界
+
+- App 会话是 Cookie 会话：变更请求同样要 `X-Oryn-CSRF: 1`。
+- App 会话**不能**查看或批准设备配对（`requireWeb` 拒绝 `DeviceID` 非空的主体，`403 forbidden`），保住「设备令牌不能再签发设备」这条不变式；也不能再换 App 会话。
+- 重新注册 Passkey 仍只接受初始化令牌或恢复会话，App 会话与完整网页会话一样做不到。
+
+### 错误码
+
+|code|HTTP|来源|
+|---|---|---|
+|`app_session_unsupported`|403|`createAppSession`（主体不是 desktop / mobile 设备令牌）|

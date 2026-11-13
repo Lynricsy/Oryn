@@ -39,13 +39,13 @@ func (s *Server) DevicePairStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requireWeb 要求完整网页会话；否则写出 401/403。
+// requireWeb 要求完整网页会话（不含设备换来的 App 会话：设备令牌不能再签发设备）；否则写出 401/403。
 func requireWeb(w http.ResponseWriter, r *http.Request) bool {
 	p, ok := principal(w, r)
 	if !ok {
 		return false
 	}
-	if p.Kind != auth.KindWeb || p.Recovery {
+	if p.Kind != auth.KindWeb || p.Recovery || p.DeviceID != "" {
 		WriteError(w, http.StatusForbidden, "forbidden", "只能在已登录的网页上查看或批准配对")
 		return false
 	}
@@ -112,7 +112,7 @@ func (s *Server) ListDevices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cur := ""
+	cur := p.DeviceID
 	if p.Kind == auth.KindDevice {
 		cur = p.ID
 	}

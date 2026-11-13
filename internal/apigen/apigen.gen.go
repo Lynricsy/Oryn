@@ -1652,6 +1652,17 @@ type AgentLiveState struct {
 // AgentStatus 线程 agent 进程状态；`none` = 尚未启动或 orb 不可用
 type AgentStatus string
 
+// AppSessionCode App 会话一次性码（M6）；以 `GET /auth/app?code=…&next=…` 兑换
+type AppSessionCode struct {
+	// Code `oac_…`，只能兑换一次
+	Code string `json:"code"`
+
+	// ExpiresIn 有效秒数
+	//
+	// Example: 30
+	ExpiresIn int `json:"expiresIn"`
+}
+
 // Attachment defines model for Attachment.
 type Attachment struct {
 	// CreatedAt UTC 毫秒时间戳
@@ -1917,6 +1928,7 @@ type Error struct {
 	// M5（分享、通知与 sync，HTTP 状态见 docs/protocol.md）：`invalid`（400 / 409）、`secrets_found`（409，体为 `ShareScanConflict`）、
 	// `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
 	// `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
+	// M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -2656,7 +2668,7 @@ type LinkStreamPortalT string
 // Me defines model for Me.
 type Me struct {
 	Auth struct {
-		// DeviceID `dev_<ulid>`
+		// DeviceID 设备令牌鉴权时为该设备；App 会话（`kind = web` 且由设备换取）时同样给出
 		DeviceID *DeviceID  `json:"deviceId,omitempty"`
 		Kind     MeAuthKind `json:"kind"`
 	} `json:"auth"`
@@ -6406,6 +6418,9 @@ type ServerInterface interface {
 	// PublishAttachment 把附件发布为公开 URL（幂等：已发布则返回现有发布）
 	// (POST /api/v1/attachments/{id}/publish)
 	PublishAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath)
+	// CreateAppSession 桌面 / 移动 App 用设备令牌换取网页会话的一次性码（M6）
+	// (POST /api/v1/auth/app-session)
+	CreateAppSession(w http.ResponseWriter, r *http.Request)
 	// AuthLoginBegin 开始 Passkey 登录（可发现凭据）
 	// (POST /api/v1/auth/login/begin)
 	AuthLoginBegin(w http.ResponseWriter, r *http.Request)
@@ -6763,6 +6778,12 @@ func (_ Unimplemented) GetAttachmentContent(w http.ResponseWriter, r *http.Reque
 // PublishAttachment 把附件发布为公开 URL（幂等：已发布则返回现有发布）
 // (POST /api/v1/attachments/{id}/publish)
 func (_ Unimplemented) PublishAttachment(w http.ResponseWriter, r *http.Request, id AttachmentIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateAppSession 桌面 / 移动 App 用设备令牌换取网页会话的一次性码（M6）
+// (POST /api/v1/auth/app-session)
+func (_ Unimplemented) CreateAppSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7628,6 +7649,20 @@ func (siw *ServerInterfaceWrapper) PublishAttachment(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PublishAttachment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAppSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateAppSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAppSession(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -10707,6 +10742,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/logout", wrapper.AuthLogout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/app-session", wrapper.CreateAppSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/me", wrapper.GetMe)

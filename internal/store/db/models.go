@@ -380,10 +380,11 @@ type UsageRecord struct {
 }
 
 type WebSession struct {
-	IDHash     string `json:"idHash"`
-	Kind       string `json:"kind"`
-	CreatedAt  int64  `json:"createdAt"`
-	ExpiresAt  int64  `json:"expiresAt"`
-	LastSeenAt int64  `json:"lastSeenAt"`
-	UserAgent  string `json:"userAgent"`
+	IDHash     string  `json:"idHash"`
+	Kind       string  `json:"kind"`
+	CreatedAt  int64   `json:"createdAt"`
+	ExpiresAt  int64   `json:"expiresAt"`
+	LastSeenAt int64   `json:"lastSeenAt"`
+	UserAgent  string  `json:"userAgent"`
+	DeviceID   *string `json:"deviceId"`
 }

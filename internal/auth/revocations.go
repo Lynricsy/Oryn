@@ -54,6 +54,8 @@ func (s *Service) Subscribe(fn func(principalKind, principalID string)) (cancel 
 }
 
 // RevokeDevice 吊销设备（幂等）并发布吊销事件；设备不存在返回 404 错误。
+// 同时作废该设备未兑换的 App 会话一次性码，并删除它换来的网页会话（App 会话，M6）：
+// 先发布 (device, id)，再逐个发布 (web, 会话哈希)，让实时通道、portal 与票据表一并失效。
 func (s *Service) RevokeDevice(ctx context.Context, id string) error {
 	if _, err := s.st.Q.GetDevice(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -65,8 +67,13 @@ func (s *Service) RevokeDevice(ctx context.Context, id string) error {
 	if _, err := s.st.Q.RevokeDevice(ctx, db.RevokeDeviceParams{RevokedAt: &now, ID: id}); err != nil {
 		return err
 	}
+	s.appCodes.Revoke(KindDevice, id)
+	sessions, err := s.st.Q.DeleteWebSessionsByDevice(ctx, &id)
 	s.revocations.publish(KindDevice, id)
-	return nil
+	for _, h := range sessions {
+		s.revocations.publish(KindWeb, h)
+	}
+	return err
 }
 
 // PrincipalValid 复核主体当前是否仍有效：设备未吊销；网页会话仍存在且未过期。

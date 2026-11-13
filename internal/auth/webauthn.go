@@ -46,6 +46,8 @@ type Service struct {
 
 	limiter     *limiter
 	revocations revocations
+	// appCodes 是 App 会话一次性码（`oac_…`，见 appsession.go）。
+	appCodes *Tickets
 
 	mu   sync.Mutex
 	used map[string]time.Time
@@ -92,7 +94,10 @@ func NewService(st *store.Store, dataDir, publicURL string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{st: st, dataDir: dataDir, wa: wa, aead: aead, limiter: newLimiter(), used: map[string]time.Time{}}, nil
+	return &Service{
+		st: st, dataDir: dataDir, wa: wa, aead: aead, limiter: newLimiter(), used: map[string]time.Time{},
+		appCodes: NewCodes("oac"),
+	}, nil
 }
 
 // Store 返回底层存储。

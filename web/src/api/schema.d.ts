@@ -130,6 +130,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/app-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 桌面 / 移动 App 用设备令牌换取网页会话的一次性码（M6）
+         * @description 只接受 `kind ∈ {desktop, mobile}` 的设备令牌（Bearer `odt_…`）；其它主体（含网页会话、cli 设备）返回
+         *     403 `app_session_unsupported`。一次性码 30 秒有效、只能兑换一次：壳把主窗口导航到
+         *     `GET /auth/app?code=<码>&next=<站内路径>`，服务端写会话 Cookie `__Host-oryn_session` 并 302 到 `next`。
+         *     换得的会话绑定该设备：吊销设备即删除其会话；不能批准设备配对。详见 docs/protocol.md「M6：App 会话」。
+         */
+        post: operations["createAppSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1895,6 +1918,7 @@ export interface components {
              *     M5（分享、通知与 sync，HTTP 状态见 docs/protocol.md）：`invalid`（400 / 409）、`secrets_found`（409，体为 `ShareScanConflict`）、
              *     `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
              *     `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
+             *     M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
              */
             code: string;
             message: string;
@@ -1985,9 +2009,20 @@ export interface components {
             auth: {
                 /** @enum {string} */
                 kind: "web" | "device" | "recovery";
+                /** @description 设备令牌鉴权时为该设备；App 会话（`kind = web` 且由设备换取）时同样给出 */
                 deviceId?: components["schemas"]["DeviceId"];
             };
             passkeyCount?: number;
+        };
+        /** @description App 会话一次性码（M6）；以 `GET /auth/app?code=…&next=…` 兑换 */
+        AppSessionCode: {
+            /** @description `oac_…`，只能兑换一次 */
+            code: string;
+            /**
+             * @description 有效秒数
+             * @example 30
+             */
+            expiresIn: number;
         };
         Device: {
             id: components["schemas"]["DeviceId"];
@@ -4100,6 +4135,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createAppSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一次性码 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSessionCode"];
+                };
             };
             default: components["responses"]["Error"];
         };

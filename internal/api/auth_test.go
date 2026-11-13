@@ -66,6 +66,7 @@ func newH2Env(t *testing.T) *h2Env {
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}
 	e := &h2Env{t: t, st: st, dataDir: dir, vault: secrets.NewVault(st, box), tickets: auth.NewTickets(), svc: svc}
 	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home}
+	s.Mounts = map[string]http.Handler{api.AppSessionPath: s.AppSessionHandler()}
 	e.srv = httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(e.srv.Close)
 	return e
@@ -499,4 +500,162 @@ func TestPublicEndpointRateLimit(t *testing.T) {
 		e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": "x"})
 	}
 	assert.Equal(t, 429, e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": "x"}).status)
+}
+
+// appGet 以不跟随跳转的客户端请求 App 会话兑换端点。
+func (e *h2Env) appGet(method, rawQuery string) *http.Response {
+	e.t.Helper()
+	req, err := http.NewRequest(method, e.srv.URL+api.AppSessionPath+"?"+rawQuery, nil)
+	require.NoError(e.t, err)
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Do(req)
+	require.NoError(e.t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	return resp
+}
+
+func sessionCookie(resp *http.Response) *http.Cookie {
+	for _, c := range resp.Cookies() {
+		if c.Name == auth.CookieName {
+			return c
+		}
+	}
+	return nil
+}
+
+// M6：App 会话——desktop 设备令牌换一次性码，顶层跳转兑换成绑定设备的网页会话。
+func TestAppSession(t *testing.T) {
+	e := newH2Env(t)
+	ctx := context.Background()
+	dev, tok, err := auth.CreateDevice(ctx, e.st, "laptop", "desktop", "linux")
+	require.NoError(t, err)
+	_, _, err = auth.CreateDevice(ctx, e.st, "phone", "mobile", "android")
+	require.NoError(t, err)
+	_, cliTok, err := auth.CreateDevice(ctx, e.st, "cli", "cli", "linux")
+	require.NoError(t, err)
+
+	mint := func() string {
+		t.Helper()
+		r := e.do("POST", "/api/v1/auth/app-session", h2Cred{bearer: tok}, nil)
+		require.Equal(t, 200, r.status, string(r.body))
+		var c struct {
+			Code      string
+			ExpiresIn int
+		}
+		r.json(t, &c)
+		assert.True(t, strings.HasPrefix(c.Code, "oac_"), c.Code)
+		assert.Equal(t, 30, c.ExpiresIn)
+		return c.Code
+	}
+
+	// 只有 desktop / mobile 设备令牌能换：网页会话与 cli 令牌 403
+	r := e.do("POST", "/api/v1/auth/app-session", h2Cred{cookie: e.webSession(), csrf: true}, nil)
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "app_session_unsupported", r.code(t))
+	r = e.do("POST", "/api/v1/auth/app-session", h2Cred{bearer: cliTok}, nil)
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "app_session_unsupported", r.code(t))
+	assert.Equal(t, 401, e.do("POST", "/api/v1/auth/app-session", h2Cred{}, nil).status)
+
+	code := mint()
+	resp := e.appGet("GET", url.Values{"code": {code}, "next": {"/t/x"}}.Encode())
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/t/x", resp.Header.Get("Location"))
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+	c := sessionCookie(resp)
+	require.NotNil(t, c, "兑换成功写会话 Cookie")
+	assert.True(t, c.Secure)
+	assert.True(t, c.HttpOnly)
+	assert.Equal(t, "/", c.Path)
+	app := c.Value
+
+	// 同一个码再兑换一次：照样 302，但没有 Set-Cookie
+	resp = e.appGet("GET", url.Values{"code": {code}, "next": {"/t/x"}}.Encode())
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/t/x", resp.Header.Get("Location"))
+	assert.Nil(t, sessionCookie(resp))
+
+	// App 会话：kind 仍为 web，并给出设备
+	r = e.do("GET", "/api/v1/me", h2Cred{cookie: app}, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var me struct {
+		Auth struct{ Kind, DeviceID string }
+	}
+	r.json(t, &me)
+	assert.Equal(t, "web", me.Auth.Kind)
+	assert.Equal(t, dev.ID, me.Auth.DeviceID)
+
+	// 普通网页会话不带 deviceId
+	r = e.do("GET", "/api/v1/me", h2Cred{cookie: e.webSession()}, nil)
+	require.Equal(t, 200, r.status)
+	me.Auth.DeviceID = ""
+	r.json(t, &me)
+	assert.Empty(t, me.Auth.DeviceID)
+
+	// 设备换来的会话不能批准配对（设备令牌不能再签发设备），也不能查看待批准请求
+	r = e.do("POST", "/api/v1/devices/pair/approve", h2Cred{cookie: app, csrf: true}, map[string]string{"code": "ABCD-EFGH"})
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "forbidden", r.code(t))
+	assert.Equal(t, 403, e.do("GET", "/api/v1/devices/pair/ABCD-EFGH", h2Cred{cookie: app}, nil).status)
+
+	// 设备列表里该设备 current == true，其余为 false
+	r = e.do("GET", "/api/v1/devices", h2Cred{cookie: app}, nil)
+	require.Equal(t, 200, r.status)
+	var list struct {
+		Devices []struct {
+			ID      string
+			Current bool
+		}
+	}
+	r.json(t, &list)
+	require.Len(t, list.Devices, 3)
+	for _, d := range list.Devices {
+		assert.Equal(t, d.ID == dev.ID, d.Current, d.ID)
+	}
+
+	// 仍是 Cookie 会话：变更请求要 CSRF 头
+	r = e.do("POST", "/api/v1/ws-ticket", h2Cred{cookie: app}, nil)
+	assert.Equal(t, 403, r.status)
+	r = e.do("POST", "/api/v1/ws-ticket", h2Cred{cookie: app, csrf: true}, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var tk struct{ Ticket string }
+	r.json(t, &tk)
+	who, ok := e.tickets.Redeem(tk.Ticket)
+	require.True(t, ok)
+	assert.Equal(t, auth.KindWeb, who.Kind)
+	assert.Equal(t, dev.ID, who.DeviceID)
+
+	// 跳转目标只放行站内路径
+	for _, next := range []string{"//evil.example", "https://evil.example", `/\evil`, "/\t/evil.example", "evil", ""} {
+		resp = e.appGet("GET", url.Values{"code": {"oac_invalid"}, "next": {next}}.Encode())
+		assert.Equal(t, http.StatusFound, resp.StatusCode, next)
+		assert.Equal(t, "/", resp.Header.Get("Location"), next)
+		assert.Nil(t, sessionCookie(resp), "无效码不写 Cookie")
+	}
+
+	// 只接受 GET / HEAD
+	req, err := http.NewRequest("POST", e.srv.URL+api.AppSessionPath, nil)
+	require.NoError(t, err)
+	pr, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = pr.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, pr.StatusCode)
+	assert.Equal(t, "GET, HEAD", pr.Header.Get("Allow"))
+
+	// HEAD 同样可兑换；新码兑换后旧 App 会话失效
+	resp = e.appGet("HEAD", url.Values{"code": {mint()}, "next": {"/settings/devices"}}.Encode())
+	assert.Equal(t, "/settings/devices", resp.Header.Get("Location"))
+	c2 := sessionCookie(resp)
+	require.NotNil(t, c2)
+	assert.Equal(t, 401, e.do("GET", "/api/v1/me", h2Cred{cookie: app}, nil).status, "每台设备只保留最新的 App 会话")
+	app = c2.Value
+	require.Equal(t, 200, e.do("GET", "/api/v1/me", h2Cred{cookie: app}, nil).status)
+
+	// 吊销设备后其 App 会话立即失效
+	require.Equal(t, 204, e.do("DELETE", "/api/v1/devices/"+dev.ID, h2Cred{bearer: cliTok}, nil).status)
+	r = e.do("GET", "/api/v1/me", h2Cred{cookie: app}, nil)
+	assert.Equal(t, 401, r.status)
+	assert.Equal(t, "unauthorized", r.code(t))
 }

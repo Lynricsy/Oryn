@@ -58,3 +58,10 @@ DELETE FROM web_sessions WHERE id_hash = @id_hash;
 
 -- name: DeleteExpiredWebSessions :execrows
 DELETE FROM web_sessions WHERE expires_at <= @now;
+
+-- name: CreateDeviceWebSession :exec
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, device_id)
+VALUES (@id_hash, 'full', @created_at, @expires_at, @last_seen_at, @user_agent, @device_id);
+
+-- name: DeleteWebSessionsByDevice :many
+DELETE FROM web_sessions WHERE device_id = @device_id RETURNING id_hash;

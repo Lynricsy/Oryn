@@ -16,6 +16,8 @@ const TicketTTL = 30 * time.Second
 type Tickets struct {
 	mu sync.Mutex
 	m  map[string]ticket
+	// prefix 是签发令牌的前缀（WS 票据 `owt`，App 会话一次性码 `oac`）。
+	prefix string
 }
 
 type ticket struct {
@@ -26,12 +28,15 @@ type ticket struct {
 // maxTickets 是未兑换票据的上限（只有已鉴权请求能签发，正常远小于此）。
 const maxTickets = 10000
 
-// NewTickets 返回空的票据表。
-func NewTickets() *Tickets { return &Tickets{m: map[string]ticket{}} }
+// NewTickets 返回空的 WebSocket 票据表。
+func NewTickets() *Tickets { return NewCodes("owt") }
+
+// NewCodes 返回以 prefix 为令牌前缀的一次性码表（同样只在内存中、TicketTTL 有效、只能兑换一次）。
+func NewCodes(prefix string) *Tickets { return &Tickets{m: map[string]ticket{}, prefix: prefix} }
 
 // Issue 为主体 p 签发票据，返回票据与有效秒数。
 func (t *Tickets) Issue(p Principal) (string, int) {
-	tk := ids.Token("owt")
+	tk := ids.Token(t.prefix)
 	now := time.Now()
 	t.mu.Lock()
 	defer t.mu.Unlock()

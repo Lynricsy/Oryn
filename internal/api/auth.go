@@ -161,6 +161,10 @@ func (s *Server) me(ctx context.Context, p auth.Principal) (apigen.Me, error) {
 		me.Auth.Kind = apigen.MeAuthKindRecovery
 	default:
 		me.Auth.Kind = apigen.MeAuthKindWeb
+		// App 会话（设备换来的网页会话）同样给出设备
+		if p.DeviceID != "" {
+			me.Auth.DeviceID = new(p.DeviceID)
+		}
 	}
 	o, err := s.Store.Q.GetOwner(ctx)
 	if err == nil {
@@ -184,4 +188,18 @@ func (s *Server) CreateWsTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	t, exp := s.Auth.Tickets.Issue(p)
 	WriteJSON(w, http.StatusOK, apigen.WsTicket{Ticket: t, ExpiresIn: exp})
+}
+
+// CreateAppSession 为 desktop / mobile 设备令牌签发 App 会话一次性码（M6）。
+func (s *Server) CreateAppSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := principal(w, r)
+	if !ok {
+		return
+	}
+	code, exp, err := s.Auth.Service.IssueAppCode(r.Context(), p)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.AppSessionCode{Code: code, ExpiresIn: exp})
 }
