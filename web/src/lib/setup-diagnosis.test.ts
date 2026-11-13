@@ -99,6 +99,24 @@ describe("diagnoseSetupRun", () => {
 		).toBe("@acme/nope");
 	});
 
+	it("包名里的 % 只在 URL 里解码，非法转义保留原文而不抛错", () => {
+		const err = ".oryn/setup: exit status 100";
+		expect(
+			diagnoseSetupRun(failed(err), "E: Unable to locate package foo%bar\n")
+				?.pkg,
+		).toBe("foo%bar");
+		expect(
+			diagnoseSetupRun(failed(err), "E: Unable to locate package foo%2fbar\n")
+				?.pkg,
+		).toBe("foo%2fbar");
+		expect(
+			diagnoseSetupRun(
+				failed(err),
+				"npm error 404 Not Found - GET https://registry.npmjs.org/bad%zz\n",
+			)?.pkg,
+		).toBe("bad%zz");
+	});
+
 	it("早先已恢复的报错不影响结论：只看日志尾部", () => {
 		const early = "Could not resolve host: github.com\n";
 		const filler = Array.from({ length: 80 }, (_, i) => `step ${i}`).join("\n");

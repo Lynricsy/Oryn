@@ -54,21 +54,33 @@ const RE_DISK = /No space left on device|ENOSPC|Disk quota exceeded/i;
 const RE_NETWORK =
 	/Could not resolve host|ENOTFOUND|EAI_AGAIN|Temporary failure in name resolution|Network is unreachable|Connection (?:timed out|refused)|ECONNREFUSED|ETIMEDOUT|ECONNRESET|TLS handshake timeout|Failed to connect to|unable to access '/i;
 const RE_PERMISSION = /Permission denied|EACCES|Operation not permitted/i;
-/** 软件源里找不到的包：apt / pip / npm / pnpm；捕获组是包名 */
-const RE_PACKAGE = [
-	/Unable to locate package (\S+)/,
-	/Package '([^']+)' has no installation candidate/,
-	/No matching distribution found for (\S+)/,
-	/npm (?:ERR!|error) 404 Not Found - GET \S+\/([^/\s]+)$/,
-	/ERR_PNPM_FETCH_404.*?\/([^/\s:]+):/,
+/**
+ * 软件源里找不到的包：apt / pip / npm / pnpm；捕获组是包名。
+ * `url` 表示包名取自 URL 路径段（npm / pnpm 把 scope 的 `/` 编码成 `%2f`），只有这些需要解码。
+ */
+const RE_PACKAGE: { re: RegExp; url?: true }[] = [
+	{ re: /Unable to locate package (\S+)/ },
+	{ re: /Package '([^']+)' has no installation candidate/ },
+	{ re: /No matching distribution found for (\S+)/ },
+	{ re: /npm (?:ERR!|error) 404 Not Found - GET \S+\/([^/\s]+)$/, url: true },
+	{ re: /ERR_PNPM_FETCH_404.*?\/([^/\s:]+):/, url: true },
 ];
+
+/** 日志是任意文本：非法的 `%` 转义保留原文，不能让诊断在渲染中抛错 */
+function decodeSegment(s: string): string {
+	try {
+		return decodeURIComponent(s);
+	} catch {
+		return s;
+	}
+}
 
 function missingPackage(lines: string[]): string | undefined {
 	for (let i = lines.length - 1; i >= 0; i--) {
 		const line = lines[i]?.trimEnd() ?? "";
-		for (const re of RE_PACKAGE) {
-			const m = line.match(re);
-			if (m?.[1]) return decodeURIComponent(m[1]);
+		for (const { re, url } of RE_PACKAGE) {
+			const name = line.match(re)?.[1];
+			if (name) return url ? decodeSegment(name) : name;
 		}
 	}
 	return undefined;
