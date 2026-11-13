@@ -1,4 +1,4 @@
-// 由 oryn-agent `scripts/oryn/emit-rpc-dts.ts` 自动生成，请勿手改。
+// 由 oryn-core `scripts/oryn/emit-rpc-dts.ts` 自动生成，请勿手改。
 // 来源：packages/coding-agent/src/modes/rpc/rpc-types.ts
 
 declare namespace Bun {
@@ -5623,6 +5623,10 @@ export type RpcCommand = {
 	enabled: boolean;
 } | {
 	id?: string;
+	type: "set_ultrafast_mode";
+	enabled: boolean;
+} | {
+	id?: string;
 	type: "set_slow_mode";
 	enabled: boolean;
 } | {
@@ -6523,6 +6527,12 @@ export interface RpcSessionState {
 	autoRetryEnabled: boolean;
 	fastModeEnabled: boolean;
 	fastModeActive: boolean;
+	/** 当前模型能开启 `/fast`（priority 档位）。 */
+	fastModeSupported: boolean;
+	/** 当前模型能开启 `/fast ultra`（OpenAI `ultrafast` 档位）。 */
+	ultrafastSupported: boolean;
+	/** `/fast ultra` 对当前模型已开启。 */
+	ultrafastEnabled: boolean;
 	/** `/slow` applies to the active model (flex tier on OpenAI/Google, low priority on Claude subscriptions). */
 	slowModeSupported: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -8105,6 +8115,15 @@ export type RpcResponse = {
 	id?: string;
 	type: "response";
 	command: "set_fast_mode";
+	success: true;
+	data: {
+		enabled: boolean;
+		active: boolean;
+	};
+} | {
+	id?: string;
+	type: "response";
+	command: "set_ultrafast_mode";
 	success: true;
 	data: {
 		enabled: boolean;
