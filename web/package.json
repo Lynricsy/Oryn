@@ -16,7 +16,8 @@
     "shots:m25": "bun scripts/screenshots.ts --m25",
     "shots:all": "bun scripts/screenshots.ts --all",
     "accept:m3": "bun scripts/m3-accept.ts",
-    "accept:m4": "bun scripts/m4-accept.ts"
+    "accept:m4": "bun scripts/m4-accept.ts",
+    "accept:m5": "bun scripts/m5-accept.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
