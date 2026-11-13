@@ -213,6 +213,24 @@ func TestDeletedThreadDropsNotification(t *testing.T) {
 	f.s.mu.Unlock()
 }
 
+// 去抖期内被归档的线程（例如 agent 正在问话时用户把线程归档）到点后不再发通知。
+func TestArchivedDuringDebounceDropsNotification(t *testing.T) {
+	f := newFixture(t)
+	id := f.thread("修复登录")
+	f.s.InputRequested(threads.InputEvent{ThreadID: id, RequestID: "r1", Frame: uiFrame("r1")})
+	row, err := f.st.Q.GetThread(f.ctx, id)
+	require.NoError(t, err)
+	_, err = f.st.Q.UpdateThreadMeta(f.ctx, db.UpdateThreadMetaParams{ID: id, Title: row.Title, TitleSource: row.TitleSource,
+		ArchivedAt: new(int64(2)), UpdatedAt: 2})
+	require.NoError(t, err)
+	f.flush()
+	assert.Empty(t, f.notifications())
+	assert.Empty(t, f.out.Notes())
+	f.s.mu.Lock()
+	assert.Empty(t, f.s.unread)
+	f.s.mu.Unlock()
+}
+
 func TestRetentionCleanup(t *testing.T) {
 	f := newFixture(t)
 	id := f.thread("t")

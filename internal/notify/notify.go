@@ -436,6 +436,11 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		s.dropUnreadIfNone(ctx, threadID)
 		return
 	}
+	// 去抖期间线程被归档：用户已明确不再关心它，不再发通知（归档线程也不计入未读与托盘状态）
+	if th.ArchivedAt != nil {
+		s.dropUnreadIfNone(ctx, threadID)
+		return
+	}
 	now := s.now()
 	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: th.Title, CreatedAt: now}
 	switch key.kind {
