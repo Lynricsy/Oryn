@@ -618,13 +618,22 @@ async function T6() {
 		id,
 		`yes | head -c 300000000; echo flood-${RUN}-$((1+1))`,
 	);
-	await waitText(
-		page,
-		id,
-		(s) => hasLine(s, `flood-${RUN}-2`),
-		"洪泛结束",
-		900_000,
-	);
+	// 洪泛约 60s 内没有用户输入，终端输出按设计也不算 agent 活动：dev 空闲阈值 30s 下 orb 会在洪泛途中冻结。
+	// 这里每 10s 走一次 POST /wake（记一次用户交互）模拟「用户在场」，测的是洪泛本身而不是空闲冻结（后者归 T8）。
+	const keep = setInterval(() => {
+		void api("POST", `/api/v1/threads/${THREAD}/wake`).catch(() => undefined);
+	}, 10_000);
+	try {
+		await waitText(
+			page,
+			id,
+			(s) => hasLine(s, `flood-${RUN}-2`),
+			"洪泛结束",
+			300_000,
+		);
+	} finally {
+		clearInterval(keep);
+	}
 	note(`洪泛 300MB 用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 	await typeLine(page, id, `echo ok-${RUN}`);
 	await waitText(page, id, (s) => hasLine(s, `ok-${RUN}`), "echo ok 回显");
