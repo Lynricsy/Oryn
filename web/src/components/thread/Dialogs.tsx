@@ -10,6 +10,7 @@ import {
 } from "../../lib/attachments";
 import { formatBytes, formatCount, formatDateTime } from "../../lib/format";
 import type { ReportKind } from "../../lib/slash";
+import { useBreakpoint } from "../../lib/viewport";
 import type {
 	OmpCommand,
 	ResponseData,
@@ -23,6 +24,7 @@ import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
+import { RoleList } from "../composer/RolePicker";
 import { Markdown } from "../markdown/Markdown";
 import {
 	TranscriptContext,
@@ -479,6 +481,8 @@ function ModelDialog({
 }) {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
+	// 手机上自动聚焦搜索框会弹出软键盘，把顶部的角色列表挤出视野
+	const compact = useBreakpoint() === "compact";
 	const models = useRpc(threadId, { type: "get_available_models" });
 	const [q, setQ] = useState("");
 	const [error, setError] = useState<unknown>(null);
@@ -497,6 +501,7 @@ function ModelDialog({
 	const levels = state?.availableThinkingLevels ?? [];
 	return (
 		<Dialog open wide onClose={onClose} title={t("model.title")}>
+			<RoleList threadId={threadId} onPicked={onClose} />
 			<div className="mb-3 flex flex-wrap items-end gap-3">
 				<Field label={t("model.thinking")}>
 					<Select
@@ -527,9 +532,12 @@ function ModelDialog({
 					label={t("model.slowMode")}
 				/>
 			</div>
-			{/* 打开即可输入筛选；否则 Dialog 会把焦点给思考级别下拉框，它顶着焦点环出现 */}
+			<h3 className="mb-1 px-2 font-medium text-2xs text-faint">
+				{t("model.allModels")}
+			</h3>
+			{/* 桌面打开即可输入筛选；否则 Dialog 会把焦点给思考级别下拉框，它顶着焦点环出现 */}
 			<TextInput
-				autoFocus
+				autoFocus={!compact}
 				placeholder={t("model.search")}
 				value={q}
 				onChange={(e) => setQ(e.target.value)}

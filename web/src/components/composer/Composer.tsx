@@ -30,6 +30,7 @@ import { describeError, IconButton, Kbd, Spinner } from "../ui/primitives";
 import { AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
 import { ContextRing, ModelChip, SessionReadout } from "./ComposerMeta";
+import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
 export function Composer({
 	threadId,
@@ -50,6 +51,8 @@ export function Composer({
 	const [menuDismissed, setMenuDismissed] = useState(false);
 	const escAt = useRef<number | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
+	useRoleShortcut(threadId);
 	const att = useAttachments({ threadId });
 	const menu = useCommandMenu(threadId, text, commands);
 	const menuOpen = menu !== null && !menuDismissed;
@@ -270,7 +273,8 @@ export function Composer({
 		!att.uploading &&
 		(text.trim() !== "" || att.attachmentIds.length > 0);
 	return (
-		<div className="relative">
+		<div ref={rootRef} className="relative">
+			<RoleTrack threadId={threadId} anchorRef={rootRef} />
 			{menuOpen && (
 				<CommandMenu
 					entries={menu}

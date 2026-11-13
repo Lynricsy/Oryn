@@ -387,7 +387,30 @@
 		"fast": "fast",
 		"slow": "slow",
 		"fastMode": "Fast mode",
-		"slowMode": "Slow mode"
+		"slowMode": "Slow mode",
+		"roles": "Roles",
+		"allModels": "All models",
+		"moreRoles": "More roles ({{n}})"
+	},
+	"roles": {
+		"track": "Role models",
+		"switched": "Switched to {{role}}: {{model}}",
+		"onlyOne": "Only one role model is available",
+		"unresolved": "The web client can't resolve this role's model ({{raw}})",
+		"unconfigured": "This role has no model configured",
+		"names": {
+			"default": "Default",
+			"smol": "Fast",
+			"slow": "Thinking",
+			"vision": "Vision",
+			"plan": "Architect",
+			"commit": "Commit",
+			"tiny": "Tiny",
+			"memory": "Memory",
+			"task": "Subtask",
+			"advisor": "Advisor",
+			"widget": "Job widgets"
+		}
 	},
 	"subagent": {
 		"title": "Subagent",

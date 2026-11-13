@@ -48,6 +48,17 @@ const PROMPT = "fake$ ";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 匹配终端转义序列必须用 ESC
 const ESCAPE_SEQ = /\u001b\[[0-9;]*[A-Za-z~]|\u001b./g;
 
+/** 角色模型的候选（get_model_roles 的 candidates）与 set_model 的查找表。 */
+const MOCK_ROLE_MODELS = [
+	{ provider: "anthropic", id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+	{ provider: "anthropic", id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+	{ provider: "anthropic", id: "claude-fable-5-2", name: "Claude Fable 5.2" },
+	{ provider: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+	{ provider: "openai-codex", id: "gpt-6-astra", name: "GPT-6 Astra" },
+	{ provider: "google", id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+	{ provider: "deepseek", id: "deepseek-flash", name: "DeepSeek Flash" },
+];
+
 interface MockTerm {
 	info: RpcTerminalInfo;
 	data: string;
@@ -1424,6 +1435,93 @@ export class MockServer {
 				return this.respond(socket, threadId, id, type, { enabled: false });
 			case "get_btw_history":
 				return this.respond(socket, threadId, id, type, { records: [] });
+			// 角色模型（Ctrl+P 轮换、模型对话框的角色列表）：照主人的真实配置，default 用 @ 引用 Cyrene，writer 是裸 id（无 selected）
+			case "get_settings":
+				return this.respond(socket, threadId, id, type, {
+					values: {
+						cycleOrder: ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"],
+					},
+					advisorEnabled: false,
+				});
+			case "get_model_roles": {
+				const role = (
+					rid: string,
+					name: string,
+					model: string | undefined,
+					extra: Json = {},
+				) => {
+					const m = model?.match(/^([^/]+)\/(.+?)(?::(\w+))?$/);
+					return {
+						id: rid,
+						name,
+						section: "chat",
+						model,
+						selected:
+							m && !model?.startsWith("@")
+								? { provider: m[1], id: m[2], thinkingLevel: m[3] }
+								: undefined,
+						source: model ? "global" : "default",
+						candidates: MOCK_ROLE_MODELS,
+						...extra,
+					};
+				};
+				return this.respond(socket, threadId, id, type, {
+					roles: [
+						role("default", "Default", "@Cyrene", { tag: "DEFAULT" }),
+						role("smol", "Fast", "anthropic/claude-sonnet-5:medium", {
+							tag: "SMOL",
+						}),
+						role("slow", "Thinking", "openai/gpt-6.1-sol:high", {
+							tag: "SLOW",
+						}),
+						role("commit", "Commit", "openai/gpt-6.1-sol:medium", {
+							tag: "COMMIT",
+						}),
+						role("web", "Web search", "openai-codex/gpt-6-astra", {
+							tag: "WEB",
+							section: "kind",
+						}),
+						role("Hyacinthia", "Hyacinthia", "anthropic/claude-fable-5-2:high"),
+						role("Nahida", "Nahida", "google/gemini-4-carbon:high"),
+						role("Mare", "Mare", "openai/gpt-6.1-sol:high"),
+						role("Cyrene", "Cyrene", "anthropic/claude-opus-5-5:high"),
+						role("Arianna", "Arianna", "deepseek/deepseek-flash:max"),
+						// 裸 id 带级别：omp 不给 selected，由网页端照 resolveModelRoleValue 解析
+						role("writer", "writer", "gemini-4-carbon:high"),
+					],
+				});
+			}
+			case "set_model": {
+				const m = MOCK_ROLE_MODELS.find(
+					(x) => x.provider === frame.provider && x.id === frame.modelId,
+				);
+				if (!m)
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						`Model not found: ${String(frame.provider)}/${String(frame.modelId)}`,
+					);
+				this.states.set(threadId, {
+					...state,
+					model: { ...m, api: "mock" } as unknown as SessionState["model"],
+				});
+				return this.respond(socket, threadId, id, type, m);
+			}
+			case "set_thinking_level": {
+				const level = String(frame.level) as SessionState["thinkingLevel"];
+				this.states.set(threadId, {
+					...state,
+					thinkingLevel: level,
+					thinkingConfigured: level as SessionState["thinkingConfigured"],
+				});
+				return this.respond(socket, threadId, id, type, {
+					thinkingLevel: level,
+					thinkingConfigured: level,
+				});
+			}
 			case "get_available_models":
 				return this.respond(socket, threadId, id, type, {
 					models: [

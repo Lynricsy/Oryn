@@ -11,8 +11,9 @@ import { threadCost } from "../../state/transcript";
 import { uiStore } from "../../state/ui";
 import { Badge, Ring, Stat, thresholdTone } from "../ui/data";
 import { Icon } from "../ui/icons";
+import { ModelLogo } from "../ui/ModelLogo";
 
-/** 当前模型 + 思考级别 + 快/慢模式；点击打开模型对话框。 */
+/** 当前模型（厂商 logo + 名字）+ 思考级别 + 快/慢模式；点击打开模型对话框（顶部可切换角色）。 */
 export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
@@ -27,7 +28,12 @@ export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 			className="inline-flex h-[30px] max-w-36 shrink-0 items-center gap-1.5 rounded-md px-2 text-fg text-xs transition-colors duration-150 hover:bg-hover sm:max-w-56"
 			onClick={() => uiStore.getState().open({ kind: "model" })}
 		>
-			<Icon name="sparkle" size={14} className="shrink-0 text-muted" />
+			<ModelLogo
+				provider={state?.model?.provider}
+				model={state?.model?.id}
+				size={14}
+				className="shrink-0"
+			/>
 			<span className="min-w-0 truncate font-medium">{name}</span>
 			{level && <Badge>{level}</Badge>}
 			{state?.fastModeEnabled && <Badge tone="accent">{t("model.fast")}</Badge>}

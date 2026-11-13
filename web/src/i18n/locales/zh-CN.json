@@ -387,7 +387,30 @@
 		"fast": "fast",
 		"slow": "slow",
 		"fastMode": "快速模式（fast）",
-		"slowMode": "慢速模式（slow）"
+		"slowMode": "慢速模式（slow）",
+		"roles": "角色",
+		"allModels": "全部模型",
+		"moreRoles": "更多角色（{{n}}）"
+	},
+	"roles": {
+		"track": "角色模型",
+		"switched": "已切换到 {{role}}：{{model}}",
+		"onlyOne": "只有一个角色模型可用",
+		"unresolved": "网页端无法解析这个角色的模型（{{raw}}）",
+		"unconfigured": "这个角色没有配置模型",
+		"names": {
+			"default": "默认",
+			"smol": "快速",
+			"slow": "思考",
+			"vision": "视觉",
+			"plan": "架构",
+			"commit": "提交",
+			"tiny": "微型",
+			"memory": "记忆",
+			"task": "子任务",
+			"advisor": "顾问",
+			"widget": "任务小组件"
+		}
 	},
 	"subagent": {
 		"title": "子 agent",

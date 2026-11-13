@@ -461,3 +461,83 @@ body {
 		transition-duration: 1ms !important;
 	}
 }
+
+/*
+ * 角色色（Ctrl+P 角色轨道、模型对话框里的角色列表）：只用于标识角色，不当强调色或状态色。
+ * 轨道按 cycleOrder 的位置取 --role-h-0..7：8 个色相相邻 ≥40°（5、50、95、135、180、225、270、315），尽量远离
+ * 红 25 / 琥珀 78 / 绿 152（8×40° 已占 320°，95 与 135 离色带只剩约 17°，所以排在最后）；前 5 位离色带都 ≥25°，
+ * 相邻位置色相差 ≥90°。不在轨道里的内置角色用固定色相，其余按名字哈希（lib/model-roles.ts 的 roleHue）。
+ */
+:root {
+	--role-h-0: 270;
+	--role-h-1: 50;
+	--role-h-2: 180;
+	--role-h-3: 315;
+	--role-h-4: 225;
+	--role-h-5: 95;
+	--role-h-6: 5;
+	--role-h-7: 135;
+	--role-h-default: 235;
+	--role-h-smol: 75;
+	--role-h-slow: 295;
+	--role-h-plan: 265;
+	--role-h-vision: 340;
+	--role-h-task: 185;
+	--role-h-advisor: 45;
+	--role-h-commit: 150;
+	--role-h-tiny: 210;
+	--role-h-memory: 320;
+}
+/* 由元素自己的 --role-h 推出四种用色：实色（圆点）、底色（12–18% 混合）、文字（≥4.5:1）、描边 */
+.role-tone,
+[data-role-flash] {
+	--role-solid: oklch(0.6 0.15 var(--role-h, 235));
+	--role-fill: color-mix(in oklab, var(--role-solid) 15%, var(--panel));
+	--role-ink: oklch(0.45 0.14 var(--role-h, 235));
+	--role-line: color-mix(in oklab, var(--role-solid) 65%, transparent);
+}
+:root[data-theme="dark"] .role-tone,
+:root[data-theme="dark"] [data-role-flash] {
+	--role-solid: oklch(0.74 0.13 var(--role-h, 235));
+	--role-fill: color-mix(in oklab, var(--role-solid) 18%, var(--raised));
+	--role-ink: oklch(0.87 0.09 var(--role-h, 235));
+	--role-line: color-mix(in oklab, var(--role-solid) 70%, transparent);
+}
+/* 托盘描边闪一下角色色：立刻到色、停留片刻，再约 600ms 渐变回默认描边（动画结束即不留痕） */
+@keyframes role-flash {
+	0%,
+	30% {
+		border-color: var(--role-line);
+		box-shadow:
+			var(--sh-md),
+			inset 0 1px 0 var(--glass-hi),
+			0 0 0 3px color-mix(in oklab, var(--role-solid) 22%, transparent);
+	}
+}
+.glass[data-role-flash] {
+	animation: role-flash 900ms var(--ease);
+}
+/* 滑块到位后当前角色名轻微回弹 */
+@keyframes role-pop {
+	0%,
+	100% {
+		scale: 1;
+	}
+	50% {
+		scale: 1.06;
+	}
+}
+.role-pop {
+	display: inline-block;
+	animation: role-pop 160ms var(--ease) 200ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+	/* 减少动效时只保留颜色变化：描边闪色不是位移，照常播放；滑块不滑、名字不弹 */
+	.glass[data-role-flash] {
+		/* biome-ignore lint/complexity/noImportantStyles: 压过全局减少动效规则里的 1ms */
+		animation-duration: 900ms !important;
+	}
+	.role-pop {
+		animation: none;
+	}
+}
