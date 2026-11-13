@@ -417,10 +417,17 @@ export default function ChangesPanel({
 						<span className="inline-flex items-center gap-1.5 tabular-nums">
 							<span>{t("changes.summary", { n: files.length })}</span>
 							{modified > 0 && (
+								// 「~3」在小号等宽字下像「-3」：改用铅笔图标 + 数字，读屏读整句
 								<span
-									className="text-warn"
+									className="inline-flex items-center gap-0.5 text-warn"
 									title={t("changes.modified", { n: modified })}
-								>{`~${modified}`}</span>
+								>
+									<Icon name="edit" size={11} aria-hidden />
+									<span aria-hidden>{modified}</span>
+									<span className="sr-only">
+										{t("changes.modified", { n: modified })}
+									</span>
+								</span>
 							)}
 							<span className="text-ok">{`+${additions}`}</span>
 							<span className="text-err">{`−${deletions}`}</span>

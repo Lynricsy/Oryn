@@ -2,7 +2,9 @@
  * 虚拟滚动转录（@tanstack/react-virtual，动态测量高度）。
  * 贴底跟随：用户停在底部时随新内容自动滚动；上翻后停止跟随并显示「回到底部」。
  * 页头与输入坞以玻璃盖在转录上方：`insetTop` / `insetBottom` 走 virtualizer 的
- * `paddingStart` / `paddingEnd`（不给滚动容器加 CSS padding，否则会破坏贴底判断）。
+ * `paddingStart` / `paddingEnd`（不给滚动容器加 CSS padding，否则会破坏贴底判断），
+ * 同时写成滚动容器的 scroll-padding，让键盘聚焦与 scrollIntoView 落在两块覆盖层之间。
+ * 左缘只有两条锚线：头像列（回合起点的 agent 头像）与正文列（其余一切左对齐的块）；用户气泡靠右。
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -21,12 +23,18 @@ import type { TranscriptItem } from "../../state/transcript";
 import { AgentAvatar } from "../ui/AgentAvatar";
 import { Badge, Callout, type Tone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { useTranscriptContext } from "./context";
 import {
 	BranchSummaryCard,
 	CompactionCard,
 	MemoMessageView,
+	summarizeTurn,
 	ToolCard,
+	type TurnUsage,
+	USER_BUBBLE,
+	USER_BUBBLE_TEXT,
 } from "./MessageView";
+import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 
 const META_ICON: Record<string, IconName> = {
 	model_change: "sparkle",
@@ -131,7 +139,15 @@ function NoticeLine({ notice }: { notice: Notice }) {
 	);
 }
 
-function ItemView({ item }: { item: TranscriptItem }): ReactNode {
+function ItemView({
+	item,
+	turn,
+	turnStart,
+}: {
+	item: TranscriptItem;
+	turn?: TurnUsage;
+	turnStart: boolean;
+}): ReactNode {
 	const { t } = useTranslation();
 	switch (item.kind) {
 		case "session_divider":
@@ -148,6 +164,8 @@ function ItemView({ item }: { item: TranscriptItem }): ReactNode {
 					message={item.message}
 					entryId={item.entryId}
 					live={item.live}
+					turn={turn}
+					turnStart={turnStart}
 				/>
 			);
 		case "tool":
@@ -170,11 +188,65 @@ function ItemView({ item }: { item: TranscriptItem }): ReactNode {
 	}
 }
 
-/** 属于 agent 回合的行：助手消息与独立的运行中工具卡；连续的这类行构成一个回合。 */
+/** 属于 agent 回合的行：助手消息与独立的运行中工具卡。 */
 function isAgentRow(item: TranscriptItem | undefined): boolean {
 	if (!item) return false;
 	if (item.kind === "tool") return true;
 	return item.kind === "message" && item.message.role === "assistant";
+}
+
+function isUserRow(item: TranscriptItem): boolean {
+	return item.kind === "message" && item.message.role === "user";
+}
+
+/**
+ * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行放头像；
+ * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
+ */
+export function layoutTurns(items: readonly TranscriptItem[]): {
+	starts: Set<number>;
+	footers: Map<number, TurnUsage>;
+} {
+	const starts = new Set<number>();
+	const footers = new Map<number, TurnUsage>();
+	let messages: JsonRecord[] = [];
+	let last = -1;
+	const close = () => {
+		const tail = items[last];
+		if (tail?.kind === "message" && !tail.live && messages.length > 0)
+			footers.set(last, summarizeTurn(messages));
+		messages = [];
+		last = -1;
+	};
+	items.forEach((it, i) => {
+		if (it.kind === "session_divider" || isUserRow(it)) {
+			close();
+			return;
+		}
+		if (!isAgentRow(it)) return;
+		if (last < 0) starts.add(i);
+		last = i;
+		if (it.kind === "message") messages.push(it.message);
+	});
+	close();
+	return { starts, footers };
+}
+
+/** 环境准备阶段先显示的首条任务（客户端暂存，转录里出现 user 消息即清除）。 */
+function PendingPrompt({ text }: { text: string }) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex flex-col items-end gap-1 pb-3">
+			<span className="sr-only">{t("transcript.you")}</span>
+			<div className={`${USER_BUBBLE} opacity-80`}>
+				<div className={USER_BUBBLE_TEXT}>{text}</div>
+			</div>
+			<span className="inline-flex items-center gap-1 text-2xs text-faint">
+				<Icon name="clock" size={11} aria-hidden />
+				{t("transcript.sending")}
+			</span>
+		</div>
+	);
 }
 
 export function Transcript({
@@ -191,6 +263,15 @@ export function Transcript({
 	insetBottom?: number;
 }): ReactNode {
 	const { t } = useTranslation();
+	const { threadId } = useTranscriptContext();
+	const pending = usePendingPrompt(threadId);
+	const hasUser = useMemo(() => items.some(isUserRow), [items]);
+	// 第一条 user 消息到了就丢掉暂存，避免同一句话出现两次
+	useEffect(() => {
+		if (hasUser && pending !== undefined) clearPendingPrompt(threadId);
+	}, [hasUser, pending, threadId]);
+	const pendingText = hasUser ? undefined : pending;
+	const turns = useMemo(() => layoutTurns(items), [items]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
 	const stick = useRef(true);
@@ -235,9 +316,11 @@ export function Transcript({
 		() =>
 			virtualItems.map((v) => {
 				const item = v.index < items.length ? items[v.index] : undefined;
-				const agent = isAgentRow(item);
-				// 回合起点（前一行不属于 agent 回合）放头像；回合内各行统一缩进到头像右侧
-				const turnStart = agent && !isAgentRow(items[v.index - 1]);
+				// 用户气泡与会话分隔线铺满整行；其余块都从正文列开始
+				const bodyCol =
+					item !== undefined &&
+					item.kind !== "session_divider" &&
+					!isUserRow(item);
 				return (
 					<div
 						key={v.key}
@@ -254,19 +337,40 @@ export function Transcript({
 						style={{ transform: `translateY(${v.start}px)` }}
 					>
 						<div
-							className={`relative mx-auto max-w-3xl ${agent ? "pl-8" : ""}`}
+							className={`group/row relative mx-auto max-w-3xl ${bodyCol ? "pl-8" : ""}`}
 						>
-							{turnStart && (
-								<span className="absolute top-1.5 left-0">
+							{turns.starts.has(v.index) && (
+								// 本行消息自带左侧菜单时，悬停 / 聚焦让出头像位置（细指针）
+								<span className="absolute top-1.5 left-0 transition-opacity duration-150 pointer-fine:group-has-[.msg-gutter:focus-within]/row:opacity-0 pointer-fine:group-has-[.msg-gutter:hover]/row:opacity-0">
 									<AgentAvatar size={20} />
 								</span>
 							)}
-							{item ? <ItemView item={item} /> : footer}
+							{item ? (
+								<ItemView
+									item={item}
+									turn={turns.footers.get(v.index)}
+									turnStart={turns.starts.has(v.index)}
+								/>
+							) : (
+								<>
+									{pendingText !== undefined && (
+										<PendingPrompt text={pendingText} />
+									)}
+									<div className="pl-8">{footer}</div>
+								</>
+							)}
 						</div>
 					</div>
 				);
 			}),
-		[virtualItems, items, footer, virtualizer.measureElement],
+		[
+			virtualItems,
+			items,
+			footer,
+			virtualizer.measureElement,
+			turns,
+			pendingText,
+		],
 	);
 
 	return (
@@ -275,6 +379,10 @@ export function Transcript({
 				ref={scrollRef}
 				onScroll={onScroll}
 				className="h-full overflow-y-auto overscroll-contain"
+				style={{
+					scrollPaddingTop: insetTop,
+					scrollPaddingBottom: insetBottom,
+				}}
 				data-testid="transcript"
 			>
 				<div className="relative w-full" style={{ height: total }}>

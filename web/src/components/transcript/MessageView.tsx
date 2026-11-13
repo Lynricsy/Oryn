@@ -2,7 +2,7 @@
  * 转录中的单条消息渲染：按 omp 的信息量全量展示（思考块、工具卡片、回合脚注、错误、bash 执行、自定义消息等）。
  * 所有字段都按「可能残缺」处理——条目与流式帧都是外部 JSON。
  */
-import { memo, type ReactNode, useState } from "react";
+import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	attachmentContentUrl,
@@ -30,6 +30,14 @@ import { useTranscriptContext } from "./context";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
+
+/** 用户气泡外观（真实消息与「发送中」的待发任务共用）。 */
+export const USER_BUBBLE =
+	"w-fit min-w-0 max-w-[85%] rounded-2xl rounded-br-sm border border-border bg-raised px-3.5 py-2";
+
+/** 用户气泡正文排版。 */
+export const USER_BUBBLE_TEXT =
+	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
 
 function textOfContent(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -146,26 +154,79 @@ export function AttachmentChips({
 	);
 }
 
-/** 消息操作菜单：行内渲染，悬停 / 聚焦时显现；贴近输入坞，向上展开。 */
+/** 菜单项高度（`py-1.5` + 20px 行高）与容器内边距 / 间距，用于估算展开所需空间。 */
+const MENU_ITEM_H = 32;
+const MENU_CHROME_H = 12;
+
+/**
+ * 选择菜单展开方向：可见区取转录滚动容器去掉 scroll-padding（页头 / 输入坞覆盖的高度）后的部分；
+ * 上方放得下就向上（贴近输入坞的常见情形），否则取上下两侧空间更大的一侧。
+ */
+function pickMenuSide(el: HTMLElement | null, items: number): "top" | "bottom" {
+	if (!el) return "top";
+	const need = items * MENU_ITEM_H + MENU_CHROME_H;
+	const r = el.getBoundingClientRect();
+	let top = 0;
+	let bottom = window.innerHeight;
+	const scroller = el.closest<HTMLElement>('[data-testid="transcript"]');
+	if (scroller) {
+		const s = scroller.getBoundingClientRect();
+		const cs = getComputedStyle(scroller);
+		top = s.top + (Number.parseFloat(cs.scrollPaddingTop) || 0);
+		bottom = s.bottom - (Number.parseFloat(cs.scrollPaddingBottom) || 0);
+	}
+	const above = r.top - top;
+	const below = bottom - r.bottom;
+	return above >= need || above >= below ? "top" : "bottom";
+}
+
+/**
+ * 消息操作菜单：行内渲染，悬停 / 聚焦时显现。打开时按可见空间选择向上或向下展开，
+ * 展开后再把菜单滚进页头与输入坞之间（滚动容器带 scroll-padding），保证每一项都点得到。
+ */
 function MessageMenu({
 	entryId,
 	text,
+	className = "",
+	align = "right",
 }: {
 	entryId?: string;
 	text: string;
+	/** 追加到外包元素上的定位类（例如回合中间消息的左侧槽位）。 */
+	className?: string;
+	/** 弹层对齐边：左侧槽位里的按钮要向右展开，否则会伸出转录左缘。 */
+	align?: "left" | "right";
 }): ReactNode {
 	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
+	const wrapRef = useRef<HTMLDivElement>(null);
+	const [side, setSide] = useState<"top" | "bottom">("top");
+	const itemCount = entryId ? 3 : 1;
 	return (
-		<div className="opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100">
+		<div
+			ref={wrapRef}
+			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100 ${className}`}
+		>
 			<Menu
-				side="top"
+				side={side}
+				align={align}
 				trigger={(p) => (
 					<button
 						type="button"
 						className="inline-grid h-6 w-6 place-items-center rounded-md text-ghost hover:bg-hover hover:text-fg"
 						aria-label={t("transcript.messageActions")}
 						{...p}
+						onClick={() => {
+							const opening = !p["aria-expanded"];
+							if (opening) setSide(pickMenuSide(wrapRef.current, itemCount));
+							p.onClick();
+							if (!opening) return;
+							requestAnimationFrame(() =>
+								wrapRef.current
+									?.querySelector('[role="menu"]')
+									?.scrollIntoView({ block: "nearest" }),
+							);
+						}}
 					>
 						<Icon name="more" size={14} />
 					</button>
@@ -231,14 +292,8 @@ function UserMessage({
 				</div>
 			)}
 			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
-			<div
-				className={`w-fit min-w-0 max-w-[85%] rounded-2xl rounded-br-sm border border-border bg-raised px-3.5 py-2 ${live ? "opacity-80" : ""}`}
-			>
-				{body && (
-					<div className="whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]">
-						{body}
-					</div>
-				)}
+			<div className={`${USER_BUBBLE} ${live ? "opacity-80" : ""}`}>
+				{body && <div className={USER_BUBBLE_TEXT}>{body}</div>}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
 			</div>
@@ -354,82 +409,134 @@ export function ToolCard({
 	);
 }
 
+/** 一个回合（两条用户消息之间）的累计用量：各条助手消息的读数相加，模型取最后一条。 */
+export interface TurnUsage {
+	model: string;
+	hasUsage: boolean;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cost: number;
+	/** 各条消息 `duration` 之和；没有任何一条带耗时时为 null。 */
+	duration: number | null;
+	/** 回合内全部助手正文，供「复制」。 */
+	text: string;
+}
+
+export function summarizeTurn(messages: readonly JsonRecord[]): TurnUsage {
+	const n = (v: unknown) => (typeof v === "number" ? v : 0);
+	const sum: TurnUsage = {
+		model: "",
+		hasUsage: false,
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cost: 0,
+		duration: null,
+		text: "",
+	};
+	const texts: string[] = [];
+	for (const m of messages) {
+		if (typeof m.model === "string" && m.model) sum.model = m.model;
+		if (isRecord(m.usage)) {
+			sum.hasUsage = true;
+			sum.input += n(m.usage.input);
+			sum.output += n(m.usage.output);
+			sum.cacheRead += n(m.usage.cacheRead);
+			if (isRecord(m.usage.cost)) sum.cost += n(m.usage.cost.total);
+		}
+		if (typeof m.duration === "number")
+			sum.duration = (sum.duration ?? 0) + m.duration;
+		const text = textOfContent(m.content);
+		if (text) texts.push(text);
+	}
+	sum.text = texts.join("\n\n");
+	return sum;
+}
+
 /** 回合脚注里的单个读数胶囊。 */
 const META_CHIP =
-	"inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 tabular-nums [&_svg]:text-faint";
+	"inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 tabular-nums [&_svg]:text-faint";
 
-/** 回合脚注：模型与用量读数（每项一个细描边胶囊）+ 消息操作。 */
-function TurnMeta({
-	message,
-	entryId,
-	text,
-}: {
-	message: JsonRecord;
-	entryId?: string;
-	text: string;
-}) {
+/**
+ * 回合脚注：整回合的模型与累计用量（每项一个细描边胶囊）+ 消息操作；只挂在回合最后一条助手消息下。
+ * 始终单行：按自身宽度（容器查询）先藏缓存、再藏耗时，模型名最后截断。
+ */
+function TurnMeta({ turn, entryId }: { turn: TurnUsage; entryId?: string }) {
 	const { t } = useTranslation();
-	const usage = isRecord(message.usage) ? message.usage : null;
-	const n = (v: unknown) => (typeof v === "number" ? v : 0);
-	const cost = usage && isRecord(usage.cost) ? n(usage.cost.total) : 0;
-	const model = typeof message.model === "string" ? message.model : "";
 	return (
-		<div className="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-muted">
-			{model && (
-				<span className={`${META_CHIP} min-w-0 max-w-full font-medium text-fg`}>
-					<Icon name="sparkle" size={12} aria-hidden className="shrink-0" />
-					<span className="min-w-0 truncate">{model}</span>
-				</span>
-			)}
-			{usage && (
-				<>
-					<span className={META_CHIP}>
-						<Stat icon="send" label={t("stat.input")}>
-							{formatTokens(n(usage.input))}
-						</Stat>
+		<div className="@container mt-2">
+			<div className="flex min-w-0 flex-nowrap items-center gap-1.5 text-2xs text-muted">
+				{turn.model && (
+					<span
+						className={`${META_CHIP} min-w-0 shrink font-medium text-fg`}
+						title={turn.model}
+					>
+						<Icon name="sparkle" size={12} aria-hidden className="shrink-0" />
+						<span className="min-w-0 truncate">{turn.model}</span>
 					</span>
-					<span className={META_CHIP}>
-						<Stat icon="arrowDown" label={t("stat.output")}>
-							{formatTokens(n(usage.output))}
-						</Stat>
-					</span>
-					{n(usage.cacheRead) > 0 && (
+				)}
+				{turn.hasUsage && (
+					<>
 						<span className={META_CHIP}>
-							<Stat icon="database" label={t("stat.cache")}>
-								{formatTokens(n(usage.cacheRead))}
+							<Stat icon="send" label={t("stat.input")}>
+								{formatTokens(turn.input)}
 							</Stat>
 						</span>
-					)}
-					{cost > 0 && (
 						<span className={META_CHIP}>
-							<Stat icon="coin" label={t("stat.cost")}>
-								{formatCost(cost)}
+							<Stat icon="arrowDown" label={t("stat.output")}>
+								{formatTokens(turn.output)}
 							</Stat>
 						</span>
-					)}
-				</>
-			)}
-			{typeof message.duration === "number" && (
-				<span className={META_CHIP}>
-					<Stat icon="timer" label={t("stat.duration")}>
-						{formatDuration(message.duration)}
-					</Stat>
-				</span>
-			)}
-			<span className="flex-1" />
-			<MessageMenu entryId={entryId} text={text} />
+						{turn.cacheRead > 0 && (
+							<span className={`${META_CHIP} @max-md:hidden`}>
+								<Stat icon="database" label={t("stat.cache")}>
+									{formatTokens(turn.cacheRead)}
+								</Stat>
+							</span>
+						)}
+						{turn.cost > 0 && (
+							<span className={META_CHIP}>
+								<Stat icon="coin" label={t("stat.cost")}>
+									{formatCost(turn.cost)}
+								</Stat>
+							</span>
+						)}
+					</>
+				)}
+				{turn.duration !== null && (
+					<span className={`${META_CHIP} @max-sm:hidden`}>
+						<Stat icon="timer" label={t("stat.duration")}>
+							{formatDuration(turn.duration)}
+						</Stat>
+					</span>
+				)}
+				<span className="flex-1" />
+				<MessageMenu entryId={entryId} text={turn.text} />
+			</div>
 		</div>
 	);
 }
+
+/**
+ * 回合中间的助手消息自己的操作菜单：放在头像列里（与头像同一位置），悬停 / 聚焦时显现，
+ * 粗指针常显弱化按钮。回合起点那条消息的头像在悬停时让位；粗指针下按钮挪到头像下方。
+ */
+const GUTTER_MENU = "absolute top-1 -left-[34px]";
+const GUTTER_MENU_UNDER_AVATAR = "pointer-coarse:top-[30px]";
 
 function AssistantMessage({
 	message,
 	entryId,
 	live,
+	turn,
+	turnStart,
 }: {
 	message: JsonRecord;
 	entryId?: string;
 	live: boolean;
+	turn?: TurnUsage;
+	turnStart?: boolean;
 }) {
 	const { t } = useTranslation();
 	const content = Array.isArray(message.content) ? message.content : [];
@@ -438,8 +545,18 @@ function AssistantMessage({
 		typeof message.stopReason === "string" ? message.stopReason : undefined;
 	const error =
 		typeof message.errorMessage === "string" ? message.errorMessage : undefined;
+	// 回合末尾的消息由脚注承载整回合菜单；其余已结束的消息各自带一个菜单
+	const ownMenu = !live && !turn;
 	return (
-		<div className="group/msg relative py-1">
+		<div className={`group/msg relative py-1 ${ownMenu ? "msg-gutter" : ""}`}>
+			{ownMenu && (
+				<MessageMenu
+					entryId={entryId}
+					text={textOfContent(content)}
+					align="left"
+					className={`${GUTTER_MENU} ${turnStart ? GUTTER_MENU_UNDER_AVATAR : ""}`}
+				/>
+			)}
 			{content.map((b, i) => {
 				if (!isRecord(b)) return null;
 				const key = `${i}-${String(b.type)}`;
@@ -501,13 +618,7 @@ function AssistantMessage({
 					</Callout>
 				</div>
 			)}
-			{!live && (
-				<TurnMeta
-					message={message}
-					entryId={entryId}
-					text={textOfContent(content)}
-				/>
-			)}
+			{!live && turn && <TurnMeta turn={turn} entryId={entryId} />}
 		</div>
 	);
 }
@@ -634,10 +745,16 @@ export function MessageView({
 	message,
 	entryId,
 	live,
+	turn,
+	turnStart,
 }: {
 	message: JsonRecord;
 	entryId?: string;
 	live: boolean;
+	/** 只在回合最后一条助手消息上传入：整回合的累计用量脚注。 */
+	turn?: TurnUsage;
+	/** 这条消息是回合起点（头像列里已有头像）。 */
+	turnStart?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	switch (message.role) {
@@ -645,7 +762,13 @@ export function MessageView({
 			return <UserMessage message={message} entryId={entryId} live={live} />;
 		case "assistant":
 			return (
-				<AssistantMessage message={message} entryId={entryId} live={live} />
+				<AssistantMessage
+					message={message}
+					entryId={entryId}
+					live={live}
+					turn={turn}
+					turnStart={turnStart}
+				/>
 			);
 		case "bashExecution":
 		case "pythonExecution":

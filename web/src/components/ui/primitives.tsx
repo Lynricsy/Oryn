@@ -318,8 +318,9 @@ export function Menu({
 	);
 }
 
+/** 输入框聚焦：强调色描边 + 一圈淡光晕，替代全局的 2px 外描边（两者叠加会成双层环）。 */
 const INPUT =
-	"w-full rounded-md border border-border bg-inset px-2.5 py-1.5 text-sm text-fg placeholder:text-faint focus-visible:border-accent focus-visible:outline-2";
+	"w-full rounded-md border border-border bg-inset px-2.5 py-1.5 text-sm text-fg placeholder:text-faint transition-[border-color,box-shadow] duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20";
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
 	return <input {...props} className={`${INPUT} ${props.className ?? ""}`} />;

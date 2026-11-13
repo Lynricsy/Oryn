@@ -207,6 +207,29 @@ describe("ChangesPanel", () => {
 		);
 	});
 
+	it("选了非默认基线后打开文件：/git/diff 请求带上 base", async () => {
+		render(<ChangesPanel threadId="T-c21" orbId={ORB} />);
+		await filesList();
+		const picker = screen.getByRole("combobox", {
+			name: t("changes.scope.label"),
+		});
+		fireEvent.change(picker, { target: { value: "base:pick" } });
+		const input = await screen.findByRole("textbox");
+		fireEvent.change(input, { target: { value: "release/1.0" } });
+		fireEvent.click(
+			screen.getByRole("button", { name: t("changes.base.apply") }),
+		);
+		await waitFor(() =>
+			expect(statusReqs().at(-1)?.query.get("base")).toBe("release/1.0"),
+		);
+		fireEvent.click(await screen.findByText("util.ts"));
+		await waitFor(() => {
+			const diff = requests.filter((r) => r.path.endsWith("/git/diff")).at(-1);
+			expect(diff?.query.get("path")).toBe("src/util.ts");
+			expect(diff?.query.get("base")).toBe("release/1.0");
+		});
+	});
+
 	it("点文件显示 git patch：增删行着色，文件头不当作增删", async () => {
 		const { container } = render(<ChangesPanel threadId="T-c4" orbId={ORB} />);
 		await filesList();

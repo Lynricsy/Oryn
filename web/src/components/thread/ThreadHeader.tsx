@@ -1,5 +1,5 @@
-/** 线程页头（玻璃）：项目徽标与名称、状态、标题卡（图标 + 代码 + 可编辑标题）、orb 胶囊、会话树 / 面板 / More Actions。 */
-import { type ReactNode, useState } from "react";
+/** 线程页头（玻璃）：项目徽标与名称、状态、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。 */
+import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
@@ -15,7 +15,7 @@ import {
 } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
-import { Badge, ProjectBadge, TitleGlyph } from "../ui/data";
+import { Badge, nameHue, ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
 import {
@@ -36,16 +36,27 @@ export const THREAD_COLORS = [
 	"pink",
 ] as const;
 
-export const COLOR_CLASS: Record<string, string> = {
-	red: "bg-red-500",
-	orange: "bg-orange-500",
-	yellow: "bg-yellow-500",
-	green: "bg-green-500",
-	teal: "bg-teal-500",
-	blue: "bg-blue-500",
-	purple: "bg-purple-500",
-	pink: "bg-pink-500",
+/** 线程色 → 色相；配色在 index.css 的 `.thread-mark`（竖条）与 `.avatar`（标题图标底色）。 */
+export const THREAD_HUE: Record<string, number> = {
+	red: 25,
+	orange: 55,
+	yellow: 90,
+	green: 150,
+	teal: 190,
+	blue: 255,
+	purple: 300,
+	pink: 350,
 };
+
+/** 线程色的色相；未设置或未知颜色时返回 undefined。 */
+export function threadHue(color?: string | null): number | undefined {
+	return color ? THREAD_HUE[color] : undefined;
+}
+
+/** 带 `--h` 的内联样式（`.thread-mark` / `.avatar` 读取）。 */
+export function hueVar(hue: number): CSSProperties {
+	return { "--h": hue } as CSSProperties;
+}
 
 function snoozeAt(kind: "1h" | "3h" | "tomorrow" | "week"): number {
 	const now = new Date();
@@ -68,7 +79,7 @@ export function useOrbOf(threadId: string): Orb | undefined {
 	return fromIndex ?? fromThread;
 }
 
-/** orb 状态胶囊：状态珠 + 状态文字（compact 只留状态珠）；点击打开信息面板。 */
+/** orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。 */
 function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 	const { t } = useTranslation();
 	const state = t(`orbState.${orb.state}`);
@@ -77,7 +88,7 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 			type="button"
 			aria-label={t("thread.orbState", { state })}
 			title={orb.id}
-			className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover sm:pr-2.5"
+			className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @xl/header:pr-2.5"
 			onClick={() => {
 				const ui = uiStore.getState();
 				ui.setPanelTab("info");
@@ -85,7 +96,7 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 			}}
 		>
 			<OrbBead state={orb.state} active={working} size={12} label={state} />
-			<span aria-hidden className="hidden sm:inline">
+			<span aria-hidden className="hidden @xl/header:inline">
 				{state}
 			</span>
 		</button>
@@ -106,11 +117,12 @@ export function ThreadHeader({
 	const panelOpen = useUi((s) => s.panelOpen);
 	const orb = useOrbOf(threadId);
 	const projects = useProjects();
-	const projectId = thread?.projectId ?? orb?.projectId;
-	const project = projectId
-		? projects.data?.projects.find((p) => p.id === projectId)
+	// 只认线程自己的项目，和侧栏分组一致；「无项目」线程不显示项目段（即使 orb 属于某个项目）
+	const project = thread?.projectId
+		? projects.data?.projects.find((p) => p.id === thread.projectId)
 		: undefined;
 	const card = parseTitleCard(thread?.title ?? "");
+	const hue = threadHue(thread?.color);
 	const [editing, setEditing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const act = (fn: () => Promise<unknown>) => () => {
@@ -174,7 +186,10 @@ export function ThreadHeader({
 					key: c,
 					label: (
 						<span className="inline-flex items-center gap-2">
-							<span className={`h-2.5 w-2.5 rounded-full ${COLOR_CLASS[c]}`} />
+							<span
+								className="thread-mark h-2.5 w-2.5 rounded-full"
+								style={hueVar(THREAD_HUE[c] ?? 0)}
+							/>
 							{t(`color.${c}`)}
 						</span>
 					),
@@ -266,7 +281,7 @@ export function ThreadHeader({
 	];
 
 	return (
-		<header className="glass flex h-12 shrink-0 items-center gap-1.5 rounded-none border-0 border-b px-2 shadow-none sm:px-3">
+		<header className="glass glass-bar @container/header flex h-12 shrink-0 items-center gap-1.5 rounded-none border-0 border-b px-2 shadow-none sm:px-3">
 			{sidebarToggle && (
 				<IconButton
 					icon="menu"
@@ -277,18 +292,27 @@ export function ThreadHeader({
 				/>
 			)}
 			{project && (
-				<span className="hidden min-w-0 shrink items-center gap-2 text-sm sm:inline-flex">
+				// 项目段整段显示或整段隐藏：页头够宽才带项目名，中等宽度只留徽标，再窄连徽标一起隐藏
+				<span
+					className="hidden shrink-0 items-center gap-2 text-sm @md/header:inline-flex"
+					title={project.name}
+				>
 					<ProjectBadge name={project.name} icon={project.icon} />
-					<span className="max-w-40 truncate text-muted">{project.name}</span>
+					<span className="hidden max-w-40 truncate text-muted @2xl/header:inline">
+						{project.name}
+					</span>
 					<span aria-hidden className="text-ghost">
 						/
 					</span>
 				</span>
 			)}
+			{/* 标题前最多两个标记：状态 + 标题图标（有线程色时图标底色取线程色）；没有标题图标时线程色是一根短竖条 */}
 			{thread && <ThreadStateIcon state={thread.state} />}
-			{thread?.color && (
+			{!card.icon && hue !== undefined && editing === null && (
 				<span
-					className={`h-1.5 w-1.5 shrink-0 rounded-full ${COLOR_CLASS[thread.color] ?? ""}`}
+					aria-hidden
+					className="thread-mark h-3.5 w-[3px] shrink-0 rounded-full"
+					style={hueVar(hue)}
 				/>
 			)}
 			{editing !== null ? (
@@ -322,16 +346,25 @@ export function ThreadHeader({
 					onClick={() => setEditing(card.text)}
 				>
 					{card.icon && (
-						<TitleGlyph icon={card.icon} seed={card.text} size={18} />
-					)}
-					{card.code && (
-						<span aria-hidden className="hidden sm:inline-flex">
-							<Badge>{card.code}</Badge>
+						<span
+							aria-hidden
+							className="avatar inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] text-xs leading-none"
+							style={hueVar(hue ?? nameHue(card.text))}
+						>
+							{card.icon}
 						</span>
 					)}
 					<span className="min-w-0 truncate">
 						{card.text || t("thread.untitled")}
 					</span>
+					{card.code && (
+						<span
+							aria-hidden
+							className="hidden shrink-0 font-normal @lg/header:inline-flex"
+						>
+							<Badge>{card.code}</Badge>
+						</span>
+					)}
 				</button>
 			)}
 			{editing === null && orb && (

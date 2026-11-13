@@ -11,6 +11,7 @@ import {
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
+import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
 import { OrbBead } from "../components/ui/OrbBead";
@@ -77,7 +78,7 @@ function PillButton({
 			<Icon name={icon} size={13} className="shrink-0" />
 			<span className="min-w-0 truncate">{text.main}</span>
 			{text.badge && <Badge>{text.badge}</Badge>}
-			<span className="hidden shrink-0 sm:inline">
+			<span className="hidden shrink-0 sm:pointer-fine:inline">
 				<Kbd>{shortcut}</Kbd>
 			</span>
 		</button>
@@ -174,10 +175,10 @@ function Option({
 	);
 }
 
-/** 提示行：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。 */
+/** 提示行：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。只在有键盘鼠标的桌面宽度显示。 */
 function HintLine({ text }: { text: string }) {
 	return (
-		<p className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-faint text-xs">
+		<p className="mt-3 hidden flex-wrap items-center justify-center gap-x-3 gap-y-1 text-faint text-xs sm:pointer-fine:flex">
 			{text.split(/\s*·\s*/).map((seg) => {
 				const sp = seg.indexOf(" ");
 				const key = sp > 0 ? seg.slice(0, sp) : seg;
@@ -316,6 +317,7 @@ export function HomePage(): ReactNode {
 				...(thinking ? { thinkingLevel: thinking } : {}),
 			};
 			const thread = await createThread(body);
+			setPendingPrompt(thread.id, text);
 			setPrompt("");
 			att.clear();
 			navigate(`/t/${thread.id}`);
@@ -428,6 +430,8 @@ export function HomePage(): ReactNode {
 								<div className="flex-1" />
 								<Button
 									variant="accent"
+									// 空态与 Button 的禁用规则一致：中性底 + faint 字，不靠透明度去淡化强调色
+									className="disabled:bg-inset disabled:text-faint disabled:opacity-100! disabled:shadow-none"
 									icon={busy ? undefined : "send"}
 									disabled={
 										busy ||

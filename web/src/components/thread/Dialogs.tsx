@@ -517,16 +517,18 @@ function ModelDialog({
 				<Toggle
 					checked={state?.fastModeEnabled ?? false}
 					onChange={(v) => void run({ type: "set_fast_mode", enabled: v })}
-					label={t("model.fast")}
+					label={t("model.fastMode")}
 				/>
 				<Toggle
 					checked={state?.slowModeEnabled ?? false}
 					disabled={!state?.slowModeSupported}
 					onChange={(v) => void run({ type: "set_slow_mode", enabled: v })}
-					label={t("model.slow")}
+					label={t("model.slowMode")}
 				/>
 			</div>
+			{/* 打开即可输入筛选；否则 Dialog 会把焦点给思考级别下拉框，它顶着焦点环出现 */}
 			<TextInput
+				autoFocus
 				placeholder={t("model.search")}
 				value={q}
 				onChange={(e) => setQ(e.target.value)}
@@ -1343,13 +1345,19 @@ export function PlanProposalDialog({
 				</div>
 			}
 		>
-			<div className="mb-3 flex min-w-0 items-center gap-1.5 font-mono text-faint text-xs">
-				<Icon name="fileText" size={13} aria-hidden className="shrink-0" />
-				<span className="min-w-0 truncate" title={proposal.planFilePath}>
-					{proposal.planFilePath}
-				</span>
+			{/* 打开时 Dialog 把焦点给正文第一个可聚焦元素：给可滚动的计划正文本身，方向键即可滚动。
+			    计划是 agent 推来的、焦点是程序移入的，此处不画焦点环（否则关闭钮 / 代码块复制钮会顶着粗环出现）；
+			    Tab 之后的按钮仍有全局 :focus-visible 环 */}
+			{/* biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动区域需要能用键盘聚焦以便方向键滚动 */}
+			<div tabIndex={0} className="outline-none">
+				<div className="mb-3 flex min-w-0 items-center gap-1.5 font-mono text-faint text-xs">
+					<Icon name="fileText" size={13} aria-hidden className="shrink-0" />
+					<span className="min-w-0 truncate" title={proposal.planFilePath}>
+						{proposal.planFilePath}
+					</span>
+				</div>
+				<Markdown text={proposal.planContent} />
 			</div>
-			<Markdown text={proposal.planContent} />
 		</Dialog>
 	);
 }

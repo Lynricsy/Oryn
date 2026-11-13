@@ -344,7 +344,6 @@ export function Composer({
 						{t("composer.abortBash")}
 					</button>
 				)}
-				<span className="min-w-1 flex-1" />
 				<ModelChip threadId={threadId} />
 				<ContextRing threadId={threadId} />
 				{busy && (
@@ -363,7 +362,7 @@ export function Composer({
 					aria-label={busy ? t("composer.steer") : t("composer.send")}
 					disabled={!canSend}
 					onClick={() => void submit(busy ? "steer" : "prompt")}
-					className="ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+					className="ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,background-color,color] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:bg-inset disabled:text-faint disabled:shadow-none"
 				>
 					<Icon name="send" size={16} weight="bold" />
 				</button>
@@ -374,7 +373,7 @@ export function Composer({
 				</p>
 			)}
 			<div className="flex min-h-8 items-center gap-3 border-[var(--glass-line)] border-t px-3 py-1.5 text-2xs text-faint">
-				<div className="hidden min-w-0 items-center gap-3 truncate sm:flex">
+				<div className="hidden min-w-0 items-center gap-3 truncate sm:pointer-fine:flex">
 					{busy ? (
 						<>
 							<span>

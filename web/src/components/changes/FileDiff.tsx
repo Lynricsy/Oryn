@@ -38,11 +38,11 @@ export function FileDiff({
 	onBack?(): void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const { orbId, root, scope } = target;
+	const { orbId, root, base, scope } = target;
 	const scopeKey =
 		scope.scope === "commit" ? `commit:${scope.sha}` : scope.scope;
-	// 结果按「文件 + 范围」记键：换文件 / 范围时不显示旧 diff，同键刷新时不闪烁
-	const key = `${orbId}|${root ?? ""}|${scopeKey}|${file.oldPath ?? ""}|${file.path}`;
+	// 结果按「文件 + 范围 + 基线」记键：换文件 / 范围 / 基线时不显示旧 diff，同键刷新时不闪烁
+	const key = `${orbId}|${root ?? ""}|${base ?? ""}|${scopeKey}|${file.oldPath ?? ""}|${file.path}`;
 	const [loaded, setLoaded] = useState<{
 		key: string;
 		diff: GitFileDiff;
@@ -58,7 +58,7 @@ export function FileDiff({
 		// 只有同一文件的后台刷新才用 bg；换文件 / 范围是用户操作
 		const bg = refresh.bg && lastKey.current === key;
 		lastKey.current = key;
-		getGitDiff({ orbId, root, scope }, file, bg, ctl.signal).then(
+		getGitDiff({ orbId, root, base, scope }, file, bg, ctl.signal).then(
 			(d) => {
 				if (!cancelled) setLoaded({ key, diff: d });
 			},

@@ -1,8 +1,9 @@
 /* Tool renderer design system — `tv-` namespace.
  *
- * Oryn 改版（R1）：每张工具卡是一张细描边圆角卡（--r-lg），头部左侧 22px 类别色图标方块
- * （--cat-*，低彩度，只表达工具类别），工具名加粗 + 等宽参数摘要，右侧读数、状态图标、折叠箭头；
- * 展开体在卡内，上方一条发丝线。颜色一律经 `--tv-*` 桥接到全站令牌（index.css 的桥接块），
+ * Oryn 改版（Step 6）：工具调用是「过程」，要退到页边。折叠态是一行没有外框的灰度文字：
+ * 13px 小图标（灰；悬停/展开时才染上 --cat-* 类别色）+ 工具名 + 等宽摘要，悬停时整行出现底色；
+ * 成功只留一枚 ghost 色的小勾，只有失败与运行中才有颜色。展开体是一张细描边圆角卡，
+ * 左缘对齐工具名。颜色一律经 `--tv-*` 桥接到全站令牌（index.css 的桥接块），
  * 圆角、字体、缓动只用原始变量 --r-* / --mono / --sans / --ease。 */
 
 .tv-card {
@@ -31,20 +32,13 @@
 		monospace
 	);
 
-	margin: 3px 0;
-	border: 1px solid var(--tv-border);
-	border-radius: var(--r-lg, 10px);
-	background: var(--tv-panel);
+	margin: 0;
+	border-radius: var(--r-md, 8px);
 	font-family: var(--tv-mono);
 	font-size: 12px;
 	line-height: 1.5;
 	color: var(--tv-fg);
 	isolation: isolate;
-	overflow: hidden;
-}
-
-.tv-card--error {
-	border-color: color-mix(in oklab, var(--tv-err) 35%, var(--tv-border));
 }
 
 /* ---- header ---- */
@@ -52,14 +46,15 @@
 .tv-head {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 	width: 100%;
-	min-height: 38px;
-	padding: 0 10px 0 7px;
+	min-height: 28px;
+	padding: 0 8px 0 6px;
 	background: none;
 	border: 0;
+	border-radius: var(--r-md, 8px);
 	font: inherit;
-	color: inherit;
+	color: var(--tv-muted);
 	text-align: left;
 	cursor: pointer;
 	touch-action: manipulation;
@@ -68,7 +63,7 @@
 }
 
 .tv-head:hover {
-	background: color-mix(in oklab, var(--tv-hover) 55%, var(--tv-panel));
+	background: var(--tv-hover);
 }
 
 .tv-head:focus-visible {
@@ -76,16 +71,20 @@
 	outline-offset: -2px;
 }
 
-/* 类别色图标方块：底 = 类别色 12%，图标 = 类别色 */
+/* 工具小图标：平时灰，悬停或展开时染上类别色（--cat-*，低彩度，只表达工具类别） */
 .tv-cat {
 	--tv-cat: var(--cat-other, var(--tv-muted));
-	display: grid;
+	display: inline-grid;
 	place-items: center;
 	flex: none;
-	width: 22px;
-	height: 22px;
-	border-radius: var(--r-sm, 6px);
-	background: color-mix(in oklab, var(--tv-cat) 12%, var(--tv-panel));
+	width: 14px;
+	height: 14px;
+	color: var(--tv-faint);
+	transition: color 150ms var(--ease, ease);
+}
+
+.tv-head:hover .tv-cat,
+.tv-head[aria-expanded="true"] .tv-cat {
 	color: var(--tv-cat);
 }
 
@@ -117,8 +116,9 @@
 	height: 14px;
 }
 
+/* 成功是常态，只留一枚很弱的勾；失败才用红 */
 .tv-status--ok {
-	color: var(--tv-ok);
+	color: var(--tv-ghost);
 }
 
 .tv-status--err {
@@ -142,29 +142,35 @@
 }
 
 .tv-name {
-	position: relative;
-	top: -0.5px;
 	flex: none;
 	font-family: var(--tv-sans);
 	font-size: 12.5px;
 	line-height: 20px;
-	font-weight: 640;
-	color: var(--tv-fg);
+	font-weight: 550;
+	color: var(--tv-muted);
 }
 
+/* 摘要：各渲染器拼出的片段（路径、模式、徽标……）是这里的 flex 子项，
+ * 由 gap 给出固定间距；flex 容器会丢掉片段之间仅含空白的文本节点，所以不会叠成双倍空隙。 */
 .tv-sum {
+	display: flex;
+	align-items: center;
+	gap: 6px;
 	flex: 1;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-size: 12px;
 	line-height: 20px;
-	color: var(--tv-muted);
+	color: var(--tv-faint);
 	font-variant-numeric: tabular-nums;
 }
 
 .tv-sum > * {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -172,12 +178,23 @@
 	display: inline-grid;
 	place-items: center;
 	flex: none;
-	color: var(--tv-ghost);
-	transition: rotate 150ms var(--ease, ease);
+	color: var(--tv-faint);
+	opacity: 0;
+	transition:
+		rotate 150ms var(--ease, ease),
+		opacity 150ms var(--ease, ease);
 }
 
-.tv-head:hover .tv-chev {
-	color: var(--tv-faint);
+.tv-head:hover .tv-chev,
+.tv-head:focus-visible .tv-chev,
+.tv-head[aria-expanded="true"] .tv-chev {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.tv-chev {
+		opacity: 1;
+	}
 }
 
 .tv-head[aria-expanded="true"] .tv-chev {
@@ -186,12 +203,16 @@
 
 /* ---- body ---- */
 
+/* 展开体：左缘对齐工具名（6px 内边距 + 14px 图标 + 8px gap） */
 .tv-body {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+	margin: 2px 0 6px 28px;
 	padding: 10px 12px;
-	border-top: 1px solid var(--tv-border);
+	border: 1px solid var(--tv-border);
+	border-radius: var(--r-lg, 10px);
+	background: var(--tv-panel);
 }
 
 .tv-intent {
@@ -202,9 +223,10 @@
 }
 
 .tv-partial {
-	margin: 0;
+	margin: 2px 0 6px 28px;
 	padding: 8px 12px;
-	border-top: 1px solid var(--tv-border);
+	border: 1px solid var(--tv-border);
+	border-radius: var(--r-lg, 10px);
 	background: var(--tv-inset);
 	font-size: 11px;
 	line-height: 1.45;
@@ -290,6 +312,29 @@
 
 .tv-ok-text {
 	color: var(--tv-ok);
+}
+
+/* ---- 折叠行里的覆盖（须排在原子样式之后） ---- */
+
+.tv-card--error .tv-name {
+	color: var(--tv-err);
+}
+
+.tv-sum > .tv-badge,
+.tv-sum > .tv-badges {
+	flex-shrink: 0;
+}
+
+/* 折叠行保持灰度：路径与模式不再用正文色/强调色，accent 徽标退成中性徽标 */
+.tv-head .tv-path,
+.tv-head .tv-pattern {
+	color: var(--tv-muted);
+}
+
+.tv-head .tv-badge--accent {
+	background: var(--tv-inset);
+	box-shadow: inset 0 0 0 1px var(--tv-border);
+	color: var(--tv-muted);
 }
 
 .tv-agent-link {

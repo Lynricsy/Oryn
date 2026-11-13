@@ -20,6 +20,9 @@ export interface MenuEntry {
 	submit: boolean;
 }
 
+/** Oryn 客户端命令的来源名。 */
+const ORYN_SOURCE = "Oryn";
+
 function useDebounced<T>(value: T, ms: number): T {
 	const [v, setV] = useState(value);
 	useEffect(() => {
@@ -75,7 +78,7 @@ export function useCommandMenu(
 				insert: `/${c} `,
 				label: `/${c}`,
 				description: t(`slash.desc.${c}`),
-				badge: "Oryn",
+				badge: ORYN_SOURCE,
 				submit: false,
 			});
 		}
@@ -139,6 +142,10 @@ export function CommandMenu({
 	hint?: string;
 }): ReactNode {
 	const { t } = useTranslation();
+	// 来源徽标只用来区分来源：所有项来源相同时不显示；混排时 Oryn 自己的命令（排在最前）不挂徽标，
+	// 只给 omp 公布的命令标出来源（builtin、skill…），避免每行都挂同一个「Oryn」
+	const showBadges =
+		new Set(entries.map((e) => e.badge).filter(Boolean)).size > 1;
 	return (
 		// 玻璃放在外层、滚动放在内层：玻璃的模糊底是伪元素，放进滚动容器会随内容滚走
 		<div className="glass pop-in absolute right-0 bottom-full left-0 z-30 mb-2 overflow-hidden rounded-xl">
@@ -171,7 +178,9 @@ export function CommandMenu({
 						<span className="min-w-0 flex-1 truncate text-muted text-xs">
 							{e.description}
 						</span>
-						{e.badge && <Badge>{e.badge}</Badge>}
+						{showBadges && e.badge && e.badge !== ORYN_SOURCE && (
+							<Badge>{e.badge}</Badge>
+						)}
 					</button>
 				))}
 			</div>

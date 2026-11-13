@@ -23,7 +23,7 @@ import {
 import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, ListRow, Stat, StatusDot, type Tone } from "../ui/data";
+import { Badge, Stat, StatusDot, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -235,27 +235,26 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	);
 }
 
-/** 一次运行的结果徽标：失败 / 跳过 / 成功。 */
-function RunResult({ run }: { run: SetupRun }): ReactNode {
-	const { t } = useTranslation();
-	const [tone, label]: [Tone, string] = !run.ok
-		? ["err", t("env.failed")]
-		: run.phase === "setup" && !run.setupRan
-			? ["neutral", t("env.skipped")]
-			: ["ok", t("env.ok")];
-	return <Badge tone={tone}>{label}</Badge>;
+/** 一次运行的结果：失败 / 跳过 / 成功（返回语气与文案 key）。 */
+function runResult(
+	run: SetupRun,
+): [tone: Tone, key: "env.failed" | "env.skipped" | "env.ok"] {
+	if (!run.ok) return ["err", "env.failed"];
+	if (run.phase === "setup" && !run.setupRan) return ["neutral", "env.skipped"];
+	return ["ok", "env.ok"];
 }
 
-/** 一次运行的元信息：结果、耗时、触发方式、结束时间。 */
+/** 一次运行的元信息：耗时、触发方式、结束时间（结果由调用方另行表达，只出现一次）。 */
 function RunMeta({ run }: { run: SetupRun }): ReactNode {
 	const { t } = useTranslation();
 	return (
 		<>
-			<RunResult run={run} />
 			<Stat icon="timer" label={t("stat.duration")}>
 				{formatDuration(run.durationMs)}
 			</Stat>
+			<span aria-hidden>·</span>
 			<span>{t(`env.trigger.${run.trigger}`)}</span>
+			<span aria-hidden>·</span>
 			<span className="tabular-nums">{formatRelative(run.finishedAt)}</span>
 		</>
 	);
@@ -273,6 +272,7 @@ export function SetupLogDialog({
 	onClose: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
+	const [resultTone, resultKey] = runResult(run);
 	const ask = useAskAgent(threadId);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
@@ -325,9 +325,8 @@ export function SetupLogDialog({
 				</>
 			}
 		>
-			<div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-faint text-xs">
-				<StatusDot tone={run.ok ? "ok" : "err"} />
-				<Badge>{t(`env.phase.${run.phase}`)}</Badge>
+			<div className="mb-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-faint text-xs">
+				<Badge tone={resultTone}>{t(resultKey)}</Badge>
 				<RunMeta run={run} />
 				<span className="flex-1" />
 				{log.data && <CopyButton text={log.data} label={t("common.copy")} />}
@@ -367,27 +366,38 @@ export function EnvRuns({
 	if (present.length === 0)
 		return <p className="text-faint text-xs">{t("env.none")}</p>;
 	return (
-		<ul className="-mx-2 flex flex-col">
-			{present.map((run) => (
-				<li key={run.id}>
-					<ListRow
-						leading={<StatusDot tone={run.ok ? "ok" : "err"} />}
-						title={<Badge>{t(`env.phase.${run.phase}`)}</Badge>}
-						meta={<RunMeta run={run} />}
-						trailing={
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() =>
-									uiStore.getState().open({ kind: "setupLog", orbId, run })
-								}
-							>
-								{t("env.log")}
-							</Button>
-						}
-					/>
-				</li>
-			))}
+		<ul className="flex flex-col">
+			{present.map((run) => {
+				const [tone, key] = runResult(run);
+				const label = t(key);
+				return (
+					<li
+						key={run.id}
+						className="flex h-8 min-w-0 items-center gap-2 text-xs"
+					>
+						{/* 状态只由这个点表达一次；悬停给出文字 */}
+						<span title={label} className="inline-flex">
+							<StatusDot tone={tone} label={label} />
+						</span>
+						<span className="shrink-0 font-medium text-fg">
+							{t(`env.phase.${run.phase}`)}
+						</span>
+						<span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap text-faint">
+							<RunMeta run={run} />
+						</span>
+						<Button
+							size="sm"
+							variant="ghost"
+							className="-mr-1.5 shrink-0"
+							onClick={() =>
+								uiStore.getState().open({ kind: "setupLog", orbId, run })
+							}
+						>
+							{t("env.log")}
+						</Button>
+					</li>
+				);
+			})}
 		</ul>
 	);
 }

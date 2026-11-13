@@ -1,18 +1,12 @@
 /**
  * 侧边栏（按最新 Amp 布局）：品牌 + 新建、搜索；分区 已置顶 → 按项目分组的活跃线程 → 72 小时未活动（一键归档）→ 稍后提醒 → 已归档。
- * 线程行 = 状态图标 + 标题卡图标 + 颜色点 + 标题 + 相对时间 / 子线程计数 / 未读点；fork 出的子线程挂在父线程下，带 L 形引导线。
+ * 线程行 = 状态图标 + 标题卡图标 + 标题 + 相对时间 / 子线程计数 / 未读点（标题前最多两个标记）；线程色是行左缘的一根细竖条，
+ * 有标题卡图标时图标底色也取线程色。fork 出的子线程挂在父线程下，带 L 形引导线。
  * 链接的 textContent 必须只等于标题文字：图标字形、时间、计数、活动行一律走 data 属性 + 伪元素。
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import {
-	type CSSProperties,
-	type ReactNode,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
 import type { Thread } from "../../api/client";
@@ -24,7 +18,7 @@ import { patchThread } from "../../state/actions";
 import { useConnection, useIndex } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
 import { uiStore, useUi } from "../../state/ui";
-import { COLOR_CLASS } from "../thread/ThreadHeader";
+import { hueVar, threadHue } from "../thread/ThreadHeader";
 import {
 	BrandMark,
 	nameHue,
@@ -106,13 +100,13 @@ export function groupThreads(
 }
 
 /** 标题卡图标：外观同 `TitleGlyph`，但字形放在伪元素里，不进链接的 textContent。 */
-function CardGlyph({ icon, seed }: { icon: string; seed: string }) {
+function CardGlyph({ icon, hue }: { icon: string; hue: number }) {
 	return (
 		<span
 			aria-hidden
 			data-glyph={icon}
 			className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-[11px] leading-none before:content-[attr(data-glyph)]"
-			style={{ "--h": nameHue(seed) } as CSSProperties}
+			style={hueVar(hue)}
 		/>
 	);
 }
@@ -145,6 +139,7 @@ export function ThreadRow({
 	const card = parseTitleCard(thread.title);
 	const title = card.text || t("thread.untitled");
 	const stamp = time ?? formatRelative(activityOf(thread), now ?? Date.now());
+	const hue = threadHue(thread.color);
 	const activity = thread.state === "working" ? thread.activity : undefined;
 	const seen = new Set(ancestors);
 	seen.add(thread.id);
@@ -161,14 +156,17 @@ export function ThreadRow({
 				}
 				style={{ paddingLeft: `${0.5 + depth}rem` }}
 			>
+				{hue !== undefined && (
+					<span
+						aria-hidden
+						className="thread-mark absolute top-2 left-0.5 h-4 w-[3px] rounded-full"
+						style={hueVar(hue)}
+					/>
+				)}
 				<span className="flex h-8 items-center gap-2">
 					<ThreadStateIcon state={thread.state} size={14} />
-					{card.icon && <CardGlyph icon={card.icon} seed={title} />}
-					{thread.color && (
-						<span
-							aria-hidden
-							className={`h-1.5 w-1.5 shrink-0 rounded-full ${COLOR_CLASS[thread.color] ?? ""}`}
-						/>
+					{card.icon && (
+						<CardGlyph icon={card.icon} hue={hue ?? nameHue(title)} />
 					)}
 					<span
 						className={`min-w-0 flex-1 truncate ${thread.unread ? "font-medium text-fg" : ""}`}

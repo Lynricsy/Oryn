@@ -4,6 +4,8 @@
  * `blob:sha256:<hex>` 图片引用改写为 `GET /api/v1/blobs/<hex>`。
  * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
  */
+
+import type { MermaidConfig } from "mermaid";
 import {
 	type ComponentProps,
 	memo,
@@ -100,21 +102,117 @@ function useThemeVersion(): number {
 	return version;
 }
 
-/** 从当前令牌读出 mermaid `base` 主题变量（mermaid 只认 hex）。 */
-function mermaidThemeVariables(): Record<string, string | boolean> {
-	const root = document.documentElement;
-	const sans = getComputedStyle(root).getPropertyValue("--sans").trim();
+/** 图内字号：不超过界面正文 13px，免得图比散文（14.5px）还抢眼。 */
+const MERMAID_FONT_PX = 13;
+const MERMAID_SMALL_FONT_PX = 12;
+
+/** 从当前令牌读出 mermaid `base` 主题变量（mermaid 只认 hex）。节点白底细描边，不用灰块。 */
+function mermaidThemeVariables(sans: string): Record<string, string | boolean> {
+	const panel = cssColor("--panel", "#fcfcfd");
+	const inset = cssColor("--inset", "#f1f2f5");
+	const raised = cssColor("--raised", "#f5f6f8");
+	const line = cssColor("--line", "#e2e4e8");
+	const lineStrong = cssColor("--line-strong", "#cfd2d8");
+	const text = cssColor("--text", "#202329");
+	const muted = cssColor("--text-muted", "#5a5f6b");
 	return {
-		darkMode: root.dataset.theme === "dark",
-		background: cssColor("--panel", "#fcfcfd"),
-		primaryColor: cssColor("--raised", "#f5f6f8"),
-		primaryBorderColor: cssColor("--line-strong", "#cfd2d8"),
-		primaryTextColor: cssColor("--text", "#202329"),
-		secondaryColor: cssColor("--inset", "#f1f2f5"),
-		tertiaryColor: cssColor("--panel", "#fcfcfd"),
-		lineColor: cssColor("--text-muted", "#5a5f6b"),
-		textColor: cssColor("--text", "#202329"),
-		fontFamily: sans || "sans-serif",
+		darkMode: document.documentElement.dataset.theme === "dark",
+		fontFamily: sans,
+		fontSize: `${MERMAID_FONT_PX}px`,
+		background: panel,
+		primaryColor: panel,
+		primaryBorderColor: lineStrong,
+		primaryTextColor: text,
+		secondaryColor: inset,
+		secondaryBorderColor: line,
+		secondaryTextColor: text,
+		tertiaryColor: raised,
+		tertiaryBorderColor: line,
+		tertiaryTextColor: text,
+		mainBkg: panel,
+		nodeBorder: lineStrong,
+		clusterBkg: inset,
+		clusterBorder: line,
+		edgeLabelBackground: panel,
+		lineColor: muted,
+		textColor: text,
+		actorBkg: panel,
+		actorBorder: lineStrong,
+		actorTextColor: text,
+		actorLineColor: lineStrong,
+		signalColor: muted,
+		signalTextColor: text,
+		labelBoxBkgColor: inset,
+		labelBoxBorderColor: line,
+		labelTextColor: text,
+		loopTextColor: muted,
+		noteBkgColor: inset,
+		noteBorderColor: line,
+		noteTextColor: muted,
+		activationBkgColor: inset,
+		activationBorderColor: lineStrong,
+		sequenceNumberColor: panel,
+	};
+}
+
+/**
+ * 完整 mermaid 配置。`useMaxWidth: false` 让 SVG 保持自身尺寸（只随容器缩小，不放大），图内字号才是真实的 13px；
+ * `look: "classic"`：mermaid 12 默认的 neo 外观给时序图参与者预留 44px 图形带，盒子会高出一倍。
+ */
+function mermaidConfig(): MermaidConfig {
+	const sans =
+		getComputedStyle(document.documentElement)
+			.getPropertyValue("--sans")
+			.trim() || "sans-serif";
+	const fit = { useMaxWidth: false };
+	return {
+		startOnLoad: false,
+		securityLevel: "strict",
+		theme: "base",
+		look: "classic",
+		fontFamily: sans,
+		fontSize: MERMAID_FONT_PX,
+		themeVariables: mermaidThemeVariables(sans),
+		flowchart: {
+			...fit,
+			padding: 8,
+			nodeSpacing: 32,
+			rankSpacing: 36,
+			diagramPadding: 8,
+		},
+		sequence: {
+			...fit,
+			diagramMarginX: 8,
+			diagramMarginY: 8,
+			width: 96,
+			height: 34,
+			actorMargin: 48,
+			boxMargin: 8,
+			boxTextMargin: 4,
+			noteMargin: 8,
+			messageMargin: 28,
+			actorFontSize: MERMAID_FONT_PX,
+			actorFontFamily: sans,
+			messageFontSize: MERMAID_SMALL_FONT_PX,
+			messageFontFamily: sans,
+			noteFontSize: MERMAID_SMALL_FONT_PX,
+			noteFontFamily: sans,
+		},
+		class: fit,
+		state: fit,
+		er: fit,
+		gantt: { ...fit, fontSize: MERMAID_SMALL_FONT_PX },
+		journey: fit,
+		timeline: fit,
+		pie: fit,
+		mindmap: fit,
+		gitGraph: fit,
+		requirement: fit,
+		quadrantChart: fit,
+		xyChart: fit,
+		sankey: fit,
+		block: fit,
+		architecture: fit,
 	};
 }
 
@@ -127,12 +225,7 @@ function MermaidBlock({ code }: { code: string }): ReactNode {
 		let alive = true;
 		void import("mermaid")
 			.then(async ({ default: mermaid }) => {
-				mermaid.initialize({
-					startOnLoad: false,
-					securityLevel: "strict",
-					theme: "base",
-					themeVariables: mermaidThemeVariables(),
-				});
+				mermaid.initialize(mermaidConfig());
 				const out = await mermaid.render(`m${id}v${version}`, code);
 				if (alive) setSvg(out.svg);
 			})

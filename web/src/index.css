@@ -314,6 +314,36 @@ body {
 			backdrop-filter: none;
 		}
 	}
+	/*
+	 * 页头玻璃：盖在转录上沿，底下常有密集正文（表格、代码），所以底色更实、模糊稍重，
+	 * 下沿再接一段渐隐，滚到页头下的字认不出来。只给页头用，菜单、弹层仍用 .glass。
+	 * 不靠模糊单独遮字：实测 Chromium 截图里这一窄条的模糊有时只褪色、字形仍清楚，所以底色要足够实。
+	 */
+	.glass-bar::before {
+		background: color-mix(in oklab, var(--panel) 92%, transparent);
+		-webkit-backdrop-filter: blur(20px) saturate(1.4);
+		backdrop-filter: blur(20px) saturate(1.4);
+	}
+	.glass-bar::after {
+		content: "";
+		position: absolute;
+		inset-inline: 0;
+		top: 100%;
+		height: 20px;
+		pointer-events: none;
+		background: linear-gradient(
+			to bottom,
+			color-mix(in oklab, var(--panel) 90%, transparent),
+			transparent
+		);
+	}
+	@media (prefers-reduced-transparency: reduce) {
+		.glass-bar::before {
+			background: var(--panel);
+			-webkit-backdrop-filter: none;
+			backdrop-filter: none;
+		}
+	}
 	/* 浮层进入：只做进入，退出不做动画 */
 	.pop-in {
 		transition:
@@ -359,6 +389,13 @@ body {
 	:root[data-theme="dark"] .avatar {
 		background: oklch(0.34 0.08 var(--h));
 		color: oklch(0.87 0.1 var(--h));
+	}
+	/* 线程色（用户给线程挑的颜色）：竖条 / 标题图标底色，色相由 --h 给出，与强调色的圆点区分开 */
+	.thread-mark {
+		background: oklch(0.64 0.15 var(--h));
+	}
+	:root[data-theme="dark"] .thread-mark {
+		background: oklch(0.74 0.14 var(--h));
 	}
 }
 

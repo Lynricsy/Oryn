@@ -2,7 +2,13 @@
  * 模式开关（计划 / goal / vibe / loop / prewalk / 暂停全部 agent）、模式状态（压缩、重试、扩展状态、命令错误）
  * 与扩展小部件；都嵌在线程输入坞的玻璃托盘里。
  */
-import { type ReactNode, useEffect } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
@@ -13,7 +19,7 @@ import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Badge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
-import { Spinner } from "../ui/primitives";
+import { Menu, type MenuItem, Spinner } from "../ui/primitives";
 
 /** 模式命令的最近错误（按线程）：ModeStrip 写、ModeStatus 读。 */
 const modeErrorStore = createStore<{
@@ -25,45 +31,70 @@ const modeErrorStore = createStore<{
 		set((s) => ({ errors: { ...s.errors, [threadId]: error } })),
 }));
 
-function ModeToggle({
-	on,
-	icon,
-	label,
-	title,
-	onClick,
-}: {
+interface ModeDef {
+	key: string;
 	on: boolean;
 	icon: IconName;
 	label: string;
 	title?: string;
 	onClick: () => void;
-}) {
+}
+
+function toggleClass(on: boolean): string {
+	return `inline-flex h-[30px] shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
+		on
+			? "gap-1.5 bg-accent-soft pr-2.5 pl-2 font-medium text-accent-ink text-xs ring-1 ring-accent/25 ring-inset"
+			: "w-[30px] text-faint hover:bg-hover hover:text-fg"
+	}`;
+}
+
+function ModeToggle({ mode }: { mode: ModeDef }) {
 	return (
 		<button
 			type="button"
-			aria-pressed={on}
-			aria-label={label}
-			title={title ?? label}
-			onClick={onClick}
-			className={`inline-flex h-[30px] shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
-				on
-					? "gap-1.5 bg-accent-soft pr-2.5 pl-2 font-medium text-accent-ink text-xs ring-1 ring-accent/25 ring-inset"
-					: "w-[30px] text-faint hover:bg-hover hover:text-fg"
-			}`}
+			aria-pressed={mode.on}
+			aria-label={mode.label}
+			title={mode.title ?? mode.label}
+			onClick={mode.onClick}
+			className={toggleClass(mode.on)}
 		>
-			<Icon name={icon} size={on ? 14 : 15} />
-			{on && <span className="whitespace-nowrap">{label}</span>}
+			<Icon name={mode.icon} size={mode.on ? 14 : 15} />
+			{mode.on && <span className="whitespace-nowrap">{mode.label}</span>}
 		</button>
 	);
 }
 
-/** 六个模式开关：关时只显示图标，开时显示图标 + 文案。 */
+/** 「更多」按钮宽度与开关间距（px），与 `toggleClass`、`gap-0.5` 一致。 */
+const MORE_W = 30;
+const GAP = 2;
+
+/** 前 k 个开关加上（有剩余时的）「更多」按钮能放进 `avail` 的最大 k。 */
+function fitCount(widths: number[], avail: number): number {
+	let used = 0;
+	for (let k = 0; k < widths.length; k++) {
+		const w = (widths[k] ?? 0) + (k ? GAP : 0);
+		const more = k < widths.length - 1 ? GAP + MORE_W : 0;
+		if (used + w + more > avail) return k;
+		used += w;
+	}
+	return widths.length;
+}
+
+/**
+ * 六个模式开关：关时只显示图标，开时显示图标 + 文案。
+ * 放不下的开关按顺序收进末尾的「更多」菜单，任何宽度下都不出现半截图标。
+ * 宽度量的是一排不可见的同尺寸替身（不进无障碍树），开关开合、容器缩放时重算。
+ */
 export function ModeStrip({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
 	const ready = useThread(threadId, (s) => s.agentStatus === "ready");
 	const vibe = useThread(threadId, (s) => s.vibeEnabled);
 	const loop = useThread(threadId, (s) => s.loopMode);
+	const outerRef = useRef<HTMLDivElement>(null);
+	const measureRef = useRef<HTMLDivElement>(null);
+	// 没有 ResizeObserver（jsdom）时全部显示
+	const [fit, setFit] = useState(Number.POSITIVE_INFINITY);
 
 	useEffect(() => {
 		if (!ready) return;
@@ -78,6 +109,23 @@ export function ModeStrip({ threadId }: { threadId: string }): ReactNode {
 		);
 	}, [ready, threadId]);
 
+	useLayoutEffect(() => {
+		const outer = outerRef.current;
+		const measure = measureRef.current;
+		if (!outer || !measure || typeof ResizeObserver === "undefined") return;
+		const compute = () => {
+			const widths = [...measure.children].map(
+				(c) => (c as HTMLElement).offsetWidth,
+			);
+			setFit(fitCount(widths, outer.clientWidth));
+		};
+		const ro = new ResizeObserver(compute);
+		ro.observe(outer);
+		ro.observe(measure);
+		compute();
+		return () => ro.disconnect();
+	}, []);
+
 	const run = async (frame: OmpCommand) => {
 		const setError = modeErrorStore.getState().set;
 		setError(threadId, undefined);
@@ -89,75 +137,130 @@ export function ModeStrip({ threadId }: { threadId: string }): ReactNode {
 	};
 
 	const goal = state?.goal;
+	const modes: ModeDef[] = [
+		{
+			key: "plan",
+			on: state?.planModeEnabled ?? false,
+			icon: "list",
+			label: t("mode.plan"),
+			onClick: () =>
+				void run({
+					type: "set_plan_mode",
+					enabled: !(state?.planModeEnabled ?? false),
+				}),
+		},
+		{
+			key: "goal",
+			on: Boolean(goal),
+			icon: "target",
+			label: goal
+				? t("mode.goalOn", { status: goal.goal?.status ?? "" })
+				: t("mode.goal"),
+			onClick: () => uiStore.getState().open({ kind: "goal" }),
+		},
+		{
+			key: "vibe",
+			on: vibe ?? false,
+			icon: "bolt",
+			label: t("mode.vibe"),
+			onClick: () =>
+				void run({ type: "set_vibe_mode", enabled: !(vibe ?? false) }),
+		},
+		{
+			key: "loop",
+			on: loop?.enabled ?? false,
+			icon: "play",
+			label: loop?.enabled
+				? t("mode.loopOn", { state: t(`mode.loopState.${loop.state}`) })
+				: t("mode.loop"),
+			title: loop?.prompt || undefined,
+			onClick: () =>
+				void run({
+					type: "set_loop_mode",
+					enabled: !(loop?.enabled ?? false),
+				}),
+		},
+		{
+			key: "prewalk",
+			on: state?.prewalkArmed ?? false,
+			icon: "clock",
+			label: t("mode.prewalk"),
+			onClick: () =>
+				void run({
+					type: "set_prewalk",
+					enabled: !(state?.prewalkArmed ?? false),
+				}),
+		},
+		{
+			key: "pause",
+			on: state?.agentsPaused ?? false,
+			icon: "pause",
+			label: t("mode.pauseAgents"),
+			onClick: () =>
+				void run({
+					type: "set_agents_paused",
+					enabled: !(state?.agentsPaused ?? false),
+				}),
+		},
+	];
+	const shown = modes.slice(0, fit);
+	const rest = modes.slice(fit);
+	const restOn = rest.some((m) => m.on);
+	const items: MenuItem[] = rest.map((m) => ({
+		key: m.key,
+		icon: m.icon,
+		label: m.label,
+		hint: m.on ? (
+			<Icon name="check" size={13} weight="bold" className="text-accent" />
+		) : undefined,
+		onSelect: m.onClick,
+	}));
+
 	return (
-		<div className="focus-inset flex min-w-0 shrink items-center gap-0.5 overflow-x-auto">
-			<ModeToggle
-				on={state?.planModeEnabled ?? false}
-				icon="list"
-				label={t("mode.plan")}
-				onClick={() =>
-					void run({
-						type: "set_plan_mode",
-						enabled: !(state?.planModeEnabled ?? false),
-					})
-				}
-			/>
-			<ModeToggle
-				on={Boolean(goal)}
-				icon="target"
-				label={
-					goal
-						? t("mode.goalOn", { status: goal.goal?.status ?? "" })
-						: t("mode.goal")
-				}
-				onClick={() => uiStore.getState().open({ kind: "goal" })}
-			/>
-			<ModeToggle
-				on={vibe ?? false}
-				icon="bolt"
-				label={t("mode.vibe")}
-				onClick={() =>
-					void run({ type: "set_vibe_mode", enabled: !(vibe ?? false) })
-				}
-			/>
-			<ModeToggle
-				on={loop?.enabled ?? false}
-				icon="play"
-				label={
-					loop?.enabled
-						? t("mode.loopOn", { state: t(`mode.loopState.${loop.state}`) })
-						: t("mode.loop")
-				}
-				title={loop?.prompt || undefined}
-				onClick={() =>
-					void run({
-						type: "set_loop_mode",
-						enabled: !(loop?.enabled ?? false),
-					})
-				}
-			/>
-			<ModeToggle
-				on={state?.prewalkArmed ?? false}
-				icon="clock"
-				label={t("mode.prewalk")}
-				onClick={() =>
-					void run({
-						type: "set_prewalk",
-						enabled: !(state?.prewalkArmed ?? false),
-					})
-				}
-			/>
-			<ModeToggle
-				on={state?.agentsPaused ?? false}
-				icon="pause"
-				label={t("mode.pauseAgents")}
-				onClick={() =>
-					void run({
-						type: "set_agents_paused",
-						enabled: !(state?.agentsPaused ?? false),
-					})
-				}
-			/>
+		<div
+			ref={outerRef}
+			className="relative flex min-w-[30px] flex-1 items-center gap-0.5"
+		>
+			<div
+				ref={measureRef}
+				aria-hidden
+				inert
+				className="pointer-events-none invisible absolute top-0 left-0 flex gap-0.5"
+			>
+				{modes.map((m) => (
+					<span key={m.key} className={toggleClass(m.on)}>
+						<Icon name={m.icon} size={m.on ? 14 : 15} />
+						{m.on && <span className="whitespace-nowrap">{m.label}</span>}
+					</span>
+				))}
+			</div>
+			{shown.map((m) => (
+				<ModeToggle key={m.key} mode={m} />
+			))}
+			{rest.length > 0 && (
+				<Menu
+					side="top"
+					align="left"
+					items={items}
+					trigger={(p) => (
+						<button
+							type="button"
+							aria-label={t("mode.more")}
+							title={t("mode.more")}
+							className={`relative inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-md transition-colors duration-150 hover:bg-hover hover:text-fg ${restOn ? "text-accent-ink" : "text-faint"}`}
+							{...p}
+						>
+							<Icon name="more" size={15} />
+							{restOn && (
+								<span
+									aria-hidden
+									className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent"
+								/>
+							)}
+						</button>
+					)}
+				/>
+			)}
 		</div>
 	);
 }

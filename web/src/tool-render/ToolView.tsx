@@ -54,7 +54,7 @@ const TOOL_ICON: Record<string, IconName> = {
 
 type ToolCat = "read" | "edit" | "exec" | "web" | "agent" | "other";
 
-/** 工具类别：只决定图标方块的低彩度色调（`--cat-*`），不表达状态。 */
+/** 工具类别：只决定悬停或展开时工具小图标的低彩度色调（`--cat-*`），不表达状态。 */
 const TOOL_CAT: Record<string, ToolCat> = {
 	read: "read",
 	grep: "read",
@@ -217,16 +217,11 @@ export function ToolView(props: ToolViewProps): ReactNode {
 					/>
 				) : (
 					<span className={`tv-status tv-status--${status}`} aria-hidden="true">
-						<Icon
-							name={
-								status === "ok"
-									? "checkCircle"
-									: status === "err"
-										? "xCircle"
-										: "circle"
-							}
-							size={14}
-						/>
+						{status === "ok" ? (
+							<Icon name="check" size={12} />
+						) : (
+							<Icon name={status === "err" ? "xCircle" : "circle"} size={14} />
+						)}
 					</span>
 				)}
 				<span className="tv-chev" aria-hidden="true">

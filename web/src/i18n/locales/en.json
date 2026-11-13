@@ -25,6 +25,7 @@
 			"graphite": "Graphite"
 		},
 		"desc": "Appearance is saved in this browser only.",
+		"theme": "Theme",
 		"avatar": "Agent avatar",
 		"avatarKind": {
 			"default": "Default mark",
@@ -204,6 +205,7 @@
 		},
 		"newSession": "New session",
 		"redactedThinking": "(thinking redacted)",
+		"sending": "Sending",
 		"steer": "steer",
 		"synthetic": "injected",
 		"thinking": "Thinking",
@@ -256,6 +258,7 @@
 		"rename": "Rename",
 		"snooze": "Snooze",
 		"snoozeClear": "Unsnooze",
+		"startingAgent": "Starting the agent…",
 		"snoozeFor": {
 			"1h": "1 hour",
 			"3h": "3 hours",
@@ -290,6 +293,7 @@
 		"goalOn": "Goal · {{status}}",
 		"loop": "Loop",
 		"loopOn": "Loop · {{state}}",
+		"more": "More modes",
 		"loopState": {
 			"off": "off",
 			"waiting": "waiting",
@@ -381,7 +385,9 @@
 		"search": "Search models…",
 		"thinking": "Thinking",
 		"fast": "fast",
-		"slow": "slow"
+		"slow": "slow",
+		"fastMode": "Fast mode",
+		"slowMode": "Slow mode"
 	},
 	"subagent": {
 		"title": "Subagent",
@@ -804,7 +810,7 @@
 			"reset": "Use default base",
 			"invalid": "Branch names must start with a letter or digit and contain only letters, digits, and . _ / -"
 		},
-		"modified": "{{n}} modified",
+		"modified": "Modified files: {{n}}",
 		"refresh": "Refresh",
 		"approximateBase": "Base is approximate",
 		"noBase": "No base branch found; showing uncommitted changes",

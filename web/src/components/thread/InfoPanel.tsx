@@ -11,10 +11,17 @@ import type { TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
-import { Card, ListRow, Meter, StatusDot, thresholdTone } from "../ui/data";
+import {
+	Card,
+	ListRow,
+	Meter,
+	StatusDot,
+	type Tone,
+	thresholdTone,
+} from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
-import { IconButton, Sparkline, TextInput } from "../ui/primitives";
+import { IconButton, Sparkline } from "../ui/primitives";
 import { useRpc } from "./Dialogs";
 import { EnvRuns } from "./EnvBanner";
 import { useOrbOf } from "./ThreadHeader";
@@ -40,17 +47,27 @@ function EmptyLine({
 	);
 }
 
-/** 规格胶囊：图标 + 值。 */
+/** 规格：无边框的图标 + 值，同一行用间距分开（卡片里不再套第三层边框）。 */
 function Spec({ icon, children }: { icon: IconName; children: ReactNode }) {
 	return (
-		<span className="inline-flex h-6 items-center gap-1.5 rounded-sm border border-border bg-inset px-2 text-2xs text-muted">
+		<span className="inline-flex items-center gap-1 whitespace-nowrap text-muted text-xs">
 			<Icon name={icon} size={12} aria-hidden className="text-faint" />
-			<span className="font-medium text-fg">{children}</span>
+			{children}
 		</span>
 	);
 }
 
-/** 内嵌井里的一行读数：图标 + 标签、数值、着色迷你曲线（颜色由 `className` 的文字色决定）。 */
+/** 迷你曲线默认用中性色，只有越过阈值才染警告 / 错误色（强调色只给需要你的东西）。 */
+const CHART_TONE: Record<Tone, string> = {
+	neutral: "text-muted",
+	accent: "text-muted",
+	ok: "text-muted",
+	frost: "text-muted",
+	warn: "text-warn",
+	err: "text-err",
+};
+
+/** 内嵌井里的一行读数：图标 + 标签、数值、迷你曲线（颜色由 `className` 的文字色决定）。井只用底色，不画边框。 */
 function MetricWell({
 	icon,
 	label,
@@ -65,7 +82,7 @@ function MetricWell({
 	className: string;
 }) {
 	return (
-		<div className="grid h-10 grid-cols-[4.25rem_4.5rem_minmax(0,1fr)] items-center rounded-md border border-border bg-inset px-2.5">
+		<div className="grid h-10 grid-cols-[4.25rem_4.5rem_minmax(0,1fr)] items-center rounded-md bg-inset px-2.5">
 			<span className="flex items-center gap-1.5 font-medium text-2xs text-muted">
 				<Icon name={icon} size={13} aria-hidden className="text-faint" />
 				{label}
@@ -92,6 +109,12 @@ function OrbSection({ threadId }: { threadId: string }) {
 	}
 	const samples = metrics.data?.samples ?? [];
 	const last = samples[samples.length - 1];
+	const cpuTone = last ? thresholdTone(last.cpuPct) : "neutral";
+	const memLimit = last?.memLimitMB ?? 0;
+	const memTone =
+		last && memLimit > 0
+			? thresholdTone((last.memUsedMB / memLimit) * 100)
+			: "neutral";
 	return (
 		<Card title={t("panel.orb")} icon="box">
 			<div className="flex items-center gap-2.5">
@@ -103,7 +126,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 					{orb.id.slice(0, 12)}
 				</span>
 			</div>
-			<div className="mt-3 mb-2.5 flex flex-wrap gap-1.5">
+			<div className="mt-2.5 mb-2.5 flex flex-wrap gap-x-3 gap-y-1">
 				<Spec icon="box">{orb.type}</Spec>
 				<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
 				<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
@@ -114,7 +137,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 					icon="cpu"
 					label={t("panel.cpu")}
 					value={last ? formatPercent(last.cpuPct) : "—"}
-					className="text-accent"
+					className={CHART_TONE[cpuTone]}
 					chart={
 						<Sparkline
 							values={samples.map((s) => s.cpuPct)}
@@ -127,7 +150,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 					icon="memory"
 					label={t("panel.memory")}
 					value={last ? formatMemoryMB(last.memUsedMB) : "—"}
-					className="text-ok"
+					className={CHART_TONE[memTone]}
 					chart={
 						<Sparkline
 							values={samples.map((s) => s.memUsedMB)}
@@ -306,8 +329,9 @@ function TodoSection({ threadId }: { threadId: string }) {
 					).then(() => setDraft(""));
 				}}
 			>
-				<TextInput
-					className="h-7 py-0 text-xs"
+				{/* 卡片里的输入框只用内嵌底色，不再画第三层边框；焦点环由全局 :focus-visible 给 */}
+				<input
+					className="h-7 w-full rounded-md bg-inset px-2.5 text-fg text-xs placeholder:text-faint"
 					placeholder={t("panel.addTodo")}
 					value={draft}
 					onChange={(e) => setDraft(e.target.value)}
@@ -530,7 +554,7 @@ function ToolsSection() {
 					<li key={icon}>
 						<ListRow
 							leading={
-								<span className="grid h-6 w-6 place-items-center rounded-sm border border-border bg-inset text-muted">
+								<span className="grid h-6 w-6 place-items-center rounded-sm bg-inset text-muted">
 									<Icon name={icon} size={13} aria-hidden />
 								</span>
 							}

@@ -26,15 +26,15 @@ import {
 } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
 import { RightPanel } from "../components/thread/RightPanel";
-import { ThreadHeader, useOrbOf } from "../components/thread/ThreadHeader";
+import { ThreadHeader } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
 } from "../components/transcript/context";
 import { Transcript } from "../components/transcript/Transcript";
-import { Callout, Sheet } from "../components/ui/data";
-import { OrbBead } from "../components/ui/OrbBead";
+import { WorkingFooter } from "../components/transcript/WorkingFooter";
+import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
 import { useBreakpoint } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
@@ -43,7 +43,6 @@ import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
 
-const INFO_PANEL_WIDTH = 320;
 /** 玻璃页头盖住的转录顶部留白（页头 48px + 8px）。 */
 const HEADER_INSET = 56;
 
@@ -88,50 +87,6 @@ function PanelResizer() {
 			onKeyDown={onKeyDown}
 		/>
 	);
-}
-
-function WorkingFooter({ threadId }: { threadId: string }) {
-	const { t } = useTranslation();
-	const running = useThread(threadId, (s) => s.running);
-	const live = useThread(
-		threadId,
-		(s) => s.liveMessage && !s.liveMessage.ended,
-	);
-	const state = useThread(threadId, (s) => s.thread?.state);
-	const activity = useThread(threadId, (s) => s.thread?.activity);
-	const agentStatus = useThread(threadId, (s) => s.agentStatus);
-	const orb = useOrbOf(threadId);
-	if (state === "provisioning") {
-		return (
-			<div className="flex items-center gap-2 py-3 text-muted text-sm">
-				{orb ? <OrbBead state={orb.state} size={16} /> : <Spinner />}
-				{t("thread.provisioning", {
-					state: orb ? t(`orbState.${orb.state}`) : "…",
-				})}
-			</div>
-		);
-	}
-	if (agentStatus === "exited") {
-		return (
-			<div className="py-3">
-				<Callout tone="warn">{t("thread.agentExited")}</Callout>
-			</div>
-		);
-	}
-	if (running && !live) {
-		return (
-			<div className="flex min-w-0 items-center gap-2 py-3 text-muted text-sm">
-				<Spinner />
-				<span className="shrink-0">{t("thread.working")}</span>
-				{state === "working" && activity && (
-					<span className="min-w-0 truncate text-faint text-xs">
-						{activity}
-					</span>
-				)}
-			</div>
-		);
-	}
-	return <div className="h-4" />;
 }
 
 export function ThreadPage(): ReactNode {
@@ -295,15 +250,9 @@ export function ThreadPage(): ReactNode {
 			{showPanelColumn && (
 				<div
 					className={`relative h-full min-w-0 ${panelFull ? "flex-1" : "shrink-0"}`}
-					style={
-						panelFull
-							? undefined
-							: {
-									width: panelTab === "info" ? INFO_PANEL_WIDTH : panelWidth,
-								}
-					}
+					style={panelFull ? undefined : { width: panelWidth }}
 				>
-					{panelTab !== "info" && !panelFull && <PanelResizer />}
+					{!panelFull && <PanelResizer />}
 					<Sheet inset className="h-full">
 						<RightPanel
 							threadId={threadId}
@@ -320,13 +269,8 @@ export function ThreadPage(): ReactNode {
 						className="absolute inset-0 bg-scrim"
 						onClick={() => uiStore.getState().setPanel(false)}
 					/>
-					<div
-						className={
-							panelTab === "info"
-								? "relative h-full w-full max-w-sm pt-safe shadow-xl"
-								: "fixed inset-0 bg-panel pt-safe pr-safe pl-safe"
-						}
-					>
+					{/* 抽屉宽度与标签无关：手机上铺满，平板上停在 36rem，切标签不跳 */}
+					<div className="relative h-full w-full max-w-xl bg-panel pt-safe pr-safe shadow-xl">
 						<RightPanel
 							threadId={threadId}
 							onClose={() => uiStore.getState().setPanel(false)}

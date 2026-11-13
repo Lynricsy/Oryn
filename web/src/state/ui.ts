@@ -22,10 +22,11 @@ export type DialogState =
 export type PanelTab = "info" | "changes" | "files" | "terminal";
 
 export const PANEL_WIDTH_KEY = "oryn.panel.width";
-export const PANEL_MIN_WIDTH = 320;
-const PANEL_DEFAULT_WIDTH = 480;
+/** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下。 */
+export const PANEL_MIN_WIDTH = 360;
+const PANEL_DEFAULT_WIDTH = 420;
 
-/** 面板宽度夹到 [320, 视口 70%]（视口过窄时下限优先）。 */
+/** 面板宽度夹到 [PANEL_MIN_WIDTH, 视口 70%]（视口过窄时下限优先）。 */
 export function clampPanelWidth(width: number, viewport: number): number {
 	const max = Math.max(PANEL_MIN_WIDTH, Math.floor(viewport * 0.7));
 	if (!Number.isFinite(width)) return Math.min(PANEL_DEFAULT_WIDTH, max);
@@ -66,7 +67,7 @@ export interface UiState {
 	sidebarOpen: boolean;
 	panelOpen: boolean;
 	panelTab: PanelTab;
-	/** 非 info 标签时 expanded 布局下的面板列宽（px）。 */
+	/** expanded 布局下的面板列宽（px），所有标签共用。 */
 	panelWidth: number;
 	/** 面板占满内容区（转录列隐藏）。 */
 	panelMax: boolean;

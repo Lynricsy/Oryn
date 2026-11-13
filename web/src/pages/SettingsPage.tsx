@@ -374,30 +374,6 @@ function ProvidersSettings() {
 												? t("providers.online")
 												: t("providers.offline")}
 										</span>
-										{p.orbTypes.map((ot) => {
-											const isDefault = p.defaultType === ot.name;
-											return (
-												<span
-													key={ot.name}
-													className="inline-flex items-center gap-0.5"
-												>
-													<Badge tone={isDefault ? "accent" : "neutral"}>
-														{ot.name}
-													</Badge>
-													<Badge icon="cpu">
-														{t("panel.cores", { n: ot.cpus })}
-													</Badge>
-													<Badge icon="memory">
-														{formatMemoryMB(ot.memoryMB)}
-													</Badge>
-													{isDefault && (
-														<Badge tone="accent">
-															{t("providers.default")}
-														</Badge>
-													)}
-												</span>
-											);
-										})}
 										{p.capabilities && (
 											<>
 												<Capability
@@ -409,6 +385,32 @@ function ProvidersSettings() {
 													label={t("providers.snapshot")}
 												/>
 											</>
+										)}
+										{/* 每个 orb 类型一组：名称 + 规格，组间留出明显间隔；「默认」只是标注，用中性色 */}
+										{p.orbTypes.length > 0 && (
+											<span className="mt-1 flex basis-full flex-wrap gap-2">
+												{p.orbTypes.map((ot) => (
+													<span
+														key={ot.name}
+														className="inline-flex h-6 items-center gap-2 rounded-md bg-inset px-2 text-muted"
+													>
+														<span className="font-medium text-fg">
+															{ot.name}
+														</span>
+														<span className="inline-flex items-center gap-1 tabular-nums">
+															<Icon name="cpu" size={11} aria-hidden />
+															{t("panel.cores", { n: ot.cpus })}
+														</span>
+														<span className="inline-flex items-center gap-1 tabular-nums">
+															<Icon name="memory" size={11} aria-hidden />
+															{formatMemoryMB(ot.memoryMB)}
+														</span>
+														{p.defaultType === ot.name && (
+															<Badge>{t("providers.default")}</Badge>
+														)}
+													</span>
+												))}
+											</span>
 										)}
 									</>
 								}
@@ -1150,7 +1152,7 @@ function ThemeSettings() {
 	const setMode = useTheme((s) => s.setMode);
 	const setAccent = useTheme((s) => s.setAccent);
 	return (
-		<Card title={t("settings.appearance")} icon="palette">
+		<Card title={t("appearance.theme")} icon="palette">
 			<div className="flex flex-col gap-5">
 				<div className="flex flex-col gap-2">
 					<span aria-hidden className="font-medium text-muted text-xs">

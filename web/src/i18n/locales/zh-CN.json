@@ -25,6 +25,7 @@
 			"graphite": "石墨"
 		},
 		"desc": "外观设置只保存在这台设备的浏览器里。",
+		"theme": "主题",
 		"avatar": "Agent 头像",
 		"avatarKind": {
 			"default": "默认品牌标",
@@ -204,6 +205,7 @@
 		},
 		"newSession": "新会话",
 		"redactedThinking": "（思考内容已隐藏）",
+		"sending": "发送中",
 		"steer": "引导",
 		"synthetic": "系统注入",
 		"thinking": "思考",
@@ -256,6 +258,7 @@
 		"rename": "改名",
 		"snooze": "稍后提醒",
 		"snoozeClear": "取消提醒",
+		"startingAgent": "正在启动 agent…",
 		"snoozeFor": {
 			"1h": "1 小时",
 			"3h": "3 小时",
@@ -290,6 +293,7 @@
 		"goalOn": "目标 · {{status}}",
 		"loop": "循环",
 		"loopOn": "循环 · {{state}}",
+		"more": "更多模式",
 		"loopState": {
 			"off": "关闭",
 			"waiting": "等待",
@@ -381,7 +385,9 @@
 		"search": "搜索模型…",
 		"thinking": "思考级别",
 		"fast": "fast",
-		"slow": "slow"
+		"slow": "slow",
+		"fastMode": "快速模式（fast）",
+		"slowMode": "慢速模式（slow）"
 	},
 	"subagent": {
 		"title": "子 agent",
@@ -434,17 +440,17 @@
 		"tools": "工具",
 		"cpu": "CPU",
 		"cores": "{{n}} 核",
-		"addTodo": "添加 todo…",
+		"addTodo": "添加待办…",
 		"context": "上下文",
 		"cpuChart": "CPU 曲线",
 		"memChart": "内存曲线",
 		"memory": "内存",
 		"noOrb": "线程没有 orb（只读）。",
 		"noSubagents": "没有子 agent。",
-		"noTodos": "没有 todo。",
+		"noTodos": "没有待办。",
 		"orb": "orb",
 		"subagents": "子 agent",
-		"todos": "Todo"
+		"todos": "待办"
 	},
 	"todo": {
 		"status": {
@@ -804,7 +810,7 @@
 			"reset": "恢复默认基线",
 			"invalid": "分支名须以字母或数字开头，只能包含字母、数字与 . _ / -"
 		},
-		"modified": "{{n}} 个修改",
+		"modified": "{{n}} 个文件被修改",
 		"refresh": "刷新",
 		"approximateBase": "基线为近似值",
 		"noBase": "未找到基线分支，显示未提交的改动",
