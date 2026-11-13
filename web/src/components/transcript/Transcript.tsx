@@ -4,7 +4,7 @@
  * 页头与输入坞以玻璃盖在转录上方：`insetTop` / `insetBottom` 走 virtualizer 的
  * `paddingStart` / `paddingEnd`（不给滚动容器加 CSS padding，否则会破坏贴底判断），
  * 同时写成滚动容器的 scroll-padding，让键盘聚焦与 scrollIntoView 落在两块覆盖层之间。
- * 左缘只有两条锚线：头像列（回合起点的 agent 头像）与正文列（其余一切左对齐的块）；用户气泡靠右。
+ * 左缘只有一条锚线：agent 头像（回合起点内容上方单独一行）与其余一切左对齐的块共用；用户气泡靠右。
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -33,6 +33,7 @@ import {
 	type FlowKind,
 	flowGap,
 	GAP_FLOW,
+	GAP_PROC,
 	MemoMessageView,
 	summarizeTurn,
 	ToolCard,
@@ -210,7 +211,7 @@ function isUserRow(item: TranscriptItem): boolean {
 }
 
 /**
- * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行放头像；
+ * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
@@ -262,6 +263,9 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 /** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
 const GAP_TURN = 16;
 
+/** 回合头像行与回合第一块内容之间的距离：头像是这一回合的题头，贴着内容用近档。 */
+const AVATAR_GAP = GAP_PROC;
+
 /** 行首 / 行尾的节奏类别；`turn` 是不属于 agent 过程流的行。 */
 type Edge = FlowKind | "turn";
 
@@ -275,6 +279,8 @@ function rowEdges(item: TranscriptItem, hasFooter: boolean): [Edge, Edge] {
 /**
  * 每行的上边距：由上一行行尾与本行行首的类别决定（见 MessageView 的 `flowGap`），
  * 与消息内块之间的间距同一规则，虚拟行之间不再叠加各自的内边距。
+ * 回合起点行以头像行开头，它的上一行必然是回合边界（用户气泡、分隔线、提示行）或列表开头，
+ * 所以按 `GAP_TURN` / `GAP_FLOW` 取值，与行首块的类别无关。
  */
 export function rowGaps(
 	items: readonly TranscriptItem[],
@@ -382,10 +388,8 @@ export function Transcript({
 		() =>
 			virtualItems.map((v) => {
 				const item = v.index < items.length ? items[v.index] : undefined;
-				// 会话分隔线铺满整行；用户气泡右侧让出头像列（pr-8），其余块从左侧头像列之后的正文列开始
+				// 会话分隔线与 agent 各块都铺满正文列；用户气泡右侧让出头像列（pr-8）
 				const userRow = item !== undefined && isUserRow(item);
-				const bodyCol =
-					item !== undefined && item.kind !== "session_divider" && !userRow;
 				return (
 					<div
 						key={v.key}
@@ -407,13 +411,16 @@ export function Transcript({
 						}}
 					>
 						<div
-							className={`group/row relative mx-auto max-w-3xl ${bodyCol ? "pl-8" : userRow ? "pr-8" : ""}`}
+							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-8" : ""}`}
 						>
 							{turns.starts.has(v.index) && (
-								// 本行消息自带左侧菜单时，悬停 / 聚焦让出头像位置（细指针）
-								<span className="absolute top-1 left-0 transition-opacity duration-150 pointer-fine:group-has-[.msg-gutter:focus-within]/row:opacity-0 pointer-fine:group-has-[.msg-gutter:hover]/row:opacity-0">
+								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
+								<div
+									className="flex h-5 items-center"
+									style={{ marginBottom: AVATAR_GAP }}
+								>
 									<AgentAvatar size={20} working={liveStart === v.index} />
-								</span>
+								</div>
 							)}
 							{item ? (
 								<ItemView
@@ -428,7 +435,7 @@ export function Transcript({
 									{pendingText !== undefined && (
 										<PendingPrompt text={pendingText} />
 									)}
-									<div className="pl-8">{footer}</div>
+									{footer}
 								</>
 							)}
 						</div>

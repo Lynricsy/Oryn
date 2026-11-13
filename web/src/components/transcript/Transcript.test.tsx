@@ -282,6 +282,24 @@ describe("助手头像闪烁", () => {
 		expect(carets(container).map((c) => c.blink)).toEqual([false, false]);
 	});
 
+	it("助手头像在回合首行内部单独一行，位于内容之前，不留左侧头像列", () => {
+		const { container } = renderTranscript("idle");
+		for (const index of ["1", "3"]) {
+			const row = container.querySelector(`[data-index="${index}"]`);
+			const body = row?.firstElementChild as HTMLElement;
+			const avatarRow = body.firstElementChild as HTMLElement;
+			expect(
+				avatarRow.querySelector('[data-avatar-of="agent"]'),
+			).not.toBeNull();
+			// 头像行之后才是消息内容
+			expect(avatarRow.nextElementSibling?.className).toContain("group/msg");
+			expect(body.className).not.toMatch(/\bpl-8\b/);
+		}
+		// 回合中间的行（第二个回合的流式消息）没有头像
+		const mid = container.querySelector('[data-index="4"]');
+		expect(mid?.querySelector('[data-avatar-of="agent"]')).toBeNull();
+	});
+
 	it("最后一行是用户消息时没有进行中的回合", () => {
 		expect(layoutTurns(items).openStart).toBe(3);
 		expect(layoutTurns([...items, user(6)]).openStart).toBeUndefined();

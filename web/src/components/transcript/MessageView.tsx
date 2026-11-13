@@ -218,14 +218,14 @@ function MessageMenu({
 	entryId,
 	text,
 	className = "",
-	align = "right",
+	touchVisible = true,
 }: {
 	entryId?: string;
 	text: string;
-	/** 追加到外包元素上的定位类（例如回合中间消息的左侧槽位）。 */
+	/** 追加到外包元素上的定位类（例如回合中间消息右上角的浮动槽位）。 */
 	className?: string;
-	/** 弹层对齐边：左侧槽位里的按钮要向右展开，否则会伸出转录左缘。 */
-	align?: "left" | "right";
+	/** 粗指针下常显（弱化按钮）；浮在内容上的槽位关掉，只在点按消息（触屏模拟悬停）或聚焦时显现。 */
+	touchVisible?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
@@ -235,11 +235,10 @@ function MessageMenu({
 	return (
 		<div
 			ref={wrapRef}
-			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100 ${className}`}
+			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : ""} ${className}`}
 		>
 			<Menu
 				side={side}
-				align={align}
 				trigger={(p) => (
 					<button
 						type="button"
@@ -608,24 +607,22 @@ export function assistantEdges(
 }
 
 /**
- * 回合中间的助手消息自己的操作菜单：放在头像列里（与头像同一位置），悬停 / 聚焦时显现，
- * 粗指针常显弱化按钮。回合起点那条消息的头像在悬停时让位；粗指针下按钮挪到头像下方。
+ * 回合中间的助手消息自己的操作菜单：浮在消息右上角（压在上方间距与首块右上角），带底色描边，
+ * 只在悬停 / 聚焦时显现——左侧不再留头像列，菜单不占正文宽度。
  */
-const GUTTER_MENU = "absolute top-0.5 -left-[34px]";
-const GUTTER_MENU_UNDER_AVATAR = "pointer-coarse:top-[28px]";
+const FLOAT_MENU =
+	"absolute -top-3 right-0 z-10 rounded-md border border-border bg-panel shadow-xs";
 
 function AssistantMessage({
 	message,
 	entryId,
 	live,
 	turn,
-	turnStart,
 }: {
 	message: JsonRecord;
 	entryId?: string;
 	live: boolean;
 	turn?: TurnUsage;
-	turnStart?: boolean;
 }) {
 	const { t } = useTranslation();
 	const content = Array.isArray(message.content) ? message.content : [];
@@ -690,13 +687,13 @@ function AssistantMessage({
 		);
 	});
 	return (
-		<div className={`group/msg relative ${ownMenu ? "msg-gutter" : ""}`}>
+		<div className="group/msg relative">
 			{ownMenu && (
 				<MessageMenu
 					entryId={entryId}
 					text={textOfContent(content)}
-					align="left"
-					className={`${GUTTER_MENU} ${turnStart ? GUTTER_MENU_UNDER_AVATAR : ""}`}
+					touchVisible={false}
+					className={FLOAT_MENU}
 				/>
 			)}
 			{blocks}
@@ -850,7 +847,7 @@ export function MessageView({
 	live: boolean;
 	/** 只在回合最后一条助手消息上传入：整回合的累计用量脚注。 */
 	turn?: TurnUsage;
-	/** 这条消息是回合起点（助手：头像列里已有头像；用户：右侧放用户头像）。 */
+	/** 这条消息是回合起点（用户：右侧放用户头像；助手的头像行由 Transcript 放在行首）。 */
 	turnStart?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -871,7 +868,6 @@ export function MessageView({
 					entryId={entryId}
 					live={live}
 					turn={turn}
-					turnStart={turnStart}
 				/>
 			);
 		case "bashExecution":
