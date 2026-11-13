@@ -26,7 +26,9 @@ import { Icon, type IconName } from "../components/ui/icons";
 import { ModelLogo } from "../components/ui/ModelLogo";
 import { OrbBead } from "../components/ui/OrbBead";
 import { IconButton, Spinner, TextInput } from "../components/ui/primitives";
+import { ThinkingDial } from "../components/ui/ThinkingDial";
 import { formatMemoryMB } from "../lib/format";
+import { modelBrand, shortModelName } from "../lib/model-brand";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { useIndex } from "../state/stores";
@@ -55,6 +57,8 @@ interface PillText {
 	label: string;
 	main: string;
 	badge?: string;
+	/** 主文字后的图标（模型胶囊的思考级别圆圈） */
+	trail?: ReactNode;
 }
 
 /** 底部胶囊；快捷键只放进悬停提示，输入框里不显示按键提示。 */
@@ -88,6 +92,7 @@ function PillButton({
 			)}
 			<span className="min-w-0 truncate">{text.main}</span>
 			{text.badge && <Badge>{text.badge}</Badge>}
+			{text.trail}
 		</button>
 	);
 }
@@ -262,16 +267,22 @@ export function HomePage(): ReactNode {
 		? (projects.data?.projects.find((p) => p.id === projectId)?.name ??
 			projectId)
 		: t("newThread.noProject");
-	const modelText: PillText = model
-		? {
-				label: `${model}${thinking ? ` · ${thinking}` : ""}`,
-				main: model,
-				badge: thinking || undefined,
-			}
-		: {
-				label: thinking || t("newThread.defaultModel"),
-				main: thinking || t("newThread.defaultModel"),
-			};
+	// 与线程输入坞的 ModelChip 同一套省空间规则：认得出品牌时去掉系列名（logo 已说明），思考级别画成圆圈；
+	// 胶囊的无障碍名与悬停提示仍是全名加级别
+	const modelId = model.trim().split("/").pop()?.replace(/:.*$/, "") || model;
+	const modelText: PillText = {
+		label: model
+			? `${model}${thinking ? ` · ${thinking}` : ""}`
+			: thinking
+				? `${t("newThread.defaultModel")} · ${thinking}`
+				: t("newThread.defaultModel"),
+		main: model
+			? shortModelName(modelId, modelBrand(model))
+			: t("newThread.defaultModel"),
+		trail: thinking ? (
+			<ThinkingDial level={thinking} className="text-muted" />
+		) : undefined,
+	};
 	const rise = (delay: string) =>
 		intro
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
