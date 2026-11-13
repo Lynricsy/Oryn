@@ -440,7 +440,9 @@
 		"orb_unavailable": "orb 不可用",
 		"disconnected": "未连接到服务器",
 		"timeout": "请求超时",
-		"invalid_frame": "服务端拒绝了这次应答，请求已恢复"
+		"invalid_frame": "服务端拒绝了这次应答，请求已恢复",
+		"orbd_bad_response": "orb 返回了无效的响应",
+		"orbd_timeout": "orb 响应超时"
 	},
 	"pair": {
 		"title": "批准设备",
@@ -673,6 +675,7 @@
 		"pick": "选择一个文件查看。",
 		"emptyDir": "空目录",
 		"listTruncated": "目录超过 {{n}} 项，仅显示前 {{n}} 项。",
+		"unsaved": "有未保存的改动",
 		"actions": {
 			"newFile": "新建文件",
 			"newFolder": "新建文件夹",
@@ -702,7 +705,9 @@
 			"source": "源码",
 			"preview": "预览",
 			"previewTruncated": "文件较大（{{size}}），只读显示前 {{shown}}。",
-			"binaryInfo": "{{mime}} · {{size}}"
+			"binaryInfo": "{{mime}} · {{size}}",
+			"discard": "放弃改动",
+			"draftStale": "开始编辑之后，磁盘上的文件又被修改过；保存时会询问是否覆盖。"
 		},
 		"conflict": {
 			"title": "文件已被修改",
@@ -779,7 +784,38 @@
 	},
 	"editor": {
 		"loading": "正在加载编辑器…",
-		"saveHint": "Ctrl/⌘+S 保存"
+		"saveHint": "Ctrl/⌘+S 保存",
+		"phrases": {
+			"find": "查找",
+			"replace": "替换",
+			"next": "下一个",
+			"previous": "上一个",
+			"all": "全部",
+			"matchCase": "区分大小写",
+			"regexp": "正则",
+			"byWord": "全词匹配",
+			"replaceOne": "替换",
+			"replaceAll": "全部替换",
+			"close": "关闭",
+			"currentMatch": "当前匹配",
+			"onLine": "位于第",
+			"replacedMatches": "已替换 $ 处",
+			"replacedMatchOnLine": "已替换第 $ 行的匹配",
+			"goToLine": "跳转到行",
+			"go": "跳转",
+			"foldedLines": "已折叠行",
+			"unfoldedLines": "已展开行",
+			"to": "至",
+			"foldedCode": "已折叠的代码",
+			"unfold": "展开",
+			"foldLine": "折叠此行",
+			"unfoldLine": "展开此行",
+			"controlCharacter": "控制字符",
+			"completions": "补全",
+			"diagnostics": "诊断",
+			"noDiagnostics": "没有诊断",
+			"selectionDeleted": "已删除选中内容"
+		}
 	},
 	"attachments": {
 		"attach": "添加附件",

@@ -440,7 +440,9 @@
 		"orb_unavailable": "The orb is unavailable",
 		"disconnected": "Not connected to the server",
 		"timeout": "Request timed out",
-		"invalid_frame": "The server rejected that response — the request has been restored"
+		"invalid_frame": "The server rejected that response — the request has been restored",
+		"orbd_bad_response": "The orb returned an invalid response",
+		"orbd_timeout": "The orb didn't respond in time"
 	},
 	"pair": {
 		"title": "Approve device",
@@ -673,6 +675,7 @@
 		"pick": "Select a file to view.",
 		"emptyDir": "Empty folder",
 		"listTruncated": "This folder has more than {{n}} entries; showing the first {{n}}.",
+		"unsaved": "Unsaved changes",
 		"actions": {
 			"newFile": "New file",
 			"newFolder": "New folder",
@@ -702,7 +705,9 @@
 			"source": "Source",
 			"preview": "Preview",
 			"previewTruncated": "Large file ({{size}}); showing the first {{shown}} read-only.",
-			"binaryInfo": "{{mime}} · {{size}}"
+			"binaryInfo": "{{mime}} · {{size}}",
+			"discard": "Discard changes",
+			"draftStale": "This file changed on disk after you started editing. Saving will ask whether to overwrite."
 		},
 		"conflict": {
 			"title": "File changed",
@@ -779,7 +784,38 @@
 	},
 	"editor": {
 		"loading": "Loading editor…",
-		"saveHint": "Ctrl/⌘+S to save"
+		"saveHint": "Ctrl/⌘+S to save",
+		"phrases": {
+			"find": "Find",
+			"replace": "Replace",
+			"next": "next",
+			"previous": "previous",
+			"all": "all",
+			"matchCase": "match case",
+			"regexp": "regexp",
+			"byWord": "by word",
+			"replaceOne": "replace",
+			"replaceAll": "replace all",
+			"close": "close",
+			"currentMatch": "current match",
+			"onLine": "on line",
+			"replacedMatches": "replaced $ matches",
+			"replacedMatchOnLine": "replaced match on line $",
+			"goToLine": "Go to line",
+			"go": "go",
+			"foldedLines": "Folded lines",
+			"unfoldedLines": "Unfolded lines",
+			"to": "to",
+			"foldedCode": "folded code",
+			"unfold": "unfold",
+			"foldLine": "Fold line",
+			"unfoldLine": "Unfold line",
+			"controlCharacter": "Control character",
+			"completions": "Completions",
+			"diagnostics": "Diagnostics",
+			"noDiagnostics": "No diagnostics",
+			"selectionDeleted": "Selection deleted"
+		}
 	},
 	"attachments": {
 		"attach": "Attach files",

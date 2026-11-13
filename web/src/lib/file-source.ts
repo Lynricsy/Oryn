@@ -22,6 +22,8 @@ export const MAX_FILE_BYTES = 512 * 1024 * 1024;
 export const MAX_EDIT_BYTES = 2 * 1024 * 1024;
 /** 超过编辑上限时只读预览的字节数。 */
 export const PREVIEW_BYTES = 256 * 1024;
+/** 图片预览的上限：更大的图片只显示信息与下载按钮，读取时也最多收这么多字节。 */
+export const MAX_IMAGE_PREVIEW_BYTES = 32 * 1024 * 1024;
 
 export interface WriteOptions {
 	/** 期望的当前 etag；不符 → 412 `modified` */
@@ -144,8 +146,44 @@ export function guessType(path: string): { mime: string; text: boolean } {
 	return { mime: "text/plain", text: true };
 }
 
+/**
+ * 流式读取响应体，最多保留 `maxBytes` 字节；再多就取消读取（服务端可能无视 Range 回整个大文件）。
+ * `over` 为真表示响应体超过了 `maxBytes`。
+ */
+export async function readCapped(
+	res: Response,
+	maxBytes: number,
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; over: boolean }> {
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	let over = false;
+	const reader = res.body?.getReader();
+	if (reader)
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const room = maxBytes - size;
+			if (value.byteLength > room) {
+				chunks.push(value.subarray(0, room));
+				size += room;
+				over = true;
+				await reader.cancel();
+				break;
+			}
+			chunks.push(value);
+			size += value.byteLength;
+		}
+	const bytes = new Uint8Array(size);
+	let at = 0;
+	for (const c of chunks) {
+		bytes.set(c, at);
+		at += c.byteLength;
+	}
+	return { bytes, over };
+}
+
 /** 读取到的字节按 UTF-8 解码；截断时丢掉末尾残缺的码点。 */
-function decodeUtf8(buf: ArrayBuffer, truncated: boolean): string {
+function decodeUtf8(buf: Uint8Array, truncated: boolean): string {
 	return new TextDecoder("utf-8").decode(buf, { stream: truncated });
 }
 
@@ -163,6 +201,13 @@ export function sortEntries(entries: FileEntry[]): FileEntry[] {
 /** 条目是否可展开为目录（含指向目录的符号链接）。 */
 export function isDirEntry(e: FileEntry): boolean {
 	return e.type === "dir" || (e.type === "symlink" && e.targetType === "dir");
+}
+
+/** 图片预览用的整份内容；超过 32MiB 即停止读取并报 413 `too_large`。 */
+async function cappedBlob(res: Response): Promise<Blob> {
+	const { bytes, over } = await readCapped(res, MAX_IMAGE_PREVIEW_BYTES);
+	if (over) throw new ApiError(413, "too_large", "file too large to preview");
+	return new Blob([bytes]);
 }
 
 // ---------------------------------------------------------------- XHR 写入
@@ -301,15 +346,10 @@ export function orbFileSource(orbId: string): FileSource {
 					return { text: "", truncated: false };
 				throw e;
 			}
-			const buf = await res.arrayBuffer();
-			// 206：Content-Range 给出总长；200：服务端忽略了 Range，自行截断
-			const total = Number(
-				res.headers.get("Content-Range")?.split("/")[1] ?? buf.byteLength,
-			);
-			const truncated =
-				(Number.isFinite(total) && total > maxBytes) ||
-				buf.byteLength > maxBytes;
-			const bytes = buf.byteLength > maxBytes ? buf.slice(0, maxBytes) : buf;
+			// 206：Content-Range 给出总长；200：服务端忽略了 Range，读满上限即停
+			const { bytes, over } = await readCapped(res, maxBytes);
+			const total = Number(res.headers.get("Content-Range")?.split("/")[1]);
+			const truncated = over || (Number.isFinite(total) && total > maxBytes);
 			return {
 				text: decodeUtf8(bytes, truncated),
 				etag: res.headers.get("ETag") ?? undefined,
@@ -317,7 +357,7 @@ export function orbFileSource(orbId: string): FileSource {
 			};
 		},
 		async readBlob(path) {
-			return (await rawFetch(fileUrl(path))).blob();
+			return cappedBlob(await rawFetch(fileUrl(path)));
 		},
 		write(path, body, opts = {}) {
 			const headers: Record<string, string> = {};
@@ -440,15 +480,14 @@ export function agentConfigSource(
 			throw new ApiError(404, "not_found", path);
 		},
 		async readText(path, maxBytes = MAX_EDIT_BYTES) {
-			const buf = await (await rawFetch(agentUrl(path))).arrayBuffer();
-			const truncated = buf.byteLength > maxBytes;
-			return {
-				text: decodeUtf8(truncated ? buf.slice(0, maxBytes) : buf, truncated),
-				truncated,
-			};
+			const { bytes, over } = await readCapped(
+				await rawFetch(agentUrl(path)),
+				maxBytes,
+			);
+			return { text: decodeUtf8(bytes, over), truncated: over };
 		},
 		async readBlob(path) {
-			return (await rawFetch(agentUrl(path))).blob();
+			return cappedBlob(await rawFetch(agentUrl(path)));
 		},
 		async write(path, body, opts = {}) {
 			if (opts.overwrite === false) {

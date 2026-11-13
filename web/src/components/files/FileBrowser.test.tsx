@@ -1,4 +1,5 @@
 import {
+	act,
 	fireEvent,
 	render,
 	screen,
@@ -14,6 +15,7 @@ import {
 	type FileSource,
 	parentPath,
 } from "../../lib/file-source";
+import { draftStore } from "./drafts";
 import { FileBrowser } from "./FileBrowser";
 
 // 编辑器换成 textarea：这里测浏览器的流程，CodeMirror 本身另有测试
@@ -128,6 +130,7 @@ async function openMenu(name: string) {
 describe("FileBrowser", () => {
 	beforeEach(() => {
 		localStorage.clear();
+		draftStore.setState({ drafts: {} });
 		mem = memorySource();
 		mem.files.set("/r/a.txt", { text: "alpha", v: 1 });
 	});
@@ -321,5 +324,179 @@ describe("FileBrowser", () => {
 		fireEvent.click(await screen.findByText("sub"));
 		expect(await screen.findByText("deep.txt")).toBeInTheDocument();
 		expect(list.mock.calls.map((c) => c[0])).toEqual(["/r", "/r/sub"]);
+	});
+});
+
+/** 清空微任务队列（过期请求的后续 await 链跑完），不依赖计时器。 */
+async function flushMicrotasks() {
+	await act(async () => {
+		for (let i = 0; i < 20; i++) await Promise.resolve();
+	});
+}
+
+/** 手动控制的结果（tsconfig 的 lib 不含 Promise.withResolvers）。 */
+function deferred<T>() {
+	let resolve!: (v: T) => void;
+	let reject!: (e: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+describe("FileBrowser 未保存草稿", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		draftStore.setState({ drafts: {} });
+		mem = memorySource();
+		mem.files.set("/r/a.txt", { text: "alpha", v: 1 });
+		mem.files.set("/r/b.txt", { text: "beta", v: 1 });
+	});
+
+	const unsaved = () => t("files.unsaved");
+
+	it("换文件再回来：草稿仍在、带未保存标记、可保存；树上也标出", async () => {
+		setup();
+		fireEvent.click(await screen.findByText("a.txt"));
+		fireEvent.change(await screen.findByLabelText("editor:/r/a.txt"), {
+			target: { value: "UNSAVED DRAFT" },
+		});
+		fireEvent.click(screen.getByText("b.txt"));
+		expect(await screen.findByLabelText("editor:/r/b.txt")).toHaveValue("beta");
+		const row = screen.getByRole("treeitem", { name: "a.txt" });
+		expect(
+			within(row).getByRole("img", { name: unsaved() }),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByText("a.txt"));
+		expect(await screen.findByLabelText("editor:/r/a.txt")).toHaveValue(
+			"UNSAVED DRAFT",
+		);
+		const save = screen.getByRole("button", { name: t("common.save") });
+		expect(save).toBeEnabled();
+		fireEvent.click(save);
+		await waitFor(() =>
+			expect(mem.files.get("/r/a.txt")?.text).toBe("UNSAVED DRAFT"),
+		);
+		await waitFor(() => expect(save).toBeDisabled());
+		expect(screen.queryAllByRole("img", { name: unsaved() })).toHaveLength(0);
+	});
+
+	it("面板卸载（关面板 / 换标签 / 换线程）再挂载：草稿仍在；页面卸载前浏览器会询问", async () => {
+		const unloadEvent = () => {
+			const e = new Event("beforeunload", { cancelable: true });
+			window.dispatchEvent(e);
+			return e.defaultPrevented;
+		};
+		const view = render(<FileBrowser sources={[mem.src]} storageKey="k" />);
+		fireEvent.click(await screen.findByText("a.txt"));
+		fireEvent.change(await screen.findByLabelText("editor:/r/a.txt"), {
+			target: { value: "keep me" },
+		});
+		expect(unloadEvent()).toBe(true);
+		view.unmount();
+		expect(unloadEvent()).toBe(true);
+
+		render(<FileBrowser sources={[mem.src]} storageKey="k" />);
+		expect(await screen.findByLabelText("editor:/r/a.txt")).toHaveValue(
+			"keep me",
+		);
+		// 用户明确放弃后恢复磁盘内容，不再拦截关闭
+		fireEvent.click(
+			screen.getByRole("button", { name: t("files.viewer.discard") }),
+		);
+		await waitFor(() =>
+			expect(screen.getByLabelText("editor:/r/a.txt")).toHaveValue("alpha"),
+		);
+		expect(unloadEvent()).toBe(false);
+	});
+
+	it("保存进行中继续输入：保存完成后保留较新的输入，仍可再存且不冲突", async () => {
+		const realWrite = mem.src.write;
+		// 第一次写入先挂起：直到测试放行才返回
+		const gate = deferred<void>();
+		const write = vi
+			.spyOn(mem.src, "write")
+			.mockImplementationOnce(async (p, body, opts) => {
+				await gate.promise;
+				return realWrite(p, body, opts);
+			});
+		setup();
+		fireEvent.click(await screen.findByText("a.txt"));
+		const editor = await screen.findByLabelText("editor:/r/a.txt");
+		fireEvent.change(editor, { target: { value: "version submitted" } });
+		fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+		fireEvent.change(editor, { target: { value: "newer unsaved changes" } });
+		gate.resolve();
+		await waitFor(() =>
+			expect(mem.files.get("/r/a.txt")?.text).toBe("version submitted"),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: t("common.save") }),
+			).toBeEnabled(),
+		);
+		expect(screen.getByLabelText("editor:/r/a.txt")).toHaveValue(
+			"newer unsaved changes",
+		);
+		fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+		await waitFor(() =>
+			expect(mem.files.get("/r/a.txt")?.text).toBe("newer unsaved changes"),
+		);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(write).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("FileBrowser 过期的目录应答", () => {
+	it("换来源后，旧来源迟到的同路径列表不覆盖当前树", async () => {
+		const a = memorySource();
+		a.files.set("/r/A.txt", { text: "a", v: 1 });
+		const b = memorySource();
+		b.files.set("/r/B.txt", { text: "b", v: 1 });
+		const srcA: FileSource = { ...a.src, id: "orb:A" };
+		const srcB: FileSource = { ...b.src, id: "orb:B" };
+		const late = deferred<FileEntry[]>();
+		const realList = a.src.list;
+		srcA.list = async (dir) => {
+			const entries = await realList(dir);
+			await late.promise;
+			return entries;
+		};
+		const { rerender } = render(
+			<FileBrowser sources={[srcA]} storageKey="stale" />,
+		);
+		await screen.findByRole("tree");
+		rerender(<FileBrowser sources={[srcB]} storageKey="stale" />);
+		expect(await screen.findByText("B.txt")).toBeInTheDocument();
+		late.resolve([]);
+		await flushMicrotasks();
+		expect(screen.queryByText("A.txt")).toBeNull();
+		expect(screen.getByText("B.txt")).toBeInTheDocument();
+	});
+
+	it("同一目录的并发请求只认最后一个", async () => {
+		const first = deferred<void>();
+		const realList = mem.src.list;
+		let calls = 0;
+		mem.src.list = async (dir) => {
+			const n = ++calls;
+			const entries = await realList(dir);
+			if (n === 1) await first.promise;
+			return entries;
+		};
+		setup();
+		// 第一次加载挂起；刷新发出第二次请求并先返回新列表
+		await screen.findByRole("tree");
+		mem.files.set("/r/new.txt", { text: "n", v: 1 });
+		fireEvent.click(
+			screen.getByRole("button", { name: t("files.actions.refresh") }),
+		);
+		expect(await screen.findByText("new.txt")).toBeInTheDocument();
+		mem.files.delete("/r/new.txt");
+		first.resolve();
+		await flushMicrotasks();
+		expect(screen.getByText("new.txt")).toBeInTheDocument();
 	});
 });

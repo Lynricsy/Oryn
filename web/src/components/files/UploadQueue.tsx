@@ -2,6 +2,7 @@
  * 上传队列：并发 3，单文件超过 512MiB 在客户端直接拒绝；
  * 重名时先以 `overwrite=false` 写入，收到 409 `exists` 再询问「替换 / 跳过」。
  * 拖入文件夹时先按深度逐个 `mkdir`，再逐文件写入，一次最多 2000 个文件。
+ * 队列随宿主卸载而终止：进行中的上传被中止，未完成的 `mkdir` / 入队不再继续。
  */
 import {
 	type ReactNode,
@@ -174,6 +175,17 @@ export function useUploads(onUploaded: (dir: string) => void): Uploads {
 	const sticky = useRef<ConflictChoice | null>(null);
 	const onUploadedRef = useRef(onUploaded);
 	onUploadedRef.current = onUploaded;
+	const disposed = useRef(false);
+
+	useEffect(() => {
+		disposed.current = false;
+		const map = aborts.current;
+		return () => {
+			disposed.current = true;
+			for (const ctl of map.values()) ctl.abort();
+			map.clear();
+		};
+	}, []);
 
 	const patch = useCallback((id: number, p: Partial<UploadItem>) => {
 		setItems((list) => list.map((it) => (it.id === id ? { ...it, ...p } : it)));
@@ -181,6 +193,7 @@ export function useUploads(onUploaded: (dir: string) => void): Uploads {
 
 	const start = useCallback(
 		async (it: UploadItem) => {
+			if (disposed.current) return;
 			const ctl = new AbortController();
 			aborts.current.set(it.id, ctl);
 			patch(it.id, { status: "uploading", sent: 0 });
@@ -225,8 +238,12 @@ export function useUploads(onUploaded: (dir: string) => void): Uploads {
 				const dirs = [...new Set(batch.dirs)].sort(
 					(a, b) => a.split("/").length - b.split("/").length,
 				);
-				for (const d of dirs) await source.mkdir(d);
+				for (const d of dirs) {
+					if (disposed.current) return;
+					await source.mkdir(d);
+				}
 			}
+			if (disposed.current) return;
 			sticky.current = null;
 			const added = batch.files.map(
 				({ file, path }): UploadItem => ({

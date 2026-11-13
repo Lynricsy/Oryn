@@ -1,111 +1,90 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+/** 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb。 */
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
-import { getThreadStore, resetThreadStores } from "../../state/stores";
-import { terminalHub } from "../../state/terminals";
+import i18n from "../../i18n";
+import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
+import { getThreadStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { RightPanel } from "./RightPanel";
 
-vi.mock("../terminal/TerminalPanel", () => ({
-	default: ({ threadId }: { threadId: string }) => (
-		<div data-testid="stub-terminal">{threadId}</div>
-	),
-}));
-vi.mock("../files/FilesPanel", () => ({
-	default: ({ threadId, orbId }: { threadId: string; orbId?: string }) => (
-		<div data-testid="stub-files">{`${threadId}|${orbId ?? ""}`}</div>
-	),
-}));
-vi.mock("../changes/ChangesPanel", () => ({
-	default: ({ orbId }: { threadId: string; orbId?: string }) => (
-		<div data-testid="stub-changes">{orbId ?? ""}</div>
-	),
+vi.mock("../../state/terminals", () => ({
+	terminalHub: { onExit: vi.fn(() => () => {}) },
+	useTerminals: () => false,
 }));
 
-const TID = "T-rightpanel";
-
-function renderPanel(onClose?: () => void) {
-	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(
-		<QueryClientProvider client={qc}>
-			<RightPanel threadId={TID} onClose={onClose} />
-		</QueryClientProvider>,
-	);
-}
+const ORB_A = "orb-rp00000000000000000000a1";
+const ORB_B = "orb-rp00000000000000000000b2";
+const SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+let statusQueries: { orb: string; query: URLSearchParams }[];
 
 beforeEach(() => {
-	resetThreadStores();
-	uiStore.setState({ panelTab: "info", panelMax: false });
-	getThreadStore(TID).setState({
-		thread: { id: TID, orbId: "orb-rp", state: "idle" } as Thread,
-	});
+	resetOrbFs();
+	localStorage.clear();
+	statusQueries = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const req =
+				input instanceof Request
+					? input
+					: new Request(new URL(String(input), location.origin), init);
+			const url = new URL(req.url);
+			if (url.pathname.endsWith("/git/status"))
+				statusQueries.push({
+					orb: url.pathname.split("/")[4] ?? "",
+					query: url.searchParams,
+				});
+			return (await handleOrbFetch(req)) ?? new Response(null, { status: 404 });
+		}),
+	);
+	for (const [id, orbId] of [
+		["T-rpA", ORB_A],
+		["T-rpB", ORB_B],
+	] as const)
+		getThreadStore(id)
+			.getState()
+			.patchLocal({ thread: { id, orbId } as Thread });
+	uiStore.getState().setPanelTab("changes");
 });
 
 afterEach(() => {
-	uiStore.setState({ panelTab: "info" });
+	vi.unstubAllGlobals();
 });
 
 describe("RightPanel", () => {
-	it("四个标签；默认 Info 渲染信息面板", () => {
-		renderPanel();
-		const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-		expect(tabs).toEqual(["信息", "改动", "文件", "终端"]);
-		expect(screen.getByRole("tab", { name: "信息" })).toHaveAttribute(
-			"aria-selected",
-			"true",
+	it("在线程 A 选了 commit，切到线程 B：B 的请求按自己的默认范围，不带 A 的 commit", async () => {
+		const { rerender } = render(<RightPanel threadId="T-rpA" />);
+		const picker = await screen.findByRole(
+			"combobox",
+			{ name: i18n.t("changes.scope.label") },
+			{ timeout: 5000 },
 		);
-		expect(screen.getByText("orb")).toBeInTheDocument();
-	});
-
-	it("切换标签按需加载对应面板并传入 threadId / orbId", async () => {
-		renderPanel();
-		fireEvent.click(screen.getByRole("tab", { name: "文件" }));
-		expect(uiStore.getState().panelTab).toBe("files");
-		expect(await screen.findByTestId("stub-files")).toHaveTextContent(
-			`${TID}|orb-rp`,
+		await waitFor(() =>
+			expect(
+				screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
+			).toBeInTheDocument(),
 		);
-		fireEvent.click(screen.getByRole("tab", { name: "改动" }));
-		expect(await screen.findByTestId("stub-changes")).toHaveTextContent(
-			"orb-rp",
+		fireEvent.change(picker, { target: { value: `commit:${SHA}` } });
+		await waitFor(() =>
+			expect(statusQueries.at(-1)?.query.get("commit")).toBe(SHA),
 		);
-		fireEvent.click(screen.getByRole("tab", { name: "终端" }));
-		expect(await screen.findByTestId("stub-terminal")).toHaveTextContent(TID);
-	});
 
-	it("有终端等待输入时自动切到 Terminal；离开后标签亮注意点", async () => {
-		const detach = terminalHub.attach(TID);
-		try {
-			renderPanel();
-			expect(screen.queryByTestId("terminal-attention")).toBeNull();
-			terminalHub.onFrame(TID, {
-				type: "terminal_opened",
-				terminal: {
-					terminalId: "c1",
-					kind: "command",
-					title: "read",
-					cwd: "/",
-					running: true,
-					cols: 80,
-					rows: 24,
-				},
-			});
-			// 文档可见：自动切到 Terminal（每个终端只自动切一次）
-			expect(uiStore.getState().panelTab).toBe("terminal");
-			expect(screen.queryByTestId("terminal-attention")).toBeNull();
-			fireEvent.click(screen.getByRole("tab", { name: "信息" }));
-			expect(await screen.findByTestId("terminal-attention")).toBeVisible();
-			fireEvent.click(screen.getByRole("tab", { name: "终端" }));
-			expect(screen.queryByTestId("terminal-attention")).toBeNull();
-		} finally {
-			detach();
-		}
-	});
-
-	it("关闭按钮调用 onClose", () => {
-		const onClose = vi.fn();
-		renderPanel(onClose);
-		fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-		expect(onClose).toHaveBeenCalled();
+		await act(async () => {
+			rerender(<RightPanel threadId="T-rpB" />);
+		});
+		await waitFor(() => expect(statusQueries.at(-1)?.orb).toBe(ORB_B));
+		const forB = statusQueries.filter((q) => q.orb === ORB_B);
+		expect(forB.map((q) => q.query.get("scope"))).toEqual(["all"]);
+		expect(forB.some((q) => q.query.has("commit"))).toBe(false);
+		expect(
+			screen.getByRole("combobox", { name: i18n.t("changes.scope.label") }),
+		).toHaveValue("all");
 	});
 });

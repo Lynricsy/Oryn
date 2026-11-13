@@ -1,15 +1,24 @@
 /**
  * CodeMirror 6 编辑器封装。整个模块经 `React.lazy` 按需加载，不进首屏包；
  * 语言包再按文件扩展名经 `@codemirror/language-data` 懒加载。
- * `value` 变化且与当前文档不同时（重新加载）整体替换文档；`Mod-s` 触发 `onSave`。
+ * `value` 变化且与当前文档不同时（重新加载）整体替换文档，这类替换不触发 `onChange`；`Mod-s` 触发 `onSave`。
+ * CodeMirror 自带界面（搜索 / 替换面板、跳转行、折叠提示等）的文案经 `EditorState.phrases` 跟随界面语言。
  */
 import { indentWithTab } from "@codemirror/commands";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import { Compartment, EditorState, Prec } from "@codemirror/state";
+import {
+	Annotation,
+	Compartment,
+	EditorState,
+	type Extension,
+	Prec,
+} from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
+import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface CodeEditorProps {
 	value: string;
@@ -19,6 +28,49 @@ export interface CodeEditorProps {
 	onChange?(value: string): void;
 	onSave?(): void;
 }
+
+/** CodeMirror 内置文案（英文原文）→ `editor.phrases.*` 键。`$` 是 CodeMirror 的参数占位符。 */
+export const PHRASE_KEYS = {
+	Find: "find",
+	Replace: "replace",
+	next: "next",
+	previous: "previous",
+	all: "all",
+	"match case": "matchCase",
+	regexp: "regexp",
+	"by word": "byWord",
+	replace: "replaceOne",
+	"replace all": "replaceAll",
+	close: "close",
+	"current match": "currentMatch",
+	"on line": "onLine",
+	"replaced $ matches": "replacedMatches",
+	"replaced match on line $": "replacedMatchOnLine",
+	"Go to line": "goToLine",
+	go: "go",
+	"Folded lines": "foldedLines",
+	"Unfolded lines": "unfoldedLines",
+	to: "to",
+	"folded code": "foldedCode",
+	unfold: "unfold",
+	"Fold line": "foldLine",
+	"Unfold line": "unfoldLine",
+	"Control character": "controlCharacter",
+	Completions: "completions",
+	Diagnostics: "diagnostics",
+	"No diagnostics": "noDiagnostics",
+	"Selection deleted": "selectionDeleted",
+} as const;
+
+function phrasesFor(t: TFunction): Extension {
+	const out: Record<string, string> = {};
+	for (const [phrase, key] of Object.entries(PHRASE_KEYS))
+		out[phrase] = t(`editor.phrases.${key}`);
+	return EditorState.phrases.of(out);
+}
+
+/** 由外部 `value` 引起的整体替换（不是用户编辑）。 */
+const external = Annotation.define<boolean>();
 
 const theme = EditorView.theme({
 	"&": {
@@ -51,6 +103,8 @@ export default function CodeEditor({
 	const view = useRef<EditorView | null>(null);
 	const language = useRef(new Compartment());
 	const editable = useRef(new Compartment());
+	const phrases = useRef(new Compartment());
+	const { t, i18n } = useTranslation();
 	// 回调经 ref 读取，避免重建编辑器
 	const handlers = useRef({ onChange, onSave });
 	handlers.current = { onChange, onSave };
@@ -76,6 +130,7 @@ export default function CodeEditor({
 							},
 						]),
 					),
+					phrases.current.of(phrasesFor(t)),
 					basicSetup,
 					keymap.of([indentWithTab]),
 					theme,
@@ -87,7 +142,10 @@ export default function CodeEditor({
 					]),
 					EditorView.contentAttributes.of({ "aria-label": path }),
 					EditorView.updateListener.of((u) => {
-						if (u.docChanged)
+						if (
+							u.docChanged &&
+							!u.transactions.some((tr) => tr.annotation(external))
+						)
 							handlers.current.onChange?.(u.state.doc.toString());
 					}),
 				],
@@ -105,8 +163,19 @@ export default function CodeEditor({
 		if (!v) return;
 		const cur = v.state.doc.toString();
 		if (cur !== value)
-			v.dispatch({ changes: { from: 0, to: cur.length, insert: value } });
+			v.dispatch({
+				changes: { from: 0, to: cur.length, insert: value },
+				annotations: external.of(true),
+			});
 	}, [value]);
+
+	// 界面语言切换：重新配置内置文案（已打开的搜索面板随之更新）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: t 随 language 变化
+	useEffect(() => {
+		view.current?.dispatch({
+			effects: phrases.current.reconfigure(phrasesFor(t)),
+		});
+	}, [i18n.language]);
 
 	useEffect(() => {
 		view.current?.dispatch({

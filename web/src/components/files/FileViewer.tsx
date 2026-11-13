@@ -2,9 +2,12 @@
  * 文件预览 / 编辑：`stat` 后分流——
  * - 文本且 ≤2MiB：CodeMirror 编辑器（懒加载）；`.md` 另有「预览 / 源码」切换；
  * - 文本但更大：只读显示前 256KiB；
- * - 常见图片：`readBlob` → object URL 的 `<img>`（不用 iframe，也不直接导航到接口地址）；
+ * - 常见图片（≤32MiB）：`readBlob` → `<img>`（不用 iframe，也不直接导航到接口地址）；
+ *   位图用 object URL，SVG 用 `data:` URL（不透明源，SVG 里的脚本与外链拿不到本站的源）；
  * - 其它：类型、大小与下载按钮。
  * 保存带 `etag`；412 `modified` → 对话框「覆盖 / 重新加载」。
+ * 草稿存在 `drafts` store（按来源 + 路径），换文件、关面板、换线程回来后仍在；
+ * 保存期间继续编辑时，保存完成只把基线前移，不覆盖较新的草稿。
  */
 import {
 	lazy,
@@ -21,6 +24,7 @@ import {
 	type FileSource,
 	isPreviewImage,
 	MAX_EDIT_BYTES,
+	MAX_IMAGE_PREVIEW_BYTES,
 	PREVIEW_BYTES,
 } from "../../lib/file-source";
 import { formatDateTime } from "../../lib/format";
@@ -34,8 +38,25 @@ import {
 	IconButton,
 	Spinner,
 } from "../ui/primitives";
+import {
+	discardDraft,
+	draftKey,
+	editDraft,
+	markSaved,
+	useDraft,
+} from "./drafts";
 
 const CodeEditor = lazy(() => import("../editor/CodeEditor"));
+
+/** Blob → `data:<type>;base64,…`。 */
+function dataUrl(blob: Blob): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const r = new FileReader();
+		r.onload = () => resolve(String(r.result));
+		r.onerror = () => reject(r.error);
+		r.readAsDataURL(blob);
+	});
+}
 
 type Loaded =
 	| {
@@ -65,7 +86,8 @@ export function FileViewer({
 	const { t } = useTranslation();
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
 	const [loadError, setLoadError] = useState<unknown>(null);
-	const [draft, setDraft] = useState<string | null>(null);
+	const key = draftKey(source.id, path);
+	const draft = useDraft(key);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<unknown>(null);
 	const [conflict, setConflict] = useState(false);
@@ -78,14 +100,17 @@ export function FileViewer({
 		let url: string | null = null;
 		setLoaded(null);
 		setLoadError(null);
-		setDraft(null);
 		setSaveError(null);
 		(async () => {
 			const entry = await source.stat(path);
-			if (isPreviewImage(entry.mime)) {
+			if (isPreviewImage(entry.mime) && entry.size <= MAX_IMAGE_PREVIEW_BYTES) {
 				// 下载接口一律回 application/octet-stream；类型取自 stat，否则 SVG 无法在 <img> 中显示
-				const blob = await source.readBlob(path);
-				url = URL.createObjectURL(new Blob([blob], { type: entry.mime }));
+				const blob = new Blob([await source.readBlob(path)], {
+					type: entry.mime,
+				});
+				if (entry.mime === "image/svg+xml")
+					return { kind: "image", entry, url: await dataUrl(blob) } as const;
+				url = URL.createObjectURL(blob);
 				return { kind: "image", entry, url } as const;
 			}
 			if (entry.text) {
@@ -122,19 +147,31 @@ export function FileViewer({
 	}, [source, path, reloadKey]);
 
 	const text = loaded?.kind === "text" ? loaded : null;
-	const dirty = text !== null && draft !== null && draft !== text.text;
+	const dirty = text !== null && !text.readOnly && draft !== undefined;
+	// 草稿开始之后磁盘上的文件又变了：保存会触发 412 再让用户选择
+	const draftStale =
+		dirty && text.etag !== undefined && draft.etag !== text.etag;
+
+	const onChange = useCallback(
+		(value: string) => {
+			if (!text || text.readOnly) return;
+			editDraft(key, value, { text: text.text, etag: text.etag });
+		},
+		[key, text],
+	);
 
 	const save = useCallback(
 		async (force: boolean) => {
-			if (!text || text.readOnly || draft === null) return;
+			if (!text || text.readOnly || !draft) return;
+			const submitted = draft;
 			setSaving(true);
 			setSaveError(null);
 			try {
-				const entry = await source.write(path, draft, {
-					etag: force ? undefined : text.etag,
+				const entry = await source.write(path, submitted.text, {
+					etag: force ? undefined : submitted.etag,
 				});
-				setLoaded({ ...text, entry, text: draft, etag: entry.etag });
-				setDraft(null);
+				setLoaded({ ...text, entry, text: submitted.text, etag: entry.etag });
+				markSaved(key, submitted.rev, submitted.text, entry.etag);
 				setConflict(false);
 				onSaved?.(entry);
 			} catch (e) {
@@ -144,7 +181,7 @@ export function FileViewer({
 				setSaving(false);
 			}
 		},
-		[source, path, text, draft, onSaved],
+		[source, path, key, text, draft, onSaved],
 	);
 
 	const isMarkdown = /\.(md|markdown)$/i.test(path);
@@ -164,7 +201,16 @@ export function FileViewer({
 					className="min-w-0 flex-1 truncate font-mono text-xs"
 					title={path}
 				>
-					{dirty && <span className="text-accent">● </span>}
+					{dirty && (
+						<span
+							className="text-accent"
+							role="img"
+							aria-label={t("files.unsaved")}
+							title={t("files.unsaved")}
+						>
+							{"● "}
+						</span>
+					)}
 					{path}
 				</span>
 				{text && isMarkdown && (
@@ -186,6 +232,16 @@ export function FileViewer({
 							{t("files.viewer.preview")}
 						</button>
 					</div>
+				)}
+				{draft && (
+					<Button
+						size="sm"
+						variant="ghost"
+						disabled={saving}
+						onClick={() => discardDraft(key)}
+					>
+						{t("files.viewer.discard")}
+					</Button>
 				)}
 				{text && !text.readOnly && (
 					<Button
@@ -219,6 +275,11 @@ export function FileViewer({
 					</div>
 				) : loaded.kind === "text" ? (
 					<div className="flex h-full min-h-0 flex-col">
+						{draftStale && (
+							<p className="shrink-0 bg-warn/10 px-3 py-1 text-warn text-xs">
+								{t("files.viewer.draftStale")}
+							</p>
+						)}
 						{loaded.readOnly && (
 							<p className="shrink-0 bg-warn/10 px-3 py-1 text-warn text-xs">
 								{t("files.viewer.previewTruncated", {
@@ -229,7 +290,7 @@ export function FileViewer({
 						)}
 						{isMarkdown && mdPreview ? (
 							<div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-								<Markdown text={draft ?? loaded.text} />
+								<Markdown text={dirty ? draft.text : loaded.text} />
 							</div>
 						) : (
 							<Suspense
@@ -241,10 +302,10 @@ export function FileViewer({
 							>
 								<div className="min-h-0 flex-1">
 									<CodeEditor
-										value={draft ?? loaded.text}
+										value={dirty ? draft.text : loaded.text}
 										path={path}
 										readOnly={loaded.readOnly}
-										onChange={setDraft}
+										onChange={onChange}
 										onSave={() => void save(false)}
 									/>
 								</div>
@@ -289,6 +350,7 @@ export function FileViewer({
 						<Button
 							onClick={() => {
 								setConflict(false);
+								discardDraft(key);
 								setReloadKey((k) => k + 1);
 							}}
 						>

@@ -145,4 +145,25 @@ describe("useAttachments", () => {
 		expect(del).toHaveBeenCalledWith("att_ok");
 		expect(result.current.attachmentIds).toEqual([]);
 	});
+
+	it("图片预处理期间 composer 卸载（换线程）：预处理完成后不加入、不上传，后续文件也不处理", async () => {
+		const decoding = deferred<PreparedImage>();
+		prepare.mockReturnValueOnce(decoding.promise);
+		upload.mockResolvedValue(meta("att_x", "x"));
+		const { result, unmount } = renderHook(() =>
+			useAttachments({ threadId: "T-A" }),
+		);
+		let adding!: Promise<void>;
+		act(() => {
+			adding = result.current.addFiles([
+				new File(["a"], "a.png", { type: "image/png" }),
+				new File(["b"], "b.txt"),
+			]);
+		});
+		expect(prepare).toHaveBeenCalledTimes(1);
+		unmount();
+		decoding.resolve(img);
+		await adding;
+		expect(upload).not.toHaveBeenCalled();
+	});
 });

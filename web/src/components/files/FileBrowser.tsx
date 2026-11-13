@@ -3,6 +3,8 @@
  * 线程 Files 面板（orb + agent 配置）与设置页的 agent 配置共用。
  * 容器宽 ≥720px 时左树右内容，否则列表 → 详情两级。
  * 刷新时机：展开目录、手动刷新、自己的变更之后、`refreshKey` 变化（由上层在 agent 活动后防抖触发）。
+ * 目录请求按「来源 + 根」的代次与每个目录的请求序号校验，过期的结果（旧 orb、同目录更早的请求）一律丢弃。
+ * 未保存的草稿在 `drafts` store 里，不随查看器卸载丢失；树上以圆点标出。
  */
 import {
 	type ReactNode,
@@ -32,6 +34,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
+import { dropDrafts, moveDrafts, useDraftPaths } from "./drafts";
 import { type DirState, type FileAction, FileTree } from "./FileTree";
 import { FileViewer } from "./FileViewer";
 import { isOrbdOutdated, useElementWidth, withWakeRetry } from "./hooks";
@@ -179,25 +182,46 @@ export function FileBrowser({
 
 	const source = root?.source;
 	const rootPath = root?.path;
+	const draftPaths = useDraftPaths(source?.id);
+
+	// 「来源 + 根」的代次：换根时递增，之前发出的目录请求结果作废
+	const generation = useRef(0);
+	// 每个目录最近一次请求的序号：同目录的并发请求只认最后一个
+	const dirRequests = useRef(new Map<string, number>());
+	const requestSeq = useRef(0);
 
 	const loadDir = useCallback(
 		async (path: string) => {
 			if (!source) return;
+			const gen = generation.current;
+			const n = ++requestSeq.current;
+			dirRequests.current.set(path, n);
+			const current = () =>
+				gen === generation.current && dirRequests.current.get(path) === n;
 			setDirs((d) =>
 				d[path]?.status === "ok" ? d : { ...d, [path]: { status: "loading" } },
 			);
 			try {
-				const entries = await withWakeRetry(() => source.list(path), setWaking);
-				setDirs((d) => ({ ...d, [path]: { status: "ok", entries } }));
+				const entries = await withWakeRetry(
+					() => source.list(path),
+					(w) => {
+						if (gen === generation.current) setWaking(w);
+					},
+				);
+				if (current())
+					setDirs((d) => ({ ...d, [path]: { status: "ok", entries } }));
 			} catch (error) {
-				setDirs((d) => ({ ...d, [path]: { status: "error", error } }));
+				if (current())
+					setDirs((d) => ({ ...d, [path]: { status: "error", error } }));
 			}
 		},
 		[source],
 	);
 
-	// 换根：清空树状态并加载根目录
+	// 换根：作废旧请求、清空树状态并加载根目录
 	useEffect(() => {
+		generation.current++;
+		dirRequests.current.clear();
 		setDirs({});
 		setExpanded({});
 		if (rootPath !== undefined) void loadDir(rootPath);
@@ -301,6 +325,7 @@ export function FileBrowser({
 				const to = joinPath(dialog.dir, n);
 				if (to === dialog.entry.path) return;
 				await source.rename(dialog.entry.path, to);
+				moveDrafts(source.id, dialog.entry.path, to);
 				if (selected && isWithin(selected, dialog.entry.path))
 					select(to + selected.slice(dialog.entry.path.length));
 				await loadDir(dialog.dir);
@@ -335,7 +360,9 @@ export function FileBrowser({
 
 	const doDelete = async (entry: FileEntry) => {
 		const ok = await run(async () => {
-			await source?.remove(entry.path);
+			if (!source) return;
+			await source.remove(entry.path);
+			dropDrafts(source.id, entry.path);
 			if (selected && isWithin(selected, entry.path)) select(null);
 			await loadDir(parentPath(entry.path) || (rootPath ?? ""));
 		});
@@ -399,6 +426,7 @@ export function FileBrowser({
 				dirs={dirs}
 				expanded={expanded}
 				selectedPath={selected}
+				dirtyPaths={draftPaths}
 				caps={source.caps}
 				onToggle={(e) => {
 					const open = !expanded[e.path];

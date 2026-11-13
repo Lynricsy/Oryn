@@ -2,6 +2,8 @@
  * 消息附件（粘贴 / 拖放 / 选择任意文件）：加入即开始上传到控制面，发送时以 `orynAttachments` 携带 id。
  * 图片另按整条消息内联预算压缩出一份内联副本（模型可直接看到）；预算用完的图片只作为文件附件（「仅文件」）。
  * 新建线程框与线程输入区共用。
+ * 每个文件在预处理（图片压缩）之前就登记取消句柄：composer 卸载（换线程）后，
+ * 未完成的预处理不会再加入条目或开始上传。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -47,10 +49,13 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 	// 同步可读的当前列表：所有修改都经 commit 基于它计算并同时写回 state，连续加入与并发上传回调不会互相覆盖
 	const itemsRef = useRef<AttachmentItem[]>([]);
 	const aborts = useRef(new Map<string, AbortController>());
+	const disposed = useRef(false);
 
 	useEffect(() => {
+		disposed.current = false;
 		const map = aborts.current;
 		return () => {
+			disposed.current = true;
 			for (const c of map.values()) c.abort();
 			map.clear();
 		};
@@ -82,6 +87,7 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 		async (files: Iterable<File>) => {
 			setError(null);
 			for (const file of files) {
+				if (disposed.current) return;
 				const key = `att-${++seq}`;
 				const live = itemsRef.current.filter((i) => i.status !== "error");
 				if (live.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
@@ -110,6 +116,8 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 					status: "uploading",
 					progress: 0,
 				};
+				const ctl = new AbortController();
+				aborts.current.set(key, ctl);
 				if (file.type.startsWith("image/")) {
 					const { remaining } = checkBudget(
 						itemsRef.current.map((i) => i.image?.inlineBytes ?? 0),
@@ -121,10 +129,13 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 						// 预算用完或解码失败：只作为文件附件
 						item.fileOnly = true;
 					}
+					// 预处理期间 composer 已卸载：不再加入、不再上传
+					if (ctl.signal.aborted || disposed.current) {
+						aborts.current.delete(key);
+						return;
+					}
 				}
 				push(item);
-				const ctl = new AbortController();
-				aborts.current.set(key, ctl);
 				uploadAttachment(file, {
 					threadId,
 					signal: ctl.signal,

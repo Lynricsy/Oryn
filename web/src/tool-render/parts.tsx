@@ -360,6 +360,15 @@ function diffRowClasses(lines: string[], unified: boolean): string[] {
 	});
 }
 
+/** Split a diff into display rows plus each row's CSS modifier (`""` | `--add` | `--del` | `--hunk` | `--gap`). */
+export function diffRows(
+	diff: string,
+	unified: boolean,
+): { lines: string[]; classes: string[] } {
+	const lines = replaceTabs(stripAnsi(diff)).replace(/\n+$/, "").split("\n");
+	return { lines, classes: diffRowClasses(lines, unified) };
+}
+
 /**
  * Unified-diff-ish block: `+` rows added, `-` rows removed, `@@` hunk headers
  * faint, blank rows render as `…` gaps (non-contiguous regions).
@@ -376,13 +385,9 @@ export function DiffBlock({
 	unified?: boolean;
 }): ReactNode {
 	const [expanded, setExpanded] = useState(false);
-	const lines = useMemo(
-		() => replaceTabs(stripAnsi(diff)).replace(/\n+$/, "").split("\n"),
-		[diff],
-	);
-	const classes = useMemo(
-		() => diffRowClasses(lines, unified),
-		[lines, unified],
+	const { lines, classes } = useMemo(
+		() => diffRows(diff, unified),
+		[diff, unified],
 	);
 	const collapsible = lines.length > maxLines + 1;
 	const shown = collapsible && !expanded ? lines.slice(0, maxLines) : lines;

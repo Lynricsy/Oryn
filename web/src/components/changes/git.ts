@@ -27,10 +27,28 @@ function scopeQuery({ root, scope }: GitTarget) {
 	};
 }
 
+/** 单次 git 请求的上限；超时以 `TimeoutError` 结束（服务端 45s 后回 504）。 */
+export const GIT_REQUEST_TIMEOUT_MS = 30_000;
+
+/** 调用方的取消信号（面板卸载）叠加请求超时。 */
+export function requestSignal(signal?: AbortSignal): AbortSignal {
+	const timeout = AbortSignal.timeout(GIT_REQUEST_TIMEOUT_MS);
+	return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** 请求被取消或超时（而不是服务端报错）。 */
+export function isAbort(e: unknown): boolean {
+	return (
+		e instanceof DOMException &&
+		(e.name === "AbortError" || e.name === "TimeoutError")
+	);
+}
+
 /** `bg=true`：后台轮询，orb 不可用时 409 `orb_not_ready`，不唤醒、不计用户交互。 */
 export function getGitStatus(
 	target: GitTarget,
 	bg: boolean,
+	signal?: AbortSignal,
 ): Promise<GitStatus> {
 	return unwrap(
 		api.GET("/api/v1/orbs/{id}/git/status", {
@@ -38,6 +56,7 @@ export function getGitStatus(
 				path: { id: target.orbId },
 				query: { ...scopeQuery(target), bg: bg || undefined },
 			},
+			signal: requestSignal(signal),
 		}),
 	);
 }
@@ -46,6 +65,7 @@ export function getGitDiff(
 	target: GitTarget,
 	file: Pick<GitFileChange, "path" | "oldPath">,
 	bg = false,
+	signal?: AbortSignal,
 ): Promise<GitFileDiff> {
 	return unwrap(
 		api.GET("/api/v1/orbs/{id}/git/diff", {
@@ -58,6 +78,7 @@ export function getGitDiff(
 					bg: bg || undefined,
 				},
 			},
+			signal: requestSignal(signal),
 		}),
 	);
 }
@@ -67,10 +88,12 @@ export function listGitCommits(
 	orbId: string,
 	root: string | undefined,
 	bg = false,
+	signal?: AbortSignal,
 ): Promise<Schemas["GitCommitList"]> {
 	return unwrap(
 		api.GET("/api/v1/orbs/{id}/git/commits", {
 			params: { path: { id: orbId }, query: { root, bg: bg || undefined } },
+			signal: requestSignal(signal),
 		}),
 	);
 }

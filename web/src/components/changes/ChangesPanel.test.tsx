@@ -12,6 +12,7 @@ import i18n from "../../i18n";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
 import ChangesPanel, { POLL_MS } from "./ChangesPanel";
+import { GIT_REQUEST_TIMEOUT_MS } from "./git";
 
 vi.mock("../../state/terminals", () => ({
 	terminalHub: { onExit: vi.fn(() => () => {}) },
@@ -26,10 +27,13 @@ let requests: {
 	path: string;
 	query: URLSearchParams;
 	paths?: string[];
+	signal: AbortSignal;
 }[];
 let override: ((url: URL) => Response | null) | null;
 
 beforeEach(() => {
+	// jsdom 没有布局：给滚动容器一个视口高度，diff 的虚拟列表才会渲染行
+	vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
 	resetOrbFs();
 	localStorage.clear();
 	requests = [];
@@ -47,6 +51,7 @@ beforeEach(() => {
 				method: req.method,
 				path: url.pathname,
 				query: url.searchParams,
+				signal: req.signal,
 				paths: text
 					? (JSON.parse(text) as { paths?: string[] }).paths
 					: undefined,
@@ -61,7 +66,21 @@ beforeEach(() => {
 afterEach(() => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
+
+/** 手动控制的应答（tsconfig 的 lib 不含 Promise.withResolvers）。 */
+function deferred<T>() {
+	let resolve!: (v: T) => void;
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+function diffJson(path: string, patch: string): Response {
+	return Response.json({ path, kind: "text", patch, truncated: false });
+}
 
 const statusReqs = () => requests.filter((r) => r.path.endsWith("/git/status"));
 /** 首次加载经 fetch → 渲染；负载高时给足等待时间（不是固定 sleep，元素出现即返回）。 */
@@ -282,5 +301,219 @@ describe("ChangesPanel 后台刷新", () => {
 		expect(diffs()).toHaveLength(2);
 		expect(diffs()[1]?.query.get("bg")).toBe("true");
 		expect(diffs()[1]?.query.get("path")).toBe("src/util.ts");
+	});
+});
+
+describe("ChangesPanel diff 刷新与渲染", () => {
+	it("后台刷新时状态元数据（增删行数）不变，已打开文件的 diff 仍以 bg 重拉并显示新内容", async () => {
+		const patchOf = (line: string) =>
+			`diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -1 +1 @@\n-x\n+${line}\n`;
+		let line = "OLD";
+		override = (url) =>
+			url.pathname.endsWith("/git/diff")
+				? diffJson("src/util.ts", patchOf(line))
+				: null;
+		render(<ChangesPanel threadId="T-c11" orbId={ORB} />);
+		await filesList();
+		fireEvent.click(screen.getByText("util.ts"));
+		expect(await screen.findByText("+OLD")).toBeInTheDocument();
+		const diffs = () => requests.filter((r) => r.path.endsWith("/git/diff"));
+		const before = diffs().length;
+		vi.useFakeTimers();
+		act(() => {
+			getThreadStore("T-c11")
+				.getState()
+				.patchLocal({ orb: { id: ORB, state: "ready" } as Orb });
+		});
+		// 只换一行内容：文件列表（路径、状态、暂存、+1/−1）与上一次完全相同
+		line = "NEW";
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(POLL_MS);
+		});
+		expect(diffs().length).toBe(before + 1);
+		expect(diffs().at(-1)?.query.get("bg")).toBe("true");
+		expect(screen.getByText("+NEW")).toBeInTheDocument();
+		expect(screen.queryByText("+OLD")).toBeNull();
+	});
+
+	it("接近 1MiB 的 patch 只挂载视口附近的行，滚动到末尾可见最后一行", async () => {
+		const n = 100_000;
+		const body = Array.from({ length: n }, (_, i) => `+line ${i}`).join("\n");
+		const patch = `diff --git a/big.txt b/big.txt\n@@ -0,0 +1,${n} @@\n${body}\n`;
+		override = (url) =>
+			url.pathname.endsWith("/git/diff")
+				? diffJson("src/util.ts", patch)
+				: null;
+		const { container } = render(<ChangesPanel threadId="T-c12" orbId={ORB} />);
+		await filesList();
+		fireEvent.click(screen.getByText("util.ts"));
+		const list = await screen.findByTestId("diff-rows");
+		expect(list.dataset.rows).toBe(String(n + 2));
+		const mounted = () => container.querySelectorAll(".tv-diff-row").length;
+		expect(mounted()).toBeGreaterThan(0);
+		expect(mounted()).toBeLessThan(200);
+		expect(screen.queryByText(`+line ${n - 1}`)).toBeNull();
+		const scroller = list.closest(".overflow-auto");
+		if (!(scroller instanceof HTMLElement)) throw new Error("no scroller");
+		act(() => {
+			scroller.scrollTop = Number.parseFloat(list.style.height);
+			scroller.dispatchEvent(new Event("scroll"));
+		});
+		expect(await screen.findByText(`+line ${n - 1}`)).toBeInTheDocument();
+		expect(mounted()).toBeLessThan(200);
+	});
+
+	it("换 orb 后，旧 orb 迟到的 commit 列表不覆盖新列表", async () => {
+		const other = "orb-chg000000000000000000002";
+		const late = deferred<Response>();
+		override = (url) =>
+			url.pathname === `/api/v1/orbs/${ORB}/git/commits`
+				? (late.promise as unknown as Response)
+				: null;
+		const { rerender } = render(<ChangesPanel threadId="T-c13" orbId={ORB} />);
+		await filesList();
+		rerender(<ChangesPanel threadId="T-c13" orbId={other} />);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
+			).toBeInTheDocument(),
+		);
+		await act(async () => {
+			late.resolve(
+				Response.json({
+					commits: [
+						{
+							sha: "f".repeat(40),
+							shortSha: "fffffff",
+							subject: "stale orb commit",
+							authorName: "a",
+							authorEmail: "a@x",
+							ts: 0,
+						},
+					],
+					truncated: false,
+				}),
+			);
+			await late.promise;
+		});
+		expect(
+			screen.queryByRole("option", { name: /stale orb commit/ }),
+		).toBeNull();
+		expect(
+			screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
+		).toBeInTheDocument();
+	});
+});
+
+describe("ChangesPanel 请求生命周期", () => {
+	const ready = (threadId: string) =>
+		act(() => {
+			getThreadStore(threadId)
+				.getState()
+				.patchLocal({ orb: { id: ORB, state: "ready" } as Orb });
+		});
+
+	it("上一次状态请求还没返回时，后台轮询跳过，不堆积请求", async () => {
+		render(<ChangesPanel threadId="T-c14" orbId={ORB} />);
+		await filesList();
+		vi.useFakeTimers();
+		ready("T-c14");
+		const hang = deferred<Response>();
+		override = (url) =>
+			url.pathname.endsWith("/git/status")
+				? (hang.promise as unknown as Response)
+				: null;
+		const before = statusReqs().length;
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+		});
+		expect(statusReqs().length).toBe(before + 1);
+		override = null;
+		await act(async () => {
+			hang.resolve(
+				Response.json({ code: "orb_not_ready", message: "x" }, { status: 409 }),
+			);
+			await vi.advanceTimersByTimeAsync(POLL_MS);
+		});
+		expect(statusReqs().length).toBe(before + 2);
+	});
+
+	it("面板卸载即取消在途请求", async () => {
+		const { unmount } = render(<ChangesPanel threadId="T-c15" orbId={ORB} />);
+		await filesList();
+		override = (url) =>
+			url.pathname.endsWith("/git/status")
+				? (new Promise(() => {}) as unknown as Response)
+				: null;
+		fireEvent.click(screen.getByRole("button", { name: t("changes.refresh") }));
+		const pending = statusReqs().at(-1);
+		expect(pending?.signal.aborted).toBe(false);
+		unmount();
+		expect(pending?.signal.aborted).toBe(true);
+	});
+
+	it("面板卸载同样取消在途的 diff 请求", async () => {
+		override = (url) =>
+			url.pathname.endsWith("/git/diff")
+				? (new Promise(() => {}) as unknown as Response)
+				: null;
+		const { unmount } = render(<ChangesPanel threadId="T-c18" orbId={ORB} />);
+		await filesList();
+		fireEvent.click(screen.getByText("util.ts"));
+		const diff = await waitFor(() => {
+			const r = requests.filter((q) => q.path.endsWith("/git/diff")).at(-1);
+			expect(r).toBeDefined();
+			return r;
+		});
+		expect(diff?.signal.aborted).toBe(false);
+		unmount();
+		expect(diff?.signal.aborted).toBe(true);
+	});
+
+	it("每个 git 请求都带 30s 超时信号", async () => {
+		// 用手动控制的信号替代 AbortSignal.timeout，确定性地触发「超时」
+		const timeout = new AbortController();
+		const spy = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockReturnValue(timeout.signal);
+		render(<ChangesPanel threadId="T-c19" orbId={ORB} />);
+		await filesList();
+		expect(spy).toHaveBeenCalledWith(GIT_REQUEST_TIMEOUT_MS);
+		expect(GIT_REQUEST_TIMEOUT_MS).toBe(30_000);
+		const first = statusReqs()[0];
+		expect(first?.signal.aborted).toBe(false);
+		timeout.abort(new DOMException("timed out", "TimeoutError"));
+		expect(first?.signal.aborted).toBe(true);
+	});
+
+	it("后台请求超时不报错，保留已有列表", async () => {
+		render(<ChangesPanel threadId="T-c16" orbId={ORB} />);
+		await filesList();
+		vi.useFakeTimers();
+		ready("T-c16");
+		override = (url) =>
+			url.pathname.endsWith("/git/status")
+				? (Promise.reject(
+						new DOMException("timed out", "TimeoutError"),
+					) as unknown as Response)
+				: null;
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(POLL_MS);
+		});
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(
+			screen.getByRole("list", { name: t("changes.files") }),
+		).toBeInTheDocument();
+	});
+
+	it("orbd 超时 / 无效应答显示可读文案", async () => {
+		override = (url) =>
+			url.pathname.endsWith("/git/status")
+				? Response.json({ code: "orbd_timeout", message: "x" }, { status: 504 })
+				: null;
+		render(<ChangesPanel threadId="T-c17" orbId={ORB} />);
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			t("errors.orbd_timeout"),
+		);
 	});
 });

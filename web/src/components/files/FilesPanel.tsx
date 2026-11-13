@@ -44,6 +44,8 @@ export default function FilesPanel({
 			)}
 			<div className="min-h-0 flex-1">
 				<FileBrowser
+					// 换线程即重建：根、已选文件与目录树都属于该线程（草稿另存，不受影响）
+					key={threadId}
 					sources={sources}
 					storageKey={`thread.${threadId}`}
 					refreshKey={refreshKey}

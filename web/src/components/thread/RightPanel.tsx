@@ -91,7 +91,8 @@ export function RightPanel({
 						}
 					>
 						{tab === "changes" && (
-							<ChangesPanel threadId={threadId} orbId={orbId} />
+							// 换线程即重建：根目录、范围（含所选 commit）与所选文件都属于该线程
+							<ChangesPanel key={threadId} threadId={threadId} orbId={orbId} />
 						)}
 						{tab === "files" && (
 							<FilesPanel threadId={threadId} orbId={orbId} />

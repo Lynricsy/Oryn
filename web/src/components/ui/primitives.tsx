@@ -481,6 +481,8 @@ const FRIENDLY_CODES = [
 	"disconnected",
 	"timeout",
 	"invalid_frame",
+	"orbd_bad_response",
+	"orbd_timeout",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

@@ -165,6 +165,69 @@ describe("orbFileSource（对 mock orb 文件系统）", () => {
 	});
 });
 
+describe("读取上限：服务端无视 Range 回整个大文件时不整份读入", () => {
+	/**
+	 * 远超上限的 200 响应体（有限长，没有上限的实现会整份读完而不是挂起），
+	 * 记录被拉取的块数与是否被取消。
+	 */
+	function oversized(chunk = 64 * 1024, count = 64) {
+		const stats = { pulls: 0, cancelled: false };
+		const body = new ReadableStream<Uint8Array>({
+			pull(c) {
+				stats.pulls++;
+				c.enqueue(new Uint8Array(chunk).fill(0x61));
+				if (stats.pulls === count) c.close();
+			},
+			cancel() {
+				stats.cancelled = true;
+			},
+		});
+		return { stats, body };
+	}
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("orb readText：读满上限即取消读取并标记截断", async () => {
+		const { stats, body } = oversized();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 200 })),
+		);
+		const r = await orbFileSource("orb-cap00000000000000000000001").readText(
+			"/home/user/huge.log",
+			100_000,
+		);
+		expect(r.truncated).toBe(true);
+		expect(r.text.length).toBe(100_000);
+		expect(stats.cancelled).toBe(true);
+		expect(stats.pulls).toBeLessThan(10);
+	});
+
+	it("agent 配置 readText 同样有上限", async () => {
+		const { stats, body } = oversized();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 200 })),
+		);
+		const r = await agentConfigSource().readText("big.md", 1000);
+		expect(r).toMatchObject({ truncated: true });
+		expect(r.text.length).toBe(1000);
+		expect(stats.cancelled).toBe(true);
+	});
+
+	it("readBlob（图片预览）超过 32MiB → 413 too_large，并取消读取", async () => {
+		const { stats, body } = oversized(1024 * 1024, 48);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 200 })),
+		);
+		await expect(
+			orbFileSource("orb-cap00000000000000000000001").readBlob("/x.png"),
+		).rejects.toMatchObject({ status: 413, code: "too_large" });
+		expect(stats.cancelled).toBe(true);
+		expect(stats.pulls).toBeLessThan(40);
+	});
+});
+
 describe("orbFileSource.write（XHR）", () => {
 	interface Sent {
 		method: string;

@@ -2,12 +2,17 @@
  * 线程右侧面板的 Changes 标签：相对基线的文件列表与 diff、文件级暂存、按 commit 查看。
  * 刷新：打开、手动刷新、暂存操作之后、agent 活动（工具结束 / 回合结束 / 终端退出）后 1s 防抖；
  * 另有每 10s 一次的 `bg=1` 轮询，仅在文档可见且 orb 为 `ready` 时进行（不唤醒、不计用户交互）。
+ * 每次刷新成功后都重拉已打开文件的 diff（后台刷新同样以 bg 发出）：增删行数不变时内容也可能已变。
+ * 单个 commit 的 diff 不会变，后台刷新不重拉。commit 列表请求按序号校验，换目标后旧结果作废。
+ * 已有请求在途时跳过后台刷新（慢 orb 上不堆积）；每个请求 30s 超时，面板卸载即取消，
+ * 后台请求的取消 / 超时不报错。
  * 面板卸载即停止请求。不做 hunk 级暂存、提交与丢弃。
  */
 import {
 	type ReactNode,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -36,6 +41,7 @@ import {
 	type GitStatus,
 	type GitTarget,
 	getGitStatus,
+	isAbort,
 	listGitCommits,
 	setStaged,
 } from "./git";
@@ -108,7 +114,8 @@ function StageBox({
 }): ReactNode {
 	const { t } = useTranslation();
 	const ref = useRef<HTMLInputElement>(null);
-	useEffect(() => {
+	// 绘制前同步 DOM 属性：避免先画出非半选态再跳变
+	useLayoutEffect(() => {
 		if (ref.current) ref.current.indeterminate = file.staged === "partial";
 	}, [file.staged]);
 	return (
@@ -158,14 +165,30 @@ export default function ChangesPanel({
 		[orbId, root, scope],
 	);
 	const seq = useRef(0);
+	const commitSeq = useRef(0);
+	// 在途的状态请求数：大于 0 时后台刷新直接跳过
+	const inflight = useRef(0);
+	// 面板卸载时取消全部请求
+	const lifetime = useRef<AbortController | null>(null);
+	useEffect(() => {
+		const ctl = new AbortController();
+		lifetime.current = ctl;
+		return () => ctl.abort();
+	}, []);
 	const headRef = useRef<string | undefined>(undefined);
-	const filesSig = useRef("");
 
 	const loadCommits = useCallback(
 		async (bg = false) => {
+			const n = ++commitSeq.current;
 			if (!orbId) return;
 			try {
-				const r = await listGitCommits(orbId, root, bg);
+				const r = await listGitCommits(
+					orbId,
+					root,
+					bg,
+					lifetime.current?.signal,
+				);
+				if (n !== commitSeq.current) return;
 				setCommits({ list: r.commits, truncated: r.truncated });
 			} catch {
 				// 列表只是选择器的辅助数据；失败时保留旧值，错误由 status 呈现
@@ -177,9 +200,11 @@ export default function ChangesPanel({
 	const load = useCallback(
 		async (bg: boolean) => {
 			if (!target) return;
+			if (bg && inflight.current > 0) return;
 			const n = ++seq.current;
+			inflight.current++;
 			try {
-				const s = await getGitStatus(target, bg);
+				const s = await getGitStatus(target, bg, lifetime.current?.signal);
 				if (n !== seq.current) return;
 				setStatus(s);
 				setError(null);
@@ -189,16 +214,19 @@ export default function ChangesPanel({
 					headRef.current = s.head;
 					if (!first) void loadCommits(bg);
 				}
-				// 后台刷新只在文件列表确有变化时才重拉 diff（同样以 bg 发出）
-				const sig = JSON.stringify(s.files);
-				if (!bg || sig !== filesSig.current)
+				// 重拉已打开文件的 diff：状态元数据（含增删行数）不变不代表内容未变；
+				// 单个 commit 的内容固定，后台刷新时跳过
+				if (!bg || target.scope.scope !== "commit")
 					setRefresh((r) => ({ n: r.n + 1, bg }));
-				filesSig.current = sig;
 			} catch (e) {
 				if (n !== seq.current) return;
-				// 后台请求遇到 orb 不可用：保留已有数据，等下一次
+				// 后台请求遇到 orb 不可用 / 取消 / 超时：保留已有数据，等下一次
 				if (bg && e instanceof ApiError && e.code === "orb_not_ready") return;
+				if (bg && isAbort(e)) return;
+				if (lifetime.current?.signal.aborted) return;
 				setError(e);
+			} finally {
+				inflight.current--;
 			}
 		},
 		[target, loadCommits],
