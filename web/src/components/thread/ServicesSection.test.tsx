@@ -1,6 +1,7 @@
 /**
  * 信息面板的「服务」小节：状态点颜色、失败原因、按状态给启动 / 停止、动作调对应接口、「在 Portal 中打开」
- * 切到 Portal 标签并选中端口、orb 不就绪时禁用与置灰，以及日志对话框每 3s 以 `bg=1` 轮询。
+ * 切到 Portal 标签并选中端口、orb 不就绪时禁用与置灰，端口错误给出改法，日志对话框每 3s 以 `bg=1` 轮询，
+ * 且绑定 {线程, orb, 服务}：身份变化或服务移除即关闭。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -223,6 +224,102 @@ describe("服务小节", () => {
 		);
 		await act(() => vi.advanceTimersByTimeAsync(3 * SERVICE_LOG_POLL_MS));
 		expect(logs().length).toBe(2);
+	});
+
+	it("端口冲突 / 保留端口：按来源给出改端口的办法，不指向（不存在的）日志", () => {
+		const failed = (
+			name: string,
+			source: Schemas["OrbService"]["source"],
+			error: string,
+		): Schemas["OrbService"] => ({
+			name,
+			source,
+			command: "x",
+			port: 7811,
+			links: [],
+			status: "failed",
+			restarts: 0,
+			error,
+		});
+		mount({
+			...orb(),
+			services: [
+				failed("api", "file", "port_conflict"),
+				failed("proxy", "file", "forbidden_port"),
+				failed("demo", "dynamic", "port_conflict"),
+				SERVICES[1] as Schemas["OrbService"],
+			],
+		});
+		const fileFix = i18n.t("services.errorFix.file");
+		expect(row("api")).toHaveTextContent(
+			i18n.t("services.errors.port_conflict"),
+		);
+		expect(row("api")).toHaveTextContent(fileFix);
+		expect(row("proxy")).toHaveTextContent(
+			i18n.t("services.errors.forbidden_port"),
+		);
+		expect(row("proxy")).toHaveTextContent(fileFix);
+		expect(row("demo")).toHaveTextContent(
+			i18n.t("services.errorFix.dynamic", { name: "demo" }),
+		);
+		for (const name of ["api", "proxy", "demo"])
+			expect(row(name)).not.toHaveTextContent(i18n.t("services.errorHint"));
+		// 其它（进程退出类）错误仍原样显示并指向日志
+		expect(row("worker")).toHaveTextContent(i18n.t("services.errorHint"));
+	});
+
+	it("日志对话框绑定 {线程, orb, 服务}：换线程 / orb 时关闭且不拉新 orb 的同名日志，回来也不再弹出", async () => {
+		const ORB_B = "orb-svc000000000000000000002";
+		const qc = client();
+		const ui = (threadId: string, o: Orb) => (
+			<QueryClientProvider client={qc}>
+				<ServicesSection threadId={threadId} orb={o} />
+			</QueryClientProvider>
+		);
+		const { rerender } = render(ui(THREAD, orb()));
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: i18n.t("services.log", { name: "web" }),
+			}),
+		);
+		await act(async () => {});
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+		// 路由复用实例：同一个 ServicesSection 换到线程 B（另一台 orb，也有 web 服务）
+		rerender(ui("T-svc-B", { ...orb(), id: ORB_B, threadIds: ["T-svc-B"] }));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(
+			calls.filter((c) => c.url.pathname.includes(`/orbs/${ORB_B}/`)),
+		).toEqual([]);
+
+		// 浏览器后退回线程 A：不自己再弹出来
+		rerender(ui(THREAD, orb()));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("日志对话框看的服务被移除时关闭，服务重新出现也不再弹出", async () => {
+		const qc = client();
+		const ui = (o: Orb) => (
+			<QueryClientProvider client={qc}>
+				<ServicesSection threadId={THREAD} orb={o} />
+			</QueryClientProvider>
+		);
+		const { rerender } = render(ui(orb()));
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: i18n.t("services.log", { name: "web" }),
+			}),
+		);
+		await act(async () => {});
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		rerender(ui({ ...orb(), services: SERVICES.slice(1) }));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		rerender(ui(orb()));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
 	it("信息面板的 orb 卡在「环境」之下列出服务；没有服务时不出现", () => {

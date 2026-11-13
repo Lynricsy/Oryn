@@ -53,7 +53,7 @@ export interface paths {
         put?: never;
         /**
          * 完成注册 Passkey
-         * @description 成功后建立网页会话（Set-Cookie `oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）。
+         * @description 成功后建立网页会话（Set-Cookie `__Host-oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）。
          */
         post: operations["authSetupFinish"];
         delete?: never;
@@ -3078,7 +3078,7 @@ export interface operations {
             /** @description 注册成功 */
             200: {
                 headers: {
-                    /** @description `oryn_session=…; HttpOnly; Secure; SameSite=Lax` */
+                    /** @description `__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax` */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -3123,10 +3123,10 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 登录成功（Set-Cookie `oryn_session`，有效期 30 天，滑动续期） */
+            /** @description 登录成功（Set-Cookie `__Host-oryn_session`，有效期 30 天，滑动续期） */
             200: {
                 headers: {
-                    /** @description `oryn_session=…; HttpOnly; Secure; SameSite=Lax` */
+                    /** @description `__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax` */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };

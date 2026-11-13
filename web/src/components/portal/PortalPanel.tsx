@@ -264,7 +264,7 @@ function PortalView({
 						title={t("portal.frameTitle", { title: linkTitle })}
 						src={portalFrameSrc(template, stop.port, stop.path)}
 						sandbox={PORTAL_SANDBOX}
-						allow="clipboard-read; clipboard-write; fullscreen"
+						allow="clipboard-write; fullscreen"
 						referrerPolicy="no-referrer"
 						className="block h-full w-full border-0"
 					/>

@@ -126,9 +126,18 @@ function useUnseenChanges(
 	return !viewing && hasUnseenChanges(sig);
 }
 
+/** 带文字的标签内容实际占的宽度：最后一个标签的右边缘（相对 tablist，它是 offsetParent）。 */
+function tabsWidth(list: HTMLElement): number {
+	let right = 0;
+	for (const tab of list.querySelectorAll<HTMLElement>('[role="tab"]'))
+		right = Math.max(right, tab.offsetLeft + tab.offsetWidth);
+	return right;
+}
+
 /**
  * 标签条放不下全部文字时只有选中的标签保留文字，其余只显示图标（保留 `aria-label` 与悬停提示）。
- * 带文字时量出所需宽度并记住，之后按可用宽度与它比较；标签集合或语言变化时先回到带文字状态重新量。
+ * 带文字时量出标签内容本身的宽度（最后一个标签的右边缘，不是会被 flex 撑满的 tablist）并记住，之后按可用宽度
+ * 与它比较；标签集合或语言变化时先回到带文字状态重新量。
  * `reserve`：此刻没显示、但切到别的标签就会出现的页头按钮宽度（信息标签下隐藏的「最大化」），
  * 按它出现时的宽度判断，免得切标签时文字忽隐忽现。
  */
@@ -148,8 +157,8 @@ function useCompactTabs(
 		const list = ref.current;
 		if (!list) return;
 		const measure = () => {
-			// 带文字时 scrollWidth 就是全部标签所需的宽度
-			if (!current.current) full.current = list.scrollWidth;
+			// tablist 是 flex-1，scrollWidth 不小于 clientWidth；要量的是标签内容（offset* 不受横向滚动影响）
+			if (!current.current) full.current = tabsWidth(list);
 			const next = list.clientWidth - reserve + 1 < full.current;
 			if (next !== current.current) {
 				current.current = next;

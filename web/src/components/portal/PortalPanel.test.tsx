@@ -98,10 +98,9 @@ describe("PortalPanel", () => {
 		);
 		expect(sandbox).not.toContain("allow-top-navigation");
 		expect(frame()).toHaveAttribute("referrerpolicy", "no-referrer");
-		expect(frame()).toHaveAttribute(
-			"allow",
-			"clipboard-read; clipboard-write; fullscreen",
-		);
+		// 不委派剪贴板读取：权限按顶层源（Oryn 主域名）记，授权一次后任何 portal 应用都能静默读剪贴板
+		expect(frame()).toHaveAttribute("allow", "clipboard-write; fullscreen");
+		expect(frame().getAttribute("allow")).not.toContain("clipboard-read");
 		expect(frame()).toHaveAttribute("title", "Portal：web");
 		expect(screen.getByTestId("portal-host")).toHaveTextContent(
 			"t-3f9a1c0b7e2d-p5173.orb.example.com",

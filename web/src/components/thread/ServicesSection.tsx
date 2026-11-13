@@ -1,10 +1,17 @@
 /**
  * 信息面板 orb 卡里的「服务」小节（计划 M4 5.3）：受管服务列表（状态点、名称、端口、重启次数、失败原因）与行尾动作
  * （启动 / 停止、重启、日志、在 Portal 中打开）。orb 不是 `ready` 时动作禁用、状态点置灰。
- * 日志对话框打开期间每 3s 以 `bg=1` 重新拉取（不唤醒、不计用户交互）。
+ * 日志对话框打开期间每 3s 以 `bg=1` 重新拉取（不唤醒、不计用户交互）。对话框绑定打开它时的
+ * {线程, orb, 服务名}：换线程 / 换 orb（路由复用本组件实例）或服务被移除时关闭，不会拿旧服务名去拉别的 orb 的日志。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { Orb, Schemas } from "../../api/client";
 import { fetchServiceLog, qk, useServiceAction } from "../../api/queries";
@@ -216,15 +223,32 @@ function ServiceRow({
 			</div>
 			{s.status === "failed" && s.error && (
 				<p className="mb-1 ml-[15px] break-words text-2xs text-err">
-					{/* 有专门文案的 orbd 错误码；其余原样显示 */}
-					{s.error === "port_conflict" || s.error === "forbidden_port"
-						? t(`services.errors.${s.error}`)
-						: s.error}
-					<span className="text-faint"> {t("services.errorHint")}</span>
+					{/* 端口校验错误：服务根本没启动、没有日志，按来源给改端口的办法；其余原样显示并指向日志 */}
+					{s.error === "port_conflict" || s.error === "forbidden_port" ? (
+						<>
+							{t(`services.errors.${s.error}`)}
+							<span className="text-faint">
+								{" "}
+								{t(`services.errorFix.${s.source}`, { name: s.name })}
+							</span>
+						</>
+					) : (
+						<>
+							{s.error}
+							<span className="text-faint"> {t("services.errorHint")}</span>
+						</>
+					)}
 				</p>
 			)}
 		</li>
 	);
+}
+
+/** 日志对话框看的是哪个线程、哪台 orb 上的哪个服务。 */
+interface LogTarget {
+	threadId: string;
+	orbId: string;
+	name: string;
 }
 
 /** orb 没有受管服务时不渲染。 */
@@ -237,8 +261,20 @@ export function ServicesSection({
 }): ReactNode {
 	const { t } = useTranslation();
 	const action = useServiceAction(orb.id);
-	const [logOf, setLogOf] = useState<string | null>(null);
+	const [logOf, setLogOf] = useState<LogTarget | null>(null);
 	const services = orb.services ?? [];
+	const logName =
+		logOf &&
+		logOf.threadId === threadId &&
+		logOf.orbId === orb.id &&
+		services.some((s) => s.name === logOf.name)
+			? logOf.name
+			: null;
+	// 身份变了或服务没了：真正清掉，回到原线程 / 服务重新出现时也不会自己再弹出来
+	const stale = logOf !== null && logName === null;
+	useEffect(() => {
+		if (stale) setLogOf(null);
+	}, [stale]);
 	if (orb.state === "deleted" || services.length === 0) return null;
 	const ready = orb.state === "ready";
 	const portalPorts = new Set((orb.portals ?? []).map((p) => p.port));
@@ -262,17 +298,17 @@ export function ServicesSection({
 						hasPortal={s.port !== undefined && portalPorts.has(s.port)}
 						busy={action.isPending && action.variables?.name === s.name}
 						onAction={(a) => action.mutate({ name: s.name, action: a })}
-						onLog={() => setLogOf(s.name)}
+						onLog={() => setLogOf({ threadId, orbId: orb.id, name: s.name })}
 					/>
 				))}
 			</ul>
 			<div className="mt-1 empty:hidden">
 				<ErrorText error={action.error} />
 			</div>
-			{logOf && (
+			{logName && (
 				<ServiceLogDialog
 					orbId={orb.id}
-					name={logOf}
+					name={logName}
 					onClose={() => setLogOf(null)}
 				/>
 			)}

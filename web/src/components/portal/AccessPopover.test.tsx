@@ -1,6 +1,6 @@
 /**
  * 访问弹层：公开要先二次确认再调 `setOrbPortalShare`；公开中续期（同一接口、不再确认）与终止
- * （`endOrbPortalShare`）；剩余时间随时钟每 30s 刷新；外点 / Esc 关闭。
+ * （`endOrbPortalShare`）；剩余时间随时钟每 30s 刷新；外点 / Esc 关闭，桌面弹层打开时焦点移入、Esc 后还给齿轮。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -153,6 +153,34 @@ describe("AccessPopover", () => {
 			"data-state",
 			"private",
 		);
+	});
+
+	it("桌面弹层：打开时焦点移到第一个时长；Tab 到别的按钮后 Esc 关闭，焦点还给齿轮按钮", () => {
+		mount(portal());
+		const trigger = button(i18n.t("portal.access"));
+		trigger.focus();
+		fireEvent.click(trigger);
+		const dialog = screen.getByRole("dialog");
+		expect(document.activeElement).toBe(
+			button(i18n.t("portal.publishFor", { d: dur("1h") })),
+		);
+		const other = button(i18n.t("portal.publishFor", { d: dur("7d") }));
+		other.focus();
+		fireEvent.keyDown(other, { key: "Escape" });
+		expect(dialog).not.toBeInTheDocument();
+		expect(document.activeElement).toBe(trigger);
+	});
+
+	it("Esc 时焦点已在弹层外：关闭但不抢焦点", () => {
+		mount(portal());
+		const outside = document.createElement("button");
+		document.body.append(outside);
+		openPopover();
+		outside.focus();
+		fireEvent.keyDown(outside, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(document.activeElement).toBe(outside);
+		outside.remove();
 	});
 
 	it("Esc 与点外面关闭", () => {

@@ -1053,7 +1053,11 @@
 		"logLive": "每 3 秒自动刷新",
 		"errors": {
 			"port_conflict": "端口已被其它服务占用",
-			"forbidden_port": "端口被 orbd 保留"
+			"forbidden_port": "端口留给了 orbd 的出站代理"
+		},
+		"errorFix": {
+			"file": "在 .oryn/services.yaml 里给它换一个端口（或删掉 port 行让 orbd 自动分配），再重启它。",
+			"dynamic": "用 oryn orb service start {{name}} 重新启动它，换一个 --port（或不带 --port 让 orbd 自动分配）。"
 		},
 		"errorHint": "详情见日志。"
 	}

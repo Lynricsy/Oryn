@@ -78,6 +78,7 @@ const BOX = { xs: "h-6 w-6", sm: "h-7 w-7", md: "h-8 w-8" } as const;
 
 export interface IconButtonProps
 	extends ButtonHTMLAttributes<HTMLButtonElement> {
+	ref?: Ref<HTMLButtonElement>;
 	icon: IconName;
 	label: string;
 	active?: boolean;

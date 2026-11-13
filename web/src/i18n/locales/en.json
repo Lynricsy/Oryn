@@ -1053,7 +1053,11 @@
 		"logLive": "Refreshes every 3 seconds",
 		"errors": {
 			"port_conflict": "Its port is already used by another service",
-			"forbidden_port": "Its port is reserved by orbd"
+			"forbidden_port": "Its port is reserved for orbd's egress proxy"
+		},
+		"errorFix": {
+			"file": "Change its port in .oryn/services.yaml (or drop the port line to get one assigned automatically), then restart it.",
+			"dynamic": "Start it again with oryn orb service start {{name}} and a different --port (or no --port to get one assigned automatically)."
 		},
 		"errorHint": "Check the log for details."
 	}

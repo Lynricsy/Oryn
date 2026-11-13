@@ -273,8 +273,7 @@ describe("RightPanel", () => {
 	});
 
 	it("标签条放不下全部文字时只有选中的标签保留文字，其余只显示图标（保留读屏名）", () => {
-		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(250);
-		vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(330);
+		layoutTabs(250, 80);
 		uiStore.getState().setPanelTab("info");
 		render(withQuery(<RightPanel threadId="T-rpA" />));
 		const info = screen.getByRole("tab", {
@@ -287,4 +286,51 @@ describe("RightPanel", () => {
 		expect(files.textContent).toBe("");
 		expect(files).toHaveAttribute("title", i18n.t("rightPanel.tabs.files"));
 	});
+
+	it("按标签内容宽度判断：放得下（含预留的「最大化」宽度）就不折叠", () => {
+		// expanded + 信息标签 → 预留 36px；4 个 60px 标签共 243px，远小于 400 − 36
+		layoutTabs(400, 60);
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId="T-rpA" />));
+		const files = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.files"),
+		});
+		expect(files).toHaveTextContent(i18n.t("rightPanel.tabs.files"));
+		expect(files).not.toHaveAttribute("title");
+	});
 });
+
+/**
+ * 模拟真实布局：tablist（flex-1）宽 `listWidth`，scrollWidth 不小于 clientWidth；
+ * 每个标签宽 `tabWidth`、间距 1px 依次排开。
+ */
+function layoutTabs(listWidth: number, tabWidth: number) {
+	const isTab = (el: HTMLElement) => el.getAttribute("role") === "tab";
+	const index = (el: HTMLElement) =>
+		Array.from(
+			el.parentElement?.querySelectorAll('[role="tab"]') ?? [],
+		).indexOf(el);
+	vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+		listWidth,
+	);
+	vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+		function (this: HTMLElement) {
+			return this.getAttribute("role") === "tablist"
+				? Math.max(
+						listWidth,
+						this.querySelectorAll('[role="tab"]').length * (tabWidth + 1),
+					)
+				: 0;
+		},
+	);
+	vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
+		function (this: HTMLElement) {
+			return isTab(this) ? tabWidth : 0;
+		},
+	);
+	vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(
+		function (this: HTMLElement) {
+			return isTab(this) ? index(this) * (tabWidth + 1) : 0;
+		},
+	);
+}
