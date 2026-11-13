@@ -1089,7 +1089,9 @@ await ctxB.addCookies([
 	{
 		name: "__Host-oryn_session",
 		value: SESSION,
-		url: BASE, // __Host- 前缀：host-only，不能带 Domain
+		// 不带前导点的 domain 在 CDP 里就是 host-only，满足 __Host- 前缀（url 形式会被 CDP 拒收）
+		domain: new URL(BASE).hostname,
+		path: "/",
 		secure: true,
 		httpOnly: true,
 		sameSite: "Lax",
