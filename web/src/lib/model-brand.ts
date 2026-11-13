@@ -165,3 +165,41 @@ export function modelBrand(model?: string, provider?: string): Brand | null {
 	}
 	return provider ? byVendor(provider.trim().toLowerCase()) : null;
 }
+
+/**
+ * 各品牌模型显示名开头的系列名：输入框里已有品牌 logo，这个词就不必再写一遍。
+ * 只收「系列名 = 品牌招牌」的词；gemma、qwq、codestral、o3 这类子系列名本身是信息，不在表里。
+ */
+const FAMILY_PREFIX: Partial<Record<Brand, RegExp>> = {
+	anthropic: /^claude/i,
+	openai: /^(?:chatgpt|gpt)/i,
+	gemini: /^gemini/i,
+	xai: /^grok/i,
+	deepseek: /^deepseek/i,
+	qwen: /^qwen/i,
+	moonshot: /^kimi/i,
+	zhipu: /^(?:chatglm|glm)/i,
+	mistral: /^mistral/i,
+	meta: /^llama/i,
+	minimax: /^minimax/i,
+	doubao: /^doubao/i,
+	wenxin: /^ernie/i,
+	hunyuan: /^hunyuan/i,
+	baichuan: /^baichuan/i,
+	longcat: /^longcat/i,
+};
+
+/**
+ * 去掉显示名开头的品牌系列名：`Claude Opus 5.5` → `Opus 5.5`，`gpt-6.1-sol` → `6.1-sol`。
+ * `brand` 是 `modelBrand` 的结果；为 null（不显示品牌 logo）时原样返回。
+ * 系列名后面必须是空格、`-`、`_` 或数字（`Qwen3` → `3`），连同分隔符一起去掉；去完为空或只剩标点时保留原名。
+ */
+export function shortModelName(name: string, brand: Brand | null): string {
+	const re = brand ? FAMILY_PREFIX[brand] : undefined;
+	const m = re?.exec(name.trim());
+	if (!m) return name;
+	const rest = name.trim().slice(m[0].length);
+	if (!/^(?:[\s_-]|\d)/.test(rest)) return name;
+	const short = rest.replace(/^[\s_-]+/, "");
+	return /^[\p{P}\p{S}\s]*$/u.test(short) ? name : short;
+}

@@ -1,12 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import source from "../../public/theme-init.js?raw";
 
 /** `public/theme-init.js` 是首帧前的经典脚本，这里直接执行它的源码，检查只靠它写出的 `<html>` 属性。 */
-const source = readFileSync(
-	resolve(__dirname, "../../public/theme-init.js"),
-	"utf8",
-);
 const runInit = () => new Function(source)();
 
 describe("theme-init.js 首帧属性", () => {

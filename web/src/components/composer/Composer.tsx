@@ -1,6 +1,6 @@
 /**
  * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、文件附件。
- * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、上下文、发送）、页脚行（快捷键、模式状态、会话读数）。
+ * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、发送）、页脚行（模式状态；上下文、成本、速度读数）。
  */
 import {
 	type ReactNode,
@@ -26,10 +26,10 @@ import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { Icon } from "../ui/icons";
-import { describeError, IconButton, Kbd, Spinner } from "../ui/primitives";
+import { describeError, IconButton, Spinner } from "../ui/primitives";
 import { AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
-import { ContextRing, ModelChip, SessionReadout } from "./ComposerMeta";
+import { ModelChip, SessionReadout } from "./ComposerMeta";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
 export function Composer({
@@ -316,7 +316,7 @@ export function Composer({
 				}}
 			/>
 			{/*
-			 * 工具行：附件 + 分隔、可换行的选项（模式、模型、上下文）、停止 + 发送。停止与发送始终在第一行最右；
+			 * 工具行：附件 + 分隔、可换行的选项（模式、模型）、停止 + 发送。停止与发送始终在第一行最右；
 			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
 			 */}
 			<div className="flex items-start gap-0.5 px-2 pb-2">
@@ -359,7 +359,6 @@ export function Composer({
 					<span className="contents max-sm:[&>button]:max-w-32">
 						<ModelChip threadId={threadId} />
 					</span>
-					<ContextRing threadId={threadId} />
 				</div>
 				{busy && (
 					<IconButton
@@ -388,26 +387,7 @@ export function Composer({
 					{error ? describeError(error, t) : att.error}
 				</p>
 			)}
-			<div className="@container/foot flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4">
-				{/* 按键提示照 D 稿：引导 · 排队 · 中断 · 命令；托盘窄时按 中断 → 排队 的顺序整段收起，手机与触屏不显示 */}
-				<div className="hidden min-w-0 items-center gap-3.5 overflow-hidden whitespace-nowrap sm:pointer-fine:flex">
-					<span className="inline-flex items-center gap-[5px]">
-						<Kbd>Enter</Kbd>
-						{t("composer.keySteer")}
-					</span>
-					<span className="hidden items-center gap-[5px] @md/foot:inline-flex">
-						<Kbd>Ctrl+Enter</Kbd>
-						{t("composer.keyQueue")}
-					</span>
-					<span className="hidden items-center gap-[5px] @lg/foot:inline-flex">
-						<Kbd>Esc Esc</Kbd>
-						{t("composer.keyAbort")}
-					</span>
-					<span className="inline-flex items-center gap-[5px]">
-						<Kbd>/</Kbd>
-						{t("composer.keyCommands")}
-					</span>
-				</div>
+			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4">
 				<ModeStatus threadId={threadId} />
 				<span className="flex-1" />
 				<SessionReadout threadId={threadId} />

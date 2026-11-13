@@ -30,11 +30,13 @@ import { Database } from "@phosphor-icons/react/dist/csr/Database";
 import { Devices } from "@phosphor-icons/react/dist/csr/Devices";
 import { DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { FastForward } from "@phosphor-icons/react/dist/csr/FastForward";
 import { File } from "@phosphor-icons/react/dist/csr/File";
 import { FileCode } from "@phosphor-icons/react/dist/csr/FileCode";
 import { FileImage } from "@phosphor-icons/react/dist/csr/FileImage";
 import { FilePlus } from "@phosphor-icons/react/dist/csr/FilePlus";
 import { FileText } from "@phosphor-icons/react/dist/csr/FileText";
+import { Fire } from "@phosphor-icons/react/dist/csr/Fire";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { FolderPlus } from "@phosphor-icons/react/dist/csr/FolderPlus";
@@ -167,6 +169,8 @@ const ICONS = {
 	bell: Bell,
 	memory: Memory,
 	hardDrives: HardDrives,
+	fire: Fire,
+	fastForward: FastForward,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

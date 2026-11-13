@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelBrand } from "./model-brand";
+import { modelBrand, shortModelName } from "./model-brand";
 
 describe("modelBrand", () => {
 	it.each([
@@ -100,5 +100,44 @@ describe("modelBrand", () => {
 		// 系列名必须在词首：这些不该被误认
 		expect(modelBrand("bigstep-model")).toBeNull();
 		expect(modelBrand("sapphire")).toBeNull();
+	});
+});
+
+describe("shortModelName", () => {
+	it.each([
+		["Claude Opus 5.5", "Opus 5.5"],
+		["GPT 6.1 Sol", "6.1 Sol"],
+		["gpt-6.1-sol", "6.1-sol"],
+		["claude-opus-5-5", "opus-5-5"],
+		["GPT-4o", "4o"],
+		["Gemini 3 Pro", "3 Pro"],
+		["Qwen3-Coder-Plus", "3-Coder-Plus"],
+		["kimi_k2", "k2"],
+		["DeepSeek V4", "V4"],
+	])("%s → %s", (name, short) => {
+		expect(shortModelName(name, modelBrand(name))).toBe(short);
+	});
+
+	it("认不出品牌（不显示 logo）时保留全名", () => {
+		expect(shortModelName("Claude Opus 5.5", null)).toBe("Claude Opus 5.5");
+		expect(shortModelName("my-local-model", modelBrand("my-local-model"))).toBe(
+			"my-local-model",
+		);
+	});
+
+	it("子系列名不是品牌招牌，不去掉", () => {
+		expect(shortModelName("o3-mini", "openai")).toBe("o3-mini");
+		expect(shortModelName("Gemma 3 27B", "gemini")).toBe("Gemma 3 27B");
+		expect(shortModelName("codestral-2508", "mistral")).toBe("codestral-2508");
+	});
+
+	it("去掉前缀后为空或只剩标点时保留全名", () => {
+		expect(shortModelName("Claude", "anthropic")).toBe("Claude");
+		expect(shortModelName("GPT-", "openai")).toBe("GPT-");
+		expect(shortModelName("Grok (…)", "xai")).toBe("Grok (…)");
+	});
+
+	it("系列名只是词的一部分时不去掉", () => {
+		expect(shortModelName("Claudette 1", "anthropic")).toBe("Claudette 1");
 	});
 });

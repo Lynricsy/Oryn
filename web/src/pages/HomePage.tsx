@@ -25,12 +25,7 @@ import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
 import { ModelLogo } from "../components/ui/ModelLogo";
 import { OrbBead } from "../components/ui/OrbBead";
-import {
-	IconButton,
-	Kbd,
-	Spinner,
-	TextInput,
-} from "../components/ui/primitives";
+import { IconButton, Spinner, TextInput } from "../components/ui/primitives";
 import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
@@ -62,6 +57,7 @@ interface PillText {
 	badge?: string;
 }
 
+/** 底部胶囊；快捷键只放进悬停提示，输入框里不显示按键提示。 */
 function PillButton({
 	icon,
 	text,
@@ -82,7 +78,7 @@ function PillButton({
 			onClick={onClick}
 			aria-expanded={active}
 			aria-label={text.label}
-			title={text.label}
+			title={`${text.label} (${shortcut})`}
 			className={`inline-flex h-8 max-w-60 items-center gap-1.5 rounded-full border px-3 text-xs shadow-xs transition-colors duration-150 ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
 			{typeof icon === "string" ? (
@@ -92,9 +88,6 @@ function PillButton({
 			)}
 			<span className="min-w-0 truncate">{text.main}</span>
 			{text.badge && <Badge>{text.badge}</Badge>}
-			<span className="hidden shrink-0 sm:pointer-fine:inline">
-				<Kbd>{shortcut}</Kbd>
-			</span>
 		</button>
 	);
 }
@@ -186,25 +179,6 @@ function Option({
 				<Icon name="check" size={13} className="shrink-0 text-muted" />
 			)}
 		</button>
-	);
-}
-
-/** 托盘页脚（同线程页输入坞页脚）：按「·」拆段，每段首个词（按键）用 Kbd，其余为说明文字。只在有键盘鼠标的桌面宽度显示。 */
-function HintLine({ text }: { text: string }) {
-	return (
-		<p className="hidden min-h-8 flex-wrap items-center gap-x-3.5 gap-y-1 border-[var(--glass-line)] border-t px-3.5 py-[7px] text-2xs text-faint leading-4 sm:pointer-fine:flex">
-			{text.split(/\s*·\s*/).map((seg) => {
-				const sp = seg.indexOf(" ");
-				const key = sp > 0 ? seg.slice(0, sp) : seg;
-				const rest = sp > 0 ? seg.slice(sp + 1) : "";
-				return (
-					<span key={seg} className="inline-flex items-center gap-[5px]">
-						<Kbd>{key}</Kbd>
-						{rest}
-					</span>
-				);
-			})}
-		</p>
 	);
 }
 
@@ -639,7 +613,6 @@ export function HomePage(): ReactNode {
 									</Popover>
 								)}
 							</div>
-							<HintLine text={t("newThread.hint")} />
 						</div>
 						{(error || att.error) && (
 							<p

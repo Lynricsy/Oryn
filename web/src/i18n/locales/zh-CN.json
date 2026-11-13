@@ -146,17 +146,12 @@
 		"noProject": "无项目",
 		"defaultModel": "默认模型",
 		"defaultThinking": "默认",
-		"modelPlaceholder": "provider/模型 id",
-		"hint": "Enter 开始 · Shift+Enter 换行 · Ctrl+K 搜索线程"
+		"modelPlaceholder": "provider/模型 id"
 	},
 	"composer": {
 		"abort": "中断",
 		"abortBash": "中止 bash",
 		"commands": "命令",
-		"keyAbort": "中断",
-		"keyCommands": "命令",
-		"keyQueue": "排队",
-		"keySteer": "引导",
 		"label": "消息",
 		"menuHint": "↑↓ 选择 · Tab 补全 · Esc 关闭",
 		"needsArgs": "/{{name}} 需要参数",
@@ -407,8 +402,6 @@
 		"title": "模型",
 		"search": "搜索模型…",
 		"thinking": "思考级别",
-		"fast": "fast",
-		"slow": "slow",
 		"fastMode": "快速模式（fast）",
 		"slowMode": "慢速模式（slow）",
 		"roles": "角色",
@@ -416,7 +409,17 @@
 		"moreRoles": "更多角色（{{n}}）",
 		"presetLevel": "这个 role 预设的级别",
 		"currentLevel": "当前 {{level}}",
-		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）"
+		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）",
+		"levelLabel": "思考级别：{{level}}",
+		"levels": {
+			"off": "关闭",
+			"minimal": "最低",
+			"low": "低",
+			"medium": "中",
+			"high": "高",
+			"xhigh": "超高",
+			"max": "极限"
+		}
 	},
 	"roles": {
 		"track": "角色模型",

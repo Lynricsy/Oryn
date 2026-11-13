@@ -146,17 +146,12 @@
 		"noProject": "No project",
 		"defaultModel": "Default model",
 		"defaultThinking": "Default",
-		"modelPlaceholder": "provider/model-id",
-		"hint": "Enter to start · Shift+Enter for newline · Ctrl+K to search"
+		"modelPlaceholder": "provider/model-id"
 	},
 	"composer": {
 		"abort": "Interrupt",
 		"abortBash": "Abort bash",
 		"commands": "Commands",
-		"keyAbort": "interrupt",
-		"keyCommands": "commands",
-		"keyQueue": "queue",
-		"keySteer": "steer",
 		"label": "Message",
 		"menuHint": "↑↓ select · Tab complete · Esc close",
 		"needsArgs": "/{{name}} needs an argument",
@@ -407,8 +402,6 @@
 		"title": "Model",
 		"search": "Search models…",
 		"thinking": "Thinking",
-		"fast": "fast",
-		"slow": "slow",
 		"fastMode": "Fast mode",
 		"slowMode": "Slow mode",
 		"roles": "Roles",
@@ -416,7 +409,17 @@
 		"moreRoles": "More roles ({{n}})",
 		"presetLevel": "Level preset by this role",
 		"currentLevel": "now {{level}}",
-		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)"
+		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)",
+		"levelLabel": "Thinking: {{level}}",
+		"levels": {
+			"off": "Off",
+			"minimal": "Minimal",
+			"low": "Low",
+			"medium": "Medium",
+			"high": "High",
+			"xhigh": "Extra high",
+			"max": "Max"
+		}
 	},
 	"roles": {
 		"track": "Role models",
