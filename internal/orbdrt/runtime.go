@@ -764,7 +764,7 @@ func (r *Runtime) thread(id, dir string) *thread {
 	return t
 }
 
-// CodeForeignThread 是控制面对不属于本 orb 的线程（来自快照源 orb）返回的 ctl 错误码。
+// CodeForeignThread 是控制面对不该由本 orb 续传的线程返回的 ctl 错误码：快照源 orb 的线程，或已被删除的线程。
 const CodeForeignThread = "foreign_thread"
 
 func isForeignThread(err error) bool {

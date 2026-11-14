@@ -241,19 +241,26 @@ func (s *Service) markFailed(ctx context.Context, t *thread) {
 // sessionDirOf 是线程在 orb 内的会话目录（契约 §3：控制面只发 `~/…`）。
 func sessionDirOf(threadID string) string { return "~/.oryn/threads/" + threadID }
 
-// ownThread 校验 threadId 属于发起 link 的 orb；不属于时关闭 link（快照副本 orb 继承的源线程只回错误）。
+// ownThread 校验 threadId 属于发起 link 的 orb。确属别的 orb 时关闭 link；快照副本 orb 继承的源线程、
+// 以及已被删除的线程（orb 磁盘上还留着它的会话目录，下次 hello 仍会报上来）只回 foreign_thread，
+// orbd 据此把它移出登记表，不再续传——否则每次重连都会被踢，orb 永远到不了 ready。
 func (s *Service) ownThread(ctx context.Context, orbID, threadID string) (*thread, error) {
 	t, err := s.get(ctx, threadID)
-	if err == nil {
-		t.mu.Lock()
-		owner := t.orbID
-		t.mu.Unlock()
-		if owner == orbID {
-			return t, nil
-		}
-		if owner != "" && s.snapshotOf(ctx, orbID, owner) {
-			return nil, &link.CtlError{Code: "foreign_thread", Message: "thread belongs to the snapshot source orb"}
-		}
+	switch {
+	case errors.Is(err, ErrNotFound):
+		slog.Info("threads: orb 报上了已删除的线程，令其放弃", "orb", orbID, "thread", threadID)
+		return nil, &link.CtlError{Code: "foreign_thread", Message: "thread no longer exists"}
+	case err != nil:
+		return nil, &link.CtlError{Code: "internal", Message: "thread lookup failed"}
+	}
+	t.mu.Lock()
+	owner := t.orbID
+	t.mu.Unlock()
+	if owner == orbID {
+		return t, nil
+	}
+	if owner != "" && s.snapshotOf(ctx, orbID, owner) {
+		return nil, &link.CtlError{Code: "foreign_thread", Message: "thread belongs to the snapshot source orb"}
 	}
 	slog.Warn("threads: orb 访问不属于它的线程，关闭 link", "orb", orbID, "thread", threadID)
 	s.orbs.Kick(orbID, "thread "+threadID+" does not belong to this orb")
