@@ -80,7 +80,7 @@ type pendingCmd struct {
 	internal chan json.RawMessage
 	// after 在应答到达后、持有线程锁时执行（如 get_state 刷新缓冲）。
 	after func(t *thread, resp omprpc.Envelope, data json.RawMessage)
-	// leafBefore 是 switch_leaf / navigate_tree 受理时的叶子：应答的新叶子与它不同即视为切换了分支。
+	// leafBefore 是 switch_leaf / navigate_tree 受理时的叶子：之后得到的新叶子（应答或内部查询）与它不同即视为切换了分支。
 	leafBefore *string
 }
 
@@ -535,12 +535,22 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	var r responseHead
 	_ = json.Unmarshal(frame, &r)
 	switch p.cmdType {
-	case "switch_leaf", "navigate_tree":
+	case "switch_leaf":
 		var d struct {
 			ActiveLeafID *string `json:"activeLeafId"`
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && d.ActiveLeafID != nil {
 			s.switchLeafLocked(ctx, t, d.ActiveLeafID, !eqPtr(d.ActiveLeafID, p.leafBefore))
+		}
+	case "navigate_tree":
+		// omp 的 navigate_tree 应答（RpcNavigateTreeResult）不带新叶子：成功且确有移动（非 cancelled / aborted）时
+		// 另发内部查询取真实叶子
+		var d struct {
+			Cancelled bool `json:"cancelled"`
+			Aborted   bool `json:"aborted"`
+		}
+		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted {
+			s.queryLeafLocked(t, p.leafBefore)
 		}
 	case "plan_approval":
 		if r.Success {
@@ -701,6 +711,31 @@ func (s *Service) refreshStateLocked(t *thread) {
 			t.unsynced = false
 		}
 		s.syncModelLocked(t, data)
+	}})
+}
+
+// queryLeafLocked 在 navigate_tree 成功后向 agent 发内部 get_tree，以应答的 leafId（即 sessionManager.getLeafId()，
+// 与 switch_leaf 应答的 activeLeafId 同源）按受理时的叶子 leafBefore 走 switchLeafLocked。
+// 选 get_tree 而非 get_messages_page：后者的应答（pageRpcMessages）只有 {messages, nextCursor?, totalMessages}，
+// 叶子只编码在不透明的游标里，分支消息不超过 limit 时连游标都没有；且流式中回 session_busy。get_tree 直接给出
+// leafId、不做忙碌检查，代价是整棵树随应答回传——它只在用户手动跳转时发一次。
+// 内部命令：没有 reply，应答不交给任何 WS 客户端；发起方的 navigate_tree 应答已照常送达，不等这次查询。
+// 查询失败（未送达、agent 退出）时不改叶子，之后入库的新条目照常推进它。调用方持有 t.mu。
+func (s *Service) queryLeafLocked(t *thread, leafBefore *string) {
+	frame := []byte(`{"type":"get_tree"}`)
+	_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "get_tree", after: func(t *thread, env omprpc.Envelope, data json.RawMessage) {
+		var d struct {
+			LeafID json.RawMessage `json:"leafId"`
+		}
+		if !env.OK() || json.Unmarshal(data, &d) != nil || len(d.LeafID) == 0 {
+			slog.Debug("threads: navigate_tree 后查询叶子失败", "thread", t.id, "err", env.ErrorText())
+			return
+		}
+		var leaf *string
+		if json.Unmarshal(d.LeafID, &leaf) != nil {
+			return
+		}
+		s.switchLeafLocked(context.Background(), t, leaf, !eqPtr(leaf, leafBefore))
 	}})
 }
 

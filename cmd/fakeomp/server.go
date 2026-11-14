@@ -535,7 +535,28 @@ func (s *server) handle(line []byte) {
 			s.failCode(id, env.Type, "entry_not_found", "Entry not found: "+c.EntryID)
 			return
 		}
-		s.ok(id, env.Type, map[string]any{"cancelled": false, "activeLeafId": c.EntryID})
+		if env.Type == "switch_leaf" {
+			s.ok(id, env.Type, map[string]any{"cancelled": false, "activeLeafId": c.EntryID})
+		} else {
+			// 与 omp 的 RpcNavigateTreeResult 一致：不带新叶子，调用方经 get_tree 查询
+			s.ok(id, env.Type, map[string]any{"cancelled": false})
+		}
+
+	case "get_tree":
+		// 应答形状同 omp：{tree: SessionTreeNode[], leafId: string|null}；叶子取内存值（switch_leaf / navigate_tree 只移动它）
+		if err := s.ensureSession(); err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.mu.Lock()
+		tree, err := s.sess.tree()
+		leaf := nilIfEmpty(s.sess.leaf)
+		s.mu.Unlock()
+		if err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.ok(id, env.Type, map[string]any{"tree": tree, "leafId": leaf})
 
 	case "abort":
 		s.mu.Lock()

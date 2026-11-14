@@ -170,7 +170,7 @@ func (c *pubClient) assertClean() {
 func (e *env) seedThread(id string, n int) {
 	e.t.Helper()
 	ctx := context.Background()
-	require.NoError(e.t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{ID: id, Title: "seeded", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(e.t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: id, Title: "seeded", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
 	parent := ""
 	for i := range n {
 		eid := fmt.Sprintf("e%04d", i)

@@ -186,3 +186,56 @@ func (s *sessionFile) appendMessage(message map[string]any, now time.Time) (stri
 	s.leaf = id
 	return id, nil
 }
+
+// treeNode 对应 oryn-core session-entries.ts 的 SessionTreeNode（get_tree 应答的 tree 元素；fakeomp 不写 label）。
+type treeNode struct {
+	Entry    json.RawMessage `json:"entry"`
+	Children []*treeNode     `json:"children"`
+}
+
+// tree 读会话文件，按 parentId 组装条目树（SessionManager.getTree）：父条目不存在的条目（断链）也作为根；
+// 同级按文件顺序（即追加的时间顺序）排列。
+func (s *sessionFile) tree() ([]*treeNode, error) {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	type item struct {
+		node   *treeNode
+		parent string
+	}
+	var items []item
+	byID := map[string]*treeNode{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 256<<20)
+	for sc.Scan() {
+		var e struct {
+			Type     string  `json:"type"`
+			ID       string  `json:"id"`
+			ParentID *string `json:"parentId"`
+		}
+		if json.Unmarshal(sc.Bytes(), &e) != nil || e.Type == "title" || e.Type == "session" || e.ID == "" {
+			continue
+		}
+		n := &treeNode{Entry: append(json.RawMessage(nil), sc.Bytes()...), Children: []*treeNode{}}
+		it := item{node: n}
+		if e.ParentID != nil {
+			it.parent = *e.ParentID
+		}
+		items = append(items, it)
+		byID[e.ID] = n
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	roots := []*treeNode{}
+	for _, it := range items {
+		if p := byID[it.parent]; it.parent != "" && p != nil {
+			p.Children = append(p.Children, it.node)
+		} else {
+			roots = append(roots, it.node)
+		}
+	}
+	return roots, nil
+}

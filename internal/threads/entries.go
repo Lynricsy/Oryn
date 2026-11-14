@@ -359,7 +359,7 @@ func (s *Service) announceTranscriptLocked(ctx context.Context, t *thread, leaf 
 	}
 }
 
-// switchLeafLocked 记下 switch_leaf / navigate_tree 成功应答给出的叶子。moved 为真（叶子离开了命令受理时的位置：
+// switchLeafLocked 记下 switch_leaf 成功应答给出的叶子，或 navigate_tree 成功后内部 get_tree 查到的叶子。moved 为真（叶子离开了命令受理时的位置：
 // 切到别的分支或退回祖先）时与转录重写走同一条路径：同一事务里写叶子并把转录版本加一，随后广播 transcript.reset——
 // 只持有旧分支条目的客户端（其它窗口、断线中的匿名观众）重订阅 / 重连时版本不符，整线程按新分支重拉（B7）。
 // 调用方持有 t.mu。

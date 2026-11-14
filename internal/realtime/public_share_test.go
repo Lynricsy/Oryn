@@ -88,7 +88,7 @@ func TestPublicLeafSwitchRebuildsBranch(t *testing.T) {
 	svc := share.New(share.Config{PublicURL: "http://oryn.test"}, e.st, e.svc, e.hub, nil, nil, nil)
 	srv := e.shareServer(svc)
 	const tid = "T-01932f6e-8d1a-7c3b-9f2e-000000000007"
-	require.NoError(t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{ID: tid, Title: "branches", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: tid, Title: "branches", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
 	e.addEntry(tid, "u1", "")
 	e.addEntry(tid, "b1", "u1")
 	e.addEntry(tid, "b2", "b1")
@@ -184,9 +184,16 @@ func TestPublicFramesHideInjectedAndSubagent(t *testing.T) {
 	p.assertClean()
 }
 
-// B7 重连缺口：观众断线期间所有者经 switch_leaf 切换分支（真实应答路径），转录版本随之递增；
-// 观众带旧 rev 与旧游标重连时收到 fullReplay 与新 rev，按 after=0 补发到完整的新分支。
+// B7 重连缺口：观众断线期间所有者经 switch_leaf / navigate_tree 切换分支（真实应答路径，fakeomp 的应答形状与 omp
+// 一致：navigate_tree 不带叶子，控制面另发内部 get_tree），转录版本随之递增；观众带旧 rev 与旧游标重连时收到
+// fullReplay 与新 rev，按 after=0 补发到完整的新分支。
 func TestPublicReconnectAfterLeafSwitch(t *testing.T) {
+	for _, typ := range []string{"switch_leaf", "navigate_tree"} {
+		t.Run(typ, func(t *testing.T) { testPublicReconnectAfterLeafSwitch(t, typ) })
+	}
+}
+
+func testPublicReconnectAfterLeafSwitch(t *testing.T, switchCmd string) {
 	e := newEnv(t)
 	ctx := context.Background()
 	svc := share.New(share.Config{PublicURL: "http://oryn.test"}, e.st, e.svc, e.hub, nil, nil, nil)
@@ -230,15 +237,25 @@ func TestPublicReconnectAfterLeafSwitch(t *testing.T) {
 		require.True(t, resp.Success, string(ms[len(ms)-1].Response))
 		return ms
 	}
-	resetRev := func(ms []msg) int64 {
+	// switchTo 切换叶子，返回所有者收到的 transcript.reset 的版本：switch_leaf 在应答之前广播，navigate_tree
+	// 要等应答之后的内部 get_tree 应答，因此收集到二者都到为止
+	switchTo := func(entry string) int64 {
 		t.Helper()
-		for _, m := range ms {
-			if m.Type == "transcript.reset" {
-				return m.TranscriptRev
+		n++
+		id := "c" + strconv.Itoa(n)
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": id, "frame": map[string]any{"type": switchCmd, "entryId": entry}})
+		var res, reset *msg
+		a.next(func(m msg) bool {
+			switch {
+			case m.Type == "res" && m.ID == id:
+				res = &m
+			case m.Type == "transcript.reset" && m.ThreadID == th.ID:
+				reset = &m
 			}
-		}
-		t.Fatal("owner did not receive transcript.reset")
-		return 0
+			return res != nil && reset != nil
+		})
+		ok([]msg{*res})
+		return reset.TranscriptRev
 	}
 	take(4)
 	e.waitState(th.ID, threads.StateIdle)
@@ -246,7 +263,7 @@ func TestPublicReconnectAfterLeafSwitch(t *testing.T) {
 	take(8)
 	e.waitState(th.ID, threads.StateIdle)
 	// 分支 B：从第一轮末尾另起一轮
-	assert.EqualValues(t, 1, resetRev(ok(cmd(map[string]any{"type": "switch_leaf", "entryId": order[3]}))))
+	assert.EqualValues(t, 1, switchTo(order[3]))
 	ok(cmd(map[string]any{"type": "prompt", "message": "three"}))
 	take(12)
 	e.waitState(th.ID, threads.StateIdle)
@@ -263,7 +280,7 @@ func TestPublicReconnectAfterLeafSwitch(t *testing.T) {
 	require.NoError(t, p.ws.Close(4000, "offline"))
 
 	// 断线期间所有者切回分支 A（不产生新条目）
-	assert.EqualValues(t, 2, resetRev(ok(cmd(map[string]any{"type": "switch_leaf", "entryId": order[7]}))))
+	assert.EqualValues(t, 2, switchTo(order[7]))
 
 	// 观众按 feed.ts 带旧游标与旧 rev 重连：版本不符 → 从头补发新分支
 	p2, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after="+strconv.FormatInt(snap.LastSeq, 10)+"&rev=1")

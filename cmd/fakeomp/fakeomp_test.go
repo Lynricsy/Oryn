@@ -482,7 +482,8 @@ func TestSettledOnlyAfterQueuedTurns(t *testing.T) {
 	assert.Equal(t, true, st["data"].(map[string]any)["isSettled"])
 }
 
-// switch_leaf / navigate_tree：已知条目 → 成功应答带 activeLeafId，之后的条目接在新叶子后面；未知条目 → entry_not_found。
+// switch_leaf / navigate_tree：已知条目 → 成功；switch_leaf 应答带 activeLeafId，navigate_tree 应答与 omp 一致不带叶子，
+// 叶子经 get_tree 查到；之后的条目接在新叶子后面；未知条目 → entry_not_found。
 func TestSwitchLeafMovesParent(t *testing.T) {
 	dir := t.TempDir()
 	h := start(t, []string{"--mode", "rpc-ui", "--session-dir", dir, "--delay", "1ms"}, nil)
@@ -507,7 +508,17 @@ func TestSwitchLeafMovesParent(t *testing.T) {
 
 	r, _ = h.call(map[string]any{"id": "n1", "type": "navigate_tree", "entryId": entries[3].ID})
 	require.Equal(t, true, r["success"], r)
-	assert.Equal(t, map[string]any{"cancelled": false, "activeLeafId": entries[3].ID}, r["data"])
+	assert.Equal(t, map[string]any{"cancelled": false}, r["data"], "omp 的 RpcNavigateTreeResult 没有 activeLeafId")
+	r, _ = h.call(map[string]any{"id": "g1", "type": "get_tree"})
+	require.Equal(t, true, r["success"], r)
+	data := r["data"].(map[string]any)
+	assert.Equal(t, entries[3].ID, data["leafId"])
+	// 树：u1 下分出 a1 与第二轮的 u2 两支
+	tree := data["tree"].([]any)
+	require.Len(t, tree, 1)
+	root := tree[0].(map[string]any)
+	assert.Equal(t, entries[2].ID, root["entry"].(map[string]any)["id"])
+	assert.Len(t, root["children"].([]any), 2)
 	for _, typ := range []string{"switch_leaf", "navigate_tree"} {
 		r, _ = h.call(map[string]any{"id": "x-" + typ, "type": typ, "entryId": "ffffffff"})
 		assert.Equal(t, false, r["success"])
