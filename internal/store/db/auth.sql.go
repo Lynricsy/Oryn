@@ -240,9 +240,16 @@ func (q *Queries) GetPasskey(ctx context.Context, id []byte) (Passkey, error) {
 }
 
 const getWebSession = `-- name: GetWebSession :one
-SELECT id_hash, kind, created_at, expires_at, last_seen_at, user_agent, device_id FROM web_sessions WHERE id_hash = ?1
+SELECT web_sessions.id_hash, web_sessions.kind, web_sessions.created_at, web_sessions.expires_at, web_sessions.last_seen_at, web_sessions.user_agent, web_sessions.device_id FROM web_sessions
+WHERE web_sessions.id_hash = ?1
+  AND (web_sessions.device_id IS NULL OR EXISTS (
+    SELECT 1 FROM devices WHERE devices.id = web_sessions.device_id AND devices.revoked_at IS NULL
+  ))
 `
 
+// App sessions (device_id set) are treated as gone once their device is revoked or missing,
+// so a session left behind by a partial revocation can never authenticate (defense in depth;
+// auth.RevokeDevice deletes them in the same transaction). Costs one PK lookup on devices.
 func (q *Queries) GetWebSession(ctx context.Context, idHash string) (WebSession, error) {
 	row := q.db.QueryRowContext(ctx, getWebSession, idHash)
 	var i WebSession

@@ -569,6 +569,9 @@ func TestAppSession(t *testing.T) {
 	assert.True(t, c.Secure)
 	assert.True(t, c.HttpOnly)
 	assert.Equal(t, "/", c.Path)
+	// 会话级 Cookie：不落 WebView 磁盘
+	assert.Zero(t, c.MaxAge, "不带 Max-Age")
+	assert.True(t, c.Expires.IsZero(), "不带 Expires")
 	app := c.Value
 
 	// 同一个码再兑换一次：照样 302，但没有 Set-Cookie

@@ -54,29 +54,40 @@ func (s *Service) Subscribe(fn func(principalKind, principalID string)) (cancel 
 }
 
 // RevokeDevice 吊销设备（幂等）并发布吊销事件；设备不存在返回 404 错误。
-// 同时作废该设备未兑换的 App 会话一次性码，并删除它换来的网页会话（App 会话，M6）：
-// 先发布 (device, id)，再逐个发布 (web, 会话哈希)，让实时通道、portal 与票据表一并失效。
+// 同时删除它换来的网页会话（App 会话，M6）：标记吊销与删除会话在同一个事务里，
+// 任一步失败（含请求 ctx 被取消）整体回滚，不会留下「设备已吊销但 App 会话仍可用」的半完成状态。
+// 提交成功后才作废该设备未兑换的 App 会话一次性码，并先发布 (device, id)、再逐个发布 (web, 会话哈希)，
+// 让实时通道、portal 与票据表一并失效；失败时不发布任何事件。
 func (s *Service) RevokeDevice(ctx context.Context, id string) error {
-	if _, err := s.st.Q.GetDevice(ctx, id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return newErr(404, "not_found", "设备不存在")
+	var sessions []string
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if _, err := q.GetDevice(ctx, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return newErr(404, "not_found", "设备不存在")
+			}
+			return err
 		}
+		now := time.Now().UnixMilli()
+		if _, err := q.RevokeDevice(ctx, db.RevokeDeviceParams{RevokedAt: &now, ID: id}); err != nil {
+			return err
+		}
+		var err error
+		sessions, err = q.DeleteWebSessionsByDevice(ctx, &id)
 		return err
-	}
-	now := time.Now().UnixMilli()
-	if _, err := s.st.Q.RevokeDevice(ctx, db.RevokeDeviceParams{RevokedAt: &now, ID: id}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	s.appCodes.Revoke(KindDevice, id)
-	sessions, err := s.st.Q.DeleteWebSessionsByDevice(ctx, &id)
 	s.revocations.publish(KindDevice, id)
 	for _, h := range sessions {
 		s.revocations.publish(KindWeb, h)
 	}
-	return err
+	return nil
 }
 
-// PrincipalValid 复核主体当前是否仍有效：设备未吊销；网页会话仍存在且未过期。
+// PrincipalValid 复核主体当前是否仍有效：设备未吊销；网页会话仍存在且未过期
+// （App 会话另要求其设备未吊销，由 GetWebSession 查询本身保证）。
 // 供长连接（WebSocket）在登记之后复核票据签发时的主体。
 func (s *Service) PrincipalValid(ctx context.Context, p Principal) (bool, error) {
 	switch p.Kind {

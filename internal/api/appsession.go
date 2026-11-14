@@ -29,13 +29,13 @@ func (s *Server) AppSessionHandler() http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		q := r.URL.Query()
 		next := safeNext(q.Get("next"))
-		cookie, exp, ok, err := s.Auth.Service.RedeemAppCode(r.Context(), q.Get("code"), r.UserAgent())
+		cookie, _, ok, err := s.Auth.Service.RedeemAppCode(r.Context(), q.Get("code"), r.UserAgent())
 		if err != nil {
 			writeErr(w, r, err)
 			return
 		}
 		if ok {
-			auth.SetSessionCookie(w, cookie, exp)
+			auth.SetAppSessionCookie(w, cookie)
 		}
 		http.Redirect(w, r, next, http.StatusFound)
 	})

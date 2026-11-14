@@ -48,7 +48,14 @@ INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, u
 VALUES (@id_hash, @kind, @created_at, @expires_at, @last_seen_at, @user_agent);
 
 -- name: GetWebSession :one
-SELECT * FROM web_sessions WHERE id_hash = @id_hash;
+-- App sessions (device_id set) are treated as gone once their device is revoked or missing,
+-- so a session left behind by a partial revocation can never authenticate (defense in depth;
+-- auth.RevokeDevice deletes them in the same transaction). Costs one PK lookup on devices.
+SELECT web_sessions.* FROM web_sessions
+WHERE web_sessions.id_hash = @id_hash
+  AND (web_sessions.device_id IS NULL OR EXISTS (
+    SELECT 1 FROM devices WHERE devices.id = web_sessions.device_id AND devices.revoked_at IS NULL
+  ));
 
 -- name: TouchWebSession :exec
 UPDATE web_sessions SET last_seen_at = @last_seen_at, expires_at = @expires_at WHERE id_hash = @id_hash;

@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // expireAppCode 把一次性码的过期时间改到过去（测试不 sleep）。
@@ -181,4 +184,107 @@ func TestRevokeDeviceDeletesAppSessions(t *testing.T) {
 	events = nil
 	require.NoError(t, svc.RevokeDevice(ctx, dev.ID))
 	assert.Equal(t, []string{"device:" + dev.ID}, events)
+}
+
+// appSessionReq 构造带 App 会话 Cookie 的只读请求。
+func appSessionReq(cookie string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Header.Set("Cookie", CookieName+"="+cookie)
+	return req
+}
+
+// 审查 #1：删除 App 会话失败（库内触发器注入，或请求 ctx 已取消）时，吊销整体回滚：
+// 设备不得处于「已吊销但 App 会话仍可用」的状态，也不发布任何吊销事件；故障消除后再吊销则一并失效。
+func TestRevokeDeviceAtomicOnSessionDeleteFailure(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	dev, devTok, err := CreateDevice(ctx, svc.st, "d", "desktop", "linux")
+	require.NoError(t, err)
+	who := Principal{Kind: KindDevice, ID: dev.ID}
+	code, _, err := svc.IssueAppCode(ctx, who)
+	require.NoError(t, err)
+	cookie, _, ok, err := svc.RedeemAppCode(ctx, code, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	pending, _, err := svc.IssueAppCode(ctx, who)
+	require.NoError(t, err)
+
+	var events []string
+	svc.Subscribe(func(kind, id string) { events = append(events, kind+":"+id) })
+
+	// 断言当前状态一致：设备未吊销，令牌与 App 会话都仍有效
+	assertIntact := func() {
+		t.Helper()
+		got, err := svc.st.Q.GetDevice(ctx, dev.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.RevokedAt, "失败的吊销必须回滚设备标记")
+		_, ok := DeviceByToken(ctx, svc.st, devTok)
+		assert.True(t, ok)
+		p, err := Authenticate(httptest.NewRecorder(), appSessionReq(cookie), svc.st)
+		require.NoError(t, err)
+		assert.Equal(t, dev.ID, p.DeviceID)
+		assert.Empty(t, events, "失败时不发布吊销事件")
+	}
+
+	// 1. 删除会话这一步失败：设备标记已在同一事务里执行，必须一并回滚
+	_, err = svc.st.DB.ExecContext(ctx, `CREATE TRIGGER inject_app_session_delete_failure
+BEFORE DELETE ON web_sessions WHEN OLD.device_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END`)
+	require.NoError(t, err)
+	err = svc.RevokeDevice(ctx, dev.ID)
+	require.ErrorContains(t, err, "injected delete failure")
+	assertIntact()
+
+	// 2. 请求 ctx 已取消：同样不留下任何持久变化
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Error(t, svc.RevokeDevice(cctx, dev.ID))
+	assertIntact()
+
+	// 3. 故障消除后吊销成功：设备、令牌、App 会话与未兑换的码一并失效，事件按序发布
+	_, err = svc.st.DB.ExecContext(ctx, `DROP TRIGGER inject_app_session_delete_failure`)
+	require.NoError(t, err)
+	require.NoError(t, svc.RevokeDevice(ctx, dev.ID))
+	assert.Equal(t, []string{"device:" + dev.ID, "web:" + ids.Hash(cookie)}, events)
+	_, ok = DeviceByToken(ctx, svc.st, devTok)
+	assert.False(t, ok)
+	_, err = Authenticate(httptest.NewRecorder(), appSessionReq(cookie), svc.st)
+	assert.ErrorIs(t, err, errUnauthorized)
+	_, _, ok, err = svc.RedeemAppCode(ctx, pending, "")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// 纵深防御：即便库里残留了已吊销设备的 App 会话行（绕过 RevokeDevice 直接标记吊销模拟），
+// Cookie 鉴权与长连接复核都不再接受它；普通网页会话不受影响。
+func TestAppSessionRejectedWhenDeviceRevoked(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	dev, _, err := CreateDevice(ctx, svc.st, "d", "mobile", "android")
+	require.NoError(t, err)
+	code, _, err := svc.IssueAppCode(ctx, Principal{Kind: KindDevice, ID: dev.ID})
+	require.NoError(t, err)
+	cookie, _, ok, err := svc.RedeemAppCode(ctx, code, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	web, err := CreateWebSession(ctx, svc.st, "")
+	require.NoError(t, err)
+
+	now := time.Now().UnixMilli()
+	_, err = svc.st.Q.RevokeDevice(ctx, db.RevokeDeviceParams{RevokedAt: &now, ID: dev.ID})
+	require.NoError(t, err)
+	var rows int
+	require.NoError(t, svc.st.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM web_sessions WHERE id_hash = ?`, ids.Hash(cookie)).Scan(&rows))
+	require.Equal(t, 1, rows, "会话行仍在，验证的是鉴权侧的设备复核")
+
+	_, err = Authenticate(httptest.NewRecorder(), appSessionReq(cookie), svc.st)
+	assert.ErrorIs(t, err, errUnauthorized)
+	valid, err := svc.PrincipalValid(ctx, Principal{Kind: KindWeb, ID: ids.Hash(cookie), DeviceID: dev.ID})
+	require.NoError(t, err)
+	assert.False(t, valid)
+
+	p, err := Authenticate(httptest.NewRecorder(), appSessionReq(web), svc.st)
+	require.NoError(t, err)
+	assert.Equal(t, ids.Hash(web), p.ID)
 }

@@ -156,7 +156,12 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 			if err := st.Q.TouchWebSession(ctx, db.TouchWebSessionParams{
 				LastSeenAt: now.UnixMilli(), ExpiresAt: exp.UnixMilli(), IDHash: ws.IDHash,
 			}); err == nil {
-				SetSessionCookie(w, cookie, exp)
+				if p.DeviceID != "" {
+					// App 会话只用会话级 Cookie（壳每次启动都重新换取，不落盘）
+					SetAppSessionCookie(w, cookie)
+				} else {
+					SetSessionCookie(w, cookie, exp)
+				}
 				// App 会话：让设备列表的「最近活跃」对 App 有效
 				if p.DeviceID != "" {
 					ms := now.UnixMilli()
@@ -188,7 +193,8 @@ func DeviceByToken(ctx context.Context, st *store.Store, tok string) (Principal,
 
 // sessionFromCookie 读取并校验 Cookie 会话，返回会话与命中的 Cookie 值；没有有效会话返回 ok=false。
 // 同名 Cookie 可能有多条（浏览器按 Path 长度排序发送，旧的或被写坏的可能排在前面），
-// 逐条校验并取第一条有效的，而不是只看第一条。
+// 逐条校验并取第一条有效的，而不是只看第一条。App 会话（device_id 非空）在其设备已吊销时
+// 由 GetWebSession 直接视为不存在，即便吊销中途失败留下了会话行也无法通过鉴权。
 func sessionFromCookie(ctx context.Context, q *db.Queries, r *http.Request) (db.WebSession, string, bool, error) {
 	for _, c := range r.CookiesNamed(CookieName) {
 		if c.Value == "" {
@@ -245,6 +251,15 @@ func SetSessionCookie(w http.ResponseWriter, value string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: value, Path: "/",
 		Expires: expires, MaxAge: int(time.Until(expires).Seconds()),
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// SetAppSessionCookie 写出 App 会话 Cookie：不带 Expires / Max-Age，只活在 WebView 进程里，
+// 不写进 WebView 的磁盘存储；服务端过期仍按 SessionTTL 滑动。
+func SetAppSessionCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: CookieName, Value: value, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
 }
