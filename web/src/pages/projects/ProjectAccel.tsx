@@ -1,10 +1,11 @@
 /**
  * 项目设置页的加速部分（M11a）：表单里的「项目快照」开关与「预热 orb」步进器，以及「快照与预热」卡——
  * 快照表（类型、状态、提交前 7 位、血统年龄、大小、使用次数、退役原因）、带确认的「清除快照」、本项目当前的预热 orb。
+ * 卡片随后台进展更新：池 orb 取实时 orb 索引；快照表在本项目 orb 的推送后失效，在建 / 预热期间另有低频兜底刷新。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	api,
@@ -13,7 +14,7 @@ import {
 	type Schemas,
 	unwrap,
 } from "../../api/client";
-import { qk, useOrbs, useProjectSnapshots } from "../../api/queries";
+import { qk, useLiveOrbs, useProjectSnapshots } from "../../api/queries";
 import { useAsync } from "../../components/settings/useAsync";
 import { Badge, Card, type Tone } from "../../components/ui/data";
 import type { IconName } from "../../components/ui/icons";
@@ -28,6 +29,7 @@ import {
 } from "../../components/ui/primitives";
 import { formatBytes, formatDuration } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
+import { indexStore } from "../../state/stores";
 
 type Snapshot = Schemas["ProjectSnapshot"];
 
@@ -125,21 +127,80 @@ export function WarmOrbsStepper({
 
 const shortCommit = (c: string | undefined) => (c ? c.slice(0, 7) : "—");
 
+/** 一次状态迁移常连着几条推送：窗口内只刷新一次快照表。 */
+export const PUSH_REFRESH_WINDOW_MS = 300;
+
+/** orb 在这些状态下跑 setup / 拍快照：同状态的旁注推送（快照 building / ready / failed）也可能改变快照表。 */
+const SETUP_STATES: Partial<Record<Orb["state"], true>> = {
+	connecting: true,
+	setting_up: true,
+	resuming: true,
+};
+
+/**
+ * 本项目 orb 的 WS 推送 → 失效快照表。快照发布进展（building / ready / failed）在服务端会给来源 orb 写旁注并推送，
+ * 但推送本身不带快照；所以在「状态或池变化」「orb 正在 setup / 预热」「表里有在建快照」时刷新，其余（就绪 orb 的
+ * 桌面、服务等推送）不打扰。订阅随卡片卸载而解除。
+ */
+function useSnapshotRefreshOnPush(projectId: string, building: boolean): void {
+	const qc = useQueryClient();
+	const buildingRef = useRef(building);
+	useEffect(() => {
+		buildingRef.current = building;
+	}, [building]);
+	useEffect(() => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const unsub = indexStore.subscribe((s, prev) => {
+			if (s.orbs === prev.orbs || timer !== undefined) return;
+			const relevant = Object.values(s.orbs).some((o) => {
+				const p = prev.orbs[o.id];
+				if (o === p || o.projectId !== projectId) return false;
+				return (
+					!p ||
+					p.state !== o.state ||
+					p.pool !== o.pool ||
+					buildingRef.current ||
+					SETUP_STATES[o.state] ||
+					o.pool === "warming"
+				);
+			});
+			if (!relevant) return;
+			timer = setTimeout(() => {
+				timer = undefined;
+				void qc.invalidateQueries({
+					queryKey: qk.projectSnapshots(projectId),
+				});
+			}, PUSH_REFRESH_WINDOW_MS);
+		});
+		return () => {
+			unsub();
+			clearTimeout(timer);
+		};
+	}, [projectId, qc]);
+}
+
 /** 快照与预热卡：快照表 + 清除快照 + 本项目的预热 orb。 */
 export function AccelCard({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
-	const snaps = useProjectSnapshots(project.id);
-	const orbs = useOrbs().data?.orbs ?? [];
-	const clear = useAsync();
-	const list = snaps.data?.snapshots ?? [];
-	const anyReady = list.some((s) => s.state === "ready");
+	const orbs = useLiveOrbs();
 	const pool = orbs.filter(
 		(o) =>
 			o.projectId === project.id &&
 			o.pool &&
 			o.state !== "deleted" &&
 			o.state !== "deleting",
+	);
+	const snaps = useProjectSnapshots(
+		project.id,
+		pool.some((o) => o.pool === "warming"),
+	);
+	const clear = useAsync();
+	const list = snaps.data?.snapshots ?? [];
+	const anyReady = list.some((s) => s.state === "ready");
+	useSnapshotRefreshOnPush(
+		project.id,
+		list.some((s) => s.state === "building"),
 	);
 	return (
 		<Card

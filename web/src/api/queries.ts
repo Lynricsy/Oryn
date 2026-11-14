@@ -5,8 +5,9 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { fetchHealth } from "../health";
-import { acceptOrbReply, orbPushMark } from "../state/stores";
+import { acceptOrbReply, orbPushMark, useIndex } from "../state/stores";
 import { api, type Orb, rawFetch, type Schemas, unwrap } from "./client";
 
 export const qk = {
@@ -63,8 +64,17 @@ export function useProjects() {
 	});
 }
 
-/** 项目快照（M11a；含 building / ready / retired）。 */
-export function useProjectSnapshots(projectId: string) {
+/**
+ * 兜底刷新间隔：有快照在建或池 orb 在预热时才启用（由调用方决定）。正常进展靠 orb 推送触发的失效，
+ * 这里只补推送漏掉的情况（WS 重连期间的推送不会重放；回收器删掉残留的 building 行时也不推送）。
+ */
+export const SNAPSHOT_POLL_MS = 30_000;
+
+/**
+ * 项目快照（M11a；含 building / ready / retired）。`poll` 为真，或列表里有 building 时按 {@link SNAPSHOT_POLL_MS}
+ * 刷新；轮询挂在观察者上，卸载即停。
+ */
+export function useProjectSnapshots(projectId: string, poll = false) {
 	return useQuery({
 		queryKey: qk.projectSnapshots(projectId),
 		queryFn: () =>
@@ -74,6 +84,10 @@ export function useProjectSnapshots(projectId: string) {
 				}),
 			),
 		staleTime: 10_000,
+		refetchInterval: (q) =>
+			poll || q.state.data?.snapshots.some((s) => s.state === "building")
+				? SNAPSHOT_POLL_MS
+				: false,
 	});
 }
 
@@ -159,6 +173,24 @@ export function useOrbs() {
 		queryFn: () => unwrap(api.GET("/api/v1/orbs")),
 		staleTime: 10_000,
 	});
+}
+
+/**
+ * 实时 orb 列表：REST 列表叠加 WS `orb` 推送维护的索引。推送是实时源（含新出现的 orb）；同一台 orb 两边都有时
+ * 取索引，除非 REST 的 `stateChangedAt` 更新（池认领等旁注不改 `stateChangedAt`，同值时以推送为准）。
+ */
+export function useLiveOrbs(): Orb[] {
+	const rest = useOrbs().data?.orbs;
+	const pushed = useIndex((s) => s.orbs);
+	return useMemo(() => {
+		const merged = new Map<string, Orb>();
+		for (const o of rest ?? []) merged.set(o.id, o);
+		for (const o of Object.values(pushed)) {
+			const r = merged.get(o.id);
+			if (!r || o.stateChangedAt >= r.stateChangedAt) merged.set(o.id, o);
+		}
+		return [...merged.values()];
+	}, [rest, pushed]);
 }
 
 /** 最近 30 分钟的 orb 采样（30s 步长），信息面板迷你曲线用。 */
