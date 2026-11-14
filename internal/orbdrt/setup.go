@@ -121,12 +121,20 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	if full {
 		phase = apigen.SetupPhaseSetup
 	}
+	// prepared：本次开始时完成标记已在（快照或此前的 setup 留下的），M11a 2.3。
+	_, statErr := os.Stat(r.setupMarker())
+	prepared := statErr == nil
+	res.Prepared = new(prepared)
 	// 中途出错（omp 配置、git、clone）也上报当前阶段的失败结果，控制面据此留下这次运行与日志。
 	fail := func(err *link.CtlError) (apigen.LinkCtlSetupRunResult, error) {
-		r.publishResult(apigen.LinkCtlSetupResultParams{
+		fres := apigen.LinkCtlSetupResultParams{
 			Phase: phase, Trigger: apigen.SetupTriggerAuto, Ok: false, Error: new(err.Message),
 			StartedAt: phaseStart.UnixMilli(), DurationMs: time.Since(phaseStart).Milliseconds(),
-		})
+		}
+		if phase == apigen.SetupPhaseSetup {
+			fres.Prepared = new(prepared)
+		}
+		r.publishResult(fres)
 		return res, err
 	}
 
@@ -203,6 +211,7 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		if err := os.MkdirAll(filepath.Dir(workdir), 0o755); err != nil {
 			return fail(ctlErr("failed", "%v", err))
 		}
+		cloned := false
 		if p.Repo != nil && p.Repo.URL != "" && !hasCheckout(workdir) {
 			args := []string{"clone"}
 			if p.Repo.Shallow {
@@ -218,16 +227,24 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			if err != nil {
 				return fail(ctlErr(errCode(err), "git clone: %v", err))
 			}
+			cloned = true
 		}
 		if err := os.MkdirAll(workdir, 0o755); err != nil {
 			return fail(ctlErr("failed", "%v", err))
 		}
+		// 3b. repo.update：已有检出（快照或池 orb）移动到基线最新提交；HEAD 变了就删掉完成标记，下面增量重跑 setup。
+		repoUpdated := false
+		if p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && !cloned && hasCheckout(workdir) {
+			repoUpdated = r.updateRepo(ctx, lg, workdir, envList(env), p.Repo)
+		}
+		res.RepoUpdated = new(repoUpdated)
 
 		// 4. setup 脚本（合计 20 分钟），成功后写标记。
 		sres := apigen.LinkCtlSetupResultParams{
 			Phase: apigen.SetupPhaseSetup, Trigger: apigen.SetupTriggerAuto,
 			StartedAt: phaseStart.UnixMilli(), HasProjectScript: nonEmpty(p.Scripts.Setup),
 			HasRepoScript: repoScript(workdir, "setup") != "",
+			Prepared:      new(prepared), RepoUpdated: new(repoUpdated),
 		}
 		if _, err := os.Stat(r.setupMarker()); err != nil {
 			res.SetupRan, sres.SetupRan = true, true
@@ -240,11 +257,23 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		}
 		sres.Ok, sres.Error = res.SetupError == nil, res.SetupError
 		sres.DurationMs = time.Since(phaseStart).Milliseconds()
+		if hasCheckout(workdir) {
+			if c := gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
+				res.BaseCommit, sres.BaseCommit = new(c), new(c)
+			}
+		}
 		r.publishResult(sres)
 		// 此后的失败属于 resume 阶段。
 		phase, phaseStart = apigen.SetupPhaseResume, time.Now()
-	} else if err := os.MkdirAll(workdir, 0o755); err != nil {
-		return fail(ctlErr("failed", "%v", err))
+	} else {
+		if err := os.MkdirAll(workdir, 0o755); err != nil {
+			return fail(ctlErr("failed", "%v", err))
+		}
+		if hasCheckout(workdir) {
+			if c := gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
+				res.BaseCommit = new(c)
+			}
+		}
 	}
 
 	// 5. resume 脚本：至多等 ResumeWait，其余放到后台继续；结果在脚本真正结束时上报。
@@ -293,6 +322,72 @@ func errCode(err error) string {
 func hasCheckout(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil
+}
+
+// updateRepo 实现 repo.update（M11a 2.3）：fetch 基线（分支名，缺省远端 HEAD），HEAD 不等于 FETCH_HEAD 时
+// 先试 fast-forward（浅克隆或失败则 reset --hard），并删掉 setup 完成标记。返回 HEAD 是否移动。
+// fetch 或移动失败只记日志：沿用当前检出（快照里的提交），不让 orb 失败。
+func (r *Runtime) updateRepo(ctx context.Context, lg *setupLogger, workdir string, env []string, repo *apigen.LinkCtlSetupRepo) bool {
+	ref := "HEAD"
+	if repo.Branch != nil && *repo.Branch != "" {
+		ref = *repo.Branch
+	}
+	args := []string{"-C", workdir, "fetch"}
+	if repo.Shallow {
+		args = append(args, "--depth", "1")
+	}
+	args = append(args, "--", "origin", ref)
+	cctx, cancel := context.WithTimeout(ctx, setupTimeout)
+	err := lg.run(cctx, apigen.Git, workdir, env, "git", args...)
+	cancel()
+	if err != nil {
+		lg.system(apigen.Git, "repo update: fetch failed; keeping the current checkout: "+err.Error())
+		return false
+	}
+	head, fetched := gitRev(ctx, workdir, env, "HEAD"), gitRev(ctx, workdir, env, "FETCH_HEAD")
+	if fetched == "" {
+		lg.system(apigen.Git, "repo update: FETCH_HEAD unreadable; keeping the current checkout")
+		return false
+	}
+	if head == fetched {
+		lg.system(apigen.Git, "repo update: already at "+shortRev(head))
+		return false
+	}
+	moved := false
+	if !repo.Shallow {
+		moved = lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "merge", "--ff-only", "FETCH_HEAD") == nil
+	}
+	if !moved {
+		if err := lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "reset", "--hard", "FETCH_HEAD"); err != nil {
+			lg.system(apigen.Git, "repo update: reset failed; keeping the current checkout: "+err.Error())
+			return false
+		}
+	}
+	if err := os.Remove(r.setupMarker()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		lg.system(apigen.Git, "repo update: remove setup marker: "+err.Error())
+	}
+	lg.system(apigen.Git, fmt.Sprintf("repo update: %s -> %s; setup scripts will rerun", shortRev(head), shortRev(fetched)))
+	return true
+}
+
+// gitRev 解析 rev 为提交的完整哈希；失败返回空串。
+func gitRev(ctx context.Context, dir string, env []string, rev string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func shortRev(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
 }
 
 func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {

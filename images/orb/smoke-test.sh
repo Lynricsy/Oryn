@@ -20,9 +20,15 @@ for cmd in omp orbd oryn node npm npx pnpm bun bunx python python3 pip pipx uv u
 	zip unzip tar gzip bzip2 zstd xz 7z bc sponge timeout flock setsid \
 	ps pgrep pkill killall lsof free ip ss ping dig nc socat traceroute \
 	sqlite3 psql mariadb redis-cli xmllint xsltproc pdftotext pdfinfo qpdf convert ffmpeg ffprobe \
-	chromium Xvnc openbox; do
+	chromium Xvnc openbox docker dockerd containerd; do
 	command -v "$cmd" >/dev/null || { echo "缺少工具：$cmd" >&2; exit 1; }
 done
+
+# 嵌套 Docker（M11a）：客户端与插件随镜像预装，user 在 docker 组里；守护进程只在 sysbox 类型里由 orbd 拉起
+docker --version
+docker compose version
+docker buildx version
+id -nG | tr ' ' '\n' | grep -qx docker
 
 # 不依赖交互启动文件补 PATH，且登录/交互 shell 不替换标准命令。
 for mode in -c -lc -ic; do

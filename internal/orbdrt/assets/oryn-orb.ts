@@ -41,6 +41,10 @@ function desktopEnabled(): boolean {
 	return existsSync(join(homedir(), ".oryn", "core", "desktop.yml"));
 }
 
+// 嵌套 Docker（M11a）：只有带 Docker 的 orb 类型由 provider 注入 ORYN_NESTED_DOCKER=1，orbd 据此监督 dockerd。
+const DOCKER_GUIDE = `Docker：这台 orb 有自己的 Docker 守护进程，由 Oryn 托管（不要自己启动或重启 dockerd），日志在 ~/.cache/oryn/logs/dockerd.log；\`docker\` / \`docker compose\` 直接可用（user 在 docker 组，不需要 sudo）。setup 里拉取或构建的镜像会进入项目快照，新 orb 直接可用；setup 结束时不要留下运行中的容器（需要常驻的容器用受管服务启动）。`;
+const NO_DOCKER_GUIDE = `Docker：这台 orb 没有 Docker 守护进程（docker 命令存在但连不上），不要尝试自己安装或启动 dockerd；任务确实需要 Docker 时，请用户改用带 Docker 的 orb 类型新开线程。`;
+
 interface SetupResult {
 	ok: boolean;
 	error?: string;
@@ -92,7 +96,8 @@ function statusLines(): string[] {
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
-		const guide = desktopEnabled() ? [GUIDE, DESKTOP_GUIDE] : [GUIDE];
+		const docker = process.env.ORYN_NESTED_DOCKER === "1" ? DOCKER_GUIDE : NO_DOCKER_GUIDE;
+		const guide = desktopEnabled() ? [GUIDE, docker, DESKTOP_GUIDE] : [GUIDE, docker];
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines()].join("\n")] };
 	});
 }

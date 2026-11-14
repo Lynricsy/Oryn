@@ -100,6 +100,11 @@ type Config struct {
 	Connect func(ctx context.Context) (*link.Session, error)
 	// ThreadPollInterval 是 orbd.sock 的 thread.wait 轮询 thread.get 的间隔，默认 2s（测试可调小）。
 	ThreadPollInterval time.Duration
+
+	// NestedDocker 为真时由 orbd 监督 orb 内的 dockerd（M11a 4.3；ConfigFromEnv 读 ORYN_NESTED_DOCKER=1）。
+	// DockerdBackoff 是 dockerd 第 n 次（从 1 起）连续失败后的重启等待（缺省 1s 起翻倍、上限 30s；测试钩子）。
+	NestedDocker   bool
+	DockerdBackoff func(n int) time.Duration
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -135,6 +140,7 @@ func ConfigFromEnv(version string) (Config, error) {
 	cfg.Desktop = os.Getenv("ORYN_DESKTOP") == "1"
 	cfg.DesktopCDPAddr = os.Getenv("ORYN_DESKTOP_CDP_ADDR")
 	cfg.DesktopTmpDir = os.Getenv("ORYN_DESKTOP_X11_TMPDIR")
+	cfg.NestedDocker = os.Getenv("ORYN_NESTED_DOCKER") == "1"
 	return cfg, nil
 }
 
@@ -211,6 +217,8 @@ type Runtime struct {
 	svc *serviceSupervisor
 	// desk 是桌面（M8）；未启用为 nil。
 	desk *desktop
+	// dockerd 是嵌套 Docker 的守护进程监督器（M11a）；未启用为 nil。
+	dockerd *dockerd
 
 	// syncMu 串行化 /sync/prepare（共用仓库里的临时 index 与 refs/oryn/sync/*）。
 	syncMu sync.Mutex
@@ -322,6 +330,9 @@ func New(cfg Config) (*Runtime, error) {
 	if !cfg.Coordinator {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）。
 		r.desk = newDesktop(r)
+		if cfg.NestedDocker {
+			r.dockerd = newDockerd(r)
+		}
 		if err := r.writeAgentAssets(); err != nil {
 			_ = ln.Close()
 			if r.desk != nil {
@@ -381,6 +392,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 		wg.Go(func() { d.serveCDP(ctx) })
 		wg.Go(func() { d.reportLoop(ctx) })
 	}
+	if dk := r.dockerd; dk != nil {
+		wg.Go(func() { dk.run(ctx) })
+	}
 	r.linkLoop(ctx)
 	// 仍存活的服务进程组直接 SIGKILL（优雅停止由 Shutdown 负责）。
 	r.svc.killAll()
@@ -400,10 +414,15 @@ func (r *Runtime) Redial() {
 }
 
 // Shutdown 优雅停止全部 agent（关闭 stdin、读完输出，超时 SIGKILL），并行停掉全部受管服务（不改期望状态）
-// 与桌面上的浏览器，然后在 link 可用时冲刷 tailer。
+// 与桌面上的浏览器，服务停完后停 dockerd（服务可能依赖它；TERM 至多等 15 秒），然后在 link 可用时冲刷 tailer。
 func (r *Runtime) Shutdown(grace time.Duration) {
 	var wg sync.WaitGroup
-	wg.Go(func() { r.svc.StopAll(grace) })
+	wg.Go(func() {
+		r.svc.StopAll(grace)
+		if dk := r.dockerd; dk != nil {
+			dk.stop()
+		}
+	})
 	if d := r.desk; d != nil {
 		wg.Go(func() { d.stopBrowser(min(grace, browserStopGrace)) })
 	}
@@ -617,9 +636,12 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 			threads = append(threads, apigen.LinkCtlHelloThread{ThreadID: id})
 		}
 	}
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads"}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update"}
 	if r.desk != nil {
 		features = append(features, "desktop")
+	}
+	if r.dockerd != nil {
+		features = append(features, "docker")
 	}
 	if r.cfg.Coordinator {
 		features = []string{"coordinator"}
@@ -728,6 +750,8 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 			return nil, err
 		}
 		return r.desk.setProfileMode(p)
+	case string(apigen.MethodSnapshotPrepare):
+		return r.snapshotPrepare(ctx)
 	default:
 		return nil, link.ErrMethodNotFound
 	}
