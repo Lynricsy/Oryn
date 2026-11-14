@@ -52,6 +52,7 @@ import {
 	modelPillText,
 	newThreadThinkingOptions,
 } from "../components/ui/ModelSelect";
+import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
 import { OrbBead } from "../components/ui/OrbBead";
 import { Option, Popover, PopoverLabel } from "../components/ui/PickerPopover";
 import { IconButton, Spinner } from "../components/ui/primitives";
@@ -256,10 +257,12 @@ export function HomePage(): ReactNode {
 					}),
 					main: pickedProfileName ?? t("newThread.profileNone"),
 				};
-	// 协调 orb（M9，跑在控制面宿主上）不能挂工作线程，也不出现在执行位置里
+	// 协调 orb（M9，跑在控制面宿主上）不能挂工作线程，也不出现在执行位置里；
+	// 预热池 orb（M11a）由控制面在新建线程时自动认领，不能手动挂（服务端回 409 orb_is_pooled）
 	const liveOrbs = (orbs.data?.orbs ?? []).filter(
 		(o) =>
 			!o.coordinator &&
+			!o.pool &&
 			o.state !== "deleted" &&
 			o.state !== "deleting" &&
 			o.state !== "failed",
@@ -662,6 +665,7 @@ export function HomePage(): ReactNode {
 																	{t("panel.cores", { n: ot.cpus })}
 																</Badge>
 																<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
+																{typeHasDocker(ot) && <DockerBadge />}
 																{!p.online && (
 																	<Badge tone="warn">
 																		{t("providers.offline")}
@@ -693,7 +697,12 @@ export function HomePage(): ReactNode {
 												}
 												leading={<OrbBead state={o.state} />}
 												mono
-												trailing={<Badge>{o.type}</Badge>}
+												trailing={
+													<>
+														<Badge>{o.type}</Badge>
+														{o.nestedDocker && <DockerBadge />}
+													</>
+												}
 												onClick={() => {
 													setExecutor({ kind: "orb", orbId: o.id });
 													setPill(null);

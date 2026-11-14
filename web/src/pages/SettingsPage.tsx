@@ -50,6 +50,7 @@ import {
 	StatusDot,
 } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
+import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
 import {
 	Button,
 	ErrorText,
@@ -396,6 +397,7 @@ function ProvidersSettings() {
 														{p.defaultType === ot.name && (
 															<Badge>{t("providers.default")}</Badge>
 														)}
+														{typeHasDocker(ot) && <DockerBadge />}
 													</span>
 												))}
 											</span>

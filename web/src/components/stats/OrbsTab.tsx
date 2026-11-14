@@ -5,6 +5,7 @@
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useOrbs } from "../../api/queries";
 import {
 	type OrbStat,
 	useOrbStats,
@@ -16,6 +17,7 @@ import { Legend } from "../charts/Legend";
 import { StackedBars } from "../charts/StackedBars";
 import { TIMELINE_COLOR } from "../charts/TimelineStrip";
 import { Card } from "../ui/data";
+import { WarmBadge } from "../ui/OrbBadges";
 import { ErrorText, Spinner } from "../ui/primitives";
 import { bucketLabel, formatHours, formatRatio } from "./format";
 import { OrbDrawer } from "./OrbDrawer";
@@ -69,6 +71,12 @@ export function OrbsTab({
 	const list = useOrbStats({ ...scope, groupBy: "orb" });
 	const meta = useStatsMeta();
 	const [open, setOpen] = useState<{ id: string; title: string } | null>(null);
+	// 预热池 orb（M11a）在列表里带「预热」徽标；统计接口不带池状态，取自 `GET orbs`
+	const pooled = new Map(
+		(useOrbs().data?.orbs ?? []).flatMap((o) =>
+			o.pool ? [[o.id, o.pool] as const] : [],
+		),
+	);
 	const total = main.data?.total;
 	const setup = main.data?.setup;
 	const kpis =
@@ -192,6 +200,7 @@ export function OrbsTab({
 					<ul className="flex min-w-0 flex-col">
 						{orbs.map((o) => {
 							const title = o.label || t("stats.orbs.untitled");
+							const pool = pooled.get(o.key);
 							return (
 								<li key={o.key}>
 									<button
@@ -204,6 +213,7 @@ export function OrbsTab({
 											<span className="min-w-0 flex-1 truncate" title={o.key}>
 												{title}
 											</span>
+											{pool && <WarmBadge pool={pool} />}
 											<span className="shrink-0 text-faint text-xs">
 												{o.type ?? ""}
 											</span>

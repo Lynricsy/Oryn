@@ -79,6 +79,7 @@ function orb(over: Partial<Orb>): Orb {
 let projectList: Project[];
 let orbList: Orb[];
 let writes: Write[];
+let snapshotList: Schemas["ProjectSnapshot"][];
 
 async function handle(req: Request): Promise<Response> {
 	const url = new URL(req.url, "http://x");
@@ -93,6 +94,17 @@ async function handle(req: Request): Promise<Response> {
 			return Response.json(p, { status: 201 });
 		}
 		return Response.json({ projects: projectList });
+	}
+	const snaps = /^\/api\/v1\/projects\/([^/]+)\/snapshots$/.exec(path);
+	if (snaps) {
+		if (req.method !== "DELETE")
+			return Response.json({ snapshots: snapshotList });
+		snapshotList = snapshotList.map((s) =>
+			s.state === "ready"
+				? { ...s, state: "retired", retireReason: "manual" }
+				: s,
+		);
+		return new Response(null, { status: 204 });
 	}
 	const one = /^\/api\/v1\/projects\/([^/]+)$/.exec(path);
 	if (one) {
@@ -156,6 +168,7 @@ beforeEach(() => {
 	projectList = [ORYN, CORE];
 	orbList = [];
 	writes = [];
+	snapshotList = [];
 	uiStore.getState().setProjectFilter(undefined);
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
 		handle(
@@ -219,6 +232,8 @@ describe("ProjectPage 项目设置", () => {
 					gitAuthorName: "",
 					gitAuthorEmail: "",
 					defaultBrowserProfileId: "",
+					snapshots: true,
+					warmOrbs: 0,
 				},
 			],
 		]);
@@ -247,7 +262,11 @@ describe("ProjectPage 项目设置", () => {
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(where()).toHaveTextContent("/projects/prj_new"));
 		expect(writesOnly()).toEqual([
-			["POST", "/api/v1/projects", { name: "fresh", shallowClone: false }],
+			[
+				"POST",
+				"/api/v1/projects",
+				{ name: "fresh", shallowClone: false, snapshots: true, warmOrbs: 0 },
+			],
 		]);
 		expect(
 			await screen.findByRole("heading", { level: 1, name: "fresh" }),
@@ -434,5 +453,156 @@ describe("ProjectPage 环境配置与服务", () => {
 		expect(rows[0]).toHaveTextContent("跑通 demo");
 		// 只读：没有启停按钮
 		expect(within(rows[0] as HTMLElement).queryByRole("button")).toBeNull();
+	});
+});
+
+const SNAP = (
+	over: Partial<Schemas["ProjectSnapshot"]> &
+		Pick<Schemas["ProjectSnapshot"], "id" | "state">,
+): Schemas["ProjectSnapshot"] => ({
+	providerId: "prov_1",
+	providerName: "local",
+	type: "medium",
+	configHash: "h",
+	depth: 0,
+	lineageAt: Date.now() - 2 * 3_600_000,
+	createdAt: 1,
+	useCount: 0,
+	...over,
+});
+
+describe("ProjectPage 项目快照与预热（M11a）", () => {
+	it("快照开关：关掉后保存，PATCH 带 snapshots=false", async () => {
+		mount(`/projects/${ORYN.id}`);
+		const toggle = await screen.findByRole("checkbox", {
+			name: i18n.t("accel.snapshotsToggle"),
+		});
+		expect(toggle).toBeChecked();
+		fireEvent.click(toggle);
+		expect(toggle).not.toBeChecked();
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(writes[0]?.body).toEqual(
+			expect.objectContaining({ snapshots: false, warmOrbs: 0 }),
+		);
+	});
+
+	it("预热步进器：0–3，到上限后「增加」禁用，保存带 warmOrbs", async () => {
+		projectList = [{ ...ORYN, warmOrbs: 2 }, CORE];
+		mount(`/projects/${ORYN.id}`);
+		const value = await screen.findByTestId("warm-orbs-value");
+		const inc = screen.getByRole("button", { name: i18n.t("accel.warmInc") });
+		const dec = screen.getByRole("button", { name: i18n.t("accel.warmDec") });
+		expect(value).toHaveTextContent("2");
+		// 下限：减到 0 后「减少」禁用，再点不变
+		for (let i = 0; i < 3; i++) fireEvent.click(dec);
+		expect(value).toHaveTextContent("0");
+		expect(dec).toBeDisabled();
+		// 上限：加到 3 后「增加」禁用，再点不变
+		for (let i = 0; i < 3; i++) fireEvent.click(inc);
+		expect(value).toHaveTextContent("3");
+		expect(inc).toBeDisabled();
+		fireEvent.click(inc);
+		expect(value).toHaveTextContent("3");
+		// 说明文字写明全局上限与常驻占用内存
+		const hint = screen.getByText(i18n.t("accel.warmHint"));
+		expect(hint).toHaveTextContent("pool.max_total");
+		expect(hint).toHaveTextContent("常驻占用内存");
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(writes[0]?.body).toEqual(expect.objectContaining({ warmOrbs: 3 }));
+	});
+
+	it("快照表：三种状态、提交前 7 位、使用次数与退役原因", async () => {
+		snapshotList = [
+			SNAP({ id: "s-b", state: "building", type: "large" }),
+			SNAP({
+				id: "s-r",
+				state: "ready",
+				baseCommit: "abc1234def5678",
+				useCount: 7,
+				sizeBytes: 1_240_000_000,
+			}),
+			SNAP({
+				id: "s-x",
+				state: "retired",
+				type: "small",
+				retireReason: "superseded",
+			}),
+		];
+		mount(`/projects/${ORYN.id}`);
+		const table = await screen.findByTestId("snapshot-list");
+		const row = (id: string) =>
+			table.querySelector(`[data-snapshot="${id}"]`) as HTMLElement;
+		expect(row("s-b")).toHaveTextContent("建立中");
+		expect(row("s-r")).toHaveTextContent("可用");
+		expect(row("s-r")).toHaveTextContent("abc1234");
+		expect(row("s-r")).not.toHaveTextContent("abc1234d");
+		expect(row("s-r")).toHaveTextContent("1.2 GB");
+		expect(row("s-r")).toHaveTextContent("7");
+		expect(row("s-r")).toHaveTextContent("2h 0m");
+		expect(row("s-x")).toHaveTextContent("已退役");
+		expect(row("s-x")).toHaveTextContent("已被新快照取代");
+	});
+
+	it("清除快照：取消确认不发请求；确认后 DELETE 并刷新列表", async () => {
+		snapshotList = [
+			SNAP({ id: "s-r", state: "ready", baseCommit: "abc1234def" }),
+		];
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+		mount(`/projects/${ORYN.id}`);
+		const clear = await screen.findByRole("button", {
+			name: i18n.t("accel.clear"),
+		});
+		fireEvent.click(clear);
+		expect(confirm).toHaveBeenCalledWith(
+			i18n.t("accel.clearConfirm", { name: ORYN.name }),
+		);
+		expect(writes).toEqual([]);
+		confirm.mockReturnValue(true);
+		fireEvent.click(clear);
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(writesOnly()).toEqual([
+			["DELETE", `/api/v1/projects/${ORYN.id}/snapshots`, undefined],
+		]);
+		// 没有可用快照了：按钮消失，行变成「已退役 · 手动清除」
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: i18n.t("accel.clear") }),
+			).toBeNull(),
+		);
+		expect(screen.getByTestId("snapshot-list")).toHaveTextContent("手动清除");
+	});
+
+	it("预热 orb 列表：池 orb 带「预热」徽标与 Docker 徽标；非池 orb 不列", async () => {
+		orbList = [
+			orb({
+				id: "orb-pool",
+				threadIds: [],
+				pool: "idle",
+				state: "frozen",
+				nestedDocker: true,
+			}),
+			orb({ id: "orb-work" }),
+		];
+		mount(`/projects/${ORYN.id}`);
+		const card = await screen.findByTestId("project-accel");
+		await waitFor(() =>
+			expect(card.querySelector('[data-pool-orb="orb-pool"]')).not.toBeNull(),
+		);
+		const row = card.querySelector('[data-pool-orb="orb-pool"]') as HTMLElement;
+		expect(row).toHaveTextContent(i18n.t("accel.warm"));
+		expect(row).toHaveTextContent("Docker");
+		expect(row).toHaveTextContent(i18n.t("accel.pool.idle"));
+		expect(card.querySelector('[data-pool-orb="orb-work"]')).toBeNull();
+	});
+
+	it("没有预热 orb：开了预热时说明暂不满足条件", async () => {
+		projectList = [{ ...ORYN, warmOrbs: 1 }, CORE];
+		mount(`/projects/${ORYN.id}`);
+		expect(await screen.findByTestId("pool-empty")).toHaveTextContent(
+			i18n.t("accel.pool.pending"),
+		);
+		expect(await screen.findByTestId("snapshots-empty")).toBeInTheDocument();
 	});
 });

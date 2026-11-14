@@ -6,6 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { Orb } from "../../api/client";
 import { useOrbMetrics } from "../../api/queries";
 import { formatMemoryMB, formatPercent, formatTokens } from "../../lib/format";
 import { keyed } from "../../lib/keys";
@@ -24,6 +25,7 @@ import {
 	thresholdTone,
 } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { DockerBadge } from "../ui/OrbBadges";
 import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Sparkline } from "../ui/primitives";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
@@ -255,6 +257,11 @@ function OrbSection({ threadId }: { threadId: string }) {
 					{formatMemoryMB(orb.memoryMB)}
 				</Spec>
 				{orb.providerName && <Spec icon="hardDrives">{orb.providerName}</Spec>}
+				{orb.nestedDocker && (
+					<span className="inline-flex h-6 items-center">
+						<DockerBadge />
+					</span>
+				)}
 			</div>
 			<div className="flex flex-col gap-1.5">
 				<MetricWell
@@ -288,11 +295,62 @@ function OrbSection({ threadId }: { threadId: string }) {
 				<h4 className="mb-1 font-medium text-2xs text-faint">
 					{t("env.title")}
 				</h4>
+				<SnapshotOrigin orb={orb} />
 				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
 			</div>
 			<DesktopProfileLine orb={orb} />
 			<ServicesSection threadId={threadId} orb={orb} />
 		</Card>
+	);
+}
+
+/**
+ * 环境小节的快照来源（M11a）：来自项目快照的 orb 显示「来自项目快照 · 提交 abc1234」（提交取最近一次 setup 结束时的检出）；
+ * 本次 setup 起步时已有标记（快照）却仍实际跑了脚本，说明基线有新提交、在快照上增量重跑过。
+ */
+export function SnapshotOrigin({
+	orb,
+}: {
+	orb: Pick<Orb, "snapshotKind" | "lastSetup">;
+}): ReactNode {
+	const { t } = useTranslation();
+	const run = orb.lastSetup;
+	const fromSnapshot = orb.snapshotKind === "project";
+	const refreshed = Boolean(run?.prepared && run.setupRan);
+	if (!fromSnapshot && !refreshed) return null;
+	const commit = run?.baseCommit?.slice(0, 7);
+	return (
+		<div
+			data-testid="env-snapshot"
+			className="mb-1 flex flex-col gap-0.5 text-muted text-xs"
+		>
+			{fromSnapshot && (
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<Icon
+						name="snapshot"
+						size={12}
+						aria-hidden
+						className="shrink-0 text-faint"
+					/>
+					<span className="min-w-0 truncate">
+						{commit
+							? t("accel.fromSnapshotCommit", { commit })
+							: t("accel.fromSnapshot")}
+					</span>
+				</span>
+			)}
+			{refreshed && (
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<Icon
+						name="branch"
+						size={12}
+						aria-hidden
+						className="shrink-0 text-faint"
+					/>
+					<span className="min-w-0">{t("accel.refreshed")}</span>
+				</span>
+			)}
+		</div>
 	);
 }
 

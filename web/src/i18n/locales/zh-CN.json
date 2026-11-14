@@ -2204,5 +2204,60 @@
 			},
 			"notifyHint": "超过预警线或上限时发一条系统通知：通知中心、推送，以及在<settings>「设置 → 通知」</settings>里勾选了「预算告警」的渠道。"
 		}
+	},
+	"accel": {
+		"cardTitle": "快照与预热",
+		"snapshotsToggle": "项目快照",
+		"snapshotsHint": "setup 成功后把 orb 存成快照，之后的新 orb 直接从快照启动、跳过 setup（仍会跑 resume 并更新到基线最新提交）。同一血统最长复用 72 小时。",
+		"warmOrbs": "预热 orb",
+		"warmHint": "提前开好、跑完 setup 的 orb，新线程直接认领，省去启动等待。全局最多同时预热的台数由控制面的 pool.max_total 决定（默认 2 台），超出时排队补位。每台预热 orb 都会常驻占用内存。",
+		"warmDec": "减少预热 orb",
+		"warmInc": "增加预热 orb",
+		"snapshots": "项目快照",
+		"snapshotsOff": "这个项目已关闭项目快照：新 orb 每次都从基础镜像跑 setup。",
+		"snapshotsEmpty": "还没有快照。本项目的 orb 第一次 setup 成功后会自动建立。",
+		"col": {
+			"type": "类型",
+			"state": "状态",
+			"commit": "提交",
+			"age": "血统年龄",
+			"size": "大小",
+			"uses": "使用次数",
+			"reason": "退役原因"
+		},
+		"uses": "使用 {{count}} 次",
+		"state": {
+			"building": "建立中",
+			"ready": "可用",
+			"retired": "已退役"
+		},
+		"reason": {
+			"config_changed": "项目配置已变",
+			"expired": "超过 72 小时",
+			"image_missing": "镜像丢失",
+			"refresh_failed": "刷新失败",
+			"depth": "刷新次数超限",
+			"superseded": "已被新快照取代",
+			"quota": "超出空间配额",
+			"manual": "手动清除",
+			"project_deleted": "项目已删除",
+			"provider_removed": "provider 已移除"
+		},
+		"clear": "清除快照",
+		"clearConfirm": "清除 {{name}} 的全部可用快照？下一台新 orb 会从基础镜像重新跑 setup，快照镜像随后被回收。",
+		"pool": {
+			"title": "预热 orb",
+			"none": "当前没有预热中的 orb。",
+			"pending": "还没有预热 orb：可能正在补位，或暂不满足预热条件（72 小时内没有新线程、provider 离线、全局已满、上次 setup 失败后 1 小时内）。",
+			"warming": "预热中：正在启动并跑 setup",
+			"idle": "待认领：新线程会直接用它",
+			"claimed": "已被线程认领，正在刷新"
+		},
+		"warm": "预热",
+		"docker": "Docker",
+		"dockerHint": "orb 内可用 Docker（嵌套 Docker，由 Oryn 托管 dockerd）",
+		"fromSnapshot": "来自项目快照",
+		"fromSnapshotCommit": "来自项目快照 · 提交 {{commit}}",
+		"refreshed": "基线有新提交，已增量重跑 setup"
 	}
 }

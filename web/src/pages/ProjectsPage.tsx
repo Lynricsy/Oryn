@@ -42,6 +42,7 @@ import { parseTitleCard } from "../lib/title";
 import { useBreakpoint } from "../lib/viewport";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
+import { AccelCard } from "./projects/ProjectAccel";
 import {
 	EMPTY_PROJECT,
 	formOf,
@@ -271,6 +272,7 @@ function ProjectDetail({ project }: { project: Project }): ReactNode {
 				/>
 			</Card>
 			<EnvironmentCard orb={setupOrb} />
+			<AccelCard project={project} />
 			<ServicesCard orbs={mine} />
 			{/* 定时列表自带「定时任务」小标题与新建按钮，卡片不再重复标题 */}
 			<Card>

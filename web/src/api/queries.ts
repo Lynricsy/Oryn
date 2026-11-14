@@ -14,6 +14,7 @@ export const qk = {
 	me: ["me"] as const,
 	devices: ["devices"] as const,
 	projects: ["projects"] as const,
+	projectSnapshots: (id: string) => ["projects", id, "snapshots"] as const,
 	providers: ["providers"] as const,
 	secrets: ["secrets"] as const,
 	gitIdentity: ["settings", "git-identity"] as const,
@@ -59,6 +60,20 @@ export function useProjects() {
 		queryKey: qk.projects,
 		queryFn: () => unwrap(api.GET("/api/v1/projects")),
 		staleTime: 30_000,
+	});
+}
+
+/** 项目快照（M11a；含 building / ready / retired）。 */
+export function useProjectSnapshots(projectId: string) {
+	return useQuery({
+		queryKey: qk.projectSnapshots(projectId),
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/projects/{id}/snapshots", {
+					params: { path: { id: projectId } },
+				}),
+			),
+		staleTime: 10_000,
 	});
 }
 

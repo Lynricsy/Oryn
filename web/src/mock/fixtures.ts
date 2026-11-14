@@ -29,7 +29,8 @@ export const projects: Project[] = [
 		setupScript: "bun install --cwd web",
 		shallowClone: true,
 		snapshots: true,
-		warmOrbs: 0,
+		// 预热 1 台（M11a）：mock 里对应 `POOL_ORB`
+		warmOrbs: 1,
 		// 浏览器 Profile「工作账号」（M8；与 `BROWSER_PROFILE_IDS.work` 相同）
 		defaultBrowserProfileId: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P1",
 		createdAt: NOW - 30 * 24 * HOUR,
@@ -60,6 +61,8 @@ export const providers: Provider[] = [
 			{ name: "small", cpus: 2, memoryMB: 4096 },
 			{ name: "medium", cpus: 4, memoryMB: 8192 },
 			{ name: "large", cpus: 8, memoryMB: 16384 },
+			// 嵌套 Docker 类型（M11a，sysbox；与 docs/deploy.md 的示例同名）
+			{ name: "dind", cpus: 4, memoryMB: 8192, features: ["docker"] },
 		],
 		defaultType: "medium",
 		online: true,
@@ -425,6 +428,18 @@ export const orbEnv: Record<string, Partial<Orb>> = {
 		}),
 	},
 	[DOCKER_ORB]: {
+		// M11a：嵌套 Docker 类型，来自项目快照；基线前进过，在快照上增量重跑了 setup
+		type: "dind",
+		nestedDocker: true,
+		snapshotOf: "oryn-snap-01jd2m11a0000000000000rdy1",
+		snapshotKind: "project",
+		lastSetup: setupRun(DOCKER_ORB, 1, {
+			phase: "setup",
+			durationMs: 18_400,
+			prepared: true,
+			baseCommit: "8d41e0b9c2f7a5136e0d4c8b2a91f3e7c6d5b4a0",
+			finishedAt: NOW - 50 * MIN,
+		}),
 		desktop: {
 			displayReady: true,
 			browser: "running",
@@ -492,6 +507,107 @@ export const orbEnv: Record<string, Partial<Orb>> = {
 		projectId: undefined,
 		coordinator: true,
 	},
+};
+
+// ---------------------------------------------------------------- 项目快照与预热池（M11a）
+
+/** Oryn 项目的预热池 orb（没有线程；冻结待认领）。 */
+export const POOL_ORB = "orb-01jd2m11a0000000000000pool";
+
+/** M11a 截图 / 验收用：`snapshotThread` 的 orb 是来自项目快照、增量重跑过 setup 的嵌套 Docker orb。 */
+export const M11A_IDS = {
+	snapshotThread: "T-0193a1b2-0000-7000-8000-00000000a004",
+	poolOrb: POOL_ORB,
+} as const;
+
+export const poolOrbs: Orb[] = [
+	{
+		...makeOrb(POOL_ORB, [], "frozen"),
+		stateChangedAt: NOW - 25 * MIN,
+		createdAt: NOW - 70 * MIN,
+		pool: "idle",
+		snapshotOf: "oryn-snap-01jd2m11a0000000000000rdy0",
+		snapshotKind: "project",
+		lastSetup: setupRun(POOL_ORB, 1, {
+			phase: "setup",
+			durationMs: 2_300,
+			prepared: true,
+			setupRan: false,
+			baseCommit: "3f9c2a7e51b04d6c8e2f1a9b7c3d5e4f6a8b0c12",
+			finishedAt: NOW - 68 * MIN,
+		}),
+	},
+];
+
+const snapshot = (
+	p: Partial<Schemas["ProjectSnapshot"]> &
+		Pick<Schemas["ProjectSnapshot"], "id" | "type" | "state" | "lineageAt">,
+): Schemas["ProjectSnapshot"] => ({
+	providerId: providers[0]?.id ?? "prov",
+	providerName: "local",
+	configHash:
+		"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+	depth: 0,
+	createdAt: p.lineageAt,
+	useCount: 0,
+	...p,
+});
+
+/** 项目快照（按 createdAt 倒序，与服务端一致）：三种状态都有。 */
+export const projectSnapshots: Record<string, Schemas["ProjectSnapshot"][]> = {
+	[projects[0]?.id ?? ""]: [
+		snapshot({
+			id: "oryn-snap-01jd2m11a0000000000000bld1",
+			type: "large",
+			state: "building",
+			lineageAt: NOW - 2 * MIN,
+		}),
+		snapshot({
+			id: "oryn-snap-01jd2m11a0000000000000rdy1",
+			type: "dind",
+			state: "ready",
+			baseCommit: "8d41e0b9c2f7a5136e0d4c8b2a91f3e7c6d5b4a0",
+			depth: 1,
+			lineageAt: NOW - 26 * HOUR,
+			createdAt: NOW - 50 * MIN,
+			readyAt: NOW - 49 * MIN,
+			lastUsedAt: NOW - 20 * MIN,
+			useCount: 3,
+			sizeBytes: 3_650_000_000,
+		}),
+		snapshot({
+			id: "oryn-snap-01jd2m11a0000000000000rdy0",
+			type: "medium",
+			state: "ready",
+			baseCommit: "3f9c2a7e51b04d6c8e2f1a9b7c3d5e4f6a8b0c12",
+			lineageAt: NOW - 5 * HOUR,
+			readyAt: NOW - 5 * HOUR + 2 * MIN,
+			lastUsedAt: NOW - 70 * MIN,
+			useCount: 7,
+			sizeBytes: 1_240_000_000,
+		}),
+		snapshot({
+			id: "oryn-snap-01jd2m11a0000000000000old1",
+			type: "dind",
+			state: "retired",
+			baseCommit: "c07e19a4d8b2f6e3a5c1d9b7e2f4a6c8d0b1e3f5",
+			lineageAt: NOW - 26 * HOUR,
+			readyAt: NOW - 26 * HOUR + 3 * MIN,
+			useCount: 5,
+			sizeBytes: 3_420_000_000,
+			retireReason: "superseded",
+		}),
+		snapshot({
+			id: "oryn-snap-01jd2m11a0000000000000old0",
+			type: "small",
+			state: "retired",
+			baseCommit: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+			lineageAt: NOW - 30 * HOUR,
+			useCount: 2,
+			sizeBytes: 980_000_000,
+			retireReason: "config_changed",
+		}),
+	],
 };
 
 /** 运行记录 id → 日志全文。 */

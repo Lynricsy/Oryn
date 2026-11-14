@@ -90,14 +90,17 @@ import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
+import { ShippingContainer } from "@phosphor-icons/react/dist/csr/ShippingContainer";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Square } from "@phosphor-icons/react/dist/csr/Square";
+import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
 import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
+import { ThermometerHot } from "@phosphor-icons/react/dist/csr/ThermometerHot";
 import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
@@ -235,6 +238,14 @@ const ICONS = {
 	windowMinimize: Minus,
 	windowMaximize: Square,
 	windowRestore: Cards,
+	/** orb 内可用 Docker（嵌套 Docker 类型，M11a） */
+	docker: ShippingContainer,
+	/** 项目快照（M11a） */
+	snapshot: Stack,
+	/** 预热 orb（M11a 预热池） */
+	warm: ThermometerHot,
+	/** 步进器「减少」（增加用 `plus`） */
+	minus: Minus,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

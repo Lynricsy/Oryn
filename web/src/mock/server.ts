@@ -42,6 +42,8 @@ import {
 	mockSpeedCaps,
 	NOW,
 	orbEnv,
+	poolOrbs,
+	projectSnapshots,
 	providers,
 	SESSION_FILE,
 	serviceLogs,
@@ -310,6 +312,15 @@ function badGitPair(name?: string, email?: string): Response | null {
 	);
 }
 
+/** 预热 orb 数越界（0–3，M11a；与服务端一致回 400）。 */
+function badWarmOrbs(n?: number): Response | null {
+	if (n === undefined || (Number.isInteger(n) && n >= 0 && n <= 3)) return null;
+	return json(
+		{ code: "invalid_request", message: "warmOrbs 须在 0–3 之间" },
+		400,
+	);
+}
+
 function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
@@ -362,6 +373,13 @@ export class MockServer {
 		{ afterSeq: number; frame: Json }[]
 	>();
 	readonly projects: Project[] = fixtureProjects.map((p) => ({ ...p }));
+	/** 项目快照（M11a），按项目 id。 */
+	readonly snapshots = new Map<string, Schemas["ProjectSnapshot"][]>(
+		Object.entries(projectSnapshots).map(([k, v]) => [
+			k,
+			v.map((s) => ({ ...s })),
+		]),
+	);
 	/** 浏览器 Profile 与 orb 桌面（M8）。 */
 	readonly desktop = new MockDesktop({
 		orbs: this.orbs,
@@ -459,6 +477,8 @@ export class MockServer {
 				});
 			}
 		}
+		// 预热池 orb（M11a）没有线程，单独加入
+		for (const o of poolOrbs) this.orbs.set(o.id, { ...o });
 		for (const orb of this.orbs.values())
 			this.setupRuns.set(
 				orb.id,
@@ -1028,7 +1048,9 @@ export class MockServer {
 			});
 		if (p === "projects" && m === "POST") {
 			const b = (await body()) as Schemas["ProjectCreate"];
-			const bad = badGitPair(b.gitAuthorName, b.gitAuthorEmail);
+			const bad =
+				badGitPair(b.gitAuthorName, b.gitAuthorEmail) ??
+				badWarmOrbs(b.warmOrbs);
 			if (bad) return bad;
 			const created: Project = {
 				// 新建时空串等同缺省
@@ -1045,6 +1067,27 @@ export class MockServer {
 			this.projects.push(created);
 			return json(created, 201);
 		}
+		const snapMatch = /^projects\/([^/]+)\/snapshots$/.exec(p);
+		if (snapMatch) {
+			const pid = snapMatch[1] ?? "";
+			if (!this.projects.some((x) => x.id === pid))
+				return json({ code: "not_found", message: "project" }, 404);
+			const list = this.snapshots.get(pid) ?? [];
+			if (m === "DELETE") {
+				// 与服务端一致：把匹配的 ready 快照退役（原因 manual），镜像由回收器异步删除
+				const type = url.searchParams.get("type");
+				this.snapshots.set(
+					pid,
+					list.map((s) =>
+						s.state === "ready" && (!type || s.type === type)
+							? { ...s, state: "retired", retireReason: "manual" }
+							: s,
+					),
+				);
+				return new Response(null, { status: 204 });
+			}
+			return json({ snapshots: list });
+		}
 		const projectMatch = /^projects\/([^/]+)$/.exec(p);
 		if (projectMatch) {
 			const i = this.projects.findIndex((x) => x.id === projectMatch[1]);
@@ -1052,7 +1095,9 @@ export class MockServer {
 			if (!cur) return json({ code: "not_found", message: "project" }, 404);
 			if (m === "PATCH") {
 				const { archived, ...b } = (await body()) as Schemas["ProjectPatch"];
-				const bad = badGitPair(b.gitAuthorName, b.gitAuthorEmail);
+				const bad =
+					badGitPair(b.gitAuthorName, b.gitAuthorEmail) ??
+					badWarmOrbs(b.warmOrbs);
 				if (bad) return bad;
 				const next: Project = { ...cur, updatedAt: Date.now() };
 				for (const [k, v] of Object.entries(b)) {

@@ -2204,5 +2204,60 @@
 			},
 			"notifyHint": "Crossing the warning line or the limit posts a system notification: to the notification center, push, and channels that have “Budget alert” checked in <settings>Settings → Notifications</settings>."
 		}
+	},
+	"accel": {
+		"cardTitle": "Snapshots & warm orbs",
+		"snapshotsToggle": "Project snapshots",
+		"snapshotsHint": "After a successful setup the orb is saved as a snapshot; later orbs boot from it and skip setup (resume still runs and the repo moves to the latest base commit). One lineage is reused for at most 72 hours.",
+		"warmOrbs": "Warm orbs",
+		"warmHint": "Orbs started ahead of time with setup already done; new threads claim one and skip the boot wait. How many orbs can be warm at once across all projects is set by the control plane's pool.max_total (2 by default); extra requests wait their turn. Every warm orb stays resident and uses memory.",
+		"warmDec": "Fewer warm orbs",
+		"warmInc": "More warm orbs",
+		"snapshots": "Project snapshots",
+		"snapshotsOff": "Project snapshots are off for this project: every new orb runs setup from the base image.",
+		"snapshotsEmpty": "No snapshots yet. One is created after this project's first successful orb setup.",
+		"col": {
+			"type": "Type",
+			"state": "State",
+			"commit": "Commit",
+			"age": "Lineage age",
+			"size": "Size",
+			"uses": "Uses",
+			"reason": "Retired because"
+		},
+		"uses": "Uses: {{count}}",
+		"state": {
+			"building": "Building",
+			"ready": "Ready",
+			"retired": "Retired"
+		},
+		"reason": {
+			"config_changed": "Project config changed",
+			"expired": "Older than 72 hours",
+			"image_missing": "Image missing",
+			"refresh_failed": "Refresh failed",
+			"depth": "Too many refreshes",
+			"superseded": "Replaced by a newer snapshot",
+			"quota": "Over the space quota",
+			"manual": "Cleared manually",
+			"project_deleted": "Project deleted",
+			"provider_removed": "Provider removed"
+		},
+		"clear": "Clear snapshots",
+		"clearConfirm": "Clear all ready snapshots of {{name}}? The next new orb runs setup from the base image again; the snapshot images are reclaimed afterwards.",
+		"pool": {
+			"title": "Warm orbs",
+			"none": "No warm orbs right now.",
+			"pending": "No warm orb yet: one may be starting, or the project doesn't qualify right now (no new thread in 72 hours, provider offline, global limit reached, or within 1 hour of a failed setup).",
+			"warming": "Warming: booting and running setup",
+			"idle": "Ready to claim: the next new thread uses it",
+			"claimed": "Claimed by a thread, refreshing"
+		},
+		"warm": "Warm",
+		"docker": "Docker",
+		"dockerHint": "Docker is available inside the orb (nested Docker; dockerd managed by Oryn)",
+		"fromSnapshot": "From project snapshot",
+		"fromSnapshotCommit": "From project snapshot · commit {{commit}}",
+		"refreshed": "The base branch had new commits; setup re-ran incrementally"
 	}
 }

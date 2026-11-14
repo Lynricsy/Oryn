@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -160,6 +164,110 @@ func deref(s *string) string {
 	return *s
 }
 
+var projectSnapshotsCmd = &cobra.Command{
+	Use:   "snapshots",
+	Short: "项目快照（ls / rm）",
+}
+
+var projectSnapshotsLsOpts struct{ json bool }
+
+var projectSnapshotsLsCmd = &cobra.Command{
+	Use:   "ls <name|id>",
+	Short: "列出项目快照（含 building / ready / retired）",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		return projectSnapshotsLs(cmd.Context(), c, args[0], projectSnapshotsLsOpts.json, time.Now(), os.Stdout)
+	},
+}
+
+var projectSnapshotsRmOpts struct{ orbType string }
+
+var projectSnapshotsRmCmd = &cobra.Command{
+	Use:   "rm <name|id>",
+	Short: "清除项目快照（把 ready 快照退役，镜像由控制面异步回收）",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		return projectSnapshotsRm(cmd.Context(), c, args[0], projectSnapshotsRmOpts.orbType, os.Stdout)
+	},
+}
+
+// projectSnapshotsLs 打印项目快照表：类型、provider、状态、退役原因、提交前 7 位、血统年龄、大小、使用次数。
+func projectSnapshotsLs(ctx context.Context, c *apiClient, name string, asJSON bool, now time.Time, w io.Writer) error {
+	pid, err := resolveProject(ctx, c, name)
+	if err != nil {
+		return err
+	}
+	var list apigen.ProjectSnapshotList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/projects/"+pid+"/snapshots", nil, &list); err != nil {
+		return err
+	}
+	if asJSON {
+		return printJSONTo(w, list)
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "TYPE\tPROVIDER\tSTATE\tREASON\tCOMMIT\tAGE\tSIZE\tUSES")
+	for _, s := range list.Snapshots {
+		provider := s.ProviderID
+		if s.ProviderName != nil && *s.ProviderName != "" {
+			provider = *s.ProviderName
+		}
+		commit := "-"
+		if s.BaseCommit != nil && *s.BaseCommit != "" {
+			commit = (*s.BaseCommit)[:min(7, len(*s.BaseCommit))]
+		}
+		size := "-"
+		if s.SizeBytes != nil {
+			size = fmtBytes(*s.SizeBytes)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n", s.Type, provider, s.State, deref(s.RetireReason), commit,
+			fmtDur(max(0, now.UnixMilli()-s.LineageAt)), size, s.UseCount)
+	}
+	return tw.Flush()
+}
+
+// projectSnapshotsRm 退役项目快照；orbType 非空时只退役该类型。
+func projectSnapshotsRm(ctx context.Context, c *apiClient, name, orbType string, w io.Writer) error {
+	pid, err := resolveProject(ctx, c, name)
+	if err != nil {
+		return err
+	}
+	path := "/api/v1/projects/" + pid + "/snapshots"
+	if orbType != "" {
+		path += "?" + url.Values{"type": {orbType}}.Encode()
+	}
+	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil {
+		return err
+	}
+	if orbType != "" {
+		fmt.Fprintf(w, "已清除项目 %s 的 %s 类型快照\n", name, orbType)
+	} else {
+		fmt.Fprintf(w, "已清除项目 %s 的全部快照\n", name)
+	}
+	return nil
+}
+
+// fmtBytes：字节数 → 812B / 4.0KiB / 1.3GiB。
+func fmtBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit && exp < 4; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTP"[exp])
+}
+
 func init() {
 	f := projectCreateCmd.Flags()
 	f.StringVar(&projectCreateOpts.repo, "repo", "", "仓库 URL")
@@ -180,6 +288,9 @@ func init() {
 	f.BoolVar(&projectUpdateOpts.json, "json", false, "输出 JSON")
 	projectLsCmd.Flags().BoolVar(&projectLsOpts.json, "json", false, "输出 JSON")
 	projectLsCmd.Flags().BoolVar(&projectLsOpts.archived, "archived", false, "只列出已归档项目")
-	projectCmd.AddCommand(projectCreateCmd, projectUpdateCmd, projectLsCmd)
+	projectSnapshotsLsCmd.Flags().BoolVar(&projectSnapshotsLsOpts.json, "json", false, "输出 JSON")
+	projectSnapshotsRmCmd.Flags().StringVar(&projectSnapshotsRmOpts.orbType, "type", "", "只清除该 orb 类型的快照（缺省 = 全部类型）")
+	projectSnapshotsCmd.AddCommand(projectSnapshotsLsCmd, projectSnapshotsRmCmd)
+	projectCmd.AddCommand(projectCreateCmd, projectUpdateCmd, projectLsCmd, projectSnapshotsCmd)
 	root.AddCommand(projectCmd)
 }

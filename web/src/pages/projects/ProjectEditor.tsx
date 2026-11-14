@@ -10,6 +10,7 @@ import { qk, useBrowserProfiles, useProviders } from "../../api/queries";
 import { GlyphGrid } from "../../components/settings/GlyphGrid";
 import { useAsync } from "../../components/settings/useAsync";
 import { ProjectBadge } from "../../components/ui/data";
+import { typeHasDocker } from "../../components/ui/OrbBadges";
 import {
 	Button,
 	ErrorText,
@@ -21,10 +22,16 @@ import {
 } from "../../components/ui/primitives";
 import type { SetupRun } from "../../lib/env-banner";
 import { PROJECT_GLYPHS } from "../../lib/glyphs";
+import { SnapshotsToggle, WarmOrbsStepper } from "./ProjectAccel";
 
 export type ProjectForm = Schemas["ProjectCreate"];
 
-export const EMPTY_PROJECT: ProjectForm = { name: "", shallowClone: false };
+export const EMPTY_PROJECT: ProjectForm = {
+	name: "",
+	shallowClone: false,
+	snapshots: true,
+	warmOrbs: 0,
+};
 
 export function formOf(p: Project): ProjectForm {
 	return {
@@ -41,6 +48,8 @@ export function formOf(p: Project): ProjectForm {
 		gitAuthorName: p.gitAuthorName,
 		gitAuthorEmail: p.gitAuthorEmail,
 		defaultBrowserProfileId: p.defaultBrowserProfileId,
+		snapshots: p.snapshots,
+		warmOrbs: p.warmOrbs,
 	};
 }
 
@@ -213,7 +222,9 @@ export function ProjectEditor({
 					<option value="">{t("projects.inherit")}</option>
 					{(provider?.orbTypes ?? []).map((ot) => (
 						<option key={ot.name} value={ot.name}>
-							{ot.name}
+							{typeHasDocker(ot)
+								? `${ot.name} · ${t("accel.docker")}`
+								: ot.name}
 						</option>
 					))}
 				</Select>
@@ -241,6 +252,18 @@ export function ProjectEditor({
 					checked={f.shallowClone}
 					onChange={(v) => set("shallowClone", v)}
 					label={t("projects.shallowClone")}
+				/>
+			</div>
+			<div className="sm:col-span-2">
+				<SnapshotsToggle
+					checked={f.snapshots ?? true}
+					onChange={(v) => set("snapshots", v)}
+				/>
+			</div>
+			<div className="sm:col-span-2">
+				<WarmOrbsStepper
+					value={f.warmOrbs ?? 0}
+					onChange={(v) => set("warmOrbs", v)}
 				/>
 			</div>
 			<div className="sm:col-span-2">

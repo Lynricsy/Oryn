@@ -368,6 +368,24 @@ describe("StatsPage Orb 与产出", () => {
 		expect(posts).toEqual([]);
 	});
 
+	it("Orb 列表：预热池 orb 带「预热」徽标（池状态取自 GET orbs）", async () => {
+		override = (url) =>
+			url.pathname === "/api/v1/orbs"
+				? Response.json({
+						orbs: [ORBS[0], { ...ORBS[1], pool: "idle" }],
+					})
+				: undefined;
+		mount("/stats/orbs");
+		await screen.findByRole("button", {
+			name: new RegExp(threads.find((t) => t.id === MAIN_THREAD)?.title ?? ""),
+		});
+		const pooled = document.querySelector('[data-orb-row="orb-bbb"]');
+		const plain = document.querySelector('[data-orb-row="orb-aaa"]');
+		expect(pooled).not.toBeNull();
+		await waitFor(() => expect(pooled).toHaveTextContent("预热"));
+		expect(plain).not.toHaveTextContent("预热");
+	});
+
 	it("产出标签：按粒度 / 项目 / 空间三次请求，指标含已交付", async () => {
 		mount("/stats/output?range=90d&space=none");
 		expect(await screen.findByTestId("kpi-shipped")).toBeInTheDocument();

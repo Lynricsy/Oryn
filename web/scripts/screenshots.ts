@@ -29,6 +29,7 @@ import {
 	DESKTOP_THREADS,
 	ENV_THREADS,
 	M9_IDS,
+	M11A_IDS,
 	MAIN_THREAD,
 	projects,
 	TOOL_ZOO_THREAD,
@@ -716,6 +717,8 @@ const ALL_SIZES = [
 const DEFAULT_WIDTHS: readonly number[] = [390, 1280];
 /** 统计页（M10）：手机两档 + 桌面。 */
 const STATS_WIDTHS = [360, 390, 1280] as const;
+/** M11a 的界面：手机两档 + 桌面。 */
+const M11A_WIDTHS = [360, 390, 1280] as const;
 
 /** 打开统计页某个标签并等指标行出现。 */
 async function openStats(page: Page, path: string, kpi: string) {
@@ -889,6 +892,34 @@ async function nextFrames(page: Page) {
 		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 		return promise;
 	});
+}
+
+/**
+ * 只滚元素所在的内部滚动容器，把它放到容器顶部（`start`，留 64px 给页头玻璃）或中间（`center`）。
+ * 不用 `scrollIntoView`：它会连带滚动根元素，把整个外壳推出视口。
+ */
+async function scrollWithin(
+	page: Page,
+	selector: string,
+	block: "start" | "center",
+) {
+	await page.evaluate(
+		([sel, where]) => {
+			const el = document.querySelector<HTMLElement>(sel as string);
+			let box = el?.parentElement ?? null;
+			while (box && box.scrollHeight <= box.clientHeight + 1)
+				box = box.parentElement;
+			if (!el || !box) return;
+			const r = el.getBoundingClientRect();
+			const b = box.getBoundingClientRect();
+			box.scrollTop +=
+				where === "start"
+					? r.top - b.top - 64
+					: r.top + r.height / 2 - (b.top + b.height / 2);
+		},
+		[selector, block],
+	);
+	await settle(page, 400);
 }
 
 const SCREENS: Screen[] = [
@@ -1639,6 +1670,52 @@ const SCREENS: Screen[] = [
 				.getByRole("button", { name: "设置预算" })
 				.click();
 			await page.getByRole("dialog", { name: "设置预算" }).waitFor();
+			await settle(page, 400);
+		},
+	},
+	// M11a：项目设置里的快照开关与预热步进器、快照与预热卡、信息面板的快照来源、执行位置选择器的 Docker 徽标
+	{
+		name: "m11a-project-settings",
+		widths: M11A_WIDTHS,
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				`/projects/${projects[0]?.id}`,
+				"[data-testid=project-accel]",
+			);
+			await scrollWithin(page, "[data-testid=warm-orbs-value]", "center");
+		},
+	},
+	{
+		name: "m11a-project-accel",
+		widths: M11A_WIDTHS,
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				`/projects/${projects[0]?.id}`,
+				"[data-testid=snapshot-list]",
+			);
+			await scrollWithin(page, "[data-testid=project-accel]", "start");
+		},
+	},
+	{
+		name: "m11a-panel-snapshot",
+		widths: M11A_WIDTHS,
+		prepare: async ({ page }) => {
+			await openThread(page, M11A_IDS.snapshotThread);
+			await openPanel(page, "info");
+			await page
+				.locator("[data-testid=env-snapshot]")
+				.waitFor({ timeout: 10_000 });
+			await scrollWithin(page, "[data-testid=env-snapshot]", "center");
+		},
+	},
+	{
+		name: "m11a-executor",
+		widths: M11A_WIDTHS,
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
 			await settle(page, 400);
 		},
 	},
