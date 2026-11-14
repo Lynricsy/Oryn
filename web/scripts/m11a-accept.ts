@@ -353,8 +353,21 @@ const readyOf = async (pid: string, type?: string) =>
 	(await snaps(pid)).find(
 		(s) => s.state === "ready" && (!type || s.type === type),
 	);
-const snapById = async (pid: string, id: string) =>
-	(await snaps(pid)).find((s) => s.id === id);
+// 退役且不再被任何 orb 引用的快照会在下一轮回收里连行带镜像删掉（dev 评估周期 30 秒）：
+// 这时按 orynd.log 里的「项目快照已退役」记录还原它的状态与原因
+const snapById = async (pid: string, id: string): Promise<Snap | undefined> => {
+	const s = (await snaps(pid)).find((x) => x.id === id);
+	if (s) return s;
+	const log = readFileSync(`${ROOT}/.dev/orynd.log`, "utf8");
+	const m = [
+		...log.matchAll(
+			new RegExp(`项目快照已退役 snapshot=${id} reason=(\\S+)`, "g"),
+		),
+	].at(-1);
+	if (!m) return undefined;
+	note(`${id} 已被回收（行与镜像已删），退役原因取自 orynd.log：${m[1]}`);
+	return { id, state: "retired", retireReason: m[1] } as Snap;
+};
 
 async function clearSnapshots(pid: string) {
 	const r = await api("DELETE", `/api/v1/projects/${pid}/snapshots`);
@@ -1401,7 +1414,9 @@ async function X16() {
 	if (!w) {
 		const idle = (await poolOrbs(p.id)).find((o) => o.pool === "idle");
 		if (idle) {
-			note(`没有 warming 的池 orb：先认领 idle 的 ${idle.id} 逼出补位`);
+			// 有快照时补位 orb 约 1 秒就 setup 完、warming 一闪而过：先清掉快照，让补位跑完整的 15 秒 setup
+			await clearSnapshots(p.id);
+			note(`没有 warming 的池 orb：清快照后认领 idle 的 ${idle.id} 逼出补位`);
 			await waitIdle(
 				(await startThread({ projectId: p.id, tag: "逼补位" })).id,
 			);
