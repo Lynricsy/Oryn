@@ -674,7 +674,15 @@ function factCounts(tid: string) {
 
 async function Y4() {
 	const tid = await ensureT();
-	const before = factCounts(tid);
+	// __advisor 等异步子 agent 在回合结束后还会补写用量：等事实行数连续 5 秒不变再取基线
+	let before = factCounts(tid);
+	let still = 0;
+	for (const t0 = Date.now(); still < 5 && Date.now() - t0 < 120_000; ) {
+		await sleep(1000);
+		const cur = factCounts(tid);
+		still = JSON.stringify(cur) === JSON.stringify(before) ? still + 1 : 0;
+		before = cur;
+	}
 	const rev = threadRow(tid)?.transcript_rev ?? 0;
 	note(
 		`改写前 用量 ${before?.u} 工具 ${before?.t} 回合 ${before?.r} 成本 ${before?.c} rev ${rev}`,
@@ -1295,6 +1303,9 @@ async function Y16() {
 	)?.n;
 	check(ins === 1, "插入 40 天前的采样");
 	const before = (await usage({ groupBy: "total", from: 0 })).total;
+	// 回填目标版本取当前值（代码升级会提高 FactsVersion），而不是写死
+	const want = (await getJson<{ factsVersion: number }>("/api/v1/stats/meta"))
+		.factsVersion;
 	sql(`update stats_state set value='1' where key='facts_version'`);
 	const r = sh(`${ROOT}/.dev/e2e/restart.sh --no-build`);
 	check(r.code === 0, `重启 orynd：${r.out.split("\n").at(-1)}`);
@@ -1314,7 +1325,7 @@ async function Y16() {
 			const m = await getJson<{ factsVersion: number; backfill?: unknown }>(
 				"/api/v1/stats/meta",
 			);
-			return !m.backfill && m.factsVersion === 2 ? m : undefined;
+			return !m.backfill && m.factsVersion === want ? m : undefined;
 		},
 		600_000,
 		2000,
