@@ -22,9 +22,9 @@ func addOutput(a, b *apigen.OutputStat) {
 	a.ThreadsCreated += b.ThreadsCreated
 	a.ThreadsShipped += b.ThreadsShipped
 	a.ThreadsArchived += b.ThreadsArchived
-	a.ShippedCostUsd += b.ShippedCostUsd
+	a.ShippedCostUsd = finite(a.ShippedCostUsd + b.ShippedCostUsd)
 	a.Commits += b.Commits
-	a.Turns += b.Turns
+	a.Turns = satAdd(a.Turns, b.Turns)
 }
 
 // Output 统计 [From, To) 的线程产出：新建 / 已交付 / 已归档（不含已交付）只数工作线程，分别按 created_at /
@@ -110,7 +110,8 @@ func Output(ctx context.Context, q *db.Queries, oq OutputQuery) (apigen.OutputSt
 	}
 	for _, t := range shipped {
 		if i := at(t.ShippedAt); i >= 0 {
-			get(cell{i, keyOf(t.ProjectID, t.SpaceID)}).ShippedCostUsd += t.CostUsd
+			c := get(cell{i, keyOf(t.ProjectID, t.SpaceID)})
+			c.ShippedCostUsd = finite(c.ShippedCostUsd + t.CostUsd)
 		}
 	}
 	for _, seg := range tp.segs {
@@ -124,7 +125,8 @@ func Output(ctx context.Context, q *db.Queries, oq OutputQuery) (apigen.OutputSt
 			}
 			for _, r := range turns {
 				if i := tp.slot(seg, r.Bucket); i >= 0 {
-					get(cell{i, r.Key}).Turns += r.Turns
+					c := get(cell{i, r.Key})
+					c.Turns = satAdd(c.Turns, r.Turns)
 				}
 			}
 		}

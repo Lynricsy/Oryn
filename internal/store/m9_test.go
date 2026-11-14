@@ -391,6 +391,9 @@ func TestM9MigrationDownUp(t *testing.T) {
 
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	assert.EqualValues(t, 20, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	assert.EqualValues(t, 19, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m10Rollup).Scan(&n))
 	assert.Zero(t, n, "0019 回滚后三张汇总表与九个触发器消失")

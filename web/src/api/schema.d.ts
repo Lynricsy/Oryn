@@ -4356,7 +4356,7 @@ export interface components {
             /** @description 全部未读通知数 */
             unread: number;
         };
-        /** @description `id` 与 `threadId` 至多给一个（都给 → 400 `invalid_request`）；都省略 = 全部 */
+        /** @description `id` 与 `threadId` 至多给一个；给出时不能为空串（都给或空串 → 400 `invalid_request`）；都省略 = 全部 */
         NotificationsReadRequest: {
             /** @description 只标该线程的通知 */
             threadId?: components["schemas"]["ThreadId"];

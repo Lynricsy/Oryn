@@ -3944,7 +3944,7 @@ type NotificationTestResult struct {
 	Ok    bool    `json:"ok"`
 }
 
-// NotificationsReadRequest `id` 与 `threadId` 至多给一个（都给 → 400 `invalid_request`）；都省略 = 全部
+// NotificationsReadRequest `id` 与 `threadId` 至多给一个；给出时不能为空串（都给或空串 → 400 `invalid_request`）；都省略 = 全部
 type NotificationsReadRequest struct {
 	// ID 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204
 	ID *NotificationID `json:"id,omitempty"`

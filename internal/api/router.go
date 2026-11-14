@@ -2,7 +2,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -144,11 +146,19 @@ func (s *Server) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "version": version.Version})
 }
 
-// WriteJSON 以 JSON 写出响应体。
+// WriteJSON 以 JSON 写出响应体。先编码进缓冲区再写头：编码失败（如值里有 NaN / ±Inf）时回 500 JSON 错误，
+// 而不是 200 加空体。
 func WriteJSON(w http.ResponseWriter, status int, v any) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		slog.Error("api: 编码 JSON 响应失败", "status", status, "err", err)
+		status = http.StatusInternalServerError
+		buf.Reset()
+		_ = json.NewEncoder(&buf).Encode(map[string]string{"code": "internal", "message": "failed to encode response"})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(buf.Bytes())
 }
 
 // WriteError 写出 {code, message} 错误体。

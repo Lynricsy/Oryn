@@ -58,8 +58,8 @@ func Tools(ctx context.Context, q *db.Queries, tq ToolQuery) (apigen.ToolStats, 
 		}
 		for _, r := range part {
 			if a := byTool[r.Key]; a != nil {
-				a.Calls += r.Calls
-				a.Errors += r.Errors
+				a.Calls = satAdd(a.Calls, r.Calls)
+				a.Errors = satAdd(a.Errors, r.Errors)
 			} else {
 				byTool[r.Key] = &r
 			}
@@ -77,13 +77,13 @@ func Tools(ctx context.Context, q *db.Queries, tq ToolQuery) (apigen.ToolStats, 
 	})
 	other := apigen.ToolStat{Tool: OtherKey}
 	for i, r := range rows {
-		out.Total.Calls += r.Calls
-		out.Total.Errors += r.Errors
+		out.Total.Calls = satAdd(out.Total.Calls, r.Calls)
+		out.Total.Errors = satAdd(out.Total.Errors, r.Errors)
 		if i < limit {
 			out.Tools = append(out.Tools, apigen.ToolStat{Tool: r.Key, Calls: r.Calls, Errors: r.Errors})
 		} else {
-			other.Calls += r.Calls
-			other.Errors += r.Errors
+			other.Calls = satAdd(other.Calls, r.Calls)
+			other.Errors = satAdd(other.Errors, r.Errors)
 		}
 	}
 	if len(rows) > limit {
@@ -107,8 +107,8 @@ func Tools(ctx context.Context, q *db.Queries, tq ToolQuery) (apigen.ToolStats, 
 			}
 			for _, r := range rows {
 				if i := tp.slot(seg, r.Bucket); i >= 0 {
-					pts[i].Calls += r.Calls
-					pts[i].Errors += r.Errors
+					pts[i].Calls = satAdd(pts[i].Calls, r.Calls)
+					pts[i].Errors = satAdd(pts[i].Errors, r.Errors)
 				}
 			}
 		}

@@ -46,19 +46,25 @@ CREATE TABLE turn_q (
     PRIMARY KEY (q, thread_id, project_id, space_id)
 ) WITHOUT ROWID;
 
--- 回填现有事实行。
+-- 回填现有事实行。求和用 TOTAL（REAL，从不报错）再 CAST：旧库里可能有入库校验之前写下的越界行，
+-- SUM 遇到整数溢出会抛 integer overflow 让迁移失败；CAST 过大的 REAL 到 INTEGER 会饱和。这些行之后由
+-- threads.sanitizeFacts（FactsVersion 3 的回填开头）钳制并整表重建汇总。
 INSERT INTO usage_q (q, thread_id, project_id, space_id, provider, model, purpose,
     requests, request_errors, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
     cost_usd, subagent_cost_usd, ttft_sum_ms, ttft_n, timed_output_tokens, duration_ms)
 SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), provider, model, purpose,
-    COUNT(*), SUM(stop_reason = 'error'), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_tokens),
-    SUM(cost_usd), SUM(CASE WHEN is_subagent THEN cost_usd ELSE 0 END), COALESCE(SUM(ttft_ms), 0), COUNT(ttft_ms),
-    SUM(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END), SUM(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END)
+    COUNT(*), CAST(TOTAL(stop_reason = 'error') AS INTEGER),
+    CAST(TOTAL(input_tokens) AS INTEGER), CAST(TOTAL(output_tokens) AS INTEGER),
+    CAST(TOTAL(cache_read_tokens) AS INTEGER), CAST(TOTAL(cache_write_tokens) AS INTEGER),
+    TOTAL(cost_usd), TOTAL(CASE WHEN is_subagent THEN cost_usd ELSE 0 END), CAST(TOTAL(ttft_ms) AS INTEGER), COUNT(ttft_ms),
+    CAST(TOTAL(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END) AS INTEGER),
+    CAST(TOTAL(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END) AS INTEGER)
 FROM usage_records
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
 INSERT INTO tool_q (q, thread_id, project_id, space_id, tool, calls, errors)
-SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), tool, COUNT(*), SUM(is_error)
+SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), tool, COUNT(*),
+    CAST(TOTAL(is_error) AS INTEGER)
 FROM tool_calls
 GROUP BY 1, 2, 3, 4, 5;
 

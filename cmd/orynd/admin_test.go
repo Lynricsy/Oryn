@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // admin rebuild-stats：--thread 只重算该线程；不带参数时全量回填（purge），写版本号、清进度键。
@@ -74,7 +76,7 @@ func TestAdminRebuildStats(t *testing.T) {
 	usage, turns = facts()
 	assert.Equal(t, "T-1:p:a@2000", usage, "全量：T-2 的 a@2000 已归先创建的 T-1，多余行清除")
 	assert.Equal(t, "T-1:u@1000", turns)
-	assert.Equal(t, "2", state("facts_version"))
+	assert.Equal(t, strconv.Itoa(threads.FactsVersion), state("facts_version"))
 	for _, k := range []string{"backfill_cursor", "backfill_done", "backfill_total"} {
 		assert.Equal(t, "<none>", state(k), k)
 	}

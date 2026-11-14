@@ -63,6 +63,9 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 20, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 19, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
@@ -496,6 +499,9 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 20, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 19, r.Source.Version)
 
 	q := s.Q
@@ -558,6 +564,9 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1||prj_1|spc_1|anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0"}, dumpRows(t, s.DB, usageQ), "减空的行被删掉")
 
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 20, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 19, r.Source.Version)

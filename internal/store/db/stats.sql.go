@@ -9,6 +9,35 @@ import (
 	"context"
 )
 
+const clearToolQ = `-- name: ClearToolQ :exec
+DELETE FROM tool_q
+`
+
+func (q *Queries) ClearToolQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearToolQ)
+	return err
+}
+
+const clearTurnQ = `-- name: ClearTurnQ :exec
+DELETE FROM turn_q
+`
+
+func (q *Queries) ClearTurnQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearTurnQ)
+	return err
+}
+
+const clearUsageQ = `-- name: ClearUsageQ :exec
+DELETE FROM usage_q
+`
+
+// Rebuild the 15-minute rollups from the fact rows (same statements as the 0019 backfill); after sanitising, so that
+// an +Inf left in a rollup by earlier out-of-range rows (Inf - x stays Inf) cannot survive.
+func (q *Queries) ClearUsageQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearUsageQ)
+	return err
+}
+
 const countUsageRecords = `-- name: CountUsageRecords :one
 SELECT CAST(COUNT(*) AS INTEGER) AS n
 FROM usage_records u
@@ -83,6 +112,38 @@ func (q *Queries) DeleteDeadOrbSetupRunsBefore(ctx context.Context, before int64
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const deleteLiveLongKeyToolCalls = `-- name: DeleteLiveLongKeyToolCalls :exec
+DELETE FROM tool_calls WHERE thread_id IS NOT NULL AND length(CAST(ukey AS BLOB)) > 65
+`
+
+func (q *Queries) DeleteLiveLongKeyToolCalls(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveLongKeyToolCalls)
+	return err
+}
+
+const deleteLiveLongKeyTurns = `-- name: DeleteLiveLongKeyTurns :exec
+DELETE FROM turns WHERE thread_id IS NOT NULL AND length(CAST(ukey AS BLOB)) > 65
+`
+
+func (q *Queries) DeleteLiveLongKeyTurns(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveLongKeyTurns)
+	return err
+}
+
+const deleteLiveLongKeyUsage = `-- name: DeleteLiveLongKeyUsage :exec
+
+DELETE FROM usage_records WHERE thread_id IS NOT NULL AND length(CAST(ukey AS BLOB)) > 65
+`
+
+// ---------------------------------------------------------------- one-off sanitising (threads.sanitizeFacts)
+// Before rekeying: drop live rows whose ukey may carry an over-long entry id. Every live thread is rebuilt right after
+// (BackfillFacts), so they come back under the new key; dropping them first keeps a live row that already holds the
+// new key (ingested by new code before the backfill) from blocking the frozen row's rekey.
+func (q *Queries) DeleteLiveLongKeyUsage(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveLongKeyUsage)
+	return err
 }
 
 const deleteLiveToolCalls = `-- name: DeleteLiveToolCalls :exec
@@ -278,6 +339,71 @@ func (q *Queries) DeleteUsageBefore(ctx context.Context, before int64) (int64, e
 	return result.RowsAffected()
 }
 
+const factKeyTaken = `-- name: FactKeyTaken :one
+SELECT CAST(CASE CAST(?1 AS INTEGER)
+    WHEN 1 THEN EXISTS (SELECT 1 FROM usage_records WHERE ukey = CAST(?2 AS TEXT))
+    WHEN 2 THEN EXISTS (SELECT 1 FROM tool_calls WHERE ukey = CAST(?2 AS TEXT))
+    ELSE EXISTS (SELECT 1 FROM turns WHERE ukey = CAST(?2 AS TEXT)) END AS BOOLEAN) AS taken
+`
+
+type FactKeyTakenParams struct {
+	Tbl  int64  `json:"tbl"`
+	Ukey string `json:"ukey"`
+}
+
+// 1 when some fact row of table tbl already holds ukey (live or frozen).
+func (q *Queries) FactKeyTaken(ctx context.Context, arg FactKeyTakenParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, factKeyTaken, arg.Tbl, arg.Ukey)
+	var taken bool
+	err := row.Scan(&taken)
+	return taken, err
+}
+
+const fillToolQ = `-- name: FillToolQ :exec
+INSERT INTO tool_q (q, thread_id, project_id, space_id, tool, calls, errors)
+SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), tool, COUNT(*),
+    CAST(TOTAL(is_error) AS INTEGER)
+FROM tool_calls
+GROUP BY 1, 2, 3, 4, 5
+`
+
+func (q *Queries) FillToolQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, fillToolQ)
+	return err
+}
+
+const fillTurnQ = `-- name: FillTurnQ :exec
+INSERT INTO turn_q (q, thread_id, project_id, space_id, turns)
+SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), COUNT(*)
+FROM turns
+GROUP BY 1, 2, 3, 4
+`
+
+func (q *Queries) FillTurnQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, fillTurnQ)
+	return err
+}
+
+const fillUsageQ = `-- name: FillUsageQ :exec
+INSERT INTO usage_q (q, thread_id, project_id, space_id, provider, model, purpose,
+    requests, request_errors, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+    cost_usd, subagent_cost_usd, ttft_sum_ms, ttft_n, timed_output_tokens, duration_ms)
+SELECT ts / 900000, COALESCE(thread_id, ''), COALESCE(project_id, ''), COALESCE(space_id, ''), provider, model, purpose,
+    COUNT(*), CAST(TOTAL(stop_reason = 'error') AS INTEGER),
+    CAST(TOTAL(input_tokens) AS INTEGER), CAST(TOTAL(output_tokens) AS INTEGER),
+    CAST(TOTAL(cache_read_tokens) AS INTEGER), CAST(TOTAL(cache_write_tokens) AS INTEGER),
+    TOTAL(cost_usd), TOTAL(CASE WHEN is_subagent THEN cost_usd ELSE 0 END), CAST(TOTAL(ttft_ms) AS INTEGER), COUNT(ttft_ms),
+    CAST(TOTAL(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END) AS INTEGER),
+    CAST(TOTAL(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END) AS INTEGER)
+FROM usage_records
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+`
+
+func (q *Queries) FillUsageQ(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, fillUsageQ)
+	return err
+}
+
 const getBudget = `-- name: GetBudget :one
 SELECT id, daily_usd, monthly_usd, warn_pct, timezone, enabled, updated_at FROM budget WHERE id = 1
 `
@@ -444,8 +570,10 @@ type InsertUsageRecordParams struct {
 // Invariant: fact rows of a live thread = f(its current entries); rows of a deleted thread are frozen
 // (thread_id NULL, project_id / space_id = attribution snapshot written on delete).
 // ---------------------------------------------------------------- writes
-// ukey = "<entryId>@<ts>": cross-thread dedup key (fork copies keep id and timestamp). 0 rows = ignored
-// (same (thread_id, entry_seq) or ukey already taken by another thread).
+// ukey = "<entryId>@<ts>": cross-thread dedup key (fork copies keep id and timestamp); ids over 64 bytes are replaced
+// by "<first <= 32 bytes>~<sha256 hex>" (threads.factKeyID). 0 rows = ignored (same (thread_id, entry_seq) or ukey
+// already taken by another thread). Invariant also covers duplicates: when the owning entry goes away and a current
+// copy still exists, threads.restoreFacts rebuilds the row on that copy.
 func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertUsageRecord,
 		arg.ThreadID,
@@ -469,6 +597,145 @@ func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordPa
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const listFactCandidates = `-- name: ListFactCandidates :many
+SELECT e.thread_id, e.seq, e.file, e.payload
+FROM entries e JOIN threads t ON t.id = e.thread_id
+WHERE e.entry_id = ?1
+ORDER BY e.stale, t.created_at, e.thread_id, e.seq
+`
+
+type ListFactCandidatesRow struct {
+	ThreadID string `json:"threadId"`
+	Seq      int64  `json:"seq"`
+	File     string `json:"file"`
+	Payload  []byte `json:"payload"`
+}
+
+// Entries (of any live thread) that may carry a released dedup key: same entry id (index entries_entry_id), current
+// rows before stale ones, then in thread creation order (the same order BackfillFacts hands out keys in).
+func (q *Queries) ListFactCandidates(ctx context.Context, entryID string) ([]ListFactCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFactCandidates, entryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFactCandidatesRow{}
+	for rows.Next() {
+		var i ListFactCandidatesRow
+		if err := rows.Scan(
+			&i.ThreadID,
+			&i.Seq,
+			&i.File,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFactCandidatesByPrefix = `-- name: ListFactCandidatesByPrefix :many
+SELECT e.thread_id, e.seq, e.file, e.payload
+FROM entries e JOIN threads t ON t.id = e.thread_id
+WHERE e.entry_id >= CAST(?1 AS TEXT) AND e.entry_id < CAST(?2 AS TEXT) AND length(CAST(e.entry_id AS BLOB)) > 64
+ORDER BY e.stale, t.created_at, e.thread_id, e.seq
+`
+
+type ListFactCandidatesByPrefixParams struct {
+	Lo string `json:"lo"`
+	Hi string `json:"hi"`
+}
+
+type ListFactCandidatesByPrefixRow struct {
+	ThreadID string `json:"threadId"`
+	Seq      int64  `json:"seq"`
+	File     string `json:"file"`
+	Payload  []byte `json:"payload"`
+}
+
+// Over-long entry ids (> 64 bytes) are hashed in the key, which keeps only their first <= 32 bytes: candidates are the
+// long ids in [lo, hi) (hi = lo || 0xFF); the caller recomputes each key.
+func (q *Queries) ListFactCandidatesByPrefix(ctx context.Context, arg ListFactCandidatesByPrefixParams) ([]ListFactCandidatesByPrefixRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFactCandidatesByPrefix, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFactCandidatesByPrefixRow{}
+	for rows.Next() {
+		var i ListFactCandidatesByPrefixRow
+		if err := rows.Scan(
+			&i.ThreadID,
+			&i.Seq,
+			&i.File,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFactKeysAt = `-- name: ListFactKeysAt :many
+SELECT CAST(1 AS INTEGER) AS tbl, CAST(ukey AS TEXT) AS ukey FROM usage_records
+WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = CAST(?2 AS INTEGER) AND ukey IS NOT NULL
+UNION ALL
+SELECT 2, CAST(ukey AS TEXT) FROM tool_calls
+WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = CAST(?2 AS INTEGER) AND ukey IS NOT NULL
+UNION ALL
+SELECT 3, CAST(ukey AS TEXT) FROM turns
+WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = CAST(?2 AS INTEGER) AND ukey IS NOT NULL
+`
+
+type ListFactKeysAtParams struct {
+	ThreadID string `json:"threadId"`
+	EntrySeq int64  `json:"entrySeq"`
+}
+
+type ListFactKeysAtRow struct {
+	Tbl  int64  `json:"tbl"`
+	Ukey string `json:"ukey"`
+}
+
+// Dedup keys a delete is about to release (tbl: 1 = usage_records, 2 = tool_calls, 3 = turns; see threads.factTable):
+// the facts at one entry, or a thread's orphans. Rows without ukey (pre-0018) are never restored.
+func (q *Queries) ListFactKeysAt(ctx context.Context, arg ListFactKeysAtParams) ([]ListFactKeysAtRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFactKeysAt, arg.ThreadID, arg.EntrySeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFactKeysAtRow{}
+	for rows.Next() {
+		var i ListFactKeysAtRow
+		if err := rows.Scan(&i.Tbl, &i.Ukey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listOrbEventsForTimeline = `-- name: ListOrbEventsForTimeline :many
@@ -655,6 +922,48 @@ func (q *Queries) ListOrbsForStats(ctx context.Context, arg ListOrbsForStatsPara
 	return items, nil
 }
 
+const listOrphanFactKeys = `-- name: ListOrphanFactKeys :many
+SELECT CAST(1 AS INTEGER) AS tbl, CAST(u.ukey AS TEXT) AS ukey FROM usage_records u
+WHERE u.thread_id = CAST(?1 AS TEXT) AND u.ukey IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = u.thread_id AND e.seq = u.entry_seq)
+UNION ALL
+SELECT 2, CAST(c.ukey AS TEXT) FROM tool_calls c
+WHERE c.thread_id = CAST(?1 AS TEXT) AND c.ukey IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = c.thread_id AND e.seq = c.entry_seq)
+UNION ALL
+SELECT 3, CAST(r.ukey AS TEXT) FROM turns r
+WHERE r.thread_id = CAST(?1 AS TEXT) AND r.ukey IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = r.thread_id AND e.seq = r.entry_seq)
+`
+
+type ListOrphanFactKeysRow struct {
+	Tbl  int64  `json:"tbl"`
+	Ukey string `json:"ukey"`
+}
+
+func (q *Queries) ListOrphanFactKeys(ctx context.Context, threadID string) ([]ListOrphanFactKeysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOrphanFactKeys, threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrphanFactKeysRow{}
+	for rows.Next() {
+		var i ListOrphanFactKeysRow
+		if err := rows.Scan(&i.Tbl, &i.Ukey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSetupRunsForStats = `-- name: ListSetupRunsForStats :many
 SELECT r.orb_id, r.phase, r.ok, r.setup_ran, r.duration_ms, r.started_at, o.type
 FROM orb_setup_runs r JOIN orbs o ON o.id = r.orb_id
@@ -719,7 +1028,7 @@ func (q *Queries) ListSetupRunsForStats(ctx context.Context, arg ListSetupRunsFo
 
 const listShippedThreadCosts = `-- name: ListShippedThreadCosts :many
 SELECT t.id, t.project_id, t.space_id, CAST(t.shipped_at AS INTEGER) AS shipped_at,
-    CAST(COALESCE((SELECT SUM(u.cost_usd) FROM usage_records u WHERE u.thread_id = t.id), 0) AS REAL) AS cost_usd
+    CAST((SELECT TOTAL(u.cost_usd) FROM usage_records u WHERE u.thread_id = t.id) AS REAL) AS cost_usd
 FROM threads t
 WHERE t.kind = 'work' AND t.shipped_at >= CAST(?1 AS INTEGER) AND t.shipped_at < CAST(?2 AS INTEGER)
   AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(t.project_id, '') = CAST(?3 AS TEXT))
@@ -829,6 +1138,175 @@ func (q *Queries) ListThreadTimesForStats(ctx context.Context, arg ListThreadTim
 			&i.CreatedAt,
 			&i.ArchivedAt,
 			&i.ShippedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnsafeToolCalls = `-- name: ListUnsafeToolCalls :many
+SELECT id, ts, tool, ukey FROM tool_calls
+WHERE (CAST(?1 AS BOOLEAN) AND length(CAST(ukey AS BLOB)) > 65)
+   OR ts < CAST(?2 AS INTEGER) OR ts > CAST(?3 AS INTEGER) OR length(CAST(tool AS BLOB)) > 128
+ORDER BY id
+`
+
+type ListUnsafeToolCallsParams struct {
+	Rekey bool  `json:"rekey"`
+	MinTs int64 `json:"minTs"`
+	MaxTs int64 `json:"maxTs"`
+}
+
+type ListUnsafeToolCallsRow struct {
+	ID   int64   `json:"id"`
+	Ts   int64   `json:"ts"`
+	Tool string  `json:"tool"`
+	Ukey *string `json:"ukey"`
+}
+
+func (q *Queries) ListUnsafeToolCalls(ctx context.Context, arg ListUnsafeToolCallsParams) ([]ListUnsafeToolCallsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnsafeToolCalls, arg.Rekey, arg.MinTs, arg.MaxTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnsafeToolCallsRow{}
+	for rows.Next() {
+		var i ListUnsafeToolCallsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Tool,
+			&i.Ukey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnsafeTurns = `-- name: ListUnsafeTurns :many
+SELECT id, ts, ukey FROM turns
+WHERE (CAST(?1 AS BOOLEAN) AND length(CAST(ukey AS BLOB)) > 65)
+   OR ts < CAST(?2 AS INTEGER) OR ts > CAST(?3 AS INTEGER)
+ORDER BY id
+`
+
+type ListUnsafeTurnsParams struct {
+	Rekey bool  `json:"rekey"`
+	MinTs int64 `json:"minTs"`
+	MaxTs int64 `json:"maxTs"`
+}
+
+type ListUnsafeTurnsRow struct {
+	ID   int64   `json:"id"`
+	Ts   int64   `json:"ts"`
+	Ukey *string `json:"ukey"`
+}
+
+func (q *Queries) ListUnsafeTurns(ctx context.Context, arg ListUnsafeTurnsParams) ([]ListUnsafeTurnsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnsafeTurns, arg.Rekey, arg.MinTs, arg.MaxTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnsafeTurnsRow{}
+	for rows.Next() {
+		var i ListUnsafeTurnsRow
+		if err := rows.Scan(&i.ID, &i.Ts, &i.Ukey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnsafeUsageRecords = `-- name: ListUnsafeUsageRecords :many
+SELECT id, ts, provider, model, purpose, stop_reason, ukey, input_tokens, output_tokens, cache_read_tokens,
+    cache_write_tokens, cost_usd, duration_ms, ttft_ms
+FROM usage_records
+WHERE (CAST(?1 AS BOOLEAN) AND length(CAST(ukey AS BLOB)) > 65)
+   OR ts < CAST(?2 AS INTEGER) OR ts > CAST(?3 AS INTEGER)
+   OR input_tokens NOT BETWEEN 0 AND 1000000000000 OR output_tokens NOT BETWEEN 0 AND 1000000000000
+   OR cache_read_tokens NOT BETWEEN 0 AND 1000000000000 OR cache_write_tokens NOT BETWEEN 0 AND 1000000000000
+   OR NOT (cost_usd BETWEEN 0 AND 1000000)
+   OR duration_ms NOT BETWEEN 0 AND 1000000000 OR ttft_ms NOT BETWEEN 0 AND 1000000000
+   OR length(CAST(provider AS BLOB)) > 128 OR length(CAST(model AS BLOB)) > 128 OR length(CAST(stop_reason AS BLOB)) > 32
+   OR (purpose <> '' AND (length(CAST(purpose AS BLOB)) > 64 OR purpose GLOB '*[^A-Za-z0-9:._-]*'))
+ORDER BY id
+`
+
+type ListUnsafeUsageRecordsParams struct {
+	Rekey bool  `json:"rekey"`
+	MinTs int64 `json:"minTs"`
+	MaxTs int64 `json:"maxTs"`
+}
+
+type ListUnsafeUsageRecordsRow struct {
+	ID               int64   `json:"id"`
+	Ts               int64   `json:"ts"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	Purpose          string  `json:"purpose"`
+	StopReason       string  `json:"stopReason"`
+	Ukey             *string `json:"ukey"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	CostUsd          float64 `json:"costUsd"`
+	DurationMs       *int64  `json:"durationMs"`
+	TtftMs           *int64  `json:"ttftMs"`
+}
+
+// Fact rows outside the ingest bounds of threads/ingest.go (tokens <= 1e12, cost <= 1e6, durations <= 1e9 ms, provider /
+// model / tool <= 128 bytes, stop_reason <= 32, purpose <= 64 bytes of [A-Za-z0-9:._-]; ts in [min_ts, max_ts]); with
+// rekey also every row whose ukey may hold an entry id over 64 bytes (written before ids were hashed).
+func (q *Queries) ListUnsafeUsageRecords(ctx context.Context, arg ListUnsafeUsageRecordsParams) ([]ListUnsafeUsageRecordsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnsafeUsageRecords, arg.Rekey, arg.MinTs, arg.MaxTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnsafeUsageRecordsRow{}
+	for rows.Next() {
+		var i ListUnsafeUsageRecordsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Provider,
+			&i.Model,
+			&i.Purpose,
+			&i.StopReason,
+			&i.Ukey,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CostUsd,
+			&i.DurationMs,
+			&i.TtftMs,
 		); err != nil {
 			return nil, err
 		}
@@ -1055,7 +1533,7 @@ SELECT
          WHEN 6 THEN c.tool
          ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS calls,
-    CAST(COALESCE(SUM(c.is_error), 0) AS INTEGER) AS errors
+    CAST(TOTAL(c.is_error) AS INTEGER) AS errors
 FROM tool_calls c
 WHERE c.ts >= ?5 AND c.ts < ?6
   AND (CAST(?7 AS TEXT) IS NULL OR c.thread_id = CAST(?7 AS TEXT))
@@ -1134,8 +1612,8 @@ SELECT
          WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
          WHEN 6 THEN x.tool
          ELSE '' END AS TEXT) AS "key",
-    CAST(COALESCE(SUM(x.calls), 0) AS INTEGER) AS calls,
-    CAST(COALESCE(SUM(x.errors), 0) AS INTEGER) AS errors
+    CAST(TOTAL(x.calls) AS INTEGER) AS calls,
+    CAST(TOTAL(x.errors) AS INTEGER) AS errors
 FROM tool_q x
 WHERE x.q >= ?5 AND x.q < ?6
   AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
@@ -1285,7 +1763,7 @@ SELECT
          WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
          WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
          ELSE '' END AS TEXT) AS "key",
-    CAST(COALESCE(SUM(x.turns), 0) AS INTEGER) AS turns
+    CAST(TOTAL(x.turns) AS INTEGER) AS turns
 FROM turn_q x
 WHERE x.q >= ?5 AND x.q < ?6
   AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
@@ -1361,17 +1839,17 @@ SELECT
          WHEN 5 THEN u.purpose
          ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(COALESCE(SUM(u.stop_reason = 'error'), 0) AS INTEGER) AS request_errors,
-    CAST(COALESCE(SUM(u.input_tokens), 0) AS INTEGER) AS input_tokens,
-    CAST(COALESCE(SUM(u.output_tokens), 0) AS INTEGER) AS output_tokens,
-    CAST(COALESCE(SUM(u.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
-    CAST(COALESCE(SUM(u.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
-    CAST(COALESCE(SUM(u.cost_usd), 0) AS REAL) AS cost_usd,
-    CAST(COALESCE(SUM(CASE WHEN u.is_subagent THEN u.cost_usd ELSE 0 END), 0) AS REAL) AS subagent_cost_usd,
-    CAST(COALESCE(SUM(u.ttft_ms), 0) AS INTEGER) AS ttft_sum_ms,
+    CAST(TOTAL(u.stop_reason = 'error') AS INTEGER) AS request_errors,
+    CAST(TOTAL(u.input_tokens) AS INTEGER) AS input_tokens,
+    CAST(TOTAL(u.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(TOTAL(u.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
+    CAST(TOTAL(u.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
+    CAST(TOTAL(u.cost_usd) AS REAL) AS cost_usd,
+    CAST(TOTAL(CASE WHEN u.is_subagent THEN u.cost_usd ELSE 0 END) AS REAL) AS subagent_cost_usd,
+    CAST(TOTAL(u.ttft_ms) AS INTEGER) AS ttft_sum_ms,
     CAST(COUNT(u.ttft_ms) AS INTEGER) AS ttft_n,
-    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END), 0) AS INTEGER) AS timed_output_tokens,
-    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END), 0) AS INTEGER) AS duration_ms
+    CAST(TOTAL(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END) AS INTEGER) AS timed_output_tokens,
+    CAST(TOTAL(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END) AS INTEGER) AS duration_ms
 FROM usage_records u
 WHERE u.ts >= ?5 AND u.ts < ?6
   AND (CAST(?7 AS TEXT) IS NULL OR u.thread_id = CAST(?7 AS TEXT))
@@ -1426,6 +1904,8 @@ type StatsUsageAggRow struct {
 // Output is (bucket, key, sums...) grouped by the first two columns.
 // Filters: NULL = no filter; project / space ” = none.
 // Raw rows serve the unaligned head / tail of a window; the 15-minute rollups (*AggQ) serve the aligned middle.
+// Sums use TOTAL() (REAL, never raises): SUM() raises "integer overflow" when an all-integer group exceeds int64, and
+// CAST of a too-large REAL to INTEGER saturates instead. Integer sums stay exact below 2^53.
 func (q *Queries) StatsUsageAgg(ctx context.Context, arg StatsUsageAggParams) ([]StatsUsageAggRow, error) {
 	rows, err := q.db.QueryContext(ctx, statsUsageAgg,
 		arg.ByBucket,
@@ -1486,18 +1966,18 @@ SELECT
          WHEN 4 THEN x.provider || '/' || x.model
          WHEN 5 THEN x.purpose
          ELSE '' END AS TEXT) AS "key",
-    CAST(COALESCE(SUM(x.requests), 0) AS INTEGER) AS requests,
-    CAST(COALESCE(SUM(x.request_errors), 0) AS INTEGER) AS request_errors,
-    CAST(COALESCE(SUM(x.input_tokens), 0) AS INTEGER) AS input_tokens,
-    CAST(COALESCE(SUM(x.output_tokens), 0) AS INTEGER) AS output_tokens,
-    CAST(COALESCE(SUM(x.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
-    CAST(COALESCE(SUM(x.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
-    CAST(COALESCE(SUM(x.cost_usd), 0) AS REAL) AS cost_usd,
-    CAST(COALESCE(SUM(x.subagent_cost_usd), 0) AS REAL) AS subagent_cost_usd,
-    CAST(COALESCE(SUM(x.ttft_sum_ms), 0) AS INTEGER) AS ttft_sum_ms,
-    CAST(COALESCE(SUM(x.ttft_n), 0) AS INTEGER) AS ttft_n,
-    CAST(COALESCE(SUM(x.timed_output_tokens), 0) AS INTEGER) AS timed_output_tokens,
-    CAST(COALESCE(SUM(x.duration_ms), 0) AS INTEGER) AS duration_ms
+    CAST(TOTAL(x.requests) AS INTEGER) AS requests,
+    CAST(TOTAL(x.request_errors) AS INTEGER) AS request_errors,
+    CAST(TOTAL(x.input_tokens) AS INTEGER) AS input_tokens,
+    CAST(TOTAL(x.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(TOTAL(x.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
+    CAST(TOTAL(x.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
+    CAST(TOTAL(x.cost_usd) AS REAL) AS cost_usd,
+    CAST(TOTAL(x.subagent_cost_usd) AS REAL) AS subagent_cost_usd,
+    CAST(TOTAL(x.ttft_sum_ms) AS INTEGER) AS ttft_sum_ms,
+    CAST(TOTAL(x.ttft_n) AS INTEGER) AS ttft_n,
+    CAST(TOTAL(x.timed_output_tokens) AS INTEGER) AS timed_output_tokens,
+    CAST(TOTAL(x.duration_ms) AS INTEGER) AS duration_ms
 FROM usage_q x
 WHERE x.q >= ?5 AND x.q < ?6
   AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
@@ -1592,7 +2072,7 @@ func (q *Queries) StatsUsageAggQ(ctx context.Context, arg StatsUsageAggQParams) 
 }
 
 const sumUsageCost = `-- name: SumUsageCost :one
-SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) AS cost_usd FROM usage_records WHERE ts >= ?1 AND ts < ?2
+SELECT CAST(TOTAL(cost_usd) AS REAL) AS cost_usd FROM usage_records WHERE ts >= ?1 AND ts < ?2
 `
 
 type SumUsageCostParams struct {
@@ -1651,6 +2131,97 @@ type TombstoneUsageParams struct {
 func (q *Queries) TombstoneUsage(ctx context.Context, arg TombstoneUsageParams) error {
 	_, err := q.db.ExecContext(ctx, tombstoneUsage, arg.ProjectID, arg.SpaceID, arg.ThreadID)
 	return err
+}
+
+const updateToolCallFacts = `-- name: UpdateToolCallFacts :execrows
+UPDATE OR IGNORE tool_calls SET ts = ?1, tool = ?2, ukey = ?3 WHERE id = ?4
+`
+
+type UpdateToolCallFactsParams struct {
+	Ts   int64   `json:"ts"`
+	Tool string  `json:"tool"`
+	Ukey *string `json:"ukey"`
+	ID   int64   `json:"id"`
+}
+
+func (q *Queries) UpdateToolCallFacts(ctx context.Context, arg UpdateToolCallFactsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateToolCallFacts,
+		arg.Ts,
+		arg.Tool,
+		arg.Ukey,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateTurnFacts = `-- name: UpdateTurnFacts :execrows
+UPDATE OR IGNORE turns SET ts = ?1, ukey = ?2 WHERE id = ?3
+`
+
+type UpdateTurnFactsParams struct {
+	Ts   int64   `json:"ts"`
+	Ukey *string `json:"ukey"`
+	ID   int64   `json:"id"`
+}
+
+func (q *Queries) UpdateTurnFacts(ctx context.Context, arg UpdateTurnFactsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateTurnFacts, arg.Ts, arg.Ukey, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateUsageRecordFacts = `-- name: UpdateUsageRecordFacts :execrows
+UPDATE OR IGNORE usage_records SET ts = ?1, provider = ?2, model = ?3, purpose = ?4,
+    stop_reason = ?5, ukey = ?6, input_tokens = ?7, output_tokens = ?8,
+    cache_read_tokens = ?9, cache_write_tokens = ?10, cost_usd = ?11,
+    duration_ms = ?12, ttft_ms = ?13
+WHERE id = ?14
+`
+
+type UpdateUsageRecordFactsParams struct {
+	Ts               int64   `json:"ts"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	Purpose          string  `json:"purpose"`
+	StopReason       string  `json:"stopReason"`
+	Ukey             *string `json:"ukey"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	CostUsd          float64 `json:"costUsd"`
+	DurationMs       *int64  `json:"durationMs"`
+	TtftMs           *int64  `json:"ttftMs"`
+	ID               int64   `json:"id"`
+}
+
+// OR IGNORE: a rekeyed ukey that collides with an existing one leaves the row untouched.
+func (q *Queries) UpdateUsageRecordFacts(ctx context.Context, arg UpdateUsageRecordFactsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateUsageRecordFacts,
+		arg.Ts,
+		arg.Provider,
+		arg.Model,
+		arg.Purpose,
+		arg.StopReason,
+		arg.Ukey,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.CacheReadTokens,
+		arg.CacheWriteTokens,
+		arg.CostUsd,
+		arg.DurationMs,
+		arg.TtftMs,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertBudget = `-- name: UpsertBudget :exec

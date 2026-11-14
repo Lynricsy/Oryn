@@ -3,10 +3,12 @@ package threads
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // 无 id 行的合成 id。
@@ -60,24 +62,105 @@ type ToolCall struct {
 	IsError bool
 }
 
+// 事实行的取值上限（会话 JSONL 由 orb 写，不可信）。越界的数值记 0（时长类记 NULL），越长的字符串截断；
+// 它们保证单行不会把聚合推到溢出：SUM 要约 920 万次满额请求才会超过 int64，成本要 1e302 行才会到 +Inf。
+const (
+	// maxFactTokens 是单次请求每类 token 的上限：比任何真实上下文窗口（百万级）高六个数量级。
+	maxFactTokens = 1e12
+	// maxFactCostUSD 是单次请求的成本上限（美元）。
+	maxFactCostUSD = 1e6
+	// maxFactMs 是单次请求时长 / 首字延迟的上限（毫秒，约 11.6 天）。
+	maxFactMs = 1e9
+	// maxPurposeLen 是 purpose 的字节上限；超长或含 purposeOK 之外的字符记 unknown。
+	maxPurposeLen = 64
+	// maxNameLen 是 provider / model / tool 的字节上限（超出按字符边界截断）。
+	maxNameLen = 128
+	// maxStopReasonLen 是 stop_reason 的字节上限（omp 的取值是 stop / length / toolUse / error / aborted）。
+	maxStopReasonLen = 32
+)
+
 // usageJSON 是 omp `Usage` 中入库用到的字段（assistant 消息与 model_usage 条目同形）。
+// token 按 float64 解析：越界的大数（如 5e18、1e30）不会让整行解析失败，而是在 record 里被判越界记 0。
 type usageJSON struct {
-	Input      int64 `json:"input"`
-	Output     int64 `json:"output"`
-	CacheRead  int64 `json:"cacheRead"`
-	CacheWrite int64 `json:"cacheWrite"`
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
 	Cost       *struct {
 		Total float64 `json:"total"`
 	} `json:"cost"`
 }
 
-func (u *usageJSON) record(ts int64, provider, model, purpose, stopReason string) *UsageRecord {
-	r := &UsageRecord{TS: ts, Provider: provider, Model: model, Purpose: purpose, StopReason: stopReason,
-		Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrt: u.CacheWrite}
-	if u.Cost != nil {
-		r.CostUSD = u.Cost.Total
+// record 生成一行用量并钳制数值与字符串；clamped 为真时至少有一个数值越界（记 0）。
+func (u *usageJSON) record(ts int64, provider, model, purpose, stopReason string) (r *UsageRecord, clamped bool) {
+	tok := func(v float64) int64 {
+		n, ok := clampTokens(v)
+		clamped = clamped || !ok
+		return n
 	}
-	return r
+	r = &UsageRecord{TS: ts, Provider: truncBytes(provider, maxNameLen), Model: truncBytes(model, maxNameLen),
+		Purpose: purpose, StopReason: truncBytes(stopReason, maxStopReasonLen),
+		Input: tok(u.Input), Output: tok(u.Output), CacheRead: tok(u.CacheRead), CacheWrt: tok(u.CacheWrite)}
+	if u.Cost != nil {
+		var ok bool
+		r.CostUSD, ok = clampCost(u.Cost.Total)
+		clamped = clamped || !ok
+	}
+	return r, clamped
+}
+
+// clampTokens 把 token 数限制在 [0, maxFactTokens]：越界（含负数）记 0，ok = false。小数部分截掉。
+func clampTokens(v float64) (int64, bool) {
+	if !(v >= 0 && v <= maxFactTokens) {
+		return 0, false
+	}
+	return int64(v), true
+}
+
+// clampCost 要求成本有限且在 [0, maxFactCostUSD]：否则记 0，ok = false。
+func clampCost(v float64) (float64, bool) {
+	if !(v >= 0 && v <= maxFactCostUSD) {
+		return 0, false
+	}
+	return v, true
+}
+
+// clampMs 要求时长在 [0, maxFactMs]：否则为 nil。
+func clampMs(v int64) *int64 {
+	if v < 0 || v > maxFactMs {
+		return nil
+	}
+	return &v
+}
+
+// truncBytes 把 s 截到至多 n 字节，不切断 UTF-8 字符。
+func truncBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := n
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
+}
+
+// cleanPurpose 规范 model_usage 的 purpose：空、超过 maxPurposeLen 字节或含 [A-Za-z0-9:._-] 之外的字符时记 unknown
+// （omp 的实际取值如 title、find、cache-warm、judge_batch 都在这个字符集里）。
+func cleanPurpose(s string) string {
+	if s == "" || len(s) > maxPurposeLen {
+		return "unknown"
+	}
+	for i := range len(s) {
+		if !purposeOK(s[i]) {
+			return "unknown"
+		}
+	}
+	return s
+}
+
+func purposeOK(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == ':' || c == '.' || c == '_' || c == '-'
 }
 
 type lineHead struct {
@@ -162,12 +245,13 @@ func ParseLine(line string) (ParsedEntry, error) {
 		switch m.Role {
 		case "assistant":
 			if m.Usage != nil {
-				u := m.Usage.record(ts, m.Provider, m.Model, "", m.StopReason)
+				u, clamped := m.Usage.record(ts, m.Provider, m.Model, "", m.StopReason)
 				u.DurationMs, u.TTFTMs = roundMs(m.Duration), roundMs(m.TTFT)
+				warnClamped(p.EntryID, clamped || (m.Duration != nil && u.DurationMs == nil) || (m.TTFT != nil && u.TTFTMs == nil))
 				p.Usage = u
 			}
 		case "toolResult":
-			p.Tool = &ToolCall{TS: ts, Tool: m.ToolName, IsError: m.IsError}
+			p.Tool = &ToolCall{TS: ts, Tool: truncBytes(m.ToolName, maxNameLen), IsError: m.IsError}
 		case "user":
 			p.TurnTS = &ts
 		}
@@ -177,21 +261,27 @@ func ParseLine(line string) (ParsedEntry, error) {
 		if p.TS != nil {
 			ts = *p.TS
 		}
-		purpose := h.Purpose
-		if purpose == "" {
-			purpose = "unknown"
-		}
-		p.Usage = h.Usage.record(ts, h.Provider, h.Model, purpose, h.StopReason)
+		u, clamped := h.Usage.record(ts, h.Provider, h.Model, cleanPurpose(h.Purpose), h.StopReason)
+		warnClamped(p.EntryID, clamped)
+		p.Usage = u
 	}
 	return p, nil
 }
 
+// warnClamped 在一条条目的用量数值越界（已记 0 / NULL）时打一条警告。
+func warnClamped(entryID string, clamped bool) {
+	if clamped {
+		slog.Warn("threads: 会话行的用量数值越界，已按 0 记", "entry", truncBytes(entryID, maxFactKeyIDLen))
+	}
+}
+
+// roundMs 把 omp 的毫秒浮点数取整：NaN / ±Inf / 负数 / 超过 maxFactMs 时为 nil（先判再转 int64，
+// 避免浮点越界转换的结果由实现决定）。
 func roundMs(v *float64) *int64 {
-	if v == nil {
+	if v == nil || !(*v >= 0 && *v <= maxFactMs) {
 		return nil
 	}
-	n := int64(math.Round(*v))
-	return &n
+	return clampMs(int64(math.Round(*v)))
 }
 
 // parseTS 接受 ISO 8601 字符串或毫秒数。

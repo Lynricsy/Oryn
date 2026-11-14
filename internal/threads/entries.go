@@ -159,12 +159,17 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			if !isNew && old != nil && string(old) == string(pe.Payload) {
 				continue
 			}
+			var released []factRef
 			if !isNew && old != nil { // reset 重发且内容变了：先清掉该条目旧的派生行
-				if err := deleteFactsAt(ctx, q, t.id, seq); err != nil {
+				if released, err = deleteFactsAt(ctx, q, t.id, seq); err != nil {
 					return err
 				}
 			}
 			if err := writeFacts(ctx, q, t.id, seq, p.File, pe, now); err != nil {
+				return err
+			}
+			// 新内容不再产出的旧键回到仍持有它的副本上
+			if err := restoreFacts(ctx, q, released, now); err != nil {
 				return err
 			}
 			out = append(out, ingested{parsed: pe, entry: Entry{
@@ -313,7 +318,7 @@ func (s *Service) rewriteTranscriptLocked(ctx context.Context, t *thread, file s
 		if _, err := q.DeleteStaleEntries(ctx, db.DeleteStaleEntriesParams{ThreadID: t.id, File: file}); err != nil {
 			return err
 		}
-		if err := deleteOrphanFacts(ctx, q, t.id); err != nil {
+		if err := deleteOrphanFacts(ctx, q, t.id, s.now()); err != nil {
 			return err
 		}
 		if leaf != nil {

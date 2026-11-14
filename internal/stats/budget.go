@@ -80,6 +80,7 @@ func (s *Service) periodStatus(ctx context.Context, b apigen.Budget, p budgetPer
 	if err != nil {
 		return apigen.BudgetPeriod{}, err
 	}
+	spent = finite(spent) // 入库前的越界行可能把和推成 +Inf：按 0 报，响应与告警文本才可编码
 	return apigen.BudgetPeriod{Key: p.key, From: p.from, To: p.to, SpentUsd: spent, LimitUsd: p.limit, Level: budgetLevel(spent, p.limit, b.WarnPct)}, nil
 }
 

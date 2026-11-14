@@ -3,6 +3,7 @@ package stats
 import (
 	"cmp"
 	"context"
+	"math"
 	"slices"
 	"time"
 
@@ -41,21 +42,41 @@ type uacc struct {
 }
 
 func (a *uacc) add(b *uacc) {
-	a.requests += b.requests
-	a.requestErrors += b.requestErrors
-	a.in += b.in
-	a.out += b.out
-	a.cacheR += b.cacheR
-	a.cacheW += b.cacheW
+	a.requests = satAdd(a.requests, b.requests)
+	a.requestErrors = satAdd(a.requestErrors, b.requestErrors)
+	a.in = satAdd(a.in, b.in)
+	a.out = satAdd(a.out, b.out)
+	a.cacheR = satAdd(a.cacheR, b.cacheR)
+	a.cacheW = satAdd(a.cacheW, b.cacheW)
 	a.cost += b.cost
 	a.subCost += b.subCost
-	a.ttftSum += b.ttftSum
-	a.ttftN += b.ttftN
-	a.timedOut += b.timedOut
-	a.durMs += b.durMs
-	a.toolCalls += b.toolCalls
-	a.toolErrors += b.toolErrors
-	a.turns += b.turns
+	a.ttftSum = satAdd(a.ttftSum, b.ttftSum)
+	a.ttftN = satAdd(a.ttftN, b.ttftN)
+	a.timedOut = satAdd(a.timedOut, b.timedOut)
+	a.durMs = satAdd(a.durMs, b.durMs)
+	a.toolCalls = satAdd(a.toolCalls, b.toolCalls)
+	a.toolErrors = satAdd(a.toolErrors, b.toolErrors)
+	a.turns = satAdd(a.turns, b.turns)
+}
+
+// satAdd 是饱和加法：SQL 里 CAST(TOTAL(…) AS INTEGER) 会把过大的和饱和到 MaxInt64，Go 侧再相加不能回绕成负数。
+func satAdd(a, b int64) int64 {
+	c := a + b
+	if (c > a) != (b > 0) {
+		if b > 0 {
+			return math.MaxInt64
+		}
+		return math.MinInt64
+	}
+	return c
+}
+
+// finite 把 NaN / ±Inf 换成 0：encoding/json 编码不了非有限值（会让整个响应失败）。
+func finite(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }
 
 func (a *uacc) addRow(r db.StatsUsageAggRow) {
@@ -71,20 +92,21 @@ func (a *uacc) zero() bool {
 		a.in == 0 && a.out == 0 && a.cacheR == 0 && a.cacheW == 0
 }
 
+// stat 输出一个分组；浮点字段都经 finite，保证响应可编码。
 func (a *uacc) stat(key string) apigen.UsageStat {
 	s := apigen.UsageStat{
 		Key: key, Requests: a.requests, RequestErrors: a.requestErrors, InputTokens: a.in, OutputTokens: a.out,
-		CacheReadTokens: a.cacheR, CacheWriteTokens: a.cacheW, CostUsd: a.cost,
+		CacheReadTokens: a.cacheR, CacheWriteTokens: a.cacheW, CostUsd: finite(a.cost),
 		ToolCalls: a.toolCalls, ToolErrors: a.toolErrors, Turns: a.turns,
 	}
-	sub := a.subCost
+	sub := finite(a.subCost)
 	s.SubagentCostUsd = &sub
 	if a.ttftN > 0 {
-		v := float64(a.ttftSum) / float64(a.ttftN)
+		v := finite(float64(a.ttftSum) / float64(a.ttftN))
 		s.AvgTtftMs = &v
 	}
 	if a.durMs > 0 {
-		v := float64(a.timedOut) / (float64(a.durMs) / 1000)
+		v := finite(float64(a.timedOut) / (float64(a.durMs) / 1000))
 		s.TokensPerSecond = &v
 	}
 	return s
@@ -174,8 +196,8 @@ func Usage(ctx context.Context, q *db.Queries, uq UsageQuery) (apigen.UsageStats
 			for _, r := range tools {
 				if i := tp.slot(seg, r.Bucket); i >= 0 {
 					a := get(cell{i, usageKey(dim, r.Key)})
-					a.toolCalls += r.Calls
-					a.toolErrors += r.Errors
+					a.toolCalls = satAdd(a.toolCalls, r.Calls)
+					a.toolErrors = satAdd(a.toolErrors, r.Errors)
 				}
 			}
 			turns, err := turnAgg(ctx, q, db.StatsTurnAggParams{
@@ -187,7 +209,8 @@ func Usage(ctx context.Context, q *db.Queries, uq UsageQuery) (apigen.UsageStats
 			}
 			for _, r := range turns {
 				if i := tp.slot(seg, r.Bucket); i >= 0 {
-					get(cell{i, usageKey(dim, r.Key)}).turns += r.Turns
+					a := get(cell{i, usageKey(dim, r.Key)})
+					a.turns = satAdd(a.turns, r.Turns)
 				}
 			}
 		}
