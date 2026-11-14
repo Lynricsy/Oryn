@@ -53,6 +53,23 @@ WHERE thread_id = @thread_id AND seq <= @until_seq AND instr(file, '/') = 0
   AND instr(payload, CAST(@needle AS BLOB)) > 0
 ORDER BY seq;
 
+-- Main-session model_change entries and Oryn model-source records up to until_seq (payload included).
+-- name: ListModelSourceEntries :many
+SELECT seq, type, payload FROM entries
+WHERE thread_id = @thread_id AND seq <= @until_seq AND instr(file, '/') = 0
+  AND (type = 'model_change' OR (type = 'custom' AND instr(payload, CAST('oryn-model-source' AS BLOB)) > 0))
+ORDER BY seq;
+
+-- Identity frozen when a snapshot share is created (PublicShareIdentity JSON); live shares have no row.
+-- name: InsertThreadShareIdentity :exec
+INSERT INTO thread_share_identities (share_id, payload) VALUES (@share_id, @payload);
+
+-- name: GetThreadShareIdentity :one
+SELECT payload FROM thread_share_identities WHERE share_id = @share_id;
+
+-- name: DeleteThreadShareIdentity :exec
+DELETE FROM thread_share_identities WHERE share_id = @share_id;
+
 -- name: InsertPublishedFile :exec
 INSERT INTO published_files (id, attachment_id, slug, created_at)
 VALUES (@id, @attachment_id, @slug, @created_at);

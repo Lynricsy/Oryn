@@ -632,7 +632,8 @@
 		"shares": "Public sharing",
 		"desktop": "Desktop app",
 		"browser-profiles": "Browser profiles",
-		"automations": "Automations"
+		"automations": "Automations",
+		"identity": "Identity & avatars"
 	},
 	"devices": {
 		"pairQr": {
@@ -1284,6 +1285,7 @@
 		}
 	},
 	"share": {
+		"identityHint": "The shared page shows your agent's name and avatar and those of the roles used in this conversation. Snapshots keep them as of creation; live pages follow your current settings.",
 		"page": {
 			"snapshotBadge": "Snapshot · {{date}}",
 			"copyLink": "Copy link",
@@ -1737,6 +1739,7 @@
 		"hint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back."
 	},
 	"assistant": {
+		"actions": "Conversation actions",
 		"title": "Assistant",
 		"untitled": "New conversation",
 		"new": "New conversation",
@@ -1978,5 +1981,62 @@
 		"fromAssistantUntitled": "From the assistant · sent by an agent",
 		"report": "Thread report · automatic",
 		"reportThread": "Open thread “{{name}}” ({{state}})"
+	},
+	"sections": {
+		"tabTitle": "{{label}} ({{keys}})"
+	},
+	"assistantPane": {
+		"empty": "No conversations yet",
+		"archiveOne": "Archive “{{title}}”"
+	},
+	"projectsPane": {
+		"filterThreads": "Show only threads in {{name}}",
+		"noProjectThreads": "Threads without a project"
+	},
+	"projectsPage": {
+		"viewThreads": "View threads",
+		"settings": "Project settings",
+		"environment": "Environment setup",
+		"noSetupRun": "No setup runs yet.",
+		"openThread": "Open thread",
+		"services": "Services",
+		"noServices": "No managed services in this project's orbs.",
+		"notFound": "This project doesn't exist or was deleted.",
+		"empty": "No projects yet. A project ties a repo to its environment and scripts."
+	},
+	"more": {
+		"overview": "Overview"
+	},
+	"identity": {
+		"agentTitle": "Agent identity",
+		"agentHint": "Default name and avatar on assistant turns; synced across devices.",
+		"name": "Name",
+		"namePlaceholder": "Not set",
+		"assistantTitle": "Global assistant",
+		"assistantHint": "Shown on the assistant tab and in assistant conversations. Leave the name or avatar empty to follow the agent identity.",
+		"followAgent": "Same as agent identity",
+		"tabPreview": "Tab bar preview",
+		"rolesTitle": "Role avatars",
+		"rolesHint": "Set an avatar for each role in cycleOrder. After you switch a conversation to a role, its turns show that avatar, name and model. Picking a model straight from the model list doesn't count as a role and shows the agent identity. The list comes from config.yml in Agent config.",
+		"rolesOrphans": "Not in cycleOrder",
+		"rolesConfigError": "Couldn't parse config.yml; showing the default cycleOrder: {{error}}",
+		"roleNoModel": "No model configured",
+		"roleNoAvatar": "No avatar",
+		"setAvatar": "Set avatar",
+		"removeAvatar": "Remove avatar",
+		"editConfig": "Edit config.yml"
+	},
+	"avatarCrop": {
+		"title": "Crop avatar",
+		"hint": "Drag the frame to choose the area; zoom with the wheel, a pinch or the slider. Keyboard: arrows move, + / − zoom, 0 resets.",
+		"frame": "Crop frame",
+		"zoom": "Zoom",
+		"previewTile": "As a tile",
+		"previewCircle": "As a circle",
+		"reset": "Reset",
+		"cancel": "Cancel",
+		"use": "Use",
+		"handle": "Resize the frame",
+		"outlines": "The solid line is the tile outline; the dashed line is the circle outline."
 	}
 }

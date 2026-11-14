@@ -3,13 +3,14 @@
  * 有 git 身份名字就放名字首字，否则放 User 图标。用户回合起点与侧栏页脚使用。
  */
 import type { ReactNode } from "react";
-import { useGitIdentity, useUserIdentity } from "../../api/queries";
+import { useIdentity } from "../../api/identity-queries";
+import { useGitIdentity } from "../../api/queries";
 import { AvatarTile } from "./AvatarTile";
 import { firstGrapheme } from "./data";
 import { Icon } from "./icons";
 
 export function UserAvatar({ size = 20 }: { size?: number }): ReactNode {
-	const { data, isPending } = useUserIdentity();
+	const { data, isPending } = useIdentity("user");
 	return (
 		<AvatarTile
 			of="user"

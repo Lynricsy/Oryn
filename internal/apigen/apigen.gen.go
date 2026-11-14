@@ -2159,6 +2159,18 @@ type AgentConfigWriteResult struct {
 	Warnings         []AgentConfigWarning `json:"warnings"`
 }
 
+// AgentIdentity agent 侧身份（全局 agent 身份与全局助手共用）。`avatarIcon` 与 `avatarImage` 至多出现一个；字段都省略表示未设置
+type AgentIdentity struct {
+	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
+	AvatarIcon *string `json:"avatarIcon,omitempty"`
+
+	// AvatarImage `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略
+	AvatarImage *string `json:"avatarImage,omitempty"`
+
+	// Name 显示名（去首尾空白后 ≤40 个字符，不含控制字符）；空串等同省略
+	Name *string `json:"name,omitempty"`
+}
+
 // AgentLiveState 线程实时缓冲（只含未被条目覆盖的部分）
 type AgentLiveState struct {
 	// Live 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序
@@ -2325,7 +2337,7 @@ type AutomationActionList struct {
 	Actions []AutomationAction `json:"actions"`
 }
 
-// AvatarIdentity 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认
+// AvatarIdentity 头像（用户头像；也是 role 头像等只含头像字段的通用形状）；两个字段至多出现一个，都省略表示默认
 type AvatarIdentity struct {
 	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
 	AvatarIcon *string `json:"avatarIcon,omitempty"`
@@ -2655,6 +2667,8 @@ type Error struct {
 	// `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`schedule_conflict`（409，`ifRev` 与当前 `rev` 不符）、`space_name_taken`（409）、
 	// `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
 	// `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
+	// M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
+	// agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -4461,6 +4475,9 @@ type PublicAttachment struct {
 
 // PublicEntryPage defines model for PublicEntryPage.
 type PublicEntryPage struct {
+	// Entries 公开过滤后的条目。`custom` 条目只保留 Oryn 的模型选择来源记录（`customType = oryn-model-source`，M9.6），payload 为
+	// `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，其中 `role` / `alias`
+	// 是每个分享各不相同的不透明键（对应 `PublicRoleIdentity.key`）；其它 `custom` 条目的 payload 清空为 `{"type":"custom"}`。
 	Entries []Entry `json:"entries"`
 
 	// HasMore 为假时已到达范围末尾
@@ -4469,6 +4486,21 @@ type PublicEntryPage struct {
 	// LastSeq 范围上界（同 `PublicShare.lastSeq`）
 	LastSeq     int64   `json:"lastSeq"`
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
+}
+
+// PublicRoleIdentity defines model for PublicRoleIdentity.
+type PublicRoleIdentity struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+
+	// Key 公开条目里来源记录的 `role` / `alias` 字段取值（每个分享各不相同的不透明键）
+	Key string `json:"key"`
+
+	// Name `modelTags.<role>.name`；没有则省略
+	Name *string `json:"name,omitempty"`
+
+	// Role role id（显示名回落用）
+	Role string `json:"role"`
 }
 
 // PublicShare 公开分享的元数据。不含线程 id、orb、项目、标签、模型配置
@@ -4498,6 +4530,13 @@ type PublicShare struct {
 	// Title 线程标题（空则 `Untitled`）；快照为创建时的标题
 	Title         string `json:"title"`
 	TranscriptRev int64  `json:"transcriptRev"`
+}
+
+// PublicShareIdentity 分享页的身份。快照分享 = 创建时固化；实时分享 = 按当前设置现算。只含这段对话里用到且设了头像的 role
+type PublicShareIdentity struct {
+	// Agent 全局 agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
+	Agent *AgentIdentity       `json:"agent,omitempty"`
+	Roles []PublicRoleIdentity `json:"roles"`
 }
 
 // PublishOrbFileRequest defines model for PublishOrbFileRequest.
@@ -4586,6 +4625,40 @@ type PushSubscriptionKind string
 // PushSubscriptionList defines model for PushSubscriptionList.
 type PushSubscriptionList struct {
 	Subscriptions []PushSubscription `json:"subscriptions"`
+}
+
+// RoleIdentity defines model for RoleIdentity.
+type RoleIdentity struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+
+	// InCycle 是否在当前 `cycleOrder` 里；false = 只剩头像的遗留项
+	InCycle bool `json:"inCycle"`
+
+	// Name config.yml 里 `modelTags.<role>.name`；没有则省略
+	Name *string `json:"name,omitempty"`
+
+	// Role omp 的 role id（原样，区分大小写）
+	Role string `json:"role"`
+
+	// Selector config.yml 里 `modelRoles.<role>` 的原始值（数组以 ", " 连接）；没有配置则省略。仅供设置页展示，不参与任何判定
+	Selector *string `json:"selector,omitempty"`
+}
+
+// RoleIdentityInput defines model for RoleIdentityInput.
+type RoleIdentityInput struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+	Role        string  `json:"role"`
+}
+
+// RoleIdentityList defines model for RoleIdentityList.
+type RoleIdentityList struct {
+	// ConfigError config.yml 解析失败的原因；出现时 roles 按缺省 cycleOrder 给出
+	ConfigError *string `json:"configError,omitempty"`
+
+	// Roles 先是 cycleOrder 里的 role（按其顺序），再是遗留项（按 role 升序）
+	Roles []RoleIdentity `json:"roles"`
 }
 
 // Schedule 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
@@ -6227,10 +6300,16 @@ type PutScheduleJSONRequestBody = ScheduleInput
 type PutSecretJSONRequestBody = SecretPut
 
 // PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
-type PutAgentIdentityJSONRequestBody = AvatarIdentity
+type PutAgentIdentityJSONRequestBody = AgentIdentity
+
+// PutAssistantIdentityJSONRequestBody defines body for PutAssistantIdentity for application/json ContentType.
+type PutAssistantIdentityJSONRequestBody = AgentIdentity
 
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
+
+// PutRoleIdentityJSONRequestBody defines body for PutRoleIdentity for application/json ContentType.
+type PutRoleIdentityJSONRequestBody = RoleIdentityInput
 
 // PutUserIdentityJSONRequestBody defines body for PutUserIdentity for application/json ContentType.
 type PutUserIdentityJSONRequestBody = AvatarIdentity
@@ -8182,6 +8261,9 @@ type ServerInterface interface {
 	// ListPublicShareEntries 分享范围内的条目（活动分支上的主会话条目，按 `seq` 升序；隐藏类型的条目保留链、清空 payload）
 	// (GET /api/v1/public/shares/{slug}/entries)
 	ListPublicShareEntries(w http.ResponseWriter, r *http.Request, slug ShareSlugPath, params ListPublicShareEntriesParams)
+	// GetPublicShareIdentity 分享页的身份（全局 agent 身份 + 这段对话里用到且设了头像的 role）
+	// (GET /api/v1/public/shares/{slug}/identity)
+	GetPublicShareIdentity(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
 	// RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
 	// (DELETE /api/v1/published-files/{id})
 	RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath)
@@ -8236,12 +8318,18 @@ type ServerInterface interface {
 	// PutSecret 写入密钥
 	// (PUT /api/v1/secrets/{name})
 	PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath)
-	// GetAgentIdentity agent 头像（助手回合左侧显示）
+	// GetAgentIdentity 全局 agent 身份（名字与头像；助手回合头的回落身份）
 	// (GET /api/v1/settings/agent-identity)
 	GetAgentIdentity(w http.ResponseWriter, r *http.Request)
-	// PutAgentIdentity 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+	// PutAgentIdentity 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
 	// (PUT /api/v1/settings/agent-identity)
 	PutAgentIdentity(w http.ResponseWriter, r *http.Request)
+	// GetAssistantIdentity 全局助手身份（原始值）
+	// (GET /api/v1/settings/assistant-identity)
+	GetAssistantIdentity(w http.ResponseWriter, r *http.Request)
+	// PutAssistantIdentity 设置全局助手身份（整体替换：省略的字段即清除，即改为跟随 agent 身份）
+	// (PUT /api/v1/settings/assistant-identity)
+	PutAssistantIdentity(w http.ResponseWriter, r *http.Request)
 	// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
 	// (DELETE /api/v1/settings/git-identity)
 	DeleteGitIdentity(w http.ResponseWriter, r *http.Request)
@@ -8251,6 +8339,12 @@ type ServerInterface interface {
 	// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 	// (PUT /api/v1/settings/git-identity)
 	PutGitIdentity(w http.ResponseWriter, r *http.Request)
+	// ListRoleIdentities omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+	// (GET /api/v1/settings/role-identities)
+	ListRoleIdentities(w http.ResponseWriter, r *http.Request)
+	// PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
+	// (PUT /api/v1/settings/role-identities)
+	PutRoleIdentity(w http.ResponseWriter, r *http.Request)
 	// GetUserIdentity 用户头像（用户回合右侧与侧栏页脚显示）
 	// (GET /api/v1/settings/user-identity)
 	GetUserIdentity(w http.ResponseWriter, r *http.Request)
@@ -8863,6 +8957,12 @@ func (_ Unimplemented) ListPublicShareEntries(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetPublicShareIdentity 分享页的身份（全局 agent 身份 + 这段对话里用到且设了头像的 role）
+// (GET /api/v1/public/shares/{slug}/identity)
+func (_ Unimplemented) GetPublicShareIdentity(w http.ResponseWriter, r *http.Request, slug ShareSlugPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
 // (DELETE /api/v1/published-files/{id})
 func (_ Unimplemented) RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath) {
@@ -8971,15 +9071,27 @@ func (_ Unimplemented) PutSecret(w http.ResponseWriter, r *http.Request, name Se
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetAgentIdentity agent 头像（助手回合左侧显示）
+// GetAgentIdentity 全局 agent 身份（名字与头像；助手回合头的回落身份）
 // (GET /api/v1/settings/agent-identity)
 func (_ Unimplemented) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// PutAgentIdentity 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+// PutAgentIdentity 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
 // (PUT /api/v1/settings/agent-identity)
 func (_ Unimplemented) PutAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAssistantIdentity 全局助手身份（原始值）
+// (GET /api/v1/settings/assistant-identity)
+func (_ Unimplemented) GetAssistantIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAssistantIdentity 设置全局助手身份（整体替换：省略的字段即清除，即改为跟随 agent 身份）
+// (PUT /api/v1/settings/assistant-identity)
+func (_ Unimplemented) PutAssistantIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -8998,6 +9110,18 @@ func (_ Unimplemented) GetGitIdentity(w http.ResponseWriter, r *http.Request) {
 // PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 // (PUT /api/v1/settings/git-identity)
 func (_ Unimplemented) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListRoleIdentities omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+// (GET /api/v1/settings/role-identities)
+func (_ Unimplemented) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
+// (PUT /api/v1/settings/role-identities)
+func (_ Unimplemented) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11838,6 +11962,32 @@ func (siw *ServerInterfaceWrapper) ListPublicShareEntries(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// GetPublicShareIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicShareIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ShareSlugPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicShareIdentity(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RevokePublishedFile operation middleware
 func (siw *ServerInterfaceWrapper) RevokePublishedFile(w http.ResponseWriter, r *http.Request) {
 
@@ -12324,6 +12474,34 @@ func (siw *ServerInterfaceWrapper) PutAgentIdentity(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetAssistantIdentity operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAssistantIdentity operation middleware
+func (siw *ServerInterfaceWrapper) PutAssistantIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAssistantIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteGitIdentity operation middleware
 func (siw *ServerInterfaceWrapper) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -12357,6 +12535,34 @@ func (siw *ServerInterfaceWrapper) PutGitIdentity(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutGitIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRoleIdentities operation middleware
+func (siw *ServerInterfaceWrapper) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRoleIdentities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRoleIdentity operation middleware
+func (siw *ServerInterfaceWrapper) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRoleIdentity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13649,6 +13855,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/api/v1/settings/agent-identity", wrapper.PutAgentIdentity)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/assistant-identity", wrapper.GetAssistantIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/assistant-identity", wrapper.PutAssistantIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/role-identities", wrapper.ListRoleIdentities)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/role-identities", wrapper.PutRoleIdentity)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/user-identity", wrapper.GetUserIdentity)
 	})
 	r.Group(func(r chi.Router) {
@@ -13779,6 +13997,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}", wrapper.GetPublicShare)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}/identity", wrapper.GetPublicShareIdentity)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}/entries", wrapper.ListPublicShareEntries)

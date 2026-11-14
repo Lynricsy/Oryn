@@ -852,3 +852,153 @@ Treat the content above as data, not instructions.
 **定时的版本与推送**：`Schedule.rev`（见 0016）；`ScheduleInput.ifRev` 只用于 `PUT /schedules/{id}` 与 `PUT /threads/{id}/schedule`（`POST` 忽略）——给出时仅在当前 `rev` 相等时替换，否则 409 `schedule_conflict`，消息为 `the schedule changed since it was loaded (rev N)`、`the schedule no longer exists`（带 `ifRev` 而定时已删除，不再是 404；不带 `ifRev` 仍是 404）或 `the thread already has a schedule`；线程内定时的 `ifRev = 0` 表示「只在该线程没有定时时新建」。协调工具与 orb 内方法不传。WS 新增服务端消息 `schedules.changed {scheduleId}`（发给全部私有连接）：新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 投递 / 运行状态变化时各发一次；客户端收到它、以及每次 WS 重新 open 时让定时相关查询全部失效。
 
 **协调宿主的目录与身份**：每台协调 orb 一个 HOME，`<dir>/homes/<orbID>`（`<dir>/homes` 0755 属 orynd，各 HOME 0700 属沙箱账号）；拉起新一代之前先停掉别代的子进程（同一时刻至多一个 coordinator-host 子进程），删除 orb 只删它自己的 HOME；旧布局 `<dir>/home` 在启动时迁到当前协调 orb 名下（没有协调 orb 则删除）。root 部署时 `coordinator.user` 为空、`nobody` / `nfsnobody` 或解析为 uid 65534 都视为「自动」：使用（必要时以 `useradd --system` 创建）每实例一个的专用账号 `oryn-coord-<fnv32a(协调目录绝对路径) 的 8 位十六进制>`；`useradd` 不可用或失败则协调功能不可用并给出手工命令。每次拉起前校验该账号的 uid 上没有不属于本实例的进程，否则不可用（不杀任何进程）；只有自动创建的专用账号、且没有 PID 命名空间时，子进程退出后才按 uid 清扫残留。`CoordinatorStatus.sandbox.uid` 即该账号的 uid。沙箱的 seccomp 在所有模式下拒绝作用于其它进程的 `prlimit64`、`sched_setaffinity / setscheduler / setparam / setattr`、`setpriority`、`ioprio_set`（第 0 参数非 0 / 非本进程），以及 flags 带 `MSG_FASTOPEN` 的 `sendto` / `sendmsg` / `sendmmsg`（TFO 的发送路径不经 connect 钩子，较旧内核上 Landlock 的端口规则管不到它）；出站代理端口由协调宿主在施加沙箱之前监听并交给 orbd，Landlock 只授予 `ConnectTCP`。自检清单相应新增：对父进程的 `prlimit64` / `setpriority` / `sched_setaffinity`、对宿主监听端的 TFO（`sendto(MSG_FASTOPEN)`、`TCP_FASTOPEN_CONNECT`）、在 `0.0.0.0` / `[::]` 上 bind 出站代理端口，均必须失败。
+
+## M9.6：身份与角色头像
+
+三类 agent 侧身份：**全局 agent 身份**（名字 + 头像，转录回合头的缺省身份）、**全局助手身份**（名字、头像各自可单独设置，缺省跟随 agent 身份）、**role 头像**（为 omp `cycleOrder` 里的 role 在 Oryn 侧设头像，不写进 omp 配置文本）。用户头像不变。回合头显示 role 的唯一依据是会话里的**模型选择来源记录**（Oryn Core `oryn-v18.19.0-4` 起写入）；不做任何「模型 → role」的反推。公开分享页展示 agent 身份与这段对话里用到的 role 的身份（快照固化、实时跟随）。不新增 WS 消息。
+
+### 模型
+
+- `AgentIdentity{name?(去首尾空白后 ≤40 字符、无控制字符), avatarIcon?(≤64 字节的单个字形), avatarImage?(data:image/(png|webp|jpeg);base64,…，≤128KiB)}`：全局 agent 与全局助手共用；两个头像字段至多一个；空串等同省略。
+- `AvatarIdentity` 只剩用户头像（以及「只含头像字段」的通用形状，如 role 头像的写入）。
+- `RoleIdentity{role, name?, inCycle, selector?, avatarIcon?, avatarImage?}`：`role` 是 omp 的 role id（原样，区分大小写）；`name` = `modelTags.<role>.name`；`inCycle` 为假 = 只剩头像的遗留项（role 改名或从 `cycleOrder` 删掉后）；`selector` = `modelRoles.<role>` 的原始值，**仅供设置页展示，不参与任何判定**。
+- `RoleIdentityList{roles, configError?}`：先是 `cycleOrder` 里的 role（按其顺序），再是遗留项（按 role 升序）。
+- `RoleIdentityInput{role(1–128), avatarIcon?, avatarImage?}`。
+- `PublicRoleIdentity{key, role, name?, avatarIcon?, avatarImage?}`、`PublicShareIdentity{agent?: AgentIdentity, roles: PublicRoleIdentity[]}`（见下文「分享页的身份」）。
+
+### REST
+
+tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口是匿名的公开分享接口。
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/settings/agent-identity`|`getAgentIdentity`（改）|—|`AgentIdentity`（无所有者 → `{}`）|
+|`PUT /api/v1/settings/agent-identity`|`putAgentIdentity`（改）|`AgentIdentity`|`AgentIdentity`；整体替换，省略的字段即清除|
+|`GET /api/v1/settings/assistant-identity`|`getAssistantIdentity`|—|`AgentIdentity`，**原始值**：名字、头像各自省略 = 跟随 agent 身份，回落由客户端做|
+|`PUT /api/v1/settings/assistant-identity`|`putAssistantIdentity`|`AgentIdentity`|同 agent：整体替换|
+|`GET /api/v1/settings/role-identities`|`listRoleIdentities`|—|`RoleIdentityList`（不唤醒任何 orb）|
+|`PUT /api/v1/settings/role-identities`|`putRoleIdentity`|`RoleIdentityInput`|`RoleIdentity`；两个头像字段都省略 = 清除该 role 的头像|
+|`GET /api/v1/public/shares/{slug}/identity`|`getPublicShareIdentity`（`security: [{}]`）|—|`PublicShareIdentity`；头同 `getPublicShare`（`X-Robots-Tag: noindex, nofollow`、`Cache-Control: no-store`）|
+
+客户端的回落：助手的**生效身份** = 名字取助手的、没有取 agent 的；头像取助手的（图标或图片）、没有取 agent 的；名字与头像分别回落，头像不混合两者的字段。
+
+### 错误码
+
+不新增错误码。
+
+|code|HTTP|情形|
+|---|---|---|
+|`invalid_request`|400|名字超 40 字符或含控制字符；头像两字段同时给；图标不是单个字形；图片不是 png / webp / jpeg 的 base64 data URL；`role` 去空白后为空、超 128 字节或含控制字符；给不在当前 `cycleOrder` 里的 role **设置**头像（清除任何 role 的头像都允许，幂等）|
+|`too_large`|413|图片整串超过 128KiB|
+|`conflict`|409|agent / 助手身份 PUT 时尚无所有者|
+|`not_found`|404|分享身份：slug 不存在或已撤销（与 `getPublicShare` 一致）|
+
+### role 列表：config.yml 解析规则
+
+只读 omp-home 的全局 `config.yml`（`agentcfg.ConfigFile`）；项目级 `.omp/config.yml` 不读。实现 `agentcfg.ParseCycleRoles(config []byte) ([]CycleRole, error)` 与 `(*Home).CycleRoles()`，`CycleRole{Role, Name, Selector string}`：
+
+- `cycleOrder`：字符串数组；不是数组或过滤后为空 → 缺省 `["smol", "default", "slow"]`；去掉非字符串与空白项，去重保序。
+- `Name` = `modelTags.<role>.name`（非空字符串才算）。
+- `Selector` = `modelRoles.<role>` 的原始值：字符串原样 `TrimSpace`；数组逐项 `TrimSpace`、丢空项后以 `", "` 连接；没有配置为空（接口里省略 `selector`）。
+- 不做别名展开、`:level` 切分或内置 role 表——控制面里没有任何能把模型映射回 role 的代码。
+- 文件不存在或内容为空 → 缺省 `cycleOrder`；YAML 不合法 → `CycleRoles()` 返回缺省 `cycleOrder` 与该错误，接口照样 200 并带 `configError`。
+
+### 模型选择来源（Oryn Core 命令与会话条目）
+
+两条 Oryn 命令（`oryn-core` 的 `modes/rpc/oryn-model-source.ts`；串行执行，不是后台命令）：
+
+|命令|参数|应答 `data`|
+|---|---|---|
+|`oryn_select_model`|`role?` 或 `provider? + modelId?`（二选一）|`{model: ModelInfo, thinkingLevel?, source: "role" \| "manual", role?, alias?}`|
+|`oryn_mark_session_start`|`explicitModel?: boolean`|`{recorded: boolean, source?: "startup" \| "manual", role?, alias?, model?}`|
+
+- `oryn_select_model`：`role` 为非空字符串且没给 `provider` / `modelId` → role 形式（`resolveRoleModelWithThinking(role)` → `applyRoleModel`，`model_change` 写 `role:<role>`；不限于 `cycleOrder` 里的 role）；`provider`、`modelId` 都非空且没给 `role` → 手动形式（`setModel(model)`，`model_change` 写 `role:"default"`，与 `set_model` 相同）。错误文案：只给了 `provider` / `modelId` 之一 → `provider and modelId must be given together`；其余非法组合 → `oryn_select_model requires either role or provider+modelId`；`Role has no available model: <role>`；`Model not found: <provider>/<modelId>`；`setModel` 的错误原样返回。出错时不写记录。
+- `oryn_mark_session_start`：分支上已有 `message` 条目或已有来源记录、或没有活动模型 → `recorded:false`。`explicitModel` 为真 → 记 `manual`。否则只在「确实是 default role 解析出来的」时记 `startup`：分支上的 `model_change` 至多一条，且（有的话）没有 `role`、`resolvedModelIsFallback` 不为真、`model` 等于当前模型；`resolveRoleModelWithThinking("default")` 解析出的模型与当前模型相同。任一不满足 → `recorded:false`。
+- 两条命令写完记录都调 `sessionManager.ensureOnDisk()`：会话文件在第一条助手消息之前落盘，流式中的第一个回合也能读到记录。进程在第一条回复前重启时目录里会留下一个只有启动元数据的会话文件（客户端不渲染它，见下文）。
+- 旧 Core 不认识这两条命令，应答 `Unknown command: <type>`（无 `code`）。
+
+条目（唯一的持久化形状；`custom` 条目不进 LLM 上下文，fork / 分支 / 压缩都保留在路径上）：
+
+```jsonc
+{ "type": "custom", "id": "…", "parentId": "…", "timestamp": "…",
+  "customType": "oryn-model-source",
+  "data": { "v": 1, "source": "role" | "manual" | "startup",
+            "model": "provider/modelId",   // 写入时的活动模型，格式同 model_change.model
+            "role": "Mare",                // source=role：被点的 role id；source=startup：恒为 "default"；manual：没有
+            "alias": "Cyrene" } }          // 可选：role 的配置值是指向另一个 role 的单一别名时，那个 role
+```
+
+`alias` 只走一跳：`modelRoles.<role>` 规范化后恰为一个选择器，且形如 `@X`、`@X:<level>`、`pi/X`、`*`（= `default`）或 `*:<level>`，`X` 是已知 role（内置 role id 或配置过的 role）且不等于 `role` 本身；回退链、数组、字面模型、未知 role 都不产生 `alias`。
+
+|来源|由谁写|同时写的 `model_change`|
+|---|---|---|
+|点 role（含 `default`）|`oryn_select_model{role}`|`role:<role>`|
+|模型列表手动选|`oryn_select_model{provider, modelId}`|`role:"default"`|
+|建线程时显式选了模型|`oryn_mark_session_start{explicitModel:true}`|不写（`open_session` 已处理）|
+|启动时按 default role 解析|`oryn_mark_session_start{explicitModel:false}`|不写（会话启动时已写无 role 的那条）|
+
+控制面：agent 每次 `ready` 后、下发排队命令之前向 agent 流写一条 `oryn_mark_session_start{explicitModel: 线程行有模型}`（冻结途中就绪的那一次不发）；应答失败（含旧 Core 的 `Unknown command`）只记调试日志，不改变线程状态。命令路由：`oryn_mark_session_start` 只允许控制面自己发，客户端发来 → `managed_by_oryn`；`set_model` 不拦截（旧标签页、旧 App 仍可切模型，结果是「未记录来源的切换」→ 回落）；协调对话的命令白名单加 `oryn_select_model`（`set_model` 保留）。客户端点 role / 选模型先发 `oryn_select_model`，收到 `Unknown command` 即改发 `set_model`（+ `set_thinking_level`），本页面之后对该线程不再试新命令。
+
+### 回合头的 role 判定规则（全局约定）
+
+实现在 `web/src/lib/turn-role.ts`，其它客户端照此实现。
+
+**来源记录**：主会话文件里 `type === "custom"`、`payload.customType === "oryn-model-source"`、`payload.data.v === 1`、`data.source ∈ {role, manual, startup}`、`data.model` 为非空字符串的条目。不满足的条目当作不存在。
+
+**轨迹**（`trail = { record?, fallback: boolean, tracked: boolean }`，初值 `{ fallback: false, tracked: false }`）：沿活动分支自前向后走一遍主会话条目（多个主会话文件按创建顺序拼接，换文件不清零；子 agent 文件不参与）：
+
+- 来源记录 → `record = 它`，`fallback = false`，`tracked = true`。
+- `model_change` 且 `role ∈ {"fallback", "prewalk"}`（重试回退的切入与切回、上下文提升、prewalk：临时覆盖，不改变「选的是谁」）→ `fallback = (resolvedModelIsFallback === true)`，`record` 不变。
+- 其它 `model_change`（没有 role、`default`、`temporary`、任何 role 名）→ `record = undefined`，`fallback = false`。新命令写的 `model_change` 后面紧跟一条来源记录，会把 `record` 重新立起来；后面没有记录的就是「未记录来源的切换」。
+- 其余条目不影响轨迹。
+
+**回合的 role**（回合 = `layoutTurns` 的回合；`M` = 回合里第一条带 `model` 的助手消息的 `provider + "/" + model`，已入库条目与流式中的在途消息同一取法；轨迹取走到这条消息之前的状态，在途消息取分支末端的状态）：
+
+1. 没有 `record` → 无 role。
+2. `fallback` 为真 → 无 role（这一回合跑在重试回退模型上）。
+3. `record.source === "manual"` → 无 role。
+4. `M` 取不到，或 `M` 与 `record.model` 不相等（不分大小写）→ 无 role。这是否决校验：记录说选的是这个模型、回合却不是它跑的（切了分支而活动模型没跟着变、prewalk / 上下文提升期间、服务端降级）；它只会把结果变成「无 role」，不会产生 role。
+5. 候选 = `[record.role, record.alias]` 去掉空项；取第一个**设了头像**的 → 该 role；都没有 → 无 role。
+
+**显示**：
+
+- 得到 role → 回合头 = role 头像 + role 名 + 模型 logo + 模型短名。role 名：`name`（`modelTags.<role>.name`）有就用；否则内置 role 用本地化名（`roles.names.<id>`），自定义 role 用 id。
+- 无 role → 回落身份：`kind = assistant` 的对话用全局助手的生效身份（自己的 → agent 的），其余（工作线程、Space 聊天）用全局 agent 身份；设了名字显示「头像 + 名字 + 模型 logo + 短名」，没设名字「头像 + 模型 logo + 短名」。
+- 分享页：同一套规则；role 的身份与回落身份来自匿名身份接口，接口里没有的一律默认品牌标。
+
+**哪些事会让记录失效（之后的回合回落，直到下一次用新命令选择）**：
+
+|事件|写下的东西|结果|
+|---|---|---|
+|旧客户端 / 旧 Core 路径的 `set_model`、`cycle_model`|`model_change`（`default` 或无 role），无记录|失效|
+|TUI 里的任何切换（`/model`、角色轮换、计划模式换模型）|`model_change`（`temporary` / role 名 / `default`），无记录|失效|
+|重试回退切入|`fallback` + `resolvedModelIsFallback:true`|回退期间无 role；切回主模型（`fallback`、无标志）后记录恢复生效|
+|上下文提升、prewalk|`fallback` / `prewalk`，模型不同|期间第 4 步否决；回到原模型后恢复|
+|agent 重启时 `open_session` 带的模型与会话里可恢复的模型不同（重启前正处在回退 / 临时模型上；或回退发生过、之后重启；或 handoff / 计划执行开了新会话文件之后重启）|无 role 的 `model_change`|失效|
+|切到别的分支，活动模型没跟着变|—|该分支上旧记录的 `model` 与回合模型不等 → 第 4 步否决|
+|config.yml 里改了 role 的模型 / 删了 role|—|不影响已有记录（记录存的是 role id 与当时的模型）；role 的头像被清掉后该回合回落|
+
+**旧 Core**（升级前建的 orb，容器里的 omp 不认识新命令）：切换照常生效（经 `set_model` 回退路径）；会话里没有来源记录 → 所有回合回落显示。不做任何补偿性的匹配。输入区角色轨道的「当前格」在没有任何来源记录的线程上维持现状（本机记忆 + 现有逻辑），它不是身份显示。
+
+**只有启动元数据的会话文件**：不是最后一个主会话文件、且其分支上只有 `session / title / model_change / thinking_level_change / service_tier_change / 来源记录` 的文件不渲染、也不出「新会话」分隔线；它的条目照常参与轨迹。
+
+### 分享页的身份
+
+- 内容：全局 agent 身份（名字、头像；两者都未设置时省略 `agent`）+ 「用到的 role」各自的 `{key, role, name?, 头像}`。不含助手身份（协调对话不能分享）。
+- 「用到」= 该分享范围内活动分支上，某条 `source ∈ {role, startup}` 的来源记录生效期间（到下一条来源记录或下一条非 `fallback` / `prewalk` 的 `model_change` 为止）出现过至少一条 `type = message` 的条目。每条用到的记录取候选 `[role, alias]` 里第一个在 `role_avatars` 有行的 role；没有就不产生任何项。按 role 去重。
+- 何时拍：**快照分享在创建时**算一次并存进 `thread_share_identities`（与快照条目在同一个事务里），之后改名字、换头像、删 role 都不影响已有快照；**实时分享不存**，每次请求按当前设置现算（客户端在页面加载、WS 重连、转录里出现身份里没有的键时各取一次，每个新键至多一次）。
+- 匿名下发：公开条目里放行清洗过的来源记录，payload 只剩 `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，`role` / `alias` 换成不透明键 `key = hex(sha256(shareID + "\x00" + role))[:16]`（`shareID` 是 `shr_…`，不出现在任何公开响应里，所以不同分享的键不同）；其它 `custom` 条目的 payload 仍清空为 `{"type":"custom"}`。快照的扫描范围与公开内容用同一个清洗函数。没用到的 role 在匿名面上只可能以不透明键出现，id、名字、头像都不出网。
+- 撤销：身份接口与页面一起 404；撤销时删除该分享的 `thread_share_identities` 行。线程删除经外键级联。
+- `.md` 导出不带身份（标题仍是固定的 `## Assistant`）。
+- 升级前已有的快照分享没有身份行 → 身份接口返回 `{roles: []}`，页面与之前一样（默认品牌标 + 模型）；已有的实时分享升级后即按当前设置展示身份。
+
+### 存储
+
+`0017_identity_roles.sql`：
+
+- `owner` 加 `agent_name`、`assistant_name`、`assistant_avatar_icon`、`assistant_avatar_image`（都可空；NULL = 未设置 / 跟随 agent）。
+- `role_avatars(role PK, avatar_icon, avatar_image, updated_at)`，`CHECK ((avatar_icon IS NULL) <> (avatar_image IS NULL))`：行存在 = 设了头像，清除即删行；`role` 原样区分大小写。
+- `thread_share_identities(share_id PK → thread_shares ON DELETE CASCADE, payload)`：快照分享创建时的 `PublicShareIdentity` JSON；实时分享不写行。
+- Down 依次删 `thread_share_identities`、`role_avatars` 与 `owner` 的四列。
+
+查询：`avatar_identity.sql`（`GetOwnerAgentIdentity` / `SetOwnerAgentIdentity` 多 `agent_name`；`GetOwnerAssistantIdentity`、`SetOwnerAssistantIdentity`；`ListRoleAvatars`、`GetRoleAvatar`、`UpsertRoleAvatar`、`DeleteRoleAvatar`）、`share.sql`（`InsertThreadShareIdentity`、`GetThreadShareIdentity`、`DeleteThreadShareIdentity`；`ListModelSourceEntries` = 主会话文件里 `seq ≤ until_seq` 的 `model_change` 与来源记录，带 payload）。

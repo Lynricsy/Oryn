@@ -247,16 +247,20 @@ type OrbSetupRun struct {
 }
 
 type Owner struct {
-	ID               int64   `json:"id"`
-	DisplayName      string  `json:"displayName"`
-	UserHandle       []byte  `json:"userHandle"`
-	CreatedAt        int64   `json:"createdAt"`
-	GitName          *string `json:"gitName"`
-	GitEmail         *string `json:"gitEmail"`
-	AgentAvatarIcon  *string `json:"agentAvatarIcon"`
-	AgentAvatarImage *string `json:"agentAvatarImage"`
-	UserAvatarIcon   *string `json:"userAvatarIcon"`
-	UserAvatarImage  *string `json:"userAvatarImage"`
+	ID                   int64   `json:"id"`
+	DisplayName          string  `json:"displayName"`
+	UserHandle           []byte  `json:"userHandle"`
+	CreatedAt            int64   `json:"createdAt"`
+	GitName              *string `json:"gitName"`
+	GitEmail             *string `json:"gitEmail"`
+	AgentAvatarIcon      *string `json:"agentAvatarIcon"`
+	AgentAvatarImage     *string `json:"agentAvatarImage"`
+	UserAvatarIcon       *string `json:"userAvatarIcon"`
+	UserAvatarImage      *string `json:"userAvatarImage"`
+	AgentName            *string `json:"agentName"`
+	AssistantName        *string `json:"assistantName"`
+	AssistantAvatarIcon  *string `json:"assistantAvatarIcon"`
+	AssistantAvatarImage *string `json:"assistantAvatarImage"`
 }
 
 type Passkey struct {
@@ -346,6 +350,13 @@ type PushSubscription struct {
 type RecoveryCode struct {
 	CodeHash string `json:"codeHash"`
 	UsedAt   *int64 `json:"usedAt"`
+}
+
+type RoleAvatar struct {
+	Role        string  `json:"role"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+	UpdatedAt   int64   `json:"updatedAt"`
 }
 
 type Schedule struct {
@@ -478,6 +489,11 @@ type ThreadShareEntry struct {
 	Pos           int64  `json:"pos"`
 	Seq           int64  `json:"seq"`
 	PayloadSha256 []byte `json:"payloadSha256"`
+}
+
+type ThreadShareIdentity struct {
+	ShareID string `json:"shareId"`
+	Payload string `json:"payload"`
 }
 
 type ToolCall struct {

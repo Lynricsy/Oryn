@@ -1810,21 +1810,23 @@ paths:
     get:
       tags: [settings]
       operationId: getAgentIdentity
-      summary: agent 头像（助手回合左侧显示）
+      summary: 全局 agent 身份（名字与头像；助手回合头的回落身份）
+      description: 尚未初始化所有者 → `{}`。
       responses:
         '200':
-          description: 当前设置（都省略 = 默认品牌标）
+          description: 当前设置（都省略 = 默认品牌标、不显示名字）
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AvatarIdentity' }
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
         default: { $ref: '#/components/responses/Error' }
     put:
       tags: [settings]
       operationId: putAgentIdentity
-      summary: 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
+      summary: 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
       description: |
+        `name` 去首尾空白后为空等同省略；超过 40 个字符或含控制字符 → 400 `invalid_request`。
         `avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
-        `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+        `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409 `conflict`。
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -1833,13 +1835,91 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AvatarIdentity' }
+            schema: { $ref: '#/components/schemas/AgentIdentity' }
       responses:
         '200':
           description: 写入后的设置
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AvatarIdentity' }
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/settings/assistant-identity:
+    get:
+      tags: [settings]
+      operationId: getAssistantIdentity
+      summary: 全局助手身份（原始值）
+      description: |
+        返回的是原始值：名字、头像各自省略 = 跟随全局 agent 身份，回落由客户端做（名字与头像分别回落）。
+        尚未初始化所有者 → `{}`。
+      responses:
+        '200':
+          description: 当前设置（都省略 = 完全跟随 agent 身份）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putAssistantIdentity
+      summary: 设置全局助手身份（整体替换：省略的字段即清除，即改为跟随 agent 身份）
+      description: 校验同 `putAgentIdentity`（400 `invalid_request`、413 `too_large`、尚未初始化所有者 → 409 `conflict`）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentIdentity' }
+      responses:
+        '200':
+          description: 写入后的设置（原始值）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/settings/role-identities:
+    get:
+      tags: [settings]
+      operationId: listRoleIdentities
+      summary: omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+      description: |
+        role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：`cycleOrder`、
+        `modelTags.<role>.name`、`modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省 `cycleOrder`（`smol / default / slow`）；
+        解析失败时照样 200，带 `configError`，roles 按缺省 `cycleOrder` 给出。不唤醒任何 orb。
+      responses:
+        '200':
+          description: role 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleIdentityList' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putRoleIdentity
+      summary: 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
+      description: |
+        `role` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
+        头像校验同 `putAgentIdentity`（两字段同时给 → 400 `invalid_request`；图片超 128KiB → 413 `too_large`）。
+        给不在当前 `cycleOrder` 里的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoleIdentityInput' }
+      responses:
+        '200':
+          description: 写入后的该 role（组装方式同列表；清除后的遗留项 `inCycle` 为假）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleIdentity' }
         default: { $ref: '#/components/responses/Error' }
 
   /api/v1/settings/user-identity:
@@ -2637,6 +2717,29 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicShare' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/shares/{slug}/identity:
+    parameters:
+      - { $ref: '#/components/parameters/ShareSlugPath' }
+    get:
+      tags: [public]
+      operationId: getPublicShareIdentity
+      summary: 分享页的身份（全局 agent 身份 + 这段对话里用到且设了头像的 role）
+      description: |
+        快照分享返回创建时固化的身份（升级前创建、没有身份记录的快照 → `{roles: []}`）；实时分享每次按当前设置现算。
+        未被用到的 role 不出现。slug 不存在或已撤销 → 404 `not_found`（同 `getPublicShare`）。
+      security: [{}]
+      responses:
+        '200':
+          description: 身份
+          headers:
+            X-Robots-Tag:
+              schema: { type: string, example: 'noindex, nofollow' }
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicShareIdentity' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/public/shares/{slug}/entries:
     parameters:
       - { $ref: '#/components/parameters/ShareSlugPath' }
@@ -3162,6 +3265,8 @@ components:
             `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`schedule_conflict`（409，`ifRev` 与当前 `rev` 不符）、`space_name_taken`（409）、
             `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
             `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
+            M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
+            agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
         message:
           type: string
     HealthResponse:
@@ -3510,7 +3615,7 @@ components:
         identity: { $ref: '#/components/schemas/GitIdentity' }
     AvatarIdentity:
       type: object
-      description: 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认
+      description: 头像（用户头像；也是 role 头像等只含头像字段的通用形状）；两个字段至多出现一个，都省略表示默认
       properties:
         avatarIcon:
           type: string
@@ -3520,6 +3625,58 @@ components:
           type: string
           maxLength: 131072
           description: '`data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略'
+    AgentIdentity:
+      type: object
+      description: agent 侧身份（全局 agent 身份与全局助手共用）。`avatarIcon` 与 `avatarImage` 至多出现一个；字段都省略表示未设置
+      properties:
+        name:
+          type: string
+          maxLength: 40
+          description: 显示名（去首尾空白后 ≤40 个字符，不含控制字符）；空串等同省略
+        avatarIcon:
+          type: string
+          maxLength: 64
+          description: 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
+        avatarImage:
+          type: string
+          maxLength: 131072
+          description: '`data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略'
+    RoleIdentity:
+      type: object
+      required: [role, inCycle]
+      properties:
+        role:
+          type: string
+          description: omp 的 role id（原样，区分大小写）
+        name:
+          type: string
+          description: 'config.yml 里 `modelTags.<role>.name`；没有则省略'
+        inCycle:
+          type: boolean
+          description: 是否在当前 `cycleOrder` 里；false = 只剩头像的遗留项
+        selector:
+          type: string
+          description: 'config.yml 里 `modelRoles.<role>` 的原始值（数组以 ", " 连接）；没有配置则省略。仅供设置页展示，不参与任何判定'
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
+    RoleIdentityList:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          description: 先是 cycleOrder 里的 role（按其顺序），再是遗留项（按 role 升序）
+          items: { $ref: '#/components/schemas/RoleIdentity' }
+        configError:
+          type: string
+          description: config.yml 解析失败的原因；出现时 roles 按缺省 cycleOrder 给出
+    RoleIdentityInput:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, minLength: 1, maxLength: 128 }
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
 
     # ============================================================ provider（客户端视图）
     OrbType:
@@ -5237,6 +5394,10 @@ components:
       properties:
         entries:
           type: array
+          description: |
+            公开过滤后的条目。`custom` 条目只保留 Oryn 的模型选择来源记录（`customType = oryn-model-source`，M9.6），payload 为
+            `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，其中 `role` / `alias`
+            是每个分享各不相同的不透明键（对应 `PublicRoleIdentity.key`）；其它 `custom` 条目的 payload 清空为 `{"type":"custom"}`。
           items: { $ref: '#/components/schemas/Entry' }
         hasMore:
           type: boolean
@@ -5246,6 +5407,33 @@ components:
           format: int64
           description: 范围上界（同 `PublicShare.lastSeq`）
         leafEntryId: { type: string }
+    PublicRoleIdentity:
+      type: object
+      required: [key, role]
+      properties:
+        key:
+          type: string
+          description: 公开条目里来源记录的 `role` / `alias` 字段取值（每个分享各不相同的不透明键）
+        role:
+          type: string
+          description: role id（显示名回落用）
+        name:
+          type: string
+          description: '`modelTags.<role>.name`；没有则省略'
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
+    PublicShareIdentity:
+      type: object
+      required: [roles]
+      description: 分享页的身份。快照分享 = 创建时固化；实时分享 = 按当前设置现算。只含这段对话里用到且设了头像的 role
+      properties:
+        agent:
+          allOf:
+            - $ref: '#/components/schemas/AgentIdentity'
+          description: 全局 agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/PublicRoleIdentity' }
 
     # ============================================================ 通知（M5）
     NotificationKind:

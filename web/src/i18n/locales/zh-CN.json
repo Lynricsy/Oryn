@@ -632,7 +632,8 @@
 		"shares": "公开分享",
 		"desktop": "桌面应用",
 		"browser-profiles": "浏览器 Profile",
-		"automations": "自动化"
+		"automations": "自动化",
+		"identity": "身份与头像"
 	},
 	"devices": {
 		"pairQr": {
@@ -1284,6 +1285,7 @@
 		}
 	},
 	"share": {
+		"identityHint": "分享页会显示 Agent 的名字与头像，以及这段对话用到的角色的名字与头像。快照固定为创建时的样子，实时页跟随当前设置。",
 		"page": {
 			"snapshotBadge": "快照 · {{date}}",
 			"copyLink": "复制链接",
@@ -1737,6 +1739,7 @@
 		"hint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。"
 	},
 	"assistant": {
+		"actions": "对话操作",
 		"title": "全局助手",
 		"untitled": "新对话",
 		"new": "新对话",
@@ -1978,5 +1981,62 @@
 		"fromAssistantUntitled": "来自全局助手 · 由 agent 发送",
 		"report": "线程报告 · 自动",
 		"reportThread": "打开线程「{{name}}」（{{state}}）"
+	},
+	"sections": {
+		"tabTitle": "{{label}}（{{keys}}）"
+	},
+	"assistantPane": {
+		"empty": "还没有对话",
+		"archiveOne": "归档「{{title}}」"
+	},
+	"projectsPane": {
+		"filterThreads": "只看「{{name}}」的线程",
+		"noProjectThreads": "无项目的线程"
+	},
+	"projectsPage": {
+		"viewThreads": "查看线程",
+		"settings": "项目设置",
+		"environment": "环境配置",
+		"noSetupRun": "还没有环境配置记录。",
+		"openThread": "打开线程",
+		"services": "服务",
+		"noServices": "这个项目的 orb 里没有受管服务。",
+		"notFound": "项目不存在或已删除。",
+		"empty": "还没有项目。项目把仓库、环境与脚本绑在一起。"
+	},
+	"more": {
+		"overview": "概览"
+	},
+	"identity": {
+		"agentTitle": "Agent 身份",
+		"agentHint": "对话里助手回合默认显示的名字与头像；跨设备同步。",
+		"name": "名字",
+		"namePlaceholder": "未设置",
+		"assistantTitle": "全局助手",
+		"assistantHint": "显示在底栏的助手标签和助手对话里。名字或头像留空时跟随 Agent 身份。",
+		"followAgent": "跟随 Agent 身份",
+		"tabPreview": "底栏预览",
+		"rolesTitle": "角色头像",
+		"rolesHint": "为 cycleOrder 里的每个 role 设置头像。在对话里切到某个 role 之后，它的回合头显示这个头像、名字和模型；直接在模型列表里选模型不算切到 role，显示 Agent 身份。role 列表来自 Agent 配置里的 config.yml。",
+		"rolesOrphans": "不在 cycleOrder 里",
+		"rolesConfigError": "config.yml 解析失败，暂按默认 cycleOrder 列出：{{error}}",
+		"roleNoModel": "未配置模型",
+		"roleNoAvatar": "未设置头像",
+		"setAvatar": "设置头像",
+		"removeAvatar": "移除头像",
+		"editConfig": "编辑 config.yml"
+	},
+	"avatarCrop": {
+		"title": "裁剪头像",
+		"hint": "拖动取景框选择范围；滚轮、双指或滑杆缩放。键盘：方向键移动，+ / − 缩放，0 重置。",
+		"frame": "取景框",
+		"zoom": "缩放",
+		"previewTile": "方块显示",
+		"previewCircle": "圆形显示",
+		"reset": "重置",
+		"cancel": "取消",
+		"use": "使用",
+		"handle": "调整取景框大小",
+		"outlines": "实线是方块显示的轮廓，虚线是圆形显示的轮廓。"
 	}
 }

@@ -1486,14 +1486,71 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** agent 头像（助手回合左侧显示） */
+        /**
+         * 全局 agent 身份（名字与头像；助手回合头的回落身份）
+         * @description 尚未初始化所有者 → `{}`。
+         */
         get: operations["getAgentIdentity"];
         /**
-         * 设置 agent 头像（整体替换：省略的字段即清除；两者都省略 = 恢复默认）
-         * @description `avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
-         *     `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409。
+         * 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
+         * @description `name` 去首尾空白后为空等同省略；超过 40 个字符或含控制字符 → 400 `invalid_request`。
+         *     `avatarIcon` 与 `avatarImage` 至多给一个（都给 → 400 `invalid_request`）。`avatarImage` 必须是
+         *     `data:image/(png|webp|jpeg);base64,` 开头的 data URL，整串超过 128KiB → 413 `too_large`。尚未初始化所有者 → 409 `conflict`。
          */
         put: operations["putAgentIdentity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/assistant-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 全局助手身份（原始值）
+         * @description 返回的是原始值：名字、头像各自省略 = 跟随全局 agent 身份，回落由客户端做（名字与头像分别回落）。
+         *     尚未初始化所有者 → `{}`。
+         */
+        get: operations["getAssistantIdentity"];
+        /**
+         * 设置全局助手身份（整体替换：省略的字段即清除，即改为跟随 agent 身份）
+         * @description 校验同 `putAgentIdentity`（400 `invalid_request`、413 `too_large`、尚未初始化所有者 → 409 `conflict`）。
+         */
+        put: operations["putAssistantIdentity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/role-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+         * @description role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：`cycleOrder`、
+         *     `modelTags.<role>.name`、`modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省 `cycleOrder`（`smol / default / slow`）；
+         *     解析失败时照样 200，带 `configError`，roles 按缺省 `cycleOrder` 给出。不唤醒任何 orb。
+         */
+        get: operations["listRoleIdentities"];
+        /**
+         * 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
+         * @description `role` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
+         *     头像校验同 `putAgentIdentity`（两字段同时给 → 400 `invalid_request`；图片超 128KiB → 413 `too_large`）。
+         *     给不在当前 `cycleOrder` 里的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
+         */
+        put: operations["putRoleIdentity"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2099,6 +2156,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/shares/{slug}/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 分享页的身份（全局 agent 身份 + 这段对话里用到且设了头像的 role）
+         * @description 快照分享返回创建时固化的身份（升级前创建、没有身份记录的快照 → `{roles: []}`）；实时分享每次按当前设置现算。
+         *     未被用到的 role 不出现。slug 不存在或已撤销 → 404 `not_found`（同 `getPublicShare`）。
+         */
+        get: operations["getPublicShareIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/shares/{slug}/entries": {
         parameters: {
             query?: never;
@@ -2383,6 +2463,8 @@ export interface components {
              *     `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`schedule_conflict`（409，`ifRev` 与当前 `rev` 不符）、`space_name_taken`（409）、
              *     `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
              *     `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
+             *     M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
+             *     agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
              */
             code: string;
             message: string;
@@ -2621,11 +2703,43 @@ export interface components {
         GitIdentitySettings: {
             identity?: components["schemas"]["GitIdentity"];
         };
-        /** @description 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认 */
+        /** @description 头像（用户头像；也是 role 头像等只含头像字段的通用形状）；两个字段至多出现一个，都省略表示默认 */
         AvatarIdentity: {
             /** @description 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略 */
             avatarIcon?: string;
             /** @description `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略 */
+            avatarImage?: string;
+        };
+        /** @description agent 侧身份（全局 agent 身份与全局助手共用）。`avatarIcon` 与 `avatarImage` 至多出现一个；字段都省略表示未设置 */
+        AgentIdentity: {
+            /** @description 显示名（去首尾空白后 ≤40 个字符，不含控制字符）；空串等同省略 */
+            name?: string;
+            /** @description 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略 */
+            avatarIcon?: string;
+            /** @description `data:image/(png|webp|jpeg);base64,...`，前端先缩到 128×128；整串 ≤ 128KiB；空串等同省略 */
+            avatarImage?: string;
+        };
+        RoleIdentity: {
+            /** @description omp 的 role id（原样，区分大小写） */
+            role: string;
+            /** @description config.yml 里 `modelTags.<role>.name`；没有则省略 */
+            name?: string;
+            /** @description 是否在当前 `cycleOrder` 里；false = 只剩头像的遗留项 */
+            inCycle: boolean;
+            /** @description config.yml 里 `modelRoles.<role>` 的原始值（数组以 ", " 连接）；没有配置则省略。仅供设置页展示，不参与任何判定 */
+            selector?: string;
+            avatarIcon?: string;
+            avatarImage?: string;
+        };
+        RoleIdentityList: {
+            /** @description 先是 cycleOrder 里的 role（按其顺序），再是遗留项（按 role 升序） */
+            roles: components["schemas"]["RoleIdentity"][];
+            /** @description config.yml 解析失败的原因；出现时 roles 按缺省 cycleOrder 给出 */
+            configError?: string;
+        };
+        RoleIdentityInput: {
+            role: string;
+            avatarIcon?: string;
             avatarImage?: string;
         };
         OrbType: {
@@ -3791,6 +3905,11 @@ export interface components {
             attachments: components["schemas"]["PublicAttachment"][];
         };
         PublicEntryPage: {
+            /**
+             * @description 公开过滤后的条目。`custom` 条目只保留 Oryn 的模型选择来源记录（`customType = oryn-model-source`，M9.6），payload 为
+             *     `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，其中 `role` / `alias`
+             *     是每个分享各不相同的不透明键（对应 `PublicRoleIdentity.key`）；其它 `custom` 条目的 payload 清空为 `{"type":"custom"}`。
+             */
             entries: components["schemas"]["Entry"][];
             /** @description 为假时已到达范围末尾 */
             hasMore: boolean;
@@ -3800,6 +3919,22 @@ export interface components {
              */
             lastSeq: number;
             leafEntryId?: string;
+        };
+        PublicRoleIdentity: {
+            /** @description 公开条目里来源记录的 `role` / `alias` 字段取值（每个分享各不相同的不透明键） */
+            key: string;
+            /** @description role id（显示名回落用） */
+            role: string;
+            /** @description `modelTags.<role>.name`；没有则省略 */
+            name?: string;
+            avatarIcon?: string;
+            avatarImage?: string;
+        };
+        /** @description 分享页的身份。快照分享 = 创建时固化；实时分享 = 按当前设置现算。只含这段对话里用到且设了头像的 role */
+        PublicShareIdentity: {
+            /** @description 全局 agent 身份；名字与头像都未设置时省略（页面用默认品牌标） */
+            agent?: components["schemas"]["AgentIdentity"];
+            roles: components["schemas"]["PublicRoleIdentity"][];
         };
         /**
          * @description `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
@@ -7311,13 +7446,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 当前设置（都省略 = 默认品牌标） */
+            /** @description 当前设置（都省略 = 默认品牌标、不显示名字） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AvatarIdentity"];
+                    "application/json": components["schemas"]["AgentIdentity"];
                 };
             };
             default: components["responses"]["Error"];
@@ -7332,7 +7467,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AvatarIdentity"];
+                "application/json": components["schemas"]["AgentIdentity"];
             };
         };
         responses: {
@@ -7342,7 +7477,99 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AvatarIdentity"];
+                    "application/json": components["schemas"]["AgentIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAssistantIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（都省略 = 完全跟随 agent 身份） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAssistantIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentIdentity"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置（原始值） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentIdentity"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listRoleIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description role 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleIdentityList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putRoleIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleIdentityInput"];
+            };
+        };
+        responses: {
+            /** @description 写入后的该 role（组装方式同列表；清除后的遗留项 `inCycle` 为假） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleIdentity"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8400,6 +8627,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PublicShare"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPublicShareIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 身份 */
+            200: {
+                headers: {
+                    "X-Robots-Tag"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicShareIdentity"];
                 };
             };
             default: components["responses"]["Error"];

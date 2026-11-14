@@ -9,21 +9,51 @@ import (
 	"context"
 )
 
+const deleteRoleAvatar = `-- name: DeleteRoleAvatar :exec
+DELETE FROM role_avatars WHERE role = ?1
+`
+
+func (q *Queries) DeleteRoleAvatar(ctx context.Context, role string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoleAvatar, role)
+	return err
+}
+
 const getOwnerAgentIdentity = `-- name: GetOwnerAgentIdentity :one
 
-SELECT agent_avatar_icon, agent_avatar_image FROM owner WHERE id = 1
+SELECT agent_name, agent_avatar_icon, agent_avatar_image FROM owner WHERE id = 1
 `
 
 type GetOwnerAgentIdentityRow struct {
+	AgentName        *string `json:"agentName"`
 	AgentAvatarIcon  *string `json:"agentAvatarIcon"`
 	AgentAvatarImage *string `json:"agentAvatarImage"`
 }
 
-// Avatar identities (owner-level): agent avatar on assistant turns, user avatar on user turns.
+// Identities (owner-level): agent name + avatar on assistant turns, assistant identity, user avatar on user turns,
+// and per-role avatars for omp roles.
 func (q *Queries) GetOwnerAgentIdentity(ctx context.Context) (GetOwnerAgentIdentityRow, error) {
 	row := q.db.QueryRowContext(ctx, getOwnerAgentIdentity)
 	var i GetOwnerAgentIdentityRow
-	err := row.Scan(&i.AgentAvatarIcon, &i.AgentAvatarImage)
+	err := row.Scan(&i.AgentName, &i.AgentAvatarIcon, &i.AgentAvatarImage)
+	return i, err
+}
+
+const getOwnerAssistantIdentity = `-- name: GetOwnerAssistantIdentity :one
+
+SELECT assistant_name, assistant_avatar_icon, assistant_avatar_image FROM owner WHERE id = 1
+`
+
+type GetOwnerAssistantIdentityRow struct {
+	AssistantName        *string `json:"assistantName"`
+	AssistantAvatarIcon  *string `json:"assistantAvatarIcon"`
+	AssistantAvatarImage *string `json:"assistantAvatarImage"`
+}
+
+// Global assistant identity: raw values; NULL name / avatar = follow the agent identity (resolved by clients).
+func (q *Queries) GetOwnerAssistantIdentity(ctx context.Context) (GetOwnerAssistantIdentityRow, error) {
+	row := q.db.QueryRowContext(ctx, getOwnerAssistantIdentity)
+	var i GetOwnerAssistantIdentityRow
+	err := row.Scan(&i.AssistantName, &i.AssistantAvatarIcon, &i.AssistantAvatarImage)
 	return i, err
 }
 
@@ -45,17 +75,91 @@ func (q *Queries) GetOwnerUserIdentity(ctx context.Context) (GetOwnerUserIdentit
 	return i, err
 }
 
+const getRoleAvatar = `-- name: GetRoleAvatar :one
+SELECT role, avatar_icon, avatar_image FROM role_avatars WHERE role = ?1
+`
+
+type GetRoleAvatarRow struct {
+	Role        string  `json:"role"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+}
+
+func (q *Queries) GetRoleAvatar(ctx context.Context, role string) (GetRoleAvatarRow, error) {
+	row := q.db.QueryRowContext(ctx, getRoleAvatar, role)
+	var i GetRoleAvatarRow
+	err := row.Scan(&i.Role, &i.AvatarIcon, &i.AvatarImage)
+	return i, err
+}
+
+const listRoleAvatars = `-- name: ListRoleAvatars :many
+
+SELECT role, avatar_icon, avatar_image FROM role_avatars ORDER BY role
+`
+
+type ListRoleAvatarsRow struct {
+	Role        string  `json:"role"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+}
+
+// Role avatars: a row exists iff the role has an avatar; clearing deletes the row.
+func (q *Queries) ListRoleAvatars(ctx context.Context) ([]ListRoleAvatarsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRoleAvatars)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRoleAvatarsRow{}
+	for rows.Next() {
+		var i ListRoleAvatarsRow
+		if err := rows.Scan(&i.Role, &i.AvatarIcon, &i.AvatarImage); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setOwnerAgentIdentity = `-- name: SetOwnerAgentIdentity :execrows
-UPDATE owner SET agent_avatar_icon = ?1, agent_avatar_image = ?2 WHERE id = 1
+UPDATE owner SET agent_name = ?1, agent_avatar_icon = ?2, agent_avatar_image = ?3
+WHERE id = 1
 `
 
 type SetOwnerAgentIdentityParams struct {
+	AgentName        *string `json:"agentName"`
 	AgentAvatarIcon  *string `json:"agentAvatarIcon"`
 	AgentAvatarImage *string `json:"agentAvatarImage"`
 }
 
 func (q *Queries) SetOwnerAgentIdentity(ctx context.Context, arg SetOwnerAgentIdentityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setOwnerAgentIdentity, arg.AgentAvatarIcon, arg.AgentAvatarImage)
+	result, err := q.db.ExecContext(ctx, setOwnerAgentIdentity, arg.AgentName, arg.AgentAvatarIcon, arg.AgentAvatarImage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setOwnerAssistantIdentity = `-- name: SetOwnerAssistantIdentity :execrows
+UPDATE owner SET assistant_name = ?1, assistant_avatar_icon = ?2,
+    assistant_avatar_image = ?3
+WHERE id = 1
+`
+
+type SetOwnerAssistantIdentityParams struct {
+	AssistantName        *string `json:"assistantName"`
+	AssistantAvatarIcon  *string `json:"assistantAvatarIcon"`
+	AssistantAvatarImage *string `json:"assistantAvatarImage"`
+}
+
+func (q *Queries) SetOwnerAssistantIdentity(ctx context.Context, arg SetOwnerAssistantIdentityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setOwnerAssistantIdentity, arg.AssistantName, arg.AssistantAvatarIcon, arg.AssistantAvatarImage)
 	if err != nil {
 		return 0, err
 	}
@@ -77,4 +181,28 @@ func (q *Queries) SetOwnerUserIdentity(ctx context.Context, arg SetOwnerUserIden
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertRoleAvatar = `-- name: UpsertRoleAvatar :exec
+INSERT INTO role_avatars (role, avatar_icon, avatar_image, updated_at)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT (role) DO UPDATE SET avatar_icon = excluded.avatar_icon, avatar_image = excluded.avatar_image,
+    updated_at = excluded.updated_at
+`
+
+type UpsertRoleAvatarParams struct {
+	Role        string  `json:"role"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+	UpdatedAt   int64   `json:"updatedAt"`
+}
+
+func (q *Queries) UpsertRoleAvatar(ctx context.Context, arg UpsertRoleAvatarParams) error {
+	_, err := q.db.ExecContext(ctx, upsertRoleAvatar,
+		arg.Role,
+		arg.AvatarIcon,
+		arg.AvatarImage,
+		arg.UpdatedAt,
+	)
+	return err
 }

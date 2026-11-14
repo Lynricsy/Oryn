@@ -21,6 +21,15 @@ func (q *Queries) CountActiveThreadShares(ctx context.Context, threadID string) 
 	return count, err
 }
 
+const deleteThreadShareIdentity = `-- name: DeleteThreadShareIdentity :exec
+DELETE FROM thread_share_identities WHERE share_id = ?1
+`
+
+func (q *Queries) DeleteThreadShareIdentity(ctx context.Context, shareID string) error {
+	_, err := q.db.ExecContext(ctx, deleteThreadShareIdentity, shareID)
+	return err
+}
+
 const getActivePublishedFileByAttachment = `-- name: GetActivePublishedFileByAttachment :one
 SELECT id, attachment_id, slug, created_at, revoked_at FROM published_files WHERE attachment_id = ?1 AND revoked_at IS NULL
 `
@@ -113,6 +122,17 @@ func (q *Queries) GetThreadShare(ctx context.Context, id string) (ThreadShare, e
 	return i, err
 }
 
+const getThreadShareIdentity = `-- name: GetThreadShareIdentity :one
+SELECT payload FROM thread_share_identities WHERE share_id = ?1
+`
+
+func (q *Queries) GetThreadShareIdentity(ctx context.Context, shareID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getThreadShareIdentity, shareID)
+	var payload string
+	err := row.Scan(&payload)
+	return payload, err
+}
+
 const insertPublishedFile = `-- name: InsertPublishedFile :exec
 INSERT INTO published_files (id, attachment_id, slug, created_at)
 VALUES (?1, ?2, ?3, ?4)
@@ -189,6 +209,21 @@ func (q *Queries) InsertThreadShareEntry(ctx context.Context, arg InsertThreadSh
 		arg.Seq,
 		arg.PayloadSha256,
 	)
+	return err
+}
+
+const insertThreadShareIdentity = `-- name: InsertThreadShareIdentity :exec
+INSERT INTO thread_share_identities (share_id, payload) VALUES (?1, ?2)
+`
+
+type InsertThreadShareIdentityParams struct {
+	ShareID string `json:"shareId"`
+	Payload string `json:"payload"`
+}
+
+// Identity frozen when a snapshot share is created (PublicShareIdentity JSON); live shares have no row.
+func (q *Queries) InsertThreadShareIdentity(ctx context.Context, arg InsertThreadShareIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, insertThreadShareIdentity, arg.ShareID, arg.Payload)
 	return err
 }
 
@@ -567,6 +602,48 @@ func (q *Queries) ListMainEntryLinks(ctx context.Context, arg ListMainEntryLinks
 			&i.ParentID,
 			&i.Type,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listModelSourceEntries = `-- name: ListModelSourceEntries :many
+SELECT seq, type, payload FROM entries
+WHERE thread_id = ?1 AND seq <= ?2 AND instr(file, '/') = 0
+  AND (type = 'model_change' OR (type = 'custom' AND instr(payload, CAST('oryn-model-source' AS BLOB)) > 0))
+ORDER BY seq
+`
+
+type ListModelSourceEntriesParams struct {
+	ThreadID string `json:"threadId"`
+	UntilSeq int64  `json:"untilSeq"`
+}
+
+type ListModelSourceEntriesRow struct {
+	Seq     int64  `json:"seq"`
+	Type    string `json:"type"`
+	Payload []byte `json:"payload"`
+}
+
+// Main-session model_change entries and Oryn model-source records up to until_seq (payload included).
+func (q *Queries) ListModelSourceEntries(ctx context.Context, arg ListModelSourceEntriesParams) ([]ListModelSourceEntriesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listModelSourceEntries, arg.ThreadID, arg.UntilSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListModelSourceEntriesRow{}
+	for rows.Next() {
+		var i ListModelSourceEntriesRow
+		if err := rows.Scan(&i.Seq, &i.Type, &i.Payload); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
