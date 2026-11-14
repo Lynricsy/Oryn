@@ -117,6 +117,10 @@ type CreateParams struct {
 	SnapshotOf string
 	// SnapshotID 是用作镜像的快照。
 	SnapshotID string
+	// BrowserProfileID 非空时新 orb 选用该浏览器 Profile（M8；与 orb 同一事务写入 orb_desktops，进入 ready 之前装载）。
+	BrowserProfileID string
+	// ProfileMode 是选用方式（apigen.BrowserProfileMode：exclusive / readonly / takeover；空 = exclusive）。
+	ProfileMode string
 }
 
 type (
@@ -160,6 +164,8 @@ type Service struct {
 	streams   map[string]StreamFunc
 	subs      []func(Event)
 	quiescent QuiesceFunc
+	// deskHooks 是 Profile 生命周期钩子（M8，见 desktop.go）。
+	deskHooks DesktopHooks
 
 	bg sync.WaitGroup
 
@@ -605,6 +611,11 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 		if err := s.spawnIn(t); err != nil {
 			return err
 		}
+		if p.BrowserProfileID != "" {
+			if err := bindProfileIn(ctx, q, orbID, p.BrowserProfileID, p.ProfileMode, now); err != nil {
+				return err
+			}
+		}
 		orb, err := q.GetOrb(ctx, orbID)
 		ch = &change{orb: orb, from: "", to: StateRequested, seq: seq, detail: string(raw), signal: true}
 		return err
@@ -697,6 +708,8 @@ func (s *Service) Pause(ctx context.Context, orbID, mode string) error {
 	case mode == PauseFreeze && orb.State == StateFrozen, mode == PauseStop && orb.State == StateStopped:
 		return nil
 	case mode == PauseFreeze && orb.State == StateReady:
+		// 冻结前的 Profile 活体保存必须先于 freezeTx（它与 pause 任务同一事务提交）。
+		s.preFreeze(ctx, orbID)
 		ch, err := s.freezeTx(ctx, orbID, "manual", nil)
 		s.publish(ch)
 		return err
@@ -753,6 +766,9 @@ func (s *Service) shutdownOrbd(ctx context.Context, orbID string, wait time.Dura
 	l := s.waitLink(ctx, orbID, wait)
 	if l == nil {
 		return
+	}
+	if h := s.desktopHooksFor(l); h != nil {
+		h.BeforeShutdown(ctx, orbID)
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(s.cfg.ShutdownGrace+10)*time.Second)
 	defer cancel()
@@ -954,6 +970,9 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 			s.closeEgress(orbID)
 			s.dropSetupLogs(orbID)
 			s.dropPortalState(ctx, orbID)
+			if err := s.st.Q.DeleteOrbDesktop(ctx, orbID); err != nil {
+				slog.Warn("清理 orb 桌面镜像失败", "orb", orbID, "err", err)
+			}
 			if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
 				s.releaseSnapshot(ctx, orb.ProviderID, orbID, *orb.SnapshotOf)
 			}
@@ -1101,6 +1120,10 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			}
 			if !idle(orb) {
 				continue
+			}
+			if state == StateReady {
+				// 冻结前的 Profile 活体保存（只在静止且有东西可存时）；之后 freezeTx 仍在事务内复核空闲条件。
+				s.preFreeze(ctx, orb.ID)
 			}
 			var ch *change
 			var cerr error

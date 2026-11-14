@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -43,11 +44,24 @@ const (
 	OrbEventSetup = "setup"
 	// OrbEventServices 表示 orb 的服务镜像、portal 或公开分享变化（只需推送 orb 更新，与 orbs.EventServices 同值）。
 	OrbEventServices = "services"
+	// OrbEventDesktop 表示 orb 的桌面镜像或浏览器 Profile 绑定变化（只需推送 orb 更新，与 orbs.EventDesktop 同值）。
+	OrbEventDesktop = "desktop"
 )
 
 // OrbCreate 是新建 orb 的参数（对应 orbs.CreateParams）；空 Provider / Type 由 orbs 按 C3 规则取默认。
+// 字段须与 orbs.CreateParams 逐一相同（适配器直接做类型转换）。
 type OrbCreate struct {
 	Provider, Type, ProjectID, SnapshotOf, SnapshotID string
+	// BrowserProfileID 非空时新 orb 选用该浏览器 Profile（M8）；ProfileMode 为 apigen.BrowserProfileMode（空 = exclusive）。
+	BrowserProfileID string
+	ProfileMode      string
+}
+
+// Profiles 决定新 orb 选用的浏览器 Profile（internal/desktop.Service 实现）。
+type Profiles interface {
+	// ResolveForNewOrb：explicit == nil → 项目默认；空串 → 不用；否则须存在。以 exclusive 选用正被独占持有的 Profile
+	// 返回带 ProfileInUseConflict 的错误（Coded() = profile_in_use）。
+	ResolveForNewOrb(ctx context.Context, explicit *string, projectID string, mode apigen.BrowserProfileMode) (string, error)
 }
 
 // OrbEvent 是 orb 状态或 link 变化（对应 orbs.Event，字段须与之逐一相同）。

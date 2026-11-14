@@ -93,6 +93,8 @@ type Service struct {
 	obs  atomic.Pointer[observerBox]
 	// attach 由 SetAttachments 在服务对外可用之前设置；nil = 不支持附件。
 	attach Attachments
+	// profiles 是浏览器 Profile 服务（M8；nil = 不支持）。
+	profiles Profiles
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -200,6 +202,9 @@ func (s *Service) SetSink(k Sink) { s.sink.Store(&sinkBox{k}) }
 // SetAttachments 设置附件服务；须在 orb link 接入与 API 对外服务之前调用。
 func (s *Service) SetAttachments(a Attachments) { s.attach = a }
 
+// SetProfiles 设置浏览器 Profile 服务（M8）；须在 API 对外服务之前调用。未设置时建线程不能指定 Profile。
+func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
+
 func (s *Service) out() Sink { return s.sink.Load().Sink }
 
 // Close 停止后台任务。
@@ -288,6 +293,8 @@ var ErrNotFound = &Error{Code: "not_found", Message: "thread not found"}
 type Error struct {
 	Code    string
 	Message string
+	// Body 非 nil 时 API 以它作为响应体（替代 {code, message}），如 profile_in_use 的 ProfileInUseConflict。
+	Body any
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -616,7 +623,7 @@ func (e *eventQueue) run(ctx context.Context, fn func(context.Context, OrbEvent)
 }
 
 func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
-	if ev.Kind == OrbEventSetup || ev.Kind == OrbEventServices {
+	if ev.Kind == OrbEventSetup || ev.Kind == OrbEventServices || ev.Kind == OrbEventDesktop {
 		// 只有运行记录 / 服务镜像变化：线程状态不受影响。事件里的 orb 行可能早于随后的状态变化，重读一次再推送，
 		// 也不覆盖状态缓存。
 		if o, err := s.st.Q.GetOrb(ctx, ev.OrbID); err == nil {

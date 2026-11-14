@@ -13,6 +13,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/desktop"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -44,9 +45,11 @@ type Server struct {
 	Orbs        *orbs.Service
 	Threads     *threads.Service
 	Attachments *attachments.Service
-	Hub         *realtime.Hub
-	Notify      *notify.Service
-	Share       *share.Service
+	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
+	Desktop *desktop.Service
+	Hub     *realtime.Hub
+	Notify  *notify.Service
+	Share   *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
@@ -114,6 +117,13 @@ func (s *Server) init(ctx context.Context) error {
 		return err
 	}
 	s.Threads.SetAttachments(s.Attachments)
+	// 浏览器 Profile（M8）：在 orb 服务接受 link 之前注册生命周期钩子
+	if s.Desktop, err = desktop.New(desktop.Config{DataDir: cfg.DataDir, Box: box, Valid: s.Auth}, s.Store, s.Orbs, s.Tickets); err != nil {
+		return err
+	}
+	s.closers = append(s.closers, s.Desktop.Close)
+	s.Threads.SetProfiles(s.Desktop)
+	s.Auth.Subscribe(s.Desktop.Revoke)
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
@@ -137,6 +147,7 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
+	mounts[desktop.WSPath] = s.Desktop.WSHandler()
 	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
@@ -162,6 +173,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}
 	s.API.Shares = &api.ShareDeps{Service: s.Share}
 	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
+	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

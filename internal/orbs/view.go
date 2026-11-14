@@ -66,6 +66,9 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 			return apigen.Orb{}, err
 		}
 		v.Services, v.Portals = services, portals
+		if v.Desktop, err = DesktopView(ctx, q, o.ID); err != nil {
+			return apigen.Orb{}, err
+		}
 	}
 	return v, nil
 }

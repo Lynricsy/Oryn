@@ -19,6 +19,8 @@ var threadErrStatus = map[string]int{
 	"orb_create_failed":    http.StatusBadRequest,
 	"no_orb":               http.StatusConflict,
 	"orb_unavailable":      http.StatusConflict,
+	"profile_not_found":    http.StatusNotFound,
+	"profile_in_use":       http.StatusConflict,
 	"queue_full":           http.StatusTooManyRequests,
 	"agent_error":          http.StatusBadGateway,
 	"timeout":              http.StatusGatewayTimeout,
@@ -30,6 +32,10 @@ func writeThreadErr(w http.ResponseWriter, err error) {
 		status, ok := threadErrStatus[te.Code]
 		if !ok {
 			status = http.StatusBadRequest
+		}
+		if te.Body != nil {
+			WriteJSON(w, status, te.Body)
+			return
 		}
 		WriteError(w, status, te.Code, te.Message)
 		return
@@ -80,7 +86,17 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 	if !decodeThreadBody(w, r, &req) {
 		return
 	}
-	p := threads.CreateParams{Prompt: req.Prompt, Images: req.Images, Model: req.Model, Labels: req.Labels, Attachments: req.Attachments}
+	p := threads.CreateParams{
+		Prompt: req.Prompt, Images: req.Images, Model: req.Model, Labels: req.Labels, Attachments: req.Attachments,
+		BrowserProfileID: req.BrowserProfileID,
+	}
+	if req.ProfileMode != nil {
+		if !req.ProfileMode.Valid() {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "profileMode 须为 exclusive / readonly / takeover")
+			return
+		}
+		p.ProfileMode = *req.ProfileMode
+	}
 	if req.ProjectID != nil {
 		p.ProjectID = *req.ProjectID
 	}

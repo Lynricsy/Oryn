@@ -29,6 +29,9 @@ type threadNewOptions struct {
 	project, provider, orbType, orb, title string
 	labels                                 []string
 	noProject, json                        bool
+	// browserProfile 是浏览器 Profile 的名字或 id（none = 不用；空 = 项目默认）；readonly / takeover 为选用方式。
+	browserProfile     string
+	readonly, takeover bool
 }
 
 var threadNewOpts threadNewOptions
@@ -62,6 +65,12 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 	if o.orb != "" && (o.provider != "" || o.orbType != "") {
 		return apigen.Thread{}, errors.New("--orb 与 --provider / --type 不能同时使用")
 	}
+	if o.readonly && o.takeover {
+		return apigen.Thread{}, errors.New("--readonly 与 --takeover 不能同时使用")
+	}
+	if o.orb != "" && (o.browserProfile != "" || o.readonly || o.takeover) {
+		return apigen.Thread{}, errors.New("--browser-profile / --readonly / --takeover 只对新建 orb 有效，不能与 --orb 同时使用")
+	}
 	req := apigen.CreateThreadRequest{Prompt: prompt, Labels: o.labels}
 	if o.title != "" {
 		req.Title = &o.title
@@ -89,8 +98,25 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 		}
 		req.ProjectID = &id
 	}
+	if o.browserProfile != "" {
+		id, err := resolveBrowserProfile(ctx, c, o.browserProfile)
+		if err != nil {
+			return apigen.Thread{}, err
+		}
+		req.BrowserProfileID = &id
+	}
+	switch {
+	case o.readonly:
+		req.ProfileMode = new(apigen.BrowserProfileModeReadonly)
+	case o.takeover:
+		req.ProfileMode = new(apigen.BrowserProfileModeTakeover)
+	}
 	var env apigen.ThreadEnvelope
 	if err := c.do(ctx, http.MethodPost, "/api/v1/threads", req, &env); err != nil {
+		var ae *apiError
+		if errors.As(err, &ae) && ae.Code == "profile_in_use" {
+			return apigen.Thread{}, fmt.Errorf("%w\n加 --readonly 以只读副本使用（不回写），或加 --takeover 接管（对方降级为只读）", err)
+		}
 		return apigen.Thread{}, err
 	}
 	return env.Thread, nil
@@ -108,6 +134,23 @@ func resolveProject(ctx context.Context, c *apiClient, name string) (string, err
 		}
 	}
 	return "", fmt.Errorf("项目 %q 不存在", name)
+}
+
+// resolveBrowserProfile 把浏览器 Profile 名（或 id）解析为 id；none 表示不用 Profile（空串）。
+func resolveBrowserProfile(ctx context.Context, c *apiClient, name string) (string, error) {
+	if name == "none" {
+		return "", nil
+	}
+	var list apigen.BrowserProfileList
+	if err := c.do(ctx, http.MethodGet, "/api/v1/browser-profiles", nil, &list); err != nil {
+		return "", err
+	}
+	for _, p := range list.Profiles {
+		if p.Name == name || p.ID == name {
+			return p.ID, nil
+		}
+	}
+	return "", fmt.Errorf("浏览器 Profile %q 不存在", name)
 }
 
 // threadListOptions 对应 `GET threads` 的查询参数。
@@ -350,6 +393,9 @@ func init() {
 	f.StringVar(&threadNewOpts.title, "title", "", "线程标题")
 	f.StringArrayVar(&threadNewOpts.labels, "label", nil, "标签（可重复）")
 	f.BoolVar(&threadNewOpts.json, "json", false, "以 JSON 输出线程")
+	f.StringVar(&threadNewOpts.browserProfile, "browser-profile", "", "新 orb 选用的浏览器 Profile（名字或 id；none = 不用；缺省 = 项目默认）")
+	f.BoolVar(&threadNewOpts.readonly, "readonly", false, "以只读副本使用浏览器 Profile（不取租约、不回写）")
+	f.BoolVar(&threadNewOpts.takeover, "takeover", false, "接管正被别的 orb 使用的浏览器 Profile（对方降级为只读）")
 	lf := threadListCmd.Flags()
 	lf.BoolVar(&threadListOpts.json, "json", false, "以 JSON 输出")
 	lf.BoolVar(&threadListOpts.archived, "archived", false, "只列已归档线程")

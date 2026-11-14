@@ -31,6 +31,11 @@ type CreateParams struct {
 	Labels         []string
 	// Attachments 是已上传附件的 id：建线程时绑定，首条提示词在 orb 与 agent 就绪、附件投递之后才下发。
 	Attachments []string
+	// BrowserProfileID 是新 orb 选用的浏览器 Profile（M8）：nil = 项目默认；空串 = 不用；否则为 bpf_…。
+	// 只对新建 orb 有效；挂到已有 orb 时给非空值 → invalid。
+	BrowserProfileID *string
+	// ProfileMode 是选用方式（空 = exclusive）。
+	ProfileMode apigen.BrowserProfileMode
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
@@ -58,6 +63,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return apigen.Thread{}, err
 		}
 	}
+	explicitProfile := p.BrowserProfileID != nil && *p.BrowserProfileID != ""
+	if p.OrbID != "" && explicitProfile {
+		return apigen.Thread{}, errf("invalid", "browserProfileId cannot be set when attaching to an existing orb")
+	}
 	var orb db.Orb
 	if p.OrbID != "" {
 		o, err := s.st.Q.GetOrb(ctx, p.OrbID)
@@ -69,7 +78,20 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		}
 		orb = o
 	} else {
-		o, err := s.orbs.Create(ctx, OrbCreate{Provider: p.Provider, Type: p.Type, ProjectID: p.ProjectID})
+		var profileID string
+		switch {
+		case s.profiles != nil:
+			id, err := s.profiles.ResolveForNewOrb(ctx, p.BrowserProfileID, p.ProjectID, p.ProfileMode)
+			if err != nil {
+				return apigen.Thread{}, asThreadErr(err)
+			}
+			profileID = id
+		case explicitProfile:
+			return apigen.Thread{}, errf("invalid", "browser profiles are not supported")
+		}
+		o, err := s.orbs.Create(ctx, OrbCreate{
+			Provider: p.Provider, Type: p.Type, ProjectID: p.ProjectID, BrowserProfileID: profileID, ProfileMode: string(p.ProfileMode),
+		})
 		if err != nil {
 			return apigen.Thread{}, errf("orb_create_failed", err.Error())
 		}

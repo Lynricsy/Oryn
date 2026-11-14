@@ -916,12 +916,20 @@ func appendMessage(frame []byte, text string) ([]byte, error) {
 // codedError 是带业务错误码的错误（internal/attachments.Error 实现）。
 type codedError interface{ Coded() (code, message string) }
 
-// asThreadErr 把附件服务的业务错误转成本包的 *Error（API 据错误码映射状态）。
+// bodiedError 是带专用响应体的业务错误（internal/desktop.Error 实现）。
+type bodiedError interface{ ErrorBody() any }
+
+// asThreadErr 把附件服务、浏览器 Profile 服务的业务错误转成本包的 *Error（API 据错误码映射状态）。
 func asThreadErr(err error) error {
 	var c codedError
 	if errors.As(err, &c) {
 		code, msg := c.Coded()
-		return errf(code, msg)
+		e := errf(code, msg)
+		var b bodiedError
+		if errors.As(err, &b) {
+			e.Body = b.ErrorBody()
+		}
+		return e
 	}
 	return err
 }

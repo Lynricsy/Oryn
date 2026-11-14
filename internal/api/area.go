@@ -14,6 +14,8 @@ type area struct {
 	// Shares 是线程公开分享与文件发布（shares.go）；Notify 是通知与渠道（notifications.go）。
 	Shares *ShareDeps
 	Notify *NotifyDeps
+	// Desktop 是 M8 桌面与浏览器 Profile（desktop.go）；nil 时这些接口回 501。
+	Desktop *DesktopDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

@@ -275,6 +275,8 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 		s.onSetupResult(ctx, l.orbID, params)
 	case string(apigen.MethodServicesState):
 		s.onServicesState(ctx, l.orbID, params)
+	case string(apigen.MethodDesktopState):
+		s.onDesktopState(ctx, l.orbID, params)
 	}
 	s.hmu.RLock()
 	fn := s.notifies[method]
@@ -284,7 +286,7 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 		fn(ctx, l.orbID, params)
 	case method == string(apigen.MethodHello), method == string(apigen.MethodMetricsSample),
 		method == string(apigen.MethodSetupLog), method == string(apigen.MethodSetupResult),
-		method == string(apigen.MethodServicesState):
+		method == string(apigen.MethodServicesState), method == string(apigen.MethodDesktopState):
 	default:
 		slog.Debug("未处理的 ctl 通知", "orb", l.orbID, "method", method)
 	}
@@ -392,6 +394,18 @@ func (s *Service) runPhase(l *orbLink) {
 			detail["setupError"] = *res.SetupError
 		}
 		slog.Warn("orb setup 脚本失败（继续）", "orb", l.orbID, "phase", phase, "err", detail["setupError"])
+	}
+	if h := s.desktopHooksFor(l); h != nil {
+		// Profile 必须在 agent 启动（ready）之前定下来。期间 link 断开则 Profile 可能没定好：
+		// 与 setup 期间断开同样退回 connecting，由新 link 重跑本阶段（setup 有完成标记，不会重复执行脚本）。
+		h.BeforeReady(ctx, l.orbID)
+		if l.ctl.Err() != nil {
+			slog.Info("Profile 同步期间 link 断开", "orb", l.orbID, "phase", phase)
+			if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
+				s.advance(l.orbID)
+			}
+			return
+		}
 	}
 	_, _, _ = s.transition(ctx, l.orbID, phase, StateReady, detail)
 }

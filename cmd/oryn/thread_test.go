@@ -182,3 +182,43 @@ func TestNormalizeRepoURL(t *testing.T) {
 		assert.Equal(t, want, got, s)
 	}
 }
+
+func TestThreadNewBrowserProfile(t *testing.T) {
+	f := newFakeAPI(t)
+	f.json("POST /api/v1/threads", 201, apigen.ThreadEnvelope{Thread: sampleThread("T-1")})
+	f.json("GET /api/v1/browser-profiles", 200, apigen.BrowserProfileList{Profiles: []apigen.BrowserProfile{{ID: "bpf_A", Name: "工作"}}})
+	ctx := context.Background()
+	lastBody := func() string {
+		reqs := f.requests()
+		return string(reqs[len(reqs)-1].Body)
+	}
+
+	_, err := threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "工作"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"prompt":"hi","executor":{"kind":"new_orb"},"browserProfileId":"bpf_A"}`, lastBody())
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "bpf_A", readonly: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"prompt":"hi","executor":{"kind":"new_orb"},"browserProfileId":"bpf_A","profileMode":"readonly"}`, lastBody())
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "工作", takeover: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"prompt":"hi","executor":{"kind":"new_orb"},"browserProfileId":"bpf_A","profileMode":"takeover"}`, lastBody())
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "none"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"prompt":"hi","executor":{"kind":"new_orb"},"browserProfileId":""}`, lastBody())
+
+	n := len(f.requests())
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "nope"})
+	assert.ErrorContains(t, err, "不存在")
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "工作", readonly: true, takeover: true})
+	assert.ErrorContains(t, err, "不能同时使用")
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{orb: "orb-x", browserProfile: "工作"})
+	assert.ErrorContains(t, err, "--orb")
+	assert.Len(t, f.requests(), n+1, "只有解析名字发了请求")
+
+	// 409 profile_in_use：提示 --readonly / --takeover
+	f.json("POST /api/v1/threads", 409, apigen.ProfileInUseConflict{Code: apigen.ProfileInUseConflictCodeProfileInUse, Message: "Profile「工作」正在线程「T」里使用"})
+	_, err = threadNew(ctx, f.client(), "hi", threadNewOptions{browserProfile: "工作"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "正在线程「T」里使用")
+	assert.Contains(t, err.Error(), "--takeover")
+}

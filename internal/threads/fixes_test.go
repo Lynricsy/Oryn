@@ -69,6 +69,9 @@ type stubOrbs struct {
 	nopOrbs
 	st    *store.Store
 	wakes chan string
+
+	mu      sync.Mutex
+	creates []OrbCreate
 }
 
 func (o *stubOrbs) Wake(_ context.Context, id string) error {
@@ -76,7 +79,10 @@ func (o *stubOrbs) Wake(_ context.Context, id string) error {
 	return nil
 }
 
-func (o *stubOrbs) Create(ctx context.Context, _ OrbCreate) (db.Orb, error) {
+func (o *stubOrbs) Create(ctx context.Context, p OrbCreate) (db.Orb, error) {
+	o.mu.Lock()
+	o.creates = append(o.creates, p)
+	o.mu.Unlock()
 	id := mkOrbRow(ctx, o.st, "requested")
 	return o.st.Q.GetOrb(ctx, id)
 }

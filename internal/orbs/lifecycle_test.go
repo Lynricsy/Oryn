@@ -44,6 +44,8 @@ type fakeOrbd struct {
 	features []string
 	fs       http.Handler
 	portal   func(st *link.Stream)
+	// desk 非 nil 时服务 desk 流（M8）。
+	desk func(st *link.Stream)
 	// onCall 非 nil 时在记下每个 ctl 请求之后调用。
 	onCall func(method string)
 
@@ -78,7 +80,7 @@ func (o *fakeOrbd) connect() error {
 		switch method {
 		case "setup.run", "resume.run":
 			return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: method == "setup.run", DurationMs: 3}, nil
-		case "shutdown", "portal.configure":
+		case "shutdown", "portal.configure", "profile.mode":
 			return apigen.LinkCtlOkResult{Ok: true}, nil
 		}
 		return nil, link.ErrMethodNotFound
@@ -86,7 +88,7 @@ func (o *fakeOrbd) connect() error {
 	o.mu.Lock()
 	o.sess, o.ctl = sess, ctl
 	o.mu.Unlock()
-	if o.fs != nil || o.portal != nil {
+	if o.fs != nil || o.portal != nil || o.desk != nil {
 		l := link.NewStreamListener("fs")
 		fsH := o.fs
 		if fsH == nil {
@@ -109,6 +111,8 @@ func (o *fakeOrbd) connect() error {
 					l.Push(st)
 				case st.Header.T == link.StreamPortal && o.portal != nil:
 					go o.portal(st)
+				case st.Header.T == link.StreamDesk && o.desk != nil:
+					go o.desk(st)
 				default:
 					_ = st.Close()
 				}
@@ -163,6 +167,7 @@ type fakeDriver struct {
 	features []string
 	fs       http.Handler
 	portal   func(st *link.Stream)
+	desk     func(st *link.Stream)
 	onCall   func(method string)
 }
 
@@ -186,12 +191,12 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
-	features, fs, portal, onCall := d.features, d.fs, d.portal, d.onCall
+	features, fs, portal, desk, onCall := d.features, d.fs, d.portal, d.desk, d.onCall
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, onCall: onCall}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()
