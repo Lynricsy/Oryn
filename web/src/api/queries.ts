@@ -6,7 +6,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { fetchHealth } from "../health";
-import { indexStore } from "../state/stores";
+import { acceptOrbReply, orbPushMark } from "../state/stores";
 import { api, type Orb, rawFetch, type Schemas, unwrap } from "./client";
 
 export const qk = {
@@ -340,8 +340,14 @@ export function useDeleteBrowserProfile() {
 	});
 }
 
-function acceptOrb(orb: Orb): Orb {
-	indexStore.getState().upsertOrb(orb);
+/** 发 orb 变更：应答里的 orb 只在请求在途期间没有新的 WS 推送时写入索引（见 `acceptOrbReply`）。 */
+async function mutateOrb(
+	orbId: string,
+	send: () => Promise<Orb>,
+): Promise<Orb> {
+	const mark = orbPushMark(orbId);
+	const orb = await send();
+	acceptOrbReply(orb, mark);
 	return orb;
 }
 
@@ -349,9 +355,9 @@ function acceptOrb(orb: Orb): Orb {
 export function useSetOrbDesktopProfile(orbId: string) {
 	const invalidate = useProfilesInvalidate();
 	return useMutation({
-		mutationFn: async (body: Schemas["OrbDesktopProfilePut"]) =>
-			acceptOrb(
-				await unwrap(
+		mutationFn: (body: Schemas["OrbDesktopProfilePut"]) =>
+			mutateOrb(orbId, () =>
+				unwrap(
 					api.PUT("/api/v1/orbs/{id}/desktop/profile", {
 						params: { path: { id: orbId } },
 						body,
@@ -379,10 +385,10 @@ export function useSaveOrbDesktopProfile(orbId: string) {
 /** 启动（`true`）/ 关闭（`false`）桌面上的浏览器。 */
 export function useOrbBrowser(orbId: string) {
 	return useMutation({
-		mutationFn: async (run: boolean) => {
+		mutationFn: (run: boolean) => {
 			const params = { params: { path: { id: orbId } } };
-			return acceptOrb(
-				await unwrap(
+			return mutateOrb(orbId, () =>
+				unwrap(
 					run
 						? api.POST("/api/v1/orbs/{id}/desktop/browser/start", params)
 						: api.POST("/api/v1/orbs/{id}/desktop/browser/stop", params),

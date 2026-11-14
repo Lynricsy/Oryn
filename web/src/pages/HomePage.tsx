@@ -313,6 +313,11 @@ export function HomePage(): ReactNode {
 	const [conflict, setConflict] = useState<ProfileConflict | null>(null);
 	const [conflictBusy, setConflictBusy] = useState<ConflictChoice | null>(null);
 	const [conflictError, setConflictError] = useState<unknown>(null);
+	// 撞上冲突的那次请求（冲突重试只在它上面加使用方式，不再按当前胶囊重新构造）
+	const conflictReq = useRef<{
+		body: Schemas["CreateThreadRequest"];
+		text: string;
+	} | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const trayRef = useRef<HTMLDivElement>(null);
 	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
@@ -489,23 +494,17 @@ export function HomePage(): ReactNode {
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
 			: "";
 
-	/** 发送；`mode` = 冲突对话框里选的使用方式（只读 / 接管），带上后重发同一请求。 */
-	const submit = async (mode?: ConflictChoice) => {
+	/** 发送当前输入；Profile 被占用时记下这次请求并弹冲突对话框。 */
+	const submit = async () => {
 		const text = prompt.trim();
 		if (!text && att.attachmentIds.length === 0) return;
 		if (att.uploading) {
 			setError(t("attachments.waitUpload"));
 			return;
 		}
-		setBusy(true);
-		setError(null);
-		if (mode) {
-			setConflictBusy(mode);
-			setConflictError(null);
-		}
-		try {
-			const slash = model.indexOf("/");
-			const body: Schemas["CreateThreadRequest"] = {
+		const slash = model.indexOf("/");
+		await send(
+			{
 				prompt: text,
 				executor,
 				...(projectId ? { projectId } : {}),
@@ -525,10 +524,41 @@ export function HomePage(): ReactNode {
 				...(executor.kind === "new_orb" && profilePick !== null
 					? { browserProfileId: profilePick }
 					: {}),
-				...(executor.kind === "new_orb" && mode ? { profileMode: mode } : {}),
-			};
+			},
+			text,
+		);
+	};
+
+	/**
+	 * 冲突对话框里选了使用方式：重发撞上冲突的那次请求，并钉住对话框展示的 Profile。
+	 * 「跟随项目默认」的请求不带 id，若照旧重发，服务端会按当时的项目默认重新解析；
+	 * 期间默认被另一台设备改掉的话，接管的就成了用户没看到的另一个 Profile。
+	 */
+	const resolveConflict = (mode: ConflictChoice) => {
+		const req = conflictReq.current;
+		if (!conflict || !req) return;
+		void send(
+			{ ...req.body, browserProfileId: conflict.profileId, profileMode: mode },
+			req.text,
+			mode,
+		);
+	};
+
+	const send = async (
+		body: Schemas["CreateThreadRequest"],
+		text: string,
+		mode?: ConflictChoice,
+	) => {
+		setBusy(true);
+		setError(null);
+		if (mode) {
+			setConflictBusy(mode);
+			setConflictError(null);
+		}
+		try {
 			const thread = await createThread(body);
 			setConflict(null);
+			conflictReq.current = null;
 			setPendingPrompt(thread.id, text);
 			// 触屏：发送即收起软键盘，线程页也不再抢焦点（否则键盘会先收后弹闪一下）
 			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
@@ -541,8 +571,10 @@ export function HomePage(): ReactNode {
 		} catch (e) {
 			const c = profileConflictOf(e);
 			if (mode) setConflictError(e);
-			else if (c) setConflict(c);
-			else setError(e instanceof Error ? e.message : String(e));
+			else if (c) {
+				conflictReq.current = { body, text };
+				setConflict(c);
+			} else setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 			setConflictBusy(null);
@@ -943,7 +975,7 @@ export function HomePage(): ReactNode {
 				conflict={conflict}
 				busy={conflictBusy}
 				error={conflictError}
-				onChoose={(mode) => void submit(mode)}
+				onChoose={resolveConflict}
 				onClose={() => {
 					if (!conflictBusy) setConflict(null);
 				}}

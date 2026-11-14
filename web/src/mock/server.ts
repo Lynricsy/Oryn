@@ -1034,7 +1034,12 @@ export class MockServer {
 					{ code: "attachment_not_found", message: "attachment" },
 					404,
 				);
-			const desktop = this.desktop.forNewOrb(b);
+			// 挂到已有 orb 时沿用那台 orb 的 Profile，不解析项目默认（与 internal/threads 一致），不做冲突预检；
+			// mock 照旧另起一台 orb 演示，给它一张不带 Profile 的桌面
+			const existing = (b.executor as Json | undefined)?.kind === "orb";
+			const desktop = this.desktop.forNewOrb(
+				existing ? { browserProfileId: "" } : b,
+			);
 			if (desktop instanceof Response) return desktop;
 			return json({ thread: this.createThread(b, desktop) }, 201);
 		}

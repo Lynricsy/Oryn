@@ -1582,6 +1582,8 @@
 		"toWatch": "Switch to view only (no keyboard or mouse)",
 		"toControl": "Switch to control",
 		"watching": "View only",
+		"stage": "Remote desktop",
+		"stageHint": "Press Enter to control the desktop; press Ctrl+Alt on its own to release the keyboard",
 		"saved": "Saved — now at revision {{revision}}",
 		"status": {
 			"connecting": "Connecting",
@@ -1625,9 +1627,8 @@
 			"send": "Send to desktop",
 			"pasteHint": "After sending, press Ctrl+V on the desktop.",
 			"sent": "Sent. Press Ctrl+V on the desktop to paste.",
-			"autoSync": "Sync clipboard automatically",
-			"autoSyncHint": "Copying on the desktop updates your clipboard, and your clipboard is sent when you return to the desktop. Needs browser permission.",
-			"denied": "The browser denied clipboard access. Use manual send above instead."
+			"copyLocal": "Copy to this device",
+			"manualNote": "The clipboard never syncs on its own. With the desktop focused, Ctrl/⌘+V pastes your clipboard into it; text copied on the desktop reaches your clipboard only when you click “Copy to this device”."
 		},
 		"menu": {
 			"label": "Browser profile: {{name}}",

@@ -1582,6 +1582,8 @@
 		"toWatch": "切换为仅观看（不发送键鼠）",
 		"toControl": "切换为可控制",
 		"watching": "仅观看",
+		"stage": "远端桌面",
+		"stageHint": "按 Enter 开始操作桌面；操作中单独按一下 Ctrl+Alt 交还键盘",
 		"saved": "已保存，当前是第 {{revision}} 版",
 		"status": {
 			"connecting": "正在连接",
@@ -1625,9 +1627,8 @@
 			"send": "发送到桌面",
 			"pasteHint": "发送后在桌面里按 Ctrl+V 粘贴。",
 			"sent": "已发送，在桌面里按 Ctrl+V 粘贴。",
-			"autoSync": "自动同步剪贴板",
-			"autoSyncHint": "在桌面里复制会写入本机剪贴板；回到桌面时把本机剪贴板发过去。需要浏览器授权。",
-			"denied": "浏览器没有授权读取剪贴板，请改用上面的手动发送。"
+			"copyLocal": "复制到本机",
+			"manualNote": "剪贴板不会自动同步。焦点在桌面上时按 Ctrl/⌘+V，会把本机剪贴板粘贴进去；桌面里复制的文字，点「复制到本机」才会写入本机剪贴板。"
 		},
 		"menu": {
 			"label": "浏览器 Profile：{{name}}",

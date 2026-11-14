@@ -1,6 +1,6 @@
 /**
  * 桌面会话：票据换 URL、两种缩放对应的 RFB 属性、只读 / 粘贴 / 发键透传、事件转成 onStatus / onClipboard（带关闭码），
- * close 之后不再回调。noVNC 用假 RFB 替换。
+ * 软键盘期间关掉点按聚焦、RFB 构造失败时关掉 WebSocket，close 之后不再回调。noVNC 用假 RFB 替换。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,8 +27,13 @@ class FakeRfb extends EventTarget {
 	blur = vi.fn();
 	sendKey = vi.fn();
 	clipboardPasteFrom = vi.fn();
+	static throwNext = false;
 	constructor(target: HTMLElement, channel: unknown, options: unknown) {
 		super();
+		if (FakeRfb.throwNext) {
+			FakeRfb.throwNext = false;
+			throw new Error("attach failed");
+		}
 		this.target = target;
 		this.channel = channel;
 		this.options = options;
@@ -41,6 +46,7 @@ vi.mock("@novnc/novnc", () => ({ default: FakeRfb }));
 class FakeSocket extends EventTarget {
 	static instances: FakeSocket[] = [];
 	binaryType = "blob";
+	close = vi.fn();
 	readonly url: string;
 	constructor(url: string) {
 		super();
@@ -175,6 +181,26 @@ describe("openDesktopSession", () => {
 			expect(onStatus).toHaveBeenLastCalledWith("closed", undefined),
 		);
 		expect(rfbs).toHaveLength(0);
+	});
+
+	it("软键盘期间关掉点按聚焦：连接前后设置都落到 RFB.focusOnClick", async () => {
+		const { s } = open();
+		s.setFocusOnClick(false);
+		await vi.waitFor(() => expect(rfbs).toHaveLength(1));
+		const rfb = rfbs[0] as FakeRfb;
+		expect(rfb.focusOnClick).toBe(false);
+		s.setFocusOnClick(true);
+		expect(rfb.focusOnClick).toBe(true);
+	});
+
+	it("RFB 构造失败：关掉已建立的 WebSocket（不占观看者名额），报 closed", async () => {
+		FakeRfb.throwNext = true;
+		const { onStatus } = open();
+		await vi.waitFor(() =>
+			expect(onStatus).toHaveBeenLastCalledWith("closed", undefined),
+		);
+		expect(FakeSocket.instances).toHaveLength(1);
+		expect(FakeSocket.instances[0]?.close).toHaveBeenCalled();
 	});
 
 	it("close 断开 RFB，之后不再回调", async () => {

@@ -1,7 +1,7 @@
 /**
  * 新建线程框的浏览器 Profile 胶囊（M8 4.6）：只在新 orb 且有 Profile 时出现；三种请求体
- * （跟随项目默认 = 不带字段、不使用 = 空串、指定 = id）；409 `profile_in_use` 弹对话框，选「接管」后带 profileMode 重发；
- * Ctrl+B 在输入框里打开弹层。
+ * （跟随项目默认 = 不带字段、不使用 = 空串、指定 = id）；409 `profile_in_use` 弹对话框，选「接管」后带 profileMode 重发，
+ * 重发钉住对话框展示的 Profile（期间项目默认被改也不变）；Ctrl+B 在输入框里打开弹层。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -31,10 +31,13 @@ const HOLDER: Schemas["BrowserProfileHolder"] = {
 let profiles: Schemas["BrowserProfile"][];
 let posts: Schemas["CreateThreadRequest"][];
 let conflictOnce: boolean;
+/** 服务端此刻的项目默认 Profile（可被「另一台设备」改掉） */
+let projectDefault: string;
 
 beforeEach(() => {
 	posts = [];
 	conflictOnce = false;
+	projectDefault = WORK;
 	profiles = [
 		{
 			id: WORK,
@@ -67,7 +70,7 @@ beforeEach(() => {
 							id: "prj_1",
 							name: "oryn",
 							shallowClone: false,
-							defaultBrowserProfileId: WORK,
+							defaultBrowserProfileId: projectDefault,
 							createdAt: 1,
 							updatedAt: 1,
 						},
@@ -89,13 +92,16 @@ beforeEach(() => {
 			if (path === "/api/v1/threads" && req.method === "POST") {
 				const body = (await req.json()) as Schemas["CreateThreadRequest"];
 				posts.push(body);
+				// 与服务端一致：缺省 browserProfileId 时按当时的项目默认解析
+				const resolved =
+					body.browserProfileId ?? (body.projectId ? projectDefault : GH);
 				if (conflictOnce && !body.profileMode)
 					return Response.json(
 						{
 							code: "profile_in_use",
 							message: "held",
-							profileId: GH,
-							profileName: "GitHub 测试号",
+							profileId: resolved,
+							profileName: resolved === WORK ? "工作账号" : "GitHub 测试号",
 							holder: HOLDER,
 						},
 						{ status: 409 },
@@ -217,6 +223,28 @@ describe("首页 Profile 胶囊", () => {
 		await waitFor(() =>
 			expect(screen.queryByTestId("profile-conflict")).toBeNull(),
 		);
+	});
+
+	it("跟随项目默认撞上 409 后，项目默认被另一台设备改掉：接管仍钉住对话框里的 Profile，请求其余字段不变", async () => {
+		conflictOnce = true;
+		renderHome();
+		await profilePill();
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("newThread.noProject") }),
+		);
+		fireEvent.click(await screen.findByRole("button", { name: /^oryn/ }));
+		await send("登录后台");
+		const dialog = await screen.findByTestId("profile-conflict");
+		expect(dialog).toHaveTextContent("比价下单");
+		projectDefault = GH;
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("profile-conflict-takeover"));
+		});
+		expect(posts).toHaveLength(2);
+		expect(posts[0]).not.toHaveProperty("browserProfileId");
+		const { browserProfileId, profileMode, ...rest } = posts[1] ?? {};
+		expect([browserProfileId, profileMode]).toEqual([WORK, "takeover"]);
+		expect(rest).toEqual(posts[0]);
 	});
 
 	it("挂到已有 orb 时不出现，也不带 Profile 字段", async () => {

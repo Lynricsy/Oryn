@@ -8,12 +8,18 @@
  * 何时连接：面板挂载、orb `ready`、`desktop.displayReady`、页面在前台四者同时成立；页面转入后台满 60 秒断开，回到前台再连。
  * 意外断开（关闭码不是 4401 / 4409 / 4410 / 4429）且仍满足条件：按 1、2、5 秒重试三次，之后显示「重新连接」。
  *
+ * 键盘：舞台本身可 Tab 聚焦（noVNC 的画布是 tabIndex=-1，进不了 Tab 序列），在舞台上按 Enter 把焦点交给画布开始操作；
+ * 在桌面里单独按一下 Ctrl+Alt（按下再松开，中间没有别的键）交还焦点到舞台，再 Tab 即可离开。
+ *
+ * 剪贴板（安全审查 F3）：本机 → 桌面只在用户往舞台粘贴（Ctrl/⌘+V 触发的 `paste` 事件）或在弹层里点「发送」时发送；
+ * 桌面 → 本机只在弹层里点「复制到本机」时写入。不读、不写本机剪贴板的任何自动同步。
+ *
  * 触屏：手势由 noVNC 自带（单指点 = 左键、单指拖 = 左键拖、长按 = 右键、双指拖 = 滚动、捏合 = Ctrl+滚轮即页面缩放）；
  * compact 默认「适应」（远端 1280x800 不变、整块桌面等比缩进面板，不需要本地平移）；也可切「跟随面板」让远端分辨率等于面板，
  * 网页按手机宽度排版、1:1 清晰；全屏与横屏能拿到更大的画面。软键盘打开时临时按「适应」缩放，远端分辨率不随键盘高度抖动。
  */
 import type { TFunction } from "i18next";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Orb } from "../../api/client";
 import { useOrbBrowser, useSaveOrbDesktopProfile } from "../../api/queries";
@@ -34,6 +40,7 @@ import {
 	Spinner,
 } from "../ui/primitives";
 import { ClipboardPopover } from "./ClipboardPopover";
+import { KEYSYM, keysymOf } from "./keysym";
 import { ProfileMenu, useOrbProfileChoice } from "./ProfileMenu";
 import { profileErrorText, profileStatusText } from "./profile-status";
 import { SoftKeyboard } from "./SoftKeyboard";
@@ -224,7 +231,6 @@ function DesktopView({
 	const profile = desktop.profile;
 	const control = useUi((s) => s.desktopControl);
 	const scale = useDesktopScale();
-	const clipSync = useUi((s) => s.desktopClipSync);
 	const coarse = useCoarsePointer();
 	const away = usePageAway(AWAY_MS);
 	const want = orb.state === "ready" && desktop.displayReady && !away;
@@ -239,17 +245,23 @@ function DesktopView({
 	const attemptRef = useRef(0);
 	const [kbOpen, setKbOpen] = useState(false);
 	const [remoteClip, setRemoteClip] = useState<string | null>(null);
-	const lastSentClip = useRef<string | null>(null);
+	const [stageFocused, setStageFocused] = useState(false);
+	const hintId = useId();
 	const [notice, setNotice] = useState<string | null>(null);
 
 	const browser = useOrbBrowser(orb.id);
 	const save = useSaveOrbDesktopProfile(orb.id);
-	const choice = useOrbProfileChoice(orb.id, profile?.mode === "readonly");
+	const choice = useOrbProfileChoice(
+		orb.id,
+		profile?.mode === "readonly" ? profile.id : undefined,
+	);
 
 	// 会话里读最新偏好（会话只在连接条件变化时重建）
 	const effectiveScale = kbOpen ? "fit" : scale;
-	const prefs = useRef({ control, scale: effectiveScale, clipSync });
-	prefs.current = { control, scale: effectiveScale, clipSync };
+	// 软键盘打开时点画面不抢焦点，系统键盘不收起
+	const kbActive = kbOpen && control;
+	const prefs = useRef({ control, scale: effectiveScale, kbActive });
+	prefs.current = { control, scale: effectiveScale, kbActive };
 
 	// 离开可连接状态后重新计数，下次满足条件时重新给三次重试
 	useEffect(() => {
@@ -286,16 +298,14 @@ function DesktopView({
 					timer = setTimeout(() => setNonce((x) => x + 1), delay);
 				}
 			},
+			// 只显示在弹层里；写本机剪贴板要用户点「复制到本机」
 			onClipboard: (text) => {
-				if (!alive) return;
-				setRemoteClip(text);
-				lastSentClip.current = text;
-				if (prefs.current.clipSync && document.hasFocus())
-					void navigator.clipboard?.writeText(text).catch(() => {});
+				if (alive) setRemoteClip(text);
 			},
 		});
 		s.setViewOnly(!prefs.current.control);
 		s.setScale(prefs.current.scale);
+		s.setFocusOnClick(!prefs.current.kbActive);
 		sessionRef.current = s;
 		return () => {
 			alive = false;
@@ -312,27 +322,76 @@ function DesktopView({
 		sessionRef.current?.setScale(effectiveScale);
 	}, [effectiveScale]);
 
-	// 自动同步（本机 → 桌面）：舞台获得焦点与窗口获得焦点时读本机剪贴板，与上次不同才发送
+	useEffect(() => {
+		sessionRef.current?.setFocusOnClick(!kbActive);
+	}, [kbActive]);
+
+	// 舞台的键盘：Ctrl/⌘+V 让浏览器照常粘贴（不交给 noVNC），单独按一下 Ctrl+Alt 交还焦点。
+	// 捕获阶段挂在舞台上，先于 noVNC 挂在画布上的按键处理。
 	useEffect(() => {
 		const stage = stageRef.current;
-		if (!clipSync || !stage) return;
-		const pull = () => {
-			void navigator.clipboard
-				?.readText()
-				.then((text) => {
-					if (!text || text === lastSentClip.current) return;
-					lastSentClip.current = text;
-					sessionRef.current?.paste(text);
-				})
-				.catch(() => {});
+		if (!stage) return;
+		// 这一轮 Ctrl+Alt 期间是否按过别的键（按过就不算「单独按一下」）
+		let chord: "none" | "armed" | "spoiled" = "none";
+		// 这次粘贴由 ⌘+V（macOS）触发
+		let pasteMeta = false;
+		const isMod = (k: string) => k === "Control" || k === "Alt";
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.target === stage) {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					sessionRef.current?.focus();
+				}
+				return;
+			}
+			if (isMod(e.key)) {
+				if (e.ctrlKey && e.altKey && chord === "none") chord = "armed";
+				return;
+			}
+			if (chord !== "none") chord = "spoiled";
+			if (
+				prefs.current.control &&
+				(e.ctrlKey || e.metaKey) &&
+				!e.altKey &&
+				(e.code === "KeyV" || e.key.toLowerCase() === "v")
+			) {
+				// 不让 noVNC 拦下（它会 preventDefault，浏览器就不派发 paste）；粘贴在 onPaste 里完成
+				e.stopPropagation();
+				pasteMeta = e.metaKey && !e.ctrlKey;
+			}
 		};
-		stage.addEventListener("focusin", pull);
-		window.addEventListener("focus", pull);
+		const onKeyUp = (e: KeyboardEvent) => {
+			if (!isMod(e.key)) return;
+			const fire = chord === "armed";
+			if (!e.ctrlKey && !e.altKey) chord = "none";
+			else if (fire) chord = "spoiled";
+			if (fire && e.target !== stage) stage.focus({ preventScroll: true });
+		};
+		const onPaste = (e: ClipboardEvent) => {
+			if (e.target === stage || !prefs.current.control) return;
+			const text = e.clipboardData?.getData("text/plain") ?? "";
+			e.preventDefault();
+			const s = sessionRef.current;
+			if (!s || !text) return;
+			s.paste(text);
+			// 远端已按着 Ctrl（Ctrl+V 的 Ctrl 交给了 noVNC），补发 V 完成粘贴；
+			// macOS 的 ⌘ 在远端是 Alt：先松开它，再按 Ctrl+V
+			if (pasteMeta) {
+				s.sendKey(KEYSYM.Alt_L, false);
+				s.sendKey(KEYSYM.Control_L, true);
+				s.sendKey(keysymOf("v"));
+				s.sendKey(KEYSYM.Control_L, false);
+			} else s.sendKey(keysymOf("v"));
+		};
+		stage.addEventListener("keydown", onKeyDown, true);
+		stage.addEventListener("keyup", onKeyUp, true);
+		stage.addEventListener("paste", onPaste);
 		return () => {
-			stage.removeEventListener("focusin", pull);
-			window.removeEventListener("focus", pull);
+			stage.removeEventListener("keydown", onKeyDown, true);
+			stage.removeEventListener("keyup", onKeyUp, true);
+			stage.removeEventListener("paste", onPaste);
 		};
-	}, [clipSync]);
+	}, []);
 
 	// 全屏结束时释放键盘锁
 	useEffect(() => {
@@ -555,10 +614,7 @@ function DesktopView({
 				<ClipboardPopover
 					remoteText={remoteClip}
 					disabled={shownStatus !== "connected"}
-					onSend={(text) => {
-						lastSentClip.current = text;
-						sessionRef.current?.paste(text);
-					}}
+					onSend={(text) => sessionRef.current?.paste(text)}
 				/>
 				{coarse && (
 					<IconButton
@@ -608,9 +664,28 @@ function DesktopView({
 				<div
 					ref={stageRef}
 					data-testid="desktop-stage"
+					role="application"
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: 远端桌面是整块交互区；noVNC 画布 tabIndex=-1，舞台是键盘进入它的唯一入口
+					tabIndex={0}
+					aria-label={t("deskPanel.stage")}
+					aria-describedby={hintId}
+					onFocus={(e) => setStageFocused(e.target === e.currentTarget)}
+					onBlur={() => setStageFocused(false)}
 					className="relative h-full overflow-hidden rounded-lg border border-border bg-inset"
 				>
 					<div ref={screenRef} className="absolute inset-0" />
+					<span id={hintId} className="sr-only">
+						{t("deskPanel.stageHint")}
+					</span>
+					{stageFocused && shownStatus === "connected" && (
+						<span
+							data-testid="desktop-stage-hint"
+							className="pointer-events-none absolute top-2 left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full bg-panel/85 px-2.5 py-0.5 text-2xs text-muted shadow-xs"
+						>
+							<Icon name="keyboard" size={11} aria-hidden />
+							{t("deskPanel.stageHint")}
+						</span>
+					)}
 					{!control && shownStatus === "connected" && (
 						<span className="pointer-events-none absolute top-2 left-2 z-10 inline-flex items-center gap-1 rounded-full bg-panel/85 px-2 py-0.5 text-2xs text-muted shadow-xs">
 							<Icon name="eye" size={11} aria-hidden />

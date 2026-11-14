@@ -41,10 +41,12 @@ export interface OrbProfileChoice {
 /**
  * 为 orb 选用 Profile：`apply(id, mode?)` 发 PUT，409 `profile_in_use` 时打开冲突对话框；`open(c)` 直接打开对话框
  * （已知持有者时）。`dialog` 由调用方渲染；`error` 是非冲突的失败。
+ * `readonlyProfileId`：这台 orb 正以只读方式使用的 Profile。只有冲突目标正是它（想恢复写回）时不再给「只读使用」；
+ * 换到另一个被占用的 Profile 时照常给两个选项。
  */
 export function useOrbProfileChoice(
 	orbId: string,
-	readonlyNow = false,
+	readonlyProfileId?: string,
 ): OrbProfileChoice {
 	const set = useSetOrbDesktopProfile(orbId);
 	const [conflict, setConflict] = useState<ProfileConflict | null>(null);
@@ -89,7 +91,7 @@ export function useOrbProfileChoice(
 			conflict={conflict}
 			busy={busy}
 			error={dialogError}
-			allowReadonly={!readonlyNow}
+			allowReadonly={conflict?.profileId !== readonlyProfileId}
 			onChoose={(c) => void choose(c)}
 			onClose={() => {
 				if (!busy) setConflict(null);

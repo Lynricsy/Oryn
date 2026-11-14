@@ -2,7 +2,9 @@
  * Desktop 面板：连接条件（ready、displayReady、前台，缺一不连；后台满 60 秒断开）、休眠遮罩与唤醒、
  * 意外断开重试三次后出现「重新连接」、4429 不重试、浏览器未运行时的「启动浏览器」、
  * Profile 横幅（被占用 → 冲突对话框 → 接管；装载失败 → 重试；被接管 → 只读，随 orb 推送实时出现）、
- * Profile 菜单（被占用 / 409 → 对话框 → 只读使用）、可控制 / 仅观看开关、全屏与回退。
+ * Profile 菜单（被占用 / 409 → 对话框 → 只读使用；只读副本换另一个被占用的 Profile 仍可只读）、可控制 / 仅观看开关、全屏与回退、
+ * 迟到的 REST 应答不盖掉更新的推送、键盘进出舞台、软键盘期间点画面不抢焦点、剪贴板只在显式操作时收发。
+ * 假会话照 noVNC 1.7 的画布行为：tabIndex=-1、focusOnClick 时 mousedown / touchstart 抢焦点、keydown 全部 preventDefault。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -17,7 +19,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Schemas, Thread } from "../../api/client";
 import i18n from "../../i18n";
-import { getThreadStore, indexStore } from "../../state/stores";
+import { acceptOrbPush, getThreadStore, indexStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import DesktopPanel, { AWAY_MS, RETRY_MS } from "./DesktopPanel";
 import type { DesktopHandlers } from "./session";
@@ -31,7 +33,11 @@ interface FakeSession {
 	paste: ReturnType<typeof vi.fn>;
 	sendKey: ReturnType<typeof vi.fn>;
 	focus: ReturnType<typeof vi.fn>;
+	setFocusOnClick: ReturnType<typeof vi.fn>;
 	close: ReturnType<typeof vi.fn>;
+	canvas: HTMLCanvasElement;
+	/** noVNC 收到（并拦下）的按键 */
+	novncKeys: string[];
 }
 
 const sessions: FakeSession[] = [];
@@ -42,6 +48,22 @@ vi.mock("./session", () => ({
 		orbId: string,
 		h: DesktopHandlers,
 	) => {
+		// 与 noVNC 1.7 的画布一致（core/rfb.js:231、584-585、693-699；input/keyboard.js 的 stopEvent）
+		const canvas = document.createElement("canvas");
+		canvas.tabIndex = -1;
+		target.appendChild(canvas);
+		let focusOnClick = true;
+		const grab = () => {
+			if (focusOnClick) canvas.focus({ preventScroll: true });
+		};
+		canvas.addEventListener("mousedown", grab);
+		canvas.addEventListener("touchstart", grab);
+		const novncKeys: string[] = [];
+		canvas.addEventListener("keydown", (e) => {
+			novncKeys.push(e.key);
+			e.stopPropagation();
+			e.preventDefault();
+		});
 		const s: FakeSession = {
 			target,
 			orbId,
@@ -50,8 +72,13 @@ vi.mock("./session", () => ({
 			setScale: vi.fn(),
 			paste: vi.fn(),
 			sendKey: vi.fn(),
-			focus: vi.fn(),
+			focus: vi.fn(() => canvas.focus({ preventScroll: true })),
+			setFocusOnClick: vi.fn((on: boolean) => {
+				focusOnClick = on;
+			}),
 			close: vi.fn(),
+			canvas,
+			novncKeys,
 		};
 		sessions.push(s);
 		return s;
@@ -70,7 +97,10 @@ const HOLDER: Schemas["BrowserProfileHolder"] = {
 
 let seq = 0;
 let requests: { method: string; path: string; body: unknown }[];
-let putReply: (body: Schemas["OrbDesktopProfilePut"]) => Response;
+let putReply: (
+	body: Schemas["OrbDesktopProfilePut"],
+) => Response | Promise<Response>;
+let startReply: () => Response | Promise<Response>;
 let currentOrb: Orb;
 
 function conflictBody(id: string, name: string) {
@@ -107,7 +137,7 @@ function setup(
 /** 模拟 WS 推送新的 orb。 */
 function push(patch: Partial<Orb>) {
 	currentOrb = { ...currentOrb, ...patch };
-	act(() => indexStore.getState().upsertOrb(currentOrb));
+	act(() => acceptOrbPush(currentOrb));
 }
 
 function mount(threadId: string) {
@@ -142,11 +172,15 @@ beforeEach(() => {
 	uiStore.setState({
 		desktopControl: true,
 		desktopScale: null,
-		desktopClipSync: false,
 		panelMax: false,
 	});
 	setVisibility("visible");
 	putReply = () => Response.json(currentOrb);
+	startReply = () =>
+		Response.json({
+			...currentOrb,
+			desktop: { ...currentOrb.desktop, browser: "running" },
+		});
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -182,11 +216,7 @@ beforeEach(() => {
 				});
 			if (path.endsWith("/desktop/profile") && req.method === "PUT")
 				return putReply(body);
-			if (path.endsWith("/desktop/browser/start"))
-				return Response.json({
-					...currentOrb,
-					desktop: { ...currentOrb.desktop, browser: "running" },
-				});
+			if (path.endsWith("/desktop/browser/start")) return startReply();
 			if (path.endsWith("/wake"))
 				return Response.json({ ok: true }, { status: 202 });
 			return new Response(null, { status: 404 });
@@ -561,5 +591,301 @@ describe("DesktopPanel Profile", () => {
 		fireEvent.click(item);
 		expect(screen.getByTestId("profile-conflict")).toBeInTheDocument();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
+	});
+});
+
+const ATTACHED_WORK: Schemas["OrbDesktop"] = {
+	displayReady: true,
+	browser: "stopped",
+	profile: {
+		id: PROFILE_WORK,
+		name: "工作账号",
+		status: "attached",
+		mode: "exclusive",
+		revision: 3,
+	},
+};
+
+const READONLY_WORK: Schemas["OrbDesktop"] = {
+	displayReady: true,
+	browser: "running",
+	profile: {
+		id: PROFILE_WORK,
+		name: "工作账号",
+		status: "readonly",
+		mode: "readonly",
+		revision: 3,
+	},
+};
+
+describe("DesktopPanel Profile：只读副本与乱序", () => {
+	it("只读使用 A 时换到被占用的 B：对话框仍给「只读使用」，以 readonly 发 PUT", async () => {
+		vi.spyOn(window, "confirm").mockReturnValue(true);
+		const { threadId, orbId } = setup(READONLY_WORK);
+		mount(threadId);
+		fireEvent.click(screen.getByTestId("desktop-profile-menu"));
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", { name: /GitHub 测试号/ }),
+		);
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("profile-conflict-readonly"));
+		});
+		expect(requests).toContainEqual({
+			method: "PUT",
+			path: `/api/v1/orbs/${orbId}/desktop/profile`,
+			body: { profileId: PROFILE_GH, profileMode: "readonly" },
+		});
+	});
+
+	it("只读使用 A 时恢复写回 A 撞上 409：只给「接管」", async () => {
+		vi.spyOn(window, "confirm").mockReturnValue(true);
+		putReply = () =>
+			Response.json(conflictBody(PROFILE_WORK, "工作账号"), { status: 409 });
+		const { threadId } = setup(READONLY_WORK);
+		mount(threadId);
+		await act(async () => {
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: i18n.t("deskPanel.banner.writeBack"),
+				}),
+			);
+		});
+		await screen.findByTestId("profile-conflict");
+		expect(screen.queryByTestId("profile-conflict-readonly")).toBeNull();
+		expect(screen.getByTestId("profile-conflict-takeover")).toBeInTheDocument();
+	});
+
+	it("在途期间推来「已被接管」，迟到的 REST 应答（旧的独占快照）不覆盖它", async () => {
+		let release: (r: Response) => void = () => {};
+		startReply = () =>
+			new Promise<Response>((r) => {
+				release = r;
+			});
+		const { threadId } = setup(ATTACHED_WORK);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		// 服务端在接管之前生成的应答：浏览器已启动、Profile 仍独占（生命周期时间戳不变）
+		const staleOrb = {
+			...currentOrb,
+			desktop: { ...ATTACHED_WORK, browser: "running" as const },
+		};
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("desktop-start-browser"));
+		});
+		const taken = i18n.t("deskPanel.profile.takenOver", { thread: "WS: 重构" });
+		push({
+			desktop: {
+				...READONLY_WORK,
+				profile: {
+					...(READONLY_WORK.profile as NonNullable<
+						Schemas["OrbDesktop"]["profile"]
+					>),
+					readonlyReason: "taken_over",
+					takenOverBy: { threadId: "T-x", threadTitle: "WS: 重构", at: 1 },
+				},
+			},
+		});
+		expect(screen.getByText(taken)).toBeInTheDocument();
+		await act(async () => {
+			release(Response.json(staleOrb));
+		});
+		// 「关闭浏览器」在启动请求在途时禁用：等它可用 = 应答已处理完
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("deskPanel.more") }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("menuitem", { name: i18n.t("deskPanel.stopBrowser") }),
+			).toBeEnabled(),
+		);
+		expect(screen.getByText(taken)).toBeInTheDocument();
+		expect(
+			indexStore.getState().orbs[currentOrb.id]?.desktop?.profile?.mode,
+		).toBe("readonly");
+	});
+
+	it("在途期间没有推送：REST 应答照常写入", async () => {
+		const { threadId, orbId } = setup({
+			displayReady: true,
+			browser: "stopped",
+		});
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("desktop-start-browser"));
+		});
+		await waitFor(() =>
+			expect(indexStore.getState().orbs[orbId]?.desktop?.browser).toBe(
+				"running",
+			),
+		);
+	});
+});
+
+describe("DesktopPanel 键盘", () => {
+	it("舞台可 Tab 聚焦（画布 tabIndex=-1 不行）；Enter 把焦点交给画布，单独按一下 Ctrl+Alt 交还舞台", () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const stage = screen.getByRole("application", {
+			name: i18n.t("deskPanel.stage"),
+		});
+		const { canvas } = last();
+		expect(canvas.tabIndex).toBe(-1);
+		expect(stage.tabIndex).toBe(0);
+		expect(stage).toHaveAccessibleDescription(i18n.t("deskPanel.stageHint"));
+		act(() => stage.focus());
+		expect(screen.getByTestId("desktop-stage-hint")).toBeInTheDocument();
+		fireEvent.keyDown(stage, { key: "Enter" });
+		expect(document.activeElement).toBe(canvas);
+		expect(screen.queryByTestId("desktop-stage-hint")).toBeNull();
+		// Ctrl+Alt+T 是发给桌面的快捷键，不退出
+		fireEvent.keyDown(canvas, { key: "Control", ctrlKey: true });
+		fireEvent.keyDown(canvas, { key: "Alt", ctrlKey: true, altKey: true });
+		fireEvent.keyDown(canvas, { key: "t", ctrlKey: true, altKey: true });
+		fireEvent.keyUp(canvas, { key: "Alt", ctrlKey: true });
+		fireEvent.keyUp(canvas, { key: "Control" });
+		expect(document.activeElement).toBe(canvas);
+		expect(last().novncKeys).toEqual(["Control", "Alt", "t"]);
+		// 单独按一下 Ctrl+Alt：交还舞台
+		fireEvent.keyDown(canvas, { key: "Control", ctrlKey: true });
+		fireEvent.keyDown(canvas, { key: "Alt", ctrlKey: true, altKey: true });
+		fireEvent.keyUp(canvas, { key: "Alt", ctrlKey: true });
+		expect(document.activeElement).toBe(stage);
+		fireEvent.keyUp(stage, { key: "Control" });
+		expect(document.activeElement).toBe(stage);
+	});
+
+	it("软键盘打开期间点画面不抢焦点：点远端另一处后仍能继续输入", () => {
+		vi.stubGlobal(
+			"matchMedia",
+			vi.fn((q: string) => ({
+				matches: q === "(pointer: coarse)",
+				addEventListener: () => {},
+				removeEventListener: () => {},
+			})),
+		);
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const s = last();
+		expect(s.setFocusOnClick).toHaveBeenLastCalledWith(true);
+		fireEvent.click(screen.getByTestId("desktop-keyboard"));
+		const input = screen.getByTestId("desktop-kb-input");
+		expect(document.activeElement).toBe(input);
+		expect(s.setFocusOnClick).toHaveBeenLastCalledWith(false);
+		fireEvent.touchStart(s.canvas);
+		fireEvent.mouseDown(s.canvas);
+		expect(document.activeElement).toBe(input);
+		act(() => {
+			input.dispatchEvent(
+				new InputEvent("beforeinput", {
+					inputType: "insertText",
+					data: "a",
+					cancelable: true,
+					bubbles: true,
+				}),
+			);
+		});
+		expect(s.sendKey).toHaveBeenLastCalledWith(0x61, undefined);
+		fireEvent.click(screen.getByTestId("desktop-keyboard"));
+		expect(s.setFocusOnClick).toHaveBeenLastCalledWith(true);
+		fireEvent.mouseDown(s.canvas);
+		expect(document.activeElement).toBe(s.canvas);
+	});
+});
+
+describe("DesktopPanel 剪贴板", () => {
+	const clip = { readText: vi.fn(), writeText: vi.fn() };
+	beforeEach(() => {
+		clip.readText.mockReset().mockResolvedValue("本机密码");
+		clip.writeText.mockReset().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: clip,
+		});
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+	});
+
+	function paste(el: HTMLElement, text: string) {
+		const ev = new Event("paste", { bubbles: true, cancelable: true });
+		Object.defineProperty(ev, "clipboardData", {
+			value: { getData: (t: string) => (t === "text/plain" ? text : "") },
+		});
+		act(() => {
+			el.dispatchEvent(ev);
+		});
+		return ev;
+	}
+
+	it("桌面剪贴板变化只显示在弹层里，不写本机剪贴板；窗口 / 舞台获得焦点不读本机剪贴板", async () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		act(() => last().h.onClipboard("echo pwned | sh"));
+		await act(async () => {
+			window.dispatchEvent(new Event("focus"));
+			screen.getByTestId("desktop-stage").focus();
+		});
+		expect(clip.writeText).not.toHaveBeenCalled();
+		expect(clip.readText).not.toHaveBeenCalled();
+		expect(last().paste).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("deskPanel.clip.title") }),
+		);
+		expect(screen.getByTestId("desktop-clip-remote")).toHaveTextContent(
+			"echo pwned | sh",
+		);
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("desktop-clip-copy"));
+		});
+		expect(clip.writeText).toHaveBeenCalledWith("echo pwned | sh");
+	});
+
+	it("在桌面上按 Ctrl+V：不交给 noVNC（浏览器才会派发 paste），paste 事件把本机文本发到桌面并补发 V", () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const s = last();
+		act(() => s.canvas.focus());
+		const down = fireEvent.keyDown(s.canvas, {
+			key: "v",
+			code: "KeyV",
+			ctrlKey: true,
+		});
+		expect(down).toBe(true);
+		expect(s.novncKeys).toEqual([]);
+		const ev = paste(s.canvas, "本机文本");
+		expect(ev.defaultPrevented).toBe(true);
+		expect(s.paste).toHaveBeenCalledWith("本机文本");
+		expect(s.sendKey.mock.calls).toEqual([[0x76]]);
+		expect(clip.readText).not.toHaveBeenCalled();
+	});
+
+	it("macOS ⌘+V：远端的 ⌘ 是 Alt，先松开再按 Ctrl+V", () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const s = last();
+		fireEvent.keyDown(s.canvas, { key: "v", code: "KeyV", metaKey: true });
+		paste(s.canvas, "x");
+		expect(s.sendKey.mock.calls).toEqual([
+			[0xffe9, false],
+			[0xffe3, true],
+			[0x76],
+			[0xffe3, false],
+		]);
+	});
+
+	it("仅观看时不截获 Ctrl+V，也不发送粘贴内容", () => {
+		uiStore.setState({ desktopControl: false });
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const s = last();
+		fireEvent.keyDown(s.canvas, { key: "v", code: "KeyV", ctrlKey: true });
+		expect(s.novncKeys).toEqual(["v"]);
+		paste(s.canvas, "本机文本");
+		expect(s.paste).not.toHaveBeenCalled();
 	});
 });

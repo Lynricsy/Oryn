@@ -94,6 +94,29 @@ export function useIndex<T>(selector: (s: IndexState) => T): T {
 	return useStore(indexStore, selector);
 }
 
+/**
+ * 每台 orb 经 WS 推送（`orb`、`thread.snapshot`）落地的次数，供 REST 变更判断应答是否过期。
+ * 同一生命周期内的桌面更新不改 `stateChangedAt`，比时间戳分不出新旧；WS 推送按服务端顺序到达，
+ * 变更本身的结果也会随后推来，所以在途期间只要来过推送，就丢弃应答里的 orb 快照。
+ */
+const orbPushes = new Map<string, number>();
+
+/** WS 推来的 orb：写入索引并计数。 */
+export function acceptOrbPush(orb: Orb): void {
+	orbPushes.set(orb.id, (orbPushes.get(orb.id) ?? 0) + 1);
+	indexStore.getState().upsertOrb(orb);
+}
+
+/** 发 REST 变更前记下的推送计数。 */
+export function orbPushMark(orbId: string): number {
+	return orbPushes.get(orbId) ?? 0;
+}
+
+/** REST 变更的应答：发请求后没有新的推送才写入索引（否则推送更新）。 */
+export function acceptOrbReply(orb: Orb, mark: number): void {
+	if (orbPushMark(orb.id) === mark) indexStore.getState().upsertOrb(orb);
+}
+
 // ---------------------------------------------------------------- 线程视图
 
 /** 线程 store 收到的消息（WS 消息去掉 threadId 后的子集）。 */

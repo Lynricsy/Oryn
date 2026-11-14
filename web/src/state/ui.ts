@@ -103,10 +103,9 @@ export function loadCollapsedCards(): Record<string, boolean> {
 
 export const SIDEBAR_COLLAPSED_KEY = "oryn.sidebar.collapsed";
 
-/** Desktop 面板（M8）的三项本机偏好（存 localStorage，所有线程共用）。 */
+/** Desktop 面板（M8）的两项本机偏好（存 localStorage，所有线程共用）。剪贴板不自动同步，没有对应偏好。 */
 export const DESKTOP_CONTROL_KEY = "oryn.desktop.control";
 export const DESKTOP_SCALE_KEY = "oryn.desktop.scale";
-export const DESKTOP_CLIPSYNC_KEY = "oryn.desktop.clipsync";
 
 /** 桌面画面的缩放：`follow` 远端分辨率跟随面板尺寸；`fit` 远端分辨率不变，本地等比缩放到面板里。 */
 export type DesktopScale = "follow" | "fit";
@@ -128,17 +127,15 @@ function writeKey(key: string, value: string | null) {
 	}
 }
 
-/** 同步读取 Desktop 偏好；非法值回落默认（可控制、按断点取缩放、不自动同步剪贴板）。 */
+/** 同步读取 Desktop 偏好；非法值回落默认（可控制、按断点取缩放）。 */
 export function loadDesktopPrefs(): {
 	desktopControl: boolean;
 	desktopScale: DesktopScale | null;
-	desktopClipSync: boolean;
 } {
 	const scale = readKey(DESKTOP_SCALE_KEY);
 	return {
 		desktopControl: readKey(DESKTOP_CONTROL_KEY) !== "0",
 		desktopScale: scale === "follow" || scale === "fit" ? scale : null,
-		desktopClipSync: readKey(DESKTOP_CLIPSYNC_KEY) === "1",
 	};
 }
 
@@ -199,9 +196,6 @@ export interface UiState {
 	/** 缩放偏好；null = 按断点取默认（compact 为 `fit`，其余 `follow`）。 */
 	desktopScale: DesktopScale | null;
 	setDesktopScale(scale: DesktopScale | null): void;
-	/** 剪贴板自动同步（读写本机剪贴板，需浏览器授权）。 */
-	desktopClipSync: boolean;
-	setDesktopClipSync(on: boolean): void;
 }
 
 export const uiStore = createStore<UiState>((set, get) => ({
@@ -321,10 +315,6 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	setDesktopScale: (desktopScale) => {
 		writeKey(DESKTOP_SCALE_KEY, desktopScale);
 		set({ desktopScale });
-	},
-	setDesktopClipSync: (desktopClipSync) => {
-		writeKey(DESKTOP_CLIPSYNC_KEY, desktopClipSync ? "1" : "0");
-		set({ desktopClipSync });
 	},
 }));
 

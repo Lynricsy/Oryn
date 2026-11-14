@@ -1,5 +1,5 @@
 /**
- * 剪贴板弹层：发送到桌面、复制桌面内容、自动同步（打开时触发读取授权，被拒绝则开关回弹并提示改用手动）。
+ * 剪贴板弹层：发送到桌面、「复制到本机」；没有自动同步（安全审查 F3）——打开弹层、收到桌面内容都不读写本机剪贴板。
  */
 import {
 	act,
@@ -10,14 +10,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
-import { uiStore } from "../../state/ui";
 import { ClipboardBody, ClipboardPopover } from "./ClipboardPopover";
 
 const clip = { readText: vi.fn(), writeText: vi.fn() };
 
 beforeEach(() => {
-	localStorage.clear();
-	uiStore.setState({ desktopClipSync: false });
 	clip.readText.mockReset();
 	clip.writeText.mockReset().mockResolvedValue(undefined);
 	Object.defineProperty(navigator, "clipboard", {
@@ -29,9 +26,6 @@ beforeEach(() => {
 afterEach(() => {
 	vi.restoreAllMocks();
 });
-
-const syncToggle = () =>
-	screen.getByRole("checkbox", { name: i18n.t("deskPanel.clip.autoSync") });
 
 describe("ClipboardBody", () => {
 	it("发送到桌面：把文本框内容交给 onSend 并提示去桌面粘贴", () => {
@@ -50,7 +44,7 @@ describe("ClipboardBody", () => {
 		expect(screen.getByText(i18n.t("deskPanel.clip.sent"))).toBeInTheDocument();
 	});
 
-	it("显示最近一次桌面剪贴板内容，「复制」写入本机剪贴板；没有内容时给说明", async () => {
+	it("显示最近一次桌面剪贴板内容，只有点「复制到本机」才写本机剪贴板；没有内容时给说明", async () => {
 		const { rerender } = render(
 			<ClipboardBody remoteText={null} onSend={vi.fn()} />,
 		);
@@ -61,51 +55,23 @@ describe("ClipboardBody", () => {
 		expect(screen.getByTestId("desktop-clip-remote")).toHaveTextContent(
 			"来自桌面-2",
 		);
+		expect(clip.writeText).not.toHaveBeenCalled();
 		await act(async () => {
-			fireEvent.click(
-				screen.getByRole("button", { name: i18n.t("common.copy") }),
-			);
+			fireEvent.click(screen.getByTestId("desktop-clip-copy"));
 		});
+		expect(screen.getByTestId("desktop-clip-copy")).toHaveAccessibleName(
+			i18n.t("deskPanel.clip.copyLocal"),
+		);
 		expect(clip.writeText).toHaveBeenCalledWith("来自桌面-2");
 	});
 
-	it("打开自动同步：先读一次剪贴板（触发授权），成功则开启并把内容发到桌面", async () => {
-		clip.readText.mockResolvedValue("本机内容");
-		const onSend = vi.fn();
-		render(<ClipboardBody remoteText={null} onSend={onSend} />);
-		await act(async () => {
-			fireEvent.click(syncToggle());
-		});
-		expect(clip.readText).toHaveBeenCalledTimes(1);
-		expect(uiStore.getState().desktopClipSync).toBe(true);
-		expect(localStorage.getItem("oryn.desktop.clipsync")).toBe("1");
-		expect(onSend).toHaveBeenCalledWith("本机内容");
-		expect(syncToggle()).toBeChecked();
-	});
-
-	it("授权被拒：开关回弹，提示改用手动", async () => {
-		clip.readText.mockRejectedValue(
-			new DOMException("denied", "NotAllowedError"),
-		);
-		render(<ClipboardBody remoteText={null} onSend={vi.fn()} />);
-		await act(async () => {
-			fireEvent.click(syncToggle());
-		});
-		expect(uiStore.getState().desktopClipSync).toBe(false);
-		expect(syncToggle()).not.toBeChecked();
-		expect(screen.getByRole("alert")).toHaveTextContent(
-			i18n.t("deskPanel.clip.denied"),
-		);
-	});
-
-	it("关闭自动同步不再读剪贴板", async () => {
-		uiStore.setState({ desktopClipSync: true });
-		render(<ClipboardBody remoteText={null} onSend={vi.fn()} />);
-		await act(async () => {
-			fireEvent.click(syncToggle());
-		});
+	it("没有自动同步开关；说明剪贴板不会自动同步，也不读本机剪贴板", () => {
+		render(<ClipboardBody remoteText="x" onSend={vi.fn()} />);
+		expect(screen.queryByRole("checkbox")).toBeNull();
+		expect(
+			screen.getByText(i18n.t("deskPanel.clip.manualNote")),
+		).toBeInTheDocument();
 		expect(clip.readText).not.toHaveBeenCalled();
-		expect(uiStore.getState().desktopClipSync).toBe(false);
 	});
 });
 

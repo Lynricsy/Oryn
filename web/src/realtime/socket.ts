@@ -22,6 +22,7 @@ import type {
 } from "../omp/types";
 import { notificationsStore } from "../state/notifications";
 import {
+	acceptOrbPush,
 	connectionStore,
 	getThreadStore,
 	indexStore,
@@ -384,7 +385,7 @@ export class RealtimeClient {
 				return;
 			case "thread.snapshot":
 				indexStore.getState().upsertThread(msg.thread);
-				if (msg.orb) indexStore.getState().upsertOrb(msg.orb);
+				if (msg.orb) acceptOrbPush(msg.orb);
 				this.enqueue(msg.threadId, { type: "thread.snapshot", snapshot: msg });
 				for (const eff of snapshotEffects(msg))
 					this.scheduleEffect(msg.threadId, eff);
@@ -459,7 +460,7 @@ export class RealtimeClient {
 				return;
 			case "orb": {
 				const prev = indexStore.getState().orbs[msg.orb.id]?.state;
-				indexStore.getState().upsertOrb(msg.orb);
+				acceptOrbPush(msg.orb);
 				for (const tid of msg.orb.threadIds) {
 					const store = peekThreadStore(tid);
 					if (!store) continue;

@@ -7,18 +7,21 @@ export function CopyButton({
 	text,
 	label,
 	ariaLabel,
+	testId,
 }: {
 	text: string;
 	/** 可见文字（同时作读屏名） */
 	label?: string;
 	/** 只给读屏与悬停提示的名字（无可见文字时用） */
 	ariaLabel?: string;
+	testId?: string;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [done, setDone] = useState(false);
 	return (
 		<button
 			type="button"
+			data-testid={testId}
 			className={`inline-flex h-6 items-center gap-1 rounded-sm px-1.5 text-xs transition-colors duration-150 hover:bg-hover ${done ? "text-ok" : "text-faint hover:text-fg"}`}
 			onClick={() => {
 				void navigator.clipboard?.writeText(text).then(() => {

@@ -19,6 +19,8 @@ export interface DesktopSession {
 	/** `down` 省略 = 按下再抬起 */
 	sendKey(keysym: number, down?: boolean): void;
 	focus(): void;
+	/** 点 / 触画面时是否把焦点抢到画布（软键盘打开时关掉，保住软键盘输入框的焦点） */
+	setFocusOnClick(on: boolean): void;
 	close(): void;
 }
 
@@ -49,11 +51,13 @@ export function openDesktopSession(
 	let rfb: RFB | null = null;
 	let closed = false;
 	let viewOnly = false;
+	let focusOnClick = true;
 	let scale: DesktopScale = "follow";
 	const emit = (s: DesktopStatus, code?: number) => {
 		if (!closed) h.onStatus(s, code);
 	};
 	emit("connecting");
+	let ws: WebSocket | undefined;
 	void (async () => {
 		try {
 			const { ticket } = await unwrap(api.POST("/api/v1/ws-ticket"));
@@ -61,7 +65,7 @@ export function openDesktopSession(
 			// 动态导入：noVNC 的 browser.js 有顶层 await，且应只在打开 Desktop 面板时才下载
 			const { default: Rfb } = await import("@novnc/novnc");
 			if (closed) return;
-			const ws = new WebSocket(desktopSocketUrl(orbId, ticket));
+			ws = new WebSocket(desktopSocketUrl(orbId, ticket));
 			ws.binaryType = "arraybuffer";
 			let code: number | undefined;
 			// 先于 RFB 登记：RFB 在同一个 close 事件里派发 disconnect 时，关闭码已经记下
@@ -70,7 +74,7 @@ export function openDesktopSession(
 			});
 			const r = new Rfb(target, ws, { shared: true });
 			rfb = r;
-			r.focusOnClick = true;
+			r.focusOnClick = focusOnClick;
 			r.background = "var(--inset)";
 			r.viewOnly = viewOnly;
 			applyScale(r, scale);
@@ -84,6 +88,8 @@ export function openDesktopSession(
 				if (!closed && typeof text === "string") h.onClipboard(text);
 			});
 		} catch {
+			// RFB 构造失败时 WS 已经建立：关掉它，免得每次重试都在服务端多占一个观看者名额
+			if (!rfb) ws?.close();
 			emit("closed");
 		}
 	})();
@@ -106,6 +112,10 @@ export function openDesktopSession(
 		},
 		focus() {
 			rfb?.focus({ preventScroll: true });
+		},
+		setFocusOnClick(on) {
+			focusOnClick = on;
+			if (rfb) rfb.focusOnClick = on;
 		},
 		close() {
 			if (closed) return;
@@ -167,6 +177,8 @@ function mockSession(
 	canvas.width = MOCK_W;
 	canvas.height = MOCK_H;
 	canvas.dataset.mock = "1";
+	// 与 noVNC 的画布一致：可编程聚焦、不进 Tab 序列
+	canvas.tabIndex = -1;
 	canvas.style.width = "100%";
 	canvas.style.height = "100%";
 	canvas.style.objectFit = "contain";
@@ -184,7 +196,10 @@ function mockSession(
 	});
 	h.onStatus("connecting");
 	queueMicrotask(() => {
-		if (!closed) h.onStatus("connected");
+		if (closed) return;
+		h.onStatus("connected");
+		// 浏览器开着时给一条桌面剪贴板，弹层截图能看到「复制到本机」
+		if (shown) h.onClipboard("https://github.com/Lynricsy/Oryn/pull/42");
 	});
 	return {
 		setViewOnly() {},
@@ -194,6 +209,7 @@ function mockSession(
 		focus() {
 			canvas.focus();
 		},
+		setFocusOnClick() {},
 		close() {
 			if (closed) return;
 			closed = true;

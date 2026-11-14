@@ -1,8 +1,9 @@
 /**
  * Desktop 工具条的剪贴板弹层（M8 4.4）：
- * - 桌面 → 本机：显示最近一次桌面剪贴板内容 +「复制」；开着自动同步时由面板直接写本机剪贴板。
- * - 本机 → 桌面：文本框 +「发送到桌面」（之后在桌面里 Ctrl+V 粘贴）。
- * - 「自动同步」开关：打开的那次点击里调一次 `readText()` 触发浏览器授权提示，被拒绝则开关回弹并提示改用手动。
+ * - 桌面 → 本机：显示最近一次桌面剪贴板内容 +「复制到本机」；只有点这个按钮才写本机剪贴板。
+ * - 本机 → 桌面：文本框 +「发送到桌面」（之后在桌面里 Ctrl+V 粘贴）；舞台上直接 Ctrl/⌘+V 也会发送（见 DesktopPanel）。
+ * - 没有自动同步（安全审查 F3）：自动读本机剪贴板会把刚复制的密码送进 agent 可读的桌面，
+ *   自动写本机剪贴板会让 orb 里的进程悄悄替换用户随后要粘贴到本地终端的内容。底部一句话说明这一点。
  * 开合照 Portal 的访问弹层：宽屏是非模态弹层（外点 / Esc 关闭），compact 用 Dialog。
  */
 import {
@@ -15,9 +16,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { focusablesIn } from "../../lib/modal";
 import { useBreakpoint } from "../../lib/viewport";
-import { uiStore, useUi } from "../../state/ui";
 import { CopyButton } from "../ui/CopyButton";
-import { Button, Dialog, IconButton, TextArea, Toggle } from "../ui/primitives";
+import { Button, Dialog, IconButton, TextArea } from "../ui/primitives";
 
 export function ClipboardBody({
 	remoteText,
@@ -29,24 +29,8 @@ export function ClipboardBody({
 	disabled?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
-	const sync = useUi((s) => s.desktopClipSync);
 	const [draft, setDraft] = useState("");
 	const [sent, setSent] = useState(false);
-	const [denied, setDenied] = useState(false);
-	const enableSync = async (on: boolean) => {
-		setDenied(false);
-		if (!on) {
-			uiStore.getState().setDesktopClipSync(false);
-			return;
-		}
-		try {
-			const text = await navigator.clipboard.readText();
-			uiStore.getState().setDesktopClipSync(true);
-			if (text) onSend(text);
-		} catch {
-			setDenied(true);
-		}
-	};
 	return (
 		<div className="flex flex-col gap-3" data-testid="desktop-clipboard">
 			<section>
@@ -55,7 +39,11 @@ export function ClipboardBody({
 						{t("deskPanel.clip.fromDesktop")}
 					</h3>
 					{remoteText && (
-						<CopyButton text={remoteText} label={t("common.copy")} />
+						<CopyButton
+							text={remoteText}
+							label={t("deskPanel.clip.copyLocal")}
+							testId="desktop-clip-copy"
+						/>
 					)}
 				</div>
 				{remoteText ? (
@@ -100,21 +88,9 @@ export function ClipboardBody({
 					</Button>
 				</div>
 			</section>
-			<section className="border-border border-t pt-3">
-				<Toggle
-					checked={sync}
-					onChange={(v) => void enableSync(v)}
-					label={t("deskPanel.clip.autoSync")}
-				/>
-				<p
-					className={`mt-1 text-xs ${denied ? "text-err" : "text-faint"}`}
-					role={denied ? "alert" : undefined}
-				>
-					{denied
-						? t("deskPanel.clip.denied")
-						: t("deskPanel.clip.autoSyncHint")}
-				</p>
-			</section>
+			<p className="border-border border-t pt-3 text-faint text-xs">
+				{t("deskPanel.clip.manualNote")}
+			</p>
 		</div>
 	);
 }
