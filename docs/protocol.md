@@ -569,8 +569,8 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |`desk` 流|`LinkStreamDesk{t}`、`LinkDeskReply`|**由 orynd 打开**，每个桌面观看者一条。orbd 先回一行 `{"ok":true}` 或 `{"ok":false,"code":…,"message":…}` + `\n`；`ok=true` 之后流上是与 Xvnc（unix socket `$HOME/.oryn/vnc.sock`，Xvnc 不监听 TCP）之间的原始 RFB 字节。拒绝码：`display_unavailable`（显示未就绪）、`failed`（连 socket 失败，5s）；控制面另有 `timeout`（开流 + 应答行合计 10s）。拷贝与半关闭规则同 `portal` 流|
 |hello `features`|`LinkCtlHelloParams.features`|M8 的 orbd 在桌面启用时（`ORYN_DESKTOP=1` 且找得到 `Xtigervnc`、`openbox`、`chromium`）追加 `desktop`。缺 `desktop` → 不发 `profile.mode`、不调生命周期钩子，桌面与 Profile 接口回 409 `orbd_outdated`|
 |测试用环境变量|`ORYN_DESKTOP_X11_TMPDIR`|只给测试用：orbd 启动 Xvnc 前会删除 `<dir>/.X1-lock` 与 `<dir>/.X11-unix/X1`，默认 `/tmp`。在装了 X 显示栈的宿主上跑 e2e 必须设成临时目录，否则会删掉宿主自己 `:1` 显示的锁|
-|`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, readonlyBy?, dirty}`|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写|
-|`profile.mode`|`LinkCtlProfileModeParams{profileId, mode, reason, by?, byThreadId?}` → `LinkCtlOkResult`|orynd→orbd 请求（10s，失败只记日志）。目前只在接管时发给原持有者：`{mode:"readonly", reason:"taken_over", by:<接管方线程标题>}`。orbd 只在标记的 `profileId` 相同时生效（否则错误 `profile_mismatch`）：标记改为只读、`dirty=false`、浏览器与标签页不动，之后导出一律 409 `profile_readonly`。`mode=exclusive` → `invalid_params`（独占只能经重新装载取得）。丢失无害：控制面按围栏代数丢弃迟到的保存，下次同步的 `PUT /desktop/profile` 也带 `mode`|
+|`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, dirty}`（`readonlyBy` 已废弃、恒空）|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写。控制面以库为准纠正上报的模式：orbd 报只读而库里它仍是当前修订与代数的持有者 → `PUT …&keep=1&mode=exclusive`；orbd 报独占而库里是只读 → 重发 `profile.mode`|
+|`profile.mode`|`LinkCtlProfileModeParams{profileId, mode, reason}` → `LinkCtlOkResult`（`by` / `byThreadId` 已废弃，不发送也不采用）|orynd→orbd 请求（10s，失败只记日志）。目前只在接管时发给原持有者：`{mode:"readonly", reason:"taken_over"}`，不带接管方的任何信息（标记文件 orb 内 agent 可读）；界面上的「已被〈线程〉接管」取自控制面库。orbd 只在标记的 `profileId` 相同时生效（否则错误 `profile_mismatch`）：标记改为只读、`dirty=false`、浏览器与标签页不动，之后导出一律 409 `profile_readonly`。`mode=exclusive` → `invalid_params`（独占只能经重新装载取得）。丢失无害：控制面按围栏代数丢弃迟到的保存，下次同步的 `PUT /desktop/profile` 也带 `mode`|
 
 ### Profile 的三种选用方式（`BrowserProfileMode`）
 
@@ -619,7 +619,7 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 
 路径参数 `BrowserProfileIdPath`（`^bpf_[0-9A-Z]{26}$`）。名字：1–40 个字符，trim 后非空，不含控制字符，全局唯一。
 
-**桌面 WebSocket**：挂在 `Deps.Mounts`（不经鉴权组），与 `/api/v1/ws` 同一套一次性票据（`POST /api/v1/ws-ticket`）；`InsecureSkipVerify`（来源由票据保证）。票据无效 / 已用过 → 升级前 HTTP 401；orb 不存在 → 404。之后：观看者名额 → 唤醒 → `DialDesk` → `websocket.NetConn` 双向拷贝；客户端发来的每条消息都算一次（合并后的）用户交互，打开面板本身算一次并会唤醒 orb。关闭码：`4401` 主体被吊销、`4409` `orbd_outdated`、`4410` `orb_deleted`、`4429` 观看者已满、`4502` 桌面不可达（reason = 错误码）、`4503` orb 不可用（冻结 / 停机 / 唤醒超时）。
+**桌面 WebSocket**：挂在 `Deps.Mounts`（不经鉴权组），与 `/api/v1/ws` 同一套一次性票据（`POST /api/v1/ws-ticket`）；`InsecureSkipVerify`（来源由票据保证）。票据无效 / 已用过 → 升级前 HTTP 401；orb 不存在 → 404。之后：观看者名额 → 唤醒 → `DialDesk` → `websocket.NetConn` 双向拷贝；客户端发来的每条消息都算一次（合并后的）用户交互，打开面板本身算一次并会唤醒 orb。关闭码：`4401` 主体被吊销、`4409` `orbd_outdated`、`4410` `orb_deleted`、`4429` 观看者已满、`4502` 桌面不可达（reason = 错误码；desk 上游自行结束时 reason = `closed`，同时回收观看者名额）、`4503` orb 不可用（冻结 / 停机 / 唤醒超时）。
 
 ### orbd 本机 API（`desktop` 特性，`fs` 流上）
 
@@ -627,18 +627,18 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |---|---|
 |`GET /desktop/state`|`LinkCtlDesktopStateParams`|
 |`POST /desktop/browser/start`|启动并等到 DevTools 就绪（30s）→ 状态；显示或 Profile 未定 → 409 `not_ready`|
-|`POST /desktop/browser/stop`|SIGTERM，10s 后进程组 SIGKILL → 状态|
+|`POST /desktop/browser/stop`|经 CDP `Browser.close` 让浏览器自行退出（Cookie 等落盘），10s 后进程组 SIGKILL；拿不到 DevTools 时只对主进程 SIGTERM → 状态|
 |`PUT /desktop/profile?id=<bpf_…>&name=<名字>&mode=exclusive\|readonly[&keep=1]`|`keep=1`：标记须为 `{本 orb, id}`，是 → 改写标记的 `mode` 后 204（不动浏览器与目录），否 → 409 `profile_mismatch`。否则：停浏览器，把请求体（tar.gz；`Content-Length: 0` = 空 Profile）还原进目录，写标记 `{orbId, profileId, name, mode}`，`dirty=false`，204。失败：原目录与标记不动，回 400 `invalid_archive` / 413 `too_large` / 507 `no_space`。`mode` 缺省 `exclusive`|
 |`DELETE /desktop/profile`|定为不用 Profile：标记已是 `{本 orb, ""}` → 204 不动浏览器与目录；否则停浏览器、删除 `profile/`、写标记 `{orbId, profileId:""}`、`dirty=false`，204|
-|`GET /desktop/profile/export?mode=live\|closed`|标记没有 `profileId` → 409 `no_profile`；标记为只读 → 409 `profile_readonly`。`closed`：先停浏览器，成功后 `dirty=false`；`live`：对浏览器进程组 SIGSTOP，归档结束后 SIGCONT，`dirty` 不变。`application/gzip`，头 `X-Oryn-Profile-Id`，流式输出；中途出错直接断开（分块编码没有终止块）|
+|`GET /desktop/profile/export?mode=live\|closed`|标记没有 `profileId` → 409 `no_profile`；标记为只读 → 409 `profile_readonly`。先按还原上限统计条目数与解包字节，超限 → 413 `too_large`（输出中途再守一次，超限断开）。`closed`：先停浏览器（同上，`Browser.close`），成功后 `dirty=false`；`live`：Chromium 的 Cookie 约 30s 才落盘，所以先经 CDP `Storage.getCookies` 取持久 Cookie 写成 `Default/oryn-cookies.json`（排序后稳定，Cookie 不变则字节不变），再对浏览器进程组 SIGSTOP，归档结束后 SIGCONT，`dirty` 不变；装载后浏览器首次 DevTools 就绪时清空 Cookie 并回灌该快照，然后删除文件。归档不收扩展相关目录（`Extensions`、`Local Extension Settings`、`Extension State/Rules/Scripts`、`Managed/Sync Extension Settings`、`Extension Cookies`），装载旧归档时跳过这些条目。`application/gzip`，头 `X-Oryn-Profile-Id`，流式输出；中途出错直接断开（分块编码没有终止块）|
 
 orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `desktop.browser.stop`（未启用回 `not_supported`），CLI `oryn orb desktop status [--json]`、`oryn orb desktop browser start|stop`。CDP 前门端口与 Chromium 的 DevTools 端口是保留端口：`portal` 流回 `forbidden_port`，声明它们的服务 `failed`。
 
 ### 控制面同步与保存
 
 - **同步**（进入 `ready` 之前的 `BeforeReady` 钩子与 `setOrbDesktopProfile`，整体 150s）：没有绑定 → `DELETE /desktop/profile`。只读绑定 → 不取租约；已装载过（`local_rev ≥ 0`）则 `PUT …&mode=readonly&keep=1` 保留本地副本（持有者之后的新修订不推送；`profile_mismatch` 时才重装），未装载则用当前修订归档 `PUT …&mode=readonly`。独占绑定：有待办的接管先按上表处理；`AcquireBrowserProfile` 0 行 → `DELETE`（视图 `in_use`）；取得后 `local_rev` 相同 → `keep=1`（`profile_mismatch` 则全量重装），修订 0 → 空体 `PUT`，否则解密归档作为 `PUT` 请求体；装载失败 → `DELETE`、释放租约、记 `profile_error`。最后 `SetOrbDesktopLocal(local_rev, profile_error, fence)`。
-- **保存** `checkin(live|closed)`（120s）：只对独占绑定；持有者是别人 / `local_rev` 不是当前修订 / `dirty=0` → 不保存。导出体经 `LimitReader(256MiB+1)` 同时算 SHA-256 并 `SealStream` 到临时文件；超限 → `too_large`，读出错 → `export_failed`（都写 `profile.save_failed`）；摘要等于当前 `content_sha256` → 不产生新修订；否则 `fsync` + `rename` 为 `<revision+1>.oss` 后 `SaveBrowserProfileRevision`（0 行 → `profile.save_fenced`，删除新文件），成功后删除更旧的归档、写 `profile.saved`。
-- **释放**：orb 状态事件 `To ∈ {frozen, stopped, failed, deleted}` → `ReleaseBrowserProfileByOrb`（单 goroutine 队列，回调不阻塞）。
+- **保存** `checkin(live|closed)`（120s）：只对独占绑定；持有者是别人 / `local_rev` 不是当前修订 / `dirty=0` → 不保存。导出体经 `LimitReader(256MiB+1)` 同时算 SHA-256 并 `SealStream` 到临时文件；超限 → `too_large`，读出错 → `export_failed`（都写 `profile.save_failed`）；摘要等于当前 `content_sha256` → 不产生新修订；否则 `fsync` + `rename` 为 `<revision+1>.oss` 后 `SaveBrowserProfileRevision`（0 行 → `profile.save_fenced`，删除新文件），成功后删除更旧的归档、写 `profile.saved`。写入前在同一事务里复核：同一 Profile、独占、本地修订与代数未变、Profile 仍是该修订与代数；本 orb 仍持有租约则沿用代数；租约为空时只有代数等于本 orb 上次取得的值才重新取得（冻结释放后停机的情形），否则不保存。orbd 导出回 413 → `save_error=too_large`，手动保存回 413 `profile_too_large`。
+- **释放**：orb 状态事件 `To ∈ {frozen, stopped, failed, deleted}` → `ReleaseBrowserProfileByOrb`（单 goroutine 队列，回调不阻塞，事务内复核状态）。orynd 启动时把所有持有租约的 orb 放进同一队列，离线的（冻结 / 停机 / 失败 / 已删除）重新释放，避免重启窗口内的事件丢失留下永久占用。
 
 ### 归档的流式加密
 
@@ -651,7 +651,7 @@ orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `deskt
 |显示|`:1`，初始 1280x800，24 位色|
 |CDP 前门|`127.0.0.1:7822`（Chromium 自己的 DevTools 端口是临时端口）|
 |浏览器启动等待|显示就绪 + Profile 已定 + DevTools 就绪，合计 30s|
-|浏览器停止|SIGTERM，10s 后进程组 SIGKILL|
+|浏览器停止|CDP `Browser.close`，10s 后进程组 SIGKILL|
 |Profile 归档|gzip 后 ≤256MiB；解包后 ≤2GiB、≤200000 个条目|
 |Profile 数量|≤50|
 |导出 / 装载单次|120s；钩子整体 150s；接管前对原持有者的活体保存 15s|
@@ -671,6 +671,8 @@ orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `deskt
 |`profile_save_failed`|502|导出或落盘失败|
 |`orbd_outdated` / `orb_unavailable` / `orb_deleted`|409 / 503 / 410|沿用现有码|
 |`invalid_request`|400|Profile 名字非法|
+
+鉴权组内 `/api`、`/provider`、`/orb` 前缀下没有路由的路径一律回 404 `{"code":"not_found"}`（JSON），不再落到 SPA；公开前缀（`/api/v1/public/`、`/provider/v1/`）未命中同样 404。匿名请求仍先得到 401。
 
 ### 存储
 

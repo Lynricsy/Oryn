@@ -4868,26 +4868,37 @@ export interface components {
             profileMode?: components["schemas"]["BrowserProfileAccess"];
             /** @description `profileMode=readonly` 时的原因 */
             readonlyReason?: components["schemas"]["BrowserProfileReadonlyReason"];
-            /** @description `readonlyReason=taken_over` 时接管方线程的标题（来自 `profile.mode` 的 `by`） */
+            /**
+             * @deprecated
+             * @description 已废弃：控制面不再把接管方信息发给 orbd（防跨线程信息外泄），恒为空；界面从控制面库里的 `orb_desktops.readonly_by*` 取
+             */
             readonlyBy?: string;
             /** @description 自上次装载或关闭式导出以来浏览器启动过（有东西可存）；只读时恒为 false */
             dirty: boolean;
         };
         /**
          * @description orynd→orbd 请求（M8；仅对 `features` 含 `desktop` 的 orbd；结果 `LinkCtlOkResult`，10s，失败只记日志）。
-         *     目前只在接管时发给原持有者：`{profileId, mode: readonly, reason: taken_over, by: <接管方线程标题>}`。
+         *     目前只在接管时发给原持有者：`{profileId, mode: readonly, reason: taken_over}`；不带接管方的任何信息（orb 内 agent 可读标记文件）。
          *     orbd 只在标记的 `profileId` 与之相同时生效：改写标记的使用方式、`dirty=false`，浏览器照常运行、标签页不动，
          *     此后 `/desktop/profile/export` 回 409 `profile_readonly`（跳过一切保存）；标记不符 → 错误 `profile_mismatch`。
          *     `mode=exclusive` → 错误 `invalid_params`（独占只能经 `PUT /desktop/profile` 重新装载取得）。
          *     这条请求丢失无害：控制面按围栏代数丢弃迟到的保存（记 `profile.save_fenced`），且下次同步的 `PUT /desktop/profile` 带 `mode`。
+         *     迟到的旧请求把已重新取得独占的 orb 误降为只读时，控制面在收到其 `desktop.state` 后以库为准纠正（`PUT /desktop/profile?keep=1&mode=exclusive`）；
+         *     纠正生效前的冻结保存会被跳过（数据留在本地，纠正后可再保存）。彻底消除需给本请求加租约代数，暂未做。
          */
         LinkCtlProfileModeParams: {
             profileId: components["schemas"]["BrowserProfileId"];
             mode: components["schemas"]["BrowserProfileAccess"];
             reason: components["schemas"]["BrowserProfileReadonlyReason"];
-            /** @description 接管方线程的标题（`reason=taken_over` 时） */
+            /**
+             * @deprecated
+             * @description 已废弃，控制面不再发送
+             */
             by?: string;
-            /** @description 接管方的代表线程 */
+            /**
+             * @deprecated
+             * @description 已废弃，控制面不再发送
+             */
             byThreadId?: components["schemas"]["ThreadId"];
         };
         /**

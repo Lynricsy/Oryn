@@ -137,6 +137,13 @@ orb 里的 agent 有 root（镜像给 `user` 配了免密 sudo），应把 orb �
 
 docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`：即使在容器内是 root，也不能发原始包（ARP 欺骗同网桥上其它 orb 的 link）或改路由与防火墙。
 
+### 桌面浏览器沙箱（M8）
+
+- docker 驱动给新容器加 `--security-opt seccomp=<orb-seccomp.json>`（`internal/providerrt/orb-seccomp.json`）：moby 默认配置末尾追加一条规则，放行 `clone` / `unshare` 建 user namespace，供 Chromium 自己的沙箱使用（mount、setns、clone3 仍按默认只给有 CAP_SYS_ADMIN 的进程）。`extra_run_args` 里自带 `seccomp` 选项时不追加。代价是 orb 内进程能建 user namespace，内核暴露面略增，与 Chrome 官方推荐的容器配置相同。
+- orbd 启动时探测能否建 user namespace：能则 Chromium 带沙箱运行；不能（升级前建的旧容器、dispatch 驱动的机器）退回 `--no-sandbox` 并保留 Chromium 的警告条。新建的 orb 才有沙箱。
+- 镜像里的受管策略 `/etc/chromium/policies/managed/oryn.json`（root 所有，不随 Profile 传播）禁止安装扩展、代理固定直连，防止被注入的 agent 往共享 Profile 里植入扩展或代理。
+- Chromium 随镜像发布，**要定期重建 orb 镜像**（`make image`）以跟进浏览器安全更新；已存在的 orb 用的仍是旧镜像。
+
 ### 网络隔离
 
 默认网桥上的 orb 能访问宿主上的所有服务（1Panel、数据库等）、局域网、云厂商元数据地址 `169.254.169.254`，以及彼此。建议给 orb 一个专用网桥，并用防火墙只放行 orb → 控制面：
