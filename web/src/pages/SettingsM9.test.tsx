@@ -1,19 +1,14 @@
 /**
- * 设置 → 项目（M9）：每个项目行尾的时钟按钮带「每次新建线程」定时的数量角标，点开在行下展开该项目的定时列表；
+ * 项目页的定时任务（M9，M9.6 起在 `/projects/<id>` 的「定时任务」卡里）：直接列出该项目的「每次新建线程」定时；
  * 设置 → 关于：协调宿主一栏列出协调 orb 并标「协调」。数据走 mock 后端（夹具同截图）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-	within,
-} from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { M9_IDS, projects } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
+import { ProjectPage } from "./ProjectsPage";
 import { SettingsPage, type SettingsSection } from "./SettingsPage";
 
 let server: MockServer;
@@ -48,30 +43,29 @@ function setup(section: SettingsSection) {
 	);
 }
 
-describe("设置 → 项目的定时任务（M9）", () => {
-	it("时钟按钮带数量角标；点开展开该项目的定时列表，再点收起", async () => {
+describe("项目页的定时任务（M9）", () => {
+	it("「定时任务」卡直接列出该项目的定时，别的项目的不在里面", async () => {
 		const [oryn, core] = projects;
 		if (!oryn || !core) throw new Error("夹具缺项目");
-		setup("projects");
-		await waitFor(() =>
-			expect(
-				screen.getByTestId(`project-schedule-count-${oryn.id}`),
-			).toHaveTextContent("2"),
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/projects/${oryn.id}`]}>
+					<Routes>
+						<Route path="/projects/:projectId" element={<ProjectPage />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
 		);
-		expect(
-			screen.getByTestId(`project-schedule-count-${core.id}`),
-		).toHaveTextContent("1");
-		const toggles = screen.getAllByRole("button", { name: "定时任务" });
-		expect(toggles[0]).toHaveAttribute("aria-expanded", "false");
-		fireEvent.click(toggles[0] as HTMLElement);
-		expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
 		const box = await screen.findByTestId(`project-schedules-${oryn.id}`);
 		await waitFor(() => expect(within(box).getByText("nightly")).toBeVisible());
 		expect(
 			box.querySelector(`[data-schedule="${M9_IDS.spaceSchedule}"]`),
 		).not.toBeNull();
-		fireEvent.click(toggles[0] as HTMLElement);
-		expect(screen.queryByTestId(`project-schedules-${oryn.id}`)).toBeNull();
+		expect(box.querySelectorAll("[data-schedule]")).toHaveLength(2);
+		expect(screen.queryByTestId(`project-schedules-${core.id}`)).toBeNull();
 	});
 });
 

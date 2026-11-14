@@ -17,6 +17,7 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { identityKeys } from "../api/identity-queries";
 import { qk } from "../api/queries";
 import i18n from "../i18n";
 import {
@@ -67,10 +68,7 @@ let identity: { name: string; email: string } | undefined;
 let calls: Call[] = [];
 let agentFiles: Record<string, string> = {};
 let agentPuts: { path: string; body: string }[] = [];
-let avatars: Record<string, { avatarIcon?: string; avatarImage?: string }> = {};
-/** 非空时头像 GET 先取当时的值再等它兑现：模拟 PUT 之前发出、之后才到的旧读取。 */
-let avatarGetGate: Promise<void> | null = null;
-let avatarGetsServed = 0;
+let lastClient: QueryClient;
 
 async function agentConfig(req: Request, url: URL): Promise<Response> {
 	if (url.pathname === "/api/v1/agent-config/files")
@@ -110,16 +108,6 @@ async function agentConfig(req: Request, url: URL): Promise<Response> {
 		: new Response(c);
 }
 
-const PROJECT = {
-	id: "p1",
-	name: "oryn",
-	repoUrl: "https://github.com/x/oryn",
-	shallowClone: false,
-	icon: "\u{f07d3}",
-	createdAt: 1,
-	updatedAt: 1,
-};
-
 const fetchMock = vi.fn(
 	async (input: RequestInfo | URL, init?: RequestInit) => {
 		// rawFetch 传相对路径与 init；Node 的 Request 只收绝对地址
@@ -146,19 +134,17 @@ const fetchMock = vi.fn(
 			}
 			return Response.json(identity ? { identity } : {});
 		}
-		const avatarPath = /^\/api\/v1\/settings\/(agent|user)-identity$/.exec(
-			url.pathname,
-		);
-		if (avatarPath) {
-			const who = avatarPath[1] ?? "";
-			if (req.method === "PUT") avatars[who] = JSON.parse(text);
-			const snapshot = avatars[who] ?? {};
-			if (req.method === "GET" && avatarGetGate) {
-				await avatarGetGate;
-				avatarGetsServed++;
-			}
-			return Response.json(snapshot);
-		}
+		// 身份与头像：各卡只读不写（保存语义见 IdentitySettings.test）
+		if (
+			/^\/api\/v1\/settings\/(agent|assistant|user)-identity$/.test(
+				url.pathname,
+			)
+		)
+			return Response.json({});
+		if (url.pathname === "/api/v1/settings/role-identities")
+			return Response.json({
+				roles: [{ role: "default", inCycle: true }],
+			});
 		if (url.pathname === "/api/v1/browser-profiles")
 			return Response.json({
 				profiles: [
@@ -172,10 +158,6 @@ const fetchMock = vi.fn(
 					},
 				],
 			});
-		if (url.pathname === "/api/v1/projects")
-			return Response.json({ projects: [PROJECT] });
-		if (url.pathname === `/api/v1/projects/${PROJECT.id}`)
-			return Response.json({ ...PROJECT, ...JSON.parse(text) });
 		return Response.json({ code: "not_found", message: "" }, { status: 404 });
 	},
 );
@@ -184,6 +166,7 @@ function setup(section: SettingsSection = "git-identity") {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
+	lastClient = client;
 	return render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
@@ -320,6 +303,53 @@ describe("设置 → agent 配置", () => {
 		// 旧的 textarea 编辑器已删除
 		expect(screen.queryByRole("textbox", { name: "models.yml" })).toBeNull();
 	});
+
+	it("保存 config.yml 后角色头像列表失效（role 来自它）；保存别的文件不失效", async () => {
+		agentFiles["config.yml"] = "cycleOrder: [a]\n";
+		setup("agent-config");
+		lastClient.setQueryData(identityKeys.roles, { roles: [] });
+		const stale = () =>
+			lastClient.getQueryState(identityKeys.roles)?.isInvalidated;
+		fireEvent.click(await screen.findByText("models.yml"));
+		fireEvent.change(await screen.findByLabelText("editor:models.yml"), {
+			target: { value: "providers: {a: {}}\n" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(agentPuts).toHaveLength(1));
+		await act(async () => {});
+		expect(stale()).toBe(false);
+		fireEvent.click(screen.getByText("config.yml"));
+		fireEvent.change(await screen.findByLabelText("editor:config.yml"), {
+			target: { value: "cycleOrder: [a, b]\n" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(agentPuts).toHaveLength(2));
+		await waitFor(() => expect(stale()).toBe(true));
+	});
+});
+
+describe("设置页外框与「身份与头像」", () => {
+	beforeEach(() => {
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("页面里没有分区导航（导航在侧栏「更多」分区）", () => {
+		setup("devices");
+		expect(screen.queryByRole("navigation")).toBeNull();
+		expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("设置");
+	});
+
+	it("身份与头像：依次是 Agent 身份、全局助手、角色头像、我的头像四张卡", async () => {
+		setup("identity");
+		expect(
+			screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+		).toEqual(["Agent 身份", "全局助手", "角色头像", "我的头像"]);
+		expect(await screen.findByTestId("identity-roles")).toBeInTheDocument();
+	});
 });
 
 describe("设置 → 外观", () => {
@@ -332,9 +362,6 @@ describe("设置 → 外观", () => {
 			wallpaper: "aurora",
 			tone: undefined,
 		});
-		avatars = {};
-		avatarGetGate = null;
-		avatarGetsServed = 0;
 		calls = [];
 		vi.stubGlobal("fetch", fetchMock);
 	});
@@ -400,59 +427,13 @@ describe("设置 → 外观", () => {
 		expect(document.documentElement.dataset.accent).toBe("cobalt");
 	});
 
-	// 外观里依次是 agent 头像与我的头像两张卡，交互相同、各写各的接口
-	it.each([
-		["agent", 0],
-		["user", 1],
-	] as const)(
-		"%s 头像：选内置字形以 PUT 整体替换，恢复默认发送空对象",
-		async (who, idx) => {
-			setup("appearance");
-			const grids = await screen.findAllByRole("group", {
-				name: i18n.t("appearance.avatarGlyphs"),
-			});
-			expect(grids).toHaveLength(2);
-			const grid = grids[idx] as HTMLElement;
-			fireEvent.click(within(grid).getByRole("button", { name: "🦊" }));
-			await waitFor(() =>
-				expect(
-					within(grid).getByRole("button", { name: "🦊" }),
-				).toHaveAttribute("aria-pressed", "true"),
-			);
-			const reset = screen.getAllByRole("button", {
-				name: i18n.t("appearance.avatarReset"),
-			})[idx] as HTMLElement;
-			await waitFor(() => expect(reset).toBeEnabled());
-			fireEvent.click(reset);
-			await waitFor(() => expect(reset).toBeDisabled());
-			expect(writes().map((c) => [c.method, c.path, c.body])).toEqual([
-				["PUT", `/api/v1/settings/${who}-identity`, { avatarIcon: "🦊" }],
-				["PUT", `/api/v1/settings/${who}-identity`, {}],
-			]);
-		},
-	);
-
-	it("头像保存时在途的旧读取后到，也不会把头像还原成旧值", async () => {
-		const gate = deferred<void>();
-		avatarGetGate = gate.promise;
+	it("外观只有主题（明暗、主题色、壁纸），没有头像卡", () => {
 		setup("appearance");
-		const grid = (
-			await screen.findAllByRole("group", {
-				name: i18n.t("appearance.avatarGlyphs"),
-			})
-		)[0] as HTMLElement;
-		const fox = () => within(grid).getByRole("button", { name: "🦊" });
-		fireEvent.click(fox());
-		await waitFor(() => expect(fox()).toHaveAttribute("aria-pressed", "true"));
-		// 页面打开时发出的两个 GET（读到的是保存前的 {}）这时才到
-		await act(async () => {
-			gate.resolve();
-			await gate.promise;
-		});
-		await waitFor(() => expect(avatarGetsServed).toBe(2));
-		await act(async () => {});
-		expect(fox()).toHaveAttribute("aria-pressed", "true");
-		expect(writes().map((c) => c.body)).toEqual([{ avatarIcon: "🦊" }]);
+		expect(screen.getByRole("heading", { name: "主题" })).toBeInTheDocument();
+		expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(1);
+		expect(
+			screen.queryByRole("group", { name: i18n.t("appearance.avatarGlyphs") }),
+		).toBeNull();
 	});
 
 	const IMAGE = "data:image/png;base64,AAAA";
@@ -495,93 +476,6 @@ describe("设置 → 外观", () => {
 	});
 });
 
-describe("设置 → 项目图标", () => {
-	beforeEach(() => {
-		calls = [];
-		vi.stubGlobal("fetch", fetchMock);
-	});
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
-	it("选字形后保存发送该字形；选「自动」发送空串清除", async () => {
-		setup("projects");
-		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-		const grid = screen.getByRole("group", {
-			name: i18n.t("projects.icon" as "common.save"),
-		});
-		expect(
-			within(grid).getByRole("button", { name: "language go" }),
-		).toHaveAttribute("aria-pressed", "true");
-		fireEvent.click(
-			within(grid).getByRole("button", { name: "language rust" }),
-		);
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
-		await waitFor(() => expect(writes()).toHaveLength(1));
-		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-		fireEvent.click(
-			screen.getByRole("button", {
-				name: i18n.t("projects.iconAuto" as "common.save"),
-			}),
-		);
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
-		await waitFor(() => expect(writes()).toHaveLength(2));
-		expect(writes().map((c) => c.body)).toEqual([
-			expect.objectContaining({ icon: "\u{f1617}" }),
-			expect.objectContaining({ icon: "" }),
-		]);
-	});
-});
-
-describe("设置 → 项目默认浏览器 Profile（M8）", () => {
-	beforeEach(() => {
-		calls = [];
-		vi.stubGlobal("fetch", fetchMock);
-	});
-	afterEach(() => {
-		vi.unstubAllGlobals();
-	});
-
-	it("下拉列出各 Profile；选中后保存带它的 id，改回「无」发空串清除", async () => {
-		setup("projects");
-		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-		const select = screen.getByRole("combobox", {
-			name: new RegExp(`^${i18n.t("projects.defaultBrowserProfile")}`),
-		});
-		await screen.findByRole("option", { name: "工作账号" });
-		fireEvent.change(select, { target: { value: "bpf_A" } });
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
-		await waitFor(() => expect(writes()).toHaveLength(1));
-		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-		fireEvent.change(
-			screen.getByRole("combobox", {
-				name: new RegExp(`^${i18n.t("projects.defaultBrowserProfile")}`),
-			}),
-			{ target: { value: "" } },
-		);
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
-		await waitFor(() => expect(writes()).toHaveLength(2));
-		expect(writes().map((c) => c.body)).toEqual([
-			expect.objectContaining({ defaultBrowserProfileId: "bpf_A" }),
-			expect.objectContaining({ defaultBrowserProfileId: "" }),
-		]);
-	});
-
-	it("侧边导航有「浏览器 Profile」分区（排在密钥之后）", async () => {
-		setup("browser-profiles");
-		const nav = screen.getByRole("navigation");
-		const links = within(nav)
-			.getAllByRole("link")
-			.map((a) => a.getAttribute("href"));
-		expect(links.indexOf("/settings/browser-profiles")).toBe(
-			links.indexOf("/settings/secrets") + 1,
-		);
-		expect(
-			await screen.findByText(i18n.t("browserProfiles.new")),
-		).toBeInTheDocument();
-	});
-});
-
 describe("设置 → 通知 / 公开分享（M5）", () => {
 	beforeEach(() => {
 		calls = [];
@@ -592,17 +486,8 @@ describe("设置 → 通知 / 公开分享（M5）", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("侧边导航含「通知」与「公开分享」，通知页渲染三张卡片", async () => {
+	it("通知页渲染三张卡片", async () => {
 		setup("notifications");
-		const nav = screen.getByRole("navigation");
-		expect(within(nav).getByRole("link", { name: "通知" })).toHaveAttribute(
-			"href",
-			"/settings/notifications",
-		);
-		expect(within(nav).getByRole("link", { name: "公开分享" })).toHaveAttribute(
-			"href",
-			"/settings/shares",
-		);
 		expect(screen.getByRole("heading", { name: "此设备" })).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "渠道" })).toBeInTheDocument();
 		expect(
@@ -687,26 +572,14 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		);
 	}
 
-	it("「桌面应用」分区只在桌面壳里出现；浏览器里访问该路由回到设备页", () => {
-		const web = mount("about");
-		expect(
-			within(screen.getByRole("navigation")).queryByRole("link", {
-				name: "桌面应用",
-			}),
-		).toBeNull();
-		web.unmount();
+	it("「桌面应用」分区在浏览器里访问时回到设备页", () => {
 		mount("desktop");
 		expect(screen.getByText("DEVICES")).toBeInTheDocument();
 	});
 
-	it("桌面壳里导航出现「桌面应用」，关于页没有「退出登录」", () => {
+	it("桌面壳里关于页没有「退出登录」", () => {
 		h.desktop = fakeDesktop;
 		mount("about");
-		expect(
-			within(screen.getByRole("navigation")).getByRole("link", {
-				name: "桌面应用",
-			}),
-		).toHaveAttribute("href", "/settings/desktop");
 		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
 	});
 
@@ -750,15 +623,10 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		).toBeInTheDocument();
 	});
 
-	it("移动壳：设备页没有二维码卡，导航没有「桌面应用」，desktop 路由回设备页", () => {
+	it("移动壳：设备页没有二维码卡，desktop 路由回设备页", () => {
 		h.mobile = fakeMobile();
 		const view = mount("devices");
 		expect(screen.queryByTestId("pair-qr")).toBeNull();
-		expect(
-			within(screen.getByRole("navigation")).queryByRole("link", {
-				name: "桌面应用",
-			}),
-		).toBeNull();
 		view.unmount();
 		mount("desktop");
 		expect(screen.getByText("DEVICES")).toBeInTheDocument();

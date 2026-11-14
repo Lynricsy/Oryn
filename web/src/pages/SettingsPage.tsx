@@ -1,8 +1,9 @@
 /**
- * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
+ * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、
  * 密钥（名称列表、写入值）、浏览器 Profile（M8）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
- * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、
- * 桌面应用（M6，仅桌面壳内出现）、关于。
+ * 身份与头像（M9.6：Agent 身份、全局助手、角色头像、我的头像）、外观（明暗、主题色、壁纸）、通知（此设备、渠道、最近通知）、公开分享（M5）、
+ * 桌面应用（M6，仅桌面壳内出现）、关于。分区导航在侧栏「更多」分区（`more-entries.ts`），页面本身只有页头与内容；
+ * 项目设置在项目分区（`/projects/<id>`）。
  * 桌面壳里的会话是设备换来的 App 会话：不能批准配对（改为引导到浏览器）、不显示退出登录（由「更换服务器」代替）。
  * 移动壳（M7）：没有「桌面应用」分区，也不显示退出登录；关于页列出 App 版本、WebView、令牌存储与「更换服务器…」；
  * 设备页的「用手机扫码连接」二维码只在浏览器与桌面壳里出现（手机自己不用扫自己）。
@@ -11,7 +12,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
 	type ChangeEvent,
 	type CSSProperties,
-	type KeyboardEvent,
 	type ReactNode,
 	useEffect,
 	useMemo,
@@ -19,31 +19,26 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Navigate, NavLink, useNavigate } from "react-router";
-import { api, type Project, type Schemas, unwrap } from "../api/client";
+import { Navigate, useNavigate } from "react-router";
+import { api, type Schemas, unwrap } from "../api/client";
+import { identityKeys } from "../api/identity-queries";
 import {
-	type AvatarOwner,
 	qk,
-	saveAvatarIdentity,
-	useAvatarIdentity,
-	useBrowserProfiles,
 	useDevices,
 	useGitIdentity,
 	useHealth,
 	useMe,
-	useOrbs,
-	useProjects,
 	useProviders,
 	useSecrets,
 } from "../api/queries";
-import { useSchedules } from "../api/schedule-queries";
 import { FileBrowser } from "../components/files/FileBrowser";
 import {
 	ChromeLead,
 	WindowControls,
 } from "../components/layout/WindowControls";
 import { PairApproval } from "../components/PairApproval";
-import { AgentAvatar } from "../components/ui/AgentAvatar";
+import { radioKeys } from "../components/settings/GlyphGrid";
+import { useAsync } from "../components/settings/useAsync";
 import { CopyButton } from "../components/ui/CopyButton";
 import {
 	Badge,
@@ -51,7 +46,6 @@ import {
 	Card,
 	KeyValue,
 	ListRow,
-	ProjectBadge,
 	Sheet,
 	StatusDot,
 } from "../components/ui/data";
@@ -63,22 +57,10 @@ import {
 	IconButton,
 	Select,
 	Spinner,
-	TextArea,
 	TextInput,
-	Toggle,
 } from "../components/ui/primitives";
-import { UserAvatar } from "../components/ui/UserAvatar";
-import { AvatarTooLargeError, avatarDataUrl } from "../lib/avatar-image";
-import { latestSetupByProject, type SetupRun } from "../lib/env-banner";
 import { agentConfigSource } from "../lib/file-source";
 import { formatDateTime, formatMemoryMB, formatRelative } from "../lib/format";
-import {
-	AVATAR_EMOJI,
-	AVATAR_NERD,
-	type Glyph,
-	isSingleGlyph,
-	PROJECT_GLYPHS,
-} from "../lib/glyphs";
 import { host, type MobileInfo } from "../lib/host";
 import { pairUri, qrModules } from "../lib/pair-qr";
 import { useBreakpoint } from "../lib/viewport";
@@ -97,59 +79,24 @@ import AutomationsSettings from "./settings/AutomationsSettings";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
+import { IdentitySettings } from "./settings/IdentitySettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
-import { ProjectSchedules } from "./settings/ProjectSchedules";
 import SharesSettings from "./settings/SharesSettings";
 
 export type SettingsSection =
 	| "devices"
 	| "providers"
-	| "projects"
 	| "secrets"
 	| "browser-profiles"
 	| "git-identity"
 	| "agent-config"
+	| "identity"
 	| "appearance"
 	| "notifications"
 	| "shares"
 	| "automations"
 	| "desktop"
 	| "about";
-
-const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
-	{ key: "devices", icon: "device" },
-	{ key: "providers", icon: "box" },
-	{ key: "projects", icon: "folder" },
-	{ key: "secrets", icon: "key" },
-	{ key: "browser-profiles", icon: "browser" },
-	{ key: "git-identity", icon: "fork" },
-	{ key: "agent-config", icon: "file" },
-	{ key: "appearance", icon: "palette" },
-	{ key: "notifications", icon: "bell" },
-	{ key: "shares", icon: "share" },
-	{ key: "automations", icon: "clock" },
-	{ key: "desktop", icon: "monitor" },
-	{ key: "about", icon: "info" },
-];
-
-function useAsync() {
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<unknown>(null);
-	const run = async (fn: () => Promise<unknown>) => {
-		setBusy(true);
-		setError(null);
-		try {
-			await fn();
-			return true;
-		} catch (e) {
-			setError(e);
-			return false;
-		} finally {
-			setBusy(false);
-		}
-	};
-	return { busy, error, run };
-}
 
 /** 卡片内的列表：行自带内边距，向两侧各收 2 个单位与卡片标题对齐。 */
 function RowList({ children }: { children: ReactNode }) {
@@ -162,67 +109,6 @@ function LeadIcon({ name }: { name: IconName }) {
 		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
 			<Icon name={name} size={15} />
 		</span>
-	);
-}
-
-/** 单选组的方向键：在组内的 `role=radio` 之间移动焦点并选中。 */
-function radioKeys(e: KeyboardEvent<HTMLElement>) {
-	const step: Record<string, number> = {
-		ArrowRight: 1,
-		ArrowDown: 1,
-		ArrowLeft: -1,
-		ArrowUp: -1,
-	};
-	const d = step[e.key];
-	if (!d) return;
-	const radios = Array.from(
-		e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
-	);
-	const i = radios.indexOf(document.activeElement as HTMLButtonElement);
-	if (i < 0) return;
-	e.preventDefault();
-	const next = radios[(i + d + radios.length) % radios.length];
-	next?.focus();
-	next?.click();
-}
-
-/** 字形选择网格：项目图标与 agent 头像共用。 */
-function GlyphGrid({
-	glyphs,
-	value,
-	label,
-	disabled,
-	onPick,
-}: {
-	glyphs: readonly Glyph[];
-	value?: string;
-	label: string;
-	disabled?: boolean;
-	onPick: (char: string) => void;
-}) {
-	return (
-		<fieldset
-			aria-label={label}
-			className="m-0 grid min-w-0 grid-cols-[repeat(auto-fill,minmax(2rem,1fr))] gap-1 border-0 p-0"
-		>
-			{glyphs.map((g) => {
-				const on = g.char === value;
-				return (
-					<button
-						key={g.char}
-						type="button"
-						title={g.label}
-						aria-label={g.label}
-						aria-pressed={on}
-						disabled={disabled}
-						onClick={() => onPick(g.char)}
-						className={`grid h-8 place-items-center rounded-md border text-lg leading-none transition-colors duration-150 disabled:opacity-50 ${on ? "border-accent bg-accent-soft text-accent-ink" : "border-transparent text-muted hover:bg-hover hover:text-fg"}`}
-					>
-						{g.char}
-					</button>
-				);
-			})}
-		</fieldset>
 	);
 }
 
@@ -553,424 +439,6 @@ function ProvidersSettings() {
 	);
 }
 
-// ---------------------------------------------------------------- 项目
-
-type ProjectForm = Schemas["ProjectCreate"];
-
-const EMPTY_PROJECT: ProjectForm = { name: "", shallowClone: false };
-
-function formOf(p: Project): ProjectForm {
-	return {
-		name: p.name,
-		repoUrl: p.repoUrl,
-		baseBranch: p.baseBranch,
-		defaultProvider: p.defaultProvider,
-		defaultOrbType: p.defaultOrbType,
-		setupScript: p.setupScript,
-		resumeScript: p.resumeScript,
-		shallowClone: p.shallowClone,
-		color: p.color,
-		icon: p.icon,
-		gitAuthorName: p.gitAuthorName,
-		gitAuthorEmail: p.gitAuthorEmail,
-		defaultBrowserProfileId: p.defaultBrowserProfileId,
-	};
-}
-
-/** 「仓库内脚本：有 / 无」：取自该项目最近一次 setup 运行；无记录时为「未知」。 */
-function RepoScriptText({ run }: { run: SetupRun | undefined }) {
-	const { t } = useTranslation();
-	return (
-		<>
-			{t("env.repoScript", {
-				value: run
-					? t(run.hasRepoScript ? "env.repoScriptYes" : "env.repoScriptNo")
-					: t("env.repoScriptUnknown"),
-			})}
-		</>
-	);
-}
-
-/** 项目图标：当前徽标 + 「自动」（清空，之后由首个线程标题卡的图标自动填入）+ 精选字形网格。 */
-function ProjectIconPicker({
-	name,
-	icon,
-	onChange,
-}: {
-	name: string;
-	icon?: string;
-	onChange: (icon: string | undefined) => void;
-}) {
-	const { t } = useTranslation();
-	return (
-		<div className="flex flex-col gap-2 sm:col-span-2">
-			<span className="font-medium text-muted text-xs">
-				{t("projects.icon")}
-			</span>
-			<div className="flex flex-wrap items-center gap-3">
-				<ProjectBadge name={name || "?"} icon={icon} size={32} />
-				<Button
-					size="sm"
-					variant={icon ? "ghost" : "secondary"}
-					aria-pressed={!icon}
-					onClick={() => onChange(undefined)}
-				>
-					{t("projects.iconAuto")}
-				</Button>
-				<span className="min-w-0 flex-1 text-faint text-xs">
-					{t("projects.iconAutoHint")}
-				</span>
-			</div>
-			<GlyphGrid
-				glyphs={PROJECT_GLYPHS}
-				value={icon}
-				label={t("projects.icon")}
-				onPick={(c) => onChange(c)}
-			/>
-		</div>
-	);
-}
-
-function ProjectEditor({
-	initial,
-	id,
-	lastSetup,
-	onDone,
-}: {
-	initial: ProjectForm;
-	id?: string;
-	lastSetup?: SetupRun;
-	onDone: () => void;
-}) {
-	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const providers = useProviders();
-	const profiles = useBrowserProfiles();
-	const [f, setF] = useState<ProjectForm>(initial);
-	const save = useAsync();
-	const set = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) =>
-		setF((prev) => ({ ...prev, [k]: v }));
-	const provider = providers.data?.providers.find(
-		(p) => p.name === f.defaultProvider,
-	);
-	// 身份覆盖须两项同时填写或同时留空（服务端同样校验）。
-	const gitPairOk = !f.gitAuthorName?.trim() === !f.gitAuthorEmail?.trim();
-	return (
-		<form
-			className="grid gap-3 sm:grid-cols-2"
-			onSubmit={async (e) => {
-				e.preventDefault();
-				const ok = await save.run(async () => {
-					if (id) {
-						const patch: Schemas["ProjectPatch"] = {
-							...f,
-							repoUrl: f.repoUrl ?? "",
-							baseBranch: f.baseBranch ?? "",
-							defaultProvider: f.defaultProvider ?? "",
-							defaultOrbType: f.defaultOrbType ?? "",
-							setupScript: f.setupScript ?? "",
-							resumeScript: f.resumeScript ?? "",
-							color: f.color ?? "",
-							// 空串 = 清除，回到自动采用
-							icon: f.icon ?? "",
-							gitAuthorName: f.gitAuthorName ?? "",
-							gitAuthorEmail: f.gitAuthorEmail ?? "",
-							// 空串 = 清除默认 Profile
-							defaultBrowserProfileId: f.defaultBrowserProfileId ?? "",
-						};
-						await unwrap(
-							api.PATCH("/api/v1/projects/{id}", {
-								params: { path: { id } },
-								body: patch,
-							}),
-						);
-					} else await unwrap(api.POST("/api/v1/projects", { body: f }));
-					await qc.invalidateQueries({ queryKey: qk.projects });
-				});
-				if (ok) onDone();
-			}}
-		>
-			<Field label={t("projects.name")}>
-				<TextInput
-					required
-					value={f.name}
-					onChange={(e) => set("name", e.target.value)}
-				/>
-			</Field>
-			<Field label={t("projects.repoUrl")}>
-				<TextInput
-					placeholder="https://github.com/…"
-					value={f.repoUrl ?? ""}
-					onChange={(e) => set("repoUrl", e.target.value || undefined)}
-				/>
-			</Field>
-			<ProjectIconPicker
-				name={f.name}
-				icon={f.icon}
-				onChange={(icon) => set("icon", icon)}
-			/>
-			<Field label={t("projects.baseBranch")}>
-				<TextInput
-					placeholder="main"
-					value={f.baseBranch ?? ""}
-					onChange={(e) => set("baseBranch", e.target.value || undefined)}
-				/>
-			</Field>
-			<Field label={t("projects.defaultProvider")}>
-				<Select
-					value={f.defaultProvider ?? ""}
-					onChange={(e) => set("defaultProvider", e.target.value || undefined)}
-				>
-					<option value="">{t("projects.inherit")}</option>
-					{providers.data?.providers.map((p) => (
-						<option key={p.id} value={p.name}>
-							{p.name}
-						</option>
-					))}
-				</Select>
-			</Field>
-			<Field label={t("projects.defaultOrbType")}>
-				<Select
-					value={f.defaultOrbType ?? ""}
-					onChange={(e) => set("defaultOrbType", e.target.value || undefined)}
-				>
-					<option value="">{t("projects.inherit")}</option>
-					{(provider?.orbTypes ?? []).map((ot) => (
-						<option key={ot.name} value={ot.name}>
-							{ot.name}
-						</option>
-					))}
-				</Select>
-			</Field>
-			<Field
-				label={t("projects.defaultBrowserProfile")}
-				hint={t("projects.defaultBrowserProfileHint")}
-			>
-				<Select
-					value={f.defaultBrowserProfileId ?? ""}
-					onChange={(e) =>
-						set("defaultBrowserProfileId", e.target.value || undefined)
-					}
-				>
-					<option value="">{t("common.none")}</option>
-					{profiles.data?.profiles.map((p) => (
-						<option key={p.id} value={p.id}>
-							{p.name}
-						</option>
-					))}
-				</Select>
-			</Field>
-			<div className="flex items-end">
-				<Toggle
-					checked={f.shallowClone}
-					onChange={(v) => set("shallowClone", v)}
-					label={t("projects.shallowClone")}
-				/>
-			</div>
-			<div className="sm:col-span-2">
-				<Field label={t("projects.setupScript")} hint={t("projects.setupHint")}>
-					<TextArea
-						rows={4}
-						value={f.setupScript ?? ""}
-						onChange={(e) => set("setupScript", e.target.value || undefined)}
-					/>
-				</Field>
-			</div>
-			{id && (
-				<p className="text-muted text-xs sm:col-span-2">
-					<RepoScriptText run={lastSetup} />
-				</p>
-			)}
-			<div className="sm:col-span-2">
-				<Field label={t("projects.resumeScript")}>
-					<TextArea
-						rows={3}
-						value={f.resumeScript ?? ""}
-						onChange={(e) => set("resumeScript", e.target.value || undefined)}
-					/>
-				</Field>
-			</div>
-			<Field label={t("projects.gitAuthorName")}>
-				<TextInput
-					autoComplete="off"
-					value={f.gitAuthorName ?? ""}
-					onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
-				/>
-			</Field>
-			<Field label={t("projects.gitAuthorEmail")}>
-				<TextInput
-					type="email"
-					autoComplete="off"
-					value={f.gitAuthorEmail ?? ""}
-					onChange={(e) => set("gitAuthorEmail", e.target.value || undefined)}
-				/>
-			</Field>
-			<p
-				className={`text-xs sm:col-span-2 ${gitPairOk ? "text-muted" : "text-err"}`}
-			>
-				{gitPairOk ? t("projects.gitHint") : t("projects.gitPairError")}
-			</p>
-			<div className="flex gap-2 sm:col-span-2">
-				<Button
-					type="submit"
-					variant="primary"
-					disabled={save.busy || !f.name.trim() || !gitPairOk}
-				>
-					{t("common.save")}
-				</Button>
-				<Button onClick={onDone}>{t("common.cancel")}</Button>
-			</div>
-			<ErrorText error={save.error} />
-		</form>
-	);
-}
-
-function ProjectsSettings() {
-	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const projects = useProjects();
-	const orbs = useOrbs();
-	const lastSetup = latestSetupByProject(orbs.data?.orbs ?? []);
-	const [editing, setEditing] = useState<string | "new" | null>(null);
-	// 展开「定时任务」的项目（可多个）
-	const [schedulesOpen, setSchedulesOpen] = useState<ReadonlySet<string>>(
-		() => new Set(),
-	);
-	const toggleSchedules = (id: string) =>
-		setSchedulesOpen((prev) => {
-			const next = new Set(prev);
-			if (next.has(id)) next.delete(id);
-			else next.add(id);
-			return next;
-		});
-	const del = useAsync();
-	// 时钟按钮上的角标：每个项目的「每次新建线程」定时数
-	const projectSchedules = useSchedules({ mode: "new_thread" });
-	const scheduleCount = (id: string) =>
-		projectSchedules.data?.schedules?.filter((s) => s.projectId === id)
-			.length ?? 0;
-	return (
-		<Card
-			title={t("projects.title")}
-			icon="folder"
-			action={
-				editing === null && (
-					<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
-						{t("projects.new")}
-					</Button>
-				)
-			}
-		>
-			{editing === "new" && (
-				<div className="mb-3 rounded-lg border border-border bg-raised p-3">
-					<ProjectEditor
-						initial={EMPTY_PROJECT}
-						onDone={() => setEditing(null)}
-					/>
-				</div>
-			)}
-			{projects.isPending && <Spinner />}
-			<ErrorText error={projects.error ?? del.error} />
-			<RowList>
-				{projects.data?.projects.map((p) => (
-					<li key={p.id}>
-						{editing === p.id ? (
-							<div className="my-1 rounded-lg border border-border bg-raised p-3">
-								<ProjectEditor
-									initial={formOf(p)}
-									id={p.id}
-									lastSetup={lastSetup.get(p.id)}
-									onDone={() => setEditing(null)}
-								/>
-							</div>
-						) : (
-							<>
-								<ListRow
-									leading={
-										<ProjectBadge name={p.name} icon={p.icon} size={28} />
-									}
-									title={<span className="truncate font-medium">{p.name}</span>}
-									meta={
-										<>
-											<span className="min-w-0 max-w-full truncate">
-												{p.repoUrl ?? t("projects.noRepo")}
-											</span>
-											{p.repoUrl && (
-												<span>
-													<RepoScriptText run={lastSetup.get(p.id)} />
-												</span>
-											)}
-										</>
-									}
-									trailing={
-										<>
-											<span className="relative inline-flex">
-												<IconButton
-													icon="clock"
-													label={t("projects.schedules")}
-													aria-expanded={schedulesOpen.has(p.id)}
-													active={schedulesOpen.has(p.id)}
-													onClick={() => toggleSchedules(p.id)}
-												/>
-												{scheduleCount(p.id) > 0 && (
-													<span
-														aria-hidden
-														data-testid={`project-schedule-count-${p.id}`}
-														// 计数是中性信息：不用强调色（强调色只给「需要你」），字号不低于 text-2xs
-														className="pointer-events-none absolute -top-1 -right-1 grid h-4 min-w-4 place-items-center rounded-full border border-border bg-panel px-1 font-semibold text-2xs text-muted tabular-nums leading-none"
-													>
-														{scheduleCount(p.id)}
-													</span>
-												)}
-											</span>
-											<IconButton
-												icon="edit"
-												label={t("common.edit")}
-												onClick={() => setEditing(p.id)}
-											/>
-											<IconButton
-												icon="trash"
-												label={t("common.delete")}
-												onClick={() => {
-													if (
-														!window.confirm(
-															t("projects.deleteConfirm", { name: p.name }),
-														)
-													)
-														return;
-													void del
-														.run(() =>
-															unwrap(
-																api.DELETE("/api/v1/projects/{id}", {
-																	params: { path: { id: p.id } },
-																}),
-															),
-														)
-														.then(() =>
-															qc.invalidateQueries({ queryKey: qk.projects }),
-														);
-												}}
-											/>
-										</>
-									}
-								/>
-								{schedulesOpen.has(p.id) && (
-									<div className="mb-2 rounded-lg border border-border bg-raised p-3">
-										<ProjectSchedules project={p} />
-									</div>
-								)}
-							</>
-						)}
-					</li>
-				))}
-			</RowList>
-			{projects.data?.projects.length === 0 && editing !== "new" && (
-				<p className="text-faint text-sm">{t("projects.empty")}</p>
-			)}
-		</Card>
-	);
-}
-
 // ---------------------------------------------------------------- 密钥
 
 function SecretsSettings() {
@@ -1263,13 +731,34 @@ function GitIdentitySettings() {
 
 // ---------------------------------------------------------------- agent 配置
 
+/** omp 主配置文件：其中的 `cycleOrder` / `modelTags` 决定角色头像列表。 */
+const ROLES_CONFIG = "config.yml";
+
 function AgentConfigSettings() {
 	const { t } = useTranslation();
+	const qc = useQueryClient();
 	const [result, setResult] = useState<
 		Schemas["AgentConfigWriteResult"] | null
 	>(null);
-	// 来源须稳定：FileBrowser 以 sources 为依赖加载根
-	const sources = useMemo(() => [agentConfigSource(setResult)], []);
+	// 来源须稳定：FileBrowser 以 sources 为依赖加载根。config.yml 决定 role 列表（身份与头像 → 角色头像），
+	// 保存或删除它之后让那份列表重新取
+	const sources = useMemo(() => {
+		const rolesChanged = () =>
+			void qc.invalidateQueries({ queryKey: identityKeys.roles });
+		const base = agentConfigSource((r) => {
+			setResult(r);
+			if (r.file.path === ROLES_CONFIG) rolesChanged();
+		});
+		return [
+			{
+				...base,
+				async remove(path: string) {
+					await base.remove(path);
+					if (path === ROLES_CONFIG) rolesChanged();
+				},
+			},
+		];
+	}, [qc]);
 	return (
 		<Card title={t("agentConfig.title")} icon="file">
 			<p className="mb-3 text-muted text-xs">
@@ -1546,174 +1035,6 @@ function WallpaperPicker() {
 	);
 }
 
-/** 两种头像在设置里的差异：标题、说明、默认头像的描述与预览组件；其余交互完全相同。 */
-const AVATAR_SETTINGS = {
-	agent: {
-		title: "appearance.avatar",
-		hint: "appearance.avatarHint",
-		defaultKind: "appearance.avatarKind.default",
-		icon: "robot",
-		Preview: AgentAvatar,
-	},
-	user: {
-		title: "appearance.userAvatar",
-		hint: "appearance.userAvatarHint",
-		defaultKind: "appearance.userAvatarDefault",
-		icon: "user",
-		Preview: UserAvatar,
-	},
-} as const satisfies Record<
-	AvatarOwner,
-	{
-		title: string;
-		hint: string;
-		defaultKind: string;
-		icon: IconName;
-		Preview: (p: { size?: number }) => ReactNode;
-	}
->;
-
-function AvatarSettings({ who }: { who: AvatarOwner }) {
-	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const q = useAvatarIdentity(who);
-	const save = useAsync();
-	const [custom, setCustom] = useState("");
-	const cfg = AVATAR_SETTINGS[who];
-	const cur = q.data;
-	const kind = cur?.avatarImage
-		? "image"
-		: cur?.avatarIcon
-			? "icon"
-			: "default";
-	// PUT 整体替换：头像图片与图标字形互斥，`{}` = 恢复默认
-	const put = (body: Schemas["AvatarIdentity"]) =>
-		save.run(() => saveAvatarIdentity(qc, who, body));
-	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
-		const file = e.target.files?.[0];
-		e.target.value = "";
-		if (!file) return;
-		void save.run(async () => {
-			let avatarImage: string;
-			try {
-				avatarImage = await avatarDataUrl(file);
-			} catch (err) {
-				throw new Error(
-					err instanceof AvatarTooLargeError
-						? t("appearance.avatarTooLarge")
-						: t("appearance.avatarDecodeFailed"),
-				);
-			}
-			await saveAvatarIdentity(qc, who, { avatarImage });
-		});
-	};
-	return (
-		<Card title={t(cfg.title)} icon={cfg.icon}>
-			<div className="flex items-center gap-3">
-				<cfg.Preview size={40} />
-				<div className="min-w-0 flex-1">
-					<p className="text-sm">
-						{t(
-							kind === "default"
-								? cfg.defaultKind
-								: `appearance.avatarKind.${kind}`,
-						)}
-					</p>
-					<p className="text-faint text-xs">{t(cfg.hint)}</p>
-				</div>
-				{(save.busy || q.isPending) && <Spinner />}
-			</div>
-			<div className="mt-3 flex flex-wrap items-center gap-2">
-				<label className="inline-flex h-7 cursor-pointer select-none items-center gap-1 rounded-md border border-border bg-panel px-2.5 font-medium text-fg text-xs shadow-xs transition-colors duration-150 hover:bg-hover has-[:disabled]:pointer-events-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--ring)] has-[:focus-visible]:outline-offset-2 has-[:disabled]:opacity-50">
-					<Icon name="upload" size={13} />
-					{t("appearance.avatarUpload")}
-					<input
-						type="file"
-						accept="image/png,image/webp,image/jpeg"
-						className="sr-only"
-						disabled={save.busy}
-						onChange={onFile}
-					/>
-				</label>
-				<Button
-					size="sm"
-					variant="ghost"
-					icon="refresh"
-					disabled={kind === "default" || save.busy}
-					onClick={() => void put({})}
-				>
-					{t("appearance.avatarReset")}
-				</Button>
-			</div>
-			{/* 彩色 emoji 与单色字形分两组，不交替混排；外层保留整体的组名 */}
-			<fieldset
-				aria-label={t("appearance.avatarGlyphs")}
-				className="m-0 mt-4 flex min-w-0 flex-col gap-2 border-0 p-0"
-			>
-				<span aria-hidden className="font-medium text-muted text-xs">
-					{t("appearance.avatarGlyphs")}
-				</span>
-				{(
-					[
-						["avatarEmoji", AVATAR_EMOJI],
-						["avatarNerd", AVATAR_NERD],
-					] as const
-				).map(([key, glyphs]) => (
-					<div key={key} className="flex flex-col gap-1">
-						<span aria-hidden className="text-2xs text-faint">
-							{t(`appearance.${key}`)}
-						</span>
-						<GlyphGrid
-							glyphs={glyphs}
-							value={cur?.avatarIcon}
-							label={t(`appearance.${key}`)}
-							disabled={save.busy}
-							onPick={(avatarIcon) => void put({ avatarIcon })}
-						/>
-					</div>
-				))}
-			</fieldset>
-			<form
-				className="mt-3 flex items-end gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					const avatarIcon = custom.trim();
-					if (!isSingleGlyph(avatarIcon)) return;
-					void put({ avatarIcon }).then((ok) => {
-						if (ok) setCustom("");
-					});
-				}}
-			>
-				<Field label={t("appearance.avatarCustom")}>
-					<TextInput
-						className="w-40 text-center"
-						maxLength={16}
-						placeholder={t("appearance.avatarCustomPlaceholder")}
-						value={custom}
-						onChange={(e) => setCustom(e.target.value)}
-					/>
-				</Field>
-				<Button type="submit" disabled={save.busy || !isSingleGlyph(custom)}>
-					{t("appearance.avatarUse")}
-				</Button>
-			</form>
-			<div className="mt-2">
-				<ErrorText error={save.error ?? q.error} />
-			</div>
-		</Card>
-	);
-}
-
-function AppearanceSettings() {
-	return (
-		<>
-			<ThemeSettings />
-			<AvatarSettings who="agent" />
-			<AvatarSettings who="user" />
-		</>
-	);
-}
-
 // ---------------------------------------------------------------- 关于
 
 function AboutSettings() {
@@ -1892,37 +1213,21 @@ export function SettingsPage({
 				<span className="min-w-0 flex-1" />
 				<WindowControls side="right" className="-mr-1" />
 			</header>
-			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
-				<nav className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">
-					{SECTIONS.filter((s) => s.key !== "desktop" || desktop).map((s) => (
-						<NavLink
-							key={s.key}
-							to={`/settings/${s.key}`}
-							className={({ isActive }) =>
-								`inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2.5 text-sm transition-colors duration-150 ${isActive ? "bg-hover text-fg ring-1 ring-border" : "text-muted hover:bg-hover/60 hover:text-fg"}`
-							}
-						>
-							<Icon name={s.icon} size={15} />
-							{t(`settings.${s.key}`)}
-						</NavLink>
-					))}
-				</nav>
-				<div className="min-h-0 flex-1 overflow-y-auto p-3 pb-safe sm:p-5">
-					<div className="mx-auto flex max-w-3xl flex-col gap-3">
-						{section === "devices" && <DevicesSettings />}
-						{section === "providers" && <ProvidersSettings />}
-						{section === "projects" && <ProjectsSettings />}
-						{section === "secrets" && <SecretsSettings />}
-						{section === "browser-profiles" && <BrowserProfilesSettings />}
-						{section === "git-identity" && <GitIdentitySettings />}
-						{section === "agent-config" && <AgentConfigSettings />}
-						{section === "appearance" && <AppearanceSettings />}
-						{section === "notifications" && <NotificationsSettings />}
-						{section === "shares" && <SharesSettings />}
-						{section === "automations" && <AutomationsSettings />}
-						{section === "desktop" && <DesktopSettings />}
-						{section === "about" && <AboutSettings />}
-					</div>
+			<div className="min-h-0 flex-1 overflow-y-auto p-3 pb-safe sm:p-5">
+				<div className="mx-auto flex max-w-3xl flex-col gap-3">
+					{section === "devices" && <DevicesSettings />}
+					{section === "providers" && <ProvidersSettings />}
+					{section === "secrets" && <SecretsSettings />}
+					{section === "browser-profiles" && <BrowserProfilesSettings />}
+					{section === "git-identity" && <GitIdentitySettings />}
+					{section === "agent-config" && <AgentConfigSettings />}
+					{section === "identity" && <IdentitySettings />}
+					{section === "appearance" && <ThemeSettings />}
+					{section === "notifications" && <NotificationsSettings />}
+					{section === "shares" && <SharesSettings />}
+					{section === "automations" && <AutomationsSettings />}
+					{section === "desktop" && <DesktopSettings />}
+					{section === "about" && <AboutSettings />}
 				</div>
 			</div>
 		</Sheet>

@@ -1,6 +1,7 @@
 /**
- * 全局助手页（M9）：`/assistant` 跳到最近的对话、没有就新建；对话菜单切换 / 新对话 / 归档；
- * 协调宿主不可用时不创建对话、显示原因与指向设置 → 关于，已有对话只读。`ThreadScreen` 换成桩。数据走 mock 后端。
+ * 全局助手页（M9）：`/assistant` 跳到最近的对话、没有就新建；页头动作菜单（新对话 / 归档此对话，M9.6 起切换对话只在侧栏）；
+ * 页头小头像跟随助手的生效头像（圆形）；协调宿主不可用时不创建对话、显示原因与指向设置 → 关于，已有对话只读。
+ * `ThreadScreen` 换成桩。数据走 mock 后端，身份接口由本文件的桩应答。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -57,13 +58,21 @@ function Where() {
 	return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
+/** 助手与 agent 身份（由桩应答，不依赖 mock 后端的身份实现）。 */
+let identities: Record<"agent" | "assistant", Record<string, string>>;
+
 beforeEach(() => {
 	localStorage.removeItem("oryn.mock.coordinator");
 	server = new MockServer();
+	identities = { agent: {}, assistant: {} };
 	vi.stubGlobal(
 		"fetch",
 		async (input: RequestInfo | URL, init?: RequestInit) => {
 			const req = input instanceof Request ? input : new Request(input, init);
+			const who = /\/api\/v1\/settings\/(agent|assistant)-identity$/.exec(
+				new URL(req.url, "http://x").pathname,
+			)?.[1] as "agent" | "assistant" | undefined;
+			if (who) return Response.json(identities[who]);
 			return (
 				(await server.handleFetch(req)) ?? new Response(null, { status: 404 })
 			);
@@ -136,12 +145,16 @@ describe("AssistantPage", () => {
 		expect(created?.orbId).toBe(M9_IDS.coordOrb);
 	});
 
-	it("对话菜单：列出对话、新对话、归档此对话", async () => {
+	it("页头没有「对话」列表；动作菜单只有新对话与归档此对话", async () => {
 		mount(`/assistant/${M9_IDS.assistant}`);
-		fireEvent.click(await screen.findByRole("button", { name: "对话" }));
-		expect(
-			screen.getByRole("menuitemradio", { name: /今天有哪些线程在等我/ }),
-		).toHaveAttribute("aria-checked", "true");
+		await screen.findByTestId("screen");
+		expect(screen.queryByRole("button", { name: "对话" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+			"新对话",
+			"归档此对话",
+		]);
+		expect(screen.queryByRole("menuitemradio")).toBeNull();
 		fireEvent.click(screen.getByRole("menuitem", { name: "新对话" }));
 		await waitFor(() =>
 			expect(screen.getByTestId("where").textContent).toMatch(
@@ -149,7 +162,7 @@ describe("AssistantPage", () => {
 			),
 		);
 		const fresh = screen.getByTestId("where").textContent?.split("/").pop();
-		fireEvent.click(screen.getByRole("button", { name: "对话" }));
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
 		fireEvent.click(screen.getByRole("menuitem", { name: "归档此对话" }));
 		await waitFor(() =>
 			expect(server.threads.get(fresh ?? "")?.archivedAt).toBeDefined(),
@@ -160,6 +173,44 @@ describe("AssistantPage", () => {
 				`/assistant/${M9_IDS.assistant}`,
 			),
 		);
+	});
+
+	it("页头小头像：未设置时是 sparkle 图标；设置了助手头像后是圆形头像", async () => {
+		const view = mount(`/assistant/${M9_IDS.assistant}`);
+		const heading = await screen.findByRole("heading", {
+			name: "今天有哪些线程在等我",
+		});
+		const header = heading.parentElement as HTMLElement;
+		await waitFor(() => expect(header.querySelector("svg")).not.toBeNull());
+		expect(header.querySelector("[data-avatar-of]")).toBeNull();
+		view.unmount();
+
+		identities.assistant = { avatarIcon: "🦉" };
+		mount(`/assistant/${M9_IDS.assistant}`);
+		const h2 = await screen.findByRole("heading", {
+			name: "今天有哪些线程在等我",
+		});
+		await waitFor(() =>
+			expect(
+				h2.parentElement?.querySelector('[data-avatar-of="assistant"]'),
+			).not.toBeNull(),
+		);
+		const avatar = h2.parentElement?.querySelector(
+			'[data-avatar-of="assistant"]',
+		);
+		expect(avatar).toHaveAttribute("data-avatar-shape", "circle");
+		expect(avatar).toHaveClass("rounded-full");
+		expect(avatar).toHaveTextContent("🦉");
+	});
+
+	it("落地页标题用助手的生效名字（只设了 agent 名字时跟随 agent）", async () => {
+		localStorage.setItem("oryn.mock.coordinator", "down");
+		withoutConversations();
+		identities.agent = { name: "Ling" };
+		mount("/assistant");
+		expect(
+			await screen.findByRole("heading", { level: 1, name: "Ling" }),
+		).toBeInTheDocument();
 	});
 
 	it("协调宿主不可用：不创建对话，显示原因与设置 → 关于的链接", async () => {
@@ -191,7 +242,7 @@ describe("AssistantPage", () => {
 		const s = screen.getByTestId("screen");
 		await waitFor(() => expect(s).toHaveAttribute("data-disabled", "true"));
 		expect(within(s).getByRole("status")).toHaveTextContent("全局助手暂不可用");
-		fireEvent.click(screen.getByRole("button", { name: "对话" }));
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
 		expect(screen.getByRole("menuitem", { name: "新对话" })).toBeDisabled();
 	});
 });

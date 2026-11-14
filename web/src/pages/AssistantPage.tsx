@@ -1,17 +1,19 @@
 /**
  * 全局助手页（M9，`Ctrl/Cmd+/`）：`/assistant` 跳到最近一个未归档的助手对话，没有就新建一个；
- * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是标题 + 对话菜单（对话列表带相对时间与未读点、
- * 「新对话」、「归档此对话」）。协调宿主不可用（`GET coordinator` 的 `available === false`）时不创建对话：
- * 页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
+ * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是助手的圆形小头像 + 对话标题 +
+ * 动作菜单（新对话、归档此对话）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
+ * `available === false`）时不创建对话：页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；
+ * 已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
  */
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
-import type { Thread } from "../api/client";
 import { useCoordinatorStatus } from "../api/coordinator-queries";
+import { useAssistantIdentity } from "../api/identity-queries";
 import { createAssistantConversation } from "../api/space-queries";
 import { CoordinatorHeader } from "../components/thread/CoordinatorHeader";
 import { Callout, Sheet } from "../components/ui/data";
+import { AssistantAvatar } from "../components/ui/IdentityAvatar";
 import { Icon } from "../components/ui/icons";
 import {
 	describeError,
@@ -20,28 +22,13 @@ import {
 	type MenuItem,
 	Spinner,
 } from "../components/ui/primitives";
-import { formatRelative } from "../lib/format";
+import { useAssistantConversations } from "../lib/assistant-conversations";
 import { parseTitleCard } from "../lib/title";
 import { useBreakpoint } from "../lib/viewport";
 import { patchThread } from "../state/actions";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
 import { type ScreenHeaderLayout, ThreadScreen } from "./ThreadPage";
-
-/** 未归档的助手对话，最近活动的在前。 */
-function useConversations(): Thread[] {
-	const threads = useIndex((s) => s.threads);
-	return useMemo(
-		() =>
-			Object.values(threads)
-				.filter((t) => t.kind === "assistant" && !t.archivedAt)
-				.sort(
-					(a, b) =>
-						(b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt),
-				),
-		[threads],
-	);
-}
 
 function Unavailable({ reason }: { reason?: string }): ReactNode {
 	const { t } = useTranslation();
@@ -62,6 +49,21 @@ function Unavailable({ reason }: { reason?: string }): ReactNode {
 	);
 }
 
+/** 页头标题前的小图形：设置了助手（或 agent）头像时是圆形头像，否则是 sparkle 图标。 */
+function AssistantMark({ size }: { size: number }): ReactNode {
+	const { avatar } = useAssistantIdentity();
+	return avatar.avatarIcon || avatar.avatarImage ? (
+		<AssistantAvatar size={size} shape="circle" />
+	) : (
+		<Icon
+			name="sparkle"
+			size={16}
+			aria-hidden
+			className="shrink-0 text-faint"
+		/>
+	);
+}
+
 /** `/assistant`：选最近的对话，或在可用时新建一个。 */
 function AssistantLanding(): ReactNode {
 	const { t } = useTranslation();
@@ -69,11 +71,11 @@ function AssistantLanding(): ReactNode {
 	const bp = useBreakpoint();
 	const sidebarToggle = useSidebarToggleShown();
 	const loaded = useIndex((s) => s.loaded);
-	const conversations = useConversations();
+	const latest = useAssistantConversations()[0];
+	const { name } = useAssistantIdentity();
 	const status = useCoordinatorStatus();
 	const [error, setError] = useState<unknown>(null);
 	const started = useRef(false);
-	const latest = conversations[0];
 	const available = status.data?.available;
 	useEffect(() => {
 		if (!loaded || latest || available !== true || started.current) return;
@@ -97,8 +99,10 @@ function AssistantLanding(): ReactNode {
 						onClick={() => uiStore.getState().toggleSidebar()}
 					/>
 				)}
-				<Icon name="sparkle" size={16} className="text-faint" />
-				<h1 className="font-semibold text-sm">{t("assistant.title")}</h1>
+				<AssistantMark size={18} />
+				<h1 className="min-w-0 truncate font-semibold text-sm">
+					{name || t("assistant.title")}
+				</h1>
 			</header>
 			<div className="flex flex-1 items-start justify-center overflow-y-auto p-4 sm:items-center">
 				<div className="w-full max-w-md" data-testid="assistant-landing">
@@ -130,12 +134,10 @@ function AssistantLanding(): ReactNode {
 function AssistantHeader({
 	layout,
 	threadId,
-	conversations,
 	available,
 }: {
 	layout: ScreenHeaderLayout;
 	threadId: string;
-	conversations: Thread[];
 	available: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -146,26 +148,6 @@ function AssistantHeader({
 		? parseTitleCard(current.title).text || t("assistant.untitled")
 		: t("assistant.title");
 	const items: MenuItem[] = [
-		...conversations.map((c) => ({
-			key: c.id,
-			checked: c.id === threadId,
-			label: (
-				<span className="flex min-w-0 items-center gap-2">
-					<span className="min-w-0 truncate">
-						{parseTitleCard(c.title).text || t("assistant.untitled")}
-					</span>
-					{c.unread && (
-						<span
-							role="img"
-							aria-label={t("sidebar.unread")}
-							className="h-[7px] w-[7px] shrink-0 rounded-full bg-accent"
-						/>
-					)}
-				</span>
-			),
-			hint: formatRelative(c.lastMessageAt ?? c.updatedAt),
-			onSelect: () => navigate(`/assistant/${c.id}`),
-		})),
 		{
 			key: "new",
 			icon: "plus",
@@ -197,12 +179,7 @@ function AssistantHeader({
 			layout={layout}
 			title={
 				<>
-					<Icon
-						name="sparkle"
-						size={16}
-						aria-hidden
-						className="shrink-0 text-faint"
-					/>
+					<AssistantMark size={18} />
 					<h1 className="min-w-0 truncate font-semibold text-sm tracking-tight">
 						{title}
 					</h1>
@@ -218,17 +195,7 @@ function AssistantHeader({
 					<Menu
 						items={items}
 						trigger={(p) => (
-							<button
-								type="button"
-								aria-label={t("assistant.conversations")}
-								className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
-								{...p}
-							>
-								<Icon name="chats" size={15} />
-								<span className="hidden sm:inline">
-									{t("assistant.conversations")}
-								</span>
-							</button>
+							<IconButton icon="more" label={t("assistant.actions")} {...p} />
 						)}
 					/>
 				</>
@@ -239,7 +206,6 @@ function AssistantHeader({
 
 export function AssistantPage(): ReactNode {
 	const { threadId } = useParams();
-	const conversations = useConversations();
 	const status = useCoordinatorStatus();
 	const unavailable = status.data?.available === false;
 	if (!threadId) return <AssistantLanding />;
@@ -260,7 +226,6 @@ export function AssistantPage(): ReactNode {
 					<AssistantHeader
 						layout={layout}
 						threadId={threadId}
-						conversations={conversations}
 						available={!unavailable}
 					/>
 				)}
