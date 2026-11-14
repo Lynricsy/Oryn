@@ -27,7 +27,7 @@ arm64) goarch=arm64 ;;
 esac
 
 image="${IMAGE:-oryn-orb:dev}"
-version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+version="${VERSION:-$(git describe --tags --exclude 'desktop-v*' --exclude 'mobile-v*' --always --dirty 2>/dev/null || echo dev)}"
 omp="build/core/${arch}/omp"
 ctx="build/orb-context/${arch}"
 

@@ -3,7 +3,7 @@
 GO      ?= go
 BUN     ?= bun
 SQLC    ?= $(shell command -v sqlc 2>/dev/null || echo $(shell $(GO) env GOPATH)/bin/sqlc)
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --exclude 'desktop-v*' --exclude 'mobile-v*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
 BINS    := orynd orbd oryn fakeomp
 
