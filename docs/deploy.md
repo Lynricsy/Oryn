@@ -327,7 +327,7 @@ sudo -u oryn orynd --config /etc/oryn/orynd.yaml coordinator check   # root 部�
 stats:
   retention:
     samples: 720h    # orb 资源采样（orb_samples）；默认 30 天
-    events: 8760h    # 已删除 orb 的状态事件与 setup 记录、预算告警账本；默认 1 年（活 orb 的事件永不删）
+    events: 8760h    # 已删除 orb 的状态事件与 setup 记录、预算告警账本（账本至少保留 33 天）；默认 1 年（活 orb 的事件永不删）
     usage: 0s        # 用量 / 工具调用 / 回合事实行；默认 0 = 永久
 ```
 
@@ -336,3 +336,4 @@ stats:
 - **升级后的首次启动**：事实行的版本（`stats_state.facts_version`）与当前代码不一致时，orynd 在后台逐线程按现有条目重算（去掉 fork 造成的重复计费、补上 `model_usage` 的开销）。期间统计页顶部显示「历史数据回填中 n / m」，其它功能照常；重算可中断，下次启动从断点续作。升级前就已删除的线程留下的用量行没有条目可重算，保持原样（在按项目 / Space 的分组里落在空键）。
 - **手动重算**：`orynd --config /etc/oryn/orynd.yaml admin rebuild-stats` 全量重算（`--thread <id>` 只重算一个线程）。可在 orynd 运行时执行：每个事务很短，靠 SQLite 的 `busy_timeout` 排队。
 - **预算告警**：在统计页或 `oryn stats budget set` 设置日 / 月上限后，orynd 每 60 秒评估一次，越过预警线或上限时发一条不属于任何线程的系统通知（应用内、推送，以及在「设置 → 通知」里订阅了「预算告警」的渠道）；同一周期同一级别只发一次。
+- **统计数据的可信边界**：用量来自 orb 里的会话文件，orynd 入库时会钳制明显不合理的数值与字符串，但 orb 里的 agent 仍可以改写自己的会话来少报用量。预算告警是提醒，不是对抗恶意 agent 的计费防线；需要硬上限时，请在模型服务商一侧设置额度。
