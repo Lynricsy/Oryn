@@ -573,9 +573,12 @@ async function Y2() {
 	const es = await entriesOf(tid);
 	let cost = 0;
 	let reqs = 0;
+	// omp 重启后会把子 agent（如 __advisor）的历史原样拷进新会话目录：同 id 同时间的条目只算一次（同服务端 ukey）
+	const seen = new Set<string>();
 	for (const e of es) {
 		const u = usageOf(e);
-		if (!u) continue;
+		if (!u || seen.has(e.entryId)) continue;
+		seen.add(e.entryId);
 		cost += u.cost;
 		reqs++;
 	}
@@ -600,7 +603,16 @@ async function Y2() {
 	await page.goto(`${BASE}/t/${tid}`);
 	const link = page.locator(`a[href^="/stats/usage?thread=${tid}"]`).first();
 	await link.waitFor({ timeout: 30_000 });
-	const footer = (await link.textContent())?.trim() ?? "";
+	// 统计接口返回前页脚先显示本地条目累加（条目也可能还没加载完），等它稳定到接口值
+	const footer = await waitFor(
+		`页脚成本变为 ${formatCost(g.costUsd)}`,
+		async () => {
+			const s = (await link.textContent())?.trim() ?? "";
+			return s.includes(formatCost(g.costUsd)) ? s : undefined;
+		},
+		20_000,
+		250,
+	).catch(async () => (await link.textContent())?.trim() ?? "");
 	check(
 		footer.includes(formatCost(g.costUsd)),
 		`页脚「${footer}」含 ${formatCost(g.costUsd)}`,
