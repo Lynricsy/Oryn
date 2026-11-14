@@ -889,3 +889,127 @@ describe("DesktopPanel 剪贴板", () => {
 		expect(s.paste).not.toHaveBeenCalled();
 	});
 });
+
+/** noVNC 1.7 的 core/util/events.js（包的 exports 只开放 core/rfb.js，按文件路径加载真实实现）。 */
+interface NoVncEvents {
+	setCapture(target: Element): void;
+	releaseCapture(): void;
+}
+
+describe("DesktopPanel 全屏与 noVNC 鼠标捕获", () => {
+	let ev: NoVncEvents;
+	let fsEl: Element | null = null;
+	const doc = document as Document & { captureElement?: Element | null };
+	const proxy = () => document.getElementById("noVNC_mouse_capture_elem");
+	const captured = () =>
+		!!doc.captureElement && proxy()?.style.display !== "none";
+
+	beforeEach(async () => {
+		const path = "../../../node_modules/@novnc/novnc/core/util/events.js";
+		ev = (await import(/* @vite-ignore */ path)) as NoVncEvents;
+		fsEl = null;
+		Object.defineProperty(document, "fullscreenElement", {
+			configurable: true,
+			get: () => fsEl,
+		});
+	});
+
+	afterEach(() => {
+		ev.releaseCapture();
+		Reflect.deleteProperty(document, "fullscreenElement");
+	});
+
+	/** 全屏切换：改 fullscreenElement 并派发 fullscreenchange（与浏览器一致）。 */
+	function setFullscreen(el: Element | null) {
+		fsEl = el;
+		act(() => {
+			document.dispatchEvent(new Event("fullscreenchange"));
+		});
+	}
+
+	/**
+	 * 浏览器的命中：noVNC 的捕获代理层（fixed、盖满整页、z-index 10000）显示时，点哪都落在它上面；
+	 * 全屏时它挂在 body 上、在全屏顶层之下，事件直接落到全屏元素里的目标上。
+	 */
+	function hit(el: Element): Element {
+		const p = proxy();
+		return !fsEl && p && p.style.display !== "none" ? p : el;
+	}
+
+	function press(el: Element, type: "mousedown" | "mouseup", buttons: number) {
+		fireEvent(
+			hit(el),
+			new MouseEvent(type, {
+				bubbles: true,
+				cancelable: true,
+				clientX: 40,
+				clientY: 30,
+				button: 0,
+				buttons,
+			}),
+		);
+	}
+
+	async function realClick(el: Element) {
+		const t = hit(el);
+		press(el, "mousedown", 1);
+		press(el, "mouseup", 0);
+		await act(async () => {
+			fireEvent.click(t);
+		});
+	}
+
+	/** 照 noVNC 1.7 core/rfb.js 的 _handleMouse：画布上的鼠标事件一律 stopPropagation，mousedown 时 setCapture(画布)。 */
+	function connect() {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		const canvas = last().canvas;
+		const seen: string[] = [];
+		const onMouse = (e: MouseEvent) => {
+			e.stopPropagation();
+			e.preventDefault();
+			seen.push(`${e.type}:${e.buttons}`);
+			if (e.type === "mousedown") ev.setCapture(canvas);
+		};
+		canvas.addEventListener("mousedown", onMouse);
+		canvas.addEventListener("mouseup", onMouse);
+		const stage = screen.getByTestId("desktop-stage");
+		const req = vi.fn(async () => setFullscreen(stage));
+		stage.requestFullscreen = req;
+		return { canvas, stage, req, seen };
+	}
+
+	it("全屏里点画布：松开时释放捕获；Esc 退出全屏后第一次点全屏按钮就生效", async () => {
+		const { canvas, stage, req, seen } = connect();
+		const button = screen.getByTestId("desktop-fullscreen");
+		await realClick(button);
+		expect(req).toHaveBeenCalledTimes(1);
+		expect(document.fullscreenElement).toBe(stage);
+
+		await realClick(canvas);
+		expect(seen.slice(0, 2)).toEqual(["mousedown:1", "mouseup:0"]);
+		expect(captured()).toBe(false);
+
+		setFullscreen(null);
+		expect(captured()).toBe(false);
+		await realClick(button);
+		expect(req).toHaveBeenCalledTimes(2);
+	});
+
+	it("全屏里按着鼠标时退出全屏（没有 mouseup）：退出时释放捕获并给远端补一次松开", async () => {
+		const { canvas, stage, req, seen } = connect();
+		const button = screen.getByTestId("desktop-fullscreen");
+		await realClick(button);
+		expect(document.fullscreenElement).toBe(stage);
+
+		press(canvas, "mousedown", 1);
+		expect(captured()).toBe(true);
+
+		setFullscreen(null);
+		expect(captured()).toBe(false);
+		expect(seen).toEqual(["mousedown:1", "mouseup:0"]);
+		await realClick(button);
+		expect(req).toHaveBeenCalledTimes(2);
+	});
+});

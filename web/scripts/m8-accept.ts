@@ -2598,8 +2598,8 @@ const STALE_CAPTURE = `(() => { const el = document.getElementById("noVNC_mouse_
 
 /**
  * 真实点击全屏按钮进入全屏，再点舞台上的远端输入框（焦点进 canvas 与远端页面）。
- * 全屏中点过 canvas 后，noVNC 的捕获代理层（挂在 body 上，在全屏顶层之下收不到 mouseup）不会收起；
- * 退出全屏后它盖满整页，用户的下一次点击被它吞掉。遇到时记为产品问题（⚠）并截图，再点一次继续。
+ * 回归：全屏中点 canvas 后，noVNC 的捕获代理层（挂在 body 上，在全屏顶层之下收不到 mouseup）曾经不收起，
+ * 退出全屏后盖满整页、吞掉下一次点击。现在断言：全屏里松开鼠标后捕获层已收起，且每次第一下点全屏按钮就生效。
  */
 async function xEnterFullscreen(
 	x: XEnv,
@@ -2612,32 +2612,20 @@ async function xEnterFullscreen(
 	await s.eval(
 		`(() => { const p = Element.prototype; if (!p.__m8rf) { p.__m8rf = p.requestFullscreen; p.requestFullscreen = function (...a) { window.__m8fs = "pending"; const r = p.__m8rf.apply(this, a); r.then(() => { window.__m8fs = "ok"; }, (e) => { window.__m8fs = "rejected: " + e; }); return r; }; } window.__m8fs = "not-called"; window.__m8ev = []; if (!window.__m8evOn) { window.__m8evOn = true; for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) addEventListener(t, (e) => { const el = e.target; window.__m8ev.push(t + ":" + (el?.id || el?.dataset?.testid || el?.getAttribute?.("aria-label") || el?.tagName)); }, true); } return true; })()`,
 	);
-	const stale = await s.eval<boolean>(STALE_CAPTURE);
-	const why = () =>
-		s.eval<string>(
-			`"requestFullscreen " + window.__m8fs + "，事件 " + window.__m8ev.join(" ") + "，点击后捕获层仍开着=" + ${STALE_CAPTURE}`,
-		);
-	const entered = () =>
-		waitFor(
-			`${s.name}：进入全屏`,
-			() => s.eval<string | null>(FS_ID),
-			5_000,
-			100,
-		).catch(() => null);
 	await xclick(x, s, sel("[data-testid=desktop-fullscreen]"), "全屏按钮");
-	let id = await entered();
-	if (!id && stale) {
-		const w = await why();
-		soft(
-			false,
-			`产品问题：退出全屏后第一次点击被 noVNC 的捕获代理层吞掉（全屏中点过 canvas，mouseup 没到代理层，代理层一直盖着整页）；点全屏按钮无反应（${w}）`,
+	const id = await waitFor(
+		`${s.name}：进入全屏`,
+		() => s.eval<string | null>(FS_ID),
+		5_000,
+		100,
+	).catch(() => null);
+	if (!id) {
+		const why = await s.eval<string>(
+			`"requestFullscreen " + window.__m8fs + "，事件 " + window.__m8ev.join(" ") + "，noVNC 捕获层仍开着=" + ${STALE_CAPTURE}`,
 		);
 		await xshot(`${tag}-click-swallowed`);
-		await xclick(x, s, sel("[data-testid=desktop-fullscreen]"), "全屏按钮");
-		id = await entered();
-		if (id) note(`${s.name}：第二次点击全屏按钮才进入全屏`);
+		check(false, `${s.name}：第一次点全屏按钮就进入全屏（${why}）`);
 	}
-	if (!id) throw new Error(`${s.name}：点全屏按钮没进入全屏（${await why()}）`);
 	check(id === "desktop-stage", `${s.name}：fullscreenElement = ${id}`);
 	await Bun.sleep(1000);
 	const wm = (await xsh(x, `xprop -id ${s.wid} _NET_WM_STATE`)).stdout;
@@ -2647,6 +2635,10 @@ async function xEnterFullscreen(
 	);
 	await xclickRemote(x, s, orb, siteId, "#i");
 	await Bun.sleep(300);
+	check(
+		!(await s.eval<boolean>(STALE_CAPTURE)),
+		`${s.name}：全屏里点画布松开后 noVNC 捕获代理层已收起`,
+	);
 }
 
 /**
@@ -2695,19 +2687,10 @@ async function escTrial(
 		await s.eval("(document.exitFullscreen(), true)").catch(() => {});
 		await exited(3000);
 	}
-	// 退出全屏后 noVNC 的捕获代理层可能还盖着整页（见 xEnterFullscreen）：真实点一下舞台让它收起，后续步骤的点击不再被吞
-	if (await s.eval<boolean>(STALE_CAPTURE)) {
-		note(
-			`${s.name}：退出全屏后 noVNC 捕获代理层仍盖着整页，点一下舞台让它收起`,
-		);
-		await xclick(x, s, sel(STAGE), "舞台（收起捕获层）");
-		await waitFor(
-			"noVNC 捕获代理层收起",
-			async () => !(await s.eval<boolean>(STALE_CAPTURE)),
-			5_000,
-			200,
-		);
-	}
+	check(
+		!(await s.eval<boolean>(STALE_CAPTURE)),
+		`${s.name}：退出全屏后 noVNC 捕获代理层没有盖着页面`,
+	);
 	return { shortExit, shortRemote, longExit, longRemote };
 }
 

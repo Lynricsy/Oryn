@@ -40,6 +40,7 @@ import {
 	Spinner,
 } from "../ui/primitives";
 import { ClipboardPopover } from "./ClipboardPopover";
+import { releaseStaleCapture } from "./capture";
 import { KEYSYM, keysymOf } from "./keysym";
 import { ProfileMenu, useOrbProfileChoice } from "./ProfileMenu";
 import { profileErrorText, profileStatusText } from "./profile-status";
@@ -393,13 +394,41 @@ function DesktopView({
 		};
 	}, []);
 
-	// 全屏结束时释放键盘锁
+	// 全屏结束时释放键盘锁。全屏里 noVNC 的鼠标捕获收不回来（见 capture.ts）：
+	// 舞台上松开鼠标、退出全屏时兜底释放，免得退出后第一次点击被它的代理层吞掉
 	useEffect(() => {
+		const stage = stageRef.current;
+		let last: MouseEventInit = {};
+		const track = (e: MouseEvent) => {
+			last = {
+				clientX: e.clientX,
+				clientY: e.clientY,
+				screenX: e.screenX,
+				screenY: e.screenY,
+			};
+		};
+		const onUp = (e: MouseEvent) => {
+			track(e);
+			releaseStaleCapture({ ...last, button: e.button, buttons: e.buttons });
+		};
 		const onChange = () => {
-			if (!document.fullscreenElement) keyboardApi()?.unlock?.();
+			if (document.fullscreenElement) return;
+			keyboardApi()?.unlock?.();
+			releaseStaleCapture(last);
 		};
 		document.addEventListener("fullscreenchange", onChange);
-		return () => document.removeEventListener("fullscreenchange", onChange);
+		// 捕获阶段：noVNC 在画布上拦下鼠标事件，不冒泡到舞台
+		for (const t of ["pointerdown", "pointermove"] as const)
+			stage?.addEventListener(t, track, true);
+		for (const t of ["pointerup", "mouseup"] as const)
+			stage?.addEventListener(t, onUp, true);
+		return () => {
+			document.removeEventListener("fullscreenchange", onChange);
+			for (const t of ["pointerdown", "pointermove"] as const)
+				stage?.removeEventListener(t, track, true);
+			for (const t of ["pointerup", "mouseup"] as const)
+				stage?.removeEventListener(t, onUp, true);
+		};
 	}, []);
 
 	const fullscreen = async () => {
