@@ -370,6 +370,16 @@ func startRuntime(t *testing.T, cp *fakeCP, mutate func(*Config)) *Runtime {
 	return rt
 }
 
+// pushAll 在一次加锁内排入全部帧。转发器在测试推帧时已在运行：逐条 push 时它可能先写完已排的帧、
+// 见队列为空且没有进程便关流（设计如此），其后的帧落到另一条流上，与「全部帧走同一条流」的断言冲突。
+func (o *outbox) pushAll(items []outItem) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, it := range items {
+		o.pushLocked(it)
+	}
+}
+
 // ---- agent 流帧读取 ----
 
 type frameReader struct {

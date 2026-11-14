@@ -71,6 +71,10 @@ type outbox struct {
 func (o *outbox) push(it outItem) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.pushLocked(it)
+}
+
+func (o *outbox) pushLocked(it outItem) {
 	if it.droppable && o.size >= termHighWater {
 		o.termGap = true
 		return

@@ -73,9 +73,11 @@ func TestTerminalGapAfterBacklogDrains(t *testing.T) {
 	const thread = "T-termgap"
 	th := rt.thread(thread, filepath.Join(rt.home, ".oryn", "threads", thread))
 	pad := strings.Repeat("p", 1<<20)
+	items := make([]outItem, 0, 10)
 	for i := range 10 {
-		th.out.push(outItem{data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"n-%d %s"}`, i, pad)})
+		items = append(items, outItem{data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"n-%d %s"}`, i, pad)})
 	}
+	th.out.pushAll(items) // 一次排入：转发器已在运行，逐条排入时它可能先排空队列并关流（见 pushAll）
 	th.wake()
 	st := waitAgentStream(t, cp) // 控制面先不读：转发器卡在第一帧（yamux 窗口 256KiB）
 	for i := range 5 {

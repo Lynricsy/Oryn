@@ -110,11 +110,14 @@ func TestReadyOnlyOnCurrentEpochStream(t *testing.T) {
 	const thread = "T-epoch"
 	th := rt.thread(thread, filepath.Join(rt.home, ".oryn", "threads", thread))
 	// 上一进程代（epoch 0）遗留 2MiB 帧；控制面先不读，转发器卡在旧流上（yamux 窗口 256KiB）。
+	// 一次排入全部帧：转发器已在运行，逐条排入时它可能先排空队列并关流（见 pushAll）。
 	pad := strings.Repeat("x", 64<<10)
 	const old = 32
+	items := make([]outItem, 0, old)
 	for i := range old {
-		th.out.push(outItem{epoch: 0, data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"old-%d %s"}`, i, pad)})
+		items = append(items, outItem{epoch: 0, data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"old-%d %s"}`, i, pad)})
 	}
+	th.out.pushAll(items)
 	th.wake()
 	st0 := waitAgentStream(t, cp)
 
@@ -153,9 +156,11 @@ func TestCommandOnDeadEpochGetsFailure(t *testing.T) {
 	th := rt.thread(thread, filepath.Join(rt.home, ".oryn", "threads", thread))
 	// epoch 0 没有对应的进程；遗留帧足够多，转发器卡在写这条流上，流在命令到达时仍然打开。
 	pad := strings.Repeat("x", 64<<10)
+	items := make([]outItem, 0, 32)
 	for i := range 32 {
-		th.out.push(outItem{epoch: 0, data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"left-%d %s"}`, i, pad)})
+		items = append(items, outItem{epoch: 0, data: fmt.Appendf(nil, `{"type":"notice","level":"info","message":"left-%d %s"}`, i, pad)})
 	}
+	th.out.pushAll(items)
 	th.wake()
 	st := waitAgentStream(t, cp)
 	sendCmd(t, st, `{"type":"prompt","id":"p1","message":"hi"}`)

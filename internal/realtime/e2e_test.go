@@ -201,6 +201,18 @@ func (e *env) waitState(id, want string) {
 	}, 20*time.Second, 20*time.Millisecond, "thread %s never reached %s", id, want)
 }
 
+// waitMessages 等线程至少 n 条消息条目落库且最后一条是 assistant。线程状态由实时帧驱动，条目由 orbd 的 tailer
+// 另行复制，二者没有先后保证：转入 idle 时回合的最后一条 assistant 消息可能尚未入库。
+func (e *env) waitMessages(id string, n int) {
+	e.t.Helper()
+	require.Eventually(e.t, func() bool {
+		page, err := e.svc.Entries(context.Background(), id, 0, 500)
+		require.NoError(e.t, err)
+		roles := entryRoles(e.t, page.Entries)
+		return len(roles) >= n && roles[len(roles)-1] == "assistant"
+	}, 20*time.Second, 20*time.Millisecond, "thread %s never stored %d messages", id, n)
+}
+
 func entryRoles(t *testing.T, es []threads.Entry) []string {
 	var roles []string
 	for _, e := range es {
@@ -329,7 +341,7 @@ func TestThreadEndToEnd(t *testing.T) {
 	})
 	a.next(isFrame("session_settled"))
 	e.waitState(th.ID, threads.StateIdle)
-	time.Sleep(200 * time.Millisecond) // 让最后几行入库
+	e.waitMessages(th.ID, 8) // 两个回合各 4 条消息：等最后几行入库
 	page, err := e.svc.Entries(ctx, th.ID, 0, 500)
 	require.NoError(t, err)
 	lastSeq = page.LastSeq
@@ -493,11 +505,14 @@ func TestQueueFullWhileOrbAway(t *testing.T) {
 	// 断开 link：命令进入排队
 	e.orbs.Kick(*th.OrbID, "test")
 	require.Eventually(t, func() bool { _, ok := e.orbs.Ctl(*th.OrbID); return !ok }, 5*time.Second, 10*time.Millisecond)
+	// link 已关不等于线程服务已知晓：它的 agent 流读循环读到流结束、把 agent 置为离线之前，命令仍直接下发
+	// （写进已断的流，不报错）。持续发送直到被拒：服务知晓断开后命令开始排队，排满 queueLimit 条即 queue_full。
 	frame := json.RawMessage(`{"type":"get_state"}`)
 	var lastErr error
-	for i := 0; i < 200 && lastErr == nil; i++ {
+	require.Eventually(t, func() bool {
 		lastErr = e.svc.Command(ctx, th.ID, frame, func(json.RawMessage) {})
-	}
+		return lastErr != nil
+	}, 10*time.Second, time.Millisecond, "command never rejected")
 	var te *threads.Error
 	require.ErrorAs(t, lastErr, &te)
 	assert.Equal(t, "queue_full", te.Code)
@@ -552,6 +567,8 @@ func TestCatchUpBatchCursorAndTranscriptRev(t *testing.T) {
 	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hi"})
 	require.NoError(t, err)
 	e.waitState(th.ID, threads.StateIdle)
+	// total 取自库里当前的 lastSeq：之后不能再有条目入库，否则补发的末尾永远对不上它
+	e.waitMessages(th.ID, 4)
 	ctl := e.orbs.OrbdCtl(*th.OrbID)
 	require.NotNil(t, ctl)
 	lines := extraLines(450)
