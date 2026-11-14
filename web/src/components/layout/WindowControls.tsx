@@ -164,6 +164,11 @@ export function SidebarChromeRow(): ReactNode {
 const LIGHTS_MID = 32;
 /** 红绿灯模式下品牌行高：与页头同为 48px，侧栏玻璃离窗口上缘 8px 时中线正好落在红绿灯中线上。 */
 const LIGHTS_ROW = 48;
+/**
+ * 红绿灯与品牌标之间分隔线区的宽度：红绿灯右缘在 76，inset.left = 84；
+ * 分隔线放在 86（离红绿灯 10px），品牌标从 97 开始（离分隔线 10px），两侧等距。
+ */
+const LIGHTS_DIVIDER = 13;
 
 /**
  * 侧栏顶部的品牌行（品牌标 + 字标 + `children` 里的小按钮），整行可拖动。
@@ -190,6 +195,8 @@ export function SidebarBrandRow({
 	const reserve = native
 		? Math.max(0, (v?.chrome.inset.left ?? 0) - spacerX)
 		: 0;
+	// 品牌区整体左移的距离：红绿灯让位 + 分隔线区
+	const shiftBy = reserve + LIGHTS_DIVIDER;
 	const padTop = native ? Math.max(0, LIGHTS_MID - LIGHTS_ROW / 2 - rowTop) : 0;
 	return (
 		<div
@@ -202,27 +209,34 @@ export function SidebarBrandRow({
 			}
 		>
 			{native && (
-				// 抵掉与品牌区之间的 gap-1，品牌标正好落在 inset.left
+				// 抵掉与品牌区之间的 gap-1：红绿灯让位到 inset.left，之后是分隔线区，品牌标紧随其后
 				<span
 					ref={spacer}
 					aria-hidden
 					data-lights-reserve=""
-					className="-mr-1 shrink-0"
-					style={{ width: reserve }}
-				/>
+					className="relative -mr-1 shrink-0 self-stretch"
+					style={{ width: shiftBy }}
+				>
+					{/* 红绿灯与品牌之间的发丝分隔线（macOS 常见做法）；全屏红绿灯消失时随之淡出，退出全屏等品牌区回位后再淡入 */}
+					<span
+						data-lights-divider=""
+						className={`absolute top-1/2 h-4 w-px -translate-y-1/2 bg-border transition-opacity duration-150 motion-reduce:transition-none ${fullscreen ? "opacity-0 delay-0" : "opacity-100 delay-[260ms]"}`}
+						style={{ left: reserve + 2 }}
+					/>
+				</span>
 			)}
 			<span
 				data-brand-shift={
 					native ? (fullscreen ? "fullscreen" : "lights") : undefined
 				}
-				className={`@container flex min-w-0 flex-1 items-center gap-2 ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${fullscreen ? "delay-[180ms]" : "delay-0"}` : ""}`}
+				className={`@container flex min-w-0 flex-1 items-center ${native ? "gap-1.5" : "gap-2"} ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${fullscreen ? "delay-[180ms]" : "delay-0"}` : ""}`}
 				style={
-					fullscreen ? { transform: `translateX(${-reserve}px)` } : undefined
+					fullscreen ? { transform: `translateX(${-shiftBy}px)` } : undefined
 				}
 			>
 				<BrandMark size={24} />
 				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
-				<span className="wordmark hidden min-w-0 text-[24px] leading-none @[6rem]:inline">
+				<span className="wordmark hidden min-w-0 text-[24px] leading-none @[5.5rem]:inline">
 					{t("app.name")}
 				</span>
 			</span>

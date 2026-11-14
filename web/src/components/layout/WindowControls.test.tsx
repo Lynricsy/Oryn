@@ -293,7 +293,7 @@ describe("侧栏品牌行", () => {
 		expect(row).toHaveAttribute("data-brand-row", "lights");
 		expect(row).toHaveStyle({ height: "48px", paddingTop: "0px" });
 		expect(row.querySelector("[data-lights-reserve]")).toHaveStyle({
-			width: "60px",
+			width: "73px",
 		});
 		expect(shift).toHaveAttribute("data-brand-shift", "lights");
 		rect.mockRestore();
@@ -306,7 +306,12 @@ describe("侧栏品牌行", () => {
 		const mac = install("native-left");
 		const { row, shift } = brandRow();
 		const reserve = row.querySelector("[data-lights-reserve]") as HTMLElement;
-		expect(reserve).toHaveStyle({ width: "84px" });
+		// 让位 84 + 分隔线区 13：分隔线在红绿灯右缘（76）外 10px，品牌标再隔 10px
+		expect(reserve).toHaveStyle({ width: "97px" });
+		const divider = row.querySelector("[data-lights-divider]") as HTMLElement;
+		expect(divider).toHaveStyle({ left: "86px" });
+		expect(divider.className).toContain("opacity-100");
+		expect(divider.className).toContain("delay-[260ms]");
 		expect(shift?.style.transform).toBe("");
 		expect(shift?.className).toContain("transition-transform");
 		expect(shift?.className).toContain("duration-[260ms]");
@@ -315,10 +320,13 @@ describe("侧栏品牌行", () => {
 
 		mac.set({ fullscreen: true });
 		expect(shift).toHaveAttribute("data-brand-shift", "fullscreen");
-		expect(shift?.style.transform).toBe("translateX(-84px)");
+		expect(shift?.style.transform).toBe("translateX(-97px)");
+		// 红绿灯消失：分隔线立即淡出
+		expect(divider.className).toContain("opacity-0");
+		expect(divider.className).toContain("delay-0");
 		expect(shift?.className).toContain("delay-[180ms]");
 		// 只动 transform：让位的宽度不变，布局不跳
-		expect(reserve).toHaveStyle({ width: "84px" });
+		expect(reserve).toHaveStyle({ width: "97px" });
 
 		mac.set({ fullscreen: false });
 		expect(shift).toHaveAttribute("data-brand-shift", "lights");
