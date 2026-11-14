@@ -1350,8 +1350,8 @@ async function D11() {
 		? readConfig("app")
 		: {};
 	if (!cfg.serverUrl) throw new Error("没有已配对的主 App 配置（先跑 D2）");
-	const run = `${dir}/run/Oryn.AppImage`;
-	mkdirSync(`${dir}/run`, { recursive: true });
+	const run = `${TMP}/upd/run/Oryn.AppImage`;
+	mkdirSync(`${TMP}/upd/run`, { recursive: true });
 	const extra = { APPIMAGE_EXTRACT_AND_RUN: "1" };
 	const quitAll = async () => {
 		await once("app3", ["--quit"], { bin: run, extra, timeoutMs: 20_000 });
