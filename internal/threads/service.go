@@ -671,7 +671,7 @@ func (e *eventQueue) run(ctx context.Context, fn func(context.Context, OrbEvent)
 }
 
 func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
-	if ev.Kind == OrbEventSetup || ev.Kind == OrbEventServices || ev.Kind == OrbEventDesktop {
+	if ev.Kind == OrbEventSetup || ev.Kind == OrbEventServices || ev.Kind == OrbEventDesktop || ev.Kind == OrbEventPool {
 		// 只有运行记录 / 服务镜像变化：线程状态不受影响。事件里的 orb 行可能早于随后的状态变化，重读一次再推送，
 		// 也不覆盖状态缓存。
 		if o, err := s.st.Q.GetOrb(ctx, ev.OrbID); err == nil {

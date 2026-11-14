@@ -46,6 +46,8 @@ const (
 	OrbEventServices = "services"
 	// OrbEventDesktop 表示 orb 的桌面镜像或浏览器 Profile 绑定变化（只需推送 orb 更新，与 orbs.EventDesktop 同值）。
 	OrbEventDesktop = "desktop"
+	// OrbEventPool 表示 orb 的预热池状态或项目快照发布进展变化（只需推送 orb 更新，与 orbs.EventPool 同值；M11a）。
+	OrbEventPool = "pool"
 )
 
 // OrbCreate 是新建 orb 的参数（对应 orbs.CreateParams）；空 Provider / Type 由 orbs 按 C3 规则取默认。
@@ -57,7 +59,12 @@ type OrbCreate struct {
 	ProfileMode      string
 	// Coordinator 对应 orbs.CreateParams.Coordinator（本包从不置位：协调 orb 由 internal/coord 直接创建）。
 	Coordinator bool
+	// Pool 对应 orbs.CreateParams.Pool（M11a 预热池 orb；本包从不置位）。
+	Pool bool
 }
+
+// CodeOrbIsPooled 是把线程挂到预热池 orb 上（executor.kind = orb 指向池 orb）的错误码（M11a，HTTP 409）。
+const CodeOrbIsPooled = "orb_is_pooled"
 
 // Profiles 决定新 orb 选用的浏览器 Profile（internal/desktop.Service 实现）。
 type Profiles interface {
@@ -99,4 +106,7 @@ type Orbs interface {
 	HasFeature(orbID, feature string) bool
 	// Delete 删除 orb（先 shutdown 再入队 delete）；契约 C4：建线程事务失败时回收本次新建的 orb。
 	Delete(ctx context.Context, orbID string) error
+	// ClaimPool 认领一台与 p 匹配（项目、provider、类型、配置哈希）的预热池 orb（M11a）；没有可认领的返回 false，
+	// 调用方照常 Create。认领成功的 orb 已离开池（或处于 claimed，刷新后进入 ready）。
+	ClaimPool(ctx context.Context, p OrbCreate) (db.Orb, bool)
 }

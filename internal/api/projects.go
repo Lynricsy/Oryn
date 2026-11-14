@@ -22,7 +22,7 @@ func projectJSON(p db.Project) apigen.Project {
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
 		SetupScript: p.SetupScript, ResumeScript: p.ResumeScript, ShallowClone: p.ShallowClone,
 		Color: p.Color, Icon: p.Icon, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ArchivedAt: p.ArchivedAt,
-		DefaultBrowserProfileID: p.DefaultBrowserProfileID,
+		DefaultBrowserProfileID: p.DefaultBrowserProfileID, Snapshots: p.Snapshots, WarmOrbs: int(p.WarmOrbs),
 	}
 	if id := gitIdentityJSON(p.GitAuthorName, p.GitAuthorEmail); id != nil {
 		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
@@ -107,6 +107,11 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request", "项目名长度须为 1–100")
 		return
 	}
+	warm, err := checkWarmOrbs(req.WarmOrbs)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	gitName, gitEmail, _, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
 	if err != nil {
 		writeErr(w, r, err)
@@ -134,6 +139,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		SetupScript: optStr(req.SetupScript), ResumeScript: optStr(req.ResumeScript),
 		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color), Icon: icon,
 		GitAuthorName: gitName, GitAuthorEmail: gitEmail, CreatedAt: now, UpdatedAt: now, DefaultBrowserProfileID: profileID,
+		Snapshots: req.Snapshots, WarmOrbs: warm,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
 		WriteError(w, http.StatusConflict, "conflict", "已有同名项目")
@@ -146,6 +152,9 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if row.WarmOrbs > 0 {
+		s.poolKick(row.ID)
 	}
 	WriteJSON(w, http.StatusCreated, projectJSON(row))
 }
@@ -187,6 +196,11 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		}
 	}
 	profileID, err := s.checkBrowserProfile(ctx, req.DefaultBrowserProfileID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	warm, err := checkWarmOrbs(req.WarmOrbs)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -237,6 +251,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		if req.ShallowClone != nil {
 			u.ShallowClone = *req.ShallowClone
 		}
+		u.Snapshots, u.WarmOrbs = req.Snapshots, warm
 		if req.Archived != nil {
 			switch {
 			case *req.Archived && p.ArchivedAt == nil:
@@ -257,12 +272,29 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		writeErr(w, r, err)
 		return
 	}
+	// 预热台数、快照开关、setup 脚本、仓库、分支、默认 provider / 类型或归档变化都会改变预热池的目标或配置哈希
+	if req.WarmOrbs != nil || req.Snapshots != nil || req.SetupScript != nil || req.RepoURL != nil || req.BaseBranch != nil ||
+		req.ShallowClone != nil || req.DefaultProvider != nil || req.DefaultOrbType != nil || req.Archived != nil {
+		s.poolKick(id)
+	}
 	WriteJSON(w, http.StatusOK, projectJSON(out))
 }
 
 // DeleteProject 删除项目（线程保留，project_id 置空）。
 func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
-	n, err := s.Store.Q.DeleteProject(r.Context(), id)
+	ctx := r.Context()
+	var n int64
+	err := s.Store.Tx(ctx, func(q *db.Queries) error {
+		// 先退役项目快照（行随项目删除只把 project_id 置空，镜像交给回收器在无引用后删除）
+		if err := q.RetireProjectSnapshotsByProject(ctx, db.RetireProjectSnapshotsByProjectParams{
+			RetiredAt: time.Now().UnixMilli(), RetireReason: orbs.RetireProjectDeleted, ProjectID: id,
+		}); err != nil {
+			return err
+		}
+		var err error
+		n, err = q.DeleteProject(ctx, id)
+		return err
+	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -271,5 +303,25 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 		WriteError(w, http.StatusNotFound, "not_found", "项目不存在")
 		return
 	}
+	// 该项目的预热池 orb 由对账回收
+	s.poolKick(id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// poolKick 在影响预热池的项目设置变化后立即触发一次对账（未注入 orb 服务时无操作）。
+func (s *Server) poolKick(projectID string) {
+	if s.Orbs != nil && s.Orbs.Service != nil {
+		s.Orbs.Service.PoolKick(projectID)
+	}
+}
+
+// checkWarmOrbs 校验 warmOrbs 在 0–3 之间（nil = 未给出）。
+func checkWarmOrbs(v *int) (*int64, error) {
+	if v == nil {
+		return nil, nil
+	}
+	if *v < 0 || *v > 3 {
+		return nil, errInvalid("warmOrbs 须为 0–3")
+	}
+	return new(int64(*v)), nil
 }

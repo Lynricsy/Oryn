@@ -105,6 +105,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		if o.Coordinator {
 			return apigen.Thread{}, errf(CodeCoordinatorRestricted, "threads cannot be attached to the coordinator orb")
 		}
+		if o.PoolState != nil {
+			// 池 orb 只能经认领进入线程（认领会刷新仓库并让它离开池）；直接挂上去会与对账回收竞争
+			return apigen.Thread{}, errf(CodeOrbIsPooled, "orb belongs to the warm pool")
+		}
 	} else {
 		var profileID string
 		switch {
@@ -117,13 +121,22 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		case explicitProfile:
 			return apigen.Thread{}, errf("invalid", "browser profiles are not supported")
 		}
-		o, err := s.orbs.Create(ctx, OrbCreate{
+		req := OrbCreate{
 			Provider: p.Provider, Type: p.Type, ProjectID: p.ProjectID, BrowserProfileID: profileID, ProfileMode: string(p.ProfileMode),
-		})
-		if err != nil {
-			return apigen.Thread{}, errf("orb_create_failed", err.Error())
 		}
-		orb, newOrb = o, true
+		// 预热池（M11a）：只给有项目、不选浏览器 Profile 的线程认领（Profile 须在 ready 之前装载，池 orb 早已过了那一步）
+		var claimed bool
+		if profileID == "" && p.ProjectID != "" {
+			orb, claimed = s.orbs.ClaimPool(ctx, req)
+		}
+		if !claimed {
+			o, err := s.orbs.Create(ctx, req)
+			if err != nil {
+				return apigen.Thread{}, errf("orb_create_failed", err.Error())
+			}
+			orb = o
+		}
+		newOrb = true
 	}
 
 	id := ids.Thread()

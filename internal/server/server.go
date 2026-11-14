@@ -132,7 +132,7 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
-		PortalURLTemplate: base.Template(),
+		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool,
 	}, s.Store, s.Jobs, &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault,
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),

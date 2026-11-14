@@ -373,6 +373,10 @@ func (s *Service) advance(orbID string) {
 
 // runPhase 执行 connecting → setting_up（首次）/ resuming（唤醒）→ ready。先等本 link 准备完成
 // （见 orbLink.prepared）；link 在此期间断开则放弃，由新 link 的 hello 重来。
+//
+// M11a：刚被认领的池 orb（pool_state = claimed）即使已 ready 过也用 setup.run（阶段名仍是 resuming）并置
+// repo.update；setup.run 应答之后、BeforeReady 之前按需发布项目快照；setup 失败的 warming 池 orb 不进 ready、直接回收；
+// 进入 ready 时 warming → idle、claimed → 离开池。
 func (s *Service) runPhase(l *orbLink) {
 	select {
 	case <-l.prepared:
@@ -392,9 +396,17 @@ func (s *Service) runPhase(l *orbLink) {
 		slog.Warn("查询 orb 历史失败", "orb", l.orbID, "err", err)
 		return
 	}
+	cur, err := s.Get(ctx, l.orbID)
+	if err != nil {
+		return
+	}
+	claimed := derefStr(cur.PoolState) == PoolClaimed
 	phase, method := StateSettingUp, apigen.MethodSetupRun
 	if everReady {
 		phase, method = StateResuming, apigen.MethodResumeRun
+		if claimed {
+			method = apigen.MethodSetupRun
+		}
 	}
 	orb, moved, err := s.transition(ctx, l.orbID, StateConnecting, phase, nil)
 	if err != nil || !moved {
@@ -410,6 +422,10 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 	} else {
 		plan.Params = apigen.LinkCtlSetupRunParams{GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{}}
+	}
+	hash := s.recordConfigHash(ctx, orb)
+	if plan.Params.Repo != nil && s.wantRepoUpdate(ctx, l, orb, everReady) {
+		plan.Params.Repo.Update = new(true)
 	}
 	s.setPolicy(l.orbID, plan.Egress)
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.SetupTimeout)
@@ -436,6 +452,19 @@ func (s *Service) runPhase(l *orbLink) {
 			detail["setupError"] = *res.SetupError
 		}
 		slog.Warn("orb setup 脚本失败（继续）", "orb", l.orbID, "phase", phase, "err", detail["setupError"])
+		if derefStr(orb.PoolState) == PoolWarming && s.failWarming(ctx, orb) {
+			// 没有线程在等的池 orb：setup 失败就回收（项目退避 1 小时），不进 ready
+			return
+		}
+	}
+	pristine := phase == StateSettingUp || derefStr(orb.PoolState) == PoolClaimed
+	if s.afterSetupSnapshot(ctx, l, orb, res, pristine, hash) && l.ctl.Err() != nil {
+		// 提交快照期间容器被暂停、link 断开：退回 connecting 由新 link 重跑本阶段（完成标记已在，不会再次发布）。
+		slog.Info("快照期间 link 断开", "orb", l.orbID, "phase", phase)
+		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
+			s.advance(l.orbID)
+		}
+		return
 	}
 	if h := s.desktopHooksFor(l); h != nil {
 		// Profile 必须在 agent 启动（ready）之前定下来。期间 link 断开则 Profile 可能没定好：
@@ -449,7 +478,16 @@ func (s *Service) runPhase(l *orbLink) {
 			return
 		}
 	}
-	_, _, _ = s.transition(ctx, l.orbID, phase, StateReady, detail)
+	_, _, _ = s.transitionThen(ctx, l.orbID, phase, StateReady, detail, func(t *txn) error {
+		var err error
+		switch derefStr(t.orb.PoolState) {
+		case PoolWarming:
+			_, err = t.q.SetOrbPoolState(t.ctx, db.SetOrbPoolStateParams{PoolState: new(PoolIdle), ID: t.orb.ID, Seen: PoolWarming})
+		case PoolClaimed:
+			_, err = t.q.SetOrbPoolState(t.ctx, db.SetOrbPoolStateParams{PoolState: nil, ID: t.orb.ID, Seen: PoolClaimed})
+		}
+		return err
+	})
 }
 
 func (s *Service) onLinkDown(l *orbLink) {

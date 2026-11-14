@@ -18,6 +18,10 @@ func (a orbsAdapter) Create(ctx context.Context, p threads.OrbCreate) (db.Orb, e
 	return a.Service.Create(ctx, orbs.CreateParams(p))
 }
 
+func (a orbsAdapter) ClaimPool(ctx context.Context, p threads.OrbCreate) (db.Orb, bool) {
+	return a.Service.ClaimPool(ctx, orbs.CreateParams(p))
+}
+
 func (a orbsAdapter) HandleRequest(m string, fn func(context.Context, string, json.RawMessage) (any, error)) {
 	a.Service.HandleRequest(m, fn)
 }

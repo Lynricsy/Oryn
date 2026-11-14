@@ -135,6 +135,8 @@ func (s *Service) onSetupResult(ctx context.Context, orbID string, params json.R
 		StartedAt: p.StartedAt, FinishedAt: s.nowMs(), Ok: b2i(p.Ok), SetupRan: b2i(p.SetupRan), Error: p.Error,
 		DurationMs: p.DurationMs, HasRepoScript: b2i(p.HasRepoScript), HasProjectScript: b2i(p.HasProjectScript),
 		LogTail: s.takeSetupLog(orbID, p.Phase),
+		// M11a：开始时完成标记已在（来自项目快照）与结束时检出的提交
+		Prepared: p.Prepared != nil && *p.Prepared, BaseCommit: nonEmpty(p.BaseCommit),
 	}
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.InsertOrbSetupRun(ctx, row); err != nil {
@@ -269,5 +271,9 @@ func (s *Service) onProjectScriptsSet(ctx context.Context, orbID string, params 
 		return nil, err
 	}
 	slog.Info("orb 更新了项目脚本", "orb", orbID, "project", out.ID, "setup", p.Setup != nil, "resume", p.Resume != nil)
+	if p.Setup != nil {
+		// setup 脚本进配置哈希：旧的预热池 orb 立即被对账回收、换新
+		s.PoolKick(out.ID)
+	}
 	return projectScripts(out), nil
 }

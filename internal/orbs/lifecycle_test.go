@@ -48,6 +48,8 @@ type fakeOrbd struct {
 	desk func(st *link.Stream)
 	// onCall 非 nil 时在记下每个 ctl 请求之后调用。
 	onCall func(method string)
+	// onSetup 非 nil 时替代 setup.run / resume.run 的固定应答。
+	onSetup func(orbID, method string, p apigen.LinkCtlSetupRunParams) apigen.LinkCtlSetupRunResult
 
 	mu    sync.Mutex
 	sess  *link.Session
@@ -79,8 +81,13 @@ func (o *fakeOrbd) connect() error {
 		}
 		switch method {
 		case "setup.run", "resume.run":
+			if o.onSetup != nil {
+				var p apigen.LinkCtlSetupRunParams
+				_ = json.Unmarshal(params, &p)
+				return o.onSetup(o.orbID, method, p), nil
+			}
 			return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: method == "setup.run", DurationMs: 3}, nil
-		case "shutdown", "portal.configure", "profile.mode":
+		case "shutdown", "portal.configure", "profile.mode", "snapshot.prepare":
 			return apigen.LinkCtlOkResult{Ok: true}, nil
 		}
 		return nil, link.ErrMethodNotFound
@@ -171,15 +178,50 @@ type fakeDriver struct {
 	onCall   func(method string)
 	// afterSpawn 非 nil 时在 spawn 成功连上之后、任务返回之前调用（让测试控制「spawn 完成」相对 hello 的先后）。
 	afterSpawn func(orbID string)
+	// onSetup 非 nil 时替代假 orbd 对 setup.run / resume.run 的固定应答（M11a 快照与预热池测试）。
+	onSetup func(orbID, method string, p apigen.LinkCtlSetupRunParams) apigen.LinkCtlSetupRunResult
+	// baseImage 进 hello 的 baseImageId；types 非空时替代缺省类型表。
+	baseImage string
+	types     []apigen.OrbType
+	// snapBytes 是 snapshot 任务上报的 snapshotBytes（nil = 不上报）；snapFail 让 snapshot 任务失败；
+	// snapGate 非 nil 时 snapshot 任务阻塞到它关闭；missing 里的快照 spawn 时「不存在」（按 snapshotOptional 退回或失败）。
+	snapBytes *int64
+	snapFail  bool
+	snapGate  chan struct{}
+	// deletedSnaps 记录 delete_snapshot 任务删除的快照。
+	deletedSnaps []string
+	missing      map[string]bool
+	// spawns 记录 spawn 任务的参数。
+	spawns []apigen.JobSpawnParams
 }
 
-func newFakeDriver() *fakeDriver { return &fakeDriver{orbds: map[string]*fakeOrbd{}} }
+func newFakeDriver() *fakeDriver {
+	return &fakeDriver{orbds: map[string]*fakeOrbd{}, missing: map[string]bool{}}
+}
 
 func (d *fakeDriver) Info() providerrt.Info {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	types := d.types
+	if len(types) == 0 {
+		types = []apigen.OrbType{{Name: "small", Cpus: 2, MemoryMB: 4096}}
+	}
 	return providerrt.Info{
 		Driver: apigen.Process, Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
-		Types: []apigen.OrbType{{Name: "small", Cpus: 2, MemoryMB: 4096}}, DefaultType: "small",
+		Types: types, DefaultType: "small", BaseImageID: d.baseImage,
 	}
+}
+
+func (d *fakeDriver) countOps(op string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, o := range d.ops {
+		if strings.HasPrefix(o, op+":") {
+			n++
+		}
+	}
+	return n
 }
 
 func (d *fakeDriver) orbd(id string) *fakeOrbd {
@@ -188,17 +230,32 @@ func (d *fakeDriver) orbd(id string) *fakeOrbd {
 	return d.orbds[id]
 }
 
-func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) error {
+func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*apigen.JobResult, error) {
 	d.mu.Lock()
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
 	features, fs, portal, desk, onCall, afterSpawn := d.features, d.fs, d.portal, d.desk, d.onCall, d.afterSpawn
+	onSetup, snapBytes, snapFail, snapGate := d.onSetup, d.snapBytes, d.snapFail, d.snapGate
+	if j.Spawn != nil {
+		d.spawns = append(d.spawns, *j.Spawn)
+	}
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
+		if sid := j.Spawn.SnapshotID; sid != nil && *sid != "" {
+			d.mu.Lock()
+			gone := d.missing[*sid]
+			d.mu.Unlock()
+			if gone {
+				if j.Spawn.SnapshotOptional == nil || !*j.Spawn.SnapshotOptional {
+					return nil, fmt.Errorf("snapshot %s missing", *sid)
+				}
+				_, _ = fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", *sid)
+			}
+		}
 		if o == nil {
-			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall}
+			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall, onSetup: onSetup}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
 			d.mu.Unlock()
@@ -208,20 +265,32 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 		o.token = j.Spawn.Env.OrynOrbToken
 		o.mu.Unlock()
 		if noConnect {
-			return nil
+			return nil, nil
 		}
 		o.disconnect()
 		if err := o.connect(); err != nil || afterSpawn == nil {
-			return err
+			return nil, err
 		}
 		afterSpawn(j.OrbID)
-		return nil
+		return nil, nil
+	case "snapshot":
+		if snapGate != nil {
+			<-snapGate
+		}
+		if snapFail {
+			return nil, fmt.Errorf("commit failed")
+		}
+		return &apigen.JobResult{SnapshotBytes: snapBytes}, nil
+	case "delete_snapshot":
+		d.mu.Lock()
+		d.deletedSnaps = append(d.deletedSnaps, j.SnapshotID)
+		d.mu.Unlock()
 	case "pause", "delete":
 		if o != nil {
 			o.disconnect()
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // ---- 夹具 ----
@@ -253,12 +322,19 @@ type harness struct {
 	srv    *httptest.Server
 	provID string
 	quiet  atomic.Bool
+	// skew 是服务时钟相对真实时间的偏移（纳秒；M11a 测试拨快时钟用）。
+	skew atomic.Int64
 
 	evMu   sync.Mutex
 	events []Event
 }
 
 func newHarness(t *testing.T, drv providerrt.Driver, setup SetupSource, mod func(*Config)) *harness {
+	return newHarnessRun(t, drv, setup, mod, true)
+}
+
+// newHarnessRun 同 newHarness；run 为 false 时不启动 Service.Run（空闲评估、快照回收与预热池对账都由测试显式调用）。
+func newHarnessRun(t *testing.T, drv providerrt.Driver, setup SetupSource, mod func(*Config), run bool) *harness {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir())
@@ -277,6 +353,7 @@ func newHarness(t *testing.T, drv providerrt.Driver, setup SetupSource, mod func
 		mod(&cfg)
 	}
 	h.svc = New(cfg, st, h.q, setup, fakeSecrets{})
+	h.svc.now = func() time.Time { return time.Now().Add(time.Duration(h.skew.Load())) }
 	h.quiet.Store(true)
 	h.svc.SetQuiescence(func(_ string, commit func() bool) bool { return h.quiet.Load() && commit() })
 	h.svc.Subscribe(func(ev Event) {
@@ -297,7 +374,9 @@ func newHarness(t *testing.T, drv providerrt.Driver, setup SetupSource, mod func
 	runner := &providerrt.Runner{URL: h.srv.URL, Token: tok, Driver: drv, ClaimWait: time.Second, ShutdownGrace: time.Second}
 	done := make(chan struct{})
 	go func() { _ = runner.Run(runCtx); close(done) }()
-	go h.svc.Run(svcCtx)
+	if run {
+		go h.svc.Run(svcCtx)
+	}
 	go h.q.Run(svcCtx)
 	// 等 provider hello 完成（Create 需要 provider 的类型表）。
 	require.Eventually(t, func() bool {

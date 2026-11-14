@@ -32,6 +32,8 @@ var threadErrStatus = map[string]int{
 	"space_not_found":                 http.StatusNotFound,
 	"space_thread":                    http.StatusConflict,
 	"archived":                        http.StatusConflict,
+	// M11a：把线程挂到预热池里的 orb 上
+	threads.CodeOrbIsPooled: http.StatusConflict,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {

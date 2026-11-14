@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -268,6 +269,8 @@ type Result struct {
 	Output     string
 	Error      string
 	DurationMs int64
+	// Data 是驱动上报的结构化结果（snapshot 任务的 snapshotBytes 等；M11a）：成功进入终态时写入 jobs.result。
+	Data *apigen.JobResult
 }
 
 // Complete 记录 provider 对第 claimGen 次认领上报的结果：成功即终态；失败且未达上限则重排，否则终态 failed。
@@ -314,7 +317,14 @@ func (q *Queue) finishAttempt(ctx context.Context, job db.Job, res Result) error
 		state = StateFailed
 	}
 	now := q.nowMs()
-	n, err := q.st.Q.FinishJob(ctx, db.FinishJobParams{State: state, FinishedAt: &now, Output: out, Error: errPtr, ID: job.ID, ClaimGen: job.ClaimGen})
+	var result *string
+	if res.OK && res.Data != nil {
+		if b, err := json.Marshal(res.Data); err == nil {
+			s := string(b)
+			result = &s
+		}
+	}
+	n, err := q.st.Q.FinishJob(ctx, db.FinishJobParams{State: state, FinishedAt: &now, Output: out, Error: errPtr, ID: job.ID, ClaimGen: job.ClaimGen, Result: result})
 	if err != nil {
 		return err
 	}
@@ -418,4 +428,13 @@ func deref(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// ResultOf 解析任务行的 jobs.result（驱动上报的结构化结果）；没有或无法解析时返回零值。
+func ResultOf(job db.Job) apigen.JobResult {
+	var r apigen.JobResult
+	if job.Result != nil {
+		_ = json.Unmarshal([]byte(*job.Result), &r)
+	}
+	return r
 }

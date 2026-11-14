@@ -106,6 +106,10 @@ type Config struct {
 	// PortalURLTemplate 是下发给 orbd 的 portal 地址模板（portalhost.Base.Template()，如
 	// `https://t-{code}-p{port}.orb.example.com/`）；空串 = 未配置 portal_domain。
 	PortalURLTemplate string
+	// Snapshots 是项目快照配置（M11a）；零值 = 关闭。
+	Snapshots config.Snapshots
+	// Pool 是预热池配置（M11a）；MaxTotal 为 0 = 关闭。
+	Pool config.Pool
 }
 
 // CreateParams 是新建 orb 的参数。空 Provider / Type 按 C3 规则取默认。
@@ -123,6 +127,8 @@ type CreateParams struct {
 	ProfileMode string
 	// Coordinator 为真时建协调 orb（M9）：provider 固定为内置的 @host、类型 host，忽略其余字段。
 	Coordinator bool
+	// Pool 为真时建预热池 orb（M11a）：pool_state = warming；须有项目，且与 SnapshotID、BrowserProfileID 互斥。
+	Pool bool
 }
 
 // 内置协调宿主 provider（M9 协调宿主分册 H6）。名称 `@host` 不满足 API 的 provider 名称正则，用户建不出同名行。
@@ -192,6 +198,12 @@ type Service struct {
 	hookAwaitPrepared func(orbID string)
 	hookTouchWrite    func(ctx context.Context, orbID string)
 	hookTouchWait     func(orbID string)
+	// hookSnapshotBuilding（仅测试）在项目快照登记为 building 之后、入队 snapshot 任务之前调用。
+	hookSnapshotBuilding func(orbID, snapID string)
+
+	// poolKick 是容量 1 的对账触发通道（PoolKick）；poolBackoff 是各项目池 orb setup 失败后的退避截止时间（受 mu 保护）。
+	poolKick    chan struct{}
+	poolBackoff map[string]time.Time
 }
 
 // QuiesceFunc 是冻结 / 停机闸门（Threads 提供）：持有该 orb 全部线程的锁，确认全部 settled、无待发命令、
@@ -225,6 +237,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		setupLogs: map[string]*setupLogs{},
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 		userTouched: map[string]*userTouch{},
+		poolKick:    make(chan struct{}, 1), poolBackoff: map[string]time.Time{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
@@ -435,6 +448,10 @@ func (s *Service) spawnIn(t *txn) error {
 	}
 	if t.orb.SnapshotOf != nil && *t.orb.SnapshotOf != "" {
 		p.SnapshotID = t.orb.SnapshotOf
+		// 项目快照可以缺失（provider 上被清理）：退回基础镜像、照常 setup；fork 快照是用户数据，必须存在。
+		if s.isProjectSnapshot(t.ctx, t.q, *t.orb.SnapshotOf) {
+			p.SnapshotOptional = new(true)
+		}
 	}
 	return s.enqueueIn(t, jobs.OpSpawn, p)
 }
@@ -534,7 +551,72 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 	return db.Provider{}, fmt.Errorf("%w: 未指定 provider 且无法确定默认值（共 %d 个可用）", ErrNoProvider, len(live))
 }
 
-// Create 新建 orb（requested）并入队 spawn 任务。
+// target 是新 orb 的落点：项目、provider、类型与规格（Create 与 ClaimPool 共用）。
+type target struct {
+	prj  *db.Project
+	prov db.Provider
+	typ  string
+	spec *apigen.OrbType
+}
+
+// resolveTarget 按「项目 → provider → 类型 → 规格」解析新 orb 的落点。
+func (s *Service) resolveTarget(ctx context.Context, p CreateParams) (target, error) {
+	var t target
+	if p.ProjectID != "" {
+		v, err := s.st.Q.GetProject(ctx, p.ProjectID)
+		if err != nil {
+			return t, fmt.Errorf("读取项目 %s: %w", p.ProjectID, err)
+		}
+		t.prj = &v
+	}
+	var src *db.Orb
+	if p.SnapshotOf != "" {
+		if v, err := s.st.Q.GetOrb(ctx, p.SnapshotOf); err == nil {
+			src = &v
+		}
+	}
+	prov, err := s.resolveProvider(ctx, p.Provider, t.prj, src)
+	if err != nil {
+		return t, err
+	}
+	t.prov = prov
+	typ := p.Type
+	if typ == "" && src != nil && p.Provider == "" {
+		typ = src.Type
+	}
+	if typ == "" && t.prj != nil && t.prj.DefaultOrbType != nil {
+		typ = *t.prj.DefaultOrbType
+	}
+	if typ == "" {
+		typ = s.cfg.Defaults.Type
+	}
+	if typ == "" {
+		typ = prov.DefaultType
+	}
+	if typ == "" {
+		return t, fmt.Errorf("%w: 无法确定 orb 类型（provider %q 尚未上线？）", ErrBadType, prov.Name)
+	}
+	t.typ = typ
+	types := providerTypes(prov)
+	for i := range types {
+		if types[i].Name == typ {
+			t.spec = &types[i]
+		}
+	}
+	if t.spec == nil && len(types) > 0 {
+		return t, fmt.Errorf("%w: provider %q 没有类型 %q", ErrBadType, prov.Name, typ)
+	}
+	return t, nil
+}
+
+// providerTypes 解析 provider 上报的类型表。
+func providerTypes(prov db.Provider) []apigen.OrbType {
+	var types []apigen.OrbType
+	_ = json.Unmarshal([]byte(prov.OrbTypes), &types)
+	return types
+}
+
+// Create 新建 orb（requested）并入队 spawn 任务。有项目时按 M11a 2.2 选用该项目的就绪快照。
 func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err error) {
 	if p.Coordinator {
 		prov, err := s.st.Q.GetProviderByName(ctx, HostProviderName)
@@ -544,7 +626,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 		if err != nil {
 			return db.Orb{}, err
 		}
-		return s.insertOrb(ctx, CreateParams{Coordinator: true}, prov, HostType, nil, nil)
+		return s.insertOrb(ctx, CreateParams{Coordinator: true}, target{prov: prov, typ: HostType}, snapPick{})
+	}
+	if p.Pool && (p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "") {
+		return db.Orb{}, fmt.Errorf("%w: 预热池 orb 须属于项目，且不能指定快照或浏览器 Profile", ErrInvalidState)
 	}
 	if p.SnapshotID != "" && p.SnapshotOf != "" {
 		// 快照是专为这次创建拍的：创建失败时没有 orb 会用它，交给源 orb 的 provider 回收。
@@ -557,82 +642,63 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 			}
 		}()
 	}
-	var prj *db.Project
-	if p.ProjectID != "" {
-		v, err := s.st.Q.GetProject(ctx, p.ProjectID)
-		if err != nil {
-			return db.Orb{}, fmt.Errorf("读取项目 %s: %w", p.ProjectID, err)
-		}
-		prj = &v
-	}
-	var src *db.Orb
-	if p.SnapshotOf != "" {
-		if v, err := s.st.Q.GetOrb(ctx, p.SnapshotOf); err == nil {
-			src = &v
-		}
-	}
-	prov, err := s.resolveProvider(ctx, p.Provider, prj, src)
+	t, err := s.resolveTarget(ctx, p)
 	if err != nil {
 		return db.Orb{}, err
 	}
-	typ := p.Type
-	if typ == "" && src != nil && p.Provider == "" {
-		typ = src.Type
-	}
-	if typ == "" && prj != nil && prj.DefaultOrbType != nil {
-		typ = *prj.DefaultOrbType
-	}
-	if typ == "" {
-		typ = s.cfg.Defaults.Type
-	}
-	if typ == "" {
-		typ = prov.DefaultType
-	}
-	if typ == "" {
-		return db.Orb{}, fmt.Errorf("%w: 无法确定 orb 类型（provider %q 尚未上线？）", ErrBadType, prov.Name)
-	}
-	var types []apigen.OrbType
-	_ = json.Unmarshal([]byte(prov.OrbTypes), &types)
-	var spec *apigen.OrbType
-	for i := range types {
-		if types[i].Name == typ {
-			spec = &types[i]
-		}
-	}
-	if spec == nil && len(types) > 0 {
-		return db.Orb{}, fmt.Errorf("%w: provider %q 没有类型 %q", ErrBadType, prov.Name, typ)
-	}
-	return s.insertOrb(ctx, p, prov, typ, spec, prj)
+	return s.insertOrb(ctx, p, t, s.pickProjectSnapshot(ctx, p, t))
 }
 
 // insertOrb 写入 orb 行（requested）、requested 事件与首个 spawn 任务（同一事务），然后发布。
-func (s *Service) insertOrb(ctx context.Context, p CreateParams, prov db.Provider, typ string, spec *apigen.OrbType, prj *db.Project) (db.Orb, error) {
+// pick.snapID 非空时在同一事务里登记一次项目快照的使用；快照已被退役（0 行）则照常从基础镜像起。
+func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick snapPick) (db.Orb, error) {
 	orbID := ids.Orb()
 	now := s.nowMs()
 	// 第 0 代令牌从不下发：入队 spawn 时立即轮换到第 1 代。
-	params := db.CreateOrbParams{
-		ID: orbID, ProviderID: prov.ID, Type: typ, Image: p.SnapshotID,
+	base := db.CreateOrbParams{
+		ID: orbID, ProviderID: t.prov.ID, Type: t.typ, Image: p.SnapshotID,
 		State: StateRequested, StateChangedAt: now, TokenHash: ids.Hash(orbToken(s.cfg.TokenKey, orbID, 0)), CreatedAt: now,
 		Coordinator: p.Coordinator,
 	}
-	if spec != nil {
-		params.Cpus = int64(math.Round(float64(spec.Cpus)))
-		params.MemoryMb = int64(spec.MemoryMB)
+	if t.spec != nil {
+		base.Cpus = int64(math.Round(float64(t.spec.Cpus)))
+		base.MemoryMb = int64(t.spec.MemoryMB)
 	}
-	if prj != nil {
-		params.ProjectID = &prj.ID
+	if t.prj != nil {
+		base.ProjectID = &t.prj.ID
 	}
 	if p.SnapshotID != "" {
-		params.SnapshotOf = &p.SnapshotID
+		base.SnapshotOf = &p.SnapshotID
 	}
-	detail := map[string]any{"provider": prov.Name, "type": typ}
-	if p.SnapshotOf != "" {
-		detail["sourceOrb"] = p.SnapshotOf
+	if pick.hash != "" {
+		base.ConfigHash = &pick.hash
 	}
-	raw, _ := json.Marshal(detail)
+	if p.Pool {
+		base.PoolState = new(PoolWarming)
+	}
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
+	var params db.CreateOrbParams
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		params = base
+		detail := map[string]any{"provider": t.prov.Name, "type": t.typ}
+		if p.SnapshotOf != "" {
+			detail["sourceOrb"] = p.SnapshotOf
+		}
+		if p.Pool {
+			detail["pool"] = true
+		}
+		if pick.snapID != "" {
+			n, err := q.TouchProjectSnapshotUse(ctx, db.TouchProjectSnapshotUseParams{LastUsedAt: now, ID: pick.snapID})
+			if err != nil {
+				return err
+			}
+			if n == 1 {
+				params.Image, params.SnapshotOf = pick.snapID, &pick.snapID
+				detail["projectSnapshot"] = pick.snapID
+			}
+		}
+		raw, _ := json.Marshal(detail)
 		if err := q.CreateOrb(ctx, params); err != nil {
 			return err
 		}
@@ -640,11 +706,11 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, prov db.Provide
 		if err != nil {
 			return err
 		}
-		t := &txn{ctx: ctx, q: q, now: now}
-		if t.orb, err = q.GetOrb(ctx, orbID); err != nil {
+		tx := &txn{ctx: ctx, q: q, now: now}
+		if tx.orb, err = q.GetOrb(ctx, orbID); err != nil {
 			return err
 		}
-		if err := s.spawnIn(t); err != nil {
+		if err := s.spawnIn(tx); err != nil {
 			return err
 		}
 		if p.BrowserProfileID != "" {
@@ -659,7 +725,7 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, prov db.Provide
 	if err != nil {
 		return db.Orb{}, fmt.Errorf("创建 orb: %w", err)
 	}
-	slog.Info("orb 已创建", "orb", orbID, "provider", prov.Name, "type", typ, "snapshot", p.SnapshotID)
+	slog.Info("orb 已创建", "orb", orbID, "provider", t.prov.Name, "type", t.typ, "snapshot", params.Image, "pool", p.Pool)
 	s.publish(ch)
 	return ch.orb, nil
 }
@@ -858,7 +924,11 @@ func (s *Service) shutdownThenDelete(orbID string, wait time.Duration) {
 }
 
 // releaseSnapshot 在没有未删除的 orb 使用快照 snap 时入队 delete_snapshot（使用它的容器删除后镜像才可删除）。
+// 项目快照不走这里：它们由 sweepSnapshots 按退役与引用回收。
 func (s *Service) releaseSnapshot(ctx context.Context, providerID, orbID, snap string) {
+	if s.isProjectSnapshot(ctx, s.st.Q, snap) {
+		return
+	}
 	n, err := s.st.Q.CountLiveOrbsBySnapshot(ctx, &snap)
 	if err != nil {
 		slog.Warn("查询快照引用失败", "snapshot", snap, "err", err)
@@ -880,26 +950,34 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if orb.State == StateDeleting || orb.State == StateDeleted {
-		return "", fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orbID)
-	}
 	snap := ids.Snapshot()
-	job, err := s.jobs.Enqueue(ctx, orb.ProviderID, orbID, jobs.OpSnapshot, apigen.JobSnapshotParams{SnapshotID: snap})
-	if err != nil {
+	if _, err := s.snapshotAs(ctx, orb, snap); err != nil {
 		return "", err
+	}
+	return snap, nil
+}
+
+// snapshotAs 为 orb 入队以 snap 为名的 snapshot 任务并等待完成，返回终态任务（其 result 带 snapshotBytes）。
+func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.Job, error) {
+	if orb.State == StateDeleting || orb.State == StateDeleted {
+		return db.Job{}, fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orb.ID)
+	}
+	job, err := s.jobs.Enqueue(ctx, orb.ProviderID, orb.ID, jobs.OpSnapshot, apigen.JobSnapshotParams{SnapshotID: snap})
+	if err != nil {
+		return db.Job{}, err
 	}
 	done, err := s.jobs.Wait(ctx, job.ID)
 	if err != nil {
-		return "", err
+		return db.Job{}, err
 	}
 	if done.State != jobs.StateSucceeded {
 		msg := "snapshot failed"
 		if done.Error != nil {
 			msg = *done.Error
 		}
-		return "", fmt.Errorf("快照 orb %s: %s", orbID, msg)
+		return done, fmt.Errorf("快照 orb %s: %s", orb.ID, msg)
 	}
-	return snap, nil
+	return done, nil
 }
 
 // TouchUser 记录一次用户交互。
@@ -943,6 +1021,12 @@ func (s *Service) onJobClaimed(ctx context.Context, job db.Job) {
 // onJobFinished 按任务结果推进 orb 状态。所有推进都是基于当前状态的比较并交换，重复调用（重启后的 reconcile
 // 重放同一个终态任务）不会重复生效。
 func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
+	if job.Op == jobs.OpDeleteSnapshot {
+		if ok {
+			s.onSnapshotDeleted(ctx, job)
+		}
+		return
+	}
 	if job.OrbID == nil {
 		return
 	}
@@ -1027,6 +1111,10 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			s.EvaluateIdle(ctx)
+			s.sweepSnapshots(ctx)
+			s.poolReconcile(ctx)
+		case <-s.poolKick:
+			s.poolReconcile(ctx)
 		}
 	}
 }
@@ -1051,6 +1139,7 @@ func (s *Service) recover(ctx context.Context) {
 			slog.Warn("orb 对账失败", "orb", orb.ID, "state", orb.State, "err", err)
 		}
 	}
+	s.recoverPool(ctx)
 }
 
 func (s *Service) reconcile(ctx context.Context, orb db.Orb) error {

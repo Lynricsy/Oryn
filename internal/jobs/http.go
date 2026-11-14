@@ -65,6 +65,8 @@ func (q *Queue) Hello(w http.ResponseWriter, r *http.Request) {
 	n, err := q.st.Q.AcquireProviderHello(r.Context(), db.AcquireProviderHelloParams{
 		Driver: string(req.Driver), Version: req.Version, Capabilities: string(caps), OrbTypes: string(typesJSON),
 		DefaultType: req.DefaultType, AllowMultiple: req.AllowMultiple, InstanceID: &inst, LeaseUntil: &lease, ID: p.ID, Now: &now,
+		// 每次 hello 都覆盖：provider 重建基础镜像后新身份立即进入项目快照的配置哈希（M11a；缺省 = 未知）。
+		BaseImageID: deref(req.BaseImageID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
@@ -138,7 +140,7 @@ func (q *Queue) CompleteHTTP(w http.ResponseWriter, r *http.Request, jobID strin
 	if !decode(w, r, &req) {
 		return
 	}
-	res := Result{OK: req.Ok, Output: req.Output, DurationMs: req.DurationMs}
+	res := Result{OK: req.Ok, Output: req.Output, DurationMs: req.DurationMs, Data: req.Result}
 	if req.Error != nil {
 		res.Error = *req.Error
 	}

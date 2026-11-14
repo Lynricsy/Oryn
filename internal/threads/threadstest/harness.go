@@ -461,6 +461,9 @@ func (o *Orbs) TouchAgent(context.Context, string) {}
 // SetQuiescence 实现 threads.Orbs。
 func (o *Orbs) SetQuiescence(func(string, func() bool) bool) {}
 
+// ClaimPool 实现 threads.Orbs：替身没有预热池，永远不认领。
+func (o *Orbs) ClaimPool(context.Context, threads.OrbCreate) (db.Orb, bool) { return db.Orb{}, false }
+
 // SetFeature 设置 HasFeature 对全部 orb 报告的特性。
 func (o *Orbs) SetFeature(feature string, on bool) {
 	o.mu.Lock()

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -37,8 +38,28 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	switch {
 	case err == nil:
 		v.ProviderName = &p.Name
+		// 嵌套 Docker（M11a 4.1）：按 orb 的类型查 provider 上报的特性
+		for _, t := range providerTypes(p) {
+			if t.Name == o.Type && slices.Contains(t.Features, FeatureDocker) {
+				v.NestedDocker = new(true)
+			}
+		}
 	case !errors.Is(err, sql.ErrNoRows):
 		return apigen.Orb{}, err
+	}
+	// 预热池状态：retiring 不对外暴露（只给出 warming / idle / claimed）
+	switch ps := derefStr(o.PoolState); ps {
+	case PoolWarming, PoolIdle, PoolClaimed:
+		v.Pool = new(apigen.OrbPoolState(ps))
+	}
+	if o.SnapshotOf != nil && *o.SnapshotOf != "" {
+		kind := apigen.OrbSnapshotKindFork
+		if _, err := q.GetProjectSnapshot(ctx, *o.SnapshotOf); err == nil {
+			kind = apigen.OrbSnapshotKindProject
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return apigen.Orb{}, err
+		}
+		v.SnapshotKind = &kind
 	}
 	if o.State == StateFailed {
 		reason, err := FailureReason(ctx, q, o.ID)
@@ -83,6 +104,7 @@ func SetupRunView(r db.ListOrbSetupRunsRow) apigen.OrbSetupRun {
 		ID: r.ID, OrbID: r.OrbID, Phase: apigen.SetupPhase(r.Phase), Trigger: apigen.SetupTrigger(r.Trigger),
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Ok: r.Ok != 0, SetupRan: r.SetupRan != 0,
 		Error: r.Error, DurationMs: r.DurationMs, HasRepoScript: r.HasRepoScript != 0, HasProjectScript: r.HasProjectScript != 0,
+		Prepared: new(r.Prepared), BaseCommit: r.BaseCommit,
 	}
 }
 

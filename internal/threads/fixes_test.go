@@ -73,6 +73,22 @@ type stubOrbs struct {
 	mu      sync.Mutex
 	creates []OrbCreate
 	deletes []string
+	// claims 记录 ClaimPool 的调用；poolOrb 非空时第一次认领返回它（之后返回 false）。
+	claims  []OrbCreate
+	poolOrb string
+}
+
+func (o *stubOrbs) ClaimPool(ctx context.Context, p OrbCreate) (db.Orb, bool) {
+	o.mu.Lock()
+	o.claims = append(o.claims, p)
+	id := o.poolOrb
+	o.poolOrb = ""
+	o.mu.Unlock()
+	if id == "" {
+		return db.Orb{}, false
+	}
+	orb, err := o.st.Q.GetOrb(ctx, id)
+	return orb, err == nil
 }
 
 func (o *stubOrbs) Wake(_ context.Context, id string) error {
