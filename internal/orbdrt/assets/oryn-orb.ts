@@ -22,7 +22,11 @@ git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身�
 - dev server 若校验 Host / Origin，要放行 \`$PUBLIC_URL\` 的主机名（如 Vite 的 \`server.allowedHosts\`）。前端需要调另一个服务时在 dev server 里做代理，不要跨 portal 主机发请求。
 - portal 默认只有所有者能打开；限时公开只能由用户在 Portal 面板里设置。应用可读请求头 \`X-Oryn-Authenticated: owner=yes|no\` 区分访问者。
 - 在 orb 内自测用 \`http://127.0.0.1:<端口>\`（portal URL 需要登录，orb 内 curl 只会得到 302）。WebSocket 可用，但控制面重启或 orb 冻结会断开，客户端要能重连。
-- 查看：\`oryn orb service ls\`、\`oryn orb service logs <名字>\`；停止：\`oryn orb service stop <名字>\`。服务在 setup 之后、每次唤醒后由 Oryn 自动确保运行，不要在 setup / resume 里启动它们。`;
+- 查看：\`oryn orb service ls\`、\`oryn orb service logs <名字>\`；停止：\`oryn orb service stop <名字>\`。服务在 setup 之后、每次唤醒后由 Oryn 自动确保运行，不要在 setup / resume 里启动它们。
+与其它线程协作（独立、产出明确的工作才外包；需要反复协调或改同一批文件的留在当前线程）：
+- \`oryn thread new "<完整、自包含的提示>"\` 在本项目开一个新线程（自带新 orb，不共享未提交的文件），打印线程 id。
+- \`oryn thread wait <id>\` 等它静止并打印最后的回复（退出码 0 完成 / 3 在等主人回答 / 4 出错 / 124 超时）；\`oryn thread send <id> "<消息>"\` 追加指示；\`oryn thread show <id>\` 看状态。只能联系自己开的线程和开了自己的那个线程。
+- \`oryn schedule set --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "<到点要做的事>"\` 给当前线程设定时（另有 \`--every 30m\`、\`--at 2026-01-02T09:00:00+08:00\`）；\`oryn schedule show|pause|resume|rm\`。每个线程只有一个定时，到点时提示会作为新消息出现在本线程。`;
 
 // 桌面说明只在 orbd 启用了桌面时追加（orbd 此时写出 ~/.oryn/core/desktop.yml 覆盖层）。
 const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DISPLAY=:1），用户能在 Oryn 的 Desktop 面板里看到并随时接管。

@@ -6,6 +6,13 @@
 //	--script <file>   用脚本替换默认的 prompt 帧序列（也可用环境变量 FAKEOMP_SCRIPT）
 //	--delay <dur>     流式帧之间的间隔（默认 20ms；也可用 FAKEOMP_DELAY_MS）
 //	-e <path>         扩展文件（与 omp 同名参数，接受并忽略）
+//	--no-tools 等     M9 协调档的开关（--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp，接受并忽略）
+//	--system-prompt   系统提示词；首行 `#dump <HOME 内路径>` 时把参数、环境、uid、cwd 写成 JSON 到该路径
+//
+// 环境变量 FAKEOMP_DUMP_DIR 非空时同样转储到 `<dir>/<ORYN_THREAD_ID 或 pid>.json`。
+// 提示词里的 `hosttool <name> <json>` 行发起宿主工具调用（host_tool_call → 等 host_tool_result），
+// `probe <read|write|exec|tcp|unix|kill> <arg>` 与 `probe args` 行在本进程内做探测；
+// 回合最后的 assistant 文本每步一行：`host:<name>:<ok|error>:<结果前 200 字符>` / `probe:<op>:<ok|错误串>`。
 package main
 
 import (

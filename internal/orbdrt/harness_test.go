@@ -118,6 +118,9 @@ type fakeCP struct {
 	agents chan *link.Stream
 	blobs  chan *link.Stream
 	egress *streamListener
+
+	// extra 先于内置方法处理 orbd 发来的请求（M9 线程 / 定时方法）；ok=false 表示不处理。
+	extra func(method string, params json.RawMessage) (res any, ok bool, err error)
 }
 
 func newFakeCP(t *testing.T) *fakeCP {
@@ -165,6 +168,11 @@ func (cp *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	cp.serve(sess)
+}
+
+// serve 服务一条已建立的 link 会话（WebSocket 或协调宿主的 socketpair），阻塞到它断开。
+func (cp *fakeCP) serve(sess *link.Session) {
 	defer sess.Close()
 	ctx := context.Background()
 	st, err := sess.AcceptStream(ctx)
@@ -212,6 +220,11 @@ func (cp *fakeCP) file(thread, file string) *cpFile {
 }
 
 func (cp *fakeCP) onRequest(_ context.Context, method string, params json.RawMessage) (any, error) {
+	if cp.extra != nil {
+		if res, ok, err := cp.extra(method, params); ok {
+			return res, err
+		}
+	}
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 	var probe struct {

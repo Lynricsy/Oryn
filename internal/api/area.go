@@ -16,6 +16,10 @@ type area struct {
 	Notify *NotifyDeps
 	// Desktop 是 M8 桌面与浏览器 Profile（desktop.go）；nil 时这些接口回 501。
 	Desktop *DesktopDeps
+	// Coord 是 M9 的 Space、全局助手、协调宿主状态与操作记录（spaces.go、coordinator.go）；nil 时回 501。
+	Coord *CoordDeps
+	// Schedules 是 M9 的定时（schedules.go）；nil 时回 501。
+	Schedules *ScheduleDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

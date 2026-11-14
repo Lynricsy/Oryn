@@ -201,3 +201,92 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811/git/<host>/…`�
 ### 模型密钥绑定
 
 `models.yml` 中，`providers.<key>.apiKey` 只能引用本 provider 自己的密钥 `omp/models/<key>/apiKey`。只有这一个密钥会走环境变量降级；它若已绑定上游主机（`hosts` 非空），就不允许降级。`models.yml` 里不允许引用 `git/*` 密钥。其它 `${oryn:secret:…}` 引用必须属于 `hosts` 非空的密钥，而且只绑定到 origin 主机与 `hosts` 匹配的路由。`hosts` 为空的密钥只能注入到它自己 provider 的路由，其它任何路由都不行。导入时，provider 密钥的 `hosts` 包括 provider `baseUrl` 与各模型 `baseUrl` 的全部主机。经代理的 WebSocket / Upgrade（101）连接只对响应头做真实值回显脱敏，不改写升级后的字节流，否则会破坏其分帧。
+
+## 8. 协调宿主（Space 与全局助手）
+
+Space 协调者与全局助手的 agent 不跑在 orb 里，而是跑在控制面这台机器上：orynd 内置一个名为 `@host` 的 provider（在 provider 列表里看不到），需要时拉起子进程 `orynd coordinator-host`，子进程先把自己关进操作系统沙箱，再以无工具的协调档启动 omp（每个协调对话一个进程）。子进程唯一的对外通道是 orynd 交给它的 socketpair；模型请求经它内部的代理端口回到 orynd，由 orynd 注入真实密钥，协调 agent 拿不到任何密钥。
+
+### 安装 omp
+
+协调宿主用的 omp 与 orb 镜像是同一份发布产物（`scripts/fetch-core.sh` 按 `core/source.json` 校验后放在 `build/core/<arch>/omp`）：
+
+```bash
+scripts/fetch-core.sh x64
+sudo install -D -m 0755 build/core/x64/omp /usr/local/lib/oryn/omp
+```
+
+不放 `/usr/local/bin`，免得与宿主上你自己用的 `omp` 互相遮蔽。orynd 启动时与每次拉起协调宿主前都会核对它的 sha256 与编进 orynd 的 `core/source.json` 是否一致；不一致时协调功能不可用，原因写在日志与 `GET /api/v1/coordinator` 里（`omp at … does not match core/source.json`），普通线程不受影响。本地改过 Core、确实要用自己的构建时，设 `coordinator.verify_omp: false`。
+
+### 配置
+
+`orynd.yaml` 的 `coordinator` 段（全部可省）：
+
+```yaml
+coordinator:
+  omp_path: "/usr/local/lib/oryn/omp"   # 缺省值
+  dir: ""                               # 缺省 <data_dir>/coordinator：omp 副本、协调 agent 的 HOME、host.log
+  user: "nobody"                        # orynd 以 root 运行时，协调宿主降权到这个用户
+  egress_port: 7811                     # 沙箱内模型代理监听的回环端口
+  verify_omp: true
+  model: ""                             # 协调对话的默认模型（provider/id）；空 = omp 配置的默认模型
+```
+
+`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`home/`（0700，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`、natives 缓存）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
+
+### 启动条件
+
+三条缺一条，协调功能就不可用（建 Space、开助手对话时回 `409 coordinator_unavailable` 并带原因），其它功能照常。没有「关掉沙箱」的开关。
+
+1. Landlock ABI ≥ 2：内核 ≥ 5.19，且 Landlock LSM 已启用（`cat /sys/kernel/security/lsm` 里有 `landlock`）。
+2. 网络隔离二选一：能创建网络命名空间，或 Landlock ABI ≥ 4（内核 ≥ 6.7，可按端口限制 TCP）。
+3. orynd 以 root 运行时：`coordinator.user` 存在且不是 root，`coordinator.dir` 的每一级父目录对它可进入（other 有 `x` 位）。默认的 `<data_dir>/coordinator` 在 0700 的 `data_dir` 下，root 部署必须把 `dir` 移出来（例如 `/var/lib/oryn-coordinator`）。
+
+### 沙箱里有什么
+
+| 层 | 内容 |
+|---|---|
+| 启动开关 | omp 以 `--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动，带一份强制关闭 autolearn、memory、checkpoint、goal、plan、generate_image、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv 的覆盖层；环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED ORYN_THREAD_ID` |
+| 文件 | 只下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥）；cwd 是空目录 |
+| 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
+| Landlock | 只有 `<dir>/home` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；TCP 只能 bind / connect `egress_port`；ABI ≥ 6 时信号与抽象 unix socket 不出沙箱 |
+| seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；拒绝非 TCP 套接字（含 unix、netlink、UDP、MPTCP）、带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等 |
+| 权限 | `no_new_privs`；能力集与边界集清空；root 部署时降权到 `coordinator.user` |
+| 命名空间（能建就建） | 独立的网络（只有回环）、PID、IPC、UTS 命名空间；非 root 时外加一个只映射自己的 user namespace |
+
+### 不同环境得到的隔离
+
+| 环境 | 命名空间 | Landlock | 降权 | 结果 |
+|---|---|---|---|---|
+| 开发机（root，Arch，内核 7.x） | 有 | 有 | `nobody` | 全部 |
+| systemd 生产单元（`User=oryn`；Debian / Arch / Fedora） | 有（非特权 user namespace） | 有 | 不适用 | 全部（文件靠 Landlock，不靠 uid） |
+| systemd 生产单元，Ubuntu 23.10+ 默认 AppArmor | 探测失败时不用 | 有（6.8 = ABI 4） | 不适用 | 文件 + 按端口限制的网络 |
+| Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 ≥ 6.7 且 Docker ≥ 20.10.18 | `nobody` | 文件 + 按端口限制的网络；内核更旧则不可用 |
+
+`deploy/systemd/orynd.service` 不用改：`<data_dir>/coordinator` 在 `ReadWritePaths` 之内，单元没有限制命名空间与系统调用。**如果你自己给单元加了 `RestrictNamespaces=`，协调宿主会退到「按端口限制」模式**；加了 `SystemCallFilter=` 且挡掉了 `landlock_*` 或 `seccomp`，协调功能会不可用。
+
+root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去的地方（容器里挂一个卷），`data_dir` 保持 0700；容器里要有 `nobody` 用户。
+
+### 残余风险
+
+- 没有网络命名空间时，沙箱内进程能向**任意地址**的 `egress_port` 端口发起 TCP 连接（Landlock 只按端口管）。
+- `/proc` 只读可见，其它进程的命令行可读（环境与内存读不到）。
+- 不防资源耗尽（内存、磁盘、CPU）。
+- 非 root、内核 < 6.12 且没有 PID 命名空间时，可以给同一用户的其它进程发信号。
+
+### 排查
+
+```bash
+sudo -u oryn orynd --config /etc/oryn/orynd.yaml coordinator check   # root 部署去掉 sudo -u oryn
+```
+
+它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性，再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443` 与 `127.0.0.1:1`，建 UDP / unix / netlink / MPTCP 套接字，`unshare`、`mount`、`ptrace`、`clone3`）与**必须成功**的（home 内写文件并跨目录改名、`omp --version`、监听并自连代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。
+
+宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/home`，下一条消息时接着同一个会话。子进程意外退出时 orynd 会把协调 orb 停下再唤醒；5 分钟内连续 3 次意外退出后停在 `stopped`，等下一条消息再试。
+
+### 升级
+
+同时替换 `orynd` 与 `/usr/local/lib/oryn/omp`，然后重启 orynd。旧的子进程随旧 orynd 退出（socketpair 断开、父进程死亡信号、PID 命名空间三重保证）；新进程拉起前发现源文件变了会重拷 `<dir>/bin/omp`，natives 由 omp 首次运行时解压到 `<dir>/home/.omp/natives/<版本>` 并清理旧版本。
+
+### 开发
+
+`dev/orynd.yaml` 已带 `coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }`：开发机以 root 运行、仓库在 `/root` 下，`nobody` 进不去，所以目录放在外面。CI 设了 `ORYN_REQUIRE_SANDBOX=1`，沙箱相关的测试在条件不满足时直接失败而不是跳过；若 GitHub runner 不满足条件，去掉这个变量（测试改为跳过），本机验收不受影响。

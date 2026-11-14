@@ -202,6 +202,9 @@ func (w webhookSender) Send(ctx context.Context, m Message) Result {
 	body := map[string]any{"event": event, "id": m.NotificationID, "ts": w.s.now(), "title": displayTitle(m), "body": m.Body}
 	if m.ThreadID != "" {
 		body["thread"] = map[string]string{"id": m.ThreadID, "title": m.Title, "state": webhookStates[m.Kind], "url": m.URL}
+	} else if m.URL != "" && m.Kind != KindTest {
+		// 没有线程的通知（定时失败 / 自动暂停）：链接指向自动化设置页
+		body["url"] = m.URL
 	}
 	b, err := json.Marshal(body)
 	if err != nil {

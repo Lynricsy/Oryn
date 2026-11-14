@@ -13,6 +13,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/coord"
+	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/desktop"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/notify"
@@ -20,6 +22,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/portal"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
+	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -32,6 +35,15 @@ var evalInterval time.Duration
 
 // notifyDoneDelay / notifyInputDelay 是通知去抖时长；0 = notify 默认（3s / 2s）。测试可调小。
 var notifyDoneDelay, notifyInputDelay time.Duration
+
+// scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图）的时钟；零值 = 真实时钟。e2e 注入。
+var (
+	scheduleNow       func() time.Time
+	scheduleAfterFunc func(d time.Duration, f func()) (stop func())
+)
+
+// coordhostCommand 是拉起协调宿主子进程的命令；零值 = coordhost 默认（{os.Executable(), "coordinator-host"}）。e2e 注入。
+var coordhostCommand []string
 
 // Server 持有控制面全部组件。
 type Server struct {
@@ -47,9 +59,13 @@ type Server struct {
 	Attachments *attachments.Service
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
 	Desktop *desktop.Service
-	Hub     *realtime.Hub
-	Notify  *notify.Service
-	Share   *share.Service
+	// Host 是协调宿主（M9，内置 provider @host）；Schedules 是定时；Coord 是 Space / 助手 / 宿主工具。
+	Host      *coordhost.Host
+	Schedules *schedule.Service
+	Coord     *coord.Service
+	Hub       *realtime.Hub
+	Notify    *notify.Service
+	Share     *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
@@ -108,7 +124,10 @@ func (s *Server) init(ctx context.Context) error {
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
 		PortalURLTemplate: base.Template(),
-	}, s.Store, s.Jobs, &orbs.DefaultSetup{Store: s.Store, Home: s.Home, Vault: s.Vault}, s.Vault)
+	}, s.Store, s.Jobs, &orbs.DefaultSetup{
+		Store: s.Store, Home: s.Home, Vault: s.Vault,
+		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
+	}, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate,
@@ -134,7 +153,23 @@ func (s *Server) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.Threads.SetObserver(s.Notify)
+	// M9：协调宿主（进程内认领 @host 的任务）→ 定时 → 协调层；观察者按 notify、定时、协调的顺序注册。
+	// 协调层在构造时向 orbs 注册 orb 内的 thread.* / schedule.* ctl 方法，须在接受 link 之前。
+	hostCfg := coordhost.ConfigFrom(cfg, "")
+	if coordhostCommand != nil {
+		hostCfg.Command = coordhostCommand
+	}
+	s.Host = coordhost.New(hostCfg, s.Store, s.Jobs, s.Orbs)
+	s.Schedules = schedule.New(schedule.Config{
+		Now: scheduleNow, AfterFunc: scheduleAfterFunc,
+		DeliverTimeout: cfg.Schedule.DeliverTimeout.D(), MaxFailures: cfg.Schedule.MaxFailures,
+	}, s.Store, s.Threads, s.Orbs, s.Notify)
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
+		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
+	s.Threads.SetCoordinator(s.Coord)
+	s.Threads.AddObserver(s.Notify)
+	s.Threads.AddObserver(s.Schedules)
+	s.Threads.AddObserver(s.Coord)
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
@@ -142,6 +177,9 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
 	go s.Notify.Run(runCtx)
+	go s.Host.Run(runCtx)
+	go s.Schedules.Run(runCtx)
+	go s.Coord.Run(runCtx)
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
@@ -174,6 +212,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Shares = &api.ShareDeps{Service: s.Share}
 	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
 	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}
+	s.API.Coord = &api.CoordDeps{Service: s.Coord, Host: s.Host}
+	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

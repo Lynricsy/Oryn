@@ -1,9 +1,13 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidatePortalDomain(t *testing.T) {
@@ -55,4 +59,53 @@ func TestValidateFCMSecretName(t *testing.T) {
 			assert.Error(t, cfg.Validate(), "%q", name)
 		}
 	}
+}
+
+// M9：协调宿主与定时的校验、默认值与路径解析。
+func TestValidateCoordinatorAndSchedule(t *testing.T) {
+	base := func() Orynd {
+		c := DefaultOrynd()
+		c.PublicURL = "https://oryn.example.com"
+		return c
+	}
+	assert.NoError(t, base().Validate())
+	for name, mod := range map[string]func(*Orynd){
+		"端口为 0":           func(c *Orynd) { c.Coordinator.EgressPort = 0 },
+		"端口越界":            func(c *Orynd) { c.Coordinator.EgressPort = 65536 },
+		"model 不含 /":      func(c *Orynd) { c.Coordinator.Model = "sonnet" },
+		"omp_path 为空":     func(c *Orynd) { c.Coordinator.OmpPath = "" },
+		"默认 provider 保留名": func(c *Orynd) { c.OrbDefaults.Provider = "@host" },
+		"失败上限 < 1":        func(c *Orynd) { c.Schedule.MaxFailures = 0 },
+		"送达超时 < 1m":       func(c *Orynd) { c.Schedule.DeliverTimeout = Duration(30 * time.Second) },
+	} {
+		c := base()
+		mod(&c)
+		assert.Error(t, c.Validate(), name)
+	}
+	c := base()
+	c.Coordinator.Model = "anthropic/claude-sonnet"
+	assert.NoError(t, c.Validate())
+	assert.True(t, c.Coordinator.Verify(), "verify_omp 缺省为真")
+	no := false
+	c.Coordinator.VerifyOmp = &no
+	assert.False(t, c.Coordinator.Verify())
+	c.DataDir = "/srv/oryn"
+	assert.Equal(t, "/srv/oryn/coordinator", c.CoordinatorDir())
+	c.Coordinator.Dir = "/x/coord"
+	assert.Equal(t, "/x/coord", c.CoordinatorDir())
+}
+
+func TestLoadOryndCoordinatorPaths(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\ncoordinator:\n  omp_path: bin/omp\n  dir: coord\n  egress_port: 7999\n  verify_omp: false\n"), 0o600))
+	c, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "bin/omp"), c.Coordinator.OmpPath)
+	assert.Equal(t, filepath.Join(dir, "coord"), c.Coordinator.Dir)
+	assert.Equal(t, 7999, c.Coordinator.EgressPort)
+	assert.Equal(t, "nobody", c.Coordinator.User, "未写的键保持默认")
+	assert.False(t, c.Coordinator.Verify())
+	assert.Equal(t, 3, c.Schedule.MaxFailures)
 }

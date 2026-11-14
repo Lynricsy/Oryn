@@ -70,13 +70,13 @@ func TestInitFramesConfigureTerminal(t *testing.T) {
 	f := newFixture(t, Config{})
 	th := f.thread(f.orb("ready"), StateIdle)
 
-	fs := initFrames(th)
+	fs := initFrames(th, nil)
 	assert.Equal(t, []string{"open_session", "set_event_filter", "set_ask_dialog", "set_subagent_subscription", "terminal_configure"}, frameTypes(fs))
 	assert.Equal(t, apigen.OmpFrame{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true}, fs[4])
 
 	level := "high"
 	th.thinking = &level
-	fs = initFrames(th)
+	fs = initFrames(th, nil)
 	assert.Equal(t, []string{"open_session", "set_event_filter", "set_ask_dialog", "set_subagent_subscription", "terminal_configure", "set_thinking_level"}, frameTypes(fs))
 }
 

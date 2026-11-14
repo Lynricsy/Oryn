@@ -10,6 +10,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -49,6 +50,10 @@ func (s *Server) ListProviders(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UnixMilli()
 	out := apigen.ProviderList{Providers: make([]apigen.Provider, 0, len(rows))}
 	for _, p := range rows {
+		if p.Driver == orbs.HostDriver {
+			// 内置的 @host（协调宿主）不是用户的 provider
+			continue
+		}
 		out.Providers = append(out.Providers, providerJSON(p, now))
 	}
 	WriteJSON(w, http.StatusOK, out)
@@ -86,7 +91,7 @@ func (s *Server) CreateProvider(w http.ResponseWriter, r *http.Request) {
 // DeleteProvider 删除 provider；仍被 orb / 任务引用时改为停用（令牌立即失效，名称保留）。
 func (s *Server) DeleteProvider(w http.ResponseWriter, r *http.Request, id apigen.ProviderIDPath) {
 	ctx := r.Context()
-	if _, err := s.Store.Q.GetProvider(ctx, id); errors.Is(err, sql.ErrNoRows) {
+	if p, err := s.Store.Q.GetProvider(ctx, id); errors.Is(err, sql.ErrNoRows) || (err == nil && p.Driver == orbs.HostDriver) {
 		WriteError(w, http.StatusNotFound, "not_found", "provider 不存在")
 		return
 	} else if err != nil {

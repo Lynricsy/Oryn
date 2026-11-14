@@ -10,6 +10,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/share"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // ShareDeps 是公开分享与文件发布领域的依赖（M5 步骤 2）。
@@ -64,6 +65,10 @@ func (s *Server) CreateThreadShare(w http.ResponseWriter, r *http.Request, id ap
 	var req apigen.CreateThreadShareRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid", "invalid request body: "+err.Error())
+		return
+	}
+	if t, err := s.Store.Q.GetThread(r.Context(), id); err == nil && t.Kind != threads.KindWork {
+		WriteError(w, http.StatusBadRequest, threads.CodeCoordinatorRestricted, "coordinator conversations cannot be shared")
 		return
 	}
 	ack := req.AcknowledgeFindings != nil && *req.AcknowledgeFindings

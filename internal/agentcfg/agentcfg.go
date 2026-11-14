@@ -287,15 +287,20 @@ type Rendered struct {
 	Warnings []string
 }
 
-// Render 为一台 orb 生成 omp-home 文件。
+// Render 为一台 orb 生成 omp-home 文件（模型代理地址为 orb 内的 EgressAddr）。
 func Render(files map[string][]byte, r Resolver) (Rendered, error) {
+	return RenderAt(files, r, EgressAddr)
+}
+
+// RenderAt 同 Render，但模型 baseUrl 改写到 egressAddr（host:port）；协调宿主的代理端口来自配置。
+func RenderAt(files map[string][]byte, r Resolver, egressAddr string) (Rendered, error) {
 	out := Rendered{Files: map[string][]byte{}, Routes: map[string]egress.Route{}, Env: map[string]string{}}
 	for p, content := range files {
 		if p != ModelsFile {
 			out.Files[p] = content
 			continue
 		}
-		b, err := renderModels(content, r, &out)
+		b, err := renderModels(content, r, egressAddr, &out)
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", p, err)
 		}
@@ -309,7 +314,7 @@ func Render(files map[string][]byte, r Resolver) (Rendered, error) {
 //   - 环境变量降级只用于该密钥，且仅当它没有绑定上游主机（绑定了主机的密钥只能经代理使用）；
 //   - provider 子树里的其它引用必须属于 hosts 非空的密钥，且只绑定到上游主机与 hosts 匹配的路由；
 //   - providers 之外的引用换成占位符但不绑定任何路由（egress 拒绝使用）；任何位置都不能引用 git/* 密钥。
-func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
+func renderModels(content []byte, r Resolver, egressAddr string, out *Rendered) ([]byte, error) {
 	doc, providers, err := parseModels(content)
 	if err != nil {
 		return content, err
@@ -348,7 +353,7 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 				out.Env[env] = value
 				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 没有 baseUrl 且不在内置表中，真实密钥以环境变量 %s 进入 orb", key, env))
 			} else {
-				local, origin, err := rewriteBase(base, key)
+				local, origin, err := rewriteBase(base, key, egressAddr)
 				if err != nil {
 					return nil, fmt.Errorf("provider %s baseUrl: %w", key, err)
 				}
@@ -373,7 +378,7 @@ func renderModels(content []byte, r Resolver, out *Rendered) ([]byte, error) {
 						continue
 					}
 					rk := fmt.Sprintf("%s.m%d", key, i)
-					local, origin, err := rewriteBase(mb.Value, rk)
+					local, origin, err := rewriteBase(mb.Value, rk, egressAddr)
 					if err != nil {
 						return nil, fmt.Errorf("provider %s models[%d].baseUrl: %w", key, i, err)
 					}
@@ -457,13 +462,13 @@ func providerBase(key string, prov *yaml.Node) string {
 }
 
 // rewriteBase 把上游 baseUrl 改写为经 orbd 出站代理的地址，返回新地址与上游前缀。
-func rewriteBase(base, routeKey string) (local, origin string, err error) {
+func rewriteBase(base, routeKey, egressAddr string) (local, origin string, err error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", "", fmt.Errorf("无效 URL %q", base)
 	}
 	origin = u.Scheme + "://" + u.Host
-	local = "http://" + EgressAddr + "/llm/" + routeKey + strings.TrimSuffix(u.EscapedPath(), "/")
+	local = "http://" + egressAddr + "/llm/" + routeKey + strings.TrimSuffix(u.EscapedPath(), "/")
 	if u.RawQuery != "" {
 		local += "?" + u.RawQuery
 	}

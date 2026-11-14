@@ -43,6 +43,8 @@ type Policy struct {
 	// （其它主机、同主机其它仓库一律拒绝）；为空时（无项目的 orb）任意有令牌主机上的任意仓库只读，
 	// 拒绝 git-receive-pack。
 	GitRepos map[string][]string
+	// NoGit 为真时 /git/… 一律 403（协调宿主没有任何 git 访问）。
+	NoGit bool
 }
 
 // Resolver 提供策略与密钥查询。
@@ -177,6 +179,9 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		u.Path = rest
 		return target{url: u, own: rt.SecretIDs, hostBound: rt.HostBoundIDs}, http.StatusOK
 	case "git":
+		if pol.NoGit {
+			return target{}, http.StatusForbidden
+		}
 		host := strings.ToLower(parts[1])
 		// 解码后的路径（%2e%2e 已还原为 ..）原样转发，因此在这里拒绝一切非规范形式。
 		if !canonicalPath(rest) {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"regexp"
@@ -53,10 +54,88 @@ type DefaultSetup struct {
 	Store *store.Store
 	Home  Home  // 可为 nil（不下发 omp 配置）
 	Vault Vault // 可为 nil（无密钥）
+	// CoordinatorEgressAddr 是协调宿主内模型代理的监听地址（127.0.0.1:<coordinator.egress_port>）；
+	// 空 = agentcfg.EgressAddr。
+	CoordinatorEgressAddr string
+}
+
+// coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（mcp.json、extensions/、skills/、
+// agents/、commands/、AGENTS.md…）一律不下发。
+var coordinatorFiles = map[string]bool{agentcfg.ModelsFile: true, "config.yml": true}
+
+// planCoordinator 是协调 orb 的 setup 参数：不取项目、不下发 git 身份 / GitHosts / env 模式密钥，omp-home 只有
+// models.yml 与 config.yml（模型地址改写到协调宿主的代理端口），环境变量降级的模型密钥丢弃，git 出站一律拒绝。
+func (d *DefaultSetup) planCoordinator(orb db.Orb) (SetupPlan, error) {
+	plan := SetupPlan{
+		Params: apigen.LinkCtlSetupRunParams{
+			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
+		},
+		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true},
+	}
+	if d.Home == nil {
+		return plan, nil
+	}
+	files, err := d.Home.LoadAll()
+	if err != nil {
+		return plan, fmt.Errorf("读取 omp-home: %w", err)
+	}
+	modes, err := d.Home.Modes()
+	if err != nil {
+		return plan, fmt.Errorf("读取 omp-home 权限: %w", err)
+	}
+	kept := map[string][]byte{}
+	for p, b := range files {
+		if coordinatorFiles[p] {
+			kept[p] = b
+		}
+	}
+	var resolver agentcfg.Resolver = emptyResolver{}
+	if d.Vault != nil {
+		resolver = d.Vault
+	}
+	addr := d.CoordinatorEgressAddr
+	if addr == "" {
+		addr = agentcfg.EgressAddr
+	}
+	rendered, err := agentcfg.RenderAt(kept, resolver, addr)
+	if err != nil {
+		return plan, fmt.Errorf("变换 omp-home: %w", err)
+	}
+	if len(rendered.Env) > 0 {
+		names := make([]string, 0, len(rendered.Env))
+		for k := range rendered.Env {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		slog.Warn("orbs: 以环境变量降级的模型 provider 对协调 agent 不可用", "orb", orb.ID, "env", names)
+	}
+	paths := make([]string, 0, len(rendered.Files))
+	for path := range rendered.Files {
+		if coordinatorFiles[path] {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		mode := os.FileMode(0o644)
+		if m, ok := modes[path]; ok {
+			mode = m.Perm()
+		}
+		plan.Params.OmpHome = append(plan.Params.OmpHome, apigen.LinkCtlOmpHomeFile{
+			Path: path, Mode: int(mode), ContentB64: base64.StdEncoding.EncodeToString(rendered.Files[path]),
+		})
+	}
+	for k, v := range rendered.Routes {
+		plan.Egress.Routes[k] = v
+	}
+	return plan, nil
 }
 
 // Plan 实现 SetupSource。workdir 留空，由 orbd 按有无仓库取 $HOME/workspace[/repo]。
 func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) {
+	if orb.Coordinator {
+		return d.planCoordinator(orb)
+	}
 	plan := SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},

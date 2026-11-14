@@ -12,6 +12,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -65,6 +66,9 @@ func (s *Server) checkBrowserProfile(ctx context.Context, id *string) (*string, 
 func (s *Server) checkProviderName(ctx context.Context, name *string) error {
 	if name == nil {
 		return nil
+	}
+	if *name == orbs.HostProviderName {
+		return errInvalid("provider " + *name + " 是协调宿主保留的内置 provider")
 	}
 	if _, err := s.Store.Q.GetProviderByName(ctx, *name); errors.Is(err, sql.ErrNoRows) {
 		return errInvalid("provider " + *name + " 不存在")

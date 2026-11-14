@@ -54,6 +54,10 @@ oryn provider run --config /etc/oryn/provider.yaml
 oryn secrets set git/github.com/token          # git 令牌，经出站代理注入 clone/push
 oryn git-identity set --name "Ada" --email ada@example.com   # orb 内 git 提交身份的默认值（下次 setup / 唤醒生效）
 oryn project update myproj --git-name Bot --git-email bot@example.com   # 项目级覆盖；--clear-git 清除
+oryn space create 发布周 --project myproj --goal "本周把 1.2 发出去"   # Space：目标 + 协调聊天，它开的线程以卡片出现
+oryn schedule set <线程> --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "汇总昨天的 CI 失败"   # 线程内定时
+oryn schedule add --project myproj --every 6h --prompt "检查依赖更新并开 PR"   # 每次触发新建一个线程
+oryn schedule ls / runs <ref> / pause <ref> / run <ref>   # 查看、暂停、立即运行
 ```
 
 ## orb 环境自配置
@@ -66,6 +70,9 @@ orb 内的 agent 自带 `oryn-setup` 技能：让它「为这个项目配置 Ory
 oryn orb setup run [--resume]                         # 重跑 setup / resume（经 orbd，结果上报控制面）
 oryn orb setup status | logs [--resume]               # 最近结果与日志
 oryn orb setup project-script get|set setup --file f  # 读写本 orb 所属项目的项目脚本
+oryn thread new "跑一遍集成测试" && oryn thread wait <id>   # 在本项目开子线程并等它的回复（退出码 0 / 3 等回答 / 4 出错 / 124 超时）
+oryn thread send <id> "补一个用例"                    # 给子线程或亲属线程发消息
+oryn schedule set --every 1h --prompt "检查部署状态"    # 给当前线程设定时
 ```
 
 ## 文档

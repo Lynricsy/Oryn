@@ -66,6 +66,10 @@ type Orbs struct {
 	hold     bool
 	held     map[string]bool
 	snapGate chan struct{}
+	// features 是 HasFeature 对任意 orb 报告的特性（M9：协调线程要求 "coordinator"）。
+	features map[string]bool
+	// starts 记录每个线程收到的 agent.start 参数（按到达顺序）。
+	starts map[string][]apigen.LinkCtlAgentStartParams
 }
 
 type serverLink struct {
@@ -84,6 +88,8 @@ func NewOrbs(st *store.Store, fakeompBin, home string, env ...string) (*Orbs, er
 		orbds:    map[string]*Orbd{},
 		blobs:    map[string][]byte{},
 		held:     map[string]bool{},
+		features: map[string]bool{},
+		starts:   map[string][]apigen.LinkCtlAgentStartParams{},
 	}
 	o.provID = ids.New("prov")
 	if err := st.Q.CreateProvider(context.Background(), db.CreateProviderParams{ID: o.provID, Name: "test", TokenHash: ids.Hash("opv_test"), CreatedAt: time.Now().UnixMilli()}); err != nil {
@@ -168,7 +174,8 @@ func (o *Orbs) emit(ev threads.OrbEvent) {
 func (o *Orbs) Create(ctx context.Context, p threads.OrbCreate) (db.Orb, error) {
 	id := ids.Orb()
 	row := db.CreateOrbParams{ID: id, ProviderID: o.provID, Type: "medium", Cpus: 4, MemoryMb: 8192, Image: "test",
-		State: "requested", StateChangedAt: time.Now().UnixMilli(), TokenHash: ids.Hash("oot_" + id), CreatedAt: time.Now().UnixMilli()}
+		State: "requested", StateChangedAt: time.Now().UnixMilli(), TokenHash: ids.Hash("oot_" + id), CreatedAt: time.Now().UnixMilli(),
+		Coordinator: p.Coordinator}
 	if p.ProjectID != "" {
 		row.ProjectID = &p.ProjectID
 	}
@@ -416,6 +423,27 @@ func (o *Orbs) TouchAgent(context.Context, string) {}
 // SetQuiescence 实现 threads.Orbs。
 func (o *Orbs) SetQuiescence(func(string, func() bool) bool) {}
 
+// SetFeature 设置 HasFeature 对全部 orb 报告的特性。
+func (o *Orbs) SetFeature(feature string, on bool) {
+	o.mu.Lock()
+	o.features[feature] = on
+	o.mu.Unlock()
+}
+
+// HasFeature 实现 threads.Orbs：有 link 且该特性已用 SetFeature 打开。
+func (o *Orbs) HasFeature(orbID, feature string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.links[orbID] != nil && o.features[feature]
+}
+
+// Starts 返回线程收到过的 agent.start 参数。
+func (o *Orbs) Starts(threadID string) []apigen.LinkCtlAgentStartParams {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]apigen.LinkCtlAgentStartParams(nil), o.starts[threadID]...)
+}
+
 // Kick 关闭 orb 的 link。
 func (o *Orbs) Kick(orbID, _ string) {
 	o.mu.Lock()
@@ -522,6 +550,9 @@ func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMess
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
+		d.o.mu.Lock()
+		d.o.starts[p.ThreadID] = append(d.o.starts[p.ThreadID], p)
+		d.o.mu.Unlock()
 		return d.agentStart(p)
 	case "agent.stop":
 		var p apigen.LinkCtlAgentStopParams

@@ -20,6 +20,10 @@ import (
 )
 
 func main() {
+	// 协调宿主子进程（M9）：在解析全局 flag 与读配置文件之前分派，退出码由它自己决定。
+	if len(os.Args) > 1 && os.Args[1] == "coordinator-host" {
+		os.Exit(coordinatorHost(os.Args[2:]))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "orynd:", err)
 		os.Exit(1)
@@ -37,6 +41,7 @@ func run(args []string) error {
 		fmt.Println(version.Version)
 		return nil
 	}
+	configPath = *cfgPath
 	cfg, err := config.LoadOrynd(*cfgPath)
 	if err != nil {
 		return err
@@ -98,3 +103,6 @@ func serve(ctx context.Context, cfg config.Orynd, h http.Handler) error {
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }
+
+// configPath 是本次运行的 --config（子命令用，例如自检把它列入「必须读不到」）。
+var configPath string

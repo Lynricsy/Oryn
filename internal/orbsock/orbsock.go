@@ -43,6 +43,21 @@ const (
 	MethodDesktopStatus       = "desktop.status"
 	MethodDesktopBrowserStart = "desktop.browser.start"
 	MethodDesktopBrowserStop  = "desktop.browser.stop"
+
+	// 线程与定时（M9）：参数与结果同名 ctl 方法的模型（apigen.LinkCtl*），threadId 恒为调用方线程（ORYN_THREAD_ID）。
+	// thread.new → ctl thread.create（LinkCtlThreadCreateParams → LinkCtlThreadInfo）；thread.send → thread.send
+	// （LinkCtlThreadSendParams → {}）；thread.get → thread.get（LinkCtlThreadGetParams → LinkCtlThreadInfo）；
+	// thread.wait 由 orbd 轮询 thread.get 直到 settled（ThreadWaitParams → LinkCtlThreadInfo，超时回 CodeTimeout）；
+	// schedule.get / schedule.delete（LinkCtlScheduleParams）、schedule.set → schedule.put（LinkCtlSchedulePutParams）、
+	// schedule.enable（LinkCtlScheduleEnableParams），结果均为 LinkCtlScheduleResult。
+	MethodThreadNew      = "thread.new"
+	MethodThreadSend     = "thread.send"
+	MethodThreadGet      = "thread.get"
+	MethodThreadWait     = "thread.wait"
+	MethodScheduleGet    = "schedule.get"
+	MethodScheduleSet    = "schedule.set"
+	MethodScheduleDelete = "schedule.delete"
+	MethodScheduleEnable = "schedule.enable"
 )
 
 // 消息类型。
@@ -74,6 +89,8 @@ const (
 	CodeNameConflict    = "name_conflict"     // 动态服务与 services.yaml 里的服务同名
 
 	CodeNotSupported = "not_supported" // 本 orb 没有启用桌面
+
+	CodeTimeout = "timeout" // thread.wait 到时目标仍未静止
 )
 
 // maxRequestBytes 是请求行上限（项目脚本随 project.scripts.set 传入）。
@@ -165,6 +182,13 @@ type DesktopResult struct {
 	Display     string                           `json:"display"`
 	CDPURL      string                           `json:"cdpUrl"`
 	ProfileName string                           `json:"profileName,omitempty"`
+}
+
+// ThreadWaitParams 是 thread.wait 的参数：TimeoutSeconds 缺省 1800，上限 86400。
+type ThreadWaitParams struct {
+	ThreadID       string `json:"threadId"`
+	Target         string `json:"target"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
 }
 
 // ---- 服务端 ----

@@ -718,6 +718,10 @@ var threadAttachCmd = &cobra.Command{
 		"输入：每行一条；有待答请求时作为作答（编号或文字），否则 steer 当前回合。/abort 中断，/quit 或 EOF 退出；Ctrl-C 退出（agent 继续）。",
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if inOrb() {
+			fmt.Fprintln(os.Stderr, "oryn:", errUnavailableInOrb("thread attach"))
+			os.Exit(2)
+		}
 		c, err := newClient()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "oryn:", err)

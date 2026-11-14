@@ -61,6 +61,31 @@ type Push struct {
 	FCM FCM `yaml:"fcm"`
 }
 
+// Coordinator 是协调宿主配置（M9 协调宿主分册 H6）。
+type Coordinator struct {
+	// OmpPath 是宿主上的 omp 二进制（与 orb 镜像同一份发布产物）。
+	OmpPath string `yaml:"omp_path"`
+	// Dir 是协调宿主的工作目录（omp 副本、HOME、host.log）；空 = <data_dir>/coordinator。
+	Dir string `yaml:"dir"`
+	// User 是 orynd 以 root 运行时协调宿主降权到的用户。
+	User string `yaml:"user"`
+	// EgressPort 是协调宿主内模型代理监听的回环端口。
+	EgressPort int `yaml:"egress_port"`
+	// VerifyOmp 为 nil 或 true 时校验 omp 的 sha256 与 core/source.json 一致。
+	VerifyOmp *bool `yaml:"verify_omp"`
+	// Model 是协调对话的默认模型（"provider/id"）；空 = omp 配置的默认模型。
+	Model string `yaml:"model"`
+}
+
+// Verify 报告是否校验 omp 的版本钉（缺省 true）。
+func (c Coordinator) Verify() bool { return c.VerifyOmp == nil || *c.VerifyOmp }
+
+// Schedule 是定时调度参数（M9）。
+type Schedule struct {
+	DeliverTimeout Duration `yaml:"deliver_timeout"`
+	MaxFailures    int      `yaml:"max_failures"`
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -71,6 +96,16 @@ type Orynd struct {
 	Idle         Idle        `yaml:"idle"`
 	OrbDefaults  OrbDefaults `yaml:"orb_defaults"`
 	Push         Push        `yaml:"push"`
+	Coordinator  Coordinator `yaml:"coordinator"`
+	Schedule     Schedule    `yaml:"schedule"`
+}
+
+// CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
+func (c Orynd) CoordinatorDir() string {
+	if c.Coordinator.Dir != "" {
+		return c.Coordinator.Dir
+	}
+	return filepath.Join(c.DataDir, "coordinator")
 }
 
 // DefaultOrynd 返回带默认值的配置。
@@ -85,6 +120,8 @@ func DefaultOrynd() Orynd {
 			StopAfterFrozen: Duration(24 * time.Hour),
 			WakeOnFocus:     true,
 		},
+		Coordinator: Coordinator{OmpPath: "/usr/local/lib/oryn/omp", User: "nobody", EgressPort: 7811},
+		Schedule:    Schedule{DeliverTimeout: Duration(10 * time.Minute), MaxFailures: 3},
 	}
 }
 
@@ -102,6 +139,14 @@ func LoadOrynd(path string) (Orynd, error) {
 		return c, err
 	}
 	c.DataDir = abs
+	if c.Coordinator.OmpPath, err = filepath.Abs(c.Coordinator.OmpPath); err != nil {
+		return c, err
+	}
+	if c.Coordinator.Dir != "" {
+		if c.Coordinator.Dir, err = filepath.Abs(c.Coordinator.Dir); err != nil {
+			return c, err
+		}
+	}
 	return c, nil
 }
 
@@ -134,6 +179,24 @@ func (c Orynd) Validate() error {
 	}
 	if s := c.Push.FCM.ServiceAccountSecret; s != "" && !secretNameRe.MatchString(s) {
 		errs = append(errs, fmt.Errorf("push.fcm.service_account_secret %q 不是合法的密钥名", s))
+	}
+	if p := c.Coordinator.EgressPort; p < 1 || p > 65535 {
+		errs = append(errs, fmt.Errorf("coordinator.egress_port %d 必须在 1–65535 之间", p))
+	}
+	if m := c.Coordinator.Model; m != "" && !strings.Contains(m, "/") {
+		errs = append(errs, fmt.Errorf("coordinator.model %q 必须是 provider/id", m))
+	}
+	if c.Coordinator.OmpPath == "" {
+		errs = append(errs, errors.New("coordinator.omp_path 不能为空"))
+	}
+	if c.OrbDefaults.Provider == "@host" {
+		errs = append(errs, errors.New(`orb_defaults.provider 不能是保留的 "@host"`))
+	}
+	if c.Schedule.MaxFailures < 1 {
+		errs = append(errs, errors.New("schedule.max_failures 至少为 1"))
+	}
+	if c.Schedule.DeliverTimeout.D() < time.Minute {
+		errs = append(errs, errors.New("schedule.deliver_timeout 至少为 1m"))
 	}
 	return errors.Join(errs...)
 }

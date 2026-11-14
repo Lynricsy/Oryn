@@ -15,6 +15,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -82,6 +83,9 @@ type pendingCmd struct {
 	after func(t *thread, resp omprpc.Envelope, data json.RawMessage)
 	// leafBefore 是 switch_leaf / navigate_tree 受理时的叶子：之后得到的新叶子（应答或内部查询）与它不同即视为切换了分支。
 	leafBefore *string
+	// id 是注入的命令 id；origin 区分客户端命令与自动化投递（Deliver）。
+	id     string
+	origin cmdOrigin
 }
 
 // responseHead 是应答中本包关心的字段。
@@ -94,22 +98,56 @@ type responseHead struct {
 
 // initFrames 按 C4 第 3 步构造 agent 初始化帧；M3 起在 set_subagent_subscription 之后开启终端
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
-func initFrames(t *thread) []apigen.OmpFrame {
+// 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
+// 子 agent 订阅与终端。
+func initFrames(t *thread, prof *AgentProfile) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
 		open["provider"], open["modelId"] = m.Provider, m.ID
 	}
-	frames := []apigen.OmpFrame{
-		open,
-		{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
-		{"type": "set_ask_dialog", "enabled": true, "form": true},
-		{"type": "set_subagent_subscription", "level": "progress"},
-		{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true},
+	var frames []apigen.OmpFrame
+	if prof != nil {
+		tools := prof.Tools
+		if tools == nil {
+			tools = []apigen.OmpFrame{}
+		}
+		frames = []apigen.OmpFrame{
+			open,
+			{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
+			{"type": "set_host_tools", "tools": tools},
+		}
+	} else {
+		frames = []apigen.OmpFrame{
+			open,
+			{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
+			{"type": "set_ask_dialog", "enabled": true, "form": true},
+			{"type": "set_subagent_subscription", "level": "progress"},
+			{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true},
+		}
 	}
 	if t.thinking != nil && *t.thinking != "" {
 		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
 	}
 	return frames
+}
+
+// coordinatorProfile 为协调线程取 AgentProfile：所在 orb 必须是声明了 coordinator 特性的协调宿主
+// （只在实现出错时不满足）。普通线程返回 nil。
+func (s *Service) coordinatorProfile(ctx context.Context, t *thread, orbID string) (*AgentProfile, error) {
+	if t.kind == KindWork {
+		return nil, nil
+	}
+	if s.coord == nil {
+		return nil, errors.New("coordinator is not configured")
+	}
+	if !s.orbs.HasFeature(orbID, orbs.FeatureCoordinator) {
+		return nil, fmt.Errorf("orb %s is not a coordinator host", orbID)
+	}
+	prof, err := s.coord.AgentProfile(ctx, t.id)
+	if err != nil {
+		return nil, err
+	}
+	return &prof, nil
 }
 
 // startAgent 在线程所在 orb 上执行 agent.start（orbd 侧幂等）。fork copy 时先复制会话目录。
@@ -125,7 +163,6 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	}
 	t.starting = true
 	orbID, copyFrom := t.orbID, t.copyFrom
-	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t)}
 	if t.agentStatus != apigen.AgentStatusReady {
 		t.agentStatus = apigen.AgentStatusStarting
 	}
@@ -140,6 +177,19 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	if !ok {
 		return
 	}
+	prof, err := s.coordinatorProfile(ctx, t, orbID)
+	if err != nil {
+		slog.Warn("threads: 协调线程无法启动 agent", "thread", t.id, "orb", orbID, "err", err)
+		s.markFailed(ctx, t)
+		return
+	}
+	t.mu.Lock()
+	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof)}
+	if prof != nil {
+		profile := apigen.AgentProfileCoordinator
+		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
+	}
+	t.mu.Unlock()
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.AgentStartTimeout)
 	defer cancel()
 	if copyFrom != "" {
@@ -250,10 +300,22 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		s.failPendingLocked(t, "agent exited", false)
 		s.resetLiveLocked(t)
 		s.out().LiveReset(t.id)
-		if p.RestartsLeft != nil && *p.RestartsLeft > 0 {
+		t.autoActive = false
+		cancelHostCallsLocked(t)
+		switch {
+		case t.stopping:
+			// 控制面主动停的（RefreshAgent）：不是故障，下一条命令经唤醒路径重新 agent.start
+			t.stopping = false
+			t.live.SetWorking(false)
+			t.settled, t.unsynced = true, false
+			s.dropPassiveLocked(t, "agent stopped")
+			if t.queueNeedsWake() || len(t.msgOrder) > 0 {
+				s.wake(t.id, t.orbID)
+			}
+		case p.RestartsLeft != nil && *p.RestartsLeft > 0:
 			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
 			t.unsynced = true
-		} else {
+		default:
 			// 不会再有进程：没有在跑的回合；排队等它就绪的只读查询随之结束
 			t.live.RestartExhausted()
 			t.settled, t.unsynced = true, false
@@ -477,6 +539,18 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		t.settled = false
 	case "session_settled":
 		t.settled = true
+		t.autoActive = false
+		if t.refresh {
+			s.stopForRefreshLocked(t)
+		}
+	case "host_tool_call":
+		if t.kind != KindWork {
+			s.hostToolCallLocked(t, line)
+		}
+	case "host_tool_cancel":
+		if t.kind != KindWork {
+			cancelHostCallLocked(t, line)
+		}
 	case "session_info_update":
 		if x.Title != nil && *x.Title != "" {
 			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: *x.Title, UpdatedAt: s.now(), ID: t.id}); err == nil && n > 0 {
@@ -593,6 +667,10 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 	}
 	if p := t.pending[h.ID]; p != nil {
 		p.sent = true
+		if p.origin == originAuto && messageCommands[h.Type] {
+			// 自动化消息开启（或并入）的这段活动：宿主工具调用记为 auto 来源
+			t.autoActive = true
+		}
 	}
 	switch h.Type {
 	case "prompt", "abort_and_prompt":
@@ -779,45 +857,64 @@ func eqPtr(a, b *string) bool {
 }
 
 // Command 处理客户端 `cmd`：路由检查、注入 id、下发或排队（orb 未就绪时触发唤醒）。只读查询（passiveCommand）
-// 不算用户交互：从不唤醒 orb，orb 挂起时直接拒绝（见 passiveLocked）。
+// 不算用户交互：从不唤醒 orb，orb 挂起时直接拒绝（见 passiveLocked）。协调线程只接受白名单内的命令。
 // reply 收到 omp 应答（id 仍为注入值，由调用方换回客户端 id）。
 func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage)) error {
+	_, err := s.command(ctx, threadID, frame, reply, originUser)
+	return err
+}
+
+// command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
+// （记 agent 活动），唤醒逻辑相同。返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
+func (s *Service) command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage), origin cmdOrigin) (*pendingCmd, error) {
 	route, cmdType := RouteCommand(frame)
 	switch route {
 	case RouteInvalidFrame:
-		return errf(RouteInvalidFrame, "frame must be an omp command object with a type")
+		return nil, errf(RouteInvalidFrame, "frame must be an omp command object with a type")
 	case RouteManaged:
-		return errf(RouteManaged, cmdType+" is managed by Oryn")
+		return nil, errf(RouteManaged, cmdType+" is managed by Oryn")
 	case RouteUseOrynFork:
-		return errf(RouteUseOrynFork, "use POST /api/v1/threads/{id}/fork")
+		return nil, errf(RouteUseOrynFork, "use POST /api/v1/threads/{id}/fork")
 	}
 	ids, frame, err := takeAttachments(cmdType, frame)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t, err := s.get(ctx, threadID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if t.kind != KindWork {
+		if !coordinatorAllowed(cmdType) {
+			return nil, errf(CodeCoordinatorRestricted, cmdType+" is not available in coordinator conversations")
+		}
+		if len(ids) > 0 {
+			return nil, errf(CodeCoordinatorRestricted, "coordinator conversations do not accept attachments")
+		}
+		if err := s.ensureCoordOrb(ctx, t); err != nil {
+			return nil, err
+		}
 	}
 	if len(ids) > 0 {
-		return s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
+		return nil, s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
 	}
-	line, err := omprpc.SetID(frame, s.newCmdID())
+	id := s.newCmdID()
+	line, err := omprpc.SetID(frame, id)
 	if err != nil {
-		return errf(RouteInvalidFrame, err.Error())
+		return nil, errf(RouteInvalidFrame, err.Error())
 	}
 	t.mu.Lock()
 	if t.orbID == "" {
 		t.mu.Unlock()
-		return errf("no_orb", "thread has no orb")
+		return nil, errf("no_orb", "thread has no orb")
 	}
 	orbID := t.orbID
 	if passiveCommand(cmdType) {
 		err := s.passiveLocked(t, line, &pendingCmd{cmdType: cmdType, reply: reply})
 		t.mu.Unlock()
-		return err
+		return nil, err
 	}
-	p := &pendingCmd{cmdType: cmdType, reply: reply}
+	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin}
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
 		p.leafBefore = copyStr(t.leaf)
 	}
@@ -826,12 +923,12 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		sl, err := s.reserveMsgLocked(t, false)
 		if err != nil {
 			t.mu.Unlock()
-			return err
+			return nil, err
 		}
 		s.readyMsgLocked(t, sl, line, p)
 	} else if err := s.enqueueLocked(t, line, p); err != nil {
 		t.mu.Unlock()
-		return err
+		return nil, err
 	}
 	if cmdType == "terminal_resize" {
 		// omp 不为 resize 发帧：由控制面告知其它窗口（含发起方）当前尺寸归属
@@ -845,15 +942,23 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 		}
 	}
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
-	s.clearUnreadLocked(ctx, t)
+	if origin == originUser {
+		s.clearUnreadLocked(ctx, t)
+	}
 	s.recompute(ctx, t)
-	s.observer().Seen(t.id)
+	if origin == originUser {
+		s.observer().Seen(t.id)
+	}
 	t.mu.Unlock()
-	s.touchUser(orbID)
+	if origin == originUser {
+		s.touchUser(orbID)
+	} else {
+		s.touchAgent(orbID)
+	}
 	if needWake {
 		s.wake(threadID, orbID)
 	}
-	return nil
+	return p, nil
 }
 
 // ---- 消息附件（M3 计划 5.3）----
@@ -1236,6 +1341,11 @@ func (s *Service) Wake(ctx context.Context, threadID string) error {
 	if err != nil {
 		return err
 	}
+	if t.kind != KindWork {
+		if err := s.ensureCoordOrb(ctx, t); err != nil {
+			return err
+		}
+	}
 	t.mu.Lock()
 	orbID := t.orbID
 	t.mu.Unlock()
@@ -1265,6 +1375,10 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 	t, err := s.get(ctx, threadID)
 	if err != nil {
 		return err
+	}
+	if t.kind != KindWork && typ != "extension_ui_response" {
+		// 宿主工具的结果只由控制面写回；客户端不能冒充
+		return errf(CodeCoordinatorRestricted, typ+" is not accepted in coordinator conversations")
 	}
 	t.mu.Lock()
 	orbID := t.orbID

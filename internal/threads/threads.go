@@ -14,6 +14,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -36,6 +37,13 @@ type CreateParams struct {
 	BrowserProfileID *string
 	// ProfileMode 是选用方式（空 = exclusive）。
 	ProfileMode apigen.BrowserProfileMode
+	// SpaceID 非空时新线程加入该 Space（M9；须存在）。
+	SpaceID string
+	// ParentThreadID 是发起它的线程（协调对话或 orb 内 agent，M9）。
+	ParentThreadID string
+	// ScheduleID / ScheduleRun 记录创建它的「新建线程」定时与运行序号（M9）。
+	ScheduleID  string
+	ScheduleRun int64
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
@@ -63,6 +71,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return apigen.Thread{}, err
 		}
 	}
+	if p.Provider == orbs.HostProviderName {
+		return apigen.Thread{}, errf(CodeCoordinatorRestricted, "provider "+orbs.HostProviderName+" is reserved for coordinator conversations")
+	}
+	if p.SpaceID != "" {
+		if _, err := s.st.Q.GetSpace(ctx, p.SpaceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return apigen.Thread{}, errf("space_not_found", "space not found")
+			}
+			return apigen.Thread{}, err
+		}
+	}
 	explicitProfile := p.BrowserProfileID != nil && *p.BrowserProfileID != ""
 	if p.OrbID != "" && explicitProfile {
 		return apigen.Thread{}, errf("invalid", "browserProfileId cannot be set when attaching to an existing orb")
@@ -77,6 +96,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return apigen.Thread{}, err
 		}
 		orb = o
+		if o.Coordinator {
+			return apigen.Thread{}, errf(CodeCoordinatorRestricted, "threads cannot be attached to the coordinator orb")
+		}
 	} else {
 		var profileID string
 		switch {
@@ -100,8 +122,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 
 	id := ids.Thread()
 	row := db.CreateThreadParams{
-		Kind: "work", ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
+		Kind: KindWork, ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
 		Model: modelString(p.Model), ShortCode: shortCode(id),
+	}
+	if p.SpaceID != "" {
+		row.SpaceID = &p.SpaceID
+	}
+	if p.ParentThreadID != "" {
+		row.ParentThreadID = &p.ParentThreadID
+	}
+	if p.ScheduleID != "" {
+		row.ScheduleID, row.ScheduleRun = &p.ScheduleID, &p.ScheduleRun
 	}
 	if p.ProjectID != "" {
 		row.ProjectID = &p.ProjectID
@@ -205,6 +236,10 @@ type ListFilter struct {
 	// Archived 为 nil 时只返回未归档线程。
 	Archived *bool
 	Q        string
+	// Kind 为空时只列工作线程；"all" = 全部种类；否则只列该种类（M9）。
+	Kind string
+	// Space 非空时只列属于该 Space 的线程（M9）。
+	Space string
 }
 
 // List 返回线程列表（置顶优先、最近活动优先）。
@@ -230,15 +265,30 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 	for _, r := range shareRows {
 		shares[r.ThreadID] = int(r.N)
 	}
+	schedRows, err := s.st.Q.ListScheduleSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	schedules := make(map[string]*apigen.ThreadScheduleSummary, len(schedRows))
+	for _, r := range schedRows {
+		schedules[r.ThreadID] = &apigen.ThreadScheduleSummary{Enabled: r.Enabled, NextRunAt: r.NextRunAt}
+	}
 	archived := false
 	if f.Archived != nil {
 		archived = *f.Archived
+	}
+	kind := f.Kind
+	if kind == "" {
+		kind = KindWork
 	}
 	q := strings.ToLower(f.Q)
 	reasons := map[string]*apigen.ThreadError{}
 	out := make([]apigen.Thread, 0, len(all))
 	for _, t := range all {
 		if (t.ArchivedAt != nil) != archived || (f.State != "" && t.State != f.State) {
+			continue
+		}
+		if (kind != "all" && t.Kind != kind) || (f.Space != "" && (t.SpaceID == nil || *t.SpaceID != f.Space)) {
 			continue
 		}
 		switch {
@@ -260,6 +310,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		if n := shares[t.ID]; n > 0 {
 			api.PublicShares = &n
 		}
+		api.Schedule = schedules[t.ID]
 		out = append(out, api)
 	}
 	return out, nil
@@ -276,12 +327,12 @@ func anyContains(ls []string, q string) bool {
 
 // Index 返回 WS `index` 的线程摘要（全部未归档与已归档线程）。
 func (s *Service) Index(ctx context.Context) ([]apigen.Thread, error) {
-	live, err := s.List(ctx, ListFilter{})
+	live, err := s.List(ctx, ListFilter{Kind: "all"})
 	if err != nil {
 		return nil, err
 	}
 	yes := true
-	arch, err := s.List(ctx, ListFilter{Archived: &yes})
+	arch, err := s.List(ctx, ListFilter{Archived: &yes, Kind: "all"})
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +344,21 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	t, err := s.get(ctx, id)
 	if err != nil {
 		return apigen.Thread{}, err
+	}
+	var newSpace *string // p.SpaceID 给出时的新值（nil = 移出）
+	if p.SpaceID != nil {
+		if t.kind != KindWork {
+			return apigen.Thread{}, errf(CodeCoordinatorRestricted, "only work threads can join a Space")
+		}
+		if *p.SpaceID != "" {
+			if _, err := s.st.Q.GetSpace(ctx, *p.SpaceID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return apigen.Thread{}, errf("space_not_found", "space not found")
+				}
+				return apigen.Thread{}, err
+			}
+			newSpace = p.SpaceID
+		}
 	}
 	t.mu.Lock()
 	row, err := s.st.Q.GetThread(ctx, id)
@@ -333,12 +399,34 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 			m.ArchivedAt = nil
 		}
 	}
+	shipped := row.ShippedAt
+	if p.Shipped != nil {
+		if *p.Shipped {
+			shipped = &now
+			if m.ArchivedAt == nil {
+				// 标记为已交付即同时归档
+				m.ArchivedAt = &now
+			}
+		} else {
+			shipped = nil
+		}
+	}
 	if p.Unread != nil {
 		m.Unread = *p.Unread
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if _, err := q.UpdateThreadMeta(ctx, m); err != nil {
 			return err
+		}
+		if p.SpaceID != nil {
+			if _, err := q.SetThreadSpace(ctx, db.SetThreadSpaceParams{SpaceID: newSpace, UpdatedAt: now, ID: id}); err != nil {
+				return err
+			}
+		}
+		if p.Shipped != nil {
+			if err := q.SetThreadShipped(ctx, db.SetThreadShippedParams{ShippedAt: shipped, UpdatedAt: now, ID: id}); err != nil {
+				return err
+			}
 		}
 		if p.Labels != nil {
 			if err := q.ClearThreadLabels(ctx, id); err != nil {
@@ -356,6 +444,12 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	})
 	if err == nil {
 		t.unread = m.Unread
+		if p.SpaceID != nil {
+			t.spaceID = ""
+			if newSpace != nil {
+				t.spaceID = *newSpace
+			}
+		}
 		s.publish(ctx, id)
 	}
 	t.mu.Unlock()
@@ -368,12 +462,29 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	return s.Get(ctx, id)
 }
 
-// Delete 删除线程（条目随之删除；orb 保留）。agent 若在运行则先停止。
+// Delete 删除线程（条目随之删除；orb 保留）。agent 若在运行则先停止。Space 的聊天线程不能直接删除（删 Space）。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	t, err := s.get(ctx, id)
 	if err != nil {
 		return err
 	}
+	if t.kind == KindSpace {
+		return errf("space_thread", "delete the Space instead of its chat thread")
+	}
+	return s.deleteThread(ctx, t)
+}
+
+// DeleteSpaceThread 删除 Space 的聊天线程（只供 internal/coord 删除 Space 时调用）。
+func (s *Service) DeleteSpaceThread(ctx context.Context, id string) error {
+	t, err := s.get(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.deleteThread(ctx, t)
+}
+
+func (s *Service) deleteThread(ctx context.Context, t *thread) error {
+	id := t.id
 	t.mu.Lock()
 	orbID := t.orbID
 	if t.agent != nil {
@@ -381,6 +492,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		t.agent = nil
 	}
 	s.failPendingLocked(t, "thread deleted", true)
+	cancelHostCallsLocked(t)
 	t.queue = nil
 	t.mu.Unlock()
 	if ctl, ok := s.orbs.Ctl(orbID); ok && orbID != "" {
@@ -537,6 +649,9 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 	src, err := s.get(ctx, srcID)
 	if err != nil {
 		return apigen.Thread{}, err
+	}
+	if src.kind != KindWork {
+		return apigen.Thread{}, errf(CodeCoordinatorRestricted, "coordinator conversations cannot be forked")
 	}
 	row, err := s.st.Q.GetThread(ctx, srcID)
 	if err != nil {

@@ -37,6 +37,10 @@ type options struct {
 	// ready 之前先发一条 extension_ui_request(select)，等到应答才发 ready（与 omp 一样，启动期间只即时处理
 	// 侧通道应答与 set_ask_dialog，其余命令排到启动完成之后）。
 	startupDialog string
+	// systemPrompt 是 --system-prompt（协调档）；首行 `#dump <路径>` 时把参数与环境写到该路径（须在 HOME 内）。
+	systemPrompt string
+	// args 是原始命令行参数（转储与 `probe args` 用）。
+	args []string
 }
 
 func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (options, bool, error) {
@@ -61,9 +65,15 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	var extensions multiFlag
 	fs.Var(&extensions, "e", "扩展文件（忽略，可重复）")
 	fs.Var(&extensions, "extension", "扩展文件（忽略，可重复）")
-	// omp 的设置覆盖层（M8：桌面启用时 orbd 以 `--config <desktop.yml>` 注入）：接受并忽略。
+	// omp 的设置覆盖层（M8：桌面启用时 orbd 以 `--config <desktop.yml>` 注入；M9 协调档的 overlay.yml）：接受并忽略。
 	var configs multiFlag
 	fs.Var(&configs, "config", "设置覆盖层文件（忽略，可重复）")
+	// M9 协调档的开关：接受并忽略（参数本身经转储与 `probe args` 供测试断言）。
+	for _, name := range []string{"no-tools", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp"} {
+		fs.Bool(name, false, "忽略")
+	}
+	fs.StringVar(&o.systemPrompt, "system-prompt", "", "系统提示词（首行 #dump <路径> 时写出参数与环境）")
+	o.args = append([]string(nil), args...)
 	version := fs.Bool("version", false, "打印版本")
 	if err := fs.Parse(args); err != nil {
 		return o, false, err
@@ -113,6 +123,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 		}
 	}
+	dumpInvocation(opts, getenv, stderr)
 	s := &server{
 		opts:           opts,
 		script:         script,
@@ -122,6 +133,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		messageUpdates: "full",
 		subLevel:       "off",
 		uiWait:         map[string]chan json.RawMessage{},
+		hostWait:       map[string]chan json.RawMessage{},
 		prompts:        make(chan promptReq, 100),
 		terms:          newTerminals(),
 	}
@@ -160,6 +172,10 @@ type server struct {
 	pending        int // 已接受但尚未结束的 prompt 数（含进行中的一个）
 	messageCount   int
 	cancelTurn     context.CancelFunc
+	// 宿主工具（M9）：set_host_tools 注册的工具；hostWait 是等待 host_tool_result 的调用（按 host_tool_call 的 id）。
+	hostDescs []hostTool
+	hostSeq   int
+	hostWait  map[string]chan json.RawMessage
 
 	prompts chan promptReq
 	terms   *terminals
@@ -576,7 +592,7 @@ func (s *server) handle(line []byte) {
 		}
 
 	default:
-		if s.handleTerminal(env.Type, id, line) {
+		if s.handleTerminal(env.Type, id, line) || s.handleHost(env.Type, id, line) {
 			return
 		}
 		cmd := env.Type

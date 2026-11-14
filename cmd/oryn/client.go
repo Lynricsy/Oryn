@@ -162,8 +162,11 @@ func (c *apiClient) do(ctx context.Context, method, path string, body, out any) 
 }
 
 // printJSON 以缩进 JSON 打印到 stdout。
-func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+func printJSON(v any) error { return printJSONTo(os.Stdout, v) }
+
+// printJSONTo 以缩进 JSON 打印到 w。
+func printJSONTo(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

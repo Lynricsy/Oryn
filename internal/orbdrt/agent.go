@@ -541,13 +541,28 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if !validThreadID(p.ThreadID) {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "invalid threadId %q", p.ThreadID)
 	}
+	if !r.cfg.Coordinator && p.Profile != nil && *p.Profile != "" {
+		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "profile %q is only available on the coordinator host", *p.Profile)
+	}
 	dir := filepath.Join(r.home, ".oryn", "threads", p.ThreadID)
 	if p.SessionDir != "" {
 		dir = r.resolvePath(p.SessionDir)
 	}
-	cwd := r.currentWorkdir()
-	if p.Cwd != "" {
-		cwd = r.resolvePath(p.Cwd)
+	var (
+		args []string
+		cwd  string
+		env  map[string]string
+	)
+	if r.cfg.Coordinator {
+		var err error
+		if args, cwd, env, err = r.coordinatorAgentSpec(p, dir); err != nil {
+			return apigen.LinkCtlAgentStartResult{}, err
+		}
+	} else {
+		cwd = r.currentWorkdir()
+		if p.Cwd != "" {
+			cwd = r.resolvePath(p.Cwd)
+		}
 	}
 	for _, d := range []string{dir, cwd} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -567,23 +582,25 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		}
 		frames = append(frames, r.fixOpenSession(b, dir))
 	}
-	env := r.baseEnv()
-	for k, v := range r.setupEnvSnapshot() {
-		env[k] = v
-	}
-	// agent 以登录 shell 的环境启动（setup 写进 ~/.profile 的开发环境由此生效）；Oryn 自己的变量与
-	// agent.start 下发的环境（env 模式密钥）在其后覆盖。
-	env = loginEnv(r.ctx, cwd, env)
-	env["PI_RPC_EMIT_TITLE"] = "1"
-	env["PI_NOTIFICATIONS"] = "off"
-	env["ORYN_THREAD_ID"] = p.ThreadID
-	for k, v := range p.Env {
-		env[k] = v
-	}
-	args := []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()}
-	if r.desk != nil {
-		// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
-		args = append(args, "--config", r.desktopOverlayPath())
+	if !r.cfg.Coordinator {
+		env = r.baseEnv()
+		for k, v := range r.setupEnvSnapshot() {
+			env[k] = v
+		}
+		// agent 以登录 shell 的环境启动（setup 写进 ~/.profile 的开发环境由此生效）；Oryn 自己的变量与
+		// agent.start 下发的环境（env 模式密钥）在其后覆盖。
+		env = loginEnv(r.ctx, cwd, env)
+		env["PI_RPC_EMIT_TITLE"] = "1"
+		env["PI_NOTIFICATIONS"] = "off"
+		env["ORYN_THREAD_ID"] = p.ThreadID
+		for k, v := range p.Env {
+			env[k] = v
+		}
+		args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()}
+		if r.desk != nil {
+			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
+			args = append(args, "--config", r.desktopOverlayPath())
+		}
 	}
 	pid, err := t.start(startSpec{
 		args:       args,
@@ -595,7 +612,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "start agent: %v", err)
 	}
 	// 线程登记之前已启动、因此没拿到 PUBLIC_URL 的 portal 服务，此时重启一次补上。
-	go r.svc.refreshPublicURLs()
+	if !r.cfg.Coordinator {
+		go r.svc.refreshPublicURLs()
+	}
 	return apigen.LinkCtlAgentStartResult{Pid: pid}, nil
 }
 

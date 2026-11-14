@@ -55,6 +55,8 @@ type OrbCreate struct {
 	// BrowserProfileID 非空时新 orb 选用该浏览器 Profile（M8）；ProfileMode 为 apigen.BrowserProfileMode（空 = exclusive）。
 	BrowserProfileID string
 	ProfileMode      string
+	// Coordinator 对应 orbs.CreateParams.Coordinator（本包从不置位：协调 orb 由 internal/coord 直接创建）。
+	Coordinator bool
 }
 
 // Profiles 决定新 orb 选用的浏览器 Profile（internal/desktop.Service 实现）。
@@ -93,4 +95,6 @@ type Orbs interface {
 	// （orbs 在其中做状态 CAS），返回 commit 的结果；命令准入同样持线程锁，因此与冻结串行。
 	SetQuiescence(fn func(orbID string, commit func() bool) bool)
 	Kick(orbID, reason string)
+	// HasFeature 报告 orb 当前已 hello 的 link 是否声明了 feature（M9：协调线程要求 "coordinator"）。
+	HasFeature(orbID, feature string) bool
 }

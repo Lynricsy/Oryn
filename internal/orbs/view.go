@@ -29,6 +29,10 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 		OrbdVersion: o.OrbdVersion, AgentVersion: o.AgentVersion, CreatedAt: o.CreatedAt, DeletedAt: o.DeletedAt,
 		ThreadIds: threadIDs,
 	}
+	if o.Coordinator {
+		yes := true
+		v.Coordinator = &yes
+	}
 	p, err := q.GetProvider(ctx, o.ProviderID)
 	switch {
 	case err == nil:

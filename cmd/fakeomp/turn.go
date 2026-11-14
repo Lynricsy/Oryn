@@ -44,6 +44,11 @@ func (s *server) runTurn(base context.Context, p promptReq) {
 		t.runScript(p)
 		return
 	}
+	// 提示词里有 `hosttool …` / `probe …` 行（M9）：按行执行宿主工具调用与沙箱探测。
+	if steps := parseSpecial(p.message); len(steps) > 0 {
+		t.runSpecial(p, steps)
+		return
+	}
 	t.runDefault(p)
 }
 

@@ -454,8 +454,7 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		s.dropUnreadIfNone(ctx, threadID)
 		return
 	}
-	now := s.now()
-	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: th.Title, CreatedAt: now}
+	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: th.Title, CreatedAt: s.now()}
 	switch key.kind {
 	case KindDone:
 		p.Body = s.lastAssistantText(ctx, threadID)
@@ -467,22 +466,39 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 			p.Body = uiprompt.Describe(pt.frame, uiprompt.Labels{}).Title
 		}
 	}
+	err = s.record(ctx, p)
+	if errors.Is(err, errDuplicate) {
+		// 同一未决请求已通知过（控制面重启后 orbd 重放了它）
+		s.dropUnreadIfNone(ctx, threadID)
+		return
+	}
+	if err != nil {
+		slog.Warn("notify: 写入通知失败", "thread", threadID, "kind", key.kind, "err", err)
+		s.dropUnreadIfNone(ctx, threadID)
+	}
+}
+
+// errDuplicate 表示同一未决请求的通知已存在（InsertNotification 忽略了重复行）。
+var errDuplicate = errors.New("notify: duplicate notification")
+
+// record 落库一条通知、为每个匹配的渠道与推送订阅排一条待投递，然后广播并唤醒投递循环（emit 与 Post 共用）。
+func (s *Service) record(ctx context.Context, p db.InsertNotificationParams) error {
+	now := p.CreatedAt
 	var dels []db.NotificationDelivery
-	errDup := errors.New("duplicate")
-	err = s.st.Tx(ctx, func(q *db.Queries) error {
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		n, err := q.InsertNotification(ctx, p)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
-			return errDup
+			return errDuplicate
 		}
 		chs, err := q.ListNotificationChannels(ctx)
 		if err != nil {
 			return err
 		}
 		for _, ch := range chs {
-			if !ch.Enabled || !hasEvent(ch.Events, key.kind) {
+			if !ch.Enabled || !hasEvent(ch.Events, p.Kind) {
 				continue
 			}
 			d := db.InsertNotificationDeliveryParams{ID: ids.New("ndl"), NotificationID: p.ID, ChannelID: new(ch.ID), Target: ch.Kind, NextAttemptAt: now, CreatedAt: now}
@@ -507,15 +523,8 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		}
 		return nil
 	})
-	if errors.Is(err, errDup) {
-		// 同一未决请求已通知过（控制面重启后 orbd 重放了它）
-		s.dropUnreadIfNone(ctx, threadID)
-		return
-	}
 	if err != nil {
-		slog.Warn("notify: 写入通知失败", "thread", threadID, "kind", key.kind, "err", err)
-		s.dropUnreadIfNone(ctx, threadID)
-		return
+		return err
 	}
 	names, _ := s.channelNames(ctx)
 	s.out.Notification(notificationAPI(db.Notification{
@@ -524,6 +533,49 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 	if len(dels) > 0 {
 		signal(s.deliverWake)
 	}
+	return nil
+}
+
+// AutomationsPath 是没有线程的通知（定时无法建出线程、定时被自动暂停）在 Web 上的落点。
+const AutomationsPath = "/settings/automations"
+
+// Post 立即生成一条 kind = error 的通知（M9 定时补「线程状态机看不到」的失败，不去抖）。
+// threadID 非空时标题取线程标题（忽略 title），线程不存在或已归档则不发；threadID 为空时用 title，
+// 链接指向 AutomationsPath。
+func (s *Service) Post(ctx context.Context, threadID, title, body string) error {
+	p := db.InsertNotificationParams{ID: ids.New("ntf"), Kind: KindError, Title: title, Body: body}
+	if threadID == "" {
+		p.CreatedAt = s.now()
+		return s.record(ctx, p)
+	}
+	th, err := s.th.Get(ctx, threadID)
+	if err != nil {
+		if errors.Is(err, threads.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if th.ArchivedAt != nil {
+		return nil
+	}
+	p.ThreadID, p.Title = &threadID, th.Title
+	// 与 processEvents 相同：先登记未读，此后到达的 Seen 会在本通知落库之后把它标为已读
+	s.mu.Lock()
+	s.unread[threadID] = true
+	s.emitGen++
+	s.emitting++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.emitting--
+		s.mu.Unlock()
+	}()
+	p.CreatedAt = s.now()
+	if err := s.record(ctx, p); err != nil {
+		s.dropUnreadIfNone(ctx, threadID)
+		return err
+	}
+	return nil
 }
 
 // dropUnreadIfNone 在预先登记的未读没有落成通知时，按库里的实际情况更正未读集合。
@@ -680,6 +732,8 @@ func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names ma
 	}
 	if n.ThreadID != nil {
 		out.URL = "/t/" + *n.ThreadID
+	} else {
+		out.URL = AutomationsPath
 	}
 	for _, d := range dels {
 		at := d.CreatedAt

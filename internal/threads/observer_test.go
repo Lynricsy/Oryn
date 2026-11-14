@@ -64,7 +64,7 @@ func readyThread(f *fixture) (*thread, *agentConn, *recObserver) {
 	a := fakeAgent(64)
 	attach(th, a, apigen.AgentStatusReady)
 	o := &recObserver{}
-	f.s.SetObserver(o)
+	f.s.AddObserver(o)
 	return th, a, o
 }
 
@@ -98,7 +98,7 @@ func TestObserverStateChanged(t *testing.T) {
 func TestObserverProvisioningToIdle(t *testing.T) {
 	f := newFixture(t, Config{})
 	o := &recObserver{}
-	f.s.SetObserver(o)
+	f.s.AddObserver(o)
 	orb := f.orb("ready")
 	th := f.thread(orb, StateProvisioning)
 	th.mu.Lock()

@@ -124,6 +124,31 @@ func TestImportAndRender(t *testing.T) {
 	assert.Error(t, err, "缺失密钥应报错")
 }
 
+// M9：RenderAt 把模型地址改写到给定代理地址（协调宿主的端口），Render 等价于 RenderAt(EgressAddr)。
+func TestRenderAtEgressAddr(t *testing.T) {
+	res, err := Import(map[string][]byte{"models.yml": []byte(sampleModels)})
+	require.NoError(t, err)
+	r := fakeResolver{
+		"omp/models/custom/apiKey":    {"sec1", "sk-literal-custom-0123456789", "llm.example.com,alt.example.com"},
+		"omp/models/anthropic/apiKey": {"sec2", "sk-ant-literal-abcdef", "api.anthropic.com"},
+		"omp/models/exa/apiKey":       {"sec3", "exa-literal-xyz", ""},
+	}
+	at, err := RenderAt(res.Files, r, "127.0.0.1:9911")
+	require.NoError(t, err)
+	models := string(at.Files["models.yml"])
+	assert.Contains(t, models, "http://127.0.0.1:9911/llm/custom/api/v1")
+	assert.Contains(t, models, "http://127.0.0.1:9911/llm/custom.m0/v2")
+	assert.Contains(t, models, "http://127.0.0.1:9911/llm/anthropic")
+	assert.NotContains(t, models, "7811")
+
+	def, err := Render(res.Files, r)
+	require.NoError(t, err)
+	viaAt, err := RenderAt(res.Files, r, EgressAddr)
+	require.NoError(t, err)
+	assert.Equal(t, def.Files, viaAt.Files)
+	assert.Equal(t, def.Routes, at.Routes, "路由只与上游有关，与代理地址无关")
+}
+
 func TestExcluded(t *testing.T) {
 	for p, want := range map[string]bool{
 		"sessions/a.jsonl": true, "blobs/x": true, "agent.db": true, "agent.db-wal": true,

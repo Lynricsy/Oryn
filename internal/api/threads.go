@@ -1,12 +1,14 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
@@ -24,6 +26,12 @@ var threadErrStatus = map[string]int{
 	"queue_full":           http.StatusTooManyRequests,
 	"agent_error":          http.StatusBadGateway,
 	"timeout":              http.StatusGatewayTimeout,
+	// M9
+	threads.CodeCoordinatorRestricted: http.StatusBadRequest,
+	"coordinator_unavailable":         http.StatusConflict,
+	"space_not_found":                 http.StatusNotFound,
+	"space_thread":                    http.StatusConflict,
+	"archived":                        http.StatusConflict,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {
@@ -68,6 +76,16 @@ func (s *Server) ListThreads(w http.ResponseWriter, r *http.Request, params apig
 	if params.Q != nil {
 		f.Q = *params.Q
 	}
+	if params.Kind != nil {
+		if !params.Kind.Valid() {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "kind 须为 work / space / assistant / all")
+			return
+		}
+		f.Kind = string(*params.Kind)
+	}
+	if params.Space != nil {
+		f.Space = *params.Space
+	}
 	list, err := svc.List(r.Context(), f)
 	if err != nil {
 		writeThreadErr(w, err)
@@ -106,6 +124,24 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 	if req.Title != nil {
 		p.Title = *req.Title
 	}
+	if req.SpaceID != nil && *req.SpaceID != "" {
+		p.SpaceID = *req.SpaceID
+		// 未给项目时取 Space 的项目
+		if p.ProjectID == "" {
+			sp, err := s.Store.Q.GetSpace(r.Context(), p.SpaceID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					WriteError(w, http.StatusNotFound, "space_not_found", "space not found")
+					return
+				}
+				writeThreadErr(w, err)
+				return
+			}
+			if sp.ProjectID != nil {
+				p.ProjectID = *sp.ProjectID
+			}
+		}
+	}
 	if kind, _ := req.Executor.Discriminator(); kind != "" {
 		v, err := req.Executor.ValueByDiscriminator()
 		if err != nil {
@@ -115,6 +151,10 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 		switch e := v.(type) {
 		case apigen.ThreadExecutorNewOrb:
 			if e.Provider != nil {
+				if *e.Provider == orbs.HostProviderName {
+					WriteError(w, http.StatusBadRequest, threads.CodeCoordinatorRestricted, "provider "+orbs.HostProviderName+" is reserved for coordinator conversations")
+					return
+				}
 				p.Provider = *e.Provider
 			}
 			if e.Type != nil {

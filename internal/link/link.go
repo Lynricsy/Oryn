@@ -37,12 +37,12 @@ func URL(base string) string {
 	return strings.TrimRight(base, "/") + Path
 }
 
-// Session 是一条已建立的 link：底层 WebSocket + yamux 会话。
+// Session 是一条已建立的 link：底层传输（WebSocket 或任意字节流）+ yamux 会话。
 type Session struct {
-	ws     *websocket.Conn
-	mux    *yamux.Session
-	cancel context.CancelFunc
-	once   sync.Once
+	closeConn func()
+	mux       *yamux.Session
+	cancel    context.CancelFunc
+	once      sync.Once
 }
 
 func yamuxConfig() *yamux.Config {
@@ -81,7 +81,40 @@ func newSession(ws *websocket.Conn, client bool) (*Session, error) {
 		_ = ws.CloseNow()
 		return nil, fmt.Errorf("link: yamux: %w", err)
 	}
-	s := &Session{ws: ws, mux: mux, cancel: cancel}
+	s := &Session{
+		closeConn: func() { _ = ws.Close(websocket.StatusNormalClosure, "") },
+		mux:       mux,
+		cancel:    cancel,
+	}
+	go func() {
+		<-mux.CloseChan()
+		s.Close()
+	}()
+	return s, nil
+}
+
+// NewConnSession 在任意字节流（如继承来的 socketpair）上建立 link 会话：
+// client 为真时作 yamux 客户端（orbd 一侧），否则作服务端（orynd 一侧）。
+// 不做任何鉴权，调用方须自行保证对端身份。
+func NewConnSession(conn net.Conn, client bool) (*Session, error) {
+	var (
+		mux *yamux.Session
+		err error
+	)
+	if client {
+		mux, err = yamux.Client(conn, yamuxConfig())
+	} else {
+		mux, err = yamux.Server(conn, yamuxConfig())
+	}
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("link: yamux: %w", err)
+	}
+	s := &Session{
+		closeConn: func() { _ = conn.Close() },
+		mux:       mux,
+		cancel:    func() {},
+	}
 	go func() {
 		<-mux.CloseChan()
 		s.Close()
@@ -223,11 +256,11 @@ type HeaderError struct{ Err error }
 func (e *HeaderError) Error() string { return "link: stream header: " + e.Err.Error() }
 func (e *HeaderError) Unwrap() error { return e.Err }
 
-// Close 关闭 yamux 会话与底层 WebSocket；可重复调用。
+// Close 关闭 yamux 会话与底层传输；可重复调用。
 func (s *Session) Close() error {
 	s.once.Do(func() {
 		_ = s.mux.Close()
-		_ = s.ws.Close(websocket.StatusNormalClosure, "")
+		s.closeConn()
 		s.cancel()
 	})
 	return nil

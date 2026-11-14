@@ -155,6 +155,9 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 	case orbsock.MethodDesktopStatus, orbsock.MethodDesktopBrowserStart, orbsock.MethodDesktopBrowserStop:
 		return r.handleDesktopSock(ctx, method)
 	default:
+		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
+			return res, err
+		}
 		if res, ok, err := r.handleServiceSock(ctx, method, params, out); ok {
 			return res, err
 		}

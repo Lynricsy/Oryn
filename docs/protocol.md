@@ -759,11 +759,11 @@ P2 的视图即协调宿主（H4）的只读路径清单，`ReadOnlyDirs` / `Rea
 |可执行（`Exec`）|`<dir>/bin/omp` 的真实路径 + 其 ELF 解释器（`sandbox.ExecPaths`）|
 |只读目录|`/usr/lib`、`/usr/lib64`、`/lib`、`/lib64`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup`|
 |只读文件|`/etc/ld.so.cache`、`/etc/localtime`、`/etc/passwd`、`/etc/group`、`/etc/nsswitch.conf`、`/etc/hosts`、`/dev/urandom`、`/dev/random`、`/dev/zero`（另 `/dev/null` 可读写）|
-|读写目录|协调宿主的 HOME（`<dir>/home`，内含 `TMPDIR`、`cwd`、会话目录、`.omp/`）|
+|读写目录（**不可执行**）|协调宿主的 HOME（`<dir>/home`，内含 `TMPDIR`、`cwd`、会话目录、`.omp/`）。go-landlock 的 `RWDirs` 会连带授予执行权，所以这里只给读写、不给 `Execute`：写进 HOME 的程序无法运行|
 
 不需要、也不给：`/etc/resolv.conf`、`/etc/ssl`、`/run/systemd/resolve`（模型请求只走 `http://127.0.0.1:<egress_port>`，不解析域名、不做 TLS）、`/tmp`、`/var/tmp`，以及上表之外的 `/sys`（omp 会试读 `/sys/devices/virtual/dmi`、`/sys/kernel/mm/transparent_hugepage`，读不到时照常启动）。`/sys/fs/cgroup` 只用于 omp 读取内存 / CPU 上限，P2 未提供也能启动。
 
-启动条件、环境对照与残余风险见 `docs/deploy.md`「协调宿主」。版本钉：`core/embed.go` 的 `core.Pin()` 返回 `core/source.json` 的 `sha256` 表（键 `linux-x64` / `linux-arm64` / `omp-rpc-types.d.ts`），`coordinator.verify_omp` 为真时 omp 必须与 `Pin()["linux-"+arch]` 一致。
+启动条件、环境对照与残余风险见 `docs/deploy.md`「协调宿主」。自检清单是 `sandbox.Checks`（单测与 `orynd coordinator-host --selftest` / `orynd coordinator check` 共用），除读写、网络、提权、ptrace 外，还覆盖 MPTCP 套接字与「把可执行文件复制进 HOME 再运行」两项。非 root 且没有 user namespace 时无法清空 bounding set，此时以 `no_new_privs` + 非 root uid + 空能力集为准（自检明细里注明）。版本钉：`core/embed.go` 的 `core.Pin()` 返回 `core/source.json` 的 `sha256` 表（键 `linux-x64` / `linux-arm64` / `omp-rpc-types.d.ts`），`coordinator.verify_omp` 为真时 omp 必须与 `Pin()["linux-"+arch]` 一致。
 
 ### 限额
 

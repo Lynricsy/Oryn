@@ -152,6 +152,26 @@ func TestGitRoute(t *testing.T) {
 	assert.Equal(t, 403, r.StatusCode, "git 路由不接受占位符")
 }
 
+// M9：协调宿主（NoGit）的 git 路由一律 403，模型路由照常。
+func TestNoGitPolicy(t *testing.T) {
+	req := func(path string) *http.Request { return httptest.NewRequest("GET", path, nil) }
+	h := NewHandler("orb-x", fakeR{git: map[string]string{"github.com": "tok"}, pol: Policy{
+		NoGit:  true,
+		Routes: map[string]Route{"anthropic": {Origin: "https://api.anthropic.com", SecretIDs: []string{"s1"}}},
+	}})
+	for _, p := range []string{
+		"/git/github.com/a/b/info/refs?service=git-upload-pack",
+		"/git/github.com/a/b/git-upload-pack",
+		"/git/gitlab.com/x/y/git-upload-pack",
+	} {
+		_, st := h.resolve(req(p))
+		assert.Equal(t, http.StatusForbidden, st, p)
+	}
+	tg, st := h.resolve(req("/llm/anthropic/v1/messages"))
+	require.Equal(t, http.StatusOK, st)
+	assert.Equal(t, "https://api.anthropic.com/v1/messages", tg.url.String())
+}
+
 // M3：点段、空段与编码形式的点段都不能绕过仓库限定。
 func TestGitRouteRejectsNonCanonicalPaths(t *testing.T) {
 	h := NewHandler("orb-x", fakeR{git: map[string]string{"github.com": "tok"},

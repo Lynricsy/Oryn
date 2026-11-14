@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -22,6 +23,10 @@ var root = &cobra.Command{
 func main() {
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "oryn:", err)
+		var ec *exitCodeError
+		if errors.As(err, &ec) {
+			os.Exit(ec.code)
+		}
 		os.Exit(1)
 	}
 }

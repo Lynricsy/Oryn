@@ -121,7 +121,19 @@ type CreateParams struct {
 	BrowserProfileID string
 	// ProfileMode 是选用方式（apigen.BrowserProfileMode：exclusive / readonly / takeover；空 = exclusive）。
 	ProfileMode string
+	// Coordinator 为真时建协调 orb（M9）：provider 固定为内置的 @host、类型 host，忽略其余字段。
+	Coordinator bool
 }
+
+// 内置协调宿主 provider（M9 协调宿主分册 H6）。名称 `@host` 不满足 API 的 provider 名称正则，用户建不出同名行。
+const (
+	HostProviderName = "@host"
+	HostType         = "host"
+	// HostDriver 是 @host 行的 driver 列。
+	HostDriver = "host"
+	// FeatureCoordinator 是协调宿主（orynd coordinator-host）在 hello 里上报的特性。
+	FeatureCoordinator = "coordinator"
+)
 
 type (
 	// RequestFunc 处理 orbd→orynd 的 ctl 请求。
@@ -478,12 +490,16 @@ func (s *Service) armConnectTimer(orbID, state string, seq int64) {
 }
 
 // resolveProvider 按「显式 → 项目默认 → orb_defaults → 源 orb → 唯一 provider」确定 provider。
+// 内置的 @host 只给协调 orb 用：显式指定它一律拒绝，「唯一 provider」回退也不计入它。
 func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Project, src *db.Orb) (db.Provider, error) {
 	if name == "" && prj != nil && prj.DefaultProvider != nil {
 		name = *prj.DefaultProvider
 	}
 	if name == "" {
 		name = s.cfg.Defaults.Provider
+	}
+	if name == HostProviderName {
+		return db.Provider{}, fmt.Errorf("%w: provider %q is reserved", ErrNoProvider, HostProviderName)
 	}
 	if name != "" {
 		p, err := s.st.Q.GetProviderByName(ctx, name)
@@ -496,7 +512,11 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 		return p, err
 	}
 	if src != nil {
-		return s.st.Q.GetProvider(ctx, src.ProviderID)
+		p, err := s.st.Q.GetProvider(ctx, src.ProviderID)
+		if err == nil && p.Driver == HostDriver {
+			return db.Provider{}, fmt.Errorf("%w: provider %q is reserved", ErrNoProvider, HostProviderName)
+		}
+		return p, err
 	}
 	all, err := s.st.Q.ListProviders(ctx)
 	if err != nil {
@@ -504,7 +524,7 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 	}
 	var live []db.Provider
 	for _, p := range all {
-		if p.DisabledAt == nil {
+		if p.DisabledAt == nil && p.Driver != HostDriver {
 			live = append(live, p)
 		}
 	}
@@ -516,6 +536,16 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 
 // Create 新建 orb（requested）并入队 spawn 任务。
 func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err error) {
+	if p.Coordinator {
+		prov, err := s.st.Q.GetProviderByName(ctx, HostProviderName)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && prov.DisabledAt != nil) {
+			return db.Orb{}, fmt.Errorf("%w: 内置 provider %q 尚未注册", ErrNoProvider, HostProviderName)
+		}
+		if err != nil {
+			return db.Orb{}, err
+		}
+		return s.insertOrb(ctx, CreateParams{Coordinator: true}, prov, HostType, nil, nil)
+	}
 	if p.SnapshotID != "" && p.SnapshotOf != "" {
 		// 快照是专为这次创建拍的：创建失败时没有 orb 会用它，交给源 orb 的 provider 回收。
 		defer func() {
@@ -572,12 +602,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 	if spec == nil && len(types) > 0 {
 		return db.Orb{}, fmt.Errorf("%w: provider %q 没有类型 %q", ErrBadType, prov.Name, typ)
 	}
+	return s.insertOrb(ctx, p, prov, typ, spec, prj)
+}
+
+// insertOrb 写入 orb 行（requested）、requested 事件与首个 spawn 任务（同一事务），然后发布。
+func (s *Service) insertOrb(ctx context.Context, p CreateParams, prov db.Provider, typ string, spec *apigen.OrbType, prj *db.Project) (db.Orb, error) {
 	orbID := ids.Orb()
 	now := s.nowMs()
 	// 第 0 代令牌从不下发：入队 spawn 时立即轮换到第 1 代。
 	params := db.CreateOrbParams{
 		ID: orbID, ProviderID: prov.ID, Type: typ, Image: p.SnapshotID,
 		State: StateRequested, StateChangedAt: now, TokenHash: ids.Hash(orbToken(s.cfg.TokenKey, orbID, 0)), CreatedAt: now,
+		Coordinator: p.Coordinator,
 	}
 	if spec != nil {
 		params.Cpus = int64(math.Round(float64(spec.Cpus)))
@@ -596,7 +632,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 	raw, _ := json.Marshal(detail)
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
-	err = s.st.Tx(ctx, func(q *db.Queries) error {
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.CreateOrb(ctx, params); err != nil {
 			return err
 		}

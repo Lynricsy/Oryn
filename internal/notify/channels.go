@@ -47,13 +47,17 @@ func (s *Service) webpushSender(sub db.PushSubscription) Sender {
 
 // pushPayload 是 service worker 收到的 JSON（≤3000 字节：正文截到 300 字符、标题截到 200 字符，仍超出时去掉正文）。
 func pushPayload(m Message) ([]byte, error) {
-	tag := m.ThreadID
+	tag, path := m.ThreadID, "/t/"+m.ThreadID
 	if len(tag) > 12 {
 		tag = tag[len(tag)-12:]
 	}
+	if m.ThreadID == "" {
+		// 没有线程的通知（定时失败 / 自动暂停）
+		tag, path = "automations", AutomationsPath
+	}
 	v := map[string]any{
 		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(m.Title, 200), "body": truncate(m.Body, maxPushBody),
-		"url": "/t/" + m.ThreadID, "tag": "oryn-" + tag,
+		"url": path, "tag": "oryn-" + tag,
 	}
 	b, err := json.Marshal(v)
 	if err != nil || len(b) <= maxPushPayload {

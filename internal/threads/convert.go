@@ -2,7 +2,9 @@ package threads
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -53,7 +55,7 @@ func ThreadToAPI(t db.Thread, labels []string) apigen.Thread {
 	if labels == nil {
 		labels = []string{}
 	}
-	return apigen.Thread{
+	out := apigen.Thread{
 		ID:                t.ID,
 		ProjectID:         t.ProjectID,
 		OrbID:             t.OrbID,
@@ -75,7 +77,17 @@ func ThreadToAPI(t db.Thread, labels []string) apigen.Thread {
 		CreatedAt:         t.CreatedAt,
 		UpdatedAt:         t.UpdatedAt,
 		LastMessageAt:     t.LastMessageAt,
+		SpaceID:           t.SpaceID,
+		ShippedAt:         t.ShippedAt,
 	}
+	if t.Kind != "" && t.Kind != KindWork {
+		k := apigen.ThreadKind(t.Kind)
+		out.Kind = &k
+	}
+	if t.ScheduleID != nil && t.ScheduleRun != nil {
+		out.ScheduleRun = &apigen.ThreadScheduleRun{ScheduleID: *t.ScheduleID, Run: *t.ScheduleRun}
+	}
+	return out
 }
 
 // orbAPI 把 orb 行转换成 API 形态（orbs.View）；读库失败时记录并返回已有字段。
@@ -147,6 +159,13 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	}
 	out.Activity = s.activityPtr(t.ID)
 	out.PublicShares = s.publicShares(ctx, t.ID)
+	sum, err := s.st.Q.GetScheduleSummary(ctx, t.ID)
+	switch {
+	case err == nil:
+		out.Schedule = &apigen.ThreadScheduleSummary{Enabled: sum.Enabled, NextRunAt: sum.NextRunAt}
+	case !errors.Is(err, sql.ErrNoRows):
+		return apigen.Thread{}, err
+	}
 	return out, nil
 }
 

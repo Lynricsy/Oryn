@@ -89,6 +89,14 @@ type Config struct {
 	// DesktopUserNS 报告能否建立 user namespace（决定 Chromium 是否加 --no-sandbox）；nil = 真实探测
 	// （userNamespacesUsable）。测试用它固定结果。
 	DesktopUserNS func() bool
+
+	// Coordinator 为真时以协调宿主的受限模式运行（M9，见 coordinator.go）：不要求 URL / Token，
+	// link 只经 Connect 建立且不重连，只服务 setup.run / resume.run / agent.start / agent.stop / shutdown。
+	Coordinator bool
+	// Connect 非 nil 时取代 link.Dial 建立 link；返回 ErrNoRedial 表示不能再建，Run 随之返回。
+	Connect func(ctx context.Context) (*link.Session, error)
+	// ThreadPollInterval 是 orbd.sock 的 thread.wait 轮询 thread.get 的间隔，默认 2s（测试可调小）。
+	ThreadPollInterval time.Duration
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -214,7 +222,11 @@ type conn struct {
 
 // New 校验配置、绑定 egress 监听并探测 agent 版本。
 func New(cfg Config) (*Runtime, error) {
-	if cfg.URL == "" || cfg.OrbID == "" {
+	if cfg.Coordinator {
+		if cfg.OrbID == "" || cfg.Connect == nil {
+			return nil, errors.New("orbdrt: OrbID and Connect are required in coordinator mode")
+		}
+	} else if cfg.URL == "" || cfg.OrbID == "" {
 		return nil, errors.New("orbdrt: URL and OrbID are required")
 	}
 	if cfg.Home == "" {
@@ -228,7 +240,7 @@ func New(cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Token == "" && readTokenFile(home) == "" {
+	if !cfg.Coordinator && cfg.Token == "" && readTokenFile(home) == "" {
 		return nil, errors.New("orbdrt: Token is required (ORYN_ORB_TOKEN or $HOME/.oryn/orb-token)")
 	}
 	if cfg.AgentBin == "" {
@@ -251,6 +263,9 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	if cfg.ResumeWait <= 0 {
 		cfg.ResumeWait = 10 * time.Second
+	}
+	if cfg.ThreadPollInterval <= 0 {
+		cfg.ThreadPollInterval = DefaultPollInterval
 	}
 	if cfg.CgroupDir == "" {
 		cfg.CgroupDir = "/sys/fs/cgroup"
@@ -299,13 +314,16 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
-	r.desk = newDesktop(r)
-	if err := r.writeAgentAssets(); err != nil {
-		_ = ln.Close()
-		if r.desk != nil {
-			_ = r.desk.cdpLn.Close()
+	if !cfg.Coordinator {
+		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）。
+		r.desk = newDesktop(r)
+		if err := r.writeAgentAssets(); err != nil {
+			_ = ln.Close()
+			if r.desk != nil {
+				_ = r.desk.cdpLn.Close()
+			}
+			return nil, fmt.Errorf("orbdrt: %w", err)
 		}
-		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
 	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
@@ -333,6 +351,7 @@ func detectAgentVersion(bin string) string {
 
 // Run 运行到 ctx 结束：恢复已登记线程的 tailer、egress、指标与 link 重连循环。
 // 优雅退出（停 agent、冲刷 tailer）由调用方在取消 ctx 之前调用 Shutdown 完成。
+// 协调宿主模式只起 egress 与 tailer；link 断开（Connect 返回 ErrNoRedial）后即返回。
 func (r *Runtime) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
@@ -344,12 +363,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Add(5)
-	go func() { defer wg.Done(); r.serveEgress(ctx) }()
-	go func() { defer wg.Done(); r.metricsLoop(ctx) }()
-	go func() { defer wg.Done(); r.serveSocket(ctx) }()
-	go func() { defer wg.Done(); _ = r.localSrv.Serve(r.local) }()
-	go func() { defer wg.Done(); r.svc.reportLoop(ctx) }()
+	wg.Go(func() { r.serveEgress(ctx) })
+	if !r.cfg.Coordinator {
+		wg.Go(func() { r.metricsLoop(ctx) })
+		wg.Go(func() { r.serveSocket(ctx) })
+		wg.Go(func() { _ = r.localSrv.Serve(r.local) })
+		wg.Go(func() { r.svc.reportLoop(ctx) })
+	}
 	if d := r.desk; d != nil {
 		// 显示栈常驻；ctx 结束时三者的进程组都被 SIGKILL（优雅停浏览器由 Shutdown 负责）。
 		wg.Go(func() { d.run(ctx) })
@@ -440,7 +460,7 @@ func (r *Runtime) linkLoop(ctx context.Context) {
 	backoff := backoffMin
 	for ctx.Err() == nil {
 		connected, err := r.connectOnce(ctx)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, ErrNoRedial) {
 			return
 		}
 		if errors.Is(err, errRedial) {
@@ -474,8 +494,13 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	default:
 	}
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	// 令牌文件每次拨号重新读取：控制面每次 spawn 轮换令牌，provider 写文件后发 SIGHUP 触发重拨。
-	sess, err := link.Dial(dctx, link.URL(r.cfg.URL), r.dialToken())
+	var sess *link.Session
+	if r.cfg.Connect != nil {
+		sess, err = r.cfg.Connect(dctx)
+	} else {
+		// 令牌文件每次拨号重新读取：控制面每次 spawn 轮换令牌，provider 写文件后发 SIGHUP 触发重拨。
+		sess, err = link.Dial(dctx, link.URL(r.cfg.URL), r.dialToken())
+	}
 	if err != nil {
 		cancel()
 		return false, err
@@ -520,7 +545,9 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	r.flushResultsLocked(c)
 	r.resultsMu.Unlock()
 	// 服务与桌面快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
-	r.svc.markDirty()
+	if !r.cfg.Coordinator {
+		r.svc.markDirty()
+	}
 	if r.desk != nil {
 		r.desk.markDirty()
 	}
@@ -539,7 +566,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 }
 
 // acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，`portal` 流对接本机端口，
-// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。
+// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。协调宿主不接受任何控制面发起的流。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -549,6 +576,11 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 				continue
 			}
 			return
+		}
+		if r.cfg.Coordinator {
+			r.log.Warn("coordinator host refuses streams from the control plane", "t", st.Header.T)
+			_ = st.Close()
+			continue
 		}
 		switch st.Header.T {
 		case link.StreamFS:
@@ -580,9 +612,12 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 			threads = append(threads, apigen.LinkCtlHelloThread{ThreadID: id})
 		}
 	}
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync"}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads"}
 	if r.desk != nil {
 		features = append(features, "desktop")
+	}
+	if r.cfg.Coordinator {
+		features = []string{"coordinator"}
 	}
 	return apigen.LinkCtlHelloParams{
 		OrbdVersion:  r.cfg.Version,
@@ -614,11 +649,17 @@ func decode[T any](params json.RawMessage) (T, error) {
 func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params json.RawMessage) (any, error) {
 	// 长操作使用运行时 ctx：link 断开不应中断 setup 或 agent 停止。
 	ctx := r.ctx
+	if r.cfg.Coordinator && !coordinatorMethods[method] {
+		return nil, link.ErrMethodNotFound
+	}
 	switch method {
 	case "setup.run", "resume.run":
 		p, err := decode[apigen.LinkCtlSetupRunParams](params)
 		if err != nil {
 			return nil, err
+		}
+		if r.cfg.Coordinator {
+			return r.coordinatorSetup(p)
 		}
 		return r.runSetup(ctx, p, method == "setup.run")
 	case "agent.start":

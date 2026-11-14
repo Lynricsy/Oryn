@@ -479,7 +479,8 @@ func TestServiceStopAndShutdown(t *testing.T) {
 
 	// 运行时结束（ctx 取消）时仍存活的进程组被 SIGKILL。
 	e.stop()
-	assert.True(t, groupGone(*a3.Pid), "Run 结束后进程组消失")
+	// 组长已被回收，组里后代的 SIGKILL 是异步生效的
+	assert.Eventually(t, func() bool { return groupGone(*a3.Pid) }, 5*time.Second, 10*time.Millisecond, "Run 结束后进程组消失")
 }
 
 // 新 Runtime（同一 $HOME，模拟容器重启）启动时不自行拉起服务；resume.run 之后按 state.json 恢复动态服务，端口不变。
@@ -757,6 +758,43 @@ func echoListener(t *testing.T, network, addr string) (int, bool) {
 	return ln.Addr().(*net.TCPAddr).Port, true
 }
 
+// v6OnlyEchoListener 起一个只听 [::1] 的回显服务，且同号的 127.0.0.1 端口当前无人监听（否则 dialLoopback
+// 会先连上那个无关的 IPv4 服务；全量并行测试时偶发撞号）。IPv6 回环不可用时返回 false。
+func v6OnlyEchoListener(t *testing.T) (int, bool) {
+	t.Helper()
+	for range 20 {
+		ln, err := net.Listen("tcp6", "[::1]:0")
+		if err != nil {
+			return 0, false
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
+		if c != nil {
+			_ = c.Close()
+		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			_ = ln.Close()
+			continue
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					_, _ = io.Copy(c, c)
+				}()
+			}
+		}()
+		return port, true
+	}
+	t.Fatal("找不到 127.0.0.1 上空闲的 [::1] 端口")
+	return 0, false
+}
+
 func TestPortalStream(t *testing.T) {
 	e := newSvcEnv(t, nil, "")
 	e.setup()
@@ -801,7 +839,7 @@ func TestPortalStream(t *testing.T) {
 	assert.Equal(t, "connection_refused", *rep.Code)
 
 	// 只听 [::1] 的监听经回退可达。
-	v6, ok := echoListener(t, "tcp6", "[::1]:0")
+	v6, ok := v6OnlyEchoListener(t)
 	if !ok {
 		t.Log("IPv6 loopback unavailable; skipping [::1] case")
 		return
@@ -812,6 +850,7 @@ func TestPortalStream(t *testing.T) {
 	_, err = st.Write([]byte("ping"))
 	require.NoError(t, err)
 	buf := make([]byte, 4)
+	_ = st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, err = io.ReadFull(st, buf)
 	require.NoError(t, err)
 	assert.Equal(t, "ping", string(buf))

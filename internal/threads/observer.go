@@ -41,20 +41,43 @@ type InputEvent struct {
 // PlanRequestID 是计划提案在 Observer 回调里的请求 id。
 const PlanRequestID = "plan"
 
-type observerBox struct{ Observer }
+// observerList 把事件按注册顺序交给全部接收方（空列表 = 丢弃）。
+type observerList []Observer
 
-// nopObserver 在未设置 Observer 时丢弃事件。
-type nopObserver struct{}
+func (l observerList) StateChanged(ev StateEvent) {
+	for _, o := range l {
+		o.StateChanged(ev)
+	}
+}
 
-func (nopObserver) StateChanged(StateEvent)      {}
-func (nopObserver) InputRequested(InputEvent)    {}
-func (nopObserver) InputResolved(string, string) {}
-func (nopObserver) Seen(string)                  {}
+func (l observerList) InputRequested(ev InputEvent) {
+	for _, o := range l {
+		o.InputRequested(ev)
+	}
+}
 
-// SetObserver 设置通知事件接收方。
-func (s *Service) SetObserver(o Observer) { s.obs.Store(&observerBox{o}) }
+func (l observerList) InputResolved(threadID, requestID string) {
+	for _, o := range l {
+		o.InputResolved(threadID, requestID)
+	}
+}
 
-func (s *Service) observer() Observer { return s.obs.Load().Observer }
+func (l observerList) Seen(threadID string) {
+	for _, o := range l {
+		o.Seen(threadID)
+	}
+}
+
+// AddObserver 追加一个状态事件接收方（notify、定时、协调各一个）。每个事件按注册顺序同步交给全部接收方；
+// 接收方不关心的回调留空实现。须在服务对外可用之前调用。
+func (s *Service) AddObserver(o Observer) {
+	s.obsMu.Lock()
+	defer s.obsMu.Unlock()
+	next := append(slices.Clone(*s.obs.Load()), o)
+	s.obs.Store(&next)
+}
+
+func (s *Service) observer() Observer { return *s.obs.Load() }
 
 // Publish 取线程锁后推送该线程的 index.patch（分享增删后刷新 Thread.publicShares 用）。
 func (s *Service) Publish(ctx context.Context, threadID string) {

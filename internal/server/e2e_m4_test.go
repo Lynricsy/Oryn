@@ -233,7 +233,8 @@ func TestE2EM4Portal(t *testing.T) {
 	start := time.Now()
 	assert.Equal(t, "owner=yes", pc.owner(t, pc.get("/echo", bearer...)))
 	assert.Less(t, time.Since(start), 25*time.Second)
-	assert.Equal(t, "ready", orbState())
+	// resuming 也算可用（usableState），portal 请求可能先于 resume.run 的应答（resuming → ready）完成
+	require.Eventually(t, func() bool { return orbState() == "ready" }, 10*time.Second, 20*time.Millisecond)
 	after, err := s.srv.Store.Q.GetOrb(context.Background(), th.OrbID)
 	require.NoError(t, err)
 	require.NotNil(t, after.LastUserInteractionAt)

@@ -90,7 +90,11 @@ type Service struct {
 	st   *store.Store
 	orbs Orbs
 	sink atomic.Pointer[sinkBox]
-	obs  atomic.Pointer[observerBox]
+	obs  atomic.Pointer[observerList]
+	// obsMu 串行化 AddObserver。
+	obsMu sync.Mutex
+	// coord 是协调服务（M9，SetCoordinator 在服务对外可用之前设置；nil = 不支持协调线程）。
+	coord Coordinator
 	// attach 由 SetAttachments 在服务对外可用之前设置；nil = 不支持附件。
 	attach Attachments
 	// profiles 是浏览器 Profile 服务（M8；nil = 不支持）。
@@ -172,7 +176,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		activity:  map[string]string{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
-	s.obs.Store(&observerBox{nopObserver{}})
+	s.obs.Store(&observerList{})
 	s.events.init()
 	s.wg.Add(1)
 	go func() {
@@ -228,6 +232,8 @@ func (s *Service) go_(fn func(ctx context.Context)) {
 type thread struct {
 	id         string
 	sessionDir string
+	// kind 是线程种类（work / space / assistant，创建后不变）。
+	kind string
 
 	mu          sync.Mutex
 	orbID       string
@@ -274,6 +280,17 @@ type thread struct {
 	// msgOrder 是已受理、尚未入队的消息命令（prompt / steer / follow_up / abort_and_prompt），按受理顺序排列：
 	// 带附件的消息受理时即占位，投递完成后才可下发；其后的消息排在它后面，不得越过。非消息命令不经过这里。
 	msgOrder []*msgSlot
+	// spaceID 是线程所属 Space（空 = 无）；Space 聊天线程为其 Space。
+	spaceID string
+	// autoActive 为真表示当前这段活动里下发过自动化消息（宿主工具调用的 OwnerTurn = !autoActive，只用于审计）；
+	// session_settled 或 agent 退出时清零。
+	autoActive bool
+	// hostCalls 是在途的宿主工具调用：omp 的调用 id → 取消函数（协调线程）。
+	hostCalls map[string]context.CancelFunc
+	// refresh 为真时，协调线程在静止后停掉 agent，下一条命令以新的 AgentProfile 启动（RefreshAgent）。
+	refresh bool
+	// stopping 为真表示控制面主动发了 agent.stop：随后的 exited 不算重启耗尽。
+	stopping bool
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
@@ -334,11 +351,17 @@ func (s *Service) get(ctx context.Context, id string) (*thread, error) {
 
 func newThread(row db.Thread) *thread {
 	t := &thread{
-		id: row.ID, sessionDir: row.SessionDir,
+		id: row.ID, sessionDir: row.SessionDir, kind: row.Kind,
 		live: NewLive(), agentStatus: apigen.AgentStatusNone,
 		pending: map[string]*pendingCmd{}, resetting: map[string]bool{}, ignored: map[string]bool{}, held: map[string][]apigen.LinkCtlEntriesAppendParams{},
 		settled: true, state: row.State, unread: row.Unread, leaf: row.LeafEntryID, lastSeq: row.LastSeq,
-		model: row.Model, thinking: row.ThinkingLevel,
+		model: row.Model, thinking: row.ThinkingLevel, hostCalls: map[string]context.CancelFunc{},
+	}
+	if t.kind == "" {
+		t.kind = KindWork
+	}
+	if row.SpaceID != nil {
+		t.spaceID = *row.SpaceID
 	}
 	if row.OrbID != nil {
 		t.orbID = *row.OrbID
@@ -704,6 +727,11 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		for _, r := range rows {
 			// 归档线程不主动启动 agent，除非重启前它正忙（否则其 unsynced 永远不会清除、orb 无法冻结）
 			if r.ArchivedAt != nil && r.State != StateWorking && r.State != StateAwaitingInput {
+				continue
+			}
+			// 协调对话按需启动（每个都是一个上百 MB 的 omp）：只启动重启前正忙、尚未启动过、或有排队命令的；
+			// 其余在收到命令（Command / Deliver）或被唤醒（Wake）时才起 agent。
+			if r.Kind != KindWork && r.State != StateWorking && r.State != StateAwaitingInput && r.State != StateProvisioning && !s.hasQueued(ctx, r.ID) {
 				continue
 			}
 			s.scheduleStart(r.ID)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"time"
@@ -81,6 +82,14 @@ func (s *Service) Connected(orbID string) bool {
 	return l != nil && l.helloSeen()
 }
 
+// HasFeature 报告 orb 当前有已 hello 的 link，且其 hello 的 features 含 feature（判定同 usable）。
+func (s *Service) HasFeature(orbID, feature string) bool {
+	s.mu.Lock()
+	l := s.links[orbID]
+	s.mu.Unlock()
+	return l != nil && l.helloSeen() && slices.Contains(l.hello.Features, feature)
+}
+
 // Kick 关闭 orb 的活动 link（越权或 orb 删除时）。
 func (s *Service) Kick(orbID, reason string) {
 	s.mu.Lock()
@@ -153,7 +162,40 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sess.Close()
-	hctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	s.attach(orb, sess, r.RemoteAddr)
+}
+
+// ServeConn 在已建立的字节流上服务协调 orb 的 link（M9 协调宿主分册 H6）：conn 是 orynd 与它拉起的
+// `orynd coordinator-host` 之间的 socketpair，对端身份由创建它的进程保证，不再鉴权。orb 须存在、是协调 orb
+// 且处于接受 link 的状态，否则关闭 conn 并返回错误。阻塞到 link 断开。
+func (s *Service) ServeConn(ctx context.Context, orbID string, conn net.Conn) error {
+	orb, err := s.Get(ctx, orbID)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if !orb.Coordinator {
+		_ = conn.Close()
+		return fmt.Errorf("%w: orb %s is not a coordinator orb", ErrInvalidState, orbID)
+	}
+	if !linkAcceptable(orb.State) {
+		_ = conn.Close()
+		return fmt.Errorf("%w: orb %s is %s", ErrInvalidState, orbID, orb.State)
+	}
+	sess, err := link.NewConnSession(conn, false)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	defer sess.Close()
+	s.attach(orb, sess, "coordinator-host")
+	return nil
+}
+
+// attach 是 link 建立之后的通用逻辑（WebSocket link 与协调宿主的 socketpair 共用）：等首条 ctl 流、发布 link、
+// 分派后续流，直到会话结束。
+func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
+	hctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	first, err := sess.AcceptStream(hctx)
 	cancel()
 	if err != nil || first.Header.T != link.StreamCtl {
@@ -194,7 +236,7 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		slog.Info("orb link 被新连接替换", "orb", orb.ID)
 		_ = old.sess.Close()
 	}
-	slog.Info("orb link 已连接", "orb", orb.ID, "remote", r.RemoteAddr)
+	slog.Info("orb link 已连接", "orb", orb.ID, "remote", remote)
 
 	ctx, cancelStreams := context.WithCancel(context.Background())
 	defer cancelStreams()
