@@ -276,16 +276,25 @@ func (t *trackedReader) Read(p []byte) (int, error) {
 
 // takeover 把 Profile 从当前持有者手里转给 orbID：持有者可用时先请它活体保存（takeoverSaveTimeout；失败记
 // takeover_unsaved 后继续），再在同一事务里按保存之前读到的围栏代数 StealBrowserProfile、把原持有者降级为只读、
-// 写 profile.taken_over；最后经 ctl 向原 orbd 发 profile.mode。CAS 失败则重读重试（至多 3 次）；
+// 写 profile.taken_over；最后经 ctl 向原 orbd 发 profile.mode。CAS 失败则重读重试（至多 3 次）：每次尝试都针对
+// 本次读到的（持有者, 代数）先保存一次（同一对只存一次），新持有者刚产生的登录态不会被跳过；
 // 没有持有者或持有者已是自己时不做任何事（随后的 Acquire 取得租约）。
+//
+// profile.mode 只带 profileId / mode / reason：接管方线程的标题与 id 只写进库（orb_desktops.readonly_by*，
+// 面板据此展示），不下发给 orb（orb 对控制面不可信，见安全审查 F5）。
 func (s *Service) takeover(ctx context.Context, orbID string, p db.BrowserProfile) error {
+	saved := ""
 	for attempt := range 3 {
 		if p.HolderOrbID == nil || *p.HolderOrbID == orbID {
 			return nil
 		}
 		holder, fence := *p.HolderOrbID, p.Fence
-		if attempt == 0 {
+		if key := fmt.Sprintf("%s/%d", holder, fence); key != saved {
 			s.preTakeoverSave(ctx, holder, p)
+			saved = key
+		}
+		if s.beforeSteal != nil {
+			s.beforeSteal(orbID, attempt)
 		}
 		var by *string
 		var byThread *string
@@ -317,10 +326,10 @@ func (s *Service) takeover(ctx context.Context, orbID string, p db.BrowserProfil
 			s.event(ctx, p.ID, holder, apigen.BrowserProfileEventTakenOver, map[string]any{"by": orbID, "fence": newFence})
 			mp := apigen.LinkCtlProfileModeParams{
 				ProfileID: p.ID, Mode: apigen.BrowserProfileAccessReadonly, Reason: apigen.BrowserProfileReadonlyReasonTakenOver,
-				By: by, ByThreadID: byThread,
 			}
 			if err := s.o.SendProfileMode(ctx, holder, mp); err != nil {
-				// 丢失无害：迟到的保存会被围栏挡下，下次同步的 PUT 也带 mode
+				// 丢失无害：迟到的保存会被 confirmLease 与围栏挡下，下次同步的 PUT 也带 mode；
+				// 它若迟到、落在原持有者反向接管之后，由 DesktopReported 的纠正以库为准改回。
 				slog.Info("向原持有者发 profile.mode 失败（忽略）", "orb", holder, "profile", p.ID, "err", err)
 			}
 			s.o.RefreshDesktop(ctx, holder)
@@ -390,18 +399,12 @@ func (s *Service) checkinLocked(ctx context.Context, orbID, mode string) error {
 	if p.Revision != d.LocalRev || d.Dirty == 0 {
 		return nil
 	}
-	fence, err := s.st.Q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{OrbID: orbID, Now: s.nowMs(), ID: p.ID})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+	if s.beforeLease != nil {
+		s.beforeLease(orbID)
 	}
-	if err != nil {
+	fence, ok, err := s.confirmLease(ctx, orbID, d)
+	if err != nil || !ok {
 		return err
-	}
-	if fence != d.Fence {
-		// 释放后重新取得（例如冻结后停机）：记下新的代数
-		if err := s.setLocal(ctx, orbID, d.LocalRev, d.ProfileError, fence); err != nil {
-			return err
-		}
 	}
 	defer s.o.RefreshDesktop(context.WithoutCancel(ctx), orbID)
 	tctx, cancel := context.WithTimeout(ctx, transferTimeout)
@@ -412,6 +415,9 @@ func (s *Service) checkinLocked(ctx context.Context, orbID, mode string) error {
 		case "no_profile", "profile_readonly":
 			slog.Info("orbd 没有可导出的 Profile，跳过保存", "orb", orbID, "profile", p.ID, "code", orbdCode(err))
 			return nil
+		case "too_large":
+			// orbd 在开始输出前按还原端的条目数 / 解包大小上限检查过：超限不交出无法还原的归档，旧修订保留
+			return s.saveFailed(ctx, orbID, p.ID, string(apigen.TooLarge), err)
 		}
 		return s.saveFailed(ctx, orbID, p.ID, string(apigen.ExportFailed), err)
 	}
@@ -519,6 +525,65 @@ func (s *Service) checkinLocked(ctx context.Context, orbID, mode string) error {
 	return nil
 }
 
+// confirmLease 在一个事务里复核保存资格，给出本次保存要出示的围栏代数（ok=false = 不保存）：
+//   - 绑定仍是同一 Profile 的独占，本地修订与围栏代数与开始保存时读到的一致，且就是 Profile 的当前修订与代数；
+//   - 本 orb 仍持有租约 → 沿用该代数；
+//   - 租约空着且代数仍是本 orb 上次持有时的值（期间没有别的 orb 持有过，例如冻结释放租约后停机前的关闭式保存）
+//     → 重新取得租约并记下新代数；
+//   - 其余（已被接管降级、别的 orb 持有或持有过）→ 不保存。迟到的保存因此不能把已释放的租约重新领成新围栏。
+func (s *Service) confirmLease(ctx context.Context, orbID string, d db.OrbDesktop) (int64, bool, error) {
+	if d.ProfileID == nil || d.Fence <= 0 {
+		return 0, false, nil
+	}
+	var fence int64
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		cd, err := q.GetOrbDesktop(ctx, orbID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if cd.ProfileID == nil || *cd.ProfileID != *d.ProfileID || cd.ProfileMode != accessExclusive ||
+			cd.LocalRev != d.LocalRev || cd.Fence != d.Fence {
+			return nil
+		}
+		p, err := q.GetBrowserProfile(ctx, *cd.ProfileID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if p.Revision != cd.LocalRev || p.Fence != cd.Fence {
+			return nil
+		}
+		switch {
+		case p.HolderOrbID != nil && *p.HolderOrbID == orbID:
+			fence = p.Fence
+		case p.HolderOrbID == nil:
+			f, err := q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{OrbID: orbID, Now: s.nowMs(), ID: p.ID})
+			if err != nil {
+				return err
+			}
+			if err := q.SetOrbDesktopLocal(ctx, db.SetOrbDesktopLocalParams{
+				LocalRev: cd.LocalRev, ProfileError: cd.ProfileError, Fence: f, Now: s.nowMs(), OrbID: orbID,
+			}); err != nil {
+				return err
+			}
+			fence = f
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	if fence == 0 {
+		slog.Info("保存资格已失效（被接管或租约换过手），不保存", "orb", orbID, "profile", *d.ProfileID, "fence", d.Fence)
+	}
+	return fence, fence > 0, nil
+}
+
 // fenced 记录一次被围栏挡下的保存（不报错给用户）。
 func (s *Service) fenced(ctx context.Context, orbID, profileID string, fence, current int64) {
 	s.event(ctx, profileID, orbID, apigen.BrowserProfileEventSaveFenced, map[string]any{"fence": fence, "currentFence": current})
@@ -602,6 +667,85 @@ func (s *Service) hookCheckin(ctx context.Context, orbID, mode string) {
 	defer cancel()
 	if err := s.checkin(cctx, orbID, mode); err != nil {
 		slog.Warn("保存浏览器 Profile 失败", "orb", orbID, "mode", mode, "err", err)
+	}
+}
+
+// ---- 以库为准纠正 orbd 本地的使用方式 ----
+
+// DesktopReported 实现 orbs.DesktopHooks（不阻塞）：记下 orb 最新一次报告，排入纠正队列。
+func (s *Service) DesktopReported(orbID string, st apigen.LinkCtlDesktopStateParams) {
+	if st.ProfileID == nil || *st.ProfileID == "" || st.ProfileMode == nil {
+		return
+	}
+	s.fixMu.Lock()
+	_, queued := s.fixes[orbID]
+	s.fixes[orbID] = st
+	s.fixMu.Unlock()
+	if !queued {
+		s.modeFixes.push(orbID)
+	}
+}
+
+func (s *Service) modeFixLoop() {
+	for {
+		orbID, ok := s.modeFixes.pop(s.ctx)
+		if !ok {
+			return
+		}
+		s.fixMu.Lock()
+		st, has := s.fixes[orbID]
+		delete(s.fixes, orbID)
+		s.fixMu.Unlock()
+		if has {
+			s.fixMode(s.ctx, orbID, st)
+		}
+		if s.onModeFixed != nil {
+			s.onModeFixed(orbID)
+		}
+	}
+}
+
+// fixMode 让 orbd 本地标记的使用方式与库里的绑定一致（profile.mode 没有代数，消息可能迟到）：
+//   - orbd 报只读、库里是本 orb 独占且仍持有当前修订与代数（迟到的降级落在反向接管之后）→ 按绑定重新装载
+//     （本地就是当前修订，即 keep=1&mode=exclusive），orbd 恢复独占、dirty 按浏览器是否在运行重算；
+//   - orbd 报独占、库里已降为只读（profile.mode 丢失）→ 重发 profile.mode。
+//
+// 两种动作都只是把 orbd 改成库里的样子，基于过时的报告执行也无害；持 orb 锁，与同步 / 保存串行。
+func (s *Service) fixMode(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams) {
+	cctx, cancel := context.WithTimeout(ctx, hookTimeout)
+	defer cancel()
+	unlock, err := s.orbLocks.lock(cctx, orbID)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	d, ok, err := s.getDesktop(cctx, orbID)
+	if err != nil || !ok || d.ProfileID == nil || *d.ProfileID != *st.ProfileID {
+		return
+	}
+	reported := string(*st.ProfileMode)
+	switch {
+	case reported == accessReadonly && d.ProfileMode == accessExclusive:
+		p, err := getProfile(cctx, s.st.Q, *d.ProfileID)
+		if err != nil || p.HolderOrbID == nil || *p.HolderOrbID != orbID || p.Fence != d.Fence || d.LocalRev != p.Revision {
+			return
+		}
+		slog.Warn("orbd 把当前持有者的 Profile 记成了只读（迟到的 profile.mode），以库为准改回独占", "orb", orbID, "profile", p.ID)
+		if err := s.load(cctx, orbID, d, p.ID, d.Fence, accessExclusive); err != nil {
+			slog.Warn("纠正 Profile 使用方式失败", "orb", orbID, "profile", p.ID, "err", err)
+		}
+		s.o.RefreshDesktop(context.WithoutCancel(cctx), orbID)
+	case reported == accessExclusive && d.ProfileMode == accessReadonly:
+		reason := apigen.BrowserProfileReadonlyReasonRequested
+		if d.ReadonlyReason != nil {
+			reason = apigen.BrowserProfileReadonlyReason(*d.ReadonlyReason)
+		}
+		slog.Info("orbd 仍以独占使用已降为只读的 Profile，重发 profile.mode", "orb", orbID, "profile", *d.ProfileID)
+		if err := s.o.SendProfileMode(cctx, orbID, apigen.LinkCtlProfileModeParams{
+			ProfileID: *d.ProfileID, Mode: apigen.BrowserProfileAccessReadonly, Reason: reason,
+		}); err != nil {
+			slog.Info("重发 profile.mode 失败（忽略）", "orb", orbID, "err", err)
+		}
 	}
 }
 

@@ -130,6 +130,10 @@ type Service struct {
 	orbLocks  keyLocks
 	profLocks keyLocks
 	releases  queue
+	// modeFixes 是待纠正 Profile 使用方式的 orb（DesktopReported 排入）；fixes 存每台 orb 最新的报告。
+	modeFixes queue
+	fixMu     sync.Mutex
+	fixes     map[string]apigen.LinkCtlDesktopStateParams
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -140,13 +144,25 @@ type Service struct {
 	conns   map[*deskConn]struct{}
 
 	// 测试钩子（生产为 nil）：onReleased 在释放队列处理完一个 orb 之后调用；beforeSave 在导出体写完、
-	// 提交新修订之前调用。
-	onReleased func(orbID string)
-	beforeSave func(orbID string)
+	// 提交新修订之前调用；onWSDone 在一个桌面 WS 处理器完全退出（观看者名额已回收）后调用；
+	// beforeLease 在保存读完绑定、复核租约之前调用；beforeSteal 在接管的每次 CAS 之前调用；
+	// onModeFixed 在纠正队列处理完一个 orb 之后调用。
+	onReleased  func(orbID string)
+	beforeSave  func(orbID string)
+	onWSDone    func(orbID string)
+	beforeLease func(orbID string)
+	beforeSteal func(orbID string, attempt int)
+	onModeFixed func(orbID string)
 }
 
-// New 创建服务：建 <data_dir>/browser-profiles/（0700）并清掉残留的 .tmp-*，注册生命周期钩子与 orb 事件订阅。
+// New 创建服务：建 <data_dir>/browser-profiles/（0700）并清掉残留的 .tmp-*，注册生命周期钩子与 orb 事件订阅，
+// 并补做启动前未完成的租约释放。
 func New(cfg Config, st *store.Store, o Orbs, tickets TicketRedeemer) (*Service, error) {
+	return newService(cfg, st, o, tickets, nil)
+}
+
+// newService 是 New 的实现；init 非 nil 时在任何后台循环启动之前调用（测试据此安装钩子）。
+func newService(cfg Config, st *store.Store, o Orbs, tickets TicketRedeemer, init func(*Service)) (*Service, error) {
 	if cfg.Box == nil {
 		return nil, errors.New("desktop: Box 未配置")
 	}
@@ -169,17 +185,42 @@ func New(cfg Config, st *store.Store, o Orbs, tickets TicketRedeemer) (*Service,
 	s := &Service{
 		cfg: cfg, st: st, o: o, tickets: tickets, dir: dir, ctx: ctx, cancel: cancel,
 		orbLocks: keyLocks{m: map[string]*keyLock{}}, profLocks: keyLocks{m: map[string]*keyLock{}},
-		viewers: map[string]int{}, conns: map[*deskConn]struct{}{},
+		viewers: map[string]int{}, conns: map[*deskConn]struct{}{}, fixes: map[string]apigen.LinkCtlDesktopStateParams{},
 	}
 	s.releases.init()
-	s.wg.Add(1)
+	s.modeFixes.init()
+	if init != nil {
+		init(s)
+	}
+	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
 		s.releaseLoop()
 	}()
+	go func() {
+		defer s.wg.Done()
+		s.modeFixLoop()
+	}()
 	o.SetDesktopHooks(s)
 	o.Subscribe(s.onOrbEvent)
+	s.recoverReleases(ctx)
 	return s, nil
+}
+
+// recoverReleases 把启动时仍持有租约的 orb 全部排入释放队列：释放任务只在内存里，orynd 在 orb 已进入
+// frozen / stopped / failed / deleted 之后、释放完成之前重启（或关闭时队列里还有未处理的）会让租约一直挂着。
+// releaseIfDown 在事务里按 orb 当前状态重新判定，运行中的持有者不受影响。
+func (s *Service) recoverReleases(ctx context.Context) {
+	ps, err := s.st.Q.ListBrowserProfiles(ctx)
+	if err != nil {
+		slog.Warn("启动时列出浏览器 Profile 失败，跳过租约补偿", "err", err)
+		return
+	}
+	for _, p := range ps {
+		if p.HolderOrbID != nil {
+			s.releases.push(*p.HolderOrbID)
+		}
+	}
 }
 
 // Close 停止释放队列并断开全部桌面 WS。

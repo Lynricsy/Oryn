@@ -46,6 +46,8 @@ type fakeOrbd struct {
 	exportGate     chan struct{}
 	putFail        string
 	notReady       bool
+	// exportFail 非空时导出以 413 + 该码失败（orbd 的条目数 / 解包大小预检）。
+	exportFail string
 }
 
 func (o *fakeOrbd) requests() []string {
@@ -132,6 +134,9 @@ func (o *fakeOrbd) serve(req *http.Request) (*http.Response, error) {
 		if o.mode == "readonly" {
 			return errResp(409, "profile_readonly"), nil
 		}
+		if o.exportFail != "" {
+			return errResp(413, o.exportFail), nil
+		}
 		gate := o.exportGate
 		if gate != nil {
 			o.mu.Unlock()
@@ -186,6 +191,11 @@ type fakeOrbs struct {
 	applied  map[string]apigen.LinkCtlDesktopStateParams
 	order    []string // 跨 orb 的请求顺序：orbID + " " + 请求
 	refreshN int
+	// deskPeer 非 nil 时 DialDesk 把 orb 一端交给测试（不回显）。
+	deskPeer chan net.Conn
+	// deferModes 为真时 profile.mode 像超时一样返回错误，但消息留在 pending 里，deliverModes 时才落到 orbd。
+	deferModes bool
+	pending    []modeCall
 }
 
 func newFakeOrbs(st *store.Store) *fakeOrbs {
@@ -230,12 +240,16 @@ func (f *fakeOrbs) Do(_ context.Context, orbID string, req *http.Request) (*http
 
 func (f *fakeOrbs) DialDesk(_ context.Context, orbID string) (net.Conn, error) {
 	f.mu.Lock()
-	err := f.dialErr[orbID]
+	err, peer := f.dialErr[orbID], f.deskPeer
 	f.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 	a, b := net.Pipe()
+	if peer != nil {
+		peer <- b
+		return a, nil
+	}
 	go func() {
 		defer b.Close()
 		_, _ = io.Copy(b, b)
@@ -264,9 +278,40 @@ func (f *fakeOrbs) RefreshDesktop(context.Context, string) {
 
 func (f *fakeOrbs) SendProfileMode(_ context.Context, orbID string, p apigen.LinkCtlProfileModeParams) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.modes = append(f.modes, modeCall{orbID, p})
-	f.mu.Unlock()
+	if f.deferModes {
+		f.pending = append(f.pending, modeCall{orbID, p})
+		return context.DeadlineExceeded
+	}
 	return nil
+}
+
+// deliverModes 把迟到的 profile.mode 落到各自的 orbd（标记 Profile 相同时改为只读），并像 orbd 一样上报 desktop.state。
+func (f *fakeOrbs) deliverModes() {
+	f.mu.Lock()
+	pending := f.pending
+	f.pending = nil
+	hooks := f.hooks
+	f.mu.Unlock()
+	for _, m := range pending {
+		o := f.orbd(m.orbID)
+		o.mu.Lock()
+		if o.markerID == m.p.ProfileID {
+			o.mode = string(m.p.Mode)
+		}
+		o.mu.Unlock()
+		f.report(hooks, m.orbID)
+	}
+}
+
+// report 以 orbd 当前的标记调用 DesktopReported（模拟 desktop.state 通知）。
+func (f *fakeOrbs) report(h orbs.DesktopHooks, orbID string) {
+	o := f.orbd(orbID)
+	o.mu.Lock()
+	id, mode := o.markerID, apigen.BrowserProfileAccess(o.mode)
+	o.mu.Unlock()
+	h.DesktopReported(orbID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileID: &id, ProfileMode: &mode})
 }
 
 func (f *fakeOrbs) Subscribe(fn func(orbs.Event)) {
@@ -306,8 +351,10 @@ type env struct {
 	svc    *Service
 	dir    string
 	provID string
-	// released 在释放队列处理完一个 orb 后收到其 id。
+	// released 在释放队列处理完一个 orb 后收到其 id；fixed 在纠正队列处理完一个 orb 后收到其 id。
 	released chan string
+	fixed    chan string
+	box      *secrets.Box
 }
 
 func newEnv(t *testing.T) *env {
@@ -319,10 +366,13 @@ func newEnv(t *testing.T) *env {
 	box, err := secrets.New(bytes.Repeat([]byte{7}, 32))
 	require.NoError(t, err)
 	fo := newFakeOrbs(st)
-	svc, err := New(Config{DataDir: filepath.Join(dir, "data"), Box: box}, st, fo, nil)
+	e := &env{t: t, ctx: ctx, st: st, fo: fo, dir: filepath.Join(dir, "data", "browser-profiles"), released: make(chan string, 64), fixed: make(chan string, 64), box: box}
+	svc, err := newService(Config{DataDir: filepath.Join(dir, "data"), Box: box}, st, fo, nil, func(s *Service) {
+		s.onReleased = func(id string) { e.released <- id }
+		s.onModeFixed = func(id string) { e.fixed <- id }
+	})
 	require.NoError(t, err)
-	e := &env{t: t, ctx: ctx, st: st, fo: fo, svc: svc, dir: filepath.Join(dir, "data", "browser-profiles"), released: make(chan string, 64)}
-	svc.onReleased = func(id string) { e.released <- id }
+	e.svc = svc
 	e.provID = ids.New("prov")
 	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: e.provID, Name: "local", TokenHash: ids.Hash(ids.Token("opv")), CreatedAt: 1}))
 	t.Cleanup(func() {
@@ -700,7 +750,14 @@ func TestTakeoverSavesHolderFirst(t *testing.T) {
 	require.Len(t, e.fo.modes, 1)
 	assert.Equal(t, a, e.fo.modes[0].orbID)
 	assert.Equal(t, apigen.BrowserProfileAccessReadonly, e.fo.modes[0].p.Mode)
-	assert.Equal(t, "线程B", *e.fo.modes[0].p.By)
+	// 安全审查 F5：接管方线程的标题与 id 只进库（上面 TakenOverBy 来自库），不下发给 orb
+	assert.Nil(t, e.fo.modes[0].p.By)
+	assert.Nil(t, e.fo.modes[0].p.ByThreadID)
+	assert.Equal(t, apigen.BrowserProfileReadonlyReasonTakenOver, e.fo.modes[0].p.Reason)
+	raw, err := json.Marshal(e.fo.modes[0].p)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "线程B")
+	assert.NotContains(t, string(raw), "byThreadId")
 	assert.Equal(t, []string{"profile.saved", "profile.taken_over"}, e.events(p))
 
 	// 被接管的 A 之后冻结 / 停机不改变版本号

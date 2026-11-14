@@ -79,6 +79,9 @@ func (s *Service) serveWS(w http.ResponseWriter, r *http.Request) {
 	ws.SetReadLimit(wsReadLimit)
 	ctx, cancel := context.WithCancel(s.ctx)
 	c := &deskConn{orbID: orbID, principal: p, ws: ws, ctx: ctx, cancel: cancel}
+	if s.onWSDone != nil {
+		defer s.onWSDone(orbID)
+	}
 	defer c.closeWith(websocket.StatusNormalClosure, "")
 	if !s.register(c) {
 		c.closeWith(closeFull, "too many viewers")
@@ -141,8 +144,15 @@ func (s *Service) pumpToOrb(c *deskConn, desk net.Conn) {
 }
 
 // pumpToClient 把 desk 流上的字节以二进制消息写给客户端；每次写的截止时间为 wsWriteTimeout。
+// desk 流自己结束（Xvnc 重启、link 断开、orbd 关流）时以 4502 关闭 WS：pumpToOrb 的 ws.Read 不受 ctx 管，
+// 只有关闭 WS 才能让它返回，serveWS 才能回收观看者名额。
 func (s *Service) pumpToClient(c *deskConn, desk net.Conn) {
-	defer c.cancel()
+	defer func() {
+		if c.ctx.Err() == nil {
+			c.closeWith(closeUnreachable, "closed")
+		}
+		c.cancel()
+	}()
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := desk.Read(buf)

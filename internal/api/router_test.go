@@ -30,6 +30,35 @@ func TestRouterPublicPaths(t *testing.T) {
 	assert.Equal(t, 401, get("DELETE", "/api/v1/devices/pair%2Fstart").Code, "编码路径不得命中免鉴权表")
 }
 
+// B11：服务端前缀下没有路由的路径返回 404 JSON，不回落到 SPA；已有路由与 SPA 路由不受影响。
+func TestRouterUnknownServerPathsAre404JSON(t *testing.T) {
+	pass := func(next http.Handler) http.Handler { return next }
+	mount := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("LINK")) })
+	h := NewRouter(&Server{Deps: Deps{AuthMiddleware: pass, Mounts: map[string]http.Handler{"/orb/v1/link": mount}}})
+	get := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+	for _, p := range []string{
+		"/api", "/api/", "/api/v1/nope", "/api/v1/browser-profiles/bpf_X/archive", "/api/v2/threads",
+		"/api/v1/public/nope", "/provider/v1/nope", "/orb/v1/nope", "/orb",
+	} {
+		rec := get("GET", p)
+		assert.Equal(t, http.StatusNotFound, rec.Code, p)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"), p)
+		assert.JSONEq(t, `{"code":"not_found","message":"no such endpoint"}`, rec.Body.String(), p)
+	}
+	assert.Equal(t, "LINK", get("GET", "/orb/v1/link").Body.String(), "挂载点不受影响")
+	assert.Contains(t, get("GET", "/healthz").Body.String(), `"ok":true`)
+	assert.Equal(t, http.StatusNotImplemented, get("GET", "/api/v1/threads").Code, "已有路由照常分派")
+	for _, p := range []string{"/", "/t/x", "/orbs", "/settings/devices", "/apix"} {
+		rec := get("GET", p)
+		assert.Equal(t, http.StatusOK, rec.Code, p)
+		assert.Contains(t, rec.Header().Get("Content-Type"), "text/html", p)
+	}
+}
+
 func TestTrustedProxyIP(t *testing.T) {
 	var got string
 	h := trustedProxyIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.RemoteAddr }))

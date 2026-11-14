@@ -53,6 +53,9 @@ type DesktopHooks interface {
 	BeforeFreeze(ctx context.Context, orbID string)
 	// BeforeShutdown 在向 orbd 发 shutdown 之前调用（关闭式保存）。
 	BeforeShutdown(ctx context.Context, orbID string)
+	// DesktopReported 在 orbd 报告的桌面状态写进镜像之后调用（不得阻塞）：报告里 orbd 本地的 Profile 使用方式
+	// 与库里的绑定不一致时（例如迟到的 profile.mode 把当前持有者降成了只读），由实现方以库为准纠正。
+	DesktopReported(orbID string, st apigen.LinkCtlDesktopStateParams)
 }
 
 // SetDesktopHooks 设置 Profile 生命周期钩子；须在 orb link 接入之前调用。
@@ -121,6 +124,12 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 		return
 	}
 	s.RefreshDesktop(ctx, orbID)
+	s.hmu.RLock()
+	h := s.deskHooks
+	s.hmu.RUnlock()
+	if h != nil {
+		h.DesktopReported(orbID, st)
+	}
 }
 
 // onDesktopState 处理 desktop.state 通知。

@@ -33,6 +33,24 @@ type fakeHooks struct {
 
 	mu  sync.Mutex
 	log []string
+	// reported 是 DesktopReported 收到的 (orbID, profileMode) 序列（不进 log，免得打乱时机断言）。
+	reported []string
+}
+
+func (f *fakeHooks) DesktopReported(orbID string, st apigen.LinkCtlDesktopStateParams) {
+	mode := ""
+	if st.ProfileMode != nil {
+		mode = string(*st.ProfileMode)
+	}
+	f.mu.Lock()
+	f.reported = append(f.reported, orbID+" "+mode)
+	f.mu.Unlock()
+}
+
+func (f *fakeHooks) reports() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reported...)
 }
 
 func (f *fakeHooks) add(s string) {
@@ -182,7 +200,7 @@ func TestDesktopHooksSkippedWithoutFeature(t *testing.T) {
 
 // desktop.state 写镜像并发出 EventDesktop；browser 不合法丢弃；orb 已删除时不写；View 带 desktop。
 func TestDesktopStateMirror(t *testing.T) {
-	h, drv, _ := newDesktopHarness(t, []string{FeatureDesktop})
+	h, drv, hooks := newDesktopHarness(t, []string{FeatureDesktop})
 	ctx := context.Background()
 	orb, ctl := h.readyOrb(drv, "")
 	v, err := View(ctx, h.st.Q, orb)
@@ -191,7 +209,8 @@ func TestDesktopStateMirror(t *testing.T) {
 
 	before := h.countEvents(orb.ID, EventDesktop)
 	require.NoError(t, ctl.Notify("desktop.state", map[string]any{"displayReady": true, "browser": "bogus", "dirty": true}))
-	require.NoError(t, ctl.Notify("desktop.state", apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Dirty: true}))
+	ro := apigen.BrowserProfileAccessReadonly
+	require.NoError(t, ctl.Notify("desktop.state", apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Dirty: true, ProfileMode: &ro}))
 	require.Eventually(t, func() bool {
 		d, err := h.st.Q.GetOrbDesktop(ctx, orb.ID)
 		return err == nil && d.Browser == "running"
@@ -217,6 +236,9 @@ func TestDesktopStateMirror(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "running", d.Browser)
 	assert.Equal(t, before+1, h.countEvents(orb.ID, EventDesktop))
+	// 写进镜像的报告（且只有它）原样交给 DesktopReported：无效的与已删除的都不交
+	require.Eventually(t, func() bool { return len(hooks.reports()) > 0 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, []string{orb.ID + " readonly"}, hooks.reports())
 }
 
 // Create 带 Profile 时同一事务写 orb_desktops：readonly → 只读副本（requested）；takeover → 独占 + 接管标记。

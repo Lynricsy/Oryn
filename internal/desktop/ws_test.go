@@ -23,17 +23,26 @@ type wsEnv struct {
 	*env
 	tickets *auth.Tickets
 	srv     *httptest.Server
+	// wsDone 收到每个退出的桌面 WS 处理器的 orb id。
+	wsDone chan string
 }
 
 func newWSEnv(t *testing.T) *wsEnv {
 	e := newEnv(t)
 	tk := auth.NewTickets()
 	e.svc.tickets = tk
+	done := make(chan string, 256)
+	e.svc.onWSDone = func(id string) {
+		select {
+		case done <- id:
+		default:
+		}
+	}
 	r := chi.NewRouter()
 	r.Handle(WSPath, e.svc.WSHandler())
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return &wsEnv{env: e, tickets: tk, srv: srv}
+	return &wsEnv{env: e, tickets: tk, srv: srv, wsDone: done}
 }
 
 func (w *wsEnv) url(orbID, ticket string) string {

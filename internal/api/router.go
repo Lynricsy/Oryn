@@ -88,9 +88,23 @@ func NewRouter(s *Server) http.Handler {
 				WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 			},
 		})
+		// 服务端路径前缀下没有路由的请求一律 404 JSON，不回落到 SPA（否则客户端拿到 200 text/html）。
+		// 放在鉴权组里：匿名请求与真实端点一样先过鉴权（免鉴权前缀直接 404）。
+		for _, prefix := range serverPrefixes {
+			r.Handle(prefix, http.HandlerFunc(notFound))
+			r.Handle(prefix+"/*", http.HandlerFunc(notFound))
+		}
 	})
 	r.Handle("/*", webui.Handler(s.FrameSrc))
 	return r
+}
+
+// serverPrefixes 是只属于服务端的路径前缀（REST、provider 协议、orb link），不提供给 SPA 路由。
+var serverPrefixes = []string{"/api", "/provider", "/orb"}
+
+// notFound 写出 404 {code:"not_found"}。
+func notFound(w http.ResponseWriter, _ *http.Request) {
+	WriteError(w, http.StatusNotFound, "not_found", "no such endpoint")
 }
 
 // trustedProxyIP 只在请求来自本机反代（回环地址）时采信 X-Real-IP / X-Forwarded-For。

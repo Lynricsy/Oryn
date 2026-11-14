@@ -159,9 +159,12 @@ func TestFullStackDesktopProfiles(t *testing.T) {
 	var p apigen.BrowserProfile
 	s.rest("POST", "/api/v1/browser-profiles", apigen.BrowserProfileCreate{Name: "work"}, &p, 201)
 
-	// 1. 带 Profile 建线程 → orb ready 时 attached，本地标记是该 Profile
+	// 1. 带 Profile 建线程 → orb ready 时 attached，本地标记是该 Profile。显示就绪与 Profile 装载是两条独立的路径
+	// （Profile 不等显示），一起写进等待条件，不能拿 attached 当显示就绪的同步点。
 	t1 := s.newThread(map[string]any{"prompt": "one", "title": "线程一", "browserProfileId": p.ID})
-	o1 := s.waitOrb(t1.OrbID, func(o apigen.Orb) bool { return profileStatus(o) == apigen.OrbDesktopProfileStatusAttached }, "attached")
+	o1 := s.waitOrb(t1.OrbID, func(o apigen.Orb) bool {
+		return profileStatus(o) == apigen.OrbDesktopProfileStatusAttached && o.Desktop.DisplayReady
+	}, "attached 且显示就绪")
 	assert.True(t, o1.Desktop.DisplayReady)
 	raw, err := os.ReadFile(filepath.Join(s.drv.HomeDir(t1.OrbID), ".oryn", "desktop", "profile.json"))
 	require.NoError(t, err)
@@ -216,7 +219,10 @@ func TestFullStackDesktopProfiles(t *testing.T) {
 	assert.Equal(t, t2.OrbID, s.browserProfile(p.ID).Holder.OrbID)
 
 	t3 := s.newThread(map[string]any{"prompt": "three", "title": "线程三", "browserProfileId": p.ID, "profileMode": "takeover"})
-	s.waitOrb(t3.OrbID, func(o apigen.Orb) bool { return profileStatus(o) == apigen.OrbDesktopProfileStatusAttached }, "t3 attached")
+	// 第 5 步要在 t3 上启动浏览器（显示没就绪时 orbd 回 not_ready）：同样把显示就绪写进等待条件
+	s.waitOrb(t3.OrbID, func(o apigen.Orb) bool {
+		return profileStatus(o) == apigen.OrbDesktopProfileStatusAttached && o.Desktop.DisplayReady
+	}, "t3 attached 且显示就绪")
 	o2 := s.waitOrb(t2.OrbID, func(o apigen.Orb) bool { return profileStatus(o) == apigen.OrbDesktopProfileStatusReadonly }, "t2 降级只读")
 	require.NotNil(t, o2.Desktop.Profile.TakenOverBy)
 	assert.Equal(t, "线程三", *o2.Desktop.Profile.TakenOverBy.ThreadTitle)
