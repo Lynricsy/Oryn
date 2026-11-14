@@ -13,12 +13,13 @@ VALUES (@id, @mode, @thread_id, @project_id, @space_id, @name, @kind, @spec, @ti
 
 -- Replaces the definition; the target (mode, thread_id, project_id), id, run_count and last_run_at stay.
 -- Clears failures; paused_reason is whatever the caller passes (NULL, or 'user' when saved disabled).
+-- Bumps rev (definition version).
 -- name: UpdateScheduleDef :execrows
 UPDATE schedules SET name = @name, kind = @kind, spec = @spec, timezone = @timezone, run_at = @run_at,
     ends_at = @ends_at, prompt = @prompt, enabled = @enabled, paused_reason = @paused_reason,
     next_run_at = @next_run_at, failures = 0, space_id = @space_id, model = @model,
     thinking_level = @thinking_level, provider = @provider, orb_type = @orb_type, overlap = @overlap,
-    keep_last = @keep_last, created_by = @created_by, updated_at = @updated_at
+    keep_last = @keep_last, created_by = @created_by, updated_at = @updated_at, rev = rev + 1
 WHERE id = @id;
 
 -- name: GetSchedule :one
@@ -60,6 +61,10 @@ ORDER BY created_at, id;
 -- name: CountEnabledSchedules :one
 SELECT COUNT(*) FROM schedules WHERE enabled = 1;
 
+-- Enabled schedules defined by one creator ('user' | 'agent'); per-creator cap.
+-- name: CountEnabledSchedulesBy :one
+SELECT COUNT(*) FROM schedules WHERE enabled = 1 AND created_by = @created_by;
+
 -- name: ListDueSchedules :many
 SELECT * FROM schedules
 WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= CAST(@now AS INTEGER)
@@ -71,15 +76,17 @@ LIMIT 100;
 SELECT CAST(COALESCE(MIN(next_run_at), 0) AS INTEGER) FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL;
 
 -- Written when a run fires (or RunNow): next_run_at NULL = will not fire again.
+-- rev is bumped only when enabled changes (auto-finish / auto-pause), not on a plain fire.
 -- name: AdvanceSchedule :exec
 UPDATE schedules SET next_run_at = @next_run_at, last_run_at = @last_run_at, run_count = @run_count,
+    rev = rev + (CASE WHEN enabled = @enabled THEN 0 ELSE 1 END),
     enabled = @enabled, paused_reason = @paused_reason, updated_at = @updated_at
 WHERE id = @id;
 
--- Pause / resume / auto-pause. Resuming recomputes next_run_at and normally resets failures.
+-- Pause / resume / auto-pause. Resuming recomputes next_run_at and normally resets failures. Bumps rev.
 -- name: SetScheduleEnabled :exec
 UPDATE schedules SET enabled = @enabled, paused_reason = @paused_reason, next_run_at = @next_run_at,
-    failures = @failures, updated_at = @updated_at
+    failures = @failures, updated_at = @updated_at, rev = rev + 1
 WHERE id = @id;
 
 -- name: SetScheduleFailures :exec
@@ -138,17 +145,19 @@ WHERE schedule_runs.schedule_id = CAST(@schedule_id AS TEXT)
   AND schedule_runs.id NOT IN (SELECT r.id FROM schedule_runs r WHERE r.schedule_id = CAST(@schedule_id AS TEXT)
                                ORDER BY r.started_at DESC, r.id DESC LIMIT @keep);
 
--- Thread reports (coordinator waits for a thread to settle).
+-- Thread reports (coordinator waits for a thread to settle). gen tags the registration (rep_<ULID>).
 
 -- name: UpsertThreadReport :exec
-INSERT INTO thread_reports (thread_id, report_to, requested_at) VALUES (@thread_id, @report_to, @requested_at)
-ON CONFLICT (thread_id) DO UPDATE SET report_to = excluded.report_to, requested_at = excluded.requested_at;
+INSERT INTO thread_reports (thread_id, report_to, requested_at, gen) VALUES (@thread_id, @report_to, @requested_at, @gen)
+ON CONFLICT (thread_id) DO UPDATE SET report_to = excluded.report_to, requested_at = excluded.requested_at,
+    gen = excluded.gen;
 
 -- name: GetThreadReport :one
 SELECT * FROM thread_reports WHERE thread_id = @thread_id;
 
--- name: DeleteThreadReport :exec
-DELETE FROM thread_reports WHERE thread_id = @thread_id;
+-- Consumes a registration only if it is still the given generation.
+-- name: DeleteThreadReportGen :execrows
+DELETE FROM thread_reports WHERE thread_id = @thread_id AND gen = @gen;
 
 -- Detach new_thread schedules from a deleted space (space_id has no FK; cleared by code).
 -- name: ClearSpaceSchedules :exec

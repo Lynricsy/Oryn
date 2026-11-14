@@ -163,6 +163,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Schedules = schedule.New(schedule.Config{
 		Now: scheduleNow, AfterFunc: scheduleAfterFunc,
 		DeliverTimeout: cfg.Schedule.DeliverTimeout.D(), MaxFailures: cfg.Schedule.MaxFailures,
+		Changed: s.Hub.SchedulesChanged,
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)

@@ -11,6 +11,7 @@ import (
 
 const advanceSchedule = `-- name: AdvanceSchedule :exec
 UPDATE schedules SET next_run_at = ?1, last_run_at = ?2, run_count = ?3,
+    rev = rev + (CASE WHEN enabled = ?4 THEN 0 ELSE 1 END),
     enabled = ?4, paused_reason = ?5, updated_at = ?6
 WHERE id = ?7
 `
@@ -26,6 +27,7 @@ type AdvanceScheduleParams struct {
 }
 
 // Written when a run fires (or RunNow): next_run_at NULL = will not fire again.
+// rev is bumped only when enabled changes (auto-finish / auto-pause), not on a plain fire.
 func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams) error {
 	_, err := q.db.ExecContext(ctx, advanceSchedule,
 		arg.NextRunAt,
@@ -56,6 +58,18 @@ SELECT COUNT(*) FROM schedules WHERE enabled = 1
 // Enabled schedules of both modes (global cap).
 func (q *Queries) CountEnabledSchedules(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countEnabledSchedules)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countEnabledSchedulesBy = `-- name: CountEnabledSchedulesBy :one
+SELECT COUNT(*) FROM schedules WHERE enabled = 1 AND created_by = ?1
+`
+
+// Enabled schedules defined by one creator ('user' | 'agent'); per-creator cap.
+func (q *Queries) CountEnabledSchedulesBy(ctx context.Context, createdBy string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEnabledSchedulesBy, createdBy)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -104,17 +118,26 @@ func (q *Queries) DeleteScheduleByThread(ctx context.Context, threadID string) (
 	return result.RowsAffected()
 }
 
-const deleteThreadReport = `-- name: DeleteThreadReport :exec
-DELETE FROM thread_reports WHERE thread_id = ?1
+const deleteThreadReportGen = `-- name: DeleteThreadReportGen :execrows
+DELETE FROM thread_reports WHERE thread_id = ?1 AND gen = ?2
 `
 
-func (q *Queries) DeleteThreadReport(ctx context.Context, threadID string) error {
-	_, err := q.db.ExecContext(ctx, deleteThreadReport, threadID)
-	return err
+type DeleteThreadReportGenParams struct {
+	ThreadID string `json:"threadId"`
+	Gen      string `json:"gen"`
+}
+
+// Consumes a registration only if it is still the given generation.
+func (q *Queries) DeleteThreadReportGen(ctx context.Context, arg DeleteThreadReportGenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteThreadReportGen, arg.ThreadID, arg.Gen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last FROM schedules WHERE id = ?1
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules WHERE id = ?1
 `
 
 func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) {
@@ -148,12 +171,13 @@ func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) 
 		&i.OrbType,
 		&i.Overlap,
 		&i.KeepLast,
+		&i.Rev,
 	)
 	return i, err
 }
 
 const getScheduleByProjectName = `-- name: GetScheduleByProjectName :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
 WHERE mode = 'new_thread' AND name = ?1
   AND ((project_id IS NULL AND CAST(?2 AS TEXT) IS NULL)
        OR project_id = CAST(?2 AS TEXT))
@@ -197,12 +221,13 @@ func (q *Queries) GetScheduleByProjectName(ctx context.Context, arg GetScheduleB
 		&i.OrbType,
 		&i.Overlap,
 		&i.KeepLast,
+		&i.Rev,
 	)
 	return i, err
 }
 
 const getScheduleByThread = `-- name: GetScheduleByThread :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
 `
 
 // The thread-mode schedule of a thread.
@@ -237,6 +262,7 @@ func (q *Queries) GetScheduleByThread(ctx context.Context, threadID string) (Sch
 		&i.OrbType,
 		&i.Overlap,
 		&i.KeepLast,
+		&i.Rev,
 	)
 	return i, err
 }
@@ -283,13 +309,18 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, threadID string) (GetS
 }
 
 const getThreadReport = `-- name: GetThreadReport :one
-SELECT thread_id, report_to, requested_at FROM thread_reports WHERE thread_id = ?1
+SELECT thread_id, report_to, requested_at, gen FROM thread_reports WHERE thread_id = ?1
 `
 
 func (q *Queries) GetThreadReport(ctx context.Context, threadID string) (ThreadReport, error) {
 	row := q.db.QueryRowContext(ctx, getThreadReport, threadID)
 	var i ThreadReport
-	err := row.Scan(&i.ThreadID, &i.ReportTo, &i.RequestedAt)
+	err := row.Scan(
+		&i.ThreadID,
+		&i.ReportTo,
+		&i.RequestedAt,
+		&i.Gen,
+	)
 	return i, err
 }
 
@@ -407,7 +438,7 @@ func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunPa
 }
 
 const listDueSchedules = `-- name: ListDueSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
 WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= CAST(?1 AS INTEGER)
 ORDER BY next_run_at, id
 LIMIT 100
@@ -450,6 +481,7 @@ func (q *Queries) ListDueSchedules(ctx context.Context, now int64) ([]Schedule, 
 			&i.OrbType,
 			&i.Overlap,
 			&i.KeepLast,
+			&i.Rev,
 		); err != nil {
 			return nil, err
 		}
@@ -590,7 +622,7 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context) ([]ListScheduleSumm
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
 WHERE (CAST(?1 AS TEXT) IS NULL OR mode = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS TEXT) IS NULL
@@ -656,6 +688,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 			&i.OrbType,
 			&i.Overlap,
 			&i.KeepLast,
+			&i.Rev,
 		); err != nil {
 			return nil, err
 		}
@@ -684,7 +717,7 @@ func (q *Queries) MinNextRun(ctx context.Context) (int64, error) {
 
 const setScheduleEnabled = `-- name: SetScheduleEnabled :exec
 UPDATE schedules SET enabled = ?1, paused_reason = ?2, next_run_at = ?3,
-    failures = ?4, updated_at = ?5
+    failures = ?4, updated_at = ?5, rev = rev + 1
 WHERE id = ?6
 `
 
@@ -697,7 +730,7 @@ type SetScheduleEnabledParams struct {
 	ID           string  `json:"id"`
 }
 
-// Pause / resume / auto-pause. Resuming recomputes next_run_at and normally resets failures.
+// Pause / resume / auto-pause. Resuming recomputes next_run_at and normally resets failures. Bumps rev.
 func (q *Queries) SetScheduleEnabled(ctx context.Context, arg SetScheduleEnabledParams) error {
 	_, err := q.db.ExecContext(ctx, setScheduleEnabled,
 		arg.Enabled,
@@ -791,7 +824,7 @@ UPDATE schedules SET name = ?1, kind = ?2, spec = ?3, timezone = ?4, run_at = ?5
     ends_at = ?6, prompt = ?7, enabled = ?8, paused_reason = ?9,
     next_run_at = ?10, failures = 0, space_id = ?11, model = ?12,
     thinking_level = ?13, provider = ?14, orb_type = ?15, overlap = ?16,
-    keep_last = ?17, created_by = ?18, updated_at = ?19
+    keep_last = ?17, created_by = ?18, updated_at = ?19, rev = rev + 1
 WHERE id = ?20
 `
 
@@ -820,6 +853,7 @@ type UpdateScheduleDefParams struct {
 
 // Replaces the definition; the target (mode, thread_id, project_id), id, run_count and last_run_at stay.
 // Clears failures; paused_reason is whatever the caller passes (NULL, or 'user' when saved disabled).
+// Bumps rev (definition version).
 func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateScheduleDef,
 		arg.Name,
@@ -851,18 +885,25 @@ func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefPa
 
 const upsertThreadReport = `-- name: UpsertThreadReport :exec
 
-INSERT INTO thread_reports (thread_id, report_to, requested_at) VALUES (?1, ?2, ?3)
-ON CONFLICT (thread_id) DO UPDATE SET report_to = excluded.report_to, requested_at = excluded.requested_at
+INSERT INTO thread_reports (thread_id, report_to, requested_at, gen) VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT (thread_id) DO UPDATE SET report_to = excluded.report_to, requested_at = excluded.requested_at,
+    gen = excluded.gen
 `
 
 type UpsertThreadReportParams struct {
 	ThreadID    string `json:"threadId"`
 	ReportTo    string `json:"reportTo"`
 	RequestedAt int64  `json:"requestedAt"`
+	Gen         string `json:"gen"`
 }
 
-// Thread reports (coordinator waits for a thread to settle).
+// Thread reports (coordinator waits for a thread to settle). gen tags the registration (rep_<ULID>).
 func (q *Queries) UpsertThreadReport(ctx context.Context, arg UpsertThreadReportParams) error {
-	_, err := q.db.ExecContext(ctx, upsertThreadReport, arg.ThreadID, arg.ReportTo, arg.RequestedAt)
+	_, err := q.db.ExecContext(ctx, upsertThreadReport,
+		arg.ThreadID,
+		arg.ReportTo,
+		arg.RequestedAt,
+		arg.Gen,
+	)
 	return err
 }

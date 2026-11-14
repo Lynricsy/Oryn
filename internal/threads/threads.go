@@ -44,6 +44,8 @@ type CreateParams struct {
 	// ScheduleID / ScheduleRun 记录创建它的「新建线程」定时与运行序号（M9）。
 	ScheduleID  string
 	ScheduleRun int64
+	// Tag 非空时跟踪首条提示词的终态：恰好得到一次 Observer.TurnEnded（契约 C1）；空 = 不跟踪。
+	Tag string
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。

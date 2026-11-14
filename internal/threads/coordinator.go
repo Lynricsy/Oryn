@@ -41,6 +41,8 @@ type AutoMessage struct {
 	Text string
 	// Steer 为真且线程正在工作时作为 steer 送达；否则排在当前回合之后。
 	Steer bool
+	// Tag 非空时跟踪这次投递的终态：恰好得到一次 Observer.TurnEnded（契约 C1）；空 = 不跟踪。
+	Tag string
 }
 
 // HostToolCall 是协调线程里 omp 发来的一次宿主工具调用。

@@ -801,6 +801,7 @@ function schedule(
 				r.status === "running" ||
 				r.status === "needs_input",
 		).length,
+		rev: 1,
 		...(runs[0] ? { lastRun: runs[0], lastRunAt: runs[0].scheduledFor } : {}),
 		...p,
 	};

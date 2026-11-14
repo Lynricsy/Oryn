@@ -382,3 +382,8 @@ func (h *Hub) NotificationsRead(threadID string) {
 	}
 	h.toAll(m)
 }
+
+// SchedulesChanged 实现 schedule.Config.Changed：某个定时的定义或运行记录变了，广播给全部私有连接（契约 C7.2）。
+func (h *Hub) SchedulesChanged(scheduleID string) {
+	h.toAll(apigen.WsServerSchedulesChanged{Type: apigen.WsServerSchedulesChangedTypeSchedulesChanged, ScheduleID: scheduleID})
+}

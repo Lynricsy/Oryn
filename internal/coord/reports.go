@@ -7,13 +7,14 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // requestReport 登记：target 静止后向 reportTo（协调对话或发起它的线程）投递一次回报。
 func (s *Service) requestReport(ctx context.Context, target, reportTo string) {
-	if err := s.st.Q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: target, ReportTo: reportTo, RequestedAt: s.nowMs()}); err != nil {
+	if err := s.st.Q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: target, ReportTo: reportTo, RequestedAt: s.nowMs(), Gen: ids.New("rep")}); err != nil {
 		slog.Warn("coord: 登记回报失败", "thread", target, "reportTo", reportTo, "err", err)
 	}
 }
@@ -63,6 +64,9 @@ func (s *Service) InputResolved(string, string) {}
 // Seen 实现 threads.Observer（不关心）。
 func (s *Service) Seen(string) {}
 
+// TurnEnded 实现 threads.Observer（S0 只落声明，切片 A 接入回报）。
+func (s *Service) TurnEnded(threads.TurnEvent) {}
+
 // processReports 处理排队的状态变化：有回报登记的线程向 report_to 投递一次回报。
 func (s *Service) processReports(ctx context.Context) {
 	for {
@@ -96,7 +100,7 @@ func (s *Service) report(ctx context.Context, ev threads.StateEvent) {
 	final := ev.State != threads.StateAwaitingInput
 	drop := func(why string) {
 		slog.Info("coord: 丢弃线程回报", "thread", ev.ThreadID, "reportTo", r.ReportTo, "why", why)
-		_ = s.st.Q.DeleteThreadReport(ctx, ev.ThreadID)
+		_, _ = s.st.Q.DeleteThreadReportGen(ctx, db.DeleteThreadReportGenParams{ThreadID: ev.ThreadID, Gen: r.Gen})
 	}
 	to, err := s.st.Q.GetThread(ctx, r.ReportTo)
 	if err != nil || to.ArchivedAt != nil {
@@ -131,6 +135,6 @@ func (s *Service) report(ctx context.Context, ev threads.StateEvent) {
 		slog.Warn("coord: 投递线程回报失败", "thread", t.ID, "reportTo", r.ReportTo, "err", err)
 	}
 	if final {
-		_ = s.st.Q.DeleteThreadReport(ctx, ev.ThreadID)
+		_, _ = s.st.Q.DeleteThreadReportGen(ctx, db.DeleteThreadReportGenParams{ThreadID: ev.ThreadID, Gen: r.Gen})
 	}
 }

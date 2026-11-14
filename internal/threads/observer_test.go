@@ -46,6 +46,8 @@ func (r *recObserver) Seen(id string) {
 	r.seen = append(r.seen, id)
 }
 
+func (r *recObserver) TurnEnded(TurnEvent) {}
+
 func (r *recObserver) snapshot() recObserver {
 	r.mu.Lock()
 	defer r.mu.Unlock()

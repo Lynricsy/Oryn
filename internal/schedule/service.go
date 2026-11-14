@@ -34,6 +34,8 @@ type Config struct {
 	DeliverTimeout time.Duration
 	// MaxFailures 是连续失败多少次后自动暂停（默认 3）。
 	MaxFailures int
+	// Changed 在某个定时的定义或运行记录变化后调用（契约 C7.2，调用时不持 mu）；nil = 不推送。
+	Changed func(scheduleID string)
 }
 
 // Threads 是调度器需要的线程能力（*threads.Service 实现）。
@@ -65,6 +67,8 @@ type Input struct {
 	ProjectID, SpaceID, ThinkingLevel, Provider, OrbType, Overlap string
 	Model                                                         *apigen.ModelRef
 	KeepLast                                                      *int
+	// IfRev 非 nil 时只在定时当前 rev 等于它时才替换（契约 C7.1，仅 REST 的两个 PUT 使用）；nil = 不做版本检查。
+	IfRev *int64
 }
 
 // Filter 是 List 的过滤条件；空串 = 不限。NoProject 只列没有项目的 new_thread 定时。
@@ -81,6 +85,7 @@ const (
 	CodeThreadArchived    = "thread_archived"
 	CodeNameTaken         = "schedule_name_taken"
 	CodeScheduleLimit     = "schedule_limit"
+	CodeScheduleConflict  = "schedule_conflict"
 	CodeNotFound          = "not_found"
 	CodeConflict          = "conflict"
 	createdByUser         = "user"
@@ -211,6 +216,7 @@ func InputFromAPI(in apigen.ScheduleInput) Input {
 		Prompt: in.Prompt, At: in.At, EndsAt: in.EndsAt, Enabled: in.Enabled, ThreadID: deref(in.ThreadID),
 		ProjectID: deref(in.ProjectID), SpaceID: deref(in.SpaceID), ThinkingLevel: deref(in.ThinkingLevel),
 		Provider: deref(in.Provider), OrbType: deref(in.OrbType), Model: in.Model, KeepLast: in.KeepLast,
+		IfRev: in.IfRev,
 	}
 	if in.Mode != nil {
 		out.Mode = string(*in.Mode)
@@ -702,7 +708,7 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 		EndsAt: r.EndsAt, Prompt: r.Prompt, Enabled: r.Enabled, NextRunAt: r.NextRunAt, LastRunAt: r.LastRunAt,
 		RunCount: r.RunCount, Failures: int(r.Failures), CreatedBy: apigen.ScheduleCreatedBy(r.CreatedBy),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Overlap: apigen.ScheduleOverlap(r.Overlap), KeepLast: int(r.KeepLast),
-		OpenRuns: int(open), ThreadID: r.ThreadID, ProjectID: r.ProjectID, SpaceID: r.SpaceID,
+		OpenRuns: int(open), Rev: r.Rev, ThreadID: r.ThreadID, ProjectID: r.ProjectID, SpaceID: r.SpaceID,
 		ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
 	}
 	switch r.Kind {

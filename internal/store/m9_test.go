@@ -266,6 +266,28 @@ func TestM9ScheduleQueries(t *testing.T) {
 	assert.EqualValues(t, 0, s1.Failures)
 	assert.EqualValues(t, 3, s1.KeepLast)
 	assert.Equal(t, "agent", s1.CreatedBy, "定义更新写入执行替换的一方")
+	assert.EqualValues(t, 2, s1.Rev, "定义替换 rev +1")
+
+	// rev：暂停 / 恢复 +1；按时触发（enabled 不变）不变，自动结束 / 自动暂停（enabled 变化）+1。
+	agentEnabled, err := q.CountEnabledSchedulesBy(ctx, "agent")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, agentEnabled)
+	pausedUser := "user"
+	require.NoError(t, q.SetScheduleEnabled(ctx, db.SetScheduleEnabledParams{ID: "sch_n1", Enabled: false, PausedReason: &pausedUser, UpdatedAt: 10}))
+	agentEnabled, err = q.CountEnabledSchedulesBy(ctx, "agent")
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, agentEnabled)
+	require.NoError(t, q.SetScheduleEnabled(ctx, db.SetScheduleEnabledParams{ID: "sch_n1", Enabled: true, UpdatedAt: 11}))
+	require.NoError(t, q.AdvanceSchedule(ctx, db.AdvanceScheduleParams{ID: "sch_n1", RunCount: 5, Enabled: true, UpdatedAt: 12}))
+	s1, err = q.GetSchedule(ctx, "sch_n1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, s1.Rev, "暂停与恢复各 +1，按时触发不变")
+	pausedDone := "done"
+	require.NoError(t, q.AdvanceSchedule(ctx, db.AdvanceScheduleParams{ID: "sch_n1", RunCount: 6, Enabled: false, PausedReason: &pausedDone, UpdatedAt: 13}))
+	s1, err = q.GetSchedule(ctx, "sch_n1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, s1.Rev, "触发时自动结束 +1")
+	assert.False(t, s1.Enabled)
 
 	// 线程删除级联删除其线程内定时；项目删除级联删除项目定时。
 	_, err = q.DeleteThread(ctx, "T-1")
@@ -277,14 +299,20 @@ func TestM9ScheduleQueries(t *testing.T) {
 	_, err = q.GetSchedule(ctx, "sch_n1")
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 
-	// 回报：upsert 改写目标。
+	// 回报：upsert 改写目标与代号；只有当前代号能消费登记。
 	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "assistant", ID: "T-a", TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
-	require.NoError(t, q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: "T-2", ReportTo: "T-a", RequestedAt: 1}))
-	require.NoError(t, q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: "T-2", ReportTo: "T-a", RequestedAt: 2}))
+	require.NoError(t, q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: "T-2", ReportTo: "T-a", RequestedAt: 1, Gen: "rep_1"}))
+	require.NoError(t, q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: "T-2", ReportTo: "T-a", RequestedAt: 2, Gen: "rep_2"}))
 	rep, err := q.GetThreadReport(ctx, "T-2")
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, rep.RequestedAt)
-	require.NoError(t, q.DeleteThreadReport(ctx, "T-2"))
+	assert.Equal(t, "rep_2", rep.Gen)
+	gone, err := q.DeleteThreadReportGen(ctx, db.DeleteThreadReportGenParams{ThreadID: "T-2", Gen: "rep_1"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, gone, "旧代号不消费新登记")
+	gone, err = q.DeleteThreadReportGen(ctx, db.DeleteThreadReportGenParams{ThreadID: "T-2", Gen: "rep_2"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, gone)
 }
 
 // TestM9ScheduleThreadsAndCoordActions 覆盖保留策略的查询与审计记录。
@@ -340,7 +368,7 @@ func TestM9ScheduleThreadsAndCoordActions(t *testing.T) {
 	assert.Len(t, list, 1)
 }
 
-// TestM9MigrationDownUp 回滚 0015 再重新应用：Down 段可执行，且回滚后 threads / orbs 恢复原列。
+// TestM9MigrationDownUp 依次回滚 0016、0015 再重新应用：Down 段可执行，且回滚后各表恢复原列。
 func TestM9MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -348,11 +376,19 @@ func TestM9MigrationDownUp(t *testing.T) {
 	require.NoError(t, err)
 	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
 	require.NoError(t, err)
+	var n int
+	m9Fixes := `SELECT (SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'rev')
+		+ (SELECT COUNT(*) FROM pragma_table_info('thread_reports') WHERE name = 'gen')`
 
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	assert.EqualValues(t, 16, r.Source.Version)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m9Fixes).Scan(&n))
+	assert.Zero(t, n, "0016 回滚后 schedules.rev 与 thread_reports.gen 消失")
+
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	assert.EqualValues(t, 15, r.Source.Version)
-	var n int
 	require.NoError(t, s.DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM pragma_table_info('threads') WHERE name IN ('kind', 'space_id', 'shipped_at', 'schedule_id', 'schedule_run')`).Scan(&n))
 	assert.Zero(t, n)
@@ -364,4 +400,6 @@ func TestM9MigrationDownUp(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('orbs') WHERE name = 'coordinator'`).Scan(&n))
 	assert.Equal(t, 1, n)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m9Fixes).Scan(&n))
+	assert.Equal(t, 2, n)
 }

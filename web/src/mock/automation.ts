@@ -309,6 +309,7 @@ export class MockAutomation {
 			updatedAt: now,
 			...(existing?.lastRun ? { lastRun: existing.lastRun } : {}),
 			openRuns: existing?.openRuns ?? 0,
+			rev: existing ? existing.rev + 1 : 1,
 		};
 		return s;
 	}

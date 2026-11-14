@@ -363,6 +363,9 @@ func (s *Service) Seen(threadID string) {
 	}
 }
 
+// TurnEnded 实现 threads.Observer（不关心）。
+func (s *Service) TurnEnded(threads.TurnEvent) {}
+
 // armLocked 排（或重置）一个定时器。调用方持有 s.mu。
 func (s *Service) armLocked(threadID string, key timerKey, d time.Duration, pt *pendingTimer) {
 	s.cancelLocked(threadID, key)

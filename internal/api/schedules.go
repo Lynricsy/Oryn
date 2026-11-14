@@ -35,7 +35,8 @@ func writeScheduleErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch se.Code {
 	case schedule.CodeNotFound, schedule.CodeScheduleNotFound:
 		status = http.StatusNotFound
-	case schedule.CodeScheduleBusy, schedule.CodeNameTaken, schedule.CodeThreadArchived, schedule.CodeScheduleLimit, schedule.CodeConflict:
+	case schedule.CodeScheduleBusy, schedule.CodeNameTaken, schedule.CodeThreadArchived, schedule.CodeScheduleLimit, schedule.CodeConflict,
+		schedule.CodeScheduleConflict:
 		status = http.StatusConflict
 	}
 	WriteError(w, status, se.Code, se.Message)

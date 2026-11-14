@@ -70,6 +70,8 @@ type Orbs struct {
 	features map[string]bool
 	// starts 记录每个线程收到的 agent.start 参数（按到达顺序）。
 	starts map[string][]apigen.LinkCtlAgentStartParams
+	// deletes 记录 Delete 调用的 orb（按调用顺序）。
+	deletes []string
 }
 
 type serverLink struct {
@@ -128,6 +130,13 @@ func (o *Orbs) Snapshots() []string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return append([]string(nil), o.snapshots...)
+}
+
+// Deletes 返回 Delete 调用过的 orb（按调用顺序）。
+func (o *Orbs) Deletes() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.deletes...)
 }
 
 // AddBlob 让所有 fake orbd 能经 blob.fetch 提供该内容。
@@ -452,6 +461,28 @@ func (o *Orbs) Kick(orbID, _ string) {
 	if l != nil {
 		_ = l.sess.Close()
 	}
+}
+
+// Delete 实现 threads.Orbs：记录调用，关闭 fake orbd，orb 行进入 deleted（已删除时无操作）。
+func (o *Orbs) Delete(ctx context.Context, orbID string) error {
+	orb, err := o.st.Q.GetOrb(ctx, orbID)
+	if err != nil {
+		return err
+	}
+	o.mu.Lock()
+	o.deletes = append(o.deletes, orbID)
+	d := o.orbds[orbID]
+	delete(o.orbds, orbID)
+	delete(o.held, orbID)
+	o.mu.Unlock()
+	if orb.State == "deleted" {
+		return nil
+	}
+	if d != nil {
+		d.Close()
+	}
+	o.setState(orbID, "deleted")
+	return nil
 }
 
 // ---- fake orbd ----

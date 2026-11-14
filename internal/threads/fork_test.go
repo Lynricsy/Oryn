@@ -31,6 +31,7 @@ func (nopOrbs) TouchAgent(context.Context, string)           {}
 func (nopOrbs) SetQuiescence(func(string, func() bool) bool) {}
 func (nopOrbs) Kick(string, string)                          {}
 func (nopOrbs) HasFeature(string, string) bool               { return false }
+func (nopOrbs) Delete(context.Context, string) error         { return nil }
 
 // fork_from 在途时出现的新主会话文件（其产物）不得作为源线程的新会话入库，也不得移动源线程的叶子；
 // 同期出现的其它新文件在 fork 结束后补入库。

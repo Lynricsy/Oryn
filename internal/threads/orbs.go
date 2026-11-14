@@ -97,4 +97,6 @@ type Orbs interface {
 	Kick(orbID, reason string)
 	// HasFeature 报告 orb 当前已 hello 的 link 是否声明了 feature（M9：协调线程要求 "coordinator"）。
 	HasFeature(orbID, feature string) bool
+	// Delete 删除 orb（先 shutdown 再入队 delete）；契约 C4：建线程事务失败时回收本次新建的 orb。
+	Delete(ctx context.Context, orbID string) error
 }

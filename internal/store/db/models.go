@@ -376,6 +376,7 @@ type Schedule struct {
 	OrbType       *string `json:"orbType"`
 	Overlap       string  `json:"overlap"`
 	KeepLast      int64   `json:"keepLast"`
+	Rev           int64   `json:"rev"`
 }
 
 type ScheduleRun struct {
@@ -456,6 +457,7 @@ type ThreadReport struct {
 	ThreadID    string `json:"threadId"`
 	ReportTo    string `json:"reportTo"`
 	RequestedAt int64  `json:"requestedAt"`
+	Gen         string `json:"gen"`
 }
 
 type ThreadShare struct {

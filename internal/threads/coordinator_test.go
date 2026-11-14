@@ -260,6 +260,7 @@ type seenRecorder struct {
 func (r *seenRecorder) StateChanged(StateEvent)      {}
 func (r *seenRecorder) InputRequested(InputEvent)    {}
 func (r *seenRecorder) InputResolved(string, string) {}
+func (r *seenRecorder) TurnEnded(TurnEvent)          {}
 func (r *seenRecorder) Seen(id string) {
 	r.mu.Lock()
 	r.seen = append(r.seen, id)

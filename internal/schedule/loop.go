@@ -140,6 +140,9 @@ func (s *Service) InputResolved(string, string) {}
 // Seen 实现 threads.Observer（不关心）。
 func (s *Service) Seen(string) {}
 
+// TurnEnded 实现 threads.Observer（S0 只落声明，切片 B 接入运行结算）。
+func (s *Service) TurnEnded(threads.TurnEvent) {}
+
 // processEvents 顺序处理已入队的事件直到队列为空。调用方持有 loopMu。
 func (s *Service) processEvents(ctx context.Context) {
 	for {

@@ -1963,7 +1963,7 @@ export interface paths {
         get: operations["getSchedule"];
         /**
          * 替换定时的定义（保留 `id`、`runCount`；清零 `failures` 与 `pausedReason`；重算 `nextRunAt`）
-         * @description `mode` / `threadId` / `projectId` 若出现必须与现值相同（目标不可改），否则 400 `invalid_schedule`。
+         * @description `mode` / `threadId` / `projectId` 若出现必须与现值相同（目标不可改），否则 400 `invalid_schedule`。带 `ifRev` 且与当前 `rev` 不等（或定时已不存在）→ 409 `schedule_conflict`。
          */
         put: operations["putSchedule"];
         post?: never;
@@ -2066,7 +2066,7 @@ export interface paths {
         get: operations["getThreadSchedule"];
         /**
          * 设置线程内定时（没有则新建，有则替换定义；隐含 `mode = thread`）
-         * @description 请求体不得带 `new_thread` 专属字段，`mode` / `threadId` 若出现须为 `thread` / 本线程，否则 400 `invalid_schedule`；线程已归档 → 409 `thread_archived`。
+         * @description 请求体不得带 `new_thread` 专属字段，`mode` / `threadId` 若出现须为 `thread` / 本线程，否则 400 `invalid_schedule`；线程已归档 → 409 `thread_archived`；带 `ifRev` 且不满足版本条件 → 409 `schedule_conflict`。
          */
         put: operations["putThreadSchedule"];
         post?: never;
@@ -2380,7 +2380,7 @@ export interface components {
              *     M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
              *     `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
              *     M9（Space、助手与定时，HTTP 状态见 docs/protocol.md）：`invalid_schedule`（400）、`schedule_not_found`（404）、`space_not_found`（404）、
-             *     `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`space_name_taken`（409）、
+             *     `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`schedule_conflict`（409，`ifRev` 与当前 `rev` 不符）、`space_name_taken`（409）、
              *     `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
              *     `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
              */
@@ -3258,6 +3258,12 @@ export interface components {
             overlap?: components["schemas"]["ScheduleOverlap"];
             /** @description 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5） */
             keepLast?: number;
+            /**
+             * Format: int64
+             * @description 仅 `PUT /schedules/{id}` 与 `PUT /threads/{id}/schedule` 使用（其它入口忽略）：给出时只在定时当前 `rev` 等于它时才替换，否则 409 `schedule_conflict`。
+             *     线程内定时：`0` = 只在该线程没有定时时新建；线程没有定时而给了非 0 值同样 409。省略 = 不做版本检查。
+             */
+            ifRev?: number;
         };
         /** @description 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义） */
         Schedule: {
@@ -3302,6 +3308,11 @@ export interface components {
             lastRun?: components["schemas"]["ScheduleRun"];
             /** @description 未结束的运行数（`pending` / `running` / `needs_input`） */
             openRuns: number;
+            /**
+             * Format: int64
+             * @description 定义版本：定义被替换、暂停 / 恢复、自动暂停或自动结束时 +1；按时触发不变。编辑后保存时作为 `ifRev` 带回
+             */
+            rev: number;
         };
         /**
          * @description `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
@@ -3323,7 +3334,7 @@ export interface components {
             deliveredAt?: components["schemas"]["TimestampMs"];
             finishedAt?: components["schemas"]["TimestampMs"];
             status: components["schemas"]["ScheduleRunStatus"];
-            /** @description 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`，或创建线程失败的原因 */
+            /** @description 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因 */
             error?: string;
         };
         ScheduleList: {
@@ -4108,7 +4119,7 @@ export interface components {
             on: boolean;
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -4319,6 +4330,15 @@ export interface components {
             type: "notifications.read";
             /** @description 只该线程的通知已读；省略 = 全部已读 */
             threadId?: components["schemas"]["ThreadId"];
+        };
+        /** @description 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次 */
+        WsServerSchedulesChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "schedules.changed";
+            scheduleId: components["schemas"]["ScheduleId"];
         };
         /**
          * @description `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。

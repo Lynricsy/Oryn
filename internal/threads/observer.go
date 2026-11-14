@@ -20,6 +20,8 @@ type Observer interface {
 	InputResolved(threadID, requestID string)
 	// Seen 在用户与线程交互时调用（focus、cmd、ui.response）：热路径，实现须 O(1)。
 	Seen(threadID string)
+	// TurnEnded 在一次带标签的自动化投递（AutoMessage.Tag / CreateParams.Tag）得到终态时调用（契约 C1）。
+	TurnEnded(ev TurnEvent)
 }
 
 // StateEvent 是一次线程状态变化。Reason 只在 State == error 时可能非空（所在 orb 失败的原因）。
@@ -27,6 +29,9 @@ type StateEvent struct {
 	ThreadID, Prev, State, Reason string
 	// Focused 为真表示变化发生时有连接正在看该线程。
 	Focused bool
+	// PromptError 为真表示 State == error 的原因只是 prompt_result 报错（线程未失败、orb 不是 failed、
+	// agent 重启未耗尽）：带标签投递的消费方据此等待 TurnEnded（契约 C1）。
+	PromptError bool
 }
 
 // InputEvent 是一个新的待答请求。
@@ -65,6 +70,12 @@ func (l observerList) InputResolved(threadID, requestID string) {
 func (l observerList) Seen(threadID string) {
 	for _, o := range l {
 		o.Seen(threadID)
+	}
+}
+
+func (l observerList) TurnEnded(ev TurnEvent) {
+	for _, o := range l {
+		o.TurnEnded(ev)
 	}
 }
 

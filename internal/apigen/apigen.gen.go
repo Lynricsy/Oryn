@@ -1978,6 +1978,21 @@ func (e WsServerResType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerSchedulesChangedType.
+const (
+	WsServerSchedulesChangedTypeSchedulesChanged WsServerSchedulesChangedType = "schedules.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerSchedulesChangedType enum.
+func (e WsServerSchedulesChangedType) Valid() bool {
+	switch e {
+	case WsServerSchedulesChangedTypeSchedulesChanged:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerTermLaggedType.
 const (
 	TermLagged WsServerTermLaggedType = "term.lagged"
@@ -2637,7 +2652,7 @@ type Error struct {
 	// M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
 	// `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
 	// M9（Space、助手与定时，HTTP 状态见 docs/protocol.md）：`invalid_schedule`（400）、`schedule_not_found`（404）、`space_not_found`（404）、
-	// `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`space_name_taken`（409）、
+	// `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`schedule_conflict`（409，`ifRev` 与当前 `rev` 不符）、`space_name_taken`（409）、
 	// `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
 	// `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
 	Code    string `json:"code"`
@@ -4631,6 +4646,9 @@ type Schedule struct {
 	Prompt    string     `json:"prompt"`
 	Provider  *string    `json:"provider,omitempty"`
 
+	// Rev 定义版本：定义被替换、暂停 / 恢复、自动暂停或自动结束时 +1；按时触发不变。编辑后保存时作为 `ifRev` 带回
+	Rev int64 `json:"rev"`
+
 	// RunCount 已触发次数（含跳过与手动触发）；也是下一次运行的序号减一
 	RunCount int64 `json:"runCount"`
 
@@ -4673,6 +4691,10 @@ type ScheduleInput struct {
 
 	// Every Example: 30m
 	Every *string `json:"every,omitempty"`
+
+	// IfRev 仅 `PUT /schedules/{id}` 与 `PUT /threads/{id}/schedule` 使用（其它入口忽略）：给出时只在定时当前 `rev` 等于它时才替换，否则 409 `schedule_conflict`。
+	// 线程内定时：`0` = 只在该线程没有定时时新建；线程没有定时而给了非 0 值同样 409。省略 = 不做版本检查。
+	IfRev *int64 `json:"ifRev,omitempty"`
 
 	// KeepLast 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5）
 	KeepLast *int `json:"keepLast,omitempty"`
@@ -4744,7 +4766,7 @@ type ScheduleRun struct {
 	// DeliveredAt UTC 毫秒时间戳
 	DeliveredAt *TimestampMs `json:"deliveredAt,omitempty"`
 
-	// Error 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`，或创建线程失败的原因
+	// Error 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因
 	Error *string `json:"error,omitempty"`
 
 	// FinishedAt UTC 毫秒时间戳
@@ -5646,6 +5668,16 @@ type WsServerRes struct {
 
 // WsServerResType defines model for WsServerRes.Type.
 type WsServerResType string
+
+// WsServerSchedulesChanged 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次
+type WsServerSchedulesChanged struct {
+	// ScheduleID `sch_<ulid>`（M9）
+	ScheduleID ScheduleID                   `json:"scheduleId"`
+	Type       WsServerSchedulesChangedType `json:"type"`
+}
+
+// WsServerSchedulesChangedType defines model for WsServerSchedulesChanged.Type.
+type WsServerSchedulesChangedType string
 
 // WsServerTermLagged 该线程的 `terminal_output` 有丢失（本连接待发超过阈值，或 orbd 帧缓冲溢出后的 `terminal.gap`）：
 // 客户端应以 `terminal_list` + `terminal_snapshot` 重同步，并重新 `term.watch{on:true}`。
@@ -7794,6 +7826,40 @@ func (t *WsServerMessage) MergeWsServerNotificationsRead(v WsServerNotifications
 	return err
 }
 
+// AsWsServerSchedulesChanged returns the union data inside the WsServerMessage as a WsServerSchedulesChanged
+func (t WsServerMessage) AsWsServerSchedulesChanged() (WsServerSchedulesChanged, error) {
+	var body WsServerSchedulesChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerSchedulesChanged overwrites any union data inside the WsServerMessage as the provided WsServerSchedulesChanged
+func (t *WsServerMessage) FromWsServerSchedulesChanged(v WsServerSchedulesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"schedules.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerSchedulesChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerSchedulesChanged
+func (t *WsServerMessage) MergeWsServerSchedulesChanged(v WsServerSchedulesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"schedules.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -7832,6 +7898,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerPong()
 	case "res":
 		return t.AsWsServerRes()
+	case "schedules.changed":
+		return t.AsWsServerSchedulesChanged()
 	case "term.lagged":
 		return t.AsWsServerTermLagged()
 	case "term.resized":
