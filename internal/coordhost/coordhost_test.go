@@ -552,6 +552,13 @@ func selfTestMode(t *testing.T, noNS bool, maxABI int) {
 		DataDir: data, ConfigPath: cfgFile, Command: []string{testBin, "coordinator-host"},
 	}, nil, nil, nil)
 	h.noNS, h.maxABI = noNS, maxABI
+	if !noNS && maxABI > 0 {
+		// 强制旧 ABI + 命名空间的模式只在本机真能用网络命名空间时有对应的产品路径；
+		// 不能用时（GitHub runner：回环拉不起来）协调宿主退回端口规则，由 PortMode 系列覆盖。
+		if h.probe(); !h.useNS {
+			t.Skip("本机建不了可用的网络命名空间，协调宿主会走端口规则")
+		}
+	}
 	err := selfTest(context.Background(), h, &out)
 	if noNS && maxABI > 0 && maxABI < sandbox.SignalABI && os.Geteuid() != 0 {
 		// 非 root：沙箱与 orynd 同一用户、没有 PID 命名空间，低于 ABI 6 拦不住信号。

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -50,6 +51,53 @@ type helperResult struct {
 
 // RequireSandbox 报告环境是否要求沙箱测试必须真正运行（CI 设置 ORYN_REQUIRE_SANDBOX=1）。
 func requireSandbox() bool { return os.Getenv("ORYN_REQUIRE_SANDBOX") == "1" }
+
+// loopbackEnv 非空表示当前进程是 netnsUsable 的探测子进程。
+const loopbackEnv = "ORYN_SANDBOX_LOOPBACK_HELPER"
+
+// TestHelperLoopback 只在被 netnsUsable 以子进程方式执行时运行：在新的网络命名空间里拉起回环。
+func TestHelperLoopback(t *testing.T) {
+	if os.Getenv(loopbackEnv) == "" {
+		t.Skip("helper process only")
+	}
+	if err := LoopbackUp(); err != nil {
+		fmt.Println(err)
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
+
+// netnsAttr 让子进程跑在独立的网络命名空间里（非 root 时连带用户命名空间，只映射自己）。
+func netnsAttr() *syscall.SysProcAttr {
+	a := &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNET}
+	if os.Geteuid() != 0 {
+		a.Cloneflags |= syscall.CLONE_NEWUSER
+		a.UidMappings = []syscall.SysProcIDMap{{ContainerID: os.Geteuid(), HostID: os.Geteuid(), Size: 1}}
+		a.GidMappings = []syscall.SysProcIDMap{{ContainerID: os.Getegid(), HostID: os.Getegid(), Size: 1}}
+		a.GidMappingsEnableSetgroups = false
+	}
+	return a
+}
+
+var (
+	netnsOnce sync.Once
+	netnsErr  error
+)
+
+// netnsUsable 报告本机能否建网络命名空间并拉起回环，判据与协调宿主的探测相同（Host.probe）。
+// 不行的环境（例如 GitHub runner：能建命名空间，但 SIOCSIFFLAGS 被拒）里协调宿主走 Landlock 端口规则，
+// 强制命名空间的测试模式没有对应的产品路径，应跳过而不是失败。
+func netnsUsable() error {
+	netnsOnce.Do(func() {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperLoopback$", "-test.v=false")
+		cmd.Env = append(os.Environ(), loopbackEnv+"=1")
+		cmd.SysProcAttr = netnsAttr()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			netnsErr = fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+		}
+	})
+	return netnsErr
+}
 
 // skipUnlessSandbox 在内核不满足条件时跳过；ORYN_REQUIRE_SANDBOX=1 下改为失败。
 func skipUnlessSandbox(t *testing.T) int {
@@ -214,6 +262,11 @@ func TestSandboxApply(t *testing.T) {
 			if m.mode.sameUID && !root {
 				t.Skip("非 root 时总是同一用户（由其它模式覆盖）")
 			}
+			if m.mode.netns {
+				if err := netnsUsable(); err != nil {
+					t.Skipf("本机建不了可用的网络命名空间（协调宿主在此会走端口规则）：%v", err)
+				}
+			}
 			res := sandboxApply(t, m.mode)
 			if m.mode.wantErr == "" && m.mode.maxABI > 0 {
 				assert.Equal(t, m.mode.maxABI, res.Report.LandlockABI)
@@ -279,14 +332,7 @@ func sandboxApply(t *testing.T, mode sbxMode) helperResult {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperSandbox$", "-test.v=false")
 	cmd.Env = append(os.Environ(), helperEnv+"="+string(args))
 	if mode.netns {
-		a := &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNET}
-		if os.Geteuid() != 0 {
-			a.Cloneflags |= syscall.CLONE_NEWUSER
-			a.UidMappings = []syscall.SysProcIDMap{{ContainerID: os.Geteuid(), HostID: os.Geteuid(), Size: 1}}
-			a.GidMappings = []syscall.SysProcIDMap{{ContainerID: os.Getegid(), HostID: os.Getegid(), Size: 1}}
-			a.GidMappingsEnableSetgroups = false
-		}
-		cmd.SysProcAttr = a
+		cmd.SysProcAttr = netnsAttr()
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
