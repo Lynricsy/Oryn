@@ -17,12 +17,28 @@ export function Popover({
 	side?: "top" | "bottom";
 }): ReactNode {
 	const ref = useRef<HTMLDivElement>(null);
+	// 打开它的元素（首次渲染时的焦点 = 胶囊）；Escape 关闭后焦点回到这里，不掉到 body
+	const openerRef = useRef<Element | null | undefined>(undefined);
+	if (openerRef.current === undefined)
+		openerRef.current = document.activeElement;
 	useEffect(() => {
 		const onDown = (e: MouseEvent) => {
 			if (ref.current && !ref.current.contains(e.target as Node)) onClose();
 		};
+		// 捕获阶段拦下 Escape：只关这个弹层，不再传给外层（对话框在 window 上监听 Escape，否则会被一起关掉）
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			e.stopPropagation();
+			onClose();
+			const opener = openerRef.current;
+			if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+		};
 		document.addEventListener("mousedown", onDown);
-		return () => document.removeEventListener("mousedown", onDown);
+		document.addEventListener("keydown", onKey, true);
+		return () => {
+			document.removeEventListener("mousedown", onDown);
+			document.removeEventListener("keydown", onKey, true);
+		};
 	}, [onClose]);
 	return (
 		<div
