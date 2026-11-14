@@ -34,7 +34,6 @@ func newM9Stack(t *testing.T) (*stack, string) {
 	require.NoError(t, err)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0") // 同机多个 process 驱动的 orbd
 	coordhostCommand = []string{filepath.Join(binDir, "orynd"), "coordinator-host"}
 	t.Cleanup(func() { coordhostCommand = nil })
 	no := false
@@ -514,7 +513,6 @@ func (s *stack) waitRun(id string, n int, status string) db.ScheduleRun {
 // 线程内定时在冻结的普通 orb 上到点：orb 被唤醒、消息以自动化身份送达、运行 completed。
 func TestE2EM9ThreadScheduleWakesFrozenOrb(t *testing.T) {
 	clk := useSchedClock(t)
-	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0") // 同机多个 process 驱动的 orbd
 	s := newStack(t, m9Idle)
 	var th apigen.ThreadEnvelope
 	s.rest("POST", "/api/v1/threads", map[string]any{"prompt": "work", "executor": map[string]any{"kind": "new_orb"}}, &th, 201)
@@ -542,7 +540,6 @@ func TestE2EM9ThreadScheduleWakesFrozenOrb(t *testing.T) {
 // 其独占的 orb 被删除；provider 指向不存在的名字 → 运行 failed 且产生一条没有线程的通知。
 func TestE2EM9ProjectSchedule(t *testing.T) {
 	clk := useSchedClock(t)
-	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0") // 同机多个 process 驱动的 orbd
 	s := newStack(t, m9Idle)
 	ctx := context.Background()
 	var prj apigen.Project

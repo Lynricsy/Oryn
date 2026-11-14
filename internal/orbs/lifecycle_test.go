@@ -169,6 +169,8 @@ type fakeDriver struct {
 	portal   func(st *link.Stream)
 	desk     func(st *link.Stream)
 	onCall   func(method string)
+	// afterSpawn 非 nil 时在 spawn 成功连上之后、任务返回之前调用（让测试控制「spawn 完成」相对 hello 的先后）。
+	afterSpawn func(orbID string)
 }
 
 func newFakeDriver() *fakeDriver { return &fakeDriver{orbds: map[string]*fakeOrbd{}} }
@@ -191,7 +193,7 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
-	features, fs, portal, desk, onCall := d.features, d.fs, d.portal, d.desk, d.onCall
+	features, fs, portal, desk, onCall, afterSpawn := d.features, d.fs, d.portal, d.desk, d.onCall, d.afterSpawn
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
@@ -209,7 +211,11 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, _ io.Writer) erro
 			return nil
 		}
 		o.disconnect()
-		return o.connect()
+		if err := o.connect(); err != nil || afterSpawn == nil {
+			return err
+		}
+		afterSpawn(j.OrbID)
+		return nil
 	case "pause", "delete":
 		if o != nil {
 			o.disconnect()

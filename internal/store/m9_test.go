@@ -256,7 +256,7 @@ func TestM9ScheduleQueries(t *testing.T) {
 	require.NoError(t, q.SetScheduleFailures(ctx, db.SetScheduleFailuresParams{ID: "sch_n1", Failures: 2}))
 	rows, err := q.UpdateScheduleDef(ctx, db.UpdateScheduleDefParams{
 		ID: "sch_n1", Name: "tock", Kind: "cron", Spec: "0 9 * * *", Timezone: "Asia/Shanghai", Prompt: "q", Enabled: true,
-		Overlap: "skip", KeepLast: 3, UpdatedAt: 9,
+		Overlap: "skip", KeepLast: 3, CreatedBy: "agent", UpdatedAt: 9,
 	})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, rows)
@@ -265,6 +265,7 @@ func TestM9ScheduleQueries(t *testing.T) {
 	assert.Equal(t, "prj_1", *s1.ProjectID)
 	assert.EqualValues(t, 0, s1.Failures)
 	assert.EqualValues(t, 3, s1.KeepLast)
+	assert.Equal(t, "agent", s1.CreatedBy, "定义更新写入执行替换的一方")
 
 	// 线程删除级联删除其线程内定时；项目删除级联删除项目定时。
 	_, err = q.DeleteThread(ctx, "T-1")

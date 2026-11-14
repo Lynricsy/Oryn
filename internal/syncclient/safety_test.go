@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,6 +120,31 @@ func TestApplyLocalEditDuringDownload(t *testing.T) {
 	require.ErrorIs(t, err, ErrLocalEdits)
 	assert.Equal(t, "mine\n", read(t, filepath.Join(f.local, "a.txt")))
 	assert.NoFileExists(t, filepath.Join(f.local, "new.txt"))
+	f.assertUntouched(t)
+}
+
+// B2（racy-git）：索引写入与 a.txt 的 stat 在同一秒，下载期间同大小改写 a.txt 且 mtime 仍在这一秒 → 必须按内容
+// 复查出改动。复制索引时若不保留原 mtime，副本比条目「新」，git 信任 stat 而漏报。时间全部钉死，不依赖时钟。
+func TestApplyDetectsSameSecondEditOfRacyIndex(t *testing.T) {
+	f := newFixture(t)
+	gitT(t, f.orb, "reset", "-q", "--soft", "HEAD~1")
+	// 关掉 ctime 比较：ctime 无法回拨，保留它会让改写本身就破坏 stat 匹配
+	gitT(t, f.local, "config", "core.trustctime", "false")
+	a := filepath.Join(f.local, "a.txt")
+	past := time.Now().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(a, past, past))
+	// 让索引条目记下 past；索引文件本身晚于 past，precheck 的 git status 不会重写它
+	gitT(t, f.local, "update-index", "--refresh")
+	f.remote.onBundle = func() {
+		// 等价于「索引在 past 这一秒写入、随后同一秒内文件被改写」：条目对该索引是 racy 的
+		require.NoError(t, os.Chtimes(filepath.Join(f.local, ".git", "index"), past, past))
+		write(t, a, "mine\n") // 与 "orig\n" 同大小
+		require.NoError(t, os.Chtimes(a, past, past))
+	}
+	err := Apply(context.Background(), f.remote, f.opts())
+	require.ErrorIs(t, err, ErrLocalEdits)
+	assert.Contains(t, err.Error(), "a.txt")
+	assert.Equal(t, "mine\n", read(t, a))
 	f.assertUntouched(t)
 }
 

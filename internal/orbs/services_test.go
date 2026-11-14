@@ -336,7 +336,8 @@ func TestTouchUserCoalesced(t *testing.T) {
 }
 
 // B3：spawn 完成后 advance 发起的 setup 也要等本 link 的 portal.configure。onHello 被钩子卡在 configure
-// 之前时，advance 的 runPhase 必须停在准备屏障上，而不是先发 setup.run。
+// 之前时，advance 的 runPhase 必须停在准备屏障上，而不是先发 setup.run。spawn 任务等到 hello 已被看见才返回，
+// 保证 advance（进入 connecting 时）一定看到已 hello 的 link——否则单核下 spawn 先完成、advance 什么都不做。
 func TestPortalConfigureBarrierOnAdvance(t *testing.T) {
 	drv := newFakeDriver()
 	drv.features = []string{FeatureServices, FeaturePortal}
@@ -358,6 +359,9 @@ func TestPortalConfigureBarrierOnAdvance(t *testing.T) {
 			<-release
 		}
 	}
+	drv.mu.Lock()
+	drv.afterSpawn = func(string) { <-helloBlocked }
+	drv.mu.Unlock()
 	phaseWaiting := make(chan struct{}, 1)
 	h.svc.hookAwaitPrepared = func(string) {
 		select {

@@ -104,6 +104,8 @@ func newStack(t *testing.T, idle config.Idle, opts ...func(*config.Orynd)) *stac
 	t.Helper()
 	t.Setenv("ORYN_AGENT_BIN", filepath.Join(binDir, "fakeomp"))
 	t.Setenv("FAKEOMP_DELAY_MS", "15")
+	// process 驱动的 orbd 都在宿主上：egress 不能监听固定的 7811（与同机并行的测试或本机服务相撞时 orbd 起不来，线程一直等）
+	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0")
 	cfg := config.DefaultOrynd()
 	cfg.DataDir = t.TempDir()
 	cfg.PublicURL = "http://localhost"
@@ -662,7 +664,7 @@ func TestE2ESetupSock(t *testing.T) {
 	require.NotNil(t, got.SetupScript)
 	assert.Equal(t, "echo b-setup", *got.SetupScript, "其它项目不受影响")
 
-	// 无项目的 orb（process 驱动下各 orbd 共用 egress 端口，先删掉第一台）
+	// 无项目的 orb
 	s.rest("DELETE", "/api/v1/orbs/"+th.OrbID, nil, nil, 202)
 	require.Eventually(t, func() bool {
 		var o struct {

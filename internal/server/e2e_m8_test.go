@@ -27,8 +27,6 @@ func enableDesktop(t *testing.T) {
 	t.Setenv("ORYN_DESKTOP", "1")
 	t.Setenv("ORYN_DESKTOP_CDP_ADDR", "127.0.0.1:0")
 	t.Setenv("ORYN_DESKTOP_X11_TMPDIR", t.TempDir())
-	// 同一宿主上同时跑多台 process 驱动的 orbd：egress 不能都监听固定的 7811
-	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0")
 	t.Setenv("PATH", filepath.Join(binDir, "desk")+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

@@ -400,6 +400,15 @@ func (g *repo) localTrees(owned []string) (trees, error) {
 		if err := os.WriteFile(idx, b, 0o600); err != nil {
 			return t, err
 		}
+		// 副本沿用原索引的 mtime：git 只对 mtime 不早于索引文件的条目（racy-git）复查内容，副本若带着「现在」的
+		// mtime，与原索引同一秒写入的同大小改动会被当成 stat 未变而漏报（本地改动保护失效）。
+		fi, err := os.Stat(g.path("index"))
+		if err != nil {
+			return t, err
+		}
+		if err := os.Chtimes(idx, fi.ModTime(), fi.ModTime()); err != nil {
+			return t, err
+		}
 	} else if _, err := g.git(env, "read-tree", "HEAD"); err != nil {
 		return t, err
 	}
