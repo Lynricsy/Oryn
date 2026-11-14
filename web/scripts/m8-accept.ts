@@ -1053,7 +1053,6 @@ async function deskPageA(): Promise<{ page: Page; th: Th }> {
 		localStorage.setItem("oryn.panel.width", "760");
 		localStorage.removeItem("oryn.desktop.scale");
 		localStorage.removeItem("oryn.desktop.control");
-		localStorage.removeItem("oryn.desktop.clipsync");
 	});
 	await pageA.goto(`${BASE}/t/${th.tid}`);
 	await openDesktopTab(pageA);
@@ -1119,9 +1118,11 @@ async function listProfileFiles(): Promise<string> {
 // ---------------------------------------------------------------- 场景
 
 async function B1() {
+	// Debian 的 TigerVNC 1.15 执行 `Xtigervnc -version` 不输出任何内容，版本改从 dpkg 取
+	// （`dpkg-query -W` 输出「包名<Tab>版本」）；同时确认 Xtigervnc 可执行文件在 PATH 上
 	const r = await sh(
 		`docker run --rm ${IMAGE} bash -lc ${q(
-			"Xtigervnc -version 2>&1 | grep -m1 -i tigervnc; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP",
+			'command -v Xtigervnc >/dev/null && echo "tigervnc $(dpkg-query -W tigervnc-standalone-server | cut -f2)"; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP',
 		)}`,
 		{ timeoutMs: 180_000 },
 	);
@@ -1131,7 +1132,7 @@ async function B1() {
 		.filter(Boolean);
 	for (const l of lines) note(l);
 	check(r.code === 0 && lines.length === 5, `5 行输出（退出码 ${r.code}）`);
-	check(/tigervnc/i.test(lines[0] ?? ""), "Xtigervnc 版本");
+	check(/^tigervnc \d+\.\d+/i.test(lines[0] ?? ""), "TigerVNC 版本");
 	check(/chromium \d+/i.test(lines[1] ?? ""), "Chromium 版本");
 	check(/openbox \d/i.test(lines[2] ?? ""), "Openbox 版本");
 	check(Number(lines[3]) > 0, `中文字体数 ${lines[3]} > 0`);
@@ -1450,27 +1451,41 @@ async function B8() {
 		300,
 	);
 	check(true, `② 弹层显示 ${t2}`);
-	await pop.locator("label", { hasText: "自动同步剪贴板" }).click();
-	await waitFor(
-		"自动同步已开",
-		() => pop.getByRole("checkbox", { name: "自动同步剪贴板" }).isChecked(),
-		5_000,
-	);
+	// 桌面 → 本机只在点「复制到本机」时写本机剪贴板（不再有自动同步）
+	const readLocal = () =>
+		page.evaluate(() => navigator.clipboard.readText()).catch(() => "");
+	const sentinel = `本机原值-${RUN}`;
+	await page.evaluate((s) => navigator.clipboard.writeText(s), sentinel);
 	const t3 = `来自桌面2-${RUN}`;
 	await toDesk(t3);
+	await waitFor(
+		"弹层显示新的桌面剪贴板",
+		async () =>
+			(await pop
+				.locator("[data-testid=desktop-clip-remote]")
+				.textContent()
+				.catch(() => "")) === t3,
+		15_000,
+		300,
+	);
+	await holdFor(
+		"未点「复制到本机」时本机剪贴板不变",
+		async () => (await readLocal()) === sentinel,
+		2_000,
+		250,
+	);
+	check(true, "③ 未点「复制到本机」前本机剪贴板保持原值");
+	await pop.locator("[data-testid=desktop-clip-copy]").click();
 	const local = await waitFor(
 		"本机剪贴板 = 桌面文本",
 		async () => {
-			const v = await page
-				.evaluate(() => navigator.clipboard.readText())
-				.catch(() => "");
+			const v = await readLocal();
 			return v === t3 ? v : undefined;
 		},
 		15_000,
 		500,
 	);
-	check(true, `② 自动同步后 readText() = ${local}`);
-	await pop.locator("label", { hasText: "自动同步剪贴板" }).click();
+	check(true, `③ 点「复制到本机」后 readText() = ${local}`);
 	await page.keyboard.press("Escape");
 }
 
@@ -1860,10 +1875,12 @@ async function B15() {
 				.waitFor({ timeout: 60_000 });
 			check((await page.locator(DESK_TAB).count()) === 0, "没有 Desktop 标签");
 			await page.locator("[data-panel-tab=files]").first().click();
+			// 文件树是 WAI-ARIA tree（FileTree.tsx 根节点 role="tree"），没有 data-testid
 			await page
-				.locator("[data-testid=file-tree]")
+				.locator("[role=tree] [role=treeitem]")
+				.first()
 				.waitFor({ timeout: 60_000 });
-			check(true, "Files 面板正常");
+			check(true, "Files 面板正常（文件树有条目）");
 			await page.locator("[data-panel-tab=terminal]").first().click();
 			await page
 				.locator("[data-testid=terminal-panel]")
@@ -1987,32 +2004,79 @@ async function B17() {
 				? ((document.fullscreenElement as HTMLElement).dataset.testid ?? "?")
 				: null,
 		);
+	// 记下面板对键盘锁的调用：进入全屏应 lock（让 Esc 进桌面），退出全屏应 unlock
+	const hooked = await page.evaluate(() => {
+		type K = { lock?(): Promise<void>; unlock?(): void };
+		const kb = (navigator as Navigator & { keyboard?: K }).keyboard;
+		const w = window as unknown as { __m8Kb: string[] };
+		w.__m8Kb = [];
+		if (!kb?.lock || !kb.unlock) return false;
+		const lock = kb.lock.bind(kb);
+		const unlock = kb.unlock.bind(kb);
+		kb.lock = () => {
+			w.__m8Kb.push("lock");
+			return lock();
+		};
+		kb.unlock = () => {
+			w.__m8Kb.push("unlock");
+			unlock();
+		};
+		return true;
+	});
+	const kbCalls = () =>
+		page.evaluate(
+			() => (window as unknown as { __m8Kb: string[] }).__m8Kb ?? [],
+		);
 	await page.locator("[data-testid=desktop-fullscreen]").click();
 	const id = await waitFor("进入全屏", fsId, 5_000, 100);
 	check(id === "desktop-stage", `fullscreenElement = ${id}`);
+	if (hooked) {
+		await waitFor(
+			"全屏后取得键盘锁",
+			async () => (await kbCalls()).includes("lock"),
+			3_000,
+			100,
+		);
+		check(true, "进入全屏后调用了 navigator.keyboard.lock");
+	} else note("浏览器没有 navigator.keyboard.lock，跳过键盘锁观察");
 	await page.keyboard.press("Escape");
-	try {
+	const viaEsc = await waitFor(
+		"Esc 退出全屏",
+		async () => (await fsId()) === null,
+		2_000,
+		100,
+	).catch(() => false);
+	if (viaEsc) check(true, "按 Esc 后 fullscreenElement = null");
+	else {
+		// Playwright 经 CDP 合成的按键直接送进渲染进程，不经过浏览器层的全屏退出处理：
+		// 实测 headless Chromium 即使没有键盘锁，短按 / 长按 Esc 都不会退出全屏。
+		// 真实浏览器里 Esc（键盘锁下为长按 Esc）退出全屏走的就是 exitFullscreen 这条路，
+		// 这里改用它做等价验证：退出后 fullscreenElement 为 null、面板释放键盘锁、全屏按钮回来
+		note(
+			"CDP 合成的 Esc 不触发浏览器的全屏退出，改用 document.exitFullscreen()",
+		);
+		await page.evaluate(() => document.exitFullscreen());
 		await waitFor(
-			"Esc 退出全屏",
+			"exitFullscreen 退出全屏",
 			async () => (await fsId()) === null,
 			3_000,
 			100,
 		);
-		check(true, "按 Esc 后 fullscreenElement = null");
-	} catch {
-		// 键盘锁生效时 Chromium 要求长按 Esc 才退出全屏
-		note("短按 Esc 未退出（键盘锁生效），改为长按 2.5 秒");
-		await page.keyboard.down("Escape");
-		await Bun.sleep(2_500);
-		await page.keyboard.up("Escape");
-		await waitFor(
-			"长按 Esc 退出全屏",
-			async () => (await fsId()) === null,
-			3_000,
-			100,
-		);
-		check(true, "长按 Esc 后 fullscreenElement = null");
+		check(true, "退出全屏后 fullscreenElement = null");
 	}
+	if (hooked) {
+		await waitFor(
+			"退出全屏后释放键盘锁",
+			async () => (await kbCalls()).includes("unlock"),
+			3_000,
+			100,
+		);
+		check(true, "退出全屏后调用了 navigator.keyboard.unlock");
+	}
+	await page
+		.locator("[data-testid=desktop-fullscreen]")
+		.waitFor({ state: "visible", timeout: 5_000 });
+	check(true, "退出后全屏按钮可见，面板回到正常布局");
 }
 
 async function B18() {
@@ -2458,16 +2522,22 @@ await ctxB.addInitScript(() => {
 		__wsCloses: { url: string; code: number; t: number }[];
 	};
 	w.__wsCloses = [];
-	const Orig = window.WebSocket;
-	class Tapped extends Orig {
-		constructor(url: string | URL, protocols?: string | string[]) {
-			super(url, protocols);
-			this.addEventListener("close", (e) =>
-				w.__wsCloses.push({ url: String(url), code: e.code, t: Date.now() }),
+	// 用 Proxy 而不是子类：返回的实例仍是原生 WebSocket，原型方法不变。
+	// noVNC 的 Websock.attach 只查实例自身与其直接原型的属性名，子类原型上只有 constructor，
+	// 会报「Raw channel missing property: send」导致桌面连不上
+	window.WebSocket = new Proxy(window.WebSocket, {
+		construct(Target, args: ConstructorParameters<typeof WebSocket>) {
+			const ws = new Target(...args);
+			ws.addEventListener("close", (e) =>
+				w.__wsCloses.push({
+					url: String(args[0]),
+					code: e.code,
+					t: Date.now(),
+				}),
 			);
-		}
-	}
-	window.WebSocket = Tapped;
+			return ws;
+		},
+	});
 });
 ctxC = await browser.newContext({ locale: "zh-CN" });
 ctxM = await browser.newContext({
