@@ -31,9 +31,18 @@ type CheckOptions struct {
 	DenyRead  []string // 必须读不到的文件
 	DenyWrite []string // 必须建不出的文件（home 之外）
 	DenyDial  []string // 必须连不上的 TCP 地址
-	DenyExec  []string // 必须执行失败的命令行（缺省 /bin/sh -c true）
-	Exec      []string // 必须执行成功的命令行（为空则跳过）
-	Port      uint16   // 唯一允许的 TCP 端口：在 127.0.0.1 上监听并自连
+	// HostListener 是沙箱外（宿主上）真实在监听的白名单外 TCP 地址：必须连不上（端口 1 一类没人监听的地址
+	// 只能证明连接被拒，证明不了规则生效）。
+	HostListener string
+	DenyExec     []string // 必须执行失败的命令行（缺省 /bin/sh -c true）
+	Exec         []string // 必须执行成功的命令行（为空则跳过）
+	Port         uint16   // 唯一允许的 TCP 端口：在 127.0.0.1 上监听并自连
+	// DenyAbstract 是沙箱外（宿主上）监听的 abstract unix socket 名（不带前导 @ 或 NUL）：沙箱里以 stream 与
+	// datagram 两种方式 connect 都必须失败（AF_UNIX 一律被 seccomp 拒绝）。
+	DenyAbstract []string
+	// DenyUnixDgram 是沙箱外（不在 Landlock 白名单里）的路径型 unix datagram socket（宿主上建、权限 0666，像 /dev/log）：
+	// 沙箱里 connect 与 sendto 都必须失败。
+	DenyUnixDgram []string
 }
 
 // Checks 在已施加沙箱的进程里逐项验证隔离是否生效：「必须失败」的操作失败、「必须成功」的操作成功，
@@ -79,12 +88,10 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 	}
 	mustFail("exec "+denyExec[0], runQuiet(ctx, denyExec))
 	for _, addr := range o.DenyDial {
-		d := net.Dialer{Timeout: 2 * time.Second}
-		c, err := d.DialContext(ctx, "tcp", addr)
-		if c != nil {
-			_ = c.Close()
-		}
-		mustFail("tcp "+addr, err)
+		mustFail("tcp "+addr, dialTCP(ctx, addr))
+	}
+	if o.HostListener != "" {
+		mustFail("tcp host listener "+o.HostListener, dialTCP(ctx, o.HostListener))
 	}
 	for _, s := range []struct {
 		name               string
@@ -92,6 +99,7 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 	}{
 		{"udp socket", unix.AF_INET, unix.SOCK_DGRAM, 0},
 		{"unix socket", unix.AF_UNIX, unix.SOCK_STREAM, 0},
+		{"unix dgram socket", unix.AF_UNIX, unix.SOCK_DGRAM, 0},
 		{"netlink socket", unix.AF_NETLINK, unix.SOCK_RAW, unix.NETLINK_ROUTE},
 		{"mptcp socket", unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_MPTCP},
 	} {
@@ -101,6 +109,30 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 		}
 		mustFail(s.name, err)
 	}
+	// socketpair 只放行 AF_UNIX stream（Bun 启动需要）；datagram 与 seqpacket 必须失败。
+	for _, typ := range []struct {
+		name string
+		typ  int
+	}{{"dgram", unix.SOCK_DGRAM}, {"seqpacket", unix.SOCK_SEQPACKET}} {
+		mustFail("unix socketpair "+typ.name, socketpair(typ.typ))
+	}
+	for _, p := range o.DenyUnixDgram {
+		// 放行的 stream socketpair 生来已连接：拿它 sendto 别处也必须失败。
+		mustFail("sendto unix dgram "+p+" via stream socketpair", pairSendto(p))
+	}
+	for _, name := range o.DenyAbstract {
+		for _, typ := range []struct {
+			name string
+			typ  int
+		}{{"stream", unix.SOCK_STREAM}, {"dgram", unix.SOCK_DGRAM}} {
+			mustFail("connect abstract unix "+typ.name+" @"+name, connectAbstract(typ.typ, name))
+		}
+	}
+	for _, p := range o.DenyUnixDgram {
+		mustFail("connect unix dgram "+p, dgramTo(p, false))
+		mustFail("sendto unix dgram "+p, dgramTo(p, true))
+	}
+	mustFail("truncate(2) by path", truncateInHome(o.Home))
 	mustFail("unshare(CLONE_NEWUSER)", unix.Unshare(unix.CLONE_NEWUSER))
 	mustFail("mount", unix.Mount("none", o.Home, "tmpfs", 0, ""))
 	if len(o.Exec) > 0 {
@@ -113,14 +145,15 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 	mustFail("ptrace attach "+strconv.Itoa(target), ptraceAttach(target))
 	_, _, e := unix.Syscall(unix.SYS_CLONE3, 0, 0, 0)
 	add("clone3", e == unix.ENOSYS, fmt.Sprintf("errno %v (want ENOSYS)", e))
-	if abi, _ := Probe(); abi >= 6 {
-		if pp := os.Getppid(); pp > 0 {
-			mustFail("kill(ppid, 0)", unix.Kill(pp, 0))
-		}
+	// 父进程（orynd）可见时必须发不了信号：Requirement 保证了 ABI ≥ 6 的信号作用域或独立用户（二者之一）。
+	if pp := os.Getppid(); pp > 0 {
+		mustFail("kill(ppid, 0)", unix.Kill(pp, 0))
 	}
 
 	// ---- 必须成功 ----
 	mustSucceed("write and rename in home", writeAndRename(o.Home))
+	mustSucceed("flock and OFD lock in home", fileLocks(o.Home))
+	mustSucceed("unix socketpair stream (Bun)", socketpair(unix.SOCK_STREAM))
 	if len(o.Exec) > 0 {
 		mustSucceed("exec "+strings.Join(o.Exec, " "), runQuiet(ctx, o.Exec))
 	}
@@ -256,3 +289,104 @@ func execCopy(ctx context.Context, home, bin string) error {
 
 // errSetup 标记自检项本身没能搭起来（这种失败不代表沙箱生效，按不通过处理）。
 var errSetup = errors.New("setup failed")
+
+// connectAbstract 以给定类型的 AF_UNIX socket connect 一个 abstract 名字。
+func connectAbstract(typ int, name string) error {
+	fd, err := unix.Socket(unix.AF_UNIX, typ|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	return unix.Connect(fd, &unix.SockaddrUnix{Name: "@" + name})
+}
+
+// truncateInHome 在 home 里建一个文件再按路径 truncate：home 可写，但 truncate(2) 被 seccomp 拒绝
+// （低于 ABI 3 的 Landlock 管不到它）。
+func truncateInHome(home string) error {
+	f, err := os.CreateTemp(home, "selftest-truncate-")
+	if err != nil {
+		return fmt.Errorf("create in %s: %w (cannot set up the check)", home, errSetup)
+	}
+	_ = f.Close()
+	defer os.Remove(f.Name())
+	return unix.Truncate(f.Name(), 0)
+}
+
+// fileLocks 在 home 里对同一文件取 flock 与 OFD 写锁，再验证 omp 原生文件锁（PI_FILE_LOCK_BACKEND=sidecar：
+// 旁路文件上的 OFD 写锁）要用到的语义：另一个打开文件描述取不到写锁，且 F_OFD_GETLK 看得到持有者。
+func fileLocks(home string) error {
+	f, err := os.CreateTemp(home, "selftest-lock-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return fmt.Errorf("flock: %w", err)
+	}
+	lk := unix.Flock_t{Type: unix.F_WRLCK, Whence: 0, Start: 0, Len: 0}
+	if err := unix.FcntlFlock(f.Fd(), unix.F_OFD_SETLK, &lk); err != nil {
+		return fmt.Errorf("fcntl(F_OFD_SETLK): %w", err)
+	}
+	g, err := os.OpenFile(f.Name(), os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer g.Close()
+	lk2 := unix.Flock_t{Type: unix.F_WRLCK}
+	if err := unix.FcntlFlock(g.Fd(), unix.F_OFD_SETLK, &lk2); !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EACCES) {
+		return fmt.Errorf("second F_OFD_SETLK: %v (want EAGAIN)", err)
+	}
+	q := unix.Flock_t{Type: unix.F_RDLCK}
+	if err := unix.FcntlFlock(g.Fd(), unix.F_OFD_GETLK, &q); err != nil {
+		return fmt.Errorf("fcntl(F_OFD_GETLK): %w", err)
+	}
+	if q.Type != unix.F_WRLCK {
+		return fmt.Errorf("F_OFD_GETLK does not see the holder (type %d)", q.Type)
+	}
+	return nil
+}
+
+// socketpair 建一对给定类型的 AF_UNIX socket 并立即关闭。
+func socketpair(typ int) error {
+	fds, err := unix.Socketpair(unix.AF_UNIX, typ|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	_ = unix.Close(fds[0])
+	_ = unix.Close(fds[1])
+	return nil
+}
+
+// pairSendto 用一对 stream socketpair 的一端 sendto 路径型 socket p。
+func pairSendto(p string) error {
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socketpair: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	defer unix.Close(fds[0])
+	defer unix.Close(fds[1])
+	return unix.Sendto(fds[0], []byte("oryn-selftest"), 0, &unix.SockaddrUnix{Name: p})
+}
+
+func dialTCP(ctx context.Context, addr string) error {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	c, err := d.DialContext(ctx, "tcp", addr)
+	if c != nil {
+		_ = c.Close()
+	}
+	return err
+}
+
+// dgramTo 用一个 AF_UNIX datagram socket 联系路径型 socket p：send 为假时 connect，为真时（不 connect）sendto。
+func dgramTo(p string, send bool) error {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	if send {
+		return unix.Sendto(fd, []byte("oryn-selftest"), 0, &unix.SockaddrUnix{Name: p})
+	}
+	return unix.Connect(fd, &unix.SockaddrUnix{Name: p})
+}

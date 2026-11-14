@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -526,18 +527,38 @@ func TestEnsureDirsRejectsWritableDir(t *testing.T) {
 	assert.Equal(t, before.ModTime(), after.ModTime())
 }
 
-// H4 / H5：SelfTest 全部通过（必须失败的都失败、必须成功的都成功、进程状态正确）。
-func TestSelfTest(t *testing.T) {
+// H4 / H5：SelfTest 全部通过（必须失败的都失败、必须成功的都成功、进程状态正确）。本机两种网络模式各跑一遍，
+// 另外强制两种旧内核：没有命名空间、ABI 4（TCP 只靠 Landlock 的端口规则），以及有命名空间、ABI 2（TCP 只靠
+// 网络命名空间）。AF_UNIX 在每种模式下都一律被拒（含 socketpair），宿主上的监听端什么也收不到。
+func TestSelfTest(t *testing.T)               { selfTestMode(t, false, 0) }
+func TestSelfTestPortMode(t *testing.T)       { selfTestMode(t, true, 0) }
+func TestSelfTestPortModeABI4(t *testing.T)   { selfTestMode(t, true, 4) }
+func TestSelfTestNamespacesABI2(t *testing.T) { selfTestMode(t, false, 2) }
+
+func selfTestMode(t *testing.T, noNS bool, maxABI int) {
 	requireSandbox(t)
+	if abi, _ := sandbox.Probe(); abi < max(maxABI, 4) && noNS {
+		t.Skipf("landlock abi %d < %d：没有命名空间时协调功能 fail-closed（见 TestFailClosedWithoutTCPIsolation）", abi, max(maxABI, 4))
+	} else if abi < maxABI {
+		t.Skipf("landlock abi %d < %d", abi, maxABI)
+	}
 	data := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(data, "master.key"), []byte("k"), 0o600))
 	cfgFile := filepath.Join(t.TempDir(), "orynd.yaml")
 	require.NoError(t, os.WriteFile(cfgFile, []byte("listen: []\n"), 0o644))
 	var out bytes.Buffer
-	err := SelfTest(context.Background(), Config{
+	h := New(Config{
 		Dir: hostDir(t), OmpPath: fakeompBin, User: "nobody", EgressPort: freePort(t),
 		DataDir: data, ConfigPath: cfgFile, Command: []string{testBin, "coordinator-host"},
-	}, &out)
+	}, nil, nil, nil)
+	h.noNS, h.maxABI = noNS, maxABI
+	err := selfTest(context.Background(), h, &out)
+	if noNS && maxABI > 0 && maxABI < sandbox.SignalABI && os.Geteuid() != 0 {
+		// 非 root：沙箱与 orynd 同一用户、没有 PID 命名空间，低于 ABI 6 拦不住信号。
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "没有 PID 命名空间且沙箱与 orynd 是同一用户")
+		return
+	}
 	require.NoError(t, err, out.String())
 	var checks []sandbox.Check
 	var sawReport bool
@@ -552,20 +573,73 @@ func TestSelfTest(t *testing.T) {
 		}
 		if bytes.Contains(line, []byte(`"sandbox"`)) {
 			sawReport = true
+			if maxABI > 0 {
+				assert.Contains(t, string(line), fmt.Sprintf(`"landlockAbi":%d`, maxABI))
+			}
 		}
 	}
 	assert.True(t, sawReport, out.String())
 	names := map[string]bool{}
+	abstract, pathDgram, hostTCP := 0, 0, 0
 	for _, c := range checks {
 		names[c.Name] = true
+		switch {
+		case strings.HasPrefix(c.Name, "connect abstract unix "):
+			abstract++
+		case strings.HasPrefix(c.Name, "connect unix dgram /"), strings.HasPrefix(c.Name, "sendto unix dgram /"):
+			pathDgram++
+		case strings.HasPrefix(c.Name, "tcp host listener 127.0.0.1:"):
+			hostTCP++
+		}
 	}
+	assert.Equal(t, 3, pathDgram, "白名单外的 0666 unix datagram socket：connect、sendto 与经 stream socketpair 的 sendto 都必须失败\n%s", out.String())
+	assert.Equal(t, 1, hostTCP, "宿主上真实在监听的白名单外 TCP 端口必须连不上\n%s", out.String())
 	for _, want := range []string{
 		"read " + filepath.Join(data, "master.key"), "read " + cfgFile, "read /etc/shadow", "readdir /",
 		"exec /bin/sh", "exec copy in home", "tcp 1.1.1.1:443", "tcp 127.0.0.1:1", "udp socket", "unix socket",
+		"unix dgram socket", "unix socketpair stream (Bun)", "unix socketpair dgram", "unix socketpair seqpacket", "truncate(2) by path",
 		"netlink socket", "unshare(CLONE_NEWUSER)", "mount", "clone3", "write and rename in home",
+		"flock and OFD lock in home", fmt.Sprintf("listen and dial 127.0.0.1:%d", h.cfg.EgressPort),
 		"status NoNewPrivs", "status Seccomp", "status CapEff", "status CapBnd",
 	} {
 		assert.True(t, names[want], "missing check %q in\n%s", want, out.String())
+	}
+	assert.Equal(t, 4, abstract, "宿主上的 stream / datagram abstract socket 各以两种类型 connect，都必须失败\n%s", out.String())
+}
+
+// 没有网络命名空间且 Landlock ABI < 4 时 TCP 出站关不住（端口规则需要 ABI 4，BestEffort 会悄悄丢掉它）：协调功能
+// fail-closed，Check / Status / SelfTest 都给出原因，spawn 不拉起子进程。ABI 2 / 3 各跑一遍。
+func TestFailClosedWithoutTCPIsolation(t *testing.T) {
+	requireSandbox(t)
+	real, _ := sandbox.Probe()
+	for _, abi := range []int{2, 3} {
+		t.Run(fmt.Sprintf("abi=%d", abi), func(t *testing.T) {
+			if real < abi {
+				t.Skipf("landlock abi %d < %d", real, abi)
+			}
+			want := fmt.Sprintf("内核 Landlock ABI %d < 4 且没有网络命名空间，无法限制 TCP 出站", abi)
+			e := newEnv(t, nil, func(h *Host) { h.noNS, h.maxABI = true, abi })
+			err := e.h.Check(context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), want)
+			st := e.h.Status(context.Background())
+			assert.False(t, st.Available)
+			require.NotNil(t, st.Reason)
+			assert.Contains(t, *st.Reason, want)
+			j := e.runJob("spawn", map[string]any{})
+			assert.Equal(t, "failed", j.State)
+			assert.Nil(t, e.child())
+
+			h := New(Config{Dir: hostDir(t), OmpPath: fakeompBin, User: "nobody", EgressPort: freePort(t),
+				Command: []string{testBin, "coordinator-host"}}, nil, nil, nil)
+			h.noNS, h.maxABI = true, abi
+			var out bytes.Buffer
+			err = selfTest(context.Background(), h, &out)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), want)
+			assert.Contains(t, out.String(), `"available":false`)
+			assert.NotContains(t, out.String(), `"sandbox"`)
+		})
 	}
 }
 
@@ -573,16 +647,17 @@ func TestSelfTest(t *testing.T) {
 
 // agentConn 是控制面一侧的 agent 流。
 type agentConn struct {
-	t  *testing.T
-	st *link.Stream
-	ch chan json.RawMessage
+	t       *testing.T
+	st      *link.Stream
+	ch      chan json.RawMessage
+	hostLog func() string // 失败时附上协调宿主的日志尾部（含 omp 的 stderr）
 }
 
 func (e *testEnv) agent() *agentConn {
 	e.t.Helper()
 	select {
 	case st := <-e.f.agents:
-		a := &agentConn{t: e.t, st: st, ch: make(chan json.RawMessage, 4096)}
+		a := &agentConn{t: e.t, st: st, ch: make(chan json.RawMessage, 4096), hostLog: func() string { return e.h.logTail(8192) }}
 		go func() {
 			defer close(a.ch)
 			rd := omprpc.NewReader(st, omprpc.MaxReassembledBytes+1)
@@ -619,7 +694,7 @@ func (a *agentConn) until(what string, pred func(map[string]any) bool) []map[str
 		select {
 		case raw, ok := <-a.ch:
 			if !ok {
-				a.t.Fatalf("agent stream ended before %s", what)
+				a.t.Fatalf("agent stream ended before %s; host.log:\n%s", what, a.hostLog())
 			}
 			var m map[string]any
 			if json.Unmarshal(raw, &m) != nil {
@@ -630,7 +705,7 @@ func (a *agentConn) until(what string, pred func(map[string]any) bool) []map[str
 				return out
 			}
 		case <-tm.C:
-			a.t.Fatalf("timed out waiting for %s", what)
+			a.t.Fatalf("timed out waiting for %s; host.log:\n%s", what, a.hostLog())
 		}
 	}
 }
@@ -756,7 +831,7 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 	assert.Contains(t, got.Args, "--no-tools")
 	assert.Contains(t, got.Args, "--config")
 	assert.NotContains(t, got.Args, "-e")
-	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "ORYN_THREAD_ID"}, got.EnvKeys)
+	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID"}, got.EnvKeys)
 	if os.Geteuid() == 0 {
 		assert.Equal(t, 65534, got.UID)
 	}
@@ -825,18 +900,36 @@ func fakeLLM(t *testing.T, l net.Listener, reply string) *[]string {
 
 // 真 omp（build/core/<arch>/omp）在沙箱里走完一个回合：模型请求经 egress 流到假模型端，不花真实费用；
 // 宿主工具注册后活动工具只有它（--no-tools 下没有任何内置工具）。
-func TestRealOmpTurnInSandbox(t *testing.T) { realOmpTurn(t, false) }
+func TestRealOmpTurnInSandbox(t *testing.T) { realOmpTurn(t, false, 0) }
 
 // 同上，固定为没有命名空间的端口限制模式（omp 启动时探测本机端口、解析域名、连 443 都被沙箱拒绝，仍须正常工作）。
-func TestRealOmpTurnInSandboxPortMode(t *testing.T) { realOmpTurn(t, true) }
+func TestRealOmpTurnInSandboxPortMode(t *testing.T) { realOmpTurn(t, true, 0) }
 
-func realOmpTurn(t *testing.T, portMode bool) {
-	omp, err := filepath.Abs(filepath.Join("..", "..", "build", "core", strings.TrimPrefix(archKey(), "linux-"), "omp"))
-	require.NoError(t, err)
-	if _, err := os.Stat(omp); err != nil {
-		t.Skipf("real omp not available at %s (scripts/fetch-core.sh): %v", omp, err)
+// 同上，再把 Landlock 封顶到 ABI 6（Debian 13 默认内核）：AF_UNIX 一律禁止，会话照样持久化。
+func TestRealOmpTurnInSandboxPortModeABI6(t *testing.T) { realOmpTurn(t, true, 6) }
+
+// realOmpPath 是真实 omp 的路径：ORYN_REAL_OMP（测试尚未钉进 build/core 的新构建时用），缺省 build/core/<arch>/omp。
+func realOmpPath(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("ORYN_REAL_OMP"); p != "" {
+		abs, err := filepath.Abs(p)
+		require.NoError(t, err)
+		return abs
 	}
-	e := newEnv(t, func(c *Config) { c.OmpPath = omp; c.VerifyOmp = true }, func(h *Host) { h.noNS = portMode })
+	p, err := filepath.Abs(filepath.Join("..", "..", "build", "core", strings.TrimPrefix(archKey(), "linux-"), "omp"))
+	require.NoError(t, err)
+	return p
+}
+
+func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
+	omp := realOmpPath(t)
+	if _, err := os.Stat(omp); err != nil {
+		t.Skipf("real omp not available at %s (scripts/fetch-core.sh, or set ORYN_REAL_OMP): %v", omp, err)
+	}
+	if abi, _ := sandbox.Probe(); abi < maxABI {
+		t.Skipf("landlock abi %d < %d", abi, maxABI)
+	}
+	e := newEnv(t, func(c *Config) { c.OmpPath = omp; c.VerifyOmp = true }, func(h *Host) { h.noNS, h.maxABI = portMode, maxABI })
 	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
 	h := e.hello()
 	assert.NotEmpty(t, h.AgentVersion, "omp --version ran inside the sandbox")
@@ -894,6 +987,31 @@ func realOmpTurn(t *testing.T, portMode bool) {
 	a.send(map[string]any{"id": "p1", "type": "prompt", "message": "Say pong."})
 	frames := a.until("agent_end", typeIs("agent_end"))
 	assert.Contains(t, lastAssistantText(frames), reply)
+	for _, f := range frames {
+		assert.NotEqual(t, "session-persistence", f["source"], "会话持久化失败：%v", f)
+	}
+	// 会话持久化：omp 的原生文件锁（PI_FILE_LOCK_BACKEND=sidecar，home 里的旁路文件）在沙箱里可用，会话 .jsonl 写进 home 且有条目。
+	sessDir := filepath.Join(e.h.homeDir(), ".oryn", "threads", coordThread)
+	var jsonl []string
+	require.Eventually(t, func() bool {
+		jsonl = nil
+		_ = filepath.WalkDir(sessDir, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".jsonl") {
+				jsonl = append(jsonl, p)
+			}
+			return nil
+		})
+		for _, p := range jsonl {
+			if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), reply) {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 50*time.Millisecond, "会话文件里没有回合的条目（%v）", jsonl)
+	// 会话的所有权租约是 ~/.omp/run/session-owners 下的旁路文件（abstract socket 后端不会留下文件）。
+	owners, err := os.ReadDir(filepath.Join(e.h.homeDir(), ".omp", "run", "session-owners"))
+	require.NoError(t, err, "sidecar 文件锁后端没有生效")
+	assert.NotEmpty(t, owners)
 	assert.NotEmpty(t, *paths)
 	for _, p := range *paths {
 		assert.Contains(t, p, "/llm/fake/v1/", p)

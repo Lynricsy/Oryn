@@ -277,11 +277,12 @@ func TestE2EM9Coordinator(t *testing.T) {
 	assert.NotContains(t, probe.Args, "-e")
 	assert.Contains(t, probe.Args, "--system-prompt")
 	assert.Contains(t, probe.Args, "--config")
-	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "ORYN_THREAD_ID"}
+	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID"}
 	for _, k := range probe.EnvKeys {
 		assert.Contains(t, allowed, k, "协调 agent 的环境变量只有白名单")
 	}
 	assert.Contains(t, probe.EnvKeys, "ORYN_THREAD_ID")
+	assert.Contains(t, probe.EnvKeys, "PI_FILE_LOCK_BACKEND", "omp 的原生文件锁走旁路文件（沙箱禁止 AF_UNIX socket）")
 	if os.Getuid() == 0 {
 		assert.Equal(t, 65534, probe.UID, "root 部署时协调宿主降权到 nobody")
 	}

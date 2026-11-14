@@ -1,9 +1,10 @@
 //go:build linux
 
 // Package sandbox 在进程内对自身施加不可逆的操作系统沙箱（M9 协调宿主 H2）：
-// Landlock（文件读写 / 执行白名单、TCP 端口、IPC 作用域）+ seccomp（前置架构过滤与系统调用黑名单）
+// Landlock（文件读写 / 执行白名单、TCP 端口、IPC 作用域）+ seccomp（前置架构过滤与系统调用黑名单，AF_UNIX 只留已连接的 stream socketpair）
 // + no_new_privs + 清空能力，必要时先降权到独立的非特权用户。
-// 网络 / PID 命名空间由调用方在创建子进程时决定（见 internal/coordhost），本包只负责把回环网卡拉起。
+// 网络 / PID 命名空间由调用方在创建子进程时决定（见 internal/coordhost），本包只负责把回环网卡拉起；
+// 低版本内核上 Landlock 管不到的部分由命名空间或独立用户补上，补不上就拒绝施加（见 Requirement）。
 package sandbox
 
 import (
@@ -38,6 +39,13 @@ type Policy struct {
 	ReadOnlyDirs  []string // 目录：只读（不可执行）；不存在的忽略
 	ReadOnlyFiles []string // 文件：只读；不存在的忽略
 	TCPPort       uint16   // 唯一允许 bind / connect 的 TCP 端口
+	// NetNS / PIDNS 表示调用方已把进程放进独立的网络 / PID 命名空间（Landlock 管不到 TCP 或信号时由它们隔离）。
+	NetNS bool
+	PIDNS bool
+	// SeparateUID 表示进程已降权到与控制面（orynd）不同的用户：同用户进程收不到它的信号。
+	SeparateUID bool
+	// MaxABI 仅供测试：把实际使用的 Landlock ABI 封顶（模拟旧内核）；0 = 不封顶。
+	MaxABI int
 }
 
 // Report 描述实际生效的隔离（协调宿主写到状态管道，控制面经 GET /api/v1/coordinator 展示）。
@@ -49,9 +57,6 @@ type Report struct {
 	UID         int  `json:"uid"`
 	Seccomp     bool `json:"seccomp"`
 }
-
-// MinABI 是启动条件要求的最低 Landlock ABI（跨目录改名需要 refer 权限）。
-const MinABI = 2
 
 // Probe 返回内核支持的 Landlock ABI 版本；内核不支持或 LSM 未启用时返回 0 与原因。
 func Probe() (int, error) {
@@ -192,22 +197,32 @@ const readWriteRights = landlock.AccessFSSet(ll.AccessFSWriteFile | ll.AccessFSR
 // Apply 对当前进程（全部线程）施加沙箱；不可逆。返回错误时进程处于未知的半受限状态，调用方必须退出。
 func Apply(p Policy) (Report, error) {
 	abi, err := Probe()
-	if err != nil || abi < MinABI {
-		return Report{}, fmt.Errorf("landlock unavailable (abi %d): kernel >= 5.19 with the landlock LSM enabled is required", abi)
+	if p.MaxABI > 0 && abi > p.MaxABI {
+		abi = p.MaxABI
+	}
+	if err != nil {
+		return Report{}, fmt.Errorf("landlock unavailable: %w", err)
+	}
+	if err := Requirement(abi, p.NetNS, p.PIDNS, p.SeparateUID); err != nil {
+		return Report{}, err
 	}
 	if p.TCPPort == 0 {
 		return Report{}, errors.New("sandbox: TCPPort is required")
 	}
+	// 规则只能用预设处理的权限（预设低于 V3 / V4 时没有 truncate / TCP 规则，缺口由 Requirement 把关）。
+	cfg := landlockPreset(abi)
+	fs := cfg.HandledAccessFS
 	rules := []landlock.Rule{
-		landlock.PathAccess(readWriteRights, p.ReadWrite...),
+		landlock.PathAccess(readWriteRights&fs, p.ReadWrite...),
 		landlock.PathAccess(ll.AccessFSExecute|ll.AccessFSReadFile, p.Exec...),
 		landlock.PathAccess(ll.AccessFSReadFile|ll.AccessFSReadDir, p.ReadOnlyDirs...).IgnoreIfMissing(),
 		landlock.PathAccess(ll.AccessFSReadFile, p.ReadOnlyFiles...).IgnoreIfMissing(),
-		landlock.PathAccess(ll.AccessFSReadFile|ll.AccessFSWriteFile|ll.AccessFSTruncate, "/dev/null"),
-		landlock.BindTCP(p.TCPPort),
-		landlock.ConnectTCP(p.TCPPort),
+		landlock.PathAccess((ll.AccessFSReadFile|ll.AccessFSWriteFile|ll.AccessFSTruncate)&fs, "/dev/null"),
 	}
-	if err := landlock.V11.BestEffort().Restrict(rules...); err != nil {
+	if cfg.HandledAccessNet != 0 {
+		rules = append(rules, landlock.BindTCP(p.TCPPort), landlock.ConnectTCP(p.TCPPort))
+	}
+	if err := cfg.BestEffort().Restrict(rules...); err != nil {
 		return Report{}, fmt.Errorf("landlock: %w", err)
 	}
 	if _, err := os.ReadDir("/"); err == nil {
@@ -220,6 +235,13 @@ func Apply(p Policy) (Report, error) {
 		return Report{}, err
 	}
 	return Report{LandlockABI: abi, IPCScope: abi >= 6, UID: os.Getuid(), Seccomp: true}, nil
+}
+
+// landlockPreset 返回不高于 abi 的 go-landlock 预设（BestEffort 再按内核实际能力降级）。
+func landlockPreset(abi int) landlock.Config {
+	presets := []landlock.Config{landlock.V1, landlock.V1, landlock.V2, landlock.V3, landlock.V4, landlock.V5,
+		landlock.V6, landlock.V7, landlock.V8, landlock.V9, landlock.V10, landlock.V11}
+	return presets[min(max(abi, 0), len(presets)-1)]
 }
 
 // auditArch 返回本机的 seccomp 架构常量。
@@ -284,7 +306,7 @@ func loadPrefilter() error {
 	return nil
 }
 
-// denied 是无条件拒绝（EPERM）的系统调用；本机架构没有的跳过。
+// denied 是无条件拒绝（EPERM）的系统调用；本机架构没有的跳过。truncate 按路径截断不受低于 ABI 3 的 Landlock 管辖。
 var denied = []string{
 	"ptrace", "process_vm_readv", "process_vm_writev", "kcmp", "pidfd_getfd", "process_madvise",
 	"unshare", "setns", "mount", "umount2", "pivot_root", "chroot", "open_tree", "move_mount", "fsopen",
@@ -296,16 +318,57 @@ var denied = []string{
 	"io_uring_setup", "io_uring_enter", "io_uring_register",
 	"shmget", "shmat", "shmctl", "shmdt", "semget", "semop", "semctl", "semtimedop", "msgget", "msgsnd",
 	"msgrcv", "msgctl", "mq_open", "mq_unlink",
+	"truncate",
+}
+
+// socketRules 是 socket(2)、socketpair(2) 与 clone(2) 的拒绝条件（同一项内各条件为「且」，项与项之间为「或」）。
+// socket 只放行 TCP：AF_INET / AF_INET6 的 SOCK_STREAM，协议 0 或 IPPROTO_TCP；AF_UNIX 等其它域一律拒绝。
+// socketpair 只放行 AF_UNIX 的 SOCK_STREAM（协议 0）：Bun 启动时要建一对（拒绝会 abort），这对 socket 生来
+// 已连接，connect / sendto 别处都会失败；datagram 一端却能 sendto 任意路径型 socket，seqpacket 也一并拒绝。
+func socketRules() []seccomp.NameWithConditions {
+	cond := func(cs ...seccomp.Condition) seccomp.NameWithConditions {
+		return seccomp.NameWithConditions{Name: "socket", Conditions: cs}
+	}
+	pairCond := func(cs ...seccomp.Condition) seccomp.NameWithConditions {
+		return seccomp.NameWithConditions{Name: "socketpair", Conditions: cs}
+	}
+	domainIs := func(d int) seccomp.Condition {
+		return seccomp.Condition{Argument: 0, Operation: seccomp.Equal, Value: uint64(d)}
+	}
+	domainNot := func(d int) seccomp.Condition {
+		return seccomp.Condition{Argument: 0, Operation: seccomp.NotEqual, Value: uint64(d)}
+	}
+	// 类型低 4 位：SOCK_STREAM = 1；高位是 SOCK_CLOEXEC / SOCK_NONBLOCK。
+	notStream := seccomp.Condition{Argument: 1, Operation: seccomp.BitsSet, Value: 0x0E}
+	protoNot := func(p int) seccomp.Condition {
+		return seccomp.Condition{Argument: 2, Operation: seccomp.NotEqual, Value: uint64(p)}
+	}
+	rules := []seccomp.NameWithConditions{
+		cond(domainNot(unix.AF_INET), domainNot(unix.AF_INET6)),
+		pairCond(domainNot(unix.AF_UNIX)),
+		pairCond(notStream),
+		pairCond(protoNot(0)),
+	}
+	for _, d := range []int{unix.AF_INET, unix.AF_INET6} {
+		rules = append(rules,
+			cond(domainIs(d), notStream),
+			// 协议不是 0 / IPPROTO_TCP（挡 MPTCP 等）。
+			cond(domainIs(d), protoNot(0), protoNot(unix.IPPROTO_TCP)),
+		)
+	}
+	return append(rules, seccomp.NameWithConditions{Name: "clone", Conditions: seccomp.ArgumentConditions{
+		{Argument: 0, Operation: seccomp.BitsSet, Value: cloneNewFlags},
+	}})
 }
 
 // requiredSyscalls 在本机架构上必须存在，否则拒绝施加（过滤器会形同虚设）。
-var requiredSyscalls = []string{"ptrace", "mount", "unshare", "setns", "bpf", "socket", "clone"}
+var requiredSyscalls = []string{"ptrace", "mount", "unshare", "setns", "bpf", "socket", "socketpair", "truncate", "clone"}
 
 // cloneNewFlags 是 clone 的全部 CLONE_NEW* 标志位。
 const cloneNewFlags = unix.CLONE_NEWNS | unix.CLONE_NEWCGROUP | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC |
 	unix.CLONE_NEWUSER | unix.CLONE_NEWPID | unix.CLONE_NEWNET
 
-// loadDenyFilter 装入主过滤器：默认放行，黑名单调用、非 TCP 套接字与建命名空间的 clone 回 EPERM。
+// loadDenyFilter 装入主过滤器：默认放行，黑名单调用、建命名空间的 clone 与 TCP 以外的套接字回 EPERM。
 func loadDenyFilter() error {
 	info, err := arch.GetInfo("")
 	if err != nil {
@@ -325,27 +388,9 @@ func loadDenyFilter() error {
 		}
 	}
 	group := seccomp.SyscallGroup{
-		Names: names,
-		NamesWithCondtions: []seccomp.NameWithConditions{
-			// 不是 AF_INET / AF_INET6。
-			{Name: "socket", Conditions: seccomp.ArgumentConditions{
-				{Argument: 0, Operation: seccomp.NotEqual, Value: unix.AF_INET},
-				{Argument: 0, Operation: seccomp.NotEqual, Value: unix.AF_INET6},
-			}},
-			// 不是 SOCK_STREAM（类型位 0..3 中除最低位外有置位）。
-			{Name: "socket", Conditions: seccomp.ArgumentConditions{
-				{Argument: 1, Operation: seccomp.BitsSet, Value: 0x0E},
-			}},
-			// 协议不是 0 / IPPROTO_TCP（挡 MPTCP 等）。
-			{Name: "socket", Conditions: seccomp.ArgumentConditions{
-				{Argument: 2, Operation: seccomp.NotEqual, Value: 0},
-				{Argument: 2, Operation: seccomp.NotEqual, Value: unix.IPPROTO_TCP},
-			}},
-			{Name: "clone", Conditions: seccomp.ArgumentConditions{
-				{Argument: 0, Operation: seccomp.BitsSet, Value: cloneNewFlags},
-			}},
-		},
-		Action: seccomp.ActionErrno,
+		Names:              names,
+		NamesWithCondtions: socketRules(),
+		Action:             seccomp.ActionErrno,
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

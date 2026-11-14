@@ -69,8 +69,12 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 	logLevel := fs.String("log-level", "info", "日志级别")
 	probe := fs.Bool("probe", false, "只探测 Landlock ABI 与回环，打印一行 JSON 后退出")
 	selftest := fs.Bool("selftest", false, "施加沙箱后跑自检表并退出")
-	var denyRead multiFlag
+	maxABI := fs.Int("max-landlock-abi", 0, "仅供测试：把使用的 Landlock ABI 封顶（模拟旧内核）")
+	hostListener := fs.String("host-listener", "", "自检时必须连不上的、宿主上真实在监听的 TCP 地址")
+	var denyRead, denyAbstract, denyUnixDgram multiFlag
 	fs.Var(&denyRead, "deny-read", "自检时必须读不到的文件（可重复）")
+	fs.Var(&denyAbstract, "deny-abstract", "自检时必须连不上的宿主 abstract unix socket 名（可重复）")
+	fs.Var(&denyUnixDgram, "deny-unix-dgram", "自检时必须发不进去的宿主路径型 unix datagram socket（可重复）")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -86,6 +90,9 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 			res.Loopback = sandbox.LoopbackUp() == nil
 		}
 		res.LandlockABI, _ = sandbox.Probe()
+		if *maxABI > 0 {
+			res.LandlockABI = min(res.LandlockABI, *maxABI)
+		}
 		b, _ := json.Marshal(res)
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -139,6 +146,10 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 		ReadOnlyDirs:  ReadOnlyDirs,
 		ReadOnlyFiles: ReadOnlyFiles,
 		TCPPort:       uint16(port),
+		NetNS:         *netns,
+		PIDNS:         *pidns,
+		SeparateUID:   *uid >= 0,
+		MaxABI:        *maxABI,
 	})
 	if err != nil {
 		return fail("sandbox: %v", err)
@@ -161,9 +172,12 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 				filepath.Join(filepath.Dir(*home), "selftest-escape-"+strconv.Itoa(os.Getpid())),
 				filepath.Join(os.TempDir(), "oryn-selftest-escape-"+strconv.Itoa(os.Getpid())),
 			},
-			DenyDial: []string{"1.1.1.1:443", "127.0.0.1:1"},
-			Exec:     []string{*omp, "--version"},
-			Port:     uint16(port),
+			DenyDial:      []string{"1.1.1.1:443", "127.0.0.1:1"},
+			HostListener:  *hostListener,
+			Exec:          []string{*omp, "--version"},
+			Port:          uint16(port),
+			DenyAbstract:  denyAbstract,
+			DenyUnixDgram: denyUnixDgram,
 		})
 		code := 0
 		enc := json.NewEncoder(stdout)

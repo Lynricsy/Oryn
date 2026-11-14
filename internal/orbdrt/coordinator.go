@@ -90,7 +90,9 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"PI_RPC_EMIT_TITLE": "1",
 		"PI_NOTIFICATIONS":  "off",
 		"OTEL_SDK_DISABLED": "true",
-		"ORYN_THREAD_ID":    p.ThreadID,
+		// omp 的原生文件锁改用 home 里的旁路文件（OFD 锁）：沙箱禁止一切 AF_UNIX，默认的 abstract socket 锁用不了。
+		"PI_FILE_LOCK_BACKEND": "sidecar",
+		"ORYN_THREAD_ID":       p.ThreadID,
 	}
 	return args, cwd, env, nil
 }

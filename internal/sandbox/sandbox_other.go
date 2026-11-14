@@ -18,6 +18,10 @@ type Policy struct {
 	ReadOnlyDirs  []string
 	ReadOnlyFiles []string
 	TCPPort       uint16
+	NetNS         bool
+	PIDNS         bool
+	SeparateUID   bool
+	MaxABI        int
 }
 
 // Report 描述实际生效的隔离；见 Linux 实现。
@@ -29,9 +33,6 @@ type Report struct {
 	UID         int  `json:"uid"`
 	Seccomp     bool `json:"seccomp"`
 }
-
-// MinABI 是启动条件要求的最低 Landlock ABI。
-const MinABI = 2
 
 func Probe() (int, error)                    { return 0, ErrUnsupported }
 func LoopbackUp() error                      { return ErrUnsupported }
@@ -48,13 +49,16 @@ type Check struct {
 
 // CheckOptions 描述自检的输入；见 Linux 实现。
 type CheckOptions struct {
-	Home      string
-	DenyRead  []string
-	DenyWrite []string
-	DenyDial  []string
-	DenyExec  []string
-	Exec      []string
-	Port      uint16
+	Home          string
+	DenyRead      []string
+	DenyWrite     []string
+	DenyDial      []string
+	HostListener  string
+	DenyExec      []string
+	Exec          []string
+	Port          uint16
+	DenyAbstract  []string
+	DenyUnixDgram []string
 }
 
 // Checks 在非 Linux 平台上只返回一项失败。

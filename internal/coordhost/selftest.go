@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SelfTest 是 `orynd --config <f> coordinator check`：可用性检查与目录准备之后，用与 spawn 相同的参数与
@@ -60,6 +62,46 @@ func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 		}
 		deny = append(deny, "--deny-read", p)
 	}
+	// 宿主上的 abstract unix socket（stream 与 datagram 各一个）：沙箱里必须连不上。
+	abstract := "oryn-selftest-" + hex.EncodeToString(rnd[:])
+	sl, err := net.Listen("unix", "@"+abstract)
+	if err != nil {
+		return fmt.Errorf("listen abstract unix socket: %w", err)
+	}
+	defer sl.Close()
+	dl, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: "@" + abstract + "-dgram", Net: "unixgram"})
+	if err != nil {
+		return fmt.Errorf("listen abstract unix datagram socket: %w", err)
+	}
+	defer dl.Close()
+	deny = append(deny, "--deny-abstract", abstract, "--deny-abstract", abstract+"-dgram")
+	// 宿主文件系统上、沙箱白名单之外的 0666 unix datagram socket（像 /dev/log）：沙箱里 connect / sendto 都必须失败，
+	// 且它什么也收不到。网络命名空间与 IPC 作用域都管不到路径型 socket，靠 seccomp 一律禁止 AF_UNIX 挡住。
+	sockDir, err := os.MkdirTemp("", "oryn-selftest-sock-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(sockDir)
+	if err := os.Chmod(sockDir, 0o755); err != nil {
+		return err
+	}
+	dgramPath := filepath.Join(sockDir, "dgram.sock")
+	pl, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: dgramPath, Net: "unixgram"})
+	if err != nil {
+		return fmt.Errorf("listen unix datagram socket: %w", err)
+	}
+	defer pl.Close()
+	if err := os.Chmod(dgramPath, 0o666); err != nil {
+		return err
+	}
+	deny = append(deny, "--deny-unix-dgram", dgramPath)
+	// 宿主回环上真实在监听的白名单外 TCP 端口：沙箱里必须连不上（网络命名空间或 Landlock 的端口规则），且它接不到连接。
+	tl, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		return fmt.Errorf("listen tcp: %w", err)
+	}
+	defer tl.Close()
+	deny = append(deny, "--host-listener", tl.Addr().String())
 	args := h.childArgs(uid, gid, h.useNS, append([]string{"--selftest", "--home", home}, deny...)...)
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -89,6 +131,23 @@ func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 			_ = enc.Encode(map[string]string{"stderr": s})
 		}
 		return fmt.Errorf("coordinator host selftest failed: %w", runErr)
+	}
+	// 子进程已退出：它若发进来过，数据报就在接收队列里。
+	buf := make([]byte, 256)
+	for _, l := range []*net.UnixConn{pl, dl} {
+		_ = l.SetReadDeadline(time.Now())
+		if n, _, err := l.ReadFrom(buf); err == nil {
+			name := l.LocalAddr().String()
+			_ = enc.Encode(map[string]any{"check": "unix dgram " + name + " received nothing", "ok": false, "detail": fmt.Sprintf("received %q", buf[:n])})
+			return fmt.Errorf("coordinator host selftest failed: sandbox reached host unix datagram socket %s", name)
+		}
+	}
+	// 连上过的连接留在 accept 队列里：子进程退出后再同步 accept 一次，不与后台 accept 赛跑。
+	_ = tl.SetDeadline(time.Now().Add(50 * time.Millisecond))
+	if c, err := tl.Accept(); err == nil {
+		_ = c.Close()
+		_ = enc.Encode(map[string]any{"check": "tcp " + tl.Addr().String() + " accepted nothing", "ok": false, "detail": "accepted a connection from the sandbox"})
+		return fmt.Errorf("coordinator host selftest failed: sandbox reached host tcp port %s", tl.Addr())
 	}
 	return nil
 }

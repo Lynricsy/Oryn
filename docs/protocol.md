@@ -737,7 +737,7 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 
 |项|规格位置|语义|
 |---|---|---|
-|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <systemPrompt>`，环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED ORYN_THREAD_ID`）|
+|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <systemPrompt>`，环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND=sidecar ORYN_THREAD_ID`；`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用旁路文件 + OFD 锁，见 Oryn Core 的 ORYN.md）|
 |hello `features`|`LinkCtlHelloParams.features`|普通 orbd 追加 `threads`（orb 内线程与定时方法）。`coordinator` **只由** `orynd coordinator-host` 上报，此时特性表恰为 `["coordinator"]`，`onRequest` 只认 `setup.run / resume.run / agent.start / agent.stop / shutdown`|
 |`thread.create`|`LinkCtlThreadCreateParams{threadId, prompt, title?, type?}` → `LinkCtlThreadInfo`|orbd→orynd 请求。`threadId` 一律是**调用方**线程（须属于本 orb、`kind = work`、未归档，否则 `forbidden`）。新线程取调用方的项目与 Space，`parentThreadId` = 调用方，新 orb|
 |`thread.send` / `thread.get`|`LinkCtlThreadSendParams{threadId, target, message, steer?}` → `LinkCtlOkResult`；`LinkCtlThreadGetParams{threadId, target}` → `LinkCtlThreadInfo`|`target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。`send` 以自动化身份投递，正文前加 `[Oryn message from thread "<title>" (<id>) — sent by an agent, not typed by the owner]`|
@@ -754,7 +754,7 @@ orb 内方法、`thread.create` / `thread.send` 与 `schedule.put` / `schedule.d
 |探测|结果|
 |---|---|
 |P1 `--no-tools` + `set_host_tools` + 覆盖层（空 HOME、`env -i`）|`set_host_tools` 成功、`toolNames = ["create_thread"]`；`get_active_tools` **只有** `create_thread`（`source: extension`），没有任何内置工具（`manage_skill / learn / checkpoint / rewind` 等也不在）。宿主工具在 `--no-tools` 下自动激活，不需要额外的激活命令|
-|P1 的副作用|启动时 omp 主动连 `127.0.0.1:11434`（ollama）、`127.0.0.1:1234`（lm-studio）、`127.0.0.1:8080`（llama.cpp）做模型发现，并经 systemd-resolved 的 unix socket 解析域名、连外网 443 刷新模型目录；在 HOME 下写 `.omp/{logs,run/daemons,agent/*.db,natives/<版本>}`。即：不加沙箱时 omp 会碰本机其它端口——沙箱的网络隔离（命名空间或 Landlock 端口白名单 + seccomp 禁 `AF_UNIX`）是必需的|
+|P1 的副作用|启动时 omp 主动连 `127.0.0.1:11434`（ollama）、`127.0.0.1:1234`（lm-studio）、`127.0.0.1:8080`（llama.cpp）做模型发现，并经 systemd-resolved 的 unix socket 解析域名、连外网 443 刷新模型目录；在 HOME 下写 `.omp/{logs,run/daemons,agent/*.db,natives/<版本>}`；会话所有权租约默认 bind 一个 abstract unix datagram 名字（omp 的原生文件锁）；Bun 启动时建一对 `AF_UNIX` stream `socketpair`（拒绝即 abort）。即：不加沙箱时 omp 会碰本机其它端口与 unix socket——沙箱的网络隔离（网络命名空间，或 Landlock ABI ≥ 4 的端口白名单）+ seccomp 禁止 `AF_UNIX` 的 `socket(2)` 与 datagram / seqpacket 的 `socketpair`（只留生来已连接的 stream `socketpair`）是必需的；文件锁由 `PI_FILE_LOCK_BACKEND=sidecar` 改到 `.omp/run/session-owners/` 等处的旁路文件上（OFD 锁）。在 `--no-tools` 的协调档里，omp 其它的 unix socket 用途（daemon broker、预测 daemon、tiny 标题 worker、blob broker、collab、LSP / DAP / 浏览器 / IDA 等）都要工具、非默认设置或被控制面拦截的 RPC 才会触发，触发时得到 `EPERM` 并降级|
 |P2 最小文件视图 + 无网络（bwrap `--unshare-all`，uid 65534）|与 P1 相同的两行，`ready` 后 0.9 秒内到达，没有因联网失败而卡住|
 |P3 Landlock ABI|`landlock_create_ruleset(NULL, 0, VERSION)` 返回 **11**（errno 0）|
 
@@ -765,11 +765,11 @@ P2 的视图即协调宿主（H4）的只读路径清单，`ReadOnlyDirs` / `Rea
 |可执行（`Exec`）|`<dir>/bin/omp` 的真实路径 + 其 ELF 解释器（`sandbox.ExecPaths`）|
 |只读目录|`/usr/lib`、`/usr/lib64`、`/lib`、`/lib64`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup`|
 |只读文件|`/etc/ld.so.cache`、`/etc/localtime`、`/etc/passwd`、`/etc/group`、`/etc/nsswitch.conf`、`/etc/hosts`、`/dev/urandom`、`/dev/random`、`/dev/zero`（另 `/dev/null` 可读写）|
-|读写目录（**不可执行**）|协调宿主的 HOME（`<dir>/home`，内含 `TMPDIR`、`cwd`、会话目录、`.omp/`）。go-landlock 的 `RWDirs` 会连带授予执行权，所以这里只给读写、不给 `Execute`：写进 HOME 的程序无法运行|
+|读写目录（**不可执行**）|协调宿主的 HOME（`<dir>/home`，内含 `TMPDIR`、`cwd`、会话目录、`.omp/`，`.omp/run/session-owners/` 下是会话租约的旁路锁文件）。go-landlock 的 `RWDirs` 会连带授予执行权，所以这里只给读写、不给 `Execute`：写进 HOME 的程序无法运行；Landlock ABI < 3 时 `truncate` 权限不受 Landlock 管，由 seccomp 拒绝按路径的 `truncate(2)`|
 
 不需要、也不给：`/etc/resolv.conf`、`/etc/ssl`、`/run/systemd/resolve`（模型请求只走 `http://127.0.0.1:<egress_port>`，不解析域名、不做 TLS）、`/tmp`、`/var/tmp`，以及上表之外的 `/sys`（omp 会试读 `/sys/devices/virtual/dmi`、`/sys/kernel/mm/transparent_hugepage`，读不到时照常启动）。`/sys/fs/cgroup` 只用于 omp 读取内存 / CPU 上限，P2 未提供也能启动。
 
-启动条件、环境对照与残余风险见 `docs/deploy.md`「协调宿主」。自检清单是 `sandbox.Checks`（单测与 `orynd coordinator-host --selftest` / `orynd coordinator check` 共用），除读写、网络、提权、ptrace 外，还覆盖 MPTCP 套接字与「把可执行文件复制进 HOME 再运行」两项。非 root 且没有 user namespace 时无法清空 bounding set，此时以 `no_new_privs` + 非 root uid + 空能力集为准（自检明细里注明）。版本钉：`core/embed.go` 的 `core.Pin()` 返回 `core/source.json` 的 `sha256` 表（键 `linux-x64` / `linux-arm64` / `omp-rpc-types.d.ts`），`coordinator.verify_omp` 为真时 omp 必须与 `Pin()["linux-"+arch]` 一致。
+启动条件（Landlock ABI ≥ 2；没有网络命名空间时 ABI ≥ 4；没有 PID 命名空间且沙箱与 orynd 同一用户时 ABI ≥ 6，见 `sandbox.Requirement`）、环境对照与残余风险见 `docs/deploy.md`「协调宿主」。自检清单是 `sandbox.Checks`（单测与 `orynd coordinator-host --selftest` / `orynd coordinator check` 共用），除读写、网络（含一个由自检在宿主上真实监听的白名单外 TCP 端口）、提权、ptrace 外，还覆盖 MPTCP 套接字、unix stream / datagram 套接字、datagram / seqpacket `socketpair`（必须失败）与 stream `socketpair`（必须成功，且不能 sendto 别处）、按路径 `truncate`、向父进程发信号、OFD 锁的互斥与可观测，以及「把可执行文件复制进 HOME 再运行」。非 root 且没有 user namespace 时无法清空 bounding set，此时以 `no_new_privs` + 非 root uid + 空能力集为准（自检明细里注明）。版本钉：`core/embed.go` 的 `core.Pin()` 返回 `core/source.json` 的 `sha256` 表（键 `linux-x64` / `linux-arm64` / `omp-rpc-types.d.ts`），`coordinator.verify_omp` 为真时 omp 必须与 `Pin()["linux-"+arch]` 一致。
 
 ### 限额
 

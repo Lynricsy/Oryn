@@ -235,21 +235,28 @@ coordinator:
 
 ### 启动条件
 
-三条缺一条，协调功能就不可用（建 Space、开助手对话时回 `409 coordinator_unavailable` 并带原因），其它功能照常。没有「关掉沙箱」的开关。
+下面任何一条不满足，协调功能就不可用（建 Space、开助手对话时回 `409 coordinator_unavailable` 并带原因），其它功能照常。没有「关掉沙箱」的开关。
 
-1. Landlock ABI ≥ 2：内核 ≥ 5.19，且 Landlock LSM 已启用（`cat /sys/kernel/security/lsm` 里有 `landlock`）。
-2. 网络隔离二选一：能创建网络命名空间，或 Landlock ABI ≥ 4（内核 ≥ 6.7，可按端口限制 TCP）。
-3. orynd 以 root 运行时：`coordinator.user` 存在且不是 root，`coordinator.dir` 的每一级父目录对它可进入（other 有 `x` 位）。默认的 `<data_dir>/coordinator` 在 0700 的 `data_dir` 下，root 部署必须把 `dir` 移出来（例如 `/var/lib/oryn-coordinator`）。
+沙箱只靠 Landlock 管文件、TCP 端口与信号；内核的 Landlock ABI 低于某项能力所需的版本时，go-landlock 的 BestEffort 会悄悄丢掉对应规则，所以缺的那一项必须由别的机制补上，补不上就 fail-closed：
+
+| 要求 | 内核 / 条件 | 不满足时的原因（`GET /api/v1/coordinator`） |
+|---|---|---|
+| Landlock ABI ≥ 2（跨目录改名的 refer 权限） | 内核 ≥ 5.19，Landlock LSM 已启用（`cat /sys/kernel/security/lsm` 里有 `landlock`） | 「内核 Landlock ABI N < 2…」 |
+| TCP：有网络命名空间，**或** Landlock ABI ≥ 4（按端口限制 TCP） | 能建网络命名空间（root，或开放了非特权 user namespace）；否则内核 ≥ 6.7 | 「内核 Landlock ABI N < 4 且没有网络命名空间，无法限制 TCP 出站…」 |
+| 信号：有 PID 命名空间，**或**沙箱降权到独立用户（orynd 以 root 运行），**或** Landlock ABI ≥ 6（信号作用域） | 命名空间与网络命名空间一起建；否则 root 部署，或内核 ≥ 6.12 | 「内核 Landlock ABI N < 6、没有 PID 命名空间且沙箱与 orynd 是同一用户，无法阻止向 orynd 等同用户进程发信号…」 |
+| orynd 以 root 运行时：`coordinator.user` 存在且不是 root，`coordinator.dir` 的每一级父目录对它可进入（other 有 `x` 位） | 默认的 `<data_dir>/coordinator` 在 0700 的 `data_dir` 下，root 部署必须把 `dir` 移出来（例如 `/var/lib/oryn-coordinator`） | 「… is not reachable by user …」等 |
+
+其余随 ABI 出现的 Landlock 能力不设门槛：按路径的 `truncate(2)`（ABI 3）由 seccomp 无条件拒绝；设备 ioctl（ABI 5）只涉及白名单里的 `/dev/null`、`/dev/{u,}random`、`/dev/zero`；abstract 与带路径的 unix socket（ABI 6 / 9）、UDP（ABI 10）由 seccomp 一律禁止。Debian 13 默认内核（6.12，ABI 6）无论有没有命名空间都可用。
 
 ### 沙箱里有什么
 
 | 层 | 内容 |
 |---|---|
-| 启动开关 | omp 以 `--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动，带一份强制关闭 autolearn、memory、checkpoint、goal、plan、generate_image、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv 的覆盖层；环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED ORYN_THREAD_ID` |
+| 启动开关 | omp 以 `--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动，带一份强制关闭 autolearn、memory、checkpoint、goal、plan、generate_image、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv 的覆盖层；环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket） |
 | 文件 | 只下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥）；cwd 是空目录 |
 | 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
-| Landlock | 只有 `<dir>/home` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；TCP 只能 bind / connect `egress_port`；ABI ≥ 6 时信号与抽象 unix socket 不出沙箱 |
-| seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；拒绝非 TCP 套接字（含 unix、netlink、UDP、MPTCP）、带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等 |
+| Landlock | 只有 `<dir>/home` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 bind / connect `egress_port`；ABI ≥ 6 时信号不出沙箱 |
+| seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；`socket` 只放行 TCP（`AF_INET` / `AF_INET6` 的 `SOCK_STREAM`），`AF_UNIX` 一律拒绝，netlink、UDP、MPTCP 等也拒绝；`socketpair` 只放行 `AF_UNIX` + `SOCK_STREAM`（Bun 启动时要建一对，拒绝会直接 abort；这对 socket 生来已连接，connect / sendto 别处都失败），datagram 与 seqpacket 拒绝；带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、按路径的 `truncate`、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等一律拒绝 |
 | 权限 | `no_new_privs`；能力集与边界集清空；root 部署时降权到 `coordinator.user` |
 | 命名空间（能建就建） | 独立的网络（只有回环）、PID、IPC、UTS 命名空间；非 root 时外加一个只映射自己的 user namespace |
 
@@ -258,9 +265,11 @@ coordinator:
 | 环境 | 命名空间 | Landlock | 降权 | 结果 |
 |---|---|---|---|---|
 | 开发机（root，Arch，内核 7.x） | 有 | 有 | `nobody` | 全部 |
-| systemd 生产单元（`User=oryn`；Debian / Arch / Fedora） | 有（非特权 user namespace） | 有 | 不适用 | 全部（文件靠 Landlock，不靠 uid） |
-| systemd 生产单元，Ubuntu 23.10+ 默认 AppArmor | 探测失败时不用 | 有（6.8 = ABI 4） | 不适用 | 文件 + 按端口限制的网络 |
-| Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 ≥ 6.7 且 Docker ≥ 20.10.18 | `nobody` | 文件 + 按端口限制的网络；内核更旧则不可用 |
+| systemd 生产单元（`User=oryn`；Debian 13 / Arch / Fedora） | 有（非特权 user namespace） | 有（Debian 13 = ABI 6） | 不适用 | 全部（文件靠 Landlock，不靠 uid） |
+| systemd 生产单元，Ubuntu 23.10+ 默认 AppArmor | 探测失败时不用 | 有（6.8 = ABI 4） | 不适用 | 不可用：没有 PID 命名空间、同一用户，ABI < 6 拦不住信号（以 root 运行 orynd 或放开 user namespace 即可） |
+| Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 Landlock ABI ≥ 4，且 Docker ≥ 20.10.18 | `nobody` | 文件 + 按端口限制的网络；ABI < 4 时不可用 |
+
+omp 的原生文件锁（会话所有权租约等）在 Linux 上默认 bind 一个 abstract unix datagram socket；协调宿主给 omp 设了 `PI_FILE_LOCK_BACKEND=sidecar`（Oryn Core `oryn-v18.19.0-3` 起），锁改成 `~/.omp/run/…` 下的旁路文件加 OFD 写锁，沙箱因此可以禁止 `AF_UNIX` 的 `socket(2)`（只留 Bun 需要的、生来已连接的 stream `socketpair`）：宿主上的 abstract socket 与 `/dev/log` 这类带路径的 0666 socket 在任何内核上都联系不上。
 
 `deploy/systemd/orynd.service` 不用改：`<data_dir>/coordinator` 在 `ReadWritePaths` 之内，单元没有限制命名空间与系统调用。**如果你自己给单元加了 `RestrictNamespaces=`，协调宿主会退到「按端口限制」模式**；加了 `SystemCallFilter=` 且挡掉了 `landlock_*` 或 `seccomp`，协调功能会不可用。
 
@@ -273,7 +282,8 @@ root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去�
 - 没有网络命名空间时，沙箱内进程能向**任意地址**的 `egress_port` 端口发起 TCP 连接（Landlock 只按端口管）。
 - `/proc` 只读可见，其它进程的命令行可读（环境与内存读不到）。
 - 不防资源耗尽（内存、磁盘、CPU）。
-- 非 root、内核 < 6.12 且没有 PID 命名空间时，可以给同一用户的其它进程发信号。
+- root 部署、没有 PID 命名空间且 ABI < 6 时，沙箱能给同为 `coordinator.user` 的其它协调宿主进程发信号（同一所有者，不出信任域）。
+- 没有网络命名空间时，放行的 stream `socketpair` 的一端可以 `bind` 到宿主上一个尚未被占用的 abstract unix 名字（seccomp 看不到地址）：只能抢占名字，不能借它连接或收发任何东西（这对 socket 已互相连接，不能 `listen`）。
 
 ### 排查
 
@@ -281,7 +291,7 @@ root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去�
 sudo -u oryn orynd --config /etc/oryn/orynd.yaml coordinator check   # root 部署去掉 sudo -u oryn
 ```
 
-它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性，再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443` 与 `127.0.0.1:1`，建 UDP / unix / netlink / MPTCP 套接字，`unshare`、`mount`、`ptrace`、`clone3`）与**必须成功**的（home 内写文件并跨目录改名、`omp --version`、监听并自连代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。
+它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性，再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443`、`127.0.0.1:1` 与自检在宿主回环上真实监听的白名单外 TCP 端口（该端口也必须接不到连接），建 UDP / unix stream / unix datagram / netlink / MPTCP 套接字与 datagram / seqpacket 的 unix `socketpair`，以 stream 与 datagram 连宿主上的 abstract unix socket，对白名单之外的 0666 unix datagram socket 做 connect 与 sendto、并用放行的 stream `socketpair` 向它 sendto（宿主上这些 socket 也必须什么都收不到），按路径 `truncate` home 里的文件，`unshare`、`mount`、`ptrace`、`clone3`，父进程可见时向它发信号）与**必须成功**的（home 内写文件并跨目录改名、home 内 flock 与 OFD 锁——另一个打开文件描述取不到 OFD 写锁且 `F_OFD_GETLK` 看得到持有者，即 omp 旁路文件锁所需的语义——建一对 stream unix `socketpair`、`omp --version`、监听并自连代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。
 
 宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/home`，下一条消息时接着同一个会话。子进程意外退出时，若协调 orb 已就绪，orynd 会把它停下再唤醒；若还在启动（尚未就绪），就原地重新拉起子进程。5 分钟内连续 3 次意外退出后不再拉起：已就绪的停在 `stopped` 等下一条消息再试，启动中的由连接超时转为 `failed`。
 

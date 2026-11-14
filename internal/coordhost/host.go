@@ -124,6 +124,8 @@ type Host struct {
 
 	// noNS 仅供测试：跳过命名空间探测，固定为端口限制模式（模拟建不了命名空间的环境）。
 	noNS bool
+	// maxABI 仅供测试：把 Landlock ABI 封顶（探测与子进程都按它；模拟旧内核）。
+	maxABI int
 	// onRecovered 仅供测试：意外退出的善后（Pause、可能的 Wake）结束时调用。
 	onRecovered func(orbID string, woke bool)
 }
@@ -212,6 +214,9 @@ func (h *Host) probe() {
 
 func (h *Host) runProbe(ctx context.Context, ns bool) (probeResult, error) {
 	args := append(append([]string{}, h.cfg.Command[1:]...), "--probe")
+	if h.maxABI > 0 {
+		args = append(args, "--max-landlock-abi", strconv.Itoa(h.maxABI))
+	}
 	if ns {
 		args = append(args, "--netns")
 	}
@@ -280,15 +285,13 @@ func (h *Host) Check(_ context.Context) error {
 		_ = f.Close()
 	}
 	h.probe()
-	if h.abi < sandbox.MinABI {
-		reason := fmt.Sprintf("landlock unavailable (abi %d): kernel >= 5.19 with the landlock LSM enabled is required", h.abi)
+	// 命名空间是成套建的（网络 + PID + IPC + UTS）；以 root 运行时沙箱降权到独立的 coordinator.user。
+	if err := sandbox.Requirement(h.abi, h.useNS, h.useNS, os.Geteuid() == 0); err != nil {
+		reason := err.Error()
 		if h.probeErr != nil {
-			reason += fmt.Sprintf(" (probe failed: %v)", h.probeErr)
+			reason += fmt.Sprintf("（探测失败：%v）", h.probeErr)
 		}
 		return unavailable("%s", reason)
-	}
-	if !h.useNS && h.abi < 4 {
-		return unavailable("network isolation unavailable: cannot create a network namespace and landlock abi %d < 4 (kernel >= 6.7 required)", h.abi)
 	}
 	if !h.useNS {
 		if err := h.egressPortFree(); err != nil {
@@ -542,6 +545,9 @@ func (h *Host) childArgs(uid, gid int, ns bool, extra ...string) []string {
 	}
 	if ns {
 		args = append(args, "--netns", "--pidns")
+	}
+	if h.maxABI > 0 {
+		args = append(args, "--max-landlock-abi", strconv.Itoa(h.maxABI))
 	}
 	return append(args, extra...)
 }
