@@ -61,9 +61,9 @@ func TestProjectIconAPI(t *testing.T) {
 	assert.Nil(t, row.Icon)
 }
 
-// agent 头像与用户头像共用同一套校验与 handler，两条路由跑同一组用例。
+// agent、助手与用户三组身份的头像共用同一套校验与 handler，三条路由跑同一组用例。
 func TestAvatarIdentityAPI(t *testing.T) {
-	for _, path := range []string{"/api/v1/settings/agent-identity", "/api/v1/settings/user-identity"} {
+	for _, path := range []string{"/api/v1/settings/agent-identity", "/api/v1/settings/assistant-identity", "/api/v1/settings/user-identity"} {
 		t.Run(path, func(t *testing.T) { testAvatarIdentityAPI(t, path) })
 	}
 }
@@ -145,4 +145,89 @@ func TestAvatarIdentitiesIndependent(t *testing.T) {
 	assert.Nil(t, row.UserAvatarIcon)
 	require.NotNil(t, row.UserAvatarImage)
 	assert.Equal(t, jpeg, *row.UserAvatarImage)
+}
+
+// agent 与助手身份带名字：两条路由跑同一组名字用例。
+func TestIdentityNameAPI(t *testing.T) {
+	for _, path := range []string{"/api/v1/settings/agent-identity", "/api/v1/settings/assistant-identity"} {
+		t.Run(path, func(t *testing.T) { testIdentityNameAPI(t, path) })
+	}
+}
+
+func testIdentityNameAPI(t *testing.T, path string) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+
+	assert.Equal(t, 401, e.do("PUT", path, h2Cred{}, map[string]any{"name": "Ling"}).status)
+	assert.Equal(t, 403, e.do("PUT", path, h2Cred{cookie: e.webSession()}, map[string]any{"name": "Ling"}).status)
+	r := e.do("PUT", path, c, map[string]any{"name": "Ling"})
+	assert.Equal(t, 409, r.status, "尚未初始化所有者")
+	assert.Equal(t, "conflict", r.code(t))
+
+	require.NoError(t, e.st.Q.CreateOwner(context.Background(), db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
+
+	// 往返：名字与头像一起读写，首尾空白被去掉
+	r = e.do("PUT", path, c, map[string]any{"name": "  昔涟 Cyrene \t", "avatarIcon": "🤖"})
+	require.Equal(t, 200, r.status, string(r.body))
+	assert.JSONEq(t, `{"name":"昔涟 Cyrene","avatarIcon":"🤖"}`, string(r.body))
+	r = e.do("GET", path, h2Cred{cookie: e.webSession()}, nil)
+	require.Equal(t, 200, r.status)
+	assert.JSONEq(t, `{"name":"昔涟 Cyrene","avatarIcon":"🤖"}`, string(r.body))
+
+	// 整体替换：不带 name 的 PUT 清除名字
+	r = e.do("PUT", path, c, map[string]any{"avatarIcon": "🦊"})
+	require.Equal(t, 200, r.status, string(r.body))
+	assert.JSONEq(t, `{"avatarIcon":"🦊"}`, string(r.body))
+	assert.JSONEq(t, `{"avatarIcon":"🦊"}`, string(e.do("GET", path, c, nil).body))
+
+	// 40 个字符（多字节）可以，41 个不行；控制字符不行；纯空白等同省略
+	forty := strings.Repeat("名", 40)
+	r = e.do("PUT", path, c, map[string]any{"name": forty})
+	require.Equal(t, 200, r.status, string(r.body))
+	assert.JSONEq(t, `{"name":"`+forty+`"}`, string(r.body))
+	for _, bad := range []string{strings.Repeat("a", 41), strings.Repeat("名", 41), "a\nb", "a\u0000b", "a\u007fb"} {
+		r := e.do("PUT", path, c, map[string]any{"name": bad, "avatarIcon": "🤖"})
+		assert.Equal(t, 400, r.status, "%q: %s", bad, r.body)
+		assert.Equal(t, "invalid_request", r.code(t))
+	}
+	assert.JSONEq(t, `{"name":"`+forty+`"}`, string(e.do("GET", path, c, nil).body), "被拒的请求不改动已存的值")
+	r = e.do("PUT", path, c, map[string]any{"name": "   "})
+	require.Equal(t, 200, r.status)
+	assert.JSONEq(t, `{}`, string(r.body))
+	assert.JSONEq(t, `{}`, string(e.do("GET", path, c, nil).body))
+}
+
+// agent 与助手是两组列：写名字 / 头像互不影响，用户头像也不受影响。
+func TestAgentAssistantIdentityIndependent(t *testing.T) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+	ctx := context.Background()
+	require.NoError(t, e.st.Q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
+	const agent, assistant, user = "/api/v1/settings/agent-identity", "/api/v1/settings/assistant-identity", "/api/v1/settings/user-identity"
+
+	require.Equal(t, 200, e.do("PUT", agent, c, map[string]any{"name": "Agent", "avatarIcon": "🤖"}).status)
+	assert.JSONEq(t, `{}`, string(e.do("GET", assistant, c, nil).body), "助手返回原始值，不回落到 agent")
+	require.Equal(t, 200, e.do("PUT", user, c, map[string]any{"avatarIcon": "🙂"}).status)
+
+	require.Equal(t, 200, e.do("PUT", assistant, c, map[string]any{"name": "Helper"}).status)
+	assert.JSONEq(t, `{"name":"Helper"}`, string(e.do("GET", assistant, c, nil).body))
+	assert.JSONEq(t, `{"name":"Agent","avatarIcon":"🤖"}`, string(e.do("GET", agent, c, nil).body))
+
+	require.Equal(t, 200, e.do("PUT", agent, c, map[string]any{}).status)
+	assert.JSONEq(t, `{}`, string(e.do("GET", agent, c, nil).body))
+	assert.JSONEq(t, `{"name":"Helper"}`, string(e.do("GET", assistant, c, nil).body), "清 agent 不清助手")
+	assert.JSONEq(t, `{"avatarIcon":"🙂"}`, string(e.do("GET", user, c, nil).body))
+
+	// 写用户头像不碰 agent / 助手名字
+	require.Equal(t, 200, e.do("PUT", agent, c, map[string]any{"name": "Agent"}).status)
+	require.Equal(t, 200, e.do("PUT", user, c, map[string]any{}).status)
+	row, err := e.st.Q.GetOwnerAgentIdentity(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, row.AgentName)
+	assert.Equal(t, "Agent", *row.AgentName)
+	arow, err := e.st.Q.GetOwnerAssistantIdentity(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, arow.AssistantName)
+	assert.Equal(t, "Helper", *arow.AssistantName)
+	assert.Nil(t, arow.AssistantAvatarIcon)
 }
