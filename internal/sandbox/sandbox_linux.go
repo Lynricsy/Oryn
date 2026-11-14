@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -365,7 +366,20 @@ func socketRules() []seccomp.NameWithConditions {
 
 // requiredSyscalls 在本机架构上必须存在，否则拒绝施加（过滤器会形同虚设）。
 var requiredSyscalls = []string{"ptrace", "mount", "unshare", "setns", "bpf", "socket", "socketpair", "truncate", "clone",
-	"prlimit64", "setpriority", "sched_setaffinity", "sched_setscheduler", "sched_setparam", "ioprio_set"}
+	"prlimit64", "setpriority", "sched_setaffinity", "sched_setscheduler", "sched_setparam", "ioprio_set",
+	"sendto", "sendmsg", "sendmmsg"}
+
+// fastOpenRules 拒绝带 MSG_FASTOPEN 的发送：TFO 客户端经 sendto / sendmsg / sendmmsg 直接发起连接，
+// 不走 security_socket_connect，较旧内核上 Landlock 的 TCP 端口规则因此管不到它（CI 的 ABI 8 内核实测
+// 能连到白名单外的宿主端口）。flags 参数位置：sendto 第 3 个、sendmsg 第 2 个、sendmmsg 第 3 个（从 0 计）。
+func fastOpenRules() []seccomp.NameWithConditions {
+	flag := func(name string, arg uint32) seccomp.NameWithConditions {
+		return seccomp.NameWithConditions{Name: name, Conditions: seccomp.ArgumentConditions{
+			{Argument: arg, Operation: seccomp.BitsSet, Value: unix.MSG_FASTOPEN},
+		}}
+	}
+	return []seccomp.NameWithConditions{flag("sendto", 3), flag("sendmsg", 2), flag("sendmmsg", 3)}
+}
 
 // targetRules 是改动其它进程资源上限、调度与 I/O 优先级的系统调用的拒绝条件（M5）：Landlock 的信号作用域与独立用户
 // 都管不到它们，同一用户、没有 PID 命名空间时沙箱能改 orynd 等进程的 RLIMIT 与调度。只放行作用于自身的调用
@@ -412,7 +426,7 @@ func loadDenyFilter() error {
 	}
 	group := seccomp.SyscallGroup{
 		Names:              names,
-		NamesWithCondtions: append(socketRules(), targetRules()...),
+		NamesWithCondtions: slices.Concat(socketRules(), targetRules(), fastOpenRules()),
 		Action:             seccomp.ActionErrno,
 	}
 	runtime.LockOSThread()
