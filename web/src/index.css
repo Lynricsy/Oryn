@@ -1059,8 +1059,8 @@ body {
 		outline-offset: -2px;
 	}
 	/*
-	 * 角形：带圆角的表面一律超椭圆 1.6（主人在 6 种 demo 里选定）；Chromium 139+ 原生支持，
-	 * Safari / Firefox 不认 corner-shape，自动退回普通圆角。
+	 * 角形：带圆角的表面一律超椭圆 1.6（主人在 6 种 demo 里选定）；Chromium 139+ 原生支持。
+	 * 不认 corner-shape 的引擎（Firefox、WebKitGTK、旧版 Safari / WKWebView）由 lib/squircle-fallback.ts 降级，见下方 --sq-s。
 	 */
 	*,
 	::before,
@@ -1075,6 +1075,17 @@ body {
 	[class*="rounded-full"]::before,
 	[class*="rounded-full"]::after {
 		corner-shape: round;
+	}
+	/*
+	 * 角形降级（仅当 lib/squircle.ts 判定引擎不支持 corner-shape 并启用引擎后，根元素才带 data-squircle）：
+	 * 引擎把样式表里每个 border-*-radius 改写成「原值 × var(--sq-s, 1)」，并把 --sq-s 注册成不继承、初始值为包络圆系数
+	 * （squircle-geometry.ts 的 ROUND_SCALE）的自定义属性：原生圆角缩成恰好包住超椭圆的圆，背景、边框、投影、焦点环、
+	 * 玻璃模糊都跟着它走；JS 再用 clip-path 剪掉圆与超椭圆之间的薄片。正圆与胶囊同上保持 1（百分比半径本来就不缩放）。
+	 */
+	:root[data-squircle] [class*="rounded-full"],
+	:root[data-squircle] [class*="rounded-full"]::before,
+	:root[data-squircle] [class*="rounded-full"]::after {
+		--sq-s: 1;
 	}
 }
 

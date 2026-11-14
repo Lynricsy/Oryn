@@ -12,6 +12,7 @@ import "./i18n";
 import "./index.css";
 import { installDeviceCorners } from "./lib/device-corners";
 import { host } from "./lib/host";
+import { installSquircle } from "./lib/squircle";
 import { installViewportTracking } from "./lib/viewport";
 import { installTheme } from "./state/theme";
 
@@ -29,6 +30,8 @@ async function boot() {
 	// 移动壳：贴边浮层的圆角与屏幕圆角同心（其它宿主无操作）
 	installDeviceCorners(host, document.documentElement);
 	installTheme();
+	// 不支持 corner-shape 的引擎：挂载前启用超椭圆角形降级（原生支持时立即返回）
+	await installSquircle();
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { refetchOnWindowFocus: false } },
 	});
