@@ -516,6 +516,34 @@ async function ensureHook(): Promise<string> {
 let ctx: BrowserContext;
 const pageErrors: string[] = [];
 
+/**
+ * 下载用的独立上下文：extraHTTPHeaders 不作用于下载请求（会拿到 401 的 JSON），真实用户靠会话 Cookie。
+ * 新建一个网页会话，按 domain + path 写 `__Host-` Cookie（给 url 会被 CDP 拒绝，做法同 m3-accept）。
+ */
+async function downloadContext(): Promise<BrowserContext> {
+	const r = sh(
+		`${q(`${ROOT}/bin/orynd`)} --config dev/orynd.yaml admin create-web-session --user-agent m10-accept`,
+	);
+	if (r.code !== 0) throw new Error(`create-web-session 失败：${r.out}`);
+	const c = await browser.newContext({
+		locale: "zh-CN",
+		timezoneId: TZ,
+		acceptDownloads: true,
+	});
+	await c.addCookies([
+		{
+			name: "__Host-oryn_session",
+			value: r.stdout.trim(),
+			domain: new URL(BASE).hostname,
+			path: "/",
+			secure: true,
+			httpOnly: true,
+			sameSite: "Lax",
+		},
+	]);
+	return c;
+}
+
 async function newPage(viewport = { width: 1280, height: 900 }): Promise<Page> {
 	const p = await ctx.newPage();
 	await p.setViewportSize(viewport);
@@ -665,8 +693,12 @@ async function Y4() {
 
 async function Y5() {
 	const tid = await ensureT();
+	// $T 的异步子 agent（如 __advisor）可能在回合结束后才补写用量：增量比较时把 $T 自己的变化扣掉
+	const threadCost = async (t: string) =>
+		(await usage({ groupBy: "thread", thread: t, from: 0 })).total.costUsd;
 	const tot0 = (await usage({ groupBy: "total", from: 0 })).total;
-	note(`fork 前全库 cost=${tot0.costUsd} requests=${tot0.requests}`);
+	const t0 = await threadCost(tid);
+	note(`fork 前全库 cost=${tot0.costUsd} requests=${tot0.requests}；$T ${t0}`);
 	await ensureAwake(tid);
 	const mk = async (env: "share" | "copy") => {
 		const r = await api("POST", `/api/v1/threads/${tid}/fork`, { env });
@@ -696,13 +728,12 @@ async function Y5() {
 		check(n === 0, `${f} 名下没有拷贝来的条目的用量行（${n}）`);
 	}
 	const tot1 = (await usage({ groupBy: "total", from: 0 })).total;
-	const own = (await usage({ groupBy: "thread", from: 0, limit: 500 })).groups
-		.filter((g) => g.key === f1 || g.key === f2)
-		.reduce((s, g) => s + g.costUsd, 0);
-	note(`fork 后全库 cost=${tot1.costUsd}；$F1+$F2 自身 ${own}`);
+	const t1 = await threadCost(tid);
+	const own = (await threadCost(f1)) + (await threadCost(f2));
+	note(`fork 后全库 cost=${tot1.costUsd}；$T ${t1}；$F1+$F2 自身 ${own}`);
 	check(
-		near(tot1.costUsd - tot0.costUsd, own),
-		"全库增量等于两个 fork 自己的成本",
+		near(tot1.costUsd - tot0.costUsd - (t1 - t0), own),
+		"全库增量（扣除 $T 自身的迟到用量）等于两个 fork 自己的成本",
 	);
 	const tBefore = (await usage({ groupBy: "thread", thread: tid, from: 0 }))
 		.total.costUsd;
@@ -797,15 +828,22 @@ async function Y7() {
 		!badPoint && (ser.series?.length ?? 0) > 0,
 		`series 每点 groups 之和等于 total（${ser.series?.length} 点）`,
 	);
+	// 时间粒度从 0 起会超过 1000 个桶：所有分组都从最早的用量时间（stats/meta.earliestTs）起算
+	const earliest =
+		(await getJson<{ earliestTs?: number }>("/api/v1/stats/meta")).earliestTs ??
+		0;
 	const totals = await Promise.all(
 		["total", "day", "model", "thread", "project", "space", "purpose"].map(
 			async (g) =>
-				[g, (await usage({ groupBy: g, from: 0 })).total.costUsd] as const,
+				[
+					g,
+					(await usage({ groupBy: g, from: earliest, tz: TZ })).total.costUsd,
+				] as const,
 		),
 	);
 	note(totals.map(([g, c]) => `${g}=${c}`).join(" "));
 	check(
-		totals.every(([, c]) => near(c, totals[0][1])),
+		totals.every(([, c]) => near(c, totals[0]?.[1] ?? Number.NaN)),
 		"各 groupBy 的 total.costUsd 相等",
 	);
 }
@@ -885,7 +923,8 @@ async function Y10() {
 	await ensureAwake(tid);
 	await say(
 		tid,
-		"新建文件 m10.txt 写入 hello，并用 git 提交，提交信息 m10。完成后只回复 ok",
+		// dev 没有配置 git 身份（设置 → git 身份）：在命令里显式给出，避免提交因身份未知失败
+		"新建文件 m10.txt 写入 hello，然后执行 `git add m10.txt && git -c user.name=m10 -c user.email=m10@oryn.test commit -m m10` 提交。完成后只回复 ok",
 	);
 	await waitFor(
 		"thread_commits 采到提交",
@@ -938,6 +977,12 @@ async function Y11() {
 		(await usage({ groupBy: "project", from: 0 })).groups.find(
 			(g) => g.key === pid,
 		)?.costUsd ?? 0;
+	// $F1 自己要有用量，删除后才有行可核对（Y5 中途失败时它可能还没发过消息）
+	if (
+		(await usage({ groupBy: "thread", thread: f.f1, from: 0 })).total
+			.costUsd === 0
+	)
+		await say(f.f1, "只回复 ok");
 	const f1 = (await usage({ groupBy: "thread", thread: f.f1, from: 0 })).total
 		.costUsd;
 	const d0 =
@@ -1019,7 +1064,9 @@ async function Y12() {
 		`明细行数 ${recLines.length - 1} = 库里 ${n}`,
 	);
 
-	const page = await newPage();
+	// 下载导航不带 extraHTTPHeaders（会拿到 401 的 JSON）；这里经 route 补令牌
+	const cctx = await downloadContext();
+	const page = await cctx.newPage();
 	await page.goto(`${BASE}/stats/usage?by=model`);
 	await page.locator("[data-testid=stats-export]").click();
 	const [dl] = await Promise.all([
@@ -1028,7 +1075,7 @@ async function Y12() {
 	]);
 	const name = dl.suggestedFilename();
 	check(/^oryn-usage-model-\d{8}-\d{8}\.csv$/.test(name), `页面下载 ${name}`);
-	await page.close();
+	await cctx.close();
 }
 
 async function Y13() {
@@ -1195,9 +1242,13 @@ async function Y15() {
 	note(t.out.split("\n").slice(0, 12).join(" ⏎ "));
 	const cost = (await usage({ groupBy: "thread", thread: tid, from: 0 })).total
 		.costUsd;
+	// CLI 成本按 4 位小数显示：取 TOTAL 行里的金额按数值比
+	const shown = Number(
+		/^TOTAL\b.*?\$([0-9.]+)/m.exec(t.out)?.[1] ?? Number.NaN,
+	);
 	check(
-		t.code === 0 && t.out.includes(formatCost(cost).replace(/0+$/, "")),
-		`thread 总计含成本 ${formatCost(cost)}`,
+		t.code === 0 && Math.abs(shown - cost) < 5e-5,
+		`thread 总计成本 $${shown} ≈ ${cost}`,
 	);
 	check(
 		/RUNNING|运行/i.test(t.out) && /FROZEN|冻结/i.test(t.out),
@@ -1211,7 +1262,7 @@ async function Y15() {
 	const c = await cli(`stats --by day --csv --tz ${TZ}`);
 	check(
 		c.code === 0 &&
-			c.stdout.split("\n")[0].startsWith("bucket,key,label,requests"),
+			(c.stdout.split("\n")[0] ?? "").startsWith("bucket,key,label,requests"),
 		"CSV 首行为列名",
 	);
 }
