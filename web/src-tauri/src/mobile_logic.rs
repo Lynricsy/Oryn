@@ -448,8 +448,10 @@ impl<N: Native, A: Api> MobileCore<N, A> {
                     return false;
                 }
                 let had_error = self.inner().sync_error.take().is_some();
-                self.log
-                    .log("push.synced", json!({"id": id, "kind": kind, "forced": force}));
+                self.log.log(
+                    "push.synced",
+                    json!({"id": id, "kind": kind, "forced": force}),
+                );
                 !unchanged || had_error
             }
             Err(ApiError::Status { status, code, .. }) if (400..500).contains(&status) => {
@@ -698,7 +700,10 @@ mod tests {
             recreated_path(&format!("{SERVER}/t/{id}?tab=files#x"), s).as_deref(),
             Some(format!("/t/{id}?tab=files").as_str())
         );
-        assert_eq!(recreated_path(&format!("{SERVER}/"), s).as_deref(), Some("/"));
+        assert_eq!(
+            recreated_path(&format!("{SERVER}/"), s).as_deref(),
+            Some("/")
+        );
         for (url, server) in [
             ("http://tauri.localhost/launcher.html", s),
             ("https://oryn.example.com/auth/app?code=oac_1&next=%2F", s),
@@ -1134,11 +1139,7 @@ mod tests {
         assert!(!r.core.sync_push(Some(&conn()), true).await);
         assert_eq!(r.api.subscribed.lock().unwrap().len(), 2);
         // 服务器删掉过订阅、重建出新 id：页面要重取
-        r.api
-            .subscribe
-            .lock()
-            .unwrap()
-            .push_back(Ok("ps_2".into()));
+        r.api.subscribe.lock().unwrap().push_back(Ok("ps_2".into()));
         assert!(r.core.sync_push(Some(&conn()), true).await);
         assert_eq!(r.core.subscription_id().as_deref(), Some("ps_2"));
         // 分发器换了端点：重新登记

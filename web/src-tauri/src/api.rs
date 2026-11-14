@@ -85,7 +85,11 @@ impl PushSubscription {
                 p256dh,
                 auth,
             } => json!({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}),
-            PushSubscription::Fcm { token, p256dh, auth } => {
+            PushSubscription::Fcm {
+                token,
+                p256dh,
+                auth,
+            } => {
                 json!({"kind": "fcm", "token": token, "keys": {"p256dh": p256dh, "auth": auth}})
             }
         }
