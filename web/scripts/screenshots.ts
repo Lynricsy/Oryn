@@ -26,6 +26,7 @@ import {
 import {
 	DESKTOP_THREADS,
 	ENV_THREADS,
+	M9_IDS,
 	MAIN_THREAD,
 	TOOL_ZOO_THREAD,
 } from "../src/mock/fixtures";
@@ -521,8 +522,17 @@ function mobileScreen(
 	};
 }
 
+/**
+ * 打开过的下沉侧栏会在历史里压一条返回标记；同一个页面再 `goto` 同一线程时，SinkLayout 会把落在残留标记上的状态
+ * 当成「返回键」再退一步，退回上一张截图的页面。先换到空白页，丢掉这段历史。
+ */
+async function leaveSink(page: Page) {
+	await page.goto("about:blank");
+}
+
 /** 手机下沉式侧栏：打开线程页后点页头的侧栏开关（等卡片移到位）。 */
 async function openSink(page: Page) {
+	await leaveSink(page);
 	await openThread(page, MAIN_THREAD);
 	await page
 		.getByRole("button", { name: "侧边栏", exact: true })
@@ -560,6 +570,129 @@ function launcherScreen(
 	};
 }
 
+/** M9：Space 页、全局助手、定时（两种模式的对话框、项目里的列表、侧栏折叠、运行线程的页头）、`[Oryn ` 小签。 */
+function m9Screens(): Screen[] {
+	const openSpace = (page: Page) =>
+		open(page, `/space/${M9_IDS.space}`, "[data-testid=transcript]", 1800);
+	const scheduleDialog = (page: Page) =>
+		page
+			.getByRole("dialog")
+			.locator("[data-testid=schedule-preview] li")
+			.first()
+			.waitFor({ timeout: 15_000 });
+	return [
+		{ name: "m9-space", prepare: ({ page }) => openSpace(page) },
+		{
+			name: "m9-space-threads",
+			widths: [390],
+			prepare: async ({ page }) => {
+				await openSpace(page);
+				await page.locator("[data-space-tab=threads]").first().click();
+				await page.locator("[data-testid=space-progress]").waitFor();
+				await settle(page, 600);
+			},
+		},
+		{
+			name: "m9-assistant",
+			prepare: ({ page }) =>
+				open(
+					page,
+					`/assistant/${M9_IDS.assistant}`,
+					"[data-testid=transcript]",
+					1800,
+				),
+		},
+		{
+			name: "m9-assistant-down",
+			init: `localStorage.setItem("oryn.mock.coordinator", "down");`,
+			prepare: async ({ page }) => {
+				await open(
+					page,
+					`/assistant/${M9_IDS.assistant}`,
+					"[data-testid=transcript]",
+					1800,
+				);
+				await page.getByText("全局助手暂不可用").first().waitFor();
+			},
+		},
+		{
+			name: "m9-schedule-thread",
+			prepare: async ({ page }) => {
+				await openThread(page, M9_IDS.scheduledThread);
+				await page.getByRole("button", { name: "更多操作" }).first().click();
+				await page.getByRole("menuitem", { name: "定时…" }).click();
+				await scheduleDialog(page);
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m9-schedule-project",
+			prepare: async ({ page }) => {
+				await open(
+					page,
+					`/settings/automations?schedule=${M9_IDS.projectSchedule}`,
+					"main",
+				);
+				await scheduleDialog(page);
+				await page.locator("[data-testid=schedule-runs]").waitFor();
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m9-schedule-new",
+			prepare: async ({ page }) => {
+				await open(page, "/settings/automations", "main");
+				await page
+					.getByRole("button", { name: "创建", exact: true })
+					.first()
+					.click();
+				await scheduleDialog(page);
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m9-project-schedules",
+			prepare: async ({ page }) => {
+				await open(page, "/settings/projects", "main");
+				await page
+					.getByRole("button", { name: "定时任务", exact: true })
+					.first()
+					.click();
+				await page
+					.locator(`[data-testid^=project-schedules-] [data-schedule]`)
+					.first()
+					.waitFor();
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m9-sidebar-stack",
+			prepare: async ({ page, width }) => {
+				if (width < 600) await openSink(page);
+				else await open(page, "/", "textarea", 1000);
+				const stack = page.locator(
+					`[data-schedule-stack="${M9_IDS.projectSchedule}"] button`,
+				);
+				await stack.first().click();
+				await page
+					.locator(`[data-schedule-stack="${M9_IDS.projectSchedule}"] a`)
+					.first()
+					.waitFor();
+				await stack.first().scrollIntoViewIfNeeded();
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m9-run-thread",
+			prepare: ({ page }) => openThread(page, M9_IDS.run2),
+		},
+		{
+			name: "m9-oryn-label",
+			prepare: ({ page }) => openThread(page, M9_IDS.scheduledThread),
+		},
+	];
+}
+
 const SETTINGS_SECTIONS = [
 	"devices",
 	"providers",
@@ -570,6 +703,7 @@ const SETTINGS_SECTIONS = [
 	"notifications",
 	"shares",
 	"appearance",
+	"automations",
 	"about",
 ];
 
@@ -1064,6 +1198,36 @@ const SCREENS: Screen[] = [
 		47,
 	),
 	mobileScreen("mobile-sink-open-r47", ({ page }) => openSink(page), 47),
+	// M9：手机底部胶囊属于侧栏层——侧栏关闭时被卡片盖住，打开时露出；项目 / 更多两种视图
+	{
+		name: "sink-closed",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await leaveSink(page);
+			await openThread(page, MAIN_THREAD);
+		},
+	},
+	{
+		name: "sink-projects",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await openSink(page);
+			await page.locator("[data-tab=projects]").click();
+			await page.locator("[data-testid=sidebar-projects]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "sink-more",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await openSink(page);
+			await page.locator("[data-tab=more]").click();
+			await page.locator("[data-testid=sidebar-more]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	...m9Screens(),
 	// M7：窄屏线程页的同级标签（Agent | Changes | Files | Terminal … | Info）
 	{
 		name: "thread-compact-tabs",

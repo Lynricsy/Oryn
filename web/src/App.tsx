@@ -6,6 +6,14 @@ import { HomePage } from "./pages/HomePage";
 import type { SettingsSection } from "./pages/SettingsPage";
 import { ThreadPage } from "./pages/ThreadPage";
 
+// Space 页与助手页（M9）：协调对话不常开，按需加载
+const SpacePage = lazy(() =>
+	import("./pages/SpacePage").then((m) => ({ default: m.SpacePage })),
+);
+const AssistantPage = lazy(() =>
+	import("./pages/AssistantPage").then((m) => ({ default: m.AssistantPage })),
+);
+
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
 	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
@@ -33,6 +41,7 @@ const SETTINGS: SettingsSection[] = [
 	"agent-config",
 	"notifications",
 	"shares",
+	"automations",
 	"appearance",
 	"desktop",
 	"about",
@@ -57,6 +66,9 @@ export function App(): ReactNode {
 				<Route element={<AppShell />}>
 					<Route index element={<HomePage />} />
 					<Route path="t/:threadId" element={<ThreadPage />} />
+					<Route path="space/:spaceId" element={<SpacePage />} />
+					<Route path="assistant" element={<AssistantPage />} />
+					<Route path="assistant/:threadId" element={<AssistantPage />} />
 					<Route
 						path="settings"
 						element={<Navigate to="/settings/devices" replace />}

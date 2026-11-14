@@ -677,6 +677,12 @@ const FRIENDLY_CODES = [
 	"profile_readonly",
 	"profile_too_large",
 	"profile_save_failed",
+	// 定时与协调（M9）
+	"schedule_busy",
+	"thread_archived",
+	"space_thread",
+	"coordinator_restricted",
+	"invalid_target",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

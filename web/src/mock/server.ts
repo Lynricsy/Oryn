@@ -20,9 +20,11 @@
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
+import { MockAutomation } from "./automation";
 import { MockDesktop } from "./desktop";
 import {
 	assistant,
+	buildM9Transcripts,
 	buildMainTranscript,
 	buildToolZooTranscript,
 	projects as fixtureProjects,
@@ -241,6 +243,21 @@ export class MockServer {
 		projects: () => this.projects,
 		threadTitle: (id) => this.threads.get(id)?.title,
 	});
+	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
+	readonly automation = new MockAutomation({
+		threads: this.threads,
+		addThread: (t) => this.addThread(t),
+		upsertThread: (t) => this.upsertThread(t),
+		removeThread: (id) => {
+			this.threads.delete(id);
+			this.broadcast({
+				type: "index.patch",
+				upsert: [],
+				remove: [id],
+				rev: ++this.rev,
+			});
+		},
+	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
 		email: "owner@oryn.example",
@@ -314,6 +331,8 @@ export class MockServer {
 		this.entries.set(MAIN_THREAD, buildMainTranscript());
 		const zoo = buildToolZooTranscript();
 		this.entries.set(TOOL_ZOO_THREAD, zoo);
+		for (const [id, list] of Object.entries(buildM9Transcripts()))
+			this.entries.set(id, list);
 		this.liveFrames.set(TOOL_ZOO_THREAD, toolZooLiveFrames());
 		this.replayFrames.set(TOOL_ZOO_THREAD, toolZooReplayFrames(zoo));
 		for (const t of fixtureThreads)
@@ -721,6 +740,8 @@ export class MockServer {
 				return {};
 			}
 		};
+		const autoRes = await this.automation.handle(req, p, m, url);
+		if (autoRes) return autoRes;
 		const deskRes = await this.desktop.handle(req, p, m);
 		if (deskRes) return deskRes;
 		if (p === "me")
@@ -1077,6 +1098,23 @@ export class MockServer {
 					next.archivedAt = b.archived ? Date.now() : undefined;
 				if (typeof b.snoozedUntil === "number")
 					next.snoozedUntil = b.snoozedUntil || undefined;
+				if (typeof b.spaceId === "string") {
+					if (t.kind && t.kind !== "work")
+						return json(
+							{ code: "coordinator_restricted", message: "space chat" },
+							400,
+						);
+					if (
+						b.spaceId &&
+						!this.automation.spaces.some((s) => s.id === b.spaceId)
+					)
+						return json({ code: "space_not_found", message: "space" }, 404);
+					next.spaceId = b.spaceId || undefined;
+				}
+				if (b.shipped === true) {
+					next.shippedAt = Date.now();
+					next.archivedAt ??= Date.now();
+				} else if (b.shipped === false) next.shippedAt = undefined;
 				this.upsertThread(next);
 				return json(next);
 			}
@@ -1247,6 +1285,17 @@ export class MockServer {
 		this.setupRuns.set(orbId, [run, ...(this.setupRuns.get(orbId) ?? [])]);
 		this.setupLogs.set(run.id, "[setup] + oryn orb setup run\n[setup] ok\n");
 		this.setOrb({ ...orb, lastSetup: run, stateChangedAt: now });
+	}
+
+	/** 登记一个新线程（空转录、默认会话状态）并推送 index.patch。 */
+	private addThread(t: Thread) {
+		this.entries.set(t.id, []);
+		this.states.set(t.id, {
+			...mainState(),
+			todoPhases: [],
+			contextUsage: { tokens: 0, contextWindow: 200_000, percent: 0 },
+		});
+		this.upsertThread(t);
 	}
 
 	private upsertThread(input: Thread) {

@@ -287,3 +287,79 @@ export const CLIENT_COMMANDS = [
 ] as const;
 
 export type ClientCommand = (typeof CLIENT_COMMANDS)[number];
+
+/**
+ * 协调对话（Space 聊天、助手对话，M9）允许的 RPC：与控制面协调线程的命令白名单同一批（`get_*` 另行放行），
+ * 其余（计划 / goal / vibe / loop、bash、btw、fork、handoff…）服务端回 `coordinator_restricted`，客户端先行拦下。
+ */
+const COORDINATOR_RPCS: Record<string, true> = {
+	prompt: true,
+	steer: true,
+	follow_up: true,
+	abort: true,
+	abort_and_prompt: true,
+	queue_edit: true,
+	queue_remove: true,
+	queue_move: true,
+	queue_clear: true,
+	promote_queued_message: true,
+	set_model: true,
+	set_thinking_level: true,
+	set_fast_mode: true,
+	set_slow_mode: true,
+	switch_leaf: true,
+	navigate_tree: true,
+	abort_branch_summary: true,
+	set_label: true,
+	set_entry_label: true,
+	compact: true,
+	clear_context: true,
+	retry: true,
+	set_session_name: true,
+};
+
+/** 服务端不放行的 `get_*`（协调宿主没有工作区）。 */
+const COORDINATOR_DENIED_GETS: Record<string, true> = {
+	get_git_changes: true,
+	get_git_diff: true,
+	get_git_status: true,
+	get_ssh_hosts: true,
+};
+
+/** 协调对话里这条斜杠命令能不能执行（打开对话框类按其背后的 RPC 判断）。 */
+export function coordinatorAllows(action: SlashAction): boolean {
+	switch (action.kind) {
+		case "rpc": {
+			const type = action.frame.type;
+			return type.startsWith("get_")
+				? COORDINATOR_DENIED_GETS[type] !== true
+				: COORDINATOR_RPCS[type] === true;
+		}
+		case "open_fork":
+		case "open_goal":
+		case "open_btw":
+			return false;
+		default:
+			return true;
+	}
+}
+
+/** 协调对话命令菜单里出现的客户端命令。 */
+export const COORDINATOR_CLIENT_COMMANDS: Partial<Record<ClientCommand, true>> =
+	{
+		tree: true,
+		new: true,
+		resume: true,
+		clear: true,
+		queue: true,
+		compact: true,
+		retry: true,
+		model: true,
+		fast: true,
+		slow: true,
+		context: true,
+		usage: true,
+		jobs: true,
+		tools: true,
+		session: true,
+	};

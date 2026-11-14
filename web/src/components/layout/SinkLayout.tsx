@@ -3,6 +3,8 @@
  * 顶部沉浸由侧栏自己的 safe-area 内边距处理），内容（页头、转录、输入区）是一张卡片，打开时整张右移露出侧栏、
  * 左缘留一条；卡片四角与屏幕圆角同心（index.css 的 `.sink-card`）。
  * 为什么不用悬浮抽屉：悬浮抽屉四周留边，无法与顶部沉浸、屏幕圆角和刘海 / 挖孔区域协调。
+ * - `footer`（底部胶囊 `SinkTabBar`）在侧栏层底部、侧栏内容之下：属于侧栏层，平时被卡片盖住，只在打开侧栏时露出；
+ *   不放进卡片层，也不常驻屏幕底部（会挤占输入坞、破坏沉浸）。
  * - 状态 = `uiStore.sidebarOpen`（页头开关、Ctrl+B、侧栏里选线程后关闭都走它）。
  * - 手势（触摸）：关闭时在卡片任意位置横向右滑打开（不做系统手势排除：Android 每条边最多排除 200dp，且会与返回手势抢）；
  *   左缘 24px 内起手按横向为主即接管，其余位置要先过 SLOP、横向位移明显大于纵向（`DOMINANT` 倍）且向右才接管，
@@ -94,9 +96,12 @@ function marked(): boolean {
 
 export function SinkLayout({
 	sidebar,
+	footer,
 	children,
 }: {
 	sidebar: ReactNode;
+	/** 侧栏层底部（手机底部胶囊）：属于侧栏层，平时被卡片盖住，只在打开侧栏时露出 */
+	footer?: ReactNode;
 	children: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -259,9 +264,10 @@ export function SinkLayout({
 				inert={!open}
 				data-testid="sink-sidebar"
 				// isolate：栏内带 z-index 的元素（fork 树引导线）不得越过上层卡片
-				className="sink-sidebar absolute inset-y-0 left-0 isolate w-[var(--sink-w)] outline-none"
+				className="sink-sidebar absolute inset-y-0 left-0 isolate flex w-[var(--sink-w)] flex-col outline-none"
 			>
-				{sidebar}
+				<div className="min-h-0 flex-1">{sidebar}</div>
+				{footer}
 			</div>
 			<div
 				ref={cardRef}

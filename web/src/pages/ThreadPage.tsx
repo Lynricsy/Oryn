@@ -3,6 +3,8 @@
  * 输入坞高度驱动转录底部留白；右侧面板（Info / Changes / Files / Terminal）是另一张纸面。
  * 三种布局：expanded 三栏（面板列可关、可最大化、可拖宽）；窄屏（compact / medium）转录与面板各标签是同级标签，
  * 页头下方一行标签条，切到面板标签时转录纸面隐藏但保持挂载（滚动位置不丢）；折叠屏双段视口左段转录、右段面板常驻。
+ * 页面主体是 `ThreadScreen`：Space 页与助手页以 `variant="coordinator"` 复用它（没有右面板与面板开关、页头由调用方给、
+ * 输入区是协调档）。协调对话（`kind` 为 space / assistant）经 `/t/<id>` 打开时重定向到对应页面（通知与深链接仍指向 `/t/<id>`）。
  */
 import {
 	type CSSProperties,
@@ -16,7 +18,8 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams } from "react-router";
+import { Navigate, useParams } from "react-router";
+import { useSpaces } from "../api/space-queries";
 import { Composer } from "../components/composer/Composer";
 import {
 	dockArrived,
@@ -59,9 +62,10 @@ import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
 /** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
 const PANEL_ANIM_MS = 260;
 /** 窄屏同级标签条那一行的高度（px）：转录顶部留白与页头纱都加上它。 */
-const TAB_ROW = 40;
+export const TAB_ROW = 40;
 /** 贴屏幕边缘表面的同心圆角（`index.css` 的 `.dc-*`）：纸面 / 托盘都是 xl 圆角。 */
-const DC_SHEET_RIGHT = "dc-tr dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.5rem]";
+export const DC_SHEET_RIGHT =
+	"dc-tr dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.5rem]";
 const DC_DOCK_BOTTOM = "dc-bl dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.75rem]";
 
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
@@ -111,8 +115,60 @@ function PanelResizer() {
 	);
 }
 
+/** 页头的布局参数（`ThreadScreen` 交给调用方给的页头）。 */
+export interface ScreenHeaderLayout {
+	/** 非 expanded 宽度时在页头左侧显示侧边栏开关 */
+	sidebarToggle: boolean;
+	/** 渐进模糊纱的高度 */
+	veil: number;
+	chromeLeft: boolean;
+	chromeRight: boolean;
+}
+
 export function ThreadPage(): ReactNode {
 	const { threadId = "" } = useParams();
+	const kind = useIndex((s) => s.threads[threadId]?.kind);
+	if (kind === "assistant")
+		return <Navigate to={`/assistant/${threadId}`} replace />;
+	if (kind === "space") return <SpaceChatRedirect threadId={threadId} />;
+	return <ThreadScreen threadId={threadId} variant="thread" />;
+}
+
+/** Space 聊天经 `/t/<id>` 打开：跳到所属 Space 页；找不到所属 Space 时照常显示线程。 */
+function SpaceChatRedirect({ threadId }: { threadId: string }): ReactNode {
+	const spaceOf = useIndex((s) => s.threads[threadId]?.spaceId);
+	const spaces = useSpaces();
+	const id =
+		spaceOf ?? spaces.data?.spaces?.find((s) => s.threadId === threadId)?.id;
+	if (id) return <Navigate to={`/space/${id}`} replace />;
+	// Space 列表还在路上：先不渲染（不订阅一个马上要离开的线程）
+	if (spaces.isPending) return null;
+	return <ThreadScreen threadId={threadId} variant="thread" />;
+}
+
+export function ThreadScreen({
+	threadId,
+	variant,
+	header,
+	edgeRight = true,
+	subheader,
+	disabled = false,
+	dockNotice,
+}: {
+	threadId: string;
+	/** `coordinator`：协调对话（Space 聊天、助手对话）——没有右面板与面板开关，页头由 `header` 给，输入区为协调档 */
+	variant: "thread" | "coordinator";
+	header?: (layout: ScreenHeaderLayout) => ReactNode;
+	/** 纸面是不是屏幕最右侧的表面（Space 页右侧还有一列时为 false） */
+	edgeRight?: boolean;
+	/** 页头下方一行（40px，同级标签条的位置），如 Space 页窄屏的「聊天 | 线程」标签 */
+	subheader?: ReactNode;
+	/** 输入区不可用（协调宿主不可用时只读浏览） */
+	disabled?: boolean;
+	/** 输入坞托盘里、输入区之上的一节提示 */
+	dockNotice?: ReactNode;
+}): ReactNode {
+	const coordinator = variant === "coordinator";
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	const segments = useViewportSegments();
@@ -185,14 +241,14 @@ export function ThreadPage(): ReactNode {
 		[threadId, model.toolResults, model.liveTools, subagents],
 	);
 
-	const dual = segments !== null;
+	const dual = segments !== null && !coordinator;
 	const expanded = bp === "expanded" && !dual;
-	// 窄屏：转录（agent）与面板各标签是同级标签
-	const peer = !expanded && !dual;
+	// 窄屏：转录（agent）与面板各标签是同级标签（协调对话没有面板）
+	const peer = !expanded && !dual && !coordinator;
 	const onAgent = !peer || threadTab === "agent";
 	const { tabs: peerTabs } = useThreadTabs(threadId, true);
-	const topInset = peer ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
-	const showPanelColumn = expanded && panelOpen;
+	const topInset = peer || subheader ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
+	const showPanelColumn = expanded && panelOpen && !coordinator;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
@@ -246,12 +302,12 @@ export function ThreadPage(): ReactNode {
 				<Sheet
 					inset={expanded}
 					// expanded 下面板列没开时转录是最右侧纸面，右上 / 右下角离屏幕边 8px（壳的 p-2）
-					className={`relative flex h-full min-w-0 flex-1 flex-col overflow-visible ${expanded && !showPanelColumn ? DC_SHEET_RIGHT : ""}`}
+					className={`relative flex h-full min-w-0 flex-1 flex-col overflow-visible ${expanded && !showPanelColumn && edgeRight ? DC_SHEET_RIGHT : ""}`}
 				>
 					<TranscriptContext.Provider value={ctx}>
 						{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
 						<div
-							className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""} ${expanded && !showPanelColumn ? "dc-tr dc-br [--dc-r:calc(var(--r-xl)_-_1px)] [--dc-gap:calc(0.5rem_+_1px)]" : ""}`}
+							className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""} ${expanded && !showPanelColumn && edgeRight ? "dc-tr dc-br [--dc-r:calc(var(--r-xl)_-_1px)] [--dc-gap:calc(0.5rem_+_1px)]" : ""}`}
 						>
 							{!snapshotReceived && entries.length === 0 ? (
 								<div className="flex flex-1 items-center justify-center text-muted">
@@ -272,13 +328,27 @@ export function ThreadPage(): ReactNode {
 						</div>
 					</TranscriptContext.Provider>
 					<div className="absolute inset-x-0 top-0 z-30">
-						<ThreadHeader
-							threadId={threadId}
-							sidebarToggle={!expanded}
-							veil={topInset}
-							chromeLeft={chromeLeft && transcriptShown}
-							chromeRight={transcriptShown && !showPanelColumn && !dual}
-						/>
+						{header ? (
+							header({
+								sidebarToggle: !expanded,
+								veil: topInset,
+								chromeLeft: chromeLeft && transcriptShown,
+								chromeRight: transcriptShown && edgeRight && !dual,
+							})
+						) : (
+							<ThreadHeader
+								threadId={threadId}
+								sidebarToggle={!expanded}
+								veil={topInset}
+								chromeLeft={chromeLeft && transcriptShown}
+								chromeRight={transcriptShown && !showPanelColumn && !dual}
+							/>
+						)}
+						{subheader && (
+							<div className="veil-host relative flex h-10 items-center px-2 sm:px-3">
+								{subheader}
+							</div>
+						)}
 						{/* 同级标签条只在看转录时挂载：切到面板标签后由面板自己的标签条接手（改动的后台检查只跑一份） */}
 						{peer && onAgent && (
 							<div className="veil-host relative flex h-10 items-center px-2 sm:px-3">
@@ -329,13 +399,17 @@ export function ThreadPage(): ReactNode {
 										queued={pendingUi.length - 1}
 									/>
 								)}
-								<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+								{!coordinator && (
+									<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+								)}
+								{dockNotice}
 								<QueueBar threadId={threadId} />
 								<AboveEditorWidgets threadId={threadId} />
 								<Composer
 									key={`composer:${threadId}`}
 									threadId={threadId}
-									disabled={orbGone}
+									disabled={disabled || (orbGone && !coordinator)}
+									coordinator={coordinator}
 								/>
 								<BelowEditorWidgets threadId={threadId} />
 							</div>

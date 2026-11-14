@@ -138,7 +138,19 @@
 		"pinned": "已置顶",
 		"search": "搜索线程",
 		"snoozed": "稍后提醒",
-		"unread": "未读"
+		"unread": "未读",
+		"spaces": "空间",
+		"assistant": "全局助手",
+		"scheduled": "有定时",
+		"scheduledRuns": "定时运行",
+		"allRuns": "全部运行",
+		"projectFilter": "项目：{{name}}",
+		"clearProjectFilter": "清除项目过滤",
+		"projectMeta": "{{threads}} 个线程 · {{schedules}} 个定时",
+		"projectSettings": "「{{name}}」的设置",
+		"projectThreads_one": "{{count}} 个线程",
+		"projectThreads_other": "{{count}} 个线程",
+		"profileAppearance": "个人资料与外观"
 	},
 	"newThread": {
 		"heading": "要做点什么？",
@@ -173,7 +185,8 @@
 		"placeholderBusy": "引导正在进行的回合…",
 		"send": "发送",
 		"steer": "引导",
-		"unavailable": "/{{name}} 在 Oryn 中不可用"
+		"unavailable": "/{{name}} 在 Oryn 中不可用",
+		"coordinatorUnavailable": "协调对话里不能用「{{name}}」"
 	},
 	"slash": {
 		"desc": {
@@ -293,7 +306,12 @@
 		"unarchive": "取消归档",
 		"unpin": "取消置顶",
 		"untitled": "未命名线程",
-		"working": "工作中…"
+		"working": "工作中…",
+		"archiveShipped": "归档为已交付",
+		"schedule": "定时…",
+		"scheduleNext": "定时：下次 {{when}}",
+		"schedulePaused": "定时已暂停",
+		"scheduleRun": "由定时「{{name}}」第 {{run}} 次运行建出"
 	},
 	"color": {
 		"none": "无",
@@ -576,7 +594,12 @@
 		"profile_readonly": "这里用的是只读副本，改动不会保存。要保存，先在 Profile 横幅里写回。",
 		"profile_too_large": "Profile 超过 256 MiB，保存失败。清理浏览器里的大型站点数据后再试。",
 		"profile_save_failed": "保存失败：导出或写盘出错。旧的版本还在，稍后再试。",
-		"orbd_outdated": "这台 orb 的镜像太旧，不支持这个功能。新建一个线程会得到新镜像的 orb。"
+		"orbd_outdated": "这台 orb 的镜像太旧，不支持这个功能。新建一个线程会得到新镜像的 orb。",
+		"schedule_busy": "上一次运行还没结束，稍后再手动触发",
+		"thread_archived": "线程已归档，不能设定时",
+		"space_thread": "这是空间的聊天线程，删除空间才会删除它",
+		"coordinator_restricted": "协调对话里不能这样做",
+		"invalid_target": "目标不是工作线程"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
@@ -608,7 +631,8 @@
 		"notifications": "通知",
 		"shares": "公开分享",
 		"desktop": "桌面应用",
-		"browser-profiles": "浏览器 Profile"
+		"browser-profiles": "浏览器 Profile",
+		"automations": "自动化"
 	},
 	"devices": {
 		"pairQr": {
@@ -671,7 +695,10 @@
 		"iconAutoHint": "自动：取首个会话标题卡上的图标，没有时用名称首字。",
 		"title": "项目",
 		"defaultBrowserProfile": "默认浏览器 Profile",
-		"defaultBrowserProfileHint": "这个项目的新线程默认装载它（新建线程时可改）。"
+		"defaultBrowserProfileHint": "这个项目的新线程默认装载它（新建线程时可改）。",
+		"schedules": "定时任务",
+		"newSchedule": "新建定时任务",
+		"noSchedules": "这个项目还没有定时任务。"
 	},
 	"secrets": {
 		"deleteConfirm": "删除密钥 {{name}}？",
@@ -1700,5 +1727,233 @@
 		"emptyTitle": "还没有浏览器 Profile",
 		"emptyHint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。",
 		"hint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。"
+	},
+	"assistant": {
+		"title": "全局助手",
+		"untitled": "新对话",
+		"new": "新对话",
+		"archive": "归档此对话",
+		"conversations": "对话",
+		"createFailed": "没能创建助手对话"
+	},
+	"coordinator": {
+		"unavailableTitle": "全局助手暂不可用",
+		"seeAbout": "在 设置 → 关于 查看协调宿主状态",
+		"title": "协调宿主",
+		"hint": "全局助手与空间的协调者跑在控制面宿主上的隔离 omp 进程里。",
+		"status": "状态",
+		"available": "可用",
+		"unavailable": "不可用",
+		"ompVersion": "omp 版本",
+		"isolation": "隔离",
+		"network": {
+			"namespace": "网络：独立命名空间",
+			"port": "网络：仅限代理端口"
+		},
+		"landlock": "Landlock ABI {{abi}}",
+		"pidNs": "独立 PID 命名空间",
+		"ipcScope": "信号与 socket 作用域",
+		"uid": "运行用户 uid {{uid}}",
+		"notStarted": "尚未启动过",
+		"orb": "协调 orb",
+		"orbTag": "协调"
+	},
+	"automation": {
+		"schedules": "定时任务",
+		"projectSchedules": "项目定时（每次新建线程）",
+		"threadSchedules": "线程内定时",
+		"none": "还没有定时任务。",
+		"filteredBy": "只看项目「{{name}}」",
+		"showAll": "显示全部",
+		"nextRun": "下次 {{when}}",
+		"byAgent": "由 agent 创建",
+		"toggle": "启用「{{name}}」",
+		"menu": "「{{name}}」的操作",
+		"runs": "运行记录",
+		"openThread": "打开线程",
+		"log": "操作记录",
+		"logHint": "Space、全局助手与 orb 内 agent 对线程做过的操作，新的在前，保留 90 天。",
+		"logEmpty": "还没有操作记录。",
+		"loadMore": "加载更多",
+		"auto": "自动",
+		"autoHint": "发生在自动回合里（定时、线程回报或 agent 间消息触发），不是你亲自发起的",
+		"failed": "失败",
+		"actor": {
+			"space": "空间「{{name}}」",
+			"assistant": "助手「{{name}}」",
+			"agent": "线程「{{name}}」"
+		},
+		"actorKind": {
+			"space": "空间",
+			"assistant": "全局助手",
+			"agent": "orb 内 agent"
+		},
+		"action": {
+			"create_thread": "新建线程",
+			"send_message": "发送消息",
+			"archive_thread": "归档线程",
+			"set_schedule": "设置定时",
+			"delete_schedule": "删除定时"
+		}
+	},
+	"schedule": {
+		"title": "定时",
+		"editTitle": "编辑定时",
+		"newProjectTitle": "新建定时任务",
+		"kindLabel": "触发方式",
+		"kind": {
+			"cron": "按日程",
+			"every": "每隔",
+			"once": "一次"
+		},
+		"preset": {
+			"daily9": "每天 9:00",
+			"weekdays9": "工作日 9:00",
+			"hourly": "每小时整点",
+			"monday9": "每周一 9:00"
+		},
+		"cron": "cron 表达式",
+		"cronHint": "五段：分 时 日 月 周",
+		"every": "间隔",
+		"everyValue": "间隔数值",
+		"everyUnit": "间隔单位",
+		"unit": {
+			"m": "分钟",
+			"h": "小时",
+			"d": "天"
+		},
+		"at": "时间",
+		"timezone": "时区",
+		"endsAt": "截止时间",
+		"endsAtHint": "可留空；到点后自动停用",
+		"preview": "接下来",
+		"previewNone": "没有将来的运行",
+		"prompt": "提示词",
+		"placeholders": "可用占位符：",
+		"enabled": "启用",
+		"runNow": "立即运行",
+		"deleteConfirm": "删除这个定时？已经建出的线程保留。",
+		"runs": "最近运行",
+		"noRuns": "还没有运行过。",
+		"missed": "补跑（错过 {{n}} 次）",
+		"name": "名称",
+		"nameOptional": "名称（可选）",
+		"nameHint": "同一项目内不能重名；也是新线程标题的前缀",
+		"nameOptionalHint": "留空时用线程标题",
+		"nameTaken": "这个项目里已有同名的定时任务",
+		"project": "项目",
+		"model": "模型：{{model}}",
+		"modelLabel": "模型与思考级别",
+		"orbType": "orb 类型",
+		"overlapLabel": "上一次还没结束时",
+		"overlap": {
+			"skip": "跳过这一次",
+			"allow": "允许并行"
+		},
+		"keepLast": "保留最近几次",
+		"keepLastHint": "更早的已结束线程自动归档，它们独占的 orb 一并删除",
+		"space": "空间",
+		"mode": {
+			"thread": "线程内定时",
+			"new_thread": "每次新建线程"
+		},
+		"paused": "已暂停",
+		"pausedArchived": "线程已归档，这个定时随之暂停。",
+		"autoPaused": "连续失败，已自动暂停",
+		"autoPausedHint": "连续 {{n}} 次失败。检查最近运行的错误，修好后重新启用。",
+		"pausedReason": {
+			"user": "已暂停",
+			"failures": "连续失败已暂停",
+			"archived": "线程已归档",
+			"done": "已结束"
+		},
+		"runStatus": {
+			"pending": "排队中",
+			"running": "运行中",
+			"needs_input": "等你处理",
+			"completed": "完成",
+			"failed": "失败",
+			"skipped": "已跳过"
+		},
+		"trigger": {
+			"schedule": "按时",
+			"catchup": "补跑",
+			"manual": "手动"
+		},
+		"describe": {
+			"everyMinutes": "每 {{n}} 分钟",
+			"everyHours": "每 {{n}} 小时",
+			"everyHm": "每 {{h}} 小时 {{m}} 分钟",
+			"everyDays": "每 {{n}} 天",
+			"once": "{{time}} 运行一次",
+			"onceUnset": "一次（未设时间）"
+		}
+	},
+	"space": {
+		"new": "新建空间",
+		"edit": "编辑空间",
+		"name": "名称",
+		"nameHint": "比如「发布 2.0」",
+		"nameTaken": "已有同名的空间",
+		"goal": "目标",
+		"goalHint": "协调者据此规划工作；之后随时可改",
+		"goalEmpty": "还没写目标，点这里补上",
+		"project": "默认项目",
+		"projectHint": "空间里新建的线程默认用这个项目",
+		"menu": "空间操作",
+		"archive": "归档空间",
+		"unarchive": "取消归档",
+		"archived": "已归档",
+		"delete": "删除空间",
+		"deleteConfirm": "删除空间「{{name}}」？聊天一并删除，其中的工作线程保留并移出空间。",
+		"notFound": "找不到这个空间",
+		"tabs": "空间视图",
+		"tab": {
+			"chat": "聊天",
+			"threads": "线程"
+		},
+		"needYou": "需要你",
+		"active": "进行中",
+		"done": "已结束（近 7 天）",
+		"noThreads": "还没有线程。在聊天里让协调者开始工作，或把已有线程加进来。",
+		"threadMenu": "线程操作",
+		"removeThread": "移出空间",
+		"addThread": "加入线程",
+		"addThreadSearch": "搜索线程",
+		"addThreadEmpty": "没有可加入的线程",
+		"shipped": "已交付",
+		"shippedAt": "{{when}} 交付",
+		"archivedAt": "{{when}} 归档",
+		"threadGone": "线程已不可见",
+		"schedules": "定时",
+		"noSchedules": "这个空间还没有定时任务。",
+		"progress": {
+			"title": "近 30 天",
+			"summary": "近 {{days}} 天：交付 {{shipped}}，归档 {{archived}}，未结束 {{open}}",
+			"shipped": "交付 {{n}}",
+			"archived": "归档 {{n}}",
+			"open": "未结束 {{n}}"
+		}
+	},
+	"tabBar": {
+		"label": "主导航",
+		"threads": "线程",
+		"assistant": "全局助手",
+		"projects": "项目",
+		"more": "更多"
+	},
+	"oryn": {
+		"scheduledRun": "定时「{{name}}」第 {{run}} 次 · 计划于 {{time}}",
+		"untitled": "未命名",
+		"late_one": "迟到，合并了 {{count}} 次错过的运行",
+		"late_other": "迟到，合并了 {{count}} 次错过的运行",
+		"from": {
+			"space": "来自空间「{{name}}」· 由 agent 发送",
+			"assistant": "来自助手「{{name}}」· 由 agent 发送",
+			"thread": "来自线程「{{name}}」· 由 agent 发送"
+		},
+		"fromAssistantUntitled": "来自全局助手 · 由 agent 发送",
+		"report": "线程报告 · 自动",
+		"reportThread": "打开线程「{{name}}」（{{state}}）"
 	}
 }

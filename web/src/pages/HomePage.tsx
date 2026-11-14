@@ -11,7 +11,6 @@ import {
 	type Ref,
 	useEffect,
 	useLayoutEffect,
-	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -47,16 +46,20 @@ import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
 import { ModelLogo } from "../components/ui/ModelLogo";
+import {
+	ModelOptions,
+	ModelPill,
+	modelPillText,
+	newThreadThinkingOptions,
+} from "../components/ui/ModelSelect";
 import { OrbBead } from "../components/ui/OrbBead";
-import { IconButton, Spinner, TextInput } from "../components/ui/primitives";
-import { ThinkingMenu } from "../components/ui/ThinkingDial";
+import { Option, Popover, PopoverLabel } from "../components/ui/PickerPopover";
+import { IconButton, Spinner } from "../components/ui/primitives";
 import { formatMemoryMB } from "../lib/format";
-import { modelBrand, shortModelName } from "../lib/model-brand";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
-import { type ModelCaps, useModelCaps } from "../state/model-caps";
+import { useModelCaps } from "../state/model-caps";
 import { shareIntakeStore, useShareIntake } from "../state/share-intake";
-import { useIndex } from "../state/stores";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 
 type Pill = "executor" | "profile" | "project" | "model";
@@ -141,150 +144,6 @@ function PillButton({
 	);
 }
 
-/**
- * 新线程可选的思考级别：空串 = 跟随 role / 默认。新线程还没有会话，级别取模型能力缓存（会话里见过该模型时记下）；
- * 没见过的模型（含 role 默认模型）能力未知，只给「跟随默认」，不假装全部级别都可用；模型不推理时为 null（不显示圆圈）。
- */
-function homeThinkingOptions(
-	caps: ModelCaps | undefined,
-): readonly string[] | null {
-	if (!caps) return [""];
-	if (caps.thinking.length === 0) return null;
-	return ["", "auto", ...caps.thinking];
-}
-
-/**
- * 模型胶囊 + 思考级别圆圈：圆圈是单独的按钮（点开选级别），不放在模型弹层里。
- * 宽屏叠在胶囊右端（胶囊留出位置）；窄屏是模型图标右下角的角标，不占行宽，选项行的折叠测量不受影响。
- */
-function ModelPill({
-	pill,
-	corner,
-	thinking,
-	options,
-	known,
-	onThinking,
-}: {
-	pill: ReactElement;
-	corner: boolean;
-	thinking: string;
-	options: readonly string[];
-	/** 模型能力已知；未知时「跟随默认」项写明原因 */
-	known: boolean;
-	onThinking: (level: string) => void;
-}) {
-	const { t } = useTranslation();
-	return (
-		<span className="relative inline-flex min-w-0 shrink">
-			{pill}
-			<span
-				className={`absolute flex ${corner ? "-right-1 -bottom-1" : "-translate-y-1/2 top-1/2 right-0.5"}`}
-			>
-				<ThinkingMenu
-					value={thinking}
-					options={options}
-					defaultLabel={t("newThread.defaultThinking")}
-					defaultHint={known ? undefined : t("newThread.thinkingUnknown")}
-					onSelect={onThinking}
-					size={corner ? 12 : 14}
-					badge={corner}
-					className="text-muted"
-				/>
-			</span>
-		</span>
-	);
-}
-
-function Popover({
-	children,
-	onClose,
-}: {
-	children: ReactNode;
-	onClose: () => void;
-}) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		const onDown = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-		};
-		document.addEventListener("mousedown", onDown);
-		return () => document.removeEventListener("mousedown", onDown);
-	}, [onClose]);
-	return (
-		<div
-			ref={ref}
-			className="glass pop-in absolute bottom-full left-0 z-30 mb-2 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-1"
-		>
-			{children}
-		</div>
-	);
-}
-
-function PopoverLabel({ children }: { children: ReactNode }) {
-	return (
-		<div className="px-2 pt-2 pb-1 font-medium text-2xs text-faint first:pt-1">
-			{children}
-		</div>
-	);
-}
-
-/**
- * 弹层选项：主文字紧跟 hint 文字、同在一个按钮里（项目选项的无障碍名 = 项目名 + 仓库地址，验收脚本按此匹配）。
- * `leading` 只能放无文字的图标，一律 aria-hidden；`trailing` 放徽标组。
- */
-function Option({
-	selected,
-	onClick,
-	children,
-	leading,
-	hint,
-	trailing,
-	mono,
-}: {
-	selected: boolean;
-	onClick: () => void;
-	children: ReactNode;
-	leading?: ReactNode;
-	hint?: ReactNode;
-	trailing?: ReactNode;
-	mono?: boolean;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${selected ? "bg-hover text-fg" : "text-fg"}`}
-		>
-			{leading && (
-				<span
-					aria-hidden
-					className="inline-flex w-[18px] shrink-0 justify-center text-faint"
-				>
-					{leading}
-				</span>
-			)}
-			<span className="flex min-w-0 flex-1 items-baseline gap-2">
-				<span
-					className={`min-w-0 shrink truncate ${mono ? "font-mono text-xs" : ""}`}
-				>
-					{children}
-				</span>
-				{hint && (
-					<span className="min-w-0 shrink-[2] truncate text-faint text-xs">
-						{hint}
-					</span>
-				)}
-			</span>
-			{trailing && (
-				<span className="flex shrink-0 items-center gap-1">{trailing}</span>
-			)}
-			{selected && (
-				<Icon name="check" size={13} className="shrink-0 text-muted" />
-			)}
-		</button>
-	);
-}
-
 export function HomePage(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -299,7 +158,6 @@ export function HomePage(): ReactNode {
 	const projects = useProjects();
 	const orbs = useOrbs();
 	const profiles = useBrowserProfiles();
-	const threads = useIndex((s) => s.threads);
 	const att = useAttachments();
 	const [prompt, setPrompt] = useState("");
 	const [pill, setPill] = useState<Pill | null>(null);
@@ -366,13 +224,6 @@ export function HomePage(): ReactNode {
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 
-	const recentModels = useMemo(() => {
-		const set = new Set<string>();
-		for (const th of Object.values(threads))
-			if (th.model) set.add(`${th.model.provider}/${th.model.id}`);
-		return [...set].slice(0, 8);
-	}, [threads]);
-
 	const profileList = profiles.data?.profiles ?? [];
 	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（挂到已有 orb 时沿用那台 orb 的 Profile）
 	const showProfile = executor.kind === "new_orb" && profileList.length > 0;
@@ -405,9 +256,13 @@ export function HomePage(): ReactNode {
 					}),
 					main: pickedProfileName ?? t("newThread.profileNone"),
 				};
+	// 协调 orb（M9，跑在控制面宿主上）不能挂工作线程，也不出现在执行位置里
 	const liveOrbs = (orbs.data?.orbs ?? []).filter(
 		(o) =>
-			o.state !== "deleted" && o.state !== "deleting" && o.state !== "failed",
+			!o.coordinator &&
+			o.state !== "deleted" &&
+			o.state !== "deleting" &&
+			o.state !== "failed",
 	);
 	// 胶囊的无障碍名保持原拼接字符串；视觉上把「·」后的部分拆成徽标
 	const existingOrbLabel =
@@ -432,17 +287,10 @@ export function HomePage(): ReactNode {
 			projectId)
 		: t("newThread.noProject");
 	const projectText: PillText = { label: projectName, main: projectName };
-	// 与线程输入坞的 ModelChip 同一套省空间规则：认得出品牌时去掉系列名（logo 已说明）；
-	// 思考级别是胶囊旁的独立圆圈按钮（ModelPill），胶囊的无障碍名与悬停提示只写模型全名
-	const modelId = model.trim().split("/").pop()?.replace(/:.*$/, "") || model;
-	const modelText: PillText = {
-		label: model || t("newThread.defaultModel"),
-		main: model
-			? shortModelName(modelId, modelBrand(model))
-			: t("newThread.defaultModel"),
-	};
+	// 与线程输入坞的 ModelChip 同一套省空间规则；思考级别是胶囊旁的独立圆圈按钮（ModelPill）
+	const modelText: PillText = modelPillText(model, t("newThread.defaultModel"));
 	const modelCaps = useModelCaps(model);
-	const thinkingOptions = homeThinkingOptions(modelCaps);
+	const thinkingOptions = newThreadThinkingOptions(modelCaps);
 	// 换了模型、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
 	useEffect(() => {
 		if (thinking && !thinkingOptions?.includes(thinking)) setThinking("");
@@ -795,41 +643,45 @@ export function HomePage(): ReactNode {
 										>
 											{t("newThread.newOrbDefault")}
 										</Option>
-										{(providers.data?.providers ?? []).map((p) =>
-											p.orbTypes.map((ot) => (
-												<Option
-													key={`${p.id}-${ot.name}`}
-													selected={
-														executor.kind === "new_orb" &&
-														executor.provider === p.name &&
-														executor.type === ot.name
-													}
-													leading={<Icon name="cpu" size={14} />}
-													hint={ot.name}
-													trailing={
-														<>
-															<Badge>{t("panel.cores", { n: ot.cpus })}</Badge>
-															<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
-															{!p.online && (
-																<Badge tone="warn">
-																	{t("providers.offline")}
+										{(providers.data?.providers ?? [])
+											.filter((p) => p.name !== "@host")
+											.map((p) =>
+												p.orbTypes.map((ot) => (
+													<Option
+														key={`${p.id}-${ot.name}`}
+														selected={
+															executor.kind === "new_orb" &&
+															executor.provider === p.name &&
+															executor.type === ot.name
+														}
+														leading={<Icon name="cpu" size={14} />}
+														hint={ot.name}
+														trailing={
+															<>
+																<Badge>
+																	{t("panel.cores", { n: ot.cpus })}
 																</Badge>
-															)}
-														</>
-													}
-													onClick={() => {
-														setExecutor({
-															kind: "new_orb",
-															provider: p.name,
-															type: ot.name,
-														});
-														setPill(null);
-													}}
-												>
-													{p.name}
-												</Option>
-											)),
-										)}
+																<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
+																{!p.online && (
+																	<Badge tone="warn">
+																		{t("providers.offline")}
+																	</Badge>
+																)}
+															</>
+														}
+														onClick={() => {
+															setExecutor({
+																kind: "new_orb",
+																provider: p.name,
+																type: ot.name,
+															});
+															setPill(null);
+														}}
+													>
+														{p.name}
+													</Option>
+												)),
+											)}
 										{liveOrbs.length > 0 && (
 											<PopoverLabel>{t("newThread.existingOrbs")}</PopoverLabel>
 										)}
@@ -930,31 +782,7 @@ export function HomePage(): ReactNode {
 								)}
 								{pill === "model" && (
 									<Popover onClose={() => setPill(null)}>
-										<div className="p-1">
-											<TextInput
-												autoFocus
-												placeholder={t("newThread.modelPlaceholder")}
-												value={model}
-												onChange={(e) => setModel(e.target.value)}
-											/>
-										</div>
-										<Option
-											selected={!model}
-											leading={<Icon name="sparkle" size={14} />}
-											onClick={() => setModel("")}
-										>
-											{t("newThread.defaultModel")}
-										</Option>
-										{recentModels.map((m) => (
-											<Option
-												key={m}
-												selected={model === m}
-												leading={<ModelLogo model={m} />}
-												onClick={() => setModel(m)}
-											>
-												{m}
-											</Option>
-										))}
+										<ModelOptions model={model} onModel={setModel} />
 									</Popover>
 								)}
 							</div>

@@ -138,7 +138,19 @@
 		"pinned": "Pinned",
 		"search": "Search threads",
 		"snoozed": "Snoozed",
-		"unread": "Unread"
+		"unread": "Unread",
+		"spaces": "Spaces",
+		"assistant": "Assistant",
+		"scheduled": "Scheduled",
+		"scheduledRuns": "Scheduled runs",
+		"allRuns": "All runs",
+		"projectFilter": "Project: {{name}}",
+		"clearProjectFilter": "Clear project filter",
+		"projectMeta": "{{threads}} threads · {{schedules}} schedules",
+		"projectSettings": "Settings for “{{name}}”",
+		"projectThreads_one": "{{count}} thread",
+		"projectThreads_other": "{{count}} threads",
+		"profileAppearance": "Profile and appearance"
 	},
 	"newThread": {
 		"heading": "What should we work on?",
@@ -173,7 +185,8 @@
 		"placeholderBusy": "Steer the running turn…",
 		"send": "Send",
 		"steer": "Steer",
-		"unavailable": "/{{name}} is not available in Oryn"
+		"unavailable": "/{{name}} is not available in Oryn",
+		"coordinatorUnavailable": "“{{name}}” isn't available in coordinator chats"
 	},
 	"slash": {
 		"desc": {
@@ -293,7 +306,12 @@
 		"unarchive": "Unarchive",
 		"unpin": "Unpin",
 		"untitled": "Untitled thread",
-		"working": "Working…"
+		"working": "Working…",
+		"archiveShipped": "Archive as shipped",
+		"schedule": "Schedule…",
+		"scheduleNext": "Schedule: next {{when}}",
+		"schedulePaused": "Schedule paused",
+		"scheduleRun": "Created by run #{{run}} of the schedule “{{name}}”"
 	},
 	"color": {
 		"none": "None",
@@ -576,7 +594,12 @@
 		"profile_readonly": "This is a read-only copy and changes are not saved. Use “Write back” in the profile banner first.",
 		"profile_too_large": "The profile exceeds 256 MiB and could not be saved. Clear large site data in the browser and try again.",
 		"profile_save_failed": "Save failed while exporting or writing. The previous version is intact; try again later.",
-		"orbd_outdated": "This orb runs an older image that lacks this feature. Start a new thread to get an orb with the current image."
+		"orbd_outdated": "This orb runs an older image that lacks this feature. Start a new thread to get an orb with the current image.",
+		"schedule_busy": "The previous run hasn't finished yet; try again later",
+		"thread_archived": "Archived threads can't have a schedule",
+		"space_thread": "This is a Space's chat; it's removed when the Space is deleted",
+		"coordinator_restricted": "That isn't allowed in a coordinator chat",
+		"invalid_target": "The target isn't a work thread"
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",
@@ -608,7 +631,8 @@
 		"notifications": "Notifications",
 		"shares": "Public sharing",
 		"desktop": "Desktop app",
-		"browser-profiles": "Browser profiles"
+		"browser-profiles": "Browser profiles",
+		"automations": "Automations"
 	},
 	"devices": {
 		"pairQr": {
@@ -671,7 +695,10 @@
 		"iconAutoHint": "Auto: uses the icon from the first thread's title card, else the name's first letter.",
 		"title": "Projects",
 		"defaultBrowserProfile": "Default browser profile",
-		"defaultBrowserProfileHint": "New threads in this project load it by default (you can change it when starting a thread)."
+		"defaultBrowserProfileHint": "New threads in this project load it by default (you can change it when starting a thread).",
+		"schedules": "Schedules",
+		"newSchedule": "New schedule",
+		"noSchedules": "This project has no schedules yet."
 	},
 	"secrets": {
 		"deleteConfirm": "Delete secret {{name}}?",
@@ -1700,5 +1727,233 @@
 		"emptyTitle": "No browser profiles yet",
 		"emptyHint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back.",
 		"hint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back."
+	},
+	"assistant": {
+		"title": "Assistant",
+		"untitled": "New conversation",
+		"new": "New conversation",
+		"archive": "Archive this conversation",
+		"conversations": "Conversations",
+		"createFailed": "Couldn't start an assistant conversation"
+	},
+	"coordinator": {
+		"unavailableTitle": "The assistant is unavailable",
+		"seeAbout": "See Settings → About for the coordinator host status",
+		"title": "Coordinator host",
+		"hint": "The assistant and Space coordinators run in an isolated omp process on the control-plane host.",
+		"status": "Status",
+		"available": "Available",
+		"unavailable": "Unavailable",
+		"ompVersion": "omp version",
+		"isolation": "Isolation",
+		"network": {
+			"namespace": "Network: own namespace",
+			"port": "Network: proxy port only"
+		},
+		"landlock": "Landlock ABI {{abi}}",
+		"pidNs": "Own PID namespace",
+		"ipcScope": "Signal and socket scoping",
+		"uid": "Runs as uid {{uid}}",
+		"notStarted": "Not started yet",
+		"orb": "Coordinator orb",
+		"orbTag": "Coordinator"
+	},
+	"automation": {
+		"schedules": "Schedules",
+		"projectSchedules": "Project schedules (new thread each run)",
+		"threadSchedules": "Thread schedules",
+		"none": "No schedules yet.",
+		"filteredBy": "Only project “{{name}}”",
+		"showAll": "Show all",
+		"nextRun": "next {{when}}",
+		"byAgent": "Created by an agent",
+		"toggle": "Enable “{{name}}”",
+		"menu": "Actions for “{{name}}”",
+		"runs": "Run history",
+		"openThread": "Open thread",
+		"log": "Activity log",
+		"logHint": "What Spaces, the assistant and agents in orbs did to your threads, newest first. Kept for 90 days.",
+		"logEmpty": "No activity yet.",
+		"loadMore": "Load more",
+		"auto": "Auto",
+		"autoHint": "Happened in an automated turn (a schedule, a thread report or an agent-to-agent message), not one you started",
+		"failed": "Failed",
+		"actor": {
+			"space": "Space “{{name}}”",
+			"assistant": "Assistant “{{name}}”",
+			"agent": "Thread “{{name}}”"
+		},
+		"actorKind": {
+			"space": "Space",
+			"assistant": "Assistant",
+			"agent": "Agent in an orb"
+		},
+		"action": {
+			"create_thread": "Created a thread",
+			"send_message": "Sent a message",
+			"archive_thread": "Archived a thread",
+			"set_schedule": "Set a schedule",
+			"delete_schedule": "Deleted a schedule"
+		}
+	},
+	"schedule": {
+		"title": "Schedule",
+		"editTitle": "Edit schedule",
+		"newProjectTitle": "New schedule",
+		"kindLabel": "Trigger",
+		"kind": {
+			"cron": "Calendar",
+			"every": "Interval",
+			"once": "Once"
+		},
+		"preset": {
+			"daily9": "Daily at 9:00",
+			"weekdays9": "Weekdays at 9:00",
+			"hourly": "Every hour",
+			"monday9": "Mondays at 9:00"
+		},
+		"cron": "Cron expression",
+		"cronHint": "Five fields: minute hour day month weekday",
+		"every": "Interval",
+		"everyValue": "Interval value",
+		"everyUnit": "Interval unit",
+		"unit": {
+			"m": "minutes",
+			"h": "hours",
+			"d": "days"
+		},
+		"at": "Time",
+		"timezone": "Time zone",
+		"endsAt": "Ends at",
+		"endsAtHint": "Optional; the schedule turns itself off afterwards",
+		"preview": "Upcoming",
+		"previewNone": "No upcoming runs",
+		"prompt": "Prompt",
+		"placeholders": "Placeholders:",
+		"enabled": "Enabled",
+		"runNow": "Run now",
+		"deleteConfirm": "Delete this schedule? Threads it already created are kept.",
+		"runs": "Recent runs",
+		"noRuns": "No runs yet.",
+		"missed": "Catch-up ({{n}} missed)",
+		"name": "Name",
+		"nameOptional": "Name (optional)",
+		"nameHint": "Unique within the project; also prefixes new thread titles",
+		"nameOptionalHint": "Defaults to the thread title",
+		"nameTaken": "This project already has a schedule with that name",
+		"project": "Project",
+		"model": "Model: {{model}}",
+		"modelLabel": "Model and thinking level",
+		"orbType": "Orb type",
+		"overlapLabel": "If the previous run is still going",
+		"overlap": {
+			"skip": "Skip this run",
+			"allow": "Run in parallel"
+		},
+		"keepLast": "Keep the last",
+		"keepLastHint": "Older finished threads are archived automatically, along with orbs only they used",
+		"space": "Space",
+		"mode": {
+			"thread": "Thread schedule",
+			"new_thread": "New thread each run"
+		},
+		"paused": "Paused",
+		"pausedArchived": "The thread is archived, so this schedule is paused.",
+		"autoPaused": "Paused after repeated failures",
+		"autoPausedHint": "{{n}} failures in a row. Check the errors in recent runs, then turn it back on.",
+		"pausedReason": {
+			"user": "Paused",
+			"failures": "Paused after failures",
+			"archived": "Thread archived",
+			"done": "Finished"
+		},
+		"runStatus": {
+			"pending": "Queued",
+			"running": "Running",
+			"needs_input": "Needs you",
+			"completed": "Done",
+			"failed": "Failed",
+			"skipped": "Skipped"
+		},
+		"trigger": {
+			"schedule": "On time",
+			"catchup": "Catch-up",
+			"manual": "Manual"
+		},
+		"describe": {
+			"everyMinutes": "Every {{n}} min",
+			"everyHours": "Every {{n}} h",
+			"everyHm": "Every {{h}} h {{m}} min",
+			"everyDays": "Every {{n}} d",
+			"once": "Once at {{time}}",
+			"onceUnset": "Once (no time set)"
+		}
+	},
+	"space": {
+		"new": "New Space",
+		"edit": "Edit Space",
+		"name": "Name",
+		"nameHint": "For example “Ship 2.0”",
+		"nameTaken": "A Space with that name already exists",
+		"goal": "Goal",
+		"goalHint": "The coordinator plans around it; you can change it any time",
+		"goalEmpty": "No goal yet — click to add one",
+		"project": "Default project",
+		"projectHint": "New threads in this Space use this project",
+		"menu": "Space actions",
+		"archive": "Archive Space",
+		"unarchive": "Unarchive",
+		"archived": "Archived",
+		"delete": "Delete Space",
+		"deleteConfirm": "Delete the Space “{{name}}”? Its chat is deleted; its threads are kept and leave the Space.",
+		"notFound": "This Space doesn't exist",
+		"tabs": "Space views",
+		"tab": {
+			"chat": "Chat",
+			"threads": "Threads"
+		},
+		"needYou": "Needs you",
+		"active": "In progress",
+		"done": "Finished (last 7 days)",
+		"noThreads": "No threads yet. Ask the coordinator to start, or add existing threads.",
+		"threadMenu": "Thread actions",
+		"removeThread": "Remove from Space",
+		"addThread": "Add a thread",
+		"addThreadSearch": "Search threads",
+		"addThreadEmpty": "No threads to add",
+		"shipped": "Shipped",
+		"shippedAt": "Shipped {{when}}",
+		"archivedAt": "Archived {{when}}",
+		"threadGone": "Thread no longer visible",
+		"schedules": "Schedules",
+		"noSchedules": "This Space has no schedules yet.",
+		"progress": {
+			"title": "Last 30 days",
+			"summary": "Last {{days}} days: {{shipped}} shipped, {{archived}} archived, {{open}} open",
+			"shipped": "{{n}} shipped",
+			"archived": "{{n}} archived",
+			"open": "{{n}} open"
+		}
+	},
+	"tabBar": {
+		"label": "Main navigation",
+		"threads": "Threads",
+		"assistant": "Assistant",
+		"projects": "Projects",
+		"more": "More"
+	},
+	"oryn": {
+		"scheduledRun": "Scheduled run “{{name}}” #{{run}} · for {{time}}",
+		"untitled": "Untitled",
+		"late_one": "late, {{count}} missed run merged",
+		"late_other": "late, {{count}} missed runs merged",
+		"from": {
+			"space": "From space “{{name}}” · sent by an agent",
+			"assistant": "From assistant “{{name}}” · sent by an agent",
+			"thread": "From thread “{{name}}” · sent by an agent"
+		},
+		"fromAssistantUntitled": "From the assistant · sent by an agent",
+		"report": "Thread report · automatic",
+		"reportThread": "Open thread “{{name}}” ({{state}})"
 	}
 }

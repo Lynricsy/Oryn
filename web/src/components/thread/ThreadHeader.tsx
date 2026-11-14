@@ -1,12 +1,15 @@
 /**
- * 线程页头（渐进模糊纱）：项目徽标与名称、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。
+ * 线程页头（渐进模糊纱）：面包屑 Space / 项目 / 标题卡（图标 + 可编辑标题 + 代码）、定时胶囊、orb 胶囊、会话树 / 面板 / More Actions。
  * 桌面 App 无系统标题栏：整条页头是拖动区（按钮、标题等可交互元素除外）；`chromeLeft` / `chromeRight` 时两端放窗口控件。
+ * 定时（M9）：线程内定时显示 `ScheduleChip`，「每次新建线程」定时建出的线程显示 `ScheduleRunChip`，More Actions 有「定时…」；
+ * 归档旁有「归档为已交付」（Space 进度图的 Shipped）。
  */
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
 import { useProjects } from "../../api/queries";
+import { useSpaces } from "../../api/space-queries";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import {
@@ -20,6 +23,8 @@ import {
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
+import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
+import { ScheduleDialog } from "../schedule/ScheduleDialog";
 import { Badge, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
@@ -162,6 +167,14 @@ export function ThreadHeader({
 	const hue = threadHue(thread?.color);
 	const [editing, setEditing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	// 定时对话框：线程内定时，或建出本线程的「每次新建线程」定时
+	const [scheduleOpen, setScheduleOpen] = useState<
+		null | { mode: "thread" } | { mode: "new_thread"; id: string }
+	>(null);
+	const spaces = useSpaces();
+	const space = thread?.spaceId
+		? spaces.data?.spaces?.find((s) => s.id === thread.spaceId)
+		: undefined;
 	const act = (fn: () => Promise<unknown>) => () => {
 		setError(null);
 		fn().catch((e: unknown) =>
@@ -195,6 +208,13 @@ export function ThreadHeader({
 			],
 		},
 		{
+			key: "schedule",
+			icon: "clock",
+			label: t("thread.schedule"),
+			disabled: Boolean(thread?.archivedAt),
+			onSelect: () => setScheduleOpen({ mode: "thread" }),
+		},
+		{
 			key: "archive",
 			icon: "archive",
 			label: thread?.archivedAt ? t("thread.unarchive") : t("thread.archive"),
@@ -202,6 +222,18 @@ export function ThreadHeader({
 				patchThread(threadId, { archived: !thread?.archivedAt }),
 			),
 		},
+		...(thread?.archivedAt
+			? []
+			: [
+					{
+						key: "archiveShipped",
+						icon: "rocket" as const,
+						label: t("thread.archiveShipped"),
+						onSelect: act(() =>
+							patchThread(threadId, { archived: true, shipped: true }),
+						),
+					},
+				]),
 		{
 			key: "rename",
 			icon: "edit",
@@ -344,6 +376,23 @@ export function ThreadHeader({
 					onClick={() => uiStore.getState().toggleSidebar()}
 				/>
 			)}
+			{space && (
+				// Space 段只在宽页头出现：Space / 项目 / 标题
+				<Link
+					to={`/space/${space.id}`}
+					data-testid="header-space"
+					className="hidden shrink-0 items-center gap-2 text-sm @xl/header:inline-flex"
+					title={space.name}
+				>
+					<Icon name="target" size={14} aria-hidden className="text-faint" />
+					<span className="max-w-32 truncate text-muted hover:text-fg">
+						{space.name}
+					</span>
+					<span aria-hidden className="text-ghost">
+						/
+					</span>
+				</Link>
+			)}
 			{project && (
 				// 项目段整段显示或整段隐藏：页头够宽（D 稿）带项目名，中等宽度只留徽标，再窄连徽标一起隐藏
 				<span
@@ -449,6 +498,23 @@ export function ThreadHeader({
 					</span>
 				</button>
 			)}
+			{editing === null && thread?.schedule && (
+				<ScheduleChip
+					schedule={thread.schedule}
+					onOpen={() => setScheduleOpen({ mode: "thread" })}
+				/>
+			)}
+			{editing === null && thread?.scheduleRun && (
+				<ScheduleRunChip
+					run={thread.scheduleRun}
+					onOpen={() =>
+						setScheduleOpen({
+							mode: "new_thread",
+							id: thread.scheduleRun?.scheduleId ?? "",
+						})
+					}
+				/>
+			)}
 			{editing === null && orb && (
 				<OrbChip orb={orb} working={thread?.state === "working"} />
 			)}
@@ -485,6 +551,19 @@ export function ThreadHeader({
 				)}
 			/>
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
+			{scheduleOpen?.mode === "thread" && (
+				<ScheduleDialog
+					target={{ mode: "thread", threadId }}
+					onClose={() => setScheduleOpen(null)}
+				/>
+			)}
+			{scheduleOpen?.mode === "new_thread" && (
+				<ScheduleDialog
+					scheduleId={scheduleOpen.id}
+					target={{ mode: "new_thread" }}
+					onClose={() => setScheduleOpen(null)}
+				/>
+			)}
 		</header>
 	);
 }

@@ -21,6 +21,7 @@ import { lspRenderer } from "./tools/lsp";
 import { recallRenderer } from "./tools/memory-recall";
 import { reflectRenderer } from "./tools/memory-reflect";
 import { retainRenderer } from "./tools/memory-retain";
+import { ORYN_TOOLS, orynRenderer } from "./tools/oryn";
 import { readRenderer } from "./tools/read";
 import { reportToolIssueRenderer } from "./tools/report-tool-issue";
 import { resolveRenderer } from "./tools/resolve";
@@ -72,6 +73,9 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	write: writeRenderer,
 	yield: yieldRenderer,
 };
+
+// Oryn 宿主工具（M9）：只出现在协调对话里，与 omp 自带工具不重名
+for (const name of ORYN_TOOLS) RENDERERS[name] = orynRenderer;
 
 export function resolveToolRenderer(name: string): ToolRenderer {
 	return RENDERERS[name] ?? genericRenderer;

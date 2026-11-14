@@ -1,6 +1,7 @@
 /**
  * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、文件附件。
  * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、发送）、页脚行（模式状态；上下文、成本、速度读数）。
+ * `coordinator`（协调对话，M9）：没有附件与模式条；`!` 前缀按普通文本发送；命令菜单与斜杠命令按服务端白名单过滤。
  */
 import {
 	type ReactNode,
@@ -12,7 +13,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
-import type { SlashAction } from "../../lib/slash";
+import { coordinatorAllows, type SlashAction } from "../../lib/slash";
 import { realtime } from "../../realtime/socket";
 import {
 	isModeCommand,
@@ -35,9 +36,11 @@ import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 export function Composer({
 	threadId,
 	disabled,
+	coordinator = false,
 }: {
 	threadId: string;
 	disabled?: boolean;
+	coordinator?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -54,7 +57,7 @@ export function Composer({
 	const rootRef = useRef<HTMLDivElement>(null);
 	useRoleShortcut(threadId);
 	const att = useAttachments({ threadId });
-	const menu = useCommandMenu(threadId, text, commands);
+	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 
 	// omp 的 set_editor_text / 会话树跳转带回的草稿
@@ -96,6 +99,12 @@ export function Composer({
 	};
 
 	const runSlash = async (action: SlashAction, mode: SendMode) => {
+		if (coordinator && !coordinatorAllows(action))
+			throw new Error(
+				t("composer.coordinatorUnavailable", {
+					name: action.kind === "rpc" ? action.frame.type : action.kind,
+				}),
+			);
 		switch (action.kind) {
 			case "rpc":
 				if (isModeCommand(action.frame))
@@ -143,6 +152,11 @@ export function Composer({
 		if (pending && pending.text === sent.text && pending.items === sent.items)
 			return;
 		const parsed = parseComposerInput(sent.text);
+		// 协调对话没有工作区：`!` 前缀不是 bash，按原文发送
+		const asText =
+			coordinator && parsed.kind === "bash"
+				? { kind: "text" as const, text: sent.text.trim() }
+				: parsed;
 		setError(null);
 		if (att.uploading && parsed.kind !== "bash") {
 			setError(new Error(t("attachments.waitUpload")));
@@ -159,19 +173,19 @@ export function Composer({
 				resetIfUnchanged(sent);
 				return;
 			}
-			if (parsed.kind === "bash") {
+			if (asText.kind === "bash") {
 				reset();
 				setBashRunning(true);
 				try {
 					await realtime.cmd(
 						threadId,
-						parsed.excludeFromContext
+						asText.excludeFromContext
 							? {
 									type: "bash",
-									command: parsed.command,
+									command: asText.command,
 									excludeFromContext: true,
 								}
-							: { type: "bash", command: parsed.command },
+							: { type: "bash", command: asText.command },
 						3_600_000,
 					);
 				} finally {
@@ -179,8 +193,8 @@ export function Composer({
 				}
 				return;
 			}
-			if (parsed.kind === "slash") {
-				const action = resolveSlashText(threadId, parsed.text);
+			if (asText.kind === "slash") {
+				const action = resolveSlashText(threadId, asText.text);
 				if (action) {
 					await runSlash(action, mode);
 					resetIfUnchanged(sent);
@@ -191,7 +205,7 @@ export function Composer({
 				threadId,
 				promptFrame(
 					mode,
-					parsed.kind === "text" ? parsed.text : sent.text.trim(),
+					asText.kind === "text" ? asText.text : sent.text.trim(),
 					att.contents,
 					att.attachmentIds,
 				),
@@ -283,13 +297,16 @@ export function Composer({
 					hint={menu.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
-			<AttachmentStrip items={att.items} onRemove={att.remove} />
+			{!coordinator && (
+				<AttachmentStrip items={att.items} onRemove={att.remove} />
+			)}
 			<textarea
 				onDragOver={(e) => {
-					if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+					if (!coordinator && e.dataTransfer.types.includes("Files"))
+						e.preventDefault();
 				}}
 				onDrop={(e) => {
-					if (e.dataTransfer.files.length === 0) return;
+					if (coordinator || e.dataTransfer.files.length === 0) return;
 					e.preventDefault();
 					void att.addFiles(e.dataTransfer.files);
 				}}
@@ -309,7 +326,7 @@ export function Composer({
 				}}
 				onKeyDown={onKeyDown}
 				onPaste={(e) => {
-					const files = [...e.clipboardData.files];
+					const files = coordinator ? [] : [...e.clipboardData.files];
 					if (files.length > 0) {
 						e.preventDefault();
 						void att.addFiles(files);
@@ -321,15 +338,19 @@ export function Composer({
 			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
 			 */}
 			<div className="flex items-start gap-0.5 px-3 pb-2">
-				<div className="flex h-8 shrink-0 items-center">
-					<AttachButton onFiles={(files) => void att.addFiles(files)} />
-					<span
-						aria-hidden
-						className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
-					/>
-				</div>
-				<div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-0.5">
-					<ModeStrip threadId={threadId} />
+				{!coordinator && (
+					<div className="flex h-8 shrink-0 items-center">
+						<AttachButton onFiles={(files) => void att.addFiles(files)} />
+						<span
+							aria-hidden
+							className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
+						/>
+					</div>
+				)}
+				<div
+					className={`flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-0.5 ${coordinator ? "pl-2" : ""}`}
+				>
+					{!coordinator && <ModeStrip threadId={threadId} />}
 					{bashRunning && (
 						<button
 							type="button"
@@ -377,7 +398,7 @@ export function Composer({
 				</p>
 			)}
 			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-5 py-[7px] text-2xs text-faint leading-4">
-				<ModeStatus threadId={threadId} />
+				{!coordinator && <ModeStatus threadId={threadId} />}
 				<span className="flex-1" />
 				<SessionReadout threadId={threadId} />
 			</div>

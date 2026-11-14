@@ -28,6 +28,7 @@ import { Circle } from "@phosphor-icons/react/dist/csr/Circle";
 import { CircleHalf } from "@phosphor-icons/react/dist/csr/CircleHalf";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
+import { ClockClockwise } from "@phosphor-icons/react/dist/csr/ClockClockwise";
 import { Code } from "@phosphor-icons/react/dist/csr/Code";
 import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
 import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
@@ -131,6 +132,8 @@ const ICONS = {
 	check: Check,
 	alert: WarningCircle,
 	clock: Clock,
+	/** 循环时钟：重复执行的定时（定时折叠行、定时运行胶囊） */
+	repeat: ClockClockwise,
 	terminal: TerminalWindow,
 	list: ListChecks,
 	trash: Trash,

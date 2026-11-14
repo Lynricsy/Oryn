@@ -5,7 +5,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CLIENT_COMMANDS, UNAVAILABLE_COMMANDS } from "../../lib/slash";
+import {
+	CLIENT_COMMANDS,
+	COORDINATOR_CLIENT_COMMANDS,
+	UNAVAILABLE_COMMANDS,
+} from "../../lib/slash";
 import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { Badge } from "../ui/data";
@@ -32,11 +36,12 @@ function useDebounced<T>(value: T, ms: number): T {
 	return v;
 }
 
-/** 计算菜单项；输入不是斜杠命令时返回 null。 */
+/** 计算菜单项；输入不是斜杠命令时返回 null。`coordinator`：协调对话只列它能执行的客户端命令。 */
 export function useCommandMenu(
 	threadId: string,
 	text: string,
 	commands: RpcAvailableSlashCommand[] | null,
+	coordinator = false,
 ) {
 	const { t } = useTranslation();
 	const m = /^\/(\S*)(\s+([\s\S]*))?$/.exec(text);
@@ -74,6 +79,7 @@ export function useCommandMenu(
 		const entries: MenuEntry[] = [];
 		for (const c of CLIENT_COMMANDS) {
 			seen.add(c);
+			if (coordinator && !COORDINATOR_CLIENT_COMMANDS[c]) continue;
 			entries.push({
 				insert: `/${c} `,
 				label: `/${c}`,

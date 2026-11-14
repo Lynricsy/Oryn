@@ -34,8 +34,11 @@ export type PanelTab =
 	| "portal"
 	| "desktop";
 
-/** 窄屏（compact / medium、非双段）线程页的同级标签：对话（转录）与面板各标签并列。 */
+/** 窄屏线程页（compact / medium、非双段）的同级标签：对话（转录）与面板各标签并列。 */
 export type ThreadTab = "agent" | PanelTab;
+
+/** 手机下沉侧栏的主体视图（底部胶囊切换）：线程列表、项目列表、更多菜单。 */
+export type SidebarView = "threads" | "projects" | "more";
 
 export const PANEL_WIDTH_KEY = "oryn.panel.width";
 /** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下（第五个 Portal 标签出现且放不下时，未选中的标签只显示图标）。 */
@@ -164,6 +167,15 @@ export interface UiState {
 	panelMax: boolean;
 	/** 每次请求聚焦侧边栏搜索时递增。 */
 	searchNonce: number;
+	/** 下沉侧栏的主体视图（侧栏关闭时复位为 `threads`）。 */
+	sidebarView: SidebarView;
+	setSidebarView(view: SidebarView): void;
+	/** 侧栏线程列表的项目过滤：`undefined` 不过滤，`null` 只看无项目线程，否则项目 id。 */
+	projectFilter: string | null | undefined;
+	setProjectFilter(filter: string | null | undefined): void;
+	/** 侧栏里展开的定时折叠（按定时 id，不持久化）。 */
+	expandedStacks: Record<string, boolean>;
+	toggleStack(scheduleId: string): void;
 	open(d: DialogState): void;
 	close(): void;
 	setSidebar(open: boolean): void;
@@ -210,7 +222,19 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	searchNonce: 0,
 	open: (dialog) => set({ dialog }),
 	close: () => set({ dialog: null }),
-	setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+	setSidebar: (sidebarOpen) =>
+		set(
+			sidebarOpen ? { sidebarOpen } : { sidebarOpen, sidebarView: "threads" },
+		),
+	sidebarView: "threads",
+	setSidebarView: (sidebarView) => set({ sidebarView }),
+	projectFilter: undefined,
+	setProjectFilter: (projectFilter) => set({ projectFilter }),
+	expandedStacks: {},
+	toggleStack: (id) =>
+		set((s) => ({
+			expandedStacks: { ...s.expandedStacks, [id]: !s.expandedStacks[id] },
+		})),
 	setSidebarCollapsed: (sidebarCollapsed) => {
 		try {
 			globalThis.localStorage?.setItem(
@@ -227,7 +251,12 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		// 双段视口里侧栏是抽屉（与 compact 相同），按开关抽屉处理
 		if (threadLayout() === "expanded")
 			s.setSidebarCollapsed(!s.sidebarCollapsed);
-		else set({ sidebarOpen: !s.sidebarOpen });
+		else
+			set(
+				s.sidebarOpen
+					? { sidebarOpen: false, sidebarView: "threads" }
+					: { sidebarOpen: true },
+			);
 	},
 	setPanel: (panelOpen) =>
 		set((s) =>

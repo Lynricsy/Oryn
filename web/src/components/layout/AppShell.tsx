@@ -41,6 +41,7 @@ import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
+import { SinkTabBar } from "./SinkTabBar";
 import { ChromeBar } from "./WindowControls";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
@@ -146,6 +147,10 @@ function useGlobalShortcuts() {
 			) {
 				e.preventDefault();
 				uiStore.getState().toggleSidebar();
+			} else if (mod && !e.altKey && (e.key === "/" || e.code === "Slash")) {
+				// 全局助手：焦点在输入框里同样生效（Ctrl/⌘+/ 在编辑区没有别的含义）
+				e.preventDefault();
+				navigate("/assistant");
 			}
 		};
 		window.addEventListener("keydown", onKey);
@@ -274,7 +279,9 @@ export function AppShell(): ReactNode {
 	if (sink)
 		return (
 			<>
-				<SinkLayout sidebar={<Sidebar />}>{main}</SinkLayout>
+				<SinkLayout sidebar={<Sidebar sink />} footer={<SinkTabBar />}>
+					{main}
+				</SinkLayout>
 				<ServerErrors />
 				<NotificationToasts />
 			</>

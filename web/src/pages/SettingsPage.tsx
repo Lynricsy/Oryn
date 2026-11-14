@@ -36,6 +36,7 @@ import {
 	useProviders,
 	useSecrets,
 } from "../api/queries";
+import { useSchedules } from "../api/schedule-queries";
 import { FileBrowser } from "../components/files/FileBrowser";
 import {
 	ChromeLead,
@@ -92,9 +93,12 @@ import {
 	WALLPAPERS,
 } from "../state/theme";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
+import AutomationsSettings from "./settings/AutomationsSettings";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
+import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
+import { ProjectSchedules } from "./settings/ProjectSchedules";
 import SharesSettings from "./settings/SharesSettings";
 
 export type SettingsSection =
@@ -108,6 +112,7 @@ export type SettingsSection =
 	| "appearance"
 	| "notifications"
 	| "shares"
+	| "automations"
 	| "desktop"
 	| "about";
 
@@ -122,6 +127,7 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "appearance", icon: "palette" },
 	{ key: "notifications", icon: "bell" },
 	{ key: "shares", icon: "share" },
+	{ key: "automations", icon: "clock" },
 	{ key: "desktop", icon: "monitor" },
 	{ key: "about", icon: "info" },
 ];
@@ -826,7 +832,23 @@ function ProjectsSettings() {
 	const orbs = useOrbs();
 	const lastSetup = latestSetupByProject(orbs.data?.orbs ?? []);
 	const [editing, setEditing] = useState<string | "new" | null>(null);
+	// 展开「定时任务」的项目（可多个）
+	const [schedulesOpen, setSchedulesOpen] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const toggleSchedules = (id: string) =>
+		setSchedulesOpen((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
 	const del = useAsync();
+	// 时钟按钮上的角标：每个项目的「每次新建线程」定时数
+	const projectSchedules = useSchedules({ mode: "new_thread" });
+	const scheduleCount = (id: string) =>
+		projectSchedules.data?.schedules?.filter((s) => s.projectId === id)
+			.length ?? 0;
 	return (
 		<Card
 			title={t("projects.title")}
@@ -862,54 +884,82 @@ function ProjectsSettings() {
 								/>
 							</div>
 						) : (
-							<ListRow
-								leading={<ProjectBadge name={p.name} icon={p.icon} size={28} />}
-								title={<span className="truncate font-medium">{p.name}</span>}
-								meta={
-									<>
-										<span className="min-w-0 max-w-full truncate">
-											{p.repoUrl ?? t("projects.noRepo")}
-										</span>
-										{p.repoUrl && (
-											<span>
-												<RepoScriptText run={lastSetup.get(p.id)} />
+							<>
+								<ListRow
+									leading={
+										<ProjectBadge name={p.name} icon={p.icon} size={28} />
+									}
+									title={<span className="truncate font-medium">{p.name}</span>}
+									meta={
+										<>
+											<span className="min-w-0 max-w-full truncate">
+												{p.repoUrl ?? t("projects.noRepo")}
 											</span>
-										)}
-									</>
-								}
-								trailing={
-									<>
-										<IconButton
-											icon="edit"
-											label={t("common.edit")}
-											onClick={() => setEditing(p.id)}
-										/>
-										<IconButton
-											icon="trash"
-											label={t("common.delete")}
-											onClick={() => {
-												if (
-													!window.confirm(
-														t("projects.deleteConfirm", { name: p.name }),
+											{p.repoUrl && (
+												<span>
+													<RepoScriptText run={lastSetup.get(p.id)} />
+												</span>
+											)}
+										</>
+									}
+									trailing={
+										<>
+											<span className="relative inline-flex">
+												<IconButton
+													icon="clock"
+													label={t("projects.schedules")}
+													aria-expanded={schedulesOpen.has(p.id)}
+													active={schedulesOpen.has(p.id)}
+													onClick={() => toggleSchedules(p.id)}
+												/>
+												{scheduleCount(p.id) > 0 && (
+													<span
+														aria-hidden
+														data-testid={`project-schedule-count-${p.id}`}
+														// 计数是中性信息：不用强调色（强调色只给「需要你」），字号不低于 text-2xs
+														className="pointer-events-none absolute -top-1 -right-1 grid h-4 min-w-4 place-items-center rounded-full border border-border bg-panel px-1 font-semibold text-2xs text-muted tabular-nums leading-none"
+													>
+														{scheduleCount(p.id)}
+													</span>
+												)}
+											</span>
+											<IconButton
+												icon="edit"
+												label={t("common.edit")}
+												onClick={() => setEditing(p.id)}
+											/>
+											<IconButton
+												icon="trash"
+												label={t("common.delete")}
+												onClick={() => {
+													if (
+														!window.confirm(
+															t("projects.deleteConfirm", { name: p.name }),
+														)
 													)
-												)
-													return;
-												void del
-													.run(() =>
-														unwrap(
-															api.DELETE("/api/v1/projects/{id}", {
-																params: { path: { id: p.id } },
-															}),
-														),
-													)
-													.then(() =>
-														qc.invalidateQueries({ queryKey: qk.projects }),
-													);
-											}}
-										/>
-									</>
-								}
-							/>
+														return;
+													void del
+														.run(() =>
+															unwrap(
+																api.DELETE("/api/v1/projects/{id}", {
+																	params: { path: { id: p.id } },
+																}),
+															),
+														)
+														.then(() =>
+															qc.invalidateQueries({ queryKey: qk.projects }),
+														);
+												}}
+											/>
+										</>
+									}
+								/>
+								{schedulesOpen.has(p.id) && (
+									<div className="mb-2 rounded-lg border border-border bg-raised p-3">
+										<ProjectSchedules project={p} />
+									</div>
+								)}
+							</>
 						)}
 					</li>
 				))}
@@ -1764,6 +1814,7 @@ function AboutSettings() {
 					...mobileRows,
 				]}
 			/>
+			<CoordinatorAbout />
 			{mobile && (
 				<div className="mt-4 flex flex-col gap-1.5 border-border border-t pt-3">
 					<ErrorText error={mobileError} />
@@ -1868,6 +1919,7 @@ export function SettingsPage({
 						{section === "appearance" && <AppearanceSettings />}
 						{section === "notifications" && <NotificationsSettings />}
 						{section === "shares" && <SharesSettings />}
+						{section === "automations" && <AutomationsSettings />}
 						{section === "desktop" && <DesktopSettings />}
 						{section === "about" && <AboutSettings />}
 					</div>

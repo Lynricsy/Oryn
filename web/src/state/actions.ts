@@ -138,6 +138,11 @@ export function mergePatchedThread(
 	if ("archived" in patch) next.archivedAt = res.archivedAt;
 	if ("snoozedUntil" in patch) next.snoozedUntil = res.snoozedUntil;
 	if ("unread" in patch) next.unread = res.unread;
+	if ("spaceId" in patch) next.spaceId = res.spaceId;
+	if ("shipped" in patch) {
+		next.shippedAt = res.shippedAt;
+		next.archivedAt = res.archivedAt;
+	}
 	return next;
 }
 

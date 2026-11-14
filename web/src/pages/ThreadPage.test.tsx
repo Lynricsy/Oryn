@@ -3,13 +3,14 @@
  * expanded 三栏不变；折叠屏双段视口左段转录、右段面板常驻；compact 下输入坞托盘底角与屏幕圆角同心。
  * 转录、输入坞各节、页头与面板内容换成桩，只看页面自己的布局；标签条用真的 `ThreadTabStrip`。
  */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
 import type * as RightPanelModule from "../components/thread/RightPanel";
 import type * as ThreadHeaderModule from "../components/thread/ThreadHeader";
-import { getThreadStore, resetThreadStores } from "../state/stores";
+import { getThreadStore, indexStore, resetThreadStores } from "../state/stores";
 import { uiStore } from "../state/ui";
 import { ThreadPage } from "./ThreadPage";
 
@@ -244,5 +245,60 @@ describe("ThreadPage 双段视口", () => {
 			"data-sidebar-toggle",
 			"true",
 		);
+	});
+});
+
+function Where() {
+	return <span data-testid="where">{useLocation().pathname}</span>;
+}
+
+describe("ThreadPage：协调对话经 /t/<id> 打开时重定向（M9）", () => {
+	function open(thread: Partial<Thread>, spaces: unknown = { spaces: [] }) {
+		indexStore
+			.getState()
+			.setAll([{ id: "T-c", title: "c", ...thread } as Thread], 1);
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		qc.setQueryData(["spaces", "list", { archived: false }], spaces);
+		return render(
+			<QueryClientProvider client={qc}>
+				<MemoryRouter initialEntries={["/t/T-c"]}>
+					<Routes>
+						<Route path="/t/:threadId" element={<ThreadPage />} />
+						<Route path="*" element={<Where />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+	}
+
+	afterEach(() => indexStore.getState().setAll([], 0));
+
+	it("助手对话 → /assistant/<id>", () => {
+		open({ kind: "assistant" });
+		expect(screen.getByTestId("where")).toHaveTextContent("/assistant/T-c");
+	});
+
+	it("Space 聊天 → /space/<spaceId>（取线程的 spaceId）", () => {
+		open({ kind: "space", spaceId: "spc_X" });
+		expect(screen.getByTestId("where")).toHaveTextContent("/space/spc_X");
+	});
+
+	it("Space 聊天没带 spaceId 时按 Space 列表反查", () => {
+		open(
+			{ kind: "space" },
+			{ spaces: [{ id: "spc_Y", name: "y", goal: "", threadId: "T-c" }] },
+		);
+		expect(screen.getByTestId("where")).toHaveTextContent("/space/spc_Y");
+	});
+
+	it("工作线程不重定向", () => {
+		getThreadStore("T-c")
+			.getState()
+			.patchLocal({ thread: { id: "T-c" } as Thread, snapshotReceived: true });
+		open({ kind: "work" });
+		expect(screen.queryByTestId("where")).toBeNull();
+		expect(screen.getByTestId("transcript-pane")).toBeInTheDocument();
 	});
 });

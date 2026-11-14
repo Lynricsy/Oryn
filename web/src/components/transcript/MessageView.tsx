@@ -4,6 +4,8 @@
  */
 import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router";
+import type { ThreadState } from "../../api/client";
 import { useAssetUrls } from "../../lib/asset-urls";
 import {
 	type MessageAttachment,
@@ -17,7 +19,14 @@ import {
 	formatTokens,
 } from "../../lib/format";
 import { imageSrc } from "../../lib/image-src";
+import {
+	describeOrynHeader,
+	type OrynHeader,
+	parseOrynMessage,
+} from "../../lib/oryn-message";
+import { parseTitleCard } from "../../lib/title";
 import type { JsonRecord } from "../../state/message-builder";
+import { useIndex } from "../../state/stores";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
 import { isRecord, resultTextOf } from "../../tool-render/util";
@@ -25,7 +34,7 @@ import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
-import { Menu } from "../ui/primitives";
+import { Menu, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { useTranscriptContext } from "./context";
 
@@ -301,6 +310,69 @@ function MessageMenu({
 	);
 }
 
+/** 首行小签的图标：定时用时钟，线程报告用列表，其余（agent 发来的消息）用机器人。 */
+const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
+	schedule: "clock",
+	report: "list",
+	message: "robot",
+	unknown: "robot",
+};
+
+/**
+ * 线程报告（M9）：一枚可点的线程胶囊（索引里的当前标题 + 状态，链到该线程）+ 引用块里的回复正文（Markdown）。
+ * 不显示包裹标签与原始 id；索引里没有该线程时用报告首行里的标题快照与状态。
+ */
+function ThreadReport({
+	threadId,
+	title,
+	state,
+	content,
+}: {
+	threadId: string;
+	title: string;
+	state: string;
+	content: string;
+}) {
+	const { t } = useTranslation();
+	const thread = useIndex((s) => s.threads[threadId]);
+	const name =
+		(thread && parseTitleCard(thread.title).text) ||
+		title ||
+		t("thread.untitled");
+	const now = (thread?.state ?? state) as ThreadState;
+	const stateText = t(`threadState.${now}`, { defaultValue: now });
+	return (
+		<div data-testid="thread-report" className="flex min-w-0 flex-col gap-2">
+			<Link
+				to={`/t/${threadId}`}
+				aria-label={t("oryn.reportThread", { name, state: stateText })}
+				className="inline-flex h-7 max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-panel/70 pr-2.5 pl-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover"
+			>
+				{thread || now in STATE_KNOWN ? (
+					<ThreadStateIcon state={now} size={13} />
+				) : null}
+				<span className="min-w-0 truncate">{name}</span>
+				<span aria-hidden className="shrink-0 font-normal text-faint">
+					{stateText}
+				</span>
+			</Link>
+			{content.trim() && (
+				<blockquote className="min-w-0 border-border-strong border-l-2 pl-3 text-muted">
+					<Markdown text={content} />
+				</blockquote>
+			)}
+		</div>
+	);
+}
+
+const STATE_KNOWN: Record<ThreadState, true> = {
+	provisioning: true,
+	awaiting_input: true,
+	working: true,
+	error: true,
+	idle: true,
+};
+
 function UserMessage({
 	message,
 	entryId,
@@ -313,7 +385,7 @@ function UserMessage({
 	/** 连续用户消息中的第一条：右侧放用户头像。 */
 	turnStart: boolean;
 }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	// 控制面追加的附件块不按原文显示，渲染成附件芯片
 	const { text, attachments } = parseAttachmentBlock(
 		textOfContent(message.content),
@@ -322,10 +394,27 @@ function UserMessage({
 	const synthetic = message.synthetic === true;
 	const steer = message.steering === true || message.liveSteered === true;
 	const body = irc ? String(irc.body ?? text) : text;
+	const oryn = irc ? null : parseOrynMessage(body);
+	// agent 发来的消息：发起方的名字取索引里的当前标题（比首行里的快照新）
+	const senderId = oryn?.header.kind === "message" ? oryn.header.threadId : "";
+	const senderTitle = useIndex((s) =>
+		senderId ? s.threads[senderId]?.title : undefined,
+	);
+	const label = oryn
+		? describeOrynHeader(oryn, t, i18n.language, () =>
+				senderTitle ? parseTitleCard(senderTitle).text : undefined,
+			)
+		: "";
+	const shown = oryn ? oryn.body : body;
 	return (
 		<div className="group/msg flex flex-col items-end gap-1">
-			{(irc || synthetic || steer) && (
-				<div className="flex flex-wrap justify-end gap-1">
+			{(irc || synthetic || steer || oryn) && (
+				<div className="flex max-w-full flex-wrap justify-end gap-1">
+					{oryn && (
+						<Badge icon={ORYN_ICON[oryn.header.kind]} title={label}>
+							{label}
+						</Badge>
+					)}
 					{irc && (
 						<Badge icon="chats">
 							{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
@@ -338,7 +427,15 @@ function UserMessage({
 			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
 			{/* 别的 agent 经 irc 发来的消息不是「你」说的，不放用户头像 */}
 			<UserBubble avatar={turnStart && !irc} dim={live}>
-				{body && <div className={USER_BUBBLE_TEXT}>{body}</div>}
+				{oryn?.report && oryn.header.kind === "report" && (
+					<ThreadReport
+						threadId={oryn.report.threadId}
+						title={oryn.header.title}
+						state={oryn.header.state}
+						content={oryn.report.content}
+					/>
+				)}
+				{shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
 			</UserBubble>
