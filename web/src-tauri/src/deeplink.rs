@@ -1,7 +1,9 @@
 //! `oryn://` 深链接解析与接线。
 
-/// 解析深链接：`oryn://thread/<T-…>` → `/t/<id>`；`oryn://`、`oryn://open` → `/`；其余 `None`。
-/// scheme 不分大小写，忽略查询与片段。
+/// 解析深链接：`oryn://thread/<T-…>` → `/t/<id>`；`oryn://`、`oryn://open` → `/`；
+/// `oryn://stats` → `/stats/usage`；`oryn://automations` → `/settings/automations`；其余 `None`。
+/// scheme 与主机名不分大小写，忽略查询与片段与单个尾斜杠；落点是封闭集合，不透传任意路径
+/// （`oryn://stats/evil`、`oryn://statsx` 均为 `None`）。
 pub fn parse(url: &str) -> Option<String> {
     let url = url.trim();
     let rest = url
@@ -12,6 +14,12 @@ pub fn parse(url: &str) -> Option<String> {
     let rest = rest.strip_suffix('/').unwrap_or(rest);
     if rest.is_empty() || rest.eq_ignore_ascii_case("open") {
         return Some("/".into());
+    }
+    if rest.eq_ignore_ascii_case("stats") {
+        return Some("/stats/usage".into());
+    }
+    if rest.eq_ignore_ascii_case("automations") {
+        return Some("/settings/automations".into());
     }
     let (host, id) = rest.split_once('/')?;
     if !host.eq_ignore_ascii_case("thread") || !valid_thread_id(id) {
@@ -149,6 +157,26 @@ mod tests {
         assert_eq!(parse("oryn://"), Some("/".into()));
         assert_eq!(parse("oryn://open"), Some("/".into()));
         assert_eq!(parse("oryn://open/"), Some("/".into()));
+    }
+
+    #[test]
+    fn parse_system_hosts() {
+        for url in ["oryn://stats", "ORYN://Stats/", "oryn://stats?x=1", "oryn://stats#f"] {
+            assert_eq!(parse(url).as_deref(), Some("/stats/usage"), "{url}");
+        }
+        for url in ["oryn://automations", "Oryn://AUTOMATIONS/?schedule=x"] {
+            assert_eq!(parse(url).as_deref(), Some("/settings/automations"), "{url}");
+        }
+        for bad in [
+            "oryn://stats/evil",
+            "oryn://statsx",
+            "oryn://stats/usage",
+            "oryn://automations/x",
+            "oryn://automationsx",
+            "oryn://settings/automations",
+        ] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
     }
 
     #[test]

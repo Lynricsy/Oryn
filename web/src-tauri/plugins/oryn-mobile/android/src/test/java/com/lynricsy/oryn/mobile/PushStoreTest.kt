@@ -24,7 +24,7 @@ class PushStoreTest {
 
   @Test
   fun notifierChannelNameFollowsLang() {
-    assertEquals("线程通知", Notifier.channelName("zh-CN"))
-    assertEquals("Thread updates", Notifier.channelName("en"))
+    assertEquals("通知", Notifier.channelName("zh-CN"))
+    assertEquals("Notifications", Notifier.channelName("en"))
   }
 }

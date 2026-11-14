@@ -324,7 +324,8 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     }
 }
 
-/// Android：经 oryn-mobile 插件发（与推送同一个渠道与 tag 规则）；点击由深链接 `oryn://thread/<id>` 带回。
+/// Android：经 oryn-mobile 插件发（与推送同一个渠道与 tag 规则）；点击由深链接带回：线程 → `oryn://thread/<id>`，
+/// `/stats…` → `oryn://stats`，`/settings/automations…` → `oryn://automations`，其余 `oryn://open`（见 `deeplink::parse`）。
 /// 没有通知权限时插件返回 `posted: false`，记 `notify.dropped{reason}`。
 #[cfg(target_os = "android")]
 fn deliver(app: &AppHandle, id: String, p: Prepared) {

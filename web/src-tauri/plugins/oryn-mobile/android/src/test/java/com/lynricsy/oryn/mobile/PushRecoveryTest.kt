@@ -65,4 +65,18 @@ class PushRecoveryTest {
     assertFalse(got.truncated)
     assertEquals(listOf("b", "a"), got.models.map { it.id })
   }
+
+  /** 没有线程的预算告警照常补显示，tag 按路径取；已读的预算行被跳过。 */
+  @Test
+  fun budgetWithoutThreadIsRecovered() {
+    fun budget(id: String, readAt: Any) = JSONObject()
+      .put("id", id).put("kind", "budget").put("title", "Daily budget exceeded").put("body", "b")
+      .put("url", "/stats/usage").put("createdAt", 5L).put("readAt", readAt).put("resolvedAt", JSONObject.NULL)
+    val list = JSONObject().put("notifications", JSONArray(listOf(budget("b1", JSONObject.NULL), budget("b0", 4L))))
+    val got = PushRecovery.pending(list) { false }
+    assertEquals(1, got.size)
+    assertEquals("b1", got[0].id)
+    assertEquals("/stats/usage", got[0].path)
+    assertEquals("oryn-budget", got[0].tag)
+  }
 }

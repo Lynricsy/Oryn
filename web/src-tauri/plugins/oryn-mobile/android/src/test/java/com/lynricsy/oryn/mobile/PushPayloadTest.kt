@@ -79,4 +79,32 @@ class PushPayloadTest {
   fun deepLinkForSettingsPathOpensApp() {
     assertEquals("oryn://open", PushPayload.deepLink("/settings/notifications"))
   }
+
+  @Test
+  fun tagForSystemPaths() {
+    assertEquals("oryn-budget", PushPayload.tagFor("/stats/usage", "n1"))
+    assertEquals("oryn-budget", PushPayload.tagFor("/stats", "n1"))
+    assertEquals("oryn-budget", PushPayload.tagFor("/stats?range=7d", "n1"))
+    assertEquals("oryn-automations", PushPayload.tagFor("/settings/automations", "n1"))
+    assertEquals("oryn-automations", PushPayload.tagFor("/settings/automations?schedule=x", "n1"))
+    assertEquals("oryn-n1", PushPayload.tagFor("/statsx", "n1"))
+    assertEquals("oryn-n1", PushPayload.tagFor("/settings/automationsx", "n1"))
+  }
+
+  @Test
+  fun payloadTagWinsOverPathRule() {
+    val m = parse("""{"id":"n1","title":"t","url":"/stats/usage","tag":"custom"}""")
+    assertEquals("custom", m?.tag)
+    assertEquals("oryn-budget", parse("""{"id":"n1","title":"t","url":"/stats/usage"}""")?.tag)
+  }
+
+  @Test
+  fun deepLinkForSystemPaths() {
+    assertEquals("oryn://stats", PushPayload.deepLink("/stats/usage"))
+    assertEquals("oryn://stats", PushPayload.deepLink("/stats"))
+    assertEquals("oryn://automations", PushPayload.deepLink("/settings/automations?schedule=x"))
+    assertEquals("oryn://automations", PushPayload.deepLink("/settings/automations"))
+    assertEquals("oryn://open", PushPayload.deepLink("/settings/notifications"))
+    assertEquals("oryn://open", PushPayload.deepLink("/statsx"))
+  }
 }

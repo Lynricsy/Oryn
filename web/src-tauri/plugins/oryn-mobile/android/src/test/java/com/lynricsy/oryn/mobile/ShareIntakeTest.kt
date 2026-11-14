@@ -80,5 +80,8 @@ class ShareIntakeTest {
     assertEquals("线程有更新", Notifier.publicText("zh-CN"))
     assertEquals("A thread has an update", Notifier.publicText("en"))
     assertEquals("Oryn 有新通知", Notifier.genericText("zh-CN"))
+    // 无线程的系统通知（预算、定时）锁屏用通用文案
+    assertEquals("Oryn 有新通知", Notifier.publicText("zh-CN", thread = false))
+    assertEquals("You have new Oryn notifications", Notifier.publicText("en", thread = false))
   }
 }

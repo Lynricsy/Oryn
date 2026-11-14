@@ -8,7 +8,8 @@ import java.io.IOException
 /**
  * FCM 离线期间积压超过 100 条非折叠消息时，FCM 全部丢弃并在设备上线后回调 `onDeletedMessages()`。
  * 这时用设备令牌补拉未读通知 `GET /api/v1/notifications?unread=true&limit=50`，按 `before` 翻页（见 [collect]），
- * 把未作答（`input`）且没显示过的通知按推送同一套流程显示（同一线程靠本地 tag 合并）；
+ * 把未读、未作答（`input` 未解决）且没显示过的通知按推送同一套流程显示——不按 kind 过滤，漏掉的无线程系统通知
+ * （预算告警、定时）同样补显示；同一线程靠本地 tag 合并，没有线程的按路径取 tag（见 [PushPayload.tagFor]）；
  * 拉不到、或到了 [MAX_PAGES] 页上限还可能有更多时，显示一条不含内容的「Oryn 有新通知」。
  */
 object PushRecovery {
@@ -40,7 +41,10 @@ object PushRecovery {
     return Recovered(pending(JSONObject().put("notifications", all), shown), truncated)
   }
 
-  /** 列表响应 → 要显示的通知（旧 → 新，同一线程后到的覆盖先到的）。纯函数。 */
+  /**
+   * 列表响应 → 要显示的通知（旧 → 新，同 tag 后到的覆盖先到的）。列表里没有 `tag`，由 `url` 推出：线程按线程、
+   * 预算 `/stats/usage` → `oryn-budget`、定时 → `oryn-automations`。只跳过已读与已解决的 `input`。纯函数。
+   */
   fun pending(list: JSONObject, shown: (String) -> Boolean): List<PushPayload.Model> {
     val items = list.optJSONArray("notifications") ?: return emptyList()
     val out = ArrayList<PushPayload.Model>()
