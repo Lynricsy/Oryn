@@ -128,6 +128,17 @@ func localStart(loc *time.Location, label time.Time) int64 {
 			t = start
 		}
 	}
+	// 回拨造成的重复墙钟：time.Date 对选哪一次不作保证（柏林取第二次）。
+	// 若当前区段由回拨开启、且旧偏移下同一墙钟落在切换之前，改取那一次（更早）。
+	if start, _ := t.ZoneBounds(); !start.IsZero() {
+		_, prevOff := start.Add(-time.Nanosecond).Zone()
+		if _, curOff := t.Zone(); prevOff > curOff {
+			c := t.Add(time.Duration(curOff-prevOff) * time.Second)
+			if c.Before(start) && wallOf(c).Equal(label) {
+				t = c
+			}
+		}
+	}
 	return t.UnixMilli()
 }
 

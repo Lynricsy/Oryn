@@ -101,6 +101,18 @@ func TestGridHoursAcrossDST(t *testing.T) {
 	assert.Equal(t, 2.0, hours(g[1]), "重复的本地小时合并进同一个桶")
 	assert.Equal(t, "2026-11-01T02:00", g[2].Key)
 
+	// 柏林秋季：time.Date 对重复的 02:00 取第二次出现，localStart 必须改取第一次
+	berlin := mustLoc(t, "Europe/Berlin")
+	g, err = Grid(berlin, ms("2026-10-25T00:00:00Z"), ms("2026-10-25T02:00:00Z"), GrainHour)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2026-10-25T02:00"}, keys(g))
+	assert.Equal(t, ms("2026-10-25T00:00:00Z"), g[0].Start, "重复小时从第一次出现算起")
+	assert.Equal(t, 2.0, hours(g[0]))
+	g, err = Grid(berlin, ms("2026-10-24T22:00:00Z"), ms("2026-10-25T03:00:00Z"), GrainHour)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2026-10-25T00:00", "2026-10-25T01:00", "2026-10-25T02:00", "2026-10-25T03:00"}, keys(g))
+	assert.Equal(t, []float64{1, 1, 2, 1}, []float64{hours(g[0]), hours(g[1]), hours(g[2]), hours(g[3])})
+
 	// 加尔各答：小时桶从 :30Z 开始
 	g, err = Grid(mustLoc(t, "Asia/Kolkata"), ms("2026-11-14T00:00:00Z"), ms("2026-11-14T02:00:00Z"), GrainHour)
 	require.NoError(t, err)

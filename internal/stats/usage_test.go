@@ -263,3 +263,15 @@ func TestTools(t *testing.T) {
 	assert.Equal(t, []apigen.ToolStat{{Tool: "read", Calls: 1}}, ts.Tools)
 	assert.Nil(t, ts.Series)
 }
+
+// 柏林秋季回拨：两次本地 02:30 的用量都要落进同一个 2 小时桶，不能丢掉第一次
+func TestUsageBerlinFallBackKeepsFirstOccurrence(t *testing.T) {
+	f := newFixture(t)
+	f.thread("T", "", "", "work")
+	f.usage("T", ms("2026-10-25T00:30:00Z"), "m", 1)
+	f.usage("T", ms("2026-10-25T01:30:00Z"), "m", 2)
+	u, err := Usage(f.ctx, f.st.Q, UsageQuery{GroupBy: "hour", From: ms("2026-10-25T00:00:00Z"), To: ms("2026-10-25T02:00:00Z"), Loc: mustLoc(t, "Europe/Berlin")})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, u.Total.Requests)
+	assert.InDelta(t, 3.0, u.Total.CostUsd, 1e-9)
+}
