@@ -60,6 +60,8 @@ keyring = "=4.2.0"
 # 会以可执行文件名 oryn-desktop 出现在通知中心
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = "=4.19.0"
+# 自绘标题栏按 GTK 的 gtk-decoration-layout 决定按钮左右与顺序（gtk 已随 tao / wry 在依赖图里，版本与之一致）
+gtk = "0.18"
 
 [dev-dependencies]
 wiremock = "0.6"

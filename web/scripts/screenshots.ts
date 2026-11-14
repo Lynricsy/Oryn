@@ -252,6 +252,173 @@ function fakeTauri(
 
 const LAUNCHER_SERVER = "https://oryn.example.com";
 
+/**
+ * 无系统标题栏的假桌面壳（bridge 3）：`__ORYN_HOST__.chrome` 按平台给布局，`host_window` 应答窗口状态。
+ * macOS 的红绿灯由系统画、浏览器里没有：这里在窗口坐标 (22, 24) 起画三个 12px 圆点占位（与 chrome.rs 的
+ * trafficLightPosition 同一位置、按钮框 14×16、间距 20），只为看留白与对齐，不是页面的一部分。
+ * `collapsed`：侧栏收起（写 localStorage）；`launcher`：连接页（另应答 `launcher_state`）。
+ */
+function chromeShell(
+	platform: "macos" | "windows" | "linux-left",
+	opts: {
+		collapsed?: boolean;
+		launcher?: boolean;
+		window?: { maximized: boolean; fullscreen: boolean; focused: boolean };
+	} = {},
+): string {
+	const chrome =
+		platform === "macos"
+			? {
+					platform: "macos",
+					controls: "native-left",
+					buttons: [],
+					inset: { top: 48, left: 84, right: 0 },
+				}
+			: {
+					platform: platform === "windows" ? "windows" : "linux",
+					controls: platform === "windows" ? "custom-right" : "custom-left",
+					buttons:
+						platform === "windows"
+							? ["minimize", "maximize", "close"]
+							: ["close", "minimize", "maximize"],
+					inset: { top: 48, left: 0, right: 0 },
+				};
+	const meta = {
+		kind: "tauri",
+		platform: chrome.platform,
+		version: "0.1.0",
+		bridge: 3,
+		chrome,
+	};
+	const replies = {
+		host_ready: { bridge: 3, visible: true },
+		host_set_status: null,
+		host_set_language: null,
+		host_notify: null,
+		host_window: opts.window ?? {
+			maximized: false,
+			fullscreen: false,
+			focused: true,
+		},
+		...(opts.launcher
+			? {
+					launcher_state: {
+						state: { step: "connect", serverUrl: "" },
+						lang: "zh-CN",
+						version: "0.1.0",
+						tokenStore: "keyring",
+					},
+				}
+			: {}),
+	};
+	return `(() => {
+		const replies = ${JSON.stringify(replies)};
+		window.__ORYN_HOST__ = Object.freeze(${JSON.stringify(meta)});
+		window.__TAURI__ = { core: { invoke: async (cmd) => {
+			if (!(cmd in replies)) throw new Error("unexpected " + cmd);
+			return replies[cmd];
+		} } };
+		${opts.collapsed ? `localStorage.setItem("oryn.sidebar.collapsed", "1");` : ""}
+		${
+			platform === "macos"
+				? `document.addEventListener("DOMContentLoaded", () => {
+			const lights = document.createElement("div");
+			lights.setAttribute("aria-hidden", "true");
+			lights.style.cssText = "position:fixed;left:22px;top:24px;z-index:2147483647;pointer-events:none;display:flex;gap:8px";
+			for (const c of ["#ff5f57", "#febc2e", "#28c840"]) {
+				const dot = document.createElement("span");
+				dot.style.cssText = "width:12px;height:12px;margin:2px 0 2px 0;border-radius:50%;background:" + c + ";box-shadow:inset 0 0 0 0.5px rgba(0,0,0,.25)";
+				lights.append(dot);
+			}
+			document.body.append(lights);
+		});`
+				: ""
+		}
+	})();`;
+}
+
+/** 关掉宽屏线程页默认展开的右面板。 */
+async function closePanel(page: Page) {
+	const toggle = page.getByRole("button", { name: "信息面板", exact: true });
+	if ((await toggle.getAttribute("aria-pressed")) === "true") {
+		await toggle.click();
+		await settle(page, 500);
+	}
+}
+
+/** 无系统标题栏的一组界面（1280 宽，明暗各一张）：线程页侧栏展开 / 收起 × 面板开 / 关、首页、设置、连接页。 */
+function chromeScreens(
+	tag: "mac" | "win" | "linux-left",
+	platform: "macos" | "windows" | "linux-left",
+): Screen[] {
+	const widths = [1280] as const;
+	const thread =
+		(panel: boolean) =>
+		async ({ page }: Shot) => {
+			await openThread(page, MAIN_THREAD);
+			if (panel) await openPanel(page, "info");
+			else await closePanel(page);
+		};
+	return [
+		{
+			name: `chrome-${tag}-thread`,
+			widths,
+			init: chromeShell(platform),
+			prepare: thread(false),
+		},
+		{
+			name: `chrome-${tag}-thread-panel`,
+			widths,
+			init: chromeShell(platform),
+			prepare: thread(true),
+		},
+		{
+			name: `chrome-${tag}-collapsed`,
+			widths,
+			init: chromeShell(platform, { collapsed: true }),
+			prepare: thread(false),
+		},
+		{
+			name: `chrome-${tag}-collapsed-panel`,
+			widths,
+			init: chromeShell(platform, { collapsed: true }),
+			prepare: thread(true),
+		},
+		{
+			name: `chrome-${tag}-home`,
+			widths,
+			init: chromeShell(platform),
+			prepare: async ({ page }) => {
+				await open(page, "/", "textarea");
+			},
+		},
+		{
+			name: `chrome-${tag}-home-collapsed`,
+			widths,
+			init: chromeShell(platform, { collapsed: true }),
+			prepare: async ({ page }) => {
+				await open(page, "/", "textarea");
+			},
+		},
+		{
+			name: `chrome-${tag}-settings`,
+			widths,
+			init: chromeShell(platform),
+			prepare: async ({ page }) => {
+				await open(page, "/settings/appearance", "main");
+			},
+		},
+		{
+			name: `chrome-${tag}-launcher`,
+			widths,
+			init: chromeShell(platform, { launcher: true }),
+			prepare: async ({ page }) => {
+				await open(page, "/launcher.html", "h1");
+			},
+		},
+	];
+}
+
 /** 假移动壳的 `MobileInfo`：默认屏幕四角 40px、无 inset（自查屏幕圆角同心；`mobileScreen` 可改半径）。 */
 const MOBILE_INFO = {
 	version: "0.1.0",
@@ -1118,6 +1285,24 @@ const SCREENS: Screen[] = [
 				.locator("[data-testid=profile-conflict]")
 				.waitFor({ timeout: 10_000 });
 			await settle(page, 400);
+		},
+	},
+	// 桌面 App 无系统标题栏（假桌面壳）：macOS 原生红绿灯在左（占位圆点）、Windows 自绘按钮在右、
+	// Linux 按 GTK 布局放左；另有最大化后（还原图标）+ 窗口失焦变淡的一张
+	...chromeScreens("mac", "macos"),
+	...chromeScreens("win", "windows"),
+	...chromeScreens("linux-left", "linux-left").filter((s) =>
+		/-(collapsed|thread-panel|launcher)$/.test(s.name),
+	),
+	{
+		name: "chrome-win-maximized-blur",
+		widths: [1280],
+		init: chromeShell("windows", {
+			window: { maximized: true, fullscreen: false, focused: false },
+		}),
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await closePanel(page);
 		},
 	},
 	{

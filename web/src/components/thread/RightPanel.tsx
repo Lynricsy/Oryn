@@ -6,6 +6,8 @@
  * Changes 标签在有未查看的新改动时亮 accent 小点。
  * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`，
  * 标签条（`ThreadTabStrip`）同时用在转录页头下方；Agent 标签在线程等你回答时亮注意点。
+ * 桌面 App 无系统标题栏（`chrome`）：面板是窗口最右侧（或最大化时唯一）的纸面时承载窗口控件——三栏里在纸面顶部多一行
+ * 48px 可拖动的标题行（与转录页头同高，按钮与页头按钮在同一条中线上），窄屏同级面板则直接放进标签条两端。
  */
 import {
 	lazy,
@@ -31,6 +33,11 @@ import {
 } from "../../state/ui";
 import { type GitStatus, getGitStatus, readChangesRoot } from "../changes/git";
 import { useWorkspaceActivity } from "../files/hooks";
+import {
+	ChromeLead,
+	useChromeSides,
+	WindowControls,
+} from "../layout/WindowControls";
 import { Icon, type IconName } from "../ui/icons";
 import { IconButton, Spinner, tabClass } from "../ui/primitives";
 import { InfoPanel } from "./InfoPanel";
@@ -358,10 +365,13 @@ export function RightPanel({
 	threadId,
 	onClose,
 	peer = false,
+	chrome,
 }: {
 	threadId: string;
 	onClose?: () => void;
 	peer?: boolean;
+	/** 由面板承载的窗口控件：`left` = 面板是最左侧表面（同级面板、或最大化且侧栏没占左上角），`right` = 最右侧表面 */
+	chrome?: { left: boolean; right: boolean };
 }): ReactNode {
 	const { t } = useTranslation();
 	const tab = useUi((s) => s.panelTab);
@@ -380,15 +390,32 @@ export function RightPanel({
 			uiStore.getState().setPanelTab("info");
 	}, [tab, portalGone, desktopGone]);
 	const canMax = !peer && bp === "expanded" && !segments;
+	const sides = useChromeSides();
+	const chromeLeft = !!chrome?.left && sides.left !== null;
+	const chromeRight = !!chrome?.right && sides.right !== null;
 
 	return (
 		<aside
 			className="flex h-full w-full min-w-0 flex-col bg-panel"
 			aria-label={t("rightPanel.label")}
 		>
+			{!peer && (chromeLeft || chromeRight) && (
+				<div
+					data-window-drag=""
+					data-chrome-row="panel"
+					className="flex h-12 shrink-0 items-center px-2"
+				>
+					{chromeLeft && <ChromeLead />}
+					<span className="min-w-0 flex-1" />
+					{chromeRight && <WindowControls side="right" />}
+				</div>
+			)}
 			<div
+				// 同级面板的标签条就是窗口最上面一行：空白处可拖动窗口
+				data-window-drag={peer ? "" : undefined}
 				className={`flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 ${peer ? "pl-2 sm:pl-3" : "pl-2.5"}`}
 			>
+				{peer && chromeLeft && <ChromeLead />}
 				{peer && (
 					<IconButton
 						icon="menu"
@@ -424,6 +451,9 @@ export function RightPanel({
 						label={t("common.close")}
 						onClick={onClose}
 					/>
+				)}
+				{peer && chromeRight && (
+					<WindowControls side="right" className="ml-1" />
 				)}
 			</div>
 			<div className="min-h-0 flex-1">

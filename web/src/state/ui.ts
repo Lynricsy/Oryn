@@ -349,3 +349,16 @@ export function useSidebarToggleShown(): boolean {
 	const collapsed = useUi((s) => s.sidebarCollapsed);
 	return bp !== "expanded" || segments !== null || collapsed;
 }
+
+/**
+ * 侧栏此刻是否占着屏幕左上角：expanded 的列展开、medium 的推入列打开、compact 的下沉侧栏打开（双段视口的悬浮抽屉不算）。
+ * 桌面 App 无系统标题栏时，左侧的窗口控件（红绿灯 / 左侧自绘按钮）这时由侧栏顶部承载，否则由页头承载。
+ */
+export function useSidebarShown(): boolean {
+	const bp = useBreakpoint();
+	const segments = useViewportSegments();
+	const collapsed = useUi((s) => s.sidebarCollapsed);
+	const open = useUi((s) => s.sidebarOpen);
+	if (segments !== null) return false;
+	return bp === "expanded" ? !collapsed : open;
+}

@@ -1,4 +1,7 @@
-/** 线程页头（渐进模糊纱）：项目徽标与名称、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。 */
+/**
+ * 线程页头（渐进模糊纱）：项目徽标与名称、标题卡（图标 + 可编辑标题 + 代码）、orb 胶囊、会话树 / 面板 / More Actions。
+ * 桌面 App 无系统标题栏：整条页头是拖动区（按钮、标题等可交互元素除外）；`chromeLeft` / `chromeRight` 时两端放窗口控件。
+ */
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
@@ -16,6 +19,7 @@ import {
 } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { Badge, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
@@ -126,12 +130,18 @@ export function ThreadHeader({
 	threadId,
 	sidebarToggle,
 	veil = HEADER_VEIL,
+	chromeLeft = false,
+	chromeRight = false,
 }: {
 	threadId: string;
 	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
 	sidebarToggle: boolean;
 	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（窄屏的同级标签条）时加上那一行，纱一起盖住 */
 	veil?: number;
+	/** 页头是窗口最左侧的标题行（侧栏没占着左上角）：左侧窗口控件放这里 */
+	chromeLeft?: boolean;
+	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
+	chromeRight?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -314,7 +324,10 @@ export function ThreadHeader({
 	];
 
 	return (
-		<header className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3">
+		<header
+			data-window-drag=""
+			className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3"
+		>
 			<div aria-hidden className="veil" style={{ height: veil }}>
 				<i />
 				<i />
@@ -323,6 +336,7 @@ export function ThreadHeader({
 				<i />
 				<i />
 			</div>
+			{chromeLeft && <ChromeLead />}
 			{(sidebarToggle || sidebarCollapsed) && (
 				<IconButton
 					icon={sidebarToggle ? "menu" : "sidebar"}
@@ -470,6 +484,7 @@ export function ThreadHeader({
 					</button>
 				)}
 			/>
+			{chromeRight && <WindowControls side="right" className="ml-1" />}
 		</header>
 	);
 }

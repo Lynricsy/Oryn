@@ -17,6 +17,7 @@ import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { Browser } from "@phosphor-icons/react/dist/csr/Browser";
 import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
 import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
+import { Cards } from "@phosphor-icons/react/dist/csr/Cards";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
@@ -71,6 +72,7 @@ import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { Megaphone } from "@phosphor-icons/react/dist/csr/Megaphone";
 import { Memory } from "@phosphor-icons/react/dist/csr/Memory";
+import { Minus } from "@phosphor-icons/react/dist/csr/Minus";
 import { MinusCircle } from "@phosphor-icons/react/dist/csr/MinusCircle";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
 import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
@@ -88,6 +90,7 @@ import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
+import { Square } from "@phosphor-icons/react/dist/csr/Square";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
@@ -222,6 +225,10 @@ const ICONS = {
 	eye: Eye,
 	clipboard: ClipboardText,
 	keyboard: Keyboard,
+	/** 自绘标题栏（无系统标题栏的桌面 App）：最小化 / 最大化 / 还原；关闭用 `close` */
+	windowMinimize: Minus,
+	windowMaximize: Square,
+	windowRestore: Cards,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -83,6 +83,12 @@
 		"submit": "Submit",
 		"yes": "Yes"
 	},
+	"window": {
+		"minimize": "Minimize",
+		"maximize": "Maximize",
+		"restore": "Restore",
+		"close": "Close window"
+	},
 	"nav": {
 		"infoPanel": "Info panel",
 		"settings": "Settings",

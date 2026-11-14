@@ -1,6 +1,6 @@
 /** 宿主适配：web / tauri 判定、前台判定、壳事件、invoke 的参数与容错（假 window）。 */
 import { describe, expect, it, type Mock, vi } from "vitest";
-import { createHost, HOST_EVENT, type Invoke } from "./host";
+import { BRIDGE, createHost, HOST_EVENT, type Invoke } from "./host";
 
 interface FakeWin {
 	win: Window;
@@ -148,7 +148,7 @@ describe("tauri", () => {
 		const h = createHost(f.win);
 		expect(await h.ready("en", "/settings/devices")).toBe("/t/T-9");
 		expect(f.invoke).toHaveBeenCalledWith("host_ready", {
-			bridge: 2,
+			bridge: BRIDGE,
 			lang: "en",
 			path: "/settings/devices",
 		});

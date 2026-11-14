@@ -14,6 +14,7 @@
  * 移动壳（M7）：系统栏颜色跟随页面底色（`host.mobile.setChrome`）；系统分享进来的内容存入 share-intake 并跳到首页
  * 由新建线程框预填，随即 `shareAck`；Viewport Segments 双段（折叠屏半开）时侧栏走悬浮抽屉。
  * 连接状态写到 `<html data-conn>`（验收观察面）。左侧玻璃侧栏贴着屏幕左缘，左两角与屏幕圆角同心（`.dc-*`）。
+ * 桌面 App 无系统标题栏：加载中 / 加载失败的整页也贴顶放一条可拖动的标题行与窗口按钮（`ChromeBar`）。
  */
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,13 +34,14 @@ import {
 } from "../../state/notifications";
 import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
-import { uiStore, useUi } from "../../state/ui";
+import { uiStore, useSidebarShown, useUi } from "../../state/ui";
 import { NotificationToasts } from "../notify/NotificationToasts";
 import { ServerErrors } from "../ServerErrors";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
+import { ChromeBar } from "./WindowControls";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
 const DRAWER_MS = 260;
@@ -158,7 +160,8 @@ export function AppShell(): ReactNode {
 	const navigate = useNavigate();
 	const bp = useBreakpoint();
 	const sidebarOpen = useUi((s) => s.sidebarOpen);
-	const collapsed = useUi((s) => s.sidebarCollapsed);
+	// 列侧栏（expanded / medium）是否展开；双段走下面的抽屉，compact 走下沉侧栏
+	const shown = useSidebarShown();
 	const conn = useConnection((s) => s.status);
 	// 双段（折叠屏半开）：线程页占两段，侧栏退成悬浮抽屉；手机（compact）是下沉式侧栏
 	const segments = useViewportSegments();
@@ -232,7 +235,8 @@ export function AppShell(): ReactNode {
 
 	if (me.isPending || (authLost && tauri)) {
 		return (
-			<div className="flex h-dvh items-center justify-center text-muted">
+			<div className="relative flex h-dvh items-center justify-center text-muted">
+				<ChromeBar />
 				<Spinner size={20} />
 			</div>
 		);
@@ -240,7 +244,8 @@ export function AppShell(): ReactNode {
 	// 壳里 `me` 非鉴权失败：首次加载失败显示原因与重试；已有身份时后台重取失败不打断当前界面
 	if (tauri && me.isError && !me.data) {
 		return (
-			<div className="flex h-dvh flex-col items-center justify-center gap-3 p-6">
+			<div className="relative flex h-dvh flex-col items-center justify-center gap-3 p-6">
+				<ChromeBar />
 				<ActionError step="meLoad" error={me.error} />
 				<Button
 					size="sm"
@@ -276,8 +281,6 @@ export function AppShell(): ReactNode {
 		);
 
 	const expanded = bp === "expanded";
-	// 列侧栏（expanded / medium）是否展开；双段走下面的抽屉
-	const shown = expanded ? !collapsed : bp === "medium" && sidebarOpen;
 	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径
 	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--r-2xl)]";
 	return (

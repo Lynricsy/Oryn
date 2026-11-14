@@ -54,7 +54,7 @@ import { realtime } from "../realtime/socket";
 import { useConnection, useIndex, useThread } from "../state/stores";
 import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
-import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
+import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
 
 /** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
 const PANEL_ANIM_MS = 260;
@@ -121,6 +121,7 @@ export function ThreadPage(): ReactNode {
 	const panelTab = useUi((s) => s.panelTab);
 	const panelWidth = useUi((s) => s.panelWidth);
 	const panelMax = useUi((s) => s.panelMax);
+	const sidebarShown = useSidebarShown();
 	const conn = useConnection((s) => s.status);
 	const known = useIndex((s) => Boolean(s.threads[threadId]));
 	const entries = useThread(threadId, (s) => s.entries);
@@ -196,6 +197,10 @@ export function ThreadPage(): ReactNode {
 	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
 	const firstUi = pendingUi[0];
+	// 桌面 App 无系统标题栏：左侧窗口控件归最左侧表面（侧栏没占着左上角时），右侧自绘按钮归最右侧表面。
+	// 转录可见时它在最左；面板列展开时面板在最右，最大化时面板也在最左；窄屏切到面板标签时同级面板两端都占
+	const chromeLeft = !sidebarShown && !dual;
+	const transcriptShown = !panelFull && onAgent;
 
 	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
 	const dockRef = useRef<HTMLDivElement>(null);
@@ -271,6 +276,8 @@ export function ThreadPage(): ReactNode {
 							threadId={threadId}
 							sidebarToggle={!expanded}
 							veil={topInset}
+							chromeLeft={chromeLeft && transcriptShown}
+							chromeRight={transcriptShown && !showPanelColumn && !dual}
 						/>
 						{/* 同级标签条只在看转录时挂载：切到面板标签后由面板自己的标签条接手（改动的后台检查只跑一份） */}
 						{peer && onAgent && (
@@ -338,7 +345,11 @@ export function ThreadPage(): ReactNode {
 			</div>
 			{peer && !onAgent && (
 				<Sheet inset={false} className="h-full min-w-0 flex-1">
-					<RightPanel threadId={threadId} peer />
+					<RightPanel
+						threadId={threadId}
+						peer
+						chrome={{ left: chromeLeft, right: true }}
+					/>
 				</Sheet>
 			)}
 			{dual && (
@@ -377,6 +388,10 @@ export function ThreadPage(): ReactNode {
 							<RightPanel
 								threadId={threadId}
 								onClose={() => uiStore.getState().setPanel(false)}
+								chrome={{
+									left: chromeLeft && panelFull,
+									right: showPanelColumn,
+								}}
 							/>
 						</Sheet>
 					</div>

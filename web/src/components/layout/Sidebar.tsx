@@ -30,6 +30,7 @@ import {
 import { Icon, type IconName } from "../ui/icons";
 import { Button, IconButton, Kbd, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
+import { SidebarChromeRow } from "./WindowControls";
 
 const INACTIVE_MS = 72 * 3600_000;
 
@@ -347,6 +348,9 @@ const MODE_ICON = {
 
 /**
  * `floating`：手机上的悬浮抽屉自己按安全区留了外边距，栏内就不再加 safe-area 内边距（否则刘海下空两次）。
+ * 桌面 App 无系统标题栏且窗口控件在左侧时（macOS 红绿灯 / Linux 左侧布局），顶部多一行 48px 标题行放控件，
+ * 品牌行整行下移一行：侧栏只有 256–288px 宽，红绿灯（约 84px）、品牌标 + 字标与三个 28px 按钮排不进同一行。
+ * 标题行与品牌行的空白处都可拖动窗口。
  */
 export function Sidebar({
 	floating = false,
@@ -418,7 +422,11 @@ export function Sidebar({
 			className={`flex h-full w-full flex-col ${floating ? "" : "pt-safe pl-safe"}`}
 			aria-label={t("nav.sidebar")}
 		>
-			<div className="flex h-14 shrink-0 items-center gap-2 pr-2.5 pl-4">
+			{!floating && <SidebarChromeRow />}
+			<div
+				data-window-drag=""
+				className="flex h-14 shrink-0 items-center gap-2 pr-2.5 pl-4"
+			>
 				<BrandMark size={24} />
 				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
 				<span className="wordmark min-w-0 flex-1 text-[24px] leading-none">

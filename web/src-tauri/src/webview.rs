@@ -33,6 +33,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-check-update",
     "allow-host-install-update",
     "allow-host-change-server",
+    "allow-host-window",
 ];
 
 /// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏等七个。
@@ -68,13 +69,17 @@ pub fn host_platform() -> &'static str {
 }
 
 /// 注入每个主框架的宿主标识；`version` 取 Tauri 配置的应用版本（与更新器比较用的是同一个）。
-pub fn init_script(version: &str) -> String {
-    let host = json!({
+/// `chrome`：桌面的标题栏布局（见 `chrome.rs`），页面首帧前就按它留位置；移动端没有。
+pub fn init_script(version: &str, chrome: Option<Value>) -> String {
+    let mut host = json!({
         "kind": "tauri",
         "platform": host_platform(),
         "version": version,
         "bridge": host::BRIDGE,
     });
+    if let Some(c) = chrome {
+        host["chrome"] = c;
+    }
     format!("window.__ORYN_HOST__ = Object.freeze({host});")
 }
 
@@ -102,9 +107,13 @@ const LAUNCHER_PAGE: &str = "launcher.html";
 /// `remote` 为已开放的服务器 origin（Android 的导航白名单用）。
 pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<WebviewWindow> {
     let loader = app.clone();
+    #[cfg(desktop)]
+    let chrome = serde_json::to_value(crate::chrome::current()).ok();
+    #[cfg(mobile)]
+    let chrome = None;
     let builder = WebviewWindowBuilder::new(app, host::MAIN, WebviewUrl::App(LAUNCHER_PAGE.into()))
         .title("Oryn")
-        .initialization_script(init_script(&app.package_info().version.to_string()))
+        .initialization_script(init_script(&app.package_info().version.to_string(), chrome))
         .on_page_load(move |_window, payload| {
             let Some(d) = host::desktop(&loader) else {
                 return;
@@ -143,6 +152,17 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
             .background_throttling(BackgroundThrottlingPolicy::Disabled)
             .on_download(crate::download::handler(app.clone()))
     };
+    // 无系统标题栏（chrome.rs）：macOS 保留原生红绿灯、内容铺到标题栏下；Windows / Linux 去掉装饰，页面自绘按钮
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(
+            crate::chrome::TRAFFIC_LIGHT_X,
+            crate::chrome::TRAFFIC_LIGHT_Y,
+        ));
+    #[cfg(all(desktop, not(target_os = "macos")))]
+    let builder = builder.decorations(false);
     // Android：`target="_blank"` 与 `window.open` 都是主框架导航（wry 没有新窗口钩子），在这里兜住；
     // http(s) 的 iframe 导航不进这个回调，portal 不受影响
     #[cfg(target_os = "android")]
@@ -352,11 +372,14 @@ mod tests {
 
     #[test]
     fn scripts() {
-        let s = init_script("9.8.7-rc.1");
+        let s = init_script("9.8.7-rc.1", None);
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":2"));
+        assert!(s.contains("\"bridge\":3"));
+        assert!(!s.contains("chrome"));
+        let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
+        assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
         let e = event_script(&json!({"type": "navigate", "path": "/t/x"}));
         assert!(e.starts_with("window.dispatchEvent(new CustomEvent('oryn:host',{detail:{"));
         assert!(e.ends_with("}}));"));
@@ -382,7 +405,7 @@ mod tests {
             &Url::parse("http://tauri.localhost/").unwrap(),
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
-        assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 10);
+        assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
         assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 13);
     }
 
@@ -403,8 +426,21 @@ mod tests {
             "allow-host-set-settings",
             "allow-host-check-update",
             "allow-host-install-update",
+            "allow-host-window",
         ] {
             assert!(!MOBILE_HOST_PERMISSIONS.contains(&desktop_only));
+        }
+        // 桌面连接页只追加窗口操作一项，且只在桌面平台生效
+        let cap: Value =
+            serde_json::from_str(include_str!("../capabilities/launcher-desktop.json")).unwrap();
+        assert_eq!(cap["platforms"], json!(["linux", "macOS", "windows"]));
+        assert_eq!(cap["local"], true);
+        assert_eq!(cap["permissions"], json!(["allow-host-window"]));
+        // 通用连接页能力不含任何宿主命令
+        let cap: Value =
+            serde_json::from_str(include_str!("../capabilities/launcher.json")).unwrap();
+        for p in cap["permissions"].as_array().unwrap() {
+            assert!(p.as_str().unwrap().starts_with("allow-launcher-"), "{p}");
         }
         let cap: Value =
             serde_json::from_str(include_str!("../capabilities/launcher-mobile.json")).unwrap();

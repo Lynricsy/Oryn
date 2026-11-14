@@ -19,6 +19,8 @@ fn main() {
             "host_check_update",
             "host_install_update",
             "host_change_server",
+            // 桌面自绘标题栏（无系统标题栏）：连接页（capabilities/launcher-desktop.json）与远程页面都可用
+            "host_window",
             // 移动端（M7）：只在移动端注册，远程能力按平台给权限（webview::HOST_PERMISSIONS）
             "host_mobile_info",
             "host_push_enable",

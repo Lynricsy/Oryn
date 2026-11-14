@@ -3102,6 +3102,7 @@ dependencies = [
 name = "oryn-desktop"
 version = "0.1.0"
 dependencies = [
+ "gtk",
  "keyring",
  "notify-rust",
  "reqwest",

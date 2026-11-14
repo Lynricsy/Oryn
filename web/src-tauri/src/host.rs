@@ -22,8 +22,8 @@ use crate::webview::{self, TauriShell};
 
 /// 主窗口标签。
 pub const MAIN: &str = "main";
-/// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令）。
-pub const BRIDGE: u32 = 2;
+/// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令，3 = 桌面自绘标题栏 `host_window` 与 `chrome`）。
+pub const BRIDGE: u32 = 3;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 
@@ -57,6 +57,9 @@ pub struct Desktop {
     restored_logged: AtomicBool,
     #[cfg(desktop)]
     geometry_gen: std::sync::atomic::AtomicU64,
+    /// 上次推给页面的窗口状态（最大化 / 全屏 / 聚焦），变化时才再推。
+    #[cfg(desktop)]
+    window_flags: Mutex<Option<crate::chrome::WindowFlags>>,
     #[cfg(desktop)]
     status: Mutex<HostStatus>,
     #[cfg(desktop)]
@@ -93,6 +96,8 @@ impl Desktop {
             restored_logged: AtomicBool::new(false),
             #[cfg(desktop)]
             geometry_gen: Default::default(),
+            #[cfg(desktop)]
+            window_flags: Mutex::new(None),
             #[cfg(desktop)]
             status: Mutex::new(HostStatus::default()),
             #[cfg(desktop)]
@@ -252,11 +257,38 @@ pub fn hide_main(app: &AppHandle) {
     refresh_visibility(app);
 }
 
-/// 保存窗口状态（不记「可见」）。
+/// 窗口状态插件保存 / 恢复的项：不记「可见」；也不记「装饰」——主窗口固定无系统标题栏（macOS 为 Overlay），
+/// 旧版本存下的 `decorated: true` 不能把标题栏恢复回来。
+#[cfg(desktop)]
+pub fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::DECORATIONS
+}
+
+/// 保存窗口状态（见 [`window_state_flags`]）。
 #[cfg(desktop)]
 pub fn save_window_state(app: &AppHandle) {
-    use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-    let _ = app.save_window_state(StateFlags::all() & !StateFlags::VISIBLE);
+    use tauri_plugin_window_state::AppHandleExt;
+    let _ = app.save_window_state(window_state_flags());
+}
+
+/// 重新读取窗口状态；变化时推给页面（`window` 事件）。
+#[cfg(desktop)]
+pub fn refresh_window(app: &AppHandle) {
+    let (Some(d), Some(w)) = (desktop(app), main_window(app)) else {
+        return;
+    };
+    crate::chrome::publish(app, &d.window_flags, crate::chrome::WindowFlags::read(&w));
+}
+
+/// 稍后再读一次：GTK 上最大化 / 全屏的状态位可能晚于 `Resized` 到达。
+#[cfg(desktop)]
+fn refresh_window_soon(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        refresh_window(&app);
+    });
 }
 
 /// 托盘 / 通知 / 深链接共用：显示主窗口；远程页面就绪 → 发 `navigate`，否则存为待开路径。
@@ -349,9 +381,14 @@ pub fn wire_window(app: &AppHandle, window: &WebviewWindow) {
                 save_window_state(&app);
             }
         }
-        tauri::WindowEvent::Focused(_) => refresh_visibility(&app),
+        tauri::WindowEvent::Focused(_) => {
+            refresh_visibility(&app);
+            refresh_window(&app);
+        }
         tauri::WindowEvent::Resized(_) => {
             refresh_visibility(&app);
+            refresh_window(&app);
+            refresh_window_soon(&app);
             note_geometry(&app);
         }
         tauri::WindowEvent::Moved(_) => note_geometry(&app),
@@ -719,6 +756,24 @@ pub async fn host_check_update(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Re
 pub async fn host_install_update(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<()> {
     crate::updater::install(&app, &d);
     Ok(())
+}
+
+/// 自绘标题栏的窗口操作（连接页与远程页面都可调用）；交回执行后的窗口状态。
+/// 关闭走 `close()`：触发 `CloseRequested`，与点系统标题栏的关闭一样尊重「关闭时隐藏到托盘」。
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn host_window(
+    app: AppHandle,
+    action: crate::chrome::WindowAction,
+) -> Res<crate::chrome::WindowFlags> {
+    use crate::chrome::{WindowAction, WindowFlags};
+    let w = main_window(&app).ok_or("main window missing")?;
+    crate::chrome::act(&w, action).map_err(|e| e.to_string())?;
+    let flags = WindowFlags::read(&w);
+    if !matches!(action, WindowAction::State | WindowAction::StartDrag) {
+        refresh_window_soon(&app);
+    }
+    Ok(flags)
 }
 
 #[tauri::command]

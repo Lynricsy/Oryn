@@ -41,6 +41,23 @@ Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayata
 - **退出**：托盘「退出 Oryn」，或在命令行运行 `oryn-desktop --quit`，后者让正在运行的实例正常退出。
 - **下载**：网页里的下载保存到系统「下载」目录，同名文件自动编号，完成后弹一条通知。
 
+### 窗口与标题栏
+
+主窗口没有系统标题栏，窗口控件放进 Oryn 自己的侧栏 / 面板顶部。三个平台的做法不同：
+
+| 平台 | 窗口控件 | 位置 |
+|---|---|---|
+| macOS | 保留系统红绿灯（`titleBarStyle: Overlay`，标题隐藏），不自绘 | 窗口左上 (22, 24)，落在左侧玻璃栏顶部新增的 48px 标题行里；侧栏收起时落在页头左端，页头让出 84px |
+| Windows | 自绘 最小化 / 最大化（最大化后变「还原」）/ 关闭，系统装饰关闭（`decorations: false`） | 右上：右面板展开时在面板纸面顶部新增的 48px 标题行右端；面板收起或没有面板的页面（首页、设置）在页头右端；登录、配对卡与连接页在页顶一条透明标题行的右端 |
+| Linux | 同 Windows | 默认右上，位置同 Windows。启动时读 GTK 的 `gtk-decoration-layout`（GNOME 由「窗口标题栏按钮」设置同步过来，例如 `appmenu:close`、`close,minimize,maximize:`）：按它决定放左边还是右边、显示哪几个、按什么顺序；放左边时位置与 macOS 红绿灯相同（侧栏顶部标题行 / 页头左端）。读不到或一个按钮都没有时默认右侧三个 |
+
+- **拖动**：侧栏顶部标题行与品牌行、各页头的空白处、右面板顶部标题行、整页卡片的页顶标题行都能拖动窗口；按住移动超过 3px 才开始移动窗口（单纯点击不交给窗口管理器，所以双击认得出来），双击这些地方切换最大化。按钮、链接、输入框、标签等可交互元素不会被拖动。
+- **拉伸**：Windows / Linux 去掉系统装饰后仍可拖窗口四边与四角改变大小（Tauri 在窗口边缘保留了约 5px 的拉伸区）。
+- **关闭**：自绘的关闭按钮与系统关闭完全一样，仍遵守「关闭窗口时隐藏到托盘」。
+- **全屏时**自绘按钮隐藏（macOS 全屏时系统也会收起红绿灯，侧栏与页头不再为它留白）；**窗口失焦时**自绘按钮变淡。
+- 只在桌面 App 里生效：浏览器和手机 App 里没有窗口按钮，留白也不变。页面靠壳注入的 `__ORYN_HOST__.chrome`（`platform`、`controls` = `native-left` / `custom-left` / `custom-right` / `none`、`buttons`、`inset`）判断，宿主协议版本（bridge）为 3；最大化、全屏、聚焦变化由壳经 `window` 事件推给页面。窗口操作只有一个宿主命令 `host_window`（`state` / `minimize` / `toggleMaximize` / `close` / `startDrag`），连接页（`capabilities/launcher-desktop.json`，只在桌面平台）与远程页面都只多这一项权限，没有开放任何 `core:window:*`。
+- 窗口状态插件不再保存「是否有装饰」：老版本存下的设置不会把系统标题栏带回来。
+
 ### 已知限制
 
 - **Wayland**：全局快捷键依赖 X11 抓键，在纯 Wayland 会话里不可用（设置页会显示错误），其它功能不受影响。XWayland 下运行的 App 能否抓到键取决于合成器。
@@ -96,10 +113,11 @@ make web && make build                                     # bin/orynd bin/orbd 
 go run ./dev/tlsproxy -init -dir .dev/tls && sudo trust anchor --store .dev/tls/ca.crt
 cd web && bun run tauri build --no-bundle                  # D1 会构建全部安装包
 bun run accept:m6 [-- --only D2,D5]
+M6_WM=openbox bun run accept:m6 -- --only D16             # 无系统标题栏：按钮、拖动、拉伸、关闭（需要窗口管理器与 ImageMagick 的 import 截图）
 sudo trust anchor --remove .dev/tls/ca.crt                 # 验收结束后撤销对本机 CA 的信任
 ```
 
-`web/scripts/m6-accept.ts` 在 `dbus-run-session` 和 `xvfb-run` 里运行，所需的服务全部在临时目录里自建：orynd（7610）、tlsproxy（7643）、process 驱动的 provider、私有的 gnome-keyring 与 dunst、一个只记录参数的假 `xdg-open`。跑完自动清理，结果和日志保存在 `/tmp/oryn-m6-accept/<run>/`。D11 需要两次签名的 release 构建，耗时较长，构建目录是 `.dev/m6-d11-target`。D14 / D15 只读取 CI 的结果，需要先推送 tag（见下）并登录 `gh`。
+`web/scripts/m6-accept.ts` 在 `dbus-run-session` 和 `xvfb-run` 里运行，所需的服务全部在临时目录里自建：orynd（7610）、tlsproxy（7643）、process 驱动的 provider、私有的 gnome-keyring 与 dunst、一个只记录参数的假 `xdg-open`。跑完自动清理，结果和日志保存在 `/tmp/oryn-m6-accept/<run>/`。D11 需要两次签名的 release 构建，耗时较长，构建目录是 `.dev/m6-d11-target`。D14 / D15 只读取 CI 的结果，需要先推送 tag（见下）并登录 `gh`。D16 必须带 `M6_WM=openbox`：先用一个未配对的 App 在连接页上检查没有窗口管理器的标题栏框（`_NET_FRAME_EXTENTS` 全 0）、点最大化 / 还原后窗口尺寸变化、双击拖动区切换最大化、拖动顶栏能移动窗口、在按钮上按下拖动不会移动窗口、拖右缘能拉宽、关闭按钮把窗口藏到托盘，再在已配对的主 App 首页点一次最大化 / 还原；截图在 `<结果目录>/D16-*.png`。
 
 D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次性**更新密钥：每次运行用 `tauri signer generate` 在临时目录里新生成一把，再用 `--config` 把 `plugins.updater.pubkey` 换成它的公钥，运行结束随临时目录一起删除。验收不读取、也不需要正式发版密钥。因此 D1 产出的安装包内置的是一次性公钥，只能用于验收，不能对外分发。
 

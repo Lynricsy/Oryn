@@ -14,6 +14,7 @@
  * 移动壳（M7 计划 4.1，bridge ≥ 2 且 platform 为 android / ios）：`mobile` 非空、`desktop = null`；
  * 另有 `share`（系统分享已上传为附件）、`mobile`（推送状态变了）、`insets`（屏幕圆角与原生 inset 变了）三个事件；
  * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
+ * 桌面壳 bridge ≥ 3 去掉了系统标题栏：`__ORYN_HOST__.chrome` 声明按钮布局，窗口操作与 `window` 事件见 `window-chrome.ts`。
  */
 
 import type { Attachment } from "./attachments";
@@ -166,8 +167,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应）。 */
-export const BRIDGE = 2;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏）。 */
+export const BRIDGE = 3;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -183,6 +184,8 @@ declare global {
 			platform?: string;
 			version?: string;
 			bridge?: number;
+			/** 桌面壳的标题栏布局（bridge ≥ 3，见 `window-chrome.ts`）。 */
+			chrome?: unknown;
 		};
 		__TAURI__?: { core?: { invoke?: Invoke } };
 		__TAURI_INTERNALS__?: { invoke?: Invoke };

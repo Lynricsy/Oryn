@@ -4,6 +4,8 @@
 //! 主窗口与远程能力（`webview`）、托盘 / 快捷键 / 更新 / 下载（仅桌面）。
 
 mod api;
+#[cfg(desktop)]
+mod chrome;
 mod config;
 mod deeplink;
 mod eventlog;
@@ -120,9 +122,8 @@ pub fn run() {
     builder = builder.plugin(tauri_plugin_deep_link::init());
     #[cfg(desktop)]
     {
-        use tauri_plugin_window_state::StateFlags;
         let mut ws = tauri_plugin_window_state::Builder::default()
-            .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE);
+            .with_state_flags(host::window_state_flags());
         if args.smoke {
             ws = ws.with_filename(smoke_dir().join(".window-state.json").to_string_lossy());
         }
@@ -176,6 +177,8 @@ pub fn run() {
             host::host_check_update,
             #[cfg(desktop)]
             host::host_install_update,
+            #[cfg(desktop)]
+            host::host_window,
             #[cfg(mobile)]
             mobile::host_mobile_info,
             #[cfg(mobile)]

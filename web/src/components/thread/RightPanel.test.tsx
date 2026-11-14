@@ -4,6 +4,7 @@
  * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签；
  * Desktop 标签只在 orb 有桌面时出现（Portal 之后），消失时退回信息标签，Profile 被占用或装载失败时带提醒点；
  * 窄屏 `peer` 面板：同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点。
+ * 桌面 App 无系统标题栏：三栏面板顶部多一行可拖动的标题行放右侧窗口按钮；同级面板把按钮放进标签条两端；浏览器里都没有。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -17,6 +18,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import i18n from "../../i18n";
+import { setWindowChrome, type WindowChrome } from "../../lib/window-chrome";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
 import type { ThreadViewState } from "../../state/thread-reducer";
@@ -578,3 +580,90 @@ function layoutTabs(listWidth: number, tabWidth: number) {
 		},
 	);
 }
+
+describe("RightPanel 自绘标题栏", () => {
+	function install(controls: "custom-right" | "custom-left") {
+		// getFlags 要返回同一个对象（useSyncExternalStore 按引用比较快照）
+		const flags = { maximized: false, fullscreen: false, focused: true };
+		const wc: WindowChrome = {
+			chrome: {
+				platform: "windows",
+				controls,
+				buttons: ["minimize", "maximize", "close"],
+				inset: { top: 48, left: 0, right: 0 },
+			},
+			getFlags: () => flags,
+			subscribe: () => () => {},
+			act: vi.fn(),
+		};
+		act(() => setWindowChrome(wc));
+	}
+	afterEach(() => {
+		act(() => setWindowChrome(null));
+	});
+
+	it("三栏面板承载右侧按钮：纸面顶部多一行可拖动的 48px 标题行，按钮在其右端、标签条在它下面", () => {
+		install("custom-right");
+		render(
+			withQuery(
+				<RightPanel
+					threadId="T-rpA"
+					onClose={vi.fn()}
+					chrome={{ left: false, right: true }}
+				/>,
+			),
+		);
+		const row = document.querySelector("[data-chrome-row=panel]");
+		expect(row).toHaveAttribute("data-window-drag", "");
+		expect(row?.className).toContain("h-12");
+		expect(row?.lastElementChild).toHaveAttribute(
+			"data-window-controls",
+			"right",
+		);
+		expect(row?.nextElementSibling).toContainElement(
+			screen.getByTestId("thread-tabs"),
+		);
+	});
+
+	it("面板不归它（chrome 缺省）、布局是左侧按钮、或在浏览器里：没有标题行", () => {
+		install("custom-right");
+		const a = render(withQuery(<RightPanel threadId="T-rpA" />));
+		expect(document.querySelector("[data-chrome-row]")).toBeNull();
+		a.unmount();
+		install("custom-left");
+		const b = render(
+			withQuery(
+				<RightPanel threadId="T-rpA" chrome={{ left: false, right: true }} />,
+			),
+		);
+		expect(document.querySelector("[data-chrome-row]")).toBeNull();
+		b.unmount();
+		act(() => setWindowChrome(null));
+		render(
+			withQuery(
+				<RightPanel threadId="T-rpA" chrome={{ left: true, right: true }} />,
+			),
+		);
+		expect(document.querySelector("[data-chrome-row]")).toBeNull();
+		expect(document.querySelector("[data-window-controls]")).toBeNull();
+	});
+
+	it("同级面板：按钮直接放进标签条右端，不另起一行", () => {
+		install("custom-right");
+		render(
+			withQuery(
+				<RightPanel
+					threadId="T-rpA"
+					peer
+					chrome={{ left: true, right: true }}
+				/>,
+			),
+		);
+		expect(document.querySelector("[data-chrome-row]")).toBeNull();
+		const bar = screen.getByTestId("thread-tabs").closest("[data-window-drag]");
+		expect(bar?.lastElementChild).toHaveAttribute(
+			"data-window-controls",
+			"right",
+		);
+	});
+});

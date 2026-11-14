@@ -37,6 +37,10 @@ import {
 	useSecrets,
 } from "../api/queries";
 import { FileBrowser } from "../components/files/FileBrowser";
+import {
+	ChromeLead,
+	WindowControls,
+} from "../components/layout/WindowControls";
 import { PairApproval } from "../components/PairApproval";
 import { AgentAvatar } from "../components/ui/AgentAvatar";
 import { CopyButton } from "../components/ui/CopyButton";
@@ -87,7 +91,7 @@ import {
 	useTheme,
 	WALLPAPERS,
 } from "../state/theme";
-import { uiStore, useSidebarToggleShown } from "../state/ui";
+import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import DesktopSettings from "./settings/DesktopSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
@@ -1806,13 +1810,19 @@ export function SettingsPage({
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	const sidebarToggle = useSidebarToggleShown();
+	// 桌面 App 无系统标题栏：页头可拖动，两端按需放窗口控件
+	const chromeLeft = !useSidebarShown();
 	// 「桌面应用」分区只在桌面壳里有：浏览器与移动壳都没有
 	const desktop = host.desktop !== null;
 	if (section === "desktop" && !desktop)
 		return <Navigate to="/settings/devices" replace />;
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
-			<header className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3">
+			<header
+				data-window-drag=""
+				className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3"
+			>
+				{chromeLeft && <ChromeLead />}
 				{sidebarToggle && (
 					<IconButton
 						icon={bp === "expanded" ? "sidebar" : "menu"}
@@ -1828,6 +1838,8 @@ export function SettingsPage({
 				<span className="truncate text-muted text-sm">
 					{t(`settings.${section}`)}
 				</span>
+				<span className="min-w-0 flex-1" />
+				<WindowControls side="right" className="-mr-1" />
 			</header>
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				<nav className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">

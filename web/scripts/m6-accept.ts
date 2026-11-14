@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * M6 真机验收（计划「验证」D1–D15，Linux x64）：自建一套隔离环境，逐项打印 `D<n> PASS|FAIL` 与证据，退出时清理。
+ * M6 真机验收（计划「验证」D1–D15，另加 D16 无系统标题栏，Linux x64）：自建一套隔离环境，逐项打印 `D<n> PASS|FAIL` 与证据，退出时清理。
  *
  * 用法（web/ 目录）：bun run accept:m6 [-- --only D2,D5]
  *   `accept:m6` 把本脚本包在 `dbus-run-session -- xvfb-run …` 里：私有 D-Bus 会话总线 + Xvfb，宿主的会话与显示不受影响。
@@ -25,7 +25,7 @@
  *   ORYN_DESKTOP_BIN  App 二进制（默认 web/src-tauri/target/release/oryn-desktop）
  *   ORYN_URL          App 连接的服务器 origin（默认 https://localhost:7643；改成已有真实证书的域名时，该域名须反代到 127.0.0.1:7610，
  *                     此时 D12 的断网步骤不再有效）
- *   M6_WM             先启动的窗口管理器（如 openbox；没有窗口管理器时 xdotool 的窗口操作不生效再设）
+ *   M6_WM             先启动的窗口管理器（如 openbox；没有窗口管理器时 xdotool 的窗口操作不生效再设；D16 必须设）
  *   M6_D11_TARGET     D11 两次签名构建用的 CARGO_TARGET_DIR（默认 .dev/m6-d11-target，与正式构建隔离、跨次复用）
  *   M6_NO_STRIP=1     构建 AppImage 时设 NO_STRIP=true（Arch 上 linuxdeploy 的 strip 失败时）
  *   M6_TAG            D14 / D15 检查的 tag（默认 desktop-v<Cargo.toml 版本>-rc.1；需先推送该 tag，脚本不推送）
@@ -34,6 +34,7 @@
  *
  * 场景之间的依赖：D3 / D6–D10 / D12 需要已配对的主 App（`--only` 单跑时自动先配对，不做 D2 的断言）；D6 / D8 / D12 共用线程 $T；
  * D11 会先退出主 App（同一总线上单实例），D12 再把它启动起来；D12 吊销设备后，再跑需要主 App 的场景会重新配对。
+ * D16 先退出主 App，用一个未配对的 App（目录 chrome，停在连接页）测按钮 / 拖动 / 边缘拉伸 / 关闭，再回到主 App 测远程页面。
  */
 import {
 	appendFileSync,
@@ -1642,6 +1643,185 @@ async function D15() {
 	}
 }
 
+// ---------------------------------------------------------------- D16 无系统标题栏
+
+interface Geo {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+function geometry(w: string): Geo {
+	const out = sh(`xdotool getwindowgeometry --shell ${w}`).stdout;
+	const v = (k: string) =>
+		Number(out.match(new RegExp(`^${k}=(-?\\d+)`, "m"))?.[1]);
+	return { x: v("X"), y: v("Y"), w: v("WIDTH"), h: v("HEIGHT") };
+}
+
+const showGeo = (g: Geo) => `${g.w}×${g.h} @ ${g.x},${g.y}`;
+
+/** 在窗口内坐标 (x, y) 处单击（xdotool 合成的真实指针事件，经窗口管理器与 WebKitGTK 到页面）。 */
+function clickAt(w: string, x: number, y: number, repeat = 1) {
+	sh(
+		`xdotool mousemove --window ${w} ${Math.round(x)} ${Math.round(y)} click --repeat ${repeat} --delay 90 1`,
+	);
+}
+
+/**
+ * 从窗口内 (x, y) 按下左键，先挪 6px（页面在移动超过 3px 时才把拖动交给窗口管理器），停一下等窗口管理器接手，
+ * 再相对移动 (dx, dy) 后松开。
+ */
+function dragFrom(w: string, x: number, y: number, dx: number, dy: number) {
+	sh(
+		`xdotool mousemove --window ${w} ${Math.round(x)} ${Math.round(y)} sleep 0.2 mousedown 1 sleep 0.2 mousemove_relative --sync 6 0 sleep 0.5 mousemove_relative --sync ${dx} ${dy} sleep 0.4 mouseup 1`,
+	);
+}
+
+/** 等 `window.state` 报告最大化状态为 `max`，再等窗口几何稳定。 */
+async function waitMaximized(w: string, after: number, max: boolean) {
+	await ev("window.state", { after, where: (e) => e.maximized === max });
+	await sleep(800);
+	const g = geometry(w);
+	note(`${max ? "最大化" : "还原"}后 ${showGeo(g)}`);
+	return g;
+}
+
+/**
+ * D16：无系统标题栏（Linux / openbox）。
+ * 连接页：没有窗口管理器的标题栏框（_NET_FRAME_EXTENTS 全 0、_MOTIF_WM_HINTS 不要装饰）、按钮在右上（Xvfb 下没有
+ * XSettings，GTK 默认布局 menu:minimize,maximize,close）、点最大化 / 还原窗口尺寸跟着变、双击拖动区切换最大化、
+ * 拖动区能拖走窗口、右缘能拉宽窗口、关闭按钮按「关闭时隐藏到托盘」把窗口藏起来；
+ * 远程页面（主 App 首页）：右上同样有按钮，点最大化生效。按钮坐标按布局算：贴顶条 / 页头 48px 高、按钮 32px、间距 2px。
+ */
+async function D16() {
+	check(
+		!!process.env.M6_WM,
+		`有窗口管理器（M6_WM=${process.env.M6_WM ?? ""}）`,
+	);
+	if (MAIN && alive(MAIN.proc))
+		note(`先退出主 App：--quit 退出码 ${await quit(MAIN)}`);
+
+	const app = launch("chrome");
+	const chrome = await ev("window.chrome", {
+		after: app.start,
+		timeoutMs: 30_000,
+	});
+	check(
+		chrome.controls === "custom-right" &&
+			JSON.stringify(chrome.buttons) === '["minimize","maximize","close"]',
+		`布局 controls=${String(chrome.controls)} buttons=${JSON.stringify(chrome.buttons)}`,
+	);
+	await ev("launcher.ready", { after: app.start, timeoutMs: 30_000 });
+	const w = await waitFor("连接页窗口", () => windowId(), 15_000);
+	sh(
+		`xdotool windowactivate --sync ${w} 2>/dev/null || xdotool windowraise ${w} windowfocus ${w}`,
+	);
+	sh(`xdotool windowsize --sync ${w} 900 640 windowmove --sync ${w} 100 80`);
+	await sleep(1500);
+	const frame = sh(`xprop -id ${w} _NET_FRAME_EXTENTS _MOTIF_WM_HINTS`).stdout;
+	note(`xprop：${frame.replaceAll("\n", "；")}`);
+	check(
+		/_NET_FRAME_EXTENTS\(CARDINAL\) = 0, 0, 0, 0/.test(frame),
+		"窗口管理器没有画标题栏与边框（_NET_FRAME_EXTENTS = 0, 0, 0, 0）",
+	);
+	const g0 = geometry(w);
+	note(`初始 ${showGeo(g0)}`);
+	screenshot("D16-launcher");
+
+	// 连接页贴顶条：px-2，按钮 32px、间距 2px → 关闭中心 W-24、最大化 W-58、最小化 W-92，纵向中线 24
+	let a = mark();
+	clickAt(w, g0.w - 58, 24);
+	const gMax = await waitMaximized(w, a, true);
+	check(
+		gMax.w > g0.w + 100 && gMax.h > g0.h + 100,
+		`点「最大化」后窗口变大（${showGeo(g0)} → ${showGeo(gMax)}）`,
+	);
+	screenshot("D16-launcher-maximized");
+	a = mark();
+	clickAt(w, gMax.w - 58, 24);
+	const gRestored = await waitMaximized(w, a, false);
+	check(
+		Math.abs(gRestored.w - g0.w) <= 4 && Math.abs(gRestored.h - g0.h) <= 4,
+		`点「还原」后回到 ${showGeo(gRestored)}`,
+	);
+
+	// 双击拖动区（贴顶条的空白处）切换最大化
+	a = mark();
+	clickAt(w, 300, 24, 2);
+	await waitMaximized(w, a, true);
+	a = mark();
+	clickAt(w, 300, 24, 2);
+	const gBack = await waitMaximized(w, a, false);
+	note(`双击拖动区：最大化后又还原为 ${showGeo(gBack)}`);
+
+	// 拖动区拖走窗口
+	const before = geometry(w);
+	dragFrom(w, 300, 24, 90, 60);
+	await sleep(800);
+	const moved = geometry(w);
+	check(
+		Math.abs(moved.x - before.x - 90) <= 12 &&
+			Math.abs(moved.y - before.y - 60) <= 12,
+		`拖动顶栏后窗口从 ${before.x},${before.y} 移到 ${moved.x},${moved.y}`,
+	);
+
+	// 交互元素不被拖动区吃掉：在按钮上按下拖动，窗口不动
+	dragFrom(w, moved.w - 92, 24, 80, 50);
+	await sleep(800);
+	const still = geometry(w);
+	check(
+		still.x === moved.x && still.y === moved.y,
+		`在「最小化」按钮上按下拖动不移动窗口（${still.x},${still.y}）`,
+	);
+	// 刚才按下又在按钮外松开，click 不成立：窗口仍可见
+	check(
+		since(app.start, "window").pop()?.visible !== false,
+		"按钮外松开不触发最小化",
+	);
+
+	// 右缘拉宽（Tauri 在 WebView 上保留 5px 的边缘拉伸）
+	dragFrom(w, still.w - 2, still.h / 2, 120, 0);
+	await sleep(800);
+	const wider = geometry(w);
+	check(wider.w >= still.w + 80, `拖右缘后宽度 ${still.w} → ${wider.w}`);
+
+	// 关闭按钮 = 原生关闭：托盘可用且开着「关闭时隐藏到托盘」时只是藏起来，进程还在
+	a = mark();
+	clickAt(w, wider.w - 24, 24);
+	await ev("window", { after: a, where: (e) => e.visible === false });
+	check(alive(app.proc), "点「关闭」后窗口藏到托盘，进程仍在");
+	note(`--quit 退出码 ${await quit(app)}`);
+
+	// 远程页面：主 App 打开首页，宽屏三栏里首页纸面离窗口右 / 上缘 8px，页头 px-2 →
+	// 最大化按钮中心 x = W-8-8-32-2-16 = W-66、y = 8+24 = 32
+	await ensureMain();
+	await ensureVisible();
+	const m = windowId();
+	sh(`xdotool windowsize --sync ${m} 1100 720`);
+	a = mark();
+	await once("app", ["oryn://"]);
+	await ev("open", { after: a, where: (e) => e.path === "/" });
+	await sleep(2500);
+	const r0 = geometry(m);
+	screenshot("D16-remote");
+	a = mark();
+	clickAt(m, r0.w - 66, 32);
+	const rMax = await waitMaximized(m, a, true);
+	check(
+		rMax.w > r0.w + 100,
+		`远程页面点「最大化」：${showGeo(r0)} → ${showGeo(rMax)}`,
+	);
+	screenshot("D16-remote-maximized");
+	a = mark();
+	clickAt(m, rMax.w - 66, 32);
+	const rBack = await waitMaximized(m, a, false);
+	check(
+		Math.abs(rBack.w - r0.w) <= 4,
+		`远程页面点「还原」后回到 ${showGeo(rBack)}`,
+	);
+}
+
 const TESTS: [string, () => Promise<void>][] = [
 	["D1", D1],
 	["D2", D2],
@@ -1658,6 +1838,7 @@ const TESTS: [string, () => Promise<void>][] = [
 	["D13", D13],
 	["D14", D14],
 	["D15", D15],
+	["D16", D16],
 ];
 
 // ---------------------------------------------------------------- 主流程
@@ -1671,7 +1852,7 @@ try {
 		if (ONLY && !ONLY.has(id)) continue;
 		if (
 			id !== "D1" &&
-			Number(id.slice(1)) <= 12 &&
+			(Number(id.slice(1)) <= 12 || id === "D16") &&
 			!existsSync(APP) &&
 			id !== "D5"
 		) {
