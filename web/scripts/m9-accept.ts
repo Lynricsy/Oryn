@@ -1380,7 +1380,12 @@ async function S4() {
 		const spacesHead = nav.getByRole("button", { name: /^空间/ }).first();
 		await spacesHead.waitFor({ timeout: 30_000 });
 		const row = nav.locator(`a[href="/space/${s.id}"]`);
-		check(await row.isVisible(), "侧栏「空间」分组里有 m9 行");
+		// Space 列表在分组标题之后异步加载：等它出现，超时才判失败
+		const rowShown = await row.waitFor({ timeout: 15_000 }).then(
+			() => true,
+			() => false,
+		);
+		check(rowShown, "侧栏「空间」分组里有 m9 行");
 		const pinned = nav.getByRole("button", { name: /^已置顶/ }).first();
 		if (await pinned.count()) {
 			const a = await spacesHead.boundingBox();
@@ -3372,15 +3377,19 @@ async function S23() {
 			)?.n;
 			await withPage(async (page) => {
 				await page.goto(`${BASE}/assistant`);
+				// 落地页先显示不可用说明，索引加载后会跳到最近的对话，对话页在输入区上方再显示一次：
+				// 两处都带原因，等文本出现（跳转与线程加载期间页面可能短暂空白），超时才判失败
 				const call = page.getByText("全局助手暂不可用");
 				await call.waitFor({ timeout: 20_000 });
-				check(
-					await page
-						.getByText("does not match core/source.json")
-						.first()
-						.isVisible(),
-					"页面显示原因",
+				const reason = page
+					.getByText("does not match core/source.json")
+					.first();
+				const shown = await reason.waitFor({ timeout: 20_000 }).then(
+					() => true,
+					() => false,
 				);
+				note(`页面：${page.url().replace(BASE, "")}`);
+				check(shown, "页面显示原因");
 				await shot(page, `S23-assistant-${RUN}`);
 			});
 			const n1 = one<{ n: number }>(
