@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,10 +117,67 @@ type Snapshots struct {
 	MinSetup Duration `yaml:"min_setup"`
 	// MaxTotalGB 是每个 provider 上项目快照（相对基础镜像）合计占用的上限。
 	MaxTotalGB int `yaml:"max_total_gb"`
+	// MaxSnapshotGB 是单个快照（相对基础镜像）的大小上限；超出即退役删除，不挤占其它快照。
+	MaxSnapshotGB int `yaml:"max_snapshot_gb"`
 }
 
 // MaxTotalBytes 返回 max_total_gb 换算的字节数。
 func (s Snapshots) MaxTotalBytes() int64 { return int64(s.MaxTotalGB) << 30 }
+
+// MaxSnapshotBytes 返回 max_snapshot_gb 换算的字节数。
+func (s Snapshots) MaxSnapshotBytes() int64 { return int64(s.MaxSnapshotGB) << 30 }
+
+// OrbTLS 是 orb link 专用的 TLS 监听（M11a 审查修复）；Listen 为空即不开。
+type OrbTLS struct {
+	// Listen 是 TLS 监听地址（host:port，host 必须是 IP，例如 172.18.0.1:7643）；这些 IP 总会写进服务端证书。
+	Listen []string `yaml:"listen"`
+	// Hosts 是服务端证书里额外的 SAN（主机名或 IP）。
+	Hosts []string `yaml:"hosts"`
+}
+
+// ListenIPs 返回 Listen 各地址的 IP（去重，按出现顺序）；须在 Validate 通过后调用。
+func (t OrbTLS) ListenIPs() []net.IP {
+	var ips []net.IP
+	for _, l := range t.Listen {
+		host, _, err := net.SplitHostPort(l)
+		if err != nil {
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || slices.ContainsFunc(ips, ip.Equal) {
+			continue
+		}
+		ips = append(ips, ip)
+	}
+	return ips
+}
+
+// validate 校验 orb_tls：listen 可解析、host 为 IP、端口 1–65535；hosts 为 IP 或合法主机名。
+func (t OrbTLS) validate() []error {
+	var errs []error
+	for _, l := range t.Listen {
+		host, port, err := net.SplitHostPort(l)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("orb_tls.listen %q: %w", l, err))
+			continue
+		}
+		if net.ParseIP(host) == nil {
+			errs = append(errs, fmt.Errorf("orb_tls.listen %q：主机部分必须是 IP", l))
+		}
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			errs = append(errs, fmt.Errorf("orb_tls.listen %q：端口必须在 1–65535 之间", l))
+		}
+	}
+	for _, h := range t.Hosts {
+		if net.ParseIP(h) == nil && !sanHostRe.MatchString(h) {
+			errs = append(errs, fmt.Errorf("orb_tls.hosts %q 不是合法的 IP 或主机名", h))
+		}
+	}
+	return errs
+}
+
+// sanHostRe 是证书 SAN 允许的主机名形态（不带端口与尾点）。
+var sanHostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$`)
 
 // Pool 是预热池配置（M11a）。
 type Pool struct {
@@ -146,6 +204,7 @@ type Orynd struct {
 	Stats        Stats       `yaml:"stats"`
 	Snapshots    Snapshots   `yaml:"snapshots"`
 	Pool         Pool        `yaml:"pool"`
+	OrbTLS       OrbTLS      `yaml:"orb_tls"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -175,11 +234,12 @@ func DefaultOrynd() Orynd {
 			Events:  Duration(8760 * time.Hour),
 		}},
 		Snapshots: Snapshots{
-			Enabled:    true,
-			MaxAge:     Duration(72 * time.Hour),
-			MaxDepth:   16,
-			MinSetup:   Duration(10 * time.Second),
-			MaxTotalGB: 40,
+			Enabled:       true,
+			MaxAge:        Duration(72 * time.Hour),
+			MaxDepth:      16,
+			MinSetup:      Duration(10 * time.Second),
+			MaxTotalGB:    40,
+			MaxSnapshotGB: 10,
 		},
 		Pool: Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
 	}
@@ -279,12 +339,16 @@ func (c Orynd) Validate() error {
 	if c.Snapshots.MaxTotalGB < 1 {
 		errs = append(errs, fmt.Errorf("snapshots.max_total_gb %d 至少为 1", c.Snapshots.MaxTotalGB))
 	}
+	if g := c.Snapshots.MaxSnapshotGB; g < 1 || g > max(c.Snapshots.MaxTotalGB, 1) {
+		errs = append(errs, fmt.Errorf("snapshots.max_snapshot_gb %d 必须在 1 与 snapshots.max_total_gb（%d）之间", g, c.Snapshots.MaxTotalGB))
+	}
 	if n := c.Pool.MaxTotal; n < 0 || n > 16 {
 		errs = append(errs, fmt.Errorf("pool.max_total %d 必须在 0–16 之间（0 = 关闭预热池）", n))
 	}
 	if c.Pool.MaxAge <= 0 || c.Pool.ActiveWindow <= 0 {
 		errs = append(errs, errors.New("pool.max_age 与 pool.active_window 必须为正"))
 	}
+	errs = append(errs, c.OrbTLS.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -350,7 +414,12 @@ type Docker struct {
 	ExtraRunArgs []string              `yaml:"extra_run_args"`
 	Types        map[string]DockerType `yaml:"types"`
 	DefaultType  string                `yaml:"default_type"`
+	// PidsLimit 是所有类型的 `docker run --pids-limit`（M11a 审查修复）；缺省 4096，0 = 不限。
+	PidsLimit int `yaml:"pids_limit"`
 }
+
+// DefaultPidsLimit 是 docker.pids_limit 的缺省值。
+const DefaultPidsLimit = 4096
 
 // Dispatch 是 dispatch 驱动配置。
 type Dispatch struct {
@@ -378,7 +447,7 @@ func DefaultDockerTypes() map[string]DockerType {
 
 // LoadProvider 读取 provider 配置并补默认值。
 func LoadProvider(path string) (Provider, error) {
-	c := Provider{Driver: "docker", Docker: Docker{Image: "oryn-orb:dev", DefaultType: "medium"}}
+	c := Provider{Driver: "docker", Docker: Docker{Image: "oryn-orb:dev", DefaultType: "medium", PidsLimit: DefaultPidsLimit}}
 	if err := decodeStrict(path, &c); err != nil {
 		return c, err
 	}
@@ -396,6 +465,9 @@ func LoadProvider(path string) (Provider, error) {
 		errs = append(errs, errors.New("token_file 不能为空"))
 	}
 	errs = append(errs, validateDockerTypes(c.Docker.Types)...)
+	if c.Docker.PidsLimit < 0 {
+		errs = append(errs, fmt.Errorf("docker.pids_limit %d 不能为负（0 = 不限）", c.Docker.PidsLimit))
+	}
 	switch c.Driver {
 	case "docker":
 		if _, ok := c.Docker.Types[c.Docker.DefaultType]; !ok {

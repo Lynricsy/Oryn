@@ -1190,3 +1190,34 @@ pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
 - 快照：`GetProjectSnapshot`、`GetReadyProjectSnapshot`（按键）、`InsertBuildingProjectSnapshot`（`:execrows`，`ON CONFLICT DO NOTHING`，0 = 同键已有构建——这就是并发去重）、`PublishProjectSnapshot`（`building → ready`，写 `ready_at / size_bytes / base_commit`）、`RetireOtherReadySnapshots`（同键其它 ready；**须在同一事务里先于 `PublishProjectSnapshot` 执行**，否则 ready 部分唯一索引拒绝第二行）、`RetireProjectSnapshot`（`ready → retired`）、`RetireProjectSnapshotsByProject`（可选 `type`）、`RetireProjectSnapshotsByProvider`、`TouchProjectSnapshotUse`（`:execrows`，只命中 ready）、`ListProjectSnapshotsByProject`（带 provider 名）、`ListProjectSnapshotsByState`、`SumProjectSnapshotBytes`（按 provider，ready + retired，NULL 计 0）、`ListReadySnapshotsLRU`（`COALESCE(last_used_at, ready_at, created_at)` 升序）、`MarkProjectSnapshotGC`、`DeleteProjectSnapshot`、`DeleteBuildingProjectSnapshot`。
 - 预热池与哈希：`SetOrbConfigHash`；`ClaimPoolOrb` / `SetOrbPoolState`（`:execrows`，都带 `AND pool_state = @seen` 的 CAS；`pool_state` 传 NULL = 离开预热池）；`ListPoolOrbs`（可选项目）；`MaxThreadCreatedAtByProject`（只计 `kind = work`，0 = 没有）；`ListEnvSecretStamps`（env 模式密钥的名字与 `updated_at`，从不取值）。
 - 改动：`CreateOrb` 加 `pool_state`、`config_hash`；`AcquireProviderHello` 写 `base_image_id`；`FinishJob` 写 `result`；`InsertOrbSetupRun` 写 `prepared`、`base_commit`（`ListOrbSetupRuns` / `LatestOrbSetupRun` 同时读出）；`CreateProject` / `UpdateProject` 的 `snapshots`、`warm_orbs` 为可空参数（NULL = 列默认值 / 不改）。
+
+### M11a 审查修复
+
+不新增 REST 端点、WS 消息与错误码，只加字段与配置键。
+
+provider 协议（C1）：
+
+- `JobSpawnParams.orbCaPem?: string`：orb link 的 TLS CA 证书（PEM）。非空时 provider 把它作为环境变量 `ORYN_ORB_CA_PEM` 下发给 orb，和令牌一样走调用方环境，不进 argv；dispatch 脚本也拿到同名环境变量。orbd 拨 `ORYN_URL`（link 与 whoami 等全部请求）时只信任这张 CA，不合并系统根；URL 是 https 但没给 CA 时用系统根（反代场景）；PEM 解析失败直接启动失败。
+- `JobResult.snapshotUsed?: boolean`：只用于 `spawn` 任务。true 表示容器 / 目录实际来自 `snapshotId` 的快照，false 表示退回了基础镜像。docker 驱动看快照镜像是否存在，process 驱动看快照目录是否存在。dispatch 由脚本在输出里打一行 `ORYN_SNAPSHOT_USED=1|0`，没有这一行时视为「未知」，不给此字段。控制面判断 orb 是否用过快照，只看这个字段。
+
+orb link（C2）：
+
+- `LinkCtlSetupRunParams.deferResume?: boolean`：true 时 orbd 只跑 setup（clone、`repo.update`、setup 脚本），不跑 resume 脚本，也不启动受管服务；控制面随后单独调 `resume.run`。控制面只在 hello 含 `setup-defer-resume`、且本次可能发布项目快照时置位，所以快照里只留 setup 的产物。`resume.run` 忽略此字段。
+- `LinkCtlSetupRunResult` 与 `LinkCtlSetupResultParams` 增加 `setupChanged?: boolean`：本次 `repo.update` 前后 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 任一有变化，或者基线不是快进（走了 `reset --hard`），就为 true。为 true 时控制面不以来源快照为父发布，把来源快照退役（原因 `setup_changed`）。
+- `LinkCtlHelloParams.features` 新增 `setup-defer-resume`：orbd 认识 `deferResume`，结果里会给 `setupChanged`。
+
+配置：
+
+```yaml
+# orynd.yaml
+orb_tls:   { listen: ["172.18.0.1:7643"], hosts: [] }
+snapshots: { max_snapshot_gb: 10 }
+# provider.yaml
+docker:    { pids_limit: 4096 }
+```
+
+- `orb_tls.listen`：orb link 专用的 TLS 监听地址，缺省为空（不开）。每项都是 `host:port`，host 必须是 IP，端口在 1–65535 之间。这些 IP 总会写进服务端证书。监听只放行 `/orb/v1/*`。旧 orbd、旧 orb 仍走原来的明文监听，重建 orb 后才受保护。
+- `orb_tls.hosts`：证书里额外的 SAN，每项是 IP 或主机名（不带端口、不带通配）。
+- `snapshots.max_snapshot_gb`：单个快照相对基础镜像的大小上限，缺省 10，校验 1 ≤ 值 ≤ `max_total_gb`。超出时快照直接退役删除（原因 `quota`），不会挤掉别的快照。
+- `docker.pids_limit`：所有类型 orb 的 `docker run --pids-limit`，缺省 4096，0 表示不限，负数加载报错。
+- `ProjectSnapshot.retireReason` 新增 `setup_changed`；`quota` 也用于单个快照超出 `max_snapshot_gb`。

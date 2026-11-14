@@ -3157,6 +3157,10 @@ type JobPauseParams struct {
 type JobResult struct {
 	// SnapshotBytes `snapshot` 任务：这份快照相对基础镜像多占的字节数（≥0）
 	SnapshotBytes *int64 `json:"snapshotBytes,omitempty"`
+
+	// SnapshotUsed M11a 审查修复，`spawn` 任务专用：true = 容器 / 目录实际来自 `snapshotId` 的快照，false = 退回了基础镜像。
+	// docker 看快照镜像是否存在；process 看快照目录是否存在；dispatch 由脚本在输出里打一行 `ORYN_SNAPSHOT_USED=1|0`，没有这一行即「未知」，不给此字段。
+	SnapshotUsed *bool `json:"snapshotUsed,omitempty"`
 }
 
 // JobSnapshotParams defines model for JobSnapshotParams.
@@ -3178,6 +3182,9 @@ type JobSpawnEnv struct {
 type JobSpawnParams struct {
 	Env   JobSpawnEnv `json:"env"`
 	Image string      `json:"image"`
+
+	// OrbCaPem M11a 审查修复：orb link 的 TLS CA 证书（PEM）。非空时 provider 以环境变量 `ORYN_ORB_CA_PEM` 下发给 orb（走调用方环境，不进 argv），dispatch 脚本也拿到同名环境变量；orbd 拨 `ORYN_URL` 时只信任这张 CA
+	OrbCaPem *string `json:"orbCaPem,omitempty"`
 
 	// SnapshotID 快照 id，同时是 Docker 镜像名
 	SnapshotID *SnapshotID `json:"snapshotId,omitempty"`
@@ -3394,7 +3401,8 @@ type LinkCtlHelloParams struct {
 	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
 	// M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
 	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
-	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）。
+	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
+	// `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
@@ -3636,7 +3644,10 @@ type LinkCtlSetupResultParams struct {
 
 	// RepoUpdated `repo.update` 让检出前进到了新提交（M11a）
 	RepoUpdated *bool `json:"repoUpdated,omitempty"`
-	SetupRan    bool  `json:"setupRan"`
+
+	// SetupChanged 本次 `repo.update` 前后 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 任一有变化，或基线不是快进（走了 reset），即为 true（M11a 审查修复）
+	SetupChanged *bool `json:"setupChanged,omitempty"`
+	SetupRan     bool  `json:"setupRan"`
 
 	// StartedAt UTC 毫秒时间戳
 	StartedAt TimestampMs `json:"startedAt"`
@@ -3647,7 +3658,10 @@ type LinkCtlSetupResultParams struct {
 
 // LinkCtlSetupRunParams defines model for LinkCtlSetupRunParams.
 type LinkCtlSetupRunParams struct {
-	Env map[string]string `json:"env"`
+	// DeferResume M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；
+	// 控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
+	DeferResume *bool             `json:"deferResume,omitempty"`
+	Env         map[string]string `json:"env"`
 
 	// GitHosts 为每个主机写 git `url."http://127.0.0.1:7811/git/<host>/".insteadOf "https://<host>/"`
 	GitHosts []string `json:"gitHosts"`
@@ -3674,6 +3688,9 @@ type LinkCtlSetupRunResult struct {
 
 	// RepoUpdated `repo.update` 让检出前进到了新提交（M11a）
 	RepoUpdated *bool `json:"repoUpdated,omitempty"`
+
+	// SetupChanged 本次 `repo.update` 前后 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 任一有变化，或基线不是快进（走了 reset），即为 true（M11a 审查修复）；为 true 时控制面不以来源快照为父发布新快照
+	SetupChanged *bool `json:"setupChanged,omitempty"`
 
 	// SetupError setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log）
 	SetupError *string `json:"setupError,omitempty"`
@@ -4787,7 +4804,8 @@ type ProjectSnapshot struct {
 	ReadyAt *TimestampMs `json:"readyAt,omitempty"`
 
 	// RetireReason `state=retired` 时的原因：`config_changed`（项目配置哈希变化）、`expired`（血统超过 `max_age`）、`image_missing`（provider 上镜像不存在，已退回基础镜像）、
-	// `refresh_failed`（刷新时 setup 失败）、`depth`（刷新次数超过 `max_depth`）、`superseded`（被同键的新快照取代）、`quota`（超出 `max_total_gb`）、
+	// `refresh_failed`（刷新时 setup 失败）、`depth`（刷新次数超过 `max_depth`）、`superseded`（被同键的新快照取代）、`quota`（超出 `max_total_gb`，或单个快照超出 `max_snapshot_gb`）、
+	// `setup_changed`（`repo.update` 改动了 setup 相关文件或基线不是快进，不再以它为父发布）、
 	// `manual`（用户清除）、`project_deleted`（项目被删除）、`provider_removed`（provider 被删除 / 停用）
 	RetireReason *string `json:"retireReason,omitempty"`
 
