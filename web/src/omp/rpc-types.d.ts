@@ -5541,6 +5541,44 @@ interface RpcBrowserHostInfo {
 	/** Websocket URL the host dials as the relay extension (carries its token). */
 	extensionUrl: string;
 }
+type OrynRpcCommand = {
+	id?: string;
+	type: "oryn_select_model";
+	role?: string;
+	provider?: string;
+	modelId?: string;
+} | {
+	id?: string;
+	type: "oryn_mark_session_start";
+	explicitModel?: boolean;
+};
+interface OrynSelectModelResult {
+	model: Model;
+	thinkingLevel?: ThinkingLevel;
+	source: "role" | "manual";
+	role?: string;
+	alias?: string;
+}
+interface OrynMarkSessionStartResult {
+	recorded: boolean;
+	source?: "startup" | "manual";
+	role?: string;
+	alias?: string;
+	model?: string;
+}
+type OrynRpcResponse = {
+	id?: string;
+	type: "response";
+	command: "oryn_select_model";
+	success: true;
+	data: OrynSelectModelResult;
+} | {
+	id?: string;
+	type: "response";
+	command: "oryn_mark_session_start";
+	success: true;
+	data: OrynMarkSessionStartResult;
+};
 /** Structured provenance preserved for GUI settings persistence/source displays. */
 export interface RpcSettingProvenance {
 	layers: ("global" | "project" | "overlay" | "runtime")[];
@@ -6505,7 +6543,7 @@ export type RpcCommand = {
 } | {
 	id?: string;
 	type: "get_btw_history";
-};
+} | OrynRpcCommand;
 export interface RpcSessionState {
 	collab?: RpcCollabState;
 	model?: Model;
@@ -9529,7 +9567,7 @@ export type RpcResponse = {
 	data: {
 		records: readonly RpcBtwHistoryRecord[];
 	};
-} | {
+} | OrynRpcResponse | {
 	id?: string;
 	type: "response";
 	command: string;
