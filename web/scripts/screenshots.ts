@@ -327,7 +327,8 @@ function chromeShell(
 			lights.style.cssText = "position:fixed;left:22px;top:24px;z-index:2147483647;pointer-events:none;display:flex;gap:8px";
 			for (const c of ["#ff5f57", "#febc2e", "#28c840"]) {
 				const dot = document.createElement("span");
-				dot.style.cssText = "width:12px;height:12px;margin:2px 0 2px 0;border-radius:50%;background:" + c + ";box-shadow:inset 0 0 0 0.5px rgba(0,0,0,.25)";
+				// 全局 corner-shape 是超椭圆（index.css），这里是内联样式、不带 rounded-full，须显式 round 才是正圆
+				dot.style.cssText = "width:12px;height:12px;margin:2px 0 2px 0;border-radius:50%;corner-shape:round;background:" + c + ";box-shadow:inset 0 0 0 0.5px rgba(0,0,0,.25)";
 				lights.append(dot);
 			}
 			// 全屏时系统收起红绿灯：跟着壳的 window 事件显隐（逐帧动画脚本也靠它）
