@@ -1262,12 +1262,18 @@ async function heads(page: Page): Promise<Head[]> {
 			new Promise<void>((r) =>
 				requestAnimationFrame(() => setTimeout(() => r(), 40)),
 			);
+		// 转录贴底：程序设的 scrollTop 没有「用户往上翻」的意图会被拉回底部，长线程就扫不到前面的回合头。
+		// 每一步先发一个向上的 wheel 事件声明意图（Transcript 被动监听 wheel deltaY<0）
+		const intent = () =>
+			sc.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+		intent();
 		sc.scrollTop = 0;
 		await frame();
 		await frame();
 		grab();
 		for (let i = 0; i < 300; i++) {
 			if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1) break;
+			intent();
 			sc.scrollTop += Math.max(120, sc.clientHeight * 0.6);
 			await frame();
 			await frame();
@@ -1703,8 +1709,9 @@ async function R21() {
 		await pill.click();
 		await page.getByLabel(zh.newThread.modelPlaceholder).fill(model);
 		await page.keyboard.press("Escape");
+		// 胶囊本身（aria-label = 模型）；弹层里「最近用过」的同名行也叫这个名字，所以按 aria-expanded 区分并等弹层关上
 		await page
-			.getByRole("button", { name: model, exact: true })
+			.locator(`button[aria-expanded="false"][aria-label="${model}"]`)
 			.waitFor({ timeout: 5_000 });
 		note(
 			`新建线程框选了模型 ${model}（default 当前解析到的模型，取自 $R 的启动记录）`,
@@ -2730,6 +2737,20 @@ async function R3() {
 	}, DESKTOP);
 }
 
+/** R4 一次切换的逐帧采样结果。 */
+interface SlideRun {
+	paneW: number;
+	x0: number;
+	samples: { t: number; x: number }[];
+	dur: string;
+	plateX: number;
+	btnX: number;
+	plateLeft: string;
+	activeId: string | undefined;
+	anim: string;
+	animDur: string;
+}
+
 /** R4 分区动画（正常 200ms 滑动；减少动态 150ms 淡入）。 */
 async function R4() {
 	await withPage(async (page) => {
@@ -2743,7 +2764,7 @@ async function R4() {
 		await tab(page, "threads").click();
 		await waitTab(page, "threads");
 		await Bun.sleep(500);
-		const run = () =>
+		const run = (): Promise<SlideRun> =>
 			page.evaluate(async () => {
 				const track = document.querySelector<HTMLElement>(".section-track");
 				const btn = document.querySelector<HTMLElement>(
@@ -2757,20 +2778,19 @@ async function R4() {
 				const paneW = track.parentElement.getBoundingClientRect().width;
 				const x0 = track.getBoundingClientRect().x;
 				const dur = getComputedStyle(track).transitionDuration;
+				// 逐帧采样 500ms：点击后渲染路由的耗时随机器负载变化，固定时刻采一个点测不准动画是否发生
 				const frame = () =>
 					new Promise<void>((r) => requestAnimationFrame(() => r()));
 				btn.click();
 				const t0 = performance.now();
-				await frame();
-				await frame();
-				const xFrame = track.getBoundingClientRect().x;
-				await new Promise((r) =>
-					setTimeout(r, Math.max(0, 100 - (performance.now() - t0))),
-				);
-				const x100 = track.getBoundingClientRect().x;
-				const t100 = performance.now() - t0;
-				await new Promise((r) => setTimeout(r, 300 - (performance.now() - t0)));
-				const x300 = track.getBoundingClientRect().x;
+				const samples: { t: number; x: number }[] = [];
+				while (performance.now() - t0 < 500) {
+					await frame();
+					samples.push({
+						t: performance.now() - t0,
+						x: track.getBoundingClientRect().x,
+					});
+				}
 				const active = document.querySelector<HTMLElement>(
 					"[data-testid=section-pane][data-active]",
 				);
@@ -2778,10 +2798,7 @@ async function R4() {
 				return {
 					paneW,
 					x0,
-					xFrame,
-					x100,
-					t100,
-					x300,
+					samples,
 					dur,
 					plateX: plate.getBoundingClientRect().x,
 					btnX: btn.getBoundingClientRect().x,
@@ -2791,20 +2808,44 @@ async function R4() {
 					animDur: cs?.animationDuration ?? "",
 				};
 			});
+		/** 从采样里算：起动时刻（第一次离开起点）、到位时刻、中间帧数。 */
+		const motion = (a: SlideRun) => {
+			const end = a.x0 - 3 * a.paneW;
+			const start = a.samples.find((s) => Math.abs(s.x - a.x0) > 1);
+			const settled = a.samples.find((s) => Math.abs(s.x - end) <= 1);
+			const mid = a.samples.filter(
+				(s) => s.x < a.x0 - 2 && s.x > end + 2,
+			).length;
+			const last = a.samples.at(-1)?.x ?? a.x0;
+			return { end, start: start?.t, settled: settled?.t, mid, last };
+		};
 		const a = await run();
-		note(`正常：${j(a)}`);
-		const end = a.x0 - 3 * a.paneW;
+		const ma = motion(a);
+		note(
+			`正常：${j({ ...a, samples: a.samples.map((s) => `${s.t.toFixed(0)}:${s.x.toFixed(0)}`).join(" ") })}`,
+		);
+		const end = ma.end;
 		check(
 			a.dur === "0.2s",
 			`.section-track transition-duration = 0.2s（${a.dur}）`,
 		);
 		check(
-			a.x100 < a.x0 - 2 && a.x100 > end + 2,
-			`点击后 ~100ms（${a.t100.toFixed(0)}ms）轨道在起止之间（${a.x100.toFixed(1)}，${a.x0.toFixed(1)} → ${end.toFixed(1)}）`,
+			ma.mid >= 2,
+			`轨道滑动而不是跳变：起止之间有 ${ma.mid} 帧（${a.x0.toFixed(1)} → ${end.toFixed(1)}）`,
 		);
 		check(
-			Math.abs(a.x300 - end) <= 1,
-			`300ms 到位（${a.x300.toFixed(1)} ≈ ${end.toFixed(1)}）`,
+			ma.start !== undefined &&
+				ma.settled !== undefined &&
+				ma.settled - ma.start >= 120 &&
+				ma.settled - ma.start <= 320,
+			`滑动耗时 ≈ 0.2s（起动 ${ma.start?.toFixed(0)}ms，到位 ${ma.settled?.toFixed(0)}ms）`,
+		);
+		check(
+			Math.abs(ma.last - end) <= 1,
+			`最终到位（${ma.last.toFixed(1)} ≈ ${end.toFixed(1)}）`,
+		);
+		note(
+			`起动延迟 ${ma.start?.toFixed(0)}ms（点击到第一帧移动：渲染路由的耗时）`,
 		);
 		check(
 			a.plateLeft === "75%" && Math.abs(a.plateX - a.btnX) <= 2,
@@ -2817,12 +2858,14 @@ async function R4() {
 		await page.emulateMedia({ reducedMotion: "reduce" });
 		try {
 			const b = await run();
-			note(`减少动态：${j(b)}`);
-			const endB = b.x0 - 3 * b.paneW;
+			const mb = motion(b);
+			note(
+				`减少动态：${j({ ...b, samples: b.samples.map((s) => `${s.t.toFixed(0)}:${s.x.toFixed(0)}`).join(" ") })}`,
+			);
 			check(b.dur === "0s", `减少动态：transition-duration = 0s（${b.dur}）`);
 			check(
-				Math.abs(b.xFrame - endB) <= 1,
-				`减少动态：点击后下一帧即到位（${b.xFrame.toFixed(1)} ≈ ${endB.toFixed(1)}）`,
+				mb.mid === 0 && Math.abs(mb.last - mb.end) <= 1,
+				`减少动态：没有中间帧、直接到位（中间 ${mb.mid} 帧，最终 ${mb.last.toFixed(1)} ≈ ${mb.end.toFixed(1)}）`,
 			);
 			check(
 				b.anim === "section-fade" && b.animDur === "0.15s",
@@ -2940,6 +2983,16 @@ async function R6() {
 				__m96keys?: { code: string; prevented: boolean }[];
 			};
 			w.__m96keys = [];
+			// 诊断用：记下路由的每次 history 调用
+			const hw = window as unknown as { __m96hist?: string[] };
+			hw.__m96hist = [];
+			for (const name of ["pushState", "replaceState"] as const) {
+				const orig = history[name].bind(history);
+				history[name] = (...a: Parameters<History["pushState"]>) => {
+					hw.__m96hist?.push(`${name} ${String(a[2])}`);
+					return orig(...a);
+				};
+			}
 			window.addEventListener(
 				"keydown",
 				(e) => {
@@ -2957,6 +3010,9 @@ async function R6() {
 			);
 		});
 		const pages0 = page.context().pages().length;
+		// 诊断：装好按键记录之后文档是否被整页替换（替换后记录器随旧 window 一起丢失）
+		let loads = 0;
+		page.on("load", () => loads++);
 		// 焦点不留在可编辑区域（Ctrl+B 在编辑区内不抢）
 		await page.evaluate(() =>
 			(document.activeElement as HTMLElement | null)?.blur(),
@@ -2964,60 +3020,99 @@ async function R6() {
 		await page.keyboard.press("Control+b");
 		const sidebarState = () =>
 			page.locator("[data-sidebar]").first().getAttribute("data-sidebar");
-		await waitFor(
-			"侧栏收起",
-			async () => (await sidebarState()) === "collapsed",
-			5_000,
-			100,
-		);
-		check(true, "Ctrl+B 收起侧栏");
-		const barHidden = await page.evaluate(() => {
-			const bar = document.querySelector("[data-testid=section-tabbar]");
-			const r = bar?.getBoundingClientRect();
-			return !!bar?.closest("[inert]") && !!r && r.right <= 1;
-		});
-		check(barHidden, "页面上没有图标栏（底栏随侧栏移出屏外且 inert）");
-		const steps: [string, string | undefined][] = [
-			["Control+2", mem.assistant],
-			["Control+3", mem.projects],
-			["Control+4", mem.more],
-			["Control+1", mem.threads],
-			["Control+/", mem.assistant],
-		];
-		for (const [key, want] of steps) {
-			await page.keyboard.press(key);
-			const got = await waitPath(page, want ?? "/__none__", 10_000);
-			check(got === want, `${key} → ${got}`);
-			check((await sidebarState()) === "collapsed", `${key} 后侧栏仍收起`);
+		try {
+			await waitFor(
+				"侧栏收起",
+				async () => (await sidebarState()) === "collapsed",
+				5_000,
+				100,
+			);
+			check(true, "Ctrl+B 收起侧栏");
+			// 收起有滑出动画：等底栏完全移出屏外（data-sidebar 在动画开始时就已是 collapsed）
+			const barHidden = await waitFor(
+				"底栏移出屏外",
+				() =>
+					page.evaluate(() => {
+						const bar = document.querySelector("[data-testid=section-tabbar]");
+						const r = bar?.getBoundingClientRect();
+						return !!bar?.closest("[inert]") && !!r && r.right <= 1;
+					}),
+				2_000,
+				50,
+			).catch(() => false);
+			check(barHidden, "页面上没有图标栏（底栏随侧栏移出屏外且 inert）");
+			const steps: [string, string | undefined][] = [
+				["Control+2", mem.assistant],
+				["Control+3", mem.projects],
+				["Control+4", mem.more],
+				["Control+1", mem.threads],
+				["Control+/", mem.assistant],
+			];
+			for (const [key, want] of steps) {
+				await page.keyboard.press(key);
+				const got = await waitPath(page, want ?? "/__none__", 10_000).catch(
+					async (err: unknown) => {
+						// 诊断：这一步之前的 history 调用与按键记录（是否被页面拦下）
+						const diag = await page.evaluate(() => {
+							const w = window as unknown as {
+								__m96keys?: { code: string; prevented: boolean }[];
+								__m96hist?: string[];
+							};
+							return {
+								keys: w.__m96keys ?? [],
+								hist: w.__m96hist ?? [],
+								active: document.activeElement?.outerHTML.slice(0, 120),
+							};
+						});
+						note(`诊断 ${key}：${j(diag)}`);
+						throw err;
+					},
+				);
+				check(got === want, `${key} → ${got}`);
+				check((await sidebarState()) === "collapsed", `${key} 后侧栏仍收起`);
+			}
+			await page.keyboard.press("Control+1");
+			await waitPath(page, mem.threads ?? "/");
+			const box = composer(page);
+			await box.waitFor({ timeout: 30_000 });
+			await box.focus();
+			await page.keyboard.press("Control+4");
+			const got = await waitPath(page, mem.more ?? "/__none__", 10_000);
+			check(got === mem.more, `焦点在输入框里按 Ctrl+4 也生效（${got}）`);
+			const keys = await page.evaluate(
+				() =>
+					(
+						window as unknown as {
+							__m96keys?: { code: string; prevented: boolean }[];
+						}
+					).__m96keys ?? [],
+			);
+			note(`按键：${j(keys)}；记录器装好后整页加载 ${loads} 次`);
+			const digits = keys.filter((k) => /^Digit[1-4]$|^Slash$/.test(k.code));
+			check(
+				digits.length >= 6 && digits.every((k) => k.prevented),
+				"Ctrl+数字 / Ctrl+/ 都被页面拦下（defaultPrevented）",
+			);
+			const vis = await page.evaluate(() => document.visibilityState);
+			check(
+				page.context().pages().length === pages0 && vis === "visible",
+				"浏览器没有切换标签页",
+			);
+		} finally {
+			// 收起状态会持久化：失败时也要展开回来，否则后面的场景点底栏都撞上 inert
+			if ((await sidebarState()) === "collapsed") {
+				await page.evaluate(() =>
+					(document.activeElement as HTMLElement | null)?.blur(),
+				);
+				await page.keyboard.press("Control+b");
+				await waitFor(
+					"侧栏展开",
+					async () => (await sidebarState()) !== "collapsed",
+					5_000,
+					100,
+				);
+			}
 		}
-		await page.keyboard.press("Control+1");
-		await waitPath(page, mem.threads ?? "/");
-		const box = composer(page);
-		await box.waitFor({ timeout: 30_000 });
-		await box.focus();
-		await page.keyboard.press("Control+4");
-		const got = await waitPath(page, mem.more ?? "/__none__", 10_000);
-		check(got === mem.more, `焦点在输入框里按 Ctrl+4 也生效（${got}）`);
-		const keys = await page.evaluate(
-			() =>
-				(
-					window as unknown as {
-						__m96keys?: { code: string; prevented: boolean }[];
-					}
-				).__m96keys ?? [],
-		);
-		note(`按键：${j(keys)}`);
-		const digits = keys.filter((k) => /^Digit[1-4]$|^Slash$/.test(k.code));
-		check(
-			digits.length >= 6 && digits.every((k) => k.prevented),
-			"Ctrl+数字 / Ctrl+/ 都被页面拦下（defaultPrevented）",
-		);
-		const vis = await page.evaluate(() => document.visibilityState);
-		check(
-			page.context().pages().length === pages0 && vis === "visible",
-			"浏览器没有切换标签页",
-		);
-		await page.keyboard.press("Control+b");
 	}, DESKTOP);
 }
 
@@ -3049,12 +3144,17 @@ async function R7() {
 		check(true, `点「助手」→ 上次的对话 /assistant/${c1}`);
 		const list = pane(page, "assistant").getByTestId("sidebar-assistant");
 		await list.waitFor({ timeout: 10_000 });
-		check(
-			await pane(page, "assistant").evaluate((el) =>
-				el.hasAttribute("data-active"),
-			),
-			"侧栏是助手会话列表",
-		);
+		// URL 在 pushState 时就变了，pane 的 data-active 要等路由 transition 提交：等它而不是立刻断言
+		const active = await waitFor(
+			"助手 pane 成为当前",
+			() =>
+				pane(page, "assistant").evaluate((el) =>
+					el.hasAttribute("data-active"),
+				),
+			5_000,
+			100,
+		).catch(() => false);
+		check(active, "侧栏是助手会话列表");
 		const rows = () => list.locator(":scope > div.mt-1 a[href^='/assistant/']");
 		await waitFor(
 			"列表含 c1",
