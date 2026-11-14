@@ -5864,6 +5864,10 @@ type ListNotificationsParams struct {
 
 	// Before 只返回 `createdAt < before` 的通知（翻页游标）
 	Before *TimestampMs `form:"before,omitempty" json:"before,omitempty"`
+
+	// Unread `true` 只返回未读（`readAt` 为空）的通知。App 补拉被 FCM 丢弃的推送时用它翻页，
+	// 避免较早的未读通知被一页已读通知挤出窗口。
+	Unread *bool `form:"unread,omitempty" json:"unread,omitempty"`
 }
 
 // ListOrbsParams defines parameters for ListOrbs.
@@ -9955,6 +9959,19 @@ func (siw *ServerInterfaceWrapper) ListNotifications(w http.ResponseWriter, r *h
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "unread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "unread", r.URL.Query(), &params.Unread, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "unread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "unread", Err: err})
 		}
 		return
 	}

@@ -63,7 +63,7 @@ func TestPostWithoutThread(t *testing.T) {
 	assert.Nil(t, notes[0].ThreadID)
 	assert.Empty(t, f.s.unread, "没有线程就没有线程未读")
 
-	list, err := f.s.List(f.ctx, 10, 0)
+	list, err := f.s.List(f.ctx, 10, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, AutomationsPath, list.Notifications[0].URL)
 

@@ -640,8 +640,8 @@ func (s *Service) markThreadRead(ctx context.Context, threadID string) {
 
 // ---- 查询与已读（REST）----
 
-// List 返回最近的通知（createdAt < before，按时间倒序）与全部未读数。
-func (s *Service) List(ctx context.Context, limit int, before int64) (apigen.NotificationList, error) {
+// List 返回最近的通知（createdAt < before，按时间倒序；unreadOnly 时只含未读）与全部未读数。
+func (s *Service) List(ctx context.Context, limit int, before int64, unreadOnly bool) (apigen.NotificationList, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -649,7 +649,11 @@ func (s *Service) List(ctx context.Context, limit int, before int64) (apigen.Not
 	if before <= 0 {
 		before = math.MaxInt64
 	}
-	rows, err := s.st.Q.ListNotifications(ctx, db.ListNotificationsParams{Before: before, Limit: int64(limit)})
+	onlyUnread := int64(0)
+	if unreadOnly {
+		onlyUnread = 1
+	}
+	rows, err := s.st.Q.ListNotifications(ctx, db.ListNotificationsParams{Before: before, UnreadOnly: onlyUnread, Limit: int64(limit)})
 	if err != nil {
 		return apigen.NotificationList{}, err
 	}

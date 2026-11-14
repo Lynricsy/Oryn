@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/webpush/webpushtest"
 )
 
@@ -168,4 +170,47 @@ func TestNotificationsAPI(t *testing.T) {
 	assert.Contains(t, string(body), sub.ID)
 	st, _ = e.do("DELETE", "/api/v1/push/subscriptions/"+sub.ID, nil)
 	assert.Equal(t, 204, st)
+}
+
+// App 补拉被 FCM 丢弃的推送：最近 50 条都已读时，较早仍待回答的 input 不能被挤出窗口。
+// 不带 unread 的一页只有已读通知；unread=true 必须返回它，按 before 翻页也不能跳过它。
+func TestListNotificationsUnreadOnly(t *testing.T) {
+	e := newNotifyEnv(t)
+	ctx := context.Background()
+	for i := range 50 {
+		_, err := e.st.Q.InsertNotification(ctx, db.InsertNotificationParams{
+			ID: fmt.Sprintf("N-done-%02d", i), Kind: "done", Title: "t", CreatedAt: int64(1000 + i),
+		})
+		require.NoError(t, err)
+	}
+	_, err := e.st.Q.MarkAllNotificationsRead(ctx, 2000)
+	require.NoError(t, err)
+	_, err = e.st.Q.InsertNotification(ctx, db.InsertNotificationParams{
+		ID: "N-input-old", Kind: "input", Title: "t", CreatedAt: 500,
+	})
+	require.NoError(t, err)
+
+	list := func(q string) apigen.NotificationList {
+		st, body := e.do("GET", "/api/v1/notifications?"+q, nil)
+		require.Equal(t, 200, st, string(body))
+		var l apigen.NotificationList
+		require.NoError(t, json.Unmarshal(body, &l))
+		return l
+	}
+	all := list("limit=50")
+	require.Len(t, all.Notifications, 50)
+	for _, n := range all.Notifications {
+		assert.NotNil(t, n.ReadAt, "不带 unread 的第一页全是已读：%s", n.ID)
+	}
+
+	un := list("limit=50&unread=true")
+	require.Len(t, un.Notifications, 1)
+	assert.Equal(t, "N-input-old", un.Notifications[0].ID)
+	assert.Equal(t, apigen.NotificationKindInput, un.Notifications[0].Kind)
+	assert.Equal(t, 1, un.Unread)
+
+	page := list("limit=1&unread=true&before=1000")
+	require.Len(t, page.Notifications, 1, "按 before 翻页仍能拿到较早的未读")
+	assert.Equal(t, "N-input-old", page.Notifications[0].ID)
+	assert.Empty(t, list("limit=50&unread=true&before=500").Notifications)
 }

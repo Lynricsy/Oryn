@@ -116,7 +116,7 @@ func TestDeliverySuccess(t *testing.T) {
 	assert.EqualValues(t, 1, d.Attempts)
 	require.Len(t, h.requests(), 1)
 
-	list, err := f.s.List(f.ctx, 10, 0)
+	list, err := f.s.List(f.ctx, 10, 0, false)
 	require.NoError(t, err)
 	require.Len(t, list.Notifications, 1)
 	got := list.Notifications[0].Deliveries
@@ -551,7 +551,7 @@ func TestNetworkErrorRedactsChannelURL(t *testing.T) {
 	chRow, err := f.st.Q.GetNotificationChannel(f.ctx, ch.ID)
 	require.NoError(t, err)
 	check("channel.last_error", chRow.LastError)
-	list, err := f.s.List(f.ctx, 10, 0)
+	list, err := f.s.List(f.ctx, 10, 0, false)
 	require.NoError(t, err)
 	check("notification.deliveries[].error", list.Notifications[0].Deliveries[0].Error)
 	chs, err := f.s.ListChannels(f.ctx)

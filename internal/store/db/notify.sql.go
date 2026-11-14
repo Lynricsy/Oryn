@@ -599,16 +599,19 @@ func (q *Queries) ListNotificationChannels(ctx context.Context) ([]NotificationC
 }
 
 const listNotifications = `-- name: ListNotifications :many
-SELECT id, thread_id, kind, title, body, request_id, request, created_at, read_at, resolved_at FROM notifications WHERE created_at < ?1 ORDER BY created_at DESC, id DESC LIMIT ?2
+SELECT id, thread_id, kind, title, body, request_id, request, created_at, read_at, resolved_at FROM notifications
+WHERE created_at < ?1 AND (CAST(?2 AS INTEGER) = 0 OR read_at IS NULL)
+ORDER BY created_at DESC, id DESC LIMIT ?3
 `
 
 type ListNotificationsParams struct {
-	Before int64 `json:"before"`
-	Limit  int64 `json:"limit"`
+	Before     int64 `json:"before"`
+	UnreadOnly int64 `json:"unreadOnly"`
+	Limit      int64 `json:"limit"`
 }
 
 func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, listNotifications, arg.Before, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listNotifications, arg.Before, arg.UnreadOnly, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

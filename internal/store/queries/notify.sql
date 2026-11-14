@@ -81,7 +81,9 @@ ON CONFLICT DO NOTHING;
 SELECT * FROM notifications WHERE id = @id;
 
 -- name: ListNotifications :many
-SELECT * FROM notifications WHERE created_at < @before ORDER BY created_at DESC, id DESC LIMIT @limit;
+SELECT * FROM notifications
+WHERE created_at < @before AND (CAST(@unread_only AS INTEGER) = 0 OR read_at IS NULL)
+ORDER BY created_at DESC, id DESC LIMIT @limit;
 
 -- name: CountUnreadNotifications :one
 SELECT COUNT(*) FROM notifications WHERE read_at IS NULL;

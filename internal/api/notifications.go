@@ -51,7 +51,7 @@ func (s *Server) ListNotifications(w http.ResponseWriter, r *http.Request, param
 	if params.Before != nil {
 		before = *params.Before
 	}
-	list, err := svc.List(r.Context(), limit, before)
+	list, err := svc.List(r.Context(), limit, before, params.Unread != nil && *params.Unread)
 	if err != nil {
 		writeNotifyErr(w, r, err)
 		return

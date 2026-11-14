@@ -190,11 +190,11 @@ func TestUnreadSetSurvivesRestartAndMarkRead(t *testing.T) {
 	f.s.mu.Unlock()
 
 	require.NoError(t, f.s.MarkRead(f.ctx, a))
-	list, err := f.s.List(f.ctx, 0, 0)
+	list, err := f.s.List(f.ctx, 0, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, list.Unread)
 	require.NoError(t, f.s.MarkRead(f.ctx, ""))
-	list, err = f.s.List(f.ctx, 0, 0)
+	list, err = f.s.List(f.ctx, 0, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, list.Unread)
 	assert.Equal(t, []string{a, ""}, f.out.Reads())

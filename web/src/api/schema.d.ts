@@ -7556,6 +7556,11 @@ export interface operations {
                 limit?: number;
                 /** @description 只返回 `createdAt < before` 的通知（翻页游标） */
                 before?: components["schemas"]["TimestampMs"];
+                /**
+                 * @description `true` 只返回未读（`readAt` 为空）的通知。App 补拉被 FCM 丢弃的推送时用它翻页，
+                 *     避免较早的未读通知被一页已读通知挤出窗口。
+                 */
+                unread?: boolean;
             };
             header?: never;
             path?: never;
