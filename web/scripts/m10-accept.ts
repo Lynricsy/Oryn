@@ -1288,7 +1288,7 @@ async function Y16() {
 	const orb = orbOf(tid);
 	const old = Date.now() - 40 * DAY;
 	sql(
-		`insert into orb_samples (orb_id, ts, cpu_pct, mem_bytes) values ('${orb}', ${old}, 1, 1)`,
+		`insert into orb_samples (orb_id, ts, cpu_pct, mem_used_mb, mem_limit_mb, disk_used_mb, net_rx_bytes, net_tx_bytes) values ('${orb}', ${old}, 1, 1, 1, 1, 0, 0)`,
 	);
 	const ins = one<{ n: number }>(
 		`select count(*) n from orb_samples where orb_id='${orb}' and ts=${old}`,
