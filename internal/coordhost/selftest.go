@@ -19,7 +19,10 @@ import (
 // 命名空间起 `coordinator-host --selftest`（HOME 为一次性的 <dir>/selftest-<随机>，结束后删除），
 // 把探测结论、沙箱报告与自检各行（JSON）写到 out。全部通过返回 nil。
 func SelfTest(ctx context.Context, cfg Config, out io.Writer) error {
-	h := New(cfg, nil, nil, nil)
+	return selfTest(ctx, New(cfg, nil, nil, nil), out)
+}
+
+func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 	enc := json.NewEncoder(out)
 	h.probe()
 	probe := map[string]any{"netNamespace": h.useNS, "landlockAbi": h.abi}

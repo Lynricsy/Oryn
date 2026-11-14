@@ -901,3 +901,65 @@ func realOmpTurn(t *testing.T, portMode bool) {
 	}
 	t.Logf("model requests: %v", *paths)
 }
+
+// 没有网络命名空间时出站代理端口落在宿主回环上：被别的进程占着时 Check / Status 立刻报不可用并写明原因，spawn 任务
+// 失败且不拉起子进程（不再走「子进程启动即退出 → 崩溃 3 次 → 连接超时」）；端口释放后照常启动，自己的子进程占着
+// 端口时仍是可用。
+func TestEgressPortBusyWithoutNetns(t *testing.T) {
+	requireSandbox(t)
+	if abi, _ := sandbox.Probe(); abi < 4 {
+		t.Skipf("landlock abi %d < 4：没有命名空间时端口限制不可用", abi)
+	}
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := busy.Addr().(*net.TCPAddr).Port
+	e := newEnv(t, func(c *Config) { c.EgressPort = port }, func(h *Host) { h.noNS = true })
+	want := fmt.Sprintf("出站代理端口 127.0.0.1:%d 已被占用（无网络命名空间时绑定在宿主回环上），在 coordinator.egress_port 换一个端口", port)
+
+	err = e.h.Check(context.Background())
+	var he *Error
+	require.ErrorAs(t, err, &he)
+	assert.Equal(t, CodeUnavailable, he.Code)
+	assert.Equal(t, want, he.Message)
+	st := e.h.Status(context.Background())
+	assert.False(t, st.Available)
+	require.NotNil(t, st.Reason)
+	assert.Equal(t, want, *st.Reason)
+
+	j := e.runJob("spawn", map[string]any{})
+	assert.Equal(t, "failed", j.State)
+	require.NotNil(t, j.Error)
+	assert.Contains(t, *j.Error, want)
+	assert.Nil(t, e.child(), "端口被占时不启动子进程")
+	assert.Empty(t, e.f.hellos)
+
+	require.NoError(t, busy.Close())
+	require.NoError(t, e.h.Check(context.Background()))
+	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
+	e.hello()
+	assert.NoError(t, e.h.Check(context.Background()), "自己的子进程占着端口不算冲突")
+	assert.True(t, e.h.Status(context.Background()).Available)
+}
+
+// `orynd coordinator check`（SelfTest）在没有网络命名空间且代理端口被占时报同一条原因，不起沙箱子进程。
+func TestSelfTestEgressPortBusy(t *testing.T) {
+	requireSandbox(t)
+	if abi, _ := sandbox.Probe(); abi < 4 {
+		t.Skipf("landlock abi %d < 4：没有命名空间时端口限制不可用", abi)
+	}
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer busy.Close()
+	port := busy.Addr().(*net.TCPAddr).Port
+	h := New(Config{Dir: hostDir(t), OmpPath: fakeompBin, User: "nobody", EgressPort: port,
+		Command: []string{testBin, "coordinator-host"}}, nil, nil, nil)
+	h.noNS = true
+	var out bytes.Buffer
+	err = selfTest(context.Background(), h, &out)
+	want := fmt.Sprintf("出站代理端口 127.0.0.1:%d 已被占用", port)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), want)
+	assert.Contains(t, out.String(), `"available":false`)
+	assert.Contains(t, out.String(), want)
+	assert.NotContains(t, out.String(), `"sandbox"`, "没有起沙箱子进程")
+}

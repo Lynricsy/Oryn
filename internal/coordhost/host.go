@@ -290,6 +290,11 @@ func (h *Host) Check(_ context.Context) error {
 	if !h.useNS && h.abi < 4 {
 		return unavailable("network isolation unavailable: cannot create a network namespace and landlock abi %d < 4 (kernel >= 6.7 required)", h.abi)
 	}
+	if !h.useNS {
+		if err := h.egressPortFree(); err != nil {
+			return err
+		}
+	}
 	if os.Geteuid() == 0 {
 		if _, _, err := h.target(); err != nil {
 			return unavailable("%v", err)
@@ -363,6 +368,27 @@ func reachable(dir, who string) error {
 			return nil
 		}
 	}
+}
+
+// egressPortFree 在没有网络命名空间时试绑定出站代理端口：子进程的代理监听在宿主回环上，端口被别的进程占着时子进程
+// 一启动就会退出，所以在启动前快速失败并写明原因。端口不自动更换（它同时写进 omp 的配置与沙箱的连接白名单）。
+// 自己的子进程正在运行时端口本就被它占着，不检查。
+func (h *Host) egressPortFree() error {
+	h.mu.Lock()
+	for _, c := range h.children {
+		if c.alive() {
+			h.mu.Unlock()
+			return nil
+		}
+	}
+	h.mu.Unlock()
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(h.cfg.EgressPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return unavailable("出站代理端口 %s 已被占用（无网络命名空间时绑定在宿主回环上），在 coordinator.egress_port 换一个端口", addr)
+	}
+	_ = ln.Close()
+	return nil
 }
 
 // Status 是 GET /api/v1/coordinator 的内容。

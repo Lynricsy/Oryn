@@ -264,6 +264,8 @@ coordinator:
 
 `deploy/systemd/orynd.service` 不用改：`<data_dir>/coordinator` 在 `ReadWritePaths` 之内，单元没有限制命名空间与系统调用。**如果你自己给单元加了 `RestrictNamespaces=`，协调宿主会退到「按端口限制」模式**；加了 `SystemCallFilter=` 且挡掉了 `landlock_*` 或 `seccomp`，协调功能会不可用。
 
+**代理端口**：有网络命名空间时 `egress_port` 在命名空间里，与宿主上的端口互不相干。没有命名空间（「按端口限制」模式）时它直接绑定在宿主的 `127.0.0.1` 上，必须是宿主上没人用的端口；被占用时协调功能立即不可用，`GET /api/v1/coordinator` 与助手页给出原因「出站代理端口 127.0.0.1:<port> 已被占用…」，`coordinator check` 也报同一条，此时在 `coordinator.egress_port` 换一个端口后重启 orynd（不会自动换：端口同时写进 omp 的配置与沙箱的连接白名单）。在这种模式下，orynd 运行着协调宿主时再跑 `coordinator check`，端口正被它自己占着，同样会报这一条，先停 orynd 再检查。
+
 root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去的地方（容器里挂一个卷），`data_dir` 保持 0700；容器里要有 `nobody` 用户。
 
 ### 残余风险
@@ -281,7 +283,7 @@ sudo -u oryn orynd --config /etc/oryn/orynd.yaml coordinator check   # root 部�
 
 它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性，再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443` 与 `127.0.0.1:1`，建 UDP / unix / netlink / MPTCP 套接字，`unshare`、`mount`、`ptrace`、`clone3`）与**必须成功**的（home 内写文件并跨目录改名、`omp --version`、监听并自连代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。
 
-宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/home`，下一条消息时接着同一个会话。子进程意外退出时 orynd 会把协调 orb 停下再唤醒；5 分钟内连续 3 次意外退出后停在 `stopped`，等下一条消息再试。
+宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/home`，下一条消息时接着同一个会话。子进程意外退出时，若协调 orb 已就绪，orynd 会把它停下再唤醒；若还在启动（尚未就绪），就原地重新拉起子进程。5 分钟内连续 3 次意外退出后不再拉起：已就绪的停在 `stopped` 等下一条消息再试，启动中的由连接超时转为 `failed`。
 
 ### 升级
 
