@@ -1603,15 +1603,16 @@ async function D14() {
 			`latest.json 平台键 ${keys.join(",")}`,
 		);
 	}
-	if (info.isPrerelease) {
-		const ch = sh("gh release download desktop-updater -p latest.json -O -");
-		const v =
-			ch.code === 0
-				? (JSON.parse(ch.stdout) as { version: string }).version
-				: "（无更新通道）";
-		const tagVer = TAG.replace(/^desktop-v/, "");
-		check(v !== tagVer, `预发布没有改动 desktop-updater（通道版本 ${v}）`);
-	}
+	// 更新通道只由 publish 的「刷新更新通道」步骤改写：预发布时它必须被跳过，正式发布时必须执行成功。
+	// 不拿通道版本和 tag 比较：Cargo 版本只写 x.y.z、rc 后缀只在 tag 上，误发布的 0.1.0 与 0.1.0-rc.1 永远不相等。
+	const step = jobs
+		.find((x) => x.name === "publish")
+		?.steps.find((s) => s.name === "刷新更新通道 desktop-updater");
+	const want = info.isPrerelease ? "skipped" : "success";
+	check(
+		step?.conclusion === want,
+		`「刷新更新通道」步骤 ${step?.conclusion ?? "（未找到）"}，${info.isPrerelease ? "预发布" : "正式发布"}应为 ${want}`,
+	);
 }
 
 async function D15() {
