@@ -153,6 +153,10 @@ func TestNotificationsAPI(t *testing.T) {
 	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"endpoint": "http://push.example/x", "keys": in["keys"]})
 	assert.Equal(t, 400, st)
 	assert.Equal(t, "push_invalid", errCode(body))
+	// 服务器未配置 FCM：409 fcm_unavailable
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token"})
+	assert.Equal(t, 409, st)
+	assert.Equal(t, "fcm_unavailable", errCode(body))
 
 	st, body = e.do("GET", "/api/v1/push/subscriptions", nil)
 	require.Equal(t, 200, st)

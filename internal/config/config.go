@@ -50,6 +50,17 @@ type OrbDefaults struct {
 	Type     string `yaml:"type"`
 }
 
+// FCM 是 Firebase Cloud Messaging 发送参数（M7，Android `gms` 包的推送回退通道）。
+type FCM struct {
+	// ServiceAccountSecret 是密钥库里存服务账号 JSON 的密钥名（须为 proxy 模式）；空 = 关闭 FCM。
+	ServiceAccountSecret string `yaml:"service_account_secret"`
+}
+
+// Push 是推送通道配置。
+type Push struct {
+	FCM FCM `yaml:"fcm"`
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -59,6 +70,7 @@ type Orynd struct {
 	LogLevel     string      `yaml:"log_level"`
 	Idle         Idle        `yaml:"idle"`
 	OrbDefaults  OrbDefaults `yaml:"orb_defaults"`
+	Push         Push        `yaml:"push"`
 }
 
 // DefaultOrynd 返回带默认值的配置。
@@ -120,8 +132,14 @@ func (c Orynd) Validate() error {
 	if c.Idle.AgentIdle <= 0 || c.Idle.UserIdle <= 0 || c.Idle.StopAfterFrozen <= 0 {
 		errs = append(errs, errors.New("idle 的各项时长必须为正"))
 	}
+	if s := c.Push.FCM.ServiceAccountSecret; s != "" && !secretNameRe.MatchString(s) {
+		errs = append(errs, fmt.Errorf("push.fcm.service_account_secret %q 不是合法的密钥名", s))
+	}
 	return errors.Join(errs...)
 }
+
+// secretNameRe 与密钥库的 proxy 模式密钥名规则一致（internal/secrets.ValidName）。
+var secretNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$`)
 
 // portalDomainRe 是 portal_domain 允许的形态：小写主机名，不带端口与尾点。
 var portalDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)

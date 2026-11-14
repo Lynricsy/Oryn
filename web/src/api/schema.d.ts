@@ -1599,9 +1599,12 @@ export interface paths {
         get: operations["listPushSubscriptions"];
         put?: never;
         /**
-         * 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
-         * @description `endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
+         * 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+         * @description `kind` 缺省为 `webpush`：`endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
          *     `keys.auth` 解码后须为 16 字节，否则 400 `push_invalid`。
+         *     `kind: fcm`：须带 `token`（FCM 注册令牌，不得带 `endpoint` / `keys`），否则 400 `push_invalid`；
+         *     服务器未配置 FCM（`orynd.yaml` 的 `push.fcm.service_account_secret` 为空或该密钥不存在）时 409 `fcm_unavailable`。
+         *     返回的订阅 `endpoint` 即该令牌。
          */
         post: operations["createPushSubscription"];
         delete?: never;
@@ -3046,7 +3049,7 @@ export interface components {
             publicKey: string;
         };
         /**
-         * @description `apns` / `fcm` 为 M7 预留
+         * @description `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
          * @enum {string}
          */
         PushSubscriptionKind: "webpush" | "apns" | "fcm";
@@ -3068,10 +3071,21 @@ export interface components {
             /** @description base64url，解码后 16 字节 */
             auth: string;
         };
-        /** @description 浏览器 `PushSubscription.toJSON()` 的子集 */
+        /**
+         * @description 两种形态，按 `kind` 区分（缺省 `webpush`）：
+         *     - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
+         *     - `fcm`：只带 `token`（Android `gms` 包的 FCM 注册令牌）。
+         */
         PushSubscriptionInput: {
-            endpoint: string;
-            keys: components["schemas"]["PushSubscriptionKeys"];
+            /**
+             * @default webpush
+             * @enum {string}
+             */
+            kind: "webpush" | "fcm";
+            endpoint?: string;
+            keys?: components["schemas"]["PushSubscriptionKeys"];
+            /** @description FCM 注册令牌（`kind: fcm` 时必填） */
+            token?: string;
         };
         OrbSyncPrepareRequest: {
             /** @description 仓库所在目录（同 `GitRootQuery` 的路径规则）；缺省 = orb 当前工作目录 */

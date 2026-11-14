@@ -61,6 +61,8 @@ type Config struct {
 	PollHTTP *http.Client
 	// DoneDelay / InputDelay 是去抖时长（默认 3s / 2s）。
 	DoneDelay, InputDelay time.Duration
+	// FCM 是 FCM 发送参数；FCM.Secret 为空 = 关闭 FCM（不登记、不投递 fcm 订阅）。
+	FCM FCMConfig
 }
 
 const (
@@ -108,6 +110,8 @@ type Service struct {
 	// senders / pushSenders 是发送方注册表：渠道 kind → 构造器；订阅 kind → 构造器（M7 在此注册 apns / fcm）。
 	senders     map[string]func(ch db.NotificationChannel, cfg []byte) (Sender, error)
 	pushSenders map[string]func(sub db.PushSubscription) Sender
+	// fcm 缓存 FCM 的 access token。
+	fcm fcmTokenCache
 
 	mu sync.Mutex
 	// timers 是线程 → 该线程的去抖定时器（按 kind / 请求区分）。
@@ -186,6 +190,9 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 	if cfg.Box == nil {
 		return nil, errors.New("notify: Config.Box is required")
 	}
+	if cfg.FCM.Secret != "" && cfg.FCM.Secrets == nil {
+		return nil, errors.New("notify: Config.FCM.Secrets is required when FCM.Secret is set")
+	}
 	keys, err := webpush.LoadOrCreateKeys(cfg.DataDir)
 	if err != nil {
 		return nil, err
@@ -199,6 +206,12 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 		pollers:     map[string]*poller{},
 	}
 	s.registerSenders()
+	if s.fcmEnabled() {
+		// 只提示不阻止启动：密钥可以在启动后再用 `oryn secrets set` 写入
+		if _, err := s.fcmAccount(context.Background()); err != nil {
+			slog.Warn("notify: FCM 已配置但服务账号不可用", "secret", cfg.FCM.Secret, "err", err)
+		}
+	}
 	if err := s.loadUnread(context.Background()); err != nil {
 		return nil, err
 	}

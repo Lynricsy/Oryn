@@ -36,3 +36,23 @@ func TestValidatePortalDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateFCMSecretName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"":                    true, // 未配置 = 关闭 FCM
+		"fcm/service-account": true,
+		"FCM_SA.json":         true,
+		"/fcm":                false,
+		"fcm sa":              false,
+		"fcm\n":               false,
+	} {
+		cfg := DefaultOrynd()
+		cfg.PublicURL = "https://oryn.example.com"
+		cfg.Push.FCM.ServiceAccountSecret = name
+		if ok {
+			assert.NoError(t, cfg.Validate(), "%q", name)
+		} else {
+			assert.Error(t, cfg.Validate(), "%q", name)
+		}
+	}
+}

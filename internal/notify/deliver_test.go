@@ -411,10 +411,10 @@ func TestWebPushSender(t *testing.T) {
 	defer srv.Close()
 	c, err := webpushtest.NewClient(srv.URL + "/push/abc")
 	require.NoError(t, err)
-	sub, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: c.Sub.Endpoint, Keys: apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{}, "Mozilla/5.0 Test")
+	sub, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: new(c.Sub.Endpoint), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{}, "Mozilla/5.0 Test")
 	require.NoError(t, err)
 	assert.Equal(t, apigen.PushSubscriptionKindWebpush, sub.Kind)
-	again, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: c.Sub.Endpoint, Keys: apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{}, "UA2")
+	again, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: new(c.Sub.Endpoint), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{}, "UA2")
 	require.NoError(t, err)
 	assert.Equal(t, sub.ID, again.ID, "按 endpoint upsert")
 
@@ -462,11 +462,15 @@ func TestPushSubscriptionValidation(t *testing.T) {
 	require.NoError(t, err)
 	keys := apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}
 	bad := []apigen.PushSubscriptionInput{
-		{Endpoint: "http://push.example/x", Keys: keys},
-		{Endpoint: "ftp://push.example/x", Keys: keys},
-		{Endpoint: "/relative", Keys: keys},
-		{Endpoint: "https://push.example/x", Keys: apigen.PushSubscriptionKeys{P256Dh: "AAAA", Auth: c.Sub.Auth}},
-		{Endpoint: "https://push.example/x", Keys: apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: "AAAA"}},
+		{Endpoint: new("http://push.example/x"), Keys: &keys},
+		{Endpoint: new("ftp://push.example/x"), Keys: &keys},
+		{Endpoint: new("/relative"), Keys: &keys},
+		{Endpoint: new("https://push.example/x"), Keys: &apigen.PushSubscriptionKeys{P256Dh: "AAAA", Auth: c.Sub.Auth}},
+		{Endpoint: new("https://push.example/x"), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: "AAAA"}},
+		{Endpoint: new("https://push.example/x")},
+		{Keys: &keys},
+		{Endpoint: new("https://push.example/x"), Keys: &keys, Token: new("tok")},
+		{Kind: new(apigen.PushSubscriptionInputKind("apns")), Endpoint: new("https://push.example/x"), Keys: &keys},
 	}
 	for i, in := range bad {
 		_, err := f.s.CreatePushSubscription(f.ctx, in, Owner{}, "")
@@ -475,7 +479,7 @@ func TestPushSubscriptionValidation(t *testing.T) {
 		assert.Equal(t, "push_invalid", e.Code)
 	}
 	for _, ep := range []string{"https://push.example/x", "http://127.0.0.1:9/x", "http://localhost:9/y"} {
-		_, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: ep, Keys: keys}, Owner{}, "")
+		_, err := f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: new(ep), Keys: &keys}, Owner{}, "")
 		require.NoError(t, err, ep)
 	}
 	subs, err := f.s.ListPushSubscriptions(f.ctx)
@@ -499,7 +503,7 @@ func TestWebPushRetrySkipsRevokedDevice(t *testing.T) {
 	require.NoError(t, err)
 	dev := ids.New("dev")
 	require.NoError(t, f.st.Q.CreateDevice(f.ctx, db.CreateDeviceParams{ID: dev, Name: "phone", Kind: "mobile", Platform: "ios", TokenHash: ids.Hash(dev), CreatedAt: 1}))
-	_, err = f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: c.Sub.Endpoint, Keys: apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{DeviceID: &dev}, "UA")
+	_, err = f.s.CreatePushSubscription(f.ctx, apigen.PushSubscriptionInput{Endpoint: new(c.Sub.Endpoint), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}}, Owner{DeviceID: &dev}, "UA")
 	require.NoError(t, err)
 
 	d := f.onlyDelivery(f.thread("私密标题"))

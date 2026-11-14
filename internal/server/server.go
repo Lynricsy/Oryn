@@ -119,6 +119,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
 	s.Notify, err = notify.New(notify.Config{
 		PublicURL: cfg.PublicURL, DataDir: cfg.DataDir, Box: box, DoneDelay: notifyDoneDelay, InputDelay: notifyInputDelay,
+		FCM: notify.FCMConfig{Secret: cfg.Push.FCM.ServiceAccountSecret, Secrets: s.Vault},
 	}, s.Store, s.Threads, s.Hub)
 	if err != nil {
 		return err

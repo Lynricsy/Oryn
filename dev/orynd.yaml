@@ -4,3 +4,6 @@ portal_domain: "localhost"   # portal 形如 http://t-<短码>-p<端口>.localho
 data_dir: "./.dev/data"
 log_level: "debug"
 idle: { agent_idle: "30s", user_idle: "30s", stop_after_frozen: "24h", wake_on_focus: true }
+# FCM（M7，Android gms 包）：服务账号 JSON 存在密钥库里——./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json
+# 密钥不存在时只打印警告，FCM 订阅返回 409 fcm_unavailable，UnifiedPush 不受影响
+push: { fcm: { service_account_secret: "fcm/service-account" } }

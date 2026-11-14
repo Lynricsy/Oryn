@@ -73,6 +73,9 @@ func (s *Service) registerSenders() {
 	s.pushSenders = map[string]func(db.PushSubscription) Sender{
 		"webpush": s.webpushSender,
 	}
+	if s.fcmEnabled() {
+		s.pushSenders["fcm"] = s.fcmSender
+	}
 }
 
 func (s *Service) deliverLoop(ctx context.Context) {

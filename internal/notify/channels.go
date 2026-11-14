@@ -100,10 +100,22 @@ func errPushInvalid(msg string) error {
 	return &Error{Status: http.StatusBadRequest, Code: "push_invalid", Message: msg}
 }
 
-// CreatePushSubscription 按 endpoint upsert 一条 Web Push 订阅。端点须是 https（回环主机允许 http）；
-// p256dh 须是 65 字节未压缩点，auth 须是 16 字节。
+// CreatePushSubscription 登记推送订阅：`kind: fcm` 见 createFCMSubscription；其余按 endpoint upsert 一条 Web Push 订阅。
+// 端点须是 https（回环主机允许 http）；p256dh 须是 65 字节未压缩点，auth 须是 16 字节。
 func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubscriptionInput, owner Owner, userAgent string) (apigen.PushSubscription, error) {
-	u, err := url.Parse(in.Endpoint)
+	if in.Kind != nil && *in.Kind == apigen.PushSubscriptionInputKindFcm {
+		return s.createFCMSubscription(ctx, in, owner, userAgent)
+	}
+	if in.Kind != nil && !in.Kind.Valid() {
+		return apigen.PushSubscription{}, errPushInvalid("unknown kind")
+	}
+	if in.Token != nil {
+		return apigen.PushSubscription{}, errPushInvalid("token is only valid with kind fcm")
+	}
+	if in.Endpoint == nil || in.Keys == nil {
+		return apigen.PushSubscription{}, errPushInvalid("endpoint and keys are required")
+	}
+	u, err := url.Parse(*in.Endpoint)
 	if err != nil || u.Host == "" {
 		return apigen.PushSubscription{}, errPushInvalid("endpoint must be an absolute URL")
 	}
@@ -128,7 +140,7 @@ func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubs
 	}
 	enc := base64.RawURLEncoding.EncodeToString
 	row, err := s.st.Q.UpsertPushSubscription(ctx, db.UpsertPushSubscriptionParams{
-		ID: ids.New("psub"), Kind: "webpush", Endpoint: in.Endpoint, P256dh: enc(p), Auth: enc(a),
+		ID: ids.New("psub"), Kind: "webpush", Endpoint: *in.Endpoint, P256dh: enc(p), Auth: enc(a),
 		WebSessionHash: owner.WebSessionHash, DeviceID: owner.DeviceID, UserAgent: truncate(userAgent, 300), CreatedAt: s.now(),
 	})
 	if err != nil {

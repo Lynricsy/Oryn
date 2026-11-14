@@ -826,6 +826,24 @@ func (e ProviderDriver) Valid() bool {
 	}
 }
 
+// Defines values for PushSubscriptionInputKind.
+const (
+	PushSubscriptionInputKindFcm     PushSubscriptionInputKind = "fcm"
+	PushSubscriptionInputKindWebpush PushSubscriptionInputKind = "webpush"
+)
+
+// Valid indicates whether the value is a known member of the PushSubscriptionInputKind enum.
+func (e PushSubscriptionInputKind) Valid() bool {
+	switch e {
+	case PushSubscriptionInputKindFcm:
+		return true
+	case PushSubscriptionInputKindWebpush:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PushSubscriptionKind.
 const (
 	PushSubscriptionKindApns    PushSubscriptionKind = "apns"
@@ -3518,7 +3536,7 @@ type PushSubscription struct {
 	// ID `psub_<ulid>`
 	ID PushSubscriptionID `json:"id"`
 
-	// Kind `apns` / `fcm` 为 M7 预留
+	// Kind `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
 	Kind      PushSubscriptionKind `json:"kind"`
 	LastError *string              `json:"lastError,omitempty"`
 
@@ -3530,11 +3548,20 @@ type PushSubscription struct {
 // PushSubscriptionID `psub_<ulid>`
 type PushSubscriptionID = string
 
-// PushSubscriptionInput 浏览器 `PushSubscription.toJSON()` 的子集
+// PushSubscriptionInput 两种形态，按 `kind` 区分（缺省 `webpush`）：
+// - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
+// - `fcm`：只带 `token`（Android `gms` 包的 FCM 注册令牌）。
 type PushSubscriptionInput struct {
-	Endpoint string               `json:"endpoint"`
-	Keys     PushSubscriptionKeys `json:"keys"`
+	Endpoint *string                    `json:"endpoint,omitempty"`
+	Keys     *PushSubscriptionKeys      `json:"keys,omitempty"`
+	Kind     *PushSubscriptionInputKind `json:"kind,omitempty"`
+
+	// Token FCM 注册令牌（`kind: fcm` 时必填）
+	Token *string `json:"token,omitempty"`
 }
+
+// PushSubscriptionInputKind defines model for PushSubscriptionInput.Kind.
+type PushSubscriptionInputKind string
 
 // PushSubscriptionKeys defines model for PushSubscriptionKeys.
 type PushSubscriptionKeys struct {
@@ -3545,7 +3572,7 @@ type PushSubscriptionKeys struct {
 	P256Dh string `json:"p256dh"`
 }
 
-// PushSubscriptionKind `apns` / `fcm` 为 M7 预留
+// PushSubscriptionKind `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
 type PushSubscriptionKind string
 
 // PushSubscriptionList defines model for PushSubscriptionList.
@@ -6619,7 +6646,7 @@ type ServerInterface interface {
 	// ListPushSubscriptions 推送订阅（所有浏览器 / 设备）
 	// (GET /api/v1/push/subscriptions)
 	ListPushSubscriptions(w http.ResponseWriter, r *http.Request)
-	// CreatePushSubscription 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+	// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
 	// (POST /api/v1/push/subscriptions)
 	CreatePushSubscription(w http.ResponseWriter, r *http.Request)
 	// DeletePushSubscription 删除推送订阅
@@ -7183,7 +7210,7 @@ func (_ Unimplemented) ListPushSubscriptions(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// CreatePushSubscription 登记 Web Push 订阅（按 `endpoint` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
 // (POST /api/v1/push/subscriptions)
 func (_ Unimplemented) CreatePushSubscription(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
