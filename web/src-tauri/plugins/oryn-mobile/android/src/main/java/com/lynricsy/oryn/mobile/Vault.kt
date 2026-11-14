@@ -55,6 +55,27 @@ object Vault {
     prefs(context).edit().remove(prefKey(server)).commit()
   }
 
+  /** 用同一把 Keystore 密钥加密任意字节（FCM 接收端私钥用）：`iv(12) + 密文`。 */
+  @Synchronized
+  fun seal(plain: ByteArray): ByteArray {
+    val cipher = Cipher.getInstance(TRANSFORM)
+    cipher.init(Cipher.ENCRYPT_MODE, key())
+    val iv = cipher.iv
+    check(iv.size == IV_LEN) { "unexpected iv length ${iv.size}" }
+    return iv + cipher.doFinal(plain)
+  }
+
+  /** [seal] 的逆；解不开返回 null。 */
+  @Synchronized
+  fun open(sealed: ByteArray): ByteArray? = try {
+    require(sealed.size > IV_LEN)
+    val cipher = Cipher.getInstance(TRANSFORM)
+    cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, sealed, 0, IV_LEN))
+    cipher.doFinal(sealed, IV_LEN, sealed.size - IV_LEN)
+  } catch (_: Exception) {
+    null
+  }
+
   private fun prefKey(server: String) = "token:$server"
 
   private fun prefs(context: Context) =

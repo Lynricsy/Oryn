@@ -307,7 +307,8 @@ async function bootDevice(): Promise<string> {
 		() =>
 			sh(`${q(ADB)} -s ${serial} shell getprop sys.boot_completed`).stdout ===
 			"1",
-		300_000,
+		// 快照失效时是从零冷启动（swiftshader 下要 5–8 分钟）
+		600_000,
 		2000,
 	);
 	return serial;
@@ -1770,6 +1771,162 @@ scenario("A16", async () => {
 		1000,
 	);
 	check(size === body.length, `/sdcard/Download/${name} 大小 ${size}`);
+	// 代码审查第 3 条：再下载同一个附件 → 另起「名字 (1).txt」，不覆盖、不失败
+	const dup = name.replace(/\.txt$/, " (1).txt");
+	const dupAfter = mark();
+	await p.evaluate(() =>
+		(document.getElementById("m7-dl") as HTMLElement).click(),
+	);
+	await ev("download.enqueued", {
+		after: dupAfter,
+		where: (e) => e.name === dup,
+	});
+	await ev("download.done", {
+		after: dupAfter,
+		where: (e) => e.name === dup,
+		timeoutMs: 20_000,
+	});
+	const dupSize = Number(ash(`stat -c %s "/sdcard/Download/${dup}"`).stdout);
+	check(dupSize === body.length, `/sdcard/Download/${dup} 大小 ${dupSize}`);
+	check(
+		since(dupAfter, "download.failed").length === 0,
+		"同名下载没有 download.failed",
+	);
+});
+
+/** A24 用：在当前线程页下载一个新附件，等它落到公共下载目录。 */
+async function downloadOnce(T: string, name: string) {
+	const p = await page();
+	const body = te.encode(`m7 download ${RUN} ${name}\n`);
+	const up = await api(
+		"POST",
+		`/api/v1/attachments?name=${encodeURIComponent(name)}&threadId=${T}`,
+		body,
+	);
+	if (up.status >= 300) throw new Error(`上传附件失败 ${up.status} ${up.text}`);
+	const attId = (up.json as { id: string }).id;
+	const after = mark();
+	await p.evaluate((u) => {
+		const a = document.createElement("a");
+		a.href = u;
+		a.textContent = "m7 下载";
+		document.querySelector("[data-testid=transcript]")?.prepend(a);
+		a.click();
+	}, `/api/v1/attachments/${attId}/content`);
+	await ev("download.enqueued", { after, where: (e) => e.name === name });
+	const size = await waitFor(
+		`下载完成 ${name}`,
+		() =>
+			Number(ash(`stat -c %s /sdcard/Download/${name}`).stdout) || undefined,
+		20_000,
+		1000,
+	);
+	check(size === body.length, `/sdcard/Download/${name} 大小 ${size}`);
+}
+
+/** 旋转一次再转回：新绑定的 inset 监听要报出 `insets` 事件。 */
+async function rotateForInsets() {
+	const after = mark();
+	ash("settings put system accelerometer_rotation 0");
+	ash("settings put system user_rotation 1");
+	await ev("insets", { after, timeoutMs: 15_000 });
+	const back = mark();
+	ash("settings put system user_rotation 0");
+	await ev("insets", { after: back, timeoutMs: 15_000 });
+}
+
+/** 开发者选项「不保留活动」：`settings put` 不会通知 ActivityManager，只能点设置里的开关。 */
+async function setDontKeepActivities(on: boolean) {
+	const cur = ash("settings get global always_finish_activities").stdout.trim();
+	if ((cur === "1") === on) return;
+	ash("settings put global development_settings_enabled 1");
+	ash("am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS");
+	const re = /^(Don.t keep activities|不保留活动)$/;
+	// 设置页会记住上次的滚动位置：条目要完整落在屏幕中段才点（贴底时 bounds 可能是空矩形）
+	const tappable = (n: UiNode) =>
+		re.test(n.text) && n.bounds[3] > n.bounds[1] + 10 && n.bounds[1] > 300;
+	for (let i = 0; i < 40; i++) {
+		const n = uiDump().find((x) => re.test(x.text));
+		if (n && tappable(n) && n.bounds[3] < 2100) break;
+		if (n && n.bounds[1] <= 300) ash("input swipe 540 900 540 1300 300");
+		else ash("input swipe 540 1800 540 1200 300");
+	}
+	await uiTap("不保留活动", (n) => tappable(n) && n.bounds[3] < 2100);
+	await waitFor(
+		`always_finish_activities = ${on ? 1 : 0}`,
+		() =>
+			ash("settings get global always_finish_activities").stdout.trim() ===
+			(on ? "1" : "0"),
+		10_000,
+		500,
+	);
+	ash("input keyevent 3");
+}
+
+scenario("A24", async () => {
+	await ensurePaired();
+	const T = await ensureThread();
+	launch();
+	await goto(`/t/${T}`);
+
+	// 1) 同进程 Activity 重建（字体大小不在 configChanges 里）：插件改绑新 WebView、连接页恢复会话回到原线程
+	note("字体大小 1.0 → 1.3");
+	let after = mark();
+	const pid = pidof();
+	ash("settings put system font_scale 1.3");
+	try {
+		await ev("plugin.rebound", { after, timeoutMs: 20_000 });
+		const re = await ev("webview.recreated", { after });
+		check(re.path === `/t/${T}`, `webview.recreated.path = ${String(re.path)}`);
+		await ev("session.restore", { after, timeoutMs: 20_000 });
+		await ev("web.ready", { after, timeoutMs: 60_000 });
+		check(pidof() === pid, "同一进程（不是冷启动）");
+		await detachCdp();
+		await waitFor(
+			"恢复到原线程",
+			async () => (await domPath()) === `/t/${T}`,
+			15_000,
+		);
+		await rotateForInsets();
+		await downloadOnce(T, `m7-dl-recreate-${RUN}.txt`);
+	} finally {
+		after = mark();
+		ash("settings put system font_scale 1.0");
+		await ev("web.ready", { after, timeoutMs: 60_000 }).catch(() => null);
+		await detachCdp();
+	}
+
+	// 2) 不保留活动：退到后台时 Activity 被销毁（Tauri 的唯一窗口销毁后事件循环退出，进程随之结束），回来是冷启动
+	await setDontKeepActivities(true);
+	try {
+		ash(`am force-stop ${PKG}`);
+		after = mark();
+		launch();
+		await ev("web.ready", { after, timeoutMs: 60_000 });
+		await goto(`/t/${T}`);
+		after = mark();
+		ash("input keyevent 3");
+		await ev("lifecycle", { after, where: (e) => e.state === "stop" });
+		after = mark();
+		launch();
+		await ev("web.ready", { after, timeoutMs: 60_000 });
+		await detachCdp();
+		check(
+			(await domPath()).startsWith("/"),
+			`回来后在远程页面 ${await domPath()}`,
+		);
+		check(
+			since(after, "launcher.ready").length <= 1 &&
+				since(after, "pair.started").length === 0,
+			"没有重新配对",
+		);
+		await goto(`/t/${T}`);
+		await rotateForInsets();
+		await downloadOnce(T, `m7-dl-dka-${RUN}.txt`);
+	} finally {
+		await setDontKeepActivities(false);
+		ash("settings put system user_rotation 0");
+	}
 });
 
 scenario("A17", async () => {
@@ -1968,12 +2125,21 @@ scenario("A22", async () => {
 		after,
 		where: (e) => e.source === "deeplink" && e.server === ORIGIN,
 	});
+	// 安全审查第 1 条：深链接只预填，显示主机名，用户点「连接」前不发起任何连接
+	const p = await page();
+	await p.waitForSelector("[data-testid=launcher-confirm-host]", {
+		timeout: 15_000,
+	});
+	const host = await p.textContent("[data-testid=launcher-confirm-host]");
+	check(host === new URL(ORIGIN).host, `确认卡片显示主机名 ${host}`);
+	await sleep(3000);
+	check(since(after, "pair.started").length === 0, "确认前没有 pair.started");
+	await p.click("[data-testid=launcher-confirm-connect]");
 	const started = await ev("pair.started", {
 		after,
 		where: (e) => e.server === ORIGIN,
 		timeoutMs: 30_000,
 	});
-	const p = await page();
 	const code = await p.textContent("[data-testid=launcher-code]");
 	check(
 		(code ?? "").replace(/\s/g, "").includes(String(started.code)),
@@ -2015,9 +2181,23 @@ scenario("A22", async () => {
 scenario("A23", async () => {
 	if (!existsSync(GMS_APK))
 		throw new Error(`没有 gms debug APK：${GMS_APK}（M7_GMS_APK）`);
+	// 安全审查第 2 条：FCM 订阅必须带 RFC 8291 密钥（RFC 8291 附录 A 的接收端公钥与 auth 作探测值）
+	const bare = await api("POST", "/api/v1/push/subscriptions", {
+		kind: "fcm",
+		token: `m7-probe-bare-${RUN}`,
+	});
+	check(
+		bare.status === 400 || bare.status === 409,
+		`不带 keys 的 FCM 订阅被拒（${bare.status}）`,
+	);
 	const probe = await api("POST", "/api/v1/push/subscriptions", {
 		kind: "fcm",
 		token: `m7-probe-${RUN}`,
+		keys: {
+			p256dh:
+				"BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+			auth: "BTBZMqHH6r4Tts7J_aSIgg",
+		},
 	});
 	if (probe.status === 409)
 		throw new Error(

@@ -31,7 +31,7 @@ apksigner verify --print-certs Oryn_<版本>_android-foss.apk | grep 'SHA-256'
 
 ## 首次运行与配对
 
-1. 在连接页填服务器地址（如 `oryn.example.com`，不写协议按 `https://`），或点「扫码」扫网页「设置 → 设备」里的二维码（内容是 `oryn://pair?server=<服务器>`；用系统相机扫也会直接打开 App 并填好地址）。扫码只省去手输地址，批准仍要输配对码。
+1. 在连接页填服务器地址（如 `oryn.example.com`，不写协议按 `https://`），或点「扫码」扫网页「设置 → 设备」里的二维码（内容是 `oryn://pair?server=<服务器>`；用系统相机扫也会打开 App）。扫码与链接**只预填**：连接页显示「连接到这台服务器？」和大字主机名，点「连接」才发起配对（链接谁都能发，恶意服务器可以直接批准配对，所以必须由你看清地址后确认）。批准仍要输配对码。
 2. 连接页显示配对码（如 `ABCD-EFGH`，10 分钟内有效）。App **不会**自动打开浏览器，免得盖住配对码。两种批准方式任选：
    - 手机浏览器里有 Passkey：点「复制配对码并打开浏览器」，登录后粘贴配对码并批准，再点「返回 Oryn App」；
    - 手机上没有 Passkey：到已登录的电脑「设置 → 设备」输入同一个配对码批准。
@@ -62,16 +62,28 @@ apksigner verify --print-certs Oryn_<版本>_android-foss.apk | grep 'SHA-256'
 
 服务账号必须属于构建该 APK 时 `google-services.json` 所在的同一个 Firebase 项目，否则 FCM 拒绝发送（`SENDER_ID_MISMATCH`）。服务器未启用 FCM 时 App 显示推送错误，UnifiedPush 不受影响。令牌失效（App 卸载、数据被清除）时服务端收到 `UNREGISTERED` 会自动删除该订阅。
 
+FCM 消息同样端到端加密（协议见 [protocol.md](protocol.md)「M7：移动推送」）：启用时 App 生成自己的 RFC 8291 接收端密钥（P-256 + 16 字节 auth；私钥用 Keystore 里的 AES-GCM 密钥加密保存），随令牌一起登记；FCM 的 `data` 只有 `{v:"2", id, e:<密文>}`，Google 只见密文。App 用 UnifiedPush 连接器同一份解密代码解开后走同一套通知流程；`v` 不对、缺 `e` 或解不开的消息直接丢弃。旧版 App 登记的无密钥订阅会被服务端删除，新版每次进入应用都重新登记一次订阅（按令牌 / 端点覆盖），届时带密钥重建。
+
+- **后台刷新令牌**：FCM 刷新令牌、UnifiedPush 换端点时，进程里可能只有推送服务、没有界面。这时 App 排一个 WorkManager 任务（要联网、指数退避，最多 8 次），用上次登记到的服务器和 Keystore 里的设备令牌直接重新登记，不用等你打开 App。
+- **离线积压**：FCM 对离线设备最多存 100 条消息，超出时全部丢弃并在上线后通知 App；App 随即补拉最近 50 条通知，把未读（待答的还要未作答）且没显示过的逐条弹出，同一线程合并成一条；补拉失败时只弹一条不含内容的「Oryn 有新通知」。
+
+### 锁屏
+
+通知设为「私密」：锁屏上只显示公开版「Oryn · 线程有更新」，解锁后才看到线程标题与回复摘要（系统设置里选了「锁屏时隐藏敏感内容」时连公开版也按系统规则处理）。
+
 ### 国产 ROM 与省电
 
 MIUI / HyperOS、ColorOS、OriginOS、EMUI / HarmonyOS 等会在后台杀掉分发器。请对 ntfy（FCM 时对 Oryn 本身影响较小）开启「自启动」、把电池策略设为「无限制」、在多任务界面锁定。Oryn App 本身不常驻后台、不持有唤醒锁：转到后台 30 秒后断开实时连接，回到前台立即重连并补齐。清单里的 `WAKE_LOCK` 权限来自 UnifiedPush connector：它在处理每条推送的那一刻短暂持有、处理完即释放，去掉这条权限会让收推送时抛 `SecurityException`。
 
 ## 其它能力
 
-- **深链接**：`oryn://thread/<线程 id>` 打开该线程，`oryn://open` 打开首页，`oryn://pair?server=…` 预填服务器地址。
+- **深链接**：`oryn://thread/<线程 id>` 打开该线程，`oryn://open` 打开首页，`oryn://pair?server=…` 预填服务器地址并等你确认（见「首次运行与配对」）。
+- **主框架导航**：App 主窗口只会停在连接页、所连服务器的页面或 `about:blank`。`blob:` 只认服务器自己 origin 下的，`data:` 一律拦截；其它 http(s) 链接交给系统浏览器。portal 页面因此不能用 `window.open(blob:…)` 把整个 App 换成无地址栏的伪造界面。
 - **系统分享**：在任意 App 里「分享 → Oryn」，文本进入新建线程框，图片与文件（单个 ≤100MiB，最多 20 个）先上传为附件再预填。
 - **附件**：输入区的回形针选文件，相机图标直接拍照（拉起系统相机）。
-- **下载**：附件与文件面板的下载交给系统下载管理器，保存到「下载」目录。
+- **下载**：附件与文件面板的下载交给系统下载管理器，保存到「下载」目录。同名文件已存在时另存为「名字 (1).扩展名」，从不覆盖或删除已有文件。
+- **分享接收的边界**：只收其它应用 provider 给的 `content://`，按 provider 的归属 uid 判断（`content://0@<本包>…` 这类带用户前缀的地址也认得出是本应用自己的）；本应用的 FileProvider 只开放拍照目录 `Android/data/<包>/files/Pictures/`。
+- **配置变更**：旋转、改窗口大小、折叠、深色模式、显示大小都在 `configChanges` 里，不重建页面。改字体大小等其它变更会让系统重建 Activity：插件改绑到新的 WebView（下载、inset、系统栏照常），连接页发现会话还在就重新换取并回到原来的页面。开发者选项「不保留活动」或系统回收进程时，切回来是一次冷启动（Tauri 的唯一窗口销毁后进程退出），按已存的令牌直接进入应用。
 - **外链**：其它站点的链接在系统浏览器里打开。
 - **终端**：触屏按键条有 Esc / Tab / 粘滞 Ctrl / 方向键；「输入行」开关打开一个普通输入框（输入法、联想与系统粘贴都可用），回车发送整行。
 
@@ -116,7 +128,7 @@ make android DIST=foss                                      # 仓库根目录：
 1. 改 `web/src-tauri/Cargo.toml` 的 `version`（只写 `x.y.z`；`versionCode` = `major*1000000 + minor*1000 + patch`，预发布与正式版相同）。
 2. 打 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N` 并推送。
 3. `.github/workflows/mobile.yml`：`prepare` 校验 tag 与版本 → `release` 建草稿 Release → `android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `publish` 发布 Release。
-4. Release 资产：`Oryn_<版本>_android-{foss,gms}.apk`、`.aab`、`-debug.apk`。
+4. Release 资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
 
 PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS 编译，拿不到签名密钥；来自 fork 的 PR 没有 `ANDROID_GOOGLE_SERVICES_JSON`，跳过 gms。手动触发可勾选 `export_ios_project`，把 `tauri ios init` 生成的 `gen/apple` 作为产物导出以便入库。
 
@@ -125,7 +137,9 @@ PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS
 - 第三方 action 一律钉到完整提交 SHA；checkout 不保留凭据；workflow 级权限为空，只有建 / 发 Release 与上传资产的 job 有 `contents: write`。
 - secret 只出现在用到它的那一步的 `env` 里：`ANDROID_GOOGLE_SERVICES_JSON` 只给「写入 google-services.json」，三个签名 secret 只给 tag 发布时的「构建签名的 release APK + AAB」；密钥解码到 `$RUNNER_TEMP` 下的临时目录，`keystore.properties` 与 `.jks` 在该步骤结束时删除。
 
-### Secrets（仓库 Settings → Secrets and variables → Actions）
+### Secrets
+
+三个签名 secret 放在受保护的 environment `mobile-release` 里（部署规则只允许 tag `mobile-v*`），不是仓库级 secret；`ANDROID_GOOGLE_SERVICES_JSON` 仍是仓库级（PR 的 gms debug 构建要用，它不是签名材料）。
 
 | 名称 | 内容 |
 |---|---|
@@ -142,9 +156,12 @@ FCM 的**服务账号** JSON 不进 CI：它只用于服务端发送，存在控
 PW=$(openssl rand -base64 24)
 keytool -genkeypair -v -keystore .dev/android-release.jks -storetype PKCS12 -alias oryn -keyalg RSA -keysize 4096 \
   -validity 10950 -storepass "$PW" -keypass "$PW" -dname "CN=Oryn, O=Lynricsy"
-gh secret set ANDROID_KEYSTORE_BASE64 --body "$(base64 -w0 .dev/android-release.jks)"
-gh secret set ANDROID_KEYSTORE_PASSWORD --body "$PW"
-gh secret set ANDROID_KEY_ALIAS --body oryn
+gh api -X PUT repos/<owner>/<repo>/environments/mobile-release \
+  -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/<owner>/<repo>/environments/mobile-release/deployment-branch-policies -f name='mobile-v*' -f type=tag
+gh secret set ANDROID_KEYSTORE_BASE64 --env mobile-release --body "$(base64 -w0 .dev/android-release.jks)"
+gh secret set ANDROID_KEYSTORE_PASSWORD --env mobile-release --body "$PW"
+gh secret set ANDROID_KEY_ALIAS --env mobile-release --body oryn
 keytool -list -v -keystore .dev/android-release.jks -storepass "$PW" | grep 'SHA256:'   # 填进上文「发布证书 SHA-256」
 ```
 

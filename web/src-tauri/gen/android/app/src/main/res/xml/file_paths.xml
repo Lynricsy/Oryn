@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 只开放网页文件选择器「拍照」写入的那个目录（RustWebChromeClient.createImageFile：
+  getExternalFilesDir(DIRECTORY_PICTURES)）。不开放 cacheDir 与整个外部存储：分享接收拒收本应用 provider 的检查之外，
+  这里是第二道防线（安全审查第 4 条）。
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <external-files-path name="camera" path="Pictures/" />
 </paths>

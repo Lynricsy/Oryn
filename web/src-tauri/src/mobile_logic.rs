@@ -36,6 +36,8 @@ pub enum NavDecision {
 }
 
 /// launcher = 连接页 origin（`http(s)://tauri.localhost`）；server = 已配对或正在连接的服务器 origin。
+/// 主框架只放行这两个 origin 与 `about:blank`：`blob:` 只认服务器自己 origin 下的（portal 页面经 `window.open`
+/// 弹出的 `blob:` 会把整个 App 换成无地址栏的伪造界面），`data:` 一律拦截。
 pub fn nav_decision(url: &str, launcher: &str, server: Option<&str>) -> NavDecision {
     let Ok(u) = url::Url::parse(url) else {
         return NavDecision::Block;
@@ -49,7 +51,11 @@ pub fn nav_decision(url: &str, launcher: &str, server: Option<&str>) -> NavDecis
                 NavDecision::External
             }
         }
-        "about" | "blob" | "data" => NavDecision::Allow,
+        "about" if u.as_str() == "about:blank" => NavDecision::Allow,
+        // `blob:<origin>/<uuid>` 的 origin 是内嵌地址的 origin；不透明 origin 序列化为 "null"，不会等于服务器
+        "blob" if server.is_some_and(|s| u.origin().ascii_serialization() == s) => {
+            NavDecision::Allow
+        }
         "oryn" => NavDecision::DeepLink,
         "mailto" | "tel" => NavDecision::External,
         _ => NavDecision::Block,
@@ -65,6 +71,20 @@ pub fn external_url(url: &str) -> Option<String> {
 /// `host_set_chrome` 的颜色：`^#[0-9a-fA-F]{6}$`。
 pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Activity 重建前主框架所在的地址 → 恢复会话后要回到的站内路径（含查询）。只认已配对服务器的页面；
+/// 连接页、兑换地址 `/auth/app`（一次性码已用掉）与其它地址返回 `None`。
+pub fn recreated_path(url: &str, server: Option<&str>) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    if Some(u.origin().ascii_serialization().as_str()) != server || u.path() == "/auth/app" {
+        return None;
+    }
+    let path = match u.query() {
+        Some(q) => format!("{}?{q}", u.path()),
+        None => u.path().to_string(),
+    };
+    Some(crate::session::valid_app_path(&path))
 }
 
 /// 主 WebView 已建好的闸门。移动端的 WebView 要等 Activity 就绪后才异步创建，在此之前发出的
@@ -199,14 +219,19 @@ pub fn push_view(platform: Platform, s: Option<&PushState>, sync_error: Option<&
     view
 }
 
-/// 需要（重新）登记的订阅；已同步或材料不全时 `None`。
-pub fn sync_target(s: &PushState) -> Option<PushSubscription> {
+/// 要登记的订阅；材料不全时 `None`。`force = false` 时已同步的也返回 `None`。
+/// `force`：服务器可能已删掉订阅（令牌失效、M7 之前没有密钥的 FCM 订阅），本地「已同步」不可尽信；
+/// 登记按端点 / 令牌 upsert，重复登记无害，所以每次进入应用都强制登记一次。
+pub fn sync_target(s: &PushState, force: bool) -> Option<PushSubscription> {
     if !s.enabled {
         return None;
     }
     let sub = match s.channel {
+        // FCM 同样必须带 RFC 8291 公钥：服务端只发密文，缺密钥的订阅会被拒（400 push_invalid）
         Some(PushChannel::Fcm) => PushSubscription::Fcm {
             token: s.fcm_token.clone()?,
+            p256dh: s.p256dh.clone()?,
+            auth: s.auth.clone()?,
         },
         _ => PushSubscription::WebPush {
             endpoint: s.endpoint.clone()?,
@@ -214,7 +239,7 @@ pub fn sync_target(s: &PushState) -> Option<PushSubscription> {
             auth: s.auth.clone()?,
         },
     };
-    (s.synced_endpoint.as_deref() != Some(sub.key())).then_some(sub)
+    (force || s.synced_endpoint.as_deref() != Some(sub.key())).then_some(sub)
 }
 
 /// `host_mobile_info` 的返回。
@@ -262,12 +287,16 @@ impl ShareOut {
 }
 
 /// 分享槽：同一时刻只保留最新一次（新的到来时旧的作废）。
+/// 每次收到分享代次加一；上传跨网络 await，完成时只接受仍是最新代次的结果——不能拿 `incoming` 是否为空判断，
+/// 较新的分享可能也已被取走上传、甚至已下发（代码审查第 4 条）。
 #[derive(Debug, Default)]
 pub struct Shares {
     /// 收到、尚未上传（未进入应用时在这里等待）。
     incoming: Option<ShareIntake>,
     /// 已上传、等页面确认。
     ready: Option<ShareOut>,
+    /// 最近一次收到的分享的代次。
+    latest: u64,
 }
 
 impl Shares {
@@ -277,16 +306,18 @@ impl Shares {
         stale.extend(self.incoming.take().map(|s| s.id));
         stale.extend(self.ready.take().map(|s| s.id));
         self.incoming = Some(s);
+        self.latest += 1;
         stale
     }
 
-    pub fn take_incoming(&mut self) -> Option<ShareIntake> {
-        self.incoming.take()
+    /// 取走待上传的分享与它的代次（[`Self::set_ready`] 时交回）。
+    pub fn take_incoming(&mut self) -> Option<(ShareIntake, u64)> {
+        self.incoming.take().map(|s| (s, self.latest))
     }
 
-    /// 上传完成。上传期间又来了新分享时这份作废：返回 `Err(它的 id)`。
-    pub fn set_ready(&mut self, out: ShareOut) -> Result<(), String> {
-        if self.incoming.is_some() {
+    /// 上传完成。上传期间又收到过新分享（代次已变）时这份作废：返回 `Err(它的 id)`。
+    pub fn set_ready(&mut self, out: ShareOut, generation: u64) -> Result<(), String> {
+        if generation != self.latest {
             return Err(out.id);
         }
         self.ready = Some(out);
@@ -319,7 +350,8 @@ pub trait Native: Send + Sync + 'static {
     fn push_state(&self) -> Result<PushState, String>;
     fn push_enable(&self, vapid: &str) -> impl Future<Output = Result<PushState, String>> + Send;
     fn push_disable(&self) -> Result<PushState, String>;
-    fn push_mark_synced(&self, endpoint: &str, id: &str) -> Result<(), String>;
+    /// 记下已登记的端点 / 令牌、订阅 id 与服务器（原生后台任务在 App 不在前台时据此重新登记）。
+    fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<(), String>;
     fn share_ack(&self, id: &str);
     fn toast(&self, text: &str);
 }
@@ -393,14 +425,14 @@ impl<N: Native, A: Api> MobileCore<N, A> {
         }
     }
 
-    /// 把尚未登记（或端点 / 令牌变了）的订阅登记到服务器。返回页面是否需要重取 `MobileInfo`。
-    pub async fn sync_push(&self, conn: Option<&Connection>) -> bool {
+    /// 把尚未登记（或端点 / 令牌变了；`force` 时无论如何）的订阅登记到服务器。返回页面是否需要重取 `MobileInfo`。
+    pub async fn sync_push(&self, conn: Option<&Connection>, force: bool) -> bool {
         let Some(conn) = conn else { return false };
         let _serial = self.sync_lock.lock().await;
         let Ok(state) = self.native.push_state() else {
             return false;
         };
-        let Some(sub) = sync_target(&state) else {
+        let Some(sub) = sync_target(&state, force) else {
             return false;
         };
         let kind = match sub {
@@ -409,13 +441,16 @@ impl<N: Native, A: Api> MobileCore<N, A> {
         };
         match self.api.push_subscribe(&conn.base, &conn.token, &sub).await {
             Ok(id) => {
-                if let Err(e) = self.native.push_mark_synced(sub.key(), &id) {
+                let unchanged = state.synced_endpoint.as_deref() == Some(sub.key())
+                    && state.subscription_id.as_deref() == Some(id.as_str());
+                if let Err(e) = self.native.push_mark_synced(sub.key(), &id, &conn.base) {
                     self.log.log("push.sync_error", json!({"error": e}));
                     return false;
                 }
-                self.inner().sync_error = None;
-                self.log.log("push.synced", json!({"id": id, "kind": kind}));
-                true
+                let had_error = self.inner().sync_error.take().is_some();
+                self.log
+                    .log("push.synced", json!({"id": id, "kind": kind, "forced": force}));
+                !unchanged || had_error
             }
             Err(ApiError::Status { status, code, .. }) if (400..500).contains(&status) => {
                 let reason = if code.is_empty() {
@@ -442,7 +477,7 @@ impl<N: Native, A: Api> MobileCore<N, A> {
             .map_err(|e| e.to_string())?;
         self.native.push_enable(&vapid).await?;
         self.inner().sync_error = None;
-        self.sync_push(Some(conn)).await;
+        self.sync_push(Some(conn), false).await;
         Ok(())
     }
 
@@ -487,7 +522,7 @@ impl<N: Native, A: Api> MobileCore<N, A> {
 
     /// 已进入应用时上传待处理的分享；返回要发给页面的 `share` 事件（没有待处理或已作废时 `None`）。
     pub async fn process_share(&self, conn: &Connection, lang: Lang) -> Option<Value> {
-        let intake = self.inner().shares.take_incoming()?;
+        let (intake, generation) = self.inner().shares.take_incoming()?;
         if !intake.files.is_empty() {
             self.native.toast(i18n::share_importing(lang));
         }
@@ -530,7 +565,7 @@ impl<N: Native, A: Api> MobileCore<N, A> {
             failed,
         };
         let event = out.event();
-        let ready = self.inner().shares.set_ready(out);
+        let ready = self.inner().shares.set_ready(out, generation);
         match ready {
             Ok(()) => Some(event),
             Err(stale) => {
@@ -569,7 +604,7 @@ impl Native for Unsupported {
     fn push_disable(&self) -> Result<PushState, String> {
         Ok(PushState::default())
     }
-    fn push_mark_synced(&self, _endpoint: &str, _id: &str) -> Result<(), String> {
+    fn push_mark_synced(&self, _endpoint: &str, _id: &str, _server: &str) -> Result<(), String> {
         Err("unsupported".into())
     }
     fn share_ack(&self, _id: &str) {}
@@ -628,8 +663,19 @@ mod tests {
             ),
             ("ORYN://open", s, DeepLink),
             ("about:blank", s, Allow),
+            ("about:srcdoc", s, Block),
+            ("about:blank#x", s, Block),
+            // blob: 只认服务器自己的 origin（安全审查第 6 条）
             ("blob:https://oryn.example.com/0b1c", s, Allow),
-            ("data:text/html,hi", s, Allow),
+            ("blob:https://t-abc-p3000.orb.example.com/0b1c", s, Block),
+            ("blob:https://oryn.example.com:8443/0b1c", s, Block),
+            ("blob:http://tauri.localhost/0b1c", s, Block),
+            ("blob:null/0b1c", s, Block),
+            ("blob:https://oryn.example.com/0b1c", None, Block),
+            // data: 一律拦截
+            ("data:text/html,hi", s, Block),
+            ("data:text/html;base64,PGgxPk9yeW48L2gxPg==", s, Block),
+            ("DATA:image/png;base64,AAAA", s, Block),
             ("mailto:a@example.com", s, External),
             ("tel:+100", s, External),
             ("intent://scan/#Intent;scheme=zxing;end", s, Block),
@@ -641,6 +687,27 @@ mod tests {
             ("https://oryn.example.com/", None, External),
         ] {
             assert_eq!(nav_decision(url, LAUNCHER, server), want, "{url}");
+        }
+    }
+
+    #[test]
+    fn recreated_paths() {
+        let s = Some(SERVER);
+        let id = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab";
+        assert_eq!(
+            recreated_path(&format!("{SERVER}/t/{id}?tab=files#x"), s).as_deref(),
+            Some(format!("/t/{id}?tab=files").as_str())
+        );
+        assert_eq!(recreated_path(&format!("{SERVER}/"), s).as_deref(), Some("/"));
+        for (url, server) in [
+            ("http://tauri.localhost/launcher.html", s),
+            ("https://oryn.example.com/auth/app?code=oac_1&next=%2F", s),
+            ("https://evil.example/t/x", s),
+            ("https://oryn.example.com/t/x", None),
+            ("about:blank", s),
+            ("not a url", s),
+        ] {
+            assert_eq!(recreated_path(url, server), None, "{url}");
         }
     }
 
@@ -782,7 +849,7 @@ mod tests {
     fn sync_targets() {
         let s = up_state();
         assert_eq!(
-            sync_target(&s),
+            sync_target(&s, false),
             Some(PushSubscription::WebPush {
                 endpoint: "http://localhost:7680/upAbc?up=1".into(),
                 p256dh: "pk".into(),
@@ -793,30 +860,42 @@ mod tests {
             synced_endpoint: s.endpoint.clone(),
             ..s.clone()
         };
-        assert_eq!(sync_target(&synced), None);
+        assert_eq!(sync_target(&synced, false), None);
+        // 强制：服务器可能已删掉订阅，照样登记
+        assert!(sync_target(&synced, true).is_some());
         let no_keys = PushState {
             auth: None,
             ..s.clone()
         };
-        assert_eq!(sync_target(&no_keys), None);
+        assert_eq!(sync_target(&no_keys, true), None);
         let off = PushState {
             enabled: false,
             ..s.clone()
         };
-        assert_eq!(sync_target(&off), None);
+        assert_eq!(sync_target(&off, true), None);
         let fcm = PushState {
             channel: Some(PushChannel::Fcm),
             endpoint: None,
             fcm_token: Some("fcm_tok".into()),
+            p256dh: Some("fpk".into()),
+            auth: Some("fau".into()),
             synced_endpoint: s.endpoint.clone(),
             ..s.clone()
         };
         assert_eq!(
-            sync_target(&fcm),
+            sync_target(&fcm, false),
             Some(PushSubscription::Fcm {
-                token: "fcm_tok".into()
+                token: "fcm_tok".into(),
+                p256dh: "fpk".into(),
+                auth: "fau".into()
             })
         );
+        // FCM 没有密钥（M7 之前的状态）：不登记明文订阅
+        let fcm_no_keys = PushState {
+            p256dh: None,
+            ..fcm.clone()
+        };
+        assert_eq!(sync_target(&fcm_no_keys, true), None);
     }
 
     #[test]
@@ -903,7 +982,8 @@ mod tests {
             *s = PushState::default();
             Ok(s.clone())
         }
-        fn push_mark_synced(&self, endpoint: &str, id: &str) -> Result<(), String> {
+        fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<(), String> {
+            assert_eq!(server, SERVER);
             let mut s = self.state.lock().unwrap();
             s.synced_endpoint = Some(endpoint.into());
             s.subscription_id = Some(id.into());
@@ -1038,7 +1118,7 @@ mod tests {
         let r = rig(FakeApi::default());
         // 未进入应用：不能启用，也不同步
         assert_eq!(r.core.push_enable(None).await, Err("not_connected".into()));
-        assert!(!r.core.sync_push(None).await);
+        assert!(!r.core.sync_push(None, true).await);
         r.core.push_enable(Some(&conn())).await.unwrap();
         assert_eq!(
             r.native.enabled_with.lock().unwrap().as_deref(),
@@ -1047,14 +1127,25 @@ mod tests {
         assert_eq!(r.core.push_view().state, PushViewState::Active);
         assert_eq!(r.core.subscription_id().as_deref(), Some("ps_1"));
         // 已同步：再触发不重复登记
-        assert!(!r.core.sync_push(Some(&conn())).await);
+        assert!(!r.core.sync_push(Some(&conn()), false).await);
         assert_eq!(r.api.subscribed.lock().unwrap().len(), 1);
         assert_eq!(r.api.subscribed.lock().unwrap()[0].0, "odt_secret");
+        // 进入应用时强制登记：照样 POST（服务器可能已删掉订阅），id 没变则页面不必重取
+        assert!(!r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.api.subscribed.lock().unwrap().len(), 2);
+        // 服务器删掉过订阅、重建出新 id：页面要重取
+        r.api
+            .subscribe
+            .lock()
+            .unwrap()
+            .push_back(Ok("ps_2".into()));
+        assert!(r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.core.subscription_id().as_deref(), Some("ps_2"));
         // 分发器换了端点：重新登记
         r.native.state.lock().unwrap().endpoint = Some("http://localhost:7680/upNew".into());
         assert_eq!(r.core.push_view().state, PushViewState::Registering);
-        assert!(r.core.sync_push(Some(&conn())).await);
-        assert_eq!(r.api.subscribed.lock().unwrap().len(), 2);
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(r.api.subscribed.lock().unwrap().len(), 4);
 
         r.core.push_disable(Some(&conn())).await;
         assert_eq!(r.api.unsubscribed.lock().unwrap().as_slice(), ["ps_1"]);
@@ -1079,7 +1170,7 @@ mod tests {
             .lock()
             .unwrap()
             .push_back(Err(ApiError::Network("offline".into())));
-        assert!(!r.core.sync_push(Some(&conn())).await);
+        assert!(!r.core.sync_push(Some(&conn()), false).await);
         assert_eq!(r.core.push_view().state, PushViewState::Registering);
         r.api
             .subscribe
@@ -1090,14 +1181,14 @@ mod tests {
                 code: "fcm_unavailable".into(),
                 message: String::new(),
             }));
-        assert!(r.core.sync_push(Some(&conn())).await);
+        assert!(r.core.sync_push(Some(&conn()), false).await);
         let v = r.core.push_view();
         assert_eq!(
             (v.state, v.error.as_deref()),
             (PushViewState::Error, Some("fcm_unavailable"))
         );
         // 下次成功即清掉错误
-        assert!(r.core.sync_push(Some(&conn())).await);
+        assert!(r.core.sync_push(Some(&conn()), false).await);
         assert_eq!(r.core.push_view().state, PushViewState::Active);
         assert_eq!(
             r.native.state.lock().unwrap().synced_endpoint.as_deref(),
@@ -1106,7 +1197,9 @@ mod tests {
         assert_eq!(
             r.api.subscribed.lock().unwrap().last().unwrap().1,
             PushSubscription::Fcm {
-                token: "fcm_tok".into()
+                token: "fcm_tok".into(),
+                p256dh: "pk".into(),
+                auth: "au".into()
             }
         );
         assert_eq!(events(&r.log), ["push.sync_error", "push.synced"]);
@@ -1220,18 +1313,34 @@ mod tests {
         assert_eq!(r.core.ready_share_event(), None);
 
         // 上传期间又来新的：上传完的那份作废，不下发
-        let mut shares = Shares::default();
-        shares.receive(intake(dir.path(), "a", &[]));
-        let a = shares.take_incoming().unwrap();
-        shares.receive(intake(dir.path(), "b", &[]));
-        let out = ShareOut {
-            id: a.id,
+        let out = |id: &str| ShareOut {
+            id: id.into(),
             text: None,
             attachments: vec![],
             failed: vec![],
         };
-        assert_eq!(shares.set_ready(out), Err("a".into()));
+        let mut shares = Shares::default();
+        shares.receive(intake(dir.path(), "a", &[]));
+        let (_, ga) = shares.take_incoming().unwrap();
+        shares.receive(intake(dir.path(), "b", &[]));
+        assert_eq!(shares.set_ready(out("a"), ga), Err("a".into()));
         assert!(shares.has_incoming());
+
+        // 代码审查第 4 条：新分享也已被取走上传（incoming 又空了），旧的大文件后完成也必须作废
+        let mut shares = Shares::default();
+        shares.receive(intake(dir.path(), "a", &[]));
+        let (_, ga) = shares.take_incoming().unwrap();
+        shares.receive(intake(dir.path(), "b", &[]));
+        let (_, gb) = shares.take_incoming().unwrap();
+        assert!(!shares.has_incoming());
+        // b 尚在上传时 a 先完成
+        assert_eq!(shares.set_ready(out("a"), ga), Err("a".into()));
+        assert!(shares.ready().is_none());
+        // b 完成并被页面确认之后 a 才完成
+        assert_eq!(shares.set_ready(out("b"), gb), Ok(()));
+        assert!(shares.ack("b"));
+        assert_eq!(shares.set_ready(out("a"), ga), Err("a".into()));
+        assert!(shares.ready().is_none());
     }
 
     #[test]

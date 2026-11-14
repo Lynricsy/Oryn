@@ -6,8 +6,10 @@
  * - error：原因与建议、重试、更换服务器（先在本页确认）；`unreachable` 时壳在自动重连。
  * - confirmChange：确认移除这台设备在该服务器上的登录。
  * 每条命令都返回新的状态；壳也会经 `oryn:host` 事件主动推送（轮询批准、自动重连）。
- * 移动壳（M7 计划 4.8）：不提「Oryn Desktop」与桌面凭据库；地址旁有「扫码」（扫设置 → 设备里的二维码，
- * 内容原样交给 `launcher_connect`）；pairing 的主按钮是「复制配对码并打开浏览器」；系统栏颜色跟随页面底色。
+ * 移动壳（M7 计划 4.8）：不提「Oryn Desktop」与桌面凭据库；地址旁有「扫码」（扫设置 → 设备里的二维码）；
+ * pairing 的主按钮是「复制配对码并打开浏览器」；系统栏颜色跟随页面底色。
+ * 二维码与 `oryn://pair` 链接给出的服务器只预填（confirmConnect：壳推来的，或本页扫码得到的），清楚显示主机名，
+ * 用户点「连接」才发起连接（安全审查第 1 条：链接来源不可信，恶意服务器可以直接批准配对）。
  */
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -131,6 +133,8 @@ export function Launcher(): ReactNode {
 	const [scannable] = useState(() => canScan());
 	/** 扫码没成功：相机权限被拒 / 扫描失败（取消不算）。 */
 	const [scanError, setScanError] = useState<"denied" | "failed" | null>(null);
+	/** 本页扫码得到、等用户确认的服务器地址。 */
+	const [proposed, setProposed] = useState<string | null>(null);
 
 	// 移动壳：状态栏 / 导航栏颜色跟随页面底色
 	useEffect(() => {
@@ -191,15 +195,16 @@ export function Launcher(): ReactNode {
 		void run("launcher_connect", { url: url.trim() });
 	};
 
-	/** 扫码：内容原样交给 `launcher_connect`（壳同时接受普通地址与 `oryn://pair?server=`），输入框显示解析出的地址。 */
+	/** 扫码：只把解析出的服务器预填进确认卡片，用户确认后才 `launcher_connect`。 */
 	const scan = async () => {
 		setScanError(null);
 		setBusy(true);
 		const r = await scanQr();
 		setBusy(false);
 		if (r.kind === "ok") {
-			setUrl(scannedServer(r.content));
-			await run("launcher_connect", { url: r.content });
+			const server = scannedServer(r.content);
+			setUrl(server);
+			setProposed(server);
 		} else if (r.kind === "denied" || r.kind === "failed") {
 			if (r.kind === "failed") console.warn("[launcher] scan failed", r.error);
 			setScanError(r.kind);
@@ -264,6 +269,64 @@ export function Launcher(): ReactNode {
 								? setConfirmLocal(false)
 								: void run("launcher_change_server", { confirm: false })
 						}
+					>
+						{t("common.cancel")}
+					</Button>
+				</div>
+				<div className="mt-3">
+					<ErrorText error={failure} />
+				</div>
+			</AuthCard>
+		);
+	}
+
+	const confirming =
+		state.step === "confirmConnect"
+			? state.serverUrl
+			: state.step === "connect"
+				? proposed
+				: null;
+	if (confirming !== null) {
+		return (
+			<AuthCard title={t("launcher.title.confirmConnect")} footer={footer}>
+				<div
+					data-testid="launcher-confirm"
+					className="mb-3 flex items-center justify-center rounded-md bg-inset px-3 py-4"
+				>
+					<output
+						data-testid="launcher-confirm-host"
+						className="break-all font-mono font-semibold text-fg text-xl"
+					>
+						{hostOf(confirming)}
+					</output>
+				</div>
+				<p className="mb-2 break-all font-mono text-faint text-xs">
+					{t("launcher.confirmConnectFrom", { url: confirming })}
+				</p>
+				<p className="mb-4 text-muted text-sm">
+					{t("launcher.confirmConnectHint")}
+				</p>
+				<div className="flex flex-wrap gap-2">
+					<Button
+						variant="primary"
+						disabled={busy}
+						onClick={() => {
+							setProposed(null);
+							void run("launcher_connect", { url: confirming });
+						}}
+						data-testid="launcher-confirm-connect"
+					>
+						{busy ? <Spinner /> : t("launcher.connect")}
+					</Button>
+					<Button
+						variant="ghost"
+						disabled={busy}
+						onClick={() => {
+							setProposed(null);
+							if (state.step === "confirmConnect") void run("launcher_cancel");
+							else setUrl("");
+						}}
+						data-testid="launcher-confirm-cancel"
 					>
 						{t("common.cancel")}
 					</Button>

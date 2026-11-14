@@ -56,10 +56,10 @@ async fn connection(d: &Desktop) -> Option<Connection> {
     d.core.lock().await.connection()
 }
 
-/// 同步推送订阅；结果变了就让页面重取 `MobileInfo`。
-async fn sync_push(app: &AppHandle, d: &Desktop, m: &MobileRt) {
+/// 同步推送订阅（`force` 见 [`mobile_logic::sync_target`]）；结果变了就让页面重取 `MobileInfo`。
+async fn sync_push(app: &AppHandle, d: &Desktop, m: &MobileRt, force: bool) {
     let conn = connection(d).await;
-    if m.core.sync_push(conn.as_ref()).await {
+    if m.core.sync_push(conn.as_ref(), force).await {
         host::emit(app, json!({"type": "mobile"}));
     }
 }
@@ -77,7 +77,7 @@ async fn deliver_share(app: &AppHandle, d: &Desktop, m: &MobileRt) {
     }
 }
 
-/// `host_ready` 的移动端部分：清返回栈（返回键不会退回连接页）、同步推送、重发 / 继续分享。
+/// `host_ready` 的移动端部分：清返回栈（返回键不会退回连接页）、强制登记一次推送订阅、重发 / 继续分享。
 pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
     let Some(m) = runtime(app) else { return };
     #[cfg(target_os = "android")]
@@ -89,7 +89,7 @@ pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        sync_push(&app, &d, &m).await;
+        sync_push(&app, &d, &m, true).await;
         deliver_share(&app, &d, &m).await;
     });
 }
@@ -249,8 +249,8 @@ mod android {
         fn push_disable(&self) -> Result<PushState, String> {
             self.0.push_disable().map_err(err)
         }
-        fn push_mark_synced(&self, endpoint: &str, id: &str) -> Result<(), String> {
-            self.0.push_mark_synced(endpoint, id).map_err(err)
+        fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<(), String> {
+            self.0.push_mark_synced(endpoint, id, server).map_err(err)
         }
         fn share_ack(&self, id: &str) {
             if let Err(e) = self.0.share_ack(id) {
@@ -262,7 +262,7 @@ mod android {
         }
     }
 
-    /// 插件事件：前后台切换、推送状态变化、系统分享、屏幕圆角与 inset。
+    /// 插件事件：前后台切换、推送状态变化、系统分享、屏幕圆角与 inset、Activity 重建。
     /// 回调在 Java 线程上：凡是要同步调插件的都放进异步任务（否则等 UI 线程处理时死锁）。
     pub fn on_event(app: &AppHandle, event: Event) {
         let (Some(d), Some(m)) = (host::desktop(app), runtime(app)) else {
@@ -275,7 +275,7 @@ mod android {
                 tauri::async_runtime::spawn(async move {
                     let next = d.core.lock().await.resumed();
                     host::schedule(d.clone(), next);
-                    sync_push(&app, &d, &m).await;
+                    sync_push(&app, &d, &m, false).await;
                     deliver_share(&app, &d, &m).await;
                 });
             }
@@ -288,7 +288,7 @@ mod android {
             Event::Push { .. } => {
                 host::emit(&app, json!({"type": "mobile"}));
                 tauri::async_runtime::spawn(async move {
-                    sync_push(&app, &d, &m).await;
+                    sync_push(&app, &d, &m, false).await;
                 });
             }
             Event::Share { share } => {
@@ -304,6 +304,23 @@ mod android {
                 if m.core.set_insets(corner_radii, insets) {
                     host::emit(&app, mobile_logic::insets_event(corner_radii, insets));
                 }
+            }
+            // 插件已重新绑定新的 Activity / WebView；重建前所在的服务器页面作为待开路径，
+            // 新连接页的 `launcher_state` 恢复会话时（或之后新页面的 host_ready）带走
+            Event::Recreated { url } => {
+                tauri::async_runtime::spawn(async move {
+                    let server = d.core.lock().await.config().server_url.clone();
+                    let path = url
+                        .as_deref()
+                        .and_then(|u| mobile_logic::recreated_path(u, server.as_deref()));
+                    eventlog::log("webview.recreated", json!({"path": path}));
+                    if let Some(path) = path {
+                        let mut nav = d.nav();
+                        if nav.pending.is_none() {
+                            nav.pending = Some(path);
+                        }
+                    }
+                });
             }
         }
     }

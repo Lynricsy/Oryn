@@ -18,10 +18,16 @@ object Notifier {
   private const val CHANNEL = "threads"
 
   /** 渠道名跟随 `lang`（壳传入的界面语言），缺省按系统语言。 */
-  fun channelName(lang: String?): String {
-    val l = (lang?.takeIf { it.isNotBlank() } ?: Locale.getDefault().toLanguageTag()).lowercase(Locale.ROOT)
-    return if (l.startsWith("zh")) "线程通知" else "Thread updates"
-  }
+  fun channelName(lang: String?): String = if (isZh(lang)) "线程通知" else "Thread updates"
+
+  /** 锁屏公开版的正文：不含线程标题与 agent 输出（安全审查第 5 条）。 */
+  fun publicText(lang: String?): String = if (isZh(lang)) "线程有更新" else "A thread has an update"
+
+  /** FCM 补拉失败时的通用通知正文。 */
+  fun genericText(lang: String?): String = if (isZh(lang)) "Oryn 有新通知" else "You have new Oryn notifications"
+
+  private fun isZh(lang: String?): Boolean =
+    (lang?.takeIf { it.isNotBlank() } ?: Locale.getDefault().toLanguageTag()).lowercase(Locale.ROOT).startsWith("zh")
 
   fun ensureChannel(context: Context, lang: String? = null) {
     val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -45,11 +51,19 @@ object Notifier {
       intent,
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+    // 锁屏只显示公开版（「Oryn · 线程有更新」），解锁后才看到标题与正文
+    val public = NotificationCompat.Builder(context, CHANNEL)
+      .setSmallIcon(R.drawable.ic_stat_oryn)
+      .setContentTitle("Oryn")
+      .setContentText(publicText(lang))
+      .build()
     val notification = NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(R.drawable.ic_stat_oryn)
       .setContentTitle(model.title)
       .setContentText(model.body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(model.body))
+      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+      .setPublicVersion(public)
       .setAutoCancel(true)
       .setOnlyAlertOnce(true)
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -64,6 +78,10 @@ object Notifier {
     EventLog.log(context, "notify.posted", mapOf("id" to model.id, "tag" to model.tag, "path" to model.path))
     return null
   }
+
+  /** 不含任何内容的「Oryn 有新通知」，点击回首页。 */
+  fun postGeneric(context: Context, lang: String? = null): String? =
+    post(context, PushPayload.Model(id = "", title = "Oryn", body = genericText(lang), path = "/", tag = "oryn-new"), lang)
 
   fun cancelAll(context: Context) {
     NotificationManagerCompat.from(context).cancelAll()

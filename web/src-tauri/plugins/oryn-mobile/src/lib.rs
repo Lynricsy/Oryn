@@ -122,8 +122,12 @@ mod android {
             self.run("pushDisable", ())
         }
 
-        pub fn push_mark_synced(&self, endpoint: &str, id: &str) -> Result<()> {
-            self.call("pushMarkSynced", json!({"endpoint": endpoint, "id": id}))
+        /// 记下已登记的端点 / 令牌、订阅 id 与服务器（推送服务在只有它存活时据此重新登记）。
+        pub fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<()> {
+            self.call(
+                "pushMarkSynced",
+                json!({"endpoint": endpoint, "id": id, "server": server}),
+            )
         }
 
         pub fn open_notification_settings(&self) -> Result<()> {

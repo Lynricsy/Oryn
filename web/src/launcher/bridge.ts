@@ -29,6 +29,8 @@ export interface LauncherError {
 
 export type LauncherState =
 	| { step: "connect"; serverUrl: string; error?: LauncherError | null }
+	/** 二维码 / 链接给出的服务器：等用户看清主机名后确认（安全审查第 1 条）。 */
+	| { step: "confirmConnect"; serverUrl: string }
 	| {
 			step: "pairing";
 			serverUrl: string;

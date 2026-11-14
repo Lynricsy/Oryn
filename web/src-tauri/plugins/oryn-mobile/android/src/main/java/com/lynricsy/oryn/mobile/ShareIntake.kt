@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Process
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import app.tauri.plugin.JSArray
@@ -125,12 +126,34 @@ object ShareIntake {
     return out.distinct()
   }
 
-  /** 只收别人的 content:// URI：file:// 与本应用自己的 provider 会让外部 App 借分享读出本应用私有文件。 */
+  /**
+   * 只收别人的 content:// URI：file:// 与本应用自己的 provider 会让外部 App 借分享读出本应用私有文件。
+   * 按 provider 的归属 uid 判断（安全审查第 4 条）：authority 可以带 `userId@` 前缀（`content://0@<本包>.fileprovider/…`），
+   * 字符串前缀比较会被绕过，而 ContentResolver 打开时照样剥掉前缀、在本进程里打开本应用的 provider。
+   */
   private fun readable(context: Context, uri: Uri): Boolean {
     if (uri.scheme != ContentResolver.SCHEME_CONTENT) return false
     val authority = uri.authority ?: return false
-    return !authority.startsWith(context.packageName)
+    return !ownAuthority(authority, Process.myUid()) { host ->
+      @Suppress("DEPRECATION")
+      context.packageManager.resolveContentProvider(host, 0)?.applicationInfo?.uid
+    }
   }
+
+  /** 去掉 `userId@` 前缀后的 provider authority。 */
+  fun authorityHost(authority: String): String = authority.substringAfterLast('@')
+
+  /**
+   * authority 是否属于本应用（含其它用户 / 工作资料里的本应用：uid 不同但 appId 相同）。解析不到 provider 时按「不是」处理
+   * （打开时同样会失败，记为 unreadable）。纯函数，`ownerUid` 由调用方查 PackageManager。
+   */
+  fun ownAuthority(authority: String, myUid: Int, ownerUid: (String) -> Int?): Boolean {
+    val owner = ownerUid(authorityHost(authority)) ?: return false
+    return owner % PER_USER_RANGE == myUid % PER_USER_RANGE
+  }
+
+  /** `UserHandle.PER_USER_RANGE`：uid = userId × 100000 + appId。 */
+  private const val PER_USER_RANGE = 100_000
 
   private fun meta(resolver: ContentResolver, uri: Uri): Pair<String?, Long?> {
     if (uri.scheme != ContentResolver.SCHEME_CONTENT) return null to null

@@ -316,19 +316,13 @@ pub fn open_path(app: &AppHandle, path: &str) {
     eventlog::log("open", json!({"path": path, "delivered": delivered}));
 }
 
-/// 配对链接（二维码被系统相机扫到后经深链接进来）：尚未配对且停在连接页时按其中的服务器发起连接。
-pub fn connect_from_link(app: &AppHandle, server: String) {
+/// 配对链接（二维码被系统相机扫到、网页里点到的 `oryn://pair`）：来源不可信，只把服务器预填进连接页等用户确认，
+/// 绝不直接发起连接（见 [`Core::propose`]）。
+pub fn propose_from_link(app: &AppHandle, server: String) {
     let Some(d) = desktop(app) else { return };
     show_main(app);
     tauri::async_runtime::spawn(async move {
-        let next = {
-            let mut core = d.core.lock().await;
-            if core.config().server_url.is_some() {
-                return;
-            }
-            core.connect(&server).await
-        };
-        schedule(d, next);
+        d.core.lock().await.propose(&server);
     });
 }
 
@@ -560,6 +554,15 @@ pub async fn launcher_state(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<L
             eprintln!("oryn-desktop: smoke ok");
             app.exit(0);
         }
+    }
+    // 已进入过应用却又回到连接页 = WebView 被重建（Activity 重建）：重新换取会话回到应用
+    #[cfg(mobile)]
+    if matches!(info.state, LauncherState::Connected { .. }) {
+        let d = d.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            let next = d.core.lock().await.launcher_loaded().await;
+            schedule(d, next);
+        });
     }
     Ok(info)
 }

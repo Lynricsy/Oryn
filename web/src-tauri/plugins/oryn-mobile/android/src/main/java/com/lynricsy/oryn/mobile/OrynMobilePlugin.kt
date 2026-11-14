@@ -2,19 +2,16 @@ package com.lynricsy.oryn.mobile
 
 import android.Manifest
 import android.app.Activity
-import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Color
-import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.Settings
 import android.view.RoundedCorner
 import android.view.View
 import android.webkit.CookieManager
-import android.webkit.URLUtil
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -62,6 +59,7 @@ class PushEnableArgs {
 class PushSyncedArgs {
   lateinit var endpoint: String
   lateinit var id: String
+  lateinit var server: String
 }
 
 @InvokeArg
@@ -82,52 +80,101 @@ class TextArgs {
 
 /**
  * Oryn 的原生能力（只供 Rust 经 `run_mobile_plugin` 调用；插件的 JS 命令表为空，远程页面调不到）。
- * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / share / insets。
+ * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / share / insets / recreated。
+ *
+ * 插件对象与进程同寿：Tauri 只在第一个 WebView 出现时调一次 [load]。Activity 因未声明的配置变更（字体大小等）
+ * 重建时，wry 在新 Activity 里重建 WebView，插件却不会再收到 [load]（代码审查第 1 条）。所以这里不把 Activity /
+ * WebView 当构造参数用到底：`MainActivity.onWebViewCreate` 每次建 WebView 都调 [webViewCreated]，
+ * 插件改绑到新的 Activity 与 WebView，重新装下载监听、第三方 Cookie、inset 监听与系统栏颜色，并告诉 Rust 重建前所在的页面。
  */
 @TauriPlugin(
   permissions = [Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications")],
 )
-class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
+class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
+  /** 当前的 Activity（重建后换成新的）。 */
+  @Volatile private var activity: Activity = initial
+  /** 当前绑定的主 WebView。 */
   private var webView: WebView? = null
+  /** 配置变更销毁 Activity 时主框架所在的地址（UI 线程读写）。 */
+  private var urlBeforeRecreate: String? = null
   @Volatile private var insets: ViewportInsets = ViewportInsets.ZERO
-  /** Rust 还没注册监听时到达的分享（冷启动），注册后补发。 */
-  @Volatile private var pendingShare: JSObject? = null
+  /** 冷启动时 Rust 还没注册监听就到达的分享，注册后补发（见 [ShareHandoff]）。 */
+  private val shares = ShareHandoff<JSObject>(emit = { share ->
+    val o = JSObject()
+    o.put("type", "share")
+    o.put("share", share)
+    trigger("event", o)
+  })
+
+  init {
+    instance = this
+  }
 
   companion object {
     private const val INTENT_CONSUMED = "com.lynricsy.oryn.mobile.share.consumed"
     private val COLOR = Regex("^#[0-9a-fA-F]{6}$")
 
     @Volatile var instance: OrynMobilePlugin? = null
+      private set
     /** App 是否在前台（onResume ~ onStop），推送据此决定是否发系统通知。 */
     @Volatile var visible = false
 
-    /** 推送状态变了：告诉 Rust 重取 / 同步（插件未加载时无事可做，下次 resume 时 Rust 自己会取）。 */
-    fun emitPush() {
-      val p = instance ?: return
-      val o = JSObject()
-      o.put("type", "push")
-      o.put("state", PushStore.state(p.activity))
-      p.trigger("event", o)
+    /**
+     * 推送状态变了（新令牌 / 新端点 / 注册失败）：Rust 在跑就交给它重取并同步；
+     * 进程里只有推送服务（没有 Activity，也就没有 Rust 的监听）时排一个后台登记任务（代码审查第 6 条）。
+     */
+    fun pushChanged(context: Context) {
+      val p = instance
+      if (p != null && p.hasListener("event")) {
+        val o = JSObject()
+        o.put("type", "push")
+        o.put("state", PushStore.state(context))
+        p.trigger("event", o)
+      } else {
+        PushSync.schedule(context)
+      }
+    }
+
+    /** `MainActivity.onWebViewCreate`：每个新建的主 WebView（含 Activity 重建后的）都走这里。 */
+    fun webViewCreated(activity: AppCompatActivity, webView: WebView) {
+      instance?.bind(activity, webView)
     }
   }
 
   override fun load(webView: WebView) {
-    instance = this
-    this.webView = webView
+    bind(activity, webView)
+  }
+
+  /** 绑定到（新的）Activity 与 WebView；同一个 WebView 重复调用无副作用。在 UI 线程上调用。 */
+  private fun bind(act: Activity, wv: WebView) {
+    if (wv === webView) return
+    val replaced = webView != null
+    activity = act
+    webView = wv
     // portal iframe 与主站不同站点时也要带 Cookie
-    CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-    webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-      download(url, userAgent, contentDisposition, mimeType)
+    CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+    wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+      Downloads.start(act.applicationContext, url, userAgent, contentDisposition, mimeType)
     }
-    installInsets()
+    installInsets(act)
     applyChrome(initialDark(), initialColor())
-    Notifier.ensureChannel(activity)
-    handleIntent(activity.intent)
+    Notifier.ensureChannel(act)
+    handleIntent(act.intent)
+    if (replaced) {
+      val url = urlBeforeRecreate
+      urlBeforeRecreate = null
+      EventLog.log(act, "plugin.rebound", mapOf("recreated" to true))
+      val o = JSObject()
+      o.put("type", "recreated")
+      o.put("url", url ?: JSONObject.NULL)
+      trigger("event", o)
+    }
   }
 
   // ---- 生命周期 ----
 
   override fun onResume(activity: AppCompatActivity) {
+    this.activity = activity
     visible = true
     Notifier.cancelAll(activity)
     trigger("event", JSObject().apply { put("type", "resume") })
@@ -139,8 +186,11 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   override fun onDestroy(activity: AppCompatActivity) {
-    if (instance === this) instance = null
     visible = false
+    // 配置变更：马上会有新 Activity 与新 WebView（webViewCreated）；记下主框架所在页面，好让 Rust 恢复到这里
+    if (activity === this.activity && activity.isChangingConfigurations) {
+      urlBeforeRecreate = webView?.url
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -151,10 +201,7 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   override fun registerListener(invoke: Invoke) {
     super.registerListener(invoke)
-    pendingShare?.let {
-      pendingShare = null
-      emitShare(it)
-    }
+    shares.attach()
     if (insets != ViewportInsets.ZERO) emitInsets(insets)
   }
 
@@ -162,12 +209,13 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun deviceInfo(invoke: Invoke) {
+    val act = activity
     val o = JSObject()
     o.put("name", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
     o.put("sdkInt", Build.VERSION.SDK_INT)
-    o.put("webviewVersion", WebViewCompat.getCurrentWebViewPackage(activity)?.versionName ?: "")
-    o.put("debuggable", activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
-    o.put("eventLogPath", EventLog.path(activity) ?: JSONObject.NULL)
+    o.put("webviewVersion", WebViewCompat.getCurrentWebViewPackage(act)?.versionName ?: "")
+    o.put("debuggable", act.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+    o.put("eventLogPath", EventLog.path(act) ?: JSONObject.NULL)
     val snap = insets.toJson()
     o.put("insets", snap.getJSONObject("insets"))
     o.put("cornerRadii", snap.getJSONObject("cornerRadii"))
@@ -228,32 +276,34 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
   private fun enablePush(invoke: Invoke) {
     val vapid = invoke.parseArgs(PushEnableArgs::class.java).vapid
-    PushStore.setError(activity, null)
-    activity.runOnUiThread {
-      UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
-        PushStore.setEnabled(activity, true)
+    val act = activity
+    PushStore.setError(act, null)
+    act.runOnUiThread {
+      UnifiedPush.tryUseCurrentOrDefaultDistributor(act) { ok ->
+        PushStore.setEnabled(act, true)
         val fcm = Fcm.bridge
         when {
           ok -> {
             try {
-              UnifiedPush.register(activity, messageForDistributor = "Oryn", vapid = vapid)
+              UnifiedPush.register(act, messageForDistributor = "Oryn", vapid = vapid)
             } catch (e: Exception) {
-              PushStore.setError(activity, "vapid_invalid")
+              PushStore.setError(act, "vapid_invalid")
             }
-            EventLog.log(activity, "push.enable", mapOf("channel" to "unifiedpush"))
-            invoke.resolve(PushStore.state(activity))
+            EventLog.log(act, "push.enable", mapOf("channel" to "unifiedpush"))
+            invoke.resolve(PushStore.state(act))
           }
           fcm != null -> {
-            EventLog.log(activity, "push.enable", mapOf("channel" to "fcm"))
-            fcm.token(activity) { token, error ->
-              PushStore.setFcmToken(activity, token)
-              if (token == null) PushStore.setError(activity, error ?: "fcm_token")
-              invoke.resolve(PushStore.state(activity))
+            EventLog.log(act, "push.enable", mapOf("channel" to "fcm"))
+            fcm.token(act) { token, error ->
+              PushStore.setFcmToken(act, token)
+              if (token == null) PushStore.setError(act, error ?: "fcm_token")
+              // state() 顺带生成 FCM 的接收端密钥（随令牌一起登记）
+              invoke.resolve(PushStore.state(act))
             }
           }
           else -> {
-            EventLog.log(activity, "push.enable", mapOf("channel" to null))
-            invoke.resolve(PushStore.state(activity))
+            EventLog.log(act, "push.enable", mapOf("channel" to null))
+            invoke.resolve(PushStore.state(act))
           }
         }
       }
@@ -262,29 +312,32 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun pushDisable(invoke: Invoke) {
+    val act = activity
     try {
-      if (UnifiedPush.getSavedDistributor(activity) != null) UnifiedPush.unregister(activity)
+      if (UnifiedPush.getSavedDistributor(act) != null) UnifiedPush.unregister(act)
     } catch (_: Exception) {
     }
-    Fcm.bridge?.delete(activity)
-    PushStore.clear(activity)
-    EventLog.log(activity, "push.disable")
-    invoke.resolve(PushStore.state(activity))
+    Fcm.bridge?.delete(act)
+    PushStore.clear(act)
+    FcmKeys.clear(act)
+    EventLog.log(act, "push.disable")
+    invoke.resolve(PushStore.state(act))
   }
 
   @Command
   fun pushMarkSynced(invoke: Invoke) {
     val args = invoke.parseArgs(PushSyncedArgs::class.java)
-    PushStore.markSynced(activity, args.endpoint, args.id)
+    PushStore.markSynced(activity, args.endpoint, args.id, args.server)
     invoke.resolve()
   }
 
   @Command
   fun openNotificationSettings(invoke: Invoke) {
+    val act = activity
     val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-      .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+      .putExtra(Settings.EXTRA_APP_PACKAGE, act.packageName)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    activity.runOnUiThread { activity.startActivity(intent) }
+    act.runOnUiThread { act.startActivity(intent) }
     invoke.resolve()
   }
 
@@ -308,14 +361,16 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun shareAck(invoke: Invoke) {
     val args = invoke.parseArgs(IdArgs::class.java)
-    Thread { ShareIntake.ack(activity, args.id) }.start()
+    val app = activity.applicationContext
+    Thread { ShareIntake.ack(app, args.id) }.start()
     invoke.resolve()
   }
 
   @Command
   fun toast(invoke: Invoke) {
     val args = invoke.parseArgs(TextArgs::class.java)
-    activity.runOnUiThread { Toast.makeText(activity, args.text, Toast.LENGTH_SHORT).show() }
+    val act = activity
+    act.runOnUiThread { Toast.makeText(act, args.text, Toast.LENGTH_SHORT).show() }
     invoke.resolve()
   }
 
@@ -327,37 +382,27 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
     // Activity 重建时 activity.intent 仍是同一个分享，打标记避免重复导入
     if (intent.getBooleanExtra(INTENT_CONSUMED, false)) return
     intent.putExtra(INTENT_CONSUMED, true)
+    val app = activity.applicationContext
     Thread {
       val share = try {
-        ShareIntake.intake(activity, intent)
+        ShareIntake.intake(app, intent)
       } catch (_: Exception) {
         null
       }
       EventLog.log(
-        activity,
+        app,
         "share.intent",
         mapOf("files" to (share?.getJSONArray("files")?.length() ?: 0), "text" to (share?.isNull("text") == false)),
       )
-      if (share != null) emitShare(share)
+      if (share != null) shares.offer(share)
     }.start()
-  }
-
-  private fun emitShare(share: JSObject) {
-    if (!hasListener("event")) {
-      pendingShare = share
-      return
-    }
-    val o = JSObject()
-    o.put("type", "share")
-    o.put("share", share)
-    trigger("event", o)
   }
 
   // ---- inset、系统栏 ----
 
   /** 模板默认 edge-to-edge：给内容容器加「系统栏 + 刘海 + 输入法」的 padding 并消费 inset，WebView 始终落在安全区内。 */
-  private fun installInsets() {
-    val content = activity.findViewById<View>(android.R.id.content) ?: return
+  private fun installInsets(act: Activity) {
+    val content = act.findViewById<View>(android.R.id.content) ?: return
     ViewCompat.setOnApplyWindowInsetsListener(content) { v, wi ->
       val bars = wi.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(),
@@ -389,6 +434,7 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
   private fun emitInsets(snap: ViewportInsets) {
     val o = snap.toJson()
+    EventLog.log(activity, "insets", mapOf("insets" to o.getJSONObject("insets")))
     o.put("type", "insets")
     trigger("event", o)
   }
@@ -399,9 +445,10 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   private fun applyChrome(dark: Boolean, color: Int) {
-    activity.runOnUiThread {
-      val window = activity.window
-      activity.findViewById<View>(android.R.id.content)?.setBackgroundColor(color)
+    val act = activity
+    act.runOnUiThread {
+      val window = act.window
+      act.findViewById<View>(android.R.id.content)?.setBackgroundColor(color)
       window.decorView.setBackgroundColor(color)
       val controller = WindowCompat.getInsetsController(window, window.decorView)
       controller.isAppearanceLightStatusBars = !dark
@@ -413,36 +460,8 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
     activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
   private fun initialColor(): Int {
-    val id = activity.resources.getIdentifier("oryn_bg", "color", activity.packageName)
-    return if (id != 0) activity.getColor(id) else if (initialDark()) Color.BLACK else Color.WHITE
-  }
-
-  // ---- 下载（wry 在 Android 上没有下载钩子） ----
-
-  private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
-    val uri = Uri.parse(url)
-    val scheme = uri.scheme?.lowercase()
-    if (scheme != "http" && scheme != "https") {
-      EventLog.log(activity, "download.skipped", mapOf("scheme" to scheme))
-      return
-    }
-    // URLUtil 不认 RFC 6266 的 filename*（orynd 附件只发它），先自己解析
-    val name = ShareIntake.sanitizeFileName(
-      ContentDisposition.fileName(contentDisposition) ?: URLUtil.guessFileName(url, contentDisposition, mimeType),
-    )
-    try {
-      val req = DownloadManager.Request(uri)
-      CookieManager.getInstance().getCookie(url)?.let { req.addRequestHeader("Cookie", it) }
-      if (!userAgent.isNullOrEmpty()) req.addRequestHeader("User-Agent", userAgent)
-      if (!mimeType.isNullOrEmpty()) req.setMimeType(mimeType)
-      req.setTitle(name)
-      req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-      // 公共下载目录：minSdk 33，不需要任何存储权限
-      req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-      activity.getSystemService(DownloadManager::class.java).enqueue(req)
-      EventLog.log(activity, "download.enqueued", mapOf("name" to name))
-    } catch (e: Exception) {
-      EventLog.log(activity, "download.failed", mapOf("name" to name, "error" to e.javaClass.simpleName))
-    }
+    val act = activity
+    val id = act.resources.getIdentifier("oryn_bg", "color", act.packageName)
+    return if (id != 0) act.getColor(id) else if (initialDark()) Color.BLACK else Color.WHITE
   }
 }

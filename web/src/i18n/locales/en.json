@@ -1443,12 +1443,15 @@
 			"pairing": "Approve in your browser",
 			"connecting": "Connecting",
 			"error": "Can't get in right now",
-			"confirmChange": "Change server"
+			"confirmChange": "Change server",
+			"confirmConnect": "Connect to this server?"
 		},
 		"intro": "Enter your Oryn server address. The pairing page opens in your system browser: sign in with your passkey and approve this device.",
 		"serverUrl": "Server address",
 		"serverUrlHint": "Use HTTPS; http://localhost works for local testing.",
 		"connect": "Connect",
+		"confirmConnectHint": "This address came from a QR code or a link. Only connect to an Oryn server you run yourself: once connected, your prompts, shared files and notifications go to it.",
+		"confirmConnectFrom": "Full address: {{url}}",
 		"pairingHint": "{{host}} is open in your browser. Sign in, enter the pairing code below, and approve.",
 		"code": "Pairing code",
 		"expiresIn": "Expires in {{time}}",

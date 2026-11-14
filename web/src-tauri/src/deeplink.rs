@@ -57,11 +57,11 @@ mod wiring {
     use crate::eventlog;
     use crate::host;
 
-    /// 处理一个 `oryn:` 链接：配对链接 → 发起连接；站内链接 → 打开路径。
+    /// 处理一个 `oryn:` 链接：配对链接 → 预填连接页等用户确认（来源不可信，不直接连接）；站内链接 → 打开路径。
     pub fn open_url(app: &AppHandle, url: &str) {
         if let Some(server) = super::parse_pair(url) {
             eventlog::log("pair.link", json!({"server": server, "source": "deeplink"}));
-            host::connect_from_link(app, server);
+            host::propose_from_link(app, server);
             return;
         }
         let path = super::parse(url);

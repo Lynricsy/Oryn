@@ -61,8 +61,12 @@ pub enum PushSubscription {
         p256dh: String,
         auth: String,
     },
-    /// FCM 注册令牌。
-    Fcm { token: String },
+    /// FCM 注册令牌 + RFC 8291 公钥：服务端把通知加密进 data 的 `e`，Google 只看到密文。
+    Fcm {
+        token: String,
+        p256dh: String,
+        auth: String,
+    },
 }
 
 impl PushSubscription {
@@ -70,7 +74,7 @@ impl PushSubscription {
     pub fn key(&self) -> &str {
         match self {
             PushSubscription::WebPush { endpoint, .. } => endpoint,
-            PushSubscription::Fcm { token } => token,
+            PushSubscription::Fcm { token, .. } => token,
         }
     }
 
@@ -81,7 +85,9 @@ impl PushSubscription {
                 p256dh,
                 auth,
             } => json!({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}),
-            PushSubscription::Fcm { token } => json!({"kind": "fcm", "token": token}),
+            PushSubscription::Fcm { token, p256dh, auth } => {
+                json!({"kind": "fcm", "token": token, "keys": {"p256dh": p256dh, "auth": auth}})
+            }
         }
     }
 }
@@ -796,7 +802,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/api/v1/push/subscriptions"))
-            .and(body_json(json!({"kind": "fcm", "token": "fcm_tok"})))
+            .and(body_json(json!({"kind": "fcm", "token": "fcm_tok", "keys": {"p256dh": "fpk", "auth": "fau"}})))
             .respond_with(
                 ResponseTemplate::new(409)
                     .set_body_json(json!({"code": "fcm_unavailable", "message": "m"})),
@@ -817,6 +823,8 @@ mod tests {
         );
         let fcm = PushSubscription::Fcm {
             token: "fcm_tok".into(),
+            p256dh: "fpk".into(),
+            auth: "fau".into(),
         };
         assert_eq!(fcm.key(), "fcm_tok");
         assert_eq!(

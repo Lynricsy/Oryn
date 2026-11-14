@@ -313,7 +313,7 @@ describe("连接页（移动平台）", () => {
 		);
 	});
 
-	it("扫码成功：权限 prompt → 申请得到 granted → 扫描，原样把内容交给 launcher_connect，输入框显示解析出的地址", async () => {
+	it("扫码成功：权限 prompt → 申请得到 granted → 扫描；只预填并显示主机名，点「连接」才 launcher_connect", async () => {
 		const content = `oryn://pair?server=${encodeURIComponent(SERVER)}`;
 		plugin["plugin:barcode-scanner|check_permissions"] = "prompt";
 		plugin["plugin:barcode-scanner|request_permissions"] = {
@@ -324,16 +324,40 @@ describe("连接页（移动平台）", () => {
 		render(<Launcher />);
 		fireEvent.click(await screen.findByTestId("launcher-scan"));
 		expect(
-			await screen.findByText("正在进入 oryn.example.com…"),
-		).toBeInTheDocument();
+			await screen.findByTestId("launcher-confirm-host"),
+		).toHaveTextContent("oryn.example.com");
+		expect(screen.getByText("连接到这台服务器？")).toBeInTheDocument();
+		expect(screen.getByText(`完整地址：${SERVER}`)).toBeInTheDocument();
 		expect(invoke).toHaveBeenCalledWith("plugin:barcode-scanner|scan", {
 			windowed: false,
 			formats: ["QR_CODE"],
 		});
-		expect(invoke).toHaveBeenCalledWith("launcher_connect", { url: content });
+		// 安全审查第 1 条：确认前不发起连接
+		expect(invoke).not.toHaveBeenCalledWith(
+			"launcher_connect",
+			expect.anything(),
+		);
+		fireEvent.click(screen.getByTestId("launcher-confirm-connect"));
+		expect(
+			await screen.findByText("正在进入 oryn.example.com…"),
+		).toBeInTheDocument();
+		expect(invoke).toHaveBeenCalledWith("launcher_connect", { url: SERVER });
 	});
 
-	it("扫码成功但壳判定地址非法：回到 connect 显示 invalid，输入框是扫到的 server", async () => {
+	it("扫码后取消：回到地址表单、清空输入，不连接", async () => {
+		plugin["plugin:barcode-scanner|check_permissions"] = "granted";
+		plugin["plugin:barcode-scanner|scan"] = { content: SERVER };
+		render(<Launcher />);
+		fireEvent.click(await screen.findByTestId("launcher-scan"));
+		fireEvent.click(await screen.findByTestId("launcher-confirm-cancel"));
+		expect(await screen.findByTestId("launcher-url")).toHaveValue("");
+		expect(invoke).not.toHaveBeenCalledWith(
+			"launcher_connect",
+			expect.anything(),
+		);
+	});
+
+	it("扫码确认后壳判定地址非法：回到 connect 显示 invalid，输入框是扫到的 server", async () => {
 		const content = `oryn://pair?server=${encodeURIComponent("ftp://bad")}`;
 		plugin["plugin:barcode-scanner|check_permissions"] = { camera: "granted" };
 		plugin["plugin:barcode-scanner|scan"] = { content };
@@ -344,13 +368,45 @@ describe("连接页（移动平台）", () => {
 		};
 		render(<Launcher />);
 		fireEvent.click(await screen.findByTestId("launcher-scan"));
+		fireEvent.click(await screen.findByTestId("launcher-confirm-connect"));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"无法识别这个服务器地址。",
 		);
 		expect(screen.getByTestId("launcher-url")).toHaveValue("ftp://bad");
+		expect(invoke).toHaveBeenCalledWith("launcher_connect", {
+			url: "ftp://bad",
+		});
 		expect(invoke).not.toHaveBeenCalledWith(
 			"plugin:barcode-scanner|request_permissions",
 			undefined,
+		);
+	});
+
+	it("深链接（壳推来 confirmConnect）：显示主机名，取消调 launcher_cancel，确认调 launcher_connect", async () => {
+		replies.launcher_cancel = { step: "connect", serverUrl: "" };
+		replies.launcher_connect = {
+			step: "connecting",
+			serverUrl: "https://evil.example",
+		};
+		render(<Launcher />);
+		await screen.findByLabelText(/服务器地址/);
+		push({ step: "confirmConnect", serverUrl: "https://evil.example" });
+		expect(screen.getByTestId("launcher-confirm-host")).toHaveTextContent(
+			"evil.example",
+		);
+		expect(invoke).not.toHaveBeenCalledWith(
+			"launcher_connect",
+			expect.anything(),
+		);
+		fireEvent.click(screen.getByTestId("launcher-confirm-cancel"));
+		expect(await screen.findByLabelText(/服务器地址/)).toBeInTheDocument();
+		expect(invoke).toHaveBeenCalledWith("launcher_cancel", undefined);
+		push({ step: "confirmConnect", serverUrl: "https://evil.example" });
+		fireEvent.click(screen.getByTestId("launcher-confirm-connect"));
+		await waitFor(() =>
+			expect(invoke).toHaveBeenCalledWith("launcher_connect", {
+				url: "https://evil.example",
+			}),
 		);
 	});
 

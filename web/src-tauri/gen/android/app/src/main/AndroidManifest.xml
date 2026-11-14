@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- WorkManager 的库清单带开机广播权限（重启后重排任务）。推送后台登记只是一次性任务，重启后下次打开 App 也会登记，不要开机自启 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
     <!-- 扫码配对（barcode-scanner 插件）与附件拍照；运行时才申请 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 相机可选：barcode-scanner 的库清单默认 required=true，会把无相机设备挡在外面 -->

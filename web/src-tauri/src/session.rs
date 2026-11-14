@@ -66,6 +66,10 @@ pub enum LauncherState {
         server_url: String,
         error: Option<LauncherError>,
     },
+    /// 配对链接 / 二维码给出的服务器：只预填，等用户在连接页看清主机名后点「连接」（`launcher_connect`）。
+    ConfirmConnect {
+        server_url: String,
+    },
     Pairing {
         server_url: String,
         code: String,
@@ -372,9 +376,13 @@ impl<A: Api, S: Shell> Core<A, S> {
     }
 
     /// `launcher_connect`：校验地址 → 健康检查 → 发起配对 →（桌面）系统浏览器打开批准页 → 轮询。
-    /// 地址也可以是配对二维码的内容 `oryn://pair?server=…`。
+    /// 地址也可以是配对二维码的内容 `oryn://pair?server=…`（用户在连接页里亲手提交的）。
+    /// 只有用户的这一步会发起连接：深链接进来的地址先经 [`Self::propose`] 停在 `ConfirmConnect`。
     pub async fn connect(&mut self, input: &str) -> Next {
-        if !matches!(self.state, LauncherState::Connect { .. }) {
+        if !matches!(
+            self.state,
+            LauncherState::Connect { .. } | LauncherState::ConfirmConnect { .. }
+        ) {
             return Next::Idle;
         }
         let pair = crate::deeplink::parse_pair(input);
@@ -519,7 +527,7 @@ impl<A: Api, S: Shell> Core<A, S> {
         self.enter_app("/").await
     }
 
-    /// `launcher_cancel`：终止轮询，回到连接页。
+    /// `launcher_cancel`：终止轮询回到连接页；或放弃链接给出的服务器（不留预填，免得误点）。
     pub fn cancel(&mut self) {
         if let Some(p) = self.pairing.take() {
             self.epoch += 1;
@@ -527,6 +535,37 @@ impl<A: Api, S: Shell> Core<A, S> {
                 server_url: p.server,
                 error: None,
             });
+        } else if matches!(self.state, LauncherState::ConfirmConnect { .. }) {
+            self.log.log("pair.link_dismissed", json!({}));
+            self.set_state(LauncherState::Connect {
+                server_url: String::new(),
+                error: None,
+            });
+        }
+    }
+
+    /// 配对链接（深链接、主框架里点到的 `oryn://pair`）：链接的来源不可信，这里绝不发起连接——
+    /// 只在尚未配对、停在连接页（含上一个待确认的链接）时把地址预填进 `ConfirmConnect`，由用户确认后走 [`Self::connect`]。
+    /// 地址不合法 → 连接页显示对应错误；配对、连接进行中或已配对时忽略。
+    pub fn propose(&mut self, input: &str) {
+        if self.config.server_url.is_some()
+            || !matches!(
+                self.state,
+                LauncherState::Connect { .. } | LauncherState::ConfirmConnect { .. }
+            )
+        {
+            self.log
+                .log("pair.link_ignored", json!({"reason": "busy_or_paired"}));
+            return;
+        }
+        match normalize_server_url(input) {
+            Ok(server_url) => self.set_state(LauncherState::ConfirmConnect { server_url }),
+            Err(UrlError::Insecure) => {
+                self.connect_error(input.trim().into(), codes::INSECURE_URL, "");
+            }
+            Err(UrlError::Invalid) => {
+                self.connect_error(input.trim().into(), codes::INVALID_URL, "");
+            }
         }
     }
 
@@ -759,6 +798,22 @@ impl<A: Api, S: Shell> Core<A, S> {
         });
         self.shell.restart();
         Next::Idle
+    }
+
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    /// 连接页的脚本跑起来了（移动端 `launcher_state`）。此时状态仍是 `Connected` = 远程页面已就绪过、
+    /// 主框架却回到了连接页：只有 WebView 被重建才会这样（Android 改字体大小等未声明的配置变更会重建 Activity，
+    /// wry 按创建时的地址重建 WebView）。用设备令牌重新换取会话回到应用，路径取待开路径（重建前所在页面）或上次的路径。
+    /// 冷启动时连接页脚本可能晚于兑换跳转才执行，那时状态是 `Connecting`，不重复换取。
+    pub async fn launcher_loaded(&mut self) -> Next {
+        if !matches!(self.state, LauncherState::Connected { .. }) {
+            return Next::Idle;
+        }
+        self.nav().web_ready = false;
+        let pending = self.nav().pending.clone();
+        self.log.log("session.restore", json!({"path": pending}));
+        let path = self.last_path.clone();
+        self.enter_app(&path).await
     }
 
     #[cfg_attr(not(mobile), allow(dead_code))]
@@ -1075,6 +1130,14 @@ mod tests {
 
     fn err_code(state: &LauncherState) -> Option<&str> {
         state.error_code()
+    }
+
+    /// 事件日志里的事件名（按序）。
+    fn events(b: &Buffer) -> Vec<String> {
+        b.events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap_or_default().to_string())
+            .collect()
     }
 
     impl Drop for Rig {
@@ -1874,6 +1937,98 @@ mod tests {
         assert_eq!(err_code(r.core.state()), Some(codes::INSECURE_URL));
         r.core.connect("oryn://open").await;
         assert_eq!(err_code(r.core.state()), Some(codes::INVALID_URL));
+    }
+
+    /// 安全审查第 1 条：深链接给的地址只预填，绝不自己发起连接；用户确认后才走 connect。
+    #[tokio::test]
+    async fn link_only_proposes_until_user_confirms() {
+        let mut r = fresh();
+        r.core.propose("https://oryn.example.com/");
+        assert_eq!(
+            r.core.state(),
+            &LauncherState::ConfirmConnect {
+                server_url: SERVER.into()
+            }
+        );
+        // 没有任何网络请求与外部动作
+        assert!(r.api.healthz.lock().unwrap().is_empty());
+        assert!(r.shell.calls.lock().unwrap().is_empty());
+        // 冷启动的链接先到：start 不覆盖待确认的地址
+        assert_eq!(r.core.start(None).await, Next::Idle);
+        assert!(matches!(
+            r.core.state(),
+            LauncherState::ConfirmConnect { .. }
+        ));
+        // 新链接替换旧的；不合法 / 不安全的地址在连接页报错
+        r.core.propose("http://evil.example");
+        assert_eq!(err_code(r.core.state()), Some(codes::INSECURE_URL));
+        r.core.propose("https://evil.example");
+        r.core.cancel();
+        assert_eq!(
+            r.core.state(),
+            &LauncherState::Connect {
+                server_url: String::new(),
+                error: None
+            }
+        );
+        // 用户确认（launcher_connect 带上页面显示的地址）才发起配对
+        r.core.propose(SERVER);
+        healthy(&r);
+        start_ok(&r, 600_000);
+        assert!(matches!(r.core.connect(SERVER).await, Next::Poll { .. }));
+        assert!(matches!(r.core.state(), LauncherState::Pairing { .. }));
+        // 配对进行中再来链接：忽略
+        r.core.propose("https://evil.example");
+        assert!(matches!(r.core.state(), LauncherState::Pairing { .. }));
+        assert_eq!(
+            events(&r.log),
+            [
+                "pair.link_dismissed",
+                "pair.started",
+                // 测试 rig 是桌面形态（配对后自动打开批准页）
+                "browser.open",
+                "pair.link_ignored"
+            ]
+        );
+
+        // 已配对：链接一律忽略
+        let mut r = paired();
+        r.core.propose("https://evil.example");
+        assert!(matches!(
+            r.core.state(),
+            LauncherState::Connect { error: None, .. }
+        ));
+    }
+
+    /// 代码审查第 2 条：远程页面就绪后连接页重新加载（WebView 被重建）→ 重新换取会话回到原页面；
+    /// 冷启动兑换途中连接页脚本晚到不重复换取。
+    #[tokio::test]
+    async fn launcher_reload_after_ready_restores_session() {
+        let mut r = paired();
+        for code in ["oac_1", "oac_2"] {
+            r.api.app_session.lock().unwrap().push_back(Ok(code.into()));
+        }
+        r.core.start(None).await;
+        // 冷启动：兑换跳转已发出、远程页面尚未就绪时连接页脚本才跑
+        assert_eq!(r.core.launcher_loaded().await, Next::Idle);
+        assert_eq!(r.shell.calls.lock().unwrap().len(), 1);
+        r.core.host_ready(SERVER, 3, "en");
+        // Activity 重建：插件把重建前的页面写进待开路径，新连接页加载
+        r.nav.lock().unwrap().pending = Some("/t/T-abc?x=1".into());
+        assert!(matches!(
+            r.core.launcher_loaded().await,
+            Next::Watchdog { .. }
+        ));
+        assert_eq!(
+            r.shell.calls.lock().unwrap().last(),
+            Some(&Call::Remote(
+                SERVER.into(),
+                format!("{SERVER}/auth/app?code=oac_2&next=%2Ft%2FT-abc%3Fx%3D1")
+            ))
+        );
+        assert!(!r.nav.lock().unwrap().web_ready);
+        assert!(matches!(r.core.state(), LauncherState::Connecting { .. }));
+        assert!(events(&r.log).contains(&"session.restore".to_string()));
     }
 
     #[tokio::test]

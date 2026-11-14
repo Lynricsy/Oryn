@@ -47,4 +47,38 @@ class ShareIntakeTest {
     // 正文已含主题时不重复
     assertEquals("Subject — https://x", ShareIntake.composeText("Subject", "Subject — https://x"))
   }
+
+  /** 安全审查第 4 条：`userId@` 前缀绕不过归属判断；按 uid（appId）而不是包名前缀判断。 */
+  @Test
+  fun ownProviderIsRecognisedByOwnerUid() {
+    val me = 10_123
+    val owners = mapOf(
+      "com.lynricsy.oryn.fileprovider" to 10_123,
+      "com.lynricsy.oryn.androidx-startup" to 10_123,
+      "com.android.providers.media.documents" to 10_050,
+      // 名字以本包名开头、其实属于别的应用
+      "com.lynricsy.oryn.evil.provider" to 10_777,
+    )
+    val own = { a: String -> ShareIntake.ownAuthority(a, me) { owners[it] } }
+    assertTrue(own("com.lynricsy.oryn.fileprovider"))
+    assertTrue(own("0@com.lynricsy.oryn.fileprovider"))
+    assertTrue(own("10@com.lynricsy.oryn.fileprovider"))
+    assertTrue(own("com.lynricsy.oryn.androidx-startup"))
+    assertTrue(!own("com.android.providers.media.documents"))
+    assertTrue(!own("0@com.android.providers.media.documents"))
+    assertTrue(!own("com.lynricsy.oryn.evil.provider"))
+    // 解析不到的 provider：打开时同样失败，这里不算本应用
+    assertTrue(!own("unknown.authority"))
+    // 工作资料里的本应用：uid 不同、appId 相同
+    assertTrue(ShareIntake.ownAuthority("10@com.lynricsy.oryn.fileprovider", me) { 1_010_123 })
+    assertEquals("com.lynricsy.oryn.fileprovider", ShareIntake.authorityHost("0@com.lynricsy.oryn.fileprovider"))
+  }
+
+  /** 安全审查第 5 条：锁屏公开版不含任何线程内容。 */
+  @Test
+  fun lockScreenPublicTextHasNoContent() {
+    assertEquals("线程有更新", Notifier.publicText("zh-CN"))
+    assertEquals("A thread has an update", Notifier.publicText("en"))
+    assertEquals("Oryn 有新通知", Notifier.genericText("zh-CN"))
+  }
 }

@@ -66,7 +66,7 @@ pub struct PushState {
     pub enabled: bool,
     pub distributor: Option<String>,
     pub channel: Option<PushChannel>,
-    /// UnifiedPush 端点与 RFC 8291 公钥（FCM 时为空）。
+    /// UnifiedPush 端点（FCM 时为空）；RFC 8291 公钥两种通道都有（FCM 的由插件自己生成，见 `FcmKeys.kt`）。
     pub endpoint: Option<String>,
     pub p256dh: Option<String>,
     pub auth: Option<String>,
@@ -131,6 +131,11 @@ pub enum Event {
         corner_radii: CornerRadii,
         #[serde(default)]
         insets: Insets,
+    },
+    /// Activity 重建（未声明的配置变更）后插件已绑定新的 WebView；`url` 是重建前主框架所在地址。
+    Recreated {
+        #[serde(default)]
+        url: Option<String>,
     },
 }
 

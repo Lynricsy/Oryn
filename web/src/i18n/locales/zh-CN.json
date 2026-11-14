@@ -1443,12 +1443,15 @@
 			"pairing": "在浏览器中批准",
 			"connecting": "正在连接",
 			"error": "暂时无法进入",
-			"confirmChange": "更换服务器"
+			"confirmChange": "更换服务器",
+			"confirmConnect": "连接到这台服务器？"
 		},
 		"intro": "输入 Oryn 服务器地址。连接后会在系统浏览器里打开配对页，用 Passkey 登录并批准这台设备。",
 		"serverUrl": "服务器地址",
 		"serverUrlHint": "使用 HTTPS；本机调试可用 http://localhost。",
 		"connect": "连接",
+		"confirmConnectHint": "这个地址来自二维码或链接。只连接你自己部署的 Oryn 服务器：连上后，你的提示词、分享的文件和推送都会发给它。",
+		"confirmConnectFrom": "完整地址：{{url}}",
 		"pairingHint": "已在浏览器打开 {{host}}，登录后输入下面的配对码并批准。",
 		"code": "配对码",
 		"expiresIn": "{{time}} 后失效",
