@@ -1,4 +1,16 @@
 #!/usr/bin/env bun
+import {
+	chmodSync,
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 /**
  * M8 真机验收（计划「验证」B1–B20 + 主人追加 B21–B23 + Web 侧新建线程 409 选择对话框 B24）：对 dev 部署
  * （orynd + docker provider，`make image` 之后的 oryn-orb:dev）逐项执行，每项打印 `B<n> PASS|FAIL|SKIP (耗时)` 与证据，
@@ -26,11 +38,20 @@
  *   M8_SESSION（网页会话 Cookie 值；缺省时现签）；M8_THREAD（B2–B8 / B14 / B16 / B17 用的线程；缺省时新建，不带 Profile）；
  *   M8_OLD_THREAD（旧镜像线程，默认 .dev/m8-old.thread）；M8_PROJECT（新线程挂的项目名，默认不挂项目，开机更快）；
  *   M8_HOST_IP（宿主站点监听地址，默认取 dev/provider.yaml 的 orb_url 主机）；M8_IMAGE / M8_PRE_IMAGE（B1 比较的两个镜像）；
- *   M8_B20=pass|fail（B20 人工走查的结论，缺省记 SKIP）、M8_B20_NOTE；M8_KEEP=1（不清理本次建的 orb 与 Profile）；
- *   CHROMIUM（默认 /usr/bin/chromium）；M8_SHOTS（默认 /tmp/oryn-shots/m8-accept）。
+ *   M8_B20_APP=1（B20 与 B17 的真实按键分支：见下）；M8_KEEP=1（不清理本次建的 orb 与 Profile）；
+ *   CHROMIUM（默认 /usr/bin/chromium）；ORYN_DESKTOP_BIN（默认 web/src-tauri/target/release/oryn-desktop，不存在时
+ *   `bun run tauri build --no-bundle` 现建）；M8_SHOTS（默认 /tmp/oryn-shots/m8-accept）。
+ *
+ * 真跑（M8_B20_APP=1；需要 Xvfb openbox xdotool xclip xprop import dbus-daemon trust go，以及 .dev/tls 的本机 CA）：
+ *   自起一个 Xvfb（1440x900）+ openbox + 无 service 目录的私有会话总线；dev/tlsproxy 把 https://localhost:<随机端口> 反代到
+ *   ORYN_URL（WebKitGTK 不收 http:// 下发的 `__Host-` Secure Cookie）；系统还不信任 .dev/tls/ca.crt 时临时
+ *   `trust anchor --store`，结束（含 Ctrl+C）时 `--remove`。真实 Tauri App 在这个显示上启动并配对（设备结束时吊销），
+ *   WebKit 远程检查器（WEBKIT_INSPECTOR_HTTP_SERVER）只用来读 DOM 与坐标；点击与按键一律是 xdotool 发出的真实 X 事件，
+ *   每步 `import -window root` 截屏。B17 另在同一显示上以普通进程起有界面 Chromium（非 headless，只经一条裸 CDP 读状态）。
+ *   未开启时 B20 记 SKIP，B17 只跑 headless 兼容路径（仅验证退出全屏后的清理）。
  *
  * 场景之间的依赖（单独 `--only` 时按需现建，见各场景开头）：
- *   B2–B8 / B14 / B16 / B17 共用线程 T（B2 要求 T 刚建好、浏览器还没启动过；B3 记录的画面哈希给 B4 比较）。
+ *   B2–B8 / B14 / B16 / B17 共用线程 T（B2 要求 T 刚建好、浏览器还没启动过；B3 记录的画面哈希给 B4 比较）；B20 自建线程。
  *   B9–B13 / B18 是一条 Profile P 的链：B9 建 P、A1、A2；B10 接管出 A3；B11 查 B9/B10 写入的 sid；B12 / B13 / B18 用 A3。
  *   B19 前要求没有别的 orb 在保存 Profile（链上的 A3 被保持唤醒）。B22 建的接管对给 B23 用。
  * 与计划原文的差异（以 S0 契约与主人决定为准）：建线程请求用 `profileMode: "takeover"`（不是 `browserProfileTakeover`）；
@@ -39,7 +60,7 @@
  * 已知前提：Chromium 约 30 秒才把 Cookie 落盘，活体保存（冻结前、接管前）只带走已落盘的部分（计划「假设」已写明）。
  *   B10 / B21 / B22 在活体保存前先轮询 orb 里 Cookies 库直到新值落盘（前置条件，不是断言）。
  */
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import type { Subprocess } from "bun";
 import {
 	type Browser,
 	type BrowserContext,
@@ -1996,7 +2017,800 @@ async function B16() {
 	});
 }
 
+// ---------------------------------------------------------------- 真跑：Xvfb 上的真实 App 与有界面 Chromium（M8_B20_APP=1）
+
+const REAL = process.env.M8_B20_APP === "1";
+const REAL_HINT =
+	"设 M8_B20_APP=1 开启真跑：M8_B20_APP=1 bun run accept:m8 -- --only B17,B20（Xvfb + openbox + 真实 Tauri App / 有界面 Chromium，xdotool 发真实按键）";
+const APP_BIN =
+	process.env.ORYN_DESKTOP_BIN ??
+	`${ROOT}/web/src-tauri/target/release/oryn-desktop`;
+const TLS_DIR = `${ROOT}/.dev/tls`;
+
+type Env = Record<string, string | undefined>;
+
+interface XEnv {
+	tmp: string;
+	display: string;
+	/** App 连接的 https origin（dev/tlsproxy → BASE） */
+	origin: string;
+	/** WebKit 远程检查器的 HTTP 端口 */
+	inspector: number;
+	/** 显示、私有会话总线与运行时目录（App 与有界面 Chromium 共用） */
+	env: Record<string, string>;
+	events: string;
+	procs: Subprocess[];
+	/** 本次运行临时把 .dev/tls/ca.crt 加进了系统信任库（结束时撤销） */
+	caAdded: boolean;
+	bin?: string;
+	app?: Subprocess;
+	deviceId?: string;
+}
+let X: XEnv | null = null;
+
+function freePort(): number {
+	const s = Bun.listen({
+		hostname: "127.0.0.1",
+		port: 0,
+		socket: { data() {} },
+	});
+	const p = s.port;
+	s.stop(true);
+	return p;
+}
+
+/** 后台进程，输出写 $tmp/<name>.log；teardownX 统一结束。 */
+function xbg(x: XEnv, name: string, cmd: string[], env: Env = x.env) {
+	const fd = openSync(`${x.tmp}/${name}.log`, "a");
+	const p = Bun.spawn(cmd, {
+		cwd: ROOT,
+		env,
+		stdin: "ignore",
+		stdout: fd,
+		stderr: fd,
+	});
+	x.procs.push(p);
+	return p;
+}
+
+/** 在 Xvfb 显示上跑 shell（xdotool / xclip / import / xprop）。 */
+const xsh = (x: XEnv, cmd: string) =>
+	sh(`export DISPLAY=${x.display}; ${cmd}`, { timeoutMs: 60_000 });
+
+async function xshot(name: string) {
+	if (!X) return;
+	const p = `${SHOTS}/${name}-${RUN}.png`;
+	if ((await xsh(X, `import -window root ${q(p)}`)).code === 0)
+		note(`截图 ${p}`);
+}
+
+/** Xvfb + openbox + 私有会话总线 + tlsproxy（+ 需要时临时信任本机 CA）。 */
+async function ensureX(): Promise<XEnv> {
+	if (X) return X;
+	const tools = [
+		"Xvfb",
+		"openbox",
+		"xdotool",
+		"xclip",
+		"xprop",
+		"import",
+		"dbus-daemon",
+		"trust",
+		"go",
+		"curl",
+	];
+	const missing = tools.filter((t) => !Bun.which(t));
+	if (missing.length)
+		throw new Error(
+			`缺少工具：${missing.join(" ")}（Arch：pacman -S --needed xorg-server-xvfb openbox xdotool xclip xorg-xprop imagemagick）`,
+		);
+	if (!existsSync(`${TLS_DIR}/ca.crt`))
+		throw new Error(
+			`缺少 ${TLS_DIR}/ca.crt：先 go run ./dev/tlsproxy -init -dir .dev/tls`,
+		);
+	const tmp = mkdtempSync(`${tmpdir()}/oryn-m8app-`);
+	mkdirSync(`${tmp}/run`, { recursive: true });
+	chmodSync(`${tmp}/run`, 0o700);
+	mkdirSync(`${tmp}/fakebin`, { recursive: true });
+	// App 配对时会 xdg-open 验证页：只记下来，不在宿主上开浏览器
+	writeFileSync(
+		`${tmp}/fakebin/xdg-open`,
+		`#!/bin/sh\nprintf '%s\\n' "$*" >> ${q(`${tmp}/xdg-open.log`)}\n`,
+	);
+	chmodSync(`${tmp}/fakebin/xdg-open`, 0o755);
+	let n = 91;
+	while (existsSync(`/tmp/.X11-unix/X${n}`) || existsSync(`/tmp/.X${n}-lock`))
+		n++;
+	const display = `:${n}`;
+	const bus = `${tmp}/run/bus`;
+	const tlsPort = freePort();
+	const base: Record<string, string> = {};
+	for (const [k, v] of Object.entries(process.env))
+		if (v !== undefined) base[k] = v;
+	const x: XEnv = {
+		tmp,
+		display,
+		origin: `https://localhost:${tlsPort}`,
+		inspector: freePort(),
+		env: {
+			...base,
+			DISPLAY: display,
+			DBUS_SESSION_BUS_ADDRESS: `unix:path=${bus}`,
+			XDG_RUNTIME_DIR: `${tmp}/run`,
+			PATH: `${tmp}/fakebin:${process.env.PATH ?? ""}`,
+		},
+		events: `${tmp}/events.jsonl`,
+		procs: [],
+		caAdded: false,
+	};
+	X = x;
+	xbg(x, "xvfb", [
+		"Xvfb",
+		display,
+		"-screen",
+		"0",
+		"1440x900x24",
+		"-nolisten",
+		"tcp",
+	]);
+	await waitFor(
+		`Xvfb ${display} 就绪`,
+		() => existsSync(`/tmp/.X11-unix/X${n}`),
+		10_000,
+	);
+	xbg(x, "openbox", ["openbox"]);
+	// 不带任何 service 目录的会话总线：单实例与深链接照常可用，也不会 D-Bus 激活出读写真实 HOME 的凭据库（App 退回文件存令牌）
+	writeFileSync(
+		`${tmp}/bus.conf`,
+		`<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig><type>session</type><listen>unix:path=${bus}</listen><auth>EXTERNAL</auth>
+<policy context="default"><allow send_destination="*" eavesdrop="true"/><allow eavesdrop="true"/><allow own="*"/></policy></busconfig>
+`,
+	);
+	xbg(x, "dbus", ["dbus-daemon", "--nofork", `--config-file=${tmp}/bus.conf`]);
+	await waitFor("私有会话总线就绪", () => existsSync(bus), 10_000);
+	const build = await sh(`go build -o ${q(`${tmp}/tlsproxy`)} ./dev/tlsproxy`, {
+		timeoutMs: 300_000,
+	});
+	if (build.code !== 0) throw new Error(`构建 tlsproxy 失败：${build.out}`);
+	xbg(x, "tlsproxy", [
+		`${tmp}/tlsproxy`,
+		"-listen",
+		`127.0.0.1:${tlsPort}`,
+		"-target",
+		BASE,
+		"-dir",
+		TLS_DIR,
+	]);
+	const healthy = async (insecure: boolean) =>
+		(
+			await sh(
+				`curl -s ${insecure ? "-k " : ""}-o /dev/null -w '%{http_code}' ${x.origin}/healthz`,
+			)
+		).stdout === "200";
+	await waitFor("tlsproxy 就绪", () => healthy(true), 15_000, 300);
+	if (!(await healthy(false))) {
+		const r = await sh(`trust anchor --store ${q(`${TLS_DIR}/ca.crt`)}`);
+		if (r.code !== 0) throw new Error(`trust anchor --store 失败：${r.out}`);
+		x.caAdded = true;
+		note(
+			"临时信任 .dev/tls/ca.crt（trust anchor --store；CA 带名称约束，只能签 localhost；结束时 --remove）",
+		);
+		await waitFor("系统信任本机 CA", () => healthy(false), 10_000, 500);
+	}
+	note(`真跑环境：Xvfb ${display} + openbox，App 连接 ${x.origin} → ${BASE}`);
+	return x;
+}
+
+function appEnv(x: XEnv): Record<string, string> {
+	return {
+		...x.env,
+		XDG_CONFIG_HOME: `${x.tmp}/app/config`,
+		XDG_DATA_HOME: `${x.tmp}/app/data`,
+		XDG_CACHE_HOME: `${x.tmp}/app/cache`,
+		ORYN_DESKTOP_EVENT_LOG: x.events,
+		// Xvfb 下 WebKitGTK 的 DMA-BUF / 合成渲染不可用
+		WEBKIT_DISABLE_DMABUF_RENDERER: "1",
+		WEBKIT_DISABLE_COMPOSITING_MODE: "1",
+		NO_AT_BRIDGE: "1",
+		// 只用来读 DOM 与坐标（WebKit 检查器协议：Target.sendMessageToTarget → Runtime.evaluate）
+		WEBKIT_INSPECTOR_HTTP_SERVER: `127.0.0.1:${x.inspector}`,
+	};
+}
+
+interface AppEv {
+	event: string;
+	[k: string]: unknown;
+}
+
+function appEvents(x: XEnv): AppEv[] {
+	if (!existsSync(x.events)) return [];
+	const out: AppEv[] = [];
+	for (const line of readFileSync(x.events, "utf8").split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			out.push(JSON.parse(line) as AppEv);
+		} catch {
+			// 写了一半的行
+		}
+	}
+	return out;
+}
+
+async function appEv(
+	x: XEnv,
+	name: string,
+	after: number,
+	where: (e: AppEv) => boolean = () => true,
+	timeoutMs = 30_000,
+): Promise<AppEv> {
+	const e = await waitFor(
+		`App 事件 ${name}`,
+		() =>
+			appEvents(x)
+				.slice(after)
+				.find((v) => v.event === name && where(v)),
+		timeoutMs,
+		200,
+	);
+	const { ts: _ts, ...rest } = e;
+	note(`App 事件 ${JSON.stringify(rest)}`);
+	return e;
+}
+
+/** App 二进制：已有就用，没有就现建（`bun run tauri build --no-bundle`）。 */
+async function appBinary(): Promise<string> {
+	if (existsSync(APP_BIN)) return APP_BIN;
+	note(`没有 ${APP_BIN}，构建 App（bun run tauri build --no-bundle）`);
+	const r = await sh("cd web && bun run tauri build --no-bundle", {
+		timeoutMs: 3_600_000,
+	});
+	if (r.code !== 0 || !existsSync(APP_BIN))
+		throw new Error(`构建 App 失败：${r.out.slice(-800)}`);
+	return APP_BIN;
+}
+
+/** 跑一次 App 的第二实例（深链接、--quit），等它退出。 */
+async function appOnce(x: XEnv, args: string[]) {
+	const p = Bun.spawn([x.bin ?? APP_BIN, ...args], {
+		env: appEnv(x),
+		stdin: "ignore",
+		stdout: "ignore",
+		stderr: "ignore",
+	});
+	if ((await Promise.race([p.exited, Bun.sleep(15_000)])) === undefined)
+		p.kill("SIGKILL");
+}
+
+function appWindow(x: XEnv): Promise<string> {
+	return waitFor(
+		"App 窗口",
+		async () =>
+			(
+				await xsh(x, "xdotool search --onlyvisible --name '^Oryn$'")
+			).stdout.split("\n")[0],
+		15_000,
+		300,
+	);
+}
+
+const activate = (x: XEnv, wid: string) =>
+	xsh(
+		x,
+		`xdotool windowactivate --sync ${wid} 2>/dev/null || xdotool windowraise ${wid} windowfocus ${wid}`,
+	);
+
+/** 真实 App：在 Xvfb 上启动、配对到 dev 服务器（网页会话批准），进入远程页面。 */
+async function ensureApp(): Promise<XEnv> {
+	const x = await ensureX();
+	if (x.app && x.app.exitCode === null && x.deviceId) return x;
+	x.bin = await appBinary();
+	const after = appEvents(x).length;
+	if (x.deviceId) x.app = xbg(x, "app", [x.bin], appEnv(x));
+	else {
+		x.app = xbg(x, "app", [x.bin, "--server", x.origin], appEnv(x));
+		const started = await appEv(x, "pair.started", after);
+		const r = await req("POST", "/api/v1/devices/pair/approve", {
+			body: { code: started.code },
+			headers: {
+				Cookie: `__Host-oryn_session=${SESSION}`,
+				"X-Oryn-CSRF": "1",
+			},
+		});
+		if (r.status >= 300)
+			throw new Error(`批准配对失败 ${r.status} ${r.text.slice(0, 200)}`);
+		const ok = await appEv(x, "pair.approved", after);
+		x.deviceId = String(ok.deviceId);
+	}
+	await appEv(x, "web.ready", after, (e) => e.origin === x.origin);
+	const w = await appWindow(x);
+	await activate(x, w);
+	await xsh(
+		x,
+		`xdotool windowsize --sync ${w} 1400 860 windowmove --sync ${w} 20 20`,
+	);
+	note(`App 已配对（设备 ${x.deviceId}），窗口 ${w} 1400x860`);
+	return x;
+}
+
+/** 一个可被观察的页面：App（WebKit 检查器）或有界面 Chromium（裸 CDP）。操作只经 xdotool。 */
+interface Surface {
+	name: string;
+	wid: string;
+	/** 在页面里求值一个 JS 表达式（结果经 JSON 往返） */
+	eval<T>(expr: string): Promise<T>;
+	/** 视口原点的屏幕坐标 */
+	origin(): Promise<{ x: number; y: number }>;
+}
+
+async function windowGeometry(x: XEnv, wid: string) {
+	const g = (await xsh(x, `xdotool getwindowgeometry --shell ${wid}`)).stdout;
+	const v = (k: string) =>
+		Number(new RegExp(`^${k}=(-?\\d+)`, "m").exec(g)?.[1]);
+	return { x: v("X"), y: v("Y"), w: v("WIDTH"), h: v("HEIGHT") };
+}
+
+interface WkMsg {
+	id?: number;
+	method?: string;
+	params?: {
+		targetInfo?: { targetId: string; type: string };
+		message?: string;
+	};
+	error?: unknown;
+	result?: { result?: { value?: string }; wasThrown?: boolean };
+}
+
+/** WebKit 远程检查器求值：每次新连一条，取最新的 page target，经 Target.sendMessageToTarget 发 Runtime.evaluate。 */
+async function wkEval<T>(x: XEnv, expr: string): Promise<T> {
+	const index = await (await fetch(`http://127.0.0.1:${x.inspector}/`)).text();
+	const rows = [
+		...index.matchAll(
+			/targeturl">([^<]*)<[\s\S]*?window\.location\.host \+ '([^']+)'/g,
+		),
+	];
+	const row = rows.find((m) => m[1]?.startsWith(x.origin)) ?? rows[0];
+	if (!row) throw new Error("WebKit 检查器里没有页面");
+	const ws = new WebSocket(`ws://127.0.0.1:${x.inspector}${row[2]}`);
+	const message = JSON.stringify({
+		id: 2,
+		method: "Runtime.evaluate",
+		params: { expression: `JSON.stringify((${expr}))`, returnByValue: true },
+	});
+	const { promise, resolve, reject } = Promise.withResolvers<T>();
+	let target = "";
+	const timer = setTimeout(
+		() => reject(new Error(`检查器求值超时：${expr.slice(0, 80)}`)),
+		10_000,
+	);
+	ws.onerror = () => reject(new Error("WebKit 检查器连接失败"));
+	ws.onmessage = (e) => {
+		const m = JSON.parse(String(e.data)) as WkMsg;
+		const info = m.params?.targetInfo;
+		if (m.method === "Target.targetCreated" && info?.type === "page") {
+			// 连上时先报已有 target；稍等一下取最后一个（导航中可能还有临时页）
+			if (!target)
+				setTimeout(
+					() =>
+						ws.send(
+							JSON.stringify({
+								id: 1,
+								method: "Target.sendMessageToTarget",
+								params: { targetId: target, message },
+							}),
+						),
+					150,
+				);
+			target = info.targetId;
+		}
+		if (m.method !== "Target.dispatchMessageFromTarget") return;
+		const inner = JSON.parse(m.params?.message ?? "{}") as WkMsg;
+		if (inner.id !== 2) return;
+		if (inner.error || inner.result?.wasThrown)
+			reject(
+				new Error(
+					`检查器求值出错：${JSON.stringify(inner.error ?? inner.result).slice(0, 300)}`,
+				),
+			);
+		else resolve(JSON.parse(inner.result?.result?.value ?? "null") as T);
+	};
+	try {
+		return await promise;
+	} finally {
+		clearTimeout(timer);
+		ws.close();
+	}
+}
+
+/**
+ * App 的视口原点 = 窗口左上角：App 不要系统标题栏（D16），WebView 铺满窗口。
+ * 不用 mousemove 的 screenX：实测 WebKitGTK 退出全屏后 screenX 仍按全屏时的窗口位置（0,0）报，偏了窗口的偏移量。
+ */
+async function appSurface(x: XEnv): Promise<Surface> {
+	const wid = await appWindow(x);
+	return {
+		name: "App",
+		wid,
+		eval: (expr) => wkEval(x, expr),
+		origin: () => windowGeometry(x, wid),
+	};
+}
+
+const sel = (s: string) => `document.querySelector(${JSON.stringify(s)})`;
+
+/** 元素中心的视口坐标（不可见为 null）。 */
+const rectOf = (s: Surface, find: string) =>
+	s.eval<{ x: number; y: number } | null>(
+		`(() => { const el = ${find}; if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width || !r.height) return null; return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
+	);
+
+/**
+ * 有界面 Chromium 的视口原点：把指针挪进窗口，读 mousemove 的 screenX − clientX（浏览器工具栏、全屏都自动算进去）。
+ */
+async function viewportOrigin(x: XEnv, s: Surface) {
+	await s.eval(
+		`(window.__m8o = null, window.__m8oOn || (window.__m8oOn = true, addEventListener("mousemove", (e) => { window.__m8o = { x: e.screenX - e.clientX, y: e.screenY - e.clientY }; }, true)), true)`,
+	);
+	const g = await windowGeometry(x, s.wid);
+	const cx = g.x + Math.round(g.w / 2);
+	const cy = g.y + Math.round(g.h / 2);
+	return waitFor(
+		`${s.name} 视口原点`,
+		async () => {
+			await xsh(
+				x,
+				`xdotool mousemove --sync ${cx} ${cy} sleep 0.05 mousemove --sync ${cx + 3} ${cy + 2}`,
+			);
+			return s.eval<{ x: number; y: number } | null>("window.__m8o");
+		},
+		10_000,
+		200,
+	);
+}
+
+/** 在页面坐标 p 处真实点击（xdotool）。 */
+async function xclickAt(x: XEnv, s: Surface, p: { x: number; y: number }) {
+	const o = await s.origin();
+	await xsh(
+		x,
+		`xdotool mousemove --sync ${Math.round(o.x + p.x)} ${Math.round(o.y + p.y)} sleep 0.15 click 1`,
+	);
+}
+
+async function xclick(x: XEnv, s: Surface, find: string, what: string) {
+	const p = await waitFor(
+		`${s.name}：${what}`,
+		() => rectOf(s, find),
+		30_000,
+		300,
+	);
+	await xclickAt(x, s, p);
+}
+
+/** 点舞台上 orb 页面里的某个元素（远端屏幕坐标 → canvas 上的页面坐标 → 屏幕坐标）。 */
+async function xclickRemote(
+	x: XEnv,
+	s: Surface,
+	orb: string,
+	targetId: string,
+	selector: string,
+) {
+	const rp = await remotePoint(orb, targetId, selector);
+	const p = await s.eval<{ x: number; y: number } | null>(
+		`(() => { const c = document.querySelector(${JSON.stringify(CANVAS)}); if (!c?.width) return null; const r = c.getBoundingClientRect(); return { x: r.left + (${rp.x} * r.width) / c.width, y: r.top + (${rp.y} * r.height) / c.height }; })()`,
+	);
+	if (!p) throw new Error(`${s.name}：舞台上没有 canvas`);
+	await xclickAt(x, s, p);
+}
+
+const xtype = (x: XEnv, text: string) =>
+	xsh(x, `xdotool type --delay 70 -- ${q(text)}`);
+
+/** 用深链接（第二实例）让 App 打开线程页。 */
+async function appOpenThread(x: XEnv, s: Surface, tid: string) {
+	const after = appEvents(x).length;
+	await appOnce(x, [`oryn://thread/${tid}`]);
+	await appEv(x, "open", after, (e) => e.path === `/t/${tid}`);
+	await waitFor(
+		`App 进入 /t/${tid}`,
+		async () => (await s.eval<string>("location.pathname")) === `/t/${tid}`,
+		30_000,
+		500,
+	);
+	await activate(x, s.wid);
+}
+
+/** 真实点击 Desktop 标签，等 canvas 出现且状态 connected。 */
+async function xOpenDesktop(x: XEnv, s: Surface) {
+	const tab = `[...document.querySelectorAll(${JSON.stringify(DESK_TAB)})].find((e) => e.getBoundingClientRect().width > 0)`;
+	await waitFor(`${s.name}：Desktop 标签`, () => rectOf(s, tab), 60_000, 500);
+	if (
+		!(await s.eval<boolean>(`${tab}.getAttribute("aria-selected") === "true"`))
+	)
+		await xclick(x, s, tab, "Desktop 标签");
+	await waitFor(
+		`${s.name}：Desktop 面板已连接`,
+		() =>
+			s.eval<boolean>(
+				`!!document.querySelector("[data-testid=desktop-status][data-state=connected]") && (document.querySelector(${JSON.stringify(CANVAS)})?.width ?? 0) > 0`,
+			),
+		90_000,
+		500,
+	);
+	check(true, `${s.name}：点开 Desktop 标签，canvas 出现且状态 connected`);
+}
+
+/** orb 里的浏览器没在跑时，真实点击舞台上的「启动浏览器」。 */
+async function xStartBrowser(x: XEnv, s: Surface, orb: string) {
+	if ((await getOrb(orb)).desktop?.browser === "running") {
+		note("orb 里浏览器已在运行");
+		return;
+	}
+	await xclick(
+		x,
+		s,
+		sel("[data-testid=desktop-start-browser]"),
+		"「启动浏览器」",
+	);
+	await waitFor(
+		"orb 里浏览器 running",
+		async () => (await getOrb(orb)).desktop?.browser === "running",
+		120_000,
+		1000,
+	);
+	check(true, `${s.name}：点「启动浏览器」后 orb 里浏览器在运行`);
+}
+
+async function remoteEval<T>(
+	orb: string,
+	targetId: string,
+	expression: string,
+): Promise<T> {
+	const [res] = await cdp(orb, targetId, [
+		{ method: "Runtime.evaluate", params: { expression, returnByValue: true } },
+	]);
+	return (res as { result?: { value?: T } }).result?.value as T;
+}
+
+/** 在 orb 站点页上数 Escape 的 keydown（捕获阶段，首次调用时挂上），返回当前次数。 */
+const remoteEsc = (orb: string, targetId: string) =>
+	remoteEval<number>(
+		orb,
+		targetId,
+		`(window.__m8escOn || (window.__m8escOn = true, window.__m8esc = 0, addEventListener("keydown", (e) => { if (e.key === "Escape") window.__m8esc += 1; }, true)), window.__m8esc)`,
+	);
+
+const remoteClipboard = async (orb: string) =>
+	(await dexec(orb, "xclip -o -selection clipboard", { DISPLAY: ":1" })).stdout;
+
+const FS_ID =
+	"document.fullscreenElement ? (document.fullscreenElement.dataset.testid ?? '?') : null";
+
+interface EscResult {
+	shortExit: boolean;
+	shortRemote: number;
+	longExit: boolean;
+	longRemote: number;
+}
+
+/** noVNC 的鼠标捕获代理层（setCapture 的模拟：盖满整页的 div，等 mouseup 才收起）是否还开着。 */
+const STALE_CAPTURE = `(() => { const el = document.getElementById("noVNC_mouse_capture_elem"); return !!document.captureElement && !!el && getComputedStyle(el).display !== "none"; })()`;
+
+/**
+ * 真实点击全屏按钮进入全屏，再点舞台上的远端输入框（焦点进 canvas 与远端页面）。
+ * 全屏中点过 canvas 后，noVNC 的捕获代理层（挂在 body 上，在全屏顶层之下收不到 mouseup）不会收起；
+ * 退出全屏后它盖满整页，用户的下一次点击被它吞掉。遇到时记为产品问题（⚠）并截图，再点一次继续。
+ */
+async function xEnterFullscreen(
+	x: XEnv,
+	s: Surface,
+	orb: string,
+	siteId: string,
+	tag: string,
+) {
+	// 记下面板 requestFullscreen 的结果（失败时面板会静默退到「面板最大化」）与点击落在了谁身上
+	await s.eval(
+		`(() => { const p = Element.prototype; if (!p.__m8rf) { p.__m8rf = p.requestFullscreen; p.requestFullscreen = function (...a) { window.__m8fs = "pending"; const r = p.__m8rf.apply(this, a); r.then(() => { window.__m8fs = "ok"; }, (e) => { window.__m8fs = "rejected: " + e; }); return r; }; } window.__m8fs = "not-called"; window.__m8ev = []; if (!window.__m8evOn) { window.__m8evOn = true; for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) addEventListener(t, (e) => { const el = e.target; window.__m8ev.push(t + ":" + (el?.id || el?.dataset?.testid || el?.getAttribute?.("aria-label") || el?.tagName)); }, true); } return true; })()`,
+	);
+	const stale = await s.eval<boolean>(STALE_CAPTURE);
+	const why = () =>
+		s.eval<string>(
+			`"requestFullscreen " + window.__m8fs + "，事件 " + window.__m8ev.join(" ") + "，点击后捕获层仍开着=" + ${STALE_CAPTURE}`,
+		);
+	const entered = () =>
+		waitFor(
+			`${s.name}：进入全屏`,
+			() => s.eval<string | null>(FS_ID),
+			5_000,
+			100,
+		).catch(() => null);
+	await xclick(x, s, sel("[data-testid=desktop-fullscreen]"), "全屏按钮");
+	let id = await entered();
+	if (!id && stale) {
+		const w = await why();
+		soft(
+			false,
+			`产品问题：退出全屏后第一次点击被 noVNC 的捕获代理层吞掉（全屏中点过 canvas，mouseup 没到代理层，代理层一直盖着整页）；点全屏按钮无反应（${w}）`,
+		);
+		await xshot(`${tag}-click-swallowed`);
+		await xclick(x, s, sel("[data-testid=desktop-fullscreen]"), "全屏按钮");
+		id = await entered();
+		if (id) note(`${s.name}：第二次点击全屏按钮才进入全屏`);
+	}
+	if (!id) throw new Error(`${s.name}：点全屏按钮没进入全屏（${await why()}）`);
+	check(id === "desktop-stage", `${s.name}：fullscreenElement = ${id}`);
+	await Bun.sleep(1000);
+	const wm = (await xsh(x, `xprop -id ${s.wid} _NET_WM_STATE`)).stdout;
+	check(
+		wm.includes("_NET_WM_STATE_FULLSCREEN"),
+		`${s.name}：窗口进入真全屏（${wm}）`,
+	);
+	await xclickRemote(x, s, orb, siteId, "#i");
+	await Bun.sleep(300);
+}
+
+/**
+ * 全屏下真实按 Esc：先短按（xdotool key），再长按约 2.5 秒（keydown → sleep → keyup）。
+ * 每次记录是否退出全屏、远端页面收到几次 Escape keydown。长按后仍没退出时用 exitFullscreen 收尾（不让后续步骤困在全屏里）。
+ */
+async function escTrial(
+	x: XEnv,
+	s: Surface,
+	orb: string,
+	siteId: string,
+	tag: string,
+): Promise<EscResult> {
+	const exited = (ms: number) =>
+		waitFor(
+			"退出全屏",
+			async () => (await s.eval<string | null>(FS_ID)) === null,
+			ms,
+			100,
+		).then(
+			() => true,
+			() => false,
+		);
+	await xEnterFullscreen(x, s, orb, siteId, tag);
+	await xshot(`${tag}-fullscreen`);
+	let n0 = await remoteEsc(orb, siteId);
+	await xsh(x, "xdotool key Escape");
+	const shortExit = await exited(2000);
+	await Bun.sleep(500);
+	const shortRemote = (await remoteEsc(orb, siteId)) - n0;
+	note(
+		`${s.name}：短按 Esc → ${shortExit ? "退出了全屏" : "仍在全屏"}，远端收到 Escape ${shortRemote} 次`,
+	);
+	await xshot(`${tag}-after-short-esc`);
+	if (shortExit) await xEnterFullscreen(x, s, orb, siteId, tag);
+	n0 = await remoteEsc(orb, siteId);
+	await xsh(x, "xdotool keydown Escape sleep 2.5 keyup Escape");
+	const longExit = await exited(3000);
+	await Bun.sleep(500);
+	const longRemote = (await remoteEsc(orb, siteId)) - n0;
+	note(
+		`${s.name}：长按 Esc 2.5 秒 → ${longExit ? "退出了全屏" : "仍在全屏"}，远端收到 Escape ${longRemote} 次`,
+	);
+	await xshot(`${tag}-after-long-esc`);
+	if (!longExit) {
+		await s.eval("(document.exitFullscreen(), true)").catch(() => {});
+		await exited(3000);
+	}
+	// 退出全屏后 noVNC 的捕获代理层可能还盖着整页（见 xEnterFullscreen）：真实点一下舞台让它收起，后续步骤的点击不再被吞
+	if (await s.eval<boolean>(STALE_CAPTURE)) {
+		note(
+			`${s.name}：退出全屏后 noVNC 捕获代理层仍盖着整页，点一下舞台让它收起`,
+		);
+		await xclick(x, s, sel(STAGE), "舞台（收起捕获层）");
+		await waitFor(
+			"noVNC 捕获代理层收起",
+			async () => !(await s.eval<boolean>(STALE_CAPTURE)),
+			5_000,
+			200,
+		);
+	}
+	return { shortExit, shortRemote, longExit, longRemote };
+}
+
+/** 收尾：退出 App（--quit）、吊销它的设备、结束 X 环境的进程、撤销临时信任的 CA、保存日志。 */
+async function teardownX() {
+	const x = X;
+	if (!x) return;
+	X = null;
+	const stopped = async (p: Subprocess, ms: number) =>
+		(await Promise.race([p.exited, Bun.sleep(ms)])) !== undefined;
+	if (x.app && x.app.exitCode === null) {
+		await appOnce(x, ["--quit"]);
+		if (!(await stopped(x.app, 15_000))) x.app.kill("SIGKILL");
+	}
+	if (x.deviceId) {
+		const r = await api("DELETE", `/api/v1/devices/${x.deviceId}`);
+		console.log(`吊销 App 设备 ${x.deviceId} → ${r.status}`);
+	}
+	for (const p of [...x.procs].reverse()) {
+		if (p.exitCode !== null || p.signalCode !== null) continue;
+		p.kill("SIGTERM");
+		if (!(await stopped(p, 3000))) p.kill("SIGKILL");
+	}
+	if (x.caAdded) {
+		const r = await sh(`trust anchor --remove ${q(`${TLS_DIR}/ca.crt`)}`);
+		console.log(
+			`撤销本机 CA 信任（trust anchor --remove）→ ${r.code === 0 ? "完成" : `失败：${r.out}`}`,
+		);
+	}
+	const keep = `${SHOTS}/app-${RUN}`;
+	mkdirSync(keep, { recursive: true });
+	for (const f of ["events.jsonl", "app.log", "tlsproxy.log", "xdg-open.log"])
+		if (existsSync(`${x.tmp}/${f}`))
+			copyFileSync(`${x.tmp}/${f}`, `${keep}/${f}`);
+	console.log(`App 事件日志与输出：${keep}`);
+	if (!KEEP) rmSync(x.tmp, { recursive: true, force: true });
+}
+
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+	process.on(sig, () => {
+		void teardownX().finally(() => process.exit(130));
+	});
+
 async function B17() {
+	await b17Headless();
+	if (!REAL) {
+		note(`真实按键分支未开启（${REAL_HINT}）`);
+		return;
+	}
+	const fails: string[] = [];
+	for (const [name, fn] of [
+		["桌面 App（WebKitGTK）", b17App],
+		["有界面 Chromium", b17Headful],
+	] as const) {
+		note(`—— 真跑分支：${name}`);
+		try {
+			await fn();
+		} catch (e) {
+			const m = e instanceof Error ? e.message : String(e);
+			note(`✗ ${name}：${m}`);
+			await xshot(`B17-${fn.name}-FAIL`);
+			fails.push(`${name}：${m}`);
+		}
+	}
+	if (fails.length) throw new Error(fails.join("；"));
+}
+
+/** 包一层 navigator.keyboard.lock / unlock，记下调用与 lock 的结果；没有该 API 时返回 false。 */
+function hookKeyboardLock(): boolean {
+	type K = { lock?(): Promise<void>; unlock?(): void };
+	const kb = (navigator as Navigator & { keyboard?: K }).keyboard;
+	const w = window as unknown as { __m8Kb: string[] };
+	w.__m8Kb = [];
+	if (!kb?.lock || !kb.unlock) return false;
+	const lock = kb.lock.bind(kb);
+	const unlock = kb.unlock.bind(kb);
+	kb.lock = () => {
+		w.__m8Kb.push("lock");
+		return lock().then(
+			() => {
+				w.__m8Kb.push("lock:ok");
+			},
+			(e: unknown) => {
+				w.__m8Kb.push(`lock:err:${String(e)}`);
+				throw e;
+			},
+		);
+	};
+	kb.unlock = () => {
+		w.__m8Kb.push("unlock");
+		unlock();
+	};
+	return true;
+}
+
+/**
+ * B17 headless 兼容路径：仅验证退出全屏后的清理。
+ * Playwright 经 CDP 合成的按键直接送进渲染进程，不经过浏览器层的全屏处理（实测 headless Chromium 短按 / 长按 Esc
+ * 都不会退出全屏），所以这里不判断 Esc 本身，直接 document.exitFullscreen()，只看进入全屏取键盘锁、退出后释放键盘锁、
+ * 面板回到正常布局。Esc 的真实表现见真跑分支（b17App / b17Headful）。
+ */
+async function b17Headless() {
+	note("headless 兼容路径：仅验证退出全屏后的清理（不判断 Esc）");
 	const { page } = await deskPageA();
 	const fsId = () =>
 		page.evaluate(() =>
@@ -2005,24 +2819,7 @@ async function B17() {
 				: null,
 		);
 	// 记下面板对键盘锁的调用：进入全屏应 lock（让 Esc 进桌面），退出全屏应 unlock
-	const hooked = await page.evaluate(() => {
-		type K = { lock?(): Promise<void>; unlock?(): void };
-		const kb = (navigator as Navigator & { keyboard?: K }).keyboard;
-		const w = window as unknown as { __m8Kb: string[] };
-		w.__m8Kb = [];
-		if (!kb?.lock || !kb.unlock) return false;
-		const lock = kb.lock.bind(kb);
-		const unlock = kb.unlock.bind(kb);
-		kb.lock = () => {
-			w.__m8Kb.push("lock");
-			return lock();
-		};
-		kb.unlock = () => {
-			w.__m8Kb.push("unlock");
-			unlock();
-		};
-		return true;
-	});
+	const hooked = await page.evaluate(hookKeyboardLock);
 	const kbCalls = () =>
 		page.evaluate(
 			() => (window as unknown as { __m8Kb: string[] }).__m8Kb ?? [],
@@ -2039,31 +2836,14 @@ async function B17() {
 		);
 		check(true, "进入全屏后调用了 navigator.keyboard.lock");
 	} else note("浏览器没有 navigator.keyboard.lock，跳过键盘锁观察");
-	await page.keyboard.press("Escape");
-	const viaEsc = await waitFor(
-		"Esc 退出全屏",
+	await page.evaluate(() => document.exitFullscreen());
+	await waitFor(
+		"exitFullscreen 退出全屏",
 		async () => (await fsId()) === null,
-		2_000,
+		3_000,
 		100,
-	).catch(() => false);
-	if (viaEsc) check(true, "按 Esc 后 fullscreenElement = null");
-	else {
-		// Playwright 经 CDP 合成的按键直接送进渲染进程，不经过浏览器层的全屏退出处理：
-		// 实测 headless Chromium 即使没有键盘锁，短按 / 长按 Esc 都不会退出全屏。
-		// 真实浏览器里 Esc（键盘锁下为长按 Esc）退出全屏走的就是 exitFullscreen 这条路，
-		// 这里改用它做等价验证：退出后 fullscreenElement 为 null、面板释放键盘锁、全屏按钮回来
-		note(
-			"CDP 合成的 Esc 不触发浏览器的全屏退出，改用 document.exitFullscreen()",
-		);
-		await page.evaluate(() => document.exitFullscreen());
-		await waitFor(
-			"exitFullscreen 退出全屏",
-			async () => (await fsId()) === null,
-			3_000,
-			100,
-		);
-		check(true, "退出全屏后 fullscreenElement = null");
-	}
+	);
+	check(true, "exitFullscreen 后 fullscreenElement = null");
 	if (hooked) {
 		await waitFor(
 			"退出全屏后释放键盘锁",
@@ -2077,6 +2857,218 @@ async function B17() {
 		.locator("[data-testid=desktop-fullscreen]")
 		.waitFor({ state: "visible", timeout: 5_000 });
 	check(true, "退出后全屏按钮可见，面板回到正常布局");
+}
+
+/** 线程 T 的 orb 里：浏览器在跑、站点页打开并开始数 Escape。 */
+async function escSite(x: XEnv, s: Surface, th: Th) {
+	await xStartBrowser(x, s, th.orb);
+	const siteId = await openSitePage(th.orb);
+	await remoteEsc(th.orb, siteId);
+	await Bun.sleep(1500);
+	return siteId;
+}
+
+/** B17 真跑①：桌面 App（WebKitGTK）里真实点全屏、真实按 Esc。 */
+async function b17App() {
+	const th = await ensureT();
+	const x = await ensureApp();
+	const s = await appSurface(x);
+	await appOpenThread(x, s, th.tid);
+	await xOpenDesktop(x, s);
+	const siteId = await escSite(x, s, th);
+	const ua = await s.eval<string>("navigator.userAgent");
+	const kb = await s.eval<string>(
+		`typeof navigator.keyboard === "undefined" ? "undefined" : typeof navigator.keyboard.lock`,
+	);
+	note(
+		`WebKitGTK navigator.keyboard${kb === "undefined" ? " 不存在（不支持 Keyboard Lock）" : `.lock 的类型 ${kb}`}；UA ${ua}`,
+	);
+	const r = await escTrial(x, s, th.orb, siteId, "B17-app");
+	check(r.shortExit || r.longExit, "App 里能用 Esc 退出全屏");
+	if (kb !== "function")
+		check(
+			r.shortExit,
+			"没有键盘锁：短按 Esc 即退出全屏（Esc 由 WebKit 处理，用户不会被困）",
+		);
+	check(
+		!!(await rectOf(s, sel("[data-testid=desktop-fullscreen]"))),
+		"退出后全屏按钮可见，面板回到正常布局",
+	);
+}
+
+/** 宿主上一条裸 CDP 连接（只发 Runtime.evaluate / Storage.setCookies，不像 Playwright 那样接管页面）。 */
+async function rawCdp(wsUrl: string) {
+	const ws = new WebSocket(wsUrl);
+	const opened = Promise.withResolvers<void>();
+	ws.onopen = () => opened.resolve();
+	ws.onerror = () => opened.reject(new Error(`CDP 连接失败：${wsUrl}`));
+	await opened.promise;
+	type Reply = { id?: number; result?: unknown; error?: { message?: string } };
+	const pending = new Map<number, (m: Reply) => void>();
+	ws.onmessage = (e) => {
+		const m = JSON.parse(String(e.data)) as Reply;
+		if (m.id === undefined) return;
+		pending.get(m.id)?.(m);
+		pending.delete(m.id);
+	};
+	let seq = 0;
+	const call = async (method: string, params: Record<string, unknown> = {}) => {
+		seq += 1;
+		const { promise, resolve, reject } = Promise.withResolvers<Reply>();
+		pending.set(seq, resolve);
+		const timer = setTimeout(
+			() => reject(new Error(`CDP ${method} 超时`)),
+			15_000,
+		);
+		ws.send(JSON.stringify({ id: seq, method, params }));
+		const m = await promise.finally(() => clearTimeout(timer));
+		if (m.error) throw new Error(`CDP ${method}：${m.error.message}`);
+		return m.result;
+	};
+	return { call, close: () => ws.close() };
+}
+
+/**
+ * B17 真跑②：同一 Xvfb 上的有界面 Chromium（非 headless），键盘锁下短按 / 长按 Esc。
+ * 浏览器以普通进程启动（独立用户目录 + --remote-debugging-port），观察只经一条裸 CDP 连接做 Runtime.evaluate。
+ * 不用 Playwright 接管：实测 Playwright 启动或 connectOverCDP 接管的 Chromium 156 把元素全屏做成「标签页内全屏」
+ * （fullscreenElement 有值，但窗口没有 _NET_WM_STATE_FULLSCREEN，浏览器工具栏仍在），与用户看到的真实全屏不同。
+ */
+async function b17Headful() {
+	const th = await ensureT();
+	const x = await ensureX();
+	const port = freePort();
+	const proc = xbg(x, "chromium", [
+		process.env.CHROMIUM ?? "/usr/bin/chromium",
+		"--no-sandbox",
+		`--user-data-dir=${x.tmp}/chromium`,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--lang=zh-CN",
+		`--remote-debugging-port=${port}`,
+		"--window-position=0,0",
+		"--window-size=1400,880",
+		"about:blank",
+	]);
+	const dt = `http://127.0.0.1:${port}`;
+	const version = await waitFor(
+		"有界面 Chromium 的调试端口",
+		async () =>
+			(await (await fetch(`${dt}/json/version`)).json()) as {
+				Browser: string;
+				webSocketDebuggerUrl: string;
+			},
+		20_000,
+		300,
+	);
+	note(`有界面 Chromium ${version.Browser}（普通进程，非 headless）`);
+	const browserCdp = await rawCdp(version.webSocketDebuggerUrl);
+	const pageList = (await (await fetch(`${dt}/json/list`)).json()) as {
+		type: string;
+		webSocketDebuggerUrl: string;
+	}[];
+	const target = pageList.find((t) => t.type === "page");
+	if (!target) throw new Error("Chromium 没有页面 target");
+	const pageCdp = await rawCdp(target.webSocketDebuggerUrl);
+	try {
+		// 网页会话 Cookie（与上下文 B 相同）；url 形式即 host-only，满足 __Host- 前缀
+		await browserCdp.call("Storage.setCookies", {
+			cookies: [
+				{
+					name: "__Host-oryn_session",
+					value: SESSION,
+					url: `${BASE}/`,
+					path: "/",
+					secure: true,
+					httpOnly: true,
+					sameSite: "Lax",
+				},
+			],
+		});
+		const evalPage = async <T>(expr: string): Promise<T> => {
+			const r = (await pageCdp.call("Runtime.evaluate", {
+				expression: `JSON.stringify((${expr}))`,
+				returnByValue: true,
+				awaitPromise: true,
+			})) as {
+				result?: { value?: string };
+				exceptionDetails?: { text?: string };
+			};
+			if (r.exceptionDetails)
+				throw new Error(`页面求值出错：${JSON.stringify(r.exceptionDetails)}`);
+			return JSON.parse(r.result?.value ?? "null") as T;
+		};
+		const goto = async (url: string) => {
+			// 导航会销毁当前执行上下文，这次求值可能拿不到结果
+			await evalPage(`(location.href = ${JSON.stringify(url)}, true)`).catch(
+				() => {},
+			);
+			await waitFor(
+				`Chromium 打开 ${url}`,
+				async () =>
+					(await evalPage<string>(
+						`document.readyState === "complete" ? location.href : ""`,
+					)) === url,
+				30_000,
+				300,
+			);
+		};
+		await goto(`${BASE}/`);
+		await evalPage(
+			`(localStorage.setItem("oryn.panel.width", "760"), localStorage.removeItem("oryn.desktop.scale"), localStorage.removeItem("oryn.desktop.control"), true)`,
+		);
+		await goto(`${BASE}/t/${th.tid}`);
+		const wid = await waitFor(
+			"Chromium 窗口",
+			async () =>
+				(await xsh(x, "xdotool search --onlyvisible --class chromium")).stdout
+					.split("\n")
+					.filter(Boolean)
+					.pop(),
+			15_000,
+			300,
+		);
+		const s: Surface = {
+			name: "Chromium",
+			wid,
+			eval: evalPage,
+			origin: () => viewportOrigin(x, s),
+		};
+		await activate(x, wid);
+		await xOpenDesktop(x, s);
+		const siteId = await escSite(x, s, th);
+		check(
+			await evalPage<boolean>(`(${hookKeyboardLock.toString()})()`),
+			"Chromium 有 navigator.keyboard.lock",
+		);
+		const r = await escTrial(x, s, th.orb, siteId, "B17-chromium");
+		const calls = await evalPage<string[]>("window.__m8Kb");
+		note(`键盘锁调用：${calls.join(" → ")}`);
+		check(
+			calls.includes("lock:ok"),
+			"进入全屏后 navigator.keyboard.lock() 成功",
+		);
+		check(!r.shortExit, "键盘锁生效：短按 Esc 不退出全屏");
+		check(
+			r.shortRemote > 0,
+			`短按的 Esc 传进了远端页面（${r.shortRemote} 次）`,
+		);
+		check(
+			r.longExit,
+			r.longExit
+				? "长按 Esc 2.5 秒退出全屏（fullscreenElement = null）"
+				: "产品问题：键盘锁下长按 Esc 2.5 秒仍无法退出全屏，用户会被困在全屏里",
+		);
+		check(
+			calls.includes("unlock"),
+			"退出全屏后调用了 navigator.keyboard.unlock",
+		);
+	} finally {
+		pageCdp.close();
+		browserCdp.close();
+		proc.kill("SIGTERM");
+		await proc.exited;
+	}
 }
 
 async function B18() {
@@ -2135,27 +3127,156 @@ async function B19() {
 	}
 }
 
+/**
+ * B20：真实 Tauri App（WebKitGTK）里走一遍 Desktop 面板：xdotool 点 Desktop 标签 → canvas 连接 → 点「启动浏览器」→
+ * 在 orb 里经 CDP 打开站点页 → 点舞台上的输入框并键入（CDP 读回值）→ 剪贴板弹层「发送到桌面」（orb 里 xclip 读回）→
+ * 远端输入框 Ctrl+A / Ctrl+C →「复制到本机」（Xvfb 上 xclip 读回）。每步截屏。
+ */
 async function B20() {
-	const app = `${ROOT}/web/src-tauri/target/release/oryn-desktop`;
-	note(existsSync(app) ? `App 二进制 ${app}` : `App 二进制不存在：${app}`);
-	note("M6 验收环境（WebKitGTK）无法驱动页面内操作，B20 改为人工走查：");
-	note(
-		"1. 按 docs/desktop.md「本机验收」起 App（provider 换 docker），连到 dev 服务器并配对",
-	);
-	note("2. 打开任一新镜像线程的 Desktop 标签：canvas 出现、已连接");
-	note("3. 启动浏览器，点击页面输入框并键入文字，远端页面随之变化");
-	note(
-		"4. 剪贴板弹层填文字点「发送到桌面」，`docker exec -e DISPLAY=:1 <orb> xclip -o -selection clipboard` 输出该文字",
-	);
-	const v = process.env.M8_B20;
-	if (v === "pass" || v === "fail") {
-		note(
-			`人工走查结论：${v}${process.env.M8_B20_NOTE ? `（${process.env.M8_B20_NOTE}）` : ""}`,
-		);
-		check(v === "pass", "人工走查通过");
-		return;
+	if (!REAL) {
+		note(REAL_HINT);
+		throw new Skip("未开启真跑（M8_B20_APP=1）");
 	}
-	throw new Skip("待人工走查（设 M8_B20=pass|fail 记录结论）");
+	const th = await newThread("B20", { browserProfileId: "" });
+	await ensureSite(th);
+	const x = await ensureApp();
+	const s = await appSurface(x);
+	await appOpenThread(x, s, th.tid);
+	await xOpenDesktop(x, s);
+	await xshot("B20-1-connected");
+	await xStartBrowser(x, s, th.orb);
+	const siteId = await openSitePage(th.orb);
+	await Bun.sleep(1500);
+	await xshot("B20-2-browser");
+
+	// 键入：点舞台上的远端输入框，xdotool 逐键输入，经 noVNC → Xtigervnc → orb 里的 Chromium
+	const typed = `b20${RUN}`;
+	await xclickRemote(x, s, th.orb, siteId, "#i");
+	await xtype(x, typed);
+	await waitFor(
+		`远端标题 typed:${typed}`,
+		async () => (await targetTitle(th.orb, siteId)) === `typed:${typed}`,
+		20_000,
+		500,
+	);
+	const value = await remoteEval<string>(
+		th.orb,
+		siteId,
+		`document.getElementById("i").value`,
+	);
+	check(value === typed, `App 里点击并键入后，远端输入框的值 = ${value}`);
+	await xshot("B20-3-typed");
+
+	// 本机 → 桌面：弹层里填字，点「发送到桌面」
+	const trigger = sel(
+		"[data-testid=desktop-panel] [role=toolbar] button[aria-haspopup=dialog]",
+	);
+	const openClip = async () => {
+		if (!(await rectOf(s, sel("[data-testid=desktop-clipboard]"))))
+			await xclick(x, s, trigger, "剪贴板按钮");
+		await waitFor(
+			"剪贴板弹层",
+			() => rectOf(s, sel("[data-testid=desktop-clipboard]")),
+			10_000,
+			200,
+		);
+	};
+	const toDesk = `m8-b20-to-desktop-${RUN}`;
+	await openClip();
+	await xclick(
+		x,
+		s,
+		sel("[data-testid=desktop-clipboard] textarea"),
+		"弹层文本框",
+	);
+	await xtype(x, toDesk);
+	await waitFor(
+		"文本框里是键入的文字",
+		async () =>
+			(await s.eval<string>(
+				`document.querySelector("[data-testid=desktop-clipboard] textarea").value`,
+			)) === toDesk,
+		10_000,
+		200,
+	);
+	await xshot("B20-4-clip-draft");
+	await xclick(
+		x,
+		s,
+		sel("[data-testid=desktop-clipboard] section:nth-of-type(2) button"),
+		"「发送到桌面」",
+	);
+	const inOrb = await waitFor(
+		"orb 的 X 剪贴板 = 发送的文字",
+		async () => {
+			const v = await remoteClipboard(th.orb);
+			return v === toDesk ? v : undefined;
+		},
+		15_000,
+		500,
+	);
+	check(
+		inOrb === toDesk,
+		`点「发送到桌面」后 docker exec -e DISPLAY=:1 ${th.orb} xclip -o -selection clipboard = ${inOrb}`,
+	);
+	await xshot("B20-5-sent");
+
+	// 桌面 → 本机：先收起弹层（它盖住舞台上方），在远端输入框里换上新文字并 Ctrl+A / Ctrl+C
+	const fromDesk = `m8-b20-from-desktop-${RUN}`;
+	await xclick(x, s, trigger, "剪贴板按钮（收起弹层）");
+	await waitFor(
+		"剪贴板弹层收起",
+		async () => !(await rectOf(s, sel("[data-testid=desktop-clipboard]"))),
+		10_000,
+		200,
+	);
+	await xclickRemote(x, s, th.orb, siteId, "#i");
+	await xsh(x, "xdotool key --delay 120 ctrl+a");
+	await xtype(x, fromDesk);
+	await waitFor(
+		`远端标题 typed:${fromDesk}`,
+		async () => (await targetTitle(th.orb, siteId)) === `typed:${fromDesk}`,
+		20_000,
+		500,
+	);
+	await xsh(x, "xdotool key --delay 120 ctrl+a ctrl+c");
+	await waitFor(
+		"桌面里复制后 orb 的 X 剪贴板 = 新文字",
+		async () => (await remoteClipboard(th.orb)) === fromDesk,
+		15_000,
+		500,
+	);
+	check(true, `在桌面里 Ctrl+C 后 orb 的 X 剪贴板 = ${fromDesk}`);
+	await openClip();
+	const shown = await waitFor(
+		"弹层「来自桌面」显示新文字",
+		async () => {
+			const t = await s.eval<string | null>(
+				`document.querySelector("[data-testid=desktop-clip-remote]")?.textContent ?? null`,
+			);
+			return t === fromDesk ? t : undefined;
+		},
+		15_000,
+		500,
+	);
+	check(shown === fromDesk, `弹层「来自桌面」= ${shown}`);
+	await xshot("B20-6-remote-clip");
+	await xclick(x, s, sel("[data-testid=desktop-clip-copy]"), "「复制到本机」");
+	const host = await waitFor(
+		"宿主 X 剪贴板 = 桌面复制的文字",
+		async () => {
+			const v = (await xsh(x, "timeout 5 xclip -o -selection clipboard"))
+				.stdout;
+			return v === fromDesk ? v : undefined;
+		},
+		15_000,
+		500,
+	);
+	check(
+		host === fromDesk,
+		`点「复制到本机」后 Xvfb ${x.display} 上 xclip -o -selection clipboard = ${host}`,
+	);
+	await xshot("B20-7-copied");
 }
 
 async function B21() {
@@ -2569,6 +3690,7 @@ for (const [id, fn] of TESTS) {
 			const pages = [ctxA, ctxB, ctxC, ctxM].flatMap((c) => c.pages());
 			for (const [i, p] of pages.entries())
 				await shot(p, `${id}-FAIL-${RUN}-${i}`);
+			await xshot(`${id}-FAIL-x`);
 		}
 	}
 	const seconds = (Date.now() - t0) / 1000;
@@ -2582,6 +3704,7 @@ clearInterval(keepTimer);
 awake.clear();
 keepWs?.close();
 await browser.close();
+await teardownX();
 if (KEEP) console.log("M8_KEEP=1：保留本次建的 orb 与 Profile");
 else {
 	for (const orb of createdOrbs) {
