@@ -109,3 +109,42 @@ func TestLoadOryndCoordinatorPaths(t *testing.T) {
 	assert.False(t, c.Coordinator.Verify())
 	assert.Equal(t, 3, c.Schedule.MaxFailures)
 }
+
+// M10：stats.retention 的默认值、校验与 YAML 读取。
+func TestStatsRetention(t *testing.T) {
+	d := DefaultOrynd()
+	assert.Equal(t, 720*time.Hour, d.Stats.Retention.Samples.D())
+	assert.Equal(t, 8760*time.Hour, d.Stats.Retention.Events.D())
+	assert.Zero(t, d.Stats.Retention.Usage.D(), "用量默认永久")
+
+	base := func() Orynd {
+		c := DefaultOrynd()
+		c.PublicURL = "https://oryn.example.com"
+		return c
+	}
+	for name, mod := range map[string]func(*Orynd){
+		"samples < 24h": func(c *Orynd) { c.Stats.Retention.Samples = Duration(23 * time.Hour) },
+		"events < 24h":  func(c *Orynd) { c.Stats.Retention.Events = Duration(time.Hour) },
+		"usage 为负":      func(c *Orynd) { c.Stats.Retention.Usage = Duration(-48 * time.Hour) },
+	} {
+		c := base()
+		mod(&c)
+		assert.Error(t, c.Validate(), name)
+	}
+	c := base()
+	c.Stats.Retention = StatsRetention{Samples: 0, Events: Duration(24 * time.Hour), Usage: Duration(90 * 24 * time.Hour)}
+	assert.NoError(t, c.Validate(), "0 = 永久；恰好 24h 合法")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\nstats:\n  retention:\n    samples: 48h\n    usage: 2160h\n"), 0o600))
+	got, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Equal(t, 48*time.Hour, got.Stats.Retention.Samples.D())
+	assert.Equal(t, 8760*time.Hour, got.Stats.Retention.Events.D(), "未写的键保持默认")
+	assert.Equal(t, 2160*time.Hour, got.Stats.Retention.Usage.D())
+
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\nstats:\n  retention:\n    samples: 1h\n"), 0o600))
+	_, err = LoadOrynd(path)
+	assert.ErrorContains(t, err, "stats.retention.samples")
+}

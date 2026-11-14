@@ -171,10 +171,48 @@ func ToolDefs(inSpace bool) []apigen.OmpFrame {
 		tool(ToolSetSchedule, "Create, update, pause, resume or delete a schedule.", scheduleProps, "action"),
 		tool(ToolListSchedules, "List schedules.", obj{"scope": scope}),
 		tool(ToolListProjects, "List projects.", obj{}),
-		tool(ToolGetStats, "Token usage and cost.", obj{
-			"groupBy": enum("Grouping.", "day", "model", "thread", "project"),
+		tool(ToolGetStats, statsDesc(inSpace), obj{
+			"kind":    enum(statsKindDesc(inSpace), statsKinds(inSpace)...),
+			"groupBy": str(`usage: total | hour | day | week | month | model (default) | thread | project | space | purpose. orbs: type (default) | day | week | month | project | orb. output: day (default) | week | month | project | space. Not used by tools.`),
+			"series":  enum(`usage / tools: also return a time series at this grain (not allowed when groupBy is itself a grain).`, "hour", "day", "week", "month"),
 			"from":    integer("Start (UTC milliseconds; default 7 days ago)."),
 			"to":      integer("End (UTC milliseconds; default now)."),
-		}, "groupBy"),
+			"tz":      str("IANA time zone for time buckets (default UTC)."),
+			"project": str(`Only this project (name or id; "none" = threads without a project).`),
+			"space":   str(statsSpaceDesc(inSpace)),
+			"thread":  str("usage / tools: only this thread (T-…)."),
+			"model":   str("usage: only this model (provider/model); tool calls and turns are then 0."),
+			"limit":   integer("Groups to keep, by cost (usage) or calls (tools); the rest is folded into __other__ (default 10, max 30)."),
+		}),
 	}
+}
+
+// statsDesc 是 get_stats 的说明：四种 kind 各自回答什么问题。
+func statsDesc(inSpace bool) string {
+	d := `Usage and output statistics (JSON as returned by the Oryn stats API). kind "usage" (default): where tokens and money went — by model, thread, project, space, purpose or time; includes requests, errors, TTFT, tokens/s, tool calls and turns. kind "tools": which tools are called most and which fail. kind "output": threads created / shipped / archived, commits and cost per shipped thread.`
+	if inSpace {
+		return d + ` Results are always limited to this Space.`
+	}
+	return d + ` kind "orbs": orb running / frozen / stopped time, spawns, wakes, failures and setup durations.`
+}
+
+func statsKinds(inSpace bool) []string {
+	if inSpace {
+		return []string{"usage", "tools", "output"}
+	}
+	return []string{"usage", "tools", "orbs", "output"}
+}
+
+func statsKindDesc(inSpace bool) string {
+	if inSpace {
+		return `What to report (default "usage").`
+	}
+	return `What to report (default "usage"); "orbs" is the only kind not tied to threads.`
+}
+
+func statsSpaceDesc(inSpace bool) string {
+	if inSpace {
+		return "Ignored: always this Space."
+	}
+	return `Only this Space (name or id; "none" = threads outside any Space).`
 }

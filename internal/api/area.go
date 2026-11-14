@@ -20,6 +20,8 @@ type area struct {
 	Coord *CoordDeps
 	// Schedules 是 M9 的定时（schedules.go）；nil 时回 501。
 	Schedules *ScheduleDeps
+	// Stats 是 M10 的统计 meta 与预算（stats.go）；nil 时这两类接口回 501（只读聚合不依赖它）。
+	Stats *StatsDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

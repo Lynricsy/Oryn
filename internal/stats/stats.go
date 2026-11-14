@@ -1,11 +1,10 @@
-// Package stats 计算统计接口（计划 H6.2）：orb 资源采样降采样、模型用量分组聚合、
-// 由 orb_events 推导的各类型运行 / 冻结 / 停机时长与次数。
+// Package stats 计算统计分析（M10）：用量 / 工具 / 回合的分组聚合（时区在查询时处理）、orb 状态时长与时间线、
+// 线程产出与提交采样、保留期清理、预算与告警，以及 orb 资源采样的降采样。
 package stats
 
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -17,6 +16,84 @@ const RawStepSeconds = 15
 
 // DefaultWindow 是 from 缺省时向前的时长。
 const DefaultWindow = 7 * 24 * time.Hour
+
+// 错误码（docs/protocol.md「M10：统计分析」）。
+const (
+	CodeInvalidRequest  = "invalid_request"
+	CodeInvalidTimezone = "invalid_timezone"
+	CodeRangeTooLarge   = "range_too_large"
+	CodeInvalidBudget   = "invalid_budget"
+	CodeNotFound        = "not_found"
+)
+
+// Error 是调用方可见的统计错误（REST 映射为 400 / 404 的 {code, message}）。
+type Error struct {
+	Code    string
+	Message string
+}
+
+func (e *Error) Error() string { return e.Code + ": " + e.Message }
+
+func errorf(code, format string, args ...any) *Error {
+	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// ErrRangeTooLarge 表示时间桶超过 MaxBuckets。
+var ErrRangeTooLarge = &Error{Code: CodeRangeTooLarge, Message: fmt.Sprintf("时间桶超过 %d 个", MaxBuckets)}
+
+// Filter 是用量 / 工具 / 产出的可选筛选；nil = 不限。Project / Space 的字面量 "none"（= 无项目 / 不在 Space）
+// 由各查询函数换成空串。
+type Filter struct {
+	Project, Space, Thread, Model *string
+}
+
+// noneToEmpty 把筛选值 "none" 换成空串（SQL 侧空串 = 无项目 / 无 Space）。
+func noneToEmpty(p *string) *string {
+	if p != nil && *p == "none" {
+		return new("")
+	}
+	return p
+}
+
+func (f Filter) norm() Filter {
+	f.Project, f.Space = noneToEmpty(f.Project), noneToEmpty(f.Space)
+	return f
+}
+
+// LoadLocation 解析 IANA 时区名（空 = UTC）；"Local" 与不可加载的名字返回 invalid_timezone。
+func LoadLocation(name string) (*time.Location, error) {
+	if name == "" {
+		return time.UTC, nil
+	}
+	if name == "Local" {
+		return nil, errorf(CodeInvalidTimezone, "时区 %q 不是 IANA 时区名", name)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, errorf(CodeInvalidTimezone, "无法加载时区 %q", name)
+	}
+	return loc, nil
+}
+
+// checkLimit 返回生效的 limit（0 = DefaultLimit）；越界返回 invalid_request。
+func checkLimit(limit int) (int, error) {
+	if limit == 0 {
+		return DefaultLimit, nil
+	}
+	if limit < 1 || limit > MaxLimit {
+		return 0, errorf(CodeInvalidRequest, "limit 必须在 1–%d 之间", MaxLimit)
+	}
+	return limit, nil
+}
+
+// 非时间分组的折叠参数。
+const (
+	// OtherKey 是被折叠的分组合并成的一项的键。
+	OtherKey = "__other__"
+	// DefaultLimit / MaxLimit 是非时间分组保留的组数（缺省 / 上限）。
+	DefaultLimit = 50
+	MaxLimit     = 500
+)
 
 // Window 按「from 缺省 = to − 7 天，to 缺省 = now」补全时间窗。
 func Window(from, to *int64, now time.Time) (int64, int64) {
@@ -95,222 +172,4 @@ func sample(r db.OrbSample) apigen.OrbMetricSample {
 		TS: r.Ts, CPUPct: float32(r.CpuPct), MemUsedMB: float32(r.MemUsedMb), MemLimitMB: float32(r.MemLimitMb),
 		DiskUsedMB: float32(r.DiskUsedMb), NetRxBytes: r.NetRxBytes, NetTxBytes: r.NetTxBytes,
 	}
-}
-
-// usageAgg 是各分组查询的公共列。
-type usageAgg struct {
-	key, label                                         string
-	requests, in, out, cacheR, cacheW, timedOut, durMs int64
-	cost, subCost, avgTtft                             float64
-}
-
-func (a usageAgg) stat() apigen.UsageStat {
-	s := apigen.UsageStat{
-		Key: a.key, Requests: a.requests, InputTokens: a.in, OutputTokens: a.out,
-		CacheReadTokens: a.cacheR, CacheWriteTokens: a.cacheW, CostUsd: a.cost,
-	}
-	if a.label != "" {
-		l := a.label
-		s.Label = &l
-	}
-	sub := a.subCost
-	s.SubagentCostUsd = &sub
-	if a.avgTtft >= 0 {
-		v := a.avgTtft
-		s.AvgTtftMs = &v
-	}
-	if a.durMs > 0 {
-		v := float64(a.timedOut) / (float64(a.durMs) / 1000)
-		s.TokensPerSecond = &v
-	}
-	return s
-}
-
-// DayKey 把 UTC 日序号格式化为 YYYY-MM-DD。
-func DayKey(day int64) string { return time.UnixMilli(day * 86400000).UTC().Format("2006-01-02") }
-
-// Usage 按 groupBy（day | model | thread | project）聚合 [from, to) 的用量与工具调用。
-func Usage(ctx context.Context, q *db.Queries, groupBy string, from, to int64) (apigen.UsageStats, error) {
-	var aggs []usageAgg
-	tools := map[string][2]int64{}
-	switch groupBy {
-	case "day":
-		rows, err := q.StatsUsageByDay(ctx, db.StatsUsageByDayParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range rows {
-			aggs = append(aggs, usageAgg{DayKey(r.Day), "", r.Requests, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.TimedOutputTokens, r.DurationMs, r.CostUsd, r.SubagentCostUsd, r.AvgTtftMs})
-		}
-		tc, err := q.StatsToolCallsByDay(ctx, db.StatsToolCallsByDayParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range tc {
-			tools[DayKey(r.Day)] = [2]int64{r.Calls, r.Errors}
-		}
-	case "model":
-		rows, err := q.StatsUsageByModel(ctx, db.StatsUsageByModelParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range rows {
-			aggs = append(aggs, usageAgg{r.Provider + "/" + r.Model, "", r.Requests, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.TimedOutputTokens, r.DurationMs, r.CostUsd, r.SubagentCostUsd, r.AvgTtftMs})
-		}
-	case "thread":
-		rows, err := q.StatsUsageByThread(ctx, db.StatsUsageByThreadParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range rows {
-			aggs = append(aggs, usageAgg{r.ThreadID, r.Title, r.Requests, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.TimedOutputTokens, r.DurationMs, r.CostUsd, r.SubagentCostUsd, r.AvgTtftMs})
-		}
-		tc, err := q.StatsToolCallsByThread(ctx, db.StatsToolCallsByThreadParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range tc {
-			tools[r.ThreadID] = [2]int64{r.Calls, r.Errors}
-		}
-	case "project":
-		rows, err := q.StatsUsageByProject(ctx, db.StatsUsageByProjectParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range rows {
-			aggs = append(aggs, usageAgg{r.ProjectID, r.Name, r.Requests, r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.TimedOutputTokens, r.DurationMs, r.CostUsd, r.SubagentCostUsd, r.AvgTtftMs})
-		}
-		tc, err := q.StatsToolCallsByProject(ctx, db.StatsToolCallsByProjectParams{FromTs: from, ToTs: to})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range tc {
-			tools[r.ProjectID] = [2]int64{r.Calls, r.Errors}
-		}
-	default:
-		return apigen.UsageStats{}, fmt.Errorf("groupBy %q 无效", groupBy)
-	}
-	out := apigen.UsageStats{From: from, To: to, Tz: "UTC", GroupBy: apigen.UsageGroupBy(groupBy), Groups: make([]apigen.UsageStat, 0, len(aggs))}
-	seen := map[string]bool{}
-	for _, a := range aggs {
-		s := a.stat()
-		if t, ok := tools[a.key]; ok {
-			s.ToolCalls, s.ToolErrors = t[0], t[1]
-		}
-		seen[a.key] = true
-		out.Groups = append(out.Groups, s)
-	}
-	// 只有工具调用、没有模型请求的分组。
-	var extra []string
-	for k := range tools {
-		if !seen[k] {
-			extra = append(extra, k)
-		}
-	}
-	sort.Strings(extra)
-	for _, k := range extra {
-		out.Groups = append(out.Groups, apigen.UsageStat{Key: k, ToolCalls: tools[k][0], ToolErrors: tools[k][1]})
-	}
-	if groupBy == "day" {
-		sort.SliceStable(out.Groups, func(i, k int) bool { return out.Groups[i].Key < out.Groups[k].Key })
-	}
-	// total：全部分组之和（M10 契约的必填字段；切片 B 重写本函数前的最小适配）。
-	out.Total = apigen.UsageStat{Key: "total"}
-	for _, g := range out.Groups {
-		t := &out.Total
-		t.Requests += g.Requests
-		t.InputTokens += g.InputTokens
-		t.OutputTokens += g.OutputTokens
-		t.CacheReadTokens += g.CacheReadTokens
-		t.CacheWriteTokens += g.CacheWriteTokens
-		t.CostUsd += g.CostUsd
-		t.ToolCalls += g.ToolCalls
-		t.ToolErrors += g.ToolErrors
-	}
-	return out, nil
-}
-
-// runningStates 是容器在运行（计入 runningMs）的状态。
-var runningStates = map[string]bool{
-	"connecting": true, "setting_up": true, "resuming": true, "ready": true, "freezing": true, "stopping": true,
-}
-
-// Orbs 由 orb_events 计算 [from, to) 内各类型 orb 的状态时长与次数。
-func Orbs(ctx context.Context, q *db.Queries, from, to int64) (apigen.OrbStats, error) {
-	rows, err := q.ListOrbEventsForStats(ctx, db.ListOrbEventsForStatsParams{FromTs: &from, ToTs: to})
-	if err != nil {
-		return apigen.OrbStats{}, err
-	}
-	byType := map[string]*apigen.OrbStat{}
-	get := func(t string) *apigen.OrbStat {
-		s := byType[t]
-		if s == nil {
-			typ := t
-			s = &apigen.OrbStat{Key: t, Type: &typ}
-			byType[t] = s
-		}
-		return s
-	}
-	// 行按 orb_id, ts 排序：逐 orb 计算状态区间。
-	for i := 0; i < len(rows); {
-		k := i
-		for k < len(rows) && rows[k].OrbID == rows[i].OrbID {
-			k++
-		}
-		s := get(rows[i].Type)
-		s.Orbs++
-		for e := i; e < k; e++ {
-			r := rows[e]
-			start, end := r.Ts, to
-			if e+1 < k {
-				end = rows[e+1].Ts
-			}
-			start, end = max(start, from), min(end, to)
-			if d := end - start; d > 0 {
-				switch {
-				case runningStates[r.ToState]:
-					s.RunningMs += d
-				case r.ToState == "frozen":
-					s.FrozenMs += d
-				case r.ToState == "stopped":
-					s.StoppedMs += d
-				}
-			}
-			if r.Ts < from {
-				continue
-			}
-			switch r.ToState {
-			case "spawning":
-				s.Spawns++
-			case "frozen":
-				s.Freezes++
-			case "stopped":
-				s.Stops++
-			case "waking":
-				s.Wakes++
-			case "failed":
-				s.Failures++
-			}
-		}
-		i = k
-	}
-	out := apigen.OrbStats{
-		GroupBy: apigen.OrbGroupByType, From: from, To: to, Tz: "UTC",
-		Total: apigen.OrbStat{Key: "total"}, Groups: make([]apigen.OrbStat, 0, len(byType)),
-	}
-	for _, s := range byType {
-		out.Groups = append(out.Groups, *s)
-		t := &out.Total
-		t.Orbs += s.Orbs
-		t.RunningMs += s.RunningMs
-		t.FrozenMs += s.FrozenMs
-		t.StoppedMs += s.StoppedMs
-		t.Spawns += s.Spawns
-		t.Freezes += s.Freezes
-		t.Stops += s.Stops
-		t.Wakes += s.Wakes
-		t.Failures += s.Failures
-	}
-	sort.Slice(out.Groups, func(i, k int) bool { return out.Groups[i].Key < out.Groups[k].Key })
-	return out, nil
 }

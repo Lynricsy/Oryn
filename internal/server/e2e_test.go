@@ -181,6 +181,8 @@ type wsMsg struct {
 	RequestID string            `json:"requestId"`
 	Upsert    []json.RawMessage `json:"upsert"`
 	Orb       json.RawMessage   `json:"orb"`
+	// ID 是 notifications.read 的通知 id（M10）。
+	ID string `json:"id"`
 }
 
 func (m wsMsg) frameType() string {

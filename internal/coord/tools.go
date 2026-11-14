@@ -698,24 +698,137 @@ func (s *Service) toolListProjects(ctx context.Context) (any, error) {
 	return map[string]any{"projects": items}, nil
 }
 
+// statsArgs 是 get_stats 的参数（计划 M10 3.9）。
 type statsArgs struct {
+	Kind    string `json:"kind"`
 	GroupBy string `json:"groupBy"`
+	Series  string `json:"series"`
 	From    *int64 `json:"from"`
 	To      *int64 `json:"to"`
+	Tz      string `json:"tz"`
+	Project string `json:"project"`
+	Space   string `json:"space"`
+	Thread  string `json:"thread"`
+	Model   string `json:"model"`
+	Limit   int    `json:"limit"`
 }
 
+// get_stats 的组数：缺省 10，上限 30（超出按上限）。
+const (
+	statsDefaultLimit = 10
+	statsMaxLimit     = 30
+)
+
+// toolGetStats 返回与对应 REST 相同的 JSON。Space 协调者：space 强制为本 Space，kind=orbs 被拒（orb 不属于 Space）；
+// 全局助手不受限。project / space 接受名称或 id（以及 none）。
 func (s *Service) toolGetStats(ctx context.Context, c toolCtx) (any, error) {
 	var a statsArgs
 	if err := decodeArgs(c.Args, &a); err != nil {
 		return nil, err
 	}
-	switch a.GroupBy {
-	case "day", "model", "thread", "project":
-	default:
-		return nil, errf(CodeInvalid, "groupBy must be day, model, thread or project")
+	if a.Kind == "" {
+		a.Kind = "usage"
+	}
+	if c.inSpace() {
+		if a.Kind == "orbs" {
+			return nil, errf(CodeForbidden, "orb stats are not available to a Space coordinator")
+		}
+		a.Space = c.space.ID
+	}
+	limit := a.Limit
+	switch {
+	case limit <= 0:
+		limit = statsDefaultLimit
+	case limit > statsMaxLimit:
+		limit = statsMaxLimit
+	}
+	loc, err := stats.LoadLocation(a.Tz)
+	if err != nil {
+		return nil, statsErr(err)
 	}
 	from, to := stats.Window(a.From, a.To, s.cfg.Now())
-	return stats.Usage(ctx, s.st.Q, a.GroupBy, from, to)
+	project, err := s.statsProject(ctx, a.Project)
+	if err != nil {
+		return nil, err
+	}
+	space, err := s.statsSpace(ctx, a.Space)
+	if err != nil {
+		return nil, err
+	}
+	f := stats.Filter{Project: project, Space: space, Thread: optStr(a.Thread), Model: optStr(a.Model)}
+	var v any
+	switch a.Kind {
+	case "usage":
+		if a.GroupBy == "" {
+			a.GroupBy = "model"
+		}
+		v, err = stats.Usage(ctx, s.st.Q, stats.UsageQuery{GroupBy: a.GroupBy, Series: a.Series, From: from, To: to, Loc: loc, Filter: f, Limit: limit})
+	case "tools":
+		v, err = stats.Tools(ctx, s.st.Q, stats.ToolQuery{Series: a.Series, From: from, To: to, Loc: loc, Filter: f, Limit: limit})
+	case "orbs":
+		v, err = stats.Orbs(ctx, s.st.Q, stats.OrbQuery{GroupBy: a.GroupBy, From: from, To: to, Loc: loc, Project: project}, s.cfg.Now().UnixMilli())
+	case "output":
+		v, err = stats.Output(ctx, s.st.Q, stats.OutputQuery{GroupBy: a.GroupBy, From: from, To: to, Loc: loc, Project: project, Space: space})
+	default:
+		return nil, errf(CodeInvalid, "kind must be usage, tools, orbs or output")
+	}
+	if err != nil {
+		return nil, statsErr(err)
+	}
+	return v, nil
+}
+
+// statsErr 把统计的参数错误换成工具错误码（其余原样返回）。
+func statsErr(err error) error {
+	var se *stats.Error
+	if errors.As(err, &se) {
+		return errf(se.Code, "%s", se.Message)
+	}
+	return err
+}
+
+func optStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// statsProject 把项目名称或 id（或 none）解析成筛选值（项目 id / "none"）；空 = 不限。
+func (s *Service) statsProject(ctx context.Context, ref string) (*string, error) {
+	if ref == "" || ref == "none" {
+		return optStr(ref), nil
+	}
+	if p, err := s.st.Q.GetProject(ctx, ref); err == nil {
+		return &p.ID, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	p, err := s.projectByName(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return &p.ID, nil
+}
+
+// statsSpace 把 Space 名称或 id（或 none）解析成筛选值（Space id / "none"）；空 = 不限。
+func (s *Service) statsSpace(ctx context.Context, ref string) (*string, error) {
+	if ref == "" || ref == "none" {
+		return optStr(ref), nil
+	}
+	if sp, err := s.st.Q.GetSpace(ctx, ref); err == nil {
+		return &sp.ID, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	sp, err := s.st.Q.GetSpaceByName(ctx, ref)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errf(CodeNotFound, "space %q not found", ref)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &sp.ID, nil
 }
 
 // parseModelRef 解析 "provider/id"。

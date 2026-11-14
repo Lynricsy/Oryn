@@ -25,6 +25,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/share"
+	"github.com/Lynricsy/Oryn/internal/stats"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/webui"
@@ -45,6 +46,12 @@ var (
 // coordhostCommand 是拉起协调宿主子进程的命令；零值 = coordhost 默认（{os.Executable(), "coordinator-host"}）。e2e 注入。
 var coordhostCommand []string
 
+// statsNow / statsBudgetInterval 是统计服务的时钟与预算评估周期；零值 = stats 默认（真实时钟 / 60s）。e2e 注入。
+var (
+	statsNow            func() time.Time
+	statsBudgetInterval time.Duration
+)
+
 // Server 持有控制面全部组件。
 type Server struct {
 	Config      config.Orynd
@@ -63,9 +70,11 @@ type Server struct {
 	Host      *coordhost.Host
 	Schedules *schedule.Service
 	Coord     *coord.Service
-	Hub       *realtime.Hub
-	Notify    *notify.Service
-	Share     *share.Service
+	// Stats 是 M10 的统计后台（提交采样、保留期、预算）与 meta / 预算接口。
+	Stats  *stats.Service
+	Hub    *realtime.Hub
+	Notify *notify.Service
+	Share  *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
@@ -171,6 +180,9 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
 	s.Threads.AddObserver(s.Coord)
+	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）
+	s.Stats = stats.New(stats.Config{Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval}, s.Store, s.Orbs, s.Notify)
+	s.Threads.AddObserver(s.Stats)
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {
 		// 分享页 role 的显示名（config.yml 的 modelTags.<role>.name）；config.yml 解析失败时不给名字
@@ -195,6 +207,13 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Host.Run(runCtx)
 	go s.Schedules.Run(runCtx)
 	go s.Coord.Run(runCtx)
+	go s.Stats.Run(runCtx)
+	// 事实行版本不符时在后台回填（可中断，下次启动从游标续作）
+	go func() {
+		if err := threads.BackfillFacts(runCtx, s.Store, nil, false); err != nil && runCtx.Err() == nil {
+			slog.Warn("统计事实行回填失败", "err", err)
+		}
+	}()
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
@@ -229,6 +248,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}
 	s.API.Coord = &api.CoordDeps{Service: s.Coord, Host: s.Host}
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
+	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

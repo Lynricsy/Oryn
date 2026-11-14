@@ -25,7 +25,12 @@ type hookEvent struct {
 		State string `json:"state"`
 		URL   string `json:"url"`
 	} `json:"thread"`
+	// Title / URL 是通知标题与顶层落点（没有线程的通知带顶层 url，M10 预算告警）。
+	Title string `json:"title"`
+	URL   string `json:"url"`
 	sigOK bool
+	// hasThread：请求体里出现了 thread 键（由各测试的接收端填写）。
+	hasThread bool
 }
 
 // nextHook 等待下一条 Webhook 请求。

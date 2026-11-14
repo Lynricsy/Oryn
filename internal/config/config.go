@@ -88,6 +88,21 @@ type Schedule struct {
 	MaxFailures    int      `yaml:"max_failures"`
 }
 
+// StatsRetention 是统计数据的保留期（M10；0 = 永久，非零值至少 24h）。
+type StatsRetention struct {
+	// Samples 是 orb 资源采样（orb_samples）的保留期。
+	Samples Duration `yaml:"samples"`
+	// Events 是已删除 orb 的事件与 setup 记录、预算告警账本的保留期（活 orb 的事件永不删）。
+	Events Duration `yaml:"events"`
+	// Usage 是用量 / 工具调用 / 回合事实行的保留期。
+	Usage Duration `yaml:"usage"`
+}
+
+// Stats 是统计分析配置（M10）。
+type Stats struct {
+	Retention StatsRetention `yaml:"retention"`
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -100,6 +115,7 @@ type Orynd struct {
 	Push         Push        `yaml:"push"`
 	Coordinator  Coordinator `yaml:"coordinator"`
 	Schedule     Schedule    `yaml:"schedule"`
+	Stats        Stats       `yaml:"stats"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -124,6 +140,10 @@ func DefaultOrynd() Orynd {
 		},
 		Coordinator: Coordinator{OmpPath: "/usr/local/lib/oryn/omp", EgressPort: 7811},
 		Schedule:    Schedule{DeliverTimeout: Duration(10 * time.Minute), MaxFailures: 3},
+		Stats: Stats{Retention: StatsRetention{
+			Samples: Duration(720 * time.Hour),
+			Events:  Duration(8760 * time.Hour),
+		}},
 	}
 }
 
@@ -199,6 +219,18 @@ func (c Orynd) Validate() error {
 	}
 	if c.Schedule.DeliverTimeout.D() < time.Minute {
 		errs = append(errs, errors.New("schedule.deliver_timeout 至少为 1m"))
+	}
+	for _, r := range []struct {
+		key string
+		d   Duration
+	}{
+		{"stats.retention.samples", c.Stats.Retention.Samples},
+		{"stats.retention.events", c.Stats.Retention.Events},
+		{"stats.retention.usage", c.Stats.Retention.Usage},
+	} {
+		if r.d != 0 && r.d.D() < 24*time.Hour {
+			errs = append(errs, fmt.Errorf("%s 必须为 0（永久）或至少 24h", r.key))
+		}
 	}
 	return errors.Join(errs...)
 }
