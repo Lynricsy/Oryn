@@ -368,7 +368,7 @@ func TestM9ScheduleThreadsAndCoordActions(t *testing.T) {
 	assert.Len(t, list, 1)
 }
 
-// TestM9MigrationDownUp 依次回滚 0018、0017、0016、0015 再重新应用：Down 段可执行，且回滚后各表恢复原列。
+// TestM9MigrationDownUp 依次回滚 0019、0018、0017、0016、0015 再重新应用：Down 段可执行，且回滚后各表恢复原列。
 func TestM9MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -386,8 +386,16 @@ func TestM9MigrationDownUp(t *testing.T) {
 		+ (SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name IN ('purpose', 'stop_reason', 'ukey', 'project_id', 'space_id'))
 		+ (SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name IN ('ukey', 'project_id', 'space_id'))
 		+ (SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name = 'link')`
+	m10Rollup := `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('usage_q', 'tool_q', 'turn_q')
+		OR (type = 'trigger' AND tbl_name IN ('usage_records', 'tool_calls', 'turns'))`
 
 	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 19, r.Source.Version)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m10Rollup).Scan(&n))
+	assert.Zero(t, n, "0019 回滚后三张汇总表与九个触发器消失")
+
+	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 18, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m10).Scan(&n))
@@ -425,4 +433,6 @@ func TestM9MigrationDownUp(t *testing.T) {
 	assert.Equal(t, 6, n, "重新应用后 0017 的四列与两张表都回来")
 	require.NoError(t, s.DB.QueryRowContext(ctx, m10).Scan(&n))
 	assert.Equal(t, 16, n, "重新应用后 0018 的表、索引与列都回来")
+	require.NoError(t, s.DB.QueryRowContext(ctx, m10Rollup).Scan(&n))
+	assert.Equal(t, 12, n, "重新应用后 0019 的三张表与九个触发器都回来")
 }

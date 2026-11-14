@@ -79,6 +79,9 @@ func dsn(path string) string {
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
+	// 临时存储放内存：统计汇总的触发器每条写入都开语句日志（subjournal），GROUP BY 的排序也会溢出到临时文件；
+	// 默认写临时文件时批量写事实行慢约 4 倍。
+	q.Add("_pragma", "temp_store(MEMORY)")
 	q.Set("_txlock", "immediate")
 	return "file:" + path + "?" + q.Encode()
 }

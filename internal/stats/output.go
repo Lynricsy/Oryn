@@ -114,17 +114,18 @@ func Output(ctx context.Context, q *db.Queries, oq OutputQuery) (apigen.OutputSt
 		}
 	}
 	for _, seg := range tp.segs {
-		turns, err := q.StatsTurnAgg(ctx, db.StatsTurnAggParams{
-			ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
-			ByProject: dim == GroupProject, BySpace: dim == GroupSpace,
-			FromTs: seg.From, ToTs: seg.To, Project: project, Space: space,
-		})
-		if err != nil {
-			return apigen.OutputStats{}, err
-		}
-		for _, r := range turns {
-			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				get(cell{i, usageKey(dim, "", r.ProjectID, r.SpaceID, "", "")}).Turns += r.Turns
+		for _, pt := range tp.parts(seg) {
+			turns, err := turnAgg(ctx, q, db.StatsTurnAggParams{
+				ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs, Dim: sqlDim(dim),
+				Project: project, Space: space,
+			}, pt)
+			if err != nil {
+				return apigen.OutputStats{}, err
+			}
+			for _, r := range turns {
+				if i := tp.slot(seg, r.Bucket); i >= 0 {
+					get(cell{i, r.Key}).Turns += r.Turns
+				}
 			}
 		}
 		commits, err := q.StatsCommitAgg(ctx, db.StatsCommitAggParams{
@@ -137,7 +138,7 @@ func Output(ctx context.Context, q *db.Queries, oq OutputQuery) (apigen.OutputSt
 		}
 		for _, r := range commits {
 			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				get(cell{i, usageKey(dim, "", r.ProjectID, r.SpaceID, "", "")}).Commits += r.Commits
+				get(cell{i, keyOf(&r.ProjectID, &r.SpaceID)}).Commits += r.Commits
 			}
 		}
 	}

@@ -63,6 +63,9 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 19, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 18, r.Source.Version)
 
 	// 0017 的结构上造数据（notifications / deliveries 用原生 SQL：生成的查询已带 link 列）。
@@ -97,7 +100,7 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	require.Len(t, beforeN, 3)
 	require.Len(t, beforeD, 3)
 
-	_, err = p.Up(ctx)
+	_, err = p.UpTo(ctx, 18)
 	require.NoError(t, err)
 
 	assert.Equal(t, beforeN, dumpRows(t, s.DB, notifCols), "三条通知逐列相等")
@@ -245,7 +248,7 @@ func TestM10StatsQueries(t *testing.T) {
 	assert.Zero(t, usage(db.InsertUsageRecordParams{ThreadID: ptr("T-2"), EntrySeq: 8, Ts: 3000, Ukey: ptr("e4@3000"), CostUsd: 2.0}),
 		"已删线程的 ukey 仍然占用")
 
-	// ---- StatsUsageAgg：开关与筛选
+	// ---- StatsUsageAgg：dim（0 无、1 线程、2 项目、3 Space、4 模型、5 用途、6 工具）与筛选
 	agg := func(p db.StatsUsageAggParams) []db.StatsUsageAggRow {
 		if p.ToTs == 0 {
 			p.FromTs, p.ToTs = 0, 5*day
@@ -275,16 +278,17 @@ func TestM10StatsQueries(t *testing.T) {
 	assert.EqualValues(t, 1, tot.TtftN)
 	assert.EqualValues(t, 200, tot.TimedOutputTokens)
 	assert.EqualValues(t, 2000, tot.DurationMs)
-	assert.Equal(t, "", tot.ThreadID+tot.ProjectID+tot.SpaceID+tot.Model+tot.Purpose, "关掉的分组键为空串")
+	assert.Equal(t, "", tot.Key, "dim = 0：键为空串")
 
+	const dimThread, dimProject, dimSpace, dimModel, dimPurpose, dimTool = 1, 2, 3, 4, 5, 6
+	byKey := func(r db.StatsUsageAggRow) string { return r.Key }
 	assert.Equal(t, map[string]float64{"prj_1": 3.5, "prj_2": 0.25},
-		costBy(agg(db.StatsUsageAggParams{ByProject: true}), func(r db.StatsUsageAggRow) string { return r.ProjectID }), "已删线程按快照归到 prj_1")
-	assert.Equal(t, map[string]float64{"spc_1": 3.5, "": 0.25},
-		costBy(agg(db.StatsUsageAggParams{BySpace: true}), func(r db.StatsUsageAggRow) string { return r.SpaceID }))
-	assert.Equal(t, map[string]float64{"T-1": 1.5, "T-2": 0.25, "": 2.0},
-		costBy(agg(db.StatsUsageAggParams{ByThread: true}), func(r db.StatsUsageAggRow) string { return r.ThreadID }))
-	assert.Equal(t, map[string]float64{"anthropic/opus|": 3.0, "anthropic/opus|title": 0.5, "openai/gpt|": 0.25},
-		costBy(agg(db.StatsUsageAggParams{ByModel: true, ByPurpose: true}), func(r db.StatsUsageAggRow) string { return r.Model + "|" + r.Purpose }))
+		costBy(agg(db.StatsUsageAggParams{Dim: dimProject}), byKey), "已删线程按快照归到 prj_1")
+	assert.Equal(t, map[string]float64{"spc_1": 3.5, "": 0.25}, costBy(agg(db.StatsUsageAggParams{Dim: dimSpace}), byKey))
+	assert.Equal(t, map[string]float64{"T-1": 1.5, "T-2": 0.25, "": 2.0}, costBy(agg(db.StatsUsageAggParams{Dim: dimThread}), byKey))
+	assert.Equal(t, map[string]float64{"anthropic/opus": 3.5, "openai/gpt": 0.25}, costBy(agg(db.StatsUsageAggParams{Dim: dimModel}), byKey))
+	assert.Equal(t, map[string]float64{"": 3.25, "title": 0.5}, costBy(agg(db.StatsUsageAggParams{Dim: dimPurpose}), byKey))
+	assert.Equal(t, map[string]float64{"": 3.75}, costBy(agg(db.StatsUsageAggParams{Dim: dimTool}), byKey), "工具键不适用于用量：空串")
 	assert.Equal(t, map[string]float64{"0": 3.5, "1": 0.25},
 		costBy(agg(db.StatsUsageAggParams{ByBucket: true}), func(r db.StatsUsageAggRow) string { return fmt.Sprint(r.Bucket) }))
 	assert.Equal(t, map[string]float64{"0": 1.0, "1": 2.75},
@@ -304,21 +308,21 @@ func TestM10StatsQueries(t *testing.T) {
 	assert.InDelta(t, 103.75, sum(agg(db.StatsUsageAggParams{FromTs: 0, ToTs: 11 * day})), 1e-9)
 
 	// ---- StatsToolAgg / StatsTurnAgg
-	tools, err := q.StatsToolAgg(ctx, db.StatsToolAggParams{ByTool: true, BucketMs: day, FromTs: 0, ToTs: day})
+	tools, err := q.StatsToolAgg(ctx, db.StatsToolAggParams{Dim: dimTool, BucketMs: day, FromTs: 0, ToTs: day})
 	require.NoError(t, err)
 	toolMap := map[string][2]int64{}
 	for _, r := range tools {
-		toolMap[r.Tool] = [2]int64{r.Calls, r.Errors}
+		toolMap[r.Key] = [2]int64{r.Calls, r.Errors}
 	}
 	assert.Equal(t, map[string][2]int64{"bash": {2, 1}, "read": {1, 0}}, toolMap)
-	tools, err = q.StatsToolAgg(ctx, db.StatsToolAggParams{ByProject: true, BucketMs: day, FromTs: 0, ToTs: day, Project: ptr("prj_1")})
+	tools, err = q.StatsToolAgg(ctx, db.StatsToolAggParams{Dim: dimProject, BucketMs: day, FromTs: 0, ToTs: day, Project: ptr("prj_1")})
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	assert.EqualValues(t, 3, tools[0].Calls)
-	turns, err := q.StatsTurnAgg(ctx, db.StatsTurnAggParams{BySpace: true, BucketMs: day, FromTs: 0, ToTs: day})
+	turns, err := q.StatsTurnAgg(ctx, db.StatsTurnAggParams{Dim: dimSpace, BucketMs: day, FromTs: 0, ToTs: day})
 	require.NoError(t, err)
 	require.Len(t, turns, 1)
-	assert.Equal(t, "spc_1", turns[0].SpaceID)
+	assert.Equal(t, "spc_1", turns[0].Key)
 	assert.EqualValues(t, 2, turns[0].Turns)
 
 	// ---- 其它用量查询
@@ -473,4 +477,86 @@ func TestM10StatsQueries(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, n)
 	assert.Equal(t, "5", scalarString(t, s.DB, `SELECT COUNT(*) FROM orb_events`))
+}
+
+// TestM10RollupMigration 覆盖 0019：0018 → 0019 时已有事实行按 15 分钟回填进三张汇总表（NULL 存成空串、
+// 只计有值的 ttft、时长 > 0 才计入速度）；之后写入 / Tombstone / 删线程由触发器跟进；Down 后表与触发器都不在、事实行不动。
+func TestM10RollupMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	require.NoError(t, err)
+	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
+	require.NoError(t, err)
+	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 19, r.Source.Version)
+
+	q := s.Q
+	require.NoError(t, q.CreateProject(ctx, db.CreateProjectParams{ID: "prj_1", Name: "p1", ShallowClone: true, CreatedAt: 1, UpdatedAt: 1}))
+	for _, th := range []struct {
+		id      string
+		project *string
+		space   *string
+	}{{"T-1", ptr("prj_1"), ptr("spc_1")}, {"T-2", nil, nil}} {
+		require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th.id, ProjectID: th.project, SpaceID: th.space,
+			TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
+	}
+	// 0018 的结构上直接写事实行（还没有触发器）：q = ts / 900000。
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO usage_records (thread_id, entry_seq, ts, provider, model, purpose, stop_reason, ukey, project_id, space_id,
+		input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent) VALUES
+		('T-1', 1, 1000,   'anthropic', 'opus', '',      'stop',  'a@1', NULL,    NULL, 10, 20, 1, 2, 0.5,  2000, 100,  0),
+		('T-1', 2, 899999, 'anthropic', 'opus', '',      'error', 'a@2', NULL,    NULL, 5,  7,  0, 0, 0.25, NULL, NULL, 1),
+		('T-1', 3, 900000, 'anthropic', 'opus', '',      'stop',  'a@3', NULL,    NULL, 1,  1,  0, 0, 1,    0,    50,   0),
+		(NULL,  4, 2000,   'openai',    'gpt',  'title', 'stop',  NULL,  'prj_2', NULL, 3,  4,  0, 0, 2,    1000, NULL, 0)`)
+	require.NoError(t, err)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO tool_calls (thread_id, entry_seq, ts, tool, is_error, ukey, project_id) VALUES
+		('T-1', 5, 100, 'bash', 1, 't@5', NULL), ('T-1', 6, 200, 'bash', 0, 't@6', NULL), (NULL, 7, 1800000, 'read', 0, NULL, 'prj_2')`)
+	require.NoError(t, err)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO turns (thread_id, entry_seq, ts, ukey) VALUES ('T-2', 8, 5, 'r@8'), ('T-2', 9, 10, 'r@9')`)
+	require.NoError(t, err)
+
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	const usageQ = `SELECT * FROM usage_q ORDER BY q, thread_id, project_id, space_id, provider, model, purpose`
+	const toolQ = `SELECT * FROM tool_q ORDER BY q, thread_id, project_id, space_id, tool`
+	const turnQ = `SELECT * FROM turn_q ORDER BY q, thread_id, project_id, space_id`
+	// 列：q, thread, project, space, provider, model, purpose, requests, errors, in, out, cacheR, cacheW, cost, subCost,
+	// ttftSum, ttftN, timedOut, durMs
+	assert.Equal(t, []string{
+		"0||prj_2||openai|gpt|title|1|0|3|4|0|0|2|0|0|0|4|1000",
+		"0|T-1|||anthropic|opus||2|1|15|27|1|2|0.75|0.25|100|1|20|2000",
+		"1|T-1|||anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0",
+	}, dumpRows(t, s.DB, usageQ))
+	assert.Equal(t, []string{"0|T-1|||bash|2|1", "2||prj_2||read|1|0"}, dumpRows(t, s.DB, toolQ))
+	assert.Equal(t, []string{"0|T-2|||2"}, dumpRows(t, s.DB, turnQ))
+
+	// 触发器：新行累加；删线程（先 Tombstone 再经外键置空）把 T-1 的汇总整体移到 (''、prj_1、spc_1) 键下。
+	_, err = q.InsertTurn(ctx, db.InsertTurnParams{ThreadID: ptr("T-2"), EntrySeq: 10, Ts: 899999, Ukey: ptr("r@10")})
+	require.NoError(t, err)
+	n, err := q.InsertTurn(ctx, db.InsertTurnParams{ThreadID: ptr("T-1"), EntrySeq: 11, Ts: 1, Ukey: ptr("r@10")})
+	require.NoError(t, err)
+	assert.Zero(t, n, "被忽略的行不进汇总")
+	assert.Equal(t, []string{"0|T-2|||3"}, dumpRows(t, s.DB, turnQ))
+	require.NoError(t, q.TombstoneUsage(ctx, db.TombstoneUsageParams{ProjectID: ptr("prj_1"), SpaceID: ptr("spc_1"), ThreadID: "T-1"}))
+	require.NoError(t, q.TombstoneToolCalls(ctx, db.TombstoneToolCallsParams{ProjectID: ptr("prj_1"), SpaceID: ptr("spc_1"), ThreadID: "T-1"}))
+	_, err = q.DeleteThread(ctx, "T-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"0||prj_1|spc_1|anthropic|opus||2|1|15|27|1|2|0.75|0.25|100|1|20|2000",
+		"0||prj_2||openai|gpt|title|1|0|3|4|0|0|2|0|0|0|4|1000",
+		"1||prj_1|spc_1|anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0",
+	}, dumpRows(t, s.DB, usageQ))
+	assert.Equal(t, []string{"0||prj_1|spc_1|bash|2|1", "2||prj_2||read|1|0"}, dumpRows(t, s.DB, toolQ))
+	_, err = q.DeleteUsageBefore(ctx, 900000)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1||prj_1|spc_1|anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0"}, dumpRows(t, s.DB, usageQ), "减空的行被删掉")
+
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 19, r.Source.Version)
+	assert.Equal(t, "0", scalarString(t, s.DB, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('usage_q', 'tool_q', 'turn_q')
+		OR (type = 'trigger' AND tbl_name IN ('usage_records', 'tool_calls', 'turns'))`))
+	assert.Equal(t, "1|3|3", scalarString(t, s.DB,
+		`SELECT (SELECT COUNT(*) FROM usage_records) || '|' || (SELECT COUNT(*) FROM tool_calls) || '|' || (SELECT COUNT(*) FROM turns)`), "事实行不动")
 }

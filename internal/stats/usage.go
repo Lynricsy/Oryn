@@ -135,6 +135,7 @@ func Usage(ctx context.Context, q *db.Queries, uq UsageQuery) (apigen.UsageStats
 	}
 	f := uq.Filter.norm()
 	withTools := f.Model == nil && dim != GroupModel && dim != GroupPurpose
+	sd := sqlDim(dim)
 
 	cells := map[cell]*uacc{}
 	get := func(c cell) *uacc {
@@ -145,50 +146,49 @@ func Usage(ctx context.Context, q *db.Queries, uq UsageQuery) (apigen.UsageStats
 		}
 		return a
 	}
+	// 每个片段拆成头 / 中 / 尾（rollup.go）；各段的本地序号都按片段 seg 映射到同一网格
 	for _, seg := range tp.segs {
-		rows, err := q.StatsUsageAgg(ctx, db.StatsUsageAggParams{
-			ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
-			ByThread: dim == GroupThread, ByProject: dim == GroupProject, BySpace: dim == GroupSpace,
-			ByModel: dim == GroupModel, ByPurpose: dim == GroupPurpose,
-			FromTs: seg.From, ToTs: seg.To, Thread: f.Thread, Project: f.Project, Space: f.Space, Model: f.Model,
-		})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range rows {
-			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				get(cell{i, usageKey(dim, r.ThreadID, r.ProjectID, r.SpaceID, r.Model, r.Purpose)}).addRow(r)
+		for _, pt := range tp.parts(seg) {
+			rows, err := usageAgg(ctx, q, db.StatsUsageAggParams{
+				ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs, Dim: sd,
+				Thread: f.Thread, Project: f.Project, Space: f.Space, Model: f.Model,
+			}, pt)
+			if err != nil {
+				return apigen.UsageStats{}, err
 			}
-		}
-		if !withTools {
-			continue
-		}
-		tools, err := q.StatsToolAgg(ctx, db.StatsToolAggParams{
-			ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
-			ByThread: dim == GroupThread, ByProject: dim == GroupProject, BySpace: dim == GroupSpace,
-			FromTs: seg.From, ToTs: seg.To, Thread: f.Thread, Project: f.Project, Space: f.Space,
-		})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range tools {
-			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				a := get(cell{i, usageKey(dim, r.ThreadID, r.ProjectID, r.SpaceID, "", "")})
-				a.toolCalls += r.Calls
-				a.toolErrors += r.Errors
+			for _, r := range rows {
+				if i := tp.slot(seg, r.Bucket); i >= 0 {
+					get(cell{i, usageKey(dim, r.Key)}).addRow(r)
+				}
 			}
-		}
-		turns, err := q.StatsTurnAgg(ctx, db.StatsTurnAggParams{
-			ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
-			ByThread: dim == GroupThread, ByProject: dim == GroupProject, BySpace: dim == GroupSpace,
-			FromTs: seg.From, ToTs: seg.To, Thread: f.Thread, Project: f.Project, Space: f.Space,
-		})
-		if err != nil {
-			return apigen.UsageStats{}, err
-		}
-		for _, r := range turns {
-			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				get(cell{i, usageKey(dim, r.ThreadID, r.ProjectID, r.SpaceID, "", "")}).turns += r.Turns
+			if !withTools {
+				continue
+			}
+			tools, err := toolAgg(ctx, q, db.StatsToolAggParams{
+				ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs, Dim: sd,
+				Thread: f.Thread, Project: f.Project, Space: f.Space,
+			}, pt)
+			if err != nil {
+				return apigen.UsageStats{}, err
+			}
+			for _, r := range tools {
+				if i := tp.slot(seg, r.Bucket); i >= 0 {
+					a := get(cell{i, usageKey(dim, r.Key)})
+					a.toolCalls += r.Calls
+					a.toolErrors += r.Errors
+				}
+			}
+			turns, err := turnAgg(ctx, q, db.StatsTurnAggParams{
+				ByBucket: tp.bucketed, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs, Dim: sd,
+				Thread: f.Thread, Project: f.Project, Space: f.Space,
+			}, pt)
+			if err != nil {
+				return apigen.UsageStats{}, err
+			}
+			for _, r := range turns {
+				if i := tp.slot(seg, r.Bucket); i >= 0 {
+					get(cell{i, usageKey(dim, r.Key)}).turns += r.Turns
+				}
 			}
 		}
 	}
@@ -299,23 +299,13 @@ func Usage(ctx context.Context, q *db.Queries, uq UsageQuery) (apigen.UsageStats
 	return out, nil
 }
 
-// usageKey 取出某一行在维度 dim 下的分组键。
-func usageKey(dim, thread, project, space, model, purpose string) string {
-	switch dim {
-	case GroupTotal:
+// usageKey 把 SQL 按 sqlDim(dim) 返回的键还原成维度 dim 下的分组键：total 的唯一分组键是 "total"，其余原样
+// （线程 / 项目 / Space / 模型 / 用途，时间粒度为空串）。
+func usageKey(dim, key string) string {
+	if dim == GroupTotal {
 		return GroupTotal
-	case GroupThread:
-		return thread
-	case GroupProject:
-		return project
-	case GroupSpace:
-		return space
-	case GroupModel:
-		return model
-	case GroupPurpose:
-		return purpose
 	}
-	return ""
+	return key
 }
 
 // usageLabels 返回维度 dim 的 键 → 显示名（线程标题、项目名、Space 名）；各用一次列表查询。

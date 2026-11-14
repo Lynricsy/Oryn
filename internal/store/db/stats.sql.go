@@ -11,11 +11,13 @@ import (
 
 const countUsageRecords = `-- name: CountUsageRecords :one
 SELECT CAST(COUNT(*) AS INTEGER) AS n
-FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+FROM usage_records u
 WHERE u.ts >= ?1 AND u.ts < ?2
   AND (CAST(?3 AS TEXT) IS NULL OR u.thread_id = CAST(?3 AS TEXT))
-  AND (CAST(?4 AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(?4 AS TEXT))
-  AND (CAST(?5 AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(?5 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '') = CAST(?4 AS TEXT))
+  AND (CAST(?5 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '') = CAST(?5 AS TEXT))
   AND (CAST(?6 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?6 AS TEXT))
 `
 
@@ -1046,54 +1048,50 @@ const statsToolAgg = `-- name: StatsToolAgg :many
 SELECT
     CAST(CASE WHEN CAST(?1 AS BOOLEAN)
          THEN (c.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN c.tool ELSE '' END AS TEXT) AS tool,
-    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(c.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.project_id, c.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(?7 AS BOOLEAN) THEN COALESCE(t.space_id, c.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN COALESCE(c.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = c.thread_id), c.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = c.thread_id), c.space_id, '')
+         WHEN 6 THEN c.tool
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS calls,
     CAST(COALESCE(SUM(c.is_error), 0) AS INTEGER) AS errors
-FROM tool_calls c LEFT JOIN threads t ON t.id = c.thread_id
-WHERE c.ts >= ?8 AND c.ts < ?9
-  AND (CAST(?10 AS TEXT) IS NULL OR c.thread_id = CAST(?10 AS TEXT))
-  AND (CAST(?11 AS TEXT) IS NULL OR COALESCE(t.project_id, c.project_id, '') = CAST(?11 AS TEXT))
-  AND (CAST(?12 AS TEXT) IS NULL OR COALESCE(t.space_id, c.space_id, '') = CAST(?12 AS TEXT))
-GROUP BY 1, 2, 3, 4, 5
+FROM tool_calls c
+WHERE c.ts >= ?5 AND c.ts < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR c.thread_id = CAST(?7 AS TEXT))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = c.thread_id), c.project_id, '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = c.thread_id), c.space_id, '') = CAST(?9 AS TEXT))
+GROUP BY 1, 2
 `
 
 type StatsToolAggParams struct {
-	ByBucket  bool    `json:"byBucket"`
-	OffsetMs  int64   `json:"offsetMs"`
-	BucketMs  int64   `json:"bucketMs"`
-	ByTool    bool    `json:"byTool"`
-	ByThread  bool    `json:"byThread"`
-	ByProject bool    `json:"byProject"`
-	BySpace   bool    `json:"bySpace"`
-	FromTs    int64   `json:"fromTs"`
-	ToTs      int64   `json:"toTs"`
-	Thread    *string `json:"thread"`
-	Project   *string `json:"project"`
-	Space     *string `json:"space"`
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromTs   int64   `json:"fromTs"`
+	ToTs     int64   `json:"toTs"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
 }
 
 type StatsToolAggRow struct {
-	Bucket    int64  `json:"bucket"`
-	Tool      string `json:"tool"`
-	ThreadID  string `json:"threadId"`
-	ProjectID string `json:"projectId"`
-	SpaceID   string `json:"spaceId"`
-	Calls     int64  `json:"calls"`
-	Errors    int64  `json:"errors"`
+	Bucket int64  `json:"bucket"`
+	Key    string `json:"key"`
+	Calls  int64  `json:"calls"`
+	Errors int64  `json:"errors"`
 }
 
+// dim 1 / 2 / 3 / 6 (see StatsUsageAgg).
 func (q *Queries) StatsToolAgg(ctx context.Context, arg StatsToolAggParams) ([]StatsToolAggRow, error) {
 	rows, err := q.db.QueryContext(ctx, statsToolAgg,
 		arg.ByBucket,
 		arg.OffsetMs,
 		arg.BucketMs,
-		arg.ByTool,
-		arg.ByThread,
-		arg.ByProject,
-		arg.BySpace,
+		arg.Dim,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Thread,
@@ -1109,10 +1107,87 @@ func (q *Queries) StatsToolAgg(ctx context.Context, arg StatsToolAggParams) ([]S
 		var i StatsToolAggRow
 		if err := rows.Scan(
 			&i.Bucket,
-			&i.Tool,
-			&i.ThreadID,
-			&i.ProjectID,
-			&i.SpaceID,
+			&i.Key,
+			&i.Calls,
+			&i.Errors,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsToolAggQ = `-- name: StatsToolAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         WHEN 6 THEN x.tool
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.calls), 0) AS INTEGER) AS calls,
+    CAST(COALESCE(SUM(x.errors), 0) AS INTEGER) AS errors
+FROM tool_q x
+WHERE x.q >= ?5 AND x.q < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(?9 AS TEXT))
+GROUP BY 1, 2
+`
+
+type StatsToolAggQParams struct {
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromQ    int64   `json:"fromQ"`
+	ToQ      int64   `json:"toQ"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
+}
+
+type StatsToolAggQRow struct {
+	Bucket int64  `json:"bucket"`
+	Key    string `json:"key"`
+	Calls  int64  `json:"calls"`
+	Errors int64  `json:"errors"`
+}
+
+// StatsToolAgg over the rollup tool_q (see StatsUsageAggQ).
+func (q *Queries) StatsToolAggQ(ctx context.Context, arg StatsToolAggQParams) ([]StatsToolAggQRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsToolAggQ,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.Dim,
+		arg.FromQ,
+		arg.ToQ,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatsToolAggQRow{}
+	for rows.Next() {
+		var i StatsToolAggQRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.Key,
 			&i.Calls,
 			&i.Errors,
 		); err != nil {
@@ -1133,48 +1208,47 @@ const statsTurnAgg = `-- name: StatsTurnAgg :many
 SELECT
     CAST(CASE WHEN CAST(?1 AS BOOLEAN)
          THEN (r.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN COALESCE(r.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(t.project_id, r.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.space_id, r.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN COALESCE(r.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = r.thread_id), r.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = r.thread_id), r.space_id, '')
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS turns
-FROM turns r LEFT JOIN threads t ON t.id = r.thread_id
-WHERE r.ts >= ?7 AND r.ts < ?8
-  AND (CAST(?9 AS TEXT) IS NULL OR r.thread_id = CAST(?9 AS TEXT))
-  AND (CAST(?10 AS TEXT) IS NULL OR COALESCE(t.project_id, r.project_id, '') = CAST(?10 AS TEXT))
-  AND (CAST(?11 AS TEXT) IS NULL OR COALESCE(t.space_id, r.space_id, '') = CAST(?11 AS TEXT))
-GROUP BY 1, 2, 3, 4
+FROM turns r
+WHERE r.ts >= ?5 AND r.ts < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR r.thread_id = CAST(?7 AS TEXT))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = r.thread_id), r.project_id, '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = r.thread_id), r.space_id, '') = CAST(?9 AS TEXT))
+GROUP BY 1, 2
 `
 
 type StatsTurnAggParams struct {
-	ByBucket  bool    `json:"byBucket"`
-	OffsetMs  int64   `json:"offsetMs"`
-	BucketMs  int64   `json:"bucketMs"`
-	ByThread  bool    `json:"byThread"`
-	ByProject bool    `json:"byProject"`
-	BySpace   bool    `json:"bySpace"`
-	FromTs    int64   `json:"fromTs"`
-	ToTs      int64   `json:"toTs"`
-	Thread    *string `json:"thread"`
-	Project   *string `json:"project"`
-	Space     *string `json:"space"`
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromTs   int64   `json:"fromTs"`
+	ToTs     int64   `json:"toTs"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
 }
 
 type StatsTurnAggRow struct {
-	Bucket    int64  `json:"bucket"`
-	ThreadID  string `json:"threadId"`
-	ProjectID string `json:"projectId"`
-	SpaceID   string `json:"spaceId"`
-	Turns     int64  `json:"turns"`
+	Bucket int64  `json:"bucket"`
+	Key    string `json:"key"`
+	Turns  int64  `json:"turns"`
 }
 
+// dim 1 / 2 / 3 (see StatsUsageAgg).
 func (q *Queries) StatsTurnAgg(ctx context.Context, arg StatsTurnAggParams) ([]StatsTurnAggRow, error) {
 	rows, err := q.db.QueryContext(ctx, statsTurnAgg,
 		arg.ByBucket,
 		arg.OffsetMs,
 		arg.BucketMs,
-		arg.ByThread,
-		arg.ByProject,
-		arg.BySpace,
+		arg.Dim,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Thread,
@@ -1188,13 +1262,79 @@ func (q *Queries) StatsTurnAgg(ctx context.Context, arg StatsTurnAggParams) ([]S
 	items := []StatsTurnAggRow{}
 	for rows.Next() {
 		var i StatsTurnAggRow
-		if err := rows.Scan(
-			&i.Bucket,
-			&i.ThreadID,
-			&i.ProjectID,
-			&i.SpaceID,
-			&i.Turns,
-		); err != nil {
+		if err := rows.Scan(&i.Bucket, &i.Key, &i.Turns); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsTurnAggQ = `-- name: StatsTurnAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.turns), 0) AS INTEGER) AS turns
+FROM turn_q x
+WHERE x.q >= ?5 AND x.q < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(?9 AS TEXT))
+GROUP BY 1, 2
+`
+
+type StatsTurnAggQParams struct {
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromQ    int64   `json:"fromQ"`
+	ToQ      int64   `json:"toQ"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
+}
+
+type StatsTurnAggQRow struct {
+	Bucket int64  `json:"bucket"`
+	Key    string `json:"key"`
+	Turns  int64  `json:"turns"`
+}
+
+// StatsTurnAgg over the rollup turn_q (see StatsUsageAggQ).
+func (q *Queries) StatsTurnAggQ(ctx context.Context, arg StatsTurnAggQParams) ([]StatsTurnAggQRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsTurnAggQ,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.Dim,
+		arg.FromQ,
+		arg.ToQ,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatsTurnAggQRow{}
+	for rows.Next() {
+		var i StatsTurnAggQRow
+		if err := rows.Scan(&i.Bucket, &i.Key, &i.Turns); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1213,11 +1353,13 @@ const statsUsageAgg = `-- name: StatsUsageAgg :many
 SELECT
     CAST(CASE WHEN CAST(?1 AS BOOLEAN)
          THEN (u.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN COALESCE(u.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(t.project_id, u.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.space_id, u.space_id, '') ELSE '' END AS TEXT) AS space_id,
-    CAST(CASE WHEN CAST(?7 AS BOOLEAN) THEN u.provider || '/' || u.model ELSE '' END AS TEXT) AS model,
-    CAST(CASE WHEN CAST(?8 AS BOOLEAN) THEN u.purpose ELSE '' END AS TEXT) AS purpose,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN COALESCE(u.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '')
+         WHEN 4 THEN u.provider || '/' || u.model
+         WHEN 5 THEN u.purpose
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS requests,
     CAST(COALESCE(SUM(u.stop_reason = 'error'), 0) AS INTEGER) AS request_errors,
     CAST(COALESCE(SUM(u.input_tokens), 0) AS INTEGER) AS input_tokens,
@@ -1230,39 +1372,33 @@ SELECT
     CAST(COUNT(u.ttft_ms) AS INTEGER) AS ttft_n,
     CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END), 0) AS INTEGER) AS timed_output_tokens,
     CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END), 0) AS INTEGER) AS duration_ms
-FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
-WHERE u.ts >= ?9 AND u.ts < ?10
-  AND (CAST(?11 AS TEXT) IS NULL OR u.thread_id = CAST(?11 AS TEXT))
-  AND (CAST(?12 AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(?12 AS TEXT))
-  AND (CAST(?13 AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(?13 AS TEXT))
-  AND (CAST(?14 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?14 AS TEXT))
-GROUP BY 1, 2, 3, 4, 5, 6
+FROM usage_records u
+WHERE u.ts >= ?5 AND u.ts < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR u.thread_id = CAST(?7 AS TEXT))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '') = CAST(?9 AS TEXT))
+  AND (CAST(?10 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?10 AS TEXT))
+GROUP BY 1, 2
 `
 
 type StatsUsageAggParams struct {
-	ByBucket  bool    `json:"byBucket"`
-	OffsetMs  int64   `json:"offsetMs"`
-	BucketMs  int64   `json:"bucketMs"`
-	ByThread  bool    `json:"byThread"`
-	ByProject bool    `json:"byProject"`
-	BySpace   bool    `json:"bySpace"`
-	ByModel   bool    `json:"byModel"`
-	ByPurpose bool    `json:"byPurpose"`
-	FromTs    int64   `json:"fromTs"`
-	ToTs      int64   `json:"toTs"`
-	Thread    *string `json:"thread"`
-	Project   *string `json:"project"`
-	Space     *string `json:"space"`
-	Model     *string `json:"model"`
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromTs   int64   `json:"fromTs"`
+	ToTs     int64   `json:"toTs"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
+	Model    *string `json:"model"`
 }
 
 type StatsUsageAggRow struct {
 	Bucket            int64   `json:"bucket"`
-	ThreadID          string  `json:"threadId"`
-	ProjectID         string  `json:"projectId"`
-	SpaceID           string  `json:"spaceId"`
-	Model             string  `json:"model"`
-	Purpose           string  `json:"purpose"`
+	Key               string  `json:"key"`
 	Requests          int64   `json:"requests"`
 	RequestErrors     int64   `json:"requestErrors"`
 	InputTokens       int64   `json:"inputTokens"`
@@ -1278,20 +1414,24 @@ type StatsUsageAggRow struct {
 }
 
 // ---------------------------------------------------------------- aggregates
-// One static SQL for every grouping: each by_* switch turns a key column on; disabled keys are ”.
-// bucket = (ts + offset_ms) / bucket_ms (local hour / day ordinal; 0 when by_bucket is off).
-// Live threads take their current project / space; deleted threads fall back to the snapshot columns.
+// One static SQL per fact table; dim picks the single group key (Go: stats.dim* constants):
+//
+//	0 = none (''), 1 = thread ('' for deleted threads), 2 = project, 3 = space, 4 = '<provider>/<model>' (usage only),
+//	5 = purpose (usage only), 6 = tool (tool calls only); any other value = ''.
+//
+// Project / space: live threads take their current value, deleted threads (no thread row) fall back to the snapshot
+// columns. Lazy correlated subqueries instead of LEFT JOIN threads: they run only for dim 2 / 3 or the project /
+// space filters (CASE / OR short-circuit).
+// bucket = (ts + offset_ms) / bucket_ms (local hour / day / week ordinal; 0 when by_bucket is off).
+// Output is (bucket, key, sums...) grouped by the first two columns.
 // Filters: NULL = no filter; project / space ” = none.
+// Raw rows serve the unaligned head / tail of a window; the 15-minute rollups (*AggQ) serve the aligned middle.
 func (q *Queries) StatsUsageAgg(ctx context.Context, arg StatsUsageAggParams) ([]StatsUsageAggRow, error) {
 	rows, err := q.db.QueryContext(ctx, statsUsageAgg,
 		arg.ByBucket,
 		arg.OffsetMs,
 		arg.BucketMs,
-		arg.ByThread,
-		arg.ByProject,
-		arg.BySpace,
-		arg.ByModel,
-		arg.ByPurpose,
+		arg.Dim,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Thread,
@@ -1308,11 +1448,123 @@ func (q *Queries) StatsUsageAgg(ctx context.Context, arg StatsUsageAggParams) ([
 		var i StatsUsageAggRow
 		if err := rows.Scan(
 			&i.Bucket,
-			&i.ThreadID,
-			&i.ProjectID,
-			&i.SpaceID,
-			&i.Model,
-			&i.Purpose,
+			&i.Key,
+			&i.Requests,
+			&i.RequestErrors,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CostUsd,
+			&i.SubagentCostUsd,
+			&i.TtftSumMs,
+			&i.TtftN,
+			&i.TimedOutputTokens,
+			&i.DurationMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsUsageAggQ = `-- name: StatsUsageAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(?4 AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         WHEN 4 THEN x.provider || '/' || x.model
+         WHEN 5 THEN x.purpose
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.requests), 0) AS INTEGER) AS requests,
+    CAST(COALESCE(SUM(x.request_errors), 0) AS INTEGER) AS request_errors,
+    CAST(COALESCE(SUM(x.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COALESCE(SUM(x.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(x.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
+    CAST(COALESCE(SUM(x.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
+    CAST(COALESCE(SUM(x.cost_usd), 0) AS REAL) AS cost_usd,
+    CAST(COALESCE(SUM(x.subagent_cost_usd), 0) AS REAL) AS subagent_cost_usd,
+    CAST(COALESCE(SUM(x.ttft_sum_ms), 0) AS INTEGER) AS ttft_sum_ms,
+    CAST(COALESCE(SUM(x.ttft_n), 0) AS INTEGER) AS ttft_n,
+    CAST(COALESCE(SUM(x.timed_output_tokens), 0) AS INTEGER) AS timed_output_tokens,
+    CAST(COALESCE(SUM(x.duration_ms), 0) AS INTEGER) AS duration_ms
+FROM usage_q x
+WHERE x.q >= ?5 AND x.q < ?6
+  AND (CAST(?7 AS TEXT) IS NULL OR (x.thread_id = CAST(?7 AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(?8 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(?9 AS TEXT))
+  AND (CAST(?10 AS TEXT) IS NULL OR x.provider || '/' || x.model = CAST(?10 AS TEXT))
+GROUP BY 1, 2
+`
+
+type StatsUsageAggQParams struct {
+	ByBucket bool    `json:"byBucket"`
+	OffsetMs int64   `json:"offsetMs"`
+	BucketMs int64   `json:"bucketMs"`
+	Dim      int64   `json:"dim"`
+	FromQ    int64   `json:"fromQ"`
+	ToQ      int64   `json:"toQ"`
+	Thread   *string `json:"thread"`
+	Project  *string `json:"project"`
+	Space    *string `json:"space"`
+	Model    *string `json:"model"`
+}
+
+type StatsUsageAggQRow struct {
+	Bucket            int64   `json:"bucket"`
+	Key               string  `json:"key"`
+	Requests          int64   `json:"requests"`
+	RequestErrors     int64   `json:"requestErrors"`
+	InputTokens       int64   `json:"inputTokens"`
+	OutputTokens      int64   `json:"outputTokens"`
+	CacheReadTokens   int64   `json:"cacheReadTokens"`
+	CacheWriteTokens  int64   `json:"cacheWriteTokens"`
+	CostUsd           float64 `json:"costUsd"`
+	SubagentCostUsd   float64 `json:"subagentCostUsd"`
+	TtftSumMs         int64   `json:"ttftSumMs"`
+	TtftN             int64   `json:"ttftN"`
+	TimedOutputTokens int64   `json:"timedOutputTokens"`
+	DurationMs        int64   `json:"durationMs"`
+}
+
+// Same parameters (from_q / to_q instead of from_ts / to_ts), dim codes and output as StatsUsageAgg, over the
+// 15-minute rollup usage_q (q = ts / 900000; ” instead of NULL; deleted threads already sit under thread_id ”).
+// bucket = (q * 900000 + offset_ms) / bucket_ms, exact when offset_ms and bucket_ms are multiples of 900000.
+func (q *Queries) StatsUsageAggQ(ctx context.Context, arg StatsUsageAggQParams) ([]StatsUsageAggQRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsUsageAggQ,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.Dim,
+		arg.FromQ,
+		arg.ToQ,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatsUsageAggQRow{}
+	for rows.Next() {
+		var i StatsUsageAggQRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.Key,
 			&i.Requests,
 			&i.RequestErrors,
 			&i.InputTokens,

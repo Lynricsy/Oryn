@@ -77,19 +77,27 @@ UPDATE turns SET project_id = @project_id, space_id = @space_id WHERE thread_id 
 
 -- ---------------------------------------------------------------- aggregates
 
--- One static SQL for every grouping: each by_* switch turns a key column on; disabled keys are ''.
--- bucket = (ts + offset_ms) / bucket_ms (local hour / day ordinal; 0 when by_bucket is off).
--- Live threads take their current project / space; deleted threads fall back to the snapshot columns.
+-- One static SQL per fact table; dim picks the single group key (Go: stats.dim* constants):
+--   0 = none (''), 1 = thread ('' for deleted threads), 2 = project, 3 = space, 4 = '<provider>/<model>' (usage only),
+--   5 = purpose (usage only), 6 = tool (tool calls only); any other value = ''.
+-- Project / space: live threads take their current value, deleted threads (no thread row) fall back to the snapshot
+-- columns. Lazy correlated subqueries instead of LEFT JOIN threads: they run only for dim 2 / 3 or the project /
+-- space filters (CASE / OR short-circuit).
+-- bucket = (ts + offset_ms) / bucket_ms (local hour / day / week ordinal; 0 when by_bucket is off).
+-- Output is (bucket, key, sums...) grouped by the first two columns.
 -- Filters: NULL = no filter; project / space '' = none.
+-- Raw rows serve the unaligned head / tail of a window; the 15-minute rollups (*AggQ) serve the aligned middle.
 -- name: StatsUsageAgg :many
 SELECT
     CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
          THEN (u.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(u.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, u.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, u.space_id, '') ELSE '' END AS TEXT) AS space_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_model) AS BOOLEAN) THEN u.provider || '/' || u.model ELSE '' END AS TEXT) AS model,
-    CAST(CASE WHEN CAST(sqlc.arg(by_purpose) AS BOOLEAN) THEN u.purpose ELSE '' END AS TEXT) AS purpose,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN COALESCE(u.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '')
+         WHEN 4 THEN u.provider || '/' || u.model
+         WHEN 5 THEN u.purpose
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS requests,
     CAST(COALESCE(SUM(u.stop_reason = 'error'), 0) AS INTEGER) AS request_errors,
     CAST(COALESCE(SUM(u.input_tokens), 0) AS INTEGER) AS input_tokens,
@@ -102,45 +110,135 @@ SELECT
     CAST(COUNT(u.ttft_ms) AS INTEGER) AS ttft_n,
     CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END), 0) AS INTEGER) AS timed_output_tokens,
     CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END), 0) AS INTEGER) AS duration_ms
-FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+FROM usage_records u
 WHERE u.ts >= @from_ts AND u.ts < @to_ts
   AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR u.thread_id = CAST(sqlc.narg(thread) AS TEXT))
-  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
-  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
   AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(sqlc.narg(model) AS TEXT))
-GROUP BY 1, 2, 3, 4, 5, 6;
+GROUP BY 1, 2;
 
+-- Same parameters (from_q / to_q instead of from_ts / to_ts), dim codes and output as StatsUsageAgg, over the
+-- 15-minute rollup usage_q (q = ts / 900000; '' instead of NULL; deleted threads already sit under thread_id '').
+-- bucket = (q * 900000 + offset_ms) / bucket_ms, exact when offset_ms and bucket_ms are multiples of 900000.
+-- name: StatsUsageAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         WHEN 4 THEN x.provider || '/' || x.model
+         WHEN 5 THEN x.purpose
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.requests), 0) AS INTEGER) AS requests,
+    CAST(COALESCE(SUM(x.request_errors), 0) AS INTEGER) AS request_errors,
+    CAST(COALESCE(SUM(x.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COALESCE(SUM(x.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(x.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
+    CAST(COALESCE(SUM(x.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
+    CAST(COALESCE(SUM(x.cost_usd), 0) AS REAL) AS cost_usd,
+    CAST(COALESCE(SUM(x.subagent_cost_usd), 0) AS REAL) AS subagent_cost_usd,
+    CAST(COALESCE(SUM(x.ttft_sum_ms), 0) AS INTEGER) AS ttft_sum_ms,
+    CAST(COALESCE(SUM(x.ttft_n), 0) AS INTEGER) AS ttft_n,
+    CAST(COALESCE(SUM(x.timed_output_tokens), 0) AS INTEGER) AS timed_output_tokens,
+    CAST(COALESCE(SUM(x.duration_ms), 0) AS INTEGER) AS duration_ms
+FROM usage_q x
+WHERE x.q >= @from_q AND x.q < @to_q
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR (x.thread_id = CAST(sqlc.narg(thread) AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR x.provider || '/' || x.model = CAST(sqlc.narg(model) AS TEXT))
+GROUP BY 1, 2;
+
+-- dim 1 / 2 / 3 / 6 (see StatsUsageAgg).
 -- name: StatsToolAgg :many
 SELECT
     CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
          THEN (c.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(sqlc.arg(by_tool) AS BOOLEAN) THEN c.tool ELSE '' END AS TEXT) AS tool,
-    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(c.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, c.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, c.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN COALESCE(c.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = c.thread_id), c.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = c.thread_id), c.space_id, '')
+         WHEN 6 THEN c.tool
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS calls,
     CAST(COALESCE(SUM(c.is_error), 0) AS INTEGER) AS errors
-FROM tool_calls c LEFT JOIN threads t ON t.id = c.thread_id
+FROM tool_calls c
 WHERE c.ts >= @from_ts AND c.ts < @to_ts
   AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR c.thread_id = CAST(sqlc.narg(thread) AS TEXT))
-  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, c.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
-  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, c.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
-GROUP BY 1, 2, 3, 4, 5;
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = c.thread_id), c.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = c.thread_id), c.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2;
 
+-- StatsToolAgg over the rollup tool_q (see StatsUsageAggQ).
+-- name: StatsToolAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         WHEN 6 THEN x.tool
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.calls), 0) AS INTEGER) AS calls,
+    CAST(COALESCE(SUM(x.errors), 0) AS INTEGER) AS errors
+FROM tool_q x
+WHERE x.q >= @from_q AND x.q < @to_q
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR (x.thread_id = CAST(sqlc.narg(thread) AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2;
+
+-- dim 1 / 2 / 3 (see StatsUsageAgg).
 -- name: StatsTurnAgg :many
 SELECT
     CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
          THEN (r.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
-    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(r.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, r.project_id, '') ELSE '' END AS TEXT) AS project_id,
-    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, r.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN COALESCE(r.thread_id, '')
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = r.thread_id), r.project_id, '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = r.thread_id), r.space_id, '')
+         ELSE '' END AS TEXT) AS "key",
     CAST(COUNT(*) AS INTEGER) AS turns
-FROM turns r LEFT JOIN threads t ON t.id = r.thread_id
+FROM turns r
 WHERE r.ts >= @from_ts AND r.ts < @to_ts
   AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR r.thread_id = CAST(sqlc.narg(thread) AS TEXT))
-  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, r.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
-  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, r.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
-GROUP BY 1, 2, 3, 4;
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = r.thread_id), r.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = r.thread_id), r.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2;
+
+-- StatsTurnAgg over the rollup turn_q (see StatsUsageAggQ).
+-- name: StatsTurnAggQ :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (x.q * 900000 + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE CAST(sqlc.arg(dim) AS INTEGER)
+         WHEN 1 THEN x.thread_id
+         WHEN 2 THEN COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '')
+         WHEN 3 THEN COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '')
+         ELSE '' END AS TEXT) AS "key",
+    CAST(COALESCE(SUM(x.turns), 0) AS INTEGER) AS turns
+FROM turn_q x
+WHERE x.q >= @from_q AND x.q < @to_q
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR (x.thread_id = CAST(sqlc.narg(thread) AS TEXT) AND x.thread_id <> ''))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.project_id, ''), '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = x.thread_id), NULLIF(x.space_id, ''), '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2;
 
 -- Earliest usage fact time; 0 when there is none.
 -- name: MinUsageTs :one
@@ -151,11 +249,13 @@ SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) AS cost_usd FROM usage_records W
 
 -- name: CountUsageRecords :one
 SELECT CAST(COUNT(*) AS INTEGER) AS n
-FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+FROM usage_records u
 WHERE u.ts >= @from_ts AND u.ts < @to_ts
   AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR u.thread_id = CAST(sqlc.narg(thread) AS TEXT))
-  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
-  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.project_id FROM threads t WHERE t.id = u.thread_id), u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL
+       OR COALESCE((SELECT t.space_id FROM threads t WHERE t.id = u.thread_id), u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
   AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(sqlc.narg(model) AS TEXT));
 
 -- Keyset page of usage facts with their current attribution. First page: after_ts = from_ts, after_id = 0.

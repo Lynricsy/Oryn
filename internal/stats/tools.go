@@ -43,24 +43,44 @@ func Tools(ctx context.Context, q *db.Queries, tq ToolQuery) (apigen.ToolStats, 
 	}
 	out := apigen.ToolStats{From: tq.From, To: tq.To, Tz: loc.String(), Tools: []apigen.ToolStat{}}
 
-	rows, err := q.StatsToolAgg(ctx, db.StatsToolAggParams{
-		ByTool: true, BucketMs: 1, FromTs: tq.From, ToTs: tq.To, Thread: f.Thread, Project: f.Project, Space: f.Space,
-	})
+	// 合计：整个窗口不分桶（拆成头 / 中 / 尾后按工具合并）
+	whole, err := newTimePlan(loc, tq.From, tq.To, "")
 	if err != nil {
 		return apigen.ToolStats{}, err
+	}
+	byTool := map[string]*db.StatsToolAggRow{}
+	for _, pt := range whole.parts(whole.segs[0]) {
+		part, err := toolAgg(ctx, q, db.StatsToolAggParams{
+			BucketMs: 1, Dim: dimTool, Thread: f.Thread, Project: f.Project, Space: f.Space,
+		}, pt)
+		if err != nil {
+			return apigen.ToolStats{}, err
+		}
+		for _, r := range part {
+			if a := byTool[r.Key]; a != nil {
+				a.Calls += r.Calls
+				a.Errors += r.Errors
+			} else {
+				byTool[r.Key] = &r
+			}
+		}
+	}
+	rows := make([]db.StatsToolAggRow, 0, len(byTool))
+	for _, r := range byTool {
+		rows = append(rows, *r)
 	}
 	slices.SortFunc(rows, func(a, b db.StatsToolAggRow) int {
 		if c := cmp.Compare(b.Calls, a.Calls); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.Tool, b.Tool)
+		return cmp.Compare(a.Key, b.Key)
 	})
 	other := apigen.ToolStat{Tool: OtherKey}
 	for i, r := range rows {
 		out.Total.Calls += r.Calls
 		out.Total.Errors += r.Errors
 		if i < limit {
-			out.Tools = append(out.Tools, apigen.ToolStat{Tool: r.Tool, Calls: r.Calls, Errors: r.Errors})
+			out.Tools = append(out.Tools, apigen.ToolStat{Tool: r.Key, Calls: r.Calls, Errors: r.Errors})
 		} else {
 			other.Calls += r.Calls
 			other.Errors += r.Errors
@@ -77,17 +97,19 @@ func Tools(ctx context.Context, q *db.Queries, tq ToolQuery) (apigen.ToolStats, 
 		pts[i] = apigen.ToolSeriesPoint{Key: b.Key, Start: b.Start}
 	}
 	for _, seg := range tp.segs {
-		rows, err := q.StatsToolAgg(ctx, db.StatsToolAggParams{
-			ByBucket: true, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
-			FromTs: seg.From, ToTs: seg.To, Thread: f.Thread, Project: f.Project, Space: f.Space,
-		})
-		if err != nil {
-			return apigen.ToolStats{}, err
-		}
-		for _, r := range rows {
-			if i := tp.slot(seg, r.Bucket); i >= 0 {
-				pts[i].Calls += r.Calls
-				pts[i].Errors += r.Errors
+		for _, pt := range tp.parts(seg) {
+			rows, err := toolAgg(ctx, q, db.StatsToolAggParams{
+				ByBucket: true, OffsetMs: tp.sqlOffset(seg), BucketMs: tp.bucketMs,
+				Thread: f.Thread, Project: f.Project, Space: f.Space,
+			}, pt)
+			if err != nil {
+				return apigen.ToolStats{}, err
+			}
+			for _, r := range rows {
+				if i := tp.slot(seg, r.Bucket); i >= 0 {
+					pts[i].Calls += r.Calls
+					pts[i].Errors += r.Errors
+				}
 			}
 		}
 	}

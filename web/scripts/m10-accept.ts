@@ -1348,9 +1348,10 @@ async function Y17() {
 		JSON.stringify(e.payload).includes("get_stats"),
 	);
 	check(called, "助手调用了 get_stats");
+	// 空键是「已删除的线程」、__other__ 是折叠项：取第一个真实线程
 	const top = (
-		await usage({ groupBy: "thread", from: Date.now() - 7 * DAY, limit: 1 })
-	).groups[0];
+		await usage({ groupBy: "thread", from: Date.now() - 7 * DAY, limit: 10 })
+	).groups.find((g) => g.key !== "" && g.key !== "__other__");
 	const reply =
 		es
 			.filter(

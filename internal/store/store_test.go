@@ -18,14 +18,14 @@ import (
 // M8：browser_profiles、browser_profile_events、orb_desktops；
 // M9：spaces、schedules、schedule_runs、thread_reports、coord_actions；
 // M9.6：role_avatars、thread_share_identities；
-// M10：turns、thread_commits、stats_state、budget、budget_alerts）。
+// M10：turns、thread_commits、stats_state、budget、budget_alerts，以及 15 分钟汇总 usage_q、tool_q、turn_q）。
 var m2Tables = []string{
 	"attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "schedule_runs", "schedules",
 	"secrets", "spaces", "stats_state", "thread_commits", "thread_labels", "thread_reports", "thread_share_entries",
-	"thread_share_identities", "thread_shares", "threads", "tool_calls", "turns", "usage_records", "web_sessions",
+	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",
 }
 
 func openTemp(t *testing.T, dir string) *Store {
@@ -61,6 +61,9 @@ func TestOpenCreatesAllTablesAndIsIdempotent(t *testing.T) {
 	var fk int
 	require.NoError(t, s.DB.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk))
 	assert.Equal(t, 1, fk)
+	var tempStore int
+	require.NoError(t, s.DB.QueryRowContext(ctx, `PRAGMA temp_store`).Scan(&tempStore))
+	assert.Equal(t, 2, tempStore, "temp_store = MEMORY")
 
 	// owner 只允许 id = 1。
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO owner (id, display_name, user_handle, created_at) VALUES (2, 'x', x'00', 0)`)

@@ -539,6 +539,16 @@ type ToolCall struct {
 	SpaceID   *string `json:"spaceId"`
 }
 
+type ToolQ struct {
+	Q         int64  `json:"q"`
+	ThreadID  string `json:"threadId"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Tool      string `json:"tool"`
+	Calls     int64  `json:"calls"`
+	Errors    int64  `json:"errors"`
+}
+
 type Turn struct {
 	ID        int64   `json:"id"`
 	ThreadID  *string `json:"threadId"`
@@ -547,6 +557,36 @@ type Turn struct {
 	Ukey      *string `json:"ukey"`
 	ProjectID *string `json:"projectId"`
 	SpaceID   *string `json:"spaceId"`
+}
+
+type TurnQ struct {
+	Q         int64  `json:"q"`
+	ThreadID  string `json:"threadId"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Turns     int64  `json:"turns"`
+}
+
+type UsageQ struct {
+	Q                 int64   `json:"q"`
+	ThreadID          string  `json:"threadId"`
+	ProjectID         string  `json:"projectId"`
+	SpaceID           string  `json:"spaceId"`
+	Provider          string  `json:"provider"`
+	Model             string  `json:"model"`
+	Purpose           string  `json:"purpose"`
+	Requests          int64   `json:"requests"`
+	RequestErrors     int64   `json:"requestErrors"`
+	InputTokens       int64   `json:"inputTokens"`
+	OutputTokens      int64   `json:"outputTokens"`
+	CacheReadTokens   int64   `json:"cacheReadTokens"`
+	CacheWriteTokens  int64   `json:"cacheWriteTokens"`
+	CostUsd           float64 `json:"costUsd"`
+	SubagentCostUsd   float64 `json:"subagentCostUsd"`
+	TtftSumMs         int64   `json:"ttftSumMs"`
+	TtftN             int64   `json:"ttftN"`
+	TimedOutputTokens int64   `json:"timedOutputTokens"`
+	DurationMs        int64   `json:"durationMs"`
 }
 
 type UsageRecord struct {
