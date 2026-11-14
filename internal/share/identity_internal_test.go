@@ -69,3 +69,44 @@ func TestPublicEntry(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, want, got)
 }
+
+// model_change：role 是用户配置的 role 名时换成本分享的不透明键（点过却没用的 role 名不得出现在公开条目里）；
+// omp 的保留值原样保留（客户端靠它们识别回退 / 临时切换）；其余字段不变；子 agent 文件不公开。
+func TestPublicModelChange(t *testing.T) {
+	mc := func(role string) transcript.Entry {
+		p := map[string]any{"type": "model_change", "id": "c1", "parentId": "u0", "model": "openai/gpt-6.1-sol", "resolvedModelIsFallback": false}
+		if role != "" {
+			p["role"] = role
+		}
+		b, _ := json.Marshal(p)
+		return transcript.Entry{File: "a.jsonl", EntryID: "c1", Type: "model_change", Payload: b}
+	}
+	roleOf := func(e transcript.Entry) any {
+		var p map[string]any
+		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		assert.Equal(t, "openai/gpt-6.1-sol", p["model"], "其余字段不变")
+		assert.Equal(t, false, p["resolvedModelIsFallback"])
+		return p["role"]
+	}
+
+	pe, ok := publicEntry("shr_A", mc("Nahida"))
+	require.True(t, ok)
+	assert.NotContains(t, string(pe.Payload), "Nahida")
+	assert.Equal(t, roleKey("shr_A", "Nahida"), roleOf(pe))
+
+	for _, r := range []string{"default", "fallback", "prewalk", "temporary"} {
+		pe, ok := publicEntry("shr_A", mc(r))
+		require.True(t, ok)
+		assert.Equal(t, r, roleOf(pe), "保留值原样")
+	}
+	pe, ok = publicEntry("shr_A", mc(""))
+	require.True(t, ok)
+	assert.Nil(t, roleOf(pe), "没有 role 键时不添加")
+
+	pe, ok = publicEntry("shr_A", transcript.Entry{File: "a.jsonl", EntryID: "c2", Type: "model_change", Payload: json.RawMessage(`not json`)})
+	require.True(t, ok)
+	assert.JSONEq(t, `{"type":"model_change"}`, string(pe.Payload), "坏载荷只留类型")
+
+	_, ok = publicEntry("shr_A", transcript.Entry{File: "a/sub.jsonl", EntryID: "c3", Type: "model_change", Payload: mc("Nahida").Payload})
+	assert.False(t, ok, "子 agent 文件不公开")
+}

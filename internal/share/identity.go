@@ -33,12 +33,20 @@ type publicModelSourceData struct {
 	Alias  string `json:"alias,omitempty"`
 }
 
+// publicReservedRoles 是 model_change.role 里由 omp 自己写的保留值：公开面原样保留（客户端靠它们识别回退 / 临时切换），
+// 其余都是用户配置的 role 名，换成本分享的不透明键。
+var publicReservedRoles = map[string]bool{"default": true, "fallback": true, "prewalk": true, "temporary": true}
+
 // publicEntry 返回条目在某个分享公开面上的视图：主会话文件里的来源记录换成清洗形状
 // `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`（role / alias 为不透明键，
-// 其余字段丢弃）；其余条目交给 transcript.Public（其它 custom 条目仍被清空）。
+// 其余字段丢弃）；model_change 的 role 不是保留值时换成不透明键（否则点过却没用的 role 名会出现在公开条目里）；
+// 其余条目交给 transcript.Public（其它 custom 条目仍被清空）。
 func publicEntry(shareID string, e transcript.Entry) (transcript.Entry, bool) {
 	if !transcript.IsMainFile(e.File) {
 		return transcript.Entry{}, false
+	}
+	if e.Type == "model_change" {
+		return publicModelChange(shareID, e)
 	}
 	ms, ok := transcript.ParseModelSource(e)
 	if !ok {
@@ -58,6 +66,31 @@ func publicEntry(shareID string, e transcript.Entry) (transcript.Entry, bool) {
 	}{"custom", transcript.ModelSourceType, d})
 	if err != nil {
 		return transcript.Public(e)
+	}
+	e.Payload = b
+	return e, true
+}
+
+// publicModelChange 把 model_change 的 role（非保留值）换成不透明键，其余字段原样保留；载荷解析失败时只留类型。
+func publicModelChange(shareID string, e transcript.Entry) (transcript.Entry, bool) {
+	var p map[string]json.RawMessage
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		e.Payload = []byte(`{"type":"model_change"}`)
+		return e, true
+	}
+	if raw, ok := p["role"]; ok {
+		var role string
+		if json.Unmarshal(raw, &role) != nil {
+			delete(p, "role")
+		} else if !publicReservedRoles[role] {
+			b, _ := json.Marshal(roleKey(shareID, role))
+			p["role"] = b
+		}
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		e.Payload = []byte(`{"type":"model_change"}`)
+		return e, true
 	}
 	e.Payload = b
 	return e, true
