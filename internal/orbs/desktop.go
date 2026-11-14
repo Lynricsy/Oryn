@@ -112,8 +112,14 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 		if orb.State == StateDeleting || orb.State == StateDeleted {
 			return errOrbDeletedTx
 		}
+		dirty := b2i(st.Dirty)
+		if d, err := q.GetOrbDesktop(ctx, orbID); err == nil && d.Dirty == 1 && dirty == 0 && reportsLateReadonly(st, d) {
+			// orbd 把库里仍是独占的绑定报成了只读（迟到的 profile.mode 落地时 orbd 同时清了 dirty）：这份 dirty=false
+			// 不可信，保留镜像里的 dirty，否则纠正完成之前的冻结 / 停机保存会因「没东西可存」被跳过
+			dirty = 1
+		}
 		return q.UpsertOrbDesktopState(ctx, db.UpsertOrbDesktopStateParams{
-			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: b2i(st.Dirty), Now: s.nowMs(),
+			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Now: s.nowMs(),
 		})
 	})
 	if errors.Is(err, errOrbDeletedTx) {
@@ -130,6 +136,13 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 	if h != nil {
 		h.DesktopReported(orbID, st)
 	}
+}
+
+// reportsLateReadonly 报告 desktop.state 是否把库里同一 Profile 的独占绑定报成了只读。
+func reportsLateReadonly(st apigen.LinkCtlDesktopStateParams, d db.OrbDesktop) bool {
+	return st.ProfileMode != nil && *st.ProfileMode == apigen.BrowserProfileAccessReadonly &&
+		st.ProfileID != nil && d.ProfileID != nil && *st.ProfileID == *d.ProfileID &&
+		d.ProfileMode == string(apigen.BrowserProfileAccessExclusive)
 }
 
 // onDesktopState 处理 desktop.state 通知。

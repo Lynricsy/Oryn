@@ -407,9 +407,18 @@ func (s *Service) checkinLocked(ctx context.Context, orbID, mode string) error {
 		return err
 	}
 	defer s.o.RefreshDesktop(context.WithoutCancel(ctx), orbID)
+	// 复核、纠正与（至多一次的）重试导出共用这一个预算
 	tctx, cancel := context.WithTimeout(ctx, transferTimeout)
 	defer cancel()
-	resp, err := s.orbdCall(tctx, orbID, http.MethodGet, "/desktop/profile/export", url.Values{"mode": {mode}}, nil, 0)
+	export := func() (*http.Response, error) {
+		return s.orbdCall(tctx, orbID, http.MethodGet, "/desktop/profile/export", url.Values{"mode": {mode}}, nil, 0)
+	}
+	resp, err := export()
+	if orbdCode(err) == "profile_readonly" && s.reassertExclusive(tctx, orbID, p.ID, fence) {
+		// 迟到的 profile.mode 把仍是当前持有者的本 orb 降成了只读：以库为准改回独占后重试一次，
+		// 否则停机 / 删除前的关闭式保存会被跳过，最新的登录态随容器一起丢失
+		resp, err = export()
+	}
 	if err != nil {
 		switch orbdCode(err) {
 		case "no_profile", "profile_readonly":
@@ -582,6 +591,31 @@ func (s *Service) confirmLease(ctx context.Context, orbID string, d db.OrbDeskto
 		slog.Info("保存资格已失效（被接管或租约换过手），不保存", "orb", orbID, "profile", *d.ProfileID, "fence", d.Fence)
 	}
 	return fence, fence > 0, nil
+}
+
+// reassertExclusive 在保存路径上处理 orbd 回的 profile_readonly（调用方持 orb 锁）：以库为准复核本 orb 仍是
+// profileID 的独占持有者——绑定是同一 Profile 的 exclusive、本地修订与围栏代数都是 Profile 的当前值、持有者是
+// 本 orb 且代数等于本次保存出示的 fence——成立则 PUT keep=1&mode=exclusive 把 orbd 改回独占（只改标记，不动
+// 本地目录；标记的 Profile 不符时 orbd 回 profile_mismatch，这里不做全量装载，免得覆盖本地数据）。
+// 返回 true 表示已改回、调用方可重试一次导出；复核不通过或纠正失败返回 false（照旧跳过保存）。
+func (s *Service) reassertExclusive(ctx context.Context, orbID, profileID string, fence int64) bool {
+	d, ok, err := s.getDesktop(ctx, orbID)
+	if err != nil || !ok || d.ProfileID == nil || *d.ProfileID != profileID || d.ProfileMode != accessExclusive || d.Fence != fence {
+		return false
+	}
+	p, err := getProfile(ctx, s.st.Q, profileID)
+	if err != nil || p.HolderOrbID == nil || *p.HolderOrbID != orbID || p.Fence != fence || p.Revision != d.LocalRev {
+		return false
+	}
+	slog.Warn("保存时 orbd 报只读，但库里本 orb 仍是独占持有者（迟到的 profile.mode），改回独占后重试导出", "orb", orbID, "profile", profileID)
+	q := url.Values{"id": {p.ID}, "name": {p.Name}, "mode": {accessExclusive}, "keep": {"1"}}
+	resp, err := s.orbdCall(ctx, orbID, http.MethodPut, "/desktop/profile", q, http.NoBody, 0)
+	if err != nil {
+		slog.Warn("改回独占失败，跳过保存", "orb", orbID, "profile", profileID, "err", err)
+		return false
+	}
+	resp.Body.Close()
+	return true
 }
 
 // fenced 记录一次被围栏挡下的保存（不报错给用户）。

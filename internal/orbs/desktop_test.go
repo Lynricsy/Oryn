@@ -417,3 +417,32 @@ func TestDialDesk(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &pm))
 	assert.Equal(t, "bpf_X", pm.ProfileID)
 }
+
+// 迟到的 profile.mode 落地时 orbd 报「只读、dirty=false」：库里同一 Profile 仍是独占绑定时，镜像里的 dirty
+// 不被这份报告清掉（否则纠正完成之前的冻结 / 停机保存会因没东西可存被跳过）；库里确是只读时照常写。
+func TestDesktopStateLateReadonlyKeepsDirty(t *testing.T) {
+	h, drv, _ := newDesktopHarness(t, []string{FeatureDesktop})
+	ctx := context.Background()
+	orb, _ := h.readyOrb(drv, "")
+	pid := "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E2"
+	require.NoError(t, h.st.Q.CreateBrowserProfile(ctx, db.CreateBrowserProfileParams{ID: pid, Name: "work", Now: 1}))
+	require.NoError(t, h.st.Q.UpsertOrbDesktopProfile(ctx, ProfileBinding(orb.ID, pid, "", 1)))
+	ro := apigen.BrowserProfileAccessReadonly
+	dirty := func() int64 {
+		d, err := h.st.Q.GetOrbDesktop(ctx, orb.ID)
+		require.NoError(t, err)
+		return d.Dirty
+	}
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Dirty: true})
+	require.EqualValues(t, 1, dirty())
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileID: &pid, ProfileMode: &ro})
+	assert.EqualValues(t, 1, dirty(), "与库里独占绑定矛盾的只读报告不清 dirty")
+	other := "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E3"
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileID: &other, ProfileMode: &ro})
+	assert.EqualValues(t, 0, dirty(), "别的 Profile 的报告照常写")
+
+	require.NoError(t, h.st.Q.UpsertOrbDesktopProfile(ctx, ProfileBinding(orb.ID, pid, apigen.BrowserProfileModeReadonly, 2)))
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Dirty: true})
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileID: &pid, ProfileMode: &ro})
+	assert.EqualValues(t, 0, dirty(), "库里确是只读：照常写")
+}
