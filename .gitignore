@@ -13,3 +13,5 @@ build/
 /orynd
 /orbd
 /fakeomp
+# FCM 配置只在构建 gms flavor 时从 .dev/m7/ 复制进来，不入库
+web/src-tauri/gen/android/app/google-services.json

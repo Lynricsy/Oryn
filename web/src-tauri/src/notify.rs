@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::session::valid_app_path;
@@ -140,7 +140,7 @@ impl Notifier {
     }
 
     /// 分配下一个通知号（从 1 递增，溢出回绕）。
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn next_id(&self) -> i32 {
         let mut g = self.lock();
         g.next = g.next.checked_add(1).unwrap_or(1);
@@ -285,8 +285,8 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     }
 }
 
-/// macOS / Windows（及移动端）：走官方插件，点击经 `on_action` 回到 [`clicked`]。
-#[cfg(not(target_os = "linux"))]
+/// macOS / Windows / iOS：走官方插件，点击经 `on_action` 回到 [`clicked`]。
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn deliver(app: &AppHandle, id: String, p: Prepared) {
     let result = app
         .notification()
@@ -299,6 +299,15 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
         Ok(()) => log_shown(&id, &p),
         Err(e) => log_error(&id, e),
     }
+}
+
+/// Android：暂不显示（不带通知插件；由 oryn-mobile 插件的 `notify` 实现，见 M7 切片 A）。
+#[cfg(target_os = "android")]
+fn deliver(_app: &AppHandle, id: String, p: Prepared) {
+    eventlog::log(
+        "notify.dropped",
+        json!({"id": id, "n": p.n, "reason": "unsupported"}),
+    );
 }
 
 /// 显示一条不可点击跳转的提示（如下载完成）。
@@ -317,7 +326,7 @@ pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str)
                 }
             });
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = app
             .notification()
@@ -327,6 +336,9 @@ pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str)
             .body(body)
             .show();
     }
+    // Android：暂不显示（同 deliver）
+    #[cfg(target_os = "android")]
+    let _ = (app, notifier, title, body);
 }
 
 #[cfg(test)]

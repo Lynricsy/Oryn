@@ -176,13 +176,23 @@ fn host_name() -> Option<String> {
 }
 
 fn build_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .user_agent(user_agent())
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("reqwest client")
+        .redirect(reqwest::redirect::Policy::none());
+    // Android：不走 rustls-platform-verifier（未经 JNI 初始化即 panic），只信 Mozilla 根证书；
+    // 加密后端用 ring，进程内只装一次（已装过时 install_default 返回 Err，忽略即可）
+    #[cfg(target_os = "android")]
+    let builder = {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        builder.tls_certs_only(
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()),
+        )
+    };
+    builder.build().expect("reqwest client")
 }
 
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(build_client);

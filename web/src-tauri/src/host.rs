@@ -209,6 +209,7 @@ pub fn refresh_visibility(app: &AppHandle) {
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = main_window(app) {
         let _ = w.show();
+        #[cfg(desktop)]
         let _ = w.unminimize();
         let _ = w.set_focus();
     }

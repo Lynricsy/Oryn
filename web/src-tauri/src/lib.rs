@@ -102,7 +102,7 @@ pub fn run() {
     log_ignored(&args);
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
-    // → notification → opener → updater
+    // → notification（Android 不注册）→ opener → updater
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -124,9 +124,11 @@ pub fn run() {
                 .build(),
         );
     }
-    builder = builder
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init());
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder.plugin(tauri_plugin_notification::init());
+    }
+    builder = builder.plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -191,7 +193,7 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     };
 
     let window = webview::create_main(&handle)?;
-    let launcher_url = window.url()?;
+    let launcher_url = webview::launcher_url(&handle, &window)?;
     host::wire_window(&handle, &window);
     let _ = window.set_focus();
 
@@ -213,8 +215,9 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let d = Arc::new(Desktop::new(core, nav, args.smoke, version));
     app.manage(d.clone());
 
-    // 通知点击（macOS / Windows 经插件；Linux 由 notify::deliver 的等待线程直接调 notify::clicked）
-    #[cfg(not(target_os = "linux"))]
+    // 通知点击（macOS / Windows / iOS 经插件；Linux 由 notify::deliver 的等待线程直接调 notify::clicked；
+    // Android 不带通知插件）
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         use tauri_plugin_notification::NotificationExt;
         let click = handle.clone();

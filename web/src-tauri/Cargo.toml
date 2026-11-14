@@ -17,16 +17,26 @@ tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
 tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
-tauri-plugin-notification = "=2.8.1"
 tauri-plugin-opener = "=2.7.3"
 tauri-plugin-deep-link = "=2.6.3"
-reqwest = { version = "0.13", features = ["json"] } # TLS 必须信任系统根证书，见计划「假设与预案」
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 thiserror = "2"
 sys-locale = "0.3"
 tokio = { version = "1", features = ["sync", "time"] } # 计时（配对轮询、看门狗、退避、更新周期）与会话锁
+
+# Android 不带通知插件（其清单会带进开机广播与 WAKE_LOCK，通知改由 oryn-mobile 插件发）；
+# 桌面与 iOS 的 reqwest 用默认 TLS（rustls + 平台校验器，信任系统根证书，见计划「假设与预案」）
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { version = "0.13", features = ["json"] }
+tauri-plugin-notification = "=2.8.1"
+
+# Android：平台校验器需要 JNI 初始化，未初始化即 panic；改用 ring + Mozilla 根证书（tls_certs_only）
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "http2", "charset", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-root-certs = "1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "=2.5.5", features = ["deep-link"] }

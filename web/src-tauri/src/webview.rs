@@ -64,45 +64,72 @@ fn is_external(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
 
+/// 连接页在应用资源里的路径。
+const LAUNCHER_PAGE: &str = "launcher.html";
+
 /// 创建主窗口（`tauri.conf.json` 的 `windows` 为空：钩子只能在代码里挂）。
 pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let opener = app.clone();
     let loader = app.clone();
-    let builder =
-        WebviewWindowBuilder::new(app, host::MAIN, WebviewUrl::App("launcher.html".into()))
-            .title("Oryn")
-            .inner_size(1280.0, 820.0)
-            .min_inner_size(380.0, 560.0)
-            .initialization_script(init_script(&app.package_info().version.to_string()))
-            .on_new_window(move |url, _features| {
-                // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
-                if is_external(&url) {
-                    let _ = opener.opener().open_url(url.as_str(), None::<&str>);
-                    eventlog::log(
-                        "browser.open",
-                        json!({"url": eventlog::redact_url(url.as_str())}),
-                    );
-                }
-                NewWindowResponse::Deny
-            })
-            .on_page_load(move |window, payload| {
-                let Some(d) = host::desktop(&loader) else {
-                    return;
-                };
-                match payload.event() {
-                    // 主框架开始加载任何页面（回连接页、兑换跳转、用户刷新）都先清掉就绪标志：
-                    // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面
-                    PageLoadEvent::Started => d.nav().web_ready = false,
-                    // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
-                    PageLoadEvent::Finished => host::note_geometry(window.app_handle()),
-                }
-            })
-            .disable_drag_drop_handler()
-            .enable_clipboard_access()
-            .background_throttling(BackgroundThrottlingPolicy::Disabled);
+    let builder = WebviewWindowBuilder::new(app, host::MAIN, WebviewUrl::App(LAUNCHER_PAGE.into()))
+        .title("Oryn")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(380.0, 560.0)
+        .initialization_script(init_script(&app.package_info().version.to_string()))
+        .on_new_window(move |url, _features| {
+            // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
+            if is_external(&url) {
+                let _ = opener.opener().open_url(url.as_str(), None::<&str>);
+                eventlog::log(
+                    "browser.open",
+                    json!({"url": eventlog::redact_url(url.as_str())}),
+                );
+            }
+            NewWindowResponse::Deny
+        })
+        .on_page_load(move |window, payload| {
+            let Some(d) = host::desktop(&loader) else {
+                return;
+            };
+            match payload.event() {
+                // 主框架开始加载任何页面（回连接页、兑换跳转、用户刷新）都先清掉就绪标志：
+                // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面
+                PageLoadEvent::Started => d.nav().web_ready = false,
+                // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
+                PageLoadEvent::Finished => host::note_geometry(window.app_handle()),
+            }
+        })
+        .disable_drag_drop_handler()
+        .enable_clipboard_access()
+        .background_throttling(BackgroundThrottlingPolicy::Disabled);
     #[cfg(desktop)]
     let builder = builder.on_download(crate::download::handler(app.clone()));
     builder.build()
+}
+
+/// 连接页的 URL。桌面读刚建好的窗口；移动端 WebView 要等 Activity 就绪后才异步创建，`build()` 返回时
+/// `url()` 还是空串，只能按 Tauri 的规则推出：开发态取 devUrl，否则 Android `http://tauri.localhost/`、
+/// iOS `tauri://localhost/`（未开 useHttpsScheme）。
+pub fn launcher_url(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<Url> {
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        window.url()
+    }
+    #[cfg(mobile)]
+    {
+        let _ = window;
+        let base = match app.config().build.dev_url.clone() {
+            Some(dev) if tauri::is_dev() => dev,
+            _ => Url::parse(if cfg!(target_os = "android") {
+                "http://tauri.localhost/"
+            } else {
+                "tauri://localhost/"
+            })
+            .map_err(tauri::Error::InvalidUrl)?,
+        };
+        base.join(LAUNCHER_PAGE).map_err(tauri::Error::InvalidUrl)
+    }
 }
 
 /// [`Shell`] 的 Tauri 实现。
