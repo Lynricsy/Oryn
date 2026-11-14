@@ -1,6 +1,6 @@
 [package]
 name = "oryn-desktop"
-version = "0.1.0" # 发布版本的唯一来源；tauri.conf.json 不写 version
+version = "0.1.0-rc.1" # 发布版本的唯一来源；tauri.conf.json 不写 version
 description = "Oryn desktop client"
 authors = ["Lynricsy"]
 license = "MIT"
