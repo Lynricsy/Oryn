@@ -6,7 +6,8 @@
  *   没有权限时什么都不弹，回到页面后在铃铛里看到。
  *   桌面壳（M6）里不在前台 → `host.notify` 交给壳弹系统通知（点击直达线程），不碰 `Notification` 与推送订阅。
  * - WS `notifications.read` → `onRead`；`markRead` 先乐观更新再 `POST notifications/read`。
- *   按线程已读之后都要重新 `load()`：未读数是全库总数，本地只有最近 50 条，乐观扣减算不出其余部分。
+ *   已读目标 `ReadTarget`：`{threadId}` = 该线程，`{id}` = 只这一条（没有线程的系统通知），省略 = 全部。
+ *   按目标已读之后都要重新 `load()`：未读数是全库总数，本地只有最近 50 条，乐观扣减算不出其余部分。
  *   `load()` 期间经 WS 到达的通知合并回结果（应答可能早于它们生成）；期间又有已读则丢弃这次应答、再取一次。
  */
 import type { TFunction } from "i18next";
@@ -22,19 +23,32 @@ export const TOAST_MS = 6_000;
 const LIST_LIMIT = 50;
 const MAX_TOASTS = 3;
 
-/** 系统通知 / 推送的去重标签：与服务端 Web Push 载荷的 `tag` 同形（线程 id 末 12 位）。 */
-export function notificationTag(threadId: string | undefined): string {
-	return `oryn-${(threadId ?? "").slice(-12)}`;
+/** 已读目标：`{threadId}` 标该线程的全部通知，`{id}` 只标这一条；省略 = 全部。 */
+export type ReadTarget = { threadId: string } | { id: string };
+
+/** 点开一条通知时该标哪些已读：有线程标整个线程，否则只标这一条。 */
+export function readTargetOf(
+	n: Pick<AppNotification, "id" | "threadId">,
+): ReadTarget {
+	return n.threadId ? { threadId: n.threadId } : { id: n.id };
 }
 
-/** 标题与正文；正文为空时用该 kind 的缺省文案（按界面语言）。 */
+/** 与服务端推送载荷的 tag 同形：线程 id 末 12 位；没有线程时 budget → "oryn-budget"，其余 → "oryn-automations"。 */
+export function notificationTag(
+	n: Pick<AppNotification, "threadId" | "kind">,
+): string {
+	if (n.threadId) return `oryn-${n.threadId.slice(-12)}`;
+	return n.kind === "budget" ? "oryn-budget" : "oryn-automations";
+}
+
+/** 标题与正文；正文为空时用该 kind 的缺省文案（按界面语言；不认识的 kind 为空串）。 */
 export function notificationText(
 	n: Pick<AppNotification, "kind" | "title" | "body">,
 	t: TFunction,
 ): { title: string; body: string } {
 	return {
 		title: n.title || t("notify.untitled"),
-		body: n.body || t(`notify.kindBody.${n.kind}`),
+		body: n.body || t(`notify.kindBody.${n.kind}`, { defaultValue: "" }),
 	};
 }
 
@@ -47,8 +61,8 @@ export interface NotificationsState {
 	pushActive: boolean;
 	load(): Promise<void>;
 	onNotification(n: AppNotification): void;
-	onRead(threadId?: string): void;
-	markRead(threadId?: string): Promise<void>;
+	onRead(target?: ReadTarget): void;
+	markRead(target?: ReadTarget): Promise<void>;
 	dismissToast(id: string): void;
 	setPushActive(on: boolean): void;
 }
@@ -72,7 +86,7 @@ function showSystemNotification(n: AppNotification) {
 	const { title, body } = notificationText(n, i18n.t);
 	const sys = new Notification(title, {
 		body,
-		tag: notificationTag(n.threadId),
+		tag: notificationTag(n),
 	});
 	sys.onclick = () => {
 		window.focus();
@@ -83,21 +97,24 @@ function showSystemNotification(n: AppNotification) {
 
 export const notificationsStore = createStore<NotificationsState>(
 	(set, get) => {
-		/** 乐观已读：本地列表里的条目标已读并扣减；按线程时只是近似值，随后由 load() 校正。 */
-		const applyRead = (threadId: string | undefined) => {
+		/** 乐观已读：本地列表里命中目标的条目标已读并扣减；有目标时只是近似值，随后由 load() 校正。 */
+		const applyRead = (target: ReadTarget | undefined) => {
 			readGeneration++;
 			const now = Date.now();
 			const s = get();
+			const hit = (n: AppNotification) =>
+				!target ||
+				("id" in target ? n.id === target.id : n.threadId === target.threadId);
 			let cleared = 0;
 			const items = s.items.map((n) => {
-				if (n.readAt || (threadId && n.threadId !== threadId)) return n;
+				if (n.readAt || !hit(n)) return n;
 				cleared++;
 				return { ...n, readAt: now };
 			});
 			set({
 				items,
-				unread: threadId ? Math.max(0, s.unread - cleared) : 0,
-				toasts: threadId ? s.toasts.filter((n) => n.threadId !== threadId) : [],
+				unread: target ? Math.max(0, s.unread - cleared) : 0,
+				toasts: target ? s.toasts.filter((n) => !hit(n)) : [],
 			});
 		};
 		return {
@@ -165,18 +182,16 @@ export const notificationsStore = createStore<NotificationsState>(
 				)
 					showSystemNotification(n);
 			},
-			onRead: (threadId) => {
-				applyRead(threadId);
-				if (threadId) void get().load();
+			onRead: (target) => {
+				applyRead(target);
+				if (target) void get().load();
 			},
-			markRead: async (threadId) => {
-				applyRead(threadId);
+			markRead: async (target) => {
+				applyRead(target);
 				await unwrap(
-					api.POST("/api/v1/notifications/read", {
-						body: threadId ? { threadId } : {},
-					}),
+					api.POST("/api/v1/notifications/read", { body: target ?? {} }),
 				);
-				if (threadId) await get().load();
+				if (target) await get().load();
 			},
 			dismissToast: (id) => {
 				clearTimeout(toastTimers.get(id));

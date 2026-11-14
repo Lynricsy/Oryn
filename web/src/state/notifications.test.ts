@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../i18n";
 import { host } from "../lib/host";
 import {
 	type AppNotification,
 	notificationsStore,
 	notificationTag,
+	notificationText,
+	readTargetOf,
 	setNotificationNavigator,
 	TOAST_MS,
 } from "./notifications";
@@ -114,9 +117,11 @@ describe("通知 store", () => {
 		// 空正文用该 kind 的缺省文案
 		expect(sys?.options).toEqual({
 			body: "等待你的回答",
-			tag: notificationTag(TID),
+			tag: notificationTag({ threadId: TID, kind: "input" }),
 		});
-		expect(notificationTag(TID)).toBe(`oryn-${TID.slice(-12)}`);
+		expect(notificationTag({ threadId: TID, kind: "input" })).toBe(
+			`oryn-${TID.slice(-12)}`,
+		);
 		sys?.onclick?.();
 		expect(focus).toHaveBeenCalled();
 		expect(navigate).toHaveBeenCalledWith(`/t/${TID}`);
@@ -148,7 +153,7 @@ describe("通知 store", () => {
 		s().onNotification(note({ id: "a" }));
 		s().onNotification(note({ id: "b", threadId: other, url: `/t/${other}` }));
 		expect(s().unread).toBe(2);
-		s().onRead(TID);
+		s().onRead({ threadId: TID });
 		expect(s().unread).toBe(1);
 		expect(s().items.find((n) => n.id === "a")?.readAt).toBeDefined();
 		expect(s().items.find((n) => n.id === "b")?.readAt).toBeUndefined();
@@ -166,7 +171,7 @@ describe("通知 store", () => {
 		);
 		vi.stubGlobal("fetch", fetch);
 		s().onNotification(note());
-		await s().markRead(TID);
+		await s().markRead({ threadId: TID });
 		expect(s().unread).toBe(0);
 		const reqs = fetch.mock.calls.map((c) => (c as unknown as [Request])[0]);
 		const req = reqs[0] as Request;
@@ -192,7 +197,7 @@ describe("通知 store", () => {
 				}),
 			),
 		);
-		s().onRead(TID);
+		s().onRead({ threadId: TID });
 		await vi.waitFor(() => expect(s().unread).toBe(0));
 	});
 
@@ -253,6 +258,77 @@ describe("通知 store", () => {
 		const req = (fetch.mock.calls[0] as unknown as [Request])[0];
 		expect(new URL(req.url).search).toBe("?limit=50");
 		expect(s()).toMatchObject({ items: [n], unread: 7, loaded: true });
+	});
+
+	it("markRead({id})：请求体只有 id，只清这一条（别的未读与 toast 保留）", async () => {
+		const fetch = vi.fn(async (req: Request) =>
+			new URL(req.url).pathname === "/api/v1/notifications/read"
+				? new Response(null, { status: 204 })
+				: new Promise<Response>(() => {}),
+		);
+		vi.stubGlobal("fetch", fetch);
+		const nothread = { threadId: undefined };
+		s().onNotification(
+			note({ ...nothread, id: "bud", kind: "budget", url: "/stats/usage" }),
+		);
+		s().onNotification(
+			note({
+				...nothread,
+				id: "sch",
+				kind: "error",
+				url: "/settings/automations",
+			}),
+		);
+		s().onNotification(note({ id: "thr" }));
+		void s().markRead({ id: "bud" });
+		expect(s().unread).toBe(2);
+		expect(s().items.find((n) => n.id === "bud")?.readAt).toBeDefined();
+		expect(s().items.find((n) => n.id === "sch")?.readAt).toBeUndefined();
+		expect(s().items.find((n) => n.id === "thr")?.readAt).toBeUndefined();
+		expect(s().toasts.map((n) => n.id)).toEqual(["sch", "thr"]);
+		await until(() => fetch.mock.calls.length > 0);
+		const req = (fetch.mock.calls[0] as unknown as [Request])[0];
+		expect(new URL(req.url).pathname).toBe("/api/v1/notifications/read");
+		expect(await req.json()).toEqual({ id: "bud" });
+	});
+
+	it("onRead({id})：只影响这一条，随后重新 load", async () => {
+		const fetch = vi.fn(() => new Promise<Response>(() => {}));
+		vi.stubGlobal("fetch", fetch);
+		s().onNotification(note({ id: "x", threadId: undefined, kind: "budget" }));
+		s().onNotification(note({ id: "y", threadId: undefined, kind: "budget" }));
+		s().onRead({ id: "x" });
+		expect(s().unread).toBe(1);
+		expect(s().items.find((n) => n.id === "y")?.readAt).toBeUndefined();
+		await until(() => fetch.mock.calls.length > 0);
+		const req = (fetch.mock.calls[0] as unknown as [Request])[0];
+		expect(`${req.method} ${new URL(req.url).pathname}`).toBe(
+			"GET /api/v1/notifications",
+		);
+	});
+
+	it("readTargetOf：有线程 → {threadId}；没有线程 → {id}", () => {
+		expect(readTargetOf({ id: "n1", threadId: TID })).toEqual({
+			threadId: TID,
+		});
+		expect(readTargetOf({ id: "n1" })).toEqual({ id: "n1" });
+	});
+
+	it("notificationTag：线程 id 末 12 位 / oryn-budget / oryn-automations", () => {
+		expect(notificationTag({ threadId: TID, kind: "done" })).toBe(
+			`oryn-${TID.slice(-12)}`,
+		);
+		expect(notificationTag({ kind: "budget" })).toBe("oryn-budget");
+		expect(notificationTag({ kind: "error" })).toBe("oryn-automations");
+	});
+
+	it("不认识的 kind：正文回落为空串，不抛错", () => {
+		expect(
+			notificationText(
+				{ kind: "whatever" as AppNotification["kind"], title: "X", body: "" },
+				i18n.t,
+			),
+		).toEqual({ title: "X", body: "" });
 	});
 });
 

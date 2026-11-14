@@ -5,7 +5,7 @@ import {
 	type AppNotification,
 	notificationsStore,
 } from "../../state/notifications";
-import { NotificationBell } from "./NotificationBell";
+import { KIND_ICON, kindIcon, NotificationBell } from "./NotificationBell";
 
 const TID = "T-0193a1b2-0000-7000-8000-0000000000b1";
 
@@ -120,5 +120,41 @@ describe("NotificationBell", () => {
 		fireEvent.click(screen.getByRole("button", { name: "通知" }));
 		expect(screen.getByText("还没有通知")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "全部已读" })).toBeDisabled();
+	});
+
+	it("预算通知（无线程）：图标与标题；点击跳统计页，只按 id 标这一条（不再全部已读）", async () => {
+		notificationsStore.setState({
+			items: [
+				note({
+					id: "ntf_budget",
+					kind: "budget",
+					threadId: undefined,
+					url: "/stats/usage",
+					title: "Daily budget exceeded",
+					body: "$10.20 of $10.00 spent (2026-11-15, UTC).",
+				}),
+				note({ id: "a" }),
+			],
+			unread: 2,
+			toasts: [],
+		});
+		mount();
+		fireEvent.click(screen.getByRole("button", { name: /^通知/ }));
+		const dialog = screen.getByRole("dialog", { name: "通知" });
+		expect(within(dialog).getByLabelText("预算告警")).toBeInTheDocument();
+		fireEvent.click(within(dialog).getByText("Daily budget exceeded"));
+		expect(screen.getByTestId("where")).toHaveTextContent("/stats/usage");
+		await vi.waitFor(() => expect(posts).toEqual([{ id: "ntf_budget" }]));
+		const s = notificationsStore.getState();
+		expect(s.unread).toBe(1);
+		expect(s.items.find((n) => n.id === "a")?.readAt).toBeUndefined();
+	});
+
+	it("kindIcon：budget 用 chart；不认识的 kind 回落到 error 的图标", () => {
+		expect(kindIcon("budget")).toEqual({
+			icon: "chart",
+			className: "text-warn",
+		});
+		expect(kindIcon("whatever")).toBe(KIND_ICON.error);
 	});
 });

@@ -25,7 +25,7 @@ import {
 	useTestChannel,
 	useUpdateChannel,
 } from "../../api/notify-queries";
-import { KIND_ICON } from "../../components/notify/NotificationBell";
+import { kindIcon } from "../../components/notify/NotificationBell";
 import { ActionError, DeliveryFailure } from "../../components/ui/ActionError";
 import { CopyButton } from "../../components/ui/CopyButton";
 import {
@@ -71,7 +71,7 @@ type EventKind = Schemas["NotificationKind"];
 type Locale = Schemas["NotificationLocale"];
 
 const KINDS: readonly Kind[] = ["telegram", "webhook", "ntfy", "bark"];
-const EVENTS: readonly EventKind[] = ["done", "input", "error"];
+const EVENTS: readonly EventKind[] = ["done", "input", "error", "budget"];
 const LOCALES: readonly Locale[] = ["zh-CN", "en"];
 
 export const CHANNEL_ICON: Record<Kind, IconName> = {
@@ -917,7 +917,7 @@ function RecentCard() {
 			)}
 			<ul className="flex flex-col divide-y divide-border">
 				{list.map((n) => {
-					const kind = KIND_ICON[n.kind];
+					const kind = kindIcon(n.kind);
 					return (
 						<li
 							key={n.id}

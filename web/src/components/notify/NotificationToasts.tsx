@@ -1,6 +1,6 @@
 /**
  * 应用内通知 toast（M5 计划 6.3）：右上角玻璃卡片，6s 自动消失（计时在通知 store 里）。
- * 点正文 → 跳到该线程并标为已读；× 只关闭。挂在 AppShell。
+ * 点正文 → 跳到它的 `url` 并按 `readTargetOf` 标已读；× 只关闭。挂在 AppShell。
  * 最上面一张的右上角与屏幕圆角同心（`.dc-tr`，离边 12px），其余保持令牌圆角。
  */
 import type { ReactNode } from "react";
@@ -10,17 +10,18 @@ import {
 	type AppNotification,
 	notificationsStore,
 	notificationText,
+	readTargetOf,
 	useNotifications,
 } from "../../state/notifications";
 import { Icon } from "../ui/icons";
 import { IconButton } from "../ui/primitives";
-import { KIND_ICON } from "./NotificationBell";
+import { kindIcon } from "./NotificationBell";
 
 function Toast({ n }: { n: AppNotification }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const { title, body } = notificationText(n, t);
-	const kind = KIND_ICON[n.kind];
+	const kind = kindIcon(n.kind);
 	const store = notificationsStore.getState();
 	return (
 		<div
@@ -33,7 +34,7 @@ function Toast({ n }: { n: AppNotification }) {
 				onClick={() => {
 					store.dismissToast(n.id);
 					navigate(n.url);
-					void store.markRead(n.threadId).catch(() => {});
+					void store.markRead(readTargetOf(n)).catch(() => {});
 				}}
 			>
 				<Icon

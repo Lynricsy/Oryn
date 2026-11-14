@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockSpeedCaps } from "../../mock/fixtures";
 import type { OmpCommand, SessionState } from "../../omp/types";
@@ -10,13 +11,15 @@ import { ModelChip, SessionReadout } from "./ComposerMeta";
 
 const TID = "T-meta-test";
 
-/** SessionReadout 里的成本读数要 QueryClient（用量查询失败时退回转录累计） */
+/** SessionReadout 里的成本读数要 QueryClient（用量查询失败时退回转录累计）与路由（成本读数链到统计页） */
 function readout() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
 	const wrapper = ({ children }: { children: ReactNode }) => (
-		<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		<MemoryRouter>
+			<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		</MemoryRouter>
 	);
 	return render(<SessionReadout threadId={TID} />, { wrapper });
 }
@@ -124,5 +127,53 @@ describe("SessionReadout 速度档位", () => {
 		readout();
 		expect(screen.queryByRole("button", { name: /速度/ })).toBeNull();
 		expect(screen.getByText(/64/)).toBeInTheDocument();
+	});
+});
+
+describe("SessionReadout 成本", () => {
+	it("取统计接口的 costUsd（已含子 agent），不再重复加 subagentCostUsd；链到按本线程筛选的统计页", async () => {
+		const fetch = vi.fn(async (req: Request) => {
+			const url = new URL(req.url);
+			expect(url.pathname).toBe("/api/v1/stats/usage");
+			expect(url.searchParams.get("groupBy")).toBe("thread");
+			expect(url.searchParams.get("thread")).toBe(TID);
+			expect(url.searchParams.get("from")).toBe("1000");
+			return Response.json({
+				groupBy: "thread",
+				from: 1000,
+				to: 2000,
+				tz: "UTC",
+				total: { key: "total", costUsd: 2, subagentCostUsd: 0.5 },
+				groups: [
+					{
+						key: TID,
+						requests: 3,
+						requestErrors: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						costUsd: 2,
+						subagentCostUsd: 0.5,
+						toolCalls: 0,
+						toolErrors: 0,
+						turns: 1,
+					},
+				],
+			});
+		});
+		vi.stubGlobal("fetch", fetch);
+		getThreadStore(TID).setState({
+			thread: { id: TID, createdAt: 1000 } as never,
+		});
+		setState({});
+		readout();
+		const link = await screen.findByRole("link", { name: /\$2\.00/ });
+		expect(link).toHaveAttribute(
+			"href",
+			`/stats/usage?thread=${TID}&range=all`,
+		);
+		expect(screen.queryByText("$2.50")).toBeNull();
+		vi.unstubAllGlobals();
 	});
 });

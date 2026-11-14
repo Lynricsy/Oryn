@@ -6,7 +6,7 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
@@ -168,3 +168,41 @@ describe("ThreadHeader 信息面板开关", () => {
 		expect(toggle()).toBeNull();
 	});
 });
+
+describe("ThreadHeader More Actions", () => {
+	it("「成本与用量」在「复制链接」之后，跳到按本线程筛选的统计页", () => {
+		const id = "T-hdr-cost";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({ thread: { id, title: "重连" } as Thread });
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		client.setQueryData(qk.projects, { projects: [PROJECT] });
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/t/${id}`]}>
+					<Routes>
+						<Route
+							path="/t/:id"
+							element={<ThreadHeader threadId={id} sidebarToggle />}
+						/>
+						<Route path="*" element={<Where />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+		const names = screen.getAllByRole("menuitem").map((m) => m.textContent);
+		expect(names.indexOf("成本与用量")).toBe(names.indexOf("复制链接") + 1);
+		fireEvent.click(screen.getByRole("menuitem", { name: "成本与用量" }));
+		expect(screen.getByTestId("where")).toHaveTextContent(
+			`/stats/usage?thread=${id}&range=all`,
+		);
+	});
+});
+
+function Where() {
+	const l = useLocation();
+	return <span data-testid="where">{`${l.pathname}${l.search}`}</span>;
+}

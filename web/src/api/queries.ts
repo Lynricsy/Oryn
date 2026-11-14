@@ -175,7 +175,7 @@ export function useArchivedThreads(enabled: boolean) {
 	});
 }
 
-/** 本线程的用量聚合（含子 agent 成本），状态栏用。 */
+/** 本线程的用量聚合（`costUsd` 已含子 agent 成本），状态栏用。按线程筛选，只拉这一组。 */
 export function useThreadUsage(threadId: string, since: number | undefined) {
 	return useQuery({
 		queryKey: qk.threadUsage(threadId),
@@ -184,12 +184,14 @@ export function useThreadUsage(threadId: string, since: number | undefined) {
 		queryFn: async () => {
 			const stats = await unwrap(
 				api.GET("/api/v1/stats/usage", {
-					params: { query: { groupBy: "thread", from: since } },
+					params: {
+						query: { groupBy: "thread", thread: threadId, from: since },
+					},
 				}),
 			);
 			// format 缺省为 json；text/csv 只在显式请求 format=csv 时出现。
 			if (typeof stats === "string") return null;
-			return stats.groups.find((g) => g.key === threadId) ?? null;
+			return stats.groups[0] ?? null;
 		},
 	});
 }

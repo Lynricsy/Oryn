@@ -147,7 +147,7 @@ describe("NotificationsSettings 渠道", () => {
 			kind: "webhook",
 			enabled: true,
 			name: "Webhook",
-			events: ["done", "error"],
+			events: ["done", "error", "budget"],
 			locale: "zh-CN",
 			webhook: {
 				url: "https://hooks.example.com/x",
@@ -191,6 +191,28 @@ describe("NotificationsSettings 渠道", () => {
 		expect(posts("/api/v1/notification-channels")[3]?.body).toMatchObject({
 			kind: "telegram",
 			telegram: { botToken: "123:abc" },
+		});
+	});
+
+	it("事件复选框有四项（含预算告警）；只勾预算告警时提交 [budget]", async () => {
+		resetNotifyMock({ empty: true });
+		mount();
+		await screen.findByText(/还没有渠道/);
+		const d = await openAdd("Webhook");
+		const boxes = within(d)
+			.getByRole("group", { name: "发送哪些事件" })
+			.querySelectorAll("input[type=checkbox]");
+		expect(boxes).toHaveLength(4);
+		for (const label of ["完成", "需要输入", "出错"])
+			fireEvent.click(within(d).getByLabelText(label));
+		expect(within(d).getByLabelText("预算告警")).toBeChecked();
+		fill(d, "URL", "https://hooks.example.com/b");
+		fireEvent.click(within(d).getByRole("button", { name: "创建" }));
+		await waitFor(() =>
+			expect(posts("/api/v1/notification-channels")).toHaveLength(1),
+		);
+		expect(posts("/api/v1/notification-channels")[0]?.body).toMatchObject({
+			events: ["budget"],
 		});
 	});
 

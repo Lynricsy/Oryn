@@ -246,6 +246,8 @@ export interface MenuItem {
 	onSelect?: () => void;
 	children?: MenuItem[];
 	hint?: ReactNode;
+	/** 额外的 `data-*` 属性（测试与验收脚本的选择器，如统计页范围菜单的 `data-range`） */
+	attrs?: Record<`data-${string}`, string>;
 }
 
 /**
@@ -318,6 +320,7 @@ export function Menu({
 						<button
 							key={item.key}
 							type="button"
+							{...item.attrs}
 							{...(item.checked === undefined
 								? { role: "menuitem" }
 								: { role: "menuitemradio", "aria-checked": item.checked })}

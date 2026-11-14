@@ -5,12 +5,14 @@
  * 用法（web/ 目录）：
  *   `bun run shots`：390 / 720 / 1280 宽下截 `/` 与 `/t/<id>`（仅浅色）。
  *   `--m25`：改截 M2.5 环境提示条（setup 失败 + 日志对话框、orb 失败），390 / 1280 宽，输出到 `<目录>/m25/`。
- *   `--all`（`bun run shots:all`）：全界面矩阵 = 明暗 × 宽度 {390, 1280} × 界面清单（见 `SCREENS`），
+ *   `--all`（`bun run shots:all`）：全界面矩阵 = 明暗 × 宽度 {390, 1280} × 界面清单（见 `SCREENS`）；
+ *     声明了 `widths` 的界面另可截 360（目前只有统计页），
  *     文件名 `<界面>-<宽>-<scheme>.png`。仅 `--all` 可用的参数：
  *     `--scheme light|dark|both`（默认 both，经 `browser.newContext({ colorScheme })` 设置）；
  *     `--accent <名>`（经 `addInitScript` 写 `localStorage["oryn.theme"] = {mode: <scheme>, accent}`）；
  *     `--only <前缀>[,<前缀>…]`（只截界面名以其开头的项）；
- *     `--check`（在 `thread-bottom` 上断言输入坞不遮挡最后一条转录行，含模拟软键盘的第二次断言）。
+ *     `--check`（在 `thread-bottom` 上断言输入坞不遮挡最后一条转录行，含模拟软键盘的第二次断言；
+ *     统计页断言内容区没有横向溢出）。
  *   任一界面失败或断言不通过时打印原因并以非零码退出（其余界面照常截完）。
  * 环境变量：CHROMIUM=<可执行文件>（默认 /usr/bin/chromium）；WEBKIT=<Playwright WebKit 启动脚本> 时改用 WebKit 截图
  *   （近似 Safari：核对 iOS 上的动画、圆角、backdrop-filter 等差异；需与 playwright-core 版本匹配的 WebKit 构建）。
@@ -706,9 +708,38 @@ const SETTINGS_SECTIONS = [
 ];
 
 const ALL_SIZES = [
+	{ width: 360, height: 780 },
 	{ width: 390, height: 844 },
 	{ width: 1280, height: 860 },
 ] as const;
+/** 没声明 `widths` 的界面截这两种宽度（360 只给显式要它的界面）。 */
+const DEFAULT_WIDTHS: readonly number[] = [390, 1280];
+/** 统计页（M10）：手机两档 + 桌面。 */
+const STATS_WIDTHS = [360, 390, 1280] as const;
+
+/** 打开统计页某个标签并等指标行出现。 */
+async function openStats(page: Page, path: string, kpi: string) {
+	await open(page, path, `[data-testid=kpi-${kpi}]`, 1000);
+}
+
+/** 统计页内容区不得横向溢出（内容区裁掉了 x 方向，溢出会被静默切掉，所以量它自己的 scrollWidth）。 */
+async function statsNoOverflow({ page }: Shot): Promise<string | null> {
+	const r = await page.evaluate(() => {
+		const el = document.querySelector<HTMLElement>(
+			"[data-testid=stats-scroll]",
+		);
+		const doc = document.scrollingElement;
+		return {
+			inner: el ? el.scrollWidth - el.clientWidth : -1,
+			doc: doc ? doc.scrollWidth - window.innerWidth : 0,
+		};
+	});
+	if (r.inner < 0) return "找不到 stats-scroll";
+	if (r.inner > 1) return `内容区横向溢出 ${r.inner}px`;
+	if (r.doc > 0) return `页面横向溢出 ${r.doc}px`;
+	return null;
+}
+
 /** 高截图的最大高度（CSS 像素）。 */
 const TALL_MAX = 16_000;
 
@@ -1532,6 +1563,77 @@ const SCREENS: Screen[] = [
 			await closePanel(page);
 		},
 	},
+	// 统计页（M10）：三个标签、主图浮层、orb 抽屉、预算对话框；手机另截 360
+	{
+		name: "stats-usage",
+		widths: STATS_WIDTHS,
+		prepare: ({ page }) => openStats(page, "/stats/usage", "cost"),
+		verify: statsNoOverflow,
+	},
+	{
+		name: "stats-usage-tables",
+		widths: STATS_WIDTHS,
+		prepare: async ({ page }) => {
+			await openStats(page, "/stats/usage", "cost");
+			await page
+				.locator("[data-testid=table-thread] [data-row-key]")
+				.first()
+				.waitFor({ timeout: 10_000 });
+			await page.evaluate(() => {
+				const el = document.querySelector("[data-testid=stats-scroll]");
+				el?.scrollTo({ top: el.scrollHeight * 0.55 });
+			});
+			await settle(page, 400);
+		},
+		verify: statsNoOverflow,
+	},
+	{
+		name: "stats-usage-tooltip",
+		prepare: async ({ page }) => {
+			await openStats(page, "/stats/usage?range=7d&by=project", "cost");
+			const bars = page.locator("[data-testid=stats-chart] g[data-bucket]");
+			await bars.nth((await bars.count()) - 2).click();
+			await page.locator("[data-testid=chart-tooltip]").waitFor();
+			await settle(page, 300);
+		},
+	},
+	{
+		name: "stats-orbs",
+		widths: STATS_WIDTHS,
+		prepare: ({ page }) => openStats(page, "/stats/orbs", "running"),
+		verify: statsNoOverflow,
+	},
+	{
+		name: "stats-orb-drawer",
+		widths: STATS_WIDTHS,
+		prepare: async ({ page }) => {
+			await openStats(page, "/stats/orbs", "running");
+			await page.locator("[data-orb-row]").first().click();
+			await page
+				.locator("[data-testid=orb-drawer] [data-testid=timeline-strip]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 600);
+		},
+	},
+	{
+		name: "stats-output",
+		widths: STATS_WIDTHS,
+		prepare: ({ page }) => openStats(page, "/stats/output", "shipped"),
+		verify: statsNoOverflow,
+	},
+	{
+		name: "stats-budget",
+		prepare: async ({ page }) => {
+			await openStats(page, "/stats/usage", "cost");
+			await page
+				.locator("[data-testid=budget-card]")
+				.locator("xpath=ancestor::section[1]")
+				.getByRole("button", { name: "设置预算" })
+				.click();
+			await page.getByRole("dialog", { name: "设置预算" }).waitFor();
+			await settle(page, 400);
+		},
+	},
 	{
 		// 面板最窄（360px）时五个标签只显示图标、不换行；放在最后：它改了本条流水线的面板宽度
 		name: "portal-narrow",
@@ -1610,7 +1712,7 @@ async function shootLane(
 		return context.pages()[0] ?? context.newPage();
 	};
 	for (const screen of screens) {
-		if (screen.widths && !screen.widths.includes(size.width)) continue;
+		if (!(screen.widths ?? DEFAULT_WIDTHS).includes(size.width)) continue;
 		const id = `${screen.name}-${size.width}-${scheme}`;
 		const isolated =
 			screen.init || screen.touch

@@ -111,6 +111,18 @@ describe("MorePane", () => {
 		expect(screen.getByTestId("where")).toHaveTextContent("/settings/about");
 	});
 
+	it("统计入口（M10）：在「概览」组里，链到 /stats，统计页的子路径下高亮", () => {
+		mount("/stats/orbs");
+		const stats = entryLinks().find((a) => a.dataset.moreEntry === "stats");
+		expect(stats).toHaveAttribute("href", "/stats");
+		expect(stats).toHaveTextContent("统计");
+		expect(stats?.closest("[data-more-group]")).toHaveAttribute(
+			"data-more-group",
+			"overview",
+		);
+		expect(stats).toHaveAttribute("aria-current", "page");
+	});
+
 	it("连接行在 open 时不存在；connecting 时作为第一行出现并显示「正在连接…」", () => {
 		mount();
 		expect(screen.queryByTestId("sidebar-connection")).toBeNull();

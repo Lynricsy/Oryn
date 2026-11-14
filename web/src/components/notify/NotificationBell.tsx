@@ -1,7 +1,7 @@
 /**
  * 侧栏头部的通知铃铛（M5 计划 6.3）：有未读时右上角一个 accent 计数胶囊；点击打开最近 50 条通知。
  * 桌面是非模态玻璃弹层（外点 / Esc 关闭，照 `AccessPopover`），compact 档改用 `Dialog`。
- * 点一条 → 跳到该线程并把该线程的通知标为已读；顶部「全部已读」。
+ * 点一条 → 跳到它的 `url`，按 `readTargetOf` 标已读（有线程标该线程，系统通知只标这一条）；顶部「全部已读」。
  */
 import {
 	type ReactNode,
@@ -19,13 +19,14 @@ import {
 	type AppNotification,
 	notificationsStore,
 	notificationText,
+	readTargetOf,
 	useNotifications,
 } from "../../state/notifications";
 import { uiStore } from "../../state/ui";
 import { Icon, type IconName } from "../ui/icons";
 import { Button, Dialog, EmptyState, IconButton } from "../ui/primitives";
 
-/** 各 kind 的图标与颜色：完成绿、待答 accent（需要你）、出错红。 */
+/** 各 kind 的图标与颜色：完成绿、待答 accent（需要你）、出错红、预算告警黄。 */
 export const KIND_ICON: Record<
 	AppNotification["kind"],
 	{ icon: IconName; className: string }
@@ -33,8 +34,13 @@ export const KIND_ICON: Record<
 	done: { icon: "check", className: "text-ok" },
 	input: { icon: "question", className: "text-accent" },
 	error: { icon: "alert", className: "text-err" },
-	budget: { icon: "alert", className: "text-warn" },
+	budget: { icon: "chart", className: "text-warn" },
 };
+
+/** 取 kind 的图标；服务端新增了本页不认识的 kind（升级后没刷新）时回落到出错的图标，不让渲染崩掉。 */
+export function kindIcon(kind: string): { icon: IconName; className: string } {
+	return KIND_ICON[kind as keyof typeof KIND_ICON] ?? KIND_ICON.error;
+}
 
 /** 计数胶囊上限：超过显示「99+」。 */
 function badgeText(n: number): string {
@@ -50,7 +56,7 @@ function Row({
 }) {
 	const { t } = useTranslation();
 	const { title, body } = notificationText(n, t);
-	const kind = KIND_ICON[n.kind];
+	const kind = kindIcon(n.kind);
 	return (
 		<li>
 			<button
@@ -105,7 +111,7 @@ function Body({ onDone, heading }: { onDone: () => void; heading: boolean }) {
 		if (!n.readAt)
 			void notificationsStore
 				.getState()
-				.markRead(n.threadId)
+				.markRead(readTargetOf(n))
 				.catch(() => {});
 	};
 	return (

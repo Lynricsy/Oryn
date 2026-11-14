@@ -67,6 +67,19 @@
 	--ctx-tool-calls: oklch(0.68 0.16 52);
 	--ctx-tool-output: oklch(0.64 0.045 245);
 	--ctx-messages: oklch(0.6 0.12 215);
+	/*
+	 * 图表系列色（M10 统计页）：给上下文分段色起别名，明暗两套自动跟随（暗色主题只改 --ctx-*）。
+	 * 系列按成本排名依次取 1…8，第 9 项起并入 other。主人看过截图后只需改这九行映射。
+	 */
+	--viz-1: var(--ctx-user-messages);
+	--viz-2: var(--ctx-thinking);
+	--viz-3: var(--ctx-assistant-messages);
+	--viz-4: var(--ctx-system-prompt);
+	--viz-5: var(--ctx-tool-calls);
+	--viz-6: var(--ctx-system-context);
+	--viz-7: var(--ctx-instructions);
+	--viz-8: var(--ctx-skills);
+	--viz-other: var(--ctx-tool-output);
 	color-scheme: light;
 }
 
@@ -231,6 +244,15 @@
 	--color-warn: var(--caution);
 	--color-err: var(--bad);
 	--color-frost: var(--frost);
+	--color-viz-1: var(--viz-1);
+	--color-viz-2: var(--viz-2);
+	--color-viz-3: var(--viz-3);
+	--color-viz-4: var(--viz-4);
+	--color-viz-5: var(--viz-5);
+	--color-viz-6: var(--viz-6);
+	--color-viz-7: var(--viz-7);
+	--color-viz-8: var(--viz-8);
+	--color-viz-other: var(--viz-other);
 	--color-scrim: var(--scrim);
 	--font-sans: var(--sans);
 	--font-mono: var(--mono);

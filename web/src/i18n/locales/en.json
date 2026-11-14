@@ -92,7 +92,8 @@
 	"nav": {
 		"infoPanel": "Info panel",
 		"settings": "Settings",
-		"sidebar": "Sidebar"
+		"sidebar": "Sidebar",
+		"stats": "Statistics"
 	},
 	"connection": {
 		"idle": "Not connected",
@@ -276,6 +277,7 @@
 		"clickToRename": "Click to rename",
 		"color": "Color",
 		"copyLink": "Copy link",
+		"costUsage": "Cost & usage",
 		"debug": "Debug panel",
 		"delete": "Delete thread",
 		"deleteConfirm": "Delete this thread and its transcript?",
@@ -2040,5 +2042,162 @@
 		"use": "Use",
 		"handle": "Resize the frame",
 		"outlines": "The solid line is the tile outline; the dashed line is the circle outline."
+	},
+	"stats": {
+		"title": "Statistics",
+		"tabs": { "usage": "Usage", "orbs": "Orbs", "output": "Output" },
+		"range": {
+			"label": "Range",
+			"today": "Today",
+			"7d": "7 days",
+			"30d": "30 days",
+			"90d": "90 days",
+			"month": "This month",
+			"all": "All time",
+			"custom": "Custom…"
+		},
+		"custom": {
+			"title": "Custom range",
+			"from": "From",
+			"to": "To (inclusive)",
+			"apply": "Apply"
+		},
+		"filter": {
+			"project": "Project",
+			"space": "Space",
+			"model": "Model",
+			"thread": "Thread",
+			"clear": "Clear filter “{{name}}”"
+		},
+		"export": {
+			"button": "Export",
+			"viewCsv": "This view as CSV",
+			"viewJson": "This view as JSON",
+			"recordsCsv": "Usage records CSV"
+		},
+		"backfill": "Backfilling history {{done}} / {{total}}; numbers may read low until it finishes.",
+		"by": {
+			"label": "Group by",
+			"model": "Model",
+			"project": "Project",
+			"space": "Space",
+			"purpose": "Purpose"
+		},
+		"metric": {
+			"label": "Metric",
+			"cost": "Cost",
+			"tokens": "Tokens",
+			"requests": "Requests"
+		},
+		"chart": {
+			"total": "Total",
+			"usage": "{{metric}} by {{by}}",
+			"orbs": "Running and frozen time",
+			"output": "Shipped and archived"
+		},
+		"other": "Other",
+		"empty": "No data in this period",
+		"emptyKey": {
+			"model": "(unknown model)",
+			"project": "(no project)",
+			"space": "(no space)",
+			"thread": "Deleted thread",
+			"purpose": "Conversation turns"
+		},
+		"kpi": {
+			"cost": "Cost",
+			"costDelta": "{{pct}} vs previous period",
+			"tokens": "Tokens",
+			"tokensDetail": "In {{input}} · out {{output}} · cache read {{read}} · cache write {{write}}",
+			"cacheHit": "Cache hit rate",
+			"requests": "Requests",
+			"errorRate": "{{pct}} errors",
+			"turns": "Turns",
+			"tools": "Tool calls",
+			"ttft": "Avg. time to first token",
+			"tps": "Output speed",
+			"running": "Running time",
+			"frozenShare": "Frozen share",
+			"orbs": "Orbs",
+			"spawns": "Spawns / wakes / failures",
+			"setup": "Median setup time",
+			"slowSetups": "{{n}} slow setups",
+			"snapshot": "Started from snapshot",
+			"created": "Created",
+			"shipped": "Shipped",
+			"archived": "Archived",
+			"shipRate": "Ship rate",
+			"commits": "Commits",
+			"costPerShipped": "Cost per shipped"
+		},
+		"table": {
+			"name": "Name",
+			"requests": "Requests",
+			"tokens": "Tokens",
+			"cost": "Cost",
+			"ttft": "TTFT",
+			"tps": "Tokens/s",
+			"calls": "Calls",
+			"errors": "Errors",
+			"errorRate": "Error rate",
+			"details": "Details",
+			"byModel": "By model",
+			"byProject": "By project",
+			"bySpace": "By space",
+			"byThread": "By thread",
+			"byPurpose": "By purpose",
+			"byTool": "By tool"
+		},
+		"costNote": "Cost is omp's estimate from list prices and includes subagents; history copied by a fork counts only toward the source thread.",
+		"orbs": {
+			"byType": "By type",
+			"list": "Orbs",
+			"spec": "Spec",
+			"running": "Running",
+			"frozen": "Frozen",
+			"coreHours": "Core-hours",
+			"untitled": "(no thread)",
+			"barLabel": "Running {{running}}, frozen {{frozen}}, stopped {{stopped}}",
+			"state": {
+				"running": "Running",
+				"setup": "Setup",
+				"frozen": "Frozen",
+				"failed": "Failed",
+				"stopped": "Stopped"
+			},
+			"drawer": {
+				"timeline": "State timeline",
+				"cpu": "CPU",
+				"memory": "Memory",
+				"memUsed": "Memory used",
+				"setupRuns": "Recent setup / resume runs",
+				"noRuns": "No setup runs",
+				"noSamples": "No resource samples in this period",
+				"expired": "Samples are past retention: older CPU and memory samples have been removed.",
+				"phase": { "setup": "setup", "resume": "resume" }
+			}
+		},
+		"budget": {
+			"title": "Budget",
+			"open": "Budget…",
+			"edit": "Set budget",
+			"day": "Today",
+			"month": "This month",
+			"spent": "{{spent}} / {{limit}}",
+			"noLimit": "No limit",
+			"disabled": "Alerts off",
+			"level": { "none": "", "warn": "Near limit", "over": "Over limit" },
+			"dialog": {
+				"title": "Set budget",
+				"daily": "Daily limit (USD)",
+				"monthly": "Monthly limit (USD)",
+				"warnPct": "Warning at (%)",
+				"warnHint": "0 = alert only when exceeded",
+				"timezone": "Time zone (IANA)",
+				"enabled": "Enable budget alerts",
+				"invalid": "Leave an amount empty for no limit; otherwise it must be at least 0.01."
+			},
+			"notifyHint": "Crossing the warning line or the limit posts a system notification: to the notification center, push, and channels that have “Budget alert” checked in <settings>Settings → Notifications</settings>."
+		}
 	}
 }

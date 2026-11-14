@@ -571,9 +571,14 @@ describe("RealtimeClient", () => {
 		};
 		ws.recv({ type: "notification", notification: n });
 		ws.recv({ type: "notifications.read", threadId: TID });
+		ws.recv({ type: "notifications.read", id: "ntf_9" });
 		ws.recv({ type: "notifications.read" });
 		expect(onNotification).toHaveBeenCalledWith(n);
-		expect(onRead.mock.calls).toEqual([[TID], [undefined]]);
+		expect(onRead.mock.calls).toEqual([
+			[{ threadId: TID }],
+			[{ id: "ntf_9" }],
+			[undefined],
+		]);
 	});
 
 	it("orb 从挂起回到 ready：重取 state 与命令列表（挂起期间的只读查询被拒、不会重放）", async () => {

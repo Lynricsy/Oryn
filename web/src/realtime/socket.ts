@@ -563,7 +563,15 @@ export class RealtimeClient {
 				this.emitSchedulesChanged();
 				return;
 			case "notifications.read":
-				notificationsStore.getState().onRead(msg.threadId);
+				notificationsStore
+					.getState()
+					.onRead(
+						msg.id
+							? { id: msg.id }
+							: msg.threadId
+								? { threadId: msg.threadId }
+								: undefined,
+					);
 				return;
 			case "error": {
 				if (msg.id) {

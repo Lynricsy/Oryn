@@ -32,6 +32,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/notifications",
 	},
 	{
+		// 统计分析（M10）：独立页 /stats（用量 / Orb / 产出）
+		key: "stats",
+		group: "overview",
+		icon: "chart",
+		labelKey: "nav.stats",
+		to: "/stats",
+	},
+	{
 		key: "identity",
 		group: "settings",
 		icon: "robot",

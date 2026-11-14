@@ -279,6 +279,15 @@ export function ThreadHeader({
 				void navigator.clipboard?.writeText(`${location.origin}/t/${threadId}`),
 		},
 		{
+			key: "costUsage",
+			icon: "chart",
+			label: t("thread.costUsage"),
+			onSelect: () =>
+				navigate(
+					`/stats/usage?thread=${encodeURIComponent(threadId)}&range=all`,
+				),
+		},
+		{
 			key: "share",
 			icon: "share",
 			label: t("share.header.action"),

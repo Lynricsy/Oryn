@@ -52,6 +52,7 @@ import {
 } from "./fixtures";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
+import { handleStatsFetch } from "./stats";
 
 type Json = Record<string, unknown>;
 
@@ -1005,6 +1006,13 @@ export class MockServer {
 		if (autoRes) return autoRes;
 		const deskRes = await this.desktop.handle(req, p, m);
 		if (deskRes) return deskRes;
+		const statsRes = await handleStatsFetch(req, p, m, url, {
+			threads: () => [...this.threads.values()],
+			projects: () => this.projects,
+			spaces: () => this.automation.spaces,
+			orbs: () => [...this.orbs.values()],
+		});
+		if (statsRes) return statsRes;
 		if (p === "me")
 			return json({
 				displayName: "owner",
@@ -1287,28 +1295,6 @@ export class MockServer {
 		}
 		const svcRes = await this.handleServiceFetch(req, p, m, url);
 		if (svcRes) return svcRes;
-		if (p === "stats/usage") {
-			const groups = [...this.threads.values()].map((t) => ({
-				key: t.id,
-				label: t.title,
-				requests: 12,
-				inputTokens: 120_000,
-				outputTokens: 9_000,
-				cacheReadTokens: 300_000,
-				cacheWriteTokens: 0,
-				costUsd: t.id === MAIN_THREAD ? 0.2381 : 0.05,
-				subagentCostUsd: 0,
-				tokensPerSecond: 64,
-				toolCalls: 3,
-				toolErrors: 0,
-			}));
-			return json({
-				groupBy: url.searchParams.get("groupBy") ?? "thread",
-				from: 0,
-				to: Date.now(),
-				groups,
-			});
-		}
 		if (p === "threads" && m === "GET") {
 			const archived = url.searchParams.get("archived") === "true";
 			return json({

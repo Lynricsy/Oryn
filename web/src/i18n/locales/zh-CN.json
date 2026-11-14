@@ -92,7 +92,8 @@
 	"nav": {
 		"infoPanel": "信息面板",
 		"settings": "设置",
-		"sidebar": "侧边栏"
+		"sidebar": "侧边栏",
+		"stats": "统计"
 	},
 	"connection": {
 		"idle": "未连接",
@@ -276,6 +277,7 @@
 		"clickToRename": "点击改名",
 		"color": "颜色",
 		"copyLink": "复制链接",
+		"costUsage": "成本与用量",
 		"debug": "调试面板",
 		"delete": "删除线程",
 		"deleteConfirm": "删除这个线程及其全部转录？",
@@ -2040,5 +2042,162 @@
 		"use": "使用",
 		"handle": "调整取景框大小",
 		"outlines": "实线是方块显示的轮廓，虚线是圆形显示的轮廓。"
+	},
+	"stats": {
+		"title": "统计",
+		"tabs": { "usage": "用量", "orbs": "Orb", "output": "产出" },
+		"range": {
+			"label": "时间范围",
+			"today": "今天",
+			"7d": "近 7 天",
+			"30d": "近 30 天",
+			"90d": "近 90 天",
+			"month": "本月",
+			"all": "全部",
+			"custom": "自定义…"
+		},
+		"custom": {
+			"title": "自定义时间范围",
+			"from": "开始日期",
+			"to": "结束日期（含）",
+			"apply": "应用"
+		},
+		"filter": {
+			"project": "项目",
+			"space": "空间",
+			"model": "模型",
+			"thread": "线程",
+			"clear": "清除筛选「{{name}}」"
+		},
+		"export": {
+			"button": "导出",
+			"viewCsv": "当前视图 CSV",
+			"viewJson": "当前视图 JSON",
+			"recordsCsv": "用量明细 CSV"
+		},
+		"backfill": "历史数据回填中 {{done}} / {{total}}，回填完成前的数字可能偏小。",
+		"by": {
+			"label": "分组",
+			"model": "模型",
+			"project": "项目",
+			"space": "空间",
+			"purpose": "用途"
+		},
+		"metric": {
+			"label": "指标",
+			"cost": "成本",
+			"tokens": "tokens",
+			"requests": "请求"
+		},
+		"chart": {
+			"total": "合计",
+			"usage": "按{{by}}的{{metric}}",
+			"orbs": "运行与冻结时长",
+			"output": "交付与归档"
+		},
+		"other": "其他",
+		"empty": "这段时间没有数据",
+		"emptyKey": {
+			"model": "（未知模型）",
+			"project": "（无项目）",
+			"space": "（无空间）",
+			"thread": "已删除的线程",
+			"purpose": "对话回合"
+		},
+		"kpi": {
+			"cost": "成本",
+			"costDelta": "较上一周期 {{pct}}",
+			"tokens": "tokens",
+			"tokensDetail": "输入 {{input}} · 输出 {{output}} · 缓存读 {{read}} · 缓存写 {{write}}",
+			"cacheHit": "缓存命中率",
+			"requests": "请求",
+			"errorRate": "错误率 {{pct}}",
+			"turns": "回合",
+			"tools": "工具调用",
+			"ttft": "平均首字延迟",
+			"tps": "输出速度",
+			"running": "运行时长",
+			"frozenShare": "冻结占比",
+			"orbs": "orb 数",
+			"spawns": "启动 / 唤醒 / 失败",
+			"setup": "setup 中位耗时",
+			"slowSetups": "慢 setup {{n}} 次",
+			"snapshot": "由快照启动",
+			"created": "新建",
+			"shipped": "已交付",
+			"archived": "已归档",
+			"shipRate": "交付率",
+			"commits": "提交",
+			"costPerShipped": "每交付成本"
+		},
+		"table": {
+			"name": "名称",
+			"requests": "请求",
+			"tokens": "tokens",
+			"cost": "成本",
+			"ttft": "TTFT",
+			"tps": "tokens/s",
+			"calls": "调用",
+			"errors": "错误",
+			"errorRate": "错误率",
+			"details": "详情",
+			"byModel": "按模型",
+			"byProject": "按项目",
+			"bySpace": "按空间",
+			"byThread": "按线程",
+			"byPurpose": "按用途",
+			"byTool": "按工具"
+		},
+		"costNote": "成本是 omp 按模型标价的估算，含子 agent；fork 拷贝来的历史只计在源线程，不重复计算。",
+		"orbs": {
+			"byType": "按类型",
+			"list": "orb",
+			"spec": "规格",
+			"running": "运行",
+			"frozen": "冻结",
+			"coreHours": "核时",
+			"untitled": "（没有线程）",
+			"barLabel": "运行 {{running}}，冻结 {{frozen}}，停机 {{stopped}}",
+			"state": {
+				"running": "运行",
+				"setup": "setup",
+				"frozen": "冻结",
+				"failed": "失败",
+				"stopped": "停机"
+			},
+			"drawer": {
+				"timeline": "状态时间线",
+				"cpu": "CPU",
+				"memory": "内存",
+				"memUsed": "已用内存",
+				"setupRuns": "最近的 setup / resume",
+				"noRuns": "没有 setup 记录",
+				"noSamples": "这段时间没有资源采样",
+				"expired": "采样已过保留期：更早的 CPU / 内存采样已被清理。",
+				"phase": { "setup": "setup", "resume": "resume" }
+			}
+		},
+		"budget": {
+			"title": "预算",
+			"open": "预算…",
+			"edit": "设置预算",
+			"day": "今日",
+			"month": "本月",
+			"spent": "{{spent}} / {{limit}}",
+			"noLimit": "未设上限",
+			"disabled": "告警已停用",
+			"level": { "none": "", "warn": "接近上限", "over": "已超出" },
+			"dialog": {
+				"title": "设置预算",
+				"daily": "日上限（美元）",
+				"monthly": "月上限（美元）",
+				"warnPct": "预警线（%）",
+				"warnHint": "0 = 只在超出时告警",
+				"timezone": "时区（IANA）",
+				"enabled": "启用预算告警",
+				"invalid": "金额留空表示不设，填写时至少 0.01。"
+			},
+			"notifyHint": "超过预警线或上限时发一条系统通知：通知中心、推送，以及在<settings>「设置 → 通知」</settings>里勾选了「预算告警」的渠道。"
+		}
 	}
 }

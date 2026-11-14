@@ -4,6 +4,7 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router";
 import { useThreadUsage } from "../../api/queries";
 import { formatCost, formatCount } from "../../lib/format";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
@@ -177,25 +178,30 @@ function SpeedControl({
 	);
 }
 
-/** 页脚右侧读数：上下文占用、会话累计成本、速度档位与最近的输出速度。 */
+/**
+ * 页脚右侧读数：上下文占用、会话累计成本、速度档位与最近的输出速度。
+ * 成本取统计接口的 `costUsd`（已含子 agent，与统计页同一口径；接口不可用时退回转录累计），点它进统计页并按本线程筛选。
+ */
 export function SessionReadout({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
 	const createdAt = useThread(threadId, (s) => s.thread?.createdAt);
 	const entries = useThread(threadId, (s) => s.entries);
 	const usage = useThreadUsage(threadId, createdAt);
-	const cost = usage.data
-		? usage.data.costUsd + (usage.data.subagentCostUsd ?? 0)
-		: threadCost(entries);
+	const cost = usage.data ? usage.data.costUsd : threadCost(entries);
 	const tps = state?.tokensPerSecond ?? usage.data?.tokensPerSecond;
 	return (
 		<span className="inline-flex shrink-0 items-center gap-3 font-medium text-muted">
 			<ContextRing threadId={threadId} />
 			{/* 成本不配图标：formatCost 自带 $，本身就是读数的记号，再加货币图标会读成「$ $0.24」 */}
-			<span title={t("stat.cost")} className="tabular-nums">
+			<Link
+				to={`/stats/usage?thread=${encodeURIComponent(threadId)}&range=all`}
+				title={t("thread.costUsage")}
+				className="tabular-nums underline-offset-2 hover:underline"
+			>
 				<span className="sr-only">{t("stat.cost")}</span>
 				{formatCost(cost)}
-			</span>
+			</Link>
 			<SpeedControl threadId={threadId} tps={tps} />
 		</span>
 	);

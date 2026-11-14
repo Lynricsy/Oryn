@@ -59,7 +59,7 @@ function seed(): State {
 			kind: "telegram",
 			name: "Telegram",
 			enabled: true,
-			events: ["done", "input", "error"],
+			events: ["done", "input", "error", "budget"],
 			locale: "zh-CN",
 			summary: "@oryn_mock_bot",
 			telegram: {
@@ -181,6 +181,26 @@ function seed(): State {
 			],
 		},
 		{
+			// 预算告警（M10）：系统通知，没有线程；标题与正文是服务端的英文固定短语
+			id: "ntf_01JD0000000000000000000005",
+			kind: "budget",
+			title: "Daily budget warning",
+			body: "$8.16 of $10.00 spent, past the 80% warning threshold (2026-11-15, Asia/Shanghai).",
+			url: "/stats/usage",
+			createdAt: NOW - 40 * MIN,
+			deliveries: [
+				{
+					target: "telegram",
+					channelId: channels[0]?.id,
+					channelName: "Telegram",
+					status: "sent",
+					attempts: 1,
+					at: NOW - 40 * MIN,
+				},
+				{ target: "webpush", status: "sent", attempts: 1, at: NOW - 40 * MIN },
+			],
+		},
+		{
 			id: "ntf_01JD0000000000000000000002",
 			kind: "error",
 			threadId: "T-0193a1b2-0000-7000-8000-00000000a005",
@@ -264,9 +284,14 @@ export async function handleNotifyFetch(
 		});
 	}
 	if (p === "/api/v1/notifications/read" && m === "POST") {
-		const { threadId } = await bodyOf(req);
+		const { threadId, id } = await bodyOf(req);
+		if (threadId && id)
+			return error(400, "invalid_request", "id 与 threadId 至多给一个");
 		for (const n of state.notifications)
-			if (!n.readAt && (!threadId || n.threadId === threadId))
+			if (
+				!n.readAt &&
+				(id ? n.id === id : !threadId || n.threadId === threadId)
+			)
 				n.readAt = Date.now();
 		return new Response(null, { status: 204 });
 	}
@@ -288,7 +313,12 @@ export async function handleNotifyFetch(
 				kind,
 				name: b.name,
 				enabled: b.enabled !== false,
-				events: (b.events as Channel["events"]) ?? ["done", "input", "error"],
+				events: (b.events as Channel["events"]) ?? [
+					"done",
+					"input",
+					"error",
+					"budget",
+				],
 				locale: (b.locale as Channel["locale"]) ?? "zh-CN",
 				summary: summaryOf(kind, cfg),
 				...(kind === "telegram"

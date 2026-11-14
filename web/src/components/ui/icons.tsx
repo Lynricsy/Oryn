@@ -20,6 +20,7 @@ import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { Cards } from "@phosphor-icons/react/dist/csr/Cards";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { ChartBar } from "@phosphor-icons/react/dist/csr/ChartBar";
 import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
 import { Chats } from "@phosphor-icons/react/dist/csr/Chats";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
@@ -180,6 +181,8 @@ const ICONS = {
 	database: Database,
 	timer: Timer,
 	coin: CurrencyDollar,
+	/** 统计分析（M10）：侧栏「更多」入口、线程「成本与用量」、预算通知 */
+	chart: ChartBar,
 	maximize: ArrowsOutSimple,
 	minimize: ArrowsInSimple,
 	external: ArrowSquareOut,

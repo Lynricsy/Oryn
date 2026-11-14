@@ -24,6 +24,11 @@ const ProjectPage = lazy(() =>
 	import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectPage })),
 );
 
+// 统计页（M10）：全宽数据页，图表与表格都在这一个分块里
+const StatsPage = lazy(() =>
+	import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })),
+);
+
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
 	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
@@ -82,6 +87,11 @@ export function App(): ReactNode {
 					<Route path="projects" element={<ProjectsIndexPage />} />
 					<Route path="projects/new" element={<ProjectPage create />} />
 					<Route path="projects/:projectId" element={<ProjectPage />} />
+					<Route
+						path="stats"
+						element={<Navigate to="/stats/usage" replace />}
+					/>
+					<Route path="stats/:tab" element={<StatsPage />} />
 					{/* 项目管理搬到了项目分区（M9.6） */}
 					<Route
 						path="settings/projects"
