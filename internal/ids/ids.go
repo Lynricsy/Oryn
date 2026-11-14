@@ -22,6 +22,9 @@ func Orb() string { return "orb-" + strings.ToLower(newULID()) }
 // Snapshot 返回 oryn-snap-<小写 ULID>（Docker 镜像名）。
 func Snapshot() string { return "oryn-snap-" + strings.ToLower(newULID()) }
 
+// BrowserProfile 返回 bpf_<ULID>（M8 命名浏览器 Profile）。
+func BrowserProfile() string { return New("bpf") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 

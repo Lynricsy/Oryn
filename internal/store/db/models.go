@@ -21,6 +21,30 @@ type Blob struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
+type BrowserProfile struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Revision      int64   `json:"revision"`
+	SizeBytes     int64   `json:"sizeBytes"`
+	ContentSha256 *string `json:"contentSha256"`
+	HolderOrbID   *string `json:"holderOrbId"`
+	HeldAt        *int64  `json:"heldAt"`
+	Fence         int64   `json:"fence"`
+	SaveError     *string `json:"saveError"`
+	SavedAt       *int64  `json:"savedAt"`
+	CreatedAt     int64   `json:"createdAt"`
+	UpdatedAt     int64   `json:"updatedAt"`
+}
+
+type BrowserProfileEvent struct {
+	ID        int64   `json:"id"`
+	ProfileID string  `json:"profileId"`
+	OrbID     *string `json:"orbId"`
+	Ts        int64   `json:"ts"`
+	Event     string  `json:"event"`
+	Detail    string  `json:"detail"`
+}
+
 type Device struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -143,6 +167,25 @@ type Orb struct {
 	TokenGen              int64   `json:"tokenGen"`
 }
 
+type OrbDesktop struct {
+	OrbID              string  `json:"orbId"`
+	ProfileID          *string `json:"profileId"`
+	ProfileMode        string  `json:"profileMode"`
+	Takeover           int64   `json:"takeover"`
+	Fence              int64   `json:"fence"`
+	ReadonlyReason     *string `json:"readonlyReason"`
+	ReadonlyBy         *string `json:"readonlyBy"`
+	ReadonlyByThreadID *string `json:"readonlyByThreadId"`
+	ReadonlyAt         *int64  `json:"readonlyAt"`
+	LocalRev           int64   `json:"localRev"`
+	ProfileError       *string `json:"profileError"`
+	Reported           int64   `json:"reported"`
+	DisplayReady       int64   `json:"displayReady"`
+	Browser            string  `json:"browser"`
+	Dirty              int64   `json:"dirty"`
+	UpdatedAt          int64   `json:"updatedAt"`
+}
+
 type OrbEvent struct {
 	ID        int64  `json:"id"`
 	OrbID     string `json:"orbId"`
@@ -228,22 +271,23 @@ type PortalShare struct {
 }
 
 type Project struct {
-	ID              string  `json:"id"`
-	Name            string  `json:"name"`
-	RepoUrl         *string `json:"repoUrl"`
-	BaseBranch      *string `json:"baseBranch"`
-	DefaultProvider *string `json:"defaultProvider"`
-	DefaultOrbType  *string `json:"defaultOrbType"`
-	SetupScript     *string `json:"setupScript"`
-	ResumeScript    *string `json:"resumeScript"`
-	ShallowClone    bool    `json:"shallowClone"`
-	Color           *string `json:"color"`
-	CreatedAt       int64   `json:"createdAt"`
-	UpdatedAt       int64   `json:"updatedAt"`
-	ArchivedAt      *int64  `json:"archivedAt"`
-	GitAuthorName   *string `json:"gitAuthorName"`
-	GitAuthorEmail  *string `json:"gitAuthorEmail"`
-	Icon            *string `json:"icon"`
+	ID                      string  `json:"id"`
+	Name                    string  `json:"name"`
+	RepoUrl                 *string `json:"repoUrl"`
+	BaseBranch              *string `json:"baseBranch"`
+	DefaultProvider         *string `json:"defaultProvider"`
+	DefaultOrbType          *string `json:"defaultOrbType"`
+	SetupScript             *string `json:"setupScript"`
+	ResumeScript            *string `json:"resumeScript"`
+	ShallowClone            bool    `json:"shallowClone"`
+	Color                   *string `json:"color"`
+	CreatedAt               int64   `json:"createdAt"`
+	UpdatedAt               int64   `json:"updatedAt"`
+	ArchivedAt              *int64  `json:"archivedAt"`
+	GitAuthorName           *string `json:"gitAuthorName"`
+	GitAuthorEmail          *string `json:"gitAuthorEmail"`
+	Icon                    *string `json:"icon"`
+	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId"`
 }
 
 type Provider struct {

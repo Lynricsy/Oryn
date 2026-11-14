@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -13,10 +14,11 @@ import (
 
 // m2Tables 是计划 D 节列出的全部 M2 表，外加后续里程碑新增的表
 // （M3：attachments；M4：orb_services、portal_shares、portal_sessions；
-// M5：thread_shares、thread_share_entries、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries）。
+// M5：thread_shares、thread_share_entries、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries；
+// M8：browser_profiles、browser_profile_events、orb_desktops）。
 var m2Tables = []string{
-	"attachments", "blobs", "device_pairings", "devices", "entries", "entry_cursors", "jobs",
-	"notification_channels", "notification_deliveries", "notifications", "orb_events",
+	"attachments", "blobs", "browser_profile_events", "browser_profiles", "device_pairings", "devices", "entries", "entry_cursors", "jobs",
+	"notification_channels", "notification_deliveries", "notifications", "orb_desktops", "orb_events",
 	"orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "secrets", "thread_labels",
 	"thread_share_entries", "thread_shares", "threads", "tool_calls", "usage_records", "web_sessions",
@@ -513,3 +515,162 @@ func TestNotifyQueries(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// TestBrowserProfileLeaseQueries 覆盖 M8 的 Profile 租约、围栏代数、只读使用者与桌面镜像查询。
+func TestBrowserProfileLeaseQueries(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	q := s.Q
+	const (
+		orbA = "orb-aaaaaaaaaaaaaaaaaaaaaaaaaa"
+		orbB = "orb-bbbbbbbbbbbbbbbbbbbbbbbbbb"
+		orbC = "orb-cccccccccccccccccccccccccc"
+		pid  = "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E2"
+	)
+	require.NoError(t, q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "p", TokenHash: "h", CreatedAt: 1}))
+	for _, id := range []string{orbA, orbB, orbC} {
+		require.NoError(t, q.CreateOrb(ctx, db.CreateOrbParams{
+			ID: id, ProviderID: "prov_1", Type: "small", Cpus: 1, MemoryMb: 1, Image: "img", State: "ready",
+			StateChangedAt: 1, TokenHash: "t-" + id, CreatedAt: 1,
+		}))
+	}
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
+		ID: "T-a2", Title: "后建", TitleSource: "auto", State: "idle", SessionDir: "/a2", CreatedAt: 5, UpdatedAt: 5, OrbID: ptr(orbA),
+	}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
+		ID: "T-a1", Title: "先建", TitleSource: "auto", State: "idle", SessionDir: "/a1", CreatedAt: 2, UpdatedAt: 2, OrbID: ptr(orbA),
+	}))
+	rep, err := q.GetOrbRepresentativeThread(ctx, orbA)
+	require.NoError(t, err)
+	assert.Equal(t, "T-a1", rep.ID)
+	assert.Equal(t, "先建", rep.Title)
+
+	require.NoError(t, q.CreateBrowserProfile(ctx, db.CreateBrowserProfileParams{ID: pid, Name: "work", Now: 1}))
+	assert.Error(t, q.CreateBrowserProfile(ctx, db.CreateBrowserProfileParams{ID: "bpf_2", Name: "work", Now: 1}), "名字唯一")
+	n, err := q.CountBrowserProfiles(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
+
+	// 取租约：新持有者 fence +1；同一持有者幂等（held_at 不变）；别人持有时 ErrNoRows。
+	fence, err := q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{ID: pid, OrbID: orbA, Now: 10})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, fence)
+	fence, err = q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{ID: pid, OrbID: orbA, Now: 11})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, fence)
+	p, err := q.GetBrowserProfileByHolder(ctx, orbA)
+	require.NoError(t, err)
+	assert.Equal(t, pid, p.ID)
+	assert.EqualValues(t, 10, *p.HeldAt)
+	_, err = q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{ID: pid, OrbID: orbB, Now: 12})
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	// 保存：只有带当前 fence 的持有者能写。
+	rev, err := q.SaveBrowserProfileRevision(ctx, db.SaveBrowserProfileRevisionParams{ID: pid, OrbID: orbA, Fence: 1, SizeBytes: 100, ContentSha256: "aa", Now: 20})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, rev)
+	_, err = q.SaveBrowserProfileRevision(ctx, db.SaveBrowserProfileRevisionParams{ID: pid, OrbID: orbA, Fence: 0, SizeBytes: 1, ContentSha256: "bb", Now: 21})
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	// 接管：按读到的 fence 做比较并交换；原持有者此后的保存被围栏挡下。
+	require.NoError(t, q.UpsertOrbDesktopProfile(ctx, db.UpsertOrbDesktopProfileParams{OrbID: orbA, ProfileID: ptr(pid), ProfileMode: "exclusive", Now: 1}))
+	require.NoError(t, q.SetOrbDesktopLocal(ctx, db.SetOrbDesktopLocalParams{OrbID: orbA, LocalRev: 1, Fence: 1, Now: 2}))
+	require.NoError(t, q.UpsertOrbDesktopProfile(ctx, db.UpsertOrbDesktopProfileParams{OrbID: orbB, ProfileID: ptr(pid), ProfileMode: "exclusive", Takeover: 1, Now: 3}))
+	fence, err = q.StealBrowserProfile(ctx, db.StealBrowserProfileParams{ID: pid, OrbID: orbB, ExpectedFence: 1, Now: 30})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, fence)
+	_, err = q.StealBrowserProfile(ctx, db.StealBrowserProfileParams{ID: pid, OrbID: orbC, ExpectedFence: 1, Now: 31})
+	assert.ErrorIs(t, err, sql.ErrNoRows, "fence 已变")
+	demoted, err := q.DemoteOrbDesktopReadonly(ctx, db.DemoteOrbDesktopReadonlyParams{
+		OrbID: orbA, ProfileID: pid, ReadonlyBy: ptr("接管方"), ReadonlyByThreadID: ptr("T-b"), Now: 30,
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, demoted)
+	_, err = q.SaveBrowserProfileRevision(ctx, db.SaveBrowserProfileRevisionParams{ID: pid, OrbID: orbA, Fence: 1, SizeBytes: 1, ContentSha256: "cc", Now: 32})
+	assert.ErrorIs(t, err, sql.ErrNoRows, "被接管后迟到的保存")
+	rev, err = q.SaveBrowserProfileRevision(ctx, db.SaveBrowserProfileRevisionParams{ID: pid, OrbID: orbB, Fence: 2, SizeBytes: 200, ContentSha256: "dd", Now: 33})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, rev)
+
+	da, err := q.GetOrbDesktop(ctx, orbA)
+	require.NoError(t, err)
+	assert.Equal(t, "readonly", da.ProfileMode)
+	assert.Equal(t, "taken_over", *da.ReadonlyReason)
+	assert.Equal(t, "接管方", *da.ReadonlyBy)
+	assert.EqualValues(t, 0, da.Fence)
+	assert.EqualValues(t, 1, da.LocalRev, "降级不动本地修订")
+
+	// 只读使用者：A（被接管）与 C（选用时指定只读）；已删除的 orb 不列。
+	require.NoError(t, q.UpsertOrbDesktopProfile(ctx, db.UpsertOrbDesktopProfileParams{
+		OrbID: orbC, ProfileID: ptr(pid), ProfileMode: "readonly", ReadonlyReason: ptr("requested"), ReadonlyAt: ptr(int64(40)), Now: 40,
+	}))
+	readers, err := q.ListBrowserProfileReaders(ctx, ptr(pid))
+	require.NoError(t, err)
+	require.Len(t, readers, 2)
+	assert.Equal(t, orbA, readers[0].OrbID)
+	assert.Equal(t, orbC, readers[1].OrbID)
+	all, err := q.ListBrowserProfileReaders(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
+	require.NoError(t, q.SetOrbState(ctx, db.SetOrbStateParams{ID: orbC, State: "deleted", StateChangedAt: 50}))
+	readers, err = q.ListBrowserProfileReaders(ctx, ptr(pid))
+	require.NoError(t, err)
+	require.Len(t, readers, 1)
+
+	// 桌面镜像只改上报字段；重新绑定清空本地状态与接管记录。
+	require.NoError(t, q.UpsertOrbDesktopState(ctx, db.UpsertOrbDesktopStateParams{OrbID: orbA, DisplayReady: 1, Browser: "running", Dirty: 1, Now: 60}))
+	da, err = q.GetOrbDesktop(ctx, orbA)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, da.Reported)
+	assert.Equal(t, "running", da.Browser)
+	assert.Equal(t, "readonly", da.ProfileMode)
+	require.NoError(t, q.UpsertOrbDesktopProfile(ctx, db.UpsertOrbDesktopProfileParams{OrbID: orbA, ProfileID: ptr(pid), ProfileMode: "exclusive", Now: 61}))
+	da, err = q.GetOrbDesktop(ctx, orbA)
+	require.NoError(t, err)
+	assert.EqualValues(t, -1, da.LocalRev)
+	assert.Nil(t, da.ReadonlyReason)
+	assert.Nil(t, da.ReadonlyBy)
+	assert.Equal(t, "running", da.Browser, "绑定不动镜像字段")
+
+	// 释放后别人再取：fence 继续递增。
+	released, err := q.ReleaseBrowserProfileByOrb(ctx, orbB)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, released)
+	fence, err = q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{ID: pid, OrbID: orbA, Now: 70})
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, fence)
+
+	// 事件。
+	require.NoError(t, q.InsertBrowserProfileEvent(ctx, db.InsertBrowserProfileEventParams{
+		ProfileID: pid, OrbID: ptr(orbA), Ts: 80, Event: "profile.save_fenced", Detail: `{"fence":1}`,
+	}))
+	evs, err := q.ListBrowserProfileEvents(ctx, db.ListBrowserProfileEventsParams{ProfileID: pid, Lim: 10})
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	assert.Equal(t, "profile.save_fenced", evs[0].Event)
+
+	// 删除：被持有时 0 行；释放后删除，项目默认值由代码清空，绑定行的 profile_id 置空。
+	require.NoError(t, q.CreateProject(ctx, db.CreateProjectParams{ID: "prj_1", Name: "x", DefaultBrowserProfileID: ptr(pid), CreatedAt: 1, UpdatedAt: 1}))
+	gone, err := q.DeleteBrowserProfile(ctx, pid)
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, gone)
+	_, err = q.ReleaseBrowserProfileByOrb(ctx, orbA)
+	require.NoError(t, err)
+	gone, err = q.DeleteBrowserProfile(ctx, pid)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, gone)
+	require.NoError(t, q.ClearProjectsBrowserProfile(ctx, pid))
+	prj, err := q.GetProject(ctx, "prj_1")
+	require.NoError(t, err)
+	assert.Nil(t, prj.DefaultBrowserProfileID)
+	da, err = q.GetOrbDesktop(ctx, orbA)
+	require.NoError(t, err)
+	assert.Nil(t, da.ProfileID)
+	evs, err = q.ListBrowserProfileEvents(ctx, db.ListBrowserProfileEventsParams{ProfileID: pid, Lim: 10})
+	require.NoError(t, err)
+	assert.Empty(t, evs, "事件随 Profile 级联删除")
+
+	require.NoError(t, q.DeleteOrbDesktop(ctx, orbA))
+	_, err = q.GetOrbDesktop(ctx, orbA)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}

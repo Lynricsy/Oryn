@@ -1103,6 +1103,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/desktop/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 为 orb 选用、切换或解除浏览器 Profile
+         * @description `profileId` 空串 = 解除。本 orb 以 `exclusive` 持有的旧 Profile 先做关闭式保存再释放租约；只读副本直接丢弃。
+         *     `profileMode` 缺省 `exclusive`（语义见 `BrowserProfileMode`）：被另一台运行中的 orb 独占持有 → 409 `ProfileInUseConflict`，此时不做任何改动。
+         *     先唤醒 orb 并至多等 25s；Profile 不存在 → 404 `profile_not_found`；旧 orbd（hello 不含 `desktop`）→ 409 `orbd_outdated`。
+         */
+        put: operations["setOrbDesktopProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/desktop/profile/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 立即保存本 orb 持有的 Profile（活体保存，浏览器不关闭）
+         * @description 本 orb 没有独占持有 Profile → 409 `no_profile`；以只读副本使用 → 409 `profile_readonly`。
+         *     内容与当前修订相同时不产生新修订，照常返回。归档超限 → 413 `profile_too_large`；导出或落盘失败 → 502 `profile_save_failed`。
+         */
+        post: operations["saveOrbDesktopProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/desktop/browser/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 启动桌面上的 Chromium（幂等；返回时 DevTools 已就绪）
+         * @description 先唤醒 orb 并至多等 25s；显示或 Profile 未就绪 → 503 `orb_unavailable`；旧 orbd → 409 `orbd_outdated`。
+         */
+        post: operations["startOrbBrowser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/desktop/browser/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 关闭桌面上的 Chromium（SIGTERM，10s 后 SIGKILL；已停止则无操作） */
+        post: operations["stopOrbBrowser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/desktop/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 桌面观看与操作通道（WebSocket，二进制消息 = RFB 字节）
+         * @description 挂载方式同 `/api/v1/ws`（不经鉴权组，由一次性票据鉴权）。票据无效或已用过 → 升级前 HTTP 401；orb 不存在 → 404。
+         *     升级后唤醒 orb（至多 25s）并经 link 的 `desk` 流对接 Xvnc；客户端发来的每条消息都算一次（合并后的）用户交互。
+         *     客户端单条消息 ≤1MiB；写超时 30s；每台 orb ≤8 个观看者。
+         *     关闭码：`4401` 主体被吊销、`4409` `orbd_outdated`、`4410` `orb_deleted`、`4429` 观看者已满、
+         *     `4502` 桌面不可达（`display_unavailable` / 拨号失败，reason 为错误码）、`4503` orb 不可用（冻结 / 停机 / 唤醒超时）。
+         */
+        get: operations["orbDesktopSocket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 浏览器 Profile 列表（按 `name`） */
+        get: operations["listBrowserProfiles"];
+        put?: never;
+        /**
+         * 新建空 Profile（`revision = 0`）
+         * @description 名字非法 → 400 `invalid_request`；重名 → 409 `profile_name_taken`；已有 50 个 → 409 `profile_limit`。
+         */
+        post: operations["createBrowserProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BrowserProfileIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除 Profile 及其全部归档（同时清除引用它的项目默认值）
+         * @description 仍被某台 orb 独占持有 → 409 `ProfileInUseConflict`；只读使用者不阻止删除（它们的本地副本保留到下次同步）。
+         */
+        delete: operations["deleteBrowserProfile"];
+        options?: never;
+        head?: never;
+        /**
+         * 重命名 Profile
+         * @description 不存在 → 404 `profile_not_found`；名字非法 → 400 `invalid_request`；重名 → 409 `profile_name_taken`。
+         */
+        patch: operations["updateBrowserProfile"];
+        trace?: never;
+    };
     "/api/v1/blobs/{sha256}": {
         parameters: {
             query?: never;
@@ -1904,6 +2065,8 @@ export interface components {
         NotificationChannelId: string;
         /** @description `psub_<ulid>` */
         PushSubscriptionId: string;
+        /** @description `bpf_<ulid>` */
+        BrowserProfileId: string;
         /** @description omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。 */
         OmpFrame: {
             [key: string]: unknown;
@@ -1922,6 +2085,8 @@ export interface components {
              *     `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
              *     `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
              *     M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
+             *     M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
+             *     `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
              */
             code: string;
             message: string;
@@ -2102,6 +2267,8 @@ export interface components {
             /** @description 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省） */
             gitAuthorName?: string;
             gitAuthorEmail?: string;
+            /** @description 新线程（新建 orb 时）缺省选用的浏览器 Profile（M8）；未设置时省略 */
+            defaultBrowserProfileId?: components["schemas"]["BrowserProfileId"];
             createdAt: components["schemas"]["TimestampMs"];
             updatedAt: components["schemas"]["TimestampMs"];
             archivedAt?: components["schemas"]["TimestampMs"];
@@ -2126,6 +2293,8 @@ export interface components {
             gitAuthorName?: string;
             /** @description 须与 gitAuthorName 同时给出；规则同 GitIdentity.email */
             gitAuthorEmail?: string;
+            /** @description 默认浏览器 Profile（`bpf_…`）；空串等同省略。不存在 → 404 `profile_not_found` */
+            defaultBrowserProfileId?: string;
         };
         /** @description 只修改出现的字段；可选字符串字段传空串表示清除 */
         ProjectPatch: {
@@ -2143,6 +2312,8 @@ export interface components {
             /** @description 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖 */
             gitAuthorName?: string;
             gitAuthorEmail?: string;
+            /** @description 默认浏览器 Profile（`bpf_…`）；空串表示清除。不存在 → 404 `profile_not_found` */
+            defaultBrowserProfileId?: string;
             archived?: boolean;
         };
         /** @description orb 内 `git config --global user.name / user.email`；不得含换行或控制字符 */
@@ -2238,6 +2409,13 @@ export interface components {
             labels?: string[];
             /** @description 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空 */
             attachments?: components["schemas"]["AttachmentId"][];
+            /**
+             * @description 新 orb 选用的浏览器 Profile（M8；只对 `executor.kind = new_orb` 有效，挂到已有 orb 时给非空值 → 400 `invalid`）：
+             *     省略 = 用项目的 `defaultBrowserProfileId`；空串 = 不用；`bpf_…` = 指定（不存在 → 404 `profile_not_found`）。
+             */
+            browserProfileId?: string;
+            /** @description 选用方式，缺省 `exclusive`；没有解析出 Profile 时忽略 */
+            profileMode?: components["schemas"]["BrowserProfileMode"];
         };
         Thread: {
             id: components["schemas"]["ThreadId"];
@@ -2370,6 +2548,8 @@ export interface components {
             services?: components["schemas"]["OrbService"][];
             /** @description 有 portal 的服务端口（M4）；orb 已删除时省略 */
             portals?: components["schemas"]["OrbPortal"][];
+            /** @description 桌面镜像（M8）；orbd 上报过 `desktop.state` 才有，orb 已删除时省略 */
+            desktop?: components["schemas"]["OrbDesktop"];
         };
         OrbSetupRun: {
             id: components["schemas"]["SetupRunId"];
@@ -2465,6 +2645,152 @@ export interface components {
         PortalShareDuration: "1h" | "3h" | "1d" | "7d";
         PortalShareRequest: {
             duration: components["schemas"]["PortalShareDuration"];
+        };
+        /**
+         * @description orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
+         * @enum {string}
+         */
+        OrbBrowserStatus: "stopped" | "starting" | "running";
+        /**
+         * @description 选用 Profile 的方式（缺省 `exclusive`）：
+         *
+         *     - `exclusive`：取租约；Profile 被另一台运行中的 orb 独占持有 → 409 `ProfileInUseConflict`（体带持有者线程标题与开始时间）。
+         *     - `readonly`：装载最近一次已保存修订的副本，不取租约、不阻塞持有者；本 orb 的保存 / 冻结 / 停机都不回写，
+         *       持有者之后保存的新修订也不推送过来。
+         *     - `takeover`：接管。控制面先请原持有者做一次活体保存（15s；原 orb 已冻结或不可达则跳过，用最近一次已保存修订），
+         *       再在同一事务里把租约转给本 orb、围栏代数 +1、把原持有者降级为只读（`readonlyReason = taken_over`），
+         *       随后经 link 向原 orbd 发 `profile.mode`。原 orb 的浏览器照常运行、标签页不动，只是此后不再回写；
+         *       它要重新写回只能反过来再接管一次。
+         * @enum {string}
+         */
+        BrowserProfileMode: "exclusive" | "readonly" | "takeover";
+        /**
+         * @description orb 实际使用 Profile 的方式：`exclusive`（持有或等待持有租约，可回写）/ `readonly`（只读副本，从不回写）
+         * @enum {string}
+         */
+        BrowserProfileAccess: "exclusive" | "readonly";
+        /**
+         * @description 只读的原因：`requested`（选用时指定 `readonly`）/ `taken_over`（原本独占持有，被另一台 orb 接管）
+         * @enum {string}
+         */
+        BrowserProfileReadonlyReason: "requested" | "taken_over";
+        /**
+         * @description 最近一次保存失败的原因（成功保存后清除）：`too_large`（归档超过 256MiB）、`export_failed`（orbd 导出或落盘失败）、
+         *     `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
+         * @enum {string}
+         */
+        BrowserProfileSaveError: "too_large" | "export_failed" | "takeover_unsaved";
+        /**
+         * @description Profile 审计事件名（表 `browser_profile_events.event`，同时作为 slog 的 `event` 字段；不推送给客户端）：
+         *     `profile.saved`（产生新修订）、`profile.save_failed`、
+         *     `profile.save_fenced`（迟到的保存因围栏代数不符被丢弃；不报错给用户）、`profile.taken_over`（`orb_id` = 被降级为只读的原持有者）。
+         * @enum {string}
+         */
+        BrowserProfileEvent: "profile.saved" | "profile.save_failed" | "profile.save_fenced" | "profile.taken_over";
+        /** @description 正在使用 Profile 的 orb（独占持有者或只读使用者） */
+        BrowserProfileHolder: {
+            orbId: components["schemas"]["OrbId"];
+            /** @description 该 orb 上的线程（按创建时间） */
+            threadIds: components["schemas"]["ThreadId"][];
+            /** @description 代表线程（该 orb 最早创建的线程）；orb 上没有线程时省略 */
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description 代表线程的标题 */
+            threadTitle?: string;
+            /** @description 开始使用的时间（独占：取得租约；只读：选用只读副本或被降级） */
+            since: components["schemas"]["TimestampMs"];
+        };
+        BrowserProfile: {
+            id: components["schemas"]["BrowserProfileId"];
+            name: string;
+            /**
+             * Format: int64
+             * @description 当前修订；0 = 空（从未保存过）
+             */
+            revision: number;
+            /**
+             * Format: int64
+             * @description 当前修订归档的密文字节数
+             */
+            sizeBytes: number;
+            savedAt?: components["schemas"]["TimestampMs"];
+            saveError?: components["schemas"]["BrowserProfileSaveError"];
+            /** @description 独占持有者（租约）；没人持有时省略 */
+            holder?: components["schemas"]["BrowserProfileHolder"];
+            /** @description 以只读副本使用它的 orb（不含已删除的）；为空时省略 */
+            readers?: components["schemas"]["BrowserProfileHolder"][];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        BrowserProfileList: {
+            profiles: components["schemas"]["BrowserProfile"][];
+        };
+        BrowserProfileCreate: {
+            /** @description 1–40 个字符，trim 后非空，不含控制字符；全局唯一 */
+            name: string;
+        };
+        BrowserProfilePatch: {
+            /** @description 规则同 `BrowserProfileCreate.name` */
+            name: string;
+        };
+        /**
+         * @description Profile 被另一台运行中的 orb 独占持有时的 409 体（`createThread` / `setOrbDesktopProfile` 以 `exclusive` 选用，
+         *     或 `deleteBrowserProfile` 时仍被持有）。客户端据此让用户在「只读使用」与「接管」之间选择后重发。
+         */
+        ProfileInUseConflict: {
+            /** @enum {string} */
+            code: "profile_in_use";
+            message: string;
+            profileId: components["schemas"]["BrowserProfileId"];
+            profileName: string;
+            /** @description 当前持有者（带代表线程的标题与开始持有的时间） */
+            holder: components["schemas"]["BrowserProfileHolder"];
+        };
+        /**
+         * @description 本 orb 与所选 Profile 的关系：`attached`（本 orb 独占持有）、`readonly`（本 orb 以只读副本使用，见 `readonlyReason`）、
+         *     `released`（独占方式但没人持有；本 orb 下次运行时自动取回）、`in_use`（独占方式但被另一台 orb 持有；本地目录已清空）、
+         *     `error`（装载失败，见 `error`）。
+         * @enum {string}
+         */
+        OrbDesktopProfileStatus: "attached" | "readonly" | "released" | "in_use" | "error";
+        /** @description 本 orb 因被接管而降级为只读的记录 */
+        OrbDesktopTakenOver: {
+            /** @description 接管方的代表线程 */
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description 接管当时接管方线程的标题（即 `profile.mode` 的 `by`） */
+            threadTitle?: string;
+            at: components["schemas"]["TimestampMs"];
+        };
+        OrbDesktopProfile: {
+            id: components["schemas"]["BrowserProfileId"];
+            name: string;
+            status: components["schemas"]["OrbDesktopProfileStatus"];
+            mode: components["schemas"]["BrowserProfileAccess"];
+            /**
+             * Format: int64
+             * @description 本 orb 本地目录对应的修订（未装载为 0）
+             */
+            revision: number;
+            /** @description `status=error` 时的错误码（orbd 本机 API 的 `invalid_archive` / `too_large` / `no_space` 等） */
+            error?: string;
+            /** @description `status=in_use` 时的持有者 */
+            heldBy?: components["schemas"]["BrowserProfileHolder"];
+            /** @description `mode=readonly` 时的原因 */
+            readonlyReason?: components["schemas"]["BrowserProfileReadonlyReason"];
+            /** @description `readonlyReason=taken_over` 时：被谁接管（界面显示「只读 Profile · 已被〈线程〉接管」） */
+            takenOverBy?: components["schemas"]["OrbDesktopTakenOver"];
+        };
+        OrbDesktop: {
+            /** @description X 显示 `:1` 与窗口管理器已就绪 */
+            displayReady: boolean;
+            browser: components["schemas"]["OrbBrowserStatus"];
+            /** @description 选用的 Profile；不用 Profile 时省略 */
+            profile?: components["schemas"]["OrbDesktopProfile"];
+        };
+        OrbDesktopProfilePut: {
+            /** @description `bpf_…`；空串 = 解除（定为不用 Profile） */
+            profileId: string;
+            /** @description 选用方式，缺省 `exclusive`；`profileId` 为空串时忽略 */
+            profileMode?: components["schemas"]["BrowserProfileMode"];
         };
         OrbList: {
             orbs: components["schemas"]["Orb"][];
@@ -3603,8 +3929,8 @@ export interface components {
         JobDeleteSnapshotParams: {
             snapshotId: components["schemas"]["SnapshotId"];
         };
-        /** @description yamux 流的第一行（JSON + `\n`）。`desk` 由 M8 定义。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"];
+        /** @description yamux 流的第一行（JSON + `\n`）。 */
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -3672,6 +3998,24 @@ export interface components {
             message?: string;
         };
         /**
+         * @description 由 orynd 打开（M8），每个桌面观看者一条。orbd 先回一行 `LinkDeskReply` + `\n`；`ok=true` 之后流上是与
+         *     Xvnc（unix socket `$HOME/.oryn/vnc.sock`）之间的原始 RFB 字节。只有 hello `features` 含 `desktop` 的 orbd 才接受。
+         */
+        LinkStreamDesk: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "desk";
+        };
+        /** @description orbd 对 `desk` 流的应答行 */
+        LinkDeskReply: {
+            ok: boolean;
+            /** @description `ok=false` 时：`display_unavailable`（显示未就绪）、`failed`（连 Xvnc 的 socket 失败，5s） */
+            code?: string;
+            message?: string;
+        };
+        /**
          * @description `ctl` 方法（括号内为方向与形态）：
          *     `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
          *     `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
@@ -3679,9 +4023,10 @@ export interface components {
          *     `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
          *     `terminal.gap`（orbd→orynd 通知，M3）；
          *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
+         *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -3728,8 +4073,9 @@ export interface components {
             threads: components["schemas"]["LinkCtlHelloThread"][];
             /**
              * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
-             *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）。
-             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync 请求回 409 `orbd_outdated`。
+             *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
+             *     M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
+             *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
         };
@@ -3928,6 +4274,41 @@ export interface components {
             /** @description 文件服务与未指定线程的服务归属的线程（本 orb 最早创建的线程） */
             primaryThreadId?: components["schemas"]["ThreadId"];
         };
+        /**
+         * @description orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`
+         *     任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
+         */
+        LinkCtlDesktopStateParams: {
+            displayReady: boolean;
+            browser: components["schemas"]["OrbBrowserStatus"];
+            /** @description orbd 本地标记里的 Profile（`bpf_…`）；空串或省略 = 没有 */
+            profileId?: string;
+            /** @description 标记里的使用方式；没有 Profile 时省略 */
+            profileMode?: components["schemas"]["BrowserProfileAccess"];
+            /** @description `profileMode=readonly` 时的原因 */
+            readonlyReason?: components["schemas"]["BrowserProfileReadonlyReason"];
+            /** @description `readonlyReason=taken_over` 时接管方线程的标题（来自 `profile.mode` 的 `by`） */
+            readonlyBy?: string;
+            /** @description 自上次装载或关闭式导出以来浏览器启动过（有东西可存）；只读时恒为 false */
+            dirty: boolean;
+        };
+        /**
+         * @description orynd→orbd 请求（M8；仅对 `features` 含 `desktop` 的 orbd；结果 `LinkCtlOkResult`，10s，失败只记日志）。
+         *     目前只在接管时发给原持有者：`{profileId, mode: readonly, reason: taken_over, by: <接管方线程标题>}`。
+         *     orbd 只在标记的 `profileId` 与之相同时生效：改写标记的使用方式、`dirty=false`，浏览器照常运行、标签页不动，
+         *     此后 `/desktop/profile/export` 回 409 `profile_readonly`（跳过一切保存）；标记不符 → 错误 `profile_mismatch`。
+         *     `mode=exclusive` → 错误 `invalid_params`（独占只能经 `PUT /desktop/profile` 重新装载取得）。
+         *     这条请求丢失无害：控制面按围栏代数丢弃迟到的保存（记 `profile.save_fenced`），且下次同步的 `PUT /desktop/profile` 带 `mode`。
+         */
+        LinkCtlProfileModeParams: {
+            profileId: components["schemas"]["BrowserProfileId"];
+            mode: components["schemas"]["BrowserProfileAccess"];
+            reason: components["schemas"]["BrowserProfileReadonlyReason"];
+            /** @description 接管方线程的标题（`reason=taken_over` 时） */
+            by?: string;
+            /** @description 接管方的代表线程 */
+            byThreadId?: components["schemas"]["ThreadId"];
+        };
     };
     responses: {
         /** @description 错误 */
@@ -3979,6 +4360,7 @@ export interface components {
         PublishedFileIdPath: components["schemas"]["PublishedFileId"];
         NotificationChannelIdPath: components["schemas"]["NotificationChannelId"];
         PushSubscriptionIdPath: components["schemas"]["PushSubscriptionId"];
+        BrowserProfileIdPath: components["schemas"]["BrowserProfileId"];
     };
     requestBodies: never;
     headers: never;
@@ -4579,6 +4961,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ThreadEnvelope"];
+                };
+            };
+            /** @description `profile_in_use`：选用的浏览器 Profile 被另一台运行中的 orb 独占持有且 `profileMode` 为 `exclusive`（其它 409 为普通 `Error`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileInUseConflict"];
                 };
             };
             default: components["responses"]["Error"];
@@ -5658,6 +6049,238 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOrbDesktopProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrbDesktopProfilePut"];
+            };
+        };
+        responses: {
+            /** @description 同步完成后的 orb（`desktop.profile` 为新绑定） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Orb"];
+                };
+            };
+            /** @description `profile_in_use`（其它 409 为普通 `Error`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileInUseConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    saveOrbDesktopProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 保存后的 Profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserProfile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startOrbBrowser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description orb（`desktop.browser` 为 `running`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Orb"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopOrbBrowser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description orb（`desktop.browser` 为 `stopped`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Orb"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    orbDesktopSocket: {
+        parameters: {
+            query: {
+                /** @description `POST /api/v1/ws-ticket` 签发的票据 */
+                ticket: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 切换到 WebSocket */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBrowserProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserProfileList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createBrowserProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserProfile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteBrowserProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BrowserProfileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `profile_in_use` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileInUseConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBrowserProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BrowserProfileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BrowserProfilePatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的 Profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserProfile"];
+                };
             };
             default: components["responses"]["Error"];
         };

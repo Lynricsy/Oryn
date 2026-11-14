@@ -37,6 +37,108 @@ func (e AgentStatus) Valid() bool {
 	}
 }
 
+// Defines values for BrowserProfileAccess.
+const (
+	BrowserProfileAccessExclusive BrowserProfileAccess = "exclusive"
+	BrowserProfileAccessReadonly  BrowserProfileAccess = "readonly"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProfileAccess enum.
+func (e BrowserProfileAccess) Valid() bool {
+	switch e {
+	case BrowserProfileAccessExclusive:
+		return true
+	case BrowserProfileAccessReadonly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrowserProfileEvent.
+const (
+	BrowserProfileEventSaveFailed BrowserProfileEvent = "profile.save_failed"
+	BrowserProfileEventSaveFenced BrowserProfileEvent = "profile.save_fenced"
+	BrowserProfileEventSaved      BrowserProfileEvent = "profile.saved"
+	BrowserProfileEventTakenOver  BrowserProfileEvent = "profile.taken_over"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProfileEvent enum.
+func (e BrowserProfileEvent) Valid() bool {
+	switch e {
+	case BrowserProfileEventSaveFailed:
+		return true
+	case BrowserProfileEventSaveFenced:
+		return true
+	case BrowserProfileEventSaved:
+		return true
+	case BrowserProfileEventTakenOver:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrowserProfileMode.
+const (
+	BrowserProfileModeExclusive BrowserProfileMode = "exclusive"
+	BrowserProfileModeReadonly  BrowserProfileMode = "readonly"
+	BrowserProfileModeTakeover  BrowserProfileMode = "takeover"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProfileMode enum.
+func (e BrowserProfileMode) Valid() bool {
+	switch e {
+	case BrowserProfileModeExclusive:
+		return true
+	case BrowserProfileModeReadonly:
+		return true
+	case BrowserProfileModeTakeover:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrowserProfileReadonlyReason.
+const (
+	BrowserProfileReadonlyReasonRequested BrowserProfileReadonlyReason = "requested"
+	BrowserProfileReadonlyReasonTakenOver BrowserProfileReadonlyReason = "taken_over"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProfileReadonlyReason enum.
+func (e BrowserProfileReadonlyReason) Valid() bool {
+	switch e {
+	case BrowserProfileReadonlyReasonRequested:
+		return true
+	case BrowserProfileReadonlyReasonTakenOver:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BrowserProfileSaveError.
+const (
+	ExportFailed    BrowserProfileSaveError = "export_failed"
+	TakeoverUnsaved BrowserProfileSaveError = "takeover_unsaved"
+	TooLarge        BrowserProfileSaveError = "too_large"
+)
+
+// Valid indicates whether the value is a known member of the BrowserProfileSaveError enum.
+func (e BrowserProfileSaveError) Valid() bool {
+	switch e {
+	case ExportFailed:
+		return true
+	case TakeoverUnsaved:
+		return true
+	case TooLarge:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeviceKind.
 const (
 	Cli     DeviceKind = "cli"
@@ -311,6 +413,7 @@ const (
 	MethodAgentStatus       LinkCtlMethod = "agent.status"
 	MethodAgentStop         LinkCtlMethod = "agent.stop"
 	MethodBlobFetch         LinkCtlMethod = "blob.fetch"
+	MethodDesktopState      LinkCtlMethod = "desktop.state"
 	MethodEntriesAppend     LinkCtlMethod = "entries.append"
 	MethodEntriesCursors    LinkCtlMethod = "entries.cursors"
 	MethodEntriesReset      LinkCtlMethod = "entries.reset"
@@ -320,6 +423,7 @@ const (
 	MethodHello             LinkCtlMethod = "hello"
 	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
 	MethodPortalConfigure   LinkCtlMethod = "portal.configure"
+	MethodProfileMode       LinkCtlMethod = "profile.mode"
 	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
 	MethodProjectScriptsSet LinkCtlMethod = "project.scripts.set"
 	MethodResumeRun         LinkCtlMethod = "resume.run"
@@ -344,6 +448,8 @@ func (e LinkCtlMethod) Valid() bool {
 		return true
 	case MethodBlobFetch:
 		return true
+	case MethodDesktopState:
+		return true
 	case MethodEntriesAppend:
 		return true
 	case MethodEntriesCursors:
@@ -361,6 +467,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodMetricsSample:
 		return true
 	case MethodPortalConfigure:
+		return true
+	case MethodProfileMode:
 		return true
 	case MethodProjectScriptsGet:
 		return true
@@ -472,6 +580,21 @@ const (
 func (e LinkStreamCtlT) Valid() bool {
 	switch e {
 	case Ctl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamDeskT.
+const (
+	Desk LinkStreamDeskT = "desk"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamDeskT enum.
+func (e LinkStreamDeskT) Valid() bool {
+	switch e {
+	case Desk:
 		return true
 	default:
 		return false
@@ -661,6 +784,54 @@ func (e NotificationLocale) Valid() bool {
 	}
 }
 
+// Defines values for OrbBrowserStatus.
+const (
+	OrbBrowserStatusRunning  OrbBrowserStatus = "running"
+	OrbBrowserStatusStarting OrbBrowserStatus = "starting"
+	OrbBrowserStatusStopped  OrbBrowserStatus = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the OrbBrowserStatus enum.
+func (e OrbBrowserStatus) Valid() bool {
+	switch e {
+	case OrbBrowserStatusRunning:
+		return true
+	case OrbBrowserStatusStarting:
+		return true
+	case OrbBrowserStatusStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbDesktopProfileStatus.
+const (
+	OrbDesktopProfileStatusAttached OrbDesktopProfileStatus = "attached"
+	OrbDesktopProfileStatusError    OrbDesktopProfileStatus = "error"
+	OrbDesktopProfileStatusInUse    OrbDesktopProfileStatus = "in_use"
+	OrbDesktopProfileStatusReadonly OrbDesktopProfileStatus = "readonly"
+	OrbDesktopProfileStatusReleased OrbDesktopProfileStatus = "released"
+)
+
+// Valid indicates whether the value is a known member of the OrbDesktopProfileStatus enum.
+func (e OrbDesktopProfileStatus) Valid() bool {
+	switch e {
+	case OrbDesktopProfileStatusAttached:
+		return true
+	case OrbDesktopProfileStatusError:
+		return true
+	case OrbDesktopProfileStatusInUse:
+		return true
+	case OrbDesktopProfileStatusReadonly:
+		return true
+	case OrbDesktopProfileStatusReleased:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbServiceSource.
 const (
 	OrbServiceSourceDynamic OrbServiceSource = "dynamic"
@@ -799,6 +970,21 @@ func (e PortalShareDuration) Valid() bool {
 	case PortalShareDuration3H:
 		return true
 	case PortalShareDuration7D:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProfileInUseConflictCode.
+const (
+	ProfileInUseConflictCodeProfileInUse ProfileInUseConflictCode = "profile_in_use"
+)
+
+// Valid indicates whether the value is a known member of the ProfileInUseConflictCode enum.
+func (e ProfileInUseConflictCode) Valid() bool {
+	switch e {
+	case ProfileInUseConflictCodeProfileInUse:
 		return true
 	default:
 		return false
@@ -1776,16 +1962,121 @@ type BarkChannelConfig struct {
 	Server *string `json:"server,omitempty"`
 }
 
+// BrowserProfile defines model for BrowserProfile.
+type BrowserProfile struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Holder 独占持有者（租约）；没人持有时省略
+	Holder *BrowserProfileHolder `json:"holder,omitempty"`
+
+	// ID `bpf_<ulid>`
+	ID   BrowserProfileID `json:"id"`
+	Name string           `json:"name"`
+
+	// Readers 以只读副本使用它的 orb（不含已删除的）；为空时省略
+	Readers []BrowserProfileHolder `json:"readers,omitempty"`
+
+	// Revision 当前修订；0 = 空（从未保存过）
+	Revision int64 `json:"revision"`
+
+	// SaveError 最近一次保存失败的原因（成功保存后清除）：`too_large`（归档超过 256MiB）、`export_failed`（orbd 导出或落盘失败）、
+	// `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
+	SaveError *BrowserProfileSaveError `json:"saveError,omitempty"`
+
+	// SavedAt UTC 毫秒时间戳
+	SavedAt *TimestampMs `json:"savedAt,omitempty"`
+
+	// SizeBytes 当前修订归档的密文字节数
+	SizeBytes int64 `json:"sizeBytes"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// BrowserProfileAccess orb 实际使用 Profile 的方式：`exclusive`（持有或等待持有租约，可回写）/ `readonly`（只读副本，从不回写）
+type BrowserProfileAccess string
+
+// BrowserProfileCreate defines model for BrowserProfileCreate.
+type BrowserProfileCreate struct {
+	// Name 1–40 个字符，trim 后非空，不含控制字符；全局唯一
+	Name string `json:"name"`
+}
+
+// BrowserProfileEvent Profile 审计事件名（表 `browser_profile_events.event`，同时作为 slog 的 `event` 字段；不推送给客户端）：
+// `profile.saved`（产生新修订）、`profile.save_failed`、
+// `profile.save_fenced`（迟到的保存因围栏代数不符被丢弃；不报错给用户）、`profile.taken_over`（`orb_id` = 被降级为只读的原持有者）。
+type BrowserProfileEvent string
+
+// BrowserProfileHolder 正在使用 Profile 的 orb（独占持有者或只读使用者）
+type BrowserProfileHolder struct {
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID OrbID `json:"orbId"`
+
+	// Since 开始使用的时间（独占：取得租约；只读：选用只读副本或被降级）
+	Since TimestampMs `json:"since"`
+
+	// ThreadID 代表线程（该 orb 最早创建的线程）；orb 上没有线程时省略
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// ThreadIds 该 orb 上的线程（按创建时间）
+	ThreadIds []ThreadID `json:"threadIds"`
+
+	// ThreadTitle 代表线程的标题
+	ThreadTitle *string `json:"threadTitle,omitempty"`
+}
+
+// BrowserProfileID `bpf_<ulid>`
+type BrowserProfileID = string
+
+// BrowserProfileList defines model for BrowserProfileList.
+type BrowserProfileList struct {
+	Profiles []BrowserProfile `json:"profiles"`
+}
+
+// BrowserProfileMode 选用 Profile 的方式（缺省 `exclusive`）：
+//
+//   - `exclusive`：取租约；Profile 被另一台运行中的 orb 独占持有 → 409 `ProfileInUseConflict`（体带持有者线程标题与开始时间）。
+//   - `readonly`：装载最近一次已保存修订的副本，不取租约、不阻塞持有者；本 orb 的保存 / 冻结 / 停机都不回写，
+//     持有者之后保存的新修订也不推送过来。
+//   - `takeover`：接管。控制面先请原持有者做一次活体保存（15s；原 orb 已冻结或不可达则跳过，用最近一次已保存修订），
+//     再在同一事务里把租约转给本 orb、围栏代数 +1、把原持有者降级为只读（`readonlyReason = taken_over`），
+//     随后经 link 向原 orbd 发 `profile.mode`。原 orb 的浏览器照常运行、标签页不动，只是此后不再回写；
+//     它要重新写回只能反过来再接管一次。
+type BrowserProfileMode string
+
+// BrowserProfilePatch defines model for BrowserProfilePatch.
+type BrowserProfilePatch struct {
+	// Name 规则同 `BrowserProfileCreate.name`
+	Name string `json:"name"`
+}
+
+// BrowserProfileReadonlyReason 只读的原因：`requested`（选用时指定 `readonly`）/ `taken_over`（原本独占持有，被另一台 orb 接管）
+type BrowserProfileReadonlyReason string
+
+// BrowserProfileSaveError 最近一次保存失败的原因（成功保存后清除）：`too_large`（归档超过 256MiB）、`export_failed`（orbd 导出或落盘失败）、
+// `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
+type BrowserProfileSaveError string
+
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
 	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
 	Attachments []AttachmentID `json:"attachments,omitempty"`
+
+	// BrowserProfileID 新 orb 选用的浏览器 Profile（M8；只对 `executor.kind = new_orb` 有效，挂到已有 orb 时给非空值 → 400 `invalid`）：
+	// 省略 = 用项目的 `defaultBrowserProfileId`；空串 = 不用；`bpf_…` = 指定（不存在 → 404 `profile_not_found`）。
+	BrowserProfileID *string `json:"browserProfileId,omitempty"`
 
 	// Executor 线程执行位置
 	Executor ThreadExecutor `json:"executor"`
 	Images   []ImageContent `json:"images,omitempty"`
 	Labels   []string       `json:"labels,omitempty"`
 	Model    *ModelRef      `json:"model,omitempty"`
+
+	// ProfileMode 选用方式，缺省 `exclusive`；没有解析出 Profile 时忽略
+	ProfileMode *BrowserProfileMode `json:"profileMode,omitempty"`
 
 	// ProjectID `prj_<ulid>`
 	ProjectID     *ProjectID `json:"projectId,omitempty"`
@@ -1947,6 +2238,8 @@ type Error struct {
 	// `channel_exists`（409，已有 Telegram 渠道）、`invalid_channel`（400）、`channel_not_linked`（409）、`push_invalid`（400）、
 	// `share_busy`（503，匿名连接数已满）、`sync_no_commits`（409）、`sync_no_common`（409）、`sync_shallow`（409）、`sync_bundle_gone`（404）。
 	// M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
+	// M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
+	// `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -2311,6 +2604,29 @@ type LinkCtlBlobFetchResult struct {
 	Found bool `json:"found"`
 }
 
+// LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`
+// 任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
+type LinkCtlDesktopStateParams struct {
+	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
+	Browser OrbBrowserStatus `json:"browser"`
+
+	// Dirty 自上次装载或关闭式导出以来浏览器启动过（有东西可存）；只读时恒为 false
+	Dirty        bool `json:"dirty"`
+	DisplayReady bool `json:"displayReady"`
+
+	// ProfileID orbd 本地标记里的 Profile（`bpf_…`）；空串或省略 = 没有
+	ProfileID *string `json:"profileId,omitempty"`
+
+	// ProfileMode 标记里的使用方式；没有 Profile 时省略
+	ProfileMode *BrowserProfileAccess `json:"profileMode,omitempty"`
+
+	// ReadonlyBy `readonlyReason=taken_over` 时接管方线程的标题（来自 `profile.mode` 的 `by`）
+	ReadonlyBy *string `json:"readonlyBy,omitempty"`
+
+	// ReadonlyReason `profileMode=readonly` 时的原因
+	ReadonlyReason *BrowserProfileReadonlyReason `json:"readonlyReason,omitempty"`
+}
+
 // LinkCtlEntriesAppendParams `lines` 为 `[baseOffset, endOffset)` 内以 `\n` 结尾的完整行（不含 `\n`）
 type LinkCtlEntriesAppendParams struct {
 	BaseOffset int64    `json:"baseOffset"`
@@ -2399,8 +2715,9 @@ type LinkCtlHelloParams struct {
 	Arch         string `json:"arch"`
 
 	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
-	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）。
-	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync 请求回 409 `orbd_outdated`。
+	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
+	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
+	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
 	Os          string               `json:"os"`
@@ -2424,6 +2741,7 @@ type LinkCtlHelloThread struct {
 // `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
 // `terminal.gap`（orbd→orynd 通知，M3）；
 // `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
+// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -2438,6 +2756,7 @@ type LinkCtlNotification struct {
 	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
+	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -2467,6 +2786,29 @@ type LinkCtlPortalConfigureParams struct {
 
 	// URLTemplate portal 地址模板，如 `https://t-{code}-p{port}.orb.example.com/`；空串 = 控制面未配置 `portal_domain`
 	URLTemplate string `json:"urlTemplate"`
+}
+
+// LinkCtlProfileModeParams orynd→orbd 请求（M8；仅对 `features` 含 `desktop` 的 orbd；结果 `LinkCtlOkResult`，10s，失败只记日志）。
+// 目前只在接管时发给原持有者：`{profileId, mode: readonly, reason: taken_over, by: <接管方线程标题>}`。
+// orbd 只在标记的 `profileId` 与之相同时生效：改写标记的使用方式、`dirty=false`，浏览器照常运行、标签页不动，
+// 此后 `/desktop/profile/export` 回 409 `profile_readonly`（跳过一切保存）；标记不符 → 错误 `profile_mismatch`。
+// `mode=exclusive` → 错误 `invalid_params`（独占只能经 `PUT /desktop/profile` 重新装载取得）。
+// 这条请求丢失无害：控制面按围栏代数丢弃迟到的保存（记 `profile.save_fenced`），且下次同步的 `PUT /desktop/profile` 带 `mode`。
+type LinkCtlProfileModeParams struct {
+	// By 接管方线程的标题（`reason=taken_over` 时）
+	By *string `json:"by,omitempty"`
+
+	// ByThreadID 接管方的代表线程
+	ByThreadID *ThreadID `json:"byThreadId,omitempty"`
+
+	// Mode orb 实际使用 Profile 的方式：`exclusive`（持有或等待持有租约，可回写）/ `readonly`（只读副本，从不回写）
+	Mode BrowserProfileAccess `json:"mode"`
+
+	// ProfileID `bpf_<ulid>`
+	ProfileID BrowserProfileID `json:"profileId"`
+
+	// Reason 只读的原因：`requested`（选用时指定 `readonly`）/ `taken_over`（原本独占持有，被另一台 orb 接管）
+	Reason BrowserProfileReadonlyReason `json:"reason"`
 }
 
 // LinkCtlProjectScripts 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果
@@ -2499,6 +2841,7 @@ type LinkCtlRequest struct {
 	// `setup.result`（orbd→orynd 通知）、`project.scripts.get` / `project.scripts.set`（orbd→orynd 请求，只作用于本 orb 所属项目）；
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
+	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -2611,6 +2954,14 @@ type LinkCtlTerminalGapParams struct {
 	ThreadID ThreadID `json:"threadId"`
 }
 
+// LinkDeskReply orbd 对 `desk` 流的应答行
+type LinkDeskReply struct {
+	// Code `ok=false` 时：`display_unavailable`（显示未就绪）、`failed`（连 Xvnc 的 socket 失败，5s）
+	Code    *string `json:"code,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Ok      bool    `json:"ok"`
+}
+
 // LinkPortalReply orbd 对 `portal` 流的应答行
 type LinkPortalReply struct {
 	// Code `ok=false` 时：`not_exposed`（端口不属于有 portal 的服务）、`forbidden_port`（egress 端口）、`connection_refused`、`timeout`、`failed`
@@ -2651,6 +3002,15 @@ type LinkStreamCtl struct {
 // LinkStreamCtlT defines model for LinkStreamCtl.T.
 type LinkStreamCtlT string
 
+// LinkStreamDesk 由 orynd 打开（M8），每个桌面观看者一条。orbd 先回一行 `LinkDeskReply` + `\n`；`ok=true` 之后流上是与
+// Xvnc（unix socket `$HOME/.oryn/vnc.sock`）之间的原始 RFB 字节。只有 hello `features` 含 `desktop` 的 orbd 才接受。
+type LinkStreamDesk struct {
+	T LinkStreamDeskT `json:"t"`
+}
+
+// LinkStreamDeskT defines model for LinkStreamDesk.T.
+type LinkStreamDeskT string
+
 // LinkStreamEgress 每个出站代理连接一条；之后为裸 HTTP/1.1 字节流
 type LinkStreamEgress struct {
 	T LinkStreamEgressT `json:"t"`
@@ -2668,7 +3028,7 @@ type LinkStreamFs struct {
 // LinkStreamFsT defines model for LinkStreamFs.T.
 type LinkStreamFsT string
 
-// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。`desk` 由 M8 定义。
+// LinkStreamHeader yamux 流的第一行（JSON + `\n`）。
 type LinkStreamHeader struct {
 	union json.RawMessage
 }
@@ -2897,6 +3257,9 @@ type Orb struct {
 	// DeletedAt UTC 毫秒时间戳
 	DeletedAt *TimestampMs `json:"deletedAt,omitempty"`
 
+	// Desktop 桌面镜像（M8）；orbd 上报过 `desktop.state` 才有，orb 已删除时省略
+	Desktop *OrbDesktop `json:"desktop,omitempty"`
+
 	// FailureReason `state=failed` 时导致失败的原因
 	FailureReason *string `json:"failureReason,omitempty"`
 
@@ -2968,6 +3331,77 @@ type OrbAttachmentEnsureResult struct {
 
 	// Present `path` 处已是大小相同的普通文件
 	Present bool `json:"present"`
+}
+
+// OrbBrowserStatus orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
+type OrbBrowserStatus string
+
+// OrbDesktop defines model for OrbDesktop.
+type OrbDesktop struct {
+	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
+	Browser OrbBrowserStatus `json:"browser"`
+
+	// DisplayReady X 显示 `:1` 与窗口管理器已就绪
+	DisplayReady bool `json:"displayReady"`
+
+	// Profile 选用的 Profile；不用 Profile 时省略
+	Profile *OrbDesktopProfile `json:"profile,omitempty"`
+}
+
+// OrbDesktopProfile defines model for OrbDesktopProfile.
+type OrbDesktopProfile struct {
+	// Error `status=error` 时的错误码（orbd 本机 API 的 `invalid_archive` / `too_large` / `no_space` 等）
+	Error *string `json:"error,omitempty"`
+
+	// HeldBy `status=in_use` 时的持有者
+	HeldBy *BrowserProfileHolder `json:"heldBy,omitempty"`
+
+	// ID `bpf_<ulid>`
+	ID BrowserProfileID `json:"id"`
+
+	// Mode orb 实际使用 Profile 的方式：`exclusive`（持有或等待持有租约，可回写）/ `readonly`（只读副本，从不回写）
+	Mode BrowserProfileAccess `json:"mode"`
+	Name string               `json:"name"`
+
+	// ReadonlyReason `mode=readonly` 时的原因
+	ReadonlyReason *BrowserProfileReadonlyReason `json:"readonlyReason,omitempty"`
+
+	// Revision 本 orb 本地目录对应的修订（未装载为 0）
+	Revision int64 `json:"revision"`
+
+	// Status 本 orb 与所选 Profile 的关系：`attached`（本 orb 独占持有）、`readonly`（本 orb 以只读副本使用，见 `readonlyReason`）、
+	// `released`（独占方式但没人持有；本 orb 下次运行时自动取回）、`in_use`（独占方式但被另一台 orb 持有；本地目录已清空）、
+	// `error`（装载失败，见 `error`）。
+	Status OrbDesktopProfileStatus `json:"status"`
+
+	// TakenOverBy `readonlyReason=taken_over` 时：被谁接管（界面显示「只读 Profile · 已被〈线程〉接管」）
+	TakenOverBy *OrbDesktopTakenOver `json:"takenOverBy,omitempty"`
+}
+
+// OrbDesktopProfilePut defines model for OrbDesktopProfilePut.
+type OrbDesktopProfilePut struct {
+	// ProfileID `bpf_…`；空串 = 解除（定为不用 Profile）
+	ProfileID string `json:"profileId"`
+
+	// ProfileMode 选用方式，缺省 `exclusive`；`profileId` 为空串时忽略
+	ProfileMode *BrowserProfileMode `json:"profileMode,omitempty"`
+}
+
+// OrbDesktopProfileStatus 本 orb 与所选 Profile 的关系：`attached`（本 orb 独占持有）、`readonly`（本 orb 以只读副本使用，见 `readonlyReason`）、
+// `released`（独占方式但没人持有；本 orb 下次运行时自动取回）、`in_use`（独占方式但被另一台 orb 持有；本地目录已清空）、
+// `error`（装载失败，见 `error`）。
+type OrbDesktopProfileStatus string
+
+// OrbDesktopTakenOver 本 orb 因被接管而降级为只读的记录
+type OrbDesktopTakenOver struct {
+	// At UTC 毫秒时间戳
+	At TimestampMs `json:"at"`
+
+	// ThreadID 接管方的代表线程
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// ThreadTitle 接管当时接管方线程的标题（即 `profile.mode` 的 `by`）
+	ThreadTitle *string `json:"threadTitle,omitempty"`
 }
 
 // OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
@@ -3226,6 +3660,23 @@ type PortalShareRequest struct {
 	Duration PortalShareDuration `json:"duration"`
 }
 
+// ProfileInUseConflict Profile 被另一台运行中的 orb 独占持有时的 409 体（`createThread` / `setOrbDesktopProfile` 以 `exclusive` 选用，
+// 或 `deleteBrowserProfile` 时仍被持有）。客户端据此让用户在「只读使用」与「接管」之间选择后重发。
+type ProfileInUseConflict struct {
+	Code ProfileInUseConflictCode `json:"code"`
+
+	// Holder 当前持有者（带代表线程的标题与开始持有的时间）
+	Holder  BrowserProfileHolder `json:"holder"`
+	Message string               `json:"message"`
+
+	// ProfileID `bpf_<ulid>`
+	ProfileID   BrowserProfileID `json:"profileId"`
+	ProfileName string           `json:"profileName"`
+}
+
+// ProfileInUseConflictCode defines model for ProfileInUseConflict.Code.
+type ProfileInUseConflictCode string
+
 // Project defines model for Project.
 type Project struct {
 	// ArchivedAt UTC 毫秒时间戳
@@ -3234,8 +3685,11 @@ type Project struct {
 	Color      *string      `json:"color,omitempty"`
 
 	// CreatedAt UTC 毫秒时间戳
-	CreatedAt      TimestampMs `json:"createdAt"`
-	DefaultOrbType *string     `json:"defaultOrbType,omitempty"`
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// DefaultBrowserProfileID 新线程（新建 orb 时）缺省选用的浏览器 Profile（M8）；未设置时省略
+	DefaultBrowserProfileID *BrowserProfileID `json:"defaultBrowserProfileId,omitempty"`
+	DefaultOrbType          *string           `json:"defaultOrbType,omitempty"`
 
 	// DefaultProvider provider 名称
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
@@ -3261,10 +3715,13 @@ type Project struct {
 
 // ProjectCreate defines model for ProjectCreate.
 type ProjectCreate struct {
-	BaseBranch      *string `json:"baseBranch,omitempty"`
-	Color           *string `json:"color,omitempty"`
-	DefaultOrbType  *string `json:"defaultOrbType,omitempty"`
-	DefaultProvider *string `json:"defaultProvider,omitempty"`
+	BaseBranch *string `json:"baseBranch,omitempty"`
+	Color      *string `json:"color,omitempty"`
+
+	// DefaultBrowserProfileID 默认浏览器 Profile（`bpf_…`）；空串等同省略。不存在 → 404 `profile_not_found`
+	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId,omitempty"`
+	DefaultOrbType          *string `json:"defaultOrbType,omitempty"`
+	DefaultProvider         *string `json:"defaultProvider,omitempty"`
 
 	// GitAuthorEmail 须与 gitAuthorName 同时给出；规则同 GitIdentity.email
 	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
@@ -3291,12 +3748,15 @@ type ProjectList struct {
 
 // ProjectPatch 只修改出现的字段；可选字符串字段传空串表示清除
 type ProjectPatch struct {
-	Archived        *bool   `json:"archived,omitempty"`
-	BaseBranch      *string `json:"baseBranch,omitempty"`
-	Color           *string `json:"color,omitempty"`
-	DefaultOrbType  *string `json:"defaultOrbType,omitempty"`
-	DefaultProvider *string `json:"defaultProvider,omitempty"`
-	GitAuthorEmail  *string `json:"gitAuthorEmail,omitempty"`
+	Archived   *bool   `json:"archived,omitempty"`
+	BaseBranch *string `json:"baseBranch,omitempty"`
+	Color      *string `json:"color,omitempty"`
+
+	// DefaultBrowserProfileID 默认浏览器 Profile（`bpf_…`）；空串表示清除。不存在 → 404 `profile_not_found`
+	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId,omitempty"`
+	DefaultOrbType          *string `json:"defaultOrbType,omitempty"`
+	DefaultProvider         *string `json:"defaultProvider,omitempty"`
+	GitAuthorEmail          *string `json:"gitAuthorEmail,omitempty"`
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
@@ -4432,6 +4892,9 @@ type AgentConfigPath = string
 // AttachmentIDPath `att_<ulid>`
 type AttachmentIDPath = AttachmentID
 
+// BrowserProfileIDPath `bpf_<ulid>`
+type BrowserProfileIDPath = BrowserProfileID
+
 // DeviceIDPath `dev_<ulid>`
 type DeviceIDPath = DeviceID
 
@@ -4738,6 +5201,12 @@ type AuthSetupBeginJSONRequestBody = AuthSetupBeginRequest
 // AuthSetupFinishJSONRequestBody defines body for AuthSetupFinish for application/json ContentType.
 type AuthSetupFinishJSONRequestBody = AuthSetupFinishRequest
 
+// CreateBrowserProfileJSONRequestBody defines body for CreateBrowserProfile for application/json ContentType.
+type CreateBrowserProfileJSONRequestBody = BrowserProfileCreate
+
+// UpdateBrowserProfileJSONRequestBody defines body for UpdateBrowserProfile for application/json ContentType.
+type UpdateBrowserProfileJSONRequestBody = BrowserProfilePatch
+
 // DevicePairApproveJSONRequestBody defines body for DevicePairApprove for application/json ContentType.
 type DevicePairApproveJSONRequestBody = DevicePairApproveRequest
 
@@ -4755,6 +5224,9 @@ type UpdateNotificationChannelJSONRequestBody = NotificationChannelPatch
 
 // MarkNotificationsReadJSONRequestBody defines body for MarkNotificationsRead for application/json ContentType.
 type MarkNotificationsReadJSONRequestBody = NotificationsReadRequest
+
+// SetOrbDesktopProfileJSONRequestBody defines body for SetOrbDesktopProfile for application/json ContentType.
+type SetOrbDesktopProfileJSONRequestBody = OrbDesktopProfilePut
 
 // DeleteOrbFsJSONRequestBody defines body for DeleteOrbFs for application/json ContentType.
 type DeleteOrbFsJSONRequestBody = FsPathRequest
@@ -5035,6 +5507,40 @@ func (t *LinkStreamHeader) MergeLinkStreamPortal(v LinkStreamPortal) error {
 	return err
 }
 
+// AsLinkStreamDesk returns the union data inside the LinkStreamHeader as a LinkStreamDesk
+func (t LinkStreamHeader) AsLinkStreamDesk() (LinkStreamDesk, error) {
+	var body LinkStreamDesk
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamDesk overwrites any union data inside the LinkStreamHeader as the provided LinkStreamDesk
+func (t *LinkStreamHeader) FromLinkStreamDesk(v LinkStreamDesk) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"desk"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamDesk performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamDesk
+func (t *LinkStreamHeader) MergeLinkStreamDesk(v LinkStreamDesk) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"desk"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -5055,6 +5561,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamBlob()
 	case "ctl":
 		return t.AsLinkStreamCtl()
+	case "desk":
+		return t.AsLinkStreamDesk()
 	case "egress":
 		return t.AsLinkStreamEgress()
 	case "fs":
@@ -6469,6 +6977,18 @@ type ServerInterface interface {
 	// GetBlob 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
 	// (GET /api/v1/blobs/{sha256})
 	GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sha256)
+	// ListBrowserProfiles 浏览器 Profile 列表（按 `name`）
+	// (GET /api/v1/browser-profiles)
+	ListBrowserProfiles(w http.ResponseWriter, r *http.Request)
+	// CreateBrowserProfile 新建空 Profile（`revision = 0`）
+	// (POST /api/v1/browser-profiles)
+	CreateBrowserProfile(w http.ResponseWriter, r *http.Request)
+	// DeleteBrowserProfile 删除 Profile 及其全部归档（同时清除引用它的项目默认值）
+	// (DELETE /api/v1/browser-profiles/{id})
+	DeleteBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath)
+	// UpdateBrowserProfile 重命名 Profile
+	// (PATCH /api/v1/browser-profiles/{id})
+	UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath)
 	// ListDevices 设备列表
 	// (GET /api/v1/devices)
 	ListDevices(w http.ResponseWriter, r *http.Request)
@@ -6523,6 +7043,18 @@ type ServerInterface interface {
 	// GetOrb orb 详情
 	// (GET /api/v1/orbs/{id})
 	GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// StartOrbBrowser 启动桌面上的 Chromium（幂等；返回时 DevTools 已就绪）
+	// (POST /api/v1/orbs/{id}/desktop/browser/start)
+	StartOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// StopOrbBrowser 关闭桌面上的 Chromium（SIGTERM，10s 后 SIGKILL；已停止则无操作）
+	// (POST /api/v1/orbs/{id}/desktop/browser/stop)
+	StopOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// SetOrbDesktopProfile 为 orb 选用、切换或解除浏览器 Profile
+	// (PUT /api/v1/orbs/{id}/desktop/profile)
+	SetOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// SaveOrbDesktopProfile 立即保存本 orb 持有的 Profile（活体保存，浏览器不关闭）
+	// (POST /api/v1/orbs/{id}/desktop/profile/save)
+	SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// DeleteOrbFs 删除文件或目录（递归）
 	// (POST /api/v1/orbs/{id}/fs/delete)
 	DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
@@ -6856,6 +7388,30 @@ func (_ Unimplemented) GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sh
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListBrowserProfiles 浏览器 Profile 列表（按 `name`）
+// (GET /api/v1/browser-profiles)
+func (_ Unimplemented) ListBrowserProfiles(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateBrowserProfile 新建空 Profile（`revision = 0`）
+// (POST /api/v1/browser-profiles)
+func (_ Unimplemented) CreateBrowserProfile(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteBrowserProfile 删除 Profile 及其全部归档（同时清除引用它的项目默认值）
+// (DELETE /api/v1/browser-profiles/{id})
+func (_ Unimplemented) DeleteBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateBrowserProfile 重命名 Profile
+// (PATCH /api/v1/browser-profiles/{id})
+func (_ Unimplemented) UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListDevices 设备列表
 // (GET /api/v1/devices)
 func (_ Unimplemented) ListDevices(w http.ResponseWriter, r *http.Request) {
@@ -6961,6 +7517,30 @@ func (_ Unimplemented) DeleteOrb(w http.ResponseWriter, r *http.Request, id OrbI
 // GetOrb orb 详情
 // (GET /api/v1/orbs/{id})
 func (_ Unimplemented) GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartOrbBrowser 启动桌面上的 Chromium（幂等；返回时 DevTools 已就绪）
+// (POST /api/v1/orbs/{id}/desktop/browser/start)
+func (_ Unimplemented) StartOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StopOrbBrowser 关闭桌面上的 Chromium（SIGTERM，10s 后 SIGKILL；已停止则无操作）
+// (POST /api/v1/orbs/{id}/desktop/browser/stop)
+func (_ Unimplemented) StopOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetOrbDesktopProfile 为 orb 选用、切换或解除浏览器 Profile
+// (PUT /api/v1/orbs/{id}/desktop/profile)
+func (_ Unimplemented) SetOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaveOrbDesktopProfile 立即保存本 orb 持有的 Profile（活体保存，浏览器不关闭）
+// (POST /api/v1/orbs/{id}/desktop/profile/save)
+func (_ Unimplemented) SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7809,6 +8389,86 @@ func (siw *ServerInterfaceWrapper) GetBlob(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// ListBrowserProfiles operation middleware
+func (siw *ServerInterfaceWrapper) ListBrowserProfiles(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBrowserProfiles(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBrowserProfile operation middleware
+func (siw *ServerInterfaceWrapper) CreateBrowserProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBrowserProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBrowserProfile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBrowserProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id BrowserProfileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBrowserProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateBrowserProfile operation middleware
+func (siw *ServerInterfaceWrapper) UpdateBrowserProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id BrowserProfileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateBrowserProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListDevices operation middleware
 func (siw *ServerInterfaceWrapper) ListDevices(w http.ResponseWriter, r *http.Request) {
 
@@ -8212,6 +8872,110 @@ func (siw *ServerInterfaceWrapper) GetOrb(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOrb(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOrbBrowser operation middleware
+func (siw *ServerInterfaceWrapper) StartOrbBrowser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOrbBrowser(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopOrbBrowser operation middleware
+func (siw *ServerInterfaceWrapper) StopOrbBrowser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopOrbBrowser(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetOrbDesktopProfile operation middleware
+func (siw *ServerInterfaceWrapper) SetOrbDesktopProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetOrbDesktopProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveOrbDesktopProfile operation middleware
+func (siw *ServerInterfaceWrapper) SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveOrbDesktopProfile(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -10943,6 +11707,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/orbs/{id}/portals/{port}/share", wrapper.SetOrbPortalShare)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/orbs/{id}/desktop/profile", wrapper.SetOrbDesktopProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/profile/save", wrapper.SaveOrbDesktopProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/browser/start", wrapper.StartOrbBrowser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/browser/stop", wrapper.StopOrbBrowser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/browser-profiles", wrapper.ListBrowserProfiles)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/browser-profiles", wrapper.CreateBrowserProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/browser-profiles/{id}", wrapper.DeleteBrowserProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/browser-profiles/{id}", wrapper.UpdateBrowserProfile)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/blobs/{sha256}", wrapper.GetBlob)

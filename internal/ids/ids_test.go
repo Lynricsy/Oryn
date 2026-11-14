@@ -12,6 +12,7 @@ func TestFormats(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`^orb-[0-9a-z]{26}$`), Orb())
 	assert.Regexp(t, regexp.MustCompile(`^oryn-snap-[0-9a-z]{26}$`), Snapshot())
 	assert.Regexp(t, regexp.MustCompile(`^prj_[0-9A-Z]{26}$`), New("prj"))
+	assert.Regexp(t, regexp.MustCompile(`^bpf_[0-9A-Z]{26}$`), BrowserProfile())
 	tok := Token("opv")
 	assert.Regexp(t, regexp.MustCompile(`^opv_[A-Za-z0-9_-]{43}$`), tok)
 	assert.Equal(t, "opv", TokenPrefix(tok))

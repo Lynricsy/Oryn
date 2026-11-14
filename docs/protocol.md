@@ -26,7 +26,7 @@
 |分区|规格位置|说明|
 |---|---|---|
 |C1 provider 协议|`/provider/v1/{hello,jobs/claim,jobs/{id}/complete,bye}`；`Provider*Request/Response`、`ProviderJob`、`Job{Spawn,Pause,Snapshot,Delete,DeleteSnapshot}Params`、`JobOp`、`JobState`|`ProviderJob.params` 是任意对象，按 `op` 解析为对应 `Job*Params`|
-|C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs / portal`）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown`、`portal.configure` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
+|C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs / portal / desk`）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown`、`portal.configure` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
 |C3 REST|`/api/v1/...` 全部端点|列表统一包一层对象（`{threads}`、`{orbs}`…）|
 |C3 WebSocket|`/api/v1/ws?ticket=`；`WsClientMessage`、`WsServerMessage`（按 `type` 判别）；`AgentLiveState`|Go：`msg.ValueByDiscriminator()` 后类型分派；构造用 `FromWsServerXxx` 自动带 `type`|
 |状态枚举|`ThreadState`（C4）、`OrbState`（E）、`AgentStatus`、`PauseMode`、`DeviceKind`、`SecretMode`、`ProviderDriver`|—|
@@ -557,3 +557,127 @@ Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/pu
 网页「设置 → 设备」显示二维码，内容 `oryn://pair?server=<encodeURIComponent(public_url 的 origin)>`；App 的连接页扫码或系统相机扫到后经深链接进入 App，等同于在连接页填入该地址并点「连接」——之后照常 `pair/start`，批准仍要在已登录的浏览器里输入配对码。服务端没有新接口。
 
 App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳转一律用 `oryn://` 深链接。
+
+## M8：Desktop 与浏览器 Profile
+
+orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 orbd 按需启动、一台 orb 只有一个；agent 的 `browser` 工具经 CDP 前门 `127.0.0.1:7822` 附着到它，`computer` 工具作用于同一显示。用户经线程页的 Desktop 标签（noVNC）观看与操作。命名浏览器 Profile（Chromium `Default` 子 profile 里的登录态）加密保存在控制面，租约跟着「orb 在运行」走：orb 进入 `ready` 之前由控制面定好本地目录，冻结前活体保存，停机 / 删除前关闭式保存，离开运行态（`frozen` / `stopped` / `failed` / `deleted`）即释放租约。
+
+### 流与 ctl 消息
+
+|项|规格位置|语义|
+|---|---|---|
+|`desk` 流|`LinkStreamDesk{t}`、`LinkDeskReply`|**由 orynd 打开**，每个桌面观看者一条。orbd 先回一行 `{"ok":true}` 或 `{"ok":false,"code":…,"message":…}` + `\n`；`ok=true` 之后流上是与 Xvnc（unix socket `$HOME/.oryn/vnc.sock`，Xvnc 不监听 TCP）之间的原始 RFB 字节。拒绝码：`display_unavailable`（显示未就绪）、`failed`（连 socket 失败，5s）；控制面另有 `timeout`（开流 + 应答行合计 10s）。拷贝与半关闭规则同 `portal` 流|
+|hello `features`|`LinkCtlHelloParams.features`|M8 的 orbd 在桌面启用时（`ORYN_DESKTOP=1` 且找得到 `Xtigervnc`、`openbox`、`chromium`）追加 `desktop`。缺 `desktop` → 不发 `profile.mode`、不调生命周期钩子，桌面与 Profile 接口回 409 `orbd_outdated`|
+|`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, readonlyBy?, dirty}`|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写|
+|`profile.mode`|`LinkCtlProfileModeParams{profileId, mode, reason, by?, byThreadId?}` → `LinkCtlOkResult`|orynd→orbd 请求（10s，失败只记日志）。目前只在接管时发给原持有者：`{mode:"readonly", reason:"taken_over", by:<接管方线程标题>}`。orbd 只在标记的 `profileId` 相同时生效（否则错误 `profile_mismatch`）：标记改为只读、`dirty=false`、浏览器与标签页不动，之后导出一律 409 `profile_readonly`。`mode=exclusive` → `invalid_params`（独占只能经重新装载取得）。丢失无害：控制面按围栏代数丢弃迟到的保存，下次同步的 `PUT /desktop/profile` 也带 `mode`|
+
+### Profile 的三种选用方式（`BrowserProfileMode`）
+
+建线程（`CreateThreadRequest.profileMode`）与切换（`OrbDesktopProfilePut.profileMode`）都带这个枚举，缺省 `exclusive`：
+
+|方式|租约|本地目录|回写|
+|---|---|---|---|
+|`exclusive`|取租约；被另一台**运行中**的 orb 持有 → 409 `ProfileInUseConflict`（不做任何改动）|装载当前修订|冻结前活体保存、停机 / 删除 / 切换前关闭式保存、手动「立即保存」|
+|`readonly`|不取租约，不阻塞持有者|装载**最近一次已保存修订**的副本；持有者之后的新修订不推送|从不回写：orbd 标记为只读，导出回 409 `profile_readonly`；控制面的保存钩子对只读绑定直接跳过|
+|`takeover`|① 原持有者可用 → 请它活体保存（15s；与冻结前保存同一路径；失败给 Profile 记 `save_error=takeover_unsaved` 后继续）；原 orb 已冻结或不可达 → 跳过。② 同一事务：`StealBrowserProfile`（按 ① 之前读到的 `fence` 比较并交换，失败则重读重试）、`DemoteOrbDesktopReadonly`（原 orb 改为只读、记接管方标题）、写 `profile.taken_over` 事件。③ 向原 orbd 发 `profile.mode`，推送双方的 `orb`|装载接管后的当前修订|同 `exclusive`|
+
+被接管的一方：浏览器照常运行、标签页不动，只是此后不再回写；面板与线程信息显示「只读 Profile · 已被〈线程〉接管」（`Orb.desktop.profile.status = readonly`、`readonlyReason = taken_over`、`takenOverBy`）。它要重新写回只能反过来再接管一次（同样把对方降级为只读）。
+
+409 体 `ProfileInUseConflict{code:"profile_in_use", message, profileId, profileName, holder}`；`holder = BrowserProfileHolder{orbId, threadIds, threadId?, threadTitle?, since}`：代表线程 = 该 orb 最早创建的线程，`since` = 取得租约的时间。`createThread`、`setOrbDesktopProfile`、`deleteBrowserProfile` 的 409 都用它，客户端据此弹「只读使用 / 接管」选择后重发。
+
+### 租约与围栏代数
+
+- 独占租约 = `browser_profiles.holder_orb_id / held_at`（部分唯一索引保证一台 orb 至多持有一个）。
+- `browser_profiles.fence` 是围栏代数：租约每换一次持有者（从无到有的 `AcquireBrowserProfile`，或 `StealBrowserProfile`）+1；同一持有者重复取得不变；释放不变（下一个持有者再 +1）。取得时的代数记在 `orb_desktops.fence`。
+- 保存 = `SaveBrowserProfileRevision(id, orb, fence)`：只有 `holder_orb_id = orb AND fence = 当前代数` 才产生新修订。0 行 = 被围栏挡下（期间被接管，或释放后被重新取得）：删除刚写的归档文件、写事件 `profile.save_fenced`（`detail = {fence, currentFence}`），**不报错给用户**。
+- 只读使用者记在 `orb_desktops`（`profile_mode='readonly'`、`readonly_reason`、`readonly_by`、`readonly_by_thread_id`、`readonly_at`），`BrowserProfile.readers` 由 `ListBrowserProfileReaders` 得出（不含已删除的 orb）。只读使用者不阻止删除 Profile。
+
+### 模型
+
+- `Orb.desktop?: OrbDesktop{displayReady, browser: OrbBrowserStatus, profile?: OrbDesktopProfile}`；orbd 上报过 `desktop.state` 才有，orb 已删除时省略。
+- `OrbDesktopProfile{id, name, status, mode, revision, error?, heldBy?, readonlyReason?, takenOverBy?}`；`status`：`attached`（本 orb 独占持有）、`readonly`（只读副本）、`released`（独占方式但没人持有，本 orb 下次运行时自动取回）、`in_use`（独占方式但被别的 orb 持有，本地目录已清空，带 `heldBy`）、`error`（装载失败，`error` 为 orbd 的错误码）。`revision` = 本地目录对应的修订（未装载为 0）。
+- `BrowserProfile{id, name, revision, sizeBytes, savedAt?, saveError?, holder?, readers?, createdAt, updatedAt}`；`revision=0` = 空；`saveError ∈ too_large | export_failed | takeover_unsaved`。
+- `Project.defaultBrowserProfileId`（`ProjectCreate` / `ProjectPatch` 里空串 = 不设 / 清除）；`CreateThreadRequest.browserProfileId`：省略 = 项目默认，空串 = 不用，`bpf_…` = 指定；只对新建 orb 有效（挂到已有 orb 时给非空值 → 400 `invalid`）。连环境分叉出的 orb 不带 Profile。
+- 审计事件 `BrowserProfileEvent`：`profile.saved`、`profile.save_failed`、`profile.save_fenced`、`profile.taken_over`（表 `browser_profile_events`，同时作为 slog 的 `event` 字段；不推送客户端）。
+
+### REST
+
+鉴权同 C3。桌面类接口先唤醒 orb 并至多等 25s（`EnsureUsable(orb, "desktop", wake=true, 25s)`），经 `fs` 流转发到 orbd 本机 API。
+
+|方法与路径|operationId|请求体|响应|
+|---|---|---|---|
+|`GET /api/v1/browser-profiles`|`listBrowserProfiles`|—|`BrowserProfileList`（按 `name`）|
+|`POST /api/v1/browser-profiles`|`createBrowserProfile`|`BrowserProfileCreate{name}`|`201 BrowserProfile`|
+|`PATCH /api/v1/browser-profiles/{id}`|`updateBrowserProfile`|`BrowserProfilePatch{name}`|`BrowserProfile`|
+|`DELETE /api/v1/browser-profiles/{id}`|`deleteBrowserProfile`|—|`204`；被独占持有 → `409 ProfileInUseConflict`；成功后清空引用它的项目默认值、删除归档目录|
+|`PUT /api/v1/orbs/{id}/desktop/profile`|`setOrbDesktopProfile`|`OrbDesktopProfilePut{profileId, profileMode?}`（空串 = 解除）|`Orb`；`409 ProfileInUseConflict`|
+|`POST /api/v1/orbs/{id}/desktop/profile/save`|`saveOrbDesktopProfile`|—|`BrowserProfile`|
+|`POST /api/v1/orbs/{id}/desktop/browser/start`|`startOrbBrowser`|—|`Orb`|
+|`POST /api/v1/orbs/{id}/desktop/browser/stop`|`stopOrbBrowser`|—|`Orb`|
+|`GET /api/v1/orbs/{id}/desktop/ws?ticket=`|`orbDesktopSocket`（`websocket` 标签，不进 `ServerInterface`）|—|`101`，二进制消息 = RFB 字节|
+
+路径参数 `BrowserProfileIdPath`（`^bpf_[0-9A-Z]{26}$`）。名字：1–40 个字符，trim 后非空，不含控制字符，全局唯一。
+
+**桌面 WebSocket**：挂在 `Deps.Mounts`（不经鉴权组），与 `/api/v1/ws` 同一套一次性票据（`POST /api/v1/ws-ticket`）；`InsecureSkipVerify`（来源由票据保证）。票据无效 / 已用过 → 升级前 HTTP 401；orb 不存在 → 404。之后：观看者名额 → 唤醒 → `DialDesk` → `websocket.NetConn` 双向拷贝；客户端发来的每条消息都算一次（合并后的）用户交互，打开面板本身算一次并会唤醒 orb。关闭码：`4401` 主体被吊销、`4409` `orbd_outdated`、`4410` `orb_deleted`、`4429` 观看者已满、`4502` 桌面不可达（reason = 错误码）、`4503` orb 不可用（冻结 / 停机 / 唤醒超时）。
+
+### orbd 本机 API（`desktop` 特性，`fs` 流上）
+
+|路由|行为|
+|---|---|
+|`GET /desktop/state`|`LinkCtlDesktopStateParams`|
+|`POST /desktop/browser/start`|启动并等到 DevTools 就绪（30s）→ 状态；显示或 Profile 未定 → 409 `not_ready`|
+|`POST /desktop/browser/stop`|SIGTERM，10s 后进程组 SIGKILL → 状态|
+|`PUT /desktop/profile?id=<bpf_…>&name=<名字>&mode=exclusive\|readonly[&keep=1]`|`keep=1`：标记须为 `{本 orb, id}`，是 → 改写标记的 `mode` 后 204（不动浏览器与目录），否 → 409 `profile_mismatch`。否则：停浏览器，把请求体（tar.gz；`Content-Length: 0` = 空 Profile）还原进目录，写标记 `{orbId, profileId, name, mode}`，`dirty=false`，204。失败：原目录与标记不动，回 400 `invalid_archive` / 413 `too_large` / 507 `no_space`。`mode` 缺省 `exclusive`|
+|`DELETE /desktop/profile`|定为不用 Profile：标记已是 `{本 orb, ""}` → 204 不动浏览器与目录；否则停浏览器、删除 `profile/`、写标记 `{orbId, profileId:""}`、`dirty=false`，204|
+|`GET /desktop/profile/export?mode=live\|closed`|标记没有 `profileId` → 409 `no_profile`；标记为只读 → 409 `profile_readonly`。`closed`：先停浏览器，成功后 `dirty=false`；`live`：对浏览器进程组 SIGSTOP，归档结束后 SIGCONT，`dirty` 不变。`application/gzip`，头 `X-Oryn-Profile-Id`，流式输出；中途出错直接断开（分块编码没有终止块）|
+
+orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `desktop.browser.stop`（未启用回 `not_supported`），CLI `oryn orb desktop status [--json]`、`oryn orb desktop browser start|stop`。CDP 前门端口与 Chromium 的 DevTools 端口是保留端口：`portal` 流回 `forbidden_port`，声明它们的服务 `failed`。
+
+### 控制面同步与保存
+
+- **同步**（进入 `ready` 之前的 `BeforeReady` 钩子与 `setOrbDesktopProfile`，整体 150s）：没有绑定 → `DELETE /desktop/profile`。只读绑定 → 不取租约；已装载过（`local_rev ≥ 0`）则 `PUT …&mode=readonly&keep=1` 保留本地副本（持有者之后的新修订不推送；`profile_mismatch` 时才重装），未装载则用当前修订归档 `PUT …&mode=readonly`。独占绑定：有待办的接管先按上表处理；`AcquireBrowserProfile` 0 行 → `DELETE`（视图 `in_use`）；取得后 `local_rev` 相同 → `keep=1`（`profile_mismatch` 则全量重装），修订 0 → 空体 `PUT`，否则解密归档作为 `PUT` 请求体；装载失败 → `DELETE`、释放租约、记 `profile_error`。最后 `SetOrbDesktopLocal(local_rev, profile_error, fence)`。
+- **保存** `checkin(live|closed)`（120s）：只对独占绑定；持有者是别人 / `local_rev` 不是当前修订 / `dirty=0` → 不保存。导出体经 `LimitReader(256MiB+1)` 同时算 SHA-256 并 `SealStream` 到临时文件；超限 → `too_large`，读出错 → `export_failed`（都写 `profile.save_failed`）；摘要等于当前 `content_sha256` → 不产生新修订；否则 `fsync` + `rename` 为 `<revision+1>.oss` 后 `SaveBrowserProfileRevision`（0 行 → `profile.save_fenced`，删除新文件），成功后删除更旧的归档、写 `profile.saved`。
+- **释放**：orb 状态事件 `To ∈ {frozen, stopped, failed, deleted}` → `ReleaseBrowserProfileByOrb`（单 goroutine 队列，回调不阻塞）。
+
+### 归档的流式加密
+
+`<data_dir>/browser-profiles/<id>/<revision>.oss`（0600），内容 = `Box.SealStream(明文 tar.gz, "browser-profile/<id>/<revision>")`。格式（`internal/secrets/stream.go`）：`"OSS1"`（4B）‖ salt（16B 随机）‖ 若干帧 `uint32 BE 密文长度 ‖ 密文`；子密钥 = `HKDF-SHA256(主密钥, salt, "oryn stream v1")`，AES-256-GCM；明文每帧 65536 字节（末帧 0–65536）；nonce = 11 字节大端帧序号 ‖ 1 字节标志（`0x00` 中间帧、`0x01` 末帧）；AAD = name。一条流恰好以一个末帧结束：缺末帧、截断、篡改、重排、末帧后多余数据、name 或主密钥不符都返回 `secrets.ErrStreamCorrupt`。写入方必须 `Close`（写出末帧）；读取方必须读到 `io.EOF` 才能认为明文完整。备份 `browser-profiles/` 时必须连同 `master.key`。
+
+### 限额
+
+|项|值|
+|---|---|
+|显示|`:1`，初始 1280x800，24 位色|
+|CDP 前门|`127.0.0.1:7822`（Chromium 自己的 DevTools 端口是临时端口）|
+|浏览器启动等待|显示就绪 + Profile 已定 + DevTools 就绪，合计 30s|
+|浏览器停止|SIGTERM，10s 后进程组 SIGKILL|
+|Profile 归档|gzip 后 ≤256MiB；解包后 ≤2GiB、≤200000 个条目|
+|Profile 数量|≤50|
+|导出 / 装载单次|120s；钩子整体 150s；接管前对原持有者的活体保存 15s|
+|desk 流拨号|开流 + 应答行 10s；orbd 连 socket 5s|
+|桌面 WS|每台 orb ≤8 个观看者；客户端单条消息 ≤1MiB；写超时 30s；唤醒等待 25s|
+
+### 错误码
+
+|code|HTTP|含义|
+|---|---|---|
+|`profile_not_found`|404|Profile 不存在|
+|`profile_in_use`|409|被另一台运行中的 orb 独占持有（`exclusive`），或删除时仍被持有；体为 `ProfileInUseConflict`|
+|`profile_name_taken` / `profile_limit`|409|重名 / 超过 50 个|
+|`no_profile`|409|保存时该 orb 没有独占持有 Profile|
+|`profile_readonly`|409|保存时该 orb 以只读副本使用 Profile|
+|`profile_too_large`|413|归档超过上限|
+|`profile_save_failed`|502|导出或落盘失败|
+|`orbd_outdated` / `orb_unavailable` / `orb_deleted`|409 / 503 / 410|沿用现有码|
+|`invalid_request`|400|Profile 名字非法|
+
+### 存储
+
+`0014_desktop_profiles.sql`：
+
+- `browser_profiles(id, name UNIQUE, revision, size_bytes, content_sha256, holder_orb_id → orbs ON DELETE SET NULL, held_at, fence, save_error, saved_at, created_at, updated_at)`，部分唯一索引 `browser_profiles_holder(holder_orb_id)`。
+- `orb_desktops(orb_id → orbs ON DELETE CASCADE, profile_id → browser_profiles ON DELETE SET NULL, profile_mode, takeover, fence, readonly_reason, readonly_by, readonly_by_thread_id, readonly_at, local_rev, profile_error, reported, display_ready, browser, dirty, updated_at)`，索引 `orb_desktops_profile`。
+- `browser_profile_events(id, profile_id → browser_profiles ON DELETE CASCADE, orb_id, ts, event, detail)`，索引 `(profile_id, ts)`。
+- `projects.default_browser_profile_id`（不建外键；删除 Profile 时由 `ClearProjectsBrowserProfile` 清空）。
+
+查询见 `internal/store/queries/desktop.sql`：`AcquireBrowserProfile` / `StealBrowserProfile` / `SaveBrowserProfileRevision` 用 `RETURNING`（`:one`，`sql.ErrNoRows` = 被占 / CAS 失败 / 被围栏挡下）。

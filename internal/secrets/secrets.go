@@ -15,9 +15,11 @@ import (
 
 const keyFile = "master.key"
 
-// Box 用主密钥加解密密钥值。
+// Box 用主密钥加解密密钥值；大文件用 SealStream / OpenStream 分块流式加密。
 type Box struct {
 	aead cipher.AEAD
+	// key 是主密钥的副本，供流式加密经 HKDF 派生每个文件的子密钥。
+	key [32]byte
 }
 
 // LoadOrCreate 读取 <dataDir>/master.key；不存在时生成 32 字节随机密钥（0600）。
@@ -59,7 +61,9 @@ func New(key []byte) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	box := &Box{aead: aead}
+	copy(box.key[:], key)
+	return box, nil
 }
 
 // Seal 加密明文；输出 = nonce || 密文。name 作为附加数据绑定，防止密文在记录间挪用。

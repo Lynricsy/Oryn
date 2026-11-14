@@ -159,3 +159,55 @@ func TestAgentConfigPathEncodedSlash(t *testing.T) {
 	resp2.Body.Close()
 	assert.Equal(t, http.StatusNotImplemented, resp2.StatusCode)
 }
+
+// M8：desk 流头按 t 判别；desktop.state / profile.mode 的线上形态。
+func TestDesktopLinkModels(t *testing.T) {
+	var h apigen.LinkStreamHeader
+	require.NoError(t, json.Unmarshal([]byte(`{"t":"desk"}`), &h))
+	v, err := h.ValueByDiscriminator()
+	require.NoError(t, err)
+	_, ok := v.(apigen.LinkStreamDesk)
+	require.True(t, ok, "got %T", v)
+	assert.True(t, apigen.MethodDesktopState.Valid())
+	assert.True(t, apigen.MethodProfileMode.Valid())
+
+	mode := apigen.BrowserProfileAccessReadonly
+	reason := apigen.BrowserProfileReadonlyReasonTakenOver
+	st := apigen.LinkCtlDesktopStateParams{
+		DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileMode: &mode, ReadonlyReason: &reason,
+	}
+	b, err := json.Marshal(st)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"displayReady":true,"browser":"running","dirty":false,"profileMode":"readonly","readonlyReason":"taken_over"}`, string(b))
+
+	var pm apigen.LinkCtlProfileModeParams
+	require.NoError(t, json.Unmarshal([]byte(`{"profileId":"bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E2","mode":"readonly","reason":"taken_over","by":"T"}`), &pm))
+	assert.Equal(t, apigen.BrowserProfileAccessReadonly, pm.Mode)
+	require.NotNil(t, pm.By)
+	assert.Equal(t, "T", *pm.By)
+	assert.Equal(t, "profile.save_fenced", string(apigen.BrowserProfileEventSaveFenced))
+}
+
+// M8：建线程的 profileMode 缺省为空（服务端按 exclusive 处理）；409 体带持有者线程标题与开始时间。
+func TestProfileModeAndConflictBody(t *testing.T) {
+	var req apigen.CreateThreadRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"prompt":"hi","executor":{"kind":"new_orb"},"browserProfileId":""}`), &req))
+	require.NotNil(t, req.BrowserProfileID)
+	assert.Empty(t, *req.BrowserProfileID)
+	assert.Nil(t, req.ProfileMode)
+	require.NoError(t, json.Unmarshal([]byte(`{"prompt":"hi","executor":{"kind":"new_orb"},"profileMode":"takeover"}`), &req))
+	require.NotNil(t, req.ProfileMode)
+	assert.Equal(t, apigen.BrowserProfileModeTakeover, *req.ProfileMode)
+	assert.True(t, req.ProfileMode.Valid())
+
+	title := "登录 GitHub"
+	c := apigen.ProfileInUseConflict{
+		Code: apigen.ProfileInUseConflictCodeProfileInUse, Message: "in use",
+		ProfileID: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E2", ProfileName: "work",
+		Holder: apigen.BrowserProfileHolder{OrbID: "orb-01jcz8m3w4x5y6z7a8b9c0d1e2", ThreadIds: []apigen.ThreadID{threadID}, ThreadTitle: &title, Since: 1700000000000},
+	}
+	b, err := json.Marshal(c)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"code":"profile_in_use","message":"in use","profileId":"bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1E2","profileName":"work",
+		"holder":{"orbId":"orb-01jcz8m3w4x5y6z7a8b9c0d1e2","threadIds":["`+threadID+`"],"threadTitle":"登录 GitHub","since":1700000000000}}`, string(b))
+}
