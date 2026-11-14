@@ -45,6 +45,20 @@ type BrowserProfileEvent struct {
 	Detail    string  `json:"detail"`
 }
 
+type CoordAction struct {
+	ID             string  `json:"id"`
+	Ts             int64   `json:"ts"`
+	ActorKind      string  `json:"actorKind"`
+	ActorThreadID  *string `json:"actorThreadId"`
+	Origin         string  `json:"origin"`
+	Action         string  `json:"action"`
+	TargetThreadID *string `json:"targetThreadId"`
+	ScheduleID     *string `json:"scheduleId"`
+	Summary        string  `json:"summary"`
+	Ok             bool    `json:"ok"`
+	Error          *string `json:"error"`
+}
+
 type Device struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -165,6 +179,7 @@ type Orb struct {
 	CreatedAt             int64   `json:"createdAt"`
 	DeletedAt             *int64  `json:"deletedAt"`
 	TokenGen              int64   `json:"tokenGen"`
+	Coordinator           bool    `json:"coordinator"`
 }
 
 type OrbDesktop struct {
@@ -333,6 +348,50 @@ type RecoveryCode struct {
 	UsedAt   *int64 `json:"usedAt"`
 }
 
+type Schedule struct {
+	ID            string  `json:"id"`
+	Mode          string  `json:"mode"`
+	ThreadID      *string `json:"threadId"`
+	ProjectID     *string `json:"projectId"`
+	SpaceID       *string `json:"spaceId"`
+	Name          string  `json:"name"`
+	Kind          string  `json:"kind"`
+	Spec          string  `json:"spec"`
+	Timezone      string  `json:"timezone"`
+	RunAt         *int64  `json:"runAt"`
+	EndsAt        *int64  `json:"endsAt"`
+	Prompt        string  `json:"prompt"`
+	Enabled       bool    `json:"enabled"`
+	PausedReason  *string `json:"pausedReason"`
+	NextRunAt     *int64  `json:"nextRunAt"`
+	LastRunAt     *int64  `json:"lastRunAt"`
+	RunCount      int64   `json:"runCount"`
+	Failures      int64   `json:"failures"`
+	CreatedBy     string  `json:"createdBy"`
+	CreatedAt     int64   `json:"createdAt"`
+	UpdatedAt     int64   `json:"updatedAt"`
+	Model         *string `json:"model"`
+	ThinkingLevel *string `json:"thinkingLevel"`
+	Provider      *string `json:"provider"`
+	OrbType       *string `json:"orbType"`
+	Overlap       string  `json:"overlap"`
+	KeepLast      int64   `json:"keepLast"`
+}
+
+type ScheduleRun struct {
+	ID           string  `json:"id"`
+	ScheduleID   string  `json:"scheduleId"`
+	ThreadID     *string `json:"threadId"`
+	Trigger      string  `json:"trigger"`
+	ScheduledFor int64   `json:"scheduledFor"`
+	Missed       int64   `json:"missed"`
+	StartedAt    int64   `json:"startedAt"`
+	DeliveredAt  *int64  `json:"deliveredAt"`
+	FinishedAt   *int64  `json:"finishedAt"`
+	Status       string  `json:"status"`
+	Error        *string `json:"error"`
+}
+
 type Secret struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -341,6 +400,17 @@ type Secret struct {
 	Hosts     string `json:"hosts"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+}
+
+type Space struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Goal       string  `json:"goal"`
+	ProjectID  *string `json:"projectId"`
+	ThreadID   string  `json:"threadId"`
+	CreatedAt  int64   `json:"createdAt"`
+	UpdatedAt  int64   `json:"updatedAt"`
+	ArchivedAt *int64  `json:"archivedAt"`
 }
 
 type Thread struct {
@@ -370,11 +440,22 @@ type Thread struct {
 	ForkOp            []byte  `json:"forkOp"`
 	TranscriptRev     int64   `json:"transcriptRev"`
 	ShortCode         *string `json:"shortCode"`
+	Kind              string  `json:"kind"`
+	SpaceID           *string `json:"spaceId"`
+	ShippedAt         *int64  `json:"shippedAt"`
+	ScheduleID        *string `json:"scheduleId"`
+	ScheduleRun       *int64  `json:"scheduleRun"`
 }
 
 type ThreadLabel struct {
 	ThreadID string `json:"threadId"`
 	Label    string `json:"label"`
+}
+
+type ThreadReport struct {
+	ThreadID    string `json:"threadId"`
+	ReportTo    string `json:"reportTo"`
+	RequestedAt int64  `json:"requestedAt"`
 }
 
 type ThreadShare struct {

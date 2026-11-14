@@ -1,10 +1,11 @@
 -- Orbs, lifecycle events, metric samples.
 
+-- coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at)
+                  token_hash, snapshot_of, created_at, coordinator)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
-        @token_hash, @snapshot_of, @created_at);
+        @token_hash, @snapshot_of, @created_at, @coordinator);
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -72,3 +73,9 @@ DELETE FROM orb_samples WHERE ts < @before;
 
 -- name: CountLiveOrbsBySnapshot :one
 SELECT COUNT(*) FROM orbs WHERE snapshot_of = @snapshot_of AND state != 'deleted';
+
+-- The live coordinator orb (M9), newest first; no rows = none yet.
+-- name: GetCoordinatorOrb :one
+SELECT * FROM orbs
+WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
+ORDER BY created_at DESC LIMIT 1;

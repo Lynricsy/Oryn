@@ -245,7 +245,7 @@ func (f *fixture) newService() *Service {
 func (f *fixture) thread(title string) string {
 	f.t.Helper()
 	id := ids.Thread()
-	require.NoError(f.t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{ID: id, Title: title, TitleSource: "auto", State: threads.StateIdle,
+	require.NoError(f.t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{Kind: "work", ID: id, Title: title, TitleSource: "auto", State: threads.StateIdle,
 		SessionDir: "~/.oryn/threads/" + id, CreatedAt: 1, UpdatedAt: 1}))
 	return id
 }

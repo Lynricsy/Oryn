@@ -54,7 +54,7 @@ func newSvc(t *testing.T, orb OrbHTTP) (*Service, *store.Store, string) {
 func mkThread(t *testing.T, st *store.Store, id string) {
 	t.Helper()
 	require.NoError(t, st.Q.CreateThread(context.Background(), db.CreateThreadParams{
-		ID: id, TitleSource: "auto", State: "idle", SessionDir: "~/.oryn/threads/" + id,
+		Kind: "work", ID: id, TitleSource: "auto", State: "idle", SessionDir: "~/.oryn/threads/" + id,
 	}))
 }
 

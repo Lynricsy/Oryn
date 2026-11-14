@@ -41,7 +41,7 @@ func TestForkFromProductNotIngested(t *testing.T) {
 	s := New(Config{DataDir: t.TempDir()}, st, nopOrbs{})
 	t.Cleanup(s.Close)
 	const id, orb = "T-fork-src", "orb-fork-src"
-	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: id, Title: "", TitleSource: "auto", State: StateIdle, SessionDir: "~/.oryn/threads/" + id}))
+	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: id, Title: "", TitleSource: "auto", State: StateIdle, SessionDir: "~/.oryn/threads/" + id}))
 	th, err := s.get(ctx, id)
 	require.NoError(t, err)
 	th.mu.Lock()

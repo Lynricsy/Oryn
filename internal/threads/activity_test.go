@@ -136,7 +136,7 @@ func TestAutoTitleAdoptsProjectIcon(t *testing.T) {
 	}
 	mkThread := func(prj string) *thread {
 		id := ids.Thread()
-		require.NoError(t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{ID: id, ProjectID: &prj, OrbID: &orb, TitleSource: "auto", State: StateIdle, SessionDir: sessionDirOf(id), CreatedAt: 1, UpdatedAt: 1}))
+		require.NoError(t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{Kind: "work", ID: id, ProjectID: &prj, OrbID: &orb, TitleSource: "auto", State: StateIdle, SessionDir: sessionDirOf(id), CreatedAt: 1, UpdatedAt: 1}))
 		th, err := f.s.get(f.ctx, id)
 		require.NoError(t, err)
 		return th

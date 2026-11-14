@@ -23,6 +23,16 @@ func (q *Queries) AddThreadLabel(ctx context.Context, arg AddThreadLabelParams) 
 	return err
 }
 
+const clearSpaceThreads = `-- name: ClearSpaceThreads :exec
+UPDATE threads SET space_id = NULL WHERE space_id = CAST(?1 AS TEXT) AND kind = 'work'
+`
+
+// Detaches the work threads of a deleted space (the space chat itself is deleted separately).
+func (q *Queries) ClearSpaceThreads(ctx context.Context, spaceID string) error {
+	_, err := q.db.ExecContext(ctx, clearSpaceThreads, spaceID)
+	return err
+}
+
 const clearThreadLabels = `-- name: ClearThreadLabels :exec
 DELETE FROM thread_labels WHERE thread_id = ?1
 `
@@ -32,12 +42,51 @@ func (q *Queries) ClearThreadLabels(ctx context.Context, threadID string) error 
 	return err
 }
 
+const countAgentThreadsSince = `-- name: CountAgentThreadsSince :one
+SELECT COUNT(*) FROM threads
+WHERE parent_thread_id IS NOT NULL AND forked_from_entry_id IS NULL AND created_at >= ?1
+`
+
+// Threads created by agents / coordinators (have a parent, not a fork) since a point in time.
+func (q *Queries) CountAgentThreadsSince(ctx context.Context, since int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAgentThreadsSince, since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOpenChildren = `-- name: CountOpenChildren :one
+SELECT COUNT(*) FROM threads
+WHERE parent_thread_id = CAST(?1 AS TEXT) AND archived_at IS NULL AND forked_from_entry_id IS NULL
+`
+
+// Unarchived direct children created by an agent or coordinator (forks excluded).
+func (q *Queries) CountOpenChildren(ctx context.Context, parentThreadID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOpenChildren, parentThreadID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUnarchivedThreadsByOrb = `-- name: CountUnarchivedThreadsByOrb :one
+SELECT COUNT(*) FROM threads WHERE orb_id = CAST(?1 AS TEXT) AND archived_at IS NULL
+`
+
+func (q *Queries) CountUnarchivedThreadsByOrb(ctx context.Context, orbID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnarchivedThreadsByOrb, orbID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createThread = `-- name: CreateThread :exec
 
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
-                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code)
+                     forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
+                     kind, space_id, schedule_id, schedule_run)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-        ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+        ?17, ?18, ?19, ?20)
 `
 
 type CreateThreadParams struct {
@@ -57,9 +106,14 @@ type CreateThreadParams struct {
 	CreatedAt         int64   `json:"createdAt"`
 	UpdatedAt         int64   `json:"updatedAt"`
 	ShortCode         *string `json:"shortCode"`
+	Kind              string  `json:"kind"`
+	SpaceID           *string `json:"spaceId"`
+	ScheduleID        *string `json:"scheduleId"`
+	ScheduleRun       *int64  `json:"scheduleRun"`
 }
 
 // Threads and labels.
+// kind: work | space | assistant (M9); schedule_id / schedule_run: set when a new_thread schedule run created it.
 func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) error {
 	_, err := q.db.ExecContext(ctx, createThread,
 		arg.ID,
@@ -78,6 +132,10 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) erro
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.ShortCode,
+		arg.Kind,
+		arg.SpaceID,
+		arg.ScheduleID,
+		arg.ScheduleRun,
 	)
 	return err
 }
@@ -95,7 +153,7 @@ func (q *Queries) DeleteThread(ctx context.Context, id string) (int64, error) {
 }
 
 const getThread = `-- name: GetThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE id = ?1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run FROM threads WHERE id = ?1
 `
 
 func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
@@ -128,12 +186,17 @@ func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
 		&i.ForkOp,
 		&i.TranscriptRev,
 		&i.ShortCode,
+		&i.Kind,
+		&i.SpaceID,
+		&i.ShippedAt,
+		&i.ScheduleID,
+		&i.ScheduleRun,
 	)
 	return i, err
 }
 
 const getThreadByShortCode = `-- name: GetThreadByShortCode :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE short_code = CAST(?1 AS TEXT)
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run FROM threads WHERE short_code = CAST(?1 AS TEXT)
 `
 
 // Thread short code (last 12 hex of the id) in portal host names -> thread (M4).
@@ -167,6 +230,11 @@ func (q *Queries) GetThreadByShortCode(ctx context.Context, shortCode string) (T
 		&i.ForkOp,
 		&i.TranscriptRev,
 		&i.ShortCode,
+		&i.Kind,
+		&i.SpaceID,
+		&i.ShippedAt,
+		&i.ScheduleID,
+		&i.ScheduleRun,
 	)
 	return i, err
 }
@@ -185,6 +253,84 @@ func (q *Queries) ListAllThreadLabels(ctx context.Context) ([]ThreadLabel, error
 	for rows.Next() {
 		var i ThreadLabel
 		if err := rows.Scan(&i.ThreadID, &i.Label); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScheduleThreads = `-- name: ListScheduleThreads :many
+SELECT id, state, pinned, orb_id FROM threads
+WHERE schedule_id = CAST(?1 AS TEXT) AND archived_at IS NULL
+ORDER BY created_at DESC, id DESC
+`
+
+type ListScheduleThreadsRow struct {
+	ID     string  `json:"id"`
+	State  string  `json:"state"`
+	Pinned bool    `json:"pinned"`
+	OrbID  *string `json:"orbId"`
+}
+
+// Unarchived threads created by a new_thread schedule, newest first (retention policy input).
+func (q *Queries) ListScheduleThreads(ctx context.Context, scheduleID string) ([]ListScheduleThreadsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listScheduleThreads, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScheduleThreadsRow{}
+	for rows.Next() {
+		var i ListScheduleThreadsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.Pinned,
+			&i.OrbID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceThreadTimes = `-- name: ListSpaceThreadTimes :many
+SELECT created_at, archived_at, shipped_at FROM threads
+WHERE space_id = CAST(?1 AS TEXT) AND kind = 'work'
+ORDER BY created_at
+`
+
+type ListSpaceThreadTimesRow struct {
+	CreatedAt  int64  `json:"createdAt"`
+	ArchivedAt *int64 `json:"archivedAt"`
+	ShippedAt  *int64 `json:"shippedAt"`
+}
+
+// Space progress chart input.
+func (q *Queries) ListSpaceThreadTimes(ctx context.Context, spaceID string) ([]ListSpaceThreadTimesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceThreadTimes, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSpaceThreadTimesRow{}
+	for rows.Next() {
+		var i ListSpaceThreadTimesRow
+		if err := rows.Scan(&i.CreatedAt, &i.ArchivedAt, &i.ShippedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -226,26 +372,33 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 }
 
 const listThreads = `-- name: ListThreads :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run FROM threads
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
-  AND (CAST(?3 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?3 AS BOOLEAN))
-  AND (CAST(?4 AS TEXT) IS NULL OR title LIKE '%' || CAST(?4 AS TEXT) || '%')
+  AND (CAST(?3 AS TEXT) IS NULL OR kind = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR space_id = CAST(?4 AS TEXT))
+  AND (CAST(?5 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?5 AS BOOLEAN))
+  AND (CAST(?6 AS TEXT) IS NULL OR title LIKE '%' || CAST(?6 AS TEXT) || '%')
 ORDER BY pinned DESC, COALESCE(last_message_at, updated_at) DESC, id
 `
 
 type ListThreadsParams struct {
 	State     *string `json:"state"`
 	ProjectID *string `json:"projectId"`
+	Kind      *string `json:"kind"`
+	SpaceID   *string `json:"spaceId"`
 	Archived  *bool   `json:"archived"`
 	Q         *string `json:"q"`
 }
 
-// GET threads?state=&project=&archived=&q= ; a NULL filter means unrestricted.
+// GET threads?state=&project=&archived=&q=&kind=&space= ; a NULL filter means unrestricted
+// (the service passes kind = 'work' unless the caller asks for "all").
 func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thread, error) {
 	rows, err := q.db.QueryContext(ctx, listThreads,
 		arg.State,
 		arg.ProjectID,
+		arg.Kind,
+		arg.SpaceID,
 		arg.Archived,
 		arg.Q,
 	)
@@ -283,6 +436,11 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 			&i.ForkOp,
 			&i.TranscriptRev,
 			&i.ShortCode,
+			&i.Kind,
+			&i.SpaceID,
+			&i.ShippedAt,
+			&i.ScheduleID,
+			&i.ScheduleRun,
 		); err != nil {
 			return nil, err
 		}
@@ -298,7 +456,7 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 }
 
 const listThreadsByOrb = `-- name: ListThreadsByOrb :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code FROM threads WHERE orb_id = ?1 ORDER BY created_at
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run FROM threads WHERE orb_id = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread, error) {
@@ -337,6 +495,11 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 			&i.ForkOp,
 			&i.TranscriptRev,
 			&i.ShortCode,
+			&i.Kind,
+			&i.SpaceID,
+			&i.ShippedAt,
+			&i.ScheduleID,
+			&i.ScheduleRun,
 		); err != nil {
 			return nil, err
 		}
@@ -431,6 +594,43 @@ type SetThreadOrbParams struct {
 func (q *Queries) SetThreadOrb(ctx context.Context, arg SetThreadOrbParams) error {
 	_, err := q.db.ExecContext(ctx, setThreadOrb, arg.OrbID, arg.UpdatedAt, arg.ID)
 	return err
+}
+
+const setThreadShipped = `-- name: SetThreadShipped :exec
+UPDATE threads SET shipped_at = ?1, updated_at = ?2 WHERE id = ?3
+`
+
+type SetThreadShippedParams struct {
+	ShippedAt *int64 `json:"shippedAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+	ID        string `json:"id"`
+}
+
+// shipped_at NULL clears the mark.
+func (q *Queries) SetThreadShipped(ctx context.Context, arg SetThreadShippedParams) error {
+	_, err := q.db.ExecContext(ctx, setThreadShipped, arg.ShippedAt, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setThreadSpace = `-- name: SetThreadSpace :execrows
+
+UPDATE threads SET space_id = ?1, updated_at = ?2 WHERE id = ?3
+`
+
+type SetThreadSpaceParams struct {
+	SpaceID   *string `json:"spaceId"`
+	UpdatedAt int64   `json:"updatedAt"`
+	ID        string  `json:"id"`
+}
+
+// M9: spaces, coordinator limits, new_thread schedule retention.
+// Moves a thread into a space (space_id) or out of it (NULL). The service only does this for kind = 'work'.
+func (q *Queries) SetThreadSpace(ctx context.Context, arg SetThreadSpaceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setThreadSpace, arg.SpaceID, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setThreadState = `-- name: SetThreadState :exec

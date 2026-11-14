@@ -37,6 +37,72 @@ func (e AgentStatus) Valid() bool {
 	}
 }
 
+// Defines values for AutomationActionAction.
+const (
+	ActionArchiveThread  AutomationActionAction = "archive_thread"
+	ActionCreateThread   AutomationActionAction = "create_thread"
+	ActionDeleteSchedule AutomationActionAction = "delete_schedule"
+	ActionSendMessage    AutomationActionAction = "send_message"
+	ActionSetSchedule    AutomationActionAction = "set_schedule"
+)
+
+// Valid indicates whether the value is a known member of the AutomationActionAction enum.
+func (e AutomationActionAction) Valid() bool {
+	switch e {
+	case ActionArchiveThread:
+		return true
+	case ActionCreateThread:
+		return true
+	case ActionDeleteSchedule:
+		return true
+	case ActionSendMessage:
+		return true
+	case ActionSetSchedule:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AutomationActionActorKind.
+const (
+	ActorKindAgent     AutomationActionActorKind = "agent"
+	ActorKindAssistant AutomationActionActorKind = "assistant"
+	ActorKindSpace     AutomationActionActorKind = "space"
+)
+
+// Valid indicates whether the value is a known member of the AutomationActionActorKind enum.
+func (e AutomationActionActorKind) Valid() bool {
+	switch e {
+	case ActorKindAgent:
+		return true
+	case ActorKindAssistant:
+		return true
+	case ActorKindSpace:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AutomationActionOrigin.
+const (
+	OriginAuto  AutomationActionOrigin = "auto"
+	OriginOwner AutomationActionOrigin = "owner"
+)
+
+// Valid indicates whether the value is a known member of the AutomationActionOrigin enum.
+func (e AutomationActionOrigin) Valid() bool {
+	switch e {
+	case OriginAuto:
+		return true
+	case OriginOwner:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BrowserProfileAccess.
 const (
 	BrowserProfileAccessExclusive BrowserProfileAccess = "exclusive"
@@ -133,6 +199,24 @@ func (e BrowserProfileSaveError) Valid() bool {
 	case TakeoverUnsaved:
 		return true
 	case TooLarge:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoordinatorSandboxNetwork.
+const (
+	SandboxNetworkNamespace CoordinatorSandboxNetwork = "namespace"
+	SandboxNetworkPort      CoordinatorSandboxNetwork = "port"
+)
+
+// Valid indicates whether the value is a known member of the CoordinatorSandboxNetwork enum.
+func (e CoordinatorSandboxNetwork) Valid() bool {
+	switch e {
+	case SandboxNetworkNamespace:
+		return true
+	case SandboxNetworkPort:
 		return true
 	default:
 		return false
@@ -385,6 +469,21 @@ func (e JobState) Valid() bool {
 	}
 }
 
+// Defines values for LinkCtlAgentStartParamsProfile.
+const (
+	AgentProfileCoordinator LinkCtlAgentStartParamsProfile = "coordinator"
+)
+
+// Valid indicates whether the value is a known member of the LinkCtlAgentStartParamsProfile enum.
+func (e LinkCtlAgentStartParamsProfile) Valid() bool {
+	switch e {
+	case AgentProfileCoordinator:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LinkCtlAgentStatusParamsStatus.
 const (
 	LinkCtlAgentStatusParamsStatusExited   LinkCtlAgentStatusParamsStatus = "exited"
@@ -427,12 +526,19 @@ const (
 	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
 	MethodProjectScriptsSet LinkCtlMethod = "project.scripts.set"
 	MethodResumeRun         LinkCtlMethod = "resume.run"
+	MethodScheduleDelete    LinkCtlMethod = "schedule.delete"
+	MethodScheduleEnable    LinkCtlMethod = "schedule.enable"
+	MethodScheduleGet       LinkCtlMethod = "schedule.get"
+	MethodSchedulePut       LinkCtlMethod = "schedule.put"
 	MethodServicesState     LinkCtlMethod = "services.state"
 	MethodSetupLog          LinkCtlMethod = "setup.log"
 	MethodSetupResult       LinkCtlMethod = "setup.result"
 	MethodSetupRun          LinkCtlMethod = "setup.run"
 	MethodShutdown          LinkCtlMethod = "shutdown"
 	MethodTerminalGap       LinkCtlMethod = "terminal.gap"
+	MethodThreadCreate      LinkCtlMethod = "thread.create"
+	MethodThreadGet         LinkCtlMethod = "thread.get"
+	MethodThreadSend        LinkCtlMethod = "thread.send"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlMethod enum.
@@ -476,6 +582,14 @@ func (e LinkCtlMethod) Valid() bool {
 		return true
 	case MethodResumeRun:
 		return true
+	case MethodScheduleDelete:
+		return true
+	case MethodScheduleEnable:
+		return true
+	case MethodScheduleGet:
+		return true
+	case MethodSchedulePut:
+		return true
 	case MethodServicesState:
 		return true
 	case MethodSetupLog:
@@ -487,6 +601,12 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodShutdown:
 		return true
 	case MethodTerminalGap:
+		return true
+	case MethodThreadCreate:
+		return true
+	case MethodThreadGet:
+		return true
+	case MethodThreadSend:
 		return true
 	default:
 		return false
@@ -1051,6 +1171,156 @@ func (e PushSubscriptionKind) Valid() bool {
 	}
 }
 
+// Defines values for ScheduleCreatedBy.
+const (
+	ScheduleCreatedByAgent ScheduleCreatedBy = "agent"
+	ScheduleCreatedByUser  ScheduleCreatedBy = "user"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleCreatedBy enum.
+func (e ScheduleCreatedBy) Valid() bool {
+	switch e {
+	case ScheduleCreatedByAgent:
+		return true
+	case ScheduleCreatedByUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleKind.
+const (
+	ScheduleKindCron  ScheduleKind = "cron"
+	ScheduleKindEvery ScheduleKind = "every"
+	ScheduleKindOnce  ScheduleKind = "once"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleKind enum.
+func (e ScheduleKind) Valid() bool {
+	switch e {
+	case ScheduleKindCron:
+		return true
+	case ScheduleKindEvery:
+		return true
+	case ScheduleKindOnce:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleMode.
+const (
+	ScheduleModeNewThread ScheduleMode = "new_thread"
+	ScheduleModeThread    ScheduleMode = "thread"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleMode enum.
+func (e ScheduleMode) Valid() bool {
+	switch e {
+	case ScheduleModeNewThread:
+		return true
+	case ScheduleModeThread:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleOverlap.
+const (
+	ScheduleOverlapAllow ScheduleOverlap = "allow"
+	ScheduleOverlapSkip  ScheduleOverlap = "skip"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleOverlap enum.
+func (e ScheduleOverlap) Valid() bool {
+	switch e {
+	case ScheduleOverlapAllow:
+		return true
+	case ScheduleOverlapSkip:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SchedulePausedReason.
+const (
+	SchedulePausedReasonArchived SchedulePausedReason = "archived"
+	SchedulePausedReasonDone     SchedulePausedReason = "done"
+	SchedulePausedReasonFailures SchedulePausedReason = "failures"
+	SchedulePausedReasonUser     SchedulePausedReason = "user"
+)
+
+// Valid indicates whether the value is a known member of the SchedulePausedReason enum.
+func (e SchedulePausedReason) Valid() bool {
+	switch e {
+	case SchedulePausedReasonArchived:
+		return true
+	case SchedulePausedReasonDone:
+		return true
+	case SchedulePausedReasonFailures:
+		return true
+	case SchedulePausedReasonUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleRunStatus.
+const (
+	ScheduleRunStatusCompleted  ScheduleRunStatus = "completed"
+	ScheduleRunStatusFailed     ScheduleRunStatus = "failed"
+	ScheduleRunStatusNeedsInput ScheduleRunStatus = "needs_input"
+	ScheduleRunStatusPending    ScheduleRunStatus = "pending"
+	ScheduleRunStatusRunning    ScheduleRunStatus = "running"
+	ScheduleRunStatusSkipped    ScheduleRunStatus = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleRunStatus enum.
+func (e ScheduleRunStatus) Valid() bool {
+	switch e {
+	case ScheduleRunStatusCompleted:
+		return true
+	case ScheduleRunStatusFailed:
+		return true
+	case ScheduleRunStatusNeedsInput:
+		return true
+	case ScheduleRunStatusPending:
+		return true
+	case ScheduleRunStatusRunning:
+		return true
+	case ScheduleRunStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ScheduleRunTrigger.
+const (
+	ScheduleRunTriggerCatchup  ScheduleRunTrigger = "catchup"
+	ScheduleRunTriggerManual   ScheduleRunTrigger = "manual"
+	ScheduleRunTriggerSchedule ScheduleRunTrigger = "schedule"
+)
+
+// Valid indicates whether the value is a known member of the ScheduleRunTrigger enum.
+func (e ScheduleRunTrigger) Valid() bool {
+	switch e {
+	case ScheduleRunTriggerCatchup:
+		return true
+	case ScheduleRunTriggerManual:
+		return true
+	case ScheduleRunTriggerSchedule:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SecretMode.
 const (
 	Env   SecretMode = "env"
@@ -1240,6 +1510,27 @@ const (
 func (e ThreadExecutorOrbKind) Valid() bool {
 	switch e {
 	case ThreadExecutorOrbKindOrb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ThreadKind.
+const (
+	ThreadKindAssistant ThreadKind = "assistant"
+	ThreadKindSpace     ThreadKind = "space"
+	ThreadKindWork      ThreadKind = "work"
+)
+
+// Valid indicates whether the value is a known member of the ThreadKind enum.
+func (e ThreadKind) Valid() bool {
+	switch e {
+	case ThreadKindAssistant:
+		return true
+	case ThreadKindSpace:
+		return true
+	case ThreadKindWork:
 		return true
 	default:
 		return false
@@ -1786,6 +2077,30 @@ func (e GetUsageStatsParamsGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for ListThreadsParamsKind.
+const (
+	ListThreadsKindAll       ListThreadsParamsKind = "all"
+	ListThreadsKindAssistant ListThreadsParamsKind = "assistant"
+	ListThreadsKindSpace     ListThreadsParamsKind = "space"
+	ListThreadsKindWork      ListThreadsParamsKind = "work"
+)
+
+// Valid indicates whether the value is a known member of the ListThreadsParamsKind enum.
+func (e ListThreadsParamsKind) Valid() bool {
+	switch e {
+	case ListThreadsKindAll:
+		return true
+	case ListThreadsKindAssistant:
+		return true
+	case ListThreadsKindSpace:
+		return true
+	case ListThreadsKindWork:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentConfigFile defines model for AgentConfigFile.
 type AgentConfigFile struct {
 	// Mode 文件权限（十进制表示的 Unix 权限位）
@@ -1945,6 +2260,56 @@ type AuthSetupFinishResponse struct {
 	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
 }
 
+// AutomationAction 一条操作记录（协调者的宿主工具调用，或 orb 内 agent 经 `oryn` CLI 的调用；无论成败都记）
+type AutomationAction struct {
+	Action    AutomationActionAction    `json:"action"`
+	ActorKind AutomationActionActorKind `json:"actorKind"`
+
+	// ActorThreadID 发起操作的对话 / 线程
+	ActorThreadID *ThreadID `json:"actorThreadId,omitempty"`
+
+	// Error 失败时的错误码
+	Error *string `json:"error,omitempty"`
+
+	// ID `cac_<ulid>`（M9，操作记录）
+	ID AutomationActionID `json:"id"`
+	Ok bool               `json:"ok"`
+
+	// Origin `owner` 主人发起的回合；`auto` 自动化回合（定时、线程回报、agent 间消息触发）
+	Origin AutomationActionOrigin `json:"origin"`
+
+	// ScheduleID `sch_<ulid>`（M9）
+	ScheduleID *ScheduleID `json:"scheduleId,omitempty"`
+
+	// Summary 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>`
+	Summary string `json:"summary"`
+
+	// TargetThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	TargetThreadID *ThreadID `json:"targetThreadId,omitempty"`
+
+	// TS UTC 毫秒时间戳
+	TS TimestampMs `json:"ts"`
+}
+
+// AutomationActionAction defines model for AutomationAction.Action.
+type AutomationActionAction string
+
+// AutomationActionActorKind defines model for AutomationAction.ActorKind.
+type AutomationActionActorKind string
+
+// AutomationActionOrigin `owner` 主人发起的回合；`auto` 自动化回合（定时、线程回报、agent 间消息触发）
+type AutomationActionOrigin string
+
+// AutomationActionID `cac_<ulid>`（M9，操作记录）
+type AutomationActionID = string
+
+// AutomationActionList defines model for AutomationActionList.
+type AutomationActionList struct {
+	Actions []AutomationAction `json:"actions"`
+}
+
 // AvatarIdentity 头像（agent 头像与用户头像共用）；两个字段至多出现一个，都省略表示默认
 type AvatarIdentity struct {
 	// AvatarIcon 内置图标字形（Nerd Font 私有区字符或 emoji）；空串等同省略
@@ -2060,6 +2425,34 @@ type BrowserProfileReadonlyReason string
 // `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
 type BrowserProfileSaveError string
 
+// CoordinatorSandbox defines model for CoordinatorSandbox.
+type CoordinatorSandbox struct {
+	// IpcScope Landlock ABI ≥ 6 的信号与抽象 unix socket 作用域
+	IpcScope    bool `json:"ipcScope"`
+	LandlockAbi int  `json:"landlockAbi"`
+
+	// Network `namespace` 独立网络命名空间（只有回环）；`port` 共用宿主网络，由 Landlock 限制为只能连模型代理端口
+	Network      CoordinatorSandboxNetwork `json:"network"`
+	PidNamespace bool                      `json:"pidNamespace"`
+	Seccomp      bool                      `json:"seccomp"`
+	UID          int                       `json:"uid"`
+}
+
+// CoordinatorSandboxNetwork `namespace` 独立网络命名空间（只有回环）；`port` 共用宿主网络，由 Landlock 限制为只能连模型代理端口
+type CoordinatorSandboxNetwork string
+
+// CoordinatorStatus defines model for CoordinatorStatus.
+type CoordinatorStatus struct {
+	Available  bool    `json:"available"`
+	OmpVersion *string `json:"ompVersion,omitempty"`
+
+	// Reason 不可用的原因（缺 omp、校验与 `core/source.json` 不符、沙箱条件不满足…）
+	Reason *string `json:"reason,omitempty"`
+
+	// Sandbox 协调宿主至少成功启动过一次后才有
+	Sandbox *CoordinatorSandbox `json:"sandbox,omitempty"`
+}
+
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
 	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
@@ -2079,10 +2472,13 @@ type CreateThreadRequest struct {
 	ProfileMode *BrowserProfileMode `json:"profileMode,omitempty"`
 
 	// ProjectID `prj_<ulid>`
-	ProjectID     *ProjectID `json:"projectId,omitempty"`
-	Prompt        string     `json:"prompt"`
-	ThinkingLevel *string    `json:"thinkingLevel,omitempty"`
-	Title         *string    `json:"title,omitempty"`
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+	Prompt    string     `json:"prompt"`
+
+	// SpaceID 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目
+	SpaceID       *SpaceID `json:"spaceId,omitempty"`
+	ThinkingLevel *string  `json:"thinkingLevel,omitempty"`
+	Title         *string  `json:"title,omitempty"`
 }
 
 // CreateThreadShareRequest defines model for CreateThreadShareRequest.
@@ -2240,6 +2636,10 @@ type Error struct {
 	// M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
 	// M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
 	// `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
+	// M9（Space、助手与定时，HTTP 状态见 docs/protocol.md）：`invalid_schedule`（400）、`schedule_not_found`（404）、`space_not_found`（404）、
+	// `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`space_name_taken`（409）、
+	// `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
+	// `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -2545,13 +2945,24 @@ type LinkCtlAgentStartParams struct {
 
 	// InitFrames `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧
 	InitFrames []OmpFrame `json:"initFrames"`
-	SessionDir string     `json:"sessionDir"`
+
+	// Profile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
+	// **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
+	Profile    *LinkCtlAgentStartParamsProfile `json:"profile,omitempty"`
+	SessionDir string                          `json:"sessionDir"`
+
+	// SystemPrompt M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受
+	SystemPrompt *string `json:"systemPrompt,omitempty"`
 
 	// ThreadID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ThreadID ThreadID `json:"threadId"`
 }
+
+// LinkCtlAgentStartParamsProfile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
+// **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
+type LinkCtlAgentStartParamsProfile string
 
 // LinkCtlAgentStartResult defines model for LinkCtlAgentStartResult.
 type LinkCtlAgentStartResult struct {
@@ -2692,7 +3103,8 @@ type LinkCtlEntryCursor struct {
 
 // LinkCtlError defines model for LinkCtlError.
 type LinkCtlError struct {
-	// Code `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试
+	// Code `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试。
+	// M9 orb 内方法另有：`forbidden`（非亲属线程、不属于本 orb 的调用方）、`rate_limited`、`invalid_schedule`、`thread_archived`、`schedule_name_taken`。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -2717,6 +3129,8 @@ type LinkCtlHelloParams struct {
 	// Features orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
 	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
 	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
+	// M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
+	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
@@ -2742,6 +3156,8 @@ type LinkCtlHelloThread struct {
 // `terminal.gap`（orbd→orynd 通知，M3）；
 // `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 // `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
+// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -2757,6 +3173,8 @@ type LinkCtlNotification struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
+	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -2842,6 +3260,8 @@ type LinkCtlRequest struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
+	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -2862,6 +3282,43 @@ type LinkCtlResumeRunParams = LinkCtlSetupRunParams
 
 // LinkCtlResumeRunResult defines model for LinkCtlResumeRunResult.
 type LinkCtlResumeRunResult = LinkCtlSetupRunResult
+
+// LinkCtlScheduleEnableParams `schedule.enable`（M9）：暂停 / 恢复调用方线程的线程内定时；结果 `LinkCtlScheduleResult`
+type LinkCtlScheduleEnableParams struct {
+	Enabled bool `json:"enabled"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlScheduleParams `schedule.get` / `schedule.delete` 的参数（M9）：只作用于调用方线程自己的线程内定时；结果分别为 `LinkCtlScheduleResult` / `LinkCtlOkResult`
+type LinkCtlScheduleParams struct {
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlSchedulePutParams `schedule.put`（M9）：设置调用方线程的线程内定时（`createdBy = agent`）；结果 `LinkCtlScheduleResult`。
+// `input` 只接受线程内定时的字段：带 `mode = new_thread`、`threadId`（不等于调用方）或任一 `new_thread` 专属字段 → `invalid_schedule`。
+type LinkCtlSchedulePutParams struct {
+	// Input 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
+	// 不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
+	// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+	// 模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
+	// `projectId` / `spaceId` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
+	// `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
+	// `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
+	// `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+	Input ScheduleInput `json:"input"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlScheduleResult `schedule.get` / `schedule.put` / `schedule.enable` 的结果；`schedule` 省略 = 该线程没有定时
+type LinkCtlScheduleResult struct {
+	// Schedule 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
+	Schedule *Schedule `json:"schedule,omitempty"`
+}
 
 // LinkCtlServicesStateParams orbd 的受管服务全量快照；每次定义或状态变化、link 建立后、收到 `portal.configure` 后发送
 type LinkCtlServicesStateParams struct {
@@ -2951,6 +3408,74 @@ type LinkCtlTerminalGapParams struct {
 	// ThreadID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlThreadCreateParams orbd→orynd 请求（M9，`features` 含 `threads` 的 orbd；由 orb 内 `oryn thread new` 经 `orbd.sock` 转来）。
+// 在调用方线程的项目（与 Space）里新建一个子线程（`parentThreadId` = 调用方），新 orb；结果 `LinkCtlThreadInfo`。
+// 调用方须属于本 orb、`kind = work`、未归档，否则 `forbidden`；超出子线程数 / 深度 / 全库速率 → `rate_limited`。
+type LinkCtlThreadCreateParams struct {
+	Prompt string `json:"prompt"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+	Title    *string  `json:"title,omitempty"`
+
+	// Type orb 类型名；缺省取项目默认
+	Type *string `json:"type,omitempty"`
+}
+
+// LinkCtlThreadGetParams orbd→orynd 请求（M9）：读取亲属线程的状态；结果 `LinkCtlThreadInfo`；亲属规则同 `thread.send`
+type LinkCtlThreadGetParams struct {
+	// Target `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	Target ThreadID `json:"target"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlThreadInfo `thread.create` / `thread.get` 的结果
+type LinkCtlThreadInfo struct {
+	// ID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ID ThreadID `json:"id"`
+
+	// LastAssistantText 最后一条 assistant 消息的文本（截断到 8000 字符）
+	LastAssistantText *string `json:"lastAssistantText,omitempty"`
+
+	// Settled `state` ∈ {`idle`, `awaiting_input`, `error`}
+	Settled bool `json:"settled"`
+
+	// State 线程状态（全端统一，自上而下取首个成立）：
+	// `provisioning` orb 未到 ready 且 agent 从未 ready；
+	// `awaiting_input` 有待答 UI 或计划提案；
+	// `working` 已见 agent_start 且尚无终结 agent_end，或 state.hasPendingAsyncWork；
+	// `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
+	// `idle` 其它。
+	State ThreadState `json:"state"`
+	Title string      `json:"title"`
+
+	// URL 线程在 Web 上的地址（`<public_url>/t/<id>`）
+	URL string `json:"url"`
+}
+
+// LinkCtlThreadSendParams orbd→orynd 请求（M9）：以自动化身份向 `target` 追加一条消息（正文前加来源头行）；结果 `LinkCtlOkResult`。
+// `target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。
+type LinkCtlThreadSendParams struct {
+	Message string `json:"message"`
+
+	// Steer 为真且目标正在工作时作为 steer 送达；否则排在当前回合之后
+	Steer *bool `json:"steer,omitempty"`
+
+	// Target `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	Target ThreadID `json:"target"`
+
+	// ThreadID 调用方线程
 	ThreadID ThreadID `json:"threadId"`
 }
 
@@ -3249,7 +3774,10 @@ type OmpFrame map[string]interface{}
 // Orb defines model for Orb.
 type Orb struct {
 	AgentVersion *string `json:"agentVersion,omitempty"`
-	Cpus         float32 `json:"cpus"`
+
+	// Coordinator 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略
+	Coordinator *bool   `json:"coordinator,omitempty"`
+	Cpus        float32 `json:"cpus"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
@@ -4040,6 +4568,220 @@ type PushSubscriptionList struct {
 	Subscriptions []PushSubscription `json:"subscriptions"`
 }
 
+// Schedule 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
+type Schedule struct {
+	// At UTC 毫秒时间戳
+	At *TimestampMs `json:"at,omitempty"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs       `json:"createdAt"`
+	CreatedBy ScheduleCreatedBy `json:"createdBy"`
+	Cron      *string           `json:"cron,omitempty"`
+	Enabled   bool              `json:"enabled"`
+
+	// EndsAt UTC 毫秒时间戳
+	EndsAt *TimestampMs `json:"endsAt,omitempty"`
+
+	// Every 规范化的时长串（如 `30m0s`）
+	Every *string `json:"every,omitempty"`
+
+	// Failures 连续失败次数
+	Failures int `json:"failures"`
+
+	// ID `sch_<ulid>`（M9）
+	ID       ScheduleID `json:"id"`
+	KeepLast int        `json:"keepLast"`
+
+	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+	Kind    ScheduleKind `json:"kind"`
+	LastRun *ScheduleRun `json:"lastRun,omitempty"`
+
+	// LastRunAt UTC 毫秒时间戳
+	LastRunAt *TimestampMs `json:"lastRunAt,omitempty"`
+
+	// Mode `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
+	Mode  ScheduleMode `json:"mode"`
+	Model *ModelRef    `json:"model,omitempty"`
+
+	// Name `thread` 模式可为空串
+	Name string `json:"name"`
+
+	// NextRunAt 省略 = 不会再触发（暂停或已结束）
+	NextRunAt *TimestampMs `json:"nextRunAt,omitempty"`
+
+	// OpenRuns 未结束的运行数（`pending` / `running` / `needs_input`）
+	OpenRuns int     `json:"openRuns"`
+	OrbType  *string `json:"orbType,omitempty"`
+
+	// Overlap `new_thread` 定时在上一次运行未结束（线程仍 `provisioning` / `working`）时到点的处理：
+	// `skip` 记一次 `skipped`（`error = overlap`）；`allow` 照常新建，同一定时至多 3 个并存（超出记 `skipped`，`error = overlap_cap`）。
+	// 线程内定时恒为 `skip`（`needs_input` 同样算未结束）。
+	Overlap ScheduleOverlap `json:"overlap"`
+
+	// PausedReason `user` 手动暂停；`failures` 连续 3 次失败后自动暂停；`archived` 目标线程或项目已归档；`done` 一次性已触发或越过 `endsAt`
+	PausedReason *SchedulePausedReason `json:"pausedReason,omitempty"`
+
+	// ProjectID `new_thread` 模式的项目；省略 = 无项目
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+	Prompt    string     `json:"prompt"`
+	Provider  *string    `json:"provider,omitempty"`
+
+	// RunCount 已触发次数（含跳过与手动触发）；也是下一次运行的序号减一
+	RunCount int64 `json:"runCount"`
+
+	// SpaceID `spc_<ulid>`（M9）
+	SpaceID       *SpaceID `json:"spaceId,omitempty"`
+	ThinkingLevel *string  `json:"thinkingLevel,omitempty"`
+
+	// ThreadID `thread` 模式的目标线程
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+	Timezone string    `json:"timezone"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// ScheduleCreatedBy defines model for ScheduleCreatedBy.
+type ScheduleCreatedBy string
+
+// ScheduleID `sch_<ulid>`（M9）
+type ScheduleID = string
+
+// ScheduleInput 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
+// 不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
+// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+// 模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
+// `projectId` / `spaceId` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
+// `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
+// `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
+// `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+type ScheduleInput struct {
+	// At UTC 毫秒时间戳
+	At   *TimestampMs `json:"at,omitempty"`
+	Cron *string      `json:"cron,omitempty"`
+
+	// Enabled 缺省 true；false 时保存为暂停（`pausedReason = user`）
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// EndsAt UTC 毫秒时间戳
+	EndsAt *TimestampMs `json:"endsAt,omitempty"`
+
+	// Every Example: 30m
+	Every *string `json:"every,omitempty"`
+
+	// KeepLast 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5）
+	KeepLast *int `json:"keepLast,omitempty"`
+
+	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+	Kind ScheduleKind `json:"kind"`
+
+	// Mode `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
+	Mode *ScheduleMode `json:"mode,omitempty"`
+
+	// Model 仅 `new_thread`
+	Model *ModelRef `json:"model,omitempty"`
+	Name  *string   `json:"name,omitempty"`
+
+	// OrbType 仅 `new_thread`：orb 类型名
+	OrbType *string `json:"orbType,omitempty"`
+
+	// Overlap 仅 `new_thread`；缺省 `skip`
+	Overlap *ScheduleOverlap `json:"overlap,omitempty"`
+
+	// ProjectID 仅 `new_thread`：新线程所在项目；省略 = 无项目
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+
+	// Prompt 1–20000 字符（预览时可为空串）
+	Prompt string `json:"prompt"`
+
+	// Provider 仅 `new_thread`：provider 名称（不得为 `@host`）；省略按建线程的回退链
+	Provider *string `json:"provider,omitempty"`
+
+	// SpaceID 仅 `new_thread`：新线程加入该 Space
+	SpaceID *SpaceID `json:"spaceId,omitempty"`
+
+	// ThinkingLevel 仅 `new_thread`
+	ThinkingLevel *string `json:"thinkingLevel,omitempty"`
+
+	// ThreadID 仅 `thread`：目标线程
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// Timezone Example: Asia/Shanghai
+	Timezone *string `json:"timezone,omitempty"`
+}
+
+// ScheduleKind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+type ScheduleKind string
+
+// ScheduleList defines model for ScheduleList.
+type ScheduleList struct {
+	Schedules []Schedule `json:"schedules"`
+}
+
+// ScheduleMode `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
+type ScheduleMode string
+
+// ScheduleOverlap `new_thread` 定时在上一次运行未结束（线程仍 `provisioning` / `working`）时到点的处理：
+// `skip` 记一次 `skipped`（`error = overlap`）；`allow` 照常新建，同一定时至多 3 个并存（超出记 `skipped`，`error = overlap_cap`）。
+// 线程内定时恒为 `skip`（`needs_input` 同样算未结束）。
+type ScheduleOverlap string
+
+// SchedulePausedReason `user` 手动暂停；`failures` 连续 3 次失败后自动暂停；`archived` 目标线程或项目已归档；`done` 一次性已触发或越过 `endsAt`
+type SchedulePausedReason string
+
+// SchedulePreview defines model for SchedulePreview.
+type SchedulePreview struct {
+	Next []TimestampMs `json:"next"`
+}
+
+// ScheduleRun defines model for ScheduleRun.
+type ScheduleRun struct {
+	// DeliveredAt UTC 毫秒时间戳
+	DeliveredAt *TimestampMs `json:"deliveredAt,omitempty"`
+
+	// Error 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`，或创建线程失败的原因
+	Error *string `json:"error,omitempty"`
+
+	// FinishedAt UTC 毫秒时间戳
+	FinishedAt *TimestampMs `json:"finishedAt,omitempty"`
+
+	// ID `srn_<ulid>`（M9，定时的一次运行）
+	ID ScheduleRunID `json:"id"`
+
+	// Missed 被合并掉的触发数
+	Missed int `json:"missed"`
+
+	// ScheduleID `sch_<ulid>`（M9）
+	ScheduleID ScheduleID `json:"scheduleId"`
+
+	// ScheduledFor UTC 毫秒时间戳
+	ScheduledFor TimestampMs `json:"scheduledFor"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt TimestampMs       `json:"startedAt"`
+	Status    ScheduleRunStatus `json:"status"`
+
+	// ThreadID `thread` 模式为目标线程；`new_thread` 模式为建出的线程（建出之前或创建失败时省略）
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// Trigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+	Trigger ScheduleRunTrigger `json:"trigger"`
+}
+
+// ScheduleRunID `srn_<ulid>`（M9，定时的一次运行）
+type ScheduleRunID = string
+
+// ScheduleRunList defines model for ScheduleRunList.
+type ScheduleRunList struct {
+	Runs []ScheduleRun `json:"runs"`
+}
+
+// ScheduleRunStatus defines model for ScheduleRunStatus.
+type ScheduleRunStatus string
+
+// ScheduleRunTrigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+type ScheduleRunTrigger string
+
 // SecretList defines model for SecretList.
 type SecretList struct {
 	Secrets []SecretMeta `json:"secrets"`
@@ -4152,6 +4894,74 @@ type ShareSlug = string
 // SnapshotID 快照 id，同时是 Docker 镜像名
 type SnapshotID = string
 
+// Space defines model for Space.
+type Space struct {
+	// ArchivedAt UTC 毫秒时间戳
+	ArchivedAt *TimestampMs `json:"archivedAt,omitempty"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+	Goal      string      `json:"goal"`
+
+	// ID `spc_<ulid>`（M9）
+	ID   SpaceID `json:"id"`
+	Name string  `json:"name"`
+
+	// ProjectID 新线程的默认项目；省略 = 无项目
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+
+	// ThreadID 它的协调聊天线程（`kind = space`）
+	ThreadID ThreadID `json:"threadId"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// SpaceCreate defines model for SpaceCreate.
+type SpaceCreate struct {
+	Goal *string `json:"goal,omitempty"`
+	Name string  `json:"name"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+}
+
+// SpaceID `spc_<ulid>`（M9）
+type SpaceID = string
+
+// SpaceList defines model for SpaceList.
+type SpaceList struct {
+	Spaces []Space `json:"spaces"`
+}
+
+// SpacePatch 只修改出现的字段；`name` / `goal` / `projectId` 变化后协调者在静止时以新设定重启
+type SpacePatch struct {
+	Archived *bool   `json:"archived,omitempty"`
+	Goal     *string `json:"goal,omitempty"`
+	Name     *string `json:"name,omitempty"`
+
+	// ProjectID `prj_…`；空串 = 改为无项目
+	ProjectID *string `json:"projectId,omitempty"`
+}
+
+// SpaceProgress defines model for SpaceProgress.
+type SpaceProgress struct {
+	Days []SpaceProgressDay `json:"days"`
+}
+
+// SpaceProgressDay 一个自然日（按请求的 `tz`）里本 Space 的工作线程：`shipped` 当日标记为已交付的数量；
+// `archived` 当日归档且未标记已交付的数量；`open` 当日结束时已创建且未归档的数量。
+type SpaceProgressDay struct {
+	Archived int `json:"archived"`
+
+	// Date YYYY-MM-DD
+	//
+	// Example: 2026-11-14
+	Date    string `json:"date"`
+	Open    int    `json:"open"`
+	Shipped int    `json:"shipped"`
+}
+
 // TelegramChannelConfig defines model for TelegramChannelConfig.
 type TelegramChannelConfig struct {
 	// APIBase Bot API 根地址，默认 `https://api.telegram.org`（自建 Bot API 服务器与测试用）
@@ -4198,8 +5008,11 @@ type Thread struct {
 	// ID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
-	ID     ThreadID `json:"id"`
-	Labels []string `json:"labels"`
+	ID ThreadID `json:"id"`
+
+	// Kind 线程种类（M9）；省略 = `work`
+	Kind   *ThreadKind `json:"kind,omitempty"`
+	Labels []string    `json:"labels"`
 
 	// LastMessageAt UTC 毫秒时间戳
 	LastMessageAt *TimestampMs `json:"lastMessageAt,omitempty"`
@@ -4228,8 +5041,20 @@ type Thread struct {
 	// PublicShares 未撤销的公开分享数；为 0 时省略
 	PublicShares *int `json:"publicShares,omitempty"`
 
+	// Schedule 该线程的线程内定时（M9）；没有则省略
+	Schedule *ThreadScheduleSummary `json:"schedule,omitempty"`
+
+	// ScheduleRun 由「新建线程」定时创建时给出（M9）
+	ScheduleRun *ThreadScheduleRun `json:"scheduleRun,omitempty"`
+
+	// ShippedAt 标记为已交付的时间（M9，`PATCH {shipped: true}`）
+	ShippedAt *TimestampMs `json:"shippedAt,omitempty"`
+
 	// SnoozedUntil UTC 毫秒时间戳
 	SnoozedUntil *TimestampMs `json:"snoozedUntil,omitempty"`
+
+	// SpaceID 所属 Space（M9）
+	SpaceID *SpaceID `json:"spaceId,omitempty"`
 
 	// State 线程状态（全端统一，自上而下取首个成立）：
 	// `provisioning` orb 未到 ready 且 agent 从未 ready；
@@ -4304,6 +5129,10 @@ type ThreadExecutorOrbKind string
 // Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 type ThreadID = string
 
+// ThreadKind 线程种类：`work` 普通工作线程；`space` Space 的协调聊天；`assistant` 全局助手对话。
+// 后两者合称「协调对话」：跑在控制面宿主的协调宿主里，没有工作区，只有 Oryn 宿主工具。
+type ThreadKind string
+
 // ThreadList defines model for ThreadList.
 type ThreadList struct {
 	Threads []Thread `json:"threads"`
@@ -4316,10 +5145,32 @@ type ThreadPatch struct {
 	Labels   []string `json:"labels,omitempty"`
 	Pinned   *bool    `json:"pinned,omitempty"`
 
+	// Shipped `true` 标记为已交付（记 `shippedAt`，未归档则同时归档）；`false` 清除标记（M9）
+	Shipped *bool `json:"shipped,omitempty"`
+
 	// SnoozedUntil UTC 毫秒时间戳
 	SnoozedUntil *TimestampMs `json:"snoozedUntil,omitempty"`
-	Title        *string      `json:"title,omitempty"`
-	Unread       *bool        `json:"unread,omitempty"`
+
+	// SpaceID 加入 Space（`spc_…`，不存在 → 404 `space_not_found`）；空串 = 移出 Space。只对 `kind = work` 的线程有效（M9）
+	SpaceID *string `json:"spaceId,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Unread  *bool   `json:"unread,omitempty"`
+}
+
+// ThreadScheduleRun 该线程由「新建线程」定时的第 `run` 次运行创建
+type ThreadScheduleRun struct {
+	Run int64 `json:"run"`
+
+	// ScheduleID `sch_<ulid>`（M9）
+	ScheduleID ScheduleID `json:"scheduleId"`
+}
+
+// ThreadScheduleSummary 线程内定时（`mode = thread`）的摘要；完整定义见 `GET threads/{id}/schedule`
+type ThreadScheduleSummary struct {
+	Enabled bool `json:"enabled"`
+
+	// NextRunAt UTC 毫秒时间戳
+	NextRunAt *TimestampMs `json:"nextRunAt,omitempty"`
 }
 
 // ThreadShare defines model for ThreadShare.
@@ -4949,6 +5800,9 @@ type PublishedFileIDPath = PublishedFileID
 // PushSubscriptionIDPath `psub_<ulid>`
 type PushSubscriptionIDPath = PushSubscriptionID
 
+// ScheduleIDPath `sch_<ulid>`（M9）
+type ScheduleIDPath = ScheduleID
+
 // SecretNamePath defines model for SecretNamePath.
 type SecretNamePath = string
 
@@ -4960,6 +5814,9 @@ type ShareIDPath = ShareID
 
 // ShareSlugPath 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储）
 type ShareSlugPath = ShareSlug
+
+// SpaceIDPath `spc_<ulid>`（M9）
+type SpaceIDPath = SpaceID
 
 // ThreadIDPath `T-<uuidv7>`
 //
@@ -4987,6 +5844,13 @@ type UploadAttachmentParams struct {
 // GetAttachmentContentParams defines parameters for GetAttachmentContent.
 type GetAttachmentContentParams struct {
 	Inline *bool `form:"inline,omitempty" json:"inline,omitempty"`
+}
+
+// ListAutomationActionsParams defines parameters for ListAutomationActions.
+type ListAutomationActionsParams struct {
+	// Thread 只返回该线程作为发起方或目标的记录
+	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
+	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListNotificationsParams defines parameters for ListNotifications.
@@ -5145,6 +6009,39 @@ type ListPublicShareEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListSchedulesParams defines parameters for ListSchedules.
+type ListSchedulesParams struct {
+	Mode *ScheduleMode `form:"mode,omitempty" json:"mode,omitempty"`
+
+	// Project 项目 id：该项目的 `new_thread` 定时；`none` = 没有项目的 `new_thread` 定时
+	Project *string `form:"project,omitempty" json:"project,omitempty"`
+
+	// Space `spaceId` 为它的 `new_thread` 定时，加上挂在该 Space 线程上的线程内定时
+	Space *SpaceID `form:"space,omitempty" json:"space,omitempty"`
+
+	// Thread 该线程的线程内定时
+	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
+// ListScheduleRunsParams defines parameters for ListScheduleRuns.
+type ListScheduleRunsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListSpacesParams defines parameters for ListSpaces.
+type ListSpacesParams struct {
+	// Archived 为 true 时同时返回已归档的 Space；缺省只返回未归档
+	Archived *bool `form:"archived,omitempty" json:"archived,omitempty"`
+}
+
+// GetSpaceProgressParams defines parameters for GetSpaceProgress.
+type GetSpaceProgressParams struct {
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// Tz IANA 时区，决定自然日的边界；缺省 `UTC`，非法 → 400 `invalid_request`
+	Tz *string `form:"tz,omitempty" json:"tz,omitempty"`
+}
+
 // GetOrbStatsParams defines parameters for GetOrbStats.
 type GetOrbStatsParams struct {
 	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
@@ -5180,7 +6077,16 @@ type ListThreadsParams struct {
 
 	// Q 标题 / 标签的模糊搜索
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Kind 线程种类；缺省 `work`（只列工作线程），`all` = 全部种类（M9）
+	Kind *ListThreadsParamsKind `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// Space 只返回属于该 Space 的线程（M9）
+	Space *SpaceID `form:"space,omitempty" json:"space,omitempty"`
 }
+
+// ListThreadsParamsKind defines parameters for ListThreads.
+type ListThreadsParamsKind string
 
 // ListThreadEntriesParams defines parameters for ListThreadEntries.
 type ListThreadEntriesParams struct {
@@ -5267,6 +6173,15 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 // CreatePushSubscriptionJSONRequestBody defines body for CreatePushSubscription for application/json ContentType.
 type CreatePushSubscriptionJSONRequestBody = PushSubscriptionInput
 
+// CreateScheduleJSONRequestBody defines body for CreateSchedule for application/json ContentType.
+type CreateScheduleJSONRequestBody = ScheduleInput
+
+// PreviewScheduleJSONRequestBody defines body for PreviewSchedule for application/json ContentType.
+type PreviewScheduleJSONRequestBody = ScheduleInput
+
+// PutScheduleJSONRequestBody defines body for PutSchedule for application/json ContentType.
+type PutScheduleJSONRequestBody = ScheduleInput
+
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
 
@@ -5279,6 +6194,12 @@ type PutGitIdentityJSONRequestBody = GitIdentity
 // PutUserIdentityJSONRequestBody defines body for PutUserIdentity for application/json ContentType.
 type PutUserIdentityJSONRequestBody = AvatarIdentity
 
+// CreateSpaceJSONRequestBody defines body for CreateSpace for application/json ContentType.
+type CreateSpaceJSONRequestBody = SpaceCreate
+
+// UpdateSpaceJSONRequestBody defines body for UpdateSpace for application/json ContentType.
+type UpdateSpaceJSONRequestBody = SpacePatch
+
 // CreateThreadJSONRequestBody defines body for CreateThread for application/json ContentType.
 type CreateThreadJSONRequestBody = CreateThreadRequest
 
@@ -5287,6 +6208,9 @@ type UpdateThreadJSONRequestBody = ThreadPatch
 
 // ForkThreadJSONRequestBody defines body for ForkThread for application/json ContentType.
 type ForkThreadJSONRequestBody = ForkThreadRequest
+
+// PutThreadScheduleJSONRequestBody defines body for PutThreadSchedule for application/json ContentType.
+type PutThreadScheduleJSONRequestBody = ScheduleInput
 
 // CreateThreadShareJSONRequestBody defines body for CreateThreadShare for application/json ContentType.
 type CreateThreadShareJSONRequestBody = CreateThreadShareRequest
@@ -6941,6 +7865,9 @@ type ServerInterface interface {
 	// ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 	// (POST /api/v1/agent-config/import)
 	ImportAgentConfig(w http.ResponseWriter, r *http.Request)
+	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
+	// (POST /api/v1/assistant/conversations)
+	CreateAssistantConversation(w http.ResponseWriter, r *http.Request)
 	// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
 	// (POST /api/v1/attachments)
 	UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams)
@@ -6974,6 +7901,9 @@ type ServerInterface interface {
 	// AuthSetupFinish 完成注册 Passkey
 	// (POST /api/v1/auth/setup/finish)
 	AuthSetupFinish(w http.ResponseWriter, r *http.Request)
+	// ListAutomationActions 协调者与 orb 内 agent 的操作记录（审计，新的在前，保留 90 天）
+	// (GET /api/v1/automation/actions)
+	ListAutomationActions(w http.ResponseWriter, r *http.Request, params ListAutomationActionsParams)
 	// GetBlob 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
 	// (GET /api/v1/blobs/{sha256})
 	GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sha256)
@@ -6989,6 +7919,9 @@ type ServerInterface interface {
 	// UpdateBrowserProfile 重命名 Profile
 	// (PATCH /api/v1/browser-profiles/{id})
 	UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath)
+	// GetCoordinator 协调宿主的可用性与沙箱报告
+	// (GET /api/v1/coordinator)
+	GetCoordinator(w http.ResponseWriter, r *http.Request)
 	// ListDevices 设备列表
 	// (GET /api/v1/devices)
 	ListDevices(w http.ResponseWriter, r *http.Request)
@@ -7187,6 +8120,36 @@ type ServerInterface interface {
 	// GetVapidKey Web Push 的 VAPID 公钥（`applicationServerKey`）
 	// (GET /api/v1/push/vapid-key)
 	GetVapidKey(w http.ResponseWriter, r *http.Request)
+	// ListSchedules 定时列表（两种模式；按创建时间）
+	// (GET /api/v1/schedules)
+	ListSchedules(w http.ResponseWriter, r *http.Request, params ListSchedulesParams)
+	// CreateSchedule 新建定时（必须给 `mode`）
+	// (POST /api/v1/schedules)
+	CreateSchedule(w http.ResponseWriter, r *http.Request)
+	// PreviewSchedule 预览接下来的触发时间（至多 5 个；只看时间字段，`prompt` 可为空串）
+	// (POST /api/v1/schedules/preview)
+	PreviewSchedule(w http.ResponseWriter, r *http.Request)
+	// DeleteSchedule 删除定时（连同运行记录；它建出的线程保留）
+	// (DELETE /api/v1/schedules/{id})
+	DeleteSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// GetSchedule 定时详情
+	// (GET /api/v1/schedules/{id})
+	GetSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// PutSchedule 替换定时的定义（保留 `id`、`runCount`；清零 `failures` 与 `pausedReason`；重算 `nextRunAt`）
+	// (PUT /api/v1/schedules/{id})
+	PutSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// PauseSchedule 暂停（`pausedReason = user`）
+	// (POST /api/v1/schedules/{id}/pause)
+	PauseSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// ResumeSchedule 恢复（重算 `nextRunAt`，不补跑暂停期间错过的触发；已结束的一次性定时 → 400 `invalid_schedule`）
+	// (POST /api/v1/schedules/{id}/resume)
+	ResumeSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// RunSchedule 立即触发一次（`trigger = manual`；不改 `nextRunAt`；暂停中的定时也可触发）
+	// (POST /api/v1/schedules/{id}/run)
+	RunSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
+	// (GET /api/v1/schedules/{id}/runs)
+	ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams)
 	// ListSecrets 密钥列表（仅名称与元数据）
 	// (GET /api/v1/secrets)
 	ListSecrets(w http.ResponseWriter, r *http.Request)
@@ -7223,6 +8186,24 @@ type ServerInterface interface {
 	// RevokeShare 撤销线程分享（页面、接口、图片立即 404，已连接的匿名 WebSocket 收到 `share.revoked` 后以 4001 关闭）
 	// (DELETE /api/v1/shares/{id})
 	RevokeShare(w http.ResponseWriter, r *http.Request, id ShareIDPath)
+	// ListSpaces Space 列表（按名称）
+	// (GET /api/v1/spaces)
+	ListSpaces(w http.ResponseWriter, r *http.Request, params ListSpacesParams)
+	// CreateSpace 新建 Space（同时创建它的协调聊天线程）
+	// (POST /api/v1/spaces)
+	CreateSpace(w http.ResponseWriter, r *http.Request)
+	// DeleteSpace 删除 Space（删除其聊天线程；其工作线程保留并移出 Space，其项目定时的 `spaceId` 清空）
+	// (DELETE /api/v1/spaces/{id})
+	DeleteSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath)
+	// GetSpace Space 详情
+	// (GET /api/v1/spaces/{id})
+	GetSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath)
+	// UpdateSpace 修改 Space（改名同步聊天线程标题；`archived` 同步归档聊天线程）
+	// (PATCH /api/v1/spaces/{id})
+	UpdateSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath)
+	// GetSpaceProgress 近 N 天的 Shipped / Archived / Open 进度（按自然日，最早的一天在前）
+	// (GET /api/v1/spaces/{id}/progress)
+	GetSpaceProgress(w http.ResponseWriter, r *http.Request, id SpaceIDPath, params GetSpaceProgressParams)
 	// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 	// (GET /api/v1/stats/orbs)
 	GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams)
@@ -7253,6 +8234,15 @@ type ServerInterface interface {
 	// ForkThread fork 线程（共用 orb 或连环境分叉）
 	// (POST /api/v1/threads/{id}/fork)
 	ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// DeleteThreadSchedule 删除线程内定时（没有 → 404 `schedule_not_found`）
+	// (DELETE /api/v1/threads/{id}/schedule)
+	DeleteThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// GetThreadSchedule 线程内定时（没有 → 404 `schedule_not_found`）
+	// (GET /api/v1/threads/{id}/schedule)
+	GetThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// PutThreadSchedule 设置线程内定时（没有则新建，有则替换定义；隐含 `mode = thread`）
+	// (PUT /api/v1/threads/{id}/schedule)
+	PutThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// ListThreadShares 该线程未撤销的公开分享（按创建时间降序）
 	// (GET /api/v1/threads/{id}/shares)
 	ListThreadShares(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
@@ -7313,6 +8303,12 @@ func (_ Unimplemented) PutAgentConfigFile(w http.ResponseWriter, r *http.Request
 // ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 // (POST /api/v1/agent-config/import)
 func (_ Unimplemented) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
+// (POST /api/v1/assistant/conversations)
+func (_ Unimplemented) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7382,6 +8378,12 @@ func (_ Unimplemented) AuthSetupFinish(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListAutomationActions 协调者与 orb 内 agent 的操作记录（审计，新的在前，保留 90 天）
+// (GET /api/v1/automation/actions)
+func (_ Unimplemented) ListAutomationActions(w http.ResponseWriter, r *http.Request, params ListAutomationActionsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetBlob 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
 // (GET /api/v1/blobs/{sha256})
 func (_ Unimplemented) GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sha256) {
@@ -7409,6 +8411,12 @@ func (_ Unimplemented) DeleteBrowserProfile(w http.ResponseWriter, r *http.Reque
 // UpdateBrowserProfile 重命名 Profile
 // (PATCH /api/v1/browser-profiles/{id})
 func (_ Unimplemented) UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetCoordinator 协调宿主的可用性与沙箱报告
+// (GET /api/v1/coordinator)
+func (_ Unimplemented) GetCoordinator(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -7808,6 +8816,66 @@ func (_ Unimplemented) GetVapidKey(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListSchedules 定时列表（两种模式；按创建时间）
+// (GET /api/v1/schedules)
+func (_ Unimplemented) ListSchedules(w http.ResponseWriter, r *http.Request, params ListSchedulesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateSchedule 新建定时（必须给 `mode`）
+// (POST /api/v1/schedules)
+func (_ Unimplemented) CreateSchedule(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PreviewSchedule 预览接下来的触发时间（至多 5 个；只看时间字段，`prompt` 可为空串）
+// (POST /api/v1/schedules/preview)
+func (_ Unimplemented) PreviewSchedule(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSchedule 删除定时（连同运行记录；它建出的线程保留）
+// (DELETE /api/v1/schedules/{id})
+func (_ Unimplemented) DeleteSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSchedule 定时详情
+// (GET /api/v1/schedules/{id})
+func (_ Unimplemented) GetSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutSchedule 替换定时的定义（保留 `id`、`runCount`；清零 `failures` 与 `pausedReason`；重算 `nextRunAt`）
+// (PUT /api/v1/schedules/{id})
+func (_ Unimplemented) PutSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PauseSchedule 暂停（`pausedReason = user`）
+// (POST /api/v1/schedules/{id}/pause)
+func (_ Unimplemented) PauseSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ResumeSchedule 恢复（重算 `nextRunAt`，不补跑暂停期间错过的触发；已结束的一次性定时 → 400 `invalid_schedule`）
+// (POST /api/v1/schedules/{id}/resume)
+func (_ Unimplemented) ResumeSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RunSchedule 立即触发一次（`trigger = manual`；不改 `nextRunAt`；暂停中的定时也可触发）
+// (POST /api/v1/schedules/{id}/run)
+func (_ Unimplemented) RunSchedule(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
+// (GET /api/v1/schedules/{id}/runs)
+func (_ Unimplemented) ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListSecrets 密钥列表（仅名称与元数据）
 // (GET /api/v1/secrets)
 func (_ Unimplemented) ListSecrets(w http.ResponseWriter, r *http.Request) {
@@ -7880,6 +8948,42 @@ func (_ Unimplemented) RevokeShare(w http.ResponseWriter, r *http.Request, id Sh
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListSpaces Space 列表（按名称）
+// (GET /api/v1/spaces)
+func (_ Unimplemented) ListSpaces(w http.ResponseWriter, r *http.Request, params ListSpacesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateSpace 新建 Space（同时创建它的协调聊天线程）
+// (POST /api/v1/spaces)
+func (_ Unimplemented) CreateSpace(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSpace 删除 Space（删除其聊天线程；其工作线程保留并移出 Space，其项目定时的 `spaceId` 清空）
+// (DELETE /api/v1/spaces/{id})
+func (_ Unimplemented) DeleteSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSpace Space 详情
+// (GET /api/v1/spaces/{id})
+func (_ Unimplemented) GetSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateSpace 修改 Space（改名同步聊天线程标题；`archived` 同步归档聊天线程）
+// (PATCH /api/v1/spaces/{id})
+func (_ Unimplemented) UpdateSpace(w http.ResponseWriter, r *http.Request, id SpaceIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSpaceProgress 近 N 天的 Shipped / Archived / Open 进度（按自然日，最早的一天在前）
+// (GET /api/v1/spaces/{id}/progress)
+func (_ Unimplemented) GetSpaceProgress(w http.ResponseWriter, r *http.Request, id SpaceIDPath, params GetSpaceProgressParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
 // (GET /api/v1/stats/orbs)
 func (_ Unimplemented) GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams) {
@@ -7937,6 +9041,24 @@ func (_ Unimplemented) ListThreadEntries(w http.ResponseWriter, r *http.Request,
 // ForkThread fork 线程（共用 orb 或连环境分叉）
 // (POST /api/v1/threads/{id}/fork)
 func (_ Unimplemented) ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteThreadSchedule 删除线程内定时（没有 → 404 `schedule_not_found`）
+// (DELETE /api/v1/threads/{id}/schedule)
+func (_ Unimplemented) DeleteThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetThreadSchedule 线程内定时（没有 → 404 `schedule_not_found`）
+// (GET /api/v1/threads/{id}/schedule)
+func (_ Unimplemented) GetThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutThreadSchedule 设置线程内定时（没有则新建，有则替换定义；隐含 `mode = thread`）
+// (PUT /api/v1/threads/{id}/schedule)
+func (_ Unimplemented) PutThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -8116,6 +9238,20 @@ func (siw *ServerInterfaceWrapper) ImportAgentConfig(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportAgentConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAssistantConversation operation middleware
+func (siw *ServerInterfaceWrapper) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAssistantConversation(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8363,6 +9499,52 @@ func (siw *ServerInterfaceWrapper) AuthSetupFinish(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListAutomationActions operation middleware
+func (siw *ServerInterfaceWrapper) ListAutomationActions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAutomationActionsParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAutomationActions(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetBlob operation middleware
 func (siw *ServerInterfaceWrapper) GetBlob(w http.ResponseWriter, r *http.Request) {
 
@@ -8460,6 +9642,20 @@ func (siw *ServerInterfaceWrapper) UpdateBrowserProfile(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateBrowserProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCoordinator operation middleware
+func (siw *ServerInterfaceWrapper) GetCoordinator(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCoordinator(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -10646,6 +11842,304 @@ func (siw *ServerInterfaceWrapper) GetVapidKey(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListSchedules operation middleware
+func (siw *ServerInterfaceWrapper) ListSchedules(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSchedulesParams
+
+	// ------------- Optional query parameter "mode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "mode", r.URL.Query(), &params.Mode, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "mode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mode", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSchedules(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSchedule operation middleware
+func (siw *ServerInterfaceWrapper) CreateSchedule(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSchedule(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewSchedule operation middleware
+func (siw *ServerInterfaceWrapper) PreviewSchedule(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewSchedule(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSchedule operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSchedule operation middleware
+func (siw *ServerInterfaceWrapper) GetSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSchedule operation middleware
+func (siw *ServerInterfaceWrapper) PutSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PauseSchedule operation middleware
+func (siw *ServerInterfaceWrapper) PauseSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PauseSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeSchedule operation middleware
+func (siw *ServerInterfaceWrapper) ResumeSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunSchedule operation middleware
+func (siw *ServerInterfaceWrapper) RunSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListScheduleRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListScheduleRuns(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListScheduleRunsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListScheduleRuns(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSecrets operation middleware
 func (siw *ServerInterfaceWrapper) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
@@ -10850,6 +12344,186 @@ func (siw *ServerInterfaceWrapper) RevokeShare(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListSpaces operation middleware
+func (siw *ServerInterfaceWrapper) ListSpaces(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSpacesParams
+
+	// ------------- Optional query parameter "archived" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "archived", r.URL.Query(), &params.Archived, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "archived"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "archived", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSpaces(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSpace operation middleware
+func (siw *ServerInterfaceWrapper) CreateSpace(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSpace(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSpace operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSpace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SpaceIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSpace(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSpace operation middleware
+func (siw *ServerInterfaceWrapper) GetSpace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SpaceIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSpace(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSpace operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSpace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SpaceIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSpace(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSpaceProgress operation middleware
+func (siw *ServerInterfaceWrapper) GetSpaceProgress(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SpaceIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSpaceProgressParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSpaceProgress(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOrbStats operation middleware
 func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Request) {
 
@@ -11012,6 +12686,32 @@ func (siw *ServerInterfaceWrapper) ListThreads(w http.ResponseWriter, r *http.Re
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
 		}
 		return
 	}
@@ -11217,6 +12917,84 @@ func (siw *ServerInterfaceWrapper) ForkThread(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ForkThread(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteThreadSchedule operation middleware
+func (siw *ServerInterfaceWrapper) DeleteThreadSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteThreadSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetThreadSchedule operation middleware
+func (siw *ServerInterfaceWrapper) GetThreadSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetThreadSchedule(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutThreadSchedule operation middleware
+func (siw *ServerInterfaceWrapper) PutThreadSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutThreadSchedule(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11842,6 +13620,72 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/push/subscriptions/{id}", wrapper.DeletePushSubscription)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/spaces", wrapper.ListSpaces)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/spaces", wrapper.CreateSpace)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/spaces/{id}", wrapper.DeleteSpace)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/spaces/{id}", wrapper.GetSpace)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/spaces/{id}", wrapper.UpdateSpace)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/spaces/{id}/progress", wrapper.GetSpaceProgress)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/conversations", wrapper.CreateAssistantConversation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/automation/actions", wrapper.ListAutomationActions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/schedules", wrapper.ListSchedules)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/schedules", wrapper.CreateSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/schedules/preview", wrapper.PreviewSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/schedules/{id}", wrapper.DeleteSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/schedules/{id}", wrapper.GetSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/schedules/{id}", wrapper.PutSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/schedules/{id}/pause", wrapper.PauseSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/schedules/{id}/resume", wrapper.ResumeSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/schedules/{id}/run", wrapper.RunSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/schedules/{id}/runs", wrapper.ListScheduleRuns)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.DeleteThreadSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.GetThreadSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.PutThreadSchedule)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}", wrapper.GetPublicShare)

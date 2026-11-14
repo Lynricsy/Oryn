@@ -1793,6 +1793,289 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Space 列表（按名称） */
+        get: operations["listSpaces"];
+        put?: never;
+        /**
+         * 新建 Space（同时创建它的协调聊天线程）
+         * @description 需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。
+         *     名称已被占用 → 409 `space_name_taken`；项目不存在 → 404 `not_found`。
+         */
+        post: operations["createSpace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/spaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        /** Space 详情 */
+        get: operations["getSpace"];
+        put?: never;
+        post?: never;
+        /** 删除 Space（删除其聊天线程；其工作线程保留并移出 Space，其项目定时的 `spaceId` 清空） */
+        delete: operations["deleteSpace"];
+        options?: never;
+        head?: never;
+        /** 修改 Space（改名同步聊天线程标题；`archived` 同步归档聊天线程） */
+        patch: operations["updateSpace"];
+        trace?: never;
+    };
+    "/api/v1/spaces/{id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 近 N 天的 Shipped / Archived / Open 进度（按自然日，最早的一天在前） */
+        get: operations["getSpaceProgress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
+         * @description 需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。
+         */
+        post: operations["createAssistantConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/coordinator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 协调宿主的可用性与沙箱报告 */
+        get: operations["getCoordinator"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/automation/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 协调者与 orb 内 agent 的操作记录（审计，新的在前，保留 90 天） */
+        get: operations["listAutomationActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 定时列表（两种模式；按创建时间） */
+        get: operations["listSchedules"];
+        put?: never;
+        /**
+         * 新建定时（必须给 `mode`）
+         * @description `mode = thread`：须给 `threadId`（每线程至多一个，已有 → 409 `conflict`；线程已归档 → 409 `thread_archived`）。
+         *     `mode = new_thread`：须给 `name`；同项目（或同为无项目）下重名 → 409 `schedule_name_taken`。
+         *     字段规则见 `ScheduleInput`，违反 → 400 `invalid_schedule`；全库启用中的定时已达 200 → 409 `schedule_limit`。
+         */
+        post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预览接下来的触发时间（至多 5 个；只看时间字段，`prompt` 可为空串） */
+        post: operations["previewSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 定时详情 */
+        get: operations["getSchedule"];
+        /**
+         * 替换定时的定义（保留 `id`、`runCount`；清零 `failures` 与 `pausedReason`；重算 `nextRunAt`）
+         * @description `mode` / `threadId` / `projectId` 若出现必须与现值相同（目标不可改），否则 400 `invalid_schedule`。
+         */
+        put: operations["putSchedule"];
+        post?: never;
+        /** 删除定时（连同运行记录；它建出的线程保留） */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 暂停（`pausedReason = user`） */
+        post: operations["pauseSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 恢复（重算 `nextRunAt`，不补跑暂停期间错过的触发；已结束的一次性定时 → 400 `invalid_schedule`） */
+        post: operations["resumeSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 立即触发一次（`trigger = manual`；不改 `nextRunAt`；暂停中的定时也可触发）
+         * @description 已有未结束的运行且不允许并存（线程内定时，或 `overlap = skip`）→ 409 `schedule_busy`。
+         */
+        post: operations["runSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/schedules/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 最近的运行记录（新的在前；每个定时保留最近 200 条） */
+        get: operations["listScheduleRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 线程内定时（没有 → 404 `schedule_not_found`） */
+        get: operations["getThreadSchedule"];
+        /**
+         * 设置线程内定时（没有则新建，有则替换定义；隐含 `mode = thread`）
+         * @description 请求体不得带 `new_thread` 专属字段，`mode` / `threadId` 若出现须为 `thread` / 本线程，否则 400 `invalid_schedule`；线程已归档 → 409 `thread_archived`。
+         */
+        put: operations["putThreadSchedule"];
+        post?: never;
+        /** 删除线程内定时（没有 → 404 `schedule_not_found`） */
+        delete: operations["deleteThreadSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/shares/{slug}": {
         parameters: {
             query?: never;
@@ -2067,6 +2350,14 @@ export interface components {
         PushSubscriptionId: string;
         /** @description `bpf_<ulid>` */
         BrowserProfileId: string;
+        /** @description `spc_<ulid>`（M9） */
+        SpaceId: string;
+        /** @description `sch_<ulid>`（M9） */
+        ScheduleId: string;
+        /** @description `srn_<ulid>`（M9，定时的一次运行） */
+        ScheduleRunId: string;
+        /** @description `cac_<ulid>`（M9，操作记录） */
+        AutomationActionId: string;
         /** @description omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。 */
         OmpFrame: {
             [key: string]: unknown;
@@ -2087,6 +2378,10 @@ export interface components {
              *     M6（App 会话）：`app_session_unsupported`（403，只有 desktop / mobile 设备令牌能换取 App 会话）。
              *     M8（Desktop 与浏览器 Profile，HTTP 状态见 docs/protocol.md）：`profile_not_found`（404）、`profile_in_use`（409，体为 `ProfileInUseConflict`）、
              *     `profile_name_taken`（409）、`profile_limit`（409）、`no_profile`（409）、`profile_readonly`（409）、`profile_too_large`（413）、`profile_save_failed`（502）。
+             *     M9（Space、助手与定时，HTTP 状态见 docs/protocol.md）：`invalid_schedule`（400）、`schedule_not_found`（404）、`space_not_found`（404）、
+             *     `schedule_busy`（409）、`schedule_name_taken`（409）、`schedule_limit`（409，启用中的定时已达 200）、`space_name_taken`（409）、
+             *     `thread_archived`（409）、`space_thread`（409，不能直接删除 Space 的聊天线程）、`coordinator_unavailable`（409，`message` 为原因）、
+             *     `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
              */
             code: string;
             message: string;
@@ -2416,6 +2711,8 @@ export interface components {
             browserProfileId?: string;
             /** @description 选用方式，缺省 `exclusive`；没有解析出 Profile 时忽略 */
             profileMode?: components["schemas"]["BrowserProfileMode"];
+            /** @description 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目 */
+            spaceId?: components["schemas"]["SpaceId"];
         };
         Thread: {
             id: components["schemas"]["ThreadId"];
@@ -2459,6 +2756,16 @@ export interface components {
             portalUrlTemplate?: string;
             /** @description 未撤销的公开分享数；为 0 时省略 */
             readonly publicShares?: number;
+            /** @description 线程种类（M9）；省略 = `work` */
+            kind?: components["schemas"]["ThreadKind"];
+            /** @description 所属 Space（M9） */
+            spaceId?: components["schemas"]["SpaceId"];
+            /** @description 标记为已交付的时间（M9，`PATCH {shipped: true}`） */
+            shippedAt?: components["schemas"]["TimestampMs"];
+            /** @description 该线程的线程内定时（M9）；没有则省略 */
+            schedule?: components["schemas"]["ThreadScheduleSummary"];
+            /** @description 由「新建线程」定时创建时给出（M9） */
+            scheduleRun?: components["schemas"]["ThreadScheduleRun"];
         };
         /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
         ThreadError: {
@@ -2481,6 +2788,10 @@ export interface components {
             archived?: boolean;
             snoozedUntil?: components["schemas"]["TimestampMs"];
             unread?: boolean;
+            /** @description 加入 Space（`spc_…`，不存在 → 404 `space_not_found`）；空串 = 移出 Space。只对 `kind = work` 的线程有效（M9） */
+            spaceId?: string;
+            /** @description `true` 标记为已交付（记 `shippedAt`，未归档则同时归档）；`false` 清除标记（M9） */
+            shipped?: boolean;
         };
         ForkThreadRequest: {
             /** @description 从该条目分叉；缺省取当前叶子 */
@@ -2550,6 +2861,8 @@ export interface components {
             portals?: components["schemas"]["OrbPortal"][];
             /** @description 桌面镜像（M8）；orbd 上报过 `desktop.state` 才有，orb 已删除时省略 */
             desktop?: components["schemas"]["OrbDesktop"];
+            /** @description 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略 */
+            coordinator?: boolean;
         };
         OrbSetupRun: {
             id: components["schemas"]["SetupRunId"];
@@ -2814,6 +3127,259 @@ export interface components {
             /** @description 实际步长（秒） */
             step: number;
             samples: components["schemas"]["OrbMetricSample"][];
+        };
+        /**
+         * @description 线程种类：`work` 普通工作线程；`space` Space 的协调聊天；`assistant` 全局助手对话。
+         *     后两者合称「协调对话」：跑在控制面宿主的协调宿主里，没有工作区，只有 Oryn 宿主工具。
+         * @enum {string}
+         */
+        ThreadKind: "work" | "space" | "assistant";
+        /** @description 线程内定时（`mode = thread`）的摘要；完整定义见 `GET threads/{id}/schedule` */
+        ThreadScheduleSummary: {
+            enabled: boolean;
+            nextRunAt?: components["schemas"]["TimestampMs"];
+        };
+        /** @description 该线程由「新建线程」定时的第 `run` 次运行创建 */
+        ThreadScheduleRun: {
+            scheduleId: components["schemas"]["ScheduleId"];
+            /** Format: int64 */
+            run: number;
+        };
+        Space: {
+            id: components["schemas"]["SpaceId"];
+            name: string;
+            goal: string;
+            /** @description 新线程的默认项目；省略 = 无项目 */
+            projectId?: components["schemas"]["ProjectId"];
+            /** @description 它的协调聊天线程（`kind = space`） */
+            threadId: components["schemas"]["ThreadId"];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+            archivedAt?: components["schemas"]["TimestampMs"];
+        };
+        SpaceCreate: {
+            name: string;
+            goal?: string;
+            projectId?: components["schemas"]["ProjectId"];
+        };
+        /** @description 只修改出现的字段；`name` / `goal` / `projectId` 变化后协调者在静止时以新设定重启 */
+        SpacePatch: {
+            name?: string;
+            goal?: string;
+            /** @description `prj_…`；空串 = 改为无项目 */
+            projectId?: string;
+            archived?: boolean;
+        };
+        SpaceList: {
+            spaces: components["schemas"]["Space"][];
+        };
+        SpaceProgress: {
+            days: components["schemas"]["SpaceProgressDay"][];
+        };
+        /**
+         * @description 一个自然日（按请求的 `tz`）里本 Space 的工作线程：`shipped` 当日标记为已交付的数量；
+         *     `archived` 当日归档且未标记已交付的数量；`open` 当日结束时已创建且未归档的数量。
+         */
+        SpaceProgressDay: {
+            /**
+             * @description YYYY-MM-DD
+             * @example 2026-11-14
+             */
+            date: string;
+            shipped: number;
+            archived: number;
+            open: number;
+        };
+        /**
+         * @description `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+         * @enum {string}
+         */
+        ScheduleKind: "cron" | "every" | "once";
+        /**
+         * @description `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
+         * @enum {string}
+         */
+        ScheduleMode: "thread" | "new_thread";
+        /**
+         * @description `new_thread` 定时在上一次运行未结束（线程仍 `provisioning` / `working`）时到点的处理：
+         *     `skip` 记一次 `skipped`（`error = overlap`）；`allow` 照常新建，同一定时至多 3 个并存（超出记 `skipped`，`error = overlap_cap`）。
+         *     线程内定时恒为 `skip`（`needs_input` 同样算未结束）。
+         * @enum {string}
+         */
+        ScheduleOverlap: "skip" | "allow";
+        /**
+         * @description `user` 手动暂停；`failures` 连续 3 次失败后自动暂停；`archived` 目标线程或项目已归档；`done` 一次性已触发或越过 `endsAt`
+         * @enum {string}
+         */
+        SchedulePausedReason: "user" | "failures" | "archived" | "done";
+        /** @enum {string} */
+        ScheduleCreatedBy: "user" | "agent";
+        /**
+         * @description 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
+         *     不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
+         *     `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+         *     模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
+         *     `projectId` / `spaceId` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
+         *     `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
+         *     `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
+         *     `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+         */
+        ScheduleInput: {
+            mode?: components["schemas"]["ScheduleMode"];
+            /** @description 仅 `thread`：目标线程 */
+            threadId?: components["schemas"]["ThreadId"];
+            name?: string;
+            kind: components["schemas"]["ScheduleKind"];
+            cron?: string;
+            /** @example 30m */
+            every?: string;
+            at?: components["schemas"]["TimestampMs"];
+            /** @example Asia/Shanghai */
+            timezone?: string;
+            endsAt?: components["schemas"]["TimestampMs"];
+            /** @description 1–20000 字符（预览时可为空串） */
+            prompt: string;
+            /** @description 缺省 true；false 时保存为暂停（`pausedReason = user`） */
+            enabled?: boolean;
+            /** @description 仅 `new_thread`：新线程所在项目；省略 = 无项目 */
+            projectId?: components["schemas"]["ProjectId"];
+            /** @description 仅 `new_thread`：新线程加入该 Space */
+            spaceId?: components["schemas"]["SpaceId"];
+            /** @description 仅 `new_thread` */
+            model?: components["schemas"]["ModelRef"];
+            /** @description 仅 `new_thread` */
+            thinkingLevel?: string;
+            /** @description 仅 `new_thread`：provider 名称（不得为 `@host`）；省略按建线程的回退链 */
+            provider?: string;
+            /** @description 仅 `new_thread`：orb 类型名 */
+            orbType?: string;
+            /** @description 仅 `new_thread`；缺省 `skip` */
+            overlap?: components["schemas"]["ScheduleOverlap"];
+            /** @description 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5） */
+            keepLast?: number;
+        };
+        /** @description 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义） */
+        Schedule: {
+            id: components["schemas"]["ScheduleId"];
+            mode: components["schemas"]["ScheduleMode"];
+            /** @description `thread` 模式的目标线程 */
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description `new_thread` 模式的项目；省略 = 无项目 */
+            projectId?: components["schemas"]["ProjectId"];
+            spaceId?: components["schemas"]["SpaceId"];
+            /** @description `thread` 模式可为空串 */
+            name: string;
+            kind: components["schemas"]["ScheduleKind"];
+            cron?: string;
+            /** @description 规范化的时长串（如 `30m0s`） */
+            every?: string;
+            at?: components["schemas"]["TimestampMs"];
+            timezone: string;
+            endsAt?: components["schemas"]["TimestampMs"];
+            prompt: string;
+            enabled: boolean;
+            model?: components["schemas"]["ModelRef"];
+            thinkingLevel?: string;
+            provider?: string;
+            orbType?: string;
+            overlap: components["schemas"]["ScheduleOverlap"];
+            keepLast: number;
+            pausedReason?: components["schemas"]["SchedulePausedReason"];
+            /** @description 省略 = 不会再触发（暂停或已结束） */
+            nextRunAt?: components["schemas"]["TimestampMs"];
+            lastRunAt?: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 已触发次数（含跳过与手动触发）；也是下一次运行的序号减一
+             */
+            runCount: number;
+            /** @description 连续失败次数 */
+            failures: number;
+            createdBy: components["schemas"]["ScheduleCreatedBy"];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+            lastRun?: components["schemas"]["ScheduleRun"];
+            /** @description 未结束的运行数（`pending` / `running` / `needs_input`） */
+            openRuns: number;
+        };
+        /**
+         * @description `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+         * @enum {string}
+         */
+        ScheduleRunTrigger: "schedule" | "catchup" | "manual";
+        /** @enum {string} */
+        ScheduleRunStatus: "pending" | "running" | "needs_input" | "completed" | "failed" | "skipped";
+        ScheduleRun: {
+            id: components["schemas"]["ScheduleRunId"];
+            scheduleId: components["schemas"]["ScheduleId"];
+            /** @description `thread` 模式为目标线程；`new_thread` 模式为建出的线程（建出之前或创建失败时省略） */
+            threadId?: components["schemas"]["ThreadId"];
+            trigger: components["schemas"]["ScheduleRunTrigger"];
+            scheduledFor: components["schemas"]["TimestampMs"];
+            /** @description 被合并掉的触发数 */
+            missed: number;
+            startedAt: components["schemas"]["TimestampMs"];
+            deliveredAt?: components["schemas"]["TimestampMs"];
+            finishedAt?: components["schemas"]["TimestampMs"];
+            status: components["schemas"]["ScheduleRunStatus"];
+            /** @description 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`，或创建线程失败的原因 */
+            error?: string;
+        };
+        ScheduleList: {
+            schedules: components["schemas"]["Schedule"][];
+        };
+        ScheduleRunList: {
+            runs: components["schemas"]["ScheduleRun"][];
+        };
+        SchedulePreview: {
+            next: components["schemas"]["TimestampMs"][];
+        };
+        CoordinatorStatus: {
+            available: boolean;
+            /** @description 不可用的原因（缺 omp、校验与 `core/source.json` 不符、沙箱条件不满足…） */
+            reason?: string;
+            ompVersion?: string;
+            /** @description 协调宿主至少成功启动过一次后才有 */
+            sandbox?: components["schemas"]["CoordinatorSandbox"];
+        };
+        CoordinatorSandbox: {
+            landlockAbi: number;
+            /**
+             * @description `namespace` 独立网络命名空间（只有回环）；`port` 共用宿主网络，由 Landlock 限制为只能连模型代理端口
+             * @enum {string}
+             */
+            network: "namespace" | "port";
+            pidNamespace: boolean;
+            /** @description Landlock ABI ≥ 6 的信号与抽象 unix socket 作用域 */
+            ipcScope: boolean;
+            uid: number;
+            seccomp: boolean;
+        };
+        /** @description 一条操作记录（协调者的宿主工具调用，或 orb 内 agent 经 `oryn` CLI 的调用；无论成败都记） */
+        AutomationAction: {
+            id: components["schemas"]["AutomationActionId"];
+            ts: components["schemas"]["TimestampMs"];
+            /** @enum {string} */
+            actorKind: "space" | "assistant" | "agent";
+            /** @description 发起操作的对话 / 线程 */
+            actorThreadId?: components["schemas"]["ThreadId"];
+            /**
+             * @description `owner` 主人发起的回合；`auto` 自动化回合（定时、线程回报、agent 间消息触发）
+             * @enum {string}
+             */
+            origin: "owner" | "auto";
+            /** @enum {string} */
+            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule";
+            targetThreadId?: components["schemas"]["ThreadId"];
+            scheduleId?: components["schemas"]["ScheduleId"];
+            /** @description 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>` */
+            summary: string;
+            ok: boolean;
+            /** @description 失败时的错误码 */
+            error?: string;
+        };
+        AutomationActionList: {
+            actions: components["schemas"]["AutomationAction"][];
         };
         SecretMeta: {
             name: string;
@@ -4024,9 +4590,11 @@ export interface components {
          *     `terminal.gap`（orbd→orynd 通知，M3）；
          *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
          *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
+         *     `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+         *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -4050,7 +4618,10 @@ export interface components {
             error?: components["schemas"]["LinkCtlError"];
         };
         LinkCtlError: {
-            /** @description `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试 */
+            /**
+             * @description `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试。
+             *     M9 orb 内方法另有：`forbidden`（非亲属线程、不属于本 orb 的调用方）、`rate_limited`、`invalid_schedule`、`thread_archived`、`schedule_name_taken`。
+             */
             code: string;
             message: string;
         };
@@ -4075,6 +4646,8 @@ export interface components {
              * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
              *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
              *     M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
+             *     M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
+             *     `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -4230,6 +4803,14 @@ export interface components {
             };
             /** @description `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧 */
             initFrames: components["schemas"]["OmpFrame"][];
+            /**
+             * @description M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
+             *     **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
+             * @enum {string}
+             */
+            profile?: "coordinator";
+            /** @description M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受 */
+            systemPrompt?: string;
         };
         LinkCtlAgentStartResult: {
             pid: number;
@@ -4309,6 +4890,73 @@ export interface components {
             /** @description 接管方的代表线程 */
             byThreadId?: components["schemas"]["ThreadId"];
         };
+        /**
+         * @description orbd→orynd 请求（M9，`features` 含 `threads` 的 orbd；由 orb 内 `oryn thread new` 经 `orbd.sock` 转来）。
+         *     在调用方线程的项目（与 Space）里新建一个子线程（`parentThreadId` = 调用方），新 orb；结果 `LinkCtlThreadInfo`。
+         *     调用方须属于本 orb、`kind = work`、未归档，否则 `forbidden`；超出子线程数 / 深度 / 全库速率 → `rate_limited`。
+         */
+        LinkCtlThreadCreateParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            prompt: string;
+            title?: string;
+            /** @description orb 类型名；缺省取项目默认 */
+            type?: string;
+        };
+        /** @description `thread.create` / `thread.get` 的结果 */
+        LinkCtlThreadInfo: {
+            id: components["schemas"]["ThreadId"];
+            title: string;
+            state: components["schemas"]["ThreadState"];
+            /** @description `state` ∈ {`idle`, `awaiting_input`, `error`} */
+            settled: boolean;
+            /** @description 最后一条 assistant 消息的文本（截断到 8000 字符） */
+            lastAssistantText?: string;
+            /** @description 线程在 Web 上的地址（`<public_url>/t/<id>`） */
+            url: string;
+        };
+        /**
+         * @description orbd→orynd 请求（M9）：以自动化身份向 `target` 追加一条消息（正文前加来源头行）；结果 `LinkCtlOkResult`。
+         *     `target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。
+         */
+        LinkCtlThreadSendParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            target: components["schemas"]["ThreadId"];
+            message: string;
+            /** @description 为真且目标正在工作时作为 steer 送达；否则排在当前回合之后 */
+            steer?: boolean;
+        };
+        /** @description orbd→orynd 请求（M9）：读取亲属线程的状态；结果 `LinkCtlThreadInfo`；亲属规则同 `thread.send` */
+        LinkCtlThreadGetParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            target: components["schemas"]["ThreadId"];
+        };
+        /** @description `schedule.get` / `schedule.delete` 的参数（M9）：只作用于调用方线程自己的线程内定时；结果分别为 `LinkCtlScheduleResult` / `LinkCtlOkResult` */
+        LinkCtlScheduleParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description `schedule.put`（M9）：设置调用方线程的线程内定时（`createdBy = agent`）；结果 `LinkCtlScheduleResult`。
+         *     `input` 只接受线程内定时的字段：带 `mode = new_thread`、`threadId`（不等于调用方）或任一 `new_thread` 专属字段 → `invalid_schedule`。
+         */
+        LinkCtlSchedulePutParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            input: components["schemas"]["ScheduleInput"];
+        };
+        /** @description `schedule.enable`（M9）：暂停 / 恢复调用方线程的线程内定时；结果 `LinkCtlScheduleResult` */
+        LinkCtlScheduleEnableParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            enabled: boolean;
+        };
+        /** @description `schedule.get` / `schedule.put` / `schedule.enable` 的结果；`schedule` 省略 = 该线程没有定时 */
+        LinkCtlScheduleResult: {
+            schedule?: components["schemas"]["Schedule"];
+        };
     };
     responses: {
         /** @description 错误 */
@@ -4361,6 +5009,8 @@ export interface components {
         NotificationChannelIdPath: components["schemas"]["NotificationChannelId"];
         PushSubscriptionIdPath: components["schemas"]["PushSubscriptionId"];
         BrowserProfileIdPath: components["schemas"]["BrowserProfileId"];
+        SpaceIdPath: components["schemas"]["SpaceId"];
+        ScheduleIdPath: components["schemas"]["ScheduleId"];
     };
     requestBodies: never;
     headers: never;
@@ -4922,6 +5572,10 @@ export interface operations {
                 archived?: boolean;
                 /** @description 标题 / 标签的模糊搜索 */
                 q?: string;
+                /** @description 线程种类；缺省 `work`（只列工作线程），`all` = 全部种类（M9） */
+                kind?: "work" | "space" | "assistant" | "all";
+                /** @description 只返回属于该 Space 的线程（M9） */
+                space?: components["schemas"]["SpaceId"];
             };
             header?: never;
             path?: never;
@@ -7145,6 +7799,535 @@ export interface operations {
             header?: never;
             path: {
                 id: components["parameters"]["PushSubscriptionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSpaces: {
+        parameters: {
+            query?: {
+                /** @description 为 true 时同时返回已归档的 Space；缺省只返回未归档 */
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createSpace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceCreate"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Space"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSpace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Space"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSpace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateSpace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpacePatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的 Space */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Space"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSpaceProgress: {
+        parameters: {
+            query?: {
+                days?: number;
+                /** @description IANA 时区，决定自然日的边界；缺省 `UTC`，非法 → 400 `invalid_request` */
+                tz?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SpaceIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 进度 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceProgress"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createAssistantConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCoordinator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoordinatorStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAutomationActions: {
+        parameters: {
+            query?: {
+                /** @description 只返回该线程作为发起方或目标的记录 */
+                thread?: components["schemas"]["ThreadId"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationActionList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSchedules: {
+        parameters: {
+            query?: {
+                mode?: components["schemas"]["ScheduleMode"];
+                /** @description 项目 id：该项目的 `new_thread` 定时；`none` = 没有项目的 `new_thread` 定时 */
+                project?: string;
+                /** @description `spaceId` 为它的 `new_thread` 定时，加上挂在该 Space 线程上的线程内定时 */
+                space?: components["schemas"]["SpaceId"];
+                /** @description 该线程的线程内定时 */
+                thread?: components["schemas"]["ThreadId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 定时列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePreview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description 修改后的定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    pauseSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resumeSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 本次运行 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRun"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listScheduleRuns: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 运行记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRunList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getThreadSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putThreadSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description 定时 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteThreadSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
             };
             cookie?: never;
         };

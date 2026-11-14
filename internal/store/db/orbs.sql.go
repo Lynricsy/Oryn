@@ -23,9 +23,9 @@ func (q *Queries) CountLiveOrbsBySnapshot(ctx context.Context, snapshotOf *strin
 const createOrb = `-- name: CreateOrb :exec
 
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at)
+                  token_hash, snapshot_of, created_at, coordinator)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-        ?10, ?11, ?12)
+        ?10, ?11, ?12, ?13)
 `
 
 type CreateOrbParams struct {
@@ -41,9 +41,11 @@ type CreateOrbParams struct {
 	TokenHash      string  `json:"tokenHash"`
 	SnapshotOf     *string `json:"snapshotOf"`
 	CreatedAt      int64   `json:"createdAt"`
+	Coordinator    bool    `json:"coordinator"`
 }
 
 // Orbs, lifecycle events, metric samples.
+// coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
 func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 	_, err := q.db.ExecContext(ctx, createOrb,
 		arg.ID,
@@ -58,6 +60,7 @@ func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 		arg.TokenHash,
 		arg.SnapshotOf,
 		arg.CreatedAt,
+		arg.Coordinator,
 	)
 	return err
 }
@@ -74,8 +77,42 @@ func (q *Queries) DeleteOrbSamplesBefore(ctx context.Context, before int64) (int
 	return result.RowsAffected()
 }
 
+const getCoordinatorOrb = `-- name: GetCoordinatorOrb :one
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs
+WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
+ORDER BY created_at DESC LIMIT 1
+`
+
+// The live coordinator orb (M9), newest first; no rows = none yet.
+func (q *Queries) GetCoordinatorOrb(ctx context.Context) (Orb, error) {
+	row := q.db.QueryRowContext(ctx, getCoordinatorOrb)
+	var i Orb
+	err := row.Scan(
+		&i.ID,
+		&i.ProviderID,
+		&i.Type,
+		&i.Cpus,
+		&i.MemoryMb,
+		&i.Image,
+		&i.ProjectID,
+		&i.State,
+		&i.StateChangedAt,
+		&i.TokenHash,
+		&i.SnapshotOf,
+		&i.LastAgentActivityAt,
+		&i.LastUserInteractionAt,
+		&i.OrbdVersion,
+		&i.AgentVersion,
+		&i.CreatedAt,
+		&i.DeletedAt,
+		&i.TokenGen,
+		&i.Coordinator,
+	)
+	return i, err
+}
+
 const getOrb = `-- name: GetOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs WHERE id = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE id = ?1
 `
 
 func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
@@ -100,12 +137,13 @@ func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
 		&i.CreatedAt,
 		&i.DeletedAt,
 		&i.TokenGen,
+		&i.Coordinator,
 	)
 	return i, err
 }
 
 const getOrbByTokenHash = `-- name: GetOrbByTokenHash :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs WHERE token_hash = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE token_hash = ?1
 `
 
 func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb, error) {
@@ -130,6 +168,7 @@ func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb,
 		&i.CreatedAt,
 		&i.DeletedAt,
 		&i.TokenGen,
+		&i.Coordinator,
 	)
 	return i, err
 }
@@ -330,7 +369,7 @@ func (q *Queries) ListOrbSamples(ctx context.Context, arg ListOrbSamplesParams) 
 }
 
 const listOrbs = `-- name: ListOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs
 WHERE (CAST(?1 AS BOOLEAN) = 1 OR deleted_at IS NULL)
 ORDER BY created_at DESC
 `
@@ -363,6 +402,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 			&i.CreatedAt,
 			&i.DeletedAt,
 			&i.TokenGen,
+			&i.Coordinator,
 		); err != nil {
 			return nil, err
 		}
@@ -378,7 +418,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 }
 
 const listOrbsByState = `-- name: ListOrbsByState :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs WHERE state = ?1 ORDER BY created_at
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE state = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, error) {
@@ -409,6 +449,7 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 			&i.CreatedAt,
 			&i.DeletedAt,
 			&i.TokenGen,
+			&i.Coordinator,
 		); err != nil {
 			return nil, err
 		}

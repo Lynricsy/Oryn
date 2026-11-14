@@ -15,13 +15,15 @@ import (
 // m2Tables 是计划 D 节列出的全部 M2 表，外加后续里程碑新增的表
 // （M3：attachments；M4：orb_services、portal_shares、portal_sessions；
 // M5：thread_shares、thread_share_entries、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries；
-// M8：browser_profiles、browser_profile_events、orb_desktops）。
+// M8：browser_profiles、browser_profile_events、orb_desktops；
+// M9：spaces、schedules、schedule_runs、thread_reports、coord_actions）。
 var m2Tables = []string{
-	"attachments", "blobs", "browser_profile_events", "browser_profiles", "device_pairings", "devices", "entries", "entry_cursors", "jobs",
-	"notification_channels", "notification_deliveries", "notifications", "orb_desktops", "orb_events",
+	"attachments", "blobs", "browser_profile_events", "browser_profiles", "coord_actions", "device_pairings", "devices", "entries",
+	"entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops", "orb_events",
 	"orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
-	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "secrets", "thread_labels",
-	"thread_share_entries", "thread_shares", "threads", "tool_calls", "usage_records", "web_sessions",
+	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "schedule_runs", "schedules", "secrets",
+	"spaces", "thread_labels", "thread_reports", "thread_share_entries", "thread_shares", "threads", "tool_calls",
+	"usage_records", "web_sessions",
 }
 
 func openTemp(t *testing.T, dir string) *Store {
@@ -77,7 +79,7 @@ func TestUpsertEntryKeepsSeqAndClearsStale(t *testing.T) {
 	q := s.Q
 	const th = "T-1"
 	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
-		ID: th, Title: "", TitleSource: "auto", State: "provisioning", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1,
+		Kind: "work", ID: th, Title: "", TitleSource: "auto", State: "provisioning", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
 	up := func(file, id, payload string) int64 {
@@ -173,15 +175,15 @@ func TestPortalQueries(t *testing.T) {
 	// 线程短码：唯一、可反查；未填的线程为 NULL 且可有多个。
 	code := "3f9a1c0b7e2d"
 	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
-		ID: "T-01932f6e-8d1a-7c3b-9f2e-" + code, TitleSource: "auto", State: "idle", SessionDir: "/a",
+		Kind: "work", ID: "T-01932f6e-8d1a-7c3b-9f2e-" + code, TitleSource: "auto", State: "idle", SessionDir: "/a",
 		CreatedAt: 1, UpdatedAt: 1, ShortCode: &code, OrbID: ptr(orb),
 	}))
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{ID: "T-x", TitleSource: "auto", State: "idle", SessionDir: "/b", CreatedAt: 1, UpdatedAt: 1}))
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{ID: "T-y", TitleSource: "auto", State: "idle", SessionDir: "/c", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-x", TitleSource: "auto", State: "idle", SessionDir: "/b", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-y", TitleSource: "auto", State: "idle", SessionDir: "/c", CreatedAt: 1, UpdatedAt: 1}))
 	th, err := q.GetThreadByShortCode(ctx, code)
 	require.NoError(t, err)
 	assert.Equal(t, "T-01932f6e-8d1a-7c3b-9f2e-"+code, th.ID)
-	assert.Error(t, q.CreateThread(ctx, db.CreateThreadParams{ID: "T-z", TitleSource: "auto", State: "idle", SessionDir: "/d", CreatedAt: 1, UpdatedAt: 1, ShortCode: &code}))
+	assert.Error(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-z", TitleSource: "auto", State: "idle", SessionDir: "/d", CreatedAt: 1, UpdatedAt: 1, ShortCode: &code}))
 
 	// 服务镜像。
 	p3000, p4000 := int64(3000), int64(4000)
@@ -269,7 +271,7 @@ func TestShareQueries(t *testing.T) {
 	s := openTemp(t, t.TempDir())
 	q := s.Q
 	const th = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab"
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{ID: th, TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th, TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
 	sha := "ab" + strings.Repeat("0", 62)
 	for _, e := range []db.UpsertEntryParams{
 		{ThreadID: th, File: "a.jsonl", EntryID: "e1", Type: "message", Payload: []byte(`{"text":"hi"}`)},
@@ -364,7 +366,7 @@ func TestNotifyQueries(t *testing.T) {
 	s := openTemp(t, t.TempDir())
 	q := s.Q
 	const th = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab"
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{ID: th, TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th, TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
 
 	// 渠道。
 	require.NoError(t, q.InsertNotificationChannel(ctx, db.InsertNotificationChannelParams{
@@ -535,10 +537,10 @@ func TestBrowserProfileLeaseQueries(t *testing.T) {
 		}))
 	}
 	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
-		ID: "T-a2", Title: "后建", TitleSource: "auto", State: "idle", SessionDir: "/a2", CreatedAt: 5, UpdatedAt: 5, OrbID: ptr(orbA),
+		Kind: "work", ID: "T-a2", Title: "后建", TitleSource: "auto", State: "idle", SessionDir: "/a2", CreatedAt: 5, UpdatedAt: 5, OrbID: ptr(orbA),
 	}))
 	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
-		ID: "T-a1", Title: "先建", TitleSource: "auto", State: "idle", SessionDir: "/a1", CreatedAt: 2, UpdatedAt: 2, OrbID: ptr(orbA),
+		Kind: "work", ID: "T-a1", Title: "先建", TitleSource: "auto", State: "idle", SessionDir: "/a1", CreatedAt: 2, UpdatedAt: 2, OrbID: ptr(orbA),
 	}))
 	rep, err := q.GetOrbRepresentativeThread(ctx, orbA)
 	require.NoError(t, err)

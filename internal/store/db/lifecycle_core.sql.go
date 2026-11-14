@@ -84,7 +84,7 @@ func (q *Queries) ClaimNextJobSerial(ctx context.Context, arg ClaimNextJobSerial
 }
 
 const listLiveOrbs = `-- name: ListLiveOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
 `
 
 func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
@@ -115,6 +115,7 @@ func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
 			&i.CreatedAt,
 			&i.DeletedAt,
 			&i.TokenGen,
+			&i.Coordinator,
 		); err != nil {
 			return nil, err
 		}

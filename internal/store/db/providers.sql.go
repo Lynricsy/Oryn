@@ -234,6 +234,22 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 	return items, nil
 }
 
+const setProviderLease = `-- name: SetProviderLease :exec
+UPDATE providers SET instance_id = ?1, lease_until = ?2 WHERE id = ?3
+`
+
+type SetProviderLeaseParams struct {
+	InstanceID *string `json:"instanceId"`
+	LeaseUntil *int64  `json:"leaseUntil"`
+	ID         string  `json:"id"`
+}
+
+// Lease renewal for the in-process host provider (no hello round trip).
+func (q *Queries) SetProviderLease(ctx context.Context, arg SetProviderLeaseParams) error {
+	_, err := q.db.ExecContext(ctx, setProviderLease, arg.InstanceID, arg.LeaseUntil, arg.ID)
+	return err
+}
+
 const updateProviderHello = `-- name: UpdateProviderHello :exec
 UPDATE providers SET driver = ?1, version = ?2, capabilities = ?3,
     orb_types = ?4, default_type = ?5, allow_multiple = ?6,
@@ -264,6 +280,36 @@ func (q *Queries) UpdateProviderHello(ctx context.Context, arg UpdateProviderHel
 		arg.InstanceID,
 		arg.LeaseUntil,
 		arg.ID,
+	)
+	return err
+}
+
+const upsertHostProvider = `-- name: UpsertHostProvider :exec
+INSERT INTO providers (id, name, token_hash, driver, version, capabilities, orb_types, default_type, created_at)
+VALUES (?1, '@host', ?2, 'host', ?3, ?4, ?5, 'host', ?6)
+ON CONFLICT (name) DO UPDATE SET version = excluded.version, capabilities = excluded.capabilities,
+    orb_types = excluded.orb_types, default_type = 'host', disabled_at = NULL
+`
+
+type UpsertHostProviderParams struct {
+	ID           string `json:"id"`
+	TokenHash    string `json:"tokenHash"`
+	Version      string `json:"version"`
+	Capabilities string `json:"capabilities"`
+	OrbTypes     string `json:"orbTypes"`
+	CreatedAt    int64  `json:"createdAt"`
+}
+
+// The built-in coordinator host provider (M9). Its token is random and discarded, so the HTTP provider
+// protocol can never authenticate as it; restarts keep id and token_hash and refresh the declaration.
+func (q *Queries) UpsertHostProvider(ctx context.Context, arg UpsertHostProviderParams) error {
+	_, err := q.db.ExecContext(ctx, upsertHostProvider,
+		arg.ID,
+		arg.TokenHash,
+		arg.Version,
+		arg.Capabilities,
+		arg.OrbTypes,
+		arg.CreatedAt,
 	)
 	return err
 }

@@ -100,7 +100,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 
 	id := ids.Thread()
 	row := db.CreateThreadParams{
-		ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
+		Kind: "work", ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
 		Model: modelString(p.Model), ShortCode: shortCode(id),
 	}
 	if p.ProjectID != "" {
@@ -559,7 +559,7 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 	}
 	newID := ids.Thread()
 	child := db.CreateThreadParams{
-		ID: newID, ProjectID: row.ProjectID, Title: row.Title, TitleSource: "auto", State: StateProvisioning,
+		Kind: "work", ID: newID, ProjectID: row.ProjectID, Title: row.Title, TitleSource: "auto", State: StateProvisioning,
 		ParentThreadID: &row.ID, ForkedFromEntryID: &entry, SessionDir: sessionDirOf(newID),
 		Model: row.Model, ThinkingLevel: row.ThinkingLevel, Color: row.Color, ShortCode: shortCode(newID),
 	}

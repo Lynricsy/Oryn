@@ -39,3 +39,15 @@ UPDATE providers SET disabled_at = @disabled_at WHERE id = @id AND disabled_at I
 
 -- name: DeleteProvider :execrows
 DELETE FROM providers WHERE id = @id;
+
+-- The built-in coordinator host provider (M9). Its token is random and discarded, so the HTTP provider
+-- protocol can never authenticate as it; restarts keep id and token_hash and refresh the declaration.
+-- name: UpsertHostProvider :exec
+INSERT INTO providers (id, name, token_hash, driver, version, capabilities, orb_types, default_type, created_at)
+VALUES (@id, '@host', @token_hash, 'host', @version, @capabilities, @orb_types, 'host', @created_at)
+ON CONFLICT (name) DO UPDATE SET version = excluded.version, capabilities = excluded.capabilities,
+    orb_types = excluded.orb_types, default_type = 'host', disabled_at = NULL;
+
+-- Lease renewal for the in-process host provider (no hello round trip).
+-- name: SetProviderLease :exec
+UPDATE providers SET instance_id = @instance_id, lease_until = @lease_until WHERE id = @id;

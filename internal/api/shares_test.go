@@ -58,7 +58,7 @@ func TestPublicShareBlobContentType(t *testing.T) {
 	mimes := map[byte]string{'a': "image/png", 'b': "text/html; charset=utf-8", 'c': "image/svg+xml", 'd': "IMAGE/JPEG"}
 	th := shareBlobThreads{blobs: map[string]db.Blob{}, paths: map[string]string{}}
 	const tid = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab"
-	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: tid, Title: "pics", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: tid, Title: "pics", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
 	var content []string
 	for c, m := range mimes {
 		sha := strings.Repeat(string(c), 64)

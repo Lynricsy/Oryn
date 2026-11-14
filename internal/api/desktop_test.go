@@ -93,7 +93,7 @@ func (e *desktopEnv) orb(state, title string) string {
 	id := ids.Orb()
 	require.NoError(e.t, e.st.Q.CreateOrb(e.ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", State: state, StateChangedAt: 1, TokenHash: ids.Hash(id), CreatedAt: 1}))
 	if title != "" {
-		require.NoError(e.t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{ID: ids.Thread(), OrbID: &id, Title: title, TitleSource: "user", State: "idle", SessionDir: "/s", CreatedAt: 1, UpdatedAt: 1}))
+		require.NoError(e.t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{Kind: "work", ID: ids.Thread(), OrbID: &id, Title: title, TitleSource: "user", State: "idle", SessionDir: "/s", CreatedAt: 1, UpdatedAt: 1}))
 	}
 	return id
 }

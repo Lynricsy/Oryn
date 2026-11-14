@@ -239,7 +239,7 @@ func newEnv(t *testing.T) *env {
 	require.True(t, ok)
 	e.code = code
 	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{
-		ID: e.threadID, OrbID: &e.orbID, Title: "t", TitleSource: "auto", State: "idle", StateChangedAt: now.UnixMilli(),
+		Kind: "work", ID: e.threadID, OrbID: &e.orbID, Title: "t", TitleSource: "auto", State: "idle", StateChangedAt: now.UnixMilli(),
 		SessionDir: "/s", CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(), ShortCode: &code,
 	}))
 	_, e.device, err = auth.CreateDevice(ctx, st, "dev", "cli", "linux")

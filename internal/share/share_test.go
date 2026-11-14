@@ -156,7 +156,7 @@ func newEnv(t *testing.T) *env {
 func (e *env) thread(id, title string, orbID *string) {
 	e.t.Helper()
 	require.NoError(e.t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{
-		ID: id, OrbID: orbID, Title: title, TitleSource: "auto", State: "idle", SessionDir: "/home/user/.oryn/threads/" + id,
+		Kind: "work", ID: id, OrbID: orbID, Title: title, TitleSource: "auto", State: "idle", SessionDir: "/home/user/.oryn/threads/" + id,
 		CreatedAt: shareTime.Add(-time.Hour).UnixMilli(), UpdatedAt: 1,
 	}))
 }

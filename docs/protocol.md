@@ -29,7 +29,7 @@
 |C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs / portal / desk`）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown`、`portal.configure` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
 |C3 REST|`/api/v1/...` 全部端点|列表统一包一层对象（`{threads}`、`{orbs}`…）|
 |C3 WebSocket|`/api/v1/ws?ticket=`；`WsClientMessage`、`WsServerMessage`（按 `type` 判别）；`AgentLiveState`|Go：`msg.ValueByDiscriminator()` 后类型分派；构造用 `FromWsServerXxx` 自动带 `type`|
-|状态枚举|`ThreadState`（C4）、`OrbState`（E）、`AgentStatus`、`PauseMode`、`DeviceKind`、`SecretMode`、`ProviderDriver`|—|
+|状态枚举|`ThreadState`（C4）、`OrbState`（E）、`AgentStatus`、`PauseMode`、`DeviceKind`、`SecretMode`、`ProviderDriver`、`ThreadKind`（M9）|—|
 
 ## 相对计划的补充与偏差
 
@@ -682,3 +682,134 @@ orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `deskt
 - `projects.default_browser_profile_id`（不建外键；删除 Profile 时由 `ClearProjectsBrowserProfile` 清空）。
 
 查询见 `internal/store/queries/desktop.sql`：`AcquireBrowserProfile` / `StealBrowserProfile` / `SaveBrowserProfileRevision` 用 `RETURNING`（`:one`，`sql.ErrNoRows` = 被占 / CAS 失败 / 被围栏挡下）。
+
+## M9：Space、助手、定时与协调宿主
+
+Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助手是不绑定项目的协调对话（可多个）。两者都是 `threads` 里的行（`kind = space | assistant`，合称**协调对话**），转录、WS、条目复制、标题、未读全部复用。协调对话的 omp 跑在控制面宿主上的**协调宿主**里：库里是一个内置 provider `@host`（`driver = host`、类型 `host`）+ 一台 `coordinator = 1` 的 orb，状态机、空闲策略、link 上的 ctl / agent 流 / 条目复制 / egress 密钥注入全部照旧；`orynd` 进程内认领 `@host` 的任务，拉起子进程 `orynd coordinator-host`（受限 orbd，经继承的 socketpair 建 link，无 WebSocket、无令牌），它再拉起 `omp --no-tools …`。协调者的能力只有 omp 宿主工具（`set_host_tools` / `host_tool_call`），由控制面应答；不新增 WS 消息。
+
+定时是一张表、一个调度器、两种触发动作：`thread`（往一个已有线程追加提示词，每线程至多一个）与 `new_thread`（每次运行用固定提示词、模型、类型新建线程，挂在项目或 Space 上）。
+
+### 模型
+
+- `Thread` 新增可选：`kind: ThreadKind`（省略 = `work`）、`spaceId`、`shippedAt`、`schedule: ThreadScheduleSummary{enabled, nextRunAt?}`（该线程的线程内定时）、`scheduleRun: ThreadScheduleRun{scheduleId, run}`（由 `new_thread` 定时第 `run` 次运行创建）。随 `index` / `index.patch` / `thread.snapshot` 到达。
+- `CreateThreadRequest.spaceId`（未给 `projectId` 时取 Space 的项目）；`ThreadPatch.spaceId`（空串 = 移出，只对 `work`）、`ThreadPatch.shipped`（`true` 记 `shippedAt` 并归档；`false` 清除）。`listThreads` 新增 `kind`（`work | space | assistant | all`，缺省 `work`）与 `space`。
+- `Orb.coordinator`（协调 orb 为 true，否则省略）。
+- `Space{id, name(1–100), goal(≤2000), projectId?, threadId, createdAt, updatedAt, archivedAt?}`；`SpaceCreate{name, goal?, projectId?}`；`SpacePatch{name?, goal?, projectId?(空串 = 无项目), archived?}`；`SpaceProgress{days: SpaceProgressDay{date, shipped, archived, open}[]}`。
+- `ScheduleInput`（创建 / 替换 / 预览共用）与 `Schedule`、`ScheduleRun`：字段与规则见规格里的 `ScheduleInput` 描述。`Schedule.openRuns` = 未结束的运行数；`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5。`ScheduleRun.threadId` 在 `new_thread` 模式建出线程前省略。
+- `CoordinatorStatus{available, reason?, ompVersion?, sandbox?: CoordinatorSandbox{landlockAbi, network: namespace|port, pidNamespace, ipcScope, uid, seccomp}}`；`sandbox` 只在协调宿主至少成功启动过一次后出现。
+- `AutomationAction{id(cac_…), ts, actorKind: space|assistant|agent, actorThreadId?, origin: owner|auto, action: create_thread|send_message|archive_thread|set_schedule|delete_schedule, targetThreadId?, scheduleId?, summary(≤500), ok, error?}`。
+- 新 id：`SpaceId`（`spc_<ulid>`）、`ScheduleId`（`sch_<ulid>`）、`ScheduleRunId`（`srn_<ulid>`）、`AutomationActionId`（`cac_<ulid>`），均由 `ids.New(prefix)` 生成。
+- 没有线程的通知（创建线程失败、项目定时自动暂停）：`Notification.threadId` 省略、`url = /settings/automations`（模型不变）。
+
+### REST
+
+鉴权同 C3。
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/spaces?archived=`|`listSpaces`|—|`SpaceList`（按名称；缺省不含已归档）|
+|`POST /api/v1/spaces`|`createSpace`|`SpaceCreate`|`201 Space`；协调宿主不可用 → 409 `coordinator_unavailable`|
+|`GET \| PATCH \| DELETE /api/v1/spaces/{id}`|`getSpace` / `updateSpace` / `deleteSpace`|`SpacePatch`|`Space` / `204`|
+|`GET /api/v1/spaces/{id}/progress?days=&tz=`|`getSpaceProgress`|`days` 1–90（默认 30）、`tz` IANA（默认 UTC）|`SpaceProgress`|
+|`POST /api/v1/assistant/conversations`|`createAssistantConversation`|无|`201 ThreadEnvelope`；不可用 → 409 `coordinator_unavailable`|
+|`GET /api/v1/coordinator`|`getCoordinator`|—|`CoordinatorStatus`|
+|`GET /api/v1/automation/actions?thread=&limit=`|`listAutomationActions`|`thread`（作为发起方或目标）、`limit` ≤200（默认 50）|`AutomationActionList`（新的在前）|
+|`GET /api/v1/schedules?mode=&project=&space=&thread=`|`listSchedules`|`project` 为 id 或 `none`；`space` = `spaceId` 为它的定时 + 该 Space 线程上的线程内定时|`ScheduleList`（按创建时间）|
+|`POST /api/v1/schedules`|`createSchedule`|`ScheduleInput`（必须给 `mode`）|`201 Schedule`|
+|`POST /api/v1/schedules/preview`|`previewSchedule`|`ScheduleInput`（`prompt` 可空串）|`SchedulePreview{next ≤5}`|
+|`GET \| PUT \| DELETE /api/v1/schedules/{id}`|`getSchedule` / `putSchedule` / `deleteSchedule`|`ScheduleInput`|`Schedule` / `204`|
+|`POST /api/v1/schedules/{id}/pause` · `/resume`|`pauseSchedule` / `resumeSchedule`|—|`Schedule`|
+|`POST /api/v1/schedules/{id}/run`|`runSchedule`|—|`ScheduleRun`|
+|`GET /api/v1/schedules/{id}/runs?limit=`|`listScheduleRuns`|`limit` ≤100（默认 20）|`ScheduleRunList`（新的在前）|
+|`GET \| PUT \| DELETE /api/v1/threads/{id}/schedule`|`getThreadSchedule` / `putThreadSchedule` / `deleteThreadSchedule`|`ScheduleInput`（隐含 `mode = thread`）|`Schedule` / `204`（线程内定时的别名，至多一个）|
+
+暂停 / 恢复 / 触发 / 运行记录一律走 `/schedules/{id}/…`（`T-` 开头的引用先 `GET threads/{id}/schedule` 取 id）。REST 建的定时 `createdBy = user`。路径参数 `SpaceIdPath`、`ScheduleIdPath`。
+
+### link ctl
+
+|项|规格位置|语义|
+|---|---|---|
+|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <systemPrompt>`，环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED ORYN_THREAD_ID`）|
+|hello `features`|`LinkCtlHelloParams.features`|普通 orbd 追加 `threads`（orb 内线程与定时方法）。`coordinator` **只由** `orynd coordinator-host` 上报，此时特性表恰为 `["coordinator"]`，`onRequest` 只认 `setup.run / resume.run / agent.start / agent.stop / shutdown`|
+|`thread.create`|`LinkCtlThreadCreateParams{threadId, prompt, title?, type?}` → `LinkCtlThreadInfo`|orbd→orynd 请求。`threadId` 一律是**调用方**线程（须属于本 orb、`kind = work`、未归档，否则 `forbidden`）。新线程取调用方的项目与 Space，`parentThreadId` = 调用方，新 orb|
+|`thread.send` / `thread.get`|`LinkCtlThreadSendParams{threadId, target, message, steer?}` → `LinkCtlOkResult`；`LinkCtlThreadGetParams{threadId, target}` → `LinkCtlThreadInfo`|`target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。`send` 以自动化身份投递，正文前加 `[Oryn message from thread "<title>" (<id>) — sent by an agent, not typed by the owner]`|
+|`LinkCtlThreadInfo`|`{id, title, state, settled, lastAssistantText?(≤8000), url}`|`settled` = `state ∈ {idle, awaiting_input, error}`|
+|`schedule.get / put / delete / enable`|`LinkCtlScheduleParams{threadId}`、`LinkCtlSchedulePutParams{threadId, input: ScheduleInput}`、`LinkCtlScheduleEnableParams{threadId, enabled}` → `LinkCtlScheduleResult{schedule?}`（`delete` → `LinkCtlOkResult`）|只作用于调用方自己的线程内定时（`createdBy = agent`）。`input` 带 `mode = new_thread`、别的 `threadId` 或任一 `new_thread` 专属字段 → `invalid_schedule`|
+|ctl 错误码|`LinkCtlError.code`|orb 内方法另有 `forbidden`、`rate_limited`、`invalid_schedule`、`thread_archived`、`schedule_name_taken`|
+
+orb 内方法、`thread.create` / `thread.send` 与 `schedule.put` / `schedule.delete` 都写一行 `coord_actions`（`actor_kind = agent`、`origin = auto`）。
+
+### 协调宿主：探测结论与沙箱的只读视图
+
+开工前在开发机（Linux 7.3.0-5-cachyos，root）上的实测（2026-11-14，`build/core/x64/omp` 的 sha256 与 `core/source.json` 的 `linux-x64` 一致；动态链接，解释器 `/lib64/ld-linux-x86-64.so.2`，依赖 `libc / libpthread / libdl / libm`）：
+
+|探测|结果|
+|---|---|
+|P1 `--no-tools` + `set_host_tools` + 覆盖层（空 HOME、`env -i`）|`set_host_tools` 成功、`toolNames = ["create_thread"]`；`get_active_tools` **只有** `create_thread`（`source: extension`），没有任何内置工具（`manage_skill / learn / checkpoint / rewind` 等也不在）。宿主工具在 `--no-tools` 下自动激活，不需要额外的激活命令|
+|P1 的副作用|启动时 omp 主动连 `127.0.0.1:11434`（ollama）、`127.0.0.1:1234`（lm-studio）、`127.0.0.1:8080`（llama.cpp）做模型发现，并经 systemd-resolved 的 unix socket 解析域名、连外网 443 刷新模型目录；在 HOME 下写 `.omp/{logs,run/daemons,agent/*.db,natives/<版本>}`。即：不加沙箱时 omp 会碰本机其它端口——沙箱的网络隔离（命名空间或 Landlock 端口白名单 + seccomp 禁 `AF_UNIX`）是必需的|
+|P2 最小文件视图 + 无网络（bwrap `--unshare-all`，uid 65534）|与 P1 相同的两行，`ready` 后 0.9 秒内到达，没有因联网失败而卡住|
+|P3 Landlock ABI|`landlock_create_ruleset(NULL, 0, VERSION)` 返回 **11**（errno 0）|
+
+P2 的视图即协调宿主（H4）的只读路径清单，`ReadOnlyDirs` / `ReadOnlyFiles` 以此为准：
+
+|类|路径|
+|---|---|
+|可执行（`Exec`）|`<dir>/bin/omp` 的真实路径 + 其 ELF 解释器（`sandbox.ExecPaths`）|
+|只读目录|`/usr/lib`、`/usr/lib64`、`/lib`、`/lib64`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup`|
+|只读文件|`/etc/ld.so.cache`、`/etc/localtime`、`/etc/passwd`、`/etc/group`、`/etc/nsswitch.conf`、`/etc/hosts`、`/dev/urandom`、`/dev/random`、`/dev/zero`（另 `/dev/null` 可读写）|
+|读写目录|协调宿主的 HOME（`<dir>/home`，内含 `TMPDIR`、`cwd`、会话目录、`.omp/`）|
+
+不需要、也不给：`/etc/resolv.conf`、`/etc/ssl`、`/run/systemd/resolve`（模型请求只走 `http://127.0.0.1:<egress_port>`，不解析域名、不做 TLS）、`/tmp`、`/var/tmp`，以及上表之外的 `/sys`（omp 会试读 `/sys/devices/virtual/dmi`、`/sys/kernel/mm/transparent_hugepage`，读不到时照常启动）。`/sys/fs/cgroup` 只用于 omp 读取内存 / CPU 上限，P2 未提供也能启动。
+
+启动条件、环境对照与残余风险见 `docs/deploy.md`「协调宿主」。版本钉：`core/embed.go` 的 `core.Pin()` 返回 `core/source.json` 的 `sha256` 表（键 `linux-x64` / `linux-arm64` / `omp-rpc-types.d.ts`），`coordinator.verify_omp` 为真时 omp 必须与 `Pin()["linux-"+arch]` 一致。
+
+### 限额
+
+|项|值|
+|---|---|
+|线程内定时|每线程 1 个|
+|全库启用中的定时（两种模式合计）|≤200（超出 409 `schedule_limit`）|
+|最小间隔|`every` ≥1 分钟（≤`8784h`，整秒）；cron 天然为分钟级|
+|判为迟到（`trigger = catchup`）|实际触发比计划晚 >60 秒；错过的合并为一次补跑（`missed` 记合并数）|
+|投递超时（线程内定时）|10 分钟（`schedule.deliver_timeout`）|
+|自动暂停|连续 3 次失败（`schedule.max_failures`）→ `enabled = false, pausedReason = failures`|
+|未结束运行的陈旧上限|24 小时 → `failed`（`error = stale`）|
+|`new_thread` 的 `keepLast`|1–50，默认 5|
+|`overlap = allow` 并存的未结束运行|≤3，超出记 `skipped`（`error = overlap_cap`）|
+|运行记录|每个定时保留最近 200 条（未结束的不裁剪）|
+|宿主工具单次调用|60 秒超时|
+|协调者限速（每对话，滑动窗口）|`create_thread` ≤10 / 10 分钟且 ≤40 / 24 小时；`send_message` ≤60 / 10 分钟；回报 ≤60 / 小时|
+|orb 内 agent|每线程未归档的直接子线程 ≤10；父子深度 ≤3；全库 agent 创建的线程 ≤30 / 小时|
+|`read_thread`|默认最近 6 条消息、上限 30；单条截到 4000 字符；总计 ≤40000 字符|
+|`coord_actions` 保留期|90 天（每天裁剪一次）|
+
+### 错误码
+
+|code|HTTP / 位置|含义|
+|---|---|---|
+|`invalid_schedule`|400|表达式 / 时区 / 间隔 / 时间 / 模式字段非法；改目标；已结束的一次性定时直接恢复|
+|`schedule_not_found` / `space_not_found`|404|—|
+|`schedule_busy`|409|已有未结束的运行，不能手动触发（线程内定时与 `overlap = skip`）|
+|`schedule_name_taken`|409|同项目（或同为无项目）下已有同名 `new_thread` 定时|
+|`schedule_limit`|409|启用中的定时已达 200|
+|`space_name_taken`|409|Space 名称已被占用|
+|`thread_archived`|409|已归档线程不能设定时|
+|`space_thread`|409|不能直接删除 Space 的聊天线程（删 Space）|
+|`coordinator_unavailable`|409|协调宿主起不来；`message` 是具体原因（缺 omp、与 `core/source.json` 不符、沙箱条件不满足…）|
+|`coordinator_restricted`|400 / WS `error`|协调线程不允许的命令、fork、分享、附件；把线程挂到协调 orb 或 `@host`|
+|`invalid_target`|宿主工具错误|目标不是工作线程（协调对话之间不能互相操作）|
+|`rate_limited`|ctl 错误、宿主工具错误|超限|
+|`forbidden`|ctl 错误|只剩 orb 内方法使用（非亲属线程、不属于本 orb 的调用方）|
+
+### 存储
+
+`0015_spaces_schedules.sql`：
+
+- `threads` 加 `kind`（`work | space | assistant`，默认 `work`）、`space_id`、`shipped_at`、`schedule_id`、`schedule_run`（后三者与 `space_id` 都不建外键），部分索引 `threads_space_id`、`threads_schedule_id(schedule_id, created_at)`；`orbs.coordinator`（默认 0）。
+- `spaces(id, name UNIQUE, goal, project_id → projects ON DELETE SET NULL, thread_id UNIQUE → threads ON DELETE CASCADE, created_at, updated_at, archived_at)`。
+- `schedules(id, mode, thread_id → threads ON DELETE CASCADE, project_id → projects ON DELETE CASCADE, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last)`；表级 CHECK：`thread` 模式恰有 `thread_id`，非 `new_thread` 不得有 `project_id` / `space_id`；部分唯一索引 `schedules_thread(thread_id)`，索引 `schedules_project`、`schedules_due`。`spec`：cron 为表达式，every 为规范化时长串（`30m0s`），once 为空串；`model` 为 `provider/id`。
+- `schedule_runs(id, schedule_id → schedules ON DELETE CASCADE, thread_id, trigger, scheduled_for, missed, started_at, delivered_at, finished_at, status, error)`；「同一定时至多一个未结束的运行」**不**落在唯一索引上（`overlap = allow` 需要并存），由调度器的单事件循环在事务里先查后插保证。
+- `thread_reports(thread_id PK → threads, report_to → threads, requested_at)`：协调者等待的回报。
+- `coord_actions(id, ts, actor_kind, actor_thread_id, origin, action, target_thread_id, schedule_id, summary, ok, error)`：审计，不建外键。
+
+查询：`threads.sql`（`CreateThread` 多 `kind / space_id / schedule_id / schedule_run`；`ListThreads` 多 `kind`、`space_id` 两个可空过滤；`SetThreadSpace`、`SetThreadShipped`、`ClearSpaceThreads`、`CountOpenChildren`、`CountAgentThreadsSince`、`ListSpaceThreadTimes`、`ListScheduleThreads`、`CountUnarchivedThreadsByOrb`）、`orbs.sql`（`CreateOrb` 多 `coordinator`；`GetCoordinatorOrb`）、`providers.sql`（`UpsertHostProvider`、`SetProviderLease`）、`spaces.sql`、`schedules.sql`（含 `thread_reports`）、`coord_actions.sql`。

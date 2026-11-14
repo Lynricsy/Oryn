@@ -67,8 +67,8 @@ func TestUsage(t *testing.T) {
 	ctx := context.Background()
 	day := int64(86400000)
 	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: "prj_1", Name: "demo", ShallowClone: true, CreatedAt: 1, UpdatedAt: 1}))
-	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: "T-1", ProjectID: new("prj_1"), Title: "first", TitleSource: "auto", State: "idle", StateChangedAt: 1, SessionDir: "d", CreatedAt: 1, UpdatedAt: 1}))
-	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: "T-2", Title: "second", TitleSource: "auto", State: "idle", StateChangedAt: 1, SessionDir: "d", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-1", ProjectID: new("prj_1"), Title: "first", TitleSource: "auto", State: "idle", StateChangedAt: 1, SessionDir: "d", CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-2", Title: "second", TitleSource: "auto", State: "idle", StateChangedAt: 1, SessionDir: "d", CreatedAt: 1, UpdatedAt: 1}))
 	recs := []db.InsertUsageRecordParams{
 		{ThreadID: new("T-1"), EntrySeq: 1, Ts: day + 10, Provider: "anthropic", Model: "opus", InputTokens: 100, OutputTokens: 200, CostUsd: 1.5, DurationMs: new(int64(2000)), TtftMs: new(int64(300))},
 		{ThreadID: new("T-1"), EntrySeq: 2, Ts: day + 20, Provider: "anthropic", Model: "opus", InputTokens: 10, OutputTokens: 20, CostUsd: 0.5, DurationMs: new(int64(0)), TtftMs: new(int64(100)), IsSubagent: true},

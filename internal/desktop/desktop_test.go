@@ -341,7 +341,7 @@ func (e *env) orb(title string) string {
 	}))
 	if title != "" {
 		tid := ids.Thread()
-		require.NoError(e.t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{ID: tid, OrbID: &id, Title: title, TitleSource: "user", State: "idle", SessionDir: "/s/" + tid, CreatedAt: 1, UpdatedAt: 1}))
+		require.NoError(e.t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{Kind: "work", ID: tid, OrbID: &id, Title: title, TitleSource: "user", State: "idle", SessionDir: "/s/" + tid, CreatedAt: 1, UpdatedAt: 1}))
 	}
 	return id
 }

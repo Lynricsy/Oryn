@@ -199,7 +199,7 @@ func TestPortalConfigureOnHello(t *testing.T) {
 		id string
 		at int64
 	}{{later, 20}, {earlier, 10}} {
-		require.NoError(t, h.st.Q.CreateThread(ctx, db.CreateThreadParams{ID: th.id, OrbID: &orb.ID, TitleSource: "auto", State: "idle", SessionDir: "/s/" + th.id, CreatedAt: th.at, UpdatedAt: th.at}))
+		require.NoError(t, h.st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th.id, OrbID: &orb.ID, TitleSource: "auto", State: "idle", SessionDir: "/s/" + th.id, CreatedAt: th.at, UpdatedAt: th.at}))
 	}
 	o.disconnect()
 	require.NoError(t, o.connect())

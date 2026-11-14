@@ -271,7 +271,7 @@ func TestDesktopViewStatuses(t *testing.T) {
 		return d.Profile
 	}
 	holder, other, released, broken, reader := mk(""), mk(""), mk(""), mk(""), mk("readonly")
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{ID: "T-1", OrbID: &holder, Title: "持有者", TitleSource: "user", State: "idle", SessionDir: "/s", CreatedAt: 3, UpdatedAt: 3}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: "T-1", OrbID: &holder, Title: "持有者", TitleSource: "user", State: "idle", SessionDir: "/s", CreatedAt: 3, UpdatedAt: 3}))
 	_, err := q.AcquireBrowserProfile(ctx, db.AcquireBrowserProfileParams{OrbID: holder, Now: 7, ID: pid})
 	require.NoError(t, err)
 	require.NoError(t, q.SetOrbDesktopLocal(ctx, db.SetOrbDesktopLocalParams{LocalRev: 2, OrbID: holder, Now: 8}))
