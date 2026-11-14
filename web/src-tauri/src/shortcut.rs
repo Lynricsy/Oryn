@@ -5,13 +5,68 @@ use std::sync::Mutex;
 
 use serde_json::json;
 use tauri::AppHandle;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
+};
 
 use crate::{eventlog, host};
 
-/// 解析快捷键串（如 `Control+Alt+Space`）。
+/// 修饰键不足的错误。
+pub const NEEDS_MODIFIER: &str = "shortcut must include Control, Alt or Super";
+/// 与系统 / 编辑常用组合冲突的错误。
+pub const RESERVED: &str = "shortcut is reserved by the system";
+
+/// 不允许注册的组合（修饰键须完全一致）：全局注册会让所有程序都收不到它们。
+const RESERVED_COMBOS: &[(Modifiers, Code)] = &[
+    // 编辑与窗口常用（Windows / Linux 用 Control，macOS 用 Command = Super）
+    (Modifiers::CONTROL, Code::KeyA),
+    (Modifiers::CONTROL, Code::KeyC),
+    (Modifiers::CONTROL, Code::KeyV),
+    (Modifiers::CONTROL, Code::KeyX),
+    (Modifiers::CONTROL, Code::KeyZ),
+    (Modifiers::CONTROL, Code::KeyY),
+    (Modifiers::CONTROL, Code::KeyS),
+    (Modifiers::CONTROL, Code::KeyW),
+    (Modifiers::CONTROL, Code::KeyQ),
+    (Modifiers::CONTROL.union(Modifiers::SHIFT), Code::KeyZ),
+    (Modifiers::SUPER, Code::KeyA),
+    (Modifiers::SUPER, Code::KeyC),
+    (Modifiers::SUPER, Code::KeyV),
+    (Modifiers::SUPER, Code::KeyX),
+    (Modifiers::SUPER, Code::KeyZ),
+    (Modifiers::SUPER, Code::KeyS),
+    (Modifiers::SUPER, Code::KeyW),
+    (Modifiers::SUPER, Code::KeyQ),
+    (Modifiers::SUPER.union(Modifiers::SHIFT), Code::KeyZ),
+    // 系统级：关窗、切换窗口 / 输入法、锁屏、安全选项、Spotlight
+    (Modifiers::ALT, Code::F4),
+    (Modifiers::ALT, Code::Tab),
+    (Modifiers::ALT.union(Modifiers::SHIFT), Code::Tab),
+    (Modifiers::SUPER, Code::Tab),
+    (Modifiers::SUPER, Code::Space),
+    (Modifiers::SUPER, Code::KeyL),
+    (Modifiers::CONTROL, Code::Escape),
+    (Modifiers::CONTROL.union(Modifiers::ALT), Code::Delete),
+];
+
+/// 解析并校验快捷键串（如 `Control+Alt+Space`）：至少含 Control / Alt / Super 之一（只有 Shift 不算），
+/// 且不在 [`RESERVED_COMBOS`] 里。远程页面经 `host_set_settings` 也能设置它，配置文件也可能被改过，
+/// 所以注册前（设置时与启动加载时）都走这里。
 pub fn parse(accelerator: &str) -> Result<Shortcut, String> {
-    Shortcut::from_str(accelerator.trim()).map_err(|e| e.to_string())
+    let s = Shortcut::from_str(accelerator.trim()).map_err(|e| e.to_string())?;
+    if !s
+        .mods
+        .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+    {
+        return Err(NEEDS_MODIFIER.into());
+    }
+    if RESERVED_COMBOS
+        .iter()
+        .any(|(mods, key)| s.mods == *mods && s.key == *key)
+    {
+        return Err(RESERVED.into());
+    }
+    Ok(s)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +184,40 @@ mod tests {
             assert!(parse(bad).is_err(), "{bad}");
         }
         assert_eq!(parse("Control+Alt+Space"), parse("ctrl+alt+space"));
+    }
+
+    #[test]
+    fn rejects_unmodified_and_reserved() {
+        for bare in ["Enter", "KeyA", "Space", "F1", "Shift+A", "Shift+Enter"] {
+            assert_eq!(parse(bare).unwrap_err(), NEEDS_MODIFIER, "{bare}");
+        }
+        for reserved in [
+            "Control+C",
+            "ctrl+v",
+            "Control+X",
+            "Control+Z",
+            "Control+A",
+            "Control+Shift+Z",
+            "Super+C",
+            "Cmd+V",
+            "Alt+F4",
+            "Alt+Tab",
+            "Alt+Shift+Tab",
+            "Control+Alt+Delete",
+            "Super+L",
+        ] {
+            assert_eq!(parse(reserved).unwrap_err(), RESERVED, "{reserved}");
+        }
+        // 修饰键不同就不是保留组合
+        for ok in [
+            "Control+Alt+C",
+            "Control+Shift+V",
+            "Alt+F5",
+            "Super+Shift+K",
+        ] {
+            assert!(parse(ok).is_ok(), "{ok}");
+        }
+        assert!(parse(crate::config::DEFAULT_SHORTCUT).is_ok());
     }
 
     #[test]

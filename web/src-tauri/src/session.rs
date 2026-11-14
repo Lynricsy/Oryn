@@ -110,6 +110,8 @@ pub trait Shell: Send + Sync + 'static {
     fn show_launcher(&self);
     /// 通知连接页状态变化。
     fn emit_state(&self, state: &LauncherState);
+    /// 清掉 WebView 里 `origin` 的会话 Cookie 与其它站点数据（更换服务器、吊销、令牌丢失时）。
+    fn clear_web_data(&self, origin: &str);
     /// 重启应用（丢掉旧 origin 的远程能力）。
     fn restart(&self);
 }
@@ -207,6 +209,22 @@ pub fn app_session_url(origin: &str, code: &str, path: &str) -> String {
     )
 }
 
+/// 系统浏览器要打开的批准页。服务器给的 `verifyUrl` 只有在 http(s)、与 `server` 同源且不带用户信息时才采用，
+/// 否则改用壳自己拼的 `<server>/pair`：不把服务器给的任意 URI（`file:`、`ms-*:`、UNC…）交给系统 opener。
+/// 返回 `(地址, 是否替换了服务器给的值)`。
+pub fn pair_page_url(server: &str, given: &str) -> (String, bool) {
+    let trusted = url::Url::parse(given).ok().filter(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.origin().ascii_serialization() == server
+    });
+    match trusted {
+        Some(u) => (u.into(), false),
+        None => (format!("{server}/pair"), true),
+    }
+}
+
 /// 换取失败的退避：2s → 4s → … → 30s。
 pub fn backoff(attempt: u32) -> Duration {
     let secs = 1u64 << attempt.clamp(1, 5);
@@ -297,8 +315,15 @@ impl<A: Api, S: Shell> Core<A, S> {
     pub async fn start(&mut self, cli_server: Option<&str>) -> Next {
         if self.config.server_url.is_some() {
             let server = self.server();
-            if let Ok(Some(_)) = self.vault.get(&server) {
-                return self.enter_app("/").await;
+            match self.vault.get(&server) {
+                Ok(Some(_)) => return self.enter_app("/").await,
+                Ok(None) => {}
+                // 读不了凭据库 ≠ 没配对：报 keyring 错误并保留配置，「重试」重新走 enter_app 读令牌，
+                // 而不是落到连接页另起一轮配对
+                Err(e) => {
+                    self.fail(codes::KEYRING, e.to_string());
+                    return Next::Idle;
+                }
             }
         }
         match cli_server {
@@ -358,27 +383,33 @@ impl<A: Api, S: Shell> Core<A, S> {
             Err(ApiError::Network(m)) => return self.connect_error(server, codes::UNREACHABLE, m),
             Err(e) => return self.connect_error(server, codes::PAIR_FAILED, e.to_string()),
         };
+        let (verify_url, replaced) = pair_page_url(&server, &start.verify_url);
+        if replaced {
+            self.log.log(
+                "pair.verify_url_replaced",
+                json!({"given": crate::eventlog::redact_url(&start.verify_url), "used": verify_url}),
+            );
+        }
         self.log.log(
             "pair.started",
-            json!({"server": server, "code": start.code, "verifyUrl": start.verify_url}),
+            json!({"server": server, "code": start.code, "verifyUrl": verify_url}),
         );
-        self.shell.open_browser(&start.verify_url);
-        self.log
-            .log("browser.open", json!({"url": start.verify_url}));
+        self.shell.open_browser(&verify_url);
+        self.log.log("browser.open", json!({"url": verify_url}));
         self.epoch += 1;
         let interval = Duration::from_secs(start.interval.clamp(1, 30));
         self.pairing = Some(Pairing {
             server: server.clone(),
             code: start.code.clone(),
             verifier: start.verifier,
-            verify_url: start.verify_url.clone(),
+            verify_url: verify_url.clone(),
             expires_at: start.expires_at,
             interval,
         });
         self.set_state(LauncherState::Pairing {
             server_url: server,
             code: start.code,
-            verify_url: start.verify_url,
+            verify_url,
             expires_at: start.expires_at,
         });
         Next::Poll {
@@ -490,6 +521,7 @@ impl<A: Api, S: Shell> Core<A, S> {
 
     fn revoked(&mut self, server: String) -> Next {
         let _ = self.vault.delete(&server);
+        self.shell.clear_web_data(&server);
         self.config.device_id = None;
         self.save_config();
         self.log.log("disconnect", json!({"reason": "revoked"}));
@@ -509,11 +541,6 @@ impl<A: Api, S: Shell> Core<A, S> {
         self.gen += 1;
         let gen = self.gen;
         self.last_path = valid_app_path(path);
-        let target = self
-            .nav()
-            .pending
-            .clone()
-            .unwrap_or_else(|| self.last_path.clone());
         self.set_state(LauncherState::Connecting {
             server_url: server.clone(),
         });
@@ -521,6 +548,7 @@ impl<A: Api, S: Shell> Core<A, S> {
             Ok(Some(t)) => t,
             Ok(None) => {
                 self.shell.show_launcher();
+                self.shell.clear_web_data(&server);
                 return self.connect_error(server, codes::REVOKED, "");
             }
             Err(e) => {
@@ -530,12 +558,21 @@ impl<A: Api, S: Shell> Core<A, S> {
         };
         match self.api.app_session(&server, &token).await {
             Ok(code) => {
+                // 待开路径在请求返回后才取：等待期间点的深链接 / 通知 / 托盘线程要进这次兑换地址
+                let consumed = self.nav().pending.clone();
+                let target = consumed.clone().unwrap_or_else(|| self.last_path.clone());
                 let url = app_session_url(&server, &code, &target);
                 if let Err(e) = self.shell.open_remote(&server, &url) {
                     self.fail(codes::WEB_TIMEOUT, e);
                     return Next::Idle;
                 }
-                self.nav().pending = None;
+                // 只清掉本次带走的那一个：导航发出后才到的路径留给新页面的 host_ready
+                {
+                    let mut nav = self.nav();
+                    if nav.pending == consumed {
+                        nav.pending = None;
+                    }
+                }
                 self.retry_attempt = 0;
                 self.log.log("session.minted", json!({"server": server}));
                 Next::Watchdog {
@@ -677,6 +714,8 @@ impl<A: Api, S: Shell> Core<A, S> {
             let _ = self.api.revoke_self(&server, &token, &device_id).await;
         }
         let _ = self.vault.delete(&server);
+        // 自我吊销可能失败（离线）：旧服务器的 App 会话 Cookie 不能留在 WebView 存储里
+        self.shell.clear_web_data(&server);
         self.config.server_url = None;
         self.config.device_id = None;
         self.save_config();
@@ -696,7 +735,10 @@ mod tests {
     use crate::api::{Health, PairStart};
     use crate::eventlog::testing::{memory, Buffer};
     use crate::secrets::testing::FakeStore;
-    use std::sync::atomic::{AtomicI64, Ordering};
+    use crate::secrets::{StoreError, TokenStore};
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+    use tokio::sync::{oneshot, Notify};
 
     const SERVER: &str = "https://oryn.example.com";
 
@@ -708,6 +750,8 @@ mod tests {
         app_session: Mutex<VecDeque<Result<String, ApiError>>>,
         tokens_seen: Mutex<Vec<String>>,
         revoked: Mutex<Vec<(String, String)>>,
+        /// 下一次 `app_session` 进来时先 `notify` 第一个、再等第二个放行（模拟挂起中的网络请求）。
+        gate: Mutex<Option<(Arc<Notify>, oneshot::Receiver<()>)>>,
     }
 
     fn pop<T>(q: &Mutex<VecDeque<Result<T, ApiError>>>) -> Result<T, ApiError> {
@@ -743,6 +787,11 @@ mod tests {
         }
         async fn app_session(&self, _: &str, token: &str) -> Result<String, ApiError> {
             self.tokens_seen.lock().unwrap().push(token.into());
+            let gate = self.gate.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.notify_one();
+                let _ = release.await;
+            }
             pop(&self.app_session)
         }
         async fn revoke_self(&self, _: &str, token: &str, device_id: &str) -> Result<(), ApiError> {
@@ -759,6 +808,7 @@ mod tests {
         Browser(String),
         Remote(String, String),
         Launcher,
+        ClearWebData(String),
         Restart,
     }
 
@@ -767,6 +817,8 @@ mod tests {
         now: Arc<AtomicI64>,
         calls: Arc<Mutex<Vec<Call>>>,
         states: Arc<Mutex<Vec<LauncherState>>>,
+        /// `open_remote` 时把这条路径写进待开槽（模拟导航发出后才到的深链接）。
+        pending_on_remote: Arc<Mutex<Option<(SharedNav, String)>>>,
     }
 
     impl Shell for FakeShell {
@@ -781,6 +833,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(Call::Remote(origin.into(), url.into()));
+            if let Some((nav, path)) = self.pending_on_remote.lock().unwrap().take() {
+                nav.lock().unwrap().pending = Some(path);
+            }
             Ok(())
         }
         fn show_launcher(&self) {
@@ -789,8 +844,38 @@ mod tests {
         fn emit_state(&self, state: &LauncherState) {
             self.states.lock().unwrap().push(state.clone());
         }
+        fn clear_web_data(&self, origin: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(Call::ClearWebData(origin.into()));
+        }
         fn restart(&self) {
             self.calls.lock().unwrap().push(Call::Restart);
+        }
+    }
+
+    /// 读令牌可切换为失败的凭据库（模拟 Keychain 被拒、Secret Service 暂时不可用）。
+    #[derive(Clone, Default)]
+    struct FlakyStore {
+        map: Arc<Mutex<BTreeMap<String, String>>>,
+        fail: Arc<AtomicBool>,
+    }
+
+    impl TokenStore for FlakyStore {
+        fn get(&self, server: &str) -> Result<Option<String>, StoreError> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(StoreError::Failed("access denied".into()));
+            }
+            Ok(self.map.lock().unwrap().get(server).cloned())
+        }
+        fn set(&self, server: &str, token: &str) -> Result<(), StoreError> {
+            self.map.lock().unwrap().insert(server.into(), token.into());
+            Ok(())
+        }
+        fn delete(&self, server: &str) -> Result<(), StoreError> {
+            self.map.lock().unwrap().remove(server);
+            Ok(())
         }
     }
 
@@ -1433,6 +1518,207 @@ mod tests {
         assert_eq!(r.shell.calls.lock().unwrap().last(), Some(&Call::Restart));
         let ev = r.log.events();
         assert_eq!(ev.last().unwrap()["reason"], "user");
+    }
+
+    #[tokio::test]
+    async fn pending_written_during_session_request_is_kept() {
+        let mut r = paired();
+        let entered = Arc::new(Notify::new());
+        let (release, rx) = oneshot::channel();
+        *r.api.gate.lock().unwrap() = Some((entered.clone(), rx));
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_1".into()));
+        let nav = r.nav.clone();
+        // 换码请求挂起期间，深链接 / 通知把线程 B 写进待开槽
+        let click = async move {
+            entered.notified().await;
+            nav.lock().unwrap().pending = Some("/t/T-B".into());
+            release.send(()).unwrap();
+        };
+        let (next, ()) = tokio::join!(r.core.start(None), click);
+        assert!(matches!(next, Next::Watchdog { .. }));
+        assert_eq!(
+            r.shell.calls.lock().unwrap().as_slice(),
+            [Call::Remote(
+                SERVER.into(),
+                format!("{SERVER}/auth/app?code=oac_1&next=%2Ft%2FT-B")
+            )]
+        );
+        assert_eq!(r.nav.lock().unwrap().pending, None);
+    }
+
+    #[tokio::test]
+    async fn pending_arriving_after_navigation_survives_for_host_ready() {
+        let mut r = paired();
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_1".into()));
+        r.nav.lock().unwrap().pending = Some("/t/T-A".into());
+        *r.shell.pending_on_remote.lock().unwrap() = Some((r.nav.clone(), "/t/T-C".into()));
+        assert!(matches!(r.core.start(None).await, Next::Watchdog { .. }));
+        assert_eq!(
+            r.shell.calls.lock().unwrap().as_slice(),
+            [Call::Remote(
+                SERVER.into(),
+                format!("{SERVER}/auth/app?code=oac_1&next=%2Ft%2FT-A")
+            )]
+        );
+        // A 已随兑换地址带走；导航发出后才到的 C 留给新页面
+        assert_eq!(
+            r.core.host_ready(SERVER, 1, "en").as_deref(),
+            Some("/t/T-C")
+        );
+    }
+
+    #[tokio::test]
+    async fn start_keyring_read_error_is_retryable() {
+        let store = FlakyStore::default();
+        store
+            .map
+            .lock()
+            .unwrap()
+            .insert(SERVER.into(), "odt_secret".into());
+        store.fail.store(true, Ordering::SeqCst);
+        let config = Config {
+            server_url: Some(SERVER.into()),
+            device_id: Some("dev_1".into()),
+            ..Config::default()
+        };
+        let mut r = rig(config, FakeStore::default());
+        r.core.vault = Vault::with_store(
+            Box::new(store.clone()),
+            TokenStoreKind::Keyring,
+            r.dir.path(),
+            false,
+        );
+        // 命令行给了地址也不能另起配对
+        assert_eq!(r.core.start(Some(SERVER)).await, Next::Idle);
+        assert!(matches!(r.core.state(), LauncherState::Error { .. }));
+        assert_eq!(err_code(r.core.state()), Some(codes::KEYRING));
+        assert!(r.api.tokens_seen.lock().unwrap().is_empty());
+        assert!(!r
+            .shell
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| matches!(c, Call::Browser(_) | Call::Remote(..))));
+        assert_eq!(r.core.config().device_id.as_deref(), Some("dev_1"));
+        assert_eq!(r.core.config().server_url.as_deref(), Some(SERVER));
+
+        // 凭据库恢复后「重试」直接用原令牌进入
+        store.fail.store(false, Ordering::SeqCst);
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_1".into()));
+        assert!(matches!(r.core.retry().await, Next::Watchdog { .. }));
+        assert_eq!(r.api.tokens_seen.lock().unwrap().as_slice(), ["odt_secret"]);
+        assert_eq!(store.map.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn untrusted_verify_url_is_never_opened() {
+        for bad in [
+            "file:///etc/passwd",
+            "https://other.example/pair",
+            "search-ms:query=x",
+            "https://user:pw@oryn.example.com/pair",
+            "http://oryn.example.com/pair",
+            "not a url",
+        ] {
+            let mut r = fresh();
+            healthy(&r);
+            r.api.pair_start.lock().unwrap().push_back(Ok(PairStart {
+                code: "ABCD-EFGH".into(),
+                verifier: "ver".into(),
+                verify_url: bad.into(),
+                expires_at: 600_000,
+                interval: 2,
+            }));
+            assert!(matches!(r.core.connect(SERVER).await, Next::Poll { .. }));
+            let want = format!("{SERVER}/pair");
+            assert_eq!(
+                r.shell.calls.lock().unwrap().as_slice(),
+                [Call::Browser(want.clone())],
+                "{bad}"
+            );
+            assert!(matches!(
+                r.core.state(),
+                LauncherState::Pairing { verify_url, .. } if *verify_url == want
+            ));
+            r.core.reopen_browser();
+            assert_eq!(
+                r.shell.calls.lock().unwrap().last(),
+                Some(&Call::Browser(want.clone()))
+            );
+            let replaced = r
+                .log
+                .events()
+                .into_iter()
+                .find(|e| e["event"] == "pair.verify_url_replaced")
+                .expect(bad);
+            assert_eq!(replaced["used"], want);
+        }
+        // 同源的 http(s) 地址照用（含路径与查询）
+        assert_eq!(
+            pair_page_url(SERVER, "https://oryn.example.com:443/pair?x=1"),
+            (format!("{SERVER}/pair?x=1"), false)
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnects_clear_web_data() {
+        // 更换服务器：清理先于重启
+        let mut r = paired();
+        r.core.request_change();
+        assert_eq!(r.core.change_server(true).await, Next::Idle);
+        let calls = r.shell.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls[calls.len() - 2..],
+            [Call::ClearWebData(SERVER.into()), Call::Restart]
+        );
+
+        // 吊销
+        let mut r = paired();
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Err(ApiError::Status {
+                status: 401,
+                code: "unauthorized".into(),
+                message: String::new(),
+            }));
+        r.core.start(None).await;
+        assert!(r
+            .shell
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&Call::ClearWebData(SERVER.into())));
+
+        // 已配对但令牌不见了
+        let config = Config {
+            server_url: Some(SERVER.into()),
+            device_id: Some("dev_1".into()),
+            ..Config::default()
+        };
+        let mut r = rig(config, FakeStore::default());
+        r.core.enter_app("/").await;
+        assert_eq!(err_code(r.core.state()), Some(codes::REVOKED));
+        assert!(r
+            .shell
+            .calls
+            .lock()
+            .unwrap()
+            .contains(&Call::ClearWebData(SERVER.into())));
     }
 
     #[test]

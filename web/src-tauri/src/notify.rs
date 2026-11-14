@@ -208,14 +208,48 @@ pub fn clicked(app: &AppHandle, n: i32) {
     }
 }
 
+/// 把纯文本转成通知正文的 markup 文本：`&` `<` `>` 换成实体（XDG 通知规范的 body-markup 是 XML 子集），
+/// 正文里的 `<a href>`、`<img>` 等就只会原样显示。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn escape_markup(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// 通知服务是否声明了 `body-markup`；查询失败按支持处理（宁可多转义，也不让正文被当成标记）。
+#[cfg(target_os = "linux")]
+fn server_body_markup() -> bool {
+    notify_rust::get_capabilities().map_or(true, |caps| caps.iter().any(|c| c == "body-markup"))
+}
+
 /// 构建 Linux 通知：应用名 `Oryn`、`desktop-entry` 提示指向安装的 `.desktop`；
 /// `clickable` 时声明 `default` 动作，服务器才会上报点击。
+/// 正文来自 agent 输出：服务器支持 body-markup（`body_markup`）时先转义。标题按规范是纯文本，服务器不解析
+/// 标记（GNOME、Plasma、dunst、mako 都按纯文本显示），转义反而会把 `&amp;` 原样显示出来，所以不动。
 #[cfg(target_os = "linux")]
-pub fn linux_notification(title: &str, body: &str, clickable: bool) -> notify_rust::Notification {
+pub fn linux_notification(
+    title: &str,
+    body: &str,
+    clickable: bool,
+    body_markup: bool,
+) -> notify_rust::Notification {
+    let body = if body_markup {
+        escape_markup(body)
+    } else {
+        body.to_string()
+    };
     let mut n = notify_rust::Notification::new();
     n.appname(APP_NAME)
         .summary(title)
-        .body(body)
+        .body(&body)
         .icon(ICON)
         .hint(notify_rust::Hint::DesktopEntry(DESKTOP_ENTRY.into()));
     if clickable {
@@ -233,7 +267,7 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     let spawned = std::thread::Builder::new()
         .name("notification".into())
         .spawn(move || {
-            match linux_notification(&p.title, &p.body, true).show() {
+            match linux_notification(&p.title, &p.body, true, server_body_markup()).show() {
                 Ok(handle) => {
                     log_shown(&id, &p);
                     // 关闭时回调收到 `__closed`，只处理点击
@@ -276,7 +310,9 @@ pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str)
         let _ = std::thread::Builder::new()
             .name("notification".into())
             .spawn(move || {
-                if let Err(e) = linux_notification(&title, &body, false).show() {
+                if let Err(e) =
+                    linux_notification(&title, &body, false, server_body_markup()).show()
+                {
                     log_error("", e);
                 }
             });
@@ -365,7 +401,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_notification_fields() {
-        let n = linux_notification("标题", "正文", true);
+        let n = linux_notification("标题", "正文", true, true);
         assert_eq!(n.appname, "Oryn");
         assert_eq!(n.summary, "标题");
         assert_eq!(n.body, "正文");
@@ -374,9 +410,34 @@ mod tests {
             .hints
             .contains(&notify_rust::Hint::DesktopEntry("Oryn".into())));
         assert_eq!(n.actions, ["default", ""]);
-        let plain = linux_notification("t", "b", false);
+        let plain = linux_notification("t", "b", false, true);
         assert!(plain.actions.is_empty());
         assert_eq!(plain.appname, "Oryn");
+    }
+
+    #[test]
+    fn markup_escaping() {
+        assert_eq!(
+            escape_markup("<a href='x'>y</a> & <img src=\"z\"/>"),
+            "&lt;a href='x'&gt;y&lt;/a&gt; &amp; &lt;img src=\"z\"/&gt;"
+        );
+        assert_eq!(escape_markup("&amp;"), "&amp;amp;");
+        assert_eq!(escape_markup("普通文本"), "普通文本");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_body_is_escaped_when_server_parses_markup() {
+        let evil = "<a href='https://evil.example'>点我</a> & co";
+        let n = linux_notification("A & <B>", evil, true, true);
+        assert_eq!(
+            n.body,
+            "&lt;a href='https://evil.example'&gt;点我&lt;/a&gt; &amp; co"
+        );
+        // 标题是纯文本，不转义
+        assert_eq!(n.summary, "A & <B>");
+        // 服务器不解析标记时原样发送，避免显示出实体
+        assert_eq!(linux_notification("t", evil, true, false).body, evil);
     }
 
     #[test]

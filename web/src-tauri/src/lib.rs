@@ -41,6 +41,9 @@ use crate::webview::TauriShell;
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 命令行参数。深链接 URL 由 deep-link 插件自己从 argv 取。
+///
+/// argv 里只要出现 `oryn:` 链接，就只当作「打开这个链接」处理，其它参数一律忽略：Windows 上协议注册为
+/// `"exe" "%1"`，转发了原始引号的调用方能借链接往 argv 里塞 `--server=…`、`--quit` 之类的标志。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Args {
     /// `--server <url>`：预填并直接连接。
@@ -49,10 +52,27 @@ pub struct Args {
     pub quit: bool,
     /// `--smoke`：临时配置目录、不注册单实例、不碰凭据库与网络，连接页就绪即退出 0。
     pub smoke: bool,
+    /// 因 argv 里有深链接而被忽略的其它参数（记 `deeplink.args_ignored`）。
+    pub ignored: Vec<String>,
+}
+
+/// 是不是 `oryn:` 链接（scheme 不分大小写）。
+fn is_deep_link(arg: &str) -> bool {
+    arg.trim()
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("oryn:"))
 }
 
 impl Args {
+    /// 解析 argv（不含程序路径）。
     pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Self {
+        let args: Vec<String> = args.into_iter().collect();
+        if args.iter().any(|a| is_deep_link(a)) {
+            return Args {
+                ignored: args.into_iter().filter(|a| !is_deep_link(a)).collect(),
+                ..Args::default()
+            };
+        }
         let mut out = Args::default();
         let mut it = args.into_iter();
         while let Some(a) = it.next() {
@@ -79,6 +99,7 @@ fn smoke_dir() -> PathBuf {
 pub fn run() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let args = Args::parse(raw.iter().cloned());
+    log_ignored(&args);
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
     // → notification → opener → updater
@@ -138,8 +159,17 @@ pub fn run() {
     app.run(move |app, event| on_run_event(app, event, smoke));
 }
 
+fn log_ignored(args: &Args) {
+    if !args.ignored.is_empty() {
+        eventlog::log("deeplink.args_ignored", json!({"args": args.ignored}));
+    }
+}
+
 fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
+    // 一律用 Tauri 配置的版本（`--config` 可覆盖，更新器比较的也是它），不用 crate 版本
+    let version = handle.package_info().version.to_string();
+    api::set_app_version(version.clone());
     if args.quit {
         // 走到这里说明没有已运行的实例（否则单实例插件已把参数转交并退出）
         handle.cleanup_before_exit();
@@ -151,10 +181,7 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         handle.path().app_config_dir()?
     };
     std::fs::create_dir_all(&dir)?;
-    eventlog::log(
-        "app.start",
-        json!({"version": env!("CARGO_PKG_VERSION"), "args": raw}),
-    );
+    eventlog::log("app.start", json!({"version": version, "args": raw}));
 
     let config = Config::load(&dir);
     let vault = if args.smoke {
@@ -183,7 +210,7 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     );
     #[cfg(desktop)]
     let (shortcut_cfg, lang) = (core.config().shortcut.clone(), core.config().lang());
-    let d = Arc::new(Desktop::new(core, nav, args.smoke));
+    let d = Arc::new(Desktop::new(core, nav, args.smoke, version));
     app.manage(d.clone());
 
     // 通知点击（macOS / Windows 经插件；Linux 由 notify::deliver 的等待线程直接调 notify::clicked）
@@ -246,7 +273,10 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
 #[cfg(desktop)]
 fn on_second_instance(app: &AppHandle, argv: Vec<String>, _cwd: String) {
     eventlog::log("instance.second", json!({"args": argv}));
-    if argv.iter().any(|a| a == "--quit") {
+    // argv[0] 是程序路径；带深链接时 --quit 等标志同样忽略
+    let args = Args::parse(argv.into_iter().skip(1));
+    log_ignored(&args);
+    if args.quit {
         host::quit(app);
         return;
     }
@@ -289,14 +319,54 @@ mod tests {
             Args {
                 server: Some("https://a.example".into()),
                 quit: false,
-                smoke: true
+                smoke: true,
+                ignored: Vec::new(),
             }
         );
         assert_eq!(
             parse(&["--server=https://b.example"]).server.as_deref(),
             Some("https://b.example")
         );
-        assert!(parse(&["oryn://thread/T-1", "--quit"]).quit);
+        assert!(parse(&["--quit"]).quit);
         assert_eq!(parse(&["--server"]).server, None);
+    }
+
+    #[test]
+    fn deep_link_args_ignore_flags() {
+        let link = "oryn://thread/T-01932f6e-8d1a-7c3b-9f2e-0123456789ab";
+        for argv in [
+            vec![link, "--quit"],
+            vec!["--server=https://evil.example", link],
+            vec![link, "--server", "https://evil.example", "--smoke"],
+            vec!["ORYN://open", "--quit"],
+            vec!["oryn:x\"", "--server=https://evil.example"],
+        ] {
+            let a = parse(&argv);
+            assert_eq!(a.server, None, "{argv:?}");
+            assert!(!a.quit && !a.smoke, "{argv:?}");
+            assert_eq!(a.ignored.len(), argv.len() - 1, "{argv:?}");
+        }
+        assert_eq!(parse(&[link]), Args::default());
+        // 不是链接的参数照常解析
+        assert!(parse(&["--quit", "https://a.example"]).quit);
+    }
+
+    /// 版本一律取 `package_info()`：壳的源码里只有 User-Agent 的单测兜底能用 crate 版本。
+    #[test]
+    fn version_comes_from_package_info() {
+        for (name, src) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("host.rs", include_str!("host.rs")),
+            ("webview.rs", include_str!("webview.rs")),
+            ("session.rs", include_str!("session.rs")),
+            ("updater.rs", include_str!("updater.rs")),
+        ] {
+            let needle = concat!("env!(\"CARGO_PKG", "_VERSION\")");
+            assert!(!src.contains(needle), "{name} uses the crate version");
+        }
+        assert_eq!(
+            include_str!("api.rs").matches("CARGO_PKG_VERSION").count(),
+            1
+        );
     }
 }

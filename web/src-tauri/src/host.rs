@@ -46,6 +46,8 @@ pub struct Desktop {
     geometry_gen: std::sync::atomic::AtomicU64,
     /// `--smoke`：首次 `launcher_state` 后退出 0。
     pub smoke: bool,
+    /// 应用版本：Tauri 配置的 `package_info().version`（可被 `--config` 覆盖，更新器比较的就是它）。
+    pub version: String,
     pub notifier: Notifier,
     status: Mutex<HostStatus>,
     #[cfg(desktop)]
@@ -57,7 +59,7 @@ pub struct Desktop {
 }
 
 impl Desktop {
-    pub fn new(core: SessionCore, nav: SharedNav, smoke: bool) -> Self {
+    pub fn new(core: SessionCore, nav: SharedNav, smoke: bool, version: String) -> Self {
         let cfg = core.config();
         let prefs = Prefs {
             close_to_tray: cfg.close_to_tray,
@@ -74,6 +76,7 @@ impl Desktop {
             restored_logged: AtomicBool::new(false),
             geometry_gen: Default::default(),
             smoke,
+            version,
             notifier: Notifier::default(),
             status: Mutex::new(HostStatus::default()),
             #[cfg(desktop)]
@@ -382,7 +385,7 @@ pub fn schedule(d: Arc<Desktop>, next: Next) {
 pub struct LauncherInfo {
     pub state: LauncherState,
     pub lang: &'static str,
-    pub version: &'static str,
+    pub version: String,
     pub token_store: TokenStoreKind,
 }
 
@@ -414,7 +417,7 @@ pub struct SettingsPatch {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopInfo {
-    pub version: &'static str,
+    pub version: String,
     pub settings: DesktopSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shortcut_error: Option<String>,
@@ -443,7 +446,7 @@ async fn desktop_info(d: &Desktop) -> DesktopInfo {
     #[cfg(mobile)]
     let (shortcut_error, update) = (None, json!({"state": "none"}));
     DesktopInfo {
-        version: env!("CARGO_PKG_VERSION"),
+        version: d.version.clone(),
         settings,
         shortcut_error,
         token_store,
@@ -462,7 +465,7 @@ pub async fn launcher_state(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<L
         LauncherInfo {
             state: core.state().clone(),
             lang: core.config().lang().as_str(),
-            version: env!("CARGO_PKG_VERSION"),
+            version: d.version.clone(),
             token_store: core.token_store(),
         }
     };
@@ -699,7 +702,7 @@ mod tests {
     #[test]
     fn desktop_info_shape() {
         let info = DesktopInfo {
-            version: "0.1.0",
+            version: "0.1.0".into(),
             settings: DesktopSettings {
                 shortcut: "Control+Alt+Space".into(),
                 close_to_tray: true,

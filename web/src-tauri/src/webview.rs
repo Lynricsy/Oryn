@@ -37,12 +37,12 @@ pub fn host_platform() -> &'static str {
     }
 }
 
-/// 注入每个主框架的宿主标识。
-pub fn init_script() -> String {
+/// 注入每个主框架的宿主标识；`version` 取 Tauri 配置的应用版本（与更新器比较用的是同一个）。
+pub fn init_script(version: &str) -> String {
     let host = json!({
         "kind": "tauri",
         "platform": host_platform(),
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": version,
         "bridge": host::BRIDGE,
     });
     format!("window.__ORYN_HOST__ = Object.freeze({host});")
@@ -73,7 +73,7 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .title("Oryn")
             .inner_size(1280.0, 820.0)
             .min_inner_size(380.0, 560.0)
-            .initialization_script(init_script())
+            .initialization_script(init_script(&app.package_info().version.to_string()))
             .on_new_window(move |url, _features| {
                 // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
                 if is_external(&url) {
@@ -198,6 +198,36 @@ impl Shell for TauriShell {
         }
     }
 
+    /// 先逐个删掉该 origin 的 Cookie（各平台的 `delete_cookie` 都等到引擎确认才返回，接着重启也不会丢），
+    /// 再尽力清掉其余站点数据（`clear_all_browsing_data` 是异步的，不保证在重启前完成）。
+    /// 必须在异步任务里调用：Windows 上在主线程同步读 Cookie 会死锁。
+    fn clear_web_data(&self, origin: &str) {
+        let Some(w) = self.window() else { return };
+        let mut deleted = 0u32;
+        let mut error = None;
+        match Url::parse(origin)
+            .map_err(|e| e.to_string())
+            .and_then(|u| w.cookies_for_url(u).map_err(|e| e.to_string()))
+        {
+            Ok(cookies) => {
+                for c in cookies {
+                    match w.delete_cookie(c) {
+                        Ok(()) => deleted += 1,
+                        Err(e) => error = Some(e.to_string()),
+                    }
+                }
+            }
+            Err(e) => error = Some(e),
+        }
+        if let Err(e) = w.clear_all_browsing_data() {
+            error.get_or_insert(e.to_string());
+        }
+        eventlog::log(
+            "webdata.cleared",
+            json!({"origin": origin, "cookies": deleted, "error": error}),
+        );
+    }
+
     fn restart(&self) {
         host::save_window_state(&self.app);
         self.app.restart();
@@ -210,8 +240,9 @@ mod tests {
 
     #[test]
     fn scripts() {
-        let s = init_script();
+        let s = init_script("9.8.7-rc.1");
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
+        assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
         assert!(s.contains("\"bridge\":1"));
         let e = event_script(&json!({"type": "navigate", "path": "/t/x"}));

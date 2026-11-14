@@ -2,8 +2,39 @@
 
 use std::path::{Path, PathBuf};
 
-/// 文件名最大字符数。
-const NAME_MAX: usize = 200;
+/// 文件名（含去重编号）的 UTF-8 字节上限：常见文件系统单个路径分量上限是 255 字节，
+/// 再给引擎写下载时追加的临时后缀（`.crdownload`、`.part` 等）留 15 字节。
+/// UTF-16 计数的 Windows 上，同一名字的码元数不会多于 UTF-8 字节数，这个上限同样够用。
+const NAME_MAX_BYTES: usize = 240;
+/// 扩展名不超过这个字节数时截断只截主干、保留扩展名。
+const EXT_KEEP_MAX: usize = 32;
+
+/// `s` 在 `max` 字节以内的最长前缀（落在字符边界上）。
+fn prefix_within(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// 拼出 `主干 + 编号 + 扩展名`，整体不超过 [`NAME_MAX_BYTES`]：先截主干；扩展名过长时连同扩展名一起截。
+/// 结尾的点和空格（Windows 不允许）一并去掉。
+fn fit(stem: &str, suffix: &str, ext: &str) -> String {
+    let budget = NAME_MAX_BYTES - suffix.len();
+    let name = if stem.len() + ext.len() <= budget {
+        format!("{stem}{suffix}{ext}")
+    } else if ext.len() <= EXT_KEEP_MAX {
+        format!("{}{suffix}{ext}", prefix_within(stem, budget - ext.len()))
+    } else {
+        let whole = format!("{stem}{ext}");
+        format!("{}{suffix}", prefix_within(&whole, budget))
+    };
+    name.trim_end_matches(['.', ' ']).to_string()
+}
 
 /// 净化建议文件名：只取最后一段（去掉 `/` `\` 之前的部分）、去掉控制字符与 Windows 保留字符、
 /// 去掉前导点与首尾空白（以及 Windows 不允许的结尾点）；空名用 `download`。
@@ -18,7 +49,8 @@ pub fn sanitize(name: &str) -> String {
         .trim_start_matches('.')
         .trim_end_matches(['.', ' '])
         .trim();
-    let limited: String = trimmed.chars().take(NAME_MAX).collect();
+    let (stem, ext) = split_ext(trimmed);
+    let limited = fit(stem, "", ext);
     if limited.is_empty() {
         "download".into()
     } else {
@@ -27,19 +59,20 @@ pub fn sanitize(name: &str) -> String {
 }
 
 /// 在 `dir` 下为 `name` 找一个不重名的路径：`a.txt` → `a (1).txt` → `a (2).txt` …
+/// 每个候选都按字节预算收紧主干，给编号留出位置（不能指望 `exists` 对超长名字报错）。
 pub fn unique_path(dir: &Path, name: &str, exists: impl Fn(&Path) -> bool) -> PathBuf {
-    let first = dir.join(name);
+    let (stem, ext) = split_ext(name);
+    let first = dir.join(fit(stem, "", ext));
     if !exists(&first) {
         return first;
     }
-    let (stem, ext) = split_ext(name);
     for i in 1..10_000 {
-        let candidate = dir.join(format!("{stem} ({i}){ext}"));
+        let candidate = dir.join(fit(stem, &format!(" ({i})"), ext));
         if !exists(&candidate) {
             return candidate;
         }
     }
-    dir.join(format!("{stem} ({}){ext}", std::process::id()))
+    dir.join(fit(stem, &format!(" ({})", std::process::id()), ext))
 }
 
 /// `a.tar.gz` 视为 `a` + `.tar.gz`（常见双扩展名），其余按最后一个点。
@@ -149,7 +182,47 @@ mod tests {
         for (input, want) in cases {
             assert_eq!(sanitize(input), want, "{input:?}");
         }
-        assert_eq!(sanitize(&"a".repeat(500)).chars().count(), NAME_MAX);
+        assert_eq!(sanitize(&"a".repeat(500)).len(), NAME_MAX_BYTES);
+    }
+
+    #[test]
+    fn long_multibyte_names_fit_in_bytes() {
+        // 83 个「长」+ .txt = 253 字节：Linux 上合法，但再加 ` (1)` 就超 255
+        let name = format!("{}.txt", "长".repeat(83));
+        let s = sanitize(&name);
+        assert!(s.len() <= NAME_MAX_BYTES, "{}", s.len());
+        assert!(s.ends_with(".txt"));
+        assert!(s.starts_with("长长"));
+        // 4 字节字符在边界上不被切开
+        let emoji = sanitize(&format!("{}.tar.gz", "😀".repeat(70)));
+        assert!(emoji.len() <= NAME_MAX_BYTES);
+        assert!(emoji.ends_with(".tar.gz"));
+        // 扩展名本身过长：整体截断
+        let long_ext = sanitize(&format!("a.{}", "b".repeat(300)));
+        assert_eq!(long_ext.len(), NAME_MAX_BYTES);
+
+        // 去重编号的每个候选（含 pid 兜底）都不超过预算，且保留扩展名
+        let dir = Path::new("/dl");
+        for name in [s.as_str(), emoji.as_str(), long_ext.as_str()] {
+            let seen = std::cell::RefCell::new(Vec::new());
+            let p = unique_path(dir, name, |p| {
+                seen.borrow_mut().push(p.to_path_buf());
+                true
+            });
+            seen.borrow_mut().push(p);
+            let seen = seen.into_inner();
+            assert_eq!(seen.len(), 10_001);
+            for c in &seen {
+                let file = c.file_name().unwrap().to_str().unwrap();
+                assert!(file.len() <= NAME_MAX_BYTES, "{file} = {}", file.len());
+                assert_eq!(c.parent(), Some(dir));
+            }
+            let second = seen[1].file_name().unwrap().to_str().unwrap();
+            assert!(second.contains(" (1)"), "{second}");
+        }
+        let second = unique_path(dir, &s, |p| p == dir.join(&s));
+        let second = second.file_name().unwrap().to_str().unwrap();
+        assert!(second.ends_with(" (1).txt"), "{second}");
     }
 
     #[test]

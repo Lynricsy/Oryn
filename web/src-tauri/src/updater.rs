@@ -205,14 +205,23 @@ pub fn install(app: &AppHandle, d: &Desktop) {
         .take();
     let Some((update, bytes)) = taken else { return };
     let version = update.version.clone();
-    match update.install(&bytes) {
+    match save_then_install(|| host::save_window_state(app), || update.install(&bytes)) {
         Ok(()) => {
             eventlog::log("update", json!({"state": "installed", "version": version}));
-            host::save_window_state(app);
             app.restart();
         }
         Err(e) => error(app, d, Some(version), e),
     }
+}
+
+/// 先保存窗口状态再安装：Windows 上 `Update::install` 启动安装器后直接 `exit(0)`，不会返回到调用方，
+/// 而窗口状态插件只在显式保存或 `RunEvent::Exit` 时落盘。
+fn save_then_install<E>(
+    save: impl FnOnce(),
+    install: impl FnOnce() -> Result<(), E>,
+) -> Result<(), E> {
+    save();
+    install()
 }
 
 /// 进入应用后启动周期检查（每进程一次；debug 构建不检查）。
@@ -227,4 +236,33 @@ pub fn start_loop(app: &AppHandle, d: &Arc<Desktop>) {
             tokio::time::sleep(INTERVAL).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_then_install;
+    use std::cell::RefCell;
+
+    #[test]
+    fn window_state_is_saved_before_installer_takes_over() {
+        let order = RefCell::new(Vec::new());
+        // 安装器「退出进程」：安装之后的任何步骤都不会执行，所以只看安装前发生了什么
+        let r: Result<(), ()> = save_then_install(
+            || order.borrow_mut().push("save"),
+            || {
+                order.borrow_mut().push("install");
+                Ok(())
+            },
+        );
+        assert!(r.is_ok());
+        assert_eq!(*order.borrow(), ["save", "install"]);
+        // 安装失败也已保存过（无害），错误原样返回
+        let order = RefCell::new(Vec::new());
+        let r = save_then_install(
+            || order.borrow_mut().push("save"),
+            || Err::<(), _>("bad signature"),
+        );
+        assert_eq!(r, Err("bad signature"));
+        assert_eq!(*order.borrow(), ["save"]);
+    }
 }

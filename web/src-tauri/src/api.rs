@@ -1,7 +1,7 @@
 //! 与控制面的 HTTP 交互：健康检查、设备配对、App 会话换取、自我吊销。
 
 use std::future::Future;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -111,9 +111,21 @@ impl Api for HttpApi {
     }
 }
 
-/// `User-Agent: OrynDesktop/<版本> (<os>-<arch>)`。
+/// 应用版本（`package_info().version`），启动时在第一个请求之前设置。
+static APP_VERSION: OnceLock<String> = OnceLock::new();
+
+/// 设置 User-Agent 里的版本；只认第一次。
+pub fn set_app_version(version: String) {
+    let _ = APP_VERSION.set(version);
+}
+
+/// `User-Agent: OrynDesktop/<版本> (<os>-<arch>)`；版本未设置（单测）时取 crate 版本。
 pub fn user_agent() -> String {
-    format!("OrynDesktop/{} ({})", env!("CARGO_PKG_VERSION"), platform())
+    let version = APP_VERSION
+        .get()
+        .map(String::as_str)
+        .unwrap_or(env!("CARGO_PKG_VERSION"));
+    format!("OrynDesktop/{version} ({})", platform())
 }
 
 /// `<linux|macos|windows>-<x64|arm64>`。
