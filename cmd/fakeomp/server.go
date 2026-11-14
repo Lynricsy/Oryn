@@ -44,6 +44,10 @@ type options struct {
 	// legacyCore 模拟升级前的 Core（FAKEOMP_LEGACY_CORE=1）：不认识 oryn_select_model / oryn_mark_session_start，
 	// 两条命令走 handle 的 default 分支（"Unknown command: <type>"）。
 	legacyCore bool
+	// modelUsage（FAKEOMP_MODEL_USAGE=1）：默认回合结束前追加一条分支外的 model_usage{purpose:"title"}（M10 统计测试用）。
+	modelUsage bool
+	// forkFrom（FAKEOMP_FORK=1）：实现 fork_from（copyBranchToNewSession 同形）；默认关，fork_from 走 Unknown command。
+	forkFrom bool
 }
 
 func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (options, bool, error) {
@@ -56,6 +60,8 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	fs.StringVar(&o.script, "script", getenv("FAKEOMP_SCRIPT"), "替换默认 prompt 帧序列的脚本文件")
 	o.startupDialog = getenv("FAKEOMP_STARTUP_DIALOG")
 	o.legacyCore = getenv("FAKEOMP_LEGACY_CORE") == "1"
+	o.modelUsage = getenv("FAKEOMP_MODEL_USAGE") == "1"
+	o.forkFrom = getenv("FAKEOMP_FORK") == "1"
 	delay := 20 * time.Millisecond
 	if v := getenv("FAKEOMP_DELAY_MS"); v != "" {
 		ms, err := strconv.Atoi(v)
@@ -577,6 +583,30 @@ func (s *server) handle(line []byte) {
 			return
 		}
 		s.ok(id, env.Type, map[string]any{"tree": tree, "leafId": leaf})
+
+	case "fork_from":
+		// FAKEOMP_FORK=1 时把到 entryId 为止的分支逐字拷进同目录的新会话文件（omp copyBranchToNewSession）；当前会话不变。
+		// 默认关：与不支持 fork_from 的 agent 一样回 Unknown command。
+		if !s.opts.forkFrom {
+			s.fail(id, env.Type, "Unknown command: "+env.Type)
+			return
+		}
+		var c struct {
+			EntryID string `json:"entryId"`
+		}
+		_ = json.Unmarshal(line, &c)
+		if err := s.ensureSession(); err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.mu.Lock()
+		path, sid, err := s.sess.copyBranch(s.opts.cwd, c.EntryID, time.Now())
+		s.mu.Unlock()
+		if err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.ok(id, env.Type, map[string]any{"sessionPath": path, "sessionId": sid})
 
 	case "abort":
 		s.mu.Lock()

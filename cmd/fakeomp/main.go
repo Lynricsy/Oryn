@@ -16,6 +16,10 @@
 // 回合最后的 assistant 文本每步一行：`host:<name>:<ok|error>:<结果前 200 字符>` / `probe:<op>:<ok|错误串>`。
 // 当前模型 id 为 `does-not-exist` 或提示词含 `fakeomp:error` 时，回合以 provider 错误结束：assistant 消息
 // stopReason=error 带 errorMessage，prompt_result{status:"error", error:{message}}（与 omp 同形）。
+// 提示词含 `toolfail` 时，该回合的 tool_execution_end 帧与 toolResult 条目带 isError: true。
+// M10 开关（环境变量，取值 "1"，默认关）：FAKEOMP_MODEL_USAGE —— 每个正常完成的默认回合结束前追加一条分支外的
+// model_usage{purpose:"title"}；FAKEOMP_FORK —— 实现 fork_from（到 entryId 的分支逐字拷进同目录新会话文件，应答
+// {sessionPath, sessionId}），关闭时 fork_from 为 Unknown command。
 package main
 
 import (

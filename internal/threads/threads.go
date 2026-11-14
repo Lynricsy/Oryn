@@ -550,12 +550,23 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	}
 	var n int64
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		// 一个事务里：读线程行 → 把它当前的项目 / Space 写进三张事实表（删除后 thread_id 经外键置空，事实行冻结，
+		// 按项目 / Space 的历史不丢）→ inTx（它可能清 Space 引用，所以排在归属快照之后）→ 删线程行
+		row, err := q.GetThread(ctx, id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return err
+		default:
+			if err := tombstoneFacts(ctx, q, id, row.ProjectID, row.SpaceID); err != nil {
+				return err
+			}
+		}
 		if inTx != nil {
 			if err := inTx(q); err != nil {
 				return err
 			}
 		}
-		var err error
 		n, err = q.DeleteThread(ctx, id)
 		return err
 	})

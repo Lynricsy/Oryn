@@ -129,7 +129,6 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 	}
 	var out []ingested
 	main := isMainFile(p.File)
-	sub := IsSubagentFile(p.File)
 	resetting := t.resetting[p.File]
 	prevLast := t.lastSeq
 	now := s.now()
@@ -160,21 +159,13 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			if !isNew && old != nil && string(old) == string(pe.Payload) {
 				continue
 			}
-			tid := t.id
-			if pe.Usage != nil {
-				u := pe.Usage
-				if _, err := q.InsertUsageRecord(ctx, db.InsertUsageRecordParams{
-					ThreadID: &tid, EntrySeq: seq, Ts: u.TS, Provider: u.Provider, Model: u.Model,
-					InputTokens: u.Input, OutputTokens: u.Output, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrt,
-					CostUsd: u.CostUSD, DurationMs: u.DurationMs, TtftMs: u.TTFTMs, IsSubagent: sub,
-				}); err != nil {
+			if !isNew && old != nil { // reset 重发且内容变了：先清掉该条目旧的派生行
+				if err := deleteFactsAt(ctx, q, t.id, seq); err != nil {
 					return err
 				}
 			}
-			if pe.Tool != nil {
-				if _, err := q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: &tid, EntrySeq: seq, Ts: pe.Tool.TS, Tool: pe.Tool.Tool, IsError: pe.Tool.IsError}); err != nil {
-					return err
-				}
+			if err := writeFacts(ctx, q, t.id, seq, p.File, pe, now); err != nil {
+				return err
 			}
 			out = append(out, ingested{parsed: pe, entry: Entry{
 				Seq: seq, File: p.File, EntryID: pe.EntryID, ParentID: pe.ParentID, Type: pe.Type, TS: pe.TS, Payload: pe.Payload,
@@ -320,6 +311,9 @@ func (s *Service) rewriteTranscriptLocked(ctx context.Context, t *thread, file s
 			}
 		}
 		if _, err := q.DeleteStaleEntries(ctx, db.DeleteStaleEntriesParams{ThreadID: t.id, File: file}); err != nil {
+			return err
+		}
+		if err := deleteOrphanFacts(ctx, q, t.id); err != nil {
 			return err
 		}
 		if leaf != nil {

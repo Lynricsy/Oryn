@@ -69,16 +69,32 @@ func (t *turn) sleep(d time.Duration) bool {
 
 func (t *turn) step() bool { return t.sleep(t.s.opts.delay) }
 
-// appendEntry 把消息写入会话文件并计入 agent_end.messages。
-func (t *turn) appendEntry(msg map[string]any) {
+// appendEntry 把消息写入会话文件并计入 agent_end.messages；返回条目 id（写入失败为空串）。
+func (t *turn) appendEntry(msg map[string]any) string {
 	t.s.mu.Lock()
 	defer t.s.mu.Unlock()
-	if _, err := t.s.sess.appendMessage(msg, time.Now()); err != nil {
+	id, err := t.s.sess.appendMessage(msg, time.Now())
+	if err != nil {
 		t.s.emit(map[string]any{"type": "notice", "level": "error", "message": "fakeomp: append entry: " + err.Error()})
-		return
+		return ""
 	}
 	t.s.messageCount++
 	t.messages = append(t.messages, msg)
+	return id
+}
+
+// appendTitleUsage 追加一条分支外的 model_usage{purpose:"title"}（omp 生成标题的开销；FAKEOMP_MODEL_USAGE=1 时每个正常
+// 完成的默认回合在结束前调用）：parentId 为本回合的 user 条目、activeLeafId 为当前叶子，叶子不动；不计入 agent_end.messages。
+func (t *turn) appendTitleUsage(userEntryID string) {
+	t.s.mu.Lock()
+	defer t.s.mu.Unlock()
+	provider, model := t.s.modelLocked()
+	_, err := t.s.sess.appendOffBranch("model_usage", userEntryID, map[string]any{
+		"purpose": "title", "api": "fake", "provider": provider, "model": model, "usage": fakeUsage(), "stopReason": "stop",
+	}, time.Now())
+	if err != nil {
+		t.s.emit(map[string]any{"type": "notice", "level": "error", "message": "fakeomp: append model_usage: " + err.Error()})
+	}
 }
 
 func (t *turn) nextMessageID() string {
@@ -180,7 +196,7 @@ func (t *turn) runDefault(p promptReq) {
 	user := map[string]any{
 		"role": "user", "content": userContent(p.message, p.images), "attribution": "user", "timestamp": nowMs(),
 	}
-	t.appendEntry(user)
+	userEntryID := t.appendEntry(user)
 	t.s.emitEvent(map[string]any{"type": "agent_start"})
 	if reason := t.failReason(p.message); reason != "" {
 		t.failTurn(reason)
@@ -215,6 +231,8 @@ func (t *turn) runDefault(p promptReq) {
 	}
 
 	output := "hello\n"
+	// 提示词含 `toolfail`：该回合的工具调用失败（tool_execution_end 与 toolResult 条目都带 isError: true）
+	toolErr := strings.Contains(p.message, "toolfail")
 	partial := map[string]any{"content": []any{map[string]any{"type": "text", "text": output}}}
 	if !t.step() {
 		t.finish("aborted")
@@ -231,15 +249,18 @@ func (t *turn) runDefault(p promptReq) {
 		return
 	}
 	result := map[string]any{"content": []any{map[string]any{"type": "text", "text": output}}, "details": map[string]any{}}
-	t.s.emitEvent(map[string]any{"type": "tool_execution_end", "toolCallId": callID, "toolName": "bash", "result": result, "isError": false})
+	t.s.emitEvent(map[string]any{"type": "tool_execution_end", "toolCallId": callID, "toolName": "bash", "result": result, "isError": toolErr})
 	t.appendEntry(map[string]any{
 		"role": "toolResult", "toolCallId": callID, "toolName": "bash",
-		"content": result["content"], "details": map[string]any{}, "isError": false, "timestamp": nowMs(),
+		"content": result["content"], "details": map[string]any{}, "isError": toolErr, "timestamp": nowMs(),
 	})
 
 	if !t.streamAssistant("Done. The command printed hello. You said: "+p.message, nil, "stop") {
 		t.finish("aborted")
 		return
+	}
+	if t.s.opts.modelUsage {
+		t.appendTitleUsage(userEntryID)
 	}
 	t.finish("completed")
 }
