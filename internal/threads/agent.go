@@ -303,13 +303,15 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.autoActive = false
 		cancelHostCallsLocked(t)
 		switch {
-		case t.stopping:
-			// 控制面主动停的（RefreshAgent）：不是故障，下一条命令经唤醒路径重新 agent.start
+		case t.stopping || p.RestartsLeft == nil:
+			// 有意停止，不是故障：控制面的 agent.stop（RefreshAgent、删除线程、fork 回退），或 orbd 收到 shutdown /
+			// SIGTERM（orb 停机、删除；协调宿主的冻结就是结束进程）。orbd 只在崩溃时带 restartsLeft。
+			// 下一条命令经唤醒路径重新 agent.start。
 			t.stopping = false
 			t.live.SetWorking(false)
 			t.settled, t.unsynced = true, false
 			s.dropPassiveLocked(t, "agent stopped")
-			if t.queueNeedsWake() || len(t.msgOrder) > 0 {
+			if (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(t.orbID)) {
 				s.wake(t.id, t.orbID)
 			}
 		case p.RestartsLeft != nil && *p.RestartsLeft > 0:
@@ -775,9 +777,6 @@ func (s *Service) refreshStateLocked(t *thread) {
 		// 真实应答（不是 gap / 退出时合成的失败）：gap 后重放的交互必然先于它到达
 		s.reconcileGapUILocked(t)
 		rs := t.live.SetState(data)
-		if rs.IsStreaming != nil && *rs.IsStreaming {
-			t.settled = false
-		}
 		if t.unsynced {
 			// 重新同步（重启 / gap / agent 重启）后的第一份快照：以它恢复 working 与 settled（CP10）
 			if rs.IsStreaming != nil {

@@ -258,8 +258,9 @@ type RunState struct {
 }
 
 // SetState 记录最新 get_state 应答的 data，返回其中的运行 / 静止字段。
-// 正在流式输出时直接进入 working（这只会纠正漏掉的 agent_start，不会误判）；
-// 反方向（不在流式 → 结束 working）只在控制面重新同步时由线程服务决定（见 thread.unsynced）。
+// 「回合进行中」只由 agent_start / agent_end 驱动，不看这里的 isStreaming：agent_end 之后的刷新可能在 omp 清掉
+// isStreaming 之前作答，据此置 working 会让线程永远停在 working（之后没有帧再纠正）。漏掉 agent_start 只会发生在
+// gap / 重启 / agent 重启，那时由线程服务按 thread.unsynced 以这份快照双向恢复。
 func (l *Live) SetState(state json.RawMessage) RunState {
 	l.State = state
 	var s struct {
@@ -268,9 +269,6 @@ func (l *Live) SetState(state json.RawMessage) RunState {
 	}
 	_ = json.Unmarshal(state, &s)
 	l.pendingAsync = s.HasPendingAsyncWork
-	if s.IsStreaming != nil && *s.IsStreaming {
-		l.working = true
-	}
 	return s.RunState
 }
 

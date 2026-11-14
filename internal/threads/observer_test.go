@@ -283,3 +283,34 @@ func TestObserverAgentGapThenExitResolvesSuspended(t *testing.T) {
 	f.s.onAgentStatus(f.ctx, th.orbID, st)
 	assert.Equal(t, []string{"u1"}, o.snapshot().resolved)
 }
+
+// orb 冻结（协调宿主的冻结就是结束进程）/ 停机 / 删除时 orbd 有意停下 agent：exited 不带 restartsLeft，
+// 线程不得进入 error（也就不会产生空原因的错误通知）；崩溃且重启耗尽（restartsLeft = 0）才是 error。
+func TestDeliberateAgentStopIsNotError(t *testing.T) {
+	for _, orbState := range []string{"freezing", "stopping", "deleting"} {
+		t.Run(orbState, func(t *testing.T) {
+			f := newFixture(t, Config{})
+			th, _, o := readyThread(f)
+			f.setOrbState(th.orbID, orbState)
+			f.s.applyOrbState(th.orbID, orbState, 100)
+			raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited", ExitCode: new(0)})
+			f.s.onAgentStatus(f.ctx, th.orbID, raw)
+			th.mu.Lock()
+			assert.Equal(t, StateIdle, th.state)
+			assert.False(t, th.live.restartExhausted)
+			th.mu.Unlock()
+			for _, ev := range o.snapshot().states {
+				assert.NotEqual(t, StateError, ev.State, "%+v", ev)
+			}
+		})
+	}
+
+	f := newFixture(t, Config{})
+	th, _, o := readyThread(f)
+	raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited", ExitCode: new(1), RestartsLeft: new(0)})
+	f.s.onAgentStatus(f.ctx, th.orbID, raw)
+	th.mu.Lock()
+	assert.Equal(t, StateError, th.state, "崩溃且重启耗尽仍是 error")
+	th.mu.Unlock()
+	require.NotEmpty(t, o.snapshot().states)
+}
