@@ -148,17 +148,42 @@ func (c *apiClient) do(ctx context.Context, method, path string, body, out any) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		e := &apiError{Status: resp.StatusCode}
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		if json.Unmarshal(b, e) != nil || e.Message == "" {
-			e.Message = strings.TrimSpace(string(b))
-		}
-		return e
+		return readAPIError(resp)
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// getRaw 发送 GET 并返回原始响应体（调用方负责关闭）；非 2xx 时把错误体 {code, message} 解成 apiError。
+func (c *apiClient) getRaw(ctx context.Context, path string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, readAPIError(resp)
+	}
+	return resp.Body, nil
+}
+
+// readAPIError 读取错误响应体（至多 64KiB）；不是 {code, message} 时以原文作为消息。
+func readAPIError(resp *http.Response) *apiError {
+	e := &apiError{Status: resp.StatusCode}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if json.Unmarshal(b, e) != nil || e.Message == "" {
+		e.Message = strings.TrimSpace(string(b))
+	}
+	return e
 }
 
 // printJSON 以缩进 JSON 打印到 stdout。
