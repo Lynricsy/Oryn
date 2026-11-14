@@ -132,11 +132,14 @@ pub enum Event {
         #[serde(default)]
         insets: Insets,
     },
-    /// Activity 重建（未声明的配置变更）后插件已绑定新的 WebView；`url` 是重建前主框架所在地址。
+    /// 插件已绑定新的 WebView（Activity 重建后，或被系统销毁后在同一进程里新建并重建了主窗口）；
+    /// `url` 是销毁前主框架所在地址（那时还没加载页面则为空）。
     Recreated {
         #[serde(default)]
         url: Option<String>,
     },
+    /// 先前的 Activity 已被系统销毁（不是配置变更），同一进程里又新建了 Activity：Rust 要为它重建主窗口。
+    Activity,
 }
 
 /// `notify` 的参数。

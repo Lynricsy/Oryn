@@ -883,11 +883,14 @@ scenario("A1", async () => {
 		"com.google.android.c2dm.permission.RECEIVE",
 	])
 		check(!has(p), `foss 包未声明 ${p}`);
+	// 只看这次启动：缓冲区里可能留着之前别的场景 / 旧包的记录
+	sh(`${q(ADB)} -s ${SERIAL} logcat -b all -c`);
 	await freshStart();
 	await ev("app.start");
+	const crashes = nativeCrashes();
 	check(
-		!sh(`${q(ADB)} -s ${SERIAL} logcat -d -b crash`).out.includes(PKG),
-		"崩溃缓冲区里没有本包",
+		crashes.length === 0,
+		`logcat 里没有 FORTIFY / 致命信号 / 本包崩溃${crashes.length ? `：${crashes.slice(0, 3).join(" | ")}` : ""}`,
 	);
 });
 
@@ -1835,23 +1838,23 @@ async function rotateForInsets() {
 	await ev("insets", { after: back, timeoutMs: 15_000 });
 }
 
-/** 开发者选项「不保留活动」：`settings put` 不会通知 ActivityManager，只能点设置里的开关。 */
+/**
+ * 开发者选项「不保留活动」。`settings put global always_finish_activities` 只改设置值、不通知 ActivityManager
+ * （实测 API 37：写 1 后退到后台，Activity 仍在任务栈里、进程不变），只能点设置里的开关（它调 `setAlwaysFinish`）。
+ * 用设置页的高亮参数 `:settings:fragment_args_key` 让列表直接滚到这一项，不靠手动滑动找。
+ */
 async function setDontKeepActivities(on: boolean) {
 	const cur = ash("settings get global always_finish_activities").stdout.trim();
 	if ((cur === "1") === on) return;
 	ash("settings put global development_settings_enabled 1");
-	ash("am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS");
+	ash(
+		"am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS --es :settings:fragment_args_key immediately_destroy_activities",
+	);
 	const re = /^(Don.t keep activities|不保留活动)$/;
-	// 设置页会记住上次的滚动位置：条目要完整落在屏幕中段才点（贴底时 bounds 可能是空矩形）
+	const navTop = 2300; // 1080×2400 屏上手势导航条以上
 	const tappable = (n: UiNode) =>
-		re.test(n.text) && n.bounds[3] > n.bounds[1] + 10 && n.bounds[1] > 300;
-	for (let i = 0; i < 40; i++) {
-		const n = uiDump().find((x) => re.test(x.text));
-		if (n && tappable(n) && n.bounds[3] < 2100) break;
-		if (n && n.bounds[1] <= 300) ash("input swipe 540 900 540 1300 300");
-		else ash("input swipe 540 1800 540 1200 300");
-	}
-	await uiTap("不保留活动", (n) => tappable(n) && n.bounds[3] < 2100);
+		re.test(n.text) && n.bounds[3] > n.bounds[1] + 10 && n.bounds[3] < navTop;
+	await uiTap("不保留活动", tappable);
 	await waitFor(
 		`always_finish_activities = ${on ? 1 : 0}`,
 		() =>
@@ -1861,6 +1864,18 @@ async function setDontKeepActivities(on: boolean) {
 		500,
 	);
 	ash("input keyevent 3");
+}
+
+/** 本包的原生崩溃痕迹（FORTIFY abort、致命信号、崩溃缓冲区）。 */
+function nativeCrashes(): string[] {
+	const main = sh(`${q(ADB)} -s ${SERIAL} logcat -d`).out;
+	const crash = sh(`${q(ADB)} -s ${SERIAL} logcat -d -b crash`).out;
+	return [
+		...main
+			.split("\n")
+			.filter((l) => /FORTIFY|Fatal signal|Tombstone written/.test(l)),
+		...crash.split("\n").filter((l) => l.includes(PKG)),
+	];
 }
 
 scenario("A24", async () => {
@@ -1896,37 +1911,67 @@ scenario("A24", async () => {
 		await detachCdp();
 	}
 
-	// 2) 不保留活动：退到后台时 Activity 被销毁（Tauri 的唯一窗口销毁后事件循环退出，进程随之结束），回来是冷启动
+	// 2) 不保留活动：退到后台时 Activity 被系统销毁。Tauri 删掉唯一的窗口并请求退出，壳拦下（否则 std::process::exit
+	//    会在 EGL 析构里 FORTIFY 崩溃），进程留在后台；回来时同一进程里新建 Activity，壳为它重建主窗口，
+	//    插件改绑、连接页按设备令牌恢复会话并回到原线程
 	await setDontKeepActivities(true);
+	sh(`${q(ADB)} -s ${SERIAL} logcat -b all -c`);
 	try {
-		ash(`am force-stop ${PKG}`);
-		after = mark();
 		launch();
-		await ev("web.ready", { after, timeoutMs: 60_000 });
 		await goto(`/t/${T}`);
-		after = mark();
-		ash("input keyevent 3");
-		await ev("lifecycle", { after, where: (e) => e.state === "stop" });
-		after = mark();
-		launch();
-		await ev("web.ready", { after, timeoutMs: 60_000 });
-		await detachCdp();
-		check(
-			(await domPath()).startsWith("/"),
-			`回来后在远程页面 ${await domPath()}`,
-		);
-		check(
-			since(after, "launcher.ready").length <= 1 &&
-				since(after, "pair.started").length === 0,
-			"没有重新配对",
-		);
-		await goto(`/t/${T}`);
+		const pid2 = pidof();
+		for (const round of [1, 2]) {
+			note(`不保留活动：第 ${round} 轮`);
+			after = mark();
+			ash("input keyevent 3");
+			const destroy = await ev("plugin.destroy", { after, timeoutMs: 20_000 });
+			check(
+				destroy.changingConfigurations === false,
+				`plugin.destroy ${show(destroy)}`,
+			);
+			await ev("window.destroyed", { after, timeoutMs: 20_000 });
+			await ev("exit.prevented", { after, timeoutMs: 20_000 });
+			await detachCdp();
+			await sleep(3000);
+			check(pidof() === pid2, `Activity 销毁后进程仍在（pid ${pid2}）`);
+			after = mark();
+			launch();
+			await ev("plugin.activity", { after, timeoutMs: 20_000 });
+			await ev("window.recreated", { after, timeoutMs: 20_000 });
+			await ev("plugin.rebound", { after, timeoutMs: 20_000 });
+			const re = await ev("webview.recreated", { after, timeoutMs: 20_000 });
+			check(
+				re.path === `/t/${T}`,
+				`webview.recreated.path = ${String(re.path)}`,
+			);
+			await ev("session.restore", { after, timeoutMs: 20_000 });
+			await ev("web.ready", { after, timeoutMs: 60_000 });
+			check(pidof() === pid2, "同一进程（不是冷启动）");
+			check(since(after, "pair.started").length === 0, "没有重新配对");
+			await waitFor(
+				"恢复到原线程",
+				async () => (await domPath()) === `/t/${T}`,
+				15_000,
+			);
+			const shot = `${OUT}/A24-dka-round${round}.png`;
+			await Bun.write(shot, await DEVICE.screenshot());
+			note(`截图 ${shot}`);
+		}
 		await rotateForInsets();
 		await downloadOnce(T, `m7-dl-dka-${RUN}.txt`);
 	} finally {
 		await setDontKeepActivities(false);
 		ash("settings put system user_rotation 0");
 	}
+	writeFileSync(
+		`${OUT}/A24-logcat.txt`,
+		sh(`${q(ADB)} -s ${SERIAL} logcat -d -b all`).out,
+	);
+	const crashes = nativeCrashes();
+	check(
+		crashes.length === 0,
+		`logcat 里没有 FORTIFY / 致命信号 / 本包崩溃${crashes.length ? `：${crashes.slice(0, 3).join(" | ")}` : ""}`,
+	);
 });
 
 scenario("A17", async () => {

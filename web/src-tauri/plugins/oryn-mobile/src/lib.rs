@@ -29,9 +29,22 @@ mod android {
     pub enum Error {
         #[error(transparent)]
         Invoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+        /// 进程里此刻没有 Activity（被系统销毁、还没新建）。
+        #[error("no Android activity")]
+        NoActivity,
     }
 
     pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+    /// 插件命令要经 wry 的 `dispatch` 送到某个 Activity 的 UI 线程；Activity 被系统销毁（进程保留）后、新的还没建好时，
+    /// wry 那边没有 Activity 代理，`dispatch` 会 `expect("no available activity")` 直接 panic。
+    /// 这里先看 tao 是否登记着 Activity（`onCreate` 时登记、非配置变更的 `onDestroy` 时移除），没有就返回错误。
+    fn ensure_activity() -> Result<()> {
+        match tauri::tao::platform::android::prelude::main_android_context() {
+            Some(_) => Ok(()),
+            None => Err(Error::NoActivity),
+        }
+    }
 
     /// 注册插件（`Builder::new("oryn-mobile")`），并把句柄放进应用状态。
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -76,6 +89,7 @@ mod android {
 
     impl<R: Runtime> OrynMobile<R> {
         fn run<T: DeserializeOwned>(&self, cmd: &str, args: impl Serialize) -> Result<T> {
+            ensure_activity()?;
             Ok(self.0.run_mobile_plugin(cmd, args)?)
         }
 
@@ -112,6 +126,7 @@ mod android {
 
         /// 可能先弹系统通知权限、再等分发器选择：异步等待，不占线程。
         pub async fn push_enable(&self, vapid: &str) -> Result<PushState> {
+            ensure_activity()?;
             Ok(self
                 .0
                 .run_mobile_plugin_async("pushEnable", json!({"vapid": vapid}))

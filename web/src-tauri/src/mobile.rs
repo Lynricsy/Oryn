@@ -223,14 +223,73 @@ pub async fn host_open_notification_settings(m: State<'_, Arc<MobileRt>>) -> Res
 
 #[cfg(target_os = "android")]
 mod android {
+    use std::sync::Mutex;
+
     use serde_json::json;
-    use tauri::AppHandle;
+    use tauri::{AppHandle, Manager};
     use tauri_plugin_oryn_mobile::{Event, OrynMobile, PushState};
 
     use super::{deliver_share, runtime, sync_push};
     use crate::eventlog;
     use crate::host;
-    use crate::mobile_logic::{self, Native};
+    use crate::mobile_logic::{self, MainWindowLife, Native};
+    use crate::webview::{self, RemoteOrigin};
+
+    /// 主窗口随 Activity 销毁后重建要用的状态（`app.manage`）。
+    pub struct MainLife {
+        life: Mutex<MainWindowLife>,
+        remote: RemoteOrigin,
+    }
+
+    /// `setup` 建好主窗口后调用。
+    pub fn manage_main_life(app: &AppHandle, remote: RemoteOrigin) {
+        app.manage(MainLife {
+            life: Mutex::new(MainWindowLife::default()),
+            remote,
+        });
+    }
+
+    /// 对主窗口生命周期状态做一步；`true` = 现在为新 Activity 建主窗口。
+    fn step(app: &AppHandle, f: impl FnOnce(&mut MainWindowLife) -> bool) -> bool {
+        let Some(m) = app.try_state::<MainLife>() else {
+            return false;
+        };
+        let mut life = m.life.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut life)
+    }
+
+    /// 为同一进程里新建的 Activity 重建主窗口（tao 取尚无窗口的 Activity 上下文，wry 在它里面建 WebView）；
+    /// WebView 建好后插件改绑并报 `recreated`，新连接页按设备令牌恢复会话。
+    fn recreate_main(app: &AppHandle) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let Some(m) = app.try_state::<MainLife>() else {
+                return;
+            };
+            match webview::create_main(&app, &m.remote) {
+                Ok(_) => eventlog::log("window.recreated", json!({})),
+                Err(e) => {
+                    m.life
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .create_failed();
+                    eventlog::log("window.recreate_error", json!({"error": e.to_string()}));
+                }
+            }
+        });
+    }
+
+    /// 主窗口随 Activity 销毁（`RunEvent::WindowEvent::Destroyed`；此时 Tauri 已删掉这个标签）。
+    /// 页面没了：之后的待开路径留给新页面的 `host_ready`，不再派发给不存在的页面。
+    pub fn main_destroyed(app: &AppHandle) {
+        eventlog::log("window.destroyed", json!({}));
+        if let Some(d) = host::desktop(app) {
+            d.nav().web_ready = false;
+        }
+        if step(app, MainWindowLife::destroyed) {
+            recreate_main(app);
+        }
+    }
 
     /// [`Native`] 的 Android 实现：oryn-mobile 插件。
     pub struct AndroidNative(pub OrynMobile<tauri::Wry>);
@@ -322,6 +381,12 @@ mod android {
                     }
                 });
             }
+            Event::Activity => {
+                eventlog::log("lifecycle", json!({"state": "activity"}));
+                if step(&app, MainWindowLife::activity_created) {
+                    recreate_main(&app);
+                }
+            }
         }
     }
 
@@ -335,4 +400,4 @@ mod android {
 }
 
 #[cfg(target_os = "android")]
-pub use android::listen;
+pub use android::{listen, main_destroyed, manage_main_life};

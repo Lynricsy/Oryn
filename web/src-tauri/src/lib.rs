@@ -373,6 +373,8 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let remote = RemoteOrigin::default();
     let launcher_url = webview::launcher_url(&handle)?;
     webview::create_main(&handle, &remote)?;
+    #[cfg(target_os = "android")]
+    mobile::manage_main_life(&handle, remote.clone());
 
     let nav = SharedNav::default();
     let shell = TauriShell::new(handle.clone(), launcher_url, remote);
@@ -448,8 +450,28 @@ fn on_second_instance(app: &AppHandle, argv: Vec<String>, _cwd: String) {
     host::show_main(app);
 }
 
+/// Android：Activity 被系统销毁（不是配置变更）时 Tauri 删掉唯一的窗口并请求退出。拦下这次退出，进程留在后台，
+/// 用户回来时为同一进程里的新 Activity 重建主窗口（见 [`mobile_logic::MainWindowLife`]）。
 #[cfg(mobile)]
-fn on_run_event(_app: &AppHandle, _event: RunEvent, _smoke: bool) {}
+fn on_run_event(app: &AppHandle, event: RunEvent, _smoke: bool) {
+    #[cfg(target_os = "android")]
+    match event {
+        RunEvent::ExitRequested { code, api, .. } => {
+            if mobile_logic::MainWindowLife::keep_process(code) {
+                eventlog::log("exit.prevented", json!({}));
+                api.prevent_exit();
+            }
+        }
+        RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == host::MAIN => mobile::main_destroyed(app),
+        _ => {}
+    }
+    #[cfg(target_os = "ios")]
+    let _ = (app, event);
+}
 
 #[cfg(desktop)]
 fn on_run_event(app: &AppHandle, event: RunEvent, smoke: bool) {

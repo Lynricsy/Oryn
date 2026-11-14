@@ -108,6 +108,64 @@ impl WebviewGate {
     }
 }
 
+/// Android 主窗口与 Activity 的对应：Activity 被系统销毁（「不保留活动」、系统回收 Activity 但保留进程）时进程不退出，
+/// 用户回来时为新 Activity 重建主窗口。
+///
+/// 不是配置变更的 `onDestroy` 会让 tao 发 `WindowEvent::Destroyed`，Tauri 删掉唯一的窗口后发
+/// `ExitRequested { code: None }`（`tauri-runtime-wry` 的 `TaoWindowEvent::Destroyed` 分支）。放行就是 tao 的
+/// `EventLoop::run` → `std::process::exit`，在模拟器上会死在 EGL 的静态析构里
+/// （`FORTIFY: pthread_mutex_lock called on a destroyed mutex`）。所以拦下这种退出，进程照常留在后台；
+/// 用户切回时 Android 在同一进程里新建 Activity（tao 的 `onCreate` 登记新的上下文，wry 登记 Activity 代理），
+/// 插件报 `activity` 事件，这里为它重新建主窗口，之后走与配置变更重建相同的插件改绑 + 会话恢复。
+///
+/// 两个事件的先后不定：新 Activity 可能在旧窗口的 `Destroyed` 还没处理完时就到（同名窗口还在，建不了），
+/// 这时记下来，等 `Destroyed` 再建。
+#[derive(Debug)]
+pub struct MainWindowLife {
+    window: bool,
+    activity_waiting: bool,
+}
+
+impl Default for MainWindowLife {
+    /// `setup` 已建好主窗口。
+    fn default() -> Self {
+        Self {
+            window: true,
+            activity_waiting: false,
+        }
+    }
+}
+
+impl MainWindowLife {
+    /// `ExitRequested` 是否拦下：`code` 为 `None` = 最后一个窗口随 Activity 销毁，保留进程；
+    /// 显式的 `exit(code)` 放行。
+    pub fn keep_process(code: Option<i32>) -> bool {
+        code.is_none()
+    }
+
+    /// 主窗口已销毁。返回 `true` = 有新 Activity 在等，现在就为它建主窗口。
+    pub fn destroyed(&mut self) -> bool {
+        self.window = std::mem::take(&mut self.activity_waiting);
+        self.window
+    }
+
+    /// 旧 Activity 销毁后同一进程里来了新 Activity。返回 `true` = 现在建主窗口；
+    /// 旧窗口还没删掉时返回 `false`，等 [`Self::destroyed`]。
+    pub fn activity_created(&mut self) -> bool {
+        if self.window {
+            self.activity_waiting = true;
+            return false;
+        }
+        self.window = true;
+        true
+    }
+
+    /// 建主窗口失败：下一个新 Activity 再试。
+    pub fn create_failed(&mut self) {
+        self.window = false;
+    }
+}
+
 // ---------------------------------------------------------------- 推送状态
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -644,6 +702,41 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(5), gate.wait())
             .await
             .expect("已打开的闸门立即放行");
+    }
+
+    /// Activity 被系统销毁（不是配置变更）：拦下退出、进程保留；用户回来时恰好为新 Activity 建一次主窗口。
+    #[test]
+    fn main_window_survives_activity_destroy() {
+        assert!(
+            MainWindowLife::keep_process(None),
+            "随 Activity 销毁的退出要拦下"
+        );
+        assert!(!MainWindowLife::keep_process(Some(0)), "显式 exit 放行");
+
+        // 先销毁、后来新 Activity：来时建
+        let mut l = MainWindowLife::default();
+        assert!(!l.destroyed());
+        assert!(l.activity_created());
+        assert!(!l.activity_created(), "已在建，不重复建");
+
+        // 新 Activity 先到（旧窗口还没删完）：等 Destroyed 再建，且只建一次
+        let mut l = MainWindowLife::default();
+        assert!(!l.activity_created());
+        assert!(l.destroyed());
+        assert!(!l.activity_created());
+
+        // 建失败：下一个 Activity 再试
+        let mut l = MainWindowLife::default();
+        l.destroyed();
+        assert!(l.activity_created());
+        l.create_failed();
+        assert!(l.activity_created());
+    }
+
+    #[test]
+    fn activity_event_parses() {
+        let e: Event = serde_json::from_str(r#"{"type":"activity"}"#).unwrap();
+        assert_eq!(e, Event::Activity);
     }
 
     #[test]

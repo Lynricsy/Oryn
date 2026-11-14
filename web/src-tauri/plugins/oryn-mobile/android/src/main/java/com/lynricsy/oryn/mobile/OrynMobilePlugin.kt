@@ -80,12 +80,14 @@ class TextArgs {
 
 /**
  * Oryn 的原生能力（只供 Rust 经 `run_mobile_plugin` 调用；插件的 JS 命令表为空，远程页面调不到）。
- * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / share / insets / recreated。
+ * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / share / insets / recreated / activity。
  *
  * 插件对象与进程同寿：Tauri 只在第一个 WebView 出现时调一次 [load]。Activity 因未声明的配置变更（字体大小等）
  * 重建时，wry 在新 Activity 里重建 WebView，插件却不会再收到 [load]（代码审查第 1 条）。所以这里不把 Activity /
  * WebView 当构造参数用到底：`MainActivity.onWebViewCreate` 每次建 WebView 都调 [webViewCreated]，
  * 插件改绑到新的 Activity 与 WebView，重新装下载监听、第三方 Cookie、inset 监听与系统栏颜色，并告诉 Rust 重建前所在的页面。
+ * Activity 被系统销毁（不是配置变更）时进程保留、Rust 的主窗口没了：`MainActivity.onCreate` 调 [activityCreated]，
+ * 插件报 `activity` 让 Rust 为新 Activity 重建主窗口，之后同样走 [webViewCreated]。
  */
 @TauriPlugin(
   permissions = [Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications")],
@@ -95,8 +97,8 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
   @Volatile private var activity: Activity = initial
   /** 当前绑定的主 WebView。 */
   private var webView: WebView? = null
-  /** 配置变更销毁 Activity 时主框架所在的地址（UI 线程读写）。 */
-  private var urlBeforeRecreate: String? = null
+  /** 与 Activity 的对应：配置变更 / 系统销毁、销毁前所在页面（见 [ActivityLink]）。 */
+  private val link = ActivityLink()
   @Volatile private var insets: ViewportInsets = ViewportInsets.ZERO
   /** 冷启动时 Rust 还没注册监听就到达的分享，注册后补发（见 [ShareHandoff]）。 */
   private val shares = ShareHandoff<JSObject>(emit = { share ->
@@ -125,7 +127,8 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
      */
     fun pushChanged(context: Context) {
       val p = instance
-      if (p != null && p.hasListener("event")) {
+      // 没有 Activity 时 Rust 调不了插件命令（重取推送状态会失败）：同样走后台任务
+      if (p != null && p.link.attached && p.hasListener("event")) {
         val o = JSObject()
         o.put("type", "push")
         o.put("state", PushStore.state(context))
@@ -139,6 +142,19 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
     fun webViewCreated(activity: AppCompatActivity, webView: WebView) {
       instance?.bind(activity, webView)
     }
+
+    /**
+     * `MainActivity.onCreate`（`super.onCreate` 之后：tao / wry 已登记这个 Activity）。先前的 Activity 被系统销毁、
+     * 进程留着时，Rust 那边已经没有主窗口：报 `activity` 让它为这个 Activity 重建，WebView 建好后照常走 [webViewCreated]。
+     * 冷启动时插件还没创建，配置变更重建时窗口还在，都不报。
+     */
+    fun activityCreated(activity: AppCompatActivity) {
+      val p = instance ?: return
+      if (!p.link.activityCreated()) return
+      p.activity = activity
+      EventLog.log(activity, "plugin.activity")
+      p.trigger("event", JSObject().apply { put("type", "activity") })
+    }
   }
 
   override fun load(webView: WebView) {
@@ -148,7 +164,6 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
   /** 绑定到（新的）Activity 与 WebView；同一个 WebView 重复调用无副作用。在 UI 线程上调用。 */
   private fun bind(act: Activity, wv: WebView) {
     if (wv === webView) return
-    val replaced = webView != null
     activity = act
     webView = wv
     // portal iframe 与主站不同站点时也要带 Cookie
@@ -160,15 +175,12 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
     applyChrome(initialDark(), initialColor())
     Notifier.ensureChannel(act)
     handleIntent(act.intent)
-    if (replaced) {
-      val url = urlBeforeRecreate
-      urlBeforeRecreate = null
-      EventLog.log(act, "plugin.rebound", mapOf("recreated" to true))
-      val o = JSObject()
-      o.put("type", "recreated")
-      o.put("url", url ?: JSONObject.NULL)
-      trigger("event", o)
-    }
+    val rebound = link.webViewBound() ?: return
+    EventLog.log(act, "plugin.rebound", mapOf("recreated" to true))
+    val o = JSObject()
+    o.put("type", "recreated")
+    o.put("url", rebound.url ?: JSONObject.NULL)
+    trigger("event", o)
   }
 
   // ---- 生命周期 ----
@@ -187,9 +199,11 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
 
   override fun onDestroy(activity: AppCompatActivity) {
     visible = false
-    // 配置变更：马上会有新 Activity 与新 WebView（webViewCreated）；记下主框架所在页面，好让 Rust 恢复到这里
-    if (activity === this.activity && activity.isChangingConfigurations) {
-      urlBeforeRecreate = webView?.url
+    // 记下主框架所在页面，新 WebView 绑定时让 Rust 恢复到这里；不是配置变更时 Rust 的主窗口也随之没了（见 [ActivityLink]）
+    if (activity === this.activity) {
+      val changing = activity.isChangingConfigurations
+      EventLog.log(activity, "plugin.destroy", mapOf("changingConfigurations" to changing, "finishing" to activity.isFinishing))
+      link.destroyed(changing, webView?.url)
     }
   }
 

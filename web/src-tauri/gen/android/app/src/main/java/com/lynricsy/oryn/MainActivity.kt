@@ -9,6 +9,8 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // 先前的 Activity 被系统销毁、进程留着时，Rust 要为这个 Activity 重建主窗口（插件判断要不要）
+    OrynMobilePlugin.activityCreated(this)
   }
 
   /**

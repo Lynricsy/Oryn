@@ -15,5 +15,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 
+# `tauri::tao`（判断此刻有没有 Activity，见 `ensure_activity`）只在 wry 运行时下导出；壳本身就用 wry，不多编译任何东西
+[target.'cfg(target_os = "android")'.dependencies]
+tauri = { version = "=2.12.5", default-features = false, features = ["wry"] }
+
 [build-dependencies]
 tauri-plugin = { version = "=2.7.2", features = ["build"] }
