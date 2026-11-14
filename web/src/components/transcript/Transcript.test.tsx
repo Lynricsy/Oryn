@@ -8,12 +8,18 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Thread } from "../../api/client";
+import type { Entry, Thread } from "../../api/client";
+import { identityKeys } from "../../api/identity-queries";
 import { qk } from "../../api/queries";
+import {
+	buildM96Transcripts,
+	M96_IDS,
+	MOCK_ROLE_AVATARS,
+} from "../../mock/fixtures";
 import type { SessionState } from "../../omp/types";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, indexStore } from "../../state/stores";
-import type { TranscriptItem } from "../../state/transcript";
+import { buildTranscript, type TranscriptItem } from "../../state/transcript";
 import { TranscriptContext, type TranscriptContextValue } from "./context";
 import { MessageView, summarizeTurn } from "./MessageView";
 import {
@@ -720,5 +726,236 @@ describe("Oryn 自动化消息（M9）", () => {
 		// 包裹与原始 JSON 都不出现在页面上
 		expect(container.textContent).not.toContain('"outcome"');
 		expect(container.textContent).not.toContain("Treat the content above");
+	});
+});
+
+describe("回合头身份（M9.6：只认来源记录）", () => {
+	const roleEntries = buildM96Transcripts()[M96_IDS.roleThread] ?? [];
+	const items = buildTranscript({
+		entries: roleEntries,
+		leafEntryId: undefined,
+		liveMessage: null,
+		liveTools: {},
+		liveToolOrder: [],
+		notices: [],
+	}).items;
+	const T = "T-heads";
+	const roles = {
+		roles: ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"].map(
+			(role) => ({
+				role,
+				inCycle: true,
+				...MOCK_ROLE_AVATARS[role],
+			}),
+		),
+	};
+	let urls: string[] = [];
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		indexStore.setState({ threads: {} });
+	});
+
+	function renderHeads(
+		opts: {
+			kind?: Thread["kind"];
+			readOnly?: boolean;
+			agent?: Record<string, string>;
+			assistant?: Record<string, string>;
+			roleList?: typeof roles;
+		} = {},
+	) {
+		// jsdom 没有布局：视口给足，每行给一个非零高度（全为 0 时虚拟列表的二分查找会从中间开始渲染）
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+			20_000,
+		);
+		vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(40);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		urls = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: Request | string) => {
+				urls.push(typeof input === "string" ? input : input.url);
+				return Response.json({});
+			}),
+		);
+		indexStore.setState({
+			threads: { [T]: { id: T, state: "idle", kind: opts.kind } as Thread },
+		});
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+			},
+		});
+		if (!opts.readOnly) {
+			client.setQueryData(identityKeys.roles, opts.roleList ?? roles);
+			client.setQueryData(identityKeys.agent, opts.agent ?? {});
+			client.setQueryData(identityKeys.assistant, opts.assistant ?? {});
+		}
+		client.setQueryData(identityKeys.user, {});
+		client.setQueryData(qk.gitIdentity, {});
+		const { container } = render(
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider
+					value={{ ...ctx, threadId: T, readOnly: opts.readOnly }}
+				>
+					<Transcript items={items} />
+				</TranscriptContext.Provider>
+			</QueryClientProvider>,
+		);
+		return [...container.querySelectorAll<HTMLElement>("[data-turn-identity]")];
+	}
+
+	const summary = (heads: HTMLElement[]) =>
+		heads.map((h) => ({
+			identity: h.dataset.turnIdentity,
+			role: h.dataset.role,
+			source: h.dataset.turnSource,
+			name: h.querySelector('[data-testid="turn-name"]')?.textContent,
+		}));
+
+	it("七个回合头逐一等于判定表：启动记录（别名）、点 role、手动选同模型、未记录切换、回退期间与切回、没头像的 role", () => {
+		const heads = renderHeads({ agent: { name: "Oryn", avatarIcon: "🦊" } });
+		expect(summary(heads)).toEqual([
+			{ identity: "role", role: "Cyrene", source: "startup", name: "Cyrene" },
+			{ identity: "role", role: "Mare", source: "role", name: "Mare" },
+			{ identity: "agent", role: undefined, source: "manual", name: "Oryn" },
+			{ identity: "agent", role: undefined, source: undefined, name: "Oryn" },
+			{ identity: "agent", role: undefined, source: "role", name: "Oryn" },
+			{
+				identity: "role",
+				role: "Hyacinthia",
+				source: "role",
+				name: "Hyacinthia",
+			},
+			{ identity: "agent", role: undefined, source: "role", name: "Oryn" },
+		]);
+		// 回合 2 与回合 3 模型短名相同，但回合 3 没有 Mare 的头像（负向：不按模型匹配）
+		const short = (h: HTMLElement) => h.querySelector("[title]")?.textContent;
+		expect(short(heads[2] as HTMLElement)).toBe(short(heads[1] as HTMLElement));
+		expect(
+			heads[1]?.querySelector('[data-avatar-of="role"]')?.textContent,
+		).toBe("🌊");
+		expect(heads[2]?.querySelector('[data-avatar-of="role"]')).toBeNull();
+		expect(heads[2]?.textContent).not.toContain("🌊");
+		expect(
+			heads[2]?.querySelector('[data-avatar-of="agent"]')?.textContent,
+		).toBe("🦊");
+	});
+
+	it("没设 agent 名字时回落回合不显示名字（默认品牌标）", () => {
+		const heads = renderHeads();
+		expect(heads[2]?.querySelector('[data-testid="turn-name"]')).toBeNull();
+		expect(heads[2]?.querySelector('[data-avatar="default"]')).not.toBeNull();
+	});
+
+	it("role 头像被清掉后该回合回落", () => {
+		const heads = renderHeads({
+			roleList: {
+				roles: roles.roles.map((r) =>
+					r.role === "Mare" ? { role: "Mare", inCycle: true } : r,
+				),
+			},
+		});
+		expect(heads[1]?.dataset.turnIdentity).toBe("agent");
+		expect(heads[1]?.dataset.role).toBeUndefined();
+	});
+
+	it("助手对话：回落为助手的生效身份", () => {
+		const heads = renderHeads({
+			kind: "assistant",
+			agent: { name: "Oryn" },
+			assistant: { name: "小助手", avatarIcon: "✨" },
+		});
+		expect(heads[2]?.dataset.turnIdentity).toBe("assistant");
+		expect(
+			heads[2]?.querySelector('[data-testid="turn-name"]')?.textContent,
+		).toBe("小助手");
+		expect(
+			heads[2]?.querySelector('[data-avatar-of="assistant"]')?.textContent,
+		).toBe("✨");
+		// role 回合不受影响
+		expect(heads[1]?.dataset.turnIdentity).toBe("role");
+	});
+
+	it("只读且没给身份：全部默认品牌标，不发任何 /api/v1/settings/ 请求", async () => {
+		const heads = renderHeads({ readOnly: true });
+		expect(heads.map((h) => h.dataset.turnIdentity)).toEqual(
+			Array(7).fill("default"),
+		);
+		expect(heads.some((h) => h.dataset.role)).toBe(false);
+		// 冲掉挂载后的 effect 与微任务（查询若启用，请求就在这里发出）
+		await act(async () => {});
+		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
+	});
+
+	it("流式中与入库后结果一致：在途消息用分支末端的轨迹", () => {
+		const head = (list: TranscriptItem[]) => {
+			vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+				20_000,
+			);
+			vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
+				40,
+			);
+			const client = new QueryClient({
+				defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY } },
+			});
+			client.setQueryData(identityKeys.roles, roles);
+			client.setQueryData(identityKeys.agent, {});
+			client.setQueryData(identityKeys.user, {});
+			client.setQueryData(qk.gitIdentity, {});
+			const { container, unmount } = render(
+				<QueryClientProvider client={client}>
+					<TranscriptContext.Provider value={{ ...ctx, threadId: T }}>
+						<Transcript items={list} />
+					</TranscriptContext.Provider>
+				</QueryClientProvider>,
+			);
+			const heads = [
+				...container.querySelectorAll<HTMLElement>("[data-turn-identity]"),
+			];
+			const last = heads.at(-1);
+			const out = {
+				identity: last?.dataset.turnIdentity,
+				role: last?.dataset.role,
+			};
+			unmount();
+			return out;
+		};
+		// 只有 Mare 的记录；用户消息之后是在途 / 已入库的 Mare 回合
+		const base = roleEntries.slice(0, 6);
+		const userMsg = roleEntries[6] as Entry;
+		const done = roleEntries[7] as Entry;
+		const reply = (done.payload as { message: JsonRecord }).message;
+		const streaming = buildTranscript({
+			entries: [...base, userMsg],
+			leafEntryId: undefined,
+			liveMessage: {
+				messageId: "m",
+				role: "assistant",
+				timestamp: Number(reply.timestamp),
+				message: { ...reply, content: [] },
+				partialJson: {},
+				ended: false,
+			},
+			liveTools: {},
+			liveToolOrder: [],
+			notices: [],
+		}).items;
+		const stored = buildTranscript({
+			entries: [...base, userMsg, done],
+			leafEntryId: undefined,
+			liveMessage: null,
+			liveTools: {},
+			liveToolOrder: [],
+			notices: [],
+		}).items;
+		expect(
+			streaming.at(-1)?.kind === "message" && streaming.at(-1),
+		).toMatchObject({ live: true });
+		const live = head(streaming);
+		expect(live).toEqual({ identity: "role", role: "Mare" });
+		expect(head(stored)).toEqual(live);
 	});
 });

@@ -2,7 +2,8 @@
  * 匿名分享页 `/s/<slug>`（M5 计划 5.2）：L0 桌面上一张居中的纸面，页头（品牌标 + 标题 + 模式徽标 + 复制 / Markdown）
  * 盖在只读转录上。数据只来自公开接口（`share/feed.ts`）：不挂 AppShell、不调 useMe、不连私有 realtime。
  * 资源地址经 `AssetUrlContext` 换成公开接口；转录上下文 `readOnly`，没有输入坞、右面板与侧栏。
- * 转录子树挂一个独立的 QueryClient，其中的查询一律不发请求（头像等单用户设置按默认显示）。
+ * 回合头身份（M9.6）取自匿名身份接口（`share/identity.ts`），判定与站内同一个函数（`lib/turn-role.ts`），
+ * 接口里没有的一律默认品牌标。转录子树挂一个独立的 QueryClient，其中的查询一律不发请求（用户头像等单用户设置按默认显示）。
  */
 import {
 	QueryClient,
@@ -10,15 +11,17 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import type { Entry } from "../api/client";
+import { identityKeys } from "../api/identity-queries";
 import { qk } from "../api/queries";
 import { HEADER_VEIL } from "../components/thread/ThreadHeader";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
+	type TurnIdentities,
 } from "../components/transcript/context";
 import { textOfContent } from "../components/transcript/MessageView";
 import { Transcript } from "../components/transcript/Transcript";
@@ -38,6 +41,7 @@ import { AssetUrlContext, type AssetUrls } from "../lib/asset-urls";
 import { parseAttachmentBlock } from "../lib/attachments";
 import { formatDateTime } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
+import { parseModelSource } from "../lib/turn-role";
 import { useBreakpoint } from "../lib/viewport";
 import {
 	fetchShare,
@@ -46,8 +50,9 @@ import {
 	ShareGoneError,
 	shareKey,
 } from "../share/feed";
+import { shareIdentityKey, useShareIdentity } from "../share/identity";
 import { useThread } from "../state/stores";
-import { buildTranscript } from "../state/transcript";
+import { buildTranscript, isMainFile } from "../state/transcript";
 
 const SLUG_RE = /^[0-9a-f]{32}$/;
 /** 转录里有尚未公开的附件时，多久复查一次公开元数据（所有者可能刚发布了它）。 */
@@ -81,8 +86,14 @@ function referencedAttachments(entries: readonly Entry[]): string[] {
 const noop = () => {};
 
 /**
+ * 预置数据的更新时刻往后推 20 天：钩子自带的 `staleTime`（5 分钟）也不会让它在页面存续期内过期重取；
+ * 不能更远——观察者按「距过期的时间」设定时器，超过 2^31 毫秒会溢出成立即触发。
+ */
+const NEVER_STALE_MS = 20 * 86_400_000;
+
+/**
  * 转录子树专用的 QueryClient：所有查询默认不启用——转录里的头像读的是私有的单用户设置，
- * 匿名页不得触达；预置空身份，用户 / agent 头像退到默认字形。
+ * 匿名页不得触达；预置空身份，用户头像退到默认字形。回合头身份另由上下文的 `identities` 给出。
  */
 function isolatedClient(): QueryClient {
 	const client = new QueryClient({
@@ -94,10 +105,28 @@ function isolatedClient(): QueryClient {
 			},
 		},
 	});
-	client.setQueryData(qk.userIdentity, {});
-	client.setQueryData(qk.agentIdentity, {});
-	client.setQueryData(qk.gitIdentity, {});
+	const updated = { updatedAt: Date.now() + NEVER_STALE_MS };
+	for (const key of [
+		identityKeys.user,
+		identityKeys.agent,
+		identityKeys.assistant,
+	])
+		client.setQueryData(key, {}, updated);
+	client.setQueryData(identityKeys.roles, { roles: [] }, updated);
+	client.setQueryData(qk.gitIdentity, {}, updated);
 	return client;
+}
+
+/** 转录里来源记录用到的不透明键（role / alias，按出现顺序去重；只看主会话文件）。 */
+function sourceKeys(entries: readonly Entry[]): string[] {
+	const keys = new Set<string>();
+	for (const e of entries) {
+		if (!isMainFile(e.file)) continue;
+		const r = parseModelSource(e);
+		if (r?.role) keys.add(r.role);
+		if (r?.alias) keys.add(r.alias);
+	}
+	return [...keys];
 }
 
 /**
@@ -261,6 +290,45 @@ function ShareView({
 			void qc.refetchQueries({ queryKey: shareQueryKey(slug), exact: true });
 	}, [unknown, qc, slug]);
 
+	// 回合头身份：匿名身份接口（快照固化、实时现算）。实时分享里出现身份表没有的来源键（刚点了一个新 role）
+	// 就重取一次，每个键至多一次（用到但没设头像的 role 本来就不在表里）
+	const identity = useShareIdentity(slug).data;
+	const keys = useMemo(() => sourceKeys(entries), [entries]);
+	const askedKeys = useRef(new Set<string>());
+	useEffect(() => {
+		if (!live || !identity) return;
+		const fresh = keys.filter(
+			(k) =>
+				!identity.roles.some((r) => r.key === k) && !askedKeys.current.has(k),
+		);
+		if (fresh.length === 0) return;
+		for (const k of fresh) askedKeys.current.add(k);
+		void qc.invalidateQueries({
+			queryKey: shareIdentityKey(slug),
+			exact: true,
+		});
+	}, [live, identity, keys, qc, slug]);
+	const identities = useMemo<TurnIdentities>(() => {
+		const agent = identity?.agent;
+		const name = agent?.name?.trim() || undefined;
+		const avatar = {
+			avatarIcon: agent?.avatarIcon || undefined,
+			avatarImage: agent?.avatarImage || undefined,
+		};
+		const has = !!(name || avatar.avatarIcon || avatar.avatarImage);
+		return {
+			faces: (identity?.roles ?? []).map((r) => ({
+				key: r.key,
+				role: r.role,
+				name: r.name,
+				avatarIcon: r.avatarIcon,
+				avatarImage: r.avatarImage,
+			})),
+			fallback: has ? { name, avatar } : undefined,
+			fallbackKind: has ? "agent" : "default",
+		};
+	}, [identity]);
+
 	useEffect(() => {
 		const prev = document.title;
 		document.title = `${parseTitleCard(title).text || t("thread.untitled")} · Oryn`;
@@ -292,8 +360,9 @@ function ShareView({
 			forkFrom: noop,
 			labelEntry: noop,
 			readOnly: true,
+			identities,
 		}),
-		[key, model.toolResults, model.liveTools],
+		[key, model.toolResults, model.liveTools, identities],
 	);
 	const assets: AssetUrls = useMemo(
 		() => ({
@@ -368,7 +437,15 @@ export function SharePage(): ReactNode {
 			slug,
 			initial,
 			() => setGoneSlug(slug),
-			(fresh) => qc.setQueryData(shareQueryKey(slug), fresh),
+			// 断线重连时（复核链接成功）：元数据可能变了；实时分享的身份跟随当前设置，也重取一次
+			(fresh) => {
+				qc.setQueryData(shareQueryKey(slug), fresh);
+				if (fresh.mode === "live")
+					void qc.invalidateQueries({
+						queryKey: shareIdentityKey(slug),
+						exact: true,
+					});
+			},
 		);
 		feed.start();
 		return () => feed.stop();

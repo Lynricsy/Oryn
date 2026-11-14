@@ -18,6 +18,7 @@
  * 桌面与浏览器 Profile（M8）交给 `./desktop`：新建线程按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
+import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
 import { MockAutomation } from "./automation";
@@ -25,12 +26,17 @@ import { MockDesktop } from "./desktop";
 import {
 	assistant,
 	buildM9Transcripts,
+	buildM96Transcripts,
 	buildMainTranscript,
 	buildToolZooTranscript,
 	projects as fixtureProjects,
 	threads as fixtureThreads,
+	M96_IDS,
+	M96_ROLE_THREAD_MODEL,
 	MAIN_THREAD,
 	MOCK_PORTAL_TEMPLATE,
+	MOCK_ROLE_AVATARS,
+	MODEL_SOURCE_TYPE,
 	mainState,
 	makeOrb,
 	mockSpeedCaps,
@@ -56,10 +62,12 @@ export interface MockSocket {
 	close?(): void;
 }
 
-/** 主线程上的两条固定分享（截图脚本直接打开 `/s/<slug>`）。 */
+/** 固定 slug 的分享（截图脚本直接打开 `/s/<slug>`）：主线程两条，M9.6 的 role 线程两条（回合头身份）。 */
 export const MOCK_SHARE_SLUGS = {
 	snapshot: "5a0c1e7f3b9d42a8c6e1f0b2d4a69c3e",
 	live: "c3e9a14b7d2f4e6a8b0c5d1e9f2a7b64",
+	roleSnapshot: "9d6e2b17c4a84f30b5e1d8c27a9f0e61",
+	roleLive: "4b8f1c3e9a2d47e6b0c5a1d8e7f29c03",
 } as const;
 
 /** 匿名 WS 转发的帧类型（同 orynd `internal/realtime/public.go` 的白名单）。 */
@@ -129,7 +137,11 @@ function publicJson(body: unknown, status = 200): Response {
 	});
 }
 
-type MockShare = Schemas["ThreadShare"] & { leafEntryId?: string };
+type MockShare = Schemas["ThreadShare"] & {
+	leafEntryId?: string;
+	/** 快照分享创建时固化的身份（同 `thread_share_identities`）；实时分享不存。 */
+	identity?: Schemas["PublicShareIdentity"];
+};
 type MockPublished = Schemas["PublishedFile"] & { slug: string };
 
 /** omp 快照返回的回滚上限（字符）。 */
@@ -150,6 +162,119 @@ const MOCK_ROLE_MODELS = [
 	{ provider: "google", id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
 	{ provider: "deepseek", id: "deepseek-flash", name: "DeepSeek Flash" },
 ];
+
+/** mock 的 cycleOrder（同 `get_settings`）。 */
+const MOCK_CYCLE = ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"];
+
+/** 各 role 的配置值（`modelRoles.<role>`，同 `get_model_roles` 的 `model`）：default 用 @ 引用 Cyrene，writer 是裸 id。 */
+const MOCK_ROLE_SELECTORS: Record<string, string> = {
+	default: "@Cyrene",
+	smol: "anthropic/claude-sonnet-5:medium",
+	slow: "openai/gpt-6.1-sol:high",
+	commit: "openai/gpt-6.1-sol:medium",
+	web: "openai-codex/gpt-6-astra",
+	Hyacinthia: "anthropic/claude-fable-5-2:high",
+	Nahida: "google/gemini-4-carbon:high",
+	Mare: "openai/gpt-6.1-sol:high",
+	Cyrene: "anthropic/claude-opus-5-5:high",
+	Arianna: "deepseek/deepseek-flash:max",
+	writer: "gemini-4-carbon:high",
+};
+
+/** 一次按 role 或手动的模型选择：模型、role 预设的思考级别、别名目标。 */
+interface MockRolePick {
+	model: (typeof MOCK_ROLE_MODELS)[number];
+	level?: string;
+	alias?: string;
+}
+
+/**
+ * 按 role 解析模型（`oryn_select_model{role}` 用，同 Core 的 `resolveRoleModelWithThinking` 的静态子集）：
+ * `@<role>` 只跟一跳并记为别名；`provider/id:level` 或裸 id 在 MOCK_ROLE_MODELS 里查。
+ */
+function resolveMockRole(role: string): MockRolePick | undefined {
+	const raw = MOCK_ROLE_SELECTORS[role];
+	if (!raw) return undefined;
+	const target = raw.startsWith("@") ? raw.slice(1).split(":")[0] : undefined;
+	const value = target ? MOCK_ROLE_SELECTORS[target] : raw;
+	const m = value?.match(/^(?:([^/]+)\/)?(.+?)(?::(\w+))?$/);
+	const model = m
+		? MOCK_ROLE_MODELS.find(
+				(x) => x.id === m[2] && (!m[1] || x.provider === m[1]),
+			)
+		: undefined;
+	if (!model) return undefined;
+	return { model, level: m?.[3], ...(target ? { alias: target } : {}) };
+}
+
+/**
+ * 分享里 role 的不透明键（同 orynd `roleKey` 的用途：每个分享各不相同、不可反推）。mock 没有同步 sha256，
+ * 用两路 32 位 FNV 拼成 16 位十六进制；只需「同分享同 role 稳定、不同分享不同」。
+ */
+function roleKey(shareId: string, role: string): string {
+	let a = 0x811c9dc5;
+	let b = 0x9747b28c;
+	for (const ch of `${shareId}\u0000${role}`) {
+		const c = ch.codePointAt(0) ?? 0;
+		a = Math.imul(a ^ c, 0x01000193) >>> 0;
+		b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+	}
+	return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+
+/** omp 的保留 role（`model_change.role` 里不是 role id 的取值）：匿名面上原样保留。 */
+const RESERVED_ROLES: Record<string, true> = {
+	default: true,
+	fallback: true,
+	prewalk: true,
+	temporary: true,
+};
+
+/** 名字与 role id 里不得出现的控制字符（同 orynd 的 `unicode.IsControl` 校验的 ASCII 部分）。 */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要匹配控制字符
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/** 名字：去首尾空白，空 = 未设置；超过 40 个字符或含控制字符 → 错误文案。 */
+function identityName(raw: unknown): { name?: string; error?: string } {
+	const name = typeof raw === "string" ? raw.trim() : "";
+	if (!name) return {};
+	if ([...name].length > 40 || CONTROL_CHARS.test(name))
+		return { error: "name 须是 1–40 个字符且不含控制字符" };
+	return { name };
+}
+
+/** 头像两字段的校验（同 orynd `validAvatar`）；通过时返回清洗后的值。 */
+function avatarFields(
+	b: Schemas["AvatarIdentity"],
+): { avatar: Schemas["AvatarIdentity"] } | { error: Response } {
+	const avatarIcon = b.avatarIcon?.trim() || undefined;
+	const avatarImage = b.avatarImage || undefined;
+	if (avatarIcon && avatarImage)
+		return {
+			error: json(
+				{
+					code: "invalid_request",
+					message: "avatarIcon 与 avatarImage 至多给一个",
+				},
+				400,
+			),
+		};
+	if (avatarImage && !/^data:image\/(png|webp|jpeg);base64,/.test(avatarImage))
+		return {
+			error: json(
+				{ code: "invalid_request", message: "avatarImage 格式无效" },
+				400,
+			),
+		};
+	if (avatarImage && avatarImage.length > 128 << 10)
+		return {
+			error: json(
+				{ code: "too_large", message: "avatarImage 超过 128KiB" },
+				413,
+			),
+		};
+	return { avatar: { avatarIcon, avatarImage } };
+}
 
 interface MockTerm {
 	info: RpcTerminalInfo;
@@ -264,10 +389,20 @@ export class MockServer {
 		name: "Oryn Owner",
 		email: "owner@oryn.example",
 	};
-	/** agent 头像（内存态）；都缺省 = 默认品牌标。 */
-	agentIdentity: Schemas["AvatarIdentity"] = {};
+	/** 全局 agent 身份（名字 + 头像，内存态）；都缺省 = 默认品牌标、不显示名字。 */
+	agentIdentity: Schemas["AgentIdentity"] = {};
+	/** 全局助手身份（原始值；各字段缺省时客户端回落到 agent 的）。 */
+	assistantIdentity: Schemas["AgentIdentity"] = {};
 	/** 用户头像（内存态）；默认给一个 emoji，截图里能看到效果。 */
 	userIdentity: Schemas["AvatarIdentity"] = { avatarIcon: "🦊" };
+	/** role 头像（`role_avatars`）：行存在 = 设了头像。 */
+	roleAvatars: Record<string, Schemas["AvatarIdentity"]> = {
+		...MOCK_ROLE_AVATARS,
+	};
+	/** config.yml 解析失败的原因（模拟 `configError`）。 */
+	roleConfigError: string | undefined;
+	/** 旧 Core 的线程：不认识 `oryn_*` 命令（应答 `Unknown command`），也不写来源记录。 */
+	readonly legacyThreads = new Set<string>([M96_IDS.legacyThread]);
 	readonly queues = new Map<
 		string,
 		{ steering: string[]; followUp: string[] }
@@ -333,7 +468,10 @@ export class MockServer {
 		this.entries.set(MAIN_THREAD, buildMainTranscript());
 		const zoo = buildToolZooTranscript();
 		this.entries.set(TOOL_ZOO_THREAD, zoo);
-		for (const [id, list] of Object.entries(buildM9Transcripts()))
+		for (const [id, list] of Object.entries({
+			...buildM9Transcripts(),
+			...buildM96Transcripts(),
+		}))
 			this.entries.set(id, list);
 		this.liveFrames.set(TOOL_ZOO_THREAD, toolZooLiveFrames());
 		this.replayFrames.set(TOOL_ZOO_THREAD, toolZooReplayFrames(zoo));
@@ -341,6 +479,16 @@ export class MockServer {
 			this.states.set(t.id, {
 				...mainState(),
 				todoPhases: t.id === MAIN_THREAD ? mainState().todoPhases : [],
+			});
+		const roleState = this.states.get(M96_IDS.roleThread);
+		if (roleState)
+			this.states.set(M96_IDS.roleThread, {
+				...roleState,
+				model: {
+					...M96_ROLE_THREAD_MODEL,
+					api: "mock",
+				} as unknown as SessionState["model"],
+				...mockSpeedCaps(M96_ROLE_THREAD_MODEL.provider),
 			});
 		try {
 			if (globalThis.localStorage?.getItem("oryn.debug") === "1")
@@ -360,8 +508,21 @@ export class MockServer {
 		this.seedShares();
 	}
 
-	/** 主线程：一条快照分享（2 小时前）、一条实时分享（20 分钟前）与一个已发布的附件。 */
+	/**
+	 * 主线程：一条快照分享（2 小时前）、一条实时分享（20 分钟前）与一个已发布的附件；
+	 * M9.6 的 role 线程：一条快照分享与一条实时分享（分享页的回合头身份）。
+	 */
 	private seedShares() {
+		const roleMain = this.entries.get(M96_IDS.roleThread) ?? [];
+		const roleLast = roleMain[roleMain.length - 1];
+		this.addShare(M96_IDS.roleThread, "snapshot", NOW - 30 * 60_000, {
+			slug: MOCK_SHARE_SLUGS.roleSnapshot,
+			untilSeq: roleLast?.seq ?? 0,
+			leafEntryId: roleLast?.entryId,
+		});
+		this.addShare(M96_IDS.roleThread, "live", NOW - 25 * 60_000, {
+			slug: MOCK_SHARE_SLUGS.roleLive,
+		});
 		const main = (this.entries.get(MAIN_THREAD) ?? []).filter((e) =>
 			isMainFile(e.file),
 		);
@@ -419,6 +580,8 @@ export class MockServer {
 				? { untilSeq: opts.untilSeq, leafEntryId: opts.leafEntryId }
 				: {}),
 		};
+		// 快照的身份在创建时固化（之后改名字、换头像都不影响）；实时分享每次现算
+		if (mode === "snapshot") share.identity = this.shareIdentity(share);
 		this.shares.set(share.id, share);
 		this.syncPublicShares(threadId);
 		return share;
@@ -527,6 +690,96 @@ export class MockServer {
 		return [...this.shares.values()].find((s) => s.slug === slug);
 	}
 
+	/** role 头像列表里的一项（同 orynd `role_identity.go` 的组装）。 */
+	private roleIdentity(role: string): Schemas["RoleIdentity"] {
+		const inCycle = MOCK_CYCLE.includes(role);
+		const selector = inCycle ? MOCK_ROLE_SELECTORS[role] : undefined;
+		return {
+			role,
+			inCycle,
+			...(selector ? { selector } : {}),
+			...this.roleAvatars[role],
+		};
+	}
+
+	/** 先是 cycleOrder 里的 role（按其顺序），再是只剩头像的遗留项（按 role 升序）。 */
+	roleIdentities(): Schemas["RoleIdentityList"] {
+		const orphans = Object.keys(this.roleAvatars)
+			.filter((r) => !MOCK_CYCLE.includes(r))
+			.sort();
+		return {
+			roles: [...MOCK_CYCLE, ...orphans].map((r) => this.roleIdentity(r)),
+			...(this.roleConfigError ? { configError: this.roleConfigError } : {}),
+		};
+	}
+
+	/**
+	 * 分享页的身份（同 orynd `buildIdentity`）：全局 agent 身份 + 这段对话里「用到」的 role——
+	 * `role` / `startup` 记录生效期间（到下一条记录或下一条非 fallback / prewalk 的 model_change）出现过消息条目，
+	 * 取候选 `[role, alias]` 里第一个设了头像的；没用到的 role 不出现。
+	 */
+	private shareIdentity(share: MockShare): Schemas["PublicShareIdentity"] {
+		const a = this.agentIdentity;
+		const roles: Schemas["PublicRoleIdentity"][] = [];
+		let open: string[] | undefined;
+		let used = false;
+		const flush = () => {
+			const role = used ? open?.find((r) => this.roleAvatars[r]) : undefined;
+			if (role && !roles.some((x) => x.role === role))
+				roles.push({
+					key: roleKey(share.id, role),
+					role,
+					...this.roleAvatars[role],
+				});
+			open = undefined;
+			used = false;
+		};
+		for (const e of this.shareScope(share).entries) {
+			const r = parseModelSource(e);
+			if (r) {
+				flush();
+				if (r.source !== "manual")
+					open = [r.role, r.alias].filter((x): x is string => !!x);
+			} else if (e.type === "model_change") {
+				const role = (e.payload as Json | undefined)?.role;
+				if (role !== "fallback" && role !== "prewalk") flush();
+			} else if (e.type === "message") used = true;
+		}
+		flush();
+		return a.name || a.avatarIcon || a.avatarImage
+			? { agent: { ...a }, roles }
+			: { roles };
+	}
+
+	/**
+	 * 匿名面上的条目：来源记录的 role / alias 换成该分享的不透明键、只留白名单字段；`model_change` 的 role 名
+	 * 同样换成键（`fallback` / `prewalk` / `temporary` / `default` 这些保留值原样，判定要用）；其余原样。
+	 */
+	private publicEntry(share: MockShare, e: Entry): Entry {
+		const r = parseModelSource(e);
+		if (!r) {
+			const p = e.payload as Json | undefined;
+			const role = e.type === "model_change" ? p?.role : undefined;
+			if (typeof role !== "string" || Object.hasOwn(RESERVED_ROLES, role))
+				return e;
+			return { ...e, payload: { ...p, role: roleKey(share.id, role) } };
+		}
+		return {
+			...e,
+			payload: {
+				type: "custom",
+				customType: MODEL_SOURCE_TYPE,
+				data: {
+					v: 1,
+					source: r.source,
+					model: r.model,
+					...(r.role ? { role: roleKey(share.id, r.role) } : {}),
+					...(r.alias ? { alias: roleKey(share.id, r.alias) } : {}),
+				},
+			},
+		};
+	}
+
 	/** 分享、文件发布与匿名接口（计划 M5 1.1）。 */
 	private async handleShareFetch(
 		req: Request,
@@ -535,7 +788,7 @@ export class MockServer {
 		url: URL,
 	): Promise<Response | null> {
 		const pub =
-			/^public\/shares\/([0-9a-f]{32})(?:\/(entries|blobs\/[0-9a-f]{64}))?$/.exec(
+			/^public\/shares\/([0-9a-f]{32})(?:\/(entries|identity|blobs\/[0-9a-f]{64}))?$/.exec(
 				p,
 			);
 		if (pub) {
@@ -544,6 +797,12 @@ export class MockServer {
 			if (!share || !t || m !== "GET")
 				return publicJson({ code: "not_found", message: "share" }, 404);
 			const scope = this.shareScope(share);
+			if (pub[2] === "identity")
+				return publicJson(
+					share.mode === "snapshot"
+						? (share.identity ?? { roles: [] })
+						: this.shareIdentity(share),
+				);
 			if (pub[2] === "entries") {
 				const after = Number(url.searchParams.get("after") ?? 0);
 				const limit = Math.min(
@@ -552,7 +811,7 @@ export class MockServer {
 				);
 				const rest = scope.entries.filter((e) => e.seq > after);
 				return publicJson({
-					entries: rest.slice(0, limit),
+					entries: rest.slice(0, limit).map((e) => this.publicEntry(share, e)),
 					hasMore: rest.length > limit,
 					lastSeq: scope.until,
 					leafEntryId: scope.leaf,
@@ -802,37 +1061,50 @@ export class MockServer {
 			}
 			return json(cur);
 		}
-		const avatarMatch = /^settings\/(agent|user)-identity$/.exec(p);
-		if (avatarMatch) {
-			const key = avatarMatch[1] === "agent" ? "agentIdentity" : "userIdentity";
+		if (
+			p === "settings/agent-identity" ||
+			p === "settings/assistant-identity"
+		) {
+			const key =
+				p === "settings/agent-identity" ? "agentIdentity" : "assistantIdentity";
 			if (m === "PUT") {
-				const b = (await body()) as Schemas["AvatarIdentity"];
-				const avatarIcon = b.avatarIcon?.trim() || undefined;
-				const avatarImage = b.avatarImage || undefined;
-				if (avatarIcon && avatarImage)
-					return json(
-						{
-							code: "invalid_request",
-							message: "avatarIcon 与 avatarImage 至多给一个",
-						},
-						400,
-					);
-				if (
-					avatarImage &&
-					!/^data:image\/(png|webp|jpeg);base64,/.test(avatarImage)
-				)
-					return json(
-						{ code: "invalid_request", message: "avatarImage 格式无效" },
-						400,
-					);
-				if (avatarImage && avatarImage.length > 128 << 10)
-					return json(
-						{ code: "too_large", message: "avatarImage 超过 128KiB" },
-						413,
-					);
-				this[key] = { avatarIcon, avatarImage };
+				const b = (await body()) as Schemas["AgentIdentity"];
+				const name = identityName(b.name);
+				if (name.error)
+					return json({ code: "invalid_request", message: name.error }, 400);
+				const av = avatarFields(b);
+				if ("error" in av) return av.error;
+				this[key] = { ...(name.name ? { name: name.name } : {}), ...av.avatar };
 			}
 			return json(this[key]);
+		}
+		if (p === "settings/user-identity") {
+			if (m === "PUT") {
+				const av = avatarFields((await body()) as Schemas["AvatarIdentity"]);
+				if ("error" in av) return av.error;
+				this.userIdentity = av.avatar;
+			}
+			return json(this.userIdentity);
+		}
+		if (p === "settings/role-identities") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["RoleIdentityInput"];
+				const role = typeof b.role === "string" ? b.role : "";
+				if (!role.trim() || role.length > 128 || CONTROL_CHARS.test(role))
+					return json({ code: "invalid_request", message: "role 无效" }, 400);
+				const av = avatarFields(b);
+				if ("error" in av) return av.error;
+				if (!av.avatar.avatarIcon && !av.avatar.avatarImage)
+					delete this.roleAvatars[role];
+				else if (!MOCK_CYCLE.includes(role))
+					return json(
+						{ code: "invalid_request", message: "role 不在 cycleOrder 里" },
+						400,
+					);
+				else this.roleAvatars[role] = av.avatar;
+				return json(this.roleIdentity(role));
+			}
+			return json(this.roleIdentities());
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {
@@ -1520,7 +1792,7 @@ export class MockServer {
 			const end = i + 200 >= rest.length;
 			socket.deliver({
 				type: "entries",
-				entries: batch,
+				entries: batch.map((e) => this.publicEntry(share, e)),
 				leafEntryId: scope.leaf,
 				lastSeq: end ? scope.until : (batch[batch.length - 1]?.seq ?? 0),
 			});
@@ -1531,11 +1803,15 @@ export class MockServer {
 	private toPublic(threadId: string, msg: Json) {
 		for (const [s, sub] of this.publicSockets) {
 			if (sub.threadId !== threadId) continue;
+			const share = this.shares.get(sub.shareId);
+			if (!share) continue;
 			switch (msg.type) {
 				case "entries":
 					s.deliver({
 						type: "entries",
-						entries: msg.entries,
+						entries: (msg.entries as Entry[]).map((e) =>
+							this.publicEntry(share, e),
+						),
 						leafEntryId: msg.leafEntryId,
 						lastSeq: msg.lastSeq,
 					});
@@ -1850,25 +2126,29 @@ export class MockServer {
 			this.upsertThread({ ...t, activity });
 	}
 
-	private appendEntry(threadId: string, message: Json) {
+	/** 追加一条主会话条目（任意类型）并推送；叶子移到它。 */
+	private appendRaw(
+		threadId: string,
+		type: string,
+		body: Json,
+		ts = Date.now(),
+	) {
 		const list = this.entries.get(threadId) ?? [];
 		const last = [...list].reverse().find((e) => !e.entryId.startsWith("__"));
 		const id = (this.idSeq++).toString(16).padStart(8, "0");
-		const ts =
-			typeof message.timestamp === "number" ? message.timestamp : Date.now();
 		const e: Entry = {
 			seq: (list[list.length - 1]?.seq ?? 0) + 1,
 			file: SESSION_FILE,
 			entryId: id,
 			parentId: last?.entryId,
-			type: "message",
+			type,
 			ts,
 			payload: {
-				type: "message",
+				type,
 				id,
 				parentId: last?.entryId ?? null,
 				timestamp: new Date(ts).toISOString(),
-				message,
+				...body,
 			},
 		};
 		list.push(e);
@@ -1883,6 +2163,21 @@ export class MockServer {
 			},
 			threadId,
 		);
+	}
+
+	private appendEntry(threadId: string, message: Json) {
+		this.appendRaw(
+			threadId,
+			"message",
+			{ message },
+			typeof message.timestamp === "number" ? message.timestamp : Date.now(),
+		);
+	}
+
+	/** 回合里助手消息的模型字段：取线程当前的模型（切换后的新回合跑在新模型上）。 */
+	private turnModel(threadId: string): Json {
+		const m = this.states.get(threadId)?.model;
+		return m ? { provider: m.provider, model: m.id } : {};
 	}
 
 	onClient(socket: MockSocket, msg: Json) {
@@ -2071,6 +2366,16 @@ export class MockServer {
 		if (this.termCmd(socket, threadId, id, type, frame)) return;
 		const state = this.states.get(threadId) ?? mainState();
 		const list = this.entries.get(threadId) ?? [];
+		// 旧 Core：不认识 Oryn 的命令（同 omp 的 `Unknown command: <type>`，没有 code）
+		if (type.startsWith("oryn_") && this.legacyThreads.has(threadId))
+			return this.respond(
+				socket,
+				threadId,
+				id,
+				type,
+				undefined,
+				`Unknown command: ${type}`,
+			);
 		switch (type) {
 			case "get_state":
 				return this.respond(socket, threadId, id, type, state);
@@ -2162,7 +2467,7 @@ export class MockServer {
 			case "get_settings":
 				return this.respond(socket, threadId, id, type, {
 					values: {
-						cycleOrder: ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"],
+						cycleOrder: MOCK_CYCLE,
 					},
 					advisorEnabled: false,
 				});
@@ -2190,27 +2495,23 @@ export class MockServer {
 				};
 				return this.respond(socket, threadId, id, type, {
 					roles: [
-						role("default", "Default", "@Cyrene", { tag: "DEFAULT" }),
-						role("smol", "Fast", "anthropic/claude-sonnet-5:medium", {
-							tag: "SMOL",
+						role("default", "Default", MOCK_ROLE_SELECTORS.default, {
+							tag: "DEFAULT",
 						}),
-						role("slow", "Thinking", "openai/gpt-6.1-sol:high", {
+						role("smol", "Fast", MOCK_ROLE_SELECTORS.smol, { tag: "SMOL" }),
+						role("slow", "Thinking", MOCK_ROLE_SELECTORS.slow, {
 							tag: "SLOW",
 						}),
-						role("commit", "Commit", "openai/gpt-6.1-sol:medium", {
+						role("commit", "Commit", MOCK_ROLE_SELECTORS.commit, {
 							tag: "COMMIT",
 						}),
-						role("web", "Web search", "openai-codex/gpt-6-astra", {
+						role("web", "Web search", MOCK_ROLE_SELECTORS.web, {
 							tag: "WEB",
 							section: "kind",
 						}),
-						role("Hyacinthia", "Hyacinthia", "anthropic/claude-fable-5-2:high"),
-						role("Nahida", "Nahida", "google/gemini-4-carbon:high"),
-						role("Mare", "Mare", "openai/gpt-6.1-sol:high"),
-						role("Cyrene", "Cyrene", "anthropic/claude-opus-5-5:high"),
-						role("Arianna", "Arianna", "deepseek/deepseek-flash:max"),
+						...MOCK_CYCLE.map((r) => role(r, r, MOCK_ROLE_SELECTORS[r])),
 						// 裸 id 带级别：omp 不给 selected，由网页端照 resolveModelRoleValue 解析
-						role("writer", "writer", "gemini-4-carbon:high"),
+						role("writer", "writer", MOCK_ROLE_SELECTORS.writer),
 					],
 				});
 			}
@@ -2232,8 +2533,83 @@ export class MockServer {
 					model: { ...m, api: "mock" } as unknown as SessionState["model"],
 					...mockSpeedCaps(m.provider),
 				});
+				// 与真 Core 一致：RPC set_model 记成 default role，且没有来源记录
+				this.appendRaw(threadId, "model_change", {
+					model: `${m.provider}/${m.id}`,
+					role: "default",
+				});
 				return this.respond(socket, threadId, id, type, m);
 			}
+			// 新 Core 的选择命令（M9.6）：切模型的同时写 model_change 与来源记录
+			case "oryn_select_model": {
+				const role = typeof frame.role === "string" ? frame.role : undefined;
+				const provider =
+					typeof frame.provider === "string" ? frame.provider : "";
+				const modelId = typeof frame.modelId === "string" ? frame.modelId : "";
+				const fail = (error: string) =>
+					this.respond(socket, threadId, id, type, undefined, error);
+				let pick: MockRolePick | undefined;
+				if (role && !provider && !modelId) {
+					pick = resolveMockRole(role);
+					if (!pick) return fail(`Role has no available model: ${role}`);
+				} else if (provider && modelId && role === undefined) {
+					const m = MOCK_ROLE_MODELS.find(
+						(x) => x.provider === provider && x.id === modelId,
+					);
+					if (!m) return fail(`Model not found: ${provider}/${modelId}`);
+					pick = { model: m };
+				} else if ((provider || modelId) && role === undefined)
+					return fail("provider and modelId must be given together");
+				else
+					return fail(
+						"oryn_select_model requires either role or provider+modelId",
+					);
+				const key = `${pick.model.provider}/${pick.model.id}`;
+				const level = pick.level as SessionState["thinkingLevel"] | undefined;
+				this.states.set(threadId, {
+					...state,
+					model: {
+						...pick.model,
+						api: "mock",
+					} as unknown as SessionState["model"],
+					...mockSpeedCaps(pick.model.provider),
+					...(level
+						? {
+								thinkingLevel: level,
+								thinkingConfigured: level as SessionState["thinkingConfigured"],
+							}
+						: {}),
+				});
+				const source = role ? "role" : "manual";
+				const named = {
+					...(role ? { role } : {}),
+					...(pick.alias ? { alias: pick.alias } : {}),
+				};
+				this.appendRaw(threadId, "model_change", {
+					model: key,
+					role: role ?? "default",
+				});
+				this.appendRaw(threadId, "custom", {
+					customType: MODEL_SOURCE_TYPE,
+					data: { v: 1, source, model: key, ...named },
+				});
+				return this.respond(socket, threadId, id, type, {
+					model: { ...pick.model, api: "mock" },
+					thinkingLevel: this.states.get(threadId)?.thinkingLevel,
+					source,
+					...named,
+				});
+			}
+			// 只允许控制面自己发（同 orynd 的 managedCommands）
+			case "oryn_mark_session_start":
+				return this.respond(
+					socket,
+					threadId,
+					id,
+					type,
+					undefined,
+					"managed_by_oryn",
+				);
 			case "set_thinking_level": {
 				const level = String(frame.level);
 				// auto 时实际生效的级别不变（真实 omp 由模型自己挑），只改配置值
@@ -2534,7 +2910,10 @@ export class MockServer {
 		this.frame(threadId, {
 			type: "message_start",
 			messageId: mid1,
-			message: assistant([], ts1, { stopReason: undefined }),
+			message: assistant([], ts1, {
+				stopReason: undefined,
+				...this.turnModel(threadId),
+			}),
 		});
 		const upd = (ev: Json) =>
 			this.frame(threadId, {
@@ -2582,6 +2961,7 @@ export class MockServer {
 		const msg1 = assistant(
 			[{ type: "thinking", thinking }, { type: "text", text: intro }, call],
 			ts1,
+			this.turnModel(threadId),
 		);
 		this.frame(threadId, {
 			type: "message_end",
@@ -2701,7 +3081,10 @@ export class MockServer {
 		this.frame(threadId, {
 			type: "message_start",
 			messageId: mid2,
-			message: assistant([], ts2, { stopReason: undefined }),
+			message: assistant([], ts2, {
+				stopReason: undefined,
+				...this.turnModel(threadId),
+			}),
 		});
 		const upd2 = (ev: Json) =>
 			this.frame(threadId, {
@@ -2722,6 +3105,7 @@ export class MockServer {
 		upd2({ type: "text_end", contentIndex: 0, content: answer });
 		const msg2 = assistant([{ type: "text", text: answer }], ts2, {
 			stopReason: "stop",
+			...this.turnModel(threadId),
 		});
 		this.frame(threadId, {
 			type: "message_end",

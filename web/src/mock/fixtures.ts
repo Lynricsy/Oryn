@@ -134,6 +134,31 @@ export const M9_IDS = {
 	failingSchedule: "sch_01JD0000000000000000SCH004",
 } as const;
 
+/**
+ * M9.6 夹具（回合头身份）：`roleThread` 的七个回合覆盖 §7.5 的判定表（启动记录带别名、点 role、手动选同一模型、
+ * 未记录来源的切换、重试回退期间与切回、没头像的 role）；`legacyThread` 在旧 Core 的 orb 上（不认识 `oryn_*` 命令、没有来源记录）。
+ */
+export const M96_IDS = {
+	roleThread: "T-0193a1b2-0000-7000-8000-00000000c001",
+	legacyThread: "T-0193a1b2-0000-7000-8000-00000000c002",
+	roleOrb: "orb-01jcz8m3w4x5y6z7a8b9c0d1c1",
+	legacyOrb: "orb-01jcz8m3w4x5y6z7a8b9c0d1c2",
+} as const;
+
+/** mock 的 role 头像（`role_avatars`）：Cyrene、Mare、Hyacinthia 设了，Nahida 没设。 */
+export const MOCK_ROLE_AVATARS: Record<string, Schemas["AvatarIdentity"]> = {
+	Hyacinthia: { avatarIcon: "🪻" },
+	Mare: { avatarIcon: "🌊" },
+	Cyrene: { avatarIcon: "🌸" },
+};
+
+/** `roleThread` 最后一个回合的模型（mock 线程状态据此初始化）。 */
+export const M96_ROLE_THREAD_MODEL = {
+	provider: "google",
+	id: "gemini-4-carbon",
+	name: "Gemini 4 Carbon",
+} as const;
+
 // ---------------------------------------------------------------- orb 环境（M2.5）
 
 type SetupRun = Schemas["OrbSetupRun"];
@@ -669,6 +694,25 @@ export const threads: Thread[] = [
 		lastMessageAt: NOW - 30 * MIN,
 	}),
 	...m9Threads(),
+	thread({
+		id: M96_IDS.roleThread,
+		title: "🎭 ROLE: 回合头按来源记录显示 role",
+		projectId: projects[0]?.id,
+		orbId: M96_IDS.roleOrb,
+		model: {
+			provider: M96_ROLE_THREAD_MODEL.provider,
+			id: M96_ROLE_THREAD_MODEL.id,
+		},
+		thinkingLevel: "high",
+		lastMessageAt: NOW - 15 * MIN,
+	}),
+	thread({
+		id: M96_IDS.legacyThread,
+		title: "旧 Core 上的线程（没有来源记录）",
+		projectId: projects[0]?.id,
+		orbId: M96_IDS.legacyOrb,
+		lastMessageAt: NOW - 70 * MIN,
+	}),
 ];
 
 // ---------------------------------------------------------------- M9：Space、定时、操作记录、协调宿主
@@ -2403,4 +2447,144 @@ export function buildM9Transcripts(): Record<string, Entry[]> {
 		[M9_IDS.assistant]: helper,
 		[M9_IDS.scheduledThread]: scheduled,
 	};
+}
+
+// ---------------------------------------------------------------- M9.6：模型来源记录
+
+/** Oryn Core 写的来源记录（`custom` 条目）的 `customType`。 */
+export const MODEL_SOURCE_TYPE = "oryn-model-source";
+
+/**
+ * `roleThread` 与 `legacyThread` 的转录。每个回合 = 一条 user + 一条带 `provider/model` 的 assistant，
+ * 回合之前的 `model_change` / 来源记录照真实 Core 的写法（点 role 写 `role:<role>`，手动选写 `role:"default"`）。
+ */
+export function buildM96Transcripts(): Record<string, Entry[]> {
+	const build = (
+		tag: string,
+		t0: number,
+		steps: (
+			| { change: string; role?: string; fallback?: true }
+			| { record: Record<string, string> }
+			| { user: string; provider: string; model: string; reply: string }
+		)[],
+	): Entry[] => {
+		seq = 0;
+		lastId = null;
+		const out: Entry[] = [];
+		let ts = t0;
+		let n = 0;
+		const push = (type: string, body: Record<string, unknown>) => {
+			ts += 30_000;
+			out.push(
+				entry(type, body, ts, `${tag}${(++n).toString(16).padStart(7, "0")}`),
+			);
+		};
+		for (const s of steps) {
+			if ("change" in s)
+				push("model_change", {
+					model: s.change,
+					...(s.role ? { role: s.role } : {}),
+					...(s.fallback ? { resolvedModelIsFallback: true } : {}),
+				});
+			else if ("record" in s)
+				push("custom", {
+					customType: MODEL_SOURCE_TYPE,
+					data: { v: 1, ...s.record },
+				});
+			else {
+				push("message", {
+					message: { role: "user", content: s.user, timestamp: ts + 30_000 },
+				});
+				push("message", {
+					message: assistant([{ type: "text", text: s.reply }], ts + 30_000, {
+						provider: s.provider,
+						model: s.model,
+						stopReason: "stop",
+					}),
+				});
+			}
+		}
+		return out;
+	};
+	const opus = "anthropic/claude-opus-5-5";
+	const sol = "openai/gpt-6.1-sol";
+	const fable = "anthropic/claude-fable-5-2";
+	const carbon = "google/gemini-4-carbon";
+	const role = build("c", NOW - 3 * HOUR, [
+		{ change: opus },
+		{
+			record: {
+				source: "startup",
+				role: "default",
+				alias: "Cyrene",
+				model: opus,
+			},
+		},
+		{
+			user: "新线程按什么身份回答？",
+			provider: "anthropic",
+			model: "claude-opus-5-5",
+			reply:
+				"新线程按配置的 default role 启动，它指向 `@Cyrene`，所以这一回合显示 Cyrene。",
+		},
+		{ change: sol, role: "Mare" },
+		{ record: { source: "role", role: "Mare", model: sol } },
+		{
+			user: "切到 Mare 再回答一次。",
+			provider: "openai",
+			model: "gpt-6.1-sol",
+			reply: "现在是 Mare：在角色轨道里点了它，会话记下了「选的是 Mare」。",
+		},
+		{ change: sol, role: "default" },
+		{ record: { source: "manual", model: sol } },
+		{
+			user: "在模型列表里手动选同一个模型。",
+			provider: "openai",
+			model: "gpt-6.1-sol",
+			reply:
+				"模型和上一回合相同，但这是手动选的模型，不算切到 role，回合头回落为 Agent 身份。",
+		},
+		{ change: "anthropic/claude-sonnet-5", role: "default" },
+		{
+			user: "（旧客户端切到 Sonnet）",
+			provider: "anthropic",
+			model: "claude-sonnet-5",
+			reply: "这次切换没有来源记录，回落为 Agent 身份。",
+		},
+		{ change: fable, role: "Hyacinthia" },
+		{ record: { source: "role", role: "Hyacinthia", model: fable } },
+		{ change: "anthropic/claude-haiku-5", role: "fallback", fallback: true },
+		{
+			user: "切到 Hyacinthia，跑一遍检查。",
+			provider: "anthropic",
+			model: "claude-haiku-5",
+			reply: "主模型限流，这一回合由重试回退模型完成，回落为 Agent 身份。",
+		},
+		{ change: fable, role: "fallback" },
+		{
+			user: "继续。",
+			provider: "anthropic",
+			model: "claude-fable-5-2",
+			reply: "回退结束、回到主模型，回合头恢复为 Hyacinthia。",
+		},
+		{ change: carbon, role: "Nahida" },
+		{ record: { source: "role", role: "Nahida", model: carbon } },
+		{
+			user: "切到 Nahida。",
+			provider: "google",
+			model: "gemini-4-carbon",
+			reply: "Nahida 没有设头像，回合头回落为 Agent 身份。",
+		},
+	]);
+	const legacy = build("o", NOW - 2 * HOUR, [
+		{ change: "anthropic/claude-sonnet-5" },
+		{
+			user: "这台 orb 上的 Core 还是旧版。",
+			provider: "anthropic",
+			model: "claude-sonnet-5",
+			reply:
+				"旧 Core 不写来源记录，所有回合都回落为 Agent 身份；切换角色时网页会自动改用 set_model。",
+		},
+	]);
+	return { [M96_IDS.roleThread]: role, [M96_IDS.legacyThread]: legacy };
 }

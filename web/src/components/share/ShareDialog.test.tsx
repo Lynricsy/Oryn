@@ -169,6 +169,13 @@ describe("ShareDialog", () => {
 		expect(posts[0]).toMatchObject({ mode: "live" });
 	});
 
+	it("模式选择下方说明分享页会显示的身份（快照固化、实时跟随）", () => {
+		setup({ findings: false });
+		expect(screen.getByTestId("share-identity-hint")).toHaveTextContent(
+			T("share.identityHint"),
+		);
+	});
+
 	it("有命中：列出命中项，勾选确认后带 acknowledgeFindings 重发", async () => {
 		setup({ findings: true });
 		fireEvent.click(createButton());

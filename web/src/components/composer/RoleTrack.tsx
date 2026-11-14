@@ -1,8 +1,9 @@
 /**
  * 角色模型轮换：Ctrl+P / Shift+Ctrl+P（mac ⌘P）按 omp 的 cycleOrder 切换角色模型，切换时在输入坞上方浮出角色轨道。
  * 解析规则在 `lib/model-roles.ts`；这里负责取数（get_settings / get_model_roles / get_available_models，React Query 缓存）、
- * 切换（set_model + set_thinking_level，按序合并连按）、本地记忆、轨道动画与读屏播报。
- * 模型对话框里的角色列表（RolePicker.tsx）走同一套取数与切换。
+ * 切换（`lib/model-select.ts`：新 Core 发 oryn_select_model，旧 Core 回退 set_model + set_thinking_level；按序合并连按）、
+ * 轨道动画与读屏播报。当前格：线程里有来源记录时只认记录（`recordedRoleIndex`，不读写本机记忆）；
+ * 没有记录（旧 Core）时沿用本机记忆 + 现有的匹配逻辑。模型对话框里的角色列表（RolePicker.tsx）走同一套取数与切换。
  */
 import {
 	type QueryClient,
@@ -34,14 +35,18 @@ import {
 	type RoleEntry,
 	type RoleMemory,
 	type RoleSlot,
+	recordedRoleIndex,
 	roleHue,
 	slotSelector,
 	stepRole,
 } from "../../lib/model-roles";
+import { selectRole } from "../../lib/model-select";
+import { type SourceTrail, trailOf } from "../../lib/turn-role";
 import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
 import { type AccentName, useTheme } from "../../state/theme";
+import { activeBranch } from "../../state/transcript";
 import { uiStore } from "../../state/ui";
 import { ModelLogo } from "../ui/ModelLogo";
 import { describeError } from "../ui/primitives";
@@ -281,9 +286,52 @@ async function refreshState(threadId: string) {
 		.apply([{ type: "state", state }]);
 }
 
+/** 新 Core 切换后等来源记录入库的上限：记录到了轨道才从「在途」落到「当前」，不闪一下空白。 */
+const RECORD_WAIT_MS = 3000;
+
+/** 等线程活动分支末端的来源记录指向 `role`（最多 RECORD_WAIT_MS，超时照常结束）。 */
+function waitForRecord(threadId: string, role: string): Promise<void> {
+	const store = getThreadStore(threadId);
+	const hit = () => {
+		const s = store.getState();
+		return (
+			trailOf(activeBranch(s.entries, s.leafEntryId)).record?.role === role
+		);
+	};
+	if (hit()) return Promise.resolve();
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			unsubscribe();
+			resolve();
+		};
+		const timer = setTimeout(done, RECORD_WAIT_MS);
+		const unsubscribe = store.subscribe(() => {
+			if (hit()) done();
+		});
+	});
+}
+
+/**
+ * 当前角色在 `slots` 里的下标：有来源记录的线程只认记录（不读本机记忆）；
+ * 没有记录（旧 Core）的线程沿用本机记忆 + 最后一条 model_change 的 role + 模型匹配。
+ */
+function roleIndex(
+	slots: readonly RoleSlot[],
+	cur: CurrentModel | undefined,
+	threadId: string,
+	trail: SourceTrail,
+	lastRole: string | undefined,
+): number {
+	return trail.tracked
+		? recordedRoleIndex(slots, cur, trail)
+		: currentRoleIndex(slots, cur, readMemory(threadId), lastRole);
+}
+
 /**
  * 每个线程一个串行的切换工作者：连按时只保留最新目标，在途的一次做完后再切到它（不乱序、不堆积）。
  * 刷新状态也在循环里：刷新期间排入的新目标在刷新返回后接着处理，队列确实为空才结束并清 `pending`。
+ * 新 Core 路径在清 `pending` 之前等来源记录入库；旧 Core 路径没有记录，改写本机记忆。
  */
 const workers = new Map<string, { want?: RoleSlot; running: boolean }>();
 
@@ -292,6 +340,7 @@ async function drain(threadId: string) {
 	if (!w || w.running) return;
 	w.running = true;
 	let last: RoleSlot | undefined;
+	let lastLegacy = false;
 	try {
 		for (;;) {
 			const slot = w.want;
@@ -299,29 +348,26 @@ async function drain(threadId: string) {
 				w.want = undefined;
 				const model = slot.model;
 				if (!model) continue;
-				await realtime.cmd(threadId, {
-					type: "set_model",
-					provider: model.provider,
-					modelId: model.id,
-				});
-				if (slot.thinkingLevel)
-					await realtime.cmd(threadId, {
-						type: "set_thinking_level",
-						level: slot.thinkingLevel as "auto",
+				const { legacy } = await selectRole(threadId, slot);
+				if (legacy)
+					writeMemory(threadId, {
+						role: slot.id,
+						provider: model.provider,
+						id: model.id,
+						thinkingLevel: slot.thinkingLevel,
 					});
-				writeMemory(threadId, {
-					role: slot.id,
-					provider: model.provider,
-					id: model.id,
-					thinkingLevel: slot.thinkingLevel,
-				});
 				last = slot;
+				lastLegacy = legacy;
 				continue;
 			}
 			if (!last) break;
 			await refreshState(threadId);
 			// 刷新期间又排入了新目标：先切过去，最后再刷新一次
 			if (w.want) continue;
+			if (!lastLegacy) {
+				await waitForRecord(threadId, last.id);
+				if (w.want) continue;
+			}
 			const role = roleLabel(last);
 			const model = last.model?.name || last.model?.id || "";
 			patchThread(threadId, () => ({
@@ -379,10 +425,11 @@ export async function cycleRole(
 	const pending = roleStore.getState().threads[threadId]?.pending;
 	const from = pending
 		? cycle.findIndex((s) => s.id === pending)
-		: currentRoleIndex(
+		: roleIndex(
 				cycle,
 				cur,
-				readMemory(threadId),
+				threadId,
+				trailOf(activeBranch(ts.entries, ts.leafEntryId)),
 				lastModelChangeRole(ts.entries),
 			);
 	const next = stepRole(cycle, from, dir);
@@ -434,11 +481,16 @@ export function useRoleView(
 	});
 	const state = useThread(threadId, (s) => s.state);
 	const threadEntries = useThread(threadId, (s) => s.entries);
+	const leaf = useThread(threadId, (s) => s.leafEntryId);
 	const pending = useStore(roleStore, (s) => s.threads[threadId]?.pending);
 	useStore(roleStore, (s) => s.memory[threadId]);
 	const lastRole = useMemo(
 		() => lastModelChangeRole(threadEntries),
 		[threadEntries],
+	);
+	const trail = useMemo(
+		() => trailOf(activeBranch(threadEntries, leaf)),
+		[threadEntries, leaf],
 	);
 	const settingsDone = !settings.isPending || settings.isError;
 	const modelsDone = !wantModels || !models.isPending || models.isError;
@@ -457,11 +509,10 @@ export function useRoleView(
 	}, [ready, entries, settings.data, models.data, state, withExtras]);
 	const cur = currentOf(state);
 	const accent = useTheme((s) => s.accent);
-	const memory = readMemory(threadId);
 	const all = [...groups.cycle, ...groups.others, ...groups.more];
-	const currentId = all[currentRoleIndex(all, cur, memory, lastRole)]?.id;
+	const currentId = all[roleIndex(all, cur, threadId, trail, lastRole)]?.id;
 	const cycleCurrent =
-		groups.cycle[currentRoleIndex(groups.cycle, cur, memory, lastRole)]?.id;
+		groups.cycle[roleIndex(groups.cycle, cur, threadId, trail, lastRole)]?.id;
 	return {
 		...groups,
 		isPending: enabled && !ready && !roles.isError,
@@ -679,6 +730,7 @@ export function RoleTrack({
 									role="radio"
 									aria-checked={on}
 									aria-disabled={!ok || undefined}
+									data-role={slot.id}
 									title={ok ? slotSelector(slot) : slotProblem(slot)}
 									className={`role-tone relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 font-medium text-xs transition-colors duration-150 ${
 										on

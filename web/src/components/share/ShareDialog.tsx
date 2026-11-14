@@ -380,6 +380,9 @@ export function ShareDialog({
 							</label>
 						))}
 					</div>
+					<p className="text-faint text-xs" data-testid="share-identity-hint">
+						{t("share.identityHint")}
+					</p>
 					<p className="text-faint text-xs">{t("share.dialog.scope")}</p>
 				</section>
 				{scan && (

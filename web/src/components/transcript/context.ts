@@ -1,7 +1,18 @@
 /** 转录渲染上下文：工具结果 / 运行中工具查找、子 agent 查看、消息操作回调；`readOnly` 用于匿名分享页。 */
 import { createContext, useContext } from "react";
+import type { Schemas } from "../../api/client";
+import type { RoleFace } from "../../lib/turn-role";
 import type { JsonRecord } from "../../state/message-builder";
 import type { LiveTool, SubagentLive } from "../../state/thread-reducer";
+
+/** 回合头的身份来源（M9.6 §7.3）。 */
+export interface TurnIdentities {
+	/** 设了头像的 role（站内 key = role id；分享页 key = 不透明键）。 */
+	faces: readonly RoleFace[];
+	/** 回落身份；undefined = 默认品牌标 */
+	fallback?: { name?: string; avatar: Schemas["AvatarIdentity"] };
+	fallbackKind: "agent" | "assistant" | "default";
+}
 
 export interface TranscriptContextValue {
 	threadId: string;
@@ -13,6 +24,11 @@ export interface TranscriptContextValue {
 	labelEntry(entryId: string): void;
 	/** 只读（分享页）：消息菜单只留「复制」，task 卡片不提供「查看转录」。 */
 	readOnly?: boolean;
+	/**
+	 * 回合头身份（分享页从匿名身份接口组出）。不给时：只读 → 全部默认品牌标；
+	 * 否则由转录自己读站内设置（role 头像、助手 / agent 身份）。
+	 */
+	identities?: TurnIdentities;
 }
 
 export const TranscriptContext = createContext<TranscriptContextValue | null>(

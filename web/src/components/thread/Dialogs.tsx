@@ -10,6 +10,7 @@ import {
 	listThreadAttachments,
 } from "../../lib/attachments";
 import { formatBytes, formatCount, formatDateTime } from "../../lib/format";
+import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
 import { useBreakpoint } from "../../lib/viewport";
 import type {
@@ -490,10 +491,11 @@ function ModelDialog({
 	const list = (models.data?.models ?? []).filter((m) =>
 		`${m.provider}/${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()),
 	);
-	const run = async (frame: OmpCommand) => {
+	// 模型列表里直接选 = 手动选择（来源记录 `manual`，回合头回落）；旧 Core 自动回退到 set_model
+	const pick = async (m: { provider: string; id: string }) => {
 		setError(null);
 		try {
-			await realtime.cmd(threadId, frame);
+			await selectModel(threadId, m);
 			await refreshState(threadId);
 		} catch (e) {
 			setError(e);
@@ -524,13 +526,10 @@ function ModelDialog({
 						<li key={`${m.provider}/${m.id}`}>
 							<button
 								type="button"
+								data-model={`${m.provider}/${m.id}`}
 								className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${current ? "bg-hover font-medium" : ""}`}
 								onClick={() =>
-									void run({
-										type: "set_model",
-										provider: m.provider,
-										modelId: m.id,
-									}).then(onClose)
+									void pick({ provider: m.provider, id: m.id }).then(onClose)
 								}
 							>
 								<ModelLogo

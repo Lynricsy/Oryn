@@ -13,6 +13,8 @@ import {
 	parseThinkingLevel,
 	ROLE_PALETTE,
 	type RoleEntry,
+	type RoleSlot,
+	recordedRoleIndex,
 	resolveRoleValue,
 	roleHue,
 	rolePalette,
@@ -20,6 +22,7 @@ import {
 	splitThinkingSuffix,
 	stepRole,
 } from "./model-roles";
+import type { SourceTrail } from "./turn-role";
 
 /**
  * 夹具取自主人真实配置（~/.omp/agent/config.yml）经 oryn-core 18.19.0 `get_model_roles` / `get_settings` 回读的结果，
@@ -537,5 +540,69 @@ describe("其余", () => {
 				expect(Math.min(d, 360 - d)).toBeGreaterThan(25);
 			}
 		}
+	});
+});
+
+describe("recordedRoleIndex（有来源记录的线程只认记录）", () => {
+	const slots: RoleSlot[] = ["Hyacinthia", "Nahida", "Mare", "Cyrene"].map(
+		(id, i) => ({
+			id,
+			name: id,
+			status: "ok",
+			model: [
+				{ provider: "anthropic", id: "claude-fable-5-2" },
+				{ provider: "google", id: "gemini-4-carbon" },
+				{ provider: "openai", id: "gpt-6.1-sol" },
+				{ provider: "anthropic", id: "claude-opus-5-5" },
+			][i],
+		}),
+	);
+	const sol: CurrentModel = { provider: "openai", id: "gpt-6.1-sol" };
+	const opus: CurrentModel = { provider: "anthropic", id: "claude-opus-5-5" };
+	const trail = (record?: SourceTrail["record"], fallback = false) => ({
+		record,
+		fallback,
+		tracked: true,
+	});
+
+	it("role 记录且模型一致 → 该格；alias 只在 role 不在轨道时用", () => {
+		expect(
+			recordedRoleIndex(
+				slots,
+				sol,
+				trail({ source: "role", role: "Mare", model: "openai/gpt-6.1-sol" }),
+			),
+		).toBe(2);
+		expect(
+			recordedRoleIndex(
+				slots,
+				opus,
+				trail({
+					source: "startup",
+					role: "default",
+					alias: "Cyrene",
+					model: "anthropic/claude-opus-5-5",
+				}),
+			),
+		).toBe(3);
+	});
+
+	it("手动选了 Mare 的同一模型 → 不高亮（负向：不按模型匹配）", () => {
+		const t = trail({ source: "manual", model: "openai/gpt-6.1-sol" });
+		expect(recordedRoleIndex(slots, sol, t)).toBe(-1);
+		// 对照：没有记录的线程走旧逻辑，按模型匹配能认出 Mare
+		expect(currentRoleIndex(slots, sol)).toBe(2);
+	});
+
+	it("记录失效、回退中、模型不一致 → 不高亮", () => {
+		expect(recordedRoleIndex(slots, sol, trail(undefined))).toBe(-1);
+		const mare = {
+			source: "role",
+			role: "Mare",
+			model: "openai/gpt-6.1-sol",
+		} as const;
+		expect(recordedRoleIndex(slots, sol, trail(mare, true))).toBe(-1);
+		expect(recordedRoleIndex(slots, opus, trail(mare))).toBe(-1);
+		expect(recordedRoleIndex(slots, undefined, trail(mare))).toBe(-1);
 	});
 });

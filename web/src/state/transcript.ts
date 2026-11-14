@@ -3,10 +3,18 @@
  *
  * - 主会话文件 = `file` 不含 `/` 的 JSONL；子 agent 转录在子目录里，不进主转录。
  * - 一个线程可先后拥有多个主会话文件，按首次出现顺序拼接，文件之间插入「新会话」分隔。
+ *   不是最后一个、且只有启动元数据（会话头、模型 / 思考级别、来源记录）的文件是进程在第一条回复前重启留下的，不渲染。
  * - 含叶子指针的文件沿 `parentId` 从叶子回溯到根得到活动分支；其它文件以其最后一条为叶子。
  * - 叠加层只渲染尚未被条目覆盖的在途消息（`(role,timestamp)`）与运行中工具（`toolCallId`）。
+ * - 助手消息项带「走到它之前」的模型来源轨迹（`lib/turn-role.ts`），在途消息带分支末端的轨迹；回合头据此定身份。
  */
 import type { Entry } from "../api/client";
+import {
+	advanceTrail,
+	EMPTY_TRAIL,
+	parseModelSource,
+	type SourceTrail,
+} from "../lib/turn-role";
 import { isRecord } from "../tool-render/util";
 import type { JsonRecord } from "./message-builder";
 import type { LiveTool, Notice, ThreadViewState } from "./thread-reducer";
@@ -21,6 +29,8 @@ export type TranscriptItem =
 			entryId?: string;
 			message: JsonRecord;
 			live: boolean;
+			/** 助手消息：走到它之前的模型来源轨迹（在途消息为分支末端的）。 */
+			trail?: SourceTrail;
 	  }
 	| {
 			kind: "tool";
@@ -134,6 +144,22 @@ export function activeBranch(
 	return out;
 }
 
+/** 启动文件里允许出现的条目类型（另加来源记录）。 */
+const STARTUP_ENTRY_TYPES: Record<string, true> = {
+	session: true,
+	title: true,
+	model_change: true,
+	thinking_level_change: true,
+	service_tier_change: true,
+};
+
+/** 分支上只有启动元数据：进程在第一条回复之前重启时留下的会话文件。 */
+function startupOnly(branch: readonly Entry[]): boolean {
+	return branch.every(
+		(e) => STARTUP_ENTRY_TYPES[e.type] || parseModelSource(e) !== undefined,
+	);
+}
+
 function messageItem(e: Entry, message: JsonRecord): TranscriptItem | null {
 	const role = message.role;
 	if (role === "toolResult") return null; // 在对应 assistant 的工具卡片里渲染
@@ -210,11 +236,16 @@ export function buildTranscript(
 	>,
 ): TranscriptModel {
 	const items: TranscriptItem[] = [];
-	const branches = activeBranch(s.entries, s.leafEntryId);
-	const rendered = branches.filter((b) => b.length > 0);
-	rendered.forEach((branch, i) => {
+	const branches = activeBranch(s.entries, s.leafEntryId).filter(
+		(b) => b.length > 0,
+	);
+	let trail = EMPTY_TRAIL;
+	let shown = 0;
+	branches.forEach((branch, i) => {
+		// 启动文件（不是最后一个、只有启动元数据）不渲染、不出分隔线，但照常参与轨迹
+		const render = i === branches.length - 1 || !startupOnly(branch);
 		const first = branch[0];
-		if (i > 0 && first) {
+		if (render && shown > 0 && first) {
 			items.push({
 				kind: "session_divider",
 				key: `d${first.seq}`,
@@ -222,9 +253,15 @@ export function buildTranscript(
 				seq: first.seq - 0.5,
 			});
 		}
+		if (render) shown++;
 		for (const e of branch) {
-			const item = entryItem(e);
-			if (item) items.push(item);
+			if (render) {
+				const item = entryItem(e);
+				if (item?.kind === "message" && item.message.role === "assistant")
+					item.trail = trail;
+				if (item) items.push(item);
+			}
+			trail = advanceTrail(trail, e);
 		}
 	});
 
@@ -243,6 +280,7 @@ export function buildTranscript(
 			seq: lastSeq + 0.6,
 			message: live.message,
 			live: !live.ended,
+			...(live.message.role === "assistant" ? { trail } : {}),
 		});
 		toolCallIdsOf(live.message, calledIds);
 	}

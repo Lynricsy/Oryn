@@ -46,6 +46,7 @@ function RoleRow({
 				type="button"
 				aria-current={current || undefined}
 				aria-disabled={!ok || undefined}
+				data-role={slot.id}
 				title={ok ? undefined : slotProblem(slot)}
 				className={`role-tone flex w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 ${
 					current ? "bg-hover" : ok ? "hover:bg-hover" : "cursor-not-allowed"

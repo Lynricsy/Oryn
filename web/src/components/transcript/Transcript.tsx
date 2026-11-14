@@ -17,15 +17,27 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	useAssistantIdentity,
+	useIdentity,
+	useRoleIdentities,
+} from "../../api/identity-queries";
+import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
+import {
+	type ModelSourceRecord,
+	type RoleFace,
+	resolveTurnRole,
+	type SourceTrail,
+} from "../../lib/turn-role";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
-import { AgentAvatar } from "../ui/AgentAvatar";
 import { Badge, Callout, type Tone } from "../ui/data";
+import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
-import { useTranscriptContext } from "./context";
+import { type TurnIdentities, useTranscriptContext } from "./context";
 import {
 	assistantEdges,
 	BranchSummaryCard,
@@ -269,7 +281,7 @@ function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
 
 /**
  * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像
- * （`models` 给出该回合的模型，作为头像旁的身份文字）；
+ * （`models` 给出该回合的模型，作为头像旁的身份文字；`trails` 是同一条消息挂的模型来源轨迹，回合头据此定 role）；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
@@ -280,12 +292,14 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 	userStarts: Set<number>;
 	footers: Map<number, TurnUsage>;
 	models: Map<number, TurnModel>;
+	trails: Map<number, SourceTrail>;
 	openStart: number | undefined;
 } {
 	const starts = new Set<number>();
 	const userStarts = new Set<number>();
 	const footers = new Map<number, TurnUsage>();
 	const models = new Map<number, TurnModel>();
+	const trails = new Map<number, SourceTrail>();
 	let messages: JsonRecord[] = [];
 	let last = -1;
 	let start = -1;
@@ -320,14 +334,16 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 		if (it.kind !== "message") return;
 		messages.push(it.message);
 		const { model, provider } = it.message;
-		if (!models.has(start) && typeof model === "string" && model)
+		if (!models.has(start) && typeof model === "string" && model) {
 			models.set(start, {
 				model,
 				provider: typeof provider === "string" ? provider : "",
 			});
+			if (it.trail) trails.set(start, it.trail);
+		}
 	});
 	close();
-	return { starts, userStarts, footers, models, openStart };
+	return { starts, userStarts, footers, models, trails, openStart };
 }
 
 /** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
@@ -390,29 +406,110 @@ function PendingPrompt({ text }: { text: string }) {
 	);
 }
 
+const NO_FACES: readonly RoleFace[] = [];
+/** 只读且没给身份（旧分享页、其它只读视图）：一律默认品牌标，不读任何设置。 */
+const DEFAULT_IDENTITIES: TurnIdentities = {
+	faces: NO_FACES,
+	fallbackKind: "default",
+};
+
 /**
- * 回合头像行：agent 头像 → 模型品牌 logo（与输入坞模型胶囊同款）→ 该回合模型的短名（淡色，悬停给完整 id）；
- * 消息里没有模型信息时只放头像。
+ * 回合头的身份来源：上下文给了就用（分享页）；只读且没给 → 默认；否则读站内设置——
+ * 设了头像的 role，回落身份在助手对话里是全局助手的生效身份、其余是全局 agent 身份。只读时一个设置请求都不发。
+ */
+function useTurnIdentities(): TurnIdentities {
+	const { threadId, readOnly, identities } = useTranscriptContext();
+	const own = !identities && !readOnly;
+	const assistantKind =
+		useIndex((s) => s.threads[threadId]?.kind) === "assistant";
+	const roles = useRoleIdentities(own).data?.roles;
+	const assistant = useAssistantIdentity(own && assistantKind);
+	const agent = useIdentity("agent", own && !assistantKind).data;
+	const mine = useMemo<TurnIdentities>(() => {
+		const faces = (roles ?? []).flatMap((r) =>
+			r.avatarIcon || r.avatarImage
+				? [
+						{
+							key: r.role,
+							role: r.role,
+							name: r.name,
+							avatarIcon: r.avatarIcon,
+							avatarImage: r.avatarImage,
+						},
+					]
+				: [],
+		);
+		if (assistantKind)
+			return { faces, fallback: assistant, fallbackKind: "assistant" };
+		return {
+			faces,
+			fallback: {
+				name: agent?.name?.trim() || undefined,
+				avatar: {
+					avatarIcon: agent?.avatarIcon,
+					avatarImage: agent?.avatarImage,
+				},
+			},
+			fallbackKind: "agent",
+		};
+	}, [roles, assistantKind, assistant, agent]);
+	return identities ?? (readOnly ? DEFAULT_IDENTITIES : mine);
+}
+
+/**
+ * 回合头像行：身份头像 → 名字（有才显示）→ 模型品牌 logo（与输入坞模型胶囊同款）→ 该回合模型的短名（淡色，悬停给完整 id）；
+ * 消息里没有模型信息时只放头像（与名字）。身份 = 会话来源记录判定出的 role（`face`），否则回落身份（见 `lib/turn-role.ts`）。
  */
 function TurnHead({
 	working,
 	model,
 	known,
+	face,
+	identities,
+	source,
 }: {
 	working: boolean;
 	model?: TurnModel;
 	known?: KnownModel;
+	face?: RoleFace;
+	identities: TurnIdentities;
+	/** 生效来源记录的 `source`；没有记录时不出现在 DOM 上。 */
+	source?: ModelSourceRecord["source"];
 }): ReactNode {
+	const { t } = useTranslation();
 	// 助手消息的 model 是原始模型 id（可能自带 `qwen/` 这类命名空间），provider 单独给出
 	const label = model
 		? modelLabel({ id: model.model, provider: model.provider }, known)
 		: null;
+	const kind = face ? "role" : identities.fallbackKind;
+	const name = face
+		? face.name ||
+			(Object.hasOwn(BUILTIN_ROLE_NAMES, face.role)
+				? t(`roles.names.${face.role as BuiltinRole}`)
+				: face.role)
+		: identities.fallback?.name;
 	return (
 		<div
 			className="flex h-7 min-w-0 items-center gap-2"
 			style={{ marginBottom: AVATAR_GAP }}
+			data-turn-identity={kind}
+			data-role={face?.role}
+			data-turn-source={source}
 		>
-			<AgentAvatar size={28} working={working} />
+			<IdentityAvatar
+				identity={face ?? identities.fallback?.avatar}
+				of={face ? "role" : kind === "assistant" ? "assistant" : "agent"}
+				size={28}
+				working={working}
+			/>
+			{name && (
+				<span
+					data-testid="turn-name"
+					className="max-w-[40%] shrink-0 truncate font-medium text-fg text-sm"
+				>
+					{name}
+				</span>
+			)}
 			{model && label && (
 				<span
 					className="flex min-w-0 items-center gap-1.5 font-medium text-faint text-sm"
@@ -457,6 +554,7 @@ export function Transcript({
 	}, [hasUser, pending, threadId]);
 	const pendingText = hasUser ? undefined : pending;
 	const turns = useMemo(() => layoutTurns(items), [items]);
+	const identities = useTurnIdentities();
 	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）。
 	// 状态以线程索引为准；不在索引里的线程（分享页）取线程 store 自己的摘要
 	const indexState = useIndex((s) => s.threads[threadId]?.state);
@@ -660,6 +758,13 @@ export function Transcript({
 									working={liveStart === v.index}
 									model={turns.models.get(v.index)}
 									known={sessionModel}
+									face={resolveTurnRole(
+										turns.models.get(v.index),
+										turns.trails.get(v.index),
+										identities.faces,
+									)}
+									identities={identities}
+									source={turns.trails.get(v.index)?.record?.source}
 								/>
 							)}
 							{item ? (
@@ -692,6 +797,7 @@ export function Transcript({
 			pendingText,
 			liveStart,
 			sessionModel,
+			identities,
 			revealed,
 		],
 	);

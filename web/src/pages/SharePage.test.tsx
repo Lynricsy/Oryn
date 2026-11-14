@@ -3,7 +3,13 @@
  * 全程只请求 `/api/v1/public/…`，不碰 `/api/v1/me`、`/api/v1/ws-ticket` 等私有接口。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry } from "../api/client";
@@ -290,5 +296,290 @@ describe("SharePage 附件的公开地址", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("SharePage 回合头身份（M9.6）", () => {
+	const KEY_MARE = "a1b2c3d4e5f60718";
+	const KEY_NEW = "ffeeddccbbaa9988";
+	/** 主会话里的一串条目：parentId 依次接上。 */
+	function chainEntries(
+		items: { type: string; payload: Record<string, unknown> }[],
+	): Entry[] {
+		return items.map((it, i) => ({
+			seq: i + 1,
+			file: "s.jsonl",
+			entryId: `e${i + 1}`,
+			parentId: i > 0 ? `e${i}` : undefined,
+			type: it.type,
+			payload: { type: it.type, id: `e${i + 1}`, ...it.payload },
+		}));
+	}
+	const rec = (data: Record<string, unknown>) => ({
+		type: "custom",
+		payload: {
+			customType: "oryn-model-source",
+			data: { v: 1, ...data },
+		},
+	});
+	const msg = (role: string, text: string, ts: number) => ({
+		type: "message",
+		payload: {
+			message: {
+				role,
+				content: [{ type: "text", text }],
+				timestamp: ts,
+				...(role === "assistant"
+					? { provider: "openai", model: "gpt-6.1-sol" }
+					: {}),
+			},
+		},
+	});
+	const SOL = "openai/gpt-6.1-sol";
+	/** 回合 1：点了 Mare（键 KEY_MARE）；回合 2：手动选了同一模型。 */
+	const ENTRIES = chainEntries([
+		{ type: "model_change", payload: { model: SOL, role: KEY_MARE } },
+		rec({ source: "role", role: KEY_MARE, model: SOL }),
+		msg("user", "切到 Mare", 1),
+		msg("assistant", "我是 Mare", 2),
+		{ type: "model_change", payload: { model: SOL } },
+		rec({ source: "manual", model: SOL }),
+		msg("user", "手动选同一模型", 3),
+		msg("assistant", "回落", 4),
+	]);
+	const IDENTITY = {
+		agent: { name: "Oryn", avatarIcon: "🦊" },
+		roles: [{ key: KEY_MARE, role: "Mare", avatarIcon: "🌊" }],
+	};
+
+	function serve(identity: () => Response) {
+		stubFetch((path) => {
+			if (path === `/api/v1/public/shares/${SLUG}`)
+				return Response.json({ ...SHARE, lastSeq: 8, leafEntryId: "e8" });
+			if (path === `/api/v1/public/shares/${SLUG}/entries`)
+				return Response.json({
+					entries: ENTRIES,
+					hasMore: false,
+					lastSeq: 8,
+					leafEntryId: "e8",
+				});
+			if (path === `/api/v1/public/shares/${SLUG}/identity`) return identity();
+			return Response.json({ code: "unauthorized" }, { status: 401 });
+		});
+	}
+
+	const heads = () =>
+		[...document.querySelectorAll<HTMLElement>("[data-turn-identity]")].map(
+			(h) => ({
+				identity: h.dataset.turnIdentity,
+				role: h.dataset.role,
+				name: h.querySelector('[data-testid="turn-name"]')?.textContent,
+			}),
+		);
+
+	it("身份取自匿名接口：按键命中 role，手动选的回合回落为快照里的 agent 身份；没有任何设置请求", async () => {
+		serve(() => Response.json(IDENTITY));
+		renderAt(SLUG);
+		expect(await screen.findByText("我是 Mare")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(heads()).toEqual([
+				{ identity: "role", role: "Mare", name: "Mare" },
+				{ identity: "agent", role: undefined, name: "Oryn" },
+			]),
+		);
+		const [mare, fallback] = [
+			...document.querySelectorAll<HTMLElement>("[data-turn-identity]"),
+		];
+		expect(mare?.querySelector('[data-avatar-of="role"]')?.textContent).toBe(
+			"🌊",
+		);
+		// 负向：手动选的回合没有 Mare 的头像，尽管模型相同
+		expect(fallback?.querySelector('[data-avatar-of="role"]')).toBeNull();
+		expect(
+			fallback?.querySelector('[data-avatar-of="agent"]')?.textContent,
+		).toBe("🦊");
+		expect(urls).toContain(`/api/v1/public/shares/${SLUG}/identity`);
+		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
+		for (const u of urls) expect(u.startsWith("/api/v1/public/")).toBe(true);
+	});
+
+	it("接口 404 或 {roles: []} → 默认品牌标", async () => {
+		for (const res of [
+			() => Response.json({ code: "not_found", message: "x" }, { status: 404 }),
+			() => Response.json({ roles: [] }),
+		]) {
+			resetThreadStores();
+			serve(res);
+			const view = renderAt(SLUG);
+			expect(await screen.findByText("我是 Mare")).toBeInTheDocument();
+			await waitFor(() =>
+				expect(urls.includes(`/api/v1/public/shares/${SLUG}/identity`)).toBe(
+					true,
+				),
+			);
+			await waitFor(() =>
+				expect(heads()).toEqual([
+					{ identity: "default", role: undefined, name: undefined },
+					{ identity: "default", role: undefined, name: undefined },
+				]),
+			);
+			expect(
+				document.querySelectorAll(
+					'[data-turn-identity] [data-avatar="default"][data-avatar-of="agent"]',
+				).length,
+			).toBe(2);
+			view.unmount();
+		}
+	});
+
+	it("实时分享：转录里出现身份表没有的键时重取身份，同一个键只重取一次", async () => {
+		let identityCalls = 0;
+		serve(() => {
+			identityCalls++;
+			return Response.json(
+				identityCalls === 1
+					? IDENTITY
+					: {
+							...IDENTITY,
+							roles: [
+								...IDENTITY.roles,
+								{ key: KEY_NEW, role: "Cyrene", avatarIcon: "🌸" },
+							],
+						},
+			);
+		});
+		const sockets: { onmessage?: (ev: MessageEvent) => void }[] = [];
+		vi.stubGlobal(
+			"WebSocket",
+			class {
+				static OPEN = 1;
+				readyState = 1;
+				onopen?: () => void;
+				onmessage?: (ev: MessageEvent) => void;
+				onclose?: () => void;
+				constructor() {
+					sockets.push(this);
+					setTimeout(() => this.onopen?.(), 0);
+				}
+				send() {}
+				close() {}
+			},
+		);
+		const deliver = (data: unknown) =>
+			act(() => {
+				for (const s of sockets)
+					s.onmessage?.(
+						new MessageEvent("message", { data: JSON.stringify(data) }),
+					);
+			});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		client.setQueryData(["public-share", SLUG], {
+			...SHARE,
+			mode: "live",
+			state: "idle",
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/s/${SLUG}`]}>
+					<Routes>
+						<Route path="/s/:slug" element={<SharePage />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		await waitFor(() => expect(sockets.length).toBe(1));
+		await waitFor(() => expect(identityCalls).toBe(1));
+		deliver({
+			type: "share.snapshot",
+			title: "重构重连",
+			state: "idle",
+			leafEntryId: "e8",
+			lastSeq: 8,
+			transcriptRev: 0,
+			fullReplay: false,
+			live: [],
+			subagents: [],
+		});
+		deliver({
+			type: "entries",
+			entries: ENTRIES,
+			leafEntryId: "e8",
+			lastSeq: 8,
+		});
+		expect(await screen.findByText("我是 Mare")).toBeInTheDocument();
+		// 已知键：不重取
+		await act(async () => {});
+		expect(identityCalls).toBe(1);
+
+		// 点了一个新 role：键不在身份表里 → 重取一次，新回合显示它
+		const more = chainEntries([
+			...ENTRIES.map((e) => ({
+				type: e.type,
+				payload: e.payload as Record<string, unknown>,
+			})),
+			{
+				type: "model_change",
+				payload: { model: "anthropic/claude-opus-5-5", role: KEY_NEW },
+			},
+			rec({
+				source: "role",
+				role: KEY_NEW,
+				model: "anthropic/claude-opus-5-5",
+			}),
+			msg("user", "切到新 role", 5),
+			{
+				type: "message",
+				payload: {
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "新 role 的回答" }],
+						timestamp: 6,
+						provider: "anthropic",
+						model: "claude-opus-5-5",
+					},
+				},
+			},
+		]).slice(8);
+		deliver({
+			type: "entries",
+			entries: more,
+			leafEntryId: "e12",
+			lastSeq: 12,
+		});
+		expect(await screen.findByText("新 role 的回答")).toBeInTheDocument();
+		await waitFor(() => expect(identityCalls).toBe(2));
+		await waitFor(() =>
+			expect(heads().at(-1)).toEqual({
+				identity: "role",
+				role: "Cyrene",
+				name: "Cyrene",
+			}),
+		);
+		// 同一个键再出现：不再重取
+		deliver({
+			type: "entries",
+			entries: chainEntries([
+				...ENTRIES.map((e) => ({
+					type: e.type,
+					payload: e.payload as Record<string, unknown>,
+				})),
+				...more.map((e) => ({
+					type: e.type,
+					payload: e.payload as Record<string, unknown>,
+				})),
+				rec({
+					source: "role",
+					role: KEY_NEW,
+					model: "anthropic/claude-opus-5-5",
+				}),
+			]).slice(12),
+			leafEntryId: "e13",
+			lastSeq: 13,
+		});
+		await act(async () => {});
+		expect(identityCalls).toBe(2);
+		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
 	});
 });

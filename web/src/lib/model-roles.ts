@@ -3,7 +3,9 @@
  * omp 的 RPC 没有「按角色循环」的命令（`cycle_model` 循环的是 scoped models），所以由网页端照
  * `resolveRoleModelCycle` / `resolveModelRoleValue`（omp `config/model-resolver.ts`）的规则自己算。
  */
+
 import type { AccentName } from "../state/theme";
+import type { SourceTrail } from "./turn-role";
 
 /** omp `cycleOrder` 的默认值（`config/model-settings.ts`）。 */
 export const DEFAULT_CYCLE_ORDER: readonly string[] = [
@@ -435,6 +437,25 @@ export function currentRoleIndex(
 	return slots.findIndex(
 		(s) => s.status === "ok" && sameModel(s.model, current),
 	);
+}
+
+/**
+ * 线程里有来源记录时（`trail.tracked`）当前角色只认记录：记录存在、不在回退、不是手动选、记录的模型等于当前模型，
+ * 才取 `id === record.role` 的格，没有再取 `id === record.alias` 的格；其余一律 -1（不高亮）。不读本机记忆、不按模型匹配。
+ */
+export function recordedRoleIndex(
+	slots: readonly RoleSlot[],
+	current: CurrentModel | undefined,
+	trail: SourceTrail,
+): number {
+	const r = trail.record;
+	if (!r || trail.fallback || r.source === "manual" || !current) return -1;
+	if (
+		r.model.toLowerCase() !== `${current.provider}/${current.id}`.toLowerCase()
+	)
+		return -1;
+	const i = slots.findIndex((s) => s.id === r.role);
+	return i >= 0 || !r.alias ? i : slots.findIndex((s) => s.id === r.alias);
 }
 
 /**
