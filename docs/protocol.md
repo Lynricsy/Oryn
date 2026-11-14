@@ -568,6 +568,7 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |---|---|---|
 |`desk` 流|`LinkStreamDesk{t}`、`LinkDeskReply`|**由 orynd 打开**，每个桌面观看者一条。orbd 先回一行 `{"ok":true}` 或 `{"ok":false,"code":…,"message":…}` + `\n`；`ok=true` 之后流上是与 Xvnc（unix socket `$HOME/.oryn/vnc.sock`，Xvnc 不监听 TCP）之间的原始 RFB 字节。拒绝码：`display_unavailable`（显示未就绪）、`failed`（连 socket 失败，5s）；控制面另有 `timeout`（开流 + 应答行合计 10s）。拷贝与半关闭规则同 `portal` 流|
 |hello `features`|`LinkCtlHelloParams.features`|M8 的 orbd 在桌面启用时（`ORYN_DESKTOP=1` 且找得到 `Xtigervnc`、`openbox`、`chromium`）追加 `desktop`。缺 `desktop` → 不发 `profile.mode`、不调生命周期钩子，桌面与 Profile 接口回 409 `orbd_outdated`|
+|测试用环境变量|`ORYN_DESKTOP_X11_TMPDIR`|只给测试用：orbd 启动 Xvnc 前会删除 `<dir>/.X1-lock` 与 `<dir>/.X11-unix/X1`，默认 `/tmp`。在装了 X 显示栈的宿主上跑 e2e 必须设成临时目录，否则会删掉宿主自己 `:1` 显示的锁|
 |`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, readonlyBy?, dirty}`|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写|
 |`profile.mode`|`LinkCtlProfileModeParams{profileId, mode, reason, by?, byThreadId?}` → `LinkCtlOkResult`|orynd→orbd 请求（10s，失败只记日志）。目前只在接管时发给原持有者：`{mode:"readonly", reason:"taken_over", by:<接管方线程标题>}`。orbd 只在标记的 `profileId` 相同时生效（否则错误 `profile_mismatch`）：标记改为只读、`dirty=false`、浏览器与标签页不动，之后导出一律 409 `profile_readonly`。`mode=exclusive` → `invalid_params`（独占只能经重新装载取得）。丢失无害：控制面按围栏代数丢弃迟到的保存，下次同步的 `PUT /desktop/profile` 也带 `mode`|
 
