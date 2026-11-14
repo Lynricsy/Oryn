@@ -2093,7 +2093,12 @@
 			"total": "Total",
 			"usage": "{{metric}} by {{by}}",
 			"orbs": "Running and frozen time",
-			"output": "Shipped and archived"
+			"output": "Shipped and archived",
+			"start": "Start",
+			"end": "End",
+			"duration": "Duration",
+			"segments": "{{name}}: segments",
+			"segment": "{{state}}, {{start}} to {{end}}, {{duration}}"
 		},
 		"other": "Other",
 		"empty": "No data in this period",

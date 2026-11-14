@@ -5,8 +5,8 @@ import { ModelLogo } from "../ui/ModelLogo";
 export interface TooltipRow {
 	key: string;
 	label: string;
-	/** CSS 变量名，如 `--viz-1` */
-	color: string;
+	/** CSS 变量名，如 `--viz-1`；不是系列的行（如时间线的起止）省略，不画色点 */
+	color?: string;
 	value: string;
 	/** 系列是模型时的 `<provider>/<model>`：名字前放品牌 logo */
 	model?: string;
@@ -45,11 +45,13 @@ export function ChartTooltip({
 			<ul className="flex flex-col gap-0.5">
 				{rows.map((r) => (
 					<li key={r.key} className="flex items-center gap-2">
-						<span
-							aria-hidden
-							className="h-2 w-2 shrink-0 rounded-full"
-							style={{ background: `var(${r.color})` }}
-						/>
+						{r.color && (
+							<span
+								aria-hidden
+								className="h-2 w-2 shrink-0 rounded-full"
+								style={{ background: `var(${r.color})` }}
+							/>
+						)}
 						{r.model && <ModelLogo model={r.model} size={12} />}
 						<span className="min-w-0 flex-1 truncate text-muted">
 							{r.label}

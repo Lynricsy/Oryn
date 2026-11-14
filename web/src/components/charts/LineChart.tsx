@@ -1,6 +1,7 @@
 /**
  * 折线 / 面积图（纯 SVG）：orb 抽屉里的 CPU、内存曲线。`ys` 里的 null 是缺测，折线在那里断开。
  * 悬停（鼠标）或点按取最近的采样点，浮层列出各系列的值；点按固定显示，点图外空白处或 Esc 收起。
+ * 纵轴从不裁剪数据：`yFloor` 只是上限的下限（如 CPU 的单核 100%、内存上限），数据超过它时按数据最大值取整。
  */
 import { type ReactNode, useRef, useState } from "react";
 import { useBreakpoint } from "../../lib/viewport";
@@ -48,7 +49,7 @@ function runs(
 export function LineChart({
 	points,
 	series,
-	yMax,
+	yFloor,
 	formatX,
 	formatY,
 	height,
@@ -56,8 +57,8 @@ export function LineChart({
 }: {
 	points: LinePoint[];
 	series: ChartSeries[];
-	/** 纵轴上限（如内存上限）；缺省按数据取整 */
-	yMax?: number;
+	/** 纵轴上限至少取到这里（如单核 100%、内存上限）；数据更大时按数据取整。缺省只按数据取整 */
+	yFloor?: number;
 	formatX: (x: number) => string;
 	formatY: (y: number) => string;
 	height?: number;
@@ -77,8 +78,8 @@ export function LineChart({
 		),
 	);
 	const scale =
-		yMax !== undefined && yMax > 0
-			? { max: yMax, step: yMax / TICKS }
+		yFloor !== undefined && yFloor > 0 && dataMax <= yFloor
+			? { max: yFloor, step: yFloor / TICKS }
 			: niceScale(dataMax, TICKS);
 	const plotW = Math.max(0, width - PAD.left - PAD.right);
 	const plotH = Math.max(0, h - PAD.top - PAD.bottom);
@@ -86,8 +87,7 @@ export function LineChart({
 	const x1 = points[n - 1]?.x ?? 1;
 	const span = x1 > x0 ? x1 - x0 : 1;
 	const px = (x: number) => PAD.left + ((x - x0) / span) * plotW;
-	const py = (v: number) =>
-		PAD.top + plotH - (Math.min(v, scale.max) / scale.max) * plotH;
+	const py = (v: number) => PAD.top + plotH - (v / scale.max) * plotH;
 	const show = thin(points, plotW / LABEL_PX);
 	const ticks = Array.from({ length: TICKS + 1 }, (_, k) => k * scale.step);
 	const nearest = (clientX: number): number => {

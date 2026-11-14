@@ -2093,7 +2093,12 @@
 			"total": "合计",
 			"usage": "按{{by}}的{{metric}}",
 			"orbs": "运行与冻结时长",
-			"output": "交付与归档"
+			"output": "交付与归档",
+			"start": "开始",
+			"end": "结束",
+			"duration": "时长",
+			"segments": "{{name}}：各段明细",
+			"segment": "{{state}}，{{start}} 至 {{end}}，时长 {{duration}}"
 		},
 		"other": "其他",
 		"empty": "这段时间没有数据",

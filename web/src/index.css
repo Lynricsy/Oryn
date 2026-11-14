@@ -41,9 +41,10 @@
 	--syn-number: oklch(0.5 0.15 55);
 	--syn-title: oklch(0.47 0.14 250);
 	--syn-type: oklch(0.52 0.1 200);
-	/* accent / 成功色作为文字落在浅底上时混入正文色，保证 4.5:1 */
+	/* accent / 成功 / 警告色作为文字落在浅底上时混入正文色，保证 4.5:1 */
 	--accent-ink: color-mix(in oklab, var(--brand) 80%, var(--text));
 	--good-ink: color-mix(in oklab, var(--good) 82%, var(--text));
+	--caution-ink: color-mix(in oklab, var(--caution) 70%, var(--text));
 	/* 工具类别色：只给工具图标方块，低彩度，不表达「需要你」 */
 	--cat-read: oklch(0.53 0.13 255);
 	--cat-edit: oklch(0.56 0.12 72);
@@ -118,6 +119,7 @@
 	--syn-type: oklch(0.8 0.09 200);
 	--accent-ink: var(--brand);
 	--good-ink: var(--good);
+	--caution-ink: var(--caution);
 	--cat-read: oklch(0.78 0.1 255);
 	--cat-edit: oklch(0.82 0.12 80);
 	--cat-exec: oklch(0.76 0.15 152);
@@ -242,6 +244,7 @@
 	--color-cat-agent: var(--cat-agent);
 	--color-cat-other: var(--cat-other);
 	--color-warn: var(--caution);
+	--color-warn-ink: var(--caution-ink);
 	--color-err: var(--bad);
 	--color-frost: var(--frost);
 	--color-viz-1: var(--viz-1);

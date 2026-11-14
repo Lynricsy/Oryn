@@ -3,7 +3,7 @@
  * + 最近 setup 记录。compact 全屏，其余是右侧整高面板；Esc / 关闭按钮 / 点遮罩关闭，打开时焦点进抽屉，关闭后还原。
  * 采样为空且窗口起点早于采样保留期时说明「采样已过保留期」。
  */
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -46,10 +46,9 @@ export function OrbDrawer({
 	const panelRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-	// 时间线与采样都截到打开抽屉的时刻（窗口的 `to` 是本地次日零点）；只取一次，否则每次渲染换查询键会反复请求
-	const [until] = useState(() => Math.min(to, Date.now()));
-	const timeline = useOrbTimeline(orbId, from, until);
-	const metrics = useOrbMetricsRange(orbId, from, until);
+	// 查询键用所选窗口；实际终点在每次轮询时取 `min(to, 现在)`（见 `useOrbTimeline`），抽屉开着也会跟着前进
+	const timeline = useOrbTimeline(orbId, from, to);
+	const metrics = useOrbMetricsRange(orbId, from, to);
 	const runs = useOrbSetupRuns(orbId);
 	useLayoutEffect(() => {
 		const host = hostRef.current;
@@ -78,7 +77,7 @@ export function OrbDrawer({
 		samples.length === 0 &&
 		samplesRetentionMs > 0 &&
 		from < Date.now() - samplesRetentionMs;
-	const span = until - from;
+	const span = (timeline.data?.to ?? Math.min(to, Date.now())) - from;
 	const fmtX = (x: number) =>
 		new Intl.DateTimeFormat(undefined, {
 			...(span > 2 * 86_400_000 ? { month: "numeric", day: "numeric" } : {}),
@@ -129,7 +128,7 @@ export function OrbDrawer({
 							<TimelineStrip
 								ariaLabel={t("stats.orbs.drawer.timeline")}
 								from={timeline.data?.from ?? from}
-								to={timeline.data?.to ?? until}
+								to={timeline.data?.to ?? Math.min(to, Date.now())}
 								segments={timeline.data?.segments ?? []}
 							/>
 						)}
@@ -151,7 +150,7 @@ export function OrbDrawer({
 											color: "--viz-1",
 										},
 									]}
-									yMax={100}
+									yFloor={100}
 									formatX={fmtX}
 									formatY={formatPercent}
 								/>
@@ -167,7 +166,7 @@ export function OrbDrawer({
 											color: "--viz-3",
 										},
 									]}
-									yMax={memLimit > 0 ? memLimit : undefined}
+									yFloor={memLimit > 0 ? memLimit : undefined}
 									formatX={fmtX}
 									formatY={formatMemoryMB}
 								/>

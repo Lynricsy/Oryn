@@ -63,7 +63,8 @@ describe("BudgetCard", () => {
 		expect(day).toHaveAttribute("data-level", "warn");
 		expect(month).toHaveAttribute("data-level", "over");
 		expect(day).toHaveTextContent("$8.50 / $10.00");
-		expect(within(day).getByText("接近上限")).toHaveClass("text-warn");
+		// 文字用 ink 令牌（对比度见 BudgetCard.contrast.test），量表仍是原警告色
+		expect(within(day).getByText("接近上限")).toHaveClass("text-warn-ink");
 		expect(within(month).getByText("已超出")).toHaveClass("text-err");
 		const fill = (el: HTMLElement) =>
 			within(el).getByRole("meter").firstElementChild as HTMLElement;

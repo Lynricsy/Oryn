@@ -38,8 +38,8 @@ export const statsKeys = {
 	output: (q: object) => ["stats", "output", q] as const,
 	timeline: (id: string, from: number, to: number) =>
 		["orbs", id, "timeline", from, to] as const,
-	orbMetrics: (id: string, from: number, to: number, step: number) =>
-		["orbs", id, "metrics", from, to, step] as const,
+	orbMetrics: (id: string, from: number, to: number) =>
+		["orbs", id, "metrics", from, to] as const,
 	setupRuns: (id: string) => ["orbs", id, "setup-runs"] as const,
 	budget: ["stats", "budget"] as const,
 };
@@ -109,6 +109,10 @@ export function useOrbStats(q: OrbQuery, enabled = true) {
 	});
 }
 
+/**
+ * orb 抽屉的查询窗口：键里是所选窗口 `[from, to)`（稳定，不随渲染变化）；实际请求的终点在每次取数（含每 60 秒的
+ * 轮询）时才算成 `min(to, 现在)`。今天 / 近 N 天的 `to` 是本地次日零点，轮询因此逐轮推进；历史窗口的终点不越过 `to`。
+ */
 export function useOrbTimeline(orbId: string, from: number, to: number) {
 	return useQuery({
 		queryKey: statsKeys.timeline(orbId, from, to),
@@ -116,7 +120,10 @@ export function useOrbTimeline(orbId: string, from: number, to: number) {
 		queryFn: () =>
 			unwrap(
 				api.GET("/api/v1/orbs/{id}/timeline", {
-					params: { path: { id: orbId }, query: { from, to } },
+					params: {
+						path: { id: orbId },
+						query: { from, to: Math.min(to, Date.now()) },
+					},
 				}),
 			),
 	});
@@ -128,16 +135,20 @@ export function metricsStep(from: number, to: number): number {
 }
 
 export function useOrbMetricsRange(orbId: string, from: number, to: number) {
-	const step = metricsStep(from, to);
 	return useQuery({
-		queryKey: statsKeys.orbMetrics(orbId, from, to, step),
+		queryKey: statsKeys.orbMetrics(orbId, from, to),
 		refetchInterval: POLL_MS,
-		queryFn: () =>
-			unwrap(
+		queryFn: () => {
+			const end = Math.min(to, Date.now());
+			return unwrap(
 				api.GET("/api/v1/orbs/{id}/metrics", {
-					params: { path: { id: orbId }, query: { from, to, step } },
+					params: {
+						path: { id: orbId },
+						query: { from, to: end, step: metricsStep(from, end) },
+					},
 				}),
-			),
+			);
+		},
 	});
 }
 

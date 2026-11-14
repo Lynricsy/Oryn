@@ -55,7 +55,11 @@ function PeriodRow({
 				<span className="text-faint">{period.key}</span>
 				<span className="min-w-0 flex-1" />
 				{period.level !== "none" && (
-					<span className={period.level === "over" ? "text-err" : "text-warn"}>
+					// 文字用 ink 令牌（≥ 4.5:1）；量表仍用原警告 / 错误色。`--bad` 本身在明暗两套卡片底上已 ≥ 4.5:1
+					<span
+						data-testid="budget-level"
+						className={period.level === "over" ? "text-err" : "text-warn-ink"}
+					>
 						{t(`stats.budget.level.${period.level}`)}
 					</span>
 				)}
