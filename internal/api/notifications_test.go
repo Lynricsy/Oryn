@@ -27,7 +27,7 @@ import (
 type nopBroadcaster struct{}
 
 func (nopBroadcaster) Notification(apigen.Notification) {}
-func (nopBroadcaster) NotificationsRead(string)         {}
+func (nopBroadcaster) NotificationsRead(string, string) {}
 
 type notifyEnv struct {
 	t     *testing.T
@@ -95,6 +95,9 @@ func TestNotificationsAPI(t *testing.T) {
 	assert.Equal(t, 204, st, "省略请求体 = 全部已读")
 	st, _ = e.do("POST", "/api/v1/notifications/read", map[string]string{"threadId": "T-x"})
 	assert.Equal(t, 204, st)
+	st, body = e.do("POST", "/api/v1/notifications/read", map[string]string{"threadId": "T-x", "id": "ntf_x"})
+	assert.Equal(t, 400, st, "id 与 threadId 都给")
+	assert.Equal(t, "invalid_request", errCode(body))
 
 	// 渠道：201、机密只写不读、错误码映射
 	st, body = e.do("POST", "/api/v1/notification-channels", map[string]any{"kind": "webhook", "name": "w",
@@ -104,7 +107,7 @@ func TestNotificationsAPI(t *testing.T) {
 	assert.NotContains(t, string(body), "T0K3N-abcdef")
 	var ch apigen.NotificationChannel
 	require.NoError(t, json.Unmarshal(body, &ch))
-	assert.Equal(t, []apigen.NotificationKind{"done", "input", "error"}, ch.Events)
+	assert.Equal(t, []apigen.NotificationKind{"done", "input", "error", "budget"}, ch.Events)
 	assert.Equal(t, apigen.NotificationLocaleZhCN, ch.Locale)
 
 	st, body = e.do("POST", "/api/v1/notification-channels", map[string]any{"kind": "webhook", "name": "w", "webhook": map[string]any{"url": "nope"}})
@@ -213,4 +216,59 @@ func TestListNotificationsUnreadOnly(t *testing.T) {
 	require.Len(t, page.Notifications, 1, "按 before 翻页仍能拿到较早的未读")
 	assert.Equal(t, "N-input-old", page.Notifications[0].ID)
 	assert.Empty(t, list("limit=50&unread=true&before=500").Notifications)
+}
+
+// 预算通知没有线程、url 取 link；按 id 已读只影响这一条。
+func TestNotificationsBudgetAndReadByID(t *testing.T) {
+	e := newNotifyEnv(t)
+	ctx := context.Background()
+	link := "/stats/usage"
+	for _, p := range []db.InsertNotificationParams{
+		{ID: "ntf_budget", Kind: "budget", Title: "Daily budget exceeded", Link: &link, CreatedAt: 1000},
+		{ID: "ntf_other", Kind: "error", Title: "x", Link: new("/settings/automations"), CreatedAt: 1001},
+		{ID: "ntf_third", Kind: "budget", Title: "Monthly budget warning", Link: &link, CreatedAt: 1002},
+	} {
+		_, err := e.st.Q.InsertNotification(ctx, p)
+		require.NoError(t, err)
+	}
+	list := func() apigen.NotificationList {
+		st, body := e.do("GET", "/api/v1/notifications", nil)
+		require.Equal(t, 200, st, string(body))
+		var l apigen.NotificationList
+		require.NoError(t, json.Unmarshal(body, &l))
+		return l
+	}
+	l := list()
+	assert.Equal(t, 3, l.Unread)
+	byID := map[string]apigen.Notification{}
+	for _, n := range l.Notifications {
+		byID[n.ID] = n
+	}
+	b := byID["ntf_budget"]
+	assert.Equal(t, apigen.NotificationKindBudget, b.Kind)
+	assert.Nil(t, b.ThreadID)
+	assert.Equal(t, "/stats/usage", b.URL)
+	st, body := e.do("GET", "/api/v1/notifications", nil)
+	require.Equal(t, 200, st)
+	var raw struct {
+		Notifications []map[string]any `json:"notifications"`
+	}
+	require.NoError(t, json.Unmarshal(body, &raw))
+	for _, n := range raw.Notifications {
+		assert.NotContains(t, n, "threadId", "系统通知省略 threadId")
+	}
+
+	st, body = e.do("POST", "/api/v1/notifications/read", map[string]string{"id": "ntf_budget"})
+	require.Equal(t, 204, st, string(body))
+	l = list()
+	assert.Equal(t, 2, l.Unread, "unread 减一")
+	for _, n := range l.Notifications {
+		if n.ID == "ntf_budget" {
+			assert.NotNil(t, n.ReadAt)
+		} else {
+			assert.Nil(t, n.ReadAt, "按 id 已读只影响该行：%s", n.ID)
+		}
+	}
+	st, _ = e.do("POST", "/api/v1/notifications/read", map[string]string{"id": "ntf_missing"})
+	assert.Equal(t, 204, st, "不存在的 id 同样 204")
 }

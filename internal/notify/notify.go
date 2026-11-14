@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,8 +40,8 @@ type Threads interface {
 // Broadcaster 把应用内通知推给已登录的客户端（realtime hub 实现）。
 type Broadcaster interface {
 	Notification(n apigen.Notification)
-	// NotificationsRead 广播已读；threadID 为空 = 全部。
-	NotificationsRead(threadID string)
+	// NotificationsRead 广播已读：id 非空 = 只这一条；threadID 非空 = 该线程；都为空 = 全部。
+	NotificationsRead(threadID, id string)
 }
 
 // Config 是通知服务参数。
@@ -79,6 +80,8 @@ const (
 	KindDone  = "done"
 	KindInput = "input"
 	KindError = "error"
+	// KindBudget 是预算告警（没有线程）。
+	KindBudget = "budget"
 	// KindTest 是渠道「测试」的内部种类（不落库）。
 	KindTest = "test"
 )
@@ -534,7 +537,7 @@ func (s *Service) record(ctx context.Context, p db.InsertNotificationParams) err
 	}
 	names, _ := s.channelNames(ctx)
 	s.out.Notification(notificationAPI(db.Notification{
-		ID: p.ID, ThreadID: p.ThreadID, Kind: p.Kind, Title: p.Title, Body: p.Body, RequestID: p.RequestID, Request: p.Request, CreatedAt: now,
+		ID: p.ID, ThreadID: p.ThreadID, Kind: p.Kind, Title: p.Title, Body: p.Body, Link: p.Link, RequestID: p.RequestID, Request: p.Request, CreatedAt: now,
 	}, dels, names))
 	if len(dels) > 0 {
 		signal(s.deliverWake)
@@ -542,18 +545,32 @@ func (s *Service) record(ctx context.Context, p db.InsertNotificationParams) err
 	return nil
 }
 
-// AutomationsPath 是没有线程的通知（定时无法建出线程、定时被自动暂停）在 Web 上的落点。
+// AutomationsPath 是定时相关的无线程通知（定时无法建出线程、定时被自动暂停）在 Web 上的落点。
 const AutomationsPath = "/settings/automations"
 
-// Post 立即生成一条 kind = error 的通知（M9 定时补「线程状态机看不到」的失败，不去抖）。
-// threadID 非空时标题取线程标题（忽略 title），线程不存在或已归档则不发；threadID 为空时用 title，
-// 链接指向 AutomationsPath。
-func (s *Service) Post(ctx context.Context, threadID, title, body string) error {
-	p := db.InsertNotificationParams{ID: ids.New("ntf"), Kind: KindError, Title: title, Body: body}
-	if threadID == "" {
-		p.CreatedAt = s.now()
-		return s.record(ctx, p)
+// PostSystem 立即生成一条不属于任何线程的通知（不去抖、不登记线程未读）。kind 只接受 error / budget；
+// title 不能为空；link 是站内路径（以 "/" 开头且不以 "//" 开头）。落库与排投递在同一个事务里：返回错误时没有写入任何行。
+func (s *Service) PostSystem(ctx context.Context, kind, title, body, link string) error {
+	if kind != KindError && kind != KindBudget {
+		return fmt.Errorf("notify: system notification kind %q not allowed", kind)
 	}
+	if title == "" {
+		return errors.New("notify: system notification title is empty")
+	}
+	if !strings.HasPrefix(link, "/") || strings.HasPrefix(link, "//") {
+		return fmt.Errorf("notify: system notification link %q is not a site path", link)
+	}
+	return s.record(ctx, db.InsertNotificationParams{ID: ids.New("ntf"), Kind: kind, Title: title, Body: body, Link: &link, CreatedAt: s.now()})
+}
+
+// Post 立即生成一条 kind = error 的通知（M9 定时补「线程状态机看不到」的失败，不去抖）。
+// threadID 非空时标题取线程标题（忽略 title），线程不存在或已归档则不发；threadID 为空时等同
+// PostSystem(ctx, KindError, title, body, AutomationsPath)。
+func (s *Service) Post(ctx context.Context, threadID, title, body string) error {
+	if threadID == "" {
+		return s.PostSystem(ctx, KindError, title, body, AutomationsPath)
+	}
+	p := db.InsertNotificationParams{ID: ids.New("ntf"), Kind: KindError, Title: title, Body: body}
 	th, err := s.th.Get(ctx, threadID)
 	if err != nil {
 		if errors.Is(err, threads.ErrNotFound) {
@@ -640,7 +657,7 @@ func (s *Service) markThreadRead(ctx context.Context, threadID string) {
 		return
 	}
 	if n > 0 {
-		s.out.NotificationsRead(threadID)
+		s.out.NotificationsRead(threadID, "")
 	}
 }
 
@@ -692,11 +709,19 @@ func (s *Service) List(ctx context.Context, limit int, before int64, unreadOnly 
 	return out, nil
 }
 
-// MarkRead 标记已读：threadID 为空 = 全部；随后广播。
+// MarkRead 标记已读：id 非空 = 只这一条；threadID 非空 = 该线程；都为空 = 全部。随后广播。
+// 按 id 已读不动内存未读集合（库里该线程可能还有别的未读；之后的 Seen 多标一次无害）。
 //
 // 与 emit 交错时（emit 已预登记未读、尚未落库，或在本次 SQL 与清集合之间落库），SQL 可能没标到那条新通知：
 // 这时保留内存未读登记，之后的 Seen 会把它读掉，库与集合不失配。
-func (s *Service) MarkRead(ctx context.Context, threadID string) error {
+func (s *Service) MarkRead(ctx context.Context, threadID, id string) error {
+	if id != "" {
+		if _, err := s.st.Q.MarkNotificationRead(ctx, db.MarkNotificationReadParams{Now: s.now(), ID: id}); err != nil {
+			return err
+		}
+		s.out.NotificationsRead(threadID, id)
+		return nil
+	}
 	s.mu.Lock()
 	gen, busy := s.emitGen, s.emitting > 0
 	s.mu.Unlock()
@@ -718,7 +743,7 @@ func (s *Service) MarkRead(ctx context.Context, threadID string) error {
 		}
 	}
 	s.mu.Unlock()
-	s.out.NotificationsRead(threadID)
+	s.out.NotificationsRead(threadID, "")
 	return nil
 }
 
@@ -740,11 +765,7 @@ func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names ma
 		ID: n.ID, Kind: apigen.NotificationKind(n.Kind), Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt,
 		ThreadID: n.ThreadID, ReadAt: n.ReadAt, ResolvedAt: n.ResolvedAt, Deliveries: make([]apigen.NotificationDelivery, 0, len(dels)),
 	}
-	if n.ThreadID != nil {
-		out.URL = "/t/" + *n.ThreadID
-	} else {
-		out.URL = AutomationsPath
-	}
+	out.URL = notificationPath(n.ThreadID, n.Link)
 	for _, d := range dels {
 		at := d.CreatedAt
 		switch {
@@ -763,6 +784,17 @@ func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names ma
 		out.Deliveries = append(out.Deliveries, ad)
 	}
 	return out
+}
+
+// notificationPath 返回通知的站内路径：有线程为 "/t/<id>"，否则为该行的 link；两者皆空回落到 "/"。
+func notificationPath(threadID, link *string) string {
+	switch {
+	case threadID != nil:
+		return "/t/" + *threadID
+	case link != nil && *link != "":
+		return *link
+	}
+	return "/"
 }
 
 func hasEvent(eventsJSON, kind string) bool {

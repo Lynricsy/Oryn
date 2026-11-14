@@ -236,7 +236,7 @@ func (s *Service) telegramSender(ch db.NotificationChannel, raw []byte) (Sender,
 	return telegramSender{s, cfg, parseTgState(ch.State)}, nil
 }
 
-var kindEmoji = map[string]string{KindDone: "✅", KindInput: "❓", KindError: "⚠️", KindTest: "🔔"}
+var kindEmoji = map[string]string{KindDone: "✅", KindInput: "❓", KindError: "⚠️", KindBudget: "💰", KindTest: "🔔"}
 
 func labelsFor(locale string) uiprompt.Labels {
 	return uiprompt.Labels{Yes: text(locale, "yes"), No: text(locale, "no")}
@@ -272,7 +272,10 @@ func telegramText(m Message) (string, *tgMarkup) {
 		}
 	case KindTest:
 	default:
-		tail = append(tail, "", text(m.Locale, "replyHint"))
+		// 只有属于线程的通知能回复（回复即把文字发给该线程）
+		if m.ThreadID != "" {
+			tail = append(tail, "", text(m.Locale, "replyHint"))
+		}
 	}
 	if m.URL != "" {
 		tail = append(tail, m.URL)
@@ -511,8 +514,12 @@ func (s *Service) handleUpdate(ctx context.Context, id string, cfg tgConfig, loc
 		return
 	}
 	n, err := s.st.Q.GetNotification(ctx, d.NotificationID)
-	if err != nil || n.ThreadID == nil {
+	if err != nil {
 		reply(m.Chat.ID, "replyHint")
+		return
+	}
+	if n.ThreadID == nil {
+		reply(m.Chat.ID, "noThread")
 		return
 	}
 	threadID := *n.ThreadID

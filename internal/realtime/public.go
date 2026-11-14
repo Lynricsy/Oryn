@@ -374,11 +374,14 @@ func (h *Hub) Notification(n apigen.Notification) {
 	h.toAll(apigen.WsServerNotification{Type: apigen.WsServerNotificationTypeNotification, Notification: n})
 }
 
-// NotificationsRead 实现 notify.Broadcaster：threadID 为空表示全部已读。
-func (h *Hub) NotificationsRead(threadID string) {
+// NotificationsRead 实现 notify.Broadcaster：id 非空 = 只这一条已读；threadID 非空 = 该线程；都为空 = 全部已读。
+func (h *Hub) NotificationsRead(threadID, id string) {
 	m := apigen.WsServerNotificationsRead{Type: apigen.NotificationsRead}
 	if threadID != "" {
 		m.ThreadID = &threadID
+	}
+	if id != "" {
+		m.ID = &id
 	}
 	h.toAll(m)
 }

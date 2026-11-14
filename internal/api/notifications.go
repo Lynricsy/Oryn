@@ -59,7 +59,7 @@ func (s *Server) ListNotifications(w http.ResponseWriter, r *http.Request, param
 	WriteJSON(w, http.StatusOK, list)
 }
 
-// MarkNotificationsRead 对应 `POST notifications/read`：省略 threadId = 全部。
+// MarkNotificationsRead 对应 `POST notifications/read`：id 只标一条、threadId 只标该线程、都省略 = 全部；都给 → 400。
 func (s *Server) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.notifySvc(w)
 	if !ok {
@@ -70,11 +70,18 @@ func (s *Server) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
 		return
 	}
-	threadID := ""
+	if req.ID != nil && *req.ID != "" && req.ThreadID != nil && *req.ThreadID != "" {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "id 与 threadId 至多给一个")
+		return
+	}
+	threadID, id := "", ""
 	if req.ThreadID != nil {
 		threadID = *req.ThreadID
 	}
-	if err := svc.MarkRead(r.Context(), threadID); err != nil {
+	if req.ID != nil {
+		id = *req.ID
+	}
+	if err := svc.MarkRead(r.Context(), threadID, id); err != nil {
 		writeNotifyErr(w, r, err)
 		return
 	}

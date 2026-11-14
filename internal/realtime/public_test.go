@@ -248,9 +248,13 @@ func TestPublicStream(t *testing.T) {
 
 	// 通知只到私有连接
 	e.hub.Notification(apigen.Notification{ID: "ntf_1", Kind: apigen.NotificationKindDone, Title: "t", URL: "/t/x", Deliveries: []apigen.NotificationDelivery{}})
-	e.hub.NotificationsRead("")
+	e.hub.NotificationsRead("", "")
+	e.hub.NotificationsRead("", "ntf_x")
 	a.next(func(m msg) bool { return m.Type == "notification" })
-	a.next(func(m msg) bool { return m.Type == "notifications.read" })
+	all := a.next(func(m msg) bool { return m.Type == "notifications.read" })
+	assert.JSONEq(t, `{"type":"notifications.read"}`, string(all.raw), "全部已读：两个字段都省略")
+	one := a.next(func(m msg) bool { return m.Type == "notifications.read" })
+	assert.JSONEq(t, `{"type":"notifications.read","id":"ntf_x"}`, string(one.raw), "按 id 已读：带 id、不带 threadId")
 
 	p.send(map[string]string{"type": "ping"})
 	p.next(func(m msg) bool { return m.Type == "pong" })
@@ -268,6 +272,8 @@ func TestPublicStream(t *testing.T) {
 	}
 	assert.Contains(t, types, "entries")
 	assert.Contains(t, types, "frame")
+	assert.NotContains(t, types, "notification", "匿名连接收不到通知")
+	assert.NotContains(t, types, "notifications.read", "匿名连接收不到已读广播")
 
 	// 已撤销的分享不再接受连接
 	_, resp, err := dialPublic(t, pub, "share=shr_1&thread="+th.ID)

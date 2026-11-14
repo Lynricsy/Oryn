@@ -578,3 +578,43 @@ func TestRedactURLError(t *testing.T) {
 	assert.Same(t, plain, redactURLError(plain), "没有 URL 的错误原样返回")
 	assert.Equal(t, `Post "[redacted-url]": x`, redactURLError(&url.Error{Op: "Post", URL: "::bad", Err: errors.New("x")}).Error())
 }
+
+// 没有线程的通知按种类合并：预算与定时失败的 Web Push Topic 不同，同为预算的两条相同。
+func TestWebPushTopicForSystemNotifications(t *testing.T) {
+	f := newFixture(t)
+	reqs := make(chan http.Header, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs <- r.Header.Clone()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+	f.subscribe(srv.URL + "/push/sys")
+
+	topic := func(kind, title, link string) string {
+		t.Helper()
+		require.NoError(t, f.s.PostSystem(f.ctx, kind, title, "", link))
+		require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+		h := <-reqs
+		assert.Equal(t, "normal", h.Get("Urgency"))
+		require.Len(t, h.Get("Topic"), 32)
+		return h.Get("Topic")
+	}
+	budget1 := topic(KindBudget, "Daily budget warning", "/stats/usage")
+	sched := topic(KindError, `Schedule "x"`, AutomationsPath)
+	budget2 := topic(KindBudget, "Daily budget exceeded", "/stats/usage")
+	assert.NotEqual(t, budget1, sched, "预算与定时失败互不顶掉")
+	assert.Equal(t, budget1, budget2, "同为预算的通知合并")
+}
+
+func TestNormalizeEventsBudget(t *testing.T) {
+	got, err := normalizeEvents(nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `["done","input","error","budget"]`, got, "缺省全选四项")
+	got, err = normalizeEvents([]apigen.NotificationKind{apigen.NotificationKindBudget, apigen.NotificationKindDone})
+	require.NoError(t, err)
+	assert.Equal(t, `["done","budget"]`, got, "规范顺序")
+	_, err = normalizeEvents([]apigen.NotificationKind{"bogus"})
+	var e *Error
+	require.ErrorAs(t, err, &e)
+	assert.Equal(t, "invalid_channel", e.Code)
+}

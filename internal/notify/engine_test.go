@@ -189,11 +189,11 @@ func TestUnreadSetSurvivesRestartAndMarkRead(t *testing.T) {
 	assert.Equal(t, map[string]bool{a: true, b: true}, f.s.unread, "启动时由库装载")
 	f.s.mu.Unlock()
 
-	require.NoError(t, f.s.MarkRead(f.ctx, a))
+	require.NoError(t, f.s.MarkRead(f.ctx, a, ""))
 	list, err := f.s.List(f.ctx, 0, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, list.Unread)
-	require.NoError(t, f.s.MarkRead(f.ctx, ""))
+	require.NoError(t, f.s.MarkRead(f.ctx, "", ""))
 	list, err = f.s.List(f.ctx, 0, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, list.Unread)
@@ -273,7 +273,7 @@ func TestMarkReadInterleavedWithEmit(t *testing.T) {
 			if all {
 				target = ""
 			}
-			require.NoError(t, f.s.MarkRead(f.ctx, target))
+			require.NoError(t, f.s.MarkRead(f.ctx, target, ""))
 			close(release)
 			<-processed
 

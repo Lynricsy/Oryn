@@ -49,6 +49,14 @@ func (s *Service) webpushSender(sub db.PushSubscription) Sender {
 // pushPayload 是 service worker 收到的 JSON（≤3000 字节：正文截到 300 字符、标题截到 200 字符，仍超出时去掉正文）。
 func pushPayload(m Message) ([]byte, error) { return pushPayloadLimit(m, maxPushPayload) }
 
+// systemTag 是没有线程的通知的推送合并标签（同类后到的盖掉先到的）。
+func systemTag(kind string) string {
+	if kind == KindBudget {
+		return "budget"
+	}
+	return "automations"
+}
+
 // pushPayloadLimit 同 pushPayload，但序列化后超过 limit 字节时去掉正文（FCM 的密文要经 base64 放进 4096 字节的 data，上限更小）。
 func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 	tag, path := m.ThreadID, "/t/"+m.ThreadID
@@ -56,8 +64,11 @@ func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 		tag = tag[len(tag)-12:]
 	}
 	if m.ThreadID == "" {
-		// 没有线程的通知（定时失败 / 自动暂停）
-		tag, path = "automations", AutomationsPath
+		// 没有线程的通知（预算告警 / 定时失败 / 自动暂停）：按种类合并，落点取该行的 link
+		tag, path = systemTag(m.Kind), m.Link
+		if path == "" {
+			path = "/"
+		}
 	}
 	v := map[string]any{
 		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(m.Title, 200), "body": truncate(m.Body, maxPushBody),
@@ -78,7 +89,12 @@ func (w webpushSender) Send(ctx context.Context, m Message) Result {
 	if err != nil {
 		return Result{Err: err}
 	}
-	sum := sha256.Sum256([]byte(m.ThreadID))
+	// Topic：有线程按线程合并；没有线程按系统标签合并（预算与定时失败互不顶掉）
+	topic := m.ThreadID
+	if topic == "" {
+		topic = "oryn-" + systemTag(m.Kind)
+	}
+	sum := sha256.Sum256([]byte(topic))
 	urgency := "normal"
 	if m.Kind == KindInput {
 		urgency = "high"
@@ -202,14 +218,14 @@ func subscriptionAPI(r db.PushSubscription) apigen.PushSubscription {
 
 // ---- 渠道 CRUD ----
 
-var allEvents = []apigen.NotificationKind{apigen.NotificationKindDone, apigen.NotificationKindInput, apigen.NotificationKindError}
+var allEvents = []apigen.NotificationKind{apigen.NotificationKindDone, apigen.NotificationKindInput, apigen.NotificationKindError, apigen.NotificationKindBudget}
 
 func normalizeEvents(in []apigen.NotificationKind) (string, error) {
 	if len(in) == 0 {
 		in = allEvents
 	}
 	seen := map[apigen.NotificationKind]bool{}
-	out := make([]string, 0, 3)
+	out := make([]string, 0, len(allEvents))
 	for _, e := range allEvents {
 		for _, x := range in {
 			if !x.Valid() {

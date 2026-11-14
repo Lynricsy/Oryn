@@ -19,9 +19,11 @@ import (
 
 // Message 是交给发送方的一条消息。
 type Message struct {
-	// Kind 为 done / input / error，渠道测试为 test。
+	// Kind 为 done / input / error / budget，渠道测试为 test。
 	NotificationID, DeliveryID, Kind, ThreadID string
-	// URL = PublicURL + "/t/" + ThreadID；没有线程的通知为 PublicURL + AutomationsPath（测试消息为 PublicURL）。
+	// Link 是没有线程的通知的站内路径（如 /stats/usage、/settings/automations）；有线程时为空。
+	Link string
+	// URL = PublicURL + "/t/" + ThreadID；没有线程的通知为 PublicURL + Link（测试消息为 PublicURL）。
 	Title, Body, URL string
 	// Request 是 input 时的请求帧（extension_ui_request 或 plan_proposal）。
 	Request json.RawMessage
@@ -178,8 +180,9 @@ func (s *Service) message(n db.Notification, d db.NotificationDelivery) Message 
 	if n.ThreadID != nil {
 		m.ThreadID = *n.ThreadID
 		m.URL = s.threadURL(m.ThreadID)
-	} else if n.Kind != KindTest {
-		m.URL = strings.TrimRight(s.cfg.PublicURL, "/") + AutomationsPath
+	} else if n.Link != nil && *n.Link != "" {
+		m.Link = *n.Link
+		m.URL = strings.TrimRight(s.cfg.PublicURL, "/") + m.Link
 	}
 	if n.Request != nil {
 		m.Request = json.RawMessage(*n.Request)

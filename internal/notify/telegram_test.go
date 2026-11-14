@@ -354,3 +354,34 @@ func TestTelegramPollerLifecycle(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// 没有线程的预算通知：文本以 💰 开头、带链接、不提示回复；回复它 → noThread，不发任何线程命令。
+func TestTelegramBudgetNotification(t *testing.T) {
+	f := newFixture(t)
+	b := newTestBot(t)
+	ch := f.linked(b)
+
+	require.NoError(t, f.s.PostSystem(f.ctx, KindBudget, "Daily budget exceeded", "Spent $12.00 of $10.00 today", "/stats/usage"))
+	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+	c := next(t, b, "sendMessage")
+	txt := c.Str("text")
+	assert.True(t, strings.HasPrefix(txt, "💰 Daily budget exceeded\n"), txt)
+	assert.Contains(t, txt, "Spent $12.00 of $10.00 today")
+	assert.Contains(t, txt, "https://oryn.test/stats/usage")
+	assert.NotContains(t, txt, text("zh-CN", "replyHint"))
+	assert.Nil(t, c.Buttons())
+
+	d := f.deliveries(f.notifications()[0].ID)[0]
+	require.NotNil(t, d.ExternalRef)
+	_, msg, ok := parseRef(*d.ExternalRef)
+	require.True(t, ok)
+	f.push(b, ch.ID, notifytest.Reply(linkedChat, msg, "收到"))
+	c = next(t, b, "sendMessage")
+	assert.Equal(t, text("zh-CN", "noThread"), c.Str("text"))
+	assert.Empty(t, f.th.Commands(), "无线程通知的回复不路由到任何线程")
+	assert.Empty(t, f.th.UICalls())
+
+	// 有线程的 done 仍提示回复
+	done, _ := telegramText(Message{Kind: KindDone, ThreadID: "T-1", Title: "t", URL: "https://oryn.test/t/T-1", Locale: "zh-CN"})
+	assert.Contains(t, done, text("zh-CN", "replyHint"))
+}

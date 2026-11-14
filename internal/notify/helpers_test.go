@@ -177,7 +177,7 @@ func (f *fakeThreads) Commands() []uiCall {
 type recBroadcaster struct {
 	mu    sync.Mutex
 	notes []apigen.Notification
-	reads []string
+	reads [][2]string // {threadID, id}
 }
 
 func (r *recBroadcaster) Notification(n apigen.Notification) {
@@ -186,9 +186,9 @@ func (r *recBroadcaster) Notification(n apigen.Notification) {
 	r.mu.Unlock()
 }
 
-func (r *recBroadcaster) NotificationsRead(threadID string) {
+func (r *recBroadcaster) NotificationsRead(threadID, id string) {
 	r.mu.Lock()
-	r.reads = append(r.reads, threadID)
+	r.reads = append(r.reads, [2]string{threadID, id})
 	r.mu.Unlock()
 }
 
@@ -198,10 +198,22 @@ func (r *recBroadcaster) Notes() []apigen.Notification {
 	return append([]apigen.Notification(nil), r.notes...)
 }
 
+// Reads 返回各次已读广播的 threadID（按线程 / 全部已读的既有断言用）。
 func (r *recBroadcaster) Reads() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]string(nil), r.reads...)
+	out := make([]string, 0, len(r.reads))
+	for _, rd := range r.reads {
+		out = append(out, rd[0])
+	}
+	return out
+}
+
+// ReadEvents 返回各次已读广播的 {threadID, id}。
+func (r *recBroadcaster) ReadEvents() [][2]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][2]string(nil), r.reads...)
 }
 
 // ---- 夹具 ----

@@ -121,8 +121,8 @@ func validBark(in *apigen.BarkChannelConfig) (barkConfig, error) {
 
 // kindTag / kindEmoji 等按通知种类取值的小表。
 var (
-	ntfyTags     = map[string]string{KindDone: "white_check_mark", KindInput: "question", KindError: "warning", KindTest: "bell"}
-	kindTextKeys = map[string]string{KindDone: "done", KindInput: "input", KindError: "error"}
+	ntfyTags     = map[string]string{KindDone: "white_check_mark", KindInput: "question", KindError: "warning", KindBudget: "moneybag", KindTest: "bell"}
+	kindTextKeys = map[string]string{KindDone: "done", KindInput: "input", KindError: "error", KindBudget: "budget"}
 )
 
 // displayTitle 返回消息标题：线程标题为空时用渠道语言的「未命名线程」。
@@ -194,16 +194,25 @@ func (s *Service) webhookSender(_ db.NotificationChannel, raw []byte) (Sender, e
 // webhookStates 是各通知种类对应的线程状态（Webhook 体的 thread.state）。
 var webhookStates = map[string]string{KindDone: "idle", KindInput: "awaiting_input", KindError: "error"}
 
-func (w webhookSender) Send(ctx context.Context, m Message) Result {
-	event := "thread." + m.Kind
-	if m.Kind == KindTest {
-		event = "test"
+// webhookEvent 是 Webhook 的事件名（体的 event 与 X-Oryn-Event 头）：测试为 test、预算告警为 budget.alert，
+// 其余为 thread.<kind>（M9 的无线程 error 仍是 thread.error）。
+func webhookEvent(kind string) string {
+	switch kind {
+	case KindTest:
+		return "test"
+	case KindBudget:
+		return "budget.alert"
 	}
+	return "thread." + kind
+}
+
+func (w webhookSender) Send(ctx context.Context, m Message) Result {
+	event := webhookEvent(m.Kind)
 	body := map[string]any{"event": event, "id": m.NotificationID, "ts": w.s.now(), "title": displayTitle(m), "body": m.Body}
 	if m.ThreadID != "" {
 		body["thread"] = map[string]string{"id": m.ThreadID, "title": m.Title, "state": webhookStates[m.Kind], "url": m.URL}
 	} else if m.URL != "" && m.Kind != KindTest {
-		// 没有线程的通知（定时失败 / 自动暂停）：链接指向自动化设置页
+		// 没有线程的通知（预算告警 / 定时失败 / 自动暂停）：不带 thread 键，链接放顶层 url
 		body["url"] = m.URL
 	}
 	b, err := json.Marshal(body)
