@@ -16,6 +16,9 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
+// runTagPrefix 是定时运行 id 的前缀，也是带标签投递里定时的标签前缀（契约 C1）。
+const runTagPrefix = "srn_"
+
 // ---- 事件循环 ----
 
 // Run 恢复未结束的运行 → 补跑到期定时 → 按最早的 next_run_at 上定时器并处理事件，直到 ctx 结束。
@@ -51,13 +54,14 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // Tick 处理已入队的事件与全部到期的定时，然后重新上定时器（测试直接调用）。
+// 全程持 loopMu 直到 armLocked 返回（契约 C8）：否则读到的旧的最早触发时间会停掉并发修改刚上的定时器。
 func (s *Service) Tick(ctx context.Context) {
 	s.loopMu.Lock()
+	defer s.loopMu.Unlock()
 	s.processEvents(ctx)
 	s.tickLocked(ctx)
 	s.processEvents(ctx)
-	s.loopMu.Unlock()
-	s.arm(ctx)
+	s.armLocked(ctx)
 }
 
 func (s *Service) tickLocked(ctx context.Context) {
@@ -78,12 +82,17 @@ func (s *Service) tickLocked(ctx context.Context) {
 	}
 }
 
-// arm 按最早的 next_run_at 上定时器（封顶 1 小时）。
-func (s *Service) arm(ctx context.Context) {
+// armLocked 按最早的 next_run_at 上定时器（封顶 1 小时）。
+// 前提：调用方持有 loopMu（契约 C8）——「读最早触发时间 + 替换定时器」只在这一个串行区里发生，
+// 定时行的写入也都在 loopMu 下，读到的值不会在替换之前过期。
+func (s *Service) armLocked(ctx context.Context) {
 	next, err := s.st.Q.MinNextRun(ctx)
 	if err != nil {
 		slog.Warn("schedule: 读取下一次触发失败", "err", err)
 		return
+	}
+	if s.afterMinNext != nil {
+		s.afterMinNext()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,7 +132,7 @@ func (s *Service) StateChanged(ev threads.StateEvent) {
 	_, ok := s.open[ev.ThreadID]
 	ok = ok || s.creating > 0
 	if ok {
-		s.queue = append(s.queue, event{kind: evState, threadID: ev.ThreadID, state: ev.State})
+		s.queue = append(s.queue, event{kind: evState, threadID: ev.ThreadID, state: ev.State, promptError: ev.PromptError})
 	}
 	s.mu.Unlock()
 	if ok {
@@ -140,8 +149,28 @@ func (s *Service) InputResolved(string, string) {}
 // Seen 实现 threads.Observer（不关心）。
 func (s *Service) Seen(string) {}
 
-// TurnEnded 实现 threads.Observer（S0 只落声明，切片 B 接入运行结算）。
-func (s *Service) TurnEnded(threads.TurnEvent) {}
+// TurnEnded 实现 threads.Observer：只入队定时运行的标签（契约 C1.5）。
+func (s *Service) TurnEnded(ev threads.TurnEvent) {
+	if !strings.HasPrefix(ev.Tag, runTagPrefix) {
+		return
+	}
+	s.enqueue(event{kind: evTurn, runID: ev.Tag, threadID: ev.ThreadID, turn: ev})
+}
+
+// EntriesAppended 实现 threads.Observer：线程上有等可验证终态的恢复运行时入队重查（补充契约 C1.7）。
+// O(1)，不读库。
+func (s *Service) EntriesAppended(threadID string) {
+	s.mu.Lock()
+	rr := s.recovered[s.open[threadID]]
+	ok := rr != nil && rr.waiting
+	if ok {
+		s.queue = append(s.queue, event{kind: evRecheck, threadID: threadID})
+	}
+	s.mu.Unlock()
+	if ok {
+		signal(s.wake)
+	}
+}
 
 // processEvents 顺序处理已入队的事件直到队列为空。调用方持有 loopMu。
 func (s *Service) processEvents(ctx context.Context) {
@@ -156,11 +185,17 @@ func (s *Service) processEvents(ctx context.Context) {
 		s.mu.Unlock()
 		switch ev.kind {
 		case evState:
-			s.onState(ctx, ev.threadID, ev.state)
+			s.onState(ctx, ev.threadID, ev.state, ev.promptError)
 		case evAck:
 			s.onAck(ctx, ev.runID, ev.err)
 		case evTimeout:
 			s.onTimeout(ctx, ev.runID)
+		case evTurn:
+			s.onTurn(ctx, ev.turn)
+		case evRecheck:
+			s.onRecheck(ctx, ev.threadID)
+		case evSettleTimeout:
+			s.onSettleTimeout(ctx, ev.runID)
 		}
 	}
 }
@@ -182,6 +217,7 @@ func (s *Service) fire(ctx context.Context, id string, now time.Time) {
 	nowMs := now.UnixMilli()
 	var fp *fireParams
 	var threadID string
+	advanced := false
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		sc, err := q.GetSchedule(ctx, id)
 		if err != nil {
@@ -225,6 +261,7 @@ func (s *Service) fire(ctx context.Context, id string, now time.Time) {
 		if err != nil {
 			return err
 		}
+		advanced = true
 		if status == runPending {
 			fp = &fireParams{sc: sc, runID: runID, run: sc.RunCount + 1, scheduledFor: scheduledFor, trigger: trigger, missed: missed}
 		}
@@ -234,9 +271,13 @@ func (s *Service) fire(ctx context.Context, id string, now time.Time) {
 		slog.Warn("schedule: 触发失败", "schedule", id, "err", err)
 		return
 	}
+	if !advanced {
+		return
+	}
 	if threadID != "" {
 		s.th.Publish(ctx, threadID)
 	}
+	s.notifyChanged(id)
 	if fp != nil {
 		s.start(ctx, *fp)
 	}
@@ -345,6 +386,7 @@ func (s *Service) RunNow(ctx context.Context, id string) (apigen.ScheduleRun, er
 	if err != nil {
 		return apigen.ScheduleRun{}, err
 	}
+	s.notifyChanged(id)
 	s.start(ctx, fp)
 	s.processEvents(ctx)
 	r, err := s.st.Q.GetScheduleRun(ctx, fp.runID)
@@ -365,14 +407,16 @@ func (s *Service) start(ctx context.Context, fp fireParams) {
 	s.createThread(ctx, fp, loc, text)
 }
 
+// deliver 以运行 id 为标签投递（契约 C1.5）：终态由 TurnEnded 结算。
 func (s *Service) deliver(ctx context.Context, fp fireParams, text string) {
 	threadID := deref(fp.sc.ThreadID)
 	d := &delivery{runID: fp.runID, scheduleID: fp.sc.ID, threadID: threadID}
 	s.mu.Lock()
 	s.open[threadID] = fp.runID
 	s.pending[fp.runID] = d
+	s.tagged[fp.runID] = fp.sc.ID
 	s.mu.Unlock()
-	cancel, err := s.th.Deliver(ctx, threadID, threads.AutoMessage{Text: text}, func(err error) {
+	cancel, err := s.th.Deliver(ctx, threadID, threads.AutoMessage{Text: text, Tag: fp.runID}, func(err error) {
 		s.enqueue(event{kind: evAck, runID: fp.runID, err: err})
 	})
 	if err != nil {
@@ -393,23 +437,26 @@ func (s *Service) deliver(ctx context.Context, fp fireParams, text string) {
 	s.mu.Unlock()
 }
 
-// deliveryFailed 记一次投递失败（同步错误 / 应答出错 / 超时）：运行 failed、通知、计入失败次数。
+// deliveryFailed 记一次投递失败（同步错误 / 应答出错 / 超时 / 未开始就失败的回合）：运行 failed、通知、计入失败次数。
 func (s *Service) deliveryFailed(ctx context.Context, sc db.Schedule, threadID, runID, reason string) {
-	s.finishRun(ctx, runID, runFailed, reason)
+	reason = truncate(reason, maxRunError)
+	s.finishRun(ctx, sc.ID, runID, runFailed, reason)
 	s.post(ctx, threadID, "", fmt.Sprintf("Scheduled run %q could not be delivered: %s", displayName(sc.Name), reason))
 	s.countFailure(ctx, sc.ID)
 }
 
+// createThread 以运行 id 为标签新建线程（契约 C1.5）：首条提示词的终态由 TurnEnded 结算。
 func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Location, text string) {
 	sc := fp.sc
 	p := threads.CreateParams{
 		ProjectID: deref(sc.ProjectID), Prompt: text, Provider: deref(sc.Provider), Type: deref(sc.OrbType),
 		Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
 		Title:      sc.Name + " · " + time.UnixMilli(fp.scheduledFor).In(loc).Format("01-02 15:04"),
-		ScheduleID: sc.ID, ScheduleRun: fp.run,
+		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID,
 	}
 	s.mu.Lock()
 	s.creating++
+	s.tagged[fp.runID] = sc.ID
 	s.mu.Unlock()
 	t, err := s.th.Create(ctx, p)
 	s.mu.Lock()
@@ -420,18 +467,15 @@ func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Loc
 	s.mu.Unlock()
 	if err != nil {
 		reason := truncate(errText(err), maxRunError)
-		s.finishRun(ctx, fp.runID, runFailed, reason)
+		s.finishRun(ctx, sc.ID, fp.runID, runFailed, reason)
 		s.post(ctx, "", fmt.Sprintf("Schedule %q", sc.Name), "Scheduled run could not start a thread: "+reason)
 		s.countFailure(ctx, sc.ID)
 		return
 	}
-	nowMs := s.cfg.Now().UnixMilli()
 	if err := s.st.Q.SetScheduleRunThread(ctx, db.SetScheduleRunThreadParams{ID: fp.runID, ThreadID: &t.ID}); err != nil {
 		slog.Warn("schedule: 记录运行线程失败", "run", fp.runID, "err", err)
 	}
-	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{ID: fp.runID, Status: runRunning, DeliveredAt: &nowMs}); err != nil {
-		slog.Warn("schedule: 更新运行状态失败", "run", fp.runID, "err", err)
-	}
+	s.markDelivered(ctx, sc.ID, fp.runID)
 	s.retain(ctx, sc)
 }
 
@@ -482,6 +526,7 @@ func (s *Service) onAck(ctx context.Context, runID string, err error) {
 	}
 	s.mu.Unlock()
 	if d == nil {
+		// 已结算（TurnEnded 先到、超时撤回）或定时已删除
 		return
 	}
 	if err != nil {
@@ -489,13 +534,11 @@ func (s *Service) onAck(ctx context.Context, runID string, err error) {
 		if gerr != nil {
 			return
 		}
+		// 随后到达的 TurnEnded{error} 因运行已结束被忽略：只计一次失败
 		s.deliveryFailed(ctx, sc, d.threadID, runID, errText(err))
 		return
 	}
-	nowMs := s.cfg.Now().UnixMilli()
-	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{ID: runID, Status: runRunning, DeliveredAt: &nowMs}); err != nil {
-		slog.Warn("schedule: 更新运行状态失败", "run", runID, "err", err)
-	}
+	s.markDelivered(ctx, d.scheduleID, runID)
 }
 
 func (s *Service) onTimeout(ctx context.Context, runID string) {
@@ -525,7 +568,7 @@ func (s *Service) onTimeout(ctx context.Context, runID string) {
 	s.deliveryFailed(ctx, sc, d.threadID, runID, "deliver_timeout")
 }
 
-func (s *Service) onState(ctx context.Context, threadID, state string) {
+func (s *Service) onState(ctx context.Context, threadID, state string, promptError bool) {
 	s.mu.Lock()
 	runID, ok := s.open[threadID]
 	s.mu.Unlock()
@@ -536,36 +579,179 @@ func (s *Service) onState(ctx context.Context, threadID, state string) {
 	if err != nil {
 		// 定时已删除（运行随之级联删除）
 		s.dropOpen(threadID, runID)
+		s.forgetRun(runID)
 		return
 	}
-	s.applyState(ctx, run, threadID, state)
+	s.applyState(ctx, run, threadID, state, promptError)
 }
 
 // applyState 按线程状态推进一次已投递（running / needs_input）的运行；pending 的运行不受影响。
-func (s *Service) applyState(ctx context.Context, run db.ScheduleRun, threadID, state string) {
+// 线程的 idle 只是候选（契约 C1.5 / C1.6）：带标签的运行等 TurnEnded，恢复运行按转录推断。
+func (s *Service) applyState(ctx context.Context, run db.ScheduleRun, threadID, state string, promptError bool) {
 	if run.Status != runRunning && run.Status != runNeedsInput {
 		return
 	}
+	s.mu.Lock()
+	_, tagged := s.tagged[run.ID]
+	rr := s.recovered[run.ID]
+	s.mu.Unlock()
 	switch apigen.ThreadState(state) {
 	case apigen.ThreadStateIdle:
-		s.dropOpen(threadID, run.ID)
-		s.finishRun(ctx, run.ID, runCompleted, "")
-		if err := s.st.Q.SetScheduleFailures(ctx, db.SetScheduleFailuresParams{ID: run.ScheduleID, Failures: 0}); err != nil {
-			slog.Warn("schedule: 清零失败次数失败", "schedule", run.ScheduleID, "err", err)
+		if rr != nil {
+			s.tryRecovered(ctx, run, rr)
 		}
 	case apigen.ThreadStateError:
-		s.dropOpen(threadID, run.ID)
-		s.finishRun(ctx, run.ID, runFailed, "thread_error")
-		s.countFailure(ctx, run.ScheduleID)
+		switch {
+		case promptError && tagged:
+			// 只是 prompt_result 报错：同一回合的 TurnEnded 会带上原因
+		case promptError && rr != nil:
+			s.tryRecovered(ctx, run, rr)
+		default:
+			s.dropOpen(threadID, run.ID)
+			s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "thread_error")
+			s.countFailure(ctx, run.ScheduleID)
+		}
 	case apigen.ThreadStateAwaitingInput:
 		if run.Status == runRunning {
-			s.setRunStatus(ctx, run.ID, runNeedsInput)
+			s.setRunStatus(ctx, run.ScheduleID, run.ID, runNeedsInput)
 		}
 	case apigen.ThreadStateWorking:
 		if run.Status == runNeedsInput {
-			s.setRunStatus(ctx, run.ID, runRunning)
+			s.setRunStatus(ctx, run.ScheduleID, run.ID, runRunning)
 		}
 	}
+}
+
+// onTurn 结算一次带标签投递的终态（契约 C1.5）。
+func (s *Service) onTurn(ctx context.Context, ev threads.TurnEvent) {
+	run, err := s.st.Q.GetScheduleRun(ctx, ev.Tag)
+	if err != nil {
+		s.forgetRun(ev.Tag)
+		return
+	}
+	switch run.Status {
+	case runPending, runRunning, runNeedsInput:
+	default:
+		s.forgetRun(run.ID)
+		return
+	}
+	threadID := ev.ThreadID
+	if threadID == "" {
+		threadID = deref(run.ThreadID)
+	}
+	s.settle(ctx, run, threadID, ev)
+}
+
+// settle 按回合终态结束一次未结束的运行（契约 C1.5 的表）。
+func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID string, ev threads.TurnEvent) {
+	s.mu.Lock()
+	if d := s.pending[run.ID]; d != nil {
+		if d.stop != nil {
+			d.stop()
+		}
+		delete(s.pending, run.ID)
+	}
+	s.mu.Unlock()
+	s.dropOpen(threadID, run.ID)
+	switch ev.Status {
+	case threads.TurnCompleted:
+		s.finishRun(ctx, run.ScheduleID, run.ID, runCompleted, "")
+		if err := s.st.Q.SetScheduleFailures(ctx, db.SetScheduleFailuresParams{ID: run.ScheduleID, Failures: 0}); err != nil {
+			slog.Warn("schedule: 清零失败次数失败", "schedule", run.ScheduleID, "err", err)
+		}
+	case threads.TurnAborted:
+		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "aborted")
+	case threads.TurnError:
+		reason := ev.Error
+		if reason == "" {
+			reason = "thread_error"
+		}
+		if run.Status == runPending {
+			if sc, err := s.st.Q.GetSchedule(ctx, run.ScheduleID); err == nil {
+				s.deliveryFailed(ctx, sc, threadID, run.ID, reason)
+				return
+			}
+		}
+		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, reason)
+		s.countFailure(ctx, run.ScheduleID)
+	default:
+		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "outcome_unknown")
+	}
+}
+
+// tryRecovered 用转录推断恢复运行的终态（补充契约 C1.6）：推断得出就结算；推断不出（转录复制没赶上、回合未结束）
+// 就保持未结束，置 waiting 等下一批条目入库或下一次状态事件，并在第一次推断不出时上兜底超时。调用方持有 loopMu。
+func (s *Service) tryRecovered(ctx context.Context, run db.ScheduleRun, rr *recoveredRun) {
+	ev, ok, err := s.th.RecoveredOutcomeMatch(ctx, rr.threadID, rr.match, rr.since)
+	if err != nil {
+		slog.Warn("schedule: 推断恢复运行的终态失败", "run", run.ID, "err", err)
+		ok = false
+	}
+	if ok {
+		ev.ThreadID = rr.threadID
+		s.settle(ctx, run, rr.threadID, ev)
+		return
+	}
+	s.mu.Lock()
+	first := !rr.waiting
+	rr.waiting = true
+	s.mu.Unlock()
+	if !first {
+		return
+	}
+	runID := run.ID
+	stop := s.cfg.AfterFunc(recoverSettleTimeout, func() { s.enqueue(event{kind: evSettleTimeout, runID: runID}) })
+	s.mu.Lock()
+	rr.stop = stop
+	s.mu.Unlock()
+}
+
+// onRecheck 在恢复运行所在线程有新条目入库后重查一次（补充契约 C1.7）。
+func (s *Service) onRecheck(ctx context.Context, threadID string) {
+	s.mu.Lock()
+	runID := s.open[threadID]
+	rr := s.recovered[runID]
+	s.mu.Unlock()
+	if rr == nil || !rr.waiting {
+		return
+	}
+	run, err := s.st.Q.GetScheduleRun(ctx, runID)
+	if err != nil {
+		s.dropOpen(threadID, runID)
+		s.forgetRun(runID)
+		return
+	}
+	if run.Status != runRunning && run.Status != runNeedsInput {
+		return
+	}
+	s.tryRecovered(ctx, run, rr)
+}
+
+// onSettleTimeout 是恢复运行的兜底：最后再推断一次，仍推断不出就记 outcome_unknown（不计连续失败）。
+func (s *Service) onSettleTimeout(ctx context.Context, runID string) {
+	s.mu.Lock()
+	rr := s.recovered[runID]
+	s.mu.Unlock()
+	if rr == nil {
+		return
+	}
+	run, err := s.st.Q.GetScheduleRun(ctx, runID)
+	if err != nil {
+		s.dropOpen(rr.threadID, runID)
+		s.forgetRun(runID)
+		return
+	}
+	if run.Status != runRunning && run.Status != runNeedsInput {
+		return
+	}
+	ev, ok, err := s.th.RecoveredOutcomeMatch(ctx, rr.threadID, rr.match, rr.since)
+	if err == nil && ok {
+		ev.ThreadID = rr.threadID
+		s.settle(ctx, run, rr.threadID, ev)
+		return
+	}
+	s.dropOpen(rr.threadID, runID)
+	s.finishRun(ctx, run.ScheduleID, runID, runFailed, "outcome_unknown")
 }
 
 func (s *Service) dropOpen(threadID, runID string) {
@@ -576,19 +762,45 @@ func (s *Service) dropOpen(threadID, runID string) {
 	s.mu.Unlock()
 }
 
-func (s *Service) setRunStatus(ctx context.Context, runID, status string) {
-	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{ID: runID, Status: status}); err != nil {
-		slog.Warn("schedule: 更新运行状态失败", "run", runID, "err", err)
+// forgetRun 丢掉一次运行的标签与恢复登记（并撤掉其兜底超时）。
+func (s *Service) forgetRun(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tagged, runID)
+	if rr := s.recovered[runID]; rr != nil {
+		if rr.stop != nil {
+			rr.stop()
+		}
+		delete(s.recovered, runID)
 	}
 }
 
-func (s *Service) finishRun(ctx context.Context, runID, status, reason string) {
+func (s *Service) setRunStatus(ctx context.Context, scheduleID, runID, status string) {
+	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{ID: runID, Status: status}); err != nil {
+		slog.Warn("schedule: 更新运行状态失败", "run", runID, "err", err)
+	}
+	s.notifyChanged(scheduleID)
+}
+
+// markDelivered 记运行已下发（running + delivered_at）。
+func (s *Service) markDelivered(ctx context.Context, scheduleID, runID string) {
+	nowMs := s.cfg.Now().UnixMilli()
+	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{ID: runID, Status: runRunning, DeliveredAt: &nowMs}); err != nil {
+		slog.Warn("schedule: 更新运行状态失败", "run", runID, "err", err)
+	}
+	s.notifyChanged(scheduleID)
+}
+
+// finishRun 结束一次运行（错误文本截到 maxRunError），并丢掉它在内存里的标签与恢复登记。
+func (s *Service) finishRun(ctx context.Context, scheduleID, runID, status, reason string) {
+	s.forgetRun(runID)
 	nowMs := s.cfg.Now().UnixMilli()
 	if err := s.st.Q.SetScheduleRunStatus(ctx, db.SetScheduleRunStatusParams{
-		ID: runID, Status: status, FinishedAt: &nowMs, Error: optStr(reason),
+		ID: runID, Status: status, FinishedAt: &nowMs, Error: optStr(truncate(reason, maxRunError)),
 	}); err != nil {
 		slog.Warn("schedule: 更新运行状态失败", "run", runID, "err", err)
 	}
+	s.notifyChanged(scheduleID)
 }
 
 // countFailure 计一次失败；达到 MaxFailures 且仍启用时自动暂停并通知。
@@ -617,7 +829,7 @@ func (s *Service) countFailure(ctx context.Context, scheduleID string) {
 		title = fmt.Sprintf("Schedule %q", sc.Name)
 	}
 	s.post(ctx, threadID, title, fmt.Sprintf("Schedule %q was paused after %d consecutive failures", displayName(sc.Name), failures))
-	s.changed(ctx, threadID)
+	s.changed(ctx, scheduleID, threadID)
 }
 
 func (s *Service) post(ctx context.Context, threadID, title, body string) {
@@ -632,7 +844,7 @@ func (s *Service) post(ctx context.Context, threadID, title, body string) {
 // ---- 恢复 ----
 
 // recover 在启动时核对未结束的运行：pending（重启前没等到应答 / 没建出线程）→ failed(interrupted)；
-// 开始超过 24 小时 → failed(stale)；其余按线程现状结束或重新登记。
+// 开始超过 24 小时 → failed(stale)；其余重新登记为恢复运行，终态按已入库的转录推断（补充契约 C1.6）。
 func (s *Service) recover(ctx context.Context) {
 	s.loopMu.Lock()
 	defer s.loopMu.Unlock()
@@ -646,33 +858,86 @@ func (s *Service) recover(ctx context.Context) {
 		threadID := deref(r.ThreadID)
 		switch {
 		case r.Status == runPending || threadID == "":
-			s.finishRun(ctx, r.ID, runFailed, "interrupted")
+			s.finishRun(ctx, r.ScheduleID, r.ID, runFailed, "interrupted")
 			continue
 		case now.Sub(time.UnixMilli(r.StartedAt)) > staleAfter:
-			s.finishRun(ctx, r.ID, runFailed, "stale")
+			s.finishRun(ctx, r.ScheduleID, r.ID, runFailed, "stale")
 			continue
 		}
 		t, err := s.th.Get(ctx, threadID)
 		if err != nil {
-			s.finishRun(ctx, r.ID, runFailed, "interrupted")
+			s.finishRun(ctx, r.ScheduleID, r.ID, runFailed, "interrupted")
 			continue
 		}
+		// 锚点（runAnchor）：头行以固定开头起始，且其中 `scheduled for` 的时刻按秒等于本运行的 ScheduledFor。
+		// 不用名称（可改，旧消息仍是旧名字），也不依赖定时现在的时区（RFC3339 带偏移，解析出来就是绝对时刻）。
+		// 上一个运行的消息迟到（例如它因 orb 失败被记 thread_error 时消息还压在控制面队列里，之后才下发）、
+		// 在 since 之后先于本运行的消息出现时，它的 scheduled for 不同，不会被当作锚点。
+		// since 取运行开始时刻：投递的应答（delivered_at）可能晚于 omp 写下该用户消息的时间戳，开始时刻一定不晚于它。
+		// 残余：同一线程上两个运行的 ScheduledFor 落在同一秒内（线程内定时同一时刻至多一个未结束运行，
+		// 手动触发要等上一个结束，实际不会出现）。
+		rr := &recoveredRun{scheduleID: r.ScheduleID, threadID: threadID, match: runAnchor(r.ScheduledFor), since: r.StartedAt}
 		s.mu.Lock()
 		s.open[threadID] = r.ID
+		s.recovered[r.ID] = rr
 		s.mu.Unlock()
-		s.applyState(ctx, r, threadID, string(t.State))
+		if apigen.ThreadState(t.State) != apigen.ThreadStateError {
+			s.applyState(ctx, r, threadID, string(t.State), false)
+			continue
+		}
+		// 重启时看不出 error 是否只是 prompt 报错：转录推断得出终态就按它结算，否则按线程出错计
+		ev, ok, err := s.th.RecoveredOutcomeMatch(ctx, threadID, rr.match, rr.since)
+		if err == nil && ok {
+			ev.ThreadID = threadID
+			s.settle(ctx, r, threadID, ev)
+			continue
+		}
+		s.applyState(ctx, r, threadID, string(t.State), false)
 	}
 }
 
 // ---- 文本 ----
 
-// header 是投递正文的首行。
+// headerFixed 是投递正文头行里名称之前的固定开头；headerAt 引出头行里的计划触发时刻（RFC3339，精确到秒）。
+const (
+	headerFixed = "[Oryn scheduled run "
+	headerAt    = " · scheduled for "
+)
+
+// runAnchor 返回认出某次运行所投递头行的匹配函数（补充契约 C1.6）：正文以 headerFixed 开头，首行最后一个
+// headerAt 之后到下一个空格的文本按 RFC3339 解析，按秒等于 scheduledFor（头行只写到秒，手动触发的
+// scheduledFor 可能带毫秒，所以比较 Unix 秒）。名称经 %q 包裹且在前面，LastIndex 只会落在真正的字段上。
+func runAnchor(scheduledFor int64) func(string) bool {
+	want := time.UnixMilli(scheduledFor).Unix()
+	return func(text string) bool {
+		if !strings.HasPrefix(text, headerFixed) {
+			return false
+		}
+		line, _, _ := strings.Cut(text, "\n")
+		i := strings.LastIndex(line, headerAt)
+		if i < 0 {
+			return false
+		}
+		at := line[i+len(headerAt):]
+		if j := strings.IndexByte(at, ' '); j >= 0 {
+			at = at[:j]
+		}
+		t, err := time.Parse(time.RFC3339, at)
+		return err == nil && t.Unix() == want
+	}
+}
+
+// header 是投递正文的首行；agent 定义的定时在右括号前加 ` · defined by an agent`（契约 C9.3）。
 func header(fp fireParams, loc *time.Location) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Oryn scheduled run %q #%d · scheduled for %s (%s)", displayName(fp.sc.Name), fp.run,
+	b.WriteString(headerFixed)
+	fmt.Fprintf(&b, "%q #%d%s%s (%s)", displayName(fp.sc.Name), fp.run, headerAt,
 		time.UnixMilli(fp.scheduledFor).In(loc).Format(time.RFC3339), fp.sc.Timezone)
 	if fp.trigger == triggerCatchup {
 		fmt.Fprintf(&b, " · late, %d missed runs coalesced", fp.missed)
+	}
+	if fp.sc.CreatedBy == createdByAgent {
+		b.WriteString(" · defined by an agent")
 	}
 	b.WriteString("]")
 	return b.String()

@@ -41,6 +41,9 @@ func (schedThreads) Create(context.Context, threads.CreateParams) (apigen.Thread
 	return apigen.Thread{}, errors.New("not used")
 }
 func (schedThreads) Archive(context.Context, string) error { return nil }
+func (schedThreads) RecoveredOutcomeMatch(context.Context, string, func(string) bool, int64) (threads.TurnEvent, bool, error) {
+	return threads.TurnEvent{}, false, nil
+}
 
 type nopOrbs struct{}
 
@@ -196,4 +199,54 @@ func TestScheduleRoutesNotConfigured(t *testing.T) {
 	e := newNotifyEnv(t)
 	code, _ := e.do(http.MethodGet, "/api/v1/schedules", nil)
 	assert.Equal(t, http.StatusNotImplemented, code)
+}
+
+// 版本条件（契约 C7.1）：过期 ifRev → 409 schedule_conflict 且库未变；线程内定时 0 = 只新建。
+func TestScheduleIfRevRoutes(t *testing.T) {
+	e, mkThread := newScheduleEnv(t)
+	th := mkThread()
+	body := func(prompt string, ifRev any) map[string]any {
+		m := map[string]any{"kind": "every", "every": "1h", "prompt": prompt}
+		if ifRev != nil {
+			m["ifRev"] = ifRev
+		}
+		return m
+	}
+	code, b := e.do(http.MethodPut, "/api/v1/threads/"+th+"/schedule", body("p", 0))
+	require.Equal(t, http.StatusOK, code, string(b))
+	sc := decode[apigen.Schedule](t, b)
+	assert.EqualValues(t, 1, sc.Rev)
+
+	code, b = e.do(http.MethodPut, "/api/v1/threads/"+th+"/schedule", body("again", 0))
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeScheduleConflict, errCode(b))
+
+	code, b = e.do(http.MethodPost, "/api/v1/schedules/"+sc.ID+"/pause", nil)
+	require.Equal(t, http.StatusOK, code)
+	assert.EqualValues(t, 2, decode[apigen.Schedule](t, b).Rev)
+
+	code, b = e.do(http.MethodPut, "/api/v1/schedules/"+sc.ID, body("stale", 1))
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeScheduleConflict, errCode(b))
+	code, b = e.do(http.MethodGet, "/api/v1/schedules/"+sc.ID, nil)
+	require.Equal(t, http.StatusOK, code)
+	cur := decode[apigen.Schedule](t, b)
+	assert.Equal(t, "p", cur.Prompt, "库未变")
+	assert.False(t, cur.Enabled, "仍是暂停")
+	assert.EqualValues(t, 2, cur.Rev)
+
+	code, b = e.do(http.MethodPut, "/api/v1/schedules/"+sc.ID, body("fresh", 2))
+	require.Equal(t, http.StatusOK, code, string(b))
+	assert.EqualValues(t, 3, decode[apigen.Schedule](t, b).Rev)
+
+	other := mkThread()
+	code, b = e.do(http.MethodPut, "/api/v1/threads/"+other+"/schedule", body("p", 4))
+	assert.Equal(t, http.StatusConflict, code, "线程没有定时却给了非 0 ifRev")
+	assert.Equal(t, schedule.CodeScheduleConflict, errCode(b))
+
+	// 新建入口忽略 ifRev
+	nb := body("p", 7)
+	nb["mode"], nb["threadId"] = "thread", other
+	code, b = e.do(http.MethodPost, "/api/v1/schedules", nb)
+	require.Equal(t, http.StatusCreated, code, string(b))
 }

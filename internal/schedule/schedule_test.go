@@ -101,12 +101,29 @@ func (ft *fakeTimers) Active() []time.Duration {
 type deliverCall struct {
 	threadID string
 	text     string
+	tag      string
 	ack      func(error)
 	canceled bool
 }
 
+type recoverCall struct {
+	threadID string
+	since    int64
+	// anchor 是被选作锚点的用户消息正文（没有锚点时为空）。
+	anchor string
+}
+
+// fakeTurn 是假转录里的一条用户消息及其回合终态（ev 为 nil = 回合的条目还没入库）。
+type fakeTurn struct {
+	text string
+	ts   int64
+	ev   *threads.TurnEvent
+}
+
 type fakeThreads struct {
 	st *store.Store
+	// now 给投递写入假转录的时间戳（nil = 0）。
+	now func() time.Time
 
 	mu         sync.Mutex
 	delivers   []*deliverCall
@@ -119,6 +136,70 @@ type fakeThreads struct {
 	published  []string
 	// delivered 非 nil 时每次成功投递发送线程 id。
 	delivered chan string
+	// transcript 是各线程的假转录（按转录顺序）；每次成功投递追加一条。
+	transcript map[string][]*fakeTurn
+	// orphan 是没有任何投递的线程（直接插库的运行）的推断终态：不检查锚点。
+	orphan   map[string]threads.TurnEvent
+	recovers []recoverCall
+}
+
+// RecoveredOutcomeMatch 按 threads 的规则在假转录上找锚点：ts >= since、match(正文) 为真的第一条用户消息。
+func (f *fakeThreads) RecoveredOutcomeMatch(_ context.Context, threadID string, match func(string) bool, since int64) (threads.TurnEvent, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	turns := f.transcript[threadID]
+	if len(turns) == 0 {
+		f.recovers = append(f.recovers, recoverCall{threadID: threadID, since: since})
+		ev, ok := f.orphan[threadID]
+		return ev, ok, nil
+	}
+	for _, t := range turns {
+		if t.ts >= since && match(t.text) {
+			f.recovers = append(f.recovers, recoverCall{threadID: threadID, since: since, anchor: t.text})
+			if t.ev == nil {
+				return threads.TurnEvent{}, false, nil
+			}
+			return *t.ev, true, nil
+		}
+	}
+	f.recovers = append(f.recovers, recoverCall{threadID: threadID, since: since})
+	return threads.TurnEvent{}, false, nil
+}
+
+// setOutcome 设置（ev 为 nil 时清除）线程上最近一次投递那一回合的终态，模拟对应条目已入库；
+// 线程上没有投递时设置不检查锚点的终态。
+func (f *fakeThreads) setOutcome(threadID string, ev *threads.TurnEvent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if turns := f.transcript[threadID]; len(turns) > 0 {
+		last := turns[len(turns)-1]
+		last.ev = nil
+		if ev != nil {
+			last.ev = new(*ev)
+		}
+		return
+	}
+	if f.orphan == nil {
+		f.orphan = map[string]threads.TurnEvent{}
+	}
+	if ev == nil {
+		delete(f.orphan, threadID)
+		return
+	}
+	f.orphan[threadID] = *ev
+}
+
+// turns 返回线程的假转录（可就地改动，用来模拟消息迟到）。
+func (f *fakeThreads) turns(threadID string) []*fakeTurn {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.transcript[threadID]
+}
+
+func (f *fakeThreads) Recovers() []recoverCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]recoverCall(nil), f.recovers...)
 }
 
 func (f *fakeThreads) Get(ctx context.Context, id string) (apigen.Thread, error) {
@@ -138,8 +219,16 @@ func (f *fakeThreads) Deliver(_ context.Context, threadID string, m threads.Auto
 	if f.deliverErr != nil {
 		return nil, f.deliverErr
 	}
-	c := &deliverCall{threadID: threadID, text: m.Text, ack: ack}
+	c := &deliverCall{threadID: threadID, text: m.Text, tag: m.Tag, ack: ack}
 	f.delivers = append(f.delivers, c)
+	var ts int64
+	if f.now != nil {
+		ts = f.now().UnixMilli()
+	}
+	if f.transcript == nil {
+		f.transcript = map[string][]*fakeTurn{}
+	}
+	f.transcript[threadID] = append(f.transcript[threadID], &fakeTurn{text: m.Text, ts: ts})
 	if f.delivered != nil {
 		f.delivered <- threadID
 	}
@@ -249,6 +338,12 @@ type fixture struct {
 	orbs   *fakeOrbs
 	n      *fakeNotifier
 	s      *Service
+
+	// changes 记录 Config.Changed 的调用（定时 id）。
+	chMu    sync.Mutex
+	changes []string
+	// concurrent 为真时不在 Changed 里检查 mu（Run 循环另有 goroutine 短暂持 mu，检查会误报）。
+	concurrent bool
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -259,13 +354,37 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = st.Close() })
 	f := &fixture{t: t, ctx: ctx, st: st, clock: &fakeClock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 		timers: &fakeTimers{}, th: &fakeThreads{st: st}, orbs: &fakeOrbs{}, n: &fakeNotifier{}}
+	f.th.now = f.clock.Now
 	f.s = f.newService()
 	return f
 }
 
 // newService 在同一个库上新建调度器（模拟控制面重启）。
 func (f *fixture) newService() *Service {
-	return New(Config{Now: f.clock.Now, AfterFunc: f.timers.AfterFunc, DeliverTimeout: deliverTimeout}, f.st, f.th, f.orbs, f.n)
+	var s *Service
+	s = New(Config{Now: f.clock.Now, AfterFunc: f.timers.AfterFunc, DeliverTimeout: deliverTimeout, Changed: func(id string) {
+		// 契约 C7.2：调用时不持 mu（单 goroutine 的测试里 TryLock 失败只可能是调用方自己持着）
+		if !f.concurrent {
+			if s.mu.TryLock() {
+				s.mu.Unlock()
+			} else {
+				f.t.Errorf("Changed(%s) 在持有 mu 时调用", id)
+			}
+		}
+		f.chMu.Lock()
+		f.changes = append(f.changes, id)
+		f.chMu.Unlock()
+	}}, f.st, f.th, f.orbs, f.n)
+	return s
+}
+
+// takeChanges 返回并清空已记录的 Changed 调用。
+func (f *fixture) takeChanges() []string {
+	f.chMu.Lock()
+	defer f.chMu.Unlock()
+	out := f.changes
+	f.changes = nil
+	return out
 }
 
 func (f *fixture) thread() string {
@@ -301,12 +420,41 @@ func (f *fixture) exec(q string, args ...any) {
 	require.NoError(f.t, err)
 }
 
-// state 写入线程状态并发出状态事件，然后处理事件。
+// state 写入线程状态并发出状态事件（不是只因 prompt 报错），然后处理事件。
 func (f *fixture) state(threadID string, state apigen.ThreadState) {
 	f.t.Helper()
+	f.stateEv(threadID, state, false)
+}
+
+// stateEv 写入线程状态并发出带 PromptError 的状态事件，然后处理事件。
+func (f *fixture) stateEv(threadID string, state apigen.ThreadState, promptError bool) {
+	f.t.Helper()
 	f.exec(`UPDATE threads SET state = ? WHERE id = ?`, string(state), threadID)
-	f.s.StateChanged(threads.StateEvent{ThreadID: threadID, State: string(state)})
+	f.s.StateChanged(threads.StateEvent{ThreadID: threadID, State: string(state), PromptError: promptError})
 	f.process()
+}
+
+// turn 发出带标签投递的终态（TurnEnded）并处理事件。
+func (f *fixture) turn(threadID, tag, status, errText string) {
+	f.t.Helper()
+	f.s.TurnEnded(threads.TurnEvent{ThreadID: threadID, Tag: tag, Status: status, Error: errText})
+	f.process()
+}
+
+// done 以 completed 结束第 i 次投递的回合。
+func (f *fixture) done(i int) {
+	f.t.Helper()
+	ds := f.th.Delivers()
+	require.Greater(f.t, len(ds), i)
+	f.turn(ds[i].threadID, ds[i].tag, threads.TurnCompleted, "")
+}
+
+// run 读运行记录。
+func (f *fixture) run(id string) db.ScheduleRun {
+	f.t.Helper()
+	r, err := f.st.Q.GetScheduleRun(f.ctx, id)
+	require.NoError(f.t, err)
+	return r
 }
 
 func (f *fixture) process() {
@@ -400,8 +548,11 @@ func TestOnceDeliversOnceThenDone(t *testing.T) {
 	assert.Equal(t, runRunning, f.runs(s.ID)[0].Status)
 	assert.NotNil(t, f.runs(s.ID)[0].DeliveredAt)
 	assert.NotContains(t, f.timers.Active(), deliverTimeout, "应答后撤掉超时")
+	assert.Equal(t, rs[0].ID, ds[0].tag, "以运行 id 为标签投递")
 	f.state(th, apigen.ThreadStateWorking)
 	f.state(th, apigen.ThreadStateIdle)
+	assert.Equal(t, runRunning, f.runs(s.ID)[0].Status, "idle 只是候选：等回合终态")
+	f.done(0)
 	r := f.runs(s.ID)[0]
 	assert.Equal(t, runCompleted, r.Status)
 	assert.NotNil(t, r.FinishedAt)
@@ -425,6 +576,7 @@ func TestCronAdvancesAndEndsAt(t *testing.T) {
 	assert.Equal(t, ms(start.Add(20*time.Minute)), *f.sched(s.ID).NextRunAt)
 	f.ack(0, nil)
 	f.state(th, apigen.ThreadStateIdle)
+	f.done(0)
 
 	f.advanceTick(10 * time.Minute)
 	require.Len(t, f.th.Delivers(), 2)
@@ -492,6 +644,7 @@ func TestThreadOverlapSkips(t *testing.T) {
 
 			f.state(th, apigen.ThreadStateWorking)
 			f.state(th, apigen.ThreadStateIdle)
+			f.done(0)
 			assert.Equal(t, runCompleted, f.runs(s.ID)[1].Status)
 			f.advanceTick(time.Minute)
 			assert.Len(t, f.th.Delivers(), 2)
@@ -552,6 +705,7 @@ func TestCompletionResetsFailures(t *testing.T) {
 	f.advanceTick(time.Minute)
 	f.ack(1, nil)
 	f.state(th, apigen.ThreadStateIdle)
+	f.done(1)
 	assert.EqualValues(t, 0, f.sched(s.ID).Failures)
 }
 
@@ -569,6 +723,7 @@ func TestDeliverTimeout(t *testing.T) {
 	f.ack(0, nil)
 	assert.Equal(t, runRunning, f.runs(s.ID)[0].Status)
 	f.state(th, apigen.ThreadStateIdle)
+	f.done(0)
 
 	// 仍在排队：撤回并记 deliver_timeout
 	f.th.cancelOK = true
@@ -682,6 +837,8 @@ func TestRecoveryBranches(t *testing.T) {
 	thW, sW := mk(apigen.ThreadStateAwaitingInput)
 	rWait := insert(sW, thW, runRunning, now.Add(-time.Minute))
 
+	// 转录推断：thI 已有结束回合的 assistant 消息；thE 推断不出（orb 失败之类）
+	f.th.setOutcome(thI, &threads.TurnEvent{Status: threads.TurnCompleted})
 	s := f.newService()
 	s.recover(f.ctx)
 	get := func(id string) db.ScheduleRun {
@@ -693,11 +850,13 @@ func TestRecoveryBranches(t *testing.T) {
 	assert.Equal(t, "stale", *get(rStale).Error)
 	assert.Equal(t, runCompleted, get(rIdle).Status)
 	assert.Equal(t, runFailed, get(rErr).Status)
+	assert.Equal(t, "thread_error", *get(rErr).Error)
 	assert.EqualValues(t, 1, f.sched(sE).Failures)
 	assert.Equal(t, runNeedsInput, get(rWait).Status)
 	assert.Equal(t, rWait, s.open[thW], "仍未结束的运行重新登记")
 
 	f.s = s
+	f.th.setOutcome(thW, &threads.TurnEvent{Status: threads.TurnCompleted})
 	f.state(thW, apigen.ThreadStateWorking)
 	f.state(thW, apigen.ThreadStateIdle)
 	assert.Equal(t, runCompleted, get(rWait).Status)
@@ -792,9 +951,12 @@ func TestNewThreadCreatesThread(t *testing.T) {
 	assert.Equal(t, runRunning, r.Status)
 	require.NotNil(t, r.ThreadID)
 	assert.NotNil(t, r.DeliveredAt)
+	assert.Equal(t, r.ID, c.Tag, "首条提示词以运行 id 为标签")
 	tid := *r.ThreadID
 	f.state(tid, apigen.ThreadStateWorking)
 	f.state(tid, apigen.ThreadStateIdle)
+	assert.Equal(t, runRunning, f.runs(s.ID)[0].Status, "idle 只是候选")
+	f.turn(tid, c.Tag, threads.TurnCompleted, "")
 	assert.Equal(t, runCompleted, f.runs(s.ID)[0].Status)
 
 	got, err := f.s.Get(f.ctx, s.ID)
@@ -843,6 +1005,7 @@ func TestNewThreadOverlap(t *testing.T) {
 	assert.Len(t, f.th.Creates(), 2)
 	f.state(first, apigen.ThreadStateWorking)
 	f.state(first, apigen.ThreadStateIdle)
+	f.turn(first, f.th.Creates()[0].Tag, threads.TurnCompleted, "")
 	assert.Equal(t, runCompleted, f.runs(s.ID)[2].Status, "最早的运行最终完成")
 
 	// allow：至多 3 个并存
@@ -881,6 +1044,7 @@ func TestNewThreadRetention(t *testing.T) {
 		switch i {
 		case 0, 1:
 			f.state(tid, apigen.ThreadStateIdle)
+			f.turn(tid, f.th.Creates()[i].Tag, threads.TurnCompleted, "")
 		case 2:
 			f.exec(`UPDATE threads SET pinned = 1 WHERE id = ?`, tid)
 			f.state(tid, apigen.ThreadStateError)
@@ -964,6 +1128,7 @@ func TestRunLoopFiresOnTimer(t *testing.T) {
 	f := newFixture(t)
 	th := f.thread()
 	f.putThread(th, Input{Kind: KindEvery, Every: "5m", Prompt: "p"})
+	f.concurrent = true
 	f.timers.armed = make(chan time.Duration, 16)
 	f.th.delivered = make(chan string, 1)
 	ctx, cancel := context.WithCancel(f.ctx)

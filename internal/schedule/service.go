@@ -2,9 +2,12 @@
 //   - thread：到点向一个已有线程追加提示词（threads.Deliver，自动化身份）；
 //   - new_thread：每次运行用固定提示词新建一个线程（threads.Create），并按 keepLast 自动归档旧线程。
 //
-// 并发约定：定义的增删改、到点触发、手动触发与事件处理（ack、线程状态变化、投递超时）全部在 loopMu 下串行执行，
+// 并发约定：定义的增删改、到点触发、手动触发与事件处理（ack、线程状态变化、回合终态、投递超时）全部在 loopMu 下串行执行，
 // 「同一定时的未结束运行数」由此做到先查后插而不需要唯一索引。Observer 回调与 ack 在线程服务持锁时同步调用，
-// 只入队（mu），由 Run 的循环或下一次 Tick 处理。测试用注入的时钟与定时器驱动，不 sleep。
+// 只入队（mu），由 Run 的循环或下一次 Tick 处理。锁顺序 loopMu → mu。测试用注入的时钟与定时器驱动，不 sleep。
+//
+// 运行的终态（契约 C1.5 / C1.6）：本进程投递的运行带标签（运行 id），只按 threads 的 TurnEnded 结算，线程的
+// idle 只是候选；重启后恢复的运行没有标签，按已入库转录推断（Threads.RecoveredOutcomeMatch）。
 package schedule
 
 import (
@@ -45,6 +48,9 @@ type Threads interface {
 	Publish(ctx context.Context, threadID string)
 	Create(ctx context.Context, p threads.CreateParams) (apigen.Thread, error)
 	Archive(ctx context.Context, id string) error
+	// RecoveredOutcomeMatch 从已入库的转录推断一次重启前已下发的投递的终态（补充契约 C1.6）：
+	// 锚点是 ts >= since、match(正文) 为真的第一条 user 消息。
+	RecoveredOutcomeMatch(ctx context.Context, threadID string, match func(text string) bool, since int64) (threads.TurnEvent, bool, error)
 }
 
 // Orbs 是保留策略删除独占 orb 用的能力（*orbs.Service 实现）。
@@ -79,18 +85,27 @@ type Filter struct {
 
 // 错误码。
 const (
-	CodeInvalidSchedule   = "invalid_schedule"
-	CodeScheduleNotFound  = "schedule_not_found"
-	CodeScheduleBusy      = "schedule_busy"
-	CodeThreadArchived    = "thread_archived"
-	CodeNameTaken         = "schedule_name_taken"
-	CodeScheduleLimit     = "schedule_limit"
-	CodeScheduleConflict  = "schedule_conflict"
-	CodeNotFound          = "not_found"
-	CodeConflict          = "conflict"
-	createdByUser         = "user"
-	createdByAgent        = "agent"
-	maxEnabledSchedules   = 200
+	CodeInvalidSchedule  = "invalid_schedule"
+	CodeScheduleNotFound = "schedule_not_found"
+	CodeScheduleBusy     = "schedule_busy"
+	CodeThreadArchived   = "thread_archived"
+	CodeNameTaken        = "schedule_name_taken"
+	CodeScheduleLimit    = "schedule_limit"
+	CodeScheduleConflict = "schedule_conflict"
+	CodeNotFound         = "not_found"
+	CodeConflict         = "conflict"
+	createdByUser        = "user"
+	createdByAgent       = "agent"
+	maxEnabledSchedules  = 200
+	// maxAgentEnabledSchedules 是 agent 定义的启用中定时上限（契约 C6.2）。
+	maxAgentEnabledSchedules = 20
+	// minAgentNewThreadGap 是 agent 定义的 new_thread 定时相邻两次触发的最小间隔（契约 C6.2）。
+	minAgentNewThreadGap = 15 * time.Minute
+	// agentCronSamples 是校验 agent 定义的 cron 间隔时取的触发次数。
+	agentCronSamples = 7
+	// recoverSettleTimeout 是恢复运行从第一次「线程已静止但转录里还推断不出终态」起等可验证终态的上限，
+	// 超时记 outcome_unknown（不计连续失败；补充契约 C1.6）。
+	recoverSettleTimeout  = 10 * time.Minute
 	keepRuns              = 200
 	defaultDeliverTimeout = 10 * time.Minute
 	defaultMaxFailures    = 3
@@ -147,7 +162,7 @@ type Service struct {
 	orbs Orbs
 	n    Notifier
 
-	// loopMu 串行化定义的增删改、触发与事件处理。
+	// loopMu 串行化定义的增删改、触发与事件处理；读最早触发时间并替换定时器也只在持有它时进行（契约 C8）。
 	loopMu sync.Mutex
 
 	mu sync.Mutex
@@ -155,12 +170,22 @@ type Service struct {
 	open map[string]string
 	// pending 是等 omp 应答的线程内投递（运行 id → 投递）。
 	pending map[string]*delivery
+	// tagged 是本进程带标签投递的运行（运行 id → 定时 id）：终态只由 TurnEnded 结算（契约 C1.5）。
+	tagged map[string]string
+	// recovered 是重启后重新登记的运行（运行 id → 恢复信息）：终态由 RecoveredOutcomeMatch 推断（契约 C1.6 / C1.7）。
+	recovered map[string]*recoveredRun
 	// creating 是进行中的 new_thread 建线程数：期间的状态事件一律入队（新线程还没登记进 open）。
 	creating int
 	queue    []event
 	tickDue  bool
 	stopArm  func()
 	wake     chan struct{}
+
+	// 测试钩子（nil = 不调用）。
+	// afterMinNext 在 armLocked 读到最早触发时间之后、取 mu 之前调用（契约 C8）。
+	afterMinNext func()
+	// afterCheckTarget 在 createLocked / updateLocked 的目标预检之后、写库事务之前调用（契约 C4）。
+	afterCheckTarget func()
 }
 
 type delivery struct {
@@ -169,19 +194,39 @@ type delivery struct {
 	stop                        func()
 }
 
+// recoveredRun 是一次恢复运行的推断参数。
+type recoveredRun struct {
+	scheduleID, threadID string
+	// match 认出该运行投递的头行（runAnchor）；since 是运行开始时刻（毫秒）。
+	match func(text string) bool
+	since int64
+	// waiting 为真表示线程已静止过、但转录里还推断不出终态：之后每批条目入库都重查一次（契约 C1.7）。
+	waiting bool
+	// stop 撤掉兜底超时（waiting 首次置真时上）。
+	stop func()
+}
+
 type evKind int
 
 const (
 	evState evKind = iota
 	evAck
 	evTimeout
+	// evTurn 是带标签投递的终态（TurnEnded）。
+	evTurn
+	// evRecheck 是恢复运行所在线程有新条目入库（EntriesAppended）。
+	evRecheck
+	// evSettleTimeout 是恢复运行等可验证终态超时。
+	evSettleTimeout
 )
 
 type event struct {
 	kind            evKind
 	threadID, state string
+	promptError     bool
 	runID           string
 	err             error
+	turn            threads.TurnEvent
 }
 
 // New 创建调度器；Run 之前不触发任何定时。
@@ -203,9 +248,11 @@ func New(cfg Config, st *store.Store, th Threads, orbs Orbs, n Notifier) *Servic
 	}
 	return &Service{
 		cfg: cfg, st: st, th: th, orbs: orbs, n: n,
-		open:    map[string]string{},
-		pending: map[string]*delivery{},
-		wake:    make(chan struct{}, 1),
+		open:      map[string]string{},
+		pending:   map[string]*delivery{},
+		tagged:    map[string]string{},
+		recovered: map[string]*recoveredRun{},
+		wake:      make(chan struct{}, 1),
 	}
 }
 
@@ -230,7 +277,7 @@ func InputFromAPI(in apigen.ScheduleInput) Input {
 // ---- 定义 ----
 
 // Put 新建（id 为空，须给 Mode）或替换定时。替换时目标（mode / threadId / projectId）不可改，保留 id 与
-// run_count，清零 failures 与 paused_reason，重算 next_run_at。
+// run_count，清零 failures 与 paused_reason，重算 next_run_at。新建时忽略 IfRev。
 func (s *Service) Put(ctx context.Context, id string, in Input, createdBy string) (apigen.Schedule, error) {
 	s.loopMu.Lock()
 	defer s.loopMu.Unlock()
@@ -243,12 +290,14 @@ func (s *Service) Put(ctx context.Context, id string, in Input, createdBy string
 				return apigen.Schedule{}, invalid("threadId is required for mode thread")
 			}
 		}
+		in.IfRev = nil
 		return s.createLocked(ctx, in, createdBy)
 	}
 	return s.updateLocked(ctx, id, in, createdBy)
 }
 
 // PutForThread 设置线程的线程内定时（至多一个）：已有则替换，否则新建。
+// IfRev（契约 C7.1）：0 = 只在线程没有定时时新建；非 0 = 只在现有定时的 rev 等于它时替换（没有定时同样冲突）。
 func (s *Service) PutForThread(ctx context.Context, threadID string, in Input, createdBy string) (apigen.Schedule, error) {
 	if in.Mode != "" && in.Mode != ModeThread {
 		return apigen.Schedule{}, invalid("a thread schedule has mode thread")
@@ -262,8 +311,15 @@ func (s *Service) PutForThread(ctx context.Context, threadID string, in Input, c
 	cur, err := s.st.Q.GetScheduleByThread(ctx, threadID)
 	switch {
 	case err == nil:
+		if in.IfRev != nil && *in.IfRev == 0 {
+			return apigen.Schedule{}, errf(CodeScheduleConflict, "the thread already has a schedule")
+		}
 		return s.updateLocked(ctx, cur.ID, in, createdBy)
 	case errors.Is(err, sql.ErrNoRows):
+		if in.IfRev != nil && *in.IfRev != 0 {
+			return apigen.Schedule{}, errf(CodeScheduleConflict, "the schedule no longer exists")
+		}
+		in.IfRev = nil
 		return s.createLocked(ctx, in, createdBy)
 	default:
 		return apigen.Schedule{}, err
@@ -274,13 +330,24 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	if createdBy != createdByAgent {
 		createdBy = createdByUser
 	}
+	if createdBy == createdByAgent && in.Mode == ModeNewThread && in.Overlap != "" && in.Overlap != OverlapSkip {
+		return apigen.Schedule{}, invalid("agent-defined new_thread schedules cannot overlap (overlap must be skip)")
+	}
 	now := s.cfg.Now()
 	norm, loc, err := Validate(in, now)
 	if err != nil {
 		return apigen.Schedule{}, err
 	}
+	if createdBy == createdByAgent && norm.Mode == ModeNewThread {
+		if err := checkAgentGap(norm, loc, now); err != nil {
+			return apigen.Schedule{}, err
+		}
+	}
 	if err := s.checkTarget(ctx, norm); err != nil {
 		return apigen.Schedule{}, err
+	}
+	if s.afterCheckTarget != nil {
+		s.afterCheckTarget()
 	}
 	enabled := norm.Enabled == nil || *norm.Enabled
 	var next *int64
@@ -310,8 +377,12 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		// Space 的存在性在写引用的事务里复核：与删除 Space 的事务串行，不留悬空引用（契约 C4）
+		if err := checkSpaceTx(ctx, q, norm.SpaceID); err != nil {
+			return err
+		}
 		if enabled {
-			if err := checkLimit(ctx, q); err != nil {
+			if err := checkLimit(ctx, q, createdBy); err != nil {
 				return err
 			}
 		}
@@ -329,18 +400,25 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	if err != nil {
 		return apigen.Schedule{}, err
 	}
-	s.changed(ctx, norm.ThreadID)
+	s.changed(ctx, p.ID, norm.ThreadID)
 	return s.Get(ctx, p.ID)
 }
 
 // updateLocked 整份替换定义；created_by 记最后一次定义它的一方（用户在界面里改回来也记 user）。
+// in.IfRev 非 nil 时在读到现值之后比较（持 loopMu，定时行的写入都在 loopMu 下，比较即原子）。
 func (s *Service) updateLocked(ctx context.Context, id string, in Input, createdBy string) (apigen.Schedule, error) {
 	if createdBy != createdByAgent {
 		createdBy = createdByUser
 	}
 	cur, err := s.getRow(ctx, id)
 	if err != nil {
+		if in.IfRev != nil && errors.Is(err, errScheduleNotFound) {
+			return apigen.Schedule{}, errf(CodeScheduleConflict, "the schedule no longer exists")
+		}
 		return apigen.Schedule{}, err
+	}
+	if in.IfRev != nil && *in.IfRev != cur.Rev {
+		return apigen.Schedule{}, errf(CodeScheduleConflict, "the schedule changed since it was loaded (rev %d)", cur.Rev)
 	}
 	if in.Mode != "" && in.Mode != cur.Mode {
 		return apigen.Schedule{}, invalid("mode cannot be changed")
@@ -358,13 +436,27 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 		// 项目已在库里，不再复核其存在性与归档状态（项目被归档时触发会记 project_archived）
 		in.ProjectID = ""
 	}
+	agentNew := createdBy == createdByAgent && cur.Mode == ModeNewThread
+	if agentNew {
+		if err := keepAgentPolicy(&in, cur); err != nil {
+			return apigen.Schedule{}, err
+		}
+	}
 	now := s.cfg.Now()
 	norm, loc, err := Validate(in, now)
 	if err != nil {
 		return apigen.Schedule{}, err
 	}
+	if agentNew {
+		if err := checkAgentGap(norm, loc, now); err != nil {
+			return apigen.Schedule{}, err
+		}
+	}
 	if err := s.checkTarget(ctx, norm); err != nil {
 		return apigen.Schedule{}, err
+	}
+	if s.afterCheckTarget != nil {
+		s.afterCheckTarget()
 	}
 	enabled := norm.Enabled == nil || *norm.Enabled
 	var next *int64
@@ -390,8 +482,17 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
-		if enabled && !cur.Enabled {
-			if err := checkLimit(ctx, q); err != nil {
+		if err := checkSpaceTx(ctx, q, norm.SpaceID); err != nil {
+			return err
+		}
+		switch {
+		case enabled && !cur.Enabled:
+			if err := checkLimit(ctx, q, createdBy); err != nil {
+				return err
+			}
+		case enabled && createdBy == createdByAgent && cur.CreatedBy != createdByAgent:
+			// 主人的启用中定时被 agent 改写后计入 agent 的上限（全局数不变）
+			if err := checkAgentLimit(ctx, q); err != nil {
 				return err
 			}
 		}
@@ -409,11 +510,54 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 	if err != nil {
 		return apigen.Schedule{}, err
 	}
-	s.changed(ctx, deref(cur.ThreadID))
+	s.changed(ctx, id, deref(cur.ThreadID))
 	return s.Get(ctx, id)
 }
 
+// keepAgentPolicy 是 agent 改写 new_thread 定时时的沿用规则（契约 C6.2）：overlap 空 = 沿用现值、给出则须等于现值；
+// keepLast 空 = 沿用现值、给出则不得小于现值。
+func keepAgentPolicy(in *Input, cur db.Schedule) error {
+	switch {
+	case in.Overlap == "":
+		in.Overlap = cur.Overlap
+	case in.Overlap != cur.Overlap:
+		return invalid("agents cannot change overlap of a new_thread schedule (currently %s)", cur.Overlap)
+	}
+	if in.KeepLast == nil {
+		in.KeepLast = new(int(cur.KeepLast))
+	} else if int64(*in.KeepLast) < cur.KeepLast {
+		return invalid("agents cannot lower keepLast (currently %d)", cur.KeepLast)
+	}
+	return nil
+}
+
+// checkAgentGap 要求 agent 定义的 new_thread 定时相邻两次触发至少隔 minAgentNewThreadGap：every 直接比较；
+// cron 取从 now 起的 agentCronSamples 次触发，比较相邻间隔的最小值。
+func checkAgentGap(norm Input, loc *time.Location, now time.Time) error {
+	switch norm.Kind {
+	case KindEvery:
+		d, err := time.ParseDuration(norm.Every)
+		if err != nil || d < minAgentNewThreadGap {
+			return invalid("agent-defined new_thread schedules run at most every %s", "15m")
+		}
+	case KindCron:
+		prev, ok := NextAfter(KindCron, norm.Cron, loc, now)
+		for i := 1; ok && i < agentCronSamples; i++ {
+			next, more := NextAfter(KindCron, norm.Cron, loc, prev)
+			if !more {
+				break
+			}
+			if next.Sub(prev) < minAgentNewThreadGap {
+				return invalid("agent-defined new_thread schedules run at most every %s (the cron fires more often)", "15m")
+			}
+			prev = next
+		}
+	}
+	return nil
+}
+
 // checkTarget 核对目标：线程内定时的线程须存在且未归档；new_thread 的项目须存在且未归档、Space 须存在。
+// 这是事务前的预检（不白跑后续步骤）；Space 另在写库事务里复核（checkSpaceTx）。
 func (s *Service) checkTarget(ctx context.Context, in Input) error {
 	if in.Mode == ModeThread {
 		t, err := s.st.Q.GetThread(ctx, in.ThreadID)
@@ -440,23 +584,44 @@ func (s *Service) checkTarget(ctx context.Context, in Input) error {
 			return invalid("project is archived")
 		}
 	}
-	if in.SpaceID != "" {
-		if _, err := s.st.Q.GetSpace(ctx, in.SpaceID); errors.Is(err, sql.ErrNoRows) {
-			return invalid("space not found")
-		} else if err != nil {
-			return err
-		}
+	return checkSpaceTx(ctx, s.st.Q, in.SpaceID)
+}
+
+// checkSpaceTx 检查 Space 存在（spaceID 为空时不查）。
+func checkSpaceTx(ctx context.Context, q *db.Queries, spaceID string) error {
+	if spaceID == "" {
+		return nil
+	}
+	if _, err := q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
+		return invalid("space not found")
+	} else if err != nil {
+		return err
 	}
 	return nil
 }
 
-func checkLimit(ctx context.Context, q *db.Queries) error {
+// checkLimit 检查启用上限：全局 maxEnabledSchedules，agent 定义的另有 maxAgentEnabledSchedules（契约 C6.2）。
+func checkLimit(ctx context.Context, q *db.Queries, createdBy string) error {
 	n, err := q.CountEnabledSchedules(ctx)
 	if err != nil {
 		return err
 	}
 	if n >= maxEnabledSchedules {
 		return errf(CodeScheduleLimit, "at most %d schedules can be enabled", maxEnabledSchedules)
+	}
+	if createdBy == createdByAgent {
+		return checkAgentLimit(ctx, q)
+	}
+	return nil
+}
+
+func checkAgentLimit(ctx context.Context, q *db.Queries) error {
+	n, err := q.CountEnabledSchedulesBy(ctx, createdByAgent)
+	if err != nil {
+		return err
+	}
+	if n >= maxAgentEnabledSchedules {
+		return errf(CodeScheduleLimit, "agents can have at most %d enabled schedules", maxAgentEnabledSchedules)
 	}
 	return nil
 }
@@ -521,7 +686,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return errScheduleNotFound
 	}
 	s.forgetRuns(id)
-	s.changed(ctx, deref(row.ThreadID))
+	s.changed(ctx, id, deref(row.ThreadID))
 	return nil
 }
 
@@ -540,7 +705,7 @@ func (s *Service) DeleteByThread(ctx context.Context, threadID string) error {
 		return err
 	}
 	s.forgetRuns(row.ID)
-	s.changed(ctx, threadID)
+	s.changed(ctx, row.ID, threadID)
 	return nil
 }
 
@@ -556,6 +721,22 @@ func (s *Service) forgetRuns(scheduleID string) {
 			delete(s.pending, runID)
 			if s.open[d.threadID] == runID {
 				delete(s.open, d.threadID)
+			}
+		}
+	}
+	for runID, sid := range s.tagged {
+		if sid == scheduleID {
+			delete(s.tagged, runID)
+		}
+	}
+	for runID, rr := range s.recovered {
+		if rr.scheduleID == scheduleID {
+			if rr.stop != nil {
+				rr.stop()
+			}
+			delete(s.recovered, runID)
+			if s.open[rr.threadID] == runID {
+				delete(s.open, rr.threadID)
 			}
 		}
 	}
@@ -592,7 +773,7 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) (apig
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if enabled && !row.Enabled {
-			if err := checkLimit(ctx, q); err != nil {
+			if err := checkLimit(ctx, q, row.CreatedBy); err != nil {
 				return err
 			}
 		}
@@ -601,7 +782,7 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) (apig
 	if err != nil {
 		return apigen.Schedule{}, err
 	}
-	s.changed(ctx, deref(row.ThreadID))
+	s.changed(ctx, id, deref(row.ThreadID))
 	return s.Get(ctx, id)
 }
 
@@ -688,12 +869,20 @@ func (s *Service) Preview(in Input) ([]int64, error) {
 	return out, nil
 }
 
-// changed 在定义变化后刷新线程摘要（线程内定时）并重新上定时器。
-func (s *Service) changed(ctx context.Context, threadID string) {
+// changed 在定义变化后刷新线程摘要（线程内定时）、重新上定时器并推送失效通知。调用方持有 loopMu、不持 mu。
+func (s *Service) changed(ctx context.Context, scheduleID, threadID string) {
 	if threadID != "" {
 		s.th.Publish(ctx, threadID)
 	}
-	s.arm(ctx)
+	s.armLocked(ctx)
+	s.notifyChanged(scheduleID)
+}
+
+// notifyChanged 推送「某个定时的定义或运行记录变了」（契约 C7.2）。不得持 mu 调用。
+func (s *Service) notifyChanged(scheduleID string) {
+	if s.cfg.Changed != nil && scheduleID != "" {
+		s.cfg.Changed(scheduleID)
+	}
 }
 
 // ---- 转换 ----
