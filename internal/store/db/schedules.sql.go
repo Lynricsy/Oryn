@@ -39,6 +39,16 @@ func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams
 	return err
 }
 
+const clearSpaceSchedules = `-- name: ClearSpaceSchedules :exec
+
+`
+
+// 删除 Space 时把挂在它上面的 new_thread 定时改回「无 Space」（space_id 无外键，由代码清理）?1
+func (q *Queries) ClearSpaceSchedules(ctx context.Context, spaceID *string) error {
+	_, err := q.db.ExecContext(ctx, clearSpaceSchedules, spaceID)
+	return err
+}
+
 const countEnabledSchedules = `-- name: CountEnabledSchedules :one
 SELECT COUNT(*) FROM schedules WHERE enabled = 1
 `
