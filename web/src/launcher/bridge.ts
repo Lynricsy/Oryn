@@ -105,11 +105,48 @@ function isCancel(e: unknown): boolean {
 	return /cancel/i.test(s);
 }
 
+/** 壳的返回键监听（`withGlobalTauri` 的 `__TAURI__.app.onBackButtonPress`）注册后的句柄。 */
+interface BackListener {
+	unregister(): Promise<void>;
+}
+type OnBackButtonPress = (handler: () => void) => Promise<BackListener>;
+
+/** 取 `__TAURI__.app.onBackButtonPress`；旧壳或桌面没有时 null。 */
+function backButton(win: Window): OnBackButtonPress | null {
+	const g = win.__TAURI__;
+	const app = g && "app" in g ? g.app : null;
+	if (!app || typeof app !== "object" || !("onBackButtonPress" in app))
+		return null;
+	const fn = app.onBackButtonPress;
+	// 运行时只能确认是函数，签名以 @tauri-apps/api 的 app.onBackButtonPress 为准
+	return typeof fn === "function" ? (fn as OnBackButtonPress) : null;
+}
+
+/**
+ * 全屏扫码期间接管返回键：只取消扫码（插件随即以 cancelled 拒绝 scan），App 不退出。
+ * 有监听时壳的 AppPlugin 不再走默认的「后退或退出」；注册失败就照常扫码。
+ */
+async function holdBackButton(win: Window): Promise<BackListener | null> {
+	const on = backButton(win);
+	if (!on) return null;
+	try {
+		return await on(() => {
+			invoke("plugin:barcode-scanner|cancel").catch((e) =>
+				console.warn("[launcher] scan cancel failed", e),
+			);
+		});
+	} catch (e) {
+		console.warn("[launcher] back button listener failed", e);
+		return null;
+	}
+}
+
 /**
  * 扫一个二维码：先查权限，非 granted 就申请（未授权时 scan 会直接拒绝），仍拒绝 → denied；
- * 授权后全屏扫描只认 QR_CODE。用户取消 → cancelled，其它拒绝 → failed。
+ * 授权后全屏扫描只认 QR_CODE。用户取消（含扫码中按返回键）→ cancelled，其它拒绝 → failed。
+ * 扫码期间返回键只取消扫码；结束（成功 / 取消 / 出错）后解除，返回键恢复原行为。
  */
-export async function scanQr(): Promise<ScanResult> {
+export async function scanQr(win: Window = window): Promise<ScanResult> {
 	try {
 		let perm = permissionOf(
 			await invoke<unknown>("plugin:barcode-scanner|check_permissions"),
@@ -122,6 +159,7 @@ export async function scanQr(): Promise<ScanResult> {
 	} catch (error) {
 		return { kind: "failed", error };
 	}
+	const back = await holdBackButton(win);
 	try {
 		const r = await invoke<{ content?: unknown } | null>(
 			"plugin:barcode-scanner|scan",
@@ -131,5 +169,11 @@ export async function scanQr(): Promise<ScanResult> {
 		return content ? { kind: "ok", content } : { kind: "cancelled" };
 	} catch (error) {
 		return isCancel(error) ? { kind: "cancelled" } : { kind: "failed", error };
+	} finally {
+		await back
+			?.unregister()
+			.catch((e) =>
+				console.warn("[launcher] back button unregister failed", e),
+			);
 	}
 }

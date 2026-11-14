@@ -118,6 +118,9 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
             let Some(d) = host::desktop(&loader) else {
                 return;
             };
+            // 有页面加载事件 = 主 WebView 已建好，此后的 navigate 不会再被丢弃
+            #[cfg(mobile)]
+            d.webview_up.open();
             match payload.event() {
                 // 主框架开始加载任何页面（回连接页、兑换跳转、用户刷新）都先清掉就绪标志：
                 // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面

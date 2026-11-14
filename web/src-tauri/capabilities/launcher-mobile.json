@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "launcher-mobile",
-  "description": "内置连接页的移动端追加：同步系统栏颜色、扫描含服务器地址的配对二维码。只给本地连接页，远程页面拿不到",
+  "description": "内置连接页的移动端追加：同步系统栏颜色、扫描含服务器地址的配对二维码（扫码期间接管返回键以取消扫码）。只给本地连接页，远程页面拿不到",
   "windows": ["main"],
   "local": true,
   "platforms": ["android", "iOS"],
@@ -11,6 +11,8 @@
     "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-check-permissions",
     "barcode-scanner:allow-request-permissions",
-    "barcode-scanner:allow-open-app-settings"
+    "barcode-scanner:allow-open-app-settings",
+    "core:app:allow-register-listener",
+    "core:app:allow-remove-listener"
   ]
 }

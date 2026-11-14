@@ -1,5 +1,5 @@
 /**
- * 线程页布局（M7 4.2 / 4.3）：窄屏转录与面板各标签是同级标签（没有右抽屉），切走时转录纸面 hidden 但保持挂载；
+ * 线程页布局（M7 4.2 / 4.3）：窄屏转录与面板各标签是同级标签（没有右抽屉），切走时转录纸面透明、inert 但保持挂载与布局；
  * expanded 三栏不变；折叠屏双段视口左段转录、右段面板常驻；compact 下输入坞托盘底角与屏幕圆角同心。
  * 转录、输入坞各节、页头与面板内容换成桩，只看页面自己的布局；标签条用真的 `ThreadTabStrip`。
  */
@@ -137,7 +137,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(screen.queryByTestId("right-panel")).toBeNull();
 	});
 
-	it("点终端：转录纸面 hidden 但保持挂载、面板作为同级页出现、没有抽屉遮罩；切回 agent 后还是同一个转录", () => {
+	it("点终端：转录纸面 inert（透明、仍在布局）且保持挂载、面板作为同级页出现、没有抽屉遮罩；切回 agent 后还是同一个转录", () => {
 		renderPage(390);
 		const transcript = screen.getByTestId("transcript");
 		fireEvent.click(
@@ -147,7 +147,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 			threadTab: "terminal",
 			panelTab: "terminal",
 		});
-		expect(pane()).toHaveClass("hidden");
+		expect(pane()).toHaveAttribute("inert");
 		expect(screen.getByTestId("transcript")).toBe(transcript);
 		const panel = screen.getByTestId("right-panel");
 		expect(panel).toHaveAttribute("data-peer", "true");
@@ -157,7 +157,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(screen.queryByTestId("thread-tabs")).toBeNull();
 
 		act(() => uiStore.getState().setThreadTab("agent"));
-		expect(pane()).not.toHaveClass("hidden");
+		expect(pane()).not.toHaveAttribute("inert");
 		expect(screen.getByTestId("transcript")).toBe(transcript);
 		expect(screen.queryByTestId("right-panel")).toBeNull();
 		expect(screen.getByTestId("thread-tabs")).toBeInTheDocument();
@@ -172,14 +172,14 @@ describe("ThreadPage 窄屏同级标签", () => {
 			ui.setPanelTab("terminal");
 		});
 		expect(uiStore.getState().threadTab).toBe("terminal");
-		expect(pane()).toHaveClass("hidden");
+		expect(pane()).toHaveAttribute("inert");
 	});
 
 	it("进入线程回到 agent 标签", () => {
 		uiStore.setState({ threadTab: "files", panelTab: "files" });
 		renderPage(390);
 		expect(uiStore.getState().threadTab).toBe("agent");
-		expect(pane()).not.toHaveClass("hidden");
+		expect(pane()).not.toHaveAttribute("inert");
 	});
 
 	it("compact 下输入坞托盘底角与屏幕圆角同心，medium 不贴边不加", () => {

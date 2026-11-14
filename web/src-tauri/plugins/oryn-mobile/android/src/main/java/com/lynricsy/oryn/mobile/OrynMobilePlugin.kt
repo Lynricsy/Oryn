@@ -426,7 +426,10 @@ class OrynMobilePlugin(private val activity: Activity) : Plugin(activity) {
       EventLog.log(activity, "download.skipped", mapOf("scheme" to scheme))
       return
     }
-    val name = ShareIntake.sanitizeFileName(URLUtil.guessFileName(url, contentDisposition, mimeType))
+    // URLUtil 不认 RFC 6266 的 filename*（orynd 附件只发它），先自己解析
+    val name = ShareIntake.sanitizeFileName(
+      ContentDisposition.fileName(contentDisposition) ?: URLUtil.guessFileName(url, contentDisposition, mimeType),
+    )
     try {
       val req = DownloadManager.Request(uri)
       CookieManager.getInstance().getCookie(url)?.let { req.addRequestHeader("Cookie", it) }

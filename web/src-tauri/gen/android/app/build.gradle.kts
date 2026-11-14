@@ -132,6 +132,13 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     "gmsImplementation"("com.google.firebase:firebase-messaging:26.0.2")
+    // tauri-plugin-barcode-scanner 2.5.3 钉的 CameraX 1.5.1 遇到不认识的动态范围档位（Android 17 相机报的 8192）时
+    // bindToLifecycle 抛 NPE，插件吞掉异常、相机永远不开（扫码页黑屏）；1.6 起未知档位只告警跳过。只抬下限，不改插件
+    constraints {
+        for (m in listOf("camera-core", "camera-camera2", "camera-lifecycle", "camera-view")) {
+            implementation("androidx.camera:$m:1.6.2")
+        }
+    }
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

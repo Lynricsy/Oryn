@@ -250,6 +250,8 @@ export function ThreadScreen({
 	const topInset = peer || subheader ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
 	const showPanelColumn = expanded && panelOpen && !coordinator;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
+	/** 转录被面板标签或最大化面板挡住（保持挂载、仍参与布局，见下面纸面的注释）。 */
+	const away = panelFull || !onAgent;
 	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
 	const firstUi = pendingUi[0];
@@ -287,16 +289,20 @@ export function ThreadScreen({
 	}, [morph]);
 
 	return (
-		<div className="flex h-full min-w-0 flex-1">
+		<div className="relative flex h-full min-w-0 flex-1">
 			{/*
 			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
 			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。
-			 * 外层只管布局：最大化面板或窄屏切到面板标签时 hidden（保持挂载），双段视口里固定为左段宽。
+			 * 外层只管布局：最大化面板或窄屏切到面板标签时「切走」（保持挂载），双段视口里固定为左段宽。
+			 * 切走不用 display:none：那会让 react-virtual 把在屏行测成 0、总高缩水，恢复显示时滚动偏移被钳住、
+			 * 再被测高补偿推走（M7 A9：阅读位置漂移几百到上千像素）。改为叠在原处、仍参与布局但透明且 inert，
+			 * 行高与滚动偏移原样保留；贴底时新消息照常跟随。
 			 */}
 			<div
 				data-testid="transcript-pane"
 				data-pane={dual ? "primary" : undefined}
-				className={`relative h-full min-w-0 ${dual ? "" : "flex-1"} ${panelFull || !onAgent ? "hidden" : "flex"}`}
+				inert={away}
+				className={`h-full min-w-0 ${dual ? "" : "flex-1"} flex ${away ? "pointer-events-none absolute inset-0 opacity-0" : "relative"}`}
 				style={dual ? { width: segments.left, flex: "none" } : undefined}
 			>
 				<Sheet

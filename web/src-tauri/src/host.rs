@@ -48,6 +48,9 @@ pub struct Desktop {
     /// 应用版本：Tauri 配置的 `package_info().version`（可被 `--config` 覆盖，更新器比较的就是它）。
     pub version: String,
     pub notifier: Notifier,
+    /// 主 WebView 已建好（移动端会话启动前要等它，见 [`crate::mobile_logic::WebviewGate`]）。
+    #[cfg(mobile)]
+    pub webview_up: crate::mobile_logic::WebviewGate,
     #[cfg(desktop)]
     visible: AtomicBool,
     /// 托盘可用；不可用时本次运行关窗即退出。
@@ -88,6 +91,8 @@ impl Desktop {
             smoke,
             version,
             notifier: Notifier::default(),
+            #[cfg(mobile)]
+            webview_up: Default::default(),
             #[cfg(desktop)]
             visible: AtomicBool::new(true),
             #[cfg(desktop)]
@@ -537,6 +542,9 @@ type Res<T> = Result<T, String>;
 
 #[tauri::command]
 pub async fn launcher_state(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<LauncherInfo> {
+    // 连接页的脚本在跑 = WebView 已建好（首个页面加载事件之外的兜底）
+    #[cfg(mobile)]
+    d.webview_up.open();
     let info = {
         let core = d.core.lock().await;
         LauncherInfo {

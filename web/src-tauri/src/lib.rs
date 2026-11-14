@@ -426,6 +426,8 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
 
     let start = d.clone();
     tauri::async_runtime::spawn(async move {
+        // WebView 建好之前的 navigate 会被丢弃：先等它，再按已存令牌进入应用
+        start.webview_up.wait().await;
         let next = start.core.lock().await.start(None).await;
         host::schedule(start, next);
     });

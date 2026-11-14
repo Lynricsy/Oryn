@@ -10,7 +10,7 @@
  * 偶数端口启动它。其它设备（本机另有一个无关的 emulator-5554）不安装、不改动、不关闭；所有 adb 命令都带 `-s <serial>`。
  *
  * 观察面：
- *   事件  = App 的事件日志 `cache/events.jsonl`（debug 包，`adb exec-out run-as com.lynricsy.oryn cat …`；Rust 与 Kotlin 同写一个文件）；
+ *   事件  = App 的事件日志 `cache/events.jsonl`（debug 包，`adb shell -T run-as com.lynricsy.oryn sh` 经 stdin 读；Rust 与 Kotlin 同写一个文件）；
  *   DOM   = 经 CDP 在 WebView 里求值（playwright-core 的 `_android` → `device.webView({pkg})`，仅 debug 包）；
  *   界面  = `uiautomator dump` + `input tap`（不装 playwright 的驱动 APK）；
  *   服务端 = REST（设备令牌 `.dev/credentials.json`；批准配对 / 吊销用 `orynd admin create-web-session` 现签的网页会话）与 SQLite。
@@ -25,7 +25,7 @@
  *     `push.fcm.service_account_secret: fcm/service-account` 且已 `./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json`；
  *     模拟器镜像带 Google Play 服务且能连外网。
  *
- * 环境变量：ORYN_URL（默认 http://localhost:7600）、ORYN_ROOT、ORYN_TOKEN、M7_APK、M7_GMS_APK、M7_NTFY_APK、M7_KEYSTORE_PASSWORD、
+ * 环境变量：ORYN_URL（默认 http://localhost:7600）、ORYN_ROOT、ORYN_TOKEN、ORYND_CONFIG（默认 dev/orynd.yaml）、M7_APK、M7_GMS_APK、M7_NTFY_APK、M7_KEYSTORE_PASSWORD、
  *   M7_KEY_ALIAS、M7_OUT（结果目录，默认 /tmp/oryn-m7-accept/<run>）、M7_THREAD（复用的线程；缺省用 .dev/m7.thread，没有则新建）。
  *
  * 场景之间的依赖：A3–A18、A22 需要已配对（`--only` 单跑时自动先配对，不做 A2 的断言）；A6–A8 共用 A6 启用的 UnifiedPush；
@@ -59,6 +59,8 @@ const TOKEN =
 const DB = `${ROOT}/.dev/data/oryn.db`;
 const ORYN = `${ROOT}/bin/oryn`;
 const ORYND = `${ROOT}/bin/orynd`;
+/** `orynd admin` 读的配置：须与正在跑的 bin/orynd 相符（源码里新加了配置键而二进制还没重建时，指向一份去掉新键的副本）。 */
+const ORYND_CONFIG = process.env.ORYND_CONFIG ?? "dev/orynd.yaml";
 const PKG = "com.lynricsy.oryn";
 const ACTIVITY = `${PKG}/.MainActivity`;
 const NTFY_PKG = "io.heckel.ntfy";
@@ -71,6 +73,12 @@ const APK =
 const GMS_APK = process.env.M7_GMS_APK ?? `${ROOT}/.dev/m7/oryn-gms-debug.apk`;
 const RELEASE_APK = `${ROOT}/web/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`;
 const KEYSTORE = `${ROOT}/.dev/android-release.jks`;
+/** 宿主命令集版本，以壳的 `host::BRIDGE` 为准（M7 = 2，M6.1 自绘标题栏起 = 3）。 */
+const BRIDGE = Number(
+	readFileSync(`${ROOT}/web/src-tauri/src/host.rs`, "utf8").match(
+		/pub const BRIDGE: u32 = (\d+);/,
+	)?.[1],
+);
 const RUN = Math.random().toString(36).slice(2, 6);
 const OUT = process.env.M7_OUT ?? `/tmp/oryn-m7-accept/${RUN}`;
 const SDK = process.env.ANDROID_HOME ?? "/opt/android-sdk";
@@ -131,8 +139,13 @@ const adb = (args: string, timeoutMs?: number) =>
 /** 设备上的 shell 命令（整条命令作为一个参数传给 adb shell）。 */
 const ash = (cmd: string, timeoutMs?: number) =>
 	adb(`shell ${q(cmd)}`, timeoutMs);
-/** 以 App 身份在其数据目录里跑命令（debug 包）。 */
-const runAs = (cmd: string) => adb(`exec-out run-as ${PKG} sh -c ${q(q(cmd))}`);
+/**
+ * 以 App 身份在其数据目录里跑命令（debug 包）。命令走 stdin 交给设备上的 sh，不经参数拼接：
+ * adb 37 的 `exec-out` 会逐个转义参数（旧版只按空格拼接），任何「sh -c + 引号」写法都只对其中一种版本成立。
+ * `shell -T` 不分配 pty，stdout 字节原样、stderr 分开。
+ */
+const runAs = (cmd: string) =>
+	sh(`${q(ADB)} -s ${SERIAL} shell -T run-as ${PKG} sh`, { stdin: cmd });
 
 async function waitFor<T>(
 	what: string,
@@ -215,7 +228,7 @@ let WEB = "";
 function webApi(method: string, path: string, body?: unknown) {
 	if (!WEB)
 		WEB = must(
-			`${q(ORYND)} --config dev/orynd.yaml admin create-web-session --user-agent m7-accept`,
+			`${q(ORYND)} --config ${q(ORYND_CONFIG)} admin create-web-session --user-agent m7-accept`,
 		).stdout;
 	return req(method, path, { Cookie: `__Host-oryn_session=${WEB}` }, body);
 }
@@ -316,6 +329,27 @@ async function page(timeoutMs = 30_000): Promise<Page> {
 	return PAGE;
 }
 
+/** playwright 的设备句柄：只留本 serial，其它设备的句柄立即关掉（只是断开 playwright，不动设备）。 */
+async function connectDevice(): Promise<AndroidDevice> {
+	const devices = await android.devices();
+	const found = devices.find((d) => d.serial() === SERIAL);
+	for (const d of devices) if (d !== found) await d.close();
+	if (!found) throw new Error(`playwright 找不到 ${SERIAL}`);
+	return found;
+}
+
+/**
+ * 断开 CDP：关掉设备句柄（连带全部 WebView 会话）与到设备 devtools 套接字的端口转发，换一个新句柄；下次 page() 重连。
+ * 挂着 DevTools 时 WebView 页面在后台也一直是 visible，观察后台行为前必须先断开。
+ */
+async function detachCdp() {
+	await DEVICE.close();
+	PAGE = null;
+	PAGE_PID = "";
+	adb("forward --remove-all");
+	DEVICE = await connectDevice();
+}
+
 async function domPath(): Promise<string> {
 	return (await page()).evaluate(() => location.pathname);
 }
@@ -341,6 +375,81 @@ function foreground(): string {
 	return m?.[1] ?? "";
 }
 const ours = () => foreground().startsWith(`${PKG}/`);
+
+/**
+ * `input text` 经过输入法：当前子类型是拼音这类非 ASCII 布局时，字母会被组成汉字（本机 AVD 的 Gboard 只启用了简体中文拼音）。
+ * 须在软键盘弹出后调用：先把 Gboard 的英语（美国）子类型加进已启用列表（只有一个子类型时 KEYCODE_LANGUAGE_SWITCH 无处可切），
+ * 再按 KEYCODE_LANGUAGE_SWITCH 轮换，直到当前子类型 `mIsAsciiCapable=true`。直接写 `selected_input_method_subtype` 不行：
+ * Gboard 不认外部改的选中项。返回轮换回原子类型并恢复已启用列表的函数。
+ */
+async function asciiIme(): Promise<() => Promise<void>> {
+	const latin =
+		"com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME";
+	const current = () =>
+		ash("settings get secure selected_input_method_subtype").stdout;
+	const isAscii = (hash: string) =>
+		new RegExp(`mIsAsciiCapable=true mSubtypeHashCode=${hash}\\b`).test(
+			ash("dumpsys input_method").stdout,
+		);
+	const cycleUntil = async (done: () => boolean) => {
+		for (let i = 0; i < 6 && !done(); i++) {
+			ash("input keyevent 204");
+			await sleep(1000);
+		}
+		return done();
+	};
+	const original = current();
+	if (isAscii(original)) return async () => {};
+	const enabled = ash("settings get secure enabled_input_methods").stdout;
+	const en = ash("dumpsys input_method").stdout.match(
+		/mSubtypeLocale=en_US [^\n]*mSubtypeMode=keyboard [^\n]*mSubtypeHashCode=(-?\d+)/,
+	)?.[1];
+	if (en && enabled.includes(latin)) {
+		const withEn = enabled
+			.split(":")
+			.map((e) =>
+				e.split(";")[0] === latin && !e.split(";").includes(en)
+					? `${e};${en}`
+					: e,
+			)
+			.join(":");
+		ash(`settings put secure enabled_input_methods ${q(withEn)}`);
+		await sleep(1000);
+	}
+	if (!(await cycleUntil(() => isAscii(current()))))
+		throw new Error(`输入法没有可切换的 ASCII 子类型（当前 ${current()}）`);
+	note(`输入法子类型 ${original} → ${current()}（ASCII）`);
+	return async () => {
+		await cycleUntil(() => current() === original);
+		ash(`settings put secure enabled_input_methods ${q(enabled)}`);
+	};
+}
+
+/**
+ * 等浏览器到前台并站稳：Chrome 先经 IntentDispatcher 跳板再开真正的页面（没走完首次运行时是 FirstRunActivity）。
+ * 跳板还在时就把本包拉回前台，随后的页面会再盖上来，`am start -W` 一直等不到本包显示而卡住。
+ */
+async function browserForeground(): Promise<string> {
+	return waitFor(
+		"浏览器到前台",
+		() => {
+			const fg = foreground();
+			return fg && !fg.startsWith(`${PKG}/`) && !fg.includes("IntentDispatcher")
+				? fg
+				: undefined;
+		},
+		15_000,
+	);
+}
+
+/**
+ * 模拟系统回收进程：以 App 身份 SIGKILL 自己。不用 force-stop（会把包置为 stopped，广播再也拉不起它）；
+ * 也不用 `am kill`（只杀缓存态进程，刚退到后台的「上一个应用」不在其列，会一直杀不掉）。
+ */
+function killApp() {
+	const pid = pidof();
+	if (pid) runAs(`kill -9 ${pid}`);
+}
 
 function launch() {
 	must(`${q(ADB)} -s ${SERIAL} shell am start -W -n ${ACTIVITY}`);
@@ -423,20 +532,32 @@ function webViewBounds(): [number, number, number, number] {
 	return n.bounds;
 }
 
-/** 以真实触摸点 DOM 元素（打开系统文件选择器 / 相机 / 软键盘需要用户手势）。 */
+/**
+ * 以真实触摸点 DOM 元素（打开系统文件选择器 / 相机 / 软键盘需要用户手势）。
+ * 进页面时的入场动画、软键盘收起都会移动布局：等元素位置连续两次量得一样再点，免得点到旁边的控件。
+ */
 async function touch(selector: string) {
 	const p = await page();
-	const r = await p.evaluate((s) => {
-		const el = document.querySelector(s);
-		if (!el) return null;
-		el.scrollIntoView({ block: "center" });
-		const b = el.getBoundingClientRect();
-		return {
-			x: b.left + b.width / 2,
-			y: b.top + b.height / 2,
-			dpr: devicePixelRatio,
-		};
-	}, selector);
+	const measure = () =>
+		p.evaluate((s) => {
+			const el = document.querySelector(s);
+			if (!el) return null;
+			el.scrollIntoView({ block: "center" });
+			const b = el.getBoundingClientRect();
+			return {
+				x: b.left + b.width / 2,
+				y: b.top + b.height / 2,
+				dpr: devicePixelRatio,
+			};
+		}, selector);
+	let r = await measure();
+	for (let i = 0; i < 15 && r; i++) {
+		await sleep(200);
+		const next = await measure();
+		const settled = next && next.x === r.x && next.y === r.y;
+		r = next;
+		if (settled) break;
+	}
 	if (!r) throw new Error(`DOM 里没有 ${selector}`);
 	const [l, t] = webViewBounds();
 	tapAt(l + r.x * r.dpr, t + r.y * r.dpr);
@@ -674,6 +795,9 @@ async function ensureNtfy() {
 		30_000,
 		1000,
 	);
+	// adbd 以 root 重启时丢掉全部 reverse 转发：两条都重新建
+	adb(`reverse tcp:${PORT} tcp:${PORT}`);
+	adb(`reverse tcp:${NTFY_PORT} tcp:${NTFY_PORT}`);
 	const dir = `/data/data/${NTFY_PKG}/shared_prefs`;
 	const file = `${dir}/MainPreferences.xml`;
 	const xml = `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <string name="DefaultBaseURL">http://localhost:${NTFY_PORT}</string>\n</map>\n`;
@@ -717,6 +841,10 @@ function aapt2(): string {
 
 function installDebug(apk = APK) {
 	if (!existsSync(apk)) throw new Error(`APK 不存在：${apk}`);
+	// 本包在前台时覆盖安装，系统（Android 16+ 的 PackageUpdateActivity）会在装完后把它重新拉起，
+	// 随后旧任务的 remove-task 超时会连带杀掉紧接着 `pm clear` + `am start` 起来的新进程（A1 偶发）。先退到桌面并停掉。
+	ash("input keyevent 3");
+	ash(`am force-stop ${PKG}`);
 	must(`${q(ADB)} -s ${SERIAL} install -r -g ${q(apk)}`, {
 		timeoutMs: 300_000,
 	});
@@ -732,18 +860,21 @@ scenario("A1", async () => {
 	const badging = must(`${q(`${bt}/aapt2`)} dump badging ${q(APK)}`).stdout;
 	const perms = must(`${q(`${bt}/aapt2`)} dump permissions ${q(APK)}`).stdout;
 	check(badging.includes(`package: name='${PKG}'`), `包名 ${PKG}`);
-	check(badging.includes("sdkVersion:'33'"), "sdkVersion:'33'");
+	// aapt2 输出 `minSdkVersion:'33'`（旧 aapt 是 `sdkVersion:'33'`）
+	check(/^(?:min)?[sS]dkVersion:'33'$/m.test(badging), "minSdkVersion:'33'");
 	check(badging.includes("targetSdkVersion:'37'"), "targetSdkVersion:'37'");
 	const has = (p: string) => perms.includes(`name='${p}'`);
 	for (const p of [
 		"android.permission.INTERNET",
 		"android.permission.POST_NOTIFICATIONS",
 		"android.permission.CAMERA",
+		// UnifiedPush connector 3.3.5 的清单自带；其 MessagingReceiver 收到每条推送都无条件 WakeLock.acquire，
+		// 去掉这条权限 = 收推送时 SecurityException。计划里「没有 WAKE_LOCK」写于选定 connector 之前，只对通知插件成立。
+		"android.permission.WAKE_LOCK",
 	])
 		check(has(p), `声明 ${p}`);
 	for (const p of [
 		"android.permission.RECEIVE_BOOT_COMPLETED",
-		"android.permission.WAKE_LOCK",
 		"android.permission.READ_EXTERNAL_STORAGE",
 		"android.permission.WRITE_EXTERNAL_STORAGE",
 		"android.permission.READ_MEDIA_IMAGES",
@@ -781,8 +912,7 @@ scenario("A2", async () => {
 	);
 	await p.click("[data-testid=launcher-open-browser]");
 	await ev("browser.open", { after });
-	await waitFor("浏览器到前台", () => !ours() && foreground(), 15_000);
-	note(`前台 ${foreground()}`);
+	note(`前台 ${await browserForeground()}`);
 	launch();
 	await approve(String(started.code));
 	const approved = await ev("pair.approved", { after, timeoutMs: 30_000 });
@@ -794,7 +924,7 @@ scenario("A2", async () => {
 	await ev("session.minted", { after, timeoutMs: 30_000 });
 	const ready = await ev("web.ready", { after, timeoutMs: 60_000 });
 	check(
-		ready.origin === ORIGIN && ready.bridge === 2,
+		ready.origin === ORIGIN && ready.bridge === BRIDGE,
 		`web.ready ${show(ready)}`,
 	);
 	DEVICE_ID = String(approved.deviceId);
@@ -974,7 +1104,7 @@ scenario("A7", async () => {
 	await sleep(2000);
 	ash("input keyevent 3");
 	await waitFor("回到桌面", () => !ours(), 10_000);
-	ash(`am kill ${PKG}`);
+	killApp();
 	await waitFor("进程已不在", () => !pidof(), 10_000);
 	note("pidof 为空");
 	const after = mark();
@@ -1072,11 +1202,39 @@ scenario("A9", async () => {
 		"标签顺序 agent, changes, files, terminal, …, info",
 	);
 	check((await p.$$(".fixed.inset-0.z-40")).length === 0, "没有抽屉遮罩");
-	const top0 = await p.evaluate(() => {
+	// 转录进页面后还会陆续渲染、测量（虚拟列表）：高度稳定后再定位，并读回定位后真正的 scrollTop，
+	// 否则切回前后的差来自内容变化，而不是切换标签
+	await waitFor(
+		"转录高度稳定",
+		async () => {
+			const hs: number[] = [];
+			for (let i = 0; i < 3; i++) {
+				hs.push(
+					await p.evaluate(
+						() =>
+							document.querySelector("[data-testid=transcript]")
+								?.scrollHeight ?? 0,
+					),
+				);
+				await sleep(500);
+			}
+			return hs[0] > 0 && hs.every((h) => h === hs[0]);
+		},
+		15_000,
+	);
+	// 用户往上翻：程序写 scrollTop 不算用户意图（贴底跟随会把它拉回底部），先给一个向上的滚轮
+	await p.evaluate(() => {
 		const t = document.querySelector<HTMLElement>("[data-testid=transcript]");
-		if (t) t.scrollTop = Math.max(0, t.scrollHeight / 2);
-		return t?.scrollTop ?? -1;
+		if (!t) return;
+		t.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+		t.scrollTop = Math.max(0, t.scrollHeight / 2);
 	});
+	await sleep(500);
+	const top0 = await p.evaluate(
+		() =>
+			document.querySelector<HTMLElement>("[data-testid=transcript]")
+				?.scrollTop ?? -1,
+	);
 	await p.click("[data-testid=thread-tabs] [data-panel-tab=terminal]");
 	await waitFor(
 		"转录隐藏、终端可见",
@@ -1089,7 +1247,10 @@ scenario("A9", async () => {
 					"[data-testid=terminal-panel]",
 				);
 				return (
-					!!t && t.offsetParent === null && !!term && term.offsetParent !== null
+					!!t &&
+					!t.checkVisibility({ opacityProperty: true }) &&
+					!!term &&
+					term.checkVisibility({ opacityProperty: true })
 				);
 			}),
 		10_000,
@@ -1103,10 +1264,22 @@ scenario("A9", async () => {
 					const t = document.querySelector<HTMLElement>(
 						"[data-testid=transcript]",
 					);
-					return t && t.offsetParent !== null ? t.scrollTop + 1 : 0;
+					return t?.checkVisibility({ opacityProperty: true })
+						? t.scrollTop + 1
+						: 0;
 				}),
 			10_000,
 		)) - 1;
+	check(
+		top0 <
+			(await p.evaluate(() => {
+				const t = document.querySelector<HTMLElement>(
+					"[data-testid=transcript]",
+				);
+				return t ? t.scrollHeight - t.clientHeight - 48 : 0;
+			})),
+		`翻到中间（scrollTop ${top0}）`,
+	);
 	check(Math.abs(top1 - top0) <= 2, `切回后 scrollTop ${top0} → ${top1}`);
 
 	ash("wm size 1400x2000 && wm density 320");
@@ -1188,13 +1361,23 @@ scenario("A11", async () => {
 	if (wv < 138) throw new Skip(`webview <138（${wv}）`);
 	await ensurePaired();
 	const T = await ensureThread();
-	launch();
-	await goto(`/t/${T}`);
-	ash(`cmd device_state state ${half}`);
-	const p = await page();
-	const r = await waitFor(
-		"两个 viewport segment",
-		() =>
+	// WebView 145 默认不向页面暴露 Viewport Segments（`window.viewport` 不存在、媒体查询不匹配，实测）；
+	// debug 包会读 WebView 命令行文件，用它打开 Blink 特性，验完恢复原文件
+	const flags = "/data/local/tmp/webview-command-line";
+	const prevFlags = ash(`cat ${flags} 2>/dev/null`).stdout;
+	ash(`echo '_ --enable-blink-features=ViewportSegments' > ${flags}`);
+	try {
+		ash(`am force-stop ${PKG}`);
+		const after = mark();
+		launch();
+		await ev("web.ready", { after, timeoutMs: 60_000 });
+		await goto(`/t/${T}`);
+		const p = await page();
+		check(
+			await p.evaluate(() => "viewport" in window),
+			"window.viewport 存在（WebView 命令行打开 ViewportSegments）",
+		);
+		const read = () =>
 			p.evaluate(() => {
 				const segs = (
 					window as unknown as { viewport?: { segments?: DOMRect[] } }
@@ -1214,20 +1397,52 @@ scenario("A11", async () => {
 					ar: a.right,
 					bl: b.left,
 				};
-			}),
-		20_000,
-	);
-	note(`segments ${JSON.stringify(r)}`);
-	check(r.attr === "2", 'html[data-segments="2"]');
-	check(r.ar <= r.s0r + 1, "primary 右边缘 ≤ 第一段右边缘");
-	check(r.bl >= r.s1l - 1, "secondary 左边缘 ≥ 第二段左边缘");
-	ash(`cmd device_state state ${open}`);
-	await waitFor(
-		"回到单段",
-		() => p.evaluate(() => document.documentElement.dataset.segments === "1"),
-		15_000,
-	);
-	ash("cmd device_state state reset");
+			});
+		ash(`cmd device_state state ${half}`);
+		let r = await waitFor(
+			"两个 viewport segment（半开姿态）",
+			read,
+			10_000,
+		).catch(() => null);
+		const cdp = r ? null : await p.context().newCDPSession(p);
+		if (cdp) {
+			// 计划「假设与预案」：半开姿态下 WebView 不报两段时，改用 CDP 注入一条竖向铰链验证布局
+			note(
+				"半开姿态下 WebView 只报 1 段（铰链没有传给页面）：改用 CDP Emulation.setDisplayFeaturesOverride 注入竖向铰链；姿态联动未验证",
+			);
+			ash(`cmd device_state state ${open}`);
+			const w = await p.evaluate(() => innerWidth);
+			await cdp.send("Emulation.setDisplayFeaturesOverride", {
+				features: [
+					{
+						orientation: "vertical",
+						offset: Math.round(w / 2) - 10,
+						maskLength: 20,
+					},
+				],
+			});
+			r = await waitFor("两个 viewport segment（CDP 铰链）", read, 10_000);
+		}
+		if (!r) throw new Error("没有两个 viewport segment");
+		note(`segments ${JSON.stringify(r)}`);
+		check(r.attr === "2", 'html[data-segments="2"]');
+		check(r.ar <= r.s0r + 1, "primary 右边缘 ≤ 第一段右边缘");
+		check(r.bl >= r.s1l - 1, "secondary 左边缘 ≥ 第二段左边缘");
+		if (cdp) await cdp.send("Emulation.clearDisplayFeaturesOverride");
+		else ash(`cmd device_state state ${open}`);
+		await waitFor(
+			"回到单段",
+			() => p.evaluate(() => document.documentElement.dataset.segments === "1"),
+			15_000,
+		);
+	} finally {
+		ash("cmd device_state state reset");
+		ash(
+			prevFlags
+				? `printf '%s\\n' ${q(prevFlags)} > ${flags}`
+				: `rm -f ${flags}`,
+		);
+	}
 });
 
 function insets(): { statusBottom: number; navTop: number; height: number } {
@@ -1298,6 +1513,9 @@ scenario("A13", async () => {
 			'button[aria-label="New terminal"], button[aria-label="新建终端"]',
 		);
 	await p.waitForSelector("[data-testid=terminal-view]", { timeout: 60_000 });
+	// 终端会话随线程保留：上一轮中途失败留下的 cat 会吞掉本轮输入，先清掉
+	const orb = threadRow(T)?.orb_id ?? "";
+	sh(`docker exec ${orb} pkill -x cat`);
 	await p.click("[data-testid=terminal-line-toggle]");
 	check(
 		(await p.getAttribute(
@@ -1306,16 +1524,21 @@ scenario("A13", async () => {
 		)) === "true",
 		"输入行已打开",
 	);
+	const marker = `m7-ok-${RUN}`;
+	await p.fill("[data-testid=terminal-line-input]", "");
 	await touch("[data-testid=terminal-line-input]");
 	await waitFor(
 		"软键盘弹出",
 		() => ash("dumpsys input_method").stdout.includes("mInputShown=true"),
 		10_000,
 	);
-	const marker = `m7-ok-${RUN}`;
-	ash(`input text ${q(`echo%s${marker}%s>/tmp/m7-term-${RUN}`)}`);
-	ash("input keyevent 66");
-	const orb = threadRow(T)?.orb_id ?? "";
+	const restoreIme = await asciiIme();
+	try {
+		ash(`input text ${q(`echo%s${marker}%s>/tmp/m7-term-${RUN}`)}`);
+		ash("input keyevent 66");
+	} finally {
+		await restoreIme();
+	}
 	await waitFor(
 		"终端命令执行",
 		() => sh(`docker exec ${orb} cat /tmp/m7-term-${RUN}`).stdout === marker,
@@ -1339,11 +1562,12 @@ scenario("A13", async () => {
 		kb.b <= kb.h,
 		`键盘弹出期间输入行 bottom ${kb.b} ≤ innerHeight ${kb.h}`,
 	);
-	await p.fill("[data-testid=terminal-line-input]", `cat # m7-${RUN}`);
+	// 第二个参数只是给 pgrep 认的标记（bash 会剥掉注释，`cat # …` 的命令行里只剩 cat）；cat 先读 stdin，直到被中断
+	await p.fill("[data-testid=terminal-line-input]", `cat - m7-cat-${RUN}`);
 	await p.press("[data-testid=terminal-line-input]", "Enter");
 	await waitFor(
 		"cat 在跑",
-		() => sh(`docker exec ${orb} pgrep -f 'cat # m7-${RUN}'`).code === 0,
+		() => sh(`docker exec ${orb} pgrep -f 'cat - m7-cat-${RUN}'`).code === 0,
 		10_000,
 	);
 	await p.click('button:has-text("Ctrl")');
@@ -1351,7 +1575,7 @@ scenario("A13", async () => {
 	await p.press("[data-testid=terminal-line-input]", "Enter");
 	await waitFor(
 		"cat 被中断",
-		() => sh(`docker exec ${orb} pgrep -f 'cat # m7-${RUN}'`).code !== 0,
+		() => sh(`docker exec ${orb} pgrep -f 'cat - m7-cat-${RUN}'`).code !== 0,
 		10_000,
 	);
 	note("Ctrl + c 中断了 cat");
@@ -1458,8 +1682,13 @@ scenario("A15", async () => {
 	const attBefore =
 		sql<{ n: number }>("select count(*) n from attachments")[0]?.n ?? 0;
 	after = mark();
+	// `am start` 不像 Instrumentation 那样把 EXTRA_STREAM 迁进 ClipData，--grant-read-uri-permission 只授 intent 的 data：
+	// 同一个 URI 也放进 -d，授权才落到它上面（真实 App 的分享由框架自动迁移）。授权方须是 shell：
+	// adbd 以 root 跑时（ensureNtfy 之后、或镜像默认）以 uid 0 发起的 MediaStore 授权会被静默拒绝，改经 `su shell`
+	const uri = `content://media/external/images/media/${id}`;
+	const asShell = ash("id -u").stdout === "0" ? "su shell " : "";
 	must(
-		`${q(ADB)} -s ${SERIAL} shell am start -a android.intent.action.SEND -t image/png --eu android.intent.extra.STREAM content://media/external/images/media/${id} --grant-read-uri-permission -n ${ACTIVITY}`,
+		`${q(ADB)} -s ${SERIAL} shell ${asShell}am start -a android.intent.action.SEND -t image/png -d ${uri} --eu android.intent.extra.STREAM ${uri} --grant-read-uri-permission -n ${ACTIVITY}`,
 	);
 	await ev("share.uploaded", {
 		after,
@@ -1501,11 +1730,13 @@ scenario("A16", async () => {
 		a.id = "m7-ext";
 		a.textContent = "m7 外链";
 		document.querySelector("[data-testid=transcript]")?.prepend(a);
+		// DOM 点击（宿主在 document 捕获阶段拦外链，与点在哪无关）：转录顶端在 compact 下压在浮动页头之下，
+		// 指针点击会被页头截走
+		a.click();
 	});
-	await p.click("#m7-ext");
 	const o = await ev("open.external", { after });
 	check(o.ok === true, "open.external.ok");
-	await waitFor("浏览器到前台", () => !ours(), 10_000);
+	note(`前台 ${await browserForeground()}`);
 	check(p.url() === url0, "WebView 的 URL 没变");
 	launch();
 
@@ -1525,8 +1756,8 @@ scenario("A16", async () => {
 		a.id = "m7-dl";
 		a.textContent = "m7 下载";
 		document.querySelector("[data-testid=transcript]")?.prepend(a);
+		a.click();
 	}, `/api/v1/attachments/${attId}/content`);
-	await p.click("#m7-dl");
 	await ev("download.enqueued", {
 		after: dlAfter,
 		where: (e) => e.name === name,
@@ -1546,15 +1777,65 @@ scenario("A17", async () => {
 	const T = await ensureThread();
 	launch();
 	await goto(`/t/${T}`);
-	const p = await page();
+	let p = await page();
+	// 挂着 DevTools（CDP）时 WebView 页面在后台也一直报 visible、不会挂起（实测），所以后台期间不能连着 CDP 观察：
+	// 页面里自己把 visibilityState / data-conn 的每次变化（设备时钟）记进 sessionStorage，断开 CDP 再退后台，回前台后重连读出
+	await p.evaluate(() => {
+		sessionStorage.m7conn = "[]";
+		const rec = () => {
+			const log = JSON.parse(sessionStorage.m7conn) as [
+				number,
+				string,
+				string,
+			][];
+			log.push([
+				Date.now(),
+				document.visibilityState,
+				document.documentElement.dataset.conn ?? "",
+			]);
+			sessionStorage.m7conn = JSON.stringify(log);
+		};
+		document.addEventListener("visibilitychange", rec);
+		new MutationObserver(rec).observe(document.documentElement, {
+			attributes: true,
+			attributeFilter: ["data-conn"],
+		});
+		rec();
+	});
+	await detachCdp();
 	ash("input keyevent 3");
 	await sleep(40_000);
-	const conn = await p.evaluate(() => document.documentElement.dataset.conn);
-	check(conn === "idle", `后台 40 秒 data-conn = ${conn}`);
-	const svc = ash(`dumpsys activity services ${PKG}`).stdout;
+	// WebView 的渲染进程以本包名下的隔离服务 org.chromium.content.app.SandboxedProcessService* 存在（任何 WebView App 都有），
+	// 不是本包声明的服务，不算。分发器投递推送时会短暂绑定 UnifiedPush connector 的 RaiseToForegroundService
+	// （dev 部署里其它线程的通知随时可能到）：连续 10 秒每 2 秒采样，只有每次都在的才算常驻服务
+	const services = () =>
+		new Set(
+			[
+				...ash(`dumpsys activity services ${PKG}`).stdout.matchAll(
+					/ServiceRecord\{[^}]* com\.lynricsy\.oryn\/([^ }]+)/g,
+				),
+			]
+				.map((m) => m[1])
+				.filter(
+					(c) =>
+						!c.startsWith("org.chromium.content.app.SandboxedProcessService"),
+				),
+		);
+	let steady = services();
+	const seen = new Set(steady);
+	for (let i = 0; i < 5; i++) {
+		await sleep(2000);
+		const now = services();
+		for (const c of now) seen.add(c);
+		steady = new Set([...steady].filter((c) => now.has(c)));
+	}
+	if (seen.size > steady.size)
+		note(
+			`采样中短暂出现过：${[...seen].filter((c) => !steady.has(c)).join(", ")}`,
+		);
 	check(
-		!/ServiceRecord\{[^}]*com\.lynricsy\.oryn/.test(svc),
-		"本包没有运行中的服务",
+		steady.size === 0,
+		`本包没有常驻的服务（${[...steady].join(", ") || "无"}）`,
 	);
 	const power = ash("dumpsys power").stdout;
 	const locks = power.split("Wake Locks:")[1]?.split("\n\n")[0] ?? "";
@@ -1563,10 +1844,29 @@ scenario("A17", async () => {
 	const before = await send(T, `只回复 ${marker}`);
 	await waitTurn(T, before);
 	launch();
+	p = await page();
 	await waitFor(
-		"回前台 data-conn=open",
+		"回前台后 data-conn=open",
 		() => p.evaluate(() => document.documentElement.dataset.conn === "open"),
-		5000,
+		15_000,
+	);
+	const log = JSON.parse(
+		await p.evaluate(() => sessionStorage.m7conn as string),
+	) as [number, string, string][];
+	note(
+		`变化 ${log.map(([t, v, c]) => `${t - log[0][0]}ms ${v}/${c}`).join("，")}`,
+	);
+	const hidden = log.find(([, v]) => v === "hidden")?.[0];
+	const shown = log.find(
+		([t, v]) => v === "visible" && hidden && t > hidden,
+	)?.[0];
+	if (!hidden || !shown) throw new Error("没有记到转入后台 / 回到前台");
+	const at40 = log.filter(([t]) => t <= hidden + 40_000).at(-1)?.[2];
+	check(at40 === "idle", `后台 40 秒 data-conn = ${at40}`);
+	const open = log.find(([t, , c]) => t >= shown && c === "open")?.[0];
+	check(
+		open !== undefined && open - shown <= 5000,
+		`回前台 ${open === undefined ? "?" : open - shown}ms 内 data-conn = open（≤ 5000）`,
 	);
 	await waitFor(
 		"后台期间的条目补齐",
@@ -1804,7 +2104,7 @@ scenario("A23", async () => {
 		)[0];
 		check(!!sub?.last_success_at, "服务端记录了 FCM 投递成功");
 
-		ash(`am kill ${PKG}`);
+		killApp();
 		await waitFor("进程已不在", () => !pidof(), 10_000);
 		evAfter = mark();
 		before = await send(T, "数到 3");
@@ -1834,12 +2134,19 @@ scenario("A20", async () => {
 	const text = await p.textContent("#webview-outdated");
 	note(`提示：${text}`);
 	check(/WebView/.test(text ?? ""), "内核 110 时插入提示");
-	const ui = uiDump().some(
-		(n) =>
-			n.text.includes("系统 WebView 版本过旧") ||
-			/WebView .*outdated|update Android System WebView/i.test(n.text),
+	// WebView 的无障碍树是按需建的：第一次 dump 时常常还没有网页里的节点，多 dump 几次
+	const hit = await waitFor(
+		"界面层读得到提示",
+		() =>
+			uiDump().find(
+				(n) =>
+					n.text.includes("系统 WebView 版本过旧") ||
+					/WebView .*outdated|update Android System WebView/i.test(n.text),
+			),
+		15_000,
+		1000,
 	);
-	check(ui, "界面层读得到提示");
+	note(`✓ 界面层读得到提示：${hit.text}`);
 	await cdp.send("Emulation.setUserAgentOverride", { userAgent: ua(111) });
 	await p.reload();
 	await sleep(3000);
@@ -1954,11 +2261,7 @@ installDebug(APK);
 grantAll();
 const wv = webviewVersion();
 console.log(`  WebView 主版本 ${wv}`);
-const devices = await android.devices();
-const found = devices.find((d) => d.serial() === SERIAL);
-for (const d of devices) if (d !== found) await d.close();
-if (!found) throw new Error(`playwright 找不到 ${SERIAL}`);
-DEVICE = found;
+DEVICE = await connectDevice();
 
 const health = await req("GET", "/healthz", {});
 if (health.status !== 200)

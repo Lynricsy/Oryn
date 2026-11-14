@@ -67,6 +67,27 @@ pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// 主 WebView 已建好的闸门。移动端的 WebView 要等 Activity 就绪后才异步创建，在此之前发出的
+/// `navigate` 会被 wry 静默丢弃（`main_pipe.rs` 的 `LoadUrl` 找不到 webview 就什么也不做）：
+/// 冷启动时若兑换会话比 Activity 快，主框架会留在随后加载的连接页上，看门狗到点报 `web_timeout`。
+/// 会话启动先等这道闸门；首个页面加载事件或连接页的 `launcher_state` 打开它。
+#[derive(Default)]
+pub struct WebviewGate(tokio::sync::watch::Sender<bool>);
+
+impl WebviewGate {
+    /// 打开闸门（幂等）。
+    pub fn open(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// 等到闸门打开；已打开则立即返回。
+    pub async fn wait(&self) {
+        let mut rx = self.0.subscribe();
+        // 发送端就在 self 里，不会先于接收端关闭
+        let _ = rx.wait_for(|up| *up).await;
+    }
+}
+
 // ---------------------------------------------------------------- 推送状态
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -565,6 +586,28 @@ mod tests {
 
     const LAUNCHER: &str = "http://tauri.localhost";
     const SERVER: &str = "https://oryn.example.com";
+
+    #[tokio::test]
+    async fn webview_gate_holds_until_open() {
+        let gate = Arc::new(WebviewGate::default());
+        let waiter = {
+            let g = gate.clone();
+            tokio::spawn(async move { g.wait().await })
+        };
+        // 当前线程运行时：让出一次，等待方先跑到挂起点
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished(), "未打开前不得放行");
+        gate.open();
+        tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("打开后放行")
+            .unwrap();
+        // 已打开：之后的等待立即返回；重复打开无害
+        gate.open();
+        tokio::time::timeout(std::time::Duration::from_secs(5), gate.wait())
+            .await
+            .expect("已打开的闸门立即放行");
+    }
 
     #[test]
     fn nav_table() {

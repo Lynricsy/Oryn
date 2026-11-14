@@ -64,7 +64,7 @@ apksigner verify --print-certs Oryn_<版本>_android-foss.apk | grep 'SHA-256'
 
 ### 国产 ROM 与省电
 
-MIUI / HyperOS、ColorOS、OriginOS、EMUI / HarmonyOS 等会在后台杀掉分发器。请对 ntfy（FCM 时对 Oryn 本身影响较小）开启「自启动」、把电池策略设为「无限制」、在多任务界面锁定。Oryn App 本身不常驻后台、不持有唤醒锁：转到后台 30 秒后断开实时连接，回到前台立即重连并补齐。
+MIUI / HyperOS、ColorOS、OriginOS、EMUI / HarmonyOS 等会在后台杀掉分发器。请对 ntfy（FCM 时对 Oryn 本身影响较小）开启「自启动」、把电池策略设为「无限制」、在多任务界面锁定。Oryn App 本身不常驻后台、不持有唤醒锁：转到后台 30 秒后断开实时连接，回到前台立即重连并补齐。清单里的 `WAKE_LOCK` 权限来自 UnifiedPush connector：它在处理每条推送的那一刻短暂持有、处理完即释放，去掉这条权限会让收推送时抛 `SecurityException`。
 
 ## 其它能力
 
@@ -107,6 +107,7 @@ make android DIST=foss                                      # 仓库根目录：
 - 依赖现有 dev 部署（`make dev`、provider、至少一个可用模型），App 经 `adb reverse tcp:7600` 连 `http://localhost:7600`。
 - 设备只按 AVD 名选择（默认 `oryn-m7`）：脚本用 `adb -s emulator-N emu avd name` 找到对应的模拟器，没有就以空闲端口启动它；本机其它模拟器（如无关的 `emulator-5554`）不会被安装、改动或关闭。
 - UnifiedPush 场景用本机 ntfy 容器（`binwiederhier/ntfy:v2.37.2`，`127.0.0.1:7680`）与 `.dev/m7/` 里的 ntfy APK。
+- A11（Viewport Segments）只能在折叠 AVD 上验证：默认 AVD 上它报 SKIP，另跑 `bun run accept:m7 -- --only A11 --avd oryn-m7-fold`。
 - FCM 场景（A23）需要 gms debug 包（`M7_GMS_APK`，默认 `.dev/m7/oryn-gms-debug.apk`）、带 Google Play 服务且能出网的模拟器镜像，以及 dev 部署里已写入 `fcm/service-account` 密钥（`dev/orynd.yaml` 已引用该名字）：`./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json`。
 - release 包场景（A19）需要 `.dev/android-release.jks` 与 `M7_KEYSTORE_PASSWORD`，并核对上文记录的证书指纹。
 
