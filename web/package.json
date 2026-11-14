@@ -21,6 +21,7 @@
     "accept:m5": "bun scripts/m5-accept.ts",
     "accept:m6": "dbus-run-session -- xvfb-run -a -s '-screen 0 1440x900x24' bun scripts/m6-accept.ts",
     "accept:m7": "bun scripts/m7-accept.ts",
+    "accept:m8": "bun scripts/m8-accept.ts",
     "tauri": "tauri"
   },
   "dependencies": {
