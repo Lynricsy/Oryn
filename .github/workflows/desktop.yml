@@ -1,10 +1,14 @@
 name: desktop
 
 # 桌面 App（Tauri 2）的构建与发布（M6 计划 8.2）。
-# - PR / 手动触发：三平台构建 + 冒烟启动，产物上传为 workflow artifacts，不发布。
-# - 推送 tag `desktop-v<版本>`（须与 web/src-tauri/Cargo.toml 的 version 完全一致）：建草稿 Release → 三平台构建并上传资产
-#   → 生成 updater 清单 latest.json → 发布；非预发布版本同时刷新滚动发布 `desktop-updater` 下的 latest.json（更新通道）。
+# - PR / 手动触发：`build` job 三平台构建 + 冒烟启动，产物上传为 workflow artifacts，不发布、不签名、拿不到任何签名 secret。
+# - 推送 tag `desktop-v<版本>`（须与 web/src-tauri/Cargo.toml 的 version 完全一致）：`release` 建草稿 Release →
+#   `build-release` 三平台构建并上传资产 → `publish` 生成 updater 清单 latest.json → 发布；非预发布版本同时刷新
+#   滚动发布 `desktop-updater` 下的 latest.json（更新通道）。
 # 签名均按 secrets 有无自动降级：没有更新私钥 → 不产出 .sig 与 latest.json；没有 Apple 证书 → macOS ad-hoc 签名。
+#
+# 供应链约束：第三方 action 一律钉到完整提交 SHA（行尾注释为对应版本）；checkout 不保留凭据；
+# 签名私钥与 Apple 凭据从不写进 job 级环境文件或磁盘上的持久位置，只出现在构建那一步的 env 里，且只在 tag 发布时取值。
 on:
   push:
     tags: ["desktop-v*"]
@@ -16,8 +20,7 @@ on:
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -27,17 +30,15 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.meta.outputs.version }}
       is_release: ${{ steps.meta.outputs.is_release }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
-      release_id: ${{ steps.release.outputs.release_id }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: 读取版本并校验 tag
         id: meta
         shell: bash
@@ -49,7 +50,7 @@ jobs:
             exit 1
           fi
           is_release=false
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
             if [[ "$GITHUB_REF_NAME" != "desktop-v$version" ]]; then
               echo "::error::tag $GITHUB_REF_NAME 与 Cargo.toml 版本 $version 不一致（应为 desktop-v$version）"
               exit 1
@@ -64,13 +65,24 @@ jobs:
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
           echo "版本 $version；发布：$is_release；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.is_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
       - name: 创建草稿 Release
         id: release
-        if: steps.meta.outputs.is_release == 'true'
         shell: bash
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
-          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
           # 重跑时 Release 已存在，直接复用
@@ -81,11 +93,15 @@ jobs:
           fi
           echo "release_id=$(gh release view "$GITHUB_REF_NAME" --json databaseId -q .databaseId)" >> "$GITHUB_OUTPUT"
 
+  # PR / 手动触发的构建：只读令牌，不签名。与 build-release 共用同一份 strategy 与 steps（YAML 锚点），
+  # 两者只差权限与触发条件——job 级 permissions 不能按表达式切换，所以拆成两个 job。
   build:
-    needs: prepare
+    needs: [prepare, release]
+    # release 在非发布运行中被跳过；!cancelled() 让本 job 不因此连带跳过
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.is_release != 'true' }}
     permissions:
-      contents: write
-    strategy:
+      contents: read
+    strategy: &build-strategy
       fail-fast: false
       matrix:
         include:
@@ -103,14 +119,10 @@ jobs:
             targets: "aarch64-apple-darwin,x86_64-apple-darwin"
     name: build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    env:
-      # 只是「有没有」的布尔，secret 本身只在需要它的步骤里展开
-      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
-      HAS_APPLE_API: ${{ secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
-      HAS_APPLE_ID: ${{ secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
-    steps:
-      - uses: actions/checkout@v7
+    steps: &build-steps
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: 安装 Linux 构建依赖
         if: matrix.platform == 'linux'
@@ -118,15 +130,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf xdg-utils xvfb
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 分支，2026-10-16
         with:
+          toolchain: stable
           targets: ${{ matrix.targets }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: "web/src-tauri -> target"
 
@@ -134,64 +147,48 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
 
+      # 这一步只拿「有没有」的布尔（非发布运行恒为 false），决定签名方式并生成构建参数与包装脚本；不接触 secret 的值
       - name: 签名配置
+        id: sign
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
           MATRIX_ARGS: ${{ matrix.args }}
-          S_TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          S_TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          S_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          S_APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          S_APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          S_APPLE_ID: ${{ secrets.APPLE_ID }}
-          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HAS_UPDATER_KEY: ${{ needs.prepare.outputs.is_release == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_APPLE_CERT: ${{ needs.prepare.outputs.is_release == 'true' && secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+          HAS_APPLE_API: ${{ needs.prepare.outputs.is_release == 'true' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+          HAS_APPLE_ID: ${{ needs.prepare.outputs.is_release == 'true' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
         run: |
           set -euo pipefail
-          # 写入 $GITHUB_ENV；空值一律不导出（空的签名变量会让 tauri 误以为要签名）
-          put() {
-            [[ -n "$2" ]] || return 0
-            local d="ORYN_EOF_${RANDOM}${RANDOM}${RANDOM}"
-            { echo "$1<<$d"; printf '%s\n' "$2"; echo "$d"; } >> "$GITHUB_ENV"
-          }
           tmp="$RUNNER_TEMP"
-          # Windows 的 bash 里转成正斜杠绝对路径，避免 tauri-action 拆分 args 时吞掉反斜杠
+          # Windows 的 bash 里转成正斜杠绝对路径，避免 tauri-action 拆分 args / tauriScript 时吞掉反斜杠
           if command -v cygpath >/dev/null 2>&1; then tmp=$(cygpath -m "$tmp"); fi
           bundle=""
           add() { bundle="${bundle:+$bundle, }$1"; }
 
+          updater=false
           if [[ "$HAS_UPDATER_KEY" == "true" ]]; then
-            put TAURI_SIGNING_PRIVATE_KEY "$S_TAURI_KEY"
-            put TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$S_TAURI_KEY_PASSWORD"
-            updater="有（.sig）"
+            updater=true
+            updater_note="有（.sig）"
           else
             # 有公钥没私钥时 createUpdaterArtifacts 会让构建失败
             add '"createUpdaterArtifacts": false'
-            updater="无（未配置 TAURI_SIGNING_PRIVATE_KEY）"
+            updater_note="无（非发布运行或未配置 TAURI_SIGNING_PRIVATE_KEY）"
           fi
 
           codesign="未签名"
+          apple_cert=false
+          notarize=none
+          mac_sign=none
           if [[ "$PLATFORM" == "macos" ]]; then
             if [[ "$HAS_APPLE_CERT" == "true" ]]; then
-              put APPLE_CERTIFICATE "$S_APPLE_CERTIFICATE"
-              put APPLE_CERTIFICATE_PASSWORD "$S_APPLE_CERTIFICATE_PASSWORD"
-              put APPLE_SIGNING_IDENTITY "$S_APPLE_SIGNING_IDENTITY"
+              apple_cert=true
               if [[ "$HAS_APPLE_API" == "true" ]]; then
-                printf '%s\n' "$S_APPLE_API_KEY_P8" > "$tmp/AuthKey.p8"
-                chmod 600 "$tmp/AuthKey.p8"
-                put APPLE_API_ISSUER "$S_APPLE_API_ISSUER"
-                put APPLE_API_KEY "$S_APPLE_API_KEY"
-                put APPLE_API_KEY_PATH "$tmp/AuthKey.p8"
+                notarize=api
                 codesign="已签名并公证"
                 mac_sign=notarized
               elif [[ "$HAS_APPLE_ID" == "true" ]]; then
-                put APPLE_ID "$S_APPLE_ID"
-                put APPLE_PASSWORD "$S_APPLE_PASSWORD"
-                put APPLE_TEAM_ID "$S_APPLE_TEAM_ID"
+                notarize=id
                 codesign="已签名并公证"
                 mac_sign=notarized
               else
@@ -204,22 +201,72 @@ jobs:
               codesign="未签名（ad-hoc）"
               mac_sign=adhoc
             fi
-            echo "MAC_SIGN=$mac_sign" >> "$GITHUB_ENV"
           fi
 
           printf '{"bundle": {%s}}\n' "$bundle" > "$tmp/tauri.override.json"
-          echo "TAURI_ARGS=${MATRIX_ARGS:+$MATRIX_ARGS }--config $tmp/tauri.override.json" >> "$GITHUB_ENV"
-          echo "- \`$PLATFORM\`：代码签名 $codesign；更新包签名 $updater" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # tauri 把「变量存在」当成「已配置」：空的 TAURI_SIGNING_* / APPLE_* 会让签名或公证失败。
+          # step 的 env 无法省略空值，所以构建步骤以 ORYN_SIGN_<名> 传入，由这个包装脚本只导出非空的；
+          # App Store Connect 的 .p8 只在构建期间写进临时目录，结束即删除。
+          cat > "$tmp/tauri-signed.mjs" <<'JS'
+          import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+          const PREFIX = "ORYN_SIGN_";
+          const env = {};
+          for (const [k, v] of Object.entries(process.env)) {
+            if (!k.startsWith(PREFIX)) env[k] = v;
+            else if (v) env[k.slice(PREFIX.length)] = v;
+          }
+          let dir;
+          if (env.APPLE_API_KEY_P8) {
+            dir = mkdtempSync(join(tmpdir(), "oryn-p8-"));
+            env.APPLE_API_KEY_PATH = join(dir, "AuthKey.p8");
+            writeFileSync(env.APPLE_API_KEY_PATH, `${env.APPLE_API_KEY_P8}\n`, { mode: 0o600 });
+            delete env.APPLE_API_KEY_P8;
+          }
+          try {
+            const r = Bun.spawnSync([process.execPath, "run", "tauri", ...process.argv.slice(2)], {
+              env,
+              stdio: ["inherit", "inherit", "inherit"],
+            });
+            process.exitCode = r.exitCode ?? 1;
+          } finally {
+            if (dir) rmSync(dir, { recursive: true, force: true });
+          }
+          JS
+
+          {
+            echo "updater=$updater"
+            echo "apple_cert=$apple_cert"
+            echo "notarize=$notarize"
+            echo "mac_sign=$mac_sign"
+            echo "args=${MATRIX_ARGS:+$MATRIX_ARGS }--config $tmp/tauri.override.json"
+            echo "script=bun $tmp/tauri-signed.mjs"
+          } >> "$GITHUB_OUTPUT"
+          echo "- \`$PLATFORM\`：代码签名 $codesign；更新包签名 $updater_note" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: 构建（发布时上传 Release 资产）
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # 只有「签名配置」判定启用的那一组才取 secret 的值，其余为空（包装脚本不导出空值）；非发布运行全部为空
+          ORYN_SIGN_TAURI_SIGNING_PRIVATE_KEY: ${{ steps.sign.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          ORYN_SIGN_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.sign.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          ORYN_SIGN_APPLE_CERTIFICATE: ${{ steps.sign.outputs.apple_cert == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          ORYN_SIGN_APPLE_CERTIFICATE_PASSWORD: ${{ steps.sign.outputs.apple_cert == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          ORYN_SIGN_APPLE_SIGNING_IDENTITY: ${{ steps.sign.outputs.apple_cert == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          ORYN_SIGN_APPLE_API_ISSUER: ${{ steps.sign.outputs.notarize == 'api' && secrets.APPLE_API_ISSUER || '' }}
+          ORYN_SIGN_APPLE_API_KEY: ${{ steps.sign.outputs.notarize == 'api' && secrets.APPLE_API_KEY || '' }}
+          ORYN_SIGN_APPLE_API_KEY_P8: ${{ steps.sign.outputs.notarize == 'api' && secrets.APPLE_API_KEY_P8 || '' }}
+          ORYN_SIGN_APPLE_ID: ${{ steps.sign.outputs.notarize == 'id' && secrets.APPLE_ID || '' }}
+          ORYN_SIGN_APPLE_PASSWORD: ${{ steps.sign.outputs.notarize == 'id' && secrets.APPLE_PASSWORD || '' }}
+          ORYN_SIGN_APPLE_TEAM_ID: ${{ steps.sign.outputs.notarize == 'id' && secrets.APPLE_TEAM_ID || '' }}
         with:
           projectPath: web
-          tauriScript: bun run tauri
-          args: ${{ env.TAURI_ARGS }}
-          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tauriScript: ${{ steps.sign.outputs.script }}
+          args: ${{ steps.sign.outputs.args }}
+          releaseId: ${{ needs.prepare.outputs.is_release == 'true' && needs.release.outputs.release_id || '' }}
           releaseDraft: true
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
@@ -246,8 +293,10 @@ jobs:
         run: web/src-tauri/target/universal-apple-darwin/release/bundle/macos/Oryn.app/Contents/MacOS/oryn-desktop --smoke
 
       - name: 验签（macOS）
-        if: matrix.platform == 'macos' && env.MAC_SIGN != 'adhoc'
+        if: matrix.platform == 'macos' && steps.sign.outputs.mac_sign != 'adhoc'
         shell: bash
+        env:
+          MAC_SIGN: ${{ steps.sign.outputs.mac_sign }}
         run: |
           set -euo pipefail
           bundle=web/src-tauri/target/universal-apple-darwin/release/bundle
@@ -263,26 +312,41 @@ jobs:
             spctl -a -vv -t install "$dmg" || echo "::notice::spctl 未接受 dmg 本身（其中的 Oryn.app 已公证）"
           fi
 
+  # tag 发布的构建：与 build 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets
+  build-release:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    strategy: *build-strategy
+    name: build-release (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    steps: *build-steps
+
   publish:
-    needs: [prepare, build]
+    needs: [prepare, build-release]
     if: needs.prepare.outputs.is_release == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.prepare.outputs.version }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json
+      # 写权限令牌只给调用 gh 的步骤，不放进 job 级 env（第三方 action 及其 post 步骤看不到）
       - name: 生成 updater 清单
         id: manifest
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           bun web/scripts/updater-manifest.ts --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION" > latest.json
@@ -294,11 +358,17 @@ jobs:
           esac
       - name: 上传 latest.json
         if: steps.manifest.outputs.has == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" latest.json --clobber
       - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh release edit "$TAG" --draft=false
       - name: 刷新更新通道 desktop-updater
         if: steps.manifest.outputs.has == 'true' && env.PRERELEASE != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view desktop-updater >/dev/null 2>&1; then
             gh release create desktop-updater --title "Oryn Desktop update channel" \

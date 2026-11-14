@@ -9,7 +9,7 @@
  *   sudo pacman -S --needed libayatana-appindicator dunst gnome-keyring patchelf
  *   make web && make build                                   # bin/orynd bin/orbd bin/oryn bin/fakeomp
  *   go run ./dev/tlsproxy -init -dir .dev/tls                # 本机 CA 与 localhost 证书
- *   sudo trust anchor --store .dev/tls/ca.crt                # 让 WebKitGTK / reqwest 信任该 CA
+ *   sudo trust anchor --store .dev/tls/ca.crt                # 让 WebKitGTK / reqwest 信任该 CA（CA 带名称约束，只能签 localhost；验收后 --remove）
  *   cd web && bun run tauri build --no-bundle                # 或让 D1 构建全部安装包
  *
  * 隔离环境（全部在临时目录 $TMP 下）：
@@ -783,27 +783,69 @@ function orbOf(tid: string): string {
 
 // ---------------------------------------------------------------- D1–D15
 
-async function D1() {
-	// tauri.conf.json 里配了更新公钥，打包时必须有对应私钥才能产出 .sig；本机用 .dev/ 下那把（CI 用 secrets）
-	const keyFile = `${ROOT}/.dev/desktop-updater.key`;
-	const signing = existsSync(keyFile)
-		? {
-				TAURI_SIGNING_PRIVATE_KEY: readFileSync(keyFile, "utf8"),
-				TAURI_SIGNING_PRIVATE_KEY_PASSWORD: readFileSync(
-					`${keyFile}.password`,
-					"utf8",
-				),
-			}
-		: {};
-	const r = sh("bun run tauri build", {
+/**
+ * 生成一把一次性更新签名密钥（只放在本次运行的临时目录 dir 里，跑完随 $TMP 删除）。
+ * 验收从不读取发版密钥：发版私钥只存在于离线备份与 CI secret 中。
+ */
+function oneShotUpdaterKey(dir: string): UpdaterKey {
+	mkdirSync(dir, { recursive: true });
+	const pw = `m6-${RUN}`;
+	const gen = sh(
+		`bun run tauri signer generate --ci -p ${q(pw)} -w ${q(`${dir}/updater.key`)}`,
+		{ cwd: `${ROOT}/web` },
+	);
+	check(gen.code === 0, `一次性更新密钥${gen.code ? `：${gen.out}` : ""}`);
+	return {
+		dir,
+		key: readFileSync(`${dir}/updater.key`, "utf8").trim(),
+		pub: readFileSync(`${dir}/updater.key.pub`, "utf8").trim(),
+		pw,
+	};
+}
+
+type UpdaterKey = { dir: string; key: string; pub: string; pw: string };
+
+/**
+ * 用一次性密钥签名运行 `tauri build`：写一份 `--config` 覆盖文件，把 plugins.updater.pubkey 换成该密钥的公钥
+ * （其余字段与 tauri.conf.json 深合并），私钥与口令只经环境变量交给这一次构建。
+ */
+function signedBuild(
+	k: UpdaterKey,
+	name: string,
+	override: Record<string, unknown>,
+	args: string,
+	env: Env = {},
+) {
+	const updater = (override.plugins as { updater?: object } | undefined)
+		?.updater;
+	const conf = `${k.dir}/tauri.${name}.json`;
+	writeFileSync(
+		conf,
+		JSON.stringify({
+			...override,
+			plugins: {
+				...(override.plugins as object | undefined),
+				updater: { ...updater, pubkey: k.pub },
+			},
+		}),
+	);
+	return sh(`bun run tauri build ${args} --config ${q(conf)}`.trim(), {
 		cwd: `${ROOT}/web`,
 		env: {
 			...ENV,
-			...signing,
+			...env,
+			TAURI_SIGNING_PRIVATE_KEY: k.key,
+			TAURI_SIGNING_PRIVATE_KEY_PASSWORD: k.pw,
 			...(process.env.M6_NO_STRIP === "1" ? { NO_STRIP: "true" } : {}),
 		},
 		timeoutMs: 60 * 60_000,
 	});
+}
+
+async function D1() {
+	// tauri.conf.json 配了更新公钥且 createUpdaterArtifacts=true，打包必须有对应私钥才能产出 .sig。
+	// 本机用一次性密钥并经 --config 覆盖公钥（CI 用 secrets）；产出的包只供验收，不对外分发。
+	const r = signedBuild(oneShotUpdaterKey(`${TMP}/d1-key`), "d1", {}, "");
 	check(
 		r.code === 0,
 		`tauri build 退出码 ${r.code}${r.code ? `：${r.out.slice(-2000)}` : ""}`,
@@ -814,6 +856,7 @@ async function D1() {
 		deb,
 		`${bundle}/rpm/Oryn-${VERSION}-1.x86_64.rpm`,
 		`${bundle}/appimage/Oryn_${VERSION}_amd64.AppImage`,
+		`${bundle}/appimage/Oryn_${VERSION}_amd64.AppImage.sig`,
 	])
 		check(existsSync(f), `产物 ${f.slice(bundle.length + 1)}`);
 	const x = `${TMP}/deb`;
@@ -1255,44 +1298,26 @@ async function D10() {
 }
 
 /** D11：用一次性密钥签名构建一个版本的 AppImage，返回其路径与签名。 */
-function buildSigned(
-	dir: string,
-	version: string,
-	key: string,
-	pub: string,
-	pw: string,
-) {
+function buildSigned(k: UpdaterKey, version: string) {
 	const target = process.env.M6_D11_TARGET ?? `${ROOT}/.dev/m6-d11-target`;
-	const conf = `${dir}/tauri.${version}.json`;
-	writeFileSync(
-		conf,
-		JSON.stringify({
+	const r = signedBuild(
+		k,
+		version,
+		{
 			version,
 			bundle: { createUpdaterArtifacts: true },
 			plugins: {
-				updater: {
-					pubkey: pub,
-					endpoints: [`${LOCAL_ORIGIN}/updates/latest.json`],
-				},
+				updater: { endpoints: [`${LOCAL_ORIGIN}/updates/latest.json`] },
 			},
-		}),
-	);
-	const r = sh(`bun run tauri build --bundles appimage --config ${q(conf)}`, {
-		cwd: `${ROOT}/web`,
-		env: {
-			...ENV,
-			CARGO_TARGET_DIR: target,
-			TAURI_SIGNING_PRIVATE_KEY: key,
-			TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw,
-			...(process.env.M6_NO_STRIP === "1" ? { NO_STRIP: "true" } : {}),
 		},
-		timeoutMs: 60 * 60_000,
-	});
+		"--bundles appimage",
+		{ CARGO_TARGET_DIR: target },
+	);
 	if (r.code !== 0)
 		throw new Error(`构建 ${version} 失败：${r.out.slice(-2000)}`);
 	const name = `Oryn_${version}_amd64.AppImage`;
 	const built = `${target}/release/bundle/appimage/${name}`;
-	const out = `${dir}/${name}`;
+	const out = `${k.dir}/${name}`;
 	copyFileSync(built, out);
 	chmodSync(out, 0o755);
 	const sig = readFileSync(`${built}.sig`, "utf8");
@@ -1304,18 +1329,9 @@ async function D11() {
 	// 需要一份已配对的配置；随后退出主 App：同一总线上的单实例会把 0.0.1 当成第二实例
 	await quit(await ensureMain());
 	MAIN = undefined;
-	const dir = `${TMP}/upd`;
-	mkdirSync(dir, { recursive: true });
-	const pw = `m6-${RUN}`;
-	const gen = sh(
-		`bun run tauri signer generate --ci -p ${q(pw)} -w ${q(`${dir}/updater.key`)}`,
-		{ cwd: `${ROOT}/web` },
-	);
-	check(gen.code === 0, `一次性更新密钥${gen.code ? `：${gen.out}` : ""}`);
-	const key = readFileSync(`${dir}/updater.key`, "utf8").trim();
-	const pub = readFileSync(`${dir}/updater.key.pub`, "utf8").trim();
-	const v1 = buildSigned(dir, "0.0.1", key, pub, pw);
-	const v2 = buildSigned(dir, "0.0.2", key, pub, pw);
+	const k = oneShotUpdaterKey(`${TMP}/upd`);
+	const v1 = buildSigned(k, "0.0.1");
+	const v2 = buildSigned(k, "0.0.2");
 
 	const publish = (tamper: boolean) => {
 		const bytes = readFileSync(v2.path);
@@ -1524,9 +1540,9 @@ function releaseRun(): { id: number; jobs: GhJob[] } {
 async function D14() {
 	const { jobs } = releaseRun();
 	for (const name of [
-		"build (linux)",
-		"build (windows)",
-		"build (macos)",
+		"build-release (linux)",
+		"build-release (windows)",
+		"build-release (macos)",
 		"publish",
 	]) {
 		const j = jobs.find((x) => x.name === name);
@@ -1599,7 +1615,7 @@ async function D14() {
 
 async function D15() {
 	const { jobs } = releaseRun();
-	const mac = jobs.find((x) => x.name === "build (macos)");
+	const mac = jobs.find((x) => x.name === "build-release (macos)");
 	check(
 		mac?.conclusion === "success",
 		`macOS job：${mac?.conclusion ?? "不存在"}`,

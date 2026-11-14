@@ -7,8 +7,9 @@
 //	sudo trust anchor --store .dev/tls/ca.crt        # 让系统（含 WebKitGTK）信任该 CA
 //	go run ./dev/tlsproxy -listen 127.0.0.1:7643 -target http://127.0.0.1:7610 -dir .dev/tls [-static <目录>]
 //
-// 证书：ECDSA P-256 CA（10 年）+ SAN 为 localhost、127.0.0.1、::1 的叶子证书；文件为 -dir 下的
-// ca.crt / ca.key / localhost.crt / localhost.key（私钥 0600）。-static 目录挂在 /updates/。
+// 证书：ECDSA P-256 CA（10 年，带 Critical 名称约束，只能为 localhost、127.0.0.0/8、::1 签发）+ SAN 为 localhost、
+// 127.0.0.1、::1 的叶子证书；文件为 -dir 下的 ca.crt / ca.key / localhost.crt / localhost.key（私钥 0600）。
+// 旧版生成的无约束 CA 会被拒绝，需先 `sudo trust anchor --remove` 再删除 -dir 重新生成。-static 目录挂在 /updates/。
 package main
 
 import (

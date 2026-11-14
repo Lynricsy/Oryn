@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -37,6 +38,16 @@ const (
 var (
 	leafDNSNames = []string{"localhost"}
 	leafIPs      = []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+)
+
+// caPermittedDNS / caPermittedIPs 是 CA 的 X.509 名称约束（标为 Critical）：这个 CA 会被装进系统信任库，
+// 约束让它只能为 localhost、127.0.0.0/8、::1 签发有效证书，私钥即使泄露也无法用来冒充其它域名。
+var (
+	caPermittedDNS = []string{"localhost"}
+	caPermittedIPs = []*net.IPNet{
+		{IP: net.IPv4(127, 0, 0, 0).To4(), Mask: net.CIDRMask(8, 32)},
+		{IP: net.IPv6loopback, Mask: net.CIDRMask(128, 128)},
+	}
 )
 
 // ensureCerts 在 dir 中准备（已有则复用）本机 CA 与 localhost 叶子证书，返回可直接用于 TLS 监听的证书链。
@@ -71,6 +82,10 @@ func loadOrCreateCA(dir string, now time.Time) (*x509.Certificate, *ecdsa.Privat
 		if !cert.IsCA {
 			return nil, nil, fmt.Errorf("%s 不是 CA 证书", certPath)
 		}
+		if !hasLocalNameConstraints(cert) {
+			// 旧版生成的 CA 没有名称约束，能为任意域名签发证书；不再复用，必须由用户撤销信任后重建
+			return nil, nil, fmt.Errorf("%s 是旧版生成的、没有名称约束的 CA，不再使用：先 `sudo trust anchor --remove %s`，再删除 %s 目录后重新运行 -init 生成并信任新 CA", certPath, certPath, dir)
+		}
 		return cert, key, nil
 	case errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist):
 	default:
@@ -87,14 +102,17 @@ func loadOrCreateCA(dir string, now time.Time) (*x509.Certificate, *ecdsa.Privat
 		return nil, nil, err
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Oryn dev local CA", Organization: []string{"Oryn dev"}},
-		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(caValidity),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLenZero:        true,
+		SerialNumber:                serial,
+		Subject:                     pkix.Name{CommonName: "Oryn dev local CA (localhost only)", Organization: []string{"Oryn dev"}},
+		NotBefore:                   now.Add(-time.Hour),
+		NotAfter:                    now.Add(caValidity),
+		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid:       true,
+		IsCA:                        true,
+		MaxPathLenZero:              true,
+		PermittedDNSDomainsCritical: true,
+		PermittedDNSDomains:         caPermittedDNS,
+		PermittedIPRanges:           caPermittedIPs,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -108,6 +126,21 @@ func loadOrCreateCA(dir string, now time.Time) (*x509.Certificate, *ecdsa.Privat
 	}
 	cert, err := x509.ParseCertificate(der)
 	return cert, key, err
+}
+
+// hasLocalNameConstraints 判断 CA 是否带有与 caPermittedDNS / caPermittedIPs 完全一致的 Critical 名称约束。
+func hasLocalNameConstraints(c *x509.Certificate) bool {
+	if !c.PermittedDNSDomainsCritical || len(c.ExcludedDNSDomains) > 0 || len(c.ExcludedIPRanges) > 0 ||
+		!slices.Equal(c.PermittedDNSDomains, caPermittedDNS) || len(c.PermittedIPRanges) != len(caPermittedIPs) {
+		return false
+	}
+	for i, want := range caPermittedIPs {
+		got := c.PermittedIPRanges[i]
+		if !got.IP.Equal(want.IP) || got.Mask.String() != want.Mask.String() {
+			return false
+		}
+	}
+	return true
 }
 
 // loadLeaf 读取已有叶子证书；不存在、不由该 CA 签发、SAN 不全或临近过期都返回错误（调用方随后重签）。

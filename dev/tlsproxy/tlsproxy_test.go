@@ -3,9 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +77,94 @@ func TestEnsureCertsRefusesHalfCA(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, caCertFile), []byte("x"), 0o644))
 	_, err := ensureCerts(dir, time.Now())
 	assert.ErrorContains(t, err, "同时存在")
+}
+
+// TestCARefusesForeignNames：CA 带 Critical 名称约束，即使用它的私钥为 example.com 签发叶子证书，
+// Go 的 x509 校验也不接受（CA 私钥泄露时无法用来冒充其它域名）。
+func TestCARefusesForeignNames(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	_, err := ensureCerts(dir, now)
+	require.NoError(t, err)
+	ca, err := readCert(filepath.Join(dir, caCertFile))
+	require.NoError(t, err)
+	caKey, err := readKey(filepath.Join(dir, caKeyFile))
+	require.NoError(t, err)
+	assert.True(t, ca.PermittedDNSDomainsCritical)
+	assert.Equal(t, []string{"localhost"}, ca.PermittedDNSDomains)
+
+	sign := func(dns []string, ips []net.IP) *x509.Certificate {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(42),
+			Subject:      pkix.Name{CommonName: "x"},
+			NotBefore:    now.Add(-time.Hour),
+			NotAfter:     now.Add(time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			DNSNames:     dns,
+			IPAddresses:  ips,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+		require.NoError(t, err)
+		leaf, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		return leaf
+	}
+	pool := caPool(t, dir)
+	verify := func(leaf *x509.Certificate, name string) error {
+		_, err := leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: name, CurrentTime: now})
+		return err
+	}
+
+	var cie x509.CertificateInvalidError
+	err = verify(sign([]string{"example.com"}, nil), "example.com")
+	require.ErrorAs(t, err, &cie)
+	assert.Equal(t, x509.CANotAuthorizedForThisName, cie.Reason)
+	// 夹带一个合法名字也不行：约束对叶子的全部 SAN 生效
+	err = verify(sign([]string{"localhost", "example.com"}, nil), "localhost")
+	require.ErrorAs(t, err, &cie)
+	assert.Equal(t, x509.CANotAuthorizedForThisName, cie.Reason)
+	err = verify(sign(nil, []net.IP{net.IPv4(10, 0, 0, 1)}), "10.0.0.1")
+	require.ErrorAs(t, err, &cie)
+	assert.Equal(t, x509.CANotAuthorizedForThisName, cie.Reason)
+	// 约束内的名字照常通过
+	assert.NoError(t, verify(sign([]string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 2), net.IPv6loopback}), "127.0.0.2"))
+}
+
+// TestEnsureCertsRefusesUnconstrainedCA：旧版生成的无名称约束 CA 不再复用，报错提示撤销信任并重建，且不改动任何文件。
+func TestEnsureCertsRefusesUnconstrainedCA(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Oryn dev local CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(caValidity),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	require.NoError(t, writeKey(filepath.Join(dir, caKeyFile), key))
+	require.NoError(t, writePEM(filepath.Join(dir, caCertFile), "CERTIFICATE", der, 0o644))
+	before, err := os.ReadFile(filepath.Join(dir, caCertFile))
+	require.NoError(t, err)
+
+	_, err = ensureCerts(dir, now)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "没有名称约束")
+	assert.Contains(t, err.Error(), "trust anchor --remove")
+	after, err := os.ReadFile(filepath.Join(dir, caCertFile))
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	_, err = os.Stat(filepath.Join(dir, leafCertFile))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 type seen struct {

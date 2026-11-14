@@ -65,12 +65,19 @@ bun run tauri dev          # 连接页走 Vite 开发服务器（5173），改�
 
 ```bash
 go run ./dev/tlsproxy -init -dir .dev/tls                  # 生成本机 CA 与 localhost 证书（已有则复用）
-sudo trust anchor --store .dev/tls/ca.crt                  # 让系统与 WebKitGTK 信任该 CA；撤销：sudo trust anchor --remove .dev/tls/ca.crt
+sudo trust anchor --store .dev/tls/ca.crt                  # 让系统与 WebKitGTK 信任该 CA
 # orynd.yaml：public_url: "https://localhost:7643"，portal_domain 留空
 go run ./dev/tlsproxy -listen 127.0.0.1:7643 -target http://127.0.0.1:7600 -dir .dev/tls
 ```
 
 `tlsproxy` 保留原始 `Host`，设置 `X-Forwarded-For` / `-Proto`，透传 WebSocket 且不缓冲。`-static <目录>` 会把该目录挂到 `/updates/`，用于本机测试自动更新。CA 一旦生成就不再改动，叶子证书临近过期时自动重签。
+
+关于这个本机 CA：
+
+- CA 带 Critical 的 X.509 名称约束，只能为 `localhost`、`127.0.0.0/8`、`::1` 签发有效证书。即使 `.dev/tls/ca.key` 泄露，也不能用它冒充其它域名。
+- 它只供本机使用。`ca.key` 不得复制到别处，也不得提交（`.dev/` 已在 `.gitignore` 中）。
+- 不用时撤销信任：`sudo trust anchor --remove .dev/tls/ca.crt`。跑完本机验收后建议立即撤销，下次需要时再 `--store`。
+- 旧版 `tlsproxy` 生成的 CA 没有名称约束，现在会被拒绝，启动时报错。处理方法：先 `sudo trust anchor --remove .dev/tls/ca.crt`，再 `rm -r .dev/tls`，然后重新 `-init` 并 `--store`。
 
 Rust 侧的检查（与 CI 的 `desktop` job 相同）：
 
@@ -89,9 +96,12 @@ make web && make build                                     # bin/orynd bin/orbd 
 go run ./dev/tlsproxy -init -dir .dev/tls && sudo trust anchor --store .dev/tls/ca.crt
 cd web && bun run tauri build --no-bundle                  # D1 会构建全部安装包
 bun run accept:m6 [-- --only D2,D5]
+sudo trust anchor --remove .dev/tls/ca.crt                 # 验收结束后撤销对本机 CA 的信任
 ```
 
 `web/scripts/m6-accept.ts` 在 `dbus-run-session` 和 `xvfb-run` 里运行，所需的服务全部在临时目录里自建：orynd（7610）、tlsproxy（7643）、process 驱动的 provider、私有的 gnome-keyring 与 dunst、一个只记录参数的假 `xdg-open`。跑完自动清理，结果和日志保存在 `/tmp/oryn-m6-accept/<run>/`。D11 需要两次签名的 release 构建，耗时较长，构建目录是 `.dev/m6-d11-target`。D14 / D15 只读取 CI 的结果，需要先推送 tag（见下）并登录 `gh`。
+
+D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次性**更新密钥：每次运行用 `tauri signer generate` 在临时目录里新生成一把，再用 `--config` 把 `plugins.updater.pubkey` 换成它的公钥，运行结束随临时目录一起删除。验收不读取、也不需要正式发版密钥。因此 D1 产出的安装包内置的是一次性公钥，只能用于验收，不能对外分发。
 
 ## 发版
 
@@ -108,6 +118,12 @@ bun run accept:m6 [-- --only D2,D5]
 
 PR 只要改动 `web/src-tauri/**`、`web/src/launcher/**`、`web/launcher.html` 或这个工作流本身，就会跑一遍三平台构建和冒烟。构建产物作为 workflow artifacts 上传，不发布。
 
+### 工作流的安全约束
+
+- 构建分成两个 job，共用同一份步骤（YAML 锚点）：`build` 处理 PR、分支和手动触发，令牌只读，不签名；`build-release` 只在推送 `desktop-v*` tag 时运行，才有 `contents: write` 和签名 secrets。所有 PR 都拿不到签名 secrets，同仓库分支发起的也一样。
+- 签名 secrets 不写进 `$GITHUB_ENV`，也不放在 job 级 `env`。它们只出现在 `tauri-action` 那一步的 `env` 里，而且只取「签名配置」步骤判定要用的那一组，其余为空。由一个包装脚本把非空的值以 tauri 认识的变量名交给 `tauri build`。App Store Connect 的 `.p8` 只在构建期间写进临时目录，构建结束即删除。
+- 第三方 action 一律钉到完整的提交 SHA，行尾注释写对应版本；所有 checkout 都设 `persist-credentials: false`；每个 job 单独声明最小的 `permissions`。升级某个 action 时，先用 `gh api repos/<owner>/<repo>/commits/<tag> -q .sha` 查出新 SHA，再一并更新注释，然后跑 `actionlint`。
+
 ### Secrets（仓库 Settings → Secrets and variables → Actions）
 
 | 名称 | 内容 | 没有时 |
@@ -119,6 +135,13 @@ PR 只要改动 `web/src-tauri/**`、`web/src/launcher/**`、`web/launcher.html`
 | `APPLE_API_ISSUER`、`APPLE_API_KEY`、`APPLE_API_KEY_P8` | App Store Connect API 密钥的 Issuer ID、Key ID、`.p8` 文件内容（推荐） | 若也没有下面一组：已签名但未公证 |
 | `APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID` | Apple ID、App 专用密码、Team ID（公证的另一种凭据，两组配一组即可） | 同上 |
 
-每个构建 job 的 Step Summary 都会写明本次的签名状态：「已签名并公证」「已签名未公证」或「未签名（ad-hoc）」。fork 来的 PR 拿不到 secrets，会走未签名路径，所以这条降级路径在每个 PR 上都有覆盖。
+每个构建 job 的 Step Summary 都会写明本次的签名状态：「已签名并公证」「已签名未公证」或「未签名（ad-hoc）」，以及更新包签名的有无。PR 运行一律显示「更新包签名 无」并走未签名路径，所以这条降级路径在每个 PR 上都有覆盖。
 
-更新签名私钥一旦丢失，已安装的 App 就再也收不到更新，只能让用户手动重装带新公钥的版本。私钥文件和口令务必离线备份。
+### 更新签名私钥的保管
+
+更新签名私钥是自动更新通道唯一的完整性保障：谁拿到它，再加上 Release 的写权限，就能给所有已安装的 App 推送会被接受的更新。
+
+- 私钥和口令**只放在两处**：离线备份（如密码管理器或加密的离线介质），以及上面的 CI secret。不要放进工作区（包括被 `.gitignore` 忽略的 `.dev/`），也不要把口令和私钥放在一起。
+- 本机验收不需要私钥，D1 / D11 每次运行都用一次性密钥，见「本机验收」。
+- 私钥一旦丢失，已安装的 App 就再也收不到更新，只能让用户手动重装带新公钥的版本。所以离线备份必不可少。
+- 怀疑私钥泄露时（例如曾经放在工作区里），应生成新密钥对，更新 `tauri.conf.json` 的 `pubkey` 和 CI secret，并发一个新版本。还没有对外发布安装量时轮换最省事。
