@@ -103,6 +103,10 @@ type Service struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// goMu 保护 closing：Close 开始后 go_ 不再登记新任务。否则链路协程收到帧时
+	// 调 wg.Add，会与 Close 里的 wg.Wait 并发（WaitGroup 不允许计数归零后 Add 与 Wait 并发）。
+	goMu    sync.Mutex
+	closing bool
 
 	mu        sync.Mutex
 	threads   map[string]*thread
@@ -211,16 +215,24 @@ func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
 
 func (s *Service) out() Sink { return s.sink.Load().Sink }
 
-// Close 停止后台任务。
+// Close 停止后台任务。之后再调 go_ 的任务直接丢弃（ctx 已取消，启动了也做不了事）。
 func (s *Service) Close() {
+	s.goMu.Lock()
+	s.closing = true
+	s.goMu.Unlock()
 	s.cancel()
 	s.wg.Wait()
 }
 
 func (s *Service) now() int64 { return time.Now().UnixMilli() }
 
-// go_ 在服务生命周期内启动后台任务。
+// go_ 在服务生命周期内启动后台任务；Close 开始后不再启动。
 func (s *Service) go_(fn func(ctx context.Context)) {
+	s.goMu.Lock()
+	defer s.goMu.Unlock()
+	if s.closing {
+		return
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
