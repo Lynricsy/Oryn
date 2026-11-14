@@ -582,4 +582,141 @@ describe("SharePage 回合头身份（M9.6）", () => {
 		expect(identityCalls).toBe(2);
 		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
 	});
+
+	it("实时分享：来源记录先于消息到达时不重取，消息到达后才为该键重取（新 Core 提前落盘记录）", async () => {
+		let identityCalls = 0;
+		let messageSent = false;
+		// 后端规则：role 只有在生效期间出现过消息才进身份表
+		serve(() => {
+			identityCalls++;
+			return Response.json(
+				messageSent
+					? {
+							...IDENTITY,
+							roles: [
+								...IDENTITY.roles,
+								{ key: KEY_NEW, role: "Cyrene", avatarIcon: "🌸" },
+							],
+						}
+					: IDENTITY,
+			);
+		});
+		const sockets: { onmessage?: (ev: MessageEvent) => void }[] = [];
+		vi.stubGlobal(
+			"WebSocket",
+			class {
+				static OPEN = 1;
+				readyState = 1;
+				onopen?: () => void;
+				onmessage?: (ev: MessageEvent) => void;
+				onclose?: () => void;
+				constructor() {
+					sockets.push(this);
+					setTimeout(() => this.onopen?.(), 0);
+				}
+				send() {}
+				close() {}
+			},
+		);
+		const deliver = (data: unknown) =>
+			act(() => {
+				for (const s of sockets)
+					s.onmessage?.(
+						new MessageEvent("message", { data: JSON.stringify(data) }),
+					);
+			});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		client.setQueryData(["public-share", SLUG], {
+			...SHARE,
+			mode: "live",
+			state: "idle",
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[`/s/${SLUG}`]}>
+					<Routes>
+						<Route path="/s/:slug" element={<SharePage />} />
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		await waitFor(() => expect(sockets.length).toBe(1));
+		await waitFor(() => expect(identityCalls).toBe(1));
+		deliver({
+			type: "share.snapshot",
+			title: "重构重连",
+			state: "idle",
+			leafEntryId: "e8",
+			lastSeq: 8,
+			transcriptRev: 0,
+			fullReplay: false,
+			live: [],
+			subagents: [],
+		});
+		deliver({
+			type: "entries",
+			entries: ENTRIES,
+			leafEntryId: "e8",
+			lastSeq: 8,
+		});
+		expect(await screen.findByText("我是 Mare")).toBeInTheDocument();
+
+		const all = chainEntries([
+			...ENTRIES.map((e) => ({
+				type: e.type,
+				payload: e.payload as Record<string, unknown>,
+			})),
+			{
+				type: "model_change",
+				payload: { model: "anthropic/claude-opus-5-5", role: KEY_NEW },
+			},
+			rec({
+				source: "role",
+				role: KEY_NEW,
+				model: "anthropic/claude-opus-5-5",
+			}),
+			msg("user", "切到新 role", 5),
+			{
+				type: "message",
+				payload: {
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "新 role 的回答" }],
+						timestamp: 6,
+						provider: "anthropic",
+						model: "claude-opus-5-5",
+					},
+				},
+			},
+		]);
+		// 1. 只有来源记录（Core 已落盘、还没有消息）：不重取
+		deliver({
+			type: "entries",
+			entries: all.slice(8, 10),
+			leafEntryId: "e10",
+			lastSeq: 10,
+		});
+		await act(async () => {});
+		expect(identityCalls).toBe(1);
+
+		// 2. 消息到达：该键已用到 → 重取一次，新回合显示 Cyrene
+		messageSent = true;
+		deliver({
+			type: "entries",
+			entries: all.slice(10),
+			leafEntryId: "e12",
+			lastSeq: 12,
+		});
+		expect(await screen.findByText("新 role 的回答")).toBeInTheDocument();
+		await waitFor(() => expect(identityCalls).toBe(2));
+		await waitFor(() =>
+			expect(heads().at(-1)).toEqual({
+				identity: "role",
+				role: "Cyrene",
+				name: "Cyrene",
+			}),
+		);
+	});
 });

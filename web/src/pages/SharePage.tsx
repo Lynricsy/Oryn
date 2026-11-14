@@ -41,7 +41,7 @@ import { AssetUrlContext, type AssetUrls } from "../lib/asset-urls";
 import { parseAttachmentBlock } from "../lib/attachments";
 import { formatDateTime } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
-import { parseModelSource } from "../lib/turn-role";
+import { advanceTrail, EMPTY_TRAIL } from "../lib/turn-role";
 import { useBreakpoint } from "../lib/viewport";
 import {
 	fetchShare,
@@ -117,15 +117,32 @@ function isolatedClient(): QueryClient {
 	return client;
 }
 
-/** 转录里来源记录用到的不透明键（role / alias，按出现顺序去重；只看主会话文件）。 */
-function sourceKeys(entries: readonly Entry[]): string[] {
+/**
+ * 转录里「生效期间出现过消息」的来源记录的不透明键（role / alias，按出现顺序去重；只看主会话文件）。
+ * 与后端 transcript.UsedRoles 同一规则：fallback / prewalk 是临时覆盖、不截断记录，其它 model_change 让记录失效，
+ * manual 记录不算。新 Core 在第一条回复前就把来源记录落盘：记录刚到、还没有消息时身份接口合法地不含该 role，
+ * 这时重取只会拿到空表并把键标成「已问过」，之后消息到了也不会再取——所以只为已用到的键重取。
+ */
+export function usedSourceKeys(entries: readonly Entry[]): string[] {
 	const keys = new Set<string>();
+	let trail = EMPTY_TRAIL;
+	let used = false;
+	const flush = () => {
+		const r = trail.record;
+		if (r && used && r.source !== "manual") {
+			if (r.role) keys.add(r.role);
+			if (r.alias) keys.add(r.alias);
+		}
+		used = false;
+	};
 	for (const e of entries) {
 		if (!isMainFile(e.file)) continue;
-		const r = parseModelSource(e);
-		if (r?.role) keys.add(r.role);
-		if (r?.alias) keys.add(r.alias);
+		const next = advanceTrail(trail, e);
+		if (next.record !== trail.record) flush();
+		trail = next;
+		if (e.type === "message" && trail.record) used = true;
 	}
+	flush();
 	return [...keys];
 }
 
@@ -290,10 +307,10 @@ function ShareView({
 			void qc.refetchQueries({ queryKey: shareQueryKey(slug), exact: true });
 	}, [unknown, qc, slug]);
 
-	// 回合头身份：匿名身份接口（快照固化、实时现算）。实时分享里出现身份表没有的来源键（刚点了一个新 role）
-	// 就重取一次，每个键至多一次（用到但没设头像的 role 本来就不在表里）
+	// 回合头身份：匿名身份接口（快照固化、实时现算）。实时分享里出现身份表没有、且已有消息用到的来源键（刚点了一个
+	// 新 role 并发了消息）就重取一次，每个键至多一次（用到但没设头像的 role 本来就不在表里）
 	const identity = useShareIdentity(slug).data;
-	const keys = useMemo(() => sourceKeys(entries), [entries]);
+	const keys = useMemo(() => usedSourceKeys(entries), [entries]);
 	const askedKeys = useRef(new Set<string>());
 	useEffect(() => {
 		if (!live || !identity) return;
