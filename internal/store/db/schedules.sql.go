@@ -40,10 +40,10 @@ func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams
 }
 
 const clearSpaceSchedules = `-- name: ClearSpaceSchedules :exec
-
+UPDATE schedules SET space_id = NULL WHERE space_id = ?1
 `
 
-// 删除 Space 时把挂在它上面的 new_thread 定时改回「无 Space」（space_id 无外键，由代码清理）?1
+// Detach new_thread schedules from a deleted space (space_id has no FK; cleared by code).
 func (q *Queries) ClearSpaceSchedules(ctx context.Context, spaceID *string) error {
 	_, err := q.db.ExecContext(ctx, clearSpaceSchedules, spaceID)
 	return err

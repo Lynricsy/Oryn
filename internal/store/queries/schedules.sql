@@ -150,6 +150,6 @@ SELECT * FROM thread_reports WHERE thread_id = @thread_id;
 -- name: DeleteThreadReport :exec
 DELETE FROM thread_reports WHERE thread_id = @thread_id;
 
+-- Detach new_thread schedules from a deleted space (space_id has no FK; cleared by code).
 -- name: ClearSpaceSchedules :exec
--- 删除 Space 时把挂在它上面的 new_thread 定时改回「无 Space」（space_id 无外键，由代码清理）。
 UPDATE schedules SET space_id = NULL WHERE space_id = @space_id;
