@@ -298,6 +298,62 @@ describe("RealtimeClient", () => {
 		expect(seen).toHaveBeenCalledTimes(3);
 	});
 
+	describe("死连接检测（M9.6 验收 R9）", () => {
+		const PING = 25_000;
+
+		it("一次 ping 之后整个心跳周期没有任何消息：放弃连接、显示重连并重建", async () => {
+			const ws = await connected(client);
+			vi.advanceTimersByTime(PING);
+			expect(ws.sent.filter((m) => m.type === "ping")).toHaveLength(1);
+			expect(connectionStore.getState().status).toBe("open");
+			// 半开连接：服务端什么都不回，也不会有 close 事件
+			vi.advanceTimersByTime(PING);
+			expect(ws.readyState).toBe(FakeWS.CLOSED);
+			expect(connectionStore.getState().status).toBe("reconnecting");
+			expect(connectionStore.getState().lastError).toBe("heartbeat timeout");
+			vi.advanceTimersByTime(500);
+			await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+			(FakeWS.instances[1] as FakeWS).accept();
+			expect(connectionStore.getState().status).toBe("open");
+		});
+
+		it("有回音（pong 或任何消息）就不算死", async () => {
+			const ws = await connected(client);
+			for (let i = 0; i < 4; i++) {
+				vi.advanceTimersByTime(PING);
+				ws.recv(
+					i % 2
+						? { type: "pong" }
+						: { type: "schedules.changed", scheduleId: "sch_1" },
+				);
+			}
+			expect(ws.readyState).toBe(FakeWS.OPEN);
+			expect(FakeWS.instances).toHaveLength(1);
+			expect(connectionStore.getState().status).toBe("open");
+		});
+
+		it("浏览器报断网：立即放弃连接；恢复联网立即重连（不等退避）", async () => {
+			const ws = await connected(client);
+			window.dispatchEvent(new Event("offline"));
+			expect(ws.readyState).toBe(FakeWS.CLOSED);
+			expect(connectionStore.getState().status).toBe("reconnecting");
+			window.dispatchEvent(new Event("online"));
+			await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+			(FakeWS.instances[1] as FakeWS).accept();
+			expect(connectionStore.getState().status).toBe("open");
+		});
+
+		it("用户关闭之后，断网 / 联网事件都不再动连接", async () => {
+			await connected(client);
+			client.close();
+			window.dispatchEvent(new Event("offline"));
+			window.dispatchEvent(new Event("online"));
+			vi.advanceTimersByTime(60_000);
+			expect(FakeWS.instances).toHaveLength(1);
+			expect(connectionStore.getState().status).toBe("idle");
+		});
+	});
+
 	it("ui.response 被拒：错误进全局提示并重订阅取回待答请求（W14）", async () => {
 		const ws = await connected(client);
 		client.subscribe(TID);
@@ -486,7 +542,11 @@ describe("RealtimeClient", () => {
 				mobileHost.mobile = null;
 				const ws = await connected(client);
 				setVisibility("hidden");
-				await vi.advanceTimersByTimeAsync(MOBILE_SUSPEND_MS * 2);
+				// 活着的服务端会回 pong（不回就是死连接，心跳会放弃它）
+				for (let t = 0; t < MOBILE_SUSPEND_MS * 2; t += 25_000) {
+					await vi.advanceTimersByTimeAsync(25_000);
+					ws.recv({ type: "pong" });
+				}
 				expect(ws.readyState).toBe(FakeWS.OPEN);
 			});
 		});

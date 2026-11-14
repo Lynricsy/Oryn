@@ -80,6 +80,9 @@ export class RealtimeClient {
 	private closedByUser = false;
 	private reconnectTimer: Timer | null = null;
 	private pingTimer: ReturnType<typeof setInterval> | undefined;
+	/** 发出 ping 后还没收到任何消息（下一次心跳时仍为真 = 连接已死）。 */
+	private awaitingPong = false;
+	private networkBound = false;
 	private readonly subs = new Map<string, number>();
 	/** 想看的线程（线程页挂载时设置）；实际发出的见 `effectiveFocus`。 */
 	private focused: string | null = null;
@@ -123,6 +126,7 @@ export class RealtimeClient {
 		this.closedByUser = false;
 		this.suspended = false;
 		this.bindVisibility(true);
+		this.bindNetwork(true);
 		if (this.ws || this.reconnectTimer || this.opening) return;
 		void this.open();
 	}
@@ -197,6 +201,7 @@ export class RealtimeClient {
 	close() {
 		this.closedByUser = true;
 		this.bindVisibility(false);
+		this.bindNetwork(false);
 		clearTimeout(this.suspendTimer ?? undefined);
 		this.suspendTimer = null;
 		this.suspended = false;
@@ -211,6 +216,7 @@ export class RealtimeClient {
 		}
 		clearInterval(this.pingTimer);
 		this.pingTimer = undefined;
+		this.awaitingPong = false;
 		for (const [id, p] of this.pending) {
 			clearTimeout(p.timer);
 			this.pending.delete(id);
@@ -258,14 +264,21 @@ export class RealtimeClient {
 			for (const threadId of this.watching)
 				if (this.subs.has(threadId))
 					this.send({ type: "term.watch", threadId, on: true });
-			this.pingTimer = setInterval(
-				() => this.send({ type: "ping" }),
-				PING_INTERVAL_MS,
-			);
+			// 心跳：上一次 ping 到下一次之间一条消息都没收到 = 连接已死（半开），放弃并重连
+			this.awaitingPong = false;
+			this.pingTimer = setInterval(() => {
+				if (this.awaitingPong) {
+					this.abandon("heartbeat timeout");
+					return;
+				}
+				if (this.send({ type: "ping" })) this.awaitingPong = true;
+			}, PING_INTERVAL_MS);
 			this.emitSchedulesChanged();
 		};
 		ws.onmessage = (ev) => {
 			if (this.ws !== ws || typeof ev.data !== "string") return;
+			// 任何消息都说明连接活着（不只 pong）
+			this.awaitingPong = false;
 			let msg: WsServerMessage;
 			try {
 				msg = JSON.parse(ev.data) as WsServerMessage;
@@ -279,6 +292,50 @@ export class RealtimeClient {
 			this.teardown(ws, "connection closed");
 			if (!this.closedByUser) this.scheduleReconnect("closed");
 		};
+	}
+
+	/**
+	 * 放弃一条已死的连接（心跳无回音、浏览器报断网）：同步清理、摘掉旧回调再关闭，然后按退避重连。
+	 * 半开的 TCP（断网、休眠唤醒、换网络）不会触发 close 事件，只靠 onclose 会一直显示「已连接」。
+	 */
+	private abandon(reason: string) {
+		const ws = this.ws;
+		if (!ws) return;
+		this.teardown(ws, reason);
+		ws.onopen = null;
+		ws.onmessage = null;
+		ws.onclose = null;
+		ws.close();
+		if (!this.closedByUser) this.scheduleReconnect(reason);
+	}
+
+	private readonly onOffline = () => {
+		if (this.closedByUser || this.suspended) return;
+		// 还在等票据的 open 作废（断网时它只会失败）；已有连接直接放弃
+		if (this.opening) {
+			this.generation++;
+			this.opening = false;
+			this.scheduleReconnect("offline");
+		}
+		this.abandon("offline");
+	};
+
+	private readonly onOnline = () => {
+		if (this.closedByUser || this.suspended) return;
+		if (!this.ws && !this.opening) this.retryNow();
+	};
+
+	private bindNetwork(on: boolean) {
+		if (typeof window === "undefined") return;
+		if (on && !this.networkBound) {
+			window.addEventListener("offline", this.onOffline);
+			window.addEventListener("online", this.onOnline);
+			this.networkBound = true;
+		} else if (!on && this.networkBound) {
+			window.removeEventListener("offline", this.onOffline);
+			window.removeEventListener("online", this.onOnline);
+			this.networkBound = false;
+		}
 	}
 
 	private scheduleReconnect(reason: string) {
