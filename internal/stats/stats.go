@@ -107,20 +107,20 @@ type usageAgg struct {
 func (a usageAgg) stat() apigen.UsageStat {
 	s := apigen.UsageStat{
 		Key: a.key, Requests: a.requests, InputTokens: a.in, OutputTokens: a.out,
-		CacheReadTokens: a.cacheR, CacheWriteTokens: a.cacheW, CostUsd: float32(a.cost),
+		CacheReadTokens: a.cacheR, CacheWriteTokens: a.cacheW, CostUsd: a.cost,
 	}
 	if a.label != "" {
 		l := a.label
 		s.Label = &l
 	}
-	sub := float32(a.subCost)
+	sub := a.subCost
 	s.SubagentCostUsd = &sub
 	if a.avgTtft >= 0 {
-		v := float32(a.avgTtft)
+		v := a.avgTtft
 		s.AvgTtftMs = &v
 	}
 	if a.durMs > 0 {
-		v := float32(float64(a.timedOut) / (float64(a.durMs) / 1000))
+		v := float64(a.timedOut) / (float64(a.durMs) / 1000)
 		s.TokensPerSecond = &v
 	}
 	return s
@@ -190,7 +190,7 @@ func Usage(ctx context.Context, q *db.Queries, groupBy string, from, to int64) (
 	default:
 		return apigen.UsageStats{}, fmt.Errorf("groupBy %q 无效", groupBy)
 	}
-	out := apigen.UsageStats{From: from, To: to, GroupBy: apigen.UsageStatsGroupBy(groupBy), Groups: make([]apigen.UsageStat, 0, len(aggs))}
+	out := apigen.UsageStats{From: from, To: to, Tz: "UTC", GroupBy: apigen.UsageGroupBy(groupBy), Groups: make([]apigen.UsageStat, 0, len(aggs))}
 	seen := map[string]bool{}
 	for _, a := range aggs {
 		s := a.stat()
@@ -214,6 +214,19 @@ func Usage(ctx context.Context, q *db.Queries, groupBy string, from, to int64) (
 	if groupBy == "day" {
 		sort.SliceStable(out.Groups, func(i, k int) bool { return out.Groups[i].Key < out.Groups[k].Key })
 	}
+	// total：全部分组之和（M10 契约的必填字段；切片 B 重写本函数前的最小适配）。
+	out.Total = apigen.UsageStat{Key: "total"}
+	for _, g := range out.Groups {
+		t := &out.Total
+		t.Requests += g.Requests
+		t.InputTokens += g.InputTokens
+		t.OutputTokens += g.OutputTokens
+		t.CacheReadTokens += g.CacheReadTokens
+		t.CacheWriteTokens += g.CacheWriteTokens
+		t.CostUsd += g.CostUsd
+		t.ToolCalls += g.ToolCalls
+		t.ToolErrors += g.ToolErrors
+	}
 	return out, nil
 }
 
@@ -228,11 +241,12 @@ func Orbs(ctx context.Context, q *db.Queries, from, to int64) (apigen.OrbStats, 
 	if err != nil {
 		return apigen.OrbStats{}, err
 	}
-	byType := map[string]*apigen.OrbTypeStat{}
-	get := func(t string) *apigen.OrbTypeStat {
+	byType := map[string]*apigen.OrbStat{}
+	get := func(t string) *apigen.OrbStat {
 		s := byType[t]
 		if s == nil {
-			s = &apigen.OrbTypeStat{Type: t}
+			typ := t
+			s = &apigen.OrbStat{Key: t, Type: &typ}
 			byType[t] = s
 		}
 		return s
@@ -280,10 +294,23 @@ func Orbs(ctx context.Context, q *db.Queries, from, to int64) (apigen.OrbStats, 
 		}
 		i = k
 	}
-	out := apigen.OrbStats{From: from, To: to, Types: make([]apigen.OrbTypeStat, 0, len(byType))}
-	for _, s := range byType {
-		out.Types = append(out.Types, *s)
+	out := apigen.OrbStats{
+		GroupBy: apigen.OrbGroupByType, From: from, To: to, Tz: "UTC",
+		Total: apigen.OrbStat{Key: "total"}, Groups: make([]apigen.OrbStat, 0, len(byType)),
 	}
-	sort.Slice(out.Types, func(i, k int) bool { return out.Types[i].Type < out.Types[k].Type })
+	for _, s := range byType {
+		out.Groups = append(out.Groups, *s)
+		t := &out.Total
+		t.Orbs += s.Orbs
+		t.RunningMs += s.RunningMs
+		t.FrozenMs += s.FrozenMs
+		t.StoppedMs += s.StoppedMs
+		t.Spawns += s.Spawns
+		t.Freezes += s.Freezes
+		t.Stops += s.Stops
+		t.Wakes += s.Wakes
+		t.Failures += s.Failures
+	}
+	sort.Slice(out.Groups, func(i, k int) bool { return out.Groups[i].Key < out.Groups[k].Key })
 	return out, nil
 }

@@ -137,7 +137,8 @@ func TestOrbsAndStatsAPI(t *testing.T) {
 	assert.Len(t, m.Samples, 4)
 	assert.Equal(t, 404, e.do("GET", "/api/v1/orbs/orb-nope/metrics", e.dev, nil, nil))
 
-	require.NoError(t, e.st.Q.InsertUsageRecord(ctx, db.InsertUsageRecordParams{EntrySeq: 1, Ts: time.Now().UnixMilli(), Provider: "anthropic", Model: "opus", InputTokens: 5, OutputTokens: 7}))
+	_, err = e.st.Q.InsertUsageRecord(ctx, db.InsertUsageRecordParams{EntrySeq: 1, Ts: time.Now().UnixMilli(), Provider: "anthropic", Model: "opus", InputTokens: 5, OutputTokens: 7})
+	require.NoError(t, err)
 	var u apigen.UsageStats
 	require.Equal(t, 200, e.do("GET", "/api/v1/stats/usage?groupBy=model", e.dev, nil, &u))
 	require.Len(t, u.Groups, 1)
@@ -147,9 +148,9 @@ func TestOrbsAndStatsAPI(t *testing.T) {
 
 	var os apigen.OrbStats
 	require.Equal(t, 200, e.do("GET", "/api/v1/stats/orbs", e.dev, nil, &os))
-	require.Len(t, os.Types, 1)
-	assert.Equal(t, "small", os.Types[0].Type)
-	assert.Equal(t, 1, os.Types[0].Spawns)
+	require.Len(t, os.Groups, 1)
+	assert.Equal(t, "small", os.Groups[0].Key)
+	assert.Equal(t, 1, os.Groups[0].Spawns)
 
 	// 删除 → deleting，并入队 delete 任务。
 	require.Equal(t, 202, e.do("DELETE", "/api/v1/orbs/"+orb.ID, e.dev, nil, &got))

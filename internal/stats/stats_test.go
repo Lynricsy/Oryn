@@ -76,11 +76,17 @@ func TestUsage(t *testing.T) {
 		{ThreadID: new("T-2"), EntrySeq: 2, Ts: 10 * day, Provider: "openai", Model: "gpt", InputTokens: 999, OutputTokens: 999}, // 窗口外
 	}
 	for _, r := range recs {
-		require.NoError(t, st.Q.InsertUsageRecord(ctx, r))
+		_, err := st.Q.InsertUsageRecord(ctx, r)
+		require.NoError(t, err)
 	}
-	require.NoError(t, st.Q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: new("T-1"), EntrySeq: 3, Ts: day + 30, Tool: "bash"}))
-	require.NoError(t, st.Q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: new("T-1"), EntrySeq: 4, Ts: day + 40, Tool: "bash", IsError: true}))
-	require.NoError(t, st.Q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: new("T-2"), EntrySeq: 5, Ts: 3*day + 1, Tool: "read"}))
+	for _, c := range []db.InsertToolCallParams{
+		{ThreadID: new("T-1"), EntrySeq: 3, Ts: day + 30, Tool: "bash"},
+		{ThreadID: new("T-1"), EntrySeq: 4, Ts: day + 40, Tool: "bash", IsError: true},
+		{ThreadID: new("T-2"), EntrySeq: 5, Ts: 3*day + 1, Tool: "read"},
+	} {
+		_, err := st.Q.InsertToolCall(ctx, c)
+		require.NoError(t, err)
+	}
 
 	from, to := int64(0), 5*day
 	u, err := Usage(ctx, st.Q, "model", from, to)
@@ -152,12 +158,12 @@ func TestOrbStats(t *testing.T) {
 
 	s, err := Orbs(ctx, st.Q, 25, 300)
 	require.NoError(t, err)
-	require.Len(t, s.Types, 2)
-	b, a := s.Types[0], s.Types[1]
-	assert.Equal(t, "large", b.Type)
+	require.Len(t, s.Groups, 2)
+	b, a := s.Groups[0], s.Groups[1]
+	assert.Equal(t, "large", b.Key)
 	assert.Equal(t, 1, b.Spawns)
 	assert.Equal(t, 1, b.Failures)
-	assert.Equal(t, "small", a.Type)
+	assert.Equal(t, "small", a.Key)
 	assert.Equal(t, 1, a.Orbs)
 	// running: connecting[25,30) + ready[30,100) + freezing[100,110) + stopping[200,210) = 5+70+10+10
 	assert.EqualValues(t, 95, a.RunningMs)

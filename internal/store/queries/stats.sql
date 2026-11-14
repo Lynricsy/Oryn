@@ -1,70 +1,316 @@
--- Usage records, tool calls and basic aggregates (M2 stats endpoints).
+-- M10 analytics: narrow fact rows (usage_records / tool_calls / turns), thread commits, stats state, budget,
+-- retention. Fact rows are written in the entries transaction; aggregates never touch entries.payload.
+-- Invariant: fact rows of a live thread = f(its current entries); rows of a deleted thread are frozen
+-- (thread_id NULL, project_id / space_id = attribution snapshot written on delete).
 
--- name: InsertUsageRecord :exec
-INSERT OR IGNORE INTO usage_records (thread_id, entry_seq, ts, provider, model, input_tokens, output_tokens,
-    cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent)
-VALUES (@thread_id, @entry_seq, @ts, @provider, @model, @input_tokens, @output_tokens,
-    @cache_read_tokens, @cache_write_tokens, @cost_usd, @duration_ms, @ttft_ms, @is_subagent);
+-- ---------------------------------------------------------------- writes
 
--- name: ListUsageRecords :many
-SELECT * FROM usage_records WHERE ts >= @from_ts AND ts < @to_ts ORDER BY ts, id;
+-- ukey = "<entryId>@<ts>": cross-thread dedup key (fork copies keep id and timestamp). 0 rows = ignored
+-- (same (thread_id, entry_seq) or ukey already taken by another thread).
+-- name: InsertUsageRecord :execrows
+INSERT OR IGNORE INTO usage_records (thread_id, entry_seq, ts, provider, model, purpose, stop_reason, ukey,
+    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent)
+VALUES (@thread_id, @entry_seq, @ts, @provider, @model, @purpose, @stop_reason, @ukey,
+    @input_tokens, @output_tokens, @cache_read_tokens, @cache_write_tokens, @cost_usd, @duration_ms, @ttft_ms, @is_subagent);
 
--- name: ListThreadUsageRecords :many
-SELECT * FROM usage_records WHERE thread_id = @thread_id ORDER BY ts, id;
+-- name: InsertToolCall :execrows
+INSERT OR IGNORE INTO tool_calls (thread_id, entry_seq, ts, tool, is_error, ukey)
+VALUES (@thread_id, @entry_seq, @ts, @tool, @is_error, @ukey);
 
--- name: UsageByModel :many
-SELECT provider, model,
+-- A turn = one role=user message in a main session file.
+-- name: InsertTurn :execrows
+INSERT OR IGNORE INTO turns (thread_id, entry_seq, ts, ukey)
+VALUES (@thread_id, @entry_seq, @ts, @ukey);
+
+-- ---------------------------------------------------------------- per-entry / per-thread deletes
+
+-- name: DeleteUsageAt :exec
+DELETE FROM usage_records WHERE thread_id = CAST(@thread_id AS TEXT) AND entry_seq = @entry_seq;
+
+-- name: DeleteToolCallAt :exec
+DELETE FROM tool_calls WHERE thread_id = CAST(@thread_id AS TEXT) AND entry_seq = @entry_seq;
+
+-- name: DeleteTurnAt :exec
+DELETE FROM turns WHERE thread_id = CAST(@thread_id AS TEXT) AND entry_seq = @entry_seq;
+
+-- name: DeleteThreadUsage :exec
+DELETE FROM usage_records WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- name: DeleteThreadToolCalls :exec
+DELETE FROM tool_calls WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- name: DeleteThreadTurns :exec
+DELETE FROM turns WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- All live threads (manual full rebuild only); rows of deleted threads stay.
+-- name: DeleteLiveUsage :exec
+DELETE FROM usage_records WHERE thread_id IS NOT NULL;
+
+-- name: DeleteLiveToolCalls :exec
+DELETE FROM tool_calls WHERE thread_id IS NOT NULL;
+
+-- name: DeleteLiveTurns :exec
+DELETE FROM turns WHERE thread_id IS NOT NULL;
+
+-- Orphans: fact rows of a thread whose entry (thread_id, entry_seq) no longer exists (after reset_done / dropFile).
+-- name: DeleteOrphanUsage :execrows
+DELETE FROM usage_records WHERE thread_id = CAST(@thread_id AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = usage_records.thread_id AND e.seq = usage_records.entry_seq);
+
+-- name: DeleteOrphanToolCalls :execrows
+DELETE FROM tool_calls WHERE thread_id = CAST(@thread_id AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = tool_calls.thread_id AND e.seq = tool_calls.entry_seq);
+
+-- name: DeleteOrphanTurns :execrows
+DELETE FROM turns WHERE thread_id = CAST(@thread_id AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = turns.thread_id AND e.seq = turns.entry_seq);
+
+-- Attribution snapshot written right before the thread row is deleted (thread_id then becomes NULL).
+-- name: TombstoneUsage :exec
+UPDATE usage_records SET project_id = @project_id, space_id = @space_id WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- name: TombstoneToolCalls :exec
+UPDATE tool_calls SET project_id = @project_id, space_id = @space_id WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- name: TombstoneTurns :exec
+UPDATE turns SET project_id = @project_id, space_id = @space_id WHERE thread_id = CAST(@thread_id AS TEXT);
+
+-- ---------------------------------------------------------------- aggregates
+
+-- One static SQL for every grouping: each by_* switch turns a key column on; disabled keys are ''.
+-- bucket = (ts + offset_ms) / bucket_ms (local hour / day ordinal; 0 when by_bucket is off).
+-- Live threads take their current project / space; deleted threads fall back to the snapshot columns.
+-- Filters: NULL = no filter; project / space '' = none.
+-- name: StatsUsageAgg :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (u.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(u.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, u.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, u.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_model) AS BOOLEAN) THEN u.provider || '/' || u.model ELSE '' END AS TEXT) AS model,
+    CAST(CASE WHEN CAST(sqlc.arg(by_purpose) AS BOOLEAN) THEN u.purpose ELSE '' END AS TEXT) AS purpose,
     CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= @from_ts AND ts < @to_ts
-GROUP BY provider, model ORDER BY cost_usd DESC, provider, model;
-
--- day = UTC day number (ts / 86400000).
--- name: UsageByDay :many
-SELECT CAST(ts / 86400000 AS INTEGER) AS day,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= @from_ts AND ts < @to_ts
-GROUP BY day ORDER BY day;
-
--- name: UsageByThread :many
-SELECT CAST(COALESCE(thread_id, '') AS TEXT) AS thread_id,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= @from_ts AND ts < @to_ts
-GROUP BY thread_id ORDER BY cost_usd DESC, thread_id;
-
--- name: UsageByProject :many
-SELECT CAST(COALESCE(t.project_id, '') AS TEXT) AS project_id,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(u.input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(u.output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(u.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(u.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(u.cost_usd) AS REAL) AS cost_usd
+    CAST(COALESCE(SUM(u.stop_reason = 'error'), 0) AS INTEGER) AS request_errors,
+    CAST(COALESCE(SUM(u.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COALESCE(SUM(u.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(u.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
+    CAST(COALESCE(SUM(u.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
+    CAST(COALESCE(SUM(u.cost_usd), 0) AS REAL) AS cost_usd,
+    CAST(COALESCE(SUM(CASE WHEN u.is_subagent THEN u.cost_usd ELSE 0 END), 0) AS REAL) AS subagent_cost_usd,
+    CAST(COALESCE(SUM(u.ttft_ms), 0) AS INTEGER) AS ttft_sum_ms,
+    CAST(COUNT(u.ttft_ms) AS INTEGER) AS ttft_n,
+    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END), 0) AS INTEGER) AS timed_output_tokens,
+    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END), 0) AS INTEGER) AS duration_ms
 FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
 WHERE u.ts >= @from_ts AND u.ts < @to_ts
-GROUP BY project_id ORDER BY cost_usd DESC, project_id;
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR u.thread_id = CAST(sqlc.narg(thread) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(sqlc.narg(model) AS TEXT))
+GROUP BY 1, 2, 3, 4, 5, 6;
 
--- name: InsertToolCall :exec
-INSERT OR IGNORE INTO tool_calls (thread_id, entry_seq, ts, tool, is_error)
-VALUES (@thread_id, @entry_seq, @ts, @tool, @is_error);
-
--- name: ToolCallStats :many
-SELECT tool,
+-- name: StatsToolAgg :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (c.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(sqlc.arg(by_tool) AS BOOLEAN) THEN c.tool ELSE '' END AS TEXT) AS tool,
+    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(c.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, c.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, c.space_id, '') ELSE '' END AS TEXT) AS space_id,
     CAST(COUNT(*) AS INTEGER) AS calls,
-    CAST(SUM(is_error) AS INTEGER) AS errors
-FROM tool_calls WHERE ts >= @from_ts AND ts < @to_ts
-GROUP BY tool ORDER BY calls DESC, tool;
+    CAST(COALESCE(SUM(c.is_error), 0) AS INTEGER) AS errors
+FROM tool_calls c LEFT JOIN threads t ON t.id = c.thread_id
+WHERE c.ts >= @from_ts AND c.ts < @to_ts
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR c.thread_id = CAST(sqlc.narg(thread) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, c.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, c.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2, 3, 4, 5;
+
+-- name: StatsTurnAgg :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (r.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(sqlc.arg(by_thread) AS BOOLEAN) THEN COALESCE(r.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, r.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, r.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(COUNT(*) AS INTEGER) AS turns
+FROM turns r LEFT JOIN threads t ON t.id = r.thread_id
+WHERE r.ts >= @from_ts AND r.ts < @to_ts
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR r.thread_id = CAST(sqlc.narg(thread) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, r.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, r.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2, 3, 4;
+
+-- Earliest usage fact time; 0 when there is none.
+-- name: MinUsageTs :one
+SELECT CAST(COALESCE(MIN(ts), 0) AS INTEGER) AS min_ts FROM usage_records;
+
+-- name: SumUsageCost :one
+SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) AS cost_usd FROM usage_records WHERE ts >= @from_ts AND ts < @to_ts;
+
+-- name: CountUsageRecords :one
+SELECT CAST(COUNT(*) AS INTEGER) AS n
+FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+WHERE u.ts >= @from_ts AND u.ts < @to_ts
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR u.thread_id = CAST(sqlc.narg(thread) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(sqlc.narg(model) AS TEXT));
+
+-- Keyset page of usage facts with their current attribution. First page: after_ts = from_ts, after_id = 0.
+-- name: ListUsageRecordsPage :many
+SELECT u.id, u.ts,
+    CAST(COALESCE(u.thread_id, '') AS TEXT) AS thread_id,
+    CAST(COALESCE(t.project_id, u.project_id, '') AS TEXT) AS project_id,
+    CAST(COALESCE(t.space_id, u.space_id, '') AS TEXT) AS space_id,
+    u.provider, u.model, u.purpose, u.is_subagent, u.stop_reason,
+    u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.duration_ms, u.ttft_ms
+FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+WHERE u.ts >= @from_ts AND u.ts < @to_ts
+  AND (u.ts > @after_ts OR (u.ts = @after_ts AND u.id > @after_id))
+  AND (CAST(sqlc.narg(thread) AS TEXT) IS NULL OR u.thread_id = CAST(sqlc.narg(thread) AS TEXT))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+  AND (CAST(sqlc.narg(model) AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(sqlc.narg(model) AS TEXT))
+ORDER BY u.ts, u.id
+LIMIT @limit;
+
+-- ---------------------------------------------------------------- orbs
+
+-- Orbs that may have existed inside [from_ts, to_ts); state_at_from = to_state of the last event before from_ts
+-- ('' = no event yet).
+-- name: ListOrbsForStats :many
+SELECT o.id, o.type, o.cpus, o.memory_mb, o.project_id, o.created_at, o.deleted_at, o.snapshot_of, o.coordinator,
+    CAST(COALESCE((SELECT e.to_state FROM orb_events e WHERE e.orb_id = o.id AND e.ts < @from_ts
+                   ORDER BY e.ts DESC, e.id DESC LIMIT 1), '') AS TEXT) AS state_at_from
+FROM orbs o
+WHERE o.created_at < @to_ts AND (o.deleted_at IS NULL OR o.deleted_at >= @from_ts)
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(orb) AS TEXT) IS NULL OR o.id = CAST(sqlc.narg(orb) AS TEXT))
+ORDER BY o.id;
+
+-- Transitions inside [from_ts, to_ts), with the same optional project / orb filters as ListOrbsForStats.
+-- name: ListOrbEventsInWindow :many
+SELECT e.orb_id, e.ts, e.from_state, e.to_state
+FROM orb_events e JOIN orbs o ON o.id = e.orb_id
+WHERE e.ts >= @from_ts AND e.ts < @to_ts
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(orb) AS TEXT) IS NULL OR e.orb_id = CAST(sqlc.narg(orb) AS TEXT))
+ORDER BY e.orb_id, e.ts, e.id;
+
+-- One orb: events from the last one before from_ts (0 when none) up to to_ts, at most 5000.
+-- name: ListOrbEventsForTimeline :many
+SELECT e.id, e.ts, e.from_state, e.to_state, e.detail
+FROM orb_events e
+WHERE e.orb_id = @orb_id AND e.ts < @to_ts
+  AND e.ts >= COALESCE((SELECT MAX(p.ts) FROM orb_events p WHERE p.orb_id = @orb_id AND p.ts < @from_ts), 0)
+ORDER BY e.ts, e.id
+LIMIT 5000;
+
+-- name: ListSetupRunsForStats :many
+SELECT r.orb_id, r.phase, r.ok, r.setup_ran, r.duration_ms, r.started_at, o.type
+FROM orb_setup_runs r JOIN orbs o ON o.id = r.orb_id
+WHERE r.started_at >= @from_ts AND r.started_at < @to_ts
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(orb) AS TEXT) IS NULL OR r.orb_id = CAST(sqlc.narg(orb) AS TEXT))
+ORDER BY r.started_at, r.id;
+
+-- ---------------------------------------------------------------- output
+
+-- Work threads created, archived or shipped inside [from_ts, to_ts).
+-- name: ListThreadTimesForStats :many
+SELECT id, project_id, space_id, created_at, archived_at, shipped_at
+FROM threads
+WHERE kind = 'work'
+  AND ((created_at >= @from_ts AND created_at < @to_ts)
+    OR (archived_at >= @from_ts AND archived_at < @to_ts)
+    OR (shipped_at >= @from_ts AND shipped_at < @to_ts))
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+ORDER BY created_at, id;
+
+-- Work threads shipped inside [from_ts, to_ts) with their whole-lifetime cost.
+-- name: ListShippedThreadCosts :many
+SELECT t.id, t.project_id, t.space_id, CAST(t.shipped_at AS INTEGER) AS shipped_at,
+    CAST(COALESCE((SELECT SUM(u.cost_usd) FROM usage_records u WHERE u.thread_id = t.id), 0) AS REAL) AS cost_usd
+FROM threads t
+WHERE t.kind = 'work' AND t.shipped_at >= CAST(@from_ts AS INTEGER) AND t.shipped_at < CAST(@to_ts AS INTEGER)
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+ORDER BY t.shipped_at, t.id;
+
+-- Distinct commit shas per group (a sha shared by forked threads counts once).
+-- name: StatsCommitAgg :many
+SELECT
+    CAST(CASE WHEN CAST(sqlc.arg(by_bucket) AS BOOLEAN)
+         THEN (c.ts + CAST(sqlc.arg(offset_ms) AS INTEGER)) / CAST(sqlc.arg(bucket_ms) AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(sqlc.arg(by_project) AS BOOLEAN) THEN COALESCE(t.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(sqlc.arg(by_space) AS BOOLEAN) THEN COALESCE(t.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(COUNT(DISTINCT c.sha) AS INTEGER) AS commits
+FROM thread_commits c JOIN threads t ON t.id = c.thread_id
+WHERE c.ts >= @from_ts AND c.ts < @to_ts
+  AND (CAST(sqlc.narg(project) AS TEXT) IS NULL OR COALESCE(t.project_id, '') = CAST(sqlc.narg(project) AS TEXT))
+  AND (CAST(sqlc.narg(space) AS TEXT) IS NULL OR COALESCE(t.space_id, '') = CAST(sqlc.narg(space) AS TEXT))
+GROUP BY 1, 2, 3;
+
+-- name: DeleteThreadCommits :exec
+DELETE FROM thread_commits WHERE thread_id = @thread_id;
+
+-- name: InsertThreadCommit :exec
+INSERT OR IGNORE INTO thread_commits (thread_id, sha, ts) VALUES (@thread_id, @sha, @ts);
+
+-- ---------------------------------------------------------------- state and budget
+
+-- Keys: facts_version, backfill_cursor ("<created_at>:<thread_id>"), backfill_done, backfill_total.
+-- name: GetStatsState :one
+SELECT value FROM stats_state WHERE key = @key;
+
+-- name: SetStatsState :exec
+INSERT INTO stats_state (key, value) VALUES (@key, @value)
+ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+
+-- name: DeleteStatsState :exec
+DELETE FROM stats_state WHERE key = @key;
+
+-- name: GetBudget :one
+SELECT * FROM budget WHERE id = 1;
+
+-- name: UpsertBudget :exec
+INSERT INTO budget (id, daily_usd, monthly_usd, warn_pct, timezone, enabled, updated_at)
+VALUES (1, @daily_usd, @monthly_usd, @warn_pct, @timezone, @enabled, @updated_at)
+ON CONFLICT (id) DO UPDATE SET
+    daily_usd   = excluded.daily_usd,
+    monthly_usd = excluded.monthly_usd,
+    warn_pct    = excluded.warn_pct,
+    timezone    = excluded.timezone,
+    enabled     = excluded.enabled,
+    updated_at  = excluded.updated_at;
+
+-- At most one row per (period, period_key, level): 0 rows = already alerted.
+-- name: InsertBudgetAlert :execrows
+INSERT OR IGNORE INTO budget_alerts (period, period_key, level, spent_usd, limit_usd, created_at)
+VALUES (@period, @period_key, @level, @spent_usd, @limit_usd, @created_at);
+
+-- ---------------------------------------------------------------- retention
+
+-- Only events of orbs deleted before the cutoff (live orbs' events drive OrbEverReady / FailureReason).
+-- name: DeleteDeadOrbEventsBefore :execrows
+DELETE FROM orb_events
+WHERE orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NOT NULL AND deleted_at < CAST(@before AS INTEGER));
+
+-- name: DeleteDeadOrbSetupRunsBefore :execrows
+DELETE FROM orb_setup_runs
+WHERE orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NOT NULL AND deleted_at < CAST(@before AS INTEGER));
+
+-- name: DeleteUsageBefore :execrows
+DELETE FROM usage_records WHERE ts < @before;
+
+-- name: DeleteToolCallsBefore :execrows
+DELETE FROM tool_calls WHERE ts < @before;
+
+-- name: DeleteTurnsBefore :execrows
+DELETE FROM turns WHERE ts < @before;
+
+-- name: DeleteBudgetAlertsBefore :execrows
+DELETE FROM budget_alerts WHERE created_at < @before;

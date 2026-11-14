@@ -33,6 +33,7 @@ export const KIND_ICON: Record<
 	done: { icon: "check", className: "text-ok" },
 	input: { icon: "question", className: "text-accent" },
 	error: { icon: "alert", className: "text-err" },
+	budget: { icon: "alert", className: "text-warn" },
 };
 
 /** 计数胶囊上限：超过显示「99+」。 */

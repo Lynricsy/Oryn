@@ -1639,6 +1639,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stats/meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 统计元信息：服务端时间、事实行版本、历史回填进度、最早的用量时间与保留期 */
+        get: operations["getStatsMeta"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats/usage": {
         parameters: {
             query?: never;
@@ -1646,8 +1663,55 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 模型用量分组聚合 */
+        /**
+         * 模型用量分组聚合（tokens、成本、请求与错误、TTFT、tokens/s、工具调用、回合）
+         * @description `groupBy` 为时间粒度（`hour | day | week | month`）时 `groups` 稠密（窗口内每个桶一项，含全零），且不得再给 `series`。
+         *     非时间分组按成本降序（并列按键）取前 `limit` 个，其余折叠成 `key = "__other__"` 的一项；`series` 各点的 `groups` 用同一批键。
+         *     `model` 筛选生效或 `groupBy ∈ {model, purpose}` 时 `toolCalls / toolErrors / turns` 为 0。
+         *     `format=csv` 时列为 `bucket,key,label,requests,request_errors,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,subagent_cost_usd,avg_ttft_ms,tokens_per_second,tool_calls,tool_errors,turns`。
+         */
         get: operations["getUsageStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/usage/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 用量明细导出（CSV，每个请求一行；单次 ≤500000 行，超出 → 400 `range_too_large`）
+         * @description 列：`ts,time,thread_id,project_id,space_id,provider,model,purpose,subagent,stop_reason,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,duration_ms,ttft_ms`
+         *     （`time` 为 RFC3339 UTC；归属列取线程当前的项目 / Space，已删线程取删除时的快照）。
+         */
+        get: operations["exportUsageRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 工具调用与错误（按工具，前 `limit` 个，其余折叠成 `__other__`）
+         * @description `format=csv` 时列为 `bucket,tool,calls,errors`。
+         */
+        get: operations["getToolStats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1663,9 +1727,70 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** orb 生命周期统计（由 `orb_events` 计算） */
+        /**
+         * orb 运行 / 冻结 / 停机时长、次数与 setup 耗时（由 `orb_events`、`orb_setup_runs` 计算）
+         * @description 时间粒度分组把状态区间按桶边界切开分摊；次数只在 `from_state ≠ to_state` 时累加；末段区间截到「现在」。
+         *     `format=csv` 时列为 `key,label,type,cpus,memory_mb,orbs,running_ms,frozen_ms,stopped_ms,setup_ms,spawns,snapshot_spawns,freezes,stops,wakes,failures`。
+         */
         get: operations["getOrbStats"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orbs/{id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found` */
+        get: operations["getOrbTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 线程产出（新建 / 已交付 / 已归档、提交数、回合、交付线程的全生命周期成本）
+         * @description `format=csv` 时列为 `key,label,threads_created,threads_shipped,threads_archived,shipped_cost_usd,commits,turns`。
+         */
+        get: operations["getOutputStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`） */
+        get: operations["getBudget"];
+        /** 整体替换预算设置；金额 <0.01、`warnPct` 越界、时区非法 → 400 `invalid_budget` */
+        put: operations["putBudget"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1699,7 +1824,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read` */
+        /** 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read` */
         post: operations["markNotificationsRead"];
         delete?: never;
         options?: never;
@@ -3554,13 +3679,46 @@ export interface components {
             extractedSecrets: string[];
             warnings: components["schemas"]["AgentConfigWarning"][];
         };
+        /**
+         * @description 时间粒度（按请求的 `tz` 取自然小时 / 日 / 周（周一为始）/ 月）
+         * @enum {string}
+         */
+        StatsGrain: "hour" | "day" | "week" | "month";
+        /**
+         * @description 响应格式；缺省 = `json`
+         * @enum {string}
+         */
+        StatsFormat: "json" | "csv";
+        /**
+         * @description `total` 只给一组 `key = "total"`；`hour / day / week / month` 为时间桶；其余为维度
+         * @enum {string}
+         */
+        UsageGroupBy: "total" | "hour" | "day" | "week" | "month" | "model" | "thread" | "project" | "space" | "purpose";
+        /** @enum {string} */
+        OrbGroupBy: "type" | "day" | "week" | "month" | "project" | "orb";
+        /** @enum {string} */
+        OutputGroupBy: "day" | "week" | "month" | "project" | "space";
         UsageStat: {
-            /** @description 分组键：`YYYY-MM-DD`（UTC）/ `<provider>/<model>` / 线程 id / 项目 id（无项目为空串） */
+            /**
+             * @description 分组键：时间桶标签（`2026-11-14T13:00` / `2026-11-14` / `2026-W46` / `2026-11`）、`<provider>/<model>`、
+             *     线程 id（已删线程为空串）、项目 id（无项目为空串）、Space id（无为空串）、用途（对话回合为空串）、
+             *     `total`、折叠项 `__other__`
+             */
             key: string;
-            /** @description 显示名（线程标题、项目名） */
+            /** @description 显示名（线程标题、项目名、Space 名） */
             label?: string;
-            /** Format: int64 */
+            /** @description 仅时间桶：桶起点（已裁到窗口） */
+            start?: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 请求数 = 用量事实行数（带 usage 的 assistant 消息 + model_usage 条目）
+             */
             requests: number;
+            /**
+             * Format: int64
+             * @description `stopReason = error` 的请求数（`aborted` 不算）
+             */
+            requestErrors: number;
             /** Format: int64 */
             inputTokens: number;
             /** Format: int64 */
@@ -3569,42 +3727,261 @@ export interface components {
             cacheReadTokens: number;
             /** Format: int64 */
             cacheWriteTokens: number;
+            /**
+             * Format: double
+             * @description 美元（omp 按目录标价估算），含子 agent
+             */
             costUsd: number;
+            /**
+             * Format: double
+             * @description 其中子 agent 的部分（已含在 `costUsd` 内，不要再加）
+             */
             subagentCostUsd?: number;
+            /**
+             * Format: double
+             * @description 平均首 token 时间；没有样本时省略
+             */
             avgTtftMs?: number;
+            /**
+             * Format: double
+             * @description 有时长的请求的输出 tokens / 时长；分母为 0 时省略
+             */
             tokensPerSecond?: number;
             /** Format: int64 */
             toolCalls: number;
             /** Format: int64 */
             toolErrors: number;
+            /**
+             * Format: int64
+             * @description 回合数（主会话里的 user 消息）
+             */
+            turns: number;
         };
-        UsageStats: {
-            /** @enum {string} */
-            groupBy: "day" | "model" | "thread" | "project";
-            from: components["schemas"]["TimestampMs"];
-            to: components["schemas"]["TimestampMs"];
+        UsageSeriesPoint: {
+            /** @description 时间桶标签 */
+            key: string;
+            start: components["schemas"]["TimestampMs"];
+            total: components["schemas"]["UsageStat"];
+            /** @description 只含非零分组；键与顶层 `groups` 一致 */
             groups: components["schemas"]["UsageStat"][];
         };
-        OrbTypeStat: {
-            type: string;
+        UsageStats: {
+            groupBy: components["schemas"]["UsageGroupBy"];
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            /** @description 实际使用的 IANA 时区 */
+            tz: string;
+            /** @description 全部分组（折叠前）之和，`key = "total"` */
+            total: components["schemas"]["UsageStat"];
+            groups: components["schemas"]["UsageStat"][];
+            /** @description 请求了 `series` 时给出（稠密） */
+            series?: components["schemas"]["UsageSeriesPoint"][];
+        };
+        ToolStat: {
+            /** @description 工具名；`total` 为空串；折叠项为 `__other__` */
+            tool: string;
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+        };
+        ToolSeriesPoint: {
+            key: string;
+            start: components["schemas"]["TimestampMs"];
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            errors: number;
+        };
+        ToolStats: {
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            tz: string;
+            total: components["schemas"]["ToolStat"];
+            tools: components["schemas"]["ToolStat"][];
+            series?: components["schemas"]["ToolSeriesPoint"][];
+        };
+        OrbStat: {
+            /** @description 类型名 / 时间桶标签 / 项目 id（无项目为空串）/ orb id；`total` 为 `total` */
+            key: string;
+            /** @description 项目名；`groupBy=orb` 时为它第一个线程的标题 */
+            label?: string;
+            /** @description 仅时间桶 */
+            start?: components["schemas"]["TimestampMs"];
+            /** @description `groupBy=type` / `orb` 时给出 */
+            type?: string;
+            cpus?: number;
+            memoryMB?: number;
             /** @description 窗口内存在过的 orb 数 */
             orbs: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description 处于 `connecting / setting_up / resuming / ready / freezing / stopping` 的时长
+             */
             runningMs: number;
             /** Format: int64 */
             frozenMs: number;
             /** Format: int64 */
             stoppedMs: number;
+            /**
+             * Format: int64
+             * @description 处于 `setting_up` / `resuming` 的时长（已含在 `runningMs` 内）
+             */
+            setupMs: number;
             spawns: number;
+            /** @description 窗口内创建且由快照启动（`snapshot_of` 非空）的 orb 数 */
+            snapshotSpawns: number;
             freezes: number;
             stops: number;
             wakes: number;
             failures: number;
         };
+        /** @description 口径：`phase = setup` 且真正运行了脚本（`setup_ran = 1`）的记录；`resume*` 为 `phase = resume` 的记录 */
+        OrbSetupStats: {
+            runs: number;
+            failures: number;
+            /** @description 耗时 ≥ 120000 ms 的次数 */
+            slowRuns: number;
+            resumeRuns: number;
+            resumeFailures: number;
+            /** Format: int64 */
+            p50Ms?: number;
+            /** Format: int64 */
+            p95Ms?: number;
+            /** Format: int64 */
+            maxMs?: number;
+        };
         OrbStats: {
+            groupBy: components["schemas"]["OrbGroupBy"];
             from: components["schemas"]["TimestampMs"];
             to: components["schemas"]["TimestampMs"];
-            types: components["schemas"]["OrbTypeStat"][];
+            tz: string;
+            total: components["schemas"]["OrbStat"];
+            groups: components["schemas"]["OrbStat"][];
+            setup: components["schemas"]["OrbSetupStats"];
+        };
+        OrbTimelineSegment: {
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            state: components["schemas"]["OrbState"];
+            /** @description 仅 `failed`：事件的 `detail.reason`（没有则 `detail.error`） */
+            reason?: string;
+        };
+        OrbTimeline: {
+            orbId: components["schemas"]["OrbId"];
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            /** @description 相邻同状态已合并；末段截到「现在」 */
+            segments: components["schemas"]["OrbTimelineSegment"][];
+            /** @description 超过 2000 段时为真（只给前 2000 段） */
+            truncated: boolean;
+        };
+        OutputStat: {
+            /** @description 时间桶标签 / 项目 id / Space id（无为空串）；`total` 为 `total` */
+            key: string;
+            label?: string;
+            start?: components["schemas"]["TimestampMs"];
+            /** Format: int64 */
+            threadsCreated: number;
+            /** Format: int64 */
+            threadsShipped: number;
+            /**
+             * Format: int64
+             * @description 归档且未交付的线程数
+             */
+            threadsArchived: number;
+            /**
+             * Format: double
+             * @description 窗口内交付的线程的全生命周期成本之和
+             */
+            shippedCostUsd: number;
+            /**
+             * Format: int64
+             * @description 相对基线的提交数（按 sha 去重）
+             */
+            commits: number;
+            /** Format: int64 */
+            turns: number;
+        };
+        OutputStats: {
+            groupBy: components["schemas"]["OutputGroupBy"];
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            tz: string;
+            total: components["schemas"]["OutputStat"];
+            groups: components["schemas"]["OutputStat"][];
+        };
+        /** @description 历史回填进度（线程数）；完成后不出现 */
+        StatsBackfill: {
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description 保留期（毫秒）；0 = 永久 */
+        StatsRetention: {
+            /**
+             * Format: int64
+             * @description orb 资源采样
+             */
+            samplesMs: number;
+            /**
+             * Format: int64
+             * @description 已删除 orb 的事件与 setup 记录、预算告警账本
+             */
+            eventsMs: number;
+            /**
+             * Format: int64
+             * @description 用量 / 工具调用 / 回合事实行
+             */
+            usageMs: number;
+        };
+        StatsMeta: {
+            now: components["schemas"]["TimestampMs"];
+            /** @description 已完成的事实行版本（回填完成前为旧值或 0） */
+            factsVersion: number;
+            /** @description 最早的用量事实时间；没有用量时省略 */
+            earliestTs?: components["schemas"]["TimestampMs"];
+            backfill?: components["schemas"]["StatsBackfill"];
+            retention: components["schemas"]["StatsRetention"];
+        };
+        Budget: {
+            /**
+             * Format: double
+             * @description 日上限（美元）；省略 = 不设
+             */
+            dailyUsd?: number;
+            /**
+             * Format: double
+             * @description 月上限（美元）；省略 = 不设
+             */
+            monthlyUsd?: number;
+            /** @description 预警百分比；0 = 不预警 */
+            warnPct: number;
+            /** @description 划分自然日 / 月的 IANA 时区 */
+            timezone: string;
+            enabled: boolean;
+        };
+        /** @enum {string} */
+        BudgetLevel: "none" | "warn" | "over";
+        BudgetPeriod: {
+            /** @description 周期键（`2026-11-14` / `2026-11`） */
+            key: string;
+            from: components["schemas"]["TimestampMs"];
+            to: components["schemas"]["TimestampMs"];
+            /** Format: double */
+            spentUsd: number;
+            /**
+             * Format: double
+             * @description 该周期的上限；未设时省略
+             */
+            limitUsd?: number;
+            level: components["schemas"]["BudgetLevel"];
+        };
+        BudgetStatus: {
+            budget: components["schemas"]["Budget"];
+            day: components["schemas"]["BudgetPeriod"];
+            month: components["schemas"]["BudgetPeriod"];
         };
         FsRoots: {
             /** @description orb 内 `$HOME` 的绝对路径 */
@@ -3937,10 +4314,10 @@ export interface components {
             roles: components["schemas"]["PublicRoleIdentity"][];
         };
         /**
-         * @description `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+         * @description `done` 回合完成、`input` 等待作答、`error` 出错、`budget` 预算告警（不属于任何线程）；也是渠道 `events` 的元素
          * @enum {string}
          */
-        NotificationKind: "done" | "input" | "error";
+        NotificationKind: "done" | "input" | "error" | "budget";
         /**
          * @description 投递目标（`apns` / `fcm` 为 M7 预留）
          * @enum {string}
@@ -3962,10 +4339,11 @@ export interface components {
         Notification: {
             id: components["schemas"]["NotificationId"];
             kind: components["schemas"]["NotificationKind"];
+            /** @description 所属线程；系统通知（`budget`，以及定时无法建出线程 / 被自动暂停的 `error`）没有线程，省略 */
             threadId?: components["schemas"]["ThreadId"];
             title: string;
             body: string;
-            /** @description 站内路径 `/t/<threadId>` */
+            /** @description 站内路径。有线程为 `/t/<threadId>`；没有线程为该通知的落点（`/stats/usage`、`/settings/automations`） */
             url: string;
             createdAt: components["schemas"]["TimestampMs"];
             readAt?: components["schemas"]["TimestampMs"];
@@ -3978,9 +4356,12 @@ export interface components {
             /** @description 全部未读通知数 */
             unread: number;
         };
+        /** @description `id` 与 `threadId` 至多给一个（都给 → 400 `invalid_request`）；都省略 = 全部 */
         NotificationsReadRequest: {
-            /** @description 只标该线程的通知；省略 = 全部 */
+            /** @description 只标该线程的通知 */
             threadId?: components["schemas"]["ThreadId"];
+            /** @description 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204 */
+            id?: components["schemas"]["NotificationId"];
         };
         /** @enum {string} */
         NotificationChannelKind: "telegram" | "webhook" | "ntfy" | "bark";
@@ -4021,7 +4402,7 @@ export interface components {
             name: string;
             /** @default true */
             enabled: boolean;
-            /** @description 缺省 = 三者全选 */
+            /** @description 缺省 = 全选 */
             events?: components["schemas"]["NotificationKind"][];
             locale?: components["schemas"]["NotificationLocale"];
             telegram?: components["schemas"]["TelegramChannelConfig"];
@@ -4456,15 +4837,17 @@ export interface components {
             type: "notification";
             notification: components["schemas"]["Notification"];
         };
-        /** @description 通知已读（发给全部私有连接） */
+        /** @description 通知已读（发给全部私有连接）：`id` = 只这一条已读；`threadId` = 该线程的通知已读；都省略 = 全部已读 */
         WsServerNotificationsRead: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             type: "notifications.read";
-            /** @description 只该线程的通知已读；省略 = 全部已读 */
+            /** @description 该线程的通知已读 */
             threadId?: components["schemas"]["ThreadId"];
+            /** @description 只这一条已读 */
+            id?: components["schemas"]["NotificationId"];
         };
         /** @description 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次 */
         WsServerSchedulesChanged: {
@@ -5166,6 +5549,26 @@ export interface components {
         FromQuery: components["schemas"]["TimestampMs"];
         /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
         ToQuery: components["schemas"]["TimestampMs"];
+        /** @description 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone` */
+        StatsTzQuery: string;
+        /** @description 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`） */
+        StatsSeriesQuery: components["schemas"]["StatsGrain"];
+        /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+        StatsProjectQuery: string;
+        /** @description 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space */
+        StatsSpaceQuery: string;
+        /** @description 只统计该线程 */
+        StatsThreadQuery: components["schemas"]["ThreadId"];
+        /** @description 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0 */
+        StatsModelQuery: string;
+        /** @description 只统计该 orb */
+        StatsOrbQuery: components["schemas"]["OrbId"];
+        /** @description 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项 */
+        StatsLimitQuery: number;
+        /** @description `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」） */
+        StatsFormatQuery: components["schemas"]["StatsFormat"];
+        /** @description 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名） */
+        StatsDownloadQuery: boolean;
         /** @description 受管服务名 */
         ServiceNamePath: string;
         /** @description portal 端口（服务的 `PORT`） */
@@ -7744,14 +8147,53 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getStatsMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 元信息 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsMeta"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getUsageStats: {
         parameters: {
             query: {
-                groupBy: "day" | "model" | "thread" | "project";
+                groupBy: components["schemas"]["UsageGroupBy"];
+                /** @description 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`） */
+                series?: components["parameters"]["StatsSeriesQuery"];
                 /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
                 from?: components["parameters"]["FromQuery"];
                 /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
                 to?: components["parameters"]["ToQuery"];
+                /** @description 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone` */
+                tz?: components["parameters"]["StatsTzQuery"];
+                /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+                project?: components["parameters"]["StatsProjectQuery"];
+                /** @description 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space */
+                space?: components["parameters"]["StatsSpaceQuery"];
+                /** @description 只统计该线程 */
+                thread?: components["parameters"]["StatsThreadQuery"];
+                /** @description 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0 */
+                model?: components["parameters"]["StatsModelQuery"];
+                /** @description 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项 */
+                limit?: components["parameters"]["StatsLimitQuery"];
+                /** @description `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」） */
+                format?: components["parameters"]["StatsFormatQuery"];
+                /** @description 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名） */
+                download?: components["parameters"]["StatsDownloadQuery"];
             };
             header?: never;
             path?: never;
@@ -7759,13 +8201,91 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 分组结果 */
+            /** @description 分组结果（`format=csv` 时为 CSV 附件） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["UsageStats"];
+                    "text/csv": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exportUsageRecords: {
+        parameters: {
+            query?: {
+                /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
+                from?: components["parameters"]["FromQuery"];
+                /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
+                to?: components["parameters"]["ToQuery"];
+                /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+                project?: components["parameters"]["StatsProjectQuery"];
+                /** @description 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space */
+                space?: components["parameters"]["StatsSpaceQuery"];
+                /** @description 只统计该线程 */
+                thread?: components["parameters"]["StatsThreadQuery"];
+                /** @description 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0 */
+                model?: components["parameters"]["StatsModelQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CSV 附件 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getToolStats: {
+        parameters: {
+            query?: {
+                /** @description 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`） */
+                series?: components["parameters"]["StatsSeriesQuery"];
+                /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
+                from?: components["parameters"]["FromQuery"];
+                /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
+                to?: components["parameters"]["ToQuery"];
+                /** @description 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone` */
+                tz?: components["parameters"]["StatsTzQuery"];
+                /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+                project?: components["parameters"]["StatsProjectQuery"];
+                /** @description 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space */
+                space?: components["parameters"]["StatsSpaceQuery"];
+                /** @description 只统计该线程 */
+                thread?: components["parameters"]["StatsThreadQuery"];
+                /** @description 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项 */
+                limit?: components["parameters"]["StatsLimitQuery"];
+                /** @description `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」） */
+                format?: components["parameters"]["StatsFormatQuery"];
+                /** @description 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名） */
+                download?: components["parameters"]["StatsDownloadQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工具统计（`format=csv` 时为 CSV 附件） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolStats"];
+                    "text/csv": string;
                 };
             };
             default: components["responses"]["Error"];
@@ -7774,10 +8294,22 @@ export interface operations {
     getOrbStats: {
         parameters: {
             query?: {
+                /** @description 缺省 = `type` */
+                groupBy?: components["schemas"]["OrbGroupBy"];
                 /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
                 from?: components["parameters"]["FromQuery"];
                 /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
                 to?: components["parameters"]["ToQuery"];
+                /** @description 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone` */
+                tz?: components["parameters"]["StatsTzQuery"];
+                /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+                project?: components["parameters"]["StatsProjectQuery"];
+                /** @description 只统计该 orb */
+                orb?: components["parameters"]["StatsOrbQuery"];
+                /** @description `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」） */
+                format?: components["parameters"]["StatsFormatQuery"];
+                /** @description 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名） */
+                download?: components["parameters"]["StatsDownloadQuery"];
             };
             header?: never;
             path?: never;
@@ -7785,13 +8317,127 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 按 orb 类型汇总 */
+            /** @description 分组结果（`format=csv` 时为 CSV 附件） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["OrbStats"];
+                    "text/csv": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrbTimeline: {
+        parameters: {
+            query?: {
+                /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
+                from?: components["parameters"]["FromQuery"];
+                /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
+                to?: components["parameters"]["ToQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 时间线 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbTimeline"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOutputStats: {
+        parameters: {
+            query?: {
+                /** @description 缺省 = `day` */
+                groupBy?: components["schemas"]["OutputGroupBy"];
+                /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
+                from?: components["parameters"]["FromQuery"];
+                /** @description 结束时间（不含，UTC 毫秒）；缺省 = 现在 */
+                to?: components["parameters"]["ToQuery"];
+                /** @description 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone` */
+                tz?: components["parameters"]["StatsTzQuery"];
+                /** @description 只统计该项目（项目 id）；字面量 `none` = 无项目 */
+                project?: components["parameters"]["StatsProjectQuery"];
+                /** @description 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space */
+                space?: components["parameters"]["StatsSpaceQuery"];
+                /** @description `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」） */
+                format?: components["parameters"]["StatsFormatQuery"];
+                /** @description 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名） */
+                download?: components["parameters"]["StatsDownloadQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分组结果（`format=csv` 时为 CSV 附件） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutputStats"];
+                    "text/csv": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBudget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 预算状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putBudget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Budget"];
+            };
+        };
+        responses: {
+            /** @description 更新后的预算状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetStatus"];
                 };
             };
             default: components["responses"]["Error"];

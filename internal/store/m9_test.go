@@ -368,7 +368,7 @@ func TestM9ScheduleThreadsAndCoordActions(t *testing.T) {
 	assert.Len(t, list, 1)
 }
 
-// TestM9MigrationDownUp 依次回滚 0017、0016、0015 再重新应用：Down 段可执行，且回滚后各表恢复原列。
+// TestM9MigrationDownUp 依次回滚 0018、0017、0016、0015 再重新应用：Down 段可执行，且回滚后各表恢复原列。
 func TestM9MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -382,8 +382,18 @@ func TestM9MigrationDownUp(t *testing.T) {
 	m96 := `SELECT (SELECT COUNT(*) FROM pragma_table_info('owner')
 			WHERE name IN ('agent_name', 'assistant_name', 'assistant_avatar_icon', 'assistant_avatar_image'))
 		+ (SELECT COUNT(*) FROM sqlite_master WHERE name IN ('role_avatars', 'thread_share_identities'))`
+	m10 := `SELECT (SELECT COUNT(*) FROM sqlite_master WHERE name IN ('turns', 'thread_commits', 'stats_state', 'budget', 'budget_alerts', 'usage_records_ukey', 'tool_calls_ukey'))
+		+ (SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name IN ('purpose', 'stop_reason', 'ukey', 'project_id', 'space_id'))
+		+ (SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name IN ('ukey', 'project_id', 'space_id'))
+		+ (SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name = 'link')`
 
 	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 18, r.Source.Version)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m10).Scan(&n))
+	assert.Zero(t, n, "0018 回滚后五张表、两个 ukey 索引、八列与 notifications.link 消失")
+
+	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 17, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m96).Scan(&n))
@@ -413,4 +423,6 @@ func TestM9MigrationDownUp(t *testing.T) {
 	assert.Equal(t, 2, n)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m96).Scan(&n))
 	assert.Equal(t, 6, n, "重新应用后 0017 的四列与两张表都回来")
+	require.NoError(t, s.DB.QueryRowContext(ctx, m10).Scan(&n))
+	assert.Equal(t, 16, n, "重新应用后 0018 的表、索引与列都回来")
 }

@@ -11,8 +11,8 @@ import (
 // GetUsageStats 实现 GET /api/v1/stats/usage。
 func (s *Server) GetUsageStats(w http.ResponseWriter, r *http.Request, params apigen.GetUsageStatsParams) {
 	switch params.GroupBy {
-	case apigen.GetUsageStatsParamsGroupByDay, apigen.GetUsageStatsParamsGroupByModel,
-		apigen.GetUsageStatsParamsGroupByThread, apigen.GetUsageStatsParamsGroupByProject:
+	case apigen.UsageGroupByDay, apigen.UsageGroupByModel,
+		apigen.UsageGroupByThread, apigen.UsageGroupByProject:
 	default:
 		WriteError(w, http.StatusBadRequest, "invalid_request", "groupBy 必须是 day / model / thread / project")
 		return

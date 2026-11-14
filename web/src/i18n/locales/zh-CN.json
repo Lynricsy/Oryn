@@ -1169,12 +1169,14 @@
 		"kind": {
 			"done": "完成",
 			"input": "需要输入",
-			"error": "出错"
+			"error": "出错",
+			"budget": "预算告警"
 		},
 		"kindBody": {
 			"done": "回合已完成",
 			"input": "等待你的回答",
-			"error": "线程出错了"
+			"error": "线程出错了",
+			"budget": "预算告警"
 		}
 	},
 	"notifySettings": {

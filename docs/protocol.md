@@ -374,7 +374,7 @@ Sec-Fetch-Site 不存在：
 |`POST /api/v1/orbs/{id}/fs/publish`|`publishOrbFile`|`PublishOrbFileRequest{path, threadId}`|`201 PublishedFile`（发布的是此刻的副本，落成该线程的附件）|
 |`DELETE /api/v1/published-files/{id}`|`revokePublishedFile`|—|`204`|
 |`GET /api/v1/notifications`|`listNotifications`|`limit?`（默认 50，≤100）、`before?`（ms）|`NotificationList{notifications, unread}`|
-|`POST /api/v1/notifications/read`|`markNotificationsRead`|`NotificationsReadRequest{threadId?}`（省略 = 全部）|`204`；随后广播 `notifications.read`|
+|`POST /api/v1/notifications/read`|`markNotificationsRead`|`NotificationsReadRequest{id? \| threadId?}`（都省略 = 全部；都给 → 400 `invalid_request`）|`204`；随后广播 `notifications.read`|
 |`GET /api/v1/notification-channels`|`listNotificationChannels`|—|`NotificationChannelList{channels}`|
 |`POST /api/v1/notification-channels`|`createNotificationChannel`|`NotificationChannelInput`|`201 NotificationChannel`|
 |`PATCH /api/v1/notification-channels/{id}`|`updateNotificationChannel`|`NotificationChannelPatch`|`NotificationChannel`|
@@ -427,15 +427,15 @@ Sec-Fetch-Site 不存在：
 
 匿名连接不算 focus、不记用户交互、不唤醒 orb；沿用 8MiB 待发预算（超出断开，客户端重连补拉）。
 
-私有 WS 新增：`notification`（`WsServerNotification{notification}`）与 `notifications.read`（`WsServerNotificationsRead{threadId?}`，省略 = 全部已读），发给全部私有连接。
+私有 WS 新增：`notification`（`WsServerNotification{notification}`）与 `notifications.read`（`WsServerNotificationsRead{id? | threadId?}`：`id` = 只这一条已读，`threadId` = 该线程的通知已读，都省略 = 全部已读），发给全部私有连接。
 
 ### 通知与投递
 
 - 触发：`done`（`idle` 且上一状态 ∈ `working / awaiting_input`）与 `error`（转入 `error`）来自线程状态转换；`input` 来自新进入实时缓冲的待答请求（计划提案的 `request_id = "plan"`）。触发时有设备 focus 于该线程则不通知；去抖期间线程回到 `working`、被 focus / 操作、请求被作答都会取消。`(thread_id, request_id)` 的未决通知唯一（控制面重启后 orbd 重放待答请求时去重）。
-- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`fcm` 订阅只在服务器启用 FCM 时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、FCM `UNREGISTERED` 删除订阅。
-- Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: thread.<kind>`（测试为 `test`）、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。体 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`。
+- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`fcm` 订阅只在服务器启用 FCM 时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、FCM `UNREGISTERED` 删除订阅。`budget` 与无线程的 `error` 由 `PostSystem` / `Post` 立即生成，不去抖、不看 focus。
+- Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: <event>`、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。`event` 取 `thread.<kind>`、`budget.alert`（预算告警）或 `test`（测试）。有线程时体为 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`；没有线程时**不出现 `thread` 键**，改带顶层 `"url"`（绝对地址）。消费方应忽略不认识的 `event`。
 - ntfy：`POST <server>` JSON 发布 `{"topic","title","message","click","tags","priority"}`（`input` priority 4，其余 3）；有 `token` 时 `Authorization: Bearer`。Bark：`POST <server>/push` `{"device_key","title","body","url","group":"Oryn","level"}`，HTTP 200 且 `code == 200` 才算成功。
-- Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url":"/t/<threadId>","tag":"oryn-<threadId 末 12 位>"}`，`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
+- Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url","tag"}`：`url` 为该通知的站内路径（有线程为 `/t/<threadId>`），`tag` 有线程为 `oryn-<threadId 末 12 位>`、没有线程为 `oryn-budget`（`budget`）或 `oryn-automations`（其余）；`Topic` 由线程 id（没有线程时由 tag）求得。`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
 - FCM（M7，见下文「M7：移动推送」）：HTTP v1 `messages:send`，data-only 高优先级，载荷与 Web Push 相同、同样以 RFC 8291 加密，`data` 只有 `{v:"2", id, e:<密文>}`。
 - Telegram：`getUpdates` 长轮询（不需要公网入站）；至多一个渠道、只接受绑定的那一个私聊（`/start <码>` 绑定，码 8 位、10 分钟）。`input` 且有选项时带 inline 按钮（`callback_data = "o:<deliveryID>:<序号>"`）；点按钮或回复通知作答待答请求，回复其它通知即发给该线程：线程 `working` 时发 `steer`，否则发 `prompt`（开启新回合，与 Web 输入区一致）；请求在别处被作答后撤回按钮。
 
@@ -553,7 +553,8 @@ Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/pu
   - `id` 是通知 id，只用于去重与补拉，不含标题、正文、线程 id 等任何内容。`data` 里不再出现明文字段（`v: "1"` 的明文格式已废弃）。
   - 大小：FCM data 上限 4096 字节（[FCM 消息类型](https://firebase.google.com/docs/cloud-messaging/customize-messages/set-message-type)）。密文 = 明文 + 103 字节，base64 后再加 `v` / `id`，因此 FCM 的明文上限为 2800 字节（Web Push 为 3000），超出时去掉 `body`。
   - 不设 `collapse_key`（非折叠消息）。依据 [FCM collapsible message types](https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types)：每个注册令牌同时最多保留 4 个不同 collapse key 的离线消息，超出时「保留哪 4 个没有确定规则」，被淘汰的消息 App 不会得到任何通知；按线程分配 collapse key 会让离线期间第 5 个线程起的通知被静默丢弃。固定一个 collapse key 也不行：离线期间只剩最后一条。非折叠消息每台设备最多存 100 条，超出时全部丢弃，设备上线后 FCM 回调 [`FirebaseMessagingService.onDeletedMessages()`](https://firebase.google.com/docs/reference/android/com/google/firebase/messaging/FirebaseMessagingService#onDeletedMessages())（设备长期未连接、期间有消息被删也走这里），丢失总会被 App 察觉。
-  - 补拉（App 侧）：`onDeletedMessages()` 里用设备令牌请求 `GET /api/v1/notifications?unread=true&limit=50`，按 `before=<本页最后一条的 createdAt>` 翻页到某页不足 50 条为止，总量上限 200 条；只取未读是为了让较早仍待回答的 `input` 不会被一页已读通知挤出窗口。对 `input` 还要求 `resolvedAt` 为空、且未显示过的通知按同一套流程显示系统通知；同一线程的多条通知用本地通知 tag（`oryn-<threadId 末 12 位>`）合并显示。请求失败、或到达上限时最后一页仍是满页，再显示一条通用的「Oryn 有新通知」。TTL 过期（离线超过 24 小时）的消息不补发：届时打开 App 看到的未读状态即为准。
+  - 补拉（App 侧）：`onDeletedMessages()` 里用设备令牌请求 `GET /api/v1/notifications?unread=true&limit=50`，按 `before=<本页最后一条的 createdAt>` 翻页到某页不足 50 条为止，总量上限 200 条；只取未读是为了让较早仍待回答的 `input` 不会被一页已读通知挤出窗口。对 `input` 还要求 `resolvedAt` 为空、且未显示过的通知按同一套流程显示系统通知；同一线程的多条通知用本地通知 tag（`oryn-<threadId 末 12 位>`）合并显示；没有线程的通知按路径取 tag（`/stats…` → `oryn-budget`，`/settings/automations…` → `oryn-automations`）。请求失败、或到达上限时最后一页仍是满页，再显示一条通用的「Oryn 有新通知」。TTL 过期（离线超过 24 小时）的消息不补发：届时打开 App 看到的未读状态即为准。
+  - 点击落点（深链接，封闭集合）：线程通知 `oryn://thread/<id>`；`oryn://stats` → `/stats/usage`；`oryn://automations` → `/settings/automations`；其余 `oryn://open`（首页）。
 - 旧订阅：M7 初版 App 登记的 `kind: fcm` 订阅没有 `keys`。服务端不向它发送任何内容（绝不回退明文），投递时直接删除该订阅（投递以 `fcm subscription has no encryption keys` 失败，随订阅级联删除）并记一条 `slog.Warn`；新版 App 每次同步都会重新登记，届时带 `keys` 重建订阅。
 - 结果：2xx 成功；错误体 `details[].errorCode == "UNREGISTERED"` → 删除订阅；401 → 作废缓存的 access token 并按退避重试；其余按 HTTP 状态归类（408 / 429 / 5xx 重试），错误文本为 `fcm <errorCode> (HTTP <状态>)`，不含令牌。
 - 实现：`internal/notify/fcm.go`（加密复用 `internal/webpush.Encrypt`）；测试用 httptest 假冒令牌端点与 FCM 端点（`FCMConfig.TokenURL / APIBase`），校验 JWT 签名与声明、缓存与过期、UNREGISTERED 删订阅、401 换令牌重试，并断言 FCM 请求体里没有任何明文标题 / 正文 / 线程 id、用接收端私钥能解开 `e`、最长载荷不超过 4096 字节、无 keys 的旧订阅不发送且被删除。
@@ -707,7 +708,7 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 - `CoordinatorStatus{available, reason?, ompVersion?, sandbox?: CoordinatorSandbox{landlockAbi, network: namespace|port, pidNamespace, ipcScope, uid, seccomp}}`；`sandbox` 只在协调宿主至少成功启动过一次后出现。
 - `AutomationAction{id(cac_…), ts, actorKind: space|assistant|agent, actorThreadId?, origin: owner|auto, action: create_thread|send_message|archive_thread|set_schedule|delete_schedule, targetThreadId?, scheduleId?, summary(≤500), ok, error?}`。
 - 新 id：`SpaceId`（`spc_<ulid>`）、`ScheduleId`（`sch_<ulid>`）、`ScheduleRunId`（`srn_<ulid>`）、`AutomationActionId`（`cac_<ulid>`），均由 `ids.New(prefix)` 生成。
-- 没有线程的通知（创建线程失败、项目定时自动暂停）：`Notification.threadId` 省略、`url = /settings/automations`（模型不变）。
+- 没有线程的通知（创建线程失败、项目定时自动暂停）：`Notification.threadId` 省略、`url` 取该行的 `link`（定时相关为 `/settings/automations`；0018 起落库，见「M10：统计分析」）。
 
 ### REST
 
@@ -1003,3 +1004,120 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 - Down 依次删 `thread_share_identities`、`role_avatars` 与 `owner` 的四列。
 
 查询：`avatar_identity.sql`（`GetOwnerAgentIdentity` / `SetOwnerAgentIdentity` 多 `agent_name`；`GetOwnerAssistantIdentity`、`SetOwnerAssistantIdentity`；`ListRoleAvatars`、`GetRoleAvatar`、`UpsertRoleAvatar`、`DeleteRoleAvatar`）、`share.sql`（`InsertThreadShareIdentity`、`GetThreadShareIdentity`、`DeleteThreadShareIdentity`；`ListModelSourceEntries` = 主会话文件里 `seq ≤ until_seq` 的 `model_change` 与来源记录，带 payload）。
+
+## M10：统计分析
+
+用量、工具、回合、orb 时长与产出全部从「窄事实行」现算：条目入库时同一事务里写 `usage_records` / `tool_calls` / `turns`，查询只对事实行聚合，从不碰 `entries.payload`；不建汇总表。时区只在查询时处理（不落库）。同一份数据有四个出口：REST（JSON / CSV）、`oryn stats`、Web 统计页 `/stats`、全局助手的 `get_stats`。不新增 WS 消息（页面按 60 秒轮询）。
+
+### 模型
+
+金额字段一律 `number / double`（美元）；`avgTtftMs`、`tokensPerSecond` 同为 `double`。
+
+- `StatsGrain`：`hour | day | week | month`。`StatsFormat`：`json | csv`。
+- `UsageGroupBy`：`total | hour | day | week | month | model | thread | project | space | purpose`；`OrbGroupBy`：`type | day | week | month | project | orb`；`OutputGroupBy`：`day | week | month | project | space`。
+- `UsageStat{key, label?, start?, requests, requestErrors, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, subagentCostUsd?, avgTtftMs?, tokensPerSecond?, toolCalls, toolErrors, turns}`。`key`：时间桶标签（`2026-11-14T13:00` / `2026-11-14` / `2026-W46` / `2026-11`）、`<provider>/<model>`、线程 id（已删线程为空串）、项目 id（无项目为空串）、Space id（无为空串）、用途（对话回合为空串）、`total`、折叠项 `__other__`。`start` 仅时间桶。`subagentCostUsd` 已含在 `costUsd` 内。
+- `UsageSeriesPoint{key, start, total: UsageStat, groups: UsageStat[]}`（`groups` 只含非零分组，键与顶层 `groups` 一致）。
+- `UsageStats{groupBy, from, to, tz, total: UsageStat, groups, series?}`。
+- `ToolStat{tool, calls, errors}`（`total.tool` 为空串）；`ToolSeriesPoint{key, start, calls, errors}`；`ToolStats{from, to, tz, total, tools, series?}`。
+- `OrbStat{key, label?, start?, type?, cpus?, memoryMB?, orbs, runningMs, frozenMs, stoppedMs, setupMs, spawns, snapshotSpawns, freezes, stops, wakes, failures}`：`setupMs` = 处于 `setting_up` / `resuming` 的时长（已含在 `runningMs` 内）；`snapshotSpawns` = 窗口内创建且 `snapshot_of` 非空的 orb 数。`groupBy=type` 带 `type / cpus / memoryMB`；`project` 的 `label` 为项目名；`orb` 的 `key` 为 orb id、`label` 为它第一个线程的标题、另带 `type / cpus / memoryMB`。
+- `OrbSetupStats{runs, failures, slowRuns, resumeRuns, resumeFailures, p50Ms?, p95Ms?, maxMs?}`：口径为 `phase = setup` 且 `setup_ran = 1` 的记录（`resume*` 为 `phase = resume`），`slowRuns` = `duration_ms ≥ 120000`，分位数取最近邻法。
+- `OrbStats{groupBy, from, to, tz, total, groups, setup}`（取代 M2 的 `OrbTypeStat` / `types`）。
+- `OrbTimelineSegment{from, to, state: OrbState, reason?}`；`OrbTimeline{orbId, from, to, segments, truncated}`：相邻同状态合并；`failed` 段的 `reason` 取事件 `detail.reason`（没有则 `detail.error`）；末段截到「现在」；超过 2000 段置 `truncated`。
+- `OutputStat{key, label?, start?, threadsCreated, threadsShipped, threadsArchived, shippedCostUsd, commits, turns}`；`OutputStats{groupBy, from, to, tz, total, groups}`。`threadsArchived` 不含已交付的；`shippedCostUsd` = 窗口内交付的线程的**全生命周期**成本之和。
+- `StatsMeta{now, factsVersion, earliestTs?, backfill?: StatsBackfill{done, total}（线程数）, retention: StatsRetention{samplesMs, eventsMs, usageMs}（0 = 永久）}`。
+- `Budget{dailyUsd?, monthlyUsd?（≥0.01）, warnPct（0–99，0 = 不预警）, timezone（IANA）, enabled}`；`BudgetLevel`：`none | warn | over`；`BudgetPeriod{key, from, to, spentUsd, limitUsd?, level}`；`BudgetStatus{budget, day, month}`。
+
+### REST
+
+鉴权同其它 `/api/v1`（tag `stats`）。窗口参数沿用 `FromQuery` / `ToQuery`，缺省 = 近 7 天。查询参数组件：`StatsTzQuery`（`tz`，默认 `UTC`）、`StatsSeriesQuery`（`series`）、`StatsProjectQuery`（`project`：项目 id 或 `none`）、`StatsSpaceQuery`（`space`：Space id 或 `none`）、`StatsThreadQuery`（`thread`）、`StatsModelQuery`（`model`：`<provider>/<model>`）、`StatsOrbQuery`（`orb`）、`StatsLimitQuery`（`limit` 1–500，默认 50）、`StatsFormatQuery`（`format`）、`StatsDownloadQuery`（`download`）。
+
+|方法与路径|operationId|参数|响应|
+|---|---|---|---|
+|`GET /api/v1/stats/meta`|`getStatsMeta`|—|`StatsMeta`|
+|`GET /api/v1/stats/usage`|`getUsageStats`|`groupBy`（必填）、`series?`、`from?`、`to?`、`tz?`、`project?`、`space?`、`thread?`、`model?`、`limit?`、`format?`、`download?`|`UsageStats` 或 `text/csv`|
+|`GET /api/v1/stats/usage/records`|`exportUsageRecords`|`from?`、`to?`、`project?`、`space?`、`thread?`、`model?`|`text/csv`（明细，每请求一行）|
+|`GET /api/v1/stats/tools`|`getToolStats`|`series?`、`from?`、`to?`、`tz?`、`project?`、`space?`、`thread?`、`limit?`、`format?`、`download?`|`ToolStats` 或 `text/csv`|
+|`GET /api/v1/stats/orbs`|`getOrbStats`|`groupBy?`（默认 `type`）、`from?`、`to?`、`tz?`、`project?`、`orb?`、`format?`、`download?`|`OrbStats` 或 `text/csv`|
+|`GET /api/v1/orbs/{id}/timeline`|`getOrbTimeline`|`from?`、`to?`|`OrbTimeline`|
+|`GET /api/v1/stats/output`|`getOutputStats`|`groupBy?`（默认 `day`）、`from?`、`to?`、`tz?`、`project?`、`space?`、`format?`、`download?`|`OutputStats` 或 `text/csv`|
+|`GET /api/v1/stats/budget`|`getBudget`|—|`BudgetStatus`|
+|`PUT /api/v1/stats/budget`|`putBudget`|`Budget`|`BudgetStatus`|
+
+规则：
+
+- `groupBy` 是时间粒度时不得再给 `series`。时间粒度的 `groups` 与 `series` 是**稠密**的（窗口内每个桶都有，含全零）。
+- 非时间分组按成本降序（并列按键）取前 `limit` 个，其余折叠成 `key = "__other__"` 的一项；`series` 各点的 `groups` 用同一批键；`total` 在折叠前对全部分组求和。
+- `model` 筛选生效或 `groupBy ∈ {model, purpose}` 时 `toolCalls / toolErrors / turns` 为 0（工具与回合不归属到模型）；只有工具或回合、没有请求的分组也会出现。
+- `avgTtftMs = Σttft / 有 ttft 的请求数`，`tokensPerSecond = 有时长的请求的输出 tokens / (时长 / 1000)`；分母为 0 时省略。
+- 标签：线程取标题（已删为空）、项目取名称、Space 取名称。
+- `format=csv`：`Content-Type: text/csv; charset=utf-8`、`Content-Disposition: attachment; filename="oryn-<usage|tools|orbs|output>-<groupBy>-<from 的 UTC 日期 YYYYMMDD>-<to 的>.csv"`、`X-Content-Type-Options: nosniff`、`Cache-Control: no-store`；`download=true` 的 JSON 带同名 `.json` 附件头。不写 BOM。列：
+  - usage：`bucket,key,label,requests,request_errors,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,subagent_cost_usd,avg_ttft_ms,tokens_per_second,tool_calls,tool_errors,turns`（无 `series` 时 `bucket` 为空、一组一行；有 `series` 时一桶一组一行的长表）；
+  - tools：`bucket,tool,calls,errors`；
+  - orbs：`key,label,type,cpus,memory_mb,orbs,running_ms,frozen_ms,stopped_ms,setup_ms,spawns,snapshot_spawns,freezes,stops,wakes,failures`；
+  - output：`key,label,threads_created,threads_shipped,threads_archived,shipped_cost_usd,commits,turns`；
+  - 明细（`exportUsageRecords`）：`ts,time,thread_id,project_id,space_id,provider,model,purpose,subagent,stop_reason,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,duration_ms,ttft_ms`（`time` 为 RFC3339 UTC）。先计数，超过上限直接 400；随后按 `(ts, id)` 键集分页、每页 5000 行边取边写。
+
+### 口径、限额与错误码
+
+|项|定义 / 值|
+|---|---|
+|请求|一行用量事实：带 `usage` 的 assistant 消息（`purpose = ''`），或一条 `model_usage` 条目（`purpose` 取其值，空则 `unknown`）|
+|回合|主会话文件里的一条 `role = user` 消息（含 steer 与自动化消息）|
+|请求错误|`stop_reason = 'error'`（`aborted` 不算）；工具错误 = `toolResult.isError`|
+|成本|omp 写进条目的 `usage.cost.total`（按目录标价的估算；无标价的模型为 0），**含子 agent**|
+|归属|活线程取其当前项目 / Space；已删线程取删除时的快照；fork 拷贝的历史只记在先入库的线程|
+|时间|事实时间 = 消息的 `timestamp`（`model_usage` 取条目时间）；缺失时取入库时间|
+|周|周一为一周之始，键为 ISO 周 `YYYY-Www`|
+|时间桶上限|单次查询 ≤1000 个桶，超出回 400 `range_too_large`|
+|明细导出|单次 ≤500000 行，超出回 400 `range_too_large`；每页 5000 行，页间不占用数据库连接|
+|orb 时长|`running` = `connecting / setting_up / resuming / ready / freezing / stopping`；末段区间截到「现在」；次数只在 `from_state ≠ to_state` 时累加|
+|提交采样|线程转入 `idle` 后 5 秒；每线程 ≤200 个提交；请求超时 15 秒|
+|预算评估|每 60 秒一次；每个周期每个级别只告警一次|
+|预算告警送达|一条 `kind = budget`、没有线程的通知，`url = /stats/usage`；渠道须订阅 `budget`，推送订阅一律送达|
+|保留期默认|采样 720h；已删除 orb 的事件与 setup 记录 8760h；用量 0（永久）；非零值不得小于 24h|
+
+|code|HTTP|含义|
+|---|---|---|
+|`invalid_request`|400|`groupBy` / `series` 组合非法、`from ≥ to`|
+|`invalid_timezone`|400|`tz` 不是可加载的 IANA 时区|
+|`range_too_large`|400|见上表|
+|`invalid_budget`|400|金额 <0.01、`warnPct` 越界、时区非法|
+|`not_found`|404|`orbs/{id}/timeline` 的 orb 不存在|
+
+### 事实行：不变式与 `ukey`
+
+- **不变式**：活线程的事实行 = f(该线程当前的条目)；已删线程的事实行冻结。由此：重发是 upsert（`INSERT OR IGNORE`）；`entries.reset` 重发且内容变了先删该条目旧的事实行再写；`reset_done` 与移除文件（`dropFile`）后在同一事务里删孤儿（`DeleteOrphan*`：`(thread_id, entry_seq)` 已没有条目的行）；删线程在一个事务里先写归属快照（`Tombstone*`：`project_id`、`space_id` = 线程当前值），再删线程行（事实行 `thread_id` 经 `ON DELETE SET NULL` 置空）。
+- **`ukey = <entryId>@<毫秒时间戳>`**：跨线程全局唯一（`usage_records` / `tool_calls` / `turns` 各有唯一约束）。fork 拷贝的条目 id 与时间戳都与源条目相同，所以只记一次——归先入库的线程（即源线程）；被别的线程（含已删线程）占用的 `ukey` 不再写。升级前的旧行 `ukey` 为 NULL（唯一约束允许多个 NULL），由回填补上。合成 id（`__title__` 等）的条目不产生事实行。
+- **回填**：`stats_state.facts_version` 与当前版本不符时，按线程 `(created_at, id)` 升序用与入库同一个函数逐线程重算（每事务 500 条条目），进度键 `backfill_total` / `backfill_done` / `backfill_cursor`（`<created_at>:<thread_id>`），完成后写版本号并删除进度键；可被中断、下次从游标续作。升序重算会去掉历史上的 fork 重复：源线程先拿到 `ukey`。`orynd admin rebuild-stats [--thread <id>]` 手动重算。
+- 升级前已删除的线程留下的用量行没有条目可重算：保持原样（没有 `ukey`、没有归属快照），在按项目 / Space 的分组里落在空键。
+
+### 统计口径
+
+- **时区**：窗口切成 UTC 偏移恒定的片段（夏令时切换处断开），每段一条 `GROUP BY (ts + 偏移) / bucket_ms` 的 SQL（`hour` 用 3600000，其余 86400000），按本地序号映射到网格；周、月由日折叠。所有量都按「和 + 计数」返回，折叠是精确的。夏令时回拨时重复的本地小时合并进同一个桶。
+- **用量 / 工具 / 回合**：`StatsUsageAgg` / `StatsToolAgg` / `StatsTurnAgg` 一条静态 SQL 带分组开关（关掉的键为空串）与可空筛选（`project` / `space` 的 `none` 由服务端换成空串）；活线程的项目 / Space 联表取当前值，已删线程回落到快照列。
+- **orb**：`to` 先截到「现在」。`ListOrbsForStats` 给出每台 orb 在 `from` 时的状态（`state_at_from`，空串 = 窗口前无事件）与 `created_at` / `deleted_at`，`ListOrbEventsInWindow` 给出窗口内的转换；逐台扫出状态区间，时间粒度分组按桶边界切开分摊。
+- **产出**：`threadsCreated / threadsShipped / threadsArchived` 只统计 `kind = work` 的线程，分别按 `created_at` / `shipped_at` / `archived_at`（仅 `shipped_at` 为空的）落桶；`turns` 与 `commits` 不按线程种类过滤；`commits` 按 sha 去重（`total.commits` 单独不分组计一次）；`shippedCostUsd` 按线程的 `shipped_at` 落桶。
+- **提交采样**：线程由 `working / awaiting_input` 转入 `idle` 后按线程去抖 5 秒，经 orbd 的 git 接口（不唤醒 orb、不计用户交互）读相对项目基线分支的提交，整体替换 `thread_commits` 里该线程的行；线程须为 `work`、有 orb、所属项目有仓库；解析不出基线时只清空、绝不取整段 `HEAD` 历史。
+- **保留期**（`orynd.yaml` 的 `stats.retention.{samples, events, usage}`，启动时与每小时清理一次）：`samples` → `orb_samples`；`events` → 已删除 orb 的 `orb_events` 与 `orb_setup_runs`（活 orb 的事件被运行逻辑依赖，永不删）、`budget_alerts`；`usage` → 三张事实表。
+
+### 预算告警
+
+- 周期：`budget.timezone` 下的自然日（键 `2006-01-02`）与自然月（键 `2006-01`）；`spent = SumUsageCost(周期起, 周期止)`；级别 `over`（`spent ≥ limit`）、`warn`（`warnPct > 0` 且 `spent ≥ limit × warnPct / 100`）、否则 `none`。没有 `budget` 行时 `getBudget` 返回 `{warnPct: 80, timezone: "UTC", enabled: false}` 与两个 `level = none` 的周期。
+- 评估（每 60 秒）：`enabled` 为假不做任何事。日、月各自独立：没设上限或级别为 `none` 跳过；否则在一个事务里对达到的每个级别写账本 `budget_alerts`（主键 `(period, period_key, level)`；`over` 且 `warnPct > 0` 时 `warn`、`over` 两行都写），记下真正插入的级别。一行都没插入即结束；否则事务提交**之后**只为其中最高的级别发一条系统通知（`PostSystem(kind = budget, title, body, link = /stats/usage)`）。日、月在同一次评估里各自首次越线 → 两条通知。
+- 标题：`Daily budget exceeded` / `Monthly budget exceeded` / `Daily budget warning` / `Monthly budget warning`。正文（`over`）：`$<spent %.2f> of $<limit %.2f> spent (<period key>, <timezone>).`；（`warn`）：`$<spent> of $<limit> spent, past the <warnPct>% warning threshold (<period key>, <timezone>).`
+- 先落账本后发通知；通知失败只记日志，不回滚账本、不重试。去重留在账本而不在 `notifications`（通知只保留 30 天，月周期最长 31 天）；改上限后同一周期不会再次告警。
+- 送达：Webhook `event = budget.alert`（体无 `thread`、带顶层 `url`）；Web Push / FCM `tag = oryn-budget`；Telegram 不带「回复即可继续」，回复它得到「不属于任何线程」的提示；通知中心按 `id` 标已读，打开统计页的用量标签即把未读的预算通知标为已读。
+
+### 存储
+
+`0018_analytics.sql`：
+
+- `usage_records` 加 `purpose`（NOT NULL DEFAULT `''`）、`stop_reason`（NOT NULL DEFAULT `''`）、`ukey`、`project_id`、`space_id`，唯一索引 `usage_records_ukey`；`tool_calls` 加 `ukey`、`project_id`、`space_id`，唯一索引 `tool_calls_ukey`。
+- `turns(id, thread_id → threads ON DELETE SET NULL, entry_seq, ts, ukey UNIQUE, project_id, space_id, UNIQUE(thread_id, entry_seq))`，索引 `turns_ts`。
+- `thread_commits(thread_id → threads ON DELETE CASCADE, sha, ts（作者时间）, PK(thread_id, sha))`，索引 `thread_commits_ts`。
+- `stats_state(key PK, value)`：`facts_version`、`backfill_cursor`、`backfill_done`、`backfill_total`。
+- `budget(id = 1, daily_usd?, monthly_usd?, warn_pct DEFAULT 80, timezone DEFAULT 'UTC', enabled DEFAULT 1, updated_at)`；`budget_alerts(period ∈ day|month, period_key, level ∈ warn|over, spent_usd, limit_usd, created_at, PK(period, period_key, level))`（只做去重与留痕，与 `notifications` 不设外键）。
+- `notifications` 重建：`kind` 的 CHECK 加 `budget`，新增 `link`（没有线程的通知的站内路径；有线程时为 NULL；不加 CHECK，Go 侧对既无线程也无 `link` 的行回落到 `/`）。库以 `foreign_keys = ON` 打开且迁移包在事务里，所以 `notifications` 与 `notification_deliveries` 都先搬进无约束的暂存表、先删子表再删父表、先建父表再建子表、最后搬回（七个索引原样重建）；已有的无线程通知回填 `link = /settings/automations`；`events` 以 `"error"]` 结尾的渠道追加 `"budget"`。
+- Down：先去掉渠道 `events` 里的 `budget`，按同样的暂存方式把两张表重建回 0011 的结构（`kind = budget` 的通知及其投递丢弃），再逆序删五张表、两个 `*_ukey` 索引与八列。
+
+查询（`queries/stats.sql`，ASCII 注释）：写入 `InsertUsageRecord` / `InsertToolCall` / `InsertTurn`（`:execrows`，`INSERT OR IGNORE`，返回 0 = 被忽略）；单条目 `DeleteUsageAt` / `DeleteToolCallAt` / `DeleteTurnAt`；整线程 `DeleteThreadUsage` / `DeleteThreadToolCalls` / `DeleteThreadTurns`；全库活线程 `DeleteLiveUsage` / `DeleteLiveToolCalls` / `DeleteLiveTurns`；孤儿 `DeleteOrphanUsage` / `DeleteOrphanToolCalls` / `DeleteOrphanTurns`；归属快照 `TombstoneUsage` / `TombstoneToolCalls` / `TombstoneTurns`；聚合 `StatsUsageAgg` / `StatsToolAgg` / `StatsTurnAgg` / `StatsCommitAgg`；`MinUsageTs`、`SumUsageCost`、`CountUsageRecords`、`ListUsageRecordsPage`；orb `ListOrbsForStats`、`ListOrbEventsInWindow`、`ListOrbEventsForTimeline`、`ListSetupRunsForStats`；产出 `ListThreadTimesForStats`、`ListShippedThreadCosts`、`DeleteThreadCommits`、`InsertThreadCommit`；状态与预算 `GetStatsState`、`SetStatsState`、`DeleteStatsState`、`GetBudget`、`UpsertBudget`、`InsertBudgetAlert`；保留期 `DeleteDeadOrbEventsBefore`、`DeleteDeadOrbSetupRunsBefore`、`DeleteUsageBefore`、`DeleteToolCallsBefore`、`DeleteTurnsBefore`、`DeleteBudgetAlertsBefore`（另有 `orbs.sql` 的 `DeleteOrbSamplesBefore`）。`queries/notify.sql`：`InsertNotification` 多 `link`，新增 `MarkNotificationRead`。

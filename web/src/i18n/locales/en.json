@@ -1169,12 +1169,14 @@
 		"kind": {
 			"done": "Done",
 			"input": "Needs input",
-			"error": "Error"
+			"error": "Error",
+			"budget": "Budget alert"
 		},
 		"kindBody": {
 			"done": "The turn finished",
 			"input": "Waiting for your answer",
-			"error": "The thread hit an error"
+			"error": "The thread hit an error",
+			"budget": "Budget alert"
 		}
 	},
 	"notifySettings": {

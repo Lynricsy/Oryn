@@ -160,7 +160,7 @@ func (q *Queries) GetNextNotificationDeliveryAt(ctx context.Context) (int64, err
 }
 
 const getNotification = `-- name: GetNotification :one
-SELECT id, thread_id, kind, title, body, request_id, request, created_at, read_at, resolved_at FROM notifications WHERE id = ?1
+SELECT id, thread_id, kind, title, body, link, request_id, request, created_at, read_at, resolved_at FROM notifications WHERE id = ?1
 `
 
 func (q *Queries) GetNotification(ctx context.Context, id string) (Notification, error) {
@@ -172,6 +172,7 @@ func (q *Queries) GetNotification(ctx context.Context, id string) (Notification,
 		&i.Kind,
 		&i.Title,
 		&i.Body,
+		&i.Link,
 		&i.RequestID,
 		&i.Request,
 		&i.CreatedAt,
@@ -281,8 +282,8 @@ func (q *Queries) GetPushSubscriptionByEndpoint(ctx context.Context, endpoint st
 }
 
 const insertNotification = `-- name: InsertNotification :execrows
-INSERT INTO notifications (id, thread_id, kind, title, body, request_id, request, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+INSERT INTO notifications (id, thread_id, kind, title, body, link, request_id, request, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 ON CONFLICT DO NOTHING
 `
 
@@ -292,12 +293,14 @@ type InsertNotificationParams struct {
 	Kind      string  `json:"kind"`
 	Title     string  `json:"title"`
 	Body      string  `json:"body"`
+	Link      *string `json:"link"`
 	RequestID *string `json:"requestId"`
 	Request   *string `json:"request"`
 	CreatedAt int64   `json:"createdAt"`
 }
 
 // Returns 0 rows affected when an open notification for the same (thread_id, request_id) exists.
+// link: in-app path of a notification without a thread (NULL when thread_id is set).
 func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotificationParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertNotification,
 		arg.ID,
@@ -305,6 +308,7 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 		arg.Kind,
 		arg.Title,
 		arg.Body,
+		arg.Link,
 		arg.RequestID,
 		arg.Request,
 		arg.CreatedAt,
@@ -599,7 +603,7 @@ func (q *Queries) ListNotificationChannels(ctx context.Context) ([]NotificationC
 }
 
 const listNotifications = `-- name: ListNotifications :many
-SELECT id, thread_id, kind, title, body, request_id, request, created_at, read_at, resolved_at FROM notifications
+SELECT id, thread_id, kind, title, body, link, request_id, request, created_at, read_at, resolved_at FROM notifications
 WHERE created_at < ?1 AND (CAST(?2 AS INTEGER) = 0 OR read_at IS NULL)
 ORDER BY created_at DESC, id DESC LIMIT ?3
 `
@@ -625,6 +629,7 @@ func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsPa
 			&i.Kind,
 			&i.Title,
 			&i.Body,
+			&i.Link,
 			&i.RequestID,
 			&i.Request,
 			&i.CreatedAt,
@@ -759,6 +764,23 @@ UPDATE notifications SET read_at = CAST(?1 AS INTEGER) WHERE read_at IS NULL
 
 func (q *Queries) MarkAllNotificationsRead(ctx context.Context, now int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markAllNotificationsRead, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markNotificationRead = `-- name: MarkNotificationRead :execrows
+UPDATE notifications SET read_at = CAST(?1 AS INTEGER) WHERE id = ?2 AND read_at IS NULL
+`
+
+type MarkNotificationReadParams struct {
+	Now int64  `json:"now"`
+	ID  string `json:"id"`
+}
+
+func (q *Queries) MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markNotificationRead, arg.Now, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -163,7 +163,7 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			tid := t.id
 			if pe.Usage != nil {
 				u := pe.Usage
-				if err := q.InsertUsageRecord(ctx, db.InsertUsageRecordParams{
+				if _, err := q.InsertUsageRecord(ctx, db.InsertUsageRecordParams{
 					ThreadID: &tid, EntrySeq: seq, Ts: u.TS, Provider: u.Provider, Model: u.Model,
 					InputTokens: u.Input, OutputTokens: u.Output, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrt,
 					CostUsd: u.CostUSD, DurationMs: u.DurationMs, TtftMs: u.TTFTMs, IsSubagent: sub,
@@ -172,7 +172,7 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 				}
 			}
 			if pe.Tool != nil {
-				if err := q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: &tid, EntrySeq: seq, Ts: pe.Tool.TS, Tool: pe.Tool.Tool, IsError: pe.Tool.IsError}); err != nil {
+				if _, err := q.InsertToolCall(ctx, db.InsertToolCallParams{ThreadID: &tid, EntrySeq: seq, Ts: pe.Tool.TS, Tool: pe.Tool.Tool, IsError: pe.Tool.IsError}); err != nil {
 					return err
 				}
 			}

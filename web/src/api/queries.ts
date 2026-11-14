@@ -187,6 +187,8 @@ export function useThreadUsage(threadId: string, since: number | undefined) {
 					params: { query: { groupBy: "thread", from: since } },
 				}),
 			);
+			// format 缺省为 json；text/csv 只在显式请求 format=csv 时出现。
+			if (typeof stats === "string") return null;
 			return stats.groups.find((g) => g.key === threadId) ?? null;
 		},
 	});

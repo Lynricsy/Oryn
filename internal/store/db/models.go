@@ -45,6 +45,25 @@ type BrowserProfileEvent struct {
 	Detail    string  `json:"detail"`
 }
 
+type Budget struct {
+	ID         int64    `json:"id"`
+	DailyUsd   *float64 `json:"dailyUsd"`
+	MonthlyUsd *float64 `json:"monthlyUsd"`
+	WarnPct    int64    `json:"warnPct"`
+	Timezone   string   `json:"timezone"`
+	Enabled    bool     `json:"enabled"`
+	UpdatedAt  int64    `json:"updatedAt"`
+}
+
+type BudgetAlert struct {
+	Period    string  `json:"period"`
+	PeriodKey string  `json:"periodKey"`
+	Level     string  `json:"level"`
+	SpentUsd  float64 `json:"spentUsd"`
+	LimitUsd  float64 `json:"limitUsd"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
 type CoordAction struct {
 	ID             string  `json:"id"`
 	Ts             int64   `json:"ts"`
@@ -124,6 +143,7 @@ type Notification struct {
 	Kind       string  `json:"kind"`
 	Title      string  `json:"title"`
 	Body       string  `json:"body"`
+	Link       *string `json:"link"`
 	RequestID  *string `json:"requestId"`
 	Request    *string `json:"request"`
 	CreatedAt  int64   `json:"createdAt"`
@@ -425,6 +445,11 @@ type Space struct {
 	ArchivedAt *int64  `json:"archivedAt"`
 }
 
+type StatsState struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type Thread struct {
 	ID                string  `json:"id"`
 	ProjectID         *string `json:"projectId"`
@@ -457,6 +482,12 @@ type Thread struct {
 	ShippedAt         *int64  `json:"shippedAt"`
 	ScheduleID        *string `json:"scheduleId"`
 	ScheduleRun       *int64  `json:"scheduleRun"`
+}
+
+type ThreadCommit struct {
+	ThreadID string `json:"threadId"`
+	Sha      string `json:"sha"`
+	Ts       int64  `json:"ts"`
 }
 
 type ThreadLabel struct {
@@ -497,12 +528,25 @@ type ThreadShareIdentity struct {
 }
 
 type ToolCall struct {
-	ID       int64   `json:"id"`
-	ThreadID *string `json:"threadId"`
-	EntrySeq int64   `json:"entrySeq"`
-	Ts       int64   `json:"ts"`
-	Tool     string  `json:"tool"`
-	IsError  bool    `json:"isError"`
+	ID        int64   `json:"id"`
+	ThreadID  *string `json:"threadId"`
+	EntrySeq  int64   `json:"entrySeq"`
+	Ts        int64   `json:"ts"`
+	Tool      string  `json:"tool"`
+	IsError   bool    `json:"isError"`
+	Ukey      *string `json:"ukey"`
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
+}
+
+type Turn struct {
+	ID        int64   `json:"id"`
+	ThreadID  *string `json:"threadId"`
+	EntrySeq  int64   `json:"entrySeq"`
+	Ts        int64   `json:"ts"`
+	Ukey      *string `json:"ukey"`
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
 }
 
 type UsageRecord struct {
@@ -520,6 +564,11 @@ type UsageRecord struct {
 	DurationMs       *int64  `json:"durationMs"`
 	TtftMs           *int64  `json:"ttftMs"`
 	IsSubagent       bool    `json:"isSubagent"`
+	Purpose          string  `json:"purpose"`
+	StopReason       string  `json:"stopReason"`
+	Ukey             *string `json:"ukey"`
+	ProjectID        *string `json:"projectId"`
+	SpaceID          *string `json:"spaceId"`
 }
 
 type WebSession struct {

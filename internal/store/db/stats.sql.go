@@ -9,9 +9,354 @@ import (
 	"context"
 )
 
-const insertToolCall = `-- name: InsertToolCall :exec
-INSERT OR IGNORE INTO tool_calls (thread_id, entry_seq, ts, tool, is_error)
-VALUES (?1, ?2, ?3, ?4, ?5)
+const countUsageRecords = `-- name: CountUsageRecords :one
+SELECT CAST(COUNT(*) AS INTEGER) AS n
+FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+WHERE u.ts >= ?1 AND u.ts < ?2
+  AND (CAST(?3 AS TEXT) IS NULL OR u.thread_id = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(?4 AS TEXT))
+  AND (CAST(?5 AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(?5 AS TEXT))
+  AND (CAST(?6 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?6 AS TEXT))
+`
+
+type CountUsageRecordsParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Thread  *string `json:"thread"`
+	Project *string `json:"project"`
+	Space   *string `json:"space"`
+	Model   *string `json:"model"`
+}
+
+func (q *Queries) CountUsageRecords(ctx context.Context, arg CountUsageRecordsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUsageRecords,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+		arg.Model,
+	)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+const deleteBudgetAlertsBefore = `-- name: DeleteBudgetAlertsBefore :execrows
+DELETE FROM budget_alerts WHERE created_at < ?1
+`
+
+func (q *Queries) DeleteBudgetAlertsBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBudgetAlertsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteDeadOrbEventsBefore = `-- name: DeleteDeadOrbEventsBefore :execrows
+
+DELETE FROM orb_events
+WHERE orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NOT NULL AND deleted_at < CAST(?1 AS INTEGER))
+`
+
+// ---------------------------------------------------------------- retention
+// Only events of orbs deleted before the cutoff (live orbs' events drive OrbEverReady / FailureReason).
+func (q *Queries) DeleteDeadOrbEventsBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDeadOrbEventsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteDeadOrbSetupRunsBefore = `-- name: DeleteDeadOrbSetupRunsBefore :execrows
+DELETE FROM orb_setup_runs
+WHERE orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NOT NULL AND deleted_at < CAST(?1 AS INTEGER))
+`
+
+func (q *Queries) DeleteDeadOrbSetupRunsBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDeadOrbSetupRunsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteLiveToolCalls = `-- name: DeleteLiveToolCalls :exec
+DELETE FROM tool_calls WHERE thread_id IS NOT NULL
+`
+
+func (q *Queries) DeleteLiveToolCalls(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveToolCalls)
+	return err
+}
+
+const deleteLiveTurns = `-- name: DeleteLiveTurns :exec
+DELETE FROM turns WHERE thread_id IS NOT NULL
+`
+
+func (q *Queries) DeleteLiveTurns(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveTurns)
+	return err
+}
+
+const deleteLiveUsage = `-- name: DeleteLiveUsage :exec
+DELETE FROM usage_records WHERE thread_id IS NOT NULL
+`
+
+// All live threads (manual full rebuild only); rows of deleted threads stay.
+func (q *Queries) DeleteLiveUsage(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteLiveUsage)
+	return err
+}
+
+const deleteOrphanToolCalls = `-- name: DeleteOrphanToolCalls :execrows
+DELETE FROM tool_calls WHERE thread_id = CAST(?1 AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = tool_calls.thread_id AND e.seq = tool_calls.entry_seq)
+`
+
+func (q *Queries) DeleteOrphanToolCalls(ctx context.Context, threadID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOrphanToolCalls, threadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteOrphanTurns = `-- name: DeleteOrphanTurns :execrows
+DELETE FROM turns WHERE thread_id = CAST(?1 AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = turns.thread_id AND e.seq = turns.entry_seq)
+`
+
+func (q *Queries) DeleteOrphanTurns(ctx context.Context, threadID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOrphanTurns, threadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteOrphanUsage = `-- name: DeleteOrphanUsage :execrows
+DELETE FROM usage_records WHERE thread_id = CAST(?1 AS TEXT)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.thread_id = usage_records.thread_id AND e.seq = usage_records.entry_seq)
+`
+
+// Orphans: fact rows of a thread whose entry (thread_id, entry_seq) no longer exists (after reset_done / dropFile).
+func (q *Queries) DeleteOrphanUsage(ctx context.Context, threadID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOrphanUsage, threadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteStatsState = `-- name: DeleteStatsState :exec
+DELETE FROM stats_state WHERE key = ?1
+`
+
+func (q *Queries) DeleteStatsState(ctx context.Context, key string) error {
+	_, err := q.db.ExecContext(ctx, deleteStatsState, key)
+	return err
+}
+
+const deleteThreadCommits = `-- name: DeleteThreadCommits :exec
+DELETE FROM thread_commits WHERE thread_id = ?1
+`
+
+func (q *Queries) DeleteThreadCommits(ctx context.Context, threadID string) error {
+	_, err := q.db.ExecContext(ctx, deleteThreadCommits, threadID)
+	return err
+}
+
+const deleteThreadToolCalls = `-- name: DeleteThreadToolCalls :exec
+DELETE FROM tool_calls WHERE thread_id = CAST(?1 AS TEXT)
+`
+
+func (q *Queries) DeleteThreadToolCalls(ctx context.Context, threadID string) error {
+	_, err := q.db.ExecContext(ctx, deleteThreadToolCalls, threadID)
+	return err
+}
+
+const deleteThreadTurns = `-- name: DeleteThreadTurns :exec
+DELETE FROM turns WHERE thread_id = CAST(?1 AS TEXT)
+`
+
+func (q *Queries) DeleteThreadTurns(ctx context.Context, threadID string) error {
+	_, err := q.db.ExecContext(ctx, deleteThreadTurns, threadID)
+	return err
+}
+
+const deleteThreadUsage = `-- name: DeleteThreadUsage :exec
+DELETE FROM usage_records WHERE thread_id = CAST(?1 AS TEXT)
+`
+
+func (q *Queries) DeleteThreadUsage(ctx context.Context, threadID string) error {
+	_, err := q.db.ExecContext(ctx, deleteThreadUsage, threadID)
+	return err
+}
+
+const deleteToolCallAt = `-- name: DeleteToolCallAt :exec
+DELETE FROM tool_calls WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = ?2
+`
+
+type DeleteToolCallAtParams struct {
+	ThreadID string `json:"threadId"`
+	EntrySeq int64  `json:"entrySeq"`
+}
+
+func (q *Queries) DeleteToolCallAt(ctx context.Context, arg DeleteToolCallAtParams) error {
+	_, err := q.db.ExecContext(ctx, deleteToolCallAt, arg.ThreadID, arg.EntrySeq)
+	return err
+}
+
+const deleteToolCallsBefore = `-- name: DeleteToolCallsBefore :execrows
+DELETE FROM tool_calls WHERE ts < ?1
+`
+
+func (q *Queries) DeleteToolCallsBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteToolCallsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteTurnAt = `-- name: DeleteTurnAt :exec
+DELETE FROM turns WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = ?2
+`
+
+type DeleteTurnAtParams struct {
+	ThreadID string `json:"threadId"`
+	EntrySeq int64  `json:"entrySeq"`
+}
+
+func (q *Queries) DeleteTurnAt(ctx context.Context, arg DeleteTurnAtParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTurnAt, arg.ThreadID, arg.EntrySeq)
+	return err
+}
+
+const deleteTurnsBefore = `-- name: DeleteTurnsBefore :execrows
+DELETE FROM turns WHERE ts < ?1
+`
+
+func (q *Queries) DeleteTurnsBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTurnsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteUsageAt = `-- name: DeleteUsageAt :exec
+
+DELETE FROM usage_records WHERE thread_id = CAST(?1 AS TEXT) AND entry_seq = ?2
+`
+
+type DeleteUsageAtParams struct {
+	ThreadID string `json:"threadId"`
+	EntrySeq int64  `json:"entrySeq"`
+}
+
+// ---------------------------------------------------------------- per-entry / per-thread deletes
+func (q *Queries) DeleteUsageAt(ctx context.Context, arg DeleteUsageAtParams) error {
+	_, err := q.db.ExecContext(ctx, deleteUsageAt, arg.ThreadID, arg.EntrySeq)
+	return err
+}
+
+const deleteUsageBefore = `-- name: DeleteUsageBefore :execrows
+DELETE FROM usage_records WHERE ts < ?1
+`
+
+func (q *Queries) DeleteUsageBefore(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteUsageBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getBudget = `-- name: GetBudget :one
+SELECT id, daily_usd, monthly_usd, warn_pct, timezone, enabled, updated_at FROM budget WHERE id = 1
+`
+
+func (q *Queries) GetBudget(ctx context.Context) (Budget, error) {
+	row := q.db.QueryRowContext(ctx, getBudget)
+	var i Budget
+	err := row.Scan(
+		&i.ID,
+		&i.DailyUsd,
+		&i.MonthlyUsd,
+		&i.WarnPct,
+		&i.Timezone,
+		&i.Enabled,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getStatsState = `-- name: GetStatsState :one
+
+SELECT value FROM stats_state WHERE key = ?1
+`
+
+// ---------------------------------------------------------------- state and budget
+// Keys: facts_version, backfill_cursor ("<created_at>:<thread_id>"), backfill_done, backfill_total.
+func (q *Queries) GetStatsState(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getStatsState, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
+const insertBudgetAlert = `-- name: InsertBudgetAlert :execrows
+INSERT OR IGNORE INTO budget_alerts (period, period_key, level, spent_usd, limit_usd, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+`
+
+type InsertBudgetAlertParams struct {
+	Period    string  `json:"period"`
+	PeriodKey string  `json:"periodKey"`
+	Level     string  `json:"level"`
+	SpentUsd  float64 `json:"spentUsd"`
+	LimitUsd  float64 `json:"limitUsd"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
+// At most one row per (period, period_key, level): 0 rows = already alerted.
+func (q *Queries) InsertBudgetAlert(ctx context.Context, arg InsertBudgetAlertParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertBudgetAlert,
+		arg.Period,
+		arg.PeriodKey,
+		arg.Level,
+		arg.SpentUsd,
+		arg.LimitUsd,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const insertThreadCommit = `-- name: InsertThreadCommit :exec
+INSERT OR IGNORE INTO thread_commits (thread_id, sha, ts) VALUES (?1, ?2, ?3)
+`
+
+type InsertThreadCommitParams struct {
+	ThreadID string `json:"threadId"`
+	Sha      string `json:"sha"`
+	Ts       int64  `json:"ts"`
+}
+
+func (q *Queries) InsertThreadCommit(ctx context.Context, arg InsertThreadCommitParams) error {
+	_, err := q.db.ExecContext(ctx, insertThreadCommit, arg.ThreadID, arg.Sha, arg.Ts)
+	return err
+}
+
+const insertToolCall = `-- name: InsertToolCall :execrows
+INSERT OR IGNORE INTO tool_calls (thread_id, entry_seq, ts, tool, is_error, ukey)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 `
 
 type InsertToolCallParams struct {
@@ -20,25 +365,57 @@ type InsertToolCallParams struct {
 	Ts       int64   `json:"ts"`
 	Tool     string  `json:"tool"`
 	IsError  bool    `json:"isError"`
+	Ukey     *string `json:"ukey"`
 }
 
-func (q *Queries) InsertToolCall(ctx context.Context, arg InsertToolCallParams) error {
-	_, err := q.db.ExecContext(ctx, insertToolCall,
+func (q *Queries) InsertToolCall(ctx context.Context, arg InsertToolCallParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertToolCall,
 		arg.ThreadID,
 		arg.EntrySeq,
 		arg.Ts,
 		arg.Tool,
 		arg.IsError,
+		arg.Ukey,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const insertUsageRecord = `-- name: InsertUsageRecord :exec
+const insertTurn = `-- name: InsertTurn :execrows
+INSERT OR IGNORE INTO turns (thread_id, entry_seq, ts, ukey)
+VALUES (?1, ?2, ?3, ?4)
+`
 
-INSERT OR IGNORE INTO usage_records (thread_id, entry_seq, ts, provider, model, input_tokens, output_tokens,
-    cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10, ?11, ?12, ?13)
+type InsertTurnParams struct {
+	ThreadID *string `json:"threadId"`
+	EntrySeq int64   `json:"entrySeq"`
+	Ts       int64   `json:"ts"`
+	Ukey     *string `json:"ukey"`
+}
+
+// A turn = one role=user message in a main session file.
+func (q *Queries) InsertTurn(ctx context.Context, arg InsertTurnParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertTurn,
+		arg.ThreadID,
+		arg.EntrySeq,
+		arg.Ts,
+		arg.Ukey,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const insertUsageRecord = `-- name: InsertUsageRecord :execrows
+
+
+INSERT OR IGNORE INTO usage_records (thread_id, entry_seq, ts, provider, model, purpose, stop_reason, ukey,
+    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+    ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
 `
 
 type InsertUsageRecordParams struct {
@@ -47,6 +424,9 @@ type InsertUsageRecordParams struct {
 	Ts               int64   `json:"ts"`
 	Provider         string  `json:"provider"`
 	Model            string  `json:"model"`
+	Purpose          string  `json:"purpose"`
+	StopReason       string  `json:"stopReason"`
+	Ukey             *string `json:"ukey"`
 	InputTokens      int64   `json:"inputTokens"`
 	OutputTokens     int64   `json:"outputTokens"`
 	CacheReadTokens  int64   `json:"cacheReadTokens"`
@@ -57,14 +437,23 @@ type InsertUsageRecordParams struct {
 	IsSubagent       bool    `json:"isSubagent"`
 }
 
-// Usage records, tool calls and basic aggregates (M2 stats endpoints).
-func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordParams) error {
-	_, err := q.db.ExecContext(ctx, insertUsageRecord,
+// M10 analytics: narrow fact rows (usage_records / tool_calls / turns), thread commits, stats state, budget,
+// retention. Fact rows are written in the entries transaction; aggregates never touch entries.payload.
+// Invariant: fact rows of a live thread = f(its current entries); rows of a deleted thread are frozen
+// (thread_id NULL, project_id / space_id = attribution snapshot written on delete).
+// ---------------------------------------------------------------- writes
+// ukey = "<entryId>@<ts>": cross-thread dedup key (fork copies keep id and timestamp). 0 rows = ignored
+// (same (thread_id, entry_seq) or ukey already taken by another thread).
+func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertUsageRecord,
 		arg.ThreadID,
 		arg.EntrySeq,
 		arg.Ts,
 		arg.Provider,
 		arg.Model,
+		arg.Purpose,
+		arg.StopReason,
+		arg.Ukey,
 		arg.InputTokens,
 		arg.OutputTokens,
 		arg.CacheReadTokens,
@@ -74,304 +463,571 @@ func (q *Queries) InsertUsageRecord(ctx context.Context, arg InsertUsageRecordPa
 		arg.TtftMs,
 		arg.IsSubagent,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const listOrbEventsForTimeline = `-- name: ListOrbEventsForTimeline :many
+SELECT e.id, e.ts, e.from_state, e.to_state, e.detail
+FROM orb_events e
+WHERE e.orb_id = ?1 AND e.ts < ?2
+  AND e.ts >= COALESCE((SELECT MAX(p.ts) FROM orb_events p WHERE p.orb_id = ?1 AND p.ts < ?3), 0)
+ORDER BY e.ts, e.id
+LIMIT 5000
+`
+
+type ListOrbEventsForTimelineParams struct {
+	OrbID  string `json:"orbId"`
+	ToTs   int64  `json:"toTs"`
+	FromTs int64  `json:"fromTs"`
+}
+
+type ListOrbEventsForTimelineRow struct {
+	ID        int64  `json:"id"`
+	Ts        int64  `json:"ts"`
+	FromState string `json:"fromState"`
+	ToState   string `json:"toState"`
+	Detail    string `json:"detail"`
+}
+
+// One orb: events from the last one before from_ts (0 when none) up to to_ts, at most 5000.
+func (q *Queries) ListOrbEventsForTimeline(ctx context.Context, arg ListOrbEventsForTimelineParams) ([]ListOrbEventsForTimelineRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOrbEventsForTimeline, arg.OrbID, arg.ToTs, arg.FromTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrbEventsForTimelineRow{}
+	for rows.Next() {
+		var i ListOrbEventsForTimelineRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.FromState,
+			&i.ToState,
+			&i.Detail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrbEventsInWindow = `-- name: ListOrbEventsInWindow :many
+SELECT e.orb_id, e.ts, e.from_state, e.to_state
+FROM orb_events e JOIN orbs o ON o.id = e.orb_id
+WHERE e.ts >= ?1 AND e.ts < ?2
+  AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR e.orb_id = CAST(?4 AS TEXT))
+ORDER BY e.orb_id, e.ts, e.id
+`
+
+type ListOrbEventsInWindowParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Project *string `json:"project"`
+	Orb     *string `json:"orb"`
+}
+
+type ListOrbEventsInWindowRow struct {
+	OrbID     string `json:"orbId"`
+	Ts        int64  `json:"ts"`
+	FromState string `json:"fromState"`
+	ToState   string `json:"toState"`
+}
+
+// Transitions inside [from_ts, to_ts), with the same optional project / orb filters as ListOrbsForStats.
+func (q *Queries) ListOrbEventsInWindow(ctx context.Context, arg ListOrbEventsInWindowParams) ([]ListOrbEventsInWindowRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOrbEventsInWindow,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Orb,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrbEventsInWindowRow{}
+	for rows.Next() {
+		var i ListOrbEventsInWindowRow
+		if err := rows.Scan(
+			&i.OrbID,
+			&i.Ts,
+			&i.FromState,
+			&i.ToState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrbsForStats = `-- name: ListOrbsForStats :many
+
+SELECT o.id, o.type, o.cpus, o.memory_mb, o.project_id, o.created_at, o.deleted_at, o.snapshot_of, o.coordinator,
+    CAST(COALESCE((SELECT e.to_state FROM orb_events e WHERE e.orb_id = o.id AND e.ts < ?1
+                   ORDER BY e.ts DESC, e.id DESC LIMIT 1), '') AS TEXT) AS state_at_from
+FROM orbs o
+WHERE o.created_at < ?2 AND (o.deleted_at IS NULL OR o.deleted_at >= ?1)
+  AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR o.id = CAST(?4 AS TEXT))
+ORDER BY o.id
+`
+
+type ListOrbsForStatsParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Project *string `json:"project"`
+	Orb     *string `json:"orb"`
+}
+
+type ListOrbsForStatsRow struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Cpus        int64   `json:"cpus"`
+	MemoryMb    int64   `json:"memoryMb"`
+	ProjectID   *string `json:"projectId"`
+	CreatedAt   int64   `json:"createdAt"`
+	DeletedAt   *int64  `json:"deletedAt"`
+	SnapshotOf  *string `json:"snapshotOf"`
+	Coordinator bool    `json:"coordinator"`
+	StateAtFrom string  `json:"stateAtFrom"`
+}
+
+// ---------------------------------------------------------------- orbs
+// Orbs that may have existed inside [from_ts, to_ts); state_at_from = to_state of the last event before from_ts
+// (” = no event yet).
+func (q *Queries) ListOrbsForStats(ctx context.Context, arg ListOrbsForStatsParams) ([]ListOrbsForStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOrbsForStats,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Orb,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrbsForStatsRow{}
+	for rows.Next() {
+		var i ListOrbsForStatsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Cpus,
+			&i.MemoryMb,
+			&i.ProjectID,
+			&i.CreatedAt,
+			&i.DeletedAt,
+			&i.SnapshotOf,
+			&i.Coordinator,
+			&i.StateAtFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSetupRunsForStats = `-- name: ListSetupRunsForStats :many
+SELECT r.orb_id, r.phase, r.ok, r.setup_ran, r.duration_ms, r.started_at, o.type
+FROM orb_setup_runs r JOIN orbs o ON o.id = r.orb_id
+WHERE r.started_at >= ?1 AND r.started_at < ?2
+  AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(o.project_id, '') = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR r.orb_id = CAST(?4 AS TEXT))
+ORDER BY r.started_at, r.id
+`
+
+type ListSetupRunsForStatsParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Project *string `json:"project"`
+	Orb     *string `json:"orb"`
+}
+
+type ListSetupRunsForStatsRow struct {
+	OrbID      string `json:"orbId"`
+	Phase      string `json:"phase"`
+	Ok         int64  `json:"ok"`
+	SetupRan   int64  `json:"setupRan"`
+	DurationMs int64  `json:"durationMs"`
+	StartedAt  int64  `json:"startedAt"`
+	Type       string `json:"type"`
+}
+
+func (q *Queries) ListSetupRunsForStats(ctx context.Context, arg ListSetupRunsForStatsParams) ([]ListSetupRunsForStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSetupRunsForStats,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Orb,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSetupRunsForStatsRow{}
+	for rows.Next() {
+		var i ListSetupRunsForStatsRow
+		if err := rows.Scan(
+			&i.OrbID,
+			&i.Phase,
+			&i.Ok,
+			&i.SetupRan,
+			&i.DurationMs,
+			&i.StartedAt,
+			&i.Type,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listShippedThreadCosts = `-- name: ListShippedThreadCosts :many
+SELECT t.id, t.project_id, t.space_id, CAST(t.shipped_at AS INTEGER) AS shipped_at,
+    CAST(COALESCE((SELECT SUM(u.cost_usd) FROM usage_records u WHERE u.thread_id = t.id), 0) AS REAL) AS cost_usd
+FROM threads t
+WHERE t.kind = 'work' AND t.shipped_at >= CAST(?1 AS INTEGER) AND t.shipped_at < CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(t.project_id, '') = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR COALESCE(t.space_id, '') = CAST(?4 AS TEXT))
+ORDER BY t.shipped_at, t.id
+`
+
+type ListShippedThreadCostsParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Project *string `json:"project"`
+	Space   *string `json:"space"`
+}
+
+type ListShippedThreadCostsRow struct {
+	ID        string  `json:"id"`
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
+	ShippedAt int64   `json:"shippedAt"`
+	CostUsd   float64 `json:"costUsd"`
+}
+
+// Work threads shipped inside [from_ts, to_ts) with their whole-lifetime cost.
+func (q *Queries) ListShippedThreadCosts(ctx context.Context, arg ListShippedThreadCostsParams) ([]ListShippedThreadCostsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listShippedThreadCosts,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Space,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListShippedThreadCostsRow{}
+	for rows.Next() {
+		var i ListShippedThreadCostsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.ShippedAt,
+			&i.CostUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadTimesForStats = `-- name: ListThreadTimesForStats :many
+
+SELECT id, project_id, space_id, created_at, archived_at, shipped_at
+FROM threads
+WHERE kind = 'work'
+  AND ((created_at >= ?1 AND created_at < ?2)
+    OR (archived_at >= ?1 AND archived_at < ?2)
+    OR (shipped_at >= ?1 AND shipped_at < ?2))
+  AND (CAST(?3 AS TEXT) IS NULL OR COALESCE(project_id, '') = CAST(?3 AS TEXT))
+  AND (CAST(?4 AS TEXT) IS NULL OR COALESCE(space_id, '') = CAST(?4 AS TEXT))
+ORDER BY created_at, id
+`
+
+type ListThreadTimesForStatsParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	Project *string `json:"project"`
+	Space   *string `json:"space"`
+}
+
+type ListThreadTimesForStatsRow struct {
+	ID         string  `json:"id"`
+	ProjectID  *string `json:"projectId"`
+	SpaceID    *string `json:"spaceId"`
+	CreatedAt  int64   `json:"createdAt"`
+	ArchivedAt *int64  `json:"archivedAt"`
+	ShippedAt  *int64  `json:"shippedAt"`
+}
+
+// ---------------------------------------------------------------- output
+// Work threads created, archived or shipped inside [from_ts, to_ts).
+func (q *Queries) ListThreadTimesForStats(ctx context.Context, arg ListThreadTimesForStatsParams) ([]ListThreadTimesForStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadTimesForStats,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Space,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadTimesForStatsRow{}
+	for rows.Next() {
+		var i ListThreadTimesForStatsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.ShippedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsageRecordsPage = `-- name: ListUsageRecordsPage :many
+SELECT u.id, u.ts,
+    CAST(COALESCE(u.thread_id, '') AS TEXT) AS thread_id,
+    CAST(COALESCE(t.project_id, u.project_id, '') AS TEXT) AS project_id,
+    CAST(COALESCE(t.space_id, u.space_id, '') AS TEXT) AS space_id,
+    u.provider, u.model, u.purpose, u.is_subagent, u.stop_reason,
+    u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.duration_ms, u.ttft_ms
+FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+WHERE u.ts >= ?1 AND u.ts < ?2
+  AND (u.ts > ?3 OR (u.ts = ?3 AND u.id > ?4))
+  AND (CAST(?5 AS TEXT) IS NULL OR u.thread_id = CAST(?5 AS TEXT))
+  AND (CAST(?6 AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(?6 AS TEXT))
+  AND (CAST(?7 AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(?7 AS TEXT))
+  AND (CAST(?8 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?8 AS TEXT))
+ORDER BY u.ts, u.id
+LIMIT ?9
+`
+
+type ListUsageRecordsPageParams struct {
+	FromTs  int64   `json:"fromTs"`
+	ToTs    int64   `json:"toTs"`
+	AfterTs int64   `json:"afterTs"`
+	AfterID int64   `json:"afterId"`
+	Thread  *string `json:"thread"`
+	Project *string `json:"project"`
+	Space   *string `json:"space"`
+	Model   *string `json:"model"`
+	Limit   int64   `json:"limit"`
+}
+
+type ListUsageRecordsPageRow struct {
+	ID               int64   `json:"id"`
+	Ts               int64   `json:"ts"`
+	ThreadID         string  `json:"threadId"`
+	ProjectID        string  `json:"projectId"`
+	SpaceID          string  `json:"spaceId"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	Purpose          string  `json:"purpose"`
+	IsSubagent       bool    `json:"isSubagent"`
+	StopReason       string  `json:"stopReason"`
+	InputTokens      int64   `json:"inputTokens"`
+	OutputTokens     int64   `json:"outputTokens"`
+	CacheReadTokens  int64   `json:"cacheReadTokens"`
+	CacheWriteTokens int64   `json:"cacheWriteTokens"`
+	CostUsd          float64 `json:"costUsd"`
+	DurationMs       *int64  `json:"durationMs"`
+	TtftMs           *int64  `json:"ttftMs"`
+}
+
+// Keyset page of usage facts with their current attribution. First page: after_ts = from_ts, after_id = 0.
+func (q *Queries) ListUsageRecordsPage(ctx context.Context, arg ListUsageRecordsPageParams) ([]ListUsageRecordsPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageRecordsPage,
+		arg.FromTs,
+		arg.ToTs,
+		arg.AfterTs,
+		arg.AfterID,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+		arg.Model,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsageRecordsPageRow{}
+	for rows.Next() {
+		var i ListUsageRecordsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.ThreadID,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.Provider,
+			&i.Model,
+			&i.Purpose,
+			&i.IsSubagent,
+			&i.StopReason,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CostUsd,
+			&i.DurationMs,
+			&i.TtftMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const minUsageTs = `-- name: MinUsageTs :one
+SELECT CAST(COALESCE(MIN(ts), 0) AS INTEGER) AS min_ts FROM usage_records
+`
+
+// Earliest usage fact time; 0 when there is none.
+func (q *Queries) MinUsageTs(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, minUsageTs)
+	var min_ts int64
+	err := row.Scan(&min_ts)
+	return min_ts, err
+}
+
+const setStatsState = `-- name: SetStatsState :exec
+INSERT INTO stats_state (key, value) VALUES (?1, ?2)
+ON CONFLICT (key) DO UPDATE SET value = excluded.value
+`
+
+type SetStatsStateParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (q *Queries) SetStatsState(ctx context.Context, arg SetStatsStateParams) error {
+	_, err := q.db.ExecContext(ctx, setStatsState, arg.Key, arg.Value)
 	return err
 }
 
-const listThreadUsageRecords = `-- name: ListThreadUsageRecords :many
-SELECT id, thread_id, entry_seq, ts, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent FROM usage_records WHERE thread_id = ?1 ORDER BY ts, id
+const statsCommitAgg = `-- name: StatsCommitAgg :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (c.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN COALESCE(t.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(t.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(COUNT(DISTINCT c.sha) AS INTEGER) AS commits
+FROM thread_commits c JOIN threads t ON t.id = c.thread_id
+WHERE c.ts >= ?6 AND c.ts < ?7
+  AND (CAST(?8 AS TEXT) IS NULL OR COALESCE(t.project_id, '') = CAST(?8 AS TEXT))
+  AND (CAST(?9 AS TEXT) IS NULL OR COALESCE(t.space_id, '') = CAST(?9 AS TEXT))
+GROUP BY 1, 2, 3
 `
 
-func (q *Queries) ListThreadUsageRecords(ctx context.Context, threadID *string) ([]UsageRecord, error) {
-	rows, err := q.db.QueryContext(ctx, listThreadUsageRecords, threadID)
+type StatsCommitAggParams struct {
+	ByBucket  bool    `json:"byBucket"`
+	OffsetMs  int64   `json:"offsetMs"`
+	BucketMs  int64   `json:"bucketMs"`
+	ByProject bool    `json:"byProject"`
+	BySpace   bool    `json:"bySpace"`
+	FromTs    int64   `json:"fromTs"`
+	ToTs      int64   `json:"toTs"`
+	Project   *string `json:"project"`
+	Space     *string `json:"space"`
+}
+
+type StatsCommitAggRow struct {
+	Bucket    int64  `json:"bucket"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Commits   int64  `json:"commits"`
+}
+
+// Distinct commit shas per group (a sha shared by forked threads counts once).
+func (q *Queries) StatsCommitAgg(ctx context.Context, arg StatsCommitAggParams) ([]StatsCommitAggRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsCommitAgg,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.ByProject,
+		arg.BySpace,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Project,
+		arg.Space,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []UsageRecord{}
+	items := []StatsCommitAggRow{}
 	for rows.Next() {
-		var i UsageRecord
+		var i StatsCommitAggRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.ThreadID,
-			&i.EntrySeq,
-			&i.Ts,
-			&i.Provider,
-			&i.Model,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
-			&i.DurationMs,
-			&i.TtftMs,
-			&i.IsSubagent,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUsageRecords = `-- name: ListUsageRecords :many
-SELECT id, thread_id, entry_seq, ts, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, ttft_ms, is_subagent FROM usage_records WHERE ts >= ?1 AND ts < ?2 ORDER BY ts, id
-`
-
-type ListUsageRecordsParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
-}
-
-func (q *Queries) ListUsageRecords(ctx context.Context, arg ListUsageRecordsParams) ([]UsageRecord, error) {
-	rows, err := q.db.QueryContext(ctx, listUsageRecords, arg.FromTs, arg.ToTs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UsageRecord{}
-	for rows.Next() {
-		var i UsageRecord
-		if err := rows.Scan(
-			&i.ID,
-			&i.ThreadID,
-			&i.EntrySeq,
-			&i.Ts,
-			&i.Provider,
-			&i.Model,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
-			&i.DurationMs,
-			&i.TtftMs,
-			&i.IsSubagent,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const toolCallStats = `-- name: ToolCallStats :many
-SELECT tool,
-    CAST(COUNT(*) AS INTEGER) AS calls,
-    CAST(SUM(is_error) AS INTEGER) AS errors
-FROM tool_calls WHERE ts >= ?1 AND ts < ?2
-GROUP BY tool ORDER BY calls DESC, tool
-`
-
-type ToolCallStatsParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
-}
-
-type ToolCallStatsRow struct {
-	Tool   string `json:"tool"`
-	Calls  int64  `json:"calls"`
-	Errors int64  `json:"errors"`
-}
-
-func (q *Queries) ToolCallStats(ctx context.Context, arg ToolCallStatsParams) ([]ToolCallStatsRow, error) {
-	rows, err := q.db.QueryContext(ctx, toolCallStats, arg.FromTs, arg.ToTs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ToolCallStatsRow{}
-	for rows.Next() {
-		var i ToolCallStatsRow
-		if err := rows.Scan(&i.Tool, &i.Calls, &i.Errors); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const usageByDay = `-- name: UsageByDay :many
-SELECT CAST(ts / 86400000 AS INTEGER) AS day,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= ?1 AND ts < ?2
-GROUP BY day ORDER BY day
-`
-
-type UsageByDayParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
-}
-
-type UsageByDayRow struct {
-	Day              int64   `json:"day"`
-	Requests         int64   `json:"requests"`
-	InputTokens      int64   `json:"inputTokens"`
-	OutputTokens     int64   `json:"outputTokens"`
-	CacheReadTokens  int64   `json:"cacheReadTokens"`
-	CacheWriteTokens int64   `json:"cacheWriteTokens"`
-	CostUsd          float64 `json:"costUsd"`
-}
-
-// day = UTC day number (ts / 86400000).
-func (q *Queries) UsageByDay(ctx context.Context, arg UsageByDayParams) ([]UsageByDayRow, error) {
-	rows, err := q.db.QueryContext(ctx, usageByDay, arg.FromTs, arg.ToTs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UsageByDayRow{}
-	for rows.Next() {
-		var i UsageByDayRow
-		if err := rows.Scan(
-			&i.Day,
-			&i.Requests,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const usageByModel = `-- name: UsageByModel :many
-SELECT provider, model,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= ?1 AND ts < ?2
-GROUP BY provider, model ORDER BY cost_usd DESC, provider, model
-`
-
-type UsageByModelParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
-}
-
-type UsageByModelRow struct {
-	Provider         string  `json:"provider"`
-	Model            string  `json:"model"`
-	Requests         int64   `json:"requests"`
-	InputTokens      int64   `json:"inputTokens"`
-	OutputTokens     int64   `json:"outputTokens"`
-	CacheReadTokens  int64   `json:"cacheReadTokens"`
-	CacheWriteTokens int64   `json:"cacheWriteTokens"`
-	CostUsd          float64 `json:"costUsd"`
-}
-
-func (q *Queries) UsageByModel(ctx context.Context, arg UsageByModelParams) ([]UsageByModelRow, error) {
-	rows, err := q.db.QueryContext(ctx, usageByModel, arg.FromTs, arg.ToTs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UsageByModelRow{}
-	for rows.Next() {
-		var i UsageByModelRow
-		if err := rows.Scan(
-			&i.Provider,
-			&i.Model,
-			&i.Requests,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const usageByProject = `-- name: UsageByProject :many
-SELECT CAST(COALESCE(t.project_id, '') AS TEXT) AS project_id,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(u.input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(u.output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(u.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(u.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(u.cost_usd) AS REAL) AS cost_usd
-FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
-WHERE u.ts >= ?1 AND u.ts < ?2
-GROUP BY project_id ORDER BY cost_usd DESC, project_id
-`
-
-type UsageByProjectParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
-}
-
-type UsageByProjectRow struct {
-	ProjectID        string  `json:"projectId"`
-	Requests         int64   `json:"requests"`
-	InputTokens      int64   `json:"inputTokens"`
-	OutputTokens     int64   `json:"outputTokens"`
-	CacheReadTokens  int64   `json:"cacheReadTokens"`
-	CacheWriteTokens int64   `json:"cacheWriteTokens"`
-	CostUsd          float64 `json:"costUsd"`
-}
-
-func (q *Queries) UsageByProject(ctx context.Context, arg UsageByProjectParams) ([]UsageByProjectRow, error) {
-	rows, err := q.db.QueryContext(ctx, usageByProject, arg.FromTs, arg.ToTs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []UsageByProjectRow{}
-	for rows.Next() {
-		var i UsageByProjectRow
-		if err := rows.Scan(
+			&i.Bucket,
 			&i.ProjectID,
-			&i.Requests,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
+			&i.SpaceID,
+			&i.Commits,
 		); err != nil {
 			return nil, err
 		}
@@ -386,50 +1042,79 @@ func (q *Queries) UsageByProject(ctx context.Context, arg UsageByProjectParams) 
 	return items, nil
 }
 
-const usageByThread = `-- name: UsageByThread :many
-SELECT CAST(COALESCE(thread_id, '') AS TEXT) AS thread_id,
-    CAST(COUNT(*) AS INTEGER) AS requests,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(cost_usd) AS REAL) AS cost_usd
-FROM usage_records WHERE ts >= ?1 AND ts < ?2
-GROUP BY thread_id ORDER BY cost_usd DESC, thread_id
+const statsToolAgg = `-- name: StatsToolAgg :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (c.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN c.tool ELSE '' END AS TEXT) AS tool,
+    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(c.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.project_id, c.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(?7 AS BOOLEAN) THEN COALESCE(t.space_id, c.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(COUNT(*) AS INTEGER) AS calls,
+    CAST(COALESCE(SUM(c.is_error), 0) AS INTEGER) AS errors
+FROM tool_calls c LEFT JOIN threads t ON t.id = c.thread_id
+WHERE c.ts >= ?8 AND c.ts < ?9
+  AND (CAST(?10 AS TEXT) IS NULL OR c.thread_id = CAST(?10 AS TEXT))
+  AND (CAST(?11 AS TEXT) IS NULL OR COALESCE(t.project_id, c.project_id, '') = CAST(?11 AS TEXT))
+  AND (CAST(?12 AS TEXT) IS NULL OR COALESCE(t.space_id, c.space_id, '') = CAST(?12 AS TEXT))
+GROUP BY 1, 2, 3, 4, 5
 `
 
-type UsageByThreadParams struct {
-	FromTs int64 `json:"fromTs"`
-	ToTs   int64 `json:"toTs"`
+type StatsToolAggParams struct {
+	ByBucket  bool    `json:"byBucket"`
+	OffsetMs  int64   `json:"offsetMs"`
+	BucketMs  int64   `json:"bucketMs"`
+	ByTool    bool    `json:"byTool"`
+	ByThread  bool    `json:"byThread"`
+	ByProject bool    `json:"byProject"`
+	BySpace   bool    `json:"bySpace"`
+	FromTs    int64   `json:"fromTs"`
+	ToTs      int64   `json:"toTs"`
+	Thread    *string `json:"thread"`
+	Project   *string `json:"project"`
+	Space     *string `json:"space"`
 }
 
-type UsageByThreadRow struct {
-	ThreadID         string  `json:"threadId"`
-	Requests         int64   `json:"requests"`
-	InputTokens      int64   `json:"inputTokens"`
-	OutputTokens     int64   `json:"outputTokens"`
-	CacheReadTokens  int64   `json:"cacheReadTokens"`
-	CacheWriteTokens int64   `json:"cacheWriteTokens"`
-	CostUsd          float64 `json:"costUsd"`
+type StatsToolAggRow struct {
+	Bucket    int64  `json:"bucket"`
+	Tool      string `json:"tool"`
+	ThreadID  string `json:"threadId"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Calls     int64  `json:"calls"`
+	Errors    int64  `json:"errors"`
 }
 
-func (q *Queries) UsageByThread(ctx context.Context, arg UsageByThreadParams) ([]UsageByThreadRow, error) {
-	rows, err := q.db.QueryContext(ctx, usageByThread, arg.FromTs, arg.ToTs)
+func (q *Queries) StatsToolAgg(ctx context.Context, arg StatsToolAggParams) ([]StatsToolAggRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsToolAgg,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.ByTool,
+		arg.ByThread,
+		arg.ByProject,
+		arg.BySpace,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []UsageByThreadRow{}
+	items := []StatsToolAggRow{}
 	for rows.Next() {
-		var i UsageByThreadRow
+		var i StatsToolAggRow
 		if err := rows.Scan(
+			&i.Bucket,
+			&i.Tool,
 			&i.ThreadID,
-			&i.Requests,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CostUsd,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.Calls,
+			&i.Errors,
 		); err != nil {
 			return nil, err
 		}
@@ -442,4 +1127,309 @@ func (q *Queries) UsageByThread(ctx context.Context, arg UsageByThreadParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const statsTurnAgg = `-- name: StatsTurnAgg :many
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (r.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN COALESCE(r.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(t.project_id, r.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.space_id, r.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(COUNT(*) AS INTEGER) AS turns
+FROM turns r LEFT JOIN threads t ON t.id = r.thread_id
+WHERE r.ts >= ?7 AND r.ts < ?8
+  AND (CAST(?9 AS TEXT) IS NULL OR r.thread_id = CAST(?9 AS TEXT))
+  AND (CAST(?10 AS TEXT) IS NULL OR COALESCE(t.project_id, r.project_id, '') = CAST(?10 AS TEXT))
+  AND (CAST(?11 AS TEXT) IS NULL OR COALESCE(t.space_id, r.space_id, '') = CAST(?11 AS TEXT))
+GROUP BY 1, 2, 3, 4
+`
+
+type StatsTurnAggParams struct {
+	ByBucket  bool    `json:"byBucket"`
+	OffsetMs  int64   `json:"offsetMs"`
+	BucketMs  int64   `json:"bucketMs"`
+	ByThread  bool    `json:"byThread"`
+	ByProject bool    `json:"byProject"`
+	BySpace   bool    `json:"bySpace"`
+	FromTs    int64   `json:"fromTs"`
+	ToTs      int64   `json:"toTs"`
+	Thread    *string `json:"thread"`
+	Project   *string `json:"project"`
+	Space     *string `json:"space"`
+}
+
+type StatsTurnAggRow struct {
+	Bucket    int64  `json:"bucket"`
+	ThreadID  string `json:"threadId"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Turns     int64  `json:"turns"`
+}
+
+func (q *Queries) StatsTurnAgg(ctx context.Context, arg StatsTurnAggParams) ([]StatsTurnAggRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsTurnAgg,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.ByThread,
+		arg.ByProject,
+		arg.BySpace,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatsTurnAggRow{}
+	for rows.Next() {
+		var i StatsTurnAggRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.ThreadID,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.Turns,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsUsageAgg = `-- name: StatsUsageAgg :many
+
+SELECT
+    CAST(CASE WHEN CAST(?1 AS BOOLEAN)
+         THEN (u.ts + CAST(?2 AS INTEGER)) / CAST(?3 AS INTEGER) ELSE 0 END AS INTEGER) AS bucket,
+    CAST(CASE WHEN CAST(?4 AS BOOLEAN) THEN COALESCE(u.thread_id, '') ELSE '' END AS TEXT) AS thread_id,
+    CAST(CASE WHEN CAST(?5 AS BOOLEAN) THEN COALESCE(t.project_id, u.project_id, '') ELSE '' END AS TEXT) AS project_id,
+    CAST(CASE WHEN CAST(?6 AS BOOLEAN) THEN COALESCE(t.space_id, u.space_id, '') ELSE '' END AS TEXT) AS space_id,
+    CAST(CASE WHEN CAST(?7 AS BOOLEAN) THEN u.provider || '/' || u.model ELSE '' END AS TEXT) AS model,
+    CAST(CASE WHEN CAST(?8 AS BOOLEAN) THEN u.purpose ELSE '' END AS TEXT) AS purpose,
+    CAST(COUNT(*) AS INTEGER) AS requests,
+    CAST(COALESCE(SUM(u.stop_reason = 'error'), 0) AS INTEGER) AS request_errors,
+    CAST(COALESCE(SUM(u.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COALESCE(SUM(u.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(u.cache_read_tokens), 0) AS INTEGER) AS cache_read_tokens,
+    CAST(COALESCE(SUM(u.cache_write_tokens), 0) AS INTEGER) AS cache_write_tokens,
+    CAST(COALESCE(SUM(u.cost_usd), 0) AS REAL) AS cost_usd,
+    CAST(COALESCE(SUM(CASE WHEN u.is_subagent THEN u.cost_usd ELSE 0 END), 0) AS REAL) AS subagent_cost_usd,
+    CAST(COALESCE(SUM(u.ttft_ms), 0) AS INTEGER) AS ttft_sum_ms,
+    CAST(COUNT(u.ttft_ms) AS INTEGER) AS ttft_n,
+    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.output_tokens ELSE 0 END), 0) AS INTEGER) AS timed_output_tokens,
+    CAST(COALESCE(SUM(CASE WHEN u.duration_ms > 0 THEN u.duration_ms ELSE 0 END), 0) AS INTEGER) AS duration_ms
+FROM usage_records u LEFT JOIN threads t ON t.id = u.thread_id
+WHERE u.ts >= ?9 AND u.ts < ?10
+  AND (CAST(?11 AS TEXT) IS NULL OR u.thread_id = CAST(?11 AS TEXT))
+  AND (CAST(?12 AS TEXT) IS NULL OR COALESCE(t.project_id, u.project_id, '') = CAST(?12 AS TEXT))
+  AND (CAST(?13 AS TEXT) IS NULL OR COALESCE(t.space_id, u.space_id, '') = CAST(?13 AS TEXT))
+  AND (CAST(?14 AS TEXT) IS NULL OR u.provider || '/' || u.model = CAST(?14 AS TEXT))
+GROUP BY 1, 2, 3, 4, 5, 6
+`
+
+type StatsUsageAggParams struct {
+	ByBucket  bool    `json:"byBucket"`
+	OffsetMs  int64   `json:"offsetMs"`
+	BucketMs  int64   `json:"bucketMs"`
+	ByThread  bool    `json:"byThread"`
+	ByProject bool    `json:"byProject"`
+	BySpace   bool    `json:"bySpace"`
+	ByModel   bool    `json:"byModel"`
+	ByPurpose bool    `json:"byPurpose"`
+	FromTs    int64   `json:"fromTs"`
+	ToTs      int64   `json:"toTs"`
+	Thread    *string `json:"thread"`
+	Project   *string `json:"project"`
+	Space     *string `json:"space"`
+	Model     *string `json:"model"`
+}
+
+type StatsUsageAggRow struct {
+	Bucket            int64   `json:"bucket"`
+	ThreadID          string  `json:"threadId"`
+	ProjectID         string  `json:"projectId"`
+	SpaceID           string  `json:"spaceId"`
+	Model             string  `json:"model"`
+	Purpose           string  `json:"purpose"`
+	Requests          int64   `json:"requests"`
+	RequestErrors     int64   `json:"requestErrors"`
+	InputTokens       int64   `json:"inputTokens"`
+	OutputTokens      int64   `json:"outputTokens"`
+	CacheReadTokens   int64   `json:"cacheReadTokens"`
+	CacheWriteTokens  int64   `json:"cacheWriteTokens"`
+	CostUsd           float64 `json:"costUsd"`
+	SubagentCostUsd   float64 `json:"subagentCostUsd"`
+	TtftSumMs         int64   `json:"ttftSumMs"`
+	TtftN             int64   `json:"ttftN"`
+	TimedOutputTokens int64   `json:"timedOutputTokens"`
+	DurationMs        int64   `json:"durationMs"`
+}
+
+// ---------------------------------------------------------------- aggregates
+// One static SQL for every grouping: each by_* switch turns a key column on; disabled keys are ”.
+// bucket = (ts + offset_ms) / bucket_ms (local hour / day ordinal; 0 when by_bucket is off).
+// Live threads take their current project / space; deleted threads fall back to the snapshot columns.
+// Filters: NULL = no filter; project / space ” = none.
+func (q *Queries) StatsUsageAgg(ctx context.Context, arg StatsUsageAggParams) ([]StatsUsageAggRow, error) {
+	rows, err := q.db.QueryContext(ctx, statsUsageAgg,
+		arg.ByBucket,
+		arg.OffsetMs,
+		arg.BucketMs,
+		arg.ByThread,
+		arg.ByProject,
+		arg.BySpace,
+		arg.ByModel,
+		arg.ByPurpose,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Thread,
+		arg.Project,
+		arg.Space,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StatsUsageAggRow{}
+	for rows.Next() {
+		var i StatsUsageAggRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.ThreadID,
+			&i.ProjectID,
+			&i.SpaceID,
+			&i.Model,
+			&i.Purpose,
+			&i.Requests,
+			&i.RequestErrors,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.CostUsd,
+			&i.SubagentCostUsd,
+			&i.TtftSumMs,
+			&i.TtftN,
+			&i.TimedOutputTokens,
+			&i.DurationMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumUsageCost = `-- name: SumUsageCost :one
+SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) AS cost_usd FROM usage_records WHERE ts >= ?1 AND ts < ?2
+`
+
+type SumUsageCostParams struct {
+	FromTs int64 `json:"fromTs"`
+	ToTs   int64 `json:"toTs"`
+}
+
+func (q *Queries) SumUsageCost(ctx context.Context, arg SumUsageCostParams) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumUsageCost, arg.FromTs, arg.ToTs)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
+}
+
+const tombstoneToolCalls = `-- name: TombstoneToolCalls :exec
+UPDATE tool_calls SET project_id = ?1, space_id = ?2 WHERE thread_id = CAST(?3 AS TEXT)
+`
+
+type TombstoneToolCallsParams struct {
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
+	ThreadID  string  `json:"threadId"`
+}
+
+func (q *Queries) TombstoneToolCalls(ctx context.Context, arg TombstoneToolCallsParams) error {
+	_, err := q.db.ExecContext(ctx, tombstoneToolCalls, arg.ProjectID, arg.SpaceID, arg.ThreadID)
+	return err
+}
+
+const tombstoneTurns = `-- name: TombstoneTurns :exec
+UPDATE turns SET project_id = ?1, space_id = ?2 WHERE thread_id = CAST(?3 AS TEXT)
+`
+
+type TombstoneTurnsParams struct {
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
+	ThreadID  string  `json:"threadId"`
+}
+
+func (q *Queries) TombstoneTurns(ctx context.Context, arg TombstoneTurnsParams) error {
+	_, err := q.db.ExecContext(ctx, tombstoneTurns, arg.ProjectID, arg.SpaceID, arg.ThreadID)
+	return err
+}
+
+const tombstoneUsage = `-- name: TombstoneUsage :exec
+UPDATE usage_records SET project_id = ?1, space_id = ?2 WHERE thread_id = CAST(?3 AS TEXT)
+`
+
+type TombstoneUsageParams struct {
+	ProjectID *string `json:"projectId"`
+	SpaceID   *string `json:"spaceId"`
+	ThreadID  string  `json:"threadId"`
+}
+
+// Attribution snapshot written right before the thread row is deleted (thread_id then becomes NULL).
+func (q *Queries) TombstoneUsage(ctx context.Context, arg TombstoneUsageParams) error {
+	_, err := q.db.ExecContext(ctx, tombstoneUsage, arg.ProjectID, arg.SpaceID, arg.ThreadID)
+	return err
+}
+
+const upsertBudget = `-- name: UpsertBudget :exec
+INSERT INTO budget (id, daily_usd, monthly_usd, warn_pct, timezone, enabled, updated_at)
+VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (id) DO UPDATE SET
+    daily_usd   = excluded.daily_usd,
+    monthly_usd = excluded.monthly_usd,
+    warn_pct    = excluded.warn_pct,
+    timezone    = excluded.timezone,
+    enabled     = excluded.enabled,
+    updated_at  = excluded.updated_at
+`
+
+type UpsertBudgetParams struct {
+	DailyUsd   *float64 `json:"dailyUsd"`
+	MonthlyUsd *float64 `json:"monthlyUsd"`
+	WarnPct    int64    `json:"warnPct"`
+	Timezone   string   `json:"timezone"`
+	Enabled    bool     `json:"enabled"`
+	UpdatedAt  int64    `json:"updatedAt"`
+}
+
+func (q *Queries) UpsertBudget(ctx context.Context, arg UpsertBudgetParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBudget,
+		arg.DailyUsd,
+		arg.MonthlyUsd,
+		arg.WarnPct,
+		arg.Timezone,
+		arg.Enabled,
+		arg.UpdatedAt,
+	)
+	return err
 }

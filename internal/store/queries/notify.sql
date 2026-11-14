@@ -72,9 +72,10 @@ SET last_success_at = COALESCE(CAST(sqlc.narg(last_success_at) AS INTEGER), last
 WHERE id = @id;
 
 -- Returns 0 rows affected when an open notification for the same (thread_id, request_id) exists.
+-- link: in-app path of a notification without a thread (NULL when thread_id is set).
 -- name: InsertNotification :execrows
-INSERT INTO notifications (id, thread_id, kind, title, body, request_id, request, created_at)
-VALUES (@id, @thread_id, @kind, @title, @body, @request_id, @request, @created_at)
+INSERT INTO notifications (id, thread_id, kind, title, body, link, request_id, request, created_at)
+VALUES (@id, @thread_id, @kind, @title, @body, @link, @request_id, @request, @created_at)
 ON CONFLICT DO NOTHING;
 
 -- name: GetNotification :one
@@ -98,6 +99,9 @@ UPDATE notifications SET read_at = CAST(@now AS INTEGER) WHERE read_at IS NULL;
 
 -- name: MarkThreadNotificationsRead :execrows
 UPDATE notifications SET read_at = CAST(@now AS INTEGER) WHERE thread_id = CAST(@thread_id AS TEXT) AND read_at IS NULL;
+
+-- name: MarkNotificationRead :execrows
+UPDATE notifications SET read_at = CAST(@now AS INTEGER) WHERE id = @id AND read_at IS NULL;
 
 -- name: ResolveNotificationRequest :many
 UPDATE notifications SET resolved_at = CAST(@now AS INTEGER)

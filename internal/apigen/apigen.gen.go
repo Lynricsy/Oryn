@@ -205,6 +205,27 @@ func (e BrowserProfileSaveError) Valid() bool {
 	}
 }
 
+// Defines values for BudgetLevel.
+const (
+	BudgetLevelNone BudgetLevel = "none"
+	BudgetLevelOver BudgetLevel = "over"
+	BudgetLevelWarn BudgetLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the BudgetLevel enum.
+func (e BudgetLevel) Valid() bool {
+	switch e {
+	case BudgetLevelNone:
+		return true
+	case BudgetLevelOver:
+		return true
+	case BudgetLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CoordinatorSandboxNetwork.
 const (
 	SandboxNetworkNamespace CoordinatorSandboxNetwork = "namespace"
@@ -867,14 +888,17 @@ func (e NotificationDeliveryTarget) Valid() bool {
 
 // Defines values for NotificationKind.
 const (
-	NotificationKindDone  NotificationKind = "done"
-	NotificationKindError NotificationKind = "error"
-	NotificationKindInput NotificationKind = "input"
+	NotificationKindBudget NotificationKind = "budget"
+	NotificationKindDone   NotificationKind = "done"
+	NotificationKindError  NotificationKind = "error"
+	NotificationKindInput  NotificationKind = "input"
 )
 
 // Valid indicates whether the value is a known member of the NotificationKind enum.
 func (e NotificationKind) Valid() bool {
 	switch e {
+	case NotificationKindBudget:
+		return true
 	case NotificationKindDone:
 		return true
 	case NotificationKindError:
@@ -946,6 +970,36 @@ func (e OrbDesktopProfileStatus) Valid() bool {
 	case OrbDesktopProfileStatusReadonly:
 		return true
 	case OrbDesktopProfileStatusReleased:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbGroupBy.
+const (
+	OrbGroupByDay     OrbGroupBy = "day"
+	OrbGroupByMonth   OrbGroupBy = "month"
+	OrbGroupByOrb     OrbGroupBy = "orb"
+	OrbGroupByProject OrbGroupBy = "project"
+	OrbGroupByType    OrbGroupBy = "type"
+	OrbGroupByWeek    OrbGroupBy = "week"
+)
+
+// Valid indicates whether the value is a known member of the OrbGroupBy enum.
+func (e OrbGroupBy) Valid() bool {
+	switch e {
+	case OrbGroupByDay:
+		return true
+	case OrbGroupByMonth:
+		return true
+	case OrbGroupByOrb:
+		return true
+	case OrbGroupByProject:
+		return true
+	case OrbGroupByType:
+		return true
+	case OrbGroupByWeek:
 		return true
 	default:
 		return false
@@ -1048,6 +1102,33 @@ func (e OrbState) Valid() bool {
 	case OrbStateStopping:
 		return true
 	case OrbStateWaking:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OutputGroupBy.
+const (
+	OutputGroupByDay     OutputGroupBy = "day"
+	OutputGroupByMonth   OutputGroupBy = "month"
+	OutputGroupByProject OutputGroupBy = "project"
+	OutputGroupBySpace   OutputGroupBy = "space"
+	OutputGroupByWeek    OutputGroupBy = "week"
+)
+
+// Valid indicates whether the value is a known member of the OutputGroupBy enum.
+func (e OutputGroupBy) Valid() bool {
+	switch e {
+	case OutputGroupByDay:
+		return true
+	case OutputGroupByMonth:
+		return true
+	case OutputGroupByProject:
+		return true
+	case OutputGroupBySpace:
+		return true
+	case OutputGroupByWeek:
 		return true
 	default:
 		return false
@@ -1453,6 +1534,48 @@ func (e ShareScanConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for StatsFormat.
+const (
+	StatsFormatCSV  StatsFormat = "csv"
+	StatsFormatJSON StatsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the StatsFormat enum.
+func (e StatsFormat) Valid() bool {
+	switch e {
+	case StatsFormatCSV:
+		return true
+	case StatsFormatJSON:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StatsGrain.
+const (
+	StatsGrainDay   StatsGrain = "day"
+	StatsGrainHour  StatsGrain = "hour"
+	StatsGrainMonth StatsGrain = "month"
+	StatsGrainWeek  StatsGrain = "week"
+)
+
+// Valid indicates whether the value is a known member of the StatsGrain enum.
+func (e StatsGrain) Valid() bool {
+	switch e {
+	case StatsGrainDay:
+		return true
+	case StatsGrainHour:
+		return true
+	case StatsGrainMonth:
+		return true
+	case StatsGrainWeek:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ThreadTitleSource.
 const (
 	ThreadTitleSourceAuto ThreadTitleSource = "auto"
@@ -1564,24 +1687,42 @@ func (e ThreadState) Valid() bool {
 	}
 }
 
-// Defines values for UsageStatsGroupBy.
+// Defines values for UsageGroupBy.
 const (
-	UsageStatsGroupByDay     UsageStatsGroupBy = "day"
-	UsageStatsGroupByModel   UsageStatsGroupBy = "model"
-	UsageStatsGroupByProject UsageStatsGroupBy = "project"
-	UsageStatsGroupByThread  UsageStatsGroupBy = "thread"
+	UsageGroupByDay     UsageGroupBy = "day"
+	UsageGroupByHour    UsageGroupBy = "hour"
+	UsageGroupByModel   UsageGroupBy = "model"
+	UsageGroupByMonth   UsageGroupBy = "month"
+	UsageGroupByProject UsageGroupBy = "project"
+	UsageGroupByPurpose UsageGroupBy = "purpose"
+	UsageGroupBySpace   UsageGroupBy = "space"
+	UsageGroupByThread  UsageGroupBy = "thread"
+	UsageGroupByTotal   UsageGroupBy = "total"
+	UsageGroupByWeek    UsageGroupBy = "week"
 )
 
-// Valid indicates whether the value is a known member of the UsageStatsGroupBy enum.
-func (e UsageStatsGroupBy) Valid() bool {
+// Valid indicates whether the value is a known member of the UsageGroupBy enum.
+func (e UsageGroupBy) Valid() bool {
 	switch e {
-	case UsageStatsGroupByDay:
+	case UsageGroupByDay:
 		return true
-	case UsageStatsGroupByModel:
+	case UsageGroupByHour:
 		return true
-	case UsageStatsGroupByProject:
+	case UsageGroupByModel:
 		return true
-	case UsageStatsGroupByThread:
+	case UsageGroupByMonth:
+		return true
+	case UsageGroupByProject:
+		return true
+	case UsageGroupByPurpose:
+		return true
+	case UsageGroupBySpace:
+		return true
+	case UsageGroupByThread:
+		return true
+	case UsageGroupByTotal:
+		return true
+	case UsageGroupByWeek:
 		return true
 	default:
 		return false
@@ -2068,30 +2209,6 @@ func (e WsServerUIResolvedType) Valid() bool {
 	}
 }
 
-// Defines values for GetUsageStatsParamsGroupBy.
-const (
-	GetUsageStatsParamsGroupByDay     GetUsageStatsParamsGroupBy = "day"
-	GetUsageStatsParamsGroupByModel   GetUsageStatsParamsGroupBy = "model"
-	GetUsageStatsParamsGroupByProject GetUsageStatsParamsGroupBy = "project"
-	GetUsageStatsParamsGroupByThread  GetUsageStatsParamsGroupBy = "thread"
-)
-
-// Valid indicates whether the value is a known member of the GetUsageStatsParamsGroupBy enum.
-func (e GetUsageStatsParamsGroupBy) Valid() bool {
-	switch e {
-	case GetUsageStatsParamsGroupByDay:
-		return true
-	case GetUsageStatsParamsGroupByModel:
-		return true
-	case GetUsageStatsParamsGroupByProject:
-		return true
-	case GetUsageStatsParamsGroupByThread:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ListThreadsParamsKind.
 const (
 	ListThreadsKindAll       ListThreadsParamsKind = "all"
@@ -2451,6 +2568,49 @@ type BrowserProfileReadonlyReason string
 // BrowserProfileSaveError 最近一次保存失败的原因（成功保存后清除）：`too_large`（归档超过 256MiB）、`export_failed`（orbd 导出或落盘失败）、
 // `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
 type BrowserProfileSaveError string
+
+// Budget defines model for Budget.
+type Budget struct {
+	// DailyUsd 日上限（美元）；省略 = 不设
+	DailyUsd *float64 `json:"dailyUsd,omitempty"`
+	Enabled  bool     `json:"enabled"`
+
+	// MonthlyUsd 月上限（美元）；省略 = 不设
+	MonthlyUsd *float64 `json:"monthlyUsd,omitempty"`
+
+	// Timezone 划分自然日 / 月的 IANA 时区
+	Timezone string `json:"timezone"`
+
+	// WarnPct 预警百分比；0 = 不预警
+	WarnPct int `json:"warnPct"`
+}
+
+// BudgetLevel defines model for BudgetLevel.
+type BudgetLevel string
+
+// BudgetPeriod defines model for BudgetPeriod.
+type BudgetPeriod struct {
+	// From UTC 毫秒时间戳
+	From TimestampMs `json:"from"`
+
+	// Key 周期键（`2026-11-14` / `2026-11`）
+	Key   string      `json:"key"`
+	Level BudgetLevel `json:"level"`
+
+	// LimitUsd 该周期的上限；未设时省略
+	LimitUsd *float64 `json:"limitUsd,omitempty"`
+	SpentUsd float64  `json:"spentUsd"`
+
+	// To UTC 毫秒时间戳
+	To TimestampMs `json:"to"`
+}
+
+// BudgetStatus defines model for BudgetStatus.
+type BudgetStatus struct {
+	Budget Budget       `json:"budget"`
+	Day    BudgetPeriod `json:"day"`
+	Month  BudgetPeriod `json:"month"`
+}
 
 // CoordinatorSandbox defines model for CoordinatorSandbox.
 type CoordinatorSandbox struct {
@@ -3636,7 +3796,7 @@ type Notification struct {
 	// ID `ntf_<ulid>`
 	ID NotificationID `json:"id"`
 
-	// Kind `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+	// Kind `done` 回合完成、`input` 等待作答、`error` 出错、`budget` 预算告警（不属于任何线程）；也是渠道 `events` 的元素
 	Kind NotificationKind `json:"kind"`
 
 	// ReadAt UTC 毫秒时间戳
@@ -3645,13 +3805,11 @@ type Notification struct {
 	// ResolvedAt 仅 `input`：请求已被作答 / 取消 / 随 agent 重启消失
 	ResolvedAt *TimestampMs `json:"resolvedAt,omitempty"`
 
-	// ThreadID `T-<uuidv7>`
-	//
-	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	// ThreadID 所属线程；系统通知（`budget`，以及定时无法建出线程 / 被自动暂停的 `error`）没有线程，省略
 	ThreadID *ThreadID `json:"threadId,omitempty"`
 	Title    string    `json:"title"`
 
-	// URL 站内路径 `/t/<threadId>`
+	// URL 站内路径。有线程为 `/t/<threadId>`；没有线程为该通知的落点（`/stats/usage`、`/settings/automations`）
 	URL string `json:"url"`
 }
 
@@ -3688,7 +3846,7 @@ type NotificationChannelInput struct {
 	Bark    *BarkChannelConfig `json:"bark,omitempty"`
 	Enabled *bool              `json:"enabled,omitempty"`
 
-	// Events 缺省 = 三者全选
+	// Events 缺省 = 全选
 	Events []NotificationKind      `json:"events,omitempty"`
 	Kind   NotificationChannelKind `json:"kind"`
 
@@ -3766,7 +3924,7 @@ type NotificationDeliveryTarget string
 // NotificationID `ntf_<ulid>`
 type NotificationID = string
 
-// NotificationKind `done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素
+// NotificationKind `done` 回合完成、`input` 等待作答、`error` 出错、`budget` 预算告警（不属于任何线程）；也是渠道 `events` 的元素
 type NotificationKind string
 
 // NotificationList defines model for NotificationList.
@@ -3786,9 +3944,12 @@ type NotificationTestResult struct {
 	Ok    bool    `json:"ok"`
 }
 
-// NotificationsReadRequest defines model for NotificationsReadRequest.
+// NotificationsReadRequest `id` 与 `threadId` 至多给一个（都给 → 400 `invalid_request`）；都省略 = 全部
 type NotificationsReadRequest struct {
-	// ThreadID 只标该线程的通知；省略 = 全部
+	// ID 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204
+	ID *NotificationID `json:"id,omitempty"`
+
+	// ThreadID 只标该线程的通知
 	ThreadID *ThreadID `json:"threadId,omitempty"`
 }
 
@@ -3966,6 +4127,9 @@ type OrbDesktopTakenOver struct {
 	ThreadTitle *string `json:"threadTitle,omitempty"`
 }
 
+// OrbGroupBy defines model for OrbGroupBy.
+type OrbGroupBy string
+
 // OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 //
 // Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
@@ -4132,17 +4296,74 @@ type OrbSetupRunList struct {
 	Runs []OrbSetupRun `json:"runs"`
 }
 
+// OrbSetupStats 口径：`phase = setup` 且真正运行了脚本（`setup_ran = 1`）的记录；`resume*` 为 `phase = resume` 的记录
+type OrbSetupStats struct {
+	Failures       int    `json:"failures"`
+	MaxMs          *int64 `json:"maxMs,omitempty"`
+	P50Ms          *int64 `json:"p50Ms,omitempty"`
+	P95Ms          *int64 `json:"p95Ms,omitempty"`
+	ResumeFailures int    `json:"resumeFailures"`
+	ResumeRuns     int    `json:"resumeRuns"`
+	Runs           int    `json:"runs"`
+
+	// SlowRuns 耗时 ≥ 120000 ms 的次数
+	SlowRuns int `json:"slowRuns"`
+}
+
+// OrbStat defines model for OrbStat.
+type OrbStat struct {
+	Cpus     *int  `json:"cpus,omitempty"`
+	Failures int   `json:"failures"`
+	Freezes  int   `json:"freezes"`
+	FrozenMs int64 `json:"frozenMs"`
+
+	// Key 类型名 / 时间桶标签 / 项目 id（无项目为空串）/ orb id；`total` 为 `total`
+	Key string `json:"key"`
+
+	// Label 项目名；`groupBy=orb` 时为它第一个线程的标题
+	Label    *string `json:"label,omitempty"`
+	MemoryMB *int    `json:"memoryMB,omitempty"`
+
+	// Orbs 窗口内存在过的 orb 数
+	Orbs int `json:"orbs"`
+
+	// RunningMs 处于 `connecting / setting_up / resuming / ready / freezing / stopping` 的时长
+	RunningMs int64 `json:"runningMs"`
+
+	// SetupMs 处于 `setting_up` / `resuming` 的时长（已含在 `runningMs` 内）
+	SetupMs int64 `json:"setupMs"`
+
+	// SnapshotSpawns 窗口内创建且由快照启动（`snapshot_of` 非空）的 orb 数
+	SnapshotSpawns int `json:"snapshotSpawns"`
+	Spawns         int `json:"spawns"`
+
+	// Start 仅时间桶
+	Start     *TimestampMs `json:"start,omitempty"`
+	StoppedMs int64        `json:"stoppedMs"`
+	Stops     int          `json:"stops"`
+
+	// Type `groupBy=type` / `orb` 时给出
+	Type  *string `json:"type,omitempty"`
+	Wakes int     `json:"wakes"`
+}
+
 // OrbState orb 状态机（计划 E 节）
 type OrbState string
 
 // OrbStats defines model for OrbStats.
 type OrbStats struct {
 	// From UTC 毫秒时间戳
-	From TimestampMs `json:"from"`
+	From    TimestampMs `json:"from"`
+	GroupBy OrbGroupBy  `json:"groupBy"`
+	Groups  []OrbStat   `json:"groups"`
+
+	// Setup 口径：`phase = setup` 且真正运行了脚本（`setup_ran = 1`）的记录；`resume*` 为 `phase = resume` 的记录
+	Setup OrbSetupStats `json:"setup"`
 
 	// To UTC 毫秒时间戳
-	To    TimestampMs   `json:"to"`
-	Types []OrbTypeStat `json:"types"`
+	To    TimestampMs `json:"to"`
+	Total OrbStat     `json:"total"`
+	Tz    string      `json:"tz"`
 }
 
 // OrbSyncBundle defines model for OrbSyncBundle.
@@ -4187,6 +4408,41 @@ type OrbSyncState struct {
 	Snapshot string `json:"snapshot"`
 }
 
+// OrbTimeline defines model for OrbTimeline.
+type OrbTimeline struct {
+	// From UTC 毫秒时间戳
+	From TimestampMs `json:"from"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID OrbID `json:"orbId"`
+
+	// Segments 相邻同状态已合并；末段截到「现在」
+	Segments []OrbTimelineSegment `json:"segments"`
+
+	// To UTC 毫秒时间戳
+	To TimestampMs `json:"to"`
+
+	// Truncated 超过 2000 段时为真（只给前 2000 段）
+	Truncated bool `json:"truncated"`
+}
+
+// OrbTimelineSegment defines model for OrbTimelineSegment.
+type OrbTimelineSegment struct {
+	// From UTC 毫秒时间戳
+	From TimestampMs `json:"from"`
+
+	// Reason 仅 `failed`：事件的 `detail.reason`（没有则 `detail.error`）
+	Reason *string `json:"reason,omitempty"`
+
+	// State orb 状态机（计划 E 节）
+	State OrbState `json:"state"`
+
+	// To UTC 毫秒时间戳
+	To TimestampMs `json:"to"`
+}
+
 // OrbType defines model for OrbType.
 type OrbType struct {
 	Cpus     float32 `json:"cpus"`
@@ -4194,20 +4450,42 @@ type OrbType struct {
 	Name     string  `json:"name"`
 }
 
-// OrbTypeStat defines model for OrbTypeStat.
-type OrbTypeStat struct {
-	Failures int   `json:"failures"`
-	Freezes  int   `json:"freezes"`
-	FrozenMs int64 `json:"frozenMs"`
+// OutputGroupBy defines model for OutputGroupBy.
+type OutputGroupBy string
 
-	// Orbs 窗口内存在过的 orb 数
-	Orbs      int    `json:"orbs"`
-	RunningMs int64  `json:"runningMs"`
-	Spawns    int    `json:"spawns"`
-	StoppedMs int64  `json:"stoppedMs"`
-	Stops     int    `json:"stops"`
-	Type      string `json:"type"`
-	Wakes     int    `json:"wakes"`
+// OutputStat defines model for OutputStat.
+type OutputStat struct {
+	// Commits 相对基线的提交数（按 sha 去重）
+	Commits int64 `json:"commits"`
+
+	// Key 时间桶标签 / 项目 id / Space id（无为空串）；`total` 为 `total`
+	Key   string  `json:"key"`
+	Label *string `json:"label,omitempty"`
+
+	// ShippedCostUsd 窗口内交付的线程的全生命周期成本之和
+	ShippedCostUsd float64 `json:"shippedCostUsd"`
+
+	// Start UTC 毫秒时间戳
+	Start *TimestampMs `json:"start,omitempty"`
+
+	// ThreadsArchived 归档且未交付的线程数
+	ThreadsArchived int64 `json:"threadsArchived"`
+	ThreadsCreated  int64 `json:"threadsCreated"`
+	ThreadsShipped  int64 `json:"threadsShipped"`
+	Turns           int64 `json:"turns"`
+}
+
+// OutputStats defines model for OutputStats.
+type OutputStats struct {
+	// From UTC 毫秒时间戳
+	From    TimestampMs   `json:"from"`
+	GroupBy OutputGroupBy `json:"groupBy"`
+	Groups  []OutputStat  `json:"groups"`
+
+	// To UTC 毫秒时间戳
+	To    TimestampMs `json:"to"`
+	Total OutputStat  `json:"total"`
+	Tz    string      `json:"tz"`
 }
 
 // PauseMode defines model for PauseMode.
@@ -5062,6 +5340,48 @@ type SpaceProgressDay struct {
 	Shipped int    `json:"shipped"`
 }
 
+// StatsBackfill 历史回填进度（线程数）；完成后不出现
+type StatsBackfill struct {
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
+}
+
+// StatsFormat 响应格式；缺省 = `json`
+type StatsFormat string
+
+// StatsGrain 时间粒度（按请求的 `tz` 取自然小时 / 日 / 周（周一为始）/ 月）
+type StatsGrain string
+
+// StatsMeta defines model for StatsMeta.
+type StatsMeta struct {
+	// Backfill 历史回填进度（线程数）；完成后不出现
+	Backfill *StatsBackfill `json:"backfill,omitempty"`
+
+	// EarliestTS 最早的用量事实时间；没有用量时省略
+	EarliestTS *TimestampMs `json:"earliestTs,omitempty"`
+
+	// FactsVersion 已完成的事实行版本（回填完成前为旧值或 0）
+	FactsVersion int `json:"factsVersion"`
+
+	// Now UTC 毫秒时间戳
+	Now TimestampMs `json:"now"`
+
+	// Retention 保留期（毫秒）；0 = 永久
+	Retention StatsRetention `json:"retention"`
+}
+
+// StatsRetention 保留期（毫秒）；0 = 永久
+type StatsRetention struct {
+	// EventsMs 已删除 orb 的事件与 setup 记录、预算告警账本
+	EventsMs int64 `json:"eventsMs"`
+
+	// SamplesMs orb 资源采样
+	SamplesMs int64 `json:"samplesMs"`
+
+	// UsageMs 用量 / 工具调用 / 回合事实行
+	UsageMs int64 `json:"usageMs"`
+}
+
 // TelegramChannelConfig defines model for TelegramChannelConfig.
 type TelegramChannelConfig struct {
 	// APIBase Bot API 根地址，默认 `https://api.telegram.org`（自建 Bot API 服务器与测试用）
@@ -5319,40 +5639,116 @@ type ThreadState string
 // TimestampMs UTC 毫秒时间戳
 type TimestampMs = int64
 
-// UsageStat defines model for UsageStat.
-type UsageStat struct {
-	AvgTtftMs        *float32 `json:"avgTtftMs,omitempty"`
-	CacheReadTokens  int64    `json:"cacheReadTokens"`
-	CacheWriteTokens int64    `json:"cacheWriteTokens"`
-	CostUsd          float32  `json:"costUsd"`
-	InputTokens      int64    `json:"inputTokens"`
+// ToolSeriesPoint defines model for ToolSeriesPoint.
+type ToolSeriesPoint struct {
+	Calls  int64  `json:"calls"`
+	Errors int64  `json:"errors"`
+	Key    string `json:"key"`
 
-	// Key 分组键：`YYYY-MM-DD`（UTC）/ `<provider>/<model>` / 线程 id / 项目 id（无项目为空串）
+	// Start UTC 毫秒时间戳
+	Start TimestampMs `json:"start"`
+}
+
+// ToolStat defines model for ToolStat.
+type ToolStat struct {
+	Calls  int64 `json:"calls"`
+	Errors int64 `json:"errors"`
+
+	// Tool 工具名；`total` 为空串；折叠项为 `__other__`
+	Tool string `json:"tool"`
+}
+
+// ToolStats defines model for ToolStats.
+type ToolStats struct {
+	// From UTC 毫秒时间戳
+	From   TimestampMs       `json:"from"`
+	Series []ToolSeriesPoint `json:"series,omitempty"`
+
+	// To UTC 毫秒时间戳
+	To    TimestampMs `json:"to"`
+	Tools []ToolStat  `json:"tools"`
+	Total ToolStat    `json:"total"`
+	Tz    string      `json:"tz"`
+}
+
+// UsageGroupBy `total` 只给一组 `key = "total"`；`hour / day / week / month` 为时间桶；其余为维度
+type UsageGroupBy string
+
+// UsageSeriesPoint defines model for UsageSeriesPoint.
+type UsageSeriesPoint struct {
+	// Groups 只含非零分组；键与顶层 `groups` 一致
+	Groups []UsageStat `json:"groups"`
+
+	// Key 时间桶标签
 	Key string `json:"key"`
 
-	// Label 显示名（线程标题、项目名）
-	Label           *string  `json:"label,omitempty"`
-	OutputTokens    int64    `json:"outputTokens"`
-	Requests        int64    `json:"requests"`
-	SubagentCostUsd *float32 `json:"subagentCostUsd,omitempty"`
-	TokensPerSecond *float32 `json:"tokensPerSecond,omitempty"`
+	// Start UTC 毫秒时间戳
+	Start TimestampMs `json:"start"`
+	Total UsageStat   `json:"total"`
+}
+
+// UsageStat defines model for UsageStat.
+type UsageStat struct {
+	// AvgTtftMs 平均首 token 时间；没有样本时省略
+	AvgTtftMs        *float64 `json:"avgTtftMs,omitempty"`
+	CacheReadTokens  int64    `json:"cacheReadTokens"`
+	CacheWriteTokens int64    `json:"cacheWriteTokens"`
+
+	// CostUsd 美元（omp 按目录标价估算），含子 agent
+	CostUsd     float64 `json:"costUsd"`
+	InputTokens int64   `json:"inputTokens"`
+
+	// Key 分组键：时间桶标签（`2026-11-14T13:00` / `2026-11-14` / `2026-W46` / `2026-11`）、`<provider>/<model>`、
+	// 线程 id（已删线程为空串）、项目 id（无项目为空串）、Space id（无为空串）、用途（对话回合为空串）、
+	// `total`、折叠项 `__other__`
+	Key string `json:"key"`
+
+	// Label 显示名（线程标题、项目名、Space 名）
+	Label        *string `json:"label,omitempty"`
+	OutputTokens int64   `json:"outputTokens"`
+
+	// RequestErrors `stopReason = error` 的请求数（`aborted` 不算）
+	RequestErrors int64 `json:"requestErrors"`
+
+	// Requests 请求数 = 用量事实行数（带 usage 的 assistant 消息 + model_usage 条目）
+	Requests int64 `json:"requests"`
+
+	// Start 仅时间桶：桶起点（已裁到窗口）
+	Start *TimestampMs `json:"start,omitempty"`
+
+	// SubagentCostUsd 其中子 agent 的部分（已含在 `costUsd` 内，不要再加）
+	SubagentCostUsd *float64 `json:"subagentCostUsd,omitempty"`
+
+	// TokensPerSecond 有时长的请求的输出 tokens / 时长；分母为 0 时省略
+	TokensPerSecond *float64 `json:"tokensPerSecond,omitempty"`
 	ToolCalls       int64    `json:"toolCalls"`
 	ToolErrors      int64    `json:"toolErrors"`
+
+	// Turns 回合数（主会话里的 user 消息）
+	Turns int64 `json:"turns"`
 }
 
 // UsageStats defines model for UsageStats.
 type UsageStats struct {
 	// From UTC 毫秒时间戳
-	From    TimestampMs       `json:"from"`
-	GroupBy UsageStatsGroupBy `json:"groupBy"`
-	Groups  []UsageStat       `json:"groups"`
+	From TimestampMs `json:"from"`
+
+	// GroupBy `total` 只给一组 `key = "total"`；`hour / day / week / month` 为时间桶；其余为维度
+	GroupBy UsageGroupBy `json:"groupBy"`
+	Groups  []UsageStat  `json:"groups"`
+
+	// Series 请求了 `series` 时给出（稠密）
+	Series []UsageSeriesPoint `json:"series,omitempty"`
 
 	// To UTC 毫秒时间戳
 	To TimestampMs `json:"to"`
-}
 
-// UsageStatsGroupBy defines model for UsageStats.GroupBy.
-type UsageStatsGroupBy string
+	// Total 全部分组（折叠前）之和，`key = "total"`
+	Total UsageStat `json:"total"`
+
+	// Tz 实际使用的 IANA 时区
+	Tz string `json:"tz"`
+}
 
 // VapidKey defines model for VapidKey.
 type VapidKey struct {
@@ -5686,9 +6082,12 @@ type WsServerNotification struct {
 // WsServerNotificationType defines model for WsServerNotification.Type.
 type WsServerNotificationType string
 
-// WsServerNotificationsRead 通知已读（发给全部私有连接）
+// WsServerNotificationsRead 通知已读（发给全部私有连接）：`id` = 只这一条已读；`threadId` = 该线程的通知已读；都省略 = 全部已读
 type WsServerNotificationsRead struct {
-	// ThreadID 只该线程的通知已读；省略 = 全部已读
+	// ID 只这一条已读
+	ID *NotificationID `json:"id,omitempty"`
+
+	// ThreadID 该线程的通知已读
 	ThreadID *ThreadID                     `json:"threadId,omitempty"`
 	Type     WsServerNotificationsReadType `json:"type"`
 }
@@ -5928,6 +6327,40 @@ type ShareSlugPath = ShareSlug
 // SpaceIDPath `spc_<ulid>`（M9）
 type SpaceIDPath = SpaceID
 
+// StatsDownloadQuery defines model for StatsDownloadQuery.
+type StatsDownloadQuery = bool
+
+// StatsFormatQuery 响应格式；缺省 = `json`
+type StatsFormatQuery = StatsFormat
+
+// StatsLimitQuery defines model for StatsLimitQuery.
+type StatsLimitQuery = int
+
+// StatsModelQuery defines model for StatsModelQuery.
+type StatsModelQuery = string
+
+// StatsOrbQuery `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+//
+// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+type StatsOrbQuery = OrbID
+
+// StatsProjectQuery defines model for StatsProjectQuery.
+type StatsProjectQuery = string
+
+// StatsSeriesQuery 时间粒度（按请求的 `tz` 取自然小时 / 日 / 周（周一为始）/ 月）
+type StatsSeriesQuery = StatsGrain
+
+// StatsSpaceQuery defines model for StatsSpaceQuery.
+type StatsSpaceQuery = string
+
+// StatsThreadQuery `T-<uuidv7>`
+//
+// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+type StatsThreadQuery = ThreadID
+
+// StatsTzQuery defines model for StatsTzQuery.
+type StatsTzQuery = string
+
 // ThreadIDPath `T-<uuidv7>`
 //
 // Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
@@ -6110,6 +6543,15 @@ type PrepareOrbSyncParams struct {
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 }
 
+// GetOrbTimelineParams defines parameters for GetOrbTimeline.
+type GetOrbTimelineParams struct {
+	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
+	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
+	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+}
+
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
 	// Archived 为 true 时只返回已归档项目；缺省只返回未归档
@@ -6158,26 +6600,149 @@ type GetSpaceProgressParams struct {
 
 // GetOrbStatsParams defines parameters for GetOrbStats.
 type GetOrbStatsParams struct {
+	// GroupBy 缺省 = `type`
+	GroupBy *OrbGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
 	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
 	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
 
 	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
 	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+
+	// Tz 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone`
+	Tz *StatsTzQuery `form:"tz,omitempty" json:"tz,omitempty"`
+
+	// Project 只统计该项目（项目 id）；字面量 `none` = 无项目
+	Project *StatsProjectQuery `form:"project,omitempty" json:"project,omitempty"`
+
+	// Orb 只统计该 orb
+	Orb *StatsOrbQuery `form:"orb,omitempty" json:"orb,omitempty"`
+
+	// Format `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」）
+	Format *StatsFormatQuery `form:"format,omitempty" json:"format,omitempty"`
+
+	// Download 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名）
+	Download *StatsDownloadQuery `form:"download,omitempty" json:"download,omitempty"`
+}
+
+// GetOutputStatsParams defines parameters for GetOutputStats.
+type GetOutputStatsParams struct {
+	// GroupBy 缺省 = `day`
+	GroupBy *OutputGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
+	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
+	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+
+	// Tz 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone`
+	Tz *StatsTzQuery `form:"tz,omitempty" json:"tz,omitempty"`
+
+	// Project 只统计该项目（项目 id）；字面量 `none` = 无项目
+	Project *StatsProjectQuery `form:"project,omitempty" json:"project,omitempty"`
+
+	// Space 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space
+	Space *StatsSpaceQuery `form:"space,omitempty" json:"space,omitempty"`
+
+	// Format `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」）
+	Format *StatsFormatQuery `form:"format,omitempty" json:"format,omitempty"`
+
+	// Download 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名）
+	Download *StatsDownloadQuery `form:"download,omitempty" json:"download,omitempty"`
+}
+
+// GetToolStatsParams defines parameters for GetToolStats.
+type GetToolStatsParams struct {
+	// Series 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`）
+	Series *StatsSeriesQuery `form:"series,omitempty" json:"series,omitempty"`
+
+	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
+	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
+	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+
+	// Tz 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone`
+	Tz *StatsTzQuery `form:"tz,omitempty" json:"tz,omitempty"`
+
+	// Project 只统计该项目（项目 id）；字面量 `none` = 无项目
+	Project *StatsProjectQuery `form:"project,omitempty" json:"project,omitempty"`
+
+	// Space 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space
+	Space *StatsSpaceQuery `form:"space,omitempty" json:"space,omitempty"`
+
+	// Thread 只统计该线程
+	Thread *StatsThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Limit 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项
+	Limit *StatsLimitQuery `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」）
+	Format *StatsFormatQuery `form:"format,omitempty" json:"format,omitempty"`
+
+	// Download 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名）
+	Download *StatsDownloadQuery `form:"download,omitempty" json:"download,omitempty"`
 }
 
 // GetUsageStatsParams defines parameters for GetUsageStats.
 type GetUsageStatsParams struct {
-	GroupBy GetUsageStatsParamsGroupBy `form:"groupBy" json:"groupBy"`
+	GroupBy UsageGroupBy `form:"groupBy" json:"groupBy"`
+
+	// Series 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`）
+	Series *StatsSeriesQuery `form:"series,omitempty" json:"series,omitempty"`
 
 	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
 	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
 
 	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
 	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+
+	// Tz 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone`
+	Tz *StatsTzQuery `form:"tz,omitempty" json:"tz,omitempty"`
+
+	// Project 只统计该项目（项目 id）；字面量 `none` = 无项目
+	Project *StatsProjectQuery `form:"project,omitempty" json:"project,omitempty"`
+
+	// Space 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space
+	Space *StatsSpaceQuery `form:"space,omitempty" json:"space,omitempty"`
+
+	// Thread 只统计该线程
+	Thread *StatsThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Model 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0
+	Model *StatsModelQuery `form:"model,omitempty" json:"model,omitempty"`
+
+	// Limit 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项
+	Limit *StatsLimitQuery `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format `csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」）
+	Format *StatsFormatQuery `form:"format,omitempty" json:"format,omitempty"`
+
+	// Download 为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名）
+	Download *StatsDownloadQuery `form:"download,omitempty" json:"download,omitempty"`
 }
 
-// GetUsageStatsParamsGroupBy defines parameters for GetUsageStats.
-type GetUsageStatsParamsGroupBy string
+// ExportUsageRecordsParams defines parameters for ExportUsageRecords.
+type ExportUsageRecordsParams struct {
+	// From 起始时间（含，UTC 毫秒）；缺省 = 7 天前
+	From *FromQuery `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 结束时间（不含，UTC 毫秒）；缺省 = 现在
+	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
+
+	// Project 只统计该项目（项目 id）；字面量 `none` = 无项目
+	Project *StatsProjectQuery `form:"project,omitempty" json:"project,omitempty"`
+
+	// Space 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space
+	Space *StatsSpaceQuery `form:"space,omitempty" json:"space,omitempty"`
+
+	// Thread 只统计该线程
+	Thread *StatsThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Model 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0
+	Model *StatsModelQuery `form:"model,omitempty" json:"model,omitempty"`
+}
 
 // ListThreadsParams defines parameters for ListThreads.
 type ListThreadsParams struct {
@@ -6319,6 +6884,9 @@ type CreateSpaceJSONRequestBody = SpaceCreate
 
 // UpdateSpaceJSONRequestBody defines body for UpdateSpace for application/json ContentType.
 type UpdateSpaceJSONRequestBody = SpacePatch
+
+// PutBudgetJSONRequestBody defines body for PutBudget for application/json ContentType.
+type PutBudgetJSONRequestBody = Budget
 
 // CreateThreadJSONRequestBody defines body for CreateThread for application/json ContentType.
 type CreateThreadJSONRequestBody = CreateThreadRequest
@@ -8120,7 +8688,7 @@ type ServerInterface interface {
 	// ListNotifications 最近的通知（按创建时间降序，含各渠道的投递状态）
 	// (GET /api/v1/notifications)
 	ListNotifications(w http.ResponseWriter, r *http.Request, params ListNotificationsParams)
-	// MarkNotificationsRead 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+	// MarkNotificationsRead 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read`
 	// (POST /api/v1/notifications/read)
 	MarkNotificationsRead(w http.ResponseWriter, r *http.Request)
 	// ListOrbs orb 列表
@@ -8228,6 +8796,9 @@ type ServerInterface interface {
 	// PrepareOrbSync 生成工作区快照提交并按需打包 git bundle
 	// (POST /api/v1/orbs/{id}/sync/prepare)
 	PrepareOrbSync(w http.ResponseWriter, r *http.Request, id OrbIDPath, params PrepareOrbSyncParams)
+	// GetOrbTimeline 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found`
+	// (GET /api/v1/orbs/{id}/timeline)
+	GetOrbTimeline(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbTimelineParams)
 	// ListProjects 项目列表
 	// (GET /api/v1/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams)
@@ -8375,12 +8946,30 @@ type ServerInterface interface {
 	// GetSpaceProgress 近 N 天的 Shipped / Archived / Open 进度（按自然日，最早的一天在前）
 	// (GET /api/v1/spaces/{id}/progress)
 	GetSpaceProgress(w http.ResponseWriter, r *http.Request, id SpaceIDPath, params GetSpaceProgressParams)
-	// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
+	// GetBudget 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`）
+	// (GET /api/v1/stats/budget)
+	GetBudget(w http.ResponseWriter, r *http.Request)
+	// PutBudget 整体替换预算设置；金额 <0.01、`warnPct` 越界、时区非法 → 400 `invalid_budget`
+	// (PUT /api/v1/stats/budget)
+	PutBudget(w http.ResponseWriter, r *http.Request)
+	// GetStatsMeta 统计元信息：服务端时间、事实行版本、历史回填进度、最早的用量时间与保留期
+	// (GET /api/v1/stats/meta)
+	GetStatsMeta(w http.ResponseWriter, r *http.Request)
+	// GetOrbStats orb 运行 / 冻结 / 停机时长、次数与 setup 耗时（由 `orb_events`、`orb_setup_runs` 计算）
 	// (GET /api/v1/stats/orbs)
 	GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams)
-	// GetUsageStats 模型用量分组聚合
+	// GetOutputStats 线程产出（新建 / 已交付 / 已归档、提交数、回合、交付线程的全生命周期成本）
+	// (GET /api/v1/stats/output)
+	GetOutputStats(w http.ResponseWriter, r *http.Request, params GetOutputStatsParams)
+	// GetToolStats 工具调用与错误（按工具，前 `limit` 个，其余折叠成 `__other__`）
+	// (GET /api/v1/stats/tools)
+	GetToolStats(w http.ResponseWriter, r *http.Request, params GetToolStatsParams)
+	// GetUsageStats 模型用量分组聚合（tokens、成本、请求与错误、TTFT、tokens/s、工具调用、回合）
 	// (GET /api/v1/stats/usage)
 	GetUsageStats(w http.ResponseWriter, r *http.Request, params GetUsageStatsParams)
+	// ExportUsageRecords 用量明细导出（CSV，每个请求一行；单次 ≤500000 行，超出 → 400 `range_too_large`）
+	// (GET /api/v1/stats/usage/records)
+	ExportUsageRecords(w http.ResponseWriter, r *http.Request, params ExportUsageRecordsParams)
 	// ListThreads 线程列表
 	// (GET /api/v1/threads)
 	ListThreads(w http.ResponseWriter, r *http.Request, params ListThreadsParams)
@@ -8675,7 +9264,7 @@ func (_ Unimplemented) ListNotifications(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// MarkNotificationsRead 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+// MarkNotificationsRead 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read`
 // (POST /api/v1/notifications/read)
 func (_ Unimplemented) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -8888,6 +9477,12 @@ func (_ Unimplemented) GetOrbSyncBundle(w http.ResponseWriter, r *http.Request, 
 // PrepareOrbSync 生成工作区快照提交并按需打包 git bundle
 // (POST /api/v1/orbs/{id}/sync/prepare)
 func (_ Unimplemented) PrepareOrbSync(w http.ResponseWriter, r *http.Request, id OrbIDPath, params PrepareOrbSyncParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbTimeline 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found`
+// (GET /api/v1/orbs/{id}/timeline)
+func (_ Unimplemented) GetOrbTimeline(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbTimelineParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9185,15 +9780,51 @@ func (_ Unimplemented) GetSpaceProgress(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetOrbStats orb 生命周期统计（由 `orb_events` 计算）
+// GetBudget 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`）
+// (GET /api/v1/stats/budget)
+func (_ Unimplemented) GetBudget(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutBudget 整体替换预算设置；金额 <0.01、`warnPct` 越界、时区非法 → 400 `invalid_budget`
+// (PUT /api/v1/stats/budget)
+func (_ Unimplemented) PutBudget(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetStatsMeta 统计元信息：服务端时间、事实行版本、历史回填进度、最早的用量时间与保留期
+// (GET /api/v1/stats/meta)
+func (_ Unimplemented) GetStatsMeta(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOrbStats orb 运行 / 冻结 / 停机时长、次数与 setup 耗时（由 `orb_events`、`orb_setup_runs` 计算）
 // (GET /api/v1/stats/orbs)
 func (_ Unimplemented) GetOrbStats(w http.ResponseWriter, r *http.Request, params GetOrbStatsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetUsageStats 模型用量分组聚合
+// GetOutputStats 线程产出（新建 / 已交付 / 已归档、提交数、回合、交付线程的全生命周期成本）
+// (GET /api/v1/stats/output)
+func (_ Unimplemented) GetOutputStats(w http.ResponseWriter, r *http.Request, params GetOutputStatsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetToolStats 工具调用与错误（按工具，前 `limit` 个，其余折叠成 `__other__`）
+// (GET /api/v1/stats/tools)
+func (_ Unimplemented) GetToolStats(w http.ResponseWriter, r *http.Request, params GetToolStatsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetUsageStats 模型用量分组聚合（tokens、成本、请求与错误、TTFT、tokens/s、工具调用、回合）
 // (GET /api/v1/stats/usage)
 func (_ Unimplemented) GetUsageStats(w http.ResponseWriter, r *http.Request, params GetUsageStatsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ExportUsageRecords 用量明细导出（CSV，每个请求一行；单次 ≤500000 行，超出 → 400 `range_too_large`）
+// (GET /api/v1/stats/usage/records)
+func (_ Unimplemented) ExportUsageRecords(w http.ResponseWriter, r *http.Request, params ExportUsageRecordsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11667,6 +12298,61 @@ func (siw *ServerInterfaceWrapper) PrepareOrbSync(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetOrbTimeline operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbTimeline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrbTimelineParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbTimeline(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjects operation middleware
 func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.Request) {
 
@@ -12820,43 +13506,11 @@ func (siw *ServerInterfaceWrapper) GetSpaceProgress(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
-// GetOrbStats operation middleware
-func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetOrbStatsParams
-
-	// ------------- Optional query parameter "from" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "to" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
-		}
-		return
-	}
+// GetBudget operation middleware
+func (siw *ServerInterfaceWrapper) GetBudget(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetOrbStats(w, r, params)
+		siw.Handler.GetBudget(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -12866,18 +13520,46 @@ func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// GetUsageStats operation middleware
-func (siw *ServerInterfaceWrapper) GetUsageStats(w http.ResponseWriter, r *http.Request) {
+// PutBudget operation middleware
+func (siw *ServerInterfaceWrapper) PutBudget(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutBudget(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStatsMeta operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsMeta(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStatsMeta(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrbStats operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbStats(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetUsageStatsParams
+	var params GetOrbStatsParams
 
-	// ------------- Required query parameter "groupBy" -------------
+	// ------------- Optional query parameter "groupBy" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -12914,8 +13596,621 @@ func (siw *ServerInterfaceWrapper) GetUsageStats(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "orb" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "orb", r.URL.Query(), &params.Orb, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "orb"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "orb", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "download"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbStats(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOutputStats operation middleware
+func (siw *ServerInterfaceWrapper) GetOutputStats(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOutputStatsParams
+
+	// ------------- Optional query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "download"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOutputStats(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetToolStats operation middleware
+func (siw *ServerInterfaceWrapper) GetToolStats(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetToolStatsParams
+
+	// ------------- Optional query parameter "series" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "series", r.URL.Query(), &params.Series, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "series"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "series", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "download"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetToolStats(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUsageStats operation middleware
+func (siw *ServerInterfaceWrapper) GetUsageStats(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUsageStatsParams
+
+	// ------------- Required query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "groupBy", r.URL.Query(), &params.GroupBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "groupBy"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "series" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "series", r.URL.Query(), &params.Series, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "series"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "series", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tz" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tz", r.URL.Query(), &params.Tz, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tz"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tz", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "model" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "model", r.URL.Query(), &params.Model, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "download"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetUsageStats(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportUsageRecords operation middleware
+func (siw *ServerInterfaceWrapper) ExportUsageRecords(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportUsageRecordsParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "project" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "project", r.URL.Query(), &params.Project, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "space" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "space", r.URL.Query(), &params.Space, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "space"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "space", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "model" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "model", r.URL.Query(), &params.Model, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "model"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "model", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportUsageRecords(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13888,10 +15183,31 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/agent-config/import", wrapper.ImportAgentConfig)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/stats/meta", wrapper.GetStatsMeta)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/stats/usage", wrapper.GetUsageStats)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/stats/usage/records", wrapper.ExportUsageRecords)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/stats/tools", wrapper.GetToolStats)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/stats/orbs", wrapper.GetOrbStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/timeline", wrapper.GetOrbTimeline)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/stats/output", wrapper.GetOutputStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/stats/budget", wrapper.GetBudget)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/stats/budget", wrapper.PutBudget)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/notifications", wrapper.ListNotifications)

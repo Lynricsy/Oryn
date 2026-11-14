@@ -2044,42 +2044,208 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
         default: { $ref: '#/components/responses/Error' }
 
-  # ---------------------------------------------------------------- stats
+  # ---------------------------------------------------------------- stats（M10）
+  # 窗口参数 from / to 缺省 = 近 7 天；from ≥ to → 400 `invalid_request`；tz 不可加载 → 400 `invalid_timezone`；
+  # 时间桶超过 1000 个 → 400 `range_too_large`。口径见 docs/protocol.md「M10：统计分析」。
+  /api/v1/stats/meta:
+    get:
+      tags: [stats]
+      operationId: getStatsMeta
+      summary: 统计元信息：服务端时间、事实行版本、历史回填进度、最早的用量时间与保留期
+      responses:
+        '200':
+          description: 元信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatsMeta' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/stats/usage:
     get:
       tags: [stats]
       operationId: getUsageStats
-      summary: 模型用量分组聚合
+      summary: 模型用量分组聚合（tokens、成本、请求与错误、TTFT、tokens/s、工具调用、回合）
+      description: |
+        `groupBy` 为时间粒度（`hour | day | week | month`）时 `groups` 稠密（窗口内每个桶一项，含全零），且不得再给 `series`。
+        非时间分组按成本降序（并列按键）取前 `limit` 个，其余折叠成 `key = "__other__"` 的一项；`series` 各点的 `groups` 用同一批键。
+        `model` 筛选生效或 `groupBy ∈ {model, purpose}` 时 `toolCalls / toolErrors / turns` 为 0。
+        `format=csv` 时列为 `bucket,key,label,requests,request_errors,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,subagent_cost_usd,avg_ttft_ms,tokens_per_second,tool_calls,tool_errors,turns`。
       parameters:
         - name: groupBy
           in: query
           required: true
-          schema:
-            type: string
-            enum: [day, model, thread, project]
+          schema: { $ref: '#/components/schemas/UsageGroupBy' }
+        - { $ref: '#/components/parameters/StatsSeriesQuery' }
         - { $ref: '#/components/parameters/FromQuery' }
         - { $ref: '#/components/parameters/ToQuery' }
+        - { $ref: '#/components/parameters/StatsTzQuery' }
+        - { $ref: '#/components/parameters/StatsProjectQuery' }
+        - { $ref: '#/components/parameters/StatsSpaceQuery' }
+        - { $ref: '#/components/parameters/StatsThreadQuery' }
+        - { $ref: '#/components/parameters/StatsModelQuery' }
+        - { $ref: '#/components/parameters/StatsLimitQuery' }
+        - { $ref: '#/components/parameters/StatsFormatQuery' }
+        - { $ref: '#/components/parameters/StatsDownloadQuery' }
       responses:
         '200':
-          description: 分组结果
+          description: 分组结果（`format=csv` 时为 CSV 附件）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/UsageStats' }
+            text/csv:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/stats/usage/records:
+    get:
+      tags: [stats]
+      operationId: exportUsageRecords
+      summary: 用量明细导出（CSV，每个请求一行；单次 ≤500000 行，超出 → 400 `range_too_large`）
+      description: |
+        列：`ts,time,thread_id,project_id,space_id,provider,model,purpose,subagent,stop_reason,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,duration_ms,ttft_ms`
+        （`time` 为 RFC3339 UTC；归属列取线程当前的项目 / Space，已删线程取删除时的快照）。
+      parameters:
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+        - { $ref: '#/components/parameters/StatsProjectQuery' }
+        - { $ref: '#/components/parameters/StatsSpaceQuery' }
+        - { $ref: '#/components/parameters/StatsThreadQuery' }
+        - { $ref: '#/components/parameters/StatsModelQuery' }
+      responses:
+        '200':
+          description: CSV 附件
+          content:
+            text/csv:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/stats/tools:
+    get:
+      tags: [stats]
+      operationId: getToolStats
+      summary: 工具调用与错误（按工具，前 `limit` 个，其余折叠成 `__other__`）
+      description: '`format=csv` 时列为 `bucket,tool,calls,errors`。'
+      parameters:
+        - { $ref: '#/components/parameters/StatsSeriesQuery' }
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+        - { $ref: '#/components/parameters/StatsTzQuery' }
+        - { $ref: '#/components/parameters/StatsProjectQuery' }
+        - { $ref: '#/components/parameters/StatsSpaceQuery' }
+        - { $ref: '#/components/parameters/StatsThreadQuery' }
+        - { $ref: '#/components/parameters/StatsLimitQuery' }
+        - { $ref: '#/components/parameters/StatsFormatQuery' }
+        - { $ref: '#/components/parameters/StatsDownloadQuery' }
+      responses:
+        '200':
+          description: 工具统计（`format=csv` 时为 CSV 附件）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ToolStats' }
+            text/csv:
+              schema: { type: string }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/stats/orbs:
     get:
       tags: [stats]
       operationId: getOrbStats
-      summary: orb 生命周期统计（由 `orb_events` 计算）
+      summary: orb 运行 / 冻结 / 停机时长、次数与 setup 耗时（由 `orb_events`、`orb_setup_runs` 计算）
+      description: |
+        时间粒度分组把状态区间按桶边界切开分摊；次数只在 `from_state ≠ to_state` 时累加；末段区间截到「现在」。
+        `format=csv` 时列为 `key,label,type,cpus,memory_mb,orbs,running_ms,frozen_ms,stopped_ms,setup_ms,spawns,snapshot_spawns,freezes,stops,wakes,failures`。
+      parameters:
+        - name: groupBy
+          in: query
+          description: 缺省 = `type`
+          schema: { $ref: '#/components/schemas/OrbGroupBy' }
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+        - { $ref: '#/components/parameters/StatsTzQuery' }
+        - { $ref: '#/components/parameters/StatsProjectQuery' }
+        - { $ref: '#/components/parameters/StatsOrbQuery' }
+        - { $ref: '#/components/parameters/StatsFormatQuery' }
+        - { $ref: '#/components/parameters/StatsDownloadQuery' }
+      responses:
+        '200':
+          description: 分组结果（`format=csv` 时为 CSV 附件）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrbStats' }
+            text/csv:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/timeline:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+    get:
+      tags: [stats]
+      operationId: getOrbTimeline
+      summary: 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found`
       parameters:
         - { $ref: '#/components/parameters/FromQuery' }
         - { $ref: '#/components/parameters/ToQuery' }
       responses:
         '200':
-          description: 按 orb 类型汇总
+          description: 时间线
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/OrbStats' }
+              schema: { $ref: '#/components/schemas/OrbTimeline' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/stats/output:
+    get:
+      tags: [stats]
+      operationId: getOutputStats
+      summary: 线程产出（新建 / 已交付 / 已归档、提交数、回合、交付线程的全生命周期成本）
+      description: '`format=csv` 时列为 `key,label,threads_created,threads_shipped,threads_archived,shipped_cost_usd,commits,turns`。'
+      parameters:
+        - name: groupBy
+          in: query
+          description: 缺省 = `day`
+          schema: { $ref: '#/components/schemas/OutputGroupBy' }
+        - { $ref: '#/components/parameters/FromQuery' }
+        - { $ref: '#/components/parameters/ToQuery' }
+        - { $ref: '#/components/parameters/StatsTzQuery' }
+        - { $ref: '#/components/parameters/StatsProjectQuery' }
+        - { $ref: '#/components/parameters/StatsSpaceQuery' }
+        - { $ref: '#/components/parameters/StatsFormatQuery' }
+        - { $ref: '#/components/parameters/StatsDownloadQuery' }
+      responses:
+        '200':
+          description: 分组结果（`format=csv` 时为 CSV 附件）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutputStats' }
+            text/csv:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/stats/budget:
+    get:
+      tags: [stats]
+      operationId: getBudget
+      summary: 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`）
+      responses:
+        '200':
+          description: 预算状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BudgetStatus' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [stats]
+      operationId: putBudget
+      summary: 整体替换预算设置；金额 <0.01、`warnPct` 越界、时区非法 → 400 `invalid_budget`
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Budget' }
+      responses:
+        '200':
+          description: 更新后的预算状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BudgetStatus' }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- notifications（M5）
@@ -2113,7 +2279,7 @@ paths:
     post:
       tags: [notifications]
       operationId: markNotificationsRead
-      summary: 标记已读（给 `threadId` 只标该线程，省略 = 全部）；随后向所有连接广播 `notifications.read`
+      summary: 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read`
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -3083,6 +3249,56 @@ components:
       in: query
       description: 结束时间（不含，UTC 毫秒）；缺省 = 现在
       schema: { $ref: '#/components/schemas/TimestampMs' }
+    StatsTzQuery:
+      name: tz
+      in: query
+      description: 时间桶使用的 IANA 时区；缺省 = `UTC`。不可加载 → 400 `invalid_timezone`
+      schema: { type: string, default: UTC, maxLength: 64 }
+    StatsSeriesQuery:
+      name: series
+      in: query
+      description: 另给出按该粒度的时间序列（稠密：窗口内每个桶都有）；`groupBy` 本身是时间粒度时不得再给（400 `invalid_request`）
+      schema: { $ref: '#/components/schemas/StatsGrain' }
+    StatsProjectQuery:
+      name: project
+      in: query
+      description: 只统计该项目（项目 id）；字面量 `none` = 无项目
+      schema: { type: string, maxLength: 64 }
+    StatsSpaceQuery:
+      name: space
+      in: query
+      description: 只统计该 Space（Space id）；字面量 `none` = 不在任何 Space
+      schema: { type: string, maxLength: 64 }
+    StatsThreadQuery:
+      name: thread
+      in: query
+      description: 只统计该线程
+      schema: { $ref: '#/components/schemas/ThreadId' }
+    StatsModelQuery:
+      name: model
+      in: query
+      description: 只统计该模型（`<provider>/<model>`）；生效时 `toolCalls` / `toolErrors` / `turns` 为 0
+      schema: { type: string, maxLength: 256 }
+    StatsOrbQuery:
+      name: orb
+      in: query
+      description: 只统计该 orb
+      schema: { $ref: '#/components/schemas/OrbId' }
+    StatsLimitQuery:
+      name: limit
+      in: query
+      description: 非时间分组按成本降序保留的组数，其余折叠成 `key = "__other__"` 的一项
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    StatsFormatQuery:
+      name: format
+      in: query
+      description: '`csv` 返回 `text/csv; charset=utf-8` 附件（列见 docs/protocol.md「M10：统计分析」）'
+      schema: { $ref: '#/components/schemas/StatsFormat' }
+    StatsDownloadQuery:
+      name: download
+      in: query
+      description: '为真时 JSON 响应也带 `Content-Disposition: attachment`（`.json` 文件名）'
+      schema: { type: boolean, default: false }
     ServiceNamePath:
       name: name
       in: path
@@ -4865,65 +5081,356 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AgentConfigWarning' }
 
-    # ============================================================ 统计
+    # ============================================================ 统计（M10）
+    StatsGrain:
+      type: string
+      description: 时间粒度（按请求的 `tz` 取自然小时 / 日 / 周（周一为始）/ 月）
+      enum: [hour, day, week, month]
+    StatsFormat:
+      type: string
+      description: 响应格式；缺省 = `json`
+      enum: [json, csv]
+      x-enum-varnames: [StatsFormatJSON, StatsFormatCSV]
+    UsageGroupBy:
+      type: string
+      description: '`total` 只给一组 `key = "total"`；`hour / day / week / month` 为时间桶；其余为维度'
+      enum: [total, hour, day, week, month, model, thread, project, space, purpose]
+    OrbGroupBy:
+      type: string
+      enum: [type, day, week, month, project, orb]
+    OutputGroupBy:
+      type: string
+      enum: [day, week, month, project, space]
     UsageStat:
       type: object
-      required: [key, requests, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, toolCalls, toolErrors]
+      required: [key, requests, requestErrors, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, toolCalls, toolErrors, turns]
       properties:
         key:
           type: string
-          description: 分组键：`YYYY-MM-DD`（UTC）/ `<provider>/<model>` / 线程 id / 项目 id（无项目为空串）
+          description: |
+            分组键：时间桶标签（`2026-11-14T13:00` / `2026-11-14` / `2026-W46` / `2026-11`）、`<provider>/<model>`、
+            线程 id（已删线程为空串）、项目 id（无项目为空串）、Space id（无为空串）、用途（对话回合为空串）、
+            `total`、折叠项 `__other__`
         label:
           type: string
-          description: 显示名（线程标题、项目名）
-        requests: { type: integer, format: int64 }
+          description: 显示名（线程标题、项目名、Space 名）
+        start:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 仅时间桶：桶起点（已裁到窗口）
+        requests:
+          type: integer
+          format: int64
+          description: 请求数 = 用量事实行数（带 usage 的 assistant 消息 + model_usage 条目）
+        requestErrors:
+          type: integer
+          format: int64
+          description: '`stopReason = error` 的请求数（`aborted` 不算）'
         inputTokens: { type: integer, format: int64 }
         outputTokens: { type: integer, format: int64 }
         cacheReadTokens: { type: integer, format: int64 }
         cacheWriteTokens: { type: integer, format: int64 }
-        costUsd: { type: number }
-        subagentCostUsd: { type: number }
-        avgTtftMs: { type: number }
-        tokensPerSecond: { type: number }
+        costUsd:
+          type: number
+          format: double
+          description: 美元（omp 按目录标价估算），含子 agent
+        subagentCostUsd:
+          type: number
+          format: double
+          description: 其中子 agent 的部分（已含在 `costUsd` 内，不要再加）
+        avgTtftMs:
+          type: number
+          format: double
+          description: 平均首 token 时间；没有样本时省略
+        tokensPerSecond:
+          type: number
+          format: double
+          description: 有时长的请求的输出 tokens / 时长；分母为 0 时省略
         toolCalls: { type: integer, format: int64 }
         toolErrors: { type: integer, format: int64 }
+        turns:
+          type: integer
+          format: int64
+          description: 回合数（主会话里的 user 消息）
+    UsageSeriesPoint:
+      type: object
+      required: [key, start, total, groups]
+      properties:
+        key:
+          type: string
+          description: 时间桶标签
+        start: { $ref: '#/components/schemas/TimestampMs' }
+        total: { $ref: '#/components/schemas/UsageStat' }
+        groups:
+          type: array
+          description: 只含非零分组；键与顶层 `groups` 一致
+          items: { $ref: '#/components/schemas/UsageStat' }
     UsageStats:
       type: object
-      required: [groupBy, from, to, groups]
+      required: [groupBy, from, to, tz, total, groups]
       properties:
-        groupBy:
-          type: string
-          enum: [day, model, thread, project]
+        groupBy: { $ref: '#/components/schemas/UsageGroupBy' }
         from: { $ref: '#/components/schemas/TimestampMs' }
         to: { $ref: '#/components/schemas/TimestampMs' }
+        tz:
+          type: string
+          description: 实际使用的 IANA 时区
+        total:
+          allOf:
+            - $ref: '#/components/schemas/UsageStat'
+          description: 全部分组（折叠前）之和，`key = "total"`
         groups:
           type: array
           items: { $ref: '#/components/schemas/UsageStat' }
-    OrbTypeStat:
+        series:
+          type: array
+          description: 请求了 `series` 时给出（稠密）
+          items: { $ref: '#/components/schemas/UsageSeriesPoint' }
+    ToolStat:
       type: object
-      required: [type, orbs, runningMs, frozenMs, stoppedMs, spawns, freezes, stops, wakes, failures]
+      required: [tool, calls, errors]
       properties:
-        type: { type: string }
+        tool:
+          type: string
+          description: 工具名；`total` 为空串；折叠项为 `__other__`
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+    ToolSeriesPoint:
+      type: object
+      required: [key, start, calls, errors]
+      properties:
+        key: { type: string }
+        start: { $ref: '#/components/schemas/TimestampMs' }
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+    ToolStats:
+      type: object
+      required: [from, to, tz, total, tools]
+      properties:
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        tz: { type: string }
+        total: { $ref: '#/components/schemas/ToolStat' }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/ToolStat' }
+        series:
+          type: array
+          items: { $ref: '#/components/schemas/ToolSeriesPoint' }
+    OrbStat:
+      type: object
+      required: [key, orbs, runningMs, frozenMs, stoppedMs, setupMs, spawns, snapshotSpawns, freezes, stops, wakes, failures]
+      properties:
+        key:
+          type: string
+          description: 类型名 / 时间桶标签 / 项目 id（无项目为空串）/ orb id；`total` 为 `total`
+        label:
+          type: string
+          description: 项目名；`groupBy=orb` 时为它第一个线程的标题
+        start:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 仅时间桶
+        type:
+          type: string
+          description: '`groupBy=type` / `orb` 时给出'
+        cpus: { type: integer }
+        memoryMB: { type: integer }
         orbs:
           type: integer
           description: 窗口内存在过的 orb 数
-        runningMs: { type: integer, format: int64 }
+        runningMs:
+          type: integer
+          format: int64
+          description: '处于 `connecting / setting_up / resuming / ready / freezing / stopping` 的时长'
         frozenMs: { type: integer, format: int64 }
         stoppedMs: { type: integer, format: int64 }
+        setupMs:
+          type: integer
+          format: int64
+          description: 处于 `setting_up` / `resuming` 的时长（已含在 `runningMs` 内）
         spawns: { type: integer }
+        snapshotSpawns:
+          type: integer
+          description: 窗口内创建且由快照启动（`snapshot_of` 非空）的 orb 数
         freezes: { type: integer }
         stops: { type: integer }
         wakes: { type: integer }
         failures: { type: integer }
+    OrbSetupStats:
+      type: object
+      description: '口径：`phase = setup` 且真正运行了脚本（`setup_ran = 1`）的记录；`resume*` 为 `phase = resume` 的记录'
+      required: [runs, failures, slowRuns, resumeRuns, resumeFailures]
+      properties:
+        runs: { type: integer }
+        failures: { type: integer }
+        slowRuns:
+          type: integer
+          description: 耗时 ≥ 120000 ms 的次数
+        resumeRuns: { type: integer }
+        resumeFailures: { type: integer }
+        p50Ms: { type: integer, format: int64 }
+        p95Ms: { type: integer, format: int64 }
+        maxMs: { type: integer, format: int64 }
     OrbStats:
       type: object
-      required: [from, to, types]
+      required: [groupBy, from, to, tz, total, groups, setup]
+      properties:
+        groupBy: { $ref: '#/components/schemas/OrbGroupBy' }
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        tz: { type: string }
+        total: { $ref: '#/components/schemas/OrbStat' }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/OrbStat' }
+        setup: { $ref: '#/components/schemas/OrbSetupStats' }
+    OrbTimelineSegment:
+      type: object
+      required: [from, to, state]
       properties:
         from: { $ref: '#/components/schemas/TimestampMs' }
         to: { $ref: '#/components/schemas/TimestampMs' }
-        types:
+        state: { $ref: '#/components/schemas/OrbState' }
+        reason:
+          type: string
+          description: 仅 `failed`：事件的 `detail.reason`（没有则 `detail.error`）
+    OrbTimeline:
+      type: object
+      required: [orbId, from, to, segments, truncated]
+      properties:
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        segments:
           type: array
-          items: { $ref: '#/components/schemas/OrbTypeStat' }
+          description: 相邻同状态已合并；末段截到「现在」
+          items: { $ref: '#/components/schemas/OrbTimelineSegment' }
+        truncated:
+          type: boolean
+          description: 超过 2000 段时为真（只给前 2000 段）
+    OutputStat:
+      type: object
+      required: [key, threadsCreated, threadsShipped, threadsArchived, shippedCostUsd, commits, turns]
+      properties:
+        key:
+          type: string
+          description: 时间桶标签 / 项目 id / Space id（无为空串）；`total` 为 `total`
+        label: { type: string }
+        start: { $ref: '#/components/schemas/TimestampMs' }
+        threadsCreated: { type: integer, format: int64 }
+        threadsShipped: { type: integer, format: int64 }
+        threadsArchived:
+          type: integer
+          format: int64
+          description: 归档且未交付的线程数
+        shippedCostUsd:
+          type: number
+          format: double
+          description: 窗口内交付的线程的全生命周期成本之和
+        commits:
+          type: integer
+          format: int64
+          description: 相对基线的提交数（按 sha 去重）
+        turns: { type: integer, format: int64 }
+    OutputStats:
+      type: object
+      required: [groupBy, from, to, tz, total, groups]
+      properties:
+        groupBy: { $ref: '#/components/schemas/OutputGroupBy' }
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        tz: { type: string }
+        total: { $ref: '#/components/schemas/OutputStat' }
+        groups:
+          type: array
+          items: { $ref: '#/components/schemas/OutputStat' }
+    StatsBackfill:
+      type: object
+      description: 历史回填进度（线程数）；完成后不出现
+      required: [done, total]
+      properties:
+        done: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    StatsRetention:
+      type: object
+      description: 保留期（毫秒）；0 = 永久
+      required: [samplesMs, eventsMs, usageMs]
+      properties:
+        samplesMs:
+          type: integer
+          format: int64
+          description: orb 资源采样
+        eventsMs:
+          type: integer
+          format: int64
+          description: 已删除 orb 的事件与 setup 记录、预算告警账本
+        usageMs:
+          type: integer
+          format: int64
+          description: 用量 / 工具调用 / 回合事实行
+    StatsMeta:
+      type: object
+      required: [now, factsVersion, retention]
+      properties:
+        now: { $ref: '#/components/schemas/TimestampMs' }
+        factsVersion:
+          type: integer
+          description: 已完成的事实行版本（回填完成前为旧值或 0）
+        earliestTs:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 最早的用量事实时间；没有用量时省略
+        backfill: { $ref: '#/components/schemas/StatsBackfill' }
+        retention: { $ref: '#/components/schemas/StatsRetention' }
+    Budget:
+      type: object
+      required: [warnPct, timezone, enabled]
+      properties:
+        dailyUsd:
+          type: number
+          format: double
+          minimum: 0.01
+          description: 日上限（美元）；省略 = 不设
+        monthlyUsd:
+          type: number
+          format: double
+          minimum: 0.01
+          description: 月上限（美元）；省略 = 不设
+        warnPct:
+          type: integer
+          minimum: 0
+          maximum: 99
+          description: 预警百分比；0 = 不预警
+        timezone:
+          type: string
+          description: 划分自然日 / 月的 IANA 时区
+        enabled: { type: boolean }
+    BudgetLevel:
+      type: string
+      enum: [none, warn, over]
+    BudgetPeriod:
+      type: object
+      required: [key, from, to, spentUsd, level]
+      properties:
+        key:
+          type: string
+          description: 周期键（`2026-11-14` / `2026-11`）
+        from: { $ref: '#/components/schemas/TimestampMs' }
+        to: { $ref: '#/components/schemas/TimestampMs' }
+        spentUsd: { type: number, format: double }
+        limitUsd:
+          type: number
+          format: double
+          description: 该周期的上限；未设时省略
+        level: { $ref: '#/components/schemas/BudgetLevel' }
+    BudgetStatus:
+      type: object
+      required: [budget, day, month]
+      properties:
+        budget: { $ref: '#/components/schemas/Budget' }
+        day: { $ref: '#/components/schemas/BudgetPeriod' }
+        month: { $ref: '#/components/schemas/BudgetPeriod' }
 
     # ============================================================ 客户端 WebSocket
     # ============================================================ orb 文件 / 改动 / 附件（M3）
@@ -5438,8 +5945,8 @@ components:
     # ============================================================ 通知（M5）
     NotificationKind:
       type: string
-      description: '`done` 回合完成、`input` 等待作答、`error` 出错；也是渠道 `events` 的元素'
-      enum: [done, input, error]
+      description: '`done` 回合完成、`input` 等待作答、`error` 出错、`budget` 预算告警（不属于任何线程）；也是渠道 `events` 的元素'
+      enum: [done, input, error, budget]
     NotificationDeliveryTarget:
       type: string
       description: 投递目标（`apns` / `fcm` 为 M7 预留）
@@ -5469,12 +5976,15 @@ components:
       properties:
         id: { $ref: '#/components/schemas/NotificationId' }
         kind: { $ref: '#/components/schemas/NotificationKind' }
-        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 所属线程；系统通知（`budget`，以及定时无法建出线程 / 被自动暂停的 `error`）没有线程，省略
         title: { type: string }
         body: { type: string }
         url:
           type: string
-          description: 站内路径 `/t/<threadId>`
+          description: 站内路径。有线程为 `/t/<threadId>`；没有线程为该通知的落点（`/stats/usage`、`/settings/automations`）
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
         readAt: { $ref: '#/components/schemas/TimestampMs' }
         resolvedAt:
@@ -5496,11 +6006,16 @@ components:
           description: 全部未读通知数
     NotificationsReadRequest:
       type: object
+      description: '`id` 与 `threadId` 至多给一个（都给 → 400 `invalid_request`）；都省略 = 全部'
       properties:
         threadId:
           allOf:
             - $ref: '#/components/schemas/ThreadId'
-          description: 只标该线程的通知；省略 = 全部
+          description: 只标该线程的通知
+        id:
+          allOf:
+            - $ref: '#/components/schemas/NotificationId'
+          description: 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204
     NotificationChannelKind:
       type: string
       enum: [telegram, webhook, ntfy, bark]
@@ -5561,7 +6076,7 @@ components:
           default: true
         events:
           type: array
-          description: 缺省 = 三者全选
+          description: 缺省 = 全选
           items: { $ref: '#/components/schemas/NotificationKind' }
         locale: { $ref: '#/components/schemas/NotificationLocale' }
         telegram: { $ref: '#/components/schemas/TelegramChannelConfig' }
@@ -6090,14 +6605,18 @@ components:
         notification: { $ref: '#/components/schemas/Notification' }
     WsServerNotificationsRead:
       type: object
-      description: 通知已读（发给全部私有连接）
+      description: 通知已读（发给全部私有连接）：`id` = 只这一条已读；`threadId` = 该线程的通知已读；都省略 = 全部已读
       required: [type]
       properties:
         type: { type: string, enum: [notifications.read] }
         threadId:
           allOf:
             - $ref: '#/components/schemas/ThreadId'
-          description: 只该线程的通知已读；省略 = 全部已读
+          description: 该线程的通知已读
+        id:
+          allOf:
+            - $ref: '#/components/schemas/NotificationId'
+          description: 只这一条已读
     WsServerSchedulesChanged:
       type: object
       description: 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次

@@ -17,14 +17,15 @@ import (
 // M5：thread_shares、thread_share_entries、published_files、notification_channels、push_subscriptions、notifications、notification_deliveries；
 // M8：browser_profiles、browser_profile_events、orb_desktops；
 // M9：spaces、schedules、schedule_runs、thread_reports、coord_actions；
-// M9.6：role_avatars、thread_share_identities）。
+// M9.6：role_avatars、thread_share_identities；
+// M10：turns、thread_commits、stats_state、budget、budget_alerts）。
 var m2Tables = []string{
-	"attachments", "blobs", "browser_profile_events", "browser_profiles", "coord_actions", "device_pairings", "devices", "entries",
-	"entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops", "orb_events",
-	"orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
+	"attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
+	"devices", "entries", "entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
+	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "schedule_runs", "schedules",
-	"secrets", "spaces", "thread_labels", "thread_reports", "thread_share_entries", "thread_share_identities", "thread_shares",
-	"threads", "tool_calls", "usage_records", "web_sessions",
+	"secrets", "spaces", "stats_state", "thread_commits", "thread_labels", "thread_reports", "thread_share_entries",
+	"thread_share_identities", "thread_shares", "threads", "tool_calls", "turns", "usage_records", "web_sessions",
 }
 
 func openTemp(t *testing.T, dir string) *Store {
