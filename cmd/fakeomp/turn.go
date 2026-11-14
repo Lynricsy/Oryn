@@ -106,17 +106,59 @@ func (t *turn) settle() bool {
 // 状态在 prompt_result 之前更新：收到 session_settled 后的 get_state 必须已是静止态（与 omp 一致）。
 // 还有排队的回合时会话并未静止（omp rpc.md「Yield vs settled」）：sessionSettled=false 且不发 session_settled，
 // session_settled 只在最后一个排队回合结束时发出一次。
-func (t *turn) finish(status string) {
+func (t *turn) finish(status string) { t.finishErr(status, "") }
+
+// finishErr 同 finish；status == "error" 时 prompt_result 带 error{message, retryable:false}（oryn-core rpc-prompt-results.ts）。
+func (t *turn) finishErr(status, errMsg string) {
 	t.s.emitEvent(map[string]any{"type": "agent_end", "messages": nonNil(t.messages), "isTerminal": true, "yielded": true})
 	settled := t.settle()
 	pr := map[string]any{"type": "prompt_result", "agentInvoked": true, "status": status, "sessionSettled": settled}
 	if t.promptID != "" {
 		pr["id"] = t.promptID
 	}
+	if status == "error" {
+		pr["error"] = map[string]any{"message": errMsg, "retryable": false}
+	}
 	t.s.emit(pr)
 	if settled {
 		t.s.emit(map[string]any{"type": "session_settled"})
 	}
+}
+
+// failModelID 是模拟「模型不存在」的模型 id：当前模型为它（或提示词含 `fakeomp:error`）时回合以 provider 错误结束。
+const failModelID = "does-not-exist"
+
+// failReason 返回本回合应模拟的 provider 错误（空 = 正常回合）。
+func (t *turn) failReason(message string) string {
+	t.s.mu.Lock()
+	_, model := t.s.modelLocked()
+	t.s.mu.Unlock()
+	switch {
+	case model == failModelID:
+		return "fakeomp: model " + failModelID + " not found"
+	case strings.Contains(message, "fakeomp:error"):
+		return "fakeomp: provider request failed"
+	}
+	return ""
+}
+
+// failTurn 以一条 stopReason == "error" 的 assistant 消息结束回合（与 omp 的 provider 失败同形：message_start / message_end
+// 写入会话文件，agent_end.messages 末尾是它，prompt_result{status: error, error.message = errorMessage}）。
+func (t *turn) failTurn(errMsg string) {
+	t.s.mu.Lock()
+	provider, model := t.s.modelLocked()
+	t.s.mu.Unlock()
+	msg := map[string]any{
+		"role": "assistant", "content": []any{}, "api": "fake", "provider": provider, "model": model,
+		"usage": map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0,
+			"cost": map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}},
+		"stopReason": "error", "errorMessage": errMsg, "timestamp": nowMs(),
+	}
+	mid := t.nextMessageID()
+	t.s.emitEvent(map[string]any{"type": "message_start", "message": msg, "messageId": mid})
+	t.s.emitEvent(map[string]any{"type": "message_end", "message": msg, "messageId": mid})
+	t.appendEntry(msg)
+	t.finishErr("error", errMsg)
 }
 
 func nonNil(v []any) []any {
@@ -140,6 +182,10 @@ func (t *turn) runDefault(p promptReq) {
 	}
 	t.appendEntry(user)
 	t.s.emitEvent(map[string]any{"type": "agent_start"})
+	if reason := t.failReason(p.message); reason != "" {
+		t.failTurn(reason)
+		return
+	}
 
 	intro := "I'll run a quick command to check the environment."
 	if strings.Contains(strings.ToLower(p.message), "ask") {

@@ -261,6 +261,7 @@ func (r *seenRecorder) StateChanged(StateEvent)      {}
 func (r *seenRecorder) InputRequested(InputEvent)    {}
 func (r *seenRecorder) InputResolved(string, string) {}
 func (r *seenRecorder) TurnEnded(TurnEvent)          {}
+func (r *seenRecorder) EntriesAppended(string)       {}
 func (r *seenRecorder) Seen(id string) {
 	r.mu.Lock()
 	r.seen = append(r.seen, id)
@@ -532,7 +533,7 @@ func TestPatchSpaceAndShipped(t *testing.T) {
 	err = f.s.Delete(f.ctx, chat.id)
 	require.ErrorAs(t, err, &te)
 	assert.Equal(t, "space_thread", te.Code)
-	require.NoError(t, f.s.DeleteSpaceThread(f.ctx, chat.id))
+	require.NoError(t, f.s.DeleteSpaceThread(f.ctx, chat.id, nil))
 	_, err = f.st.Q.GetSpace(f.ctx, sp)
 	assert.Error(t, err, "spaces 行随聊天线程级联删除")
 }

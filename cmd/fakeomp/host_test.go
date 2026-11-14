@@ -144,13 +144,22 @@ func TestDumpInvocation(t *testing.T) {
 	dumpDir := t.TempDir()
 	inside := filepath.Join(home, "d", "dump.json")
 	outside := filepath.Join(t.TempDir(), "dump.json")
+	fromFile := filepath.Join(home, ".oryn", "coordinator", "prompts", "T-dump.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fromFile), 0o700))
+	filePrompt := "#dump " + inside + "\nYou are read from a file."
+	require.NoError(t, os.WriteFile(fromFile, []byte(filePrompt), 0o600))
+	missing := filepath.Join(home, "missing.md")
 	for _, tc := range []struct {
-		prompt string
-		want   string
+		prompt   string
+		want     string
+		resolved string // 解析后的正文（C10.6：不含换行的值按文件读，读失败保留原值）
 	}{
-		{"#dump " + inside + "\nYou are a probe.", inside},
-		{"#dump " + outside + "\nYou are a probe.", ""},
+		{"#dump " + inside + "\nYou are a probe.", inside, "#dump " + inside + "\nYou are a probe."},
+		{"#dump " + outside + "\nYou are a probe.", "", "#dump " + outside + "\nYou are a probe."},
+		{fromFile, inside, filePrompt},
+		{missing, "", missing},
 	} {
+		_ = os.Remove(inside)
 		env := map[string]string{"HOME": home, "FAKEOMP_DUMP_DIR": dumpDir, "ORYN_THREAD_ID": "T-dump"}
 		args := []string{"--session-dir", t.TempDir(), "--no-tools", "--system-prompt", tc.prompt}
 		h := start(t, args, env)
@@ -163,9 +172,10 @@ func TestDumpInvocation(t *testing.T) {
 		assert.Equal(t, args, rec.Args)
 		assert.Equal(t, os.Getuid(), rec.UID)
 		assert.NotEmpty(t, rec.Env)
+		assert.Equal(t, tc.resolved, rec.SystemPrompt)
 		if tc.want != "" {
 			_, err := os.Stat(tc.want)
-			assert.NoError(t, err)
+			assert.NoError(t, err, "首行 #dump 在解析后的正文上生效")
 		}
 	}
 	_, err := os.Stat(outside)

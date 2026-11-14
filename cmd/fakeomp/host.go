@@ -25,13 +25,29 @@ type dumpRecord struct {
 	Env  map[string]string `json:"env"`
 	UID  int               `json:"uid"`
 	Cwd  string            `json:"cwd"`
+	// SystemPrompt 是按 resolvePromptInput 解析后的系统提示词正文。
+	SystemPrompt string `json:"systemPrompt"`
+}
+
+// resolvePromptInput 照 omp（oryn-core system-prompt.ts 的同名函数）解析 --system-prompt：不含换行的值当作文件路径读，
+// 读成功取文件内容，读失败（不存在等）保留原值；含换行的值原样使用。
+func resolvePromptInput(v string) string {
+	if v == "" || strings.Contains(v, "\n") {
+		return v
+	}
+	b, err := os.ReadFile(v)
+	if err != nil {
+		return v
+	}
+	return string(b)
 }
 
 // dumpInvocation 把启动参数与环境写成 JSON：环境变量 FAKEOMP_DUMP_DIR 非空时写到
 // `<dir>/<ORYN_THREAD_ID 或 pid>.json`；--system-prompt 的首行为 `#dump <路径>` 时写到该路径
 // （协调档的环境从零构造、带不进 FAKEOMP_DUMP_DIR；路径必须在 HOME 之内）。失败只记 stderr。
 func dumpInvocation(o options, getenv func(string) string, stderr io.Writer) {
-	rec := dumpRecord{Args: nonNilStrings(o.args), Env: map[string]string{}, UID: os.Getuid(), Cwd: o.cwd}
+	prompt := resolvePromptInput(o.systemPrompt)
+	rec := dumpRecord{Args: nonNilStrings(o.args), Env: map[string]string{}, UID: os.Getuid(), Cwd: o.cwd, SystemPrompt: prompt}
 	for _, kv := range os.Environ() {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			rec.Env[k] = v
@@ -46,7 +62,7 @@ func dumpInvocation(o options, getenv func(string) string, stderr io.Writer) {
 		}
 		targets = append(targets, filepath.Join(dir, name+".json"))
 	}
-	first, _, _ := strings.Cut(o.systemPrompt, "\n")
+	first, _, _ := strings.Cut(prompt, "\n")
 	if p, ok := strings.CutPrefix(strings.TrimSpace(first), "#dump "); ok {
 		p = strings.TrimSpace(p)
 		home := getenv("HOME")

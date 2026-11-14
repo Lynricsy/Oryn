@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,8 @@ type pendingCmd struct {
 	// id 是注入的命令 id；origin 区分客户端命令与自动化投递（Deliver）。
 	id     string
 	origin cmdOrigin
+	// tag 非空时这条消息是带标签的自动化投递，恰好结算一次 TurnEnded（契约 C1）；结算后清空。
+	tag string
 }
 
 // responseHead 是应答中本包关心的字段。
@@ -305,6 +308,9 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	case "exited":
 		t.agentStatus = apigen.AgentStatusExited
 		s.failPendingLocked(t, "agent exited", false)
+		// 进程已退出：仍在跟踪的回合不会再有 prompt_result（规则 6）
+		s.endAllTurnsLocked(t, TurnError, "agent_exited")
+		t.lastYield = nil
 		s.resetLiveLocked(t)
 		s.out().LiveReset(t.id)
 		t.autoActive = false
@@ -366,6 +372,8 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 	s.suspendLiveLocked(t)
 	// 断连期间的帧（含应答、agent_end / session_settled）可能已丢失：等 get_state 重新同步
 	t.unsynced = true
+	// 已下发的带标签消息仍在 agent 里执行：转为等 prompt_result / 重新同步，不按失败结算
+	s.trackLostLocked(t)
 	s.failPendingLocked(t, "agent frames lost while disconnected", false)
 	s.out().LiveReset(t.id)
 	s.recompute(ctx, t)
@@ -432,12 +440,13 @@ func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 		}
 		resp, _ := json.Marshal(map[string]any{"type": "response", "id": id, "command": p.cmdType, "success": false, "error": reason})
 		s.deliver(p, resp)
+		s.failTagged(t.id, p, reason)
 		delete(t.pending, id)
 	}
 	if all {
 		for _, sl := range t.msgOrder {
 			if sl.ready && sl.frame != nil {
-				s.failCmd(sl.p, reason)
+				s.failCmd(t, sl.p, reason)
 			}
 		}
 		t.msgOrder = nil
@@ -561,12 +570,16 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 			cancelHostCallLocked(t, line)
 		}
 	case "session_info_update":
-		if x.Title != nil && *x.Title != "" {
-			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: *x.Title, UpdatedAt: s.now(), ID: t.id}); err == nil && n > 0 {
+		if title := cleanTitle(derefStr(x.Title)); title != "" {
+			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: title, UpdatedAt: s.now(), ID: t.id}); err == nil && n > 0 {
 				s.publish(ctx, t.id)
 			}
-			s.adoptProjectIcon(ctx, t.id, *x.Title)
+			s.adoptProjectIcon(ctx, t.id, title)
 		}
+	case "agent_end":
+		s.onAgentEndLocked(t, line)
+	case "prompt_result":
+		s.onPromptResultLocked(t, line)
 	}
 	s.out().Frame(t.id, frame)
 	if eff.UIResolved != "" {
@@ -655,6 +668,7 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	}
 	s.recompute(ctx, t)
 	s.deliver(p, frame)
+	s.settleResponseLocked(t, p, env, r)
 }
 
 // ---- 命令下发 ----
@@ -671,6 +685,7 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 			delete(t.pending, h.ID)
 			resp, _ := json.Marshal(map[string]any{"type": "response", "id": h.ID, "command": h.Type, "success": false, "error": "agent stream busy"})
 			s.deliver(p, resp)
+			s.failTagged(t.id, p, "agent stream busy")
 		}
 		return
 	}
@@ -769,7 +784,7 @@ func (s *Service) agentWontStart(t *thread, orbState string) bool {
 	return true
 }
 
-func (s *Service) newCmdID() string { return fmt.Sprintf("oryn-%d", s.nextID.Add(1)) }
+func (s *Service) newCmdID() string { return cmdIDPrefix + strconv.FormatUint(s.nextID.Add(1), 10) }
 
 // refreshStateLocked 向 agent 发 get_state 并把结果写入实时缓冲。调用方持有 t.mu。
 func (s *Service) refreshStateLocked(t *thread) {
@@ -793,6 +808,10 @@ func (s *Service) refreshStateLocked(t *thread) {
 				t.settled = *rs.IsSettled
 			}
 			t.unsynced = false
+			if rs.IsStreaming != nil && !*rs.IsStreaming && rs.IsSettled != nil && *rs.IsSettled {
+				// 断连期间回合已结束、帧已丢：仍在跟踪的投递得不到 prompt_result（规则 7）
+				s.endAllTurnsLocked(t, TurnUnknown, "")
+			}
 		}
 		s.syncModelLocked(t, data)
 	}})
@@ -866,13 +885,14 @@ func eqPtr(a, b *string) bool {
 // 不算用户交互：从不唤醒 orb，orb 挂起时直接拒绝（见 passiveLocked）。协调线程只接受白名单内的命令。
 // reply 收到 omp 应答（id 仍为注入值，由调用方换回客户端 id）。
 func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage)) error {
-	_, err := s.command(ctx, threadID, frame, reply, originUser)
+	_, err := s.command(ctx, threadID, frame, reply, originUser, "")
 	return err
 }
 
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
-// （记 agent 活动），唤醒逻辑相同。返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
-func (s *Service) command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage), origin cmdOrigin) (*pendingCmd, error) {
+// （记 agent 活动），唤醒逻辑相同。tag 是带标签投递的标签（只由 Deliver 给出）；帧上的 orynTag 一律删除丢弃。
+// 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
+func (s *Service) command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage), origin cmdOrigin, tag string) (*pendingCmd, error) {
 	route, cmdType := RouteCommand(frame)
 	switch route {
 	case RouteInvalidFrame:
@@ -882,6 +902,8 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 	case RouteUseOrynFork:
 		return nil, errf(RouteUseOrynFork, "use POST /api/v1/threads/{id}/fork")
 	}
+	// 客户端不能伪造投递标签：帧上的 orynTag 删除并丢弃
+	_, frame = takeTag(frame)
 	ids, frame, err := takeAttachments(cmdType, frame)
 	if err != nil {
 		return nil, err
@@ -920,7 +942,7 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		t.mu.Unlock()
 		return nil, err
 	}
-	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin}
+	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin, tag: tag}
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
 		p.leafBefore = copyStr(t.leaf)
 	}
@@ -1135,7 +1157,7 @@ func (s *Service) readyMsgLocked(t *thread, sl *msgSlot, frame []byte, p *pendin
 			continue
 		}
 		if err := s.enqueueLocked(t, head.frame, head.p); err != nil {
-			s.failCmd(head.p, err.Error())
+			s.failCmd(t, head.p, err.Error())
 		}
 	}
 }
@@ -1162,7 +1184,7 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame
 		t.deliveries--
 		t.mu.Unlock()
 		if !fallback {
-			s.failCmd(p, "control plane is shutting down")
+			s.failCmd(t, p, "control plane is shutting down")
 		}
 		return
 	}
@@ -1189,7 +1211,7 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame
 	live := s.threads[t.id] == t
 	s.mu.Unlock()
 	if !live {
-		s.failCmd(p, "thread deleted")
+		s.failCmd(t, p, "thread deleted")
 		return
 	}
 	if reason != "" {
@@ -1197,7 +1219,7 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame
 		s.out().Frame(t.id, notice)
 	}
 	if err != nil && !fallback {
-		s.failCmd(p, reason)
+		s.failCmd(t, p, reason)
 		s.readyMsgLocked(t, sl, nil, nil)
 	} else {
 		s.readyMsgLocked(t, sl, final, p)
@@ -1209,10 +1231,11 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame
 	}
 }
 
-// failCmd 以合成的失败应答结束尚未入队的命令。
-func (s *Service) failCmd(p *pendingCmd, reason string) {
+// failCmd 以合成的失败应答结束尚未入队的命令（带标签时按 error 结算）。
+func (s *Service) failCmd(t *thread, p *pendingCmd, reason string) {
 	resp, _ := json.Marshal(map[string]any{"type": "response", "id": s.newCmdID(), "command": p.cmdType, "success": false, "error": reason})
 	s.deliver(p, resp)
+	s.failTagged(t.id, p, reason)
 }
 
 // deliverAttachments 等 agent 与 orb 就绪后把附件投递到 orb，返回要追加到消息末尾的附件块。

@@ -22,6 +22,9 @@ type Observer interface {
 	Seen(threadID string)
 	// TurnEnded 在一次带标签的自动化投递（AutoMessage.Tag / CreateParams.Tag）得到终态时调用（契约 C1）。
 	TurnEnded(ev TurnEvent)
+	// EntriesAppended 在一批条目（entries.append，含 fork 后补入的暂存文件、reset_done 的改写）提交入库之后调用，
+	// 每批一次（契约 C1.7）。没有标签关联的投递据此重查 RecoveredOutcome。
+	EntriesAppended(threadID string)
 }
 
 // StateEvent 是一次线程状态变化。Reason 只在 State == error 时可能非空（所在 orb 失败的原因）。
@@ -76,6 +79,12 @@ func (l observerList) Seen(threadID string) {
 func (l observerList) TurnEnded(ev TurnEvent) {
 	for _, o := range l {
 		o.TurnEnded(ev)
+	}
+}
+
+func (l observerList) EntriesAppended(threadID string) {
+	for _, o := range l {
+		o.EntriesAppended(threadID)
 	}
 }
 

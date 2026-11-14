@@ -16,6 +16,8 @@ var (
 	createThreadRules = []rule{{10, 10 * time.Minute}, {40, 24 * time.Hour}}
 	sendMessageRules  = []rule{{60, 10 * time.Minute}}
 	reportRules       = []rule{{60, time.Hour}}
+	// setScheduleRules 覆盖协调者的 set_schedule（四种 action）与 orb 内的 schedule.put / delete / enable（契约 C6.2）。
+	setScheduleRules = []rule{{10, 10 * time.Minute}, {40, 24 * time.Hour}}
 )
 
 // limiter 是内存中的滑动窗口计数（控制面重启后清零）。

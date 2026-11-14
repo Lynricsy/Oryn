@@ -95,15 +95,30 @@ type Service struct {
 	lim   *limiter
 
 	ensureMu sync.Mutex
+	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
+	createMu sync.Mutex
+	// repMu 让「登记 + 投递」与回报处理互斥（契约 C3）；锁顺序 repMu → 线程锁。Observer 回调只取 mu。
+	repMu sync.Mutex
 
-	// mu 保护回报事件队列与待答问题摘要（Observer 回调持线程锁调用，只入队）。
-	mu        sync.Mutex
-	events    []threads.StateEvent
+	// mu 保护回报事件队列、事件序号、登记状态与待答问题摘要（Observer 回调持线程锁调用，只入队）。
+	mu     sync.Mutex
+	events []repEvent
+	seq    uint64
+	// armed 是目标线程 → 本进程内写下的登记；登记被消费或替换时更新。
+	armed map[string]armedReport
+	// recheck 是有非 tagged 登记、上次 RecoveredOutcome 为 !ok 的线程：条目入库后重查（契约 C1.7）。
+	recheck   map[string]bool
 	questions map[string]string
 	wake      chan struct{}
 
 	// afterReport（仅测试）在一次回报处理完之后调用。
 	afterReport func(threadID string)
+	// afterSend（仅测试）在 send_message 的 Deliver 成功返回之后、释放 repMu 之前调用。
+	afterSend func()
+	// sentReport（仅测试）在一条回报投递成功之后调用（持 repMu）。
+	sentReport func(reportTo, text string)
+	// afterQuotaCheck（仅测试）在 thread.create 的三项计数之后、Create 之前调用（仍持 createMu）。
+	afterQuotaCheck func()
 }
 
 // New 创建协调服务，并向 orbs 注册 orb 内的七个 ctl 方法。orbs 为 nil 时不注册（单测）。
@@ -113,7 +128,8 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
-		lim: newLimiter(), questions: map[string]string{}, wake: make(chan struct{}, 1),
+		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
+		wake: make(chan struct{}, 1),
 	}
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)

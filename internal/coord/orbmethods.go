@@ -118,6 +118,9 @@ func (s *Service) onThreadCreate(ctx context.Context, orbID string, params json.
 		err = ctlErr("invalid_params", "prompt is required")
 		return nil, err
 	}
+	// 「计数 + Create」持 createMu（契约 C6.1）：并发的 thread.create 不能都通过额度检查
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
 	open, cerr := s.st.Q.CountOpenChildren(ctx, c.ID)
 	if cerr != nil {
 		err = cerr
@@ -140,7 +143,11 @@ func (s *Service) onThreadCreate(ctx context.Context, orbID string, params json.
 		err = ctlErr(CodeRateLimited, "agents created 30 threads in the last hour")
 		return nil, err
 	}
-	cp := threads.CreateParams{Prompt: p.Prompt, ParentThreadID: c.ID}
+	if s.afterQuotaCheck != nil {
+		s.afterQuotaCheck()
+	}
+	// 首条提示词前加来源头行（C9.3），与 thread.send 同形
+	cp := threads.CreateParams{Prompt: threadSourceLine(c.ID) + "\n" + p.Prompt, ParentThreadID: c.ID}
 	if c.ProjectID != nil {
 		cp.ProjectID = *c.ProjectID
 	}
@@ -198,7 +205,7 @@ func (s *Service) onThreadSend(ctx context.Context, orbID string, params json.Ra
 		err = ctlErr("invalid_params", "message is required")
 		return nil, err
 	}
-	text := "[Oryn message from thread " + quote(c.Title) + " (" + c.ID + ") — sent by an agent, not typed by the owner]\n" + p.Message
+	text := threadSourceLine(c.ID) + "\n" + p.Message
 	steer := p.Steer != nil && *p.Steer
 	if _, derr := s.th.Deliver(ctx, p.Target, threads.AutoMessage{Text: text, Steer: steer}, nil); derr != nil {
 		err = asCtlErr(derr)
@@ -274,6 +281,10 @@ func (s *Service) onSchedulePut(ctx context.Context, orbID string, params json.R
 		err = ctlErr(CodeCoordinatorUnavailable, "schedules are not available")
 		return nil, err
 	}
+	if !s.lim.allow(c.ID+"|set_schedule", s.cfg.Now(), setScheduleRules) {
+		err = ctlErr(CodeRateLimited, "schedule changes are limited to 10 per 10 minutes and 40 per 24 hours per thread")
+		return nil, err
+	}
 	in := p.Input
 	if (in.Mode != nil && *in.Mode != apigen.ScheduleModeThread) || in.ProjectID != nil || in.SpaceID != nil || in.Model != nil ||
 		in.ThinkingLevel != nil || in.Provider != nil || in.OrbType != nil || in.Overlap != nil || in.KeepLast != nil {
@@ -309,6 +320,10 @@ func (s *Service) onScheduleDelete(ctx context.Context, orbID string, params jso
 		}
 		s.audit(ctx, string(apigen.ActorKindAgent), c.ID, false, string(apigen.ActionDeleteSchedule), c.ID, id, summary, err)
 	}()
+	if !s.lim.allow(c.ID+"|set_schedule", s.cfg.Now(), setScheduleRules) {
+		err = ctlErr(CodeRateLimited, "schedule changes are limited to 10 per 10 minutes and 40 per 24 hours per thread")
+		return nil, err
+	}
 	if cur, err = s.ownSchedule(ctx, c.ID); err != nil {
 		return nil, err
 	}
@@ -331,6 +346,9 @@ func (s *Service) onScheduleEnable(ctx context.Context, orbID string, params jso
 	c, err := s.caller(ctx, orbID, p.ThreadID)
 	if err != nil {
 		return nil, err
+	}
+	if !s.lim.allow(c.ID+"|set_schedule", s.cfg.Now(), setScheduleRules) {
+		return nil, ctlErr(CodeRateLimited, "schedule changes are limited to 10 per 10 minutes and 40 per 24 hours per thread")
 	}
 	cur, err := s.ownSchedule(ctx, c.ID)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
@@ -77,6 +78,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		return apigen.Thread{}, errf(CodeCoordinatorRestricted, "provider "+orbs.HostProviderName+" is reserved for coordinator conversations")
 	}
 	if p.SpaceID != "" {
+		// 预检在建 orb 之前（不白建 orb）；写引用的事务里再复核一次（契约 C4，见 insertThread）
 		if _, err := s.st.Q.GetSpace(ctx, p.SpaceID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return apigen.Thread{}, errf("space_not_found", "space not found")
@@ -84,11 +86,13 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return apigen.Thread{}, err
 		}
 	}
+	title := cleanTitle(p.Title)
 	explicitProfile := p.BrowserProfileID != nil && *p.BrowserProfileID != ""
 	if p.OrbID != "" && explicitProfile {
 		return apigen.Thread{}, errf("invalid", "browserProfileId cannot be set when attaching to an existing orb")
 	}
 	var orb db.Orb
+	newOrb := false
 	if p.OrbID != "" {
 		o, err := s.st.Q.GetOrb(ctx, p.OrbID)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && (o.DeletedAt != nil || o.State == orbStateDeleted || o.State == "deleting")) {
@@ -119,7 +123,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		if err != nil {
 			return apigen.Thread{}, errf("orb_create_failed", err.Error())
 		}
-		orb = o
+		orb, newOrb = o, true
 	}
 
 	id := ids.Thread()
@@ -139,8 +143,8 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if p.ProjectID != "" {
 		row.ProjectID = &p.ProjectID
 	}
-	if p.Title != "" {
-		row.Title, row.TitleSource = p.Title, "user"
+	if title != "" {
+		row.Title, row.TitleSource = title, "user"
 	}
 	if p.ThinkingLevel != "" {
 		row.ThinkingLevel = &p.ThinkingLevel
@@ -153,11 +157,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		// 随首批命令持久化：重启后仍按「投递后再下发」续作（见 queueStartupFrameLocked）
 		prompt[orynAttachmentsKey] = p.Attachments
 	}
+	if p.Tag != "" {
+		// 投递标签随首批命令持久化，下发前由 queueStartupFrameLocked 取出（契约 C1 规则 1）
+		prompt[orynTagKey] = p.Tag
+	}
 	frame, _ := json.Marshal(prompt)
 	frames := [][]byte{frame}
-	if p.Title != "" {
-		f, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": p.Title})
+	if title != "" {
+		f, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": title})
 		frames = append(frames, f)
+	}
+	if s.afterSpacePrecheck != nil {
+		s.afterSpacePrecheck()
 	}
 	// 首批命令与线程行同一事务落库，应答 201 之前即已持久：重启不会丢掉已受理的提示词（CP5）
 	startup := startupFrames(frames...)
@@ -170,6 +181,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		}
 		return nil
 	}); err != nil {
+		if newOrb {
+			// 线程没能写入（例如 Space 在预检之后被删）：删掉本次新建的 orb，不留孤儿
+			if derr := s.orbs.Delete(context.WithoutCancel(ctx), orb.ID); derr != nil {
+				slog.Warn("threads: 删除建线程失败后的 orb 失败", "orb", orb.ID, "err", derr)
+			}
+		}
 		return apigen.Thread{}, asThreadErr(err)
 	}
 	// 加载线程时按 startup_frames 排队（见 get / queueStartupLocked）
@@ -195,11 +212,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	return out, nil
 }
 
-// insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。
+// insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。工作线程带 Space 时，事务的第一条语句复核
+// Space 仍存在（契约 C4：存储是单连接 + BEGIN IMMEDIATE，事务彼此串行，复核与写引用之间不会插入删除）。
 func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, labels []string, extra func(q *db.Queries) error) error {
 	now := s.now()
 	row.StateChangedAt, row.CreatedAt, row.UpdatedAt = now, now, now
 	return s.st.Tx(ctx, func(q *db.Queries) error {
+		if row.Kind == KindWork && row.SpaceID != nil {
+			if err := checkSpaceTx(ctx, q, *row.SpaceID); err != nil {
+				return err
+			}
+		}
 		if err := q.CreateThread(ctx, row); err != nil {
 			return err
 		}
@@ -362,6 +385,9 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 			newSpace = p.SpaceID
 		}
 	}
+	if s.afterSpacePrecheck != nil {
+		s.afterSpacePrecheck()
+	}
 	t.mu.Lock()
 	row, err := s.st.Q.GetThread(ctx, id)
 	if err != nil {
@@ -374,9 +400,12 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 		SnoozedUntil: row.SnoozedUntil, ArchivedAt: row.ArchivedAt, Unread: row.Unread, UpdatedAt: now,
 	}
 	renamed := ""
-	if p.Title != nil && *p.Title != row.Title {
-		m.Title, m.TitleSource = *p.Title, "user"
-		renamed = *p.Title
+	if p.Title != nil {
+		// 清洗后为空视为没给（C9.4）
+		if title := cleanTitle(*p.Title); title != "" && title != row.Title {
+			m.Title, m.TitleSource = title, "user"
+			renamed = title
+		}
 	}
 	if p.Color != nil {
 		m.Color = nil
@@ -421,6 +450,12 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 			return err
 		}
 		if p.SpaceID != nil {
+			if newSpace != nil {
+				// 预检之后 Space 可能已被删：在写引用的事务里复核（契约 C4），不存在则整个事务回滚
+				if err := checkSpaceTx(ctx, q, *newSpace); err != nil {
+					return err
+				}
+			}
 			if _, err := q.SetThreadSpace(ctx, db.SetThreadSpaceParams{SpaceID: newSpace, UpdatedAt: now, ID: id}); err != nil {
 				return err
 			}
@@ -473,19 +508,20 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if t.kind == KindSpace {
 		return errf("space_thread", "delete the Space instead of its chat thread")
 	}
-	return s.deleteThread(ctx, t)
+	return s.deleteThread(ctx, t, nil)
 }
 
-// DeleteSpaceThread 删除 Space 的聊天线程（只供 internal/coord 删除 Space 时调用）。
-func (s *Service) DeleteSpaceThread(ctx context.Context, id string) error {
+// DeleteSpaceThread 删除 Space 的聊天线程（只供 internal/coord 删除 Space 时调用）。inTx 非 nil 时在删线程行的同一事务里
+// 先执行（清 Space 的引用、删 spaces 行；契约 C4）；耗时的 agent.stop 在事务之前。
+func (s *Service) DeleteSpaceThread(ctx context.Context, id string, inTx func(q *db.Queries) error) error {
 	t, err := s.get(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.deleteThread(ctx, t)
+	return s.deleteThread(ctx, t, inTx)
 }
 
-func (s *Service) deleteThread(ctx context.Context, t *thread) error {
+func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Queries) error) error {
 	id := t.id
 	t.mu.Lock()
 	orbID := t.orbID
@@ -494,6 +530,8 @@ func (s *Service) deleteThread(ctx context.Context, t *thread) error {
 		t.agent = nil
 	}
 	s.failPendingLocked(t, "thread deleted", true)
+	// 仍在跟踪的带标签投递不会再有终态（规则 8）
+	s.endAllTurnsLocked(t, TurnError, "thread_deleted")
 	cancelHostCallsLocked(t)
 	t.queue = nil
 	t.mu.Unlock()
@@ -510,7 +548,17 @@ func (s *Service) deleteThread(ctx context.Context, t *thread) error {
 			slog.Warn("threads: 删除线程附件失败", "thread", id, "err", err)
 		}
 	}
-	n, err := s.st.Q.DeleteThread(ctx, id)
+	var n int64
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if inTx != nil {
+			if err := inTx(q); err != nil {
+				return err
+			}
+		}
+		var err error
+		n, err = q.DeleteThread(ctx, id)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -522,6 +570,39 @@ func (s *Service) deleteThread(ctx context.Context, t *thread) error {
 	s.out().IndexRemove(id)
 	t.mu.Unlock()
 	return nil
+}
+
+// checkSpaceTx 在事务里确认 Space 存在；不存在 → space_not_found。
+func checkSpaceTx(ctx context.Context, q *db.Queries, spaceID string) error {
+	if _, err := q.GetSpace(ctx, spaceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errf("space_not_found", "space not found")
+		}
+		return err
+	}
+	return nil
+}
+
+// maxTitleRunes 是线程标题的上限（C9.4）。
+const maxTitleRunes = 200
+
+// cleanTitle 清洗线程标题（C9.4）：控制字符与 U+2028 / U+2029 换成空格、连续空白折叠、去首尾空白、截到 200 字符。
+// 标题可能来自 agent（session_info_update、会话文件的标题槽、协调者的 create_thread），进其它 agent 的上下文前先清洗。
+func cleanTitle(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, s)
+	return truncText(strings.Join(strings.Fields(s), " "), maxTitleRunes)
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // EntryPage 是条目分页结果（REST `GET threads/{id}/entries`）。

@@ -101,8 +101,8 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 		Kind: p.Kind, ID: id, OrbID: &p.OrbID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
 		ShortCode: shortCode(id),
 	}
-	if p.Title != "" {
-		row.Title, row.TitleSource = p.Title, "user"
+	if title := cleanTitle(p.Title); title != "" {
+		row.Title, row.TitleSource = title, "user"
 	}
 	if p.SpaceID != "" {
 		row.SpaceID = &p.SpaceID
@@ -194,6 +194,7 @@ func (s *Service) Archive(ctx context.Context, id string) error {
 // Deliver 以自动化身份向线程追加一条消息：不清未读、不通知 Seen、不记用户交互（记 agent 活动），需要时唤醒 orb。
 // ack 在 omp 应答该命令时调用一次（nil = 已被 agent 接受）。cancel 在消息仍在控制面排队时撤回它并返回 true
 // （撤回后 ack 不会被调用）。同步错误码：not_found、archived、no_orb、queue_full。
+// m.Tag 非空时，返回 nil 错误的投递恰好得到一次 Observer.TurnEnded（被 cancel 撤回、orynd 重启除外；契约 C1）。
 func (s *Service) Deliver(ctx context.Context, threadID string, m AutoMessage, ack func(err error)) (cancel func() bool, err error) {
 	t, err := s.get(ctx, threadID)
 	if err != nil {
@@ -235,7 +236,7 @@ func (s *Service) Deliver(ctx context.Context, threadID string, m AutoMessage, a
 			}
 		})
 	}
-	p, err := s.command(ctx, threadID, frame, reply, originAuto)
+	p, err := s.command(ctx, threadID, frame, reply, originAuto, m.Tag)
 	if err != nil {
 		return nil, err
 	}

@@ -72,6 +72,7 @@ type stubOrbs struct {
 
 	mu      sync.Mutex
 	creates []OrbCreate
+	deletes []string
 }
 
 func (o *stubOrbs) Wake(_ context.Context, id string) error {
@@ -85,6 +86,13 @@ func (o *stubOrbs) Create(ctx context.Context, p OrbCreate) (db.Orb, error) {
 	o.mu.Unlock()
 	id := mkOrbRow(ctx, o.st, "requested")
 	return o.st.Q.GetOrb(ctx, id)
+}
+
+func (o *stubOrbs) Delete(_ context.Context, id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.deletes = append(o.deletes, id)
+	return nil
 }
 
 type fixture struct {

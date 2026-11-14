@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -34,6 +37,11 @@ func newM9Stack(t *testing.T) (*stack, string) {
 	require.NoError(t, err)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if os.Getuid() == 0 {
+		// C10.1′：root 部署自动创建本实例的专用账号 oryn-coord-<后缀>；每次测试用新的协调目录，结束后删掉账号
+		// （注册在栈的清理之前，因此在协调宿主停掉之后执行）
+		t.Cleanup(func() { _ = exec.Command("userdel", coordhost.AutoUserName(dir)).Run() })
+	}
 	coordhostCommand = []string{filepath.Join(binDir, "orynd"), "coordinator-host"}
 	t.Cleanup(func() { coordhostCommand = nil })
 	no := false
@@ -126,14 +134,24 @@ func useSchedClock(t *testing.T) *schedClock {
 // lastAssistant 返回线程活动分支上最后一条 assistant 文本。
 func lastAssistant(t *testing.T, s *stack, threadID string) string {
 	t.Helper()
+	text, _ := lastAssistantMsg(t, s, threadID)
+	return text
+}
+
+// lastAssistantMsg 返回已入库的最后一条 assistant 文本，以及它是否结束了回合（stopReason 不是 toolUse）。
+// 线程状态走 agent 流、条目走 tailer 复制，两条流互不等待：看到 idle 时最后一条入库的可能仍是回合中间的
+// 「Calling …」，所以等待回合结果时要同时看它是不是结束回合的那条。
+func lastAssistantMsg(t *testing.T, s *stack, threadID string) (string, bool) {
+	t.Helper()
 	rows, err := s.srv.Store.Q.ListEntriesAfter(context.Background(), db.ListEntriesAfterParams{ThreadID: threadID, AfterSeq: 0, Limit: 1000})
 	require.NoError(t, err)
-	out := ""
+	out, final := "", false
 	for _, e := range rows {
 		var p struct {
 			Message *struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
+				Role       string          `json:"role"`
+				Content    json.RawMessage `json:"content"`
+				StopReason string          `json:"stopReason"`
 			} `json:"message"`
 		}
 		if e.Type != "message" || json.Unmarshal(e.Payload, &p) != nil || p.Message == nil || p.Message.Role != "assistant" {
@@ -150,9 +168,10 @@ func lastAssistant(t *testing.T, s *stack, threadID string) string {
 				}
 			}
 			out = strings.Join(parts, "\n")
+			final = p.Message.StopReason != "toolUse"
 		}
 	}
-	return out
+	return out, final
 }
 
 func entriesContain(t *testing.T, s *stack, threadID, needle string) bool {
@@ -179,7 +198,8 @@ func (s *stack) waitEntry(threadID, needle string, timeout time.Duration) {
 	}
 }
 
-// prompt 以主人身份向线程发一条消息（等价于 WS cmd）并等它回到 idle。调用方须保证此时没有别的回合（如回报）在途。
+// prompt 以主人身份向线程发一条消息（等价于 WS cmd）并等它回到 idle、且结束回合的回复已入库。
+// 调用方须保证此时没有别的回合（如回报）在途。
 func (s *stack) prompt(threadID, text string) {
 	s.t.Helper()
 	frame, _ := json.Marshal(map[string]string{"type": "prompt", "message": text})
@@ -189,7 +209,7 @@ func (s *stack) prompt(threadID, text string) {
 	for {
 		var v threadView
 		s.rest("GET", "/api/v1/threads/"+threadID, nil, &v, 200)
-		if v.State == threads.StateIdle && lastAssistant(s.t, s, threadID) != before {
+		if reply, final := lastAssistantMsg(s.t, s, threadID); v.State == threads.StateIdle && final && reply != before {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -197,6 +217,18 @@ func (s *stack) prompt(threadID, text string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// settledReply 等线程 idle、且结束回合的那条 assistant 回复已入库，返回它的文本。
+func (s *stack) settledReply(threadID string) string {
+	s.t.Helper()
+	var reply string
+	s.waitThread(threadID, 60*time.Second, func(v threadView) bool {
+		text, final := lastAssistantMsg(s.t, s, threadID)
+		reply = text
+		return v.State == threads.StateIdle && final
+	})
+	return reply
 }
 
 func (s *stack) idle(threadID string) threadView {
@@ -284,7 +316,12 @@ func TestE2EM9Coordinator(t *testing.T) {
 	assert.Contains(t, probe.EnvKeys, "ORYN_THREAD_ID")
 	assert.Contains(t, probe.EnvKeys, "PI_FILE_LOCK_BACKEND", "omp 的原生文件锁走旁路文件（沙箱禁止 AF_UNIX socket）")
 	if os.Getuid() == 0 {
-		assert.Equal(t, 65534, probe.UID, "root 部署时协调宿主降权到 nobody")
+		// C10.1′：root 部署时协调宿主降权到本实例的专用账号（不再与 nobody 共用身份）
+		acct, err := user.Lookup(coordhost.AutoUserName(coordDir))
+		require.NoError(t, err)
+		assert.Equal(t, acct.Uid, strconv.Itoa(probe.UID))
+		assert.NotEqual(t, 65534, probe.UID)
+		assert.NotZero(t, probe.UID)
 	}
 
 	// 沙箱：读密钥文件、执行 shell、连控制面、连 unix socket 全部失败；home 内写入成功（对照）
@@ -315,7 +352,7 @@ func TestE2EM9Coordinator(t *testing.T) {
 		"probe exec /bin/sh",
 		"probe tcp " + ctlAddr,
 		"probe unix " + sockPath,
-		"probe write " + filepath.Join(coordDir, "home", "probe.txt"),
+		"probe write " + filepath.Join(coordDir, "homes", chat.OrbID, "probe.txt"),
 	}, "\n"))
 	lines := strings.Split(lastAssistant(t, s, sp.ThreadID), "\n")
 	require.Len(t, lines, 5, lines)
@@ -339,7 +376,27 @@ func TestE2EM9Coordinator(t *testing.T) {
 	require.NotNil(t, child.ProjectID)
 	assert.Equal(t, prj.ID, *child.ProjectID)
 	s.idle(child.ID)
-	s.waitEntry(sp.ThreadID, "[Oryn thread report · automatic] "+child.ID, 60*time.Second)
+	// M3：首条提示词带来源头行；C9.2：回报首行只有 id 与状态
+	s.waitEntry(child.ID, `[Oryn message from Space \"Alpha\" (`+sp.ThreadID+`) — sent by an agent, not typed by the owner]\nhi`, 60*time.Second)
+	s.waitEntry(sp.ThreadID, "[Oryn thread report · automatic] "+child.ID+" is now idle.", 60*time.Second)
+	s.idle(sp.ThreadID)
+
+	// F3 / F5：子线程的回合以 provider 错误结束（fakeomp:error）→ 回报首行是 error，正文带 provider 的错误文本。
+	// 子线程失败得很快：回报的回合可能在 prompt 返回前就已跑完，最后一条回复未必是宿主工具的结果，按条目断言
+	s.prompt(sp.ThreadID, `hosttool create_thread {"prompt":"fakeomp:error"}`)
+	assert.True(t, entriesContain(t, s, sp.ThreadID, "host:create_thread:ok:"))
+	var failed string
+	s.rest("GET", "/api/v1/threads?space="+sp.ID, nil, &list, 200)
+	for _, th := range list.Threads {
+		if th.ID != child.ID {
+			failed = th.ID
+		}
+	}
+	require.NotEmpty(t, failed)
+	s.waitEntry(sp.ThreadID, "[Oryn thread report · automatic] "+failed+" is now error.", 60*time.Second)
+	assert.True(t, entriesContain(t, s, sp.ThreadID, `fakeomp: provider request failed`), "回报正文带 provider 的错误文本")
+	_, err = s.srv.Store.Q.GetThreadReport(context.Background(), failed)
+	assert.Error(t, err, "登记被消费")
 	s.idle(sp.ThreadID)
 
 	// 无闸门：对 Space 外的线程 send_message 照样成功，目标收到带来源头行的消息，space_id 不变
@@ -368,7 +425,7 @@ func TestE2EM9Coordinator(t *testing.T) {
 	// 审计
 	var acts apigen.AutomationActionList
 	s.rest("GET", "/api/v1/automation/actions?thread="+sp.ThreadID, nil, &acts, 200)
-	require.Len(t, acts.Actions, 3)
+	require.Len(t, acts.Actions, 4, "create_thread ×2、send_message 成功与失败各一")
 	byAction := map[string]apigen.AutomationAction{}
 	for _, a := range acts.Actions {
 		byAction[string(a.Action)+"/"+map[bool]string{true: "ok", false: "fail"}[a.Ok]] = a
@@ -390,7 +447,7 @@ func TestE2EM9Coordinator(t *testing.T) {
 	var prog apigen.SpaceProgress
 	s.rest("GET", "/api/v1/spaces/"+sp.ID+"/progress?days=7", nil, &prog, 200)
 	require.Len(t, prog.Days, 7)
-	assert.Equal(t, 1, prog.Days[6].Open)
+	assert.Equal(t, 2, prog.Days[6].Open, "两个子线程（成功的与失败的）都未归档")
 	s.rest("DELETE", "/api/v1/threads/"+sp.ThreadID, nil, nil, 409)
 	s.rest("DELETE", "/api/v1/spaces/"+sp.ID, nil, nil, 204)
 	s.rest("GET", "/api/v1/threads/"+child.ID, nil, &got, 200)
@@ -471,8 +528,8 @@ func TestE2EM9AssistantScheduledArchive(t *testing.T) {
 		require.NoError(t, err)
 		return row.ArchivedAt != nil
 	})
-	s.idle(asst.Thread.ID)
-	assert.True(t, strings.HasPrefix(lastAssistant(t, s, asst.Thread.ID), "host:archive_thread:ok:"), lastAssistant(t, s, asst.Thread.ID))
+	reply := s.settledReply(asst.Thread.ID)
+	assert.True(t, strings.HasPrefix(reply, "host:archive_thread:ok:"), reply)
 
 	var acts apigen.AutomationActionList
 	s.rest("GET", "/api/v1/automation/actions?thread="+target.Thread.ID, nil, &acts, 200)

@@ -122,9 +122,14 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 	if !ok {
 		return
 	}
-	p := &pendingCmd{cmdType: typ}
+	// Create 把投递标签放在持久化帧的 orynTag 上（契约 C1 规则 1）：取出交给未决命令，omp 看不到它；
+	// 「未送达」重排时从原帧 f 再取一次，交给新的未决命令。
+	tag, frame := takeTag(f)
+	p := &pendingCmd{cmdType: typ, tag: tag}
 	p.after = func(t *thread, env omprpc.Envelope, _ json.RawMessage) {
 		if undelivered(env) {
+			// 标签随原帧转给重排的命令：这一条不结算
+			p.tag = ""
 			s.queueStartupFrameLocked(t, f, true)
 			return
 		}
@@ -137,7 +142,7 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 	}
 	// 带附件的首条提示词（Create 持久化时保留了 orynAttachments）：等 orb 与 agent 就绪、投递后再入队；
 	// 「未送达」重排时回到这里重新投递（orbd 侧幂等，已在的附件不重传）。
-	if ids, rest, err := takeAttachments(typ, f); err == nil && len(ids) > 0 {
+	if ids, rest, err := takeAttachments(typ, frame); err == nil && len(ids) > 0 {
 		// 首条提示词在队首占位、不受队列上限约束，这里不会失败；保险起见仍记录。
 		if err := s.startDeliveryLocked(t, rest, ids, p, true, s.cfg.ProvisionTimeout); err != nil {
 			slog.Warn("threads: 首条提示词附件投递未能开始", "thread", t.id, "err", err)
@@ -146,7 +151,7 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 	}
 	// 每次排队用新 id：frame 本身不带 id（SetID 只作用于副本）
 	if hold {
-		line, err := omprpc.SetID(append([]byte(nil), f...), s.newCmdID())
+		line, err := omprpc.SetID(append([]byte(nil), frame...), s.newCmdID())
 		if err != nil {
 			return
 		}
@@ -156,7 +161,7 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 		t.queue = append([][]byte{line}, t.queue...)
 		return
 	}
-	if err := s.enqueueLocked(t, append([]byte(nil), f...), p); err != nil {
+	if err := s.enqueueLocked(t, append([]byte(nil), frame...), p); err != nil {
 		slog.Warn("threads: 首批命令排队失败", "thread", t.id, "err", err)
 	}
 }

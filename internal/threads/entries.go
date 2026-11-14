@@ -182,8 +182,8 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			if !main {
 				continue
 			}
-			if pe.Title != "" {
-				n, err := q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: pe.Title, UpdatedAt: now, ID: t.id})
+			if title := cleanTitle(pe.Title); title != "" {
+				n, err := q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: title, UpdatedAt: now, ID: t.id})
 				if err != nil {
 					return err
 				}
@@ -258,6 +258,9 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 		s.publish(ctx, t.id)
 	}
 	s.recompute(ctx, t)
+	if len(entries) > 0 {
+		s.observer().EntriesAppended(t.id)
+	}
 	return apigen.LinkCtlEntriesAppendResult{Accepted: true, Offset: p.EndOffset}, nil
 }
 
@@ -298,7 +301,9 @@ func (s *Service) onResetDone(ctx context.Context, orbID string, params json.Raw
 	delete(t.resetting, p.File)
 	if err := s.rewriteTranscriptLocked(ctx, t, p.File, false); err != nil {
 		slog.Warn("threads: entries.reset_done 失败", "thread", t.id, "file", p.File, "err", err)
+		return
 	}
+	s.observer().EntriesAppended(t.id)
 }
 
 // rewriteTranscriptLocked 删除文件中仍为 stale 的条目（mark 为真时先把它的全部条目标为 stale，即整体移除），

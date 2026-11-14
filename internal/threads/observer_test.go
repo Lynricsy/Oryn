@@ -20,12 +20,17 @@ type recObserver struct {
 	inputs   []InputEvent
 	resolved []string
 	seen     []string
+	turns    []TurnEvent
+	appended []string
+	// order 按到达顺序记录 state:<prev>→<state> / turn:<tag>:<status> / entries:<thread>。
+	order []string
 }
 
 func (r *recObserver) StateChanged(ev StateEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.states = append(r.states, ev)
+	r.order = append(r.order, "state:"+ev.Prev+"→"+ev.State)
 }
 
 func (r *recObserver) InputRequested(ev InputEvent) {
@@ -46,13 +51,26 @@ func (r *recObserver) Seen(id string) {
 	r.seen = append(r.seen, id)
 }
 
-func (r *recObserver) TurnEnded(TurnEvent) {}
+func (r *recObserver) TurnEnded(ev TurnEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.turns = append(r.turns, ev)
+	r.order = append(r.order, "turn:"+ev.Tag+":"+ev.Status)
+}
+
+func (r *recObserver) EntriesAppended(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appended = append(r.appended, id)
+	r.order = append(r.order, "entries:"+id)
+}
 
 func (r *recObserver) snapshot() recObserver {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return recObserver{states: append([]StateEvent(nil), r.states...), inputs: append([]InputEvent(nil), r.inputs...),
-		resolved: append([]string(nil), r.resolved...), seen: append([]string(nil), r.seen...)}
+		resolved: append([]string(nil), r.resolved...), seen: append([]string(nil), r.seen...),
+		turns: append([]TurnEvent(nil), r.turns...), appended: append([]string(nil), r.appended...), order: append([]string(nil), r.order...)}
 }
 
 func (f *fixture) frame(th *thread, s string) {

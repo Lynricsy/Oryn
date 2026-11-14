@@ -195,7 +195,9 @@ func (s *Service) UpdateSpace(ctx context.Context, id string, p apigen.SpacePatc
 	return s.GetSpace(ctx, id)
 }
 
-// DeleteSpace 删 Space：先把挂在它上面的「新建线程」定时与工作线程移出，再删聊天线程（spaces 行随之级联删除）。
+// DeleteSpace 删 Space（契约 C4）：耗时的 agent.stop 在事务之前；随后在删聊天线程行的同一事务里依次记下 Space 内的
+// 工作线程、把挂在它上面的「新建线程」定时与工作线程移出、删 spaces 行。与「复核 Space + 写引用」的事务串行，
+// 不会留下指向已删 Space 的引用。提交后推送被移出线程的 index。
 func (s *Service) DeleteSpace(ctx context.Context, id string) error {
 	cur, err := s.st.Q.GetSpace(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -204,27 +206,37 @@ func (s *Service) DeleteSpace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.st.Q.ClearSpaceSchedules(ctx, &id); err != nil {
+	var moved []string
+	inTx := func(q *db.Queries) error {
+		moved = moved[:0]
+		rows, err := q.ListThreads(ctx, db.ListThreadsParams{SpaceID: &id})
+		if err != nil {
+			return err
+		}
+		for _, t := range rows {
+			if t.Kind == threads.KindWork {
+				moved = append(moved, t.ID)
+			}
+		}
+		if err := q.ClearSpaceSchedules(ctx, &id); err != nil {
+			return err
+		}
+		if err := q.ClearSpaceThreads(ctx, id); err != nil {
+			return err
+		}
+		_, err = q.DeleteSpace(ctx, id)
 		return err
 	}
-	// 移出的线程要推送新的 index（spaceId 消失）
-	moved, err := s.st.Q.ListThreads(ctx, db.ListThreadsParams{SpaceID: &id})
+	err = s.th.DeleteSpaceThread(ctx, cur.ThreadID, inTx)
+	if errors.Is(err, threads.ErrNotFound) {
+		// 聊天线程已不存在：同一段单独成一个事务
+		err = s.st.Tx(ctx, inTx)
+	}
 	if err != nil {
 		return err
 	}
-	if err := s.st.Q.ClearSpaceThreads(ctx, id); err != nil {
-		return err
-	}
-	for _, t := range moved {
-		if t.Kind == threads.KindWork {
-			s.th.Publish(ctx, t.ID)
-		}
-	}
-	if err := s.th.DeleteSpaceThread(ctx, cur.ThreadID); err != nil && !errors.Is(err, threads.ErrNotFound) {
-		return err
-	}
-	if _, err := s.st.Q.DeleteSpace(ctx, id); err != nil {
-		return err
+	for _, tid := range moved {
+		s.th.Publish(ctx, tid)
 	}
 	return nil
 }

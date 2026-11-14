@@ -72,6 +72,35 @@ type Orbs struct {
 	starts map[string][]apigen.LinkCtlAgentStartParams
 	// deletes 记录 Delete 调用的 orb（按调用顺序）。
 	deletes []string
+	// gates 让 fake orbd 收到某个 ctl 方法时先阻塞（GateCall）。
+	gates map[string]*callGate
+}
+
+// callGate 是一个 ctl 方法的闸门：请求到达时关闭 arrived，等 release 关闭后才处理。
+type callGate struct {
+	arrived chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+// GateCall 让 fake orbd 下一次（及之后每次）收到 method 时阻塞到 release 被调用；arrived 在第一次到达时关闭。
+// release 之后闸门移除。
+func (o *Orbs) GateCall(method string) (arrived <-chan struct{}, release func()) {
+	g := &callGate{arrived: make(chan struct{}), release: make(chan struct{})}
+	o.mu.Lock()
+	if o.gates == nil {
+		o.gates = map[string]*callGate{}
+	}
+	o.gates[method] = g
+	o.mu.Unlock()
+	return g.arrived, func() {
+		o.mu.Lock()
+		if o.gates[method] == g {
+			delete(o.gates, method)
+		}
+		o.mu.Unlock()
+		close(g.release)
+	}
 }
 
 type serverLink struct {
@@ -574,7 +603,16 @@ func (d *Orbd) resolve(p string) string {
 func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	d.o.mu.Lock()
 	d.o.calls = append(d.o.calls, method)
+	g := d.o.gates[method]
 	d.o.mu.Unlock()
+	if g != nil {
+		g.once.Do(func() { close(g.arrived) })
+		select {
+		case <-g.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	switch method {
 	case "agent.start":
 		var p apigen.LinkCtlAgentStartParams

@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/stats"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -23,8 +26,9 @@ type toolCtx struct {
 
 func (c toolCtx) inSpace() bool { return c.space != nil }
 
-// HostToolCall 实现 threads.Coordinator：执行宿主工具。结果的 Text 是紧凑 JSON（read_thread 另加不可信包裹），
-// Details 是同一对象；失败时 IsError、Text 以错误码开头。
+// HostToolCall 实现 threads.Coordinator：执行宿主工具。结果的 Text 是紧凑 JSON；read_thread / list_threads /
+// list_schedules / get_stats 的结果含线程标题、定时名称等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
+// 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
 	if c.Kind == threads.KindSpace && c.SpaceID != "" {
@@ -60,6 +64,10 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	}
 	if err != nil {
 		return failResult(err)
+	}
+	switch c.Name {
+	case ToolListThreads, ToolListSchedules, ToolGetStats:
+		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
 	return threads.HostToolResult{Text: jsonText(v), Details: v}
 }
@@ -234,7 +242,7 @@ func (s *Service) toolReadThread(ctx context.Context, c toolCtx) threads.HostToo
 		"thread":   map[string]any{"id": t.ID, "title": t.Title, "state": t.State},
 		"messages": msgs,
 	}
-	return threads.HostToolResult{Text: wrapUntrusted(t.ID, jsonText(v)), Details: v}
+	return threads.HostToolResult{Text: wrapUntrusted(t.ID, v), Details: v}
 }
 
 // ---- create_thread ----
@@ -262,7 +270,8 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 		err = errf(CodeInvalid, "prompt is required")
 		return nil, err
 	}
-	p := threads.CreateParams{Prompt: a.Prompt, Title: a.Title, ThinkingLevel: a.ThinkingLevel, Type: a.OrbType, ParentThreadID: c.ThreadID}
+	// 首条提示词前加来源头行（C9.3），与 send_message 同形
+	p := threads.CreateParams{Prompt: s.sourceLine(c) + "\n" + a.Prompt, Title: a.Title, ThinkingLevel: a.ThinkingLevel, Type: a.OrbType, ParentThreadID: c.ThreadID}
 	if a.Model != "" {
 		m, ok := parseModelRef(a.Model)
 		if !ok {
@@ -292,12 +301,23 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 		err = errf(CodeRateLimited, "create_thread limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
 		return nil, err
 	}
+	// 「建线程 + 登记」持 repMu（契约 C3）：首条提示词带登记代号作标签，回报处理看到的必然是写好的登记
+	s.repMu.Lock()
+	defer s.repMu.Unlock()
+	seq0 := s.curSeq()
+	gen := ids.New("rep")
+	p.Tag = gen
+	requestedAt := s.nowMs() // 写在投递之前：重启后按它在转录里找本次投递的锚点（C1.6）
 	var t apigen.Thread
 	if t, err = s.th.Create(ctx, p); err != nil {
 		return nil, err
 	}
 	newID = t.ID
-	s.requestReport(ctx, t.ID, c.ThreadID)
+	if uerr := s.st.Q.UpsertThreadReport(ctx, db.UpsertThreadReportParams{ThreadID: t.ID, ReportTo: c.ThreadID, RequestedAt: requestedAt, Gen: gen}); uerr != nil {
+		slog.Warn("coord: 登记回报失败", "thread", t.ID, "reportTo", c.ThreadID, "err", uerr)
+	} else {
+		s.setArmed(t.ID, armedReport{gen: gen, seq: seq0})
+	}
 	return map[string]any{
 		"threadId": t.ID, "title": t.Title, "project": projectName, "url": s.threadURL(t.ID), "threadIds": []string{t.ID},
 	}, nil
@@ -311,19 +331,37 @@ type sendMessageArgs struct {
 	Steer    bool   `json:"steer"`
 }
 
-// sourceLine 是协调者发出的消息的来源头行。
-func (s *Service) sourceLine(ctx context.Context, c toolCtx) string {
+// sourceLine 是协调者发出的消息（send_message、create_thread 的首条提示词）的来源头行（C9.3）：Space 用其名称
+// （经 label 清洗）；助手的名称恒为空串——标题由 agent 控制，不进头行（Web 按 id 取当前标题）。
+func (s *Service) sourceLine(c toolCtx) string {
 	if c.inSpace() {
-		return "[Oryn message from Space " + quote(c.space.Name) + " (" + c.ThreadID + ") — sent by an agent, not typed by the owner]"
+		return "[Oryn message from Space \"" + label(c.space.Name) + "\" (" + c.ThreadID + ") — sent by an agent, not typed by the owner]"
 	}
-	title := ""
-	if t, err := s.st.Q.GetThread(ctx, c.ThreadID); err == nil {
-		title = t.Title
-	}
-	return "[Oryn message from assistant " + quote(title) + " (" + c.ThreadID + ") — sent by an agent, not typed by the owner]"
+	return "[Oryn message from assistant \"\" (" + c.ThreadID + ") — sent by an agent, not typed by the owner]"
 }
 
-func quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "'") + "\"" }
+// threadSourceLine 是 orb 内 agent 发出的消息（thread.send、thread.create 的首条提示词）的来源头行。
+func threadSourceLine(callerID string) string {
+	return "[Oryn message from thread \"\" (" + callerID + ") — sent by an agent, not typed by the owner]"
+}
+
+// label 清洗进头行的名称（C9.3）：控制字符与换行换成空格、`"` 换成 `'`、`[` `]` 换成 `(` `)`、截到 100 字符。
+func label(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029':
+			return ' '
+		case r == '"':
+			return '\''
+		case r == '[':
+			return '('
+		case r == ']':
+			return ')'
+		}
+		return r
+	}, s)
+	return truncRunes(s, 100)
+}
 
 func (s *Service) toolSendMessage(ctx context.Context, c toolCtx) (any, error) {
 	var a sendMessageArgs
@@ -345,11 +383,33 @@ func (s *Service) toolSendMessage(ctx context.Context, c toolCtx) (any, error) {
 		err = errf(CodeRateLimited, "send_message limit reached (60 per 10 minutes per conversation)")
 		return nil, err
 	}
-	text := s.sourceLine(ctx, c) + "\n" + a.Message
-	if _, err = s.th.Deliver(ctx, a.ThreadID, threads.AutoMessage{Text: text, Steer: a.Steer}, nil); err != nil {
+	// 「登记 + 投递」持 repMu（契约 C3）：登记写在投递之前，代号同时是投递标签；投递失败时恢复上一份登记
+	s.repMu.Lock()
+	defer s.repMu.Unlock()
+	seq0 := s.curSeq()
+	prev, perr := s.st.Q.GetThreadReport(ctx, a.ThreadID)
+	hasPrev := perr == nil
+	gen, err := s.arm(ctx, a.ThreadID, c.ThreadID, s.nowMs())
+	if err != nil {
 		return nil, err
 	}
-	s.requestReport(ctx, a.ThreadID, c.ThreadID)
+	text := s.sourceLine(c) + "\n" + a.Message
+	if _, err = s.th.Deliver(ctx, a.ThreadID, threads.AutoMessage{Text: text, Steer: a.Steer, Tag: gen}, nil); err != nil {
+		if hasPrev {
+			if rerr := s.st.Q.UpsertThreadReport(context.WithoutCancel(ctx), db.UpsertThreadReportParams{
+				ThreadID: prev.ThreadID, ReportTo: prev.ReportTo, RequestedAt: prev.RequestedAt, Gen: prev.Gen,
+			}); rerr != nil {
+				slog.Warn("coord: 恢复回报登记失败", "thread", a.ThreadID, "err", rerr)
+			}
+		} else if _, derr := s.st.Q.DeleteThreadReportGen(context.WithoutCancel(ctx), db.DeleteThreadReportGenParams{ThreadID: a.ThreadID, Gen: gen}); derr != nil {
+			slog.Warn("coord: 撤回回报登记失败", "thread", a.ThreadID, "err", derr)
+		}
+		return nil, err
+	}
+	s.setArmed(a.ThreadID, armedReport{gen: gen, seq: seq0})
+	if s.afterSend != nil {
+		s.afterSend()
+	}
 	return map[string]any{"ok": true, "threadIds": []string{a.ThreadID}}, nil
 }
 
@@ -452,6 +512,10 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 	}
 	if s.sched == nil {
 		err = errf(CodeCoordinatorUnavailable, "schedules are not available")
+		return nil, err
+	}
+	if !s.lim.allow(c.ThreadID+"|set_schedule", s.cfg.Now(), setScheduleRules) {
+		err = errf(CodeRateLimited, "set_schedule limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
 		return nil, err
 	}
 	// thread 模式的目标：缺省 = 本对话；给了别的线程则必须是工作线程

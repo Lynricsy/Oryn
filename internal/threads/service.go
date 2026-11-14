@@ -124,6 +124,8 @@ type Service struct {
 
 	// afterIngestCommit（仅测试）在条目入库事务提交后、内存状态更新前调用。
 	afterIngestCommit func()
+	// afterSpacePrecheck（仅测试）在 Create / Patch 的 Space 预检之后、写引用的事务之前调用（契约 C4）。
+	afterSpacePrecheck func()
 }
 
 // orbCache 是 orb 状态缓存；seq 为得出该状态的 orb_events.id，用于丢弃乱序到达的过时事件（CP9）。
@@ -212,6 +214,10 @@ func (s *Service) SetAttachments(a Attachments) { s.attach = a }
 
 // SetProfiles 设置浏览器 Profile 服务（M8）；须在 API 对外服务之前调用。未设置时建线程不能指定 Profile。
 func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
+
+// SetAfterSpacePrecheck 设置 Create / Patch 在 Space 预检之后、写引用的事务之前调用的钩子（仅测试：其它包的回归测试
+// 在这里同步执行完整的 DeleteSpace，契约 C4）。须在服务对外可用之前调用。
+func (s *Service) SetAfterSpacePrecheck(fn func()) { s.afterSpacePrecheck = fn }
 
 func (s *Service) out() Sink { return s.sink.Load().Sink }
 
@@ -303,6 +309,11 @@ type thread struct {
 	refresh bool
 	// stopping 为真表示控制面主动发了 agent.stop：随后的 exited 不算重启耗尽。
 	stopping bool
+	// turns 是已获成功应答、等 prompt_result 的 prompt / abort_and_prompt（含无标签的，按应答顺序，至多 64 项）；
+	// steers 是已获成功应答的带标签 steer（等下一个终态 agent_end）；lastYield 是最近一次 yield 的结局（契约 C1）。
+	turns     []turnRef
+	steers    []string
+	lastYield *yieldInfo
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
@@ -499,6 +510,8 @@ func (s *Service) recompute(ctx context.Context, t *thread) bool {
 	ev := StateEvent{ThreadID: t.id, Prev: prev, State: st, Focused: focused}
 	if st == StateError {
 		ev.Reason = s.errorReason(ctx, t)
+		// 原因只是 prompt_result 报错：线程未失败、orb 不是 failed、agent 重启未耗尽（契约 C1）
+		ev.PromptError = !t.failed && s.orbState(t.orbID) != orbStateFailed && !t.live.restartExhausted
 	}
 	s.observer().StateChanged(ev)
 	s.publish(ctx, t.id)
