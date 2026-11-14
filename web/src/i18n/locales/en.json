@@ -1309,6 +1309,7 @@
 	"actionError": {
 		"failed": "Couldn't {{step}}: {{reason}}",
 		"detail": "Details",
+		"retry": "Retry",
 		"step": {
 			"shareLoad": "load this share",
 			"pushEnable": "turn on push",
@@ -1316,7 +1317,8 @@
 			"pushList": "load subscribed browsers",
 			"pushRemove": "remove the subscription",
 			"channelSave": "save the channel",
-			"channelTest": "send the test message"
+			"channelTest": "send the test message",
+			"meLoad": "load your account"
 		},
 		"reason": {
 			"offline": "can't reach the Oryn server",

@@ -1309,6 +1309,7 @@
 	"actionError": {
 		"failed": "{{step}}失败：{{reason}}",
 		"detail": "详细信息",
+		"retry": "重试",
 		"step": {
 			"shareLoad": "读取分享",
 			"pushEnable": "开启推送",
@@ -1316,7 +1317,8 @@
 			"pushList": "读取已订阅的浏览器",
 			"pushRemove": "移除订阅",
 			"channelSave": "保存渠道",
-			"channelTest": "发送测试消息"
+			"channelTest": "发送测试消息",
+			"meLoad": "读取登录信息"
 		},
 		"reason": {
 			"offline": "连不上 Oryn 服务器",

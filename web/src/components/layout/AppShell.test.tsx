@@ -10,8 +10,8 @@ import {
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
-import { qk } from "../../api/queries";
-import { host } from "../../lib/host";
+import { qk, useMe } from "../../api/queries";
+import { createHost, host } from "../../lib/host";
 import { indexStore } from "../../state/stores";
 import { SIDEBAR_COLLAPSED_KEY, uiStore } from "../../state/ui";
 import { ThreadHeader } from "../thread/ThreadHeader";
@@ -118,7 +118,13 @@ describe("侧栏收起（expanded）", () => {
 
 function Where() {
 	const loc = useLocation();
-	return <p data-testid="where">{loc.pathname}</p>;
+	// me 查询状态：TanStack 的通知经 setTimeout 派发，测试等它变化来确认壳已随查询结果重新渲染
+	const me = useMe();
+	return (
+		<p data-testid="where" data-me={me.status}>
+			{loc.pathname}
+		</p>
+	);
 }
 
 describe("桌面壳里（M6）", () => {
@@ -130,10 +136,17 @@ describe("桌面壳里（M6）", () => {
 	afterEach(() => {
 		h.kind = "web";
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
-	/** 不预置 me，由测试决定 `/api/v1/me` 的应答。 */
-	function mount(me: Response | null) {
+	/**
+	 * `me` 为 null：预置身份、不拦 `/api/v1/me`；否则由 `me()` 决定每次 `/api/v1/me` 的应答（抛错 = fetch 拒绝），
+	 * `cached` 时另外预置身份（模拟后台重取）。
+	 */
+	function mount(
+		me: (() => Response | Promise<Response>) | null,
+		{ cached = false }: { cached?: boolean } = {},
+	) {
 		if (me) {
 			const base = fetch as unknown as (
 				input: RequestInfo | URL,
@@ -145,7 +158,7 @@ describe("桌面壳里（M6）", () => {
 						input instanceof Request ? input.url : String(input),
 						"http://x",
 					);
-					if (url.pathname === "/api/v1/me") return me.clone();
+					if (url.pathname === "/api/v1/me") return me();
 					return base(input);
 				}),
 			);
@@ -153,13 +166,13 @@ describe("桌面壳里（M6）", () => {
 		const qc = new QueryClient({
 			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 		});
-		if (!me)
+		if (!me || cached)
 			qc.setQueryData(qk.me, {
 				displayName: "Ada",
 				createdAt: 1,
 				auth: { kind: "web", deviceId: "dev_1" },
 			});
-		return render(
+		const view = render(
 			<QueryClientProvider client={qc}>
 				<MemoryRouter initialEntries={["/t/T-1?tab=files"]}>
 					<Routes>
@@ -171,21 +184,111 @@ describe("桌面壳里（M6）", () => {
 				</MemoryRouter>
 			</QueryClientProvider>,
 		);
+		return { ...view, qc };
 	}
 
-	it("me 401：交给 host.reauth（带当前路径），不去 /login", async () => {
-		const reauth = vi.spyOn(host, "reauth").mockImplementation(() => {});
-		vi.spyOn(host, "ready").mockResolvedValue(null);
-		mount(
-			Response.json(
-				{ code: "unauthorized", message: "no session" },
-				{ status: 401 },
-			),
+	/** 壳里的真实 reauth（含每页一次的去重），invoke 记录发给壳的命令。 */
+	function shellReauth() {
+		const invoke = vi.fn(async () => undefined);
+		const doc = Object.assign(new EventTarget(), {
+			visibilityState: "visible",
+		});
+		const shell = createHost(
+			Object.assign(new EventTarget(), {
+				document: doc,
+				__ORYN_HOST__: { kind: "tauri", platform: "linux", bridge: 1 },
+				__TAURI__: { core: { invoke } },
+			}) as unknown as Window,
 		);
-		await waitFor(() => expect(reauth).toHaveBeenCalled());
+		const reauth = vi
+			.spyOn(host, "reauth")
+			.mockImplementation((p) => shell.reauth(p));
+		const sent = () =>
+			invoke.mock.calls.filter((c: unknown[]) => c[0] === "host_reauth");
+		return { reauth, sent };
+	}
+
+	const unauthorized = () =>
+		Response.json(
+			{ code: "unauthorized", message: "no session" },
+			{ status: 401 },
+		);
+
+	it("me 401：交给 host.reauth（带当前路径），不去 /login；多个入口报上来也只向壳发一次", async () => {
+		const { reauth, sent } = shellReauth();
+		vi.spyOn(host, "ready").mockResolvedValue(null);
+		mount(unauthorized);
+		await waitFor(() => expect(sent()).toHaveLength(1));
 		expect(reauth).toHaveBeenCalledWith("/t/T-1?tab=files");
+		expect(sent()).toEqual([["host_reauth", { path: "/t/T-1?tab=files" }]]);
 		expect(screen.queryByText("LOGIN")).toBeNull();
 		expect(screen.getByRole("status")).toBeInTheDocument();
+	});
+
+	it("me 500：不 reauth，显示服务器出错与重试；重试成功后进入界面", async () => {
+		const reauth = vi.spyOn(host, "reauth").mockImplementation(() => {});
+		vi.spyOn(host, "ready").mockResolvedValue(null);
+		let reply: () => Response = () =>
+			Response.json({ code: "internal", message: "boom" }, { status: 500 });
+		mount(() => reply());
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("读取登录信息失败：服务器出错");
+		expect(reauth).not.toHaveBeenCalled();
+		expect(screen.queryByText("LOGIN")).toBeNull();
+		reply = () =>
+			Response.json({
+				displayName: "Ada",
+				createdAt: 1,
+				auth: { kind: "web", deviceId: "dev_1" },
+			});
+		fireEvent.click(screen.getByRole("button", { name: "重试" }));
+		await waitFor(() =>
+			expect(screen.getByTestId("where")).toHaveTextContent("/t/T-1"),
+		);
+		expect(reauth).not.toHaveBeenCalled();
+	});
+
+	it("me 请求被拒（连不上服务器）：不 reauth，提示连不上", async () => {
+		const reauth = vi.spyOn(host, "reauth").mockImplementation(() => {});
+		vi.spyOn(host, "ready").mockResolvedValue(null);
+		mount(() => {
+			throw new TypeError("Failed to fetch");
+		});
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("连不上 Oryn 服务器");
+		expect(reauth).not.toHaveBeenCalled();
+	});
+
+	it("已有身份时后台重取 502：不 reauth，保留当前界面；之后重取 401 才 reauth", async () => {
+		const { reauth, sent } = shellReauth();
+		vi.spyOn(host, "ready").mockResolvedValue(null);
+		let reply: () => Response = () =>
+			Response.json({ code: "bad_gateway", message: "" }, { status: 502 });
+		const { qc } = mount(() => reply(), { cached: true });
+		expect(screen.getByTestId("where")).toHaveTextContent("/t/T-1");
+		await act(async () => {
+			await qc.refetchQueries({ queryKey: qk.me });
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("where").dataset.me).toBe("error"),
+		);
+		expect(screen.getByTestId("where")).toHaveTextContent("/t/T-1");
+		expect(reauth).not.toHaveBeenCalled();
+		reply = unauthorized;
+		await act(async () => {
+			await qc.refetchQueries({ queryKey: qk.me });
+		});
+		await waitFor(() => expect(sent()).toHaveLength(1));
+	});
+
+	it("浏览器里（非壳）行为不变：me 500 仍回登录页", async () => {
+		h.kind = "web";
+		const reauth = vi.spyOn(host, "reauth").mockImplementation(() => {});
+		mount(() =>
+			Response.json({ code: "internal", message: "boom" }, { status: 500 }),
+		);
+		await screen.findByText("LOGIN");
+		expect(reauth).not.toHaveBeenCalled();
 	});
 
 	it("ready 握手带上语言与当前路径；返回的待开路径与壳推来的 navigate 都走路由跳转", async () => {

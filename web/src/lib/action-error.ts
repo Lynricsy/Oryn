@@ -17,7 +17,9 @@ export type ActionStep =
 	| "pushList"
 	| "pushRemove"
 	| "channelSave"
-	| "channelTest";
+	| "channelTest"
+	/** 桌面壳里读取 `/me` 失败（非 401）：应用壳显示失败与重试，见 AppShell */
+	| "meLoad";
 
 export type RequestReason =
 	| "offline"
