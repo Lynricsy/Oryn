@@ -135,6 +135,8 @@ type env struct {
 	orbs *fakeOrbs
 	dir  string
 	now  time.Time
+	// roleNames 是 Config.RoleNames 返回的表（身份用例设置）。
+	roleNames map[string]string
 }
 
 func newEnv(t *testing.T) *env {
@@ -149,7 +151,8 @@ func newEnv(t *testing.T) *env {
 	require.NoError(t, err)
 	e := &env{t: t, ctx: ctx, st: st, th: &fakeThreads{blobs: map[string]string{}}, hub: &fakeHub{}, att: att, orbs: orbs, dir: dir, now: shareTime}
 	secs := fakeSecrets{"db/password": "correct-horse-battery", "short": "abc"}
-	e.svc = share.New(share.Config{PublicURL: "https://oryn.example.com/", Now: func() time.Time { return e.now }}, st, e.th, e.hub, att, orbs, secs)
+	e.svc = share.New(share.Config{PublicURL: "https://oryn.example.com/", Now: func() time.Time { return e.now },
+		RoleNames: func() map[string]string { return e.roleNames }}, st, e.th, e.hub, att, orbs, secs)
 	return e
 }
 

@@ -237,7 +237,7 @@ func (s *Service) WSHandler() http.Handler {
 				if strings.HasPrefix(e.EntryID, "__") {
 					return threads.Entry{}, false
 				}
-				pe, ok := transcript.Public(fromThreads(e))
+				pe, ok := publicEntry(sh.ID, fromThreads(e))
 				return toThreads(pe), ok
 			},
 		}, max(after, 0), rev)

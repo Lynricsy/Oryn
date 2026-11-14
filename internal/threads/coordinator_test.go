@@ -189,7 +189,8 @@ func TestCoordinatorCommandWhitelist(t *testing.T) {
 		require.ErrorAs(t, err, &te, frame)
 		assert.Equal(t, CodeCoordinatorRestricted, te.Code, frame)
 	}
-	for _, frame := range []string{`{"type":"prompt","message":"hi"}`, `{"type":"get_state"}`, `{"type":"set_model","provider":"a","modelId":"b"}`} {
+	for _, frame := range []string{`{"type":"prompt","message":"hi"}`, `{"type":"get_state"}`, `{"type":"set_model","provider":"a","modelId":"b"}`,
+		`{"type":"oryn_select_model","role":"Mare"}`} {
 		assert.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(frame), noReply), frame)
 	}
 	err := f.s.UIResponse(f.ctx, th.id, json.RawMessage(`{"type":"host_tool_result","id":"h-1","result":{}}`))

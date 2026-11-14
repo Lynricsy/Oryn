@@ -182,6 +182,22 @@ func (s *Server) GetPublicShare(w http.ResponseWriter, r *http.Request, slug api
 	WriteJSON(w, http.StatusOK, ps)
 }
 
+// GetPublicShareIdentity 对应 `GET public/shares/{slug}/identity`：快照 = 创建时固化的身份，实时 = 按当前设置现算；
+// 只含这段对话里用到且设了头像的 role。
+func (s *Server) GetPublicShareIdentity(w http.ResponseWriter, r *http.Request, slug apigen.ShareSlugPath) {
+	setPublicNoIndex(w)
+	svc, ok := s.shareSvc(w)
+	if !ok {
+		return
+	}
+	id, err := svc.PublicIdentity(r.Context(), slug)
+	if err != nil {
+		writeThreadShareErr(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, id)
+}
+
 // ListPublicShareEntries 对应 `GET public/shares/{slug}/entries?after=&limit=`。
 func (s *Server) ListPublicShareEntries(w http.ResponseWriter, r *http.Request, slug apigen.ShareSlugPath, params apigen.ListPublicShareEntriesParams) {
 	setPublicNoIndex(w)

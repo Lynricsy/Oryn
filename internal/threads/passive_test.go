@@ -33,7 +33,7 @@ func TestPassiveQueryQueuedDuringProvisioning(t *testing.T) {
 			attach(th, a, apigen.AgentStatusReady)
 			f.resumeOrb(th, orb, 100)
 			types := f.answerAll(th, a)
-			assert.Equal(t, []string{"terminal_list", "get_state", "get_state"}, types, "客户端的两条查询 + 控制面的 state 刷新")
+			assert.Equal(t, []string{"oryn_mark_session_start", "terminal_list", "get_state", "get_state"}, types, "就绪时的来源标记 + 客户端的两条查询 + 控制面的 state 刷新")
 			assert.True(t, strings.Contains(string(got), `"success":true`), string(got))
 
 			f.s.Close()

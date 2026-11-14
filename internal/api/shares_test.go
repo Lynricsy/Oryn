@@ -106,3 +106,63 @@ func TestPublicShareBlobContentType(t *testing.T) {
 		assert.Equal(t, "noindex, nofollow", resp.Header.Get("X-Robots-Tag"))
 	}
 }
+
+// 匿名 `GET public/shares/{slug}/identity`：200 + noindex + no-store，只含用到且设了头像的 role；错误 slug 与撤销后 404。
+func TestPublicShareIdentity(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	const tid = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab"
+	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: tid, Title: "roles", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
+	rec := `{"type":"custom","id":"r1","customType":"oryn-model-source","data":{"v":1,"source":"role","model":"p/m","role":"Mare"}}`
+	_, err = st.Q.UpsertEntry(ctx, db.UpsertEntryParams{ThreadID: tid, File: "s.jsonl", EntryID: "r1", Type: "custom", Payload: []byte(rec)})
+	require.NoError(t, err)
+	parent := "r1"
+	_, err = st.Q.UpsertEntry(ctx, db.UpsertEntryParams{ThreadID: tid, File: "s.jsonl", EntryID: "u1", ParentID: &parent, Type: "message",
+		Payload: []byte(`{"type":"message","id":"u1","parentId":"r1","message":{"role":"user","content":"hi"}}`)})
+	require.NoError(t, err)
+	leaf := "u1"
+	require.NoError(t, st.Q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: &leaf, ID: tid}))
+	for _, role := range []string{"Mare", "Nahida"} {
+		img := "data:image/png;base64,AVATAR-" + role
+		require.NoError(t, st.Q.UpsertRoleAvatar(ctx, db.UpsertRoleAvatarParams{Role: role, AvatarImage: &img, UpdatedAt: 1}))
+	}
+
+	svc := share.New(share.Config{PublicURL: h2PublicURL}, st, shareBlobThreads{}, nopShareHub{}, nil, nil, nil)
+	sh, err := svc.Create(ctx, tid, apigen.ShareModeLive, true)
+	require.NoError(t, err)
+	cfg := config.DefaultOrynd()
+	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
+	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}
+	s.Shares = &api.ShareDeps{Service: svc}
+	srv := httptest.NewServer(api.NewRouter(s))
+	t.Cleanup(srv.Close)
+
+	get := func(slug string) (*http.Response, string) {
+		resp, err := http.Get(srv.URL + "/api/v1/public/shares/" + slug + "/identity")
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp, string(body)
+	}
+	resp, body := get(sh.Slug)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, "noindex, nofollow", resp.Header.Get("X-Robots-Tag"))
+	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+	assert.Contains(t, body, `"role":"Mare"`)
+	assert.Contains(t, body, "AVATAR-Mare")
+	assert.NotContains(t, body, "Nahida", "没用到的 role 不出网")
+	assert.NotContains(t, body, `"agent"`, "agent 身份未设置：省略")
+
+	for _, slug := range []string{strings.Repeat("0", 32), "not-a-slug"} {
+		resp, body := get(slug)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, slug)
+		assert.Contains(t, body, `"not_found"`)
+		assert.Equal(t, "noindex, nofollow", resp.Header.Get("X-Robots-Tag"))
+	}
+	require.NoError(t, svc.Revoke(ctx, sh.ID))
+	resp, _ = get(sh.Slug)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "撤销后 404")
+}

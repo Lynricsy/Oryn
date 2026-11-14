@@ -179,6 +179,16 @@ func sent(a *agentConn) []string {
 	}
 }
 
+// afterMark 断言 frames 的第一帧是就绪时控制面发的 oryn_mark_session_start，返回其后的帧。
+func afterMark(t *testing.T, frames []string) []string {
+	t.Helper()
+	require.NotEmpty(t, frames)
+	typ, _, ok := frameHeader(json.RawMessage(frames[0]))
+	require.True(t, ok, frames[0])
+	require.Equal(t, "oryn_mark_session_start", typ, "就绪后写入 agent 流的第一帧")
+	return frames[1:]
+}
+
 // respond 以 omp 应答回复 agent 流上的命令帧。
 func (f *fixture) respond(t *thread, frame string, success bool, data string) {
 	f.t.Helper()
@@ -554,7 +564,7 @@ func TestStartupPromptSurvivesRestart(t *testing.T) {
 	require.Len(t, th.queue, 2)
 	s2.onReadyLocked(f.ctx, th)
 	th.mu.Unlock()
-	frames := sent(a)
+	frames := afterMark(t, sent(a))
 	require.GreaterOrEqual(t, len(frames), 2)
 	assert.Contains(t, frames[0], `"durable hello"`)
 	assert.Contains(t, frames[0], `"aGVsbG8="`)
@@ -612,7 +622,7 @@ func TestQueuedCommandsFlushedWhenOrbResumes(t *testing.T) {
 
 	f.setOrbState(orb, "ready")
 	f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: orb, Kind: OrbEventState, From: "resuming", To: "ready", Seq: 9})
-	frames := sent(a)
+	frames := afterMark(t, sent(a))
 	require.NotEmpty(t, frames)
 	assert.Contains(t, frames[0], `"queued"`)
 }
@@ -630,7 +640,7 @@ func TestStartupPromptRequeuedWhenUndelivered(t *testing.T) {
 	th.mu.Lock()
 	f.s.onReadyLocked(f.ctx, th)
 	th.mu.Unlock()
-	frames := sent(a)
+	frames := afterMark(t, sent(a))
 	require.NotEmpty(t, frames)
 	require.Contains(t, frames[0], `"bounce"`)
 
@@ -653,7 +663,7 @@ func TestStartupPromptRequeuedWhenUndelivered(t *testing.T) {
 	th.mu.Lock()
 	f.s.onReadyLocked(f.ctx, th)
 	th.mu.Unlock()
-	frames = sent(a)
+	frames = afterMark(t, sent(a))
 	require.NotEmpty(t, frames)
 	require.Contains(t, frames[0], `"bounce"`)
 	f.respond(th, frames[0], true, `{"agentInvoked":true}`)

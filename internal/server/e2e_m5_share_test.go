@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // M5 步骤 2 验证：公开分享全链路——process 驱动 + 真实 orbd + fakeomp，匿名请求不带任何凭据。
@@ -135,6 +136,9 @@ func TestE2EM5Share(t *testing.T) {
 	assert.Equal(t, "user", conflict.Scan.Findings[0].Role)
 	assert.Equal(t, "hell…m5", conflict.Scan.Findings[0].Preview)
 
+	// M9.6：default 设了头像（fakeomp 为不带模型的新线程写了 startup 记录，role = default）
+	avatar := "data:image/png;base64,E2E-DEFAULT"
+	require.NoError(t, s.srv.Store.Q.UpsertRoleAvatar(context.Background(), db.UpsertRoleAvatarParams{Role: "default", AvatarImage: &avatar, UpdatedAt: 1}))
 	var snap, live shareView
 	s.rest("POST", "/api/v1/threads/"+th.ID+"/shares", map[string]any{"mode": "snapshot", "acknowledgeFindings": true}, &snap, 201)
 	s.rest("POST", "/api/v1/threads/"+th.ID+"/shares", map[string]any{"mode": "live", "acknowledgeFindings": true}, &live, 201)
@@ -165,6 +169,38 @@ func TestE2EM5Share(t *testing.T) {
 		assert.NotContains(t, e.File, "/")
 		assert.LessOrEqual(t, e.Seq, *snap.UntilSeq)
 	}
+	// M9.6：匿名条目里的 custom 只有来源记录，data.role 是 16 位十六进制的不透明键，等于身份接口里的键
+	var keys []string
+	for _, e := range snapEntries {
+		if e.Type != "custom" {
+			continue
+		}
+		var p struct {
+			CustomType string         `json:"customType"`
+			Data       map[string]any `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(e.Payload, &p), string(e.Payload))
+		require.Equal(t, "oryn-model-source", p.CustomType, string(e.Payload))
+		assert.Equal(t, "startup", p.Data["source"])
+		role, _ := p.Data["role"].(string)
+		assert.Regexp(t, `^[0-9a-f]{16}$`, role)
+		keys = append(keys, role)
+	}
+	require.Len(t, keys, 1, "新线程有一条 startup 来源记录")
+	code, hdr, body = s.anonGet("/api/v1/public/shares/" + snap.Slug + "/identity")
+	require.Equal(t, http.StatusOK, code, string(body))
+	assert.Equal(t, "no-store", hdr.Get("Cache-Control"))
+	var ident struct {
+		Roles []struct {
+			Key, Role, AvatarImage string
+		} `json:"roles"`
+	}
+	require.NoError(t, json.Unmarshal(body, &ident))
+	require.Len(t, ident.Roles, 1, string(body))
+	assert.Equal(t, "default", ident.Roles[0].Role)
+	assert.Equal(t, keys[0], ident.Roles[0].Key)
+	assert.Equal(t, avatar, ident.Roles[0].AvatarImage)
+	assert.NotContains(t, string(body), th.ID)
 	code, hdr, _ = s.anonGet("/s/" + snap.Slug)
 	assert.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "noindex, nofollow", hdr.Get("X-Robots-Tag"))

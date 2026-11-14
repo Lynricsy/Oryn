@@ -413,12 +413,36 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		}
 		return
 	}
+	s.markSessionStartLocked(t)
 	q := t.queue
 	t.queue = nil
 	for _, f := range q {
 		s.dispatchLocked(t, f)
 	}
 	s.refreshStateLocked(t)
+}
+
+// markSessionStartLocked 让 Core 记下新会话的模型来源（oryn_mark_session_start）。在下发排队命令之前写入 agent 流，
+// 记录因此落在第一条用户消息之前。会话是否全新由 Core 判断（有消息或已有记录即不写），所以每次就绪都发。
+// explicitModel = 本次 open_session 是否带了模型：线程从未就绪过时它等于「建线程时显式选了模型」；之后的就绪里
+// 线程行已被 get_state 回写、恒为真，但那时会话已有记录或消息，Core 不会再写。
+// 旧 Core 应答 "Unknown command"，按失败忽略。不放进 initFrames：orbd 要求每个 initFrame 成功。
+// 直接写流而不经 enqueueLocked：后者在 orb 状态缓存滞后时会把它排到队尾、落在排队的 prompt 之后。调用方持有 t.mu。
+func (s *Service) markSessionStartLocked(t *thread) {
+	frame, _ := json.Marshal(map[string]any{"type": "oryn_mark_session_start", "explicitModel": parseModel(t.model) != nil})
+	id := s.newCmdID()
+	frame, err := omprpc.SetID(frame, id)
+	if err != nil {
+		return
+	}
+	threadID := t.id
+	t.pending[id] = &pendingCmd{cmdType: "oryn_mark_session_start", after: func(_ *thread, env omprpc.Envelope, _ json.RawMessage) {
+		if !env.OK() {
+			// 旧 Core（Unknown command）或进程退出：之后的回合没有来源记录，回合头回落，方向安全
+			slog.Debug("threads: oryn_mark_session_start 未生效", "thread", threadID, "err", env.ErrorText())
+		}
+	}}
+	s.dispatchLocked(t, frame)
 }
 
 func (s *Service) notifyReadyWaiters(t *thread, st apigen.AgentStatus) {

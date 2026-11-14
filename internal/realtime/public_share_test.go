@@ -203,7 +203,8 @@ func testPublicReconnectAfterLeafSwitch(t *testing.T, switchCmd string) {
 	require.NoError(t, err)
 	a.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": 0})
 
-	var order []string
+	// order 只收消息条目；新会话的启动来源记录（oryn-model-source，M9.6）在第一条消息之前，记在 startup 里——它是两条分支共同的根
+	var order, startup []string
 	seen := map[string]bool{}
 	take := func(n int) {
 		t.Helper()
@@ -212,6 +213,10 @@ func testPublicReconnectAfterLeafSwitch(t *testing.T, switchCmd string) {
 				for _, en := range m.Entries {
 					if !strings.Contains(en.File, "/") && !strings.HasPrefix(en.EntryID, "__") && !seen[en.EntryID] {
 						seen[en.EntryID] = true
+						if en.Type == "custom" {
+							startup = append(startup, en.EntryID)
+							continue
+						}
 						order = append(order, en.EntryID)
 					}
 				}
@@ -267,8 +272,9 @@ func testPublicReconnectAfterLeafSwitch(t *testing.T, switchCmd string) {
 	ok(cmd(map[string]any{"type": "prompt", "message": "three"}))
 	take(12)
 	e.waitState(th.ID, threads.StateIdle)
-	branchA := append(append([]string{}, order[:4]...), order[4:8]...)
-	branchB := append(append([]string{}, order[:4]...), order[8:12]...)
+	require.Len(t, startup, 1, "新会话有一条启动来源记录")
+	branchA := append(append(append([]string{}, startup...), order[:4]...), order[4:8]...)
+	branchB := append(append(append([]string{}, startup...), order[:4]...), order[8:12]...)
 
 	sh, err := svc.Create(ctx, th.ID, apigen.ShareModeLive, true)
 	require.NoError(t, err)

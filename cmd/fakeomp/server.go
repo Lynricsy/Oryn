@@ -41,6 +41,9 @@ type options struct {
 	systemPrompt string
 	// args 是原始命令行参数（转储与 `probe args` 用）。
 	args []string
+	// legacyCore 模拟升级前的 Core（FAKEOMP_LEGACY_CORE=1）：不认识 oryn_select_model / oryn_mark_session_start，
+	// 两条命令走 handle 的 default 分支（"Unknown command: <type>"）。
+	legacyCore bool
 }
 
 func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (options, bool, error) {
@@ -52,6 +55,7 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	fs.StringVar(&o.sessionDir, "session-dir", "", "会话目录")
 	fs.StringVar(&o.script, "script", getenv("FAKEOMP_SCRIPT"), "替换默认 prompt 帧序列的脚本文件")
 	o.startupDialog = getenv("FAKEOMP_STARTUP_DIALOG")
+	o.legacyCore = getenv("FAKEOMP_LEGACY_CORE") == "1"
 	delay := 20 * time.Millisecond
 	if v := getenv("FAKEOMP_DELAY_MS"); v != "" {
 		ms, err := strconv.Atoi(v)
@@ -589,6 +593,17 @@ func (s *server) handle(line []byte) {
 		s.mu.Unlock()
 		if ch != nil {
 			ch <- json.RawMessage(line)
+		}
+
+	case "oryn_select_model", "oryn_mark_session_start":
+		if s.opts.legacyCore {
+			s.fail(id, env.Type, "Unknown command: "+env.Type)
+			return
+		}
+		if env.Type == "oryn_select_model" {
+			s.selectModel(id, line)
+		} else {
+			s.markSessionStart(id, line)
 		}
 
 	default:

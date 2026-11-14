@@ -35,7 +35,8 @@ var (
 // Markdown 把活动分支（通常已经过 Public）写成 Markdown。标签固定为英文：
 // `# 标题`、`> Shared from Oryn · <mode> · <时间>`、`## User` / `## Assistant` 段落；
 // 连续的 assistant 条目合并在一个 `## Assistant` 下，思考块与工具结果折叠在 `<details>` 里，
-// 工具结果按 toolCallId 跟在对应调用之后（找不到则省略）；会话文件之间插一行 `---`；
+// 工具结果按 toolCallId 跟在对应调用之后（找不到则省略）；有输出的会话文件之间插一行 `---`（没有任何输出块的文件——
+// 如进程在首条回复前重启留下的启动文件——不产生分隔线）；
 // compaction / branch_summary 写成引用行；payload 已清空的条目与其它类型跳过。
 func Markdown(w io.Writer, meta MarkdownMeta, branch []Entry) error {
 	results := map[string]rawMessage{}

@@ -91,7 +91,9 @@ func TestQueuedPromptNotQuiescentBeforeAgentStart(t *testing.T) {
 	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"hi"}`), noReply))
 	<-f.orbs.wakes
 	f.resumeOrb(th, orb, 100)
-	frames := sent(a)
+	all := sent(a)
+	frames := afterMark(t, all)
+	f.respond(th, all[0], true, `{"recorded":true,"source":"startup"}`)
 	require.NotEmpty(t, frames)
 	require.Contains(t, frames[0], `"prompt"`)
 	f.respond(th, frames[0], true, `{"agentInvoked":true}`)
@@ -167,7 +169,7 @@ func TestPassiveQueryQueuedWhileResuming(t *testing.T) {
 	th.mu.Unlock()
 	f.resumeOrb(th, orb, 100)
 	types := f.answerAll(th, a)
-	assert.Equal(t, []string{"get_state", "get_state"}, types, "客户端的查询与控制面的刷新")
+	assert.Equal(t, []string{"oryn_mark_session_start", "get_state", "get_state"}, types, "就绪时的来源标记、客户端的查询与控制面的刷新")
 	assert.True(t, strings.Contains(string(got), `"success":true`), string(got))
 
 	// agent 已退出、不再重启：查询不会有人处理，立即拒绝

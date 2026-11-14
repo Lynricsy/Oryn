@@ -14,12 +14,15 @@ const (
 )
 
 // managedCommands 是线程↔会话绑定、凭据、宿主浏览器等由 Oryn 管理、不允许客户端直接下发的命令。
+// oryn_mark_session_start 只由控制面在 agent 就绪时发（markSessionStartLocked）：客户端发它能把手动选的模型冒充成启动来源。
+// set_model 不拦：旧标签页 / 旧 App 仍要能切模型，结果是「未记录来源的切换」→ 回合头回落，方向安全。
 var managedCommands = map[string]bool{
 	"new_session": true, "switch_session": true, "open_session": true, "move_session": true,
 	"collab_start": true, "collab_join": true, "collab_leave": true,
 	"browser_host_start": true, "browser_host_stop": true,
 	"worktree_create": true, "worktree_remove": true,
 	"get_omp_update": true, "login": true, "logout": true, "set_api_key": true,
+	"oryn_mark_session_start": true,
 }
 
 // sideChannelTypes 是 ui.response 可以携带的侧通道应答类型，与 omp `dispatchRpcControlFrame` 的判定一致：

@@ -107,7 +107,7 @@ func (sc *scope) setBranch(seqs []int64) {
 	slices.Sort(sc.sorted)
 }
 
-// accept 返回一行在公开面上的视图：须在范围的分支上、（快照）内容未被改写，再经 transcript.Public 清洗。
+// accept 返回一行在公开面上的视图：须在范围的分支上、（快照）内容未被改写，再经 publicEntry 清洗。
 // 条目分页、`.md`、扫描、图片与附件授权都只经由它判定，因此「公开的」与「扫过的」恒等。
 func (sc *scope) accept(r db.Entry) (transcript.Entry, bool) {
 	if !sc.onPath[r.Seq] || r.Seq > sc.until {
@@ -122,7 +122,7 @@ func (sc *scope) accept(r db.Entry) (transcript.Entry, bool) {
 			sc.record[r.Seq] = sum[:]
 		}
 	}
-	return transcript.Public(fromDB(r))
+	return publicEntry(sc.share.ID, fromDB(r))
 }
 
 // row 读出单条主会话条目并经 accept 判定（图片与附件授权用）。

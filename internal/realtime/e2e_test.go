@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -62,12 +63,13 @@ type env struct {
 	rev  *revocations
 }
 
-func newEnv(t *testing.T) *env {
+// newEnv 组装线程服务 + hub + 扮演 orbd 的测试替身；agentEnv 追加到 fakeomp 的环境（如 FAKEOMP_LEGACY_CORE=1）。
+func newEnv(t *testing.T, agentEnv ...string) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), dir+"/data")
 	require.NoError(t, err)
-	orbs, err := threadstest.NewOrbs(st, fakeompBin, dir+"/orbs", "FAKEOMP_DELAY_MS=40")
+	orbs, err := threadstest.NewOrbs(st, fakeompBin, dir+"/orbs", append([]string{"FAKEOMP_DELAY_MS=40"}, agentEnv...)...)
 	require.NoError(t, err)
 	svc := threads.New(threads.Config{DataDir: dir + "/data", WakeOnFocus: true}, st, orbs)
 	rev := &revocations{}
@@ -756,4 +758,122 @@ func restartThreads(t *testing.T, e *env) *threads.Service {
 	svc := threads.New(threads.Config{DataDir: t.TempDir(), WakeOnFocus: true}, e.st, e.orbs)
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+// sourceRecord 是转录里的一条 Oryn 模型来源记录。
+type sourceRecord struct {
+	seq  int64
+	data map[string]any
+}
+
+// modelSources 返回条目里的来源记录（按 seq）与第一条 user 消息的 seq（没有为 0）。
+func modelSources(t *testing.T, es []threads.Entry) ([]sourceRecord, int64) {
+	t.Helper()
+	var out []sourceRecord
+	var firstUser int64
+	for _, e := range es {
+		var p struct {
+			CustomType string         `json:"customType"`
+			Data       map[string]any `json:"data"`
+			Message    struct {
+				Role string `json:"role"`
+			} `json:"message"`
+		}
+		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		switch {
+		case e.Type == "custom" && p.CustomType == "oryn-model-source":
+			out = append(out, sourceRecord{seq: e.Seq, data: p.Data})
+		case e.Type == "message" && p.Message.Role == "user" && firstUser == 0:
+			firstUser = e.Seq
+		}
+	}
+	return out, firstUser
+}
+
+// M9.6：就绪后、首条 prompt 之前控制面发 oryn_mark_session_start；WS cmd 的 oryn_select_model 写 role / manual 记录；
+// 旧 Core（不认识两条命令）上线程照常就绪、没有任何来源记录、不进 error。
+func TestModelSourceEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	t.Run("新 Core", func(t *testing.T) {
+		e := newEnv(t)
+		a := e.dial("dev_a")
+
+		// 不带模型：startup 记录，在第一条 user 消息之前
+		th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hello"})
+		require.NoError(t, err)
+		e.waitState(th.ID, threads.StateIdle)
+		e.waitMessages(th.ID, 4)
+		page, err := e.svc.Entries(ctx, th.ID, 0, 500)
+		require.NoError(t, err)
+		recs, firstUser := modelSources(t, page.Entries)
+		require.Len(t, recs, 1)
+		assert.Equal(t, map[string]any{"v": 1.0, "source": "startup", "role": "default", "model": "fake/fake-model"}, recs[0].data)
+		require.NotZero(t, firstUser)
+		assert.Less(t, recs[0].seq, firstUser, "记录在第一条 user 消息之前")
+
+		// 带模型：manual 记录（不是 startup）
+		th2, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hello", Model: &apigen.ModelRef{Provider: "openai", ID: "gpt-6.1-sol"}})
+		require.NoError(t, err)
+		e.waitState(th2.ID, threads.StateIdle)
+		e.waitMessages(th2.ID, 4)
+		page2, err := e.svc.Entries(ctx, th2.ID, 0, 500)
+		require.NoError(t, err)
+		recs2, firstUser2 := modelSources(t, page2.Entries)
+		require.Len(t, recs2, 1)
+		assert.Equal(t, map[string]any{"v": 1.0, "source": "manual", "model": "openai/gpt-6.1-sol"}, recs2[0].data)
+		assert.Less(t, recs2[0].seq, firstUser2)
+
+		// WS cmd：先点 role，再在模型列表手动选同一模型
+		a.send(map[string]any{"type": "sub", "threadId": th.ID, "afterSeq": 0})
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": "s1", "frame": map[string]any{"type": "oryn_select_model", "role": "A"}})
+		res := a.next(func(m msg) bool { return m.Type == "res" && m.ID == "s1" })
+		assert.Contains(t, string(res.Response), `"source":"role"`, string(res.Response))
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": "s2", "frame": map[string]any{"type": "oryn_select_model", "provider": "fake", "modelId": "fake-model"}})
+		res = a.next(func(m msg) bool { return m.Type == "res" && m.ID == "s2" })
+		assert.Contains(t, string(res.Response), `"source":"manual"`, string(res.Response))
+		require.Eventually(t, func() bool {
+			page, err := e.svc.Entries(ctx, th.ID, 0, 500)
+			require.NoError(t, err)
+			recs, _ := modelSources(t, page.Entries)
+			return len(recs) == 3
+		}, 20*time.Second, 20*time.Millisecond, "两条选择记录入库")
+		page, err = e.svc.Entries(ctx, th.ID, 0, 500)
+		require.NoError(t, err)
+		recs, _ = modelSources(t, page.Entries)
+		assert.Equal(t, "role", recs[1].data["source"])
+		assert.Equal(t, "A", recs[1].data["role"])
+		assert.Equal(t, "manual", recs[2].data["source"])
+		_, hasRole := recs[2].data["role"]
+		assert.False(t, hasRole, "manual 记录没有 role")
+		assert.Equal(t, recs[1].data["model"], recs[2].data["model"], "同一模型、来源不同")
+
+		// 客户端不能冒充控制面发启动标记
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": "m1", "frame": map[string]any{"type": "oryn_mark_session_start"}})
+		assert.Equal(t, "managed_by_oryn", a.next(func(m msg) bool { return m.Type == "error" && m.ID == "m1" }).Code)
+	})
+
+	t.Run("旧 Core", func(t *testing.T) {
+		e := newEnv(t, "FAKEOMP_LEGACY_CORE=1")
+		a := e.dial("dev_a")
+		th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "hello"})
+		require.NoError(t, err)
+		e.waitState(th.ID, threads.StateIdle)
+		e.waitMessages(th.ID, 4)
+		page, err := e.svc.Entries(ctx, th.ID, 0, 500)
+		require.NoError(t, err)
+		recs, _ := modelSources(t, page.Entries)
+		assert.Empty(t, recs, "旧 Core 不写来源记录")
+		for _, en := range page.Entries {
+			assert.NotEqual(t, "custom", en.Type)
+		}
+		got, err := e.svc.Get(ctx, th.ID)
+		require.NoError(t, err)
+		assert.Equal(t, threads.StateIdle, string(got.State), "未知命令的失败应答不让线程进 error")
+		assert.Nil(t, got.Error)
+
+		// 网页据 Unknown command 回退到 set_model
+		a.send(map[string]any{"type": "cmd", "threadId": th.ID, "id": "s1", "frame": map[string]any{"type": "oryn_select_model", "role": "A"}})
+		res := a.next(func(m msg) bool { return m.Type == "res" && m.ID == "s1" })
+		assert.Contains(t, string(res.Response), "Unknown command: oryn_select_model")
+	})
 }

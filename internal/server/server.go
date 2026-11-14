@@ -171,7 +171,21 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
 	s.Threads.AddObserver(s.Coord)
-	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
+	home := s.Home
+	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {
+		// 分享页 role 的显示名（config.yml 的 modelTags.<role>.name）；config.yml 解析失败时不给名字
+		roles, err := home.CycleRoles()
+		if err != nil {
+			return map[string]string{}
+		}
+		names := make(map[string]string, len(roles))
+		for _, r := range roles {
+			if r.Name != "" {
+				names[r.Role] = r.Name
+			}
+		}
+		return names
+	}}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)

@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,8 @@ type Config struct {
 	PublicURL string
 	// Now 默认 time.Now。
 	Now func() time.Time
+	// RoleNames 返回 role id → 显示名（config.yml 的 `modelTags.<role>.name`；解析失败返回空表）。nil = 没有名字。
+	RoleNames func() map[string]string
 }
 
 // Service 是公开分享服务。
@@ -166,7 +169,7 @@ func (s *Service) shareAPI(sh db.ThreadShare, title string) apigen.ThreadShare {
 // Create 为线程创建公开分享：先以创建时刻的范围扫描密钥（条目、标题与将要列出的附件名），
 // 有命中且 ack=false 时返回 *ScanError（ErrSecretsFound）。
 // 快照写入 until_seq / leaf_entry_id / title（= 创建时线程的 last_seq、叶子与标题），并在同一事务里固化扫描过的
-// 条目集合与每行内容摘要（thread_share_entries）；实时三者为 NULL、不固化。
+// 条目集合与每行内容摘要（thread_share_entries）以及此刻的身份（thread_share_identities）；实时三者为 NULL、不固化。
 func (s *Service) Create(ctx context.Context, threadID string, mode apigen.ShareMode, ack bool) (apigen.ThreadShare, error) {
 	if mode != apigen.ShareModeLive && mode != apigen.ShareModeSnapshot {
 		return apigen.ThreadShare{}, errf(http.StatusBadRequest, "invalid", "mode must be live or snapshot")
@@ -188,8 +191,9 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 	if th.LeafEntryID != nil {
 		leaf = *th.LeafEntryID
 	}
-	// 扫描的范围与快照即将固化的范围相同（实时分享同样以此刻为界扫描）；accept 记下扫过的每行摘要
-	sc, err := s.branchScope(ctx, db.ThreadShare{ThreadID: threadID, Mode: string(mode), CreatedAt: row.CreatedAt}, th, until, leaf)
+	// 扫描的范围与快照即将固化的范围相同（实时分享同样以此刻为界扫描）；accept 记下扫过的每行摘要。
+	// 范围带上分享 id：来源记录的不透明键按它计算，扫描到的内容与公开的内容一致
+	sc, err := s.branchScope(ctx, db.ThreadShare{ID: row.ID, ThreadID: threadID, Mode: string(mode), CreatedAt: row.CreatedAt}, th, until, leaf)
 	if err != nil {
 		return apigen.ThreadShare{}, err
 	}
@@ -206,9 +210,18 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 		return apigen.ThreadShare{}, &ScanError{Scan: scan}
 	}
 	row.Findings = int64(len(scan.Findings))
+	var identity []byte
 	if mode == apigen.ShareModeSnapshot {
 		title := th.Title
 		row.UntilSeq, row.LeafEntryID, row.Title = &until, th.LeafEntryID, &title
+		// 身份在创建时固化：之后改名字、换头像、删 role 都不影响这个快照
+		id, err := s.buildIdentity(ctx, sc)
+		if err != nil {
+			return apigen.ThreadShare{}, err
+		}
+		if identity, err = json.Marshal(id); err != nil {
+			return apigen.ThreadShare{}, err
+		}
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.InsertThreadShare(ctx, row); err != nil {
@@ -216,6 +229,9 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 		}
 		if mode != apigen.ShareModeSnapshot {
 			return nil
+		}
+		if err := q.InsertThreadShareIdentity(ctx, db.InsertThreadShareIdentityParams{ShareID: row.ID, Payload: string(identity)}); err != nil {
+			return err
 		}
 		// 只固化扫描时确实读到并放行的行（按分支顺序）；扫描之后才出现或改写的内容进不了快照
 		pos := int64(0)
@@ -241,7 +257,8 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 	}, th.Title), nil
 }
 
-// Revoke 撤销分享：已连接的匿名 WS 收到 share.revoked 后断开，此后页面、接口、图片一律 404。
+// Revoke 撤销分享：已连接的匿名 WS 收到 share.revoked 后断开，此后页面、接口、身份、图片一律 404；
+// 快照固化的身份与撤销同一事务删除。
 func (s *Service) Revoke(ctx context.Context, id string) error {
 	sh, err := s.st.Q.GetThreadShare(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -250,7 +267,14 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	n, err := s.st.Q.RevokeThreadShare(ctx, db.RevokeThreadShareParams{Now: s.now(), ID: id})
+	var n int64
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		var err error
+		if n, err = q.RevokeThreadShare(ctx, db.RevokeThreadShareParams{Now: s.now(), ID: id}); err != nil || n == 0 {
+			return err
+		}
+		return q.DeleteThreadShareIdentity(ctx, id)
+	})
 	if err != nil {
 		return err
 	}

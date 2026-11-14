@@ -20,7 +20,7 @@ const MaxFindings = 200
 // minVaultSecret 是参与 vault_secret 规则的密钥值最短长度（过短的值误报太多）。
 const minVaultSecret = 8
 
-// scanRule 是一条正则规则。规则作用于 transcript.Public 之后的 payload 原始字节（JSON 文本），不解析 JSON。
+// scanRule 是一条正则规则。规则作用于公开清洗（publicEntry）之后的 payload 原始字节（JSON 文本），不解析 JSON。
 // group > 0 时命中文本取该捕获组（其余部分是边界）。
 type scanRule struct {
 	name  apigen.ShareFindingRule

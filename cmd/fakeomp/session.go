@@ -33,7 +33,13 @@ type sessionFile struct {
 	id   string
 	leaf string // 最后一条条目的 id；空表示尚无条目
 	ids  map[string]bool
+	// hasMessage / hasSource：文件里已有 message 条目 / Oryn 模型来源记录（oryn_mark_session_start 据此判断会话是否全新）。
+	hasMessage bool
+	hasSource  bool
 }
+
+// modelSourceType 是 Oryn 模型来源记录的 customType（oryn-core `modes/rpc/oryn-model-source.ts` ORYN_MODEL_SOURCE_ENTRY）。
+const modelSourceType = "oryn-model-source"
 
 func isoTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
 
@@ -117,8 +123,9 @@ func loadSession(path string) (*sessionFile, error) {
 	sc.Buffer(make([]byte, 0, 64<<10), 256<<20)
 	for sc.Scan() {
 		var e struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
+			Type       string `json:"type"`
+			ID         string `json:"id"`
+			CustomType string `json:"customType"`
 		}
 		if json.Unmarshal(sc.Bytes(), &e) != nil {
 			continue
@@ -132,6 +139,7 @@ func loadSession(path string) (*sessionFile, error) {
 				s.ids[e.ID] = true
 				s.leaf = e.ID
 			}
+			s.note(e.Type, e.CustomType)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -155,28 +163,58 @@ func (s *sessionFile) newEntryID() string {
 	}
 }
 
+// note 记下条目类型对「会话是否全新」的影响。
+func (s *sessionFile) note(typ, customType string) {
+	switch {
+	case typ == "message":
+		s.hasMessage = true
+	case typ == "custom" && customType == modelSourceType:
+		s.hasSource = true
+	}
+}
+
 // appendMessage 追加一条 message 条目并推进叶子，返回条目 id。
 func (s *sessionFile) appendMessage(message map[string]any, now time.Time) (string, error) {
+	return s.appendEntry("message", map[string]any{"message": message}, now)
+}
+
+// appendEntry 追加一条 typ 类型的条目（`type`、`id`、`parentId`、`timestamp` 在前，fields 按键名排序随后）并推进叶子，
+// 返回条目 id。fields 不得含这四个键。
+func (s *sessionFile) appendEntry(typ string, fields map[string]any, now time.Time) (string, error) {
 	id := s.newEntryID()
 	var parent any
 	if s.leaf != "" {
 		parent = s.leaf
 	}
-	line, err := json.Marshal(struct {
-		Type      string         `json:"type"`
-		ID        string         `json:"id"`
-		ParentID  any            `json:"parentId"`
-		Timestamp string         `json:"timestamp"`
-		Message   map[string]any `json:"message"`
-	}{"message", id, parent, isoTime(now), message})
+	head, err := json.Marshal(struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		ParentID  any    `json:"parentId"`
+		Timestamp string `json:"timestamp"`
+	}{typ, id, parent, isoTime(now)})
 	if err != nil {
 		return "", err
 	}
+	line := head[:len(head)-1]
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		kb, _ := json.Marshal(k)
+		vb, err := json.Marshal(fields[k])
+		if err != nil {
+			return "", err
+		}
+		line = append(append(append(append(line, ','), kb...), ':'), vb...)
+	}
+	line = append(line, '}', '\n')
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		return "", err
 	}
-	_, err = f.Write(append(line, '\n'))
+	_, err = f.Write(line)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -184,6 +222,8 @@ func (s *sessionFile) appendMessage(message map[string]any, now time.Time) (stri
 		return "", err
 	}
 	s.leaf = id
+	customType, _ := fields["customType"].(string)
+	s.note(typ, customType)
 	return id, nil
 }
 
