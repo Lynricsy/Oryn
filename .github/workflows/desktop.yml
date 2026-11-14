@@ -2,7 +2,7 @@ name: desktop
 
 # 桌面 App（Tauri 2）的构建与发布（M6 计划 8.2）。
 # - PR / 手动触发：`build` job 三平台构建 + 冒烟启动，产物上传为 workflow artifacts，不发布、不签名、拿不到任何签名 secret。
-# - 推送 tag `desktop-v<版本>`（须与 web/src-tauri/Cargo.toml 的 version 完全一致）：`release` 建草稿 Release →
+# - 推送 tag `desktop-v<版本>` 或预发布 `desktop-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致，后者只写 x.y.z）：`release` 建草稿 Release →
 #   `build-release` 三平台构建并上传资产 → `publish` 生成 updater 清单 latest.json → 发布；非预发布版本同时刷新
 #   滚动发布 `desktop-updater` 下的 latest.json（更新通道）。
 # 签名均按 secrets 有无自动降级：没有更新私钥 → 不产出 .sig 与 latest.json；没有 Apple 证书 → macOS ad-hoc 签名。
@@ -49,22 +49,30 @@ jobs:
             echo "::error file=web/src-tauri/Cargo.toml::读不到 [package].version"
             exit 1
           fi
+          if [[ "$version" == *-* ]]; then
+            # rpm 不接受 '-'，msi 只接受纯数字预发布号：Cargo.toml 只写 x.y.z，预发布用 tag 后缀表达
+            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag desktop-v${version%%-*}-rc.N"
+            exit 1
+          fi
           is_release=false
+          prerelease=false
           if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
-            if [[ "$GITHUB_REF_NAME" != "desktop-v$version" ]]; then
-              echo "::error::tag $GITHUB_REF_NAME 与 Cargo.toml 版本 $version 不一致（应为 desktop-v$version）"
-              exit 1
-            fi
+            case "$GITHUB_REF_NAME" in
+              "desktop-v${version}") ;;
+              "desktop-v${version}-"*) prerelease=true ;;
+              *)
+                echo "::error::tag ${GITHUB_REF_NAME} 与 Cargo.toml 版本 ${version} 不一致（应为 desktop-v${version} 或 desktop-v${version}-<预发布标识>）"
+                exit 1
+                ;;
+            esac
             is_release=true
           fi
-          prerelease=false
-          if [[ "$version" == *-* ]]; then prerelease=true; fi
           {
             echo "version=$version"
             echo "is_release=$is_release"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
-          echo "版本 $version；发布：$is_release；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
+          echo "版本 ${version}；发布：${is_release}；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
 
   release:
     needs: prepare
@@ -244,7 +252,7 @@ jobs:
             echo "args=${MATRIX_ARGS:+$MATRIX_ARGS }--config $tmp/tauri.override.json"
             echo "script=bun $tmp/tauri-signed.mjs"
           } >> "$GITHUB_OUTPUT"
-          echo "- \`$PLATFORM\`：代码签名 $codesign；更新包签名 $updater_note" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "- \`$PLATFORM\`：代码签名 ${codesign}；更新包签名 $updater_note" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: 构建（发布时上传 Release 资产）
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0

@@ -52,7 +52,7 @@ Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayata
 
 App 启动进入 Web UI 后检查一次更新，之后每 6 小时检查一次；托盘「检查更新…」和设置页可以立即检查。发现新版本后在后台下载，下载完托盘和设置页出现「重启以更新到 v<版本>」。打开「下载后自动安装并重启」时，下载完成后直接安装并重启。
 
-更新源是 GitHub Releases 上滚动发布的 `desktop-updater` 里的 `latest.json`。每个更新包都用 App 内置的公钥校验签名，校验失败就不安装。预发布版本（版本号带 `-`，如 `0.2.0-rc.1`）不进入更新通道。Linux 的更新包只提供 AppImage，用 deb / rpm 安装的请下载新包后用系统包管理器升级。
+更新源是 GitHub Releases 上滚动发布的 `desktop-updater` 里的 `latest.json`。每个更新包都用 App 内置的公钥校验签名，校验失败就不安装。预发布版本（tag 带后缀，如 `desktop-v0.2.0-rc.1`）不进入更新通道。Linux 的更新包只提供 AppImage，用 deb / rpm 安装的请下载新包后用系统包管理器升级。
 
 ## 开发
 
@@ -107,7 +107,7 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 
 1. 修改 `web/src-tauri/Cargo.toml` 的 `version`。这是版本号的唯一来源，`tauri.conf.json` 不写版本。
 2. 提交并推送到 `main`。
-3. `git tag desktop-v<版本> && git push origin desktop-v<版本>`。tag 必须与 `Cargo.toml` 的版本完全一致，否则工作流直接失败。
+3. `git tag desktop-v<版本> && git push origin desktop-v<版本>`；预发布打 `desktop-v<版本>-rc.N`。`Cargo.toml` 的版本只写 `x.y.z`（rpm 不接受 `-`，msi 只接受纯数字预发布号），tag 去掉后缀后必须与它一致，否则工作流直接失败。
 
 `.github/workflows/desktop.yml` 依次执行：
 
