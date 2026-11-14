@@ -1,8 +1,9 @@
 /**
  * 自绘标题栏的窗口控件（无系统标题栏的桌面 App，布局与状态见 `lib/window-chrome.ts`）。
- * 放在哪：左侧控件（macOS 原生红绿灯 / Linux 左侧布局的自绘按钮）在侧栏展开时归侧栏顶部的标题行（`SidebarChromeRow`），
- * 否则归最左侧页面表面的页头（`ChromeLead`）；右侧自绘按钮归最右侧表面的顶部（右面板展开时是面板纸面顶部的标题行，
- * 否则是线程页头 / 首页、设置页头的右端），没有页头的整页卡片（登录、配对、连接页、加载中）用贴顶的 `ChromeBar`。
+ * 放在哪：侧栏展开时，macOS 原生红绿灯与侧栏品牌行合为一行（`SidebarBrandRow`），Linux 左侧布局的自绘按钮在侧栏顶部
+ * 单独一行（`SidebarChromeRow`）；侧栏没占左上角时左侧控件归最左侧页面表面的页头（`ChromeLead`）。右侧自绘按钮归最右侧
+ * 表面的顶部（右面板展开时在面板标签条右侧、替掉面板的 ×，否则是线程页头 / 首页、设置页头的右端），没有页头的整页卡片
+ * （登录、配对、连接页、加载中）用贴顶的 `ChromeBar`。
  * 按钮是低调的圆角 ghost：悬停出底色，关闭悬停变 err 色；窗口失焦时整组变淡；全屏时隐藏（macOS 全屏时红绿灯也收起，留白归 0）。
  * 浏览器与移动壳里 `useWindowChrome()` 为 null，这里全部渲染为空，留白不变。
  */
@@ -13,6 +14,7 @@ import {
 	type WindowAction,
 	type WindowButton,
 } from "../../lib/window-chrome";
+import { BrandMark } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 
 export type ChromeSide = "left" | "right";
@@ -93,28 +95,42 @@ export function WindowControls({
 }
 
 /**
- * 页头最左端：原生红绿灯 → 让出到 `inset.left` 的空白（按自身在窗口里的横坐标算，窗口缩放与侧栏收起动画后重算）；
- * 左侧自绘 → 按钮组。页头本身是拖动区，这块空白也能拖。
+ * 元素在窗口里的位置（`[left, top]`，CSS px）：`active` 时测量，窗口缩放、侧栏 / 面板列 260ms 的宽度过渡结束后重测
+ * （过渡结束后位置才定下来）。
  */
-export function ChromeLead(): ReactNode {
-	const v = useWindowChrome();
-	const ref = useRef<HTMLSpanElement>(null);
-	const [x, setX] = useState(0);
-	const native =
-		!!v && !v.flags.fullscreen && v.chrome.controls === "native-left";
+function useWindowPos(
+	ref: { current: HTMLElement | null },
+	active: boolean,
+): [number, number] {
+	const [pos, setPos] = useState<[number, number]>([0, 0]);
 	useLayoutEffect(() => {
 		const el = ref.current;
-		if (!native || !el) return;
-		const update = () => setX(el.getBoundingClientRect().left);
+		if (!active || !el) return;
+		const update = () => {
+			const r = el.getBoundingClientRect();
+			setPos((p) => (p[0] === r.left && p[1] === r.top ? p : [r.left, r.top]));
+		};
 		update();
 		window.addEventListener("resize", update);
-		// 侧栏 / 面板列的收起与展开是 260ms 的宽度过渡：结束后页头位置才定下来
 		document.addEventListener("transitionend", update, true);
 		return () => {
 			window.removeEventListener("resize", update);
 			document.removeEventListener("transitionend", update, true);
 		};
-	}, [native]);
+	}, [ref, active]);
+	return pos;
+}
+
+/**
+ * 页头最左端：原生红绿灯 → 让出到 `inset.left` 的空白（按自身在窗口里的横坐标算）；左侧自绘 → 按钮组。
+ * 页头本身是拖动区，这块空白也能拖。
+ */
+export function ChromeLead(): ReactNode {
+	const v = useWindowChrome();
+	const ref = useRef<HTMLSpanElement>(null);
+	const native =
+		!!v && !v.flags.fullscreen && v.chrome.controls === "native-left";
+	const [x] = useWindowPos(ref, native);
 	if (!v) return null;
 	if (native)
 		return (
@@ -129,10 +145,10 @@ export function ChromeLead(): ReactNode {
 	return <WindowControls side="left" className="mr-1" />;
 }
 
-/** 侧栏顶部的标题行：左侧控件归侧栏时出现（原生红绿灯由系统画在这一行里，自绘按钮排在左端），整行可拖动。 */
+/** 侧栏顶部的标题行：只给左侧自绘按钮（Linux 左侧布局，三个 32px 按钮与品牌行排不进 256px 宽的一行），整行可拖动。 */
 export function SidebarChromeRow(): ReactNode {
 	const { left } = useChromeSides();
-	if (!left) return null;
+	if (left !== "custom") return null;
 	return (
 		<div
 			data-window-drag=""
@@ -140,6 +156,77 @@ export function SidebarChromeRow(): ReactNode {
 			className="flex h-12 shrink-0 items-center pl-2.5"
 		>
 			<WindowControls side="left" />
+		</div>
+	);
+}
+
+/** macOS 红绿灯的竖直中线（窗口坐标）：chrome.rs 的 TRAFFIC_LIGHT_Y 24 + 按钮框高 16 的一半。 */
+const LIGHTS_MID = 32;
+/** 红绿灯模式下品牌行高：与页头同为 48px，侧栏玻璃离窗口上缘 8px 时中线正好落在红绿灯中线上。 */
+const LIGHTS_ROW = 48;
+
+/**
+ * 侧栏顶部的品牌行（品牌标 + 字标 + `children` 里的小按钮），整行可拖动。
+ * macOS 原生红绿灯（`native-left`）时与红绿灯合为一行：行高 48、竖直中线对齐红绿灯（侧栏贴着窗口上缘时补上内边距），
+ * 左端让出到红绿灯右侧（`inset.left`），按钮间距收紧；字标只在品牌区够宽（≥ 6rem）时显示，256px 宽的侧栏只留品牌标。
+ * 全屏时红绿灯收起：品牌区用 transform 平移到红绿灯原来的位置（260ms、`--ease`），退出全屏时平移回来；
+ * 进入全屏延后 180ms 再走（壳报告全屏时系统的全屏过渡刚开始，红绿灯随标题栏淡出，先让它们走），退出不延后
+ * （退出过渡结束时红绿灯才重新出现，260ms 早已让出空间）。减少动效时直接切换。
+ * 其它环境（浏览器、移动壳、Windows / Linux）与以前完全相同：56px 行高、字标常在。
+ */
+export function SidebarBrandRow({
+	children,
+}: {
+	children: ReactNode;
+}): ReactNode {
+	const { t } = useTranslation();
+	const v = useWindowChrome();
+	const native = v?.chrome.controls === "native-left";
+	const fullscreen = native && !!v?.flags.fullscreen;
+	const row = useRef<HTMLDivElement>(null);
+	const spacer = useRef<HTMLSpanElement>(null);
+	const [, rowTop] = useWindowPos(row, native);
+	const [spacerX] = useWindowPos(spacer, native);
+	const reserve = native
+		? Math.max(0, (v?.chrome.inset.left ?? 0) - spacerX)
+		: 0;
+	const padTop = native ? Math.max(0, LIGHTS_MID - LIGHTS_ROW / 2 - rowTop) : 0;
+	return (
+		<div
+			ref={row}
+			data-window-drag=""
+			data-brand-row={native ? "lights" : undefined}
+			className={`flex shrink-0 items-center pr-2.5 pl-4 ${native ? "gap-1" : "h-14 gap-2"}`}
+			style={
+				native ? { height: LIGHTS_ROW + padTop, paddingTop: padTop } : undefined
+			}
+		>
+			{native && (
+				// 抵掉与品牌区之间的 gap-1，品牌标正好落在 inset.left
+				<span
+					ref={spacer}
+					aria-hidden
+					data-lights-reserve=""
+					className="-mr-1 shrink-0"
+					style={{ width: reserve }}
+				/>
+			)}
+			<span
+				data-brand-shift={
+					native ? (fullscreen ? "fullscreen" : "lights") : undefined
+				}
+				className={`@container flex min-w-0 flex-1 items-center gap-2 ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${fullscreen ? "delay-[180ms]" : "delay-0"}` : ""}`}
+				style={
+					fullscreen ? { transform: `translateX(${-reserve}px)` } : undefined
+				}
+			>
+				<BrandMark size={24} />
+				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
+				<span className="wordmark hidden min-w-0 text-[24px] leading-none @[6rem]:inline">
+					{t("app.name")}
+				</span>
+			</span>
+			{children}
 		</div>
 	);
 }

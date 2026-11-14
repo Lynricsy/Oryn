@@ -330,6 +330,13 @@ function chromeShell(
 				dot.style.cssText = "width:12px;height:12px;margin:2px 0 2px 0;border-radius:50%;background:" + c + ";box-shadow:inset 0 0 0 0.5px rgba(0,0,0,.25)";
 				lights.append(dot);
 			}
+			// 全屏时系统收起红绿灯：跟着壳的 window 事件显隐（逐帧动画脚本也靠它）
+			const sync = (fs) => { lights.style.visibility = fs ? "hidden" : "visible"; };
+			sync(replies.host_window.fullscreen);
+			window.addEventListener("oryn:host", (e) => {
+				const d = e.detail;
+				if (d && d.type === "window" && typeof d.fullscreen === "boolean") sync(d.fullscreen);
+			});
 			document.body.append(lights);
 		});`
 				: ""
@@ -344,6 +351,55 @@ async function closePanel(page: Page) {
 		await toggle.click();
 		await settle(page, 500);
 	}
+}
+
+/**
+ * 侧栏最窄（256px，即 840–1023 宽的三栏）与 macOS 全屏的几组线程页：`narrow` 时先把视口改成 900 宽
+ * （文件名仍带所在流水线的 1280）。
+ */
+function chromeExtraScreens(
+	tag: string,
+	platform: "macos" | "windows" | "linux-left",
+	opts: { narrow?: boolean; fullscreen?: boolean },
+): Screen[] {
+	const widths = [1280] as const;
+	const init = (collapsed: boolean) =>
+		chromeShell(platform, {
+			collapsed,
+			...(opts.fullscreen
+				? { window: { maximized: false, fullscreen: true, focused: true } }
+				: {}),
+		});
+	const thread =
+		(panel: boolean) =>
+		async ({ page }: Shot) => {
+			if (opts.narrow) await page.setViewportSize({ width: 900, height: 860 });
+			await openThread(page, MAIN_THREAD);
+			if (panel) await openPanel(page, "info");
+			else await closePanel(page);
+		};
+	const out: Screen[] = [
+		{
+			name: `chrome-${tag}`,
+			widths,
+			init: init(false),
+			prepare: thread(false),
+		},
+		{
+			name: `chrome-${tag}-panel`,
+			widths,
+			init: init(false),
+			prepare: thread(true),
+		},
+	];
+	if (opts.fullscreen)
+		out.push({
+			name: `chrome-${tag}-collapsed`,
+			widths,
+			init: init(true),
+			prepare: thread(false),
+		});
+	return out;
 }
 
 /** 无系统标题栏的一组界面（1280 宽，明暗各一张）：线程页侧栏展开 / 收起 × 面板开 / 关、首页、设置、连接页。 */
@@ -1292,8 +1348,16 @@ const SCREENS: Screen[] = [
 	...chromeScreens("mac", "macos"),
 	...chromeScreens("win", "windows"),
 	...chromeScreens("linux-left", "linux-left").filter((s) =>
-		/-(collapsed|thread-panel|launcher)$/.test(s.name),
+		/-(thread|collapsed|thread-panel|launcher)$/.test(s.name),
 	),
+	...chromeExtraScreens("mac-fs", "macos", { fullscreen: true }),
+	...chromeExtraScreens("mac-256", "macos", { narrow: true }),
+	...chromeExtraScreens("mac-fs-256", "macos", {
+		narrow: true,
+		fullscreen: true,
+	}),
+	...chromeExtraScreens("win-256", "windows", { narrow: true }),
+	...chromeExtraScreens("linux-left-256", "linux-left", { narrow: true }),
 	{
 		name: "chrome-win-maximized-blur",
 		widths: [1280],

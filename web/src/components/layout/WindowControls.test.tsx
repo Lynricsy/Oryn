@@ -26,6 +26,7 @@ import { ThreadHeader } from "../thread/ThreadHeader";
 import {
 	ChromeBar,
 	ChromeLead,
+	SidebarBrandRow,
 	SidebarChromeRow,
 	WindowControls,
 } from "./WindowControls";
@@ -131,13 +132,11 @@ describe("各 controls 取值", () => {
 		expect(row?.querySelector("[data-window-controls=left]")).not.toBeNull();
 	});
 
-	it("native-left（macOS）：不画按钮；侧栏留出 48px 标题行，页头左端让出红绿灯的宽度", () => {
+	it("native-left（macOS）：不画按钮、侧栏不另起标题行（红绿灯与品牌行同一行），页头左端让出红绿灯的宽度", () => {
 		install("native-left");
 		render(<Shell />);
 		expect(document.querySelector("[data-window-control]")).toBeNull();
-		const row = document.querySelector("[data-chrome-row=sidebar]");
-		expect(row).not.toBeNull();
-		expect(row?.className).toContain("h-12");
+		expect(document.querySelector("[data-chrome-row=sidebar]")).toBeNull();
 		// jsdom 不做布局：页头左缘按 0 算，让出 inset.left 整段
 		expect(document.querySelector("[data-chrome-lead=native]")).toHaveStyle({
 			width: "84px",
@@ -188,10 +187,9 @@ describe("窗口状态", () => {
 		expect(group("right")).not.toBeNull();
 
 		const mac = install("native-left", [], { fullscreen: true });
-		expect(document.querySelector("[data-chrome-row=sidebar]")).toBeNull();
 		expect(document.querySelector("[data-chrome-lead]")).toBeNull();
 		mac.set({ fullscreen: false });
-		expect(document.querySelector("[data-chrome-row=sidebar]")).not.toBeNull();
+		expect(document.querySelector("[data-chrome-lead=native]")).not.toBeNull();
 	});
 
 	it("窗口失焦时整组变淡，聚焦后恢复", () => {
@@ -254,5 +252,77 @@ describe("线程页头", () => {
 		const header = renderHeader({ chromeLeft: true, chromeRight: true });
 		expect(header.querySelector("[data-window-controls]")).toBeNull();
 		expect(header.querySelector("[data-chrome-lead]")).toBeNull();
+	});
+});
+
+describe("侧栏品牌行", () => {
+	function brandRow() {
+		render(
+			<SidebarBrandRow>
+				<button type="button">新建</button>
+			</SidebarBrandRow>,
+		);
+		const row = document.querySelector("[data-window-drag]") as HTMLElement;
+		const shift = row.querySelector("[data-brand-shift]") as HTMLElement | null;
+		return { row, shift };
+	}
+
+	it("浏览器 / 自绘按钮：与以前相同（56px 行高、无让位、品牌区不平移）", () => {
+		const { row, shift } = brandRow();
+		expect(row.className).toContain("h-14");
+		expect(row).not.toHaveAttribute("data-brand-row");
+		expect(row.querySelector("[data-lights-reserve]")).toBeNull();
+		expect(shift).toBeNull();
+		expect(row).toHaveTextContent("Oryn");
+		cleanup();
+		install("custom-right");
+		expect(brandRow().row.querySelector("[data-lights-reserve]")).toBeNull();
+	});
+
+	it("macOS：与红绿灯同一行——48px 行高、左端让到 inset.left、侧栏贴着窗口上缘时补内边距对齐红绿灯中线", () => {
+		install("native-left");
+		// 侧栏玻璃离窗口上缘 8px（宽屏三栏）：行高正好 48，不补内边距
+		const rect = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockImplementation(function (this: HTMLElement) {
+				const top = this.hasAttribute("data-brand-row") ? 8 : 0;
+				const left = this.hasAttribute("data-lights-reserve") ? 24 : 0;
+				return DOMRect.fromRect({ x: left, y: top, width: 10, height: 10 });
+			});
+		const { row, shift } = brandRow();
+		expect(row).toHaveAttribute("data-brand-row", "lights");
+		expect(row).toHaveStyle({ height: "48px", paddingTop: "0px" });
+		expect(row.querySelector("[data-lights-reserve]")).toHaveStyle({
+			width: "60px",
+		});
+		expect(shift).toHaveAttribute("data-brand-shift", "lights");
+		rect.mockRestore();
+		cleanup();
+		// 贴着窗口上缘（jsdom 默认 0）：补 8px，中线仍在 32
+		expect(brandRow().row).toHaveStyle({ height: "56px", paddingTop: "8px" });
+	});
+
+	it("macOS 全屏：品牌区用 transform 平移到红绿灯原位（进入延后 180ms），退出平移回来；减少动效时不过渡", () => {
+		const mac = install("native-left");
+		const { row, shift } = brandRow();
+		const reserve = row.querySelector("[data-lights-reserve]") as HTMLElement;
+		expect(reserve).toHaveStyle({ width: "84px" });
+		expect(shift?.style.transform).toBe("");
+		expect(shift?.className).toContain("transition-transform");
+		expect(shift?.className).toContain("duration-[260ms]");
+		expect(shift?.className).toContain("ease-[var(--ease)]");
+		expect(shift?.className).toContain("motion-reduce:transition-none");
+
+		mac.set({ fullscreen: true });
+		expect(shift).toHaveAttribute("data-brand-shift", "fullscreen");
+		expect(shift?.style.transform).toBe("translateX(-84px)");
+		expect(shift?.className).toContain("delay-[180ms]");
+		// 只动 transform：让位的宽度不变，布局不跳
+		expect(reserve).toHaveStyle({ width: "84px" });
+
+		mac.set({ fullscreen: false });
+		expect(shift).toHaveAttribute("data-brand-shift", "lights");
+		expect(shift?.style.transform).toBe("");
+		expect(shift?.className).toContain("delay-0");
 	});
 });

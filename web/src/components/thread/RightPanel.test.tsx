@@ -602,7 +602,7 @@ describe("RightPanel 自绘标题栏", () => {
 		act(() => setWindowChrome(null));
 	});
 
-	it("三栏面板承载右侧按钮：纸面顶部多一行可拖动的 48px 标题行，按钮在其右端、标签条在它下面", () => {
+	it("三栏面板承载右侧按钮：按钮与标签条同一行、在标签条右侧，替掉 ×；这一行可拖动", () => {
 		install("custom-right");
 		render(
 			withQuery(
@@ -613,16 +613,51 @@ describe("RightPanel 自绘标题栏", () => {
 				/>,
 			),
 		);
-		const row = document.querySelector("[data-chrome-row=panel]");
+		const strip = screen.getByTestId("thread-tabs");
+		const row = strip.parentElement as HTMLElement;
+		expect(row).toHaveAttribute("data-chrome-row", "panel");
 		expect(row).toHaveAttribute("data-window-drag", "");
-		expect(row?.className).toContain("h-12");
-		expect(row?.lastElementChild).toHaveAttribute(
+		expect(row.lastElementChild).toHaveAttribute(
 			"data-window-controls",
 			"right",
 		);
-		expect(row?.nextElementSibling).toContainElement(
-			screen.getByTestId("thread-tabs"),
-		);
+		expect(document.querySelectorAll("[data-chrome-row]")).toHaveLength(1);
+		expect(
+			screen.queryByRole("button", { name: i18n.t("common.close") }),
+		).toBeNull();
+		expect(
+			screen.getByRole("button", { name: "关闭窗口" }),
+		).toBeInTheDocument();
+	});
+
+	it("没有右侧窗口按钮（macOS / Linux 左侧 / 浏览器 / 面板不归它）时保留 ×", () => {
+		for (const setup of [
+			() => install("custom-left"),
+			() => act(() => setWindowChrome(null)),
+		]) {
+			setup();
+			const onClose = vi.fn();
+			const r = render(
+				withQuery(
+					<RightPanel
+						threadId="T-rpA"
+						onClose={onClose}
+						chrome={{ left: false, right: true }}
+					/>,
+				),
+			);
+			fireEvent.click(
+				screen.getByRole("button", { name: i18n.t("common.close") }),
+			);
+			expect(onClose).toHaveBeenCalled();
+			r.unmount();
+		}
+		install("custom-right");
+		render(withQuery(<RightPanel threadId="T-rpA" onClose={vi.fn()} />));
+		expect(
+			screen.getByRole("button", { name: i18n.t("common.close") }),
+		).toBeInTheDocument();
+		expect(document.querySelector("[data-window-controls]")).toBeNull();
 	});
 
 	it("面板不归它（chrome 缺省）、布局是左侧按钮、或在浏览器里：没有标题行", () => {

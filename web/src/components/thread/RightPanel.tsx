@@ -6,8 +6,9 @@
  * Changes 标签在有未查看的新改动时亮 accent 小点。
  * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`，
  * 标签条（`ThreadTabStrip`）同时用在转录页头下方；Agent 标签在线程等你回答时亮注意点。
- * 桌面 App 无系统标题栏（`chrome`）：面板是窗口最右侧（或最大化时唯一）的纸面时承载窗口控件——三栏里在纸面顶部多一行
- * 48px 可拖动的标题行（与转录页头同高，按钮与页头按钮在同一条中线上），窄屏同级面板则直接放进标签条两端。
+ * 桌面 App 无系统标题栏（`chrome`）：面板是窗口最右侧（或最大化时最左侧）的纸面时承载窗口控件，都放在标签条这一行：
+ * 左侧控件在标签条左端，右侧自绘按钮在标签条右侧并替掉关闭面板的 ×（× 与页头的面板开关重复；关面板仍走页头开关与快捷键）。
+ * 这一行此时是拖动区（标签、按钮本身除外）。没有右侧自绘按钮的环境（macOS、浏览器、移动壳、Linux 左侧布局）仍有 ×。
  */
 import {
 	lazy,
@@ -399,23 +400,15 @@ export function RightPanel({
 			className="flex h-full w-full min-w-0 flex-col bg-panel"
 			aria-label={t("rightPanel.label")}
 		>
-			{!peer && (chromeLeft || chromeRight) && (
-				<div
-					data-window-drag=""
-					data-chrome-row="panel"
-					className="flex h-12 shrink-0 items-center px-2"
-				>
-					{chromeLeft && <ChromeLead />}
-					<span className="min-w-0 flex-1" />
-					{chromeRight && <WindowControls side="right" />}
-				</div>
-			)}
 			<div
-				// 同级面板的标签条就是窗口最上面一行：空白处可拖动窗口
-				data-window-drag={peer ? "" : undefined}
+				// 承载窗口控件时（同级面板总是）标签条这一行就是窗口最上面的标题行：空白处可拖动窗口
+				data-window-drag={peer || chromeLeft || chromeRight ? "" : undefined}
+				data-chrome-row={
+					!peer && (chromeLeft || chromeRight) ? "panel" : undefined
+				}
 				className={`flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 ${peer ? "pl-2 sm:pl-3" : "pl-2.5"}`}
 			>
-				{peer && chromeLeft && <ChromeLead />}
+				{chromeLeft && <ChromeLead />}
 				{peer && (
 					<IconButton
 						icon="menu"
@@ -444,7 +437,7 @@ export function RightPanel({
 						onClick={() => uiStore.getState().togglePanelMax()}
 					/>
 				)}
-				{onClose && !peer && (
+				{onClose && !peer && !chromeRight && (
 					<IconButton
 						icon="close"
 						size={14}
@@ -452,9 +445,7 @@ export function RightPanel({
 						onClick={onClose}
 					/>
 				)}
-				{peer && chromeRight && (
-					<WindowControls side="right" className="ml-1" />
-				)}
+				{chromeRight && <WindowControls side="right" className="ml-1" />}
 			</div>
 			<div className="min-h-0 flex-1">
 				{shown === "info" ? (
