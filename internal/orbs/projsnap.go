@@ -365,7 +365,11 @@ func (s *Service) publishSnapshot(ctx context.Context, orb db.Orb, snapID, hash 
 	if stale {
 		state = SnapshotRetired
 	}
-	slog.Info("项目快照已发布", "orb", orb.ID, "snapshot", snapID, "state", state, "bytes", size)
+	attrs := []any{"orb", orb.ID, "snapshot", snapID, "state", state}
+	if size != nil {
+		attrs = append(attrs, "bytes", *size)
+	}
+	slog.Info("项目快照已发布", attrs...)
 	s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": state, "snapshotId": snapID})
 	return nil
 }
