@@ -19,7 +19,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 )
 
-// M8 §3 验证：process 驱动 + 真实 orbd + fakeomp + fakedesk（Xtigervnc / openbox / chromium 的替身）。
+// M8 §3 验证：process 驱动 + 真实 orbd + fakeomp + fakedesk（Xvnc / openbox / chromium 的替身）。
 
 // enableDesktop 让本测试启动的 orbd 启用桌面：ORYN_DESKTOP=1、CDP 前门与 egress 随机端口、X 锁目录在临时目录（不碰宿主机的 /tmp/.X1-lock）、
 // fakedesk 的符号链接放到 PATH 前面。

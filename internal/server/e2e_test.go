@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 	if err := os.Mkdir(filepath.Join(dir, "desk"), 0o755); err != nil {
 		panic(err)
 	}
-	for _, n := range []string{"Xtigervnc", "openbox", "chromium"} {
+	for _, n := range []string{"Xvnc", "openbox", "chromium"} {
 		if err := os.Symlink(filepath.Join(dir, "fakedesk"), filepath.Join(dir, "desk", n)); err != nil {
 			panic(err)
 		}

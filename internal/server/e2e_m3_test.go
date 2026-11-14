@@ -186,7 +186,8 @@ func TestE2EM3OrbFiles(t *testing.T) {
 	resp = s.orbReq("GET", base+"/fs/list?path=~", nil, nil)
 	okBody(t, resp)
 	assert.Less(t, time.Since(start), 25*time.Second)
-	assert.Equal(t, "ready", orbState())
+	// resuming 时 link 已 hello 即可用（usableState），请求可能先于 resume.run 收尾返回：ready 是随后到达的终态
+	require.Eventually(t, func() bool { return orbState() == "ready" }, 30*time.Second, 50*time.Millisecond)
 
 	// 到达 orbd 的请求：没有 Cookie / Authorization / CSRF / X-Forwarded-*，bg 已剥掉，git 带上了基线
 	reqs := readOrbdRequests(t, logFile)
