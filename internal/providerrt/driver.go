@@ -22,6 +22,9 @@ type Info struct {
 	Capabilities apigen.ProviderCapabilities
 	Types        []apigen.OrbType
 	DefaultType  string
+	// BaseImageID 是驱动当前基础镜像的身份（M11a）：docker = 镜像 id，process = "process"，
+	// dispatch = "ref:<镜像引用>"；空 = 未知（控制面对该 provider 不启用项目快照）。
+	BaseImageID string
 }
 
 // Job 是解析后的任务。
@@ -39,9 +42,15 @@ type Job struct {
 }
 
 // Driver 执行任务。实现必须幂等；out 收集输出（只保留尾部上报）。
+// Exec 成功时可返回结构化结果（随 complete 上报；没有则为 nil）。
 type Driver interface {
 	Info() Info
-	Exec(ctx context.Context, j Job, out io.Writer) error
+	Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error)
+}
+
+// Preflighter 是驱动可选实现的启动前检查：`oryn provider run` 在 Runner.Run 之前调用，出错即退出。
+type Preflighter interface {
+	Preflight(ctx context.Context) error
 }
 
 // ParseJob 把协议任务按 op 解析为 Job。
@@ -99,11 +108,15 @@ func New(cfg config.Provider) (Driver, error) {
 	return nil, fmt.Errorf("未知驱动 %q", cfg.Driver)
 }
 
-// typeInfos 把配置中的类型表转为协议形态（按名称排序）。
+// typeInfos 把配置中的类型表转为协议形态（按名称排序）。nested_docker 的类型带特性 "docker"（M11a）。
 func typeInfos(types map[string]config.DockerType) []apigen.OrbType {
 	out := make([]apigen.OrbType, 0, len(types))
 	for name, t := range types {
-		out = append(out, apigen.OrbType{Name: name, Cpus: float32(t.CPUs), MemoryMB: memoryMB(t.Memory)})
+		ot := apigen.OrbType{Name: name, Cpus: float32(t.CPUs), MemoryMB: memoryMB(t.Memory)}
+		if t.NestedDocker {
+			ot.Features = []string{"docker"}
+		}
+		out = append(out, ot)
 	}
 	sort.Slice(out, func(i, k int) bool { return out[i].Name < out[k].Name })
 	return out

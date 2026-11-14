@@ -52,16 +52,31 @@ func (d *Dispatch) Info() Info {
 		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
 		Types:        typeInfos(d.Types),
 		DefaultType:  d.DefaultType,
+		BaseImageID:  d.baseImageID(),
 	}
 }
 
+// baseImageID 是 "ref:" + 镜像引用：只跟随标签、不跟随镜像内容（标签指向的内容变了也认不出，
+// 靠项目快照的最长复用期兜底）；没有配置镜像时为空。
+func (d *Dispatch) baseImageID() string {
+	if d.Image == "" {
+		return ""
+	}
+	return "ref:" + d.Image
+}
+
 // Env 返回任务的 dispatch 环境变量（不含进程继承的环境）。
+// ORB_SNAPSHOT_OPTIONAL=1 时，ORB_SNAPSHOT_ID 对应的快照不存在应退回 ORB_IMAGE 启动（不算失败）；0 时应失败。
 func (d *Dispatch) Env(j Job) []string {
 	var image, snap, typ, token, url string
+	optional := "0"
 	if s := j.Spawn; s != nil {
 		image, typ, token, url = s.Image, s.Type, s.Env.OrynOrbToken, s.Env.OrynURL
 		if s.SnapshotID != nil {
 			snap = *s.SnapshotID
+		}
+		if s.SnapshotOptional != nil && *s.SnapshotOptional {
+			optional = "1"
 		}
 	}
 	if image == "" {
@@ -75,6 +90,7 @@ func (d *Dispatch) Env(j Job) []string {
 		"ORB_ID=" + j.OrbID,
 		"ORB_IMAGE=" + image,
 		"ORB_SNAPSHOT_ID=" + snap,
+		"ORB_SNAPSHOT_OPTIONAL=" + optional,
 		"ORB_TYPE=" + typ,
 		"ORB_PAUSE_MODE=" + j.PauseMode,
 		"ORYN_ORB_TOKEN=" + token,
@@ -82,8 +98,8 @@ func (d *Dispatch) Env(j Job) []string {
 	}
 }
 
-// Exec 实现 Driver。
-func (d *Dispatch) Exec(ctx context.Context, j Job, out io.Writer) error {
+// Exec 实现 Driver。dispatch 脚本不上报结构化结果。
+func (d *Dispatch) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	cmd := exec.CommandContext(ctx, d.Script)
 	cmd.Env = append(os.Environ(), d.Env(j)...)
 	cmd.Stdout = out
@@ -101,13 +117,13 @@ func (d *Dispatch) Exec(ctx context.Context, j Job, out io.Writer) error {
 	if errors.Is(err, exec.ErrWaitDelay) {
 		// 脚本已以 0 退出，只是有后代进程继承了输出管道（例如未重定向输出的后台 orbd）。
 		fmt.Fprintln(out, "oryn: dispatch 脚本已退出，但有后代进程仍持有输出管道（不再等待）")
-		return nil
+		return nil, nil
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("dispatch %s: %w（%v）", j.Op, ctx.Err(), err)
+			return nil, fmt.Errorf("dispatch %s: %w（%v）", j.Op, ctx.Err(), err)
 		}
-		return fmt.Errorf("dispatch %s: %w", j.Op, err)
+		return nil, fmt.Errorf("dispatch %s: %w", j.Op, err)
 	}
-	return nil
+	return nil, nil
 }

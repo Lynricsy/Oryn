@@ -57,6 +57,11 @@ var providerRunCmd = &cobra.Command{
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, os.Interrupt)
 		defer stop()
+		if pf, ok := drv.(providerrt.Preflighter); ok {
+			if err := pf.Preflight(ctx); err != nil {
+				return err
+			}
+		}
 		r := &providerrt.Runner{
 			URL: cfg.URL, Token: token, OrbURL: cfg.OrbURL, Driver: drv,
 			Version: version.Version, AllowMultiple: allowMultiple,

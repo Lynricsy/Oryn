@@ -54,7 +54,7 @@ func TestDockerRealSmoke(t *testing.T) {
 	run := func(j Job) {
 		t.Helper()
 		out := newTailBuffer(1 << 16)
-		require.NoError(t, d.Exec(ctx, j, out), out.String())
+		require.NoError(t, execErr(d, ctx, j, out), out.String())
 		t.Logf("%s %s → %s\n%s", j.Op, j.PauseMode, status(), out.String())
 	}
 	spawn := Job{Op: "spawn", OrbID: orbID, Spawn: &apigen.JobSpawnParams{Type: "small", Env: apigen.JobSpawnEnv{OrynURL: "http://127.0.0.1:9", OrynOrbID: orbID, OrynOrbToken: "oot_smoke"}}}

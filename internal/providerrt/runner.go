@@ -157,6 +157,9 @@ func (r *Runner) hello(ctx context.Context) error {
 		InstanceID: r.instanceID, Driver: info.Driver, Version: r.Version, Capabilities: info.Capabilities,
 		Types: info.Types, DefaultType: info.DefaultType, AllowMultiple: r.AllowMultiple,
 	}
+	if info.BaseImageID != "" {
+		req.BaseImageID = &info.BaseImageID
+	}
 	var res apigen.ProviderHelloResponse
 	return r.post(ctx, "/provider/v1/hello", req, &res)
 }
@@ -253,12 +256,13 @@ func (r *Runner) execute(ctx context.Context, pj apigen.ProviderJob) {
 	log := slog.With("job", pj.ID, "op", pj.Op, "orb", pj.OrbID, "attempt", pj.Attempt)
 	log.Info("开始执行任务")
 	j, err := ParseJob(pj)
+	var res *apigen.JobResult
 	if err == nil {
 		if j.Spawn != nil && r.OrbURL != "" {
 			j.Spawn.Env.OrynURL = r.OrbURL
 		}
 		jctx, cancel := context.WithTimeout(ctx, r.JobTimeout)
-		err = r.Driver.Exec(jctx, j, out)
+		res, err = r.Driver.Exec(jctx, j, out)
 		cancel()
 	}
 	req := apigen.ProviderCompleteRequest{ClaimGen: pj.ClaimGen, Ok: err == nil, Output: out.String(), DurationMs: time.Since(start).Milliseconds()}
@@ -267,6 +271,7 @@ func (r *Runner) execute(ctx context.Context, pj apigen.ProviderJob) {
 		req.Error = &msg
 		log.Warn("任务失败", "err", err, "durationMs", req.DurationMs)
 	} else {
+		req.Result = res
 		log.Info("任务完成", "durationMs", req.DurationMs)
 	}
 	for i := range 5 {

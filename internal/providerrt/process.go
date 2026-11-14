@@ -72,6 +72,7 @@ func (p *Process) Info() Info {
 		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
 		Types:        typeInfos(p.Types),
 		DefaultType:  p.Default,
+		BaseImageID:  "process",
 	}
 }
 
@@ -81,30 +82,54 @@ func (p *Process) HomeDir(orbID string) string { return filepath.Join(p.Root, "o
 func (p *Process) snapshotDir(id string) string { return filepath.Join(p.Root, "snapshots", id) }
 
 // Exec 实现 Driver。
-func (p *Process) Exec(ctx context.Context, j Job, out io.Writer) error {
+func (p *Process) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	switch j.Op {
 	case "spawn":
-		return p.spawn(j, out)
+		return nil, p.spawn(j, out)
 	case "pause":
-		return p.pause(j, out)
+		return nil, p.pause(j, out)
 	case "snapshot":
 		dst := p.snapshotDir(j.SnapshotID)
-		if _, err := os.Stat(dst); err == nil {
-			return nil
+		if _, err := os.Stat(dst); err != nil {
+			tmp := dst + ".tmp"
+			_ = os.RemoveAll(tmp)
+			if err := copyTree(p.HomeDir(j.OrbID), tmp); err != nil {
+				return nil, err
+			}
+			if err := os.Rename(tmp, dst); err != nil {
+				return nil, err
+			}
 		}
-		tmp := dst + ".tmp"
-		_ = os.RemoveAll(tmp)
-		if err := copyTree(p.HomeDir(j.OrbID), tmp); err != nil {
-			return err
+		// process 驱动没有基础镜像：快照目录的全部字节都算「多占」。
+		n, err := treeBytes(dst)
+		if err != nil {
+			return nil, err
 		}
-		return os.Rename(tmp, dst)
+		return &apigen.JobResult{SnapshotBytes: &n}, nil
 	case "delete":
 		p.kill(j.OrbID)
-		return os.RemoveAll(filepath.Join(p.Root, "orbs", j.OrbID))
+		return nil, os.RemoveAll(filepath.Join(p.Root, "orbs", j.OrbID))
 	case "delete_snapshot":
-		return os.RemoveAll(p.snapshotDir(j.SnapshotID))
+		return nil, os.RemoveAll(p.snapshotDir(j.SnapshotID))
 	}
-	return fmt.Errorf("process: 不支持的操作 %q", j.Op)
+	return nil, fmt.Errorf("process: 不支持的操作 %q", j.Op)
+}
+
+// treeBytes 返回目录下全部普通文件的字节数之和。
+func treeBytes(root string) (int64, error) {
+	var n int64
+	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		n += info.Size()
+		return nil
+	})
+	return n, err
 }
 
 func (p *Process) running(orbID string) *orbProc {
@@ -143,8 +168,20 @@ func (p *Process) spawn(j Job, out io.Writer) error {
 		return pr.cmd.Process.Signal(syscall.SIGHUP)
 	}
 	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) && j.Spawn.SnapshotID != nil && *j.Spawn.SnapshotID != "" {
-		if err := copyTree(p.snapshotDir(*j.Spawn.SnapshotID), home); err != nil {
-			return fmt.Errorf("process: 从快照恢复: %w", err)
+		snap := *j.Spawn.SnapshotID
+		src := p.snapshotDir(snap)
+		_, serr := os.Stat(src)
+		switch {
+		case serr == nil:
+			if err := copyTree(src, home); err != nil {
+				return fmt.Errorf("process: 从快照恢复: %w", err)
+			}
+		case errors.Is(serr, fs.ErrNotExist) && j.Spawn.SnapshotOptional != nil && *j.Spawn.SnapshotOptional:
+			fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", snap)
+		case errors.Is(serr, fs.ErrNotExist):
+			return fmt.Errorf("process: 快照 %s 不存在", snap)
+		default:
+			return fmt.Errorf("process: 从快照恢复: %w", serr)
 		}
 	}
 	if err := os.MkdirAll(home, 0o755); err != nil {

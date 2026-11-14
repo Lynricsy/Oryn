@@ -8,22 +8,35 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
 )
 
+// BaseImageIDTTL 是 docker 驱动缓存基础镜像 id 的时长（hello 每次心跳都读 Info）。
+const BaseImageIDTTL = 60 * time.Second
+
 // Docker 驱动通过 `docker` CLI（os/exec）管理 orb 容器（计划 C1 表中的命令）。
 type Docker struct {
 	Cfg config.Docker
 	// Bin 是 docker 可执行文件，默认 "docker"（按 PATH 查找）。
 	Bin string
+	// Now 是时钟（测试替换；nil = time.Now）。
+	Now func() time.Time
+
+	baseMu sync.Mutex
+	baseID string
+	baseAt time.Time
 }
 
 // NewDocker 创建 docker 驱动。
@@ -41,36 +54,136 @@ func (d *Docker) Info() Info {
 		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
 		Types:        typeInfos(d.Cfg.Types),
 		DefaultType:  d.Cfg.DefaultType,
+		BaseImageID:  d.baseImageID(),
 	}
 }
 
+// baseImageID 返回基础镜像（cfg.image）的镜像 id，成功结果缓存 BaseImageIDTTL；读取失败给空串（不缓存）。
+func (d *Docker) baseImageID() string {
+	if d.Cfg.Image == "" {
+		return ""
+	}
+	d.baseMu.Lock()
+	defer d.baseMu.Unlock()
+	now := time.Now
+	if d.Now != nil {
+		now = d.Now
+	}
+	t := now()
+	if d.baseID != "" && t.Sub(d.baseAt) < BaseImageIDTTL {
+		return d.baseID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var stdout bytes.Buffer
+	if err := d.exec(ctx, &stdout, io.Discard, nil, "image", "inspect", "--format", "{{.Id}}", d.Cfg.Image); err != nil {
+		slog.Warn("读取基础镜像 id 失败（本次 hello 不声明 baseImageId）", "image", d.Cfg.Image, "err", err)
+		d.baseID = ""
+		return ""
+	}
+	d.baseID, d.baseAt = strings.TrimSpace(stdout.String()), t
+	return d.baseID
+}
+
+// Preflight 实现 Preflighter：类型配置的 runtime 必须已在 Docker 中登记；extra_run_args 里的特权写法只警告。
+func (d *Docker) Preflight(ctx context.Context) error {
+	for _, a := range d.Cfg.ExtraRunArgs {
+		if a == "--privileged" || (strings.HasPrefix(a, "--privileged=") && a != "--privileged=false") {
+			slog.Warn("docker.extra_run_args 含 --privileged：等于把宿主 root 交给 orb 内的 agent，不受支持；嵌套 Docker 请用类型的 nested_docker + sysbox-runc，见 docs/deploy.md")
+		}
+		if strings.Contains(a, "docker.sock") {
+			slog.Warn("docker.extra_run_args 挂载了宿主的 docker.sock：orb 内的 agent 可借此控制宿主 Docker（等同宿主 root），不受支持；见 docs/deploy.md", "arg", a)
+		}
+	}
+	need := map[string][]string{}
+	for name, t := range d.Cfg.Types {
+		if t.Runtime != "" {
+			need[t.Runtime] = append(need[t.Runtime], name)
+		}
+	}
+	if len(need) == 0 {
+		return nil
+	}
+	var stdout bytes.Buffer
+	if err := d.exec(ctx, &stdout, io.Discard, nil, "info", "--format", "{{range $k, $_ := .Runtimes}}{{$k}} {{end}}"); err != nil {
+		return fmt.Errorf("docker: 读取已登记的容器运行时: %w", err)
+	}
+	have := strings.Fields(stdout.String())
+	runtimes := make([]string, 0, len(need))
+	for rt := range need {
+		runtimes = append(runtimes, rt)
+	}
+	sort.Strings(runtimes)
+	for _, rt := range runtimes {
+		if !slices.Contains(have, rt) {
+			types := need[rt]
+			sort.Strings(types)
+			return fmt.Errorf("docker: 类型 %s 配置的 runtime %q 没有在 Docker 中登记（docker info 里只有 %q）；安装与登记方法见 docs/deploy.md",
+				strings.Join(types, ", "), rt, have)
+		}
+	}
+	return nil
+}
+
 // Exec 实现 Driver。
-func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) error {
+func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	switch j.Op {
 	case "spawn":
-		return d.spawn(ctx, j, out)
+		return nil, d.spawn(ctx, j, out)
 	case "pause":
-		return d.pause(ctx, j, out)
+		return nil, d.pause(ctx, j, out)
 	case "snapshot":
 		exists, err := d.imageExists(ctx, j.SnapshotID, out)
-		if err != nil || exists {
-			return err
+		if err != nil {
+			return nil, err
 		}
-		return d.run(ctx, out, nil, "commit", j.OrbID, j.SnapshotID)
+		if !exists {
+			if err := d.run(ctx, out, nil, "commit", j.OrbID, j.SnapshotID); err != nil {
+				return nil, err
+			}
+		}
+		return d.snapshotResult(ctx, j.SnapshotID, out), nil
 	case "delete":
 		err := d.run(ctx, out, nil, "rm", "-f", j.OrbID)
 		if isNoSuch(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	case "delete_snapshot":
 		err := d.run(ctx, out, nil, "rmi", j.SnapshotID)
 		if isNoSuch(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
-	return fmt.Errorf("docker: 不支持的操作 %q", j.Op)
+	return nil, fmt.Errorf("docker: 不支持的操作 %q", j.Op)
+}
+
+// snapshotResult 计算快照相对基础镜像多占的字节数 max(0, Size(快照) − Size(基础镜像))。
+// 读取失败只记进输出并不给结果（快照本身已经提交成功，不因统计失败而重做）。
+func (d *Docker) snapshotResult(ctx context.Context, snapshotID string, out io.Writer) *apigen.JobResult {
+	snap, err := d.imageSize(ctx, snapshotID, out)
+	if err == nil {
+		var base int64
+		if base, err = d.imageSize(ctx, d.Cfg.Image, out); err == nil {
+			n := max(0, snap-base)
+			return &apigen.JobResult{SnapshotBytes: &n}
+		}
+	}
+	fmt.Fprintf(out, "oryn: 读取快照大小失败（不上报 snapshotBytes）: %v\n", err)
+	return nil
+}
+
+func (d *Docker) imageSize(ctx context.Context, image string, out io.Writer) (int64, error) {
+	var stdout bytes.Buffer
+	if err := d.exec(ctx, &stdout, out, nil, "image", "inspect", "--format", "{{.Size}}", image); err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(stdout.String()), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("docker: 镜像 %s 的大小 %q 无法解析: %w", image, strings.TrimSpace(stdout.String()), err)
+	}
+	return n, nil
 }
 
 // OrbHome 是 orb 镜像内 orbd 用户的 HOME（镜像约定，见 images/orb/Dockerfile）。
@@ -129,16 +242,40 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 		image = p.Image
 	}
 	if p.SnapshotID != nil && *p.SnapshotID != "" {
-		image = *p.SnapshotID
+		snap := *p.SnapshotID
+		found, err := d.imageExists(ctx, snap, out)
+		switch {
+		case err != nil:
+			return err
+		case found:
+			image = snap
+		case p.SnapshotOptional != nil && *p.SnapshotOptional:
+			fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", snap)
+		default:
+			return fmt.Errorf("docker: 快照镜像 %s 不存在", snap)
+		}
 	}
 	args := []string{"create", "--init",
 		"--name", j.OrbID, "--hostname", j.OrbID, "--label", "oryn-orb=1",
 		"--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory,
-		"--shm-size", "1g", "--add-host", "host.docker.internal:host-gateway",
+		"--shm-size", "1g", "--add-host", "host.docker.internal:host-gateway"}
+	if !typ.NestedDocker {
 		// agent 在容器内有 root（免密 sudo）：去掉原始套接字与网络配置能力（防 ARP 欺骗 / 改路由），
 		// 网络隔离另见 docs/deploy.md「安全」一节。
-		"--cap-drop", "NET_RAW", "--cap-drop", "NET_ADMIN",
-		"-e", "ORYN_URL", "-e", "ORYN_ORB_ID", "-e", "ORYN_ORB_TOKEN"}
+		// 嵌套 Docker 的类型保留这两项：内层 dockerd 要建网桥、写 iptables；sysbox 下它们只作用于容器自己的
+		// 网络命名空间，宿主须按 docs/deploy.md 建隔离网桥。
+		args = append(args, "--cap-drop", "NET_RAW", "--cap-drop", "NET_ADMIN")
+	}
+	args = append(args, "-e", "ORYN_URL", "-e", "ORYN_ORB_ID", "-e", "ORYN_ORB_TOKEN")
+	// 令牌经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
+	env := []string{"ORYN_URL=" + p.Env.OrynURL, "ORYN_ORB_ID=" + j.OrbID, "ORYN_ORB_TOKEN=" + p.Env.OrynOrbToken}
+	if typ.NestedDocker {
+		args = append(args, "-e", "ORYN_NESTED_DOCKER")
+		env = append(env, "ORYN_NESTED_DOCKER=1")
+	}
+	if typ.Runtime != "" {
+		args = append(args, "--runtime", typ.Runtime)
+	}
 	if !hasSeccompOpt(d.Cfg.ExtraRunArgs) {
 		// docker CLI 在客户端读取 profile 文件并内联发给守护进程，create 返回后即可删除。
 		f, err := writeSeccompProfile()
@@ -150,8 +287,6 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 	}
 	args = append(args, d.Cfg.ExtraRunArgs...)
 	args = append(args, image, "orbd", "run")
-	// 令牌经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
-	env := []string{"ORYN_URL=" + p.Env.OrynURL, "ORYN_ORB_ID=" + j.OrbID, "ORYN_ORB_TOKEN=" + p.Env.OrynOrbToken}
 	if err := d.run(ctx, out, env, args...); err != nil {
 		return err
 	}

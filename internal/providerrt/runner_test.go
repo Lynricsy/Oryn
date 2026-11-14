@@ -1,9 +1,12 @@
 package providerrt
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -59,7 +62,7 @@ func TestProcessDriver(t *testing.T) {
 	out := io.Discard
 	spawn := Job{Op: "spawn", OrbID: "orb-p", Spawn: &apigen.JobSpawnParams{Type: "small", Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_p"}}}
 
-	require.NoError(t, p.Exec(ctx, spawn, out))
+	require.NoError(t, execErr(p, ctx, spawn, out))
 	home := p.HomeDir("orb-p")
 	eventually(t, func() bool {
 		b, _ := os.ReadFile(filepath.Join(home, "started"))
@@ -80,30 +83,43 @@ func TestProcessDriver(t *testing.T) {
 
 	// 已在运行：同一进程，写入轮换后的令牌并 SIGHUP。
 	spawn.Spawn.Env.OrynOrbToken = "oot_p2"
-	require.NoError(t, p.Exec(ctx, spawn, out))
+	require.NoError(t, execErr(p, ctx, spawn, out))
 	assert.Equal(t, pid, p.procs["orb-p"].cmd.Process.Pid)
 	assert.Equal(t, "oot_p2", readToken())
 	eventually(t, hupped, "SIGHUP after token rotation")
 	require.NoError(t, os.Remove(filepath.Join(home, "hup")))
 
-	require.NoError(t, p.Exec(ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "freeze"}, out))
+	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "freeze"}, out))
 	eventually(t, func() bool { return procState(t, pid) == "T" }, "SIGSTOP")
 	spawn.Spawn.Env.OrynOrbToken = "oot_p3"
-	require.NoError(t, p.Exec(ctx, spawn, out))
+	require.NoError(t, execErr(p, ctx, spawn, out))
 	eventually(t, func() bool { return procState(t, pid) != "T" }, "SIGCONT")
 	eventually(t, hupped, "SIGHUP after unfreeze")
 	assert.Equal(t, "oot_p3", readToken())
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, "marker"), []byte("m"), 0o600))
-	require.NoError(t, p.Exec(ctx, Job{Op: "snapshot", OrbID: "orb-p", SnapshotID: "oryn-snap-p"}, out))
+	res, err := p.Exec(ctx, Job{Op: "snapshot", OrbID: "orb-p", SnapshotID: "oryn-snap-p"}, out)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.SnapshotBytes)
+	var want int64
+	require.NoError(t, filepath.Walk(filepath.Join(root, "data", "snapshots", "oryn-snap-p"), func(_ string, fi os.FileInfo, err error) error {
+		if err == nil && fi.Mode().IsRegular() {
+			want += fi.Size()
+		}
+		return err
+	}))
+	assert.Positive(t, want)
+	assert.Equal(t, want, *res.SnapshotBytes, "snapshotBytes = 快照目录的字节数")
+	assert.Equal(t, "process", p.Info().BaseImageID)
 
-	require.NoError(t, p.Exec(ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "stop"}, out))
+	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "stop"}, out))
 	assert.Equal(t, "gone", procState(t, pid))
-	require.NoError(t, p.Exec(ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "stop"}, out), "stop idempotent")
+	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "stop"}, out), "stop idempotent")
 
 	snap := "oryn-snap-p"
 	clone := Job{Op: "spawn", OrbID: "orb-q", Spawn: &apigen.JobSpawnParams{SnapshotID: &snap, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_q"}}}
-	require.NoError(t, p.Exec(ctx, clone, out))
+	require.NoError(t, execErr(p, ctx, clone, out))
 	// 快照里带着源 orb 的令牌文件：克隆启动前必须换成自己的，否则会以源 orb 的身份连上控制面。
 	tb, err := os.ReadFile(filepath.Join(p.HomeDir("orb-q"), ".oryn", "orb-token"))
 	require.NoError(t, err)
@@ -115,33 +131,115 @@ func TestProcessDriver(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
-	require.NoError(t, p.Exec(ctx, Job{Op: "delete", OrbID: "orb-q"}, out))
+	require.NoError(t, execErr(p, ctx, Job{Op: "delete", OrbID: "orb-q"}, out))
 	_, err = os.Stat(p.HomeDir("orb-q"))
 	assert.True(t, errors.Is(err, os.ErrNotExist))
-	require.NoError(t, p.Exec(ctx, Job{Op: "delete_snapshot", SnapshotID: snap}, out))
+
+	// 快照目录不存在：snapshotOptional 时从空 HOME 起并说明；否则失败。
+	missing, yes := "oryn-snap-missing", true
+	var buf bytes.Buffer
+	require.NoError(t, execErr(p, ctx, Job{Op: "spawn", OrbID: "orb-r", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing, SnapshotOptional: &yes,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_r"}}}, &buf))
+	assert.Contains(t, buf.String(), "oryn: 快照 oryn-snap-missing 不存在，改用基础镜像")
+	_, err = os.Stat(filepath.Join(p.HomeDir("orb-r"), "marker"))
+	assert.True(t, errors.Is(err, os.ErrNotExist))
+	err = execErr(p, ctx, Job{Op: "spawn", OrbID: "orb-s", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_s"}}}, out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "oryn-snap-missing")
+
+	require.NoError(t, execErr(p, ctx, Job{Op: "delete_snapshot", SnapshotID: snap}, out))
 	_, err = os.Stat(filepath.Join(root, "data", "snapshots", snap))
 	assert.True(t, errors.Is(err, os.ErrNotExist))
 }
 
-// recDriver 记录收到的任务；op=delete 始终失败。
+// recDriver 记录收到的任务；op=delete 始终失败；op=snapshot 上报 snapshotBytes=42。
 type recDriver struct {
 	mu   sync.Mutex
 	jobs []Job
 }
 
 func (d *recDriver) Info() Info {
-	return Info{Driver: apigen.Process, Types: []apigen.OrbType{{Name: "small", Cpus: 1, MemoryMB: 512}}, DefaultType: "small"}
+	return Info{Driver: apigen.Process, Types: []apigen.OrbType{{Name: "small", Cpus: 1, MemoryMB: 512}}, DefaultType: "small", BaseImageID: "img-1"}
 }
 
-func (d *recDriver) Exec(_ context.Context, j Job, out io.Writer) error {
+func (d *recDriver) Exec(_ context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	d.mu.Lock()
 	d.jobs = append(d.jobs, j)
 	d.mu.Unlock()
 	io.WriteString(out, "did "+j.Op)
-	if j.Op == "delete" {
-		return errors.New("nope")
+	switch j.Op {
+	case "delete":
+		return nil, errors.New("nope")
+	case "snapshot":
+		n := int64(42)
+		return &apigen.JobResult{SnapshotBytes: &n}, nil
 	}
-	return nil
+	return nil, nil
+}
+
+// hello 带 baseImageId；complete 带驱动给出的 result。
+func TestRunnerReportsBaseImageAndResult(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		hellos  []apigen.ProviderHelloRequest
+		claimed bool
+	)
+	completed := make(chan apigen.ProviderCompleteRequest, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/provider/v1/hello":
+			var h apigen.ProviderHelloRequest
+			assert.NoError(t, json.NewDecoder(req.Body).Decode(&h))
+			mu.Lock()
+			hellos = append(hellos, h)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(apigen.ProviderHelloResponse{ProviderID: "prov_x", LeaseSeconds: 45})
+		case req.URL.Path == "/provider/v1/jobs/claim":
+			mu.Lock()
+			first := !claimed
+			claimed = true
+			mu.Unlock()
+			if !first {
+				<-req.Context().Done() // 之后的长轮询一直挂到 runner 退出
+				return
+			}
+			_ = json.NewEncoder(w).Encode(apigen.ProviderClaimResponse{Job: apigen.ProviderJob{
+				ID: "job_1", Op: apigen.Snapshot, OrbID: "orb-a", Attempt: 1, ClaimGen: 1, Params: map[string]any{"snapshotId": "oryn-snap-a"},
+			}})
+		case req.URL.Path == "/provider/v1/jobs/job_1/complete":
+			var c apigen.ProviderCompleteRequest
+			assert.NoError(t, json.NewDecoder(req.Body).Decode(&c))
+			w.WriteHeader(http.StatusNoContent)
+			completed <- c
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	r := &Runner{URL: srv.URL, Token: "opv_x", Driver: &recDriver{}, Version: "t", Concurrency: 1, ClaimWait: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx) }()
+	var c apigen.ProviderCompleteRequest
+	select {
+	case c = <-completed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no complete")
+	}
+	cancel()
+	require.NoError(t, <-done)
+
+	assert.True(t, c.Ok)
+	require.NotNil(t, c.Result)
+	require.NotNil(t, c.Result.SnapshotBytes)
+	assert.EqualValues(t, 42, *c.Result.SnapshotBytes)
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, hellos)
+	require.NotNil(t, hellos[0].BaseImageID)
+	assert.Equal(t, "img-1", *hellos[0].BaseImageID)
 }
 
 func TestRunnerEndToEnd(t *testing.T) {
