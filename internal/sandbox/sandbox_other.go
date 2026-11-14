@@ -6,6 +6,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"net"
 )
 
 // ErrUnsupported 表示当前平台不支持沙箱（非 Linux）。
@@ -56,10 +57,14 @@ type CheckOptions struct {
 	HostListener  string
 	DenyExec      []string
 	Exec          []string
-	Port          uint16
+	Listener      net.Listener
+	LandlockTCP   bool
 	DenyAbstract  []string
 	DenyUnixDgram []string
 }
+
+func ListenHost() (*net.TCPListener, error) { return nil, ErrUnsupported }
+func HostReceived(_ *net.TCPListener) error { return nil }
 
 // Checks 在非 Linux 平台上只返回一项失败。
 func Checks(_ context.Context, _ CheckOptions) []Check {

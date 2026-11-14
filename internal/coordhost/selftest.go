@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Lynricsy/Oryn/internal/sandbox"
 )
 
 // SelfTest 是 `orynd --config <f> coordinator check`：可用性检查与目录准备之后，用与 spawn 相同的参数与
@@ -32,17 +34,21 @@ func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 		probe["error"] = h.probeErr.Error()
 	}
 	_ = enc.Encode(map[string]any{"probe": probe})
-	uid, gid, err := h.prepare(ctx)
+	a, err := h.prepare(ctx)
 	if err != nil {
 		_ = enc.Encode(map[string]any{"available": false, "reason": err.Error()})
 		return err
 	}
-	_ = enc.Encode(map[string]any{"available": true})
+	avail := map[string]any{"available": true}
+	if a.uid >= 0 {
+		avail["account"], avail["uid"] = a.name, a.uid
+	}
+	_ = enc.Encode(avail)
 
 	var rnd [6]byte
 	_, _ = rand.Read(rnd[:])
 	home := filepath.Join(h.cfg.Dir, "selftest-"+hex.EncodeToString(rnd[:]))
-	if err := prepareHome(home, uid, gid); err != nil {
+	if err := prepareHome(home, a.uid, a.gid); err != nil {
 		return err
 	}
 	defer os.RemoveAll(home)
@@ -95,14 +101,15 @@ func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 		return err
 	}
 	deny = append(deny, "--deny-unix-dgram", dgramPath)
-	// 宿主回环上真实在监听的白名单外 TCP 端口：沙箱里必须连不上（网络命名空间或 Landlock 的端口规则），且它接不到连接。
-	tl, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	// 宿主回环上真实在监听的白名单外 TCP 端口（开了 TFO）：沙箱里必须连不上（网络命名空间或 Landlock 的端口规则），
+	// 且它接不到连接、也收不到随 SYN 带来的数据。
+	tl, err := sandbox.ListenHost()
 	if err != nil {
 		return fmt.Errorf("listen tcp: %w", err)
 	}
 	defer tl.Close()
 	deny = append(deny, "--host-listener", tl.Addr().String())
-	args := h.childArgs(uid, gid, h.useNS, append([]string{"--selftest", "--home", home}, deny...)...)
+	args := h.childArgs(a, h.useNS, append([]string{"--selftest", "--home", home}, deny...)...)
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
@@ -142,11 +149,8 @@ func selfTest(ctx context.Context, h *Host, out io.Writer) error {
 			return fmt.Errorf("coordinator host selftest failed: sandbox reached host unix datagram socket %s", name)
 		}
 	}
-	// 连上过的连接留在 accept 队列里：子进程退出后再同步 accept 一次，不与后台 accept 赛跑。
-	_ = tl.SetDeadline(time.Now().Add(50 * time.Millisecond))
-	if c, err := tl.Accept(); err == nil {
-		_ = c.Close()
-		_ = enc.Encode(map[string]any{"check": "tcp " + tl.Addr().String() + " accepted nothing", "ok": false, "detail": "accepted a connection from the sandbox"})
+	if err := sandbox.HostReceived(tl); err != nil {
+		_ = enc.Encode(map[string]any{"check": "tcp " + tl.Addr().String() + " received nothing", "ok": false, "detail": err.Error()})
 		return fmt.Errorf("coordinator host selftest failed: sandbox reached host tcp port %s", tl.Addr())
 	}
 	return nil

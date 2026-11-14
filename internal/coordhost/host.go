@@ -2,7 +2,8 @@
 // 为协调 orb 拉起受沙箱约束的子进程 `orynd coordinator-host`（受限的 orbd 运行时），经继承的 socketpair
 // 交给 orbs.ServeConn 建立 link，并监督它的退出。
 //
-// 宿主上的冻结就是停进程：pause（freeze / stop）都结束子进程，会话文件留在 <dir>/home，唤醒后接续。
+// 宿主上的冻结就是停进程：pause（freeze / stop）都结束子进程，会话文件留在 <dir>/homes/<orbID>，唤醒后接续。
+// 每个协调 orb 一个 HOME；同一时刻至多一个子进程（拉起新一代之前先停掉别的 orb 的子进程）。
 package coordhost
 
 import (
@@ -128,16 +129,27 @@ type Host struct {
 	maxABI int
 	// onRecovered 仅供测试：意外退出的善后（Pause、可能的 Wake）结束时调用。
 	onRecovered func(orbID string, woke bool)
+
+	// 降权账号（uid.go）。函数字段可注入（测试不真建账号、不扫 /proc、不 sleep）。
+	acctMu       sync.Mutex
+	warnedShared bool
+	lookupUser   func(name string) (*user.User, error)
+	addUser      func(name string) error
+	uidBusy      func(uid int) int
+	killUID      func(uid int)
+	sleep        func(time.Duration)
 }
 
 // child 是一个存活（或刚退出）的 coordinator-host 子进程。
 type child struct {
 	orbID    string
-	pid      int
+	pid      int // 受 Host.mu 保护（启动 goroutine 写、其它 goroutine 读）
 	useNS    bool
-	done     chan struct{} // Wait 返回后关闭
+	done     chan struct{} // Wait 返回（且残留进程清扫完）后关闭
 	linkDone chan struct{} // ServeConn 返回后关闭
 	expected bool          // 由 pause / delete / 启动失败引起的退出（受 Host.mu 保护）
+	// cleanupUID > 0 时子进程退出后按 uid 清扫残留进程（本实例专用账号且没有 PID 命名空间）。
+	cleanupUID int
 }
 
 func (c *child) alive() bool {
@@ -176,7 +188,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, o Orbs) *Host {
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
 	}
-	return &Host{
+	h := &Host{
 		cfg:      cfg,
 		st:       st,
 		q:        q,
@@ -185,7 +197,14 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, o Orbs) *Host {
 		children: map[string]*child{},
 		crashes:  map[string][]time.Time{},
 		paused:   map[string]chan struct{}{},
+
+		lookupUser: user.Lookup,
+		addUser:    runUseradd,
+		sleep:      time.Sleep,
 	}
+	h.uidBusy = h.procUIDBusy
+	h.killUID = h.killUIDProcs
+	return h
 }
 
 // ---- 可用性 ----
@@ -285,7 +304,7 @@ func (h *Host) Check(_ context.Context) error {
 		_ = f.Close()
 	}
 	h.probe()
-	// 命名空间是成套建的（网络 + PID + IPC + UTS）；以 root 运行时沙箱降权到独立的 coordinator.user。
+	// 命名空间是成套建的（网络 + PID + IPC + UTS）；以 root 运行时沙箱降权到本实例独占的账号。
 	if err := sandbox.Requirement(h.abi, h.useNS, h.useNS, os.Geteuid() == 0); err != nil {
 		reason := err.Error()
 		if h.probeErr != nil {
@@ -299,10 +318,14 @@ func (h *Host) Check(_ context.Context) error {
 		}
 	}
 	if os.Geteuid() == 0 {
-		if _, _, err := h.target(); err != nil {
+		a, err := h.target()
+		if err != nil {
 			return unavailable("%v", err)
 		}
-		if err := reachable(h.cfg.Dir, h.cfg.User); err != nil {
+		if err := h.exclusive(a); err != nil {
+			return unavailable("%v", err)
+		}
+		if err := reachable(h.cfg.Dir, a.name); err != nil {
 			return unavailable("%v", err)
 		}
 	}
@@ -337,24 +360,9 @@ func (h *Host) verifyOmp(st os.FileInfo) error {
 	return nil
 }
 
-// target 返回降权目标：orynd 的 euid 为 0 时是 coordinator.user 的 uid/gid，否则 (-1, -1)（不切换用户）。
-func (h *Host) target() (int, int, error) {
-	if os.Geteuid() != 0 {
-		return -1, -1, nil
-	}
-	u, err := user.Lookup(h.cfg.User)
-	if err != nil {
-		return 0, 0, fmt.Errorf("coordinator.user %q: %v", h.cfg.User, err)
-	}
-	uid, err1 := strconv.Atoi(u.Uid)
-	gid, err2 := strconv.Atoi(u.Gid)
-	if err1 != nil || err2 != nil {
-		return 0, 0, fmt.Errorf("coordinator.user %q has non-numeric ids %s/%s", h.cfg.User, u.Uid, u.Gid)
-	}
-	if uid == 0 {
-		return 0, 0, fmt.Errorf("coordinator.user %q must not be root", h.cfg.User)
-	}
-	return uid, gid, nil
+// validOrbID 报告 orb id 能否安全地作为 <dir>/homes 下的一级目录名。
+func validOrbID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, "/\x00")
 }
 
 // reachable 检查 dir 本身（已存在时）与它的每一级父目录对其他用户可进入（other 的 x 位）。
@@ -423,13 +431,15 @@ func (h *Host) Status(ctx context.Context) apigen.CoordinatorStatus {
 
 // ---- 目录 ----
 
-func (h *Host) homeDir() string     { return filepath.Join(h.cfg.Dir, "home") }
-func (h *Host) ompCopy() string     { return filepath.Join(h.cfg.Dir, "bin", "omp") }
-func (h *Host) hostLogPath() string { return filepath.Join(h.cfg.Dir, "host.log") }
+func (h *Host) homesDir() string            { return filepath.Join(h.cfg.Dir, "homes") }
+func (h *Host) homeDir(orbID string) string { return filepath.Join(h.homesDir(), orbID) }
+func (h *Host) ompCopy() string             { return filepath.Join(h.cfg.Dir, "bin", "omp") }
+func (h *Host) hostLogPath() string         { return filepath.Join(h.cfg.Dir, "host.log") }
 
 // ensureDirs 准备 <dir>（0755，须属于 orynd 且不可被组与其他人写）、<dir>/bin/omp（omp 的 0555 副本，
-// 源的大小或 mtime 变了才重拷）、<dir>/home（0700，root 部署时递归交给目标用户）并轮转 host.log。
-func (h *Host) ensureDirs(uid, gid int) error {
+// 源的大小或 mtime 变了才重拷）、<dir>/homes（0755，属于 orynd：沙箱用户只能进入，不能在里面建删）并轮转 host.log。
+// 各 orb 的 HOME 由 spawn 按 orb 准备（prepareHome）。
+func (h *Host) ensureDirs() error {
 	dir := h.cfg.Dir
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -453,7 +463,10 @@ func (h *Host) ensureDirs(uid, gid int) error {
 	if err := copyIfChanged(h.cfg.OmpPath, h.ompCopy()); err != nil {
 		return fmt.Errorf("copy omp: %w", err)
 	}
-	if err := prepareHome(h.homeDir(), uid, gid); err != nil {
+	if err := os.MkdirAll(h.homesDir(), 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(h.homesDir(), 0o755); err != nil {
 		return err
 	}
 	if st, err := os.Stat(h.hostLogPath()); err == nil && st.Size() > hostLogMax {
@@ -462,7 +475,7 @@ func (h *Host) ensureDirs(uid, gid int) error {
 	return nil
 }
 
-// prepareHome 建（或修正）一个 0700 的目录；uid ≥ 0 时把整棵树交给 uid/gid。
+// prepareHome 建（或修正）一个 0700 的目录；uid ≥ 0 时把整棵树交给 uid/gid（降权账号变了时自动迁移属主）。
 func prepareHome(dir string, uid, gid int) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -533,15 +546,15 @@ func (h *Host) logTail(n int64) string {
 }
 
 // childArgs 是子进程的命令行（Command 之后的部分）。
-func (h *Host) childArgs(uid, gid int, ns bool, extra ...string) []string {
+func (h *Host) childArgs(a account, ns bool, extra ...string) []string {
 	args := append([]string{}, h.cfg.Command[1:]...)
 	args = append(args,
 		"--omp", h.ompCopy(),
 		"--egress-addr", net.JoinHostPort("127.0.0.1", strconv.Itoa(h.cfg.EgressPort)),
 		"--log-level", h.cfg.LogLevel,
 	)
-	if uid >= 0 {
-		args = append(args, "--uid", strconv.Itoa(uid), "--gid", strconv.Itoa(gid))
+	if a.uid >= 0 {
+		args = append(args, "--uid", strconv.Itoa(a.uid), "--gid", strconv.Itoa(a.gid))
 	}
 	if ns {
 		args = append(args, "--netns", "--pidns")
@@ -552,18 +565,19 @@ func (h *Host) childArgs(uid, gid int, ns bool, extra ...string) []string {
 	return append(args, extra...)
 }
 
-// prepare 做 spawn 与自检共用的前置：可用性检查、降权目标、目录。
-func (h *Host) prepare(ctx context.Context) (uid, gid int, err error) {
+// prepare 做 spawn 与自检共用的前置：可用性检查（含账号独占）、降权目标、目录。
+func (h *Host) prepare(ctx context.Context) (account, error) {
 	if err := h.Check(ctx); err != nil {
-		return 0, 0, err
+		return account{}, err
 	}
-	if uid, gid, err = h.target(); err != nil {
-		return 0, 0, err
+	a, err := h.target()
+	if err != nil {
+		return account{}, err
 	}
-	if err := h.ensureDirs(uid, gid); err != nil {
-		return 0, 0, err
+	if err := h.ensureDirs(); err != nil {
+		return account{}, err
 	}
-	return uid, gid, nil
+	return a, nil
 }
 
 // ---- 运行 ----
@@ -583,6 +597,7 @@ func (h *Host) Run(ctx context.Context) {
 	if err := h.Check(ctx); err != nil {
 		h.log.Warn("coordinator unavailable", "reason", err.Error())
 	}
+	h.migrateLegacyHome(ctx)
 	h.recover(ctx)
 	for ctx.Err() == nil {
 		job, ok, err := h.q.Claim(ctx, pid, claimWait)
@@ -693,8 +708,11 @@ func (h *Host) execute(ctx context.Context, job db.Job) jobs.Result {
 		err = h.stop(orbID)
 		h.notePaused(orbID)
 	case "delete":
-		if err = h.stop(orbID); err == nil {
-			err = os.RemoveAll(h.homeDir())
+		if !validOrbID(orbID) {
+			err = fmt.Errorf("delete: invalid orb id %q", orbID)
+		} else if err = h.stop(orbID); err == nil {
+			// 只删这个 orb 自己的 HOME：新一代协调 orb 的 HOME 与会话不受影响。
+			err = os.RemoveAll(h.homeDir(orbID))
 		}
 		h.notePaused(orbID)
 	case "snapshot", "delete_snapshot":
@@ -709,29 +727,71 @@ func (h *Host) execute(ctx context.Context, job db.Job) jobs.Result {
 	return jobs.Result{OK: true}
 }
 
-// spawn 确保该 orb 有一个存活且 link 未断的子进程。
+// spawn 确保该 orb 有一个存活且 link 未断的子进程；拉起之前先停掉别的 orb（旧一代）的子进程。
 func (h *Host) spawn(ctx context.Context, orbID string) error {
-	if orbID == "" {
-		return errors.New("spawn: job has no orb")
+	if !validOrbID(orbID) {
+		return fmt.Errorf("spawn: invalid orb id %q", orbID)
 	}
 	h.mu.Lock()
 	c := h.children[orbID]
+	var others []string
+	for id := range h.children {
+		if id != orbID {
+			others = append(others, id)
+		}
+	}
 	h.mu.Unlock()
+	// 不变量：同一时刻至多一个 coordinator-host 子进程（别代的 HOME 与本代互不相干，但同一账号下不留两代进程）。
+	for _, id := range others {
+		if err := h.stop(id); err != nil {
+			return fmt.Errorf("stop previous coordinator host %s: %w", id, err)
+		}
+	}
 	if c != nil && c.alive() && c.linkUp() {
 		return nil
 	}
 	if c != nil {
 		_ = h.stop(orbID)
 	}
-	uid, gid, err := h.prepare(ctx)
+	a, err := h.prepare(ctx)
 	if err != nil {
 		return err
 	}
-	return h.start(orbID, uid, gid)
+	if err := prepareHome(h.homeDir(orbID), a.uid, a.gid); err != nil {
+		return err
+	}
+	return h.start(orbID, a)
+}
+
+// migrateLegacyHome 把旧布局的 <dir>/home（所有 orb 共用一个 HOME）迁到 <dir>/homes/<当前协调 orb>；没有协调 orb
+// 时删除它。属主在下次 spawn 时由 prepareHome 改成当前账号。
+func (h *Host) migrateLegacyHome(ctx context.Context) {
+	old := filepath.Join(h.cfg.Dir, "home")
+	if _, err := os.Lstat(old); err != nil {
+		return
+	}
+	if o, err := h.st.Q.GetCoordinatorOrb(ctx); err == nil && validOrbID(o.ID) {
+		dst := h.homeDir(o.ID)
+		if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(h.homesDir(), 0o755); err != nil {
+				h.log.Warn("migrate legacy coordinator home", "err", err)
+				return
+			}
+			if err := os.Rename(old, dst); err != nil {
+				h.log.Warn("migrate legacy coordinator home", "from", old, "to", dst, "err", err)
+				return
+			}
+			h.log.Info("migrated legacy coordinator home", "from", old, "to", dst)
+			return
+		}
+	}
+	if err := os.RemoveAll(old); err != nil {
+		h.log.Warn("remove legacy coordinator home", "path", old, "err", err)
+	}
 }
 
 // start 拉起子进程并等它报告沙箱生效（上限 10 秒）。
-func (h *Host) start(orbID string, uid, gid int) error {
+func (h *Host) start(orbID string, a account) error {
 	h.mu.Lock()
 	runCtx := h.runCtx
 	h.mu.Unlock()
@@ -758,14 +818,18 @@ func (h *Host) start(orbID string, uid, gid int) error {
 		return err
 	}
 	useNS := h.useNS
-	cmd := exec.Command(h.cfg.Command[0], h.childArgs(uid, gid, useNS, "--orb", orbID, "--home", h.homeDir())...)
+	cmd := exec.Command(h.cfg.Command[0], h.childArgs(a, useNS, "--orb", orbID, "--home", h.homeDir(orbID))...)
 	cmd.Env = childEnv()
 	cmd.Dir = "/"
 	cmd.Stdout, cmd.Stderr = logF, logF
 	cmd.ExtraFiles = []*os.File{childF, pw}
 	cmd.SysProcAttr = sysProcAttr(useNS)
 
-	c := &child{orbID: orbID, useNS: useNS, done: make(chan struct{}), linkDone: make(chan struct{})}
+	c := &child{orbID: orbID, useNS: useNS, done: make(chan struct{}), linkDone: make(chan struct{}), cleanupUID: -1}
+	if a.auto && !useNS && a.uid > 0 {
+		// 没有 PID 命名空间时，setsid 出去的进程不随子进程结束：本实例专用账号的进程在子进程退出后按 uid 清扫。
+		c.cleanupUID = a.uid
+	}
 	// 先登记再启动：子进程哪怕立刻退出，onExit 也能找到并移除它。
 	h.mu.Lock()
 	h.children[orbID] = c
@@ -780,9 +844,14 @@ func (h *Host) start(orbID string, uid, gid int) error {
 			close(c.done)
 			return
 		}
+		h.mu.Lock()
 		c.pid = cmd.Process.Pid
+		h.mu.Unlock()
 		started <- nil
 		_ = cmd.Wait()
+		if c.cleanupUID > 0 {
+			h.killUID(c.cleanupUID)
+		}
 		close(c.done)
 		h.onExit(c)
 	}()

@@ -67,7 +67,9 @@ type Coordinator struct {
 	OmpPath string `yaml:"omp_path"`
 	// Dir 是协调宿主的工作目录（omp 副本、HOME、host.log）；空 = <data_dir>/coordinator。
 	Dir string `yaml:"dir"`
-	// User 是 orynd 以 root 运行时协调宿主降权到的用户。
+	// User 是 orynd 以 root 运行时协调宿主降权到的账号。空（缺省）、nobody、nfsnobody 或 uid 65534 的账号 =
+	// 自动：使用（必要时用 useradd 创建）本实例专用的系统账号 oryn-coord-<协调目录路径的 fnv32a>。
+	// 写别的名字则用该账号（须不是 root，且不被本实例以外的进程使用）。
 	User string `yaml:"user"`
 	// EgressPort 是协调宿主内模型代理监听的回环端口。
 	EgressPort int `yaml:"egress_port"`
@@ -120,7 +122,7 @@ func DefaultOrynd() Orynd {
 			StopAfterFrozen: Duration(24 * time.Hour),
 			WakeOnFocus:     true,
 		},
-		Coordinator: Coordinator{OmpPath: "/usr/local/lib/oryn/omp", User: "nobody", EgressPort: 7811},
+		Coordinator: Coordinator{OmpPath: "/usr/local/lib/oryn/omp", EgressPort: 7811},
 		Schedule:    Schedule{DeliverTimeout: Duration(10 * time.Minute), MaxFailures: 3},
 	}
 }

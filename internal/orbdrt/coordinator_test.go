@@ -177,20 +177,33 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	cp.waitNotif(t, 0, "agent.status", statusIs(thread, "ready"))
 
 	var rec struct {
-		Args []string          `json:"args"`
-		Env  map[string]string `json:"env"`
-		Cwd  string            `json:"cwd"`
+		Args         []string          `json:"args"`
+		Env          map[string]string `json:"env"`
+		Cwd          string            `json:"cwd"`
+		SystemPrompt string            `json:"systemPrompt"`
 	}
 	b, err := os.ReadFile(dump)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(b, &rec))
 	cwd := filepath.Join(rt.home, ".oryn", "coordinator", "cwd")
 	overlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay.yml")
+	promptFile := filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread+".md")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread),
 		"--no-tools", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
-		"--config", overlay, "--system-prompt", prompt,
+		"--config", overlay, "--system-prompt", promptFile,
 	}, rec.Args)
+	// L4：argv 只带路径，不含提示词正文；omp 按文件读到的正文与下发的一致。
+	for _, a := range rec.Args {
+		assert.NotContains(t, a, "You are the Oryn coordinator", "system prompt text leaked into argv")
+	}
+	assert.Equal(t, prompt, rec.SystemPrompt, "the agent read the system prompt from the file")
+	pf, err := os.Stat(promptFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), pf.Mode().Perm())
+	got, err := os.ReadFile(promptFile)
+	require.NoError(t, err)
+	assert.Equal(t, prompt, string(got))
 	assert.NotContains(t, rec.Args, "-e")
 	assert.Equal(t, cwd, rec.Cwd)
 	assert.Equal(t, map[string]string{
@@ -205,6 +218,25 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	entries, err := os.ReadDir(cwd)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the coordinator cwd stays empty")
+}
+
+// L3：给了 EgressListener 时 New 不再自己监听，egress 就用这个（协调宿主在施加沙箱之前建好它）。
+func TestCoordinatorUsesProvidedEgressListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	rt, err := New(Config{
+		Coordinator:    true,
+		OrbID:          "orb-coord",
+		Home:           t.TempDir(),
+		AgentBin:       fakeompBin,
+		EgressAddr:     "127.0.0.1:1", // 若仍自行监听这个地址，拿到的会是另一个监听
+		EgressListener: ln,
+		Connect:        func(context.Context) (*link.Session, error) { return nil, ErrNoRedial },
+	})
+	require.NoError(t, err)
+	assert.Same(t, ln, rt.egressLn)
+	assert.Equal(t, ln.Addr().String(), rt.EgressAddr())
 }
 
 // H3：link 断开后 Connect 返回 ErrNoRedial，Run 随即返回（不重连）。

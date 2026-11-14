@@ -105,7 +105,7 @@ func TestLoadOryndCoordinatorPaths(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "bin/omp"), c.Coordinator.OmpPath)
 	assert.Equal(t, filepath.Join(dir, "coord"), c.Coordinator.Dir)
 	assert.Equal(t, 7999, c.Coordinator.EgressPort)
-	assert.Equal(t, "nobody", c.Coordinator.User, "未写的键保持默认")
+	assert.Equal(t, "", c.Coordinator.User, "未写的键保持默认：空 = root 部署时自动使用本实例的专用账号")
 	assert.False(t, c.Coordinator.Verify())
 	assert.Equal(t, 3, c.Schedule.MaxFailures)
 }

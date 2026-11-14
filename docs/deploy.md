@@ -224,14 +224,26 @@ sudo install -D -m 0755 build/core/x64/omp /usr/local/lib/oryn/omp
 ```yaml
 coordinator:
   omp_path: "/usr/local/lib/oryn/omp"   # 缺省值
-  dir: ""                               # 缺省 <data_dir>/coordinator：omp 副本、协调 agent 的 HOME、host.log
-  user: "nobody"                        # orynd 以 root 运行时，协调宿主降权到这个用户
+  dir: ""                               # 缺省 <data_dir>/coordinator：omp 副本、各协调 orb 的 HOME、host.log
+  user: ""                              # orynd 以 root 运行时降权到的账号；空 = 自动使用本实例的专用账号（见下）
   egress_port: 7811                     # 沙箱内模型代理监听的回环端口
   verify_omp: true
   model: ""                             # 协调对话的默认模型（provider/id）；空 = omp 配置的默认模型
 ```
 
-`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`home/`（0700，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`、natives 缓存）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
+`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`homes/`（0755，属于 orynd）与其下每个协调 orb 一个的 `homes/<orb id>/`（0700，属于降权账号，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`、natives 缓存、`.oryn/coordinator/prompts/<线程 id>.md` 系统提示词）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
+
+每个协调 orb 有自己的 HOME：删除一个协调 orb 只删它自己的 `homes/<orb id>/`；拉起新一代协调 orb 之前先停掉旧一代的子进程，所以同一时刻至多一个协调宿主子进程。旧版本的 `<dir>/home`（所有协调 orb 共用）在 orynd 启动时迁到 `homes/<当前协调 orb>/`，没有协调 orb 时删除。
+
+### 专用账号（root 部署）
+
+orynd 以 root 运行时，沙箱降权到一个只属于这个 Oryn 实例的系统账号，而不是与其它服务共用的 `nobody`：
+
+- `coordinator.user` 为空（缺省）、`nobody`、`nfsnobody`，或解析出 uid 65534 的账号时，使用 `oryn-coord-<8 位十六进制>`，后缀是协调目录绝对路径的 fnv32a（同一台机器上不同实例的账号不同）。后三种写法记一条警告（共享身份，已改用专用账号），配置不用改。
+- 账号不存在时 orynd 执行一次 `useradd --system --no-create-home --home-dir /nonexistent --shell <nologin> --user-group oryn-coord-<后缀>`（uid 由系统分配）。`useradd` 不存在或失败（例如单元带 `ProtectSystem=strict`，`/etc` 只读）时协调功能不可用，原因里有失败输出与这条命令，手工执行一次即可；也可以在 `coordinator.user` 指定一个你自己建的专用账号。
+- 已有部署升级后，下次拉起协调宿主时 HOME 的属主递归改成新账号，会话照常接续。`GET /api/v1/coordinator` 的 `sandbox.uid` 就是这个账号的 uid（`id -u oryn-coord-<后缀>`）。
+- 每次拉起前都会检查这个账号此刻没有被本实例以外的进程使用（扫描 `/proc/<pid>/status` 的 `Uid:`，本实例的协调宿主进程树不算）；有就不可用，原因「coordinator account "…" (uid N) is used by other processes (pid P); use a dedicated account」，orynd 不会去杀它。显式指定的账号同样检查，所以不要指定登录用户或其它服务的账号。
+- 卸载时可以 `userdel oryn-coord-<后缀>`。
 
 ### 启动条件
 
@@ -244,7 +256,7 @@ coordinator:
 | Landlock ABI ≥ 2（跨目录改名的 refer 权限） | 内核 ≥ 5.19，Landlock LSM 已启用（`cat /sys/kernel/security/lsm` 里有 `landlock`） | 「内核 Landlock ABI N < 2…」 |
 | TCP：有网络命名空间，**或** Landlock ABI ≥ 4（按端口限制 TCP） | 能建网络命名空间（root，或开放了非特权 user namespace）；否则内核 ≥ 6.7 | 「内核 Landlock ABI N < 4 且没有网络命名空间，无法限制 TCP 出站…」 |
 | 信号：有 PID 命名空间，**或**沙箱降权到独立用户（orynd 以 root 运行），**或** Landlock ABI ≥ 6（信号作用域） | 命名空间与网络命名空间一起建；否则 root 部署，或内核 ≥ 6.12 | 「内核 Landlock ABI N < 6、没有 PID 命名空间且沙箱与 orynd 是同一用户，无法阻止向 orynd 等同用户进程发信号…」 |
-| orynd 以 root 运行时：`coordinator.user` 存在且不是 root，`coordinator.dir` 的每一级父目录对它可进入（other 有 `x` 位） | 默认的 `<data_dir>/coordinator` 在 0700 的 `data_dir` 下，root 部署必须把 `dir` 移出来（例如 `/var/lib/oryn-coordinator`） | 「… is not reachable by user …」等 |
+| orynd 以 root 运行时：降权账号可用（自动账号能建出来或已存在；显式账号存在）、不是 root、没有被本实例以外的进程使用，且 `coordinator.dir` 的每一级父目录对它可进入（other 有 `x` 位） | 默认的 `<data_dir>/coordinator` 在 0700 的 `data_dir` 下，root 部署必须把 `dir` 移出来（例如 `/var/lib/oryn-coordinator`） | 「cannot create the coordinator account …」「… is used by other processes …」「… is not reachable by user …」等 |
 
 其余随 ABI 出现的 Landlock 能力不设门槛：按路径的 `truncate(2)`（ABI 3）由 seccomp 无条件拒绝；设备 ioctl（ABI 5）只涉及白名单里的 `/dev/null`、`/dev/{u,}random`、`/dev/zero`；abstract 与带路径的 unix socket（ABI 6 / 9）、UDP（ABI 10）由 seccomp 一律禁止。Debian 13 默认内核（6.12，ABI 6）无论有没有命名空间都可用。
 
@@ -255,19 +267,20 @@ coordinator:
 | 启动开关 | omp 以 `--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动，带一份强制关闭 autolearn、memory、checkpoint、goal、plan、generate_image、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv 的覆盖层；环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket） |
 | 文件 | 只下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥）；cwd 是空目录 |
 | 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
-| Landlock | 只有 `<dir>/home` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 bind / connect `egress_port`；ABI ≥ 6 时信号不出沙箱 |
-| seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；`socket` 只放行 TCP（`AF_INET` / `AF_INET6` 的 `SOCK_STREAM`），`AF_UNIX` 一律拒绝，netlink、UDP、MPTCP 等也拒绝；`socketpair` 只放行 `AF_UNIX` + `SOCK_STREAM`（Bun 启动时要建一对，拒绝会直接 abort；这对 socket 生来已连接，connect / sendto 别处都失败），datagram 与 seqpacket 拒绝；带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、按路径的 `truncate`、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等一律拒绝 |
-| 权限 | `no_new_privs`；能力集与边界集清空；root 部署时降权到 `coordinator.user` |
+| Landlock | 只有本 orb 的 `<dir>/homes/<orb id>` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 connect `egress_port`、不能 bind 任何端口（代理端口由子进程在施加沙箱之前监听好再交给 orbd）；ABI ≥ 6 时信号不出沙箱 |
+| seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；`socket` 只放行 TCP（`AF_INET` / `AF_INET6` 的 `SOCK_STREAM`），`AF_UNIX` 一律拒绝，netlink、UDP、MPTCP 等也拒绝；`socketpair` 只放行 `AF_UNIX` + `SOCK_STREAM`（Bun 启动时要建一对，拒绝会直接 abort；这对 socket 生来已连接，connect / sendto 别处都失败），datagram 与 seqpacket 拒绝；`prlimit64`、`sched_setaffinity`、`sched_setscheduler`、`sched_setparam`、`sched_setattr` 只能作用于自身（pid 为 0），`setpriority` 只能 `PRIO_PROCESS` + 自身，`ioprio_set` 只能 `IOPRIO_WHO_PROCESS` + 自身（同一用户时改不了 orynd 等进程的资源上限与调度）；带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、按路径的 `truncate`、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等一律拒绝 |
+| 权限 | `no_new_privs`；能力集与边界集清空；root 部署时降权到本实例的专用账号（见上） |
+| 命令行 | 系统提示词写在 HOME 里的文件中（0600），omp 的命令行只带它的路径：`/proc/<pid>/cmdline` 里看不到提示词正文 |
 | 命名空间（能建就建） | 独立的网络（只有回环）、PID、IPC、UTS 命名空间；非 root 时外加一个只映射自己的 user namespace |
 
 ### 不同环境得到的隔离
 
 | 环境 | 命名空间 | Landlock | 降权 | 结果 |
 |---|---|---|---|---|
-| 开发机（root，Arch，内核 7.x） | 有 | 有 | `nobody` | 全部 |
+| 开发机（root，Arch，内核 7.x） | 有 | 有 | 专用账号 `oryn-coord-<后缀>` | 全部 |
 | systemd 生产单元（`User=oryn`；Debian 13 / Arch / Fedora） | 有（非特权 user namespace） | 有（Debian 13 = ABI 6） | 不适用 | 全部（文件靠 Landlock，不靠 uid） |
 | systemd 生产单元，Ubuntu 23.10+ 默认 AppArmor | 探测失败时不用 | 有（6.8 = ABI 4） | 不适用 | 不可用：没有 PID 命名空间、同一用户，ABI < 6 拦不住信号（以 root 运行 orynd 或放开 user namespace 即可） |
-| Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 Landlock ABI ≥ 4，且 Docker ≥ 20.10.18 | `nobody` | 文件 + 按端口限制的网络；ABI < 4 时不可用 |
+| Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 Landlock ABI ≥ 4，且 Docker ≥ 20.10.18 | 专用账号（容器里要有 `useradd`，或预先建好并写进 `coordinator.user`） | 文件 + 按端口限制的网络；ABI < 4 时不可用 |
 
 omp 的原生文件锁（会话所有权租约等）在 Linux 上默认 bind 一个 abstract unix datagram socket；协调宿主给 omp 设了 `PI_FILE_LOCK_BACKEND=sidecar`（Oryn Core `oryn-v18.19.0-3` 起），锁改成 `~/.omp/run/…` 下的旁路文件加 OFD 写锁，沙箱因此可以禁止 `AF_UNIX` 的 `socket(2)`（只留 Bun 需要的、生来已连接的 stream `socketpair`）：宿主上的 abstract socket 与 `/dev/log` 这类带路径的 0666 socket 在任何内核上都联系不上。
 
@@ -275,15 +288,18 @@ omp 的原生文件锁（会话所有权租约等）在 Linux 上默认 bind 一
 
 **代理端口**：有网络命名空间时 `egress_port` 在命名空间里，与宿主上的端口互不相干。没有命名空间（「按端口限制」模式）时它直接绑定在宿主的 `127.0.0.1` 上，必须是宿主上没人用的端口；被占用时协调功能立即不可用，`GET /api/v1/coordinator` 与助手页给出原因「出站代理端口 127.0.0.1:<port> 已被占用…」，`coordinator check` 也报同一条，此时在 `coordinator.egress_port` 换一个端口后重启 orynd（不会自动换：端口同时写进 omp 的配置与沙箱的连接白名单）。在这种模式下，orynd 运行着协调宿主时再跑 `coordinator check`，端口正被它自己占着，同样会报这一条，先停 orynd 再检查。
 
-root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去的地方（容器里挂一个卷），`data_dir` 保持 0700；容器里要有 `nobody` 用户。
+root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方（容器里挂一个卷），`data_dir` 保持 0700。专用账号建在容器里时，重建容器后会再建一次（uid 可能不同，HOME 属主随之改过来）。
 
 ### 残余风险
 
 - 没有网络命名空间时，沙箱内进程能向**任意地址**的 `egress_port` 端口发起 TCP 连接（Landlock 只按端口管）。
 - `/proc` 只读可见，其它进程的命令行可读（环境与内存读不到）。
 - 不防资源耗尽（内存、磁盘、CPU）。
-- root 部署、没有 PID 命名空间且 ABI < 6 时，沙箱能给同为 `coordinator.user` 的其它协调宿主进程发信号（同一所有者，不出信任域）。
+- root 部署、没有 PID 命名空间且 ABI < 6 时，沙箱能给同为降权账号的其它协调宿主进程发信号（同一所有者，不出信任域）。
 - 没有网络命名空间时，放行的 stream `socketpair` 的一端可以 `bind` 到宿主上一个尚未被占用的 abstract unix 名字（seccomp 看不到地址）：只能抢占名字，不能借它连接或收发任何东西（这对 socket 已互相连接，不能 `listen`）。
+- 「home 不可执行」挡不住执行 home 里的代码：经 ELF 解释器（`ld.so <home 里的文件>`）或 `memfd_create` + `execveat` 都能运行（已在内核 7.x、Landlock ABI 11 上实测）。隔离不依赖这一条：能执行的代码仍在同一个沙箱里，受同样的 Landlock、seccomp、命名空间与降权约束。
+- 没有 PID 命名空间时，沙箱内用 `setsid` 脱离进程组的进程不随子进程结束：自动的专用账号在子进程退出后按 uid 清扫（独占检查保证这个 uid 的进程都属于本实例）；**显式指定的账号不清扫**，残留进程会一直留着，下次拉起时独占检查发现它们、协调功能不可用，需要手工结束。非 root 部署（沙箱与 orynd 同一用户）同样不清扫。
+- TCP Fast Open（`sendto(MSG_FASTOPEN)`、`TCP_FASTOPEN_CONNECT`）在实测内核上与普通 `connect` 一样被 Landlock 拒绝，自检会逐项验证；没有另加 seccomp 规则。
 
 ### 排查
 
@@ -291,14 +307,14 @@ root 或 Docker 部署：`coordinator.dir` 放在 `coordinator.user` 进得去�
 sudo -u oryn orynd --config /etc/oryn/orynd.yaml coordinator check   # root 部署去掉 sudo -u oryn
 ```
 
-它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性，再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443`、`127.0.0.1:1` 与自检在宿主回环上真实监听的白名单外 TCP 端口（该端口也必须接不到连接），建 UDP / unix stream / unix datagram / netlink / MPTCP 套接字与 datagram / seqpacket 的 unix `socketpair`，以 stream 与 datagram 连宿主上的 abstract unix socket，对白名单之外的 0666 unix datagram socket 做 connect 与 sendto、并用放行的 stream `socketpair` 向它 sendto（宿主上这些 socket 也必须什么都收不到），按路径 `truncate` home 里的文件，`unshare`、`mount`、`ptrace`、`clone3`，父进程可见时向它发信号）与**必须成功**的（home 内写文件并跨目录改名、home 内 flock 与 OFD 锁——另一个打开文件描述取不到 OFD 写锁且 `F_OFD_GETLK` 看得到持有者，即 omp 旁路文件锁所需的语义——建一对 stream unix `socketpair`、`omp --version`、监听并自连代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。
+它先打印探测结论（能否建网络命名空间、Landlock ABI）与可用性（root 部署时带降权账号的名字与 uid），再用与正式运行相同的参数在一次性的 HOME 里起一个沙箱子进程，逐项打印一行 JSON：**必须失败**的（读 `master.key`、`oryn.db`、配置文件与 `/etc/shadow`，列 `/`，在 home 之外建文件，执行 `/bin/sh` 或 home 里的程序，连 `1.1.1.1:443`、`127.0.0.1:1` 与自检在宿主回环上真实监听的白名单外 TCP 端口、并对它做两种 TCP Fast Open（该端口也必须接不到连接、收不到数据），在 `0.0.0.0` 与 `[::]` 上 bind 代理端口，建 UDP / unix stream / unix datagram / netlink / MPTCP 套接字与 datagram / seqpacket 的 unix `socketpair`，以 stream 与 datagram 连宿主上的 abstract unix socket，对白名单之外的 0666 unix datagram socket 做 connect 与 sendto、并用放行的 stream `socketpair` 向它 sendto（宿主上这些 socket 也必须什么都收不到），按路径 `truncate` home 里的文件，`unshare`、`mount`、`ptrace`、`clone3`，对父进程（PID 命名空间里是 1 号）做 `prlimit64`、`setpriority`、`sched_setaffinity`，父进程可见时向它发信号）与**必须成功**的（home 内写文件并跨目录改名、home 内 flock 与 OFD 锁——另一个打开文件描述取不到 OFD 写锁且 `F_OFD_GETLK` 看得到持有者，即 omp 旁路文件锁所需的语义——建一对 stream unix `socketpair`、`omp --version`、自连施加沙箱之前就监听好的代理端口），以及 `/proc/self/status` 的 `NoNewPrivs: 1`、`Seccomp: 2`、能力集为空。全部通过时退出码 0。运行中的协调宿主的输出在 `<dir>/host.log`；当前生效的隔离见 `GET /api/v1/coordinator` 的 `sandbox`。root 部署时 `coordinator check` 与 orynd 一样会在需要时创建专用账号。
 
-宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/home`，下一条消息时接着同一个会话。子进程意外退出时，若协调 orb 已就绪，orynd 会把它停下再唤醒；若还在启动（尚未就绪），就原地重新拉起子进程。5 分钟内连续 3 次意外退出后不再拉起：已就绪的停在 `stopped` 等下一条消息再试，启动中的由连接超时转为 `failed`。
+宿主上的「冻结」就是结束子进程（协调 omp 一个就上百 MB，留在内存里没有意义）；会话文件在 `<dir>/homes/<orb id>`，下一条消息时接着同一个会话。子进程意外退出时，若协调 orb 已就绪，orynd 会把它停下再唤醒；若还在启动（尚未就绪），就原地重新拉起子进程。5 分钟内连续 3 次意外退出后不再拉起：已就绪的停在 `stopped` 等下一条消息再试，启动中的由连接超时转为 `failed`。
 
 ### 升级
 
-同时替换 `orynd` 与 `/usr/local/lib/oryn/omp`，然后重启 orynd。旧的子进程随旧 orynd 退出（socketpair 断开、父进程死亡信号、PID 命名空间三重保证）；新进程拉起前发现源文件变了会重拷 `<dir>/bin/omp`，natives 由 omp 首次运行时解压到 `<dir>/home/.omp/natives/<版本>` 并清理旧版本。
+同时替换 `orynd` 与 `/usr/local/lib/oryn/omp`，然后重启 orynd。旧的子进程随旧 orynd 退出（socketpair 断开、父进程死亡信号、PID 命名空间三重保证）；新进程拉起前发现源文件变了会重拷 `<dir>/bin/omp`，natives 由 omp 首次运行时解压到 `<dir>/homes/<orb id>/.omp/natives/<版本>` 并清理旧版本。
 
 ### 开发
 
-`dev/orynd.yaml` 已带 `coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }`：开发机以 root 运行、仓库在 `/root` 下，`nobody` 进不去，所以目录放在外面。CI 设了 `ORYN_REQUIRE_SANDBOX=1`，沙箱相关的测试在条件不满足时直接失败而不是跳过；若 GitHub runner 不满足条件，去掉这个变量（测试改为跳过），本机验收不受影响。
+`dev/orynd.yaml` 已带 `coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }`，没写 `user`：开发机以 root 运行，用的是自动的专用账号 `oryn-coord-<fnv32a("/var/tmp/oryn-dev-coordinator")>`（首次拉起协调宿主或跑 `coordinator check` 时创建）；仓库在 `/root` 下，降权账号进不去，所以目录放在外面。测试用各自的临时协调目录（后缀与 dev 不同），在 root 下真实创建专用账号并在测试结束时 `userdel`。CI 设了 `ORYN_REQUIRE_SANDBOX=1`，沙箱相关的测试在条件不满足时直接失败而不是跳过；若 GitHub runner 不满足条件，去掉这个变量（测试改为跳过），本机验收不受影响。

@@ -68,7 +68,8 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	base := r.coordinatorDir()
 	cwd = filepath.Join(base, "cwd")
 	tmp := filepath.Join(r.home, "tmp")
-	for _, d := range []string{cwd, tmp} {
+	prompts := filepath.Join(base, "prompts")
+	for _, d := range []string{cwd, tmp, prompts} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, "", nil, ctlErr("failed", "%v", err)
 		}
@@ -77,10 +78,16 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay), 0o600); err != nil {
 		return nil, "", nil, ctlErr("failed", "write overlay: %v", err)
 	}
+	// 系统提示词写成文件、argv 只带路径（M9 L4）：同 uid 的进程与 /proc/<pid>/cmdline 看不到正文。omp 对不含换行的
+	// --system-prompt 按文件读（resolvePromptInput）；路径不含换行（threadId 已校验）。
+	promptFile := filepath.Join(prompts, p.ThreadID+".md")
+	if err := writeFileAtomic(promptFile, []byte(*p.SystemPrompt), 0o600); err != nil {
+		return nil, "", nil, ctlErr("failed", "write system prompt: %v", err)
+	}
 	args = []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir,
 		"--no-tools", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
-		"--config", overlay, "--system-prompt", *p.SystemPrompt,
+		"--config", overlay, "--system-prompt", promptFile,
 	}
 	env = map[string]string{
 		"HOME":              r.home,

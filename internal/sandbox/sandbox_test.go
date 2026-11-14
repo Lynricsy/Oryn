@@ -141,6 +141,12 @@ func TestHelperSandbox(t *testing.T) {
 			emit()
 		}
 	}
+	// 模型代理的监听在施加沙箱之前建好（沙箱内不能 bind 任何 TCP 端口，M9 L3）。
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(a.Port))))
+	if err != nil {
+		res.Err = err.Error()
+		emit()
+	}
 	if err := DropPrivileges(a.UID, a.GID); err != nil {
 		res.Err = err.Error()
 		emit()
@@ -168,7 +174,8 @@ func TestHelperSandbox(t *testing.T) {
 		DenyDial:      a.DenyDial,
 		HostListener:  a.HostListener,
 		Exec:          []string{"/usr/bin/true"},
-		Port:          a.Port,
+		Listener:      ln,
+		LandlockTCP:   rep.LandlockABI >= TCPABI,
 		DenyAbstract:  a.DenyAbstract,
 		DenyUnixDgram: a.DenyUnixDgram,
 	})
@@ -296,8 +303,8 @@ func sandboxApply(t *testing.T, mode sbxMode) helperResult {
 		require.NoError(t, os.Chown(home, uid, gid))
 	}
 
-	// 宿主上一个真实在监听的白名单外 TCP 端口：沙箱内必须连不上（只有 Port 放行），且它接不到任何连接。
-	other, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	// 宿主上一个真实在监听的白名单外 TCP 端口（开了 TFO）：沙箱内必须连不上（只有 Port 放行），且它接不到任何连接与数据。
+	other, err := ListenHost()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = other.Close() })
 
@@ -372,7 +379,11 @@ func sandboxApply(t *testing.T, mode sbxMode) helperResult {
 		"unix socketpair stream (Bun)", "unix socketpair dgram", "unix socketpair seqpacket", "netlink socket", "truncate(2) by path",
 		"unshare(CLONE_NEWUSER)", "mount", "clone3", "kill(ppid, 0)",
 		"write and rename in home", "flock and OFD lock in home", "exec /usr/bin/true",
-		"listen and dial 127.0.0.1:" + strconv.Itoa(int(port)),
+		"dial pre-bound 127.0.0.1:" + strconv.Itoa(int(port)),
+		"bind 0.0.0.0:" + strconv.Itoa(int(port)), "bind [::]:" + strconv.Itoa(int(port)),
+		"tcp fastopen sendto " + other.Addr().String(), "tcp fastopen connect " + other.Addr().String(),
+		fmt.Sprintf("prlimit64(%d)", os.Getpid()), fmt.Sprintf("setpriority(PRIO_PROCESS, %d)", os.Getpid()),
+		fmt.Sprintf("sched_setaffinity(%d)", os.Getpid()),
 		"status NoNewPrivs", "status Seccomp", "status CapEff", "status CapBnd",
 		"connect abstract unix stream @" + abstract, "connect abstract unix dgram @" + abstract,
 		"connect abstract unix stream @" + abstract + "-dgram", "connect abstract unix dgram @" + abstract + "-dgram",
@@ -387,13 +398,8 @@ func sandboxApply(t *testing.T, mode sbxMode) helperResult {
 		n, _, rerr := l.ReadFrom(buf)
 		assert.Error(t, rerr, "沙箱外的 datagram socket %s 收到了 %q", l.LocalAddr(), buf[:n])
 	}
-	// 连上过的连接留在 accept 队列里：助手退出后同步 accept 一次。
-	_ = other.SetDeadline(time.Now().Add(50 * time.Millisecond))
-	c, aerr := other.Accept()
-	if aerr == nil {
-		_ = c.Close()
-	}
-	assert.Error(t, aerr, "宿主上白名单外的 TCP 端口接到了沙箱的连接")
+	// 连上过的连接留在 accept 队列里：助手退出后同步 accept 一次（含 TFO 随 SYN 带来的数据）。
+	assert.NoError(t, HostReceived(other), "宿主上白名单外的 TCP 端口接到了沙箱的连接")
 	// 秘密文件未被改动、home 之外没有写出文件。
 	_, err = os.Stat(filepath.Join(outside, "written"))
 	assert.ErrorIs(t, err, os.ErrNotExist)

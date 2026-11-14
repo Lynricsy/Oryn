@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -84,14 +86,43 @@ func requireSandbox(t *testing.T) {
 	t.Skipf("landlock unavailable (abi %d, %v)", abi, err)
 }
 
-// hostDir 建一个降权后的用户进得去的协调宿主目录（/tmp 下，0755）。
+// hostDir 建一个降权后的用户进得去的协调宿主目录（/tmp 下，0755）。root 下 Check / spawn 会为它建专用账号
+// oryn-coord-<后缀>：测试结束时（子进程都停了之后）userdel。
 func hostDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "oryn-coordhost-")
 	require.NoError(t, err)
 	require.NoError(t, os.Chmod(dir, 0o755))
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dropTestAccount(t, dir)
 	return dir
+}
+
+// dropTestAccount 在测试结束时删掉 dir 对应的专用账号（存在时）。须在 Host.Run 的清理之前注册（t.Cleanup 后进先出）。
+func dropTestAccount(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		return
+	}
+	name := AutoUserName(dir)
+	t.Cleanup(func() {
+		if _, err := user.Lookup(name); err != nil {
+			return
+		}
+		if out, err := exec.Command("userdel", name).CombinedOutput(); err != nil {
+			t.Errorf("userdel %s: %v: %s", name, err, out)
+		}
+	})
+}
+
+// accountUID 返回 dir 对应的专用账号的 uid（不存在时测试失败）。
+func accountUID(t *testing.T, dir string) int {
+	t.Helper()
+	u, err := user.Lookup(AutoUserName(dir))
+	require.NoError(t, err)
+	uid, err := strconv.Atoi(u.Uid)
+	require.NoError(t, err)
+	return uid
 }
 
 func freePort(t *testing.T) int {
@@ -271,7 +302,7 @@ func newEnv(t *testing.T, mutate func(*Config), hostOpts ...func(*Host)) *testEn
 	cfg := Config{
 		Dir:        hostDir(t),
 		OmpPath:    fakeompBin,
-		User:       "nobody",
+		User:       "", // 缺省：root 下自动使用（并创建）本实例的专用账号
 		EgressPort: freePort(t),
 		Command:    []string{testBin, "coordinator-host"},
 		StopGrace:  5 * time.Second,
@@ -371,7 +402,12 @@ func TestSpawnPauseDelete(t *testing.T) {
 	assert.True(t, st.Sandbox.Seccomp)
 	assert.GreaterOrEqual(t, st.Sandbox.LandlockAbi, 2)
 	if os.Geteuid() == 0 {
-		assert.Equal(t, 65534, st.Sandbox.UID)
+		uid := accountUID(t, e.cfg.Dir)
+		assert.Equal(t, uid, st.Sandbox.UID, "sandbox runs as the dedicated account")
+		assert.NotEqual(t, 65534, st.Sandbox.UID)
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", c.pid))
+		require.NoError(t, err)
+		assert.Contains(t, string(b), fmt.Sprintf("Uid:\t%d\t%d\t%d\t%d\n", uid, uid, uid, uid))
 		assert.Equal(t, apigen.SandboxNetworkNamespace, st.Sandbox.Network, "root can always create namespaces")
 		assert.True(t, st.Sandbox.PidNamespace)
 	}
@@ -379,7 +415,7 @@ func TestSpawnPauseDelete(t *testing.T) {
 	fi, err := os.Stat(e.h.ompCopy())
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o555), fi.Mode().Perm())
-	hi, err := os.Stat(e.h.homeDir())
+	hi, err := os.Stat(e.h.homeDir(e.orbID))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), hi.Mode().Perm())
 
@@ -398,7 +434,7 @@ func TestSpawnPauseDelete(t *testing.T) {
 	require.NotNil(t, c2)
 	succeeded(t, e.runJob("delete", map[string]any{}), e.h)
 	<-c2.done
-	_, err = os.Stat(e.h.homeDir())
+	_, err = os.Stat(e.h.homeDir(e.orbID))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 
 	j := e.runJob("snapshot", map[string]any{"snapshotId": "x"})
@@ -497,8 +533,9 @@ func TestCheckReasons(t *testing.T) {
 	requireSandbox(t)
 	private := filepath.Join(t.TempDir(), "coordinator") // t.TempDir 的父目录是 0700
 	err = New(Config{Dir: private, OmpPath: fakeompBin, User: "nobody", Command: []string{testBin, "coordinator-host"}}, nil, nil, nil).Check(ctx)
+	dropTestAccount(t, private)
 	require.ErrorAs(t, err, &he)
-	assert.Contains(t, he.Message, "is not reachable by user nobody")
+	assert.Contains(t, he.Message, "is not reachable by user "+AutoUserName(private))
 
 	err = New(Config{Dir: hostDir(t), OmpPath: fakeompBin, User: "no-such-user-oryn", Command: []string{testBin, "coordinator-host"}}, nil, nil, nil).Check(ctx)
 	require.ErrorAs(t, err, &he)
@@ -513,15 +550,15 @@ func TestEnsureDirsRejectsWritableDir(t *testing.T) {
 	dir := hostDir(t)
 	require.NoError(t, os.Chmod(dir, 0o777))
 	h := New(Config{Dir: dir, OmpPath: fakeompBin, User: "nobody"}, nil, nil, nil)
-	err := h.ensureDirs(-1, -1)
+	err := h.ensureDirs()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "writable by group or others")
 	require.NoError(t, os.Chmod(dir, 0o755))
-	require.NoError(t, h.ensureDirs(-1, -1))
+	require.NoError(t, h.ensureDirs())
 	// 源不变时不重拷：mtime 与副本一致。
 	before, err := os.Stat(h.ompCopy())
 	require.NoError(t, err)
-	require.NoError(t, h.ensureDirs(-1, -1))
+	require.NoError(t, h.ensureDirs())
 	after, err := os.Stat(h.ompCopy())
 	require.NoError(t, err)
 	assert.Equal(t, before.ModTime(), after.ModTime())
@@ -587,7 +624,7 @@ func selfTestMode(t *testing.T, noNS bool, maxABI int) {
 	}
 	assert.True(t, sawReport, out.String())
 	names := map[string]bool{}
-	abstract, pathDgram, hostTCP := 0, 0, 0
+	abstract, pathDgram, hostTCP, tfo, other := 0, 0, 0, 0, 0
 	for _, c := range checks {
 		names[c.Name] = true
 		switch {
@@ -597,16 +634,24 @@ func selfTestMode(t *testing.T, noNS bool, maxABI int) {
 			pathDgram++
 		case strings.HasPrefix(c.Name, "tcp host listener 127.0.0.1:"):
 			hostTCP++
+		case strings.HasPrefix(c.Name, "tcp fastopen sendto 127.0.0.1:"), strings.HasPrefix(c.Name, "tcp fastopen connect 127.0.0.1:"):
+			tfo++
+		case strings.HasPrefix(c.Name, "prlimit64("), strings.HasPrefix(c.Name, "setpriority(PRIO_PROCESS, "),
+			strings.HasPrefix(c.Name, "sched_setaffinity("):
+			other++
 		}
 	}
 	assert.Equal(t, 3, pathDgram, "白名单外的 0666 unix datagram socket：connect、sendto 与经 stream socketpair 的 sendto 都必须失败\n%s", out.String())
 	assert.Equal(t, 1, hostTCP, "宿主上真实在监听的白名单外 TCP 端口必须连不上\n%s", out.String())
+	assert.Equal(t, 2, tfo, "M6：两种 TCP Fast Open 都必须连不上宿主监听端\n%s", out.String())
+	assert.Equal(t, 3, other, "M5：改别的进程的 rlimit / nice / 亲和性都必须失败\n%s", out.String())
 	for _, want := range []string{
 		"read " + filepath.Join(data, "master.key"), "read " + cfgFile, "read /etc/shadow", "readdir /",
 		"exec /bin/sh", "exec copy in home", "tcp 1.1.1.1:443", "tcp 127.0.0.1:1", "udp socket", "unix socket",
 		"unix dgram socket", "unix socketpair stream (Bun)", "unix socketpair dgram", "unix socketpair seqpacket", "truncate(2) by path",
 		"netlink socket", "unshare(CLONE_NEWUSER)", "mount", "clone3", "write and rename in home",
-		"flock and OFD lock in home", fmt.Sprintf("listen and dial 127.0.0.1:%d", h.cfg.EgressPort),
+		"flock and OFD lock in home", fmt.Sprintf("dial pre-bound 127.0.0.1:%d", h.cfg.EgressPort),
+		fmt.Sprintf("bind 0.0.0.0:%d", h.cfg.EgressPort), fmt.Sprintf("bind [::]:%d", h.cfg.EgressPort),
 		"status NoNewPrivs", "status Seccomp", "status CapEff", "status CapBnd",
 	} {
 		assert.True(t, names[want], "missing check %q in\n%s", want, out.String())
@@ -817,7 +862,7 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 		"probe tcp " + tln.Addr().String(),
 		"probe unix " + sockPath,
 		"probe write " + filepath.Join(secretDir, "escape"),
-		"probe write " + filepath.Join(e.h.homeDir(), "inside"),
+		"probe write " + filepath.Join(e.h.homeDir(e.orbID), "inside"),
 		"probe args",
 	}, "\n")})
 	frames := a.until("agent_end", typeIs("agent_end"))
@@ -838,9 +883,17 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 	assert.Contains(t, got.Args, "--no-tools")
 	assert.Contains(t, got.Args, "--config")
 	assert.NotContains(t, got.Args, "-e")
+	// L4：argv 里只有提示词文件的路径，没有正文。
+	for i, a := range got.Args {
+		assert.NotContains(t, a, "You are a probe", "system prompt text leaked into argv")
+		if a == "--system-prompt" && assert.Less(t, i+1, len(got.Args)) {
+			assert.Equal(t, filepath.Join(e.h.homeDir(e.orbID), ".oryn", "coordinator", "prompts", coordThread+".md"), got.Args[i+1])
+		}
+	}
 	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID"}, got.EnvKeys)
 	if os.Geteuid() == 0 {
-		assert.Equal(t, 65534, got.UID)
+		assert.Equal(t, accountUID(t, e.cfg.Dir), got.UID)
+		assert.NotEqual(t, 65534, got.UID)
 	}
 	_, err = os.Stat(filepath.Join(secretDir, "escape"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
@@ -975,7 +1028,9 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 		assert.Contains(t, status, "Seccomp:\t2")
 		assert.Contains(t, status, "CapEff:\t0000000000000000")
 		if os.Geteuid() == 0 {
-			assert.Contains(t, status, "Uid:\t65534\t65534\t65534\t65534")
+			uid := accountUID(t, e.cfg.Dir)
+			assert.NotEqual(t, 65534, uid)
+			assert.Contains(t, status, fmt.Sprintf("Uid:\t%d\t%d\t%d\t%d\n", uid, uid, uid, uid))
 		}
 	}
 	a.send(map[string]any{"id": "t1", "type": "get_active_tools"})
@@ -998,7 +1053,7 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 		assert.NotEqual(t, "session-persistence", f["source"], "会话持久化失败：%v", f)
 	}
 	// 会话持久化：omp 的原生文件锁（PI_FILE_LOCK_BACKEND=sidecar，home 里的旁路文件）在沙箱里可用，会话 .jsonl 写进 home 且有条目。
-	sessDir := filepath.Join(e.h.homeDir(), ".oryn", "threads", coordThread)
+	sessDir := filepath.Join(e.h.homeDir(e.orbID), ".oryn", "threads", coordThread)
 	var jsonl []string
 	require.Eventually(t, func() bool {
 		jsonl = nil
@@ -1016,7 +1071,7 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 		return false
 	}, 30*time.Second, 50*time.Millisecond, "会话文件里没有回合的条目（%v）", jsonl)
 	// 会话的所有权租约是 ~/.omp/run/session-owners 下的旁路文件（abstract socket 后端不会留下文件）。
-	owners, err := os.ReadDir(filepath.Join(e.h.homeDir(), ".omp", "run", "session-owners"))
+	owners, err := os.ReadDir(filepath.Join(e.h.homeDir(e.orbID), ".omp", "run", "session-owners"))
 	require.NoError(t, err, "sidecar 文件锁后端没有生效")
 	assert.NotEmpty(t, owners)
 	assert.NotEmpty(t, *paths)

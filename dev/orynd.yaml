@@ -7,5 +7,6 @@ idle: { agent_idle: "30s", user_idle: "30s", stop_after_frozen: "24h", wake_on_f
 # FCM（M7，Android gms 包）：服务账号 JSON 存在密钥库里——./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json
 # 密钥不存在时只打印警告，FCM 订阅返回 409 fcm_unavailable，UnifiedPush 不受影响
 push: { fcm: { service_account_secret: "fcm/service-account" } }
-# 协调宿主（M9）：本机以 root 运行、仓库在 /root 下（nobody 进不去），所以目录放在 /var/tmp；omp 用 scripts/fetch-core.sh 取到的那份
+# 协调宿主（M9）：本机以 root 运行，沙箱降权到自动创建的专用账号 oryn-coord-<fnv32a(dir)>（不写 user 即自动）；
+# 仓库在 /root 下（该账号进不去），所以目录放在 /var/tmp；omp 用 scripts/fetch-core.sh 取到的那份
 coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }

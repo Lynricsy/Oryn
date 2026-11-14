@@ -38,7 +38,9 @@ type Policy struct {
 	Exec          []string // 文件：可 execve + 可读
 	ReadOnlyDirs  []string // 目录：只读（不可执行）；不存在的忽略
 	ReadOnlyFiles []string // 文件：只读；不存在的忽略
-	TCPPort       uint16   // 唯一允许 bind / connect 的 TCP 端口
+	// TCPPort 是唯一允许 connect 的 TCP 端口。沙箱内不能 bind 任何 TCP 端口：需要监听的（模型代理）由调用方在施加沙箱
+	// 之前建好再交进来（M9 L3），否则沙箱内可以在非回环地址上监听该端口。
+	TCPPort uint16
 	// NetNS / PIDNS 表示调用方已把进程放进独立的网络 / PID 命名空间（Landlock 管不到 TCP 或信号时由它们隔离）。
 	NetNS bool
 	PIDNS bool
@@ -220,7 +222,7 @@ func Apply(p Policy) (Report, error) {
 		landlock.PathAccess((ll.AccessFSReadFile|ll.AccessFSWriteFile|ll.AccessFSTruncate)&fs, "/dev/null"),
 	}
 	if cfg.HandledAccessNet != 0 {
-		rules = append(rules, landlock.BindTCP(p.TCPPort), landlock.ConnectTCP(p.TCPPort))
+		rules = append(rules, landlock.ConnectTCP(p.TCPPort))
 	}
 	if err := cfg.BestEffort().Restrict(rules...); err != nil {
 		return Report{}, fmt.Errorf("landlock: %w", err)
@@ -362,7 +364,28 @@ func socketRules() []seccomp.NameWithConditions {
 }
 
 // requiredSyscalls 在本机架构上必须存在，否则拒绝施加（过滤器会形同虚设）。
-var requiredSyscalls = []string{"ptrace", "mount", "unshare", "setns", "bpf", "socket", "socketpair", "truncate", "clone"}
+var requiredSyscalls = []string{"ptrace", "mount", "unshare", "setns", "bpf", "socket", "socketpair", "truncate", "clone",
+	"prlimit64", "setpriority", "sched_setaffinity", "sched_setscheduler", "sched_setparam", "ioprio_set"}
+
+// targetRules 是改动其它进程资源上限、调度与 I/O 优先级的系统调用的拒绝条件（M5）：Landlock 的信号作用域与独立用户
+// 都管不到它们，同一用户、没有 PID 命名空间时沙箱能改 orynd 等进程的 RLIMIT 与调度。只放行作用于自身的调用
+// （pid / who 为 0，glibc 的 setrlimit / getrlimit 即 prlimit64(0, …)）；setpriority 与 ioprio_set 另要求
+// which 为「单个进程」（PRIO_PROCESS = 0、IOPRIO_WHO_PROCESS = 1），按进程组 / 用户的一律拒绝。
+func targetRules() []seccomp.NameWithConditions {
+	argNot := func(name string, arg uint32, v uint64) seccomp.NameWithConditions {
+		return seccomp.NameWithConditions{Name: name, Conditions: seccomp.ArgumentConditions{
+			{Argument: arg, Operation: seccomp.NotEqual, Value: v},
+		}}
+	}
+	var rules []seccomp.NameWithConditions
+	for _, n := range []string{"prlimit64", "sched_setaffinity", "sched_setscheduler", "sched_setparam", "sched_setattr"} {
+		rules = append(rules, argNot(n, 0, 0))
+	}
+	return append(rules,
+		argNot("setpriority", 0, 0), argNot("setpriority", 1, 0),
+		argNot("ioprio_set", 0, 1), argNot("ioprio_set", 1, 0),
+	)
+}
 
 // cloneNewFlags 是 clone 的全部 CLONE_NEW* 标志位。
 const cloneNewFlags = unix.CLONE_NEWNS | unix.CLONE_NEWCGROUP | unix.CLONE_NEWUTS | unix.CLONE_NEWIPC |
@@ -389,7 +412,7 @@ func loadDenyFilter() error {
 	}
 	group := seccomp.SyscallGroup{
 		Names:              names,
-		NamesWithCondtions: socketRules(),
+		NamesWithCondtions: append(socketRules(), targetRules()...),
 		Action:             seccomp.ActionErrno,
 	}
 	runtime.LockOSThread()

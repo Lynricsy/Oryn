@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -25,7 +27,35 @@ type Check struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// CheckOptions 描述自检的输入；须在 Apply 之后调用 Checks。
+// ListenHost 在宿主回环上建一个临时 TCP 监听，作为自检的 HostListener（白名单外、真实在监听的端口）。尽量打开
+// TCP Fast Open（失败不报错）：沙箱里的 TFO 若绕过了规则，数据会随 SYN 到达，由 HostReceived 发现。
+func ListenHost() (*net.TCPListener, error) {
+	lc := net.ListenConfig{Control: func(_, _ string, rc syscall.RawConn) error {
+		return rc.Control(func(fd uintptr) { _ = unix.SetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_FASTOPEN, 16) })
+	}}
+	l, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	return l.(*net.TCPListener), nil
+}
+
+// HostReceived 在沙箱进程退出之后调用：连上过的连接留在 accept 队列里，同步 accept 一次（不与后台 accept 赛跑），
+// 有连接则读出随之到达的数据。返回 nil 表示什么也没收到。
+func HostReceived(l *net.TCPListener) error {
+	_ = l.SetDeadline(time.Now().Add(50 * time.Millisecond))
+	c, err := l.AcceptTCP()
+	if err != nil {
+		return nil
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	buf := make([]byte, 256)
+	n, _ := c.Read(buf)
+	return fmt.Errorf("accepted a connection from the sandbox (data %q)", buf[:n])
+}
+
+// CheckOptions 描述自检的输入；须在 Apply 之后调用 Checks（Listener 在 Apply 之前建好）。
 type CheckOptions struct {
 	Home      string   // 沙箱内唯一可写的目录
 	DenyRead  []string // 必须读不到的文件
@@ -36,7 +66,12 @@ type CheckOptions struct {
 	HostListener string
 	DenyExec     []string // 必须执行失败的命令行（缺省 /bin/sh -c true）
 	Exec         []string // 必须执行成功的命令行（为空则跳过）
-	Port         uint16   // 唯一允许的 TCP 端口：在 127.0.0.1 上监听并自连
+	// Listener 是施加沙箱之前在 127.0.0.1:<白名单端口> 上建好的监听（模型代理的同款，M9 L3）：沙箱内自连它必须成功，
+	// 而在 0.0.0.0 / [::] 上 bind 同一端口必须失败。
+	Listener net.Listener
+	// LandlockTCP 表示 Landlock 管辖 TCP（ABI ≥ 4）：此时 bind 必须是 Landlock 的拒绝（EACCES），端口被占用的
+	// EADDRINUSE 不算数；否则（只靠网络命名空间）任何错误都算失败。
+	LandlockTCP bool
 	// DenyAbstract 是沙箱外（宿主上）监听的 abstract unix socket 名（不带前导 @ 或 NUL）：沙箱里以 stream 与
 	// datagram 两种方式 connect 都必须失败（AF_UNIX 一律被 seccomp 拒绝）。
 	DenyAbstract []string
@@ -92,6 +127,21 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 	}
 	if o.HostListener != "" {
 		mustFail("tcp host listener "+o.HostListener, dialTCP(ctx, o.HostListener))
+		// TCP Fast Open 把数据放在 SYN 里：两种发起方式都必须连不上，宿主监听端什么也收不到（M6，由调用方断言）。
+		mustFail("tcp fastopen sendto "+o.HostListener, fastOpenSendto(o.HostListener))
+		mustFail("tcp fastopen connect "+o.HostListener, fastOpenConnect(o.HostListener))
+	}
+	if o.Listener != nil {
+		_, port, _ := net.SplitHostPort(o.Listener.Addr().String())
+		for _, host := range []string{"0.0.0.0", "::"} {
+			addr := net.JoinHostPort(host, port)
+			err := bindTCP(addr)
+			if err != nil && o.LandlockTCP && !errors.Is(err, unix.EACCES) && !errors.Is(err, unix.EAFNOSUPPORT) && !errors.Is(err, errSetup) {
+				add("bind "+addr, false, fmt.Sprintf("%v (want EACCES from landlock)", err))
+				continue
+			}
+			mustFail("bind "+addr, err)
+		}
 	}
 	for _, s := range []struct {
 		name               string
@@ -143,6 +193,11 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 		target = 1 // PID 命名空间里父进程不可见
 	}
 	mustFail("ptrace attach "+strconv.Itoa(target), ptraceAttach(target))
+	// 改其它进程的资源上限、调度与 nice 值（M5）：同一用户时只有 seccomp 挡得住。各项都先读出现值再原样写回，
+	// 万一成功也不改变目标。
+	mustFail("prlimit64("+strconv.Itoa(target)+")", prlimitOther(target))
+	mustFail("setpriority(PRIO_PROCESS, "+strconv.Itoa(target)+")", setpriorityOther(target))
+	mustFail("sched_setaffinity("+strconv.Itoa(target)+")", setaffinityOther(target))
 	_, _, e := unix.Syscall(unix.SYS_CLONE3, 0, 0, 0)
 	add("clone3", e == unix.ENOSYS, fmt.Sprintf("errno %v (want ENOSYS)", e))
 	// 父进程（orynd）可见时必须发不了信号：Requirement 保证了 ABI ≥ 6 的信号作用域或独立用户（二者之一）。
@@ -157,8 +212,8 @@ func Checks(ctx context.Context, o CheckOptions) []Check {
 	if len(o.Exec) > 0 {
 		mustSucceed("exec "+strings.Join(o.Exec, " "), runQuiet(ctx, o.Exec))
 	}
-	if o.Port != 0 {
-		mustSucceed("listen and dial 127.0.0.1:"+strconv.Itoa(int(o.Port)), selfDial(ctx, o.Port))
+	if o.Listener != nil {
+		mustSucceed("dial pre-bound "+o.Listener.Addr().String(), dialListener(ctx, o.Listener))
 	}
 
 	// ---- 进程状态 ----
@@ -228,12 +283,12 @@ func writeAndRename(home string) error {
 	return os.Rename(filepath.Join(a, "f"), filepath.Join(b, "f"))
 }
 
-func selfDial(ctx context.Context, port uint16) error {
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
-	if err != nil {
-		return err
+// dialListener 自连预先建好的监听并 accept 到这条连接。
+func dialListener(ctx context.Context, ln net.Listener) error {
+	if tl, ok := ln.(*net.TCPListener); ok {
+		_ = tl.SetDeadline(time.Now().Add(5 * time.Second))
+		defer func() { _ = tl.SetDeadline(time.Time{}) }()
 	}
-	defer ln.Close()
 	accepted := make(chan error, 1)
 	go func() {
 		c, err := ln.Accept()
@@ -248,12 +303,97 @@ func selfDial(ctx context.Context, port uint16) error {
 		return err
 	}
 	_ = c.Close()
-	select {
-	case err := <-accepted:
-		return err
-	case <-time.After(2 * time.Second):
-		return errors.New("accept timed out")
+	return <-accepted
+}
+
+// sockaddrOf 把 host:port 转成 unix.Sockaddr 与地址族。
+func sockaddrOf(addr string) (unix.Sockaddr, int, error) {
+	ap, err := netip.ParseAddrPort(addr)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%v: %w (cannot set up the check)", err, errSetup)
 	}
+	if ap.Addr().Is4() {
+		return &unix.SockaddrInet4{Port: int(ap.Port()), Addr: ap.Addr().As4()}, unix.AF_INET, nil
+	}
+	return &unix.SockaddrInet6{Port: int(ap.Port()), Addr: ap.Addr().As16()}, unix.AF_INET6, nil
+}
+
+// bindTCP 建一个 TCP socket 并 bind 到 addr（不设 SO_REUSEADDR）。
+func bindTCP(addr string) error {
+	sa, family, err := sockaddrOf(addr)
+	if err != nil {
+		return err
+	}
+	fd, err := unix.Socket(family, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if errors.Is(err, unix.EAFNOSUPPORT) {
+		return err // 内核没有该地址族（例如禁用了 IPv6）：根本绑不上
+	} else if err != nil {
+		return fmt.Errorf("socket: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	defer unix.Close(fd)
+	return unix.Bind(fd, sa)
+}
+
+// fastOpenSendto 以 sendto(MSG_FASTOPEN) 向 addr 发起带数据的连接（不先 connect）。
+func fastOpenSendto(addr string) error {
+	sa, family, err := sockaddrOf(addr)
+	if err != nil {
+		return err
+	}
+	fd, err := unix.Socket(family, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	defer unix.Close(fd)
+	return unix.Sendto(fd, []byte("oryn-selftest-tfo"), unix.MSG_FASTOPEN, sa)
+}
+
+// fastOpenConnect 置 TCP_FASTOPEN_CONNECT 后 connect，再写数据。
+func fastOpenConnect(addr string) error {
+	sa, family, err := sockaddrOf(addr)
+	if err != nil {
+		return err
+	}
+	fd, err := unix.Socket(family, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	defer unix.Close(fd)
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_TCP, unix.TCP_FASTOPEN_CONNECT, 1); errors.Is(err, unix.EOPNOTSUPP) {
+		return fmt.Errorf("setsockopt TCP_FASTOPEN_CONNECT: %w (client TFO disabled by net.ipv4.tcp_fastopen)", err)
+	} else if err != nil {
+		return fmt.Errorf("setsockopt TCP_FASTOPEN_CONNECT: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	if err := unix.Connect(fd, sa); err != nil {
+		return err
+	}
+	_, err = unix.Write(fd, []byte("oryn-selftest-tfo"))
+	return err
+}
+
+// prlimitOther 读目标进程的 RLIMIT_NOFILE（只读：new_limit 为 NULL）；内核对读同样做权限检查。
+func prlimitOther(pid int) error {
+	var old unix.Rlimit
+	return unix.Prlimit(pid, unix.RLIMIT_NOFILE, nil, &old)
+}
+
+// setpriorityOther 把目标进程的 nice 值原样写回。
+func setpriorityOther(pid int) error {
+	prio, err := unix.Getpriority(unix.PRIO_PROCESS, pid)
+	if err != nil {
+		return fmt.Errorf("getpriority: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	// 原始系统调用返回 20 - nice。
+	return unix.Setpriority(unix.PRIO_PROCESS, pid, 20-prio)
+}
+
+// setaffinityOther 把目标进程的 CPU 亲和性原样写回。
+func setaffinityOther(pid int) error {
+	var set unix.CPUSet
+	if err := unix.SchedGetaffinity(pid, &set); err != nil {
+		return fmt.Errorf("sched_getaffinity: %v: %w (cannot set up the check)", err, errSetup)
+	}
+	return unix.SchedSetaffinity(pid, &set)
 }
 
 func readStatus() (map[string]string, error) {

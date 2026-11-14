@@ -53,8 +53,8 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return fmt.Sprint(*m) }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-// RunChild 是 `orynd coordinator-host` 的主体（不读配置文件）。顺序固定：探测 → 拉起回环 → 取 link →
-// 降权 → 施加沙箱 → 报告 → 自检或运行受限的 orbd。返回进程退出码。
+// RunChild 是 `orynd coordinator-host` 的主体（不读配置文件）。顺序固定：探测 → 拉起回环 → 监听模型代理端口 →
+// 取 link → 降权 → 施加沙箱 → 报告 → 自检或运行受限的 orbd。返回进程退出码。
 func RunChild(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("coordinator-host", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -118,7 +118,12 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 			return fail("%v", err)
 		}
 	}
-	// 3. link。
+	// 3. 模型代理的监听：在施加沙箱之前建好再交给 orbd，沙箱里因此不需要任何 TCP bind 权限（M9 L3）。
+	egressLn, err := net.Listen("tcp", *egressAddr)
+	if err != nil {
+		return fail("egress listen %s: %v", *egressAddr, err)
+	}
+	// 4. link。
 	var conn net.Conn
 	if !*selftest {
 		f := os.NewFile(linkFD, "link")
@@ -131,11 +136,11 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 			return fail("link fd: %v", err)
 		}
 	}
-	// 4. 降权。
+	// 5. 降权。
 	if err := sandbox.DropPrivileges(*uid, *gid); err != nil {
 		return fail("%v", err)
 	}
-	// 5. 沙箱。
+	// 6. 沙箱。
 	execs, err := sandbox.ExecPaths(*omp)
 	if err != nil {
 		return fail("%v", err)
@@ -155,13 +160,13 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 		return fail("sandbox: %v", err)
 	}
 	rep.NetNS, rep.PIDNS = *netns, *pidns
-	// 6. 报告。
+	// 7. 报告。
 	if sf := os.NewFile(statusFD, "status"); sf != nil {
 		b, _ := json.Marshal(rep)
 		_, _ = sf.Write(append(b, '\n'))
 		_ = sf.Close()
 	}
-	// 7. 自检。
+	// 8. 自检。
 	if *selftest {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -175,7 +180,8 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 			DenyDial:      []string{"1.1.1.1:443", "127.0.0.1:1"},
 			HostListener:  *hostListener,
 			Exec:          []string{*omp, "--version"},
-			Port:          uint16(port),
+			Listener:      egressLn,
+			LandlockTCP:   rep.LandlockABI >= sandbox.TCPABI,
 			DenyAbstract:  denyAbstract,
 			DenyUnixDgram: denyUnixDgram,
 		})
@@ -189,19 +195,21 @@ func RunChild(args []string, stdout, stderr io.Writer) int {
 		}
 		return code
 	}
-	return runOrbd(*orbID, *home, *omp, *egressAddr, conn, log)
+	return runOrbd(*orbID, *home, *omp, egressLn, conn, log)
 }
 
-// runOrbd 以协调宿主模式运行 orbd：link 只用继承来的 socketpair，断了就退出（由 orynd 重新拉起）。
-func runOrbd(orbID, home, omp, egressAddr string, conn net.Conn, log *slog.Logger) int {
+// runOrbd 以协调宿主模式运行 orbd：link 只用继承来的 socketpair，断了就退出（由 orynd 重新拉起）；egress 用施加沙箱
+// 之前建好的监听。
+func runOrbd(orbID, home, omp string, egressLn net.Listener, conn net.Conn, log *slog.Logger) int {
 	var once sync.Once
 	rt, err := orbdrt.New(orbdrt.Config{
-		Coordinator: true,
-		OrbID:       orbID,
-		Home:        home,
-		AgentBin:    omp,
-		EgressAddr:  egressAddr,
-		Version:     version.Version,
+		Coordinator:    true,
+		OrbID:          orbID,
+		Home:           home,
+		AgentBin:       omp,
+		EgressAddr:     egressLn.Addr().String(),
+		EgressListener: egressLn,
+		Version:        version.Version,
 		Connect: func(context.Context) (*link.Session, error) {
 			var (
 				sess  *link.Session
