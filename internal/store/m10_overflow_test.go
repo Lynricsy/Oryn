@@ -39,7 +39,7 @@ func TestM10RollupMigrationOverflow(t *testing.T) {
 	require.NoError(t, err, "0019 回填不因越界行失败")
 	v, err := p.GetDBVersion(ctx)
 	require.NoError(t, err)
-	assert.EqualValues(t, 20, v)
+	assert.EqualValues(t, 21, v)
 	// q, thread, project, space, provider, model, purpose, requests, errors, in, out, cacheR, cacheW, cost, subCost,
 	// ttftSum, ttftN, timedOut, durMs
 	assert.Equal(t, []string{"0|T-1|||p|m|x|2|0|9223372036854775807|9223372036854775807|0|0|+Inf|+Inf|9223372036854775807|2|9223372036854775807|9223372036854775807"},

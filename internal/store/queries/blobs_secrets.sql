@@ -25,3 +25,7 @@ SELECT id, name, mode, hosts, created_at, updated_at FROM secrets ORDER BY name;
 
 -- name: DeleteSecretByName :execrows
 DELETE FROM secrets WHERE name = @name;
+
+-- Env-mode secret names with their last change, for the project snapshot config hash (M11a; never the values).
+-- name: ListEnvSecretStamps :many
+SELECT name, updated_at FROM secrets WHERE mode = 'env' ORDER BY name;

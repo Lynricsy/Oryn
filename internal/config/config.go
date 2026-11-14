@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,6 +104,33 @@ type Stats struct {
 	Retention StatsRetention `yaml:"retention"`
 }
 
+// Snapshots 是项目快照配置（M11a）。
+type Snapshots struct {
+	// Enabled 是全局开关；关闭后既不建立也不使用项目快照（项目自己的开关之上）。
+	Enabled bool `yaml:"enabled"`
+	// MaxAge 是一条快照血统（从基础镜像全新 setup 起算，刷新不重置）的最长复用时间。
+	MaxAge Duration `yaml:"max_age"`
+	// MaxDepth 是同一血统内的刷新次数上限，超过即退役、下次从基础镜像重建。
+	MaxDepth int `yaml:"max_depth"`
+	// MinSetup 是值得建立新血统的最短 setup 耗时；更快的 setup 不建快照。
+	MinSetup Duration `yaml:"min_setup"`
+	// MaxTotalGB 是每个 provider 上项目快照（相对基础镜像）合计占用的上限。
+	MaxTotalGB int `yaml:"max_total_gb"`
+}
+
+// MaxTotalBytes 返回 max_total_gb 换算的字节数。
+func (s Snapshots) MaxTotalBytes() int64 { return int64(s.MaxTotalGB) << 30 }
+
+// Pool 是预热池配置（M11a）。
+type Pool struct {
+	// MaxTotal 是全局预热 orb（warming + idle）上限；0 = 关闭预热池。
+	MaxTotal int `yaml:"max_total"`
+	// MaxAge 是 idle 池 orb 的最长存活时间，到期回收换新。
+	MaxAge Duration `yaml:"max_age"`
+	// ActiveWindow 是项目「活跃」的判定窗口：窗口内没有新线程的项目不预热。
+	ActiveWindow Duration `yaml:"active_window"`
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -116,6 +144,8 @@ type Orynd struct {
 	Coordinator  Coordinator `yaml:"coordinator"`
 	Schedule     Schedule    `yaml:"schedule"`
 	Stats        Stats       `yaml:"stats"`
+	Snapshots    Snapshots   `yaml:"snapshots"`
+	Pool         Pool        `yaml:"pool"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -144,6 +174,14 @@ func DefaultOrynd() Orynd {
 			Samples: Duration(720 * time.Hour),
 			Events:  Duration(8760 * time.Hour),
 		}},
+		Snapshots: Snapshots{
+			Enabled:    true,
+			MaxAge:     Duration(72 * time.Hour),
+			MaxDepth:   16,
+			MinSetup:   Duration(10 * time.Second),
+			MaxTotalGB: 40,
+		},
+		Pool: Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
 	}
 }
 
@@ -232,6 +270,21 @@ func (c Orynd) Validate() error {
 			errs = append(errs, fmt.Errorf("%s 必须为 0（永久）或至少 24h", r.key))
 		}
 	}
+	if c.Snapshots.MaxAge <= 0 || c.Snapshots.MinSetup <= 0 {
+		errs = append(errs, errors.New("snapshots.max_age 与 snapshots.min_setup 必须为正"))
+	}
+	if d := c.Snapshots.MaxDepth; d < 1 || d > 64 {
+		errs = append(errs, fmt.Errorf("snapshots.max_depth %d 必须在 1–64 之间", d))
+	}
+	if c.Snapshots.MaxTotalGB < 1 {
+		errs = append(errs, fmt.Errorf("snapshots.max_total_gb %d 至少为 1", c.Snapshots.MaxTotalGB))
+	}
+	if n := c.Pool.MaxTotal; n < 0 || n > 16 {
+		errs = append(errs, fmt.Errorf("pool.max_total %d 必须在 0–16 之间（0 = 关闭预热池）", n))
+	}
+	if c.Pool.MaxAge <= 0 || c.Pool.ActiveWindow <= 0 {
+		errs = append(errs, errors.New("pool.max_age 与 pool.active_window 必须为正"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -262,6 +315,33 @@ func validatePortalDomain(domain string, public *url.URL) error {
 type DockerType struct {
 	CPUs   float64 `yaml:"cpus"`
 	Memory string  `yaml:"memory"`
+	// Runtime 是 `docker run --runtime` 的值（M11a）；只接受空（Docker 默认）或 sysbox-runc。
+	Runtime string `yaml:"runtime"`
+	// NestedDocker 为 true 时该类型的 orb 内由 orbd 监督 dockerd（M11a）；要求 Runtime 为 sysbox-runc。
+	NestedDocker bool `yaml:"nested_docker"`
+}
+
+// SysboxRuntime 是嵌套 Docker 唯一支持的容器运行时。
+const SysboxRuntime = "sysbox-runc"
+
+// validateDockerTypes 校验各类型的 runtime / nested_docker（M11a）。
+func validateDockerTypes(types map[string]DockerType) []error {
+	names := make([]string, 0, len(types))
+	for name := range types {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var errs []error
+	for _, name := range names {
+		t := types[name]
+		if t.Runtime != "" && t.Runtime != SysboxRuntime {
+			errs = append(errs, fmt.Errorf("docker.types.%s.runtime %q 无效：只接受空或 %s", name, t.Runtime, SysboxRuntime))
+		}
+		if t.NestedDocker && t.Runtime != SysboxRuntime {
+			errs = append(errs, fmt.Errorf("docker.types.%s：nested_docker 需要 runtime: %s；特权模式不受支持，见 docs/deploy.md", name, SysboxRuntime))
+		}
+	}
+	return errs
 }
 
 // Docker 是 docker 驱动配置。
@@ -315,6 +395,7 @@ func LoadProvider(path string) (Provider, error) {
 	if c.TokenFile == "" {
 		errs = append(errs, errors.New("token_file 不能为空"))
 	}
+	errs = append(errs, validateDockerTypes(c.Docker.Types)...)
 	switch c.Driver {
 	case "docker":
 		if _, ok := c.Docker.Types[c.Docker.DefaultType]; !ok {

@@ -99,6 +99,39 @@ func (q *Queries) InsertBlob(ctx context.Context, arg InsertBlobParams) error {
 	return err
 }
 
+const listEnvSecretStamps = `-- name: ListEnvSecretStamps :many
+SELECT name, updated_at FROM secrets WHERE mode = 'env' ORDER BY name
+`
+
+type ListEnvSecretStampsRow struct {
+	Name      string `json:"name"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// Env-mode secret names with their last change, for the project snapshot config hash (M11a; never the values).
+func (q *Queries) ListEnvSecretStamps(ctx context.Context) ([]ListEnvSecretStampsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEnvSecretStamps)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvSecretStampsRow{}
+	for rows.Next() {
+		var i ListEnvSecretStampsRow
+		if err := rows.Scan(&i.Name, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSecrets = `-- name: ListSecrets :many
 SELECT id, name, mode, hosts, created_at, updated_at FROM secrets ORDER BY name
 `

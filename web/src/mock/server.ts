@@ -1037,6 +1037,8 @@ export class MockServer {
 				) as Schemas["ProjectCreate"]),
 				id: `prj_mock${this.idSeq++}`,
 				shallowClone: Boolean(b.shallowClone),
+				snapshots: b.snapshots ?? true,
+				warmOrbs: b.warmOrbs ?? 0,
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			};

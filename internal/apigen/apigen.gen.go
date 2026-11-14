@@ -556,6 +556,7 @@ const (
 	MethodSetupResult       LinkCtlMethod = "setup.result"
 	MethodSetupRun          LinkCtlMethod = "setup.run"
 	MethodShutdown          LinkCtlMethod = "shutdown"
+	MethodSnapshotPrepare   LinkCtlMethod = "snapshot.prepare"
 	MethodTerminalGap       LinkCtlMethod = "terminal.gap"
 	MethodThreadCreate      LinkCtlMethod = "thread.create"
 	MethodThreadGet         LinkCtlMethod = "thread.get"
@@ -620,6 +621,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodSetupRun:
 		return true
 	case MethodShutdown:
+		return true
+	case MethodSnapshotPrepare:
 		return true
 	case MethodTerminalGap:
 		return true
@@ -1006,6 +1009,27 @@ func (e OrbGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for OrbPoolState.
+const (
+	OrbPoolStateClaimed OrbPoolState = "claimed"
+	OrbPoolStateIdle    OrbPoolState = "idle"
+	OrbPoolStateWarming OrbPoolState = "warming"
+)
+
+// Valid indicates whether the value is a known member of the OrbPoolState enum.
+func (e OrbPoolState) Valid() bool {
+	switch e {
+	case OrbPoolStateClaimed:
+		return true
+	case OrbPoolStateIdle:
+		return true
+	case OrbPoolStateWarming:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbServiceSource.
 const (
 	OrbServiceSourceDynamic OrbServiceSource = "dynamic"
@@ -1048,6 +1072,24 @@ func (e OrbServiceStatus) Valid() bool {
 	case OrbServiceStatusStopped:
 		return true
 	case OrbServiceStatusUnhealthy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbSnapshotKind.
+const (
+	OrbSnapshotKindFork    OrbSnapshotKind = "fork"
+	OrbSnapshotKindProject OrbSnapshotKind = "project"
+)
+
+// Valid indicates whether the value is a known member of the OrbSnapshotKind enum.
+func (e OrbSnapshotKind) Valid() bool {
+	switch e {
+	case OrbSnapshotKindFork:
+		return true
+	case OrbSnapshotKindProject:
 		return true
 	default:
 		return false
@@ -1186,6 +1228,27 @@ const (
 func (e ProfileInUseConflictCode) Valid() bool {
 	switch e {
 	case ProfileInUseConflictCodeProfileInUse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectSnapshotState.
+const (
+	ProjectSnapshotStateBuilding ProjectSnapshotState = "building"
+	ProjectSnapshotStateReady    ProjectSnapshotState = "ready"
+	ProjectSnapshotStateRetired  ProjectSnapshotState = "retired"
+)
+
+// Valid indicates whether the value is a known member of the ProjectSnapshotState enum.
+func (e ProjectSnapshotState) Valid() bool {
+	switch e {
+	case ProjectSnapshotStateBuilding:
+		return true
+	case ProjectSnapshotStateReady:
+		return true
+	case ProjectSnapshotStateRetired:
 		return true
 	default:
 		return false
@@ -2829,6 +2892,7 @@ type Error struct {
 	// `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
 	// M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
 	// agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
+	// M11a（项目快照与预热池）：`orb_is_pooled`（409，把线程挂到预热池里的 orb 上）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -3089,6 +3153,12 @@ type JobPauseParams struct {
 	Mode PauseMode `json:"mode"`
 }
 
+// JobResult 任务的结构化结果（M11a，随完成上报）
+type JobResult struct {
+	// SnapshotBytes `snapshot` 任务：这份快照相对基础镜像多占的字节数（≥0）
+	SnapshotBytes *int64 `json:"snapshotBytes,omitempty"`
+}
+
 // JobSnapshotParams defines model for JobSnapshotParams.
 type JobSnapshotParams struct {
 	// SnapshotID 快照 id，同时是 Docker 镜像名
@@ -3111,6 +3181,9 @@ type JobSpawnParams struct {
 
 	// SnapshotID 快照 id，同时是 Docker 镜像名
 	SnapshotID *SnapshotID `json:"snapshotId,omitempty"`
+
+	// SnapshotOptional M11a：true = `snapshotId` 对应的快照不存在时退回基础镜像（输出里写一行说明），不算失败；false / 缺省 = 快照必须存在
+	SnapshotOptional *bool `json:"snapshotOptional,omitempty"`
 
 	// Type orb 类型名
 	Type string `json:"type"`
@@ -3321,6 +3394,7 @@ type LinkCtlHelloParams struct {
 	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
 	// M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
 	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
+	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string             `json:"features,omitempty"`
 	OrbdVersion string               `json:"orbdVersion"`
@@ -3347,7 +3421,8 @@ type LinkCtlHelloThread struct {
 // `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 // `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 // `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
+// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -3364,7 +3439,8 @@ type LinkCtlNotification struct {
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3455,7 +3531,8 @@ type LinkCtlRequest struct {
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3536,18 +3613,30 @@ type LinkCtlSetupLogParamsStream string
 type LinkCtlSetupRepo struct {
 	Branch  *string `json:"branch,omitempty"`
 	Shallow bool    `json:"shallow"`
-	URL     string  `json:"url"`
+
+	// Update M11a：工作目录已有检出时 `git fetch` 基线并移动到最新；HEAD 变化则删掉完成标记、重跑 setup 脚本。fetch 失败只记日志、沿用现有检出。
+	// 只用于 agent 从未运行过的 orb（来自项目快照的新 orb，或刚被认领的预热池 orb）；只在 hello 的 `features` 含 `repo-update` 时置位。
+	Update *bool  `json:"update,omitempty"`
+	URL    string `json:"url"`
 }
 
 // LinkCtlSetupResultParams 每次 setup / resume 结束（含 orb 内手动重跑）时 orbd 发送；控制面写入 `orb_setup_runs`
 type LinkCtlSetupResultParams struct {
+	// BaseCommit 结束时检出的提交（40 位十六进制，M11a）；无仓库省略
+	BaseCommit       *string    `json:"baseCommit,omitempty"`
 	DurationMs       int64      `json:"durationMs"`
 	Error            *string    `json:"error,omitempty"`
 	HasProjectScript bool       `json:"hasProjectScript"`
 	HasRepoScript    bool       `json:"hasRepoScript"`
 	Ok               bool       `json:"ok"`
 	Phase            SetupPhase `json:"phase"`
-	SetupRan         bool       `json:"setupRan"`
+
+	// Prepared 本次开始时完成标记已存在（M11a）
+	Prepared *bool `json:"prepared,omitempty"`
+
+	// RepoUpdated `repo.update` 让检出前进到了新提交（M11a）
+	RepoUpdated *bool `json:"repoUpdated,omitempty"`
+	SetupRan    bool  `json:"setupRan"`
 
 	// StartedAt UTC 毫秒时间戳
 	StartedAt TimestampMs `json:"startedAt"`
@@ -3573,10 +3662,18 @@ type LinkCtlSetupRunParams struct {
 
 // LinkCtlSetupRunResult defines model for LinkCtlSetupRunResult.
 type LinkCtlSetupRunResult struct {
-	DurationMs int64 `json:"durationMs"`
+	// BaseCommit 结束时检出的提交（40 位十六进制，M11a）；无仓库省略
+	BaseCommit *string `json:"baseCommit,omitempty"`
+	DurationMs int64   `json:"durationMs"`
 
 	// Ok setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本
 	Ok bool `json:"ok"`
+
+	// Prepared 本次开始时完成标记已存在（M11a）
+	Prepared *bool `json:"prepared,omitempty"`
+
+	// RepoUpdated `repo.update` 让检出前进到了新提交（M11a）
+	RepoUpdated *bool `json:"repoUpdated,omitempty"`
 
 	// SetupError setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log）
 	SetupError *string `json:"setupError,omitempty"`
@@ -3594,6 +3691,14 @@ type LinkCtlSetupScripts struct {
 // LinkCtlShutdownParams defines model for LinkCtlShutdownParams.
 type LinkCtlShutdownParams struct {
 	GraceSeconds int `json:"graceSeconds"`
+}
+
+// LinkCtlSnapshotPrepareParams `snapshot.prepare` 无参数（M11a）
+type LinkCtlSnapshotPrepareParams = map[string]interface{}
+
+// LinkCtlSnapshotPrepareResult `snapshot.prepare` 的结果（M11a）：orbd 监督 dockerd 时已 `docker stop` 全部运行中的内层容器；未监督直接 `ok=true`
+type LinkCtlSnapshotPrepareResult struct {
+	Ok bool `json:"ok"`
 }
 
 // LinkCtlTerminalGapParams orbd 帧缓冲 ≥8MiB 时丢弃了该线程的 `terminal_output` 帧，缓冲回落到 ≤1MiB 后发送一次（M3）。
@@ -4004,7 +4109,13 @@ type Orb struct {
 	// LastUserInteractionAt UTC 毫秒时间戳
 	LastUserInteractionAt *TimestampMs `json:"lastUserInteractionAt,omitempty"`
 	MemoryMB              int          `json:"memoryMB"`
-	OrbdVersion           *string      `json:"orbdVersion,omitempty"`
+
+	// NestedDocker 该 orb 的类型声明了 `docker` 特性（M11a，orb 内可用 Docker）
+	NestedDocker *bool   `json:"nestedDocker,omitempty"`
+	OrbdVersion  *string `json:"orbdVersion,omitempty"`
+
+	// Pool 预热池状态（M11a）；不是池 orb 时省略
+	Pool *OrbPoolState `json:"pool,omitempty"`
 
 	// Portals 有 portal 的服务端口（M4）；orb 已删除时省略
 	Portals []OrbPortal `json:"portals,omitempty"`
@@ -4018,6 +4129,9 @@ type Orb struct {
 
 	// Services orbd 上报的受管服务（控制面镜像，M4）；orb 已删除时省略
 	Services []OrbService `json:"services,omitempty"`
+
+	// SnapshotKind `snapshotOf` 非空时给出：`project` = 项目快照，`fork` = 连环境 fork 的快照
+	SnapshotKind *OrbSnapshotKind `json:"snapshotKind,omitempty"`
 
 	// SnapshotOf 由哪个快照创建
 	SnapshotOf *SnapshotID `json:"snapshotOf,omitempty"`
@@ -4170,6 +4284,9 @@ type OrbPauseRequest struct {
 	Mode PauseMode `json:"mode"`
 }
 
+// OrbPoolState 预热池状态（M11a）：`warming` 已创建、尚未就绪；`idle` 就绪或冻结、可认领；`claimed` 已被线程认领、正在刷新
+type OrbPoolState string
+
 // OrbPortal defines model for OrbPortal.
 type OrbPortal struct {
 	Links []OrbPortalLink `json:"links"`
@@ -4255,7 +4372,9 @@ type OrbServiceStatus string
 
 // OrbSetupRun defines model for OrbSetupRun.
 type OrbSetupRun struct {
-	DurationMs int64 `json:"durationMs"`
+	// BaseCommit 结束时检出的提交（40 位十六进制，M11a）；无仓库时省略
+	BaseCommit *string `json:"baseCommit,omitempty"`
+	DurationMs int64   `json:"durationMs"`
 
 	// Error `ok=false` 时的失败原因
 	Error *string `json:"error,omitempty"`
@@ -4280,6 +4399,9 @@ type OrbSetupRun struct {
 	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 	OrbID OrbID      `json:"orbId"`
 	Phase SetupPhase `json:"phase"`
+
+	// Prepared 本次开始时 `setup.done` 标记已存在（M11a：例如来自项目快照）
+	Prepared *bool `json:"prepared,omitempty"`
 
 	// SetupRan `phase=setup` 时是否实际执行了脚本（`setup.done` 标记存在则为 false）
 	SetupRan bool `json:"setupRan"`
@@ -4309,6 +4431,9 @@ type OrbSetupStats struct {
 	// SlowRuns 耗时 ≥ 120000 ms 的次数
 	SlowRuns int `json:"slowRuns"`
 }
+
+// OrbSnapshotKind defines model for OrbSnapshotKind.
+type OrbSnapshotKind string
 
 // OrbStat defines model for OrbStat.
 type OrbStat struct {
@@ -4445,9 +4570,12 @@ type OrbTimelineSegment struct {
 
 // OrbType defines model for OrbType.
 type OrbType struct {
-	Cpus     float32 `json:"cpus"`
-	MemoryMB int     `json:"memoryMB"`
-	Name     string  `json:"name"`
+	Cpus float32 `json:"cpus"`
+
+	// Features 该类型 orb 的可选能力（M11a）：`docker` = orb 内可用 Docker（嵌套 Docker，由 orbd 监督 dockerd）
+	Features []string `json:"features,omitempty"`
+	MemoryMB int      `json:"memoryMB"`
+	Name     string   `json:"name"`
 }
 
 // OutputGroupBy defines model for OutputGroupBy.
@@ -4549,8 +4677,14 @@ type Project struct {
 	SetupScript  *string   `json:"setupScript,omitempty"`
 	ShallowClone bool      `json:"shallowClone"`
 
+	// Snapshots 是否为本项目建立并使用项目快照（M11a；缺省 true）
+	Snapshots bool `json:"snapshots"`
+
 	// UpdatedAt UTC 毫秒时间戳
 	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// WarmOrbs 预热池里为本项目常备的 orb 数（M11a；缺省 0 = 不预热）
+	WarmOrbs int `json:"warmOrbs"`
 }
 
 // ProjectCreate defines model for ProjectCreate.
@@ -4576,6 +4710,12 @@ type ProjectCreate struct {
 	ResumeScript *string `json:"resumeScript,omitempty"`
 	SetupScript  *string `json:"setupScript,omitempty"`
 	ShallowClone *bool   `json:"shallowClone,omitempty"`
+
+	// Snapshots 项目快照开关（M11a）；缺省 true
+	Snapshots *bool `json:"snapshots,omitempty"`
+
+	// WarmOrbs 预热 orb 数（M11a）；缺省 0；越界 → 400 `invalid_request`
+	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
 
 // ProjectID `prj_<ulid>`
@@ -4608,7 +4748,69 @@ type ProjectPatch struct {
 	ResumeScript *string `json:"resumeScript,omitempty"`
 	SetupScript  *string `json:"setupScript,omitempty"`
 	ShallowClone *bool   `json:"shallowClone,omitempty"`
+
+	// Snapshots 项目快照开关（M11a）
+	Snapshots *bool `json:"snapshots,omitempty"`
+
+	// WarmOrbs 预热 orb 数（M11a）；越界 → 400 `invalid_request`
+	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
+
+// ProjectSnapshot 项目快照（M11a）：某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像；键 = (项目, provider, 类型)
+type ProjectSnapshot struct {
+	// BaseCommit 快照里检出的提交（40 位十六进制）；无仓库或尚未发布时省略
+	BaseCommit *string `json:"baseCommit,omitempty"`
+
+	// ConfigHash 建立快照时的项目配置哈希（SHA-256 十六进制）；与当前不等时快照不再命中
+	ConfigHash string `json:"configHash"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Depth 血统内第几次刷新（0 = 从基础镜像全新 setup）
+	Depth int `json:"depth"`
+
+	// ID 快照 id，同时是 Docker 镜像名
+	ID SnapshotID `json:"id"`
+
+	// LastUsedAt UTC 毫秒时间戳
+	LastUsedAt *TimestampMs `json:"lastUsedAt,omitempty"`
+
+	// LineageAt 血统起点（刷新不重置；超过 `snapshots.max_age` 即退役）
+	LineageAt TimestampMs `json:"lineageAt"`
+
+	// ProviderID `prov_<ulid>`
+	ProviderID   ProviderID `json:"providerId"`
+	ProviderName *string    `json:"providerName,omitempty"`
+
+	// ReadyAt UTC 毫秒时间戳
+	ReadyAt *TimestampMs `json:"readyAt,omitempty"`
+
+	// RetireReason `state=retired` 时的原因：`config_changed`（项目配置哈希变化）、`expired`（血统超过 `max_age`）、`image_missing`（provider 上镜像不存在，已退回基础镜像）、
+	// `refresh_failed`（刷新时 setup 失败）、`depth`（刷新次数超过 `max_depth`）、`superseded`（被同键的新快照取代）、`quota`（超出 `max_total_gb`）、
+	// `manual`（用户清除）、`project_deleted`（项目被删除）、`provider_removed`（provider 被删除 / 停用）
+	RetireReason *string `json:"retireReason,omitempty"`
+
+	// SizeBytes 相对基础镜像多占的字节数；provider 未上报时省略
+	SizeBytes *int64 `json:"sizeBytes,omitempty"`
+
+	// State `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
+	State ProjectSnapshotState `json:"state"`
+
+	// Type orb 类型名
+	Type string `json:"type"`
+
+	// UseCount 被新 orb 命中的次数
+	UseCount int64 `json:"useCount"`
+}
+
+// ProjectSnapshotList defines model for ProjectSnapshotList.
+type ProjectSnapshotList struct {
+	Snapshots []ProjectSnapshot `json:"snapshots"`
+}
+
+// ProjectSnapshotState `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
+type ProjectSnapshotState string
 
 // Provider defines model for Provider.
 type Provider struct {
@@ -4669,6 +4871,9 @@ type ProviderCompleteRequest struct {
 
 	// Output 输出尾部（≤64KB）
 	Output string `json:"output"`
+
+	// Result 任务的结构化结果（M11a，随完成上报）
+	Result *JobResult `json:"result,omitempty"`
 }
 
 // ProviderCreateRequest defines model for ProviderCreateRequest.
@@ -4689,10 +4894,14 @@ type ProviderDriver string
 
 // ProviderHelloRequest defines model for ProviderHelloRequest.
 type ProviderHelloRequest struct {
-	AllowMultiple bool                 `json:"allowMultiple"`
-	Capabilities  ProviderCapabilities `json:"capabilities"`
-	DefaultType   string               `json:"defaultType"`
-	Driver        ProviderDriver       `json:"driver"`
+	AllowMultiple bool `json:"allowMultiple"`
+
+	// BaseImageID 驱动当前基础镜像的身份（M11a；docker = 镜像 id，process = `process`，dispatch = `ref:<镜像引用>`）。
+	// 空或缺省 = 未知，控制面对该 provider 不启用项目快照。
+	BaseImageID  *string              `json:"baseImageId,omitempty"`
+	Capabilities ProviderCapabilities `json:"capabilities"`
+	DefaultType  string               `json:"defaultType"`
+	Driver       ProviderDriver       `json:"driver"`
 
 	// InstanceID 本进程实例的随机 id
 	InstanceID string    `json:"instanceId"`
@@ -6556,6 +6765,12 @@ type GetOrbTimelineParams struct {
 type ListProjectsParams struct {
 	// Archived 为 true 时只返回已归档项目；缺省只返回未归档
 	Archived *bool `form:"archived,omitempty" json:"archived,omitempty"`
+}
+
+// DeleteProjectSnapshotsParams defines parameters for DeleteProjectSnapshots.
+type DeleteProjectSnapshotsParams struct {
+	// Type 只退役该 orb 类型的快照；缺省 = 全部类型
+	Type *string `form:"type,omitempty" json:"type,omitempty"`
 }
 
 // ListPublicShareEntriesParams defines parameters for ListPublicShareEntries.
@@ -8814,6 +9029,12 @@ type ServerInterface interface {
 	// UpdateProject 修改项目
 	// (PATCH /api/v1/projects/{id})
 	UpdateProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
+	// (DELETE /api/v1/projects/{id}/snapshots)
+	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
+	// ListProjectSnapshots 项目快照列表（M11a；按 createdAt 倒序，含 building / ready / retired）
+	// (GET /api/v1/projects/{id}/snapshots)
+	ListProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// ListProviders provider 列表
 	// (GET /api/v1/providers)
 	ListProviders(w http.ResponseWriter, r *http.Request)
@@ -9513,6 +9734,18 @@ func (_ Unimplemented) GetProject(w http.ResponseWriter, r *http.Request, id Pro
 // UpdateProject 修改项目
 // (PATCH /api/v1/projects/{id})
 func (_ Unimplemented) UpdateProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
+// (DELETE /api/v1/projects/{id}/snapshots)
+func (_ Unimplemented) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListProjectSnapshots 项目快照列表（M11a；按 createdAt 倒序，含 building / ready / retired）
+// (GET /api/v1/projects/{id}/snapshots)
+func (_ Unimplemented) ListProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12478,6 +12711,74 @@ func (siw *ServerInterfaceWrapper) UpdateProject(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteProjectSnapshots operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteProjectSnapshotsParams
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectSnapshots(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProjectSnapshots operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectSnapshots(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectSnapshots(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProviders operation middleware
 func (siw *ServerInterfaceWrapper) ListProviders(w http.ResponseWriter, r *http.Request) {
 
@@ -14941,6 +15242,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/v1/projects/{id}", wrapper.UpdateProject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/projects/{id}/snapshots", wrapper.DeleteProjectSnapshots)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/snapshots", wrapper.ListProjectSnapshots)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/providers", wrapper.ListProviders)

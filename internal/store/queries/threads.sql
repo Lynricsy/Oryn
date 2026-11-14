@@ -114,3 +114,8 @@ ORDER BY created_at DESC, id DESC;
 
 -- name: CountUnarchivedThreadsByOrb :one
 SELECT COUNT(*) FROM threads WHERE orb_id = CAST(@orb_id AS TEXT) AND archived_at IS NULL;
+
+-- Newest thread creation time of a project (warm-pool activity window, M11a); 0 = none.
+-- name: MaxThreadCreatedAtByProject :one
+SELECT CAST(COALESCE(MAX(created_at), 0) AS INTEGER) FROM threads
+WHERE project_id = CAST(@project_id AS TEXT) AND kind = 'work';

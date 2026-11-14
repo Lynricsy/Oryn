@@ -135,6 +135,7 @@ type Job struct {
 	Error      *string `json:"error"`
 	CreatedAt  int64   `json:"createdAt"`
 	ClaimGen   int64   `json:"claimGen"`
+	Result     *string `json:"result"`
 }
 
 type Notification struct {
@@ -200,6 +201,9 @@ type Orb struct {
 	DeletedAt             *int64  `json:"deletedAt"`
 	TokenGen              int64   `json:"tokenGen"`
 	Coordinator           bool    `json:"coordinator"`
+	PoolState             *string `json:"poolState"`
+	ConfigHash            *string `json:"configHash"`
+	ClaimedAt             *int64  `json:"claimedAt"`
 }
 
 type OrbDesktop struct {
@@ -264,6 +268,8 @@ type OrbSetupRun struct {
 	HasRepoScript    int64   `json:"hasRepoScript"`
 	HasProjectScript int64   `json:"hasProjectScript"`
 	LogTail          []byte  `json:"logTail"`
+	Prepared         bool    `json:"prepared"`
+	BaseCommit       *string `json:"baseCommit"`
 }
 
 type Owner struct {
@@ -327,6 +333,30 @@ type Project struct {
 	GitAuthorEmail          *string `json:"gitAuthorEmail"`
 	Icon                    *string `json:"icon"`
 	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId"`
+	Snapshots               bool    `json:"snapshots"`
+	WarmOrbs                int64   `json:"warmOrbs"`
+}
+
+type ProjectSnapshot struct {
+	ID           string  `json:"id"`
+	ProjectID    *string `json:"projectId"`
+	ProviderID   string  `json:"providerId"`
+	Type         string  `json:"type"`
+	State        string  `json:"state"`
+	ConfigHash   string  `json:"configHash"`
+	BaseCommit   string  `json:"baseCommit"`
+	Depth        int64   `json:"depth"`
+	LineageAt    int64   `json:"lineageAt"`
+	SourceOrbID  *string `json:"sourceOrbId"`
+	SizeBytes    *int64  `json:"sizeBytes"`
+	UseCount     int64   `json:"useCount"`
+	LastUsedAt   *int64  `json:"lastUsedAt"`
+	CreatedAt    int64   `json:"createdAt"`
+	ReadyAt      *int64  `json:"readyAt"`
+	RetiredAt    *int64  `json:"retiredAt"`
+	RetireReason *string `json:"retireReason"`
+	GcJobID      *string `json:"gcJobId"`
+	GcAttemptAt  *int64  `json:"gcAttemptAt"`
 }
 
 type Provider struct {
@@ -343,6 +373,7 @@ type Provider struct {
 	LeaseUntil    *int64  `json:"leaseUntil"`
 	CreatedAt     int64   `json:"createdAt"`
 	DisabledAt    *int64  `json:"disabledAt"`
+	BaseImageID   string  `json:"baseImageId"`
 }
 
 type PublishedFile struct {

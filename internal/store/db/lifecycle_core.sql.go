@@ -50,7 +50,7 @@ WHERE id = (
                       AND (e.created_at < j.created_at OR (e.created_at = j.created_at AND e.id < j.id)))
     ORDER BY j.created_at, j.id LIMIT 1
 )
-RETURNING id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen
+RETURNING id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result
 `
 
 type ClaimNextJobSerialParams struct {
@@ -79,12 +79,13 @@ func (q *Queries) ClaimNextJobSerial(ctx context.Context, arg ClaimNextJobSerial
 		&i.Error,
 		&i.CreatedAt,
 		&i.ClaimGen,
+		&i.Result,
 	)
 	return i, err
 }
 
 const listLiveOrbs = `-- name: ListLiveOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs WHERE state <> 'deleted' ORDER BY created_at, id
 `
 
 func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
@@ -116,6 +117,9 @@ func (q *Queries) ListLiveOrbs(ctx context.Context) ([]Orb, error) {
 			&i.DeletedAt,
 			&i.TokenGen,
 			&i.Coordinator,
+			&i.PoolState,
+			&i.ConfigHash,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +162,7 @@ func (q *Queries) ListThreadIDsByOrb(ctx context.Context, orbID *string) ([]stri
 }
 
 const listUnfinishedJobsByOrb = `-- name: ListUnfinishedJobsByOrb :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE orb_id = ?1 AND state IN ('queued', 'claimed') ORDER BY created_at, id
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result FROM jobs WHERE orb_id = ?1 AND state IN ('queued', 'claimed') ORDER BY created_at, id
 `
 
 func (q *Queries) ListUnfinishedJobsByOrb(ctx context.Context, orbID *string) ([]Job, error) {
@@ -185,6 +189,7 @@ func (q *Queries) ListUnfinishedJobsByOrb(ctx context.Context, orbID *string) ([
 			&i.Error,
 			&i.CreatedAt,
 			&i.ClaimGen,
+			&i.Result,
 		); err != nil {
 			return nil, err
 		}

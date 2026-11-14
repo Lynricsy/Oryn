@@ -1129,3 +1129,64 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 - 连接参数加 `temp_store = MEMORY`（与 `busy_timeout`、`journal_mode` 等同处，每条新连接执行）：触发器让每条事实行写入都开语句日志（subjournal），GROUP BY 的排序也会溢出，默认写临时文件；放内存后 90 万行批量写入由约 42 秒降到约 7–11 秒。
 
 查询（`queries/stats.sql`，ASCII 注释）：写入 `InsertUsageRecord` / `InsertToolCall` / `InsertTurn`（`:execrows`，`INSERT OR IGNORE`，返回 0 = 被忽略）；单条目 `DeleteUsageAt` / `DeleteToolCallAt` / `DeleteTurnAt`；整线程 `DeleteThreadUsage` / `DeleteThreadToolCalls` / `DeleteThreadTurns`；全库活线程 `DeleteLiveUsage` / `DeleteLiveToolCalls` / `DeleteLiveTurns`；孤儿 `DeleteOrphanUsage` / `DeleteOrphanToolCalls` / `DeleteOrphanTurns`；归属快照 `TombstoneUsage` / `TombstoneToolCalls` / `TombstoneTurns`；聚合 `StatsUsageAgg` / `StatsToolAgg` / `StatsTurnAgg` / `StatsCommitAgg`，汇总表聚合 `StatsUsageAggQ` / `StatsToolAggQ` / `StatsTurnAggQ`（参数以 `from_q` / `to_q` 代替 `from_ts` / `to_ts`）；`MinUsageTs`、`SumUsageCost`、`CountUsageRecords`、`ListUsageRecordsPage`；orb `ListOrbsForStats`、`ListOrbEventsInWindow`、`ListOrbEventsForTimeline`、`ListSetupRunsForStats`；产出 `ListThreadTimesForStats`、`ListShippedThreadCosts`、`DeleteThreadCommits`、`InsertThreadCommit`；状态与预算 `GetStatsState`、`SetStatsState`、`DeleteStatsState`、`GetBudget`、`UpsertBudget`、`InsertBudgetAlert`；保留期 `DeleteDeadOrbEventsBefore`、`DeleteDeadOrbSetupRunsBefore`、`DeleteUsageBefore`、`DeleteToolCallsBefore`、`DeleteTurnsBefore`、`DeleteBudgetAlertsBefore`（另有 `orbs.sql` 的 `DeleteOrbSamplesBefore`）。`queries/notify.sql`：`InsertNotification` 多 `link`，新增 `MarkNotificationRead`。
+
+## M11a：项目快照 / 预热池 / 嵌套 Docker
+
+三件事共用一套契约：**项目快照**（某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像，新 orb 直接从它起，跳过已做过的 setup）、**预热池**（为常用项目提前建好、跑完 setup 的 orb，新线程直接认领）、**嵌套 Docker**（按 orb 类型开启，orb 内由 orbd 监督 dockerd，容器运行时限定 sysbox）。不新增 WS 消息；`orb` 推送里的 `Orb` 带上新字段即可。
+
+### provider 协议（C1）
+
+- `ProviderHelloRequest.baseImageId?: string`：驱动当前基础镜像的身份。docker = `docker image inspect --format '{{.Id}}' <image>`（失败给空串）；process = `process`；dispatch = `ref:<镜像引用>`（只跟随标签不跟随内容，靠 `snapshots.max_age` 兜底）。空或缺省 = 未知，控制面对该 provider 不启用项目快照。控制面存进 `providers.base_image_id`，参与项目配置哈希。
+- `OrbType.features?: string[]`：该类型 orb 的可选能力。目前只有 `docker`（`provider.yaml` 里 `nested_docker: true` 的类型）。控制面原样存进 `providers.orb_types`；`Orb.nestedDocker` 由此推出。
+- `JobSpawnParams.snapshotOptional?: boolean`：true = `snapshotId` 对应的快照在 provider 上不存在时退回基础镜像（输出里写一行 `oryn: 快照 <id> 不存在，改用基础镜像`），不算失败；false / 缺省 = 快照必须存在（连环境 fork 的快照保持必需）。dispatch 驱动追加环境变量 `ORB_SNAPSHOT_OPTIONAL=1|0`。
+- `ProviderCompleteRequest.result?: JobResult`；`JobResult{snapshotBytes?: int64}`：`snapshot` 任务上报这份快照相对基础镜像多占的字节数（docker = `max(0, Size(快照) − Size(基础镜像))`；process = 快照目录字节数；dispatch 不报）。控制面存进 `jobs.result`（JSON）。
+
+### orb link（C2）
+
+- `LinkCtlSetupRepo.update?: boolean`：工作目录已有检出时 `git fetch [--depth 1] origin <分支或 HEAD>`，HEAD 与 `FETCH_HEAD` 不同则前进（非浅克隆先 `merge --ff-only`，失败或浅克隆 `reset --hard`）、删掉 `setup.done` 标记，于是 setup 脚本增量重跑。fetch 失败只记日志、沿用现有检出，不让 orb 失败。控制面只在 hello 的 `features` 含 `repo-update` 时置位，且只用于 agent 从未运行过的 orb：来自项目快照、尚未 ready 过的新 orb，或刚被认领的预热池 orb。
+- `LinkCtlSetupRunResult` 与 `LinkCtlSetupResultParams` 增加 `prepared?: boolean`（本次开始时完成标记已存在）、`baseCommit?: string`（结束时检出的提交，40 位十六进制；无仓库省略）、`repoUpdated?: boolean`（`repo.update` 让检出前进到了新提交）。
+- `LinkCtlHelloParams.features` 新增 `repo-update`（认识 `repo.update`）与 `docker`（orb 内 dockerd 由 orbd 监督）。
+- 新方法 `snapshot.prepare`（orynd→orbd 请求，`LinkCtlSnapshotPrepareParams` 无参数 → `LinkCtlSnapshotPrepareResult{ok}`）：只在项目快照提交前、且 hello 含 `docker` 时调用；orbd 停掉全部运行中的内层容器（`docker stop -t 10`，sysbox 的 `docker commit` 只在没有运行中的内层容器时才带上内层镜像）；未监督 dockerd 时直接 `ok=true`。调用失败只记录，不阻止快照。连环境 fork 不调用。
+
+### 模型
+
+- `Project` 增加 `snapshots: boolean`（必有，缺省 true）与 `warmOrbs: integer`（必有，0–3，缺省 0）；`ProjectCreate` / `ProjectPatch` 增加同名可选字段（`warmOrbs` 越界 → 400 `invalid_request`）。
+- `ProjectSnapshotState`：`building | ready | retired`。`ProjectSnapshot{id: SnapshotId, providerId, providerName?, type, state, configHash, baseCommit?, depth, lineageAt, createdAt, readyAt?, lastUsedAt?, useCount, sizeBytes?, retireReason?}`；`ProjectSnapshotList{snapshots}`。`retireReason`：`config_changed`、`expired`、`image_missing`、`refresh_failed`、`depth`、`superseded`、`quota`、`manual`、`project_deleted`、`provider_removed`。
+- `Orb` 增加 `pool?: OrbPoolState`（`warming | idle | claimed`；不是池 orb 时省略）、`snapshotKind?: OrbSnapshotKind`（`project | fork`，`snapshotOf` 非空时给出）、`nestedDocker?: boolean`。
+- `OrbSetupRun` 增加 `prepared?`、`baseCommit?`。
+
+### REST
+
+|方法与路径|operationId|说明|
+|---|---|---|
+|`GET /api/v1/projects/{id}/snapshots`|`listProjectSnapshots`|`ProjectSnapshotList`，按 `createdAt` 倒序，含 `building / ready / retired`；项目不存在 → 404|
+|`DELETE /api/v1/projects/{id}/snapshots`|`deleteProjectSnapshots`|查询参数可选 `type`；把匹配的 `ready` 快照退役（原因 `manual`），204；镜像由回收器异步删除|
+
+错误码：`orb_is_pooled`（409，新建线程的 `executor.kind = orb` 指向预热池里的 orb）。
+
+### 配置
+
+`orynd.yaml`（严格解码；未写的键保持默认）：
+
+```yaml
+snapshots: { enabled: true, max_age: "72h", max_depth: 16, min_setup: "10s", max_total_gb: 40 }
+pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
+```
+
+校验：时长为正；`snapshots.max_depth` 1–64；`snapshots.max_total_gb` ≥ 1（每个 provider 的上限）；`pool.max_total` 0–16（0 = 关闭预热池）。
+
+`provider.yaml` 的 `docker.types.<name>` 新键：`runtime`（只接受空或 `sysbox-runc`）、`nested_docker`（缺省 false；为 true 时要求 `runtime: sysbox-runc`，否则加载报错「nested_docker 需要 runtime: sysbox-runc；特权模式不受支持，见 docs/deploy.md」）。
+
+### 存储
+
+`0021_snapshots_pool.sql`：
+
+- `project_snapshots(id PK = 镜像名, project_id → projects ON DELETE SET NULL, provider_id → providers, type, state ∈ building|ready|retired, config_hash, base_commit DEFAULT '', depth, lineage_at, source_orb_id, size_bytes, use_count, last_used_at, created_at, ready_at, retired_at, retire_reason, gc_job_id, gc_attempt_at)`；部分唯一索引 `project_snapshots_building` / `project_snapshots_ready`（同一 `(project_id, provider_id, type)` 至多一行 building、一行 ready），索引 `project_snapshots_state`。
+- `projects` 加 `snapshots`（DEFAULT 1）、`warm_orbs`（DEFAULT 0）；`orbs` 加 `pool_state`（NULL | `warming` | `idle` | `claimed` | `retiring`，`retiring` 只在库内）、`config_hash`、`claimed_at`，部分索引 `orbs_pool`；`providers` 加 `base_image_id`（DEFAULT `''`）；`jobs` 加 `result`；`orb_setup_runs` 加 `prepared`（DEFAULT 0）、`base_commit`。
+- Down：逆序删列与索引，最后删表。
+
+查询（`queries/snapshots.sql` 与原文件，ASCII 注释）：
+
+- 快照：`GetProjectSnapshot`、`GetReadyProjectSnapshot`（按键）、`InsertBuildingProjectSnapshot`（`:execrows`，`ON CONFLICT DO NOTHING`，0 = 同键已有构建——这就是并发去重）、`PublishProjectSnapshot`（`building → ready`，写 `ready_at / size_bytes / base_commit`）、`RetireOtherReadySnapshots`（同键其它 ready；**须在同一事务里先于 `PublishProjectSnapshot` 执行**，否则 ready 部分唯一索引拒绝第二行）、`RetireProjectSnapshot`（`ready → retired`）、`RetireProjectSnapshotsByProject`（可选 `type`）、`RetireProjectSnapshotsByProvider`、`TouchProjectSnapshotUse`（`:execrows`，只命中 ready）、`ListProjectSnapshotsByProject`（带 provider 名）、`ListProjectSnapshotsByState`、`SumProjectSnapshotBytes`（按 provider，ready + retired，NULL 计 0）、`ListReadySnapshotsLRU`（`COALESCE(last_used_at, ready_at, created_at)` 升序）、`MarkProjectSnapshotGC`、`DeleteProjectSnapshot`、`DeleteBuildingProjectSnapshot`。
+- 预热池与哈希：`SetOrbConfigHash`；`ClaimPoolOrb` / `SetOrbPoolState`（`:execrows`，都带 `AND pool_state = @seen` 的 CAS；`pool_state` 传 NULL = 离开预热池）；`ListPoolOrbs`（可选项目）；`MaxThreadCreatedAtByProject`（只计 `kind = work`，0 = 没有）；`ListEnvSecretStamps`（env 模式密钥的名字与 `updated_at`，从不取值）。
+- 改动：`CreateOrb` 加 `pool_state`、`config_hash`；`AcquireProviderHello` 写 `base_image_id`；`FinishJob` 写 `result`；`InsertOrbSetupRun` 写 `prepared`、`base_commit`（`ListOrbSetupRuns` / `LatestOrbSetupRun` 同时读出）；`CreateProject` / `UpdateProject` 的 `snapshots`、`warm_orbs` 为可空参数（NULL = 列默认值 / 不改）。

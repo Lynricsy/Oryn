@@ -514,6 +514,19 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 	return items, nil
 }
 
+const maxThreadCreatedAtByProject = `-- name: MaxThreadCreatedAtByProject :one
+SELECT CAST(COALESCE(MAX(created_at), 0) AS INTEGER) FROM threads
+WHERE project_id = CAST(?1 AS TEXT) AND kind = 'work'
+`
+
+// Newest thread creation time of a project (warm-pool activity window, M11a); 0 = none.
+func (q *Queries) MaxThreadCreatedAtByProject(ctx context.Context, projectID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, maxThreadCreatedAtByProject, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const removeThreadLabel = `-- name: RemoveThreadLabel :exec
 DELETE FROM thread_labels WHERE thread_id = ?1 AND label = ?2
 `

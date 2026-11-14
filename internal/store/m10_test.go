@@ -63,6 +63,9 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 21, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 20, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
@@ -499,13 +502,18 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 21, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 20, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 19, r.Source.Version)
 
 	q := s.Q
-	require.NoError(t, q.CreateProject(ctx, db.CreateProjectParams{ID: "prj_1", Name: "p1", ShallowClone: true, CreatedAt: 1, UpdatedAt: 1}))
+	// 0019 的结构上造数据：项目用原生 SQL（生成的 CreateProject 已带 0021 的列）。
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO projects (id, name, shallow_clone, created_at, updated_at) VALUES ('prj_1', 'p1', 1, 1, 1)`)
+	require.NoError(t, err)
 	for _, th := range []struct {
 		id      string
 		project *string
@@ -564,6 +572,9 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1||prj_1|spc_1|anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0"}, dumpRows(t, s.DB, usageQ), "减空的行被删掉")
 
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 21, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 20, r.Source.Version)

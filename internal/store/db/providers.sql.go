@@ -12,9 +12,9 @@ import (
 const acquireProviderHello = `-- name: AcquireProviderHello :execrows
 UPDATE providers SET driver = ?1, version = ?2, capabilities = ?3,
     orb_types = ?4, default_type = ?5, allow_multiple = ?6,
-    instance_id = ?7, lease_until = ?8
-WHERE id = ?9 AND disabled_at IS NULL
-  AND (instance_id IS NULL OR instance_id = ?7 OR lease_until IS NULL OR lease_until <= ?10
+    instance_id = ?7, lease_until = ?8, base_image_id = ?9
+WHERE id = ?10 AND disabled_at IS NULL
+  AND (instance_id IS NULL OR instance_id = ?7 OR lease_until IS NULL OR lease_until <= ?11
        OR (allow_multiple AND CAST(?6 AS BOOLEAN)))
 `
 
@@ -27,6 +27,7 @@ type AcquireProviderHelloParams struct {
 	AllowMultiple bool    `json:"allowMultiple"`
 	InstanceID    *string `json:"instanceId"`
 	LeaseUntil    *int64  `json:"leaseUntil"`
+	BaseImageID   string  `json:"baseImageId"`
 	ID            string  `json:"id"`
 	Now           *int64  `json:"now"`
 }
@@ -43,6 +44,7 @@ func (q *Queries) AcquireProviderHello(ctx context.Context, arg AcquireProviderH
 		arg.AllowMultiple,
 		arg.InstanceID,
 		arg.LeaseUntil,
+		arg.BaseImageID,
 		arg.ID,
 		arg.Now,
 	)
@@ -119,7 +121,7 @@ func (q *Queries) DisableProvider(ctx context.Context, arg DisableProviderParams
 }
 
 const getProvider = `-- name: GetProvider :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at FROM providers WHERE id = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE id = ?1
 `
 
 func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) {
@@ -139,12 +141,13 @@ func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) 
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.BaseImageID,
 	)
 	return i, err
 }
 
 const getProviderByName = `-- name: GetProviderByName :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at FROM providers WHERE name = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE name = ?1
 `
 
 func (q *Queries) GetProviderByName(ctx context.Context, name string) (Provider, error) {
@@ -164,12 +167,13 @@ func (q *Queries) GetProviderByName(ctx context.Context, name string) (Provider,
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.BaseImageID,
 	)
 	return i, err
 }
 
 const getProviderByTokenHash = `-- name: GetProviderByTokenHash :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at FROM providers WHERE token_hash = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE token_hash = ?1
 `
 
 func (q *Queries) GetProviderByTokenHash(ctx context.Context, tokenHash string) (Provider, error) {
@@ -189,12 +193,13 @@ func (q *Queries) GetProviderByTokenHash(ctx context.Context, tokenHash string) 
 		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.BaseImageID,
 	)
 	return i, err
 }
 
 const listProviders = `-- name: ListProviders :many
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at FROM providers ORDER BY name
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers ORDER BY name
 `
 
 func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
@@ -220,6 +225,7 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 			&i.LeaseUntil,
 			&i.CreatedAt,
 			&i.DisabledAt,
+			&i.BaseImageID,
 		); err != nil {
 			return nil, err
 		}

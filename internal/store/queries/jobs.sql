@@ -8,8 +8,10 @@ VALUES (@id, @provider_id, @orb_id, @op, @params, @created_at);
 SELECT * FROM jobs WHERE id = @id;
 
 -- Finishes one specific claim (fenced by claim_gen): a late completion of an older claim matches no row.
+-- result = JobResult JSON reported by the provider (M11a; NULL when absent).
 -- name: FinishJob :execrows
-UPDATE jobs SET state = @state, finished_at = @finished_at, output = @output, error = @error, lease_until = NULL
+UPDATE jobs SET state = @state, finished_at = @finished_at, output = @output, error = @error, lease_until = NULL,
+    result = sqlc.narg(result)
 WHERE id = @id AND state = 'claimed' AND claim_gen = @claim_gen;
 
 -- name: ListExpiredClaimedJobs :many

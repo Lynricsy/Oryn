@@ -28,6 +28,8 @@ export const projects: Project[] = [
 		defaultOrbType: "medium",
 		setupScript: "bun install --cwd web",
 		shallowClone: true,
+		snapshots: true,
+		warmOrbs: 0,
 		// 浏览器 Profile「工作账号」（M8；与 `BROWSER_PROFILE_IDS.work` 相同）
 		defaultBrowserProfileId: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P1",
 		createdAt: NOW - 30 * 24 * HOUR,
@@ -39,6 +41,8 @@ export const projects: Project[] = [
 		repoUrl: "https://github.com/Lynricsy/oryn-core",
 		baseBranch: "oryn",
 		shallowClone: false,
+		snapshots: true,
+		warmOrbs: 0,
 		gitAuthorName: "Oryn Agent",
 		gitAuthorEmail: "agent@oryn.example",
 		createdAt: NOW - 20 * 24 * HOUR,

@@ -9,6 +9,33 @@ import (
 	"context"
 )
 
+const claimPoolOrb = `-- name: ClaimPoolOrb :execrows
+UPDATE orbs SET pool_state = ?1, claimed_at = CAST(?2 AS INTEGER)
+WHERE id = ?3 AND pool_state = CAST(?4 AS TEXT)
+`
+
+type ClaimPoolOrbParams struct {
+	PoolState *string `json:"poolState"`
+	ClaimedAt int64   `json:"claimedAt"`
+	ID        string  `json:"id"`
+	Seen      string  `json:"seen"`
+}
+
+// Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
+// 0 rows = claimed / retired by someone else.
+func (q *Queries) ClaimPoolOrb(ctx context.Context, arg ClaimPoolOrbParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimPoolOrb,
+		arg.PoolState,
+		arg.ClaimedAt,
+		arg.ID,
+		arg.Seen,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countLiveOrbsBySnapshot = `-- name: CountLiveOrbsBySnapshot :one
 SELECT COUNT(*) FROM orbs WHERE snapshot_of = ?1 AND state != 'deleted'
 `
@@ -23,9 +50,9 @@ func (q *Queries) CountLiveOrbsBySnapshot(ctx context.Context, snapshotOf *strin
 const createOrb = `-- name: CreateOrb :exec
 
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-        ?10, ?11, ?12, ?13)
+        ?10, ?11, ?12, ?13, ?14, ?15)
 `
 
 type CreateOrbParams struct {
@@ -42,10 +69,13 @@ type CreateOrbParams struct {
 	SnapshotOf     *string `json:"snapshotOf"`
 	CreatedAt      int64   `json:"createdAt"`
 	Coordinator    bool    `json:"coordinator"`
+	PoolState      *string `json:"poolState"`
+	ConfigHash     *string `json:"configHash"`
 }
 
 // Orbs, lifecycle events, metric samples.
 // coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
+// pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching).
 func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 	_, err := q.db.ExecContext(ctx, createOrb,
 		arg.ID,
@@ -61,6 +91,8 @@ func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 		arg.SnapshotOf,
 		arg.CreatedAt,
 		arg.Coordinator,
+		arg.PoolState,
+		arg.ConfigHash,
 	)
 	return err
 }
@@ -78,7 +110,7 @@ func (q *Queries) DeleteOrbSamplesBefore(ctx context.Context, before int64) (int
 }
 
 const getCoordinatorOrb = `-- name: GetCoordinatorOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs
 WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
 ORDER BY created_at DESC LIMIT 1
 `
@@ -107,12 +139,15 @@ func (q *Queries) GetCoordinatorOrb(ctx context.Context) (Orb, error) {
 		&i.DeletedAt,
 		&i.TokenGen,
 		&i.Coordinator,
+		&i.PoolState,
+		&i.ConfigHash,
+		&i.ClaimedAt,
 	)
 	return i, err
 }
 
 const getOrb = `-- name: GetOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE id = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs WHERE id = ?1
 `
 
 func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
@@ -138,12 +173,15 @@ func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
 		&i.DeletedAt,
 		&i.TokenGen,
 		&i.Coordinator,
+		&i.PoolState,
+		&i.ConfigHash,
+		&i.ClaimedAt,
 	)
 	return i, err
 }
 
 const getOrbByTokenHash = `-- name: GetOrbByTokenHash :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE token_hash = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs WHERE token_hash = ?1
 `
 
 func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb, error) {
@@ -169,6 +207,9 @@ func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb,
 		&i.DeletedAt,
 		&i.TokenGen,
 		&i.Coordinator,
+		&i.PoolState,
+		&i.ConfigHash,
+		&i.ClaimedAt,
 	)
 	return i, err
 }
@@ -369,7 +410,7 @@ func (q *Queries) ListOrbSamples(ctx context.Context, arg ListOrbSamplesParams) 
 }
 
 const listOrbs = `-- name: ListOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs
 WHERE (CAST(?1 AS BOOLEAN) = 1 OR deleted_at IS NULL)
 ORDER BY created_at DESC
 `
@@ -403,6 +444,9 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 			&i.DeletedAt,
 			&i.TokenGen,
 			&i.Coordinator,
+			&i.PoolState,
+			&i.ConfigHash,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -418,7 +462,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 }
 
 const listOrbsByState = `-- name: ListOrbsByState :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs WHERE state = ?1 ORDER BY created_at
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs WHERE state = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, error) {
@@ -450,6 +494,63 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 			&i.DeletedAt,
 			&i.TokenGen,
 			&i.Coordinator,
+			&i.PoolState,
+			&i.ConfigHash,
+			&i.ClaimedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPoolOrbs = `-- name: ListPoolOrbs :many
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs
+WHERE pool_state IS NOT NULL AND deleted_at IS NULL
+  AND (CAST(?1 AS TEXT) IS NULL OR project_id = CAST(?1 AS TEXT))
+ORDER BY created_at, id
+`
+
+// Live warm-pool orbs (any pool_state), oldest first; project NULL = all projects.
+func (q *Queries) ListPoolOrbs(ctx context.Context, projectID *string) ([]Orb, error) {
+	rows, err := q.db.QueryContext(ctx, listPoolOrbs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Orb{}
+	for rows.Next() {
+		var i Orb
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProviderID,
+			&i.Type,
+			&i.Cpus,
+			&i.MemoryMb,
+			&i.Image,
+			&i.ProjectID,
+			&i.State,
+			&i.StateChangedAt,
+			&i.TokenHash,
+			&i.SnapshotOf,
+			&i.LastAgentActivityAt,
+			&i.LastUserInteractionAt,
+			&i.OrbdVersion,
+			&i.AgentVersion,
+			&i.CreatedAt,
+			&i.DeletedAt,
+			&i.TokenGen,
+			&i.Coordinator,
+			&i.PoolState,
+			&i.ConfigHash,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -502,6 +603,40 @@ type RotateOrbTokenParams struct {
 // Rotates the orb token (compare-and-swap on the current generation).
 func (q *Queries) RotateOrbToken(ctx context.Context, arg RotateOrbTokenParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, rotateOrbToken, arg.TokenHash, arg.ID, arg.TokenGen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setOrbConfigHash = `-- name: SetOrbConfigHash :exec
+UPDATE orbs SET config_hash = CAST(?1 AS TEXT) WHERE id = ?2
+`
+
+type SetOrbConfigHashParams struct {
+	ConfigHash string `json:"configHash"`
+	ID         string `json:"id"`
+}
+
+func (q *Queries) SetOrbConfigHash(ctx context.Context, arg SetOrbConfigHashParams) error {
+	_, err := q.db.ExecContext(ctx, setOrbConfigHash, arg.ConfigHash, arg.ID)
+	return err
+}
+
+const setOrbPoolState = `-- name: SetOrbPoolState :execrows
+UPDATE orbs SET pool_state = ?1
+WHERE id = ?2 AND pool_state = CAST(?3 AS TEXT)
+`
+
+type SetOrbPoolStateParams struct {
+	PoolState *string `json:"poolState"`
+	ID        string  `json:"id"`
+	Seen      string  `json:"seen"`
+}
+
+// Warm-pool state CAS (warming -> idle, claimed -> NULL, -> retiring); 0 rows = the state moved elsewhere.
+func (q *Queries) SetOrbPoolState(ctx context.Context, arg SetOrbPoolStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setOrbPoolState, arg.PoolState, arg.ID, arg.Seen)
 	if err != nil {
 		return 0, err
 	}

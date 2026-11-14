@@ -29,6 +29,8 @@ const ORYN: Project = {
 	name: "oryn",
 	repoUrl: "https://github.com/x/oryn",
 	shallowClone: false,
+	snapshots: true,
+	warmOrbs: 0,
 	icon: "\u{f07d3}",
 	createdAt: 1,
 	updatedAt: 1,
@@ -37,6 +39,8 @@ const CORE: Project = {
 	id: "prj_b",
 	name: "core",
 	shallowClone: true,
+	snapshots: true,
+	warmOrbs: 0,
 	createdAt: 2,
 	updatedAt: 2,
 };

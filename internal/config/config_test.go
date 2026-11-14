@@ -148,3 +148,92 @@ func TestStatsRetention(t *testing.T) {
 	_, err = LoadOrynd(path)
 	assert.ErrorContains(t, err, "stats.retention.samples")
 }
+
+// M11a：snapshots / pool 的默认值、校验与 YAML 读取（未写的键保持默认）。
+func TestSnapshotsAndPool(t *testing.T) {
+	d := DefaultOrynd()
+	assert.Equal(t, Snapshots{Enabled: true, MaxAge: Duration(72 * time.Hour), MaxDepth: 16, MinSetup: Duration(10 * time.Second), MaxTotalGB: 40}, d.Snapshots)
+	assert.Equal(t, Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)}, d.Pool)
+	assert.Equal(t, int64(40)<<30, d.Snapshots.MaxTotalBytes())
+
+	base := func() Orynd {
+		c := DefaultOrynd()
+		c.PublicURL = "https://oryn.example.com"
+		return c
+	}
+	for name, mod := range map[string]func(*Orynd){
+		"snapshots.max_age 为 0":      func(c *Orynd) { c.Snapshots.MaxAge = 0 },
+		"snapshots.min_setup 为负":     func(c *Orynd) { c.Snapshots.MinSetup = Duration(-time.Second) },
+		"snapshots.max_depth 为 0":    func(c *Orynd) { c.Snapshots.MaxDepth = 0 },
+		"snapshots.max_depth 超 64":   func(c *Orynd) { c.Snapshots.MaxDepth = 65 },
+		"snapshots.max_total_gb 为 0": func(c *Orynd) { c.Snapshots.MaxTotalGB = 0 },
+		"pool.max_total 为负":          func(c *Orynd) { c.Pool.MaxTotal = -1 },
+		"pool.max_total 超 16":        func(c *Orynd) { c.Pool.MaxTotal = 17 },
+		"pool.max_age 为 0":           func(c *Orynd) { c.Pool.MaxAge = 0 },
+		"pool.active_window 为负":      func(c *Orynd) { c.Pool.ActiveWindow = Duration(-time.Hour) },
+	} {
+		c := base()
+		mod(&c)
+		assert.Error(t, c.Validate(), name)
+	}
+	c := base()
+	c.Snapshots.MaxDepth, c.Pool.MaxTotal = 64, 0
+	assert.NoError(t, c.Validate(), "max_depth = 64 与 pool.max_total = 0（关闭预热池）合法")
+	c.Snapshots.MaxDepth, c.Pool.MaxTotal = 1, 16
+	assert.NoError(t, c.Validate(), "边界值合法")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+
+		"\nsnapshots: {min_setup: 1s, enabled: false}\npool: {max_total: 0}\n"), 0o600))
+	got, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.False(t, got.Snapshots.Enabled)
+	assert.Equal(t, time.Second, got.Snapshots.MinSetup.D())
+	assert.Equal(t, 72*time.Hour, got.Snapshots.MaxAge.D(), "未写的键保持默认")
+	assert.Equal(t, 16, got.Snapshots.MaxDepth)
+	assert.Equal(t, 0, got.Pool.MaxTotal)
+	assert.Equal(t, 12*time.Hour, got.Pool.MaxAge.D())
+
+	for body, want := range map[string]string{
+		"snapshots: {max_depth: 100}\n":   "snapshots.max_depth",
+		"snapshots: {max_total_gb: 0}\n":  "snapshots.max_total_gb",
+		"pool: {max_total: 17}\n":         "pool.max_total",
+		"pool: {active_window: 0s}\n":     "pool.active_window",
+		"snapshots: {max_age_hours: 1}\n": "max_age_hours", // 严格解码：未知键报错
+	} {
+		require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\n"+body), 0o600))
+		_, err = LoadOrynd(path)
+		assert.ErrorContains(t, err, want, body)
+	}
+}
+
+// M11a：docker.types.<name>.runtime / nested_docker 的读取与校验。
+func TestDockerTypeRuntime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "provider.yaml")
+	load := func(types string) (Provider, error) {
+		require.NoError(t, os.WriteFile(path, []byte("url: http://127.0.0.1:7600\ntoken_file: /tmp/t\ndocker:\n  default_type: small\n  types:\n"+types), 0o600))
+		return LoadProvider(path)
+	}
+
+	c, err := load("    small: {cpus: 2, memory: 4g}\n    dind: {cpus: 4, memory: 8g, runtime: sysbox-runc, nested_docker: true}\n    sys: {cpus: 2, memory: 4g, runtime: sysbox-runc}\n")
+	require.NoError(t, err)
+	assert.Equal(t, DockerType{CPUs: 4, Memory: "8g", Runtime: SysboxRuntime, NestedDocker: true}, c.Docker.Types["dind"])
+	assert.Equal(t, DockerType{CPUs: 2, Memory: "4g", Runtime: SysboxRuntime}, c.Docker.Types["sys"], "只换 runtime、不开嵌套 Docker 合法")
+	assert.Equal(t, DockerType{CPUs: 2, Memory: "4g"}, c.Docker.Types["small"])
+
+	_, err = load("    small: {cpus: 2, memory: 4g, nested_docker: true}\n")
+	assert.ErrorContains(t, err, "nested_docker 需要 runtime: sysbox-runc")
+	assert.ErrorContains(t, err, "docs/deploy.md")
+
+	_, err = load("    small: {cpus: 2, memory: 4g, runtime: runc-foo}\n")
+	assert.ErrorContains(t, err, `docker.types.small.runtime "runc-foo" 无效`)
+
+	_, err = load("    small: {cpus: 2, memory: 4g, runtime: runc-foo, nested_docker: true}\n")
+	assert.ErrorContains(t, err, "runtime")
+	assert.ErrorContains(t, err, "nested_docker 需要")
+
+	_, err = load("    small: {cpus: 2, memory: 4g, privileged: true}\n")
+	assert.ErrorContains(t, err, "privileged", "严格解码：未知键报错")
+}

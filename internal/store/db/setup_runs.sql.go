@@ -27,9 +27,9 @@ func (q *Queries) GetOrbSetupRunLog(ctx context.Context, arg GetOrbSetupRunLogPa
 
 const insertOrbSetupRun = `-- name: InsertOrbSetupRun :exec
 INSERT INTO orb_setup_runs (id, orb_id, phase, trigger, started_at, finished_at, ok, setup_ran, error,
-                            duration_ms, has_repo_script, has_project_script, log_tail)
+                            duration_ms, has_repo_script, has_project_script, log_tail, prepared, base_commit)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-        ?10, ?11, ?12, ?13)
+        ?10, ?11, ?12, ?13, ?14, ?15)
 `
 
 type InsertOrbSetupRunParams struct {
@@ -46,6 +46,8 @@ type InsertOrbSetupRunParams struct {
 	HasRepoScript    int64   `json:"hasRepoScript"`
 	HasProjectScript int64   `json:"hasProjectScript"`
 	LogTail          []byte  `json:"logTail"`
+	Prepared         bool    `json:"prepared"`
+	BaseCommit       *string `json:"baseCommit"`
 }
 
 func (q *Queries) InsertOrbSetupRun(ctx context.Context, arg InsertOrbSetupRunParams) error {
@@ -63,13 +65,15 @@ func (q *Queries) InsertOrbSetupRun(ctx context.Context, arg InsertOrbSetupRunPa
 		arg.HasRepoScript,
 		arg.HasProjectScript,
 		arg.LogTail,
+		arg.Prepared,
+		arg.BaseCommit,
 	)
 	return err
 }
 
 const latestOrbSetupRun = `-- name: LatestOrbSetupRun :one
 SELECT id, orb_id, phase, trigger, started_at, finished_at, ok, setup_ran, error, duration_ms,
-       has_repo_script, has_project_script
+       has_repo_script, has_project_script, prepared, base_commit
 FROM orb_setup_runs WHERE orb_id = ?1 AND phase = ?2 ORDER BY finished_at DESC, id DESC LIMIT 1
 `
 
@@ -91,6 +95,8 @@ type LatestOrbSetupRunRow struct {
 	DurationMs       int64   `json:"durationMs"`
 	HasRepoScript    int64   `json:"hasRepoScript"`
 	HasProjectScript int64   `json:"hasProjectScript"`
+	Prepared         bool    `json:"prepared"`
+	BaseCommit       *string `json:"baseCommit"`
 }
 
 func (q *Queries) LatestOrbSetupRun(ctx context.Context, arg LatestOrbSetupRunParams) (LatestOrbSetupRunRow, error) {
@@ -109,13 +115,15 @@ func (q *Queries) LatestOrbSetupRun(ctx context.Context, arg LatestOrbSetupRunPa
 		&i.DurationMs,
 		&i.HasRepoScript,
 		&i.HasProjectScript,
+		&i.Prepared,
+		&i.BaseCommit,
 	)
 	return i, err
 }
 
 const listOrbSetupRuns = `-- name: ListOrbSetupRuns :many
 SELECT id, orb_id, phase, trigger, started_at, finished_at, ok, setup_ran, error, duration_ms,
-       has_repo_script, has_project_script
+       has_repo_script, has_project_script, prepared, base_commit
 FROM orb_setup_runs WHERE orb_id = ?1 ORDER BY finished_at DESC, id DESC LIMIT 20
 `
 
@@ -132,6 +140,8 @@ type ListOrbSetupRunsRow struct {
 	DurationMs       int64   `json:"durationMs"`
 	HasRepoScript    int64   `json:"hasRepoScript"`
 	HasProjectScript int64   `json:"hasProjectScript"`
+	Prepared         bool    `json:"prepared"`
+	BaseCommit       *string `json:"baseCommit"`
 }
 
 func (q *Queries) ListOrbSetupRuns(ctx context.Context, orbID string) ([]ListOrbSetupRunsRow, error) {
@@ -156,6 +166,8 @@ func (q *Queries) ListOrbSetupRuns(ctx context.Context, orbID string) ([]ListOrb
 			&i.DurationMs,
 			&i.HasRepoScript,
 			&i.HasProjectScript,
+			&i.Prepared,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}

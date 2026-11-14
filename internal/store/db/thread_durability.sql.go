@@ -48,7 +48,7 @@ func (q *Queries) EntryIDExists(ctx context.Context, arg EntryIDExistsParams) (i
 }
 
 const findUnboundSnapshotOrb = `-- name: FindUnboundSnapshotOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator FROM orbs o
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs o
 WHERE o.snapshot_of = ?1 AND o.image = ?2 AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.orb_id = o.id)
 ORDER BY o.created_at LIMIT 1
@@ -83,6 +83,9 @@ func (q *Queries) FindUnboundSnapshotOrb(ctx context.Context, arg FindUnboundSna
 		&i.DeletedAt,
 		&i.TokenGen,
 		&i.Coordinator,
+		&i.PoolState,
+		&i.ConfigHash,
+		&i.ClaimedAt,
 	)
 	return i, err
 }

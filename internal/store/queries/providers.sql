@@ -26,7 +26,7 @@ WHERE id = @id;
 -- name: AcquireProviderHello :execrows
 UPDATE providers SET driver = @driver, version = @version, capabilities = @capabilities,
     orb_types = @orb_types, default_type = @default_type, allow_multiple = @allow_multiple,
-    instance_id = @instance_id, lease_until = @lease_until
+    instance_id = @instance_id, lease_until = @lease_until, base_image_id = @base_image_id
 WHERE id = @id AND disabled_at IS NULL
   AND (instance_id IS NULL OR instance_id = @instance_id OR lease_until IS NULL OR lease_until <= @now
        OR (allow_multiple AND CAST(@allow_multiple AS BOOLEAN)));

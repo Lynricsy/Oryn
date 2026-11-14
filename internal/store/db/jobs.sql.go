@@ -38,8 +38,9 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 }
 
 const finishJob = `-- name: FinishJob :execrows
-UPDATE jobs SET state = ?1, finished_at = ?2, output = ?3, error = ?4, lease_until = NULL
-WHERE id = ?5 AND state = 'claimed' AND claim_gen = ?6
+UPDATE jobs SET state = ?1, finished_at = ?2, output = ?3, error = ?4, lease_until = NULL,
+    result = ?5
+WHERE id = ?6 AND state = 'claimed' AND claim_gen = ?7
 `
 
 type FinishJobParams struct {
@@ -47,17 +48,20 @@ type FinishJobParams struct {
 	FinishedAt *int64  `json:"finishedAt"`
 	Output     string  `json:"output"`
 	Error      *string `json:"error"`
+	Result     *string `json:"result"`
 	ID         string  `json:"id"`
 	ClaimGen   int64   `json:"claimGen"`
 }
 
 // Finishes one specific claim (fenced by claim_gen): a late completion of an older claim matches no row.
+// result = JobResult JSON reported by the provider (M11a; NULL when absent).
 func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, finishJob,
 		arg.State,
 		arg.FinishedAt,
 		arg.Output,
 		arg.Error,
+		arg.Result,
 		arg.ID,
 		arg.ClaimGen,
 	)
@@ -68,7 +72,7 @@ func (q *Queries) FinishJob(ctx context.Context, arg FinishJobParams) (int64, er
 }
 
 const getJob = `-- name: GetJob :one
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE id = ?1
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result FROM jobs WHERE id = ?1
 `
 
 func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
@@ -89,12 +93,13 @@ func (q *Queries) GetJob(ctx context.Context, id string) (Job, error) {
 		&i.Error,
 		&i.CreatedAt,
 		&i.ClaimGen,
+		&i.Result,
 	)
 	return i, err
 }
 
 const listExpiredClaimedJobs = `-- name: ListExpiredClaimedJobs :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE state = 'claimed' AND lease_until < ?1 ORDER BY created_at
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result FROM jobs WHERE state = 'claimed' AND lease_until < ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job, error) {
@@ -121,6 +126,7 @@ func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job
 			&i.Error,
 			&i.CreatedAt,
 			&i.ClaimGen,
+			&i.Result,
 		); err != nil {
 			return nil, err
 		}
@@ -136,7 +142,7 @@ func (q *Queries) ListExpiredClaimedJobs(ctx context.Context, now *int64) ([]Job
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result FROM jobs
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR provider_id = CAST(?2 AS TEXT))
 ORDER BY created_at, id
@@ -171,6 +177,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.Error,
 			&i.CreatedAt,
 			&i.ClaimGen,
+			&i.Result,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +193,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listJobsByOrb = `-- name: ListJobsByOrb :many
-SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen FROM jobs WHERE orb_id = ?1 ORDER BY created_at, id
+SELECT id, provider_id, orb_id, op, params, state, attempt, claimed_at, lease_until, finished_at, output, error, created_at, claim_gen, result FROM jobs WHERE orb_id = ?1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListJobsByOrb(ctx context.Context, orbID *string) ([]Job, error) {
@@ -213,6 +220,7 @@ func (q *Queries) ListJobsByOrb(ctx context.Context, orbID *string) ([]Job, erro
 			&i.Error,
 			&i.CreatedAt,
 			&i.ClaimGen,
+			&i.Result,
 		); err != nil {
 			return nil, err
 		}

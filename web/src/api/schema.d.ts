@@ -319,6 +319,26 @@ export interface paths {
         patch: operations["updateProject"];
         trace?: never;
     };
+    "/api/v1/projects/{id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 项目快照列表（M11a；按 createdAt 倒序，含 building / ready / retired） */
+        get: operations["listProjectSnapshots"];
+        put?: never;
+        post?: never;
+        /** 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除） */
+        delete: operations["deleteProjectSnapshots"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -2590,6 +2610,7 @@ export interface components {
              *     `coordinator_restricted`（400 / WS `error`，协调线程不允许的命令、fork、分享、附件，或把线程挂到协调 orb / `@host`）。
              *     M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
              *     agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
+             *     M11a（项目快照与预热池）：`orb_is_pooled`（409，把线程挂到预热池里的 orb 上）。
              */
             code: string;
             message: string;
@@ -2775,6 +2796,10 @@ export interface components {
             createdAt: components["schemas"]["TimestampMs"];
             updatedAt: components["schemas"]["TimestampMs"];
             archivedAt?: components["schemas"]["TimestampMs"];
+            /** @description 是否为本项目建立并使用项目快照（M11a；缺省 true） */
+            snapshots: boolean;
+            /** @description 预热池里为本项目常备的 orb 数（M11a；缺省 0 = 不预热） */
+            warmOrbs: number;
         };
         ProjectList: {
             projects: components["schemas"]["Project"][];
@@ -2798,6 +2823,10 @@ export interface components {
             gitAuthorEmail?: string;
             /** @description 默认浏览器 Profile（`bpf_…`）；空串等同省略。不存在 → 404 `profile_not_found` */
             defaultBrowserProfileId?: string;
+            /** @description 项目快照开关（M11a）；缺省 true */
+            snapshots?: boolean;
+            /** @description 预热 orb 数（M11a）；缺省 0；越界 → 400 `invalid_request` */
+            warmOrbs?: number;
         };
         /** @description 只修改出现的字段；可选字符串字段传空串表示清除 */
         ProjectPatch: {
@@ -2818,6 +2847,54 @@ export interface components {
             /** @description 默认浏览器 Profile（`bpf_…`）；空串表示清除。不存在 → 404 `profile_not_found` */
             defaultBrowserProfileId?: string;
             archived?: boolean;
+            /** @description 项目快照开关（M11a） */
+            snapshots?: boolean;
+            /** @description 预热 orb 数（M11a）；越界 → 400 `invalid_request` */
+            warmOrbs?: number;
+        };
+        /**
+         * @description `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
+         * @enum {string}
+         */
+        ProjectSnapshotState: "building" | "ready" | "retired";
+        /** @description 项目快照（M11a）：某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像；键 = (项目, provider, 类型) */
+        ProjectSnapshot: {
+            id: components["schemas"]["SnapshotId"];
+            providerId: components["schemas"]["ProviderId"];
+            providerName?: string;
+            /** @description orb 类型名 */
+            type: string;
+            state: components["schemas"]["ProjectSnapshotState"];
+            /** @description 建立快照时的项目配置哈希（SHA-256 十六进制）；与当前不等时快照不再命中 */
+            configHash: string;
+            /** @description 快照里检出的提交（40 位十六进制）；无仓库或尚未发布时省略 */
+            baseCommit?: string;
+            /** @description 血统内第几次刷新（0 = 从基础镜像全新 setup） */
+            depth: number;
+            /** @description 血统起点（刷新不重置；超过 `snapshots.max_age` 即退役） */
+            lineageAt: components["schemas"]["TimestampMs"];
+            createdAt: components["schemas"]["TimestampMs"];
+            readyAt?: components["schemas"]["TimestampMs"];
+            lastUsedAt?: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 被新 orb 命中的次数
+             */
+            useCount: number;
+            /**
+             * Format: int64
+             * @description 相对基础镜像多占的字节数；provider 未上报时省略
+             */
+            sizeBytes?: number;
+            /**
+             * @description `state=retired` 时的原因：`config_changed`（项目配置哈希变化）、`expired`（血统超过 `max_age`）、`image_missing`（provider 上镜像不存在，已退回基础镜像）、
+             *     `refresh_failed`（刷新时 setup 失败）、`depth`（刷新次数超过 `max_depth`）、`superseded`（被同键的新快照取代）、`quota`（超出 `max_total_gb`）、
+             *     `manual`（用户清除）、`project_deleted`（项目被删除）、`provider_removed`（provider 被删除 / 停用）
+             */
+            retireReason?: string;
+        };
+        ProjectSnapshotList: {
+            snapshots: components["schemas"]["ProjectSnapshot"][];
         };
         /** @description orb 内 `git config --global user.name / user.email`；不得含换行或控制字符 */
         GitIdentity: {
@@ -2871,6 +2948,8 @@ export interface components {
             name: string;
             cpus: number;
             memoryMB: number;
+            /** @description 该类型 orb 的可选能力（M11a）：`docker` = orb 内可用 Docker（嵌套 Docker，由 orbd 监督 dockerd） */
+            features?: string[];
         };
         ProviderCapabilities: {
             freeze: boolean;
@@ -3103,6 +3182,12 @@ export interface components {
             desktop?: components["schemas"]["OrbDesktop"];
             /** @description 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略 */
             coordinator?: boolean;
+            /** @description 预热池状态（M11a）；不是池 orb 时省略 */
+            pool?: components["schemas"]["OrbPoolState"];
+            /** @description `snapshotOf` 非空时给出：`project` = 项目快照，`fork` = 连环境 fork 的快照 */
+            snapshotKind?: components["schemas"]["OrbSnapshotKind"];
+            /** @description 该 orb 的类型声明了 `docker` 特性（M11a，orb 内可用 Docker） */
+            nestedDocker?: boolean;
         };
         OrbSetupRun: {
             id: components["schemas"]["SetupRunId"];
@@ -3122,6 +3207,10 @@ export interface components {
             hasRepoScript: boolean;
             /** @description 项目设置里配置了该阶段脚本 */
             hasProjectScript: boolean;
+            /** @description 本次开始时 `setup.done` 标记已存在（M11a：例如来自项目快照） */
+            prepared?: boolean;
+            /** @description 结束时检出的提交（40 位十六进制，M11a）；无仓库时省略 */
+            baseCommit?: string;
         };
         /** @enum {string} */
         SetupPhase: "setup" | "resume";
@@ -3130,6 +3219,13 @@ export interface components {
          * @enum {string}
          */
         SetupTrigger: "auto" | "manual";
+        /**
+         * @description 预热池状态（M11a）：`warming` 已创建、尚未就绪；`idle` 就绪或冻结、可认领；`claimed` 已被线程认领、正在刷新
+         * @enum {string}
+         */
+        OrbPoolState: "warming" | "idle" | "claimed";
+        /** @enum {string} */
+        OrbSnapshotKind: "project" | "fork";
         OrbSetupRunList: {
             runs: components["schemas"]["OrbSetupRun"][];
         };
@@ -4962,6 +5058,11 @@ export interface components {
             types: components["schemas"]["OrbType"][];
             defaultType: string;
             allowMultiple: boolean;
+            /**
+             * @description 驱动当前基础镜像的身份（M11a；docker = 镜像 id，process = `process`，dispatch = `ref:<镜像引用>`）。
+             *     空或缺省 = 未知，控制面对该 provider 不启用项目快照。
+             */
+            baseImageId?: string;
         };
         ProviderHelloResponse: {
             providerId: components["schemas"]["ProviderId"];
@@ -5007,6 +5108,7 @@ export interface components {
             error?: string;
             /** Format: int64 */
             durationMs: number;
+            result?: components["schemas"]["JobResult"];
         };
         ProviderByeRequest: {
             instanceId: string;
@@ -5023,6 +5125,8 @@ export interface components {
             /** @description orb 类型名 */
             type: string;
             env: components["schemas"]["JobSpawnEnv"];
+            /** @description M11a：true = `snapshotId` 对应的快照不存在时退回基础镜像（输出里写一行说明），不算失败；false / 缺省 = 快照必须存在 */
+            snapshotOptional?: boolean;
         };
         JobPauseParams: {
             mode: components["schemas"]["PauseMode"];
@@ -5033,6 +5137,14 @@ export interface components {
         JobDeleteParams: Record<string, never>;
         JobDeleteSnapshotParams: {
             snapshotId: components["schemas"]["SnapshotId"];
+        };
+        /** @description 任务的结构化结果（M11a，随完成上报） */
+        JobResult: {
+            /**
+             * Format: int64
+             * @description `snapshot` 任务：这份快照相对基础镜像多占的字节数（≥0）
+             */
+            snapshotBytes?: number;
         };
         /** @description yamux 流的第一行（JSON + `\n`）。 */
         LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"];
@@ -5130,10 +5242,11 @@ export interface components {
          *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
          *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
          *     `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-         *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）。
+         *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+         *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -5187,6 +5300,7 @@ export interface components {
              *     M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
              *     M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
              *     `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
+             *     M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -5275,6 +5389,12 @@ export interface components {
             durationMs: number;
             hasRepoScript: boolean;
             hasProjectScript: boolean;
+            /** @description 本次开始时完成标记已存在（M11a） */
+            prepared?: boolean;
+            /** @description 结束时检出的提交（40 位十六进制，M11a）；无仓库省略 */
+            baseCommit?: string;
+            /** @description `repo.update` 让检出前进到了新提交（M11a） */
+            repoUpdated?: boolean;
         };
         /** @description 无参数 */
         LinkCtlProjectScriptsGetParams: Record<string, never>;
@@ -5295,6 +5415,11 @@ export interface components {
             url: string;
             branch?: string;
             shallow: boolean;
+            /**
+             * @description M11a：工作目录已有检出时 `git fetch` 基线并移动到最新；HEAD 变化则删掉完成标记、重跑 setup 脚本。fetch 失败只记日志、沿用现有检出。
+             *     只用于 agent 从未运行过的 orb（来自项目快照的新 orb，或刚被认领的预热池 orb）；只在 hello 的 `features` 含 `repo-update` 时置位。
+             */
+            update?: boolean;
         };
         LinkCtlSetupScripts: {
             setup?: string;
@@ -5329,10 +5454,22 @@ export interface components {
             setupError?: string;
             /** Format: int64 */
             durationMs: number;
+            /** @description 本次开始时完成标记已存在（M11a） */
+            prepared?: boolean;
+            /** @description 结束时检出的提交（40 位十六进制，M11a）；无仓库省略 */
+            baseCommit?: string;
+            /** @description `repo.update` 让检出前进到了新提交（M11a） */
+            repoUpdated?: boolean;
         };
         /** @description 同 `setup.run`，但不 clone、不跑 setup */
         LinkCtlResumeRunParams: components["schemas"]["LinkCtlSetupRunParams"];
         LinkCtlResumeRunResult: components["schemas"]["LinkCtlSetupRunResult"];
+        /** @description `snapshot.prepare` 无参数（M11a） */
+        LinkCtlSnapshotPrepareParams: Record<string, never>;
+        /** @description `snapshot.prepare` 的结果（M11a）：orbd 监督 dockerd 时已 `docker stop` 全部运行中的内层容器；未监督直接 `ok=true` */
+        LinkCtlSnapshotPrepareResult: {
+            ok: boolean;
+        };
         LinkCtlAgentStartParams: {
             threadId: components["schemas"]["ThreadId"];
             sessionDir: string;
@@ -6061,6 +6198,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Project"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectSnapshots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 项目快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSnapshotList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProjectSnapshots: {
+        parameters: {
+            query?: {
+                /** @description 只退役该 orb 类型的快照；缺省 = 全部类型 */
+                type?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已退役 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

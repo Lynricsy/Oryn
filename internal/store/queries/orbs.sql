@@ -1,11 +1,12 @@
 -- Orbs, lifecycle events, metric samples.
 
 -- coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
+-- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching).
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
-        @token_hash, @snapshot_of, @created_at, @coordinator);
+        @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -79,3 +80,24 @@ SELECT COUNT(*) FROM orbs WHERE snapshot_of = @snapshot_of AND state != 'deleted
 SELECT * FROM orbs
 WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
 ORDER BY created_at DESC LIMIT 1;
+
+-- name: SetOrbConfigHash :exec
+UPDATE orbs SET config_hash = CAST(@config_hash AS TEXT) WHERE id = @id;
+
+-- Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
+-- 0 rows = claimed / retired by someone else.
+-- name: ClaimPoolOrb :execrows
+UPDATE orbs SET pool_state = sqlc.narg(pool_state), claimed_at = CAST(@claimed_at AS INTEGER)
+WHERE id = @id AND pool_state = CAST(@seen AS TEXT);
+
+-- Warm-pool state CAS (warming -> idle, claimed -> NULL, -> retiring); 0 rows = the state moved elsewhere.
+-- name: SetOrbPoolState :execrows
+UPDATE orbs SET pool_state = sqlc.narg(pool_state)
+WHERE id = @id AND pool_state = CAST(@seen AS TEXT);
+
+-- Live warm-pool orbs (any pool_state), oldest first; project NULL = all projects.
+-- name: ListPoolOrbs :many
+SELECT * FROM orbs
+WHERE pool_state IS NOT NULL AND deleted_at IS NULL
+  AND (CAST(sqlc.narg(project_id) AS TEXT) IS NULL OR project_id = CAST(sqlc.narg(project_id) AS TEXT))
+ORDER BY created_at, id;
