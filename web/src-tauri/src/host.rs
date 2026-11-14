@@ -6,7 +6,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde::{Deserialize, Serialize};
+#[cfg(desktop)]
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
@@ -20,15 +22,17 @@ use crate::webview::{self, TauriShell};
 
 /// 主窗口标签。
 pub const MAIN: &str = "main";
-/// 宿主命令集版本：以后新增命令就加一。
-pub const BRIDGE: u32 = 1;
+/// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令）。
+pub const BRIDGE: u32 = 2;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 
 /// 同步回调（窗口事件、托盘、通知）需要读的偏好，镜像自配置。
 #[derive(Debug, Clone, Copy)]
 pub struct Prefs {
+    #[cfg(desktop)]
     pub close_to_tray: bool,
+    #[cfg(desktop)]
     pub auto_update: bool,
     pub lang: Lang,
 }
@@ -38,17 +42,22 @@ pub struct Desktop {
     pub core: tokio::sync::Mutex<SessionCore>,
     nav: SharedNav,
     prefs: Mutex<Prefs>,
-    visible: AtomicBool,
     launcher_ready: AtomicBool,
-    /// 托盘可用；不可用时本次运行关窗即退出。
-    tray_available: AtomicBool,
-    restored_logged: AtomicBool,
-    geometry_gen: std::sync::atomic::AtomicU64,
     /// `--smoke`：首次 `launcher_state` 后退出 0。
     pub smoke: bool,
     /// 应用版本：Tauri 配置的 `package_info().version`（可被 `--config` 覆盖，更新器比较的就是它）。
     pub version: String,
     pub notifier: Notifier,
+    #[cfg(desktop)]
+    visible: AtomicBool,
+    /// 托盘可用；不可用时本次运行关窗即退出。
+    #[cfg(desktop)]
+    tray_available: AtomicBool,
+    #[cfg(desktop)]
+    restored_logged: AtomicBool,
+    #[cfg(desktop)]
+    geometry_gen: std::sync::atomic::AtomicU64,
+    #[cfg(desktop)]
     status: Mutex<HostStatus>,
     #[cfg(desktop)]
     pub tray: std::sync::OnceLock<crate::tray::Tray>,
@@ -62,7 +71,9 @@ impl Desktop {
     pub fn new(core: SessionCore, nav: SharedNav, smoke: bool, version: String) -> Self {
         let cfg = core.config();
         let prefs = Prefs {
+            #[cfg(desktop)]
             close_to_tray: cfg.close_to_tray,
+            #[cfg(desktop)]
             auto_update: cfg.auto_update,
             lang: cfg.lang(),
         };
@@ -70,14 +81,19 @@ impl Desktop {
             core: tokio::sync::Mutex::new(core),
             nav,
             prefs: Mutex::new(prefs),
-            visible: AtomicBool::new(true),
             launcher_ready: AtomicBool::new(false),
-            tray_available: AtomicBool::new(false),
-            restored_logged: AtomicBool::new(false),
-            geometry_gen: Default::default(),
             smoke,
             version,
             notifier: Notifier::default(),
+            #[cfg(desktop)]
+            visible: AtomicBool::new(true),
+            #[cfg(desktop)]
+            tray_available: AtomicBool::new(false),
+            #[cfg(desktop)]
+            restored_logged: AtomicBool::new(false),
+            #[cfg(desktop)]
+            geometry_gen: Default::default(),
+            #[cfg(desktop)]
             status: Mutex::new(HostStatus::default()),
             #[cfg(desktop)]
             tray: std::sync::OnceLock::new(),
@@ -104,6 +120,7 @@ impl Desktop {
         self.prefs().lang
     }
 
+    #[cfg(desktop)]
     /// 记录一次 `window.restored{width,height,x,y}`：尺寸取内容区（与窗口状态插件保存 / 恢复的值、
     /// `xdotool windowsize` 设定的值同一口径），位置取外框左上角。
     fn log_window_restored(&self, window: &WebviewWindow) {
@@ -125,16 +142,19 @@ impl Desktop {
         }
     }
 
-    /// 连接页已调用过 `launcher_state`。
+    /// 连接页已调用过 `launcher_state`（冒烟模式的判据）。
+    #[cfg(desktop)]
     pub fn launcher_seen(&self) -> bool {
         self.launcher_ready.load(Ordering::SeqCst)
     }
 
+    #[cfg(desktop)]
     pub fn set_tray_available(&self, ok: bool) {
         self.tray_available.store(ok, Ordering::SeqCst);
     }
 
     /// 关窗时是否藏到托盘（托盘不可用时为 false，避免「藏起来却没有入口」）。
+    #[cfg(desktop)]
     pub fn close_to_tray(&self) -> bool {
         self.prefs().close_to_tray && self.tray_available.load(Ordering::SeqCst)
     }
@@ -147,6 +167,7 @@ pub fn desktop(app: &AppHandle) -> Option<Arc<Desktop>> {
 
 // ---------------------------------------------------------------- 托盘状态
 
+#[cfg(desktop)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatusKind {
@@ -154,6 +175,7 @@ pub enum StatusKind {
     Unread,
 }
 
+#[cfg(desktop)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusItem {
@@ -164,6 +186,7 @@ pub struct StatusItem {
 }
 
 /// `host_set_status` 的参数。
+#[cfg(desktop)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostStatus {
@@ -187,6 +210,7 @@ pub fn emit(app: &AppHandle, detail: Value) {
 }
 
 /// `(visible, focused)`；`visible = is_visible && !is_minimized`。
+#[cfg(desktop)]
 pub fn main_window_flags(app: &AppHandle) -> (bool, bool) {
     let Some(w) = main_window(app) else {
         return (false, false);
@@ -195,7 +219,8 @@ pub fn main_window_flags(app: &AppHandle) -> (bool, bool) {
     (visible, w.is_focused().unwrap_or(false))
 }
 
-/// 重新计算可见性；变化时记录 `window{visible}` 并通知页面。
+/// 重新计算可见性；变化时记录 `window{visible}` 并通知页面（移动端不发：页面用 `visibilitychange`）。
+#[cfg(desktop)]
 pub fn refresh_visibility(app: &AppHandle) {
     let Some(d) = desktop(app) else { return };
     let (visible, _) = main_window_flags(app);
@@ -213,10 +238,12 @@ pub fn show_main(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+    #[cfg(desktop)]
     refresh_visibility(app);
 }
 
 /// 隐藏主窗口（先保存窗口状态）。
+#[cfg(desktop)]
 pub fn hide_main(app: &AppHandle) {
     save_window_state(app);
     if let Some(w) = main_window(app) {
@@ -226,14 +253,10 @@ pub fn hide_main(app: &AppHandle) {
 }
 
 /// 保存窗口状态（不记「可见」）。
+#[cfg(desktop)]
 pub fn save_window_state(app: &AppHandle) {
-    #[cfg(desktop)]
-    {
-        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-        let _ = app.save_window_state(StateFlags::all() & !StateFlags::VISIBLE);
-    }
-    #[cfg(mobile)]
-    let _ = app;
+    use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+    let _ = app.save_window_state(StateFlags::all() & !StateFlags::VISIBLE);
 }
 
 /// 托盘 / 通知 / 深链接共用：显示主窗口；远程页面就绪 → 发 `navigate`，否则存为待开路径。
@@ -256,13 +279,31 @@ pub fn open_path(app: &AppHandle, path: &str) {
     eventlog::log("open", json!({"path": path, "delivered": delivered}));
 }
 
+/// 配对链接（二维码被系统相机扫到后经深链接进来）：尚未配对且停在连接页时按其中的服务器发起连接。
+pub fn connect_from_link(app: &AppHandle, server: String) {
+    let Some(d) = desktop(app) else { return };
+    show_main(app);
+    tauri::async_runtime::spawn(async move {
+        let next = {
+            let mut core = d.core.lock().await;
+            if core.config().server_url.is_some() {
+                return;
+            }
+            core.connect(&server).await
+        };
+        schedule(d, next);
+    });
+}
+
 /// 托盘「退出 Oryn」、`--quit`：保存窗口状态后显式退出。
+#[cfg(desktop)]
 pub fn quit(app: &AppHandle) {
     save_window_state(app);
     app.exit(0);
 }
 
 /// 托盘「更换服务器…」：回连接页等待确认。
+#[cfg(desktop)]
 pub fn change_server(app: &AppHandle) {
     let Some(d) = desktop(app) else { return };
     show_main(app);
@@ -272,36 +313,31 @@ pub fn change_server(app: &AppHandle) {
 }
 
 /// 托盘的更新项：已下载 → 安装并重启；否则立即检查。
+#[cfg(desktop)]
 pub fn tray_update(app: &AppHandle) {
-    #[cfg(desktop)]
-    {
-        let Some(d) = desktop(app) else { return };
-        if d.updater.ready_version().is_some() {
-            crate::updater::install(app, &d);
-            return;
-        }
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            crate::updater::check(&app, &d).await;
-        });
+    let Some(d) = desktop(app) else { return };
+    if d.updater.ready_version().is_some() {
+        crate::updater::install(app, &d);
+        return;
     }
-    #[cfg(mobile)]
-    let _ = app;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::updater::check(&app, &d).await;
+    });
 }
 
 /// 按最新的状态、语言、更新重画托盘。
+#[cfg(desktop)]
 pub fn refresh_tray(app: &AppHandle, d: &Desktop) {
-    #[cfg(desktop)]
     if let Some(tray) = d.tray.get() {
         let status = d.status.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let ready = d.updater.ready_version();
         tray.apply(app, crate::tray::model(&status, d.lang(), ready.as_deref()));
     }
-    #[cfg(mobile)]
-    let _ = (app, d);
 }
 
 /// 主窗口事件：可见性、关窗藏托盘。
+#[cfg(desktop)]
 pub fn wire_window(app: &AppHandle, window: &WebviewWindow) {
     let app = app.clone();
     window.on_window_event(move |event| match event {
@@ -324,10 +360,12 @@ pub fn wire_window(app: &AppHandle, window: &WebviewWindow) {
 }
 
 /// 外框稳定多久之后记 `window.restored`。
+#[cfg(desktop)]
 const GEOMETRY_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// 窗口几何变化（或首个页面加载完）：稳定 [`GEOMETRY_SETTLE`] 后记一次 `window.restored`。
 /// 刚建好时 GTK 外框为 0×0，窗口管理器映射时还会先报一次自然尺寸，所以不能取第一次的值。
+#[cfg(desktop)]
 pub fn note_geometry(app: &AppHandle) {
     let Some(d) = desktop(app) else { return };
     if d.restored_logged.load(Ordering::SeqCst) {
@@ -399,6 +437,7 @@ pub struct HostReady {
     pub pending_path: Option<String>,
 }
 
+#[cfg(desktop)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSettings {
@@ -407,6 +446,7 @@ pub struct DesktopSettings {
     pub auto_update: bool,
 }
 
+#[cfg(desktop)]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsPatch {
@@ -415,6 +455,7 @@ pub struct SettingsPatch {
     pub auto_update: Option<bool>,
 }
 
+#[cfg(desktop)]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopInfo {
@@ -426,6 +467,7 @@ pub struct DesktopInfo {
     pub update: Value,
 }
 
+#[cfg(desktop)]
 async fn desktop_info(d: &Desktop) -> DesktopInfo {
     let (settings, token_store) = {
         let core = d.core.lock().await;
@@ -439,13 +481,10 @@ async fn desktop_info(d: &Desktop) -> DesktopInfo {
             core.token_store(),
         )
     };
-    #[cfg(desktop)]
     let (shortcut_error, update) = (
         d.shortcut.error(),
         serde_json::to_value(d.updater.status()).unwrap_or(Value::Null),
     );
-    #[cfg(mobile)]
-    let (shortcut_error, update) = (None, json!({"state": "none"}));
     DesktopInfo {
         version: d.version.clone(),
         settings,
@@ -542,10 +581,18 @@ pub async fn host_ready(
         .unwrap_or_default();
     let pending_path = d.core.lock().await.host_ready(&origin, bridge, &lang);
     d.set_prefs(|p| p.lang = Lang::from_tag(&lang));
-    refresh_tray(&app, &d);
     #[cfg(desktop)]
-    crate::updater::start_loop(&app, &d);
-    let (visible, _) = main_window_flags(&app);
+    let visible = {
+        refresh_tray(&app, &d);
+        crate::updater::start_loop(&app, &d);
+        main_window_flags(&app).0
+    };
+    // 移动端：页面在前台才会调用；另清掉返回栈、同步推送订阅、下发分享
+    #[cfg(mobile)]
+    let visible = {
+        crate::mobile::host_ready(&app, d.inner().clone());
+        true
+    };
     Ok(HostReady {
         bridge: BRIDGE,
         visible,
@@ -563,6 +610,15 @@ pub async fn host_notify(
     Ok(())
 }
 
+/// 移动端没有托盘：空操作。
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn host_set_status(status: serde::de::IgnoredAny) -> Res<()> {
+    let _ = status;
+    Ok(())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn host_set_status(
     app: AppHandle,
@@ -597,7 +653,10 @@ pub async fn host_set_language(
         .await
         .update_config(|c| c.lang = lang.as_str().to_string());
     d.set_prefs(|p| p.lang = lang);
+    #[cfg(desktop)]
     refresh_tray(&app, &d);
+    #[cfg(mobile)]
+    let _ = app;
     Ok(())
 }
 
@@ -608,26 +667,25 @@ pub async fn host_reauth(path: String, d: State<'_, Arc<Desktop>>) -> Res<()> {
     Ok(())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn host_info(d: State<'_, Arc<Desktop>>) -> Res<DesktopInfo> {
     Ok(desktop_info(&d).await)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn host_set_settings(
     app: AppHandle,
     patch: SettingsPatch,
     d: State<'_, Arc<Desktop>>,
 ) -> Res<DesktopInfo> {
-    #[cfg(desktop)]
     if let Some(shortcut) = patch.shortcut.as_deref() {
         if d.shortcut.apply(&app, shortcut).is_ok() {
             let shortcut = shortcut.trim().to_string();
             d.core.lock().await.update_config(|c| c.shortcut = shortcut);
         }
     }
-    #[cfg(mobile)]
-    let _ = &app;
     if patch.close_to_tray.is_some() || patch.auto_update.is_some() {
         d.core.lock().await.update_config(|c| {
             if let Some(v) = patch.close_to_tray {
@@ -649,26 +707,17 @@ pub async fn host_set_settings(
     Ok(desktop_info(&d).await)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn host_check_update(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<Option<Value>> {
-    #[cfg(desktop)]
-    {
-        let found = crate::updater::check(&app, &d).await;
-        Ok(found.and_then(|f| serde_json::to_value(f).ok()))
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, d);
-        Ok(None)
-    }
+    let found = crate::updater::check(&app, &d).await;
+    Ok(found.and_then(|f| serde_json::to_value(f).ok()))
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn host_install_update(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<()> {
-    #[cfg(desktop)]
     crate::updater::install(&app, &d);
-    #[cfg(mobile)]
-    let _ = (app, d);
     Ok(())
 }
 
@@ -679,7 +728,7 @@ pub async fn host_change_server(app: AppHandle, d: State<'_, Arc<Desktop>>) -> R
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod tests {
     use super::*;
 

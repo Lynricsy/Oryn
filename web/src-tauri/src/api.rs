@@ -1,11 +1,12 @@
-//! 与控制面的 HTTP 交互：健康检查、设备配对、App 会话换取、自我吊销。
+//! 与控制面的 HTTP 交互：健康检查、设备配对、App 会话换取、自我吊销；移动端另有推送订阅与分享上传。
 
 use std::future::Future;
+use std::path::Path;
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApiError {
@@ -51,7 +52,42 @@ pub enum PairPoll {
     },
 }
 
-/// 会话状态机依赖的接口；生产实现为 [`HttpApi`]，测试用假实现。
+/// 要登记到服务器的推送订阅。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushSubscription {
+    /// UnifiedPush（RFC 8291 Web Push）：端点 + 公钥。
+    WebPush {
+        endpoint: String,
+        p256dh: String,
+        auth: String,
+    },
+    /// FCM 注册令牌。
+    Fcm { token: String },
+}
+
+impl PushSubscription {
+    /// 登记成功后记作「已同步」的键：Web Push 为端点，FCM 为令牌。
+    pub fn key(&self) -> &str {
+        match self {
+            PushSubscription::WebPush { endpoint, .. } => endpoint,
+            PushSubscription::Fcm { token } => token,
+        }
+    }
+
+    fn body(&self) -> Value {
+        match self {
+            PushSubscription::WebPush {
+                endpoint,
+                p256dh,
+                auth,
+            } => json!({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}),
+            PushSubscription::Fcm { token } => json!({"kind": "fcm", "token": token}),
+        }
+    }
+}
+
+/// 会话状态机与移动端编排依赖的接口；生产实现为 [`HttpApi`]，测试用假实现。
+/// 推送与上传只在移动端调用（桌面在单测里覆盖）。
 pub trait Api: Send + Sync + 'static {
     fn healthz(&self, base: &str) -> impl Future<Output = Result<Health, ApiError>> + Send;
     fn pair_start(
@@ -77,6 +113,34 @@ pub trait Api: Send + Sync + 'static {
         token: &str,
         device_id: &str,
     ) -> impl Future<Output = Result<(), ApiError>> + Send;
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn vapid_key(
+        &self,
+        base: &str,
+        token: &str,
+    ) -> impl Future<Output = Result<String, ApiError>> + Send;
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn push_subscribe(
+        &self,
+        base: &str,
+        token: &str,
+        sub: &PushSubscription,
+    ) -> impl Future<Output = Result<String, ApiError>> + Send;
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn push_unsubscribe(
+        &self,
+        base: &str,
+        token: &str,
+        id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send;
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn upload_attachment(
+        &self,
+        base: &str,
+        token: &str,
+        name: &str,
+        path: &Path,
+    ) -> impl Future<Output = Result<Value, ApiError>> + Send;
 }
 
 /// 走 [`reqwest`] 的生产实现。
@@ -109,6 +173,29 @@ impl Api for HttpApi {
     async fn revoke_self(&self, base: &str, token: &str, device_id: &str) -> Result<(), ApiError> {
         revoke_self(base, token, device_id).await
     }
+    async fn vapid_key(&self, base: &str, token: &str) -> Result<String, ApiError> {
+        vapid_key(base, token).await
+    }
+    async fn push_subscribe(
+        &self,
+        base: &str,
+        token: &str,
+        sub: &PushSubscription,
+    ) -> Result<String, ApiError> {
+        push_subscribe(base, token, sub).await
+    }
+    async fn push_unsubscribe(&self, base: &str, token: &str, id: &str) -> Result<(), ApiError> {
+        push_unsubscribe(base, token, id).await
+    }
+    async fn upload_attachment(
+        &self,
+        base: &str,
+        token: &str,
+        name: &str,
+        path: &Path,
+    ) -> Result<Value, ApiError> {
+        upload_attachment(base, token, name, path).await
+    }
 }
 
 /// 应用版本（`package_info().version`），启动时在第一个请求之前设置。
@@ -119,16 +206,24 @@ pub fn set_app_version(version: String) {
     let _ = APP_VERSION.set(version);
 }
 
-/// `User-Agent: OrynDesktop/<版本> (<os>-<arch>)`；版本未设置（单测）时取 crate 版本。
+/// `User-Agent: OrynDesktop/<版本> (<os>-<arch>)`（移动端 `OrynMobile/…`）；版本未设置（单测）时取 crate 版本。
 pub fn user_agent() -> String {
     let version = APP_VERSION
         .get()
         .map(String::as_str)
         .unwrap_or(env!("CARGO_PKG_VERSION"));
-    format!("OrynDesktop/{version} ({})", platform())
+    let product = if cfg!(mobile) {
+        "OrynMobile"
+    } else {
+        "OrynDesktop"
+    };
+    format!("{product}/{version} ({})", platform())
 }
 
-/// `<linux|macos|windows>-<x64|arm64>`。
+/// 配对时上报的设备种类。
+pub const DEVICE_KIND: &str = if cfg!(mobile) { "mobile" } else { "desktop" };
+
+/// `<linux|macos|windows|android|ios>-<x64|arm64|…>`。
 pub fn platform() -> String {
     // std 的 OS 名（linux / macos / windows）与约定一致，只换架构名
     let os = std::env::consts::OS;
@@ -140,7 +235,8 @@ pub fn platform() -> String {
     format!("{os}-{arch}")
 }
 
-/// 设备名：主机名；取不到时 `Oryn Desktop`。
+/// 设备名：主机名；取不到时 `Oryn Desktop`（移动端的设备名由原生侧给出）。
+#[cfg(desktop)]
 pub fn device_name() -> String {
     let name = host_name()
         .map(|n| n.trim().to_string())
@@ -149,6 +245,7 @@ pub fn device_name() -> String {
     name.chars().take(100).collect()
 }
 
+#[cfg(desktop)]
 fn host_name() -> Option<String> {
     #[cfg(windows)]
     {
@@ -175,10 +272,22 @@ fn host_name() -> Option<String> {
     }
 }
 
+/// 普通请求：连接 10 秒、总计 30 秒。
 fn build_client() -> reqwest::Client {
+    client_builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("reqwest client")
+}
+
+/// 上传：只限连接 10 秒，不限总时长（附件最大 100MiB，手机网络可能很慢）。
+fn build_upload_client() -> reqwest::Client {
+    client_builder().build().expect("reqwest client")
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
     let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
         .user_agent(user_agent())
         .redirect(reqwest::redirect::Policy::none());
     // Android：不走 rustls-platform-verifier（未经 JNI 初始化即 panic），只信 Mozilla 根证书；
@@ -192,10 +301,11 @@ fn build_client() -> reqwest::Client {
                 .filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok()),
         )
     };
-    builder.build().expect("reqwest client")
+    builder
 }
 
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(build_client);
+static UPLOAD_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(build_upload_client);
 
 /// 进程共享的连接池。测试里每次新建：每个 `#[tokio::test]` 各有运行时，而 wiremock 会复用端口，
 /// 共享池里属于已关闭运行时的连接会让请求失败。
@@ -204,6 +314,14 @@ fn client() -> reqwest::Client {
         build_client()
     } else {
         CLIENT.clone()
+    }
+}
+
+fn upload_client() -> reqwest::Client {
+    if cfg!(test) {
+        build_upload_client()
+    } else {
+        UPLOAD_CLIENT.clone()
     }
 }
 
@@ -263,11 +381,11 @@ pub async fn healthz(base: &str) -> Result<Health, ApiError> {
     }
 }
 
-/// `POST /api/v1/devices/pair/start`，`kind` 固定 `desktop`。
+/// `POST /api/v1/devices/pair/start`，`kind` = [`DEVICE_KIND`]。
 pub async fn pair_start(base: &str, name: &str, platform: &str) -> Result<PairStart, ApiError> {
     let resp = client()
         .post(endpoint(base, "/api/v1/devices/pair/start"))
-        .json(&json!({"name": name, "kind": "desktop", "platform": platform}))
+        .json(&json!({"name": name, "kind": DEVICE_KIND, "platform": platform}))
         .send()
         .await
         .map_err(network)?;
@@ -342,6 +460,94 @@ pub async fn revoke_self(base: &str, token: &str, device_id: &str) -> Result<(),
         return Err(status_error(resp).await);
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VapidBody {
+    public_key: String,
+}
+
+/// `GET /api/v1/push/vapid-key`（Bearer 设备令牌）→ `publicKey`。
+pub async fn vapid_key(base: &str, token: &str) -> Result<String, ApiError> {
+    let resp = client()
+        .get(endpoint(base, "/api/v1/push/vapid-key"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(network)?;
+    if !resp.status().is_success() {
+        return Err(status_error(resp).await);
+    }
+    Ok(resp.json::<VapidBody>().await.map_err(network)?.public_key)
+}
+
+#[derive(Deserialize)]
+struct IdBody {
+    id: String,
+}
+
+/// `POST /api/v1/push/subscriptions`（Bearer 设备令牌，订阅归属该设备）→ 订阅 id。
+pub async fn push_subscribe(
+    base: &str,
+    token: &str,
+    sub: &PushSubscription,
+) -> Result<String, ApiError> {
+    let resp = client()
+        .post(endpoint(base, "/api/v1/push/subscriptions"))
+        .bearer_auth(token)
+        .json(&sub.body())
+        .send()
+        .await
+        .map_err(network)?;
+    if !resp.status().is_success() {
+        return Err(status_error(resp).await);
+    }
+    Ok(resp.json::<IdBody>().await.map_err(network)?.id)
+}
+
+/// `DELETE /api/v1/push/subscriptions/<id>`；404（已被删掉）视为成功。
+pub async fn push_unsubscribe(base: &str, token: &str, id: &str) -> Result<(), ApiError> {
+    let id: String = url::form_urlencoded::byte_serialize(id.as_bytes()).collect();
+    let resp = client()
+        .delete(endpoint(base, &format!("/api/v1/push/subscriptions/{id}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(network)?;
+    if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    Err(status_error(resp).await)
+}
+
+/// `POST /api/v1/attachments?name=<name>`：原始字节流式上传（带 `Content-Length`），返回服务端的 Attachment JSON 原样。
+pub async fn upload_attachment(
+    base: &str,
+    token: &str,
+    name: &str,
+    path: &Path,
+) -> Result<Value, ApiError> {
+    let io = |e: std::io::Error| ApiError::Network(e.to_string());
+    let file = tokio::fs::File::open(path).await.map_err(io)?;
+    let len = file.metadata().await.map_err(io)?.len();
+    let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file));
+    let query: String = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("name", name)
+        .finish();
+    let resp = upload_client()
+        .post(endpoint(base, &format!("/api/v1/attachments?{query}")))
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .header(reqwest::header::CONTENT_LENGTH, len)
+        .body(body)
+        .send()
+        .await
+        .map_err(network)?;
+    if !resp.status().is_success() {
+        return Err(status_error(resp).await);
+    }
+    resp.json::<Value>().await.map_err(network)
 }
 
 #[cfg(test)]
@@ -562,6 +768,127 @@ mod tests {
             .mount(&s)
             .await;
         revoke_self(&s.uri(), "odt_tok", "dev_1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vapid_and_subscribe_shapes() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/push/vapid-key"))
+            .and(header("authorization", "Bearer odt_tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"publicKey": "BPk"})))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/push/subscriptions"))
+            .and(header("authorization", "Bearer odt_tok"))
+            .and(body_json(json!({
+                "endpoint": "http://localhost:7680/upX",
+                "keys": {"p256dh": "pk", "auth": "au"}
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "id": "ps_1", "kind": "webpush", "endpoint": "http://localhost:7680/upX",
+                "userAgent": "u", "createdAt": 1
+            })))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/push/subscriptions"))
+            .and(body_json(json!({"kind": "fcm", "token": "fcm_tok"})))
+            .respond_with(
+                ResponseTemplate::new(409)
+                    .set_body_json(json!({"code": "fcm_unavailable", "message": "m"})),
+            )
+            .expect(1)
+            .mount(&s)
+            .await;
+        assert_eq!(vapid_key(&s.uri(), "odt_tok").await.unwrap(), "BPk");
+        let web = PushSubscription::WebPush {
+            endpoint: "http://localhost:7680/upX".into(),
+            p256dh: "pk".into(),
+            auth: "au".into(),
+        };
+        assert_eq!(web.key(), "http://localhost:7680/upX");
+        assert_eq!(
+            push_subscribe(&s.uri(), "odt_tok", &web).await.unwrap(),
+            "ps_1"
+        );
+        let fcm = PushSubscription::Fcm {
+            token: "fcm_tok".into(),
+        };
+        assert_eq!(fcm.key(), "fcm_tok");
+        assert_eq!(
+            push_subscribe(&s.uri(), "odt_tok", &fcm).await,
+            Err(ApiError::Status {
+                status: 409,
+                code: "fcm_unavailable".into(),
+                message: "m".into()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_treats_404_as_done() {
+        let s = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/push/subscriptions/ps_1"))
+            .and(header("authorization", "Bearer odt_tok"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/push/subscriptions/ps_gone"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"code": "not_found"})))
+            .mount(&s)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/push/subscriptions/ps_bad"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({"code": "unauthorized"})))
+            .mount(&s)
+            .await;
+        push_unsubscribe(&s.uri(), "odt_tok", "ps_1").await.unwrap();
+        push_unsubscribe(&s.uri(), "odt_tok", "ps_gone")
+            .await
+            .unwrap();
+        assert!(matches!(
+            push_unsubscribe(&s.uri(), "odt_tok", "ps_bad").await,
+            Err(ApiError::Status { status: 401, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn upload_streams_file_with_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("0-m7.txt");
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&file, &data).unwrap();
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/attachments"))
+            .and(wiremock::matchers::query_param("name", "m7 图.txt"))
+            .and(header("authorization", "Bearer odt_tok"))
+            .and(header("content-type", "application/octet-stream"))
+            .and(header("content-length", "200000"))
+            .and(wiremock::matchers::body_bytes(data.clone()))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "id": "att_1", "name": "m7 图.txt", "size": 200000, "mime": "text/plain"
+            })))
+            .expect(1)
+            .mount(&s)
+            .await;
+        let att = upload_attachment(&s.uri(), "odt_tok", "m7 图.txt", &file)
+            .await
+            .unwrap();
+        assert_eq!(att["id"], "att_1");
+        assert_eq!(att["size"], 200000);
+        // 文件不存在：本地错误，不发请求
+        assert!(matches!(
+            upload_attachment(&s.uri(), "odt_tok", "x", &dir.path().join("missing")).await,
+            Err(ApiError::Network(_))
+        ));
     }
 
     #[test]

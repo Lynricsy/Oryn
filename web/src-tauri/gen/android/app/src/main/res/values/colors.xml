@@ -7,4 +7,6 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- 页面底色：与 web/index.html 的 theme-color 相同 -->
+    <color name="oryn_bg">#FFEEF0F4</color>
 </resources>

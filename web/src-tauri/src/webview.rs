@@ -1,19 +1,28 @@
 //! 主窗口：创建与钩子、远程能力、Rust → 页面事件、回连接页。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use tauri::ipc::CapabilityBuilder;
+#[cfg(desktop)]
 use tauri::utils::config::BackgroundThrottlingPolicy;
-use tauri::webview::{NewWindowResponse, PageLoadEvent};
+#[cfg(desktop)]
+use tauri::webview::NewWindowResponse;
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::session::{LauncherState, Shell};
 use crate::{eventlog, host};
 
-/// 远程页面可调用的宿主命令（= `capabilities` 里的 `allow-host-*`）。
-pub const HOST_PERMISSIONS: [&str; 10] = [
+/// 远程页面可调用的宿主命令（= `capabilities` 里的 `allow-host-*`），按平台取。
+#[cfg(desktop)]
+pub const HOST_PERMISSIONS: &[&str] = DESKTOP_HOST_PERMISSIONS;
+#[cfg(mobile)]
+pub const HOST_PERMISSIONS: &[&str] = MOBILE_HOST_PERMISSIONS;
+
+#[cfg_attr(mobile, allow(dead_code))]
+const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-ready",
     "allow-host-notify",
     "allow-host-set-status",
@@ -25,6 +34,27 @@ pub const HOST_PERMISSIONS: [&str; 10] = [
     "allow-host-install-update",
     "allow-host-change-server",
 ];
+
+/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏等七个。
+#[cfg_attr(desktop, allow(dead_code))]
+const MOBILE_HOST_PERMISSIONS: &[&str] = &[
+    "allow-host-ready",
+    "allow-host-notify",
+    "allow-host-set-status",
+    "allow-host-set-language",
+    "allow-host-reauth",
+    "allow-host-change-server",
+    "allow-host-mobile-info",
+    "allow-host-push-enable",
+    "allow-host-push-disable",
+    "allow-host-open-external",
+    "allow-host-share-ack",
+    "allow-host-set-chrome",
+    "allow-host-open-notification-settings",
+];
+
+/// 已开放宿主命令、允许主框架导航的服务器 origin（Android 的导航处理与 [`TauriShell`] 共用）。
+pub type RemoteOrigin = Arc<Mutex<Option<String>>>;
 
 /// 宿主平台名（`window.__ORYN_HOST__.platform`）。
 pub fn host_platform() -> &'static str {
@@ -60,6 +90,7 @@ pub fn same_origin(a: &Url, b: &Url) -> bool {
         && a.port_or_known_default() == b.port_or_known_default()
 }
 
+#[cfg(desktop)]
 fn is_external(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
@@ -68,26 +99,13 @@ fn is_external(url: &Url) -> bool {
 const LAUNCHER_PAGE: &str = "launcher.html";
 
 /// 创建主窗口（`tauri.conf.json` 的 `windows` 为空：钩子只能在代码里挂）。
-pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let opener = app.clone();
+/// `remote` 为已开放的服务器 origin（Android 的导航白名单用）。
+pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<WebviewWindow> {
     let loader = app.clone();
     let builder = WebviewWindowBuilder::new(app, host::MAIN, WebviewUrl::App(LAUNCHER_PAGE.into()))
         .title("Oryn")
-        .inner_size(1280.0, 820.0)
-        .min_inner_size(380.0, 560.0)
         .initialization_script(init_script(&app.package_info().version.to_string()))
-        .on_new_window(move |url, _features| {
-            // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
-            if is_external(&url) {
-                let _ = opener.opener().open_url(url.as_str(), None::<&str>);
-                eventlog::log(
-                    "browser.open",
-                    json!({"url": eventlog::redact_url(url.as_str())}),
-                );
-            }
-            NewWindowResponse::Deny
-        })
-        .on_page_load(move |window, payload| {
+        .on_page_load(move |_window, payload| {
             let Some(d) = host::desktop(&loader) else {
                 return;
             };
@@ -96,56 +114,94 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
                 // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面
                 PageLoadEvent::Started => d.nav().web_ready = false,
                 // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
-                PageLoadEvent::Finished => host::note_geometry(window.app_handle()),
+                PageLoadEvent::Finished => {
+                    #[cfg(desktop)]
+                    host::note_geometry(_window.app_handle());
+                }
             }
         })
-        .disable_drag_drop_handler()
-        .enable_clipboard_access()
-        .background_throttling(BackgroundThrottlingPolicy::Disabled);
+        .enable_clipboard_access();
     #[cfg(desktop)]
-    let builder = builder.on_download(crate::download::handler(app.clone()));
+    let builder = {
+        let _ = remote;
+        let opener = app.clone();
+        builder
+            .inner_size(1280.0, 820.0)
+            .min_inner_size(380.0, 560.0)
+            .on_new_window(move |url, _features| {
+                // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
+                if is_external(&url) {
+                    let _ = opener.opener().open_url(url.as_str(), None::<&str>);
+                    eventlog::log(
+                        "browser.open",
+                        json!({"url": eventlog::redact_url(url.as_str())}),
+                    );
+                }
+                NewWindowResponse::Deny
+            })
+            .disable_drag_drop_handler()
+            .background_throttling(BackgroundThrottlingPolicy::Disabled)
+            .on_download(crate::download::handler(app.clone()))
+    };
+    // Android：`target="_blank"` 与 `window.open` 都是主框架导航（wry 没有新窗口钩子），在这里兜住；
+    // http(s) 的 iframe 导航不进这个回调，portal 不受影响
+    #[cfg(target_os = "android")]
+    let builder = {
+        let launcher = launcher_url(app)?.origin().ascii_serialization();
+        let app = app.clone();
+        let remote = remote.clone();
+        builder.on_navigation(move |url| {
+            let server = remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            crate::mobile::on_navigation(&app, url, &launcher, server.as_deref())
+        })
+    };
+    #[cfg(target_os = "ios")]
+    let _ = remote;
     builder.build()
 }
 
-/// 连接页的 URL。桌面读刚建好的窗口；移动端 WebView 要等 Activity 就绪后才异步创建，`build()` 返回时
-/// `url()` 还是空串，只能按 Tauri 的规则推出：开发态取 devUrl，否则 Android `http://tauri.localhost/`、
+/// 连接页的 URL：读刚建好的窗口。
+#[cfg(desktop)]
+pub fn launcher_url(window: &WebviewWindow) -> tauri::Result<Url> {
+    window.url()
+}
+
+/// 连接页的 URL。移动端 WebView 要等 Activity 就绪后才异步创建，`build()` 返回时 `url()` 还是空串，
+/// 只能按 Tauri 的规则推出：开发态取 devUrl，否则 Android `http://tauri.localhost/`、
 /// iOS `tauri://localhost/`（未开 useHttpsScheme）。
-pub fn launcher_url(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<Url> {
-    #[cfg(desktop)]
-    {
-        let _ = app;
-        window.url()
-    }
-    #[cfg(mobile)]
-    {
-        let _ = window;
-        let base = match app.config().build.dev_url.clone() {
-            Some(dev) if tauri::is_dev() => dev,
-            _ => Url::parse(if cfg!(target_os = "android") {
-                "http://tauri.localhost/"
-            } else {
-                "tauri://localhost/"
-            })
-            .map_err(tauri::Error::InvalidUrl)?,
-        };
-        base.join(LAUNCHER_PAGE).map_err(tauri::Error::InvalidUrl)
-    }
+#[cfg(mobile)]
+pub fn launcher_url(app: &AppHandle) -> tauri::Result<Url> {
+    let base = match app.config().build.dev_url.clone() {
+        Some(dev) if tauri::is_dev() => dev,
+        _ => Url::parse(if cfg!(target_os = "android") {
+            "http://tauri.localhost/"
+        } else {
+            "tauri://localhost/"
+        })
+        .map_err(tauri::Error::InvalidUrl)?,
+    };
+    base.join(LAUNCHER_PAGE).map_err(tauri::Error::InvalidUrl)
 }
 
 /// [`Shell`] 的 Tauri 实现。
 pub struct TauriShell {
     app: AppHandle,
     launcher_url: Url,
-    /// 已开放宿主命令的 origin（每进程一个）。
-    capability: Mutex<Option<String>>,
+    /// 已开放宿主命令的 origin（桌面每进程一个）。
+    capability: RemoteOrigin,
+    /// 已添加的远程能力个数（移动端换服务器不重启，每个 origin 各加一个）。
+    #[cfg(mobile)]
+    added: std::sync::atomic::AtomicU32,
 }
 
 impl TauriShell {
-    pub fn new(app: AppHandle, launcher_url: Url) -> Self {
+    pub fn new(app: AppHandle, launcher_url: Url, capability: RemoteOrigin) -> Self {
         Self {
             app,
             launcher_url,
-            capability: Mutex::new(None),
+            capability,
+            #[cfg(mobile)]
+            added: Default::default(),
         }
     }
 
@@ -163,17 +219,26 @@ impl TauriShell {
         let mut cap = self.capability.lock().unwrap_or_else(|e| e.into_inner());
         match cap.as_deref() {
             Some(o) if o == origin => Ok(()),
+            // 已为另一个 origin 开放过（没有移除能力的 API）：重启进程，启动时按新配置进入
+            #[cfg(desktop)]
             Some(_) => {
-                // 已为另一个 origin 开放过（没有移除能力的 API）：重启进程，启动时按新配置进入
                 host::save_window_state(&self.app);
                 self.app.restart();
             }
-            None => {
-                let mut builder = CapabilityBuilder::new("remote-host")
+            _ => {
+                // 移动端不能重启进程：给新 origin 另加一个能力；旧 origin 不再能被主框架导航到（见 mobile_logic::nav_decision）
+                #[cfg(desktop)]
+                let id = "remote-host".to_string();
+                #[cfg(mobile)]
+                let id = match self.added.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+                    0 => "remote-host".to_string(),
+                    n => format!("remote-host-{n}"),
+                };
+                let mut builder = CapabilityBuilder::new(id)
                     .local(false)
                     .remote(format!("{origin}/*"))
                     .window(host::MAIN);
-                for p in HOST_PERMISSIONS {
+                for &p in HOST_PERMISSIONS {
                     builder = builder.permission(p);
                 }
                 self.app
@@ -255,9 +320,29 @@ impl Shell for TauriShell {
         );
     }
 
+    /// 桌面：重启进程（丢掉旧 origin 的远程能力）。移动端没有重启：留在连接页。
     fn restart(&self) {
-        host::save_window_state(&self.app);
-        self.app.restart();
+        #[cfg(desktop)]
+        {
+            host::save_window_state(&self.app);
+            self.app.restart();
+        }
+        #[cfg(mobile)]
+        self.show_launcher();
+    }
+
+    fn push_subscription_id(&self) -> Option<String> {
+        #[cfg(mobile)]
+        return crate::mobile::runtime(&self.app).and_then(|m| m.core.subscription_id());
+        #[cfg(desktop)]
+        None
+    }
+
+    fn push_disable(&self) {
+        #[cfg(mobile)]
+        if let Some(m) = crate::mobile::runtime(&self.app) {
+            m.core.disable_local();
+        }
     }
 }
 
@@ -271,7 +356,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":1"));
+        assert!(s.contains("\"bridge\":2"));
         let e = event_script(&json!({"type": "navigate", "path": "/t/x"}));
         assert!(e.starts_with("window.dispatchEvent(new CustomEvent('oryn:host',{detail:{"));
         assert!(e.ends_with("}}));"));
@@ -297,6 +382,45 @@ mod tests {
             &Url::parse("http://tauri.localhost/").unwrap(),
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
-        assert_eq!(HOST_PERMISSIONS.len(), 10);
+        assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 10);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 13);
+    }
+
+    /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、
+    /// 除系统栏颜色外不含任何宿主命令。
+    #[test]
+    fn permissions_match_commands() {
+        let build = include_str!("../build.rs");
+        for p in DESKTOP_HOST_PERMISSIONS
+            .iter()
+            .chain(MOBILE_HOST_PERMISSIONS)
+        {
+            let cmd = p.strip_prefix("allow-").unwrap().replace('-', "_");
+            assert!(build.contains(&format!("\"{cmd}\"")), "{p} not in build.rs");
+        }
+        for desktop_only in [
+            "allow-host-info",
+            "allow-host-set-settings",
+            "allow-host-check-update",
+            "allow-host-install-update",
+        ] {
+            assert!(!MOBILE_HOST_PERMISSIONS.contains(&desktop_only));
+        }
+        let cap: Value =
+            serde_json::from_str(include_str!("../capabilities/launcher-mobile.json")).unwrap();
+        assert_eq!(cap["platforms"], json!(["android", "iOS"]));
+        assert_eq!(cap["local"], true);
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+        for p in &perms {
+            assert!(
+                *p == "allow-host-set-chrome" || p.starts_with("barcode-scanner:"),
+                "{p}"
+            );
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! 壳内 Rust 侧文字（托盘菜单、系统通知）。两种语言用枚举键 + `match` 保证齐全。
+//! 壳内 Rust 侧文字（托盘菜单、系统通知、移动端提示）。两种语言用枚举键 + `match` 保证齐全。
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,7 @@ impl Lang {
     }
 }
 
+#[cfg(desktop)]
 /// 固定文案的键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -47,6 +48,7 @@ pub enum Key {
     UntitledThread,
 }
 
+#[cfg(desktop)]
 /// 固定文案。
 pub fn t(lang: Lang, key: Key) -> &'static str {
     match (lang, key) {
@@ -65,6 +67,7 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
     }
 }
 
+#[cfg(desktop)]
 /// 托盘状态行：「N 个待你处理 · M 个未读」，为 0 的部分省略；都为 0 时 `None`。
 pub fn status_line(lang: Lang, awaiting: u32, unread: u32) -> Option<String> {
     let mut parts = Vec::with_capacity(2);
@@ -83,6 +86,7 @@ pub fn status_line(lang: Lang, awaiting: u32, unread: u32) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
+#[cfg(desktop)]
 /// 托盘里已下载更新的菜单项。
 pub fn restart_to_update(lang: Lang, version: &str) -> String {
     match lang {
@@ -91,11 +95,21 @@ pub fn restart_to_update(lang: Lang, version: &str) -> String {
     }
 }
 
+#[cfg(desktop)]
 /// 下载完成的系统通知标题。
 pub fn downloaded(lang: Lang, name: &str) -> String {
     match lang {
         Lang::ZhCn => format!("已下载 {name}"),
         Lang::En => format!("Downloaded {name}"),
+    }
+}
+
+/// 分享进来、正在上传时的原生 toast。
+#[cfg_attr(not(mobile), allow(dead_code))]
+pub fn share_importing(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhCn => "正在导入到 Oryn…",
+        Lang::En => "Importing into Oryn…",
     }
 }
 
@@ -113,6 +127,13 @@ mod tests {
         assert_eq!(Lang::from_tag(""), Lang::En);
     }
 
+    #[test]
+    fn share_importing_text() {
+        assert_eq!(share_importing(Lang::ZhCn), "正在导入到 Oryn…");
+        assert_eq!(share_importing(Lang::En), "Importing into Oryn…");
+    }
+
+    #[cfg(desktop)]
     #[test]
     fn status_line_parts() {
         assert_eq!(status_line(Lang::ZhCn, 0, 0), None);

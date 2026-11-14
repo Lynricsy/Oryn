@@ -21,6 +21,10 @@ pub enum TokenStoreKind {
     Keyring,
     /// 仅本人可读的文件（Linux 上没有 Secret Service 时的回退）。
     File,
+    /// Android Keystore 加密后存应用私有目录（oryn-mobile 插件）。
+    Keystore,
+    /// iOS Keychain。
+    Keychain,
 }
 
 impl TokenStoreKind {
@@ -28,6 +32,8 @@ impl TokenStoreKind {
         match self {
             TokenStoreKind::Keyring => "keyring",
             TokenStoreKind::File => "file",
+            TokenStoreKind::Keystore => "keystore",
+            TokenStoreKind::Keychain => "keychain",
         }
     }
 }
@@ -258,6 +264,23 @@ mod tests {
         assert_eq!(cfg.lang, "zh-CN");
         assert_eq!(cfg.shortcut, DEFAULT_SHORTCUT);
         assert_eq!(cfg.token_store, TokenStoreKind::Keyring);
+    }
+
+    #[test]
+    fn token_store_names() {
+        for kind in [
+            TokenStoreKind::Keyring,
+            TokenStoreKind::File,
+            TokenStoreKind::Keystore,
+            TokenStoreKind::Keychain,
+        ] {
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::Value::from(kind.as_str())
+            );
+        }
+        assert_eq!(TokenStoreKind::Keystore.as_str(), "keystore");
+        assert_eq!(TokenStoreKind::Keychain.as_str(), "keychain");
     }
 
     #[test]

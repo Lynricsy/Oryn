@@ -3,13 +3,19 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
-import org.gradle.kotlin.dsl.get
 
 const val TASK_GROUP = "rust"
 
 open class Config {
     lateinit var rootDirRel: String
 }
+
+/**
+ * 应用另有 dist 维度（foss / gms，见 app/build.gradle.kts），变体名是 <abi><Dist><BuildType>：
+ * 按名字匹配全部 dist 下的 JNI 合并任务（只启用的那个 dist 才有任务）。
+ */
+private fun Project.jniMergeTasks(abi: String, profile: String) =
+    tasks.matching { Regex("^merge$abi([A-Z][a-z]*)?${profile}JniLibFolders$").matches(it.name) }
 
 open class RustPlugin : Plugin<Project> {
     private lateinit var config: Config
@@ -57,7 +63,7 @@ open class RustPlugin : Plugin<Project> {
                     description = "Build dynamic library in $profile mode for all targets"
                 }
 
-                tasks["mergeUniversal${profileCapitalized}JniLibFolders"].dependsOn(buildTask)
+                jniMergeTasks("Universal", profileCapitalized).configureEach { dependsOn(buildTask) }
 
                 for (targetPair in targetsList.withIndex()) {
                     val targetName = targetPair.value
@@ -76,9 +82,9 @@ open class RustPlugin : Plugin<Project> {
                     }
 
                     buildTask.dependsOn(targetBuildTask)
-                    tasks["merge$targetArchCapitalized${profileCapitalized}JniLibFolders"].dependsOn(
-                        targetBuildTask
-                    )
+                    jniMergeTasks(targetArchCapitalized, profileCapitalized).configureEach {
+                        dependsOn(targetBuildTask)
+                    }
                 }
             }
         }

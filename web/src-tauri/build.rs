@@ -1,6 +1,6 @@
 fn main() {
     // 应用自定义命令：AppManifest::commands 为每个命令生成 `allow-<命令名，下划线换连字符>` 权限。
-    // 连接页（本地）只拿 launcher_*（capabilities/launcher.json）；远程页面的 host_* 在进入应用时于运行期按 origin 添加。
+    // 连接页（本地）只拿 launcher_*（capabilities/launcher.json；移动端另有 launcher-mobile.json）；远程页面的 host_* 在进入应用时于运行期按 origin 添加。
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "launcher_state",
@@ -19,6 +19,14 @@ fn main() {
             "host_check_update",
             "host_install_update",
             "host_change_server",
+            // 移动端（M7）：只在移动端注册，远程能力按平台给权限（webview::HOST_PERMISSIONS）
+            "host_mobile_info",
+            "host_push_enable",
+            "host_push_disable",
+            "host_open_external",
+            "host_share_ack",
+            "host_set_chrome",
+            "host_open_notification_settings",
         ]),
     ))
     .unwrap();

@@ -1,20 +1,26 @@
-//! 设备令牌存储。默认系统凭据库（`keyring` crate）；Linux 上没有 Secret Service 时回退为 0600 文件。
+//! 设备令牌存储。桌面默认系统凭据库（`keyring` crate），Linux 上没有 Secret Service 时回退为 0600 文件；
+//! Android 存 Keystore 加密的私有偏好（oryn-mobile 插件），iOS 存 Keychain。移动端没有文件回退。
 //!
 //! 令牌只存在于 Rust 进程与这里的存储后端，永不经过 IPC。
 
+#[cfg(desktop)]
 use std::collections::BTreeMap;
+#[cfg(desktop)]
 use std::path::{Path, PathBuf};
 
 use crate::config::TokenStoreKind;
 
 /// 凭据库服务名（= 应用标识）。
+#[cfg(not(target_os = "android"))]
 pub const SERVICE: &str = "com.lynricsy.oryn";
 /// 文件回退的文件名。
+#[cfg(desktop)]
 pub const FILE_NAME: &str = "credentials.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
     /// 存储后端不可用（没有 Secret Service、被锁、平台失败）；Linux 上据此回退到文件。
+    #[cfg(desktop)]
     #[error("credential store unavailable: {0}")]
     Unavailable(String),
     #[error("credential store error: {0}")]
@@ -77,11 +83,72 @@ impl TokenStore for KeyringStore {
     }
 }
 
+/// Android：令牌经插件存进 AndroidKeyStore 加密的私有偏好（`vaultGet / vaultSet / vaultDelete`）。
+#[cfg(target_os = "android")]
+pub struct KeystoreStore<R: tauri::Runtime>(pub tauri_plugin_oryn_mobile::OrynMobile<R>);
+
+#[cfg(target_os = "android")]
+impl<R: tauri::Runtime> TokenStore for KeystoreStore<R> {
+    fn get(&self, server: &str) -> Result<Option<String>, StoreError> {
+        self.0.vault_get(server).map_err(plugin_error)
+    }
+
+    fn set(&self, server: &str, token: &str) -> Result<(), StoreError> {
+        self.0.vault_set(server, token).map_err(plugin_error)
+    }
+
+    fn delete(&self, server: &str) -> Result<(), StoreError> {
+        self.0.vault_delete(server).map_err(plugin_error)
+    }
+}
+
+#[cfg(target_os = "android")]
+fn plugin_error(e: tauri_plugin_oryn_mobile::Error) -> StoreError {
+    StoreError::Failed(e.to_string())
+}
+
+/// iOS：Keychain 通用密码，service = [`SERVICE`]，account = 服务器 origin。
+#[cfg(target_os = "ios")]
+pub struct KeychainStore;
+
+/// Keychain 的「找不到条目」。
+#[cfg(target_os = "ios")]
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+#[cfg(target_os = "ios")]
+impl TokenStore for KeychainStore {
+    fn get(&self, server: &str) -> Result<Option<String>, StoreError> {
+        use security_framework::passwords::get_generic_password;
+        match get_generic_password(SERVICE, server) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|e| StoreError::Failed(e.to_string())),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(e) => Err(StoreError::Failed(e.to_string())),
+        }
+    }
+
+    fn set(&self, server: &str, token: &str) -> Result<(), StoreError> {
+        security_framework::passwords::set_generic_password(SERVICE, server, token.as_bytes())
+            .map_err(|e| StoreError::Failed(e.to_string()))
+    }
+
+    fn delete(&self, server: &str) -> Result<(), StoreError> {
+        match security_framework::passwords::delete_generic_password(SERVICE, server) {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+            Err(e) => Err(StoreError::Failed(e.to_string())),
+        }
+    }
+}
+
 /// 文件回退：`<app_config_dir>/credentials.json`，权限 0600，内容 `{server: token}`。
+#[cfg(desktop)]
 pub struct FileStore {
     path: PathBuf,
 }
 
+#[cfg(desktop)]
 impl FileStore {
     pub fn new(dir: &Path) -> Self {
         Self {
@@ -104,6 +171,7 @@ impl FileStore {
     }
 }
 
+#[cfg(desktop)]
 impl TokenStore for FileStore {
     fn get(&self, server: &str) -> Result<Option<String>, StoreError> {
         Ok(self.read()?.remove(server))
@@ -126,6 +194,7 @@ impl TokenStore for FileStore {
 
 /// 选择存储后端：已记录 `file` → 文件（不再碰凭据库）；否则凭据库可用 → 凭据库；
 /// 不可用时只有允许回退的平台（Linux）改用文件，其它平台仍返回凭据库（读写时报 `keyring` 错误）。
+#[cfg(desktop)]
 pub fn select(
     kind: Option<TokenStoreKind>,
     keyring_available: impl FnOnce() -> bool,
@@ -142,61 +211,57 @@ pub fn select(
 }
 
 /// 本平台是否允许回退到文件。
+#[cfg(desktop)]
 pub const FALLBACK_ALLOWED: bool = cfg!(target_os = "linux");
 
-/// 打开存储后端，返回后端与其种类。
-pub fn open(kind: Option<TokenStoreKind>, dir: &Path) -> (Box<dyn TokenStore>, TokenStoreKind) {
-    #[cfg(desktop)]
-    {
-        match select(kind, KeyringStore::available, FALLBACK_ALLOWED) {
-            TokenStoreKind::Keyring => (Box::new(KeyringStore), TokenStoreKind::Keyring),
-            TokenStoreKind::File => (Box::new(FileStore::new(dir)), TokenStoreKind::File),
-        }
-    }
-    #[cfg(mobile)]
-    {
-        // M7 增加 Keychain / Keystore 实现前，移动端先用文件。
-        let _ = kind;
-        (Box::new(FileStore::new(dir)), TokenStoreKind::File)
-    }
-}
-
-/// 令牌保管处：在 [`TokenStore`] 之上实现「写入时凭据库不可用 → 回退文件」。
+/// 令牌保管处：桌面上在 [`TokenStore`] 之上实现「写入时凭据库不可用 → 回退文件」。
 pub struct Vault {
     store: Box<dyn TokenStore>,
     kind: TokenStoreKind,
-    dir: PathBuf,
-    fallback_allowed: bool,
+    /// 允许回退时的配置目录（文件写在这里）。
+    #[cfg(desktop)]
+    fallback_dir: Option<PathBuf>,
 }
 
 impl Vault {
-    /// 按配置里记录的种类打开。
+    /// 按配置里记录的种类打开系统凭据库或文件。
+    #[cfg(desktop)]
     pub fn open(kind: TokenStoreKind, dir: &Path) -> Self {
-        let (store, kind) = open(Some(kind), dir);
-        Self::with_store(store, kind, dir, FALLBACK_ALLOWED)
+        let kind = select(Some(kind), KeyringStore::available, FALLBACK_ALLOWED);
+        let store: Box<dyn TokenStore> = match kind {
+            TokenStoreKind::File => Box::new(FileStore::new(dir)),
+            _ => Box::new(KeyringStore),
+        };
+        if FALLBACK_ALLOWED {
+            Self::with_fallback(store, kind, dir)
+        } else {
+            Self::with_store(store, kind)
+        }
     }
 
     /// 只用文件（冒烟模式：不碰凭据库）。
+    #[cfg(desktop)]
     pub fn file_only(dir: &Path) -> Self {
-        Self::with_store(
-            Box::new(FileStore::new(dir)),
-            TokenStoreKind::File,
-            dir,
-            false,
-        )
+        Self::with_store(Box::new(FileStore::new(dir)), TokenStoreKind::File)
     }
 
-    pub fn with_store(
-        store: Box<dyn TokenStore>,
-        kind: TokenStoreKind,
-        dir: &Path,
-        fallback_allowed: bool,
-    ) -> Self {
+    /// 不回退的保管处（移动端的 Keystore / Keychain、凭据库不允许回退的桌面平台）。
+    pub fn with_store(store: Box<dyn TokenStore>, kind: TokenStoreKind) -> Self {
         Self {
             store,
             kind,
-            dir: dir.to_path_buf(),
-            fallback_allowed,
+            #[cfg(desktop)]
+            fallback_dir: None,
+        }
+    }
+
+    /// 凭据库不可用时回退到 `<dir>/credentials.json` 的保管处。
+    #[cfg(desktop)]
+    pub fn with_fallback(store: Box<dyn TokenStore>, kind: TokenStoreKind, dir: &Path) -> Self {
+        Self {
+            store,
+            kind,
+            fallback_dir: Some(dir.to_path_buf()),
         }
     }
 
@@ -212,12 +277,14 @@ impl Vault {
     pub fn set(&mut self, server: &str, token: &str) -> Result<TokenStoreKind, StoreError> {
         match self.store.set(server, token) {
             Ok(()) => Ok(self.kind),
-            Err(StoreError::Unavailable(reason))
-                if self.fallback_allowed && self.kind == TokenStoreKind::Keyring =>
-            {
+            #[cfg(desktop)]
+            Err(StoreError::Unavailable(reason)) if self.kind == TokenStoreKind::Keyring => {
+                let Some(dir) = self.fallback_dir.clone() else {
+                    return Err(StoreError::Unavailable(reason));
+                };
                 // 回退原因只进事件日志（不含令牌），便于排查凭据库为何不可用
                 crate::eventlog::log("token.fallback", serde_json::json!({ "reason": reason }));
-                let file = FileStore::new(&self.dir);
+                let file = FileStore::new(&dir);
                 file.set(server, token)?;
                 self.store = Box::new(file);
                 self.kind = TokenStoreKind::File;
@@ -337,7 +404,7 @@ mod tests {
             unavailable: true,
             ..Default::default()
         };
-        let mut v = Vault::with_store(Box::new(fake), TokenStoreKind::Keyring, dir.path(), true);
+        let mut v = Vault::with_fallback(Box::new(fake), TokenStoreKind::Keyring, dir.path());
         assert_eq!(
             v.set("https://a.example", "odt_x").unwrap(),
             TokenStoreKind::File
@@ -357,7 +424,7 @@ mod tests {
             unavailable: true,
             ..Default::default()
         };
-        let mut v = Vault::with_store(Box::new(fake), TokenStoreKind::Keyring, dir.path(), false);
+        let mut v = Vault::with_store(Box::new(fake), TokenStoreKind::Keyring);
         assert!(matches!(
             v.set("https://a.example", "odt_x"),
             Err(StoreError::Unavailable(_))
@@ -370,12 +437,8 @@ mod tests {
     fn vault_keyring_ok() {
         let dir = tempfile::tempdir().unwrap();
         let fake = FakeStore::default();
-        let mut v = Vault::with_store(
-            Box::new(fake.clone()),
-            TokenStoreKind::Keyring,
-            dir.path(),
-            true,
-        );
+        let mut v =
+            Vault::with_fallback(Box::new(fake.clone()), TokenStoreKind::Keyring, dir.path());
         assert_eq!(
             v.set("https://a.example", "odt_x").unwrap(),
             TokenStoreKind::Keyring

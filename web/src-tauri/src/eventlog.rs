@@ -1,13 +1,14 @@
 //! 事件日志：验收与排障的观察面。
 //!
 //! 环境变量 `ORYN_DESKTOP_EVENT_LOG=<文件>` 存在时，每个事件向该文件追加一行 JSON
-//! `{"ts": <毫秒>, "event": "...", ...字段}`；未设置时为空操作。
+//! `{"ts": <毫秒>, "event": "...", ...字段}`；未设置时为空操作。Android 没有环境变量可设：
+//! 启动时由 [`init_file`] 指向插件给的 `cache/events.jsonl`（仅 debug 包），Kotlin 写同一个文件。
 //! 永不写入设备令牌、verifier、一次性码——URL 一律先经 [`redact_url`]。
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
@@ -52,10 +53,18 @@ impl EventLog {
     }
 }
 
-static GLOBAL: LazyLock<EventLog> = LazyLock::new(EventLog::from_env);
+static GLOBAL: OnceLock<EventLog> = OnceLock::new();
 
 fn global() -> &'static EventLog {
-    &GLOBAL
+    GLOBAL.get_or_init(EventLog::from_env)
+}
+
+/// 把进程级事件日志指向 `path`（须在第一条事件之前调用；之后调用无效）。
+#[cfg(target_os = "android")]
+pub fn init_file(path: &Path) {
+    if let Ok(log) = EventLog::to_file(path) {
+        let _ = GLOBAL.set(log);
+    }
 }
 
 /// 向进程级事件日志（[`ENV`] 指定的文件）追加一条事件。

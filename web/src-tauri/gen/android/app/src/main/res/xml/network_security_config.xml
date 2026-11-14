@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只放行回环地址的明文 HTTP（与壳的 normalize_server_url 一致），release 包也能经 adb reverse 在模拟器上验收 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">tauri.localhost</domain>
+    </domain-config>
+</network-security-config>

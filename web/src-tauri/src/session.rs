@@ -114,6 +114,10 @@ pub trait Shell: Send + Sync + 'static {
     fn clear_web_data(&self, origin: &str);
     /// 重启应用（丢掉旧 origin 的远程能力）。
     fn restart(&self);
+    /// 本机已登记到服务器的推送订阅 id（移动端；桌面恒为 `None`）。
+    fn push_subscription_id(&self) -> Option<String>;
+    /// 停用本机推送并清掉原生侧的推送状态（移动端；桌面空操作）。删令牌之前调用。
+    fn push_disable(&self);
 }
 
 /// 调用方需要安排的下一步计时。
@@ -157,6 +161,14 @@ struct Pairing {
     interval: Duration,
 }
 
+/// 已进入应用时的服务器与设备令牌（移动端编排推送订阅与分享上传用）。
+#[cfg_attr(not(mobile), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connection {
+    pub base: String,
+    pub token: String,
+}
+
 /// 轮询请求参数（锁外发起网络请求用）。
 pub struct PollRequest {
     pub base: String,
@@ -181,6 +193,8 @@ pub struct Core<A: Api, S: Shell> {
     nav: SharedNav,
     device_name: String,
     platform: String,
+    /// 进入配对后是否自动打开系统浏览器（桌面 true；移动端 false：配对码要先留在屏幕上）。
+    auto_open_browser: bool,
 }
 
 /// 站内路径校验：以 `/` 开头、不以 `//` 开头、无反斜杠与控制字符、≤2048；不合法 → `/`。
@@ -243,6 +257,7 @@ impl<A: Api, S: Shell> Core<A, S> {
         nav: SharedNav,
         device_name: String,
         platform: String,
+        auto_open_browser: bool,
     ) -> Self {
         let server_url = config.server_url.clone().unwrap_or_default();
         Self {
@@ -265,6 +280,7 @@ impl<A: Api, S: Shell> Core<A, S> {
             nav,
             device_name,
             platform,
+            auto_open_browser,
         }
     }
 
@@ -328,12 +344,15 @@ impl<A: Api, S: Shell> Core<A, S> {
         }
         match cli_server {
             Some(url) => self.connect(url).await,
+            // 只动初始的连接页状态：冷启动的配对链接（深链接）可能已先一步发起了连接
             None => {
-                let server_url = self.server();
-                self.set_state(LauncherState::Connect {
-                    server_url,
-                    error: None,
-                });
+                if matches!(self.state, LauncherState::Connect { error: None, .. }) {
+                    let server_url = self.server();
+                    self.set_state(LauncherState::Connect {
+                        server_url,
+                        error: None,
+                    });
+                }
                 Next::Idle
             }
         }
@@ -352,11 +371,18 @@ impl<A: Api, S: Shell> Core<A, S> {
         Next::Idle
     }
 
-    /// `launcher_connect`：校验地址 → 健康检查 → 发起配对 → 系统浏览器打开批准页 → 轮询。
+    /// `launcher_connect`：校验地址 → 健康检查 → 发起配对 →（桌面）系统浏览器打开批准页 → 轮询。
+    /// 地址也可以是配对二维码的内容 `oryn://pair?server=…`。
     pub async fn connect(&mut self, input: &str) -> Next {
         if !matches!(self.state, LauncherState::Connect { .. }) {
             return Next::Idle;
         }
+        let pair = crate::deeplink::parse_pair(input);
+        if let Some(server) = &pair {
+            self.log
+                .log("pair.link", json!({"server": server, "source": "connect"}));
+        }
+        let input = pair.as_deref().unwrap_or(input);
         let server = match normalize_server_url(input) {
             Ok(s) => s,
             Err(UrlError::Insecure) => {
@@ -394,8 +420,10 @@ impl<A: Api, S: Shell> Core<A, S> {
             "pair.started",
             json!({"server": server, "code": start.code, "verifyUrl": verify_url}),
         );
-        self.shell.open_browser(&verify_url);
-        self.log.log("browser.open", json!({"url": verify_url}));
+        if self.auto_open_browser {
+            self.shell.open_browser(&verify_url);
+            self.log.log("browser.open", json!({"url": verify_url}));
+        }
         self.epoch += 1;
         let interval = Duration::from_secs(start.interval.clamp(1, 30));
         self.pairing = Some(Pairing {
@@ -520,6 +548,7 @@ impl<A: Api, S: Shell> Core<A, S> {
     }
 
     fn revoked(&mut self, server: String) -> Next {
+        self.shell.push_disable();
         let _ = self.vault.delete(&server);
         self.shell.clear_web_data(&server);
         self.config.device_id = None;
@@ -708,11 +737,15 @@ impl<A: Api, S: Shell> Core<A, S> {
         if !confirm {
             return self.enter_app("/").await;
         }
-        if let (Ok(Some(token)), Some(device_id)) =
-            (self.vault.get(&server), self.config.device_id.clone())
-        {
-            let _ = self.api.revoke_self(&server, &token, &device_id).await;
+        if let Ok(Some(token)) = self.vault.get(&server) {
+            if let Some(id) = self.shell.push_subscription_id() {
+                let _ = self.api.push_unsubscribe(&server, &token, &id).await;
+            }
+            if let Some(device_id) = self.config.device_id.clone() {
+                let _ = self.api.revoke_self(&server, &token, &device_id).await;
+            }
         }
+        self.shell.push_disable();
         let _ = self.vault.delete(&server);
         // 自我吊销可能失败（离线）：旧服务器的 App 会话 Cookie 不能留在 WebView 存储里
         self.shell.clear_web_data(&server);
@@ -726,6 +759,47 @@ impl<A: Api, S: Shell> Core<A, S> {
         });
         self.shell.restart();
         Next::Idle
+    }
+
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    /// 回到前台（移动端）：配对中 → 立即轮询一次（换一代轮询，旧计时作废）；`unreachable` 错误 → 立即重试；
+    /// 其余不动。
+    pub fn resumed(&mut self) -> Next {
+        match &self.state {
+            LauncherState::Pairing { .. } if self.pairing.is_some() => {
+                self.epoch += 1;
+                Next::Poll {
+                    epoch: self.epoch,
+                    after: Duration::ZERO,
+                }
+            }
+            LauncherState::Error { error, .. } if error.code == codes::UNREACHABLE => Next::Retry {
+                gen: self.gen,
+                after: Duration::ZERO,
+            },
+            _ => Next::Idle,
+        }
+    }
+
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    /// 进入后台（移动端）：取消 `unreachable` 的退避重试（回到前台时由 [`Self::resumed`] 重试）。
+    pub fn stopped(&mut self) {
+        if self.state.error_code() == Some(codes::UNREACHABLE) {
+            self.gen += 1;
+        }
+    }
+
+    /// 已进入应用时的服务器与令牌；连接页阶段、读不到令牌时 `None`。
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    pub fn connection(&self) -> Option<Connection> {
+        let LauncherState::Connected { server_url } = &self.state else {
+            return None;
+        };
+        let token = self.vault.get(server_url).ok().flatten()?;
+        Some(Connection {
+            base: server_url.clone(),
+            token,
+        })
     }
 }
 
@@ -750,6 +824,7 @@ mod tests {
         app_session: Mutex<VecDeque<Result<String, ApiError>>>,
         tokens_seen: Mutex<Vec<String>>,
         revoked: Mutex<Vec<(String, String)>>,
+        unsubscribed: Mutex<Vec<(String, String)>>,
         /// 下一次 `app_session` 进来时先 `notify` 第一个、再等第二个放行（模拟挂起中的网络请求）。
         gate: Mutex<Option<(Arc<Notify>, oneshot::Receiver<()>)>>,
     }
@@ -801,6 +876,33 @@ mod tests {
                 .push((token.into(), device_id.into()));
             Ok(())
         }
+        async fn vapid_key(&self, _: &str, _: &str) -> Result<String, ApiError> {
+            unreachable!("session does not fetch VAPID keys")
+        }
+        async fn push_subscribe(
+            &self,
+            _: &str,
+            _: &str,
+            _: &crate::api::PushSubscription,
+        ) -> Result<String, ApiError> {
+            unreachable!("session does not subscribe")
+        }
+        async fn push_unsubscribe(&self, _: &str, token: &str, id: &str) -> Result<(), ApiError> {
+            self.unsubscribed
+                .lock()
+                .unwrap()
+                .push((token.into(), id.into()));
+            Ok(())
+        }
+        async fn upload_attachment(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &std::path::Path,
+        ) -> Result<serde_json::Value, ApiError> {
+            unreachable!("session does not upload")
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -810,6 +912,7 @@ mod tests {
         Launcher,
         ClearWebData(String),
         Restart,
+        PushDisable,
     }
 
     #[derive(Clone, Default)]
@@ -819,6 +922,8 @@ mod tests {
         states: Arc<Mutex<Vec<LauncherState>>>,
         /// `open_remote` 时把这条路径写进待开槽（模拟导航发出后才到的深链接）。
         pending_on_remote: Arc<Mutex<Option<(SharedNav, String)>>>,
+        /// 本机推送订阅 id。
+        push_id: Arc<Mutex<Option<String>>>,
     }
 
     impl Shell for FakeShell {
@@ -852,6 +957,13 @@ mod tests {
         }
         fn restart(&self) {
             self.calls.lock().unwrap().push(Call::Restart);
+        }
+        fn push_subscription_id(&self) -> Option<String> {
+            self.push_id.lock().unwrap().clone()
+        }
+        fn push_disable(&self) {
+            *self.push_id.lock().unwrap() = None;
+            self.calls.lock().unwrap().push(Call::PushDisable);
         }
     }
 
@@ -890,18 +1002,18 @@ mod tests {
     }
 
     fn rig(config: Config, store: FakeStore) -> Rig {
+        rig_with(config, store, true)
+    }
+
+    fn rig_with(config: Config, store: FakeStore, auto_open_browser: bool) -> Rig {
         let dir = tempfile::tempdir().unwrap();
         let api = Arc::new(FakeApi::default());
         let shell = FakeShell::default();
         shell.now.store(1_000, Ordering::SeqCst);
         let (log, buf) = memory();
         let nav = SharedNav::default();
-        let vault = Vault::with_store(
-            Box::new(store.clone()),
-            TokenStoreKind::Keyring,
-            dir.path(),
-            true,
-        );
+        let vault =
+            Vault::with_fallback(Box::new(store.clone()), TokenStoreKind::Keyring, dir.path());
         let core = Core::new(
             api.clone(),
             shell.clone(),
@@ -912,6 +1024,7 @@ mod tests {
             nav.clone(),
             "box".into(),
             "linux-x64".into(),
+            auto_open_browser,
         );
         Rig {
             core,
@@ -1213,11 +1326,9 @@ mod tests {
             unavailable: true,
             ..Default::default()
         };
-        let dir = tempfile::tempdir().unwrap();
         let mut r = rig(Config::default(), store.clone());
         // 不允许回退的平台（macOS / Windows）
-        r.core.vault =
-            Vault::with_store(Box::new(store), TokenStoreKind::Keyring, dir.path(), false);
+        r.core.vault = Vault::with_store(Box::new(store), TokenStoreKind::Keyring);
         healthy(&r);
         start_ok(&r, 600_000);
         let Next::Poll { epoch, .. } = r.core.connect(SERVER).await else {
@@ -1590,12 +1701,7 @@ mod tests {
             ..Config::default()
         };
         let mut r = rig(config, FakeStore::default());
-        r.core.vault = Vault::with_store(
-            Box::new(store.clone()),
-            TokenStoreKind::Keyring,
-            r.dir.path(),
-            false,
-        );
+        r.core.vault = Vault::with_store(Box::new(store.clone()), TokenStoreKind::Keyring);
         // 命令行给了地址也不能另起配对
         assert_eq!(r.core.start(Some(SERVER)).await, Next::Idle);
         assert!(matches!(r.core.state(), LauncherState::Error { .. }));
@@ -1719,6 +1825,170 @@ mod tests {
             .lock()
             .unwrap()
             .contains(&Call::ClearWebData(SERVER.into())));
+    }
+
+    #[tokio::test]
+    async fn mobile_pairing_does_not_open_browser() {
+        let mut r = rig_with(Config::default(), FakeStore::default(), false);
+        healthy(&r);
+        start_ok(&r, 600_000);
+        assert!(matches!(r.core.connect(SERVER).await, Next::Poll { .. }));
+        assert!(matches!(r.core.state(), LauncherState::Pairing { .. }));
+        assert!(r.shell.calls.lock().unwrap().is_empty());
+        let names: Vec<String> = r
+            .log
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["pair.started"]);
+        // 「复制配对码并打开浏览器」照常打开
+        r.core.reopen_browser();
+        assert_eq!(
+            r.shell.calls.lock().unwrap().as_slice(),
+            [Call::Browser(format!("{SERVER}/pair"))]
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_accepts_pair_link() {
+        let mut r = fresh();
+        healthy(&r);
+        start_ok(&r, 600_000);
+        r.core
+            .connect("oryn://pair?server=https%3A%2F%2Foryn.example.com%2F")
+            .await;
+        assert!(matches!(
+            r.core.state(),
+            LauncherState::Pairing { server_url, .. } if server_url == SERVER
+        ));
+        let ev = r.log.events();
+        assert_eq!(ev[0]["event"], "pair.link");
+        assert_eq!(ev[0]["source"], "connect");
+
+        // 链接里的地址同样受 https / 回环限制；其它 oryn 链接是非法地址
+        let mut r = fresh();
+        r.core
+            .connect("oryn://pair?server=http%3A%2F%2Fevil.example")
+            .await;
+        assert_eq!(err_code(r.core.state()), Some(codes::INSECURE_URL));
+        r.core.connect("oryn://open").await;
+        assert_eq!(err_code(r.core.state()), Some(codes::INVALID_URL));
+    }
+
+    #[tokio::test]
+    async fn start_keeps_pairing_started_by_link() {
+        let mut r = fresh();
+        healthy(&r);
+        start_ok(&r, 600_000);
+        r.core
+            .connect("oryn://pair?server=https%3A%2F%2Foryn.example.com")
+            .await;
+        assert_eq!(r.core.start(None).await, Next::Idle);
+        assert!(matches!(r.core.state(), LauncherState::Pairing { .. }));
+    }
+
+    #[tokio::test]
+    async fn resumed_polls_now_and_retries_unreachable() {
+        let mut r = fresh();
+        healthy(&r);
+        start_ok(&r, 600_000);
+        let Next::Poll { epoch: old, .. } = r.core.connect(SERVER).await else {
+            panic!()
+        };
+        let Next::Poll { epoch, after } = r.core.resumed() else {
+            panic!()
+        };
+        assert_eq!(after, Duration::ZERO);
+        assert!(epoch > old);
+        // 旧的轮询计时作废，新的一代照常
+        assert!(r.core.poll_request(old).is_none());
+        assert!(r.core.poll_request(epoch).is_some());
+
+        // 已配对、服务器暂时不可达：后台取消退避，回前台立即重试
+        let mut r = paired();
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Err(ApiError::Network("down".into())));
+        let Next::Retry {
+            gen: backoff_gen, ..
+        } = r.core.start(None).await
+        else {
+            panic!()
+        };
+        r.core.stopped();
+        assert_eq!(r.core.retry_fired(backoff_gen).await, Next::Idle);
+        let Next::Retry { gen, after } = r.core.resumed() else {
+            panic!()
+        };
+        assert_eq!(after, Duration::ZERO);
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_2".into()));
+        assert!(matches!(
+            r.core.retry_fired(gen).await,
+            Next::Watchdog { .. }
+        ));
+        // 其余状态不动
+        assert_eq!(r.core.resumed(), Next::Idle);
+        assert_eq!(fresh().core.resumed(), Next::Idle);
+    }
+
+    #[tokio::test]
+    async fn connection_only_when_connected() {
+        let mut r = paired();
+        assert_eq!(r.core.connection(), None);
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_1".into()));
+        r.core.start(None).await;
+        assert_eq!(r.core.connection(), None);
+        r.core.host_ready(SERVER, 2, "en");
+        assert_eq!(
+            r.core.connection(),
+            Some(Connection {
+                base: SERVER.into(),
+                token: "odt_secret".into()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnects_tear_down_push() {
+        // 更换服务器：先用令牌删订阅，再停用本机推送，最后删令牌
+        let mut r = paired();
+        *r.shell.push_id.lock().unwrap() = Some("ps_1".into());
+        r.core.request_change();
+        r.core.change_server(true).await;
+        assert_eq!(
+            r.api.unsubscribed.lock().unwrap().as_slice(),
+            [("odt_secret".to_string(), "ps_1".to_string())]
+        );
+        assert!(r.shell.calls.lock().unwrap().contains(&Call::PushDisable));
+        assert!(r.store.map.lock().unwrap().is_empty());
+
+        // 被吊销：令牌已失效，只停用本机推送
+        let mut r = paired();
+        *r.shell.push_id.lock().unwrap() = Some("ps_1".into());
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Err(ApiError::Status {
+                status: 401,
+                code: "unauthorized".into(),
+                message: String::new(),
+            }));
+        r.core.start(None).await;
+        assert!(r.api.unsubscribed.lock().unwrap().is_empty());
+        assert!(r.shell.calls.lock().unwrap().contains(&Call::PushDisable));
+        assert_eq!(*r.shell.push_id.lock().unwrap(), None);
     }
 
     #[test]

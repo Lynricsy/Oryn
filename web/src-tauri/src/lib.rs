@@ -9,6 +9,9 @@ mod deeplink;
 mod eventlog;
 mod host;
 mod i18n;
+#[cfg(mobile)]
+mod mobile;
+mod mobile_logic;
 mod notify;
 mod secrets;
 mod session;
@@ -23,8 +26,10 @@ mod tray;
 #[cfg(desktop)]
 mod updater;
 
+#[cfg(desktop)]
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(desktop)]
 use std::time::Duration;
 
 use serde_json::json;
@@ -35,9 +40,10 @@ use crate::config::Config;
 use crate::host::Desktop;
 use crate::secrets::Vault;
 use crate::session::{Core, SharedNav};
-use crate::webview::TauriShell;
+use crate::webview::{RemoteOrigin, TauriShell};
 
 /// 冒烟模式的超时。
+#[cfg(desktop)]
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 命令行参数。深链接 URL 由 deep-link 插件自己从 argv 取。
@@ -91,6 +97,7 @@ impl Args {
     }
 }
 
+#[cfg(desktop)]
 fn smoke_dir() -> PathBuf {
     std::env::temp_dir().join(format!("oryn-desktop-smoke-{}", std::process::id()))
 }
@@ -102,7 +109,8 @@ pub fn run() {
     log_ignored(&args);
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
-    // → notification（Android 不注册）→ opener → updater
+    // → notification（Android 不注册）→ opener → updater；
+    // 移动端：deep_link → opener → oryn-mobile（Android）/ notification（iOS）→ barcode-scanner
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -124,14 +132,25 @@ pub fn run() {
                 .build(),
         );
     }
-    #[cfg(not(target_os = "android"))]
-    {
-        builder = builder.plugin(tauri_plugin_notification::init());
-    }
-    builder = builder.plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder = builder
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    #[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_opener::init());
+        #[cfg(target_os = "android")]
+        {
+            builder = builder.plugin(tauri_plugin_oryn_mobile::init());
+        }
+        #[cfg(target_os = "ios")]
+        {
+            builder = builder.plugin(tauri_plugin_notification::init());
+        }
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     }
 
     let setup_args = args.clone();
@@ -148,11 +167,29 @@ pub fn run() {
             host::host_set_status,
             host::host_set_language,
             host::host_reauth,
-            host::host_info,
-            host::host_set_settings,
-            host::host_check_update,
-            host::host_install_update,
             host::host_change_server,
+            #[cfg(desktop)]
+            host::host_info,
+            #[cfg(desktop)]
+            host::host_set_settings,
+            #[cfg(desktop)]
+            host::host_check_update,
+            #[cfg(desktop)]
+            host::host_install_update,
+            #[cfg(mobile)]
+            mobile::host_mobile_info,
+            #[cfg(mobile)]
+            mobile::host_push_enable,
+            #[cfg(mobile)]
+            mobile::host_push_disable,
+            #[cfg(mobile)]
+            mobile::host_open_external,
+            #[cfg(mobile)]
+            mobile::host_share_ack,
+            #[cfg(mobile)]
+            mobile::host_set_chrome,
+            #[cfg(mobile)]
+            mobile::host_open_notification_settings,
         ])
         .setup(move |app| setup(app, &setup_args, &raw))
         .build(tauri::generate_context!())
@@ -167,6 +204,7 @@ fn log_ignored(args: &Args) {
     }
 }
 
+#[cfg(desktop)]
 fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
     // 一律用 Tauri 配置的版本（`--config` 可覆盖，更新器比较的也是它），不用 crate 版本
@@ -192,13 +230,14 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         Vault::open(config.token_store, &dir)
     };
 
-    let window = webview::create_main(&handle)?;
-    let launcher_url = webview::launcher_url(&handle, &window)?;
+    let remote = RemoteOrigin::default();
+    let window = webview::create_main(&handle, &remote)?;
+    let launcher_url = webview::launcher_url(&window)?;
     host::wire_window(&handle, &window);
     let _ = window.set_focus();
 
     let nav = SharedNav::default();
-    let shell = TauriShell::new(handle.clone(), launcher_url);
+    let shell = TauriShell::new(handle.clone(), launcher_url, remote);
     let core = Core::new(
         Arc::new(HttpApi),
         shell,
@@ -209,8 +248,8 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         nav.clone(),
         api::device_name(),
         api::platform(),
+        true,
     );
-    #[cfg(desktop)]
     let (shortcut_cfg, lang) = (core.config().shortcut.clone(), core.config().lang());
     let d = Arc::new(Desktop::new(core, nav, args.smoke, version));
     app.manage(d.clone());
@@ -231,17 +270,14 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         })?;
     }
 
-    #[cfg(desktop)]
-    {
-        match tray::build(&handle, lang) {
-            Some(t) => {
-                let _ = d.tray.set(t);
-                d.set_tray_available(true);
-            }
-            None => d.set_tray_available(false),
+    match tray::build(&handle, lang) {
+        Some(t) => {
+            let _ = d.tray.set(t);
+            d.set_tray_available(true);
         }
-        let _ = d.shortcut.apply(&handle, &shortcut_cfg);
+        None => d.set_tray_available(false),
     }
+    let _ = d.shortcut.apply(&handle, &shortcut_cfg);
 
     deeplink::setup(&handle, !args.smoke);
 
@@ -273,6 +309,126 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// 移动端：没有命令行、冒烟模式、托盘与单实例；令牌存 Keystore / Keychain，事件日志由插件给路径（Android）。
+#[cfg(mobile)]
+fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = args;
+    let handle = app.handle().clone();
+    let version = handle.package_info().version.to_string();
+    api::set_app_version(version.clone());
+
+    #[cfg(target_os = "android")]
+    let (device, native) = {
+        use tauri_plugin_oryn_mobile::OrynMobileExt;
+        let plugin = handle.oryn_mobile().clone();
+        let device = plugin.device_info();
+        if let Some(path) = device
+            .as_ref()
+            .ok()
+            .and_then(|d| d.event_log_path.as_deref())
+        {
+            eventlog::init_file(std::path::Path::new(path));
+        }
+        (device, plugin)
+    };
+
+    let dir = handle.path().app_config_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    eventlog::log("app.start", json!({"version": version, "args": raw}));
+
+    #[cfg(target_os = "android")]
+    let (device, device_name) = match device {
+        Ok(d) => {
+            let name = Some(d.name.trim())
+                .filter(|n| !n.is_empty())
+                .unwrap_or("Android")
+                .chars()
+                .take(100)
+                .collect::<String>();
+            (d, name)
+        }
+        Err(e) => {
+            eventlog::log("device.error", json!({"error": e.to_string()}));
+            (Default::default(), "Android".to_string())
+        }
+    };
+    #[cfg(target_os = "ios")]
+    let device_name = "iOS".to_string();
+
+    let config = Config::load(&dir);
+    #[cfg(target_os = "android")]
+    let vault = Vault::with_store(
+        Box::new(secrets::KeystoreStore(native.clone())),
+        config::TokenStoreKind::Keystore,
+    );
+    #[cfg(target_os = "ios")]
+    let vault = Vault::with_store(
+        Box::new(secrets::KeychainStore),
+        config::TokenStoreKind::Keychain,
+    );
+
+    let remote = RemoteOrigin::default();
+    let launcher_url = webview::launcher_url(&handle)?;
+    webview::create_main(&handle, &remote)?;
+
+    let nav = SharedNav::default();
+    let shell = TauriShell::new(handle.clone(), launcher_url, remote);
+    let core = Core::new(
+        Arc::new(HttpApi),
+        shell,
+        eventlog::handle(),
+        vault,
+        dir,
+        config,
+        nav.clone(),
+        device_name,
+        api::platform(),
+        false,
+    );
+    let d = Arc::new(Desktop::new(core, nav, false, version));
+    app.manage(d.clone());
+
+    // iOS 的通知点击经插件的 on_action 回来（同 macOS）；Android 经深链接
+    #[cfg(target_os = "ios")]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let click = handle.clone();
+        handle.notification().on_action(move |p| {
+            if p.action_id() != "tap" {
+                return;
+            }
+            if let Some(n) = p.notification().map(|n| n.id()) {
+                notify::clicked(&click, n);
+            }
+        })?;
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let rt = mobile::MobileRt::new(
+            mobile::NativeImpl(native.clone()),
+            device.webview_version.clone().unwrap_or_default(),
+        );
+        rt.core.set_insets(device.corner_radii, device.insets);
+        app.manage(Arc::new(rt));
+        mobile::listen(&handle, &native);
+    }
+    #[cfg(target_os = "ios")]
+    app.manage(Arc::new(mobile::MobileRt::new(
+        mobile::NativeImpl,
+        String::new(),
+    )));
+
+    deeplink::setup(&handle, false);
+
+    let start = d.clone();
+    tauri::async_runtime::spawn(async move {
+        let next = start.core.lock().await.start(None).await;
+        host::schedule(start, next);
+    });
+    Ok(())
+}
+
 #[cfg(desktop)]
 fn on_second_instance(app: &AppHandle, argv: Vec<String>, _cwd: String) {
     eventlog::log("instance.second", json!({"args": argv}));
@@ -287,6 +443,10 @@ fn on_second_instance(app: &AppHandle, argv: Vec<String>, _cwd: String) {
     host::show_main(app);
 }
 
+#[cfg(mobile)]
+fn on_run_event(_app: &AppHandle, _event: RunEvent, _smoke: bool) {}
+
+#[cfg(desktop)]
 fn on_run_event(app: &AppHandle, event: RunEvent, smoke: bool) {
     match event {
         RunEvent::ExitRequested {

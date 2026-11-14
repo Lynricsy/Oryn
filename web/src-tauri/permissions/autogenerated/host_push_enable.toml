@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-push-enable"
+description = "Enables the host_push_enable command without any pre-configured scope."
+commands.allow = ["host_push_enable"]
+
+[[permission]]
+identifier = "deny-host-push-enable"
+description = "Denies the host_push_enable command without any pre-configured scope."
+commands.deny = ["host_push_enable"]

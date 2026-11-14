@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-open-external"
+description = "Enables the host_open_external command without any pre-configured scope."
+commands.allow = ["host_open_external"]
+
+[[permission]]
+identifier = "deny-host-open-external"
+description = "Denies the host_open_external command without any pre-configured scope."
+commands.deny = ["host_open_external"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-share-ack"
+description = "Enables the host_share_ack command without any pre-configured scope."
+commands.allow = ["host_share_ack"]
+
+[[permission]]
+identifier = "deny-host-share-ack"
+description = "Denies the host_share_ack command without any pre-configured scope."
+commands.deny = ["host_share_ack"]

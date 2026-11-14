@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知小图标：品牌标（public/favicon.svg）的单色轮廓 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20.1,4.52A12,12 0,1 0,20.1 27.48Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M24.5,4H25.9A1.1,1.1 0,0 1,27 5.1V26.9A1.1,1.1 0,0 1,25.9 28H24.5A1.1,1.1 0,0 1,23.4 26.9V5.1A1.1,1.1 0,0 1,24.5 4Z" />
+</vector>

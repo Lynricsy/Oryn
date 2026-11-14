@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-oryn-mobile"
+version = "0.1.0"
+description = "Oryn 移动端原生能力（Keystore、通知、推送、分享、系统栏）；JS 不可调用，只经 Rust 使用"
+authors = ["Lynricsy"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+links = "tauri-plugin-oryn-mobile"
+
+[dependencies]
+tauri = { version = "=2.12.5", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "=2.7.2", features = ["build"] }

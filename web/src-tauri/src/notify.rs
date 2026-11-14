@@ -1,5 +1,7 @@
 //! 系统通知：限流、通知号分配与点击回查（官方 `tauri-plugin-notification`，只在 Rust 侧调用）。
+//! Android 不带通知插件：经 oryn-mobile 插件的 `notify` 发，点击经 `oryn://` 深链接回来，不登记通知号。
 
+#[cfg(not(target_os = "android"))]
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -16,18 +18,23 @@ use crate::{eventlog, host};
 pub const TITLE_MAX: usize = 120;
 pub const BODY_MAX: usize = 300;
 /// 记住的通知条数。
+#[cfg(not(target_os = "android"))]
 pub const REGISTRY_CAP: usize = 64;
 /// 令牌桶：突发 5，每 6 秒补 1。
 pub const BURST: f64 = 5.0;
 pub const REFILL_MS: f64 = 6_000.0;
 
 /// Linux 通知的应用名（通知中心显示的名字、dunst 的 `appname`）。
+#[cfg(target_os = "linux")]
 pub const APP_NAME: &str = "Oryn";
 /// 安装包里 `.desktop` 文件的名字（deb / rpm / AppImage 都是 `Oryn.desktop`，= `productName`）。
+#[cfg(target_os = "linux")]
 pub const DESKTOP_ENTRY: &str = "Oryn";
 /// 已安装的图标名（hicolor 下的 `oryn-desktop.png`，= `mainBinaryName`）。
+#[cfg(target_os = "linux")]
 pub const ICON: &str = "oryn-desktop";
 /// XDG 通知规范里「点击通知本体」对应的动作；只有声明了它的通知，服务器才会上报点击。
+#[cfg(target_os = "linux")]
 pub const DEFAULT_ACTION: &str = "default";
 
 /// `host_notify` 的参数（来自远程页面）。
@@ -53,11 +60,13 @@ pub fn truncate(s: &str, max: usize) -> String {
 }
 
 /// 通知号 → {页面通知 id, 路径}，最多 [`REGISTRY_CAP`] 条，超出淘汰最旧。
+#[cfg(not(target_os = "android"))]
 #[derive(Default)]
 pub struct Registry {
     entries: VecDeque<(i32, String, String)>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl Registry {
     pub fn insert(&mut self, n: i32, id: String, path: String) {
         if self.entries.len() >= REGISTRY_CAP {
@@ -82,25 +91,35 @@ impl Registry {
 
 /// 令牌桶限流（时间由调用方注入）。
 pub struct Bucket {
+    burst: f64,
+    refill_ms: f64,
     tokens: f64,
     last_ms: Option<i64>,
 }
 
+/// 通知用的桶：突发 [`BURST`]、每 [`REFILL_MS`] 补 1。
 impl Default for Bucket {
     fn default() -> Self {
-        Self {
-            tokens: BURST,
-            last_ms: None,
-        }
+        Self::new(BURST, REFILL_MS)
     }
 }
 
 impl Bucket {
-    /// 取一个令牌；没有则 `false`（丢弃该通知）。
+    /// 突发 `burst` 个、每 `refill_ms` 毫秒补 1 个的满桶。
+    pub fn new(burst: f64, refill_ms: f64) -> Self {
+        Self {
+            burst,
+            refill_ms,
+            tokens: burst,
+            last_ms: None,
+        }
+    }
+
+    /// 取一个令牌；没有则 `false`（丢弃该请求）。
     pub fn take(&mut self, now_ms: i64) -> bool {
         if let Some(last) = self.last_ms {
             let elapsed = (now_ms - last).max(0) as f64;
-            self.tokens = (self.tokens + elapsed / REFILL_MS).min(BURST);
+            self.tokens = (self.tokens + elapsed / self.refill_ms).min(self.burst);
         }
         self.last_ms = Some(now_ms);
         if self.tokens >= 1.0 {
@@ -115,6 +134,7 @@ impl Bucket {
 #[derive(Default)]
 struct Inner {
     next: i32,
+    #[cfg(not(target_os = "android"))]
     registry: Registry,
     bucket: Bucket,
 }
@@ -140,7 +160,7 @@ impl Notifier {
     }
 
     /// 分配下一个通知号（从 1 递增，溢出回绕）。
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(all(desktop, not(target_os = "linux")))]
     pub fn next_id(&self) -> i32 {
         let mut g = self.lock();
         g.next = g.next.checked_add(1).unwrap_or(1);
@@ -156,6 +176,7 @@ impl Notifier {
         g.next = g.next.checked_add(1).unwrap_or(1);
         let num = g.next;
         let path = valid_app_path(&n.path);
+        #[cfg(not(target_os = "android"))]
         g.registry.insert(num, n.id, path.clone());
         Some(Prepared {
             n: num,
@@ -166,6 +187,7 @@ impl Notifier {
     }
 
     /// 点击回查。
+    #[cfg(not(target_os = "android"))]
     pub fn lookup(&self, n: i32) -> Option<(String, String)> {
         let g = self.lock();
         g.registry
@@ -200,6 +222,7 @@ fn log_error(id: &str, e: impl ToString) {
 
 /// 点击通知本体：回查通知号 → 记录 `notify.clicked` → 显示主窗口并打开对应路径。
 /// macOS / Windows 由插件的 `on_action` 调到这里，Linux 由 [`deliver`] 的等待线程调到这里。
+#[cfg(not(target_os = "android"))]
 pub fn clicked(app: &AppHandle, n: i32) {
     let Some(d) = host::desktop(app) else { return };
     if let Some((id, path)) = d.notifier.lookup(n) {
@@ -301,16 +324,31 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     }
 }
 
-/// Android：暂不显示（不带通知插件；由 oryn-mobile 插件的 `notify` 实现，见 M7 切片 A）。
+/// Android：经 oryn-mobile 插件发（与推送同一个渠道与 tag 规则）；点击由深链接 `oryn://thread/<id>` 带回。
+/// 没有通知权限时插件返回 `posted: false`，记 `notify.dropped{reason}`。
 #[cfg(target_os = "android")]
-fn deliver(_app: &AppHandle, id: String, p: Prepared) {
-    eventlog::log(
-        "notify.dropped",
-        json!({"id": id, "n": p.n, "reason": "unsupported"}),
-    );
+fn deliver(app: &AppHandle, id: String, p: Prepared) {
+    use tauri_plugin_oryn_mobile::{NotifyArgs, OrynMobileExt};
+    let lang = host::desktop(app).map_or(crate::i18n::Lang::En, |d| d.lang());
+    let args = NotifyArgs {
+        id: id.clone(),
+        title: p.title.clone(),
+        body: p.body.clone(),
+        path: p.path.clone(),
+        lang: lang.as_str().to_string(),
+    };
+    match app.oryn_mobile().notify(&args) {
+        Ok(r) if r.posted => log_shown(&id, &p),
+        Ok(r) => eventlog::log(
+            "notify.dropped",
+            json!({"id": id, "n": p.n, "reason": r.reason.unwrap_or_default()}),
+        ),
+        Err(e) => log_error(&id, e),
+    }
 }
 
 /// 显示一条不可点击跳转的提示（如下载完成）。
+#[cfg(desktop)]
 pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str) {
     let (title, body) = (truncate(title, TITLE_MAX), truncate(body, BODY_MAX));
     #[cfg(target_os = "linux")]
@@ -336,9 +374,6 @@ pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str)
             .body(body)
             .show();
     }
-    // Android：暂不显示（同 deliver）
-    #[cfg(target_os = "android")]
-    let _ = (app, notifier, title, body);
 }
 
 #[cfg(test)]
@@ -354,6 +389,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn registry_evicts_oldest() {
         let mut r = Registry::default();
@@ -400,6 +436,7 @@ mod tests {
         assert_eq!(p.body.chars().count(), BODY_MAX);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_identity_matches_bundle() {
         // .desktop 文件名取 productName、图标名取 mainBinaryName：改配置时这里一起改
@@ -450,6 +487,16 @@ mod tests {
         assert_eq!(n.summary, "A & <B>");
         // 服务器不解析标记时原样发送，避免显示出实体
         assert_eq!(linux_notification("t", evil, true, false).body, evil);
+    }
+
+    #[test]
+    fn custom_bucket() {
+        // 外链打开用的桶：突发 3，每 2 秒补 1
+        let mut b = Bucket::new(3.0, 2_000.0);
+        assert!(b.take(0) && b.take(0) && b.take(0));
+        assert!(!b.take(1_999));
+        assert!(b.take(2_100));
+        assert!(!b.take(2_100));
     }
 
     #[test]
