@@ -986,8 +986,9 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 
 - 内容：全局 agent 身份（名字、头像；两者都未设置时省略 `agent`）+ 「用到的 role」各自的 `{key, role, name?, 头像}`。不含助手身份（协调对话不能分享）。
 - 「用到」= 该分享范围内活动分支上，某条 `source ∈ {role, startup}` 的来源记录生效期间（到下一条来源记录或下一条非 `fallback` / `prewalk` 的 `model_change` 为止）出现过至少一条 `type = message` 的条目。每条用到的记录取候选 `[role, alias]` 里第一个在 `role_avatars` 有行的 role；没有就不产生任何项。按 role 去重。
-- 何时拍：**快照分享在创建时**算一次并存进 `thread_share_identities`（与快照条目在同一个事务里），之后改名字、换头像、删 role 都不影响已有快照；**实时分享不存**，每次请求按当前设置现算（客户端在页面加载、WS 重连、转录里出现身份里没有的键时各取一次，每个新键至多一次）。
-- 匿名下发：公开条目里放行清洗过的来源记录，payload 只剩 `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，`role` / `alias` 换成不透明键 `key = hex(sha256(shareID + "\x00" + role))[:16]`（`shareID` 是 `shr_…`，不出现在任何公开响应里，所以不同分享的键不同）；其它 `custom` 条目的 payload 仍清空为 `{"type":"custom"}`。快照的扫描范围与公开内容用同一个清洗函数。没用到的 role 在匿名面上只可能以不透明键出现，id、名字、头像都不出网。
+- 何时拍：**快照分享在创建时**算一次并存进 `thread_share_identities`（与快照条目在同一个事务里），之后改名字、换头像、删 role 都不影响已有快照；**实时分享不存**，每次请求按当前设置现算（客户端在页面加载、WS 重连、转录里出现身份里没有且已有消息用到的键时各取一次，每个新键至多一次；只有来源记录、还没有消息时不取，因为新 Core 在第一条回复之前就落盘记录，这时身份接口合法地不含该 role）。
+- 匿名下发：公开条目里放行清洗过的来源记录，payload 只剩 `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`，`role` / `alias` 换成不透明键 `key = hex(HMAC-SHA256(secret, shareID + "\x00" + role))[:16]`；`model_change` 的 `role` 不是 omp 保留值（`default` / `fallback` / `prewalk` / `temporary`）时也换成同一个键，其余字段原样。`secret = HMAC-SHA256(orb-token.key, "oryn-share-role-key")`，只在服务端、跨重启不变（快照固化的身份表存的是键）。`shareID` 会出现在所有者 API 与日志里，时间戳部分还能由 `sharedAt` 推出，所以不能只靠它保密：没有 `secret` 就无法用 role 名字典反推键，不同分享的键也不能互相关联。其它 `custom` 条目的 payload 仍清空为 `{"type":"custom"}`。快照的扫描范围与公开内容用同一个清洗函数。没用到的 role 在匿名面上只可能以不透明键出现，id、名字、头像都不出网。
+- 已知残余风险：来源记录由 orb 里的 Core 写进会话文件，控制面不核对它是否对应一次真实的 role 选择。orb 里的 agent（例如被提示词注入时）可以追加伪造的记录和一条消息，让分享身份带上一个没被选过的 role 的名字和头像。影响限于所有者自己配置的身份，且 agent 本来就能读到 `config.yml` 里的 role 名并写进任意消息，所以不另建「已确认选择」表。
 - 撤销：身份接口与页面一起 404；撤销时删除该分享的 `thread_share_identities` 行。线程删除经外键级联。
 - `.md` 导出不带身份（标题仍是固定的 `## Assistant`）。
 - 升级前已有的快照分享没有身份行 → 身份接口返回 `{roles: []}`，页面与之前一样（默认品牌标 + 模型）；已有的实时分享升级后即按当前设置展示身份。

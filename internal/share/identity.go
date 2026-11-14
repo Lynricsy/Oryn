@@ -2,6 +2,7 @@ package share
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -14,14 +15,26 @@ import (
 )
 
 // 分享页的身份（M9.6）：全局 agent 的名字与头像，加上这段对话里用到且设了头像的 role。
-// 公开条目里的来源记录只带每个分享各不相同的不透明键（roleKey），role id、名字、头像只经 PublicIdentity 出网，
+// 公开条目里的来源记录只带每个分享各不相同的不透明键（roleKeys），role id、名字、头像只经 PublicIdentity 出网，
 // 且只含用到的 role；没用到的 role 在匿名面上至多以不透明键出现。本文件是身份在匿名面上的唯一出口。
 
-// roleKey 是 role 在某个分享里的不透明键：hex(sha256(shareID + "\x00" + role)) 的前 16 位。
-// shareID（shr_…）不出现在任何公开响应里，因此键既不能反推 role，也不能跨分享关联。
-func roleKey(shareID, role string) string {
-	sum := sha256.Sum256([]byte(shareID + "\x00" + role))
-	return hex.EncodeToString(sum[:])[:16]
+// roleKeys 生成 role 在某个分享里的不透明键：hex(HMAC-SHA256(secret, shareID + "\x00" + role)) 的前 16 位。
+// secret 只在服务端（Config.RoleKeySecret）：shareID 会出现在所有者 API 与日志里，且其时间戳部分可由 sharedAt 推出，
+// 不加密钥时拿到 shareID 就能用 role 名字典反推出全部键（含点过却没用的 role）。有密钥后键既不能反推，也不能跨分享关联。
+type roleKeys struct {
+	secret  []byte
+	shareID string
+}
+
+func (k roleKeys) of(role string) string {
+	m := hmac.New(sha256.New, k.secret)
+	m.Write([]byte(k.shareID + "\x00" + role))
+	return hex.EncodeToString(m.Sum(nil))[:16]
+}
+
+// roleKeys 返回某个分享的键生成器。
+func (s *Service) roleKeys(shareID string) roleKeys {
+	return roleKeys{secret: s.cfg.RoleKeySecret, shareID: shareID}
 }
 
 // publicModelSourceData 是公开面上来源记录的 data：只留白名单字段，role / alias 换成不透明键。
@@ -41,12 +54,12 @@ var publicReservedRoles = map[string]bool{"default": true, "fallback": true, "pr
 // `{"type":"custom","customType":"oryn-model-source","data":{v, source, model, role?, alias?}}`（role / alias 为不透明键，
 // 其余字段丢弃）；model_change 的 role 不是保留值时换成不透明键（否则点过却没用的 role 名会出现在公开条目里）；
 // 其余条目交给 transcript.Public（其它 custom 条目仍被清空）。
-func publicEntry(shareID string, e transcript.Entry) (transcript.Entry, bool) {
+func publicEntry(keys roleKeys, e transcript.Entry) (transcript.Entry, bool) {
 	if !transcript.IsMainFile(e.File) {
 		return transcript.Entry{}, false
 	}
 	if e.Type == "model_change" {
-		return publicModelChange(shareID, e)
+		return publicModelChange(keys, e)
 	}
 	ms, ok := transcript.ParseModelSource(e)
 	if !ok {
@@ -54,10 +67,10 @@ func publicEntry(shareID string, e transcript.Entry) (transcript.Entry, bool) {
 	}
 	d := publicModelSourceData{V: 1, Source: ms.Source, Model: ms.Model}
 	if ms.Role != "" {
-		d.Role = roleKey(shareID, ms.Role)
+		d.Role = keys.of(ms.Role)
 	}
 	if ms.Alias != "" {
-		d.Alias = roleKey(shareID, ms.Alias)
+		d.Alias = keys.of(ms.Alias)
 	}
 	b, err := json.Marshal(struct {
 		Type       string                `json:"type"`
@@ -72,7 +85,7 @@ func publicEntry(shareID string, e transcript.Entry) (transcript.Entry, bool) {
 }
 
 // publicModelChange 把 model_change 的 role（非保留值）换成不透明键，其余字段原样保留；载荷解析失败时只留类型。
-func publicModelChange(shareID string, e transcript.Entry) (transcript.Entry, bool) {
+func publicModelChange(keys roleKeys, e transcript.Entry) (transcript.Entry, bool) {
 	var p map[string]json.RawMessage
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		e.Payload = []byte(`{"type":"model_change"}`)
@@ -83,7 +96,7 @@ func publicModelChange(shareID string, e transcript.Entry) (transcript.Entry, bo
 		if json.Unmarshal(raw, &role) != nil {
 			delete(p, "role")
 		} else if !publicReservedRoles[role] {
-			b, _ := json.Marshal(roleKey(shareID, role))
+			b, _ := json.Marshal(keys.of(role))
 			p["role"] = b
 		}
 	}
@@ -178,7 +191,7 @@ func (s *Service) buildIdentity(ctx context.Context, sc *scope) (apigen.PublicSh
 			}
 			if !added[role] {
 				added[role] = true
-				ri := apigen.PublicRoleIdentity{Key: roleKey(sc.share.ID, role), Role: role, AvatarIcon: nonEmpty(a.AvatarIcon), AvatarImage: nonEmpty(a.AvatarImage)}
+				ri := apigen.PublicRoleIdentity{Key: sc.keys.of(role), Role: role, AvatarIcon: nonEmpty(a.AvatarIcon), AvatarImage: nonEmpty(a.AvatarImage)}
 				if n := names[role]; n != "" {
 					ri.Name = &n
 				}

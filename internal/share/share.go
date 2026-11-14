@@ -7,7 +7,9 @@ package share
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -70,6 +72,9 @@ type Config struct {
 	Now func() time.Time
 	// RoleNames 返回 role id → 显示名（config.yml 的 `modelTags.<role>.name`；解析失败返回空表）。nil = 没有名字。
 	RoleNames func() map[string]string
+	// RoleKeySecret 是不透明 role 键的 HMAC 密钥（服务端私有，跨重启不变：快照固化的身份表里存的是键）。
+	// 为空时用进程内随机密钥（仅测试）。
+	RoleKeySecret []byte
 }
 
 // Service 是公开分享服务。
@@ -88,8 +93,20 @@ func New(cfg Config, st *store.Store, th Threads, hub Hub, att Attachments, orbs
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if len(cfg.RoleKeySecret) == 0 {
+		cfg.RoleKeySecret = make([]byte, 32)
+		_, _ = rand.Read(cfg.RoleKeySecret)
+	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	return &Service{cfg: cfg, st: st, th: th, hub: hub, att: att, orbs: orbs, sec: sec}
+}
+
+// DeriveRoleKeySecret 由控制面的持久密钥（orb-token.key）派生不透明 role 键的密钥：HMAC 加用途标签做域分离，
+// 两个用途互不可推。
+func DeriveRoleKeySecret(master []byte) []byte {
+	m := hmac.New(sha256.New, master)
+	m.Write([]byte("oryn-share-role-key"))
+	return m.Sum(nil)
 }
 
 // Error 是分享服务返回给 API 的业务错误（Status 为 HTTP 状态码）。

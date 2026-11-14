@@ -22,6 +22,7 @@ const rangeBatch = 500
 //     快照里永远不会出现创建之后（未经扫描）的内容（F5）。
 type scope struct {
 	share  db.ThreadShare
+	keys   roleKeys // 本分享的不透明 role 键
 	thread db.Thread
 	title  string // snapshot：share.title；live：thread.title
 	until  int64  // snapshot：share.until_seq；live：thread.last_seq
@@ -53,7 +54,7 @@ func (s *Service) scopeOf(ctx context.Context, sh db.ThreadShare) (*scope, error
 
 // branchScope 计算 until 之前、以 leaf 为叶子的活动分支（实时分享，以及创建快照时的扫描范围）。
 func (s *Service) branchScope(ctx context.Context, sh db.ThreadShare, th db.Thread, until int64, leaf string) (*scope, error) {
-	sc := &scope{share: sh, thread: th, title: th.Title, until: until, leaf: leaf}
+	sc := &scope{share: sh, keys: s.roleKeys(sh.ID), thread: th, title: th.Title, until: until, leaf: leaf}
 	rows, err := s.st.Q.ListMainEntryLinks(ctx, db.ListMainEntryLinksParams{ThreadID: th.ID, UntilSeq: until})
 	if err != nil {
 		return nil, err
@@ -73,7 +74,7 @@ func (s *Service) branchScope(ctx context.Context, sh db.ThreadShare, th db.Thre
 
 // frozenScope 读出快照创建时固化的条目集合。
 func (s *Service) frozenScope(ctx context.Context, sh db.ThreadShare, th db.Thread) (*scope, error) {
-	sc := &scope{share: sh, thread: th}
+	sc := &scope{share: sh, keys: s.roleKeys(sh.ID), thread: th}
 	if sh.UntilSeq != nil {
 		sc.until = *sh.UntilSeq
 	}
@@ -122,7 +123,7 @@ func (sc *scope) accept(r db.Entry) (transcript.Entry, bool) {
 			sc.record[r.Seq] = sum[:]
 		}
 	}
-	return publicEntry(sc.share.ID, fromDB(r))
+	return publicEntry(sc.keys, fromDB(r))
 }
 
 // row 读出单条主会话条目并经 accept 判定（图片与附件授权用）。

@@ -185,7 +185,7 @@ func (s *Server) init(ctx context.Context) error {
 			}
 		}
 		return names
-	}}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
+	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)

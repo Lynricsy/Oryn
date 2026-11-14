@@ -213,6 +213,7 @@ func (s *Service) WSHandler() http.Handler {
 			}
 		}
 		threadID := sh.ThreadID
+		keys := s.roleKeys(sh.ID)
 		s.hub.ServePublic(w, r, realtime.PublicSub{
 			ShareID:  sh.ID,
 			ThreadID: threadID,
@@ -237,7 +238,7 @@ func (s *Service) WSHandler() http.Handler {
 				if strings.HasPrefix(e.EntryID, "__") {
 					return threads.Entry{}, false
 				}
-				pe, ok := publicEntry(sh.ID, fromThreads(e))
+				pe, ok := publicEntry(keys, fromThreads(e))
 				return toThreads(pe), ok
 			},
 		}, max(after, 0), rev)
