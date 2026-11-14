@@ -111,6 +111,9 @@ type Host struct {
 	ompKey  string // 上次校验通过的 omp 的「大小:mtime」
 	ompHash string
 
+	// opMu 串行化任务执行与崩溃后的原地重启，避免同一 orb 被并发拉起两个子进程。
+	opMu sync.Mutex
+
 	mu         sync.Mutex
 	runCtx     context.Context
 	providerID string
@@ -633,13 +636,18 @@ func (h *Host) recover(ctx context.Context) {
 			h.log.Warn("stop stale coordinator orb", "orb", o.ID, "err", err)
 		}
 	case "connecting", "setting_up", "resuming":
-		if err := h.spawn(ctx, o.ID); err != nil {
+		h.opMu.Lock()
+		err := h.spawn(ctx, o.ID)
+		h.opMu.Unlock()
+		if err != nil {
 			h.log.Warn("respawn coordinator host", "orb", o.ID, "err", err)
 		}
 	}
 }
 
 func (h *Host) execute(ctx context.Context, job db.Job) jobs.Result {
+	h.opMu.Lock()
+	defer h.opMu.Unlock()
 	orbID := ""
 	if job.OrbID != nil {
 		orbID = *job.OrbID
@@ -907,7 +915,13 @@ func (h *Host) onExit(c *child) {
 	go h.recoverCrash(ctx, c.orbID, n < crashLimit)
 }
 
-// recoverCrash 把意外退出的协调 orb 停机，wake 为真时等停机任务执行完再唤醒（让正在工作的协调线程重新同步）。
+// startingStates 是 orb 还没到 ready、正等协调宿主（重新）建 link 的状态。这些状态不能 stop（orbs.Pause 只接受
+// ready / frozen），而普通 orbd 会自行重拨、协调宿主的子进程却不会：意外退出时由宿主在原地重新拉起子进程。
+var startingStates = map[string]bool{"spawning": true, "connecting": true, "setting_up": true, "resuming": true}
+
+// recoverCrash 处理意外退出的协调 orb：启动阶段（startingStates）在原地重新拉起子进程；其余把 orb 停机，wake 为真时
+// 等停机任务执行完再唤醒（让正在工作的协调线程重新同步）。wake 为假（短时间内崩溃过多）时两条路都不再拉起：
+// 停机的留在 stopped 等下一条消息，启动阶段的由 orbs 的连接超时转为 failed。
 func (h *Host) recoverCrash(ctx context.Context, orbID string, wake bool) {
 	woke := false
 	defer func() {
@@ -915,6 +929,14 @@ func (h *Host) recoverCrash(ctx context.Context, orbID string, wake bool) {
 			h.onRecovered(orbID, woke)
 		}
 	}()
+	if o, err := h.st.Q.GetOrb(ctx, orbID); err == nil && startingStates[o.State] {
+		if !wake {
+			h.log.Warn("coordinator host crashed repeatedly while starting; not restarting it", "orb", orbID, "state", o.State)
+			return
+		}
+		woke = h.respawn(ctx, orbID)
+		return
+	}
 	ch := h.pauseWaiter(orbID)
 	if err := h.o.Pause(ctx, orbID, "stop"); err != nil {
 		h.log.Warn("stop crashed coordinator orb", "orb", orbID, "err", err)
@@ -938,6 +960,22 @@ func (h *Host) recoverCrash(ctx context.Context, orbID string, wake bool) {
 		return
 	}
 	woke = true
+}
+
+// respawn 在启动阶段崩溃后原地重新拉起子进程（与任务执行互斥；期间已有任务拉起了新进程、或 orb 已离开启动阶段时不动）。
+func (h *Host) respawn(ctx context.Context, orbID string) bool {
+	h.opMu.Lock()
+	defer h.opMu.Unlock()
+	o, err := h.st.Q.GetOrb(ctx, orbID)
+	if err != nil || !startingStates[o.State] {
+		return false
+	}
+	if err := h.spawn(ctx, orbID); err != nil {
+		h.log.Warn("restart crashed coordinator host", "orb", orbID, "state", o.State, "err", err)
+		return false
+	}
+	h.log.Info("restarted coordinator host after a crash during startup", "orb", orbID, "state", o.State)
+	return true
 }
 
 func (h *Host) pauseWaiter(orbID string) chan struct{} {

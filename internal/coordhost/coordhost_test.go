@@ -123,6 +123,7 @@ func (l *streamListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127,
 type fakeOrbs struct {
 	t   *testing.T
 	q   *jobs.Queue
+	st  *store.Store
 	pid string
 
 	hellos chan apigen.LinkCtlHelloParams
@@ -134,9 +135,9 @@ type fakeOrbs struct {
 	notifs chan string
 }
 
-func newFakeOrbs(t *testing.T, q *jobs.Queue, pid string) *fakeOrbs {
+func newFakeOrbs(t *testing.T, q *jobs.Queue, st *store.Store, pid string) *fakeOrbs {
 	return &fakeOrbs{
-		t: t, q: q, pid: pid,
+		t: t, q: q, st: st, pid: pid,
 		hellos: make(chan apigen.LinkCtlHelloParams, 8),
 		ctls:   make(chan *link.Ctl, 8),
 		agents: make(chan *link.Stream, 8),
@@ -211,9 +212,17 @@ func (f *fakeOrbs) ServeConn(ctx context.Context, _ string, conn net.Conn) error
 	}
 }
 
+// Pause 同 orbs.Pause 的状态限制：只有 ready / frozen 能停机（尝试本身照样记录）。
 func (f *fakeOrbs) Pause(ctx context.Context, orbID, mode string) error {
 	f.pauses <- orbID
-	_, err := f.q.Enqueue(ctx, f.pid, orbID, "pause", map[string]string{"mode": mode})
+	o, err := f.st.Q.GetOrb(ctx, orbID)
+	if err != nil {
+		return err
+	}
+	if o.State != "ready" && o.State != "frozen" {
+		return fmt.Errorf("orb %s is %s, cannot %s", orbID, o.State, mode)
+	}
+	_, err = f.q.Enqueue(ctx, f.pid, orbID, "pause", map[string]string{"mode": mode})
 	return err
 }
 
@@ -271,7 +280,7 @@ func newEnv(t *testing.T, mutate func(*Config), hostOpts ...func(*Host)) *testEn
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	f := newFakeOrbs(t, q, prov.ID)
+	f := newFakeOrbs(t, q, st, prov.ID)
 	h := New(cfg, st, q, f)
 	for _, o := range hostOpts {
 		o(h)
@@ -404,6 +413,7 @@ func TestCrashRecovery(t *testing.T) {
 	e := newEnv(t, nil, func(h *Host) { h.onRecovered = func(_ string, woke bool) { recovered <- woke } })
 	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
 	e.hello()
+	e.setState("ready")
 	for i := 1; i <= 3; i++ {
 		c := e.child()
 		require.NotNil(t, c, "crash %d", i)
@@ -425,6 +435,43 @@ func TestCrashRecovery(t *testing.T) {
 		}
 	}
 	assert.Empty(t, e.f.wakes)
+}
+
+// 启动阶段（orb 还没 ready，orbs 不接受 stop）子进程意外退出：不走 Pause → Wake，而是原地重新拉起子进程并重新 hello；
+// 短时间内崩溃到上限后不再拉起（留给 orbs 的连接超时转 failed）。CI 上即「egress 端口被占、子进程刚报完沙箱就退出」。
+func TestCrashWhileStartingRespawns(t *testing.T) {
+	recovered := make(chan bool, 8)
+	e := newEnv(t, nil, func(h *Host) { h.onRecovered = func(_ string, woke bool) { recovered <- woke } })
+	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
+	e.hello()
+	for i, state := range []string{"connecting", "setting_up", "resuming"} {
+		e.setState(state)
+		c := e.child()
+		require.NotNil(t, c, state)
+		require.NoError(t, syscall.Kill(c.pid, syscall.SIGKILL))
+		select {
+		case woke := <-recovered:
+			if i+1 < crashLimit {
+				require.True(t, woke, "%s：应原地重启", state)
+				e.hello()
+				n := e.child()
+				require.NotNil(t, n)
+				assert.NotEqual(t, c.pid, n.pid)
+			} else {
+				assert.False(t, woke, "%s：崩溃达到上限后不再拉起", state)
+				assert.Nil(t, e.child())
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s：没有善后", state)
+		}
+	}
+	assert.Empty(t, e.f.wakes, "启动阶段不走 Wake")
+	assert.Empty(t, e.f.pauses, "启动阶段不尝试停机")
+}
+
+func (e *testEnv) setState(state string) {
+	e.t.Helper()
+	require.NoError(e.t, e.st.Q.SetOrbState(context.Background(), db.SetOrbStateParams{ID: e.orbID, State: state, StateChangedAt: time.Now().UnixMilli()}))
 }
 
 // H5：Check 的各条原因。

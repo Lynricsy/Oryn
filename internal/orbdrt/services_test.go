@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -219,7 +220,39 @@ func freePort(t *testing.T) int {
 	return p
 }
 
-func groupGone(pid int) bool { return errors.Is(syscall.Kill(-pid, 0), syscall.ESRCH) }
+// groupLive 返回进程组 pgid 里还活着（非僵尸）的成员。kill(-pgid, 0) 不能用来判断：组长退出后组里的后代已收到
+// SIGKILL，但要等它们的新父进程（init / 子收割者）异步回收，期间仍算组成员——例如服务刚拉起、bash -l 还在跑
+// /etc/profile 的命令替换子进程时就被停止。
+func groupLive(pgid int) []string {
+	var live []string
+	ents, _ := os.ReadDir("/proc")
+	for _, e := range ents {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		i := bytes.LastIndexByte(b, ')')
+		if i < 0 || i+2 > len(b) {
+			continue
+		}
+		f := strings.Fields(string(b[i+2:])) // state ppid pgrp …
+		if len(f) > 2 && f[2] == strconv.Itoa(pgid) && f[0] != "Z" && f[0] != "X" {
+			live = append(live, e.Name()+":"+f[0])
+		}
+	}
+	return live
+}
+
+// requireGroupDead 等进程组里不再有活着的成员（SIGKILL 的送达与生效是异步的）。
+func requireGroupDead(t *testing.T, pgid int, msg string) {
+	t.Helper()
+	var live []string
+	require.Eventually(t, func() bool { live = groupLive(pgid); return len(live) == 0 }, 5*time.Second, 5*time.Millisecond,
+		"%s：仍有成员 %v", msg, live)
+}
 
 // ---- 解析 ----
 
@@ -453,7 +486,7 @@ func TestServiceStopAndShutdown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, apigen.OrbServiceStatusStopped, o.Status)
 	assert.Nil(t, o.Pid)
-	assert.True(t, groupGone(*a.Pid), "Stop 后进程组消失")
+	requireGroupDead(t, *a.Pid, "Stop 后进程组消失")
 
 	// Stop 记入 stopped：Ensure 不再拉起，状态文件里也有。
 	list, _ := e.rt.svc.Ensure()
@@ -472,7 +505,7 @@ func TestServiceStopAndShutdown(t *testing.T) {
 
 	// Shutdown 并行停掉服务：进程组消失，但不改期望状态（之后的 Ensure 会重新拉起）。
 	e.rt.Shutdown(2 * time.Second)
-	assert.True(t, groupGone(*a2.Pid), "Shutdown 后进程组消失")
+	requireGroupDead(t, *a2.Pid, "Shutdown 后进程组消失")
 	assert.Equal(t, apigen.OrbServiceStatusStopped, e.rt.svc.snapshot("a").Status)
 	e.rt.svc.Ensure()
 	a3 := e.wait("a", runningWithPid)
@@ -480,7 +513,19 @@ func TestServiceStopAndShutdown(t *testing.T) {
 	// 运行时结束（ctx 取消）时仍存活的进程组被 SIGKILL。
 	e.stop()
 	// 组长已被回收，组里后代的 SIGKILL 是异步生效的
-	assert.Eventually(t, func() bool { return groupGone(*a3.Pid) }, 5*time.Second, 10*time.Millisecond, "Run 结束后进程组消失")
+	requireGroupDead(t, *a3.Pid, "Run 结束后进程组消失")
+}
+
+// 停止服务时组里的后代（不只是组长）一并结束：组长退出后残留的后台进程同样被 SIGKILL。
+func TestServiceStopKillsDescendants(t *testing.T) {
+	e := newSvcEnv(t, nil, "")
+	e.setup()
+	e.start(orbsock.ServiceStartParams{Name: "a", Command: new("sleep 100000 & exec sleep 100000")})
+	a := e.wait("a", runningWithPid)
+	require.Eventually(t, func() bool { return len(groupLive(*a.Pid)) == 2 }, 5*time.Second, 5*time.Millisecond, "组长与后台 sleep")
+	_, err := e.rt.svc.Stop("a", false)
+	require.NoError(t, err)
+	requireGroupDead(t, *a.Pid, "Stop 后组里的后代也结束")
 }
 
 // 新 Runtime（同一 $HOME，模拟容器重启）启动时不自行拉起服务；resume.run 之后按 state.json 恢复动态服务，端口不变。
@@ -492,7 +537,7 @@ func TestServiceRestoreAfterRestart(t *testing.T) {
 	e1.start(orbsock.ServiceStartParams{Name: "dyn", Command: new(helperCmd("serve"))})
 	o1 := e1.wait("dyn", runningWithPid)
 	e1.stop()
-	require.True(t, groupGone(*o1.Pid))
+	requireGroupDead(t, *o1.Pid, "Run 结束后进程组消失")
 
 	before := cp.notifCount()
 	e2 := newSvcEnv(t, cp, home)

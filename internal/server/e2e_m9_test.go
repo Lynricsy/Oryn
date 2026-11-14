@@ -42,6 +42,8 @@ func newM9Stack(t *testing.T) (*stack, string) {
 		c.Coordinator.OmpPath = filepath.Join(binDir, "fakeomp")
 		c.Coordinator.Dir = dir
 		c.Coordinator.VerifyOmp = &no
+		// 没有网络命名空间的环境（如 CI runner）里代理端口落在宿主回环上：用空闲端口，避免与并行测试或本机服务撞上 7811
+		c.Coordinator.EgressPort = freeTCPPort(t)
 	})
 	if err := s.srv.Host.Check(context.Background()); err != nil {
 		if os.Getenv("ORYN_REQUIRE_SANDBOX") == "1" {
@@ -50,6 +52,14 @@ func newM9Stack(t *testing.T) (*stack, string) {
 		t.Skipf("协调宿主不可用：%v", err)
 	}
 	return s, dir
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 // schedClock 是注入定时服务（与协调层）的假时钟：定时器按「登记时刻 + 时长」排队，Advance 拨动时钟并触发到期的。
