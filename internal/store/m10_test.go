@@ -148,6 +148,12 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	assert.Equal(t, "<nil>", dumpRows(t, s.DB, `SELECT read_at FROM notifications WHERE id = 'ntf_err'`)[0], "别的通知不受影响")
 
 	// 预算通知的投递 → Down：预算通知与其投递消失，其余保留，link 列消失，渠道 events 复原。
+	// 只订阅 budget 的渠道（sec F8）：Down 后不能是 0011 没有语义的 []，而是 0011 的缺省三项。
+	for id, ev := range map[string]string{"nch_c": `["budget"]`, "nch_d": `["input","budget"]`} {
+		require.NoError(t, q.InsertNotificationChannel(ctx, db.InsertNotificationChannelParams{
+			ID: id, Kind: "webhook", Name: id, Enabled: true, Events: ev, Locale: "en", ConfigEnc: []byte{1}, State: "{}", CreatedAt: 2, UpdatedAt: 2,
+		}))
+	}
 	require.NoError(t, q.InsertNotificationDelivery(ctx, db.InsertNotificationDeliveryParams{ID: "ndl_4", NotificationID: "ntf_bud", ChannelID: ptr("nch_a"), Target: "webhook", NextAttemptAt: 50, CreatedAt: 30}))
 	keepN := dumpRows(t, s.DB, `SELECT id, thread_id, kind, title, body, request_id, request, created_at, read_at, resolved_at FROM notifications WHERE kind <> 'budget' ORDER BY id`)
 	keepD := dumpRows(t, s.DB, `SELECT id, notification_id, channel_id, subscription_id, target, status, attempts, next_attempt_at, last_error, external_ref, created_at, finished_at
@@ -159,7 +165,7 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	assert.Equal(t, keepD, dumpRows(t, s.DB, delivCols))
 	assert.Equal(t, []string{"ntf_err", "ntf_in"}, dumpRows(t, s.DB, `SELECT id FROM notifications ORDER BY id`))
 	assert.Equal(t, "0", scalarString(t, s.DB, `SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name = 'link'`))
-	assert.Equal(t, []string{`nch_a|["done","input","error"]`, `nch_b|["input"]`},
+	assert.Equal(t, []string{`nch_a|["done","input","error"]`, `nch_b|["input"]`, `nch_c|["done","input","error"]`, `nch_d|["input"]`},
 		dumpRows(t, s.DB, `SELECT id, events FROM notification_channels ORDER BY id`))
 	assert.Empty(t, dumpRows(t, s.DB, `PRAGMA foreign_key_check`))
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO notifications (id, kind, title, created_at) VALUES ('ntf_x', 'budget', 't', 1)`)

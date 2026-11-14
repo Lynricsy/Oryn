@@ -285,7 +285,10 @@ export async function handleNotifyFetch(
 	}
 	if (p === "/api/v1/notifications/read" && m === "POST") {
 		const { threadId, id } = await bodyOf(req);
-		if (threadId && id)
+		// 与服务端一致：字段给出但为空串、或两者都给出 → 400；都省略才是「全部已读」
+		if (id === "" || threadId === "")
+			return error(400, "invalid_request", "id / threadId 不能为空串");
+		if (threadId !== undefined && id !== undefined)
 			return error(400, "invalid_request", "id 与 threadId 至多给一个");
 		for (const n of state.notifications)
 			if (

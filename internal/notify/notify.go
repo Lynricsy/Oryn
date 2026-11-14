@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
@@ -548,8 +550,19 @@ func (s *Service) record(ctx context.Context, p db.InsertNotificationParams) err
 // AutomationsPath 是定时相关的无线程通知（定时无法建出线程、定时被自动暂停）在 Web 上的落点。
 const AutomationsPath = "/settings/automations"
 
+// maxLinkBytes 是站内路径的长度上限，与桌面壳 `valid_app_path`（web/src-tauri/src/session.rs）一致。
+const maxLinkBytes = 2048
+
+// sitePath 判断 link 是否为站内路径，规则与桌面壳 `valid_app_path` 相同：以 "/" 开头、不以 "//" 开头、
+// 不超过 2048 字节、是合法 UTF-8、不含反斜杠与控制字符。URL 标准把 "\" 当成 "/"，"/\evil.example" 会被
+// Service Worker 的 openWindow 解析成外站（sec F7）。
+func sitePath(link string) bool {
+	return strings.HasPrefix(link, "/") && !strings.HasPrefix(link, "//") && len(link) <= maxLinkBytes &&
+		utf8.ValidString(link) && strings.IndexFunc(link, func(r rune) bool { return r == '\\' || unicode.IsControl(r) }) < 0
+}
+
 // PostSystem 立即生成一条不属于任何线程的通知（不去抖、不登记线程未读）。kind 只接受 error / budget；
-// title 不能为空；link 是站内路径（以 "/" 开头且不以 "//" 开头）。落库与排投递在同一个事务里：返回错误时没有写入任何行。
+// title 不能为空；link 必须是站内路径（见 sitePath）。落库与排投递在同一个事务里：返回错误时没有写入任何行。
 func (s *Service) PostSystem(ctx context.Context, kind, title, body, link string) error {
 	if kind != KindError && kind != KindBudget {
 		return fmt.Errorf("notify: system notification kind %q not allowed", kind)
@@ -557,7 +570,7 @@ func (s *Service) PostSystem(ctx context.Context, kind, title, body, link string
 	if title == "" {
 		return errors.New("notify: system notification title is empty")
 	}
-	if !strings.HasPrefix(link, "/") || strings.HasPrefix(link, "//") {
+	if !sitePath(link) {
 		return fmt.Errorf("notify: system notification link %q is not a site path", link)
 	}
 	return s.record(ctx, db.InsertNotificationParams{ID: ids.New("ntf"), Kind: kind, Title: title, Body: body, Link: &link, CreatedAt: s.now()})

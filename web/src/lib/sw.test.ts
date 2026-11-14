@@ -23,6 +23,7 @@ function loadWorker({
 } = {}) {
 	const handlers = new Map<string, Handler>();
 	const self = {
+		location: { origin: "https://oryn.test" },
 		navigator: { userAgent },
 		addEventListener: (type: string, fn: Handler) => handlers.set(type, fn),
 		skipWaiting: vi.fn(),
@@ -199,5 +200,30 @@ describe("service worker", () => {
 		await dispatch("notificationclick", click);
 		expect(app.focus).not.toHaveBeenCalled();
 		expect(self.clients.openWindow).toHaveBeenCalledWith("/t/x");
+	});
+
+	it.each([
+		["/\\evil.example", "/"],
+		["\\\\evil.example/x", "/"],
+		["https://evil.example/t/x", "/"],
+		["//evil.example/t/x", "/"],
+		["javascript:alert(1)", "/"],
+		[42, "/"],
+		["https://oryn.test/t/y?a=1#b", "/t/y?a=1#b"],
+		["/t/\nx", "/t/x"],
+	])("点击通知：落点 %j 只允许本站（不同源落到 /）→ %s", async (raw, want) => {
+		const notification = { close: vi.fn(), data: { url: raw } };
+		const fresh = loadWorker();
+		await fresh.dispatch("notificationclick", { notification });
+		expect(fresh.self.clients.openWindow).toHaveBeenCalledWith(want);
+
+		const app = appWin(true);
+		const { self, dispatch } = loadWorker({ windows: [app] });
+		await dispatch("notificationclick", { notification });
+		expect(app.postMessage).toHaveBeenLastCalledWith(
+			{ type: "oryn.navigate", url: want },
+			expect.any(Array),
+		);
+		expect(self.clients.openWindow).not.toHaveBeenCalled();
 	});
 });

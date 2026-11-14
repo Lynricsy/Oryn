@@ -1,6 +1,8 @@
 package coord
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // M10 3.9：get_stats 的四种 kind、project / space 按名称或 id、Space 协调者的强制筛选与 orbs 被拒。
@@ -97,4 +100,42 @@ func TestGetStats(t *testing.T) {
 			assert.Nil(t, d["parameters"].(obj)["required"], "全部参数可选")
 		}
 	}
+}
+
+// sec F6：Space 协调者的 Space 缺失、不存在或加载出错时 fail-closed，不能退回全局助手的权限去读全库数据。
+func TestSpaceCoordinatorFailsClosed(t *testing.T) {
+	e := newEnv(t, true)
+	sp := e.space("S", "")
+	chat := e.spaceChat(sp)
+	e.work("outside")
+	call := func(ctx context.Context, spaceID, tool, args string) threads.HostToolResult {
+		return e.c.HostToolCall(ctx, threads.HostToolCall{ThreadID: chat.ID, Kind: threads.KindSpace, SpaceID: spaceID,
+			CallID: "h-1", ToolCallID: "tc-1", Name: tool, Args: json.RawMessage(args), OwnerTurn: true})
+	}
+	canceled, cancel := context.WithCancel(e.ctx)
+	cancel()
+	for _, tc := range []struct {
+		name    string
+		ctx     context.Context
+		spaceID string
+		code    string
+	}{
+		{"无 SpaceID", e.ctx, "", CodeForbidden},
+		{"Space 不存在", e.ctx, "spc_missing", CodeForbidden},
+		{"加载出错", canceled, sp.ID, CodeCoordinatorUnavailable},
+	} {
+		for _, tool := range []struct{ name, args string }{
+			{ToolGetStats, `{}`},
+			{ToolGetStats, `{"kind":"orbs"}`},
+			{ToolListThreads, `{"scope":"all"}`},
+		} {
+			r := call(tc.ctx, tc.spaceID, tool.name, tool.args)
+			assert.True(t, r.IsError, "%s %s %s: %s", tc.name, tool.name, tool.args, r.Text)
+			assert.True(t, strings.HasPrefix(r.Text, tc.code+":"), "%s %s: %s", tc.name, tool.name, r.Text)
+			assert.Nil(t, r.Details, tc.name)
+		}
+	}
+	// 正常加载时照常执行
+	r := details(t, call(e.ctx, sp.ID, ToolListThreads, `{}`))
+	assert.NotNil(t, r["threads"])
 }

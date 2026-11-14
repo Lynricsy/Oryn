@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -176,6 +177,13 @@ func TestPostSystemRejectsInvalid(t *testing.T) {
 		"relative link": {KindBudget, "t", "", "stats"},
 		"empty link":    {KindBudget, "t", "", ""},
 		"protocol-rel":  {KindBudget, "t", "", "//evil"},
+		// 与桌面壳 valid_app_path 同规则（sec F7）：URL 标准把 "\" 当 "/"，"/\evil" 会被 openWindow 解析成外站
+		"backslash":    {KindBudget, "t", "", `/\evil.example`},
+		"newline":      {KindBudget, "t", "", "/a\nb"},
+		"tab":          {KindBudget, "t", "", "/\t/evil.example"},
+		"c1 control":   {KindBudget, "t", "", "/a\u0085b"},
+		"invalid utf8": {KindBudget, "t", "", "/a\xffb"},
+		"too long":     {KindBudget, "t", "", "/" + strings.Repeat("a", 2048)},
 	} {
 		assert.Error(t, f.s.PostSystem(f.ctx, c[0], c[1], c[2], c[3]), name)
 	}
@@ -185,6 +193,7 @@ func TestPostSystemRejectsInvalid(t *testing.T) {
 	assert.False(t, n.Next(), "也不排投递")
 	require.NoError(t, n.Close())
 	assert.Empty(t, f.out.Notes())
+	require.NoError(t, f.s.PostSystem(f.ctx, KindBudget, "t", "", "/"+strings.Repeat("a", 2047)), "2048 字节恰好放行")
 }
 
 func TestMarkReadByID(t *testing.T) {

@@ -60,6 +60,7 @@ func (s *Server) ListNotifications(w http.ResponseWriter, r *http.Request, param
 }
 
 // MarkNotificationsRead 对应 `POST notifications/read`：id 只标一条、threadId 只标该线程、都省略 = 全部；都给 → 400。
+// 字段给出但为空串 → 400：客户端拿到空 id 时不能退化成「全部已读」（sec F8）。
 func (s *Server) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.notifySvc(w)
 	if !ok {
@@ -70,7 +71,11 @@ func (s *Server) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
 		return
 	}
-	if req.ID != nil && *req.ID != "" && req.ThreadID != nil && *req.ThreadID != "" {
+	if (req.ID != nil && *req.ID == "") || (req.ThreadID != nil && *req.ThreadID == "") {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "id / threadId 给出时不能为空；全部已读请两者都省略")
+		return
+	}
+	if req.ID != nil && req.ThreadID != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_request", "id 与 threadId 至多给一个")
 		return
 	}

@@ -258,6 +258,14 @@ func TestNotificationsBudgetAndReadByID(t *testing.T) {
 		assert.NotContains(t, n, "threadId", "系统通知省略 threadId")
 	}
 
+	// sec F8：字段给出但为空串 → 400，不能退化成「全部已读」
+	for _, req := range []map[string]string{{"id": ""}, {"threadId": ""}, {"id": "", "threadId": ""}, {"id": "ntf_budget", "threadId": ""}} {
+		st, body = e.do("POST", "/api/v1/notifications/read", req)
+		assert.Equal(t, 400, st, "%v", req)
+		assert.Equal(t, "invalid_request", errCode(body), "%v", req)
+	}
+	assert.Equal(t, 3, list().Unread, "空串请求不改未读")
+
 	st, body = e.do("POST", "/api/v1/notifications/read", map[string]string{"id": "ntf_budget"})
 	require.Equal(t, 204, st, string(body))
 	l = list()

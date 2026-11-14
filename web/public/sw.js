@@ -33,6 +33,21 @@ function payloadOf(event) {
 	}
 }
 
+/**
+ * 通知点击的落点只允许本站：按 URL 标准相对本站解析（`\` 当 `/`、去掉制表与换行），不同源、无法解析或
+ * 不是字符串一律落到 `/`；同源时返回规范化后的路径 + 查询 + 片段（sec F7：`/\evil.example` 会被解析成外站）。
+ */
+function sameOriginPath(url) {
+	if (typeof url !== "string") return "/";
+	try {
+		const u = new URL(url, self.location.origin);
+		if (u.origin !== self.location.origin) return "/";
+		return u.pathname + u.search + u.hash;
+	} catch {
+		return "/";
+	}
+}
+
 /** 发一条消息并等页面经端口应答；超时或发送失败为 null。 */
 function ask(win, message) {
 	return new Promise((resolve) => {
@@ -88,7 +103,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
 	event.notification.close();
-	const url = event.notification.data?.url ?? "/";
+	const url = sameOriginPath(event.notification.data?.url ?? "/");
 	event.waitUntil(
 		(async () => {
 			const windows = await self.clients.matchAll({

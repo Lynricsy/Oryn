@@ -138,7 +138,9 @@ UPDATE notification_channels SET events = replace(events, '"error"]', '"error","
 WHERE events LIKE '%"error"]';
 
 -- +goose Down
+-- 去掉 budget。只订阅 budget 的渠道去掉后是 []，0011 没有「空 = 全选」的语义，恢复成 0011 的缺省三项。
 UPDATE notification_channels SET events = replace(replace(events, ',"budget"', ''), '"budget"', '');
+UPDATE notification_channels SET events = '["done","input","error"]' WHERE events = '[]';
 
 CREATE TABLE notifications_keep (
     id TEXT, thread_id TEXT, kind TEXT, title TEXT, body TEXT, request_id TEXT, request TEXT,

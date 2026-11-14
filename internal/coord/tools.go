@@ -31,10 +31,21 @@ func (c toolCtx) inSpace() bool { return c.space != nil }
 // 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
-	if c.Kind == threads.KindSpace && c.SpaceID != "" {
-		if sp, err := s.st.Q.GetSpace(ctx, c.SpaceID); err == nil {
-			tc.space = &sp
+	// Space 协调者的作用域是授权判断，必须 fail-closed：SpaceID 缺失或 Space 加载失败时拒绝一切工具，
+	// 不能退回全局助手的权限（sec F6）。
+	if c.Kind == threads.KindSpace {
+		if c.SpaceID == "" {
+			return failResult(errf(CodeForbidden, "space coordinator has no space"))
 		}
+		sp, err := s.st.Q.GetSpace(ctx, c.SpaceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return failResult(errf(CodeForbidden, "space %s no longer exists", c.SpaceID))
+		}
+		if err != nil {
+			slog.Warn("加载 Space 失败，拒绝宿主工具", "space", c.SpaceID, "tool", c.Name, "err", err)
+			return failResult(errf(CodeCoordinatorUnavailable, "space could not be loaded"))
+		}
+		tc.space = &sp
 	}
 	var (
 		v   any
