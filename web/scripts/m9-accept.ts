@@ -2992,15 +2992,8 @@ async function S20() {
 	const tick = schedules.find((x) => x.name === "tick") as Schedule;
 	const spName = `space-${RUN}`;
 	await withPage(async (page) => {
-		await page.goto(`${BASE}/settings/projects`);
-		// 最内层同时含项目名与「定时任务」按钮的元素就是该项目行
-		const prow = page
-			.locator("div, li")
-			.filter({ has: page.getByText(PROJECT, { exact: true }) })
-			.filter({ has: page.getByRole("button", { name: "定时任务" }) })
-			.last();
-		await prow.waitFor({ timeout: 15_000 });
-		await prow.getByRole("button", { name: "定时任务" }).click();
+		// M9.6：项目定时直接显示在项目页 /projects/<id>（设置里的项目列表已搬走）
+		await page.goto(`${BASE}/projects/${pid}`);
 		const list = page.getByTestId(`project-schedules-${pid}`);
 		await list.waitFor({ timeout: 15_000 });
 		const txt = await waitFor(
@@ -3182,11 +3175,12 @@ async function S21() {
 						};
 					});
 			await page.getByRole("button", { name: "侧边栏", exact: true }).click();
-			const bar = page.getByTestId("sink-tabbar");
+			// M9.6：底栏统一为 section-tabbar（桌面与手机同一个组件）
+			const bar = page.getByTestId("section-tabbar");
 			// 底部栏属于侧栏层：关上时它仍在 DOM 里、只是被对话卡片盖住（侧栏层 inert），按「中心点露不露出来」判断可见
 			const barShown = () =>
 				page.evaluate(() => {
-					const b = document.querySelector("[data-testid=sink-tabbar]");
+					const b = document.querySelector("[data-testid=section-tabbar]");
 					if (!b || b.closest("[inert]")) return false;
 					const r = b.getBoundingClientRect();
 					const el = document.elementFromPoint(
@@ -3198,7 +3192,7 @@ async function S21() {
 			await waitFor("底部栏露出", barShown, 10_000, 200);
 			check(
 				(await page
-					.locator("[data-testid=sink-sidebar] [data-testid=sink-tabbar]")
+					.locator("[data-testid=sink-sidebar] [data-testid=section-tabbar]")
 					.count()) === 1,
 				"胶囊位于 [data-testid=sink-sidebar] 内",
 			);
@@ -3215,27 +3209,40 @@ async function S21() {
 			const projs = page.getByTestId("sidebar-projects");
 			await projs.waitFor();
 			await shot(page, `S21-projects-${RUN}`);
-			await projs.getByText(PROJECT, { exact: true }).first().click();
+			// M9.6：项目行进项目页；行尾按钮才是「只看该项目的线程」
+			await projs
+				.getByRole("button", { name: `只看「${PROJECT}」的线程` })
+				.first()
+				.click();
 			const chip = page.getByTestId("project-filter");
 			await chip.waitFor({ timeout: 5_000 });
 			check(
 				((await chip.textContent()) ?? "").includes(PROJECT),
-				"点项目回到线程视图并出现过滤签",
+				"点项目的过滤按钮回到线程分区并出现过滤签",
 			);
 			await bar.getByRole("button", { name: "更多" }).click();
 			const more = page.getByTestId("sidebar-more");
 			await more.waitFor();
-			const firstRow =
-				(await more.locator(":scope > *").first().textContent()) ?? "";
+			// M9.6：连接状态只在断线时出现；已连接时「更多」里没有连接行
 			check(
-				firstRow.includes("已连接"),
-				`「更多」第一行是连接状态（${firstRow.trim()}）`,
+				(await more.getByText("已连接").count()) === 0,
+				"已连接时「更多」里没有连接状态行",
 			);
 			await shot(page, `S21-more-${RUN}`);
-			await bar.getByRole("button", { name: "全局助手" }).click();
+			await bar.getByRole("button", { name: /全局助手/ }).click();
 			await page.waitForURL(/\/assistant/, { timeout: 10_000 });
-			await waitFor("侧栏收起", async () => !(await barShown()), 5_000, 200);
-			check(true, "「全局助手」跳到 /assistant 并收起侧栏");
+			check(
+				await barShown(),
+				"点「全局助手」后侧栏保持打开、卡片已换到 /assistant",
+			);
+			await bar.getByRole("button", { name: /全局助手/ }).click();
+			await waitFor(
+				"再点一次收起侧栏",
+				async () => !(await barShown()),
+				5_000,
+				200,
+			);
+			check(true, "再点一次已选中的分区收起侧栏");
 			await shot(page, `S21-assistant-${RUN}`);
 			await page.goto(`${BASE}/`);
 			// 基准与比较在同一次页面加载里取：打开侧栏前
@@ -3277,25 +3284,17 @@ async function S21() {
 	await withPage(
 		async (page) => {
 			await page.goto(`${BASE}/`);
-			const foot = page.getByTestId("sidebar-footer");
-			await foot.waitFor({ timeout: 10_000 });
-			// 刚加载时是「正在连接…」，等 WS 连上
-			const ftxt = await waitFor(
-				"底部行显示已连接",
-				async () => {
-					const s = (await foot.textContent()) ?? "";
-					return s.includes("已连接") ? s : undefined;
-				},
-				15_000,
-				300,
-			).catch(async () => (await foot.textContent()) ?? "");
+			// M9.6：桌面没有「已连接 + 图标」行，底栏在侧栏底部
 			check(
-				ftxt.includes("已连接"),
-				`1280 宽度仍是「已连接 + 图标」行（${ftxt.trim()}）`,
+				(await page.getByTestId("sidebar-footer").count()) === 0,
+				"1280 宽度没有旧的「已连接 + 图标」行",
 			);
+			await page.getByTestId("section-tabbar").waitFor({ timeout: 10_000 });
 			check(
-				(await page.getByTestId("sink-tabbar").count()) === 0,
-				"1280 宽度没有胶囊",
+				(await page
+					.locator("[data-testid=sink-sidebar] [data-testid=section-tabbar]")
+					.count()) === 0,
+				"1280 宽度的底栏在列侧栏里（不在下沉侧栏）",
 			);
 			await shot(page, `S21-wide-${RUN}`);
 		},

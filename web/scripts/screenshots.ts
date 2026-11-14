@@ -28,6 +28,7 @@ import {
 	ENV_THREADS,
 	M9_IDS,
 	MAIN_THREAD,
+	projects,
 	TOOL_ZOO_THREAD,
 } from "../src/mock/fixtures";
 import { MOCK_SHARE_SLUGS } from "../src/mock/server";
@@ -653,11 +654,8 @@ function m9Screens(): Screen[] {
 		{
 			name: "m9-project-schedules",
 			prepare: async ({ page }) => {
-				await open(page, "/settings/projects", "main");
-				await page
-					.getByRole("button", { name: "定时任务", exact: true })
-					.first()
-					.click();
+				// M9.6：项目定时直接显示在项目页 /projects/<id>（原设置里的项目列表已搬走）
+				await open(page, `/projects/${projects[0]?.id}`, "main");
 				await page
 					.locator(`[data-testid^=project-schedules-] [data-schedule]`)
 					.first()

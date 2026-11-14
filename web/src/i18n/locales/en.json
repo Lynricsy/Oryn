@@ -146,7 +146,7 @@
 		"allRuns": "All runs",
 		"projectFilter": "Project: {{name}}",
 		"clearProjectFilter": "Clear project filter",
-		"projectMeta": "{{threads}} threads · {{schedules}} schedules",
+		"projectMeta": "Threads {{threads}} · Schedules {{schedules}}",
 		"projectSettings": "Settings for “{{name}}”",
 		"projectThreads_one": "{{count}} thread",
 		"projectThreads_other": "{{count}} threads",
