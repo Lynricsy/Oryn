@@ -1,14 +1,15 @@
 /**
  * 设置 → 身份与头像（M9.6）：Agent 身份（名字 + 头像）、全局助手（名字 + 头像，留空跟随 Agent，带底栏预览）、
  * 角色头像（cycleOrder 里的每个 role，以及只剩头像的遗留项）、我的头像。
- * 身份接口是整体替换：每次保存都发完整对象——只改名字时带上当前头像，只改头像时带上当前名字。
+ * 身份接口是整体替换：每次保存都发完整对象——只改名字时带上当前头像，只改头像时带上当前名字（见 `useIdentityWriter`）。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
 import {
+	identityKeys,
 	saveIdentity,
 	saveRoleAvatar,
 	useAssistantIdentity,
@@ -52,6 +53,33 @@ function identityBody(
 
 const hasAvatar = (v: AvatarIdentity | undefined) =>
 	Boolean(v?.avatarIcon || v?.avatarImage);
+
+/** 一次身份编辑只是局部意图：改名字或改头像。 */
+type IdentityPatch = { name: string } | { avatar: AvatarIdentity };
+
+/**
+ * Agent / 助手身份的写入。写入串行排队，轮到时才取缓存里的最新身份（前一次成功后已写回缓存）合并本次改动再发，
+ * 不复用事件闭包里的旧对象——否则头像 PUT 未完成时提交名字，会把旧头像随整体替换带回去。
+ * 排队而不锁输入：等待期间两个字段的改动都不丢。
+ */
+function useIdentityWriter(who: "agent" | "assistant") {
+	const qc = useQueryClient();
+	const save = useAsync();
+	const queue = useRef<Promise<unknown>>(Promise.resolve());
+	const write = (patch: IdentityPatch): Promise<boolean> => {
+		const next = queue.current.then(() =>
+			save.run(() => {
+				const cur = qc.getQueryData<AgentIdentity>(identityKeys[who]);
+				const name = "name" in patch ? patch.name : cur?.name;
+				const avatar = "avatar" in patch ? patch.avatar : cur;
+				return saveIdentity(qc, who, identityBody(name, avatar));
+			}),
+		);
+		queue.current = next;
+		return next;
+	};
+	return { busy: save.busy, error: save.error, write };
+}
 
 /** role 的显示名：config.yml 的 `modelTags.<role>.name`，否则内置 role 的本地化名，否则 role id。 */
 function roleDisplayName(r: Pick<RoleIdentity, "role" | "name">): string {
@@ -119,12 +147,9 @@ function NameField({
 
 function AgentIdentityCard(): ReactNode {
 	const { t } = useTranslation();
-	const qc = useQueryClient();
 	const q = useIdentity("agent");
-	const save = useAsync();
+	const save = useIdentityWriter("agent");
 	const cur = q.data;
-	const put = (name: string | undefined, avatar: AvatarIdentity | undefined) =>
-		save.run(() => saveIdentity(qc, "agent", identityBody(name, avatar)));
 	return (
 		<Card title={t("identity.agentTitle")} icon="robot">
 			<div data-testid="identity-agent" className="flex flex-col gap-4">
@@ -145,13 +170,13 @@ function AgentIdentityCard(): ReactNode {
 					value={cur?.name}
 					placeholder={t("identity.namePlaceholder")}
 					disabled={q.isPending}
-					onCommit={(name) => void put(name, cur)}
+					onCommit={(name) => void save.write({ name })}
 				/>
 				<AvatarEditor
 					value={cur}
 					busy={save.busy || q.isPending}
 					resetLabel={t("appearance.avatarReset")}
-					onChange={(avatar) => put(cur?.name, avatar)}
+					onChange={(avatar) => save.write({ avatar })}
 				/>
 				<ErrorText error={save.error ?? q.error} />
 			</div>
@@ -161,14 +186,11 @@ function AgentIdentityCard(): ReactNode {
 
 function AssistantIdentityCard(): ReactNode {
 	const { t } = useTranslation();
-	const qc = useQueryClient();
 	const own = useIdentity("assistant");
 	const agent = useIdentity("agent");
 	const effective = useAssistantIdentity();
-	const save = useAsync();
+	const save = useIdentityWriter("assistant");
 	const cur = own.data;
-	const put = (name: string | undefined, avatar: AvatarIdentity | undefined) =>
-		save.run(() => saveIdentity(qc, "assistant", identityBody(name, avatar)));
 	return (
 		<Card title={t("identity.assistantTitle")} icon="sparkle">
 			<div data-testid="identity-assistant" className="flex flex-col gap-4">
@@ -200,13 +222,13 @@ function AssistantIdentityCard(): ReactNode {
 					value={cur?.name}
 					placeholder={agent.data?.name || t("tabBar.assistant")}
 					disabled={own.isPending}
-					onCommit={(name) => void put(name, cur)}
+					onCommit={(name) => void save.write({ name })}
 				/>
 				<AvatarEditor
 					value={cur}
 					busy={save.busy || own.isPending}
 					resetLabel={t("identity.followAgent")}
-					onChange={(avatar) => put(cur?.name, avatar)}
+					onChange={(avatar) => save.write({ avatar })}
 				/>
 				<ErrorText error={save.error ?? own.error} />
 			</div>

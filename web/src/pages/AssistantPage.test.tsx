@@ -5,6 +5,7 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	fireEvent,
 	render,
 	screen,
@@ -12,7 +13,14 @@ import {
 	within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+	MemoryRouter,
+	type NavigateFunction,
+	Route,
+	Routes,
+	useLocation,
+	useNavigate,
+} from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { threads as fixtureThreads, M9_IDS } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
@@ -54,7 +62,12 @@ vi.mock("./ThreadPage", async (orig) => ({
 
 let server: MockServer;
 
+let go: NavigateFunction = () => undefined;
+/** 非空时，下一个 PATCH 先等它放行（手动 resolve）。 */
+let holdPatch: Promise<void> | null = null;
+
 function Where() {
+	go = useNavigate();
 	return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
@@ -65,6 +78,7 @@ beforeEach(() => {
 	localStorage.removeItem("oryn.mock.coordinator");
 	server = new MockServer();
 	identities = { agent: {}, assistant: {} };
+	holdPatch = null;
 	vi.stubGlobal(
 		"fetch",
 		async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -73,6 +87,11 @@ beforeEach(() => {
 				new URL(req.url, "http://x").pathname,
 			)?.[1] as "agent" | "assistant" | undefined;
 			if (who) return Response.json(identities[who]);
+			if (req.method === "PATCH" && holdPatch) {
+				const gate = holdPatch;
+				holdPatch = null;
+				await gate;
+			}
 			return (
 				(await server.handleFetch(req)) ?? new Response(null, { status: 404 })
 			);
@@ -173,6 +192,27 @@ describe("AssistantPage", () => {
 				`/assistant/${M9_IDS.assistant}`,
 			),
 		);
+	});
+
+	it("页头归档未完成时已切到别的对话：完成后留在新选的对话上", async () => {
+		let release = () => {};
+		holdPatch = new Promise<void>((r) => {
+			release = r;
+		});
+		mount(`/assistant/${M9_IDS.assistant}`);
+		await screen.findByTestId("screen");
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "归档此对话" }));
+		act(() => {
+			go("/assistant/T-other");
+		});
+		expect(screen.getByTestId("where")).toHaveTextContent("/assistant/T-other");
+		await act(async () => release());
+		await waitFor(() =>
+			expect(server.threads.get(M9_IDS.assistant)?.archivedAt).toBeDefined(),
+		);
+		await act(async () => {});
+		expect(screen.getByTestId("where")).toHaveTextContent("/assistant/T-other");
 	});
 
 	it("页头小头像：未设置时是 sparkle 图标；设置了助手头像后是圆形头像", async () => {

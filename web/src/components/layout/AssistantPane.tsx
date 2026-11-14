@@ -6,14 +6,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, useLocation, useNavigate } from "react-router";
+import { NavLink, useNavigate } from "react-router";
 import { api, type Thread, unwrap } from "../../api/client";
 import { useCoordinatorStatus } from "../../api/coordinator-queries";
 import { createAssistantConversation } from "../../api/space-queries";
-import { useAssistantConversations } from "../../lib/assistant-conversations";
+import {
+	archivedAssistantKey,
+	useArchiveAssistantConversation,
+	useAssistantConversations,
+} from "../../lib/assistant-conversations";
 import { formatRelative } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
-import { patchThread } from "../../state/actions";
 import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, ThreadStateIcon } from "../ui/primitives";
@@ -30,15 +33,15 @@ import {
 function ConversationRow({
 	thread,
 	now,
-	archivable,
+	onArchive,
 }: {
 	thread: Thread;
 	now: number;
-	archivable: boolean;
+	/** 有则行尾出现归档按钮 */
+	onArchive?: (threadId: string) => void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const navigate = useNavigate();
-	const { pathname } = useLocation();
+	const archivable = onArchive !== undefined;
 	const title = parseTitleCard(thread.title).text || t("assistant.untitled");
 	const to = `/assistant/${thread.id}`;
 	const stamp = formatRelative(thread.lastMessageAt ?? thread.updatedAt, now);
@@ -68,11 +71,7 @@ function ConversationRow({
 					size={13}
 					label={t("assistantPane.archiveOne", { title })}
 					className="pointer-events-none absolute top-1 right-1 bg-[var(--sb-hover)] opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100"
-					onClick={() => {
-						void patchThread(thread.id, { archived: true }).then(() => {
-							if (pathname === to) navigate("/assistant", { replace: true });
-						});
-					}}
+					onClick={() => onArchive(thread.id)}
 				/>
 			)}
 		</div>
@@ -84,7 +83,7 @@ function ArchivedConversations({ now }: { now: number }): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const archived = useQuery({
-		queryKey: ["threads", { archived: true, kind: "assistant" }],
+		queryKey: archivedAssistantKey,
 		enabled: open,
 		queryFn: () =>
 			unwrap(
@@ -103,7 +102,7 @@ function ArchivedConversations({ now }: { now: number }): ReactNode {
 			onOpenChange={setOpen}
 		>
 			{list?.map((th) => (
-				<ConversationRow key={th.id} thread={th} now={now} archivable={false} />
+				<ConversationRow key={th.id} thread={th} now={now} />
 			))}
 			{list?.length === 0 && (
 				<p className="px-3 py-1 text-faint text-xs">{t("sidebar.empty")}</p>
@@ -116,6 +115,8 @@ export function AssistantPane(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const conversations = useAssistantConversations();
+	// 宿主是常驻的侧栏 pane（行归档后即卸载）：完成时按最新路由判断是否回 landing
+	const archive = useArchiveAssistantConversation();
 	const status = useCoordinatorStatus();
 	const now = useNow();
 	const [error, setError] = useState<unknown>(null);
@@ -166,7 +167,12 @@ export function AssistantPane(): ReactNode {
 			)}
 			<div className="mt-1 mb-2 flex flex-col">
 				{conversations.map((th) => (
-					<ConversationRow key={th.id} thread={th} now={now} archivable />
+					<ConversationRow
+						key={th.id}
+						thread={th}
+						now={now}
+						onArchive={(id) => void archive(id).catch(() => undefined)}
+					/>
 				))}
 				{conversations.length === 0 && (
 					<p className="px-3 py-2 text-faint text-sm">

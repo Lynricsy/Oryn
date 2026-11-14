@@ -40,6 +40,8 @@ let roleAvatars: Record<string, Schemas["AvatarIdentity"]>;
 let selectors: Record<string, string>;
 let configError: string | undefined;
 let writes: Write[];
+/** 非空时，下一个 PUT 记账后先等它放行（挂住第一次写入）。 */
+let holdNextPut: Promise<void> | null;
 
 function roleOf(role: string): Schemas["RoleIdentity"] {
 	return {
@@ -57,6 +59,11 @@ async function handle(req: Request): Promise<Response> {
 	const text = req.method === "GET" ? "" : await req.text();
 	const body = text ? JSON.parse(text) : undefined;
 	if (req.method !== "GET") writes.push({ method: req.method, path, body });
+	if (req.method === "PUT" && holdNextPut) {
+		const gate = holdNextPut;
+		holdNextPut = null;
+		await gate;
+	}
 	const ident = /^\/api\/v1\/settings\/(agent|assistant|user)-identity$/.exec(
 		path,
 	);
@@ -122,6 +129,7 @@ beforeEach(() => {
 	selectors = { Mare: "openai/gpt-6.1-sol:high", Cyrene: "@Hyacinthia" };
 	configError = undefined;
 	writes = [];
+	holdNextPut = null;
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
 		handle(
 			input instanceof Request
@@ -219,6 +227,42 @@ describe("Agent 身份", () => {
 			avatarIcon: "🦊",
 		});
 	});
+});
+
+describe("同一张卡连续编辑（写入排队、按最新身份合并）", () => {
+	it.each(["agent", "assistant"] as const)(
+		"%s：换头像的 PUT 未完成时提交名字——名字等它完成后再发并带上新头像，最终两者都保留",
+		async (who) => {
+			const initial = { name: "A", avatarIcon: "🦊" };
+			if (who === "agent") agent = initial;
+			else assistant = initial;
+			let release = () => {};
+			holdNextPut = new Promise<void>((r) => {
+				release = r;
+			});
+			mount();
+			const scope = card(who);
+			const name = within(scope).getByLabelText("名字");
+			await waitFor(() => expect(name).toHaveValue("A"));
+			fireEvent.click(within(scope).getByRole("button", { name: "🐱" }));
+			await waitFor(() => expect(puts()).toHaveLength(1));
+			expect(puts()[0]?.body).toEqual({ name: "A", avatarIcon: "🐱" });
+			// 名字输入不锁：用户的改动不丢
+			expect(name).toBeEnabled();
+			fireEvent.change(name, { target: { value: "B" } });
+			fireEvent.blur(name);
+			await act(async () => {});
+			expect(puts()).toHaveLength(1);
+			await act(async () => release());
+			await waitFor(() => expect(puts()).toHaveLength(2));
+			expect(puts()[1]?.body).toEqual({ name: "B", avatarIcon: "🐱" });
+			const final = { name: "B", avatarIcon: "🐱" };
+			await waitFor(() =>
+				expect(client.getQueryData(identityKeys[who])).toEqual(final),
+			);
+			expect(who === "agent" ? agent : assistant).toEqual(final);
+		},
+	);
 });
 
 describe("全局助手", () => {

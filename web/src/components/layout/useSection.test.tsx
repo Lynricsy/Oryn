@@ -18,7 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
 import { qk } from "../../api/queries";
-import { indexStore } from "../../state/stores";
+import { indexStore, useIndex } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { AppShell } from "./AppShell";
 
@@ -62,7 +62,15 @@ function FakeThread() {
 	return <Where />;
 }
 
-function mount(path: string) {
+/** 线程页替身：只按索引里的种类重定向（同 ThreadPage），索引没到时照常显示。 */
+function IndexedThread() {
+	const { id = "" } = useParams();
+	const kind = useIndex((s) => s.threads[id]?.kind);
+	if (kind === "assistant") return <Navigate to={`/assistant/${id}`} replace />;
+	return <Where />;
+}
+
+function mount(path: string, thread = <FakeThread />) {
 	const qc = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
@@ -76,7 +84,7 @@ function mount(path: string) {
 			<MemoryRouter initialEntries={[path]}>
 				<Routes>
 					<Route element={<AppShell />}>
-						<Route path="t/:id" element={<FakeThread />} />
+						<Route path="t/:id" element={thread} />
 						<Route path="*" element={<Where />} />
 					</Route>
 				</Routes>
@@ -261,6 +269,37 @@ describe("追踪器", () => {
 		await settle();
 		expect(where()).toBe("/assistant/A2");
 		expect(uiStore.getState().sectionPaths.threads).toBe("/t/T-1");
+	});
+
+	it("冷启动、索引异步到达：判定前不覆盖线程记忆；到达后是助手对话则重定向，切回线程仍是原工作线程", async () => {
+		indexStore.setState({ threads: {}, loaded: false });
+		uiStore.setState({ sectionPaths: { threads: "/t/W1" } });
+		mount("/t/C1", <IndexedThread />);
+		await settle();
+		expect(where()).toBe("/t/C1");
+		expect(uiStore.getState().sectionPaths.threads).toBe("/t/W1");
+		act(() => {
+			indexStore
+				.getState()
+				.setAll([th("C1", { kind: "assistant" }), th("W1")], 2);
+		});
+		await settle();
+		expect(where()).toBe("/assistant/C1");
+		expect(uiStore.getState().sectionPaths.threads).toBe("/t/W1");
+		digit(1);
+		expect(where()).toBe("/t/W1");
+	});
+
+	it("冷启动、索引到达后确认是工作线程：这时才记住", async () => {
+		indexStore.setState({ threads: {}, loaded: false });
+		uiStore.setState({ sectionPaths: { threads: "/t/W1" } });
+		mount("/t/W2", <IndexedThread />);
+		await settle();
+		expect(uiStore.getState().sectionPaths.threads).toBe("/t/W1");
+		act(() => {
+			indexStore.getState().setAll([th("W2", { kind: "work" })], 2);
+		});
+		expect(uiStore.getState().sectionPaths.threads).toBe("/t/W2");
 	});
 
 	it("记忆里是 /t/<助手对话>（冷启动竞态留下的）时，切到线程落到 /", async () => {

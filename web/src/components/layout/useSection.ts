@@ -18,6 +18,17 @@ import { uiStore } from "../../state/ui";
 /** 线程种类一律取索引（索引里还没有的线程视为未知）。 */
 const kindOf: ThreadKindOf = (id) => indexStore.getState().threads[id]?.kind;
 
+/**
+ * `/t/<id>` 的种类还判定不了：索引尚未到达且其中没有该线程。此时线程页还不知道要不要重定向到助手 / Space，
+ * 不能先记下它（会覆盖线程分区里上次真正的工作线程）。索引到达后仍没有它 = 线程页按工作线程显示，照常记。
+ */
+function kindPending(path: string): boolean {
+	const m = /^\/t\/([^/?#]+)\/?(?:[?#]|$)/.exec(path);
+	if (!m?.[1]) return false;
+	const s = indexStore.getState();
+	return !s.loaded && s.threads[m[1]]?.kind === undefined;
+}
+
 /** 手机下沉侧栏布局：compact 且不是双段视口（双段时侧栏是悬浮抽屉）。 */
 export function isSinkLayout(): boolean {
 	return (
@@ -60,16 +71,30 @@ export function useSwitchSection(): (
 /**
  * 路由变化后记下该分区的路径。延后一个宏任务（setTimeout 0）并在路由再次变化时取消：同一拍里的重定向
  * （`/assistant` → `/assistant/<id>`、`/t/<助手对话>` → `/assistant/<id>`、`/projects` → `/projects/<id>`）不留痕；
- * `settles` 为假的（索引里已知是协调对话的 `/t/<id>`）不记。
+ * `settles` 为假的（索引里已知是协调对话的 `/t/<id>`）不记。冷启动时 `/t/<id>` 的种类要等索引到达才判定
+ * （`kindPending`）：订阅索引，判定后再按 `settles` 决定；期间路由变化则取消。
  */
 export function useSectionTracker(): void {
 	const { pathname, search } = useLocation();
 	const path = pathname + search;
 	useEffect(() => {
-		const timer = setTimeout(() => {
+		let unsubscribe: (() => void) | undefined;
+		const note = () => {
 			if (!settles(path, kindOf)) return;
 			uiStore.getState().noteSectionPath(sectionOf(path), path);
+		};
+		const timer = setTimeout(() => {
+			if (!kindPending(path)) return note();
+			unsubscribe = indexStore.subscribe(() => {
+				if (kindPending(path)) return;
+				unsubscribe?.();
+				unsubscribe = undefined;
+				note();
+			});
 		}, 0);
-		return () => clearTimeout(timer);
+		return () => {
+			clearTimeout(timer);
+			unsubscribe?.();
+		};
 	}, [path]);
 }

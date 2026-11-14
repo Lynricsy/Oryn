@@ -22,10 +22,12 @@ import {
 	type MenuItem,
 	Spinner,
 } from "../components/ui/primitives";
-import { useAssistantConversations } from "../lib/assistant-conversations";
+import {
+	useArchiveAssistantConversation,
+	useAssistantConversations,
+} from "../lib/assistant-conversations";
 import { parseTitleCard } from "../lib/title";
 import { useBreakpoint } from "../lib/viewport";
-import { patchThread } from "../state/actions";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
 import { type ScreenHeaderLayout, ThreadScreen } from "./ThreadPage";
@@ -143,6 +145,7 @@ function AssistantHeader({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const current = useIndex((s) => s.threads[threadId]);
+	const archive = useArchiveAssistantConversation();
 	const [error, setError] = useState<unknown>(null);
 	const title = current
 		? parseTitleCard(current.title).text || t("assistant.untitled")
@@ -167,10 +170,8 @@ function AssistantHeader({
 			label: t("assistant.archive"),
 			onSelect: () => {
 				setError(null);
-				patchThread(threadId, { archived: true }).then(
-					() => navigate("/assistant", { replace: true }),
-					setError,
-				);
+				// 完成时按最新路由决定是否回 landing（等待期间用户可能已切到别的对话），并同步已归档列表
+				archive(threadId).catch(setError);
 			},
 		},
 	];

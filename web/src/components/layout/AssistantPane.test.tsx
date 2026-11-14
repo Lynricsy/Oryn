@@ -1,9 +1,11 @@
 /**
  * 「助手」分区侧栏（M9.6）：会话按最近活动排列、未读点；首行「新对话」（协调宿主不可用时禁用并提示）；
- * 归档当前对话后回到 /assistant；链接的 textContent 只等于标题；「已归档」折叠组按 kind=assistant 拉取。
+ * 归档当前对话后回到 /assistant（按完成那一刻的路由判断）；链接的 textContent 只等于标题；「已归档」折叠组按
+ * kind=assistant 拉取，归档后立即同步。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	fireEvent,
 	render,
 	screen,
@@ -40,6 +42,10 @@ function Where() {
 
 let available = true;
 const requests: { method: string; url: URL; body?: unknown }[] = [];
+/** 非空时，下一个 PATCH 先等它放行（手动 resolve）。 */
+let holdPatch: Promise<void> | null = null;
+/** 本测试里已归档的对话：`GET threads` 一并返回（服务端视角）。 */
+const archivedNow: Thread[] = [];
 
 function mount(path = "/assistant/A-old") {
 	const qc = new QueryClient({
@@ -70,6 +76,8 @@ const newButton = () => screen.getByRole("button", { name: "新对话" });
 
 beforeEach(() => {
 	available = true;
+	holdPatch = null;
+	archivedNow.length = 0;
 	requests.length = 0;
 	indexStore.getState().setAll(
 		[
@@ -108,11 +116,21 @@ beforeEach(() => {
 					{ status: 201 },
 				);
 			const patch = /^\/api\/v1\/threads\/([^/]+)$/.exec(url.pathname);
-			if (patch?.[1] && req.method === "PATCH")
-				return Response.json(th(patch[1], { archivedAt: 99 }));
+			if (patch?.[1] && req.method === "PATCH") {
+				const id = patch[1];
+				if (holdPatch) {
+					const gate = holdPatch;
+					holdPatch = null;
+					await gate;
+				}
+				const cur = indexStore.getState().threads[id] ?? th(id);
+				archivedNow.push({ ...cur, archivedAt: 99 });
+				return Response.json(th(id, { archivedAt: 99 }));
+			}
 			if (url.pathname === "/api/v1/threads")
 				return Response.json({
 					threads: [
+						...archivedNow,
 						th("A-gone", { title: "归档过的", archivedAt: 5 }),
 						th("W-arch", {
 							title: "归档的工作线程",
@@ -204,6 +222,43 @@ describe("AssistantPane", () => {
 			["/api/v1/threads/A-new", { archived: true }],
 			["/api/v1/threads/A-old", { archived: true }],
 		]);
+	});
+
+	it("归档请求未完成时已切到别的对话：完成后留在新选的对话上，不回 landing", async () => {
+		let release = () => {};
+		holdPatch = new Promise<void>((r) => {
+			release = r;
+		});
+		mount("/assistant/A-old");
+		fireEvent.click(screen.getByRole("button", { name: "归档「旧的对话」" }));
+		// 链接的可及名带未读点（「新的对话 未读」）
+		fireEvent.click(within(pane()).getByRole("link", { name: /^新的对话/ }));
+		expect(where()).toBe("/assistant/A-new");
+		await act(async () => release());
+		await waitFor(() =>
+			expect(convLinks().map((a) => a.getAttribute("href"))).not.toContain(
+				"/assistant/A-old",
+			),
+		);
+		await act(async () => {});
+		expect(where()).toBe("/assistant/A-new");
+	});
+
+	it("「已归档」展开着时归档一个对话：它立即出现在组里（不折叠、不重新挂载）", async () => {
+		mount("/assistant/A-old");
+		fireEvent.click(within(pane()).getByRole("button", { name: /已归档/ }));
+		await within(pane()).findByRole("link", { name: "归档过的" });
+		fireEvent.click(screen.getByRole("button", { name: "归档「新的对话」" }));
+		// 只剩一个指向 A-new 的链接，且它在已归档组里（行上没有归档按钮）
+		await waitFor(() => {
+			const rows = within(pane())
+				.getAllByRole("link")
+				.filter((a) => a.getAttribute("href") === "/assistant/A-new");
+			expect(rows).toHaveLength(1);
+			expect(
+				within(rows[0]?.parentElement as HTMLElement).queryByRole("button"),
+			).toBeNull();
+		});
 	});
 
 	it("空列表提示", () => {

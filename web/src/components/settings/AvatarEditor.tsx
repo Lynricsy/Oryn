@@ -33,20 +33,46 @@ export function AvatarEditor({
 }): ReactNode {
 	const { t } = useTranslation();
 	const [custom, setCustom] = useState("");
-	const [source, setSource] = useState<AvatarSource | null>(null);
+	/** 裁剪中的源图；`key` = 它的解码代次，对话框按它换 key（换源时取景框按新图重新初始化） */
+	const [crop, setCrop] = useState<{
+		source: AvatarSource;
+		key: number;
+	} | null>(null);
 	const [decodeFailed, setDecodeFailed] = useState(false);
-	// 编辑器在对话框开着时被卸载（离开页面）：释放源图
-	const sourceRef = useRef(source);
-	sourceRef.current = source;
-	useEffect(() => () => sourceRef.current?.release(), []);
+	const sourceRef = useRef(crop?.source);
+	sourceRef.current = crop?.source;
+	// 解码代次：每次选图 +1，只有仍是最新代次、且编辑器仍挂载时完成的解码才生效
+	const gen = useRef(0);
+	const mounted = useRef(true);
+	useEffect(() => {
+		mounted.current = true;
+		// 编辑器在对话框开着时被卸载（离开页面）：释放源图
+		return () => {
+			mounted.current = false;
+			sourceRef.current?.release();
+		};
+	}, []);
 	const isSet = Boolean(value?.avatarIcon || value?.avatarImage);
 
 	const onFile = (e: ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		e.target.value = "";
 		if (!file) return;
+		const my = ++gen.current;
 		setDecodeFailed(false);
-		loadAvatarSource(file).then(setSource, () => setDecodeFailed(true));
+		loadAvatarSource(file).then(
+			(next) => {
+				// 过期（已有更新的选择）或已卸载：丢弃并释放
+				if (!mounted.current || my !== gen.current) return next.release();
+				// 替换一个仍开着的源：旧的由这里释放（对话框只释放它自己确认 / 取消的那张）
+				sourceRef.current?.release();
+				setCrop({ source: next, key: my });
+			},
+			() => {
+				// 过期的失败不覆盖更新的选择
+				if (mounted.current && my === gen.current) setDecodeFailed(true);
+			},
+		);
 	};
 
 	return (
@@ -130,12 +156,13 @@ export function AvatarEditor({
 					{t("appearance.avatarUse")}
 				</Button>
 			</form>
-			{source && (
+			{crop && (
 				<AvatarCropDialog
-					source={source}
-					onCancel={() => setSource(null)}
+					key={crop.key}
+					source={crop.source}
+					onCancel={() => setCrop(null)}
 					onConfirm={(avatarImage) => {
-						setSource(null);
+						setCrop(null);
 						void onChange({ avatarImage });
 					}}
 				/>
