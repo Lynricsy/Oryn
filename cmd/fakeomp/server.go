@@ -61,6 +61,9 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	var extensions multiFlag
 	fs.Var(&extensions, "e", "扩展文件（忽略，可重复）")
 	fs.Var(&extensions, "extension", "扩展文件（忽略，可重复）")
+	// omp 的设置覆盖层（M8：桌面启用时 orbd 以 `--config <desktop.yml>` 注入）：接受并忽略。
+	var configs multiFlag
+	fs.Var(&configs, "config", "设置覆盖层文件（忽略，可重复）")
 	version := fs.Bool("version", false, "打印版本")
 	if err := fs.Parse(args); err != nil {
 		return o, false, err

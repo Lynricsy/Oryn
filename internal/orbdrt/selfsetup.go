@@ -152,6 +152,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 			return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "nothing to set: give setup and/or resume")
 		}
 		return r.projectScripts(ctx, apigen.MethodProjectScriptsSet, p)
+	case orbsock.MethodDesktopStatus, orbsock.MethodDesktopBrowserStart, orbsock.MethodDesktopBrowserStop:
+		return r.handleDesktopSock(ctx, method)
 	default:
 		if res, ok, err := r.handleServiceSock(ctx, method, params, out); ok {
 			return res, err
@@ -246,9 +248,17 @@ func (r *Runtime) skillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-setup", "SKILL.md")
 }
 
-// writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）。
+// writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）；桌面启用时另写给 omp 的
+// 设置覆盖层（地址取 CDP 前门的实际地址）与 openbox 配置，未启用时删除残留的覆盖层。
 func (r *Runtime) writeAgentAssets() error {
-	for path, data := range map[string][]byte{r.extensionPath(): orbExtension, r.skillPath(): setupSkill} {
+	files := map[string][]byte{r.extensionPath(): orbExtension, r.skillPath(): setupSkill}
+	if d := r.desk; d != nil {
+		files[r.desktopOverlayPath()] = desktopOverlay(d.cdpAddr())
+		files[d.rcPath()] = openboxRC
+	} else if err := os.Remove(r.desktopOverlayPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", r.desktopOverlayPath(), err)
+	}
+	for path, data := range files {
 		if err := writeFileAtomic(path, data, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}

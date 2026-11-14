@@ -74,6 +74,18 @@ type Config struct {
 	ServiceBackoff       func(n int) time.Duration
 	ServiceProbeInterval time.Duration
 	OnServiceStatus      func(apigen.OrbService)
+
+	// 桌面（M8）：Desktop 为真且找得到 Xtigervnc、openbox、chromium 时启用（ConfigFromEnv 读 ORYN_DESKTOP=1）。
+	// DesktopCDPAddr 是 CDP 前门的监听地址（默认 127.0.0.1:7822，ORYN_DESKTOP_CDP_ADDR 覆盖，测试用 127.0.0.1:0）。
+	Desktop        bool
+	DesktopCDPAddr string
+	// 桌面的测试钩子（生产为零值）：OnDesktopState 在每次桌面状态变化时同步回调；DesktopBackoff 是显示栈
+	// 第 n 次（从 1 起）连续失败后的重启等待（缺省 1s/2s/4s/8s/16s/30s）；DesktopTmpDir 是启动 Xvnc 前清理
+	// X 锁与 X socket 的目录（缺省 /tmp；在宿主机上跑 e2e 时用 ORYN_DESKTOP_X11_TMPDIR 指向临时目录，
+	// 免得删掉宿主机自己的 :1 显示的锁）。
+	OnDesktopState func(apigen.LinkCtlDesktopStateParams)
+	DesktopBackoff func(n int) time.Duration
+	DesktopTmpDir  string
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -84,7 +96,10 @@ func ConfigFromEnv(version string) (Config, error) {
 		OrbID:    os.Getenv("ORYN_ORB_ID"),
 		Token:    os.Getenv("ORYN_ORB_TOKEN"),
 		AgentBin: os.Getenv("ORYN_AGENT_BIN"),
-		Version:  version,
+		// ORYN_EGRESS_ADDR 仅供测试：同一主机上并行多个 process 驱动的 orbd 时设 127.0.0.1:0
+		// （git insteadOf 按实际端口写；控制面下发的 models.yml 仍指向固定的 7811）。
+		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
+		Version:    version,
 	}
 	var missing []string
 	for k, v := range map[string]string{"ORYN_URL": cfg.URL, "ORYN_ORB_ID": cfg.OrbID} {
@@ -103,6 +118,9 @@ func ConfigFromEnv(version string) (Config, error) {
 	if p := os.Getenv("ORYN_ORBD_REQUEST_LOG"); p != "" {
 		cfg.OnLocalRequest = requestLogger(p)
 	}
+	cfg.Desktop = os.Getenv("ORYN_DESKTOP") == "1"
+	cfg.DesktopCDPAddr = os.Getenv("ORYN_DESKTOP_CDP_ADDR")
+	cfg.DesktopTmpDir = os.Getenv("ORYN_DESKTOP_X11_TMPDIR")
 	return cfg, nil
 }
 
@@ -177,6 +195,8 @@ type Runtime struct {
 
 	// svc 是受管服务监督器（M4）。
 	svc *serviceSupervisor
+	// desk 是桌面（M8）；未启用为 nil。
+	desk *desktop
 
 	// syncMu 串行化 /sync/prepare（共用仓库里的临时 index 与 refs/oryn/sync/*）。
 	syncMu sync.Mutex
@@ -241,6 +261,9 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.DiskPath == "" {
 		cfg.DiskPath = "/"
 	}
+	if cfg.DesktopCDPAddr == "" {
+		cfg.DesktopCDPAddr = DefaultDesktopCDPAddr
+	}
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
@@ -270,8 +293,12 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
+	r.desk = newDesktop(r)
 	if err := r.writeAgentAssets(); err != nil {
 		_ = ln.Close()
+		if r.desk != nil {
+			_ = r.desk.cdpLn.Close()
+		}
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
 	r.loadSetupStatus()
@@ -317,6 +344,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); r.serveSocket(ctx) }()
 	go func() { defer wg.Done(); _ = r.localSrv.Serve(r.local) }()
 	go func() { defer wg.Done(); r.svc.reportLoop(ctx) }()
+	if d := r.desk; d != nil {
+		// 显示栈常驻；ctx 结束时三者的进程组都被 SIGKILL（优雅停浏览器由 Shutdown 负责）。
+		wg.Go(func() { d.run(ctx) })
+		wg.Go(func() { d.serveCDP(ctx) })
+		wg.Go(func() { d.reportLoop(ctx) })
+	}
 	r.linkLoop(ctx)
 	// 仍存活的服务进程组直接 SIGKILL（优雅停止由 Shutdown 负责）。
 	r.svc.killAll()
@@ -335,11 +368,14 @@ func (r *Runtime) Redial() {
 	}
 }
 
-// Shutdown 优雅停止全部 agent（关闭 stdin、读完输出，超时 SIGKILL）并行停掉全部受管服务（不改期望状态），
-// 然后在 link 可用时冲刷 tailer。
+// Shutdown 优雅停止全部 agent（关闭 stdin、读完输出，超时 SIGKILL），并行停掉全部受管服务（不改期望状态）
+// 与桌面上的浏览器，然后在 link 可用时冲刷 tailer。
 func (r *Runtime) Shutdown(grace time.Duration) {
 	var wg sync.WaitGroup
 	wg.Go(func() { r.svc.StopAll(grace) })
+	if d := r.desk; d != nil {
+		wg.Go(func() { d.stopBrowser(min(grace, browserStopGrace)) })
+	}
 	r.stopAllAgents(grace)
 	wg.Wait()
 	r.flushTailers(5 * time.Second)
@@ -477,8 +513,11 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	r.resultsMu.Lock()
 	r.flushResultsLocked(c)
 	r.resultsMu.Unlock()
-	// 服务快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
+	// 服务与桌面快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
 	r.svc.markDirty()
+	if r.desk != nil {
+		r.desk.markDirty()
+	}
 	go r.acceptLoop(sess)
 
 	select {
@@ -494,7 +533,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 }
 
 // acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，`portal` 流对接本机端口，
-// 其余类型直接关闭。
+// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -510,6 +549,12 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 			r.local.Push(rollingConn{Conn: st, d: localWriteTimeout})
 		case link.StreamPortal:
 			go r.servePortal(st)
+		case link.StreamDesk:
+			if r.desk == nil {
+				_ = st.Close()
+				continue
+			}
+			go r.serveDesk(st)
 		default:
 			r.log.Warn("unexpected stream from control plane", "t", st.Header.T)
 			_ = st.Close()
@@ -529,13 +574,17 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 			threads = append(threads, apigen.LinkCtlHelloThread{ThreadID: id})
 		}
 	}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync"}
+	if r.desk != nil {
+		features = append(features, "desktop")
+	}
 	return apigen.LinkCtlHelloParams{
 		OrbdVersion:  r.cfg.Version,
 		AgentVersion: r.agentVersion,
 		Os:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		Threads:      threads,
-		Features:     []string{"fs", "git", "attachments", "services", "portal", "sync"},
+		Features:     features,
 	}
 }
 
@@ -618,6 +667,15 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 		}
 		r.svc.configure(p.URLTemplate, primary)
 		return apigen.LinkCtlOkResult{Ok: true}, nil
+	case string(apigen.MethodProfileMode):
+		if r.desk == nil {
+			return nil, ctlErr("not_supported", "the desktop is not enabled on this orb")
+		}
+		p, err := decode[apigen.LinkCtlProfileModeParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.desk.setProfileMode(p)
 	default:
 		return nil, link.ErrMethodNotFound
 	}
@@ -709,7 +767,8 @@ func (r *Runtime) flushTailers(timeout time.Duration) {
 	wg.Wait()
 }
 
-// baseEnv 是 orbd 子进程（agent、setup 脚本）的基础环境：继承 orbd 环境但去掉 orb 令牌。
+// baseEnv 是 orbd 子进程（agent、setup 脚本、受管服务）的基础环境：继承 orbd 环境但去掉 orb 令牌；
+// 桌面启用时设 DISPLAY=:1。
 func (r *Runtime) baseEnv() map[string]string {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
@@ -722,7 +781,25 @@ func (r *Runtime) baseEnv() map[string]string {
 	env["HOME"] = r.home
 	env["ORYN_ORB"] = "1"
 	env["ORYN_ORB_ID"] = r.cfg.OrbID
+	if r.desk != nil {
+		env["DISPLAY"] = desktopDisplay
+	}
 	return env
+}
+
+// reservedPort 报告端口是否被 orbd 保留：egress 端口、CDP 前门端口与 Chromium 当前的 DevTools 端口。
+// 保留端口不经 portal 暴露，也不能分配给受管服务（M8 计划 2.11）。
+func (r *Runtime) reservedPort(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	if tcp, ok := r.egressLn.Addr().(*net.TCPAddr); ok && port == tcp.Port {
+		return true
+	}
+	if d := r.desk; d != nil && (port == d.cdpPort() || port == d.devtoolsPort()) {
+		return true
+	}
+	return false
 }
 
 func envList(m map[string]string) []string {

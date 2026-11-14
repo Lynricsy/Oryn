@@ -28,6 +28,15 @@ RUN apt-get update \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen \
  && rm -rf /var/lib/apt/lists/*
 
+# 桌面栈（M8）：Xvnc + openbox + Chromium + CJK / emoji 字体；ORYN_DESKTOP=1 让 orbd 启用桌面
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tigervnc-standalone-server x11-xkb-utils xkb-data openbox chromium \
+      fonts-liberation fonts-noto-cjk fonts-noto-color-emoji x11-utils xclip \
+ && rm -rf /var/lib/apt/lists/* \
+ && Xtigervnc -version 2>&1 | head -1 && chromium --version && openbox --version | head -1
+ENV ORYN_DESKTOP=1
+
 # Node.js（当前 LTS），校验官方 SHASUMS256
 RUN case "$TARGETARCH" in amd64) a=x64 ;; arm64) a=arm64 ;; *) echo "unsupported $TARGETARCH"; exit 1 ;; esac \
  && f="node-v${NODE_VERSION}-linux-${a}.tar.xz" \

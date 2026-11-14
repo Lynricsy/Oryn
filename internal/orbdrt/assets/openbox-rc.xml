@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 由 orbd 生成（每次启动覆盖，请勿手改）：Oryn 桌面的 openbox 配置。
+     一个桌面；键绑定只留 Alt+F4（关闭窗口）与 Alt+Tab（切换窗口）；不绑定根窗口菜单；
+     Chromium 最大化且不带装饰，其它窗口保持默认装饰。 -->
+<openbox_config xmlns="http://openbox.org/3.4/rc" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <resistance>
+    <strength>10</strength>
+    <screen_edge_strength>20</screen_edge_strength>
+  </resistance>
+  <focus>
+    <focusNew>yes</focusNew>
+    <followMouse>no</followMouse>
+  </focus>
+  <placement>
+    <policy>Smart</policy>
+    <center>yes</center>
+  </placement>
+  <theme>
+    <name>Clearlooks</name>
+    <titleLayout>NLMC</titleLayout>
+    <keepBorder>yes</keepBorder>
+    <animateIconify>no</animateIconify>
+  </theme>
+  <desktops>
+    <number>1</number>
+    <firstdesk>1</firstdesk>
+    <names>
+      <name>Oryn</name>
+    </names>
+  </desktops>
+  <keyboard>
+    <keybind key="A-F4">
+      <action name="Close"/>
+    </keybind>
+    <keybind key="A-Tab">
+      <action name="NextWindow"/>
+    </keybind>
+  </keyboard>
+  <mouse>
+    <dragThreshold>8</dragThreshold>
+    <doubleClickTime>200</doubleClickTime>
+    <context name="Frame">
+      <mousebind button="A-Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="A-Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+    </context>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+      <mousebind button="Left" action="DoubleClick">
+        <action name="ToggleMaximize"/>
+      </mousebind>
+    </context>
+    <context name="Titlebar Top Right Bottom Left TLCorner TRCorner BRCorner BLCorner">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Top">
+      <mousebind button="Left" action="Drag"><action name="Resize"><edge>top</edge></action></mousebind>
+    </context>
+    <context name="Left">
+      <mousebind button="Left" action="Drag"><action name="Resize"><edge>left</edge></action></mousebind>
+    </context>
+    <context name="Right">
+      <mousebind button="Left" action="Drag"><action name="Resize"><edge>right</edge></action></mousebind>
+    </context>
+    <context name="Bottom">
+      <mousebind button="Left" action="Drag"><action name="Resize"><edge>bottom</edge></action></mousebind>
+    </context>
+    <context name="TLCorner BRCorner TRCorner BLCorner">
+      <mousebind button="Left" action="Drag"><action name="Resize"/></mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Middle" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Click"><action name="Close"/></mousebind>
+    </context>
+    <context name="Maximize">
+      <mousebind button="Left" action="Click"><action name="ToggleMaximize"/></mousebind>
+    </context>
+  </mouse>
+  <applications>
+    <application class="Chromium*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+    </application>
+    <application class="chromium*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>

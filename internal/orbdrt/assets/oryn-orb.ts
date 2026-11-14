@@ -1,7 +1,7 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状。
 import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,18 @@ git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身�
 - portal 默认只有所有者能打开；限时公开只能由用户在 Portal 面板里设置。应用可读请求头 \`X-Oryn-Authenticated: owner=yes|no\` 区分访问者。
 - 在 orb 内自测用 \`http://127.0.0.1:<端口>\`（portal URL 需要登录，orb 内 curl 只会得到 302）。WebSocket 可用，但控制面重启或 orb 冻结会断开，客户端要能重连。
 - 查看：\`oryn orb service ls\`、\`oryn orb service logs <名字>\`；停止：\`oryn orb service stop <名字>\`。服务在 setup 之后、每次唤醒后由 Oryn 自动确保运行，不要在 setup / resume 里启动它们。`;
+
+// 桌面说明只在 orbd 启用了桌面时追加（orbd 此时写出 ~/.oryn/core/desktop.yml 覆盖层）。
+const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DISPLAY=:1），用户能在 Oryn 的 Desktop 面板里看到并随时接管。
+- browser 工具默认附着到桌面上的那个 Chromium（用户看得见）；不要传 headed。它第一次使用时才启动，若报 CDP 端点超时，重试一次即可。需要一个与桌面无关的无头浏览器时传 app: "own"。
+- computer 工具与任何 GUI 程序都作用于同一块桌面。
+- 浏览器里可能带着用户的登录态（浏览器 Profile）：不要把 Cookie、令牌或 tab.cookies() / tab.saveState() 的结果写进文件、日志或回复；不要退出用户已登录的账号，除非用户要求。
+- 需要用户登录或过验证码时，请用户在 Desktop 面板里操作，然后继续。
+- 查看状态：oryn orb desktop status。`;
+
+function desktopEnabled(): boolean {
+	return existsSync(join(homedir(), ".oryn", "core", "desktop.yml"));
+}
 
 interface SetupResult {
 	ok: boolean;
@@ -75,6 +87,7 @@ function statusLines(): string[] {
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
-		return { systemPrompt: [...event.systemPrompt, [GUIDE, ...statusLines()].join("\n")] };
+		const guide = desktopEnabled() ? [GUIDE, DESKTOP_GUIDE] : [GUIDE];
+		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines()].join("\n")] };
 	});
 }

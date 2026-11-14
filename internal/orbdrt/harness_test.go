@@ -27,6 +27,10 @@ import (
 
 var fakeompBin string
 
+// fakedeskBin 是 cmd/fakedesk 的构建产物；fakedeskDir 里有它的三个符号链接（Xtigervnc / openbox / chromium），
+// 已放在 PATH 最前面（桌面只在 Config.Desktop 为真时启用，其它测试不受影响）。
+var fakedeskBin, fakedeskDir string
+
 func TestMain(m *testing.M) {
 	// 受管服务测试把测试二进制自身当作服务进程（见 services_test.go 的 runServiceHelper）。
 	if mode := os.Getenv("ORBD_TEST_HELPER"); mode != "" {
@@ -48,9 +52,35 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "build fakeomp:", err)
 		os.Exit(1)
 	}
+	fakedeskBin = filepath.Join(dir, "fakedesk")
+	cmd = exec.Command("go", "build", "-o", fakedeskBin, "github.com/Lynricsy/Oryn/cmd/fakedesk")
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "build fakedesk:", err)
+		os.Exit(1)
+	}
+	fakedeskDir = filepath.Join(dir, "deskbin")
+	if err := linkFakedesk(fakedeskDir, desktopBinaries...); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_ = os.Setenv("PATH", fakedeskDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// linkFakedesk 在 dir 里建指向 fakedeskBin 的符号链接（每个名字一个）。
+func linkFakedesk(dir string, names ...string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, n := range names {
+		if err := os.Symlink(fakedeskBin, filepath.Join(dir, n)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const testToken = "oot_test"

@@ -12,3 +12,8 @@ var orbExtension []byte
 //
 //go:embed assets/oryn-setup/SKILL.md
 var setupSkill []byte
+
+// openboxRC 是写到 $HOME/.oryn/desktop/openbox-rc.xml 的窗口管理器配置（M8，仅桌面启用时）。
+//
+//go:embed assets/openbox-rc.xml
+var openboxRC []byte

@@ -580,8 +580,13 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	for k, v := range p.Env {
 		env[k] = v
 	}
+	args := []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()}
+	if r.desk != nil {
+		// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
+		args = append(args, "--config", r.desktopOverlayPath())
+	}
 	pid, err := t.start(startSpec{
-		args:       []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()},
+		args:       args,
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,

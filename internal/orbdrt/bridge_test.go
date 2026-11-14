@@ -243,8 +243,17 @@ func TestConfigFromEnvTokenFile(t *testing.T) {
 	require.Error(t, err, "既无环境变量也无令牌文件")
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".oryn"), 0o700))
 	require.NoError(t, os.WriteFile(TokenFile(home), []byte("oot_file\n"), 0o600))
-	_, err = ConfigFromEnv("v")
+	cfg, err := ConfigFromEnv("v")
 	require.NoError(t, err)
+	assert.Empty(t, cfg.EgressAddr, "缺省由 New 填 127.0.0.1:7811")
+	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0")
+	t.Setenv("ORYN_DESKTOP", "1")
+	t.Setenv("ORYN_DESKTOP_CDP_ADDR", "127.0.0.1:0")
+	cfg, err = ConfigFromEnv("v")
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:0", cfg.EgressAddr)
+	assert.True(t, cfg.Desktop)
+	assert.Equal(t, "127.0.0.1:0", cfg.DesktopCDPAddr)
 }
 
 // OD10：超过复制上限的条目不能被跳过并确认。复制停在它之前（游标不越过它），线程收到一条 notice；

@@ -15,7 +15,8 @@ import (
 
 // portal 流（M4 计划 2.9）：控制面在 link 上打开 `portal` 流（流头带端口），orbd 回一行 LinkPortalReply，
 // ok=true 之后把流与 127.0.0.1:<port>（拒绝时退到 [::1]:<port>）做裸 TCP 对接，不解析 HTTP。
-// 端口是否可暴露由这里最终裁决：只放行属于有 portal 的服务的端口，egress 端口永不暴露。
+// 端口是否可暴露由这里最终裁决：只放行属于有 portal 的服务的端口，orbd 的保留端口（egress、CDP 前门、
+// Chromium 当前的 DevTools 端口）永不暴露。
 
 const (
 	portalDialTimeout  = 5 * time.Second
@@ -36,14 +37,14 @@ const (
 func (r *Runtime) servePortal(st *link.Stream) {
 	port := st.Header.Port
 	reject := func(code, msg string) {
-		r.writePortalReply(st, apigen.LinkPortalReply{Ok: false, Code: new(code), Message: new(msg)})
+		r.writeReplyLine(st, apigen.LinkPortalReply{Ok: false, Code: new(code), Message: new(msg)})
 		_ = st.Close()
 	}
 	switch {
 	case port <= 0 || port > 65535:
 		reject(portalNotExposed, "invalid port")
 		return
-	case port == r.svc.egressPort:
+	case r.reservedPort(port):
 		reject(portalForbiddenPort, "port "+strconv.Itoa(port)+" is reserved by orbd")
 		return
 	case !r.svc.Exposed(port):
@@ -63,7 +64,7 @@ func (r *Runtime) servePortal(st *link.Stream) {
 		reject(code, err.Error())
 		return
 	}
-	if !r.writePortalReply(st, apigen.LinkPortalReply{Ok: true}) {
+	if !r.writeReplyLine(st, apigen.LinkPortalReply{Ok: true}) {
 		_ = conn.Close()
 		_ = st.Close()
 		return
@@ -71,14 +72,14 @@ func (r *Runtime) servePortal(st *link.Stream) {
 	pipePortal(st, conn)
 }
 
-// writePortalReply 写应答行（10s 写截止）；失败返回 false。
-func (r *Runtime) writePortalReply(st *link.Stream, rep apigen.LinkPortalReply) bool {
+// writeReplyLine 写 portal / desk 流的应答行（JSON + `\n`，10s 写截止）；失败返回 false。
+func (r *Runtime) writeReplyLine(st *link.Stream, rep any) bool {
 	b, _ := json.Marshal(rep)
 	_ = st.SetWriteDeadline(time.Now().Add(portalReplyTimeout))
 	_, err := st.Write(append(b, '\n'))
 	_ = st.SetWriteDeadline(time.Time{})
 	if err != nil {
-		r.log.Debug("portal reply failed", "port", st.Header.Port, "err", err)
+		r.log.Debug("stream reply failed", "t", st.Header.T, "port", st.Header.Port, "err", err)
 		return false
 	}
 	return true
@@ -100,26 +101,37 @@ func dialLoopback(port int) (net.Conn, error) {
 	return nil, err
 }
 
-// pipePortal 双向拷贝：一个方向结束后对另一端半关闭写方向，并给剩下的方向 portalDrainTimeout，随后两边都关。
-func pipePortal(st *link.Stream, conn net.Conn) {
+// pipePortal 双向拷贝 portal / desk 流与本机连接（见 pipeConns）。
+func pipePortal(st *link.Stream, conn net.Conn) { pipeConns(st, conn) }
+
+// pipeConns 双向拷贝：一个方向结束后对另一端半关闭写方向（有 CloseWrite 的用它，link 流的 Close 本身就是
+// 半关闭），并给剩下的方向 portalDrainTimeout，随后两边都关。
+func pipeConns(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = io.Copy(conn, st) // 控制面 → 服务
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
+		_, _ = io.Copy(b, a)
+		closeWrite(b)
 		done <- struct{}{}
 	}()
 	go func() {
-		_, _ = io.Copy(st, conn) // 服务 → 控制面
-		_ = st.Close()           // yamux FIN：半关闭写方向
+		_, _ = io.Copy(a, b)
+		closeWrite(a)
 		done <- struct{}{}
 	}()
 	<-done
 	deadline := time.Now().Add(portalDrainTimeout)
-	_ = conn.SetDeadline(deadline)
-	_ = st.SetDeadline(deadline)
+	_ = a.SetDeadline(deadline)
+	_ = b.SetDeadline(deadline)
 	<-done
-	_ = conn.Close()
-	_ = st.Close()
+	_ = a.Close()
+	_ = b.Close()
+}
+
+// closeWrite 半关闭 c 的写方向：TCP / unix 连接用 CloseWrite；link 流的 Close 发 FIN，同样是半关闭。
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+		return
+	}
+	_ = c.Close()
 }

@@ -1,5 +1,5 @@
-// Package orbsock 是 orbd 本地控制口（M2.5 / M4）：`$HOME/.oryn/orbd.sock` 上的 JSON 行协议，
-// orbd（服务端）与 orb 内的 `oryn orb setup …` / `oryn orb service …`（客户端）共用。
+// Package orbsock 是 orbd 本地控制口（M2.5 / M4 / M8）：`$HOME/.oryn/orbd.sock` 上的 JSON 行协议，
+// orbd（服务端）与 orb 内的 `oryn orb setup …` / `oryn orb service …` / `oryn orb desktop …`（客户端）共用。
 //
 // 每个连接一个请求：客户端写一行 `{"method": "...", "params": {...}}`，服务端回若干行：
 // 零或多条 `{"type":"log","stream":"stdout|stderr|system","data":"..."}`，
@@ -38,6 +38,11 @@ const (
 	MethodServiceStop    = "service.stop"
 	MethodServiceRestart = "service.restart"
 	MethodServiceList    = "service.list"
+
+	// 桌面（M8）：desktop.browser.start 启动浏览器并等到 DevTools 就绪（上限 30s）；桌面未启用时回 not_supported。
+	MethodDesktopStatus       = "desktop.status"
+	MethodDesktopBrowserStart = "desktop.browser.start"
+	MethodDesktopBrowserStop  = "desktop.browser.stop"
 )
 
 // 消息类型。
@@ -57,7 +62,7 @@ const (
 // 错误码（控制面经 ctl 返回的错误码如 `no_project` 原样透传）。
 const (
 	CodeBusy           = "busy"      // 已有 setup / resume 在运行
-	CodeNotReady       = "not_ready" // orbd 还没收到过 setup.run / resume.run
+	CodeNotReady       = "not_ready" // orbd 还没收到过 setup.run / resume.run；桌面：显示或 Profile 未就绪
 	CodeOffline        = "offline"   // orbd 当前未连上控制面
 	CodeNoProject      = "no_project"
 	CodeInvalidParams  = "invalid_params"
@@ -67,6 +72,8 @@ const (
 	CodeServiceNotFound = "service_not_found" // 没有该名字的服务
 	CodeInvalidService  = "invalid_service"   // 服务定义无效（或对文件服务给了 remove）
 	CodeNameConflict    = "name_conflict"     // 动态服务与 services.yaml 里的服务同名
+
+	CodeNotSupported = "not_supported" // 本 orb 没有启用桌面
 )
 
 // maxRequestBytes 是请求行上限（项目脚本随 project.scripts.set 传入）。
@@ -149,6 +156,15 @@ type ServiceResult struct {
 type ServiceListResult struct {
 	Services  []apigen.OrbService `json:"services"`
 	FileError string              `json:"fileError,omitempty"`
+}
+
+// DesktopResult 是 desktop.status / desktop.browser.start / desktop.browser.stop 的结果。
+// Display 是 X 显示名（`:1`），CDPURL 是 CDP 前门地址，ProfileName 是本地标记里的 Profile 名字（没有为空）。
+type DesktopResult struct {
+	State       apigen.LinkCtlDesktopStateParams `json:"state"`
+	Display     string                           `json:"display"`
+	CDPURL      string                           `json:"cdpUrl"`
+	ProfileName string                           `json:"profileName,omitempty"`
 }
 
 // ---- 服务端 ----

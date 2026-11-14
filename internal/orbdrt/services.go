@@ -147,7 +147,8 @@ type serviceSupervisor struct {
 	statePath  string
 	statusPath string
 	logDir     string
-	egressPort int
+	// reserved 报告端口是否被 orbd 保留（egress、CDP 前门、Chromium 当前的 DevTools 端口）：不能暴露、不能分配给服务。
+	reserved   func(port int) bool
 	backoff    func(int) time.Duration
 	probeEvery time.Duration
 	onStatus   func(apigen.OrbService)
@@ -186,6 +187,7 @@ func newServiceSupervisor(r *Runtime) *serviceSupervisor {
 		statePath:  filepath.Join(r.home, ".oryn", "services", "state.json"),
 		statusPath: filepath.Join(r.home, ".oryn", "services-status.json"),
 		logDir:     filepath.Join(r.home, ".cache", "oryn", "logs", "services"),
+		reserved:   r.reservedPort,
 		backoff:    r.cfg.ServiceBackoff,
 		probeEvery: r.cfg.ServiceProbeInterval,
 		onStatus:   r.cfg.OnServiceStatus,
@@ -200,9 +202,6 @@ func newServiceSupervisor(r *Runtime) *serviceSupervisor {
 	}
 	if s.probeEvery <= 0 {
 		s.probeEvery = defaultServiceProbeInterval
-	}
-	if tcp, ok := r.egressLn.Addr().(*net.TCPAddr); ok {
-		s.egressPort = tcp.Port
 	}
 	s.loadState()
 	return s
@@ -391,9 +390,9 @@ func (s *serviceSupervisor) WaitSettled(ctx context.Context, name string) apigen
 	}
 }
 
-// Exposed 报告端口是否属于某个有 portal 的（定义有效的）服务；egress 端口永远不算。
+// Exposed 报告端口是否属于某个有 portal 的（定义有效的）服务；保留端口永远不算。
 func (s *serviceSupervisor) Exposed(port int) bool {
-	if port <= 0 || port == s.egressPort {
+	if port <= 0 || s.reserved(port) {
 		return false
 	}
 	s.mu.Lock()
@@ -653,7 +652,7 @@ func (s *serviceSupervisor) reload(startAll bool) map[string]bool {
 }
 
 // assignPortsLocked 为定义有效的服务定端口：显式端口原样使用；否则沿用 state.json 的分配，再否则从 20000 起
-// 找第一个空闲端口并记下。显式端口重复 → 后者 port_conflict；等于 egress 端口 → forbidden_port。
+// 找第一个空闲端口并记下。显式端口重复 → 后者 port_conflict；是保留端口 → forbidden_port。
 // 自动端口与其它服务冲突时重新分配。返回 state 是否有变化。
 func (s *serviceSupervisor) assignPortsLocked(desired []fileEntry) bool {
 	explicit := map[int]bool{}
@@ -671,7 +670,7 @@ func (s *serviceSupervisor) assignPortsLocked(desired []fileEntry) bool {
 		}
 		if d.spec.PortExplicit {
 			switch p := d.spec.Port; {
-			case p == s.egressPort:
+			case s.reserved(p):
 				d.err = "forbidden_port"
 			case used[p]:
 				d.err = "port_conflict"
@@ -681,7 +680,7 @@ func (s *serviceSupervisor) assignPortsLocked(desired []fileEntry) bool {
 			continue
 		}
 		p := s.st.Ports[d.spec.Name]
-		if p == 0 || used[p] || explicit[p] || p == s.egressPort {
+		if p == 0 || used[p] || explicit[p] || s.reserved(p) {
 			if p = s.allocPortLocked(d.spec.Name, used, explicit); p == 0 {
 				d.err = fmt.Sprintf("no free port in %d-%d", servicePortMin, servicePortMax)
 				continue
@@ -703,7 +702,7 @@ func (s *serviceSupervisor) allocPortLocked(name string, used, explicit map[int]
 		}
 	}
 	for p := servicePortMin; p <= servicePortMax; p++ {
-		if used[p] || explicit[p] || taken[p] || p == s.egressPort {
+		if used[p] || explicit[p] || taken[p] || s.reserved(p) {
 			continue
 		}
 		if ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p))); err == nil {
