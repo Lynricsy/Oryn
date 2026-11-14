@@ -35,6 +35,14 @@ RUN apt-get update \
       fonts-liberation fonts-noto-cjk fonts-noto-color-emoji x11-utils xclip \
  && rm -rf /var/lib/apt/lists/* \
  && Xtigervnc -version 2>&1 | head -1 && chromium --version && openbox --version | head -1
+# Chromium 受管策略（root 所有，不随 Profile 归档传播）：禁止安装任何扩展、代理固定直连。
+# 防止被注入的 agent 往独占持有的 Profile 里放扩展或代理设置、经保存长期驻留（M8 安全审查 F2）。
+RUN mkdir -p /etc/chromium/policies/managed \
+ && printf '%s\n' '{' \
+      '  "ExtensionInstallBlocklist": ["*"],' \
+      '  "ProxySettings": { "ProxyMode": "direct" }' \
+      '}' > /etc/chromium/policies/managed/oryn.json \
+ && chmod 0644 /etc/chromium/policies/managed/oryn.json && jq -e . /etc/chromium/policies/managed/oryn.json
 ENV ORYN_DESKTOP=1
 
 # Node.js（当前 LTS），校验官方 SHASUMS256

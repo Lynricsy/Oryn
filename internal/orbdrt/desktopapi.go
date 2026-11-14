@@ -72,13 +72,13 @@ func profileModeQuery(req *http.Request) (apigen.BrowserProfileAccess, error) {
 func withMode(m profileMarker, mode apigen.BrowserProfileAccess) profileMarker {
 	if mode == apigen.BrowserProfileAccessReadonly {
 		if m.access() != apigen.BrowserProfileAccessReadonly {
-			m.ReadonlyReason, m.ReadonlyBy = apigen.BrowserProfileReadonlyReasonRequested, ""
+			m.ReadonlyReason = apigen.BrowserProfileReadonlyReasonRequested
 		}
 		m.Mode = mode
 		return m
 	}
 	m.Mode = apigen.BrowserProfileAccessExclusive
-	m.ReadonlyReason, m.ReadonlyBy = "", ""
+	m.ReadonlyReason = ""
 	return m
 }
 
@@ -217,8 +217,10 @@ func (d *desktop) handleProfileDelete(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleProfileExport 流式输出 Profile 归档。closed：先停浏览器，成功后 dirty=false；live：浏览器在运行时
-// 对其进程组 SIGSTOP，归档结束（无论成败）SIGCONT，dirty 不变。中途出错直接断开（分块编码没有终止块）。
+// handleProfileExport 流式输出 Profile 归档。closed：先优雅关闭浏览器（Cookie 落盘），成功后 dirty=false；
+// live：浏览器在运行时先经 CDP 取一份持久 Cookie 快照（磁盘上的 Cookie 库可能落后约 30 秒），再对其进程组
+// SIGSTOP，归档结束（无论成败）SIGCONT，dirty 不变。开始输出前按还原上限预估条目数与解包字节，超限回
+// 413 too_large；中途出错直接断开（分块编码没有终止块）。
 func (d *desktop) handleProfileExport(w http.ResponseWriter, req *http.Request) {
 	closed := false
 	switch v := req.URL.Query().Get("mode"); v {
@@ -242,16 +244,30 @@ func (d *desktop) handleProfileExport(w http.ResponseWriter, req *http.Request) 
 		writeErr(w, errf(http.StatusConflict, "profile_readonly", "the browser profile is a read-only copy"))
 		return
 	}
+	var cookies []byte
 	if closed {
 		d.stopBrowserLocked(browserStopGrace)
 	} else if pid := d.browserPid(); pid != 0 {
+		if port := d.devtoolsPort(); port != 0 {
+			c, err := liveCookies(req.Context(), port)
+			if err != nil {
+				// 取不到就只存磁盘上的那份（可能缺最近约 30 秒的 Cookie 变化），不让整次保存失败。
+				d.log.Warn("live cookie snapshot failed; exporting the on-disk cookie store only", "err", err)
+			} else {
+				cookies = c
+			}
+		}
 		_ = syscall.Kill(-pid, syscall.SIGSTOP)
 		defer func() { _ = syscall.Kill(-pid, syscall.SIGCONT) }()
+	}
+	if err := checkProfileLimits(d.profileDir(), cookies); err != nil {
+		writeErr(w, archiveErr(err))
+		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("X-Oryn-Profile-Id", m.ProfileID)
 	w.WriteHeader(http.StatusOK)
-	if err := writeProfileArchive(w, d.profileDir()); err != nil {
+	if err := writeProfileArchive(w, d.profileDir(), cookies); err != nil {
 		d.log.Warn("browser profile export failed", "profile", m.ProfileID, "err", err)
 		panic(http.ErrAbortHandler)
 	}

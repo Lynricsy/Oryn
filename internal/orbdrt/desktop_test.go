@@ -53,6 +53,7 @@ func newDeskEnv(t *testing.T, mutate func(*Config)) *deskEnv {
 		c.DesktopCDPAddr = "127.0.0.1:0"
 		c.DesktopTmpDir = e.x11
 		c.DesktopBackoff = func(int) time.Duration { return 5 * time.Millisecond }
+		c.DesktopUserNS = func() bool { return true }
 		c.OnDesktopState = func(s apigen.LinkCtlDesktopStateParams) {
 			e.mu.Lock()
 			e.states = append(e.states, s)
@@ -303,10 +304,10 @@ func TestDesktopBrowserLifecycle(t *testing.T) {
 
 	pid := e.rt.desk.browserPid()
 	require.Positive(t, pid)
+	// user namespace 可用：不带 --no-sandbox；从不带 --test-type 与 --disk-cache-dir（缓存留在 Profile 目录里）。
 	assert.Equal(t, []string{
 		"--user-data-dir=" + e.profile(), "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check",
-		"--password-store=basic", "--no-sandbox", "--test-type", "--hide-crash-restore-bubble", "--start-maximized",
-		"--disk-cache-dir=" + e.home(".cache", "oryn", "chromium-cache"), "about:blank",
+		"--password-store=basic", "--hide-crash-restore-bubble", "--start-maximized", "about:blank",
 	}, procArgs(t, pid)[1:])
 	assert.Contains(t, procEnv(t, pid), "DISPLAY=:1")
 	assert.Positive(t, e.rt.desk.devtoolsPort())
@@ -315,12 +316,14 @@ func TestDesktopBrowserLifecycle(t *testing.T) {
 	require.NoError(t, e.rt.desk.startBrowser(context.Background()))
 	assert.Equal(t, pid, e.rt.desk.browserPid())
 
-	// 停止：SIGTERM 让它干净退出。
+	// 停止：经 CDP Browser.close 走完整的关闭流程，不发 SIGTERM。
 	var snap apigen.LinkCtlDesktopStateParams
 	o.json(http.MethodPost, "/desktop/browser/stop", nil, nil, http.StatusOK, &snap)
 	assert.Equal(t, apigen.OrbBrowserStatusStopped, snap.Browser)
 	_, err = os.Stat(e.profile("Default", "exit-clean"))
-	require.NoError(t, err, "browser got SIGTERM and exited cleanly")
+	require.NoError(t, err, "browser closed itself via Browser.close")
+	_, err = os.Stat(e.profile("Default", "exit-term"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "no SIGTERM")
 	assert.Zero(t, e.rt.desk.devtoolsPort())
 
 	// 本机 API 的启动。
@@ -397,6 +400,19 @@ func TestProfileIncluded(t *testing.T) {
 		{"Profile 1/x", false, false},
 		{"Local State", true, false},
 		{"Default", false, false},
+		{"Default/Extensions", true, false},
+		{"Default/Extensions/abc/1.0/manifest.json", false, false},
+		{"Default/Local Extension Settings/abc/000003.log", false, false},
+		{"Default/Extension State", true, false},
+		{"Default/Extension Rules/x", false, false},
+		{"Default/Extension Scripts/x", false, false},
+		{"Default/Managed Extension Settings/x", false, false},
+		{"Default/Sync Extension Settings/x", false, false},
+		{"Default/Extension Cookies", false, false},
+		{"Default/Extension Cookies-journal", false, false},
+		{"Default/Preferences", false, true},
+		{"Default/Secure Preferences", false, true},
+		{"Default/oryn-cookies.json", false, true},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, profileIncluded(c.rel, c.isDir), "%q dir=%v", c.rel, c.isDir)
@@ -435,23 +451,27 @@ func archiveNames(t *testing.T, b []byte) []string {
 func TestProfileArchiveRoundTrip(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src, map[string]string{
-		"Local State":                     "{}",
-		"Default/Cookies":                 "c1",
-		"Default/Network/Cookies":         "c2",
-		"Default/Local Storage/leveldb/x": "ls",
-		"Default/Cache/x":                 "cache",
-		"Default/Code Cache/js/x":         "code",
-		"Default/Sessions/Session_1":      "s",
-		"Default/Preferences.tmp":         "tmp",
-		"SingletonCookie":                 "x",
-		"Crashpad/settings.dat":           "x",
-		"Profile 1/Cookies":               "x",
+		"Local State":                            "{}",
+		"Default/Cookies":                        "c1",
+		"Default/Network/Cookies":                "c2",
+		"Default/Local Storage/leveldb/x":        "ls",
+		"Default/Cache/x":                        "cache",
+		"Default/Code Cache/js/x":                "code",
+		"Default/Sessions/Session_1":             "s",
+		"Default/Preferences.tmp":                "tmp",
+		"SingletonCookie":                        "x",
+		"Crashpad/settings.dat":                  "x",
+		"Profile 1/Cookies":                      "x",
+		"Default/Extensions/abc/manifest.json":   "{}",
+		"Default/Local Extension Settings/abc/x": "x",
+		"Default/Extension State/LOG":            "x",
+		"Default/Extension Cookies":              "x",
 	})
 	require.NoError(t, os.Symlink("Cookies", filepath.Join(src, "Default", "link")))
 
 	var a, b bytes.Buffer
-	require.NoError(t, writeProfileArchive(&a, src))
-	require.NoError(t, writeProfileArchive(&b, src))
+	require.NoError(t, writeProfileArchive(&a, src, nil))
+	require.NoError(t, writeProfileArchive(&b, src, nil))
 	assert.Equal(t, a.Bytes(), b.Bytes(), "same directory → identical bytes")
 	assert.Equal(t, []string{"Default/Cookies", "Default/Local Storage/leveldb/x", "Default/Network/Cookies", "Local State"}, archiveNames(t, a.Bytes()))
 
@@ -461,12 +481,12 @@ func TestProfileArchiveRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "c2", string(got))
 	var c bytes.Buffer
-	require.NoError(t, writeProfileArchive(&c, dst))
+	require.NoError(t, writeProfileArchive(&c, dst, nil))
 	assert.Equal(t, a.Bytes(), c.Bytes(), "restored directory archives to the same bytes")
 
 	// 不存在的目录 = 空 Profile。
 	var empty bytes.Buffer
-	require.NoError(t, writeProfileArchive(&empty, filepath.Join(t.TempDir(), "missing")))
+	require.NoError(t, writeProfileArchive(&empty, filepath.Join(t.TempDir(), "missing"), nil))
 	assert.Empty(t, archiveNames(t, empty.Bytes()))
 }
 
@@ -544,6 +564,24 @@ func TestExtractProfileArchiveRejects(t *testing.T) {
 	assert.Equal(t, "too_large", codeOf(err), "unpacked size limit")
 
 	require.NoError(t, extract(mkTarGz(t, tarEntry{hdr: tar.Header{Typeflag: tar.TypeDir, Name: "Default/"}}, reg("Default/Cookies", "ok"))))
+
+	// 旧版 orbd 存进去的扩展条目：跳过不解，归档仍可装载；路径检查照旧先做。
+	dst := filepath.Join(t.TempDir(), "profile")
+	require.NoError(t, extractProfileArchive(bytes.NewReader(mkTarGz(t,
+		tarEntry{hdr: tar.Header{Typeflag: tar.TypeDir, Name: "Default/Extensions/"}},
+		reg("Default/Extensions/abc/1.0/manifest.json", "{}"),
+		reg("Default/Local Extension Settings/abc/000003.log", "x"),
+		reg("Default/Extension Cookies", "x"),
+		reg("Default/Cookies", "ok"),
+	)), dst))
+	got, err := os.ReadFile(filepath.Join(dst, "Default", "Cookies"))
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(got))
+	for _, p := range []string{"Extensions", "Local Extension Settings", "Extension Cookies"} {
+		_, err := os.Stat(filepath.Join(dst, "Default", p))
+		assert.ErrorIs(t, err, os.ErrNotExist, p)
+	}
+	assert.Equal(t, "invalid_archive", codeOf(extract(mkTarGz(t, reg("Default/Extensions/../../x", "x")))))
 }
 
 // ---- 本机 API ----
@@ -553,7 +591,7 @@ func archiveOf(t *testing.T, files map[string]string) []byte {
 	dir := t.TempDir()
 	writeTree(t, dir, files)
 	var buf bytes.Buffer
-	require.NoError(t, writeProfileArchive(&buf, dir))
+	require.NoError(t, writeProfileArchive(&buf, dir, nil))
 	return buf.Bytes()
 }
 
@@ -703,13 +741,14 @@ func TestDesktopProfileModeCtl(t *testing.T) {
 		}
 		return ""
 	}
-	params := apigen.LinkCtlProfileModeParams{ProfileID: testProfileB, Mode: apigen.BrowserProfileAccessReadonly, Reason: apigen.BrowserProfileReadonlyReasonTakenOver, By: new("Thread B")}
+	// 旧版控制面会带上接管方的线程标题与 id：orbd 不采用、不落盘、不上报（安全审查 F5）。
+	params := map[string]any{"profileId": testProfileB, "mode": "readonly", "reason": "taken_over", "by": "Thread B", "byThreadId": "T-0193a5d2-0000-7000-8000-000000000001"}
 	assert.Equal(t, "profile_mismatch", ctlCode(e.cp.call(t, string(apigen.MethodProfileMode), params, nil)))
-	params.ProfileID = testProfileA
-	params.Mode = apigen.BrowserProfileAccessExclusive
+	params["profileId"] = testProfileA
+	params["mode"] = "exclusive"
 	assert.Equal(t, link.CodeInvalidParams, ctlCode(e.cp.call(t, string(apigen.MethodProfileMode), params, nil)))
 
-	params.Mode = apigen.BrowserProfileAccessReadonly
+	params["mode"] = "readonly"
 	n := e.cp.notifCount()
 	var ok apigen.LinkCtlOkResult
 	require.NoError(t, e.cp.call(t, string(apigen.MethodProfileMode), params, &ok))
@@ -717,10 +756,14 @@ func TestDesktopProfileModeCtl(t *testing.T) {
 	m := e.marker()
 	assert.Equal(t, apigen.BrowserProfileAccessReadonly, m.Mode)
 	assert.Equal(t, apigen.BrowserProfileReadonlyReasonTakenOver, m.ReadonlyReason)
-	assert.Equal(t, "Thread B", m.ReadonlyBy)
-	// 浏览器照常运行；desktop.state 重发，带只读原因与接管方。
+	raw, err := os.ReadFile(e.home(".oryn", "desktop", "profile.json"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "Thread B")
+	assert.NotContains(t, string(raw), "T-0193a5d2")
+	// 浏览器照常运行；desktop.state 重发，带只读原因，不带接管方。
 	assert.Equal(t, pid, e.rt.desk.browserPid())
-	_, raw := e.cp.waitNotif(t, n, string(apigen.MethodDesktopState), nil)
+	_, raw = e.cp.waitNotif(t, n, string(apigen.MethodDesktopState), nil)
+	assert.NotContains(t, string(raw), "Thread B")
 	var st apigen.LinkCtlDesktopStateParams
 	require.NoError(t, json.Unmarshal(raw, &st))
 	assert.Equal(t, apigen.OrbBrowserStatusRunning, st.Browser)
@@ -729,8 +772,10 @@ func TestDesktopProfileModeCtl(t *testing.T) {
 	assert.Equal(t, apigen.BrowserProfileAccessReadonly, *st.ProfileMode)
 	require.NotNil(t, st.ReadonlyReason)
 	assert.Equal(t, apigen.BrowserProfileReadonlyReasonTakenOver, *st.ReadonlyReason)
-	require.NotNil(t, st.ReadonlyBy)
-	assert.Equal(t, "Thread B", *st.ReadonlyBy)
+	assert.Nil(t, st.ReadonlyBy)
+	sr, err := sockCall(t, e.rt, orbsock.MethodDesktopStatus, nil, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, string(sr), "Thread B", "oryn orb desktop status --json shows nothing about the taker")
 
 	resp, b = o.do(http.MethodGet, "/desktop/profile/export", url.Values{"mode": {"closed"}}, nil, nil)
 	assert.Equal(t, "profile_readonly", o.errCode(resp, b, http.StatusConflict))
@@ -757,10 +802,12 @@ func TestDesktopForeignMarkerCleared(t *testing.T) {
 	assert.Nil(t, e.rt.desk.snapshot().ProfileID)
 
 	// 自己的标记保留。
+	// 旧版 orbd 写的标记带着接管方的标题：读入后按现在的字段重写；旧版放在 Profile 外的磁盘缓存被删掉。
 	home2 := t.TempDir()
 	writeTree(t, home2, map[string]string{
-		".oryn/desktop/profile.json":            `{"orbId":"orb-test","profileId":"` + testProfileA + `","name":"Work","mode":"readonly"}`,
-		".oryn/desktop/profile/Default/Cookies": "mine",
+		".oryn/desktop/profile.json":                     `{"orbId":"orb-test","profileId":"` + testProfileA + `","name":"Work","mode":"readonly","readonlyReason":"taken_over","readonlyBy":"Thread X"}`,
+		".oryn/desktop/profile/Default/Cookies":          "mine",
+		".cache/oryn/chromium-cache/Cache_Data/f_000001": "cached response of the previous profile",
 	})
 	e2 := newDeskEnv(t, func(c *Config) { c.Home = home2 })
 	st := e2.rt.desk.snapshot()
@@ -770,6 +817,12 @@ func TestDesktopForeignMarkerCleared(t *testing.T) {
 	assert.Equal(t, apigen.BrowserProfileAccessReadonly, *st.ProfileMode)
 	_, err := os.Stat(filepath.Join(home2, ".oryn", "desktop", "profile", "Default", "Cookies"))
 	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join(home2, ".oryn", "desktop", "profile.json"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "Thread X")
+	assert.Contains(t, string(raw), `"readonlyReason":"taken_over"`)
+	_, err = os.Stat(filepath.Join(home2, ".cache", "oryn", "chromium-cache"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 // ---- 与 omp 的对接 ----

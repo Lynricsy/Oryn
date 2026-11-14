@@ -86,6 +86,9 @@ func TestDockerRealSmoke(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(capOut), "NET_RAW")
 	assert.Contains(t, string(capOut), "NET_ADMIN")
+	// seccomp 配置放行 user namespace（Chromium 沙箱所需）；默认配置下 unshare -U 会 EPERM。
+	nsOut, err := exec.Command("docker", "exec", orbID, "unshare", "-U", "true").CombinedOutput()
+	assert.NoError(t, err, "unshare -U inside the orb: %s", nsOut)
 	run(Job{Op: "snapshot", OrbID: orbID, SnapshotID: snap})
 	require.NoError(t, exec.Command("docker", "image", "inspect", snap).Run())
 

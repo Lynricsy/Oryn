@@ -94,6 +94,10 @@ type desktop struct {
 
 	cdpSem chan struct{}
 
+	// sandbox：容器允许建立 user namespace（docker 驱动给 orb 的 seccomp 配置放行），Chromium 用自己的
+	// 命名空间沙箱；否则只能 --no-sandbox。启动时探测一次。
+	sandbox bool
+
 	logsMu sync.Mutex
 	logs   map[string]*serviceLog
 }
@@ -133,7 +137,13 @@ func newDesktop(r *Runtime) *desktop {
 	if d.backoff == nil {
 		d.backoff = defaultDesktopBackoff
 	}
+	d.sandbox = r.cfg.DesktopUserNS()
+	if !d.sandbox {
+		d.log.Warn("user namespaces unavailable; Chromium will run with --no-sandbox")
+	}
 	d.loadMarker()
+	// 旧版 orbd 把磁盘缓存放在 Profile 目录之外（快照分叉、换 Profile 时不会被清掉）：删掉。
+	_ = os.RemoveAll(filepath.Join(d.r.home, ".cache", "oryn", "chromium-cache"))
 	// 上次装载中断留下的半成品。
 	_ = os.RemoveAll(d.profileNewDir())
 	return d
@@ -147,9 +157,7 @@ func (d *desktop) profileDir() string    { return filepath.Join(d.dir(), "profil
 func (d *desktop) profileNewDir() string { return filepath.Join(d.dir(), "profile.new") }
 func (d *desktop) markerPath() string    { return filepath.Join(d.dir(), "profile.json") }
 func (d *desktop) rcPath() string        { return filepath.Join(d.dir(), "openbox-rc.xml") }
-func (d *desktop) cacheDir() string {
-	return filepath.Join(d.r.home, ".cache", "oryn", "chromium-cache")
-}
+
 func (d *desktop) logPath(n string) string {
 	return filepath.Join(d.r.home, ".cache", "oryn", "logs", "desktop", n+".log")
 }
@@ -218,9 +226,6 @@ func (d *desktop) snapshotLocked() apigen.LinkCtlDesktopStateParams {
 		if mode == apigen.BrowserProfileAccessReadonly {
 			st.Dirty = false // 只读副本从不回写
 			st.ReadonlyReason = new(m.readonlyReason())
-			if m.ReadonlyBy != "" {
-				st.ReadonlyBy = new(m.ReadonlyBy)
-			}
 		}
 	}
 	return st
@@ -471,12 +476,18 @@ func (d *desktop) startBrowser(ctx context.Context) error {
 // errRetryStart：取得 opMu 之后发现条件已不满足（期间显示掉了或 Profile 被清空），回到等待。
 var errRetryStart = errors.New("desktop: retry browser start")
 
+// browserArgs 是 Chromium 的启动参数。没有 --disk-cache-dir：user-data-dir 不在 ~/.config 下时，HTTP 缓存
+// 默认就在 profile/Default/Cache 里——不进归档，清空或替换 Profile 时随目录一起删除。
 func (d *desktop) browserArgs() []string {
-	return []string{
+	args := []string{
 		"--user-data-dir=" + d.profileDir(), "--remote-debugging-port=0",
-		"--no-first-run", "--no-default-browser-check", "--password-store=basic", "--no-sandbox", "--test-type",
-		"--hide-crash-restore-bubble", "--start-maximized", "--disk-cache-dir=" + d.cacheDir(), "about:blank",
+		"--no-first-run", "--no-default-browser-check", "--password-store=basic",
 	}
+	if !d.sandbox {
+		// 没有可用的命名空间沙箱。不加 --test-type：保留 Chromium 自己「不受支持的命令行标志」警告条。
+		args = append(args, "--no-sandbox")
+	}
+	return append(args, "--hide-crash-restore-bubble", "--start-maximized", "about:blank")
 }
 
 // launchBrowser 在 opMu 下启动 Chromium 并等到 DevTools 就绪（20s）。调用方已把状态置为 starting。
@@ -499,10 +510,8 @@ func (d *desktop) launchBrowser(ctx context.Context) error {
 		return fail(errRetryStart)
 	}
 	dir := d.profileDir()
-	for _, p := range []string{dir, d.cacheDir()} {
-		if err := os.MkdirAll(p, 0o700); err != nil {
-			return fail(err)
-		}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fail(err)
 	}
 	// 单例锁里编码了主机名与 pid（快照分叉、换机器、崩溃后都会残留）；DevToolsActivePort 必须是这一次写的。
 	if des, err := os.ReadDir(dir); err == nil {
@@ -546,6 +555,8 @@ func (d *desktop) launchBrowser(ctx context.Context) error {
 		<-p.exited
 		return err
 	}
+	// 活体保存带来的 Cookie 快照：在任何人用上这个浏览器之前回灌。
+	d.restoreCookies(rctx, port)
 	d.mu.Lock()
 	if d.proc != p {
 		d.mu.Unlock()
@@ -632,33 +643,56 @@ func (d *desktop) onBrowserExit(p *browserProc) {
 	close(p.exited)
 }
 
-// stopBrowser 停止浏览器：SIGTERM → grace → 进程组 SIGKILL；已停止则无操作。
+// stopBrowser 优雅停止浏览器（见 stopBrowserLocked）；已停止则无操作。
 func (d *desktop) stopBrowser(grace time.Duration) {
 	d.opMu.Lock()
 	defer d.opMu.Unlock()
 	d.stopBrowserLocked(grace)
 }
 
-// stopBrowserLocked 同 stopBrowser，调用方持有 opMu。
+// stopBrowserLocked 同 stopBrowser，调用方持有 opMu。grace > 0 时先经 CDP `Browser.close` 让 Chromium
+// 走完整的关闭流程（Cookie、Local State 落盘），等主进程退出；拿不到 DevTools 时只对主进程 SIGTERM。
+// 不对进程组发 SIGTERM：那会让网络服务进程先于主进程死掉，还没写盘的 Cookie 就丢了（见 desktopcdp.go）。
+// grace 到期仍未退出，或 grace == 0，对进程组 SIGKILL。
 func (d *desktop) stopBrowserLocked(grace time.Duration) {
 	d.mu.Lock()
 	p := d.proc
+	port := d.devPort
 	d.mu.Unlock()
 	if p == nil {
 		return
 	}
 	if grace > 0 {
-		_ = syscall.Kill(-p.pid, syscall.SIGTERM)
-		t := time.NewTimer(grace)
+		ctx, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		d.requestClose(ctx, p, port)
 		select {
 		case <-p.exited:
-			t.Stop()
 			return
-		case <-t.C:
+		case <-ctx.Done():
+			d.log.Warn("browser did not exit in time; killing", "grace", grace)
 		}
 	}
 	_ = syscall.Kill(-p.pid, syscall.SIGKILL)
 	<-p.exited
+}
+
+// requestClose 请浏览器自行关闭：优先 CDP `Browser.close`；命令没能发出去（DevTools 不可用）时对主进程 SIGTERM。
+// 命令已发出但应答前连接断开，说明浏览器正在退出，不再补发信号（以免打断落盘）。
+func (d *desktop) requestClose(ctx context.Context, p *browserProc, port int) {
+	if port != 0 {
+		err := cdpCall(ctx, port, "Browser.close", nil, nil)
+		if err == nil || errors.Is(err, errCDPNoReply) {
+			return
+		}
+		select {
+		case <-p.exited:
+			return
+		default:
+		}
+		d.log.Warn("Browser.close failed; sending SIGTERM", "err", err)
+	}
+	_ = syscall.Kill(p.pid, syscall.SIGTERM)
 }
 
 // killBrowser 立即 SIGKILL 浏览器进程组并等它被回收（显示失效、运行时结束时用；不取 opMu）。

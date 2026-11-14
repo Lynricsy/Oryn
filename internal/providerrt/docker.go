@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -138,6 +139,15 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 		// 网络隔离另见 docs/deploy.md「安全」一节。
 		"--cap-drop", "NET_RAW", "--cap-drop", "NET_ADMIN",
 		"-e", "ORYN_URL", "-e", "ORYN_ORB_ID", "-e", "ORYN_ORB_TOKEN"}
+	if !hasSeccompOpt(d.Cfg.ExtraRunArgs) {
+		// docker CLI 在客户端读取 profile 文件并内联发给守护进程，create 返回后即可删除。
+		f, err := writeSeccompProfile()
+		if err != nil {
+			return err
+		}
+		defer os.Remove(f)
+		args = append(args, "--security-opt", "seccomp="+f)
+	}
 	args = append(args, d.Cfg.ExtraRunArgs...)
 	args = append(args, image, "orbd", "run")
 	// 令牌经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
@@ -151,6 +161,42 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 		return err
 	}
 	return d.run(ctx, out, nil, "start", j.OrbID)
+}
+
+// orbSeccompProfile 是 orb 容器的 seccomp 配置：moby/profiles 的 Docker 默认配置
+// （seccomp/default.json，提交 f862455628f78f84c937e967e4a03902fb1dee11）末尾追加一条规则，无条件放行
+// clone / unshare（含 CLONE_NEWUSER），让桌面上的 Chromium 能建立 user namespace 沙箱、不必 --no-sandbox。
+// 其余规则与默认配置相同（mount、setns、clone3 等仍按默认只给 CAP_SYS_ADMIN）。
+// 升级时取 moby/profiles 新版本的 default.json，再追加同一条规则。
+//
+//go:embed orb-seccomp.json
+var orbSeccompProfile []byte
+
+// hasSeccompOpt 报告 extra_run_args 里是否已自带 seccomp 配置（此时不再追加 Oryn 的配置）。
+func hasSeccompOpt(args []string) bool {
+	for _, a := range args {
+		if strings.Contains(a, "seccomp=") {
+			return true
+		}
+	}
+	return false
+}
+
+// writeSeccompProfile 把 orbSeccompProfile 写进一个新的临时文件并返回路径（调用方负责删除）。
+func writeSeccompProfile() (string, error) {
+	f, err := os.CreateTemp("", "oryn-orb-seccomp-*.json")
+	if err != nil {
+		return "", fmt.Errorf("docker: 写 seccomp 配置: %w", err)
+	}
+	_, err = f.Write(orbSeccompProfile)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("docker: 写 seccomp 配置: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // writeToken 在运行中的容器内写入令牌文件（令牌经 stdin 传入，不进 argv 与输出）。

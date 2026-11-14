@@ -86,6 +86,9 @@ type Config struct {
 	OnDesktopState func(apigen.LinkCtlDesktopStateParams)
 	DesktopBackoff func(n int) time.Duration
 	DesktopTmpDir  string
+	// DesktopUserNS 报告能否建立 user namespace（决定 Chromium 是否加 --no-sandbox）；nil = 真实探测
+	// （userNamespacesUsable）。测试用它固定结果。
+	DesktopUserNS func() bool
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -263,6 +266,9 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	if cfg.DesktopCDPAddr == "" {
 		cfg.DesktopCDPAddr = DefaultDesktopCDPAddr
+	}
+	if cfg.DesktopUserNS == nil {
+		cfg.DesktopUserNS = userNamespacesUsable
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)

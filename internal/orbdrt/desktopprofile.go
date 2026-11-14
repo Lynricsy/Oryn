@@ -21,8 +21,8 @@ import (
 
 // Profile 目录、标记、归档与还原（M8 计划 2.6）。Profile 的真相在控制面：orb 进入 ready 之前由控制面经
 // PUT / DELETE /desktop/profile 定下本地目录；标记文件记下当前目录对应哪个 Profile 与使用方式。
-// 归档只收 Chromium `Default` 子 profile 里的登录态（Cookie、Local Storage、IndexedDB、Preferences、扩展…），
-// 不收缓存与会话恢复数据；同一目录两次归档字节相同（控制面据此去重）。
+// 归档只收 Chromium `Default` 子 profile 里的登录态（Cookie、Local Storage、IndexedDB、Preferences…），
+// 不收缓存、会话恢复数据与扩展；同一目录两次归档字节相同（控制面据此去重）。
 
 // 归档上限（docs/protocol.md「M8 限额」）；变量便于测试调小。
 var (
@@ -37,9 +37,9 @@ type profileMarker struct {
 	ProfileID string                      `json:"profileId"`
 	Name      string                      `json:"name,omitempty"`
 	Mode      apigen.BrowserProfileAccess `json:"mode,omitempty"`
-	// ReadonlyReason / ReadonlyBy 只在 Mode=readonly 时有意义（taken_over 时 By 是接管方线程标题）。
+	// ReadonlyReason 只在 Mode=readonly 时有意义。不记接管方是谁：标记文件 agent 可读，
+	// 另一个线程的标题与 id 不该进入本 orb（接管方只在控制面视图里展示）。
 	ReadonlyReason apigen.BrowserProfileReadonlyReason `json:"readonlyReason,omitempty"`
-	ReadonlyBy     string                              `json:"readonlyBy,omitempty"`
 }
 
 // access 返回使用方式（缺省 exclusive）。
@@ -70,6 +70,12 @@ func (d *desktop) loadMarker() {
 	}
 	if err == nil && m.OrbID == d.r.cfg.OrbID {
 		d.marker = &m
+		// 旧版 orbd 写的标记可能带着接管方的线程标题（readonlyBy）：按现在的字段重写一遍。
+		if nb, merr := json.Marshal(m); merr == nil && string(append(nb, '\n')) != string(b) {
+			if err := d.writeMarker(m); err != nil {
+				d.log.Warn("rewrite profile marker", "err", err)
+			}
+		}
 		return
 	}
 	d.log.Info("discarding browser profile of another orb", "markerOrb", m.OrbID, "err", err)
@@ -117,10 +123,34 @@ func (d *desktop) commitMarker(m profileMarker, dirty *bool) error {
 
 // ---- 收录规则 ----
 
+// extensionEntries 是 `Default` 下与扩展有关的条目（目录整棵、或文件）。它们不进归档：被注入的 agent 可以往
+// 独占持有的 Profile 里放一个扩展，随保存传播到之后用这个 Profile 的每台 orb（安全审查 F2）。镜像里的
+// Chromium 受管策略另外禁止安装任何扩展。
+var extensionEntries = map[string]bool{
+	"Extensions":                 true,
+	"Local Extension Settings":   true,
+	"Extension State":            true,
+	"Extension Rules":            true,
+	"Extension Scripts":          true,
+	"Managed Extension Settings": true,
+	"Sync Extension Settings":    true,
+	"Extension Cookies":          true,
+	"Extension Cookies-journal":  true,
+}
+
+// isExtensionPath 报告相对路径是否落在 `Default` 下的扩展条目里。
+func isExtensionPath(rel string) bool {
+	parts := strings.Split(rel, "/")
+	return len(parts) >= 2 && parts[0] == "Default" && extensionEntries[parts[1]]
+}
+
 // profileIncluded 报告 user-data-dir 下的相对路径（`/` 分隔）是否进归档：顶层只收文件 `Local State` 与目录
-// `Default`；`Default` 之下，目录名含 `Cache` 或等于 `blob_storage` / `Session Storage` / `Sessions` 的整棵
-// 子树不收，文件名以 `.tmp` 结尾的不收。
+// `Default`；`Default` 之下，扩展条目（extensionEntries）不收，目录名含 `Cache` 或等于 `blob_storage` /
+// `Session Storage` / `Sessions` 的整棵子树不收，文件名以 `.tmp` 结尾的不收。
 func profileIncluded(rel string, isDir bool) bool {
+	if isExtensionPath(rel) {
+		return false
+	}
 	parts := strings.Split(rel, "/")
 	switch parts[0] {
 	case "Local State":
@@ -150,16 +180,10 @@ func profileIncluded(rel string, isDir bool) bool {
 
 // ---- 归档 ----
 
-// writeProfileArchive 把 dir 里收录的普通文件按相对路径排序写成 tar.gz：tar 头只带名字、大小、0600 与
-// 秒级 mtime（uid / gid / 用户名为空），gzip 用 BestSpeed 且头里不写名字与时间，内容不变时字节相同。
-// dir 不存在时写出空归档。
-func writeProfileArchive(w io.Writer, dir string) error {
-	gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
-	if err != nil {
-		return err
-	}
-	tw := tar.NewWriter(gz)
-	err = filepath.WalkDir(dir, func(p string, de fs.DirEntry, err error) error {
+// walkProfile 按相对路径的字典序遍历 dir 里收录的普通文件；skip 非空时跳过这个相对路径。
+// dir 不存在时什么都不做；遍历中途消失的条目忽略。
+func walkProfile(dir, skip string, fn func(p, rel string, de fs.DirEntry) error) error {
+	return filepath.WalkDir(dir, func(p string, de fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil // 根目录不存在（空 Profile）或遍历中途消失的条目
@@ -180,13 +204,88 @@ func writeProfileArchive(w io.Writer, dir string) error {
 			}
 			return nil
 		}
-		if !de.Type().IsRegular() || !profileIncluded(rel, false) {
+		if !de.Type().IsRegular() || !profileIncluded(rel, false) || rel == skip {
 			return nil
 		}
-		return addArchiveFile(tw, p, rel)
+		return fn(p, rel, de)
+	})
+}
+
+// archiveBudget 按还原时的同一套上限（maxProfileEntries / maxProfileUnpackedBytes）累计导出的条目与字节：
+// 保存一个之后无法装载的归档没有意义，超限的保存直接失败、保留旧修订。
+type archiveBudget struct {
+	entries int
+	total   int64
+}
+
+func (b *archiveBudget) admit(size int64) error {
+	b.entries++
+	b.total += size
+	if b.entries > maxProfileEntries {
+		return archiveTooLarge("browser profile has more than %d files", maxProfileEntries)
+	}
+	if b.total > maxProfileUnpackedBytes {
+		return archiveTooLarge("browser profile is larger than %d bytes", maxProfileUnpackedBytes)
+	}
+	return nil
+}
+
+// cookieSkip 是 cookies 非 nil 时 walkProfile 要跳过的磁盘文件（由新快照代替）。
+func cookieSkip(cookies []byte) string {
+	if cookies == nil {
+		return ""
+	}
+	return cookieSnapshotRel
+}
+
+// checkProfileLimits 在开始输出归档之前按文件大小预估条目数与解包字节（cookies 同 writeProfileArchive），
+// 超限返回 413 too_large。
+func checkProfileLimits(dir string, cookies []byte) error {
+	var b archiveBudget
+	err := walkProfile(dir, cookieSkip(cookies), func(_, _ string, de fs.DirEntry) error {
+		fi, err := de.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return b.admit(fi.Size())
+	})
+	if err == nil && cookies != nil {
+		err = b.admit(int64(len(cookies)))
+	}
+	return err
+}
+
+// writeProfileArchive 把 dir 里收录的普通文件按相对路径排序写成 tar.gz：tar 头只带名字、大小、0600 与
+// 秒级 mtime（uid / gid / 用户名为空），gzip 用 BestSpeed 且头里不写名字与时间，内容不变时字节相同。
+// dir 不存在时写出空归档。cookies 非 nil 时（活体导出且浏览器在运行）以它作为 cookieSnapshotRel 写在最后
+// （mtime 固定为 0），磁盘上同名的旧快照不收。超过条目数或解包字节上限即失败（too_large）。
+func writeProfileArchive(w io.Writer, dir string, cookies []byte) error {
+	gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
+	tw := tar.NewWriter(gz)
+	var b archiveBudget
+	err = walkProfile(dir, cookieSkip(cookies), func(p, rel string, _ fs.DirEntry) error {
+		return addArchiveFile(tw, p, rel, b.admit)
 	})
 	if err != nil {
 		return err
+	}
+	if cookies != nil {
+		if err := b.admit(int64(len(cookies))); err != nil {
+			return err
+		}
+		hdr := &tar.Header{Typeflag: tar.TypeReg, Name: cookieSnapshotRel, Size: int64(len(cookies)), Mode: 0o600, ModTime: time.Unix(0, 0)}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(cookies); err != nil {
+			return err
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return err
@@ -194,7 +293,8 @@ func writeProfileArchive(w io.Writer, dir string) error {
 	return gz.Close()
 }
 
-func addArchiveFile(tw *tar.Writer, p, rel string) error {
+// addArchiveFile 把 p 作为 rel 写进归档；写之前把文件大小交给 admit 记账（超限即返回其错误）。
+func addArchiveFile(tw *tar.Writer, p, rel string, admit func(int64) error) error {
 	f, err := os.Open(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -209,6 +309,9 @@ func addArchiveFile(tw *tar.Writer, p, rel string) error {
 	}
 	if !fi.Mode().IsRegular() {
 		return nil
+	}
+	if err := admit(fi.Size()); err != nil {
+		return err
 	}
 	hdr := &tar.Header{
 		Typeflag: tar.TypeReg,
@@ -238,6 +341,7 @@ func archiveTooLarge(format string, args ...any) *apiError {
 
 // extractProfileArchive 把 tar.gz 解到 dir（dir 须不存在或为空）。只接受普通文件与目录；拒绝绝对路径、
 // 含 `..` 的路径、符号链接、硬链接、设备，以及收录规则之外的路径；超过条目数或解包字节上限即失败。
+// 扩展条目（旧版 orbd 存进去的）跳过不解，不算错误。
 // 失败时 dir 里可能留有部分内容，由调用方删除。
 func extractProfileArchive(r io.Reader, dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -277,6 +381,9 @@ func extractProfileArchive(r io.Reader, dir string) error {
 		if name == "" || strings.HasPrefix(name, "/") || path.Clean(name) != name || name == ".." ||
 			strings.HasPrefix(name, "../") || strings.Contains(name, "/../") || strings.HasSuffix(name, "/..") {
 			return invalidArchive("entry %q: invalid path", hdr.Name)
+		}
+		if isExtensionPath(name) {
+			continue
 		}
 		if !profileIncluded(name, isDir) {
 			return invalidArchive("entry %q: outside the browser profile", hdr.Name)
@@ -337,7 +444,7 @@ func wrapArchiveReadErr(err error) error {
 // ---- profile.mode（ctl） ----
 
 // setProfileMode 处理 orynd 的 profile.mode 请求：只在标记的 Profile 相同时生效，把标记改为只读、dirty=false，
-// 浏览器与标签页不动；之后导出一律 409 profile_readonly。
+// 浏览器与标签页不动；之后导出一律 409 profile_readonly。参数里的接管方（by / byThreadId）不采用、不落盘。
 func (d *desktop) setProfileMode(p apigen.LinkCtlProfileModeParams) (apigen.LinkCtlOkResult, error) {
 	if p.Mode != apigen.BrowserProfileAccessReadonly {
 		return apigen.LinkCtlOkResult{}, ctlErr(link.CodeInvalidParams, "mode %q: exclusive access is only granted by reloading the profile", p.Mode)
@@ -359,10 +466,6 @@ func (d *desktop) setProfileMode(p apigen.LinkCtlProfileModeParams) (apigen.Link
 	nm.ReadonlyReason = apigen.BrowserProfileReadonlyReasonTakenOver
 	if p.Reason.Valid() {
 		nm.ReadonlyReason = p.Reason
-	}
-	nm.ReadonlyBy = ""
-	if p.By != nil {
-		nm.ReadonlyBy = *p.By
 	}
 	if err := d.commitMarker(nm, new(false)); err != nil {
 		return apigen.LinkCtlOkResult{}, ctlErr("failed", "write profile marker: %v", err)

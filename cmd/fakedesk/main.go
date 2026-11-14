@@ -4,12 +4,17 @@
 //   - openbox：挂起直到被杀（SIGTERM 正常退出）。
 //   - chromium：解析 --user-data-dir；在临时端口上应答 `/json/version`，其它路径回显方法、路径与请求体；
 //     写 `DevToolsActivePort`（先写临时文件再 rename）；在 profile 里建 `Default/Cookies`；
-//     每收到一次 SIGCONT 往 `Default/sigcont` 追加一个字节；收到 SIGTERM 时往 `Default/exit-clean` 写一个字节再退出。
+//     每收到一次 SIGCONT 往 `Default/sigcont` 追加一个字节。
+//     `/devtools/browser/…` 是浏览器级 CDP（WebSocket）：Storage.getCookies / setCookies / clearCookies 操作内存里的
+//     Cookie 表，Browser.close 把它写进 `Default/fake-cookies.json`、写 `Default/exit-clean` 后退出。
+//     和真 Chromium 一样，Cookie 只在正常关闭时落盘：收到 SIGTERM 时只写 `Default/exit-term` 就退出，内存里的
+//     Cookie 丢失。启动时从 `Default/fake-cookies.json` 读回 Cookie 表。
 //
 // 用法：构建后以 Xtigervnc / openbox / chromium 三个名字的符号链接放进 PATH。
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +25,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+
+	"github.com/coder/websocket"
 )
 
 func main() {
@@ -102,6 +110,10 @@ func runChromium(args []string) error {
 	if err := os.WriteFile(filepath.Join(def, "Cookies"), []byte("fake cookies"), 0o600); err != nil {
 		return err
 	}
+	jar, err := loadJar(filepath.Join(def, "fake-cookies.json"))
+	if err != nil {
+		return err
+	}
 	sig := make(chan os.Signal, 4)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGCONT)
 
@@ -117,6 +129,14 @@ func runChromium(args []string) error {
 			"Browser":              "FakeChromium/1.0",
 			"webSocketDebuggerUrl": "ws://" + r.Host + "/devtools/browser/fake",
 		})
+	})
+	mux.HandleFunc("/devtools/browser/", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		jar.serve(r.Context(), c, def)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -140,9 +160,125 @@ func runChromium(args []string) error {
 				_ = f.Close()
 			}
 		case syscall.SIGTERM:
-			_ = os.WriteFile(filepath.Join(def, "exit-clean"), []byte{1}, 0o600)
+			_ = os.WriteFile(filepath.Join(def, "exit-term"), []byte{1}, 0o600)
 			return nil
 		}
 	}
 	return nil
+}
+
+// cookieJar 是假浏览器内存里的 Cookie 表（键 = domain、path、name），按插入顺序返回。
+type cookieJar struct {
+	mu      sync.Mutex
+	cookies []map[string]any
+}
+
+func loadJar(path string) (*cookieJar, error) {
+	j := &cookieJar{}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return j, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return j, json.Unmarshal(b, &j.cookies)
+}
+
+func cookieKey(c map[string]any) string {
+	return fmt.Sprint(c["domain"], "\x00", c["path"], "\x00", c["name"])
+}
+
+// set 按键覆盖或追加；与 CDP 一样，没有正的 expires 就是会话 Cookie。
+func (j *cookieJar) set(in []map[string]any) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, c := range in {
+		exp, _ := c["expires"].(float64)
+		c["session"] = exp <= 0
+		if exp <= 0 {
+			c["expires"] = -1
+		}
+		k := cookieKey(c)
+		replaced := false
+		for i, old := range j.cookies {
+			if cookieKey(old) == k {
+				j.cookies[i], replaced = c, true
+			}
+		}
+		if !replaced {
+			j.cookies = append(j.cookies, c)
+		}
+	}
+}
+
+// flush 把持久 Cookie 写盘（会话 Cookie 不写，同真 Chromium）。
+func (j *cookieJar) flush(path string) error {
+	j.mu.Lock()
+	keep := []map[string]any{}
+	for _, c := range j.cookies {
+		if s, _ := c["session"].(bool); !s {
+			keep = append(keep, c)
+		}
+	}
+	j.mu.Unlock()
+	b, err := json.Marshal(keep)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+// serve 处理一条浏览器级 CDP 连接。
+func (j *cookieJar) serve(ctx context.Context, c *websocket.Conn, def string) {
+	for {
+		_, b, err := c.Read(ctx)
+		if err != nil {
+			return
+		}
+		var req struct {
+			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(b, &req) != nil {
+			return
+		}
+		reply := map[string]any{"id": req.ID, "result": map[string]any{}}
+		switch req.Method {
+		case "Storage.getCookies":
+			j.mu.Lock()
+			list := append([]map[string]any{}, j.cookies...)
+			j.mu.Unlock()
+			reply["result"] = map[string]any{"cookies": list}
+		case "Storage.setCookies":
+			var p struct {
+				Cookies []map[string]any `json:"cookies"`
+			}
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				reply = map[string]any{"id": req.ID, "error": map[string]any{"code": -32602, "message": err.Error()}}
+				break
+			}
+			j.set(p.Cookies)
+		case "Storage.clearCookies":
+			j.mu.Lock()
+			j.cookies = nil
+			j.mu.Unlock()
+		case "Browser.close":
+			if err := j.flush(filepath.Join(def, "fake-cookies.json")); err != nil {
+				fmt.Fprintln(os.Stderr, "fakedesk chromium: flush cookies:", err)
+				os.Exit(1)
+			}
+			_ = os.WriteFile(filepath.Join(def, "exit-clean"), []byte{1}, 0o600)
+			out, _ := json.Marshal(reply)
+			_ = c.Write(ctx, websocket.MessageText, out)
+			os.Exit(0)
+		default:
+			reply = map[string]any{"id": req.ID, "error": map[string]any{"code": -32601, "message": "'" + req.Method + "' wasn't found"}}
+		}
+		out, _ := json.Marshal(reply)
+		if err := c.Write(ctx, websocket.MessageText, out); err != nil {
+			return
+		}
+	}
 }

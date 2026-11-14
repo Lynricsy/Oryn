@@ -4,9 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,7 +33,11 @@ case "$1 $2" in
   if [ -f "$FAKE_DOCKER_DIR/image" ]; then echo sha256:abc; exit 0; fi
   echo "Error: No such image: $5" >&2; exit 1;;
 esac
-if [ "$1" = create ]; then echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN" >> "$FAKE_DOCKER_DIR/log"; echo cid; fi
+if [ "$1" = create ]; then
+  echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN" >> "$FAKE_DOCKER_DIR/log"
+  for a in "$@"; do case "$a" in seccomp=*) cp "${a#seccomp=}" "$FAKE_DOCKER_DIR/seccomp.json"; echo "${a#seccomp=}" > "$FAKE_DOCKER_DIR/seccomp.path";; esac; done
+  echo cid
+fi
 if [ "$1" = cp ] && [ "$2" != -a ]; then
   if [ -f "$FAKE_DOCKER_DIR/tokenfile.tar" ]; then cat "$FAKE_DOCKER_DIR/tokenfile.tar"; exit 0; fi
   echo "Error response from daemon: Could not find the file /home/user/.oryn/orb-token in container x" >&2; exit 1
@@ -56,7 +62,7 @@ func newFakeDocker(t *testing.T) *fakeDockerEnv {
 
 func (f *fakeDockerEnv) set(t *testing.T, state string, image bool) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, "state"), []byte(state), 0o644))
-	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin"} {
+	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin", "seccomp.json", "seccomp.path"} {
 		_ = os.Remove(filepath.Join(f.dir, n))
 	}
 	if image {
@@ -64,10 +70,13 @@ func (f *fakeDockerEnv) set(t *testing.T, state string, image bool) {
 	}
 }
 
+// seccompArg 把日志里 seccomp 临时文件的路径换成固定占位符。
+var seccompArg = regexp.MustCompile(`seccomp=\S+`)
+
 func (f *fakeDockerEnv) log(t *testing.T) []string {
 	b, err := os.ReadFile(filepath.Join(f.dir, "log"))
 	require.NoError(t, err)
-	return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	return strings.Split(strings.TrimRight(seccompArg.ReplaceAllString(string(b), "seccomp=PROFILE"), "\n"), "\n")
 }
 
 func TestDockerDriverCommands(t *testing.T) {
@@ -87,7 +96,7 @@ func TestDockerDriverCommands(t *testing.T) {
 	createArgs := func(image, cpus, mem string) string {
 		return "create --init --name orb-x --hostname orb-x --label oryn-orb=1 --cpus " + cpus + " --memory " + mem +
 			" --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN" +
-			" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --runtime runc " + image + " orbd run"
+			" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --security-opt seccomp=PROFILE --runtime runc " + image + " orbd run"
 	}
 	cpFrom := "cp orb-x:/home/user/.oryn/orb-token -"
 	writeToken := "exec -i orb-x sh -c " + writeTokenScript
@@ -160,6 +169,51 @@ func TestDockerDriverCommands(t *testing.T) {
 		body, _ := io.ReadAll(tr)
 		assert.Equal(t, "oot_tok", string(body))
 		assert.NotContains(t, out.String(), "oot_tok")
+	})
+
+	t.Run("new containers get the userns-enabled seccomp profile; the temp file is removed", func(t *testing.T) {
+		fd.set(t, "missing", false)
+		require.NoError(t, d.Exec(context.Background(), spawn(""), newTailBuffer(1<<16)))
+		b, err := os.ReadFile(filepath.Join(fd.dir, "seccomp.json"))
+		require.NoError(t, err)
+		assert.Equal(t, orbSeccompProfile, b)
+		var prof struct {
+			DefaultAction string `json:"defaultAction"`
+			Syscalls      []struct {
+				Names    []string        `json:"names"`
+				Action   string          `json:"action"`
+				Args     json.RawMessage `json:"args"`
+				Includes json.RawMessage `json:"includes"`
+				Excludes json.RawMessage `json:"excludes"`
+			} `json:"syscalls"`
+		}
+		require.NoError(t, json.Unmarshal(b, &prof))
+		assert.Equal(t, "SCMP_ACT_ERRNO", prof.DefaultAction)
+		unconditional := map[string]bool{}
+		for _, s := range prof.Syscalls {
+			if s.Action == "SCMP_ACT_ALLOW" && s.Args == nil && s.Includes == nil && s.Excludes == nil {
+				for _, n := range s.Names {
+					unconditional[n] = true
+				}
+			}
+		}
+		assert.True(t, unconditional["clone"] && unconditional["unshare"], "clone / unshare allowed without CAP_SYS_ADMIN")
+		assert.False(t, unconditional["mount"] || unconditional["setns"], "the rest stays as in Docker's default profile")
+		p, err := os.ReadFile(filepath.Join(fd.dir, "seccomp.path"))
+		require.NoError(t, err)
+		_, err = os.Stat(strings.TrimSpace(string(p)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "temp profile removed after spawn")
+	})
+
+	t.Run("extra_run_args with their own seccomp option win", func(t *testing.T) {
+		fd.set(t, "missing", false)
+		own := NewDocker(config.Docker{Image: "oryn-orb:dev", DefaultType: "small", ExtraRunArgs: []string{"--security-opt", "seccomp=unconfined"},
+			Types: map[string]config.DockerType{"small": {CPUs: 2, Memory: "4g"}}})
+		require.NoError(t, own.Exec(context.Background(), spawn(""), newTailBuffer(1<<16)))
+		raw, err := os.ReadFile(filepath.Join(fd.dir, "log"))
+		require.NoError(t, err)
+		assert.Contains(t, string(raw), "-e ORYN_ORB_TOKEN --security-opt seccomp=unconfined oryn-orb:dev orbd run")
+		assert.Equal(t, 1, strings.Count(string(raw), "seccomp="))
 	})
 
 	t.Run("pause missing container fails", func(t *testing.T) {
