@@ -25,6 +25,7 @@ import {
 	type GroupDim,
 	groupName,
 	metricOf,
+	modelOf,
 	OTHER_KEY,
 	tokensOf,
 	vizColor,
@@ -143,11 +144,16 @@ export function UsageTab({
 
 	const total = totals.data?.total;
 	const groups = main.data?.groups ?? [];
-	const series = groups.map((g, i) => ({
-		key: g.key,
-		label: groupName(params.by, g, t).name,
-		color: vizColor(i, g.key),
-	}));
+	const series = groups.map((g, i) => {
+		const { name, title } = groupName(params.by, g, t);
+		return {
+			key: g.key,
+			label: name,
+			title,
+			color: vizColor(i, g.key),
+			model: modelOf(params.by, g.key),
+		};
+	});
 	const points = main.data?.series ?? [];
 	const metric = params.metric;
 	const values = points.map((p) =>
@@ -257,6 +263,7 @@ export function UsageTab({
 				key: g.key,
 				name,
 				title,
+				model: modelOf(dim, g.key),
 				primary: formatCost(g.costUsd),
 				share: sum > 0 ? g.costUsd / sum : 0,
 				cells: usageCells(g),

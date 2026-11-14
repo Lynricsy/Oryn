@@ -9,6 +9,11 @@ import type { Grain, MetricKey } from "./statsParams";
 /** 服务端把排名之外的组折叠成的键。 */
 export const OTHER_KEY = "__other__";
 
+/** 按模型分组时该组的 `<provider>/<model>`（配品牌 logo）；折叠项、空键与其它维度为 undefined。 */
+export function modelOf(dim: string, key: string): string | undefined {
+	return dim === "model" && key !== "" && key !== OTHER_KEY ? key : undefined;
+}
+
 /** 系列色：按排名取 `--viz-1…8`，折叠项与第 9 项起用 `--viz-other`。 */
 export function vizColor(rank: number, key: string): string {
 	return key === OTHER_KEY || rank >= 8 ? "--viz-other" : `--viz-${rank + 1}`;

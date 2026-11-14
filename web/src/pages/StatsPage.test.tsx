@@ -160,6 +160,26 @@ describe("StatsPage 用量", () => {
 		expect(kpi.parentElement?.className).toMatch(/\bgrid\b/);
 	});
 
+	it("模型名是「品牌 logo + 淡色短名」：按模型表的行与主图图例带 logo，全名在 title；项目表不带", async () => {
+		mount("/stats/usage");
+		const table = await screen.findByTestId("table-model");
+		const row = (await within(table).findAllByRole("button")).find(
+			(b) => b.getAttribute("data-row-key") === "anthropic/claude-sonnet-5",
+		) as HTMLElement;
+		expect(row.querySelector("[data-brand=anthropic]")).not.toBeNull();
+		const name = row.querySelector("[data-model-name]") as HTMLElement;
+		expect(name).toHaveAttribute("title", "anthropic/claude-sonnet-5");
+		expect(within(name).getByText("sonnet-5")).toHaveClass("text-muted");
+		// 主图图例同一写法
+		const legend = screen
+			.getAllByTitle("anthropic/claude-sonnet-5")
+			.find((el) => el.tagName === "LI") as HTMLElement;
+		expect(legend.querySelector("[data-brand=anthropic]")).not.toBeNull();
+		const projectTable = await screen.findByTestId("table-project");
+		await within(projectTable).findAllByRole("button");
+		expect(projectTable.querySelector("[data-brand]")).toBeNull();
+	});
+
 	it("点项目表的一行设为筛选：URL 带 project，之后的请求都带它", async () => {
 		mount("/stats/usage");
 		const table = await screen.findByTestId("table-project");

@@ -1,5 +1,6 @@
 /** 图表浮层（玻璃材质的 HTML 元素，`data-testid="chart-tooltip"`）：标题 + 各系列的值 + 合计。 */
 import type { ReactNode } from "react";
+import { ModelLogo } from "../ui/ModelLogo";
 
 export interface TooltipRow {
 	key: string;
@@ -7,6 +8,8 @@ export interface TooltipRow {
 	/** CSS 变量名，如 `--viz-1` */
 	color: string;
 	value: string;
+	/** 系列是模型时的 `<provider>/<model>`：名字前放品牌 logo */
+	model?: string;
 }
 
 /**
@@ -47,6 +50,7 @@ export function ChartTooltip({
 							className="h-2 w-2 shrink-0 rounded-full"
 							style={{ background: `var(${r.color})` }}
 						/>
+						{r.model && <ModelLogo model={r.model} size={12} />}
 						<span className="min-w-0 flex-1 truncate text-muted">
 							{r.label}
 						</span>

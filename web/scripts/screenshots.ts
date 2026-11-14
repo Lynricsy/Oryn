@@ -1579,9 +1579,17 @@ const SCREENS: Screen[] = [
 				.locator("[data-testid=table-thread] [data-row-key]")
 				.first()
 				.waitFor({ timeout: 10_000 });
+			// 按模型表顶对齐：看品牌 logo + 淡色短名，下方接着项目 / 线程表
 			await page.evaluate(() => {
 				const el = document.querySelector("[data-testid=stats-scroll]");
-				el?.scrollTo({ top: el.scrollHeight * 0.55 });
+				const table = document.querySelector("[data-testid=table-model]");
+				if (!el || !table) return;
+				const top =
+					table.getBoundingClientRect().top -
+					el.getBoundingClientRect().top +
+					el.scrollTop -
+					12;
+				el.scrollTo({ top });
 			});
 			await settle(page, 400);
 		},

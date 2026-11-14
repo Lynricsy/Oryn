@@ -22,6 +22,8 @@ export interface ChartSeries {
 	label: string;
 	/** CSS 变量名，如 `--viz-1` */
 	color: string;
+	/** 系列是模型时的 `<provider>/<model>`：图例与浮层在名字前放品牌 logo */
+	model?: string;
 }
 
 /** 绘图区留白：左侧纵轴标签、底部横轴标签。 */
@@ -229,6 +231,7 @@ export function StackedBars({
 							key: s.key,
 							label: s.label,
 							color: s.color,
+							model: s.model,
 							value: format(v),
 						}))}
 					total={{

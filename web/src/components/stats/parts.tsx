@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useBreakpoint } from "../../lib/viewport";
 import { Card, Meter } from "../ui/data";
+import { ModelLogo } from "../ui/ModelLogo";
 import { IconButton, Spinner } from "../ui/primitives";
 
 export interface Kpi {
@@ -51,6 +52,8 @@ export interface BreakdownRow {
 	name: string;
 	/** 悬停提示（全名） */
 	title?: string;
+	/** 行是模型时的 `<provider>/<model>`：品牌 logo + 淡色短名（全站模型名同一写法） */
+	model?: string;
 	/** 主指标（成本或该标签的主指标）的文本 */
 	primary: string;
 	/** 主指标占合计的比例（0..1），画占比条 */
@@ -113,9 +116,20 @@ export function BreakdownTable({
 				{rows.map((r) => {
 					const body = (
 						<>
-							<span className="min-w-0 flex-1 truncate" title={r.title}>
-								{r.name}
-							</span>
+							{r.model ? (
+								<span
+									data-model-name=""
+									className="flex min-w-0 flex-1 items-center gap-1.5"
+									title={r.title}
+								>
+									<ModelLogo model={r.model} size={14} />
+									<span className="min-w-0 truncate text-muted">{r.name}</span>
+								</span>
+							) : (
+								<span className="min-w-0 flex-1 truncate" title={r.title}>
+									{r.name}
+								</span>
+							)}
 							{columns.map((c, i) => (
 								<span
 									key={c}
