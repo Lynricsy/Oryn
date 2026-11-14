@@ -4,3 +4,9 @@ orb_url: "http://172.18.0.1:7600"
 driver: docker
 docker:
   image: "oryn-orb:dev"
+  # 显式写 types 会替换默认的三档，所以三档也照抄；dind（M11a）需要宿主装好 sysbox（见 docs/deploy.md）
+  types:
+    small: { cpus: 2, memory: "4g" }
+    medium: { cpus: 4, memory: "8g" }
+    large: { cpus: 8, memory: "16g" }
+    dind: { cpus: 4, memory: "8g", runtime: sysbox-runc, nested_docker: true }

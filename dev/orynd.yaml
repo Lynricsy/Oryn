@@ -10,3 +10,6 @@ push: { fcm: { service_account_secret: "fcm/service-account" } }
 # 协调宿主（M9）：本机以 root 运行，沙箱降权到自动创建的专用账号 oryn-coord-<fnv32a(dir)>（不写 user 即自动）；
 # 仓库在 /root 下（该账号进不去），所以目录放在 /var/tmp；omp 用 scripts/fetch-core.sh 取到的那份
 coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }
+# M11a 验收用：全新 setup 只要跑过 1 秒就发布项目快照（默认 10 秒）；预热池全局最多 2 台（默认也是 2，写明便于 X19 核对）
+snapshots: { min_setup: "1s" }
+pool: { max_total: 2 }
