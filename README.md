@@ -68,7 +68,19 @@ oryn schedule ls / runs <ref> / pause <ref> / run <ref>   # 查看、暂停、�
 
 每次 `make image` 都用 `--pull --no-cache` 拉取目标架构的最新基础镜像、重新安装软件：x64 使用官方 [`archlinux:latest`](https://hub.docker.com/_/archlinux)，ARM64 使用每日构建、源码公开的社区 [`menci/archlinuxarm:latest`](https://github.com/Menci/docker-archlinuxarm)。两边的软件仓库独立，版本可以不同；优先跟进修复，不承诺版本固定。`scripts/build-orb-image.sh arm64` 构建 ARM64，宿主需原生 ARM64 或配置 QEMU/binfmt。
 
-跨架构离线冒烟还要求 QEMU/binfmt 正确处理 setuid（[`C` 凭据标志](https://docs.kernel.org/admin-guide/binfmt-misc.html)）；否则镜像可以构建，但 `sudo` 验收会失败。应在原生目标架构主机或支持该语义的模拟环境完成验收，不跳过权限检查。
+跨架构离线冒烟要求 QEMU/binfmt 正确处理 setuid（[`C` 凭据标志](https://docs.kernel.org/admin-guide/binfmt-misc.html)），否则 `sudo` 会报告 effective uid 不是 0。这是宿主注册配置，不需要更改镜像用户或跳过权限检查。
+
+Arch 宿主若使用 `qemu-user-static`，可将 `/usr/lib/binfmt.d/qemu-aarch64-static.conf` 复制到同名的 `/etc/binfmt.d/qemu-aarch64-static.conf`，仅把规则末尾 `FP` 改为 `FPC`，保留原有 ELF 匹配与解释器路径。`C` 让目标 ARM64 程序的 setuid 权限生效，因此解释器必须由 root 管理并受信任。写好覆盖文件后，只重新注册 ARM64，无需重启 Docker 或重载其它架构：
+
+下面的验收命令使用 `oryn-orb:arch-arm64` 标签；其它构建标签按实际 `IMAGE` 替换。
+
+```bash
+sudo sh -c 'printf "%s\n" -1 > /proc/sys/fs/binfmt_misc/qemu-aarch64'
+sudo /usr/lib/systemd/systemd-binfmt /etc/binfmt.d/qemu-aarch64-static.conf
+docker run --rm --platform linux/arm64 --network none --entrypoint bash oryn-orb:arch-arm64 /usr/local/lib/oryn/smoke-test.sh
+```
+
+验收应输出 `orb 镜像离线冒烟：通过`。回退时删除该本地覆盖，再注销这一条 ARM64 注册，并用 `/usr/lib/systemd/systemd-binfmt /usr/lib/binfmt.d/qemu-aarch64-static.conf` 加载发行版规则。构建脚本不会自动更改宿主全局 binfmt 配置。
 
 | 类别 | 预装能力 |
 |---|---|
