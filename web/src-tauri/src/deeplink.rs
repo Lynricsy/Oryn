@@ -161,11 +161,20 @@ mod tests {
 
     #[test]
     fn parse_system_hosts() {
-        for url in ["oryn://stats", "ORYN://Stats/", "oryn://stats?x=1", "oryn://stats#f"] {
+        for url in [
+            "oryn://stats",
+            "ORYN://Stats/",
+            "oryn://stats?x=1",
+            "oryn://stats#f",
+        ] {
             assert_eq!(parse(url).as_deref(), Some("/stats/usage"), "{url}");
         }
         for url in ["oryn://automations", "Oryn://AUTOMATIONS/?schedule=x"] {
-            assert_eq!(parse(url).as_deref(), Some("/settings/automations"), "{url}");
+            assert_eq!(
+                parse(url).as_deref(),
+                Some("/settings/automations"),
+                "{url}"
+            );
         }
         for bad in [
             "oryn://stats/evil",
