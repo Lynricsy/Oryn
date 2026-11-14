@@ -5,6 +5,9 @@ name: mobile
 #   `ios-check` 在 macOS 上不签名编译模拟器包。不签名、拿不到签名 secret。
 # - 推送 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致）：`release` 建草稿 Release →
 #   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产 → `publish` 发布。
+#   debug APK 只作为 workflow artifact（冒烟与下载调试用），从不上传到 Release：它可调试、允许明文流量，装错会泄露设备令牌。
+# - 签名 secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS）只存在 environment `mobile-release` 里，
+#   该 environment 的部署规则只允许 `mobile-v*` tag；只有声明了它的 `android-release` 能取到这些值，PR / 手动 / 分支运行一律拿不到。
 # flavor 由 gradle 属性 `orynDistribution=foss|gms` 选择（`ORG_GRADLE_PROJECT_orynDistribution`）；gms 需要
 # `app/google-services.json`，由 secret ANDROID_GOOGLE_SERVICES_JSON 在构建前写入（没有该 secret 时跳过 gms）。
 #
@@ -292,18 +295,28 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      # 只上传 release 签名的产物；按名字逐个列出，debug APK（*-debug.apk）留在 artifact 里，不进 Release
       - name: 上传 Release 资产
         if: steps.plan.outputs.build == 'true' && needs.prepare.outputs.is_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.apk dist/*.aab --clobber
+        run: |
+          set -euo pipefail
+          assets=("dist/Oryn_${LABEL}_android-${DIST}.apk" "dist/Oryn_${LABEL}_android-${DIST}.aab")
+          for f in "${assets[@]}"; do
+            [[ -f "$f" ]] || { echo "::error::缺少 release 产物 $f"; exit 1; }
+            [[ "$f" != *-debug.* ]] || { echo "::error::$f 是 debug 包，不得上传到 Release"; exit 1; }
+          done
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
-  # tag 发布的构建：与 android 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets
+  # tag 发布的构建：与 android 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets。
+  # 签名 secrets 只在 environment mobile-release 里（部署规则只放行 mobile-v* tag），本 job 是唯一声明它的 job。
   android-release:
     needs: [prepare, release]
     if: needs.prepare.outputs.is_release == 'true'
+    environment: mobile-release
     permissions:
       contents: write
     strategy: *android-strategy
