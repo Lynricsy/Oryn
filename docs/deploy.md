@@ -337,3 +337,51 @@ stats:
 - **手动重算**：`orynd --config /etc/oryn/orynd.yaml admin rebuild-stats` 全量重算（`--thread <id>` 只重算一个线程）。可在 orynd 运行时执行：每个事务很短，靠 SQLite 的 `busy_timeout` 排队。
 - **预算告警**：在统计页或 `oryn stats budget set` 设置日 / 月上限后，orynd 每 60 秒评估一次，越过预警线或上限时发一条不属于任何线程的系统通知（应用内、推送，以及在「设置 → 通知」里订阅了「预算告警」的渠道）；同一周期同一级别只发一次。
 - **统计数据的可信边界**：用量来自 orb 里的会话文件，orynd 入库时会钳制明显不合理的数值与字符串，但 orb 里的 agent 仍可以改写自己的会话来少报用量。预算告警是提醒，不是对抗恶意 agent 的计费防线；需要硬上限时，请在模型服务商一侧设置额度。
+
+## 10. 加速：项目快照、预热池与带 Docker 的 orb（M11a）
+
+```yaml
+# orynd.yaml（以下为默认值）
+snapshots: { enabled: true, max_age: "72h", max_depth: 16, min_setup: "10s", max_total_gb: 40 }
+pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
+```
+
+### 项目快照
+
+- **什么时候拍**：项目 orb 第一次 setup 成功、且 setup 用时不少于 `min_setup` 时，orynd 在它进入 ready 之前让 provider 把磁盘存成快照（docker 驱动是 `docker commit`，这期间容器暂停几秒）。只在 agent 从未在这台 orb 上运行过时才拍，所以快照里没有会话、附件、浏览器 Profile，也没有 agent 的改动。
+- **怎么用**：之后同一项目、同一 provider、同一类型的新 orb 从快照启动。orbd 会 `git fetch` 基线：HEAD 没变就跳过 setup，只跑 resume；HEAD 变了就在快照的环境上把 setup 增量重跑一遍，成功后发布新快照。所以 setup 脚本要能重复执行。
+- **什么时候失效**：项目的仓库、分支、setup 脚本、env 模式密钥（只看名字与修改时间）或 provider 的基础镜像有任何一项变化，旧快照就退役，下一个 orb 从基础镜像重来。重建 orb 镜像（`make image`）会让该 provider 上的全部快照失效。同一条血统最多复用 `max_age`（72 小时），最多刷新 `max_depth` 次。
+- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
+- **dispatch 驱动**：基础镜像只按引用名识别（`ref:<镜像>`），镜像内容变了但引用名不变时，要靠 72 小时上限兜底；它也不上报快照大小，所以配额对它不起作用。
+- **管理**：项目设置页的「项目快照」开关与快照表；CLI `oryn project snapshots ls <项目>`，`oryn project snapshots rm <项目> [--type <类型>]`。
+
+### 预热池
+
+在项目设置里把「预热 orb」设成 1–3，orynd 就会为这个项目保持这么多台已完成 setup、还没绑定线程的 orb，新线程直接认领，跳过 spawn 与 setup。全局最多 `pool.max_total` 台（设成 0 即关闭）。预热 orb 会常驻占用内存（空闲时照常被冻结），每 `max_age`（12 小时）换新一次。以下情况不预热：项目既没有仓库也没有 setup 脚本；`active_window`（72 小时）内没有新线程；provider 离线；上一台预热 orb 的 setup 失败后 1 小时内。请求了浏览器 Profile 的线程不认领预热 orb。
+
+### 带 Docker 的 orb（sysbox）
+
+agent 在 orb 里有免密 sudo，所以**不支持 `--privileged`**（那等于把宿主 root 交给 agent），也不做 rootless DinD（它要求放宽 seccomp、AppArmor 与 `/proc` 掩码，放宽的部分正好落在 agent 手里）。需要在 orb 里跑 Docker 时，用 [sysbox](https://github.com/nestybox/sysbox)：容器里的 root 映射到宿主上的非特权 uid，不放宽宿主侧的任何防线。
+
+1. **前置条件**：先按第 7 节建隔离网桥。sysbox 类型要保留 `NET_ADMIN` / `NET_RAW`，供内层 dockerd 建网桥、写 iptables；这两项只在容器自己的网络命名空间里生效，但同网桥上的其它 orb 要靠 `enable_icc=false` 隔开。
+2. **安装 sysbox**：Ubuntu / Debian 用官方 deb 包；Arch 用 AUR 的 `sysbox-ce-bin`。然后 `systemctl enable --now sysbox`。
+3. **向 Docker 注册 runtime**，合并进 `/etc/docker/daemon.json`：
+
+   ```json
+   {
+     "live-restore": true,
+     "runtimes": { "sysbox-runc": { "path": "/usr/bin/sysbox-runc", "runtimeArgs": ["--no-kernel-check"] } }
+   }
+   ```
+
+   这两项都可以用 `systemctl reload docker` 热加载，不需要重启 Docker。建议先单独加 `live-restore` 并 reload 一次，之后任何需要重启 Docker 的改动都不会停掉正在运行的容器。`--no-kernel-check` 是因为 sysbox 不认识较新的内核版本号。
+4. **只在创建 sysbox 容器失败时**：Docker ≥ 29.5 在某些宿主上需要在 `daemon.json` 里合并 `"features": {"time-namespaces": false}`，这一项必须重启 Docker。在 Docker 29.9.2 加内核 7.3 上实测不需要。
+5. **provider.yaml**：加一个类型。provider 启动时会预检：配置的 runtime 不在 `docker info` 里就拒绝启动。
+
+   ```yaml
+   docker:
+     types:
+       dind: { cpus: 4, memory: "8g", runtime: sysbox-runc, nested_docker: true }
+   ```
+
+这种类型的 orb 里，dockerd 由 orbd 托管（日志在 `~/.cache/oryn/logs/dockerd.log`）。setup 里拉取的镜像会随项目快照保存（拍快照前，orbd 会停掉内层正在运行的容器）。普通类型的 orb 里也有 `docker` 命令，但连不上守护进程。
