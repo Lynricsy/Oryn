@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +30,8 @@ type statsEnv struct {
 	now    func() time.Time
 	// localtime 返回 /etc/localtime 的链接目标（时区回落的第三步）。
 	localtime func() (string, error)
+	// isTTY 报告 w 是否是终端（决定 --csv 是否去掉控制字符）；nil = 都不是。
+	isTTY func(w io.Writer) bool
 }
 
 func defaultStatsEnv() statsEnv {
@@ -35,6 +39,10 @@ func defaultStatsEnv() statsEnv {
 		client:    newClient,
 		now:       time.Now,
 		localtime: func() (string, error) { return os.Readlink("/etc/localtime") },
+		isTTY: func(w io.Writer) bool {
+			f, ok := w.(*os.File)
+			return ok && isTerminal(f)
+		},
 	}
 }
 
@@ -254,8 +262,9 @@ func checkEnum(flag, v string, allowed []string) error {
 	return nil
 }
 
-// statsFetch 取统计接口：--json / --csv 时把响应体原样写到 stdout 并返回 true；否则把 JSON 解码到 out。
-func statsFetch(cmd *cobra.Command, c *apiClient, path string, q url.Values, o statsOutOpts, out any) (bool, error) {
+// statsFetch 取统计接口：--json / --csv 时把响应体写到 stdout 并返回 true；否则把 JSON 解码到 out。
+// --json 原样；--csv 写到文件 / 管道时原样，写到终端时去掉控制字符（只保留换行），防止服务端文本里的转义序列被终端执行。
+func statsFetch(cmd *cobra.Command, env statsEnv, c *apiClient, path string, q url.Values, o statsOutOpts, out any) (bool, error) {
 	if o.csv {
 		q.Set("format", "csv")
 	}
@@ -268,8 +277,48 @@ func statsFetch(cmd *cobra.Command, c *apiClient, path string, q url.Values, o s
 		return true, err
 	}
 	defer rc.Close()
-	_, err = io.Copy(cmd.OutOrStdout(), rc)
+	w := cmd.OutOrStdout()
+	if o.csv && env.isTTY != nil && env.isTTY(w) {
+		return true, copyTermSafe(w, rc)
+	}
+	_, err = io.Copy(w, rc)
 	return true, err
+}
+
+// isTermControl 与 threads.cleanTitle 同规则：控制字符（C0 / C1）与行 / 段分隔符。
+func isTermControl(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }
+
+// termText 是写到终端表格的服务端文本：控制字符换成空格并合并空白（同 threads.cleanTitle，不截断）。
+func termText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if isTermControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// copyTermSafe 把 r 复制到终端 w：换行保留，其余控制字符换成空格；非法 UTF-8 字节由 ReadRune 读成 U+FFFD。
+func copyTermSafe(w io.Writer, r io.Reader) error {
+	br := bufio.NewReader(r)
+	bw := bufio.NewWriter(w)
+	for {
+		c, _, err := br.ReadRune()
+		if err == io.EOF {
+			return bw.Flush()
+		}
+		if err != nil {
+			_ = bw.Flush()
+			return err
+		}
+		if c != '\n' && isTermControl(c) {
+			c = ' '
+		}
+		if _, err := bw.WriteRune(c); err != nil {
+			return err
+		}
+	}
 }
 
 // getJSON 取一个 JSON 响应的原始字节。
@@ -346,7 +395,7 @@ func runStatsUsage(cmd *cobra.Command, env statsEnv, o statsUsageOpts) error {
 		return err
 	}
 	var st apigen.UsageStats
-	if done, err := statsFetch(cmd, c, "/api/v1/stats/usage", q, o.out, &st); done || err != nil {
+	if done, err := statsFetch(cmd, env, c, "/api/v1/stats/usage", q, o.out, &st); done || err != nil {
 		return err
 	}
 	tw := newStatsTable(cmd.OutOrStdout())
@@ -375,7 +424,7 @@ func writeUsageRows(tw io.Writer, by string, groups []apigen.UsageStat, total *a
 }
 
 func writeUsageRow(tw io.Writer, key string, s apigen.UsageStat) {
-	fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n", key, s.Requests,
+	fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\n", termText(key), s.Requests,
 		fmtPct(float64(s.RequestErrors), float64(s.Requests)),
 		fmtTokens(s.InputTokens), fmtTokens(s.OutputTokens), fmtTokens(s.CacheReadTokens), fmtTokens(s.CacheWriteTokens),
 		fmtUSD(s.CostUsd), fmtTTFT(s.AvgTtftMs), fmtRate(s.TokensPerSecond), s.ToolCalls, s.Turns)
@@ -440,7 +489,7 @@ func newStatsToolsCmd(env statsEnv) *cobra.Command {
 				return err
 			}
 			var st apigen.ToolStats
-			if done, err := statsFetch(cmd, c, "/api/v1/stats/tools", q, o.out, &st); done || err != nil {
+			if done, err := statsFetch(cmd, env, c, "/api/v1/stats/tools", q, o.out, &st); done || err != nil {
 				return err
 			}
 			tw := newStatsTable(cmd.OutOrStdout())
@@ -461,7 +510,7 @@ func newStatsToolsCmd(env statsEnv) *cobra.Command {
 func writeToolRows(tw io.Writer, tools []apigen.ToolStat, total *apigen.ToolStat) {
 	fmt.Fprintln(tw, "TOOL\tCALLS\tERRORS\tERR%")
 	row := func(name string, s apigen.ToolStat) {
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%s\n", name, s.Calls, s.Errors, fmtPct(float64(s.Errors), float64(s.Calls)))
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%s\n", termText(name), s.Calls, s.Errors, fmtPct(float64(s.Errors), float64(s.Calls)))
 	}
 	for _, s := range tools {
 		name := s.Tool
@@ -513,13 +562,13 @@ func newStatsOrbsCmd(env statsEnv) *cobra.Command {
 				return err
 			}
 			var st apigen.OrbStats
-			if done, err := statsFetch(cmd, c, "/api/v1/stats/orbs", q, o.out, &st); done || err != nil {
+			if done, err := statsFetch(cmd, env, c, "/api/v1/stats/orbs", q, o.out, &st); done || err != nil {
 				return err
 			}
 			tw := newStatsTable(cmd.OutOrStdout())
 			fmt.Fprintln(tw, "KEY\tORBS\tRUNNING\tFROZEN\tFROZEN%\tSTOPPED\tSPAWNS\tWAKES\tFAILS")
 			row := func(key string, s apigen.OrbStat) {
-				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n", key, s.Orbs, fmtDur(s.RunningMs), fmtDur(s.FrozenMs),
+				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\n", termText(key), s.Orbs, fmtDur(s.RunningMs), fmtDur(s.FrozenMs),
 					fmtPct(float64(s.FrozenMs), float64(s.RunningMs+s.FrozenMs)), fmtDur(s.StoppedMs), s.Spawns, s.Wakes, s.Failures)
 			}
 			for _, g := range st.Groups {
@@ -603,7 +652,7 @@ func newStatsOutputCmd(env statsEnv) *cobra.Command {
 				return err
 			}
 			var st apigen.OutputStats
-			if done, err := statsFetch(cmd, c, "/api/v1/stats/output", q, o.out, &st); done || err != nil {
+			if done, err := statsFetch(cmd, env, c, "/api/v1/stats/output", q, o.out, &st); done || err != nil {
 				return err
 			}
 			tw := newStatsTable(cmd.OutOrStdout())
@@ -613,7 +662,7 @@ func newStatsOutputCmd(env statsEnv) *cobra.Command {
 				if s.ThreadsShipped > 0 {
 					per = fmtUSD(s.ShippedCostUsd / float64(s.ThreadsShipped))
 				}
-				fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", key, s.ThreadsCreated, s.ThreadsShipped, s.ThreadsArchived, s.Commits, s.Turns, per)
+				fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", termText(key), s.ThreadsCreated, s.ThreadsShipped, s.ThreadsArchived, s.Commits, s.Turns, per)
 			}
 			for _, g := range st.Groups {
 				key := g.Key
@@ -733,7 +782,7 @@ func runStatsThread(cmd *cobra.Command, env statsEnv, id, tzFlag string, asJSON 
 		}
 	}
 	tw := newStatsTable(stdout)
-	fmt.Fprintf(tw, "Thread\t%s  %s\n", th.ID, oneLine(th.Title, 60))
+	fmt.Fprintf(tw, "Thread\t%s  %s\n", termText(th.ID), oneLine(termText(th.Title), 60))
 	fmt.Fprintf(tw, "Window\t%s → now (%s)\n", time.UnixMilli(th.CreatedAt).In(loc).Format(time.DateTime), tz)
 	fmt.Fprintln(tw, "\nTotal:")
 	writeUsageRows(tw, "thread", nil, &total.Total)
@@ -760,7 +809,7 @@ func runStatsThread(cmd *cobra.Command, env statsEnv, id, tzFlag string, asJSON 
 		if s.Type != nil {
 			typ = *s.Type
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", *th.OrbID, typ, fmtDur(s.RunningMs), fmtDur(s.FrozenMs), fmtDur(s.StoppedMs), fmtDur(s.SetupMs))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", termText(*th.OrbID), termText(typ), fmtDur(s.RunningMs), fmtDur(s.FrozenMs), fmtDur(s.StoppedMs), fmtDur(s.SetupMs))
 	}
 	return tw.Flush()
 }
@@ -899,7 +948,7 @@ func printBudget(w io.Writer, st apigen.BudgetStatus) error {
 		warn = strconv.Itoa(b.WarnPct) + "%"
 	}
 	tw := newStatsTable(w)
-	fmt.Fprintf(tw, "Budget\t%s  tz %s  warn %s\n\n", state, b.Timezone, warn)
+	fmt.Fprintf(tw, "Budget\t%s  tz %s  warn %s\n\n", state, termText(b.Timezone), warn)
 	fmt.Fprintln(tw, "PERIOD\tKEY\tSPENT\tLIMIT\tUSED\tLEVEL")
 	for _, p := range []struct {
 		name string
@@ -910,7 +959,7 @@ func printBudget(w io.Writer, st apigen.BudgetStatus) error {
 			limit = fmtUSD(*p.p.LimitUsd)
 			used = fmtPct(p.p.SpentUsd, *p.p.LimitUsd)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.name, p.p.Key, fmtUSD(p.p.SpentUsd), limit, used, p.p.Level)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", p.name, termText(p.p.Key), fmtUSD(p.p.SpentUsd), limit, used, termText(string(p.p.Level)))
 	}
 	return tw.Flush()
 }

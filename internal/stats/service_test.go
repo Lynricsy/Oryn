@@ -2,6 +2,7 @@ package stats
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,12 +14,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // fakeOrbs 是假 orb 服务：EnsureUsable 返回固定结果，Do 按路径回固定 JSON 并记下请求。
+// stuckOrb 非空时，对该 orb 的 Do 先向 entered 发一次信号，再阻塞到 release 关闭（不理会 ctx，模拟卡住的 orbd）；
+// served 非空时，每个未卡住的应答在返回前把「orb 路径」发进去。
 type fakeOrbs struct {
 	mu        sync.Mutex
 	ensureErr error
@@ -26,6 +30,11 @@ type fakeOrbs struct {
 	commits   string
 	ensures   []string
 	reqs      []string
+
+	stuckOrb string
+	entered  chan struct{}
+	release  chan struct{}
+	served   chan string
 }
 
 func (o *fakeOrbs) EnsureUsable(_ context.Context, orbID, feature string, wake bool, _ time.Duration) error {
@@ -36,12 +45,20 @@ func (o *fakeOrbs) EnsureUsable(_ context.Context, orbID, feature string, wake b
 }
 
 func (o *fakeOrbs) Do(_ context.Context, orbID string, req *http.Request) (*http.Response, error) {
+	if o.stuckOrb != "" && orbID == o.stuckOrb {
+		o.entered <- struct{}{}
+		<-o.release
+		return nil, errors.New("released")
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.reqs = append(o.reqs, orbID+" "+req.URL.Path+"?"+req.URL.RawQuery)
 	body := o.status
 	if req.URL.Path == "/git/commits" {
 		body = o.commits
+	}
+	if o.served != nil {
+		o.served <- orbID + " " + req.URL.Path
 	}
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 }
@@ -93,12 +110,45 @@ func commitRows(t *testing.T, f *fixture, thread string) []string {
 	return out
 }
 
-const (
-	statusWithBase = `{"repo":true,"base":{"name":"main","ref":"refs/remotes/origin/main"},"files":[],"scope":"uncommitted","truncated":false}`
-	commitsJSON    = `{"commits":[{"sha":"c2","shortSha":"c2","subject":"b","authorName":"a","authorEmail":"e","ts":2000},{"sha":"c1","shortSha":"c1","subject":"a","authorName":"a","authorEmail":"e","ts":1000}],"truncated":false}`
+// 合法的提交 sha：SHA-1 与 SHA-256。
+var (
+	sha1A   = strings.Repeat("a1", 20)
+	sha1B   = strings.Repeat("b2", 20)
+	sha256C = strings.Repeat("c3", 32)
 )
 
+// commitTestNow 是提交采样测试的服务时钟。
+var commitTestNow = time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+
+const statusWithBase = `{"repo":true,"base":{"name":"main","ref":"refs/remotes/origin/main"},"files":[],"scope":"uncommitted","truncated":false}`
+
+// commitList 是 /git/commits 的应答体。
+func commitList(t *testing.T, cs ...apigen.GitCommit) string {
+	t.Helper()
+	b, err := json.Marshal(apigen.GitCommitList{Commits: cs})
+	require.NoError(t, err)
+	return string(b)
+}
+
+func commit(sha string, ts int64) apigen.GitCommit {
+	return apigen.GitCommit{Sha: sha, ShortSha: sha[:min(len(sha), 7)], Subject: "s", AuthorName: "a", AuthorEmail: "e", TS: ts}
+}
+
+// commitsJSON 是两个合法的提交。
+var commitsJSON = func() string {
+	b, _ := json.Marshal(apigen.GitCommitList{Commits: []apigen.GitCommit{commit(sha1B, 2000), commit(sha1A, 1000)}})
+	return string(b)
+}()
+
 func commitFixture(t *testing.T, o *fakeOrbs, timers *fakeTimers) (*fixture, *Service) {
+	cfg := Config{}
+	if timers != nil {
+		cfg.AfterFunc = timers.AfterFunc
+	}
+	return commitFixtureCfg(t, o, cfg, nil)
+}
+
+func commitFixtureCfg(t *testing.T, o *fakeOrbs, cfg Config, n Notifier) (*fixture, *Service) {
 	f := newFixture(t)
 	f.exec(`UPDATE projects SET repo_url = 'https://git.example/r.git', base_branch = 'main' WHERE id = 'prj_a'`)
 	f.orb("orb-1", "small", 1, "prj_a", "", false)
@@ -106,18 +156,17 @@ func commitFixture(t *testing.T, o *fakeOrbs, timers *fakeTimers) (*fixture, *Se
 	f.thread("W-norepo", "prj_b", "", "work")
 	f.exec(`UPDATE threads SET orb_id = 'orb-1' WHERE id IN ('W', 'W-norepo')`)
 	require.NoError(t, f.st.Q.InsertThreadCommit(f.ctx, db.InsertThreadCommitParams{ThreadID: "W", Sha: "old", Ts: 1}))
-	cfg := Config{}
-	if timers != nil {
-		cfg.AfterFunc = timers.AfterFunc
+	if cfg.Now == nil {
+		cfg.Now = func() time.Time { return commitTestNow }
 	}
-	return f, New(cfg, f.st, o, nil)
+	return f, New(cfg, f.st, o, n)
 }
 
 func TestSampleCommitsWithBase(t *testing.T) {
 	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON}
 	f, s := commitFixture(t, o, nil)
 	require.NoError(t, s.SampleCommits(f.ctx, "W"))
-	assert.Equal(t, []string{"c1", "c2"}, commitRows(t, f, "W"), "整体替换")
+	assert.Equal(t, []string{sha1A, sha1B}, commitRows(t, f, "W"), "整体替换")
 	assert.Equal(t, []string{"orb-1 git wake=0"}, o.ensures, "不唤醒、不计交互")
 	assert.Equal(t, []string{"orb-1 /git/status?base=main&scope=uncommitted", "orb-1 /git/commits?base=main&limit=200"}, o.requests())
 }
@@ -174,9 +223,114 @@ func TestStateChangedDebounce(t *testing.T) {
 	<-s.wake
 	s.drainSamples(f.ctx)
 	assert.Len(t, o.requests(), 2, "恰好采样一次（status + commits）")
-	assert.Equal(t, []string{"c1", "c2"}, commitRows(t, f, "W"))
+	assert.Equal(t, []string{sha1A, sha1B}, commitRows(t, f, "W"))
 	s.drainSamples(f.ctx)
 	assert.Len(t, o.requests(), 2, "队列已清空")
+}
+
+// orbd 的应答不可信：sha 不是 40 / 64 位小写十六进制、时间不在 [线程创建 − 1 年, 现在 + 1 天] 内的行都丢弃。
+func TestSampleCommitsRejectsInvalid(t *testing.T) {
+	o := &fakeOrbs{status: statusWithBase}
+	f, s := commitFixture(t, o, nil)
+	now := commitTestNow.UnixMilli()
+	created := now - 10*dayMs
+	f.exec(`UPDATE threads SET created_at = ? WHERE id = 'W'`, created)
+	hex := func(n int) string { return strings.Repeat("0123456789abcdef", 8)[:n] }
+	keep := []apigen.GitCommit{
+		commit(sha1A, now-dayMs),
+		commit(sha256C, now-dayMs),
+		commit(sha1B, now+dayMs-1),                 // 未来不到一天（时钟偏差）
+		commit(hex(40), created-365*dayMs),         // 下限本身
+		commit(strings.Repeat("d", 40), now+dayMs), // 上限本身
+	}
+	drop := []apigen.GitCommit{
+		commit("c1", now),
+		commit(strings.ToUpper(sha1A), now),
+		commit(hex(39), now),
+		commit(hex(41), now),
+		commit(hex(63), now),
+		commit(hex(65), now),
+		commit(hex(39)+"g", now),
+		commit(sha1A+"\n", now),
+		commit(" "+hex(40)[1:], now),
+		commit(strings.Repeat("e", 4096), now),
+		commit(strings.Repeat("f", 40), now+dayMs+1),         // 远期
+		commit(strings.Repeat("9", 40), created-365*dayMs-1), // 早于线程创建一年以上
+		commit(strings.Repeat("8", 40), -1),
+	}
+	o.commits = commitList(t, append(drop, keep...)...)
+	require.NoError(t, s.SampleCommits(f.ctx, "W"))
+	var want []string
+	for _, c := range keep {
+		want = append(want, c.Sha)
+	}
+	assert.ElementsMatch(t, want, commitRows(t, f, "W"))
+}
+
+// chanNotifier 把每条系统通知的标题发进通道。
+type chanNotifier struct{ ch chan string }
+
+func (n chanNotifier) PostSystem(_ context.Context, _, title, _, _ string) error {
+	n.ch <- title
+	return nil
+}
+
+// 一个卡住的 orb 只占住一个采样 worker：预算评估照常按周期执行，另一个 orb 上的线程照常采样。
+func TestStuckOrbDoesNotDelayBudget(t *testing.T) {
+	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON, stuckOrb: "orb-1",
+		entered: make(chan struct{}, 1), release: make(chan struct{}), served: make(chan string, 8)}
+	timers := &fakeTimers{}
+	n := chanNotifier{ch: make(chan string, 4)}
+	f, s := commitFixtureCfg(t, o, Config{AfterFunc: timers.AfterFunc, BudgetInterval: time.Millisecond}, n)
+	f.orb("orb-2", "small", 1, "prj_a", "", false)
+	f.thread("W2", "prj_a", "", "work")
+	f.exec(`UPDATE threads SET orb_id = 'orb-2' WHERE id = 'W2'`)
+
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() {
+		close(o.release)
+		cancel()
+		<-done
+	}()
+	wait := func(what string, ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatal(what)
+		}
+	}
+
+	s.StateChanged(threads.StateEvent{ThreadID: "W", Prev: threads.StateWorking, State: threads.StateIdle})
+	timers.fire(0)
+	wait("W 的采样没有开始", o.entered)
+
+	// W 的采样卡在 orb-1 上：另一个 worker 仍采样 orb-2 上的 W2
+	s.StateChanged(threads.StateEvent{ThreadID: "W2", Prev: threads.StateWorking, State: threads.StateIdle})
+	timers.fire(1)
+	served := make(chan struct{})
+	go func() {
+		for p := range o.served {
+			if p == "orb-2 /git/commits" {
+				close(served)
+				return
+			}
+		}
+	}()
+	wait("W2 的采样被卡住的 orb 挡住", served)
+
+	// 采样卡住期间才设预算并越线：只有预算循环独立于采样，才会发出告警
+	_, err := s.SetBudget(f.ctx, apigen.Budget{Enabled: true, DailyUsd: new(1.0), Timezone: "UTC"})
+	require.NoError(t, err)
+	f.usage("W2", commitTestNow.UnixMilli()-1, "m", 2)
+	select {
+	case title := <-n.ch:
+		assert.Equal(t, "Daily budget exceeded", title)
+	case <-time.After(10 * time.Second):
+		t.Fatal("预算评估被卡住的采样推迟")
+	}
 }
 
 func TestSweep(t *testing.T) {

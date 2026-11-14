@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -19,6 +21,16 @@ const MaxSampledCommits = 200
 
 // maxGitBody 是 orbd git 应答的读取上限。
 const maxGitBody = 8 << 20
+
+// commitShaRe 是合法的提交 sha：SHA-1（40 位）或 SHA-256（64 位）小写十六进制。
+var commitShaRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// 提交时间的可信范围：[线程创建 − commitTsBefore, 现在 + commitTsAfter]。作者时间可以早于线程（分支上已有的提交），
+// 但不会早一年以上，也不会在未来。
+const (
+	commitTsBefore = 365 * 24 * time.Hour
+	commitTsAfter  = 24 * time.Hour
+)
 
 var _ threads.Observer = (*Service)(nil)
 
@@ -46,10 +58,7 @@ func (s *Service) StateChanged(ev threads.StateEvent) {
 		delete(s.pending, id)
 		s.ready[id] = true
 		s.mu.Unlock()
-		select {
-		case s.wake <- struct{}{}:
-		default:
-		}
+		s.signal()
 	})
 	s.pending[id] = pendingSample{gen: gen, stop: stop}
 }
@@ -69,22 +78,57 @@ func (s *Service) TurnEnded(threads.TurnEvent) {}
 // EntriesAppended 实现 threads.Observer（不关心）。
 func (s *Service) EntriesAppended(string) {}
 
-// drainSamples 采样全部去抖到期的线程。
+// drainSamples 逐个采样去抖到期的线程，直到没有可取的为止。正在采样的线程不会被另一个 worker 同时取走。
 func (s *Service) drainSamples(ctx context.Context) {
-	s.mu.Lock()
-	ids := make([]string, 0, len(s.ready))
-	for id := range s.ready {
-		ids = append(ids, id)
-	}
-	clear(s.ready)
-	s.mu.Unlock()
-	for _, id := range ids {
-		if ctx.Err() != nil {
+	for ctx.Err() == nil {
+		id, ok := s.popReady()
+		if !ok {
 			return
 		}
 		if err := s.SampleCommits(ctx, id); err != nil {
 			slog.Debug("提交采样失败", "thread", id, "err", err)
 		}
+		s.mu.Lock()
+		delete(s.sampling, id)
+		again := s.ready[id] // 采样期间又到期了一次：留给下一轮
+		s.mu.Unlock()
+		if again {
+			s.signal()
+		}
+	}
+}
+
+// popReady 取出一个到期且不在采样中的线程并标记为采样中；取完后还有剩余时唤醒另一个 worker，
+// 使一个卡住的 orb 只占住一个 worker。
+func (s *Service) popReady() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var id string
+	for t := range s.ready {
+		if !s.sampling[t] {
+			id = t
+			break
+		}
+	}
+	if id == "" {
+		return "", false
+	}
+	delete(s.ready, id)
+	s.sampling[id] = true
+	for t := range s.ready {
+		if !s.sampling[t] {
+			s.signal()
+			break
+		}
+	}
+	return id, true
+}
+
+// signal 非阻塞地唤醒一个采样 worker。
+func (s *Service) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -138,17 +182,28 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 	if err := s.gitGet(ctx, orbID, "/git/commits", q, &list); err != nil {
 		return err
 	}
+	// orbd 的应答不可信：sha 格式或时间不合法的行丢弃
+	minTs := t.CreatedAt - commitTsBefore.Milliseconds()
+	maxTs := s.Now() + commitTsAfter.Milliseconds()
 	return s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.DeleteThreadCommits(ctx, threadID); err != nil {
 			return err
 		}
+		dropped := 0
 		for i, c := range list.Commits {
 			if i == MaxSampledCommits {
 				break
 			}
+			if !commitShaRe.MatchString(c.Sha) || c.TS < minTs || c.TS > maxTs {
+				dropped++
+				continue
+			}
 			if err := q.InsertThreadCommit(ctx, db.InsertThreadCommitParams{ThreadID: threadID, Sha: c.Sha, Ts: c.TS}); err != nil {
 				return err
 			}
+		}
+		if dropped > 0 {
+			slog.Warn("丢弃不合法的提交采样", "thread", threadID, "orb", orbID, "dropped", dropped)
 		}
 		return nil
 	})

@@ -5,7 +5,9 @@ import (
 	"encoding/csv"
 	"io"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -37,7 +39,24 @@ func itoa(v int) string      { return strconv.Itoa(v) }
 func f64(v float64) string   { return strconv.FormatFloat(v, 'f', -1, 64) }
 func optF(v *float64) string { return optional(v, f64) }
 func optI(v *int) string     { return optional(v, itoa) }
-func optS(v *string) string  { return optional(v, func(s string) string { return s }) }
+func optT(v *string) string  { return optional(v, csvText) }
+
+// csvText 是文本单元格的安全编码：表格软件会把以 = + - @ 开头的单元格当公式求值（含前导空白 / 控制字符被
+// 忽略后的情形），首字符是制表符或回车时同样危险。这类单元格前置一个 '，使其按纯文本显示（OWASP 推荐写法）。
+// 只用于文本列；数值列不经过这里，负数照常输出。
+func csvText(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] == '\t' || s[0] == '\r' {
+		return "'" + s
+	}
+	t := strings.TrimLeftFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+	if t != "" && strings.ContainsRune("=+-@", rune(t[0])) {
+		return "'" + s
+	}
+	return s
+}
 
 func optional[T any](v *T, f func(T) string) string {
 	if v == nil {
@@ -58,7 +77,7 @@ func writeAll(w io.Writer, header []string, rows [][]string) error {
 }
 
 func usageRow(bucket string, s apigen.UsageStat) []string {
-	return []string{bucket, s.Key, optS(s.Label), i64(s.Requests), i64(s.RequestErrors), i64(s.InputTokens), i64(s.OutputTokens),
+	return []string{csvText(bucket), csvText(s.Key), optT(s.Label), i64(s.Requests), i64(s.RequestErrors), i64(s.InputTokens), i64(s.OutputTokens),
 		i64(s.CacheReadTokens), i64(s.CacheWriteTokens), f64(s.CostUsd), optF(s.SubagentCostUsd), optF(s.AvgTtftMs),
 		optF(s.TokensPerSecond), i64(s.ToolCalls), i64(s.ToolErrors), i64(s.Turns)}
 }
@@ -83,10 +102,10 @@ func WriteUsageCSV(w io.Writer, u apigen.UsageStats) error {
 func WriteToolsCSV(w io.Writer, t apigen.ToolStats) error {
 	rows := make([][]string, 0, len(t.Tools)+len(t.Series))
 	for _, s := range t.Tools {
-		rows = append(rows, []string{"", s.Tool, i64(s.Calls), i64(s.Errors)})
+		rows = append(rows, []string{"", csvText(s.Tool), i64(s.Calls), i64(s.Errors)})
 	}
 	for _, p := range t.Series {
-		rows = append(rows, []string{p.Key, "", i64(p.Calls), i64(p.Errors)})
+		rows = append(rows, []string{csvText(p.Key), "", i64(p.Calls), i64(p.Errors)})
 	}
 	return writeAll(w, toolsCSVHeader, rows)
 }
@@ -95,7 +114,7 @@ func WriteToolsCSV(w io.Writer, t apigen.ToolStats) error {
 func WriteOrbsCSV(w io.Writer, o apigen.OrbStats) error {
 	rows := make([][]string, 0, len(o.Groups))
 	for _, g := range o.Groups {
-		rows = append(rows, []string{g.Key, optS(g.Label), optS(g.Type), optI(g.Cpus), optI(g.MemoryMB), itoa(g.Orbs),
+		rows = append(rows, []string{csvText(g.Key), optT(g.Label), optT(g.Type), optI(g.Cpus), optI(g.MemoryMB), itoa(g.Orbs),
 			i64(g.RunningMs), i64(g.FrozenMs), i64(g.StoppedMs), i64(g.SetupMs), itoa(g.Spawns), itoa(g.SnapshotSpawns),
 			itoa(g.Freezes), itoa(g.Stops), itoa(g.Wakes), itoa(g.Failures)})
 	}
@@ -106,7 +125,7 @@ func WriteOrbsCSV(w io.Writer, o apigen.OrbStats) error {
 func WriteOutputCSV(w io.Writer, o apigen.OutputStats) error {
 	rows := make([][]string, 0, len(o.Groups))
 	for _, g := range o.Groups {
-		rows = append(rows, []string{g.Key, optS(g.Label), i64(g.ThreadsCreated), i64(g.ThreadsShipped), i64(g.ThreadsArchived),
+		rows = append(rows, []string{csvText(g.Key), optT(g.Label), i64(g.ThreadsCreated), i64(g.ThreadsShipped), i64(g.ThreadsArchived),
 			f64(g.ShippedCostUsd), i64(g.Commits), i64(g.Turns)})
 	}
 	return writeAll(w, outputCSVHeader, rows)
@@ -140,8 +159,8 @@ func WriteUsageRecords(ctx context.Context, q *db.Queries, w io.Writer, from, to
 			if r.IsSubagent {
 				sub = "1"
 			}
-			if err := cw.Write([]string{i64(r.Ts), time.UnixMilli(r.Ts).UTC().Format(time.RFC3339Nano), r.ThreadID, r.ProjectID, r.SpaceID,
-				r.Provider, r.Model, r.Purpose, sub, r.StopReason, i64(r.InputTokens), i64(r.OutputTokens),
+			if err := cw.Write([]string{i64(r.Ts), time.UnixMilli(r.Ts).UTC().Format(time.RFC3339Nano), csvText(r.ThreadID), csvText(r.ProjectID), csvText(r.SpaceID),
+				csvText(r.Provider), csvText(r.Model), csvText(r.Purpose), sub, csvText(r.StopReason), i64(r.InputTokens), i64(r.OutputTokens),
 				i64(r.CacheReadTokens), i64(r.CacheWriteTokens), f64(r.CostUsd), optional(r.DurationMs, i64), optional(r.TtftMs, i64)}); err != nil {
 				return err
 			}

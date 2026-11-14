@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,6 +37,7 @@ func (f *fakeAPI) raw(route, contentType, body string) {
 type statsHarness struct {
 	f         *fakeAPI
 	localtime string // 空 = 读取失败
+	tty       bool   // stdout 是否当作终端
 }
 
 func newStatsHarness(t *testing.T) *statsHarness {
@@ -55,6 +57,7 @@ func (h *statsHarness) run(args ...string) (string, string, error) {
 			}
 			return h.localtime, nil
 		},
+		isTTY: func(io.Writer) bool { return h.tty },
 	}
 	cmd := newStatsCmd(env)
 	var out, errb bytes.Buffer
@@ -574,4 +577,93 @@ func TestStatsFormatters(t *testing.T) {
 	assert.Equal(t, "42s", fmtDur(42_400))
 	assert.Equal(t, "33%", fmtPct(1, 3))
 	assert.Equal(t, "-", fmtPct(1, 0))
+}
+
+// 服务端文本（模型 / 用途 / 工具名 / 标题 / 预算键）里的控制字符不进终端：表格总是替换，
+// --csv 只在写终端时替换（重定向到文件时原样），--json 原样。
+func TestStatsTerminalControlChars(t *testing.T) {
+	const evil = "a\x1b[31mb\x1b]52;c;ZXZpbA==\x07\u009b2J\u2028c\rd\te"
+	want := []string{"a", "[31mb", "]52;c;ZXZpbA==", "2J", "c", "d", "e"}
+	assertClean := func(t *testing.T, out string) {
+		t.Helper()
+		for _, bad := range []string{"\x1b", "\x07", "\u009b", "\u2028", "\r", "\t"} {
+			assert.NotContains(t, out, bad)
+		}
+	}
+	firstLine := func(t *testing.T, out string, n int) []string {
+		t.Helper()
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		require.Greater(t, len(lines), n)
+		return strings.Fields(lines[n])
+	}
+	h := newStatsHarness(t)
+	h.tty = true
+
+	h.f.json("GET /api/v1/stats/usage", 200, apigen.UsageStats{
+		Groups: []apigen.UsageStat{{Key: evil, Requests: 1}},
+		Series: []apigen.UsageSeriesPoint{{Key: evil, Total: apigen.UsageStat{Requests: 1}}},
+	})
+	out, _, err := h.run("--by", "purpose", "--series", "day")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, want, firstLine(t, out, 1)[:len(want)], "用途键")
+	assert.Equal(t, want, firstLine(t, out, 5)[:len(want)], "桶键")
+
+	h.f.json("GET /api/v1/stats/usage", 200, apigen.UsageStats{Groups: []apigen.UsageStat{{Key: "T-1", Label: new(evil), Requests: 1}}})
+	out, _, err = h.run("--by", "thread")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, want, firstLine(t, out, 1)[:len(want)], "线程标题")
+
+	h.f.json("GET /api/v1/stats/tools", 200, apigen.ToolStats{Tools: []apigen.ToolStat{{Tool: evil, Calls: 1}}})
+	out, _, err = h.run("tools")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, want, firstLine(t, out, 1)[:len(want)], "工具名")
+
+	h.f.json("GET /api/v1/stats/orbs", 200, apigen.OrbStats{Groups: []apigen.OrbStat{{Key: "prj_a", Label: new(evil)}}})
+	out, _, err = h.run("orbs", "--by", "project")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, want, firstLine(t, out, 1)[:len(want)], "orb 分组标签")
+
+	h.f.json("GET /api/v1/stats/output", 200, apigen.OutputStats{Groups: []apigen.OutputStat{{Key: "prj_a", Label: new(evil)}}})
+	out, _, err = h.run("output", "--by", "project")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, want, firstLine(t, out, 1)[:len(want)], "产出分组标签")
+
+	h.f.json("GET /api/v1/stats/budget", 200, apigen.BudgetStatus{
+		Budget: apigen.Budget{Timezone: evil, Enabled: true},
+		Day:    apigen.BudgetPeriod{Key: evil, Level: apigen.BudgetLevel(evil)},
+	})
+	out, _, err = h.run("budget")
+	require.NoError(t, err)
+	assertClean(t, out)
+
+	h.f.json("GET /api/v1/threads/T-1", 200, apigen.Thread{ID: "T-1", Title: evil, State: apigen.ThreadStateIdle, Labels: []string{}, TitleSource: "auto",
+		CreatedAt: statsNow.Add(-time.Hour).UnixMilli()})
+	out, _, err = h.run("thread", "T-1")
+	require.NoError(t, err)
+	assertClean(t, out)
+	assert.Equal(t, append([]string{"Thread", "T-1"}, want...), firstLine(t, out, 0))
+
+	// --csv：写终端时替换控制字符（换行保留，非法 UTF-8 成 U+FFFD），写文件时原样
+	const csvBody = "key,n\r\n\"a\x1b[2Jb\u009b\u2028中\xff\",1\n"
+	h.f.raw("GET /api/v1/stats/usage", "text/csv", csvBody)
+	out, _, err = h.run("--csv")
+	require.NoError(t, err)
+	assert.Equal(t, "key,n \n\"a [2Jb  中\uFFFD\",1\n", out)
+	h.tty = false
+	out, _, err = h.run("--csv")
+	require.NoError(t, err)
+	assert.Equal(t, csvBody, out, "重定向到文件：原样")
+
+	// --json 不动（终端也不动：JSON 字符串里的控制字符本就以 \u 转义）
+	const jsonBody = `{"groups":[{"key":"a\u001b[31mb"}]}`
+	h.f.raw("GET /api/v1/stats/usage", "application/json", jsonBody)
+	h.tty = true
+	out, _, err = h.run("--json")
+	require.NoError(t, err)
+	assert.Equal(t, jsonBody, out)
 }

@@ -28,6 +28,9 @@ const (
 	DefaultSampleDelay    = 5 * time.Second
 	sweepInterval         = time.Hour
 	sampleTimeout         = 15 * time.Second
+	// sampleWorkers 是并发采样的 worker 数：采样（每次至多 sampleTimeout）不在预算 / 清理循环里跑，
+	// 卡住的 orb 只占住一个 worker，既推迟不了预算评估，也挡不住其它线程的采样。
+	sampleWorkers = 2
 )
 
 // Config 是统计服务的参数；零值字段取默认。
@@ -57,11 +60,12 @@ type Service struct {
 	orbs OrbClient
 	n    Notifier
 
-	mu      sync.Mutex
-	gen     uint64
-	pending map[string]pendingSample // 线程 → 去抖中的计时器
-	ready   map[string]bool          // 去抖到期、待采样的线程
-	wake    chan struct{}
+	mu       sync.Mutex
+	gen      uint64
+	pending  map[string]pendingSample // 线程 → 去抖中的计时器
+	ready    map[string]bool          // 去抖到期、待采样的线程
+	sampling map[string]bool          // 正在采样的线程
+	wake     chan struct{}
 }
 
 // pendingSample 是一个去抖中的采样计时器；gen 区分被取代的旧计时器。
@@ -89,15 +93,21 @@ func New(cfg Config, st *store.Store, orbs OrbClient, n Notifier) *Service {
 	}
 	return &Service{
 		cfg: cfg, st: st, orbs: orbs, n: n,
-		pending: map[string]pendingSample{}, ready: map[string]bool{}, wake: make(chan struct{}, 1),
+		pending: map[string]pendingSample{}, ready: map[string]bool{}, sampling: map[string]bool{}, wake: make(chan struct{}, 1),
 	}
 }
 
 // Now 返回服务时钟的当前时刻（毫秒）。
 func (s *Service) Now() int64 { return s.cfg.Now().UnixMilli() }
 
-// Run 启动时清理一次，之后循环：采样到期线程的提交、每小时清理、每 BudgetInterval 评估预算。ctx 取消即返回。
+// Run 启动 sampleWorkers 个采样 worker，清理一次，之后循环：每小时清理、每 BudgetInterval 评估预算。
+// ctx 取消后停掉去抖计时器，等 worker 退出再返回。
 func (s *Service) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	for range sampleWorkers {
+		wg.Go(func() { s.sampleWorker(ctx) })
+	}
+	defer wg.Wait()
 	s.Sweep(ctx)
 	sweep := time.NewTicker(sweepInterval)
 	defer sweep.Stop()
@@ -113,12 +123,22 @@ func (s *Service) Run(ctx context.Context) {
 			clear(s.pending)
 			s.mu.Unlock()
 			return
-		case <-s.wake:
-			s.drainSamples(ctx)
 		case <-sweep.C:
 			s.Sweep(ctx)
 		case <-budget.C:
 			s.EvaluateBudget(ctx)
+		}
+	}
+}
+
+// sampleWorker 每被唤醒一次就采样到期线程，直到 ctx 取消。
+func (s *Service) sampleWorker(ctx context.Context) {
+	for {
+		s.drainSamples(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.wake:
 		}
 	}
 }
