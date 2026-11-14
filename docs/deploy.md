@@ -29,9 +29,20 @@ data_dir: "/var/lib/oryn"
 log_level: "info"
 idle: { agent_idle: "5m", user_idle: "20m", stop_after_frozen: "24h", wake_on_focus: true }
 orb_defaults: { provider: "", type: "" }
+push: { fcm: { service_account_secret: "" } }   # Android gms 包的 FCM 推送；空 = 关闭（见下文「移动 App 推送」）
 ```
 
 docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有的机器是 `172.18.0.1`）。orb 不经过反代，直接连这个地址。
+
+### 移动 App 推送
+
+Android App 的后台推送默认走 UnifiedPush（手机上装 ntfy 等分发器），服务端不需要任何配置。要给装了 Google Play 服务、又不想装分发器的手机用 `gms` 包的 FCM 回退通道：
+
+1. 在 Firebase 项目（包名 `com.lynricsy.oryn` 的 Android 应用）的「项目设置 → 服务账号」生成私钥，得到服务账号 JSON。
+2. 存进密钥库（**proxy 模式**，即默认；env 模式会注入每台 orb，被 orynd 拒绝）：`oryn secrets set fcm/service-account < service-account.json`，随后删除本地副本。
+3. `orynd.yaml` 写 `push: { fcm: { service_account_secret: "fcm/service-account" } }` 并重启 orynd。启动日志出现「FCM 已配置但服务账号不可用」说明密钥缺失或内容无效。
+
+不配置时 App 登记 FCM 订阅会得到 `409 fcm_unavailable`，UnifiedPush 照常。移动 App 的安装、配对与发版见 [mobile.md](mobile.md)。
 
 ## 3. 反代（1Panel OpenResty）
 

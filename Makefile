@@ -7,7 +7,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
 BINS    := orynd orbd oryn fakeomp
 
-.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop image dev
+.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image dev
 
 all: build
 
@@ -57,6 +57,11 @@ web:
 ## desktop：构建桌面 App 安装包（Tauri 2，产物在 web/src-tauri/target/release/bundle/）
 desktop:
 	cd web && $(BUN) install && $(BUN) run tauri build
+
+## android：构建 Android 通用 APK（需先 `source .dev/m7-env.sh`；DIST=gms 时先放好 web/src-tauri/gen/android/app/google-services.json）
+DIST ?= foss
+android:
+	cd web && $(BUN) install && ORG_GRADLE_PROJECT_orynDistribution=$(DIST) $(BUN) run tauri android build --apk
 
 image:
 	scripts/build-orb-image.sh

@@ -383,7 +383,7 @@ Sec-Fetch-Site 不存在：
 |`POST /api/v1/notification-channels/{id}/telegram/link`|`linkTelegramChannel`|—|`TelegramLink{code, botUsername, expiresAt}`|
 |`GET /api/v1/push/vapid-key`|`getVapidKey`|—|`VapidKey{publicKey}`（base64url 的 65 字节未压缩点）|
 |`GET /api/v1/push/subscriptions`|`listPushSubscriptions`|—|`PushSubscriptionList{subscriptions}`|
-|`POST /api/v1/push/subscriptions`|`createPushSubscription`|`PushSubscriptionInput{endpoint, keys:{p256dh, auth}}`（`userAgent` 取请求头）|`201 PushSubscription`（按 endpoint upsert）|
+|`POST /api/v1/push/subscriptions`|`createPushSubscription`|`PushSubscriptionInput`：Web Push `{kind?: "webpush", endpoint, keys:{p256dh, auth}}`；FCM（M7）`{kind: "fcm", token}`（`userAgent` 取请求头）|`201 PushSubscription`（Web Push 按 endpoint、FCM 按令牌 upsert；FCM 的 `endpoint` 即令牌）|
 |`DELETE /api/v1/push/subscriptions/{id}`|`deletePushSubscription`|—|`204`|
 |`POST /api/v1/orbs/{id}/sync/prepare`|`prepareOrbSync`|`bg?`；`OrbSyncPrepareRequest{root?, have?≤256, force?}`|`OrbSyncState{root, branch?, head, snapshot, dirty, common, bundle?{id, size}}`|
 |`GET /api/v1/orbs/{id}/sync/bundle`|`getOrbSyncBundle`|`id`（`^[0-9a-f]{16}$`）|`application/octet-stream`|
@@ -397,7 +397,7 @@ Sec-Fetch-Site 不存在：
 - `PublishedFile{id, attachmentId, threadId?, name, mime, size, url, createdAt}`：`url = <public_url>/f/<slug>/<encodeURIComponent(name)>`。
 - `Notification{id, kind, threadId?, title, body, url, createdAt, readAt?, resolvedAt?, deliveries[]}`：`url` 为站内路径 `/t/<threadId>`；`NotificationDelivery{target, channelId?, channelName?, status, attempts, at, error?}`，`at` 在 `pending` 时为下次尝试时间、其余为完成时间。
 - `NotificationChannelInput{kind, name, enabled?, events?, locale?}` + 与 `kind` 同名的**恰好一个**配置对象：`telegram{botToken, apiBase?}`、`webhook{url, secret?, headers?≤16}`、`ntfy{server?, topic, token?}`、`bark{server?, deviceKey}`。`NotificationChannelPatch` 给出配置对象 = 整体替换（Telegram 换 token 会清掉绑定）。`NotificationChannel` 只回脱敏的 `summary`、`telegram?{botUsername, linked, chatTitle?}`、`lastError?`、`lastDelivery?{status, at, error?}`，**机密字段只写不读**。
-- 枚举：`ShareMode`（`live | snapshot`）、`ShareFindingRule`、`NotificationKind`（`done | input | error`）、`NotificationChannelKind`、`NotificationLocale`（`zh-CN | en`）、`NotificationDeliveryTarget`（`telegram | webhook | ntfy | bark | webpush`，`apns | fcm` 预留）、`NotificationDeliveryStatus`、`PushSubscriptionKind`（`webpush`，`apns | fcm` 预留）。为避免 oapi-codegen 在常量名冲突时给既有常量加前缀，`ShareMode` 与匿名 WS 消息的 `type` 枚举用 `x-enum-varnames` 显式命名（`ShareModeSnapshot` 与 `JobOp` 的 `Snapshot` 共存）。
+- 枚举：`ShareMode`（`live | snapshot`）、`ShareFindingRule`、`NotificationKind`（`done | input | error`）、`NotificationChannelKind`、`NotificationLocale`（`zh-CN | en`）、`NotificationDeliveryTarget`（`telegram | webhook | ntfy | bark | webpush | fcm`，`apns` 预留）、`NotificationDeliveryStatus`、`PushSubscriptionKind`（`webpush | fcm`，`apns` 预留）。为避免 oapi-codegen 在常量名冲突时给既有常量加前缀，`ShareMode` 与匿名 WS 消息的 `type` 枚举用 `x-enum-varnames` 显式命名（`ShareModeSnapshot` 与 `JobOp` 的 `Snapshot` 共存）。
 
 ### 匿名面
 
@@ -432,10 +432,11 @@ Sec-Fetch-Site 不存在：
 ### 通知与投递
 
 - 触发：`done`（`idle` 且上一状态 ∈ `working / awaiting_input`）与 `error`（转入 `error`）来自线程状态转换；`input` 来自新进入实时缓冲的待答请求（计划提案的 `request_id = "plan"`）。触发时有设备 focus 于该线程则不通知；去抖期间线程回到 `working`、被 focus / 操作、请求被作答都会取消。`(thread_id, request_id)` 的未决通知唯一（控制面重启后 orbd 重放待答请求时去重）。
-- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410 删除订阅。
+- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`fcm` 订阅只在服务器启用 FCM 时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、FCM `UNREGISTERED` 删除订阅。
 - Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: thread.<kind>`（测试为 `test`）、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。体 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`。
 - ntfy：`POST <server>` JSON 发布 `{"topic","title","message","click","tags","priority"}`（`input` priority 4，其余 3）；有 `token` 时 `Authorization: Bearer`。Bark：`POST <server>/push` `{"device_key","title","body","url","group":"Oryn","level"}`，HTTP 200 且 `code == 200` 才算成功。
 - Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url":"/t/<threadId>","tag":"oryn-<threadId 末 12 位>"}`，`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
+- FCM（M7，见下文「M7：移动推送」）：HTTP v1 `messages:send`，data-only 高优先级，`data` 的键与 Web Push 载荷同名、值为字符串。
 - Telegram：`getUpdates` 长轮询（不需要公网入站）；至多一个渠道、只接受绑定的那一个私聊（`/start <码>` 绑定，码 8 位、10 分钟）。`input` 且有选项时带 inline 按钮（`callback_data = "o:<deliveryID>:<序号>"`）；点按钮或回复通知作答待答请求，回复其它通知即发给该线程：线程 `working` 时发 `steer`，否则发 `prompt`（开启新回合，与 Web 输入区一致）；请求在别处被作答后撤回按钮。
 
 ### orbd 本机 API（`sync` 特性，`fs` 流上）
@@ -476,6 +477,7 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 |`invalid_channel`（配置非法、Telegram `getMe` 失败、非 Telegram 渠道上的绑定）|400|控制面|
 |`channel_not_linked`（Telegram 未绑定时测试）|409|控制面|
 |`push_invalid`|400|`createPushSubscription`|
+|`fcm_unavailable`|409|`createPushSubscription`（`kind: fcm` 而服务器未启用 FCM，或服务账号密钥缺失 / 不是 proxy 模式 / 内容无效）|
 |`is_a_directory` / `too_large`|409 / 413|`publishOrbFile`|
 |`sync_no_commits` / `sync_no_common` / `sync_shallow`|409|orbd `/sync/prepare`|
 |`too_large`（bundle 超过 1GiB）|413|orbd `/sync/prepare`|
@@ -534,3 +536,24 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 |code|HTTP|来源|
 |---|---|---|
 |`app_session_unsupported`|403|`createAppSession`（主体不是 desktop / mobile 设备令牌）|
+
+## M7：移动推送
+
+Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/push/subscriptions`，订阅归属设备（`device_id`），设备吊销即停止投递：
+
+- **UnifiedPush**（主路径，`foss` 与 `gms` 包都有）：分发器（推荐 ntfy）给出的端点就是 RFC 8291 的 Web Push 端点，App 以 `kind: webpush` 登记 `{endpoint, keys}`，服务端零改动、端到端加密（分发服务器只见密文）。私有 ntfy 需 `ntfy access '*' 'up*' write-only` 放行匿名发布。
+- **FCM**（回退，仅 `gms` 包、且没有 UnifiedPush 分发器时）：App 以 `kind: fcm` 登记 FCM 注册令牌。
+
+### FCM 发送
+
+- 启用：`orynd.yaml` 的 `push.fcm.service_account_secret` 写密钥名；服务账号 JSON（Firebase 控制台「服务账号」生成，角色含 `cloudmessaging.messages.create`）存在密钥库里，**须为 proxy 模式**（env 模式的密钥会注入每台 orb，被拒绝）。未配置 → `fcm` 订阅登记返回 `409 fcm_unavailable`、也不生成投递；配置了但密钥缺失或无效 → 启动时告警，登记 409，已有订阅的投递以 `fcm_unavailable` 失败（不重试）。每次投递都重新读取密钥，换服务账号不需要重启。
+- 认证：服务账号私钥做 RS256 JWT 断言（RFC 7523：`iss` = `client_email`，`scope = https://www.googleapis.com/auth/firebase.messaging`，`aud` = 令牌端点 `https://oauth2.googleapis.com/token`，`exp` = `iat` + 1h，头带 `kid = private_key_id`），`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` 换 access token，进程内缓存 55 分钟（令牌端点给的有效期更短时取其减 1 分钟）；换了服务账号即作废缓存。令牌端点 4xx 不重试。
+- 发送：`POST https://fcm.googleapis.com/v1/projects/<project_id>/messages:send`，体 `{"message":{"token","data":{"v":"1","id","kind","title","body","url":"/t/<threadId>","tag":"oryn-<threadId 末 12 位>"},"android":{"priority":"HIGH","ttl":"86400s","collapse_key":<tag>}}}`，没有 `notification` 块（通知由 App 自己发，点击经 `oryn://thread/<id>` 直达）。
+- 结果：2xx 成功；错误体 `details[].errorCode == "UNREGISTERED"` → 删除订阅；401 → 作废缓存的 access token 并按退避重试；其余按 HTTP 状态归类（408 / 429 / 5xx 重试），错误文本为 `fcm <errorCode> (HTTP <状态>)`，不含令牌。
+- 实现：`internal/notify/fcm.go`；测试用 httptest 假冒令牌端点与 FCM 端点（`FCMConfig.TokenURL / APIBase`），校验 JWT 签名与声明、缓存与过期、UNREGISTERED 删订阅、401 换令牌重试。
+
+### 扫码配对
+
+网页「设置 → 设备」显示二维码，内容 `oryn://pair?server=<encodeURIComponent(public_url 的 origin)>`；App 的连接页扫码或系统相机扫到后经深链接进入 App，等同于在连接页填入该地址并点「连接」——之后照常 `pair/start`，批准仍要在已登录的浏览器里输入配对码。服务端没有新接口。
+
+App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳转一律用 `oryn://` 深链接。

@@ -1,0 +1,462 @@
+name: mobile
+
+# 移动 App（同一 Tauri 工程的 Android / iOS 目标）的构建与发布（M7 计划步骤 6；主人决定：UnifiedPush + FCM、仅 GitHub Release）。
+# - PR / 手动触发：`android` 构建 foss 与 gms 两个 debug APK（x86_64 + arm64）并跑插件单测，`android-smoke` 在模拟器里冒烟，
+#   `ios-check` 在 macOS 上不签名编译模拟器包。不签名、拿不到签名 secret。
+# - 推送 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致）：`release` 建草稿 Release →
+#   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产 → `publish` 发布。
+# flavor 由 gradle 属性 `orynDistribution=foss|gms` 选择（`ORG_GRADLE_PROJECT_orynDistribution`）；gms 需要
+# `app/google-services.json`，由 secret ANDROID_GOOGLE_SERVICES_JSON 在构建前写入（没有该 secret 时跳过 gms）。
+#
+# 供应链约束（同 desktop.yml）：第三方 action 一律钉到完整提交 SHA（行尾注释为对应版本）；checkout 不保留凭据；
+# secret 只出现在用到它的那一步的 env 里，签名密钥只在 tag 发布时取值，用完即删，不写进 $GITHUB_ENV 或持久位置。
+on:
+  push:
+    tags: ["mobile-v*"]
+  pull_request:
+    paths:
+      - "web/src-tauri/**"
+      - "web/src/launcher/**"
+      - "web/launcher.html"
+      - "web/public/webview-check.js"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+    inputs:
+      export_ios_project:
+        description: 把 tauri ios init 生成的 web/src-tauri/gen/apple 作为产物上传（首次入库用）
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NDK_VERSION: "28.2.13676358"
+  ANDROID_TARGETS: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      label: ${{ steps.meta.outputs.label }}
+      is_release: ${{ steps.meta.outputs.is_release }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 读取版本并校验 tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^\[/{in_pkg = ($0 == "[package]")} in_pkg && /^version *=/{gsub(/^version *= *"|".*$/, ""); print; exit}' web/src-tauri/Cargo.toml)
+          if [[ -z "$version" ]]; then
+            echo "::error file=web/src-tauri/Cargo.toml::读不到 [package].version"
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag mobile-v${version%%-*}-rc.N"
+            exit 1
+          fi
+          is_release=false
+          prerelease=false
+          label=$version
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
+            case "$GITHUB_REF_NAME" in
+              "mobile-v${version}") ;;
+              "mobile-v${version}-"*) prerelease=true ;;
+              *)
+                echo "::error::tag ${GITHUB_REF_NAME} 与 Cargo.toml 版本 ${version} 不一致（应为 mobile-v${version} 或 mobile-v${version}-<预发布标识>）"
+                exit 1
+                ;;
+            esac
+            is_release=true
+            label=${GITHUB_REF_NAME#mobile-v}
+          fi
+          {
+            echo "version=$version"
+            echo "label=$label"
+            echo "is_release=$is_release"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "版本 ${version}（产物标签 ${label}）；发布：${is_release}；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.is_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: 创建草稿 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.label }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # 重跑时 Release 已存在，直接复用
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            flags=(--draft --verify-tag --title "Oryn Mobile $VERSION" --generate-notes)
+            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+          fi
+
+  # PR / 手动触发的构建：只读令牌，只出 debug 包。与 android-release 共用 strategy 与 steps（YAML 锚点），
+  # 两者只差权限与触发条件——job 级 permissions 不能按表达式切换，所以拆成两个 job。
+  android:
+    needs: [prepare, release]
+    # release 在非发布运行中被跳过；!cancelled() 让本 job 不因此连带跳过
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.is_release != 'true' }}
+    permissions:
+      contents: read
+    strategy: &android-strategy
+      fail-fast: false
+      matrix:
+        dist: [foss, gms]
+    name: android (${{ matrix.dist }})
+    runs-on: ubuntu-24.04
+    env:
+      ORG_GRADLE_PROJECT_orynDistribution: ${{ matrix.dist }}
+      LABEL: ${{ needs.prepare.outputs.label }}
+      DIST: ${{ matrix.dist }}
+    steps: &android-steps
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 只取「有没有」的布尔，不接触 secret 的值
+      - name: 判定构建内容
+        id: plan
+        shell: bash
+        env:
+          HAS_GSJ: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON != '' }}
+          HAS_KEYSTORE: ${{ needs.prepare.outputs.is_release == 'true' && secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' }}
+          IS_RELEASE: ${{ needs.prepare.outputs.is_release }}
+        run: |
+          set -euo pipefail
+          build=true
+          if [[ "$DIST" == "gms" && "$HAS_GSJ" != "true" ]]; then
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              echo "::error::发布 gms 包需要 secret ANDROID_GOOGLE_SERVICES_JSON"
+              exit 1
+            fi
+            build=false
+            echo "::notice::没有 ANDROID_GOOGLE_SERVICES_JSON（如来自 fork 的 PR），跳过 gms 构建"
+          fi
+          if [[ "$IS_RELEASE" == "true" && "$HAS_KEYSTORE" != "true" ]]; then
+            echo "::error::发布需要 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS"
+            exit 1
+          fi
+          {
+            echo "build=$build"
+            echo "sign=$HAS_KEYSTORE"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        if: steps.plan.outputs.build == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.plan.outputs.build == 'true'
+        with:
+          bun-version-file: web/package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 分支，2026-10-16
+        if: steps.plan.outputs.build == 'true'
+        with:
+          toolchain: stable
+          targets: ${{ env.ANDROID_TARGETS }}
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.plan.outputs.build == 'true'
+        with:
+          workspaces: "web/src-tauri -> target"
+          key: android
+
+      - name: 安装 NDK
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -1)
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/$bt" >> "$GITHUB_ENV"
+
+      - name: 安装 web 依赖
+        if: steps.plan.outputs.build == 'true'
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: 写入 google-services.json（gms）
+        if: steps.plan.outputs.build == 'true' && matrix.dist == 'gms'
+        shell: bash
+        env:
+          GSJ: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$GSJ" > web/src-tauri/gen/android/app/google-services.json
+          jq -e '.client[] | select(.client_info.android_client_info.package_name == "com.lynricsy.oryn")' \
+            web/src-tauri/gen/android/app/google-services.json > /dev/null \
+            || { echo "::error::google-services.json 里没有 com.lynricsy.oryn 的客户端"; exit 1; }
+
+      # 总是先出 debug 包：供冒烟与 PR 下载；debug 包可经 CDP 调试、写事件日志 cache/events.jsonl
+      - name: 构建 debug APK
+        if: steps.plan.outputs.build == 'true'
+        working-directory: web
+        run: bun run tauri android build --debug --apk --target aarch64 x86_64 --ci
+
+      - name: 收集 debug APK
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp web/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
+            "dist/Oryn_${LABEL}_android-${DIST}-debug.apk"
+
+      - name: 插件 JVM 单测
+        if: steps.plan.outputs.build == 'true'
+        working-directory: web/src-tauri/gen/android
+        run: ./gradlew --no-daemon :tauri-plugin-oryn-mobile:testDebugUnitTest
+
+      # 发布构建：密钥只在这一步解码到临时目录，keystore.properties 与 .jks 在步骤结束时删除
+      - name: 构建签名的 release APK + AAB
+        if: steps.plan.outputs.build == 'true' && steps.plan.outputs.sign == 'true'
+        shell: bash
+        working-directory: web
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          dir=$(mktemp -d "$RUNNER_TEMP/keystore.XXXXXX")
+          props=src-tauri/gen/android/keystore.properties
+          trap 'rm -rf "$dir" "$props"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$dir/release.jks"
+          {
+            echo "keyAlias=$KEY_ALIAS"
+            echo "password=$KEYSTORE_PASSWORD"
+            echo "storeFile=$dir/release.jks"
+          } > "$props"
+          bun run tauri android build --apk --aab --target aarch64 armv7 x86_64 --ci
+          out=src-tauri/gen/android/app/build/outputs
+          cp "$out/apk/universal/release/app-universal-release.apk" "../dist/Oryn_${LABEL}_android-${DIST}.apk"
+          cp "$out/bundle/universalRelease/app-universal-release.aab" "../dist/Oryn_${LABEL}_android-${DIST}.aab"
+
+      - name: 校验产物并写摘要
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        env:
+          SIGNED: ${{ steps.plan.outputs.sign }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Android（${DIST}）"
+            if [[ "$SIGNED" == "true" ]]; then echo "已签名（release）"; else echo "未签名（仅 debug）"; fi
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for apk in dist/*.apk; do
+            "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$apk" > /dev/null
+            badging=$("$BUILD_TOOLS/aapt2" dump badging "$apk")
+            pkg=$(grep -oP "^package: name='\K[^']+" <<<"$badging")
+            vc=$(grep -oP "versionCode='\K[^']+" <<<"$badging")
+            sdk=$(grep -oP "^sdkVersion:'\K[^']+" <<<"$badging")
+            target=$(grep -oP "^targetSdkVersion:'\K[^']+" <<<"$badging")
+            if [[ "$pkg" != "com.lynricsy.oryn" ]]; then echo "::error::$apk 包名是 $pkg"; exit 1; fi
+            cert=$("$BUILD_TOOLS/apksigner" verify --print-certs "$apk" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+            echo "$(basename "$apk")  package=$pkg versionCode=$vc sdk=$sdk target=$target cert-sha256=$cert" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.plan.outputs.build == 'true'
+        with:
+          name: android-${{ matrix.dist }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: 上传 Release 资产
+        if: steps.plan.outputs.build == 'true' && needs.prepare.outputs.is_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.apk dist/*.aab --clobber
+
+  # tag 发布的构建：与 android 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets
+  android-release:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    strategy: *android-strategy
+    name: android-release (${{ matrix.dist }})
+    runs-on: ubuntu-24.04
+    env:
+      ORG_GRADLE_PROJECT_orynDistribution: ${{ matrix.dist }}
+      LABEL: ${{ needs.prepare.outputs.label }}
+      DIST: ${{ matrix.dist }}
+    steps: *android-steps
+
+  # 冒烟：模拟器里装 foss debug 包并启动，90 秒内事件日志出现 launcher.ready 即过
+  android-smoke:
+    needs: [android, android-release]
+    if: ${{ !cancelled() && (needs.android.result == 'success' || needs.android-release.result == 'success') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: 启用 KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: android-foss
+          path: dist
+
+      - name: 写冒烟脚本
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/smoke.sh" <<'SH'
+          set -euo pipefail
+          apk=$(ls dist/*-debug.apk | head -1)
+          adb install -r -g "$apk"
+          adb shell am start -W -n com.lynricsy.oryn/.MainActivity
+          for _ in $(seq 1 90); do
+            if adb shell run-as com.lynricsy.oryn cat cache/events.jsonl 2>/dev/null | grep -q '"launcher.ready"'; then
+              echo "smoke ok"
+              adb shell run-as com.lynricsy.oryn cat cache/events.jsonl
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::90 秒内没有 launcher.ready"
+          adb shell run-as com.lynricsy.oryn cat cache/events.jsonl || true
+          adb logcat -d | grep -iE 'oryn|FATAL EXCEPTION|panic' | tail -200 || true
+          exit 1
+          SH
+
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
+          script: bash "$RUNNER_TEMP/smoke.sh"
+
+  # iOS：只保证不签名编译（附录 A 的签名 / TestFlight 待 ADP）
+  ios-check:
+    needs: prepare
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: web/package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 分支，2026-10-16
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios-sim,aarch64-apple-ios
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: "web/src-tauri -> target"
+          key: ios
+
+      - name: 安装 web 依赖
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: 生成 iOS 工程（未入库时）
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
+
+      - name: 不签名编译模拟器包
+        working-directory: web
+        run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
+
+      - name: 断言产物
+        id: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find web/src-tauri/gen/apple/build -type d -name 'Oryn.app' | head -1)
+          if [[ -z "$app" ]]; then echo "::error::没有找到 Oryn.app"; exit 1; fi
+          echo "产物：$app" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "path=$app" >> "$GITHUB_OUTPUT"
+
+      - name: 模拟器启动截图（尽力而为）
+        continue-on-error: true
+        shell: bash
+        env:
+          APP: ${{ steps.app.outputs.path }}
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" "$APP"
+          xcrun simctl launch "$udid" com.lynricsy.oryn
+          sleep 10
+          mkdir -p ios-shot
+          xcrun simctl io "$udid" screenshot ios-shot/launch.png
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        continue-on-error: true
+        with:
+          name: ios-screenshot
+          path: ios-shot/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'workflow_dispatch' && inputs.export_ios_project
+        with:
+          name: ios-project
+          path: |
+            web/src-tauri/gen/apple
+            !web/src-tauri/gen/apple/build
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, android-release, android-smoke, ios-check]
+    if: needs.prepare.outputs.is_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
