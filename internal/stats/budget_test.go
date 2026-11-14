@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/config"
 )
 
 type postCall struct{ kind, title, body, link string }
@@ -130,6 +131,29 @@ func TestBudgetWarnThenOver(t *testing.T) {
 	e.s.EvaluateBudget(e.ctx)
 	assert.Equal(t, []string{"Daily budget warning", "Daily budget exceeded", "Daily budget exceeded"}, e.titles())
 	assert.Equal(t, []string{"day 2026-11-14 over", "day 2026-11-14 warn", "day 2026-11-15 over", "day 2026-11-15 warn"}, e.ledger())
+}
+
+// events 保留期缩到 24h 时，月预算的去重账本不能被清掉（同月重复告警），跨月后照常发新周期的告警
+func TestBudgetLedgerOutlivesShortEventRetention(t *testing.T) {
+	e := newBudgetEnv(t, true)
+	e.s.cfg.Retention.Events = config.Duration(24 * time.Hour)
+	e.set(apigen.Budget{MonthlyUsd: new(1.0), WarnPct: 80, Timezone: "UTC", Enabled: true})
+	e.spend(2)
+	e.s.EvaluateBudget(e.ctx)
+	require.Len(t, e.n.calls, 1)
+	for range 3 {
+		e.now = e.now.Add(25 * time.Hour)
+		e.s.Sweep(e.ctx)
+		e.s.EvaluateBudget(e.ctx)
+	}
+	assert.Equal(t, []string{"Monthly budget exceeded"}, e.titles(), "同一个月不重发")
+	assert.Equal(t, []string{"month 2026-11 over", "month 2026-11 warn"}, e.ledger())
+
+	e.now = time.Date(2026, 12, 2, 10, 0, 0, 0, time.UTC)
+	e.spend(2)
+	e.s.Sweep(e.ctx)
+	e.s.EvaluateBudget(e.ctx)
+	assert.Equal(t, []string{"Monthly budget exceeded", "Monthly budget exceeded"}, e.titles(), "新的月份照常告警")
 }
 
 func TestBudgetVariants(t *testing.T) {
