@@ -1,0 +1,109 @@
+/**
+ * 「项目」分区侧栏：首行「新建项目」，其后每个未归档项目一行（链到项目页 `/projects/<id>`，行尾按钮 = 只看它的线程），
+ * 末行「无项目的线程」。不设分区标题行。过滤线程 = 设 `projectFilter` 并切回线程分区。
+ */
+import { type ReactNode, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { NavLink, useNavigate } from "react-router";
+import { useProjects } from "../../api/queries";
+import { useSchedules } from "../../api/schedule-queries";
+import { isCoordinatorThread } from "../../lib/thread-kind";
+import { useIndex } from "../../state/stores";
+import { uiStore } from "../../state/ui";
+import { ProjectBadge } from "../ui/data";
+import { IconButton } from "../ui/primitives";
+import {
+	CountPill,
+	closeOnCompact,
+	GroupIcon,
+	LIST_LINK,
+	LIST_ROW,
+} from "./pane-parts";
+import { useSwitchSection } from "./useSection";
+
+export function ProjectsPane(): ReactNode {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const switchSection = useSwitchSection();
+	const threads = useIndex((s) => s.threads);
+	const projects = useProjects();
+	const schedules = useSchedules({ mode: "new_thread" });
+	const list = (projects.data?.projects ?? []).filter((p) => !p.archivedAt);
+	const counts = useMemo(() => {
+		const m = new Map<string | null, number>();
+		for (const th of Object.values(threads))
+			if (!th.archivedAt && !isCoordinatorThread(th)) {
+				const key = th.projectId ?? null;
+				m.set(key, (m.get(key) ?? 0) + 1);
+			}
+		return m;
+	}, [threads]);
+	const scheduleCounts = useMemo(() => {
+		const m = new Map<string, number>();
+		for (const s of schedules.data?.schedules ?? [])
+			if (s.projectId) m.set(s.projectId, (m.get(s.projectId) ?? 0) + 1);
+		return m;
+	}, [schedules.data]);
+	const filterThreads = (filter: string | null) => {
+		uiStore.getState().setProjectFilter(filter);
+		switchSection("threads");
+	};
+	return (
+		<div className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-4">
+			<div className="flex flex-col gap-0.5" data-testid="sidebar-projects">
+				<button
+					type="button"
+					className={LIST_ROW}
+					onClick={() => {
+						navigate("/projects/new");
+						closeOnCompact();
+					}}
+				>
+					<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
+						<GroupIcon name="plus" />
+					</span>
+					<span className="min-w-0 flex-1 truncate">{t("projects.new")}</span>
+				</button>
+				{list.map((p) => (
+					<div key={p.id} className="flex items-center gap-1 pr-1">
+						<NavLink
+							to={`/projects/${p.id}`}
+							onClick={closeOnCompact}
+							className={LIST_LINK}
+						>
+							<ProjectBadge name={p.name} icon={p.icon} size={22} />
+							<span className="flex min-w-0 flex-1 flex-col">
+								<span className="truncate">{p.name}</span>
+								<span className="truncate font-normal text-2xs text-faint">
+									{t("sidebar.projectMeta", {
+										threads: counts.get(p.id) ?? 0,
+										schedules: scheduleCounts.get(p.id) ?? 0,
+									})}
+								</span>
+							</span>
+						</NavLink>
+						<IconButton
+							icon="chats"
+							size={15}
+							label={t("projectsPane.filterThreads", { name: p.name })}
+							onClick={() => filterThreads(p.id)}
+						/>
+					</div>
+				))}
+				<button
+					type="button"
+					className={LIST_ROW}
+					onClick={() => filterThreads(null)}
+				>
+					<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
+						<GroupIcon name="folder" />
+					</span>
+					<span className="min-w-0 flex-1 truncate">
+						{t("projectsPane.noProjectThreads")}
+					</span>
+					<CountPill n={counts.get(null) ?? 0} />
+				</button>
+			</div>
+		</div>
+	);
+}

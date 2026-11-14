@@ -4,7 +4,9 @@
  * 同样是悬浮玻璃；compact（<600）是下沉式侧栏（SinkLayout：侧栏常驻底层，内容卡片右移露出它）；
  * Viewport Segments 双段时是同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
- * 右侧信息面板由线程页自行处理。
+ * 右侧信息面板由线程页自行处理。分区（M9.6）：侧栏底部是底栏 `SectionTabBar`，当前分区由路由决定，`useSectionTracker` 记下
+ * 各分区最近的路径；快捷键 Ctrl/⌘+1…4 切分区、Ctrl/⌘+/ 进助手分区、Ctrl/⌘+K 回线程分区并聚焦搜索（都不展开已收起的侧栏，
+ * Ctrl/⌘+K 为了聚焦除外）。
  * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker 并作为应用接收器
  * 应答它的探询，它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
  * 桌面壳（M6）：挂载时 `host.ready` 握手（壳里待开的路径随返回值交出），壳推来的 `navigate` 走路由跳转；
@@ -27,6 +29,7 @@ import { watchChrome } from "../../lib/host-chrome";
 import { computeHostStatus } from "../../lib/host-status";
 import { usePresence } from "../../lib/presence";
 import { pushRegistration, registerServiceWorker } from "../../lib/push";
+import { SECTION_ORDER } from "../../lib/sections";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
 import {
@@ -42,7 +45,7 @@ import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
-import { SinkTabBar } from "./SinkTabBar";
+import { useSectionTracker, useSwitchSection } from "./useSection";
 import { ChromeBar } from "./WindowControls";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
@@ -129,12 +132,16 @@ function inEditable(target: EventTarget | null): boolean {
 
 function useGlobalShortcuts() {
 	const navigate = useNavigate();
+	const switchSection = useSwitchSection();
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			const mod = e.ctrlKey || e.metaKey;
 			const key = e.key.toLowerCase();
+			// 分区序号按物理键位（Digit1…4）判：数字需要 Shift 的键盘布局（AZERTY）也能用；焦点在输入框里同样生效
+			const digit = /^Digit([1-4])$/.exec(e.code)?.[1];
 			if (mod && key === "k") {
 				e.preventDefault();
+				switchSection("threads");
 				uiStore.getState().focusSearch();
 			} else if (mod && e.shiftKey && key === "o") {
 				e.preventDefault();
@@ -149,14 +156,19 @@ function useGlobalShortcuts() {
 				e.preventDefault();
 				uiStore.getState().toggleSidebar();
 			} else if (mod && !e.altKey && (e.key === "/" || e.code === "Slash")) {
-				// 全局助手：焦点在输入框里同样生效（Ctrl/⌘+/ 在编辑区没有别的含义）
+				// 全局助手：回到上次的助手对话；焦点在输入框里同样生效（Ctrl/⌘+/ 在编辑区没有别的含义）
 				e.preventDefault();
-				navigate("/assistant");
+				switchSection("assistant");
+			} else if (mod && !e.shiftKey && !e.altKey && digit) {
+				const section = SECTION_ORDER[Number(digit) - 1];
+				if (!section) return;
+				e.preventDefault();
+				switchSection(section);
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [navigate]);
+	}, [navigate, switchSection]);
 }
 
 export function AppShell(): ReactNode {
@@ -174,6 +186,7 @@ export function AppShell(): ReactNode {
 	const drawerMode = segments !== null;
 	const sink = bp === "compact" && !drawerMode;
 	useGlobalShortcuts();
+	useSectionTracker();
 	useHostBridge();
 	// 定时查询跟着 WS 推送与重连对账（M9 审查 W6）
 	useRealtimeScheduleSync();
@@ -282,9 +295,7 @@ export function AppShell(): ReactNode {
 	if (sink)
 		return (
 			<>
-				<SinkLayout sidebar={<Sidebar sink />} footer={<SinkTabBar />}>
-					{main}
-				</SinkLayout>
+				<SinkLayout sidebar={<Sidebar sink />}>{main}</SinkLayout>
 				<ServerErrors />
 				<NotificationToasts />
 			</>

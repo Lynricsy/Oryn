@@ -14,6 +14,16 @@ const AssistantPage = lazy(() =>
 	import("./pages/AssistantPage").then((m) => ({ default: m.AssistantPage })),
 );
 
+// 项目页（M9.6）：项目分区的主区
+const ProjectsIndexPage = lazy(() =>
+	import("./pages/ProjectsPage").then((m) => ({
+		default: m.ProjectsIndexPage,
+	})),
+);
+const ProjectPage = lazy(() =>
+	import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectPage })),
+);
+
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
 	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
@@ -34,15 +44,15 @@ const SharePage = lazy(() =>
 const SETTINGS: SettingsSection[] = [
 	"devices",
 	"providers",
-	"projects",
 	"secrets",
 	"browser-profiles",
 	"git-identity",
 	"agent-config",
+	"identity",
+	"appearance",
 	"notifications",
 	"shares",
 	"automations",
-	"appearance",
 	"desktop",
 	"about",
 ];
@@ -69,6 +79,14 @@ export function App(): ReactNode {
 					<Route path="space/:spaceId" element={<SpacePage />} />
 					<Route path="assistant" element={<AssistantPage />} />
 					<Route path="assistant/:threadId" element={<AssistantPage />} />
+					<Route path="projects" element={<ProjectsIndexPage />} />
+					<Route path="projects/new" element={<ProjectPage create />} />
+					<Route path="projects/:projectId" element={<ProjectPage />} />
+					{/* 项目管理搬到了项目分区（M9.6） */}
+					<Route
+						path="settings/projects"
+						element={<Navigate to="/projects" replace />}
+					/>
 					<Route
 						path="settings"
 						element={<Navigate to="/settings/devices" replace />}

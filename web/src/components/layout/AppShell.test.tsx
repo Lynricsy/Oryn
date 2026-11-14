@@ -51,6 +51,8 @@ function setup() {
 							path="/t/:id"
 							element={<ThreadHeader threadId="T-1" sidebarToggle={false} />}
 						/>
+						{/* 切分区会导航到别的页面：壳仍要留在原地 */}
+						<Route path="*" element={null} />
 					</Route>
 				</Routes>
 			</MemoryRouter>
@@ -125,6 +127,16 @@ describe("侧栏收起（expanded）", () => {
 		setup();
 		expect(column()).toHaveAttribute("inert");
 		expect(headerToggle()).not.toBeNull();
+	});
+
+	it("1280 宽：侧栏底部是底栏（内嵌底色），没有旧的「已连接 + 图标」底部行", () => {
+		setup();
+		const bar = screen.getByTestId("section-tabbar");
+		expect(column()).toContainElement(bar);
+		expect(bar.dataset.tone).toBe("inset");
+		expect(screen.queryByTestId("sidebar-footer")).toBeNull();
+		// 底栏是侧栏 nav 的最后一个子元素
+		expect(column().querySelector("nav")?.lastElementChild).toBe(bar);
 	});
 });
 
@@ -473,6 +485,23 @@ describe("手机下沉式侧栏（compact）", () => {
 		act(() => uiStore.getState().toggleSidebar());
 		expect(screen.getByTestId("sink-card")).toHaveAttribute("data-open");
 		expect(screen.getByTestId("sink-content")).toHaveAttribute("inert");
+	});
+
+	it("390 宽：底栏（玻璃胶囊）在下沉侧栏层里、不在卡片里；点别的分区侧栏保持打开，再点已选中的收起", () => {
+		window.innerWidth = 390;
+		setup();
+		const bar = screen.getByTestId("section-tabbar");
+		expect(screen.getByTestId("sink-sidebar")).toContainElement(bar);
+		expect(screen.getByTestId("sink-card")).not.toContainElement(bar);
+		expect(bar.dataset.tone).toBe("glass");
+		expect(screen.queryByTestId("sidebar-footer")).toBeNull();
+		act(() => uiStore.getState().setSidebar(true));
+		const more = bar.querySelector<HTMLElement>('[data-tab="more"]');
+		fireEvent.click(more as HTMLElement);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(more).toHaveAttribute("aria-current", "true");
+		fireEvent.click(more as HTMLElement);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
 	});
 });
 

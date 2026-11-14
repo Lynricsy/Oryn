@@ -171,20 +171,15 @@ describe("开关", () => {
 		expect(card()).toHaveAttribute("data-instant");
 	});
 
-	it("footer（底部胶囊）渲染在侧栏层底部、不在卡片层里：关闭时随侧栏 inert，打开时可用", () => {
+	it("侧栏（含它底部的底栏）渲染在侧栏层、不在卡片层里：关闭时随侧栏 inert，打开时可用", () => {
 		render(
-			<SinkLayout
-				sidebar={<button type="button">线程甲</button>}
-				footer={<nav data-testid="footer">胶囊</nav>}
-			>
+			<SinkLayout sidebar={<nav data-testid="bar">底栏</nav>}>
 				<p>正文</p>
 			</SinkLayout>,
 		);
-		const footer = screen.getByTestId("footer");
-		expect(side()).toContainElement(footer);
-		expect(card()).not.toContainElement(footer);
-		// 在侧栏内容之后（侧栏层是纵向排布，胶囊贴底）
-		expect(side().lastElementChild).toBe(footer);
+		const bar = screen.getByTestId("bar");
+		expect(side()).toContainElement(bar);
+		expect(card()).not.toContainElement(bar);
 		expect(side()).toHaveAttribute("inert");
 		act(() => uiStore.getState().setSidebar(true));
 		expect(side()).not.toHaveAttribute("inert");

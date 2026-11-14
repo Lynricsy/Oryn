@@ -1246,3 +1246,32 @@ body {
 		animation: none;
 	}
 }
+
+@layer components {
+	/* 分区轨道（M9.6）：四个分区并排，切换只移动轨道；各分区始终挂载（滚动位置、展开状态不丢）。
+	 * 跨两格切换时轨道连续滑过中间的分区；主区不做过渡。 */
+	.section-track {
+		display: flex;
+		width: 400%;
+		height: 100%;
+		translate: calc(var(--section-i, 0) * -25%) 0;
+		transition: translate 200ms var(--ease);
+	}
+	.section-pane {
+		width: 25%;
+		height: 100%;
+	}
+	@keyframes section-fade {
+		from {
+			opacity: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		/* 减少动态：轨道不滑（全局规则把过渡压成 0s），新分区改为淡入。分层里的 !important 优先于全局规则里未分层的 !important */
+		.section-pane[data-active] {
+			animation: section-fade 150ms ease-out both;
+			/* biome-ignore lint/complexity/noImportantStyles: 压过全局减少动效规则里的 1ms */
+			animation-duration: 150ms !important;
+		}
+	}
+}

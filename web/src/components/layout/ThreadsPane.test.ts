@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../../api/client";
-import { filterByProject, groupThreads, stackState } from "./Sidebar";
+import { filterByProject, groupThreads, stackState } from "./ThreadsPane";
 
 const NOW = 1_800_000_000_000;
 

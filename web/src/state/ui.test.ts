@@ -1,6 +1,7 @@
-/** 界面状态：改动标签的未看签名（首次记录即为基线，之后的新签名才算未看；在看改动标签时记为已看）、侧栏收起与窄屏同级标签。 */
+/** 界面状态：改动标签的未看签名（首次记录即为基线，之后的新签名才算未看；在看改动标签时记为已看）、侧栏收起、窄屏同级标签、分区记忆（M9.6）。 */
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SECTION_PATHS_KEY } from "../lib/sections";
 import {
 	hasUnseenChanges,
 	SIDEBAR_COLLAPSED_KEY,
@@ -174,5 +175,59 @@ describe("窄屏同级标签", () => {
 			panelOpen: true,
 			threadTab: "agent",
 		});
+	});
+});
+
+describe("分区记忆（M9.6）", () => {
+	beforeEach(() => {
+		sessionStorage.clear();
+		uiStore.setState({ sectionPaths: {} });
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("noteSectionPath 写 sessionStorage，刷新（重新加载模块）后读回", async () => {
+		uiStore.getState().noteSectionPath("more", "/settings/secrets");
+		uiStore.getState().noteSectionPath("threads", "/t/T-1?tab=files");
+		expect(uiStore.getState().sectionPaths).toEqual({
+			more: "/settings/secrets",
+			threads: "/t/T-1?tab=files",
+		});
+		expect(JSON.parse(sessionStorage.getItem(SECTION_PATHS_KEY) ?? "")).toEqual(
+			{ more: "/settings/secrets", threads: "/t/T-1?tab=files" },
+		);
+		vi.resetModules();
+		// 动态导入：resetModules 之后重新求值模块，模拟刷新页面
+		const fresh = await import("./ui");
+		expect(fresh.uiStore.getState().sectionPaths).toEqual({
+			more: "/settings/secrets",
+			threads: "/t/T-1?tab=files",
+		});
+	});
+
+	it("同值不重写（存储与 store 状态都不变）", () => {
+		uiStore.getState().noteSectionPath("projects", "/projects/p1");
+		const before = uiStore.getState().sectionPaths;
+		const setItem = vi.spyOn(Storage.prototype, "setItem");
+		uiStore.getState().noteSectionPath("projects", "/projects/p1");
+		expect(setItem).not.toHaveBeenCalled();
+		expect(uiStore.getState().sectionPaths).toBe(before);
+	});
+
+	it("存储抛错不崩，内存里照样记下", () => {
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+			throw new DOMException("quota", "QuotaExceededError");
+		});
+		expect(() =>
+			uiStore.getState().noteSectionPath("assistant", "/assistant/T-a"),
+		).not.toThrow();
+		expect(uiStore.getState().sectionPaths.assistant).toBe("/assistant/T-a");
+	});
+
+	it("M9 的「侧栏视图」状态已删除（分区只由路由决定）", () => {
+		expect(
+			Object.keys(uiStore.getState()).filter((k) => /sidebar_?view/i.test(k)),
+		).toEqual([]);
 	});
 });

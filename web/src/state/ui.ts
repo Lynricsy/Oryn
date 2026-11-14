@@ -1,7 +1,12 @@
-/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、窄屏线程页的同级标签、搜索聚焦请求、Desktop 面板的本机偏好。 */
+/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、窄屏线程页的同级标签、搜索聚焦请求、各分区记住的路径、Desktop 面板的本机偏好。 */
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { Schemas } from "../api/client";
+import {
+	loadSectionPaths,
+	SECTION_PATHS_KEY,
+	type SectionId,
+} from "../lib/sections";
 import type { ReportKind } from "../lib/slash";
 import {
 	breakpointFor,
@@ -36,9 +41,6 @@ export type PanelTab =
 
 /** 窄屏线程页（compact / medium、非双段）的同级标签：对话（转录）与面板各标签并列。 */
 export type ThreadTab = "agent" | PanelTab;
-
-/** 手机下沉侧栏的主体视图（底部胶囊切换）：线程列表、项目列表、更多菜单。 */
-export type SidebarView = "threads" | "projects" | "more";
 
 export const PANEL_WIDTH_KEY = "oryn.panel.width";
 /** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下（第五个 Portal 标签出现且放不下时，未选中的标签只显示图标）。 */
@@ -167,9 +169,10 @@ export interface UiState {
 	panelMax: boolean;
 	/** 每次请求聚焦侧边栏搜索时递增。 */
 	searchNonce: number;
-	/** 下沉侧栏的主体视图（侧栏关闭时复位为 `threads`）。 */
-	sidebarView: SidebarView;
-	setSidebarView(view: SidebarView): void;
+	/** 每个分区最近停留的站内路径（pathname + search）；存 sessionStorage（每个标签页 / 窗口各自一份，刷新保留）。 */
+	sectionPaths: Partial<Record<SectionId, string>>;
+	/** 记下某分区的路径：值没变不写；写 `SECTION_PATHS_KEY`，存储不可用时静默。 */
+	noteSectionPath(section: SectionId, path: string): void;
 	/** 侧栏线程列表的项目过滤：`undefined` 不过滤，`null` 只看无项目线程，否则项目 id。 */
 	projectFilter: string | null | undefined;
 	setProjectFilter(filter: string | null | undefined): void;
@@ -222,12 +225,22 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	searchNonce: 0,
 	open: (dialog) => set({ dialog }),
 	close: () => set({ dialog: null }),
-	setSidebar: (sidebarOpen) =>
-		set(
-			sidebarOpen ? { sidebarOpen } : { sidebarOpen, sidebarView: "threads" },
-		),
-	sidebarView: "threads",
-	setSidebarView: (sidebarView) => set({ sidebarView }),
+	setSidebar: (sidebarOpen) => set({ sidebarOpen }),
+	sectionPaths: loadSectionPaths(),
+	noteSectionPath: (section, path) => {
+		const prev = get().sectionPaths;
+		if (prev[section] === path) return;
+		const sectionPaths = { ...prev, [section]: path };
+		try {
+			globalThis.sessionStorage?.setItem(
+				SECTION_PATHS_KEY,
+				JSON.stringify(sectionPaths),
+			);
+		} catch {
+			// 隐私模式 / 配额满时只留在内存里
+		}
+		set({ sectionPaths });
+	},
 	projectFilter: undefined,
 	setProjectFilter: (projectFilter) => set({ projectFilter }),
 	expandedStacks: {},
@@ -251,12 +264,7 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		// 双段视口里侧栏是抽屉（与 compact 相同），按开关抽屉处理
 		if (threadLayout() === "expanded")
 			s.setSidebarCollapsed(!s.sidebarCollapsed);
-		else
-			set(
-				s.sidebarOpen
-					? { sidebarOpen: false, sidebarView: "threads" }
-					: { sidebarOpen: true },
-			);
+		else set({ sidebarOpen: !s.sidebarOpen });
 	},
 	setPanel: (panelOpen) =>
 		set((s) =>
