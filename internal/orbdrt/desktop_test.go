@@ -214,7 +214,7 @@ func TestDesktopDisabledByConfig(t *testing.T) {
 
 func TestDesktopDisabledWhenExecutableMissing(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, linkFakedesk(dir, "Xtigervnc", "openbox")) // 缺 chromium
+	require.NoError(t, linkFakedesk(dir, "Xvnc", "openbox")) // 缺 chromium
 	t.Setenv("PATH", dir)
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, func(c *Config) { c.Desktop = true; c.DesktopCDPAddr = "127.0.0.1:0" })

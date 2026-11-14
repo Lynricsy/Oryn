@@ -9,9 +9,9 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 
 ## orb 是什么样的
 
-- Debian 13，用户 `user`，`sudo` 免密；`$HOME=/home/user`。
+- Arch Linux 系（x64 官方 Arch，ARM64 为 Arch Linux ARM），用户 `user`，`sudo` 免密；`$HOME=/home/user`。
 - 有仓库的项目检出在 `~/workspace/repo`（setup / resume 的工作目录就是仓库根）；没有仓库时为 `~/workspace`。
-- 基础镜像已带：git、curl、build-essential、python3 + uv、Node.js LTS、bun、Go、rustup（minimal）、gh、ripgrep、jq、tmux。没有 Docker daemon。
+- 基础镜像已带 C/C++、CMake/Ninja、Python/uv/pipx/ruff、Node/npm/pnpm/Bun、Go、Rust（含 rustfmt/clippy）、Ruby/Bundler、PHP/Composer、Lua，以及 Git/LFS/gh、网络诊断、数据库客户端、图像与文档处理工具。版本随镜像构建时的软件仓库更新，清单见 `/usr/local/share/oryn/packages.txt`；先检查再补装。没有 Docker daemon。
 - 访问 git 主机与模型 API 都经 orb 内的代理注入凭据，脚本里**不要**写令牌，也不需要 `gh auth login`。
 - git 提交身份（`user.name` / `user.email`）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
 
@@ -25,7 +25,7 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 
 硬约束：
 
-- setup **非交互**（不读 stdin、`apt-get -y`、`DEBIAN_FRONTEND=noninteractive`）、**可重复执行**（第二次运行应快且无副作用）、20 分钟内结束，目标 2 分钟内。
+- setup **非交互**（不读 stdin、pacman 使用 `--noconfirm`）、**可重复执行**（第二次运行应快且无副作用）、20 分钟内结束，目标 2 分钟内。
 - setup 结束时不要留下常驻进程：脚本退出后残留进程不保证继续存在。dev server、数据库等长驻进程写进 `.oryn/services.yaml`（见下文「受管服务」），由 Oryn 在 setup 之后与每次唤醒后自动拉起。
 - setup 里不做任何用户 / 线程级认证：setup 的产物以后可能被其它线程复用。
 - resume 必须在 10 秒内返回且保持前台运行；不要在 resume 里装依赖，也不要把慢步骤丢到后台（会掩盖失败）。
@@ -81,7 +81,7 @@ services:
 ## 第 2 步：写 setup
 
 - 开头 `#!/usr/bin/env bash` 与 `set -euo pipefail`；每个主要步骤先打印一行说明，并记录耗时（如 `SECONDS`）。
-- 系统包：先检查再装，只在确实缺包时才 `sudo apt-get update && sudo apt-get install -y …`，避免每次重跑都刷新索引。
+- 系统包：先用 `pacman -Q` 或 `command -v` 检查，只在确实缺包时执行 `sudo pacman -Syu --needed --noconfirm <包名>`；Arch 不支持部分升级，不能使用 `pacman -Sy` 后单独安装。保留包签名与 TLS 校验，不默认引入 AUR 助手。
 - 工具链：按版本钉安装；刚装好的工具若要在本脚本后面用，先 `source` 它的环境脚本或把目录加进 `PATH`。
 - 依赖：按锁文件安装（`npm ci`、`pnpm install --frozen-lockfile`、`uv sync --frozen`、`go mod download` 等）。
 - 数据库：安装、初始化、灌种子数据都要幂等（已初始化则跳过）；开发环境优先速度（例如关掉 fsync）。
@@ -95,7 +95,7 @@ setup 进程里 `export` 的变量随脚本结束就没了。Oryn 的规则：
 - agent 进程在**启动时**取一次登录 shell（`bash -lc`，工作目录为仓库根）的环境；setup / resume 的每个脚本也在登录 shell 环境下运行。
 - agent 的每条 bash 命令 = agent 进程环境 + `~/.bashrc` 的快照（函数、别名、PATH）。
 
-所以需要持久的 `PATH`、`NODE_PATH`、虚拟环境等写进 **`~/.profile`**（Debian 默认的登录配置；不要新建 `~/.bash_profile`，它存在时 bash 会跳过 `~/.profile`）。写法要幂等（重复运行不重复追加）、不递归：
+所以需要持久的 `PATH`、`NODE_PATH`、虚拟环境等写进 **`~/.profile`**（镜像的 `~/.bash_profile` 会加载它；不要覆盖这份桥接配置）。写法要幂等（重复运行不重复追加）、不递归；不要把标准命令替换为别名或函数：
 
 ```bash
 hook='# >>> oryn project env >>>'

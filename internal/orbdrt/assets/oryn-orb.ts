@@ -6,7 +6,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const GUIDE = `# Oryn orb 环境
-你运行在 Oryn orb 中：一台 Debian 13 隔离机器，用户 \`user\`（免密 sudo），仓库默认在 ~/workspace/repo。
+你运行在 Oryn orb 中：一台 Arch Linux 系隔离机器（x64 官方 Arch，ARM64 为 Arch Linux ARM），用户 \`user\`（免密 sudo），仓库默认在 ~/workspace/repo。
+常见语言、编译工具、网络诊断与数据处理 CLI 已预装，先检查现有命令；系统包用 \`sudo pacman -Syu --needed --noconfirm <包名>\`，不要使用 apt 或 \`pacman -Sy\` 部分升级。包版本清单在 \`/usr/local/share/oryn/packages.txt\`。保留标准命令，不配置替换别名。
 orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\`.agents/resume\` 作为回退也会被读取）：
 - \`.oryn/setup\`：每台新 orb 首次就绪时运行一次。必须非交互、可重复执行（幂等）、结束时不留常驻进程，且不做任何认证。
 - \`.oryn/resume\`：首次激活与每次唤醒时运行，须在 10 秒内完成，只做快速、幂等的认证 / 重连 / 自检。

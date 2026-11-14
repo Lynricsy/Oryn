@@ -1,6 +1,6 @@
 // fakedesk 是 orbd 桌面栈（M8）的测试替身：按 argv[0] 的文件名扮演三个程序。
 //
-//   - Xtigervnc：解析 -rfbunixpath，在该 unix socket 上做字节回显；收到 SIGTERM 退出。
+//   - Xvnc：解析 -rfbunixpath，在该 unix socket 上做字节回显；收到 SIGTERM 退出。
 //   - openbox：挂起直到被杀（SIGTERM 正常退出）。
 //   - chromium：解析 --user-data-dir；在临时端口上应答 `/json/version`，其它路径回显方法、路径与请求体；
 //     写 `DevToolsActivePort`（先写临时文件再 rename）；在 profile 里建 `Default/Cookies`；
@@ -10,7 +10,7 @@
 //     和真 Chromium 一样，Cookie 只在正常关闭时落盘：收到 SIGTERM 时只写 `Default/exit-term` 就退出，内存里的
 //     Cookie 丢失。启动时从 `Default/fake-cookies.json` 读回 Cookie 表。
 //
-// 用法：构建后以 Xtigervnc / openbox / chromium 三个名字的符号链接放进 PATH。
+// 用法：构建后以 Xvnc / openbox / chromium 三个名字的符号链接放进 PATH。
 package main
 
 import (
@@ -35,14 +35,14 @@ func main() {
 	name := filepath.Base(os.Args[0])
 	var err error
 	switch name {
-	case "Xtigervnc":
+	case "Xvnc":
 		err = runXvnc(os.Args[1:])
 	case "openbox":
 		err = runOpenbox()
 	case "chromium":
 		err = runChromium(os.Args[1:])
 	default:
-		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xtigervnc, openbox or chromium)", name)
+		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xvnc, openbox or chromium)", name)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -59,7 +59,7 @@ func runXvnc(args []string) error {
 		}
 	}
 	if path == "" {
-		return errors.New("fakedesk Xtigervnc: -rfbunixpath is required")
+		return errors.New("fakedesk Xvnc: -rfbunixpath is required")
 	}
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)

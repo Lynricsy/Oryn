@@ -5,7 +5,7 @@
 # 环境变量：IMAGE（默认 oryn-orb:dev）、VERSION（默认 git describe）
 #
 # 前置：build/core/<arch>/omp 已就位（scripts/fetch-core.sh <arch>）。
-# 构建上下文是 build/orb-context/<arch>/，只含 omp / orbd / oryn 三个文件，不把仓库与 node_modules 发给 docker。
+# 构建上下文是 build/orb-context/<arch>/，只含三个二进制与冒烟脚本，不发送仓库或 node_modules。
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,11 +45,17 @@ for b in orbd oryn; do
 done
 cp "$omp" "${ctx}/omp"
 
+cp images/orb/smoke-test.sh "$ctx/smoke-test.sh"
+
 docker build \
+	--pull --no-cache \
 	--platform "linux/${goarch}" \
 	--build-arg "TARGETARCH=${goarch}" \
 	-f images/orb/Dockerfile \
 	-t "$image" \
 	"$ctx"
+
+# 在默认非 root 用户下验证工具、权限和 shell 契约；禁止网络，避免首用下载掩盖漏装。
+docker run --rm --platform "linux/${goarch}" --network none --entrypoint bash "$image" /usr/local/lib/oryn/smoke-test.sh
 
 docker image ls "$image"

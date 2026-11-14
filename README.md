@@ -12,7 +12,7 @@
 | `orbd` | orb 内守护进程：经出站长连接（WebSocket + yamux）与控制面通信，监督 Oryn Core 进程、复制会话 JSONL、提供本地出站代理 |
 | `oryn` | 命令行客户端，含 `oryn provider run`（在 Docker 主机上执行 orb 任务） |
 | `web/` | React + TypeScript 客户端（Web/PWA）；`web/src-tauri` 为 Tauri 2 桌面壳（加载服务器 Web UI，壳内只有连接页），移动端在后续里程碑 |
-| `images/orb/` | orb 基础镜像（Debian 13 + Node/bun/Python/uv/Go/Rust/gh + Oryn Core） |
+| `images/orb/` | agent 优先的 Arch Linux 系开发镜像（x64 官方 Arch / ARM64 社区 Arch Linux ARM，含常用工具链与 Oryn Core） |
 
 ```mermaid
 flowchart LR
@@ -63,6 +63,26 @@ oryn schedule ls / runs <ref> / pause <ref> / run <ref>   # 查看、暂停、�
 ## orb 环境自配置
 
 项目的 orb 环境由生命周期脚本配置：仓库内 `.oryn/setup`（新 orb 首次就绪时运行一次，兼容读取 `.agents/setup`）、`.oryn/resume`（每次唤醒，至多等 10 秒），或存在项目设置里、不进仓库的项目脚本。脚本失败不会阻止 orb 就绪，线程里会出现提示条，可查看日志并一键交给 agent 修复。
+
+### 基础镜像与预装工具
+
+每次 `make image` 都用 `--pull --no-cache` 拉取目标架构的最新基础镜像、重新安装软件：x64 使用官方 [`archlinux:latest`](https://hub.docker.com/_/archlinux)，ARM64 使用每日构建、源码公开的社区 [`menci/archlinuxarm:latest`](https://github.com/Menci/docker-archlinuxarm)。两边的软件仓库独立，版本可以不同；优先跟进修复，不承诺版本固定。`scripts/build-orb-image.sh arm64` 构建 ARM64，宿主需原生 ARM64 或配置 QEMU/binfmt。
+
+跨架构离线冒烟还要求 QEMU/binfmt 正确处理 setuid（[`C` 凭据标志](https://docs.kernel.org/admin-guide/binfmt-misc.html)）；否则镜像可以构建，但 `sudo` 验收会失败。应在原生目标架构主机或支持该语义的模拟环境完成验收，不跳过权限检查。
+
+| 类别 | 预装能力 |
+|---|---|
+| 语言与构建 | C/C++、Make、CMake/Ninja、Autotools、Python/pip/uv/pipx/ruff、Node/npm/pnpm/Bun、Go、Rust/rustfmt/clippy、Ruby/Bundler、PHP/Composer、Lua |
+| 代码与文件 | Git/LFS/gh、SSH/rsync、ripgrep/fd、jq、Mike Farah yq v4、patch/diff、ShellCheck/shfmt、常用压缩格式 |
+| 排障与数据 | ip/ss/dig/nc/socat、lsof/strace/ltrace/gdb、SQLite/PostgreSQL/MariaDB/Redis 兼容客户端、XML/XSLT、Poppler/qpdf、ImageMagick/FFmpeg |
+| 桌面 | TigerVNC `Xvnc`、Openbox、Chromium、中文与 emoji 字体 |
+
+默认 UTF-8、UTC、不分页，Git/gh 不弹凭据提示；不配置替换命令的别名、不全局设置 `CI=1`、不关闭 TLS 或包签名校验。用户工具目录 `~/.local/bin`、`~/.cargo/bin`、`~/go/bin` 对普通进程和登录 shell 都可见；npm 全局包安装到用户目录，无需 sudo。`~/.bash_profile` 加载 `~/.profile`，项目环境仍写入后者。Git 初始分支为 `main`，提交身份仍由 Oryn 设置注入。
+
+系统包使用 `sudo pacman -Syu --needed --noconfirm <包名>`，不要部分升级。已安装的系统包版本记录在 `/usr/local/share/oryn/packages.txt`。大型 SDK（Android、Flutter、CUDA、JDK、.NET 等）和 Docker daemon 不预装，项目按需在 setup 中配置；镜像不启动数据库服务，Valkey 包同时提供 Redis 兼容客户端和服务端程序。
+
+构建脚本会以默认非 root 用户、断网运行镜像内的 `/usr/local/lib/oryn/smoke-test.sh`：验证三类 shell、用户全局安装、实际编译与数据处理。已有 orb 不会随镜像重建自动换底层系统；依赖 apt 的旧项目 setup 脚本需迁移，新建 orb 才使用新镜像。
+
 
 orb 内的 agent 自带 `oryn-setup` 技能：让它「为这个项目配置 Oryn orb 环境」，它会调查仓库、写出脚本、试跑并推送到基线分支。orb 内可用：
 

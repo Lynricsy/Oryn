@@ -51,7 +51,7 @@ const (
 var errNotReady = errors.New("desktop: display or browser profile not ready")
 
 // desktopBinaries 是启用桌面所需的三个可执行文件（缺任一则桌面整体禁用）。
-var desktopBinaries = []string{"Xtigervnc", "openbox", "chromium"}
+var desktopBinaries = []string{"Xvnc", "openbox", "chromium"}
 
 // defaultDesktopBackoff 是显示栈第 n 次（从 1 起）连续失败后的重启等待：1s、2s、4s、8s、16s、30s 封顶。
 func defaultDesktopBackoff(n int) time.Duration {
@@ -374,7 +374,7 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	d.cleanStale()
 	env := d.r.baseEnv()
 	delete(env, "DISPLAY")
-	xpid, xdone, err := d.spawn("xvnc", "Xtigervnc", d.xvncArgs(), env)
+	xpid, xdone, err := d.spawn("xvnc", "Xvnc", d.xvncArgs(), env)
 	if err != nil {
 		d.log.Warn("start Xvnc failed", "err", err)
 		return

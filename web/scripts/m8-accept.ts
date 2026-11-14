@@ -1139,11 +1139,10 @@ async function listProfileFiles(): Promise<string> {
 // ---------------------------------------------------------------- 场景
 
 async function B1() {
-	// Debian 的 TigerVNC 1.15 执行 `Xtigervnc -version` 不输出任何内容，版本改从 dpkg 取
-	// （`dpkg-query -W` 输出「包名<Tab>版本」）；同时确认 Xtigervnc 可执行文件在 PATH 上
+	// 从包数据库取版本，同时验证 Arch 镜像里的 Xvnc 在 PATH 上。
 	const r = await sh(
 		`docker run --rm ${IMAGE} bash -lc ${q(
-			'command -v Xtigervnc >/dev/null && echo "tigervnc $(dpkg-query -W tigervnc-standalone-server | cut -f2)"; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP',
+			'command -v Xvnc >/dev/null && pacman -Q tigervnc; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP',
 		)}`,
 		{ timeoutMs: 180_000 },
 	);
@@ -1167,16 +1166,16 @@ async function B1() {
 		note(
 			`${IMAGE} ${(now / 1e9).toFixed(2)}GB，${PRE_IMAGE} ${(pre / 1e9).toFixed(2)}GB`,
 		);
-		soft(gb >= 0.8 && gb <= 1.1, `体积差 ${gb.toFixed(2)}GB（预期 0.8–1.1GB）`);
+		note(`相对旧镜像体积差 ${gb.toFixed(2)}GB（基础发行版与预装工具已变更）`);
 	} else note(`镜像体积取不到：${s.out}`);
 }
 
 async function B2() {
 	const th = await ensureT();
 	const orb = th.orb;
-	const xv = await dexec(orb, "pgrep -x Xtigervnc");
+	const xv = await dexec(orb, "pgrep -x Xvnc");
 	const ob = await dexec(orb, "pgrep -x openbox");
-	check(xv.code === 0, `Xtigervnc 在运行（${xv.stdout}）`);
+	check(xv.code === 0, `Xvnc 在运行（${xv.stdout}）`);
 	check(ob.code === 0, `openbox 在运行（${ob.stdout}）`);
 	const bm = await browserMains(orb);
 	check(bm.length === 0, `没有浏览器主进程（${bm.length}）`);
@@ -1207,7 +1206,7 @@ async function B2() {
 	);
 	const sock = await dexec(orb, "test -S ~/.oryn/vnc.sock && echo yes");
 	check(sock.stdout === "yes", "~/.oryn/vnc.sock 是 socket");
-	const rss = await dexec(orb, "ps -o rss= -C Xtigervnc,openbox");
+	const rss = await dexec(orb, "ps -o rss= -C Xvnc,openbox");
 	const mb =
 		rss.stdout
 			.split("\n")
@@ -1215,7 +1214,7 @@ async function B2() {
 			.reduce((a, b) => a + b, 0) / 1024;
 	soft(
 		mb <= 80,
-		`Xtigervnc + openbox RSS 合计 ${mb.toFixed(1)}MB（预期 ≤ 80MB）`,
+		`Xvnc + openbox RSS 合计 ${mb.toFixed(1)}MB（预期 ≤ 80MB）`,
 	);
 	const o = await getOrb(orb);
 	note(`GET orbs → desktop ${JSON.stringify(o.desktop)}`);
@@ -3132,7 +3131,7 @@ async function B20() {
 	await Bun.sleep(1500);
 	await xshot("B20-2-browser");
 
-	// 键入：点舞台上的远端输入框，xdotool 逐键输入，经 noVNC → Xtigervnc → orb 里的 Chromium
+	// 键入：点舞台上的远端输入框，xdotool 逐键输入，经 noVNC → Xvnc → orb 里的 Chromium
 	const typed = `b20${RUN}`;
 	await xclickRemote(x, s, th.orb, siteId, "#i");
 	await xtype(x, typed);

@@ -27,7 +27,7 @@ import (
 
 var fakeompBin string
 
-// fakedeskBin 是 cmd/fakedesk 的构建产物；fakedeskDir 里有它的三个符号链接（Xtigervnc / openbox / chromium），
+// fakedeskBin 是 cmd/fakedesk 的构建产物；fakedeskDir 里有它的三个符号链接（Xvnc / openbox / chromium），
 // 已放在 PATH 最前面（桌面只在 Config.Desktop 为真时启用，其它测试不受影响）。
 var fakedeskBin, fakedeskDir string
 

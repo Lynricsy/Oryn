@@ -47,7 +47,10 @@ type Config struct {
 	Home       string // 默认 $HOME
 	AgentBin   string // 默认 ORYN_AGENT_BIN，再缺省为 "omp"
 	EgressAddr string // 默认 127.0.0.1:7811；测试用 127.0.0.1:0
-	Version    string // orbd 版本（hello.orbdVersion）
+	// EgressListener 非 nil 时就是 egress 的监听（New 不再自己监听 EgressAddr）：协调宿主在施加沙箱之前建好它，
+	// 沙箱内因此不需要任何 bind 权限（M9 L3）。
+	EgressListener net.Listener
+	Version        string // orbd 版本（hello.orbdVersion）
 
 	MetricsInterval time.Duration // 默认 15s
 	PollInterval    time.Duration // tailer 轮询兜底间隔，默认 2s
@@ -75,7 +78,7 @@ type Config struct {
 	ServiceProbeInterval time.Duration
 	OnServiceStatus      func(apigen.OrbService)
 
-	// 桌面（M8）：Desktop 为真且找得到 Xtigervnc、openbox、chromium 时启用（ConfigFromEnv 读 ORYN_DESKTOP=1）。
+	// 桌面（M8）：Desktop 为真且找得到 Xvnc、openbox、chromium 时启用（ConfigFromEnv 读 ORYN_DESKTOP=1）。
 	// DesktopCDPAddr 是 CDP 前门的监听地址（默认 127.0.0.1:7822，ORYN_DESKTOP_CDP_ADDR 覆盖，测试用 127.0.0.1:0）。
 	Desktop        bool
 	DesktopCDPAddr string
@@ -292,9 +295,11 @@ func New(cfg Config) (*Runtime, error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
-	ln, err := net.Listen("tcp", cfg.EgressAddr)
-	if err != nil {
-		return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+	ln := cfg.EgressListener
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
+			return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+		}
 	}
 	r := &Runtime{
 		cfg:      cfg,
