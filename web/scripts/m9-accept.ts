@@ -1055,17 +1055,18 @@ async function S2() {
 		"命令行含 --no-tools 与 --config",
 	);
 	check(!` ${cmdline} `.includes(" -e "), "命令行不含 -e");
-	const envKeys = (await sh(`tr '\\0' '\\n' < /proc/${op}/environ`)).stdout
+	const envLines = (await sh(`tr '\\0' '\\n' < /proc/${op}/environ`)).stdout
 		.split("\n")
-		.filter(Boolean)
-		.map((l) => l.split("=")[0] ?? "")
-		.sort();
+		.filter(Boolean);
+	const envKeys = envLines.map((l) => l.split("=")[0] ?? "").sort();
+	// PI_FILE_LOCK_BACKEND=sidecar：Oryn Core 的会话锁走 sidecar 文件上的 OFD 锁（0febd72，沙箱禁 AF_UNIX）
 	const want = [
 		"HOME",
 		"LANG",
 		"ORYN_THREAD_ID",
 		"OTEL_SDK_DISABLED",
 		"PATH",
+		"PI_FILE_LOCK_BACKEND",
 		"PI_NOTIFICATIONS",
 		"PI_RPC_EMIT_TITLE",
 		"TMPDIR",
@@ -1073,6 +1074,10 @@ async function S2() {
 	check(
 		JSON.stringify(envKeys) === JSON.stringify(want),
 		`环境变量名 = ${envKeys.join(" ")}`,
+	);
+	check(
+		envLines.includes("PI_FILE_LOCK_BACKEND=sidecar"),
+		"PI_FILE_LOCK_BACKEND=sidecar",
 	);
 	const status = (
 		await sh(
