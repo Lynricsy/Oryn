@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -46,7 +47,10 @@ func (s *Service) webpushSender(sub db.PushSubscription) Sender {
 }
 
 // pushPayload 是 service worker 收到的 JSON（≤3000 字节：正文截到 300 字符、标题截到 200 字符，仍超出时去掉正文）。
-func pushPayload(m Message) ([]byte, error) {
+func pushPayload(m Message) ([]byte, error) { return pushPayloadLimit(m, maxPushPayload) }
+
+// pushPayloadLimit 同 pushPayload，但序列化后超过 limit 字节时去掉正文（FCM 的密文要经 base64 放进 4096 字节的 data，上限更小）。
+func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 	tag, path := m.ThreadID, "/t/"+m.ThreadID
 	if len(tag) > 12 {
 		tag = tag[len(tag)-12:]
@@ -60,7 +64,7 @@ func pushPayload(m Message) ([]byte, error) {
 		"url": path, "tag": "oryn-" + tag,
 	}
 	b, err := json.Marshal(v)
-	if err != nil || len(b) <= maxPushPayload {
+	if err != nil || len(b) <= limit {
 		return b, err
 	}
 	v["body"] = ""
@@ -104,6 +108,24 @@ func errPushInvalid(msg string) error {
 	return &Error{Status: http.StatusBadRequest, Code: "push_invalid", Message: msg}
 }
 
+// parsePushKeys 校验 RFC 8291 的接收端密钥（Web Push / UnifiedPush / FCM 共用）：p256dh 须是 65 字节未压缩 P-256 点、
+// auth 须是 16 字节；返回规范化（无填充 base64url）的两个值。
+func parsePushKeys(k *apigen.PushSubscriptionKeys) (p256dh, auth string, err error) {
+	p, err := webpush.DecodeKey(k.P256Dh)
+	if err != nil || len(p) != 65 || p[0] != 0x04 {
+		return "", "", errPushInvalid("keys.p256dh must be a 65-byte uncompressed P-256 point")
+	}
+	if _, err := ecdh.P256().NewPublicKey(p); err != nil {
+		return "", "", errPushInvalid("keys.p256dh is not a point on P-256")
+	}
+	a, err := webpush.DecodeKey(k.Auth)
+	if err != nil || len(a) != 16 {
+		return "", "", errPushInvalid("keys.auth must be 16 bytes")
+	}
+	enc := base64.RawURLEncoding.EncodeToString
+	return enc(p), enc(a), nil
+}
+
 // CreatePushSubscription 登记推送订阅：`kind: fcm` 见 createFCMSubscription；其余按 endpoint upsert 一条 Web Push 订阅。
 // 端点须是 https（回环主机允许 http）；p256dh 须是 65 字节未压缩点，auth 须是 16 字节。
 func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubscriptionInput, owner Owner, userAgent string) (apigen.PushSubscription, error) {
@@ -134,17 +156,12 @@ func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubs
 	default:
 		return apigen.PushSubscription{}, errPushInvalid("endpoint must use https")
 	}
-	p, err := webpush.DecodeKey(in.Keys.P256Dh)
-	if err != nil || len(p) != 65 || p[0] != 0x04 {
-		return apigen.PushSubscription{}, errPushInvalid("keys.p256dh must be a 65-byte uncompressed P-256 point")
+	p256dh, auth, err := parsePushKeys(in.Keys)
+	if err != nil {
+		return apigen.PushSubscription{}, err
 	}
-	a, err := webpush.DecodeKey(in.Keys.Auth)
-	if err != nil || len(a) != 16 {
-		return apigen.PushSubscription{}, errPushInvalid("keys.auth must be 16 bytes")
-	}
-	enc := base64.RawURLEncoding.EncodeToString
 	row, err := s.st.Q.UpsertPushSubscription(ctx, db.UpsertPushSubscriptionParams{
-		ID: ids.New("psub"), Kind: "webpush", Endpoint: *in.Endpoint, P256dh: enc(p), Auth: enc(a),
+		ID: ids.New("psub"), Kind: "webpush", Endpoint: *in.Endpoint, P256dh: p256dh, Auth: auth,
 		WebSessionHash: owner.WebSessionHash, DeviceID: owner.DeviceID, UserAgent: truncate(userAgent, 300), CreatedAt: s.now(),
 	})
 	if err != nil {

@@ -1,8 +1,9 @@
 package notify
 
-// FCM 发送器（M7 附录 B）：Android `gms` 包在没有 UnifiedPush 分发器时登记 FCM 注册令牌，
+// FCM 发送器（M7 附录 B）：Android `gms` 包在没有 UnifiedPush 分发器时登记 FCM 注册令牌与 RFC 8291 接收端密钥，
 // 服务端以服务账号做 RS256 JWT 换 OAuth access token（缓存 55 分钟），经 FCM HTTP v1 `messages:send`
-// 发 data-only 高优先级消息（data 的键与 Web Push 载荷同名、值为字符串）；FCM 回 UNREGISTERED 即删除订阅。
+// 发 data-only 高优先级消息。data 只有 `{v:"2", id, e}`：`e` 是与 Web Push 完全相同的 aes128gcm 密文（base64url），
+// Google 只见密文；不设 collapse key（见 fcmSender.Send）。FCM 回 UNREGISTERED 即删除订阅；没有密钥的旧订阅不再投递、直接删除。
 // 服务账号 JSON 存在密钥库里（须为 proxy 模式：env 模式的密钥会注入每台 orb），配置只引用密钥名。
 
 import (
@@ -19,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,6 +32,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/webpush"
 )
 
 const (
@@ -43,6 +46,11 @@ const (
 	fcmJWTLifetime = time.Hour
 	fcmMaxToken    = 4096
 	maxFCMResponse = 64 << 10
+	// fcmDataVersion 是 data.v：2 = 载荷加密（v1 是 M7 初版的明文字段，已废弃）。
+	fcmDataVersion = "2"
+	// fcmMaxPlaintext 是加密前的明文上限：密文 = 明文 + 103 字节（86 字节头 + 1 字节分隔符 + 16 字节标签），
+	// base64 后 ≤ ceil((2800+103)×4/3) = 3871 字节，加上 v / id 两个字段仍在 FCM data 的 4096 字节上限内。
+	fcmMaxPlaintext = 2800
 )
 
 // SecretGetter 按名称读取密钥（secrets.Vault 实现）。
@@ -147,19 +155,27 @@ func parseFCMAccount(raw []byte) (*fcmAccount, error) {
 	return &a, nil
 }
 
-// createFCMSubscription 按令牌 upsert 一条 FCM 订阅（endpoint 列存令牌）。
+// createFCMSubscription 按令牌 upsert 一条 FCM 订阅（endpoint 列存令牌，p256dh / auth 存接收端密钥）。
+// keys 必填：没有它服务端无法加密，而 FCM 载荷绝不以明文发送。
 func (s *Service) createFCMSubscription(ctx context.Context, in apigen.PushSubscriptionInput, owner Owner, userAgent string) (apigen.PushSubscription, error) {
-	if in.Endpoint != nil || in.Keys != nil {
-		return apigen.PushSubscription{}, errPushInvalid("kind fcm takes only token")
+	if in.Endpoint != nil {
+		return apigen.PushSubscription{}, errPushInvalid("kind fcm takes token and keys, not endpoint")
 	}
 	if in.Token == nil || !validFCMToken(*in.Token) {
 		return apigen.PushSubscription{}, errPushInvalid("token must be a non-empty FCM registration token")
+	}
+	if in.Keys == nil {
+		return apigen.PushSubscription{}, errPushInvalid("kind fcm requires keys (p256dh, auth) for payload encryption")
+	}
+	p256dh, auth, err := parsePushKeys(in.Keys)
+	if err != nil {
+		return apigen.PushSubscription{}, err
 	}
 	if _, err := s.fcmAccount(ctx); err != nil {
 		return apigen.PushSubscription{}, err
 	}
 	row, err := s.st.Q.UpsertPushSubscription(ctx, db.UpsertPushSubscriptionParams{
-		ID: ids.New("psub"), Kind: "fcm", Endpoint: *in.Token,
+		ID: ids.New("psub"), Kind: "fcm", Endpoint: *in.Token, P256dh: p256dh, Auth: auth,
 		WebSessionHash: owner.WebSessionHash, DeviceID: owner.DeviceID, UserAgent: truncate(userAgent, 300), CreatedAt: s.now(),
 	})
 	if err != nil {
@@ -188,42 +204,50 @@ func validFCMToken(t string) bool {
 type fcmSender struct {
 	s     *Service
 	token string
+	// keys 是接收端的 RFC 8291 密钥（Endpoint 不用）；P256dh 为空 = 旧版 App 登记的无密钥订阅。
+	keys webpush.Subscription
 }
 
-func (s *Service) fcmSender(sub db.PushSubscription) Sender { return fcmSender{s, sub.Endpoint} }
+func (s *Service) fcmSender(sub db.PushSubscription) Sender {
+	return fcmSender{s, sub.Endpoint, webpush.Subscription{P256dh: sub.P256dh, Auth: sub.Auth}}
+}
 
-// fcmData 把 Web Push 载荷转成 FCM 的 data（值一律为字符串）。
-func fcmData(m Message) (map[string]string, error) {
-	payload, err := pushPayload(m)
+// errFCMNoKeys 是无密钥旧订阅的投递错误（写入投递的 last_error）。
+var errFCMNoKeys = errors.New("fcm subscription has no encryption keys")
+
+// fcmData 把 Web Push 载荷按 RFC 8291 加密后放进 FCM 的 data：`{v:"2", id:<通知 id>, e:<aes128gcm 报文体的无填充 base64url>}`。
+// 明文与 Web Push 载荷相同，App 解密后交给同一套通知流程；data 里不出现标题、正文、线程 id 等任何明文。
+func fcmData(m Message, keys webpush.Subscription, rnd io.Reader) (map[string]string, error) {
+	payload, err := pushPayloadLimit(m, fcmMaxPlaintext)
 	if err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.UseNumber()
-	var v map[string]any
-	if err := dec.Decode(&v); err != nil {
+	ct, err := webpush.Encrypt(payload, keys, rnd)
+	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]string, len(v))
-	for k, x := range v {
-		out[k] = fmt.Sprint(x)
-	}
-	return out, nil
+	return map[string]string{"v": fcmDataVersion, "id": m.NotificationID, "e": base64.RawURLEncoding.EncodeToString(ct)}, nil
 }
 
+// Send 发送一条 FCM 消息。不设 android.collapse_key：FCM 对每个注册令牌最多只保留 4 个不同 collapse key 的离线消息，
+// 超出的会被不确定地丢弃且不通知 App；非折叠消息离线时最多存 100 条，超出则全部丢弃并在设备上线时回调
+// FirebaseMessagingService.onDeletedMessages()，App 在那里补拉未读通知（见 docs/protocol.md「M7：移动推送」）。
+// 同一线程的多条通知由 App 用本地通知 tag 合并显示。
 func (f fcmSender) Send(ctx context.Context, m Message) Result {
+	if f.keys.P256dh == "" || f.keys.Auth == "" {
+		// 旧版 App 的订阅：无法加密，绝不回退明文；删除订阅，新版 App 下次同步时带 keys 重新登记
+		slog.Warn("notify: 删除没有加密密钥的 FCM 订阅（旧版 App 登记）", "token", maskTail(f.token))
+		return Result{Gone: true, Err: errFCMNoKeys}
+	}
 	acct, err := f.s.fcmAccount(ctx)
 	if err != nil {
 		return Result{Err: err}
 	}
-	data, err := fcmData(m)
+	data, err := fcmData(m, f.keys, rand.Reader)
 	if err != nil {
 		return Result{Err: err}
 	}
 	android := map[string]any{"priority": "HIGH", "ttl": fmt.Sprintf("%ds", pushTTL)}
-	if tag := data["tag"]; tag != "" {
-		android["collapse_key"] = tag
-	}
 	body, err := json.Marshal(map[string]any{"message": map[string]any{"token": f.token, "data": data, "android": android}})
 	if err != nil {
 		return Result{Err: err}

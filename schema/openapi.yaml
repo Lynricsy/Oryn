@@ -2178,9 +2178,10 @@ paths:
       description: |
         `kind` 缺省为 `webpush`：`endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
         `keys.auth` 解码后须为 16 字节，否则 400 `push_invalid`。
-        `kind: fcm`：须带 `token`（FCM 注册令牌，不得带 `endpoint` / `keys`），否则 400 `push_invalid`；
+        `kind: fcm`：须带 `token`（FCM 注册令牌）与 `keys`（App 生成的 RFC 8291 接收端密钥，校验同上），不得带 `endpoint`；
+        缺 `keys` 或形态错误 → 400 `push_invalid`。FCM 载荷用这对密钥加密（`data` 只有 `{v:"2", id, e}`，见 docs/protocol.md「M7：移动推送」）。
         服务器未配置 FCM（`orynd.yaml` 的 `push.fcm.service_account_secret` 为空或该密钥不存在）时 409 `fcm_unavailable`。
-        返回的订阅 `endpoint` 即该令牌。
+        按 `token` upsert（再次登记覆盖 `keys`），返回的订阅 `endpoint` 即该令牌。
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -5481,7 +5482,7 @@ components:
       description: |
         两种形态，按 `kind` 区分（缺省 `webpush`）：
         - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
-        - `fcm`：只带 `token`（Android `gms` 包的 FCM 注册令牌）。
+        - `fcm`：带 `token`（Android `gms` 包的 FCM 注册令牌）与 `keys`（载荷加密用，必填）。
       properties:
         kind:
           type: string

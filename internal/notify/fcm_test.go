@@ -22,8 +22,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/secrets"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
+	"github.com/Lynricsy/Oryn/internal/webpush/webpushtest"
 )
 
 const fcmSecretName = "fcm/service-account"
@@ -52,7 +55,9 @@ type fcmErr struct {
 
 type fcmSendReq struct {
 	path, auth string
-	body       map[string]any
+	// raw 是请求体原文：用来断言其中没有任何明文标题 / 正文。
+	raw  string
+	body map[string]any
 }
 
 func newFakeGoogle(t *testing.T, pub *rsa.PublicKey) *fakeGoogle {
@@ -84,7 +89,7 @@ func (g *fakeGoogle) serve(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		require.NoError(g.t, json.Unmarshal(b, &body))
 		auth := r.Header.Get("Authorization")
-		g.sends = append(g.sends, fcmSendReq{r.URL.Path, auth, body})
+		g.sends = append(g.sends, fcmSendReq{r.URL.Path, auth, string(b), body})
 		if g.rejectAccess[strings.TrimPrefix(auth, "Bearer ")] {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = io.WriteString(w, `{"error":{"code":401,"status":"UNAUTHENTICATED"}}`)
@@ -169,8 +174,46 @@ func (f *fixture) useFCM(v *secrets.Vault, g *fakeGoogle) {
 	f.s = s
 }
 
-func fcmInput(token string) apigen.PushSubscriptionInput {
-	return apigen.PushSubscriptionInput{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new(token)}
+// pushClient 生成接收端（App）的 P-256 密钥对与 auth secret。
+func pushClient(t *testing.T) *webpushtest.Client {
+	t.Helper()
+	c, err := webpushtest.NewClient("fcm:")
+	require.NoError(t, err)
+	return c
+}
+
+// fcmInput 构造 fcm 订阅登记；c 为 nil 时不带 keys。
+func fcmInput(token string, c *webpushtest.Client) apigen.PushSubscriptionInput {
+	in := apigen.PushSubscriptionInput{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new(token)}
+	if c != nil {
+		in.Keys = &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}
+	}
+	return in
+}
+
+// fcmPlain 校验一条 FCM 请求的 data 只有 {v, id, e}，用接收端私钥解开 e 并返回明文 JSON。
+func fcmPlain(t *testing.T, c *webpushtest.Client, s fcmSendReq) map[string]any {
+	t.Helper()
+	data, ok := s.body["message"].(map[string]any)["data"].(map[string]any)
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"v", "id", "e"}, keysOf(data), "data 只有版本、通知 id 与密文")
+	assert.Equal(t, "2", data["v"])
+	ct, err := base64.RawURLEncoding.DecodeString(data["e"].(string))
+	require.NoError(t, err, "e 是无填充 base64url")
+	plain, err := c.Decrypt(ct)
+	require.NoError(t, err, "接收端私钥能解开")
+	var p map[string]any
+	require.NoError(t, json.Unmarshal(plain, &p))
+	assert.Equal(t, p["id"], data["id"])
+	return p
+}
+
+func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func requireNotifyErr(t *testing.T, err error, status int, code string) {
@@ -184,7 +227,7 @@ func requireNotifyErr(t *testing.T, err error, status int, code string) {
 // 未配置 FCM：登记 fcm 订阅 409 fcm_unavailable，Web Push 不受影响，fcm 不在投递注册表里。
 func TestFCMDisabled(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1"), Owner{}, "")
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1", pushClient(t)), Owner{}, "")
 	requireNotifyErr(t, err, http.StatusConflict, "fcm_unavailable")
 	assert.Nil(t, f.s.pushSenders["fcm"])
 	assert.NotNil(t, f.s.pushSenders["webpush"])
@@ -196,7 +239,7 @@ func TestFCMSubscriptionValidation(t *testing.T) {
 	// 已配置但密钥不存在 / 是 env 模式 / 内容无效 → fcm_unavailable
 	f, v := fcmFixture(t, "", "")
 	f.useFCM(v, nil)
-	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1"), Owner{}, "")
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1", pushClient(t)), Owner{}, "")
 	requireNotifyErr(t, err, http.StatusConflict, "fcm_unavailable")
 
 	f, v = fcmFixture(t, "", "")
@@ -205,39 +248,51 @@ func TestFCMSubscriptionValidation(t *testing.T) {
 	s, err := New(Config{PublicURL: "https://oryn.test", DataDir: f.dir, Box: f.box, Now: f.clock.Now, AfterFunc: f.timers.AfterFunc,
 		FCM: FCMConfig{Secret: "FCM_SA", Secrets: v}}, f.st, f.th, f.out)
 	require.NoError(t, err)
-	_, err = s.CreatePushSubscription(f.ctx, fcmInput("tok-1"), Owner{}, "")
+	_, err = s.CreatePushSubscription(f.ctx, fcmInput("tok-1", pushClient(t)), Owner{}, "")
 	requireNotifyErr(t, err, http.StatusConflict, "fcm_unavailable")
 
 	f, v = fcmFixture(t, `{"project_id":"p","client_email":"e","private_key":"not pem"}`, secrets.ModeProxy)
 	f.useFCM(v, nil)
-	_, err = f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1"), Owner{}, "")
+	_, err = f.s.CreatePushSubscription(f.ctx, fcmInput("tok-1", pushClient(t)), Owner{}, "")
 	requireNotifyErr(t, err, http.StatusConflict, "fcm_unavailable")
 
-	// 形态错误 → push_invalid
+	// 形态错误 → push_invalid；kind fcm 不带 keys（旧版 App 的登记形态）同样拒绝
 	f, v = fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, nil)
+	c := pushClient(t)
+	keys := &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: c.Sub.Auth}
 	bad := []apigen.PushSubscriptionInput{
-		{Kind: new(apigen.PushSubscriptionInputKindFcm)},
-		fcmInput(""),
-		fcmInput("has space"),
-		fcmInput("tok\n"),
-		fcmInput(strings.Repeat("a", fcmMaxToken+1)),
-		{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new("tok"), Endpoint: new("https://push.example/x")},
+		{Kind: new(apigen.PushSubscriptionInputKindFcm), Keys: keys},
+		fcmInput("", c),
+		fcmInput("has space", c),
+		fcmInput("tok\n", c),
+		fcmInput(strings.Repeat("a", fcmMaxToken+1), c),
+		{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new("tok"), Endpoint: new("https://push.example/x"), Keys: keys},
+		fcmInput("tok", nil),
 		{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new("tok"), Keys: &apigen.PushSubscriptionKeys{}},
+		{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new("tok"), Keys: &apigen.PushSubscriptionKeys{P256Dh: "AAAA", Auth: c.Sub.Auth}},
+		{Kind: new(apigen.PushSubscriptionInputKindFcm), Token: new("tok"), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: "AAAA"}},
 	}
 	for _, in := range bad {
 		_, err := f.s.CreatePushSubscription(f.ctx, in, Owner{}, "")
 		requireNotifyErr(t, err, http.StatusBadRequest, "push_invalid")
 	}
+	_, err = f.s.CreatePushSubscription(f.ctx, fcmInput("tok", nil), Owner{}, "")
+	assert.ErrorContains(t, err, "kind fcm requires keys")
 
-	// 合法：按令牌 upsert，endpoint = 令牌
-	sub, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok:APA91b-x_y"), Owner{}, "OrynMobile/0.1.0 (android)")
+	// 合法：按令牌 upsert，endpoint = 令牌；再次登记覆盖 keys
+	sub, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok:APA91b-x_y", c), Owner{}, "OrynMobile/0.1.0 (android)")
 	require.NoError(t, err)
 	assert.Equal(t, apigen.PushSubscriptionKindFcm, sub.Kind)
 	assert.Equal(t, "tok:APA91b-x_y", sub.Endpoint)
-	again, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok:APA91b-x_y"), Owner{}, "UA2")
+	c2 := pushClient(t)
+	again, err := f.s.CreatePushSubscription(f.ctx, fcmInput("tok:APA91b-x_y", c2), Owner{}, "UA2")
 	require.NoError(t, err)
 	assert.Equal(t, sub.ID, again.ID)
+	row, err := f.st.Q.GetPushSubscriptionByEndpoint(f.ctx, "tok:APA91b-x_y")
+	require.NoError(t, err)
+	assert.Equal(t, c2.Sub.P256dh, row.P256dh)
+	assert.Equal(t, c2.Sub.Auth, row.Auth)
 }
 
 func TestFCMSender(t *testing.T) {
@@ -245,7 +300,8 @@ func TestFCMSender(t *testing.T) {
 	g := newFakeGoogle(t, pub)
 	f, v := fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, g)
-	sub, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg-token-1"), Owner{}, "")
+	c := pushClient(t)
+	sub, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg-token-1", c), Owner{}, "")
 	require.NoError(t, err)
 
 	id := f.thread("推送测试")
@@ -259,12 +315,12 @@ func TestFCMSender(t *testing.T) {
 
 	tokens, sends := g.snapshot()
 	require.Len(t, tokens, 1)
-	c := tokens[0]
-	assert.Equal(t, "fcm-sender@oryn-test.iam.gserviceaccount.com", c["iss"])
-	assert.Equal(t, "https://www.googleapis.com/auth/firebase.messaging", c["scope"])
-	assert.Equal(t, g.srv.URL+"/token", c["aud"])
-	assert.Equal(t, float64(f.clock.Now().Unix()), c["iat"])
-	assert.Equal(t, float64(f.clock.Now().Add(time.Hour).Unix()), c["exp"])
+	claims := tokens[0]
+	assert.Equal(t, "fcm-sender@oryn-test.iam.gserviceaccount.com", claims["iss"])
+	assert.Equal(t, "https://www.googleapis.com/auth/firebase.messaging", claims["scope"])
+	assert.Equal(t, g.srv.URL+"/token", claims["aud"])
+	assert.Equal(t, float64(f.clock.Now().Unix()), claims["iat"])
+	assert.Equal(t, float64(f.clock.Now().Add(time.Hour).Unix()), claims["exp"])
 
 	require.Len(t, sends, 1)
 	s0 := sends[0]
@@ -273,10 +329,15 @@ func TestFCMSender(t *testing.T) {
 	msg := s0.body["message"].(map[string]any)
 	assert.Equal(t, "reg-token-1", msg["token"])
 	assert.NotContains(t, msg, "notification", "data-only")
+	// 请求体里没有任何明文：标题、正文、线程 id（url / tag 都含它）、明文字段名都不出现
+	for _, leak := range []string{"推送测试", "选 A 还是 B", `\u63a8`, id, id[len(id)-12:], `"title"`, `"body"`, `"url"`, `"tag"`, `"kind"`} {
+		assert.NotContains(t, s0.raw, leak, "FCM 请求体泄露明文 %q", leak)
+	}
 	tag := "oryn-" + id[len(id)-12:]
-	assert.Equal(t, map[string]any{"v": "1", "id": n.ID, "kind": "input", "title": "推送测试", "body": "选 A 还是 B？",
-		"url": "/t/" + id, "tag": tag}, msg["data"])
-	assert.Equal(t, map[string]any{"priority": "HIGH", "ttl": "86400s", "collapse_key": tag}, msg["android"])
+	assert.Equal(t, map[string]any{"v": float64(1), "id": n.ID, "kind": "input", "title": "推送测试", "body": "选 A 还是 B？",
+		"url": "/t/" + id, "tag": tag}, fcmPlain(t, c, s0))
+	// 不用 collapse key：每条都是非折叠消息，离线时不会被 FCM 的「最多 4 个 collapse key」规则静默淘汰
+	assert.Equal(t, map[string]any{"priority": "HIGH", "ttl": "86400s"}, msg["android"])
 	assert.Equal(t, statusSent, f.delivery(ds[0].ID).Status)
 
 	// 55 分钟内复用 access token
@@ -287,6 +348,8 @@ func TestFCMSender(t *testing.T) {
 	assert.Len(t, tokens, 1, "缓存命中，不再换 token")
 	require.Len(t, sends, 2)
 	assert.Equal(t, "Bearer ya29.test-1", sends[1].auth)
+	assert.Equal(t, "done", fcmPlain(t, c, sends[1])["kind"])
+	assert.NotContains(t, sends[1].body["message"].(map[string]any)["android"], "collapse_key")
 
 	// 满 55 分钟后重新换取
 	f.clock.Advance(2 * time.Minute)
@@ -312,7 +375,7 @@ func TestFCMAccessTokenRejected(t *testing.T) {
 	g.rejectAccess["ya29.test-1"] = true
 	f, v := fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, g)
-	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg-token-1"), Owner{}, "")
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg-token-1", pushClient(t)), Owner{}, "")
 	require.NoError(t, err)
 	d := f.onlyDelivery(f.thread("t"))
 	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
@@ -340,9 +403,9 @@ func TestFCMUnregisteredDeletesSubscription(t *testing.T) {
 		"details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"INVALID_ARGUMENT"}]}}`}
 	f, v := fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, g)
-	dead, err := f.s.CreatePushSubscription(f.ctx, fcmInput("dead"), Owner{}, "")
+	dead, err := f.s.CreatePushSubscription(f.ctx, fcmInput("dead", pushClient(t)), Owner{}, "")
 	require.NoError(t, err)
-	bad, err := f.s.CreatePushSubscription(f.ctx, fcmInput("bad"), Owner{}, "")
+	bad, err := f.s.CreatePushSubscription(f.ctx, fcmInput("bad", pushClient(t)), Owner{}, "")
 	require.NoError(t, err)
 
 	f.done(f.thread("t"))
@@ -369,7 +432,7 @@ func TestFCMTokenEndpointRejects(t *testing.T) {
 	g := newFakeGoogle(t, &other.PublicKey) // 公钥不匹配 → invalid_grant
 	f, v := fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, g)
-	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg"), Owner{}, "")
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg", pushClient(t)), Owner{}, "")
 	require.NoError(t, err)
 	d := f.onlyDelivery(f.thread("t"))
 	require.Equal(t, 1, f.s.DeliverDue(f.ctx))
@@ -387,7 +450,7 @@ func TestFCMSecretRemovedAtRuntime(t *testing.T) {
 	g := newFakeGoogle(t, pub)
 	f, v := fcmFixture(t, sa, secrets.ModeProxy)
 	f.useFCM(v, g)
-	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg"), Owner{}, "")
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg", pushClient(t)), Owner{}, "")
 	require.NoError(t, err)
 	ok, err := v.Delete(context.Background(), fcmSecretName)
 	require.NoError(t, err)
@@ -401,4 +464,76 @@ func TestFCMSecretRemovedAtRuntime(t *testing.T) {
 	tokens, sends := g.snapshot()
 	assert.Empty(t, tokens)
 	assert.Empty(t, sends)
+}
+
+// 旧版 App 登记的 fcm 订阅没有 keys：投递时不发任何请求（绝不回退明文），直接删除该订阅（投递随外键级联删除）。
+func TestFCMLegacySubscriptionWithoutKeys(t *testing.T) {
+	sa, pub := serviceAccountJSON(t)
+	g := newFakeGoogle(t, pub)
+	f, v := fcmFixture(t, sa, secrets.ModeProxy)
+	f.useFCM(v, g)
+	legacy, err := f.st.Q.UpsertPushSubscription(f.ctx, db.UpsertPushSubscriptionParams{
+		ID: ids.New("psub"), Kind: "fcm", Endpoint: "legacy-token", CreatedAt: 1,
+	})
+	require.NoError(t, err)
+	c := pushClient(t)
+	_, err = f.s.CreatePushSubscription(f.ctx, fcmInput("new-token", c), Owner{}, "")
+	require.NoError(t, err)
+
+	id := f.thread("机密标题")
+	f.done(id)
+	n := f.notifications()[0]
+	require.Len(t, f.deliveries(n.ID), 2)
+	require.Equal(t, 2, f.s.DeliverDue(f.ctx))
+
+	_, sends := g.snapshot()
+	require.Len(t, sends, 1, "只给带 keys 的订阅发送")
+	assert.Equal(t, "new-token", sends[0].body["message"].(map[string]any)["token"])
+	assert.NotContains(t, sends[0].raw, "机密标题")
+	assert.Equal(t, "机密标题", fcmPlain(t, c, sends[0])["title"])
+	subs, err := f.s.ListPushSubscriptions(f.ctx)
+	require.NoError(t, err)
+	require.Len(t, subs, 1)
+	assert.NotEqual(t, legacy.ID, subs[0].ID, "无 keys 的旧订阅已删除")
+	ds := f.deliveries(n.ID)
+	require.Len(t, ds, 1)
+	assert.Equal(t, statusSent, ds[0].Status)
+}
+
+// 最长的标题 / 正文（且全部需要 JSON 转义）加密后，FCM data 仍不超过 4096 字节（FCM 对 data 的上限）；
+// 正文长度逐步加大，覆盖明文落在 2800–3000 字节（Web Push 上限以内、FCM 已超限）的区间。
+func TestFCMPayloadFitsDataLimit(t *testing.T) {
+	sa, pub := serviceAccountJSON(t)
+	g := newFakeGoogle(t, pub)
+	f, v := fcmFixture(t, sa, secrets.ModeProxy)
+	f.useFCM(v, g)
+	c := pushClient(t)
+	_, err := f.s.CreatePushSubscription(f.ctx, fcmInput("reg", c), Owner{}, "")
+	require.NoError(t, err)
+	cases := []struct{ title, reason string }{
+		{strings.Repeat("\u2028", 400), strings.Repeat("<", 400)},
+		{strings.Repeat("标", 400), strings.Repeat("题", 400)},
+		{"短标题", strings.Repeat("\u2028", 400)},
+	}
+	for n := 200; n <= 300; n += 4 {
+		cases = append(cases, struct{ title, reason string }{strings.Repeat("<", 200), strings.Repeat("<", n)})
+	}
+	for i, tc := range cases {
+		id := f.thread(tc.title)
+		f.s.StateChanged(threads.StateEvent{ThreadID: id, Prev: threads.StateWorking, State: threads.StateError, Reason: tc.reason})
+		f.flush()
+		require.Equal(t, 1, f.s.DeliverDue(f.ctx))
+		_, sends := g.snapshot()
+		require.Len(t, sends, i+1)
+		data := sends[i].body["message"].(map[string]any)["data"].(map[string]any)
+		size := 0
+		for k, x := range data {
+			size += len(k) + len(x.(string))
+		}
+		assert.LessOrEqual(t, size, 4096, "case %d", i)
+		p := fcmPlain(t, c, sends[i])
+		title := p["title"].(string)
+		assert.Equal(t, min(utf8Len(tc.title), 200), utf8Len(title), "标题保留（截到 200 字符）")
+		assert.True(t, strings.HasPrefix(tc.title, strings.TrimSuffix(title, "…")), "case %d", i)
+	}
 }

@@ -153,8 +153,13 @@ func TestNotificationsAPI(t *testing.T) {
 	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"endpoint": "http://push.example/x", "keys": in["keys"]})
 	assert.Equal(t, 400, st)
 	assert.Equal(t, "push_invalid", errCode(body))
-	// 服务器未配置 FCM：409 fcm_unavailable
+	// kind fcm 不带 keys（旧版 App 的形态）：400 push_invalid，先于 FCM 是否配置的检查
 	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token"})
+	assert.Equal(t, 400, st)
+	assert.Equal(t, "push_invalid", errCode(body))
+	assert.Contains(t, string(body), "kind fcm requires keys")
+	// 服务器未配置 FCM：409 fcm_unavailable
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token", "keys": in["keys"]})
 	assert.Equal(t, 409, st)
 	assert.Equal(t, "fcm_unavailable", errCode(body))
 

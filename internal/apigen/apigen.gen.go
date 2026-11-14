@@ -4543,7 +4543,7 @@ type PushSubscriptionID = string
 
 // PushSubscriptionInput 两种形态，按 `kind` 区分（缺省 `webpush`）：
 // - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
-// - `fcm`：只带 `token`（Android `gms` 包的 FCM 注册令牌）。
+// - `fcm`：带 `token`（Android `gms` 包的 FCM 注册令牌）与 `keys`（载荷加密用，必填）。
 type PushSubscriptionInput struct {
 	Endpoint *string                    `json:"endpoint,omitempty"`
 	Keys     *PushSubscriptionKeys      `json:"keys,omitempty"`
