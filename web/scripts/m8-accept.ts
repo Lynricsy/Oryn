@@ -1142,7 +1142,7 @@ async function B1() {
 	// 从包数据库取版本，同时验证 Arch 镜像里的 Xvnc 在 PATH 上。
 	const r = await sh(
 		`docker run --rm ${IMAGE} bash -lc ${q(
-			'command -v Xvnc >/dev/null && pacman -Q tigervnc; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP',
+			"command -v Xvnc >/dev/null && pacman -Q tigervnc; chromium --version; openbox --version | head -1; fc-list :lang=zh | wc -l; echo $ORYN_DESKTOP",
 		)}`,
 		{ timeoutMs: 180_000 },
 	);
@@ -1212,10 +1212,7 @@ async function B2() {
 			.split("\n")
 			.map((x) => Number(x.trim()) || 0)
 			.reduce((a, b) => a + b, 0) / 1024;
-	soft(
-		mb <= 80,
-		`Xvnc + openbox RSS 合计 ${mb.toFixed(1)}MB（预期 ≤ 80MB）`,
-	);
+	soft(mb <= 80, `Xvnc + openbox RSS 合计 ${mb.toFixed(1)}MB（预期 ≤ 80MB）`);
 	const o = await getOrb(orb);
 	note(`GET orbs → desktop ${JSON.stringify(o.desktop)}`);
 	check(o.desktop?.displayReady === true, "desktop.displayReady == true");
