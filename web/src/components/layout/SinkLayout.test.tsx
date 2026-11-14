@@ -3,14 +3,45 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { concentricRadius } from "../../lib/device-corners";
 import { uiStore } from "../../state/ui";
-import { SINK_EDGE, SinkLayout, settleSink, sinkProgress } from "./SinkLayout";
+import {
+	blocksSwipe,
+	SINK_EDGE,
+	SinkLayout,
+	settleSink,
+	sinkProgress,
+} from "./SinkLayout";
 
 function mount() {
 	return render(
 		<SinkLayout sidebar={<button type="button">线程甲</button>}>
 			<button type="button">正文按钮</button>
+			<p data-testid="prose">正文段落</p>
+			<pre data-testid="code">
+				<span data-testid="code-text">const x = 1;</span>
+			</pre>
+			<table>
+				<tbody>
+					<tr>
+						<td data-testid="cell">格</td>
+					</tr>
+				</tbody>
+			</table>
+			<div data-testid="thread-tabs">
+				<span data-testid="tab">终端</span>
+			</div>
+			<input data-testid="field" />
+			<div data-testid="scroller" style={{ overflowX: "auto" }}>
+				<span data-testid="scroll-item">很宽的内容</span>
+			</div>
 		</SinkLayout>,
 	);
+}
+
+/** jsdom 不做布局：给横滚容器补上内容宽度与滚动位置。 */
+function makeScrollable(el: HTMLElement, scrollLeft: number) {
+	Object.defineProperty(el, "scrollWidth", { configurable: true, value: 800 });
+	Object.defineProperty(el, "clientWidth", { configurable: true, value: 300 });
+	el.scrollLeft = scrollLeft;
 }
 
 const card = () => screen.getByTestId("sink-card");
@@ -149,13 +180,17 @@ describe("触摸手势", () => {
 		window.innerWidth = 1024;
 	});
 
-	it("左缘右滑跟手写进度，松手过半吸附打开；非左缘起手不拖", () => {
-		mount();
-		touch(card(), "touchStart", SINK_EDGE + 40, 300, 0);
-		touch(card(), "touchMove", 300, 300, 400);
-		touch(card(), "touchEnd", 300);
-		expect(uiStore.getState().sidebarOpen).toBe(false);
+	/** 从 `el` 起手横滑：起点 x0、终点 x1，纵向漂移 dy。 */
+	function swipe(el: Element, x0: number, x1: number, dy = 0, t = 0) {
+		touch(el, "touchStart", x0, 300, t);
+		const move = touch(el, "touchMove", (x0 + x1) / 2, 300 + dy / 2, t + 100);
+		touch(el, "touchMove", x1, 300 + dy, t + 400);
+		touch(el, "touchEnd", x1);
+		return move;
+	}
 
+	it("左缘右滑跟手写进度，松手过半吸附打开", () => {
+		mount();
 		touch(card(), "touchStart", 4, 300, 1000);
 		const move = touch(card(), "touchMove", 120, 302, 1400);
 		expect(move.defaultPrevented).toBe(true);
@@ -185,5 +220,60 @@ describe("触摸手势", () => {
 		touch(strip, "touchMove", 300, 300, 3020);
 		touch(strip, "touchEnd", 300);
 		expect(uiStore.getState().sidebarOpen).toBe(false);
+	});
+
+	it("关闭时在卡片中部右滑也能打开（横向明显大于纵向）", () => {
+		mount();
+		const move = swipe(screen.getByTestId("prose"), 120, 340, 20);
+		expect(move.defaultPrevented).toBe(true);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+	});
+
+	it("卡片中部：纵向为主、横纵相近或向左滑都不打开", () => {
+		mount();
+		const prose = screen.getByTestId("prose");
+		expect(swipe(prose, 120, 140, 200).defaultPrevented).toBe(false);
+		expect(swipe(prose, 120, 300, 160, 1000).defaultPrevented).toBe(false);
+		expect(swipe(prose, 300, 100, 0, 2000).defaultPrevented).toBe(false);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		expect(card()).not.toHaveAttribute("data-dragging");
+	});
+
+	it("起手在代码块、表格、同级标签条、输入框、没滚到最左的横滚容器里不接管；滚到最左的容器照常", () => {
+		mount();
+		for (const id of ["code-text", "cell", "tab", "field"]) {
+			swipe(screen.getByTestId(id), 120, 340);
+			expect(uiStore.getState().sidebarOpen).toBe(false);
+		}
+		const scroller = screen.getByTestId("scroller");
+		makeScrollable(scroller, 40);
+		swipe(screen.getByTestId("scroll-item"), 120, 340);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+
+		makeScrollable(scroller, 0);
+		swipe(screen.getByTestId("scroll-item"), 120, 340);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+	});
+
+	it("左缘起手不受可横滚元素限制；有文本选择时卡片中部不接管", () => {
+		mount();
+		const sel = vi
+			.spyOn(window, "getSelection")
+			.mockReturnValue({ isCollapsed: false } as Selection);
+		swipe(screen.getByTestId("prose"), 120, 340);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		sel.mockRestore();
+		swipe(screen.getByTestId("code-text"), SINK_EDGE - 4, 300);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+	});
+
+	it("blocksSwipe：卡片外的祖先不算", () => {
+		const outer = document.createElement("pre");
+		const stop = document.createElement("div");
+		const inner = document.createElement("span");
+		outer.append(stop);
+		stop.append(inner);
+		expect(blocksSwipe(inner, stop)).toBe(false);
+		expect(blocksSwipe(null, stop)).toBe(false);
 	});
 });

@@ -4,8 +4,10 @@
  * 左缘留一条；卡片四角与屏幕圆角同心（index.css 的 `.sink-card`）。
  * 为什么不用悬浮抽屉：悬浮抽屉四周留边，无法与顶部沉浸、屏幕圆角和刘海 / 挖孔区域协调。
  * - 状态 = `uiStore.sidebarOpen`（页头开关、Ctrl+B、侧栏里选线程后关闭都走它）。
- * - 手势（触摸）：关闭时从左缘 24px 内右滑打开；打开时在露出的卡片条上左滑关闭，轻点关闭。跟手（按位移插值进度），
- *   松手按速度 / 位置吸附（`settleSink`）。
+ * - 手势（触摸）：关闭时在卡片任意位置横向右滑打开（不做系统手势排除：Android 每条边最多排除 200dp，且会与返回手势抢）；
+ *   左缘 24px 内起手按横向为主即接管，其余位置要先过 SLOP、横向位移明显大于纵向（`DOMINANT` 倍）且向右才接管，
+ *   起手点落在可横滚 / 可编辑的元素里（`blocksSwipe`）或有文本选择时不接管。打开时在露出的卡片条上左滑关闭，轻点关闭。
+ *   跟手（按位移插值进度），松手按速度 / 位置吸附（`settleSink`）。
  * - Esc 与返回键关闭：打开时压入一条带标记的历史记录，返回键弹出它即关闭；其它方式关闭时自己 `history.back()` 弹掉；
  *   在侧栏里点链接导航后标记留在栈里，日后返回落到它上面时自动再退一步。
  * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。
@@ -25,6 +27,32 @@ import { uiStore, useUi } from "../../state/ui";
 export const SINK_EDGE = 24;
 /** 判定为横向拖动前的最小位移（px）。 */
 const SLOP = 8;
+/** 非左缘起手时，横向位移至少是纵向的这么多倍才算横滑。 */
+const DOMINANT = 1.5;
+/** 起手点在这些元素里时不接管：它们自己要横滑、拖选或编辑（代码块、表格、终端、同级标签条、输入框）。 */
+const OWN_GESTURE =
+	'pre, table, input, textarea, select, [contenteditable]:not([contenteditable="false"]), .cm-editor, .xterm, [data-testid="terminal-view"], [data-testid="thread-tabs"], [role="tablist"]';
+
+/**
+ * 卡片中部起手的右滑是否该让给元素自己：命中 `OWN_GESTURE`，或从起手点到卡片之间有可横滚且没滚到最左的容器
+ * （右滑会先把它往左滚）。
+ */
+export function blocksSwipe(target: Element | null, stop: Element): boolean {
+	if (!target) return false;
+	const own = target.closest(OWN_GESTURE);
+	if (own && stop.contains(own)) return true;
+	for (
+		let el: Element | null = target;
+		el && el !== stop;
+		el = el.parentElement
+	) {
+		if (el.scrollLeft <= 0 || el.scrollWidth <= el.clientWidth) continue;
+		const ox = getComputedStyle(el).overflowX;
+		if (ox === "auto" || ox === "scroll") return true;
+	}
+	return false;
+}
+
 /** 速度阈值（px/ms）：快速一甩即按方向吸附。 */
 const FLING = 0.3;
 /** 历史记录里的标记字段。 */
@@ -137,7 +165,13 @@ export function SinkLayout({
 	useEffect(() => {
 		const card = cardRef.current;
 		if (!card) return;
-		let start: { x: number; y: number; p: number; t: number } | null = null;
+		let start: {
+			x: number;
+			y: number;
+			p: number;
+			t: number;
+			edge: boolean;
+		} | null = null;
 		let dragging = false;
 		let last = { x: 0, t: 0, v: 0 };
 		let progress = 0;
@@ -159,10 +193,22 @@ export function SinkLayout({
 				return;
 			}
 			const isOpen = openRef.current;
-			// 关闭时只认左缘起手；打开时整张露出的卡片都可以拖
-			if (!isOpen && touch.clientX > SINK_EDGE) return;
+			// 打开时整张露出的卡片都可以拖；关闭时左缘直接认，其余位置让给自带手势的元素与文本选择
+			const edge = !isOpen && touch.clientX <= SINK_EDGE;
+			if (!isOpen && !edge) {
+				const sel = window.getSelection?.();
+				if (sel && !sel.isCollapsed) return;
+				if (blocksSwipe(e.target instanceof Element ? e.target : null, card))
+					return;
+			}
 			const now = e.timeStamp || performance.now();
-			start = { x: touch.clientX, y: touch.clientY, p: isOpen ? 1 : 0, t: now };
+			start = {
+				x: touch.clientX,
+				y: touch.clientY,
+				p: isOpen ? 1 : 0,
+				t: now,
+				edge,
+			};
 			last = { x: touch.clientX, t: now, v: 0 };
 			progress = start.p;
 		};
@@ -173,8 +219,12 @@ export function SinkLayout({
 			const dy = touch.clientY - start.y;
 			if (!dragging) {
 				if (Math.abs(dx) < SLOP && Math.abs(dy) < SLOP) return;
-				// 竖向为主：交给滚动
-				if (Math.abs(dy) > Math.abs(dx)) {
+				// 竖向为主：交给滚动；关闭时卡片中部起手还要求横向明显占优且向右
+				const mid = start.p === 0 && !start.edge;
+				if (
+					Math.abs(dy) > Math.abs(dx) ||
+					(mid && (dx <= 0 || Math.abs(dx) < Math.abs(dy) * DOMINANT))
+				) {
 					start = null;
 					return;
 				}
