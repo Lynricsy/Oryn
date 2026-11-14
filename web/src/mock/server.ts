@@ -15,10 +15,12 @@
  * 公开分享（M5）：主线程带一条快照分享与一条实时分享（固定 slug 见 `MOCK_SHARE_SLUGS`）与一个已发布的附件；
  * 分享 / 发布的增删查、匿名 REST（`public/shares/*`）与匿名 WS（按 URL 识别，只转发公开白名单内的消息），
  * 创建分享前按服务端同一套正则扫描疑似密钥（409 `secrets_found`）。通知相关接口交给 `./notify`。
+ * 桌面与浏览器 Profile（M8）交给 `./desktop`：新建线程按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
+import { MockDesktop } from "./desktop";
 import {
 	assistant,
 	buildMainTranscript,
@@ -232,6 +234,13 @@ export class MockServer {
 		{ afterSeq: number; frame: Json }[]
 	>();
 	readonly projects: Project[] = fixtureProjects.map((p) => ({ ...p }));
+	/** 浏览器 Profile 与 orb 桌面（M8）。 */
+	readonly desktop = new MockDesktop({
+		orbs: this.orbs,
+		setOrb: (orb) => this.setOrb(orb),
+		projects: () => this.projects,
+		threadTitle: (id) => this.threads.get(id)?.title,
+	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
 		email: "owner@oryn.example",
@@ -712,6 +721,8 @@ export class MockServer {
 				return {};
 			}
 		};
+		const deskRes = await this.desktop.handle(req, p, m);
+		if (deskRes) return deskRes;
 		if (p === "me")
 			return json({
 				displayName: "owner",
@@ -1023,7 +1034,9 @@ export class MockServer {
 					{ code: "attachment_not_found", message: "attachment" },
 					404,
 				);
-			return json({ thread: this.createThread(b) }, 201);
+			const desktop = this.desktop.forNewOrb(b);
+			if (desktop instanceof Response) return desktop;
+			return json({ thread: this.createThread(b, desktop) }, 201);
 		}
 		const threadMatch = /^threads\/([^/]+)(?:\/(fork|wake))?$/.exec(p);
 		if (threadMatch) {
@@ -1338,7 +1351,10 @@ export class MockServer {
 		return message ? `${message}\n\n${block}` : block;
 	}
 
-	private createThread(b: Json): Thread {
+	private createThread(
+		b: Json,
+		desktop?: (orb: Orb) => Schemas["OrbDesktop"],
+	): Thread {
 		const id = `T-mock-${(this.idSeq++).toString(16)}`;
 		const orbId = `orb-mock${this.idSeq.toString().padStart(22, "0")}`;
 		const prompt =
@@ -1375,6 +1391,8 @@ export class MockServer {
 		const orb = makeOrb(orbId, [id], "spawning");
 		this.orbs.set(orbId, orb);
 		this.upsertThread(t);
+		// 新 orb 都带桌面；Profile 在线程登记之后再定（持有者要带线程标题）
+		if (desktop) orb.desktop = desktop(orb);
 		void (async () => {
 			for (const state of ["connecting", "setting_up", "ready"] as const) {
 				await sleep(this.delay * 8);

@@ -34,17 +34,21 @@ export class ApiError extends Error {
 	readonly code: string;
 	/** 429 时 `Retry-After` 给出的秒数 */
 	readonly retryAfter?: number;
+	/** 原始错误体（带额外字段的错误，如 409 `ProfileInUseConflict` 的持有者） */
+	readonly body?: unknown;
 	constructor(
 		status: number,
 		code: string,
 		message: string,
 		retryAfter?: number,
+		body?: unknown,
 	) {
 		super(message || code);
 		this.name = "ApiError";
 		this.status = status;
 		this.code = code;
 		this.retryAfter = retryAfter;
+		this.body = body;
 	}
 }
 
@@ -100,7 +104,7 @@ function toApiError(res: Response, error: unknown): ApiError {
 			"message" in error && typeof error.message === "string"
 				? error.message
 				: `HTTP ${status}`;
-		return new ApiError(status, code, message, retryAfter);
+		return new ApiError(status, code, message, retryAfter, error);
 	}
 	const message = typeof error === "string" && error ? error : `HTTP ${status}`;
 	return new ApiError(status, fallbackCode, message, retryAfter);

@@ -28,6 +28,8 @@ export const projects: Project[] = [
 		defaultOrbType: "medium",
 		setupScript: "bun install --cwd web",
 		shallowClone: true,
+		// 浏览器 Profile「工作账号」（M8；与 `BROWSER_PROFILE_IDS.work` 相同）
+		defaultBrowserProfileId: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P1",
 		createdAt: NOW - 30 * 24 * HOUR,
 		updatedAt: NOW - 2 * HOUR,
 	},
@@ -237,9 +239,99 @@ error: Cannot find module "./jobs/index.ts" from "/home/user/workspace/repo/work
 		.concat("\n"),
 };
 
+// ---------------------------------------------------------------- 桌面与浏览器 Profile（M8）
+
+/** 各桌面场景对应的线程（截图 `desktop-*` 直接打开）。 */
+export const DESKTOP_THREADS = {
+	/** 主线程：已连接、浏览器在跑、独占使用「工作账号」 */
+	connected: MAIN_THREAD,
+	/** 「GitHub 测试号」正被 DOCKER 线程的 orb 占用；本地已清空、浏览器未运行 */
+	inUse: "T-0193a1b2-0000-7000-8000-00000000a003",
+	/** 「工作账号」被主线程接管后降级为只读 */
+	takenOver: "T-0193a1b2-0000-7000-8000-00000000a00b",
+} as const;
+
+const MAIN_ORB = "orb-01jcz8m3w4x5y6z7a8b9c0d1e2";
+const DOCKER_ORB = "orb-01jcz8m3w4x5y6z7a8b9c0d1e4";
+const TAKEN_OVER_ORB = "orb-01jcz8m3w4x5y6z7a8b9c0d1eb";
+const MAIN_TITLE = "\u{F0668} WS: 重构 WebSocket 重连与 afterSeq 补拉";
+const DOCKER_TITLE = "🐳 DOCKER: Docker provider 冻结后 orbd 重连";
+
+export const BROWSER_PROFILE_IDS = {
+	work: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P1",
+	github: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P2",
+	shop: "bpf_01JCZ8M3W4X5Y6Z7A8B9C0D1P3",
+} as const;
+
+/** 浏览器 Profile（与控制面的 `BrowserProfile` 同形）。 */
+export const browserProfiles: Schemas["BrowserProfile"][] = [
+	{
+		id: BROWSER_PROFILE_IDS.work,
+		name: "工作账号",
+		revision: 3,
+		sizeBytes: 18_874_368,
+		savedAt: NOW - 12 * MIN,
+		holder: {
+			orbId: MAIN_ORB,
+			threadIds: [MAIN_THREAD, "T-0193a1b2-0000-7000-8000-00000000a002"],
+			threadId: MAIN_THREAD,
+			threadTitle: MAIN_TITLE,
+			since: NOW - 40 * MIN,
+		},
+		readers: [
+			{
+				orbId: TAKEN_OVER_ORB,
+				threadIds: [DESKTOP_THREADS.takenOver],
+				threadId: DESKTOP_THREADS.takenOver,
+				threadTitle: "🛒 BUY: 比价并下单测试物料",
+				since: NOW - 40 * MIN,
+			},
+		],
+		createdAt: NOW - 9 * 24 * HOUR,
+		updatedAt: NOW - 12 * MIN,
+	},
+	{
+		id: BROWSER_PROFILE_IDS.github,
+		name: "GitHub 测试号",
+		revision: 1,
+		sizeBytes: 4_718_592,
+		savedAt: NOW - 2 * 24 * HOUR,
+		holder: {
+			orbId: DOCKER_ORB,
+			threadIds: ["T-0193a1b2-0000-7000-8000-00000000a004"],
+			threadId: "T-0193a1b2-0000-7000-8000-00000000a004",
+			threadTitle: DOCKER_TITLE,
+			since: NOW - 25 * MIN,
+		},
+		createdAt: NOW - 6 * 24 * HOUR,
+		updatedAt: NOW - 25 * MIN,
+	},
+	{
+		id: BROWSER_PROFILE_IDS.shop,
+		name: "淘宝采购",
+		revision: 2,
+		sizeBytes: 271_581_184,
+		savedAt: NOW - 3 * 24 * HOUR,
+		saveError: "too_large",
+		createdAt: NOW - 20 * 24 * HOUR,
+		updatedAt: NOW - 3 * HOUR,
+	},
+];
+
 /** 每个 orb 的环境字段（覆盖 `makeOrb` 的默认值）。 */
 export const orbEnv: Record<string, Partial<Orb>> = {
 	"orb-01jcz8m3w4x5y6z7a8b9c0d1e2": {
+		desktop: {
+			displayReady: true,
+			browser: "running",
+			profile: {
+				id: BROWSER_PROFILE_IDS.work,
+				name: "工作账号",
+				status: "attached",
+				mode: "exclusive",
+				revision: 3,
+			},
+		},
 		services: MAIN_ORB_SERVICES,
 		portals: [
 			{
@@ -260,10 +352,54 @@ export const orbEnv: Record<string, Partial<Orb>> = {
 		}),
 	},
 	"orb-01jcz8m3w4x5y6z7a8b9c0d1e3": {
+		desktop: {
+			displayReady: true,
+			browser: "stopped",
+			profile: {
+				id: BROWSER_PROFILE_IDS.github,
+				name: "GitHub 测试号",
+				status: "in_use",
+				mode: "exclusive",
+				revision: 0,
+				heldBy: browserProfiles[1]?.holder,
+			},
+		},
 		lastSetup: setupRun("orb-01jcz8m3w4x5y6z7a8b9c0d1e3", 1, {
 			phase: "setup",
 			durationMs: 263_000,
 		}),
+	},
+	[DOCKER_ORB]: {
+		desktop: {
+			displayReady: true,
+			browser: "running",
+			profile: {
+				id: BROWSER_PROFILE_IDS.github,
+				name: "GitHub 测试号",
+				status: "attached",
+				mode: "exclusive",
+				revision: 1,
+			},
+		},
+	},
+	[TAKEN_OVER_ORB]: {
+		desktop: {
+			displayReady: true,
+			browser: "running",
+			profile: {
+				id: BROWSER_PROFILE_IDS.work,
+				name: "工作账号",
+				status: "readonly",
+				mode: "readonly",
+				revision: 2,
+				readonlyReason: "taken_over",
+				takenOverBy: {
+					threadId: MAIN_THREAD,
+					threadTitle: MAIN_TITLE,
+					at: NOW - 40 * MIN,
+				},
+			},
+		},
 	},
 	"orb-01jcz8m3w4x5y6z7a8b9c0d1e5": {
 		state: "failed",
@@ -379,6 +515,13 @@ export const threads: Thread[] = [
 		projectId: projects[1]?.id,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e9",
 		lastMessageAt: NOW - 20 * MIN,
+	}),
+	thread({
+		id: DESKTOP_THREADS.takenOver,
+		title: "🛒 BUY: 比价并下单测试物料",
+		projectId: projects[0]?.id,
+		orbId: TAKEN_OVER_ORB,
+		lastMessageAt: NOW - 45 * MIN,
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a006",

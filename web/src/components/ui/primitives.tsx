@@ -667,6 +667,16 @@ const FRIENDLY_CODES = [
 	"invalid_frame",
 	"orbd_bad_response",
 	"orbd_timeout",
+	"orbd_outdated",
+	// 浏览器 Profile（M8）
+	"profile_not_found",
+	"profile_in_use",
+	"profile_name_taken",
+	"profile_limit",
+	"no_profile",
+	"profile_readonly",
+	"profile_too_large",
+	"profile_save_failed",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

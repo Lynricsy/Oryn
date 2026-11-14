@@ -1,6 +1,8 @@
 /**
- * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、项目（Ctrl+J）、
- * 模型与思考级别（Ctrl+S）、发送。省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
+ * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、
+ * 浏览器 Profile（Ctrl+B，M8；只在新 orb 且至少有一个 Profile 时出现）、项目（Ctrl+J）、模型与思考级别（Ctrl+S）、发送。
+ * 省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
+ * 选的 Profile 被另一台运行中的 orb 占用（409 `profile_in_use`）时弹选择对话框，选「只读使用」或「接管」后带 `profileMode` 重发。
  * 托盘背后是一层主题色光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  */
 import {
@@ -16,13 +18,26 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Schemas } from "../api/client";
-import { useOrbs, useProjects, useProviders } from "../api/queries";
+import {
+	useBrowserProfiles,
+	useOrbs,
+	useProjects,
+	useProviders,
+} from "../api/queries";
 import {
 	AttachButton,
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
 import { morphToThread } from "../components/composer/DockTray";
+import {
+	type ConflictChoice,
+	ProfileConflictDialog,
+} from "../components/desktop/ProfileConflictDialog";
+import {
+	type ProfileConflict,
+	profileConflictOf,
+} from "../components/desktop/profile-status";
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
@@ -39,9 +54,20 @@ import { shareIntakeStore, useShareIntake } from "../state/share-intake";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
 
-type Pill = "executor" | "project" | "model";
+type Pill = "executor" | "profile" | "project" | "model";
 
 type Executor = Schemas["ThreadExecutor"];
+
+/** 新线程的浏览器 Profile：`null` = 跟随项目默认（不带字段），`""` = 不使用，`bpf_…` = 指定。 */
+type ProfilePick = string | null;
+
+/** 焦点在输入框里（Ctrl+B 在这里切 Profile 弹层；别处由全局快捷键开关侧栏）。 */
+function inEditable(target: EventTarget | null): boolean {
+	return (
+		target instanceof HTMLElement &&
+		!!target.closest("input, textarea, select, [contenteditable]")
+	);
+}
 
 /** 首次出场动效只在本次页面会话里第一次挂载首页时播放 */
 let introPlayed = false;
@@ -263,6 +289,7 @@ export function HomePage(): ReactNode {
 	const providers = useProviders();
 	const projects = useProjects();
 	const orbs = useOrbs();
+	const profiles = useBrowserProfiles();
 	const threads = useIndex((s) => s.threads);
 	const att = useAttachments();
 	const [prompt, setPrompt] = useState("");
@@ -271,8 +298,12 @@ export function HomePage(): ReactNode {
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
 	const [model, setModel] = useState("");
 	const [thinking, setThinking] = useState<string>("");
+	const [profilePick, setProfilePick] = useState<ProfilePick>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [conflict, setConflict] = useState<ProfileConflict | null>(null);
+	const [conflictBusy, setConflictBusy] = useState<ConflictChoice | null>(null);
+	const [conflictError, setConflictError] = useState<unknown>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const trayRef = useRef<HTMLDivElement>(null);
 	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
@@ -306,8 +337,12 @@ export function HomePage(): ReactNode {
 				m: "executor",
 				j: "project",
 				s: "model",
+				b: "profile",
 			};
 			const p = map[k];
+			// Ctrl+B 只在输入框里切 Profile 弹层（且胶囊在时）；其余时候留给全局的侧栏开关
+			if (p === "profile" && (!inEditable(e.target) || !showProfileRef.current))
+				return;
 			if (p) {
 				e.preventDefault();
 				setPill((cur) => (cur === p ? null : p));
@@ -324,6 +359,38 @@ export function HomePage(): ReactNode {
 		return [...set].slice(0, 8);
 	}, [threads]);
 
+	const profileList = profiles.data?.profiles ?? [];
+	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（挂到已有 orb 时沿用那台 orb 的 Profile）
+	const showProfile = executor.kind === "new_orb" && profileList.length > 0;
+	const showProfileRef = useRef(showProfile);
+	showProfileRef.current = showProfile;
+	const defaultProfileId = projects.data?.projects.find(
+		(p) => p.id === projectId,
+	)?.defaultBrowserProfileId;
+	const defaultProfileName = defaultProfileId
+		? (profileList.find((p) => p.id === defaultProfileId)?.name ??
+			defaultProfileId)
+		: undefined;
+	const pickedProfileName =
+		profilePick === null
+			? defaultProfileName
+			: profilePick === ""
+				? undefined
+				: (profileList.find((p) => p.id === profilePick)?.name ?? profilePick);
+	const profileText: PillText =
+		profilePick === null
+			? {
+					label: t("newThread.profileDefaultLabel", {
+						name: defaultProfileName ?? t("common.none"),
+					}),
+					main: defaultProfileName ?? t("newThread.profileNone"),
+				}
+			: {
+					label: t("newThread.profileLabel", {
+						name: pickedProfileName ?? t("newThread.profileNone"),
+					}),
+					main: pickedProfileName ?? t("newThread.profileNone"),
+				};
 	const liveOrbs = (orbs.data?.orbs ?? []).filter(
 		(o) =>
 			o.state !== "deleted" && o.state !== "deleting" && o.state !== "failed",
@@ -369,6 +436,7 @@ export function HomePage(): ReactNode {
 	// 窄屏选项行：项目名先拿够自然宽度，剩下的还放得下模型名才展开模型，否则模型只留圆圈。
 	// 模型名的自然宽度量一个不可见的同款胶囊（ghost），避免展开/收起来回抖动。
 	const pillsRef = useRef<HTMLDivElement>(null);
+	const profilePillRef = useRef<HTMLButtonElement>(null);
 	const projectPillRef = useRef<HTMLButtonElement>(null);
 	const modelGhostRef = useRef<HTMLSpanElement>(null);
 	const [modelFolded, setModelFolded] = useState(true);
@@ -391,21 +459,29 @@ export function HomePage(): ReactNode {
 				(Number.parseFloat(cs.paddingLeft) || 0) -
 				(Number.parseFloat(cs.paddingRight) || 0);
 			const orb = row.firstElementChild as HTMLElement | null;
+			// Profile 胶囊（窄屏是小圆圈）在时也占一格
+			const profile = profilePillRef.current;
 			const need =
-				(orb?.offsetWidth ?? 0) + gap + projNatural + gap + ghost.offsetWidth;
+				(orb?.offsetWidth ?? 0) +
+				gap +
+				(profile ? profile.offsetWidth + gap : 0) +
+				projNatural +
+				gap +
+				ghost.offsetWidth;
 			setModelFolded(need > avail);
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
 		ro.observe(row);
 		return () => ro.disconnect();
-	}, [compact, projectText.main, modelText.main]);
+	}, [compact, projectText.main, modelText.main, showProfile]);
 	const rise = (delay: string) =>
 		intro
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
 			: "";
 
-	const submit = async () => {
+	/** 发送；`mode` = 冲突对话框里选的使用方式（只读 / 接管），带上后重发同一请求。 */
+	const submit = async (mode?: ConflictChoice) => {
 		const text = prompt.trim();
 		if (!text && att.attachmentIds.length === 0) return;
 		if (att.uploading) {
@@ -414,6 +490,10 @@ export function HomePage(): ReactNode {
 		}
 		setBusy(true);
 		setError(null);
+		if (mode) {
+			setConflictBusy(mode);
+			setConflictError(null);
+		}
 		try {
 			const slash = model.indexOf("/");
 			const body: Schemas["CreateThreadRequest"] = {
@@ -433,8 +513,13 @@ export function HomePage(): ReactNode {
 						}
 					: {}),
 				...(thinking ? { thinkingLevel: thinking } : {}),
+				...(executor.kind === "new_orb" && profilePick !== null
+					? { browserProfileId: profilePick }
+					: {}),
+				...(executor.kind === "new_orb" && mode ? { profileMode: mode } : {}),
 			};
 			const thread = await createThread(body);
+			setConflict(null);
 			setPendingPrompt(thread.id, text);
 			// 触屏：发送即收起软键盘，线程页也不再抢焦点（否则键盘会先收后弹闪一下）
 			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
@@ -445,9 +530,13 @@ export function HomePage(): ReactNode {
 				navigate(`/t/${thread.id}`);
 			});
 		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
+			const c = profileConflictOf(e);
+			if (mode) setConflictError(e);
+			else if (c) setConflict(c);
+			else setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
+			setConflictBusy(null);
 		}
 	};
 
@@ -552,6 +641,19 @@ export function HomePage(): ReactNode {
 										}
 										shape={compact ? "circle" : "pill"}
 									/>
+									{showProfile && (
+										<PillButton
+											ref={profilePillRef}
+											icon="browser"
+											text={profileText}
+											shortcut="Ctrl+B"
+											active={pill === "profile"}
+											onClick={() =>
+												setPill(pill === "profile" ? null : "profile")
+											}
+											shape={compact ? "circle" : "pill"}
+										/>
+									)}
 									<PillButton
 										ref={projectPillRef}
 										icon="folder"
@@ -699,6 +801,52 @@ export function HomePage(): ReactNode {
 										))}
 									</Popover>
 								)}
+								{pill === "profile" && showProfile && (
+									<Popover onClose={() => setPill(null)}>
+										<PopoverLabel>{t("newThread.profileTitle")}</PopoverLabel>
+										<Option
+											selected={profilePick === null}
+											leading={<Icon name="folder" size={14} />}
+											hint={defaultProfileName ?? t("common.none")}
+											onClick={() => {
+												setProfilePick(null);
+												setPill(null);
+											}}
+										>
+											{t("newThread.profileFollow")}
+										</Option>
+										<Option
+											selected={profilePick === ""}
+											leading={<Icon name="minusCircle" size={14} />}
+											onClick={() => {
+												setProfilePick("");
+												setPill(null);
+											}}
+										>
+											{t("newThread.profileNone")}
+										</Option>
+										{profileList.map((p) => (
+											<Option
+												key={p.id}
+												selected={profilePick === p.id}
+												leading={<Icon name="browser" size={14} />}
+												trailing={
+													p.holder && (
+														<Badge tone="warn">
+															{t("newThread.profileInUse")}
+														</Badge>
+													)
+												}
+												onClick={() => {
+													setProfilePick(p.id);
+													setPill(null);
+												}}
+											>
+												{p.name}
+											</Option>
+										))}
+									</Popover>
+								)}
 								{pill === "project" && (
 									<Popover onClose={() => setPill(null)}>
 										<Option
@@ -772,6 +920,15 @@ export function HomePage(): ReactNode {
 					</div>
 				</div>
 			</div>
+			<ProfileConflictDialog
+				conflict={conflict}
+				busy={conflictBusy}
+				error={conflictError}
+				onChoose={(mode) => void submit(mode)}
+				onClose={() => {
+					if (!conflictBusy) setConflict(null);
+				}}
+			/>
 		</Sheet>
 	);
 }

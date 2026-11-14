@@ -77,3 +77,7 @@ oryn orb setup project-script get|set setup --file f  # 读写本 orb 所属项�
 - [`docs/design/ui-redesign.md`](docs/design/ui-redesign.md)：Web 界面设计说明（方向、令牌、评审记录）
 - [`docs/design/web-guidelines.md`](docs/design/web-guidelines.md)：Web 前端开发守则（不可回退的设计要点、验证流程）
 - agent 内核：[`Lynricsy/oryn-core`](https://github.com/Lynricsy/oryn-core)（钉定版本见 `core/source.json`；二进制与配置目录沿用 omp 的 `omp` / `~/.omp/agent`）
+
+## 第三方组件
+
+- [`@novnc/novnc`](https://github.com/novnc/noVNC) 1.7.0（MPL-2.0）：Desktop 面板的 VNC 客户端，未修改源码，按需单独打包

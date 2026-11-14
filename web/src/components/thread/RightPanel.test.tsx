@@ -2,6 +2,7 @@
  * 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb；
  * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除；
  * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签；
+ * Desktop 标签只在 orb 有桌面时出现（Portal 之后），消失时退回信息标签，Profile 被占用或装载失败时带提醒点；
  * 窄屏 `peer` 面板：同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -301,6 +302,136 @@ describe("RightPanel", () => {
 	});
 });
 
+/** 带桌面（与可选 portal）的线程。 */
+function deskThread(
+	id: string,
+	desktop: Orb["desktop"],
+	portals = false,
+	state: Orb["state"] = "frozen",
+): Orb {
+	const orbId = `orb-${id.toLowerCase().padEnd(24, "0")}`;
+	const orb = {
+		id: orbId,
+		state,
+		stateChangedAt: 0,
+		threadIds: [id],
+		...(desktop ? { desktop } : {}),
+		...(portals
+			? {
+					portals: [
+						{ port: 80, service: "web", links: [{ title: "w", path: "/" }] },
+					],
+				}
+			: {}),
+	} as unknown as Orb;
+	getThreadStore(id)
+		.getState()
+		.patchLocal({
+			thread: {
+				id,
+				orbId,
+				portalUrlTemplate: "https://x-p{port}.e/",
+			} as Thread,
+			orb,
+		});
+	return orb;
+}
+
+describe("RightPanel Desktop 标签", () => {
+	it("orb 有桌面时出现 Desktop 标签，排在 Portal 之后", () => {
+		deskThread("T-rpD1", { displayReady: true, browser: "stopped" }, true);
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId="T-rpD1" />));
+		const tabs = screen
+			.getAllByRole("tab")
+			.map((b) => b.getAttribute("data-panel-tab"));
+		expect(tabs).toEqual([
+			"info",
+			"changes",
+			"files",
+			"terminal",
+			"portal",
+			"desktop",
+		]);
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.desktop") }),
+		).toBeInTheDocument();
+	});
+
+	it("没有桌面（旧镜像）没有 Desktop 标签；已删除的 orb 也没有", () => {
+		deskThread("T-rpD2", undefined);
+		uiStore.getState().setPanelTab("info");
+		const { unmount } = render(withQuery(<RightPanel threadId="T-rpD2" />));
+		expect(document.querySelector("[data-panel-tab=desktop]")).toBeNull();
+		unmount();
+		deskThread(
+			"T-rpD3",
+			{ displayReady: true, browser: "stopped" },
+			false,
+			"deleted",
+		);
+		render(withQuery(<RightPanel threadId="T-rpD3" />));
+		expect(document.querySelector("[data-panel-tab=desktop]")).toBeNull();
+	});
+
+	it("正看着 Desktop 时桌面消失则退回信息标签", async () => {
+		const orb = deskThread("T-rpD4", {
+			displayReady: true,
+			browser: "stopped",
+		});
+		uiStore.getState().setPanelTab("desktop");
+		render(withQuery(<RightPanel threadId="T-rpD4" />));
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.desktop") }),
+		).toHaveAttribute("aria-selected", "true");
+		const { desktop: _, ...rest } = orb;
+		act(() => {
+			getThreadStore("T-rpD4")
+				.getState()
+				.patchLocal({ orb: rest as Orb });
+		});
+		await waitFor(() => expect(uiStore.getState().panelTab).toBe("info"));
+		expect(document.querySelector("[data-panel-tab=desktop]")).toBeNull();
+	});
+
+	it("Profile 被占用或装载失败时标签带提醒点；独占使用时没有", () => {
+		const profile = {
+			id: "bpf_1",
+			name: "工作账号",
+			mode: "exclusive" as const,
+			revision: 1,
+		};
+		const orb = deskThread("T-rpD5", {
+			displayReady: true,
+			browser: "running",
+			profile: { ...profile, status: "attached" },
+		});
+		uiStore.getState().setPanelTab("info");
+		render(withQuery(<RightPanel threadId="T-rpD5" />));
+		expect(screen.queryByTestId("desktop-attention")).toBeNull();
+		for (const status of ["in_use", "error"] as const) {
+			act(() => {
+				getThreadStore("T-rpD5")
+					.getState()
+					.patchLocal({
+						orb: {
+							...orb,
+							desktop: {
+								displayReady: true,
+								browser: "stopped",
+								profile: { ...profile, status },
+							},
+						},
+					});
+			});
+			const dot = screen.getByTestId("desktop-attention");
+			expect(
+				screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.desktop") }),
+			).toContainElement(dot);
+		}
+	});
+});
+
 describe("RightPanel peer（窄屏同级标签）", () => {
 	const initialWidth = window.innerWidth;
 	beforeEach(() => {
@@ -385,6 +516,24 @@ describe("RightPanel peer（窄屏同级标签）", () => {
 				});
 		});
 		expect(screen.getByTestId("agent-attention")).toBeInTheDocument();
+	});
+
+	it("有 portal 与桌面时：agent / changes / files / terminal / portal / desktop / info", () => {
+		deskThread("T-rpD6", { displayReady: true, browser: "stopped" }, true);
+		render(withQuery(<RightPanel threadId="T-rpD6" peer />));
+		expect(
+			Array.from(
+				screen.getByTestId("thread-tabs").querySelectorAll("[data-panel-tab]"),
+			).map((b) => b.getAttribute("data-panel-tab")),
+		).toEqual([
+			"agent",
+			"changes",
+			"files",
+			"terminal",
+			"portal",
+			"desktop",
+			"info",
+		]);
 	});
 
 	it("非 peer（expanded / 双段）没有 agent 标签", () => {

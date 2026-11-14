@@ -28,6 +28,7 @@ const SETTINGS: SettingsSection[] = [
 	"providers",
 	"projects",
 	"secrets",
+	"browser-profiles",
 	"git-identity",
 	"agent-config",
 	"notifications",

@@ -159,6 +159,19 @@ const fetchMock = vi.fn(
 			}
 			return Response.json(snapshot);
 		}
+		if (url.pathname === "/api/v1/browser-profiles")
+			return Response.json({
+				profiles: [
+					{
+						id: "bpf_A",
+						name: "工作账号",
+						revision: 1,
+						sizeBytes: 1,
+						createdAt: 1,
+						updatedAt: 1,
+					},
+				],
+			});
 		if (url.pathname === "/api/v1/projects")
 			return Response.json({ projects: [PROJECT] });
 		if (url.pathname === `/api/v1/projects/${PROJECT.id}`)
@@ -517,6 +530,55 @@ describe("设置 → 项目图标", () => {
 			expect.objectContaining({ icon: "\u{f1617}" }),
 			expect.objectContaining({ icon: "" }),
 		]);
+	});
+});
+
+describe("设置 → 项目默认浏览器 Profile（M8）", () => {
+	beforeEach(() => {
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("下拉列出各 Profile；选中后保存带它的 id，改回「无」发空串清除", async () => {
+		setup("projects");
+		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+		const select = screen.getByRole("combobox", {
+			name: new RegExp(`^${i18n.t("projects.defaultBrowserProfile")}`),
+		});
+		await screen.findByRole("option", { name: "工作账号" });
+		fireEvent.change(select, { target: { value: "bpf_A" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes()).toHaveLength(1));
+		fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+		fireEvent.change(
+			screen.getByRole("combobox", {
+				name: new RegExp(`^${i18n.t("projects.defaultBrowserProfile")}`),
+			}),
+			{ target: { value: "" } },
+		);
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes()).toHaveLength(2));
+		expect(writes().map((c) => c.body)).toEqual([
+			expect.objectContaining({ defaultBrowserProfileId: "bpf_A" }),
+			expect.objectContaining({ defaultBrowserProfileId: "" }),
+		]);
+	});
+
+	it("侧边导航有「浏览器 Profile」分区（排在密钥之后）", async () => {
+		setup("browser-profiles");
+		const nav = screen.getByRole("navigation");
+		const links = within(nav)
+			.getAllByRole("link")
+			.map((a) => a.getAttribute("href"));
+		expect(links.indexOf("/settings/browser-profiles")).toBe(
+			links.indexOf("/settings/secrets") + 1,
+		);
+		expect(
+			await screen.findByText(i18n.t("browserProfiles.new")),
+		).toBeInTheDocument();
 	});
 });
 

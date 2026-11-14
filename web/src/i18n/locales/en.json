@@ -147,7 +147,13 @@
 		"defaultModel": "Default model",
 		"defaultThinking": "Default",
 		"thinkingUnknown": "Supported levels not known yet",
-		"modelPlaceholder": "provider/model-id"
+		"modelPlaceholder": "provider/model-id",
+		"profileTitle": "Browser profile",
+		"profileFollow": "Use project default",
+		"profileNone": "No profile",
+		"profileInUse": "In use",
+		"profileLabel": "Browser profile: {{name}}",
+		"profileDefaultLabel": "Browser profile: project default ({{name}})"
 	},
 	"composer": {
 		"abort": "Interrupt",
@@ -555,7 +561,16 @@
 		"timeout": "Request timed out",
 		"invalid_frame": "The server rejected that response — the request has been restored",
 		"orbd_bad_response": "The orb returned an invalid response",
-		"orbd_timeout": "The orb didn't respond in time"
+		"orbd_timeout": "The orb didn't respond in time",
+		"profile_not_found": "This browser profile no longer exists — it may have been deleted. Pick another one.",
+		"profile_in_use": "This browser profile is being used by another thread.",
+		"profile_name_taken": "A profile with this name already exists. Choose another name.",
+		"profile_limit": "You have reached the limit of 50 profiles. Delete unused ones first.",
+		"no_profile": "This orb is not using a profile exclusively, so there is nothing to save.",
+		"profile_readonly": "This is a read-only copy and changes are not saved. Use “Write back” in the profile banner first.",
+		"profile_too_large": "The profile exceeds 256 MiB and could not be saved. Clear large site data in the browser and try again.",
+		"profile_save_failed": "Save failed while exporting or writing. The previous version is intact; try again later.",
+		"orbd_outdated": "This orb runs an older image that lacks this feature. Start a new thread to get an orb with the current image."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",
@@ -586,7 +601,8 @@
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
-		"desktop": "Desktop app"
+		"desktop": "Desktop app",
+		"browser-profiles": "Browser profiles"
 	},
 	"devices": {
 		"pairQr": {
@@ -647,7 +663,9 @@
 		"icon": "Project icon",
 		"iconAuto": "Auto",
 		"iconAutoHint": "Auto: uses the icon from the first thread's title card, else the name's first letter.",
-		"title": "Projects"
+		"title": "Projects",
+		"defaultBrowserProfile": "Default browser profile",
+		"defaultBrowserProfileHint": "New threads in this project load it by default (you can change it when starting a thread)."
 	},
 	"secrets": {
 		"deleteConfirm": "Delete secret {{name}}?",
@@ -798,14 +816,16 @@
 			"changes": "Changes",
 			"files": "Files",
 			"terminal": "Terminal",
-			"portal": "Portal"
+			"portal": "Portal",
+			"desktop": "Desktop"
 		},
 		"attention": "A terminal is waiting for input",
 		"agentAttention": "The agent is waiting for your reply",
 		"maximize": "Maximize panel",
 		"restore": "Restore panel",
 		"resize": "Resize panel",
-		"unseenChanges": "New changes"
+		"unseenChanges": "New changes",
+		"desktopAttention": "Browser profile needs your attention"
 	},
 	"terminal": {
 		"title": "Terminals",
@@ -1533,5 +1553,145 @@
 			}
 		},
 		"shareFailed": "{{count}} file(s) could not be imported"
+	},
+	"deskPanel": {
+		"toolbar": "Desktop toolbar",
+		"orbGone": "The orb has been deleted",
+		"orbGoneHint": "The desktop was deleted with the orb. Start a new thread to get a new orb.",
+		"unsupported": "This orb has no desktop",
+		"unsupportedHint": "Its image predates the desktop. Start a new thread to use the Desktop panel.",
+		"asleep": "The orb is asleep",
+		"asleepHint": "The browser and its tabs are kept as they were. The desktop reconnects after waking.",
+		"wake": "Wake",
+		"orbFailed": "The orb failed to start. See the error banner at the top of the thread for the reason and a retry button.",
+		"orbStarting": "Orb is {{state}}; the desktop connects when it is ready…",
+		"displayStarting": "Desktop is starting…",
+		"connecting": "Connecting to the desktop…",
+		"browserStarting": "Starting the browser…",
+		"startBrowser": "Start browser",
+		"stopBrowser": "Close browser",
+		"reconnect": "Reconnect",
+		"more": "More",
+		"fullscreen": "Full screen",
+		"toWatch": "Switch to view only (no keyboard or mouse)",
+		"toControl": "Switch to control",
+		"watching": "View only",
+		"saved": "Saved — now at revision {{revision}}",
+		"status": {
+			"connecting": "Connecting",
+			"connected": "Connected",
+			"closed": "Not connected"
+		},
+		"scale": {
+			"follow": "Resolution follows panel",
+			"fit": "Scale to fit"
+		},
+		"closed": {
+			"revoked": "Access revoked",
+			"revokedHint": "This device was signed out. Sign in again, then reopen the panel.",
+			"outdated": "This orb has no desktop",
+			"outdatedHint": "Its image predates the desktop. Start a new thread to use it.",
+			"deleted": "The orb has been deleted",
+			"deletedHint": "The desktop was deleted with the orb.",
+			"full": "Too many viewers",
+			"fullHint": "Up to 8 windows can view an orb’s desktop at once. Close the Desktop panel elsewhere, then reconnect.",
+			"lost": "Can’t reach the desktop",
+			"unreachableHint": "The display server in the orb did not respond; it usually recovers within seconds. Reconnect shortly.",
+			"unavailableHint": "The orb is unavailable (asleep or waking). Reconnect once it is ready.",
+			"networkHint": "The connection dropped and 3 automatic retries failed. Check your network, then reconnect."
+		},
+		"kb": {
+			"show": "Show keyboard",
+			"hide": "Hide keyboard",
+			"input": "Keyboard input sent to the desktop",
+			"ctrl": "Ctrl (sticky)",
+			"alt": "Alt (sticky)",
+			"left": "Left arrow",
+			"up": "Up arrow",
+			"down": "Down arrow",
+			"right": "Right arrow"
+		},
+		"clip": {
+			"title": "Clipboard",
+			"fromDesktop": "From the desktop",
+			"empty": "Text copied on the desktop shows up here.",
+			"toDesktop": "Send to the desktop",
+			"send": "Send to desktop",
+			"pasteHint": "After sending, press Ctrl+V on the desktop.",
+			"sent": "Sent. Press Ctrl+V on the desktop to paste.",
+			"autoSync": "Sync clipboard automatically",
+			"autoSyncHint": "Copying on the desktop updates your clipboard, and your clipboard is sent when you return to the desktop. Needs browser permission.",
+			"denied": "The browser denied clipboard access. Use manual send above instead."
+		},
+		"menu": {
+			"label": "Browser profile: {{name}}",
+			"noProfile": "No profile",
+			"none": "Don’t use a profile",
+			"inUse": "In use",
+			"save": "Save now",
+			"manage": "Manage profiles…",
+			"switchConfirm": "Switching profiles closes the current browser (an exclusively used profile is saved first). Continue?"
+		},
+		"profile": {
+			"title": "Browser profile",
+			"attached": "In use here",
+			"readonly": "Read-only profile",
+			"readonlyShort": "Read-only",
+			"takenOver": "Read-only profile · taken over by “{{thread}}”",
+			"anotherThread": "another thread",
+			"released": "Released; reclaimed automatically on next run",
+			"inUse": "In use by another orb",
+			"inUseBy": "In use in “{{thread}}”",
+			"error": "Failed to load: {{reason}}",
+			"otherOrb": "another orb ({{id}})"
+		},
+		"profileError": {
+			"invalid_archive": "The archive is corrupt. Detach it and sign in again, or pick another profile.",
+			"too_large": "It exceeds the 2 GiB unpacked limit.",
+			"no_space": "The orb is out of disk space. Free some space and retry.",
+			"other": "The orb could not load it. Try again shortly."
+		},
+		"banner": {
+			"choose": "Choose how to use it…",
+			"inUseHint": "The browser here hasn’t loaded “{{name}}”. Use its last saved version read-only, or take it over.",
+			"readonlyHint": "This is the last saved version; sign-in changes made here won’t be saved.",
+			"takenOverHint": "Sign-in state here was saved before the takeover; later changes won’t be saved. Take it back to write again.",
+			"writeBack": "Write back…",
+			"writeBackConfirm": "Using it exclusively closes the browser here and loads the latest saved version. If another thread holds it, you can take it over. Continue?",
+			"errorTitle": "Profile “{{name}}” failed to load",
+			"retry": "Retry"
+		},
+		"conflict": {
+			"title": "“{{name}}” is in use",
+			"body": "Thread “{{thread}}” has been using it since {{since}} ({{ago}}). Only one orb at a time can write sign-in state back. Choose how to continue:",
+			"readonly": "Use read-only",
+			"readonlyHint": "Uses the last saved version; changes made here won’t be saved.",
+			"takeover": "Take over",
+			"takeoverHint": "Saves the other thread’s sign-in state first, then moves it here; the other thread becomes read-only."
+		}
+	},
+	"browserProfiles": {
+		"title": "Browser profiles",
+		"new": "New profile",
+		"name": "Name",
+		"namePlaceholder": "e.g. Work accounts",
+		"idle": "Idle",
+		"inUse": "In use · {{thread}}",
+		"readers": "Read-only copies: {{count}}",
+		"saveFailed": "Last save failed: {{reason}}",
+		"saveError": {
+			"too_large": "over 256 MiB",
+			"export_failed": "export error",
+			"takeover_unsaved": "the previous holder could not be saved before takeover"
+		},
+		"empty": "Empty",
+		"savedAt": "saved {{when}}",
+		"neverSaved": "never saved",
+		"rename": "Rename",
+		"deleteHeld": "In use — detach it in that thread’s Desktop panel first",
+		"deleteConfirm": "Delete profile “{{name}}” and its saved sign-in state? Project defaults that use it are cleared.",
+		"emptyTitle": "No browser profiles yet",
+		"emptyHint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back.",
+		"hint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back."
 	}
 }

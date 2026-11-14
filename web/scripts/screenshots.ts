@@ -24,6 +24,7 @@ import {
 	webkit,
 } from "playwright-core";
 import {
+	DESKTOP_THREADS,
 	ENV_THREADS,
 	MAIN_THREAD,
 	TOOL_ZOO_THREAD,
@@ -214,6 +215,8 @@ interface Screen {
 	verify?(s: Shot): Promise<string | null>;
 	/** 页面脚本之前注入的脚本源码（假桌面壳）；有它的界面在独立的 context 里截，不污染流水线里的其它界面。 */
 	init?: string;
+	/** 触屏设备（`hasTouch` + `isMobile`，`(pointer: coarse)` 成立）；同样在独立的 context 里截。 */
+	touch?: boolean;
 }
 
 /**
@@ -388,7 +391,7 @@ async function sendPrompt(page: Page, text: string) {
 /** 切到右侧面板的指定标签（窄屏是线程页的同级标签，宽屏先打开面板列）。 */
 async function openPanel(
 	page: Page,
-	tab: "info" | "changes" | "files" | "terminal" | "portal",
+	tab: "info" | "changes" | "files" | "terminal" | "portal" | "desktop",
 ) {
 	const btn = page.locator(`[data-panel-tab=${tab}]`);
 	if (!(await btn.isVisible().catch(() => false)))
@@ -996,6 +999,127 @@ const SCREENS: Screen[] = [
 			await settle(page);
 		},
 	},
+	// M8：Desktop 标签（已连接 / 浏览器未运行 + 被占用横幅 / 冲突对话框 / 只读（被接管）/ 触屏附加键）、
+	// 信息面板的 Profile 行、设置页列表、新建线程框的 Profile 弹层与 409 冲突对话框
+	{
+		name: "desktop-connected",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+		},
+	},
+	{
+		name: "desktop-in-use",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.inUse);
+			await page
+				.locator("[data-testid=desktop-start-browser]")
+				.waitFor({ timeout: 10_000 });
+		},
+	},
+	{
+		name: "desktop-conflict",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.inUse);
+			await page
+				.getByRole("button", { name: "选择使用方式…", exact: true })
+				.click();
+			await page
+				.locator("[data-testid=profile-conflict]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-readonly",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.takenOver);
+		},
+	},
+	{
+		name: "desktop-menu",
+		widths: [1280],
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await page.locator("[data-testid=desktop-profile-menu]").click();
+			await page.getByRole("menu").waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-clipboard",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await page.getByRole("button", { name: "剪贴板", exact: true }).click();
+			await page
+				.locator("[data-testid=desktop-clipboard]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-compact-keys",
+		widths: [390],
+		touch: true,
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await page.locator("[data-testid=desktop-keyboard]").click();
+			await page
+				.locator("[data-testid=desktop-softkeys]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-info",
+		prepare: async ({ page }) => {
+			await openThread(page, DESKTOP_THREADS.takenOver);
+			await openPanel(page, "info");
+			const line = page.locator("[data-testid=info-desktop-profile]");
+			await line.waitFor({ timeout: 10_000 });
+			await line.scrollIntoViewIfNeeded();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-settings",
+		prepare: async ({ page }) => {
+			await open(page, "/settings/browser-profiles", "main", 400);
+			await page
+				.locator("[data-testid=browser-profile-row]")
+				.first()
+				.waitFor({ timeout: 15_000 });
+			await settle(page);
+		},
+	},
+	{
+		name: "desktop-new-thread",
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page
+				.getByRole("button", { name: /^浏览器 Profile：/ })
+				.click({ timeout: 15_000 });
+			await page
+				.getByRole("button", { name: /^跟随项目默认/ })
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "desktop-new-thread-conflict",
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page
+				.getByRole("button", { name: /^浏览器 Profile：/ })
+				.click({ timeout: 15_000 });
+			await page.getByRole("button", { name: /^GitHub 测试号/ }).click();
+			await page.locator("textarea").first().fill("登录 GitHub 看看通知");
+			await page.getByRole("button", { name: "发送", exact: true }).click();
+			await page
+				.locator("[data-testid=profile-conflict]")
+				.waitFor({ timeout: 10_000 });
+			await settle(page, 400);
+		},
+	},
 	{
 		// 面板最窄（360px）时五个标签只显示图标、不换行；放在最后：它改了本条流水线的面板宽度
 		name: "portal-narrow",
@@ -1023,6 +1147,16 @@ async function openPortal(page: Page) {
 	await openThread(page, MAIN_THREAD);
 	await openPanel(page, "portal");
 	await page.locator("[data-testid=portal-frame]").waitFor({ timeout: 15_000 });
+	await settle(page, 600);
+}
+
+/** 打开线程的 Desktop 标签并等桌面连上（mock 会话立即 connected）。 */
+async function openDesktop(page: Page, threadId: string) {
+	await openThread(page, threadId);
+	await openPanel(page, "desktop");
+	await page
+		.locator("[data-testid=desktop-status][data-state=connected]")
+		.waitFor({ timeout: 15_000 });
 	await settle(page, 600);
 }
 
@@ -1066,21 +1200,23 @@ async function shootLane(
 	for (const screen of screens) {
 		if (screen.widths && !screen.widths.includes(size.width)) continue;
 		const id = `${screen.name}-${size.width}-${scheme}`;
-		const isolated = screen.init
-			? await browser.newContext({
-					viewport: { width: size.width, height: size.height },
-					deviceScaleFactor: 2,
-					locale: "zh-CN",
-					colorScheme: scheme,
-					reducedMotion: "reduce",
-				})
-			: null;
-		if (isolated && screen.init) {
+		const isolated =
+			screen.init || screen.touch
+				? await browser.newContext({
+						viewport: { width: size.width, height: size.height },
+						deviceScaleFactor: 2,
+						locale: "zh-CN",
+						colorScheme: scheme,
+						reducedMotion: "reduce",
+						...(screen.touch ? { hasTouch: true, isMobile: true } : {}),
+					})
+				: null;
+		if (isolated && (screen.init || ACCENT)) {
 			if (ACCENT)
 				await isolated.addInitScript({
 					content: `localStorage.setItem("oryn.theme", ${JSON.stringify(JSON.stringify({ mode: scheme, accent: ACCENT }))});`,
 				});
-			await isolated.addInitScript({ content: screen.init });
+			if (screen.init) await isolated.addInitScript({ content: screen.init });
 		}
 		const page = isolated
 			? await isolated.newPage()

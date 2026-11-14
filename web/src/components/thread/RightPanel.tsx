@@ -1,9 +1,10 @@
 /**
- * 右侧面板（计划 M3 2.5）：标签 `Info | Changes | Files | Terminal`，orb 有 portal 时在终端之后追加 `Portal`（M4）。
+ * 右侧面板（计划 M3 2.5）：标签 `Info | Changes | Files | Terminal`，orb 有 portal 时在终端之后追加 `Portal`（M4），
+ * orb 有桌面（`orb.desktop`）时再追加 `Desktop`（M8，Profile 被占用或装载失败时带提醒点）。
  * Info 为原信息面板；其余按需加载。标签条可横向滚动，选中项下有一块滑动底板；放不下全部文字时只有选中项保留文字。
  * Terminal 标签在有终端等待用户（agent 的 `pty:true` 命令、会话要密码）时亮注意点；
  * Changes 标签在有未查看的新改动时亮 accent 小点。
- * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | Info`，
+ * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`，
  * 标签条（`ThreadTabStrip`）同时用在转录页头下方；Agent 标签在线程等你回答时亮注意点。
  */
 import {
@@ -13,6 +14,7 @@ import {
 	Suspense,
 	useEffect,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -38,25 +40,9 @@ const ChangesPanel = lazy(() => import("../changes/ChangesPanel"));
 const FilesPanel = lazy(() => import("../files/FilesPanel"));
 const TerminalPanel = lazy(() => import("../terminal/TerminalPanel"));
 const PortalPanel = lazy(() => import("../portal/PortalPanel"));
+const DesktopPanel = lazy(() => import("../desktop/DesktopPanel"));
 
-const BASE_TABS: readonly PanelTab[] = ["info", "changes", "files", "terminal"];
-const PORTAL_TABS: readonly PanelTab[] = [...BASE_TABS, "portal"];
-/** 同级标签：对话在最前，信息放最后。 */
-const PEER_TABS: readonly ThreadTab[] = [
-	"agent",
-	"changes",
-	"files",
-	"terminal",
-	"info",
-];
-const PEER_PORTAL_TABS: readonly ThreadTab[] = [
-	"agent",
-	"changes",
-	"files",
-	"terminal",
-	"portal",
-	"info",
-];
+const CONTENT_TABS: readonly PanelTab[] = ["changes", "files", "terminal"];
 
 const TAB_ICON: Record<ThreadTab, IconName> = {
 	agent: "message",
@@ -65,6 +51,7 @@ const TAB_ICON: Record<ThreadTab, IconName> = {
 	files: "folder",
 	terminal: "terminal",
 	portal: "globe",
+	desktop: "monitor",
 };
 
 /** 改动标签后台检查的间隔（与 Changes 面板的后台轮询同频）。 */
@@ -196,27 +183,38 @@ function useCompactTabs(
 }
 
 /**
- * 当前线程的标签集合：`peer`（窄屏同级标签）为 `agent … info`，否则为面板标签；orb 有 portal 时在终端之后加 Portal。
- * `portalGone`：portal 消失（服务停掉、orb 删除、换到没有 portal 的线程）；orb 还没到时为假，先不动。
+ * 当前线程的标签集合：`peer`（窄屏同级标签）为 `agent … info`，否则为 `info …` 面板标签；
+ * orb 有 portal 时在终端之后加 Portal，orb 有桌面时再加 Desktop。
+ * `portalGone` / `desktopGone`：对应标签消失（服务停掉、orb 删除、换到没有它的线程）；orb 还没到时为假，先不动。
  */
 export function useThreadTabs(
 	threadId: string,
 	peer: boolean,
-): { tabs: readonly ThreadTab[]; portalGone: boolean } {
+): {
+	tabs: readonly ThreadTab[];
+	portalGone: boolean;
+	desktopGone: boolean;
+} {
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
 	const loaded = useThread(threadId, (s) => s.thread !== undefined);
 	const orb = useOrbOf(threadId);
-	const hasPortal = orb?.state !== "deleted" && (orb?.portals?.length ?? 0) > 0;
-	const tabs = peer
-		? hasPortal
-			? PEER_PORTAL_TABS
-			: PEER_TABS
-		: hasPortal
-			? PORTAL_TABS
-			: BASE_TABS;
+	const live = orb?.state !== "deleted";
+	const hasPortal = live && (orb?.portals?.length ?? 0) > 0;
+	const hasDesktop = live && orb?.desktop !== undefined;
+	const tabs = useMemo(() => {
+		const extra: PanelTab[] = [
+			...(hasPortal ? (["portal"] as const) : []),
+			...(hasDesktop ? (["desktop"] as const) : []),
+		];
+		return peer
+			? (["agent", ...CONTENT_TABS, ...extra, "info"] as const)
+			: (["info", ...CONTENT_TABS, ...extra] as const);
+	}, [peer, hasPortal, hasDesktop]);
+	const settled = orb !== undefined || (loaded && !orbId);
 	return {
 		tabs,
-		portalGone: !hasPortal && (orb !== undefined || (loaded && !orbId)),
+		portalGone: !hasPortal && settled,
+		desktopGone: !hasDesktop && settled,
 	};
 }
 
@@ -241,6 +239,9 @@ export function ThreadTabStrip({
 	const { t, i18n } = useTranslation();
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
 	const attention = useTerminals(threadId, (s) => s.attention);
+	// Desktop：Profile 被别的 orb 占用或装载失败，需要你选择或重试
+	const profileStatus = useOrbOf(threadId)?.desktop?.profile?.status;
+	const deskAttention = profileStatus === "in_use" || profileStatus === "error";
 	const unseen = useUnseenChanges(threadId, orbId, shown === "changes");
 	// 线程进入 awaiting_input：有待回答的扩展 UI 请求或待批准的计划
 	const awaiting = useThread(
@@ -328,6 +329,13 @@ export function ThreadTabStrip({
 							className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-warn"
 						/>
 					)}
+					{id === "desktop" && deskAttention && (
+						<span
+							data-testid="desktop-attention"
+							title={t("rightPanel.desktopAttention")}
+							className="absolute top-1 right-0.5 h-1.5 w-1.5 rounded-full bg-warn"
+						/>
+					)}
 					{id === "changes" && unseen && (
 						<span
 							data-testid="changes-unseen"
@@ -361,13 +369,16 @@ export function RightPanel({
 	const bp = useBreakpoint();
 	const segments = useViewportSegments();
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
-	const { tabs, portalGone } = useThreadTabs(threadId, peer);
-	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示
+	const { tabs, portalGone, desktopGone } = useThreadTabs(threadId, peer);
+	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示；可选标签不在时先按信息标签显示
 	const shown: PanelTab =
-		tab === "portal" && !tabs.includes("portal") ? "info" : tab;
+		(tab === "portal" || tab === "desktop") && !tabs.includes(tab)
+			? "info"
+			: tab;
 	useEffect(() => {
-		if (tab === "portal" && portalGone) uiStore.getState().setPanelTab("info");
-	}, [tab, portalGone]);
+		if ((tab === "portal" && portalGone) || (tab === "desktop" && desktopGone))
+			uiStore.getState().setPanelTab("info");
+	}, [tab, portalGone, desktopGone]);
 	const canMax = !peer && bp === "expanded" && !segments;
 
 	return (
@@ -436,6 +447,9 @@ export function RightPanel({
 						{shown === "terminal" && <TerminalPanel threadId={threadId} />}
 						{shown === "portal" && (
 							<PortalPanel threadId={threadId} orbId={orbId} />
+						)}
+						{shown === "desktop" && (
+							<DesktopPanel threadId={threadId} orbId={orbId} />
 						)}
 					</Suspense>
 				)}

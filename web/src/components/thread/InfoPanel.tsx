@@ -1,5 +1,5 @@
 /**
- * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、受管服务（M4）、
+ * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、浏览器 Profile（M8）、受管服务（M4）、
  * 上下文占用（主动请求上下文报告，分消息 / 工具定义 / 系统提示词三段）、todo（可编辑，`set_todos`）、子 agent 列表，
  * 以及报告 / btw 入口。外观以 D 稿（`.dev/design/explore/d.html` 的右栏）为准。
  */
@@ -13,6 +13,7 @@ import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { DesktopProfileLine } from "../desktop/profile-status";
 import {
 	Card,
 	ListRow,
@@ -289,6 +290,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 				</h4>
 				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
 			</div>
+			<DesktopProfileLine orb={orb} />
 			<ServicesSection threadId={threadId} orb={orb} />
 		</Card>
 	);

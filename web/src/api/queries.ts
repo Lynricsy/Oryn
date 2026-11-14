@@ -6,7 +6,8 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { fetchHealth } from "../health";
-import { api, rawFetch, type Schemas, unwrap } from "./client";
+import { indexStore } from "../state/stores";
+import { api, type Orb, rawFetch, type Schemas, unwrap } from "./client";
 
 export const qk = {
 	health: ["healthz"] as const,
@@ -27,6 +28,7 @@ export const qk = {
 		["orbs", orbId, "services", name, "log"] as const,
 	threads: (archived: boolean) => ["threads", { archived }] as const,
 	threadUsage: (id: string) => ["stats", "usage", "thread", id] as const,
+	browserProfiles: ["browser-profiles"] as const,
 };
 
 export function useHealth() {
@@ -277,4 +279,115 @@ export async function fetchServiceLog(
 		{ signal },
 	);
 	return res.text();
+}
+
+// ---------------------------------------------------------------- 浏览器 Profile 与 Desktop（M8）
+// 桌面状态不另行请求：`orb.desktop` 随 WS `orb` 消息到达；下面的 orb 变更成功后把返回的 orb 写进索引（不等推送），
+// 并使 Profile 列表失效（持有者 / 修订可能变了）。
+
+export function useBrowserProfiles() {
+	return useQuery({
+		queryKey: qk.browserProfiles,
+		queryFn: () => unwrap(api.GET("/api/v1/browser-profiles")),
+		staleTime: 10_000,
+	});
+}
+
+function useProfilesInvalidate() {
+	const qc = useQueryClient();
+	return () => qc.invalidateQueries({ queryKey: qk.browserProfiles });
+}
+
+export function useCreateBrowserProfile() {
+	const invalidate = useProfilesInvalidate();
+	return useMutation({
+		mutationFn: (name: string) =>
+			unwrap(api.POST("/api/v1/browser-profiles", { body: { name } })),
+		onSuccess: invalidate,
+	});
+}
+
+export function useRenameBrowserProfile() {
+	const invalidate = useProfilesInvalidate();
+	return useMutation({
+		mutationFn: ({ id, name }: { id: string; name: string }) =>
+			unwrap(
+				api.PATCH("/api/v1/browser-profiles/{id}", {
+					params: { path: { id } },
+					body: { name },
+				}),
+			),
+		onSuccess: invalidate,
+	});
+}
+
+export function useDeleteBrowserProfile() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (id: string) => {
+			await unwrap(
+				api.DELETE("/api/v1/browser-profiles/{id}", {
+					params: { path: { id } },
+				}),
+			);
+		},
+		// 删除会清掉引用它的项目默认值
+		onSuccess: () =>
+			Promise.all([
+				qc.invalidateQueries({ queryKey: qk.browserProfiles }),
+				qc.invalidateQueries({ queryKey: qk.projects }),
+			]),
+	});
+}
+
+function acceptOrb(orb: Orb): Orb {
+	indexStore.getState().upsertOrb(orb);
+	return orb;
+}
+
+/** 为 orb 选用 / 切换 / 解除 Profile（`profileId` 空串 = 解除）；被占用时抛 409 `profile_in_use`（见 `profileConflictOf`）。 */
+export function useSetOrbDesktopProfile(orbId: string) {
+	const invalidate = useProfilesInvalidate();
+	return useMutation({
+		mutationFn: async (body: Schemas["OrbDesktopProfilePut"]) =>
+			acceptOrb(
+				await unwrap(
+					api.PUT("/api/v1/orbs/{id}/desktop/profile", {
+						params: { path: { id: orbId } },
+						body,
+					}),
+				),
+			),
+		onSettled: invalidate,
+	});
+}
+
+/** 立即保存（活体保存，浏览器不关闭）。 */
+export function useSaveOrbDesktopProfile(orbId: string) {
+	const invalidate = useProfilesInvalidate();
+	return useMutation({
+		mutationFn: () =>
+			unwrap(
+				api.POST("/api/v1/orbs/{id}/desktop/profile/save", {
+					params: { path: { id: orbId } },
+				}),
+			),
+		onSettled: invalidate,
+	});
+}
+
+/** 启动（`true`）/ 关闭（`false`）桌面上的浏览器。 */
+export function useOrbBrowser(orbId: string) {
+	return useMutation({
+		mutationFn: async (run: boolean) => {
+			const params = { params: { path: { id: orbId } } };
+			return acceptOrb(
+				await unwrap(
+					run
+						? api.POST("/api/v1/orbs/{id}/desktop/browser/start", params)
+						: api.POST("/api/v1/orbs/{id}/desktop/browser/stop", params),
+				),
+			);
+		},
+	});
 }

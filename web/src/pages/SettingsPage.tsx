@@ -1,6 +1,6 @@
 /**
  * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、项目（表单与图标）、
- * 密钥（名称列表、写入值）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
+ * 密钥（名称列表、写入值）、浏览器 Profile（M8）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
  * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、
  * 桌面应用（M6，仅桌面壳内出现）、关于。
  * 桌面壳里的会话是设备换来的 App 会话：不能批准配对（改为引导到浏览器）、不显示退出登录（由「更换服务器」代替）。
@@ -26,6 +26,7 @@ import {
 	qk,
 	saveAvatarIdentity,
 	useAvatarIdentity,
+	useBrowserProfiles,
 	useDevices,
 	useGitIdentity,
 	useHealth,
@@ -87,6 +88,7 @@ import {
 	WALLPAPERS,
 } from "../state/theme";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
+import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import DesktopSettings from "./settings/DesktopSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
 import SharesSettings from "./settings/SharesSettings";
@@ -96,6 +98,7 @@ export type SettingsSection =
 	| "providers"
 	| "projects"
 	| "secrets"
+	| "browser-profiles"
 	| "git-identity"
 	| "agent-config"
 	| "appearance"
@@ -109,6 +112,7 @@ const SECTIONS: { key: SettingsSection; icon: IconName }[] = [
 	{ key: "providers", icon: "box" },
 	{ key: "projects", icon: "folder" },
 	{ key: "secrets", icon: "key" },
+	{ key: "browser-profiles", icon: "browser" },
 	{ key: "git-identity", icon: "fork" },
 	{ key: "agent-config", icon: "file" },
 	{ key: "appearance", icon: "palette" },
@@ -559,6 +563,7 @@ function formOf(p: Project): ProjectForm {
 		icon: p.icon,
 		gitAuthorName: p.gitAuthorName,
 		gitAuthorEmail: p.gitAuthorEmail,
+		defaultBrowserProfileId: p.defaultBrowserProfileId,
 	};
 }
 
@@ -630,6 +635,7 @@ function ProjectEditor({
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const providers = useProviders();
+	const profiles = useBrowserProfiles();
 	const [f, setF] = useState<ProjectForm>(initial);
 	const save = useAsync();
 	const set = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) =>
@@ -659,6 +665,8 @@ function ProjectEditor({
 							icon: f.icon ?? "",
 							gitAuthorName: f.gitAuthorName ?? "",
 							gitAuthorEmail: f.gitAuthorEmail ?? "",
+							// 空串 = 清除默认 Profile
+							defaultBrowserProfileId: f.defaultBrowserProfileId ?? "",
 						};
 						await unwrap(
 							api.PATCH("/api/v1/projects/{id}", {
@@ -720,6 +728,24 @@ function ProjectEditor({
 					{(provider?.orbTypes ?? []).map((ot) => (
 						<option key={ot.name} value={ot.name}>
 							{ot.name}
+						</option>
+					))}
+				</Select>
+			</Field>
+			<Field
+				label={t("projects.defaultBrowserProfile")}
+				hint={t("projects.defaultBrowserProfileHint")}
+			>
+				<Select
+					value={f.defaultBrowserProfileId ?? ""}
+					onChange={(e) =>
+						set("defaultBrowserProfileId", e.target.value || undefined)
+					}
+				>
+					<option value="">{t("common.none")}</option>
+					{profiles.data?.profiles.map((p) => (
+						<option key={p.id} value={p.id}>
+							{p.name}
 						</option>
 					))}
 				</Select>
@@ -1824,6 +1850,7 @@ export function SettingsPage({
 						{section === "providers" && <ProvidersSettings />}
 						{section === "projects" && <ProjectsSettings />}
 						{section === "secrets" && <SecretsSettings />}
+						{section === "browser-profiles" && <BrowserProfilesSettings />}
 						{section === "git-identity" && <GitIdentitySettings />}
 						{section === "agent-config" && <AgentConfigSettings />}
 						{section === "appearance" && <AppearanceSettings />}

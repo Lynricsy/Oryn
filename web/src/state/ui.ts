@@ -1,4 +1,4 @@
-/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、窄屏线程页的同级标签、搜索聚焦请求。 */
+/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、窄屏线程页的同级标签、搜索聚焦请求、Desktop 面板的本机偏好。 */
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { Schemas } from "../api/client";
@@ -26,7 +26,13 @@ export type DialogState =
 	| { kind: "share" }
 	| { kind: "setupLog"; orbId: string; run: Schemas["OrbSetupRun"] };
 
-export type PanelTab = "info" | "changes" | "files" | "terminal" | "portal";
+export type PanelTab =
+	| "info"
+	| "changes"
+	| "files"
+	| "terminal"
+	| "portal"
+	| "desktop";
 
 /** 窄屏（compact / medium、非双段）线程页的同级标签：对话（转录）与面板各标签并列。 */
 export type ThreadTab = "agent" | PanelTab;
@@ -97,6 +103,45 @@ export function loadCollapsedCards(): Record<string, boolean> {
 
 export const SIDEBAR_COLLAPSED_KEY = "oryn.sidebar.collapsed";
 
+/** Desktop 面板（M8）的三项本机偏好（存 localStorage，所有线程共用）。 */
+export const DESKTOP_CONTROL_KEY = "oryn.desktop.control";
+export const DESKTOP_SCALE_KEY = "oryn.desktop.scale";
+export const DESKTOP_CLIPSYNC_KEY = "oryn.desktop.clipsync";
+
+/** 桌面画面的缩放：`follow` 远端分辨率跟随面板尺寸；`fit` 远端分辨率不变，本地等比缩放到面板里。 */
+export type DesktopScale = "follow" | "fit";
+
+function readKey(key: string): string | null {
+	try {
+		return globalThis.localStorage?.getItem(key) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function writeKey(key: string, value: string | null) {
+	try {
+		if (value === null) globalThis.localStorage?.removeItem(key);
+		else globalThis.localStorage?.setItem(key, value);
+	} catch {
+		// 隐私模式下静默
+	}
+}
+
+/** 同步读取 Desktop 偏好；非法值回落默认（可控制、按断点取缩放、不自动同步剪贴板）。 */
+export function loadDesktopPrefs(): {
+	desktopControl: boolean;
+	desktopScale: DesktopScale | null;
+	desktopClipSync: boolean;
+} {
+	const scale = readKey(DESKTOP_SCALE_KEY);
+	return {
+		desktopControl: readKey(DESKTOP_CONTROL_KEY) !== "0",
+		desktopScale: scale === "follow" || scale === "fit" ? scale : null,
+		desktopClipSync: readKey(DESKTOP_CLIPSYNC_KEY) === "1",
+	};
+}
+
 /** 同步读取（store 创建时），桌面端首帧就按存储的收起状态渲染。 */
 function loadSidebarCollapsed(): boolean {
 	try {
@@ -148,6 +193,15 @@ export interface UiState {
 	/** Portal 标签里选中的端口（按线程，不持久化）；缺省 = 第一个 portal。 */
 	portalPort: Record<string, number>;
 	setPortalPort(threadId: string, port: number): void;
+	/** Desktop 面板向桌面发送键鼠（默认 true；false = 仅观看）。 */
+	desktopControl: boolean;
+	setDesktopControl(on: boolean): void;
+	/** 缩放偏好；null = 按断点取默认（compact 为 `fit`，其余 `follow`）。 */
+	desktopScale: DesktopScale | null;
+	setDesktopScale(scale: DesktopScale | null): void;
+	/** 剪贴板自动同步（读写本机剪贴板，需浏览器授权）。 */
+	desktopClipSync: boolean;
+	setDesktopClipSync(on: boolean): void;
 }
 
 export const uiStore = createStore<UiState>((set, get) => ({
@@ -259,7 +313,27 @@ export const uiStore = createStore<UiState>((set, get) => ({
 				? s
 				: { portalPort: { ...s.portalPort, [threadId]: port } },
 		),
+	...loadDesktopPrefs(),
+	setDesktopControl: (desktopControl) => {
+		writeKey(DESKTOP_CONTROL_KEY, desktopControl ? "1" : "0");
+		set({ desktopControl });
+	},
+	setDesktopScale: (desktopScale) => {
+		writeKey(DESKTOP_SCALE_KEY, desktopScale);
+		set({ desktopScale });
+	},
+	setDesktopClipSync: (desktopClipSync) => {
+		writeKey(DESKTOP_CLIPSYNC_KEY, desktopClipSync ? "1" : "0");
+		set({ desktopClipSync });
+	},
 }));
+
+/** 实际生效的缩放：有偏好用偏好，否则 compact 为 `fit`（触屏上看全貌），其余 `follow`。 */
+export function useDesktopScale(): DesktopScale {
+	const pref = useUi((s) => s.desktopScale);
+	const bp = useBreakpoint();
+	return pref ?? (bp === "compact" ? "fit" : "follow");
+}
 
 export function useUi<T>(selector: (s: UiState) => T): T {
 	return useStore(uiStore, selector);

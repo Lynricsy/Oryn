@@ -147,7 +147,13 @@
 		"defaultModel": "默认模型",
 		"defaultThinking": "默认",
 		"thinkingUnknown": "还不知道这个模型支持哪些级别",
-		"modelPlaceholder": "provider/模型 id"
+		"modelPlaceholder": "provider/模型 id",
+		"profileTitle": "浏览器 Profile",
+		"profileFollow": "跟随项目默认",
+		"profileNone": "不用 Profile",
+		"profileInUse": "使用中",
+		"profileLabel": "浏览器 Profile：{{name}}",
+		"profileDefaultLabel": "浏览器 Profile：跟随项目默认（{{name}}）"
 	},
 	"composer": {
 		"abort": "中断",
@@ -555,7 +561,16 @@
 		"timeout": "请求超时",
 		"invalid_frame": "服务端拒绝了这次应答，请求已恢复",
 		"orbd_bad_response": "orb 返回了无效的响应",
-		"orbd_timeout": "orb 响应超时"
+		"orbd_timeout": "orb 响应超时",
+		"profile_not_found": "这个浏览器 Profile 不存在了，可能已被删除。请重新选择。",
+		"profile_in_use": "这个浏览器 Profile 正被另一个线程使用。",
+		"profile_name_taken": "已有同名的 Profile，换个名字。",
+		"profile_limit": "Profile 已到上限（50 个），先删掉不用的再新建。",
+		"no_profile": "这台 orb 没有独占使用 Profile，没有可保存的内容。",
+		"profile_readonly": "这里用的是只读副本，改动不会保存。要保存，先在 Profile 横幅里写回。",
+		"profile_too_large": "Profile 超过 256 MiB，保存失败。清理浏览器里的大型站点数据后再试。",
+		"profile_save_failed": "保存失败：导出或写盘出错。旧的版本还在，稍后再试。",
+		"orbd_outdated": "这台 orb 的镜像太旧，不支持这个功能。新建一个线程会得到新镜像的 orb。"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
@@ -586,7 +601,8 @@
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
-		"desktop": "桌面应用"
+		"desktop": "桌面应用",
+		"browser-profiles": "浏览器 Profile"
 	},
 	"devices": {
 		"pairQr": {
@@ -647,7 +663,9 @@
 		"icon": "项目图标",
 		"iconAuto": "自动",
 		"iconAutoHint": "自动：取首个会话标题卡上的图标，没有时用名称首字。",
-		"title": "项目"
+		"title": "项目",
+		"defaultBrowserProfile": "默认浏览器 Profile",
+		"defaultBrowserProfileHint": "这个项目的新线程默认装载它（新建线程时可改）。"
 	},
 	"secrets": {
 		"deleteConfirm": "删除密钥 {{name}}？",
@@ -798,14 +816,16 @@
 			"changes": "改动",
 			"files": "文件",
 			"terminal": "终端",
-			"portal": "Portal"
+			"portal": "Portal",
+			"desktop": "桌面"
 		},
 		"attention": "有终端在等待输入",
 		"agentAttention": "对话在等待你回答",
 		"maximize": "面板最大化",
 		"restore": "还原面板",
 		"resize": "调整面板宽度",
-		"unseenChanges": "有未查看的新改动"
+		"unseenChanges": "有未查看的新改动",
+		"desktopAttention": "浏览器 Profile 需要你处理"
 	},
 	"terminal": {
 		"title": "终端",
@@ -1533,5 +1553,145 @@
 			}
 		},
 		"shareFailed": "{{count}} 个文件未能导入"
+	},
+	"deskPanel": {
+		"toolbar": "桌面工具条",
+		"orbGone": "orb 已删除",
+		"orbGoneHint": "桌面随 orb 一起删除了。新建线程会得到一台新的 orb。",
+		"unsupported": "这台 orb 没有桌面",
+		"unsupportedHint": "它的镜像早于桌面功能。新建一个线程即可使用 Desktop 面板。",
+		"asleep": "orb 已休眠",
+		"asleepHint": "浏览器和标签页都原样保留。唤醒后桌面会自动连上。",
+		"wake": "唤醒",
+		"orbFailed": "orb 没能启动，原因和重试按钮在线程顶部的错误提示里。",
+		"orbStarting": "orb {{state}}，就绪后自动连接桌面…",
+		"displayStarting": "桌面正在启动…",
+		"connecting": "正在连接桌面…",
+		"browserStarting": "浏览器正在启动…",
+		"startBrowser": "启动浏览器",
+		"stopBrowser": "关闭浏览器",
+		"reconnect": "重新连接",
+		"more": "更多",
+		"fullscreen": "全屏",
+		"toWatch": "切换为仅观看（不发送键鼠）",
+		"toControl": "切换为可控制",
+		"watching": "仅观看",
+		"saved": "已保存，当前是第 {{revision}} 版",
+		"status": {
+			"connecting": "正在连接",
+			"connected": "已连接",
+			"closed": "未连接"
+		},
+		"scale": {
+			"follow": "分辨率跟随面板",
+			"fit": "缩放以适应"
+		},
+		"closed": {
+			"revoked": "访问已失效",
+			"revokedHint": "这台设备的登录已被吊销，重新登录后再打开。",
+			"outdated": "这台 orb 不支持桌面",
+			"outdatedHint": "它的镜像早于桌面功能。新建一个线程即可使用。",
+			"deleted": "orb 已删除",
+			"deletedHint": "桌面随 orb 一起删除了。",
+			"full": "观看者已满",
+			"fullHint": "每台 orb 最多 8 个窗口同时打开桌面。关掉其它窗口里的 Desktop 面板后重新连接。",
+			"lost": "连不上桌面",
+			"unreachableHint": "orb 里的显示服务没有响应，通常几秒内会自动恢复。稍后点「重新连接」。",
+			"unavailableHint": "orb 暂时不可用（休眠或正在唤醒）。等它就绪后点「重新连接」。",
+			"networkHint": "连接中断，已自动重试 3 次。检查网络后点「重新连接」。"
+		},
+		"kb": {
+			"show": "打开软键盘",
+			"hide": "收起软键盘",
+			"input": "发送到桌面的键盘输入",
+			"ctrl": "Ctrl（粘滞）",
+			"alt": "Alt（粘滞）",
+			"left": "左方向键",
+			"up": "上方向键",
+			"down": "下方向键",
+			"right": "右方向键"
+		},
+		"clip": {
+			"title": "剪贴板",
+			"fromDesktop": "来自桌面",
+			"empty": "在桌面里复制的文字会出现在这里。",
+			"toDesktop": "发送到桌面",
+			"send": "发送到桌面",
+			"pasteHint": "发送后在桌面里按 Ctrl+V 粘贴。",
+			"sent": "已发送，在桌面里按 Ctrl+V 粘贴。",
+			"autoSync": "自动同步剪贴板",
+			"autoSyncHint": "在桌面里复制会写入本机剪贴板；回到桌面时把本机剪贴板发过去。需要浏览器授权。",
+			"denied": "浏览器没有授权读取剪贴板，请改用上面的手动发送。"
+		},
+		"menu": {
+			"label": "浏览器 Profile：{{name}}",
+			"noProfile": "无 Profile",
+			"none": "不使用 Profile",
+			"inUse": "使用中",
+			"save": "立即保存",
+			"manage": "管理 Profile…",
+			"switchConfirm": "切换 Profile 会关闭当前浏览器（独占使用的 Profile 先保存）。继续？"
+		},
+		"profile": {
+			"title": "浏览器 Profile",
+			"attached": "独占使用",
+			"readonly": "只读 Profile",
+			"readonlyShort": "只读",
+			"takenOver": "只读 Profile · 已被「{{thread}}」接管",
+			"anotherThread": "另一个线程",
+			"released": "已释放，下次运行时自动取回",
+			"inUse": "正被另一台 orb 使用",
+			"inUseBy": "正在线程「{{thread}}」里使用",
+			"error": "装载失败：{{reason}}",
+			"otherOrb": "另一台 orb（{{id}}）"
+		},
+		"profileError": {
+			"invalid_archive": "归档已损坏。可以解除后重新登录，或换一个 Profile。",
+			"too_large": "解包后超过 2 GiB 上限。",
+			"no_space": "orb 磁盘空间不足。清理磁盘后重试。",
+			"other": "orb 没能装载它。稍后重试。"
+		},
+		"banner": {
+			"choose": "选择使用方式…",
+			"inUseHint": "这里的浏览器没有装载「{{name}}」。可以只读使用它最近保存的版本，或者把它接管过来。",
+			"readonlyHint": "用的是最近一次保存的版本，这里的登录态改动不会保存。",
+			"takenOverHint": "接管前已保存过这里的登录态；之后这里的改动不会保存。要写回，可以再接管回来。",
+			"writeBack": "写回…",
+			"writeBackConfirm": "改为独占使用会关闭这里的浏览器，并装载这个 Profile 最新保存的版本。被别的线程占用时可以接管。继续？",
+			"errorTitle": "Profile「{{name}}」没能装载",
+			"retry": "重试"
+		},
+		"conflict": {
+			"title": "「{{name}}」正在使用中",
+			"body": "线程「{{thread}}」从 {{since}}（{{ago}}）起在使用它。同一时间只有一台 orb 能把登录态写回，选一种方式继续：",
+			"readonly": "只读使用",
+			"readonlyHint": "用最近一次保存的版本；这里的改动不会保存。",
+			"takeover": "接管",
+			"takeoverHint": "先保存对方的登录态再转到这里；对方转为只读。"
+		}
+	},
+	"browserProfiles": {
+		"title": "浏览器 Profile",
+		"new": "新建 Profile",
+		"name": "名字",
+		"namePlaceholder": "例如：工作账号",
+		"idle": "空闲",
+		"inUse": "使用中 · {{thread}}",
+		"readers": "只读副本 {{count}}",
+		"saveFailed": "上次保存失败：{{reason}}",
+		"saveError": {
+			"too_large": "超过 256 MiB",
+			"export_failed": "导出出错",
+			"takeover_unsaved": "接管前没能保存原线程的登录态"
+		},
+		"empty": "空",
+		"savedAt": "{{when}}保存",
+		"neverSaved": "从未保存",
+		"rename": "重命名",
+		"deleteHeld": "使用中，先在那个线程的桌面面板里解除",
+		"deleteConfirm": "删除 Profile「{{name}}」及其保存的登录态？引用它的项目默认值会被清除。",
+		"emptyTitle": "还没有浏览器 Profile",
+		"emptyHint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。",
+		"hint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。"
 	}
 }

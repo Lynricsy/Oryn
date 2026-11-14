@@ -25,6 +25,7 @@ import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { Circle } from "@phosphor-icons/react/dist/csr/Circle";
 import { CircleHalf } from "@phosphor-icons/react/dist/csr/CircleHalf";
+import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { Code } from "@phosphor-icons/react/dist/csr/Code";
 import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
@@ -32,11 +33,13 @@ import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
 import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
 import { Cube } from "@phosphor-icons/react/dist/csr/Cube";
 import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
+import { Cursor } from "@phosphor-icons/react/dist/csr/Cursor";
 import { Database } from "@phosphor-icons/react/dist/csr/Database";
 import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 import { Devices } from "@phosphor-icons/react/dist/csr/Devices";
 import { DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 import { FastForward } from "@phosphor-icons/react/dist/csr/FastForward";
 import { File } from "@phosphor-icons/react/dist/csr/File";
 import { FileCode } from "@phosphor-icons/react/dist/csr/FileCode";
@@ -59,6 +62,7 @@ import { Hourglass } from "@phosphor-icons/react/dist/csr/Hourglass";
 import { Image } from "@phosphor-icons/react/dist/csr/Image";
 import { Info } from "@phosphor-icons/react/dist/csr/Info";
 import { Key } from "@phosphor-icons/react/dist/csr/Key";
+import { Keyboard } from "@phosphor-icons/react/dist/csr/Keyboard";
 import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
@@ -213,6 +217,11 @@ const ICONS = {
 	megaphone: Megaphone,
 	phone: DeviceMobile,
 	qr: QrCode,
+	/** Desktop 面板（M8）：可控制（发送键鼠）/ 仅观看、剪贴板弹层、软键盘 */
+	cursor: Cursor,
+	eye: Eye,
+	clipboard: ClipboardText,
+	keyboard: Keyboard,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;
