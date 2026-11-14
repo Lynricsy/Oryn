@@ -5,6 +5,7 @@
  */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useCoarsePointer } from "../../lib/viewport";
 import type { RpcTerminalInfo } from "../../omp/types";
 import {
 	type TerminalEntry,
@@ -22,7 +23,7 @@ import {
 	Spinner,
 	tabClass,
 } from "../ui/primitives";
-import { TerminalKeyBar, useCoarsePointer } from "./TerminalKeyBar";
+import { TerminalKeyBar } from "./TerminalKeyBar";
 import { TerminalView } from "./TerminalView";
 import { createXterm } from "./xterm";
 

@@ -134,7 +134,11 @@ export function subscriptionInput(
 	const { endpoint, keys } = sub;
 	if (!endpoint || !keys?.p256dh || !keys.auth)
 		throw new Error("push subscription is missing keys");
-	return { endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } };
+	return {
+		kind: "webpush",
+		endpoint,
+		keys: { p256dh: keys.p256dh, auth: keys.auth },
+	};
 }
 
 /** 订阅后台推送并登记到服务端；需要先拿到通知权限（调用方负责 `requestPermission`）。 */

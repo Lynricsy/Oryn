@@ -18,6 +18,7 @@ import { useNavigate } from "react-router";
 import type { Schemas } from "../api/client";
 import { useOrbs, useProjects, useProviders } from "../api/queries";
 import {
+	AttachButton,
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
@@ -34,6 +35,7 @@ import { modelBrand, shortModelName } from "../lib/model-brand";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { type ModelCaps, useModelCaps } from "../state/model-caps";
+import { shareIntakeStore, useShareIntake } from "../state/share-intake";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarToggleShown } from "../state/ui";
 
@@ -281,6 +283,21 @@ export function HomePage(): ReactNode {
 		ref.current?.focus();
 	}, []);
 
+	// 系统分享进来的内容（M7 计划 4.6）：先取走（StrictMode 重跑 effect 时不会重复预填），
+	// 文字追加进提示词、已上传的附件加入条目，导入失败的文件给出提示
+	const pendingShare = useShareIntake((s) => s.pending);
+	const addUploaded = att.addUploaded;
+	useEffect(() => {
+		if (!pendingShare) return;
+		const share = shareIntakeStore.getState().take();
+		if (!share) return;
+		const text = share.text;
+		if (text) setPrompt((p) => (p ? `${p}\n${text}` : text));
+		addUploaded(share.attachments);
+		if (share.failed.length > 0)
+			setError(t("mobile.shareFailed", { count: share.failed.length }));
+	}, [pendingShare, addUploaded, t]);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (!(e.ctrlKey || e.metaKey)) return;
@@ -513,19 +530,7 @@ export function HomePage(): ReactNode {
 								className={`relative flex px-3 pb-3 ${compact ? "flex-wrap items-center gap-y-2" : "items-start gap-0.5"}`}
 							>
 								<div className="flex h-8 shrink-0 items-center">
-									<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
-										<Icon name="attach" size={15} />
-										<span className="sr-only">{t("attachments.attach")}</span>
-										<input
-											type="file"
-											multiple
-											className="hidden"
-											onChange={(e) => {
-												if (e.target.files) void att.addFiles(e.target.files);
-												e.target.value = "";
-											}}
-										/>
-									</label>
+									<AttachButton onFiles={(files) => void att.addFiles(files)} />
 									{!compact && (
 										<span
 											aria-hidden

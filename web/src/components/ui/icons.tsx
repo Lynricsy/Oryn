@@ -77,6 +77,7 @@ import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
+import { QrCode } from "@phosphor-icons/react/dist/csr/QrCode";
 import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
@@ -211,6 +212,7 @@ const ICONS = {
 	webhook: WebhooksLogo,
 	megaphone: Megaphone,
 	phone: DeviceMobile,
+	qr: QrCode,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

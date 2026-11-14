@@ -140,6 +140,7 @@ describe("订阅与退订", () => {
 			method: "POST",
 			path: "/api/v1/push/subscriptions",
 			body: {
+				kind: "webpush",
 				endpoint: "https://push.example/ep1",
 				keys: { p256dh: UA_PUBLIC, auth: "BTBZMqHH6r4Tts7J_aSIgg" },
 			},

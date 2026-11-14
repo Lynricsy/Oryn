@@ -1,7 +1,8 @@
 /**
  * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，是浮在壁纸上的悬浮玻璃（macOS Tahoe 式），
  * 中栏与右栏是纸面，8px 缝里露出壁纸，侧栏可收起（存 localStorage）；medium（600–839）侧边栏可折叠推入，
- * 同样是悬浮玻璃；compact（<600）单栏 + 同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
+ * 同样是悬浮玻璃；compact（<600）是下沉式侧栏（SinkLayout：侧栏常驻底层，内容卡片右移露出它）；
+ * Viewport Segments 双段时是同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。
  * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker 并作为应用接收器
@@ -10,6 +11,9 @@
  * 只有明确的鉴权失效（`me` 401、WS unauthorized、请求钩子的 401 事件）才交给 `host.reauth` 由壳重新换取 App 会话
  * （壳里没有可用的 Passkey，不去 `/login`）；`me` 的网络错误 / 5xx 显示失败与重试，已有身份时保留当前界面；
  * 线程索引变化后 300ms 去抖把待处理 / 未读计数交给托盘（`host.setStatus`），界面语言变化同步给壳。
+ * 移动壳（M7）：系统栏颜色跟随页面底色（`host.mobile.setChrome`）；系统分享进来的内容存入 share-intake 并跳到首页
+ * 由新建线程框预填，随即 `shareAck`；Viewport Segments 双段（折叠屏半开）时侧栏走悬浮抽屉。
+ * 连接状态写到 `<html data-conn>`（验收观察面）。左侧玻璃侧栏贴着屏幕左缘，左两角与屏幕圆角同心（`.dc-*`）。
  */
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,15 +21,17 @@ import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useMe } from "../../api/queries";
 import { host } from "../../lib/host";
+import { watchChrome } from "../../lib/host-chrome";
 import { computeHostStatus } from "../../lib/host-status";
 import { usePresence } from "../../lib/presence";
 import { pushRegistration, registerServiceWorker } from "../../lib/push";
-import { useBreakpoint } from "../../lib/viewport";
+import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { realtime } from "../../realtime/socket";
 import {
 	notificationsStore,
 	setNotificationNavigator,
 } from "../../state/notifications";
+import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { NotificationToasts } from "../notify/NotificationToasts";
@@ -33,6 +39,7 @@ import { ServerErrors } from "../ServerErrors";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Sidebar } from "./Sidebar";
+import { SinkLayout } from "./SinkLayout";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
 const DRAWER_MS = 260;
@@ -58,6 +65,22 @@ function useHostBridge() {
 	}, [i18n]);
 
 	useEffect(() => host.onNavigate((path) => navRef.current(path)), []);
+
+	// 移动壳：系统栏跟随页面底色；分享进来的内容交给新建线程框，确认后壳清掉缓存
+	useEffect(() => {
+		const mobile = host.mobile;
+		if (!mobile) return;
+		const offChrome = watchChrome(window, (c) => mobile.setChrome(c));
+		const offShare = host.onShare((s) => {
+			shareIntakeStore.getState().set(s);
+			navRef.current("/");
+			mobile.shareAck(s.id);
+		});
+		return () => {
+			offChrome();
+			offShare();
+		};
+	}, []);
 
 	useEffect(() => {
 		if (host.kind !== "tauri") return;
@@ -137,12 +160,20 @@ export function AppShell(): ReactNode {
 	const sidebarOpen = useUi((s) => s.sidebarOpen);
 	const collapsed = useUi((s) => s.sidebarCollapsed);
 	const conn = useConnection((s) => s.status);
+	// 双段（折叠屏半开）：线程页占两段，侧栏退成悬浮抽屉；手机（compact）是下沉式侧栏
+	const segments = useViewportSegments();
+	const drawerMode = segments !== null;
+	const sink = bp === "compact" && !drawerMode;
 	useGlobalShortcuts();
 	useHostBridge();
 	const here = useRef("");
 	here.current = location.pathname + location.search;
-	// 手机抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前
-	const drawer = usePresence(bp === "compact" && sidebarOpen, DRAWER_MS);
+	// 双段抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前
+	const drawer = usePresence(drawerMode && sidebarOpen, DRAWER_MS);
+
+	useEffect(() => {
+		document.documentElement.dataset.conn = conn;
+	}, [conn]);
 
 	useEffect(() => {
 		if (!me.data) return;
@@ -230,14 +261,31 @@ export function AppShell(): ReactNode {
 		);
 	}
 
+	const main = (
+		<main className="flex h-full min-w-0 flex-1 flex-col pr-safe">
+			<Outlet />
+		</main>
+	);
+	if (sink)
+		return (
+			<>
+				<SinkLayout sidebar={<Sidebar />}>{main}</SinkLayout>
+				<ServerErrors />
+				<NotificationToasts />
+			</>
+		);
+
 	const expanded = bp === "expanded";
-	// 列侧栏（expanded / medium）是否展开；compact 走下面的抽屉
+	// 列侧栏（expanded / medium）是否展开；双段走下面的抽屉
 	const shown = expanded ? !collapsed : bp === "medium" && sidebarOpen;
+	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径
+	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--r-2xl)]";
 	return (
 		<div
-			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${expanded ? "p-2" : ""}`}
+			// 双段时不留外边距：线程页按段的视口坐标分窗格
+			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${expanded && !segments ? "p-2" : ""}`}
 		>
-			{bp !== "compact" && (
+			{!drawerMode && (
 				// 外层只负责占位宽度与右侧 8px 缝；内层固定宽度，translate 与列宽同时长同缓动，
 				// 右缘始终贴着列右缘，所以外层不必 overflow-hidden（那会裁掉玻璃的描边与投影）
 				<div
@@ -249,7 +297,7 @@ export function AppShell(): ReactNode {
 					<div
 						className={`h-full w-64 transition-[translate] duration-[260ms] ease-out lg:w-72 ${expanded ? "" : "p-2"} ${shown ? "" : "-translate-x-[calc(100%+1rem)]"}`}
 					>
-						<div className="glass-sidebar h-full">
+						<div className={`glass-sidebar h-full ${sidebarCorners}`}>
 							<Sidebar />
 						</div>
 					</div>
@@ -271,17 +319,15 @@ export function AppShell(): ReactNode {
 					<div
 						inert={!sidebarOpen}
 						data-shown={drawer.shown ? "" : undefined}
-						className={`drawer-spot absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
+						className={`drawer-spot ${sidebarCorners} absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
 					>
-						<div className="glass-sidebar h-full">
+						<div className={`glass-sidebar h-full ${sidebarCorners}`}>
 							<Sidebar floating />
 						</div>
 					</div>
 				</div>
 			)}
-			<main className="flex h-full min-w-0 flex-1 flex-col pr-safe">
-				<Outlet />
-			</main>
+			{main}
 			<ServerErrors />
 			<NotificationToasts />
 		</div>

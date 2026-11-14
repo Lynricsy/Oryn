@@ -130,7 +130,7 @@ export function Spinner({ size = 14 }: { size?: number }) {
 }
 
 /**
- * 模态对话框：Esc / 点遮罩关闭；compact 屏上为底部抽屉。
+ * 模态对话框：Esc / 点遮罩关闭；compact 屏上为底部抽屉（贴屏幕底边，下两角与屏幕圆角同心，见 index.css 的 `.dc-*`）。
  * 渲染到 body 下；打开时把焦点移入对话框、Tab 在其中循环、背景 `inert`，关闭后焦点回到打开前的元素。
  */
 export function Dialog({
@@ -209,7 +209,7 @@ export function Dialog({
 				aria-modal="true"
 				tabIndex={-1}
 				aria-label={typeof title === "string" ? title : undefined}
-				className={`pop-in relative flex max-h-[85dvh] w-full flex-col rounded-t-xl border border-border bg-panel shadow-xl outline-none sm:rounded-xl ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
+				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl border border-border bg-panel shadow-xl outline-none [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
 			>
 				<div className="flex items-center justify-between gap-2 border-border border-b px-4 py-3">
 					<h2 className="truncate font-semibold text-sm">{title}</h2>

@@ -2,10 +2,17 @@
  * 消息附件（粘贴 / 拖放 / 选择任意文件）：加入即开始上传到控制面，发送时以 `orynAttachments` 携带 id。
  * 图片另按整条消息内联预算压缩出一份内联副本（模型可直接看到）；预算用完的图片只作为文件附件（「仅文件」）。
  * 新建线程框与线程输入区共用。
+ * 系统分享进来的文件由移动壳先行上传（M7 计划 4.6），经 `addUploaded` 以已完成条目加入。
  * 每个文件在预处理（图片压缩）之前就登记取消句柄：composer 卸载（换线程）后，
  * 未完成的预处理不会再加入条目或开始上传。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type ChangeEvent,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type Attachment,
@@ -21,6 +28,7 @@ import {
 	type PreparedImage,
 	prepareImage,
 } from "../../lib/images";
+import { useCoarsePointer } from "../../lib/viewport";
 import type { ImageContent } from "../../omp/types";
 import { Badge, Meter } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -158,6 +166,32 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 		[push, threadId, t, update],
 	);
 
+	/** 已在别处上传好的附件（系统分享）：直接作为完成条目加入；图片不做内联副本，只作为文件附件。 */
+	const addUploaded = useCallback(
+		(list: Attachment[]) => {
+			setError(null);
+			for (const attachment of list) {
+				const live = itemsRef.current.filter((i) => i.status !== "error");
+				if (live.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+					setError(
+						t("attachments.tooMany", { max: MAX_ATTACHMENTS_PER_MESSAGE }),
+					);
+					return;
+				}
+				push({
+					key: `att-${++seq}`,
+					name: attachment.name,
+					size: attachment.size,
+					status: "done",
+					progress: 1,
+					attachment,
+					fileOnly: attachment.mime.startsWith("image/"),
+				});
+			}
+		},
+		[push, t],
+	);
+
 	const remove = useCallback(
 		(key: string) => {
 			const item = itemsRef.current.find((i) => i.key === key);
@@ -194,9 +228,54 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 		uploading,
 		error,
 		addFiles,
+		addUploaded,
 		remove,
 		clear,
 	};
+}
+
+const ATTACH_BTN =
+	"inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg";
+
+/** 输入区工具行的附件入口：回形针选任意文件；触屏上再给一个相机键直接拍照（M7 计划 4.5）。 */
+export function AttachButton({ onFiles }: { onFiles(files: File[]): void }) {
+	const { t } = useTranslation();
+	const coarse = useCoarsePointer();
+	const pick = (e: ChangeEvent<HTMLInputElement>) => {
+		// 先拷出文件再清空 value（清空后同一文件可再次选择）
+		const files = e.target.files ? [...e.target.files] : [];
+		e.target.value = "";
+		if (files.length > 0) onFiles(files);
+	};
+	return (
+		<>
+			<label className={ATTACH_BTN}>
+				<Icon name="attach" size={15} />
+				<span className="sr-only">{t("attachments.attach")}</span>
+				<input
+					type="file"
+					multiple
+					data-testid="attach-file-input"
+					className="hidden"
+					onChange={pick}
+				/>
+			</label>
+			{coarse && (
+				<label data-testid="attach-camera" className={ATTACH_BTN}>
+					<Icon name="camera" size={15} />
+					<span className="sr-only">{t("attachments.camera")}</span>
+					<input
+						type="file"
+						accept="image/*"
+						capture="environment"
+						data-testid="attach-camera-input"
+						className="hidden"
+						onChange={pick}
+					/>
+				</label>
+			)}
+		</>
+	);
 }
 
 export function AttachmentStrip({

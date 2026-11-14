@@ -6,6 +6,8 @@
  * - error：原因与建议、重试、更换服务器（先在本页确认）；`unreachable` 时壳在自动重连。
  * - confirmChange：确认移除这台设备在该服务器上的登录。
  * 每条命令都返回新的状态；壳也会经 `oryn:host` 事件主动推送（轮询批准、自动重连）。
+ * 移动壳（M7 计划 4.8）：不提「Oryn Desktop」与桌面凭据库；地址旁有「扫码」（扫设置 → 设备里的二维码，
+ * 内容原样交给 `launcher_connect`）；pairing 的主按钮是「复制配对码并打开浏览器」；系统栏颜色跟随页面底色。
  */
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,15 +20,33 @@ import {
 	Spinner,
 	TextInput,
 } from "../components/ui/primitives";
+import { watchChrome } from "../lib/host-chrome";
+import { scannedServer } from "../lib/pair-qr";
 import {
+	canScan,
 	invoke,
+	isMobilePlatform,
 	LAUNCHER_ERROR_CODES,
 	type LauncherError,
 	type LauncherErrorCode,
 	type LauncherInfo,
 	type LauncherState,
 	onState,
+	scanQr,
 } from "./bridge";
+
+/** 移动端另有措辞的错误码（原文提到桌面应用或系统凭据库）。 */
+const MOBILE_ERROR_CODES = [
+	"keyring",
+	"server_too_old",
+	"web_timeout",
+] as const;
+type MobileErrorCode = (typeof MOBILE_ERROR_CODES)[number];
+
+/** 发出即忘的壳命令：拒绝只记日志。 */
+function fire(cmd: string, args?: Record<string, unknown>) {
+	invoke(cmd, args).catch((e) => console.warn(`[launcher] ${cmd} failed`, e));
+}
 
 /** URL 的主机部分（带端口）；解析不了时原样返回。 */
 function hostOf(url: string): string {
@@ -51,13 +71,33 @@ function formatRemaining(ms: number): string {
 }
 
 /** 原因（ErrorText）+ 下一步；壳的原文只放在悬停提示里备查。 */
-function LauncherErrorText({ error }: { error: LauncherError }) {
+function LauncherErrorText({
+	error,
+	mobile,
+}: {
+	error: LauncherError;
+	mobile: boolean;
+}) {
 	const { t } = useTranslation();
 	const key = launcherErrorKey(error.code);
+	const mobileKey =
+		mobile && (MOBILE_ERROR_CODES as readonly string[]).includes(key)
+			? (key as MobileErrorCode)
+			: null;
 	return (
 		<div className="flex flex-col gap-1" title={error.message || undefined}>
-			<ErrorText error={t(`launcher.error.${key}.reason`)} />
-			<p className="text-faint text-xs">{t(`launcher.error.${key}.hint`)}</p>
+			<ErrorText
+				error={
+					mobileKey
+						? t(`launcher.mobileError.${mobileKey}.reason`)
+						: t(`launcher.error.${key}.reason`)
+				}
+			/>
+			<p className="text-faint text-xs">
+				{mobileKey
+					? t(`launcher.mobileError.${mobileKey}.hint`)
+					: t(`launcher.error.${key}.hint`)}
+			</p>
 		</div>
 	);
 }
@@ -86,6 +126,19 @@ export function Launcher(): ReactNode {
 	const [failure, setFailure] = useState<unknown>(null);
 	/** 在错误页点了「更换服务器…」，等本页确认。 */
 	const [confirmLocal, setConfirmLocal] = useState(false);
+	/** 平台在页面生命周期内不变。 */
+	const [mobile] = useState(() => isMobilePlatform());
+	const [scannable] = useState(() => canScan());
+	/** 扫码没成功：相机权限被拒 / 扫描失败（取消不算）。 */
+	const [scanError, setScanError] = useState<"denied" | "failed" | null>(null);
+
+	// 移动壳：状态栏 / 导航栏颜色跟随页面底色
+	useEffect(() => {
+		if (!mobile) return;
+		return watchChrome(window, (c) =>
+			fire("host_set_chrome", { dark: c.dark, color: c.color }),
+		);
+	}, [mobile]);
 
 	useEffect(() => {
 		let live = true;
@@ -134,14 +187,45 @@ export function Launcher(): ReactNode {
 	const submit = (e: FormEvent) => {
 		e.preventDefault();
 		if (!url.trim() || busy) return;
+		setScanError(null);
 		void run("launcher_connect", { url: url.trim() });
+	};
+
+	/** 扫码：内容原样交给 `launcher_connect`（壳同时接受普通地址与 `oryn://pair?server=`），输入框显示解析出的地址。 */
+	const scan = async () => {
+		setScanError(null);
+		setBusy(true);
+		const r = await scanQr();
+		setBusy(false);
+		if (r.kind === "ok") {
+			setUrl(scannedServer(r.content));
+			await run("launcher_connect", { url: r.content });
+		} else if (r.kind === "denied" || r.kind === "failed") {
+			if (r.kind === "failed") console.warn("[launcher] scan failed", r.error);
+			setScanError(r.kind);
+		}
+	};
+
+	/** 移动端：先把配对码放进剪贴板（手机浏览器里粘贴），再打开浏览器。 */
+	const copyAndOpen = async (code: string) => {
+		try {
+			await navigator.clipboard.writeText(code);
+		} catch (e) {
+			// 剪贴板不可用时仍打开浏览器：配对码就在本页上，可手动输入
+			console.warn("[launcher] clipboard failed", e);
+		}
+		await run("launcher_open_browser");
 	};
 
 	const footer = info && (
 		<>
-			{info.tokenStore === "file" && <p>{t("launcher.fileStore")}</p>}
+			{!mobile && info.tokenStore === "file" && (
+				<p>{t("launcher.fileStore")}</p>
+			)}
 			<p className="font-mono">
-				{t("launcher.version", { version: info.version })}
+				{t(mobile ? "launcher.versionMobile" : "launcher.version", {
+					version: info.version,
+				})}
 			</p>
 		</>
 	);
@@ -194,31 +278,64 @@ export function Launcher(): ReactNode {
 	if (state.step === "connect") {
 		return (
 			<AuthCard title={t("launcher.title.connect")} blink footer={footer}>
-				<p className="mb-4 text-muted text-sm">{t("launcher.intro")}</p>
+				<p className="mb-4 text-muted text-sm">
+					{t(mobile ? "launcher.introMobile" : "launcher.intro")}
+				</p>
 				<form className="flex flex-col gap-3" onSubmit={submit}>
 					<Field
 						label={t("launcher.serverUrl")}
 						hint={t("launcher.serverUrlHint")}
 					>
-						<TextInput
-							autoFocus
-							inputMode="url"
-							autoComplete="url"
-							autoCapitalize="off"
-							spellCheck={false}
-							placeholder="https://oryn.example.com"
-							value={url}
-							onChange={(e) => setUrl(e.target.value)}
-						/>
+						<span className="flex items-center gap-2">
+							<TextInput
+								autoFocus={!mobile}
+								inputMode="url"
+								autoComplete="url"
+								autoCapitalize="off"
+								spellCheck={false}
+								placeholder="https://oryn.example.com"
+								value={url}
+								onChange={(e) => setUrl(e.target.value)}
+								className="min-w-0 flex-1"
+								data-testid="launcher-url"
+							/>
+							{scannable && (
+								<Button
+									icon="qr"
+									disabled={busy}
+									onClick={() => void scan()}
+									data-testid="launcher-scan"
+								>
+									{t("launcher.scan")}
+								</Button>
+							)}
+						</span>
 					</Field>
 					<Button
 						type="submit"
 						variant="primary"
 						disabled={busy || !url.trim()}
+						data-testid="launcher-connect"
 					>
 						{busy ? <Spinner /> : t("launcher.connect")}
 					</Button>
-					{state.error && <LauncherErrorText error={state.error} />}
+					{scanError === "denied" && (
+						<div className="flex flex-wrap items-center gap-2">
+							<ErrorText error={t("launcher.scanDenied")} />
+							<Button
+								size="sm"
+								onClick={() => fire("plugin:barcode-scanner|open_app_settings")}
+							>
+								{t("launcher.openSettings")}
+							</Button>
+						</div>
+					)}
+					{scanError === "failed" && (
+						<ErrorText error={t("launcher.scanFailed")} />
+					)}
+					{state.error && (
+						<LauncherErrorText error={state.error} mobile={mobile} />
+					)}
 					<ErrorText error={failure} />
 				</form>
 			</AuthCard>
@@ -229,10 +346,13 @@ export function Launcher(): ReactNode {
 		return (
 			<AuthCard title={t("launcher.title.pairing")} blink footer={footer}>
 				<p className="mb-4 text-muted text-sm">
-					{t("launcher.pairingHint", { host: hostOf(state.verifyUrl) })}
+					{mobile
+						? t("launcher.pairingMobile")
+						: t("launcher.pairingHint", { host: hostOf(state.verifyUrl) })}
 				</p>
 				<div className="mb-2 flex items-center justify-center rounded-md bg-inset px-3 py-4">
 					<output
+						data-testid="launcher-code"
 						aria-label={t("launcher.code")}
 						className="select-all font-mono font-semibold text-2xl text-fg tracking-widest tabular-nums"
 					>
@@ -249,12 +369,24 @@ export function Launcher(): ReactNode {
 					<CopyButton text={state.code} label={t("common.copy")} />
 				</div>
 				<div className="flex flex-wrap gap-2">
-					<Button
-						disabled={busy}
-						onClick={() => void run("launcher_open_browser")}
-					>
-						{t("launcher.reopenBrowser")}
-					</Button>
+					{mobile ? (
+						<Button
+							variant="primary"
+							disabled={busy}
+							onClick={() => void copyAndOpen(state.code)}
+							data-testid="launcher-open-browser"
+						>
+							{t("launcher.copyAndOpen")}
+						</Button>
+					) : (
+						<Button
+							disabled={busy}
+							onClick={() => void run("launcher_open_browser")}
+							data-testid="launcher-open-browser"
+						>
+							{t("launcher.reopenBrowser")}
+						</Button>
+					)}
 					<Button
 						variant="ghost"
 						disabled={busy}
@@ -274,7 +406,7 @@ export function Launcher(): ReactNode {
 		return (
 			<AuthCard title={t("launcher.title.error")} footer={footer}>
 				<p className="mb-3 font-mono text-muted text-xs">{server}</p>
-				<LauncherErrorText error={state.error} />
+				<LauncherErrorText error={state.error} mobile={mobile} />
 				{state.error.code === "unreachable" && (
 					<p className="mt-2 inline-flex items-center gap-1.5 text-muted text-xs">
 						<Spinner size={11} />

@@ -12,7 +12,7 @@ import {
 	resetThreadStores,
 } from "../state/stores";
 import { terminalHub } from "../state/terminals";
-import { RealtimeClient } from "./socket";
+import { MOBILE_SUSPEND_MS, RealtimeClient } from "./socket";
 
 const TID = "T-0193a1b2-0000-7000-8000-0000000000c1";
 
@@ -413,6 +413,57 @@ describe("RealtimeClient", () => {
 			expect(focuses(ws)).toEqual([null, TID, null, TID]);
 			client.close();
 			expect(notify).toBeUndefined();
+		});
+
+		describe("移动壳后台挂起（M7 4.9）", () => {
+			const mobileHost = host as { mobile: unknown };
+			let saved: unknown;
+			beforeEach(() => {
+				saved = mobileHost.mobile;
+				mobileHost.mobile = {};
+			});
+			afterEach(() => {
+				mobileHost.mobile = saved;
+			});
+
+			it("隐藏 30 秒后关闭连接并置 idle、不再重连；回前台立即重连并补订阅", async () => {
+				const ws = await connected(client);
+				client.subscribe(TID);
+				setVisibility("hidden");
+				await vi.advanceTimersByTimeAsync(MOBILE_SUSPEND_MS - 1);
+				expect(ws.readyState).toBe(FakeWS.OPEN);
+				await vi.advanceTimersByTimeAsync(1);
+				expect(ws.readyState).toBe(FakeWS.CLOSED);
+				expect(connectionStore.getState().status).toBe("idle");
+				// 挂起期间不重连
+				await vi.advanceTimersByTimeAsync(60_000);
+				expect(FakeWS.instances.length).toBe(1);
+
+				setVisibility("visible");
+				await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+				const ws2 = FakeWS.instances[1] as FakeWS;
+				ws2.accept();
+				expect(connectionStore.getState().status).toBe("open");
+				expect(ws2.subs().map((m) => m.threadId)).toEqual([TID]);
+			});
+
+			it("30 秒内回到前台：计时取消、连接不断", async () => {
+				const ws = await connected(client);
+				setVisibility("hidden");
+				await vi.advanceTimersByTimeAsync(10_000);
+				setVisibility("visible");
+				await vi.advanceTimersByTimeAsync(MOBILE_SUSPEND_MS);
+				expect(ws.readyState).toBe(FakeWS.OPEN);
+				expect(FakeWS.instances.length).toBe(1);
+			});
+
+			it("非移动宿主隐藏不挂起", async () => {
+				mobileHost.mobile = null;
+				const ws = await connected(client);
+				setVisibility("hidden");
+				await vi.advanceTimersByTimeAsync(MOBILE_SUSPEND_MS * 2);
+				expect(ws.readyState).toBe(FakeWS.OPEN);
+			});
 		});
 	});
 

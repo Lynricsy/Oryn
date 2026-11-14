@@ -3,6 +3,8 @@
  * Info 为原信息面板；其余按需加载。标签条可横向滚动，选中项下有一块滑动底板；放不下全部文字时只有选中项保留文字。
  * Terminal 标签在有终端等待用户（agent 的 `pty:true` 命令、会话要密码）时亮注意点；
  * Changes 标签在有未查看的新改动时亮 accent 小点。
+ * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | Info`，
+ * 标签条（`ThreadTabStrip`）同时用在转录页头下方；Agent 标签在线程等你回答时亮注意点。
  */
 import {
 	lazy,
@@ -15,12 +17,13 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useBreakpoint } from "../../lib/viewport";
+import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
 import { useTerminals } from "../../state/terminals";
 import {
 	hasUnseenChanges,
 	type PanelTab,
+	type ThreadTab,
 	uiStore,
 	useUi,
 } from "../../state/ui";
@@ -38,8 +41,25 @@ const PortalPanel = lazy(() => import("../portal/PortalPanel"));
 
 const BASE_TABS: readonly PanelTab[] = ["info", "changes", "files", "terminal"];
 const PORTAL_TABS: readonly PanelTab[] = [...BASE_TABS, "portal"];
+/** 同级标签：对话在最前，信息放最后。 */
+const PEER_TABS: readonly ThreadTab[] = [
+	"agent",
+	"changes",
+	"files",
+	"terminal",
+	"info",
+];
+const PEER_PORTAL_TABS: readonly ThreadTab[] = [
+	"agent",
+	"changes",
+	"files",
+	"terminal",
+	"portal",
+	"info",
+];
 
-const TAB_ICON: Record<PanelTab, IconName> = {
+const TAB_ICON: Record<ThreadTab, IconName> = {
+	agent: "message",
 	info: "info",
 	changes: "diff",
 	files: "folder",
@@ -67,7 +87,10 @@ export function changesSignature(s: GitStatus): string {
  * 以同样的后台请求（`bg=1`、默认范围 `all`）低频检查：orb 就绪、文档可见时每 10s 一次，
  * agent 活动后 1s 防抖再查一次。正在看改动标签时不查（面板自己在拉），并把最新签名记为已看；
  * 离开改动标签后的第一次结果也记为已看。
+ * 「最近在看改动的线程」放在模块级：窄屏同级标签下看改动的是面板里的标签条，离开后接手检查的是转录页头里新挂载的那一条。
  */
+let viewedChanges: string | null = null;
+
 function useUnseenChanges(
 	threadId: string,
 	orbId: string | undefined,
@@ -75,21 +98,19 @@ function useUnseenChanges(
 ): boolean {
 	const ready = useOrbOf(threadId)?.state === "ready";
 	const sig = useUi((s) => s.changesSig[threadId]);
-	// 最近一次正在看改动标签的线程
-	const viewed = useRef<string | null>(null);
 	const check = useRef<(() => void) | null>(null);
 
 	useEffect(() => {
 		if (!viewing) return;
-		viewed.current = threadId;
+		viewedChanges = threadId;
 		uiStore.getState().markChangesSeen(threadId);
 	}, [viewing, threadId]);
 
 	useEffect(() => {
 		if (!orbId || !ready || viewing) return;
 		const ctl = new AbortController();
-		let seen = viewed.current === threadId;
-		viewed.current = null;
+		let seen = viewedChanges === threadId;
+		viewedChanges = null;
 		let busy = false;
 		const run = async (force: boolean) => {
 			if (busy || (!force && document.visibilityState !== "visible")) return;
@@ -143,7 +164,7 @@ function tabsWidth(list: HTMLElement): number {
  */
 function useCompactTabs(
 	ref: RefObject<HTMLDivElement | null>,
-	tabs: readonly PanelTab[],
+	tabs: readonly ThreadTab[],
 	lang: string,
 	reserve: number,
 ): boolean {
@@ -174,41 +195,63 @@ function useCompactTabs(
 	return compact;
 }
 
-export function RightPanel({
-	threadId,
-	onClose,
-}: {
-	threadId: string;
-	onClose?: () => void;
-}): ReactNode {
-	const { t, i18n } = useTranslation();
-	const tab = useUi((s) => s.panelTab);
-	const max = useUi((s) => s.panelMax);
-	const bp = useBreakpoint();
+/**
+ * 当前线程的标签集合：`peer`（窄屏同级标签）为 `agent … info`，否则为面板标签；orb 有 portal 时在终端之后加 Portal。
+ * `portalGone`：portal 消失（服务停掉、orb 删除、换到没有 portal 的线程）；orb 还没到时为假，先不动。
+ */
+export function useThreadTabs(
+	threadId: string,
+	peer: boolean,
+): { tabs: readonly ThreadTab[]; portalGone: boolean } {
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
 	const loaded = useThread(threadId, (s) => s.thread !== undefined);
 	const orb = useOrbOf(threadId);
 	const hasPortal = orb?.state !== "deleted" && (orb?.portals?.length ?? 0) > 0;
-	const tabs = hasPortal ? PORTAL_TABS : BASE_TABS;
-	// portal 消失（服务停掉、orb 删除、换到没有 portal 的线程）时退回信息标签；orb 还没到时先不动
-	const portalGone = !hasPortal && (orb !== undefined || (loaded && !orbId));
-	const shown: PanelTab = tab === "portal" && !hasPortal ? "info" : tab;
-	useEffect(() => {
-		if (tab === "portal" && portalGone) uiStore.getState().setPanelTab("info");
-	}, [tab, portalGone]);
+	const tabs = peer
+		? hasPortal
+			? PEER_PORTAL_TABS
+			: PEER_TABS
+		: hasPortal
+			? PORTAL_TABS
+			: BASE_TABS;
+	return {
+		tabs,
+		portalGone: !hasPortal && (orb !== undefined || (loaded && !orbId)),
+	};
+}
+
+/**
+ * 线程标签条（tablist）：滑动底板、放不下时只留选中项文字、终端注意点、改动未看点、Agent 注意点（线程在等你回答）。
+ * 只是标签本身（`flex-1`），所在行与两侧按钮由调用方放。
+ * `reserve`：见 `useCompactTabs`。
+ */
+export function ThreadTabStrip({
+	threadId,
+	tabs,
+	shown,
+	onSelect,
+	reserve = 0,
+}: {
+	threadId: string;
+	tabs: readonly ThreadTab[];
+	shown: ThreadTab;
+	onSelect: (tab: ThreadTab) => void;
+	reserve?: number;
+}): ReactNode {
+	const { t, i18n } = useTranslation();
+	const orbId = useThread(threadId, (s) => s.thread?.orbId);
 	const attention = useTerminals(threadId, (s) => s.attention);
 	const unseen = useUnseenChanges(threadId, orbId, shown === "changes");
+	// 线程进入 awaiting_input：有待回答的扩展 UI 请求或待批准的计划
+	const awaiting = useThread(
+		threadId,
+		(s) => s.pendingUi.length > 0 || s.planProposal !== null,
+	);
 
 	// 滑动底板：读选中标签的 offsetLeft/offsetWidth（相对可滚动的 tablist，随内容一起滚动）。
 	// 首次定位与尺寸变化（窗口缩放、字体加载）直接到位，只有切换标签时滑动。
 	const listRef = useRef<HTMLDivElement>(null);
-	// 信息标签下不显示「最大化」（IconButton 32px + 间距 4px），按它在时的宽度判断
-	const compact = useCompactTabs(
-		listRef,
-		tabs,
-		i18n.language,
-		bp === "expanded" && shown === "info" ? 36 : 0,
-	);
+	const compact = useCompactTabs(listRef, tabs, i18n.language, reserve);
 	const plateRef = useRef<HTMLSpanElement>(null);
 	const placed = useRef(false);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 标签（含增减与只显示图标）与语言变化后按钮位置 / 宽度改变，需要重新定位
@@ -243,56 +286,118 @@ export function RightPanel({
 	}, [shown, tabs, compact, i18n.language]);
 
 	return (
+		<div
+			ref={listRef}
+			role="tablist"
+			aria-label={t("rightPanel.label")}
+			data-testid="thread-tabs"
+			className="focus-inset relative flex min-w-0 flex-1 items-center gap-px overflow-x-auto [scrollbar-width:none]"
+		>
+			<span
+				ref={plateRef}
+				aria-hidden
+				className="absolute top-0 left-0 h-7 rounded-md bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
+			/>
+			{tabs.map((id) => (
+				<button
+					key={id}
+					type="button"
+					role="tab"
+					aria-selected={shown === id}
+					aria-label={t(`rightPanel.tabs.${id}`)}
+					title={
+						compact && shown !== id ? t(`rightPanel.tabs.${id}`) : undefined
+					}
+					data-panel-tab={id}
+					className={tabClass(shown === id)}
+					onClick={() => onSelect(id)}
+				>
+					<Icon name={TAB_ICON[id]} size={14} aria-hidden />
+					{(!compact || shown === id) && t(`rightPanel.tabs.${id}`)}
+					{id === "agent" && awaiting && shown !== "agent" && (
+						<span
+							data-testid="agent-attention"
+							title={t("rightPanel.agentAttention")}
+							className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
+						/>
+					)}
+					{id === "terminal" && attention && shown !== "terminal" && (
+						<span
+							data-testid="terminal-attention"
+							title={t("rightPanel.attention")}
+							className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-warn"
+						/>
+					)}
+					{id === "changes" && unseen && (
+						<span
+							data-testid="changes-unseen"
+							title={t("rightPanel.unseenChanges")}
+							className="absolute top-1 right-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+						/>
+					)}
+				</button>
+			))}
+		</div>
+	);
+}
+
+/**
+ * `peer`：窄屏线程页里与转录并列的面板（同级标签带 Agent，选 Agent 回到转录）；不能关闭、不能最大化，
+ * 标签条左侧放侧栏开关（转录页头此时隐藏）。
+ * 不传 `onClose` 就没有关闭按钮（双段视口的右段常驻）；最大化只在 expanded 三栏里有。
+ */
+export function RightPanel({
+	threadId,
+	onClose,
+	peer = false,
+}: {
+	threadId: string;
+	onClose?: () => void;
+	peer?: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const tab = useUi((s) => s.panelTab);
+	const max = useUi((s) => s.panelMax);
+	const bp = useBreakpoint();
+	const segments = useViewportSegments();
+	const orbId = useThread(threadId, (s) => s.thread?.orbId);
+	const { tabs, portalGone } = useThreadTabs(threadId, peer);
+	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示
+	const shown: PanelTab =
+		tab === "portal" && !tabs.includes("portal") ? "info" : tab;
+	useEffect(() => {
+		if (tab === "portal" && portalGone) uiStore.getState().setPanelTab("info");
+	}, [tab, portalGone]);
+	const canMax = !peer && bp === "expanded" && !segments;
+
+	return (
 		<aside
 			className="flex h-full w-full min-w-0 flex-col bg-panel"
 			aria-label={t("rightPanel.label")}
 		>
-			<div className="flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 pl-2.5">
-				<div
-					ref={listRef}
-					role="tablist"
-					aria-label={t("rightPanel.label")}
-					className="focus-inset relative flex min-w-0 flex-1 items-center gap-px overflow-x-auto [scrollbar-width:none]"
-				>
-					<span
-						ref={plateRef}
-						aria-hidden
-						className="absolute top-0 left-0 h-7 rounded-md bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
+			<div
+				className={`flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 ${peer ? "pl-2 sm:pl-3" : "pl-2.5"}`}
+			>
+				{peer && (
+					<IconButton
+						icon="menu"
+						label={t("nav.sidebar")}
+						onClick={() => uiStore.getState().toggleSidebar()}
 					/>
-					{tabs.map((id) => (
-						<button
-							key={id}
-							type="button"
-							role="tab"
-							aria-selected={shown === id}
-							aria-label={t(`rightPanel.tabs.${id}`)}
-							title={
-								compact && shown !== id ? t(`rightPanel.tabs.${id}`) : undefined
-							}
-							data-panel-tab={id}
-							className={tabClass(shown === id)}
-							onClick={() => uiStore.getState().setPanelTab(id)}
-						>
-							<Icon name={TAB_ICON[id]} size={14} aria-hidden />
-							{(!compact || shown === id) && t(`rightPanel.tabs.${id}`)}
-							{id === "terminal" && attention && shown !== "terminal" && (
-								<span
-									data-testid="terminal-attention"
-									title={t("rightPanel.attention")}
-									className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-warn"
-								/>
-							)}
-							{id === "changes" && unseen && (
-								<span
-									data-testid="changes-unseen"
-									title={t("rightPanel.unseenChanges")}
-									className="absolute top-1 right-0.5 h-1.5 w-1.5 rounded-full bg-accent"
-								/>
-							)}
-						</button>
-					))}
-				</div>
-				{bp === "expanded" && shown !== "info" && (
+				)}
+				<ThreadTabStrip
+					threadId={threadId}
+					tabs={tabs}
+					shown={shown}
+					onSelect={(id) =>
+						peer
+							? uiStore.getState().setThreadTab(id)
+							: id !== "agent" && uiStore.getState().setPanelTab(id)
+					}
+					// 信息标签下不显示「最大化」（IconButton 32px + 间距 4px），按它在时的宽度判断
+					reserve={canMax && shown === "info" ? 36 : 0}
+				/>
+				{canMax && shown !== "info" && (
 					<IconButton
 						icon={max ? "minimize" : "maximize"}
 						size={14}
@@ -301,7 +406,7 @@ export function RightPanel({
 						onClick={() => uiStore.getState().togglePanelMax()}
 					/>
 				)}
-				{onClose && (
+				{onClose && !peer && (
 					<IconButton
 						icon="close"
 						size={14}

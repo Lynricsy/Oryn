@@ -27,7 +27,7 @@ import { uiStore } from "../../state/ui";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, Spinner } from "../ui/primitives";
-import { AttachmentStrip, useAttachments } from "./attachments";
+import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
 import { ModelChip, SessionReadout } from "./ComposerMeta";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
@@ -322,19 +322,7 @@ export function Composer({
 			 */}
 			<div className="flex items-start gap-0.5 px-3 pb-2">
 				<div className="flex h-8 shrink-0 items-center">
-					<label className="inline-flex h-[30px] w-[30px] shrink-0 cursor-pointer items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-hover hover:text-fg">
-						<Icon name="attach" size={15} />
-						<span className="sr-only">{t("attachments.attach")}</span>
-						<input
-							type="file"
-							multiple
-							className="hidden"
-							onChange={(e) => {
-								if (e.target.files) void att.addFiles(e.target.files);
-								e.target.value = "";
-							}}
-						/>
-					</label>
+					<AttachButton onFiles={(files) => void att.addFiles(files)} />
 					<span
 						aria-hidden
 						className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"

@@ -1,6 +1,7 @@
 /**
  * 连接页与壳之间的桥（M6 计划 3.3 / 3.5 / 4）：`invoke` = `window.__TAURI__.core.invoke`；
  * 壳经 `oryn:host` 事件（`detail.type === "launcher"`）推送新的 `LauncherState`。类型与壳的 `session.rs` 一致（字段 camelCase）。
+ * 移动壳（M7 计划 4.8）复用同一连接页：平台取 `window.__ORYN_HOST__.platform`，扫码走 barcode-scanner 插件的命令。
  */
 import { findInvoke, HOST_EVENT } from "../lib/host";
 
@@ -46,7 +47,8 @@ export interface LauncherInfo {
 	state: LauncherState;
 	lang: string;
 	version: string;
-	tokenStore: "keyring" | "file";
+	/** 桌面：keyring / file；移动：keystore（Android）/ keychain（iOS）。 */
+	tokenStore: "keyring" | "file" | "keystore" | "keychain";
 }
 
 export function invoke<T>(
@@ -69,4 +71,65 @@ export function onState(cb: (s: LauncherState) => void): () => void {
 	};
 	window.addEventListener(HOST_EVENT, listener);
 	return () => window.removeEventListener(HOST_EVENT, listener);
+}
+
+/** 是否跑在移动壳里（壳注入的 `__ORYN_HOST__.platform` 为 android / ios）。 */
+export function isMobilePlatform(win: Window = window): boolean {
+	const p = win.__ORYN_HOST__?.platform;
+	return p === "android" || p === "ios";
+}
+
+/** 能否扫码：移动平台，且有 barcode-scanner 的全局对象或能取到 invoke（桌面上没有该插件）。 */
+export function canScan(win: Window = window): boolean {
+	if (!isMobilePlatform(win)) return false;
+	const g = win.__TAURI__;
+	return (!!g && "barcodeScanner" in g) || findInvoke(win) !== null;
+}
+
+/** 插件的权限状态：可能直接是字符串，也可能是 `{camera: "..."}`。 */
+function permissionOf(v: unknown): string {
+	if (typeof v === "string") return v;
+	if (v && typeof v === "object" && "camera" in v) return String(v.camera);
+	return "";
+}
+
+export type ScanResult =
+	| { kind: "ok"; content: string }
+	| { kind: "cancelled" }
+	| { kind: "denied" }
+	| { kind: "failed"; error: unknown };
+
+/** 插件 reject 的字符串里表示「用户取消」的。 */
+function isCancel(e: unknown): boolean {
+	const s = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+	return /cancel/i.test(s);
+}
+
+/**
+ * 扫一个二维码：先查权限，非 granted 就申请（未授权时 scan 会直接拒绝），仍拒绝 → denied；
+ * 授权后全屏扫描只认 QR_CODE。用户取消 → cancelled，其它拒绝 → failed。
+ */
+export async function scanQr(): Promise<ScanResult> {
+	try {
+		let perm = permissionOf(
+			await invoke<unknown>("plugin:barcode-scanner|check_permissions"),
+		);
+		if (perm !== "granted")
+			perm = permissionOf(
+				await invoke<unknown>("plugin:barcode-scanner|request_permissions"),
+			);
+		if (perm !== "granted") return { kind: "denied" };
+	} catch (error) {
+		return { kind: "failed", error };
+	}
+	try {
+		const r = await invoke<{ content?: unknown } | null>(
+			"plugin:barcode-scanner|scan",
+			{ windowed: false, formats: ["QR_CODE"] },
+		);
+		const content = typeof r?.content === "string" ? r.content.trim() : "";
+		return content ? { kind: "ok", content } : { kind: "cancelled" };
+	} catch (error) {
+		return isCancel(error) ? { kind: "cancelled" } : { kind: "failed", error };
+	}
 }

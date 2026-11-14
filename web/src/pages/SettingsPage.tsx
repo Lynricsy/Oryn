@@ -4,6 +4,8 @@
  * 外观（明暗、主题色、壁纸、agent 头像与我的头像）、通知（此设备、渠道、最近通知）、公开分享（M5）、
  * 桌面应用（M6，仅桌面壳内出现）、关于。
  * 桌面壳里的会话是设备换来的 App 会话：不能批准配对（改为引导到浏览器）、不显示退出登录（由「更换服务器」代替）。
+ * 移动壳（M7）：没有「桌面应用」分区，也不显示退出登录；关于页列出 App 版本、WebView、令牌存储与「更换服务器…」；
+ * 设备页的「用手机扫码连接」二维码只在浏览器与桌面壳里出现（手机自己不用扫自己）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,6 +13,7 @@ import {
 	type CSSProperties,
 	type KeyboardEvent,
 	type ReactNode,
+	useEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -70,7 +73,8 @@ import {
 	isSingleGlyph,
 	PROJECT_GLYPHS,
 } from "../lib/glyphs";
-import { host } from "../lib/host";
+import { host, type MobileInfo } from "../lib/host";
+import { pairUri, qrModules } from "../lib/pair-qr";
 import { useBreakpoint } from "../lib/viewport";
 import { processWallpaper, readWallpaperImage } from "../lib/wallpaper";
 import {
@@ -210,6 +214,49 @@ function GlyphGrid({
 
 // ---------------------------------------------------------------- 设备
 
+/**
+ * 「用手机扫码连接」：二维码内容 `oryn://pair?server=<本站 origin>`，手机 App 连接页扫码后只填服务器地址。
+ * 二维码要高对比才扫得出：浅色主题用纸面底 + 正文色码，深色主题反过来（正文色作底、纸面色作码），始终浅底深码。
+ */
+function PairQrCard() {
+	const { t } = useTranslation();
+	const origin = window.location.origin;
+	const uri = pairUri(origin);
+	const qr = useMemo(() => qrModules(uri), [uri]);
+	return (
+		<Card title={t("devices.pairQr.title")} icon="qr">
+			<div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center">
+				<div className="shrink-0 rounded-md bg-panel p-4 text-fg ring-1 ring-border [[data-theme=dark]_&]:bg-fg [[data-theme=dark]_&]:text-panel">
+					<svg
+						data-testid="pair-qr"
+						data-qr-payload={uri}
+						role="img"
+						aria-label={t("devices.pairQr.label", { server: origin })}
+						viewBox={`0 0 ${qr.size} ${qr.size}`}
+						shapeRendering="crispEdges"
+						className="block h-40 w-40"
+					>
+						{qr.runs.map((r) => (
+							<rect
+								key={`${r.x},${r.y}`}
+								x={r.x}
+								y={r.y}
+								width={r.w}
+								height={1}
+								fill="currentColor"
+							/>
+						))}
+					</svg>
+				</div>
+				<div className="flex min-w-0 flex-col gap-1.5">
+					<p className="break-all font-mono text-sm">{origin}</p>
+					<p className="text-muted text-xs">{t("devices.pairQr.hint")}</p>
+				</div>
+			</div>
+		</Card>
+	);
+}
+
 const DEVICE_ICON: Record<Schemas["Device"]["kind"], IconName> = {
 	cli: "terminal",
 	desktop: "monitor",
@@ -314,6 +361,7 @@ function DevicesSettings() {
 					<p className="text-faint text-sm">{t("devices.empty")}</p>
 				)}
 			</Card>
+			{host.mobile === null && <PairQrCard />}
 		</>
 	);
 }
@@ -1594,6 +1642,50 @@ function AboutSettings() {
 	const me = useMe();
 	const navigate = useNavigate();
 	const logout = useAsync();
+	const mobile = host.mobile;
+	const [mobileInfo, setMobileInfo] = useState<MobileInfo | null>(null);
+	const [mobileError, setMobileError] = useState<unknown>(null);
+	useEffect(() => {
+		if (!mobile) return;
+		let live = true;
+		mobile.info().then(
+			(i) => {
+				if (live) setMobileInfo(i);
+			},
+			(e) => {
+				if (live) setMobileError(e);
+			},
+		);
+		return () => {
+			live = false;
+		};
+		// 宿主在页面生命周期内不变
+	}, []);
+	const mobileRows = mobile
+		? [
+				{
+					key: "appVersion",
+					label: t("mobile.about.appVersion"),
+					value: (
+						<span className="font-mono">{mobileInfo?.version || "—"}</span>
+					),
+				},
+				{
+					key: "webview",
+					label: t("mobile.about.webview"),
+					value: (
+						<span className="font-mono">{mobileInfo?.webview || "—"}</span>
+					),
+				},
+				{
+					key: "tokenStore",
+					label: t("mobile.about.tokenStore"),
+					value: mobileInfo
+						? t(`mobile.about.tokenStoreKind.${mobileInfo.tokenStore}`)
+						: "—",
+				},
+			]
+		: [];
 	return (
 		<Card title={t("about.title")} icon="info">
 			<KeyValue
@@ -1639,9 +1731,26 @@ function AboutSettings() {
 							</Select>
 						),
 					},
+					...mobileRows,
 				]}
 			/>
-			{host.kind !== "tauri" && (
+			{mobile && (
+				<div className="mt-4 flex flex-col gap-1.5 border-border border-t pt-3">
+					<ErrorText error={mobileError} />
+					<div>
+						<Button
+							variant="danger"
+							onClick={() => mobile.changeServer()}
+							data-testid="mobile-change-server"
+						>
+							{t("desktop.changeServer")}
+						</Button>
+					</div>
+					<p className="text-faint text-xs">{t("desktop.changeServerHint")}</p>
+				</div>
+			)}
+			{/* 退出登录只给纯浏览器：两种壳里的会话由壳的设备令牌换来，退出后壳会立刻再换一个，改用「更换服务器」 */}
+			{host.desktop === null && host.mobile === null && (
 				<div className="mt-4 border-border border-t pt-3">
 					<Button
 						variant="danger"
@@ -1671,8 +1780,9 @@ export function SettingsPage({
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
 	const sidebarToggle = useSidebarToggleShown();
-	const tauri = host.kind === "tauri";
-	if (section === "desktop" && !tauri)
+	// 「桌面应用」分区只在桌面壳里有：浏览器与移动壳都没有
+	const desktop = host.desktop !== null;
+	if (section === "desktop" && !desktop)
 		return <Navigate to="/settings/devices" replace />;
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
@@ -1695,7 +1805,7 @@ export function SettingsPage({
 			</header>
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				<nav className="focus-inset flex shrink-0 gap-1 overflow-x-auto border-border border-b p-2 md:w-52 md:flex-col md:border-r md:border-b-0">
-					{SECTIONS.filter((s) => s.key !== "desktop" || tauri).map((s) => (
+					{SECTIONS.filter((s) => s.key !== "desktop" || desktop).map((s) => (
 						<NavLink
 							key={s.key}
 							to={`/settings/${s.key}`}

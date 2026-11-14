@@ -8,7 +8,12 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { host } from "../../lib/host";
+import {
+	type DesktopHost,
+	host,
+	type MobileHost,
+	type MobileInfo,
+} from "../../lib/host";
 import { handleNotifyFetch, resetNotifyMock } from "../../mock/notify";
 import { notificationsStore } from "../../state/notifications";
 import NotificationsSettings, {
@@ -393,12 +398,18 @@ describe("NotificationsSettings 此设备", () => {
 });
 
 describe("NotificationsSettings 此设备（桌面壳，M6）", () => {
-	const h = host as { kind: "web" | "tauri" };
+	const h = host as { desktop: DesktopHost | null };
 	beforeEach(() => {
-		h.kind = "tauri";
+		h.desktop = {
+			info: vi.fn(),
+			setSettings: vi.fn(),
+			checkUpdate: vi.fn(),
+			installUpdate: vi.fn(),
+			changeServer: vi.fn(),
+		};
 	});
 	afterEach(() => {
-		h.kind = "web";
+		h.desktop = null;
 	});
 
 	it("只有一句说明与「发送测试通知」，不渲染权限与推送开关", async () => {
@@ -419,6 +430,41 @@ describe("NotificationsSettings 此设备（桌面壳，M6）", () => {
 		);
 		expect(screen.getByText("已发送")).toBeInTheDocument();
 		notify.mockRestore();
+	});
+});
+
+describe("NotificationsSettings 此设备（移动壳，M7）", () => {
+	const h = host as { mobile: MobileHost | null };
+	afterEach(() => {
+		h.mobile = null;
+	});
+
+	it("换成移动推送卡，不渲染浏览器推送开关与桌面说明", async () => {
+		const info: MobileInfo = {
+			version: "0.1.0",
+			platform: "android",
+			tokenStore: "keystore",
+			webview: "141.0",
+			push: { state: "disabled" },
+		};
+		h.mobile = {
+			info: vi.fn(async () => info),
+			enablePush: vi.fn(async () => info),
+			disablePush: vi.fn(async () => info),
+			openExternal: vi.fn(),
+			shareAck: vi.fn(),
+			setChrome: vi.fn(),
+			openNotificationSettings: vi.fn(),
+			changeServer: vi.fn(),
+		};
+		mount();
+		expect(await screen.findByTestId("mobile-push-enable")).toBeInTheDocument();
+		expect(screen.getByTestId("mobile-push-card")).toHaveAttribute(
+			"data-push-state",
+			"disabled",
+		);
+		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
+		expect(screen.queryByText(/系统通知由桌面应用发送/)).toBeNull();
 	});
 });
 

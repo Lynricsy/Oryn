@@ -1,6 +1,6 @@
 /**
  * 输入区回归：等待应答期间的新草稿不被清空（W4）、同一草稿不重复发送、斜杠模式命令对账（W12）、
- * 切换线程时草稿不串（W5）。
+ * 切换线程时草稿不串（W5）；触屏上工具行有拍照键，拍到的照片作为附件上传到本线程。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -8,11 +8,22 @@ import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
+import type * as AttachmentsLib from "../../lib/attachments";
+import type * as ImagesLib from "../../lib/images";
 import { ThreadPage } from "../../pages/ThreadPage";
 import { resetThreadStores } from "../../state/stores";
 import { Composer } from "./Composer";
 
-const { cmd } = vi.hoisted(() => ({ cmd: vi.fn() }));
+const { cmd, upload } = vi.hoisted(() => ({ cmd: vi.fn(), upload: vi.fn() }));
+vi.mock("../../lib/attachments", async (orig) => ({
+	...(await orig<typeof AttachmentsLib>()),
+	uploadAttachment: upload,
+}));
+vi.mock("../../lib/images", async (orig) => ({
+	...(await orig<typeof ImagesLib>()),
+	// 不解码：图片只作为文件附件
+	prepareImage: () => Promise.reject(new Error("no decode")),
+}));
 vi.mock("../../realtime/socket", () => ({
 	realtime: {
 		cmd: (...args: unknown[]) => cmd(...args),
@@ -147,5 +158,41 @@ describe("Composer", () => {
 		expect(box().value).toBe("");
 		act(() => go(`/t/${A}`));
 		expect(box().value).toBe("");
+	});
+});
+
+describe("Composer 附件入口", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		upload.mockReset();
+	});
+
+	it("触屏：工具行有拍照键，拍到的照片上传到本线程", async () => {
+		vi.stubGlobal("matchMedia", (q: string) => ({
+			matches: q === "(pointer: coarse)",
+			media: q,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		}));
+		upload.mockReturnValue(new Promise(() => undefined));
+		wrap(<Composer threadId={A} />);
+		expect(screen.getByTestId("attach-file-input")).toBeInTheDocument();
+		const cam = screen.getByTestId("attach-camera-input");
+		expect(cam).toHaveAttribute("capture", "environment");
+		const photo = new File(["x"], "photo.jpg", { type: "image/jpeg" });
+		await act(async () => {
+			fireEvent.change(cam, { target: { files: [photo] } });
+		});
+		expect(upload).toHaveBeenCalledWith(
+			photo,
+			expect.objectContaining({ threadId: A }),
+		);
+		expect(screen.getByText("photo.jpg")).toBeInTheDocument();
+	});
+
+	it("非触屏：没有拍照键", () => {
+		wrap(<Composer threadId={A} />);
+		expect(screen.getByTestId("attach-file-input")).toBeInTheDocument();
+		expect(screen.queryByTestId("attach-camera")).toBeNull();
 	});
 });

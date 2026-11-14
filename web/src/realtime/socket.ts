@@ -8,6 +8,8 @@
  * 桌面壳里另要求窗口未隐藏 / 最小化，M6）——不在前台时发 `focus null`，否则后台页面会一直占着 focus，通知永远被抑制。
  * `notification` / `notifications.read` 交给通知 store。
  * orb 从挂起回到 `ready` 时重取 state 与命令列表：挂起期间的只读查询被控制面以 `agent_unavailable` 拒绝，不会自行重放。
+ * 移动壳（M7 计划 4.9）：转入后台 30 秒后挂起连接（关掉 socket、取消重连，状态 `idle`），不让 WebView 在后台保活网络；
+ * 回到前台立即重连（退避计数归零），重连后照常按 `afterSeq` 补齐。
  */
 
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
@@ -64,6 +66,8 @@ const TERMINAL_FRAMES: Record<string, true> = {
 	terminal_closed: true,
 };
 const PING_INTERVAL_MS = 25_000;
+/** 移动壳转入后台后多久挂起连接。 */
+export const MOBILE_SUSPEND_MS = 30_000;
 
 function backoffMs(attempt: number): number {
 	return Math.min(15_000, 500 * 2 ** attempt);
@@ -92,15 +96,64 @@ export class RealtimeClient {
 	private opening = false;
 	/** 每次 close() 递增；open() 在 await 之后据此判断自己是否已被作废 */
 	private generation = 0;
+	/** 移动壳后台挂起计时器与挂起标记（挂起 ≠ 用户关闭：前台监听仍在，回前台即重连）。 */
+	private suspendTimer: Timer | null = null;
+	private suspended = false;
 
 	connect() {
 		this.closedByUser = false;
+		this.suspended = false;
 		this.bindVisibility(true);
 		if (this.ws || this.reconnectTimer || this.opening) return;
 		void this.open();
 	}
 
-	private readonly onVisibility = () => this.sendFocus(false);
+	private readonly onVisibility = () => {
+		this.sendFocus(false);
+		if (!host.mobile || this.closedByUser) return;
+		if (!host.isForeground()) {
+			if (this.suspendTimer || this.suspended) return;
+			this.suspendTimer = setTimeout(() => {
+				this.suspendTimer = null;
+				this.suspend();
+			}, MOBILE_SUSPEND_MS);
+			return;
+		}
+		clearTimeout(this.suspendTimer ?? undefined);
+		this.suspendTimer = null;
+		if (!this.suspended) return;
+		this.suspended = false;
+		connectionStore.setState({ attempts: 0 });
+		if (!this.ws && !this.opening) void this.open();
+	};
+
+	/** 摘掉并关闭 socket、作废在等票据的 open、取消重连；不解绑前台监听、不算用户关闭。 */
+	private suspend() {
+		if (this.closedByUser) return;
+		this.suspended = true;
+		this.dropConnection();
+	}
+
+	/** 同步断开当前连接（close 与后台挂起共用）。 */
+	private dropConnection() {
+		// 作废仍在等票据的 open()，避免 close→connect 快速交替时建出两条连接
+		this.generation++;
+		this.opening = false;
+		clearTimeout(this.reconnectTimer ?? undefined);
+		this.reconnectTimer = null;
+		const ws = this.ws;
+		if (ws) {
+			// 原生 close 事件是异步的：先同步清理，再关闭；旧 socket 的回调全部摘掉
+			this.teardown(ws, "connection closed");
+			ws.onopen = null;
+			ws.onmessage = null;
+			ws.onclose = null;
+			ws.close();
+		}
+		for (const timer of this.effectTimers.values()) clearTimeout(timer);
+		this.effectTimers.clear();
+		connectionStore.setState({ status: "idle" });
+	}
 
 	private bindVisibility(on: boolean) {
 		if (on) this.offForeground ??= host.onForegroundChange(this.onVisibility);
@@ -125,23 +178,10 @@ export class RealtimeClient {
 	close() {
 		this.closedByUser = true;
 		this.bindVisibility(false);
-		// 作废仍在等票据的 open()，避免 close→connect 快速交替时建出两条连接
-		this.generation++;
-		this.opening = false;
-		clearTimeout(this.reconnectTimer ?? undefined);
-		this.reconnectTimer = null;
-		const ws = this.ws;
-		if (ws) {
-			// 原生 close 事件是异步的：先同步清理，再关闭；旧 socket 的回调全部摘掉
-			this.teardown(ws, "connection closed");
-			ws.onopen = null;
-			ws.onmessage = null;
-			ws.onclose = null;
-			ws.close();
-		}
-		for (const timer of this.effectTimers.values()) clearTimeout(timer);
-		this.effectTimers.clear();
-		connectionStore.setState({ status: "idle" });
+		clearTimeout(this.suspendTimer ?? undefined);
+		this.suspendTimer = null;
+		this.suspended = false;
+		this.dropConnection();
 	}
 
 	/** 连接作废时的统一清理：停 ping、拒绝在途命令、放开连接引用。 */

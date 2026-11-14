@@ -558,6 +558,7 @@
 		"orbd_timeout": "The orb didn't respond in time"
 	},
 	"pair": {
+		"backToApp": "Back to the Oryn app",
 		"ip": "IP",
 		"title": "Approve device",
 		"lookup": "Look up",
@@ -588,6 +589,11 @@
 		"desktop": "Desktop app"
 	},
 	"devices": {
+		"pairQr": {
+			"title": "Connect a phone by scanning",
+			"label": "Server address QR code: {{server}}",
+			"hint": "Tap Scan on the Oryn app's connect page. Scanning only fills in the server address; you still approve by entering the app's pairing code under Approve pairing above."
+		},
 		"approveTitle": "Approve pairing",
 		"current": "current",
 		"empty": "No devices.",
@@ -787,6 +793,7 @@
 	"rightPanel": {
 		"label": "Right panel",
 		"tabs": {
+			"agent": "Agent",
 			"info": "Info",
 			"changes": "Changes",
 			"files": "Files",
@@ -794,6 +801,7 @@
 			"portal": "Portal"
 		},
 		"attention": "A terminal is waiting for input",
+		"agentAttention": "The agent is waiting for your reply",
 		"maximize": "Maximize panel",
 		"restore": "Restore panel",
 		"resize": "Resize panel",
@@ -820,6 +828,8 @@
 		"needsInput": "waiting for input",
 		"keyBar": "Terminal keys",
 		"paste": "Paste",
+		"lineInput": "Line",
+		"lineInputPlaceholder": "Type, then Enter to send to the terminal",
 		"kind": {
 			"shell": "shell",
 			"command": "agent command",
@@ -1002,6 +1012,7 @@
 		}
 	},
 	"attachments": {
+		"camera": "Take a photo",
 		"attach": "Attach files",
 		"tooMany": "At most {{max}} attachments per message",
 		"tooLarge": "Exceeds the {{max}} attachment limit",
@@ -1398,6 +1409,28 @@
 		"changeConfirm": "Remove and change",
 		"fileStore": "No system keyring found; the token is stored in a file only you can read.",
 		"version": "Oryn Desktop {{version}}",
+		"versionMobile": "Oryn {{version}}",
+		"introMobile": "Enter your Oryn server address, or scan the QR code under Settings → Devices on your computer. After connecting, sign in with a browser and approve this phone.",
+		"pairingMobile": "Sign in to Oryn in your phone's browser and enter this code, or enter it under Settings → Devices on a computer that's already signed in.",
+		"copyAndOpen": "Copy code and open browser",
+		"scan": "Scan",
+		"scanDenied": "Camera access is off, so the code can't be scanned.",
+		"scanFailed": "Scanning failed. Try again or type the address.",
+		"openSettings": "Open settings",
+		"mobileError": {
+			"keyring": {
+				"reason": "Couldn't save the token to the system's secure storage.",
+				"hint": "Tap Retry; if it keeps failing, restart the app and try again."
+			},
+			"server_too_old": {
+				"reason": "The server is too old to support the mobile app.",
+				"hint": "Update the server to the latest version, then tap Retry."
+			},
+			"web_timeout": {
+				"reason": "The server's pages didn't respond to the mobile app.",
+				"hint": "Make sure the server runs a version that supports the mobile app, then tap Retry."
+			}
+		},
 		"error": {
 			"invalid_url": {
 				"reason": "That server address isn't valid.",
@@ -1472,5 +1505,33 @@
 		"fileStore": "No system keyring found; the token is stored in a file only you can read.",
 		"changeServer": "Change server…",
 		"changeServerHint": "Takes you to the connect page; after you confirm, this device's sign-in on the current server is removed."
+	},
+	"mobile": {
+		"push": {
+			"disabled": "Turn this on to get alerts that need you even when the app is in the background or closed.",
+			"enable": "Turn on push",
+			"noDistributor": "This device has no Google push services. Install a UnifiedPush distributor first (ntfy is recommended), then tap Retry.",
+			"installGuide": "Installation guide",
+			"retry": "Retry",
+			"permissionDenied": "Notifications for Oryn are turned off in system settings, so pushes can't be shown.",
+			"openSettings": "Open notification settings",
+			"registering": "Registering for push…",
+			"viaFcm": "Receiving pushes via Firebase Cloud Messaging (FCM)",
+			"viaUnifiedPush": "Receiving pushes via {{distributor}} ({{detail}})",
+			"disable": "Turn off push",
+			"error": "Push registration failed: {{error}}",
+			"errorUnknown": "unknown reason",
+			"unsupported": "This device doesn't support push; notifications still show up in the sidebar bell."
+		},
+		"about": {
+			"appVersion": "App version",
+			"webview": "System WebView",
+			"tokenStore": "Token storage",
+			"tokenStoreKind": {
+				"keystore": "Android Keystore",
+				"keychain": "iOS Keychain"
+			}
+		},
+		"shareFailed": "{{count}} file(s) could not be imported"
 	}
 }

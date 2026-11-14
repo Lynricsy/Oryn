@@ -142,13 +142,13 @@ describe("tauri", () => {
 			tauri: true,
 			invoke: (cmd) =>
 				cmd === "host_ready"
-					? { bridge: 1, visible: false, pendingPath: "/t/T-9" }
+					? { bridge: 2, visible: false, pendingPath: "/t/T-9" }
 					: undefined,
 		});
 		const h = createHost(f.win);
 		expect(await h.ready("en", "/settings/devices")).toBe("/t/T-9");
 		expect(f.invoke).toHaveBeenCalledWith("host_ready", {
-			bridge: 1,
+			bridge: 2,
 			lang: "en",
 			path: "/settings/devices",
 		});
@@ -206,5 +206,169 @@ describe("tauri", () => {
 	it("checkUpdate：壳返回 null 时为 null", async () => {
 		const f = fakeWindow({ tauri: true, invoke: () => null });
 		expect(await createHost(f.win).desktop?.checkUpdate()).toBeNull();
+	});
+});
+
+describe("移动壳（M7）", () => {
+	/** android / bridge 2 的假 window：带真实 DOM 文档（点击能冒泡到 document）与 location。 */
+	function mobileWindow(
+		opts: { platform?: string; bridge?: number; invoke?: () => unknown } = {},
+	) {
+		const target = new EventTarget();
+		const doc = document.implementation.createHTMLDocument("t");
+		const invoke = vi.fn(
+			async (_cmd: string, _args?: Record<string, unknown>) =>
+				opts.invoke ? opts.invoke() : undefined,
+		);
+		const win = Object.assign(target, {
+			document: doc,
+			location: {
+				href: "http://localhost:7600/t/T-1",
+				origin: "http://localhost:7600",
+			},
+			open: vi.fn(),
+			__ORYN_HOST__: {
+				kind: "tauri",
+				platform: opts.platform ?? "android",
+				version: "0.1.0",
+				bridge: opts.bridge ?? 2,
+			},
+			__TAURI__: { core: { invoke: invoke as unknown as Invoke } },
+		}) as unknown as Window;
+		const emit = (detail: unknown) =>
+			target.dispatchEvent(new CustomEvent(HOST_EVENT, { detail }));
+		/** 在文档里放一个链接并点击；返回事件是否被阻止。 */
+		const click = (attrs: Record<string, string>) => {
+			const a = doc.createElement("a");
+			for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
+			const span = doc.createElement("span");
+			a.append(span);
+			doc.body.append(a);
+			const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+			span.dispatchEvent(ev);
+			a.remove();
+			return ev.defaultPrevented;
+		};
+		return { win, invoke, emit, click };
+	}
+
+	it("android + bridge 2 → mobile 非空、desktop 为 null；bridge 1 或桌面平台 → 反之", () => {
+		const m = createHost(mobileWindow().win);
+		expect(m.mobile).not.toBeNull();
+		expect(m.desktop).toBeNull();
+		expect(m.platform).toBe("android");
+		const ios = createHost(mobileWindow({ platform: "ios" }).win);
+		expect(ios.mobile).not.toBeNull();
+		const old = createHost(mobileWindow({ bridge: 1 }).win);
+		expect(old.mobile).toBeNull();
+		expect(old.desktop).not.toBeNull();
+		const desk = createHost(fakeWindow({ tauri: true }).win);
+		expect(desk.mobile).toBeNull();
+		expect(desk.desktop).not.toBeNull();
+		expect(createHost(fakeWindow().win).mobile).toBeNull();
+	});
+
+	it("_blank 与跨源链接改经 host_open_external；同源普通链接、download、锚点不拦", () => {
+		const f = mobileWindow();
+		createHost(f.win);
+		expect(f.click({ href: "/docs", target: "_blank" })).toBe(true);
+		expect(f.click({ href: "https://example.com/a?b=1" })).toBe(true);
+		expect(f.click({ href: "/t/T-2" })).toBe(false);
+		expect(f.click({ href: "/api/v1/attachments/x", download: "" })).toBe(
+			false,
+		);
+		expect(f.click({ href: "#top" })).toBe(false);
+		expect(f.click({ href: "mailto:a@b.c" })).toBe(false);
+		expect(f.invoke.mock.calls).toEqual([
+			["host_open_external", { url: "http://localhost:7600/docs" }],
+			["host_open_external", { url: "https://example.com/a?b=1" }],
+		]);
+	});
+
+	it("window.open 改道到系统浏览器并返回 null", () => {
+		const f = mobileWindow();
+		createHost(f.win);
+		expect(f.win.open("https://example.com/x", "_blank")).toBeNull();
+		expect(f.win.open("/rel")).toBeNull();
+		expect(f.invoke.mock.calls).toEqual([
+			["host_open_external", { url: "https://example.com/x" }],
+			["host_open_external", { url: "http://localhost:7600/rel" }],
+		]);
+	});
+
+	it("share / mobile / insets 事件到回调；畸形与桌面壳上的同名事件被忽略", () => {
+		const f = mobileWindow();
+		const h = createHost(f.win);
+		const share = vi.fn();
+		const mobile = vi.fn();
+		const insets = vi.fn();
+		h.onShare(share);
+		h.onMobile(mobile);
+		h.onInsets(insets);
+		const att = { id: "att_1", name: "a.png", size: 3, mime: "image/png" };
+		f.emit({
+			type: "share",
+			share: {
+				id: "s1",
+				text: "hi",
+				attachments: [att, { bad: 1 }],
+				failed: [{ name: "b.bin", reason: "too_large" }, 3],
+			},
+		});
+		f.emit({ type: "share", share: { text: "no id" } });
+		f.emit({ type: "mobile" });
+		f.emit({
+			type: "insets",
+			cornerRadii: { tl: 40, tr: 40, bl: 40, br: 40 },
+			insets: { top: 24, right: 0, bottom: 16, left: 0 },
+		});
+		f.emit({ type: "insets" });
+		expect(share.mock.calls).toEqual([
+			[
+				{
+					id: "s1",
+					text: "hi",
+					attachments: [att],
+					failed: [{ name: "b.bin", reason: "too_large" }],
+				},
+			],
+		]);
+		expect(mobile).toHaveBeenCalledTimes(1);
+		expect(insets.mock.calls).toEqual([
+			[
+				{
+					cornerRadii: { tl: 40, tr: 40, bl: 40, br: 40 },
+					insets: { top: 24, right: 0, bottom: 16, left: 0 },
+				},
+			],
+		]);
+
+		const d = fakeWindow({ tauri: true });
+		const desk = createHost(d.win);
+		const s2 = vi.fn();
+		desk.onShare(s2);
+		d.emit({ type: "share", share: { id: "x", attachments: [], failed: [] } });
+		expect(s2).not.toHaveBeenCalled();
+	});
+
+	it("命令参数：info / enablePush / disablePush / shareAck / setChrome / openNotificationSettings / changeServer", async () => {
+		const f = mobileWindow();
+		const m = createHost(f.win).mobile;
+		await m?.info();
+		await m?.enablePush();
+		await m?.disablePush();
+		m?.shareAck("s1");
+		m?.setChrome({ dark: true, color: "#101010" });
+		m?.openNotificationSettings();
+		m?.changeServer();
+		expect(f.invoke.mock.calls).toEqual([
+			["host_mobile_info"],
+			["host_push_enable"],
+			["host_push_disable"],
+			["host_share_ack", { id: "s1" }],
+			["host_set_chrome", { dark: true, color: "#101010" }],
+			["host_open_notification_settings", undefined],
+			["host_change_server", undefined],
+		]);
 	});
 });

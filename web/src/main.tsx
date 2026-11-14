@@ -10,6 +10,8 @@ import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import "./i18n";
 import "./index.css";
+import { installDeviceCorners } from "./lib/device-corners";
+import { host } from "./lib/host";
 import { installViewportTracking } from "./lib/viewport";
 import { installTheme } from "./state/theme";
 
@@ -24,6 +26,8 @@ async function boot() {
 		installMock();
 	}
 	installViewportTracking();
+	// 移动壳：贴边浮层的圆角与屏幕圆角同心（其它宿主无操作）
+	installDeviceCorners(host, document.documentElement);
 	installTheme();
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { refetchOnWindowFocus: false } },

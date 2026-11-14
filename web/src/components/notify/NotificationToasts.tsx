@@ -1,6 +1,7 @@
 /**
  * 应用内通知 toast（M5 计划 6.3）：右上角玻璃卡片，6s 自动消失（计时在通知 store 里）。
  * 点正文 → 跳到该线程并标为已读；× 只关闭。挂在 AppShell。
+ * 最上面一张的右上角与屏幕圆角同心（`.dc-tr`，离边 12px），其余保持令牌圆角。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,7 +25,7 @@ function Toast({ n }: { n: AppNotification }) {
 	return (
 		<div
 			role="status"
-			className="glass pop-in pointer-events-auto flex items-start gap-1 rounded-lg py-1.5 pr-1.5 pl-1"
+			className="glass pop-in dc-tr pointer-events-auto flex items-start gap-1 rounded-lg py-1.5 pr-1.5 pl-1 [--dc-gap:100vmax] [--dc-r:var(--r-lg)] first:[--dc-gap:0.75rem]"
 		>
 			<button
 				type="button"

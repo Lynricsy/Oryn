@@ -1,7 +1,8 @@
 /**
  * 设置 → 通知（M5 计划 6.3）：三张卡片。
  * 1. 此设备：系统通知权限、「后台推送」开关（Web Push 订阅 / 退订）、其它已订阅的浏览器。
- *    桌面壳（M6）里系统通知由壳发送：只有一句说明与「发送测试通知」，不渲染权限与推送开关。
+ *    桌面壳（M6）里系统通知由壳发送：只有一句说明与「发送测试通知」，不渲染权限与推送开关；
+ *    移动壳（M7）换成 `MobilePushCard`（壳注册的 UnifiedPush / FCM 推送状态）。
  * 2. 渠道：Telegram / Webhook / ntfy / Bark 的列表、启停、测试、编辑、删除与「添加渠道 ▾」。
  *    机密字段只写不读：编辑时整组配置留空 = 不变（不提交配置对象），填了任一项 = 整体替换。
  *    Telegram 创建后进入绑定向导：显示 `/start <码>`，每 2s 拉一次渠道列表直到已绑定。
@@ -63,6 +64,7 @@ import {
 	notificationsStore,
 	useNotifications,
 } from "../../state/notifications";
+import MobilePushCard from "./MobilePushCard";
 
 type Kind = Schemas["NotificationChannelKind"];
 type EventKind = Schemas["NotificationKind"];
@@ -969,7 +971,13 @@ function RecentCard() {
 export default function NotificationsSettings(): ReactNode {
 	return (
 		<>
-			{host.kind === "tauri" ? <DesktopDeviceCard /> : <DeviceCard />}
+			{host.mobile ? (
+				<MobilePushCard />
+			) : host.desktop ? (
+				<DesktopDeviceCard />
+			) : (
+				<DeviceCard />
+			)}
 			<ChannelsCard />
 			<RecentCard />
 		</>

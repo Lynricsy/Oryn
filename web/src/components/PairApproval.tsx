@@ -1,6 +1,7 @@
 /**
  * 设备配对批准：所有者输入设备上显示的配对码 → `GET devices/pair/{code}` 查看发起设备（名称、IP、UA、时间）→
  * 确认后 `POST devices/pair/approve`。404 = 无效或已过期，409 = 已批准。
+ * 在手机浏览器里批准移动设备后，给一个 `oryn://open` 链接回到 App（M7 计划 4.10）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
@@ -8,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, api, type Schemas, unwrap } from "../api/client";
 import { qk } from "../api/queries";
 import { formatDateTime, formatRelative } from "../lib/format";
+import { useCoarsePointer } from "../lib/viewport";
 import { Badge, Callout, Card, KeyValue } from "./ui/data";
 import { Button, ErrorText, Spinner, TextInput } from "./ui/primitives";
 
@@ -28,7 +30,9 @@ export function PairApproval({
 	const [pairing, setPairing] = useState<Schemas["DevicePairing"] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
-	const [done, setDone] = useState(false);
+	/** 刚批准的设备；非空即显示成功提示。 */
+	const [done, setDone] = useState<Schemas["Device"] | null>(null);
+	const coarse = useCoarsePointer();
 
 	const explain = (e: unknown): unknown => {
 		if (e instanceof ApiError && e.status === 404)
@@ -41,7 +45,7 @@ export function PairApproval({
 	const lookup = async () => {
 		setBusy(true);
 		setError(null);
-		setDone(false);
+		setDone(null);
 		try {
 			const c = normalizePairCode(code);
 			setPairing(
@@ -64,12 +68,13 @@ export function PairApproval({
 		setBusy(true);
 		setError(null);
 		try {
-			await unwrap(
-				api.POST("/api/v1/devices/pair/approve", {
-					body: { code: pairing.code },
-				}),
+			setDone(
+				await unwrap(
+					api.POST("/api/v1/devices/pair/approve", {
+						body: { code: pairing.code },
+					}),
+				),
 			);
-			setDone(true);
 			setPairing(null);
 			setCode("");
 			await qc.invalidateQueries({ queryKey: qk.devices });
@@ -179,6 +184,15 @@ export function PairApproval({
 				<Callout tone="ok" role="status">
 					{t("pair.approved")}
 				</Callout>
+			)}
+			{done?.kind === "mobile" && coarse && (
+				<a
+					href="oryn://open"
+					data-testid="pair-back-to-app"
+					className="inline-flex min-h-10 items-center self-start text-accent-ink text-sm underline-offset-2 hover:underline"
+				>
+					{t("pair.backToApp")}
+				</a>
 			)}
 			<ErrorText error={error} />
 		</div>

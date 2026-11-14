@@ -26,7 +26,7 @@ export function ServerErrors(): ReactNode {
 					<div
 						key={e.key}
 						role="alert"
-						className="glass pop-in pointer-events-auto rounded-lg px-3 py-2.5 text-sm"
+						className="glass pop-in dc-br pointer-events-auto rounded-lg px-3 py-2.5 text-sm [--dc-gap:100vmax] [--dc-r:var(--r-lg)] last:[--dc-gap:0.75rem]"
 					>
 						<div className="flex items-start gap-2">
 							<Icon

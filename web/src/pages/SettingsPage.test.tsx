@@ -19,7 +19,13 @@ import {
 } from "vitest";
 import { qk } from "../api/queries";
 import i18n from "../i18n";
-import { host } from "../lib/host";
+import {
+	type DesktopHost,
+	host,
+	type MobileHost,
+	type MobileInfo,
+} from "../lib/host";
+import { pairUri } from "../lib/pair-qr";
 import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
 import type { SettingsSection } from "./SettingsPage";
@@ -543,15 +549,45 @@ describe("设置 → 通知 / 公开分享（M5）", () => {
 	});
 });
 
-describe("设置 → 桌面壳（M6）", () => {
-	const h = host as { kind: "web" | "tauri" };
+describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
+	const h = host as {
+		desktop: DesktopHost | null;
+		mobile: MobileHost | null;
+	};
+	const fakeDesktop: DesktopHost = {
+		info: vi.fn(),
+		setSettings: vi.fn(),
+		checkUpdate: vi.fn(),
+		installUpdate: vi.fn(),
+		changeServer: vi.fn(),
+	};
+	const mobileInfo: MobileInfo = {
+		version: "0.2.0",
+		platform: "android",
+		tokenStore: "keystore",
+		webview: "141.0.7390.0",
+		push: { state: "disabled" },
+	};
+	function fakeMobile(): MobileHost {
+		return {
+			info: vi.fn(async () => mobileInfo),
+			enablePush: vi.fn(async () => mobileInfo),
+			disablePush: vi.fn(async () => mobileInfo),
+			openExternal: vi.fn(),
+			shareAck: vi.fn(),
+			setChrome: vi.fn(),
+			openNotificationSettings: vi.fn(),
+			changeServer: vi.fn(),
+		};
+	}
 	beforeEach(() => {
 		calls = [];
 		vi.stubGlobal("fetch", fetchMock);
 		fetchMock.mockClear();
 	});
 	afterEach(() => {
-		h.kind = "web";
+		h.desktop = null;
+		h.mobile = null;
 		vi.unstubAllGlobals();
 	});
 
@@ -602,7 +638,7 @@ describe("设置 → 桌面壳（M6）", () => {
 	});
 
 	it("桌面壳里导航出现「桌面应用」，关于页没有「退出登录」", () => {
-		h.kind = "tauri";
+		h.desktop = fakeDesktop;
 		mount("about");
 		expect(
 			within(screen.getByRole("navigation")).getByRole("link", {
@@ -632,5 +668,49 @@ describe("设置 → 桌面壳（M6）", () => {
 		mount("devices");
 		expect(screen.getByLabelText("配对码")).toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: "在浏览器中打开" })).toBeNull();
+	});
+
+	it("设备页：二维码内容是 oryn://pair?server=<编码后的 origin>，下方写服务器地址", () => {
+		mount("devices");
+		const qr = screen.getByTestId("pair-qr");
+		expect(qr).toHaveAttribute(
+			"data-qr-payload",
+			`oryn://pair?server=${encodeURIComponent(window.location.origin)}`,
+		);
+		expect(qr.getAttribute("data-qr-payload")).toBe(
+			pairUri(window.location.origin),
+		);
+		expect(qr).toHaveAttribute("role", "img");
+		expect(qr.querySelectorAll("rect").length).toBeGreaterThan(0);
+		expect(screen.getByText(window.location.origin)).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "用手机扫码连接" }),
+		).toBeInTheDocument();
+	});
+
+	it("移动壳：设备页没有二维码卡，导航没有「桌面应用」，desktop 路由回设备页", () => {
+		h.mobile = fakeMobile();
+		const view = mount("devices");
+		expect(screen.queryByTestId("pair-qr")).toBeNull();
+		expect(
+			within(screen.getByRole("navigation")).queryByRole("link", {
+				name: "桌面应用",
+			}),
+		).toBeNull();
+		view.unmount();
+		mount("desktop");
+		expect(screen.getByText("DEVICES")).toBeInTheDocument();
+	});
+
+	it("移动壳关于页：App 版本、WebView、令牌存储与「更换服务器…」，没有「退出登录」", async () => {
+		const mobile = fakeMobile();
+		h.mobile = mobile;
+		mount("about");
+		expect(await screen.findByText("0.2.0")).toBeInTheDocument();
+		expect(screen.getByText("141.0.7390.0")).toBeInTheDocument();
+		expect(screen.getByText("Android Keystore")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
+		fireEvent.click(screen.getByTestId("mobile-change-server"));
+		expect(mobile.changeServer).toHaveBeenCalledTimes(1);
 	});
 });

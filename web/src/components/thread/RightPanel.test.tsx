@@ -1,7 +1,8 @@
 /**
  * 右侧面板：换线程时 Changes 面板按线程重建，不把上一个线程的范围（所选 commit）带到新 orb；
  * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除；
- * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签。
+ * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签；
+ * 窄屏 `peer` 面板：同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -297,6 +298,100 @@ describe("RightPanel", () => {
 		});
 		expect(files).toHaveTextContent(i18n.t("rightPanel.tabs.files"));
 		expect(files).not.toHaveAttribute("title");
+	});
+});
+
+describe("RightPanel peer（窄屏同级标签）", () => {
+	const initialWidth = window.innerWidth;
+	beforeEach(() => {
+		window.innerWidth = 390;
+		uiStore.setState({ sidebarOpen: false });
+		uiStore.getState().setThreadTab("info");
+	});
+	afterEach(() => {
+		window.innerWidth = initialWidth;
+		uiStore.setState({ threadTab: "agent" });
+	});
+
+	it("标签依次是 agent / changes / files / terminal / info；左侧侧栏开关，没有关闭与最大化", () => {
+		render(withQuery(<RightPanel threadId="T-rpA" peer onClose={vi.fn()} />));
+		const strip = screen.getByTestId("thread-tabs");
+		expect(
+			Array.from(strip.querySelectorAll("[data-panel-tab]")).map((b) =>
+				b.getAttribute("data-panel-tab"),
+			),
+		).toEqual(["agent", "changes", "files", "terminal", "info"]);
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.info") }),
+		).toHaveAttribute("aria-selected", "true");
+		expect(
+			screen.queryByRole("button", { name: i18n.t("common.close") }),
+		).toBeNull();
+		expect(
+			screen.queryByRole("button", { name: i18n.t("rightPanel.maximize") }),
+		).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("nav.sidebar") }),
+		);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+	});
+
+	it("点 agent 回到转录，点其它标签切同级标签与面板标签", async () => {
+		render(withQuery(<RightPanel threadId="T-rpA" peer />));
+		await act(async () => {
+			fireEvent.click(
+				screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.files") }),
+			);
+		});
+		expect(uiStore.getState()).toMatchObject({
+			threadTab: "files",
+			panelTab: "files",
+		});
+		fireEvent.click(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.agent") }),
+		);
+		expect(uiStore.getState().threadTab).toBe("agent");
+	});
+
+	it("线程等你回答（待答 UI 请求或待批计划）时 agent 标签亮注意点", () => {
+		const id = "T-rpW";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				thread: { id } as Thread,
+				pendingUi: [],
+				planProposal: null,
+			});
+		render(withQuery(<RightPanel threadId={id} peer />));
+		expect(screen.queryByTestId("agent-attention")).toBeNull();
+		act(() => {
+			getThreadStore(id)
+				.getState()
+				.patchLocal({
+					pendingUi: [{ id: "ui-1" } as ThreadViewState["pendingUi"][number]],
+				});
+		});
+		const dot = screen.getByTestId("agent-attention");
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.agent") }),
+		).toContainElement(dot);
+		expect(dot).toHaveAttribute("title", i18n.t("rightPanel.agentAttention"));
+		act(() => {
+			getThreadStore(id)
+				.getState()
+				.patchLocal({
+					pendingUi: [],
+					planProposal: {} as ThreadViewState["planProposal"],
+				});
+		});
+		expect(screen.getByTestId("agent-attention")).toBeInTheDocument();
+	});
+
+	it("非 peer（expanded / 双段）没有 agent 标签", () => {
+		window.innerWidth = 1280;
+		render(withQuery(<RightPanel threadId="T-rpA" />));
+		expect(document.querySelector('[data-panel-tab="agent"]')).toBeNull();
+		expect(screen.getByTestId("thread-tabs")).toBeInTheDocument();
 	});
 });
 

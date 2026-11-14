@@ -1,6 +1,8 @@
 /**
  * 线程页：订阅线程；对话纸面里转录铺满，玻璃页头与玻璃输入坞绝对定位盖在其上（内容从玻璃下方透出），
  * 输入坞高度驱动转录底部留白；右侧面板（Info / Changes / Files / Terminal）是另一张纸面。
+ * 三种布局：expanded 三栏（面板列可关、可最大化、可拖宽）；窄屏（compact / medium）转录与面板各标签是同级标签，
+ * 页头下方一行标签条，切到面板标签时转录纸面隐藏但保持挂载（滚动位置不丢）；折叠屏双段视口左段转录、右段面板常驻。
  */
 import {
 	type CSSProperties,
@@ -31,7 +33,11 @@ import {
 	BelowEditorWidgets,
 } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
-import { RightPanel } from "../components/thread/RightPanel";
+import {
+	RightPanel,
+	ThreadTabStrip,
+	useThreadTabs,
+} from "../components/thread/RightPanel";
 import { HEADER_VEIL, ThreadHeader } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
@@ -43,7 +49,7 @@ import { WorkingFooter } from "../components/transcript/WorkingFooter";
 import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
 import { usePresence } from "../lib/presence";
-import { useBreakpoint } from "../lib/viewport";
+import { useBreakpoint, useViewportSegments } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useConnection, useIndex, useThread } from "../state/stores";
 import { terminalHub } from "../state/terminals";
@@ -52,6 +58,11 @@ import { PANEL_MIN_WIDTH, uiStore, useUi } from "../state/ui";
 
 /** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
 const PANEL_ANIM_MS = 260;
+/** 窄屏同级标签条那一行的高度（px）：转录顶部留白与页头纱都加上它。 */
+const TAB_ROW = 40;
+/** 贴屏幕边缘表面的同心圆角（`index.css` 的 `.dc-*`）：纸面 / 托盘都是 xl 圆角。 */
+const DC_SHEET_RIGHT = "dc-tr dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.5rem]";
+const DC_DOCK_BOTTOM = "dc-bl dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.75rem]";
 
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
 function PanelResizer() {
@@ -104,6 +115,8 @@ export function ThreadPage(): ReactNode {
 	const { threadId = "" } = useParams();
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
+	const segments = useViewportSegments();
+	const threadTab = useUi((s) => s.threadTab);
 	const panelOpen = useUi((s) => s.panelOpen);
 	const panelTab = useUi((s) => s.panelTab);
 	const panelWidth = useUi((s) => s.panelWidth);
@@ -138,9 +151,11 @@ export function ThreadPage(): ReactNode {
 		};
 	}, [threadId]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 切换线程时关闭上一线程的对话框
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 切换线程时关闭上一线程的对话框，窄屏回到对话标签
 	useEffect(() => {
-		uiStore.getState().close();
+		const ui = uiStore.getState();
+		ui.close();
+		ui.setThreadTab("agent");
 	}, [threadId]);
 
 	const model = useMemo(
@@ -169,13 +184,17 @@ export function ThreadPage(): ReactNode {
 		[threadId, model.toolResults, model.liveTools, subagents],
 	);
 
-	const expanded = bp === "expanded";
+	const dual = segments !== null;
+	const expanded = bp === "expanded" && !dual;
+	// 窄屏：转录（agent）与面板各标签是同级标签
+	const peer = !expanded && !dual;
+	const onAgent = !peer || threadTab === "agent";
+	const { tabs: peerTabs } = useThreadTabs(threadId, true);
+	const topInset = peer ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
 	const showPanelColumn = expanded && panelOpen;
-	const showPanelDrawer = !expanded && panelOpen;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
-	// 面板列与抽屉的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄 / 滑出再卸载（与左栏同一套时长与缓动）
+	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
-	const drawer = usePresence(showPanelDrawer, PANEL_ANIM_MS);
 	const firstUi = pendingUi[0];
 
 	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
@@ -211,83 +230,129 @@ export function ThreadPage(): ReactNode {
 			{/*
 			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
 			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。
+			 * 外层只管布局：最大化面板或窄屏切到面板标签时 hidden（保持挂载），双段视口里固定为左段宽。
 			 */}
-			<Sheet
-				inset={expanded}
-				className={`relative h-full min-w-0 flex-1 flex-col overflow-visible ${panelFull ? "hidden" : "flex"}`}
+			<div
+				data-testid="transcript-pane"
+				data-pane={dual ? "primary" : undefined}
+				className={`relative h-full min-w-0 ${dual ? "" : "flex-1"} ${panelFull || !onAgent ? "hidden" : "flex"}`}
+				style={dual ? { width: segments.left, flex: "none" } : undefined}
 			>
-				<TranscriptContext.Provider value={ctx}>
-					{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
-					<div
-						className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""}`}
-					>
-						{!snapshotReceived && entries.length === 0 ? (
-							<div className="flex flex-1 items-center justify-center text-muted">
-								{known || conn !== "open" ? (
-									<Spinner size={18} />
-								) : (
-									t("thread.notFound")
-								)}
+				<Sheet
+					inset={expanded}
+					// expanded 下面板列没开时转录是最右侧纸面，右上 / 右下角离屏幕边 8px（壳的 p-2）
+					className={`relative flex h-full min-w-0 flex-1 flex-col overflow-visible ${expanded && !showPanelColumn ? DC_SHEET_RIGHT : ""}`}
+				>
+					<TranscriptContext.Provider value={ctx}>
+						{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
+						<div
+							className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""} ${expanded && !showPanelColumn ? "dc-tr dc-br [--dc-r:calc(var(--r-xl)_-_1px)] [--dc-gap:calc(0.5rem_+_1px)]" : ""}`}
+						>
+							{!snapshotReceived && entries.length === 0 ? (
+								<div className="flex flex-1 items-center justify-center text-muted">
+									{known || conn !== "open" ? (
+										<Spinner size={18} />
+									) : (
+										t("thread.notFound")
+									)}
+								</div>
+							) : (
+								<Transcript
+									items={model.items}
+									footer={<WorkingFooter threadId={threadId} />}
+									insetTop={topInset}
+									insetBottom={dockH + 16}
+								/>
+							)}
+						</div>
+					</TranscriptContext.Provider>
+					<div className="absolute inset-x-0 top-0 z-30">
+						<ThreadHeader
+							threadId={threadId}
+							sidebarToggle={!expanded}
+							veil={topInset}
+						/>
+						{/* 同级标签条只在看转录时挂载：切到面板标签后由面板自己的标签条接手（改动的后台检查只跑一份） */}
+						{peer && onAgent && (
+							<div className="veil-host relative flex h-10 items-center px-2 sm:px-3">
+								<ThreadTabStrip
+									threadId={threadId}
+									tabs={peerTabs}
+									shown="agent"
+									onSelect={(id) => uiStore.getState().setThreadTab(id)}
+								/>
 							</div>
-						) : (
-							<Transcript
-								items={model.items}
-								footer={<WorkingFooter threadId={threadId} />}
-								insetTop={HEADER_VEIL}
-								insetBottom={dockH + 16}
-							/>
 						)}
 					</div>
-				</TranscriptContext.Provider>
-				<div className="absolute inset-x-0 top-0 z-30">
-					<ThreadHeader threadId={threadId} sidebarToggle={!expanded} />
-				</div>
-				{conn !== "open" && (
-					<div className="pointer-events-none absolute inset-x-0 top-14 z-20 flex justify-center px-3">
-						<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
-							<Spinner size={11} />
-							{t(`connection.${conn}`)}
-						</div>
-					</div>
-				)}
-				<div
-					ref={dockRef}
-					// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
-					className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
-				>
-					<div className="pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
-						{/* 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去 */}
+					{conn !== "open" && (
 						<div
-							className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl ${morph === "dock" ? "dock-morphing" : ""}`}
+							className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3 ${peer ? "top-24" : "top-14"}`}
 						>
-							{plan && (
-								<PlanProposalDialog
-									key={`plan:${threadId}`}
+							<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
+								<Spinner size={11} />
+								{t(`connection.${conn}`)}
+							</div>
+						</div>
+					)}
+					<div
+						ref={dockRef}
+						// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
+						className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
+					>
+						<div className="pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
+							{/*
+							 * 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去。
+							 * compact 下托盘离屏幕左右与底边 12px（px-3 / pb-3），底部两角跟屏幕圆角同心
+							 */}
+							<div
+								className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl ${bp === "compact" && !dual ? DC_DOCK_BOTTOM : ""} ${morph === "dock" ? "dock-morphing" : ""}`}
+							>
+								{plan && (
+									<PlanProposalDialog
+										key={`plan:${threadId}`}
+										threadId={threadId}
+										proposal={plan}
+									/>
+								)}
+								{firstUi && (
+									<UiRequestCard
+										key={firstUi.id}
+										threadId={threadId}
+										req={firstUi}
+										queued={pendingUi.length - 1}
+									/>
+								)}
+								<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+								<QueueBar threadId={threadId} />
+								<AboveEditorWidgets threadId={threadId} />
+								<Composer
+									key={`composer:${threadId}`}
 									threadId={threadId}
-									proposal={plan}
+									disabled={orbGone}
 								/>
-							)}
-							{firstUi && (
-								<UiRequestCard
-									key={firstUi.id}
-									threadId={threadId}
-									req={firstUi}
-									queued={pendingUi.length - 1}
-								/>
-							)}
-							<EnvBanner key={`env:${threadId}`} threadId={threadId} />
-							<QueueBar threadId={threadId} />
-							<AboveEditorWidgets threadId={threadId} />
-							<Composer
-								key={`composer:${threadId}`}
-								threadId={threadId}
-								disabled={orbGone}
-							/>
-							<BelowEditorWidgets threadId={threadId} />
+								<BelowEditorWidgets threadId={threadId} />
+							</div>
 						</div>
 					</div>
+				</Sheet>
+			</div>
+			{peer && !onAgent && (
+				<Sheet inset={false} className="h-full min-w-0 flex-1">
+					<RightPanel threadId={threadId} peer />
+				</Sheet>
+			)}
+			{dual && (
+				// 双段视口右段：隔着铰链常驻，不能关闭、不能最大化、不能拖宽
+				<div
+					data-pane="secondary"
+					className="h-full min-w-0"
+					style={{ marginLeft: segments.gap, flex: 1 }}
+				>
+					<Sheet inset={false} className="h-full">
+						<RightPanel threadId={threadId} />
+					</Sheet>
 				</div>
-			</Sheet>
+			)}
 			{column.mounted && (
 				// 与左栏同一做法：外层宽度与左侧 8px 缝一起过渡，内层固定宽度，左缘贴着外层左缘随之滑入 / 滑出并淡入淡出；
 				// 外层不裁剪，免得裁掉纸面描边与投影
@@ -307,35 +372,13 @@ export function ThreadPage(): ReactNode {
 					<div
 						className={`h-full transition-opacity duration-[260ms] ease-out ${panelFull ? "w-full" : "w-[var(--pw)]"} ${column.shown ? "opacity-100" : "opacity-0"}`}
 					>
-						<Sheet inset className="h-full">
+						{/* 面板列是最右侧纸面：右上 / 右下角离屏幕边 8px */}
+						<Sheet inset className={`h-full ${DC_SHEET_RIGHT}`}>
 							<RightPanel
 								threadId={threadId}
 								onClose={() => uiStore.getState().setPanel(false)}
 							/>
 						</Sheet>
-					</div>
-				</div>
-			)}
-			{drawer.mounted && (
-				<div className="fixed inset-0 z-40">
-					<button
-						type="button"
-						aria-label={t("common.close")}
-						className={`absolute inset-0 bg-scrim/70 backdrop-blur-sm transition-opacity duration-[260ms] ease-out ${drawer.shown ? "opacity-100" : "opacity-0"}`}
-						onClick={() => uiStore.getState().setPanel(false)}
-					/>
-					{/*
-					 * 与左抽屉同一形态：悬浮圆角纸面，四周留 8px 与安全区，从右侧滑入 / 滑出。
-					 * 宽度与标签无关：手机上铺满（减去边距），平板上停在 36rem，切标签不跳。
-					 */}
-					<div
-						inert={!showPanelDrawer}
-						className={`absolute top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-2 ml-auto max-w-xl overflow-hidden rounded-2xl border border-border bg-panel shadow-xl transition-[translate,opacity] duration-[260ms] ease-out ${drawer.shown ? "translate-x-0 opacity-100" : "translate-x-[calc(100%+1rem)] opacity-0"}`}
-					>
-						<RightPanel
-							threadId={threadId}
-							onClose={() => uiStore.getState().setPanel(false)}
-						/>
 					</div>
 				</div>
 			)}

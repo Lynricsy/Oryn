@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../i18n";
+import type { Attachment } from "../lib/attachments";
 import type { SessionState } from "../omp/types";
 import { MODEL_CAPS_KEY, modelCapsStore } from "../state/model-caps";
+import { shareIntakeStore } from "../state/share-intake";
 import { getThreadStore, resetThreadStores } from "../state/stores";
 import { HomePage } from "./HomePage";
 
@@ -35,6 +38,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	resetThreadStores();
+	shareIntakeStore.setState({ pending: null });
 });
 
 function renderHome() {
@@ -118,5 +122,57 @@ describe("模型能力缓存", () => {
 				"anthropic/claude-x"
 			],
 		).toEqual({ thinking: ["off", "high"] });
+	});
+});
+
+describe("系统分享预填新建线程框", () => {
+	const shot: Attachment = {
+		id: "att_s1",
+		name: "shot.png",
+		mime: "image/png",
+		size: 2048,
+		sha256: "0".repeat(64),
+		createdAt: 0,
+	};
+
+	function prompt(): HTMLTextAreaElement {
+		return screen.getByRole("textbox", {
+			name: i18n.t("newThread.prompt"),
+		}) as HTMLTextAreaElement;
+	}
+
+	it("待取的分享：文字进输入框、附件成为条目、导入失败给出提示，然后取走", () => {
+		shareIntakeStore.getState().set({
+			id: "s-1",
+			text: "https://example.com/post",
+			attachments: [shot],
+			failed: [
+				{ name: "big.mov", reason: "too_large" },
+				{ name: "x.bin", reason: "io" },
+			],
+		});
+		renderHome();
+		expect(prompt().value).toBe("https://example.com/post");
+		expect(screen.getByText("shot.png")).toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			i18n.t("mobile.shareFailed", { count: 2 }),
+		);
+		expect(shareIntakeStore.getState().pending).toBeNull();
+	});
+
+	it("已有内容时换行追加；没有失败项不显示提示", () => {
+		renderHome();
+		fireEvent.change(prompt(), { target: { value: "看看这个" } });
+		act(() => {
+			shareIntakeStore.getState().set({
+				id: "s-2",
+				text: "分享的文字",
+				attachments: [],
+				failed: [],
+			});
+		});
+		expect(prompt().value).toBe("看看这个\n分享的文字");
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(shareIntakeStore.getState().pending).toBeNull();
 	});
 });

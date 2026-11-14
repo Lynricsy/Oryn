@@ -11,7 +11,12 @@
  * `reauth` 每个页面只发一次：壳收到后总会把主窗口整页导航走（换取成功去 `/auth/app`，失败回连接页），
  * 同一次 401 经多个入口（请求钩子、`me` 查询、WS）报上来也只算一次，不会误触壳的「60 秒内 3 次」循环保护。
  * 兼容：以后新增宿主命令就把 `BRIDGE` 加一，调用新命令前比较 `__ORYN_HOST__.bridge`。
+ * 移动壳（M7 计划 4.1，bridge ≥ 2 且 platform 为 android / ios）：`mobile` 非空、`desktop = null`；
+ * 另有 `share`（系统分享已上传为附件）、`mobile`（推送状态变了）、`insets`（屏幕圆角与原生 inset 变了）三个事件；
+ * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
  */
+
+import type { Attachment } from "./attachments";
 
 export type HostPlatform = "linux" | "macos" | "windows" | "android" | "ios";
 
@@ -70,6 +75,73 @@ export interface DesktopHost {
 	changeServer(): void;
 }
 
+/** 推送状态（壳归并后的视图，M7 计划 2.7）。 */
+export type MobilePushState =
+	| "unsupported"
+	| "disabled"
+	| "permission_denied"
+	| "no_distributor"
+	| "registering"
+	| "active"
+	| "error";
+
+/** 四角半径（CSS px，取不到为 0）。 */
+export interface CornerRadii {
+	tl: number;
+	tr: number;
+	bl: number;
+	br: number;
+}
+
+/** 原生容器加在 WebView 四周的 padding（系统栏 + 刘海 + 软键盘，CSS px）。 */
+export interface EdgeInsets {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+}
+
+/** 屏幕几何：物理屏幕圆角与 WebView 外的 inset（`insets` 事件与 `MobileInfo` 同形）。 */
+export interface DeviceGeometry {
+	cornerRadii: CornerRadii;
+	insets: EdgeInsets;
+}
+
+export interface MobileInfo extends Partial<DeviceGeometry> {
+	version: string;
+	platform: "android" | "ios";
+	tokenStore: "keystore" | "keychain";
+	/** 系统 WebView 版本（取不到为空串）。 */
+	webview: string;
+	push: {
+		state: MobilePushState;
+		/** 当前推送通道；未启用时缺省。 */
+		channel?: "unifiedpush" | "fcm" | null;
+		distributor?: string | null;
+		endpointHost?: string | null;
+		error?: string | null;
+	};
+}
+
+/** 系统分享进来的内容：壳已把文件上传为附件（M7 计划 2.8）。 */
+export interface ShareIntake {
+	id: string;
+	text: string | null;
+	attachments: Attachment[];
+	failed: { name: string; reason: string }[];
+}
+
+export interface MobileHost {
+	info(): Promise<MobileInfo>;
+	enablePush(): Promise<MobileInfo>;
+	disablePush(): Promise<MobileInfo>;
+	openExternal(url: string): void;
+	shareAck(id: string): void;
+	setChrome(c: { dark: boolean; color: string }): void;
+	openNotificationSettings(): void;
+	changeServer(): void;
+}
+
 export interface Host {
 	readonly kind: "web" | "tauri";
 	readonly platform: HostPlatform | null;
@@ -84,11 +156,18 @@ export interface Host {
 	setStatus(s: HostStatus): void;
 	setLanguage(lang: string): void;
 	reauth(path: string): void;
+	/** 系统分享进来的内容（仅移动壳会触发）。 */
+	onShare(cb: (s: ShareIntake) => void): () => void;
+	/** 推送状态变了，调用方重取 `mobile.info()`（仅移动壳）。 */
+	onMobile(cb: () => void): () => void;
+	/** 屏幕圆角 / inset 变了（旋转、折叠、软键盘；仅移动壳）。 */
+	onInsets(cb: (g: DeviceGeometry) => void): () => void;
 	desktop: DesktopHost | null;
+	mobile: MobileHost | null;
 }
 
 /** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应）。 */
-export const BRIDGE = 1;
+export const BRIDGE = 2;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -150,7 +229,11 @@ function webHost(win: Window): Host {
 		setStatus: noop,
 		setLanguage: noop,
 		reauth: noop,
+		onShare: () => noop,
+		onMobile: () => noop,
+		onInsets: () => noop,
 		desktop: null,
+		mobile: null,
 	};
 }
 
@@ -174,6 +257,134 @@ function listeners<A extends unknown[]>() {
 	};
 }
 
+function num(v: unknown): number {
+	return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** 解析 `insets` 事件 / `MobileInfo` 里的屏幕几何；两项都缺时为 null，单项缺省按 0。 */
+export function parseGeometry(v: unknown): DeviceGeometry | null {
+	if (!v || typeof v !== "object") return null;
+	const o = v as { cornerRadii?: unknown; insets?: unknown };
+	const r = (o.cornerRadii ?? null) as Record<string, unknown> | null;
+	const i = (o.insets ?? null) as Record<string, unknown> | null;
+	if ((!r || typeof r !== "object") && (!i || typeof i !== "object"))
+		return null;
+	return {
+		cornerRadii: {
+			tl: num(r?.tl),
+			tr: num(r?.tr),
+			bl: num(r?.bl),
+			br: num(r?.br),
+		},
+		insets: {
+			top: num(i?.top),
+			right: num(i?.right),
+			bottom: num(i?.bottom),
+			left: num(i?.left),
+		},
+	};
+}
+
+function parseShare(v: unknown): ShareIntake | null {
+	if (!v || typeof v !== "object") return null;
+	const o = v as Record<string, unknown>;
+	if (typeof o.id !== "string" || !o.id) return null;
+	const failed = Array.isArray(o.failed)
+		? o.failed.flatMap((f) =>
+				f && typeof f === "object" && typeof f.name === "string"
+					? [{ name: f.name as string, reason: String(f.reason ?? "") }]
+					: [],
+			)
+		: [];
+	return {
+		id: o.id,
+		text: typeof o.text === "string" && o.text ? o.text : null,
+		attachments: Array.isArray(o.attachments)
+			? (o.attachments.filter(
+					(a) => a && typeof a === "object" && typeof a.id === "string",
+				) as Attachment[])
+			: [],
+		failed,
+	};
+}
+
+/** 链接是否该交给系统浏览器：新窗口目标，或 http(s) 且跨源。 */
+export function externalHref(a: HTMLAnchorElement, win: Window): string | null {
+	const raw = a.getAttribute("href");
+	if (!raw || raw.startsWith("#")) return null;
+	let url: URL;
+	try {
+		url = new URL(raw, win.location.href);
+	} catch {
+		return null;
+	}
+	const web = url.protocol === "http:" || url.protocol === "https:";
+	if (!web) return null;
+	if (a.target === "_blank" || url.origin !== win.location.origin)
+		return url.href;
+	return null;
+}
+
+/**
+ * 移动壳的宿主命令；构造时接管外链：捕获阶段的 `click`（`a[href]` 且新窗口或跨源 → 系统浏览器）与 `window.open`。
+ * 同源普通链接与 `download` 链接不拦（后者由原生下载监听处理）。
+ */
+function mobileHost(
+	win: Window,
+	invoke: Invoke,
+	call: <T>(
+		cmd: string,
+		args?: Record<string, unknown>,
+	) => Promise<T | undefined>,
+): MobileHost {
+	const openExternal = (url: string) => {
+		void call("host_open_external", { url });
+	};
+	win.document?.addEventListener(
+		"click",
+		(ev) => {
+			const e = ev as MouseEvent;
+			if (e.defaultPrevented || e.button !== 0) return;
+			const t = e.target as Element | null;
+			const a = t?.closest?.("a[href]") as HTMLAnchorElement | null;
+			if (!a || a.hasAttribute("download")) return;
+			const href = externalHref(a, win);
+			if (!href) return;
+			e.preventDefault();
+			openExternal(href);
+		},
+		true,
+	);
+	win.open = ((u?: string | URL) => {
+		if (u !== undefined && u !== "") {
+			try {
+				openExternal(new URL(String(u), win.location.href).href);
+			} catch {
+				// 非法地址：忽略
+			}
+		}
+		return null;
+	}) as Window["open"];
+	return {
+		info: () => invoke<MobileInfo>("host_mobile_info"),
+		enablePush: () => invoke<MobileInfo>("host_push_enable"),
+		disablePush: () => invoke<MobileInfo>("host_push_disable"),
+		openExternal,
+		shareAck: (id) => {
+			void call("host_share_ack", { id });
+		},
+		setChrome: ({ dark, color }) => {
+			void call("host_set_chrome", { dark, color });
+		},
+		openNotificationSettings: () => {
+			void call("host_open_notification_settings");
+		},
+		changeServer: () => {
+			void call("host_change_server");
+		},
+	};
+}
+
 function tauriHost(win: Window, invoke: Invoke): Host {
 	const meta = win.__ORYN_HOST__;
 	const platform = PLATFORMS.find((p) => p === meta?.platform) ?? null;
@@ -183,6 +394,11 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const foreground = listeners<[]>();
 	const navigate = listeners<[string]>();
 	const update = listeners<[]>();
+	const share = listeners<[ShareIntake]>();
+	const mobileChanged = listeners<[]>();
+	const insets = listeners<[DeviceGeometry]>();
+	const isMobile =
+		(platform === "android" || platform === "ios") && (meta?.bridge ?? 0) >= 2;
 
 	const setVisible = (v: boolean) => {
 		if (v === visible) return;
@@ -195,6 +411,9 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			type?: unknown;
 			visible?: unknown;
 			path?: unknown;
+			share?: unknown;
+			cornerRadii?: unknown;
+			insets?: unknown;
 		} | null;
 		if (!d || typeof d !== "object") return;
 		if (d.type === "visibility" && typeof d.visible === "boolean")
@@ -202,6 +421,14 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		else if (d.type === "navigate" && typeof d.path === "string")
 			navigate.emit(d.path);
 		else if (d.type === "update") update.emit();
+		else if (isMobile && d.type === "share") {
+			const s = parseShare(d.share);
+			if (s) share.emit(s);
+		} else if (isMobile && d.type === "mobile") mobileChanged.emit();
+		else if (isMobile && d.type === "insets") {
+			const g = parseGeometry(d);
+			if (g) insets.emit(g);
+		}
 	});
 
 	/** 发出即忘：拒绝只记日志。 */
@@ -254,21 +481,27 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			reauthRequested = true;
 			void call("host_reauth", { path });
 		},
-		desktop: {
-			info: () => invoke<DesktopInfo>("host_info"),
-			setSettings: (patch) =>
-				invoke<DesktopInfo>("host_set_settings", { patch }),
-			checkUpdate: async () =>
-				(await invoke<{ version: string; notes?: string | null } | null>(
-					"host_check_update",
-				)) ?? null,
-			installUpdate: async () => {
-				await invoke<unknown>("host_install_update");
-			},
-			changeServer: () => {
-				void call("host_change_server");
-			},
-		},
+		onShare: (cb) => share.add(cb),
+		onMobile: (cb) => mobileChanged.add(cb),
+		onInsets: (cb) => insets.add(cb),
+		mobile: isMobile ? mobileHost(win, invoke, call) : null,
+		desktop: isMobile
+			? null
+			: {
+					info: () => invoke<DesktopInfo>("host_info"),
+					setSettings: (patch) =>
+						invoke<DesktopInfo>("host_set_settings", { patch }),
+					checkUpdate: async () =>
+						(await invoke<{ version: string; notes?: string | null } | null>(
+							"host_check_update",
+						)) ?? null,
+					installUpdate: async () => {
+						await invoke<unknown>("host_install_update");
+					},
+					changeServer: () => {
+						void call("host_change_server");
+					},
+				},
 	};
 }
 

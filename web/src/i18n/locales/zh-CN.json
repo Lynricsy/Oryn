@@ -558,6 +558,7 @@
 		"orbd_timeout": "orb 响应超时"
 	},
 	"pair": {
+		"backToApp": "返回 Oryn App",
 		"ip": "IP",
 		"title": "批准设备",
 		"lookup": "查看",
@@ -588,6 +589,11 @@
 		"desktop": "桌面应用"
 	},
 	"devices": {
+		"pairQr": {
+			"title": "用手机扫码连接",
+			"label": "服务器地址二维码：{{server}}",
+			"hint": "在 Oryn App 的连接页点「扫码」。扫码只填好服务器地址，批准仍要在上面的「批准配对」里输入 App 显示的配对码。"
+		},
 		"approveTitle": "批准配对",
 		"current": "当前",
 		"empty": "没有设备。",
@@ -787,6 +793,7 @@
 	"rightPanel": {
 		"label": "右侧面板",
 		"tabs": {
+			"agent": "对话",
 			"info": "信息",
 			"changes": "改动",
 			"files": "文件",
@@ -794,6 +801,7 @@
 			"portal": "Portal"
 		},
 		"attention": "有终端在等待输入",
+		"agentAttention": "对话在等待你回答",
 		"maximize": "面板最大化",
 		"restore": "还原面板",
 		"resize": "调整面板宽度",
@@ -820,6 +828,8 @@
 		"needsInput": "等待输入",
 		"keyBar": "终端按键",
 		"paste": "粘贴",
+		"lineInput": "输入行",
+		"lineInputPlaceholder": "输入后回车发送到终端",
 		"kind": {
 			"shell": "shell",
 			"command": "agent 命令",
@@ -1002,6 +1012,7 @@
 		}
 	},
 	"attachments": {
+		"camera": "拍照",
 		"attach": "添加附件",
 		"tooMany": "每条消息最多 {{max}} 个附件",
 		"tooLarge": "超过单个附件上限 {{max}}",
@@ -1398,6 +1409,28 @@
 		"changeConfirm": "移除并更换",
 		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。",
 		"version": "Oryn Desktop {{version}}",
+		"versionMobile": "Oryn {{version}}",
+		"introMobile": "输入 Oryn 服务器地址，或扫描电脑上「设置 → 设备」里的二维码。连接后用浏览器登录并批准这台手机。",
+		"pairingMobile": "在手机浏览器登录 Oryn 后输入此码；或到已登录的电脑「设置 → 设备」输入。",
+		"copyAndOpen": "复制配对码并打开浏览器",
+		"scan": "扫码",
+		"scanDenied": "没有相机权限，无法扫码。",
+		"scanFailed": "扫码失败，请重试或直接输入地址。",
+		"openSettings": "打开设置",
+		"mobileError": {
+			"keyring": {
+				"reason": "无法把令牌存进系统安全存储。",
+				"hint": "点「重试」；仍失败时重启 App 再试。"
+			},
+			"server_too_old": {
+				"reason": "服务器版本太旧，还不支持手机 App。",
+				"hint": "把服务器升级到最新版后点「重试」。"
+			},
+			"web_timeout": {
+				"reason": "服务器的页面没有响应手机 App。",
+				"hint": "确认服务器已升级到支持手机 App 的版本，然后点「重试」。"
+			}
+		},
 		"error": {
 			"invalid_url": {
 				"reason": "无法识别这个服务器地址。",
@@ -1472,5 +1505,33 @@
 		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。",
 		"changeServer": "更换服务器…",
 		"changeServerHint": "回到连接页确认后，移除这台设备在当前服务器上的登录。"
+	},
+	"mobile": {
+		"push": {
+			"disabled": "启用后，App 在后台或已关闭时也能收到需要你处理的提醒。",
+			"enable": "启用推送",
+			"noDistributor": "这台设备没有 Google 推送服务，需要先安装一个 UnifiedPush 分发器（推荐 ntfy），装好后点「重试」。",
+			"installGuide": "查看安装说明",
+			"retry": "重试",
+			"permissionDenied": "系统已关闭 Oryn 的通知权限，推送无法显示。",
+			"openSettings": "打开系统通知设置",
+			"registering": "正在注册推送…",
+			"viaFcm": "经 Firebase 云消息（FCM）接收推送",
+			"viaUnifiedPush": "经 {{distributor}} 接收推送（{{detail}}）",
+			"disable": "关闭推送",
+			"error": "推送注册失败：{{error}}",
+			"errorUnknown": "原因不明",
+			"unsupported": "这台设备不支持推送；通知仍会出现在侧栏铃铛里。"
+		},
+		"about": {
+			"appVersion": "App 版本",
+			"webview": "系统 WebView",
+			"tokenStore": "令牌存储",
+			"tokenStoreKind": {
+				"keystore": "Android Keystore",
+				"keychain": "iOS 钥匙串"
+			}
+		},
+		"shareFailed": "{{count}} 个文件未能导入"
 	}
 }

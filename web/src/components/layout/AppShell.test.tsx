@@ -1,4 +1,4 @@
-/** 应用壳：桌面端侧栏收起 / 展开（按钮、页头开关、Ctrl+B）与持久化；桌面壳里的握手、跳转、重新鉴权与托盘状态（M6）。 */
+/** 应用壳：桌面端侧栏收起 / 展开（按钮、页头开关、Ctrl+B）与持久化；桌面壳里的握手、跳转、重新鉴权与托盘状态（M6）；移动壳的系统栏、分享与连接状态（M7）。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
@@ -11,8 +11,14 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
 import { qk, useMe } from "../../api/queries";
-import { createHost, host } from "../../lib/host";
-import { indexStore } from "../../state/stores";
+import {
+	createHost,
+	host,
+	type MobileHost,
+	type ShareIntake,
+} from "../../lib/host";
+import { shareIntakeStore } from "../../state/share-intake";
+import { connectionStore, indexStore } from "../../state/stores";
 import { SIDEBAR_COLLAPSED_KEY, uiStore } from "../../state/ui";
 import { ThreadHeader } from "../thread/ThreadHeader";
 import { AppShell } from "./AppShell";
@@ -347,5 +353,119 @@ describe("桌面壳里（M6）", () => {
 			await vi.advanceTimersByTimeAsync(300);
 		});
 		expect(setStatus).toHaveBeenCalledTimes(calls);
+	});
+});
+
+describe("移动壳里（M7）", () => {
+	const h = host as { kind: "web" | "tauri"; mobile: MobileHost | null };
+	let mobile: MobileHost;
+	let onShare: ((s: ShareIntake) => void) | undefined;
+	beforeEach(() => {
+		h.kind = "tauri";
+		mobile = {
+			info: vi.fn(),
+			enablePush: vi.fn(),
+			disablePush: vi.fn(),
+			openExternal: vi.fn(),
+			shareAck: vi.fn(),
+			setChrome: vi.fn(),
+			openNotificationSettings: vi.fn(),
+			changeServer: vi.fn(),
+		};
+		h.mobile = mobile;
+		vi.spyOn(host, "ready").mockResolvedValue(null);
+		vi.spyOn(host, "onShare").mockImplementation((cb) => {
+			onShare = cb;
+			return () => {
+				onShare = undefined;
+			};
+		});
+		shareIntakeStore.setState({ pending: null });
+		document.body.style.backgroundColor = "rgb(238, 240, 244)";
+	});
+	afterEach(() => {
+		h.kind = "web";
+		h.mobile = null;
+		document.body.style.backgroundColor = "";
+		delete document.documentElement.dataset.conn;
+		vi.restoreAllMocks();
+	});
+
+	function mount() {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		qc.setQueryData(qk.me, {
+			displayName: "Ada",
+			createdAt: 1,
+			auth: { kind: "web", deviceId: "dev_1" },
+		});
+		return render(
+			<QueryClientProvider client={qc}>
+				<MemoryRouter initialEntries={["/t/T-1"]}>
+					<Routes>
+						<Route element={<AppShell />}>
+							<Route path="*" element={<Where />} />
+						</Route>
+					</Routes>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+	}
+
+	it("系统栏跟随页面底色", () => {
+		mount();
+		expect(mobile.setChrome).toHaveBeenCalledWith({
+			dark: false,
+			color: "#eef0f4",
+		});
+	});
+
+	it("分享进来：存入 share-intake、跳到首页、shareAck", async () => {
+		mount();
+		const share: ShareIntake = {
+			id: "s1",
+			text: "m7 share",
+			attachments: [],
+			failed: [],
+		};
+		act(() => onShare?.(share));
+		await waitFor(() =>
+			expect(screen.getByTestId("where")).toHaveTextContent(/^\/$/),
+		);
+		expect(shareIntakeStore.getState().pending).toEqual(share);
+		expect(mobile.shareAck).toHaveBeenCalledWith("s1");
+	});
+
+	it("连接状态写到 <html data-conn>；侧栏玻璃带屏幕同心圆角类", () => {
+		// 不用 open：连上会去拉通知列表（本测试的假 fetch 不应答它）
+		connectionStore.setState({ status: "reconnecting" });
+		mount();
+		expect(document.documentElement.dataset.conn).toBe("reconnecting");
+		act(() => connectionStore.setState({ status: "idle" }));
+		expect(document.documentElement.dataset.conn).toBe("idle");
+		const glass = document.querySelector(".glass-sidebar");
+		expect(glass?.className).toContain("dc-tl");
+		expect(glass?.className).toContain("dc-bl");
+	});
+});
+
+describe("手机下沉式侧栏（compact）", () => {
+	afterEach(() => {
+		uiStore.setState({ sidebarOpen: false });
+		window.history.replaceState(null, "");
+	});
+
+	it("compact 下侧栏在底层（无玻璃外框）、内容是卡片；页头开关打开后卡片 inert", () => {
+		window.innerWidth = 390;
+		setup();
+		expect(document.querySelector(".glass-sidebar")).toBeNull();
+		expect(screen.getByTestId("sink-sidebar")).toHaveAttribute("inert");
+		expect(
+			screen.getByTestId("sink-sidebar").querySelector("nav"),
+		).not.toBeNull();
+		act(() => uiStore.getState().toggleSidebar());
+		expect(screen.getByTestId("sink-card")).toHaveAttribute("data-open");
+		expect(screen.getByTestId("sink-content")).toHaveAttribute("inert");
 	});
 });

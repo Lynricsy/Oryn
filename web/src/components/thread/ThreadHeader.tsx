@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
+import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import {
 	deleteOrb,
 	deleteThread,
@@ -124,16 +125,23 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 export function ThreadHeader({
 	threadId,
 	sidebarToggle,
+	veil = HEADER_VEIL,
 }: {
 	threadId: string;
 	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
 	sidebarToggle: boolean;
+	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（窄屏的同级标签条）时加上那一行，纱一起盖住 */
+	veil?: number;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const thread = useThread(threadId, (s) => s.thread);
 	const panelOpen = useUi((s) => s.panelOpen);
 	const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+	const bp = useBreakpoint();
+	const segments = useViewportSegments();
+	// 面板开关只属于 expanded 三栏：窄屏面板是同级标签，双段视口右段常驻
+	const panelToggle = bp === "expanded" && !segments;
 	const orb = useOrbOf(threadId);
 	const projects = useProjects();
 	// 只认线程自己的项目，和侧栏分组一致；「无项目」线程不显示项目段（即使 orb 属于某个项目）
@@ -307,7 +315,7 @@ export function ThreadHeader({
 
 	return (
 		<header className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3">
-			<div aria-hidden className="veil" style={{ height: HEADER_VEIL }}>
+			<div aria-hidden className="veil" style={{ height: veil }}>
 				<i />
 				<i />
 				<i />
@@ -441,12 +449,14 @@ export function ThreadHeader({
 				label={t("thread.tree")}
 				onClick={() => uiStore.getState().open({ kind: "tree" })}
 			/>
-			<IconButton
-				icon="panel"
-				label={t("nav.infoPanel")}
-				active={panelOpen}
-				onClick={() => uiStore.getState().setPanel(!panelOpen)}
-			/>
+			{panelToggle && (
+				<IconButton
+					icon="panel"
+					label={t("nav.infoPanel")}
+					active={panelOpen}
+					onClick={() => uiStore.getState().setPanel(!panelOpen)}
+				/>
+			)}
 			<Menu
 				items={items}
 				trigger={(p) => (

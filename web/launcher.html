@@ -11,6 +11,8 @@
 	</head>
 	<body>
 		<div id="root"></div>
+		<!-- 系统 WebView 过旧时插入中英提示（ES5 经典脚本，先于模块脚本运行；模块脚本在旧内核上可能直接失败） -->
+		<script src="/webview-check.js"></script>
 		<script type="module" src="/src/launcher/main.tsx"></script>
 	</body>
 </html>

@@ -217,13 +217,26 @@ interface Screen {
 }
 
 /**
- * 假桌面壳（M6）：`window.__TAURI__.core.invoke` 按命令表应答，`handlers` 是 `{命令: 应答}` 的 JSON；
- * `host` 为真时另注入 `__ORYN_HOST__`（远程页面里的宿主适配），连接页不需要它。
+ * 假桌面 / 移动壳（M6 / M7）：`window.__TAURI__.core.invoke` 按命令表应答，`handlers` 是 `{命令: 应答}` 的 JSON；
+ * `host` 非假时另注入 `__ORYN_HOST__`（远程页面里的宿主适配）：`true` / `"desktop"` = linux 桌面壳，
+ * `"android"` = 移动壳（bridge 2）；连接页不需要它，`launcherPlatform` 只给连接页设平台。
  */
-function fakeTauri(handlers: Record<string, unknown>, host = false): string {
+function fakeTauri(
+	handlers: Record<string, unknown>,
+	host: boolean | "desktop" | "android" = false,
+	launcherPlatform?: "android",
+): string {
+	const meta =
+		host === "android"
+			? `{ kind: "tauri", platform: "android", version: "0.1.0", bridge: 2 }`
+			: host
+				? `{ kind: "tauri", platform: "linux", version: "0.1.0", bridge: 1 }`
+				: launcherPlatform
+					? `{ kind: "tauri", platform: "${launcherPlatform}", version: "0.1.0", bridge: 2 }`
+					: "";
 	return `(() => {
 		const replies = ${JSON.stringify(handlers)};
-		${host ? `window.__ORYN_HOST__ = { kind: "tauri", platform: "linux", version: "0.1.0", bridge: 1 };` : ""}
+		${meta ? `window.__ORYN_HOST__ = ${meta};` : ""}
 		// 配对码按截图时刻起算 9 分 30 秒后过期
 		const state = replies.launcher_state && replies.launcher_state.state;
 		if (state && state.step === "pairing") state.expiresAt = Date.now() + 570000;
@@ -236,17 +249,84 @@ function fakeTauri(handlers: Record<string, unknown>, host = false): string {
 
 const LAUNCHER_SERVER = "https://oryn.example.com";
 
-function launcherScreen(name: string, state: Record<string, unknown>): Screen {
+/** 假移动壳的 `MobileInfo`：默认屏幕四角 40px、无 inset（自查屏幕圆角同心；`mobileScreen` 可改半径）。 */
+const MOBILE_INFO = {
+	version: "0.1.0",
+	platform: "android",
+	tokenStore: "keystore",
+	webview: "146.0.7680.0",
+	push: {
+		state: "active",
+		channel: "unifiedpush",
+		distributor: "ntfy",
+		endpointHost: "ntfy.sh",
+	},
+	cornerRadii: { tl: 40, tr: 40, bl: 40, br: 40 },
+	insets: { top: 0, right: 0, bottom: 0, left: 0 },
+};
+
+/** 假移动壳（android，bridge 2）的命令表；`radius` = 屏幕四角半径。 */
+function mobileHandlers(radius: number) {
+	return {
+		host_ready: { bridge: 2, visible: true },
+		host_set_status: null,
+		host_set_language: null,
+		host_set_chrome: null,
+		host_mobile_info: {
+			...MOBILE_INFO,
+			cornerRadii: { tl: radius, tr: radius, bl: radius, br: radius },
+		},
+		host_notify: null,
+	};
+}
+
+/** 移动壳里的界面（390 宽）：独立 context 注入假移动壳（屏幕圆角 `radius`，默认 40）。 */
+function mobileScreen(
+	name: string,
+	prepare: Screen["prepare"],
+	radius = 40,
+): Screen {
 	return {
 		name,
-		init: fakeTauri({
-			launcher_state: {
-				state,
-				lang: "zh-CN",
-				version: "0.1.0",
-				tokenStore: "keyring",
+		widths: [390],
+		init: fakeTauri(mobileHandlers(radius), "android"),
+		prepare,
+	};
+}
+
+/** 手机下沉式侧栏：打开线程页后点页头的侧栏开关（等卡片移到位）。 */
+async function openSink(page: Page) {
+	await openThread(page, MAIN_THREAD);
+	await page
+		.getByRole("button", { name: "侧边栏", exact: true })
+		.first()
+		.click();
+	await page.locator("[data-testid=sink-card][data-open]").waitFor();
+	await settle(page, 600);
+}
+
+function launcherScreen(
+	name: string,
+	state: Record<string, unknown>,
+	platform?: "android",
+): Screen {
+	return {
+		name,
+		...(platform ? { widths: [390] } : {}),
+		init: fakeTauri(
+			{
+				launcher_state: {
+					state,
+					lang: "zh-CN",
+					version: "0.1.0",
+					tokenStore: platform ? "keystore" : "keyring",
+				},
+				// 移动连接页同步系统栏颜色
+				...(platform ? { host_set_chrome: null } : {}),
 			},
-		}),
+			false,
+			platform,
+		),
 		prepare: async ({ page }) => {
 			await open(page, "/launcher.html", "h1");
 		},
@@ -305,7 +385,7 @@ async function sendPrompt(page: Page, text: string) {
 	await composer(page).press("Enter");
 }
 
-/** 打开右侧面板（窄屏是抽屉）并切到指定标签。 */
+/** 切到右侧面板的指定标签（窄屏是线程页的同级标签，宽屏先打开面板列）。 */
 async function openPanel(
 	page: Page,
 	tab: "info" | "changes" | "files" | "terminal" | "portal",
@@ -745,24 +825,52 @@ const SCREENS: Screen[] = [
 			await settle(page);
 		},
 	},
+	// 手机下沉式侧栏：浏览器（屏幕圆角 0 → 卡片取 2xl 令牌）与移动壳（屏幕圆角 47）各一套，关 / 开两态
 	{
-		name: "drawer-sidebar",
+		name: "sink-open",
+		widths: [390],
+		prepare: ({ page }) => openSink(page),
+	},
+	mobileScreen(
+		"mobile-sink-closed-r47",
+		({ page }) => openThread(page, MAIN_THREAD),
+		47,
+	),
+	mobileScreen("mobile-sink-open-r47", ({ page }) => openSink(page), 47),
+	// M7：窄屏线程页的同级标签（Agent | Changes | Files | Terminal … | Info）
+	{
+		name: "thread-compact-tabs",
 		widths: [390],
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await page.getByRole("button", { name: "侧边栏", exact: true }).click();
+			await page.locator("[data-testid=thread-tabs]").first().waitFor();
 			await settle(page, 600);
 		},
 	},
 	{
-		name: "drawer-panel",
+		name: "thread-compact-terminal",
 		widths: [390],
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await openPanel(page, "info");
+			await openTerminal(page);
 			await settle(page, 600);
 		},
 	},
+	// M7：移动壳（假 android 壳，屏幕圆角 40px）——推送卡与贴边浮层的同心圆角自查
+	mobileScreen("settings-mobile-push", async ({ page }) => {
+		await open(page, "/settings/notifications", "main", 400);
+		await page
+			.locator("[data-testid=mobile-push-card]")
+			.waitFor({ timeout: 15_000 });
+		await settle(page);
+	}),
+	mobileScreen("mobile-corners-dialog", async ({ page }) => {
+		await openThread(page, MAIN_THREAD);
+		await page.getByRole("button", { name: "更多操作" }).first().click();
+		await page.getByRole("menuitem", { name: "附件" }).click();
+		await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+		await settle(page);
+	}),
 	// M4：Portal 标签、访问弹层两种状态、信息面板的服务小节与日志对话框
 	{
 		name: "portal-panel",
@@ -840,6 +948,23 @@ const SCREENS: Screen[] = [
 		serverUrl: LAUNCHER_SERVER,
 		error: { code: "unreachable", message: "error sending request" },
 	}),
+	// M7：移动连接页（无「Oryn Desktop」与桌面凭据库提示；扫码按钮；复制配对码并打开浏览器）
+	launcherScreen(
+		"launcher-mobile-connect",
+		{ step: "connect", serverUrl: "" },
+		"android",
+	),
+	launcherScreen(
+		"launcher-mobile-pairing",
+		{
+			step: "pairing",
+			serverUrl: LAUNCHER_SERVER,
+			code: "K7QM-W3XP",
+			verifyUrl: `${LAUNCHER_SERVER}/pair`,
+			expiresAt: 0,
+		},
+		"android",
+	),
 	{
 		// 设置 → 桌面应用：已下载新版本、令牌存在文件里（两种提示都在图上）
 		name: "settings-desktop",

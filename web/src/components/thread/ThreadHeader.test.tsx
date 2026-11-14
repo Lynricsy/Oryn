@@ -2,11 +2,12 @@
  * 页头标题前的图标：窄页头（手机）下项目段整段隐藏，标题前仍要有图标——
  * 有标题卡图标用它，没有时退到项目徽标，两者都没有就不放。
  * jsdom 不算容器查询，这里只核对渲染了哪种图标、是否带窄屏才显示的类。
+ * 信息面板开关只在 expanded 三栏里有（窄屏面板是同级标签，双段视口右段常驻）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
@@ -131,5 +132,39 @@ describe("ThreadHeader 公开徽标", () => {
 		expect(
 			screen.queryByRole("button", { name: i18n.t("share.header.badge") }),
 		).toBeNull();
+	});
+});
+
+describe("ThreadHeader 信息面板开关", () => {
+	const initialWidth = window.innerWidth;
+	afterEach(() => {
+		window.innerWidth = initialWidth;
+		delete window.viewport;
+	});
+	const toggle = () =>
+		screen.queryByRole("button", { name: i18n.t("nav.infoPanel") });
+
+	it("expanded 下显示", () => {
+		window.innerWidth = 1280;
+		renderHeader("T-hdr-panel1", { title: "重连" });
+		expect(toggle()).toBeInTheDocument();
+	});
+
+	it("compact / medium 下不显示", () => {
+		window.innerWidth = 390;
+		renderHeader("T-hdr-panel2", { title: "重连" });
+		expect(toggle()).toBeNull();
+	});
+
+	it("宽屏双段视口下不显示", () => {
+		window.innerWidth = 1030;
+		window.viewport = {
+			segments: [
+				{ x: 0, y: 0, top: 0, width: 500, height: 800 } as DOMRectReadOnly,
+				{ x: 530, y: 0, top: 0, width: 500, height: 800 } as DOMRectReadOnly,
+			],
+		};
+		renderHeader("T-hdr-panel3", { title: "重连" });
+		expect(toggle()).toBeNull();
 	});
 });

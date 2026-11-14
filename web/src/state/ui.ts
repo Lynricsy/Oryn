@@ -1,9 +1,14 @@
-/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、搜索聚焦请求。 */
+/** 界面状态（与协议无关）：当前打开的对话框、侧边栏（开关 / 收起）/ 右侧面板（标签、宽度、最大化、改动标签的未看签名）、窄屏线程页的同级标签、搜索聚焦请求。 */
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { Schemas } from "../api/client";
 import type { ReportKind } from "../lib/slash";
-import { breakpointFor, useBreakpoint } from "../lib/viewport";
+import {
+	breakpointFor,
+	readSegments,
+	useBreakpoint,
+	useViewportSegments,
+} from "../lib/viewport";
 
 export type DialogState =
 	| { kind: "tree" }
@@ -23,6 +28,9 @@ export type DialogState =
 
 export type PanelTab = "info" | "changes" | "files" | "terminal" | "portal";
 
+/** 窄屏（compact / medium、非双段）线程页的同级标签：对话（转录）与面板各标签并列。 */
+export type ThreadTab = "agent" | PanelTab;
+
 export const PANEL_WIDTH_KEY = "oryn.panel.width";
 /** 下限保证四个标签与关闭 / 最大化按钮在一行里放得下（第五个 Portal 标签出现且放不下时，未选中的标签只显示图标）。 */
 export const PANEL_MIN_WIDTH = 360;
@@ -37,6 +45,12 @@ export function clampPanelWidth(width: number, viewport: number): number {
 
 function viewportWidth(): number {
 	return typeof window === "undefined" ? 1280 : window.innerWidth;
+}
+
+/** 当前线程页布局：expanded 三栏、双段视口（左右两栏）、窄屏同级标签。 */
+function threadLayout(): "expanded" | "dual" | "tabs" {
+	if (typeof window !== "undefined" && readSegments(window)) return "dual";
+	return breakpointFor(viewportWidth()) === "expanded" ? "expanded" : "tabs";
 }
 
 function loadPanelWidth(): number {
@@ -100,6 +114,8 @@ export interface UiState {
 	sidebarCollapsed: boolean;
 	panelOpen: boolean;
 	panelTab: PanelTab;
+	/** 窄屏线程页当前的同级标签（不持久化，换线程回到 agent）；非 agent 时与 `panelTab` 同步。 */
+	threadTab: ThreadTab;
 	/** expanded 布局下的面板列宽（px），所有标签共用。 */
 	panelWidth: number;
 	/** 面板占满内容区（转录列隐藏）。 */
@@ -110,10 +126,14 @@ export interface UiState {
 	close(): void;
 	setSidebar(open: boolean): void;
 	setSidebarCollapsed(collapsed: boolean): void;
-	/** 页头开关与 Ctrl/⌘+B：expanded 收起 / 展开，medium 推入 / 收回，compact 开关抽屉。 */
+	/** 页头开关与 Ctrl/⌘+B：expanded 收起 / 展开，medium 推入 / 收回，compact 与双段视口开关抽屉。 */
 	toggleSidebar(): void;
+	/** 打开面板；窄屏同级标签布局下同时切到面板当前标签（终端、信息胶囊等入口在手机上也能直达）。 */
 	setPanel(open: boolean): void;
+	/** 切面板标签；正在看面板标签（threadTab 非 agent）时同级标签跟着切。 */
 	setPanelTab(tab: PanelTab): void;
+	/** 切窄屏同级标签；非 agent 时同时切面板标签。 */
+	setThreadTab(tab: ThreadTab): void;
 	setPanelWidth(width: number): void;
 	togglePanelMax(): void;
 	focusSearch(): void;
@@ -136,6 +156,7 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	sidebarCollapsed: loadSidebarCollapsed(),
 	panelOpen: typeof window === "undefined" || window.innerWidth >= 840,
 	panelTab: "info",
+	threadTab: "agent",
 	panelWidth: loadPanelWidth(),
 	panelMax: false,
 	searchNonce: 0,
@@ -155,17 +176,31 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	},
 	toggleSidebar: () => {
 		const s = get();
-		if (breakpointFor(viewportWidth()) === "expanded")
+		// 双段视口里侧栏是抽屉（与 compact 相同），按开关抽屉处理
+		if (threadLayout() === "expanded")
 			s.setSidebarCollapsed(!s.sidebarCollapsed);
 		else set({ sidebarOpen: !s.sidebarOpen });
 	},
-	setPanel: (panelOpen) => set({ panelOpen }),
+	setPanel: (panelOpen) =>
+		set((s) =>
+			panelOpen && threadLayout() === "tabs"
+				? { panelOpen, threadTab: s.panelTab }
+				: { panelOpen },
+		),
 	setPanelTab: (panelTab) =>
 		set((s) => ({
 			panelTab,
+			threadTab: s.threadTab === "agent" ? "agent" : panelTab,
 			// 最大化只对内容标签有意义
 			panelMax: panelTab === "info" ? false : s.panelMax,
 		})),
+	setThreadTab: (threadTab) => {
+		if (threadTab === "agent") set({ threadTab });
+		else {
+			get().setPanelTab(threadTab);
+			set({ threadTab });
+		}
+	},
 	setPanelWidth: (width) => {
 		const panelWidth = clampPanelWidth(width, viewportWidth());
 		try {
@@ -230,9 +265,13 @@ export function useUi<T>(selector: (s: UiState) => T): T {
 	return useStore(uiStore, selector);
 }
 
-/** 页头左上角的侧栏开关是否显示：非 expanded 时总在（开抽屉 / 推入列），expanded 时只在侧栏收起后出现。 */
+/**
+ * 页头左上角的侧栏开关是否显示：非 expanded 时总在（开抽屉 / 推入列），双段视口里侧栏是抽屉也总在，
+ * expanded 时只在侧栏收起后出现。
+ */
 export function useSidebarToggleShown(): boolean {
 	const bp = useBreakpoint();
+	const segments = useViewportSegments();
 	const collapsed = useUi((s) => s.sidebarCollapsed);
-	return bp !== "expanded" || collapsed;
+	return bp !== "expanded" || segments !== null || collapsed;
 }

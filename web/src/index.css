@@ -265,6 +265,11 @@
 	--bg-inset: var(--inset);
 	--bg-raised: var(--raised);
 	--kb-inset: 0px;
+	/* 视口四角的屏幕同心半径（lib/device-corners.ts 由移动壳写入）；浏览器与桌面恒为 0 */
+	--device-r-tl: 0px;
+	--device-r-tr: 0px;
+	--device-r-bl: 0px;
+	--device-r-br: 0px;
 }
 
 html,
@@ -298,6 +303,45 @@ body {
 /* 输入区随软键盘上移 */
 @utility pb-keyboard {
 	padding-bottom: max(env(safe-area-inset-bottom), var(--kb-inset));
+}
+
+/*
+ * 屏幕圆角同心（M7）：贴着屏幕边缘的浮层（抽屉、侧栏、底部弹层、输入坞）在对应角上取
+ * max(自身令牌圆角 --dc-r, 视口角半径 − 与边缘的间距 --dc-gap)。`--device-r-*` 为 0 时就是令牌圆角，视觉不变。
+ * 不分层（不进 @layer）：要压过组件类与 rounded-* 工具类里同一个角的半径；`::before` 的 `border-radius: inherit` 随之同心。
+ */
+.dc-tl {
+	border-top-left-radius: max(
+		var(--dc-r, 0px),
+		calc(var(--device-r-tl) - var(--dc-gap, 0px))
+	);
+}
+.dc-tr {
+	border-top-right-radius: max(
+		var(--dc-r, 0px),
+		calc(var(--device-r-tr) - var(--dc-gap, 0px))
+	);
+}
+.dc-bl {
+	border-bottom-left-radius: max(
+		var(--dc-r, 0px),
+		calc(var(--device-r-bl) - var(--dc-gap, 0px))
+	);
+}
+.dc-br {
+	border-bottom-right-radius: max(
+		var(--dc-r, 0px),
+		calc(var(--device-r-br) - var(--dc-gap, 0px))
+	);
+}
+/* 线程页头的纱（及无模糊回退时的不透明页头）贴着纸面顶边：纸面右上角同心时跟着收角（内缩 1px 描边） */
+.sheet.dc-tr .veil > i,
+.sheet.dc-tr .veil::after,
+.sheet.dc-tr header.veil-host {
+	border-top-right-radius: max(
+		calc(var(--r-xl) - 1px),
+		calc(var(--device-r-tr) - var(--dc-gap, 0px) - 1px)
+	);
 }
 
 /* ---- 材质与全局类 ---- */
@@ -863,12 +907,16 @@ body {
 	 * 模糊放在 ::before（同 .glass 的理由）；外缘只有 1px 中性描边（--sb-rim）：渐变镜面边在左上角会读成一圈细白边，已撤掉。
 	 * 栏内的选中、悬停、输入框底色都是正文色的低透明叠加（--sb-*），落在任何壁纸上都只是压暗一点。
 	 */
-	.glass-sidebar {
+	/* 栏内叠加色：悬浮玻璃侧栏与手机下沉式侧栏（.sink-sidebar）共用 */
+	.glass-sidebar,
+	.sink-sidebar {
 		--sb-tint: color-mix(in oklab, var(--panel) 56%, transparent);
 		--sb-sel: color-mix(in oklab, var(--text) 7%, transparent);
 		--sb-hover: color-mix(in oklab, var(--text) 4.5%, transparent);
 		--sb-field: color-mix(in oklab, var(--text) 5%, transparent);
 		--sb-rim: color-mix(in oklab, var(--text) 8%, transparent);
+	}
+	.glass-sidebar {
 		position: relative;
 		isolation: isolate;
 		border-radius: var(--r-2xl);
@@ -877,6 +925,11 @@ body {
 			0 1px 2px oklch(var(--shadow-color) / calc(0.04 * var(--shadow-k))),
 			0 12px 32px -12px
 			oklch(var(--shadow-color) / calc(0.16 * var(--shadow-k)));
+	}
+	:root[data-theme="dark"] .sink-sidebar {
+		--sb-sel: color-mix(in oklab, var(--text) 10%, transparent);
+		--sb-hover: color-mix(in oklab, var(--text) 6%, transparent);
+		--sb-field: color-mix(in oklab, var(--text) 7%, transparent);
 	}
 	:root[data-theme="dark"] .glass-sidebar {
 		--sb-tint: color-mix(in oklab, var(--bg) 60%, transparent);
@@ -938,6 +991,44 @@ body {
 	}
 	.drawer-spot[data-shown] {
 		box-shadow: 0 0 0 100vmax color-mix(in oklab, var(--scrim) 70%, transparent);
+	}
+	/*
+	 * 手机下沉式侧栏（compact）：侧栏常驻底层（页面底色、无外框无圆角），内容是一张卡片，
+	 * 打开时整张卡片右移 --sink-w 露出侧栏、左缘留一条。进度 --sink-p（0 关、1 开；拖动时由手势写入）驱动平移、圆角与投影。
+	 * 卡片四角与屏幕圆角同心：卡片贴满屏幕（间距 0），半径 = max(较大的圆角令牌 2xl, 视口角半径)；关闭时归 0（沉浸）。
+	 * 打开时卡片裁剪内容（overflow: clip），关闭时不裁剪（对话纸面的页头纱需要祖先不带圆角裁剪）。
+	 */
+	.sink-root {
+		--sink-w: min(82vw, 20rem);
+		background: var(--bg);
+	}
+	.sink-card {
+		--sink-p: 0;
+		background: var(--bg);
+		translate: calc(var(--sink-w) * var(--sink-p)) 0;
+		border-radius: calc(max(var(--r-2xl), var(--device-r-tl)) * var(--sink-p))
+			calc(max(var(--r-2xl), var(--device-r-tr)) * var(--sink-p))
+			calc(max(var(--r-2xl), var(--device-r-br)) * var(--sink-p))
+			calc(max(var(--r-2xl), var(--device-r-bl)) * var(--sink-p));
+		transition:
+			translate 260ms var(--ease),
+			border-radius 260ms var(--ease),
+			box-shadow 260ms var(--ease);
+	}
+	.sink-card[data-open] {
+		--sink-p: 1;
+	}
+	.sink-card[data-open],
+	.sink-card[data-dragging] {
+		overflow: clip;
+		/* 深色下投影几乎看不见：加一圈发丝线分开卡片与底层侧栏 */
+		box-shadow:
+			0 0 0 1px var(--line),
+			var(--sh-xl);
+	}
+	.sink-card[data-dragging],
+	.sink-card[data-instant] {
+		transition: none;
 	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {

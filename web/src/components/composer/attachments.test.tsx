@@ -1,15 +1,22 @@
 /**
  * 消息附件：任意文件都被接受并上传、超过 100MiB 在客户端拒绝、内联预算用完的图片只作为文件（「仅文件」）、
- * 上传未完成时 uploading 为真、移除已上传的附件会删除服务端副本。
+ * 上传未完成时 uploading 为真、移除已上传的附件会删除服务端副本；
+ * 分享进来的已上传附件直接成为完成条目（addUploaded）；触屏上附件入口多一个拍照键。
  */
-import { act, render, renderHook, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	act,
+	fireEvent,
+	render,
+	renderHook,
+	screen,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
 import type { Attachment } from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ImageBudgetError, type PreparedImage } from "../../lib/images";
-import { AttachmentStrip, useAttachments } from "./attachments";
+import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
 
 const { upload, del, prepare } = vi.hoisted(() => ({
 	upload: vi.fn(),
@@ -165,5 +172,73 @@ describe("useAttachments", () => {
 		decoding.resolve(img);
 		await adding;
 		expect(upload).not.toHaveBeenCalled();
+	});
+});
+
+describe("addUploaded（系统分享）", () => {
+	it("已上传的附件直接成为完成条目：不再上传、不做内联副本，图片标「仅文件」", () => {
+		const { result } = renderHook(() => useAttachments());
+		const photo = { ...meta("att_p", "p.jpg"), mime: "image/jpeg" };
+		act(() => result.current.addUploaded([meta("att_d", "d.pdf"), photo]));
+		expect(upload).not.toHaveBeenCalled();
+		expect(prepare).not.toHaveBeenCalled();
+		expect(result.current.items).toMatchObject([
+			{ name: "d.pdf", size: 3, status: "done", progress: 1, fileOnly: false },
+			{ name: "p.jpg", status: "done", progress: 1, fileOnly: true },
+		]);
+		expect(result.current.attachmentIds).toEqual(["att_d", "att_p"]);
+		expect(result.current.contents).toEqual([]);
+		expect(result.current.uploading).toBe(false);
+	});
+
+	it("超过每条消息的上限后停止追加并报错", () => {
+		const { result } = renderHook(() => useAttachments());
+		const list = Array.from({ length: 22 }, (_, i) => meta(`att_${i}`, `${i}`));
+		act(() => result.current.addUploaded(list));
+		expect(result.current.items).toHaveLength(20);
+		expect(result.current.error).toBe(
+			i18n.t("attachments.tooMany", { max: 20 }),
+		);
+	});
+});
+
+describe("AttachButton", () => {
+	/** 假 matchMedia：只回答 `(pointer: coarse)`。 */
+	function pointer(coarse: boolean) {
+		vi.stubGlobal("matchMedia", (q: string) => ({
+			matches: coarse && q === "(pointer: coarse)",
+			media: q,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		}));
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("细指针：只有回形针，没有拍照键", () => {
+		pointer(false);
+		render(<AttachButton onFiles={() => undefined} />);
+		expect(screen.getByTestId("attach-file-input")).toHaveAttribute("multiple");
+		expect(screen.queryByTestId("attach-camera")).toBeNull();
+		expect(screen.queryByTestId("attach-camera-input")).toBeNull();
+	});
+
+	it("粗指针：多一个拍照键，直接调后置相机；选中后交出文件并清空 value", () => {
+		pointer(true);
+		const onFiles = vi.fn();
+		render(<AttachButton onFiles={onFiles} />);
+		expect(screen.getByTestId("attach-camera")).toHaveTextContent(
+			i18n.t("attachments.camera"),
+		);
+		const cam = screen.getByTestId("attach-camera-input") as HTMLInputElement;
+		expect(cam).toHaveAttribute("type", "file");
+		expect(cam).toHaveAttribute("accept", "image/*");
+		expect(cam).toHaveAttribute("capture", "environment");
+		const photo = new File(["x"], "photo.jpg", { type: "image/jpeg" });
+		fireEvent.change(cam, { target: { files: [photo] } });
+		expect(onFiles).toHaveBeenCalledWith([photo]);
+		expect(cam.value).toBe("");
 	});
 });
