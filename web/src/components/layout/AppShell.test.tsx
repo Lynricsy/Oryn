@@ -17,6 +17,7 @@ import {
 	type MobileHost,
 	type ShareIntake,
 } from "../../lib/host";
+import { realtime } from "../../realtime/socket";
 import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore } from "../../state/stores";
 import { SIDEBAR_COLLAPSED_KEY, uiStore } from "../../state/ui";
@@ -24,7 +25,12 @@ import { ThreadHeader } from "../thread/ThreadHeader";
 import { AppShell } from "./AppShell";
 
 vi.mock("../../realtime/socket", () => ({
-	realtime: { connect: vi.fn(), close: vi.fn(), send: vi.fn() },
+	realtime: {
+		connect: vi.fn(),
+		close: vi.fn(),
+		send: vi.fn(),
+		onSchedulesChanged: vi.fn(() => () => undefined),
+	},
 }));
 
 function setup() {
@@ -467,5 +473,19 @@ describe("手机下沉式侧栏（compact）", () => {
 		act(() => uiStore.getState().toggleSidebar());
 		expect(screen.getByTestId("sink-card")).toHaveAttribute("data-open");
 		expect(screen.getByTestId("sink-content")).toHaveAttribute("inert");
+	});
+});
+
+describe("定时查询对账（M9 审查 W6）", () => {
+	it("应用壳订阅一次 realtime.onSchedulesChanged，卸载时取消", () => {
+		const off = vi.fn();
+		const on = vi.mocked(realtime.onSchedulesChanged);
+		on.mockClear();
+		on.mockReturnValueOnce(off);
+		const { unmount } = setup();
+		expect(on).toHaveBeenCalledTimes(1);
+		expect(off).not.toHaveBeenCalled();
+		unmount();
+		expect(off).toHaveBeenCalledTimes(1);
 	});
 });

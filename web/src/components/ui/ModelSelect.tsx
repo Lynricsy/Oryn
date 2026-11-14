@@ -145,7 +145,11 @@ export function ModelOptions({
 	);
 }
 
-/** 表单里的模型 + 思考级别控件（定时对话框）：胶囊点开弹层，圆圈独立选级别；换模型后不支持的级别退回默认。 */
+/**
+ * 表单里的模型 + 思考级别控件（定时对话框）：胶囊点开弹层，圆圈独立选级别。
+ * 本机能力缓存认得这个模型时，换模型后不支持的级别退回默认；认不得时（新设备、没在本机见过该模型的会话）
+ * 保留现有级别——缓存不是「模型支持什么」的权威判定，清掉就成了跨设备编辑悄悄改配置（M9 审查 W4）。
+ */
 export function ModelSelect({
 	model,
 	thinking,
@@ -160,12 +164,15 @@ export function ModelSelect({
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const caps = useModelCaps(model);
-	const options = newThreadThinkingOptions(caps);
+	const known = caps !== undefined;
+	const capOptions = useMemo(() => newThreadThinkingOptions(caps), [caps]);
+	// 能力未知：只有「跟随默认」与现有级别两项
+	const options = known || !thinking ? capOptions : ["", thinking];
 	const text = modelPillText(model, t("newThread.defaultModel"));
-	// 换了模型、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
+	// 能力已知、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
 	useEffect(() => {
-		if (thinking && !options?.includes(thinking)) onThinking("");
-	}, [thinking, options, onThinking]);
+		if (known && thinking && !capOptions?.includes(thinking)) onThinking("");
+	}, [known, thinking, capOptions, onThinking]);
 	const pill = (
 		<button
 			type="button"
@@ -182,24 +189,31 @@ export function ModelSelect({
 		</button>
 	);
 	return (
-		<span className="relative inline-flex min-w-0 max-w-full">
-			{options ? (
-				<ModelPill
-					pill={pill}
-					corner={false}
-					thinking={thinking}
-					options={options}
-					known={caps !== undefined}
-					onThinking={onThinking}
-					side="bottom"
-				/>
-			) : (
-				pill
-			)}
-			{open && (
-				<Popover side="bottom" onClose={() => setOpen(false)}>
-					<ModelOptions model={model} onModel={onModel} />
-				</Popover>
+		<span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+			<span className="relative inline-flex min-w-0 max-w-full">
+				{options ? (
+					<ModelPill
+						pill={pill}
+						corner={false}
+						thinking={thinking}
+						options={options}
+						known={known}
+						onThinking={onThinking}
+						side="bottom"
+					/>
+				) : (
+					pill
+				)}
+				{open && (
+					<Popover side="bottom" onClose={() => setOpen(false)}>
+						<ModelOptions model={model} onModel={onModel} />
+					</Popover>
+				)}
+			</span>
+			{!known && thinking && (
+				<span data-testid="thinking-unknown" className="text-faint text-xs">
+					{t("schedule.thinkingUnknown")}
+				</span>
 			)}
 		</span>
 	);

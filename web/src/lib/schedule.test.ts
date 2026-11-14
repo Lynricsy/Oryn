@@ -34,6 +34,19 @@ describe("describeSchedule", () => {
 		).toBe("abc");
 	});
 
+	it.each([
+		["1m1s", "每 61 秒"],
+		["1m30s", "每 90 秒"],
+		["1h0m30s", "每 3630 秒"],
+	])(
+		"every 不能整除分钟（%s）：摘要按秒，不四舍五入成分钟（M9 审查 W3）",
+		(every, want) => {
+			expect(
+				describeSchedule({ kind: "every", every, timezone: zone }, t),
+			).toBe(want);
+		},
+	);
+
 	it("cron 命中预设给短语；时区与浏览器不同时补上时区", () => {
 		expect(
 			describeSchedule(
@@ -102,6 +115,21 @@ describe("时长串与预设", () => {
 		expect(splitEvery(1800)).toEqual({ value: 30, unit: "m" });
 		expect(joinEvery(2, "d")).toBe("48h");
 		expect(joinEvery(0, "m")).toBe("1m");
+	});
+
+	it.each([61, 90, 3630])(
+		"整秒间隔 %i 秒：拆成秒、拼回去不变（M9 审查 W3）",
+		(sec) => {
+			const { value, unit } = splitEvery(sec);
+			expect({ value, unit }).toEqual({ value: sec, unit: "s" });
+			expect(parseGoDuration(joinEvery(value, unit))).toBe(sec);
+		},
+	);
+
+	it("能整除时取最大的单位（天 → 小时 → 分钟 → 秒）", () => {
+		expect(splitEvery(120)).toEqual({ value: 2, unit: "m" });
+		expect(splitEvery(3600 * 25)).toEqual({ value: 25, unit: "h" });
+		expect(joinEvery(61, "s")).toBe("61s");
 	});
 
 	it("cronPreset 忽略多余空白", () => {

@@ -319,19 +319,22 @@ const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
 };
 
 /**
- * 线程报告（M9）：一枚可点的线程胶囊（索引里的当前标题 + 状态，链到该线程）+ 引用块里的回复正文（Markdown）。
- * 不显示包裹标签与原始 id；索引里没有该线程时用报告首行里的标题快照与状态。
+ * 线程报告（M9）：一枚可点的线程胶囊（索引里的当前标题 + 状态，链到该线程）+ 引用块里的回复正文（Markdown）
+ * + 出错原因（有时）。不显示包裹标签与原始 id；索引里没有该线程时用报告里的标题快照（新格式在包裹的 JSON 里，
+ * 旧格式在首行）与状态。
  */
 function ThreadReport({
 	threadId,
 	title,
 	state,
 	content,
+	error,
 }: {
 	threadId: string;
 	title: string;
 	state: string;
 	content: string;
+	error?: string;
 }) {
 	const { t } = useTranslation();
 	const thread = useIndex((s) => s.threads[threadId]);
@@ -360,6 +363,15 @@ function ThreadReport({
 				<blockquote className="min-w-0 border-border-strong border-l-2 pl-3 text-muted">
 					<Markdown text={content} />
 				</blockquote>
+			)}
+			{error && (
+				<p
+					data-testid="thread-report-error"
+					className="flex min-w-0 items-start gap-1.5 break-words text-err text-xs"
+				>
+					<Icon name="alert" size={13} className="mt-px shrink-0" />
+					<span className="min-w-0">{error}</span>
+				</p>
 			)}
 		</div>
 	);
@@ -430,9 +442,10 @@ function UserMessage({
 				{oryn?.report && oryn.header.kind === "report" && (
 					<ThreadReport
 						threadId={oryn.report.threadId}
-						title={oryn.header.title}
+						title={oryn.report.title ?? oryn.header.title}
 						state={oryn.header.state}
 						content={oryn.report.content}
+						error={oryn.report.error}
 					/>
 				)}
 				{shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>}

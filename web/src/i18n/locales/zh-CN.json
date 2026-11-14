@@ -816,6 +816,11 @@
 		"open": "打开图片 {{n}}",
 		"alt": "图片 {{n}}"
 	},
+	"tool": {
+		"oryn": {
+			"showAll": "显示全部 {{n}} 个线程"
+		}
+	},
 	"toolRender": {
 		"collapse": "收起",
 		"moreLines_one": "⋯ 还有 {{count}} 行",
@@ -1823,12 +1828,24 @@
 		"unit": {
 			"m": "分钟",
 			"h": "小时",
-			"d": "天"
+			"d": "天",
+			"seconds": "秒"
 		},
 		"at": "时间",
 		"timezone": "时区",
 		"endsAt": "截止时间",
 		"endsAtHint": "可留空；到点后自动停用",
+		"localTime": "（浏览器本地时间，{{zone}}）",
+		"conflict": {
+			"title": "这个定时在你编辑期间被改过了（另一台设备或 agent）。你的草稿还在：重新载入看最新的定义，或用草稿覆盖它。",
+			"reload": "重新载入",
+			"overwrite": "仍然保存"
+		},
+		"loadError": "读取定时失败。为免用默认值覆盖现有定义，没有打开编辑表单；检查网络后重试。",
+		"notFound": "这个定时不存在，可能已被删除。",
+		"retry": "重试",
+		"definedByAgent": "由 agent 定义",
+		"thinkingUnknown": "本机还不知道这个模型支持哪些思考级别，保留原设置",
 		"preview": "接下来",
 		"previewNone": "没有将来的运行",
 		"prompt": "提示词",
@@ -1888,6 +1905,7 @@
 			"everyHours": "每 {{n}} 小时",
 			"everyHm": "每 {{h}} 小时 {{m}} 分钟",
 			"everyDays": "每 {{n}} 天",
+			"everySeconds": "每 {{n}} 秒",
 			"once": "{{time}} 运行一次",
 			"onceUnset": "一次（未设时间）"
 		}
@@ -1935,7 +1953,9 @@
 			"summary": "近 {{days}} 天：交付 {{shipped}}，归档 {{archived}}，未结束 {{open}}",
 			"shipped": "交付 {{n}}",
 			"archived": "归档 {{n}}",
-			"open": "未结束 {{n}}"
+			"open": "未结束 {{n}}",
+			"pickDay": "选择日期",
+			"dayValue": "{{date}}：交付 {{shipped}}，归档 {{archived}}，未结束 {{open}}"
 		}
 	},
 	"tabBar": {

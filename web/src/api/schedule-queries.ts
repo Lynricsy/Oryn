@@ -1,8 +1,12 @@
 /**
  * 定时的 REST（M9）：两种模式（线程内 / 每次新建线程）共用一张表。增删改成功后让 `scheduleKeys.all` 失效；
+ * 别处（另一台设备、agent、按时触发、自动暂停）的变化经 WS `schedules.changed` 推送，`useRealtimeScheduleSync`
+ * 据此（以及每次 WS 重新连上时）让同一前缀的查询全部失效。
  * 线程内定时的摘要（`thread.schedule`）随线程索引推送，不必另行刷新。
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { type RealtimeClient, realtime } from "../realtime/socket";
 import { api, type Schemas, unwrap } from "./client";
 
 export type Schedule = Schemas["Schedule"];
@@ -24,6 +28,23 @@ export const scheduleKeys = {
 	thread: (threadId: string) => ["schedules", "thread", threadId] as const,
 	runs: (id: string) => ["schedules", "runs", id] as const,
 };
+
+/**
+ * 定时查询与服务端对账：收到 `schedules.changed`、或 WS（重新）连上时，`["schedules"]` 前缀的查询全部失效。
+ * 在调 `realtime.connect()` 的应用壳里调用一次。
+ */
+export function useRealtimeScheduleSync(
+	client: Pick<RealtimeClient, "onSchedulesChanged"> = realtime,
+): void {
+	const qc = useQueryClient();
+	useEffect(
+		() =>
+			client.onSchedulesChanged(() => {
+				void qc.invalidateQueries({ queryKey: scheduleKeys.all });
+			}),
+		[client, qc],
+	);
+}
 
 export function useSchedules(filter: ScheduleFilter = {}, enabled = true) {
 	return useQuery({

@@ -7,6 +7,7 @@
  * focus（M5）：`focus()` 只记「想看的线程」，实际发出的随页面是否在前台变化（`host.isForeground()`：浏览器里 = 标签页可见，
  * 桌面壳里另要求窗口未隐藏 / 最小化，M6）——不在前台时发 `focus null`，否则后台页面会一直占着 focus，通知永远被抑制。
  * `notification` / `notifications.read` 交给通知 store。
+ * `schedules.changed` 与每次连接建立都通知 `onSchedulesChanged` 的监听者（定时查询据此失效，断线期间错过的推送靠 open 时对账）。
  * orb 从挂起回到 `ready` 时重取 state 与命令列表：挂起期间的只读查询被控制面以 `agent_unavailable` 拒绝，不会自行重放。
  * 移动壳（M7 计划 4.9）：转入后台 30 秒后挂起连接（关掉 socket、取消重连，状态 `idle`），不让 WebView 在后台保活网络；
  * 回到前台立即重连（退避计数归零），重连后照常按 `afterSeq` 补齐。
@@ -100,6 +101,23 @@ export class RealtimeClient {
 	/** 移动壳后台挂起计时器与挂起标记（挂起 ≠ 用户关闭：前台监听仍在，回前台即重连）。 */
 	private suspendTimer: Timer | null = null;
 	private suspended = false;
+	/** 定时变更的监听者（M9 审查 W6）：收到 `schedules.changed` 与每次连接建立时调用。 */
+	private readonly scheduleListeners = new Set<() => void>();
+
+	/**
+	 * 订阅「定时可能变了」：服务端推送 `schedules.changed`，或连接（重新）建立——断线期间错过的推送无从补发，
+	 * 只能整体对账一次。返回取消订阅。
+	 */
+	onSchedulesChanged(cb: () => void): () => void {
+		this.scheduleListeners.add(cb);
+		return () => {
+			this.scheduleListeners.delete(cb);
+		};
+	}
+
+	private emitSchedulesChanged() {
+		for (const cb of [...this.scheduleListeners]) cb();
+	}
 
 	connect() {
 		this.closedByUser = false;
@@ -244,6 +262,7 @@ export class RealtimeClient {
 				() => this.send({ type: "ping" }),
 				PING_INTERVAL_MS,
 			);
+			this.emitSchedulesChanged();
 		};
 		ws.onmessage = (ev) => {
 			if (this.ws !== ws || typeof ev.data !== "string") return;
@@ -482,6 +501,9 @@ export class RealtimeClient {
 			}
 			case "notification":
 				notificationsStore.getState().onNotification(msg.notification);
+				return;
+			case "schedules.changed":
+				this.emitSchedulesChanged();
 				return;
 			case "notifications.read":
 				notificationsStore.getState().onRead(msg.threadId);

@@ -303,9 +303,21 @@ export function SpacePage(): ReactNode {
 			</div>
 		);
 	const tabs = <SpaceTabs tab={tab} onTab={setTab} />;
+	const away = tab !== "chat";
 	return (
-		<div data-testid="space-page" className="flex h-full min-w-0 flex-1">
-			<div className={tab === "chat" ? "flex h-full min-w-0 flex-1" : "hidden"}>
+		<div
+			data-testid="space-page"
+			className="relative flex h-full min-w-0 flex-1"
+		>
+			{/*
+			 * 切到「线程」时聊天不用 display:none（会让 react-virtual 把在屏行测成 0、回来时阅读位置漂移，
+			 * 见 ThreadPage 的转录面板）：叠在原处、仍参与布局，但透明且 inert（M9 审查 V1）。
+			 */}
+			<div
+				data-testid="space-chat"
+				inert={away}
+				className={`flex h-full min-w-0 flex-1 ${away ? "pointer-events-none absolute inset-0 opacity-0" : "relative"}`}
+			>
 				<ThreadScreen
 					threadId={s.threadId}
 					variant="coordinator"

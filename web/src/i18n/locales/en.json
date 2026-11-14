@@ -816,6 +816,11 @@
 		"open": "Open image {{n}}",
 		"alt": "Image {{n}}"
 	},
+	"tool": {
+		"oryn": {
+			"showAll": "Show all {{n}} threads"
+		}
+	},
 	"toolRender": {
 		"collapse": "Collapse",
 		"moreLines_one": "⋯ {{count}} more line",
@@ -1823,12 +1828,24 @@
 		"unit": {
 			"m": "minutes",
 			"h": "hours",
-			"d": "days"
+			"d": "days",
+			"seconds": "seconds"
 		},
 		"at": "Time",
 		"timezone": "Time zone",
 		"endsAt": "Ends at",
 		"endsAtHint": "Optional; the schedule turns itself off afterwards",
+		"localTime": " (browser local time, {{zone}})",
+		"conflict": {
+			"title": "This schedule changed while you were editing it (another device or an agent). Your draft is kept: reload to see the latest definition, or overwrite it with your draft.",
+			"reload": "Reload",
+			"overwrite": "Save anyway"
+		},
+		"loadError": "Couldn’t load the schedule. The edit form stays closed so defaults can’t overwrite the existing definition; check your connection and retry.",
+		"notFound": "This schedule doesn’t exist; it may have been deleted.",
+		"retry": "Retry",
+		"definedByAgent": "defined by an agent",
+		"thinkingUnknown": "This device doesn’t know which thinking levels the model supports yet; keeping the current setting",
 		"preview": "Upcoming",
 		"previewNone": "No upcoming runs",
 		"prompt": "Prompt",
@@ -1888,6 +1905,7 @@
 			"everyHours": "Every {{n}} h",
 			"everyHm": "Every {{h}} h {{m}} min",
 			"everyDays": "Every {{n}} d",
+			"everySeconds": "Every {{n}} s",
 			"once": "Once at {{time}}",
 			"onceUnset": "Once (no time set)"
 		}
@@ -1935,7 +1953,9 @@
 			"summary": "Last {{days}} days: {{shipped}} shipped, {{archived}} archived, {{open}} open",
 			"shipped": "{{n}} shipped",
 			"archived": "{{n}} archived",
-			"open": "{{n}} open"
+			"open": "{{n}} open",
+			"pickDay": "Pick a day",
+			"dayValue": "{{date}}: {{shipped}} shipped, {{archived}} archived, {{open}} open"
 		}
 	},
 	"tabBar": {

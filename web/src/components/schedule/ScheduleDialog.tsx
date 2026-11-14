@@ -6,7 +6,16 @@
  *   orb 类型（不含 `@host`）、重叠策略、保留数（1–50）。
  * 保存：新建走 `POST schedules`（线程内定时走 `PUT threads/{id}/schedule`），编辑走 `PUT schedules/{id}`；
  * 409 `schedule_name_taken` 标在名称框上。
+ *
+ * M9 审查修复：
+ * - 版本条件（W1）：打开时记下定义版本 `baseRev`，保存带 `ifRev`（线程内定时此前没有时为 0）。编辑期间查询刷新带来
+ *   新版本、或保存回 409 `schedule_conflict` → 表单上方出冲突条，草稿不动、保存禁用；「重新载入」以最新定义重建表单，
+ *   「仍然保存」以最新版本为基线重发。
+ * - 读取失败（W2）：GET 失败且手里没有数据时只给错误与重试，不落到新建表单（否则保存会覆盖现有定义）；
+ *   指定了 id 的 404 显示「定时不存在」。线程内定时的 404 是「还没有」，照常进新建表单。
+ * - 间隔支持秒（W3）；`at` / `endsAt` 明确是浏览器本地时间，「一次」不给时区选择、请求里的时区取浏览器时区（W5）。
  */
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	type ReactNode,
 	useCallback,
@@ -24,6 +33,7 @@ import {
 	type Schedule,
 	type ScheduleInput,
 	type ScheduleRun,
+	scheduleKeys,
 	useCreateSchedule,
 	useDeleteSchedule,
 	usePutSchedule,
@@ -36,6 +46,7 @@ import {
 import { useSpaces } from "../../api/space-queries";
 import { formatDateTime } from "../../lib/format";
 import {
+	browserZone,
 	CRON_PRESETS,
 	type EveryUnit,
 	joinEvery,
@@ -50,6 +61,7 @@ import { ModelSelect } from "../ui/ModelSelect";
 import {
 	Button,
 	Dialog,
+	describeError,
 	ErrorText,
 	Field,
 	Select,
@@ -72,16 +84,14 @@ export type ScheduleTarget =
 	  };
 
 const KINDS: Schemas["ScheduleKind"][] = ["cron", "every", "once"];
-const EVERY_UNITS: EveryUnit[] = ["m", "h", "d"];
+const EVERY_UNITS: EveryUnit[] = ["s", "m", "h", "d"];
+const UNIT_LABEL = {
+	s: "schedule.unit.seconds",
+	m: "schedule.unit.m",
+	h: "schedule.unit.h",
+	d: "schedule.unit.d",
+} as const satisfies Record<EveryUnit, string>;
 const PREVIEW_DEBOUNCE_MS = 400;
-
-function browserZone(): string {
-	try {
-		return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-	} catch {
-		return "UTC";
-	}
-}
 
 /** 时区列表（`Intl.supportedValuesOf`），保证含 UTC、浏览器时区与当前值。 */
 function zoneList(current: string): string[] {
@@ -102,6 +112,7 @@ function toLocalInput(ms: number | undefined): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** `datetime-local` 的值按浏览器本地时间解释（字段标签写明了这一点）。 */
 function fromLocalInput(v: string): number | undefined {
 	if (!v) return undefined;
 	const ms = new Date(v).getTime();
@@ -163,7 +174,10 @@ function initialState(
 	};
 }
 
-/** 只含时间字段的定义（预览用）。 */
+/**
+ * 只含时间字段的定义（预览用）。`at` / `endsAt` 是浏览器本地时间；「一次」的时区取浏览器时区——
+ * 绝对时间与时区无关，带上浏览器时区只是让服务端的显示与表单一致。
+ */
 function timing(s: FormState): ScheduleInput {
 	const endsAt = fromLocalInput(s.endsAt);
 	return {
@@ -173,7 +187,7 @@ function timing(s: FormState): ScheduleInput {
 			? { every: joinEvery(s.everyValue, s.everyUnit) }
 			: {}),
 		...(s.kind === "once" ? { at: fromLocalInput(s.at) } : {}),
-		timezone: s.timezone,
+		timezone: s.kind === "once" ? browserZone() : s.timezone,
 		...(endsAt !== undefined && s.kind !== "once" ? { endsAt } : {}),
 		prompt: "",
 	};
@@ -297,11 +311,25 @@ export function ScheduleDialog({
 		threadMode,
 	);
 	const one = useSchedule(threadMode ? undefined : scheduleId);
-	const loading = threadMode
-		? threadSchedule.isPending
-		: Boolean(scheduleId) && one.isPending;
-	const existing = threadMode ? (threadSchedule.data ?? undefined) : one.data;
-	if (loading)
+	// 当前用到的那个查询（新建「每次新建线程」定时时没有）
+	const q = threadMode
+		? {
+				pending: threadSchedule.isPending,
+				failed: threadSchedule.isError && threadSchedule.data === undefined,
+				error: threadSchedule.error,
+				fetching: threadSchedule.isFetching,
+				refetch: threadSchedule.refetch,
+			}
+		: scheduleId
+			? {
+					pending: one.isPending,
+					failed: one.isError && one.data === undefined,
+					error: one.error,
+					fetching: one.isFetching,
+					refetch: one.refetch,
+				}
+			: null;
+	if (q?.pending)
 		return (
 			<Dialog open onClose={onClose} title={t("schedule.title")}>
 				<div className="flex justify-center py-6 text-muted">
@@ -309,11 +337,48 @@ export function ScheduleDialog({
 				</div>
 			</Dialog>
 		);
+	if (q?.failed) {
+		// 读取失败不能当作「没有定时」：那会显示默认值的新建表单，保存时覆盖现有定义（W2）
+		const notFound =
+			!threadMode && q.error instanceof ApiError && q.error.status === 404;
+		return (
+			<Dialog
+				open
+				onClose={onClose}
+				title={t("schedule.title")}
+				footer={
+					<>
+						<Button onClick={onClose}>{t("common.close")}</Button>
+						{!notFound && (
+							<Button
+								variant="primary"
+								disabled={q.fetching}
+								onClick={() => void q.refetch()}
+							>
+								{t("schedule.retry")}
+							</Button>
+						)}
+					</>
+				}
+			>
+				<div data-testid="schedule-load-error">
+					<Callout
+						tone={notFound ? "neutral" : "err"}
+						role="alert"
+						title={notFound ? t("schedule.notFound") : t("schedule.loadError")}
+					>
+						{notFound ? null : describeError(q.error, t)}
+					</Callout>
+				</div>
+			</Dialog>
+		);
+	}
+	const existing = threadMode ? (threadSchedule.data ?? undefined) : one.data;
 	return (
 		<ScheduleForm
-			key={existing?.id ?? "new"}
 			target={target}
 			existing={existing}
+			refreshing={q?.fetching ?? false}
 			onClose={onClose}
 		/>
 	);
@@ -322,13 +387,18 @@ export function ScheduleDialog({
 function ScheduleForm({
 	target,
 	existing,
+	refreshing,
 	onClose,
 }: {
 	target: ScheduleTarget;
+	/** 最新的定义（查询刷新后随之更新；表单草稿不跟着变） */
 	existing: Schedule | undefined;
+	/** 定义查询正在重新读取 */
+	refreshing: boolean;
 	onClose: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
+	const qc = useQueryClient();
 	const [s, setS] = useState<FormState>(() => initialState(existing, target));
 	const set = useCallback(
 		<K extends keyof FormState>(k: K, v: FormState[K]) =>
@@ -337,6 +407,16 @@ function ScheduleForm({
 	);
 	const onThinking = useCallback((v: string) => set("thinking", v), [set]);
 	const newThread = target.mode === "new_thread";
+	// 版本：线程内定时「还没有」记作 0（`ifRev: 0` = 只在线程没有定时时新建）；新建「每次新建线程」定时不做版本检查
+	const latestRev = existing?.rev ?? (newThread ? undefined : 0);
+	const [baseRev, setBaseRev] = useState(latestRev);
+	// 保存回了 409 schedule_conflict
+	const [rejected, setRejected] = useState(false);
+	// 保存已发出、还没失败：期间自己的保存带来的刷新不算冲突
+	const [submitting, setSubmitting] = useState(false);
+	const conflict =
+		!submitting &&
+		(rejected || (baseRev !== undefined && latestRev !== baseRev));
 	const projects = useProjects();
 	const providers = useProviders();
 	const create = useCreateSchedule();
@@ -351,6 +431,8 @@ function ScheduleForm({
 	const saveError = create.error ?? putOne.error ?? putThread.error;
 	const nameTaken =
 		saveError instanceof ApiError && saveError.code === "schedule_name_taken";
+	const conflictError =
+		saveError instanceof ApiError && saveError.code === "schedule_conflict";
 	const spaces = useSpaces();
 	const spaceId =
 		existing?.spaceId ??
@@ -358,6 +440,7 @@ function ScheduleForm({
 	const projectLocked =
 		existing !== undefined ||
 		(target.mode === "new_thread" && target.lockProject);
+	const zone = browserZone();
 
 	// 防抖预览：只看时间字段，变化后 400ms 才请求，前一个在途请求作废
 	const timingKey = JSON.stringify(timing(s));
@@ -399,15 +482,45 @@ function ScheduleForm({
 		return list;
 	}, [providers.data, s.executor]);
 
-	const save = async () => {
-		const body = scheduleBody(s, target, existing);
-		if (target.mode === "thread") await putThread.mutateAsync(body);
-		else if (existing) await putOne.mutateAsync(body);
-		else await create.mutateAsync(body);
+	const save = async (ifRev: number | undefined) => {
+		const body: ScheduleInput = {
+			...scheduleBody(s, target, existing),
+			...(ifRev !== undefined ? { ifRev } : {}),
+		};
+		setSubmitting(true);
+		try {
+			if (target.mode === "thread") await putThread.mutateAsync(body);
+			else if (existing) await putOne.mutateAsync(body);
+			else await create.mutateAsync(body);
+		} catch (e) {
+			setSubmitting(false);
+			if (e instanceof ApiError && e.code === "schedule_conflict") {
+				setRejected(true);
+				// 取回最新定义：冲突条的两个动作都以它为准
+				void qc.invalidateQueries({ queryKey: scheduleKeys.all });
+			}
+			return;
+		}
 		onClose();
+	};
+	/** 丢弃草稿，以最新定义重建表单。 */
+	const reload = () => {
+		setS(initialState(existing, target));
+		setBaseRev(latestRev);
+		setRejected(false);
+		create.reset();
+		putOne.reset();
+		putThread.reset();
+	};
+	/** 以最新版本为基线重发草稿（覆盖别处的修改）。 */
+	const overwrite = () => {
+		setBaseRev(latestRev);
+		setRejected(false);
+		void save(latestRev);
 	};
 	const canSave =
 		!saving &&
+		!conflict &&
 		s.prompt.trim() !== "" &&
 		(!newThread || s.name.trim() !== "") &&
 		(s.kind !== "cron" || s.cron.trim() !== "") &&
@@ -457,7 +570,7 @@ function ScheduleForm({
 					<Button
 						variant="primary"
 						disabled={!canSave}
-						onClick={() => void save().catch(() => undefined)}
+						onClick={() => void save(baseRev)}
 					>
 						{t("common.save")}
 					</Button>
@@ -468,9 +581,31 @@ function ScheduleForm({
 				className="flex flex-col gap-3"
 				onSubmit={(e) => {
 					e.preventDefault();
-					if (canSave) void save().catch(() => undefined);
+					if (canSave) void save(baseRev);
 				}}
 			>
+				{conflict && (
+					<div data-testid="schedule-conflict">
+						<Callout
+							tone="warn"
+							role="alert"
+							title={t("schedule.conflict.title")}
+						>
+							<span className="mt-1.5 flex flex-wrap gap-1.5">
+								<Button size="sm" disabled={refreshing} onClick={reload}>
+									{t("schedule.conflict.reload")}
+								</Button>
+								<Button
+									size="sm"
+									disabled={refreshing || saving}
+									onClick={overwrite}
+								>
+									{t("schedule.conflict.overwrite")}
+								</Button>
+							</span>
+						</Callout>
+					</div>
+				)}
 				{existing?.pausedReason === "failures" && (
 					<Callout tone="warn" title={t("schedule.autoPaused")}>
 						{t("schedule.autoPausedHint", { n: existing.failures })}
@@ -594,7 +729,7 @@ function ScheduleForm({
 							>
 								{EVERY_UNITS.map((u) => (
 									<option key={u} value={u}>
-										{t(`schedule.unit.${u}`)}
+										{t(UNIT_LABEL[u])}
 									</option>
 								))}
 							</Select>
@@ -602,7 +737,9 @@ function ScheduleForm({
 					</Field>
 				)}
 				{s.kind === "once" && (
-					<Field label={t("schedule.at")}>
+					<Field
+						label={`${t("schedule.at")}${t("schedule.localTime", { zone })}`}
+					>
 						<TextInput
 							type="datetime-local"
 							value={s.at}
@@ -610,35 +747,42 @@ function ScheduleForm({
 						/>
 					</Field>
 				)}
-				<div className="grid gap-3 sm:grid-cols-2">
-					<Field label={t("schedule.timezone")}>
-						<Select
-							value={s.timezone}
-							onChange={(e) => set("timezone", e.target.value)}
+				{s.kind !== "once" && (
+					// 「一次」是绝对时间，时区不参与解释，不给选择
+					<div className="grid gap-3 sm:grid-cols-2">
+						<Field label={t("schedule.timezone")}>
+							<Select
+								value={s.timezone}
+								onChange={(e) => set("timezone", e.target.value)}
+							>
+								{zoneList(s.timezone).map((z) => (
+									<option key={z} value={z}>
+										{z}
+									</option>
+								))}
+							</Select>
+						</Field>
+						<Field
+							label={`${t("schedule.endsAt")}${t("schedule.localTime", { zone })}`}
+							hint={t("schedule.endsAtHint")}
 						>
-							{zoneList(s.timezone).map((z) => (
-								<option key={z} value={z}>
-									{z}
-								</option>
-							))}
-						</Select>
-					</Field>
-					{s.kind !== "once" && (
-						<Field label={t("schedule.endsAt")} hint={t("schedule.endsAtHint")}>
 							<TextInput
 								type="datetime-local"
 								value={s.endsAt}
 								onChange={(e) => set("endsAt", e.target.value)}
 							/>
 						</Field>
-					)}
-				</div>
+					</div>
+				)}
 				<div
 					data-testid="schedule-preview"
 					className="rounded-md bg-inset px-3 py-2 text-xs"
 				>
 					<div className="mb-1 font-medium text-muted">
 						{t("schedule.preview")}
+						<span className="font-normal text-faint">
+							{t("schedule.localTime", { zone })}
+						</span>
 					</div>
 					{preview === null ? (
 						<Spinner size={12} />
@@ -734,7 +878,7 @@ function ScheduleForm({
 					onChange={(v) => set("enabled", v)}
 					label={t("schedule.enabled")}
 				/>
-				{!nameTaken && <ErrorText error={saveError} />}
+				{!nameTaken && !conflictError && <ErrorText error={saveError} />}
 				<ErrorText error={runNow.error ?? del.error} />
 				{existing && (
 					<section className="flex flex-col gap-1">

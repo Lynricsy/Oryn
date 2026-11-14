@@ -3,6 +3,8 @@
  * 格式与 orynd 一致。`MockServer.handleFetch` 开头先调 `handle`，不归这里的请求返回 null。
  * 协调宿主默认可用；`localStorage["oryn.mock.coordinator"] = "down"` 时模拟不可用（版本钉不符），新建 Space 与助手对话回 409。
  * 预览只认 cron 的数字 / `*` / 区间 / 列表 / 步长（够 mock 用），时区按浏览器本地时间算。
+ * 定义版本 `rev` 与 `ifRev` 条件同 orynd（替换、暂停、恢复 +1；版本不符 409 `schedule_conflict`）；定时每次变化经
+ * `schedulesChanged` 推送 WS `schedules.changed`。
  */
 import type { Schemas, Thread } from "../api/client";
 import {
@@ -30,6 +32,32 @@ export interface AutomationDeps {
 	addThread(t: Thread): void;
 	upsertThread(t: Thread): void;
 	removeThread(id: string): void;
+	/** 某个定时的定义或运行记录变了：推送 `schedules.changed` */
+	schedulesChanged(scheduleId: string): void;
+}
+
+/**
+ * `ifRev` 条件（与 `internal/schedule` 的 `PutForThread` / `updateLocked` 相同）：没给不检查；
+ * 线程内定时 `0` = 只在线程没有定时时新建。不满足时返回 409。
+ */
+function revConflict(
+	ifRev: number | undefined,
+	cur: Schedule | undefined,
+): Response | null {
+	if (ifRev === undefined) return null;
+	if (!cur)
+		return ifRev === 0
+			? null
+			: error(409, "schedule_conflict", "the schedule no longer exists");
+	if (ifRev === 0)
+		return error(409, "schedule_conflict", "the thread already has a schedule");
+	if (cur.rev !== ifRev)
+		return error(
+			409,
+			"schedule_conflict",
+			`the schedule changed since it was loaded (rev ${cur.rev})`,
+		);
+	return null;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -319,6 +347,7 @@ export class MockAutomation {
 		if (i >= 0) this.schedules[i] = s;
 		else this.schedules.push(s);
 		if (s.mode === "thread" && s.threadId) this.setThreadSummary(s.threadId);
+		this.deps.schedulesChanged(s.id);
 	}
 
 	private remove(s: Schedule) {
@@ -326,6 +355,7 @@ export class MockAutomation {
 		if (i >= 0) this.schedules.splice(i, 1);
 		this.runs.delete(s.id);
 		if (s.mode === "thread" && s.threadId) this.setThreadSummary(s.threadId);
+		this.deps.schedulesChanged(s.id);
 	}
 
 	/** 立即运行：`new_thread` 建一个运行线程（带 `scheduleRun`），`thread` 只记一条运行。 */
@@ -551,7 +581,10 @@ export class MockAutomation {
 				(s) => s.mode === "thread" && s.threadId === threadId,
 			);
 			if (m === "PUT") {
-				const s = this.build((await body()) as ScheduleInput, cur, threadId);
+				const b = (await body()) as ScheduleInput;
+				const stale = revConflict(b.ifRev, cur);
+				if (stale) return stale;
+				const s = this.build(b, cur, threadId);
 				if (s instanceof Response) return s;
 				this.save(s);
 				return json(s);
@@ -580,6 +613,7 @@ export class MockAutomation {
 					enabled: false,
 					pausedReason: "user",
 					updatedAt: Date.now(),
+					rev: cur.rev + 1,
 				};
 				this.save(next);
 				return json(next);
@@ -595,12 +629,16 @@ export class MockAutomation {
 					failures: 0,
 					nextRunAt: at[0],
 					updatedAt: Date.now(),
+					rev: cur.rev + 1,
 				};
 				this.save(next);
 				return json(next);
 			}
 			if (m === "PUT") {
-				const s = this.build((await body()) as ScheduleInput, cur);
+				const b = (await body()) as ScheduleInput;
+				const stale = revConflict(b.ifRev, cur);
+				if (stale) return stale;
+				const s = this.build(b, cur);
 				if (s instanceof Response) return s;
 				this.save(s);
 				return json(s);

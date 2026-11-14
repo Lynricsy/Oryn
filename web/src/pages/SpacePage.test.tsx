@@ -197,7 +197,7 @@ describe("SpacePage", () => {
 		);
 	});
 
-	it("窄屏：「聊天 | 线程」两项标签；切到线程时聊天保持挂载", async () => {
+	it("窄屏：「聊天 | 线程」两项标签；切到线程时聊天保持挂载、仍在布局中（透明 + inert，不用 display:none）", async () => {
 		mount(390);
 		const chat = await screen.findByTestId("screen");
 		const tabs = within(chat).getByTestId("space-tabs");
@@ -207,10 +207,24 @@ describe("SpacePage", () => {
 				.map((x) => x.textContent),
 		).toEqual(["聊天", "线程"]);
 		expect(screen.queryByTestId("space-side")).toBeNull();
+		const pane = screen.getByTestId("space-chat");
+		expect(pane).toBe(chat.parentElement);
+		expect(pane).not.toHaveAttribute("inert");
 		fireEvent.click(within(tabs).getByRole("tab", { name: "线程" }));
 		expect(screen.getByTestId("space-side")).toBeVisible();
 		expect(screen.getByTestId("screen")).toBe(chat);
-		expect(chat.parentElement).toHaveClass("hidden");
+		// display:none 会让虚拟转录把在屏行测成 0、切回来阅读位置漂移（同 ThreadPage 的转录面板）
+		expect(pane).not.toHaveClass("hidden");
+		expect(pane).toHaveClass("absolute", "inset-0", "opacity-0");
+		expect(pane).toHaveAttribute("inert");
+		expect(pane.parentElement).toHaveClass("relative");
+		// 切回聊天（用线程页上那组可见的标签；聊天里那组此刻是 inert 的）：回到常规布局
+		const visibleTabs = screen
+			.getAllByTestId("space-tabs")
+			.find((x) => !pane.contains(x)) as HTMLElement;
+		fireEvent.click(within(visibleTabs).getByRole("tab", { name: "聊天" }));
+		expect(pane).not.toHaveAttribute("inert");
+		expect(pane).not.toHaveClass("opacity-0");
 	});
 
 	it("找不到 Space：空状态", async () => {

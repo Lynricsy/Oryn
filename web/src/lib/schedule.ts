@@ -49,18 +49,21 @@ export function parseGoDuration(s: string | undefined): number | null {
 	return consumed === s.length && consumed > 0 ? total : null;
 }
 
-export type EveryUnit = "m" | "h" | "d";
+export type EveryUnit = "s" | "m" | "h" | "d";
 
-/** 秒 → 表单里的「数值 + 单位」（取能整除的最大单位）。 */
+/**
+ * 秒 → 表单里的「数值 + 单位」：依次试天、小时、分钟、秒，取能整除的最大单位。服务端接受任意 ≥1 分钟的整秒间隔
+ * （`internal/schedule/spec.go`），不能整除分钟时落到秒，保证读入后原样保存。
+ */
 export function splitEvery(seconds: number): {
 	value: number;
 	unit: EveryUnit;
 } {
-	if (seconds > 0 && seconds % 86_400 === 0)
-		return { value: seconds / 86_400, unit: "d" };
-	if (seconds > 0 && seconds % 3600 === 0)
-		return { value: seconds / 3600, unit: "h" };
-	return { value: Math.max(1, Math.round(seconds / 60)), unit: "m" };
+	const s = Math.max(1, Math.round(seconds));
+	if (s % 86_400 === 0) return { value: s / 86_400, unit: "d" };
+	if (s % 3600 === 0) return { value: s / 3600, unit: "h" };
+	if (s % 60 === 0) return { value: s / 60, unit: "m" };
+	return { value: s, unit: "s" };
 }
 
 /** 表单的「数值 + 单位」→ 服务端接受的时长串（天换算成小时：Go 不认 `d`）。 */
@@ -70,7 +73,8 @@ export function joinEvery(value: number, unit: EveryUnit): string {
 	return `${n}${unit}`;
 }
 
-function browserZone(): string {
+/** 浏览器所在的 IANA 时区（取不到时 UTC）。 */
+export function browserZone(): string {
 	try {
 		return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 	} catch {
@@ -78,20 +82,20 @@ function browserZone(): string {
 	}
 }
 
-/** 间隔短语：整天 / 整小时 / 小时加分钟 / 分钟。 */
+/** 间隔短语：整天 / 整小时 / 小时加分钟 / 分钟 / 秒（不能整除分钟时按秒，不四舍五入）。 */
 function describeEvery(seconds: number, t: TFunction): string {
 	if (seconds % 86_400 === 0)
 		return t("schedule.describe.everyDays", { n: seconds / 86_400 });
 	if (seconds % 3600 === 0)
 		return t("schedule.describe.everyHours", { n: seconds / 3600 });
-	if (seconds >= 3600 && seconds % 60 === 0)
+	if (seconds % 60 !== 0)
+		return t("schedule.describe.everySeconds", { n: seconds });
+	if (seconds >= 3600)
 		return t("schedule.describe.everyHm", {
 			h: Math.floor(seconds / 3600),
 			m: (seconds % 3600) / 60,
 		});
-	return t("schedule.describe.everyMinutes", {
-		n: Math.max(1, Math.round(seconds / 60)),
-	});
+	return t("schedule.describe.everyMinutes", { n: seconds / 60 });
 }
 
 /**

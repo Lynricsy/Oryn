@@ -273,6 +273,31 @@ describe("RealtimeClient", () => {
 		expect(ws.cmds("get_state")).toHaveLength(1);
 	});
 
+	it("schedules.changed 与每次连接建立都通知定时监听者；取消订阅后不再通知（M9 审查 W6）", async () => {
+		const seen = vi.fn();
+		const off = client.onSchedulesChanged(seen);
+		const ws = await connected(client);
+		// 连接建立：断线期间错过的推送无从补发，先整体对账一次
+		expect(seen).toHaveBeenCalledTimes(1);
+		ws.recv({ type: "schedules.changed", scheduleId: "sch_1" });
+		expect(seen).toHaveBeenCalledTimes(2);
+		// 不相干的消息不触发
+		ws.recv({ type: "pong" });
+		expect(seen).toHaveBeenCalledTimes(2);
+		// 断线重连：新连接 open 时再通知一次
+		ws.drop();
+		vi.advanceTimersByTime(500);
+		await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+		(FakeWS.instances[1] as FakeWS).accept();
+		expect(seen).toHaveBeenCalledTimes(3);
+		off();
+		(FakeWS.instances[1] as FakeWS).recv({
+			type: "schedules.changed",
+			scheduleId: "sch_1",
+		});
+		expect(seen).toHaveBeenCalledTimes(3);
+	});
+
 	it("ui.response 被拒：错误进全局提示并重订阅取回待答请求（W14）", async () => {
 		const ws = await connected(client);
 		client.subscribe(TID);

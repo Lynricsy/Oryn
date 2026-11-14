@@ -257,6 +257,8 @@ export class MockServer {
 				rev: ++this.rev,
 			});
 		},
+		schedulesChanged: (scheduleId) =>
+			this.broadcast({ type: "schedules.changed", scheduleId }),
 	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
