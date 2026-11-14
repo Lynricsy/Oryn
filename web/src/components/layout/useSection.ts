@@ -2,7 +2,7 @@
  * 分区（M9.6）的 React 接入：当前分区 = f(路由)（`sectionOf`），切分区 = 导航到该分区记住的路径（`sectionTarget`），
  * 路由变化后由 `useSectionTracker` 记下路径（存 sessionStorage，见 `uiStore.sectionPaths`）。规则全部在 `lib/sections.ts`。
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
 	type SectionId,
@@ -42,6 +42,15 @@ export function useSection(): SectionId {
 }
 
 /**
+ * 「此刻在哪个分区」的依据（所有 useSwitchSection 共享）：`committed` = 最近一次提交的路由路径（布局副作用里更新）；
+ * `pending` = 提交之后发出的最近一次分区导航的目标。路由更新走 transition：目标页渲染慢（懒加载、四个分区 pane
+ * 一起渲染）时 URL 已经变了、树还没提交，其间旧树的紧急重渲染（store 更新）拿到的仍是旧路径。若按它判断，连按
+ * Ctrl+2…4 再按 Ctrl+1 会被当成「已在线程分区」而丢掉。有 pending 以它为准；已提交路径一变（含点链接）就清掉。
+ */
+let committed: string | undefined;
+let pending: string | null = null;
+
+/**
  * 切到某分区：已在该分区时不导航（`toggleSink` 且此刻是打开着的手机下沉侧栏 → 收起它）；
  * 否则导航到 `sectionTarget(...)`（push，不 replace：下沉侧栏的历史标记要留在栈里，返回键才先收侧栏）。
  */
@@ -51,20 +60,27 @@ export function useSwitchSection(): (
 ) => void {
 	const navigate = useNavigate();
 	const { pathname } = useLocation();
-	const here = useRef(pathname);
-	here.current = pathname;
+	useLayoutEffect(() => {
+		committed = pathname;
+		pending = null;
+	}, [pathname]);
 	const nav = useRef(navigate);
 	nav.current = navigate;
 	return useCallback((section, opts) => {
-		if (sectionOf(here.current) === section) {
+		const here = pending ?? committed ?? "/";
+		if (sectionOf(here) === section) {
 			const ui = uiStore.getState();
 			if (opts?.toggleSink && ui.sidebarOpen && isSinkLayout())
 				ui.setSidebar(false);
 			return;
 		}
-		nav.current(
-			sectionTarget(section, uiStore.getState().sectionPaths[section], kindOf),
+		const to = sectionTarget(
+			section,
+			uiStore.getState().sectionPaths[section],
+			kindOf,
 		);
+		pending = to;
+		nav.current(to);
 	}, []);
 }
 
