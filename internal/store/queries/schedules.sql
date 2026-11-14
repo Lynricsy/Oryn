@@ -18,7 +18,7 @@ UPDATE schedules SET name = @name, kind = @kind, spec = @spec, timezone = @timez
     ends_at = @ends_at, prompt = @prompt, enabled = @enabled, paused_reason = @paused_reason,
     next_run_at = @next_run_at, failures = 0, space_id = @space_id, model = @model,
     thinking_level = @thinking_level, provider = @provider, orb_type = @orb_type, overlap = @overlap,
-    keep_last = @keep_last, updated_at = @updated_at
+    keep_last = @keep_last, created_by = @created_by, updated_at = @updated_at
 WHERE id = @id;
 
 -- name: GetSchedule :one

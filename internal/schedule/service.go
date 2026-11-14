@@ -239,7 +239,7 @@ func (s *Service) Put(ctx context.Context, id string, in Input, createdBy string
 		}
 		return s.createLocked(ctx, in, createdBy)
 	}
-	return s.updateLocked(ctx, id, in)
+	return s.updateLocked(ctx, id, in, createdBy)
 }
 
 // PutForThread 设置线程的线程内定时（至多一个）：已有则替换，否则新建。
@@ -256,7 +256,7 @@ func (s *Service) PutForThread(ctx context.Context, threadID string, in Input, c
 	cur, err := s.st.Q.GetScheduleByThread(ctx, threadID)
 	switch {
 	case err == nil:
-		return s.updateLocked(ctx, cur.ID, in)
+		return s.updateLocked(ctx, cur.ID, in, createdBy)
 	case errors.Is(err, sql.ErrNoRows):
 		return s.createLocked(ctx, in, createdBy)
 	default:
@@ -327,7 +327,11 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	return s.Get(ctx, p.ID)
 }
 
-func (s *Service) updateLocked(ctx context.Context, id string, in Input) (apigen.Schedule, error) {
+// updateLocked 整份替换定义；created_by 记最后一次定义它的一方（用户在界面里改回来也记 user）。
+func (s *Service) updateLocked(ctx context.Context, id string, in Input, createdBy string) (apigen.Schedule, error) {
+	if createdBy != createdByAgent {
+		createdBy = createdByUser
+	}
 	cur, err := s.getRow(ctx, id)
 	if err != nil {
 		return apigen.Schedule{}, err
@@ -369,7 +373,7 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input) (apigen
 	p := db.UpdateScheduleDefParams{
 		ID: id, Name: norm.Name, Kind: norm.Kind, Spec: norm.spec(), Timezone: norm.Timezone, EndsAt: norm.EndsAt,
 		Prompt: norm.Prompt, Enabled: enabled, PausedReason: paused, NextRunAt: next, UpdatedAt: now.UnixMilli(),
-		Overlap: OverlapSkip, KeepLast: defaultKeepLast,
+		Overlap: OverlapSkip, KeepLast: defaultKeepLast, CreatedBy: createdBy,
 	}
 	if norm.Kind == KindOnce {
 		p.RunAt = norm.At

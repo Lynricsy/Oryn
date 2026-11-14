@@ -791,8 +791,8 @@ UPDATE schedules SET name = ?1, kind = ?2, spec = ?3, timezone = ?4, run_at = ?5
     ends_at = ?6, prompt = ?7, enabled = ?8, paused_reason = ?9,
     next_run_at = ?10, failures = 0, space_id = ?11, model = ?12,
     thinking_level = ?13, provider = ?14, orb_type = ?15, overlap = ?16,
-    keep_last = ?17, updated_at = ?18
-WHERE id = ?19
+    keep_last = ?17, created_by = ?18, updated_at = ?19
+WHERE id = ?20
 `
 
 type UpdateScheduleDefParams struct {
@@ -813,6 +813,7 @@ type UpdateScheduleDefParams struct {
 	OrbType       *string `json:"orbType"`
 	Overlap       string  `json:"overlap"`
 	KeepLast      int64   `json:"keepLast"`
+	CreatedBy     string  `json:"createdBy"`
 	UpdatedAt     int64   `json:"updatedAt"`
 	ID            string  `json:"id"`
 }
@@ -838,6 +839,7 @@ func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefPa
 		arg.OrbType,
 		arg.Overlap,
 		arg.KeepLast,
+		arg.CreatedBy,
 		arg.UpdatedAt,
 		arg.ID,
 	)

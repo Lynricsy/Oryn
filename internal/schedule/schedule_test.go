@@ -609,6 +609,24 @@ func TestArchivedThreadPauses(t *testing.T) {
 	assert.Empty(t, f.runs(s.ID))
 }
 
+// 替换定时时 created_by 记最后一次定义它的一方：用户建、agent 替换后为 agent，用户再改回为 user。
+func TestReplaceUpdatesCreatedBy(t *testing.T) {
+	f := newFixture(t)
+	th := f.thread()
+	s, err := f.s.PutForThread(f.ctx, th, Input{Kind: KindEvery, Every: "1h", Prompt: "p"}, "user")
+	require.NoError(t, err)
+	assert.Equal(t, apigen.ScheduleCreatedByUser, s.CreatedBy)
+
+	s2, err := f.s.PutForThread(f.ctx, th, Input{Kind: KindEvery, Every: "2h", Prompt: "q"}, "agent")
+	require.NoError(t, err)
+	assert.Equal(t, s.ID, s2.ID)
+	assert.Equal(t, apigen.ScheduleCreatedByAgent, s2.CreatedBy)
+
+	s3, err := f.s.Put(f.ctx, s.ID, Input{Kind: KindEvery, Every: "3h", Prompt: "r"}, "user")
+	require.NoError(t, err)
+	assert.Equal(t, apigen.ScheduleCreatedByUser, s3.CreatedBy)
+}
+
 func TestRunNowAndSetEnabled(t *testing.T) {
 	f := newFixture(t)
 	th := f.thread()
