@@ -28,6 +28,7 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
 - **项目快照与预热池**：项目首次完成 `.oryn/setup` 后自动生成干净磁盘快照（Docker 镜像提交或 Firecracker `reflink` 稀疏盘复制），后续新线程跳过构建直接运行 `.oryn/resume`；高频项目可配置 1–3 台常驻预热池，新建线程即刻认领。
 - **自动冻结与按需唤醒**：Agent 与用户空闲达到阈值后自动冻结（暂停容器或 vCPU），打开线程或访问受管服务时自动唤醒；超时冻结后转为停机并完整保留磁盘状态。
 - **全功能工程面板**：工作台右侧内置 **环境信息**（CPU / 内存采样曲线、10 段彩色上下文构成、可交互待办与子 Agent 状态）、**Git 改动**（实时 Diff、暂存与取消暂存）、**文件树与编辑器**、**Web 终端**（256K 字符快照续传与流控背压恢复）、**受管服务与 Portal**（经泛域名 `https://t-<短码>-p<端口>.<portal_domain>/` 安全暴露开发服务器，支持限时公开预览）以及 **远程桌面**（内置 TigerVNC + Openbox + Chromium，支持跨线程读写锁复用登录态 Profile）。
+- **图形化 Agent 配置，保存即生效**：设置页「Agent」分组把技能、子 Agent、模型角色、提示词与上下文、命令 / 规则 / 提示片段、扩展 / hook / 工具做成表单（编辑 `config.yml` 保留原有注释，启停沿用 Oryn Core 的 `disabledExtensions` 与 `task.disabledAgents`），原始文件浏览器保留为「高级」入口；保存后数秒内下发到所有运行中的 orb，技能、命令、规则、上下文文件与 MCP 在会话空闲时热重载，hook、扩展模块、自定义工具等需重启的改动在页面顶部列出受影响会话，一键安排空闲时懒重启。
 - **项目级中央 Agent 配置**：每个项目在控制面另有一层 Agent 配置，内容可以是规则、技能、子 Agent、命令、提示片段、扩展、hook、工具、`mcp.json`、`config.yml` 与 `AGENTS.md`。这一层在项目页的「Agent 配置」卡片里编辑，或用 `oryn config push|pull --project <项目>` 同步。每次 setup / resume 时，这一层原样镜像到 orb 的 `~/.oryn/project-config/.omp/`，不写进仓库工作区，`git status` 保持干净。同名条目的优先级是「项目层 > 仓库 `.omp/` > 全局」，`AGENTS.md` 与仓库里的并存。`/omfg` 生成规则后可以选「本项目」或「全局」，规则会写回中央，由新建或唤醒的 orb 拿到。约束如下：
   - 全局与项目两层合计的下发编码不能超过 88 MiB，超过时写入返回 413。
   - `models.yml` 只能放在全局层。
@@ -35,6 +36,8 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
   - 为防止不可信仓库借符号链接把本机文件（如 `~/.ssh`）传上去，`config push --project` 拒绝以下情况：推送目录本身是符号链接，或其中有指向目录外、无法解析、指向被排除路径的链接。全局推送仍照常跟随 `~/.omp/agent` 里指向别处的链接。两种推送都只收普通文件，`--exclude` 与 `.orynignore` 会同时按链接名和真实路径匹配。
   - 同一线程同时只能有一个 `/omfg`。
   - `/omfg` 写回中央的规则必须与确认时的预览一致；中央已有同名但内容不同的规则时不覆盖，需要到 Agent 配置里手工合并。
+- **中央模型目录**：控制面用钉定版本的 Oryn Core 一次性运行 `omp models` 生成模型列表（`models.yml` 自定义 provider 与有密钥的内置 provider，附各自的思考档位），设置页、首屏与线程内三处共用，无需打开线程或唤醒 orb；配置变化后自动重算，24 小时过期，也可手动刷新。
+- **头像体系**：默认 Agent 身份、全局助手、每个 role（含内置 role 与不在轮换里的 role）和每个子 Agent 都能设头像，内置 role / Agent 自带默认 Nerd 字形；子 Agent 总览、详情与 task 卡片用头像加光环动效区分运行、排队、完成、失败与仅存转录，公开分享页只带出分享范围内实际用到的 Agent 头像。
 
 ### 2. Space 多线程协调、定时巡检与全量统计
 
@@ -43,7 +46,9 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
   <img alt="左图：Space 协调工作区并行调度多个子线程并配置工作日定时巡检；右图：统计分析页展示多模型成本堆叠柱状图、缓存命中率与日/月预算进度。" src="docs/assets/coord-stats-light.png" width="100%">
 </picture>
 
-- **Space 与全局助手**：控制面内置 `@host` 协调宿主，按需在独立系统账号、Landlock LSM、seccomp-bpf 与 Linux 命名空间围成的严格无工具沙箱中拉起协调进程，拆解阶段目标、并发创建与检视子线程，并在需要人工决策时汇总提醒。
+- **Space 与全局助手**：控制面内置 `@host` 协调宿主，按需在独立系统账号、Landlock LSM、seccomp-bpf 与 Linux 命名空间围成、只开放内置 `read` / `write` 的严格沙箱中拉起协调进程，拆解阶段目标、并发创建与检视子线程，并在需要人工决策时汇总提醒。
+- **首屏直达全局助手**：首屏输入框的 role 胶囊可选全局助手、轮换里的 role，或直接指定模型与思考强度；选全局助手时执行位置与项目胶囊收起、输入框换上流光描边，发送即新建助手对话并带上首条消息、附件与所选模型。「新对话默认对象」存在服务端，各设备一致。
+- **助手文件库**：助手对话里的附件、助手用 `write` 写出并存库的文件、orb 内 Agent 用 `oryn library put` 存入的文件统一进入文件库，并同步进协调宿主沙箱供 omp 自带的 `read` 读取（PDF、Office、图片、压缩包、SQLite 等）；助手开新线程时可附带库文件；全局助手页的文件库面板可预览、下载、删除、切换共享并查看来源。
 - **双模式定时任务**：支持在单个已有线程内按 Cron 或固定间隔触发巡检提示词（`oryn schedule set`），也支持项目级定时每次拉起全新隔离线程并按 `keepLast` 自动归档历史运行（`oryn schedule add`）。
 - **事实级成本与产出统计**：控制面直接从会话条目入库模型调用、工具执行与生命周期事件（自动剔除分支 fork 造成的历史重复计费），按模型、项目、Space 或用途穿透统计成本、缓存命中率、TTFT 与交付提交数，支持 CSV 导出与日 / 月度预算阈值系统通知。
 
