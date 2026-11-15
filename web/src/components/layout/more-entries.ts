@@ -6,7 +6,7 @@ import type { IconName } from "../ui/icons";
 
 export interface MoreEntry {
 	key: string;
-	group: "overview" | "settings";
+	group: "overview" | "agent" | "settings";
 	icon: IconName;
 	/** i18n 键 */
 	labelKey: string;
@@ -38,6 +38,42 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		icon: "chart",
 		labelKey: "nav.stats",
 		to: "/stats",
+	},
+	// Agent（M13）：omp 配置的表单化子页；「高级」是原始文件浏览器，放在组末
+	{
+		key: "agent-skills",
+		group: "agent",
+		icon: "sparkle",
+		labelKey: "settings.agent-skills",
+		to: "/settings/agent-skills",
+	},
+	{
+		key: "agent-prompts",
+		group: "agent",
+		icon: "fileText",
+		labelKey: "settings.agent-prompts",
+		to: "/settings/agent-prompts",
+	},
+	{
+		key: "agent-commands",
+		group: "agent",
+		icon: "terminal",
+		labelKey: "settings.agent-commands",
+		to: "/settings/agent-commands",
+	},
+	{
+		key: "agent-extensions",
+		group: "agent",
+		icon: "plugs",
+		labelKey: "settings.agent-extensions",
+		to: "/settings/agent-extensions",
+	},
+	{
+		key: "agent-config",
+		group: "agent",
+		icon: "file",
+		labelKey: "settings.agent-config",
+		to: "/settings/agent-config",
 	},
 	{
 		key: "identity",
@@ -94,13 +130,6 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		icon: "fork",
 		labelKey: "settings.git-identity",
 		to: "/settings/git-identity",
-	},
-	{
-		key: "agent-config",
-		group: "settings",
-		icon: "file",
-		labelKey: "settings.agent-config",
-		to: "/settings/agent-config",
 	},
 	{
 		key: "shares",

@@ -979,7 +979,11 @@
 		"projects": "项目",
 		"secrets": "密钥",
 		"git-identity": "Git 身份",
-		"agent-config": "agent 配置",
+		"agent-config": "高级",
+		"agent-skills": "技能",
+		"agent-prompts": "提示词与上下文",
+		"agent-commands": "命令与规则",
+		"agent-extensions": "扩展与工具",
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
@@ -1084,6 +1088,116 @@
 		"hint": "omp 的文本配置（config.yml、models.yml、AGENTS.md、skills/ …）。models.yml 里的明文 API key 保存时自动抽进密钥库。",
 		"pushHint": "用 oryn config push 从本机导入。",
 		"title": "agent 配置"
+	},
+	"agentPages": {
+		"scope": "保存后下发到 orb，不作用于全局助手。",
+		"new": "新建",
+		"newTitle": "新建条目（{{kind}}）",
+		"edit": "编辑 {{name}}",
+		"delete": "删除 {{name}}",
+		"enable": "启用 {{name}}",
+		"createFile": "创建 {{name}}",
+		"deleteTitle": "删除 {{name}}？",
+		"deleteFile": "将删除 {{path}}，无法撤销。",
+		"deleteFiles": "将删除整个目录（{{count}} 个文件），无法撤销。",
+		"name": "名称",
+		"nameHint": "以字母或数字开头，可含字母、数字和 . _ -，最长 64 个字符。",
+		"body": "正文",
+		"missingDescription": "缺少描述，不会加载",
+		"frontmatterBroken": "frontmatter 有误",
+		"frontmatterRaw": "frontmatter 无法解析（{{reason}}），按原文编辑。",
+		"errors": {
+			"nameRequired": "请填写名称。",
+			"nameInvalid": "名称格式不符合要求。",
+			"nameTaken": "已有同名条目。",
+			"required": "必填。",
+			"modified": "文件已在别处修改，已载入最新内容，请重新操作。",
+			"configInvalid": "config.yml 不是合法的 YAML（{{reason}}），先在「高级」里修好。"
+		},
+		"fields": {
+			"description": "描述",
+			"argumentHint": "参数提示",
+			"argumentHintHint": "输入命令时跟在后面的灰字，如 <文件> [选项]。",
+			"globs": "文件匹配",
+			"globsHint": "规则适用的文件，逗号分隔的 glob，如 src/**/*.ts。",
+			"alwaysApply": "始终应用",
+			"alwaysApplyHint": "每次请求都带上这条规则，不按需加载。",
+			"applyTo": "适用范围",
+			"applyToHint": "glob，如 **/*.py。"
+		},
+		"skills": {
+			"title": "技能",
+			"hint": "每个技能是 skills/<名称>/SKILL.md，agent 按描述决定何时读取。",
+			"empty": "还没有技能。",
+			"nameHint": "小写字母、数字与连字符，以字母或数字开头，最长 64 个字符。",
+			"descriptionHint": "写清楚什么时候用。没有描述的技能不会加载。"
+		},
+		"commands": {
+			"title": "斜杠命令",
+			"hint": "commands/<名称>.md，在输入框里用 /<名称> 调用，正文是展开后的提示词。",
+			"empty": "还没有命令。"
+		},
+		"rules": {
+			"title": "规则",
+			"hint": "rules/<名称>.md 或 .mdc，按描述与文件匹配按需加载，也可设为始终应用。",
+			"empty": "还没有规则。"
+		},
+		"prompts": {
+			"title": "提示片段",
+			"hint": "prompts/<名称>.md，可从 /prompts 菜单插入。",
+			"empty": "还没有提示片段。"
+		},
+		"instructions": {
+			"title": "指令文件",
+			"hint": "instructions/<名称>.md，处理与适用范围匹配的文件时附上。",
+			"empty": "还没有指令文件。"
+		},
+		"context": {
+			"title": "提示词文件",
+			"hint": "omp 主目录顶层的提示词与上下文文件，未创建的可以直接创建。",
+			"missing": "未创建",
+			"replacesBuiltin": "替换内置提示词",
+			"systemWarningTitle": "SYSTEM.md 会整段替换内置系统提示词",
+			"systemWarning": "它的内容会代替 omp 内置的系统提示词。只想追加内容时用 APPEND_SYSTEM.md。",
+			"files": {
+				"agents": "全局上下文：每个会话都会读到的约定与偏好",
+				"rules": "常驻规则：全文随每次请求发送",
+				"appendSystem": "追加到系统提示词末尾",
+				"personality": "agent 的语气与性格",
+				"titleSystem": "生成会话标题时用的提示词",
+				"system": "替换整个内置系统提示词"
+			}
+		},
+		"code": {
+			"notLoaded": "不会加载",
+			"open": "编辑 {{name}} 的源码",
+			"restart": "扩展、hook 与自定义工具在会话重启后才生效。",
+			"newIn": "在「{{section}}」中新建",
+			"continue": "继续",
+			"file": "文件",
+			"fileName": "文件名",
+			"hookType": "时机",
+			"hookPre": "pre：工具调用前",
+			"hookPost": "post：工具调用后",
+			"extensions": {
+				"title": "扩展模块",
+				"hint": "extensions/ 下的 .ts、.js 文件，或带 index.ts、package.json 的子目录。",
+				"empty": "还没有扩展模块。",
+				"nameHint": "以 .ts 或 .js 结尾，如 my-extension.ts。"
+			},
+			"hooks": {
+				"title": "Hook",
+				"hint": "hooks/pre 与 hooks/post 下的文件；文件名去掉扩展名是要拦截的工具，* 表示所有工具。",
+				"empty": "还没有 hook。",
+				"nameHint": "工具名加扩展名，如 bash.ts；*.ts 拦截所有工具。"
+			},
+			"tools": {
+				"title": "自定义工具",
+				"hint": "tools/ 下的 .ts、.js、.sh、.bash、.py、.md、.json 文件，或带 index.ts 的子目录。",
+				"empty": "还没有自定义工具。",
+				"nameHint": "以 .ts、.js、.sh、.bash、.py、.md 或 .json 结尾。"
+			}
+		}
 	},
 	"about": {
 		"language": "界面语言",
@@ -2469,7 +2583,8 @@
 		}
 	},
 	"more": {
-		"overview": "概览"
+		"overview": "概览",
+		"agent": "Agent"
 	},
 	"identity": {
 		"agentTitle": "Agent 身份",

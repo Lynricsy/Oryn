@@ -1,6 +1,6 @@
 /**
  * 「更多」分区侧栏：连接状态行（只在断线时出现，`warn` 脉动、`unauthorized` 为 `err`）、「切换明暗」，
- * 其后是 `MORE_ENTRIES` 的两组条目（概览 / 设置）；浏览器里不出现桌面 App 专属的条目。不设分区标题行。
+ * 其后是 `MORE_ENTRIES` 的三组条目（概览 / Agent / 设置）；浏览器里不出现桌面 App 专属的条目。不设分区标题行。
  */
 import type { ParseKeys } from "i18next";
 import type { ReactNode } from "react";
@@ -22,6 +22,7 @@ const MODE_ICON = {
 
 const GROUPS = [
 	{ key: "overview", labelKey: "more.overview" },
+	{ key: "agent", labelKey: "more.agent" },
 	{ key: "settings", labelKey: "nav.settings" },
 ] as const satisfies readonly {
 	key: MoreEntry["group"];

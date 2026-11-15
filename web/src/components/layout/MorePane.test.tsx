@@ -1,5 +1,5 @@
 /**
- * 「更多」分区侧栏（M9.6）：条目与 `MORE_ENTRIES` 一致（浏览器里没有「桌面」，桌面壳里有）、分两组、当前页高亮；
+ * 「更多」分区侧栏（M9.6）：条目与 `MORE_ENTRIES` 一致（浏览器里没有「桌面」，桌面壳里有）、分三组、当前页高亮；
  * 连接行只在断线时出现（在第一行）；明暗切换；注册表里的每个 labelKey 在两种语言里都有。
  */
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -82,6 +82,7 @@ describe("MorePane", () => {
 		);
 		expect(groups.map((g) => g.firstElementChild?.textContent)).toEqual([
 			"概览",
+			"Agent",
 			"设置",
 		]);
 		for (const g of groups)

@@ -77,6 +77,10 @@ import {
 } from "../state/theme";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import AutomationsSettings from "./settings/AutomationsSettings";
+import CollectionsPage from "./settings/agent/CollectionsPage";
+import ExtensionsPage from "./settings/agent/ExtensionsPage";
+import PromptsPage from "./settings/agent/PromptsPage";
+import SkillsPage from "./settings/agent/SkillsPage";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
@@ -92,6 +96,10 @@ export type SettingsSection =
 	| "secrets"
 	| "browser-profiles"
 	| "git-identity"
+	| "agent-skills"
+	| "agent-prompts"
+	| "agent-commands"
+	| "agent-extensions"
 	| "agent-config"
 	| "identity"
 	| "appearance"
@@ -1225,6 +1233,10 @@ export function SettingsPage({
 					{section === "secrets" && <SecretsSettings />}
 					{section === "browser-profiles" && <BrowserProfilesSettings />}
 					{section === "git-identity" && <GitIdentitySettings />}
+					{section === "agent-skills" && <SkillsPage />}
+					{section === "agent-prompts" && <PromptsPage />}
+					{section === "agent-commands" && <CollectionsPage />}
+					{section === "agent-extensions" && <ExtensionsPage />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
 					{section === "appearance" && <ThemeSettings />}

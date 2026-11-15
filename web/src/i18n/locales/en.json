@@ -979,7 +979,11 @@
 		"projects": "Projects",
 		"secrets": "Secrets",
 		"git-identity": "Git identity",
-		"agent-config": "Agent config",
+		"agent-config": "Advanced",
+		"agent-skills": "Skills",
+		"agent-prompts": "Prompts & context",
+		"agent-commands": "Commands & rules",
+		"agent-extensions": "Extensions & tools",
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
@@ -1084,6 +1088,116 @@
 		"hint": "omp's text config (config.yml, models.yml, AGENTS.md, skills/ …). Literal API keys in models.yml are moved into the secret store on save.",
 		"pushHint": "Import from your machine with `oryn config push`.",
 		"title": "Agent config"
+	},
+	"agentPages": {
+		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
+		"new": "New",
+		"newTitle": "New entry in {{kind}}",
+		"edit": "Edit {{name}}",
+		"delete": "Delete {{name}}",
+		"enable": "Enable {{name}}",
+		"createFile": "Create {{name}}",
+		"deleteTitle": "Delete {{name}}?",
+		"deleteFile": "This deletes {{path}} and can't be undone.",
+		"deleteFiles": "This deletes the whole folder ({{count}} files) and can't be undone.",
+		"name": "Name",
+		"nameHint": "Starts with a letter or digit; letters, digits and . _ - only; up to 64 characters.",
+		"body": "Body",
+		"missingDescription": "No description, won't load",
+		"frontmatterBroken": "Bad frontmatter",
+		"frontmatterRaw": "The frontmatter can't be parsed ({{reason}}). Editing the raw file.",
+		"errors": {
+			"nameRequired": "Enter a name.",
+			"nameInvalid": "That name doesn't fit the required format.",
+			"nameTaken": "That name is already taken.",
+			"required": "Required.",
+			"modified": "The file was changed elsewhere. The latest version is loaded; try again.",
+			"configInvalid": "config.yml isn't valid YAML ({{reason}}). Fix it under Advanced first."
+		},
+		"fields": {
+			"description": "Description",
+			"argumentHint": "Argument hint",
+			"argumentHintHint": "Ghost text shown after the command, e.g. <file> [options].",
+			"globs": "File globs",
+			"globsHint": "Files the rule applies to, comma-separated, e.g. src/**/*.ts.",
+			"alwaysApply": "Always apply",
+			"alwaysApplyHint": "Send the rule with every request instead of loading it on demand.",
+			"applyTo": "Applies to",
+			"applyToHint": "A glob such as **/*.py."
+		},
+		"skills": {
+			"title": "Skills",
+			"hint": "Each skill is skills/<name>/SKILL.md; the agent reads it when the description fits the task.",
+			"empty": "No skills yet.",
+			"nameHint": "Lowercase letters, digits and hyphens; starts with a letter or digit; up to 64 characters.",
+			"descriptionHint": "Say when to use it. Skills without a description aren't loaded."
+		},
+		"commands": {
+			"title": "Slash commands",
+			"hint": "commands/<name>.md, invoked as /<name>; the body is the prompt it expands to.",
+			"empty": "No commands yet."
+		},
+		"rules": {
+			"title": "Rules",
+			"hint": "rules/<name>.md or .mdc, loaded on demand by description and file globs, or always applied.",
+			"empty": "No rules yet."
+		},
+		"prompts": {
+			"title": "Prompt snippets",
+			"hint": "prompts/<name>.md, available from the /prompts menu.",
+			"empty": "No prompt snippets yet."
+		},
+		"instructions": {
+			"title": "Instructions",
+			"hint": "instructions/<name>.md, attached when working on files that match applyTo.",
+			"empty": "No instructions yet."
+		},
+		"context": {
+			"title": "Prompt files",
+			"hint": "Prompt and context files at the top of the omp home. Missing ones can be created here.",
+			"missing": "Not created",
+			"replacesBuiltin": "Replaces built-in prompt",
+			"systemWarningTitle": "SYSTEM.md replaces the built-in system prompt",
+			"systemWarning": "Its content is used instead of omp's built-in system prompt. To add to the prompt instead, use APPEND_SYSTEM.md.",
+			"files": {
+				"agents": "Global context: conventions and preferences every session reads",
+				"rules": "Sticky rules: the full text is sent with every request",
+				"appendSystem": "Appended to the end of the system prompt",
+				"personality": "The agent's tone and personality",
+				"titleSystem": "Prompt used to generate session titles",
+				"system": "Replaces the entire built-in system prompt"
+			}
+		},
+		"code": {
+			"notLoaded": "Won't load",
+			"open": "Edit source of {{name}}",
+			"restart": "Extensions, hooks and custom tools take effect after the session restarts.",
+			"newIn": "New in {{section}}",
+			"continue": "Continue",
+			"file": "File",
+			"fileName": "File name",
+			"hookType": "When",
+			"hookPre": "pre: before the tool call",
+			"hookPost": "post: after the tool call",
+			"extensions": {
+				"title": "Extension modules",
+				"hint": ".ts and .js files in extensions/, or subfolders with index.ts or package.json.",
+				"empty": "No extension modules yet.",
+				"nameHint": "Ends in .ts or .js, e.g. my-extension.ts."
+			},
+			"hooks": {
+				"title": "Hooks",
+				"hint": "Files in hooks/pre and hooks/post; the file name without extension is the tool to intercept, * means every tool.",
+				"empty": "No hooks yet.",
+				"nameHint": "Tool name plus extension, e.g. bash.ts; *.ts intercepts every tool."
+			},
+			"tools": {
+				"title": "Custom tools",
+				"hint": ".ts, .js, .sh, .bash, .py, .md and .json files in tools/, or subfolders with index.ts.",
+				"empty": "No custom tools yet.",
+				"nameHint": "Ends in .ts, .js, .sh, .bash, .py, .md or .json."
+			}
+		}
 	},
 	"about": {
 		"language": "Language",
@@ -2469,7 +2583,8 @@
 		}
 	},
 	"more": {
-		"overview": "Overview"
+		"overview": "Overview",
+		"agent": "Agent"
 	},
 	"identity": {
 		"agentTitle": "Agent identity",
