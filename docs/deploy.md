@@ -132,7 +132,7 @@ orb 里的 agent 有 root（镜像给 `user` 配了免密 sudo），应把 orb �
 1. 机器不存在：创建并以分离方式启动 `orbd run`，环境里带 `ORYN_URL`、`ORYN_ORB_ID`、`ORYN_ORB_TOKEN`。若机器来自快照，启动 orbd **之前**把 `$HOME/.oryn/orb-token` 覆盖为本次令牌（或删除它），否则 orbd 会读到源 orb 的令牌。
 2. 机器已存在（解冻、开机或已在运行）：恢复运行后，以 orbd 的用户原子写入 `$HOME/.oryn/orb-token`（内容 = `ORYN_ORB_TOKEN`，权限 0600，先写临时文件再 `mv`），然后向 orbd 发 `SIGHUP`。
 3. 环境变量 `ORYN_ORB_CA_PEM`：orynd 开启 `orb_tls` 时，这里是 link 用的 CA（PEM），没开时为空。新建机器时把它原样传给 orbd 的环境；orbd 只信这一张 CA，不用系统根证书。
-4. 任务带非空的 `ORB_SNAPSHOT_ID` 时，脚本应在输出里单独打一行 `ORYN_SNAPSHOT_USED=1`（机器确实从快照创建）或 `ORYN_SNAPSHOT_USED=0`（退回了基础镜像），以最后一行为准。控制面按这一行判断快照血统，不信 orb 自报。没有这一行时视为「用了快照」，以兼容旧脚本；但脚本若会退回基础镜像，就必须打出 `=0`，否则这台从零 setup 的 orb 会被当作旧快照的后代。
+4. 任务带非空的 `ORB_SNAPSHOT_ID` 时，脚本**必须**在输出里单独打一行 `ORYN_SNAPSHOT_USED=1`（机器确实从快照创建）或 `ORYN_SNAPSHOT_USED=0`（退回了基础镜像），以最后一行为准。控制面按这一行判断快照血统，不信 orb 自报。没有这一行就视为来源未知：这台 orb 不继承快照血统，也不发布任何新快照（快照本身不退役）。所以不打标记的脚本，项目快照最多被复用到 `max_age`，期间不会增量刷新。
 5. 脚本退出码 0 = 成功。脚本在独立进程组中运行，任务超时（5 分钟）时整组被 `SIGKILL`；脚本退出后仍有后代进程占着 stdout / stderr 时，provider 至多再等 5 秒就返回（退出码 0 仍算成功），所以后台启动的 orbd 应把输出重定向到日志文件。
 
 ### 容器能力
@@ -353,7 +353,7 @@ pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
 - **什么时候拍**：项目 orb 第一次 setup 成功、且 setup 用时不少于 `min_setup` 时，orynd 在它进入 ready 之前让 provider 把磁盘存成快照（docker 驱动是 `docker commit`，这期间容器暂停几秒；sysbox 类型要先停机再拍，见下文）。只在 agent 从未在这台 orb 上运行过时才拍，而且是在 setup 脚本跑完、resume 与受管服务启动**之前**拍。所以快照里只有 setup 的产物，没有会话、附件、浏览器 Profile、agent 的改动，也没有服务运行时写下的东西。认领来的预热 orb 已经跑过服务，不发布快照。
 - **怎么用**：之后同一项目、同一 provider、同一类型的新 orb 从快照启动。orbd 会 `git fetch` 基线：HEAD 没变就跳过 setup，只跑 resume；HEAD 变了就在快照的环境上把 setup 增量重跑一遍，成功后发布新快照。所以 setup 脚本要能重复执行。如果新的基线改动了仓库里的 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 或 `.amp/services.yaml`（内容、可执行位、符号链接目标任一变化都算），或者旧 HEAD 不是新基线的祖先（force push 等情况），旧快照就直接退役，下一个 orb 从基础镜像全新 setup。浅克隆的项目会多 fetch 一次历史来判断祖先关系；仍判断不了的，按「不是快进」处理。
 - **什么时候失效**：项目的仓库、分支、setup 脚本、env 模式密钥与降级模型 key（只看名字与修改时间），或者 provider 的基础镜像，任何一项变化，旧快照就退役，下一个 orb 从基础镜像重来。重建 orb 镜像（`make image`）会让该 provider 上的全部快照失效。同一条血统最多复用 `max_age`（72 小时），最多刷新 `max_depth` 次；orb 是否真的从快照启动，以 provider 的上报为准，orb 内的程序无法让控制面误判、借此续期。
-- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。单个快照超过 `max_snapshot_gb` 就直接作废，不会挤掉别的项目。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
+- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。单个快照超过 `max_snapshot_gb` 就直接作废，不会挤掉别的项目（不写时取 10 与 `max_total_gb` 中较小的一个）。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
 - **事故处置**：怀疑某次 setup 把不该留的东西（后门、泄露的凭据）拍进了快照时，执行 `oryn project snapshots rm <项目>`。这会把可用的和正在构建的快照一起作废，之后的 orb 从基础镜像全新 setup。快照镜像的配置里不保留 orb 令牌等环境变量。
 - **dispatch 驱动**：基础镜像只按引用名识别（`ref:<镜像>`），镜像内容变了但引用名不变时，要靠 72 小时上限兜底；它也不上报快照大小，所以配额对它不起作用。
 - **管理**：项目设置页的「项目快照」开关与快照表；CLI `oryn project snapshots ls <项目>`，`oryn project snapshots rm <项目> [--type <类型>]`。

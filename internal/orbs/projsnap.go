@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -216,6 +217,28 @@ func (s *Service) noteOrb(ctx context.Context, orbID string, detail map[string]a
 	s.emitInfo(ctx, EventPool, orb)
 }
 
+// detailSnapshotUnknown 是 orb 事件 detail 里的键：首次 spawn 带了项目快照、provider 却没上报 snapshotUsed，值为该快照 id。
+const detailSnapshotUnknown = "snapshotUsedUnknown"
+
+// snapshotUsageUnknown 报告 orb 的事件里是否记过「来源未知」（S-P1-1）。只在发布新血统前查一次，事件数有限。
+func (s *Service) snapshotUsageUnknown(ctx context.Context, orbID string) bool {
+	evs, err := s.st.Q.ListOrbEvents(ctx, orbID)
+	if err != nil {
+		slog.Warn("读取 orb 事件失败，按来源未知处理", "orb", orbID, "err", err)
+		return true
+	}
+	for _, e := range evs {
+		if !strings.Contains(e.Detail, detailSnapshotUnknown) {
+			continue
+		}
+		var d map[string]any
+		if json.Unmarshal([]byte(e.Detail), &d) == nil && d[detailSnapshotUnknown] != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // snapshotSource 读取 orb 参与项目快照所需的项目、provider 与来源快照。来源只看 orb.snapshot_of（S-P1-1：
 // 它只在 provider 确认实际用了快照时保留，见 onJobFinished），不看 orbd 自报的 prepared。ok=false 表示不参与：
 // 无项目、协调 orb、快照未开启，或 orb 来自连环境 fork 的快照（用过快照的 orb 永远不开新血统）。
@@ -285,6 +308,11 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 	depth, lineage := int64(0), now
 	if src == nil {
 		if time.Duration(res.DurationMs)*time.Millisecond < s.cfg.Snapshots.MinSetup.D() {
+			return false
+		}
+		if s.snapshotUsageUnknown(ctx, orb.ID) {
+			// 从快照 spawn、provider 却没说是否用上：磁盘可能带着快照内容，不能洗成 depth 0 的新血统
+			s.noteOrb(ctx, orb.ID, map[string]any{"snapshotSkipped": "provenance_unknown"})
 			return false
 		}
 	} else {

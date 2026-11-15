@@ -1054,15 +1054,23 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 				to = StateFailed
 			}
 			// S-P1-1：是否真的从项目快照起来以 provider 的 snapshotUsed 为准（只看首次 spawn；唤醒时容器早已存在）。
-			// 明确退回了基础镜像：清掉 snapshot_of（同一事务，runPhase 看到的已是新值），快照退役 image_missing。
+			// 只有明确 true 才保留 snapshot_of（同一事务清除，runPhase 看到的已是新值）：
+			//   - false：退回了基础镜像，快照退役 image_missing，这台 orb 可以开新血统；
+			//   - 缺省（如 dispatch 脚本没打标记）：来源未知，镜像未被证明缺失，快照不退役；
+			//     在 orb 事件里记下来源未知，afterSetupSnapshot 据此禁止它发布任何新快照。
 			var fellBack string
 			var then func(t *txn) error
-			if r := jobs.ResultOf(job); ok && orb.State != StateWaking && r.SnapshotUsed != nil && !*r.SnapshotUsed &&
+			if r := jobs.ResultOf(job); ok && orb.State != StateWaking && (r.SnapshotUsed == nil || !*r.SnapshotUsed) &&
 				orb.SnapshotOf != nil && *orb.SnapshotOf != "" && s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf) {
-				fellBack = *orb.SnapshotOf
-				detail["snapshotUsed"] = false
+				src := *orb.SnapshotOf
+				if r.SnapshotUsed == nil {
+					detail[detailSnapshotUnknown] = src
+				} else {
+					fellBack = src
+					detail["snapshotUsed"] = false
+				}
 				then = func(t *txn) error {
-					_, err := t.q.ClearOrbSnapshot(t.ctx, db.ClearOrbSnapshotParams{ID: orbID, SnapshotOf: fellBack})
+					_, err := t.q.ClearOrbSnapshot(t.ctx, db.ClearOrbSnapshotParams{ID: orbID, SnapshotOf: src})
 					return err
 				}
 			}

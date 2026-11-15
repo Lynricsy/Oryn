@@ -433,6 +433,27 @@ func TestProjectSnapshotForgedPreparedKeepsLineage(t *testing.T) {
 	assert.Equal(t, s1.LineageAt, s2.LineageAt)
 }
 
+// S-P1-1：provider 没上报 snapshotUsed（dispatch 脚本没打标记）= 来源未知，不能当作「用了快照」。
+// snapshot_of 清空（不续血统）；镜像没被证明缺失，来源快照不退役；这台 orb 即使 setup 全量重跑（orb 内删了完成标记）
+// 也不得发布 depth 0 的新血统，否则来源不明的 orb 可以借此把快照内容洗成新血统。
+func TestProjectSnapshotUnknownUsageNoLineage(t *testing.T) {
+	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
+	prj := e.project("app", nil)
+	e.createReady(CreateParams{ProjectID: prj})
+	s1 := e.snapshots(prj)[0]
+	e.drv.mu.Lock()
+	e.drv.noSnapshotUsed = true
+	e.drv.mu.Unlock()
+	e.forgeUnprepared.Store(true)
+	b := e.createReady(CreateParams{ProjectID: prj})
+	assert.Equal(t, s1.ID, *e.lastSpawn(b.ID).SnapshotID)
+	assert.Nil(t, b.SnapshotOf, "来源未知：不保留 snapshot_of")
+	require.EqualValues(t, 1, e.latestSetupRun(b.ID).SetupRan)
+	assert.Equal(t, SnapshotReady, e.snapshot(s1.ID).State, "镜像未被证明缺失：来源快照不退役")
+	assert.Len(t, e.snapshots(prj), 1, "来源未知的 orb 不发布新快照")
+	assert.Zero(t, e.drv.countOps("snapshot")-1, "只有第一台 orb 拍过快照")
+}
+
 // 旧 orbd（hello 不含 repo-update）：来自项目快照的 orb 不收到 repo.update（X12）。
 func TestProjectSnapshotOldOrbdNoRepoUpdate(t *testing.T) {
 	e := newM11Env(t, nil, true, nil)

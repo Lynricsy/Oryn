@@ -191,6 +191,8 @@ type fakeDriver struct {
 	// deletedSnaps 记录 delete_snapshot 任务删除的快照。
 	deletedSnaps []string
 	missing      map[string]bool
+	// noSnapshotUsed 模拟不上报 snapshotUsed 的 provider（没打 ORYN_SNAPSHOT_USED 标记的 dispatch 脚本）。
+	noSnapshotUsed bool
 	// spawns 记录 spawn 任务的参数。
 	spawns []apigen.JobSpawnParams
 }
@@ -256,6 +258,11 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 				_, _ = fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", *sid)
 			}
 			result = &apigen.JobResult{SnapshotUsed: new(!gone)}
+			d.mu.Lock()
+			if d.noSnapshotUsed {
+				result = nil
+			}
+			d.mu.Unlock()
 		}
 		if o == nil {
 			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall, onSetup: onSetup}
