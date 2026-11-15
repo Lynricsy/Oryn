@@ -225,6 +225,9 @@ func (c Orynd) CoordinatorDir() string {
 	return filepath.Join(c.DataDir, "coordinator")
 }
 
+// ModelCatalogDir 返回中央模型目录的缓存目录（<data_dir>/model-catalog）。
+func (c Orynd) ModelCatalogDir() string { return filepath.Join(c.DataDir, "model-catalog") }
+
 // DefaultOrynd 返回带默认值的配置。
 func DefaultOrynd() Orynd {
 	return Orynd{

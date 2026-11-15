@@ -91,6 +91,7 @@ func TestValidateCoordinatorAndSchedule(t *testing.T) {
 	assert.False(t, c.Coordinator.Verify())
 	c.DataDir = "/srv/oryn"
 	assert.Equal(t, "/srv/oryn/coordinator", c.CoordinatorDir())
+	assert.Equal(t, "/srv/oryn/model-catalog", c.ModelCatalogDir())
 	c.Coordinator.Dir = "/x/coord"
 	assert.Equal(t, "/x/coord", c.CoordinatorDir())
 }
