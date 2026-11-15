@@ -462,7 +462,7 @@ export default function RolesPage(): ReactNode {
 	return (
 		<>
 			<ApplyStatusBanner />
-			<AgentScopeNote />
+			<AgentScopeNote reachesAssistant />
 			{invalid && (
 				<Callout tone="warn" role="status">
 					{t("agentPages.errors.configInvalid", {

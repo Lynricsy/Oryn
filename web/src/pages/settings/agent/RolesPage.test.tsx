@@ -80,7 +80,7 @@ describe("RolesPage", () => {
 	it("标注作用范围；下移「快速」：PUT config.yml 的 cycleOrder 随之改变", async () => {
 		renderPage(<RolesPage />);
 		expect(
-			screen.getByText("保存后下发到 orb，不作用于全局助手。"),
+			screen.getByText("保存后写进 config.yml，下发到 orb，也下发给全局助手。"),
 		).toBeInTheDocument();
 		const down = await screen.findByRole("button", { name: "下移 快速" });
 		await waitFor(() => expect(down).toBeEnabled());

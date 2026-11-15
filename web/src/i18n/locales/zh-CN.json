@@ -1116,6 +1116,7 @@
 	},
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
+		"scopeConfig": "保存后写进 config.yml，下发到 orb，也下发给全局助手。",
 		"apply": {
 			"pushing": "正在下发到运行中的 orb……",
 			"pushed": "已下发：空闲的会话随即生效，正在跑回合的会话在回合结束后生效。",

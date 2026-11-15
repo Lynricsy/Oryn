@@ -15,12 +15,21 @@ import { Button, Dialog, ErrorText, Spinner } from "../ui/primitives";
 
 const CodeEditor = lazy(() => import("../editor/CodeEditor"));
 
-/** R31：各子页都标明不作用于全局助手；保存即下发。 */
-export function AgentScopeNote({ children }: { children?: ReactNode }) {
+/**
+ * R31：各子页都标明不作用于全局助手；保存即下发。只改 `config.yml`、且所改的键对全局助手同样有效的页面
+ * （模型角色）传 `reachesAssistant`：`config.yml` 也下发给全局助手。
+ */
+export function AgentScopeNote({
+	children,
+	reachesAssistant = false,
+}: {
+	children?: ReactNode;
+	reachesAssistant?: boolean;
+}) {
 	const { t } = useTranslation();
 	return (
 		<Callout tone="neutral">
-			{t("agentPages.scope")}
+			{t(reachesAssistant ? "agentPages.scopeConfig" : "agentPages.scope")}
 			{children && <> {children}</>}
 		</Callout>
 	);

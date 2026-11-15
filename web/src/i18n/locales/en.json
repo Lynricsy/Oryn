@@ -1116,6 +1116,7 @@
 	},
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
+		"scopeConfig": "Saved to config.yml and pushed to orbs and to the global assistant.",
 		"apply": {
 			"pushing": "Pushing to running orbs…",
 			"pushed": "Pushed. Idle sessions pick it up now; sessions mid-turn pick it up when the turn ends.",
