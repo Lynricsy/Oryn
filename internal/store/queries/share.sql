@@ -60,6 +60,13 @@ WHERE thread_id = @thread_id AND seq <= @until_seq AND instr(file, '/') = 0
   AND (type = 'model_change' OR (type = 'custom' AND instr(payload, CAST('oryn-model-source' AS BLOB)) > 0))
 ORDER BY seq;
 
+-- Main-session message entries up to until_seq that may contain a `task` tool call (payload included; caller parses).
+-- name: ListTaskCallEntries :many
+SELECT seq, type, payload FROM entries
+WHERE thread_id = @thread_id AND seq <= @until_seq AND instr(file, '/') = 0
+  AND type = 'message' AND instr(payload, CAST('"name":"task"' AS BLOB)) > 0
+ORDER BY seq;
+
 -- Identity frozen when a snapshot share is created (PublicShareIdentity JSON); live shares have no row.
 -- name: InsertThreadShareIdentity :exec
 INSERT INTO thread_share_identities (share_id, payload) VALUES (@share_id, @payload);

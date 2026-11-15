@@ -657,6 +657,48 @@ func (q *Queries) ListModelSourceEntries(ctx context.Context, arg ListModelSourc
 	return items, nil
 }
 
+const listTaskCallEntries = `-- name: ListTaskCallEntries :many
+SELECT seq, type, payload FROM entries
+WHERE thread_id = ?1 AND seq <= ?2 AND instr(file, '/') = 0
+  AND type = 'message' AND instr(payload, CAST('"name":"task"' AS BLOB)) > 0
+ORDER BY seq
+`
+
+type ListTaskCallEntriesParams struct {
+	ThreadID string `json:"threadId"`
+	UntilSeq int64  `json:"untilSeq"`
+}
+
+type ListTaskCallEntriesRow struct {
+	Seq     int64  `json:"seq"`
+	Type    string `json:"type"`
+	Payload []byte `json:"payload"`
+}
+
+// Main-session message entries up to until_seq that may contain a `task` tool call (payload included; caller parses).
+func (q *Queries) ListTaskCallEntries(ctx context.Context, arg ListTaskCallEntriesParams) ([]ListTaskCallEntriesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskCallEntries, arg.ThreadID, arg.UntilSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskCallEntriesRow{}
+	for rows.Next() {
+		var i ListTaskCallEntriesRow
+		if err := rows.Scan(&i.Seq, &i.Type, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listThreadShareEntries = `-- name: ListThreadShareEntries :many
 SELECT seq, payload_sha256 FROM thread_share_entries WHERE share_id = ?1 ORDER BY pos
 `

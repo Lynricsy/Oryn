@@ -153,6 +153,9 @@ func (s *Service) buildIdentity(ctx context.Context, sc *scope) (apigen.PublicSh
 			branch = append(branch, transcript.Entry{Seq: seq, Type: typ, Payload: payloads[seq]})
 		}
 	}
+	if err := s.addAgentIdentities(ctx, sc, &out); err != nil {
+		return out, err
+	}
 	used := transcript.UsedRoles(branch)
 	if len(used) == 0 {
 		return out, nil
@@ -235,4 +238,34 @@ func (s *Service) PublicIdentity(ctx context.Context, slug string) (apigen.Publi
 		out.Roles = []apigen.PublicRoleIdentity{}
 	}
 	return out, nil
+}
+
+// addAgentIdentities 填 out.Agents：范围内活动分支上 task 工具调用用到、且设了自定义头像的子 agent（按首次用到排序）。
+// agent 名在公开的工具卡片里本就可见，所以按名字明文对应，不做 role 那种不透明键。
+func (s *Service) addAgentIdentities(ctx context.Context, sc *scope, out *apigen.PublicShareIdentity) error {
+	rows, err := s.st.Q.ListTaskCallEntries(ctx, db.ListTaskCallEntriesParams{ThreadID: sc.thread.ID, UntilSeq: sc.until})
+	if err != nil {
+		return err
+	}
+	branch := make([]transcript.Entry, 0, len(rows))
+	for _, r := range rows {
+		if sc.onPath[r.Seq] {
+			branch = append(branch, transcript.Entry{Seq: r.Seq, Type: r.Type, Payload: r.Payload})
+		}
+	}
+	for _, name := range transcript.UsedAgents(branch) {
+		row, err := s.st.Q.GetAgentAvatar(ctx, name)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		icon, image := nonEmpty(row.AvatarIcon), nonEmpty(row.AvatarImage)
+		if icon == nil && image == nil {
+			continue
+		}
+		out.Agents = append(out.Agents, apigen.PublicAgentIdentity{Name: name, AvatarIcon: icon, AvatarImage: image})
+	}
+	return nil
 }
