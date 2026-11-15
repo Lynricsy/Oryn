@@ -131,6 +131,8 @@ export function Spinner({ size = 14 }: { size?: number }) {
 
 /**
  * 模态对话框：Esc / 点遮罩关闭；compact 屏上为底部抽屉（贴屏幕底边，下两角与屏幕圆角同心，见 index.css 的 `.dc-*`）。
+ * 版式：一整块纸面，标题、正文、按钮之间不画分隔线，只靠留白分层；四边 20px 内边距配 32px 圆角（正文里的卡片用
+ * 12px 圆角，与外框同心）；标题 16px 半粗，关闭按钮是右上角的小圆钮。正文超高时只有正文滚动。
  * 渲染到 body 下；打开时把焦点移入对话框、Tab 在其中循环、背景 `inert`，关闭后焦点回到打开前的元素。
  */
 export function Dialog({
@@ -200,7 +202,7 @@ export function Dialog({
 				type="button"
 				tabIndex={-1}
 				aria-label={t("common.close")}
-				className="absolute inset-0 bg-scrim backdrop-blur-[2px]"
+				className="absolute inset-0 bg-scrim backdrop-blur-[3px]"
 				onClick={onClose}
 			/>
 			<div
@@ -209,21 +211,29 @@ export function Dialog({
 				aria-modal="true"
 				tabIndex={-1}
 				aria-label={typeof title === "string" ? title : undefined}
-				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl border border-border bg-panel shadow-xl outline-none [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
+				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl bg-panel shadow-xl outline-none ring-1 ring-[var(--glass-line)] [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
 			>
-				<div className="flex items-center justify-between gap-2 border-border border-b px-4 py-3">
-					<h2 className="truncate font-semibold text-sm">{title}</h2>
+				<div className="flex items-start gap-3 pt-5 pr-4 pb-2 pl-5">
+					<h2 className="min-w-0 flex-1 truncate pt-0.5 font-semibold text-base text-fg tracking-tight">
+						{title}
+					</h2>
 					<IconButton
 						icon="close"
+						size={14}
+						box="sm"
 						label={t("common.close")}
+						className="-mt-0.5 rounded-full! bg-inset"
 						onClick={onClose}
 					/>
 				</div>
-				<div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+				<div
+					ref={bodyRef}
+					className={`min-h-0 flex-1 overflow-y-auto px-5 pt-1 ${footer ? "pb-2" : "pb-5"}`}
+				>
 					{children}
 				</div>
 				{footer && (
-					<div className="flex flex-wrap justify-end gap-2 border-border border-t px-4 py-3">
+					<div className="flex flex-wrap justify-end gap-2 px-5 pt-3 pb-5">
 						{footer}
 					</div>
 				)}
