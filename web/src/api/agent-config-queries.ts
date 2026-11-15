@@ -8,6 +8,7 @@
  */
 import {
 	type QueryClient,
+	skipToken,
 	type UseQueryResult,
 	useQueries,
 	useQuery,
@@ -82,11 +83,15 @@ export async function deleteAgentFile(path: string): Promise<void> {
 	await rawFetch(fileUrl(path), { method: "DELETE" });
 }
 
-/** 文件变动后的缓存同步：列表重取；config.yml 决定角色列表（身份与头像），一并重取。 */
+/**
+ * 文件变动后的缓存同步：列表重取；config.yml 决定角色列表（身份与头像），一并重取；
+ * 服务端随后下发，稍后重取生效状态。
+ */
 function afterChange(qc: QueryClient, paths: readonly string[]): void {
 	void qc.invalidateQueries({ queryKey: agentConfigKeys.files });
 	if (paths.includes(OMP_CONFIG_PATH))
 		void qc.invalidateQueries({ queryKey: identityKeys.roles });
+	noteAgentConfigWrite(qc);
 }
 
 export function useAgentFiles(): UseQueryResult<AgentFile[]> {
@@ -265,4 +270,89 @@ export function useOmpConfig(): OmpConfig {
 		pending: pending > 0,
 		mutateError,
 	};
+}
+
+// ---------------------------------------------------------------- 生效状态（R29、R30）
+
+export type ApplyStatus = Schemas["AgentConfigApplyStatus"];
+export type ApplyStatusThread = Schemas["AgentConfigRestartThread"];
+
+export const applyStatusKeys = {
+	status: ["agent-config", "apply-status"] as const,
+	/** 本页会话内最近一次下发的时间；不在 `agentConfigKeys.all` 下，免得被整体失效清掉。 */
+	pushedAt: ["agent-config-apply", "pushed-at"] as const,
+};
+
+/** 服务端写入后防抖 1 秒才下发：多等半秒再取生效状态。 */
+const APPLY_REFRESH_DELAY = 1500;
+/** 还有会话等重启或等静止后重新加载时的轮询间隔。 */
+const APPLY_POLL_INTERVAL = 5000;
+
+const applyTimers = new WeakMap<QueryClient, number>();
+
+/**
+ * omp-home 写入或删除之后调用（`useAgentFileActions` 已自动调用；「高级」的文件浏览器自己调用）：
+ * 连续写入只算一次，等服务端下发后记下下发时间并重取生效状态。
+ */
+export function noteAgentConfigWrite(qc: QueryClient): void {
+	window.clearTimeout(applyTimers.get(qc));
+	applyTimers.set(
+		qc,
+		window.setTimeout(() => {
+			applyTimers.delete(qc);
+			qc.setQueryData(applyStatusKeys.pushedAt, Date.now());
+			void qc.invalidateQueries({ queryKey: applyStatusKeys.status });
+		}, APPLY_REFRESH_DELAY),
+	);
+}
+
+export async function fetchApplyStatus(): Promise<ApplyStatus> {
+	return unwrap(api.GET("/api/v1/agent-config/apply-status"));
+}
+
+/** 生效状态；有会话等重启或等重新加载时轮询。 */
+export function useApplyStatus(): UseQueryResult<ApplyStatus> {
+	return useQuery({
+		queryKey: applyStatusKeys.status,
+		queryFn: fetchApplyStatus,
+		refetchInterval: (q) => {
+			const d = q.state.data;
+			return d && (d.threads.length > 0 || d.pendingReloads > 0)
+				? APPLY_POLL_INTERVAL
+				: false;
+		},
+	});
+}
+
+/** 最近一次下发的时间（`noteAgentConfigWrite` 记下）；本页会话内还没有写入时为 undefined。 */
+export function useLastPush(): number | undefined {
+	return useQuery<number>({
+		queryKey: applyStatusKeys.pushedAt,
+		queryFn: skipToken,
+		staleTime: Number.POSITIVE_INFINITY,
+		gcTime: Number.POSITIVE_INFINITY,
+	}).data;
+}
+
+/**
+ * 重启需重启才能生效的会话：各会话静止后停掉 omp，下一条消息带着原会话拉起。
+ * 返回的线程先在缓存里标为已安排，再重取生效状态。
+ */
+export async function restartSessions(qc: QueryClient): Promise<string[]> {
+	const { threadIds } = await unwrap(
+		api.POST("/api/v1/agent-config/restart-sessions"),
+	);
+	const scheduled = new Set(threadIds);
+	qc.setQueryData<ApplyStatus>(applyStatusKeys.status, (prev) =>
+		prev
+			? {
+					...prev,
+					threads: prev.threads.map((t) =>
+						scheduled.has(t.threadId) ? { ...t, scheduled: true } : t,
+					),
+				}
+			: prev,
+	);
+	void qc.invalidateQueries({ queryKey: applyStatusKeys.status });
+	return threadIds;
 }

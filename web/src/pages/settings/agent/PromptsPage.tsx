@@ -8,6 +8,7 @@
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAgentFiles, useOmpConfig } from "../../../api/agent-config-queries";
+import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import {
 	AgentErrorText,
 	AgentScopeNote,
@@ -161,6 +162,7 @@ export default function PromptsPage() {
 
 	return (
 		<>
+			<ApplyStatusBanner />
 			<AgentScopeNote />
 			<Card title={t("agentPages.context.title")} icon="fileText">
 				<p className="mb-2 text-faint text-xs">

@@ -17,6 +17,7 @@ import {
 	useAgentTexts,
 	useOmpConfig,
 } from "../../../api/agent-config-queries";
+import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import {
 	AgentErrorText,
 	AgentScopeNote,
@@ -339,6 +340,7 @@ export default function ExtensionsPage() {
 
 	return (
 		<>
+			<ApplyStatusBanner />
 			<AgentScopeNote />
 			<Callout tone="warn" icon="restart">
 				{t("agentPages.code.restart")}

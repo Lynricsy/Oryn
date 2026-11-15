@@ -19,6 +19,7 @@
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import { AGENT_DEFAULT_GLYPHS } from "../lib/avatar-defaults";
+import { readConfigDoc } from "../lib/omp-config";
 import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
@@ -557,6 +558,100 @@ export class MockServer {
 		"AGENTS.md": "# 约定\n\n- 中文注释\n- 先写测试\n",
 		"skills/review/SKILL.md": "---\nname: review\n---\n审查改动。\n",
 	};
+	/**
+	 * omp 配置的会话级生效（M13 apply-status）：需重启的线程 → 原因与安排重启的时间；等回合结束才能重新加载的会话数与截止时间。
+	 * 模拟里「agent 在跑」的会话取最近更新的 3 个未归档工作线程；安排重启后 5 秒视为已重启，回合中的会话 8 秒后视为已重新加载。
+	 */
+	readonly applyRestarts = new Map<
+		string,
+		{ reasons: Set<string>; scheduledAt?: number }
+	>();
+	applyReloads = { count: 0, until: 0 };
+
+	/** 全局 omp-home 的一次写入或删除：按 docs/protocol.md「会话级生效与懒重启」的分类记到线程上（`config.yml` 只比较 `disabledExtensions`）。 */
+	private noteOmpHomeChange(path: string, before: string | undefined): void {
+		const restart: string[] = [];
+		let reload = false;
+		if (path === "config.yml") {
+			const ids = (text: string | undefined): Set<string> => {
+				const list: unknown = readConfigDoc(text ?? "").toJS()
+					?.disabledExtensions;
+				return new Set(
+					Array.isArray(list)
+						? list.filter((v): v is string => typeof v === "string")
+						: [],
+				);
+			};
+			const prev = ids(before);
+			const next = ids(this.files[path]);
+			for (const id of [...prev, ...next]) {
+				if (prev.has(id) && next.has(id)) continue;
+				const prefix = id.split(":")[0] ?? "";
+				if (
+					/^(skill|slash-command|rule|prompt|instruction|context-file|mcp)$/.test(
+						prefix,
+					)
+				)
+					reload = true;
+				else restart.push(id);
+			}
+		} else if (
+			/^(skills|commands|rules|prompts|instructions)\/|^(AGENTS\.md|RULES\.md|mcp\.json)$/.test(
+				path,
+			)
+		)
+			reload = true;
+		else if (!path.startsWith("agents/")) restart.push(path);
+		const live = [...this.threads.values()]
+			.filter(
+				(t) =>
+					!t.archivedAt &&
+					(t.kind ?? "work") === "work" &&
+					t.state !== "error" &&
+					t.state !== "provisioning",
+			)
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, 3);
+		for (const t of live) {
+			if (restart.length === 0) break;
+			const entry = this.applyRestarts.get(t.id) ?? { reasons: new Set() };
+			for (const r of restart) entry.reasons.add(r);
+			this.applyRestarts.set(t.id, entry);
+		}
+		const working = live.filter((t) => t.state === "working").length;
+		if (reload && working > 0)
+			this.applyReloads = { count: working, until: Date.now() + 8_000 };
+	}
+
+	private applyStatus(): Schemas["AgentConfigApplyStatus"] {
+		const now = Date.now();
+		const threads: Schemas["AgentConfigRestartThread"][] = [];
+		for (const [id, entry] of [...this.applyRestarts].sort(([a], [b]) =>
+			a.localeCompare(b),
+		)) {
+			const t = this.threads.get(id);
+			if (
+				!t ||
+				(entry.scheduledAt !== undefined && now - entry.scheduledAt > 5_000)
+			) {
+				this.applyRestarts.delete(id);
+				continue;
+			}
+			threads.push({
+				threadId: id,
+				kind: t.kind ?? "work",
+				title: t.title,
+				reasons: [...entry.reasons],
+				scheduled: entry.scheduledAt !== undefined,
+			});
+		}
+		return {
+			threads,
+			pendingReloads:
+				now < this.applyReloads.until ? this.applyReloads.count : 0,
+		};
+	}
+
 
 	constructor() {
 		// runner 的常驻 orb（M11b）：先放进去，下面按线程补 orb 时跳过
@@ -1482,7 +1577,9 @@ export class MockServer {
 					status: this.files[fp] === undefined ? 404 : 200,
 				});
 			if (m === "PUT") {
+				const before = this.files[fp];
 				this.files[fp] = await req.text();
+				this.noteOmpHomeChange(fp, before);
 				return json({
 					file: {
 						path: fp,
@@ -1496,9 +1593,21 @@ export class MockServer {
 				});
 			}
 			if (m === "DELETE") {
+				const before = this.files[fp];
 				delete this.files[fp];
+				this.noteOmpHomeChange(fp, before);
 				return new Response(null, { status: 204 });
 			}
+		}
+		if (p === "agent-config/apply-status" && m === "GET")
+			return json(this.applyStatus());
+		if (p === "agent-config/restart-sessions" && m === "POST") {
+			const now = Date.now();
+			for (const entry of this.applyRestarts.values())
+				entry.scheduledAt ??= now;
+			return json({
+				threadIds: [...this.applyRestarts.keys()].sort(),
+			});
 		}
 		if (p === "orbs" && m === "GET")
 			return json({ orbs: [...this.orbs.values()] });

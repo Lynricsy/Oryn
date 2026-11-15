@@ -7,6 +7,7 @@
  * - instruction `instructions/*.md`，名称去 `.instructions.md` 或 `.md`，键 `instruction:<名称>`；frontmatter `applyTo`。
  */
 import { useTranslation } from "react-i18next";
+import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import { AgentScopeNote } from "../../../components/settings/agent-config-ui";
 import { MarkdownCollection } from "../../../components/settings/MarkdownCollection";
 import {
@@ -32,6 +33,7 @@ export default function CollectionsPage() {
 	} as const;
 	return (
 		<>
+			<ApplyStatusBanner />
 			<AgentScopeNote />
 			<MarkdownCollection
 				dir="commands"

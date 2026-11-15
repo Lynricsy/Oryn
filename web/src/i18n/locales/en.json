@@ -1113,6 +1113,19 @@
 	},
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
+		"apply": {
+			"pushed": "Pushed. Idle sessions pick it up now; sessions mid-turn pick it up when the turn ends.",
+			"restartTitle_one": "{{count}} session needs a restart to apply changes",
+			"restartTitle_other": "{{count}} sessions need a restart to apply changes",
+			"restartHint": "Hooks, extension modules, custom tools, SYSTEM.md and similar changes only apply after a restart. Sessions restart once idle, so running turns aren't interrupted; the next message resumes the same session.",
+			"scheduledHint": "Restart scheduled. Each session restarts once idle and resumes with your next message.",
+			"restart": "Restart these sessions",
+			"details": "Sessions and reasons",
+			"scheduled": "Scheduled",
+			"untitled": "Untitled session",
+			"pendingReloads_one": "{{count}} session is mid-turn and will reload automatically once idle.",
+			"pendingReloads_other": "{{count}} sessions are mid-turn and will reload automatically once idle."
+		},
 		"new": "New",
 		"reloadLatest": "Load latest (discard my changes)",
 		"newTitle": "New entry in {{kind}}",

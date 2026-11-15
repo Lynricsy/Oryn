@@ -20,6 +20,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, useNavigate } from "react-router";
+import { noteAgentConfigWrite } from "../api/agent-config-queries";
 import { api, type Schemas, unwrap } from "../api/client";
 import { identityKeys } from "../api/identity-queries";
 import { invalidateModelCatalog } from "../api/model-catalog-queries";
@@ -38,6 +39,7 @@ import {
 	WindowControls,
 } from "../components/layout/WindowControls";
 import { PairApproval } from "../components/PairApproval";
+import { ApplyStatusBanner } from "../components/settings/ApplyStatusBanner";
 import { radioKeys } from "../components/settings/GlyphGrid";
 import { useAsync } from "../components/settings/useAsync";
 import { CopyButton } from "../components/ui/CopyButton";
@@ -760,12 +762,13 @@ function AgentConfigSettings() {
 		Schemas["AgentConfigWriteResult"] | null
 	>(null);
 	// 来源须稳定：FileBrowser 以 sources 为依赖加载根。config.yml 决定 role 列表（身份与头像 → 角色头像），
-	// 保存或删除它之后让那份列表重新取；models.yml / config.yml 变了让模型目录重新取
+	// 保存或删除它之后让那份列表重新取；models.yml / config.yml 变了让模型目录重新取；任何改动都会下发，稍后重取生效状态
 	const sources = useMemo(() => {
 		const changed = (path: string) => {
 			if (path === ROLES_CONFIG)
 				void qc.invalidateQueries({ queryKey: identityKeys.roles });
 			if (CATALOG_CONFIGS.has(path)) void invalidateModelCatalog(qc);
+			noteAgentConfigWrite(qc);
 		};
 		const base = agentConfigSource((r) => {
 			setResult(r);
@@ -782,30 +785,33 @@ function AgentConfigSettings() {
 		];
 	}, [qc]);
 	return (
-		<Card title={t("agentConfig.title")} icon="file">
-			<p className="mb-3 text-muted text-xs">
-				{t("agentConfig.hint")} {t("agentConfig.pushHint")}
-			</p>
-			<div className="h-[32rem] overflow-hidden rounded-lg border border-border">
-				<FileBrowser sources={sources} storageKey="settings.agent-config" />
-			</div>
-			{result && (
-				<div className="mt-2 flex flex-col gap-1.5">
-					{result.extractedSecrets.length > 0 && (
-						<Callout tone="ok">
-							{t("agentConfig.extracted", {
-								names: result.extractedSecrets.join(", "),
-							})}
-						</Callout>
-					)}
-					{result.warnings.map((w) => (
-						<Callout key={`${w.path}:${w.line ?? 0}:${w.kind}`} tone="warn">
-							{`${w.path}${w.line ? `:${w.line}` : ""} — ${w.message}`}
-						</Callout>
-					))}
+		<>
+			<ApplyStatusBanner />
+			<Card title={t("agentConfig.title")} icon="file">
+				<p className="mb-3 text-muted text-xs">
+					{t("agentConfig.hint")} {t("agentConfig.pushHint")}
+				</p>
+				<div className="h-[32rem] overflow-hidden rounded-lg border border-border">
+					<FileBrowser sources={sources} storageKey="settings.agent-config" />
 				</div>
-			)}
-		</Card>
+				{result && (
+					<div className="mt-2 flex flex-col gap-1.5">
+						{result.extractedSecrets.length > 0 && (
+							<Callout tone="ok">
+								{t("agentConfig.extracted", {
+									names: result.extractedSecrets.join(", "),
+								})}
+							</Callout>
+						)}
+						{result.warnings.map((w) => (
+							<Callout key={`${w.path}:${w.line ?? 0}:${w.kind}`} tone="warn">
+								{`${w.path}${w.line ? `:${w.line}` : ""} — ${w.message}`}
+							</Callout>
+						))}
+					</div>
+				)}
+			</Card>
+		</>
 	);
 }
 

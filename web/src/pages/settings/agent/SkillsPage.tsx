@@ -3,6 +3,7 @@
  * Core 只加载带 `description` 的技能（`scanSkillsFromDir` 的 `requireDescription`），表单里描述必填。
  */
 import { useTranslation } from "react-i18next";
+import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import { AgentScopeNote } from "../../../components/settings/agent-config-ui";
 import {
 	type FieldSpec,
@@ -26,6 +27,7 @@ export default function SkillsPage() {
 	];
 	return (
 		<>
+			<ApplyStatusBanner />
 			<AgentScopeNote />
 			<MarkdownCollection
 				dir="skills"

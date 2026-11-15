@@ -1113,6 +1113,19 @@
 	},
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
+		"apply": {
+			"pushed": "已下发：空闲的会话随即生效，正在跑回合的会话在回合结束后生效。",
+			"restartTitle_one": "{{count}} 个会话需重启后生效",
+			"restartTitle_other": "{{count}} 个会话需重启后生效",
+			"restartHint": "hook、扩展模块、自定义工具、SYSTEM.md 等改动要重启会话才生效。会话空闲时才重启，正在跑的回合不受影响；下次发消息时带着原会话自动拉起。",
+			"scheduledHint": "已安排重启：各会话空闲时重启，下次发消息时自动拉起。",
+			"restart": "重启这些会话",
+			"details": "会话与原因",
+			"scheduled": "已安排",
+			"untitled": "未命名会话",
+			"pendingReloads_one": "{{count}} 个会话正在跑回合，空闲时自动重新加载。",
+			"pendingReloads_other": "{{count}} 个会话正在跑回合，空闲时自动重新加载。"
+		},
 		"new": "新建",
 		"reloadLatest": "载入最新内容（放弃我的改动）",
 		"newTitle": "新建条目（{{kind}}）",
