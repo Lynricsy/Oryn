@@ -19,6 +19,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/desktop"
 	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/orbtls"
@@ -260,6 +261,10 @@ func (s *Server) init(ctx context.Context) error {
 	// App 会话兑换（M6）：不在 /api/v1 下，壳以顶层导航到达
 	mounts[api.AppSessionPath] = s.API.AppSessionHandler()
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home, ProjectHomes: s.ProjectHomes}
+	// M13：中央模型目录（控制面用协调宿主的 omp 跑 `omp models`）；未配置 omp 时不建，接口回 503
+	if cfg.Coordinator.OmpPath != "" {
+		s.API.Auth.ModelCatalog = modelcat.New(modelcat.Config{OmpPath: cfg.Coordinator.OmpPath, CacheDir: cfg.ModelCatalogDir()}, s.Home, s.Vault)
+	}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}

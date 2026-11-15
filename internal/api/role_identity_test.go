@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 )
 
 const roleIdentitiesPath = "/api/v1/settings/role-identities"
@@ -43,14 +45,32 @@ func (e *h2Env) putConfigYML(c h2Cred, content string) {
 	require.Equal(e.t, 200, r.status, string(r.body))
 }
 
-// roleKeys 把列表压成 "role:inCycle" 便于整体比较顺序。
+// roleKeys 把列表压成 role id（不在 cycleOrder 里的加 "(off)"）便于整体比较顺序。
 func roleKeys(l roleListJSON) []string {
 	out := make([]string, len(l.Roles))
 	for i, r := range l.Roles {
 		if r.InCycle {
 			out[i] = r.Role
 		} else {
-			out[i] = r.Role + "(legacy)"
+			out[i] = r.Role + "(off)"
+		}
+	}
+	return out
+}
+
+// knownKeys 是 cycleOrder 为 cycle、modelRoles 其余的键为 extra 时 roleKeys 的期望前缀：
+// cycle（按序）→ extra（调用方已按字典序给出）→ 其余内置 role。
+func knownKeys(cycle []string, extra ...string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, r := range cycle {
+		seen[r] = true
+		out = append(out, r)
+	}
+	for _, r := range append(extra, agentcfg.BuiltinRoles...) {
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r+"(off)")
 		}
 	}
 	return out
@@ -80,10 +100,15 @@ func TestRoleIdentitiesList(t *testing.T) {
 	e := newH2Env(t)
 	c := h2DeviceToken(t, e)
 
-	// 没有 config.yml：缺省 cycleOrder，全部在 cycle 里、没有 name / selector / 头像
+	// 没有 config.yml：缺省 cycleOrder 在前、其余内置 role 在后，没有 name / selector / 头像
 	r := e.do("GET", roleIdentitiesPath, c, nil)
 	require.Equal(t, 200, r.status)
-	assert.JSONEq(t, `{"roles":[{"role":"smol","inCycle":true},{"role":"default","inCycle":true},{"role":"slow","inCycle":true}]}`, string(r.body))
+	var def struct{ Roles []json.RawMessage }
+	r.json(t, &def)
+	require.Len(t, def.Roles, len(agentcfg.BuiltinRoles))
+	assert.JSONEq(t, `{"role":"smol","inCycle":true}`, string(def.Roles[0]))
+	assert.JSONEq(t, `{"role":"vision","inCycle":false}`, string(def.Roles[3]))
+	assert.Equal(t, knownKeys(agentcfg.DefaultCycleOrder), roleKeys(e.roleList(c)))
 
 	// 写入 config.yml 后按新 cycleOrder，带 name 与原始 selector
 	e.putConfigYML(c, `
@@ -96,7 +121,7 @@ modelTags:
   Cyrene: { name: 昔涟 }
 `)
 	l := e.roleList(c)
-	assert.Equal(t, []string{"Mare", "Cyrene", "Nahida"}, roleKeys(l))
+	assert.Equal(t, knownKeys([]string{"Mare", "Cyrene", "Nahida"}, "default"), roleKeys(l))
 	assert.Nil(t, l.ConfigError)
 	cy := roleByID(t, l, "Cyrene")
 	require.NotNil(t, cy.Name)
@@ -109,13 +134,14 @@ modelTags:
 	assert.Equal(t, "openai/gpt-6.1:high, @Cyrene", *mare.Selector)
 	var raw struct{ Roles []json.RawMessage }
 	e.do("GET", roleIdentitiesPath, c, nil).json(t, &raw)
-	require.Len(t, raw.Roles, 3)
+	require.Len(t, raw.Roles, len(knownKeys([]string{"Mare", "Cyrene", "Nahida"}, "default")))
 	assert.JSONEq(t, `{"role":"Nahida","inCycle":true}`, string(raw.Roles[2]), "没配置的 role 省略 name 与 selector")
+	assert.JSONEq(t, `{"role":"default","inCycle":false,"selector":"@Cyrene"}`, string(raw.Roles[3]), "modelRoles 里的其余键带 selector")
 
-	// 非法 YAML：照样 200，带 configError，roles 为缺省三项
+	// 非法 YAML：照样 200，带 configError，roles 按缺省配置
 	e.putConfigYML(c, "cycleOrder: [Mare\n")
 	l = e.roleList(c)
-	assert.Equal(t, []string{"smol", "default", "slow"}, roleKeys(l))
+	assert.Equal(t, knownKeys(agentcfg.DefaultCycleOrder), roleKeys(l))
 	require.NotNil(t, l.ConfigError)
 	assert.Contains(t, *l.ConfigError, "config.yml")
 }
@@ -156,8 +182,8 @@ func TestRoleIdentitiesPut(t *testing.T) {
 	assert.Equal(t, 413, r.status)
 	assert.Equal(t, "too_large", r.code(t))
 	for _, bad := range []map[string]any{
-		{"role": "smol", "avatarIcon": "🤖"}, // 不在 cycleOrder 里
-		{"role": "MARE", "avatarIcon": "🤖"}, // 大小写不同即不同 role
+		{"role": "Nahida", "avatarIcon": "🤖"}, // 不是已知 role
+		{"role": "MARE", "avatarIcon": "🤖"},   // 大小写不同即不同 role
 		{"role": "Cyrene", "avatarIcon": "🤖", "avatarImage": png},
 		{"role": "Cyrene", "avatarIcon": "robot"},
 		{"role": "Cyrene", "avatarImage": "https://example.com/a.png"},
@@ -175,7 +201,7 @@ func TestRoleIdentitiesPut(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "被拒的请求不写库")
 
-	// 128 字节的 role 合法（不在 cycle 里只能清除；清除幂等）
+	// 128 字节的 role 合法（不是已知 role 只能清除；清除幂等）
 	r = e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": strings.Repeat("r", 128)})
 	assert.Equal(t, 200, r.status, string(r.body))
 
@@ -191,7 +217,31 @@ func TestRoleIdentitiesPut(t *testing.T) {
 	require.NoError(t, err, "清 mare 不影响 Mare")
 }
 
-// 从 cycleOrder 删掉一个已设头像的 role：它成为遗留项排在末尾，可清除、不可重设。
+// 不在 cycleOrder 里、但在 modelRoles 里或是内置 role 的，同样可以设头像；未知 role 400。
+func TestRoleIdentitiesKnownOutsideCycle(t *testing.T) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+	e.putConfigYML(c, "cycleOrder: [Mare]\nmodelRoles: { Mare: openai/gpt-6.1, Nahida: google/gemini-4 }\nmodelTags: { Nahida: { name: 纳西妲 } }\n")
+
+	r := e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": "Nahida", "avatarIcon": "🌿"})
+	require.Equal(t, 200, r.status, string(r.body))
+	assert.JSONEq(t, `{"role":"Nahida","name":"纳西妲","inCycle":false,"selector":"google/gemini-4","avatarIcon":"🌿"}`, string(r.body))
+	r = e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": "vision", "avatarIcon": "👁"})
+	require.Equal(t, 200, r.status, string(r.body))
+	assert.JSONEq(t, `{"role":"vision","inCycle":false,"avatarIcon":"👁"}`, string(r.body))
+
+	r = e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": "Cyrene", "avatarIcon": "🤖"})
+	assert.Equal(t, 400, r.status, string(r.body))
+	assert.Equal(t, "invalid_request", r.code(t))
+
+	l := e.roleList(c)
+	assert.Equal(t, knownKeys([]string{"Mare"}, "Nahida"), roleKeys(l), "带头像的已知 role 不算遗留项")
+	require.NotNil(t, roleByID(t, l, "Nahida").AvatarIcon)
+	assert.Equal(t, "🌿", *roleByID(t, l, "Nahida").AvatarIcon)
+	require.NotNil(t, roleByID(t, l, "vision").AvatarIcon)
+}
+
+// 已设头像的 role 不再是已知 role（从 cycleOrder 与 modelRoles 删掉）：它成为遗留项排在末尾，可清除、不可重设。
 func TestRoleIdentitiesLegacy(t *testing.T) {
 	e := newH2Env(t)
 	c := h2DeviceToken(t, e)
@@ -200,9 +250,9 @@ func TestRoleIdentitiesLegacy(t *testing.T) {
 		require.Equal(t, 200, e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": role, "avatarIcon": "🤖"}).status)
 	}
 
-	e.putConfigYML(c, "cycleOrder: [Cyrene]\nmodelRoles: { Mare: openai/gpt-6.1 }\nmodelTags: { Mare: { name: 玛蕾 } }\n")
+	e.putConfigYML(c, "cycleOrder: [Cyrene]\nmodelTags: { Mare: { name: 玛蕾 } }\n")
 	l := e.roleList(c)
-	assert.Equal(t, []string{"Cyrene", "Alpha(legacy)", "Mare(legacy)", "Zed(legacy)"}, roleKeys(l), "遗留项按 role 升序排在末尾")
+	assert.Equal(t, append(knownKeys([]string{"Cyrene"}), "Alpha(off)", "Mare(off)", "Zed(off)"), roleKeys(l), "遗留项按 role 升序排在末尾")
 	mare := roleByID(t, l, "Mare")
 	assert.False(t, mare.InCycle)
 	assert.Nil(t, mare.Name, "遗留项不带 name")
@@ -217,11 +267,11 @@ func TestRoleIdentitiesLegacy(t *testing.T) {
 	r = e.do("PUT", roleIdentitiesPath, c, map[string]any{"role": "Mare"})
 	require.Equal(t, 200, r.status, string(r.body))
 	assert.JSONEq(t, `{"role":"Mare","inCycle":false}`, string(r.body))
-	assert.Equal(t, []string{"Cyrene", "Alpha(legacy)", "Zed(legacy)"}, roleKeys(e.roleList(c)))
+	assert.Equal(t, append(knownKeys([]string{"Cyrene"}), "Alpha(off)", "Zed(off)"), roleKeys(e.roleList(c)))
 
-	// config.yml 解析失败时缺省三项 + 全部头像行作为遗留项
+	// config.yml 解析失败时按缺省配置 + 其余头像行作为遗留项
 	e.putConfigYML(c, "cycleOrder: [\n")
 	l = e.roleList(c)
-	assert.Equal(t, []string{"smol", "default", "slow", "Alpha(legacy)", "Cyrene(legacy)", "Zed(legacy)"}, roleKeys(l))
+	assert.Equal(t, append(knownKeys(agentcfg.DefaultCycleOrder), "Alpha(off)", "Cyrene(off)", "Zed(off)"), roleKeys(l))
 	require.NotNil(t, l.ConfigError)
 }

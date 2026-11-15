@@ -13,6 +13,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/auth"
+	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
 
@@ -26,6 +27,8 @@ type AuthDeps struct {
 	Home    *agentcfg.Home
 	// ProjectHomes 是项目级 omp 配置（M12.2）；项目删除时一并删除其目录。
 	ProjectHomes *agentcfg.ProjectHomes
+	// ModelCatalog 是中央模型目录（M13）；nil（未配置协调宿主的 omp）时 getModelCatalog 回 503 catalog_unavailable。
+	ModelCatalog *modelcat.Catalog
 }
 
 // maxJSONBody 是 JSON 请求体上限。

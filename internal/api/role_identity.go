@@ -14,13 +14,13 @@ import (
 // maxRoleBytes 是 role id 的字节上限。
 const maxRoleBytes = 128
 
-// role 头像：role 列表来自 omp-home 的 config.yml（cycleOrder），头像存在 role_avatars（有行 = 设了头像）。
-// 不在 cycleOrder 里但仍有头像的 role 作为遗留项列在末尾，只能清除、不能重设。
+// role 头像：role 列表是 omp-home config.yml 里的已知 role（agentcfg.KnownRoles：cycleOrder、modelRoles 的键与内置 role 的并集），
+// 头像存在 role_avatars（有行 = 设了头像）。不在已知 role 里但仍有头像的 role 作为遗留项列在末尾，只能清除、不能重设。
 
-// ListRoleIdentities 列出 cycleOrder 里的 role（按其顺序）与遗留项（按 role 升序）。
-// config.yml 解析失败照样 200：roles 按缺省 cycleOrder，带 configError。
+// ListRoleIdentities 列出已知 role（按 KnownRoles 的顺序）与遗留项（按 role 升序）。
+// config.yml 解析失败照样 200：roles 按缺省配置，带 configError。
 func (s *Server) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
-	roles, cfgErr := s.Auth.Home.CycleRoles()
+	roles, cfgErr := s.Auth.Home.KnownRoles()
 	rows, err := s.Store.Q.ListRoleAvatars(r.Context())
 	if err != nil {
 		writeErr(w, r, err)
@@ -31,15 +31,15 @@ func (s *Server) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
 		avatars[row.Role] = row
 	}
 	out := apigen.RoleIdentityList{Roles: make([]apigen.RoleIdentity, 0, len(roles)+len(rows))}
-	inCycle := make(map[string]bool, len(roles))
+	known := make(map[string]bool, len(roles))
 	for i := range roles {
-		inCycle[roles[i].Role] = true
+		known[roles[i].Role] = true
 		a := avatars[roles[i].Role]
 		out.Roles = append(out.Roles, roleIdentity(roles[i].Role, &roles[i], a.AvatarIcon, a.AvatarImage))
 	}
 	// rows 已按 role 升序（ListRoleAvatars 的 ORDER BY role，SQLite BINARY 排序 = 字节序）
 	for _, row := range rows {
-		if !inCycle[row.Role] {
+		if !known[row.Role] {
 			out.Roles = append(out.Roles, roleIdentity(row.Role, nil, row.AvatarIcon, row.AvatarImage))
 		}
 	}
@@ -51,7 +51,7 @@ func (s *Server) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
 }
 
 // PutRoleIdentity 设置或清除一个 role 的头像：两个头像字段都空 = 清除（删行，幂等，任何 role 都允许）；
-// 设置只允许 cycleOrder 里的 role。返回写入后的该 role（组装方式同列表）。
+// 设置只允许已知 role。返回写入后的该 role（组装方式同列表）。
 func (s *Server) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
 	var req apigen.RoleIdentityInput
 	if !decodeJSON(w, r, &req) {
@@ -67,11 +67,11 @@ func (s *Server) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	roles, _ := s.Auth.Home.CycleRoles()
-	var cr *agentcfg.CycleRole
+	roles, _ := s.Auth.Home.KnownRoles()
+	var kr *agentcfg.KnownRole
 	for i := range roles {
 		if roles[i].Role == role {
-			cr = &roles[i]
+			kr = &roles[i]
 			break
 		}
 	}
@@ -82,8 +82,8 @@ func (s *Server) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if cr == nil {
-			writeErr(w, r, errInvalid("role 不在 cycleOrder 里"))
+		if kr == nil {
+			writeErr(w, r, errInvalid("role 不是已知 role（cycleOrder、modelRoles 或内置 role）"))
 			return
 		}
 		if err := s.Store.Q.UpsertRoleAvatar(ctx, db.UpsertRoleAvatarParams{
@@ -93,19 +93,20 @@ func (s *Server) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	WriteJSON(w, http.StatusOK, roleIdentity(role, cr, icon, image))
+	WriteJSON(w, http.StatusOK, roleIdentity(role, kr, icon, image))
 }
 
-// roleIdentity 组装一项：cr 非 nil = 在 cycleOrder 里（带 name / selector），nil = 遗留项。
-func roleIdentity(role string, cr *agentcfg.CycleRole, icon, image *string) apigen.RoleIdentity {
-	out := apigen.RoleIdentity{Role: role, InCycle: cr != nil, AvatarIcon: nonEmpty(icon), AvatarImage: nonEmpty(image)}
-	if cr != nil {
-		if cr.Name != "" {
-			name := cr.Name
+// roleIdentity 组装一项：kr 非 nil = 已知 role（带 name / selector / inCycle），nil = 遗留项。
+func roleIdentity(role string, kr *agentcfg.KnownRole, icon, image *string) apigen.RoleIdentity {
+	out := apigen.RoleIdentity{Role: role, AvatarIcon: nonEmpty(icon), AvatarImage: nonEmpty(image)}
+	if kr != nil {
+		out.InCycle = kr.InCycle
+		if kr.Name != "" {
+			name := kr.Name
 			out.Name = &name
 		}
-		if cr.Selector != "" {
-			sel := cr.Selector
+		if kr.Selector != "" {
+			sel := kr.Selector
 			out.Selector = &sel
 		}
 	}

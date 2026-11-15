@@ -131,6 +131,9 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 	if req.ThinkingLevel != nil {
 		p.ThinkingLevel = *req.ThinkingLevel
 	}
+	if req.Role != nil {
+		p.Role = *req.Role
+	}
 	if req.Title != nil {
 		p.Title = *req.Title
 	}
