@@ -236,4 +236,21 @@ describe("NoticeLine", () => {
 		expect(link).toHaveAttribute("href", "https://example.com/login");
 		expect(link).toHaveAttribute("target", "_blank");
 	});
+
+	it("/mcp list 的 ` | ` 分隔行渲染成表格（单行也不内联）", () => {
+		const { container } = render(
+			<NoticeLine
+				notice={notice({
+					text: "fs_tools | stdio | disabled | npx -y @a/b_c [project]",
+				})}
+			/>,
+		);
+		const table = container.querySelector('[data-config-list="mcp"] table');
+		const cells = [...(table?.querySelectorAll("tbody td") ?? [])].map(
+			(td) => td.textContent,
+		);
+		expect(cells[0]).toBe("fs_tools");
+		expect(cells[1]).toBe("stdio");
+		expect(cells[3]).toBe("npx -y @a/b_c");
+	});
 });

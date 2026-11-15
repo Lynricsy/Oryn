@@ -3,6 +3,7 @@
  * ```mermaid 图与 $…$ 数学公式在首次出现时才加载 mermaid / KaTeX。
  * `blob:sha256:<hex>` 图片引用改写为 `AssetUrlContext` 给出的地址（站内 `GET /api/v1/blobs/<hex>`，分享页为公开接口）。
  * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
+ * 文档首行起的 YAML frontmatter（SKILL.md、rules/*.md 等）渲染成字段网格，不再被当成 setext 标题；解析不了时原样交给 Markdown。
  */
 
 import type { MermaidConfig } from "mermaid";
@@ -21,9 +22,11 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { useAssetUrls } from "../../lib/asset-urls";
 import { cssColor } from "../../lib/css-color";
+import { splitFrontmatter } from "../../lib/frontmatter";
 import { useHighlighted } from "../../lib/highlight";
 import { THEME_EVENT } from "../../state/theme";
 import { CopyButton } from "../ui/CopyButton";
+import { FrontmatterFields } from "./Frontmatter";
 import "./markdown.css";
 
 type PluggableList = NonNullable<Options["remarkPlugins"]>;
@@ -338,7 +341,10 @@ export const Markdown = memo(function Markdown({
 	streaming = false,
 }: MarkdownProps): ReactNode {
 	const assets = useAssetUrls();
-	const source = text.replace(BLOB_RE, (_, sha: string) => assets.blob(sha));
+	const doc = splitFrontmatter(text);
+	const source = (doc ? doc.body : text).replace(BLOB_RE, (_, sha: string) =>
+		assets.blob(sha),
+	);
 	const math = useMath(MATH_RE.test(source));
 	const remarkPlugins: PluggableList = math
 		? [remarkGfm, remarkBreaks, ...math.remark]
@@ -349,6 +355,7 @@ export const Markdown = memo(function Markdown({
 		: [[rehypeSanitize, schema]];
 	return (
 		<div className="md">
+			{doc && <FrontmatterFields fields={doc.fields} />}
 			<ReactMarkdown
 				remarkPlugins={remarkPlugins}
 				rehypePlugins={rehypePlugins}

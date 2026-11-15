@@ -345,6 +345,20 @@
 		"showAll_one": "展开全部（{{count}} 行）",
 		"showAll_other": "展开全部（{{count}} 行）",
 		"collapse": "收起",
+		"configList": {
+			"name": "名称",
+			"type": "类型",
+			"status": "状态",
+			"location": "地址 / 命令",
+			"host": "主机",
+			"user": "用户",
+			"port": "端口",
+			"scope": "范围",
+			"enabled": "已启用",
+			"disabled": "已停用",
+			"scopeUser": "用户",
+			"scopeProject": "项目"
+		},
 		"copy": "复制{{label}}"
 	},
 	"titleMenu": {
@@ -445,12 +459,28 @@
 		"followUp": "排队"
 	},
 	"ui": {
+		"approvalOrigin": "来源",
+		"approvalReason": "原因",
 		"askTitle": "agent 在提问",
 		"formTitle": "请填写",
 		"moreQueued": "另有 {{count}} 个待答",
 		"otherAnswer": "其他回答…",
 		"recommended": "推荐",
 		"timeLeft": "{{s}} 秒"
+	},
+	"ttsrRule": {
+		"kind": "TTSR 规则",
+		"validation": {
+			"pending": "校验中",
+			"matched": "已在本对话命中",
+			"unconfirmed": "未能确认命中"
+		},
+		"field": {
+			"condition": "触发条件",
+			"astCondition": "AST 条件",
+			"question": "判定问题",
+			"scope": "作用范围"
+		}
 	},
 	"plan": {
 		"title": "计划提案：{{title}}",

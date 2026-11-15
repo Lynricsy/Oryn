@@ -4,15 +4,18 @@
  * 形态与工具行一致：一行「图标方块 + 标签」；短正文接在标签后面，长正文 / 多行正文放进标签下方左缘对齐标签的卡片。
  * 正文默认按 Markdown 渲染（omp 的命令输出本来就是给 ACP 客户端看的 Markdown：`/changelog` 是标题 + 列表，
  * `/jobs`、`/usage` 把对齐的树 / 量表包在围栏代码块里）；没有包围栏、靠空格对齐的纯文本（`/context` 等）
- * 按等宽原样排（规则见 `noticeBodyFormat`）。超过 `max-h-80` 的正文折叠，底部「展开全部」；卡片右上角可复制全文。
+ * 按等宽原样排（规则见 `noticeBodyFormat`）；`/mcp list`、`/ssh list` 的 ` | ` 分隔行渲染成表格（`lib/config-list.ts`）。
+ * 超过 `max-h-80` 的正文折叠，底部「展开全部」；卡片右上角可复制全文。
  * 信息 / 警告 / 错误只给图标方块、标签和卡片描边上色，颜色来自令牌。
  */
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { type ConfigList, parseConfigList } from "../../lib/config-list";
 import type { Notice } from "../../state/thread-reducer";
 import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Icon, type IconName } from "../ui/icons";
+import { ConfigListTable } from "./ConfigListTable";
 
 /** 正文的排法：`markdown` 交给 Markdown 组件；`plain` 是靠空格对齐的纯文本，等宽、不折行、横向滚动。 */
 export type NoticeBodyFormat = "markdown" | "plain";
@@ -128,9 +131,12 @@ export function NoticeLine({ notice }: { notice: Notice }): ReactNode {
 	// 只去掉首尾空行：首行的缩进是对齐的一部分
 	const text = notice.text.replace(/^(?:[ \t]*\n)+/, "").trimEnd();
 	const format = noticeBodyFormat(text);
+	// `/mcp list`、`/ssh list` 的固定格式行：渲染成表格
+	const list = notice.kind === "command_output" ? parseConfigList(text) : null;
 	const inline =
 		!text ||
-		(format === "markdown" &&
+		(!list &&
+			format === "markdown" &&
 			text.length <= INLINE_MAX &&
 			!text.includes("\n") &&
 			!FENCE_RE.test(text));
@@ -178,6 +184,7 @@ export function NoticeLine({ notice }: { notice: Notice }): ReactNode {
 				<NoticeBody
 					text={text}
 					format={format}
+					list={list}
 					cardTone={style.card}
 					lines={text.split("\n").length}
 				/>
@@ -199,11 +206,13 @@ export function NoticeLine({ notice }: { notice: Notice }): ReactNode {
 function NoticeBody({
 	text,
 	format,
+	list,
 	cardTone,
 	lines,
 }: {
 	text: string;
 	format: NoticeBodyFormat;
+	list: ConfigList | null;
 	cardTone: string;
 	lines: number;
 }): ReactNode {
@@ -234,7 +243,7 @@ function NoticeBody({
 	return (
 		<div
 			ref={cardRef}
-			className={`focus-inset mt-1 ml-[26px] min-w-0 scroll-mt-16 overflow-hidden rounded-md border ${cardTone} ${format === "plain" ? "bg-inset" : "bg-panel"}`}
+			className={`focus-inset mt-1 ml-[26px] min-w-0 scroll-mt-16 overflow-hidden rounded-md border ${cardTone} ${format === "plain" && !list ? "bg-inset" : "bg-panel"}`}
 		>
 			<div
 				ref={clipRef}
@@ -242,7 +251,11 @@ function NoticeBody({
 				data-folded={folded || undefined}
 				className={`${expanded ? "" : "max-h-80"} overflow-hidden ${folded ? "[mask-image:linear-gradient(to_bottom,black_calc(100%-56px),transparent)]" : ""}`}
 			>
-				{format === "plain" ? (
+				{list ? (
+					<div className="py-1">
+						<ConfigListTable list={list} />
+					</div>
+				) : format === "plain" ? (
 					<pre className="m-0 overflow-x-auto whitespace-pre px-3 py-2.5 font-mono text-xs leading-relaxed text-fg">
 						{text}
 					</pre>

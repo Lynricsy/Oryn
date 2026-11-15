@@ -18,4 +18,35 @@ describe("Markdown", () => {
 		expect(ol?.style.counterReset).toBe("md-ol 2");
 		expect(ol?.querySelectorAll("li")).toHaveLength(2);
 	});
+
+	it("文档首行的 YAML frontmatter 渲染成字段网格，不变成 setext 标题", () => {
+		const { container } = render(
+			<Markdown
+				text={
+					"---\nname: review\ndescription: Review a PR\nallowed-tools: [Read, Grep]\n---\n\n# Body"
+				}
+			/>,
+		);
+		const dl = container.querySelector("dl[data-frontmatter]");
+		expect(
+			[...(dl?.querySelectorAll("dt") ?? [])].map((d) => d.textContent),
+		).toEqual(["name", "description", "allowed-tools"]);
+		expect(
+			[...(dl?.querySelectorAll("dd code") ?? [])].map((c) => c.textContent),
+		).toEqual(["Read", "Grep"]);
+		expect(container.querySelectorAll("h1, h2")).toHaveLength(1);
+		expect(container.querySelector("h1")).toHaveTextContent("Body");
+	});
+
+	it("正文里的 --- 与解析不了的开头分隔线照常是 Markdown", () => {
+		const { container } = render(
+			<Markdown text={"Intro\n\n---\n\nname: x\n\n---\n\nend"} />,
+		);
+		expect(container.querySelector("dl[data-frontmatter]")).toBeNull();
+		expect(container.querySelectorAll("hr")).toHaveLength(2);
+		const nested = render(
+			<Markdown text={"---\nmeta:\n  author: x\n---\n\nbody"} />,
+		);
+		expect(nested.container.querySelector("dl[data-frontmatter]")).toBeNull();
+	});
 });

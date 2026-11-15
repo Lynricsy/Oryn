@@ -345,6 +345,20 @@
 		"showAll_one": "Show all ({{count}} line)",
 		"showAll_other": "Show all ({{count}} lines)",
 		"collapse": "Show less",
+		"configList": {
+			"name": "Name",
+			"type": "Type",
+			"status": "Status",
+			"location": "URL / command",
+			"host": "Host",
+			"user": "User",
+			"port": "Port",
+			"scope": "Scope",
+			"enabled": "Enabled",
+			"disabled": "Disabled",
+			"scopeUser": "User",
+			"scopeProject": "Project"
+		},
 		"copy": "Copy {{label}}"
 	},
 	"titleMenu": {
@@ -445,12 +459,28 @@
 		"followUp": "Follow-up"
 	},
 	"ui": {
+		"approvalOrigin": "Origin",
+		"approvalReason": "Reason",
 		"askTitle": "The agent has a question",
 		"formTitle": "Please fill in",
 		"moreQueued": "{{count}} more pending",
 		"otherAnswer": "Other answer…",
 		"recommended": "Recommended",
 		"timeLeft": "{{s}}s"
+	},
+	"ttsrRule": {
+		"kind": "TTSR rule",
+		"validation": {
+			"pending": "Validating",
+			"matched": "Matches this conversation",
+			"unconfirmed": "Couldn't confirm a match"
+		},
+		"field": {
+			"condition": "Triggers",
+			"astCondition": "AST triggers",
+			"question": "Judge question",
+			"scope": "Scope"
+		}
 	},
 	"plan": {
 		"title": "Plan proposal: {{title}}",

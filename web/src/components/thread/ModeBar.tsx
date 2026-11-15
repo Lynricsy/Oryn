@@ -22,6 +22,7 @@ import { escapeAngles, noticeBodyFormat } from "../transcript/NoticeLine";
 import { Badge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { Menu, type MenuItem, Spinner } from "../ui/primitives";
+import { RuleCard } from "./RuleCard";
 
 /** 模式命令的最近错误（按线程）：ModeStrip 写、ModeStatus 读。 */
 const modeErrorStore = createStore<{
@@ -329,11 +330,27 @@ function Widgets({
 		([, w]) => w.placement === placement,
 	);
 	if (list.length === 0) return null;
-	// 扩展小部件可能是对齐的状态行，也可能是整段 Markdown（如 /omfg 的规则全文）：与命令输出行同一套判定。
+	// 扩展小部件可能是对齐的状态行，也可能是整段 Markdown：与命令输出行同一套判定。
+	// /omfg 的候选规则（`TTSR rule — <状态>` + frontmatter 规则全文）单独渲染成规则卡，格式不符时回落。
 	// 托盘空间有限，超高的部件在自身内部滚动
 	return (
 		<div>
 			{list.map(([key, w]) => {
+				const omfg = parseOmfgWidget(key, w.lines);
+				if (omfg)
+					return (
+						<div
+							key={key}
+							data-widget={key}
+							className="max-h-48 overflow-y-auto px-3 py-2"
+						>
+							<RuleCard
+								rule={omfg.rule}
+								validation={omfg.validation}
+								label={omfg.label}
+							/>
+						</div>
+					);
 				const text = w.lines.join("\n");
 				return noticeBodyFormat(text) === "markdown" ? (
 					<div

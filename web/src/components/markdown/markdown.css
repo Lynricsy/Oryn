@@ -155,6 +155,39 @@
 	border-radius: var(--r-xs);
 	padding: 0.1em 0.35em;
 }
+/* 文档开头的 YAML frontmatter：与表格同一套圆角描边容器，键等宽淡色、值正文色，窄屏也保持两列 */
+.md-frontmatter {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	align-items: baseline;
+	gap: 0.3em 1em;
+	margin: 0 0 0.9em;
+	padding: 0.6em 0.9em;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	background: var(--panel);
+	font-size: max(11px, 0.9em);
+	line-height: 1.55;
+}
+.md-frontmatter dt {
+	font-family: var(--mono);
+	font-size: max(11px, 0.9em);
+	color: var(--text-faint);
+}
+.md-frontmatter dd {
+	margin: 0;
+	min-width: 0;
+}
+.md-fm-chip {
+	font-family: var(--mono);
+	font-size: max(11px, 0.88em);
+	background: var(--inset);
+	border: 1px solid var(--line);
+	border-radius: var(--r-xs);
+	padding: 0 0.4em;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
 .md-code {
 	margin: 0.6em 0;
 	border: 1px solid var(--line);

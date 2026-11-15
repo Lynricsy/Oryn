@@ -6,6 +6,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyed } from "../../lib/keys";
+import { splitConfirmRule } from "../../lib/omfg-rule";
 import type {
 	AskQuestion,
 	ExtensionUiRequest,
@@ -19,6 +20,7 @@ import { answerUi } from "../../state/actions";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { Button, Checkbox, Radio, TextArea, TextInput } from "../ui/primitives";
+import { RuleCard } from "./RuleCard";
 
 /** 选项行：细描边半透明底，选中时强调色描边 + 浅强调底。 */
 const OPTION =
@@ -114,9 +116,18 @@ function ConfirmBody({
 	answer: Answer;
 }) {
 	const { t } = useTranslation();
+	// /omfg 的 confirm 在 message 尾部拼着候选规则全文：拆出来用规则卡展示
+	const ruled = splitConfirmRule(req.message);
 	return (
 		<div className="flex flex-col gap-3">
-			<p className="whitespace-pre-wrap text-sm">{req.message}</p>
+			<p className="whitespace-pre-wrap text-sm">
+				{ruled ? ruled.message : req.message}
+			</p>
+			{ruled && (
+				<div className="max-h-48 overflow-y-auto rounded-md border border-border bg-panel/60 px-3 py-2.5">
+					<RuleCard rule={ruled.rule} />
+				</div>
+			)}
 			<div className="flex justify-end gap-2">
 				<Button
 					onClick={() =>
@@ -599,6 +610,64 @@ function titleOf(
 	return t("ui.askTitle");
 }
 
+/** Core `approvalHeader`（tools/approval.ts）在工具名之后的固定行。 */
+const APPROVAL_ROW_RE = /^(Origin|Reason): (.+)$/;
+
+/**
+ * 多行标题首行以外的部分。工具审批（首行 `Allow tool: <名>`）的 `Origin:` / `Reason:` 是固定行，拆成键值；
+ * 之后是各工具自己拼的参数（命令、路径、JSON），等宽原样。其余对话框的多行标题按命令输出同一套判定。
+ */
+function TitleDetail({ head, text }: { head: string; text: string }) {
+	const { t } = useTranslation();
+	const pre = (body: string) => (
+		<pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-inset px-2.5 py-2 font-mono text-2xs text-fg leading-relaxed [overflow-wrap:anywhere]">
+			{body}
+		</pre>
+	);
+	if (head.startsWith("Allow tool: ")) {
+		const lines = text.split("\n");
+		const rows: { key: string; value: string }[] = [];
+		while (rows.length < lines.length) {
+			const m = APPROVAL_ROW_RE.exec(lines[rows.length] ?? "");
+			if (!m) break;
+			rows.push({ key: m[1] ?? "", value: m[2] ?? "" });
+		}
+		const rest = lines.slice(rows.length).join("\n").trim();
+		return (
+			<div className="mb-2.5 flex flex-col gap-2">
+				{rows.length > 0 && (
+					<dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+						{rows.map((r) => (
+							<div key={r.key} className="contents">
+								<dt className="text-faint">
+									{r.key === "Origin"
+										? t("ui.approvalOrigin")
+										: t("ui.approvalReason")}
+								</dt>
+								<dd className="m-0 min-w-0 whitespace-pre-wrap text-fg">
+									{r.value}
+								</dd>
+							</div>
+						))}
+					</dl>
+				)}
+				{rest && pre(rest)}
+			</div>
+		);
+	}
+	return (
+		<div className="mb-2.5">
+			{noticeBodyFormat(text) === "markdown" ? (
+				<div className="text-fg [&_.md]:text-sm! [&_.md]:leading-relaxed!">
+					<Markdown text={escapeAngles(text)} />
+				</div>
+			) : (
+				pre(text)
+			)}
+		</div>
+	);
+}
+
 export function UiRequestCard({
 	threadId,
 	req,
@@ -646,18 +715,28 @@ export function UiRequestCard({
 		default:
 			return null;
 	}
+	// 标题可能是多行：Core 在 RPC 下没有审批对话框，工具审批走 select，整段提示（`Allow tool: …` + 参数）
+	// 都在 title 里。标题栏只放首行，其余作正文，免得命令 / 路径被截掉、盲批。
+	const [head = "", ...more] = titleOf(req, t).split("\n");
+	const detail = more
+		.join("\n")
+		.replace(/^(?:[ \t]*\n)+/, "")
+		.trimEnd();
 	return (
 		<div
 			role="dialog"
-			aria-label={titleOf(req, t)}
+			aria-label={head}
 			className="max-h-[55dvh] overflow-y-auto px-3.5 py-3"
 		>
 			<div className="mb-2.5 flex items-center gap-2">
 				<span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-accent-soft text-accent">
 					<Icon name="message" size={12} weight="fill" />
 				</span>
-				<h3 className="min-w-0 flex-1 truncate font-medium text-sm">
-					{titleOf(req, t)}
+				<h3
+					className="min-w-0 flex-1 truncate font-medium text-sm"
+					title={head}
+				>
+					{head}
 				</h3>
 				{queued > 0 && (
 					<span className="text-faint text-xs">
@@ -683,6 +762,7 @@ export function UiRequestCard({
 					{t("common.dismiss")}
 				</Button>
 			</div>
+			{detail && <TitleDetail head={head} text={detail} />}
 			{body}
 		</div>
 	);
