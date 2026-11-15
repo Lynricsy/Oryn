@@ -89,6 +89,9 @@ type Config struct {
 	// Run 执行 `omp models --json --kind all` 并返回 stdout 与 stderr；home 是临时 HOME，
 	// 渲染后的配置在 AgentDir(home) 下。nil = 以从零构造的环境变量运行 OmpPath（测试可替换）。
 	Run func(ctx context.Context, home string) (stdout, stderr []byte, err error)
+	// SchemaRun 以 RPC 模式运行 omp、发送 get_settings_schema 并返回 id 匹配的 response 行；home 同 Run。
+	// nil = 运行 OmpPath（测试可替换）。
+	SchemaRun func(ctx context.Context, home string) (response []byte, err error)
 }
 
 // AgentDir 返回临时 HOME 下 omp 的配置目录（PI_CODING_AGENT_DIR）。
@@ -103,6 +106,10 @@ type Catalog struct {
 	mu       sync.Mutex
 	last     *entry // 最近一份成功结果
 	inflight *call  // 正在进行的运行（同一时刻至多一个）
+
+	schemaMu     sync.Mutex
+	schema       *schemaEntry // 最近一份成功的设置 schema
+	schemaFlight *schemaCall  // 正在进行的 schema 运行
 }
 
 // entry 是一份成功结果及其缓存键。
@@ -141,7 +148,11 @@ func New(cfg Config, home *agentcfg.Home, vault *secrets.Vault) *Catalog {
 	if c.cfg.Run == nil {
 		c.cfg.Run = c.runOmp
 	}
+	if c.cfg.SchemaRun == nil {
+		c.cfg.SchemaRun = c.rpcSettingsSchema
+	}
 	c.last = c.loadDisk()
+	c.schema = c.loadSchemaDisk()
 	return c
 }
 
@@ -271,9 +282,27 @@ func pinKey() string {
 	return "linux-x64"
 }
 
+// newTempHome 建临时 HOME（0700）与其中的 AgentDir；调用方用完后 os.RemoveAll。
+func newTempHome() (string, error) {
+	tmp, err := os.MkdirTemp("", "oryn-modelcat-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(AgentDir(tmp), 0o700); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// ompEnv 是一次性运行 omp 的环境变量，从零构造。
+func ompEnv(home string) []string {
+	return []string{"HOME=" + home, "PI_CODING_AGENT_DIR=" + AgentDir(home), "PATH=/usr/bin:/bin"}
+}
+
 // fetch 渲染配置到临时 HOME（0700，结束即删），起本机回环 egress 代理，运行 omp 并解析输出。
 func (c *Catalog) fetch(ctx context.Context, files map[string][]byte) (Result, error) {
-	tmp, err := os.MkdirTemp("", "oryn-modelcat-")
+	tmp, err := newTempHome()
 	if err != nil {
 		return Result{}, err
 	}
@@ -289,12 +318,8 @@ func (c *Catalog) fetch(ctx context.Context, files map[string][]byte) (Result, e
 	}
 	srv := serveEgress(ln, c.res, rendered.Routes)
 	defer func() { _ = srv.Close() }()
-	dir := AgentDir(tmp)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Result{}, err
-	}
 	for p, b := range rendered.Files {
-		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(p)), b, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(AgentDir(tmp), filepath.FromSlash(p)), b, 0o600); err != nil {
 			return Result{}, err
 		}
 	}
@@ -313,7 +338,7 @@ func (c *Catalog) fetch(ctx context.Context, files map[string][]byte) (Result, e
 func (c *Catalog) runOmp(ctx context.Context, home string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, c.cfg.OmpPath, "models", "--json", "--kind", "all")
 	cmd.Dir = home
-	cmd.Env = []string{"HOME=" + home, "PI_CODING_AGENT_DIR=" + AgentDir(home), "PATH=/usr/bin:/bin"}
+	cmd.Env = ompEnv(home)
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -358,41 +383,39 @@ func errDetail(stderr []byte) string {
 	return ": " + s
 }
 
-func (c *Catalog) cachePath() string { return filepath.Join(c.cfg.CacheDir, cacheFile) }
-
-// loadDisk 读取落盘的上一份结果；不存在或损坏时返回 nil。
-func (c *Catalog) loadDisk() *entry {
+// readCache 读取缓存目录下的 JSON 文件到 v；未配置缓存目录、文件不存在或损坏时返回 false。
+func (c *Catalog) readCache(name string, v any) bool {
 	if c.cfg.CacheDir == "" {
-		return nil
+		return false
 	}
-	b, err := os.ReadFile(c.cachePath())
+	path := filepath.Join(c.cfg.CacheDir, name)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("读取模型目录缓存失败", "err", err)
+			slog.Warn("读取模型目录缓存失败", "path", path, "err", err)
 		}
-		return nil
+		return false
 	}
-	var d diskEntry
-	if err := json.Unmarshal(b, &d); err != nil || d.Key == "" || d.Models == nil {
-		slog.Warn("模型目录缓存损坏，已忽略", "path", c.cachePath(), "err", err)
-		return nil
+	if err := json.Unmarshal(b, v); err != nil {
+		slog.Warn("模型目录缓存损坏，已忽略", "path", path, "err", err)
+		return false
 	}
-	return &entry{key: d.Key, res: Result{Models: d.Models, FetchedAt: d.FetchedAt, Warnings: d.Warnings}}
+	return true
 }
 
-// saveDisk 原子写入最近一份成功结果（目录 0700，文件 0600）。
-func (c *Catalog) saveDisk(key string, r Result) error {
+// writeCache 把 v 以 JSON 原子写入缓存目录（目录 0700，文件 0600）；未配置缓存目录时什么都不做。
+func (c *Catalog) writeCache(name string, v any) error {
 	if c.cfg.CacheDir == "" {
 		return nil
 	}
-	b, err := json.Marshal(diskEntry{Key: key, FetchedAt: r.FetchedAt, Models: r.Models, Warnings: r.Warnings})
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(c.cfg.CacheDir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(c.cfg.CacheDir, cacheFile+".*")
+	f, err := os.CreateTemp(c.cfg.CacheDir, name+".*")
 	if err != nil {
 		return err
 	}
@@ -401,10 +424,24 @@ func (c *Catalog) saveDisk(key string, r Result) error {
 		werr = cerr
 	}
 	if werr == nil {
-		werr = os.Rename(f.Name(), c.cachePath())
+		werr = os.Rename(f.Name(), filepath.Join(c.cfg.CacheDir, name))
 	}
 	if werr != nil {
 		_ = os.Remove(f.Name())
 	}
 	return werr
+}
+
+// loadDisk 读取落盘的上一份目录结果；不存在或损坏时返回 nil。
+func (c *Catalog) loadDisk() *entry {
+	var d diskEntry
+	if !c.readCache(cacheFile, &d) || d.Key == "" || d.Models == nil {
+		return nil
+	}
+	return &entry{key: d.Key, res: Result{Models: d.Models, FetchedAt: d.FetchedAt, Warnings: d.Warnings}}
+}
+
+// saveDisk 落盘最近一份成功的目录结果。
+func (c *Catalog) saveDisk(key string, r Result) error {
+	return c.writeCache(cacheFile, diskEntry{Key: key, FetchedAt: r.FetchedAt, Models: r.Models, Warnings: r.Warnings})
 }
