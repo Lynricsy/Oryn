@@ -26,6 +26,7 @@ import {
 	GroupIcon,
 	LIST_ROW,
 	NAV_ROW,
+	PANE_SCROLL,
 	UnreadDot,
 	useNow,
 } from "./pane-parts";
@@ -138,10 +139,7 @@ export function AssistantPane(): ReactNode {
 		);
 	};
 	return (
-		<div
-			data-testid="sidebar-assistant"
-			className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-4"
-		>
+		<div data-testid="sidebar-assistant" className={PANE_SCROLL}>
 			<button
 				type="button"
 				className={`${LIST_ROW} disabled:opacity-50 disabled:hover:bg-transparent`}

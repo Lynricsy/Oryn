@@ -17,6 +17,10 @@ export const LIST_ROW =
 export const LIST_LINK = ({ isActive }: { isActive: boolean }) =>
 	`${LIST_ROW} ${isActive ? "bg-[var(--sb-sel)] font-medium" : ""}`;
 
+/** 分区滚动区：底部让出悬浮底栏的高度（`--tabbar-h`，侧栏外壳设置）再留 1rem，最后一行能滚到胶囊上方。 */
+export const PANE_SCROLL =
+	"min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-[calc(var(--tabbar-h,0px)+1rem)]";
+
 /** 与线程行同款的未读点。 */
 export function UnreadDot(): ReactNode {
 	const { t } = useTranslation();

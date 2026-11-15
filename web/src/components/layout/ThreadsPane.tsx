@@ -32,6 +32,7 @@ import {
 	Group,
 	GroupIcon,
 	NAV_ROW,
+	PANE_SCROLL,
 	UnreadDot,
 	useNow,
 } from "./pane-parts";
@@ -608,10 +609,7 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 					projects={projects.data?.projects ?? []}
 				/>
 			)}
-			<div
-				data-testid="threads-scroll"
-				className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-4"
-			>
+			<div data-testid="threads-scroll" className={PANE_SCROLL}>
 				<SpacesGroup threads={threads} />
 				{empty && (
 					<p className="px-3 py-4 text-faint text-sm">

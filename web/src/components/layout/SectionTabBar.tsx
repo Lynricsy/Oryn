@@ -4,8 +4,10 @@
  * 200ms `--ease`，与分区轨道同步；减少动效时由全局规则压掉过渡）。
  * 助手项显示全局助手的生效名字与圆形头像（都没设时「全局助手」+ sparkle）；任一助手对话未读时带未读点。
  * 「更多」项在连接不是 open 时带状态点。
- * `tone`：`glass` 是手机下沉侧栏层底部的玻璃胶囊（自带安全区内边距）；`inset` 是列侧栏 / 双段抽屉底部的内嵌底色胶囊
- * （侧栏本身已是玻璃，不叠第二层模糊），`safeBottom` 时再让出底部安全区。底栏不带 `data-window-drag`（不能拖动窗口）。
+ * 底栏悬浮在分区内容之上（绝对定位贴侧栏底边）：列表照常滚到它下面、从玻璃胶囊后面透出来，不再被一条实底截断；
+ * 各分区滚动区底部按 `--tabbar-h`（`tabBarHeight`，由侧栏外壳设置）留白，最后一行能滚到胶囊上方。
+ * 胶囊两种场合都是玻璃（`.glass`，自带模糊）：`tone="glass"` 是手机下沉侧栏层，底部让出安全区；`inset` 是列侧栏 / 双段抽屉，
+ * `safeBottom` 时再让出底部安全区。外层不接收指针（胶囊两侧露出的列表仍可点）。底栏不带 `data-window-drag`（不能拖动窗口）。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +25,21 @@ const ICONS = {
 	projects: "folder",
 	more: "more",
 } as const satisfies Record<SectionId, IconName>;
+
+/** 胶囊高度与上下外边距：与下面 `outer` 的类名一致，供侧栏外壳设 `--tabbar-h`。 */
+const PILL = "52px";
+export function tabBarHeight(
+	tone: "glass" | "inset",
+	safeBottom: boolean,
+): string {
+	const bottom =
+		tone === "glass"
+			? "max(env(safe-area-inset-bottom), 0.5rem)"
+			: safeBottom
+				? "calc(0.5rem + env(safe-area-inset-bottom))"
+				: "0.5rem";
+	return `calc(${PILL} + 0.375rem + ${bottom})`;
+}
 
 /** 快捷键提示：macOS / iOS 用 ⌘n，其余 Ctrl+n。 */
 const MAC =
@@ -59,11 +76,9 @@ export function SectionTabBar({
 			aria-label={t("tabBar.label")}
 			data-testid="section-tabbar"
 			data-tone={tone}
-			className={`shrink-0 ${outer}`}
+			className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`}
 		>
-			<div
-				className={`h-[52px] rounded-full p-1 ${tone === "glass" ? "glass" : "bg-[var(--sb-field)]"}`}
-			>
+			<div className="glass pointer-events-auto h-[52px] rounded-full p-1">
 				<div className="relative grid h-full grid-cols-4">
 					<span
 						aria-hidden

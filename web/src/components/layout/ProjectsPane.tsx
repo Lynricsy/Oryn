@@ -18,6 +18,7 @@ import {
 	GroupIcon,
 	LIST_LINK,
 	LIST_ROW,
+	PANE_SCROLL,
 } from "./pane-parts";
 import { useSwitchSection } from "./useSection";
 
@@ -49,7 +50,7 @@ export function ProjectsPane(): ReactNode {
 		switchSection("threads");
 	};
 	return (
-		<div className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-4">
+		<div className={PANE_SCROLL}>
 			<div className="flex flex-col gap-0.5" data-testid="sidebar-projects">
 				<button
 					type="button"
