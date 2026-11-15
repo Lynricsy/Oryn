@@ -96,6 +96,7 @@ Rollback point：每个阶段都能单独上线、单独停下。三次数据库
 ## 假设
 
 - A1. 控制面能为模型目录进程起一个本机回环 egress 监听，复用 `internal/egress` 按策略注入密钥。若不成立：步骤 1.1 改为把真实密钥渲染进临时 HOME（0700，用完即删），并在本节记录这一风险。受影响步骤：1.1、1.2。
+  - **1.1 结论（2026-11-15）：成立。** `egress.NewHandler` 是普通 `http.Handler`，挂在控制面 `127.0.0.1:0` 监听上即可，Resolver 返回 `Policy{Routes: rendered.Routes, NoGit: true}`，密钥查询用 `*secrets.Vault`。用开发库的 omp-home 实测：`RenderAt` 生成 9 条路由；`build/core/x64/omp models --json --kind all` 耗时约 4.4 秒、退出码 0、stderr 为空；6 个 provider 的发现请求（`/llm/<key>/…/models`）经代理全部 200；共输出 311 个模型，分属 10 个 provider，kind 覆盖 chat、embedding、image、judge、search、stt、tiny、tts。环境变量降级的 provider（如 exa）没有路由，目录运行时不注入其真实密钥。
 - A2. `omp models --json --kind all` 的输出结构（`cli/models-cli.ts:68-86`）在钉住的 Core 版本内稳定。若不成立：步骤 1.2 的解析改为宽松解析。受影响步骤：1.2。
 - A3. 协调宿主的 omp 加 `--tools read,write` 后，内置工具只有 read 和 write，不会自动追加其他工具。若不成立：步骤 4.3 在 overlay 里显式关掉多出来的工具。受影响步骤：4.3。
 - A4. 在 omp 会话空闲时执行 `reload_plugins`，会刷新技能、斜杠命令、MCP，并重建系统提示（含 AGENTS.md 与规则）（`rpc-session-actions.ts:83-125`，`session-tools.ts:2316-2323`）。若不成立：步骤 6.3 把这些改动也归为"需重启"。受影响步骤：6.3。
