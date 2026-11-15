@@ -6,6 +6,7 @@ import type {
 	RpcAskDialogQuestion,
 	RpcCommand,
 	RpcGetQueueResult,
+	RpcAvailableSlashCommand,
 	RpcQueueClearResult,
 	RpcQueueEditResult,
 	RpcQueueMoveResult,
@@ -43,6 +44,14 @@ export type CommandOf<T extends OmpCommandType> = Extract<OmpCommand, { type: T 
 export interface OrynPromptExtras {
 	orynAttachments?: string[];
 }
+
+/**
+ * `get_available_commands` / `available_commands_update` 的命令项。Core 在线上多发 `textModeExecutable`
+ * （false = 只能在 TUI 里执行的 builtin，文本路径会原样进模型），rpc-types 尚未声明，这里本地补上。
+ */
+export type SlashCommandInfo = RpcAvailableSlashCommand & {
+	textModeExecutable?: boolean;
+};
 
 /** rpc-types 的 `RpcResponse` 联合里缺失的应答类型（以 `Rpc*Result` 为准补齐）。 */
 interface MissingResponses {

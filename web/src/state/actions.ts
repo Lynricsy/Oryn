@@ -2,6 +2,8 @@
  * 线程操作：输入区发送、UI 应答、线程管理（REST）与 omp 命令的薄封装。
  * 组件只调这里，不直接拼命令帧。
  */
+
+import type { ParseKeys } from "i18next";
 import {
 	api,
 	rawFetch,
@@ -10,6 +12,7 @@ import {
 	unwrap,
 } from "../api/client";
 import type { ComposerAction } from "../lib/composer";
+import { formatCount, formatDuration } from "../lib/format";
 import {
 	parseSlash,
 	resolveSlash,
@@ -23,6 +26,7 @@ import type {
 	OrynPromptExtras,
 	RpcLoopModeState,
 	SessionState,
+	SlashCommandInfo,
 } from "../omp/types";
 import { realtime } from "../realtime/socket";
 import { getThreadStore, indexStore, type ThreadStore } from "./stores";
@@ -37,16 +41,25 @@ export type SendMode = Extract<
 	"prompt" | "steer" | "follow_up" | "abort_and_prompt"
 >;
 
-/** 按发送方式构造命令帧；attachmentIds 写入 Oryn 扩展字段 `orynAttachments`。 */
+/** 消息帧的附件字段：内联图片 `images`，已上传附件的 id 写入 Oryn 扩展字段 `orynAttachments`。 */
+function promptExtras(
+	images: ImageContent[],
+	attachmentIds: readonly string[],
+): { images?: ImageContent[] } & OrynPromptExtras {
+	const extra: { images?: ImageContent[] } & OrynPromptExtras = {};
+	if (images.length > 0) extra.images = images;
+	if (attachmentIds.length > 0) extra.orynAttachments = [...attachmentIds];
+	return extra;
+}
+
+/** 按发送方式构造命令帧（附件见 `promptExtras`）。 */
 export function promptFrame(
 	mode: SendMode,
 	message: string,
 	images: ImageContent[],
 	attachmentIds: readonly string[] = [],
 ): OmpCommand & OrynPromptExtras {
-	const extra: { images?: ImageContent[] } & OrynPromptExtras = {};
-	if (images.length > 0) extra.images = images;
-	if (attachmentIds.length > 0) extra.orynAttachments = [...attachmentIds];
+	const extra = promptExtras(images, attachmentIds);
 	switch (mode) {
 		case "prompt":
 			return { type: "prompt", message, ...extra };
@@ -84,7 +97,6 @@ export async function fetchSetupRunLog(
 
 export function slashContextOf(threadId: string): SlashContext {
 	const s = getThreadStore(threadId).getState();
-	const compact = s.commands?.find((c) => c.name === "compact");
 	return {
 		planModeEnabled: s.state?.planModeEnabled ?? false,
 		vibeEnabled: s.vibeEnabled ?? false,
@@ -92,7 +104,7 @@ export function slashContextOf(threadId: string): SlashContext {
 		agentsPaused: s.state?.agentsPaused ?? false,
 		fastModeEnabled: s.state?.fastModeEnabled ?? false,
 		slowModeEnabled: s.state?.slowModeEnabled ?? false,
-		compactModes: compact?.subcommands?.map((c) => c.name) ?? [],
+		commands: (s.commands ?? []) as SlashCommandInfo[],
 	};
 }
 
@@ -102,6 +114,152 @@ export function resolveSlashText(
 ): SlashAction | null {
 	const parsed = parseSlash(text);
 	return parsed ? resolveSlash(parsed, slashContextOf(threadId)) : null;
+}
+
+/**
+ * 斜杠命令的文本路径帧：omp 只在 `prompt` 里执行 builtin，`steer` / `follow_up` 会把 `/xxx` 原样交给模型，
+ * 所以无论 agent 忙不忙都发 `prompt`。builtin 照常立即执行；会变成消息的命令（skill、自定义命令）忙时按
+ * `streamingBehavior` 引导，Ctrl+Enter（follow_up）时排队。
+ */
+export function slashPromptFrame(
+	mode: SendMode,
+	message: string,
+	images: ImageContent[] = [],
+	attachmentIds: readonly string[] = [],
+): OmpCommand & OrynPromptExtras {
+	return {
+		type: "prompt",
+		message,
+		streamingBehavior: mode === "follow_up" ? "followUp" : "steer",
+		...promptExtras(images, attachmentIds),
+	};
+}
+
+/** 与 plan_approval 一样的长超时：大会话的压缩 / 交接、等用户在对话框里选的 omfg、引导访谈都可能远超默认 120s。 */
+export const LONG_COMMAND_TIMEOUT_MS = 600_000;
+
+const LONG_COMMANDS: Record<string, true> = {
+	compact: true,
+	handoff: true,
+	omfg: true,
+	guided_goal: true,
+	// 文本路径的 builtin（如 `/compact <模式>`、`/mcp reauth`）在应答前同步执行完
+	prompt: true,
+};
+
+/** 这条命令的应答超时（未列出的走 realtime 的默认值）。 */
+export function commandTimeout(frame: OmpCommand): number | undefined {
+	return LONG_COMMANDS[frame.type] ? LONG_COMMAND_TIMEOUT_MS : undefined;
+}
+
+/** 斜杠命令应答的本地提示：i18n 键（`slash.result.*`）+ 参数。 */
+export interface SlashResultNotice {
+	level: "info" | "warning";
+	key: ParseKeys;
+	params?: Record<string, string | number>;
+}
+
+/**
+ * 把命令应答变成一句给人看的提示；不需要提示的命令（结果在别处已经可见，如模式开关、压缩卡片）返回 null。
+ * 命令本身失败时 realtime.cmd 抛错，错误留在输入区，不经这里。
+ */
+export function describeSlashResult(
+	frame: OmpCommand,
+	data: unknown,
+): SlashResultNotice | null {
+	const d = isObject(data) ? data : {};
+	const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+	switch (frame.type) {
+		case "shake_context": {
+			const summary = str(d.removed);
+			return summary
+				? { level: "info", key: "slash.result.shake", params: { summary } }
+				: null;
+		}
+		case "retry":
+			return d.retried === true
+				? { level: "info", key: "slash.result.retried" }
+				: { level: "warning", key: "slash.result.nothingToRetry" };
+		case "handoff": {
+			if (data === null)
+				return { level: "warning", key: "slash.result.handoffCancelled" };
+			const path = str(d.savedPath);
+			return path
+				? { level: "info", key: "slash.result.handoffSaved", params: { path } }
+				: { level: "info", key: "slash.result.handoff" };
+		}
+		case "tan": {
+			const id = str(d.jobId);
+			return id
+				? { level: "info", key: "slash.result.tan", params: { id } }
+				: null;
+		}
+		case "omfg": {
+			if (d.state === "saved") {
+				const path = str(d.savedPath);
+				return path
+					? { level: "info", key: "slash.result.omfgSaved", params: { path } }
+					: { level: "info", key: "slash.result.omfgSavedNoPath" };
+			}
+			if (d.state === "rejected")
+				return { level: "warning", key: "slash.result.omfgRejected" };
+			if (d.state === "aborted")
+				return { level: "warning", key: "slash.result.omfgAborted" };
+			return null;
+		}
+		case "clear_context":
+			return typeof d.droppedCount === "number"
+				? {
+						level: "info",
+						key: "slash.result.cleared",
+						params: { count: d.droppedCount },
+					}
+				: { level: "info", key: "slash.result.clearedNoCount" };
+		case "fresh":
+			return { level: "info", key: "slash.result.fresh" };
+		case "guided_goal":
+			return { level: "info", key: "slash.result.guidedGoal" };
+		case "set_agents_paused": {
+			if (d.paused === true)
+				return { level: "info", key: "slash.result.paused" };
+			const held = typeof d.heldMs === "number" ? formatDuration(d.heldMs) : "";
+			return held
+				? {
+						level: "info",
+						key: "slash.result.resumedAfter",
+						params: { duration: held },
+					}
+				: { level: "info", key: "slash.result.resumed" };
+		}
+		case "set_goal":
+			if (frame.tokenBudget === null)
+				return { level: "info", key: "slash.result.goalBudgetCleared" };
+			if (typeof frame.tokenBudget === "number" && !frame.objective)
+				return {
+					level: "info",
+					key: "slash.result.goalBudgetSet",
+					params: { n: formatCount(frame.tokenBudget) },
+				};
+			return null;
+		default:
+			return null;
+	}
+}
+
+/** 在转录里插一条本地提示（与 omp 的 `notice` 帧同一条渲染路径，`source` 标明来自客户端）。 */
+export function pushLocalNotice(
+	threadId: string,
+	level: "info" | "warning" | "error",
+	message: string,
+) {
+	getThreadStore(threadId)
+		.getState()
+		.apply([
+			{
+				type: "frame",
+				frame: { type: "notice", level, message, source: "oryn-slash" },
+			},
+		]);
 }
 
 /** 应答一个 extension UI 请求：发给控制面（先到先得），本地立即关闭对话框。 */
@@ -190,7 +348,11 @@ export function isModeCommand(frame: OmpCommand): boolean {
  * `set_vibe_mode` / `set_loop_mode` 的应答直接写回，随后刷新 `get_state`。模式条与斜杠命令共用。
  */
 export async function runModeCommand(threadId: string, frame: OmpCommand) {
-	const data: unknown = await realtime.cmd(threadId, frame);
+	const data: unknown = await realtime.cmd(
+		threadId,
+		frame,
+		commandTimeout(frame),
+	);
 	const store = getThreadStore(threadId);
 	if (frame.type === "set_vibe_mode" && isObject(data) && "enabled" in data)
 		store.getState().patchLocal({ vibeEnabled: data.enabled === true });

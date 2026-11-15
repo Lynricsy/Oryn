@@ -13,17 +13,30 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
-import { coordinatorAllows, type SlashAction } from "../../lib/slash";
+import { selectModel } from "../../lib/model-select";
+import {
+	carriesAttachments,
+	coordinatorAllows,
+	matchModelSelector,
+	type SlashAction,
+} from "../../lib/slash";
+import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import {
+	commandTimeout,
+	describeSlashResult,
 	isModeCommand,
 	isThreadBusy,
+	LONG_COMMAND_TIMEOUT_MS,
 	promptFrame,
+	pushLocalNotice,
 	resolveSlashText,
 	runModeCommand,
 	type SendMode,
+	slashPromptFrame,
 } from "../../state/actions";
-import { useThread } from "../../state/stores";
+import { getThreadStore, useThread } from "../../state/stores";
+import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { Icon } from "../ui/icons";
@@ -52,6 +65,8 @@ export function Composer({
 	const [bashRunning, setBashRunning] = useState(false);
 	const [active, setActive] = useState(0);
 	const [menuDismissed, setMenuDismissed] = useState(false);
+	/** 上一条斜杠命令没有带走附件（附件留在输入区）时，那条命令的名字。 */
+	const [keptFor, setKeptFor] = useState<string | null>(null);
 	const escAt = useRef<number | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -59,6 +74,7 @@ export function Composer({
 	const att = useAttachments({ threadId });
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
+	const entries = menu?.entries ?? [];
 
 	// omp 的 set_editor_text / 会话树跳转带回的草稿
 	useEffect(() => {
@@ -80,7 +96,7 @@ export function Composer({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 候选数变化时重置高亮项
 	useEffect(() => {
 		setActive(0);
-	}, [menu?.length]);
+	}, [entries.length]);
 
 	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）
 	const draftRef = useRef({ text, items: att.items });
@@ -98,33 +114,99 @@ export function Composer({
 		if (cur.text === sent.text && cur.items === sent.items) reset();
 	};
 
-	const runSlash = async (action: SlashAction, mode: SendMode) => {
+	/** 命令没有带走附件：只清掉命令文本，附件留在输入区。 */
+	const clearTextIfUnchanged = (sent: typeof draftRef.current) => {
+		if (draftRef.current.text !== sent.text) return;
+		setText("");
+		setMenuDismissed(false);
+	};
+
+	const notifyResult = (frame: OmpCommand, data: unknown) => {
+		const r = describeSlashResult(frame, data);
+		if (r) pushLocalNotice(threadId, r.level, t(r.key, r.params ?? {}));
+	};
+
+	const runSlash = async (
+		action: SlashAction,
+		mode: SendMode,
+		name: string,
+	) => {
 		if (coordinator && !coordinatorAllows(action))
-			throw new Error(
-				t("composer.coordinatorUnavailable", {
-					name: action.kind === "rpc" ? action.frame.type : action.kind,
-				}),
-			);
+			throw new Error(t("composer.coordinatorUnavailable", { name }));
+		const ui = uiStore.getState();
 		switch (action.kind) {
-			case "rpc":
-				if (isModeCommand(action.frame))
-					await runModeCommand(threadId, action.frame);
-				else await realtime.cmd(threadId, action.frame);
+			case "rpc": {
+				const data = isModeCommand(action.frame)
+					? await runModeCommand(threadId, action.frame)
+					: await realtime.cmd(
+							threadId,
+							action.frame,
+							commandTimeout(action.frame),
+						);
+				notifyResult(action.frame, data);
 				return;
+			}
+			case "mode_prompt":
+				// 与 TUI 一致：先进入模式，再把 prompt（连同附件）作为该模式的第一条消息发出
+				if (action.frame) await runModeCommand(threadId, action.frame);
+				await realtime.cmd(
+					threadId,
+					slashPromptFrame(
+						mode,
+						action.prompt,
+						att.contents,
+						att.attachmentIds,
+					),
+				);
+				return;
+			case "queue":
+				await realtime.cmd(
+					threadId,
+					promptFrame(
+						"follow_up",
+						action.message,
+						att.contents,
+						att.attachmentIds,
+					),
+				);
+				return;
+			case "select_model": {
+				const { models } = await realtime.cmd(threadId, {
+					type: "get_available_models",
+				});
+				const model = matchModelSelector(models, action.selector);
+				if (!model) {
+					ui.open({ kind: "model", query: action.selector });
+					return;
+				}
+				await selectModel(threadId, model);
+				const state = (await realtime.cmd(threadId, {
+					type: "get_state",
+				})) as SessionState;
+				getThreadStore(threadId)
+					.getState()
+					.apply([{ type: "state", state }]);
+				pushLocalNotice(
+					threadId,
+					"info",
+					t("slash.result.model", { model: model.name || model.id }),
+				);
+				return;
+			}
 			case "open_tree":
-				uiStore.getState().open({ kind: "tree" });
+				ui.open({ kind: "tree" });
 				return;
 			case "open_fork":
-				uiStore.getState().open({ kind: "fork" });
+				ui.open({ kind: "fork" });
 				return;
 			case "open_model":
-				uiStore.getState().open({ kind: "model" });
+				ui.open({ kind: "model" });
 				return;
 			case "open_goal":
-				uiStore.getState().open({ kind: "goal" });
+				ui.open({ kind: "goal" });
 				return;
 			case "open_btw":
-				uiStore.getState().open({ kind: "btw" });
+				ui.open({ kind: "btw" });
 				return;
 			case "ask_btw":
 				// Core 先写入运行中的记录再应答；成功后打开对话框看流式回答（已有运行中的会被拒，错误留在输入区）
@@ -132,23 +214,68 @@ export function Composer({
 					type: "btw",
 					question: action.question,
 				});
-				uiStore.getState().open({ kind: "btw" });
+				ui.open({ kind: "btw" });
+				return;
+			case "open_changes":
+				ui.setPanelTab("changes");
+				ui.setPanel(true);
+				return;
+			case "open_subagents": {
+				ui.setPanelTab("info");
+				ui.setPanel(true);
+				if (ui.collapsedCards.subagents) ui.toggleCard("subagents");
+				// 子 agent 卡没有内容时不显示：说明一下，免得看起来没反应
+				const s = getThreadStore(threadId).getState();
+				if (
+					Object.keys(s.subagents).length === 0 &&
+					subagentFiles(s.entries).length === 0
+				)
+					pushLocalNotice(threadId, "info", t("slash.result.noSubagents"));
+				return;
+			}
+			case "review_plan":
+				if (!getThreadStore(threadId).getState().planProposal)
+					throw new Error(t("slash.noPlan"));
+				ui.reviewPlan();
 				return;
 			case "report":
-				uiStore.getState().open({ kind: "report", report: action.report });
+				ui.open({ kind: "report", report: action.report });
 				return;
 			case "new_thread":
 				navigate("/");
 				return;
 			case "thread_search":
-				uiStore.getState().focusSearch();
+				ui.focusSearch();
 				return;
 			case "needs_args":
-				throw new Error(t("composer.needsArgs", { name: action.name }));
+				throw new Error(
+					t("slash.needsArgs", { name: action.name, usage: action.usage }),
+				);
+			case "bad_args":
+				throw new Error(
+					t("slash.badArgs", {
+						name: action.name,
+						arg: action.arg,
+						usage: action.usage,
+					}),
+				);
 			case "unavailable":
-				throw new Error(t("composer.unavailable", { name: action.name }));
+				throw new Error(
+					t(`slash.unavailable.${action.reason}`, { name: action.name }),
+				);
 			case "prompt":
-				await realtime.cmd(threadId, promptFrame(mode, action.text, []));
+				await realtime.cmd(
+					threadId,
+					action.attach
+						? slashPromptFrame(
+								mode,
+								action.text,
+								att.contents,
+								att.attachmentIds,
+							)
+						: slashPromptFrame(mode, action.text),
+					LONG_COMMAND_TIMEOUT_MS,
+				);
 				return;
 		}
 	};
@@ -166,6 +293,7 @@ export function Composer({
 				? { kind: "text" as const, text: sent.text.trim() }
 				: parsed;
 		setError(null);
+		setKeptFor(null);
 		if (att.uploading && parsed.kind !== "bash") {
 			setError(new Error(t("attachments.waitUpload")));
 			return;
@@ -204,8 +332,12 @@ export function Composer({
 			if (asText.kind === "slash") {
 				const action = resolveSlashText(threadId, asText.text);
 				if (action) {
-					await runSlash(action, mode);
-					resetIfUnchanged(sent);
+					const name = asText.text.trim().split(/\s/)[0] ?? asText.text;
+					await runSlash(action, mode, name);
+					if (sent.items.length > 0 && !carriesAttachments(action)) {
+						clearTextIfUnchanged(sent);
+						setKeptFor(name);
+					} else resetIfUnchanged(sent);
 					return;
 				}
 			}
@@ -236,26 +368,26 @@ export function Composer({
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		if (menuOpen && menu.length > 0) {
+		if (menuOpen && entries.length > 0) {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
-				setActive((a) => (a + 1) % menu.length);
+				setActive((a) => (a + 1) % entries.length);
 				return;
 			}
 			if (e.key === "ArrowUp") {
 				e.preventDefault();
-				setActive((a) => (a - 1 + menu.length) % menu.length);
+				setActive((a) => (a - 1 + entries.length) % entries.length);
 				return;
 			}
 			if (
 				e.key === "Tab" ||
 				(e.key === "Enter" &&
 					!e.shiftKey &&
-					menu[active] &&
-					text.trim() !== menu[active]?.insert.trim())
+					entries[active] &&
+					text.trim() !== entries[active]?.insert.trim())
 			) {
 				e.preventDefault();
-				const entry = menu[active];
+				const entry = entries[active];
 				if (entry) pick(entry);
 				return;
 			}
@@ -299,10 +431,11 @@ export function Composer({
 			<RoleTrack threadId={threadId} anchorRef={rootRef} />
 			{menuOpen && (
 				<CommandMenu
-					entries={menu}
+					entries={entries}
+					usage={menu.usage}
 					active={active}
 					onPick={pick}
-					hint={menu.length > 0 ? t("composer.menuHint") : undefined}
+					hint={entries.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
 			{!coordinator && (
@@ -403,6 +536,15 @@ export function Composer({
 			{(error || att.error) && (
 				<p role="alert" className="px-5 pb-2 text-err text-xs">
 					{error ? describeError(error, t) : att.error}
+				</p>
+			)}
+			{keptFor && att.items.length > 0 && !error && (
+				<p
+					role="status"
+					className="flex items-center gap-1.5 px-5 pb-2 text-muted text-xs"
+				>
+					<Icon name="info" size={13} aria-hidden className="shrink-0" />
+					{t("slash.attachmentsKept", { name: keptFor })}
 				</p>
 			)}
 			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-5 py-[7px] text-2xs text-faint leading-4">

@@ -19,7 +19,8 @@ export type DialogState =
 	| { kind: "tree" }
 	| { kind: "fork"; entryId?: string }
 	| { kind: "report"; report: ReportKind }
-	| { kind: "model" }
+	/** `query`：打开时预填搜索框（`/model <选择器>` 解析不出唯一模型时）。 */
+	| { kind: "model"; query?: string }
 	| { kind: "subagent"; id: string }
 	| { kind: "btw" }
 	| { kind: "goal" }
@@ -169,6 +170,9 @@ export interface UiState {
 	panelMax: boolean;
 	/** 每次请求聚焦侧边栏搜索时递增。 */
 	searchNonce: number;
+	/** 每次请求重新打开计划提案（`/plan-review`）时递增；PlanProposalDialog 据此从收起的胶囊回到对话框。 */
+	planReviewNonce: number;
+	reviewPlan(): void;
 	/** 每个分区最近停留的站内路径（pathname + search）；存 sessionStorage（每个标签页 / 窗口各自一份，刷新保留）。 */
 	sectionPaths: Partial<Record<SectionId, string>>;
 	/** 记下某分区的路径：值没变不写；写 `SECTION_PATHS_KEY`，存储不可用时静默。 */
@@ -223,6 +227,8 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	panelWidth: loadPanelWidth(),
 	panelMax: false,
 	searchNonce: 0,
+	planReviewNonce: 0,
+	reviewPlan: () => set((s) => ({ planReviewNonce: s.planReviewNonce + 1 })),
 	open: (dialog) => set({ dialog }),
 	close: () => set({ dialog: null }),
 	setSidebar: (sidebarOpen) => set({ sidebarOpen }),

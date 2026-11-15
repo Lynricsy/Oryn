@@ -9,7 +9,12 @@ import {
 	deleteAttachment,
 	listThreadAttachments,
 } from "../../lib/attachments";
-import { formatBytes, formatCount, formatDateTime } from "../../lib/format";
+import {
+	formatBytes,
+	formatCount,
+	formatDateTime,
+	formatDuration,
+} from "../../lib/format";
 import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
 import { useBreakpoint } from "../../lib/viewport";
@@ -43,6 +48,7 @@ import { ModelLogo } from "../ui/ModelLogo";
 import {
 	Button,
 	Dialog,
+	describeError,
 	EmptyState,
 	ErrorText,
 	Field,
@@ -57,6 +63,17 @@ import { StructuredView } from "../ui/StructuredView";
 import { BtwDialog } from "./BtwDialog";
 import { ContextBar, ContextTable, useContextParts } from "./ContextBreakdown";
 import { SetupLogDialog } from "./EnvBanner";
+import { JOBS_POLL_MS, JobsReport, jobsRunning } from "./reports/JobsReport";
+import {
+	ConfirmStrip,
+	ReportCard,
+	ReportError,
+	ReportLoading,
+	ReportSection,
+} from "./reports/parts";
+import { SessionReport } from "./reports/SessionReport";
+import { ToolsReport } from "./reports/ToolsReport";
+import { UsageReport } from "./reports/UsageReport";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -421,7 +438,7 @@ function ContextReport({
 	return (
 		<div className="flex flex-col gap-3 text-sm">
 			{/* 总览：模型 + 已用 / 窗口 + 彩色分段量表 */}
-			<div className="rounded-lg border border-border bg-raised p-3">
+			<div className="rounded-md border border-border bg-raised p-3">
 				<div className="flex flex-wrap items-center gap-2">
 					{data.model && (
 						<Badge icon="sparkle" title={data.model}>
@@ -451,6 +468,10 @@ function ContextReport({
 	);
 }
 
+/**
+ * 报告对话框：各报告有专属渲染（上下文、用量、后台任务、工具、会话统计）；加载态带文案，读取失败可重试，
+ * 底部「刷新」重读。后台任务有运行中的任务时每 2 秒自动刷新。
+ */
 function ReportDialog({
 	threadId,
 	report,
@@ -461,20 +482,86 @@ function ReportDialog({
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
-	const q = useRpc(threadId, { type: report });
+	// 与 useRpc 同一个 key（信息面板的上下文卡共用缓存）；多了后台任务的轮询
+	const q = useQuery({
+		queryKey: ["rpc", threadId, { type: report }],
+		retry: false,
+		refetchInterval: (query) =>
+			report === "get_jobs" &&
+			jobsRunning(query.state.data as ResponseData<"get_jobs"> | undefined)
+				? JOBS_POLL_MS
+				: false,
+		queryFn: () => realtime.cmd(threadId, { type: report }),
+	});
+	const refetch = () => void q.refetch();
+	const data = q.data;
+	// 自动刷新时不再给手动刷新按钮（它会每 2 秒闪一次禁用态）
+	const polling =
+		report === "get_jobs" && jobsRunning(data as ResponseData<"get_jobs">);
+	let body: ReactNode = null;
+	if (q.isPending)
+		body = <ReportLoading label={t(`report.loading.${report}`)} />;
+	else if (q.isError)
+		body = (
+			<ReportError
+				title={t(`report.failed.${report}`)}
+				error={q.error}
+				retrying={q.isFetching}
+				onRetry={refetch}
+			/>
+		);
+	else if (report === "get_context_report")
+		body = (
+			<ContextReport
+				threadId={threadId}
+				data={data as ResponseData<"get_context_report">}
+			/>
+		);
+	else if (report === "get_usage")
+		body = (
+			<UsageReport
+				threadId={threadId}
+				data={data as ResponseData<"get_usage">}
+			/>
+		);
+	else if (report === "get_jobs")
+		body = (
+			<JobsReport
+				threadId={threadId}
+				data={data as ResponseData<"get_jobs">}
+				onChanged={refetch}
+			/>
+		);
+	else if (report === "get_active_tools")
+		body = <ToolsReport data={data as ResponseData<"get_active_tools">} />;
+	else
+		body = <SessionReport data={data as ResponseData<"get_session_stats">} />;
 	return (
-		<Dialog open wide onClose={onClose} title={t(`report.${report}`)}>
-			<ErrorText error={q.error} />
-			{q.isPending && <Spinner />}
-			{q.data !== undefined &&
-				(report === "get_context_report" ? (
-					<ContextReport
-						threadId={threadId}
-						data={q.data as ResponseData<"get_context_report">}
-					/>
-				) : (
-					<StructuredView value={q.data} />
-				))}
+		<Dialog
+			open
+			wide
+			onClose={onClose}
+			title={t(`report.${report}`)}
+			footer={
+				q.isSuccess &&
+				!polling && (
+					<Button
+						size="sm"
+						variant="ghost"
+						disabled={q.isFetching}
+						onClick={refetch}
+					>
+						{q.isFetching ? (
+							<Spinner size={12} />
+						) : (
+							<Icon name="refresh" size={13} />
+						)}
+						{t("report.refresh")}
+					</Button>
+				)
+			}
+		>
+			{body}
 		</Dialog>
 	);
 }
@@ -483,9 +570,12 @@ function ReportDialog({
 
 function ModelDialog({
 	threadId,
+	initialQuery,
 	onClose,
 }: {
 	threadId: string;
+	/** 打开时预填的筛选词（`/model <选择器>` 解析不出时带过来） */
+	initialQuery?: string;
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
@@ -493,9 +583,10 @@ function ModelDialog({
 	// 手机上自动聚焦搜索框会弹出软键盘，把顶部的角色列表挤出视野
 	const compact = useBreakpoint() === "compact";
 	const models = useRpc(threadId, { type: "get_available_models" });
-	const [q, setQ] = useState("");
+	const [q, setQ] = useState(initialQuery ?? "");
 	const [error, setError] = useState<unknown>(null);
-	const list = (models.data?.models ?? []).filter((m) =>
+	const all = models.data?.models ?? [];
+	const list = all.filter((m) =>
 		`${m.provider}/${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()),
 	);
 	// 模型列表里直接选 = 手动选择（来源记录 `manual`，回合头回落）；旧 Core 自动回退到 set_model
@@ -524,7 +615,19 @@ function ModelDialog({
 				className="mb-2"
 			/>
 			<ErrorText error={error ?? models.error} />
-			{models.isPending && <Spinner />}
+			{models.isPending && (
+				<div className="flex items-center gap-2 px-2 py-3 text-muted text-sm">
+					<Spinner />
+					{t("model.loading")}
+				</div>
+			)}
+			{models.isSuccess && list.length === 0 && (
+				<p className="px-2 py-3 text-muted text-sm">
+					{all.length === 0
+						? t("model.noModels")
+						: t("model.noMatch", { q: q.trim() })}
+				</p>
+			)}
 			<ul className="flex flex-col gap-px">
 				{list.map((m) => {
 					const current =
@@ -577,9 +680,9 @@ function subagentTone(status: string): Tone {
 	return "neutral";
 }
 
-// goal 的状态色调（未列出的状态用中性）
+// goal 的状态色调（未列出的状态用中性）；进行中不用强调色（强调色只给「需要你」的东西）
 const GOAL_TONE: Record<string, Tone> = {
-	active: "accent",
+	active: "neutral",
 	paused: "warn",
 	"budget-limited": "warn",
 	complete: "ok",
@@ -743,6 +846,35 @@ export function SubagentDialog({
 
 // ---------------------------------------------------------------- goal
 
+type GoalStep =
+	| "pause"
+	| "resume"
+	| "drop"
+	| "budget"
+	| "clearBudget"
+	| "set"
+	| "guided";
+
+/** 目标对话框里一步操作失败：哪一步（标题）+ 为什么（错误原文），就近显示在那一步所在的分区里。 */
+function GoalFailure({
+	step,
+	error,
+}: {
+	step: GoalStep;
+	error: unknown;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<Callout tone="err" role="alert" title={t(`goal.failed.${step}`)}>
+			<span className="break-words">{describeError(error, t)}</span>
+		</Callout>
+	);
+}
+
+/**
+ * 目标对话框：当前目标（状态、用量、暂停 / 继续 / 丢弃）、预算（只调预算，`set_goal` 只带 `tokenBudget`）、
+ * 设定新目标（已有进行中的目标时提示会替换；目标暂停时须先继续或丢弃）。丢弃前确认；失败就近显示在对应分区。
+ */
 function GoalDialog({
 	threadId,
 	onClose,
@@ -754,121 +886,310 @@ function GoalDialog({
 	const goal = useRpc(threadId, { type: "get_goal" });
 	const [objective, setObjective] = useState("");
 	const [budget, setBudget] = useState("");
-	const [error, setError] = useState<unknown>(null);
+	const [nextBudget, setNextBudget] = useState("");
+	const [confirmDrop, setConfirmDrop] = useState(false);
+	const [busy, setBusy] = useState<GoalStep | null>(null);
+	const [failure, setFailure] = useState<{
+		step: GoalStep;
+		error: unknown;
+	} | null>(null);
 	const qc = useQueryClient();
-	const act = async (frame: OmpCommand) => {
-		setError(null);
+	const act = async (step: GoalStep, frame: OmpCommand): Promise<boolean> => {
+		setFailure(null);
+		setBusy(step);
 		try {
 			await realtime.cmd(threadId, frame);
 			await qc.invalidateQueries({ queryKey: ["rpc", threadId] });
 			await refreshState(threadId);
-		} catch (e) {
-			setError(e);
+			return true;
+		} catch (error) {
+			setFailure({ step, error });
+			return false;
+		} finally {
+			setBusy(null);
 		}
 	};
+	const failed = (...steps: GoalStep[]) =>
+		failure && steps.includes(failure.step) ? (
+			<GoalFailure step={failure.step} error={failure.error} />
+		) : null;
 	const g = goal.data;
+	// 暂停的目标 `enabled` 为 false 但仍有目标；已放弃的不算
+	const hasGoal = !!g?.objective && g.status !== "dropped";
+	const paused = hasGoal && g?.status === "paused";
+	const replacing = hasGoal && !!g?.enabled && g.status !== "complete";
+	const used = g?.tokensUsed ?? 0;
+	const parsedBudget = Number(nextBudget);
 	return (
 		<Dialog open onClose={onClose} title={t("goal.title")}>
-			{g?.enabled ? (
-				<div className="mb-3 rounded-lg border border-border bg-raised p-3 text-sm">
-					<div className="flex items-start gap-2">
-						<Icon
-							name="target"
-							size={15}
-							aria-hidden
-							className="mt-0.5 shrink-0 text-faint"
-						/>
-						<div className="min-w-0 flex-1 font-medium">{g.objective}</div>
-						<Badge tone={GOAL_TONE[g.status ?? "active"] ?? "neutral"}>
-							{t(`goal.status.${g.status ?? "active"}`)}
-						</Badge>
-					</div>
-					{g.tokenBudget ? (
-						<div className="mt-2.5">
-							<div className="mb-1 flex justify-end text-faint text-xs tabular-nums">
-								{formatCount(g.tokensUsed ?? 0)} / {formatCount(g.tokenBudget)}
-							</div>
-							<Meter
-								value={g.tokensUsed ?? 0}
-								max={g.tokenBudget}
-								tone={thresholdTone(
-									((g.tokensUsed ?? 0) / g.tokenBudget) * 100,
-								)}
-								label={`${formatCount(g.tokensUsed ?? 0)} / ${formatCount(g.tokenBudget)}`}
-							/>
-						</div>
-					) : null}
-					<div className="mt-3 flex gap-2">
-						{g.status === "paused" ? (
-							<Button
-								size="sm"
-								onClick={() => void act({ type: "set_goal", action: "resume" })}
-							>
-								{t("goal.resume")}
-							</Button>
-						) : (
-							<Button
-								size="sm"
-								onClick={() => void act({ type: "set_goal", action: "pause" })}
-							>
-								{t("goal.pause")}
-							</Button>
-						)}
-						<Button
-							size="sm"
-							variant="danger"
-							onClick={() => void act({ type: "set_goal", action: "drop" })}
-						>
-							{t("goal.drop")}
-						</Button>
-					</div>
-				</div>
+			{goal.isPending ? (
+				<ReportLoading label={t("goal.loading")} />
+			) : goal.isError ? (
+				<ReportError
+					title={t("goal.loadFailed")}
+					error={goal.error}
+					retrying={goal.isFetching}
+					onRetry={() => void goal.refetch()}
+				/>
 			) : (
-				<p className="mb-3 text-muted text-sm">{t("goal.none")}</p>
-			)}
-			<div className="flex flex-col gap-2">
-				<Field label={t("goal.objective")}>
-					<TextArea
-						rows={3}
-						value={objective}
-						onChange={(e) => setObjective(e.target.value)}
-					/>
-				</Field>
-				<Field label={t("goal.budget")}>
-					<TextInput
-						inputMode="numeric"
-						value={budget}
-						onChange={(e) => setBudget(e.target.value.replace(/\D/g, ""))}
-					/>
-				</Field>
-				<div className="flex flex-wrap gap-2">
-					<Button
-						variant="primary"
-						disabled={!objective.trim()}
-						onClick={() =>
-							void act({
-								type: "set_goal",
-								objective: objective.trim(),
-								...(budget ? { tokenBudget: Number(budget) } : {}),
-							})
-						}
+				<div className="flex flex-col gap-5">
+					<ReportSection title={t("goal.current")}>
+						{hasGoal && g ? (
+							<ReportCard className="flex flex-col gap-3">
+								<div className="flex items-start gap-2">
+									<Icon
+										name="target"
+										size={15}
+										aria-hidden
+										className="mt-0.5 shrink-0 text-faint"
+									/>
+									<p
+										data-goal-objective
+										className="min-w-0 flex-1 whitespace-pre-wrap break-words font-medium text-sm"
+									>
+										{g.objective}
+									</p>
+									<Badge tone={GOAL_TONE[g.status ?? "active"] ?? "neutral"}>
+										{t(`goal.status.${g.status ?? "active"}`)}
+									</Badge>
+								</div>
+								<div className="flex flex-col gap-1.5">
+									<div className="flex flex-wrap items-baseline gap-x-3 text-faint text-xs tabular-nums">
+										<span>
+											{g.tokenBudget
+												? t("goal.usedOf", {
+														used: formatCount(used),
+														budget: formatCount(g.tokenBudget),
+													})
+												: t("goal.usedNoBudget", { used: formatCount(used) })}
+										</span>
+										<span className="flex-1" />
+										{(g.timeUsedSeconds ?? 0) > 0 && (
+											<span>
+												{t("goal.timeUsed", {
+													d: formatDuration((g.timeUsedSeconds ?? 0) * 1000),
+												})}
+											</span>
+										)}
+									</div>
+									{g.tokenBudget ? (
+										<Meter
+											value={used}
+											max={g.tokenBudget}
+											tone={thresholdTone((used / g.tokenBudget) * 100)}
+											label={t("goal.usedOf", {
+												used: formatCount(used),
+												budget: formatCount(g.tokenBudget),
+											})}
+										/>
+									) : null}
+								</div>
+								{confirmDrop ? (
+									<ConfirmStrip
+										label={t("goal.dropConfirmTitle")}
+										body={t("goal.dropConfirmBody")}
+										cancelLabel={t("goal.keep")}
+										confirmLabel={t("goal.dropConfirm")}
+										danger
+										busy={busy === "drop"}
+										onCancel={() => setConfirmDrop(false)}
+										onConfirm={() =>
+											void act("drop", {
+												type: "set_goal",
+												action: "drop",
+											}).then((ok) => ok && setConfirmDrop(false))
+										}
+									/>
+								) : (
+									<div className="flex flex-wrap gap-2">
+										{paused ? (
+											<Button
+												size="sm"
+												icon="play"
+												disabled={busy !== null}
+												onClick={() =>
+													void act("resume", {
+														type: "set_goal",
+														action: "resume",
+													})
+												}
+											>
+												{t("goal.resume")}
+											</Button>
+										) : g.enabled ? (
+											<Button
+												size="sm"
+												icon="pause"
+												disabled={busy !== null}
+												onClick={() =>
+													void act("pause", {
+														type: "set_goal",
+														action: "pause",
+													})
+												}
+											>
+												{t("goal.pause")}
+											</Button>
+										) : null}
+										<Button
+											size="sm"
+											variant="danger"
+											disabled={busy !== null}
+											onClick={() => {
+												setFailure(null);
+												setConfirmDrop(true);
+											}}
+										>
+											{t("goal.drop")}
+										</Button>
+									</div>
+								)}
+								{failed("pause", "resume", "drop")}
+							</ReportCard>
+						) : (
+							<p className="px-0.5 text-muted text-sm">{t("goal.none")}</p>
+						)}
+					</ReportSection>
+
+					{replacing && g && (
+						<ReportSection title={t("goal.budgetTitle")}>
+							<form
+								className="flex flex-col gap-2"
+								onSubmit={(e) => {
+									e.preventDefault();
+									if (!(parsedBudget > 0)) return;
+									void act("budget", {
+										type: "set_goal",
+										tokenBudget: parsedBudget,
+									}).then((ok) => ok && setNextBudget(""));
+								}}
+							>
+								<div className="flex flex-wrap items-center gap-2">
+									<span className="relative min-w-0 flex-1 basis-40">
+										<TextInput
+											inputMode="numeric"
+											aria-label={t("goal.newBudget")}
+											placeholder={
+												g.tokenBudget
+													? formatCount(g.tokenBudget)
+													: t("goal.budgetPlaceholder")
+											}
+											value={nextBudget}
+											onChange={(e) =>
+												setNextBudget(e.target.value.replace(/\D/g, ""))
+											}
+											className="pr-16"
+										/>
+										<span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-faint text-xs">
+											{t("goal.tokensUnit")}
+										</span>
+									</span>
+									<Button
+										type="submit"
+										size="sm"
+										disabled={!(parsedBudget > 0) || busy !== null}
+									>
+										{t("goal.updateBudget")}
+									</Button>
+									{g.tokenBudget ? (
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={busy !== null}
+											onClick={() =>
+												void act("clearBudget", {
+													type: "set_goal",
+													tokenBudget: null,
+												})
+											}
+										>
+											{t("goal.clearBudget")}
+										</Button>
+									) : null}
+								</div>
+								<p className="px-0.5 text-faint text-xs">
+									{parsedBudget > 0
+										? t("goal.budgetPreview", { n: formatCount(parsedBudget) })
+										: t("goal.budgetHint")}
+								</p>
+								{failed("budget", "clearBudget")}
+							</form>
+						</ReportSection>
+					)}
+
+					<ReportSection
+						title={replacing ? t("goal.replaceTitle") : t("goal.newTitle")}
 					>
-						{t("goal.set")}
-					</Button>
-					<Button
-						onClick={() =>
-							void act(
-								objective.trim()
-									? { type: "guided_goal", initial: objective.trim() }
-									: { type: "guided_goal" },
-							)
-						}
-					>
-						{t("goal.guided")}
-					</Button>
+						{/* 目标暂停时 Core 不接受新目标：只留一句说明，不摆一套禁用的表单 */}
+						{paused ? (
+							<Callout tone="neutral" role="status">
+								{t("goal.pausedBlocks")}
+							</Callout>
+						) : (
+							<div className="flex flex-col gap-3">
+								<Field label={t("goal.objective")}>
+									<TextArea
+										rows={3}
+										value={objective}
+										onChange={(e) => setObjective(e.target.value)}
+									/>
+								</Field>
+								<Field label={t("goal.budget")} hint={t("goal.budgetHintNew")}>
+									<TextInput
+										inputMode="numeric"
+										value={budget}
+										onChange={(e) =>
+											setBudget(e.target.value.replace(/\D/g, ""))
+										}
+									/>
+								</Field>
+								{/* 开始输入新目标时才提醒会替换，平时只靠分区标题「替换目标」 */}
+								{replacing && objective.trim() && (
+									<Callout tone="warn" role="status">
+										{t("goal.replaceWarning")}
+									</Callout>
+								)}
+								<div className="flex flex-wrap gap-2">
+									<Button
+										variant="primary"
+										disabled={!objective.trim() || busy !== null}
+										onClick={() =>
+											void act("set", {
+												type: "set_goal",
+												objective: objective.trim(),
+												...(budget ? { tokenBudget: Number(budget) } : {}),
+											}).then((ok) => {
+												if (!ok) return;
+												setObjective("");
+												setBudget("");
+											})
+										}
+									>
+										{replacing ? t("goal.replace") : t("goal.set")}
+									</Button>
+									{/* 引导式设定只在没有目标时可用（Core 对进行中的目标会拒绝） */}
+									{!replacing && (
+										<Button
+											disabled={busy !== null}
+											onClick={() =>
+												void act(
+													"guided",
+													objective.trim()
+														? { type: "guided_goal", initial: objective.trim() }
+														: { type: "guided_goal" },
+												).then((ok) => ok && onClose())
+											}
+										>
+											{t("goal.guided")}
+										</Button>
+									)}
+								</div>
+								{failed("set", "guided")}
+							</div>
+						)}
+					</ReportSection>
 				</div>
-			</div>
-			<ErrorText error={error ?? goal.error} />
+			)}
 		</Dialog>
 	);
 }
@@ -1180,7 +1501,10 @@ export function PlanProposalDialog({
 	const [savePath, setSavePath] = useState(proposal.suggestedFileName);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
-	const [hidden, setHidden] = useState(false);
+	// 收起时记下当时的 `planReviewNonce`：`/plan-review`（uiStore.reviewPlan）递增它，胶囊即回到对话框
+	const reviewNonce = useUi((s) => s.planReviewNonce);
+	const [hiddenAt, setHiddenAt] = useState<number | null>(null);
+	const hidden = hiddenAt === reviewNonce;
 	const options: PlanChoice[] = [
 		"execute",
 		"compact",
@@ -1225,7 +1549,7 @@ export function PlanProposalDialog({
 				<span className="min-w-0 flex-1 truncate">
 					{t("plan.pending", { title: proposal.title })}
 				</span>
-				<Button size="sm" variant="accent" onClick={() => setHidden(false)}>
+				<Button size="sm" variant="accent" onClick={() => setHiddenAt(null)}>
 					{t("plan.review")}
 				</Button>
 			</div>
@@ -1235,7 +1559,7 @@ export function PlanProposalDialog({
 		<Dialog
 			open
 			wide
-			onClose={() => setHidden(true)}
+			onClose={() => setHiddenAt(uiStore.getState().planReviewNonce)}
 			title={t("plan.title", { title: proposal.title })}
 			footer={
 				<div className="flex w-full flex-col gap-2">
@@ -1320,7 +1644,13 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 				/>
 			);
 		case "model":
-			return <ModelDialog threadId={threadId} onClose={close} />;
+			return (
+				<ModelDialog
+					threadId={threadId}
+					initialQuery={dialog.query}
+					onClose={close}
+				/>
+			);
 		case "subagent":
 			return (
 				<SubagentDialog threadId={threadId} id={dialog.id} onClose={close} />

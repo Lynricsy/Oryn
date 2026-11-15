@@ -11,6 +11,7 @@ import { OmpCommandError } from "../../realtime/socket";
 import { resetThreadStores } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { ThreadDialogs } from "./Dialogs";
+import { openThreadDialog } from "./reports/test-helpers";
 
 const { cmd } = vi.hoisted(() => ({ cmd: vi.fn() }));
 vi.mock("../../realtime/socket", () => ({
@@ -114,4 +115,51 @@ describe("ModelDialog", () => {
 		]);
 		expect(screen.queryByText(/Unknown command/)).toBeNull();
 	});
+
+	it("加载中：转圈带文案", async () => {
+		cmd.mockImplementation(async (_t: string, f: Record<string, unknown>) =>
+			f.type === "get_available_models" ? new Promise(() => undefined) : {},
+		);
+		openDialog();
+		expect(await screen.findByText("正在读取模型列表…")).toBeTruthy();
+	});
+
+	it("筛选无结果：说明没有匹配的模型", async () => {
+		openDialog();
+		await pickReady();
+		fireEvent.change(screen.getByPlaceholderText("搜索模型…"), {
+			target: { value: "zzz" },
+		});
+		expect(screen.getByText("没有匹配「zzz」的模型")).toBeTruthy();
+		expect(document.querySelector("[data-model]")).toBeNull();
+	});
+
+	it("没有任何模型：说明需要先登录供应商", async () => {
+		cmd.mockImplementation(async (_t: string, f: Record<string, unknown>) =>
+			f.type === "get_available_models" ? { models: [] } : {},
+		);
+		openDialog();
+		expect(await screen.findByText(/没有可用的模型/)).toBeTruthy();
+	});
+
+	it("带 query 打开（/model <选择器> 解析不出时）：预填搜索框并按它筛选", async () => {
+		openThreadDialog(T, { kind: "model", query: "sol" });
+		await pickReady();
+		expect(
+			(screen.getByPlaceholderText("搜索模型…") as HTMLInputElement).value,
+		).toBe("sol");
+		expect(
+			[...document.querySelectorAll("[data-model]")].map((e) =>
+				e.getAttribute("data-model"),
+			),
+		).toEqual(["openai/gpt-6.1-sol"]);
+	});
 });
+
+/** 等模型列表读完（至少一行或空态出现）。 */
+function pickReady() {
+	return vi.waitFor(() => {
+		if (screen.queryByText("正在读取模型列表…"))
+			throw new Error("模型列表未就绪");
+	});
+}
