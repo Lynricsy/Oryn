@@ -665,10 +665,19 @@ function ModelDialog({
 									provider={m.provider}
 									className="text-muted"
 								/>
-								<span className="min-w-0 flex-1 truncate">
-									{m.name || m.id}
+								{/* 主名称优先：桌面同一行、空间不够先截 id；手机分两行，id 作次要文字放第二行 */}
+								<span
+									className={`flex min-w-0 flex-1 ${compact ? "flex-col" : "items-center gap-2"}`}
+								>
+									<span
+										className={`min-w-0 truncate ${compact ? "" : "max-w-[60%] shrink-0"}`}
+									>
+										{m.name || m.id}
+									</span>
+									<span
+										className={`min-w-0 truncate font-mono text-faint text-xs ${compact ? "" : "flex-1 text-right"}`}
+									>{`${m.provider}/${m.id}`}</span>
 								</span>
-								<span className="min-w-0 truncate font-mono text-faint text-xs">{`${m.provider}/${m.id}`}</span>
 								{/* 与角色列表同一种选中样式：灰底 + 行尾中性勾 */}
 								{current && (
 									<Icon

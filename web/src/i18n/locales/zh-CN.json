@@ -244,7 +244,8 @@
 			"tui": "/{{name}} 只能在终端界面（TUI）里用，Oryn 里没有对应的界面。",
 			"workspace": "/{{name}} 会直接改 agent 的工作目录，Oryn 跟不上线程和工作区的对应关系，所以这里不能用。要在别的目录工作，请新建线程。",
 			"stats": "/stats 会在 orb 里启动本地仪表盘，浏览器打不开。看会话统计请用 /session。",
-			"export": "/export 会把会话导出成 orb 里的 HTML 文件，Oryn 还没有下载入口，暂时不能用。"
+			"export": "/export 会把会话导出成 orb 里的 HTML 文件，Oryn 还没有下载入口，暂时不能用。",
+			"sessionDelete": "/session delete 会删掉线程绑定的会话文件，Oryn 里不能这样删。要删除这段对话，请在线程标题栏的「更多操作」里选「删除线程」；只想从列表收起，选「归档」。"
 		},
 		"result": {
 			"shake": "精简上下文：{{summary}}",
@@ -287,8 +288,27 @@
 		"label": "加标签",
 		"messageActions": "消息操作",
 		"meta": {
-			"mode": "模式：{{mode}}",
 			"model": "模型切换为 {{model}}",
+			"modes": {
+				"goalBudget": "目标预算改为 {{budget}} token",
+				"goalBudgetCleared": "目标预算已取消",
+				"goalBudgetLimited": "目标已用到预算上限",
+				"goalChanged": "目标改为：{{objective}}",
+				"goalCompleted": "目标已完成",
+				"goalEnded": "目标已结束",
+				"goalPaused": "目标已暂停",
+				"goalResumed": "目标已继续",
+				"goalSet": "设定目标：{{objective}}",
+				"goalUpdated": "目标已更新",
+				"normal": "回到普通模式",
+				"other": "模式：{{mode}}",
+				"plan": "进入计划模式",
+				"planExited": "已退出计划模式",
+				"planPaused": "计划模式已暂停",
+				"planResumed": "计划模式已继续",
+				"vibe": "进入 vibe 模式",
+				"vibeExited": "已退出 vibe 模式"
+			},
 			"thinking": "思考级别：{{level}}",
 			"title": "标题：{{title}}",
 			"ttsr": "注入规则：{{rules}}"

@@ -42,7 +42,14 @@ export type TranscriptItem =
 	| { kind: "compaction"; key: string; seq: number; entry: JsonRecord }
 	| { kind: "branch_summary"; key: string; seq: number; entry: JsonRecord }
 	| { kind: "custom_message"; key: string; seq: number; entry: JsonRecord }
-	| { kind: "meta"; key: string; seq: number; entry: JsonRecord }
+	| {
+			kind: "meta";
+			key: string;
+			seq: number;
+			entry: JsonRecord;
+			/** mode_change 专用：同一条会话轨迹上前一条 mode_change 的内容（没有则缺省），用来说清这次变了什么 */
+			prevMode?: JsonRecord;
+	  }
 	| { kind: "notice"; key: string; seq: number; notice: Notice };
 
 const SYNTHETIC_IDS: Record<string, true> = {
@@ -254,6 +261,7 @@ export function buildTranscript(
 		(b) => b.length > 0,
 	);
 	let trail = EMPTY_TRAIL;
+	let lastMode: JsonRecord | undefined;
 	let shown = 0;
 	branches.forEach((branch, i) => {
 		// 启动文件（不是最后一个、只有启动元数据）不渲染、不出分隔线，但照常参与轨迹
@@ -273,8 +281,12 @@ export function buildTranscript(
 				const item = entryItem(e);
 				if (item?.kind === "message" && item.message.role === "assistant")
 					item.trail = trail;
+				if (item?.kind === "meta" && e.type === "mode_change" && lastMode)
+					item.prevMode = lastMode;
 				if (item) items.push(item);
 			}
+			// 模式轨迹跨会话文件延续（含不渲染的启动文件）
+			if (e.type === "mode_change" && isRecord(e.payload)) lastMode = e.payload;
 			trail = advanceTrail(trail, e);
 		}
 	});

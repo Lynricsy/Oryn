@@ -26,7 +26,12 @@ export const UNAVAILABLE_COMMANDS = [
 ] as const;
 
 /** 不可用的原因（i18n `slash.unavailable.<reason>`）。 */
-export type UnavailableReason = "tui" | "workspace" | "stats" | "export";
+export type UnavailableReason =
+	| "tui"
+	| "workspace"
+	| "stats"
+	| "export"
+	| "sessionDelete";
 
 /**
  * 有文本实现、但在 Oryn 里执行会出问题的命令，客户端先行拦下并说明原因：
@@ -226,6 +231,9 @@ export function resolveSlash(
 		return { kind: "unavailable", name, reason: "tui" };
 	const blocked = BLOCKED_COMMANDS[name];
 	if (blocked) return { kind: "unavailable", name, reason: blocked };
+	// `/session delete` 删掉线程绑定的会话文件（控制面同样拦 drop_session）：指向线程菜单的删除 / 归档
+	if (name === "session" && lower.trim() === "delete")
+		return { kind: "unavailable", name, reason: "sessionDelete" };
 	const text = args ? `/${name} ${args}` : `/${name}`;
 	const bad = (): SlashAction => ({
 		kind: "bad_args",

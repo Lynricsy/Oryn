@@ -1544,7 +1544,7 @@ async function w7() {
 	const cases: [string, string, string, boolean][] = [
 		["/move /tmp", "w7-move", "会直接改 agent 的工作目录", true],
 		["/wt feature-x", "w7-wt", "会直接改 agent 的工作目录", false],
-		["/session delete", "w7-session-delete", "Oryn 管理", true],
+		["/session delete", "w7-session-delete", "「删除线程」", true],
 		["/hotkeys", "w7-hotkeys", "只能在终端界面", false],
 		["/stats", "w7-stats", "/stats 会在 orb 里启动本地仪表盘", false],
 		["/export", "w7-export", "/export", false],
@@ -1556,10 +1556,7 @@ async function w7() {
 		expect(a.includes(want), `${cmd} 给出明确提示（含「${want}」）`);
 		if (cmd === "/session delete" && !a.includes("/session"))
 			issue(
-				`Web 发 /session delete 被控制面拦下（managed_by_oryn，原文「/session delete is managed by Oryn」），输入坞只显示通用文案「${a}」：` +
-					"没点名被拦的命令，也没说为什么（会删掉线程已入库的会话文件）和该怎么做，和客户端先拦的 /move、/stats 的说明不在一个水平。" +
-					"原因：describeError 对 managed_by_oryn 一律换成 i18n 固定句（web/src/components/ui/primitives.tsx:674、web/src/i18n/locales/zh-CN.json:844），丢了服务端消息里的命令名。" +
-					"复现：线程页输入 /session delete 回车。截图 w7-session-delete-*.png。",
+				`Web 发 /session delete 后输入坞没点名被拦的命令：「${a}」。复现：线程页输入 /session delete 回车。截图 w7-session-delete-*.png。`,
 			);
 		expect(
 			(await p.locator(BOX).inputValue()) === cmd,

@@ -383,22 +383,15 @@ describe("Composer 斜杠命令", () => {
 		expect(box().value).toBe("/move ../other");
 	});
 
-	it("/session delete 被控制面拦下：错误行点名命令并保留服务端原文", async () => {
-		reply({
-			prompt: () => {
-				throw Object.assign(new Error("/session delete is managed by Oryn"), {
-					code: "managed_by_oryn",
-				});
-			},
-		});
+	it("/session delete 先行拦下：命令不发出，提示指向线程菜单的删除 / 归档", async () => {
+		reply();
 		mount();
 		await send("/session delete");
-		expect(framesOf("prompt")).toMatchObject([{ message: "/session delete" }]);
-		const alert = screen.getByRole("alert");
-		expect(alert).toHaveTextContent(/^\/session delete 由 Oryn 管理/);
-		expect(alert).toHaveTextContent(
-			"服务端原文：/session delete is managed by Oryn",
+		expect(cmd).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			i18n.t("slash.unavailable.sessionDelete"),
 		);
+		expect(box().value).toBe("/session delete");
 	});
 
 	it("/fast foo 报用法，不切换", async () => {

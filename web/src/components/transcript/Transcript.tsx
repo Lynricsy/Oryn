@@ -52,6 +52,7 @@ import {
 	USER_BUBBLE_TEXT,
 	UserBubble,
 } from "./MessageView";
+import { describeModeChange } from "./mode-change";
 import { type KnownModel, modelLabel } from "./model-label";
 import { NoticeLine } from "./NoticeLine";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
@@ -91,7 +92,13 @@ const META_ICON: Record<string, IconName> = {
 	ttsr_injection: "bolt",
 };
 
-function MetaLine({ entry }: { entry: JsonRecord }) {
+function MetaLine({
+	entry,
+	prevMode,
+}: {
+	entry: JsonRecord;
+	prevMode?: JsonRecord;
+}) {
 	const { t } = useTranslation();
 	const { threadId } = useTranscriptContext();
 	const known = useThread(threadId, (s) => s.state?.model);
@@ -110,9 +117,11 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 				level: String(entry.thinkingLevel ?? entry.configured ?? "off"),
 			});
 			break;
-		case "mode_change":
-			text = t("transcript.meta.mode", { mode: String(entry.mode ?? "") });
+		case "mode_change": {
+			const d = describeModeChange(entry, prevMode);
+			text = t(d.key, d.params ?? {});
 			break;
+		}
 		case "ttsr_injection":
 			text = t("transcript.meta.ttsr", {
 				rules: Array.isArray(entry.injectedRules)
@@ -193,7 +202,7 @@ function ItemView({
 				/>
 			);
 		case "meta":
-			return <MetaLine entry={item.entry} />;
+			return <MetaLine entry={item.entry} prevMode={item.prevMode} />;
 		case "notice":
 			return <NoticeLine notice={item.notice} />;
 	}

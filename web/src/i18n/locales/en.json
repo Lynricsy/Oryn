@@ -244,7 +244,8 @@
 			"tui": "/{{name}} only works in the terminal UI (TUI); Oryn has no equivalent screen.",
 			"workspace": "/{{name}} changes the agent's working directory behind Oryn's back, so threads and workspaces would fall out of sync. To work in another directory, start a new thread.",
 			"stats": "/stats starts a local dashboard inside the orb that the browser can't reach. Use /session for session stats.",
-			"export": "/export writes the session as an HTML file inside the orb and Oryn has no download for it yet, so it's unavailable for now."
+			"export": "/export writes the session as an HTML file inside the orb and Oryn has no download for it yet, so it's unavailable for now.",
+			"sessionDelete": "/session delete removes the session file this thread is bound to, so Oryn doesn't allow it. To delete this conversation, open “More actions” in the thread header and choose “Delete thread”; to just hide it from the list, choose “Archive”."
 		},
 		"result": {
 			"shake": "Shake: {{summary}}",
@@ -287,8 +288,27 @@
 		"label": "Label",
 		"messageActions": "Message actions",
 		"meta": {
-			"mode": "Mode: {{mode}}",
 			"model": "Model changed to {{model}}",
+			"modes": {
+				"goalBudget": "Goal budget set to {{budget}} tokens",
+				"goalBudgetCleared": "Goal budget removed",
+				"goalBudgetLimited": "Goal reached its budget",
+				"goalChanged": "Goal changed: {{objective}}",
+				"goalCompleted": "Goal completed",
+				"goalEnded": "Goal ended",
+				"goalPaused": "Goal paused",
+				"goalResumed": "Goal resumed",
+				"goalSet": "Goal set: {{objective}}",
+				"goalUpdated": "Goal updated",
+				"normal": "Back to normal mode",
+				"other": "Mode: {{mode}}",
+				"plan": "Entered plan mode",
+				"planExited": "Left plan mode",
+				"planPaused": "Plan mode paused",
+				"planResumed": "Plan mode resumed",
+				"vibe": "Entered vibe mode",
+				"vibeExited": "Left vibe mode"
+			},
 			"thinking": "Thinking level: {{level}}",
 			"title": "Title: {{title}}",
 			"ttsr": "Rules injected: {{rules}}"

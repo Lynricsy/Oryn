@@ -272,6 +272,19 @@ describe("斜杠命令拦截映射", () => {
 		expect(resolve("/export")).toMatchObject({ reason: "export" });
 	});
 
+	it("/session delete 先行拦下并指向线程菜单；/session 其它操作照常交给 omp", () => {
+		expect(resolve("/session delete")).toEqual({
+			kind: "unavailable",
+			name: "session",
+			reason: "sessionDelete",
+		});
+		expect(resolve("/session  DELETE ")).toMatchObject({
+			reason: "sessionDelete",
+		});
+		expect(resolve("/session pin x")).toMatchObject({ kind: "prompt" });
+		expect(resolve("/session")).toMatchObject({ kind: "report" });
+	});
+
 	it("omp 标为只能在 TUI 执行的命令（含别名）不发给模型", () => {
 		expect(resolve("/hotkeys")).toEqual({
 			kind: "unavailable",
