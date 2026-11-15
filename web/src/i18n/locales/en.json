@@ -1174,9 +1174,12 @@
 				"not_editable": "read-only fact"
 			},
 			"importance": "Importance",
-			"bank": "Bank"
+			"bank": "Bank",
+			"id": "Memory",
+			"replacement": "Replaced by"
 		},
 		"tts": {
+			"output": "Output",
 			"voice": "Voice",
 			"language": "Language",
 			"format": "Format",

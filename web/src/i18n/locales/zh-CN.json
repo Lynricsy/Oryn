@@ -1174,9 +1174,12 @@
 				"not_editable": "只读事实"
 			},
 			"importance": "重要度",
-			"bank": "记忆库"
+			"bank": "记忆库",
+			"id": "记忆",
+			"replacement": "替代为"
 		},
 		"tts": {
+			"output": "输出",
 			"voice": "音色",
 			"language": "语言",
 			"format": "格式",

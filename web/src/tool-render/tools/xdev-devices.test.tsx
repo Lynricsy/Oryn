@@ -34,7 +34,7 @@ const meta = (c: HTMLElement) => c.querySelector(".tv-meta");
 const body = (c: HTMLElement) => c.querySelector(".tv-body");
 
 describe("checkpoint / rewind 卡片", () => {
-	it("checkpoint 摘要给出调查目标，展开体给开始时间；短目标不在展开体里重复", () => {
+	it("checkpoint 摘要给出调查目标，展开体给目标全文与开始时间", () => {
 		const goal = "弄清重连为什么丢消息";
 		const { container } = renderDevice(
 			"checkpoint",
@@ -46,7 +46,8 @@ describe("checkpoint / rewind 卡片", () => {
 			{ open: true },
 		);
 		expect(sum(container)).toHaveTextContent(goal);
-		expect(body(container)?.querySelector(".tv-prose")).toBeNull();
+		// 头部摘要会被窄屏截断：短目标也在展开体里给出全文
+		expect(body(container)?.querySelector(".tv-prose")).toHaveTextContent(goal);
 		expect(body(container)).toHaveTextContent("开始于");
 		// 工具的固定提示语不重复展示
 		expect(body(container)).not.toHaveTextContent("Finish exploration");
@@ -187,16 +188,6 @@ describe("tts 卡片", () => {
 		expect(container.querySelector(".tv-card--error")).not.toBeNull();
 		expect(body(container)).toHaveTextContent("No available speech model");
 		expect(meta(container)).toBeEmptyDOMElement();
-	});
-
-	it("短文本只在头部出现，不在展开体重复", () => {
-		const { container } = renderDevice(
-			"tts",
-			{ text: "你好", output_path: "a.mp3" },
-			{ text: "Saved", inner: { bytes: 10, voiceId: "eve", codec: "mp3" } },
-			{ open: true },
-		);
-		expect(body(container)?.querySelector(".tv-prose")).toBeNull();
 	});
 });
 

@@ -240,13 +240,6 @@ const ARG_SKIP: Record<string, true> = {
 	validation_evidence: true,
 };
 
-/** preflight 摘要已写出目标类别与 ref 区间（包含路径可能很长，仍在网格里列全）。 */
-const PREFLIGHT_IN_SUMMARY: Record<string, true> = {
-	target_kind: true,
-	base_revision: true,
-	head_revision: true,
-};
-
 function ArgsGrid({
 	args,
 	statusInMeta,
@@ -254,13 +247,10 @@ function ArgsGrid({
 	args: Record<string, unknown>;
 	statusInMeta: boolean;
 }): ReactNode {
-	const action = actionOf(args);
 	const rows: ReactNode[] = [];
 	for (const k in args) {
 		if (ARG_SKIP[k] || (statusInMeta && k === "validation_status")) continue;
-		// 头部摘要已写出的参数不再重复
-		if (action && KEY_ARG[action] === k) continue;
-		if (action === "preflight" && PREFLIGHT_IN_SUMMARY[k]) continue;
+		// 头部摘要会被省略号截断：关键对象、preflight 的目标与 ref 区间也在网格里列全
 		const text = argText(args[k]);
 		if (text === null) continue;
 		rows.push(

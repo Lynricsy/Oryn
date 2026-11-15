@@ -78,18 +78,22 @@ function Body(props: ToolRenderProps): ReactNode {
 		status === "updated" || status === "deleted" || status === "invalidated";
 	return (
 		<>
-			{/* 操作、id、替代记忆与短内容都在头部；长内容这里给全文 */}
-			{content && (content.length > 50 || content.includes("\n")) && (
-				<div className="tv-prose">{content}</div>
-			)}
-			{(importance !== null || where) && (
-				<KvGrid>
-					<Kv k={t("toolRender.memoryEdit.importance")}>
-						{importance === null ? null : importance.toFixed(2)}
-					</Kv>
-					<Kv k={t("toolRender.memoryEdit.bank")}>{where}</Kv>
-				</KvGrid>
-			)}
+			{/* 头部会被省略号截断：id、替代记忆与内容在这里完整给出 */}
+			{content && <div className="tv-prose">{content}</div>}
+			<KvGrid>
+				<Kv k={t("toolRender.memoryEdit.id")}>
+					{str(args.id) && <span className="tv-path">{str(args.id)}</span>}
+				</Kv>
+				<Kv k={t("toolRender.memoryEdit.replacement")}>
+					{str(args.replacement_id) && (
+						<span className="tv-path">{str(args.replacement_id)}</span>
+					)}
+				</Kv>
+				<Kv k={t("toolRender.memoryEdit.importance")}>
+					{importance === null ? null : importance.toFixed(2)}
+				</Kv>
+				<Kv k={t("toolRender.memoryEdit.bank")}>{where}</Kv>
+			</KvGrid>
 			{/* 成功时读数已说明结果；找不到、只读与出错时给出工具原文（含下一步提示） */}
 			{!success && <ResultText result={result} maxLines={6} />}
 		</>

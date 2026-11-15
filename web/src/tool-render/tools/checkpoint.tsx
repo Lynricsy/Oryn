@@ -11,13 +11,7 @@ import type { ToolRenderer, ToolRenderProps } from "../types";
 import { detailsRecord, normalizeWs, str, truncate } from "../util";
 import { CardMarkdown } from "./xdev-cards";
 
-/** 头部一行装得下的长度（中文约一行）；更长或多行的文本才在展开体里重写全文。 */
-const FITS_SUMMARY = 60;
-
-function fitsSummary(text: string): boolean {
-	return text.length <= FITS_SUMMARY && !text.includes("\n");
-}
-
+// 头部摘要会被 CSS 省略号截断（窄屏下几十个字符就放不下），展开体总是给出全文，不按字数猜头部是否装得下
 /** Markdown 报告的一行摘要：跳过标题行，去掉强调、行内代码与列表记号。 */
 function plainLine(markdown: string): string {
 	const lines = markdown
@@ -42,7 +36,7 @@ function CheckpointBody({ args, result }: ToolRenderProps): ReactNode {
 	const started = Date.parse(str(details?.startedAt) ?? "");
 	return (
 		<>
-			{goal && !fitsSummary(goal) && <div className="tv-prose">{goal}</div>}
+			{goal && <div className="tv-prose">{goal}</div>}
 			{Number.isFinite(started) && (
 				<KvGrid>
 					<Kv k={t("toolRender.checkpoint.started")}>
@@ -80,9 +74,7 @@ function RewindBody({ args, result }: ToolRenderProps): ReactNode {
 	const report = str(detailsRecord(result)?.report) ?? str(args.report);
 	return (
 		<>
-			{report?.trim() && !fitsSummary(report.trim()) && (
-				<CardMarkdown text={report.trim()} />
-			)}
+			{report?.trim() && <CardMarkdown text={report.trim()} />}
 			{result?.isError && <ResultText result={result} maxLines={6} />}
 		</>
 	);

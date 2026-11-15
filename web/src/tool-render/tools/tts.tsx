@@ -40,11 +40,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const codec = str(details?.codec);
 	return (
 		<>
-			{/* 短文本在头部已完整显示 */}
-			{text && (text.length > 50 || text.includes("\n")) && (
-				<div className="tv-prose">{text}</div>
-			)}
+			{/* 头部会被省略号截断：路径与全文都在这里完整给出 */}
+			{text && <div className="tv-prose">{text}</div>}
 			<KvGrid>
+				<Kv k={t("toolRender.tts.output")}>
+					{str(args.output_path) && (
+						<PathText path={str(args.output_path) as string} />
+					)}
+				</Kv>
 				<Kv k={t("toolRender.tts.voice")}>
 					{str(details?.voiceId) ?? str(args.voice_id)}
 				</Kv>

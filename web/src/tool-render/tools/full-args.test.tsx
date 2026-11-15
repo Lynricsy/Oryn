@@ -81,6 +81,55 @@ describe("展开体保留折叠行里可能被截断的完整参数", () => {
 			{ action: "launch", program: "bin/orynd", file: "cmd/main.go", line: 3 },
 			["bin/orynd", "cmd/main.go"],
 		],
+		// M12.1 新卡片：短字符串同样可能被窄屏截断，长路径更是
+		["checkpoint 目标（短）", "checkpoint", { goal: SHORT }, [SHORT]],
+		["rewind 报告（短）", "rewind", { report: SHORT }, [SHORT]],
+		[
+			"memory_edit 记忆 id、替代 id 与短内容",
+			"memory_edit",
+			{
+				op: "invalidate",
+				id: "mem-01JQ7F3K2Z9X8W6V5T4R3P2N1M",
+				replacement_id: "mem-01JQ7F3K2Z9X8W6V5T4R3P2N9Z",
+			},
+			["mem-01JQ7F3K2Z9X8W6V5T4R3P2N1M", "mem-01JQ7F3K2Z9X8W6V5T4R3P2N9Z"],
+		],
+		[
+			"memory_edit 短内容",
+			"memory_edit",
+			{ op: "update", id: "m1", content: SHORT },
+			["m1", SHORT],
+		],
+		[
+			"tts 短文本与长输出路径",
+			"tts",
+			{
+				text: "ok",
+				output_path: "/srv/oryn/projects/artifacts/audio/reconnect-summary.mp3",
+			},
+			["ok", "/srv/oryn/projects/artifacts/audio/reconnect-summary.mp3"],
+		],
+		[
+			"security_scan 关键对象",
+			"security_scan",
+			{
+				action: "cloud_start",
+				repository_url: "https://github.com/Lynricsy/oryn-setup-sandbox",
+			},
+			["https://github.com/Lynricsy/oryn-setup-sandbox"],
+		],
+		[
+			"ida 数据库与目标",
+			"ida",
+			{ action: "decompile", db: "/srv/bins/orbd.i64", target: "main.run" },
+			["/srv/bins/orbd.i64", "main.run"],
+		],
+		[
+			"MCP 主要参数",
+			"mcp__github__search_issues",
+			{ query: SHORT, repo: "can1357/oh-my-pi" },
+			[SHORT, "can1357/oh-my-pi"],
+		],
 	])("%s", (_label, name, args, expected) => {
 		const text = bodyText(name, args, ok());
 		for (const s of expected) expect(text).toContain(s);
