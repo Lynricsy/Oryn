@@ -26,6 +26,7 @@
     "accept:m96": "bun scripts/m96-accept.ts",
     "accept:m10": "bun scripts/m10-accept.ts",
     "accept:m11a": "bun scripts/m11a-accept.ts",
+    "accept:m11b": "bun scripts/m11b-accept.ts",
     "tauri": "tauri"
   },
   "dependencies": {
