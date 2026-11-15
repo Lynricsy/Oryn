@@ -114,7 +114,7 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	if p.Extra != nil {
 		extra = func(q *db.Queries) error { return p.Extra(q, id) }
 	}
-	if err := s.insertThread(ctx, row, nil, extra); err != nil {
+	if err := s.insertThread(ctx, row, nil, nil, extra); err != nil {
 		return apigen.Thread{}, err
 	}
 	t, err := s.get(ctx, id)

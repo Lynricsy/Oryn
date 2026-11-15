@@ -344,7 +344,11 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		}
 		s.notifyReadyWaiters(t, apigen.AgentStatusExited)
 		if p.StderrTail != nil {
-			slog.Warn("threads: agent 退出", "thread", t.id, "exitCode", p.ExitCode, "stderr", *p.StderrTail)
+			exit := any("unknown")
+			if p.ExitCode != nil {
+				exit = *p.ExitCode
+			}
+			slog.Warn("threads: agent 退出", "thread", t.id, "exitCode", exit, "stderr", *p.StderrTail)
 		}
 	}
 	s.recompute(ctx, t)

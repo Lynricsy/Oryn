@@ -119,6 +119,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return apigen.Thread{}, err
 		}
 		orb = o
+		if orbs.IsRunner(o) {
+			// runner 线程的工作目录只能经 runner executor 给出（校验目录、在线与 dir_in_use）；不替它猜默认目录
+			return apigen.Thread{}, errf(CodeRunnerUnsupported, "use executor kind=runner with a directory to start a thread on a runner")
+		}
 		if o.Coordinator {
 			return apigen.Thread{}, errf(CodeCoordinatorRestricted, "threads cannot be attached to the coordinator orb")
 		}
@@ -201,12 +205,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		f, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": title})
 		frames = append(frames, f)
 	}
+	// 未要求 worktree、未给 shareDir 的 runner 线程独占工作目录：检查与写线程行同一事务（BEGIN IMMEDIATE 串行），
+	// 并发的同目录请求恰好一条成功
+	var check func(q *db.Queries) error
+	if rt != nil && rt.worktree == nil && !p.ShareDir {
+		check = func(q *db.Queries) error { return checkDirFreeTx(ctx, q, orb.ID, rt.cwd) }
+	}
 	if s.afterSpacePrecheck != nil {
 		s.afterSpacePrecheck()
 	}
 	// 首批命令与线程行同一事务落库，应答 201 之前即已持久：重启不会丢掉已受理的提示词（CP5）
 	startup := startupFrames(frames...)
-	if err := s.insertThread(ctx, row, p.Labels, func(q *db.Queries) error {
+	if err := s.insertThread(ctx, row, p.Labels, check, func(q *db.Queries) error {
 		if err := q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startup, ID: id}); err != nil {
 			return err
 		}
@@ -251,12 +261,24 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 
 // insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。工作线程带 Space 时，事务的第一条语句复核
 // Space 仍存在（契约 C4：存储是单连接 + BEGIN IMMEDIATE，事务彼此串行，复核与写引用之间不会插入删除）。
-func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, labels []string, extra func(q *db.Queries) error) error {
+// 线程挂在 runner 上时同样复核 runner 仍在用（删除 runner 先提交 → 建线程失败；后提交 → 其 deleted 事件必能列到本线程）。
+// check 非 nil 时在写线程行之前执行（同一事务）。
+func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, labels []string, check, extra func(q *db.Queries) error) error {
 	now := s.now()
 	row.StateChangedAt, row.CreatedAt, row.UpdatedAt = now, now, now
 	return s.st.Tx(ctx, func(q *db.Queries) error {
 		if row.Kind == KindWork && row.SpaceID != nil {
 			if err := checkSpaceTx(ctx, q, *row.SpaceID); err != nil {
+				return err
+			}
+		}
+		if row.OrbID != nil {
+			if err := checkRunnerTx(ctx, q, *row.OrbID); err != nil {
+				return err
+			}
+		}
+		if check != nil {
+			if err := check(q); err != nil {
 				return err
 			}
 		}
@@ -874,7 +896,7 @@ func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThr
 			return q.SetThreadForkOp(ctx, db.SetThreadForkOpParams{ForkOp: op.bytes(), ID: child.ID})
 		}
 	}
-	if err := s.insertThread(ctx, child, nil, extra); err != nil {
+	if err := s.insertThread(ctx, child, nil, nil, extra); err != nil {
 		return apigen.Thread{}, err
 	}
 	t, err := s.get(ctx, child.ID)
@@ -949,7 +971,7 @@ func (s *Service) forkCopy(ctx context.Context, src *thread, child db.CreateThre
 		op.ProjectID = *srcOrb.ProjectID
 	}
 	// 后台阶段先落库再应答：重启后由 recoverForks 从快照阶段续作（CP5）
-	if err := s.insertThread(ctx, child, nil, func(q *db.Queries) error {
+	if err := s.insertThread(ctx, child, nil, nil, func(q *db.Queries) error {
 		return q.SetThreadForkOp(ctx, db.SetThreadForkOpParams{ForkOp: op.bytes(), ID: child.ID})
 	}); err != nil {
 		return apigen.Thread{}, err

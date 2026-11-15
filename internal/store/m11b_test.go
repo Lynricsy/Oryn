@@ -187,3 +187,101 @@ func TestM11bMigrationDownUp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "orb", o.Kind)
 }
+
+// TestM11bMigrationDownRunners：带存量 runner 回滚 0023 再重新应用。Down 让 runner 安全失效：其线程解绑（orb_id 置空，
+// 普通线程不动）、在线 / 离线的常驻 orb 置 deleted（已删除的保持原删除时间）、provider 停用、换掉令牌哈希并改名腾出原名。
+// 重新 Up 后不存在「未删除、kind=orb、属于 driver=runner 的 provider、没有 runners 关联」的 orb，原名可以重建 runner。
+func TestM11bMigrationDownRunners(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	q := s.Q
+	require.NoError(t, q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_d", Name: "docker", TokenHash: "hd", CreatedAt: 1}))
+	require.NoError(t, q.CreateOrb(ctx, db.CreateOrbParams{ID: "orb-d", ProviderID: "prov_d", Type: "small", State: "ready", TokenHash: "td", CreatedAt: 1}))
+	mk := func(prov, orb, name, state string) {
+		require.NoError(t, s.Tx(ctx, func(q *db.Queries) error {
+			if err := q.CreateRunnerProvider(ctx, db.CreateRunnerProviderParams{ID: prov, Name: name, TokenHash: "rt-" + prov, CreatedAt: 1}); err != nil {
+				return err
+			}
+			if err := q.CreateOrb(ctx, db.CreateOrbParams{ID: orb, ProviderID: prov, Type: "runner", State: state,
+				TokenHash: "ot-" + orb, CreatedAt: 1, Kind: new("runner")}); err != nil {
+				return err
+			}
+			return q.CreateRunner(ctx, db.CreateRunnerParams{ProviderID: prov, OrbID: orb})
+		}))
+	}
+	mk("prov_on", "orb-on", "laptop", "ready")
+	mk("prov_off", "orb-off", "desk", "stopped")
+	mk("prov_gone", "orb-gone", "old", "stopped")
+	n, err := q.RevokeRunnerProvider(ctx, db.RevokeRunnerProviderParams{DisabledAt: new(int64(7)), TokenHash: "rt-gone-revoked", ID: "prov_gone"})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	require.NoError(t, q.MarkOrbDeleted(ctx, db.MarkOrbDeletedParams{DeletedAt: 7, ID: "orb-gone"}))
+	thread := func(id string, orb, cwd *string) {
+		require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: id, OrbID: orb, TitleSource: "auto", State: "idle",
+			SessionDir: "/" + id, CreatedAt: 1, UpdatedAt: 1, Cwd: cwd}))
+	}
+	thread("T-on", new("orb-on"), new("/w/app"))
+	thread("T-off", new("orb-off"), new("/w/lib"))
+	thread("T-plain", new("orb-d"), nil)
+
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	require.NoError(t, err)
+	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
+	require.NoError(t, err)
+	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 23, r.Source.Version)
+
+	orbOf := func(id string) *string {
+		var o *string
+		require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT orb_id FROM threads WHERE id = ?`, id).Scan(&o))
+		return o
+	}
+	assert.Nil(t, orbOf("T-on"), "runner 线程解绑")
+	assert.Nil(t, orbOf("T-off"))
+	assert.Equal(t, new("orb-d"), orbOf("T-plain"), "普通线程不动")
+	for _, id := range []string{"orb-on", "orb-off"} {
+		var state string
+		var deletedAt *int64
+		require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT state, deleted_at FROM orbs WHERE id = ?`, id).Scan(&state, &deletedAt))
+		assert.Equal(t, "deleted", state, id)
+		require.NotNil(t, deletedAt, id)
+		assert.Greater(t, *deletedAt, int64(1_000_000_000_000), "%s：deleted_at 是毫秒时间戳", id)
+	}
+	var goneAt int64
+	require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT deleted_at FROM orbs WHERE id = 'orb-gone'`).Scan(&goneAt))
+	assert.EqualValues(t, 7, goneAt, "已删除的保持原删除时间")
+	for _, tc := range []struct{ id, name, hash string }{{"prov_on", "laptop", "rt-prov_on"}, {"prov_off", "desk", "rt-prov_off"}, {"prov_gone", "old", "rt-gone-revoked"}} {
+		var name, hash string
+		var disabled *int64
+		require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT name, token_hash, disabled_at FROM providers WHERE id = ?`, tc.id).Scan(&name, &hash, &disabled))
+		assert.Equal(t, tc.name+"#runner-"+tc.id, name, "改名腾出原名")
+		assert.NotEqual(t, tc.hash, hash, "%s：令牌哈希已换掉", tc.id)
+		require.NotNil(t, disabled, tc.id)
+	}
+	var disabledGone int64
+	require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT disabled_at FROM providers WHERE id = 'prov_gone'`).Scan(&disabledGone))
+	assert.EqualValues(t, 7, disabledGone, "已停用的保持原停用时间")
+
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	var live int
+	require.NoError(t, s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM orbs o JOIN providers p ON p.id = o.provider_id
+		WHERE p.driver = 'runner' AND o.state <> 'deleted' AND o.deleted_at IS NULL
+		AND o.id NOT IN (SELECT orb_id FROM runners)`).Scan(&live))
+	assert.Zero(t, live, "没有失去 runners 关联的活 orb")
+	_, err = q.GetProviderByTokenHash(ctx, "rt-prov_on")
+	require.ErrorIs(t, err, sql.ErrNoRows, "旧 ort_ 令牌失效")
+	d, err := q.GetOrb(ctx, "orb-d")
+	require.NoError(t, err)
+	assert.Equal(t, "orb", d.Kind, "普通 orb 的 kind 回填为 orb")
+	mk("prov_on2", "orb-on2", "laptop", "stopped")
+	list, err := q.ListRunners(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1, "原名可重建；失效的 runner 不出现")
+	assert.Equal(t, "laptop", list[0].Name)
+	provs, err := q.ListProviders(ctx)
+	require.NoError(t, err)
+	require.Len(t, provs, 1)
+	assert.Equal(t, "prov_d", provs[0].ID)
+}

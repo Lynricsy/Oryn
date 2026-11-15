@@ -79,18 +79,7 @@ func (s *Service) prepareRunner(ctx context.Context, p CreateParams) (*runnerTar
 	}
 	t := &runnerTarget{orb: r.Orb, cwd: dir}
 	if p.Worktree == "" {
-		if !p.ShareDir {
-			ids, err := s.st.Q.ListThreadsByOrbCwd(ctx, db.ListThreadsByOrbCwdParams{OrbID: r.Orb.ID, Cwd: dir})
-			if err != nil {
-				return nil, err
-			}
-			if len(ids) > 0 {
-				msg := fmt.Sprintf("%s is already the working directory of %d thread(s)", dir, len(ids))
-				e := errf(CodeDirInUse, msg)
-				e.Body = apigen.DirInUseConflict{Code: apigen.DirInUseConflictCodeDirInUse, Message: msg, ThreadIds: ids}
-				return nil, e
-			}
-		}
+		// 目录占用（dir_in_use）在写线程行的事务里检查（checkDirFreeTx）
 		return t, nil
 	}
 	ctl, ok := s.orbs.Ctl(r.Orb.ID)
@@ -109,6 +98,53 @@ func (s *Service) prepareRunner(ctx context.Context, p CreateParams) (*runnerTar
 	t.cwd = path.Clean(res.Dir)
 	t.worktree = &apigen.ThreadWorktree{Repo: dir, Dir: t.cwd, Branch: res.Branch}
 	return t, nil
+}
+
+// checkDirFreeTx 在写线程行的事务里检查 cwd 不是该 orb 上其它未归档线程的工作目录；占用 → dir_in_use（带占用线程的 id）。
+func checkDirFreeTx(ctx context.Context, q *db.Queries, orbID, cwd string) error {
+	ids, err := q.ListThreadsByOrbCwd(ctx, db.ListThreadsByOrbCwdParams{OrbID: orbID, Cwd: cwd})
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("%s is already the working directory of %d thread(s)", cwd, len(ids))
+	e := errf(CodeDirInUse, msg)
+	e.Body = apigen.DirInUseConflict{Code: apigen.DirInUseConflictCodeDirInUse, Message: msg, ThreadIds: ids}
+	return e
+}
+
+// checkRunnerTx 在写线程行的事务里复核：orb 是 runner 时，其 orb 未删除、runners 关联仍在、provider 未停用；否则 not_found。
+// 普通 orb 不检查。
+func checkRunnerTx(ctx context.Context, q *db.Queries, orbID string) error {
+	o, err := q.GetOrb(ctx, orbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// orb 行不存在：交给外键报错
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !orbs.IsRunner(o) {
+		return nil
+	}
+	gone := errf("not_found", "runner not found")
+	if o.DeletedAt != nil || o.State == orbStateDeleted || o.State == orbs.StateDeleting {
+		return gone
+	}
+	r, err := q.GetRunnerByOrb(ctx, orbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return gone
+	}
+	if err != nil {
+		return err
+	}
+	p, err := q.GetProvider(ctx, r.ProviderID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (p.Driver != orbs.DriverRunner || p.DisabledAt != nil)) {
+		return gone
+	}
+	return err
 }
 
 // worktreeErr 把 worktree.add / worktree.remove 的 ctl 错误转成线程错误；fallback 是 git 失败时的错误码。

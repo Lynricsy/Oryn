@@ -12,6 +12,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/stats"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -99,7 +100,8 @@ func decodeArgs(raw json.RawMessage, v any) error {
 }
 
 // resolveTarget 是宿主工具唯一的目标校验：线程必须存在且是工作线程。协调对话之间不能互相发消息、归档、读取——
-// 这是防止协调者互相唤醒成环的结构规则，不是权限。
+// 这是防止协调者互相唤醒成环的结构规则，不是权限。runner 线程（跑在用户自己的机器上）一律不作目标：协调者读到的
+// orb 内容可能带注入的指令，不能经它转成用户机器上的操作（sec S6）→ runner_unsupported。
 func (s *Service) resolveTarget(ctx context.Context, threadID string) (db.Thread, error) {
 	if threadID == "" {
 		return db.Thread{}, errf(CodeInvalid, "threadId is required")
@@ -113,6 +115,17 @@ func (s *Service) resolveTarget(ctx context.Context, threadID string) (db.Thread
 	}
 	if t.Kind != threads.KindWork {
 		return db.Thread{}, errf(CodeInvalidTarget, "%s is a coordinator conversation, not a work thread", threadID)
+	}
+	runner := t.Cwd != nil
+	if !runner && t.OrbID != nil {
+		o, err := s.st.Q.GetOrb(ctx, *t.OrbID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return db.Thread{}, err
+		}
+		runner = err == nil && orbs.IsRunner(o)
+	}
+	if runner {
+		return db.Thread{}, errf(threads.CodeRunnerUnsupported, "%s runs on a runner; coordinator tools cannot act on runner threads", threadID)
 	}
 	return t, nil
 }
