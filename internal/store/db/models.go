@@ -11,6 +11,20 @@ type AgentAvatar struct {
 	UpdatedAt   int64   `json:"updatedAt"`
 }
 
+type AssistantFile struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Mime           string  `json:"mime"`
+	Size           int64   `json:"size"`
+	Sha256         string  `json:"sha256"`
+	Scope          string  `json:"scope"`
+	ThreadID       *string `json:"threadId"`
+	Source         string  `json:"source"`
+	SourceThreadID *string `json:"sourceThreadId"`
+	Bound          int64   `json:"bound"`
+	CreatedAt      int64   `json:"createdAt"`
+}
+
 type Attachment struct {
 	ID        string  `json:"id"`
 	ThreadID  *string `json:"threadId"`

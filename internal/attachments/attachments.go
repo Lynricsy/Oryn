@@ -174,8 +174,8 @@ var idRe = regexp.MustCompile(`^att_[0-9A-Z]{26}$`)
 // ValidID 报告 id 是否为附件 id 形态。
 func ValidID(id string) bool { return idRe.MatchString(id) }
 
-// sniffMime 取前 512 字节嗅探类型；嗅探不出（octet-stream）时按扩展名。
-func sniffMime(head []byte, name string) string {
+// SniffMime 取前 512 字节嗅探类型；嗅探不出（octet-stream）时按扩展名。文件库（internal/library）共用。
+func SniffMime(head []byte, name string) string {
 	m := http.DetectContentType(head)
 	if m == "application/octet-stream" {
 		if byExt := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); byExt != "" {
@@ -232,7 +232,7 @@ func (s *Service) Upload(ctx context.Context, name, threadID string, r io.Reader
 		return db.Attachment{}, err
 	}
 	row := db.Attachment{
-		ID: ids.New("att"), ThreadID: tid, Name: name, Mime: sniffMime(head.b, name),
+		ID: ids.New("att"), ThreadID: tid, Name: name, Mime: SniffMime(head.b, name),
 		Size: n, Sha256: hex.EncodeToString(h.Sum(nil)), CreatedAt: s.now().UnixMilli(),
 	}
 	if err := os.Rename(tmp.Name(), s.path(row.ID)); err != nil {

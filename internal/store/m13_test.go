@@ -76,7 +76,7 @@ func TestOwnerNewThreadTarget(t *testing.T) {
 	assert.Equal(t, "assistant", o.NewThreadTarget)
 }
 
-// TestM13MigrationDownUp 回滚 0024 再重新应用：已有所有者行在升级后取缺省 role，Down 后表与列都消失。
+// TestM13MigrationDownUp 回滚 0025、0024 再重新应用：已有所有者行在升级后取缺省 role，Down 后表与列都消失。
 func TestM13MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -92,6 +92,9 @@ func TestM13MigrationDownUp(t *testing.T) {
 
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	assert.EqualValues(t, 25, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	assert.EqualValues(t, 24, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m13).Scan(&n))
 	assert.Zero(t, n, "0024 回滚后表与列都消失")
@@ -105,4 +108,49 @@ func TestM13MigrationDownUp(t *testing.T) {
 	v, err := s.Q.GetOwnerNewThreadTarget(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "role", v, "存量所有者行升级后取缺省 role")
+}
+
+// TestAssistantFilesMigration 覆盖 0025：CHECK 约束、线程硬删除时 thread_id 置 NULL 而行保留，以及回滚再应用。
+func TestAssistantFilesMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	q := s.Q
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
+		Kind: "work", ID: "T-1", TitleSource: "auto", State: "idle", SessionDir: "~/.oryn/threads/T-1",
+	}))
+	row := db.InsertAssistantFileParams{
+		ID: "afl_1", Name: "a.txt", Mime: "text/plain", Size: 1, Sha256: "x", Scope: "conversation",
+		ThreadID: ptr("T-1"), Source: "upload", CreatedAt: 1,
+	}
+	require.NoError(t, q.InsertAssistantFile(ctx, row))
+	bad := row
+	bad.ID, bad.Scope = "afl_2", "public"
+	assert.Error(t, q.InsertAssistantFile(ctx, bad), "CHECK 拒绝未知 scope")
+	bad.Scope, bad.Source = "shared", "web"
+	assert.Error(t, q.InsertAssistantFile(ctx, bad), "CHECK 拒绝未知 source")
+	bad.Source, bad.ThreadID = "orb", ptr("T-404")
+	assert.Error(t, q.InsertAssistantFile(ctx, bad), "thread_id 受外键约束")
+
+	n, err := q.DeleteThread(ctx, "T-1")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	got, err := q.GetAssistantFile(ctx, "afl_1")
+	require.NoError(t, err, "线程删除后文件行保留")
+	assert.Nil(t, got.ThreadID, "thread_id 置 NULL")
+
+	sub, err := fs.Sub(migrationsFS, "migrations")
+	require.NoError(t, err)
+	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
+	require.NoError(t, err)
+	const exists = `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('assistant_files', 'assistant_files_thread')`
+	var c int
+	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 25, r.Source.Version)
+	require.NoError(t, s.DB.QueryRowContext(ctx, exists).Scan(&c))
+	assert.Zero(t, c, "0025 回滚后表与索引都消失")
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.DB.QueryRowContext(ctx, exists).Scan(&c))
+	assert.Equal(t, 2, c)
 }

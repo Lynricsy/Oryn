@@ -25,6 +25,9 @@ func Snapshot() string { return "oryn-snap-" + strings.ToLower(newULID()) }
 // BrowserProfile 返回 bpf_<ULID>（M8 命名浏览器 Profile）。
 func BrowserProfile() string { return New("bpf") }
 
+// AssistantFile 返回 afl_<ULID>（M13 全局助手文件库）。
+func AssistantFile() string { return New("afl") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 
