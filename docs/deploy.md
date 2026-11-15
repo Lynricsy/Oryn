@@ -409,7 +409,7 @@ orb_tls:
 orb_url: "https://172.17.0.1:7643"
 ```
 
-- 开启后，**已存在的 orb 仍走原来的明文监听**，直到重建（停机再恢复，或删除重建）才改用 TLS。全部 orb 都换过之后，可以从 `listen` 里去掉面向网桥的明文地址。
+- 开启后，**已存在的 orb 仍走原来的明文监听**：orbd 的 `ORYN_URL` 和 CA 是在创建容器时写进环境变量的，停机再恢复、冻结再唤醒都只换令牌，不会改成 TLS。只有删掉重建的 orb，才会改走 TLS（线程会在新 orb 里继续，转录不丢）。要关掉面向网桥的明文监听，先把开启 TLS 之前创建的 orb 都删掉重建（`docker inspect <orb> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep ORYN_URL` 是 `http://` 的就是），否则它们会失去连接，直到被删除重建。
 - provider 在另一台主机、经反代用正式证书连 orynd 时，不需要开启它：`orb_url` 写 `https://` 的主域名，orbd 用系统根证书校验。
 - 服务端证书有效期 1 年，到期前 30 天或 `listen` / `hosts` 变化时，orynd 启动时自动重签；CA 不变，已下发 CA 的 orb 不受影响。删除 `orb-tls/` 目录会生成新的 CA，之后要重建所有 orb。
 
