@@ -650,19 +650,38 @@ const asUser = (cmd: string) =>
 		`runuser -u ${RUSER} -- env -i HOME=${q(uhome)} USER=${RUSER} LOGNAME=${RUSER} PATH=/usr/local/bin:/usr/bin:/bin bash -c ${q(cmd)}`,
 	);
 
-/** 首个字面模型 key 的前 12 位（跳过 `!命令` 与环境变量名形态）。 */
-function modelKeyPrefix(): string {
+/** 宿主 models.yml 里 provider → 字面 apiKey 的前 12 位（跳过 `!命令`、环境变量名与过短的值）。 */
+function hostModelKeys(): Map<string, string> {
 	const f = `${homedir()}/.omp/agent/models.yml`;
-	if (!existsSync(f)) return "";
-	for (const m of readFileSync(f, "utf8").matchAll(
-		/^\s*apiKey:\s*["']?([^"'\s#]+)/gm,
-	)) {
-		const k = m[1] ?? "";
+	const out = new Map<string, string>();
+	if (!existsSync(f)) return out;
+	const doc = Bun.YAML.parse(readFileSync(f, "utf8")) as {
+		providers?: Record<string, { apiKey?: unknown } | null>;
+	} | null;
+	for (const [p, v] of Object.entries(doc?.providers ?? {})) {
+		const k = typeof v?.apiKey === "string" ? v.apiKey : "";
 		if (k.startsWith("!") || /^[A-Z_][A-Z0-9_]*$/.test(k) || k.length < 12)
 			continue;
-		return k.slice(0, 12);
+		out.set(p, k.slice(0, 12));
 	}
-	return "";
+	return out;
+}
+
+/**
+ * guest 环境里「名=值前 12 位」形态的密钥变量中不合规的名字：值不是占位符，且不是「降级变量名、值正是该 provider
+ * 自己的 key」。allowed 只来自宿主配置与控制面元数据。
+ */
+function envSecretViolations(
+	envVars: string[],
+	allowed: Map<string, string>,
+): string[] {
+	return envVars
+		.map((x) => x.split("="))
+		.filter(([n = "", v = ""]) => {
+			if (v.startsWith("oryn-ph-")) return false;
+			return allowed.get(n) !== v;
+		})
+		.map(([n = ""]) => n);
 }
 
 /** 用户、二进制副本、模型配置与目录（每个进程一次）。 */
@@ -695,7 +714,7 @@ function prepareRunnerHost() {
 			"拷贝 models.yml",
 		);
 		snote(
-			`已把 root 的 ~/.omp/agent/models.yml 拷到 ${uhome}/.omp/agent/models.yml（0600，属主 ${RUSER}），runner 上的 agent 用它应答${modelKeyPrefix() ? "" : "；注意：其中没有字面 apiKey（`!命令` / 环境变量形态），该用户下可能取不到 key"}`,
+			`已把 root 的 ~/.omp/agent/models.yml 拷到 ${uhome}/.omp/agent/models.yml（0600，属主 ${RUSER}），runner 上的 agent 用它应答${hostModelKeys().size ? "" : "；注意：其中没有字面 apiKey（`!命令` / 环境变量形态），该用户下可能取不到 key"}`,
 		);
 	} else
 		snote(`root 没有 ~/.omp/agent/models.yml：runner 上的 agent 可能无法应答`);
@@ -1359,7 +1378,12 @@ async function X29() {
 	note(`应答（${st}，重启后 ${sec(ms)}）：${text.slice(0, 80)}`);
 	check(text.includes(token), `应答含 ${token}`);
 	check(ms <= 30_000, `重启后 30 秒内得到应答（${sec(ms)}）`);
-	check(offlineRes?.code === 0, "离线期间发送即被接受");
+	// `oryn thread send` 等到 agent 应答才退出（--timeout 默认 5m，含等 runner 重连）：离线期间不被拒绝、
+	// 重连后以 0 退出并得到应答，即「发送被接受」
+	check(
+		offlineRes === undefined || offlineRes.code === 0,
+		`离线期间发送没有被拒绝（${offlineRes ? `退出码 ${offlineRes.code}` : "仍在等 runner 重连"}）`,
+	);
 }
 
 async function X30() {
@@ -1764,43 +1788,64 @@ async function X36() {
 			`models.yml 的 apiKey（前 12 位）：${keys.join(",") || "无"}；占位符 ${kv.PH} 个；环境里的密钥形态变量：${kv.ENVSECRETS || "无"}`,
 		);
 		check(Number(kv.PH) >= 1, "配置 / 环境里有 oryn-ph- 占位符");
-		// 没绑定上游主机（hosts 为空）的 provider key 按设计走环境变量降级（docs/deploy.md「models.yml」一节）：
-		// apiKey 写成 ORYN_MODEL_KEY_<KEY>，真实值在环境里。其余 apiKey 必须是占位符；环境里的密钥形态变量要么值是占位符，
-		// 要么是这些降级变量。
+		// 没绑定上游主机（控制面 secrets 里 hosts 为空）的 provider key 按设计走环境变量降级（docs/deploy.md「models.yml」
+		// 一节）：apiKey 写成 ORYN_MODEL_KEY_<KEY>，真实值在环境里。豁免表只由宿主 models.yml（provider → 字面 key）与
+		// 控制面的 hosts 元数据决定，不取被测输出：降级变量名下的值必须正是该 provider 自己的 key，其余 key 一律不得出现。
 		const secrets = (
 			await getJson<{ secrets: { name: string; hosts?: string[] }[] }>(
 				"/api/v1/secrets",
 			)
 		).secrets;
-		const fallback = new Set<string>();
-		for (const s of secrets) {
-			const k = s.name.match(/^omp\/models\/([^/]+)\/apiKey$/)?.[1];
-			if (k && (s.hosts ?? []).length === 0)
-				fallback.add(
-					`ORYN_MODEL_KEY_${k.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+		const fallbackProviders = new Set(
+			secrets
+				.filter((s) => (s.hosts ?? []).length === 0)
+				.map((s) => s.name.match(/^omp\/models\/([^/]+)\/apiKey$/)?.[1])
+				.filter((k): k is string => k !== undefined),
+		);
+		const hostKeys = hostModelKeys();
+		/** 降级变量名 → 允许的真实值（宿主 models.yml 里该 provider 的字面 key 前 12 位）。 */
+		const allowed = new Map<string, string>();
+		for (const p of fallbackProviders) {
+			const v = hostKeys.get(p);
+			if (v)
+				allowed.set(
+					`ORYN_MODEL_KEY_${p.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+					v,
 				);
 		}
-		note(`环境变量降级的 provider key：${[...fallback].join(",") || "无"}`);
+		const secretKeys = [...hostKeys]
+			.filter(([p]) => !fallbackProviders.has(p))
+			.map(([, v]) => v);
+		note(
+			`环境变量降级的 provider：${[...fallbackProviders].join(",") || "无"}；其余字面 key ${secretKeys.length} 个`,
+		);
 		check(
 			keys.every(
 				(k) =>
 					k.startsWith("oryn-ph-") ||
-					[...fallback].some((f) => f.startsWith(k)),
+					[...allowed.keys()].some((n) => n.startsWith(k)),
 			),
 			"models.yml 的 apiKey 都是占位符或降级变量名",
 		);
 		const envVars = (kv.ENVSECRETS ?? "").split(",").filter(Boolean);
+		const bad = envSecretViolations(envVars, allowed);
 		check(
-			envVars.every((x) => {
-				const [n = "", v = ""] = x.split("=");
-				return v.startsWith("oryn-ph-") || fallback.has(n);
-			}),
-			`环境里的密钥形态变量都是占位符或降级变量（${envVars.map((x) => x.split("=")[0]).join(",") || "无"}）`,
+			bad.length === 0,
+			`环境里的密钥形态变量都是占位符，或值正是该 provider 自己 key 的降级变量（${envVars.map((x) => x.split("=")[0]).join(",") || "无"}${bad.length ? `；违规 ${bad.join(",")}` : ""}）`,
 		);
-		const real = modelKeyPrefix();
-		if (real)
-			check(!r.text.includes(real), "回复里没有真实模型 key（前 12 位）");
-		else note("宿主 models.yml 没有字面 key，只检查占位符");
+		// 负例：把一个非降级 provider 的真实 key 塞进允许的降级变量名，判定必须报违规（防止断言自我豁免）
+		const [someAllowed] = allowed.keys();
+		const [someSecret] = secretKeys;
+		if (someAllowed && someSecret)
+			check(
+				envSecretViolations([`${someAllowed}=${someSecret}`], allowed)
+					.length === 1,
+				`负例：${someAllowed} 里装着非降级 key 会被判违规`,
+			);
+		check(
+			secretKeys.every((p) => !r.text.includes(p)),
+			`探测输出里没有非降级的真实模型 key（${secretKeys.length} 个，前 12 位）`,
+		);
 	} finally {
 		// 另一台 guest 里的探针随 VM 删除而消失（收尾会删本次建的全部 fc orb）
 		stopHost();
