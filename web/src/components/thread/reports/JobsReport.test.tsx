@@ -65,8 +65,9 @@ const DONE = {
 	errorPreview: "SyntaxError: bad",
 };
 
+// Core 的 `jobs` 只有当前 agent 直属的任务，子 agent 的后代只在 `tree` 里
 const JOBS = {
-	jobs: [BASH, SCOUT, NESTED, DONE],
+	jobs: [BASH, SCOUT, DONE],
 	tree: [
 		{ depth: 0, job: BASH, cancellable: true },
 		{ depth: 0, job: SCOUT, agentId: "Scout", cancellable: true },
@@ -207,6 +208,64 @@ describe("JobsReport", () => {
 		expect(readCount(cmd, "get_jobs")).toBeGreaterThan(reads);
 		expect(within(bash).getByText(/^已运行 /).textContent).not.toBe(before);
 		expect(screen.getByText("每 2 秒自动刷新")).toBeTruthy();
+	});
+
+	it("jobs 里没有运行中的，只有树中后代在跑：继续轮询、时长走动，计数按树算", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		jobs = {
+			jobs: [DONE],
+			tree: [
+				{ depth: 0, job: DONE },
+				{ depth: 0, agentId: "Scout" },
+				{ depth: 1, job: NESTED },
+			],
+		};
+		open();
+		const nested = await jobRow("bash-9");
+		expect(screen.getByText("运行中 1 个 · 最近结束 1 个")).toBeTruthy();
+		expect(screen.getByText("每 2 秒自动刷新")).toBeTruthy();
+		const before = within(nested).getByText(/^已运行 /).textContent;
+		const reads = readCount(cmd, "get_jobs");
+		await act(() => vi.advanceTimersByTimeAsync(2_100));
+		expect(readCount(cmd, "get_jobs")).toBeGreaterThan(reads);
+		expect(within(nested).getByText(/^已运行 /).textContent).not.toBe(before);
+	});
+
+	it("停止唯一运行中的任务：cancellationPending 期间继续轮询，直到它真正退出", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const only = { ...BASH };
+		const pending = { ...BASH, status: "cancelled", cancellationPending: true };
+		const ended = { ...BASH, status: "cancelled", endedAt: NOW };
+		let current: object = only;
+		cmd.mockImplementation(async (_t, f) => {
+			if (f.type === "get_jobs")
+				return {
+					jobs: [current],
+					tree: [{ depth: 0, job: current, cancellable: current === only }],
+				};
+			if (f.type === "oryn_cancel_job") {
+				current = pending;
+				return { cancelled: true };
+			}
+			return {};
+		});
+		open();
+		const row = await jobRow("bash-1");
+		fireEvent.click(within(row).getByRole("button", { name: "停止" }));
+		fireEvent.click(within(row).getByRole("button", { name: "停止任务" }));
+		await vi.waitFor(() =>
+			expect(within(row).getByText("正在停止")).toBeTruthy(),
+		);
+		expect(screen.getByText("每 2 秒自动刷新")).toBeTruthy();
+		// 任务真正退出：下一次轮询读到 endedAt，「正在停止」消失、轮询停下
+		current = ended;
+		const reads = readCount(cmd, "get_jobs");
+		await act(() => vi.advanceTimersByTimeAsync(2_100));
+		expect(readCount(cmd, "get_jobs")).toBeGreaterThan(reads);
+		await vi.waitFor(() =>
+			expect(within(row).queryByText("正在停止")).toBeNull(),
+		);
+		expect(screen.queryByText("每 2 秒自动刷新")).toBeNull();
 	});
 
 	it("全部结束：不轮询", async () => {

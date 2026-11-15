@@ -102,6 +102,15 @@ export function Composer({
 	const draftRef = useRef({ text, items: att.items });
 	draftRef.current = { text, items: att.items };
 	const inFlight = useRef<typeof draftRef.current | null>(null);
+	// 眼前这个输入区属于哪个线程（卸载后为 null）。异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：
+	// 对话框是全局单值、由当前页面消费，旧线程的应答不得在新线程打开 / 覆盖对话框
+	const ownerRef = useRef<string | null>(threadId);
+	useEffect(() => {
+		ownerRef.current = threadId;
+		return () => {
+			ownerRef.current = null;
+		};
+	}, [threadId]);
 
 	const reset = () => {
 		setText("");
@@ -176,7 +185,8 @@ export function Composer({
 				});
 				const model = matchModelSelector(models, action.selector);
 				if (!model) {
-					ui.open({ kind: "model", query: action.selector });
+					if (ownerRef.current === threadId)
+						ui.open({ kind: "model", query: action.selector });
 					return;
 				}
 				await selectModel(threadId, model);
@@ -214,7 +224,7 @@ export function Composer({
 					type: "btw",
 					question: action.question,
 				});
-				ui.open({ kind: "btw" });
+				if (ownerRef.current === threadId) ui.open({ kind: "btw" });
 				return;
 			case "open_changes":
 				ui.setPanelTab("changes");

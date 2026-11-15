@@ -26,9 +26,22 @@ export async function cancelJob(
 	const r = await realtime.cmd(threadId, { type: "oryn_cancel_job", jobId });
 	return r.cancelled;
 }
-/** 有运行中的任务时才轮询。 */
+/**
+ * 报告展示的任务集合：有树时取树里的任务（含子 agent 后代），没有树才退回 Core 按归属限定的 `jobs`。
+ * 轮询、计数与时长走动都按这一份算，与界面上的行一致。
+ */
+function shownJobs(data: JobsData | undefined): Job[] {
+	if (!data) return [];
+	return data.tree?.length
+		? data.tree.flatMap((r) => (r.job ? [r.job] : []))
+		: data.jobs;
+}
+
+/** 有仍在变化的任务时才轮询：运行中（含树中的后代），或已请求停止但还没真正退出（`cancellationPending`）。 */
 export function jobsRunning(data: JobsData | undefined): boolean {
-	return !!data?.jobs.some((j) => j.status === "running");
+	return shownJobs(data).some(
+		(j) => j.status === "running" || j.cancellationPending === true,
+	);
 }
 
 /** 运行中不用强调色（强调色只给「需要你」的东西），靠走动的时长与「停止」按钮区分。 */
@@ -190,8 +203,11 @@ export function JobsReport({
 	onChanged: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const running = data.jobs.filter((j) => j.status === "running").length;
-	const now = useTicker(running > 0);
+	const jobs = shownJobs(data);
+	const running = jobs.filter((j) => j.status === "running").length;
+	// 与 Dialogs 的轮询同一判定：正在停止的任务时长也还在走
+	const live = jobsRunning(data);
+	const now = useTicker(live);
 	const rows: RpcJobTreeRow[] = data.tree?.length
 		? data.tree
 		: data.jobs.map((job) => ({ depth: 0, job }));
@@ -207,11 +223,11 @@ export function JobsReport({
 				<span>
 					{t("report.jobs.summary", {
 						running,
-						recent: data.jobs.length - running,
+						recent: jobs.length - running,
 					})}
 				</span>
 				<span className="flex-1" />
-				{running > 0 && (
+				{live && (
 					<span className="inline-flex items-center gap-1">
 						<Icon name="refresh" size={11} aria-hidden />
 						{t("report.jobs.autoRefresh")}

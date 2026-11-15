@@ -263,6 +263,64 @@ describe("Composer 斜杠命令", () => {
 		});
 	});
 
+	describe("应答晚于切线程：旧线程的命令不动新线程的对话框", () => {
+		const B = "T-0193a1b2-0000-7000-8000-0000000000f2";
+
+		/** 挂上 A，返回「切到 B」：与 ThreadPage 一样按线程给输入区 key，切线程即卸载 A 的输入区。 */
+		function mountSwitchable() {
+			const client = new QueryClient({
+				defaultOptions: { queries: { retry: false } },
+			});
+			const tree = (tid: string) => (
+				<QueryClientProvider client={client}>
+					<MemoryRouter>
+						<Composer key={tid} threadId={tid} />
+					</MemoryRouter>
+				</QueryClientProvider>
+			);
+			const r = render(tree(A));
+			return () => r.rerender(tree(B));
+		}
+
+		/** 指定类型的命令挂起，直到测试手动放行。 */
+		function holdReply(type: string, value: unknown) {
+			let release: () => void = () => {};
+			const gate = new Promise<void>((res) => {
+				release = res;
+			});
+			reply({ [type]: () => gate.then(() => value) });
+			return () => act(async () => release());
+		}
+
+		it("/btw <问题>：留在 A 时打开 btw；切到 B 后才应答则不打开、B 的对话框不变", async () => {
+			reply();
+			const switchToB = mountSwitchable();
+			await send("/btw 第一个问题");
+			expect(uiStore.getState().dialog).toEqual({ kind: "btw" });
+			uiStore.getState().close();
+
+			const release = holdReply("btw", {});
+			await send("/btw 第二个问题");
+			expect(framesOf("btw")).toHaveLength(2);
+			switchToB();
+			uiStore.getState().open({ kind: "goal" });
+			await release();
+			expect(uiStore.getState().dialog).toEqual({ kind: "goal" });
+		});
+
+		it("/model <选择器>：对不上的应答在切到 B 后才到，不在 B 打开模型对话框", async () => {
+			const release = holdReply("get_available_models", {
+				models: [{ provider: "openai", id: "gpt-5", name: "GPT-5" }],
+			});
+			const switchToB = mountSwitchable();
+			await send("/model llama");
+			switchToB();
+			uiStore.getState().open({ kind: "goal" });
+			await release();
+			expect(uiStore.getState().dialog).toEqual({ kind: "goal" });
+		});
+	});
+
 	it("/plan-review：没有提案时说明原因，有提案时请求重新打开", async () => {
 		reply();
 		mount();

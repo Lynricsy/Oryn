@@ -21,7 +21,8 @@ export type DialogState =
 	| { kind: "report"; report: ReportKind }
 	/** `query`：打开时预填搜索框（`/model <选择器>` 解析不出唯一模型时）。 */
 	| { kind: "model"; query?: string }
-	| { kind: "subagent"; id: string }
+	/** `file`：离线子 agent 的完整存档路径（按它打开存档，而不是按 id 查运行中的）。 */
+	| { kind: "subagent"; id: string; file?: string }
 	| { kind: "btw" }
 	| { kind: "goal" }
 	| { kind: "label"; entryId: string }

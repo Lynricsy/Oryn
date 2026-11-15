@@ -72,6 +72,12 @@ export function CompactThreadHeader({
 	const { cost } = useSessionCost(threadId);
 	const { items, error, openSchedule, dialogs } = useThreadActions(threadId);
 	const [open, setOpen] = useState(false);
+	// 页头在切线程（返回 / 前进）时被复用：标题菜单是上一个线程的，立刻收起（渲染期重置，不留一帧旧菜单）
+	const [menuThread, setMenuThread] = useState(threadId);
+	if (menuThread !== threadId) {
+		setMenuThread(threadId);
+		setOpen(false);
+	}
 	const menu = usePresence(open, MENU_MS);
 	const capsuleRef = useRef<HTMLButtonElement>(null);
 
@@ -349,6 +355,7 @@ export function CompactThreadHeader({
 				</button>
 				{menu.mounted && (
 					<TitleMenu
+						key={threadId}
 						shown={menu.shown}
 						label={title}
 						quick={quick}
@@ -381,7 +388,14 @@ function TitleMenu({
 	onClose: (refocus: boolean) => void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const [sub, setSub] = useState<Row | null>(null);
+	// 只存子菜单的 key，每次渲染从最新的菜单项里取（与共享 Menu 一致）：不缓存带回调的旧对象，
+	// 线程状态变化后子菜单的 disabled / 回调也跟着最新
+	const [sub, setSub] = useState<string | null>(null);
+	const page = sub
+		? [...quick, ...status, ...groups.flat()].find(
+				(i) => i.key === sub && i.children,
+			)
+		: undefined;
 	const panelRef = useRef<HTMLDivElement>(null);
 
 	// 打开 / 换页后焦点给第一项（键盘与读屏从菜单里接着走）
@@ -395,7 +409,7 @@ function TitleMenu({
 
 	const choose = (item: Row) => {
 		if (item.children) {
-			setSub(item);
+			setSub(item.key);
 			return;
 		}
 		onClose(false);
@@ -405,7 +419,7 @@ function TitleMenu({
 	const onKeyDown = (e: KeyboardEvent) => {
 		if (e.key !== "Escape") return;
 		e.stopPropagation();
-		if (sub) setSub(null);
+		if (page) setSub(null);
 		else onClose(true);
 	};
 
@@ -419,7 +433,7 @@ function TitleMenu({
 			// 与标题胶囊等宽、挂在它正下方；最高到屏幕一半多一点，其余滚动
 			className={`title-menu absolute inset-x-0 top-full z-10 mt-1.5 max-h-[min(30rem,calc(100dvh-8rem))] origin-top overflow-y-auto overscroll-contain rounded-[22px] p-1.5 transition-[opacity,scale,translate] duration-150 ease-[var(--ease)] ${shown ? "translate-y-0 scale-100 opacity-100" : "-translate-y-1 scale-95 opacity-0"}`}
 		>
-			{sub ? (
+			{page ? (
 				<>
 					<button
 						type="button"
@@ -428,10 +442,10 @@ function TitleMenu({
 						className="flex w-full items-center gap-2 rounded-[12px] px-2.5 py-1.5 text-left text-faint text-xs hover:bg-hover"
 					>
 						<Icon name="back" size={14} />
-						<span className="truncate">{sub.label}</span>
+						<span className="truncate">{page.label}</span>
 					</button>
 					<Rule />
-					{sub.children?.map((item) => (
+					{page.children?.map((item) => (
 						<MenuRow key={item.key} item={item} onChoose={choose} />
 					))}
 				</>
