@@ -963,16 +963,21 @@ async function runOmfg(
 		if (response.success === false)
 			throw new Error(`omfg 失败：${String(response.error ?? "")}`);
 		const data = isRecord(response.data) ? response.data : {};
-		const notice = await waitFor(
-			"omfg 结果提示",
-			async () =>
-				(await notices(page).count()) > n0
-					? oneLine((await notices(page).last().textContent()) ?? "")
-					: undefined,
-			30_000,
-		);
+		// 只看本次提交后新出现的提示里与规则有关的那条：Core 可能在同一时段发别的提示（如 xd:// 设备卸载），
+		// 取「最后一条」会拿错。omfg 的各种结果文案都含「规则」。
+		const pick = async () => {
+			const all = notices(page);
+			const count = await all.count();
+			for (let i = count - 1; i >= n0; i--) {
+				const text = oneLine((await all.nth(i).textContent()) ?? "");
+				if (text.includes("规则")) return { i, text };
+			}
+			return undefined;
+		};
+		const hit = await waitFor("omfg 结果提示", pick, 30_000);
+		const notice = hit.text;
 		note(`结果提示：${notice}`);
-		await shots(page, `${id}-omfg-result`, notices(page).last());
+		await shots(page, `${id}-omfg-result`, notices(page).nth(hit.i));
 		return { options: options ?? [], confirms, response, data, notice };
 	} finally {
 		await page.close().catch(() => {});
