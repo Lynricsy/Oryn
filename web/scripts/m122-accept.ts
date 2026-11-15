@@ -774,10 +774,12 @@ async function shots(p: Page, name: string, target?: Locator) {
 	] as const) {
 		await p.setViewportSize({ width: w, height: h });
 		await sleep(700);
-		if (target) await target.scrollIntoViewIfNeeded().catch(() => {});
+		if (prepare) await prepare(w);
 		for (const scheme of ["light", "dark"] as const) {
 			await p.emulateMedia({ colorScheme: scheme });
 			await sleep(350);
+			if (target && !(await reveal(p, target)))
+				throw new Error(`截图 ${name}-${w}-${scheme}：目标没能滚进视口`);
 			const f = `${SHOTS}/${name}-${w}-${scheme}.png`;
 			await p.screenshot({ path: f });
 			shotFiles.push(f);
@@ -970,14 +972,18 @@ async function runOmfg(
 			const count = await all.count();
 			for (let i = count - 1; i >= n0; i--) {
 				const text = oneLine((await all.nth(i).textContent()) ?? "");
-				if (text.includes("规则")) return { i, text };
+				if (text.includes("规则")) return text;
 			}
 			return undefined;
 		};
-		const hit = await waitFor("omfg 结果提示", pick, 30_000);
-		const notice = hit.text;
+		const notice = await waitFor("omfg 结果提示", pick, 30_000);
 		note(`结果提示：${notice}`);
-		await shots(page, `${id}-omfg-result`, notices(page).nth(hit.i));
+		// 截图按内容定位：截图前可能又插入新提示，按下标会拍偏
+		await shots(
+			page,
+			`${id}-omfg-result`,
+			notices(page).filter({ hasText: "规则" }).last(),
+		);
 		return { options: options ?? [], confirms, response, data, notice };
 	} finally {
 		await page.close().catch(() => {});
@@ -1110,29 +1116,36 @@ async function Z2() {
 		);
 		check(true, `保存后 REST 读到 rules/z2.md（${z2.length} 字节）`);
 
-		// mcp.json 写入带令牌的 headers
-		await card.locator('[role=treeitem][data-path="mcp.json"]').click();
-		await waitFor(
-			"编辑器载入 mcp.json",
-			async () => ((await editor.textContent()) ?? "").includes("mcpServers"),
-			30_000,
-		);
-		await editor.click();
-		await page.keyboard.press("Control+A");
-		await page.keyboard.insertText(Z2_MCP);
-		const putRes = page.waitForResponse(
-			(r) =>
-				r.request().method() === "PUT" &&
-				r.url().includes("/agent-config/files/mcp.json"),
-			{ timeout: 30_000 },
-		);
-		await card.getByRole("button", { name: "保存", exact: true }).click();
-		const res = await putRes;
-		const wr = (await res.json().catch(() => ({}))) as WriteResult;
-		const kinds = (wr.warnings ?? []).map((w) => w.kind);
+		// mcp.json 写入带令牌的 headers。警告只存在于保存响应的前端状态里，换布局后卡片重新挂载就没了，
+		// 所以 390 宽截图前在手机布局下再保存一次（内容加一个换行，保证有改动可存）。
+		const saveMcp = async (text: string) => {
+			// 手机布局的文件浏览器是单栏：已停在 mcp.json 的编辑视图时树不可见，直接编辑
+			const row = card.locator('[role=treeitem][data-path="mcp.json"]');
+			if (await row.isVisible().catch(() => false)) await row.click();
+			await waitFor(
+				"编辑器载入 mcp.json",
+				async () => ((await editor.textContent()) ?? "").includes("mcpServers"),
+				30_000,
+			);
+			await editor.click();
+			await page.keyboard.press("Control+A");
+			await page.keyboard.insertText(text);
+			const putRes = page.waitForResponse(
+				(r) =>
+					r.request().method() === "PUT" &&
+					r.url().includes("/agent-config/files/mcp.json"),
+				{ timeout: 30_000 },
+			);
+			await card.getByRole("button", { name: "保存", exact: true }).click();
+			const res = await putRes;
+			const wr = (await res.json().catch(() => ({}))) as WriteResult;
+			return { status: res.status(), warnings: wr.warnings ?? [] };
+		};
+		const first = await saveMcp(Z2_MCP);
 		check(
-			res.status() === 200 && kinds.includes("possible_secret"),
-			`PUT mcp.json → ${res.status()}，warnings ${JSON.stringify(wr.warnings ?? [])}`,
+			first.status === 200 &&
+				first.warnings.some((w) => w.kind === "possible_secret"),
+			`PUT mcp.json → ${first.status}，warnings ${JSON.stringify(first.warnings)}`,
 		);
 		const saved = await cfgText(a, "mcp.json");
 		check(
@@ -1276,7 +1289,24 @@ async function Z4() {
 				(await sec.getByText(Z1_SERVER).count()) > 0,
 				`「能力」卡列出 MCP server ${Z1_SERVER}`,
 			);
-			await shots(page, "Z4-capabilities", sec);
+			// 手机布局里信息面板默认不展开：从标题菜单「查看环境信息」打开
+			await shots(page, "Z4-capabilities", sec, async (w) => {
+				if (w >= 640 || (await sec.isVisible().catch(() => false))) return;
+				await page.getByTestId("thread-title").click();
+				// 「查看环境信息」在标题菜单 orb 那一行的子菜单里
+				const envInfo = page.getByRole("menuitem", {
+					name: "查看环境信息",
+					exact: true,
+				});
+				if (!(await envInfo.isVisible().catch(() => false)))
+					await page
+						.getByRole("menuitem")
+						.filter({ hasText: /^orb/ })
+						.first()
+						.click();
+				await envInfo.click();
+				await sec.waitFor({ timeout: 15_000 });
+			});
 		} finally {
 			await page.close().catch(() => {});
 		}

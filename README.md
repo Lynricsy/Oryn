@@ -28,6 +28,13 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
 - **项目快照与预热池**：项目首次完成 `.oryn/setup` 后自动生成干净磁盘快照（Docker 镜像提交或 Firecracker `reflink` 稀疏盘复制），后续新线程跳过构建直接运行 `.oryn/resume`；高频项目可配置 1–3 台常驻预热池，新建线程即刻认领。
 - **自动冻结与按需唤醒**：Agent 与用户空闲达到阈值后自动冻结（暂停容器或 vCPU），打开线程或访问受管服务时自动唤醒；超时冻结后转为停机并完整保留磁盘状态。
 - **全功能工程面板**：工作台右侧内置 **环境信息**（CPU / 内存采样曲线、10 段彩色上下文构成、可交互待办与子 Agent 状态）、**Git 改动**（实时 Diff、暂存与取消暂存）、**文件树与编辑器**、**Web 终端**（256K 字符快照续传与流控背压恢复）、**受管服务与 Portal**（经泛域名 `https://t-<短码>-p<端口>.<portal_domain>/` 安全暴露开发服务器，支持限时公开预览）以及 **远程桌面**（内置 TigerVNC + Openbox + Chromium，支持跨线程读写锁复用登录态 Profile）。
+- **项目级中央 Agent 配置**：每个项目在控制面另有一层 Agent 配置，内容可以是规则、技能、子 Agent、命令、提示片段、扩展、hook、工具、`mcp.json`、`config.yml` 与 `AGENTS.md`。这一层在项目页的「Agent 配置」卡片里编辑，或用 `oryn config push|pull --project <项目>` 同步。每次 setup / resume 时，这一层原样镜像到 orb 的 `~/.oryn/project-config/.omp/`，不写进仓库工作区，`git status` 保持干净。同名条目的优先级是「项目层 > 仓库 `.omp/` > 全局」，`AGENTS.md` 与仓库里的并存。`/omfg` 生成规则后可以选「本项目」或「全局」，规则会写回中央，由新建或唤醒的 orb 拿到。约束如下：
+  - 全局与项目两层合计的下发编码不能超过 88 MiB，超过时写入返回 413。
+  - `models.yml` 只能放在全局层。
+  - 规则、`.md`、`.yml`、`.json` 都必须是 UTF-8 文本。
+  - 为防止不可信仓库借符号链接把本机文件（如 `~/.ssh`）传上去，`config push --project` 拒绝以下情况：推送目录本身是符号链接，或其中有指向目录外、无法解析、指向被排除路径的链接。全局推送仍照常跟随 `~/.omp/agent` 里指向别处的链接。两种推送都只收普通文件，`--exclude` 与 `.orynignore` 会同时按链接名和真实路径匹配。
+  - 同一线程同时只能有一个 `/omfg`。
+  - `/omfg` 写回中央的规则必须与确认时的预览一致；中央已有同名但内容不同的规则时不覆盖，需要到 Agent 配置里手工合并。
 
 ### 2. Space 多线程协调、定时巡检与全量统计
 
@@ -150,6 +157,8 @@ EOF
 oryn login --url https://oryn.example.com                    # 设备配对登录（浏览器输入配对码批准）
 oryn config push ~/.omp/agent                                # 上传 omp 配置，明文 Key 自动抽入加密密钥库
 oryn config pull                                             # 拉回文本配置（models.yml 默认存为 models.oryn.yml）
+oryn config push --project myproj                            # 在仓库根目录把 ./.omp 上传为该项目的 Agent 配置（整体替换）
+oryn config pull --project myproj                            # 把项目的 Agent 配置拉回 ./.omp
 oryn secrets set git/github.com/token                        # 写入 Git 令牌（只写不读，由出站代理按需注入）
 oryn git-identity set --name "Ada" --email ada@example.com   # 设置 orb 内 Git 提交身份的全局默认值
 
