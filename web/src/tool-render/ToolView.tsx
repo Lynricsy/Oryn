@@ -7,6 +7,14 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
 import { resolveToolRenderer } from "./registry";
+import {
+	isMcpToolName,
+	mcpOrigin,
+	unwrapXdevResult,
+	XDEV_DEVICE_TOOL,
+	XDEV_DOCS_TOOL,
+	xdevCardOf,
+} from "./tools/xdev";
 import type { ToolRenderHost, ToolRenderProps, ToolResultLike } from "./types";
 import { isRecord, replaceTabs, stripAnsi } from "./util";
 import "./tool-render.css";
@@ -50,6 +58,15 @@ const TOOL_ICON: Record<string, IconName> = {
 	reject: "checkCircle",
 	propose: "checkCircle",
 	report_tool_issue: "alert",
+	report_issue: "alert",
+	checkpoint: "snapshot",
+	rewind: "snapshot",
+	memory_edit: "brain",
+	tts: "megaphone",
+	security_scan: "lock",
+	ida: "cpu",
+	[XDEV_DOCS_TOOL]: "info",
+	[XDEV_DEVICE_TOOL]: "device",
 };
 
 type ToolCat = "read" | "edit" | "exec" | "web" | "agent" | "other";
@@ -90,6 +107,13 @@ const TOOL_CAT: Record<string, ToolCat> = {
 	resolve: "agent",
 	reject: "agent",
 	propose: "agent",
+	checkpoint: "agent",
+	rewind: "agent",
+	memory_edit: "agent",
+	security_scan: "exec",
+	ida: "exec",
+	tts: "exec",
+	[XDEV_DOCS_TOOL]: "read",
 };
 
 /** omp 线路上工具参数里的意图字段名（原为 `@oh-my-pi/pi-wire` 的 INTENT_FIELD）。 */
@@ -129,62 +153,37 @@ function normalizeArgs(raw: unknown): {
 	return { args, intent };
 }
 
-interface XdevDispatch {
-	tool: string;
-	args: Record<string, unknown>;
-	inner: unknown;
-}
-
-/** 从 write 结果的 details 取 xdev execute 派发（真实工具名、校验后的参数与内层 details）。 */
-function xdevOf(details: unknown): XdevDispatch | null {
-	if (!isRecord(details)) return null;
-	const xdev = details.xdev;
-	if (
-		!isRecord(xdev) ||
-		xdev.mode !== "execute" ||
-		typeof xdev.tool !== "string"
-	)
-		return null;
-	return {
-		tool: xdev.tool,
-		args: isRecord(xdev.args) ? xdev.args : {},
-		inner: xdev.inner,
-	};
-}
-
-/**
- * `write xd://<tool>` 的派发：完成后看最终结果（失败的不改名），运行中看部分结果——
- * Core 的运行中更新同样把真实工具的进度包在 `details.xdev.inner` 里。
- */
-function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
-	if (props.name !== "write") return null;
-	if (props.result)
-		return props.result.isError === true ? null : xdevOf(props.result.details);
-	return props.running ? xdevOf(props.partialResult?.details) : null;
-}
-
 export function ToolView(props: ToolViewProps): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
-	const xdev = executeXdevDispatch(props);
-	const { args, intent: argIntent } = normalizeArgs(props.args);
-	const intent = props.intent?.trim() || argIntent;
+	const { args: outerArgs, intent: argIntent } = normalizeArgs(props.args);
+	// `write` / `read xd://…`：换成真实工具（或设备文档卡）的名字与参数
+	const xdev = xdevCardOf({
+		name: props.name,
+		args: outerArgs,
+		result: props.result,
+		partialResult: props.partialResult,
+	});
+	const intent = props.intent?.trim() || argIntent || xdev?.intent;
 	const name = xdev?.tool ?? props.name;
-	// 派发时把外层 write 的 details 换成内层工具的 details，交给真实工具的渲染器
 	const unwrap = (r: ToolResultLike | undefined) =>
-		xdev && r
-			? { content: r.content, details: xdev.inner, isError: r.isError }
-			: r;
+		xdev?.unwrap ? unwrapXdevResult(r) : r;
 	const result = unwrap(props.result);
 	const renderer = resolveToolRenderer(name);
 	const renderProps: ToolRenderProps = {
 		name,
-		args: xdev?.args ?? args,
+		args: xdev?.args ?? outerArgs,
 		result,
 		running: props.running,
 		partial: props.running && !result ? unwrap(props.partialResult) : undefined,
 		host: props.host,
 	};
+	// MCP 工具（顶层或 `xd://mcp__…`）：头部名字写成 server / tool，完整工具名放进 title
+	const mcp = mcpOrigin(
+		name,
+		(renderProps.result ?? renderProps.partial)?.details,
+	);
+	const label = xdev?.label ?? name;
 
 	const isError = props.result?.isError === true;
 	const status = props.running
@@ -215,9 +214,19 @@ export function ToolView(props: ToolViewProps): ReactNode {
 					className={`tv-cat tv-cat--${TOOL_CAT[name] ?? "other"}`}
 					aria-hidden="true"
 				>
-					<Icon name={TOOL_ICON[name] ?? "wrench"} size={13} />
+					<Icon
+						name={TOOL_ICON[name] ?? (isMcpToolName(name) ? "plugs" : "wrench")}
+						size={13}
+					/>
 				</span>
-				<span className="tv-name">{xdev ? `xd://${name}` : name}</span>
+				{mcp ? (
+					<span className="tv-name" title={label}>
+						<span className="tv-muted">{mcp.server} / </span>
+						{mcp.tool}
+					</span>
+				) : (
+					<span className="tv-name">{label}</span>
+				)}
 				<span className="tv-sum">
 					<renderer.Summary {...renderProps} />
 				</span>

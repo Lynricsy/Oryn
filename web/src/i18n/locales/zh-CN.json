@@ -890,6 +890,90 @@
 		"moreLines_other": "⋯ 还有 {{count}} 行",
 		"running": "运行中",
 		"args": "参数",
+		"ida": {
+			"code": "代码",
+			"output": "输出",
+			"value": "返回值",
+			"error": "错误",
+			"noOutput": "无输出",
+			"artifact": "完整输出",
+			"dbs_one": "{{count}} 个库",
+			"dbs_other": "{{count}} 个库",
+			"opening": "打开中",
+			"execRunning": "{{method}} 运行中",
+			"saved": "已保存",
+			"discarded": "已丢弃改动",
+			"dbId": "库 ID",
+			"module": "模块",
+			"format": "格式",
+			"idb": "IDB",
+			"oldName": "原名",
+			"appliedType": "生效类型",
+			"funcName": "函数名"
+		},
+		"securityScan": {
+			"findings_one": "{{count}} 个发现",
+			"findings_other": "{{count}} 个发现",
+			"cancelRequested": "已请求取消",
+			"notRunning": "未在运行",
+			"planReady": "计划就绪",
+			"configs_one": "{{count}} 个配置",
+			"configs_other": "{{count}} 个配置",
+			"started": "已启动",
+			"imported_one": "导入 {{count}} 个发现",
+			"imported_other": "导入 {{count}} 个发现",
+			"operation": "操作",
+			"scan": "扫描",
+			"plan": "计划",
+			"job": "任务",
+			"sessionFile": "会话文件",
+			"created": "创建于",
+			"updated": "更新于",
+			"remaining": "剩余 {{remaining}}/{{total}} 次扫描",
+			"cloudConfig": "配置",
+			"sourceConfig": "来源配置",
+			"commits": "提交",
+			"finished": "完成 {{count}}",
+			"pending": "待扫 {{count}}",
+			"failed": "失败 {{count}}",
+			"severity": "按严重度",
+			"lastCommit": "最近扫描的提交",
+			"lastScanned": "最近扫描",
+			"fingerprint": "指纹",
+			"cloudScan": "云扫描",
+			"repository": "仓库"
+		},
+		"xdev": {
+			"docs": "文档",
+			"catalog": "设备目录",
+			"payload": "写入内容"
+		},
+		"checkpoint": {
+			"started": "开始于",
+			"rewound": "已回退"
+		},
+		"memoryEdit": {
+			"op": {
+				"update": "更新",
+				"forget": "遗忘",
+				"invalidate": "作废"
+			},
+			"status": {
+				"updated": "已更新",
+				"deleted": "已遗忘",
+				"invalidated": "已作废",
+				"not_found": "未找到",
+				"not_editable": "只读事实"
+			},
+			"importance": "重要度",
+			"bank": "记忆库"
+		},
+		"tts": {
+			"voice": "音色",
+			"language": "语言",
+			"format": "格式",
+			"backend": "后端"
+		},
 		"terminal": {
 			"viewInPanel": "在终端面板查看",
 			"awaitingInput": "等待终端输入",

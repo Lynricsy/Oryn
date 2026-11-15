@@ -786,6 +786,12 @@
 	border-top: 1px solid var(--tv-border);
 }
 
+/* 卡片里的 Markdown（文档卡、MCP 结果、eval 的 Markdown 视图）与卡片其他文字同级，不用对话正文的 14.5px */
+.tv-body .md {
+	font-size: 13px;
+	line-height: 1.6;
+}
+
 /* ---- syntax tokens (highlight.js, scoped) ----
  * 与 Markdown 代码块共用 --syn-* 令牌，随明暗与主题切换。 */
 

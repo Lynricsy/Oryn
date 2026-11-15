@@ -890,6 +890,90 @@
 		"moreLines_other": "⋯ {{count}} more lines",
 		"running": "Running",
 		"args": "Arguments",
+		"ida": {
+			"code": "Code",
+			"output": "Output",
+			"value": "Value",
+			"error": "Error",
+			"noOutput": "no output",
+			"artifact": "Full output",
+			"dbs_one": "{{count}} db",
+			"dbs_other": "{{count}} dbs",
+			"opening": "opening",
+			"execRunning": "{{method}} running",
+			"saved": "saved",
+			"discarded": "changes discarded",
+			"dbId": "DB id",
+			"module": "Module",
+			"format": "Format",
+			"idb": "IDB",
+			"oldName": "Was",
+			"appliedType": "Applied type",
+			"funcName": "Function"
+		},
+		"securityScan": {
+			"findings_one": "{{count}} finding",
+			"findings_other": "{{count}} findings",
+			"cancelRequested": "cancel requested",
+			"notRunning": "not running",
+			"planReady": "plan ready",
+			"configs_one": "{{count}} configuration",
+			"configs_other": "{{count}} configurations",
+			"started": "started",
+			"imported_one": "{{count}} finding imported",
+			"imported_other": "{{count}} findings imported",
+			"operation": "Operation",
+			"scan": "Scan",
+			"plan": "Plan",
+			"job": "Job",
+			"sessionFile": "Session file",
+			"created": "Created",
+			"updated": "Updated",
+			"remaining": "{{remaining}}/{{total}} scans left",
+			"cloudConfig": "Configuration",
+			"sourceConfig": "Source configuration",
+			"commits": "Commits",
+			"finished": "{{count}} finished",
+			"pending": "{{count}} pending",
+			"failed": "{{count}} failed",
+			"severity": "Findings by severity",
+			"lastCommit": "Last scanned commit",
+			"lastScanned": "Last scanned",
+			"fingerprint": "Fingerprint",
+			"cloudScan": "Cloud scan",
+			"repository": "Repository"
+		},
+		"xdev": {
+			"docs": "docs",
+			"catalog": "device catalog",
+			"payload": "Payload"
+		},
+		"checkpoint": {
+			"started": "Started",
+			"rewound": "rewound"
+		},
+		"memoryEdit": {
+			"op": {
+				"update": "update",
+				"forget": "forget",
+				"invalidate": "invalidate"
+			},
+			"status": {
+				"updated": "updated",
+				"deleted": "forgotten",
+				"invalidated": "invalidated",
+				"not_found": "not found",
+				"not_editable": "read-only fact"
+			},
+			"importance": "Importance",
+			"bank": "Bank"
+		},
+		"tts": {
+			"voice": "Voice",
+			"language": "Language",
+			"format": "Format",
+			"backend": "Backend"
+		},
 		"terminal": {
 			"viewInPanel": "View in terminal panel",
 			"awaitingInput": "Waiting for terminal input",

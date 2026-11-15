@@ -16,6 +16,7 @@ import {
 	isRecord,
 	normalizeWs,
 	num,
+	resultTextOf,
 	shortenPath,
 	str,
 	truncate,
@@ -64,7 +65,10 @@ function shortSha(sha: string): string {
 	return /^[0-9a-f]{12,}$/i.test(sha) ? sha.slice(0, 7) : sha;
 }
 
-function Salient({ args }: { args: Record<string, unknown> }): ReactNode {
+function Salient({
+	args,
+	result,
+}: Pick<ToolRenderProps, "args" | "result">): ReactNode {
 	const op = str(args.op) ?? "";
 	const repo = str(args.repo);
 	if (op.startsWith("search_")) {
@@ -90,8 +94,19 @@ function Salient({ args }: { args: Record<string, unknown> }): ReactNode {
 	if (op === "pr_create") {
 		const title = str(args.title);
 		if (title) return <span>{truncate(normalizeWs(title), 60)}</span>;
+		// `xd://github` 派发只回传 {op, repo}（标题与正文不进 details）：改用结果里的 PR 链接
+		const created = /https:\/\/\S+\/pull\/(\d+)/.exec(resultTextOf(result));
+		if (created)
+			return (
+				<>
+					<span>#{created[1]}</span>
+					{repo && <span className="tv-muted">{repo}</span>}
+				</>
+			);
 		return args.fill === true ? (
 			<span className="tv-muted">fill from commits</span>
+		) : repo ? (
+			<span className="tv-muted">{repo}</span>
 		) : null;
 	}
 	if (op === "run_watch") {
@@ -118,7 +133,7 @@ function Summary(props: ToolRenderProps): ReactNode {
 			) : (
 				<Badge tone="warn">no op</Badge>
 			)}{" "}
-			<Salient args={props.args} />
+			<Salient args={props.args} result={props.result} />
 		</>
 	);
 }
