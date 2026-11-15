@@ -1,7 +1,8 @@
 /**
  * 线程输入区：发送 / steer / 排队 / 中断按键（`lib/composer.ts`）、`/` 命令菜单、`!`/`!!` bash、文件附件。
  * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、发送）、页脚行（模式状态；上下文、成本、速度读数）。
- * `coordinator`（协调对话，M9）：没有附件与模式条；`!` 前缀按普通文本发送；命令菜单与斜杠命令按服务端白名单过滤。
+ * `coordinator`（协调对话，M9）：没有模式条；`!` 前缀按普通文本发送；命令菜单与斜杠命令按服务端白名单过滤。
+ * 协调对话里只有全局助手对话（M13）有附件：文件传进助手文件库，以 `orynFiles` 携带；Space 聊天没有附件。
  */
 import {
 	type ReactNode,
@@ -45,7 +46,7 @@ import {
 	patchComposerDraft,
 	useComposerDraft,
 } from "../../state/composer-drafts";
-import { getThreadStore, useThread } from "../../state/stores";
+import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
@@ -86,7 +87,9 @@ export function Composer({
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
 	useRoleShortcut(threadId);
-	const att = useAttachments({ threadId });
+	const assistant = useIndex((s) => s.threads[threadId]?.kind) === "assistant";
+	const canAttach = !coordinator || assistant;
+	const att = useAttachments({ threadId, library: assistant });
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];
@@ -212,6 +215,7 @@ export function Composer({
 						action.prompt,
 						att.contents,
 						att.attachmentIds,
+						att.fileIds,
 					),
 				);
 				return;
@@ -223,6 +227,7 @@ export function Composer({
 						action.message,
 						att.contents,
 						att.attachmentIds,
+						att.fileIds,
 					),
 				);
 				return;
@@ -328,6 +333,7 @@ export function Composer({
 								action.text,
 								att.contents,
 								att.attachmentIds,
+								att.fileIds,
 							)
 						: slashPromptFrame(mode, action.text),
 					LONG_COMMAND_TIMEOUT_MS,
@@ -358,10 +364,10 @@ export function Composer({
 		patchComposerDraft(threadId, { inFlight: marker });
 		try {
 			if (parsed.kind === "empty") {
-				if (att.attachmentIds.length === 0) return;
+				if (!att.hasFiles) return;
 				await realtime.cmd(
 					threadId,
-					promptFrame(mode, "", att.contents, att.attachmentIds),
+					promptFrame(mode, "", att.contents, att.attachmentIds, att.fileIds),
 				);
 				resetIfUnchanged(sent);
 				return;
@@ -405,6 +411,7 @@ export function Composer({
 					asText.kind === "text" ? asText.text : sent.text.trim(),
 					att.contents,
 					att.attachmentIds,
+					att.fileIds,
 				),
 			);
 			resetIfUnchanged(sent);
@@ -481,9 +488,7 @@ export function Composer({
 
 	// 上传未完成时不能发送（否则附件会被悄悄漏掉）；出错的文件不随消息发送
 	const canSend =
-		!disabled &&
-		!att.uploading &&
-		(text.trim() !== "" || att.attachmentIds.length > 0);
+		!disabled && !att.uploading && (text.trim() !== "" || att.hasFiles);
 	return (
 		<div ref={rootRef} className="relative">
 			<RoleTrack threadId={threadId} anchorRef={rootRef} />
@@ -496,16 +501,14 @@ export function Composer({
 					hint={entries.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
-			{!coordinator && (
-				<AttachmentStrip items={att.items} onRemove={att.remove} />
-			)}
+			{canAttach && <AttachmentStrip items={att.items} onRemove={att.remove} />}
 			<textarea
 				onDragOver={(e) => {
-					if (!coordinator && e.dataTransfer.types.includes("Files"))
+					if (canAttach && e.dataTransfer.types.includes("Files"))
 						e.preventDefault();
 				}}
 				onDrop={(e) => {
-					if (coordinator || e.dataTransfer.files.length === 0) return;
+					if (!canAttach || e.dataTransfer.files.length === 0) return;
 					e.preventDefault();
 					void att.addFiles(e.dataTransfer.files);
 				}}
@@ -525,7 +528,7 @@ export function Composer({
 				}}
 				onKeyDown={onKeyDown}
 				onPaste={(e) => {
-					const files = coordinator ? [] : [...e.clipboardData.files];
+					const files = canAttach ? [...e.clipboardData.files] : [];
 					if (files.length > 0) {
 						e.preventDefault();
 						void att.addFiles(files);
@@ -537,7 +540,7 @@ export function Composer({
 			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
 			 */}
 			<div className="flex items-start gap-0.5 px-3 pb-2">
-				{!coordinator && (
+				{canAttach && (
 					<div className="flex h-8 shrink-0 items-center">
 						<AttachButton onFiles={(files) => void att.addFiles(files)} />
 						<span
@@ -547,7 +550,7 @@ export function Composer({
 					</div>
 				)}
 				<div
-					className={`flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-0.5 ${coordinator ? "pl-2" : ""}`}
+					className={`flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-0.5 ${canAttach ? "" : "pl-2"}`}
 				>
 					{!coordinator && <ModeStrip threadId={threadId} />}
 					{bashRunning && (

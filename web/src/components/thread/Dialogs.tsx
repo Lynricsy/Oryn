@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
-import { chatModels, useModelCatalog } from "../../api/model-catalog-queries";
+import { useModelCatalog } from "../../api/model-catalog-queries";
 import { useShareOverview } from "../../api/share-queries";
 import {
 	attachmentContentUrl,
@@ -19,7 +19,6 @@ import {
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
-import { useBreakpoint } from "../../lib/viewport";
 import type {
 	OmpCommand,
 	ResponseData,
@@ -47,6 +46,7 @@ import {
 } from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
+import { ModelPickerBody } from "../composer/ModelPickerBody";
 import { RoleList } from "../composer/RolePicker";
 import { Markdown } from "../markdown/Markdown";
 import { AttachmentPublishButton } from "../share/AttachmentPublish";
@@ -58,13 +58,7 @@ import {
 } from "../transcript/context";
 import { MessageView } from "../transcript/MessageView";
 import { CopyButton } from "../ui/CopyButton";
-import {
-	Badge,
-	Callout,
-	Meter,
-	type Tone,
-	thresholdTone,
-} from "../ui/data";
+import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { ModelCatalogFooter } from "../ui/ModelSelect";
@@ -603,15 +597,8 @@ function ModelDialog({
 }) {
 	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
-	// 手机上自动聚焦搜索框会弹出软键盘，把顶部的角色列表挤出视野
-	const compact = useBreakpoint() === "compact";
 	const models = useModelCatalog();
-	const [q, setQ] = useState(initialQuery ?? "");
 	const [error, setError] = useState<unknown>(null);
-	const all = chatModels(models.data);
-	const list = all.filter((m) =>
-		`${m.selector} ${m.name}`.toLowerCase().includes(q.toLowerCase()),
-	);
 	// 模型列表里直接选 = 手动选择（来源记录 `manual`，回合头回落）；旧 Core 自动回退到 set_model
 	const pick = async (m: { provider: string; id: string }) => {
 		setError(null);
@@ -630,79 +617,16 @@ function ModelDialog({
 			title={t("model.title")}
 			footer={<ModelCatalogFooter catalog={models.data} />}
 		>
-			<RoleList threadId={threadId} onPicked={onClose} />
 			{/* 思考级别在输入坞的圆圈菜单里调，速度在页脚的速度读数里调；这里只选模型 */}
-			<h3 className="mb-1 px-2 font-medium text-2xs text-faint">
-				{t("model.allModels")}
-			</h3>
-			{/* 桌面打开即可输入筛选；手机上不自动聚焦，免得软键盘把角色列表挤出视野 */}
-			<TextInput
-				autoFocus={!compact}
-				placeholder={t("model.search")}
-				value={q}
-				onChange={(e) => setQ(e.target.value)}
-				className="mb-2"
+			<ModelPickerBody
+				roles={<RoleList threadId={threadId} onPicked={onClose} />}
+				current={state?.model}
+				initialQuery={initialQuery}
+				error={error}
+				onPick={(m) =>
+					void pick({ provider: m.provider, id: m.id }).then(onClose)
+				}
 			/>
-			<ErrorText error={error ?? models.error} />
-			{models.isPending && (
-				<div className="flex items-center gap-2 px-2 py-3 text-muted text-sm">
-					<Spinner />
-					{t("model.loading")}
-				</div>
-			)}
-			{models.isSuccess && list.length === 0 && (
-				<p className="px-2 py-3 text-muted text-sm">
-					{all.length === 0
-						? t("model.noModels")
-						: t("model.noMatch", { q: q.trim() })}
-				</p>
-			)}
-			<ul className="flex flex-col gap-px">
-				{list.map((m) => {
-					const current =
-						state?.model?.provider === m.provider && state?.model?.id === m.id;
-					return (
-						<li key={`${m.provider}/${m.id}`}>
-							<button
-								type="button"
-								data-model={`${m.provider}/${m.id}`}
-								className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${current ? "bg-hover font-medium" : ""}`}
-								onClick={() =>
-									void pick({ provider: m.provider, id: m.id }).then(onClose)
-								}
-							>
-								<ModelLogo
-									model={m.id}
-									provider={m.provider}
-									className="text-muted"
-								/>
-								{/* 主名称优先：桌面同一行、空间不够先截 id；手机分两行，id 作次要文字放第二行 */}
-								<span
-									className={`flex min-w-0 flex-1 ${compact ? "flex-col" : "items-center gap-2"}`}
-								>
-									<span
-										className={`min-w-0 truncate ${compact ? "" : "max-w-[60%] shrink-0"}`}
-									>
-										{m.name || m.id}
-									</span>
-									<span
-										className={`min-w-0 truncate font-mono text-faint text-xs ${compact ? "" : "flex-1 text-right"}`}
-									>{`${m.provider}/${m.id}`}</span>
-								</span>
-								{/* 与角色列表同一种选中样式：灰底 + 行尾中性勾 */}
-								{current && (
-									<Icon
-										name="check"
-										size={13}
-										weight="bold"
-										className="shrink-0 text-fg"
-									/>
-								)}
-							</button>
-						</li>
-					);
-				})}
-			</ul>
 		</Dialog>
 	);
 }

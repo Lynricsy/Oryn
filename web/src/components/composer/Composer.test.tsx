@@ -1,25 +1,35 @@
 /**
  * 输入区回归：等待应答期间的新草稿不被清空（W4）、同一草稿不重复发送、斜杠模式命令对账（W12）、
  * 切换线程时草稿各自保留、不串（W5）；跨 compact 断点重新挂载时草稿、错误行、光标保留（M12.1 问题 4）；
- * 触屏上工具行有拍照键，拍到的照片作为附件上传到本线程。
+ * 触屏上工具行有拍照键，拍到的照片作为附件上传到本线程；全局助手对话的附件传进助手文件库、以 `orynFiles` 发送（M13）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Thread } from "../../api/client";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ThreadPage } from "../../pages/ThreadPage";
 import { resetComposerDrafts } from "../../state/composer-drafts";
-import { getThreadStore, resetThreadStores } from "../../state/stores";
+import {
+	getThreadStore,
+	indexStore,
+	resetThreadStores,
+} from "../../state/stores";
 import { Composer } from "./Composer";
 
-const { cmd, upload } = vi.hoisted(() => ({ cmd: vi.fn(), upload: vi.fn() }));
+const { cmd, upload, uploadLib } = vi.hoisted(() => ({
+	cmd: vi.fn(),
+	upload: vi.fn(),
+	uploadLib: vi.fn(),
+}));
 vi.mock("../../lib/attachments", async (orig) => ({
 	...(await orig<typeof AttachmentsLib>()),
 	uploadAttachment: upload,
+	uploadAssistantFile: uploadLib,
 }));
 vi.mock("../../lib/images", async (orig) => ({
 	...(await orig<typeof ImagesLib>()),
@@ -324,5 +334,74 @@ describe("Composer 附件入口", () => {
 		wrap(<Composer threadId={A} />);
 		expect(screen.getByTestId("attach-file-input")).toBeInTheDocument();
 		expect(screen.queryByTestId("attach-camera")).toBeNull();
+	});
+});
+
+describe("全局助手对话的附件（M13 4.2）", () => {
+	const K = "T-0193a1b2-0000-7000-8000-0000000000e3";
+	const S = "T-0193a1b2-0000-7000-8000-0000000000e4";
+	const th = (id: string, kind: Thread["kind"]): Thread => ({
+		id,
+		title: id,
+		titleSource: "auto",
+		state: "idle",
+		stateChangedAt: 1,
+		pinned: false,
+		labels: [],
+		unread: false,
+		createdAt: 1,
+		updatedAt: 1,
+		kind,
+	});
+
+	beforeEach(() => {
+		cmd.mockReset();
+		cmd.mockResolvedValue({});
+		upload.mockReset();
+		uploadLib.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		indexStore.getState().upsertThread(th(K, "assistant"));
+		indexStore.getState().upsertThread(th(S, "space"));
+	});
+
+	it("有附件按钮；文件传进助手文件库，发送带 orynFiles、不带 orynAttachments", async () => {
+		uploadLib.mockResolvedValue({
+			id: "afl_1",
+			name: "notes.txt",
+			mime: "text/plain",
+			size: 1,
+			sha256: "0".repeat(64),
+			scope: "conversation",
+			source: "upload",
+			createdAt: 1,
+		});
+		wrap(<Composer threadId={K} coordinator />);
+		const file = new File(["x"], "notes.txt", { type: "text/plain" });
+		await act(async () => {
+			fireEvent.change(screen.getByTestId("attach-file-input"), {
+				target: { files: [file] },
+			});
+		});
+		expect(uploadLib).toHaveBeenCalledWith(
+			file,
+			expect.objectContaining({ threadId: K }),
+		);
+		expect(upload).not.toHaveBeenCalled();
+		type("看看这个");
+		await act(async () => {
+			enter();
+		});
+		const [frame] = framesOf("prompt");
+		expect(frame).toMatchObject({
+			message: "看看这个",
+			orynFiles: ["afl_1"],
+		});
+		expect(frame).not.toHaveProperty("orynAttachments");
+	});
+
+	it("Space 聊天（协调对话）仍然没有附件入口", () => {
+		wrap(<Composer threadId={S} coordinator />);
+		expect(screen.queryByTestId("attach-file-input")).toBeNull();
 	});
 });

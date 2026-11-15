@@ -179,6 +179,15 @@
 		"profileLabel": "浏览器 Profile：{{name}}",
 		"profileDefaultLabel": "浏览器 Profile：跟随项目默认（{{name}}）"
 	},
+	"roleCapsule": {
+		"label": "对象：{{name}}",
+		"title": "对话对象",
+		"assistantHint": "新建助手对话",
+		"pickModel": "指定模型…",
+		"back": "返回",
+		"modelInput": "搜索或输入 provider/模型 id",
+		"useModel": "使用 {{model}}"
+	},
 	"dockPill": {
 		"expand": "展开输入框",
 		"working": "运行中",
@@ -1739,6 +1748,7 @@
 		"fileOnly": "仅文件",
 		"remove": "移除 {{name}}",
 		"waitUpload": "附件仍在上传，请稍候再发送",
+		"notForAssistant": "系统分享的附件只能发给普通线程",
 		"inMessage": "消息附件",
 		"title": "附件",
 		"empty": "这个线程还没有附件",

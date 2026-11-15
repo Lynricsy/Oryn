@@ -1,7 +1,8 @@
 /**
  * 消息附件：任意文件都被接受并上传、超过 100MiB 在客户端拒绝、内联预算用完的图片只作为文件（「仅文件」）、
  * 上传未完成时 uploading 为真、移除已上传的附件会删除服务端副本；
- * 分享进来的已上传附件直接成为完成条目（addUploaded）；触屏上附件入口多一个拍照键。
+ * 分享进来的已上传附件直接成为完成条目（addUploaded）；触屏上附件入口多一个拍照键；
+ * 助手文件库模式（M13）：文件传进库、内联图片不上传，换去向时按新去向重传并删掉旧上传。
  */
 import {
 	act,
@@ -13,20 +14,24 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
-import type { Attachment } from "../../lib/attachments";
+import type { AssistantFile, Attachment } from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ImageBudgetError, type PreparedImage } from "../../lib/images";
 import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
 
-const { upload, del, prepare } = vi.hoisted(() => ({
+const { upload, del, uploadLib, delLib, prepare } = vi.hoisted(() => ({
 	upload: vi.fn(),
 	del: vi.fn(),
+	uploadLib: vi.fn(),
+	delLib: vi.fn(),
 	prepare: vi.fn(),
 }));
 vi.mock("../../lib/attachments", async (orig) => ({
 	...(await orig<typeof AttachmentsLib>()),
 	uploadAttachment: upload,
 	deleteAttachment: del,
+	uploadAssistantFile: uploadLib,
+	deleteAssistantFile: delLib,
 }));
 vi.mock("../../lib/images", async (orig) => ({
 	...(await orig<typeof ImagesLib>()),
@@ -240,5 +245,74 @@ describe("AttachButton", () => {
 		fireEvent.change(cam, { target: { files: [photo] } });
 		expect(onFiles).toHaveBeenCalledWith([photo]);
 		expect(cam.value).toBe("");
+	});
+});
+
+describe("useAttachments 助手文件库模式", () => {
+	const libFile = (id: string, name: string): AssistantFile => ({
+		id,
+		name,
+		mime: "text/plain",
+		size: 3,
+		sha256: "0".repeat(64),
+		scope: "conversation",
+		source: "upload",
+		createdAt: 0,
+	});
+
+	beforeEach(() => {
+		upload.mockReset();
+		del.mockReset().mockResolvedValue(undefined);
+		uploadLib.mockReset();
+		delLib.mockReset().mockResolvedValue(undefined);
+		prepare.mockReset();
+	});
+
+	it("文件传进助手文件库（fileIds），有内联副本的图片不上传、只随 images 发送", async () => {
+		uploadLib.mockResolvedValue(libFile("afl_1", "a.txt"));
+		prepare.mockResolvedValue(img);
+		const { result } = renderHook(() =>
+			useAttachments({ threadId: "T-k", library: true }),
+		);
+		const txt = new File(["abc"], "a.txt", { type: "text/plain" });
+		const png = new File(["x"], "a.png", { type: "image/png" });
+		await act(() => result.current.addFiles([txt, png]));
+		expect(uploadLib).toHaveBeenCalledTimes(1);
+		expect(uploadLib).toHaveBeenCalledWith(
+			txt,
+			expect.objectContaining({ threadId: "T-k" }),
+		);
+		expect(upload).not.toHaveBeenCalled();
+		expect(result.current.fileIds).toEqual(["afl_1"]);
+		expect(result.current.attachmentIds).toEqual([]);
+		expect(result.current.contents).toHaveLength(1);
+		expect(result.current.hasFiles).toBe(true);
+	});
+
+	it("换去向：已加入的文件按新去向重传，旧上传尽力删除；分享来的线程附件切到助手时标为错误", async () => {
+		upload.mockResolvedValue(meta("att_1", "a.txt"));
+		uploadLib.mockResolvedValue(libFile("afl_1", "a.txt"));
+		const { result, rerender } = renderHook(
+			({ library }) => useAttachments({ library }),
+			{ initialProps: { library: false } },
+		);
+		const txt = new File(["abc"], "a.txt", { type: "text/plain" });
+		await act(() => result.current.addFiles([txt]));
+		act(() => result.current.addUploaded([meta("att_s", "shared.txt")]));
+		expect(result.current.attachmentIds).toEqual(["att_1", "att_s"]);
+
+		await act(async () => rerender({ library: true }));
+		expect(del).toHaveBeenCalledWith("att_1");
+		expect(uploadLib).toHaveBeenCalledWith(txt, expect.anything());
+		expect(result.current.fileIds).toEqual(["afl_1"]);
+		expect(result.current.attachmentIds).toEqual([]);
+		expect(
+			result.current.items.find((i) => i.name === "shared.txt"),
+		).toMatchObject({ status: "error" });
+
+		await act(async () => rerender({ library: false }));
+		expect(delLib).toHaveBeenCalledWith("afl_1");
+		expect(result.current.attachmentIds).toEqual(["att_1", "att_s"]);
+		expect(result.current.fileIds).toEqual([]);
 	});
 });

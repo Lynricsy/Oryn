@@ -1,16 +1,19 @@
 /**
- * 首页 = 新建线程框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——执行位置（Ctrl+M）、
- * 浏览器 Profile（Ctrl+B，M8；只在新 orb 且至少有一个 Profile 时出现）、项目（Ctrl+J）、模型与思考级别（Ctrl+S）、发送。
- * 省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
+ * 首页 = 新建对话框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——对象（role 胶囊，Ctrl+S：
+ * 全局助手 / cycleOrder 里的 role / 指定模型，以及思考强度）、执行位置（Ctrl+M）、浏览器 Profile（Ctrl+B，M8；只在新 orb
+ * 且至少有一个 Profile 时出现）、项目（Ctrl+J）、发送。初始对象取首屏偏好（`settings/composer` 的 `defaultTarget`）。
+ * 选全局助手（M13 R14–R16）：执行位置、项目、Profile 三个胶囊收起（不在 DOM 里），附件传进助手文件库，发送即新建
+ * 助手对话（首条消息、文件、图片、所选模型都带上）并跳到 `/assistant/:id`；托盘换成旋转流光描边、色场换成助手色相。
+ * 普通对象：新线程以所选 role 开场（`role`），或用指定的模型（`model`）；省略 provider / 类型时由控制面依次取项目默认、
+ * orb_defaults、provider 默认。
  * 选的 Profile 被另一台运行中的 orb 占用（409 `profile_in_use`）时弹选择对话框，选「只读使用」或「接管」后带 `profileMode` 重发。
  * 执行位置的「Runners」分组（M11b）：选 runner 的目录（可带子路径、可新建 worktree）；目录已被别的线程占用
  * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
- * 托盘背后是一层主题色光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
+ * 托盘背后是一层光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  */
 import {
-	type ReactElement,
+	type CSSProperties,
 	type ReactNode,
-	type Ref,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -19,18 +22,27 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Schemas } from "../api/client";
+import { useComposerPrefs } from "../api/identity-queries";
 import {
 	useBrowserProfiles,
 	useOrbs,
 	useProjects,
 	useProviders,
 } from "../api/queries";
+import { createAssistantConversation } from "../api/space-queries";
 import {
 	AttachButton,
 	AttachmentStrip,
 	useAttachments,
 } from "../components/composer/attachments";
 import { morphToThread } from "../components/composer/DockTray";
+import { PillButton, type PillText } from "../components/composer/PillButton";
+import {
+	RoleCapsule,
+	type Target,
+	useRoleOptions,
+} from "../components/composer/RoleCapsule";
+import { FADE_MS, type Phase } from "../components/composer/RoleTrack";
 import {
 	type ConflictChoice,
 	ProfileConflictDialog,
@@ -60,14 +72,7 @@ import {
 } from "../components/runner/RunnerPicker";
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
-import { Icon, type IconName } from "../components/ui/icons";
-import { ModelLogo } from "../components/ui/ModelLogo";
-import {
-	ModelOptions,
-	ModelPill,
-	modelPillText,
-	newThreadThinkingOptions,
-} from "../components/ui/ModelSelect";
+import { Icon } from "../components/ui/icons";
 import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
 import { OrbBead } from "../components/ui/OrbBead";
 import { Option, Popover, PopoverLabel } from "../components/ui/PickerPopover";
@@ -75,11 +80,10 @@ import { IconButton, Spinner } from "../components/ui/primitives";
 import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
-import { useModelCaps } from "../state/model-caps";
 import { shareIntakeStore, useShareIntake } from "../state/share-intake";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 
-type Pill = "executor" | "profile" | "project" | "model";
+type Pill = "executor" | "profile" | "project" | "role";
 
 type Executor = Schemas["ThreadExecutor"];
 
@@ -97,70 +101,6 @@ function inEditable(target: EventTarget | null): boolean {
 /** 首次出场动效只在本次页面会话里第一次挂载首页时播放 */
 let introPlayed = false;
 
-/** 胶囊文案：主文字 + 可选徽标；`label` 是整体无障碍名（保持原拼接字符串）。 */
-interface PillText {
-	label: string;
-	main: string;
-	badge?: string;
-}
-
-/**
- * 底部选项按钮；快捷键只放进悬停提示，输入框里不显示按键提示。
- * `pill`：图标 + 名字，放不下时文字截断；`circle`：窄屏上 orb（以及以后的浏览器 profile）只留一个
- * 32px 小圆圈，模型在空间不够时也缩成圆圈；名字靠 aria-label 与悬停提示，把横向空间让给项目名。
- */
-function PillButton({
-	ref,
-	icon,
-	text,
-	shortcut,
-	onClick,
-	active,
-	shape = "pill",
-	grow = false,
-	reserveEnd = false,
-}: {
-	ref?: Ref<HTMLButtonElement>;
-	/** 图标名，或现成的装饰节点（如模型 logo） */
-	icon: IconName | ReactElement;
-	text: PillText;
-	shortcut: string;
-	onClick: () => void;
-	active: boolean;
-	shape?: "pill" | "circle";
-	/** 不设 240px 上限，有多少剩余宽度用多少（窄屏的项目名） */
-	grow?: boolean;
-	/** 右端给叠在胶囊里的思考级别按钮留位置（ModelPill） */
-	reserveEnd?: boolean;
-}) {
-	const circle = shape === "circle";
-	return (
-		<button
-			ref={ref}
-			type="button"
-			onClick={onClick}
-			aria-expanded={active}
-			aria-label={text.label}
-			title={`${text.label} (${shortcut})`}
-			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink gap-1.5 pl-3 ${reserveEnd ? "pr-8" : "pr-3"} ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
-		>
-			<span className="inline-flex shrink-0">
-				{typeof icon === "string" ? (
-					<Icon name={icon} size={circle ? 15 : 13} />
-				) : (
-					icon
-				)}
-			</span>
-			{!circle && <span className="min-w-0 truncate">{text.main}</span>}
-			{!circle && text.badge && (
-				<span className="inline-flex shrink-0">
-					<Badge>{text.badge}</Badge>
-				</span>
-			)}
-		</button>
-	);
-}
-
 export function HomePage(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -175,15 +115,30 @@ export function HomePage(): ReactNode {
 	const projects = useProjects();
 	const orbs = useOrbs();
 	const profiles = useBrowserProfiles();
-	const att = useAttachments();
 	const [prompt, setPrompt] = useState("");
 	const [pill, setPill] = useState<Pill | null>(null);
 	const [executor, setExecutor] = useState<Executor>({ kind: "new_orb" });
 	// 选了 runner 的目录（M11b）时优先于 `executor`；选回新 orb / 已有 orb 时清空
 	const [runnerPick, setRunnerPick] = useState<RunnerPick | null>(null);
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
-	const [model, setModel] = useState("");
-	const [thinking, setThinking] = useState<string>("");
+	// 用户在 role 胶囊里选的对象；还没选时跟随首屏偏好（偏好没读到或读取失败时是 default role）
+	const [picked, setPicked] = useState<Target | null>(null);
+	const prefs = useComposerPrefs();
+	const target: Target =
+		picked ??
+		(prefs.data?.defaultTarget === "assistant"
+			? { kind: "assistant" }
+			: { kind: "role", role: "default" });
+	const assistantTarget = target.kind === "assistant";
+	const assistantRef = useRef(assistantTarget);
+	assistantRef.current = assistantTarget;
+	// 用户切换过全局助手与普通对象之后，三个胶囊的收起 / 展开才播动画（偏好读到后的初始对象直接到位）
+	const [pillsMotion, setPillsMotion] = useState(false);
+	const choose = (next: Target) => {
+		if ((next.kind === "assistant") !== assistantTarget) setPillsMotion(true);
+		setPicked(next);
+	};
+	const att = useAttachments({ library: assistantTarget });
 	const [profilePick, setProfilePick] = useState<ProfilePick>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -230,17 +185,18 @@ export function HomePage(): ReactNode {
 			const map: Record<string, Pill> = {
 				m: "executor",
 				j: "project",
-				s: "model",
+				s: "role",
 				b: "profile",
 			};
 			const p = map[k];
+			if (!p) return;
+			// 全局助手：执行位置、项目、Profile 胶囊不在，它们的快捷键也不响应（Ctrl+B 照旧留给侧栏开关）
+			if (p !== "role" && assistantRef.current) return;
 			// Ctrl+B 只在输入框里切 Profile 弹层（且胶囊在时）；其余时候留给全局的侧栏开关
 			if (p === "profile" && (!inEditable(e.target) || !showProfileRef.current))
 				return;
-			if (p) {
-				e.preventDefault();
-				setPill((cur) => (cur === p ? null : p));
-			}
+			e.preventDefault();
+			setPill((cur) => (cur === p ? null : p));
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
@@ -322,70 +278,53 @@ export function HomePage(): ReactNode {
 			projectId)
 		: t("newThread.noProject");
 	const projectText: PillText = { label: projectName, main: projectName };
-	// 与线程输入坞的 ModelChip 同一套省空间规则；思考级别是胶囊旁的独立圆圈按钮（ModelPill）
-	const modelText: PillText = modelPillText(model, t("newThread.defaultModel"));
-	const modelCaps = useModelCaps(model);
-	const thinkingOptions = newThreadThinkingOptions(modelCaps);
-	// 换了模型、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
-	useEffect(() => {
-		if (thinking && !thinkingOptions?.includes(thinking)) setThinking("");
-	}, [thinking, thinkingOptions]);
-	// 窄屏选项行：项目名先拿够自然宽度，剩下的还放得下模型名才展开模型，否则模型只留圆圈。
-	// 模型名的自然宽度量一个不可见的同款胶囊（ghost），避免展开/收起来回抖动。
-	const pillsRef = useRef<HTMLDivElement>(null);
-	const profilePillRef = useRef<HTMLButtonElement>(null);
-	const projectPillRef = useRef<HTMLButtonElement>(null);
-	const modelGhostRef = useRef<HTMLSpanElement>(null);
-	const [modelFolded, setModelFolded] = useState(true);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 项目名或模型名变了要重新测量（ResizeObserver 不报文字截断量变化）
+	const roles = useRoleOptions();
+	// 普通 role 的托盘光晕与色场用该 role 的色相（与 Ctrl+P 轨道同色）；指定模型与全局助手由 CSS 各自取色
+	const trayHue =
+		target.kind === "role"
+			? roles.find((r) => r.role === target.role)?.hue
+			: undefined;
+	// 执行位置、项目、Profile 三个胶囊：hidden（不在 DOM 里）→ shown → leaving（FADE_MS 淡出后回到 hidden）
+	const [pillsPhase, setPillsPhase] = useState<Phase>(
+		assistantTarget ? "hidden" : "shown",
+	);
 	useLayoutEffect(() => {
-		const row = pillsRef.current;
-		const proj = projectPillRef.current;
-		const ghost = modelGhostRef.current;
-		if (!compact || !row || !proj || !ghost) return;
-		const measure = () => {
-			const text = proj.querySelector<HTMLElement>(".truncate");
-			if (!text) return;
-			const projNatural =
-				proj.offsetWidth - text.clientWidth + text.scrollWidth;
-			const cs = getComputedStyle(row);
-			const gap = Number.parseFloat(cs.columnGap) || 0;
-			// clientWidth 含左右内边距，子元素实际能用的是内容盒宽度
-			const avail =
-				row.clientWidth -
-				(Number.parseFloat(cs.paddingLeft) || 0) -
-				(Number.parseFloat(cs.paddingRight) || 0);
-			const orb = row.firstElementChild as HTMLElement | null;
-			// Profile 胶囊（窄屏是小圆圈）在时也占一格
-			const profile = profilePillRef.current;
-			const need =
-				(orb?.offsetWidth ?? 0) +
-				gap +
-				(profile ? profile.offsetWidth + gap : 0) +
-				projNatural +
-				gap +
-				ghost.offsetWidth;
-			setModelFolded(need > avail);
-		};
-		measure();
-		const ro = new ResizeObserver(measure);
-		ro.observe(row);
-		return () => ro.disconnect();
-	}, [compact, projectText.main, modelText.main, showProfile]);
+		if (!assistantTarget) {
+			setPillsPhase("shown");
+			return;
+		}
+		if (!pillsMotion) {
+			setPillsPhase("hidden");
+			return;
+		}
+		setPillsPhase((p) => (p === "hidden" ? p : "leaving"));
+		const id = window.setTimeout(() => setPillsPhase("hidden"), FADE_MS);
+		return () => window.clearTimeout(id);
+	}, [assistantTarget, pillsMotion]);
+	// 切到助手的那一帧就开始淡出（不等 effect 把状态改成 leaving）；展开时新挂载的胶囊组播进场
+	const pillsAnim =
+		pillsPhase === "leaving" || assistantTarget
+			? "home-pills-out"
+			: pillsMotion
+				? "home-pills-in"
+				: "";
 	const rise = (delay: string) =>
 		intro
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
 			: "";
 
-	/** 发送当前输入；Profile 被占用时记下这次请求并弹冲突对话框。 */
+	/** 发送当前输入：全局助手新建助手对话；其余新建线程，Profile 被占用时记下这次请求并弹冲突对话框。 */
 	const submit = async () => {
 		const text = prompt.trim();
-		if (!text && att.attachmentIds.length === 0) return;
+		if (!text && !att.hasFiles) return;
 		if (att.uploading) {
 			setError(t("attachments.waitUpload"));
 			return;
 		}
-		const slash = model.indexOf("/");
+		if (target.kind === "assistant") {
+			await sendAssistant(text, target);
+			return;
+		}
 		const pickError = runnerPick && runnerPickError(runnerPick);
 		if (pickError) {
 			setPill("executor");
@@ -407,21 +346,46 @@ export function HomePage(): ReactNode {
 				...(att.attachmentIds.length > 0
 					? { attachments: att.attachmentIds }
 					: {}),
-				...(slash > 0
-					? {
-							model: {
-								provider: model.slice(0, slash),
-								id: model.slice(slash + 1),
-							},
-						}
-					: {}),
-				...(thinking ? { thinkingLevel: thinking } : {}),
+				...(target.kind === "role"
+					? { role: target.role }
+					: {
+							model: { provider: target.model.provider, id: target.model.id },
+						}),
+				...(target.thinking ? { thinkingLevel: target.thinking } : {}),
 				...(executor.kind === "new_orb" && !runnerPick && profilePick !== null
 					? { browserProfileId: profilePick }
 					: {}),
 			},
 			text,
 		);
+	};
+
+	/** 全局助手：新建助手对话，首条消息、库文件、图片、所选模型与思考档位都带上，然后跳过去。 */
+	const sendAssistant = async (
+		text: string,
+		to: Extract<Target, { kind: "assistant" }>,
+	) => {
+		setBusy(true);
+		setError(null);
+		try {
+			const thread = await createAssistantConversation({
+				...(text ? { prompt: text } : {}),
+				...(att.fileIds.length > 0 ? { files: att.fileIds } : {}),
+				...(att.contents.length > 0 ? { images: att.contents } : {}),
+				...(to.model
+					? { model: { provider: to.model.provider, id: to.model.id } }
+					: {}),
+				...(to.thinking ? { thinkingLevel: to.thinking } : {}),
+			});
+			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
+			setPrompt("");
+			att.clear();
+			navigate(`/assistant/${thread.id}`);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	/**
@@ -561,8 +525,17 @@ export function HomePage(): ReactNode {
 						{t("newThread.heading")}
 					</h1>
 					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同样的分行；首页大一档圆角（18px） */}
-					<div className={`relative isolate ${rise("delay-[120ms]")}`}>
-						{/* 托盘背后的光场（一圈宽而淡的光晕 + 两团晕）：玻璃底下有东西可模糊，居中态也看得出是玻璃 */}
+					<div
+						className={`home-tray relative isolate ${rise("delay-[120ms]")}`}
+						data-target={target.kind}
+						style={
+							trayHue ? ({ "--role-h": trayHue } as CSSProperties) : undefined
+						}
+					>
+						{/*
+						 * 托盘背后的光场：玻璃底下有东西可模糊，居中态也看得出是玻璃。按对象换色（R15）：全局助手是助手色相的色场
+						 * 加旋转流光描边（.home-tray::after），普通 role 是该 role 色相的静态光晕
+						 */}
 						<div aria-hidden className="home-field" />
 						<div ref={trayRef} className="glass glass-dock rounded-2xl">
 							<AttachmentStrip items={att.items} onRemove={att.remove} />
@@ -603,9 +576,8 @@ export function HomePage(): ReactNode {
 								}}
 							/>
 							{/*
-							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊、发送钮。
-							 * 窄屏两行：附件与发送钮在第一行两端；分隔线下选项单独占第二行——orb 是小圆圈，
-							 * 项目名先拿够宽度，剩余空间放得下才显示模型名，否则模型也缩成圆圈；思考级别始终是模型图标右下角的角标。
+							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊（对象在最前，其余三个在选全局助手时收起）、发送钮。
+							 * 窄屏两行：附件与发送钮在第一行两端；分隔线下选项单独占第二行——对象、orb 是小圆圈，项目名拿剩下的宽度。
 							 */}
 							<div
 								className={`relative flex px-3 pb-3 ${compact ? "flex-wrap items-center gap-y-2" : "items-start gap-0.5"}`}
@@ -620,86 +592,54 @@ export function HomePage(): ReactNode {
 									)}
 								</div>
 								<div
-									ref={pillsRef}
 									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-3 relative order-last w-[calc(100%+1.5rem)] border-[var(--glass-line)] border-t px-3 pt-2.5" : "flex-1"}`}
 								>
-									<PillButton
-										icon={runnerPick ? "laptop" : "box"}
-										text={executorText}
-										shortcut="Ctrl+M"
-										active={pill === "executor"}
-										onClick={() =>
-											setPill(pill === "executor" ? null : "executor")
-										}
-										shape={compact ? "circle" : "pill"}
+									<RoleCapsule
+										value={target}
+										onChange={choose}
+										allowAssistant
+										open={pill === "role"}
+										onOpenChange={(open) => setPill(open ? "role" : null)}
+										compactPill={compact}
 									/>
-									{showProfile && (
-										<PillButton
-											ref={profilePillRef}
-											icon="browser"
-											text={profileText}
-											shortcut="Ctrl+B"
-											active={pill === "profile"}
-											onClick={() =>
-												setPill(pill === "profile" ? null : "profile")
-											}
-											shape={compact ? "circle" : "pill"}
-										/>
-									)}
-									<PillButton
-										ref={projectPillRef}
-										icon="folder"
-										text={projectText}
-										shortcut="Ctrl+J"
-										active={pill === "project"}
-										onClick={() =>
-											setPill(pill === "project" ? null : "project")
-										}
-										grow={compact}
-									/>
-									{(() => {
-										const modelPill = (
-											<PillButton
-												icon={
-													<ModelLogo
-														model={model}
-														size={compact && modelFolded ? 16 : 13}
-													/>
-												}
-												text={modelText}
-												shortcut="Ctrl+S"
-												active={pill === "model"}
-												onClick={() =>
-													setPill(pill === "model" ? null : "model")
-												}
-												shape={compact && modelFolded ? "circle" : "pill"}
-												reserveEnd={!compact && thinkingOptions !== null}
-											/>
-										);
-										// 模型不推理：只有胶囊，没有思考级别圆圈
-										return thinkingOptions ? (
-											<ModelPill
-												corner={compact}
-												thinking={thinking}
-												options={thinkingOptions}
-												known={modelCaps !== undefined}
-												onThinking={setThinking}
-												pill={modelPill}
-											/>
-										) : (
-											modelPill
-										);
-									})()}
-									{compact && (
-										// 只用来量模型名胶囊的自然宽度，与展开态同款内边距与间距
-										<span
-											ref={modelGhostRef}
-											aria-hidden
-											className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs"
+									{pillsPhase !== "hidden" && (
+										<div
+											data-testid="home-pills"
+											className={`flex min-w-0 items-center gap-1.5 ${compact ? "flex-1" : ""} ${pillsAnim}`}
 										>
-											<ModelLogo model={model} size={13} />
-											{modelText.main}
-										</span>
+											<PillButton
+												icon={runnerPick ? "laptop" : "box"}
+												text={executorText}
+												shortcut="Ctrl+M"
+												active={pill === "executor"}
+												onClick={() =>
+													setPill(pill === "executor" ? null : "executor")
+												}
+												shape={compact ? "circle" : "pill"}
+											/>
+											{showProfile && (
+												<PillButton
+													icon="browser"
+													text={profileText}
+													shortcut="Ctrl+B"
+													active={pill === "profile"}
+													onClick={() =>
+														setPill(pill === "profile" ? null : "profile")
+													}
+													shape={compact ? "circle" : "pill"}
+												/>
+											)}
+											<PillButton
+												icon="folder"
+												text={projectText}
+												shortcut="Ctrl+J"
+												active={pill === "project"}
+												onClick={() =>
+													setPill(pill === "project" ? null : "project")
+												}
+												grow={compact}
+											/>
+										</div>
 									)}
 								</div>
 								<button
@@ -707,9 +647,7 @@ export function HomePage(): ReactNode {
 									title={t("newThread.start")}
 									aria-label={t("composer.send")}
 									disabled={
-										busy ||
-										att.uploading ||
-										(!prompt.trim() && att.attachmentIds.length === 0)
+										busy || att.uploading || (!prompt.trim() && !att.hasFiles)
 									}
 									onClick={() => void submit()}
 									// 与线程页发送钮相同：强调色实心圆角方块，空态只降不透明度
@@ -721,7 +659,7 @@ export function HomePage(): ReactNode {
 										<Icon name="send" size={16} weight="bold" />
 									)}
 								</button>
-								{pill === "executor" && (
+								{pill === "executor" && !assistantTarget && (
 									<Popover onClose={() => setPill(null)}>
 										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
 										<Option
@@ -816,7 +754,7 @@ export function HomePage(): ReactNode {
 										))}
 									</Popover>
 								)}
-								{pill === "profile" && showProfile && (
+								{pill === "profile" && showProfile && !assistantTarget && (
 									<Popover onClose={() => setPill(null)}>
 										<PopoverLabel>{t("newThread.profileTitle")}</PopoverLabel>
 										<Option
@@ -862,7 +800,7 @@ export function HomePage(): ReactNode {
 										))}
 									</Popover>
 								)}
-								{pill === "project" && (
+								{pill === "project" && !assistantTarget && (
 									<Popover onClose={() => setPill(null)}>
 										<Option
 											selected={!projectId}
@@ -892,23 +830,18 @@ export function HomePage(): ReactNode {
 											))}
 									</Popover>
 								)}
-								{pill === "model" && (
-									<Popover onClose={() => setPill(null)}>
-										<ModelOptions model={model} onModel={setModel} />
-									</Popover>
-								)}
 							</div>
 						</div>
-						{(error || att.error) && (
-							<p
-								role="alert"
-								className="mt-2 flex items-center justify-center gap-1.5 text-err text-sm"
-							>
-								<Icon name="alert" size={13} className="shrink-0" />
-								{error ?? att.error}
-							</p>
-						)}
 					</div>
+					{(error || att.error) && (
+						<p
+							role="alert"
+							className="mt-2 flex items-center justify-center gap-1.5 text-err text-sm"
+						>
+							<Icon name="alert" size={13} className="shrink-0" />
+							{error ?? att.error}
+						</p>
+					)}
 				</div>
 			</div>
 			<ProfileConflictDialog

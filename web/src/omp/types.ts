@@ -38,10 +38,12 @@ export type CommandOf<T extends OmpCommandType> = Extract<OmpCommand, { type: T 
 
 /**
  * Oryn 在 prompt / steer / follow_up / abort_and_prompt 帧上的扩展字段（控制面下发前删除，omp 看不到）：
- * 已上传附件的 id，控制面投递进 orb 后在 message 末尾追加 `<oryn-attachments>` 块。
+ * 已上传附件的 id，控制面投递进 orb 后在 message 末尾追加 `<oryn-attachments>` 块；
+ * 全局助手对话改用 `orynFiles`（助手文件库的 id，≤20），控制面绑定到本对话并追加沙箱路径块。
  */
 export interface OrynPromptExtras {
 	orynAttachments?: string[];
+	orynFiles?: string[];
 }
 
 /** rpc-types 的 `RpcResponse` 联合里缺失的应答类型（以 `Rpc*Result` 为准补齐）。 */

@@ -179,6 +179,15 @@
 		"profileLabel": "Browser profile: {{name}}",
 		"profileDefaultLabel": "Browser profile: project default ({{name}})"
 	},
+	"roleCapsule": {
+		"label": "Talk to: {{name}}",
+		"title": "Talk to",
+		"assistantHint": "New assistant conversation",
+		"pickModel": "Specific model…",
+		"back": "Back",
+		"modelInput": "Search or enter provider/model id",
+		"useModel": "Use {{model}}"
+	},
 	"dockPill": {
 		"expand": "Expand composer",
 		"working": "Working",
@@ -1739,6 +1748,7 @@
 		"fileOnly": "file only",
 		"remove": "Remove {{name}}",
 		"waitUpload": "Attachments are still uploading — send once they finish",
+		"notForAssistant": "Shared-in attachments can only go to a regular thread",
 		"inMessage": "Message attachments",
 		"title": "Attachments",
 		"empty": "This thread has no attachments yet",

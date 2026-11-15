@@ -97,9 +97,16 @@ export function useDeleteSpace() {
 	});
 }
 
-/** 新建一个全局助手对话并写入索引（不等推送，页面随即跳过去）。 */
-export async function createAssistantConversation(): Promise<Thread> {
-	const res = await unwrap(api.POST("/api/v1/assistant/conversations"));
+/**
+ * 新建一个全局助手对话并写入索引（不等推送，页面随即跳过去）。给了 `body`（首屏发送，M13）时，
+ * 新对话以其中的提示词、库文件与图片作为第一条用户消息，并用所选模型与思考档位。
+ */
+export async function createAssistantConversation(
+	body?: Schemas["CreateAssistantConversationRequest"],
+): Promise<Thread> {
+	const res = await unwrap(
+		api.POST("/api/v1/assistant/conversations", body ? { body } : {}),
+	);
 	indexStore.getState().upsertThread(res.thread);
 	return res.thread;
 }

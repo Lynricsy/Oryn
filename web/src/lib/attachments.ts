@@ -1,11 +1,13 @@
 /**
  * 消息附件（M3 计划 5.4）：上传到控制面（`POST attachments`，原始字节，单文件 ≤100MiB），发消息时以
  * `orynAttachments` 携带 id，控制面投递进 orb 后在消息末尾追加 `<oryn-attachments>` 块。
+ * 全局助手对话（M13）没有 orb：文件传进助手文件库（`POST assistant/files`），发消息时以 `orynFiles` 携带库文件 id。
  */
 import { api, rawFetch, type Schemas, unwrap } from "../api/client";
 import { xhrUpload } from "./file-source";
 
 export type Attachment = Schemas["Attachment"];
+export type AssistantFile = Schemas["AssistantFile"];
 
 /** 单个附件上限（服务端同样校验，超限 413 too_large）。 */
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -19,22 +21,20 @@ export interface UploadOptions {
 	signal?: AbortSignal;
 }
 
-export function uploadAttachment(
+/** POST 原始字节；mock 模式只拦截 fetch（XHR 不经过假服务端），改用 fetch，进度只在完成时报告。 */
+function postBytes<T>(
+	url: string,
 	file: File,
-	{ threadId, onProgress, signal }: UploadOptions = {},
-): Promise<Attachment> {
-	const q = new URLSearchParams({ name: file.name || "file" });
-	if (threadId) q.set("threadId", threadId);
-	const url = `/api/v1/attachments?${q.toString()}`;
-	// mock 模式只拦截 fetch（XHR 不经过假服务端）：改用 fetch，进度只在完成时报告
+	{ onProgress, signal }: UploadOptions,
+): Promise<T> {
 	if (import.meta.env.VITE_MOCK === "1")
 		return rawFetch(url, { method: "POST", body: file, signal }).then(
 			async (res) => {
 				onProgress?.(file.size, file.size);
-				return (await res.json()) as Attachment;
+				return (await res.json()) as T;
 			},
 		);
-	return xhrUpload<Attachment>({
+	return xhrUpload<T>({
 		method: "POST",
 		url,
 		body: file,
@@ -42,6 +42,44 @@ export function uploadAttachment(
 		signal,
 		onProgress,
 	});
+}
+
+function uploadQuery(file: File, threadId: string | undefined): string {
+	const q = new URLSearchParams({ name: file.name || "file" });
+	if (threadId) q.set("threadId", threadId);
+	return q.toString();
+}
+
+export function uploadAttachment(
+	file: File,
+	opts: UploadOptions = {},
+): Promise<Attachment> {
+	return postBytes<Attachment>(
+		`/api/v1/attachments?${uploadQuery(file, opts.threadId)}`,
+		file,
+		opts,
+	);
+}
+
+/**
+ * 上传到全局助手文件库（`afl_…`）。`threadId` 是所属助手对话；缺省 = 首屏新建助手对话时随
+ * `createAssistantConversation` 的 `files` 绑定。24h 内没随消息发出的上传由服务端回收。
+ */
+export function uploadAssistantFile(
+	file: File,
+	opts: UploadOptions = {},
+): Promise<AssistantFile> {
+	return postBytes<AssistantFile>(
+		`/api/v1/assistant/files?${uploadQuery(file, opts.threadId)}`,
+		file,
+		opts,
+	);
+}
+
+export async function deleteAssistantFile(id: string): Promise<void> {
+	await unwrap(
+		api.DELETE("/api/v1/assistant/files/{id}", { params: { path: { id } } }),
+	);
 }
 
 /** 附件内容地址；`inline` 只对安全的栅格图片生效（服务端判定），其余一律以附件下载。 */

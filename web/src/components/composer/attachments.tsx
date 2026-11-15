@@ -2,7 +2,9 @@
  * 消息附件（粘贴 / 拖放 / 选择任意文件）：加入即开始上传到控制面，发送时以 `orynAttachments` 携带 id。
  * 图片另按整条消息内联预算压缩出一份内联副本（模型可直接看到）；预算用完的图片只作为文件附件（「仅文件」）。
  * 新建线程框与线程输入区共用。
- * 系统分享进来的文件由移动壳先行上传（M7 计划 4.6），经 `addUploaded` 以已完成条目加入。
+ * `library`（全局助手对话，M13）：文件传进助手文件库，发送时以 `orynFiles` 携带库文件 id；有内联副本的图片
+ * 只随 `images` 发送、不上传。首屏切换对象时去向随之改变，已加入的文件按新去向重传（旧上传尽力删除）。
+ * 系统分享进来的文件由移动壳先行上传（M7 计划 4.6），经 `addUploaded` 以已完成条目加入（只能随普通线程发送）。
  * 每个文件在预处理（图片压缩）之前就登记取消句柄：composer 卸载（换线程）后，
  * 未完成的预处理不会再加入条目或开始上传。
  */
@@ -15,10 +17,13 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	type AssistantFile,
 	type Attachment,
+	deleteAssistantFile,
 	deleteAttachment,
 	MAX_ATTACHMENT_BYTES,
 	MAX_ATTACHMENTS_PER_MESSAGE,
+	uploadAssistantFile,
 	uploadAttachment,
 } from "../../lib/attachments";
 import { fileIcon } from "../../lib/file-icon";
@@ -44,15 +49,34 @@ export interface AttachmentItem {
 	/** 单个文件的错误（超限、上传失败）；该文件不会随消息发送。 */
 	error?: string;
 	attachment?: Attachment;
+	/** 已传进助手文件库的文件（`library` 模式）。 */
+	libraryFile?: AssistantFile;
 	/** 内联副本（仅图片且预算允许时）。 */
 	image?: PreparedImage;
 	/** 图片未能放进内联预算：只作为文件附件。 */
 	fileOnly?: boolean;
+	/** 本机选的原始文件：上传去向改变时据此重传；系统分享进来的已上传条目没有。 */
+	source?: File;
 }
 
 let seq = 0;
 
-export function useAttachments({ threadId }: { threadId?: string } = {}) {
+/** 已上传但不再发送：尽力删除（未随消息发出的上传服务端 24h 后也会清理）。 */
+function discard(item: AttachmentItem) {
+	if (item.attachment)
+		void deleteAttachment(item.attachment.id).catch(() => undefined);
+	if (item.libraryFile)
+		void deleteAssistantFile(item.libraryFile.id).catch(() => undefined);
+}
+
+export function useAttachments({
+	threadId,
+	library = false,
+}: {
+	threadId?: string;
+	/** 传进全局助手文件库（`orynFiles`）而不是线程附件（`orynAttachments`） */
+	library?: boolean;
+} = {}) {
 	const { t } = useTranslation();
 	const [items, setItems] = useState<AttachmentItem[]>([]);
 	const [error, setError] = useState<string | null>(null);
@@ -93,6 +117,71 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 		[commit],
 	);
 
+	// 当前的上传去向：上传开始时读取；换去向（下面的 effect）后按新去向重传
+	const libraryRef = useRef(library);
+
+	/** 按当前去向上传一个条目；助手文件库模式下有内联副本的图片只随 `images` 发送，不上传。 */
+	const upload = useCallback(
+		(key: string, file: File, inline: boolean) => {
+			const lib = libraryRef.current;
+			if (lib && inline) {
+				update(key, { status: "done", progress: 1, error: undefined });
+				return;
+			}
+			const ctl = new AbortController();
+			aborts.current.set(key, ctl);
+			update(key, { status: "uploading", progress: 0, error: undefined });
+			const opts = {
+				threadId,
+				signal: ctl.signal,
+				onProgress: (sent: number, total: number) =>
+					update(key, { progress: total > 0 ? sent / total : 0 }),
+			};
+			const done: Promise<Partial<AttachmentItem>> = lib
+				? uploadAssistantFile(file, opts).then((libraryFile) => ({
+						libraryFile,
+					}))
+				: uploadAttachment(file, opts).then((attachment) => ({ attachment }));
+			done
+				.then((patch) => {
+					if (ctl.signal.aborted) return;
+					update(key, { status: "done", progress: 1, ...patch });
+				})
+				.catch((e: unknown) => {
+					if (ctl.signal.aborted) return;
+					update(key, { status: "error", error: describeError(e, t) });
+				})
+				.finally(() => {
+					if (aborts.current.get(key) === ctl) aborts.current.delete(key);
+				});
+		},
+		[threadId, t, update],
+	);
+
+	// 去向改变（首屏换对象）：本机选的文件取消在途上传、删掉旧上传、按新去向重传；
+	// 系统分享进来的已上传附件（线程附件）不能随助手对话发送，切到助手时标为错误，切回来恢复
+	useEffect(() => {
+		if (libraryRef.current === library) return;
+		libraryRef.current = library;
+		for (const it of itemsRef.current) {
+			if (!it.source) {
+				if (library && it.attachment && it.status === "done")
+					update(it.key, {
+						status: "error",
+						error: t("attachments.notForAssistant"),
+					});
+				else if (!library && it.attachment && it.status === "error")
+					update(it.key, { status: "done", error: undefined });
+				continue;
+			}
+			aborts.current.get(it.key)?.abort();
+			aborts.current.delete(it.key);
+			discard(it);
+			update(it.key, { attachment: undefined, libraryFile: undefined });
+			upload(it.key, it.source, !!it.image);
+		}
+	}, [library, t, update, upload]);
+
 	const addFiles = useCallback(
 		async (files: Iterable<File>) => {
 			setError(null);
@@ -125,6 +214,7 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 					size: file.size,
 					status: "uploading",
 					progress: 0,
+					source: file,
 				};
 				const ctl = new AbortController();
 				aborts.current.set(key, ctl);
@@ -146,27 +236,16 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 					}
 				}
 				push(item);
-				uploadAttachment(file, {
-					threadId,
-					signal: ctl.signal,
-					onProgress: (sent, total) =>
-						update(key, { progress: total > 0 ? sent / total : 0 }),
-				})
-					.then((attachment) => {
-						if (ctl.signal.aborted) return;
-						update(key, { status: "done", progress: 1, attachment });
-					})
-					.catch((e: unknown) => {
-						if (ctl.signal.aborted) return;
-						update(key, { status: "error", error: describeError(e, t) });
-					})
-					.finally(() => aborts.current.delete(key));
+				upload(key, file, !!item.image);
 			}
 		},
-		[push, threadId, t, update],
+		[push, t, upload],
 	);
 
-	/** 已在别处上传好的附件（系统分享）：直接作为完成条目加入；图片不做内联副本，只作为文件附件。 */
+	/**
+	 * 已在别处上传好的附件（系统分享）：直接作为完成条目加入；图片不做内联副本，只作为文件附件。
+	 * 它们是线程附件，助手文件库模式下不能发送（标为错误，切回普通去向时恢复）。
+	 */
 	const addUploaded = useCallback(
 		(list: Attachment[]) => {
 			setError(null);
@@ -182,10 +261,13 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 					key: `att-${++seq}`,
 					name: attachment.name,
 					size: attachment.size,
-					status: "done",
+					status: libraryRef.current ? "error" : "done",
 					progress: 1,
 					attachment,
 					fileOnly: attachment.mime.startsWith("image/"),
+					...(libraryRef.current
+						? { error: t("attachments.notForAssistant") }
+						: {}),
 				});
 			}
 		},
@@ -198,9 +280,7 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 			aborts.current.get(key)?.abort();
 			aborts.current.delete(key);
 			commit((prev) => prev.filter((i) => i.key !== key));
-			// 已上传但不再发送：尽力删除（未绑定的附件服务端 24h 后也会清理）
-			if (item?.attachment)
-				void deleteAttachment(item.attachment.id).catch(() => undefined);
+			if (item) discard(item);
 		},
 		[commit],
 	);
@@ -220,11 +300,17 @@ export function useAttachments({ threadId }: { threadId?: string } = {}) {
 	const attachmentIds = sendable.flatMap((i) =>
 		i.attachment ? [i.attachment.id] : [],
 	);
+	const fileIds = sendable.flatMap((i) =>
+		i.libraryFile ? [i.libraryFile.id] : [],
+	);
 	const uploading = items.some((i) => i.status === "uploading");
 	return {
 		items,
 		contents,
 		attachmentIds,
+		fileIds,
+		/** 至少有一个能随消息发出的条目（只有附件、没有文字时也能发送） */
+		hasFiles: sendable.length > 0,
 		uploading,
 		error,
 		addFiles,

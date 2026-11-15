@@ -548,9 +548,11 @@ export function useRoleShortcut(threadId: string) {
 }
 
 const SHOW_MS = 4000;
-const FADE_MS = 180;
+/** 浮层淡出时长；首屏胶囊的收起 / 展开同用这个时长。 */
+export const FADE_MS = 180;
 
-type Phase = "hidden" | "shown" | "leaving";
+/** 浮出状态：`hidden` 不在 DOM 里，`leaving` 播完淡出（FADE_MS）后回到 `hidden`。 */
+export type Phase = "hidden" | "shown" | "leaving";
 
 /**
  * 切换时浮在输入坞托盘上方的角色胶囊轨：每格是模型 logo + 角色名，当前格由一块角色色滑块高亮，

@@ -40,14 +40,19 @@ export type SendMode = Extract<
 	"prompt" | "steer" | "follow_up" | "abort_and_prompt"
 >;
 
-/** 消息帧的附件字段：内联图片 `images`，已上传附件的 id 写入 Oryn 扩展字段 `orynAttachments`。 */
+/**
+ * 消息帧的附件字段：内联图片 `images`，已上传附件的 id 写入 Oryn 扩展字段 `orynAttachments`，
+ * 助手文件库的文件 id（全局助手对话）写入 `orynFiles`。
+ */
 function promptExtras(
 	images: ImageContent[],
 	attachmentIds: readonly string[],
+	fileIds: readonly string[],
 ): { images?: ImageContent[] } & OrynPromptExtras {
 	const extra: { images?: ImageContent[] } & OrynPromptExtras = {};
 	if (images.length > 0) extra.images = images;
 	if (attachmentIds.length > 0) extra.orynAttachments = [...attachmentIds];
+	if (fileIds.length > 0) extra.orynFiles = [...fileIds];
 	return extra;
 }
 
@@ -57,8 +62,9 @@ export function promptFrame(
 	message: string,
 	images: ImageContent[],
 	attachmentIds: readonly string[] = [],
+	fileIds: readonly string[] = [],
 ): OmpCommand & OrynPromptExtras {
-	const extra = promptExtras(images, attachmentIds);
+	const extra = promptExtras(images, attachmentIds, fileIds);
 	switch (mode) {
 		case "prompt":
 			return { type: "prompt", message, ...extra };
@@ -125,12 +131,13 @@ export function slashPromptFrame(
 	message: string,
 	images: ImageContent[] = [],
 	attachmentIds: readonly string[] = [],
+	fileIds: readonly string[] = [],
 ): OmpCommand & OrynPromptExtras {
 	return {
 		type: "prompt",
 		message,
 		streamingBehavior: mode === "follow_up" ? "followUp" : "steer",
-		...promptExtras(images, attachmentIds),
+		...promptExtras(images, attachmentIds, fileIds),
 	};
 }
 

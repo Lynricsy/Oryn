@@ -1,6 +1,17 @@
+/**
+ * 首页新建对话框：role 胶囊里的思考强度按对象的模型列出；首屏默认对象与全局助手（M13 5.4：三个胶囊随对象收起 / 展开、
+ * 托盘 `data-target`、助手发送新建助手对话、普通发送带 role、Ctrl+S 打开 role 胶囊）；系统分享预填。
+ */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
 import type { Attachment } from "../lib/attachments";
@@ -23,30 +34,70 @@ const chat = (
 	...(thinking ? { thinking } : {}),
 });
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-	const url = new URL(
-		typeof input === "object" && "url" in input ? input.url : String(input),
-		"http://x",
-	);
-	if (url.pathname === "/api/v1/providers")
-		return Response.json({ providers: [] });
-	if (url.pathname === "/api/v1/projects")
-		return Response.json({ projects: [] });
-	if (url.pathname === "/api/v1/orbs") return Response.json({ orbs: [] });
-	if (url.pathname === "/api/v1/models/catalog")
-		return Response.json({
-			models: [
-				chat("openai", "gpt-x", "GPT X", ["low", "high"]),
-				chat("openai", "gpt-lite", "GPT Lite", ["low"]),
-				chat("acme", "plain", "Plain"),
-			],
-			fetchedAt: 0,
-			stale: false,
-		});
-	return Response.json({ code: "not_found", message: "" }, { status: 404 });
-});
+/** 首屏偏好的默认对象（`GET settings/composer`）；null = 接口 404（按 default role 处理）。 */
+let defaultTarget: "role" | "assistant" | null = null;
+/** 收到的写请求：路径 + JSON 请求体。 */
+let posts: { path: string; body: unknown }[] = [];
+
+const THREAD = {
+	id: "T-new",
+	title: "",
+	titleSource: "auto",
+	state: "starting",
+	stateChangedAt: 1,
+	pinned: false,
+	labels: [],
+	unread: false,
+	createdAt: 1,
+	updatedAt: 1,
+};
+
+const fetchMock = vi.fn(
+	async (input: RequestInfo | URL, init?: RequestInit) => {
+		const req =
+			input instanceof Request ? input : new Request(String(input), init);
+		const url = new URL(req.url, "http://x");
+		if (req.method === "POST") {
+			const text = await req.text();
+			posts.push({
+				path: url.pathname,
+				body: text ? JSON.parse(text) : undefined,
+			});
+			if (url.pathname === "/api/v1/assistant/conversations")
+				return Response.json(
+					{ thread: { ...THREAD, id: "T-asst", kind: "assistant" } },
+					{ status: 201 },
+				);
+			if (url.pathname === "/api/v1/threads")
+				return Response.json(
+					{ thread: { ...THREAD, kind: "work" } },
+					{ status: 201 },
+				);
+		}
+		if (url.pathname === "/api/v1/providers")
+			return Response.json({ providers: [] });
+		if (url.pathname === "/api/v1/projects")
+			return Response.json({ projects: [] });
+		if (url.pathname === "/api/v1/orbs") return Response.json({ orbs: [] });
+		if (url.pathname === "/api/v1/settings/composer" && defaultTarget)
+			return Response.json({ defaultTarget });
+		if (url.pathname === "/api/v1/models/catalog")
+			return Response.json({
+				models: [
+					chat("openai", "gpt-x", "GPT X", ["low", "high"]),
+					chat("openai", "gpt-lite", "GPT Lite", ["low"]),
+					chat("acme", "plain", "Plain"),
+				],
+				fetchedAt: 0,
+				stale: false,
+			});
+		return Response.json({ code: "not_found", message: "" }, { status: 404 });
+	},
+);
 
 beforeEach(() => {
+	defaultTarget = null;
+	posts = [];
 	vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -56,6 +107,10 @@ afterEach(() => {
 	shareIntakeStore.setState({ pending: null });
 });
 
+function Where() {
+	return <span data-testid="where">{useLocation().pathname}</span>;
+}
+
 function renderHome() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
@@ -64,58 +119,166 @@ function renderHome() {
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
 				<HomePage />
+				<Where />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
 }
 
-/** 在模型弹层的输入框里填模型（弹层没开时先点开模型胶囊） */
-function pickModel(model: string) {
-	if (!screen.queryByPlaceholderText("provider/模型 id"))
-		fireEvent.click(screen.getByRole("button", { name: "默认模型" }));
-	fireEvent.change(screen.getByPlaceholderText("provider/模型 id"), {
-		target: { value: model },
+const capsule = () => screen.getByRole("button", { name: /^对象：/ });
+const tray = () => document.querySelector(".home-tray") as HTMLElement;
+const pills = () => screen.queryByTestId("home-pills");
+
+/** 打开 role 胶囊（没开时），点「指定模型…」，在目录里点该模型（目录读到后才有这一行）。 */
+async function pickModel(selector: string) {
+	if (!screen.queryByTestId("role-capsule-popover")) fireEvent.click(capsule());
+	fireEvent.click(screen.getByRole("button", { name: /^指定模型/ }));
+	const row = await vi.waitFor(() => {
+		const el = document.querySelector<HTMLElement>(
+			`[data-model="${selector}"]`,
+		);
+		if (!el) throw new Error("模型列表未就绪");
+		return el;
 	});
+	fireEvent.click(row);
 }
 
-function openThinking() {
-	fireEvent.click(screen.getByRole("button", { name: /思考级别：/ }));
-	return screen.getAllByRole("menuitemradio").map((i) => i.textContent);
+/** 打开 role 胶囊，读思考强度的选项（没有这一节时为 null）。 */
+function thinkingLevels(): (string | null)[] | null {
+	if (!screen.queryByTestId("role-capsule-popover")) fireEvent.click(capsule());
+	const group = screen.queryByRole("radiogroup", { name: "思考级别" });
+	return group
+		? within(group)
+				.getAllByRole("radio")
+				.map((r) => r.textContent)
+		: null;
 }
 
-describe("首页思考级别按所选模型的能力列出", () => {
-	it("能力未知（默认模型）：只给「默认」并说明原因，不假装全部级别可用", () => {
+function prompt(): HTMLTextAreaElement {
+	return screen.getByRole("textbox", {
+		name: i18n.t("newThread.prompt"),
+	}) as HTMLTextAreaElement;
+}
+
+describe("首页思考强度按对象的模型能力列出", () => {
+	it("能力未知（role 没解析出模型）：只给「默认」，不假装全部级别可用", () => {
 		renderHome();
-		expect(openThinking()).toEqual(["默认还不知道这个模型支持哪些级别"]);
+		expect(thinkingLevels()).toEqual(["默认"]);
 	});
 
-	it("目录里的模型：列出它支持的级别（加自动）", async () => {
+	it("指定目录里的模型：列出它支持的级别（加自动）", async () => {
 		renderHome();
-		pickModel("openai/gpt-x");
-		await screen.findByText("GPT X");
-		expect(openThinking()).toEqual(["默认", "自动", "低", "高"]);
+		await pickModel("openai/gpt-x");
+		expect(thinkingLevels()).toEqual(["默认", "自动", "低", "高"]);
 	});
 
-	it("模型不能调节思考：没有思考级别圆圈", async () => {
+	it("模型不能调节思考：没有思考强度一节", async () => {
 		renderHome();
-		pickModel("acme/plain");
-		await screen.findByText("Plain");
+		await pickModel("acme/plain");
+		expect(thinkingLevels()).toBeNull();
+	});
+
+	it("换模型时退回「默认」", async () => {
+		renderHome();
+		await pickModel("openai/gpt-x");
+		thinkingLevels();
+		fireEvent.click(screen.getByRole("radio", { name: "高" }));
+		expect(capsule()).toHaveTextContent("高");
+		await pickModel("openai/gpt-lite");
+		expect(capsule()).not.toHaveTextContent("高");
+		expect(thinkingLevels()).toEqual(["默认", "自动", "低"]);
+		expect(screen.getByRole("radio", { name: "默认" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+	});
+
+	it("首页没有单独的模型胶囊与思考级别圆圈", () => {
+		renderHome();
+		expect(screen.queryByRole("button", { name: "默认模型" })).toBeNull();
 		expect(screen.queryByRole("button", { name: /思考级别：/ })).toBeNull();
 	});
+});
 
-	it("换到不支持已选级别的模型时退回「默认」", async () => {
+describe("首屏对象与全局助手（M13 5.4）", () => {
+	it("默认对象为 assistant：执行位置、项目、Profile 胶囊不在 DOM 中，托盘 data-target=assistant", async () => {
+		defaultTarget = "assistant";
 		renderHome();
-		pickModel("openai/gpt-x");
-		await screen.findByText("GPT X");
-		openThinking();
-		fireEvent.click(screen.getByRole("menuitemradio", { name: "高" }));
-		expect(
-			screen.getByRole("button", { name: /思考级别：高/ }),
-		).toBeInTheDocument();
-		pickModel("openai/gpt-lite");
-		expect(
-			screen.getByRole("button", { name: /思考级别：默认/ }),
-		).toBeInTheDocument();
+		await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+		expect(pills()).toBeNull();
+		expect(screen.queryByRole("button", { name: /^无项目/ })).toBeNull();
+		expect(capsule()).toHaveAccessibleName("对象：全局助手");
+	});
+
+	it("切到 role 后三胶囊出现，data-target 随选择变化；切回助手后收起", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			defaultTarget = "assistant";
+			renderHome();
+			await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+			fireEvent.click(capsule());
+			fireEvent.click(screen.getByRole("button", { name: /^快速/ }));
+			expect(tray().dataset.target).toBe("role");
+			expect(pills()).not.toBeNull();
+			expect(pills()?.className).toContain("home-pills-in");
+			expect(
+				screen.getByRole("button", { name: "无项目" }),
+			).toBeInTheDocument();
+
+			fireEvent.click(capsule());
+			fireEvent.click(screen.getByRole("button", { name: /^全局助手/ }));
+			expect(tray().dataset.target).toBe("assistant");
+			// leaving：先淡出，FADE_MS 后才离开 DOM
+			expect(pills()?.className).toContain("home-pills-out");
+			act(() => {
+				vi.advanceTimersByTime(200);
+			});
+			expect(pills()).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("助手发送：POST assistant/conversations，请求体含 prompt，然后跳到 /assistant/:id", async () => {
+		defaultTarget = "assistant";
+		renderHome();
+		await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+		fireEvent.change(prompt(), { target: { value: "帮我整理下周计划" } });
+		fireEvent.keyDown(prompt(), { key: "Enter" });
+		await waitFor(() =>
+			expect(screen.getByTestId("where")).toHaveTextContent(
+				"/assistant/T-asst",
+			),
+		);
+		expect(posts).toEqual([
+			{
+				path: "/api/v1/assistant/conversations",
+				body: { prompt: "帮我整理下周计划" },
+			},
+		]);
+	});
+
+	it("普通发送：新建线程带所选 role", async () => {
+		renderHome();
+		fireEvent.click(capsule());
+		fireEvent.click(screen.getByRole("button", { name: /^思考/ }));
+		fireEvent.change(prompt(), { target: { value: "修个 bug" } });
+		fireEvent.keyDown(prompt(), { key: "Enter" });
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0]).toMatchObject({
+			path: "/api/v1/threads",
+			body: { prompt: "修个 bug", role: "slow" },
+		});
+		expect(posts[0]?.body).not.toHaveProperty("model");
+	});
+
+	it("Ctrl+S 打开 role 胶囊，再按一次关上", () => {
+		renderHome();
+		fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+		expect(screen.getByTestId("role-capsule-popover")).toBeInTheDocument();
+		expect(capsule()).toHaveAttribute("aria-expanded", "true");
+		fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+		expect(screen.queryByTestId("role-capsule-popover")).toBeNull();
 	});
 });
 
