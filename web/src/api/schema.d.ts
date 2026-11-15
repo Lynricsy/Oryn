@@ -3367,10 +3367,15 @@ export interface components {
             /** @description Oryn 为该线程建的 worktree（M11b）；没有或已移除则省略 */
             worktree?: components["schemas"]["ThreadWorktree"];
         };
-        /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
+        /**
+         * @description `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
+         *     - `orb_failed`：所在 orb 进入 `failed`，reason 为导致失败的原因；
+         *     - `agent_failed`：orb 未失败，但 agent 在 orb 里没能启动，reason 为 orbd 返回的 ctl 错误 `code: message`
+         *       （例如 runner 拒绝不在其服务目录内的 cwd：`dir_not_served: …`）；只在控制面内存中维护。
+         */
         ThreadError: {
             /** @enum {string} */
-            kind: "orb_failed";
+            kind: "orb_failed" | "agent_failed";
             reason: string;
         };
         ThreadEnvelope: {

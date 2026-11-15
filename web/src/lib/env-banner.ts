@@ -15,9 +15,20 @@ const LOG_TAIL_MAX_CHARS = 16_000;
 
 export type EnvBanner =
 	| { kind: "orb_failed"; key: string; reason: string }
+	| { kind: "agent_failed"; key: string; reason: string }
 	| { kind: "run_failed"; key: string; run: SetupRun }
 	| { kind: "slow_setup"; key: string; run: SetupRun }
 	| { kind: "missing_config"; key: string; run: SetupRun };
+
+/** 线程级失败（orb 或 agent 没能启动）：带原因与重试，不可关闭。 */
+export type FailureBanner = Extract<
+	EnvBanner,
+	{ kind: "orb_failed" | "agent_failed" }
+>;
+
+export function isFailureBanner(b: EnvBanner): b is FailureBanner {
+	return b.kind === "orb_failed" || b.kind === "agent_failed";
+}
 
 export interface EnvBannerInput {
 	thread: Pick<Thread, "error" | "state"> | undefined;
@@ -29,17 +40,22 @@ export interface EnvBannerInput {
 
 /**
  * 按优先级列出当前适用的提示条（第一条之外的在前者被关闭后才显示）：
- * orb 失败 → setup 失败 → resume 失败 → setup 过慢 → 缺少环境配置。
- * orb 失败时只给出它本身（其余提示基于已不可用的环境，没有意义）。
+ * orb 失败 → agent 没能启动 → setup 失败 → resume 失败 → setup 过慢 → 缺少环境配置。
+ * orb / agent 失败时只给出它本身（线程已进入 error，其余提示没有意义）。
  */
 export function envBannerCandidates(input: EnvBannerInput): EnvBanner[] {
 	const { thread, orb, project } = input;
-	const orbFailed =
-		thread?.error?.kind === "orb_failed" || orb?.state === "failed";
-	if (orbFailed) {
-		const reason = thread?.error?.reason || orb?.failureReason || "";
+	const error = thread?.error;
+	if (error?.kind === "orb_failed" || orb?.state === "failed") {
+		// 线程的 agent_failed 原因说的是 agent，不是 orb：orb 已失败时只取 orb 的原因
+		const threadReason = error?.kind === "orb_failed" ? error.reason : "";
+		const reason = threadReason || orb?.failureReason || "";
 		return [{ kind: "orb_failed", key: "orb_failed", reason }];
 	}
+	if (error?.kind === "agent_failed")
+		return [
+			{ kind: "agent_failed", key: "agent_failed", reason: error.reason },
+		];
 	if (!orb || orb.state === "deleted" || orb.state === "deleting") return [];
 	const out: EnvBanner[] = [];
 	const setup = orb.lastSetup;
@@ -64,13 +80,13 @@ export function envBannerCandidates(input: EnvBannerInput): EnvBanner[] {
 	return out;
 }
 
-/** 当前应显示的提示条：第一条未被关闭的候选。orb 失败不可关闭（需要用户处理）。 */
+/** 当前应显示的提示条：第一条未被关闭的候选。orb / agent 失败不可关闭（需要用户处理）。 */
 export function selectEnvBanner(
 	input: EnvBannerInput,
 	dismissed: ReadonlySet<string>,
 ): EnvBanner | null {
 	for (const b of envBannerCandidates(input)) {
-		if (b.kind === "orb_failed" || !dismissed.has(b.key)) return b;
+		if (isFailureBanner(b) || !dismissed.has(b.key)) return b;
 	}
 	return null;
 }
@@ -141,7 +157,7 @@ function logBlock(log: string): string {
 
 /** 「让 agent 修复 / 优化 / 生成」发送的提示词（中文；点名 `oryn-setup` 技能）。 */
 export function buildEnvPrompt(
-	banner: Exclude<EnvBanner, { kind: "orb_failed" }>,
+	banner: Exclude<EnvBanner, FailureBanner>,
 	log: string,
 	baseBranch?: string,
 ): string {

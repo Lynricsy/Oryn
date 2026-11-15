@@ -766,6 +766,7 @@
 		"missing": "This project has no environment setup yet",
 		"missingHint": "New orbs won't install dependencies automatically; the agent can inspect the repo and write .oryn/setup.",
 		"orbFailed": "The orb failed to start",
+		"agentFailed": "The agent failed to start",
 		"noReason": "No reason given",
 		"askFix": "Ask agent to fix",
 		"askOptimize": "Ask agent to optimize",

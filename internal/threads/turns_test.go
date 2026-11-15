@@ -91,7 +91,7 @@ func TestTurnEndedPromptError(t *testing.T) {
 
 	// 线程失败（agent 没能启动）造成的 error 不是 PromptError
 	th2, _, o2 := readyThread(f)
-	f.s.markFailed(f.ctx, th2)
+	f.s.markFailed(f.ctx, th2, errStartFailed)
 	st := o2.snapshot().states
 	require.NotEmpty(t, st)
 	assert.Equal(t, StateError, st[len(st)-1].State)

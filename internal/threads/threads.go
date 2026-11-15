@@ -952,7 +952,8 @@ func (s *Service) forkShareFallback(ctx context.Context, t *thread, srcID, orbID
 	}
 	s.dropFile(ctx, t, base)
 	t.mu.Lock()
-	t.copyFrom, t.forkEntry, t.failed = srcID, entry, false
+	t.copyFrom, t.forkEntry = srcID, entry
+	s.clearFailedLocked(t)
 	_ = s.setForkOpLocked(ctx, t, &forkOp{Stage: forkStageCopy, Src: srcID, SrcOrb: orbID, ForkAt: entry})
 	s.resetLiveLocked(t)
 	t.mu.Unlock()

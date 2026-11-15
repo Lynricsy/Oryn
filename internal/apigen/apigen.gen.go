@@ -1704,12 +1704,15 @@ func (e ThreadTitleSource) Valid() bool {
 
 // Defines values for ThreadErrorKind.
 const (
-	OrbFailed ThreadErrorKind = "orb_failed"
+	AgentFailed ThreadErrorKind = "agent_failed"
+	OrbFailed   ThreadErrorKind = "orb_failed"
 )
 
 // Valid indicates whether the value is a known member of the ThreadErrorKind enum.
 func (e ThreadErrorKind) Valid() bool {
 	switch e {
+	case AgentFailed:
+		return true
 	case OrbFailed:
 		return true
 	default:
@@ -5866,7 +5869,10 @@ type Thread struct {
 	// Cwd 线程的工作目录（M11b，runner 线程的绝对路径）；普通 orb 线程省略
 	Cwd *string `json:"cwd,omitempty"`
 
-	// Error `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）
+	// Error `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
+	// - `orb_failed`：所在 orb 进入 `failed`，reason 为导致失败的原因；
+	// - `agent_failed`：orb 未失败，但 agent 在 orb 里没能启动，reason 为 orbd 返回的 ctl 错误 `code: message`
+	//   （例如 runner 拒绝不在其服务目录内的 cwd：`dir_not_served: …`）；只在控制面内存中维护。
 	Error             *ThreadError `json:"error,omitempty"`
 	ForkedFromEntryID *string      `json:"forkedFromEntryId,omitempty"`
 
@@ -5951,7 +5957,10 @@ type ThreadEnvelope struct {
 	Thread Thread `json:"thread"`
 }
 
-// ThreadError `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）
+// ThreadError `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
+//   - `orb_failed`：所在 orb 进入 `failed`，reason 为导致失败的原因；
+//   - `agent_failed`：orb 未失败，但 agent 在 orb 里没能启动，reason 为 orbd 返回的 ctl 错误 `code: message`
+//     （例如 runner 拒绝不在其服务目录内的 cwd：`dir_not_served: …`）；只在控制面内存中维护。
 type ThreadError struct {
 	Kind   ThreadErrorKind `json:"kind"`
 	Reason string          `json:"reason"`

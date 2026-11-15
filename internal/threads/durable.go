@@ -3,6 +3,7 @@ package threads
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/Lynricsy/Oryn/internal/omprpc"
@@ -217,7 +218,7 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 				return // 控制面关闭：保留阶段，重启后续作
 			}
 			slog.Warn("threads: fork copy 快照失败", "orb", op.SrcOrb, "err", err)
-			s.failFork(ctx, t)
+			s.failFork(ctx, t, fmt.Errorf("fork copy: snapshot failed: %w", err))
 			return
 		}
 		op.Stage, op.SnapshotID = forkStageCreateOrb, snap
@@ -237,7 +238,7 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 				return
 			}
 			slog.Warn("threads: fork copy 新建 orb 失败", "err", err)
-			s.failFork(ctx, t)
+			s.failFork(ctx, t, fmt.Errorf("fork copy: create orb failed: %w", err))
 			return
 		}
 	}
@@ -260,11 +261,11 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 	}
 }
 
-// failFork 结束无法继续的 fork：线程进入 error，清除续作（不在每次重启时重试注定失败的操作）。
-func (s *Service) failFork(ctx context.Context, t *thread) {
+// failFork 结束无法继续的 fork：线程进入 error（cause 为原因），清除续作（不在每次重启时重试注定失败的操作）。
+func (s *Service) failFork(ctx context.Context, t *thread, cause error) {
 	t.mu.Lock()
 	_ = s.setForkOpLocked(ctx, t, nil)
 	t.copyFrom, t.forkEntry = "", ""
 	t.mu.Unlock()
-	s.markFailed(ctx, t)
+	s.markFailed(ctx, t, cause)
 }

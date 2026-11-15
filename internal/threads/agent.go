@@ -186,7 +186,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	prof, err := s.coordinatorProfile(ctx, t, orbID)
 	if err != nil {
 		slog.Warn("threads: 协调线程无法启动 agent", "thread", t.id, "orb", orbID, "err", err)
-		s.markFailed(ctx, t)
+		s.markFailed(ctx, t, err)
 		return
 	}
 	terminal := prof == nil && s.terminalEnabled(orbID)
@@ -206,7 +206,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		if err != nil {
 			slog.Warn("threads: 复制会话目录失败", "thread", t.id, "from", copyFrom, "err", err)
 			if ctx.Err() == nil && !errors.Is(err, link.ErrCtlClosed) {
-				s.markFailed(ctx, t)
+				s.markFailed(ctx, t, err)
 			}
 			return
 		}
@@ -227,24 +227,61 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	if err := ctl.Call(cctx, "agent.start", params, &res); err != nil {
 		slog.Warn("threads: agent.start 失败", "thread", t.id, "orb", orbID, "err", err)
 		if !errors.Is(err, link.ErrCtlClosed) && !errors.Is(err, context.Canceled) {
-			s.markFailed(ctx, t)
+			s.markFailed(ctx, t, err)
 		}
 		return
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
 }
 
-func (s *Service) markFailed(ctx context.Context, t *thread) {
+// markFailed 把线程标为 failed（agent 没能启动）并记下原因，供 Thread.error / 状态事件的 agent_failed 使用。
+func (s *Service) markFailed(ctx context.Context, t *thread, cause error) {
+	reason := failReason(cause)
 	t.mu.Lock()
 	t.failed = true
+	s.mu.Lock()
+	prev, had := s.agentFail[t.id]
+	s.agentFail[t.id] = reason
+	s.mu.Unlock()
 	// agent 没能启动：不会有在跑的回合，也不会再有 get_state 来重新同步
 	t.live.SetWorking(false)
 	t.settled, t.unsynced = true, false
 	s.notifyReadyWaiters(t, apigen.AgentStatusExited)
 	// 排队等它就绪的只读查询不会再有应答，也不能让它们阻止静止
 	s.dropPassiveLocked(t, "agent failed to start")
-	s.recompute(ctx, t)
+	// 已是 error（例如重试再次失败）时状态不变，原因变了仍要推送 Thread.error
+	if !s.recompute(ctx, t) && (!had || prev != reason) {
+		s.publish(ctx, t.id)
+	}
 	t.mu.Unlock()
+}
+
+// clearFailedLocked 清除线程的 failed 标记与 agent 失败原因。调用方持有 t.mu。
+func (s *Service) clearFailedLocked(t *thread) {
+	t.failed = false
+	s.mu.Lock()
+	delete(s.agentFail, t.id)
+	s.mu.Unlock()
+}
+
+// agentFailReason 返回线程 agent 没能启动的原因；ok 为假表示线程未处于 failed。
+func (s *Service) agentFailReason(id string) (reason string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reason, ok = s.agentFail[id]
+	return reason, ok
+}
+
+// failReason 把 agent 启动失败的错误转成 Thread.error.reason：orbd 回的 ctl 错误取 `code: message`，其余取 err.Error()。
+func failReason(err error) string {
+	var ce *link.CtlError
+	switch {
+	case errors.As(err, &ce):
+		return ce.Code + ": " + ce.Message
+	case err != nil:
+		return err.Error()
+	}
+	return ""
 }
 
 // sessionDirOf 是线程在 orb 内的会话目录（契约 §3：控制面只发 `~/…`）。
@@ -309,7 +346,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.agentStatus = apigen.AgentStatusStarting
 	case "ready":
 		t.agentStatus = apigen.AgentStatusReady
-		t.failed = false
+		s.clearFailedLocked(t)
 		s.onReadyLocked(ctx, t)
 	case "exited":
 		t.agentStatus = apigen.AgentStatusExited
@@ -1493,7 +1530,8 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 	return nil
 }
 
-// Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。
+// Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。失败（orb failed、agent 没能启动）
+// 不因 focus 自动重试，只由显式重试（`POST threads/{id}/wake`，即横幅的「重试」）恢复。
 func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	s.mu.Lock()
 	if threadID == "" {
@@ -1513,7 +1551,11 @@ func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	orbID := t.orbID
 	s.clearUnreadLocked(ctx, t)
 	// 与命令准入相同的判定：冻结中的 orb 上 agent 流仍在、agentReady 仍为真，但进程已暂停
-	needWake := orbID != "" && (!t.agentReady() || s.orbState(orbID) != orbStateReady)
+	needWake := false
+	if orbID != "" && !t.failed {
+		st := s.orbState(orbID)
+		needWake = st != orbStateFailed && (!t.agentReady() || st != orbStateReady)
+	}
 	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)

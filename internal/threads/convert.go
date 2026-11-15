@@ -127,24 +127,39 @@ func shortCode(threadID string) *string {
 	return nil
 }
 
-// threadError 返回线程 state=error 的原因：所在 orb 为 failed 时为 {orb_failed, reason}。
-// reasons 缓存 orb id → 原因（nil = orb 未失败），供列表批量转换复用。
+// threadError 返回线程 state=error 的原因：所在 orb 为 failed 时为 {orb_failed, reason}；否则线程 failed
+// （agent 没能启动）时为 {agent_failed, reason}。reasons 缓存 orb id → orb 失败原因（nil = orb 未失败），供列表批量转换复用。
+// 只取 s.mu（agent 失败原因），不取线程锁：publish 在持有 t.mu 时经 threadAPI 调到这里。
 func (s *Service) threadError(ctx context.Context, t db.Thread, reasons map[string]*apigen.ThreadError) *apigen.ThreadError {
-	if t.State != StateError || t.OrbID == nil {
+	if t.State != StateError {
 		return nil
 	}
-	if e, ok := reasons[*t.OrbID]; ok {
+	if e := s.orbError(ctx, t.OrbID, reasons); e != nil {
+		return e
+	}
+	if reason, ok := s.agentFailReason(t.ID); ok {
+		return &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: reason}
+	}
+	return nil
+}
+
+// orbError 返回 orb 为 failed 时的 {orb_failed, reason}，否则 nil；结果按 orb id 缓存在 reasons 里。
+func (s *Service) orbError(ctx context.Context, orbID *string, reasons map[string]*apigen.ThreadError) *apigen.ThreadError {
+	if orbID == nil {
+		return nil
+	}
+	if e, ok := reasons[*orbID]; ok {
 		return e
 	}
 	var out *apigen.ThreadError
-	if o, err := s.st.Q.GetOrb(ctx, *t.OrbID); err == nil && o.State == orbStateFailed {
+	if o, err := s.st.Q.GetOrb(ctx, *orbID); err == nil && o.State == orbStateFailed {
 		reason, err := orbs.FailureReason(ctx, s.st.Q, o.ID)
 		if err != nil {
 			slog.Warn("threads: 读取 orb 失败原因失败", "orb", o.ID, "err", err)
 		}
 		out = &apigen.ThreadError{Kind: apigen.OrbFailed, Reason: reason}
 	}
-	reasons[*t.OrbID] = out
+	reasons[*orbID] = out
 	return out
 }
 

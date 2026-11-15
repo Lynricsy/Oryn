@@ -26,6 +26,8 @@ type ctlOrbs struct {
 	mu    sync.Mutex
 	calls []ctlCall
 	reqCh chan ctlCall
+	// startErr 非 nil 时 orbd 以它应答 agent.start（ctl 错误原样回给控制面）。
+	startErr error
 }
 
 type ctlCall struct {
@@ -41,10 +43,14 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 		c := ctlCall{method: method, params: append(json.RawMessage(nil), params...)}
 		o.mu.Lock()
 		o.calls = append(o.calls, c)
+		startErr := o.startErr
 		o.mu.Unlock()
 		o.reqCh <- c
 		switch method {
 		case "agent.start":
+			if startErr != nil {
+				return nil, startErr
+			}
 			return apigen.LinkCtlAgentStartResult{Pid: 1}, nil
 		case "agent.stop":
 			return apigen.LinkCtlAgentStopResult{}, nil

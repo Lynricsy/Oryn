@@ -10,6 +10,8 @@ import {
 	buildEnvPrompt,
 	dismissBanner,
 	type EnvBanner as EnvBannerData,
+	type FailureBanner,
+	isFailureBanner,
 	loadDismissed,
 	type SetupRun,
 	selectEnvBanner,
@@ -39,7 +41,7 @@ import {
 } from "../ui/primitives";
 import { useOrbOf } from "./ThreadHeader";
 
-type AgentBanner = Exclude<EnvBannerData, { kind: "orb_failed" }>;
+type AgentBanner = Exclude<EnvBannerData, FailureBanner>;
 
 function useProjectOf(threadId: string) {
 	const projectId = useThread(threadId, (s) => s.thread?.projectId);
@@ -228,11 +230,14 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	};
 	const dismiss = () => setDismissed(dismissBanner(threadId, banner.key));
 
-	if (banner.kind === "orb_failed") {
+	if (isFailureBanner(banner)) {
+		// agent 没能启动时同样走 wake：orb 就绪时它直接重新 agent.start（例如 runner 改了服务目录之后）
 		return (
 			<BannerShell
 				tone="err"
-				title={t("env.orbFailed")}
+				title={t(
+					banner.kind === "orb_failed" ? "env.orbFailed" : "env.agentFailed",
+				)}
 				detail={banner.reason || t("env.noReason")}
 				actions={
 					<>

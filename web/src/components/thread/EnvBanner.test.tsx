@@ -231,6 +231,27 @@ describe("环境提示条", () => {
 		);
 	});
 
+	it("agent 没能启动：显示 orbd 给的原因，没有关闭按钮，「重试」调用 wake", async () => {
+		const reason =
+			'dir_not_served: "/tmp/m11-a/esc" is not inside a directory served by this runner';
+		setup(
+			orb({ lastSetup: run({ ok: false }) }),
+			thread({ state: "error", error: { kind: "agent_failed", reason } }),
+		);
+		expect(screen.getByText("agent 没能启动")).toBeInTheDocument();
+		expect(screen.getByText(reason)).toBeInTheDocument();
+		expect(screen.queryByText("orb 启动失败")).toBeNull();
+		expect(screen.queryByRole("button", { name: "忽略" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "重试" }));
+		await waitFor(() =>
+			expect(
+				fetchMock.mock.calls.some(([u]) =>
+					urlOf(u).endsWith(`/threads/${TID}/wake`),
+				),
+			).toBe(true),
+		);
+	});
+
 	it("缺少配置：需要项目信息加载后才出现，并提供「让 agent 生成」", async () => {
 		setup(orb({ lastSetup: run({ ok: true, hasRepoScript: false }) }));
 		expect(

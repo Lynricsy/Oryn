@@ -139,6 +139,27 @@ describe("环境提示条选择", () => {
 		).toMatchObject({ kind: "orb_failed", reason: "r" });
 	});
 
+	it("agent 没能启动：压过 setup 提示且不可关闭，原因取线程错误；orb 失败时仍报 orb 失败", () => {
+		const reason =
+			'dir_not_served: "/tmp/m11-a/esc" is not inside a directory served by this runner';
+		const thread: EnvBannerInput["thread"] = {
+			state: "error",
+			error: { kind: "agent_failed", reason },
+		};
+		expect(
+			selectEnvBanner(
+				input({ lastSetup: run({ ok: false }) }, { thread }),
+				new Set(["agent_failed"]),
+			),
+		).toEqual({ kind: "agent_failed", key: "agent_failed", reason });
+		expect(
+			selectEnvBanner(
+				input({ state: "failed", failureReason: "orb 原因" }, { thread }),
+				NONE,
+			),
+		).toEqual({ kind: "orb_failed", key: "orb_failed", reason: "orb 原因" });
+	});
+
 	it("orb 已删除时不再提示环境问题", () => {
 		expect(
 			selectEnvBanner(

@@ -117,6 +117,8 @@ type Service struct {
 	blobs     map[string]*blobFetch // sha256 → 在途的 blob.fetch
 	// activity 是 working 线程的当前活动（最近一次工具调用的意图，见 activity.go）；只在内存中，不落库。
 	activity map[string]string
+	// agentFail 是 failed 线程（agent 没能启动）的失败原因（Thread.error 的 agent_failed）；只在内存中，与 thread.failed 同生同灭。
+	agentFail map[string]string
 
 	nextID atomic.Uint64
 
@@ -180,6 +182,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) *Service {
 		userTouch: map[string]time.Time{},
 		blobs:     map[string]*blobFetch{},
 		activity:  map[string]string{},
+		agentFail: map[string]string{},
 	}
 	s.sink.Store(&sinkBox{nopSink{}})
 	s.obs.Store(&observerList{})
@@ -425,6 +428,7 @@ func (s *Service) forget(id string) {
 	s.mu.Lock()
 	delete(s.threads, id)
 	delete(s.activity, id)
+	delete(s.agentFail, id)
 	s.mu.Unlock()
 }
 

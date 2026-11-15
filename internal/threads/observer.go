@@ -27,7 +27,7 @@ type Observer interface {
 	EntriesAppended(threadID string)
 }
 
-// StateEvent 是一次线程状态变化。Reason 只在 State == error 时可能非空（所在 orb 失败的原因）。
+// StateEvent 是一次线程状态变化。Reason 只在 State == error 时可能非空（所在 orb 失败的原因，或 agent 没能启动的原因）。
 type StateEvent struct {
 	ThreadID, Prev, State, Reason string
 	// Focused 为真表示变化发生时有连接正在看该线程。
@@ -167,16 +167,21 @@ func (s *Service) reconcileGapUILocked(t *thread) {
 	t.gapUI = nil
 }
 
-// errorReason 返回 error 状态的原因：所在 orb 为 failed 时取导致失败的原因，其余为空。调用方持有 t.mu。
+// errorReason 返回 error 状态的原因：所在 orb 为 failed 时取导致失败的原因；否则线程 failed（agent 没能启动）时
+// 取 agent 失败原因（同 Thread.error 的 agent_failed）；其余为空。调用方持有 t.mu。
 func (s *Service) errorReason(ctx context.Context, t *thread) string {
-	if t.orbID == "" || s.orbState(t.orbID) != orbStateFailed {
-		return ""
+	if t.orbID != "" && s.orbState(t.orbID) == orbStateFailed {
+		reason, err := orbs.FailureReason(ctx, s.st.Q, t.orbID)
+		if err != nil {
+			slog.Warn("threads: 读取 orb 失败原因失败", "orb", t.orbID, "err", err)
+		}
+		return reason
 	}
-	reason, err := orbs.FailureReason(ctx, s.st.Q, t.orbID)
-	if err != nil {
-		slog.Warn("threads: 读取 orb 失败原因失败", "orb", t.orbID, "err", err)
+	if t.failed {
+		reason, _ := s.agentFailReason(t.id)
+		return reason
 	}
-	return reason
+	return ""
 }
 
 // publicShares 返回线程未撤销的公开分享数（0 时 nil，字段省略）。

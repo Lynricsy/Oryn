@@ -120,7 +120,7 @@ func TestQueuedPassiveDroppedWhenOrbFails(t *testing.T) {
 // provisioning 期间排队的只读查询须以 agent_unavailable 结束，不得滞留在队列 / pending 里阻止静止；用户命令留下等重试。
 func TestQueuedPassiveDroppedWhenAgentNeverStarts(t *testing.T) {
 	cases := map[string]func(f *fixture, th *thread){
-		"agent.start failed": func(f *fixture, th *thread) { f.s.markFailed(f.ctx, th) },
+		"agent.start failed": func(f *fixture, th *thread) { f.s.markFailed(f.ctx, th, errStartFailed) },
 		"restart exhausted": func(f *fixture, th *thread) {
 			raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited", RestartsLeft: new(0)})
 			f.s.onAgentStatus(f.ctx, th.orbID, raw)
@@ -165,7 +165,7 @@ func TestAgentStartFailureKeepsUserCommands(t *testing.T) {
 	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"set_thinking_level","level":"low"}`), noReply))
 	f.setOrbState(orb, "ready")
 	f.s.applyOrbState(orb, "ready", 10)
-	f.s.markFailed(f.ctx, th)
+	f.s.markFailed(f.ctx, th, errStartFailed)
 	th.mu.Lock()
 	require.Len(t, th.queue, 1)
 	typ, _, _ := frameHeader(th.queue[0])
