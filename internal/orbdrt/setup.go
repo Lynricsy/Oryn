@@ -80,6 +80,7 @@ func setupKey(p apigen.LinkCtlSetupRunParams, full bool) [sha256.Size]byte {
 // （含转入后台的 resume）运行时排队等待。每个阶段结束发一条 setup.result（trigger=auto）。
 // 与进行中（或其 resume 仍在后台占着互斥）的自动运行等价的请求合并到那次运行上。
 func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool) (apigen.LinkCtlSetupRunResult, error) {
+	ompSeq := r.nextOmpSeq() // 到达即编号，等互斥期间到达的 omphome.apply 排在它后面
 	key := setupKey(p, full)
 	r.autoMu.Lock()
 	if op := r.autoOp; op != nil && op.key == key && (!op.finished() || r.semHolder == op) {
@@ -103,12 +104,12 @@ func (r *Runtime) runSetup(ctx context.Context, p apigen.LinkCtlSetupRunParams, 
 	r.autoMu.Lock()
 	r.semHolder = op
 	r.autoMu.Unlock()
-	op.res, op.err = r.runSetupLocked(ctx, p, full)
+	op.res, op.err = r.runSetupLocked(ctx, p, full, ompSeq)
 	return op.res, op.err
 }
 
-// runSetupLocked 是 runSetup 的主体；调用方已持有 setup 互斥。
-func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool) (apigen.LinkCtlSetupRunResult, error) {
+// runSetupLocked 是 runSetup 的主体；调用方已持有 setup 互斥。ompSeq 是请求到达时取得的 omp 配置写入编号。
+func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunParams, full bool, ompSeq uint64) (apigen.LinkCtlSetupRunResult, error) {
 	res := apigen.LinkCtlSetupRunResult{}
 	// resume 交给后台时连同互斥一起移交，由它在脚本结束时释放。
 	handedOff := false
@@ -172,11 +173,14 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.envMu.Unlock()
 
 	// 1. omp 文本配置。
-	if err := r.writeOmpHome(p.OmpHome); err != nil {
+	if skipped, err := r.writeOmpHomeAt(ompSeq, p.OmpHome); err != nil {
 		lg.system(apigen.OmpHome, "error: "+err.Error())
 		return fail(ctlErr("failed", "omp home: %v", err))
+	} else if skipped {
+		lg.system(apigen.OmpHome, "skipped: a newer omp config was applied while waiting")
+	} else {
+		lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
 	}
-	lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
 	// 1b. 项目级 omp 配置（M12.2）：严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录。
 	if err := r.writeProjectOmp(p.ProjectConfig); err != nil {
 		lg.system(apigen.OmpHome, "error: "+err.Error())
@@ -505,6 +509,30 @@ func shortRev(c string) string {
 	return c
 }
 
+// nextOmpSeq 取下一个 omp 配置写入编号（见 Runtime.ompSeq）。
+func (r *Runtime) nextOmpSeq() uint64 {
+	r.ompMu.Lock()
+	defer r.ompMu.Unlock()
+	r.ompSeq++
+	return r.ompSeq
+}
+
+// writeOmpHomeAt 以编号 seq 写入 omp 文本配置；已有更晚到达的请求写过时不写，返回 skipped=true。
+// 写入全程持有 ompMu，两路写入不会交错，清单（manifest）始终与最后一次写入一致。
+func (r *Runtime) writeOmpHomeAt(seq uint64, files []apigen.LinkCtlOmpHomeFile) (skipped bool, err error) {
+	r.ompMu.Lock()
+	defer r.ompMu.Unlock()
+	if seq < r.ompWritten {
+		return true, nil
+	}
+	if err := r.writeOmpHome(files); err != nil {
+		return false, err
+	}
+	r.ompWritten = seq
+	return false, nil
+}
+
+// writeOmpHome 把 files 写进 ~/.omp/agent/ 并清理上次下发、这次已不在清单里的文件。调用方经 writeOmpHomeAt 串行化。
 func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {
 	base := filepath.Join(r.home, ".omp", "agent")
 	for _, f := range files {

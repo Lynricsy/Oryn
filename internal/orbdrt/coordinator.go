@@ -35,6 +35,7 @@ bash: { direnv: "off" }
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
 var coordinatorMethods = map[string]bool{
 	"setup.run": true, "resume.run": true, "agent.start": true, "agent.stop": true, "shutdown": true,
+	string(apigen.MethodOmpHomeApply): true,
 }
 
 func (r *Runtime) coordinatorDir() string { return filepath.Join(r.home, ".oryn", "coordinator") }
@@ -48,7 +49,7 @@ func (r *Runtime) coordinatorSetup(p apigen.LinkCtlSetupRunParams) (apigen.LinkC
 		return apigen.LinkCtlSetupRunResult{}, ctlErr(link.CodeInvalidParams,
 			"the coordinator host accepts only ompHome (no repo, scripts, git hosts, git identity or env)")
 	}
-	if err := r.writeOmpHome(p.OmpHome); err != nil {
+	if _, err := r.writeOmpHomeAt(r.nextOmpSeq(), p.OmpHome); err != nil {
 		return apigen.LinkCtlSetupRunResult{}, ctlErr("failed", "omp home: %v", err)
 	}
 	return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: false}, nil

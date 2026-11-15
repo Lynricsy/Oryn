@@ -635,6 +635,7 @@ const (
 	MethodFsMove            LinkCtlMethod = "fs.move"
 	MethodHello             LinkCtlMethod = "hello"
 	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
+	MethodOmpHomeApply      LinkCtlMethod = "omphome.apply"
 	MethodPortalConfigure   LinkCtlMethod = "portal.configure"
 	MethodProfileMode       LinkCtlMethod = "profile.mode"
 	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
@@ -688,6 +689,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodHello:
 		return true
 	case MethodMetricsSample:
+		return true
+	case MethodOmpHomeApply:
 		return true
 	case MethodPortalConfigure:
 		return true
@@ -3700,11 +3703,12 @@ type LinkCtlHelloParams struct {
 	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
 	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
 	// M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
-	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
+	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator", "omphome-apply"]`）。
 	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
 	// `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
 	// M11b 起：`terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）、
 	// `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
+	// M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -3736,7 +3740,8 @@ type LinkCtlHelloThread struct {
 // `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 // （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 // `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
-// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
+// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
+// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -3755,7 +3760,8 @@ type LinkCtlNotification struct {
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
-	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
+	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
+	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3765,6 +3771,13 @@ type LinkCtlNotification struct {
 // LinkCtlOkResult `fs.copyTree` / `fs.move` / `shutdown` / `portal.configure` 的结果
 type LinkCtlOkResult struct {
 	Ok bool `json:"ok"`
+}
+
+// LinkCtlOmpHomeApplyParams M13：只把 omp 文本配置写进 `$HOME/.omp/agent/` 并清理上次下发、这次已不在清单里的文件（与 `setup.run` 的第 1 步相同），
+// 不碰 git、不跑脚本、不动项目层配置。与 `setup.run` / `resume.run` 写配置的那一步按到达顺序生效：
+// 先到达的 setup 若在本请求之后才走到写配置，就跳过写入，不会用旧内容覆盖新内容。
+type LinkCtlOmpHomeApplyParams struct {
+	OmpHome []LinkCtlOmpHomeFile `json:"ompHome"`
 }
 
 // LinkCtlOmpHomeFile defines model for LinkCtlOmpHomeFile.
@@ -3853,7 +3866,8 @@ type LinkCtlRequest struct {
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
-	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
+	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
+	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`

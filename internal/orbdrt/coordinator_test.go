@@ -76,13 +76,13 @@ func ctlCode(err error) string {
 	return ""
 }
 
-// H3：hello 的特性恰为 ["coordinator"]；不在白名单里的 ctl 方法回 method_not_found；不写 orb 扩展与技能。
+// H3：hello 的特性恰为 ["coordinator", "omphome-apply"]；不在白名单里的 ctl 方法回 method_not_found；不写 orb 扩展与技能。
 func TestCoordinatorHelloAndRejectedMethods(t *testing.T) {
 	rt, cp, _, _ := startCoordinator(t)
 	_, raw := cp.waitNotif(t, 0, "hello", nil)
 	var hello apigen.LinkCtlHelloParams
 	require.NoError(t, json.Unmarshal(raw, &hello))
-	assert.Equal(t, []string{"coordinator"}, hello.Features)
+	assert.Equal(t, []string{"coordinator", "omphome-apply"}, hello.Features)
 	assert.Equal(t, "test-coord", hello.OrbdVersion)
 
 	for _, m := range []string{"blob.fetch", "fs.copyTree", "fs.move", string(apigen.MethodPortalConfigure), string(apigen.MethodProfileMode)} {

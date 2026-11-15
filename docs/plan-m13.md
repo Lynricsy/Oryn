@@ -392,7 +392,7 @@ Accept：`cd web && bun x vitest run src/pages/HomePage` 通过。新用例：
 ### 步骤 6.1：orbd `omphome.apply`
 Depends on：无。
 Files：`internal/orbdrt/runtime.go`（新 case）、`internal/orbdrt/setup.go`（抽出 `writeOmpHome` 供复用）、`internal/orbdrt/coordinator.go`（允许列表）、`schema/openapi.yaml`（`LinkCtlOmpHomeApplyParams{ompHome}`）、orbd hello 能力标志 `omphome-apply`。
-Do：只做"写入并清理"，不碰 git、不跑脚本，与 `acquireSetup` 互斥。
+Do：只做"写入并清理"，不碰 git、不跑脚本。~~与 `acquireSetup` 互斥~~ → 实施时改为按到达顺序编号的写入锁（2026-11-15）：setup 互斥可能被转入后台的 resume 脚本长时间占着，apply 排在它后面会让 GUI 改动迟迟不生效；而真正要防的只是"排队中的旧 setup 晚写、盖掉新内容"，编号比较就能防住。见 docs/protocol.md「M13：omp 配置立即下发」。
 Accept：`make check-gen && go test ./internal/orbdrt/...` 通过，用例断言 apply 后文件更新，被删的托管文件被清理，非托管文件保留。
 
 ### 步骤 6.2：控制面下发器

@@ -67,6 +67,7 @@ var runnerUnsupported = map[string]bool{
 	string(apigen.MethodShutdown):          true,
 	string(apigen.MethodPortalConfigure):   true,
 	string(apigen.MethodProfileMode):       true,
+	string(apigen.MethodOmpHomeApply):      true,
 }
 
 // RunnerConfigFromEnv 读取 runner 形态的配置：ORYN_URL 必填；令牌取 ORYN_RUNNER_TOKEN，否则读令牌文件，

@@ -390,7 +390,7 @@ func TestSpawnPauseDelete(t *testing.T) {
 	e := newEnv(t, nil)
 	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
 	h := e.hello()
-	assert.Equal(t, []string{"coordinator"}, h.Features)
+	assert.Equal(t, []string{"coordinator", "omphome-apply"}, h.Features)
 	assert.Equal(t, "omp/0.0.0-fakeomp", h.AgentVersion)
 	c := e.child()
 	require.NotNil(t, c)
