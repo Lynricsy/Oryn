@@ -1,78 +1,196 @@
-# Oryn
+<div align="center">
 
-带高级环境与跨平台客户端的 agent 系统：每个线程一台隔离机器（orb），agent 内核为 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [omp](https://github.com/can1357/oh-my-pi)，MIT），客户端覆盖 Web / 桌面 / 移动 / CLI，外围（环境面板、Portal、分享、统计）参照 Amp 最新版。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img alt="Oryn：一个线程，一台专属机器。自托管的跨平台 Coding Agent 工作台。" src="docs/assets/hero-light.png" width="100%">
+</picture>
 
-> 状态：M1–M5（协议骨架、线程核心、终端/文件/改动、Portal 与受管服务、公开分享/通知/CLI 同步）已完成，M6 桌面 App 实现中。早期计划见 [`docs/plan-m1-m2.md`](docs/plan-m1-m2.md)。
+<br>
 
-## 组成
+**自托管的跨平台 Coding Agent 工作台：每个对话线程独占一台隔离环境，真实密钥永不进入沙箱，在浏览器、桌面、手机与终端里无缝接续同一份工作。**
 
-| 组件 | 说明 |
-|---|---|
-| `orynd` | 控制面：REST + WebSocket、SQLite 存储、Passkey/设备鉴权、orb 生命周期、密钥注入出站代理 |
-| `orbd` | orb 内守护进程：经出站长连接（WebSocket + yamux）与控制面通信，监督 Oryn Core 进程、复制会话 JSONL、提供本地出站代理 |
-| `oryn` | 命令行客户端，含 `oryn provider run`（在 Docker 主机上执行 orb 任务） |
-| `web/` | React + TypeScript 客户端（Web/PWA）；`web/src-tauri` 为 Tauri 2 桌面壳（加载服务器 Web UI，壳内只有连接页），移动端在后续里程碑 |
-| `images/orb/` | agent 优先的 Arch Linux 系开发镜像（x64 官方 Arch / ARM64 社区 Arch Linux ARM，含常用工具链与 Oryn Core） |
+[快速开始](#快速开始) · [核心能力](#核心能力) · [系统架构与安全边界](#系统架构与安全边界) · [CLI 常用命令](#cli-常用命令) · [生产部署](docs/deploy.md) · [桌面端](docs/desktop.md) · [移动端](docs/mobile.md) · [协议规格](docs/protocol.md)
+
+</div>
+
+## 核心能力
+
+### 1. 一个线程，一台专属机器（Orb & Runner）
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/workbench-dark.png">
+  <img alt="Oryn 三栏工作台全景：左侧为项目线程树与悬浮分区底栏，中间为 Claude Opus 5.5 的代码读写与测试执行记录，右侧为 Firecracker microVM 实时资源曲线、项目快照状态与 10 段彩色上下文分解。" src="docs/assets/workbench-light.png" width="100%">
+</picture>
+
+Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi)，MIT）为 Agent 内核，为每个线程分配独立的计算环境，并提供从对话到交付的完整操作面：
+
+- **四种执行后端混排**：同一控制面可同时接入 **Docker 容器**（默认剥离 `NET_RAW` 与 `NET_ADMIN`）、**Sysbox 嵌套容器**（非特权 UID 映射运行内层 `dockerd`，无需 `--privileged`）、**Firecracker microVM**（独立 Linux 内核、`/30` 点对点 tap 网络与 jailer 槽位隔离）以及 **本机 Runner**（个人工作站或笔记本以普通用户运行 `orbd run --runner` 直连指定目录，冲突时自动创建相邻 `git worktree`）。
+- **项目快照与预热池**：项目首次完成 `.oryn/setup` 后自动生成干净磁盘快照（Docker 镜像提交或 Firecracker `reflink` 稀疏盘复制），后续新线程跳过构建直接运行 `.oryn/resume`；高频项目可配置 1–3 台常驻预热池，新建线程即刻认领。
+- **自动冻结与按需唤醒**：Agent 与用户空闲达到阈值后自动冻结（暂停容器或 vCPU），打开线程或访问受管服务时自动唤醒；超时冻结后转为停机并完整保留磁盘状态。
+- **全功能工程面板**：工作台右侧内置 **环境信息**（CPU / 内存采样曲线、10 段彩色上下文构成、可交互待办与子 Agent 状态）、**Git 改动**（实时 Diff、暂存与取消暂存）、**文件树与编辑器**、**Web 终端**（256K 字符快照续传与流控背压恢复）、**受管服务与 Portal**（经泛域名 `https://t-<短码>-p<端口>.<portal_domain>/` 安全暴露开发服务器，支持限时公开预览）以及 **远程桌面**（内置 TigerVNC + Openbox + Chromium，支持跨线程读写锁复用登录态 Profile）。
+
+### 2. Space 多线程协调、定时巡检与全量统计
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coord-stats-dark.png">
+  <img alt="左图：Space 协调工作区并行调度多个子线程并配置工作日定时巡检；右图：统计分析页展示多模型成本堆叠柱状图、缓存命中率与日/月预算进度。" src="docs/assets/coord-stats-light.png" width="100%">
+</picture>
+
+- **Space 与全局助手**：控制面内置 `@host` 协调宿主，按需在独立系统账号、Landlock LSM、seccomp-bpf 与 Linux 命名空间围成的严格无工具沙箱中拉起协调进程，拆解阶段目标、并发创建与检视子线程，并在需要人工决策时汇总提醒。
+- **双模式定时任务**：支持在单个已有线程内按 Cron 或固定间隔触发巡检提示词（`oryn schedule set`），也支持项目级定时每次拉起全新隔离线程并按 `keepLast` 自动归档历史运行（`oryn schedule add`）。
+- **事实级成本与产出统计**：控制面直接从会话条目入库模型调用、工具执行与生命周期事件（自动剔除分支 fork 造成的历史重复计费），按模型、项目、Space 或用途穿透统计成本、缓存命中率、TTFT 与交付提交数，支持 CSV 导出与日 / 月度预算阈值系统通知。
+
+### 3. 全平台同源体验
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mobile-views-dark.png">
+  <img alt="Oryn 移动端三联视图：下沉式侧栏与悬浮毛玻璃胶囊切换栏、紧凑单栏对话与底部输入坞、右上角快捷视图切换菜单。" src="docs/assets/mobile-views-light.png" width="100%">
+</picture>
+
+- **零版本漂移的原生壳**：Windows / macOS / Linux 桌面端与 Android 客户端共用一套 Tauri 2 工程（`web/src-tauri`）。客户端本身只携带极简配对连接页，配对后加载所连服务器自身的 Web UI，服务端升级即全端同步；设备令牌仅驻留 Rust 进程与系统凭据库（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service、Android Keystore），网页脚本无法读取。
+- **精细的平台交互适配**：桌面端采用无系统标题栏同源设计（macOS 融合原生红绿灯，Windows / Linux 自绘窗口按钮并遵循 GTK 标题栏布局），支持系统托盘、全局唤醒快捷键与 `oryn://` 深链接；移动端针对 `<600dp` 窄屏提供屏幕圆角同心的下沉式侧栏、右上角快捷视图菜单、系统分享接收以及 RFC 8291 端到端加密的 **UnifiedPush（零 Google 依赖）** 与加密 **FCM** 双通道后台推送。
+- **终端流式挂接与本地实时镜像**：偏爱本地 IDE 与编辑器的开发者可使用 `oryn thread attach` 在终端内流式交互，或运行 `oryn sync <线程>` 将远端 orb 内的提交与未提交改动实时镜像至本机干净检出（`Ctrl-C` 自动还原，`--apply` 一次性落盘）。
+
+## 系统架构与安全边界
+
+| 组件 | 路径 | 职责说明 |
+|---|---|---|
+| `orynd` | `cmd/orynd` · `internal/` | 控制面单二进制：REST + WebSocket、SQLite 存储（`sqlc` + `goose`）、WebAuthn Passkey 与设备配对鉴权、orb 调度、宿主协调沙箱、出站密钥注入代理、内嵌 Web 前端 |
+| `orbd` | `cmd/orbd` · `internal/orbdrt/` | 环境内守护进程：经出站长连接（WebSocket + `yamux` 多路复用）回连控制面，监督 Oryn Core（`omp --mode rpc-ui`）、增量同步会话 JSONL、托管本地服务 / VNC 桌面与 `127.0.0.1:7811` 出站代理；亦支持 `--runner` 模式接入个人机器 |
+| `oryn` | `cmd/oryn` · `internal/providerrt/` | 命令行客户端与宿主机 Provider 执行器（`oryn provider run`，支持 `docker`、`firecracker` 与脚本 `dispatch` 三类驱动） |
+| `web/` | `web/src` · `web/src-tauri` | React 19 + TypeScript + Tailwind CSS 4 Web/PWA 客户端，以及桌面与 Android 的 Tauri 2 宿主壳 |
+| `images/` | `images/orb` · `images/fc` | Agent 优先的 Arch Linux 开发镜像（x64 / ARM64）与锁定 SHA-256 的 Firecracker 内核及根盘构建脚本 |
 
 ```mermaid
 flowchart LR
-  C[Web / CLI] -- REST + WS --> D[orynd]
-  P[oryn provider run] -- 长轮询拉任务 --> D
-  P -- docker run/pause/commit --> O
-  subgraph O[orb 容器]
-    B[orbd] -- JSONL --> A[Oryn Core<br/>omp --mode rpc-ui]
+  C[Web / Desktop / Android / CLI] -- REST + WebSocket --> D[orynd 控制面]
+  P[oryn provider run] -- 长轮询拉取任务 --> D
+  P -- Docker / Sysbox / Firecracker --> O
+  subgraph O[隔离 Orb 环境]
+    B[orbd] -- RPC + JSONL --> A[Oryn Core<br/>omp --mode rpc-ui]
   end
+  R[个人机器 orbd --runner] -- 仅同步转录与状态 .-> D
   B -- WS + yamux 出站长连接 --> D
-  D -- 注入真实密钥 --> L[模型 API / git]
+  D -- 按主机路由注入真实密钥 --> U[模型 API / Git 远端]
 ```
 
-关键约束：真实 API key 从不进入 orb——下发的 `models.yml` 只含占位令牌，请求经 orbd 的 `127.0.0.1:7811` 回到控制面，在那里按路由绑定替换为真实值，响应中的回显会被换回占位符。
+系统围绕三条核心安全不变量构建（完整威胁模型与加固清单见 [`docs/deploy.md`](docs/deploy.md)）：
 
-## 开发
+1. **真实凭据永不进入 Orb**：导入配置时，`models.yml` 中的明文 API Key 自动移入控制面主密钥加密库，下发至 orb 的配置文件仅含 `oryn-ph-…` 占位符。模型与 Git 请求经 `orbd` 本地端口 `127.0.0.1:7811` 回到 `orynd`，在控制面校验目标上游主机后注入真实凭据，并将响应头与响应体中的凭据回显逆向脱敏回占位符。
+2. **Git 最小权限放行**：绑定了 `https://` 仓库地址的项目 orb 仅允许对该单一仓库执行读写（`git-upload-pack` / `git-receive-pack`），同主机其它仓库一律 `403`；未绑定项目的 orb 对已配置令牌的 Git 主机仅放行只读克隆，拒绝一切推送。
+3. **动态令牌轮换与单向信任隔离**：Orb 连接令牌 `oot_…` 由 `HMAC(key, orbID : 代数)` 派生，每次创建、唤醒及拍摄快照后立即轮换，快照磁盘内不留有效令牌（Firecracker guest 令牌仅驻留内存 `tmpfs`）；本机 Runner 采用严格单向边界：控制面永不向 Runner 下发模型配置、环境变量密钥或开启出站代理，且协调助手禁止读写或操控任何 Runner 线程。
 
-依赖：Go 1.27、bun 1.4、Docker、`sqlc`（`go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1`）。
+## 快速开始
+
+### 前置依赖
+
+- **Go** `1.27+`、**Bun** `1.4+`、**Docker**（运行本机容器 orb 与构建镜像）
+- **`sqlc`**（代码生成时使用：`go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1`）
+
+### 本地构建与启动
+
+在仓库根目录按顺序执行以下命令，即可在本地拉起一套完整的 Oryn 服务与 Docker Provider：
 
 ```bash
-make gen          # 由 schema/openapi.yaml 与 SQL 生成 Go / TS 代码
-make web          # 构建前端并嵌入 orynd
-make build        # bin/orynd bin/orbd bin/oryn bin/fakeomp
-make test
-scripts/fetch-core.sh && make image    # 拉取钉定的 Oryn Core 发行版并构建 oryn-orb:dev
-./bin/orynd --config dev/orynd.yaml    # 首次启动打印 Passkey 初始化链接
+# 1. 构建前端并编译静态链接的四个二进制（bin/orynd、bin/orbd、bin/oryn、bin/fakeomp）
+make web
+make build
+
+# 2. 拉取钉定版本（core/source.json）的 Oryn Core 二进制并构建本机 orb 开发镜像 oryn-orb:dev
+scripts/fetch-core.sh
+make image
 ```
 
-`dev/orynd.yaml` 的第二个 `listen` 是本机 docker0 网桥地址（用 `ip -4 addr show docker0` 查看），供本机 orb 直连。
+`make image` 构建完成后会自动以非 root 用户在断网容器内执行冒烟脚本，终端输出 `orb 镜像离线冒烟：通过`。
 
-## 常用命令
+在开始下一步前，确认 `dev/orynd.yaml` 与 `dev/provider.yaml` 中的网桥地址与本机 `docker0` 一致（执行 `ip -4 addr show docker0` 查看，常见值为 `172.17.0.1` 或 `172.18.0.1`），随后启动控制面：
 
 ```bash
-oryn login --url https://oryn.example.com     # 设备配对（在网页上输入设备显示的验证码并批准）
-oryn config push ~/.omp/agent                  # 上传 omp 文本配置，明文 key 自动移入加密密钥库
-oryn config pull                               # 拉回文本配置（models.yml 默认另存为 models.oryn.yml）
-oryn provider create local > provider.token    # 创建 orb provider，令牌只显示一次
-oryn provider run --config /etc/oryn/provider.yaml
-oryn secrets set git/github.com/token          # git 令牌，经出站代理注入 clone/push
-oryn git-identity set --name "Ada" --email ada@example.com   # orb 内 git 提交身份的默认值（下次 setup / 唤醒生效）
-oryn project update myproj --git-name Bot --git-email bot@example.com   # 项目级覆盖；--clear-git 清除
-oryn space create 发布周 --project myproj --goal "本周把 1.2 发出去"   # Space：目标 + 协调聊天，它开的线程以卡片出现
-oryn schedule set <线程> --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "汇总昨天的 CI 失败"   # 线程内定时
-oryn schedule add --project myproj --every 6h --prompt "检查依赖更新并开 PR"   # 每次触发新建一个线程
-oryn schedule ls / runs <ref> / pause <ref> / run <ref>   # 查看、暂停、立即运行
+# 3. 启动控制面（首次启动会在日志中打印一次性的 Passkey 初始化链接）
+./bin/orynd --config dev/orynd.yaml
 ```
 
-## orb 环境自配置
+复制终端输出的 `http://localhost:7600/setup#token=ost_…` 在浏览器中打开，注册管理员 Passkey 并保存恢复码。随后在第二个终端配对命令行并启动本机 Provider：
 
-项目的 orb 环境由生命周期脚本配置：仓库内 `.oryn/setup`（新 orb 首次就绪时运行一次，兼容读取 `.agents/setup`）、`.oryn/resume`（每次唤醒，至多等 10 秒），或存在项目设置里、不进仓库的项目脚本。脚本失败不会阻止 orb 就绪，线程里会出现提示条，可查看日志并一键交给 agent 修复。
+```bash
+# 4. 登录 CLI、上传本地 omp 模型配置（明文 API Key 自动转入控制面加密密钥库）
+./bin/oryn login --url http://localhost:7600
+./bin/oryn config push ~/.omp/agent
 
-### 基础镜像与预装工具
+# 5. 创建名为 local 的 Provider 令牌并启动 Docker 执行器
+mkdir -p .dev
+./bin/oryn provider create local > .dev/provider.token
+chmod 0600 .dev/provider.token
+./bin/oryn provider run --config dev/provider.yaml
+```
 
-每次 `make image` 都用 `--pull --no-cache` 拉取目标架构的最新基础镜像、重新安装软件：x64 使用官方 [`archlinux:latest`](https://hub.docker.com/_/archlinux)，ARM64 使用每日构建、源码公开的社区 [`menci/archlinuxarm:latest`](https://github.com/Menci/docker-archlinuxarm)。两边的软件仓库独立，版本可以不同；优先跟进修复，不承诺版本固定。`scripts/build-orb-image.sh arm64` 构建 ARM64，宿主需原生 ARM64 或配置 QEMU/binfmt。
+打开 `http://localhost:7600` 即可新建线程并在独立的 Docker orb 中开始工作。生产环境部署（1Panel / OpenResty 反代、通配符 Portal 证书、网络防火墙隔离、Sysbox 与 Firecracker microVM 配置）请参阅 **[`docs/deploy.md`](docs/deploy.md)**。
 
-跨架构离线冒烟要求 QEMU/binfmt 正确处理 setuid（[`C` 凭据标志](https://docs.kernel.org/admin-guide/binfmt-misc.html)），否则 `sudo` 会报告 effective uid 不是 0。这是宿主注册配置，不需要更改镜像用户或跳过权限检查。
+## CLI 常用命令
 
-Arch 宿主若使用 `qemu-user-static`，可将 `/usr/lib/binfmt.d/qemu-aarch64-static.conf` 复制到同名的 `/etc/binfmt.d/qemu-aarch64-static.conf`，仅把规则末尾 `FP` 改为 `FPC`，保留原有 ELF 匹配与解释器路径。`C` 让目标 ARM64 程序的 setuid 权限生效，因此解释器必须由 root 管理并受信任。写好覆盖文件后，只重新注册 ARM64，无需重启 Docker 或重载其它架构：
+```bash
+# ── 认证、配置与密钥 ──
+oryn login --url https://oryn.example.com                    # 设备配对登录（浏览器输入配对码批准）
+oryn config push ~/.omp/agent                                # 上传 omp 配置，明文 Key 自动抽入加密密钥库
+oryn config pull                                             # 拉回文本配置（models.yml 默认存为 models.oryn.yml）
+oryn secrets set git/github.com/token                        # 写入 Git 令牌（只写不读，由出站代理按需注入）
+oryn git-identity set --name "Ada" --email ada@example.com   # 设置 orb 内 Git 提交身份的全局默认值
 
-下面的验收命令使用 `oryn-orb:arch-arm64` 标签；其它构建标签按实际 `IMAGE` 替换。
+# ── 执行后端（Provider 与个人机器 Runner）──
+oryn provider create prod-fc > provider.token                # 创建 Provider（令牌仅在标准输出显示一次）
+sudo oryn provider preflight --config /etc/oryn/fc.yaml      # 启动前逐项核查 KVM / nftables / UID 区间
+oryn provider run --config /etc/oryn/provider.yaml           # 运行宿主机 Provider 守护循环
+oryn runner create macbook                                   # 注册个人开发机 Runner，获取 ort_… 令牌
+# 在个人开发机上以普通用户接入目录：
+# ORYN_URL=https://oryn.example.com orbd run --runner --dir /home/ada/code/app --terminal
+
+# ── 线程、流式挂接与本地镜像同步 ──
+oryn thread new --project myproj "排查登录重定向循环并补单测"  # 在指定项目的新 orb 中启动线程
+oryn thread new --runner macbook --dir /home/ada/code/app --worktree fix-auth "修复鉴权中间件"
+oryn thread attach <线程>                                     # 流式查看转录，支持实时输入引导（steer）与审批
+oryn sync <线程>                                              # 将 orb 内的改动实时镜像至当前干净检出（--apply 落盘）
+
+# ── Space 协调、定时任务与统计分析 ──
+oryn space create "v1.2 发布周" --project myproj --goal "完成迁移回归与变更日志"
+oryn schedule set <线程> --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "汇总昨日 CI 失败"
+oryn schedule add --project myproj --every 6h --prompt "检查依赖安全更新并提 PR"
+oryn stats --since 30d --by model                            # 按模型汇总近 30 天 Token、缓存与成本（支持 --csv / --json）
+oryn stats budget set --daily 20 --monthly 300 --warn 80     # 配置日/月成本预算与预警百分比
+```
+
+在隔离 **orb 环境内部**，Agent 与开发者同样可以直接调用 `oryn` 编排环境与子线程：
+
+```bash
+oryn orb setup run [--resume]                         # 手动重跑 setup 或 resume 生命周期脚本并上报控制面
+oryn orb setup status | logs [--resume]               # 查看最近一次环境配置状态与完整输出
+oryn orb service ls | start <名> | logs <名>           # 查看或启停 .oryn/services.yaml 定义的受管服务
+oryn orb desktop status | browser start               # 查看虚拟桌面状态或拉起受管 Chromium
+oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派生子线程并等待其静止（退出码 0/3/4/124）
+```
+
+## Orb 环境自配置与开发镜像
+
+项目的开发环境通过生命周期脚本声明：仓库内的 `.oryn/setup`（兼容 `.agents/setup`）在新 orb 首次创建时执行一次；`.oryn/resume` 在每次冻结唤醒时执行（最长等待 10 秒）；不便入库的脚本也可保存在控制面的项目设置中。脚本退出非零不会阻塞 orb 就绪：工作台顶部会展示诊断条，支持一键查看日志或直接交由当前线程的 Agent（内置 `oryn-setup` 技能）自动修复。
+
+### 基础镜像预装能力
+
+`images/orb/` 基于滚动更新的 Arch Linux 构建（x64 采用官方 [`archlinux:latest`](https://hub.docker.com/_/archlinux)，ARM64 采用每日构建的 [`menci/archlinuxarm:latest`](https://github.com/Menci/docker-archlinuxarm)），默认非 root 用户、UTF-8、`UTC` 时区，用户级全局路径（`~/.local/bin`、`~/.cargo/bin`、`~/go/bin`、npm 全局目录）开箱即用：
+
+| 类别 | 预装工具链 |
+|---|---|
+| 语言与构建 | C/C++ (GCC/Clang)、Make、CMake、Ninja、Autotools、Go、Rust (`rustfmt`/`clippy`)、Python (`pip`/`uv`/`pipx`/`ruff`)、Node.js (`npm`/`pnpm`/Bun)、Ruby/Bundler、PHP/Composer、Lua |
+| 代码与协作 | Git、Git LFS、`gh`、OpenSSH、`rsync`、`ripgrep`、`fd`、`jq`、`yq` v4、`patch`/`diff`、ShellCheck、`shfmt`、常见归档解压工具 |
+| 排障与数据 | `ip`/`ss`/`dig`/`nc`/`socat`、`lsof`/`strace`/`ltrace`/`gdb`、SQLite / PostgreSQL / MariaDB / Valkey(Redis) 客户端、Poppler/`qpdf`、ImageMagick、FFmpeg |
+| 图形桌面 | TigerVNC (`Xvnc`)、Openbox、受管策略加固的 Chromium、中英文与彩色 Emoji 字体 |
+
+系统软件包记录于 `/usr/local/share/oryn/packages.txt`；在项目 `setup` 脚本中增装系统包时请使用 `sudo pacman -Syu --needed --noconfirm <包名>`。
+
+<details>
+<summary><strong>跨架构构建 ARM64 镜像与 QEMU / binfmt 离线冒烟说明</strong></summary>
+
+在 x64 宿主上执行 `scripts/build-orb-image.sh arm64` 构建 ARM64 镜像时，跨架构离线冒烟需要宿主的 QEMU `binfmt_misc` 注册开启 `C`（凭据）标志，否则容器内 `sudo` 会报告 effective uid 不为 0。
+
+在装有 `qemu-user-static` 的 Arch Linux 宿主上，可将 `/usr/lib/binfmt.d/qemu-aarch64-static.conf` 复制到 `/etc/binfmt.d/qemu-aarch64-static.conf`，仅将规则末尾的 `FP` 改为 `FPC`，随后重载 ARM64 注册并运行验收（无需重启 Docker）：
 
 ```bash
 sudo sh -c 'printf "%s\n" -1 > /proc/sys/fs/binfmt_misc/qemu-aarch64'
@@ -80,43 +198,34 @@ sudo /usr/lib/systemd/systemd-binfmt /etc/binfmt.d/qemu-aarch64-static.conf
 docker run --rm --platform linux/arm64 --network none --entrypoint bash oryn-orb:arch-arm64 /usr/local/lib/oryn/smoke-test.sh
 ```
 
-验收应输出 `orb 镜像离线冒烟：通过`。回退时删除该本地覆盖，再注销这一条 ARM64 注册，并用 `/usr/lib/systemd/systemd-binfmt /usr/lib/binfmt.d/qemu-aarch64-static.conf` 加载发行版规则。构建脚本不会自动更改宿主全局 binfmt 配置。
+验收通过将输出 `orb 镜像离线冒烟：通过`。
 
-| 类别 | 预装能力 |
+</details>
+
+## 文档与工程索引
+
+| 文档 | 内容 |
 |---|---|
-| 语言与构建 | C/C++、Make、CMake/Ninja、Autotools、Python/pip/uv/pipx/ruff、Node/npm/pnpm/Bun、Go、Rust/rustfmt/clippy、Ruby/Bundler、PHP/Composer、Lua |
-| 代码与文件 | Git/LFS/gh、SSH/rsync、ripgrep/fd、jq、Mike Farah yq v4、patch/diff、ShellCheck/shfmt、常用压缩格式 |
-| 排障与数据 | ip/ss/dig/nc/socat、lsof/strace/ltrace/gdb、SQLite/PostgreSQL/MariaDB/Redis 兼容客户端、XML/XSLT、Poppler/qpdf、ImageMagick/FFmpeg |
-| 桌面 | TigerVNC `Xvnc`、Openbox、Chromium、中文与 emoji 字体 |
+| **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner 与 Firecracker microVM |
+| **[`docs/desktop.md`](docs/desktop.md)** | Windows / macOS / Linux 桌面客户端安装、Passkey 配对、无边框窗口控件、系统托盘、全局快捷键与签名自动更新 |
+| **[`docs/mobile.md`](docs/mobile.md)** | Android 客户端（`foss` 与 `gms` 双包）安装校验、扫码配对、UnifiedPush / FCM 端到端加密推送与省电策略说明 |
+| **[`docs/protocol.md`](docs/protocol.md)** | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的 C1 Provider、C2 Orb Link、C3 REST/WebSocket 协议索引与状态机说明 |
+| **[`docs/design/ui-redesign.md`](docs/design/ui-redesign.md)** | Web 界面设计说明：D 稿「晴·手作」视觉方向、四层材质、色彩令牌与超椭圆几何规范 |
+| **[`docs/design/web-guidelines.md`](docs/design/web-guidelines.md)** | 前端开发守则：不可回退的视觉约束、响应式断点、无障碍对比度与截图回归验证流程 |
 
-默认 UTF-8、UTC、不分页，Git/gh 不弹凭据提示；不配置替换命令的别名、不全局设置 `CI=1`、不关闭 TLS 或包签名校验。用户工具目录 `~/.local/bin`、`~/.cargo/bin`、`~/go/bin` 对普通进程和登录 shell 都可见；npm 全局包安装到用户目录，无需 sudo。`~/.bash_profile` 加载 `~/.profile`，项目环境仍写入后者。Git 初始分支为 `main`，提交身份仍由 Oryn 设置注入。
-
-系统包使用 `sudo pacman -Syu --needed --noconfirm <包名>`，不要部分升级。已安装的系统包版本记录在 `/usr/local/share/oryn/packages.txt`。大型 SDK（Android、Flutter、CUDA、JDK、.NET 等）和 Docker daemon 不预装，项目按需在 setup 中配置；镜像不启动数据库服务，Valkey 包同时提供 Redis 兼容客户端和服务端程序。
-
-构建脚本会以默认非 root 用户、断网运行镜像内的 `/usr/local/lib/oryn/smoke-test.sh`：验证三类 shell、用户全局安装、实际编译与数据处理。已有 orb 不会随镜像重建自动换底层系统；依赖 apt 的旧项目 setup 脚本需迁移，新建 orb 才使用新镜像。
-
-
-orb 内的 agent 自带 `oryn-setup` 技能：让它「为这个项目配置 Oryn orb 环境」，它会调查仓库、写出脚本、试跑并推送到基线分支。orb 内可用：
+### 构建与校验目标
 
 ```bash
-oryn orb setup run [--resume]                         # 重跑 setup / resume（经 orbd，结果上报控制面）
-oryn orb setup status | logs [--resume]               # 最近结果与日志
-oryn orb setup project-script get|set setup --file f  # 读写本 orb 所属项目的项目脚本
-oryn thread new "跑一遍集成测试" && oryn thread wait <id>   # 在本项目开子线程并等它的回复（退出码 0 / 3 等回答 / 4 出错 / 124 超时）
-oryn thread send <id> "补一个用例"                    # 给子线程或亲属线程发消息
-oryn schedule set --every 1h --prompt "检查部署状态"    # 给当前线程设定时
+make gen            # 由 schema/openapi.yaml 与 SQL 生成 Go / TypeScript 代码
+make check-gen      # 校验生成物与源码完全同步（CI 门禁）
+make lint-spec      # 使用 Redocly 校验 OpenAPI 规格
+make test           # 运行 Go 全量单元与集成测试（前端测试于 web/ 目录执行 bun run test）
+make desktop        # 构建当前平台 Tauri 2 桌面安装包
+make android        # 构建 Android APK（DIST=foss 或 DIST=gms）
+make fc-artifacts   # 构建锁定摘要的 Firecracker 二进制、vmlinux 内核与 ext4 根盘
 ```
 
-## 文档
+## 内核与第三方组件
 
-- [`docs/deploy.md`](docs/deploy.md)：部署到 1Panel OpenResty 反代之后
-- [`docs/desktop.md`](docs/desktop.md)：桌面 App 安装、配对、托盘、深链接、更新与发版
-- [`docs/protocol.md`](docs/protocol.md)：协议索引与相对计划的偏差
-- [`docs/research/`](docs/research/)：Amp / omp / 参考 GUI / Tauri 移动端调研
-- [`docs/design/ui-redesign.md`](docs/design/ui-redesign.md)：Web 界面设计说明（方向、令牌、评审记录）
-- [`docs/design/web-guidelines.md`](docs/design/web-guidelines.md)：Web 前端开发守则（不可回退的设计要点、验证流程）
-- agent 内核：[`Lynricsy/oryn-core`](https://github.com/Lynricsy/oryn-core)（钉定版本见 `core/source.json`；二进制与配置目录沿用 omp 的 `omp` / `~/.omp/agent`）
-
-## 第三方组件
-
-- [`@novnc/novnc`](https://github.com/novnc/noVNC) 1.7.0（MPL-2.0）：Desktop 面板的 VNC 客户端，未修改源码，按需单独打包
+- **Agent 内核**：[`Lynricsy/oryn-core`](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi)，MIT 许可；钉定版本与 SHA-256 见 [`core/source.json`](core/source.json)）。
+- **远程桌面客户端**：[`@novnc/novnc`](https://github.com/novnc/noVNC) `1.7.0`（MPL-2.0 许可，未修改源码，按需独立分块加载）。
