@@ -57,7 +57,7 @@ import { type KnownModel, modelLabel } from "./model-label";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 import { findRevealHit, registerRevealer } from "./reveal";
 
-/** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在往上翻（含平滑滚动的余程）。 */
+/** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在翻动（含平滑滚动的余程）。 */
 const INTENT_MS = 600;
 /** 往上翻的按键（Shift+空格另判）。 */
 const UP_KEYS: Record<string, true> = {
@@ -65,6 +65,14 @@ const UP_KEYS: Record<string, true> = {
 	PageUp: true,
 	Home: true,
 };
+/** 往下翻的按键（不带 Shift 的空格另判）。 */
+const DOWN_KEYS: Record<string, true> = {
+	ArrowDown: true,
+	PageDown: true,
+	End: true,
+};
+/** 用户朝同一方向连续翻过多少像素才报告阅读方向（`onReadDirection`），过滤手指的细小抖动。 */
+const READ_TRAVEL = 24;
 /** 定位条目后描边的时长与寻找工具卡的最多帧数。 */
 const REVEAL_MS = 2400;
 const REVEAL_TRIES = 30;
@@ -537,6 +545,8 @@ export function Transcript({
 	insetTop = 0,
 	insetBottom = 0,
 	startAtTop = false,
+	onReadDirection,
+	trayTop: trayTopOverride,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
@@ -546,6 +556,13 @@ export function Transcript({
 	insetBottom?: number;
 	/** 从开头读起（快照分享页）：不贴底，内容增长时不跟随，直到读者自己滚到底。 */
 	startAtTop?: boolean;
+	/**
+	 * 用户的阅读方向：`back` = 离开底部往上翻历史（同向连续翻过 READ_TRAVEL），`forward` = 往下翻回来或回到底部。
+	 * 只认用户的滚动（滚轮 / 触摸 / 按键 / 拖滚动条），测高补偿与跟随新内容的程序滚动不报告；回到底部除外。
+	 */
+	onReadDirection?: (dir: "back" | "forward") => void;
+	/** 输入坞托盘顶边离底部的距离（px），「回到底部」悬在它上方；默认按 `insetBottom` 推算。输入坞收成胶囊时托盘比留白矮，由调用方给出。 */
+	trayTop?: number;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId } = useTranscriptContext();
@@ -572,9 +589,15 @@ export function Transcript({
 	// 用户向上阅读的意图：滚轮 / 键盘 / 触摸之后 INTENT_MS 内，或按住滚动条往上拖。
 	// 只有它能让转录退出跟随；测高补偿、程序写 scrollTop 等非用户滚动不改变跟随状态
 	const intentUntil = useRef(0);
+	// 往下翻的意图（只用于报告阅读方向，不影响跟随）
+	const forwardUntil = useRef(0);
 	const dragging = useRef(false);
 	const touchY = useRef<number | null>(null);
 	const lastTop = useRef(0);
+	// 同一方向连续翻过的距离（换方向清零），超过 READ_TRAVEL 报告一次
+	const travel = useRef({ dir: 0, px: 0 });
+	const onReadRef = useRef(onReadDirection);
+	onReadRef.current = onReadDirection;
 	const count = items.length + 1; // 末尾一项放 footer（工作中指示等）
 	const virtualizer = useVirtualizer({
 		count,
@@ -596,31 +619,58 @@ export function Transcript({
 		const el = scrollRef.current;
 		if (!el) return;
 		const top = el.scrollTop;
-		const movedUp = top < lastTop.current - 1;
+		const delta = top - lastTop.current;
+		const movedUp = delta < -1;
 		lastTop.current = top;
 		const bottom = el.scrollHeight - top - el.clientHeight < 48;
+		const now = performance.now();
 		if (bottom) stick.current = true;
-		else if (
-			performance.now() < intentUntil.current ||
-			(dragging.current && movedUp)
-		)
+		else if (now < intentUntil.current || (dragging.current && movedUp))
 			stick.current = false;
 		else if (stick.current) scrollToEnd();
 		setAtBottom(stick.current || bottom);
+
+		const report = onReadRef.current;
+		if (!report || Math.abs(delta) <= 1) return;
+		const dir = Math.sign(delta);
+		const user =
+			dragging.current ||
+			now < (dir < 0 ? intentUntil.current : forwardUntil.current);
+		if (bottom && dir > 0) {
+			// 回到底部（含「回到底部」按钮与跟随新内容）：输入区属于这里
+			travel.current = { dir: 0, px: 0 };
+			report("forward");
+			return;
+		}
+		if (!user || bottom) return;
+		const prev = travel.current;
+		travel.current =
+			prev.dir === dir
+				? { dir, px: prev.px + Math.abs(delta) }
+				: { dir, px: Math.abs(delta) };
+		if (travel.current.px >= READ_TRAVEL) {
+			travel.current = { dir, px: 0 };
+			report(dir < 0 ? "back" : "forward");
+		}
 	}, [scrollToEnd]);
 
-	// 只观察、不拦截（被动监听）：哪些滚动出自用户往上翻的动作
+	// 只观察、不拦截（被动监听）：哪些滚动出自用户往上 / 往下翻的动作
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el) return;
 		const markUp = () => {
 			intentUntil.current = performance.now() + INTENT_MS;
 		};
+		const markDown = () => {
+			forwardUntil.current = performance.now() + INTENT_MS;
+		};
 		const onWheel = (e: WheelEvent) => {
 			if (e.deltaY < 0) markUp();
+			else if (e.deltaY > 0) markDown();
 		};
 		const onKey = (e: KeyboardEvent) => {
 			if (UP_KEYS[e.key] || (e.key === " " && e.shiftKey)) markUp();
+			else if (DOWN_KEYS[e.key] || e.key === " ") markDown();
 		};
 		const onTouchStart = (e: TouchEvent) => {
 			touchY.current = e.touches[0]?.clientY ?? null;
@@ -628,8 +678,9 @@ export function Transcript({
 		const onTouchMove = (e: TouchEvent) => {
 			const y = e.touches[0]?.clientY;
 			if (y === undefined) return;
-			// 手指往下拖 = 内容往上翻
+			// 手指往下拖 = 内容往上翻；手指往上推 = 往下翻
 			if (touchY.current !== null && y > touchY.current + 2) markUp();
+			else if (touchY.current !== null && y < touchY.current - 2) markDown();
 			touchY.current = y;
 		};
 		const onPointerDown = (e: PointerEvent) => {
@@ -806,7 +857,7 @@ export function Transcript({
 	);
 
 	// 「回到底部」是悬在托盘顶边上方 8px 的独立小圆钮；输入坞整体独立悬浮，不遮罩、不淡出周围正文
-	const trayTop = Math.max(0, insetBottom - DOCK_GAP);
+	const trayTop = trayTopOverride ?? Math.max(0, insetBottom - DOCK_GAP);
 
 	return (
 		<div className="relative min-h-0 flex-1">

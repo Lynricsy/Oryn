@@ -1,7 +1,7 @@
 /**
  * 线程页布局（M7 4.2 / 4.3）：窄屏转录与面板各标签是同级标签（没有右抽屉），切走时转录纸面透明、inert 但保持挂载与布局；
- * medium 页头下一行是标签条，compact（手机）不占这一行、视图菜单在页头里；
- * expanded 三栏不变；折叠屏双段视口左段转录、右段面板常驻；compact 下输入坞托盘底角与屏幕圆角同心。
+ * medium 页头下一行是标签条，compact（手机）不占这一行、视图菜单在悬浮页头里；
+ * expanded 三栏不变；折叠屏双段视口左段转录、右段面板常驻；compact 下输入坞托盘底角与屏幕圆角同心，往上翻历史时收成胶囊。
  * 转录、输入坞各节、页头与面板内容换成桩，只看页面自己的布局；标签条与视图菜单用真的。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +10,8 @@ import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
+import type * as DockPillModule from "../components/composer/DockPill";
+import type * as CompactThreadHeaderModule from "../components/thread/CompactThreadHeader";
 import type * as RightPanelModule from "../components/thread/RightPanel";
 import type * as ThreadHeaderModule from "../components/thread/ThreadHeader";
 import { getThreadStore, indexStore, resetThreadStores } from "../state/stores";
@@ -23,10 +25,19 @@ vi.mock("../state/terminals", () => ({
 	terminalHub: { attach: () => () => {} },
 	useTerminals: () => false,
 }));
+// 转录桩：记下页面给的阅读方向回调，测试里直接报告「往上翻 / 往下翻」
+let reportRead: ((dir: "back" | "forward") => void) | undefined;
 vi.mock("../components/transcript/Transcript", () => ({
-	Transcript: ({ insetTop }: { insetTop: number }) => (
-		<div data-testid="transcript" data-inset-top={insetTop} />
-	),
+	Transcript: ({
+		insetTop,
+		onReadDirection,
+	}: {
+		insetTop: number;
+		onReadDirection?: (dir: "back" | "forward") => void;
+	}) => {
+		reportRead = onReadDirection;
+		return <div data-testid="transcript" data-inset-top={insetTop} />;
+	},
 }));
 vi.mock("../components/transcript/WorkingFooter", () => ({
 	WorkingFooter: () => null,
@@ -55,19 +66,41 @@ vi.mock("../components/thread/ThreadHeader", async (orig) => ({
 	ThreadHeader: ({
 		sidebarToggle,
 		veil,
-		viewMenu,
 	}: {
 		sidebarToggle: boolean;
 		veil?: number;
-		viewMenu?: ReactNode;
 	}) => (
 		<header
 			data-testid="thread-header"
 			data-sidebar-toggle={String(sidebarToggle)}
 			data-veil={veil}
-		>
+		/>
+	),
+}));
+vi.mock("../components/thread/CompactThreadHeader", async (orig) => ({
+	...(await orig<typeof CompactThreadHeaderModule>()),
+	CompactThreadHeader: ({
+		veil,
+		viewMenu,
+	}: {
+		veil: number;
+		viewMenu?: ReactNode;
+	}) => (
+		<header data-testid="thread-header" data-compact="" data-veil={veil}>
 			{viewMenu}
 		</header>
+	),
+}));
+// 胶囊内容换成一个按钮（真的要读模型与成本查询）；变形钩子用真的
+vi.mock("../components/composer/DockPill", async (orig) => ({
+	...(await orig<typeof DockPillModule>()),
+	DockPill: ({ shown, onExpand }: { shown: boolean; onExpand: () => void }) => (
+		<button
+			type="button"
+			data-testid="dock-pill"
+			inert={!shown}
+			onClick={onExpand}
+		/>
 	),
 }));
 vi.mock("../components/thread/RightPanel", async (orig) => ({
@@ -148,7 +181,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(screen.queryByTestId("thread-tabs")).toBeNull();
 		expect(screen.getByTestId("transcript")).toHaveAttribute(
 			"data-inset-top",
-			"64",
+			"78",
 		);
 		const transcript = screen.getByTestId("transcript");
 		fireEvent.click(screen.getByTestId("thread-view-menu"));
@@ -201,6 +234,35 @@ describe("ThreadPage 窄屏同级标签", () => {
 		unmount();
 		renderPage(700);
 		expect(tray()).not.toHaveClass("dc-bl");
+	});
+
+	it("compact：往上翻历史时输入坞收成胶囊（托盘内容 inert、软键盘随焦点收起），往下翻回来或点胶囊展开；medium 不收", () => {
+		const { unmount } = renderPage(390);
+		const tray = () => screen.getByTestId("dock-tray");
+		const body = () => tray().querySelector(".dock-body") as HTMLElement;
+		expect(tray()).toHaveAttribute("data-dock", "open");
+		const input = document.createElement("textarea");
+		body().append(input);
+		input.focus();
+
+		act(() => reportRead?.("back"));
+		expect(tray()).toHaveAttribute("data-dock", "mini");
+		expect(body()).toHaveAttribute("inert");
+		expect(document.activeElement).not.toBe(input);
+		expect(screen.getByTestId("dock-pill")).not.toHaveAttribute("inert");
+
+		act(() => reportRead?.("forward"));
+		expect(tray()).toHaveAttribute("data-dock", "open");
+		expect(body()).not.toHaveAttribute("inert");
+
+		act(() => reportRead?.("back"));
+		fireEvent.click(screen.getByTestId("dock-pill"));
+		expect(tray()).toHaveAttribute("data-dock", "open");
+		unmount();
+
+		renderPage(700);
+		expect(reportRead).toBeUndefined();
+		expect(tray()).not.toHaveAttribute("data-dock");
 	});
 });
 

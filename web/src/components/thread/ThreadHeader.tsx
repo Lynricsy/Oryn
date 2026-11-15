@@ -1,9 +1,11 @@
 /**
- * 线程页头（渐进模糊纱）：面包屑 Space / 项目 / 标题卡（图标 + 可编辑标题 + 代码）、定时胶囊、orb 胶囊、会话树 / 面板 / More Actions。
+ * 线程页头（渐进模糊纱）：宽页头 `ThreadHeader` 是面包屑 Space / 项目 / 标题卡（图标 + 可编辑标题 + 代码）、定时胶囊、orb 胶囊、会话树 / 面板 / More Actions；
+ * 手机是 `CompactThreadHeader`（另一个文件），两者共用这里的 `useThreadActions`（全部线程操作与对话框）。
  * 桌面 App 无系统标题栏：整条页头是拖动区（按钮、标题等可交互元素除外）；`chromeLeft` / `chromeRight` 时两端放窗口控件。
  * 定时（M9）：线程内定时显示 `ScheduleChip`，「每次新建线程」定时建出的线程显示 `ScheduleRunChip`，More Actions 有「定时…」；
  * 归档旁有「归档为已交付」（Space 进度图的 Shipped）。
  */
+import type { TFunction } from "i18next";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
@@ -33,6 +35,8 @@ import { useArchiveThread } from "./ArchiveDialog";
 
 /** 页头背后渐进模糊纱的高度（px）：48px 页头 + 16px 渐隐，模糊在页头下沿之后 16px 内减到 0；转录顶部留白取同一个值。 */
 export const HEADER_VEIL = 64;
+/** 手机悬浮页头的纱高（px）：8px 上边距 + 46px 标题胶囊 + 8px，再 16px 渐隐；转录顶部留白取同一个值。 */
+export const COMPACT_HEADER_VEIL = 78;
 
 export const THREAD_COLORS = [
 	"red",
@@ -89,12 +93,13 @@ export function useOrbOf(threadId: string): Orb | undefined {
 }
 
 /**
- * orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。
- * orb 本身就绪、但最近一次 setup / resume 失败时，胶囊改报环境失败（错误色圆点 + 文案），与托盘里的提示条一致；
+ * orb 的状态文案：orb 本身就绪、但最近一次 setup / resume 失败时报环境失败（`failed`），与托盘里的提示条一致；
  * 其它状态（冻结、停机、唤醒、恢复、失败等）照实呈现生命周期，历史失败不覆盖。
  */
-function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
-	const { t } = useTranslation();
+export function orbStatus(
+	orb: Orb,
+	t: TFunction,
+): { failed: boolean; label: string } {
 	const failedRun =
 		orb.state !== "ready"
 			? undefined
@@ -103,9 +108,20 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 				: orb.lastResume && !orb.lastResume.ok
 					? orb.lastResume
 					: undefined;
-	const state = failedRun
-		? t(failedRun.phase === "resume" ? "env.resumeFailed" : "env.setupFailed")
-		: t(`orbState.${orb.state}`);
+	return failedRun
+		? {
+				failed: true,
+				label: t(
+					failedRun.phase === "resume" ? "env.resumeFailed" : "env.setupFailed",
+				),
+			}
+		: { failed: false, label: t(`orbState.${orb.state}`) };
+}
+
+/** orb 状态胶囊：状态珠 + 状态文字（页头窄时只留状态珠）；点击打开信息面板。环境失败时是错误色圆点 + 文案。 */
+function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
+	const { t } = useTranslation();
+	const { failed: failedRun, label: state } = orbStatus(orb, t);
 	return (
 		<button
 			type="button"
@@ -185,53 +201,44 @@ function RunnerChip({
 	);
 }
 
-export function ThreadHeader({
-	threadId,
-	sidebarToggle,
-	veil = HEADER_VEIL,
-	chromeLeft = false,
-	chromeRight = false,
-	viewMenu,
-}: {
-	threadId: string;
-	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
-	sidebarToggle: boolean;
-	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（medium 的同级标签条）时加上那一行，纱一起盖住 */
-	veil?: number;
-	/** 页头是窗口最左侧的标题行（侧栏没占着左上角）：左侧窗口控件放这里 */
-	chromeLeft?: boolean;
-	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
-	chromeRight?: boolean;
-	/** 手机上的视图菜单（`ThreadViewMenu`），放在「更多」之前 */
-	viewMenu?: ReactNode;
-}): ReactNode {
+/** 线程自己的项目：只认线程的 `projectId`，和侧栏分组一致；「无项目」线程没有项目段（即使 orb 属于某个项目）。 */
+export function useThreadProject(projectId: string | null | undefined) {
+	const projects = useProjects();
+	return projectId
+		? projects.data?.projects.find((p) => p.id === projectId)
+		: undefined;
+}
+
+/** 线程所属的 Space（Space 聊天里派出的线程）。 */
+export function useThreadSpace(spaceId: string | null | undefined) {
+	const spaces = useSpaces();
+	return spaceId
+		? spaces.data?.spaces?.find((s) => s.id === spaceId)
+		: undefined;
+}
+
+/** 定时对话框的目标：线程内定时，或建出本线程的「每次新建线程」定时。 */
+export type ScheduleTarget =
+	| { mode: "thread" }
+	| { mode: "new_thread"; id: string };
+
+/**
+ * 线程的全部操作（宽页头的 More Actions 与手机标题菜单共用）：菜单项按宽页头菜单的顺序排，`key` 稳定（手机菜单按 key 取用、重排）。
+ * `act` 包一层错误收集（失败文案进 `error`）；`dialogs` 是操作要用的定时 / 归档对话框，调用方渲染。
+ */
+export function useThreadActions(threadId: string): {
+	items: MenuItem[];
+	act: (fn: () => Promise<unknown>) => () => void;
+	error: string | null;
+	openSchedule: (target: ScheduleTarget) => void;
+	dialogs: ReactNode;
+} {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const thread = useThread(threadId, (s) => s.thread);
-	const panelOpen = useUi((s) => s.panelOpen);
-	const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
-	const bp = useBreakpoint();
-	const segments = useViewportSegments();
-	// 面板开关只属于 expanded 三栏：窄屏面板是同级标签，双段视口右段常驻
-	const panelToggle = bp === "expanded" && !segments;
 	const orb = useOrbOf(threadId);
-	const projects = useProjects();
-	// 只认线程自己的项目，和侧栏分组一致；「无项目」线程不显示项目段（即使 orb 属于某个项目）
-	const project = thread?.projectId
-		? projects.data?.projects.find((p) => p.id === thread.projectId)
-		: undefined;
-	const card = parseTitleCard(thread?.title ?? "");
-	const hue = threadHue(thread?.color);
-	const [editing, setEditing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	// 定时对话框：线程内定时，或建出本线程的「每次新建线程」定时
-	const [scheduleOpen, setScheduleOpen] = useState<
-		null | { mode: "thread" } | { mode: "new_thread"; id: string }
-	>(null);
-	const spaces = useSpaces();
-	const space = thread?.spaceId
-		? spaces.data?.spaces?.find((s) => s.id === thread.spaceId)
-		: undefined;
+	const [scheduleOpen, setScheduleOpen] = useState<ScheduleTarget | null>(null);
 	const act = (fn: () => Promise<unknown>) => () => {
 		setError(null);
 		fn().catch((e: unknown) =>
@@ -431,6 +438,65 @@ export function ThreadHeader({
 			},
 		},
 	];
+	const dialogs = (
+		<>
+			{scheduleOpen?.mode === "thread" && (
+				<ScheduleDialog
+					target={{ mode: "thread", threadId }}
+					onClose={() => setScheduleOpen(null)}
+				/>
+			)}
+			{scheduleOpen?.mode === "new_thread" && (
+				<ScheduleDialog
+					scheduleId={scheduleOpen.id}
+					target={{ mode: "new_thread" }}
+					onClose={() => setScheduleOpen(null)}
+				/>
+			)}
+			{archiveDialog}
+		</>
+	);
+	return { items, act, error, openSchedule: setScheduleOpen, dialogs };
+}
+
+/**
+ * 宽页头（medium / expanded；手机是 `CompactThreadHeader`）：Space / 项目 / 标题卡 / 标题（点击就地改名）、
+ * 公开、定时与 orb 胶囊、会话树 / 面板开关 / More Actions。
+ */
+export function ThreadHeader({
+	threadId,
+	sidebarToggle,
+	veil = HEADER_VEIL,
+	chromeLeft = false,
+	chromeRight = false,
+}: {
+	threadId: string;
+	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
+	sidebarToggle: boolean;
+	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（medium 的同级标签条）时加上那一行，纱一起盖住 */
+	veil?: number;
+	/** 页头是窗口最左侧的标题行（侧栏没占着左上角）：左侧窗口控件放这里 */
+	chromeLeft?: boolean;
+	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
+	chromeRight?: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const thread = useThread(threadId, (s) => s.thread);
+	const panelOpen = useUi((s) => s.panelOpen);
+	const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+	const bp = useBreakpoint();
+	const segments = useViewportSegments();
+	// 面板开关只属于 expanded 三栏：窄屏面板是同级标签，双段视口右段常驻
+	const panelToggle = bp === "expanded" && !segments;
+	const orb = useOrbOf(threadId);
+	const project = useThreadProject(thread?.projectId);
+	const card = parseTitleCard(thread?.title ?? "");
+	const hue = threadHue(thread?.color);
+	const [editing, setEditing] = useState<string | null>(null);
+	const space = useThreadSpace(thread?.spaceId);
+	const { items, act, error, openSchedule, dialogs } =
+		useThreadActions(threadId);
+	const isRunner = orb?.kind === "runner";
 
 	return (
 		<header
@@ -578,14 +644,14 @@ export function ThreadHeader({
 			{editing === null && thread?.schedule && (
 				<ScheduleChip
 					schedule={thread.schedule}
-					onOpen={() => setScheduleOpen({ mode: "thread" })}
+					onOpen={() => openSchedule({ mode: "thread" })}
 				/>
 			)}
 			{editing === null && thread?.scheduleRun && (
 				<ScheduleRunChip
 					run={thread.scheduleRun}
 					onOpen={() =>
-						setScheduleOpen({
+						openSchedule({
 							mode: "new_thread",
 							id: thread.scheduleRun?.scheduleId ?? "",
 						})
@@ -622,7 +688,6 @@ export function ThreadHeader({
 					onClick={() => uiStore.getState().setPanel(!panelOpen)}
 				/>
 			)}
-			{viewMenu}
 			<Menu
 				items={items}
 				trigger={(p) => (
@@ -637,20 +702,7 @@ export function ThreadHeader({
 				)}
 			/>
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
-			{scheduleOpen?.mode === "thread" && (
-				<ScheduleDialog
-					target={{ mode: "thread", threadId }}
-					onClose={() => setScheduleOpen(null)}
-				/>
-			)}
-			{scheduleOpen?.mode === "new_thread" && (
-				<ScheduleDialog
-					scheduleId={scheduleOpen.id}
-					target={{ mode: "new_thread" }}
-					onClose={() => setScheduleOpen(null)}
-				/>
-			)}
-			{archiveDialog}
+			{dialogs}
 		</header>
 	);
 }

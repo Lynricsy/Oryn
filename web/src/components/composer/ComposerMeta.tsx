@@ -24,18 +24,39 @@ import { ModelLogo } from "../ui/ModelLogo";
 import { Menu, type MenuItem } from "../ui/primitives";
 import { ThinkingMenu } from "../ui/ThinkingDial";
 
+/** 当前模型的全名与短名（认得出品牌时去掉系列名，logo 已说明）；输入坞的模型胶囊与收起后的信息条共用。 */
+export function useModelName(threadId: string) {
+	const { t } = useTranslation();
+	const model = useThread(threadId, (s) => s.state?.model);
+	const name = model ? model.name || model.id : t("status.noModel");
+	const short = model
+		? shortModelName(name, modelBrand(model.id, model.provider))
+		: name;
+	return { model, name, short };
+}
+
+/** 会话累计成本与最近的输出速度：成本取统计接口的 `costUsd`（已含子 agent），接口不可用时退回转录累计。 */
+export function useSessionCost(threadId: string): {
+	cost: number;
+	tps: number | null | undefined;
+} {
+	const tokensPerSecond = useThread(threadId, (s) => s.state?.tokensPerSecond);
+	const createdAt = useThread(threadId, (s) => s.thread?.createdAt);
+	const entries = useThread(threadId, (s) => s.entries);
+	const usage = useThreadUsage(threadId, createdAt);
+	return {
+		cost: usage.data ? usage.data.costUsd : threadCost(entries),
+		tps: tokensPerSecond ?? usage.data?.tokensPerSecond,
+	};
+}
+
 /**
  * 当前模型：厂商 logo + 名字（认得出品牌时去掉系列名，logo 已说明），点击打开模型对话框（顶部可切换角色）；
  * 右侧思考级别圆圈是单独的按钮，点开选级别（选项按模型能力，模型不推理时不显示圆圈）。悬停提示与读屏用全名。
  */
 export function ModelChip({ threadId }: { threadId: string }): ReactNode {
-	const { t } = useTranslation();
 	const state = useThread(threadId, (s) => s.state);
-	const model = state?.model;
-	const name = model ? model.name || model.id : t("status.noModel");
-	const short = model
-		? shortModelName(name, modelBrand(model.id, model.provider))
-		: name;
+	const { model, name, short } = useModelName(threadId);
 	const levels = state?.availableThinkingLevels;
 	const reasons = model?.reasoning !== false && (levels?.length ?? 1) > 0;
 	// 菜单里勾选的是配置值（auto 或具体级别）；圆圈画实际生效的级别
@@ -184,12 +205,7 @@ function SpeedControl({
  */
 export function SessionReadout({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
-	const state = useThread(threadId, (s) => s.state);
-	const createdAt = useThread(threadId, (s) => s.thread?.createdAt);
-	const entries = useThread(threadId, (s) => s.entries);
-	const usage = useThreadUsage(threadId, createdAt);
-	const cost = usage.data ? usage.data.costUsd : threadCost(entries);
-	const tps = state?.tokensPerSecond ?? usage.data?.tokensPerSecond;
+	const { cost, tps } = useSessionCost(threadId);
 	return (
 		<span className="inline-flex shrink-0 items-center gap-3 font-medium text-muted">
 			<ContextRing threadId={threadId} />

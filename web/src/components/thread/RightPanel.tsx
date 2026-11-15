@@ -49,6 +49,7 @@ import {
 	Spinner,
 	tabClass,
 } from "../ui/primitives";
+import { ROUND_GLASS } from "./CompactThreadHeader";
 import { InfoPanel } from "./InfoPanel";
 import { useOrbOf } from "./ThreadHeader";
 
@@ -407,16 +408,19 @@ export function ThreadTabStrip({
 
 /**
  * 手机线程页的视图菜单（右上角四宫格按钮）：列出对话与各面板，当前视图打勾；任一别的视图有提醒点时按钮上也亮一个。
- * 取代 compact 下常驻的标签条，把那一行高度还给转录。
+ * 取代 compact 下常驻的标签条，把那一行高度还给转录。`round`：转录页头的 44px 圆形玻璃钮（与侧栏开关、标题胶囊一组）；
+ * 不带时是面板标签行里的普通图标钮。
  */
 export function ThreadViewMenu({
 	threadId,
 	tabs,
 	shown,
+	round = false,
 }: {
 	threadId: string;
 	tabs: readonly ThreadTab[];
 	shown: ThreadTab;
+	round?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const dots = useTabDots(threadId, tabs, shown);
@@ -446,15 +450,19 @@ export function ThreadViewMenu({
 					aria-label={t("rightPanel.views")}
 					title={t("rightPanel.views")}
 					data-testid="thread-view-menu"
-					className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+					className={
+						round
+							? ROUND_GLASS
+							: "relative inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+					}
 					{...p}
 				>
-					<Icon name="views" size={17} />
+					<Icon name="views" size={round ? 19 : 17} />
 					{pending && (
 						<span
 							aria-hidden
 							data-testid="view-menu-dot"
-							className={`absolute top-1 right-1 h-1.5 w-1.5 rounded-full ring-2 ring-[var(--panel)] ${dots[pending]?.tone === "warn" ? "bg-warn" : "bg-accent"}`}
+							className={`absolute ${round ? "top-2 right-2 h-2 w-2" : "top-1 right-1 h-1.5 w-1.5"} rounded-full ring-2 ring-[var(--panel)] ${dots[pending]?.tone === "warn" ? "bg-warn" : "bg-accent"}`}
 						/>
 					)}
 				</button>

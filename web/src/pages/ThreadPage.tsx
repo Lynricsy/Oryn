@@ -12,6 +12,7 @@ import {
 	type KeyboardEvent,
 	type PointerEvent,
 	type ReactNode,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -22,11 +23,13 @@ import { useTranslation } from "react-i18next";
 import { Navigate, useParams } from "react-router";
 import { useSpaces } from "../api/space-queries";
 import { Composer } from "../components/composer/Composer";
+import { DockPill, useDockCollapse } from "../components/composer/DockPill";
 import {
 	dockArrived,
 	takeArrival,
 	useDockMorph,
 } from "../components/composer/DockTray";
+import { CompactThreadHeader } from "../components/thread/CompactThreadHeader";
 import {
 	PlanProposalDialog,
 	ThreadDialogs,
@@ -44,7 +47,11 @@ import {
 	useThreadTabs,
 } from "../components/thread/RightPanel";
 import { RunnerOfflineNotice } from "../components/thread/RunnerOfflineNotice";
-import { HEADER_VEIL, ThreadHeader } from "../components/thread/ThreadHeader";
+import {
+	COMPACT_HEADER_VEIL,
+	HEADER_VEIL,
+	ThreadHeader,
+} from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
 	TranscriptContext,
@@ -252,7 +259,10 @@ export function ThreadScreen({
 	const { tabs: peerTabs } = useThreadTabs(threadId, true);
 	// 手机不常驻标签条（视图菜单在页头右上角）；medium 仍是页头下方一行标签条
 	const tabRow = peer && bp !== "compact";
-	const topInset = tabRow || subheader ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
+	// 手机线程页头是悬浮的三件式（侧栏钮 / 标题胶囊 / 视图钮，比宽页头高）；协调对话的页头由调用方给，仍是 48px
+	const compactHeader = bp === "compact" && !dual && !header;
+	const headerVeil = compactHeader ? COMPACT_HEADER_VEIL : HEADER_VEIL;
+	const topInset = tabRow || subheader ? headerVeil + TAB_ROW : headerVeil;
 	const showPanelColumn = expanded && panelOpen && !coordinator;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	/** 转录被面板标签或最大化面板挡住（保持挂载、仍参与布局，见下面纸面的注释）。 */
@@ -265,18 +275,65 @@ export function ThreadScreen({
 	const chromeLeft = !sidebarShown && !dual;
 	const transcriptShown = !panelFull && onAgent;
 
-	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住
+	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住。
+	// 收成胶囊时不改留白（改了会让内容高度跳动、把阅读位置推到底部又触发展开），只另记胶囊那一档的高度给「回到底部」定位
 	const dockRef = useRef<HTMLDivElement>(null);
+	const trayRef = useRef<HTMLDivElement>(null);
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const pillRowRef = useRef<HTMLSpanElement>(null);
 	const [dockH, setDockH] = useState(0);
+	const [miniH, setMiniH] = useState(0);
+	const measureDock = useCallback(() => {
+		const el = dockRef.current;
+		const tray = trayRef.current;
+		if (!el || tray?.hasAttribute("data-morphing")) return;
+		if (tray?.dataset.dock === "mini") setMiniH(el.offsetHeight);
+		else setDockH(el.offsetHeight);
+	}, []);
 	useLayoutEffect(() => {
 		const el = dockRef.current;
 		if (!el) return;
-		setDockH(el.offsetHeight);
+		measureDock();
 		if (typeof ResizeObserver === "undefined") return;
-		const ro = new ResizeObserver(() => setDockH(el.offsetHeight));
+		const ro = new ResizeObserver(measureDock);
 		ro.observe(el, { box: "border-box" });
 		return () => ro.disconnect();
+	}, [measureDock]);
+
+	// 手机：往上翻历史时输入坞收成一条胶囊（DockPill），往下翻回来、回到底部或点胶囊时展开
+	const collapsible = bp === "compact" && !dual;
+	const [miniWanted, setMini] = useState(false);
+	const mini = collapsible && miniWanted;
+	const [draft, setDraft] = useState(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 换线程或离开手机宽度时回到展开
+	useEffect(() => {
+		setMini(false);
+	}, [threadId, collapsible]);
+	const onReadDirection = useCallback((dir: "back" | "forward") => {
+		if (dir === "forward") {
+			setMini(false);
+			return;
+		}
+		const dock = dockRef.current;
+		setDraft(Boolean(dock?.querySelector("textarea")?.value.trim()));
+		// 收起前交出焦点：软键盘随之收起，收进胶囊的输入框不留着焦点
+		const focused = document.activeElement;
+		if (focused instanceof HTMLElement && dock?.contains(focused))
+			focused.blur();
+		setMini(true);
 	}, []);
+	// omp 带回草稿（会话树跳转、set_editor_text）时展开，免得字填进了看不见的输入框
+	const editorText = useThread(threadId, (s) => s.editorText);
+	useEffect(() => {
+		if (editorText) setMini(false);
+	}, [editorText]);
+	useDockCollapse({
+		mini,
+		trayRef,
+		bodyRef,
+		measureRef: pillRowRef,
+		onSettle: measureDock,
+	});
 
 	// 首条消息过渡（DockTray）：挂载即告诉过渡新状态已就绪；变形期间托盘挂 view-transition-name，
 	// 结束后在有键盘鼠标的设备上把焦点交给输入框（触屏不抢焦点，免得软键盘收起又弹出）
@@ -334,6 +391,8 @@ export function ThreadScreen({
 									footer={<WorkingFooter threadId={threadId} />}
 									insetTop={topInset}
 									insetBottom={dockH + 16}
+									onReadDirection={collapsible ? onReadDirection : undefined}
+									trayTop={mini && miniH > 0 ? miniH : undefined}
 								/>
 							)}
 						</div>
@@ -346,6 +405,24 @@ export function ThreadScreen({
 								chromeLeft: chromeLeft && transcriptShown,
 								chromeRight: transcriptShown && edgeRight && !dual,
 							})
+						) : compactHeader ? (
+							<CompactThreadHeader
+								threadId={threadId}
+								veil={topInset}
+								chromeLeft={chromeLeft && transcriptShown}
+								chromeRight={transcriptShown}
+								viewMenu={
+									peer &&
+									onAgent && (
+										<ThreadViewMenu
+											threadId={threadId}
+											tabs={peerTabs}
+											shown="agent"
+											round
+										/>
+									)
+								}
+							/>
 						) : (
 							<ThreadHeader
 								threadId={threadId}
@@ -353,17 +430,6 @@ export function ThreadScreen({
 								veil={topInset}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown && !showPanelColumn && !dual}
-								viewMenu={
-									peer &&
-									!tabRow &&
-									onAgent && (
-										<ThreadViewMenu
-											threadId={threadId}
-											tabs={peerTabs}
-											shown="agent"
-										/>
-									)
-								}
 							/>
 						)}
 						{subheader && (
@@ -386,7 +452,8 @@ export function ThreadScreen({
 					</div>
 					{conn !== "open" && (
 						<div
-							className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3 ${tabRow ? "top-24" : "top-14"}`}
+							className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3"
+							style={{ top: topInset - 8 }}
 						>
 							<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
 								<Spinner size={11} />
@@ -399,43 +466,72 @@ export function ThreadScreen({
 						// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
 						className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
 					>
-						<div className="pointer-events-auto relative mx-auto w-full max-w-3xl pb-3">
+						<div className="relative mx-auto w-full max-w-3xl pb-3">
 							{/*
 							 * 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去。
-							 * compact 下托盘离屏幕左右与底边 12px（px-3 / pb-3），底部两角跟屏幕圆角同心
+							 * compact 下托盘离屏幕左右与底边 12px（px-3 / pb-3），底部两角跟屏幕圆角同心；
+							 * 往上翻历史时收成胶囊（data-dock="mini"，见 DockPill），托盘两侧空出来的地方不拦触摸
 							 */}
 							<div
-								className={`glass glass-dock divide-y divide-[var(--glass-line)] rounded-xl ${bp === "compact" && !dual ? DC_DOCK_BOTTOM : ""} ${morph === "dock" ? "dock-morphing" : ""}`}
+								ref={trayRef}
+								data-testid="dock-tray"
+								data-dock={collapsible ? (mini ? "mini" : "open") : undefined}
+								className={`glass glass-dock pointer-events-auto mx-auto rounded-xl ${collapsible ? DC_DOCK_BOTTOM : ""} ${morph === "dock" ? "dock-morphing" : ""}`}
 							>
-								{plan && (
-									<PlanProposalDialog
-										key={`plan:${threadId}`}
+								<div
+									ref={bodyRef}
+									inert={mini}
+									className="dock-body divide-y divide-[var(--glass-line)]"
+								>
+									{plan && (
+										<PlanProposalDialog
+											key={`plan:${threadId}`}
+											threadId={threadId}
+											proposal={plan}
+										/>
+									)}
+									{firstUi && (
+										<UiRequestCard
+											key={firstUi.id}
+											threadId={threadId}
+											req={firstUi}
+											queued={pendingUi.length - 1}
+										/>
+									)}
+									{!coordinator && (
+										<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+									)}
+									{!coordinator && <RunnerOfflineNotice threadId={threadId} />}
+									{dockNotice}
+									<QueueBar threadId={threadId} />
+									<AboveEditorWidgets threadId={threadId} />
+									<Composer
+										key={`composer:${threadId}`}
 										threadId={threadId}
-										proposal={plan}
+										disabled={disabled || (orbGone && !coordinator)}
+										coordinator={coordinator}
+									/>
+									<BelowEditorWidgets threadId={threadId} />
+								</div>
+								{collapsible && (
+									<DockPill
+										threadId={threadId}
+										bodyRef={bodyRef}
+										measureRef={pillRowRef}
+										draft={draft}
+										shown={mini}
+										onExpand={(e) => {
+											setMini(false);
+											// 键盘激活（detail 为 0）：焦点交给输入框，不留在要变成 inert 的胶囊上（等托盘内容解除 inert 后）；触屏不弹软键盘
+											if (e.detail === 0)
+												requestAnimationFrame(() =>
+													dockRef.current
+														?.querySelector("textarea")
+														?.focus({ preventScroll: true }),
+												);
+										}}
 									/>
 								)}
-								{firstUi && (
-									<UiRequestCard
-										key={firstUi.id}
-										threadId={threadId}
-										req={firstUi}
-										queued={pendingUi.length - 1}
-									/>
-								)}
-								{!coordinator && (
-									<EnvBanner key={`env:${threadId}`} threadId={threadId} />
-								)}
-								{!coordinator && <RunnerOfflineNotice threadId={threadId} />}
-								{dockNotice}
-								<QueueBar threadId={threadId} />
-								<AboveEditorWidgets threadId={threadId} />
-								<Composer
-									key={`composer:${threadId}`}
-									threadId={threadId}
-									disabled={disabled || (orbGone && !coordinator)}
-									coordinator={coordinator}
-								/>
-								<BelowEditorWidgets threadId={threadId} />
 							</div>
 						</div>
 					</div>

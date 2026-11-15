@@ -20,6 +20,7 @@ import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { Cards } from "@phosphor-icons/react/dist/csr/Cards";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { CaretUp } from "@phosphor-icons/react/dist/csr/CaretUp";
 import { ChartBar } from "@phosphor-icons/react/dist/csr/ChartBar";
 import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
 import { Chats } from "@phosphor-icons/react/dist/csr/Chats";
@@ -131,6 +132,7 @@ const ICONS = {
 	sidebar: SidebarSimple,
 	chevronDown: CaretDown,
 	chevronRight: CaretRight,
+	chevronUp: CaretUp,
 	close: X,
 	pin: PushPin,
 	archive: Archive,
