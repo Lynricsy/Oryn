@@ -4,11 +4,24 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
 import type { Attachment } from "../lib/attachments";
-import type { SessionState } from "../omp/types";
-import { MODEL_CAPS_KEY, modelCapsStore } from "../state/model-caps";
 import { shareIntakeStore } from "../state/share-intake";
-import { getThreadStore, resetThreadStores } from "../state/stores";
+import { resetThreadStores } from "../state/stores";
 import { HomePage } from "./HomePage";
+
+/** 中央模型目录里的一个对话模型。 */
+const chat = (
+	provider: string,
+	id: string,
+	name: string,
+	thinking?: string[],
+) => ({
+	provider,
+	id,
+	selector: `${provider}/${id}`,
+	name,
+	kind: "chat",
+	...(thinking ? { thinking } : {}),
+});
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 	const url = new URL(
@@ -20,19 +33,21 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 	if (url.pathname === "/api/v1/projects")
 		return Response.json({ projects: [] });
 	if (url.pathname === "/api/v1/orbs") return Response.json({ orbs: [] });
+	if (url.pathname === "/api/v1/models/catalog")
+		return Response.json({
+			models: [
+				chat("openai", "gpt-x", "GPT X", ["low", "high"]),
+				chat("openai", "gpt-lite", "GPT Lite", ["low"]),
+				chat("acme", "plain", "Plain"),
+			],
+			fetchedAt: 0,
+			stale: false,
+		});
 	return Response.json({ code: "not_found", message: "" }, { status: 404 });
 });
 
 beforeEach(() => {
 	vi.stubGlobal("fetch", fetchMock);
-	localStorage.removeItem(MODEL_CAPS_KEY);
-	modelCapsStore.setState({
-		caps: {
-			"openai/gpt-x": { thinking: ["low", "high"] },
-			"openai/gpt-lite": { thinking: ["low"] },
-			"acme/plain": { thinking: [] },
-		},
-	});
 });
 
 afterEach(() => {
@@ -74,21 +89,24 @@ describe("首页思考级别按所选模型的能力列出", () => {
 		expect(openThinking()).toEqual(["默认还不知道这个模型支持哪些级别"]);
 	});
 
-	it("见过的模型：列出它支持的级别（加自动）", () => {
+	it("目录里的模型：列出它支持的级别（加自动）", async () => {
 		renderHome();
 		pickModel("openai/gpt-x");
+		await screen.findByText("GPT X");
 		expect(openThinking()).toEqual(["默认", "自动", "低", "高"]);
 	});
 
-	it("模型不推理：没有思考级别圆圈", () => {
+	it("模型不能调节思考：没有思考级别圆圈", async () => {
 		renderHome();
 		pickModel("acme/plain");
+		await screen.findByText("Plain");
 		expect(screen.queryByRole("button", { name: /思考级别：/ })).toBeNull();
 	});
 
-	it("换到不支持已选级别的模型时退回「默认」", () => {
+	it("换到不支持已选级别的模型时退回「默认」", async () => {
 		renderHome();
 		pickModel("openai/gpt-x");
+		await screen.findByText("GPT X");
 		openThinking();
 		fireEvent.click(screen.getByRole("menuitemradio", { name: "高" }));
 		expect(
@@ -98,30 +116,6 @@ describe("首页思考级别按所选模型的能力列出", () => {
 		expect(
 			screen.getByRole("button", { name: /思考级别：默认/ }),
 		).toBeInTheDocument();
-	});
-});
-
-describe("模型能力缓存", () => {
-	it("会话状态到达时按 provider/id 记下支持的级别，并存进本机", () => {
-		getThreadStore("T-caps")
-			.getState()
-			.apply([
-				{
-					type: "state",
-					state: {
-						model: { provider: "anthropic", id: "claude-x", reasoning: true },
-						availableThinkingLevels: ["off", "high"],
-					} as unknown as SessionState,
-				},
-			]);
-		expect(modelCapsStore.getState().caps["anthropic/claude-x"]).toEqual({
-			thinking: ["off", "high"],
-		});
-		expect(
-			JSON.parse(localStorage.getItem(MODEL_CAPS_KEY) ?? "{}")[
-				"anthropic/claude-x"
-			],
-		).toEqual({ thinking: ["off", "high"] });
 	});
 });
 

@@ -169,6 +169,83 @@ const MOCK_ROLE_MODELS = [
 	{ provider: "deepseek", id: "deepseek-flash", name: "DeepSeek Flash" },
 ];
 
+/** 中央模型目录里的一个模型（`omp models --json` 的子集）。 */
+function mockCatalogModel(
+	provider: string,
+	id: string,
+	name: string,
+	kind: string,
+	thinking?: string[],
+): Schemas["CatalogModel"] {
+	return {
+		provider,
+		id,
+		selector: `${provider}/${id}`,
+		name,
+		kind,
+		reasoning: thinking !== undefined,
+		...(thinking ? { thinking } : {}),
+		input: ["text"],
+	};
+}
+
+/** `GET /api/v1/models/catalog`：多厂商，方便核对 ModelLogo；ids 取自主人实际在用的模型。含非对话模型，核对选择器只列 chat。 */
+const MOCK_CATALOG_MODELS: Schemas["CatalogModel"][] = [
+	mockCatalogModel("anthropic", "claude-sonnet-5", "Claude Sonnet 5", "chat", [
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+	]),
+	mockCatalogModel("anthropic", "claude-opus-5-5", "Claude Opus 5.5", "chat", [
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	]),
+	mockCatalogModel(
+		"anthropic",
+		"claude-fable-5-2",
+		"Claude Fable 5.2",
+		"chat",
+		["low", "medium", "high", "xhigh", "max"],
+	),
+	mockCatalogModel("openai", "gpt-6.1-sol", "GPT-6.1 Sol", "chat", [
+		"minimal",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+	]),
+	mockCatalogModel("openai-codex", "gpt-6-astra", "GPT-6 Astra", "chat", [
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+	]),
+	mockCatalogModel("google", "gemini-4-carbon", "Gemini 4 Carbon", "chat", [
+		"low",
+		"medium",
+		"high",
+	]),
+	mockCatalogModel("deepseek", "deepseek-flash", "DeepSeek Flash", "chat", [
+		"low",
+		"high",
+		"max",
+	]),
+	mockCatalogModel("openrouter", "qwen/qwen3-max", "Qwen3 Max", "chat"),
+	mockCatalogModel("xai", "grok-5", "Grok 5", "chat", ["low", "high"]),
+	mockCatalogModel("typesafe", "jev-latest", "Jev", "chat"),
+	mockCatalogModel("web", "exa", "Exa", "search"),
+	mockCatalogModel(
+		"openai",
+		"text-embedding-3-small",
+		"Text Embedding 3 Small",
+		"embedding",
+	),
+];
+
 /** mock 的 cycleOrder（同 `get_settings`）。 */
 const MOCK_CYCLE = ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"];
 
@@ -419,6 +496,8 @@ export class MockServer {
 	assistantIdentity: Schemas["AgentIdentity"] = {};
 	/** 用户头像（内存态）；默认给一个 emoji，截图里能看到效果。 */
 	userIdentity: Schemas["AvatarIdentity"] = { avatarIcon: "🦊" };
+	/** 模型目录的读取时间；`?refresh=true` 时更新。 */
+	catalogFetchedAt = Date.now();
 	/** role 头像（`role_avatars`）：行存在 = 设了头像。 */
 	roleAvatars: Record<string, Schemas["AvatarIdentity"]> = {
 		...MOCK_ROLE_AVATARS,
@@ -1147,6 +1226,15 @@ export class MockServer {
 				this[key] = { ...(name.name ? { name: name.name } : {}), ...av.avatar };
 			}
 			return json(this[key]);
+		}
+		if (p === "models/catalog") {
+			if (url.searchParams.get("refresh") === "true")
+				this.catalogFetchedAt = Date.now();
+			return json({
+				models: MOCK_CATALOG_MODELS,
+				fetchedAt: this.catalogFetchedAt,
+				stale: false,
+			} satisfies Schemas["ModelCatalog"]);
 		}
 		if (p === "settings/user-identity") {
 			if (m === "PUT") {
@@ -2920,54 +3008,6 @@ export class MockServer {
 				this.states.set(threadId, { ...state, slowModeEnabled: on });
 				return this.respond(socket, threadId, id, type, { enabled: on });
 			}
-			case "get_available_models":
-				return this.respond(socket, threadId, id, type, {
-					models: [
-						{
-							id: "claude-sonnet-5",
-							name: "Claude Sonnet 5",
-							provider: "anthropic",
-						},
-						// 多厂商，方便核对 ModelLogo；ids 取自主人实际在用的模型
-						{
-							id: "claude-opus-5-5",
-							name: "Claude Opus 5.5",
-							provider: "anthropic",
-						},
-						{
-							id: "claude-fable-5-2",
-							name: "Claude Fable 5.2",
-							provider: "anthropic",
-						},
-						{ id: "gpt-6.1-sol", name: "GPT-6.1 Sol", provider: "openai" },
-						{
-							id: "gpt-6-astra",
-							name: "GPT-6 Astra",
-							provider: "openai-codex",
-						},
-						{
-							id: "gemini-4-carbon",
-							name: "Gemini 4 Carbon",
-							provider: "google",
-						},
-						{
-							id: "deepseek-flash",
-							name: "DeepSeek Flash",
-							provider: "deepseek",
-						},
-						{
-							id: "qwen/qwen3-max",
-							name: "Qwen3 Max",
-							provider: "openrouter",
-						},
-						{ id: "grok-5", name: "Grok 5", provider: "xai" },
-						{ id: "jev-latest", name: "Jev", provider: "typesafe" },
-						{ id: "exa", name: "Exa", provider: "web" },
-					],
-					discoveryStates: [],
-					refreshPending: false,
-					generation: 1,
-				});
 			case "get_session_tree": {
 				const tree = list
 					.filter((e) => e.type === "message" && !e.entryId.startsWith("__"))

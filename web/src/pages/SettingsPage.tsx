@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { Navigate, useNavigate } from "react-router";
 import { api, type Schemas, unwrap } from "../api/client";
 import { identityKeys } from "../api/identity-queries";
+import { invalidateModelCatalog } from "../api/model-catalog-queries";
 import {
 	qk,
 	useDevices,
@@ -745,6 +746,8 @@ function GitIdentitySettings() {
 
 /** omp 主配置文件：其中的 `cycleOrder` / `modelTags` 决定角色头像列表。 */
 const ROLES_CONFIG = "config.yml";
+/** 中央模型目录按这两个文件渲染：保存或删除后让目录重新读取（服务端按新配置重跑）。 */
+const CATALOG_CONFIGS = new Set([ROLES_CONFIG, "models.yml"]);
 
 function AgentConfigSettings() {
 	const { t } = useTranslation();
@@ -753,20 +756,23 @@ function AgentConfigSettings() {
 		Schemas["AgentConfigWriteResult"] | null
 	>(null);
 	// 来源须稳定：FileBrowser 以 sources 为依赖加载根。config.yml 决定 role 列表（身份与头像 → 角色头像），
-	// 保存或删除它之后让那份列表重新取
+	// 保存或删除它之后让那份列表重新取；models.yml / config.yml 变了让模型目录重新取
 	const sources = useMemo(() => {
-		const rolesChanged = () =>
-			void qc.invalidateQueries({ queryKey: identityKeys.roles });
+		const changed = (path: string) => {
+			if (path === ROLES_CONFIG)
+				void qc.invalidateQueries({ queryKey: identityKeys.roles });
+			if (CATALOG_CONFIGS.has(path)) void invalidateModelCatalog(qc);
+		};
 		const base = agentConfigSource((r) => {
 			setResult(r);
-			if (r.file.path === ROLES_CONFIG) rolesChanged();
+			changed(r.file.path);
 		});
 		return [
 			{
 				...base,
 				async remove(path: string) {
 					await base.remove(path);
-					if (path === ROLES_CONFIG) rolesChanged();
+					changed(path);
 				},
 			},
 		];

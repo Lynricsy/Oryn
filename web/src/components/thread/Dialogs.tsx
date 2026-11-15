@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import { chatModels, useModelCatalog } from "../../api/model-catalog-queries";
 import { useShareOverview } from "../../api/share-queries";
 import {
 	attachmentContentUrl,
@@ -63,6 +64,7 @@ import {
 } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
+import { ModelCatalogFooter } from "../ui/ModelSelect";
 import {
 	Button,
 	Dialog,
@@ -600,12 +602,12 @@ function ModelDialog({
 	const state = useThread(threadId, (s) => s.state);
 	// 手机上自动聚焦搜索框会弹出软键盘，把顶部的角色列表挤出视野
 	const compact = useBreakpoint() === "compact";
-	const models = useRpc(threadId, { type: "get_available_models" });
+	const models = useModelCatalog();
 	const [q, setQ] = useState(initialQuery ?? "");
 	const [error, setError] = useState<unknown>(null);
-	const all = models.data?.models ?? [];
+	const all = chatModels(models.data);
 	const list = all.filter((m) =>
-		`${m.provider}/${m.id} ${m.name}`.toLowerCase().includes(q.toLowerCase()),
+		`${m.selector} ${m.name}`.toLowerCase().includes(q.toLowerCase()),
 	);
 	// 模型列表里直接选 = 手动选择（来源记录 `manual`，回合头回落）；旧 Core 自动回退到 set_model
 	const pick = async (m: { provider: string; id: string }) => {
@@ -618,7 +620,13 @@ function ModelDialog({
 		}
 	};
 	return (
-		<Dialog open wide onClose={onClose} title={t("model.title")}>
+		<Dialog
+			open
+			wide
+			onClose={onClose}
+			title={t("model.title")}
+			footer={<ModelCatalogFooter catalog={models.data} />}
+		>
 			<RoleList threadId={threadId} onPicked={onClose} />
 			{/* 思考级别在输入坞的圆圈菜单里调，速度在页脚的速度读数里调；这里只选模型 */}
 			<h3 className="mb-1 px-2 font-medium text-2xs text-faint">

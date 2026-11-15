@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import { selectModel } from "../../lib/model-select";
 import {
@@ -226,9 +227,8 @@ export function Composer({
 				);
 				return;
 			case "select_model": {
-				const { models } = await realtime.cmd(threadId, {
-					type: "get_available_models",
-				});
+				// 中央模型目录里的对话模型（不问线程的 agent）；切换命令照旧发给线程
+				const models = chatModels(await fetchModelCatalog());
 				const model = matchModelSelector(models, action.selector);
 				if (!model) {
 					if (composerMounted(threadId))

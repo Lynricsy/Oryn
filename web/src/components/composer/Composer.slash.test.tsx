@@ -5,7 +5,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
 import { resetComposerDrafts } from "../../state/composer-drafts";
@@ -256,19 +256,51 @@ describe("Composer 斜杠命令", () => {
 		]);
 	});
 
-	it("/model <选择器>：对上唯一模型直接切换；对不上打开模型对话框并预填搜索", async () => {
-		reply({
-			get_available_models: () => ({
-				models: [
-					{
-						provider: "anthropic",
-						id: "claude-sonnet-4-5",
-						name: "Claude Sonnet 4.5",
-					},
-					{ provider: "openai", id: "gpt-5", name: "GPT-5" },
-				],
-			}),
+	/** 中央模型目录（`GET /api/v1/models/catalog`）；给了 `gate` 时应答挂起到放行。 */
+	function stubCatalog(
+		models: { provider: string; id: string; name: string; kind?: string }[],
+		gate?: Promise<void>,
+	) {
+		vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+			const url = new URL(
+				input instanceof Request ? input.url : String(input),
+				"http://x",
+			);
+			if (url.pathname !== "/api/v1/models/catalog")
+				return new Response(null, { status: 404 });
+			await gate;
+			return Response.json({
+				models: models.map((m) => ({
+					kind: "chat",
+					selector: `${m.provider}/${m.id}`,
+					...m,
+				})),
+				fetchedAt: 0,
+				stale: false,
+			});
 		});
+		onTestFinished(() => {
+			vi.unstubAllGlobals();
+		});
+	}
+
+	it("/model <选择器>：按中央目录的对话模型匹配，对上唯一模型直接切换；对不上打开模型对话框并预填搜索", async () => {
+		reply();
+		stubCatalog([
+			{
+				provider: "anthropic",
+				id: "claude-sonnet-4-5",
+				name: "Claude Sonnet 4.5",
+			},
+			{ provider: "openai", id: "gpt-5", name: "GPT-5" },
+			// 非对话模型不参与匹配：否则 "sonnet" 会对上两个
+			{
+				provider: "voice",
+				id: "sonnet-tts",
+				name: "Sonnet TTS",
+				kind: "tts",
+			},
+		]);
 		mount();
 		await send("/model sonnet");
 		expect(framesOf("oryn_select_model")).toEqual([
@@ -349,9 +381,16 @@ describe("Composer 斜杠命令", () => {
 		});
 
 		it("/model <选择器>：对不上的应答在切到 B 后才到，不在 B 打开模型对话框", async () => {
-			const release = holdReply("get_available_models", {
-				models: [{ provider: "openai", id: "gpt-5", name: "GPT-5" }],
-			});
+			reply();
+			// tsconfig 的 lib 不含 Promise.withResolvers
+			let open: () => void = () => {};
+			stubCatalog(
+				[{ provider: "openai", id: "gpt-5", name: "GPT-5" }],
+				new Promise<void>((res) => {
+					open = res;
+				}),
+			);
+			const release = () => act(async () => open());
 			const { switchToB } = mountSwitchable();
 			await send("/model llama");
 			switchToB();

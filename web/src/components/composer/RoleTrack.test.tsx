@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry } from "../../api/client";
 import i18n from "../../i18n";
 import { resetLegacyCore } from "../../lib/model-select";
@@ -145,6 +145,10 @@ beforeEach(() => {
 	localStorage.clear();
 	seq = 0;
 	current = { provider: "google", id: "gemini-4-carbon", level: "high" };
+	// default 的 `@Cyrene` 没有 `selected`，解析时会读中央模型目录：给一份空目录，不走真网络
+	vi.stubGlobal("fetch", async () =>
+		Response.json({ models: [], fetchedAt: 0, stale: false }),
+	);
 	cmd.mockImplementation(
 		async (threadId: string, f: Record<string, unknown>) => {
 			switch (f.type) {
@@ -198,6 +202,10 @@ beforeEach(() => {
 		getThreadStore(id)
 			.getState()
 			.apply([{ type: "state", state: state() }]);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe("Ctrl+P 角色轮换", () => {

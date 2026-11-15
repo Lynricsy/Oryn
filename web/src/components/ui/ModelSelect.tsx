@@ -1,8 +1,10 @@
 /**
  * 新线程的模型与思考级别选择（首页新建线程框、「每次新建线程」定时的对话框共用）。
- * 模型选择器只选模型：自由输入 `provider/id`、「默认模型」与最近用过的模型；思考级别是胶囊旁的独立圆圈按钮（`ModelPill`），
- * 级别取模型能力缓存（会话里见过该模型时记下），没见过的模型只给「跟随默认」，模型不推理时没有圆圈。
+ * 模型选择器只选模型：自由输入 `provider/id`、「默认模型」、最近用过的模型与中央模型目录里的对话模型；
+ * 思考级别是胶囊旁的独立圆圈按钮（`ModelPill`），级别取模型目录的 `thinking`（`state/model-caps.ts`），
+ * 目录里没有的模型只给「跟随默认」，模型不能调节思考时没有圆圈。
  */
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	type ReactElement,
 	type ReactNode,
@@ -11,18 +13,26 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	chatModels,
+	type ModelCatalog,
+	refreshModelCatalog,
+	useModelCatalog,
+} from "../../api/model-catalog-queries";
+import { formatDateTime } from "../../lib/format";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { type ModelCaps, useModelCaps } from "../../state/model-caps";
 import { useIndex } from "../../state/stores";
 import { Icon } from "./icons";
 import { ModelLogo } from "./ModelLogo";
-import { Option, Popover } from "./PickerPopover";
-import { TextInput } from "./primitives";
+import { Option, Popover, PopoverLabel } from "./PickerPopover";
+import { Button, describeError, Spinner, TextInput } from "./primitives";
 import { ThinkingMenu } from "./ThinkingDial";
 
 /**
- * 新线程可选的思考级别：空串 = 跟随 role / 默认。新线程还没有会话，级别取模型能力缓存；
- * 没见过的模型（含 role 默认模型）能力未知，只给「跟随默认」，不假装全部级别都可用；模型不推理时为 null（不显示圆圈）。
+ * 新线程可选的思考级别：空串 = 跟随 role / 默认。新线程还没有会话，级别取模型目录；
+ * 目录里没有的模型（含 role 默认模型）能力未知，只给「跟随默认」，不假装全部级别都可用；
+ * 模型不能调节思考时为 null（不显示圆圈）。
  */
 export function newThreadThinkingOptions(
 	caps: ModelCaps | undefined,
@@ -103,7 +113,64 @@ export function ModelPill({
 	);
 }
 
-/** 模型弹层的内容：自由输入框、「默认模型」、最近用过的模型。 */
+/**
+ * 模型列表的页脚（模型对话框、新线程的模型弹层）：目录是旧结果时给一行淡色提示，
+ * 「刷新」让控制面强制重跑目录（`?refresh=true`），结果直接写回缓存。
+ */
+export function ModelCatalogFooter({
+	catalog,
+}: {
+	catalog: ModelCatalog | undefined;
+}): ReactNode {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<unknown>(null);
+	const refresh = async () => {
+		setBusy(true);
+		setError(null);
+		try {
+			await refreshModelCatalog(qc);
+		} catch (e) {
+			setError(e);
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div className="flex w-full min-w-0 items-center gap-2 text-xs">
+			<span className="min-w-0 flex-1 truncate">
+				{error ? (
+					<span role="alert" className="text-err">
+						{describeError(error, t)}
+					</span>
+				) : (
+					catalog?.stale && (
+						<span data-testid="catalog-stale" className="text-faint">
+							{t("model.catalogStale", {
+								time: formatDateTime(catalog.fetchedAt),
+							})}
+						</span>
+					)
+				)}
+			</span>
+			<Button
+				size="sm"
+				variant="ghost"
+				disabled={busy}
+				onClick={() => void refresh()}
+			>
+				{busy ? <Spinner size={12} /> : <Icon name="refresh" size={13} />}
+				{t("model.refresh")}
+			</Button>
+		</div>
+	);
+}
+
+/**
+ * 模型弹层的内容：自由输入框、「默认模型」、最近用过的模型、目录里的对话模型（按输入框筛选，
+ * 已在「最近」里的不重复列出），页脚是目录的刷新与过期提示。
+ */
 export function ModelOptions({
 	model,
 	onModel,
@@ -113,6 +180,16 @@ export function ModelOptions({
 }): ReactNode {
 	const { t } = useTranslation();
 	const recent = useRecentModels();
+	const catalog = useModelCatalog();
+	const q = model.trim().toLowerCase();
+	const listed = useMemo(() => {
+		const seen = new Set(recent);
+		return chatModels(catalog.data).filter(
+			(m) =>
+				!seen.has(m.selector) &&
+				(!q || `${m.selector} ${m.name}`.toLowerCase().includes(q)),
+		);
+	}, [catalog.data, recent, q]);
 	return (
 		<>
 			<div className="p-1">
@@ -141,14 +218,35 @@ export function ModelOptions({
 					{m}
 				</Option>
 			))}
+			{listed.length > 0 && <PopoverLabel>{t("model.allModels")}</PopoverLabel>}
+			{listed.map((m) => (
+				<Option
+					key={m.selector}
+					selected={model === m.selector}
+					leading={<ModelLogo model={m.id} provider={m.provider} />}
+					hint={m.selector}
+					onClick={() => onModel(m.selector)}
+				>
+					{m.name || m.id}
+				</Option>
+			))}
+			{catalog.isPending && (
+				<div className="flex items-center gap-2 px-2 py-1.5 text-muted text-xs">
+					<Spinner size={12} />
+					{t("model.loading")}
+				</div>
+			)}
+			<div className="px-1 pt-1">
+				<ModelCatalogFooter catalog={catalog.data} />
+			</div>
 		</>
 	);
 }
 
 /**
  * 表单里的模型 + 思考级别控件（定时对话框）：胶囊点开弹层，圆圈独立选级别。
- * 本机能力缓存认得这个模型时，换模型后不支持的级别退回默认；认不得时（新设备、没在本机见过该模型的会话）
- * 保留现有级别——缓存不是「模型支持什么」的权威判定，清掉就成了跨设备编辑悄悄改配置（M9 审查 W4）。
+ * 模型目录认得这个模型时，换模型后不支持的级别退回默认；认不得时（目录还没读到、目录里没有该模型）
+ * 保留现有级别——清掉就成了悄悄改配置（M9 审查 W4）。
  */
 export function ModelSelect({
 	model,
@@ -169,7 +267,7 @@ export function ModelSelect({
 	// 能力未知：只有「跟随默认」与现有级别两项
 	const options = known || !thinking ? capOptions : ["", thinking];
 	const text = modelPillText(model, t("newThread.defaultModel"));
-	// 能力已知、原来选的级别新模型不支持（或不推理）时退回「跟随默认」
+	// 能力已知、原来选的级别新模型不支持（或不能调节）时退回「跟随默认」
 	useEffect(() => {
 		if (known && thinking && !capOptions?.includes(thinking)) onThinking("");
 	}, [known, thinking, capOptions, onThinking]);

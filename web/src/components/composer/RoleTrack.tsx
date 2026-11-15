@@ -1,6 +1,7 @@
 /**
  * 角色模型轮换：Ctrl+P / Shift+Ctrl+P（mac ⌘P）按 omp 的 cycleOrder 切换角色模型，切换时在输入坞上方浮出角色轨道。
- * 解析规则在 `lib/model-roles.ts`；这里负责取数（get_settings / get_model_roles / get_available_models，React Query 缓存）、
+ * 解析规则在 `lib/model-roles.ts`；这里负责取数（get_settings / get_model_roles 走线程，React Query 缓存；
+ * 解析别名与回退链用的模型列表取中央模型目录 `useModelCatalog`）、
  * 切换（`lib/model-select.ts`：新 Core 发 oryn_select_model，旧 Core 回退 set_model + set_thinking_level；按序合并连按）、
  * 轨道动画与读屏播报。当前格：线程里有来源记录时只认记录（`recordedRoleIndex`，不读写本机记忆）；
  * 没有记录（旧 Core）时沿用本机记忆 + 现有的匹配逻辑。模型对话框里的角色列表（RolePicker.tsx）走同一套取数与切换。
@@ -22,6 +23,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import {
+	modelCatalogQuery,
+	useModelCatalog,
+} from "../../api/model-catalog-queries";
 import i18n from "../../i18n";
 import {
 	BUILTIN_ROLE_NAMES,
@@ -58,11 +63,10 @@ const SETTINGS_FRAME: OmpCommand = {
 	paths: ["cycleOrder"],
 };
 const ROLES_FRAME: OmpCommand = { type: "get_model_roles" };
-const MODELS_FRAME: OmpCommand = { type: "get_available_models" };
 /** 角色配置很少变：30 秒内复用缓存，过期后下次按键或打开对话框时重取。 */
 const STALE_MS = 30_000;
 
-/** 与 `Dialogs.tsx` 的 `useRpc` 同一种 key，模型对话框的模型列表与这里共用缓存。 */
+/** 与 `Dialogs.tsx` 的 `useRpc` 同一种 key，两边共用缓存。 */
 const rpcKey = (threadId: string, frame: OmpCommand) =>
 	["rpc", threadId, frame] as const;
 
@@ -71,9 +75,6 @@ interface SettingsData {
 }
 interface RolesData {
 	roles?: RoleEntry[];
-}
-interface ModelsData {
-	models?: ModelRef[];
 }
 
 function rpcQuery<T>(threadId: string, frame: OmpCommand) {
@@ -85,7 +86,7 @@ function rpcQuery<T>(threadId: string, frame: OmpCommand) {
 	};
 }
 
-/** 有配置值却没有 `selected` 的角色（别名、回退链、不在候选里）需要可用模型列表来解析。 */
+/** 有配置值却没有 `selected` 的角色（别名、回退链、不在候选里）需要模型目录来解析。 */
 const needsModels = (entries: readonly RoleEntry[]) =>
 	entries.some((e) => !e.selected && !!e.model);
 
@@ -107,12 +108,10 @@ async function fetchRoleData(
 		qc.fetchQuery(rpcQuery<RolesData>(threadId, ROLES_FRAME)),
 	]);
 	const entries = roles.roles ?? [];
+	// 目录含全部种类（tiny 等角色可能指向非 chat 模型）；读不到时只靠 `selected` 解析
 	const available = needsModels(entries)
-		? ((
-				await qc
-					.fetchQuery(rpcQuery<ModelsData>(threadId, MODELS_FRAME))
-					.catch(() => undefined)
-			)?.models ?? [])
+		? ((await qc.fetchQuery(modelCatalogQuery()).catch(() => undefined))
+				?.models ?? [])
 		: [];
 	return {
 		order: parseCycleOrder(settings?.values?.cycleOrder),
@@ -475,10 +474,7 @@ export function useRoleView(
 	});
 	const entries = roles.data?.roles;
 	const wantModels = !!entries && needsModels(entries);
-	const models = useQuery({
-		...rpcQuery<ModelsData>(threadId, MODELS_FRAME),
-		enabled: enabled && wantModels,
-	});
+	const models = useModelCatalog(enabled && wantModels);
 	const state = useThread(threadId, (s) => s.state);
 	const threadEntries = useThread(threadId, (s) => s.entries);
 	const leaf = useThread(threadId, (s) => s.leafEntryId);

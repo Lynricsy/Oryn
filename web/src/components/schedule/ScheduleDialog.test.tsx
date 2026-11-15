@@ -14,6 +14,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Schemas } from "../../api/client";
 import { scheduleKeys } from "../../api/schedule-queries";
 import {
 	threads as fixtureThreads,
@@ -21,7 +22,6 @@ import {
 	projects,
 } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
-import { MODEL_CAPS_KEY, modelCapsStore } from "../../state/model-caps";
 import { indexStore } from "../../state/stores";
 import { ScheduleDialog, type ScheduleTarget } from "./ScheduleDialog";
 
@@ -444,13 +444,16 @@ describe("ScheduleDialog：秒级间隔（M9 审查 W3）", () => {
 });
 
 describe("ScheduleDialog：模型能力未知（M9 审查 W4）", () => {
-	afterEach(() => {
-		modelCapsStore.setState({ caps: {} });
-	});
+	/** 让中央模型目录只含这些模型。 */
+	function catalogOf(models: Schemas["CatalogModel"][]) {
+		override = (_req, path) =>
+			path === "/api/v1/models/catalog"
+				? Response.json({ models, fetchedAt: 0, stale: false })
+				: undefined;
+	}
 
-	it("本机没有该模型的能力缓存：保留原思考级别并标注「能力未知」，保存仍带 high", async () => {
-		localStorage.removeItem(MODEL_CAPS_KEY);
-		modelCapsStore.setState({ caps: {} });
+	it("模型目录里没有该模型：保留原思考级别并标注「能力未知」，保存仍带 high", async () => {
+		catalogOf([]);
 		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
 		await ready();
 		expect(within(dialog()).getByTestId("thinking-unknown")).toHaveTextContent(
@@ -462,12 +465,21 @@ describe("ScheduleDialog：模型能力未知（M9 审查 W4）", () => {
 	});
 
 	it("能力已知且不支持原级别：退回「跟随默认」（换模型时的既有规则不变）", async () => {
-		modelCapsStore.setState({
-			caps: { "anthropic/claude-sonnet-5": { thinking: ["low", "medium"] } },
-		});
+		catalogOf([
+			{
+				provider: "anthropic",
+				id: "claude-sonnet-5",
+				selector: "anthropic/claude-sonnet-5",
+				name: "Claude Sonnet 5",
+				kind: "chat",
+				thinking: ["low", "medium"],
+			},
+		]);
 		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
 		await ready();
-		expect(within(dialog()).queryByTestId("thinking-unknown")).toBeNull();
+		await waitFor(() =>
+			expect(within(dialog()).queryByTestId("thinking-unknown")).toBeNull(),
+		);
 		fireEvent.click(save());
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 		expect(writes()[0]?.body).not.toHaveProperty("thinkingLevel");
