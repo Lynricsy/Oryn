@@ -1675,7 +1675,8 @@ async function X36() {
 		focus = otherT;
 		const og = await say(
 			otherT,
-			`用 bash 执行 nohup python3 -m http.server ${G} --bind 0.0.0.0 >/dev/null 2>&1 & sleep 1; curl -s -o /dev/null -w 'LOCAL=%{http_code}' http://127.0.0.1:${G}/ ，只回复输出`,
+			// 冷启动的 python3 在 guest 里可能要好几秒才开始监听：轮询到 200（最多 15 秒）再回报
+			`用 bash 执行 setsid nohup python3 -m http.server ${G} --bind 0.0.0.0 >/dev/null 2>&1 < /dev/null & for i in $(seq 30); do c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${G}/); [ "$c" = 200 ] && break; sleep 0.5; done; echo LOCAL=$c ，只回复输出`,
 		);
 		check(
 			og.text.includes("LOCAL=200"),
