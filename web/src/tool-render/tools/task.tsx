@@ -216,10 +216,12 @@ function AgentProgressRow({
 	);
 }
 
-function Body({ args, result, host }: ToolRenderProps): ReactNode {
+function Body({ args, result, partial, host }: ToolRenderProps): ReactNode {
+	// 运行中没有最终结果时，用结构化部分结果（details.progress）展示各子 agent 的进度
+	const current = result ?? partial;
 	const context = str(args.context);
 	const tasks = taskItems(args);
-	const details = detailsRecord(result);
+	const details = detailsRecord(current);
 	const results =
 		details && Array.isArray(details.results)
 			? details.results.filter(isRecord)
@@ -320,10 +322,10 @@ function Body({ args, result, host }: ToolRenderProps): ReactNode {
 				</div>
 			)}
 			{ordered.length === 0 && !showProgress && (
-				<ResultText result={result} maxLines={12} />
+				<ResultText result={current} maxLines={12} />
 			)}
 		</>
 	);
 }
 
-export const taskRenderer: ToolRenderer = { Summary, Body };
+export const taskRenderer: ToolRenderer = { Summary, Body, livePartial: true };

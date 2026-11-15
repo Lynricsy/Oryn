@@ -156,21 +156,23 @@ function Board({ phases }: { phases: unknown[] }): ReactNode {
 	return <div className="tv-todo">{rendered}</div>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, partial }: ToolRenderProps): ReactNode {
 	const ops = toOps(args);
-	const rec = detailsRecord(result);
+	// 运行中没有最终结果时，用结构化部分结果展示看板
+	const current = result ?? partial;
+	const rec = detailsRecord(current);
 	const phases =
-		rec && Array.isArray(rec.phases) && !result?.isError ? rec.phases : null;
+		rec && Array.isArray(rec.phases) && !current?.isError ? rec.phases : null;
 	return (
 		<>
 			{ops.length > 0 && <div className="tv-list">{ops.map(opRow)}</div>}
 			{phases !== null ? (
 				<Board phases={phases} />
 			) : (
-				<ResultText result={result} maxLines={8} />
+				<ResultText result={current} maxLines={8} />
 			)}
 		</>
 	);
 }
 
-export const todoRenderer: ToolRenderer = { Summary, Body };
+export const todoRenderer: ToolRenderer = { Summary, Body, livePartial: true };

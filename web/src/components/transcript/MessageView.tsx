@@ -540,10 +540,9 @@ export function ToolCard({
 			: undefined;
 	const running =
 		!result && (Boolean(live && !live.ended) || streamingArgs === true);
-	const partial =
-		live && !live.ended
-			? resultTextOf(toolResultLike(live.partialResult))
-			: undefined;
+	const partialResult =
+		live && !live.ended ? toolResultLike(live.partialResult) : undefined;
+	const partial = resultTextOf(partialResult);
 	return (
 		<ToolView
 			name={live?.toolName ?? name}
@@ -556,6 +555,7 @@ export function ToolCard({
 			running={running}
 			intent={intent ?? live?.intent}
 			partial={partial}
+			partialResult={partialResult}
 			host={
 				// 只读（分享页）不提供子 agent 转录查看
 				ctx.readOnly

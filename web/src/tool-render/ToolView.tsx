@@ -105,6 +105,8 @@ export interface ToolViewProps {
 	intent?: string;
 	/** Streaming partial output tail while running. */
 	partial?: string;
+	/** 运行中的结构化部分结果；渲染器声明 `livePartial` 时由它自己展示，替代文本尾巴。 */
+	partialResult?: ToolResultLike;
 	defaultOpen?: boolean;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
@@ -174,6 +176,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		args: xdev?.args ?? args,
 		result,
 		running: props.running,
+		partial: props.running && !result ? props.partialResult : undefined,
 		host: props.host,
 	};
 
@@ -186,7 +189,10 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				? "ok"
 				: "pending";
 	const partial =
-		props.running && !props.result && props.partial
+		props.running &&
+		!props.result &&
+		props.partial &&
+		!(renderer.livePartial === true && renderProps.partial)
 			? stripAnsi(replaceTabs(props.partial))
 			: "";
 

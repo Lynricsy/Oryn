@@ -542,8 +542,12 @@ function renderCells(
 	}));
 }
 
-function Summary({ name, args, result }: ToolRenderProps): ReactNode {
-	const cells = renderCells(args, name, detailCellsOf(detailsRecord(result)));
+function Summary({ name, args, result, partial }: ToolRenderProps): ReactNode {
+	const cells = renderCells(
+		args,
+		name,
+		detailCellsOf(detailsRecord(result ?? partial)),
+	);
 	const first = cells[0];
 	if (!first) return <span className="tv-muted">{argsDigest(args)}</span>;
 	const label =
@@ -560,8 +564,10 @@ function Summary({ name, args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ name, args, result }: ToolRenderProps): ReactNode {
-	const details = detailsRecord(result);
+function Body({ name, args, result, partial }: ToolRenderProps): ReactNode {
+	// 运行中没有最终结果时，用结构化部分结果（details.cells）逐格展示输出
+	const current = result ?? partial;
+	const details = detailsRecord(current);
 	const detailCells = detailCellsOf(details);
 	const cells = renderCells(args, name, detailCells);
 
@@ -573,8 +579,8 @@ function Body({ name, args, result }: ToolRenderProps): ReactNode {
 		return (
 			<>
 				{badArgs && <InvalidArg what="cells" />}
-				<ResultImages result={result} />
-				<ResultText result={result} maxLines={12} />
+				<ResultImages result={current} />
+				<ResultText result={current} maxLines={12} />
 			</>
 		);
 	}
@@ -611,10 +617,12 @@ function Body({ name, args, result }: ToolRenderProps): ReactNode {
 				})}
 			</div>
 			{notice && <Note>{notice}</Note>}
-			<ResultImages result={result} />
-			{detailCells.length === 0 && <ResultText result={result} maxLines={12} />}
+			<ResultImages result={current} />
+			{detailCells.length === 0 && (
+				<ResultText result={current} maxLines={12} />
+			)}
 		</>
 	);
 }
 
-export const evalRenderer: ToolRenderer = { Summary, Body };
+export const evalRenderer: ToolRenderer = { Summary, Body, livePartial: true };
