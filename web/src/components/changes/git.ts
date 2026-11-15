@@ -12,17 +12,24 @@ export type ChangeScope =
 	| { scope: "all" | "uncommitted" }
 	| { scope: "commit"; sha: string };
 
-export interface GitTarget {
+/** 一个仓库：在哪台 orb、以哪个线程的身份（runner 线程的范围是它的工作目录）、哪个目录、对比哪个基线。 */
+export interface GitRepo {
 	orbId: string;
-	/** 仓库所在目录；缺省 = orb 当前工作目录 */
+	/** 当前线程：请求都带 `thread`（runner 的 orb 必须带，控制面据此转发线程的工作目录） */
+	threadId: string;
+	/** 仓库所在目录；缺省 = 线程工作目录（普通 orb 为 orb 当前工作目录） */
 	root?: string;
 	/** 基线分支名；缺省由服务端按项目 `baseBranch` / `origin/HEAD` / `main` / `master` 推定 */
 	base?: string;
+}
+
+export interface GitTarget extends GitRepo {
 	scope: ChangeScope;
 }
 
-function scopeQuery({ root, base, scope }: GitTarget) {
+function scopeQuery({ threadId, root, base, scope }: GitTarget) {
 	return {
+		thread: threadId,
 		root,
 		base,
 		scope: scope.scope,
@@ -109,9 +116,7 @@ export function getGitDiff(
 
 /** `bg=true` 仅用于后台触发的刷新（HEAD 变化）；打开与手动刷新走前台。 */
 export function listGitCommits(
-	orbId: string,
-	root: string | undefined,
-	base: string | undefined,
+	{ orbId, threadId, root, base }: GitRepo,
 	bg = false,
 	signal?: AbortSignal,
 ): Promise<Schemas["GitCommitList"]> {
@@ -119,7 +124,7 @@ export function listGitCommits(
 		api.GET("/api/v1/orbs/{id}/git/commits", {
 			params: {
 				path: { id: orbId },
-				query: { root, base, bg: bg || undefined },
+				query: { thread: threadId, root, base, bg: bg || undefined },
 			},
 			signal: requestSignal(signal),
 		}),
@@ -128,8 +133,7 @@ export function listGitCommits(
 
 /** 文件级暂存 / 取消暂存；重命名把新旧路径一起提交，否则只暂存了一半。 */
 export async function setStaged(
-	orbId: string,
-	root: string | undefined,
+	{ orbId, threadId, root }: Omit<GitRepo, "base">,
 	files: GitFileChange[],
 	staged: boolean,
 ): Promise<void> {
@@ -138,7 +142,7 @@ export async function setStaged(
 	);
 	if (paths.length === 0) return;
 	const body = { root, paths };
-	const params = { path: { id: orbId } };
+	const params = { path: { id: orbId }, query: { thread: threadId } };
 	await unwrap(
 		staged
 			? api.POST("/api/v1/orbs/{id}/git/stage", { params, body })

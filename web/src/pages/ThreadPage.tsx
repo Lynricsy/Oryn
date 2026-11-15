@@ -41,6 +41,7 @@ import {
 	ThreadTabStrip,
 	useThreadTabs,
 } from "../components/thread/RightPanel";
+import { RunnerOfflineNotice } from "../components/thread/RunnerOfflineNotice";
 import { HEADER_VEIL, ThreadHeader } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
 import {
@@ -408,6 +409,7 @@ export function ThreadScreen({
 								{!coordinator && (
 									<EnvBanner key={`env:${threadId}`} threadId={threadId} />
 								)}
+								{!coordinator && <RunnerOfflineNotice threadId={threadId} />}
 								{dockNotice}
 								<QueueBar threadId={threadId} />
 								<AboveEditorWidgets threadId={threadId} />

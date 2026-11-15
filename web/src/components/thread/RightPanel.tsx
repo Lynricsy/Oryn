@@ -22,6 +22,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { contentTabs } from "../../lib/orb-features";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
 import { useTerminals } from "../../state/terminals";
@@ -49,8 +50,6 @@ const FilesPanel = lazy(() => import("../files/FilesPanel"));
 const TerminalPanel = lazy(() => import("../terminal/TerminalPanel"));
 const PortalPanel = lazy(() => import("../portal/PortalPanel"));
 const DesktopPanel = lazy(() => import("../desktop/DesktopPanel"));
-
-const CONTENT_TABS: readonly PanelTab[] = ["changes", "files", "terminal"];
 
 const TAB_ICON: Record<ThreadTab, IconName> = {
 	agent: "message",
@@ -112,7 +111,12 @@ function useUnseenChanges(
 			busy = true;
 			try {
 				const s = await getGitStatus(
-					{ orbId, root: readChangesRoot(threadId), scope: { scope: "all" } },
+					{
+						orbId,
+						threadId,
+						root: readChangesRoot(threadId),
+						scope: { scope: "all" },
+					},
 					true,
 					ctl.signal,
 				);
@@ -192,16 +196,16 @@ function useCompactTabs(
 
 /**
  * 当前线程的标签集合：`peer`（窄屏同级标签）为 `agent … info`，否则为 `info …` 面板标签；
- * orb 有 portal 时在终端之后加 Portal，orb 有桌面时再加 Desktop。
- * `portalGone` / `desktopGone`：对应标签消失（服务停掉、orb 删除、换到没有它的线程）；orb 还没到时为假，先不动。
+ * 内容标签按 orb 声明的特性筛（`contentTabs`，M11b），orb 有 portal 时在终端之后加 Portal，orb 有桌面时再加 Desktop。
+ * `settled`：orb 已到（或线程确实没有 orb），此时不在 `tabs` 里的标签才算真的消失（服务停掉、orb 删除、
+ * 换到没有它的线程、runner 没有该特性）；orb 还没到时为假，先不动。
  */
 export function useThreadTabs(
 	threadId: string,
 	peer: boolean,
 ): {
 	tabs: readonly ThreadTab[];
-	portalGone: boolean;
-	desktopGone: boolean;
+	settled: boolean;
 } {
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
 	const loaded = useThread(threadId, (s) => s.thread !== undefined);
@@ -209,21 +213,18 @@ export function useThreadTabs(
 	const live = orb?.state !== "deleted";
 	const hasPortal = live && (orb?.portals?.length ?? 0) > 0;
 	const hasDesktop = live && orb?.desktop !== undefined;
+	const content = contentTabs(live ? orb : undefined).join(",");
 	const tabs = useMemo(() => {
-		const extra: PanelTab[] = [
+		const middle: PanelTab[] = [
+			...(content ? (content.split(",") as PanelTab[]) : []),
 			...(hasPortal ? (["portal"] as const) : []),
 			...(hasDesktop ? (["desktop"] as const) : []),
 		];
 		return peer
-			? (["agent", ...CONTENT_TABS, ...extra, "info"] as const)
-			: (["info", ...CONTENT_TABS, ...extra] as const);
-	}, [peer, hasPortal, hasDesktop]);
-	const settled = orb !== undefined || (loaded && !orbId);
-	return {
-		tabs,
-		portalGone: !hasPortal && settled,
-		desktopGone: !hasDesktop && settled,
-	};
+			? (["agent", ...middle, "info"] as const)
+			: (["info", ...middle] as const);
+	}, [peer, content, hasPortal, hasDesktop]);
+	return { tabs, settled: orb !== undefined || (loaded && !orbId) };
 }
 
 /**
@@ -250,7 +251,12 @@ export function ThreadTabStrip({
 	// Desktop：Profile 被别的 orb 占用或装载失败，需要你选择或重试
 	const profileStatus = useOrbOf(threadId)?.desktop?.profile?.status;
 	const deskAttention = profileStatus === "in_use" || profileStatus === "error";
-	const unseen = useUnseenChanges(threadId, orbId, shown === "changes");
+	// 没有「改动」标签（runner 没有 git）时不做后台检查
+	const unseen = useUnseenChanges(
+		threadId,
+		tabs.includes("changes") ? orbId : undefined,
+		shown === "changes",
+	);
 	// 线程进入 awaiting_input：有待回答的扩展 UI 请求或待批准的计划
 	const awaiting = useThread(
 		threadId,
@@ -380,16 +386,12 @@ export function RightPanel({
 	const bp = useBreakpoint();
 	const segments = useViewportSegments();
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
-	const { tabs, portalGone, desktopGone } = useThreadTabs(threadId, peer);
-	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示；可选标签不在时先按信息标签显示
-	const shown: PanelTab =
-		(tab === "portal" || tab === "desktop") && !tabs.includes(tab)
-			? "info"
-			: tab;
+	const { tabs, settled } = useThreadTabs(threadId, peer);
+	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示；标签不在时先按信息标签显示
+	const shown: PanelTab = tabs.includes(tab) ? tab : "info";
 	useEffect(() => {
-		if ((tab === "portal" && portalGone) || (tab === "desktop" && desktopGone))
-			uiStore.getState().setPanelTab("info");
-	}, [tab, portalGone, desktopGone]);
+		if (settled && !tabs.includes(tab)) uiStore.getState().setPanelTab("info");
+	}, [tab, tabs, settled]);
 	const canMax = !peer && bp === "expanded" && !segments;
 	const sides = useChromeSides();
 	const chromeLeft = !!chrome?.left && sides.left !== null;

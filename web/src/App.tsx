@@ -49,6 +49,7 @@ const SharePage = lazy(() =>
 const SETTINGS: SettingsSection[] = [
 	"devices",
 	"providers",
+	"runners",
 	"secrets",
 	"browser-profiles",
 	"git-identity",

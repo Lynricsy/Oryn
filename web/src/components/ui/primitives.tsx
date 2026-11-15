@@ -686,6 +686,11 @@ const FRIENDLY_CODES = [
 	"space_thread",
 	"coordinator_restricted",
 	"invalid_target",
+	// runner（M11b）；worktree_failed / worktree_dirty 不在此列：它们的消息是 git 的原文，要原样显示
+	"runner_offline",
+	"runner_unsupported",
+	"dir_not_served",
+	"thread_required",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

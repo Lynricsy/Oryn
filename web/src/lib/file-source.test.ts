@@ -124,14 +124,14 @@ describe("orbFileSource（对 mock orb 文件系统）", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it("roots：Workspace 在前、Home 在后", async () => {
-		expect(await orbFileSource(orb).roots()).toEqual([
+		expect(await orbFileSource(orb, "T-1").roots()).toEqual([
 			{ label: "files.roots.workspace", path: "/home/user/workspace/repo" },
 			{ label: "files.roots.home", path: "/home/user" },
 		]);
 	});
 
 	it("readText 超过上限时截断并带 etag；小文件不截断", async () => {
-		const s = orbFileSource(orb);
+		const s = orbFileSource(orb, "T-1");
 		const big = await s.readText("~/workspace/repo/logs/big.log", 1024);
 		expect(big.truncated).toBe(true);
 		expect(new TextEncoder().encode(big.text).length).toBeLessThanOrEqual(1024);
@@ -145,19 +145,22 @@ describe("orbFileSource（对 mock orb 文件系统）", () => {
 
 	it("截断处恰好落在多字节字符中间时不产生替换字符", async () => {
 		// 「orb 里」：'里' 占 3 字节，从第 5 字节起；只读 6 字节会切开它
-		const r = await orbFileSource(orb).readText("/home/user/notes.txt", 6);
+		const r = await orbFileSource(orb, "T-1").readText(
+			"/home/user/notes.txt",
+			6,
+		);
 		expect(r).toMatchObject({ text: "orb ", truncated: true });
 	});
 
 	it("$HOME 之外的路径 → 403 outside_home", async () => {
-		await expect(orbFileSource(orb).list("/etc")).rejects.toMatchObject({
+		await expect(orbFileSource(orb, "T-1").list("/etc")).rejects.toMatchObject({
 			status: 403,
 			code: "outside_home",
 		});
 	});
 
 	it("旧版 orbd → ApiError orbd_outdated", async () => {
-		const e = await orbFileSource("orb-old00000000000000000000e4")
+		const e = await orbFileSource("orb-old00000000000000000000e4", "T-1")
 			.roots()
 			.catch((x) => x);
 		expect(e).toBeInstanceOf(ApiError);
@@ -192,10 +195,10 @@ describe("读取上限：服务端无视 Range 回整个大文件时不整份读
 			"fetch",
 			vi.fn(async () => new Response(body, { status: 200 })),
 		);
-		const r = await orbFileSource("orb-cap00000000000000000000001").readText(
-			"/home/user/huge.log",
-			100_000,
-		);
+		const r = await orbFileSource(
+			"orb-cap00000000000000000000001",
+			"T-1",
+		).readText("/home/user/huge.log", 100_000);
 		expect(r.truncated).toBe(true);
 		expect(r.text.length).toBe(100_000);
 		expect(stats.cancelled).toBe(true);
@@ -221,7 +224,7 @@ describe("读取上限：服务端无视 Range 回整个大文件时不整份读
 			vi.fn(async () => new Response(body, { status: 200 })),
 		);
 		await expect(
-			orbFileSource("orb-cap00000000000000000000001").readBlob("/x.png"),
+			orbFileSource("orb-cap00000000000000000000001", "T-1").readBlob("/x.png"),
 		).rejects.toMatchObject({ status: 413, code: "too_large" });
 		expect(stats.cancelled).toBe(true);
 		expect(stats.pulls).toBeLessThan(40);
@@ -296,7 +299,7 @@ describe("orbFileSource.write（XHR）", () => {
 			},
 		};
 		const progress: [number, number][] = [];
-		const entry = await orbFileSource("orb-1").write(
+		const entry = await orbFileSource("orb-1", "T-1").write(
 			"/home/user/a b.txt",
 			"abcd",
 			{
@@ -308,7 +311,8 @@ describe("orbFileSource.write（XHR）", () => {
 		expect(entry.etag).toBe('"2-4"');
 		expect(sent[0]).toMatchObject({
 			method: "PUT",
-			url: "/api/v1/orbs/orb-1/fs/file?path=%2Fhome%2Fuser%2Fa%20b.txt&overwrite=false",
+			// 带 thread（runner 的 orb 必须带，M11b）
+			url: "/api/v1/orbs/orb-1/fs/file?thread=T-1&path=%2Fhome%2Fuser%2Fa%20b.txt&overwrite=false",
 			headers: {
 				"X-Oryn-CSRF": "1",
 				"If-Match": '"1-3"',
@@ -328,7 +332,9 @@ describe("orbFileSource.write（XHR）", () => {
 			body: { code: "modified", message: "etag mismatch" },
 		};
 		await expect(
-			orbFileSource("orb-1").write("/home/user/a.txt", "x", { etag: '"1-1"' }),
+			orbFileSource("orb-1", "T-1").write("/home/user/a.txt", "x", {
+				etag: '"1-1"',
+			}),
 		).rejects.toMatchObject({
 			status: 412,
 			code: "modified",

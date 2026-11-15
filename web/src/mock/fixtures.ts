@@ -376,6 +376,89 @@ export const browserProfiles: Schemas["BrowserProfile"][] = [
 	},
 ];
 
+// ---------------------------------------------------------------- runner（M11b）
+
+/** runner 截图 / 测试用的 id：laptop 在线（没有终端）、nas 离线（没有 git）、studio 从未接入。 */
+export const M11B_IDS = {
+	laptop: "prov_01JD2M11B0000000000LAPTOP",
+	nas: "prov_01JD2M11B000000000000NAS",
+	studio: "prov_01JD2M11B0000000000STUDIO",
+	laptopOrb: "orb-01jd2m11b00000000000laptop",
+	nasOrb: "orb-01jd2m11b0000000000000nas",
+	studioOrb: "orb-01jd2m11b000000000studio",
+	/** laptop 上直接在仓库目录里工作的线程（新建线程再选这个目录会撞上 `dir_in_use`） */
+	runnerThread: "T-0193a1b2-0000-7000-8000-00000000e001",
+	/** laptop 上在新 worktree 里工作的线程（归档对话框带「同时移除 worktree」） */
+	worktreeThread: "T-0193a1b2-0000-7000-8000-00000000e002",
+	/** 离线的 nas 上的线程（输入区上方的离线提示） */
+	offlineThread: "T-0193a1b2-0000-7000-8000-00000000e003",
+} as const;
+
+/** laptop 声明的仓库目录（与 mock orb 文件系统的仓库同一个路径，文件 / 改动面板有内容）。 */
+export const RUNNER_REPO = "/home/user/workspace/repo";
+
+export const runners: Schemas["Runner"][] = [
+	{
+		id: M11B_IDS.laptop,
+		name: "laptop",
+		online: true,
+		orbId: M11B_IDS.laptopOrb,
+		hostname: "lyn-desktop",
+		os: "linux",
+		arch: "amd64",
+		dirs: [
+			{ path: RUNNER_REPO, name: "repo", git: true },
+			{ path: "/home/user/notes", name: "notes", git: false },
+		],
+		features: ["fs", "git", "attachments", "metrics"],
+		orbdVersion: "0.11.0",
+		agentVersion: "omp/18.19.0",
+		createdAt: NOW - 6 * 24 * HOUR,
+		lastSeenAt: NOW - MIN,
+	},
+	{
+		id: M11B_IDS.nas,
+		name: "nas",
+		online: false,
+		orbId: M11B_IDS.nasOrb,
+		hostname: "nas",
+		os: "linux",
+		arch: "amd64",
+		dirs: [{ path: "/srv/projects/blog", name: "blog", git: false }],
+		features: ["fs", "attachments", "metrics", "terminal"],
+		orbdVersion: "0.11.0",
+		createdAt: NOW - 20 * 24 * HOUR,
+		lastSeenAt: NOW - 3 * HOUR,
+	},
+	{
+		id: M11B_IDS.studio,
+		name: "studio",
+		online: false,
+		orbId: M11B_IDS.studioOrb,
+		dirs: [],
+		features: [],
+		createdAt: NOW - 2 * HOUR,
+	},
+];
+
+/** runner 的常驻 orb：没有类型与规格，provider 名即 runner 名。 */
+export function runnerOrb(r: Schemas["Runner"], threadIds: string[]): Orb {
+	return {
+		...makeOrb(r.orbId, threadIds, r.online ? "ready" : "stopped"),
+		providerId: r.id,
+		providerName: r.name,
+		kind: "runner",
+		type: "runner",
+		cpus: 0,
+		memoryMB: 0,
+		image: "",
+		projectId: undefined,
+		features: r.features,
+		orbdVersion: r.orbdVersion,
+		agentVersion: r.agentVersion,
+	};
+}
+
 /** 每个 orb 的环境字段（覆盖 `makeOrb` 的默认值）。 */
 export const orbEnv: Record<string, Partial<Orb>> = {
 	"orb-01jcz8m3w4x5y6z7a8b9c0d1e2": {
@@ -814,6 +897,35 @@ export const threads: Thread[] = [
 		lastMessageAt: NOW - 30 * MIN,
 	}),
 	...m9Threads(),
+	// runner（M11b）
+	thread({
+		id: M11B_IDS.runnerThread,
+		title: "🖥️ RUN: 在自己机器上排查登录页闪烁",
+		projectId: projects[0]?.id,
+		orbId: M11B_IDS.laptopOrb,
+		cwd: RUNNER_REPO,
+		lastMessageAt: NOW - 4 * MIN,
+	}),
+	thread({
+		id: M11B_IDS.worktreeThread,
+		title: "修复登录重定向",
+		projectId: projects[0]?.id,
+		orbId: M11B_IDS.laptopOrb,
+		cwd: `${RUNNER_REPO}-fix-login`,
+		worktree: {
+			repo: RUNNER_REPO,
+			dir: `${RUNNER_REPO}-fix-login`,
+			branch: "fix-login",
+		},
+		lastMessageAt: NOW - 12 * MIN,
+	}),
+	thread({
+		id: M11B_IDS.offlineThread,
+		title: "博客换成静态站点生成器",
+		orbId: M11B_IDS.nasOrb,
+		cwd: "/srv/projects/blog",
+		lastMessageAt: NOW - 3 * HOUR,
+	}),
 	thread({
 		id: M96_IDS.roleThread,
 		title: "🎭 ROLE: 回合头按来源记录显示 role",
@@ -2707,4 +2819,30 @@ export function buildM96Transcripts(): Record<string, Entry[]> {
 		},
 	]);
 	return { [M96_IDS.roleThread]: role, [M96_IDS.legacyThread]: legacy };
+}
+
+// ---------------------------------------------------------------- M11b：runner 线程的转录
+
+/** runner 线程：agent 直接在用户机器的仓库目录里工作（命令与路径都是那台机器上的）。 */
+export function buildM11bTranscripts(): Record<string, Entry[]> {
+	const run = scriptTranscript("r", NOW - 30 * MIN, [
+		{ user: "登录页在 Safari 上首屏会闪一下白，帮我查一下原因。" },
+		{
+			assistant: "先看看登录页的样式是怎么加载的。",
+			calls: [
+				{
+					name: "bash",
+					args: {
+						command: "git log --oneline -5 -- web/src/pages/AuthPages.tsx",
+					},
+					text: "9c41e2a style(auth): 登录卡改用玻璃材质\n3f0b7d1 feat(auth): passkey 登录\n",
+				},
+			],
+		},
+		{
+			assistant:
+				"闪白来自 `index.html` 里主题脚本晚于样式表执行：Safari 先按浅色画了一帧。把主题脚本挪到 `<head>` 最前面即可，改动只有两行。",
+		},
+	]);
+	return { [M11B_IDS.runnerThread]: run };
 }

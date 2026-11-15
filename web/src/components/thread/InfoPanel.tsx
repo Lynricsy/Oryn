@@ -7,9 +7,10 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Orb } from "../../api/client";
-import { useOrbMetrics } from "../../api/queries";
+import { useOrbMetrics, useRunnerOfOrb } from "../../api/queries";
 import { formatMemoryMB, formatPercent, formatTokens } from "../../lib/format";
 import { keyed } from "../../lib/keys";
+import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
@@ -167,6 +168,9 @@ function OrbSection({ threadId }: { threadId: string }) {
 	const working = useThread(threadId, (s) => s.thread?.state === "working");
 	const metrics = useOrbMetrics(orb?.state === "deleted" ? undefined : orb?.id);
 	const fold = useCardFold("orb");
+	const runner = orb?.kind === "runner";
+	const runnerInfo = useRunnerOfOrb(orb);
+	const cwd = useThread(threadId, (s) => s.thread?.cwd);
 	if (!orb) {
 		return (
 			<Card
@@ -218,7 +222,8 @@ function OrbSection({ threadId }: { threadId: string }) {
 				</span>
 			}
 			action={
-				orb.state !== "deleted" && (
+				orb.state !== "deleted" &&
+				contentTabs(orb).includes("terminal") && (
 					<IconButton
 						icon="terminal"
 						size={13}
@@ -246,23 +251,54 @@ function OrbSection({ threadId }: { threadId: string }) {
 					{orb.id.slice(0, 12)}
 				</span>
 			</div>
-			<div className="mt-[11px] mb-2.5 flex flex-wrap gap-[5px]">
-				<Spec icon="box" strong>
-					{orb.type}
-				</Spec>
-				<Spec icon="cpu" strong>
-					{t("panel.cores", { n: orb.cpus })}
-				</Spec>
-				<Spec icon="memory" strong>
-					{formatMemoryMB(orb.memoryMB)}
-				</Spec>
-				{orb.providerName && <Spec icon="hardDrives">{orb.providerName}</Spec>}
-				{orb.nestedDocker && (
-					<span className="inline-flex h-6 items-center">
-						<DockerBadge />
-					</span>
-				)}
-			</div>
+			{runner ? (
+				// runner（M11b）：没有类型与规格，显示 runner 名、主机与线程的工作目录
+				<div
+					data-testid="runner-specs"
+					className="mt-[11px] mb-2.5 flex flex-wrap gap-[5px]"
+				>
+					<Spec icon="hardDrives" strong>
+						{orb.providerName ?? t("runner.label")}
+					</Spec>
+					{runnerInfo?.hostname && (
+						<Spec icon="monitor">{runnerInfo.hostname}</Spec>
+					)}
+					{cwd && (
+						<span
+							title={cwd}
+							className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-border bg-inset pr-2 pl-[7px] font-mono text-2xs text-muted"
+						>
+							<Icon
+								name="folder"
+								size={12}
+								aria-hidden
+								className="shrink-0 text-faint"
+							/>
+							<span className="min-w-0 truncate">{cwd}</span>
+						</span>
+					)}
+				</div>
+			) : (
+				<div className="mt-[11px] mb-2.5 flex flex-wrap gap-[5px]">
+					<Spec icon="box" strong>
+						{orb.type}
+					</Spec>
+					<Spec icon="cpu" strong>
+						{t("panel.cores", { n: orb.cpus })}
+					</Spec>
+					<Spec icon="memory" strong>
+						{formatMemoryMB(orb.memoryMB)}
+					</Spec>
+					{orb.providerName && (
+						<Spec icon="hardDrives">{orb.providerName}</Spec>
+					)}
+					{orb.nestedDocker && (
+						<span className="inline-flex h-6 items-center">
+							<DockerBadge />
+						</span>
+					)}
+				</div>
+			)}
 			<div className="flex flex-col gap-1.5">
 				<MetricWell
 					icon="cpu"
@@ -291,13 +327,16 @@ function OrbSection({ threadId }: { threadId: string }) {
 					}
 				/>
 			</div>
-			<div className="mt-3">
-				<h4 className="mb-1 font-medium text-2xs text-faint">
-					{t("env.title")}
-				</h4>
-				<SnapshotOrigin orb={orb} />
-				<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
-			</div>
+			{/* runner 不跑 setup / resume，也没有快照 */}
+			{!runner && (
+				<div className="mt-3">
+					<h4 className="mb-1 font-medium text-2xs text-faint">
+						{t("env.title")}
+					</h4>
+					<SnapshotOrigin orb={orb} />
+					<EnvRuns orbId={orb.id} runs={[orb.lastSetup, orb.lastResume]} />
+				</div>
+			)}
 			<DesktopProfileLine orb={orb} />
 			<ServicesSection threadId={threadId} orb={orb} />
 		</Card>

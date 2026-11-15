@@ -23,8 +23,8 @@ export default function FilesPanel({
 	const [agentSaved, setAgentSaved] = useState(false);
 	const sources = useMemo(() => {
 		const agent = agentConfigSource(() => setAgentSaved(true));
-		return orbId ? [orbFileSource(orbId), agent] : [agent];
-	}, [orbId]);
+		return orbId ? [orbFileSource(orbId, threadId), agent] : [agent];
+	}, [orbId, threadId]);
 	const [refreshKey, bump] = useReducer((n: number) => n + 1, 0);
 	const publishFile = usePublishOrbFile(orbId ?? "");
 	const publisher: FilePublisher | undefined = orbId

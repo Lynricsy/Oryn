@@ -68,6 +68,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/providers",
 	},
 	{
+		key: "runners",
+		group: "settings",
+		icon: "laptop",
+		labelKey: "settings.runners",
+		to: "/settings/runners",
+	},
+	{
 		key: "secrets",
 		group: "settings",
 		icon: "key",

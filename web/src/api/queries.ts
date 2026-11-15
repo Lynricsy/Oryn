@@ -31,6 +31,7 @@ export const qk = {
 	threads: (archived: boolean) => ["threads", { archived }] as const,
 	threadUsage: (id: string) => ["stats", "usage", "thread", id] as const,
 	browserProfiles: ["browser-profiles"] as const,
+	runners: ["runners"] as const,
 };
 
 export function useHealth() {
@@ -330,6 +331,60 @@ export async function fetchServiceLog(
 		{ signal },
 	);
 	return res.text();
+}
+
+// ---------------------------------------------------------------- runner（M11b）
+
+export type Runner = Schemas["Runner"];
+
+/** `enabled=false` 时不请求（线程页只在所在 orb 是 runner 时才要这份列表）。 */
+export function useRunners(enabled = true) {
+	return useQuery({
+		queryKey: qk.runners,
+		queryFn: () => unwrap(api.GET("/api/v1/runners")),
+		staleTime: 10_000,
+		enabled,
+	});
+}
+
+/**
+ * runner 是否在线：其 orb 有 WS 推送时以推送的状态为准（`ready` = link 在线），否则取列表里的 `online`。
+ * 列表只在打开时拉一次，上下线靠 orb 推送实时反映。
+ */
+export function useRunnerOnline(runner: Runner | undefined): boolean {
+	const pushed = useIndex((s) => (runner ? s.orbs[runner.orbId] : undefined));
+	if (!runner) return false;
+	return pushed ? pushed.state === "ready" : runner.online;
+}
+
+/** 线程所在 orb 是 runner 时给出那台 runner（按 `orbId` 匹配）；否则 undefined。 */
+export function useRunnerOfOrb(orb: Orb | undefined): Runner | undefined {
+	const isRunner = orb?.kind === "runner";
+	const runners = useRunners(isRunner);
+	return isRunner
+		? runners.data?.runners.find((r) => r.orbId === orb.id)
+		: undefined;
+}
+
+export function useCreateRunner() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (name: string) =>
+			unwrap(api.POST("/api/v1/runners", { body: { name } })),
+		onSuccess: () => qc.invalidateQueries({ queryKey: qk.runners }),
+	});
+}
+
+export function useDeleteRunner() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (id: string) => {
+			await unwrap(
+				api.DELETE("/api/v1/runners/{id}", { params: { path: { id } } }),
+			);
+		},
+		onSuccess: () => qc.invalidateQueries({ queryKey: qk.runners }),
+	});
 }
 
 // ---------------------------------------------------------------- 浏览器 Profile 与 Desktop（M8）

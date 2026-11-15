@@ -55,6 +55,7 @@ import {
 import { StructuredView } from "../ui/StructuredView";
 import { ContextBar, ContextTable, useContextParts } from "./ContextBreakdown";
 import { SetupLogDialog } from "./EnvBanner";
+import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
 const NO_LABELS: readonly string[] = [];
@@ -332,6 +333,7 @@ function ForkDialog({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [env, setEnv] = useState<"share" | "copy">("share");
+	const runner = useOrbOf(threadId)?.kind === "runner";
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 	return (
@@ -367,28 +369,31 @@ function ForkDialog({
 				{entryId ? t("fork.fromEntry") : t("fork.fromLeaf")}
 			</p>
 			<div className="flex flex-col gap-2">
-				{(["share", "copy"] as const).map((v) => (
-					// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Radio 组件（内含原生 input）
-					<label
-						key={v}
-						className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors duration-150 ${env === v ? "border-accent bg-accent-soft" : "border-border bg-panel/60 hover:bg-hover"}`}
-					>
-						<Radio
-							name="env"
-							checked={env === v}
-							onChange={() => setEnv(v)}
-							className="mt-0.5"
-						/>
-						<span>
-							<span className="block font-medium text-sm">
-								{t(`fork.${v}`)}
+				{/* runner（M11b）不能连环境 fork（409 runner_unsupported）：只有共用 */}
+				{(runner ? (["share"] as const) : (["share", "copy"] as const)).map(
+					(v) => (
+						// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Radio 组件（内含原生 input）
+						<label
+							key={v}
+							className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors duration-150 ${env === v ? "border-accent bg-accent-soft" : "border-border bg-panel/60 hover:bg-hover"}`}
+						>
+							<Radio
+								name="env"
+								checked={env === v}
+								onChange={() => setEnv(v)}
+								className="mt-0.5"
+							/>
+							<span>
+								<span className="block font-medium text-sm">
+									{t(`fork.${v}`)}
+								</span>
+								<span className="block text-muted text-xs">
+									{t(`fork.${v}Hint`)}
+								</span>
 							</span>
-							<span className="block text-muted text-xs">
-								{t(`fork.${v}Hint`)}
-							</span>
-						</span>
-					</label>
-				))}
+						</label>
+					),
+				)}
 			</div>
 			<ErrorText error={error} />
 		</Dialog>

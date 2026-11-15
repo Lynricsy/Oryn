@@ -292,15 +292,22 @@ function children(fs: OrbFs, dir: string): string[] {
 	);
 }
 
+/** 文件 / 改动接口的范围：普通 orb 是 `$HOME` 与 orb 的工作目录，runner 线程两者都是线程的工作目录（M11b）。 */
+interface Scope {
+	home: string;
+	workdir: string;
+}
+
 async function handleFs(
 	fs: OrbFs,
+	scope: Scope,
 	op: string,
 	req: Request,
 	url: URL,
 ): Promise<Response> {
 	const m = req.method.toUpperCase();
 	if (op === "roots" && m === "GET")
-		return json({ home: HOME, workdir: fs.workdir });
+		return json({ home: scope.home, workdir: scope.workdir });
 	let body: Record<string, unknown> = {};
 	if (m === "POST") {
 		try {
@@ -312,11 +319,13 @@ async function handleFs(
 	const resolve = (raw: unknown, mutate: boolean): string | Response => {
 		const p = normalize(typeof raw === "string" ? raw : "");
 		if (!p) return fail(400, "invalid_path");
-		if (p !== HOME && !p.startsWith(`${HOME}/`))
+		if (p !== scope.home && !p.startsWith(`${scope.home}/`))
 			return fail(403, "outside_home");
 		if (
 			mutate &&
-			(p === HOME || p === `${HOME}/.oryn` || p.startsWith(`${HOME}/.oryn/`))
+			(p === scope.home ||
+				p === `${HOME}/.oryn` ||
+				p.startsWith(`${HOME}/.oryn/`))
 		)
 			return fail(403, "protected_path");
 		return p;
@@ -447,6 +456,7 @@ function publicFile({ patch: _patch, ...f }: GitFile): S["GitFileChange"] {
 
 async function handleGit(
 	fs: OrbFs,
+	scope: Scope,
 	op: string,
 	req: Request,
 	url: URL,
@@ -454,7 +464,7 @@ async function handleGit(
 	const m = req.method.toUpperCase();
 	const root = url.searchParams.get("root");
 	const inRepo = (r: string | null | undefined) => {
-		const p = normalize(r ?? fs.workdir);
+		const p = normalize(r ?? scope.workdir);
 		return p !== null && (p === REPO || p.startsWith(`${REPO}/`));
 	};
 	const base: S["GitBase"] = {
@@ -539,8 +549,20 @@ async function handleGit(
 
 const ROUTE = /^\/api\/v1\/orbs\/([^/]+)\/(fs|git)\/([a-z]+)$/;
 
+/**
+ * runner 的 orb（M11b）：按 `thread` 查询参数给出线程的工作目录；缺 `thread` 等错误直接给 Response；
+ * 普通 orb 返回 undefined（范围照旧）。
+ */
+export type RunnerScope = (
+	orbId: string,
+	threadId: string | null,
+) => { cwd: string } | Response | undefined;
+
 /** orb 文件 / git 接口的 mock 应答；其它请求返回 null。 */
-export async function handleOrbFetch(req: Request): Promise<Response | null> {
+export async function handleOrbFetch(
+	req: Request,
+	runnerScope?: RunnerScope,
+): Promise<Response | null> {
 	const url = new URL(
 		req.url,
 		globalThis.location?.origin ?? "http://localhost",
@@ -551,8 +573,13 @@ export async function handleOrbFetch(req: Request): Promise<Response | null> {
 	const orbId = decodeURIComponent(rawId);
 	if (orbId.endsWith("e4"))
 		return fail(409, "orbd_outdated", "orbd does not support fs/git");
+	const runner = runnerScope?.(orbId, url.searchParams.get("thread"));
+	if (runner instanceof Response) return runner;
 	const fs = orbFs(orbId);
+	const scope: Scope = runner
+		? { home: runner.cwd, workdir: runner.cwd }
+		: { home: HOME, workdir: fs.workdir };
 	return area === "fs"
-		? handleFs(fs, op, req, url)
-		: handleGit(fs, op, req, url);
+		? handleFs(fs, scope, op, req, url)
+		: handleGit(fs, scope, op, req, url);
 }

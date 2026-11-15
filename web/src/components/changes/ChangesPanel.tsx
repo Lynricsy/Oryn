@@ -274,6 +274,7 @@ export default function ChangesPanel({
 }): ReactNode {
 	const { t } = useTranslation();
 	const orbState = useThread(threadId, (s) => s.orb?.state);
+	const cwd = useThread(threadId, (s) => s.thread?.cwd);
 	const [root, setRootState] = useState<string | undefined>(() =>
 		readChangesRoot(threadId),
 	);
@@ -297,8 +298,8 @@ export default function ChangesPanel({
 	const split = useElementWidth(hostRef, SPLIT_MIN_WIDTH) >= SPLIT_MIN_WIDTH;
 
 	const target = useMemo<GitTarget | null>(
-		() => (orbId ? { orbId, root, base, scope } : null),
-		[orbId, root, base, scope],
+		() => (orbId ? { orbId, threadId, root, base, scope } : null),
+		[orbId, threadId, root, base, scope],
 	);
 	const seq = useRef(0);
 	const commitSeq = useRef(0);
@@ -319,9 +320,7 @@ export default function ChangesPanel({
 			if (!orbId) return;
 			try {
 				const r = await listGitCommits(
-					orbId,
-					root,
-					base,
+					{ orbId, threadId, root, base },
 					bg,
 					lifetime.current?.signal,
 				);
@@ -331,7 +330,7 @@ export default function ChangesPanel({
 				// 列表只是选择器的辅助数据；失败时保留旧值，错误由 status 呈现
 			}
 		},
-		[orbId, root, base],
+		[orbId, threadId, root, base],
 	);
 
 	const load = useCallback(
@@ -421,7 +420,11 @@ export default function ChangesPanel({
 		if (!orbId) return;
 		setStaging(true);
 		try {
-			await setStaged(orbId, status?.root ?? root, files, on);
+			await setStaged(
+				{ orbId, threadId, root: status?.root ?? root },
+				files,
+				on,
+			);
 			await load(false);
 		} catch (e) {
 			setError(e);
@@ -579,7 +582,10 @@ export default function ChangesPanel({
 	} else if (!status.repo) {
 		list = (
 			<div className="p-3 text-sm">
-				<EmptyState icon="branch" title={t("changes.notRepo")} />
+				{/* runner 线程（有 cwd）：orbd 只认工作目录本身是仓库根，子目录里的线程没有改动视图 */}
+				<EmptyState icon="branch" title={t("changes.notRepo")}>
+					{cwd && t("changes.runnerRepoRoot")}
+				</EmptyState>
 				{(status.candidates?.length ?? 0) > 0 && (
 					<div className="flex flex-col gap-1">
 						<p className="text-muted text-xs">{t("changes.pickRepo")}</p>

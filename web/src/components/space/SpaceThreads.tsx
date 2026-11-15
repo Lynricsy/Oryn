@@ -10,6 +10,7 @@ import { isCoordinatorThread } from "../../lib/thread-kind";
 import { parseTitleCard } from "../../lib/title";
 import { patchThread } from "../../state/actions";
 import { useIndex } from "../../state/stores";
+import { useArchiveThread } from "../thread/ArchiveDialog";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -57,6 +58,8 @@ export function groupSpaceThreads(
 function CardMenu({ thread }: { thread: Thread }): ReactNode {
 	const { t } = useTranslation();
 	const [error, setError] = useState<unknown>(null);
+	// 有 worktree 的 runner 线程先问是否一并移除
+	const { archive, dialog } = useArchiveThread();
 	const act = (fn: () => Promise<unknown>) => () => {
 		setError(null);
 		fn().catch(setError);
@@ -77,9 +80,7 @@ function CardMenu({ thread }: { thread: Thread }): ReactNode {
 									key: "ship",
 									icon: "rocket" as const,
 									label: t("thread.archiveShipped"),
-									onSelect: act(() =>
-										patchThread(thread.id, { archived: true, shipped: true }),
-									),
+									onSelect: act(() => archive(thread, true)),
 								},
 							]),
 					{
@@ -100,6 +101,7 @@ function CardMenu({ thread }: { thread: Thread }): ReactNode {
 					</button>
 				)}
 			/>
+			{dialog}
 		</span>
 	);
 }

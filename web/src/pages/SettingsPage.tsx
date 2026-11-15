@@ -1,5 +1,5 @@
 /**
- * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、
+ * 设置页：设备（列表、吊销、批准配对）、provider（新建并一次性显示令牌、类型、在线状态）、runner（M11b：新建并一次性显示令牌与启动命令、列表、删除）、
  * 密钥（名称列表、写入值）、浏览器 Profile（M8）、Git 身份（orb 内提交身份的全局默认值）、agent 配置（与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化）、
  * 身份与头像（M9.6：Agent 身份、全局助手、角色头像、我的头像）、外观（明暗、主题色、壁纸）、通知（此设备、渠道、最近通知）、公开分享（M5）、
  * 桌面应用（M6，仅桌面壳内出现）、关于。分区导航在侧栏「更多」分区（`more-entries.ts`），页面本身只有页头与内容；
@@ -82,11 +82,13 @@ import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
 import { IdentitySettings } from "./settings/IdentitySettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
+import RunnersSettings from "./settings/RunnersSettings";
 import SharesSettings from "./settings/SharesSettings";
 
 export type SettingsSection =
 	| "devices"
 	| "providers"
+	| "runners"
 	| "secrets"
 	| "browser-profiles"
 	| "git-identity"
@@ -1219,6 +1221,7 @@ export function SettingsPage({
 				<div className="mx-auto flex max-w-3xl flex-col gap-3">
 					{section === "devices" && <DevicesSettings />}
 					{section === "providers" && <ProvidersSettings />}
+					{section === "runners" && <RunnersSettings />}
 					{section === "secrets" && <SecretsSettings />}
 					{section === "browser-profiles" && <BrowserProfilesSettings />}
 					{section === "git-identity" && <GitIdentitySettings />}

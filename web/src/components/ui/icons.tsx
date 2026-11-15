@@ -66,6 +66,7 @@ import { Image } from "@phosphor-icons/react/dist/csr/Image";
 import { Info } from "@phosphor-icons/react/dist/csr/Info";
 import { Key } from "@phosphor-icons/react/dist/csr/Key";
 import { Keyboard } from "@phosphor-icons/react/dist/csr/Keyboard";
+import { Laptop } from "@phosphor-icons/react/dist/csr/Laptop";
 import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
@@ -83,6 +84,7 @@ import { Paperclip } from "@phosphor-icons/react/dist/csr/Paperclip";
 import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
 import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
+import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
 import { QrCode } from "@phosphor-icons/react/dist/csr/QrCode";
@@ -246,6 +248,10 @@ const ICONS = {
 	warm: ThermometerHot,
 	/** 步进器「减少」（增加用 `plus`） */
 	minus: Minus,
+	/** runner：用户自己的机器（M11b） */
+	laptop: Laptop,
+	/** runner 离线（M11b） */
+	plugs: Plugs,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

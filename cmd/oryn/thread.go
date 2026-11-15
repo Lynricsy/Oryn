@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -34,13 +35,17 @@ type threadNewOptions struct {
 	readonly, takeover bool
 	// space 是 Space 的名字或 id（M9）：新线程加入该 Space，未给 --project 时取 Space 的项目。
 	space string
+	// runner 是 runner 的名字或 id（M11b）；dir 是 runner 上的绝对路径；worktree 非空时在 dir 旁新建同名 worktree；
+	// shareDir 允许与其它线程共用 dir。
+	runner, dir, worktree string
+	shareDir              bool
 }
 
 var threadNewOpts threadNewOptions
 
 var threadNewCmd = &cobra.Command{
 	Use:   "new <prompt>",
-	Short: "新建线程（默认新建 orb；--orb 挂到已有 orb）；orb 内在本项目开一个子线程",
+	Short: "新建线程（默认新建 orb；--orb 挂到已有 orb；--runner --dir 在 runner 的目录里）；orb 内在本项目开一个子线程",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if inOrb() {
@@ -76,15 +81,34 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 	if o.orb != "" && (o.browserProfile != "" || o.readonly || o.takeover) {
 		return apigen.Thread{}, errors.New("--browser-profile / --readonly / --takeover 只对新建 orb 有效，不能与 --orb 同时使用")
 	}
+	if err := checkRunnerOptions(o); err != nil {
+		return apigen.Thread{}, err
+	}
 	req := apigen.CreateThreadRequest{Prompt: prompt, Labels: o.labels}
 	if o.title != "" {
 		req.Title = &o.title
 	}
-	if o.orb != "" {
+	switch {
+	case o.runner != "":
+		r, err := resolveRunner(ctx, c, o.runner)
+		if err != nil {
+			return apigen.Thread{}, err
+		}
+		exec := apigen.ThreadExecutorRunner{Kind: apigen.ThreadExecutorRunnerKindRunner, RunnerID: r.ID, Dir: o.dir}
+		if o.worktree != "" {
+			exec.Worktree = &apigen.ThreadExecutorRunnerWorktree{Name: o.worktree}
+		}
+		if o.shareDir {
+			exec.ShareDir = &o.shareDir
+		}
+		if err := req.Executor.FromThreadExecutorRunner(exec); err != nil {
+			return apigen.Thread{}, err
+		}
+	case o.orb != "":
 		if err := req.Executor.FromThreadExecutorOrb(apigen.ThreadExecutorOrb{Kind: apigen.ThreadExecutorOrbKindOrb, OrbID: o.orb}); err != nil {
 			return apigen.Thread{}, err
 		}
-	} else {
+	default:
 		exec := apigen.ThreadExecutorNewOrb{Kind: apigen.NewOrb}
 		if o.provider != "" {
 			exec.Provider = &o.provider
@@ -126,12 +150,59 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 	var env apigen.ThreadEnvelope
 	if err := c.do(ctx, http.MethodPost, "/api/v1/threads", req, &env); err != nil {
 		var ae *apiError
-		if errors.As(err, &ae) && ae.Code == "profile_in_use" {
-			return apigen.Thread{}, fmt.Errorf("%w\n加 --readonly 以只读副本使用（不回写），或加 --takeover 接管（对方降级为只读）", err)
+		if errors.As(err, &ae) {
+			switch ae.Code {
+			case "profile_in_use":
+				return apigen.Thread{}, fmt.Errorf("%w\n加 --readonly 以只读副本使用（不回写），或加 --takeover 接管（对方降级为只读）", err)
+			case "dir_in_use":
+				return apigen.Thread{}, dirInUseError(ae)
+			}
 		}
 		return apigen.Thread{}, err
 	}
 	return env.Thread, nil
+}
+
+// checkRunnerOptions 校验 --runner / --dir / --worktree / --share-dir 的组合（不发请求）。
+func checkRunnerOptions(o threadNewOptions) error {
+	if o.runner == "" {
+		if o.dir != "" || o.worktree != "" || o.shareDir {
+			return errors.New("--dir / --worktree / --share-dir 需要与 --runner 一起使用")
+		}
+		return nil
+	}
+	if o.orb != "" || o.provider != "" || o.orbType != "" {
+		return errors.New("--runner 与 --orb / --provider / --type 不能同时使用")
+	}
+	if o.browserProfile != "" || o.readonly || o.takeover {
+		return errors.New("runner 上没有浏览器 Profile：--runner 不能与 --browser-profile / --readonly / --takeover 同时使用")
+	}
+	if o.dir == "" {
+		return errors.New("--runner 需要 --dir（runner 上的绝对路径）")
+	}
+	// 路径属于 runner 那台机器，不在本机解析；runner 只接受 POSIX 绝对路径
+	if !path.IsAbs(o.dir) {
+		return fmt.Errorf("--dir %q 须是 runner 上的绝对路径", o.dir)
+	}
+	if o.worktree != "" && o.shareDir {
+		return errors.New("--worktree 与 --share-dir 不能同时使用")
+	}
+	return nil
+}
+
+// dirInUseError 把 409 `dir_in_use` 改写成带占用线程与两种出路的提示。
+func dirInUseError(ae *apiError) error {
+	var body apigen.DirInUseConflict
+	_ = json.Unmarshal(ae.Body, &body)
+	ids := make([]string, 0, len(body.ThreadIds))
+	for _, id := range body.ThreadIds {
+		ids = append(ids, termText(id))
+	}
+	msg := "该目录已是其它线程的工作目录"
+	if len(ids) > 0 {
+		msg += "（" + strings.Join(ids, ", ") + "）"
+	}
+	return fmt.Errorf("%s\n加 --worktree <名字> 在旁边新建 worktree（推荐，互不干扰），或加 --share-dir 仍然共用（两个 agent 会同时改同一份文件）", msg)
 }
 
 // resolveProject 把项目名（或 id）解析为项目 id。
@@ -422,7 +493,7 @@ var threadSendCmd = &cobra.Command{
 }
 
 // orbThreadNewRejected 是 orb 内 `thread new` 不接受的参数（只接受 --title、--type、--json）。
-var orbThreadNewRejected = []string{"project", "no-project", "provider", "orb", "label", "browser-profile", "readonly", "takeover", "space"}
+var orbThreadNewRejected = []string{"project", "no-project", "provider", "orb", "label", "browser-profile", "readonly", "takeover", "space", "runner", "dir", "worktree", "share-dir"}
 
 // orbThreadNewCmd 是 orb 内的 `thread new`：项目与 Space 取调用方的，自带新 orb。
 func orbThreadNewCmd(cmd *cobra.Command, prompt string) error {
@@ -477,6 +548,10 @@ func init() {
 	f.BoolVar(&threadNewOpts.readonly, "readonly", false, "以只读副本使用浏览器 Profile（不取租约、不回写）")
 	f.BoolVar(&threadNewOpts.takeover, "takeover", false, "接管正被别的 orb 使用的浏览器 Profile（对方降级为只读）")
 	f.StringVar(&threadNewOpts.space, "space", "", "加入 Space（名字或 id；未给 --project 时取 Space 的项目）")
+	f.StringVar(&threadNewOpts.runner, "runner", "", "在 runner 上执行（名字或 id；需要 --dir）")
+	f.StringVar(&threadNewOpts.dir, "dir", "", "runner 上的工作目录（绝对路径，须在 runner 声明的目录之内）")
+	f.StringVar(&threadNewOpts.worktree, "worktree", "", "先在 --dir（git 仓库）旁新建该名字的 worktree 与分支，线程在其中工作")
+	f.BoolVar(&threadNewOpts.shareDir, "share-dir", false, "允许与其它未归档线程共用 --dir")
 	lf := threadListCmd.Flags()
 	lf.BoolVar(&threadListOpts.json, "json", false, "以 JSON 输出")
 	lf.BoolVar(&threadListOpts.archived, "archived", false, "只列已归档线程")

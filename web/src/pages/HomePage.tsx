@@ -3,6 +3,8 @@
  * 浏览器 Profile（Ctrl+B，M8；只在新 orb 且至少有一个 Profile 时出现）、项目（Ctrl+J）、模型与思考级别（Ctrl+S）、发送。
  * 省略 provider / 类型时由控制面依次取项目默认、orb_defaults、provider 默认。
  * 选的 Profile 被另一台运行中的 orb 占用（409 `profile_in_use`）时弹选择对话框，选「只读使用」或「接管」后带 `profileMode` 重发。
+ * 执行位置的「Runners」分组（M11b）：选 runner 的目录（可带子路径、可新建 worktree）；目录已被别的线程占用
+ * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
  * 托盘背后是一层主题色光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  */
 import {
@@ -42,6 +44,20 @@ import {
 	useChromeSides,
 	WindowControls,
 } from "../components/layout/WindowControls";
+import {
+	type DirChoice,
+	type DirConflict,
+	DirInUseDialog,
+	dirConflictOf,
+} from "../components/runner/DirInUseDialog";
+import {
+	RunnerOptions,
+	type RunnerPick,
+	runnerExecutor,
+	runnerPickDir,
+	runnerPickError,
+	worktreeSlug,
+} from "../components/runner/RunnerPicker";
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
@@ -163,6 +179,8 @@ export function HomePage(): ReactNode {
 	const [prompt, setPrompt] = useState("");
 	const [pill, setPill] = useState<Pill | null>(null);
 	const [executor, setExecutor] = useState<Executor>({ kind: "new_orb" });
+	// 选了 runner 的目录（M11b）时优先于 `executor`；选回新 orb / 已有 orb 时清空
+	const [runnerPick, setRunnerPick] = useState<RunnerPick | null>(null);
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
 	const [model, setModel] = useState("");
 	const [thinking, setThinking] = useState<string>("");
@@ -172,6 +190,9 @@ export function HomePage(): ReactNode {
 	const [conflict, setConflict] = useState<ProfileConflict | null>(null);
 	const [conflictBusy, setConflictBusy] = useState<ConflictChoice | null>(null);
 	const [conflictError, setConflictError] = useState<unknown>(null);
+	const [dirConflict, setDirConflict] = useState<DirConflict | null>(null);
+	const [dirBusy, setDirBusy] = useState<DirChoice | null>(null);
+	const [dirError, setDirError] = useState<unknown>(null);
 	// 撞上冲突的那次请求（冲突重试只在它上面加使用方式，不再按当前胶囊重新构造）
 	const conflictReq = useRef<{
 		body: Schemas["CreateThreadRequest"];
@@ -227,7 +248,8 @@ export function HomePage(): ReactNode {
 
 	const profileList = profiles.data?.profiles ?? [];
 	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（挂到已有 orb 时沿用那台 orb 的 Profile）
-	const showProfile = executor.kind === "new_orb" && profileList.length > 0;
+	const showProfile =
+		executor.kind === "new_orb" && !runnerPick && profileList.length > 0;
 	const showProfileRef = useRef(showProfile);
 	showProfileRef.current = showProfile;
 	const defaultProfileId = projects.data?.projects.find(
@@ -262,6 +284,8 @@ export function HomePage(): ReactNode {
 	const liveOrbs = (orbs.data?.orbs ?? []).filter(
 		(o) =>
 			!o.coordinator &&
+			// runner 的常驻 orb（M11b）在「Runners」分组里按目录选，不作为已有 orb 挂
+			o.kind !== "runner" &&
 			!o.pool &&
 			o.state !== "deleted" &&
 			o.state !== "deleting" &&
@@ -272,8 +296,16 @@ export function HomePage(): ReactNode {
 		executor.kind === "orb"
 			? t("newThread.existingOrb", { id: executor.orbId.slice(0, 12) })
 			: "";
-	const executorText: PillText =
-		executor.kind === "orb"
+	const executorText: PillText = runnerPick
+		? {
+				label: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick)}${runnerPick.mode === "worktree" ? ` · ${t("runner.modeWorktree")}` : ""}`,
+				main: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick).split("/").pop()}`,
+				badge:
+					runnerPick.mode === "worktree"
+						? t("runner.worktreeBadge")
+						: undefined,
+			}
+		: executor.kind === "orb"
 			? { label: existingOrbLabel, main: existingOrbLabel }
 			: executor.kind === "new_orb" && executor.provider
 				? {
@@ -354,10 +386,22 @@ export function HomePage(): ReactNode {
 			return;
 		}
 		const slash = model.indexOf("/");
+		const pickError = runnerPick && runnerPickError(runnerPick);
+		if (pickError) {
+			setPill("executor");
+			setError(
+				t(
+					pickError === "subpath"
+						? "runner.subpathInvalid"
+						: "runner.worktreeNameInvalid",
+				),
+			);
+			return;
+		}
 		await send(
 			{
 				prompt: text,
-				executor,
+				executor: runnerPick ? runnerExecutor(runnerPick, text) : executor,
 				...(projectId ? { projectId } : {}),
 				...(att.contents.length > 0 ? { images: att.contents } : {}),
 				...(att.attachmentIds.length > 0
@@ -372,7 +416,7 @@ export function HomePage(): ReactNode {
 						}
 					: {}),
 				...(thinking ? { thinkingLevel: thinking } : {}),
-				...(executor.kind === "new_orb" && profilePick !== null
+				...(executor.kind === "new_orb" && !runnerPick && profilePick !== null
 					? { browserProfileId: profilePick }
 					: {}),
 			},
@@ -395,10 +439,34 @@ export function HomePage(): ReactNode {
 		);
 	};
 
+	/**
+	 * 目录冲突对话框里选了做法：在撞上冲突的那次请求上改执行位置后重发——
+	 * 「新建 worktree」取提示词的 slug 作名字（冲突只出现在「当前目录」模式，没有填过名字），「仍然共用」带 `shareDir`。
+	 */
+	const resolveDirConflict = (choice: DirChoice) => {
+		const req = conflictReq.current;
+		if (req?.body.executor.kind !== "runner") return;
+		const { worktree: _, shareDir: __, ...base } = req.body.executor;
+		const name = worktreeSlug(req.text);
+		void send(
+			{
+				...req.body,
+				executor:
+					choice === "worktree"
+						? { ...base, worktree: { name } }
+						: { ...base, shareDir: true },
+			},
+			req.text,
+			undefined,
+			choice,
+		);
+	};
+
 	const send = async (
 		body: Schemas["CreateThreadRequest"],
 		text: string,
 		mode?: ConflictChoice,
+		dirChoice?: DirChoice,
 	) => {
 		setBusy(true);
 		setError(null);
@@ -406,9 +474,14 @@ export function HomePage(): ReactNode {
 			setConflictBusy(mode);
 			setConflictError(null);
 		}
+		if (dirChoice) {
+			setDirBusy(dirChoice);
+			setDirError(null);
+		}
 		try {
 			const thread = await createThread(body);
 			setConflict(null);
+			setDirConflict(null);
 			conflictReq.current = null;
 			setPendingPrompt(thread.id, text);
 			// 触屏：发送即收起软键盘，线程页也不再抢焦点（否则键盘会先收后弹闪一下）
@@ -421,14 +494,31 @@ export function HomePage(): ReactNode {
 			});
 		} catch (e) {
 			const c = profileConflictOf(e);
+			// 冲突的目录正是声明的 git 仓库根时才能在旁边新建 worktree（子目录不行）
+			const d =
+				body.executor.kind === "runner"
+					? dirConflictOf(
+							e,
+							body.executor.dir,
+							Boolean(
+								runnerPick?.dir.git &&
+									runnerPick.dir.path === body.executor.dir,
+							),
+						)
+					: null;
 			if (mode) setConflictError(e);
+			else if (dirChoice) setDirError(e);
 			else if (c) {
 				conflictReq.current = { body, text };
 				setConflict(c);
+			} else if (d) {
+				conflictReq.current = { body, text };
+				setDirConflict(d);
 			} else setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 			setConflictBusy(null);
+			setDirBusy(null);
 		}
 	};
 
@@ -534,7 +624,7 @@ export function HomePage(): ReactNode {
 									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-3 relative order-last w-[calc(100%+1.5rem)] border-[var(--glass-line)] border-t px-3 pt-2.5" : "flex-1"}`}
 								>
 									<PillButton
-										icon="box"
+										icon={runnerPick ? "laptop" : "box"}
 										text={executorText}
 										shortcut="Ctrl+M"
 										active={pill === "executor"}
@@ -636,11 +726,14 @@ export function HomePage(): ReactNode {
 										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
 										<Option
 											selected={
-												executor.kind === "new_orb" && !executor.provider
+												!runnerPick &&
+												executor.kind === "new_orb" &&
+												!executor.provider
 											}
 											leading={<Icon name="box" size={14} />}
 											onClick={() => {
 												setExecutor({ kind: "new_orb" });
+												setRunnerPick(null);
 												setPill(null);
 											}}
 										>
@@ -653,6 +746,7 @@ export function HomePage(): ReactNode {
 													<Option
 														key={`${p.id}-${ot.name}`}
 														selected={
+															!runnerPick &&
 															executor.kind === "new_orb" &&
 															executor.provider === p.name &&
 															executor.type === ot.name
@@ -679,6 +773,7 @@ export function HomePage(): ReactNode {
 																provider: p.name,
 																type: ot.name,
 															});
+															setRunnerPick(null);
 															setPill(null);
 														}}
 													>
@@ -686,6 +781,11 @@ export function HomePage(): ReactNode {
 													</Option>
 												)),
 											)}
+										<RunnerOptions
+											pick={runnerPick}
+											prompt={prompt}
+											onPick={setRunnerPick}
+										/>
 										{liveOrbs.length > 0 && (
 											<PopoverLabel>{t("newThread.existingOrbs")}</PopoverLabel>
 										)}
@@ -693,7 +793,9 @@ export function HomePage(): ReactNode {
 											<Option
 												key={o.id}
 												selected={
-													executor.kind === "orb" && executor.orbId === o.id
+													!runnerPick &&
+													executor.kind === "orb" &&
+													executor.orbId === o.id
 												}
 												leading={<OrbBead state={o.state} />}
 												mono
@@ -705,6 +807,7 @@ export function HomePage(): ReactNode {
 												}
 												onClick={() => {
 													setExecutor({ kind: "orb", orbId: o.id });
+													setRunnerPick(null);
 													setPill(null);
 												}}
 											>
@@ -815,6 +918,15 @@ export function HomePage(): ReactNode {
 				onChoose={resolveConflict}
 				onClose={() => {
 					if (!conflictBusy) setConflict(null);
+				}}
+			/>
+			<DirInUseDialog
+				conflict={dirConflict}
+				busy={dirBusy}
+				error={dirError}
+				onChoose={resolveDirConflict}
+				onClose={() => {
+					if (!dirBusy) setDirConflict(null);
 				}}
 			/>
 		</Sheet>

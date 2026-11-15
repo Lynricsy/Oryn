@@ -26,10 +26,12 @@ import { MockDesktop } from "./desktop";
 import {
 	assistant,
 	buildM9Transcripts,
+	buildM11bTranscripts,
 	buildM96Transcripts,
 	buildMainTranscript,
 	buildToolZooTranscript,
 	projects as fixtureProjects,
+	runners as fixtureRunners,
 	threads as fixtureThreads,
 	M96_IDS,
 	M96_ROLE_THREAD_MODEL,
@@ -45,6 +47,7 @@ import {
 	poolOrbs,
 	projectSnapshots,
 	providers,
+	runnerOrb,
 	SESSION_FILE,
 	serviceLogs,
 	setupLogs,
@@ -358,6 +361,8 @@ export class MockServer {
 	readonly entries = new Map<string, Entry[]>();
 	readonly states = new Map<string, SessionState>();
 	readonly orbs = new Map<string, Orb>();
+	/** runner（M11b）：列表、新建、删除；它们的常驻 orb 在 `orbs` 里（`kind: "runner"`）。 */
+	readonly runners: Schemas["Runner"][] = fixtureRunners.map((r) => ({ ...r }));
 	readonly pendingUi = new Map<string, Json[]>();
 	/** setup / resume 运行记录（按 orb，新的在前）与日志。 */
 	readonly setupRuns = new Map<string, Schemas["OrbSetupRun"][]>();
@@ -464,6 +469,15 @@ export class MockServer {
 	};
 
 	constructor() {
+		// runner 的常驻 orb（M11b）：先放进去，下面按线程补 orb 时跳过
+		for (const r of this.runners)
+			this.orbs.set(
+				r.orbId,
+				runnerOrb(
+					r,
+					fixtureThreads.filter((x) => x.orbId === r.orbId).map((x) => x.id),
+				),
+			);
 		for (const t of fixtureThreads) {
 			this.threads.set(t.id, { ...t, portalUrlTemplate: MOCK_PORTAL_TEMPLATE });
 			this.entries.set(t.id, []);
@@ -492,6 +506,7 @@ export class MockServer {
 		for (const [id, list] of Object.entries({
 			...buildM9Transcripts(),
 			...buildM96Transcripts(),
+			...buildM11bTranscripts(),
 		}))
 			this.entries.set(id, list);
 		this.liveFrames.set(TOOL_ZOO_THREAD, toolZooLiveFrames());
@@ -1011,7 +1026,7 @@ export class MockServer {
 			url,
 		);
 		if (shareRes) return shareRes;
-		const orbRes = await handleOrbFetch(req);
+		const orbRes = await handleOrbFetch(req, this.runnerScope);
 		if (orbRes) return orbRes;
 		const p = path.slice("/api/v1/".length);
 		const m = req.method.toUpperCase();
@@ -1178,6 +1193,8 @@ export class MockServer {
 			}
 			return json(this.gitIdentity ? { identity: this.gitIdentity } : {});
 		}
+		const runnerRes = await this.handleRunnerFetch(p, m, body);
+		if (runnerRes) return runnerRes;
 		if (p === "providers" && m === "GET") return json({ providers });
 		if (p === "providers" && m === "POST") {
 			const b = await body();
@@ -1330,6 +1347,8 @@ export class MockServer {
 		if (orbAction) {
 			const orb = this.orbs.get(orbAction[1] ?? "");
 			if (!orb) return json({ code: "not_found", message: "orb" }, 404);
+			if (orb.kind === "runner")
+				return json({ code: "runner_unsupported", message: "runner" }, 409);
 			const next = {
 				...orb,
 				state:
@@ -1364,7 +1383,10 @@ export class MockServer {
 				);
 			// 挂到已有 orb 时沿用那台 orb 的 Profile，不解析项目默认（与 internal/threads 一致），不做冲突预检；
 			// mock 照旧另起一台 orb 演示，给它一张不带 Profile 的桌面
-			const existing = (b.executor as Json | undefined)?.kind === "orb";
+			const executor = b.executor as Json | undefined;
+			if (executor?.kind === "runner")
+				return this.createRunnerThread(b, executor);
+			const existing = executor?.kind === "orb";
 			const desktop = this.desktop.forNewOrb(
 				existing ? { browserProfileId: "" } : b,
 			);
@@ -1765,6 +1787,203 @@ export class MockServer {
 			if (prompt) await this.runPrompt(id, prompt);
 		})();
 		return t;
+	}
+
+	// ------------------------------------------------------------ runner（M11b）
+
+	/** orb 文件 / 改动接口的范围：runner 的 orb 必须带 `thread`（同 orynd 的 orb 代理），范围是线程的工作目录。 */
+	private runnerScope = (
+		orbId: string,
+		threadId: string | null,
+	): { cwd: string } | Response | undefined => {
+		if (this.orbs.get(orbId)?.kind !== "runner") return undefined;
+		if (!threadId)
+			return json({ code: "thread_required", message: "thread" }, 400);
+		const t = this.threads.get(threadId);
+		if (!t || t.orbId !== orbId || !t.cwd)
+			return json({ code: "invalid_request", message: "thread" }, 400);
+		return { cwd: t.cwd };
+	};
+
+	/** `runners*` 与 `threads/{id}/worktree/remove`；其它请求返回 null。 */
+	private async handleRunnerFetch(
+		p: string,
+		m: string,
+		body: () => Promise<Json>,
+	): Promise<Response | null> {
+		if (p === "runners" && m === "GET")
+			return json({
+				runners: this.runners.map((r) => ({
+					...r,
+					online: this.orbs.get(r.orbId)?.state === "ready",
+				})),
+			});
+		if (p === "runners" && m === "POST") {
+			const name = String((await body()).name ?? "").trim();
+			if (!name) return json({ code: "invalid_request", message: "name" }, 400);
+			if (
+				this.runners.some((r) => r.name === name) ||
+				providers.some((x) => x.name === name)
+			)
+				return json(
+					{ code: "conflict", message: `名称 ${name} 已被占用` },
+					409,
+				);
+			const seq = (this.idSeq++).toString().padStart(14, "0");
+			const runner: Schemas["Runner"] = {
+				id: `prov_01JD2M11BMOCK${seq}`,
+				name,
+				online: false,
+				orbId: `orb-01jd2m11bmock${seq}`,
+				dirs: [],
+				features: [],
+				createdAt: Date.now(),
+			};
+			this.runners.push(runner);
+			const orb = runnerOrb(runner, []);
+			this.orbs.set(orb.id, orb);
+			this.broadcast({ type: "orb", orb });
+			return json({ runner, token: "ort_mock_ONLY_SHOWN_ONCE" }, 201);
+		}
+		const del = /^runners\/([^/]+)$/.exec(p);
+		if (del && m === "DELETE") {
+			const i = this.runners.findIndex((r) => r.id === del[1]);
+			const runner = this.runners[i];
+			if (!runner) return json({ code: "not_found", message: "runner" }, 404);
+			this.runners.splice(i, 1);
+			const orb = this.orbs.get(runner.orbId);
+			if (orb) {
+				const next: Orb = {
+					...orb,
+					state: "deleted",
+					stateChangedAt: Date.now(),
+					deletedAt: Date.now(),
+				};
+				this.orbs.set(orb.id, next);
+				this.broadcast({ type: "orb", orb: next });
+			}
+			// 线程保留转录，`orbId` 置空（只读）
+			for (const t of [...this.threads.values()])
+				if (t.orbId === runner.orbId)
+					this.upsertThread({ ...t, orbId: undefined, updatedAt: Date.now() });
+			return new Response(null, { status: 204 });
+		}
+		const wt = /^threads\/([^/]+)\/worktree\/remove$/.exec(p);
+		if (wt && m === "POST") {
+			const t = this.threads.get(wt[1] ?? "");
+			if (!t) return json({ code: "not_found", message: "thread" }, 404);
+			if (!t.worktree)
+				return json({ code: "conflict", message: "no worktree" }, 409);
+			if (this.orbs.get(t.orbId ?? "")?.state !== "ready")
+				return json({ code: "runner_offline", message: "runner" }, 409);
+			this.upsertThread({ ...t, worktree: undefined, updatedAt: Date.now() });
+			return new Response(null, { status: 204 });
+		}
+		return null;
+	}
+
+	/**
+	 * 在 runner 上新建线程（同 internal/threads 的 runner 分支）：runner 须在线、`dir` 须在声明的目录之内；
+	 * 没要 worktree、没给 `shareDir` 而目录已被未归档线程占用 → 409 `dir_in_use`；要 worktree 时目录取 `<repo>-<name>`（重名加 `-2`…）。
+	 */
+	private createRunnerThread(b: Json, executor: Json): Response {
+		const runner = this.runners.find((r) => r.id === executor.runnerId);
+		if (!runner) return json({ code: "not_found", message: "runner" }, 404);
+		const orb = this.orbs.get(runner.orbId);
+		if (orb?.state !== "ready")
+			return json({ code: "runner_offline", message: runner.name }, 409);
+		const dir = String(executor.dir ?? "");
+		const served = runner.dirs.find(
+			(d) => dir === d.path || dir.startsWith(`${d.path}/`),
+		);
+		if (!dir.startsWith("/") || !served || dir.split("/").includes(".."))
+			return json({ code: "dir_not_served", message: dir }, 400);
+		const open = [...this.threads.values()].filter(
+			(t) => !t.archivedAt && t.orbId === orb.id,
+		);
+		let cwd = dir;
+		let worktree: Thread["worktree"];
+		const wt = executor.worktree as Json | undefined;
+		if (wt) {
+			const name = String(wt.name ?? "");
+			if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(name))
+				return json(
+					{
+						code: "worktree_failed",
+						message: `fatal: '${name}' is not a valid branch name`,
+					},
+					400,
+				);
+			if (!(served.git && served.path === dir))
+				return json(
+					{
+						code: "worktree_failed",
+						message:
+							"fatal: not a git repository (or any of the parent directories): .git",
+					},
+					400,
+				);
+			let n = 1;
+			const taken = (d: string) => open.some((t) => t.cwd === d);
+			while (taken(n === 1 ? `${dir}-${name}` : `${dir}-${name}-${n}`)) n++;
+			const branch = n === 1 ? name : `${name}-${n}`;
+			cwd = `${dir}-${branch}`;
+			worktree = { repo: dir, dir: cwd, branch };
+		} else if (executor.shareDir !== true) {
+			const users = open.filter((t) => t.cwd === dir).map((t) => t.id);
+			if (users.length > 0)
+				return json(
+					{
+						code: "dir_in_use",
+						message: `${dir} 已是其它线程的工作目录`,
+						threadIds: users,
+					},
+					409,
+				);
+		}
+		const id = `T-mock-${(this.idSeq++).toString(16)}`;
+		const prompt =
+			this.withAttachments(
+				id,
+				typeof b.prompt === "string" ? b.prompt : "",
+				b.attachments,
+			) ?? "";
+		const t: Thread = {
+			id,
+			title:
+				typeof b.title === "string" && b.title
+					? b.title
+					: prompt.slice(0, 40) || "新线程",
+			titleSource: "auto",
+			state: "provisioning",
+			stateChangedAt: Date.now(),
+			pinned: false,
+			labels: [],
+			unread: false,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			orbId: orb.id,
+			projectId: typeof b.projectId === "string" ? b.projectId : undefined,
+			cwd,
+			worktree,
+		};
+		this.entries.set(id, []);
+		this.states.set(id, {
+			...mainState(),
+			todoPhases: [],
+			contextUsage: { tokens: 0, contextWindow: 200_000, percent: 0 },
+		});
+		const next = { ...orb, threadIds: [...orb.threadIds, id] };
+		this.orbs.set(orb.id, next);
+		this.broadcast({ type: "orb", orb: next });
+		this.upsertThread(t);
+		// runner 常驻在线：不建 orb、不跑 setup，agent 直接启动
+		void (async () => {
+			await sleep(this.delay * 4);
+			this.upsertThread({ ...t, state: "idle" });
+			if (prompt) await this.runPrompt(id, prompt);
+		})();
+		return json({ thread: t }, 201);
 	}
 
 	// ------------------------------------------------------------ WS

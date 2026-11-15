@@ -303,26 +303,33 @@ export function xhrUpload<T>({
 
 // ---------------------------------------------------------------- orb
 
-export function orbFileSource(orbId: string): FileSource {
+/**
+ * `threadId`：当前线程，所有请求都带 `thread`——runner 的 orb 必须带（范围是该线程的工作目录），普通 orb 由控制面校验后照旧。
+ * runner 线程的 `workdir` 与 `home` 是同一个目录（线程的工作目录），此时只给一个根。
+ */
+export function orbFileSource(orbId: string, threadId: string): FileSource {
 	const id = { id: orbId };
+	const thread = { thread: threadId };
 	const fileUrl = (path: string) =>
-		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?path=${encodeURIComponent(path)}`;
+		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?thread=${encodeURIComponent(threadId)}&path=${encodeURIComponent(path)}`;
 	return {
 		id: `orb:${orbId}`,
 		caps: { mkdir: true, rename: true, upload: true, download: true },
 		async roots() {
 			const r = await unwrap(
-				api.GET("/api/v1/orbs/{id}/fs/roots", { params: { path: id } }),
+				api.GET("/api/v1/orbs/{id}/fs/roots", {
+					params: { path: id, query: thread },
+				}),
 			);
-			return [
-				{ label: "files.roots.workspace", path: r.workdir },
-				{ label: "files.roots.home", path: r.home },
-			];
+			const workspace = { label: "files.roots.workspace", path: r.workdir };
+			return r.home === r.workdir
+				? [workspace]
+				: [workspace, { label: "files.roots.home", path: r.home }];
 		},
 		async list(path) {
 			const r = await unwrap(
 				api.GET("/api/v1/orbs/{id}/fs/list", {
-					params: { path: id, query: { path } },
+					params: { path: id, query: { ...thread, path } },
 				}),
 			);
 			return r.entries;
@@ -330,7 +337,7 @@ export function orbFileSource(orbId: string): FileSource {
 		stat(path) {
 			return unwrap(
 				api.GET("/api/v1/orbs/{id}/fs/stat", {
-					params: { path: id, query: { path } },
+					params: { path: id, query: { ...thread, path } },
 				}),
 			);
 		},
@@ -374,7 +381,7 @@ export function orbFileSource(orbId: string): FileSource {
 		async mkdir(path) {
 			await unwrap(
 				api.POST("/api/v1/orbs/{id}/fs/mkdir", {
-					params: { path: id },
+					params: { path: id, query: thread },
 					body: { path },
 				}),
 			);
@@ -382,7 +389,7 @@ export function orbFileSource(orbId: string): FileSource {
 		async rename(from, to) {
 			await unwrap(
 				api.POST("/api/v1/orbs/{id}/fs/rename", {
-					params: { path: id },
+					params: { path: id, query: thread },
 					body: { from, to, overwrite: false },
 				}),
 			);
@@ -390,7 +397,7 @@ export function orbFileSource(orbId: string): FileSource {
 		async remove(path) {
 			await unwrap(
 				api.POST("/api/v1/orbs/{id}/fs/delete", {
-					params: { path: id },
+					params: { path: id, query: thread },
 					body: { path },
 				}),
 			);

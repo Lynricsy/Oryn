@@ -29,6 +29,7 @@ import { Badge, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Menu, type MenuItem } from "../ui/primitives";
+import { useArchiveThread } from "./ArchiveDialog";
 
 /** 页头背后渐进模糊纱的高度（px）：48px 页头 + 16px 渐隐，模糊在页头下沿之后 16px 内减到 0；转录顶部留白取同一个值。 */
 export const HEADER_VEIL = 64;
@@ -131,6 +132,59 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 	);
 }
 
+/** 长路径只留最后两段（`…/code/oryn`），完整路径放悬停提示。 */
+export function shortPath(p: string): string {
+	const parts = p.split("/").filter(Boolean);
+	return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : p;
+}
+
+/**
+ * runner 线程（M11b）的位置胶囊：状态珠 + `runner 名 · cwd`（页头窄时只留状态珠与名字）；点击打开信息面板。
+ * runner 不在线时状态珠是 `stopped` 的静止灰点，与离线提示条一致。
+ */
+function RunnerChip({
+	orb,
+	cwd,
+	working,
+}: {
+	orb: Orb;
+	cwd?: string;
+	working: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const name = orb.providerName ?? t("runner.label");
+	const state =
+		orb.state === "ready" ? t("runner.online") : t("runner.offline");
+	return (
+		<button
+			type="button"
+			data-testid="runner-chip"
+			aria-label={t("runner.chip", { name, cwd: cwd ?? "", state })}
+			title={cwd ? `${name} · ${cwd}` : name}
+			className="ml-1.5 inline-flex h-[26px] min-w-0 shrink items-center gap-[7px] rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @lg/header:pr-2.5 @lg/header:pl-[9px]"
+			onClick={() => {
+				const ui = uiStore.getState();
+				ui.setPanelTab("info");
+				ui.setPanel(true);
+			}}
+		>
+			<OrbBead state={orb.state} active={working} size={12} label={state} />
+			<span aria-hidden className="max-w-28 shrink-0 truncate">
+				{name}
+			</span>
+			{cwd && (
+				<span
+					aria-hidden
+					className="hidden min-w-0 truncate font-mono font-normal text-muted @lg/header:inline"
+				>
+					<span className="text-ghost">· </span>
+					{shortPath(cwd)}
+				</span>
+			)}
+		</button>
+	);
+}
+
 export function ThreadHeader({
 	threadId,
 	sidebarToggle,
@@ -181,6 +235,8 @@ export function ThreadHeader({
 			setError(e instanceof Error ? e.message : String(e)),
 		);
 	};
+	const isRunner = orb?.kind === "runner";
+	const { archive, dialog: archiveDialog } = useArchiveThread();
 	const items: MenuItem[] = [
 		{
 			key: "pin",
@@ -219,7 +275,9 @@ export function ThreadHeader({
 			icon: "archive",
 			label: thread?.archivedAt ? t("thread.unarchive") : t("thread.archive"),
 			onSelect: act(() =>
-				patchThread(threadId, { archived: !thread?.archivedAt }),
+				thread?.archivedAt
+					? patchThread(threadId, { archived: false })
+					: archive(thread ?? { id: threadId }),
 			),
 		},
 		...(thread?.archivedAt
@@ -229,9 +287,7 @@ export function ThreadHeader({
 						key: "archiveShipped",
 						icon: "rocket" as const,
 						label: t("thread.archiveShipped"),
-						onSelect: act(() =>
-							patchThread(threadId, { archived: true, shipped: true }),
-						),
+						onSelect: act(() => archive(thread ?? { id: threadId }, true)),
 					},
 				]),
 		{
@@ -318,29 +374,38 @@ export function ThreadHeader({
 					}),
 					disabled: true,
 				},
-				{
-					key: "freeze",
-					icon: "pause",
-					label: t("thread.orbFreeze"),
-					disabled: orb?.state !== "ready",
-					onSelect: act(() => pauseOrb(thread?.orbId ?? "", "freeze")),
-				},
+				// runner 不能冻结、不能删除（409 runner_unsupported）；runner 自己在那台机器上停
+				...(isRunner
+					? []
+					: [
+							{
+								key: "freeze",
+								icon: "pause" as const,
+								label: t("thread.orbFreeze"),
+								disabled: orb?.state !== "ready",
+								onSelect: act(() => pauseOrb(thread?.orbId ?? "", "freeze")),
+							},
+						]),
 				{
 					key: "wake",
 					icon: "play",
 					label: t("thread.orbWake"),
 					onSelect: act(() => wakeThread(threadId)),
 				},
-				{
-					key: "delete",
-					icon: "trash",
-					danger: true,
-					label: t("thread.orbDelete"),
-					onSelect: () => {
-						if (window.confirm(t("thread.orbDeleteConfirm")))
-							act(() => deleteOrb(thread?.orbId ?? ""))();
-					},
-				},
+				...(isRunner
+					? []
+					: [
+							{
+								key: "delete",
+								icon: "trash" as const,
+								danger: true,
+								label: t("thread.orbDelete"),
+								onSelect: () => {
+									if (window.confirm(t("thread.orbDeleteConfirm")))
+										act(() => deleteOrb(thread?.orbId ?? ""))();
+								},
+							},
+						]),
 			],
 		},
 		{
@@ -524,9 +589,17 @@ export function ThreadHeader({
 					}
 				/>
 			)}
-			{editing === null && orb && (
-				<OrbChip orb={orb} working={thread?.state === "working"} />
-			)}
+			{editing === null &&
+				orb &&
+				(isRunner ? (
+					<RunnerChip
+						orb={orb}
+						cwd={thread?.cwd}
+						working={thread?.state === "working"}
+					/>
+				) : (
+					<OrbChip orb={orb} working={thread?.state === "working"} />
+				))}
 			<span className="min-w-0 flex-1" />
 			{error && (
 				<span className="max-w-40 truncate text-err text-xs" title={error}>
@@ -573,6 +646,7 @@ export function ThreadHeader({
 					onClose={() => setScheduleOpen(null)}
 				/>
 			)}
+			{archiveDialog}
 		</header>
 	);
 }

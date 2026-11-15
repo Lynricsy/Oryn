@@ -30,6 +30,7 @@ import {
 	ENV_THREADS,
 	M9_IDS,
 	M11A_IDS,
+	M11B_IDS,
 	MAIN_THREAD,
 	projects,
 	TOOL_ZOO_THREAD,
@@ -1716,6 +1717,73 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await open(page, "/", "textarea");
 			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await settle(page, 400);
+		},
+	},
+	// M11b：执行位置的 Runners 分组、runner 线程（页头 runner · cwd、信息面板、没有终端标签）、离线提示、
+	// 目录被占用对话框、归档带「同时移除 worktree」、设置 → Runners（新建后的令牌与启动命令）
+	{
+		name: "m11b-executor",
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await page.getByRole("button", { name: /^laptop/ }).click();
+			await page.getByRole("button", { name: "新 worktree" }).first().click();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "m11b-dir-in-use",
+		prepare: async ({ page }) => {
+			await open(page, "/", "textarea");
+			await page.locator("textarea").fill("Fix login flicker");
+			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await page.getByRole("button", { name: /^laptop/ }).click();
+			await page.getByRole("button", { name: /^repo/ }).click();
+			await page.keyboard.press("Escape");
+			await page.getByRole("button", { name: "发送" }).click();
+			await page.locator("[data-testid=dir-in-use]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "m11b-thread",
+		prepare: async ({ page }) => {
+			await openThread(page, M11B_IDS.runnerThread);
+			await openPanel(page, "info");
+			await page.locator("[data-testid=runner-specs]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "m11b-offline",
+		prepare: async ({ page }) => {
+			await openThread(page, M11B_IDS.offlineThread);
+			await page.locator("[data-testid=runner-offline]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "m11b-archive",
+		prepare: async ({ page }) => {
+			await openThread(page, M11B_IDS.worktreeThread);
+			await page.getByRole("button", { name: "更多操作" }).first().click();
+			await page.getByRole("menuitem", { name: "归档", exact: true }).click();
+			await page.locator("[data-testid=archive-dialog]").waitFor();
+			await settle(page, 400);
+		},
+	},
+	{
+		name: "m11b-settings",
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				"/settings/runners",
+				"[data-testid=runner-settings-row]",
+			);
+			await page.getByRole("textbox", { name: "名字" }).fill("studio-2");
+			await page.getByRole("button", { name: "创建", exact: true }).click();
+			await page.locator("[data-testid=runner-created]").waitFor();
 			await settle(page, 400);
 		},
 	},

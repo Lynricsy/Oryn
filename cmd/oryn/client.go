@@ -101,6 +101,8 @@ type apiError struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Body 是原始错误体（带额外字段的错误，如 409 `DirInUseConflict` 的 `threadIds`）。
+	Body []byte `json:"-"`
 }
 
 func (e *apiError) Error() string {
@@ -180,6 +182,7 @@ func (c *apiClient) getRaw(ctx context.Context, path string) (io.ReadCloser, err
 func readAPIError(resp *http.Response) *apiError {
 	e := &apiError{Status: resp.StatusCode}
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	e.Body = b
 	if json.Unmarshal(b, e) != nil || e.Message == "" {
 		e.Message = strings.TrimSpace(string(b))
 	}
