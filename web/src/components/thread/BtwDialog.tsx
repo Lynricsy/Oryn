@@ -1,90 +1,65 @@
 /**
- * `/btw` 旁路提问对话框，对齐 omp TUI 的 BTW 历史面板。一个话题是一段对话：标题是首轮问题，首轮回答之后
- * 追问以气泡、回答以正文依次排列；状态（回答中 / 已取消 / 被打断 / 出错）和「取消」落在所属的那一轮上；
- * 追问输入贴在话题底部；最新一轮起草的 `<inject>` 引导块单独成卡，可注入主会话（`btw_inject`）。
- * 话题按创建时间新的在前（与 Core `get_btw_history`、TUI 一致），最新与运行中的话题默认展开，其余折叠成一行。
+ * `/btw` 旁路提问对话框，对齐 omp TUI 的 BTW 历史面板，左右分栏：
+ * - 左栏是话题列表（新的在前，与 Core `get_btw_history`、TUI 一致）：首轮问题（最多两行）、时间（今天写时刻，否则写日期）、
+ *   追问轮数；运行中的话题带中性转圈。顶部「新话题」把右栏切成提问输入。列表是 listbox，上下键切换。
+ * - 右栏是选中话题的详情（`BtwTopic.tsx`），追问输入贴在详情底部，由页脚主按钮「追问」展开。
+ * - 页脚：左「复制回答」，右「关闭」与主按钮（追问 / 运行中改为取消 / 新话题时为提问）。
+ * - 手机（compact）是两级页面：列表页 → 详情页，详情左上角返回列表。
+ * 打开时默认选中最新话题（`/btw <问题>` 先发问再打开，最新的就是刚发的那个）；用户点过之后固定在所点话题。
  * Core 一次只跑一个 btw（否则报「cancel it first」），有运行中或正在发起时提问与追问都禁用。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { formatDateTime, formatRelative } from "../../lib/format";
-import type { RpcBtwHistoryRecord, RpcBtwInjectState } from "../../omp/types";
+import { formatDateTime } from "../../lib/format";
+import { useBreakpoint } from "../../lib/viewport";
+import type { RpcBtwHistoryRecord } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
 import { isRecord } from "../../tool-render/util";
-import { Markdown } from "../markdown/Markdown";
-import { CopyButton } from "../ui/CopyButton";
-import { Badge, Callout, type Tone } from "../ui/data";
+import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
 	Button,
 	Dialog,
-	EmptyState,
 	ErrorText,
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
+import { BtwTopicDetail, copyableAnswer, latestTurn } from "./BtwTopic";
 
-type BtwTurn = Omit<
-	RpcBtwHistoryRecord,
-	"id" | "leafId" | "followUps" | "inject"
->;
-type BtwStatus = BtwTurn["status"];
+const NEW_FORM = "btw-new-topic";
+const FOLLOW_FORM = "btw-follow-up";
 
-/** 折叠行上的状态徽标：绿黄红只表达成功 / 警告 / 错误，运行中是中性（强调色只给「需要你」的东西）。 */
-const BTW_TONE: Record<BtwStatus, Tone> = {
-	running: "neutral",
-	complete: "ok",
-	cancelled: "warn",
-	error: "err",
-	interrupted: "warn",
-};
-
-/** 追问气泡：与转录里的用户气泡同一形态（`MessageView` 的 USER_BUBBLE），字号按对话框正文收一档。 */
-const QUESTION_BUBBLE =
-	"w-fit min-w-0 max-w-[85%] whitespace-pre-wrap break-words rounded-lg rounded-br-xs border border-border bg-raised px-3 py-1.5 text-sm";
-
-/** 最新一轮：追问末尾，无追问则是首轮（与 Core `getBtwLatestTurn` 一致）。 */
-function latestTurn(record: RpcBtwHistoryRecord): BtwTurn {
-	return record.followUps?.at(-1) ?? record;
-}
-
-const INJECT_OPEN = "<inject>";
-const INJECT_CLOSE = "</inject>";
-
-interface InjectParts {
-	before: string;
-	inject: string;
-	after: string;
-	/** 没有闭合块：最后一个起始标签一直延伸到结尾，只在仍在流式时单独显示。 */
-	closed: boolean;
-}
-
-/** 在最后一个闭合的 `<inject>` 块处切开回答（移植自 Core `splitBtwInject`）。 */
-function splitInject(answer: string): InjectParts | undefined {
-	const lastClose = answer.lastIndexOf(INJECT_CLOSE);
-	const open =
-		lastClose === -1
-			? -1
-			: answer.lastIndexOf(INJECT_OPEN, lastClose - INJECT_OPEN.length);
-	if (open !== -1) {
-		const close = answer.indexOf(INJECT_CLOSE, open + INJECT_OPEN.length);
-		return {
-			before: answer.slice(0, open),
-			inject: answer.slice(open + INJECT_OPEN.length, close),
-			after: answer.slice(close + INJECT_CLOSE.length),
-			closed: true,
-		};
+/** 列表里的时间：今天写时刻，今年写月日，更早连年份。 */
+function topicTime(ts: number, now: number, lang: string): string {
+	const d = new Date(ts);
+	const n = new Date(now);
+	const sameYear = d.getFullYear() === n.getFullYear();
+	if (
+		sameYear &&
+		d.getMonth() === n.getMonth() &&
+		d.getDate() === n.getDate()
+	) {
+		return new Intl.DateTimeFormat(lang, {
+			hour: "2-digit",
+			minute: "2-digit",
+		}).format(d);
 	}
-	const streaming = answer.lastIndexOf(INJECT_OPEN);
-	if (streaming === -1) return undefined;
-	return {
-		before: answer.slice(0, streaming),
-		inject: answer.slice(streaming + INJECT_OPEN.length),
-		after: "",
-		closed: false,
-	};
+	return new Intl.DateTimeFormat(
+		lang,
+		sameYear
+			? { month: "short", day: "numeric" }
+			: { year: "numeric", month: "short", day: "numeric" },
+	).format(d);
 }
 
 export function BtwDialog({
@@ -95,11 +70,21 @@ export function BtwDialog({
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
+	const compact = useBreakpoint() === "compact";
 	const btw = useThread(threadId, (s) => s.btw);
 	const order = useThread(threadId, (s) => s.btwOrder);
 	const notices = useThread(threadId, (s) => s.notices);
 	const [openedAt] = useState(Date.now);
-	const [q, setQ] = useState("");
+	// 用户点选的话题；null 表示跟随最新的那个
+	const [picked, setPicked] = useState<string | null>(null);
+	// 右栏（窄屏为整页）是新话题输入
+	const [composing, setComposing] = useState(false);
+	// 窄屏的两级页面；null 表示还没定：话题第一次出现时（可能在历史读回之后）定下来，
+	// 最新话题正在回答（刚用 /btw 发问）就直接进详情，否则停在列表
+	const [pageState, setPage] = useState<"list" | "detail" | null>(null);
+	const [question, setQuestion] = useState("");
+	const [followOpen, setFollowOpen] = useState(false);
+	const [followUp, setFollowUp] = useState("");
 	const [error, setError] = useState<unknown>(null);
 	// 一个 btw 命令在途（Core 还没写入运行中的记录）：同样不能再发起
 	const [asking, setAsking] = useState(false);
@@ -131,383 +116,453 @@ export function BtwDialog({
 			),
 		[notices, openedAt],
 	);
-	const running = order.some((id) => {
-		const r = btw[id];
-		return r !== undefined && latestTurn(r).status === "running";
-	});
+	const records = useMemo(
+		() =>
+			order.flatMap((id) => {
+				const r = btw[id];
+				return r ? [r] : [];
+			}),
+		[order, btw],
+	);
+	const running = records.some((r) => latestTurn(r).status === "running");
 	const busy = running || asking;
+	const selected = (picked === null ? undefined : btw[picked]) ?? records.at(0);
+	// 还没有任何话题且历史在读：先转圈，读完再决定是不是空态（空态直接进新话题输入）
+	const loading = selected === undefined && history.isPending;
+	const newMode = !loading && (composing || selected === undefined);
+	const topic = newMode ? undefined : selected;
+	const topicRunning =
+		topic !== undefined && latestTurn(topic).status === "running";
+	const newest = records.at(0);
+	const page =
+		pageState ??
+		(newest && latestTurn(newest).status === "running" ? "detail" : "list");
+	const pageDecided = pageState !== null || newest === undefined;
+	useEffect(() => {
+		if (!pageDecided) setPage(page);
+	}, [pageDecided, page]);
 
-	const ask = async (question: string, recordId?: string) => {
+	const select = (id: string) => {
+		setPicked(id);
+		setComposing(false);
+		setFollowOpen(false);
+		setFollowUp("");
+		setError(null);
+	};
+	const startNew = () => {
+		setComposing(true);
+		setFollowOpen(false);
+		setError(null);
+	};
+	const backToList = () => {
+		setComposing(false);
+		setFollowOpen(false);
+		setError(null);
+		setPage("list");
+	};
+
+	const ask = async (q: string, recordId?: string) => {
 		setAsking(true);
 		try {
-			await realtime.cmd(
+			const res = await realtime.cmd(
 				threadId,
 				recordId === undefined
-					? { type: "btw", question }
-					: { type: "btw", question, recordId },
+					? { type: "btw", question: q }
+					: { type: "btw", question: q, recordId },
 			);
+			return res.record.id;
 		} finally {
 			setAsking(false);
 		}
 	};
+	const submitNew = (e: FormEvent) => {
+		e.preventDefault();
+		const q = question.trim();
+		if (!q || busy) return;
+		setError(null);
+		ask(q).then((id) => {
+			setQuestion("");
+			setPicked(id);
+			setComposing(false);
+			setPage("detail");
+		}, setError);
+	};
+	const submitFollowUp = (e: FormEvent) => {
+		e.preventDefault();
+		const q = followUp.trim();
+		if (!q || busy || !topic) return;
+		setError(null);
+		ask(q, topic.id).then(() => {
+			setFollowUp("");
+			setFollowOpen(false);
+		}, setError);
+	};
+	const cancel = () => {
+		if (!topic) return;
+		setError(null);
+		realtime
+			.cmd(threadId, { type: "btw_cancel", recordId: topic.id })
+			.catch(setError);
+	};
 
-	return (
-		<Dialog open wide onClose={onClose} title={t("btw.title")}>
-			<p className="mb-3 text-muted text-xs">{t("btw.hint")}</p>
-			<form
-				className="flex gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					const question = q.trim();
-					if (!question || busy) return;
-					setError(null);
-					ask(question).then(() => setQ(""), setError);
-				}}
-			>
+	const errorLine = error ? (
+		<div className="px-5 pb-3 sm:px-7">
+			<ErrorText error={error} />
+		</div>
+	) : null;
+	const busyHint = <p className="mt-1.5 text-muted text-xs">{t("btw.busy")}</p>;
+
+	const list = (
+		<TopicList
+			records={records}
+			selectedId={newMode ? undefined : selected?.id}
+			newActive={newMode}
+			onNew={startNew}
+			onPick={(id) => {
+				select(id);
+				if (compact) setPage("detail");
+			}}
+			onMove={compact ? setPicked : select}
+		/>
+	);
+
+	const newPane = (
+		<form
+			id={NEW_FORM}
+			onSubmit={submitNew}
+			className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-6 sm:px-7"
+		>
+			<h3 className="font-semibold text-fg text-lg leading-snug tracking-tight">
+				{t("btw.newTopic")}
+			</h3>
+			<p className="mt-1 text-muted text-xs">{t("btw.hint")}</p>
+			<div className="mt-4">
 				<TextInput
 					autoFocus
 					aria-label={t("btw.placeholder")}
 					placeholder={t("btw.placeholder")}
-					value={q}
+					value={question}
 					disabled={busy}
-					onChange={(e) => setQ(e.target.value)}
+					onChange={(e) => setQuestion(e.target.value)}
 				/>
+				{busy && busyHint}
+			</div>
+			{records.length === 0 && (
+				<p className="mt-3 text-faint text-xs">{t("btw.emptyHint")}</p>
+			)}
+			<div className="mt-3">
+				<ErrorText error={error} />
+			</div>
+		</form>
+	);
+
+	const detailPane = topic && (
+		<>
+			<BtwTopicDetail key={topic.id} threadId={threadId} record={topic} />
+			{followOpen && !topicRunning && (
+				<form
+					id={FOLLOW_FORM}
+					onSubmit={submitFollowUp}
+					className="border-border border-t px-5 pt-3 pb-3 sm:px-7"
+				>
+					<TextInput
+						autoFocus
+						aria-label={t("btw.followUpPlaceholder")}
+						placeholder={t("btw.followUpPlaceholder")}
+						value={followUp}
+						disabled={busy}
+						onChange={(e) => setFollowUp(e.target.value)}
+					/>
+				</form>
+			)}
+			{busy && !topicRunning && (
+				<div className="px-5 pb-3 sm:px-7">{busyHint}</div>
+			)}
+			{errorLine}
+		</>
+	);
+
+	const spinner = (
+		<div className="flex flex-1 items-center justify-center text-faint">
+			<Spinner size={16} />
+		</div>
+	);
+
+	let body: ReactNode;
+	if (!compact) {
+		body = (
+			<>
+				<div className="flex w-64 shrink-0 flex-col border-border border-r lg:w-72">
+					{list}
+				</div>
+				<div className="flex min-w-0 flex-1 flex-col">
+					{loading ? spinner : newMode ? newPane : detailPane}
+				</div>
+			</>
+		);
+	} else if (loading) {
+		body = spinner;
+	} else if (newMode || page === "detail") {
+		body = (
+			<div className="flex min-w-0 flex-1 flex-col">
+				{(!newMode || records.length > 0) && (
+					<div className="px-3 pt-2">
+						<Button size="sm" variant="ghost" icon="back" onClick={backToList}>
+							{t("btw.topics")}
+						</Button>
+					</div>
+				)}
+				{newMode ? newPane : detailPane}
+			</div>
+		);
+	} else {
+		body = <div className="flex min-w-0 flex-1 flex-col">{list}</div>;
+	}
+
+	const close = <Button onClick={onClose}>{t("common.close")}</Button>;
+	let footer: ReactNode = close;
+	if (newMode) {
+		footer = (
+			<>
+				{close}
 				<Button
 					type="submit"
+					form={NEW_FORM}
 					variant="primary"
-					className="shrink-0 whitespace-nowrap"
-					disabled={busy || !q.trim()}
+					disabled={busy || !question.trim()}
 				>
 					{t("btw.ask")}
 				</Button>
-			</form>
-			{busy && <p className="mt-1.5 text-muted text-xs">{t("btw.busy")}</p>}
-			<div className="mt-2">
-				<ErrorText error={error ?? history.error} />
-			</div>
-			{historyNotices.map((n) => (
-				<div key={n.key} className="mt-2">
-					<Callout tone={n.level === "error" ? "err" : "warn"} role="alert">
-						{n.text}
-					</Callout>
-				</div>
-			))}
-			{order.length === 0 && history.isSuccess ? (
-				<EmptyState icon="chats" title={t("btw.empty")}>
-					{t("btw.emptyHint")}
-				</EmptyState>
-			) : (
-				<div className="mt-3 flex flex-col gap-2.5">
-					{order.map((id, i) => {
-						const r = btw[id];
-						return r ? (
-							<BtwTopic
-								key={id}
-								threadId={threadId}
-								record={r}
-								busy={busy}
-								defaultOpen={i === 0 || latestTurn(r).status === "running"}
-								onAsk={ask}
-							/>
-						) : null;
-					})}
+			</>
+		);
+	} else if (topic && (!compact || page === "detail")) {
+		footer = (
+			<>
+				<CopyAnswer key={topic.id} text={copyableAnswer(topic)} />
+				{close}
+				{topicRunning ? (
+					<Button variant="primary" onClick={cancel}>
+						{t("common.cancel")}
+					</Button>
+				) : followOpen ? (
+					<Button
+						type="submit"
+						form={FOLLOW_FORM}
+						variant="primary"
+						disabled={busy || !followUp.trim()}
+					>
+						{t("btw.followUp")}
+					</Button>
+				) : (
+					<Button
+						variant="primary"
+						disabled={busy}
+						title={busy ? t("btw.busy") : undefined}
+						onClick={() => setFollowOpen(true)}
+					>
+						{t("btw.followUp")}
+					</Button>
+				)}
+			</>
+		);
+	}
+
+	return (
+		<Dialog
+			open
+			size="xl"
+			onClose={onClose}
+			title={t("btw.title")}
+			footer={footer}
+		>
+			{(history.error || historyNotices.length > 0) && (
+				<div className="mb-3 flex flex-col gap-2">
+					<ErrorText error={history.error} />
+					{historyNotices.map((n) => (
+						<Callout
+							key={n.key}
+							tone={n.level === "error" ? "err" : "warn"}
+							role="alert"
+						>
+							{n.text}
+						</Callout>
+					))}
 				</div>
 			)}
+			<div className="-mx-5 -mb-2 flex h-[min(68dvh,640px)] border-border border-y">
+				{body}
+			</div>
 		</Dialog>
 	);
 }
 
 /**
- * 一个话题。折叠时是一行：首轮问题（单行截断）、非完成状态的徽标、轮数与时间；
- * 展开后标题完整换行，下面依次是各轮回答与追问，底部是追问输入。
+ * 话题列表：顶部「新话题」，下面是 listbox。选中项中性高亮（强调色只给「需要你」的东西），
+ * 漫游 tabindex：只有选中项（无选中时第一项）在 Tab 序里，上下键 / Home / End 在项间移动并选中。
  */
-function BtwTopic({
-	threadId,
-	record,
-	busy,
-	defaultOpen,
-	onAsk,
+function TopicList({
+	records,
+	selectedId,
+	newActive,
+	onNew,
+	onPick,
+	onMove,
 }: {
-	threadId: string;
-	record: RpcBtwHistoryRecord;
-	busy: boolean;
-	defaultOpen: boolean;
-	onAsk: (question: string, recordId: string) => Promise<void>;
+	records: readonly RpcBtwHistoryRecord[];
+	selectedId: string | undefined;
+	newActive: boolean;
+	onNew: () => void;
+	onPick: (id: string) => void;
+	onMove: (id: string) => void;
 }) {
-	const { t } = useTranslation();
-	const turns: readonly BtwTurn[] = [record, ...(record.followUps ?? [])];
-	const latest = latestTurn(record);
-	const latestIndex = turns.length - 1;
-	const [open, setOpen] = useState(defaultOpen);
-	const [followUp, setFollowUp] = useState("");
-	const [error, setError] = useState<unknown>(null);
-	const [injectNote, setInjectNote] = useState<string | null>(null);
-	// 最近一个非空回答，原样保留空白（与 TUI 的复制一致）
-	const copy = turns
-		.map((turn) => turn.answer)
-		.findLast((answer) => answer.trim() !== "");
+	const { t, i18n } = useTranslation();
+	const listRef = useRef<HTMLDivElement>(null);
+	const now = Date.now();
+	const tabbable = selectedId ?? records[0]?.id;
+	// 打开（窄屏是回到列表页）时焦点落在选中的话题上，上下键即可切换。话题可能在历史读回后才出现，
+	// 所以等第一次有选中项时再聚焦（只做一次）；用户已经在输入框里打字就不抢焦点
+	const focused = useRef(false);
+	const hasSelection = selectedId !== undefined && records.length > 0;
+	useLayoutEffect(() => {
+		if (focused.current || !hasSelection) return;
+		focused.current = true;
+		const active = document.activeElement;
+		if (
+			active instanceof HTMLInputElement ||
+			active instanceof HTMLTextAreaElement
+		)
+			return;
+		listRef.current
+			?.querySelector<HTMLElement>("[aria-selected=true]")
+			?.focus();
+	}, [hasSelection]);
 
-	const cancel = () => {
-		setError(null);
-		realtime
-			.cmd(threadId, { type: "btw_cancel", recordId: record.id })
-			.catch(setError);
-	};
-	const inject = () => {
-		setError(null);
-		setInjectNote(null);
-		realtime
-			.cmd(threadId, { type: "btw_inject", recordId: record.id })
-			.then((r) => {
-				if (!r.sent)
-					setInjectNote(
-						r.reason
-							? t("btw.inject.refused", { reason: r.reason })
-							: t("btw.inject.notSent"),
-					);
-			}, setError);
+	const move = (from: string, key: string) => {
+		const i = records.findIndex((r) => r.id === from);
+		const next =
+			key === "ArrowDown"
+				? Math.min(i + 1, records.length - 1)
+				: key === "ArrowUp"
+					? Math.max(i - 1, 0)
+					: key === "Home"
+						? 0
+						: records.length - 1;
+		const id = records[next]?.id;
+		if (id === undefined) return;
+		onMove(id);
+		listRef.current
+			?.querySelector<HTMLElement>(`[data-topic="${CSS.escape(id)}"]`)
+			?.focus();
 	};
 
 	return (
-		<section
-			aria-label={record.question}
-			className="rounded-lg border border-border"
-		>
-			<div className="flex items-start gap-2 px-3 pt-2.5 pb-2.5">
+		<>
+			{/* 与下方滚动的话题列表之间一条分隔线：列表滚动时顶上被截的话题不会贴着「新话题」 */}
+			<div className="border-border border-b px-2 pt-2 pb-2">
 				<button
 					type="button"
-					aria-expanded={open}
-					onClick={() => setOpen((v) => !v)}
-					className="-mx-1 -my-0.5 flex min-w-0 flex-1 items-start gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-hover"
+					aria-pressed={newActive}
+					onClick={onNew}
+					className={`flex h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm transition-colors duration-150 ${newActive ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg"}`}
 				>
-					<Icon
-						name={open ? "chevronDown" : "chevronRight"}
-						size={12}
-						aria-hidden
-						className="mt-[3px] shrink-0 text-faint"
-					/>
-					<span
-						className={`min-w-0 flex-1 font-medium text-sm ${open ? "whitespace-pre-wrap break-words" : "truncate"}`}
-					>
-						{record.question}
-					</span>
+					<Icon name="plus" size={14} aria-hidden />
+					{t("btw.newTopic")}
 				</button>
-				{!open && latest.status !== "complete" && (
-					<Badge tone={BTW_TONE[latest.status]}>
-						{t(`btw.status.${latest.status}`)}
-					</Badge>
-				)}
-				<span
-					title={formatDateTime(record.createdAt)}
-					className="mt-0.5 shrink-0 whitespace-nowrap text-2xs text-faint"
-				>
-					{turns.length > 1 && `${t("btw.turns", { count: turns.length })} · `}
-					{formatRelative(record.createdAt)}
-				</span>
-				{open && copy && (
-					<span className="-my-0.5 shrink-0">
-						<CopyButton text={copy} ariaLabel={t("common.copy")} />
-					</span>
-				)}
 			</div>
-			{open && (
-				<div className="flex flex-col gap-3 px-3 pb-3">
-					{turns.map((turn, i) => (
-						<BtwTurnView
-							// 轮次只追加不重排，下标即稳定身份
-							// biome-ignore lint/suspicious/noArrayIndexKey: 同上
-							key={i}
-							turn={turn}
-							followUp={i > 0}
-							inject={i === latestIndex ? record.inject : undefined}
-							onInject={inject}
-							onCancel={i === latestIndex ? cancel : undefined}
-						/>
-					))}
-					{injectNote && (
-						<p role="status" className="text-warn-ink text-xs">
-							{injectNote}
-						</p>
-					)}
-					<ErrorText error={error} />
-					<form
-						className="flex gap-2"
-						onSubmit={(e) => {
-							e.preventDefault();
-							const question = followUp.trim();
-							if (!question || busy) return;
-							setError(null);
-							onAsk(question, record.id).then(() => setFollowUp(""), setError);
-						}}
-					>
-						<TextInput
-							aria-label={t("btw.followUpPlaceholder")}
-							placeholder={t("btw.followUpPlaceholder")}
-							title={busy ? t("btw.busy") : undefined}
-							value={followUp}
-							disabled={busy}
-							onChange={(e) => setFollowUp(e.target.value)}
-						/>
-						<Button
-							type="submit"
-							className="shrink-0 whitespace-nowrap"
-							disabled={busy || !followUp.trim()}
-						>
-							{t("btw.followUp")}
-						</Button>
-					</form>
-				</div>
-			)}
-		</section>
-	);
-}
-
-/**
- * 一轮问答：追问轮先是右对齐的问题气泡（首轮问题就是话题标题），然后是回答与这一轮的状态。
- * 回答里的 `<inject>` 块只在最新一轮单独成卡：流式中显示起草中，完成后按 Core 给的 inject 状态显示可注入 / 注入中 / 已注入。
- */
-function BtwTurnView({
-	turn,
-	followUp,
-	inject,
-	onInject,
-	onCancel,
-}: {
-	turn: BtwTurn;
-	followUp: boolean;
-	inject: RpcBtwInjectState | undefined;
-	onInject: () => void;
-	/** 只给最新一轮：运行中可取消。 */
-	onCancel: (() => void) | undefined;
-}) {
-	const streaming = turn.status === "running";
-	const parts = splitInject(turn.answer);
-	const block =
-		parts && (streaming || (parts.closed && inject !== undefined))
-			? parts
-			: undefined;
-	return (
-		<div className="flex flex-col gap-2">
-			{followUp && (
-				<div className="flex justify-end">
-					<p className={QUESTION_BUBBLE}>{turn.question}</p>
-				</div>
-			)}
-			{block ? (
-				<>
-					<Prose text={block.before} streaming={streaming} />
-					<InjectCard
-						text={block.inject.trim()}
-						state={streaming ? undefined : inject}
-						onInject={onInject}
-					/>
-					<Prose text={block.after} streaming={streaming} />
-				</>
+			{records.length === 0 ? (
+				// 没有话题时只剩新话题输入（历史还在读时 newActive 为假，不先写空态）
+				newActive && (
+					<p className="px-5 py-3 text-faint text-xs">{t("btw.empty")}</p>
+				)
 			) : (
-				<Prose text={turn.answer} streaming={streaming} />
+				<div
+					ref={listRef}
+					role="listbox"
+					aria-label={t("btw.topics")}
+					className="min-h-0 flex-1 overflow-y-auto scroll-py-2 px-2 pt-2 pb-2"
+					onKeyDown={(e) => {
+						if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key))
+							return;
+						const from = (e.target as HTMLElement).dataset.topic;
+						if (from === undefined) return;
+						e.preventDefault();
+						move(from, e.key);
+					}}
+				>
+					{records.map((r) => {
+						const sel = r.id === selectedId;
+						const status = latestTurn(r).status;
+						const followUps = r.followUps?.length ?? 0;
+						return (
+							<button
+								key={r.id}
+								type="button"
+								role="option"
+								aria-selected={sel}
+								data-topic={r.id}
+								tabIndex={r.id === tabbable ? 0 : -1}
+								onClick={() => onPick(r.id)}
+								className={`mt-0.5 flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left transition-colors duration-150 ${sel ? "bg-active" : "hover:bg-hover"}`}
+							>
+								<span className="line-clamp-2 break-words text-fg text-sm leading-snug">
+									{r.question}
+								</span>
+								<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
+									{status === "running" && <Spinner size={10} />}
+									{status !== "complete" && (
+										<span
+											className={
+												status === "error"
+													? "text-err"
+													: status === "running"
+														? ""
+														: "text-warn-ink"
+											}
+										>
+											{t(`btw.status.${status}`)}
+										</span>
+									)}
+									{status !== "complete" && <span aria-hidden>·</span>}
+									<time
+										dateTime={new Date(r.createdAt).toISOString()}
+										title={formatDateTime(r.createdAt)}
+									>
+										{topicTime(r.createdAt, now, i18n.language)}
+									</time>
+									{followUps > 0 && (
+										<>
+											<span aria-hidden>·</span>
+											<span>{t("btw.followUps", { count: followUps })}</span>
+										</>
+									)}
+								</span>
+							</button>
+						);
+					})}
+				</div>
 			)}
-			<TurnStatus turn={turn} onCancel={onCancel} />
-		</div>
+		</>
 	);
 }
 
-/** 一轮的状态行：完成不写；回答中带转圈与取消；已取消 / 被打断为警示小字；出错为错误提示块。 */
-function TurnStatus({
-	turn,
-	onCancel,
-}: {
-	turn: BtwTurn;
-	onCancel: (() => void) | undefined;
-}): ReactNode {
+/** 页脚左侧的「复制回答」：复制选中话题最近一个非空回答，成功后短暂显示「已复制」。 */
+function CopyAnswer({ text }: { text: string | undefined }) {
 	const { t } = useTranslation();
-	switch (turn.status) {
-		case "complete":
-			return null;
-		case "running":
-			return (
-				<div className="flex items-center gap-2 text-muted text-xs">
-					<Spinner size={12} />
-					<span>{t("btw.status.running")}</span>
-					{onCancel && (
-						<Button size="sm" variant="ghost" onClick={onCancel}>
-							{t("common.cancel")}
-						</Button>
-					)}
-				</div>
-			);
-		case "cancelled":
-			return (
-				<p className="flex items-center gap-1.5 text-warn-ink text-xs">
-					<Icon name="minusCircle" size={13} aria-hidden />
-					{t("btw.status.cancelled")}
-				</p>
-			);
-		case "interrupted":
-			return (
-				<p className="flex items-center gap-1.5 text-warn-ink text-xs">
-					<Icon name="circleHalf" size={13} aria-hidden />
-					{t("btw.note.interrupted")}
-				</p>
-			);
-		case "error":
-			return (
-				<Callout tone="err" title={t("btw.note.error")}>
-					{turn.error}
-				</Callout>
-			);
-	}
-}
-
-function Prose({
-	text,
-	streaming,
-}: {
-	text: string;
-	streaming: boolean;
-}): ReactNode {
-	const trimmed = text.trim();
-	return trimmed ? <Markdown text={trimmed} streaming={streaming} /> : null;
-}
-
-/** `<inject>` 引导块：内嵌井底色，标签说明用途；可注入时给墨色主按钮，注入中转圈，已注入为成功色勾；`state` 缺省表示仍在起草。 */
-function InjectCard({
-	text,
-	state,
-	onInject,
-}: {
-	text: string;
-	state: RpcBtwInjectState | undefined;
-	onInject: () => void;
-}) {
-	const { t } = useTranslation();
+	const [done, setDone] = useState(false);
 	return (
-		<div className="rounded-md bg-inset px-3 py-2.5">
-			<p className="mb-1 font-medium text-2xs text-faint">
-				{t("btw.inject.caption")}
-			</p>
-			<p className="whitespace-pre-wrap break-words text-sm">{text}</p>
-			<div className="mt-2 flex items-center gap-1.5 text-xs">
-				{state === undefined && (
-					<span className="text-muted">{t("btw.inject.drafting")}</span>
-				)}
-				{state === "ready" && (
-					<Button size="sm" variant="primary" icon="send" onClick={onInject}>
-						{t("btw.inject.send")}
-					</Button>
-				)}
-				{state === "sending" && (
-					<span className="flex items-center gap-1.5 text-muted">
-						<Spinner size={12} />
-						{t("btw.inject.sending")}
-					</span>
-				)}
-				{state === "sent" && (
-					<span className="flex items-center gap-1 text-ok-ink">
-						<Icon name="check" size={12} aria-hidden />
-						{t("btw.inject.sent")}
-					</span>
-				)}
-			</div>
-		</div>
+		<Button
+			icon={done ? "check" : "copy"}
+			className="mr-auto"
+			disabled={text === undefined}
+			onClick={() => {
+				if (text === undefined) return;
+				void navigator.clipboard?.writeText(text).then(() => {
+					setDone(true);
+					setTimeout(() => setDone(false), 1200);
+				});
+			}}
+		>
+			{done ? t("common.copied") : t("btw.copyAnswer")}
+		</Button>
 	);
 }

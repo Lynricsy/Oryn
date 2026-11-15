@@ -143,6 +143,7 @@ export function Dialog({
 	children,
 	footer,
 	wide,
+	size,
 }: {
 	open: boolean;
 	onClose: () => void;
@@ -150,6 +151,8 @@ export function Dialog({
 	children: ReactNode;
 	footer?: ReactNode;
 	wide?: boolean;
+	/** `xl`：分栏类对话框（≈1024px，如 btw 话题列表 + 详情）；优先于 `wide`，窄屏同样全宽底部弹出。 */
+	size?: "xl";
 }) {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -212,7 +215,7 @@ export function Dialog({
 				aria-modal="true"
 				tabIndex={-1}
 				aria-label={typeof title === "string" ? title : undefined}
-				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl bg-panel shadow-xl outline-none ring-1 ring-[var(--glass-line)] [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
+				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl bg-panel shadow-xl outline-none ring-1 ring-[var(--glass-line)] [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${size === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
 			>
 				<div className="flex items-start gap-3 pt-5 pr-4 pb-2 pl-5">
 					<h2 className="min-w-0 flex-1 truncate pt-0.5 font-semibold text-base text-fg tracking-tight">
