@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,9 @@ type Docker struct {
 	Bin string
 	// Now 是时钟（测试替换；nil = time.Now）。
 	Now func() time.Time
+
+	// hookSnapshotStopped（测试用）在 sysbox 快照停机之后、commit 之前调用。
+	hookSnapshotStopped func()
 
 	baseMu sync.Mutex
 	baseID string
@@ -85,7 +89,8 @@ func (d *Docker) baseImageID() string {
 	return d.baseID
 }
 
-// Preflight 实现 Preflighter：类型配置的 runtime 必须已在 Docker 中登记；extra_run_args 里的特权写法只警告。
+// Preflight 实现 Preflighter：类型配置的 runtime 必须已在 Docker 中登记；extra_run_args 里的特权写法只警告；
+// 类型所用的 runtime 带 --no-kernel-check（关掉了 sysbox 的内核兼容性检查）时只警告（S-P2-6）。
 func (d *Docker) Preflight(ctx context.Context) error {
 	for _, a := range d.Cfg.ExtraRunArgs {
 		if a == "--privileged" || (strings.HasPrefix(a, "--privileged=") && a != "--privileged=false") {
@@ -105,21 +110,36 @@ func (d *Docker) Preflight(ctx context.Context) error {
 		return nil
 	}
 	var stdout bytes.Buffer
-	if err := d.exec(ctx, &stdout, io.Discard, nil, "info", "--format", "{{range $k, $_ := .Runtimes}}{{$k}} {{end}}"); err != nil {
+	if err := d.exec(ctx, &stdout, io.Discard, nil, "info", "--format", "{{json .Runtimes}}"); err != nil {
 		return fmt.Errorf("docker: 读取已登记的容器运行时: %w", err)
 	}
-	have := strings.Fields(stdout.String())
+	var registered map[string]struct {
+		RuntimeArgs []string `json:"runtimeArgs"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &registered); err != nil {
+		return fmt.Errorf("docker: 解析 docker info 的运行时列表 %q: %w", strings.TrimSpace(stdout.String()), err)
+	}
+	have := make([]string, 0, len(registered))
+	for rt := range registered {
+		have = append(have, rt)
+	}
+	sort.Strings(have)
 	runtimes := make([]string, 0, len(need))
 	for rt := range need {
 		runtimes = append(runtimes, rt)
 	}
 	sort.Strings(runtimes)
 	for _, rt := range runtimes {
-		if !slices.Contains(have, rt) {
-			types := need[rt]
-			sort.Strings(types)
+		types := need[rt]
+		sort.Strings(types)
+		reg, ok := registered[rt]
+		if !ok {
 			return fmt.Errorf("docker: 类型 %s 配置的 runtime %q 没有在 Docker 中登记（docker info 里只有 %q）；安装与登记方法见 docs/deploy.md",
 				strings.Join(types, ", "), rt, have)
+		}
+		if slices.Contains(reg.RuntimeArgs, "--no-kernel-check") {
+			slog.Warn("容器运行时带 --no-kernel-check：sysbox 不再检查宿主内核是否受支持，在未验证的内核上以 root 运行的 sysbox-mgr / sysbox-fs 是额外的宿主攻击面；请改用受支持的内核并去掉该参数，见 docs/deploy.md",
+				"runtime", rt, "types", strings.Join(types, ","))
 		}
 	}
 	return nil
@@ -129,7 +149,7 @@ func (d *Docker) Preflight(ctx context.Context) error {
 func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	switch j.Op {
 	case "spawn":
-		return nil, d.spawn(ctx, j, out)
+		return d.spawn(ctx, j, out)
 	case "pause":
 		return nil, d.pause(ctx, j, out)
 	case "snapshot":
@@ -138,7 +158,7 @@ func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobRes
 			return nil, err
 		}
 		if !exists {
-			if err := d.run(ctx, out, nil, "commit", j.OrbID, j.SnapshotID); err != nil {
+			if err := d.commit(ctx, j.OrbID, j.SnapshotID, out); err != nil {
 				return nil, err
 			}
 		}
@@ -157,6 +177,83 @@ func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobRes
 		return nil, err
 	}
 	return nil, fmt.Errorf("docker: 不支持的操作 %q", j.Op)
+}
+
+// snapshotClearEnv 是 spawn 经 `-e` 写进容器配置的变量；docker commit 会把容器配置的 Env 原样写进镜像配置
+// （本机 `docker image inspect` 核对：快照镜像的 Config.Env 有 ORYN_URL / ORYN_ORB_ID / ORYN_ORB_TOKEN / ORYN_NESTED_DOCKER，
+// 基础镜像一个都没有；ORYN_ORB_CA_PEM 同样经 `-e` 下发）。commit 时全部置空（S-P2-3）：令牌与 CA 不留在镜像里，
+// 身份与类型属性由下一次 spawn 的 `-e` 重新给出。Docker 不能从镜像里删掉 ENV，只能置空，orbd 把空值当作未设置。
+var snapshotClearEnv = []string{"ORYN_URL", "ORYN_ORB_ID", "ORYN_ORB_TOKEN", "ORYN_ORB_CA_PEM", "ORYN_NESTED_DOCKER"}
+
+// SnapshotStopSeconds 是 sysbox 容器快照前 `docker stop -t` 的宽限秒数。
+const SnapshotStopSeconds = "10"
+
+// SnapshotRestartTimeout 是 sysbox 容器快照后重新启动的时限；不受任务 ctx 取消影响（任务超时也要把容器拉起来）。
+const SnapshotRestartTimeout = 2 * time.Minute
+
+// commitArgs 是 `docker commit` 的 argv：逐个 --change 清空 snapshotClearEnv。
+func commitArgs(orbID, snapshotID string) []string {
+	args := []string{"commit"}
+	for _, k := range snapshotClearEnv {
+		args = append(args, "--change", "ENV "+k+"=")
+	}
+	return append(args, orbID, snapshotID)
+}
+
+// isSysboxRuntime 判断容器的 HostConfig.Runtime 是否为 sysbox（按名称；Docker 的默认运行时也可能被配成 sysbox）。
+func isSysboxRuntime(rt string) bool { return strings.Contains(rt, "sysbox") }
+
+// commit 把 orb 容器提交为快照镜像 snapshotID。
+//
+// sysbox 容器（X22）：sysbox 自己挂着容器的 overlay，Docker 处在 naive diff 模式看不到上层内容，
+// 运行或暂停时 commit 得到空层（本机实测 0B），停机后才完整。所以：
+//   - running / restarting：stop → commit → start（commit 失败也 start）；start 后令牌文件不变，orbd 自行重连；
+//   - paused：unpause → stop → commit，拍完保持停机（进程已被 stop 结束；控制面唤醒时 spawn 走 start 分支，
+//     此时 start 反而会让「冻结」的 orb 意外连回控制面）；stop 失败时尽力恢复 pause；
+//   - 其它状态（已停机）：直接 commit。
+//
+// 普通容器照旧直接 commit。
+func (d *Docker) commit(ctx context.Context, orbID, snapshotID string, out io.Writer) error {
+	var stdout bytes.Buffer
+	if err := d.exec(ctx, &stdout, out, nil, "container", "inspect", "--format", "{{.HostConfig.Runtime}} {{.State.Status}}", orbID); err != nil {
+		return err
+	}
+	rt, status, _ := strings.Cut(strings.TrimSpace(stdout.String()), " ")
+	args := commitArgs(orbID, snapshotID)
+	if !isSysboxRuntime(rt) {
+		return d.run(ctx, out, nil, args...)
+	}
+	switch status {
+	case "running", "restarting":
+		fmt.Fprintf(out, "oryn: %s 容器运行中 commit 拍不到上层内容，先停机再快照\n", rt)
+		err := d.run(ctx, out, nil, "stop", "-t", SnapshotStopSeconds, orbID)
+		if err == nil {
+			if d.hookSnapshotStopped != nil {
+				d.hookSnapshotStopped()
+			}
+			err = d.run(ctx, out, nil, args...)
+		}
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SnapshotRestartTimeout)
+		defer cancel()
+		if serr := d.run(rctx, out, nil, "start", orbID); serr != nil {
+			err = errors.Join(err, fmt.Errorf("快照后重新启动容器: %w", serr))
+		}
+		return err
+	case "paused":
+		fmt.Fprintf(out, "oryn: %s 容器暂停中 commit 拍不到上层内容，停机后快照，拍完保持停机\n", rt)
+		if err := d.run(ctx, out, nil, "unpause", orbID); err != nil {
+			return err
+		}
+		if err := d.run(ctx, out, nil, "stop", "-t", SnapshotStopSeconds, orbID); err != nil {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SnapshotRestartTimeout)
+			defer cancel()
+			if perr := d.run(rctx, out, nil, "pause", orbID); perr != nil {
+				err = errors.Join(err, fmt.Errorf("恢复暂停: %w", perr))
+			}
+			return err
+		}
+	}
+	return d.run(ctx, out, nil, args...)
 }
 
 // snapshotResult 计算快照相对基础镜像多占的字节数 max(0, Size(快照) − Size(基础镜像))。
@@ -196,42 +293,61 @@ const OrbTokenFile = ".oryn/orb-token"
 // writeTokenScript 在容器内以 orbd 用户原子替换令牌文件（内容取自 stdin，0600）。
 const writeTokenScript = `umask 077 && mkdir -p "$HOME/.oryn" && cat > "$HOME/.oryn/orb-token.tmp" && mv -f "$HOME/.oryn/orb-token.tmp" "$HOME/.oryn/orb-token"`
 
-func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
+// spawn 创建 / 解冻 / 启动 orb 容器。请求了快照时结果带 snapshotUsed（S-P1-1）：新容器看快照镜像是否存在；
+// 已有容器看它创建时所用的镜像（.Config.Image）是不是这个快照。
+func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	p := j.Spawn
 	if p == nil {
-		return errors.New("docker: spawn 缺少参数")
+		return nil, errors.New("docker: spawn 缺少参数")
+	}
+	snap := ""
+	if p.SnapshotID != nil {
+		snap = *p.SnapshotID
+	}
+	result := func(used bool) *apigen.JobResult {
+		if snap == "" {
+			return nil
+		}
+		return &apigen.JobResult{SnapshotUsed: &used}
 	}
 	status, exists, err := d.status(ctx, j.OrbID, out)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if exists {
 		switch status {
 		case "running", "restarting":
 		case "paused":
 			if err := d.run(ctx, out, nil, "unpause", j.OrbID); err != nil {
-				return err
+				return nil, err
 			}
 		case "exited", "created":
 			if err := d.run(ctx, out, nil, "start", j.OrbID); err != nil {
-				return err
+				return nil, err
 			}
 		case "dead":
 			if err := d.run(ctx, out, nil, "rm", "-f", j.OrbID); err != nil {
-				return err
+				return nil, err
 			}
 			exists = false
 		default:
-			return fmt.Errorf("docker: 容器 %s 处于 %q，无法 spawn", j.OrbID, status)
+			return nil, fmt.Errorf("docker: 容器 %s 处于 %q，无法 spawn", j.OrbID, status)
 		}
 	}
 	if exists {
 		// 已有容器：写入本次轮换后的令牌，再让 orbd 立即用它重建 link。
 		if err := d.writeToken(ctx, j.OrbID, p.Env.OrynOrbToken, out); err != nil {
-			return err
+			return nil, err
 		}
 		d.hupOrbd(ctx, j.OrbID, out)
-		return nil
+		if snap == "" {
+			return nil, nil
+		}
+		var img bytes.Buffer
+		if err := d.exec(ctx, &img, out, nil, "container", "inspect", "--format", "{{.Config.Image}}", j.OrbID); err != nil {
+			return nil, err
+		}
+		return result(strings.TrimSpace(img.String()) == snap), nil
 	}
 	typ, ok := d.Cfg.Types[p.Type]
 	if !ok {
@@ -241,24 +357,28 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 	if p.Image != "" {
 		image = p.Image
 	}
-	if p.SnapshotID != nil && *p.SnapshotID != "" {
-		snap := *p.SnapshotID
+	used := false
+	if snap != "" {
 		found, err := d.imageExists(ctx, snap, out)
 		switch {
 		case err != nil:
-			return err
+			return nil, err
 		case found:
-			image = snap
+			image, used = snap, true
 		case p.SnapshotOptional != nil && *p.SnapshotOptional:
 			fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", snap)
 		default:
-			return fmt.Errorf("docker: 快照镜像 %s 不存在", snap)
+			return nil, fmt.Errorf("docker: 快照镜像 %s 不存在", snap)
 		}
 	}
 	args := []string{"create", "--init",
 		"--name", j.OrbID, "--hostname", j.OrbID, "--label", "oryn-orb=1",
-		"--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory,
-		"--shm-size", "1g", "--add-host", "host.docker.internal:host-gateway"}
+		"--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory}
+	if d.Cfg.PidsLimit > 0 {
+		// 所有类型都限制进程数（S-P2-6）：sysbox 宿主调高了 kernel.pid_max，fork 炸弹的上限随之放大。
+		args = append(args, "--pids-limit", strconv.Itoa(d.Cfg.PidsLimit))
+	}
+	args = append(args, "--shm-size", "1g", "--add-host", "host.docker.internal:host-gateway")
 	if !typ.NestedDocker {
 		// agent 在容器内有 root（免密 sudo）：去掉原始套接字与网络配置能力（防 ARP 欺骗 / 改路由），
 		// 网络隔离另见 docs/deploy.md「安全」一节。
@@ -267,8 +387,12 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 		args = append(args, "--cap-drop", "NET_RAW", "--cap-drop", "NET_ADMIN")
 	}
 	args = append(args, "-e", "ORYN_URL", "-e", "ORYN_ORB_ID", "-e", "ORYN_ORB_TOKEN")
-	// 令牌经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
+	// 令牌与 CA 经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
 	env := []string{"ORYN_URL=" + p.Env.OrynURL, "ORYN_ORB_ID=" + j.OrbID, "ORYN_ORB_TOKEN=" + p.Env.OrynOrbToken}
+	if p.OrbCaPem != nil && *p.OrbCaPem != "" {
+		args = append(args, "-e", "ORYN_ORB_CA_PEM")
+		env = append(env, "ORYN_ORB_CA_PEM="+*p.OrbCaPem)
+	}
 	if typ.NestedDocker {
 		args = append(args, "-e", "ORYN_NESTED_DOCKER")
 		env = append(env, "ORYN_NESTED_DOCKER=1")
@@ -280,7 +404,7 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 		// docker CLI 在客户端读取 profile 文件并内联发给守护进程，create 返回后即可删除。
 		f, err := writeSeccompProfile()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer os.Remove(f)
 		args = append(args, "--security-opt", "seccomp="+f)
@@ -288,14 +412,17 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) error {
 	args = append(args, d.Cfg.ExtraRunArgs...)
 	args = append(args, image, "orbd", "run")
 	if err := d.run(ctx, out, env, args...); err != nil {
-		return err
+		return nil, err
 	}
 	// 快照镜像里带着源 orb 的令牌文件，而 orbd 优先读文件：启动前替换成本 orb 的令牌，
 	// 否则新容器会以源 orb 的身份连上控制面。
 	if err := d.replaceStaleToken(ctx, j.OrbID, p.Env.OrynOrbToken, out); err != nil {
-		return err
+		return nil, err
 	}
-	return d.run(ctx, out, nil, "start", j.OrbID)
+	if err := d.run(ctx, out, nil, "start", j.OrbID); err != nil {
+		return nil, err
+	}
+	return result(used), nil
 }
 
 // orbSeccompProfile 是 orb 容器的 seccomp 配置：moby/profiles 的 Docker 默认配置

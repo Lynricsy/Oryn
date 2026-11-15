@@ -41,6 +41,30 @@ func TestProjectSnapshotsLsTable(t *testing.T) {
 	assert.ErrorContains(t, err, "不存在")
 }
 
+// S-P2-5：baseCommit 来自 orb（不可信），表格里不能出现控制字符（\x1b[2J\x1b[H 正好 7 字节，原先会原样打印）。
+func TestProjectSnapshotsLsStripsControlChars(t *testing.T) {
+	f := newFakeAPI(t)
+	f.json("GET /api/v1/projects", 200, apigen.ProjectList{Projects: []apigen.Project{{ID: "prj_A", Name: "demo"}}})
+	now := time.UnixMilli(1_800_000_000_000)
+	f.json("GET /api/v1/projects/prj_A/snapshots", 200, apigen.ProjectSnapshotList{Snapshots: []apigen.ProjectSnapshot{
+		{ID: "oryn-snap-1", ProviderID: "prov_1", ProviderName: new("lo\x1b]0;x\acal"), Type: "med\tium", State: apigen.ProjectSnapshotStateRetired,
+			RetireReason: new("\u009b2Jquota"), BaseCommit: new("\x1b[2J\x1b[Habcdef"), LineageAt: now.UnixMilli()},
+		{ID: "oryn-snap-2", ProviderID: "prov_1", Type: "small", State: apigen.ProjectSnapshotStateReady,
+			BaseCommit: new("\x1b\x07\n"), LineageAt: now.UnixMilli()},
+	}})
+	var out bytes.Buffer
+	require.NoError(t, projectSnapshotsLs(context.Background(), f.client(), "demo", false, now, &out))
+	for _, r := range out.String() {
+		if r != '\n' {
+			assert.False(t, isTermControl(r), "输出含控制字符 %q: %q", r, out.String())
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 3)
+	assert.Equal(t, []string{"med", "ium", "lo", "]0;x", "cal", "retired", "2Jquota", "[2J", "[Ha", "0s", "-", "0"}, strings.Fields(lines[1]))
+	assert.Equal(t, []string{"small", "prov_1", "ready", "-", "-", "0s", "-", "0"}, strings.Fields(lines[2]), "清理后为空的提交显示 -")
+}
+
 func TestProjectSnapshotsRmRequest(t *testing.T) {
 	f := newFakeAPI(t)
 	f.json("GET /api/v1/projects", 200, apigen.ProjectList{Projects: []apigen.Project{{ID: "prj_A", Name: "demo"}}})

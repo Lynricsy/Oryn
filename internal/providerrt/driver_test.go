@@ -25,11 +25,19 @@ import (
 
 const fakeDocker = `#!/bin/sh
 echo "$*" >> "$FAKE_DOCKER_DIR/log"
+# fail.<子命令> 存在时该子命令失败（不产生副作用）。
+if [ -f "$FAKE_DOCKER_DIR/fail.$1" ]; then echo "Error: injected $1 failure" >&2; exit 1; fi
+for last; do :; done
 case "$1 $2" in
 "container inspect")
   st=$(cat "$FAKE_DOCKER_DIR/state")
   if [ "$st" = missing ]; then echo "Error: No such container: $5" >&2; exit 1; fi
-  echo "$st"; exit 0;;
+  case "$4" in
+  *Runtime*) echo "$(cat "$FAKE_DOCKER_DIR/runtime" 2>/dev/null || echo runc) $st";;
+  *Config.Image*) cat "$FAKE_DOCKER_DIR/config.image";;
+  *) echo "$st";;
+  esac
+  exit 0;;
 "image inspect")
   # images/<名称> 第一行 = Id、第二行 = Size；否则 image 标志文件存在时任何镜像都存在。
   f="$FAKE_DOCKER_DIR/images/$5"
@@ -44,10 +52,11 @@ esac
 if [ "$1" = info ]; then cat "$FAKE_DOCKER_DIR/runtimes" 2>/dev/null; exit 0; fi
 if [ "$1" = commit ]; then
   mkdir -p "$FAKE_DOCKER_DIR/images"
-  printf 'sha256:snap\n%s\n' "$(cat "$FAKE_DOCKER_DIR/commit.size" 2>/dev/null || echo 100)" > "$FAKE_DOCKER_DIR/images/$3"
+  printf 'sha256:snap\n%s\n' "$(cat "$FAKE_DOCKER_DIR/commit.size" 2>/dev/null || echo 100)" > "$FAKE_DOCKER_DIR/images/$last"
 fi
 if [ "$1" = create ]; then
   echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN${ORYN_NESTED_DOCKER:+ nested=$ORYN_NESTED_DOCKER}" >> "$FAKE_DOCKER_DIR/log"
+  if [ -n "${ORYN_ORB_CA_PEM+x}" ]; then printf '%s' "$ORYN_ORB_CA_PEM" > "$FAKE_DOCKER_DIR/ca.pem"; fi
   for a in "$@"; do case "$a" in seccomp=*) cp "${a#seccomp=}" "$FAKE_DOCKER_DIR/seccomp.json"; echo "${a#seccomp=}" > "$FAKE_DOCKER_DIR/seccomp.path";; esac; done
   echo cid
 fi
@@ -75,7 +84,8 @@ func newFakeDocker(t *testing.T) *fakeDockerEnv {
 
 func (f *fakeDockerEnv) set(t *testing.T, state string, image bool) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, "state"), []byte(state), 0o644))
-	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin", "seccomp.json", "seccomp.path", "images", "runtimes", "commit.size"} {
+	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin", "seccomp.json", "seccomp.path", "images", "runtimes", "commit.size",
+		"runtime", "config.image", "ca.pem", "fail.commit", "fail.stop", "fail.start", "fail.unpause"} {
 		_ = os.RemoveAll(filepath.Join(f.dir, n))
 	}
 	if image {
@@ -94,6 +104,13 @@ func (f *fakeDockerEnv) image(t *testing.T, name, id string, size int64) {
 func (f *fakeDockerEnv) write(t *testing.T, name, content string) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, name), []byte(content), 0o644))
 }
+
+// runtimeInspect 是快照前读容器运行时与状态的命令。
+const runtimeInspect = "container inspect --format {{.HostConfig.Runtime}} {{.State.Status}} orb-x"
+
+// commitLine 是 orb-x → oryn-snap-1 的 commit：spawn 经 -e 下发的变量全部置空（S-P2-3）。
+const commitLine = "commit --change ENV ORYN_URL= --change ENV ORYN_ORB_ID= --change ENV ORYN_ORB_TOKEN= --change ENV ORYN_ORB_CA_PEM=" +
+	" --change ENV ORYN_NESTED_DOCKER= orb-x oryn-snap-1"
 
 // seccompArg 把日志里 seccomp 临时文件的路径换成固定占位符。
 var seccompArg = regexp.MustCompile(`seccomp=\S+`)
@@ -146,8 +163,8 @@ func TestDockerDriverCommands(t *testing.T) {
 		{"pause freeze already paused", "paused", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "freeze"}, []string{inspect}},
 		{"pause stop paused", "paused", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "stop"}, []string{inspect, "unpause orb-x", "stop -t 30 orb-x"}},
 		{"pause stop running", "running", false, Job{Op: "pause", OrbID: "orb-x", PauseMode: "stop"}, []string{inspect, "stop -t 30 orb-x"}},
-		{"snapshot", "running", false, Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, []string{"image inspect --format {{.Id}} oryn-snap-1", "commit orb-x oryn-snap-1",
-			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}},
+		{"snapshot", "running", false, Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, []string{"image inspect --format {{.Id}} oryn-snap-1",
+			runtimeInspect, commitLine, "image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}},
 		{"snapshot exists", "running", true, Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, []string{"image inspect --format {{.Id}} oryn-snap-1",
 			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}},
 		{"delete", "running", false, Job{Op: "delete", OrbID: "orb-x"}, []string{"rm -f orb-x"}},
@@ -163,6 +180,72 @@ func TestDockerDriverCommands(t *testing.T) {
 			assert.NotContains(t, out.String(), "oot_tok", "token must not appear in output/argv")
 		})
 	}
+
+	// X22：sysbox 容器在运行中 commit 拍不到上层：inspect runtime → stop → commit → start。
+	t.Run("sysbox snapshot stops, commits, restarts", func(t *testing.T) {
+		fd.set(t, "running", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		require.NoError(t, execErr(d, context.Background(), Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16)))
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, "stop -t 10 orb-x", commitLine, "start orb-x",
+			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}, fd.log(t))
+	})
+
+	t.Run("sysbox snapshot restarts the container even when commit fails", func(t *testing.T) {
+		fd.set(t, "running", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		fd.write(t, "fail.commit", "")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		err := execErr(d, ctx, Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "injected commit failure")
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, "stop -t 10 orb-x", commitLine, "start orb-x"}, fd.log(t))
+	})
+
+	t.Run("sysbox snapshot restarts the container when stop fails, without committing", func(t *testing.T) {
+		fd.set(t, "running", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		fd.write(t, "fail.stop", "")
+		require.Error(t, execErr(d, context.Background(), Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16)))
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, "stop -t 10 orb-x", "start orb-x"}, fd.log(t))
+	})
+
+	t.Run("sysbox snapshot restarts the container even after the job context is cancelled", func(t *testing.T) {
+		fd.set(t, "running", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		// 停机后任务 ctx 被取消（模拟任务超时）：commit 不再执行，start 仍要执行。
+		hd := NewDocker(d.Cfg)
+		hd.hookSnapshotStopped = cancel
+		err := execErr(hd, ctx, Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, "stop -t 10 orb-x", "start orb-x"}, fd.log(t))
+	})
+
+	t.Run("paused sysbox container: unpause, stop, commit, stays stopped", func(t *testing.T) {
+		fd.set(t, "paused", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		require.NoError(t, execErr(d, context.Background(), Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16)))
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, "unpause orb-x", "stop -t 10 orb-x", commitLine,
+			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}, fd.log(t))
+	})
+
+	t.Run("stopped sysbox container commits directly", func(t *testing.T) {
+		fd.set(t, "exited", false)
+		fd.write(t, "runtime", "sysbox-runc")
+		require.NoError(t, execErr(d, context.Background(), Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16)))
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, commitLine,
+			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}, fd.log(t))
+	})
+
+	t.Run("non-sysbox paused container commits without stop/start", func(t *testing.T) {
+		fd.set(t, "paused", false)
+		require.NoError(t, execErr(d, context.Background(), Job{Op: "snapshot", OrbID: "orb-x", SnapshotID: "oryn-snap-1"}, newTailBuffer(1<<16)))
+		assert.Equal(t, []string{"image inspect --format {{.Id}} oryn-snap-1", runtimeInspect, commitLine,
+			"image inspect --format {{.Size}} oryn-snap-1", "image inspect --format {{.Size}} oryn-orb:dev"}, fd.log(t))
+	})
 
 	t.Run("existing container receives the rotated token on stdin", func(t *testing.T) {
 		fd.set(t, "paused", false)
@@ -380,6 +463,100 @@ func TestDockerSpawnSnapshotOptional(t *testing.T) {
 	assert.True(t, strings.HasSuffix(fd.log(t)[2], " oryn-snap-9 orbd run"), "快照存在时照常使用")
 }
 
+// S-P1-1：spawn 结果的 snapshotUsed 由 provider 判定；没请求快照时不给。
+func TestDockerSpawnSnapshotUsed(t *testing.T) {
+	fd := newFakeDocker(t)
+	d := NewDocker(config.Docker{Image: "oryn-orb:dev", DefaultType: "small", Types: map[string]config.DockerType{"small": {CPUs: 2, Memory: "4g"}}})
+	yes := true
+	spawn := func(snap string) Job {
+		p := &apigen.JobSpawnParams{Type: "small", SnapshotOptional: &yes, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbID: "orb-x", OrynOrbToken: "oot_tok"}}
+		if snap != "" {
+			p.SnapshotID = &snap
+		}
+		return Job{Op: "spawn", OrbID: "orb-x", Spawn: p}
+	}
+	used := func(t *testing.T, res *apigen.JobResult) bool {
+		t.Helper()
+		require.NotNil(t, res)
+		require.NotNil(t, res.SnapshotUsed)
+		return *res.SnapshotUsed
+	}
+
+	fd.set(t, "missing", false)
+	fd.image(t, "oryn-snap-9", "sha256:snap", 2000)
+	res, err := d.Exec(context.Background(), spawn("oryn-snap-9"), newTailBuffer(1<<16))
+	require.NoError(t, err)
+	assert.True(t, used(t, res), "快照镜像存在 → 用了快照")
+
+	fd.set(t, "missing", false)
+	res, err = d.Exec(context.Background(), spawn("oryn-snap-9"), newTailBuffer(1<<16))
+	require.NoError(t, err)
+	assert.False(t, used(t, res), "快照缺失、optional → 退回基础镜像")
+
+	fd.set(t, "missing", false)
+	res, err = d.Exec(context.Background(), spawn(""), newTailBuffer(1<<16))
+	require.NoError(t, err)
+	assert.Nil(t, res, "没请求快照 → 不给 snapshotUsed")
+
+	// 已有容器（唤醒）：看它创建时所用的镜像。
+	for _, c := range []struct {
+		state, image string
+		want         bool
+	}{{"paused", "oryn-snap-9", true}, {"exited", "oryn-orb:dev", false}, {"running", "oryn-snap-1", false}} {
+		fd.set(t, c.state, false)
+		fd.write(t, "config.image", c.image+"\n")
+		res, err = d.Exec(context.Background(), spawn("oryn-snap-9"), newTailBuffer(1<<16))
+		require.NoError(t, err)
+		assert.Equal(t, c.want, used(t, res), "%s 容器，镜像 %s", c.state, c.image)
+		log := fd.log(t)
+		assert.Equal(t, "container inspect --format {{.Config.Image}} orb-x", log[len(log)-1])
+	}
+	fd.set(t, "paused", false)
+	res, err = d.Exec(context.Background(), spawn(""), newTailBuffer(1<<16))
+	require.NoError(t, err)
+	assert.Nil(t, res)
+	assert.NotContains(t, strings.Join(fd.log(t), "\n"), "Config.Image", "没请求快照时不多查")
+}
+
+// S-P2-6：pids_limit > 0 时所有类型都带 --pids-limit；TLS：orbCaPem 经调用方环境下发，不进 argv / 输出。
+func TestDockerSpawnPidsLimitAndCA(t *testing.T) {
+	fd := newFakeDocker(t)
+	d := NewDocker(config.Docker{Image: "oryn-orb:dev", DefaultType: "small", PidsLimit: 4096, Types: map[string]config.DockerType{
+		"small": {CPUs: 2, Memory: "4g"},
+		"dind":  {CPUs: 4, Memory: "8g", Runtime: config.SysboxRuntime, NestedDocker: true},
+	}})
+	pem := "-----BEGIN CERTIFICATE-----\nMIIBsecret\n-----END CERTIFICATE-----\n"
+	spawn := func(typ string, ca *string) Job {
+		return Job{Op: "spawn", OrbID: "orb-x", Spawn: &apigen.JobSpawnParams{Type: typ, OrbCaPem: ca,
+			Env: apigen.JobSpawnEnv{OrynURL: "https://u", OrynOrbID: "orb-x", OrynOrbToken: "oot_tok"}}}
+	}
+	head := "create --init --name orb-x --hostname orb-x --label oryn-orb=1 --cpus "
+
+	fd.set(t, "missing", false)
+	out := newTailBuffer(1 << 16)
+	require.NoError(t, execErr(d, context.Background(), spawn("small", &pem), out))
+	log := fd.log(t)
+	assert.Equal(t, head+"2 --memory 4g --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_ORB_CA_PEM --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
+	b, err := os.ReadFile(filepath.Join(fd.dir, "ca.pem"))
+	require.NoError(t, err)
+	assert.Equal(t, pem, string(b), "CA 经调用方环境交给 docker CLI")
+	assert.NotContains(t, out.String(), "MIIBsecret", "CA 不进 argv / 输出")
+
+	fd.set(t, "missing", false)
+	require.NoError(t, execErr(d, context.Background(), spawn("dind", nil), newTailBuffer(1<<16)))
+	log = fd.log(t)
+	assert.Equal(t, head+"4 --memory 8g --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway"+
+		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_NESTED_DOCKER --runtime sysbox-runc --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
+	_, err = os.Stat(filepath.Join(fd.dir, "ca.pem"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "没有 orbCaPem 时不下发 ORYN_ORB_CA_PEM")
+
+	empty := ""
+	fd.set(t, "missing", false)
+	require.NoError(t, execErr(d, context.Background(), spawn("small", &empty), newTailBuffer(1<<16)))
+	assert.NotContains(t, fd.log(t)[1], "ORYN_ORB_CA_PEM", "空 orbCaPem 等同没有")
+}
+
 // snapshot 任务的 result.snapshotBytes = max(0, Size(快照) − Size(基础镜像))。
 func TestDockerSnapshotBytes(t *testing.T) {
 	fd := newFakeDocker(t)
@@ -394,7 +571,7 @@ func TestDockerSnapshotBytes(t *testing.T) {
 	require.NotNil(t, res)
 	require.NotNil(t, res.SnapshotBytes)
 	assert.EqualValues(t, 500, *res.SnapshotBytes)
-	assert.Contains(t, fd.log(t), "commit orb-x oryn-snap-1")
+	assert.Contains(t, fd.log(t), commitLine)
 
 	// 已存在（重试）：不再 commit，照样上报大小。
 	res, err = d.Exec(context.Background(), job, newTailBuffer(1<<16))
@@ -418,7 +595,7 @@ func TestDockerSnapshotBytes(t *testing.T) {
 	assert.Contains(t, out.String(), "读取快照大小失败")
 }
 
-// Preflight：配置的 runtime 必须在 docker info 里；extra_run_args 的特权写法只警告。
+// Preflight：配置的 runtime 必须在 docker info 里；extra_run_args 的特权写法只警告；runtime 带 --no-kernel-check 只警告（S-P2-6）。
 func TestDockerPreflight(t *testing.T) {
 	fd := newFakeDocker(t)
 	types := map[string]config.DockerType{
@@ -428,26 +605,40 @@ func TestDockerPreflight(t *testing.T) {
 	ctx := context.Background()
 
 	fd.set(t, "missing", false)
-	fd.write(t, "runtimes", "io.containerd.runc.v2 runc \n")
+	fd.write(t, "runtimes", `{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc","runtimeArgs":null}}`)
 	err := NewDocker(config.Docker{Image: "oryn-orb:dev", Types: types}).Preflight(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sysbox-runc")
 	assert.Contains(t, err.Error(), "dind")
 	assert.Contains(t, err.Error(), "docs/deploy.md")
-	assert.Equal(t, []string{"info --format {{range $k, $_ := .Runtimes}}{{$k}} {{end}}"}, fd.log(t))
+	assert.Equal(t, []string{"info --format {{json .Runtimes}}"}, fd.log(t))
 
-	fd.write(t, "runtimes", "io.containerd.runc.v2 runc sysbox-runc \n")
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	fd.write(t, "runtimes", `{"runc":{"path":"runc"},"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}`)
 	require.NoError(t, NewDocker(config.Docker{Image: "oryn-orb:dev", Types: types}).Preflight(ctx))
+	assert.Empty(t, buf.String())
+
+	// 本机 daemon.json 的写法：sysbox-runc 带 --no-kernel-check → 只警告，照常启动。
+	fd.write(t, "runtimes", `{"runc":{"path":"runc"},"sysbox-runc":{"path":"/usr/bin/sysbox-runc","runtimeArgs":["--no-kernel-check"]}}`)
+	require.NoError(t, NewDocker(config.Docker{Image: "oryn-orb:dev", Types: types}).Preflight(ctx))
+	assert.Contains(t, buf.String(), "level=WARN")
+	assert.Contains(t, buf.String(), "--no-kernel-check")
+	assert.Contains(t, buf.String(), "runtime=sysbox-runc")
+	assert.Contains(t, buf.String(), "types=dind")
+	buf.Reset()
+
+	fd.write(t, "runtimes", "not json")
+	assert.ErrorContains(t, NewDocker(config.Docker{Image: "oryn-orb:dev", Types: types}).Preflight(ctx), "not json")
 
 	fd.set(t, "missing", false)
 	require.NoError(t, NewDocker(config.Docker{Image: "oryn-orb:dev"}).Preflight(ctx))
 	_, err = os.Stat(filepath.Join(fd.dir, "log"))
 	assert.ErrorIs(t, err, os.ErrNotExist, "没有类型配置 runtime 时不调用 docker info")
 
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	require.NoError(t, NewDocker(config.Docker{Image: "oryn-orb:dev",
 		ExtraRunArgs: []string{"--privileged", "-v", "/var/run/docker.sock:/var/run/docker.sock"}}).Preflight(ctx))
 	assert.Contains(t, buf.String(), "--privileged")
@@ -460,7 +651,7 @@ func TestDockerPreflight(t *testing.T) {
 func TestDispatchEnv(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "dispatch.sh")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nenv | grep -E '^(ORB_[A-Z_]*|ORYN_ORB_TOKEN|ORYN_URL)=' | sort > \""+dir+"/env\"\necho hello-from-dispatch\n[ \"$ORB_OPERATION\" != delete ]\n"), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nenv | grep -E '^(ORB_[A-Z_]*|ORYN_ORB_TOKEN|ORYN_URL)=' | sort > \""+dir+"/env\"\nprintf '%s' \"$ORYN_ORB_CA_PEM\" > \""+dir+"/ca\"\necho hello-from-dispatch\n[ \"$ORB_OPERATION\" != delete ]\n"), 0o755))
 	d := NewDispatch(script, config.Docker{Image: "oryn-orb:dev", DefaultType: "small"})
 	snap := "oryn-snap-2"
 	out := newTailBuffer(1024)
@@ -482,14 +673,71 @@ func TestDispatchEnv(t *testing.T) {
 		Type: "small", SnapshotID: &snap, SnapshotOptional: &optional, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_z"},
 	}}, out)
 	require.NoError(t, err)
-	assert.Nil(t, res, "dispatch 不上报结构化结果")
+	assert.Nil(t, res, "脚本没有打 ORYN_SNAPSHOT_USED 行 → 未知，不上报")
+	ca, err := os.ReadFile(filepath.Join(dir, "ca"))
+	require.NoError(t, err)
+	assert.Empty(t, string(ca), "没有 orbCaPem 时 ORYN_ORB_CA_PEM 为空")
 	b, _ = os.ReadFile(filepath.Join(dir, "env"))
 	assert.Contains(t, string(b), "ORB_SNAPSHOT_OPTIONAL=1\n")
+
+	pem := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+	require.NoError(t, execErr(d, context.Background(), Job{Op: "spawn", OrbID: "orb-y", Spawn: &apigen.JobSpawnParams{
+		Type: "small", OrbCaPem: &pem, Env: apigen.JobSpawnEnv{OrynURL: "https://u", OrynOrbToken: "oot_z"},
+	}}, out))
+	ca, err = os.ReadFile(filepath.Join(dir, "ca"))
+	require.NoError(t, err)
+	assert.Equal(t, pem, string(ca), "orbCaPem 原样作为 ORYN_ORB_CA_PEM 交给脚本")
 
 	require.NoError(t, execErr(d, context.Background(), Job{Op: "pause", OrbID: "orb-y", PauseMode: "freeze"}, out))
 	b, _ = os.ReadFile(filepath.Join(dir, "env"))
 	assert.Contains(t, string(b), "ORB_PAUSE_MODE=freeze")
 	assert.Error(t, execErr(d, context.Background(), Job{Op: "delete", OrbID: "orb-y"}, out), "non-zero exit = failure")
+}
+
+// S-P1-1：dispatch 脚本以 ORYN_SNAPSHOT_USED=1|0 行报告是否用了快照（最后一行为准；没有即未知；只认 spawn）。
+func TestDispatchSnapshotUsedMarker(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "dispatch.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ncat \""+dir+"/says\"\n"), 0o755))
+	d := NewDispatch(script, config.Docker{Image: "oryn-orb:dev"})
+	snap := "oryn-snap-2"
+	spawn := Job{Op: "spawn", OrbID: "orb-y", Spawn: &apigen.JobSpawnParams{Type: "small", SnapshotID: &snap,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_z"}}}
+	cases := []struct {
+		name string
+		says string
+		op   string
+		want *bool
+	}{
+		{"used", "starting\nORYN_SNAPSHOT_USED=1\nok\n", "spawn", new(true)},
+		{"fell back", "ORYN_SNAPSHOT_USED=0\n", "spawn", new(false)},
+		{"last line wins, CRLF and no trailing newline", "ORYN_SNAPSHOT_USED=1\r\nORYN_SNAPSHOT_USED=0", "spawn", new(false)},
+		{"no marker = unknown", "started\n", "spawn", nil},
+		{"not a whole line", "echo ORYN_SNAPSHOT_USED=1\nORYN_SNAPSHOT_USED=yes\n", "spawn", nil},
+		{"overlong line is ignored", strings.Repeat("x", 100) + "ORYN_SNAPSHOT_USED=1\n", "spawn", nil},
+		{"only spawn reports", "ORYN_SNAPSHOT_USED=1\n", "pause", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "says"), []byte(c.says), 0o644))
+			j := spawn
+			j.Op = c.op
+			if c.op == "pause" {
+				j.PauseMode = "freeze"
+			}
+			out := newTailBuffer(1 << 16)
+			res, err := d.Exec(context.Background(), j, out)
+			require.NoError(t, err)
+			assert.Equal(t, c.says, out.String(), "输出原样保留")
+			if c.want == nil {
+				assert.Nil(t, res)
+				return
+			}
+			require.NotNil(t, res)
+			require.NotNil(t, res.SnapshotUsed)
+			assert.Equal(t, *c.want, *res.SnapshotUsed)
+		})
+	}
 }
 
 func TestParseJob(t *testing.T) {

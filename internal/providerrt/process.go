@@ -85,7 +85,7 @@ func (p *Process) snapshotDir(id string) string { return filepath.Join(p.Root, "
 func (p *Process) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	switch j.Op {
 	case "spawn":
-		return nil, p.spawn(j, out)
+		return p.spawn(j, out)
 	case "pause":
 		return nil, p.pause(j, out)
 	case "snapshot":
@@ -146,54 +146,78 @@ func (p *Process) running(orbID string) *orbProc {
 	}
 }
 
-func (p *Process) spawn(j Job, out io.Writer) error {
+// snapshotMarker 记录 orb 的 HOME 是从哪个快照复制来的（放在 HOME 之外，orb 内改不到），供之后的 spawn 上报 snapshotUsed。
+func (p *Process) snapshotMarker(orbID string) string {
+	return filepath.Join(p.Root, "orbs", orbID, "snapshot")
+}
+
+// spawn 启动或唤醒 orbd。请求了快照时结果带 snapshotUsed（S-P1-1）：首次创建看快照目录是否存在；
+// HOME 已存在时看它当初是否从这个快照复制而来。
+func (p *Process) spawn(j Job, out io.Writer) (*apigen.JobResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if j.Spawn == nil {
-		return errors.New("process: spawn 缺少参数")
+		return nil, errors.New("process: spawn 缺少参数")
+	}
+	snap := ""
+	if j.Spawn.SnapshotID != nil {
+		snap = *j.Spawn.SnapshotID
+	}
+	result := func() *apigen.JobResult {
+		if snap == "" {
+			return nil
+		}
+		b, err := os.ReadFile(p.snapshotMarker(j.OrbID))
+		used := err == nil && string(b) == snap
+		return &apigen.JobResult{SnapshotUsed: &used}
 	}
 	home := p.HomeDir(j.OrbID)
 	if pr := p.running(j.OrbID); pr != nil {
 		if pr.frozen {
 			if err := pr.cmd.Process.Signal(syscall.SIGCONT); err != nil {
-				return err
+				return nil, err
 			}
 			pr.frozen = false
 			fmt.Fprintln(out, "SIGCONT")
 		}
 		// 与 docker 驱动一致：写入本次轮换后的令牌，再让 orbd 立即用它重建 link。
 		if err := writeTokenFile(home, j.Spawn.Env.OrynOrbToken); err != nil {
-			return err
+			return nil, err
 		}
-		return pr.cmd.Process.Signal(syscall.SIGHUP)
+		if err := pr.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+			return nil, err
+		}
+		return result(), nil
 	}
-	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) && j.Spawn.SnapshotID != nil && *j.Spawn.SnapshotID != "" {
-		snap := *j.Spawn.SnapshotID
+	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) && snap != "" {
 		src := p.snapshotDir(snap)
 		_, serr := os.Stat(src)
 		switch {
 		case serr == nil:
 			if err := copyTree(src, home); err != nil {
-				return fmt.Errorf("process: 从快照恢复: %w", err)
+				return nil, fmt.Errorf("process: 从快照恢复: %w", err)
+			}
+			if err := os.WriteFile(p.snapshotMarker(j.OrbID), []byte(snap), 0o644); err != nil {
+				return nil, err
 			}
 		case errors.Is(serr, fs.ErrNotExist) && j.Spawn.SnapshotOptional != nil && *j.Spawn.SnapshotOptional:
 			fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", snap)
 		case errors.Is(serr, fs.ErrNotExist):
-			return fmt.Errorf("process: 快照 %s 不存在", snap)
+			return nil, fmt.Errorf("process: 快照 %s 不存在", snap)
 		default:
-			return fmt.Errorf("process: 从快照恢复: %w", serr)
+			return nil, fmt.Errorf("process: 从快照恢复: %w", serr)
 		}
 	}
 	if err := os.MkdirAll(home, 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	// orbd 优先读令牌文件：启动前写入（同时覆盖快照里带来的源 orb 令牌）。
 	if err := writeTokenFile(home, j.Spawn.Env.OrynOrbToken); err != nil {
-		return err
+		return nil, err
 	}
 	logf, err := os.OpenFile(filepath.Join(filepath.Dir(home), "orbd.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmd := exec.Command(p.OrbdBin, "run")
 	cmd.Dir = home
@@ -203,11 +227,14 @@ func (p *Process) spawn(j Job, out io.Writer) error {
 		"ORYN_ORB_ID="+j.OrbID,
 		"ORYN_ORB_TOKEN="+j.Spawn.Env.OrynOrbToken,
 	)
+	if c := j.Spawn.OrbCaPem; c != nil && *c != "" {
+		cmd.Env = append(cmd.Env, "ORYN_ORB_CA_PEM="+*c)
+	}
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
 		_ = logf.Close()
-		return fmt.Errorf("process: 启动 %s: %w", p.OrbdBin, err)
+		return nil, fmt.Errorf("process: 启动 %s: %w", p.OrbdBin, err)
 	}
 	pr := &orbProc{cmd: cmd, done: make(chan struct{})}
 	go func() {
@@ -217,7 +244,7 @@ func (p *Process) spawn(j Job, out io.Writer) error {
 	}()
 	p.procs[j.OrbID] = pr
 	fmt.Fprintf(out, "started pid %d\n", cmd.Process.Pid)
-	return nil
+	return result(), nil
 }
 
 // writeTokenFile 原子写入 <home>/.oryn/orb-token（0600）。

@@ -164,6 +164,14 @@ func deref(s *string) string {
 	return *s
 }
 
+// orDash 把空串显示为 "-"（表格列不能空，否则 tabwriter 错位）。
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 var projectSnapshotsCmd = &cobra.Command{
 	Use:   "snapshots",
 	Short: "项目快照（ls / rm）",
@@ -200,6 +208,7 @@ var projectSnapshotsRmCmd = &cobra.Command{
 }
 
 // projectSnapshotsLs 打印项目快照表：类型、provider、状态、退役原因、提交前 7 位、血统年龄、大小、使用次数。
+// 服务端给的文本都经 termText 清掉控制字符（baseCommit 来自 orb，不可信），再按字符截断。
 func projectSnapshotsLs(ctx context.Context, c *apiClient, name string, asJSON bool, now time.Time, w io.Writer) error {
 	pid, err := resolveProject(ctx, c, name)
 	if err != nil {
@@ -215,20 +224,22 @@ func projectSnapshotsLs(ctx context.Context, c *apiClient, name string, asJSON b
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "TYPE\tPROVIDER\tSTATE\tREASON\tCOMMIT\tAGE\tSIZE\tUSES")
 	for _, s := range list.Snapshots {
-		provider := s.ProviderID
-		if s.ProviderName != nil && *s.ProviderName != "" {
-			provider = *s.ProviderName
+		provider := termText(s.ProviderID)
+		if s.ProviderName != nil && termText(*s.ProviderName) != "" {
+			provider = termText(*s.ProviderName)
 		}
 		commit := "-"
-		if s.BaseCommit != nil && *s.BaseCommit != "" {
-			commit = (*s.BaseCommit)[:min(7, len(*s.BaseCommit))]
+		if s.BaseCommit != nil {
+			if c := []rune(termText(*s.BaseCommit)); len(c) > 0 {
+				commit = string(c[:min(7, len(c))])
+			}
 		}
 		size := "-"
 		if s.SizeBytes != nil {
 			size = fmtBytes(*s.SizeBytes)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n", s.Type, provider, s.State, deref(s.RetireReason), commit,
-			fmtDur(max(0, now.UnixMilli()-s.LineageAt)), size, s.UseCount)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n", orDash(termText(s.Type)), orDash(provider), orDash(termText(string(s.State))),
+			orDash(termText(deref(s.RetireReason))), commit, fmtDur(max(0, now.UnixMilli()-s.LineageAt)), size, s.UseCount)
 	}
 	return tw.Flush()
 }

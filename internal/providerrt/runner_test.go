@@ -29,6 +29,7 @@ import (
 
 const fakeOrbd = `#!/bin/sh
 echo "$ORYN_ORB_ID $ORYN_URL" > "$HOME/started"
+printf '%s' "${ORYN_ORB_CA_PEM-unset}" > "$HOME/ca"
 trap 'echo hup >> "$HOME/hup"' HUP
 trap 'exit 0' TERM
 while true; do sleep 0.05; done
@@ -62,12 +63,15 @@ func TestProcessDriver(t *testing.T) {
 	out := io.Discard
 	spawn := Job{Op: "spawn", OrbID: "orb-p", Spawn: &apigen.JobSpawnParams{Type: "small", Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_p"}}}
 
-	require.NoError(t, execErr(p, ctx, spawn, out))
+	res0, err := p.Exec(ctx, spawn, out)
+	require.NoError(t, err)
+	assert.Nil(t, res0, "没请求快照 → 不给 snapshotUsed")
 	home := p.HomeDir("orb-p")
 	eventually(t, func() bool {
 		b, _ := os.ReadFile(filepath.Join(home, "started"))
 		return string(b) == "orb-p http://u\n"
 	}, "orbd started with env")
+	eventually(t, func() bool { b, _ := os.ReadFile(filepath.Join(home, "ca")); return string(b) == "unset" }, "没有 orbCaPem 时不设 ORYN_ORB_CA_PEM")
 	pid := p.procs["orb-p"].cmd.Process.Pid
 	tokenFile := filepath.Join(home, ".oryn", "orb-token")
 	readToken := func() string {
@@ -118,8 +122,22 @@ func TestProcessDriver(t *testing.T) {
 	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-p", PauseMode: "stop"}, out), "stop idempotent")
 
 	snap := "oryn-snap-p"
-	clone := Job{Op: "spawn", OrbID: "orb-q", Spawn: &apigen.JobSpawnParams{SnapshotID: &snap, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_q"}}}
-	require.NoError(t, execErr(p, ctx, clone, out))
+	pem := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+	clone := Job{Op: "spawn", OrbID: "orb-q", Spawn: &apigen.JobSpawnParams{SnapshotID: &snap, OrbCaPem: &pem, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_q"}}}
+	res, err = p.Exec(ctx, clone, out)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.SnapshotUsed)
+	assert.True(t, *res.SnapshotUsed, "HOME 来自快照目录")
+	eventually(t, func() bool { b, _ := os.ReadFile(filepath.Join(p.HomeDir("orb-q"), "ca")); return string(b) == pem }, "orbCaPem 作为 ORYN_ORB_CA_PEM 下发")
+	// 再次 spawn（运行中 / 停机后）：HOME 仍是当初从快照复制来的。
+	res, err = p.Exec(ctx, clone, out)
+	require.NoError(t, err)
+	assert.True(t, *res.SnapshotUsed)
+	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-q", PauseMode: "stop"}, out))
+	res, err = p.Exec(ctx, clone, out)
+	require.NoError(t, err)
+	assert.True(t, *res.SnapshotUsed)
 	// 快照里带着源 orb 的令牌文件：克隆启动前必须换成自己的，否则会以源 orb 的身份连上控制面。
 	tb, err := os.ReadFile(filepath.Join(p.HomeDir("orb-q"), ".oryn", "orb-token"))
 	require.NoError(t, err)
@@ -138,9 +156,21 @@ func TestProcessDriver(t *testing.T) {
 	// 快照目录不存在：snapshotOptional 时从空 HOME 起并说明；否则失败。
 	missing, yes := "oryn-snap-missing", true
 	var buf bytes.Buffer
-	require.NoError(t, execErr(p, ctx, Job{Op: "spawn", OrbID: "orb-r", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing, SnapshotOptional: &yes,
-		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_r"}}}, &buf))
+	res, err = p.Exec(ctx, Job{Op: "spawn", OrbID: "orb-r", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing, SnapshotOptional: &yes,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_r"}}}, &buf)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.SnapshotUsed)
+	assert.False(t, *res.SnapshotUsed, "快照缺失 → 退回空 HOME")
 	assert.Contains(t, buf.String(), "oryn: 快照 oryn-snap-missing 不存在，改用基础镜像")
+	// orb-r 停机后再以同一快照 spawn：HOME 不是从快照来的，仍为 false。
+	require.NoError(t, execErr(p, ctx, Job{Op: "pause", OrbID: "orb-r", PauseMode: "stop"}, out))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "data", "snapshots", missing), 0o755))
+	res, err = p.Exec(ctx, Job{Op: "spawn", OrbID: "orb-r", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing, SnapshotOptional: &yes,
+		Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbToken: "oot_r"}}}, out)
+	require.NoError(t, err)
+	assert.False(t, *res.SnapshotUsed)
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "data", "snapshots", missing)))
 	_, err = os.Stat(filepath.Join(p.HomeDir("orb-r"), "marker"))
 	assert.True(t, errors.Is(err, os.ErrNotExist))
 	err = execErr(p, ctx, Job{Op: "spawn", OrbID: "orb-s", Spawn: &apigen.JobSpawnParams{SnapshotID: &missing,
