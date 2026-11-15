@@ -277,76 +277,89 @@ export function CompactThreadHeader({
 			>
 				<Icon name="sidebar" size={19} />
 			</button>
-			<button
-				ref={capsuleRef}
-				type="button"
-				data-testid="thread-title"
-				aria-haspopup="menu"
-				aria-expanded={open}
-				title={title}
-				onClick={() => setOpen((v) => !v)}
-				className={`glass relative flex h-[46px] min-w-0 flex-1 flex-col items-center justify-center rounded-full px-4 transition-[scale] duration-150 active:scale-[0.98] ${open ? "z-20" : ""}`}
-			>
-				<span className="flex max-w-full items-center gap-1.5 font-semibold text-[15px] leading-5 tracking-tight">
-					{card.icon ? (
-						<span
-							aria-hidden
-							data-title-glyph="card"
-							className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none"
-							style={hueVar(hue ?? nameHue(card.text))}
-						>
-							{card.icon}
-						</span>
-					) : (
-						hue !== undefined && (
-							<span
-								aria-hidden
-								className="thread-mark h-2 w-2 shrink-0 rounded-full"
-								style={hueVar(hue)}
-							/>
-						)
-					)}
-					<span className="min-w-0 truncate">{title}</span>
-					{/* 展开提示：标题胶囊是菜单入口，不只是标题牌 */}
-					<Icon
-						name="chevronDown"
-						size={12}
-						weight="bold"
-						aria-hidden
-						className={`shrink-0 text-faint transition-transform duration-150 ${open ? "rotate-180" : ""}`}
-					/>
-				</span>
-				{error ? (
-					<span
-						role="alert"
-						className="max-w-full truncate text-[11.5px] text-err leading-4"
-					>
-						{error}
-					</span>
-				) : (
-					meta.length > 0 && (
-						// 段间的「·」由 ::before 画（第一段之外），各段自己决定能不能被挤窄
-						<span
-							data-testid="title-meta"
-							className="flex max-w-full items-center gap-1.5 overflow-hidden text-[11.5px] text-muted leading-4 [&>*+*]:before:mr-0.5 [&>*+*]:before:text-ghost [&>*+*]:before:content-['·']"
-						>
-							{meta}
-						</span>
-					)
-				)}
-			</button>
-			{viewMenu}
-			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{menu.mounted && (
-				<TitleMenu
-					shown={menu.shown}
-					label={title}
-					quick={quick}
-					status={status}
-					groups={groups}
-					onClose={close}
+				// 遮罩在页头这一层：侧栏钮、视图钮一起压暗，标题胶囊（下面的 z-20 一组）留在遮罩之上
+				<button
+					type="button"
+					aria-label={t("common.close")}
+					tabIndex={-1}
+					onClick={() => close(false)}
+					className={`fixed inset-0 z-10 cursor-default bg-scrim backdrop-blur-[2px] transition-opacity duration-150 ${menu.shown ? "opacity-100" : "opacity-0"}`}
 				/>
 			)}
+			{/* 标题胶囊与它的菜单是一组：菜单挂在胶囊正下方、与胶囊等宽 */}
+			<div className={`relative min-w-0 flex-1 ${menu.mounted ? "z-20" : ""}`}>
+				<button
+					ref={capsuleRef}
+					type="button"
+					data-testid="thread-title"
+					aria-haspopup="menu"
+					aria-expanded={open}
+					title={title}
+					onClick={() => setOpen((v) => !v)}
+					className="glass relative flex h-[46px] w-full flex-col items-center justify-center rounded-full px-4 transition-[scale] duration-150 active:scale-[0.98]"
+				>
+					<span className="flex max-w-full items-center gap-1.5 font-semibold text-[15px] leading-5 tracking-tight">
+						{card.icon ? (
+							<span
+								aria-hidden
+								data-title-glyph="card"
+								className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none"
+								style={hueVar(hue ?? nameHue(card.text))}
+							>
+								{card.icon}
+							</span>
+						) : (
+							hue !== undefined && (
+								<span
+									aria-hidden
+									className="thread-mark h-2 w-2 shrink-0 rounded-full"
+									style={hueVar(hue)}
+								/>
+							)
+						)}
+						<span className="min-w-0 truncate">{title}</span>
+						{/* 展开提示：标题胶囊是菜单入口，不只是标题牌 */}
+						<Icon
+							name="chevronDown"
+							size={12}
+							weight="bold"
+							aria-hidden
+							className={`shrink-0 text-faint transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+						/>
+					</span>
+					{error ? (
+						<span
+							role="alert"
+							className="max-w-full truncate text-[11.5px] text-err leading-4"
+						>
+							{error}
+						</span>
+					) : (
+						meta.length > 0 && (
+							// 段间的「·」由 ::before 画（第一段之外），各段自己决定能不能被挤窄
+							<span
+								data-testid="title-meta"
+								className="flex max-w-full items-center gap-1.5 overflow-hidden text-[11.5px] text-muted leading-4 [&>*+*]:before:mr-0.5 [&>*+*]:before:text-ghost [&>*+*]:before:content-['·']"
+							>
+								{meta}
+							</span>
+						)
+					)}
+				</button>
+				{menu.mounted && (
+					<TitleMenu
+						shown={menu.shown}
+						label={title}
+						quick={quick}
+						status={status}
+						groups={groups}
+						onClose={close}
+					/>
+				)}
+			</div>
+			{viewMenu}
+			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{dialogs}
 		</header>
 	);
@@ -397,87 +410,78 @@ function TitleMenu({
 	};
 
 	return (
-		<>
-			<button
-				type="button"
-				aria-label={t("common.close")}
-				tabIndex={-1}
-				data-shown={shown ? "" : undefined}
-				onClick={() => onClose(false)}
-				className={`fixed inset-0 z-10 cursor-default bg-scrim backdrop-blur-[2px] transition-opacity duration-150 ${shown ? "opacity-100" : "opacity-0"}`}
-			/>
-			<div
-				ref={panelRef}
-				role="menu"
-				aria-label={t("titleMenu.label", { title: label })}
-				data-testid="title-menu"
-				onKeyDown={onKeyDown}
-				className={`title-menu absolute inset-x-3 top-[calc(100%-2px)] z-30 mx-auto max-h-[calc(100dvh-7rem)] max-w-[22rem] origin-top overflow-y-auto overscroll-contain rounded-[26px] p-2 transition-[opacity,scale,translate] duration-150 ease-[var(--ease)] ${shown ? "translate-y-0 scale-100 opacity-100" : "-translate-y-1 scale-95 opacity-0"}`}
-			>
-				{sub ? (
-					<>
-						<button
-							type="button"
-							role="menuitem"
-							onClick={() => setSub(null)}
-							className="flex w-full items-center gap-2 rounded-[14px] px-3 py-2 text-left text-faint text-sm hover:bg-hover"
-						>
-							<Icon name="back" size={15} />
-							<span className="truncate">{sub.label}</span>
-						</button>
-						<Rule />
-						{sub.children?.map((item) => (
-							<MenuRow key={item.key} item={item} onChoose={choose} />
+		<div
+			ref={panelRef}
+			role="menu"
+			aria-label={t("titleMenu.label", { title: label })}
+			data-testid="title-menu"
+			onKeyDown={onKeyDown}
+			// 与标题胶囊等宽、挂在它正下方；最高到屏幕一半多一点，其余滚动
+			className={`title-menu absolute inset-x-0 top-full z-10 mt-1.5 max-h-[min(30rem,calc(100dvh-8rem))] origin-top overflow-y-auto overscroll-contain rounded-[22px] p-1.5 transition-[opacity,scale,translate] duration-150 ease-[var(--ease)] ${shown ? "translate-y-0 scale-100 opacity-100" : "-translate-y-1 scale-95 opacity-0"}`}
+		>
+			{sub ? (
+				<>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => setSub(null)}
+						className="flex w-full items-center gap-2 rounded-[12px] px-2.5 py-1.5 text-left text-faint text-xs hover:bg-hover"
+					>
+						<Icon name="back" size={14} />
+						<span className="truncate">{sub.label}</span>
+					</button>
+					<Rule />
+					{sub.children?.map((item) => (
+						<MenuRow key={item.key} item={item} onChoose={choose} />
+					))}
+				</>
+			) : (
+				<>
+					<div className="grid grid-cols-3 gap-0.5 pb-1">
+						{quick.map((item) => (
+							<button
+								key={item.key}
+								type="button"
+								role="menuitem"
+								data-menu-key={item.key}
+								disabled={item.disabled}
+								onClick={() => choose(item)}
+								className="flex flex-col items-center gap-1 rounded-[14px] px-1 pt-2 pb-1.5 text-[11.5px] text-fg transition-colors duration-150 hover:bg-hover active:bg-active disabled:opacity-40"
+							>
+								{item.icon && <Icon name={item.icon} size={18} />}
+								<span className="max-w-full truncate">{item.label}</span>
+							</button>
 						))}
-					</>
-				) : (
-					<>
-						<div className="grid grid-cols-3 gap-1 px-0.5 pt-0.5 pb-1.5">
-							{quick.map((item) => (
-								<button
-									key={item.key}
-									type="button"
-									role="menuitem"
-									data-menu-key={item.key}
-									disabled={item.disabled}
-									onClick={() => choose(item)}
-									className="flex flex-col items-center gap-1.5 rounded-2xl px-1 pt-3 pb-2.5 text-fg text-xs transition-colors duration-150 hover:bg-hover active:bg-active disabled:opacity-40"
-								>
-									{item.icon && <Icon name={item.icon} size={21} />}
-									<span className="max-w-full truncate">{item.label}</span>
-								</button>
+					</div>
+					{status.length > 0 && (
+						// 当前状态自成一块浅底，与下面的「操作」分开扫读
+						<div
+							data-testid="title-menu-status"
+							className="my-1 rounded-[14px] bg-[color-mix(in_oklab,var(--text)_4%,transparent)]"
+						>
+							{status.map((item) => (
+								<MenuRow key={item.key} item={item} onChoose={choose} />
 							))}
 						</div>
-						{status.length > 0 && (
-							// 当前状态自成一块浅底，与下面的「操作」分开扫读
-							<div
-								data-testid="title-menu-status"
-								className="mx-0.5 my-1 rounded-[18px] bg-[color-mix(in_oklab,var(--text)_4%,transparent)] p-0.5"
-							>
-								{status.map((item) => (
+					)}
+					{groups
+						.filter((g) => g.length > 0)
+						.map((group) => (
+							<div key={group[0]?.key}>
+								<Rule />
+								{group.map((item) => (
 									<MenuRow key={item.key} item={item} onChoose={choose} />
 								))}
 							</div>
-						)}
-						{groups
-							.filter((g) => g.length > 0)
-							.map((group) => (
-								<div key={group[0]?.key}>
-									<Rule />
-									{group.map((item) => (
-										<MenuRow key={item.key} item={item} onChoose={choose} />
-									))}
-								</div>
-							))}
-					</>
-				)}
-			</div>
-		</>
+						))}
+				</>
+			)}
+		</div>
 	);
 }
 
 function Rule(): ReactNode {
-	return <hr className="mx-3 my-1 border-[var(--glass-line)]" />;
+	return <hr className="mx-2.5 my-1 border-[var(--glass-line)]" />;
 }
 
 function MenuRow({
@@ -497,29 +501,29 @@ function MenuRow({
 			data-menu-key={item.key}
 			disabled={item.disabled}
 			onClick={() => onChoose(item)}
-			className={`flex min-h-11 w-full items-center gap-3.5 rounded-[14px] px-3 py-2 text-left text-[15px] transition-colors duration-150 hover:bg-hover active:bg-active disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"}`}
+			className={`flex min-h-10 w-full items-center gap-2.5 rounded-[12px] px-2.5 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover active:bg-active disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"}`}
 		>
 			<span
 				aria-hidden
-				className={`inline-flex w-5 shrink-0 justify-center ${item.danger ? "text-err" : "text-muted"}`}
+				className={`inline-flex w-4 shrink-0 justify-center ${item.danger ? "text-err" : "text-muted"}`}
 			>
-				{item.leading ?? (item.icon && <Icon name={item.icon} size={18} />)}
+				{item.leading ?? (item.icon && <Icon name={item.icon} size={16} />)}
 			</span>
 			<span className="min-w-0 flex-1">
 				<span className="block truncate">{item.label}</span>
 				{item.sub && (
-					<span className="mt-0.5 block truncate text-faint text-xs">
+					<span className="block truncate text-[11px] text-faint leading-4">
 						{item.sub}
 					</span>
 				)}
 			</span>
 			{item.hint && (
-				<span className="shrink-0 text-faint text-[13px] tabular-nums">
+				<span className="shrink-0 text-faint text-xs tabular-nums">
 					{item.hint}
 				</span>
 			)}
 			{item.children && (
-				<Icon name="chevronRight" size={14} className="shrink-0 text-ghost" />
+				<Icon name="chevronRight" size={13} className="shrink-0 text-ghost" />
 			)}
 			{item.checked && (
 				<Icon

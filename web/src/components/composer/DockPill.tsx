@@ -115,7 +115,8 @@ export function DockPill({
 			</span>
 		);
 	}
-	// agent 的运行状态与「要你做的事」分开表达：运行中是中性色转圈；同时有待处理时只留转圈，把宽度让给待处理
+	// agent 的运行状态与「要你做的事」分开表达：运行中是中性色转圈；同时有待处理时只留转圈，把宽度让给待处理。
+	// 速度是最低优先级的读数，放在读数区末尾（窄屏先被裁掉）
 	const rate =
 		typeof tps === "number" && tps > 0
 			? t("status.tps", { n: tps.toFixed(0) })
@@ -129,12 +130,7 @@ export function DockPill({
 			{attention ? (
 				<span className="sr-only">{t("dockPill.working")}</span>
 			) : (
-				<>
-					{t("dockPill.working")}
-					{rate && (
-						<span className="font-normal text-muted tabular-nums">{rate}</span>
-					)}
-				</>
+				t("dockPill.working")
 			)}
 		</span>
 	);
@@ -151,58 +147,77 @@ export function DockPill({
 			// 贴底：变形时胶囊行就在最终位置，外壳从上往下收拢到它身上（展开时反过来），中途不出现悬在中间的空壳
 			className="dock-pill absolute inset-x-0 bottom-0 flex h-10 items-center justify-center rounded-[inherit] text-muted text-xs outline-offset-2 active:scale-[0.98]"
 		>
+			{/*
+			 * 两端固定：「要你做的事」/ 运行中在前，展开箭头在后，永远完整。中间读数按优先级让位：草稿 > 模型（先缩成只剩 logo）
+			 * > 上下文 > 成本 > 速度，放不下时从尾部被裁掉。胶囊宽度 = 内容自然宽度，最宽到容器宽（见 useDockCollapse）
+			 */}
 			<span
 				ref={measureRef}
-				// 不收缩不折行：内容变宽时按自然宽度量出新宽度，再由托盘的 width 过渡跟上
-				className="flex h-full w-max shrink-0 items-center gap-2.5 whitespace-nowrap pr-1.5 pl-3.5"
+				className="flex h-full w-max max-w-full items-center gap-2.5 whitespace-nowrap pr-1.5 pl-3.5"
 			>
 				{(attention || running) && (
-					<>
+					<span className="inline-flex shrink-0 items-center gap-2.5">
 						{attention}
 						{running}
 						<span aria-hidden className="h-3.5 w-px bg-[var(--glass-line)]" />
-					</>
-				)}
-				<span className="inline-flex items-center gap-1.5 font-medium text-fg">
-					<ModelLogo
-						provider={model?.provider}
-						model={model?.id}
-						size={13}
-						className="shrink-0"
-					/>
-					<span className="max-w-28 truncate">{short}</span>
-					{short !== name && <span className="sr-only">{name}</span>}
-				</span>
-				{pct !== null && (
-					<span className="inline-flex items-center gap-1 tabular-nums">
-						<Ring
-							value={pct}
-							size={12}
-							tone={thresholdTone(pct)}
-							label={t("status.context", { pct })}
-						/>
-						{pct}%
-					</span>
-				)}
-				<span className="tabular-nums">
-					<span className="sr-only">{t("stat.cost")}</span>
-					{formatCost(cost)}
-				</span>
-				{draft && (
-					<span className="inline-flex items-center gap-1 text-fg">
-						<Icon name="edit" size={12} aria-hidden />
-						{t("dockPill.draft")}
 					</span>
 				)}
 				<span
+					data-testid="dock-pill-readouts"
+					className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden"
+				>
+					{draft && (
+						<span className="inline-flex shrink-0 items-center gap-1 text-fg">
+							<Icon name="edit" size={12} aria-hidden />
+							{t("dockPill.draft")}
+						</span>
+					)}
+					<span className="inline-flex min-w-[13px] items-center gap-1.5 font-medium text-fg">
+						<ModelLogo
+							provider={model?.provider}
+							model={model?.id}
+							size={13}
+							className="shrink-0"
+						/>
+						<span className="min-w-0 max-w-28 truncate">{short}</span>
+						{short !== name && <span className="sr-only">{name}</span>}
+					</span>
+					{pct !== null && (
+						<span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
+							<Ring
+								value={pct}
+								size={12}
+								tone={thresholdTone(pct)}
+								label={t("status.context", { pct })}
+							/>
+							{pct}%
+						</span>
+					)}
+					<span className="shrink-0 tabular-nums">
+						<span className="sr-only">{t("stat.cost")}</span>
+						{formatCost(cost)}
+					</span>
+					{busy && rate && (
+						<span className="shrink-0 text-muted tabular-nums">{rate}</span>
+					)}
+				</span>
+				<span
 					aria-hidden
-					className="grid h-7 w-7 place-items-center rounded-full bg-[var(--glass-line)] text-muted"
+					className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--glass-line)] text-muted"
 				>
 					<Icon name="chevronUp" size={13} weight="bold" />
 				</span>
 			</span>
 		</button>
 	);
+}
+
+/** 胶囊内容行的自然宽度：行平时被 `max-w-full` 限在胶囊里（读数区收缩、尾部被裁），量的时候临时放开。 */
+function naturalWidth(row: HTMLElement): number {
+	row.style.maxWidth = "none";
+	const width = row.scrollWidth;
+	row.style.maxWidth = "";
+	return width;
 }
 
 /**
@@ -228,20 +243,32 @@ export function useDockCollapse({
 	const settleRef = useRef(onSettle);
 	settleRef.current = onSettle;
 
-	// 收起后胶囊内容变宽 / 变窄（待处理数、草稿变化）：跟着改胶囊宽度（index.css 里有 width 过渡）
+	// 收起后胶囊内容变宽 / 变窄（待处理数、草稿、读数变化）或容器变宽窄（旋转）：重算胶囊宽度（index.css 里有 width 过渡）。
+	// 内容行被限在胶囊里，变宽时自身尺寸不变，所以看的是内容变动（MutationObserver）与容器尺寸（ResizeObserver）
 	useEffect(() => {
 		const tray = trayRef.current;
 		const row = measureRef.current;
-		if (!tray || !row || typeof ResizeObserver === "undefined") return;
-		const ro = new ResizeObserver(() => {
-			const parent = tray.parentElement?.clientWidth ?? row.scrollWidth;
+		const container = tray?.parentElement;
+		if (!tray || !row || !container) return;
+		const fitPill = () => {
+			const border = tray.offsetWidth - tray.clientWidth;
 			tray.style.setProperty(
 				"--pill-w",
-				`${Math.min(row.scrollWidth + 2, parent)}px`,
+				`${Math.min(naturalWidth(row) + border, container.clientWidth)}px`,
 			);
-		});
-		ro.observe(row);
-		return () => ro.disconnect();
+		};
+		fitPill();
+		const mo = new MutationObserver(fitPill);
+		mo.observe(row, { subtree: true, childList: true, characterData: true });
+		const ro =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(fitPill);
+		ro?.observe(container);
+		return () => {
+			mo.disconnect();
+			ro?.disconnect();
+		};
 	}, [trayRef, measureRef]);
 
 	useLayoutEffect(() => {
@@ -257,7 +284,7 @@ export function useDockCollapse({
 		const parent = tray.parentElement?.clientWidth ?? tray.offsetWidth;
 		const border = tray.offsetWidth - tray.clientWidth;
 		tray.style.setProperty("--open-w", `${parent - border}px`);
-		const pillW = Math.min(row.scrollWidth + border, parent);
+		const pillW = Math.min(naturalWidth(row) + border, parent);
 		tray.style.setProperty("--pill-w", `${pillW}px`);
 		// 内容在变形期间是绝对定位（不撑高托盘），按展开宽度量出的就是展开后的高度
 		tray.setAttribute("data-morphing", "");
