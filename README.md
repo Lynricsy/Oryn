@@ -7,7 +7,7 @@
 
 <br>
 
-**自托管的跨平台 Coding Agent 工作台：每个对话线程独占一台隔离环境，真实密钥永不进入沙箱，在浏览器、桌面、手机与终端里无缝接续同一份工作。**
+**自托管的跨平台 Coding Agent 工作台：每个对话线程独占一台隔离环境，模型与 Git 凭据默认经控制面出站代理注入，在浏览器、桌面、手机与终端里无缝接续同一份工作。**
 
 [快速开始](#快速开始) · [核心能力](#核心能力) · [系统架构与安全边界](#系统架构与安全边界) · [CLI 常用命令](#cli-常用命令) · [生产部署](docs/deploy.md) · [桌面端](docs/desktop.md) · [移动端](docs/mobile.md) · [协议规格](docs/protocol.md)
 
@@ -24,7 +24,7 @@
 
 Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi)，MIT）为 Agent 内核，为每个线程分配独立的计算环境，并提供从对话到交付的完整操作面：
 
-- **四种执行后端混排**：同一控制面可同时接入 **Docker 容器**（默认剥离 `NET_RAW` 与 `NET_ADMIN`）、**Sysbox 嵌套容器**（非特权 UID 映射运行内层 `dockerd`，无需 `--privileged`）、**Firecracker microVM**（独立 Linux 内核、`/30` 点对点 tap 网络与 jailer 槽位隔离）以及 **本机 Runner**（个人工作站或笔记本以普通用户运行 `orbd run --runner` 直连指定目录，冲突时自动创建相邻 `git worktree`）。
+- **四种执行后端混排**：同一控制面可同时接入 **Docker 容器**（默认剥离 `NET_RAW` 与 `NET_ADMIN`）、**Sysbox 嵌套容器**（非特权 UID 映射运行内层 `dockerd`，无需 `--privileged`）、**Firecracker microVM**（独立 Linux 内核、`/30` 点对点 tap 网络与 jailer 槽位隔离）以及 **本机 Runner**（个人工作站或笔记本以普通用户运行 `orbd run --runner` 直连指定目录；目录已有活动线程时提示报错，可通过界面选项或 `--worktree <名>` 在仓库旁新建独立 `git worktree`）。
 - **项目快照与预热池**：项目首次完成 `.oryn/setup` 后自动生成干净磁盘快照（Docker 镜像提交或 Firecracker `reflink` 稀疏盘复制），后续新线程跳过构建直接运行 `.oryn/resume`；高频项目可配置 1–3 台常驻预热池，新建线程即刻认领。
 - **自动冻结与按需唤醒**：Agent 与用户空闲达到阈值后自动冻结（暂停容器或 vCPU），打开线程或访问受管服务时自动唤醒；超时冻结后转为停机并完整保留磁盘状态。
 - **全功能工程面板**：工作台右侧内置 **环境信息**（CPU / 内存采样曲线、10 段彩色上下文构成、可交互待办与子 Agent 状态）、**Git 改动**（实时 Diff、暂存与取消暂存）、**文件树与编辑器**、**Web 终端**（256K 字符快照续传与流控背压恢复）、**受管服务与 Portal**（经泛域名 `https://t-<短码>-p<端口>.<portal_domain>/` 安全暴露开发服务器，支持限时公开预览）以及 **远程桌面**（内置 TigerVNC + Openbox + Chromium，支持跨线程读写锁复用登录态 Profile）。
@@ -76,7 +76,7 @@ flowchart LR
 
 系统围绕三条核心安全不变量构建（完整威胁模型与加固清单见 [`docs/deploy.md`](docs/deploy.md)）：
 
-1. **真实凭据永不进入 Orb**：导入配置时，`models.yml` 中的明文 API Key 自动移入控制面主密钥加密库，下发至 orb 的配置文件仅含 `oryn-ph-…` 占位符。模型与 Git 请求经 `orbd` 本地端口 `127.0.0.1:7811` 回到 `orynd`，在控制面校验目标上游主机后注入真实凭据，并将响应头与响应体中的凭据回显逆向脱敏回占位符。
+1. **出站代理凭据隔离**：默认 `proxy` 模式下，导入的 `models.yml` 明文 API Key 与 `git/*` 令牌存入控制面主密钥加密库，下发至 orb 的配置仅含 `oryn-ph-…` 占位符；请求经 `orbd` 本地端口 `127.0.0.1:7811` 回到 `orynd` 按绑定上游主机注入真实值，并将响应中的凭据回显脱敏回占位符（仅显式设为 `env` 模式的自定义密钥或未绑定上游 `hosts` 的模型 Key 降级路径会以环境变量下发）。
 2. **Git 最小权限放行**：绑定了 `https://` 仓库地址的项目 orb 仅允许对该单一仓库执行读写（`git-upload-pack` / `git-receive-pack`），同主机其它仓库一律 `403`；未绑定项目的 orb 对已配置令牌的 Git 主机仅放行只读克隆，拒绝一切推送。
 3. **动态令牌轮换与单向信任隔离**：Orb 连接令牌 `oot_…` 由 `HMAC(key, orbID : 代数)` 派生，每次创建、唤醒及拍摄快照后立即轮换，快照磁盘内不留有效令牌（Firecracker guest 令牌仅驻留内存 `tmpfs`）；本机 Runner 采用严格单向边界：控制面永不向 Runner 下发模型配置、环境变量密钥或开启出站代理，且协调助手禁止读写或操控任何 Runner 线程。
 
@@ -103,11 +103,20 @@ make image
 
 `make image` 构建完成后会自动以非 root 用户在断网容器内执行冒烟脚本，终端输出 `orb 镜像离线冒烟：通过`。
 
-在开始下一步前，确认 `dev/orynd.yaml` 与 `dev/provider.yaml` 中的网桥地址与本机 `docker0` 一致（执行 `ip -4 addr show docker0` 查看，常见值为 `172.17.0.1` 或 `172.18.0.1`），随后启动控制面：
+生成与本机 `docker0` 网桥地址匹配的最小本地配置并启动控制面（仓库内的 `dev/orynd.yaml` 额外监听了 Firecracker 网段 `172.31.255.1`，未初始化该网卡时请使用下方纯 Docker 配置）：
 
 ```bash
-# 3. 启动控制面（首次启动会在日志中打印一次性的 Passkey 初始化链接）
-./bin/orynd --config dev/orynd.yaml
+# 3. 生成纯 Docker 本地开发配置并启动控制面（首次启动会在日志中打印一次性的 Passkey 初始化链接）
+mkdir -p .dev
+DOCKER_IP=$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)
+cat > .dev/quickstart-orynd.yaml <<EOF
+listen: ["127.0.0.1:7600"]
+public_url: "http://localhost:7600"
+portal_domain: "localhost"
+data_dir: "./.dev/quickstart-data"
+orb_tls: { listen: ["${DOCKER_IP}:7643"] }
+EOF
+./bin/orynd --config .dev/quickstart-orynd.yaml
 ```
 
 复制终端输出的 `http://localhost:7600/setup#token=ost_…` 在浏览器中打开，注册管理员 Passkey 并保存恢复码。随后在第二个终端配对命令行并启动本机 Provider：
@@ -118,10 +127,18 @@ make image
 ./bin/oryn config push ~/.omp/agent
 
 # 5. 创建名为 local 的 Provider 令牌并启动 Docker 执行器
-mkdir -p .dev
-./bin/oryn provider create local > .dev/provider.token
-chmod 0600 .dev/provider.token
-./bin/oryn provider run --config dev/provider.yaml
+DOCKER_IP=$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)
+./bin/oryn provider create local > .dev/quickstart-provider.token
+chmod 0600 .dev/quickstart-provider.token
+cat > .dev/quickstart-provider.yaml <<EOF
+url: "http://127.0.0.1:7600"
+token_file: ".dev/quickstart-provider.token"
+orb_url: "https://${DOCKER_IP}:7643"
+driver: docker
+docker:
+  image: "oryn-orb:dev"
+EOF
+./bin/oryn provider run --config .dev/quickstart-provider.yaml
 ```
 
 打开 `http://localhost:7600` 即可新建线程并在独立的 Docker orb 中开始工作。生产环境部署（1Panel / OpenResty 反代、通配符 Portal 证书、网络防火墙隔离、Sysbox 与 Firecracker microVM 配置）请参阅 **[`docs/deploy.md`](docs/deploy.md)**。
