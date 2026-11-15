@@ -488,6 +488,70 @@ describe("thread.snapshot", () => {
 		]);
 		expect(s.pendingUi.map((r) => r.id)).toEqual(["u1"]);
 	});
+
+	// M12.1 走查问题 3：/omfg 的规则预览（setWidget）与状态行（setStatus）在重新订阅后丢失
+	it("从 snapshot.displayUi 恢复扩展的 statuses / widgets；live.reset 清空", () => {
+		let s = frames(initialThreadState(TID), [
+			{
+				type: "extension_ui_request",
+				id: "old",
+				method: "setStatus",
+				statusKey: "stale",
+				statusText: "旧连接的状态",
+			},
+		]);
+		s = applySnapshot(s, {
+			type: "thread.snapshot",
+			threadId: TID,
+			thread: {
+				id: TID,
+				title: "t",
+				titleSource: "auto",
+				state: "awaiting_input",
+				stateChangedAt: 0,
+				pinned: false,
+				labels: [],
+				unread: false,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+			agent: {
+				status: "ready",
+				pendingUi: [],
+				displayUi: [
+					{
+						type: "extension_ui_request",
+						id: "w1",
+						method: "setWidget",
+						widgetKey: "omfg",
+						widgetLines: ["rule: no sleep"],
+						widgetPlacement: "belowEditor",
+					},
+					{
+						type: "extension_ui_request",
+						id: "s1",
+						method: "setStatus",
+						statusKey: "omfg",
+						statusText: "drafting",
+					},
+				],
+				subagents: [],
+				live: [],
+			},
+			lastSeq: 0,
+			transcriptRev: 0,
+			fullReplay: false,
+		});
+		expect(s.widgets).toEqual({
+			omfg: { lines: ["rule: no sleep"], placement: "belowEditor" },
+		});
+		expect(s.statuses).toEqual({ omfg: "drafting" });
+		expect(s.pendingUi).toEqual([]);
+
+		s = applyLiveReset(s);
+		expect(s.widgets).toEqual({});
+		expect(s.statuses).toEqual({});
+	});
 });
 
 describe("转录推导", () => {

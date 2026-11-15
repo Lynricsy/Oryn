@@ -5069,6 +5069,8 @@ export interface components {
             queue?: components["schemas"]["OmpFrame"];
             /** @description 未应答的 `extension_ui_request` 帧 */
             pendingUi: components["schemas"]["OmpFrame"][];
+            /** @description 扩展当前的展示类 UI：`setStatus` / `setWidget` 每个 key 最新的 `extension_ui_request` 帧，按到达顺序（空内容的 key 已移除）；agent 重启或 `live.reset` 时清空 */
+            displayUi?: components["schemas"]["OmpFrame"][];
             /** @description 未决的 `plan_proposal` 帧 */
             planProposal?: components["schemas"]["OmpFrame"];
             /** @description 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧 */

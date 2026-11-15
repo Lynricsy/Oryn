@@ -53,3 +53,26 @@ func TestPendingUIPlanClearedOnlyOnSuccess(t *testing.T) {
 	p.observeOut([]byte(`{"type":"response","id":"a3","command":"plan_approval","success":false,"error":"No plan is awaiting approval"}`))
 	assert.Empty(t, p.replay(), "omp 已无提案时同样清除")
 }
+
+// M12.1 走查问题 3：setStatus / setWidget 按 key 保留最新帧，空内容即删除，与待答请求按到达顺序一起重放
+// （控制面重启或 agent 断档后，新的控制面据此重建展示类 UI）。
+func TestPendingUIReplaysDisplayUI(t *testing.T) {
+	var p pendingUI
+	frames := []string{
+		`{"type":"extension_ui_request","id":"1","method":"setWidget","widgetKey":"omfg","widgetLines":["v1"]}`,
+		`{"type":"extension_ui_request","id":"2","method":"setStatus","statusKey":"s","statusText":"x"}`,
+		`{"type":"extension_ui_request","id":"3","method":"select","title":"Save TTSR rule where?"}`,
+		`{"type":"extension_ui_request","id":"4","method":"setWidget","widgetKey":"omfg","widgetLines":["v2"]}`,
+		`{"type":"extension_ui_request","id":"5","method":"setStatus","statusKey":"s","statusText":""}`,
+		`{"type":"extension_ui_request","id":"6","method":"setWidget","widgetKey":"tmp","widgetLines":["t"]}`,
+		`{"type":"extension_ui_request","id":"7","method":"setWidget","widgetKey":"tmp"}`,
+	}
+	for _, f := range frames {
+		p.observeOut([]byte(f))
+	}
+	var s []string
+	for _, f := range p.replay() {
+		s = append(s, string(f))
+	}
+	assert.Equal(t, []string{frames[2], frames[3]}, s, "每个 key 最新的非空帧，与待答请求按到达顺序")
+}

@@ -2416,6 +2416,9 @@ type AgentIdentity struct {
 
 // AgentLiveState 线程实时缓冲（只含未被条目覆盖的部分）
 type AgentLiveState struct {
+	// DisplayUI 扩展当前的展示类 UI：`setStatus` / `setWidget` 每个 key 最新的 `extension_ui_request` 帧，按到达顺序（空内容的 key 已移除）；agent 重启或 `live.reset` 时清空
+	DisplayUI []OmpFrame `json:"displayUi,omitempty"`
+
 	// Live 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序
 	Live []OmpFrame `json:"live"`
 

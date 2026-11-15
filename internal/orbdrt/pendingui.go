@@ -2,18 +2,20 @@ package orbdrt
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 )
 
-// pendingUI 记录进程中仍在等待用户作答的交互帧（extension_ui_request、plan_proposal）。
-// 这些请求只存在于 omp 内存与控制面内存中：控制面重启后会丢失，agent 则会一直等待。
-// orbd 在新的 agent 流上重放它们，让新的控制面重建待答状态。
+// pendingUI 记录进程中仍在等待用户作答的交互帧（extension_ui_request、plan_proposal），以及扩展当前的展示类 UI
+// （setStatus / setWidget 每个 key 的最新帧）。这些状态只存在于 omp 内存与控制面内存中：控制面重启后会丢失，
+// agent 则会一直等待、也不会重发展示帧。orbd 在新的 agent 流上重放它们，让新的控制面重建待答与展示状态。
 type pendingUI struct {
-	mu   sync.Mutex
-	seq  int
-	reqs map[string]pendingFrame // id → 请求帧
-	plan []byte                  // 未决的 plan_proposal 帧
+	mu       sync.Mutex
+	seq      int
+	reqs     map[string]pendingFrame // id → 请求帧
+	displays map[string]pendingFrame // 方法 + key → 最新的 setStatus / setWidget 帧；空内容即删除
+	plan     []byte                  // 未决的 plan_proposal 帧
 	// approvals 是已写给 omp、尚未收到应答的 plan_approval 命令 id。提案只在其成功应答后清除：
 	// 失败的批准（如 save 缺绝对路径）不会结束 omp 里的待批提案，重连后仍须重放。
 	approvals map[string]bool
@@ -34,12 +36,16 @@ var nonPendingMethods = map[string]bool{
 }
 
 type uiHead struct {
-	Type     string `json:"type"`
-	ID       string `json:"id"`
-	Method   string `json:"method"`
-	TargetID string `json:"targetId"`
-	Success  *bool  `json:"success"`
-	Error    string `json:"error"`
+	Type        string            `json:"type"`
+	ID          string            `json:"id"`
+	Method      string            `json:"method"`
+	TargetID    string            `json:"targetId"`
+	Success     *bool             `json:"success"`
+	Error       string            `json:"error"`
+	StatusKey   string            `json:"statusKey"`
+	StatusText  string            `json:"statusText"`
+	WidgetKey   string            `json:"widgetKey"`
+	WidgetLines []json.RawMessage `json:"widgetLines"`
 }
 
 // observeOut 处理 omp → 控制面的帧。
@@ -55,6 +61,21 @@ func (p *pendingUI) observeOut(frame []byte) {
 		switch {
 		case h.Method == "cancel" && h.TargetID != "":
 			delete(p.reqs, h.TargetID)
+		case h.Method == "setStatus" || h.Method == "setWidget":
+			// 与控制面 / 客户端一致：空的 statusText / widgetLines 表示移除该 key
+			key, empty := h.Method+"\x00"+h.StatusKey, h.StatusText == ""
+			if h.Method == "setWidget" {
+				key, empty = h.Method+"\x00"+h.WidgetKey, len(h.WidgetLines) == 0
+			}
+			if empty {
+				delete(p.displays, key)
+				return
+			}
+			if p.displays == nil {
+				p.displays = map[string]pendingFrame{}
+			}
+			p.seq++
+			p.displays[key] = pendingFrame{seq: p.seq, frame: append([]byte(nil), frame...)}
 		case !nonPendingMethods[h.Method] && h.ID != "":
 			if p.reqs == nil {
 				p.reqs = map[string]pendingFrame{}
@@ -97,19 +118,18 @@ func (p *pendingUI) observeIn(line []byte) {
 	}
 }
 
-// replay 按到达顺序返回仍待答的帧。
+// replay 返回要在新流上重放的帧：计划提案在前，其余（待答请求与展示类 UI）按到达顺序。
 func (p *pendingUI) replay() [][]byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]pendingFrame, 0, len(p.reqs))
+	out := make([]pendingFrame, 0, len(p.reqs)+len(p.displays))
 	for _, f := range p.reqs {
 		out = append(out, f)
 	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].seq < out[j-1].seq; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
+	for _, f := range p.displays {
+		out = append(out, f)
 	}
+	slices.SortFunc(out, func(a, b pendingFrame) int { return a.seq - b.seq })
 	frames := make([][]byte, 0, len(out)+1)
 	if p.plan != nil {
 		frames = append(frames, p.plan)

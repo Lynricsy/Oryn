@@ -18,6 +18,10 @@ const (
 // （`askDialog` / `form` 是 set_ask_dialog{enabled, form} 开启后 ask 工具与表单的请求形态）。
 var pendingMethods = map[string]bool{"select": true, "confirm": true, "input": true, "editor": true, "ask": true, "askDialog": true, "form": true}
 
+// displayMethods 是只做展示、按 key 覆盖的 extension_ui_request 方法（扩展的页脚状态行与编辑器上下方的小部件）。
+// 它们不待答，但重新订阅的客户端需要当前值：按 key 保留最新帧，空内容即删除。
+var displayMethods = map[string]bool{"setStatus": true, "setWidget": true}
+
 type msgKey struct {
 	role string
 	ts   int64
@@ -66,6 +70,7 @@ type Live struct {
 	tools     map[string]*toolSlot
 	subagents map[string]*subSlot // 子 agent id → 最新帧
 	pendingUI map[string]uiSlot
+	displays  map[string]uiSlot // 方法 + key → 最新的 setStatus / setWidget 帧
 
 	PlanProposal json.RawMessage
 	Queue        json.RawMessage
@@ -84,20 +89,25 @@ func NewLive() *Live {
 		tools:     map[string]*toolSlot{},
 		subagents: map[string]*subSlot{},
 		pendingUI: map[string]uiSlot{},
+		displays:  map[string]uiSlot{},
 	}
 }
 
 // frameHead 是帧里实时缓冲关心的字段。
 type frameHead struct {
-	Type       string          `json:"type"`
-	ID         string          `json:"id"`
-	Method     string          `json:"method"`
-	TargetID   string          `json:"targetId"`
-	ToolCallID string          `json:"toolCallId"`
-	Status     string          `json:"status"`
-	IsTerminal *bool           `json:"isTerminal"`
-	Payload    json.RawMessage `json:"payload"`
-	Message    json.RawMessage `json:"message"`
+	Type        string            `json:"type"`
+	ID          string            `json:"id"`
+	Method      string            `json:"method"`
+	TargetID    string            `json:"targetId"`
+	ToolCallID  string            `json:"toolCallId"`
+	Status      string            `json:"status"`
+	IsTerminal  *bool             `json:"isTerminal"`
+	Payload     json.RawMessage   `json:"payload"`
+	Message     json.RawMessage   `json:"message"`
+	StatusKey   string            `json:"statusKey"`
+	StatusText  string            `json:"statusText"`
+	WidgetKey   string            `json:"widgetKey"`
+	WidgetLines []json.RawMessage `json:"widgetLines"`
 }
 
 type messageHead struct {
@@ -204,6 +214,17 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 				delete(l.pendingUI, h.TargetID)
 				eff.UIResolved = h.TargetID
 			}
+		case displayMethods[h.Method]:
+			// 与客户端一致：空的 statusText / widgetLines 表示移除该 key
+			key, empty := h.Method+"\x00"+h.StatusKey, h.StatusText == ""
+			if h.Method == "setWidget" {
+				key, empty = h.Method+"\x00"+h.WidgetKey, len(h.WidgetLines) == 0
+			}
+			if empty {
+				delete(l.displays, key)
+			} else {
+				l.displays[key] = uiSlot{seq: l.seq, frame: frame}
+			}
 		}
 	case "plan_proposal":
 		eff.PlanProposed = l.PlanProposal == nil
@@ -222,6 +243,13 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 		l.promptError = h.Status == "error"
 	case "session_settled":
 		eff.Settled = true
+		// session_settled 与 get_state.isSettled 同一判定：此刻已没有能再唤醒会话的后台任务。后台任务在回合之间
+		// 结束（完成后结果被 await 消费、被 oryn_cancel_job 取消等）不会再有 state 帧，pendingAsync 在这里复位；
+		// 再刷新一次 state，让快照里的 state 也跟上（只在此前判为有后台任务时，不给每个回合多加一次查询）。
+		if l.pendingAsync {
+			l.pendingAsync = false
+			eff.RefreshState = true
+		}
 	case "model_changed", "thinking_level_changed", "goal_updated", "config_update":
 		eff.RefreshState = true
 	default:
@@ -328,12 +356,14 @@ func (l *Live) AgentReady() { l.agentEverReady = true; l.restartExhausted = fals
 // RestartExhausted 标记 agent 重启耗尽。
 func (l *Live) RestartExhausted() { l.restartExhausted = true; l.working = false }
 
-// Reset 丢弃全部在途帧（live.reset / agent.gap / agent 重启）；保留就绪与错误标志。
+// Reset 丢弃全部在途帧（live.reset / agent.gap / agent 重启）；保留就绪与错误标志。展示类 UI 一并丢弃：agent 重启后
+// 新进程从零开始；gap 后同一进程由 orbd 在新流上重放当前值（见 orbdrt pendingUI）。
 func (l *Live) Reset() {
 	l.openMessage, l.openKey = nil, nil
 	l.tools = map[string]*toolSlot{}
 	l.subagents = map[string]*subSlot{}
 	l.pendingUI = map[string]uiSlot{}
+	l.displays = map[string]uiSlot{}
 	l.PlanProposal = nil
 	l.working = false
 }
@@ -357,9 +387,14 @@ func (l *Live) Status(orbReady bool) string {
 func (l *Live) Quiescent() bool { return len(l.pendingUI) == 0 && l.PlanProposal == nil && !l.working }
 
 // PendingUI 按到达顺序返回待答请求帧。
-func (l *Live) PendingUI() []json.RawMessage {
-	s := make([]uiSlot, 0, len(l.pendingUI))
-	for _, v := range l.pendingUI {
+func (l *Live) PendingUI() []json.RawMessage { return slotFrames(l.pendingUI) }
+
+// DisplayUI 按到达顺序返回各 key 当前的 setStatus / setWidget 帧。
+func (l *Live) DisplayUI() []json.RawMessage { return slotFrames(l.displays) }
+
+func slotFrames(m map[string]uiSlot) []json.RawMessage {
+	s := make([]uiSlot, 0, len(m))
+	for _, v := range m {
 		s = append(s, v)
 	}
 	sort.Slice(s, func(i, j int) bool { return s[i].seq < s[j].seq })

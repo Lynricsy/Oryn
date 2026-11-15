@@ -941,8 +941,9 @@ export function applyFrame(
 }
 
 /**
- * `live.reset`（agent 断档 / 重启）：服务端已清空在途帧、工作标志、待答 UI、计划提案与子 agent，
- * 客户端同步作废这些状态（随后由 `refresh_state` 拉回权威 state）；叠加层抑制到下一个 message_start。
+ * `live.reset`（agent 断档 / 重启）：服务端已清空在途帧、工作标志、待答 UI、计划提案、子 agent 与展示类 UI
+ * （setStatus / setWidget），客户端同步作废这些状态（随后由 `refresh_state` 拉回权威 state；断档后同一进程的
+ * 展示类 UI 由服务端重放的帧重建）；叠加层抑制到下一个 message_start。
  */
 export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 	return {
@@ -953,6 +954,8 @@ export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 		liveSuppressed: true,
 		running: false,
 		pendingUi: [],
+		statuses: {},
+		widgets: {},
 		planProposal: null,
 		subagents: {},
 		compaction: null,
@@ -1008,6 +1011,11 @@ export function applySnapshot(
 	if (isRecord(snap.agent.queue))
 		next = { ...next, queue: queueFrom(snap.agent.queue) };
 	for (const ui of snap.agent.pendingUi) {
+		if (isRecord(ui) && typeof ui.type === "string")
+			next = applyFrame(next, ui as OmpFrame);
+	}
+	// 展示类 UI（setStatus / setWidget）：服务端按 key 保留当前值，重新订阅后据此恢复
+	for (const ui of snap.agent.displayUi ?? []) {
 		if (isRecord(ui) && typeof ui.type === "string")
 			next = applyFrame(next, ui as OmpFrame);
 	}

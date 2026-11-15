@@ -6893,6 +6893,10 @@ components:
           type: array
           description: 未应答的 `extension_ui_request` 帧
           items: { $ref: '#/components/schemas/OmpFrame' }
+        displayUi:
+          type: array
+          description: 扩展当前的展示类 UI：`setStatus` / `setWidget` 每个 key 最新的 `extension_ui_request` 帧，按到达顺序（空内容的 key 已移除）；agent 重启或 `live.reset` 时清空
+          items: { $ref: '#/components/schemas/OmpFrame' }
         planProposal:
           allOf:
             - $ref: '#/components/schemas/OmpFrame'

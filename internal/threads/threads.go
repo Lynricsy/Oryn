@@ -747,6 +747,7 @@ type AgentSnapshot struct {
 	State        json.RawMessage    `json:"state,omitempty"`
 	Queue        json.RawMessage    `json:"queue,omitempty"`
 	PendingUI    []json.RawMessage  `json:"pendingUi"`
+	DisplayUI    []json.RawMessage  `json:"displayUi"`
 	PlanProposal json.RawMessage    `json:"planProposal,omitempty"`
 	Subagents    []json.RawMessage  `json:"subagents"`
 	Live         []json.RawMessage  `json:"live"`
@@ -782,7 +783,8 @@ func (s *Service) Subscribe(ctx context.Context, id string, fn func(Snapshot)) e
 	l := t.live
 	snap.Agent = AgentSnapshot{
 		Status: t.agentStatus, State: l.State, Queue: l.Queue, PlanProposal: l.PlanProposal,
-		PendingUI: nonNilFrames(l.PendingUI()), Subagents: nonNilFrames(l.Subagents()), Live: nonNilFrames(l.LiveFrames()),
+		PendingUI: nonNilFrames(l.PendingUI()), DisplayUI: nonNilFrames(l.DisplayUI()),
+		Subagents: nonNilFrames(l.Subagents()), Live: nonNilFrames(l.LiveFrames()),
 	}
 	fn(snap)
 	return nil

@@ -1369,3 +1369,22 @@ firecracker:
 - 子 agent：列表与对话框优先用已入库的子 agent 条目（会话文件 `<id>.jsonl`），agent 不在运行时显示「agent 未运行，显示已保存的转录」，控制按钮不可用。
 - 右栏「能力」卡片（只读）：展开时经 RPC 取 `get_skills`、`get_mcp_servers`、`get_agent_definitions`、`get_hooks`、`get_config_warnings`，不提供启停。
 - 转录：`reset_boundary` 显示为「上下文已清空」分隔行；未归类的条目类型显示为「未知条目：<type>」元信息行，不再静默丢弃。测试从 `rpc-types.d.ts` 核对条目类型与扩展 UI 方法的覆盖，Core 升级新增类型时失败。
+
+## M12.1：走查修复
+
+### 后台任务结束后复位 working
+
+线程状态里的「有后台任务」取自最近一次 `get_state.hasPendingAsyncWork`。后台任务在回合之间结束（被 `oryn_cancel_job` 取消、结果已被 await 消费等）时 Core 不发任何专门的帧，只在这段活动真正静止后发 `session_settled`（与 `get_state.isSettled` 同一判定）。控制面据此复位：
+
+- 收到 `session_settled` 时，若此前判为有后台任务，直接清掉该标志（线程立即离开 `working`），并补发一次内部 `get_state`，让快照里的 `agent.state` 跟上。此前没有后台任务时不多发查询。
+- `oryn_cancel_job` 成功应答、且此时判为有后台任务时，同样补发一次内部 `get_state`（取消在 Core 里同步生效），复位不只依赖 `session_settled`。
+
+两条都由事件触发，不轮询。
+
+### 扩展展示类 UI 进快照
+
+扩展的 `setStatus`（页脚状态行）与 `setWidget`（编辑器上下方的小部件）是只展示、不待答的 `extension_ui_request`，Core 只在变化时发一次。以前重新订阅（刷新页面、跨断点重挂载、重连）后它们就丢了。现在：
+
+- 控制面实时缓冲按「方法 + key」（`statusKey` / `widgetKey`）保留最新帧；空的 `statusText` / `widgetLines` 表示移除该 key（与 Web 渲染规则一致）。`thread.snapshot` 的 `agent.displayUi`（`AgentLiveState.displayUi`，可选，按到达顺序）带上当前值。agent 重启、`live.reset`、agent 断档时随实时缓冲一起清空。
+- orbd 的待答重放槽同样按 key 保留这两类帧，在新的 agent 流上与待答请求一起按到达顺序重放（计划提案仍在最前）。于是控制面重启或 agent 断档后，同一进程的展示类 UI 会重建；agent 进程重启时新进程从零开始。
+- Web：`applySnapshot` 依次应用 `displayUi` 里的帧恢复 `statuses` / `widgets`；`live.reset` 时一并清空，断档后由随后重放的帧重建。
