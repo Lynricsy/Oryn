@@ -57,6 +57,8 @@ export interface ToolRenderProps {
 	result?: ToolResultLike;
 	/** Tool is still executing (live collab view). */
 	running?: boolean;
+	/** 运行中的结构化部分结果（tool_execution_update.partialResult）；仅在 running 且尚无 result 时有值。 */
+	partial?: ToolResultLike;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
 }
@@ -71,4 +73,6 @@ export interface ToolRenderer {
 	Meta?: ComponentType<ToolRenderProps>;
 	/** Expanded body. Omit when the summary already says everything. */
 	Body?: ComponentType<ToolRenderProps>;
+	/** 为真时渲染器自己展示 partial，ToolView 不再输出文本尾巴。 */
+	livePartial?: boolean;
 }

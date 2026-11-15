@@ -222,6 +222,8 @@
 		}
 	},
 	"transcript": {
+		"contextCleared": "上下文已清空",
+		"unknownEntry": "未知条目：{{type}}",
 		"aborted": "已中断",
 		"branchSummary": "分支摘要",
 		"cancelled": "已取消",
@@ -486,6 +488,7 @@
 		}
 	},
 	"subagent": {
+		"offline": "agent 未运行，显示已保存的转录",
 		"title": "子 agent",
 		"abort": "终止",
 		"cancel": "取消",
@@ -532,7 +535,19 @@
 		"hint": "这里列出客户端未识别的 omp 帧，便于排查协议差异。",
 		"empty": "暂无。"
 	},
+	"capabilities": {
+		"skills": "技能",
+		"mcp": "MCP 服务器",
+		"agents": "子 agent 定义",
+		"hooks": "钩子",
+		"warnings": "配置警告",
+		"authRequired": "需要授权",
+		"refresh": "刷新",
+		"empty": "没有可显示的扩展",
+		"summary": "技能 {{skills}} · MCP {{connected}}/{{total}}"
+	},
 	"panel": {
+		"capabilities": "能力",
 		"tools": "工具",
 		"cpu": "CPU",
 		"cores": "{{n}} 核",

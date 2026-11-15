@@ -1318,3 +1318,32 @@ firecracker:
 - 一条连接一问一答；每个方向一行 JSON，以 `\n` 结尾，不含换行至多 `MaxLine = 64KiB`（超出读写都报 `ErrLineTooLong`）。
 - `Request{op, url?, orbId?, token?, dns?, nowMs?, graceSeconds?}`，`op`：`start`（对时、`sethostname(orbId)`、写 hosts / resolv.conf / 令牌文件、拉起 `orbd run`；已在运行时等同 `token`）、`token`（对时、重写令牌、SIGHUP orbd）、`sync`、`fsfreeze` / `fsthaw`（对可写盘 `FIFREEZE` / `FITHAW`，冻结后 120 秒内没等到 `fsthaw` 自行解冻）、`shutdown`（SIGTERM orbd，至多等 `graceSeconds`，杀掉其余进程、sync，应答后重启使 Firecracker 退出）、`ping`。
 - `Response{ok, error?}`；`ok=false` 时 `Call` 返回 `*fcguest.RemoteError{Op, Msg}`。
+
+## M12：omp 能力补齐
+
+透传架构不变：WS `cmd` 原样转发 RPC 命令，agent 帧原样广播，会话 JSONL 整行入库。M12 **不改** REST（`schema/openapi.yaml`）、WS 消息、ctl 方法与存储迁移（最高仍是 `0023_runners.sql`）。
+
+### Core 钉 `oryn-v18.19.0-5`：工具变更被拒时降级
+
+- 对开启 `supportsMidConversationToolChanges` 的模型，Core 保持顶层 `tools` 稳定：新出现的活动工具以 `defer_loading: true` 追加到声明表，并在消息尾部插入 `role: "system"` 的 `tool_addition`；离开活动集的工具发 `tool_removal`。有的网关会改写 `tools[]` 里的工具名却不改写这两种块，于是返回 400 `tool_addition/tool_removal references unknown tool '<名>'`。活动工具集的任何变化都会触发：runner 增减 `--terminal`、goal 模式、MCP 迟连、宿主工具表或 Core 升级。
+- `-5` 起：某次请求以 400 失败、错误文本命中 `tool_addition|tool_removal|tool_reference_unresolved`、且此前没有输出任何内容时，同一回合关掉工具变更（声明表直接用当前活动工具，不再带 `mid-conversation-tool-changes` beta 头）重放一次；重放成功后本进程内对该端点（provider + baseUrl + 模型）不再使用工具变更。其它错误照常上抛。
+- 手工开关（不等 Core 发布即可止血）：`models.yml` 里受影响 provider 加 `compat: { supportsMidConversationToolChanges: false }`；orb 经 `oryn config push` 下发，runner 改本机 `~/.omp/agent/models.yml`。
+
+### 派生事实 v4：工具名口径
+
+- `FactsVersion` 3 → 4（启动时整体重算一次）。`toolResult` 的工具名若为 `write` 且 `details.xdev = {tool, mode: "execute"}`，按 `tool`（经 `write xd://<tool>` 派发的真实工具）归属；失败的派发同样归到真实工具。规则与 Web 工具卡的 xdev 重派发一致。
+
+### CLI
+
+- `oryn thread rpc <id> <json> [--timeout 5m]`：`<json>` 须是带字符串 `type` 的 JSON 对象，经 WS `cmd` 下发，应答缩进打印；`success: false` 时错误打到 stderr 并以 1 退出。托管命令被拒（`managed_by_oryn` 等）沿用现有错误路径。
+- `oryn thread abort <id>`：下发 `{type: "abort"}`。
+- `oryn thread fork <id> [--entry <entryId>] [--env share|copy] [--json]`：`POST /api/v1/threads/{id}/fork`，`--env` 缺省 `share`。
+- `oryn thread attach` 支持计划审批：快照里的 `agent.planProposal` 或 `plan_proposal` 帧到达时打印 `[plan] <标题>`、计划原文与编号选项；输入编号或选项名（`execute` / `compact` / `keep_context`）→ `plan_approval{approved: true, option}`；`save <绝对路径>` → `option: "save", savePath`；其它文字 → `approved: false, feedback`。有未决 UI 请求时仍先答它；`plan.resolved` 后输入恢复为普通消息。
+- 以上命令在 orb 内不可用。
+
+### Web
+
+- 工具卡：`ToolRenderProps.partial` 为运行中的结构化部分结果（`tool_execution_update.partialResult`，仅在 running 且尚无最终结果时有值）；渲染器设 `livePartial: true` 时自己展示它（task / todo / eval），卡片不再输出文本尾巴。
+- 子 agent：列表与对话框优先用已入库的子 agent 条目（会话文件 `<id>.jsonl`），agent 不在运行时显示「agent 未运行，显示已保存的转录」，控制按钮不可用。
+- 右栏「能力」卡片（只读）：展开时经 RPC 取 `get_skills`、`get_mcp_servers`、`get_agent_definitions`、`get_hooks`、`get_config_warnings`，不提供启停。
+- 转录：`reset_boundary` 显示为「上下文已清空」分隔行；未归类的条目类型显示为「未知条目：<type>」元信息行，不再静默丢弃。测试从 `rpc-types.d.ts` 核对条目类型与扩展 UI 方法的覆盖，Core 升级新增类型时失败。

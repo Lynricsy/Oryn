@@ -222,6 +222,8 @@
 		}
 	},
 	"transcript": {
+		"contextCleared": "Context cleared",
+		"unknownEntry": "Unknown entry: {{type}}",
 		"aborted": "Aborted",
 		"branchSummary": "Branch summary",
 		"cancelled": "cancelled",
@@ -486,6 +488,7 @@
 		}
 	},
 	"subagent": {
+		"offline": "Agent is not running; showing the saved transcript",
 		"title": "Subagent",
 		"abort": "Abort",
 		"cancel": "Cancel",
@@ -532,7 +535,19 @@
 		"hint": "Frames the client did not recognize, for diagnosing protocol drift.",
 		"empty": "None yet."
 	},
+	"capabilities": {
+		"skills": "Skills",
+		"mcp": "MCP servers",
+		"agents": "Agent definitions",
+		"hooks": "Hooks",
+		"warnings": "Config warnings",
+		"authRequired": "Auth required",
+		"refresh": "Refresh",
+		"empty": "Nothing to show",
+		"summary": "Skills {{skills}} · MCP {{connected}}/{{total}}"
+	},
 	"panel": {
+		"capabilities": "Capabilities",
 		"tools": "Tools",
 		"cpu": "CPU",
 		"cores": "{{n}} cores",
