@@ -1728,6 +1728,82 @@ async function X22() {
 	check(true, `docker image ls alpine：${img.split("\n").join(" ")}`);
 }
 
+// ---------------------------------------------------------------- 场景：link TLS 与快照里的敏感环境变量（审查修复）
+
+async function X23() {
+	const t = await newIdle({ tag: "link TLS" });
+	const env = JSON.parse(
+		sh(`docker inspect ${t.orb} --format '{{json .Config.Env}}'`).stdout ||
+			"[]",
+	) as string[];
+	const get = (k: string) =>
+		env.find((e) => e.startsWith(`${k}=`))?.slice(k.length + 1) ?? "";
+	const url = get("ORYN_URL");
+	check(url.startsWith("https://"), `新 orb 的 ORYN_URL = ${url}`);
+	check(
+		get("ORYN_ORB_CA_PEM").includes("BEGIN CERTIFICATE"),
+		"新 orb 带 ORYN_ORB_CA_PEM",
+	);
+	// orb 能走到 ready（上面的 newIdle）就说明 link 经 TLS 建立；下面从 orb 内部核对监听的边界
+	const probe = (args: string) =>
+		dexec(
+			t.orb,
+			`printf %s "$ORYN_ORB_CA_PEM" > /tmp/ca.pem; curl -sS -o /dev/null -w '%{http_code}' --max-time 10 ${args}`,
+		);
+	const api = probe(`--cacert /tmp/ca.pem ${url}/api/v1/me`);
+	check(api.stdout === "404", `TLS 监听上 /api/v1/me → ${api.out}`);
+	const trav = probe(
+		`--cacert /tmp/ca.pem --path-as-is ${url}/orb/v1/../api/v1/me`,
+	);
+	check(trav.stdout === "404", `路径穿越 /orb/v1/../api/v1/me → ${trav.out}`);
+	const link = probe(`--cacert /tmp/ca.pem ${url}/orb/v1/link`);
+	check(
+		link.stdout === "401" || link.stdout === "400",
+		`无令牌访问 /orb/v1/link → ${link.out}（走到了 link 处理器）`,
+	);
+	const noCA = probe(`${url}/orb/v1/link`);
+	check(
+		noCA.code !== 0,
+		`不带 CA（系统根证书）握手失败：${noCA.out.split("\n").at(-1)}`,
+	);
+	const p = await ensureP();
+	const leakedOf = (id: string) =>
+		(
+			JSON.parse(
+				sh(`docker image inspect ${q(id)} --format '{{json .Config.Env}}'`)
+					.stdout || "[]",
+			) as string[]
+		)
+			.filter((e) => /^ORYN_(ORB_TOKEN|ORB_CA_PEM|URL|ORB_ID)=./.test(e))
+			.map((e) => e.split("=")[0]);
+	let s = await ensureReady(p.id);
+	if (leakedOf(s.id).length > 0) {
+		// 升级前发布的快照：配置哈希版本已变，下一台项目 orb 会把它退役（config_changed）并重新发布
+		const old = s;
+		note(`现有快照 ${old.id} 发布于修复之前，新建项目 orb 触发一次性失效`);
+		await newIdle({ projectId: p.id, tag: "升级后首个项目 orb" });
+		s = await waitFor(
+			"修复后发布的新快照",
+			async () => {
+				const r = await readyOf(p.id);
+				return r && r.id !== old.id ? r : undefined;
+			},
+			300_000,
+			1000,
+		);
+		const was = await snapById(p.id, old.id);
+		check(
+			was?.state === "retired" && was.retireReason === "config_changed",
+			`旧快照 ${was?.state}/${was?.retireReason}`,
+		);
+	}
+	const leaked = leakedOf(s.id);
+	check(
+		leaked.length === 0,
+		`快照 ${s.id} 的镜像环境里没有令牌 / CA / 地址（${leaked.join(",") || "全空"}）`,
+	);
+}
+
 const TESTS: [string, () => Promise<void>][] = [
 	["X2", X2],
 	["X3", X3],
@@ -1750,6 +1826,7 @@ const TESTS: [string, () => Promise<void>][] = [
 	["X20", X20],
 	["X21", X21],
 	["X22", X22],
+	["X23", X23],
 ];
 
 // ---------------------------------------------------------------- 主流程
