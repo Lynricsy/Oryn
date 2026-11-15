@@ -1,6 +1,6 @@
 /**
  * 当前工具报告（`/tools`）：按来源分组（内置 / MCP / 扩展 / 插件 / xd:// 挂载设备），可搜索；描述先显示第一段，
- * 更长的可展开全文。挂载设备靠 Core 的 `mounted` 标记区分（oryn-core 161c2f9 起）。
+ * 更长的可展开全文。挂载设备靠 Core 的 `mounted` 标记区分。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,8 +15,6 @@ import { EmptyState, TextInput } from "../../ui/primitives";
 import { ReportSection } from "./parts";
 
 type ToolsData = ResponseData<"get_active_tools">;
-/** oryn-core 161c2f9 给 xd:// 挂载项标 `mounted`；生成的 rpc-types.d.ts 替换前的本地扩展，替换后删除。 */
-type Tool = RpcActiveTool & { mounted?: true };
 type Group = RpcToolSource | "mounted";
 
 const GROUPS: readonly Group[] = [
@@ -41,7 +39,7 @@ function mcpServer(name: string): string | null {
 	return m?.[1] ?? null;
 }
 
-function ToolRow({ tool }: { tool: Tool }): ReactNode {
+function ToolRow({ tool }: { tool: RpcActiveTool }): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const desc = (tool.description ?? "").trim();
@@ -90,7 +88,7 @@ function ToolRow({ tool }: { tool: Tool }): ReactNode {
 export function ToolsReport({ data }: { data: ToolsData }): ReactNode {
 	const { t } = useTranslation();
 	const [q, setQ] = useState("");
-	const tools = data.tools as Tool[];
+	const tools = data.tools;
 	if (tools.length === 0)
 		return (
 			<EmptyState icon="wrench" title={t("report.tools.emptyTitle")}>

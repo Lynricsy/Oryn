@@ -4,7 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
-import type { SlashCommandInfo } from "../../omp/types";
+import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { Composer } from "./Composer";
 
@@ -20,7 +20,7 @@ vi.mock("../../realtime/socket", () => ({
 
 const A = "T-0193a1b2-0000-7000-8000-0000000000f2";
 
-const COMMANDS: SlashCommandInfo[] = [
+const COMMANDS: RpcAvailableSlashCommand[] = [
 	{ name: "hotkeys", source: "builtin", textModeExecutable: false },
 	{ name: "branch", source: "builtin", textModeExecutable: false },
 	{

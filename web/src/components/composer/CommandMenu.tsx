@@ -14,7 +14,7 @@ import {
 	findCommand,
 	hiddenFromMenu,
 } from "../../lib/slash";
-import type { SlashCommandInfo } from "../../omp/types";
+import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { Badge } from "../ui/data";
 
@@ -58,7 +58,7 @@ function useDebounced<T>(value: T, ms: number): T {
 export function useCommandMenu(
 	threadId: string,
 	text: string,
-	commands: readonly SlashCommandInfo[] | null,
+	commands: readonly RpcAvailableSlashCommand[] | null,
 	coordinator = false,
 ): CommandMenuModel | null {
 	const { t } = useTranslation();

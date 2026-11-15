@@ -5579,6 +5579,22 @@ type OrynRpcResponse = {
 	success: true;
 	data: OrynMarkSessionStartResult;
 };
+type OrynUiParityRpcCommand = {
+	id?: string;
+	type: "oryn_cancel_job";
+	jobId: string;
+};
+interface OrynCancelJobResult {
+	/** 只有本会话拥有、仍在运行的任务才会被取消；其它情况（不存在、已结束、属于子 agent）为 false。 */
+	cancelled: boolean;
+}
+type OrynUiParityRpcResponse = {
+	id?: string;
+	type: "response";
+	command: "oryn_cancel_job";
+	success: true;
+	data: OrynCancelJobResult;
+};
 /** Structured provenance preserved for GUI settings persistence/source displays. */
 export interface RpcSettingProvenance {
 	layers: ("global" | "project" | "overlay" | "runtime")[];
@@ -6543,7 +6559,7 @@ export type RpcCommand = {
 } | {
 	id?: string;
 	type: "get_btw_history";
-} | OrynRpcCommand;
+} | OrynRpcCommand | OrynUiParityRpcCommand;
 export interface RpcSessionState {
 	collab?: RpcCollabState;
 	model?: Model;
@@ -6644,6 +6660,8 @@ export interface RpcAvailableSlashCommand {
 	allowArgs?: boolean;
 	/** Whether dynamic candidates exist (get_command_arg_completions); static-only commands never need the round trip. */
 	hasDynamicArgCompletion?: boolean;
+	/** False for builtins that only the TUI can run; sent as text over RPC they reach the model as a plain prompt. */
+	textModeExecutable?: boolean;
 }
 /** Result of switch_leaf (session.navigateTree passthrough + the leaf after the move). */
 export interface RpcSwitchLeafResult {
@@ -8002,6 +8020,8 @@ export interface RpcActiveTool {
 	name: string;
 	description?: string;
 	source: RpcToolSource;
+	/** Set on xd:// mounted entries (the `~ xd://name` rows), absent on top-level tools. */
+	mounted?: true;
 }
 /**
  * Result of get_active_tools: active top-level tools (TUI /tools rows),
@@ -8034,6 +8054,8 @@ export interface RpcJobTreeRow {
 	job?: AsyncJobSnapshotItem;
 	/** Registry id of the subagent this row heads. */
 	agentId?: string;
+	/** Set when `oryn_cancel_job` can cancel this row's job: running and owned by the viewing agent. */
+	cancellable?: true;
 }
 /**
  * Result of get_jobs: running jobs first, then recent (TUI /jobs ordering),
@@ -9567,7 +9589,7 @@ export type RpcResponse = {
 	data: {
 		records: readonly RpcBtwHistoryRecord[];
 	};
-} | OrynRpcResponse | {
+} | OrynRpcResponse | OrynUiParityRpcResponse | {
 	id?: string;
 	type: "response";
 	command: string;

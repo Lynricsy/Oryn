@@ -15,26 +15,6 @@ import { ConfirmStrip, formatClock, useTicker } from "./parts";
 type JobsData = ResponseData<"get_jobs">;
 type Job = NonNullable<RpcJobTreeRow["job"]>;
 
-// ---- oryn-core 161c2f9 新增的三处字段 / 命令；生成的 rpc-types.d.ts 替换前的本地扩展，替换后删除
-/** 树行：运行中且属于当前 agent 时 Core 标 `cancellable`。 */
-type JobRow = RpcJobTreeRow & { cancellable?: true };
-interface CancelJobCommand {
-	type: "oryn_cancel_job";
-	jobId: string;
-}
-interface CancelJobResult {
-	/** id 不存在、已结束、属于子 agent 时为 false */
-	cancelled: boolean;
-}
-const sendCancelJob = (threadId: string, frame: CancelJobCommand) =>
-	(
-		realtime.cmd as unknown as (
-			threadId: string,
-			frame: CancelJobCommand,
-		) => Promise<CancelJobResult>
-	).call(realtime, threadId, frame);
-// ----
-
 /** 运行中时报告的自动刷新间隔。 */
 export const JOBS_POLL_MS = 2000;
 
@@ -43,7 +23,7 @@ export async function cancelJob(
 	threadId: string,
 	jobId: string,
 ): Promise<boolean> {
-	const r = await sendCancelJob(threadId, { type: "oryn_cancel_job", jobId });
+	const r = await realtime.cmd(threadId, { type: "oryn_cancel_job", jobId });
 	return r.cancelled;
 }
 /** 有运行中的任务时才轮询。 */
@@ -74,7 +54,7 @@ function JobItem({
 	onChanged,
 }: {
 	threadId: string;
-	row: JobRow;
+	row: RpcJobTreeRow;
 	job: Job;
 	cancellable: boolean;
 	now: number;
@@ -212,7 +192,7 @@ export function JobsReport({
 	const { t } = useTranslation();
 	const running = data.jobs.filter((j) => j.status === "running").length;
 	const now = useTicker(running > 0);
-	const rows: JobRow[] = data.tree?.length
+	const rows: RpcJobTreeRow[] = data.tree?.length
 		? data.tree
 		: data.jobs.map((job) => ({ depth: 0, job }));
 	if (rows.length === 0)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SlashCommandInfo } from "../omp/types";
+import type { RpcAvailableSlashCommand } from "../omp/types";
 import {
 	carriesAttachments,
 	coordinatorAllows,
@@ -11,7 +11,7 @@ import {
 	UNAVAILABLE_COMMANDS,
 } from "./slash";
 
-const COMMANDS: SlashCommandInfo[] = [
+const COMMANDS: RpcAvailableSlashCommand[] = [
 	{
 		name: "compact",
 		source: "builtin",
@@ -400,13 +400,17 @@ describe("斜杠命令拦截映射", () => {
 });
 
 describe("命令菜单过滤", () => {
-	const byName = (n: string) => COMMANDS.find((c) => c.name === n);
+	const byName = (n: string) => {
+		const c = COMMANDS.find((x) => x.name === n);
+		if (!c) throw new Error(`缺少测试命令 ${n}`);
+		return c;
+	};
 	it("只能在 TUI 执行、客户端没有接管的不列；客户端接管的（/branch）保留；被拦的（/move）不列", () => {
-		expect(hiddenFromMenu(byName("hotkeys") as SlashCommandInfo)).toBe(true);
-		expect(hiddenFromMenu(byName("extensions") as SlashCommandInfo)).toBe(true);
-		expect(hiddenFromMenu(byName("branch") as SlashCommandInfo)).toBe(false);
-		expect(hiddenFromMenu(byName("effort") as SlashCommandInfo)).toBe(false);
-		expect(hiddenFromMenu(byName("move") as SlashCommandInfo)).toBe(true);
+		expect(hiddenFromMenu(byName("hotkeys"))).toBe(true);
+		expect(hiddenFromMenu(byName("extensions"))).toBe(true);
+		expect(hiddenFromMenu(byName("branch"))).toBe(false);
+		expect(hiddenFromMenu(byName("effort"))).toBe(false);
+		expect(hiddenFromMenu(byName("move"))).toBe(true);
 		expect(hiddenFromMenu({ name: "settings", source: "builtin" })).toBe(true);
 	});
 });

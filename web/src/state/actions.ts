@@ -26,7 +26,6 @@ import type {
 	OrynPromptExtras,
 	RpcLoopModeState,
 	SessionState,
-	SlashCommandInfo,
 } from "../omp/types";
 import { realtime } from "../realtime/socket";
 import { getThreadStore, indexStore, type ThreadStore } from "./stores";
@@ -104,7 +103,7 @@ export function slashContextOf(threadId: string): SlashContext {
 		agentsPaused: s.state?.agentsPaused ?? false,
 		fastModeEnabled: s.state?.fastModeEnabled ?? false,
 		slowModeEnabled: s.state?.slowModeEnabled ?? false,
-		commands: (s.commands ?? []) as SlashCommandInfo[],
+		commands: s.commands ?? [],
 	};
 }
 

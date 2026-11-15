@@ -3,7 +3,7 @@
  * 表内命令由客户端处理，**不得**当作文本发给模型；其余命令经 `prompt "/xxx"` 交给 omp 执行（显示 command_output）。
  * omp 只在 `prompt` 命令里执行 builtin（`steer` / `follow_up` 直接把文本交给模型），所以文本路径一律发 `prompt`。
  */
-import type { OmpCommand, SlashCommandInfo } from "../omp/types";
+import type { OmpCommand, RpcAvailableSlashCommand } from "../omp/types";
 
 /** 在 Oryn 中不可用的 TUI 专属命令（菜单里不列）。其余只有 TUI 实现的命令按 Core 的 `textModeExecutable` 判定。 */
 export const UNAVAILABLE_COMMANDS = [
@@ -88,7 +88,7 @@ export interface SlashContext {
 	fastModeEnabled: boolean;
 	slowModeEnabled: boolean;
 	/** omp 公布的命令（`get_available_commands`）；尚未拿到时为空。 */
-	commands: readonly SlashCommandInfo[];
+	commands: readonly RpcAvailableSlashCommand[];
 }
 
 export interface ParsedSlash {
@@ -161,9 +161,9 @@ function usageOf(name: string, hint = COMMAND_HINTS[name]): string {
 
 /** 按名字或别名找 omp 公布的命令。 */
 export function findCommand(
-	commands: readonly SlashCommandInfo[],
+	commands: readonly RpcAvailableSlashCommand[],
 	name: string,
-): SlashCommandInfo | undefined {
+): RpcAvailableSlashCommand | undefined {
 	return commands.find((c) => c.name === name || c.aliases?.includes(name));
 }
 
@@ -465,7 +465,7 @@ const MENU_KEEPS_TUI_ONLY: Record<string, true> = {
 };
 
 /** omp 公布的这条命令不进菜单：Oryn 不可用，或只能在 TUI 执行且客户端没有接管。 */
-export function hiddenFromMenu(c: SlashCommandInfo): boolean {
+export function hiddenFromMenu(c: RpcAvailableSlashCommand): boolean {
 	if (
 		(UNAVAILABLE_COMMANDS as readonly string[]).includes(c.name) ||
 		BLOCKED_COMMANDS[c.name]
