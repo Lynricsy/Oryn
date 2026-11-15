@@ -87,7 +87,7 @@ func (o *fakeOrbd) connect() error {
 				return o.onSetup(o.orbID, method, p), nil
 			}
 			return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: method == "setup.run", DurationMs: 3}, nil
-		case "shutdown", "portal.configure", "profile.mode", "snapshot.prepare":
+		case "shutdown", "portal.configure", "profile.mode", "snapshot.prepare", "omphome.apply":
 			return apigen.LinkCtlOkResult{Ok: true}, nil
 		}
 		return nil, link.ErrMethodNotFound

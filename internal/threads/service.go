@@ -104,6 +104,8 @@ type Service struct {
 	// cfgSync 是 /omfg 回写（M12.2，SetConfigSync 在服务对外可用之前设置；nil = 不回写）；cfgSyncTimeout 是一次回写的上限。
 	cfgSync        ConfigSync
 	cfgSyncTimeout time.Duration
+	// cfgSchema 是 omp 设置 schema（M13 6.3，SetConfigSchema 在服务对外可用之前设置；nil = 未知，键变化按需重启处理）。
+	cfgSchema ConfigSchema
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -315,7 +317,8 @@ type thread struct {
 	autoActive bool
 	// hostCalls 是在途的宿主工具调用：omp 的调用 id → 取消函数（协调线程）。
 	hostCalls map[string]context.CancelFunc
-	// refresh 为真时，协调线程在静止后停掉 agent，下一条命令以新的 AgentProfile 启动（RefreshAgent）。
+	// refresh 为真时，线程在静止后停掉 agent，下一条命令经唤醒路径重新启动（refreshLocked：协调线程取新的
+	// AgentProfile；工作线程让需重启的 omp 配置生效）。
 	refresh bool
 	// stopping 为真表示控制面主动发了 agent.stop：随后的 exited 不算重启耗尽。
 	stopping bool
@@ -327,6 +330,10 @@ type thread struct {
 	// omfgGlobal 为真表示客户端发起的 omfg 在途时，用户在保存位置对话框里点了全局选项（M12.2，noteOmfgChoiceLocked）；
 	// 每次 omfg 应答时取出并复位。
 	omfgGlobal bool
+	// reloadPending 为真表示 omp 配置变化后还欠一次 reload_plugins（会话静止时下发）；restartReasons 是需重启才能
+	// 生效的配置变化（M13 6.3，见 apply.go）。agent 退出时都清空。
+	reloadPending  bool
+	restartReasons []string
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败

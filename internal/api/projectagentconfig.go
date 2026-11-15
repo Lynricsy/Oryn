@@ -47,23 +47,23 @@ func (s *Server) GetProjectAgentConfigFile(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// PutProjectAgentConfigFile 写入项目级配置文件。
+// PutProjectAgentConfigFile 写入项目级配置文件。成功后防抖下发到该项目运行中的 orb（M13）。
 func (s *Server) PutProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, path apigen.AgentConfigPath, params apigen.PutProjectAgentConfigFileParams) {
-	if h, ok := s.projectHome(w, r, id); ok {
-		putAgentFile(w, r, h, path, params.Mode, nil)
+	if h, ok := s.projectHome(w, r, id); ok && putAgentFile(w, r, h, path, params.Mode, nil) {
+		s.ompConfigChanged(id)
 	}
 }
 
-// DeleteProjectAgentConfigFile 删除项目级配置文件。
+// DeleteProjectAgentConfigFile 删除项目级配置文件。成功后防抖下发到该项目运行中的 orb（M13）。
 func (s *Server) DeleteProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, path apigen.AgentConfigPath) {
-	if h, ok := s.projectHome(w, r, id); ok {
-		deleteAgentFile(w, r, h, path)
+	if h, ok := s.projectHome(w, r, id); ok && deleteAgentFile(w, r, h, path) {
+		s.ompConfigChanged(id)
 	}
 }
 
-// ImportProjectAgentConfig 用 tar 包整体替换该项目的配置。
+// ImportProjectAgentConfig 用 tar 包整体替换该项目的配置。成功后防抖下发到该项目运行中的 orb（M13）。
 func (s *Server) ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
-	if h, ok := s.projectHome(w, r, id); ok {
-		importAgentFiles(w, r, h, nil)
+	if h, ok := s.projectHome(w, r, id); ok && importAgentFiles(w, r, h, nil) {
+		s.ompConfigChanged(id)
 	}
 }

@@ -1967,6 +1967,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent-config/apply-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * omp 配置在会话上的生效状态（M13）
+         * @description 全局 omp-home 或项目层的 `PUT` / `DELETE` / `import` 成功后防抖 1 秒，控制面把这一层下发到所有 `ready` 且支持
+         *     `omphome-apply` 的 orb（协调宿主只收 `config.yml` 与 `models.yml`；项目层只发给该项目的 orb），再按变化分类作用到
+         *     agent 在跑的会话：技能、命令、规则、提示片段、instruction、上下文文件、MCP 在会话静止时 `reload_plugins`；hook、
+         *     扩展模块、自定义工具、`SYSTEM.md`、`APPEND_SYSTEM.md`、`PERSONALITY.md`、`models.yml` 以及设置 schema 中
+         *     `restartRequired` 的键要重启会话，列在 `threads` 里。规则见 docs/protocol.md「M13：omp 配置立即下发」。
+         *     状态只在内存里：agent 退出即清除，orynd 重启后为空。
+         */
+        get: operations["getAgentConfigApplyStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-config/restart-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重启需重启才能让配置生效的会话（M13）
+         * @description 对 apply-status 列出的每个会话：等它静止（正在跑的回合不受影响）后停掉 omp 进程，下一条消息经唤醒路径以原会话
+         *     自动拉起。agent 已不在运行的会话直接清除标记。
+         */
+        post: operations["restartAgentConfigSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats/meta": {
         parameters: {
             query?: never;
@@ -4391,6 +4437,26 @@ export interface components {
             extractedSecrets: string[];
             warnings: components["schemas"]["AgentConfigWarning"][];
         };
+        /** @description omp 配置在会话上的生效状态（M13） */
+        AgentConfigApplyStatus: {
+            /** @description 需重启才能让配置生效的会话，按线程 id 排序 */
+            threads: components["schemas"]["AgentConfigRestartThread"][];
+            /** @description 回合仍在进行、等会话静止才能 `reload_plugins` 的会话数 */
+            pendingReloads: number;
+        };
+        AgentConfigRestartThread: {
+            threadId: string;
+            kind: components["schemas"]["ThreadKind"];
+            title: string;
+            /** @description 需重启的原因：`disabledExtensions` 条目（如 `hook:pre:bash:bash.ts`）、`config.yml` 键名（点分路径）或文件路径 */
+            reasons: string[];
+            /** @description 已调用 restart-sessions，等会话静止后重启 */
+            scheduled: boolean;
+        };
+        AgentConfigRestartResult: {
+            /** @description 已安排重启的线程（按 id 排序） */
+            threadIds: string[];
+        };
         /**
          * @description 时间粒度（按请求的 `tz` 取自然小时 / 日 / 周（周一为始）/ 月）
          * @enum {string}
@@ -5782,7 +5848,7 @@ export interface components {
             snapshotUsed?: boolean;
         };
         /** @description yamux 流的第一行（JSON + `\n`）。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"];
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -5868,6 +5934,36 @@ export interface components {
             message?: string;
         };
         /**
+         * @description M13 全局助手文件库的字节流，两种用法：
+         *     同步（orynd 打开，发往协调宿主）：`library.sync` 回报缺失的文件后，控制面为每个缺失文件开一条，`path` 为该次清单里的沙箱路径，
+         *     流头之后是 `size` 字节原始内容；协调宿主校验字节数与 `sha256`、原子落盘后回一行 `LinkLibraryReply` + `\n` 并关闭。
+         *     路径不在最近一次 `library.sync` 清单里的流一律拒绝。只有 hello `features` 含 `library` 的协调宿主才接受。
+         *     取回（orbd 打开，发往 orynd）：应 `library.fetch` 请求由 orbd 开，`id` 回带请求的 `id`，流头之后是 `size` 字节原始内容；
+         *     控制面只接受自己向该 orb 发出、仍在等待的 `library.fetch`。
+         */
+        LinkStreamLibrary: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "library";
+            /** @description 取回：`library.fetch` 请求的 `id` */
+            id?: string;
+            /** @description 同步：沙箱路径（`~/library/shared/<fileId>/<name>` 或 `~/library/threads/<threadId>/<fileId>/<name>`） */
+            path?: string;
+            /** Format: int64 */
+            size: number;
+            /** @description 同步：内容摘要 */
+            sha256?: components["schemas"]["Sha256"];
+        };
+        /** @description 协调宿主对同步用 `library` 流的应答行 */
+        LinkLibraryReply: {
+            ok: boolean;
+            /** @description `ok=false` 时：`invalid_path`（路径不在最近一次同步清单里）、`mismatch`（字节数或 sha256 不符）、`failed` */
+            code?: string;
+            message?: string;
+        };
+        /**
          * @description `ctl` 方法（括号内为方向与形态）：
          *     `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
          *     `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
@@ -5880,10 +5976,13 @@ export interface components {
          *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
          *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
          *     `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
-         *     `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
+         *     `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
+         *     `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
+         *     `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
+         *     `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -5941,12 +6040,13 @@ export interface components {
              *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
              *     M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
              *     M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
-             *     `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator", "omphome-apply"]`）。
+             *     `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
              *     M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
              *     `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
              *     M11b 起：`terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）、
              *     `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
-             *     M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）。
+             *     M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
+             *     `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -6209,6 +6309,55 @@ export interface components {
         /** @description `found=true` 时 orbd 另开一条 `blob` 流 */
         LinkCtlBlobFetchResult: {
             found: boolean;
+        };
+        LinkCtlLibrarySyncFile: {
+            /** @description 沙箱路径：共享文件 `~/library/shared/<fileId>/<name>`，对话文件 `~/library/threads/<threadId>/<fileId>/<name>` */
+            path: string;
+            /** Format: int64 */
+            size: number;
+            sha256: components["schemas"]["Sha256"];
+        };
+        /**
+         * @description M13（orynd→协调宿主）：文件库在协调宿主沙箱里应有的全部文件。协调宿主删除 `~/library/shared/` 与 `~/library/threads/` 下
+         *     不在清单里或内容不符的一切（含符号链接与空目录），确保 `~/library/out/` 存在，并回报还缺哪些文件；控制面随后为每个缺失文件开一条 `library` 流。
+         *     清单里的路径必须是上述两种形态（`fileId` 为 `afl_…`，`name` 是单个路径段），否则整个请求 `invalid_params`。
+         */
+        LinkCtlLibrarySyncParams: {
+            files: components["schemas"]["LinkCtlLibrarySyncFile"][];
+        };
+        LinkCtlLibrarySyncResult: {
+            /** @description 清单中协调宿主上缺失或内容不符（已删除）的路径 */
+            missing: string[];
+        };
+        /**
+         * @description M13（orynd→orbd）：取回一个文件的字节。orbd 校验通过后另开一条 `library` 流（流头 `id` 回带本请求的 `id`）发送原始字节，再应答。
+         *     协调宿主只服务 `~/library/out/` 下的普通文件：`path` 可写成 `~/…`、绝对路径或相对 `~/library/out/` 的路径，含 `..` 段、解析符号链接后
+         *     越出 `~/library/out/` 或不是普通文件一律 `invalid_params` / `not_found`。普通 orbd 只服务本 orb 正在经 `library.put` 存入的那个路径。
+         */
+        LinkCtlLibraryFetchParams: {
+            /** @description 控制面生成的关联 id */
+            id: string;
+            path: string;
+        };
+        LinkCtlLibraryFetchResult: {
+            /**
+             * Format: int64
+             * @description `library` 流上随后的字节数
+             */
+            size: number;
+        };
+        /**
+         * @description M13（orbd→orynd，由 orb 内 `oryn library put <文件>` 经 `orbd.sock` 转来）：把 orb 内的一个文件存进全局助手文件库，
+         *     `scope = shared`、`source = orb`、`sourceThreadId` = 调用方线程；结果 `AssistantFile`。控制面先校验调用方
+         *     （属于本 orb、`kind = work`、未归档，否则 `forbidden`），再对同一 orb 发 `library.fetch{path}` 取回字节。
+         */
+        LinkCtlLibraryPutParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            /** @description orb 内文件的绝对路径 */
+            path: string;
+            /** @description 库内文件名；缺省取路径的最后一段 */
+            name?: string;
         };
         LinkCtlFsCopyTreeParams: {
             from: string;
@@ -9473,6 +9622,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentConfigImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAgentConfigApplyStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 生效状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigApplyStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restartAgentConfigSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已安排重启的会话 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigRestartResult"];
                 };
             };
             default: components["responses"]["Error"];

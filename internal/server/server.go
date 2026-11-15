@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
@@ -168,6 +169,13 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.SetAttachments(s.Attachments)
 	// M12.2：/omfg 保存的规则由控制面读回并写入中央（全局 omp-home 或项目层）
 	s.Threads.SetConfigSync(&cfgsync.Saver{Store: s.Store, Orbs: s.Orbs, Global: s.Home, Projects: s.ProjectHomes, Vault: s.Vault})
+	// M13：agent-config 写入后防抖下发到运行中的 orb，再按变化让会话 reload_plugins 或标为需重启
+	if err := s.Orbs.EnableOmpApply(orbs.OmpApplyConfig{
+		Home: s.Home, Projects: s.ProjectHomes, Dir: filepath.Join(cfg.DataDir, "omp-home-applied"),
+	}); err != nil {
+		return err
+	}
+	s.Orbs.OnOmpApplied(func(rep orbs.ApplyReport) { s.Threads.ConfigApplied(context.Background(), rep) })
 	if s.Library, err = library.New(s.Store, cfg.DataDir, s.Attachments); err != nil {
 		return err
 	}
@@ -272,6 +280,8 @@ func (s *Server) init(ctx context.Context) error {
 	// M13：中央模型目录（控制面用协调宿主的 omp 跑 `omp models`）；未配置 omp 时不建，接口回 503
 	if cfg.Coordinator.OmpPath != "" {
 		s.API.Auth.ModelCatalog = modelcat.New(modelcat.Config{OmpPath: cfg.Coordinator.OmpPath, CacheDir: cfg.ModelCatalogDir()}, s.Home, s.Vault)
+		// 6.3：config.yml 的键是否要重启会话按钉住 Core 的设置 schema 判断
+		s.Threads.SetConfigSchema(s.API.Auth.ModelCatalog)
 	}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}

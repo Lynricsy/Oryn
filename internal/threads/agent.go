@@ -358,6 +358,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		s.out().LiveReset(t.id)
 		t.autoActive = false
 		cancelHostCallsLocked(t)
+		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
 		switch {
 		case t.stopping || p.RestartsLeft == nil:
 			// 有意停止，不是故障：控制面的 agent.stop（RefreshAgent、删除线程、fork 回退），或 orbd 收到 shutdown /
@@ -632,6 +633,7 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		if t.refresh {
 			s.stopForRefreshLocked(t)
 		}
+		s.reloadPluginsLocked(t) // M13 6.3：补发会话忙时挂起的 reload_plugins
 	case "host_tool_call":
 		if t.kind != KindWork {
 			s.hostToolCallLocked(t, line)

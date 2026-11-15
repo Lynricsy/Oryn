@@ -189,17 +189,27 @@ func (s *Service) RefreshAgent(ctx context.Context, threadID string) {
 	if t.kind == KindWork {
 		return
 	}
+	s.refreshLocked(t, "agent profile")
+}
+
+// refreshLocked 让线程在静止后停掉 agent（正在跑的回合不受影响），下一条命令经唤醒路径重新 agent.start、以
+// open_session 拉起原会话：协调线程借此取新的 AgentProfile，工作线程借此让需重启的 omp 配置生效（M13 6.3）。
+// agent 不在运行时什么都不做并返回 false（下次启动自然用新的）。调用方持有 t.mu。
+func (s *Service) refreshLocked(t *thread, reason string) bool {
 	if t.agent == nil && t.agentStatus != apigen.AgentStatusReady && !t.starting {
-		// agent 不在运行：下次启动自然取新的 AgentProfile
-		return
+		return false
+	}
+	if !t.refresh && !t.stopping {
+		slog.Debug("threads: 线程将在静止后重启 agent", "thread", t.id, "reason", reason)
 	}
 	t.refresh = true
 	if t.settled && !t.unsynced && len(t.queue) == 0 && len(t.pending) == 0 {
 		s.stopForRefreshLocked(t)
 	}
+	return true
 }
 
-// stopForRefreshLocked 在后台停掉协调线程的 agent（RefreshAgent）。调用方持有 t.mu。
+// stopForRefreshLocked 在后台停掉线程的 agent（refreshLocked）。调用方持有 t.mu。
 func (s *Service) stopForRefreshLocked(t *thread) {
 	t.refresh = false
 	t.stopping = true
@@ -215,7 +225,7 @@ func (s *Service) stopForRefreshLocked(t *thread) {
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		if err := ctl.Call(cctx, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: t.id, GraceSeconds: 5}, nil); err != nil {
-			slog.Debug("threads: 刷新协调 agent 时 agent.stop 失败", "thread", t.id, "err", err)
+			slog.Debug("threads: 刷新 agent 时 agent.stop 失败", "thread", t.id, "err", err)
 			t.mu.Lock()
 			t.stopping = false
 			t.mu.Unlock()

@@ -1558,3 +1558,21 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 - 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`），runner 不上报且回 `not_supported`。
 - 语义与 `setup.run` 第 1 步相同：写入 `~/.omp/agent/`，按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件不动。带 `projectConfig` 时同时把项目层镜像到 `~/.oryn/project-config/.omp`；缺省时不动项目层（`setup.run` 缺省表示删除项目层，两者不同）。不碰 git、不跑脚本。协调宿主忽略 `projectConfig`。
 - 与 `setup.run` / `resume.run` 的写配置步骤按**到达顺序、按层**生效：每个请求到达时取一个递增编号，写入串行进行；用户层与项目层各记已写入的最大编号，编号更小的请求跳过该层（setup 日志记 `skipped: a newer omp config was applied while waiting (…)`）。所以 `omphome.apply` 不必排在 setup 互斥（含转入后台的 resume）之后，排队中的旧 setup 也不会用旧内容覆盖它；apply 没带的项目层仍由 setup 照常写。
+
+### 控制面下发器（计划 6.2）
+
+- 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import` 成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
+- 对象：状态为 `ready`、有已 hello 的 link 且 `features` 含 `omphome-apply` 的 orb；项目层只发给 `project_id` 为该项目的 orb。冻结、停机、恢复途中的 orb 跳过，它们在 `resume.run` / `setup.run` 时照常拿到最新配置；runner 与旧 orbd 不发。
+- 参数取自与 setup 同一份 `SetupSource.Plan`：`ompHome` 是渲染后的 omp-home（协调宿主只有 `coordinatorFiles`，即 `models.yml` 与 `config.yml`），`projectConfig` 是该 orb 所属项目的项目层（没有项目则省略，orbd 不动项目层）。各 orb 并发下发，单台应答上限 30 秒；成功后用同一份 Plan 的 `Egress` 替换该 orb 的出站策略（`models.yml` 改了 provider / baseUrl 时路由立即生效）。中央模型目录的缓存键本来就按 `models.yml` 与 `config.yml` 内容计算，不需要额外失效。
+- 基线：每层下发后在 `<data_dir>/omp-home-applied/`（项目层在其下 `projects/<id>/`）记下各文件原文的 sha256（`manifest.json`）与 `config.yml` 原文。下一次以此算出 `Changed`（新增、修改、删除的路径）与 `ConfigBefore`。没有基线时这一层的全部文件都算变化；全局层在 orynd 启动时若没有基线，先以当前 omp-home 建立基线。个别 orb 下发失败不影响基线（它在下次 setup / resume 时同步）。
+- 结果 `orbs.ApplyReport{ProjectID, Orbs[{OrbID, OK, Err}], Changed, ConfigBefore, ConfigAfter}` 交给线程服务做会话级生效。
+
+### 会话级生效与懒重启（计划 6.3）
+
+- 只处理 agent 在跑（含正在启动）的线程；下发失败的 orb、或 `ready` 却没收到下发的 orb 上的线程不处理。全局层作用于全部线程，协调对话只看 `config.yml` 与 `models.yml`；项目层只作用于该项目 orb 上的工作线程。
+- 分类（取并集）：
+  - `config.yml` 做键级差分。`disabledExtensions` 比较前后集合，增删条目按冒号前的前缀分：`skill`、`slash-command`、`rule`、`prompt`、`instruction`、`context-file`、`mcp` → reload；`hook`、`extension-module`、`tool` 与不认识的前缀 → 需重启，原因为该条目（如 `hook:pre:bash:bash.ts`）。协调对话忽略 `disabledExtensions`。`task` 及其下的键什么都不做。其余键逐级比较映射、数组整体比较，得到点分路径，按钉住 Core 的设置 schema（`get_settings_schema` 的 `restartRequired`）判断：需要则标为需重启、原因为路径，否则交给 omp 的文件监听。拿不到 schema 时一律按需重启；`config.yml` 解析失败时原因记为 `config.yml`。
+  - 文件：`skills/`、`commands/`、`rules/`、`prompts/`、`instructions/`、`AGENTS.md`、`RULES.md`、`mcp.json` → reload；`agents/` → 不处理；`hooks/`、`extensions/`、`tools/`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`PERSONALITY.md`、`models.yml` 及其余未列出的文件 → 需重启，原因为路径。
+- reload：会话静止（`session_settled`）、运行状态已同步、agent 就绪且 orb 不在挂起状态时向 agent 发内部命令 `reload_plugins`；否则挂起，在下一次 `session_settled` 时补发。已安排重启的线程不发。
+- 需重启：记在线程上，`GET /api/v1/agent-config/apply-status` 返回 `{threads: [{threadId, kind, title, reasons, scheduled}], pendingReloads}`。`POST /api/v1/agent-config/restart-sessions` 对这些线程置刷新标记：静止后控制面发 `agent.stop`（正在跑的回合不受影响），下一条命令经唤醒路径重新 `agent.start`、以 `open_session` 拉起原会话；返回 `{threadIds}`。agent 已不在运行的线程直接清除标记。
+- agent 退出（主动停止、崩溃后由 orbd 重启、orb 停机）时清除该线程的 reload 与需重启标记：新进程读的就是新配置。标记只在内存里，orynd 重启后为空。

@@ -634,6 +634,9 @@ const (
 	MethodFsCopyTree        LinkCtlMethod = "fs.copyTree"
 	MethodFsMove            LinkCtlMethod = "fs.move"
 	MethodHello             LinkCtlMethod = "hello"
+	MethodLibraryFetch      LinkCtlMethod = "library.fetch"
+	MethodLibraryPut        LinkCtlMethod = "library.put"
+	MethodLibrarySync       LinkCtlMethod = "library.sync"
 	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
 	MethodOmpHomeApply      LinkCtlMethod = "omphome.apply"
 	MethodPortalConfigure   LinkCtlMethod = "portal.configure"
@@ -687,6 +690,12 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodFsMove:
 		return true
 	case MethodHello:
+		return true
+	case MethodLibraryFetch:
+		return true
+	case MethodLibraryPut:
+		return true
+	case MethodLibrarySync:
 		return true
 	case MethodMetricsSample:
 		return true
@@ -871,6 +880,21 @@ const (
 func (e LinkStreamFsT) Valid() bool {
 	switch e {
 	case Fs:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamLibraryT.
+const (
+	Library LinkStreamLibraryT = "library"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamLibraryT enum.
+func (e LinkStreamLibraryT) Valid() bool {
+	switch e {
+	case Library:
 		return true
 	default:
 		return false
@@ -2474,6 +2498,15 @@ type AgentAvatarList struct {
 	Warnings []AgentConfigWarning `json:"warnings,omitempty"`
 }
 
+// AgentConfigApplyStatus omp 配置在会话上的生效状态（M13）
+type AgentConfigApplyStatus struct {
+	// PendingReloads 回合仍在进行、等会话静止才能 `reload_plugins` 的会话数
+	PendingReloads int `json:"pendingReloads"`
+
+	// Threads 需重启才能让配置生效的会话，按线程 id 排序
+	Threads []AgentConfigRestartThread `json:"threads"`
+}
+
 // AgentConfigFile defines model for AgentConfigFile.
 type AgentConfigFile struct {
 	// Mode 文件权限（十进制表示的 Unix 权限位）
@@ -2498,6 +2531,27 @@ type AgentConfigImportResult struct {
 	ExtractedSecrets []string             `json:"extractedSecrets"`
 	Files            []AgentConfigFile    `json:"files"`
 	Warnings         []AgentConfigWarning `json:"warnings"`
+}
+
+// AgentConfigRestartResult defines model for AgentConfigRestartResult.
+type AgentConfigRestartResult struct {
+	// ThreadIds 已安排重启的线程（按 id 排序）
+	ThreadIds []string `json:"threadIds"`
+}
+
+// AgentConfigRestartThread defines model for AgentConfigRestartThread.
+type AgentConfigRestartThread struct {
+	// Kind 线程种类：`work` 普通工作线程；`space` Space 的协调聊天；`assistant` 全局助手对话。
+	// 后两者合称「协调对话」：跑在控制面宿主的协调宿主里，没有工作区，只有 Oryn 宿主工具。
+	Kind ThreadKind `json:"kind"`
+
+	// Reasons 需重启的原因：`disabledExtensions` 条目（如 `hook:pre:bash:bash.ts`）、`config.yml` 键名（点分路径）或文件路径
+	Reasons []string `json:"reasons"`
+
+	// Scheduled 已调用 restart-sessions，等会话静止后重启
+	Scheduled bool   `json:"scheduled"`
+	ThreadID  string `json:"threadId"`
+	Title     string `json:"title"`
 }
 
 // AgentConfigWarning defines model for AgentConfigWarning.
@@ -3703,12 +3757,13 @@ type LinkCtlHelloParams struct {
 	// M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
 	// M8 起：`desktop`（`desk` 流、`desktop.state` 通知、`profile.mode` 请求与 `/desktop/*`）。
 	// M9 起：`threads`（orb 内线程与定时方法 `thread.*` / `schedule.*`，普通 orbd 上报）；
-	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator", "omphome-apply"]`）。
+	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
 	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
 	// `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
 	// M11b 起：`terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）、
 	// `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
-	// M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）。
+	// M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
+	// `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -3729,6 +3784,58 @@ type LinkCtlHelloThread struct {
 	ThreadID ThreadID `json:"threadId"`
 }
 
+// LinkCtlLibraryFetchParams M13（orynd→orbd）：取回一个文件的字节。orbd 校验通过后另开一条 `library` 流（流头 `id` 回带本请求的 `id`）发送原始字节，再应答。
+// 协调宿主只服务 `~/library/out/` 下的普通文件：`path` 可写成 `~/…`、绝对路径或相对 `~/library/out/` 的路径，含 `..` 段、解析符号链接后
+// 越出 `~/library/out/` 或不是普通文件一律 `invalid_params` / `not_found`。普通 orbd 只服务本 orb 正在经 `library.put` 存入的那个路径。
+type LinkCtlLibraryFetchParams struct {
+	// ID 控制面生成的关联 id
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+// LinkCtlLibraryFetchResult defines model for LinkCtlLibraryFetchResult.
+type LinkCtlLibraryFetchResult struct {
+	// Size `library` 流上随后的字节数
+	Size int64 `json:"size"`
+}
+
+// LinkCtlLibraryPutParams M13（orbd→orynd，由 orb 内 `oryn library put <文件>` 经 `orbd.sock` 转来）：把 orb 内的一个文件存进全局助手文件库，
+// `scope = shared`、`source = orb`、`sourceThreadId` = 调用方线程；结果 `AssistantFile`。控制面先校验调用方
+// （属于本 orb、`kind = work`、未归档，否则 `forbidden`），再对同一 orb 发 `library.fetch{path}` 取回字节。
+type LinkCtlLibraryPutParams struct {
+	// Name 库内文件名；缺省取路径的最后一段
+	Name *string `json:"name,omitempty"`
+
+	// Path orb 内文件的绝对路径
+	Path string `json:"path"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlLibrarySyncFile defines model for LinkCtlLibrarySyncFile.
+type LinkCtlLibrarySyncFile struct {
+	// Path 沙箱路径：共享文件 `~/library/shared/<fileId>/<name>`，对话文件 `~/library/threads/<threadId>/<fileId>/<name>`
+	Path string `json:"path"`
+
+	// Sha256 SHA-256 小写十六进制
+	Sha256 Sha256 `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// LinkCtlLibrarySyncParams M13（orynd→协调宿主）：文件库在协调宿主沙箱里应有的全部文件。协调宿主删除 `~/library/shared/` 与 `~/library/threads/` 下
+// 不在清单里或内容不符的一切（含符号链接与空目录），确保 `~/library/out/` 存在，并回报还缺哪些文件；控制面随后为每个缺失文件开一条 `library` 流。
+// 清单里的路径必须是上述两种形态（`fileId` 为 `afl_…`，`name` 是单个路径段），否则整个请求 `invalid_params`。
+type LinkCtlLibrarySyncParams struct {
+	Files []LinkCtlLibrarySyncFile `json:"files"`
+}
+
+// LinkCtlLibrarySyncResult defines model for LinkCtlLibrarySyncResult.
+type LinkCtlLibrarySyncResult struct {
+	// Missing 清单中协调宿主上缺失或内容不符（已删除）的路径
+	Missing []string `json:"missing"`
+}
+
 // LinkCtlMethod `ctl` 方法（括号内为方向与形态）：
 // `hello`（orbd→orynd 通知）、`entries.cursors`（orbd→orynd 请求）、`entries.append`（orbd→orynd 请求）、
 // `entries.reset` / `entries.reset_done`（orbd→orynd 通知）、`agent.status`、`agent.gap`、`setup.log`、`metrics.sample`（orbd→orynd 通知）、
@@ -3741,7 +3848,10 @@ type LinkCtlHelloThread struct {
 // （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 // `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 // `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
-// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
+// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
+// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
+// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
+// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -3761,7 +3871,10 @@ type LinkCtlNotification struct {
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
-	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
+	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
+	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
+	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
+	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3871,7 +3984,10 @@ type LinkCtlRequest struct {
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
-	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）。
+	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
+	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
+	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
+	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -4168,6 +4284,14 @@ type LinkDeskReply struct {
 	Ok      bool    `json:"ok"`
 }
 
+// LinkLibraryReply 协调宿主对同步用 `library` 流的应答行
+type LinkLibraryReply struct {
+	// Code `ok=false` 时：`invalid_path`（路径不在最近一次同步清单里）、`mismatch`（字节数或 sha256 不符）、`failed`
+	Code    *string `json:"code,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Ok      bool    `json:"ok"`
+}
+
 // LinkPortalReply orbd 对 `portal` 流的应答行
 type LinkPortalReply struct {
 	// Code `ok=false` 时：`not_exposed`（端口不属于有 portal 的服务）、`forbidden_port`（egress 端口）、`connection_refused`、`timeout`、`failed`
@@ -4244,6 +4368,28 @@ type LinkStreamFsT string
 type LinkStreamHeader struct {
 	union json.RawMessage
 }
+
+// LinkStreamLibrary M13 全局助手文件库的字节流，两种用法：
+// 同步（orynd 打开，发往协调宿主）：`library.sync` 回报缺失的文件后，控制面为每个缺失文件开一条，`path` 为该次清单里的沙箱路径，
+// 流头之后是 `size` 字节原始内容；协调宿主校验字节数与 `sha256`、原子落盘后回一行 `LinkLibraryReply` + `\n` 并关闭。
+// 路径不在最近一次 `library.sync` 清单里的流一律拒绝。只有 hello `features` 含 `library` 的协调宿主才接受。
+// 取回（orbd 打开，发往 orynd）：应 `library.fetch` 请求由 orbd 开，`id` 回带请求的 `id`，流头之后是 `size` 字节原始内容；
+// 控制面只接受自己向该 orb 发出、仍在等待的 `library.fetch`。
+type LinkStreamLibrary struct {
+	// ID 取回：`library.fetch` 请求的 `id`
+	ID *string `json:"id,omitempty"`
+
+	// Path 同步：沙箱路径（`~/library/shared/<fileId>/<name>` 或 `~/library/threads/<threadId>/<fileId>/<name>`）
+	Path *string `json:"path,omitempty"`
+
+	// Sha256 同步：内容摘要
+	Sha256 *Sha256            `json:"sha256,omitempty"`
+	Size   int64              `json:"size"`
+	T      LinkStreamLibraryT `json:"t"`
+}
+
+// LinkStreamLibraryT defines model for LinkStreamLibrary.T.
+type LinkStreamLibraryT string
 
 // LinkStreamPortal 由 orynd 打开（M4），每个代理连接一条。orbd 先回一行 `LinkPortalReply` + `\n`；`ok=true` 之后流上是与
 // `127.0.0.1:<port>`（被拒绝时回退 `[::1]:<port>`）之间的原始字节。只有 hello `features` 含 `portal` 的 orbd 才接受。
@@ -8066,6 +8212,40 @@ func (t *LinkStreamHeader) MergeLinkStreamDesk(v LinkStreamDesk) error {
 	return err
 }
 
+// AsLinkStreamLibrary returns the union data inside the LinkStreamHeader as a LinkStreamLibrary
+func (t LinkStreamHeader) AsLinkStreamLibrary() (LinkStreamLibrary, error) {
+	var body LinkStreamLibrary
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamLibrary overwrites any union data inside the LinkStreamHeader as the provided LinkStreamLibrary
+func (t *LinkStreamHeader) FromLinkStreamLibrary(v LinkStreamLibrary) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"library"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamLibrary performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamLibrary
+func (t *LinkStreamHeader) MergeLinkStreamLibrary(v LinkStreamLibrary) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"library"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -8092,6 +8272,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamEgress()
 	case "fs":
 		return t.AsLinkStreamFs()
+	case "library":
+		return t.AsLinkStreamLibrary()
 	case "portal":
 		return t.AsLinkStreamPortal()
 	default:
@@ -9624,6 +9806,9 @@ func (t *CreateThread409JSONResponseBody) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetAgentConfigApplyStatus omp 配置在会话上的生效状态（M13）
+	// (GET /api/v1/agent-config/apply-status)
+	GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request)
 	// ListAgentConfigFiles omp-home 文件列表
 	// (GET /api/v1/agent-config/files)
 	ListAgentConfigFiles(w http.ResponseWriter, r *http.Request)
@@ -9639,6 +9824,9 @@ type ServerInterface interface {
 	// ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 	// (POST /api/v1/agent-config/import)
 	ImportAgentConfig(w http.ResponseWriter, r *http.Request)
+	// RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
+	// (POST /api/v1/agent-config/restart-sessions)
+	RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request)
 	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 	// (POST /api/v1/assistant/conversations)
 	CreateAssistantConversation(w http.ResponseWriter, r *http.Request)
@@ -10149,6 +10337,12 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
+// GetAgentConfigApplyStatus omp 配置在会话上的生效状态（M13）
+// (GET /api/v1/agent-config/apply-status)
+func (_ Unimplemented) GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListAgentConfigFiles omp-home 文件列表
 // (GET /api/v1/agent-config/files)
 func (_ Unimplemented) ListAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
@@ -10176,6 +10370,12 @@ func (_ Unimplemented) PutAgentConfigFile(w http.ResponseWriter, r *http.Request
 // ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 // (POST /api/v1/agent-config/import)
 func (_ Unimplemented) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
+// (POST /api/v1/agent-config/restart-sessions)
+func (_ Unimplemented) RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11196,6 +11396,20 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// GetAgentConfigApplyStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAgentConfigApplyStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListAgentConfigFiles operation middleware
 func (siw *ServerInterfaceWrapper) ListAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
 
@@ -11309,6 +11523,20 @@ func (siw *ServerInterfaceWrapper) ImportAgentConfig(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportAgentConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestartAgentConfigSessions operation middleware
+func (siw *ServerInterfaceWrapper) RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartAgentConfigSessions(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17248,6 +17476,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/agent-config/import", wrapper.ImportAgentConfig)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/agent-config/apply-status", wrapper.GetAgentConfigApplyStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/agent-config/restart-sessions", wrapper.RestartAgentConfigSessions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/stats/meta", wrapper.GetStatsMeta)

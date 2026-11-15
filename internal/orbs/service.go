@@ -217,6 +217,9 @@ type Service struct {
 	// poolKick 是容量 1 的对账触发通道（PoolKick）；poolBackoff 是各项目池 orb setup 失败后的退避截止时间（受 mu 保护）。
 	poolKick    chan struct{}
 	poolBackoff map[string]time.Time
+
+	// omp 是 omp 配置立即下发（M13，见 apply.go；受 mu 保护，nil = 未开启）。
+	omp *ompApplier
 }
 
 // QuiesceFunc 是冻结 / 停机闸门（Threads 提供）：持有该 orb 全部线程的锁，确认全部 settled、无待发命令、
