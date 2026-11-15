@@ -2,8 +2,9 @@
  * 匿名分享页 `/s/<slug>`（M5 计划 5.2）：L0 桌面上一张居中的纸面，页头（品牌标 + 标题 + 模式徽标 + 复制 / Markdown）
  * 盖在只读转录上。数据只来自公开接口（`share/feed.ts`）：不挂 AppShell、不调 useMe、不连私有 realtime。
  * 资源地址经 `AssetUrlContext` 换成公开接口；转录上下文 `readOnly`，没有输入坞、右面板与侧栏。
- * 回合头身份（M9.6）取自匿名身份接口（`share/identity.ts`），判定与站内同一个函数（`lib/turn-role.ts`），
- * 接口里没有的一律默认品牌标。转录子树挂一个独立的 QueryClient，其中的查询一律不发请求（用户头像等单用户设置按默认显示）。
+ * 回合头身份（M9.6）与 task 卡片的子 agent 头像（M13 R9）取自匿名身份接口（`share/identity.ts`），回合头判定与站内
+ * 同一个函数（`lib/turn-role.ts`），接口里没有的一律默认品牌标 / 默认字形。转录子树挂一个独立的 QueryClient，其中的
+ * 查询一律不发请求（用户头像等单用户设置按默认显示）。
  */
 import {
 	QueryClient,
@@ -53,6 +54,7 @@ import {
 import { shareIdentityKey, useShareIdentity } from "../share/identity";
 import { useThread } from "../state/stores";
 import { buildTranscript, isMainFile } from "../state/transcript";
+import { isRecord } from "../tool-render/util";
 
 const SLUG_RE = /^[0-9a-f]{32}$/;
 /** 转录里有尚未公开的附件时，多久复查一次公开元数据（所有者可能刚发布了它）。 */
@@ -144,6 +146,35 @@ export function usedSourceKeys(entries: readonly Entry[]): string[] {
 	}
 	flush();
 	return [...keys];
+}
+
+/** 没写 agent 的 task 调用由 omp 交给的子 agent（与后端 transcript.DefaultTaskAgent 一致）。 */
+const DEFAULT_TASK_AGENT = "task";
+
+/**
+ * 主会话里 `task` 工具调用用到的子 agent 名（去重、按首次出现排序）。与后端 transcript.UsedAgents 同一规则：
+ * 认批量 `{tasks: [{agent}]}` 与扁平 `{agent}` 两种形状，条目没写时退回顶层 agent，都没写算 `task`。
+ */
+export function usedAgentNames(entries: readonly Entry[]): string[] {
+	const names = new Set<string>();
+	for (const e of entries) {
+		if (e.type !== "message" || !isMainFile(e.file)) continue;
+		const message = e.payload.message;
+		const content = isRecord(message) ? message.content : undefined;
+		if (!Array.isArray(content)) continue;
+		for (const c of content) {
+			if (!isRecord(c) || c.type !== "toolCall" || c.name !== "task") continue;
+			const args = isRecord(c.arguments) ? c.arguments : {};
+			const top = typeof args.agent === "string" ? args.agent : "";
+			const tasks = Array.isArray(args.tasks) ? args.tasks : [];
+			if (tasks.length === 0) names.add(top || DEFAULT_TASK_AGENT);
+			for (const t of tasks) {
+				const own = isRecord(t) && typeof t.agent === "string" ? t.agent : "";
+				names.add(own || top || DEFAULT_TASK_AGENT);
+			}
+		}
+	}
+	return [...names];
 }
 
 /**
@@ -307,24 +338,30 @@ function ShareView({
 			void qc.refetchQueries({ queryKey: shareQueryKey(slug), exact: true });
 	}, [unknown, qc, slug]);
 
-	// 回合头身份：匿名身份接口（快照固化、实时现算）。实时分享里出现身份表没有、且已有消息用到的来源键（刚点了一个
-	// 新 role 并发了消息）就重取一次，每个键至多一次（用到但没设头像的 role 本来就不在表里）
+	// 回合头与 task 卡片的身份：匿名身份接口（快照固化、实时现算）。实时分享里出现身份表没有、且已有消息用到的
+	// 来源键（刚点了一个新 role 并发了消息）或 task 调用用到的 agent，就重取一次，每个键 / agent 至多一次
+	// （用到但没设头像的 role / agent 本来就不在表里）
 	const identity = useShareIdentity(slug).data;
 	const keys = useMemo(() => usedSourceKeys(entries), [entries]);
-	const askedKeys = useRef(new Set<string>());
+	const agentNames = useMemo(() => usedAgentNames(entries), [entries]);
+	const asked = useRef(new Set<string>());
 	useEffect(() => {
 		if (!live || !identity) return;
-		const fresh = keys.filter(
-			(k) =>
-				!identity.roles.some((r) => r.key === k) && !askedKeys.current.has(k),
-		);
+		const fresh = [
+			...keys
+				.filter((k) => !identity.roles.some((r) => r.key === k))
+				.map((k) => `role:${k}`),
+			...agentNames
+				.filter((n) => !identity.agents?.some((a) => a.name === n))
+				.map((n) => `agent:${n}`),
+		].filter((k) => !asked.current.has(k));
 		if (fresh.length === 0) return;
-		for (const k of fresh) askedKeys.current.add(k);
+		for (const k of fresh) asked.current.add(k);
 		void qc.invalidateQueries({
 			queryKey: shareIdentityKey(slug),
 			exact: true,
 		});
-	}, [live, identity, keys, qc, slug]);
+	}, [live, identity, keys, agentNames, qc, slug]);
 	const identities = useMemo<TurnIdentities>(() => {
 		const agent = identity?.agent;
 		const name = agent?.name?.trim() || undefined;
@@ -367,6 +404,7 @@ function ShareView({
 			}),
 		[entries, leaf, liveMessage, liveTools, liveToolOrder],
 	);
+	const agentFaces = identity?.agents;
 	const ctx: TranscriptContextValue = useMemo(
 		() => ({
 			threadId: key,
@@ -378,8 +416,9 @@ function ShareView({
 			labelEntry: noop,
 			readOnly: true,
 			identities,
+			agentFaces,
 		}),
-		[key, model.toolResults, model.liveTools, identities],
+		[key, model.toolResults, model.liveTools, identities, agentFaces],
 	);
 	const assets: AssetUrls = useMemo(
 		() => ({

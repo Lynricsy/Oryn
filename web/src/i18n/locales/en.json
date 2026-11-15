@@ -753,6 +753,15 @@
 	"subagent": {
 		"offline": "Agent is not running; showing the saved transcript",
 		"archived": "Saved transcript from an earlier session; the live subagent with this id is a different one",
+		"state": {
+			"running": "Running",
+			"pending": "Queued",
+			"done": "Done",
+			"failed": "Failed",
+			"aborted": "Aborted"
+		},
+		"modelRole": "Role used",
+		"model": "Model used: {{model}}",
 		"title": "Subagent",
 		"abort": "Abort",
 		"cancel": "Cancel",

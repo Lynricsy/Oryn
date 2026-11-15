@@ -16,6 +16,7 @@ import {
 	formatDateTime,
 	formatDuration,
 } from "../../lib/format";
+import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
 import { useBreakpoint } from "../../lib/viewport";
@@ -38,9 +39,11 @@ import {
 } from "../../state/subagent-entries";
 import {
 	type SubagentNode,
+	subagentArchiveReason,
 	subagentNodeOf,
 	subagentRows,
 	subagentTree,
+	subagentVisualState,
 } from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
@@ -48,6 +51,7 @@ import { RoleList } from "../composer/RolePicker";
 import { Markdown } from "../markdown/Markdown";
 import { AttachmentPublishButton } from "../share/AttachmentPublish";
 import { ShareDialog } from "../share/ShareDialog";
+import { AgentAvatar, agentStateLabel } from "../transcript/AgentAvatar";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
@@ -58,7 +62,6 @@ import {
 	Badge,
 	Callout,
 	Meter,
-	StatusDot,
 	type Tone,
 	thresholdTone,
 } from "../ui/data";
@@ -706,17 +709,6 @@ function ModelDialog({
 
 // ---------------------------------------------------------------- 子 agent
 
-/**
- * 子 agent 状态 → 徽标色调：运行中用中性（强调色只给「需要你」的东西，见 docs/design/web-guidelines.md §2），
- * 失败为错误、完成为成功；状态文字照常显示。
- */
-export function subagentTone(status: string): Tone {
-	if (status === "failed" || status === "error" || status === "aborted")
-		return "err";
-	if (status === "completed" || status === "done") return "ok";
-	return "neutral";
-}
-
 const GET_SUBAGENTS = { type: "get_subagents" } as const;
 
 /**
@@ -756,17 +748,25 @@ export function openSubagent(row: SubagentNode["row"]) {
 		);
 }
 
-/** 对话框里的上级 / 下级入口：状态点 + agent 名 + 标签，点开即换成它的对话框。 */
+/** 对话框里的上级 / 下级入口：状态头像 + agent 名 + 标签，点开即换成它的对话框。 */
 function SubagentLink({ node }: { node: SubagentNode }) {
+	const { t } = useTranslation();
 	const { row } = node;
+	const state = subagentVisualState(row);
+	const name = row.agent || row.id;
 	return (
 		<button
 			type="button"
 			onClick={() => openSubagent(row)}
-			className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm bg-inset px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
+			className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-sm bg-inset pr-2 pl-0.5 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
 		>
-			<StatusDot tone={subagentTone(row.status)} />
-			<span className="shrink-0 font-medium">{row.agent || row.id}</span>
+			<AgentAvatar
+				agent={row.agent}
+				state={state}
+				size={14}
+				title={agentStateLabel(t, state, row.archiveReason) ?? name}
+			/>
+			<span className="shrink-0 font-medium">{name}</span>
 			{row.description && (
 				<span className="min-w-0 truncate text-faint">{row.description}</span>
 			)}
@@ -863,12 +863,23 @@ export function SubagentDialog({
 		}
 	};
 	const agent = sub?.agent ?? saved?.agent;
+	const description = subagentLabel(sub?.description, saved);
+	// 只剩保存的转录（agent 不可查询 / 较早会话的同名存档）由头像的存档态与 tooltip 说明，控制按钮照旧禁用
+	const archiveReason =
+		self?.row.archiveReason ?? subagentArchiveReason(queryable, current);
+	const state = archiveReason
+		? "archived"
+		: self
+			? subagentVisualState(self.row)
+			: "unknown";
+	const modelRole = self?.row.progress?.modelRole;
+	const model = self?.row.progress?.resolvedModel;
 	return (
 		<Dialog
 			open
 			wide
 			onClose={onClose}
-			title={`${agent ?? t("subagent.title")} · ${subagentLabel(sub?.description, saved) ?? id}`}
+			title={`${agent ?? t("subagent.title")} · ${description ?? id}`}
 			footer={
 				<>
 					<Button
@@ -898,22 +909,51 @@ export function SubagentDialog({
 				</>
 			}
 		>
-			{(!queryable || !current) && (
-				<div className="mb-3">
-					<Callout tone="neutral" role="status">
-						{t(queryable ? "subagent.archived" : "subagent.offline")}
-					</Callout>
-				</div>
-			)}
 			{(sub || saved) && (
-				<div className="mb-3 flex flex-wrap items-center gap-1.5">
-					{agent && <Badge icon="robot">{agent}</Badge>}
-					{sub?.status && (
-						<Badge tone={subagentTone(sub.status)}>{sub.status}</Badge>
+				<div className="mb-3 flex flex-col gap-1.5">
+					<div className="flex min-w-0 items-center gap-2">
+						<AgentAvatar
+							agent={agent ?? ""}
+							state={state}
+							size={24}
+							title={
+								agentStateLabel(t, state, archiveReason) ??
+								agent ??
+								t("subagent.title")
+							}
+						/>
+						{agent && <Badge>{agent}</Badge>}
+						<span
+							className="min-w-0 truncate font-mono text-fg text-xs"
+							title={id}
+						>
+							{id.slice(id.lastIndexOf(".") + 1)}
+						</span>
+						{(modelRole || model) && (
+							<span className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-faint text-xs">
+								{modelRole && (
+									<span title={t("subagent.modelRole")}>{modelRole}</span>
+								)}
+								{model && (
+									<span
+										className="inline-flex min-w-0 items-center gap-1"
+										title={t("subagent.model", { model })}
+									>
+										<ModelLogo model={model} size={12} />
+										<span className="truncate">
+											{shortModelName(
+												model.split("/").pop() ?? model,
+												modelBrand(model),
+											)}
+										</span>
+									</span>
+								)}
+							</span>
+						)}
+					</div>
+					{description && (
+						<p className="m-0 text-muted text-sm">{description}</p>
 					)}
-					<span className="min-w-0 truncate font-mono text-2xs text-faint">
-						{id}
-					</span>
 				</div>
 			)}
 			{(parent || children.length > 0) && (

@@ -12,6 +12,7 @@
  * `details` — these arrive as plain JSON over the wire.
  */
 import type { ComponentType } from "react";
+import type { AgentVisualState } from "../components/ui/AgentStatusAvatar";
 
 export interface ToolResultText {
 	type: "text";
@@ -47,6 +48,21 @@ export interface ToolRenderHost {
 	hasAgent?(id: string): boolean;
 	/** Open the sub-session/transcript view for an agent id. */
 	openAgent?(id: string): void;
+	/**
+	 * 渲染一个 agent 的状态头像（站内读 agent 头像设置，分享页读公开身份）。
+	 * 不给时渲染器只用各 agent 的默认字形，不读任何设置。
+	 */
+	AgentAvatar?: ComponentType<AgentAvatarProps>;
+}
+
+/** `ToolRenderHost.AgentAvatar` 的参数。 */
+export interface AgentAvatarProps {
+	/** agent 名（类型，如 `scout`），不是子 agent 的 id。 */
+	agent: string;
+	state: AgentVisualState;
+	/** tooltip 与 aria-label。 */
+	title: string;
+	size?: number;
 }
 
 export interface ToolRenderProps {

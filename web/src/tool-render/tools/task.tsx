@@ -1,5 +1,12 @@
 /** `task` — spawn subagents: batch shape, streamed progress, per-agent results. */
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { agentStateLabel } from "../../components/transcript/AgentAvatar";
+import {
+	AgentStatusAvatar,
+	type AgentVisualState,
+} from "../../components/ui/AgentStatusAvatar";
+import { agentDefaultGlyph } from "../../lib/avatar-defaults";
 import { formatDuration, formatTokens } from "../../lib/format";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import {
@@ -81,7 +88,64 @@ function resultStatus(res: Record<string, unknown>): {
 	return { label: "failed", tone: "err" };
 }
 
-function Summary({ args }: ToolRenderProps): ReactNode {
+/** 结果卡的头像状态：merge failed 时子 agent 本身已跑完（exitCode 0），头像记完成，合并失败由旁边的徽标说明。 */
+function resultVisualState(res: Record<string, unknown>): AgentVisualState {
+	const { label } = resultStatus(res);
+	if (label === "aborted") return "aborted";
+	if (label === "failed") return "failed";
+	return "done";
+}
+
+/** 进度帧的 `status`（Core 的 SubagentStatus）→ 头像状态；未知的写法按运行中。 */
+const PROGRESS_VISUAL: Record<string, AgentVisualState> = {
+	pending: "pending",
+	running: "running",
+	completed: "done",
+	failed: "failed",
+	aborted: "aborted",
+};
+
+/** 头像尺寸：与卡片里的徽标同高。 */
+const AVATAR_SIZE = 14;
+
+/**
+ * agent 头像（M13 R12）+ 其后的内容（agent 名徽标或子 agent id）。头像由宿主渲染（站内读 agent 头像设置，
+ * 分享页读公开身份）；宿主不提供时只用该 agent 的默认字形。参数卡没有运行状态，用 `unknown`。
+ */
+function AgentTag({
+	agent,
+	state,
+	host,
+	children,
+}: {
+	agent: string;
+	state: AgentVisualState;
+	host?: ToolRenderHost;
+	children: ReactNode;
+}): ReactNode {
+	const { t } = useTranslation();
+	const label = agentStateLabel(t, state);
+	const title = label ? `${agent} · ${label}` : agent;
+	const Avatar = host?.AgentAvatar;
+	return (
+		<span className="tv-agent">
+			{Avatar ? (
+				<Avatar agent={agent} state={state} title={title} size={AVATAR_SIZE} />
+			) : (
+				<AgentStatusAvatar
+					face={undefined}
+					fallbackGlyph={agentDefaultGlyph(agent)}
+					state={state}
+					size={AVATAR_SIZE}
+					title={title}
+				/>
+			)}
+			{children}
+		</span>
+	);
+}
+
+function Summary({ args, host }: ToolRenderProps): ReactNode {
 	const tasks = taskItems(args);
 	// One badge when every spawn runs the same agent; mixed batches badge each row in the body.
 	const agents = new Set(tasks.map((t) => t.agent));
@@ -90,7 +154,11 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	const label = first ? (first.name ?? taskBrief(first)) : null;
 	return (
 		<>
-			{agent && <Badge tone="accent">{agent}</Badge>}
+			{agent && (
+				<AgentTag agent={agent} state="unknown" host={host}>
+					<Badge tone="accent">{agent}</Badge>
+				</AgentTag>
+			)}
 			{label && <span className="tv-muted">{truncate(label, 72)}</span>}
 			{tasks.length > 1 && <Badge>{tasks.length} tasks</Badge>}
 		</>
@@ -107,6 +175,7 @@ function AgentResult({
 }): ReactNode {
 	const { label, tone } = resultStatus(res);
 	const id = str(res.id) ?? "agent";
+	const agent = str(res.agent);
 	const description = str(res.description);
 	const stats: ReactNode[] = [];
 	const tokens = num(res.tokens);
@@ -141,13 +210,22 @@ function AgentResult({
 	const abortReason = str(res.abortReason);
 	const patchPath = str(res.patchPath);
 	const branchName = str(res.branchName);
+	const link = (
+		<AgentLink id={id} host={host}>
+			{taskIdLabel(id)}
+		</AgentLink>
+	);
 	return (
 		<>
 			<Row
 				k={
-					<AgentLink id={id} host={host}>
-						{taskIdLabel(id)}
-					</AgentLink>
+					agent ? (
+						<AgentTag agent={agent} state={resultVisualState(res)} host={host}>
+							{link}
+						</AgentTag>
+					) : (
+						link
+					)
 				}
 			>
 				<Badge tone={tone}>{label}</Badge>{" "}
@@ -189,6 +267,7 @@ function AgentProgressRow({
 					? ("accent" as const)
 					: undefined;
 	const id = str(p.id) ?? "agent";
+	const agent = str(p.agent);
 	const description = str(p.description);
 	const intent = str(p.lastIntent) ?? str(p.currentTool);
 	const bits: string[] = [];
@@ -198,12 +277,25 @@ function AgentProgressRow({
 	if (tokens) bits.push(`${formatTokens(tokens)} tok`);
 	const durationMs = num(p.durationMs);
 	if (durationMs) bits.push(formatDuration(durationMs));
+	const link = (
+		<AgentLink id={id} host={host}>
+			{taskIdLabel(id)}
+		</AgentLink>
+	);
 	return (
 		<Row
 			k={
-				<AgentLink id={id} host={host}>
-					{taskIdLabel(id)}
-				</AgentLink>
+				agent ? (
+					<AgentTag
+						agent={agent}
+						state={PROGRESS_VISUAL[status] ?? "running"}
+						host={host}
+					>
+						{link}
+					</AgentTag>
+				) : (
+					link
+				)
 			}
 		>
 			<Badge tone={tone}>{status}</Badge>{" "}
@@ -287,7 +379,11 @@ function Body({ args, result, partial, host }: ToolRenderProps): ReactNode {
 									)
 								}
 							>
-								{t.agent && <Badge>{t.agent}</Badge>}{" "}
+								{t.agent && (
+									<AgentTag agent={t.agent} state="unknown" host={host}>
+										<Badge>{t.agent}</Badge>
+									</AgentTag>
+								)}{" "}
 								{t.steps.length > 0 && (
 									<Badge>{`${t.steps.length} ${t.steps.length === 1 ? "step" : "steps"}`}</Badge>
 								)}{" "}

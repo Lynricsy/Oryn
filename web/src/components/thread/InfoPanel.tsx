@@ -15,15 +15,19 @@ import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
-import type { SubagentNode } from "../../state/subagent-tree";
+import {
+	type SubagentNode,
+	subagentVisualState,
+} from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
 import { DesktopProfileLine } from "../desktop/profile-status";
+import { AgentAvatar, agentStateLabel } from "../transcript/AgentAvatar";
+import { AgentStatusRing } from "../ui/AgentStatusAvatar";
 import {
 	Card,
 	ListRow,
 	Meter,
 	Stat,
-	StatusDot,
 	type Tone,
 	thresholdTone,
 } from "../ui/data";
@@ -33,7 +37,7 @@ import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Sparkline } from "../ui/primitives";
 import { CapabilitiesSection } from "./CapabilitiesSection";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
-import { openSubagent, subagentTone, useSubagentTree } from "./Dialogs";
+import { openSubagent, useSubagentTree } from "./Dialogs";
 import { EnvRuns } from "./EnvBanner";
 import { ServicesSection } from "./ServicesSection";
 import { useOrbOf } from "./ThreadHeader";
@@ -609,22 +613,28 @@ function TodoSection({ threadId }: { threadId: string }) {
 }
 
 /** 子 agent 树每深一层的缩进（px）。 */
-const SUBAGENT_INDENT = 16;
-/** 行内状态点中线到行左缘的距离：ListRow 左内边距 8px + 7px 状态点的一半。 */
-const DOT_X = 11.5;
+const SUBAGENT_INDENT = 24;
+/** 行首头像的边长，与含外圈留白（四边各 3px）的外框边长。 */
+const AVATAR = 18;
+const AVATAR_BOX = AVATAR + 6;
+/** 行首头像中线到行左缘的距离：ListRow 左内边距 8px + 头像外框的一半。 */
+const DOT_X = 8 + AVATAR_BOX / 2;
+/** L 形引导线横向的终点：停在头像外框左侧 2px。 */
+const GUIDE_END = DOT_X - AVATAR_BOX / 2 - 2;
 /** 引导线（与左侧线程列表的 fork 引导线同款：1.5px、border-strong、L 形圆角）。 */
 const GUIDE = "pointer-events-none absolute z-[1] border-border-strong";
 
 /**
  * 子 agent 卡片：实时、快照与已入库存档合并成的派发树（`useSubagentTree`）。与左侧线程列表的 fork 层级同一种画法：
- * 下级从上级状态点的中线引出 L 形引导线连到自己的状态点，非最后一个下级时竖线继续向下；摘要计数含所有层级。
+ * 下级从上级头像的中线引出 L 形引导线连到自己的头像，非最后一个下级时竖线继续向下；摘要计数含所有层级。
+ * 每行以 agent 头像开头，头像外圈与角标表示状态（M13 R10），标题栏的运行汇总用同一种运行光环。
  */
 function SubagentSection({ threadId }: { threadId: string }) {
 	const { t } = useTranslation();
 	const { nodes } = useSubagentTree(threadId);
 	const fold = useCardFold("subagents");
 	const running = nodes.filter(
-		(n) => n.row.status === "started" || n.row.status === "running",
+		(n) => subagentVisualState(n.row) === "running",
 	).length;
 	// 先序序列 → 上级 key 到下级的映射；上级不在序列里（缺失 / 断环）的挂在根上
 	const keys = new Set(nodes.map((n) => n.row.key));
@@ -645,7 +655,7 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			summary={
 				running > 0 ? (
 					<span className="inline-flex items-center gap-1.5">
-						<StatusDot tone="neutral" pulse />
+						<AgentStatusRing state="running" size={12} />
 						{t("panel.subagentsRunning", { n: running })}
 					</span>
 				) : (
@@ -674,9 +684,11 @@ function SubagentBranch({
 	root?: boolean;
 	last: boolean;
 }): ReactNode {
+	const { t } = useTranslation();
 	const { row } = node;
 	const children = kids.get(row.key) ?? [];
-	// 引导线挂在上级状态点的中线上：本节点坐标系里是 DOT_X - 缩进
+	const state = subagentVisualState(row);
+	// 引导线挂在上级头像的中线上：本节点坐标系里是 DOT_X - 缩进
 	const parentX = DOT_X - SUBAGENT_INDENT - 0.75;
 	return (
 		<li
@@ -686,15 +698,15 @@ function SubagentBranch({
 			<div className="relative">
 				{!root &&
 					(last ? (
-						// 最后一个下级：└ 从上方下到本行中线，圆角拐向本行状态点
+						// 最后一个下级：└ 从上方下到本行中线，圆角拐向本行头像
 						<span
 							aria-hidden
 							data-guide="elbow"
 							className={`${GUIDE} -top-px bottom-1/2 rounded-bl-[6px] border-b-[1.5px] border-l-[1.5px]`}
-							style={{ left: parentX, width: DOT_X - 5.5 - parentX }}
+							style={{ left: parentX, width: GUIDE_END - parentX }}
 						/>
 					) : (
-						// 后面还有同级：├ 竖线贯穿本行接到下一个同级，中线处横向分出一支连到本行状态点
+						// 后面还有同级：├ 竖线贯穿本行接到下一个同级，中线处横向分出一支连到本行头像
 						<>
 							<span
 								aria-hidden
@@ -705,24 +717,28 @@ function SubagentBranch({
 								aria-hidden
 								data-guide="elbow"
 								className={`${GUIDE} bottom-1/2 h-0 border-b-[1.5px]`}
-								style={{ left: parentX, width: DOT_X - 5.5 - parentX }}
+								style={{ left: parentX, width: GUIDE_END - parentX }}
 							/>
 						</>
 					))}
 				{children.length > 0 && (
-					// 有下级时从本行状态点下方引出竖线，接到第一个下级的引导线
+					// 有下级时从本行头像下方引出竖线，接到第一个下级的引导线
 					<span
 						aria-hidden
-						className={`${GUIDE} top-[calc(50%+6px)] bottom-0 border-l-[1.5px]`}
-						style={{ left: DOT_X - 0.75 }}
+						className={`${GUIDE} bottom-0 border-l-[1.5px]`}
+						style={{
+							left: DOT_X - 0.75,
+							top: `calc(50% + ${AVATAR_BOX / 2 + 1}px)`,
+						}}
 					/>
 				)}
 				<ListRow
 					leading={
-						// 运行中是中性色 + 扩散动画：强调色只给「需要你」的东西
-						<StatusDot
-							tone={subagentTone(row.status)}
-							pulse={row.status === "started" || row.status === "running"}
+						<AgentAvatar
+							agent={row.agent}
+							state={state}
+							size={AVATAR}
+							title={agentStateLabel(t, state, row.archiveReason) ?? row.agent}
 						/>
 					}
 					title={<span className="truncate font-medium">{row.agent}</span>}

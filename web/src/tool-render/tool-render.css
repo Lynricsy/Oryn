@@ -408,6 +408,15 @@
 	color: var(--tv-muted);
 }
 
+/* agent 头像 + 其后的 agent 名徽标或子 agent id（task 卡片）：头像外框含外圈留白，靠负边距收回，不撑高行 */
+.tv-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	margin-block: -2px;
+	vertical-align: middle;
+}
+
 .tv-agent-link {
 	border: 0;
 	font: inherit;

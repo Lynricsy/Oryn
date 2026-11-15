@@ -115,6 +115,26 @@ function Ring({
 	}
 }
 
+/** 只有外圈、没有头像的状态标记（与头像外圈同一套画法）：用在汇总处，例如总览标题栏的「N 个运行中」。 */
+export function AgentStatusRing({
+	state,
+	size = 12,
+}: {
+	state: AgentVisualState;
+	/** 外框边长（外圈贴着外框画）。 */
+	size?: number;
+}): ReactNode {
+	return (
+		<span
+			aria-hidden
+			className="relative inline-block shrink-0"
+			style={{ width: size, height: size }}
+		>
+			<Ring state={state} box={size} />
+		</span>
+	);
+}
+
 export function AgentStatusAvatar({
 	face,
 	fallbackGlyph,

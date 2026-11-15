@@ -36,6 +36,7 @@ import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
 import { Menu, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
+import { AgentAvatar } from "./AgentAvatar";
 import { useTranscriptContext } from "./context";
 
 const CHIP =
@@ -557,12 +558,13 @@ export function ToolCard({
 			partial={partial}
 			partialResult={partialResult}
 			host={
-				// 只读（分享页）不提供子 agent 转录查看
+				// 只读（分享页）不提供子 agent 转录查看；头像在分享页只用公开身份（见 AgentAvatar）
 				ctx.readOnly
-					? {}
+					? { AgentAvatar }
 					: {
 							hasAgent: () => true,
 							openAgent: (id) => ctx.openSubagent(id),
+							AgentAvatar,
 						}
 			}
 		/>

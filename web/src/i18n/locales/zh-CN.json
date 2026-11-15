@@ -752,7 +752,16 @@
 	},
 	"subagent": {
 		"offline": "agent 未运行，显示已保存的转录",
-		"archived": "较早会话的已保存转录；在线的同 id 子 agent 不是它",
+		"archived": "较早会话里已保存的转录；在线的同 id 子 agent 不是它",
+		"state": {
+			"running": "运行中",
+			"pending": "排队中",
+			"done": "已完成",
+			"failed": "失败",
+			"aborted": "已中止"
+		},
+		"modelRole": "所用 role",
+		"model": "所用模型：{{model}}",
 		"title": "子 agent",
 		"abort": "终止",
 		"cancel": "取消",

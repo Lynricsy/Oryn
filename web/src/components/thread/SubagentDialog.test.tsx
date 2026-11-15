@@ -8,6 +8,7 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entry } from "../../api/client";
 import i18n from "../../i18n";
+import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
 import type { SubagentLive, ThreadViewState } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
@@ -78,14 +79,14 @@ function liveSub(patch: Partial<SubagentLive>): Record<string, SubagentLive> {
 	};
 }
 
-function setup(patch: Partial<ThreadViewState>, file?: string) {
+function setup(patch: Partial<ThreadViewState>, file?: string, id = "0-Scout") {
 	getThreadStore(T).getState().patchLocal(patch);
 	return render(
 		<MemoryRouter>
 			<QueryClientProvider client={new QueryClient()}>
 				<SubagentDialog
 					threadId={T}
-					id="0-Scout"
+					id={id}
 					file={file}
 					onClose={() => undefined}
 				/>
@@ -108,6 +109,15 @@ function sentTypes(): string[] {
 	return cmd.mock.calls.map(([, f]) => f.type);
 }
 
+/** 对话框第一行的状态头像（转录里没有 task 卡片，对话框里第一个状态头像就是它）。 */
+function headerAvatar(): HTMLElement {
+	const el = screen
+		.getByRole("dialog")
+		.querySelector<HTMLElement>("[role=img][data-state]");
+	if (!el) throw new Error("对话框里没有状态头像");
+	return el;
+}
+
 beforeEach(() => {
 	i18n.changeLanguage("zh-CN");
 	resetThreadStores();
@@ -117,14 +127,16 @@ beforeEach(() => {
 });
 
 describe("SubagentDialog", () => {
-	it("agent 不可查询：显示已入库的转录与离线提示，不发命令，控制按钮禁用", async () => {
+	it("agent 不可查询：显示已入库的转录，离线说明在头像 tooltip 里（不再有说明条），不发命令，控制按钮禁用", async () => {
 		setup({ agentStatus: "none", entries: ENTRIES });
 		expect(await screen.findByText("子 agent 的任务")).toBeInTheDocument();
 		expect(screen.getByText("子 agent 的回答")).toBeInTheDocument();
 		expect(screen.queryByText("主线消息")).toBeNull();
-		expect(screen.getByRole("status")).toHaveTextContent(
-			i18n.t("subagent.offline"),
-		);
+		expect(screen.queryByRole("status")).toBeNull();
+		const avatar = headerAvatar();
+		expect(avatar).toHaveAttribute("data-state", "archived");
+		expect(avatar.getAttribute("title")).toContain("已保存的转录");
+		expect(avatar).toHaveAttribute("title", i18n.t("subagent.offline"));
 		expect(cmd).not.toHaveBeenCalled();
 		for (const name of ["取消", "终止", "复活", "发送"])
 			expect(screen.getByRole("button", { name })).toBeDisabled();
@@ -165,15 +177,54 @@ describe("SubagentDialog", () => {
 		);
 	});
 
-	it("运行中的状态徽标用中性色，状态文字保留", () => {
+	it("第一行：状态头像、类型 badge、等宽短名，右侧是所用 role 与模型短名；第二行是 description", () => {
 		setup({
-			agentStatus: "none",
+			agentStatus: "ready",
 			entries: ENTRIES,
-			subagents: liveSub({ status: "running" }),
+			subagents: liveSub({
+				id: "0-Scout",
+				status: "started",
+				description: TITLE,
+				progress: {
+					status: "running",
+					modelRole: "smol",
+					resolvedModel: "anthropic/claude-sonnet-4-5",
+				},
+			}),
 		});
-		const badge = screen.getByText("running").parentElement;
-		expect(badge).toHaveClass("text-muted");
-		expect(badge).not.toHaveClass("text-accent");
+		const avatar = headerAvatar();
+		expect(avatar).toHaveAttribute("data-state", "running");
+		const first = avatar.parentElement as HTMLElement;
+		expect(within(first).getByText("scout")).toBeInTheDocument();
+		const short = within(first).getByText("0-Scout");
+		expect(short).toHaveClass("font-mono");
+		expect(within(first).getByText("smol")).toBeInTheDocument();
+		const model = "anthropic/claude-sonnet-4-5";
+		expect(
+			within(first).getByTitle(i18n.t("subagent.model", { model })),
+		).toHaveTextContent(shortModelName("claude-sonnet-4-5", modelBrand(model)));
+		// 状态由头像表示，不再有状态徽标与说明条
+		expect(screen.queryByText("running")).toBeNull();
+		expect(screen.queryByRole("status")).toBeNull();
+		expect(first.nextElementSibling).toHaveTextContent(TITLE);
+	});
+
+	it("嵌套子 agent 的短名是 id 的最后一段，完整 id 进悬停提示", () => {
+		setup(
+			{
+				agentStatus: "none",
+				entries: [],
+				subagents: liveSub({ id: "FixTest1.Leaf2", agent: "task" }),
+			},
+			undefined,
+			"FixTest1.Leaf2",
+		);
+		const first = headerAvatar().parentElement as HTMLElement;
+		expect(within(first).getByText("task")).toBeInTheDocument();
+		expect(within(first).getByText("Leaf2")).toHaveAttribute(
+			"title",
+			"FixTest1.Leaf2",
+		);
 	});
 
 	it("指定较早主会话的同名存档：只显示该文件的消息，不当作在线的同 id 子 agent 控制", async () => {
@@ -188,9 +239,11 @@ describe("SubagentDialog", () => {
 		expect(await screen.findByText("旧会话的消息")).toBeInTheDocument();
 		expect(screen.queryByText("新会话的消息")).toBeNull();
 		expect(screen.queryByText("running")).toBeNull();
-		expect(screen.getByRole("status")).toHaveTextContent(
-			i18n.t("subagent.archived"),
-		);
+		expect(screen.queryByRole("status")).toBeNull();
+		const avatar = headerAvatar();
+		expect(avatar).toHaveAttribute("data-state", "archived");
+		expect(avatar.getAttribute("title")).toContain("已保存的转录");
+		expect(avatar).toHaveAttribute("title", i18n.t("subagent.archived"));
 		for (const name of ["取消", "终止", "复活", "发送"])
 			expect(screen.getByRole("button", { name })).toBeDisabled();
 		expect(sentTypes()).toEqual(["get_subagents"]);
@@ -271,7 +324,7 @@ describe("信息面板子 agent 列表", () => {
 		expect(screen.queryByRole("button", { name: /advisor/ })).toBeNull();
 	});
 
-	it("运行中的圆点是中性色带动画，不用强调色", () => {
+	it("行首是 agent 头像：运行中是中性色的旋转光环，不用强调色；标题栏汇总用同一种光环", () => {
 		renderPanel({
 			agentStatus: "none",
 			entries: ENTRIES,
@@ -279,8 +332,25 @@ describe("信息面板子 agent 列表", () => {
 		});
 		const row = screen.getByRole("button", { name: /scout/ });
 		expect(within(row).queryByText(TITLE)).not.toBeNull();
+		const avatar = within(row).getByRole("img");
+		expect(avatar).toHaveAttribute("data-state", "running");
+		expect(avatar).toHaveAttribute("title", i18n.t("subagent.state.running"));
+		expect(avatar.querySelector(".agent-ring-spin")).not.toBeNull();
 		expect(row.querySelector(".bg-accent")).toBeNull();
-		expect(row.querySelector(".animate-ping")).not.toBeNull();
+		expect(row.querySelector(".animate-ping")).toBeNull();
+		const summary = screen.getByText("1 个运行中");
+		expect(
+			summary.closest("span")?.querySelector(".agent-ring-spin"),
+		).not.toBeNull();
+	});
+
+	it("只剩存档的行：头像是存档态，tooltip 说明只剩保存的转录", () => {
+		renderPanel({ agentStatus: "none", entries: ENTRIES });
+		const avatar = within(
+			screen.getByRole("button", { name: /scout/ }),
+		).getByRole("img");
+		expect(avatar).toHaveAttribute("data-state", "archived");
+		expect(avatar).toHaveAttribute("title", i18n.t("subagent.offline"));
 	});
 });
 
@@ -319,7 +389,7 @@ describe("子 agent 派发树", () => {
 	function panelRows(): [string, number, boolean][] {
 		// closest 返回 Element；根节点的按钮最近的 <ul> 就是卡片的顶层列表
 		const list = screen
-			.getByRole("button", { name: /^scout/ })
+			.getByRole("button", { name: /scout/ })
 			.closest("ul") as HTMLElement;
 		return within(list)
 			.getAllByRole("listitem")
@@ -433,7 +503,7 @@ describe("子 agent 派发树", () => {
 		expect(
 			within(nav2)
 				.getAllByRole("button")
-				.map((b) => b.textContent),
+				.map((b) => b.querySelector(".font-medium")?.textContent),
 		).toEqual(["scout", "leaf"]);
 		fireEvent.click(within(nav2).getByRole("button", { name: /leaf/ }));
 		expect(uiStore.getState().dialog).toEqual({

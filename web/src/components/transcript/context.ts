@@ -29,6 +29,11 @@ export interface TranscriptContextValue {
 	 * 否则由转录自己读站内设置（role 头像、助手 / agent 身份）。
 	 */
 	identities?: TurnIdentities;
+	/**
+	 * 子 agent 头像（M13 R9；分享页取自匿名身份接口的 `agents`，只含设了自定义头像的）。只读时只用它，没有的
+	 * agent 显示默认字形；非只读时不看它，由头像自己读站内的 agent 头像设置。
+	 */
+	agentFaces?: readonly Schemas["PublicAgentIdentity"][];
 }
 
 export const TranscriptContext = createContext<TranscriptContextValue | null>(

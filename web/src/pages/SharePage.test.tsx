@@ -16,7 +16,7 @@ import type { Entry } from "../api/client";
 import i18n from "../i18n";
 import type { PublicShare } from "../share/feed";
 import { resetThreadStores } from "../state/stores";
-import { ATTACHMENT_POLL_MS, SharePage } from "./SharePage";
+import { ATTACHMENT_POLL_MS, SharePage, usedAgentNames } from "./SharePage";
 
 const SLUG = "fedcba9876543210fedcba9876543210";
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -718,5 +718,86 @@ describe("SharePage 回合头身份（M9.6）", () => {
 				name: "Cyrene",
 			}),
 		);
+	});
+});
+
+describe("SharePage task 卡片的 agent 头像（M13 R9）", () => {
+	const IMAGE = "data:image/png;base64,iVBORw0KGgo=";
+	function toolCall(id: string, args: Record<string, unknown>) {
+		return { type: "toolCall", id, name: "task", arguments: args };
+	}
+	function assistant(seq: number, content: unknown[]): Entry {
+		return {
+			seq,
+			file: "s.jsonl",
+			entryId: `e${seq}`,
+			parentId: `e${seq - 1}`,
+			type: "message",
+			payload: {
+				type: "message",
+				id: `e${seq}`,
+				message: { role: "assistant", content, timestamp: seq },
+			},
+		};
+	}
+	const ENTRIES: Entry[] = [
+		entry(1, "user", "派两个子 agent"),
+		assistant(2, [
+			toolCall("c1", { tasks: [{ name: "Alpha", agent: "scout", task: "a" }] }),
+			toolCall("c2", {
+				tasks: [{ name: "Beta", agent: "reviewer", task: "b" }],
+			}),
+		]),
+	];
+
+	it("公开身份里设了头像的 agent 显示该头像，没有的用默认字形；不发任何设置请求", async () => {
+		stubFetch((path) => {
+			if (path === `/api/v1/public/shares/${SLUG}`)
+				return Response.json({ ...SHARE, lastSeq: 2, leafEntryId: "e2" });
+			if (path === `/api/v1/public/shares/${SLUG}/entries`)
+				return Response.json({
+					entries: ENTRIES,
+					hasMore: false,
+					lastSeq: 2,
+					leafEntryId: "e2",
+				});
+			if (path === `/api/v1/public/shares/${SLUG}/identity`)
+				return Response.json({
+					roles: [],
+					agents: [{ name: "scout", avatarImage: IMAGE }],
+				});
+			return Response.json({ code: "unauthorized" }, { status: 401 });
+		});
+		renderAt(SLUG);
+		const img = await waitFor(() => {
+			const el = document.querySelector('img[data-avatar="image"]');
+			if (!el) throw new Error("还没有 agent 头像图片");
+			return el;
+		});
+		expect(img).toHaveAttribute("src", IMAGE);
+		expect(img.closest("[data-state]")).toHaveAttribute("title", "scout");
+		const reviewer = [
+			...document.querySelectorAll<HTMLElement>("[role=img][data-state]"),
+		].find((el) => el.title === "reviewer");
+		expect(reviewer?.querySelector('[data-avatar="default"]')).not.toBeNull();
+		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
+	});
+
+	it("usedAgentNames 与后端 UsedAgents 同一规则：两种参数形状、条目退回顶层 agent、都没写算 task", () => {
+		expect(
+			usedAgentNames([
+				entry(1, "user", "hi"),
+				assistant(2, [
+					toolCall("c1", { agent: "scout", tasks: [{ agent: "" }, {}] }),
+					toolCall("c2", { tasks: [{ agent: "reviewer" }] }),
+					toolCall("c3", { task: "flat" }),
+					{ type: "toolCall", id: "c4", name: "bash", arguments: {} },
+				]),
+				{
+					...assistant(3, [toolCall("c5", { agent: "foo" })]),
+					file: "s/0-X.jsonl",
+				},
+			]),
+		).toEqual(["scout", "reviewer", "task"]);
 	});
 });
