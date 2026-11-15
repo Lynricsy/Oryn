@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	coordinatorAllows,
 	parseSlash,
 	resolveSlash,
 	type SlashContext,
@@ -75,12 +76,16 @@ describe("斜杠命令拦截映射", () => {
 		});
 	});
 
-	it("btw / tan / omfg / vibe / loop / goal / guided-goal / pause 走对应 RPC", () => {
+	it("/btw 带问题发起旁路提问（并由输入区打开对话框），不带问题只打开对话框；协调对话不放行", () => {
 		expect(resolve("/btw 这是什么")).toEqual({
-			kind: "rpc",
-			frame: { type: "btw", question: "这是什么" },
+			kind: "ask_btw",
+			question: "这是什么",
 		});
 		expect(resolve("/btw")).toEqual({ kind: "open_btw" });
+		expect(coordinatorAllows({ kind: "ask_btw", question: "x" })).toBe(false);
+	});
+
+	it("tan / omfg / vibe / loop / goal / guided-goal / pause 走对应 RPC", () => {
 		expect(resolve("/tan 顺便修 lint")).toEqual({
 			kind: "rpc",
 			frame: { type: "tan", work: "顺便修 lint" },

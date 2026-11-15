@@ -39,6 +39,8 @@ export type SlashAction =
 	| { kind: "thread_search" }
 	| { kind: "open_goal" }
 	| { kind: "open_btw" }
+	/** `/btw <问题>`：发起旁路提问并打开 btw 对话框看回答。 */
+	| { kind: "ask_btw"; question: string }
 	| { kind: "open_model" }
 	| { kind: "report"; report: ReportKind }
 	| { kind: "needs_args"; name: string }
@@ -125,9 +127,7 @@ export function resolveSlash(
 				? { kind: "rpc", frame: { type: "follow_up", message: args } }
 				: { kind: "needs_args", name };
 		case "btw":
-			return args
-				? { kind: "rpc", frame: { type: "btw", question: args } }
-				: { kind: "open_btw" };
+			return args ? { kind: "ask_btw", question: args } : { kind: "open_btw" };
 		case "tan":
 			return args
 				? { kind: "rpc", frame: { type: "tan", work: args } }
@@ -338,6 +338,7 @@ export function coordinatorAllows(action: SlashAction): boolean {
 		case "open_fork":
 		case "open_goal":
 		case "open_btw":
+		case "ask_btw":
 			return false;
 		default:
 			return true;

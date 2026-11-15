@@ -223,6 +223,7 @@ export interface ThreadViewState {
 	retry: RetryStatus | null;
 	commands: RpcAvailableSlashCommand[] | null;
 	btw: Record<string, RpcBtwHistoryRecord>;
+	/** btw topic 的展示顺序：与 Core `get_btw_history` 和 TUI 一致，按 createdAt 新的在前（同时刻按 id 升序）。 */
 	btwOrder: string[];
 	loopMode: RpcLoopModeState | null;
 	/** 最近一次 get/set_vibe_mode 的结果；未知为 null。 */
@@ -326,6 +327,13 @@ function pushDebug(
 	const debug = [...s.debug, { key: `d${n}`, ts: Date.now(), source, frame }];
 	if (debug.length > MAX_DEBUG) debug.splice(0, debug.length - MAX_DEBUG);
 	return { ...s, debug, noticeSeq: n };
+}
+
+/** btw topic 按 createdAt 新的在前排序（同时刻按 id 升序），与 Core 的历史顺序一致。 */
+function btwOrderOf(btw: Record<string, RpcBtwHistoryRecord>): string[] {
+	return Object.values(btw)
+		.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+		.map((r) => r.id);
 }
 
 function setTool(
@@ -851,24 +859,32 @@ export function applyFrame(
 		case "subagent_progress":
 			return upsertSubagent(s, f.payload, "progress");
 		case "btw_delta": {
+			// 增量属于最新一轮：有追问时是 followUps 末尾，否则是顶层首轮
 			const id = str(f.recordId);
 			const prev = id ? s.btw[id] : undefined;
 			if (!id || !prev) return s;
-			return {
-				...s,
-				btw: {
-					...s.btw,
-					[id]: { ...prev, answer: `${prev.answer}${str(f.delta) ?? ""}` },
-				},
-			};
+			const delta = str(f.delta) ?? "";
+			const followUps = prev.followUps;
+			const last = followUps?.at(-1);
+			const next: RpcBtwHistoryRecord =
+				followUps && last
+					? {
+							...prev,
+							followUps: [
+								...followUps.slice(0, -1),
+								{ ...last, answer: `${last.answer}${delta}` },
+							],
+						}
+					: { ...prev, answer: `${prev.answer}${delta}` };
+			return { ...s, btw: { ...s.btw, [id]: next } };
 		}
 		case "btw_record": {
 			const rec = isRecord(f.record)
 				? (f.record as unknown as RpcBtwHistoryRecord)
 				: null;
 			if (!rec?.id) return s;
-			const btwOrder = s.btw[rec.id] ? s.btwOrder : [...s.btwOrder, rec.id];
-			return { ...s, btw: { ...s.btw, [rec.id]: rec }, btwOrder };
+			const btw = { ...s.btw, [rec.id]: rec };
+			return { ...s, btw, btwOrder: btwOrderOf(btw) };
 		}
 		case "command_output":
 			return pushNotice(s, "command_output", "info", str(f.text) ?? "", f);

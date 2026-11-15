@@ -126,6 +126,14 @@ export function Composer({
 			case "open_btw":
 				uiStore.getState().open({ kind: "btw" });
 				return;
+			case "ask_btw":
+				// Core 先写入运行中的记录再应答；成功后打开对话框看流式回答（已有运行中的会被拒，错误留在输入区）
+				await realtime.cmd(threadId, {
+					type: "btw",
+					question: action.question,
+				});
+				uiStore.getState().open({ kind: "btw" });
+				return;
 			case "report":
 				uiStore.getState().open({ kind: "report", report: action.report });
 				return;

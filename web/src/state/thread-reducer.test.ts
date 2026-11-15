@@ -555,3 +555,72 @@ describe("parsePartialJson", () => {
 		expect(parsePartialJson("")).toBeUndefined();
 	});
 });
+
+describe("btw 帧", () => {
+	const topic = {
+		id: "b1",
+		leafId: null,
+		question: "首轮",
+		answer: "首轮回答",
+		status: "complete" as const,
+		createdAt: 100,
+		updatedAt: 100,
+	};
+
+	it("无追问时 btw_delta 追加到首轮回答", () => {
+		const s = frames(initialThreadState(TID), [
+			{
+				type: "btw_record",
+				record: { ...topic, answer: "", status: "running" },
+			},
+			{ type: "btw_delta", recordId: "b1", delta: "你" },
+			{ type: "btw_delta", recordId: "b1", delta: "好" },
+		]);
+		expect(s.btw.b1?.answer).toBe("你好");
+	});
+
+	it("追问运行中 btw_delta 只追加到 followUps 末轮，顶层与更早的追问不变", () => {
+		const s = frames(initialThreadState(TID), [
+			{
+				type: "btw_record",
+				record: {
+					...topic,
+					followUps: [
+						{ ...topic, question: "追问一", answer: "答一" },
+						{
+							...topic,
+							question: "追问二",
+							answer: "部分",
+							status: "running",
+						},
+					],
+				},
+			},
+			{ type: "btw_delta", recordId: "b1", delta: "回答" },
+		]);
+		const r = s.btw.b1;
+		expect(r?.answer).toBe("首轮回答");
+		expect(r?.followUps?.map((f) => f.answer)).toEqual(["答一", "部分回答"]);
+	});
+
+	it("未知 topic 的 btw_delta 忽略", () => {
+		const s0 = initialThreadState(TID);
+		expect(
+			applyFrame(s0, { type: "btw_delta", recordId: "nope", delta: "x" }),
+		).toBe(s0);
+	});
+
+	it("btwOrder 按 createdAt 新的在前，与到达顺序无关；同一 topic 更新不改变位置", () => {
+		const s = frames(initialThreadState(TID), [
+			{ type: "btw_record", record: { ...topic, id: "new", createdAt: 3 } },
+			{ type: "btw_record", record: { ...topic, id: "old", createdAt: 1 } },
+			{ type: "btw_record", record: { ...topic, id: "mid", createdAt: 2 } },
+			{
+				type: "btw_record",
+				record: { ...topic, id: "new", createdAt: 3, answer: "更新" },
+			},
+		]);
+		expect(s.btwOrder).toEqual(["new", "mid", "old"]);
+		expect(s.btw.new?.answer).toBe("更新");
+	});
+});

@@ -54,6 +54,7 @@ import {
 	Toggle,
 } from "../ui/primitives";
 import { StructuredView } from "../ui/StructuredView";
+import { BtwDialog } from "./BtwDialog";
 import { ContextBar, ContextTable, useContextParts } from "./ContextBreakdown";
 import { SetupLogDialog } from "./EnvBanner";
 import { useOrbOf } from "./ThreadHeader";
@@ -576,14 +577,7 @@ function subagentTone(status: string): Tone {
 	return "neutral";
 }
 
-// btw 记录与 goal 的状态色调（未列出的状态用中性）
-const BTW_TONE: Record<string, Tone> = {
-	running: "accent",
-	complete: "ok",
-	error: "err",
-	interrupted: "warn",
-};
-
+// goal 的状态色调（未列出的状态用中性）
 const GOAL_TONE: Record<string, Tone> = {
 	active: "accent",
 	paused: "warn",
@@ -741,110 +735,6 @@ export function SubagentDialog({
 				/>
 				<Button type="submit" disabled={!queryable || !steer.trim()}>
 					{t("common.send")}
-				</Button>
-			</form>
-		</Dialog>
-	);
-}
-
-// ---------------------------------------------------------------- btw
-
-function BtwDialog({
-	threadId,
-	onClose,
-}: {
-	threadId: string;
-	onClose: () => void;
-}) {
-	const { t } = useTranslation();
-	const btw = useThread(threadId, (s) => s.btw);
-	const order = useThread(threadId, (s) => s.btwOrder);
-	const [q, setQ] = useState("");
-	const [error, setError] = useState<unknown>(null);
-	useQuery({
-		queryKey: ["rpc", threadId, "btw-history"],
-		retry: false,
-		queryFn: async () => {
-			const data = await realtime.cmd(threadId, { type: "get_btw_history" });
-			const store = getThreadStore(threadId);
-			store.getState().apply(
-				data.records.map((record) => ({
-					type: "frame" as const,
-					frame: { type: "btw_record", record },
-				})),
-			);
-			return data.records.length;
-		},
-	});
-	return (
-		<Dialog open wide onClose={onClose} title={t("btw.title")}>
-			<p className="mb-2 text-muted text-xs">{t("btw.hint")}</p>
-			<div className="flex flex-col gap-3">
-				{order.map((id) => {
-					const r = btw[id];
-					if (!r) return null;
-					return (
-						<div
-							key={id}
-							className="rounded-lg border border-border bg-panel p-3"
-						>
-							<div className="mb-1.5 flex items-center gap-2 text-sm">
-								<Icon
-									name="message"
-									size={13}
-									aria-hidden
-									className="shrink-0 text-faint"
-								/>
-								<span className="min-w-0 flex-1 font-medium">{r.question}</span>
-								<Badge tone={BTW_TONE[r.status] ?? "neutral"}>
-									{t(`btw.status.${r.status}`)}
-								</Badge>
-								{r.status === "running" && (
-									<Button
-										size="sm"
-										variant="ghost"
-										onClick={() =>
-											void realtime.cmd(threadId, {
-												type: "btw_cancel",
-												recordId: id,
-											})
-										}
-									>
-										{t("common.cancel")}
-									</Button>
-								)}
-							</div>
-							<Markdown text={r.answer} streaming={r.status === "running"} />
-							{r.error && (
-								<p className="mt-1 flex items-center gap-1 text-err text-xs">
-									<Icon name="alert" size={12} aria-hidden />
-									{r.error}
-								</p>
-							)}
-						</div>
-					);
-				})}
-			</div>
-			<ErrorText error={error} />
-			<form
-				className="mt-3 flex gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (!q.trim()) return;
-					setError(null);
-					realtime
-						.cmd(threadId, { type: "btw", question: q.trim() })
-						.then(() => setQ(""), setError);
-				}}
-			>
-				<TextInput
-					autoFocus
-					placeholder={t("btw.placeholder")}
-					value={q}
-					onChange={(e) => setQ(e.target.value)}
-				/>
-				<Button type="submit" variant="primary" disabled={!q.trim()}>
-					{t("btw.ask")}
 				</Button>
 			</form>
 		</Dialog>

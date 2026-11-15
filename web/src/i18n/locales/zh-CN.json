@@ -519,6 +519,26 @@
 		"ask": "提问",
 		"hint": "btw 在不打断主线的情况下回答问题。",
 		"placeholder": "问点什么…",
+		"empty": "还没有旁路提问",
+		"emptyHint": "在上面输入问题，或在对话输入框里用 /btw <问题>。",
+		"busy": "有一个旁路提问正在回答，等它完成或先取消。",
+		"followUp": "追问",
+		"followUpPlaceholder": "接着这个话题问…",
+		"turns_one": "{{count}} 轮",
+		"turns_other": "{{count}} 轮",
+		"inject": {
+			"caption": "给主线的引导",
+			"send": "注入主会话",
+			"sending": "正在注入…",
+			"sent": "已注入主会话",
+			"drafting": "正在起草引导…",
+			"notSent": "没有发出，可以重试。",
+			"refused": "没有发出：{{reason}}"
+		},
+		"note": {
+			"interrupted": "回答中途被打断（omp 重启或退出），可以追问继续。",
+			"error": "回答出错"
+		},
 		"status": {
 			"running": "回答中",
 			"complete": "完成",

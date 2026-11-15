@@ -519,6 +519,26 @@
 		"ask": "Ask",
 		"hint": "btw answers questions without interrupting the main run.",
 		"placeholder": "Ask something…",
+		"empty": "No side questions yet",
+		"emptyHint": "Ask above, or type /btw <question> in the composer.",
+		"busy": "A side question is still running. Wait for it or cancel it first.",
+		"followUp": "Follow up",
+		"followUpPlaceholder": "Ask more on this topic…",
+		"turns_one": "{{count}} turn",
+		"turns_other": "{{count}} turns",
+		"inject": {
+			"caption": "Steering prompt for the main session",
+			"send": "Inject into main session",
+			"sending": "Injecting…",
+			"sent": "Injected into main session",
+			"drafting": "Drafting a steering prompt…",
+			"notSent": "Not sent; you can retry.",
+			"refused": "Not sent: {{reason}}"
+		},
+		"note": {
+			"interrupted": "The answer was interrupted (omp restarted or exited). Follow up to continue.",
+			"error": "The answer failed"
+		},
 		"status": {
 			"running": "answering",
 			"complete": "done",
