@@ -30,8 +30,8 @@ func etagFor(fi fs.FileInfo) string {
 	return fmt.Sprintf(`"%d-%d"`, fi.ModTime().UnixNano(), fi.Size())
 }
 
-// entryFor 由 Lstat 结果构造 FsEntry；符号链接带 target 与（指向 $HOME 之内时的）targetType。
-func (r *Runtime) entryFor(abs string, fi fs.FileInfo) apigen.FsEntry {
+// entryFor 由 Lstat 结果构造 FsEntry；符号链接带 target 与（指向 root 之内时的）targetType。
+func (r *Runtime) entryFor(root, abs string, fi fs.FileInfo) apigen.FsEntry {
 	e := apigen.FsEntry{
 		Path:  abs,
 		Name:  filepath.Base(abs),
@@ -52,7 +52,7 @@ func (r *Runtime) entryFor(abs string, fi fs.FileInfo) apigen.FsEntry {
 			e.Target = &target
 		}
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			if _, ok := r.relHome(real); ok {
+			if _, ok := relTo(root, real); ok {
 				if st, err := os.Stat(real); err == nil {
 					var tt apigen.FsEntryTargetType
 					switch {
@@ -73,12 +73,12 @@ func (r *Runtime) entryFor(abs string, fi fs.FileInfo) apigen.FsEntry {
 	return e
 }
 
-func (r *Runtime) lstatEntry(abs string) (apigen.FsEntry, error) {
+func (r *Runtime) lstatEntry(root, abs string) (apigen.FsEntry, error) {
 	fi, err := os.Lstat(abs)
 	if err != nil {
 		return apigen.FsEntry{}, err
 	}
-	return r.entryFor(abs, fi), nil
+	return r.entryFor(root, abs, fi), nil
 }
 
 // isDirEntry：目录或指向目录的符号链接（排序时排在前面）。
@@ -88,12 +88,23 @@ func isDirEntry(e apigen.FsEntry) bool {
 
 // ---- 只读路由 ----
 
-func (r *Runtime) handleFsRoots(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, apigen.FsRoots{Home: r.home, Workdir: r.currentWorkdir()})
+// handleFsRoots：orb 为 {$HOME, 工作目录}；runner 两者都是线程的工作目录（范围的根）。
+func (r *Runtime) handleFsRoots(w http.ResponseWriter, req *http.Request) {
+	root, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apigen.FsRoots{Home: root, Workdir: wd})
 }
 
 func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
-	abs, real, err := r.userPath(req.URL.Query().Get("path"), true)
+	root, _, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	abs, real, err := r.userPath(root, req.URL.Query().Get("path"), true)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -119,7 +130,7 @@ func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			continue // 列目录与 Lstat 之间被删除
 		}
-		entries = append(entries, r.entryFor(p, fi))
+		entries = append(entries, r.entryFor(root, p, fi))
 	}
 	slices.SortFunc(entries, func(a, b apigen.FsEntry) int {
 		if da, db := isDirEntry(a), isDirEntry(b); da != db {
@@ -141,12 +152,17 @@ func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Runtime) handleFsStat(w http.ResponseWriter, req *http.Request) {
-	abs, real, err := r.userPath(req.URL.Query().Get("path"), true)
+	root, _, err := r.scope(req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	e, err := r.lstatEntry(abs)
+	abs, real, err := r.userPath(root, req.URL.Query().Get("path"), true)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	e, err := r.lstatEntry(root, abs)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -199,7 +215,12 @@ func isText(b []byte, truncated bool) bool {
 }
 
 func (r *Runtime) handleFsRead(w http.ResponseWriter, req *http.Request) {
-	abs, real, err := r.userPath(req.URL.Query().Get("path"), true)
+	root, _, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	abs, real, err := r.userPath(root, req.URL.Query().Get("path"), true)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -282,8 +303,13 @@ func writeTarget(abs, real string, overwrite bool, ifMatchHdr string) (os.FileMo
 }
 
 func (r *Runtime) handleFsWrite(w http.ResponseWriter, req *http.Request) {
+	root, _, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	p := req.URL.Query().Get("path")
-	abs, real, err := r.mutablePath(p)
+	abs, real, err := r.mutablePath(root, p)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -310,7 +336,7 @@ func (r *Runtime) handleFsWrite(w http.ResponseWriter, req *http.Request) {
 	}
 	defer func() { _ = os.Remove(tmp) }() // 提交成功后 tmp 已不存在
 	// 上传期间路径上的符号链接可能已变化：重新解析并校验，再按规范化目标加变更锁、重新核对前置条件。
-	if abs, real, err = r.mutablePath(p); err != nil {
+	if abs, real, err = r.mutablePath(root, p); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -342,7 +368,7 @@ func (r *Runtime) handleFsWrite(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// 以请求路径回报，元数据取写入的文件（其 etag 即下次保存的 If-Match）。
-	e := r.entryFor(real, st)
+	e := r.entryFor(root, real, st)
 	e.Path, e.Name = abs, filepath.Base(abs)
 	writeJSON(w, http.StatusOK, e)
 }
@@ -477,12 +503,17 @@ func within(p, dir string) bool {
 }
 
 func (r *Runtime) handleFsMkdir(w http.ResponseWriter, req *http.Request) {
+	root, _, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	var body apigen.FsPathRequest
 	if err := readJSON(w, req, &body); err != nil {
 		writeErr(w, err)
 		return
 	}
-	abs, _, err := r.mutablePath(body.Path)
+	abs, _, err := r.mutablePath(root, body.Path)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -495,7 +526,7 @@ func (r *Runtime) handleFsMkdir(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	e, err := r.lstatEntry(abs)
+	e, err := r.lstatEntry(root, abs)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -504,18 +535,23 @@ func (r *Runtime) handleFsMkdir(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Runtime) handleFsRename(w http.ResponseWriter, req *http.Request) {
+	root, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	var body apigen.FsRenameRequest
 	if err := readJSON(w, req, &body); err != nil {
 		writeErr(w, err)
 		return
 	}
-	src, _, err := r.removablePath(body.From)
+	src, _, err := r.removablePath(root, wd, body.From)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	// 目标同样不得是工作目录或其上级（overwrite 会先删除目标）。
-	dst, _, err := r.removablePath(body.To)
+	dst, _, err := r.removablePath(root, wd, body.To)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -540,7 +576,7 @@ func (r *Runtime) handleFsRename(w http.ResponseWriter, req *http.Request) {
 	}
 	if srcEntry == dstEntry {
 		// 改名到自身（含经别名）：不做任何改动
-		e, err := r.lstatEntry(dst)
+		e, err := r.lstatEntry(root, dst)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -570,7 +606,7 @@ func (r *Runtime) handleFsRename(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	e, err := r.lstatEntry(dst)
+	e, err := r.lstatEntry(root, dst)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -579,12 +615,17 @@ func (r *Runtime) handleFsRename(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Runtime) handleFsDelete(w http.ResponseWriter, req *http.Request) {
+	root, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	var body apigen.FsPathRequest
 	if err := readJSON(w, req, &body); err != nil {
 		writeErr(w, err)
 		return
 	}
-	abs, _, err := r.removablePath(body.Path)
+	abs, _, err := r.removablePath(root, wd, body.Path)
 	if err != nil {
 		writeErr(w, err)
 		return

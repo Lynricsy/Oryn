@@ -1,6 +1,6 @@
 // Package orbdrt 是 orbd（orb 内守护进程）的运行时（计划 C2 / C4 / H3.3 / H4 / H6.1）：
 // 维持到控制面的出站 link、服务 ctl 请求、监督每线程的 omp 进程、tail 会话 JSONL、
-// 执行 setup / resume、提供本机 egress 代理入口并上报指标。
+// 执行 setup / resume、提供本机 egress 代理入口并上报指标。M11b 起另有 runner 形态（Config.Runner，见 runner.go）。
 //
 // 本包中所有计划里写作 `/home/user/…` 的路径一律以 $HOME（Config.Home）为根。
 package orbdrt
@@ -115,6 +115,12 @@ type Config struct {
 	// 一切 HTTPS 请求只信任这里的证书（不合并系统根）；为空且 URL 为 https 时用系统根（反代场景）。
 	// 解析失败时 New 返回错误。
 	OrbCAPEM string
+
+	// Runner 非 nil 时以 runner 形态运行（M11b，`orbd run --runner`，见 runner.go）：用户自己的机器与真实 $HOME，
+	// 只服务声明的目录；不开 egress / orbd.sock / 受管服务 / 桌面，不写 agent 资产。OrbID 为空时 New 经 whoami 取得。
+	Runner *RunnerConfig
+	// ProcStat 是 /proc 指标源读取的 CPU 计数文件（默认 /proc/stat；测试可替换）。
+	ProcStat string
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -168,7 +174,11 @@ func readTokenFile(home string) string {
 }
 
 // dialToken 返回本次拨号使用的令牌：令牌文件优先，缺省时用环境变量给出的令牌。
+// runner 形态只用 runner 令牌（$HOME/.oryn/orb-token 属于 orb，不在用户机器上生效）。
 func (r *Runtime) dialToken() string {
+	if r.runner != nil {
+		return r.cfg.Token
+	}
 	if tok := readTokenFile(r.home); tok != "" {
 		return tok
 	}
@@ -236,8 +246,11 @@ type Runtime struct {
 
 	// bins 把 orbd 自己起的子进程解析到可信 PATH 目录里的绝对路径（不经 $HOME 下的 PATH 项）。
 	bins binResolver
-	// httpClient 是对 cfg.URL 的一切请求（目前只有 link 握手）所用的 client；nil = http.DefaultClient（系统根）。
+	// httpClient 是对 cfg.URL 的一切请求（link 握手与 runner 的 whoami）所用的 client；nil = http.DefaultClient（系统根）。
 	httpClient *http.Client
+
+	// runner 是 runner 形态的状态（声明的目录、实例锁、worktree 登记）；orb 形态为 nil。
+	runner *runnerState
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -247,13 +260,13 @@ type conn struct {
 	done chan struct{}
 }
 
-// New 校验配置、绑定 egress 监听并探测 agent 版本。
-func New(cfg Config) (*Runtime, error) {
+// New 校验配置、绑定 egress 监听并探测 agent 版本。runner 形态另取实例锁并经 whoami 取得 orb id。
+func New(cfg Config) (_ *Runtime, err error) {
 	if cfg.Coordinator {
 		if cfg.OrbID == "" || cfg.Connect == nil {
 			return nil, errors.New("orbdrt: OrbID and Connect are required in coordinator mode")
 		}
-	} else if cfg.URL == "" || cfg.OrbID == "" {
+	} else if cfg.URL == "" || (cfg.OrbID == "" && cfg.Runner == nil) {
 		return nil, errors.New("orbdrt: URL and OrbID are required")
 	}
 	if cfg.Home == "" {
@@ -267,7 +280,12 @@ func New(cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.Coordinator && cfg.Token == "" && readTokenFile(home) == "" {
+	switch {
+	case cfg.Runner != nil:
+		if cfg.Token == "" {
+			return nil, errors.New("orbdrt: Token is required in runner mode")
+		}
+	case !cfg.Coordinator && cfg.Token == "" && readTokenFile(home) == "":
 		return nil, errors.New("orbdrt: Token is required (ORYN_ORB_TOKEN or $HOME/.oryn/orb-token)")
 	}
 	if cfg.AgentBin == "" {
@@ -303,8 +321,11 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.MemInfo == "" {
 		cfg.MemInfo = "/proc/meminfo"
 	}
-	if cfg.DiskPath == "" {
+	if cfg.DiskPath == "" && cfg.Runner == nil {
 		cfg.DiskPath = "/"
+	}
+	if cfg.ProcStat == "" {
+		cfg.ProcStat = "/proc/stat"
 	}
 	if cfg.DesktopCDPAddr == "" {
 		cfg.DesktopCDPAddr = DefaultDesktopCDPAddr
@@ -323,6 +344,30 @@ func New(cfg Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("orbdrt: ORYN_ORB_CA_PEM: %w", err)
 	}
+	// runner：先取实例锁（第二个实例不得清掉第一个的上传临时目录），再经 whoami 得知 orb id。
+	var rs *runnerState
+	if cfg.Runner != nil {
+		if rs, err = newRunnerState(home, cfg.Runner); err != nil {
+			return nil, fmt.Errorf("orbdrt: %w", err)
+		}
+		defer func() {
+			if err != nil {
+				rs.unlock()
+			}
+		}()
+		if cfg.OrbID == "" {
+			wctx, cancel := context.WithTimeout(context.Background(), whoamiTimeout)
+			who, werr := whoami(wctx, hc, cfg.URL, cfg.Token)
+			cancel()
+			if werr != nil {
+				return nil, fmt.Errorf("orbdrt: %w", werr)
+			}
+			cfg.OrbID = string(who.OrbID)
+		}
+		if cfg.DiskPath == "" {
+			cfg.DiskPath = rs.dirs[0]
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
@@ -330,11 +375,20 @@ func New(cfg Config) (*Runtime, error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
-	ln := cfg.EgressListener
-	if ln == nil {
-		if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
-			return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+	// runner 不开 egress：控制面的密钥不去用户机器（agent 用那台机器自己的模型配置与 git 凭据）。
+	var ln net.Listener
+	if cfg.Runner == nil {
+		if ln = cfg.EgressListener; ln == nil {
+			if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
+				return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+			}
 		}
+	}
+	// 可信 PATH 去掉 $HOME 之下的项是 orb 的纵深防御（agent 可能在 ~/.local/bin 放同名程序）；runner 上 agent
+	// 本就以该用户身份运行，而 omp / git 常装在 ~/.bun/bin、~/.local/bin，因此保留 PATH 里的全部绝对路径项。
+	binHome := home
+	if rs != nil {
+		binHome = ""
 	}
 	r := &Runtime{
 		cfg:      cfg,
@@ -352,16 +406,21 @@ func New(cfg Config) (*Runtime, error) {
 		maxFileBytes:       MaxFileBytes,
 		maxAttachmentBytes: MaxAttachmentBytes,
 
-		bins:       newBinResolver(os.Getenv("PATH"), home),
+		bins:       newBinResolver(os.Getenv("PATH"), binHome),
 		httpClient: hc,
+		runner:     rs,
 	}
 	if hc != nil && !strings.HasPrefix(cfg.URL, "https://") && !strings.HasPrefix(cfg.URL, "wss://") {
 		r.log.Warn("ORYN_ORB_CA_PEM is set but ORYN_URL is not https; the link stays unencrypted", "url", cfg.URL)
 	}
+	if rs != nil && plainRemoteURL(cfg.URL) {
+		r.log.Warn("ORYN_URL is plain http to a non-loopback host; the runner link (and everything the control plane can run on this machine) is unprotected", "url", cfg.URL)
+	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
-	if !cfg.Coordinator {
-		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）。
+	if !cfg.Coordinator && rs == nil {
+		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
+		// runner 同样不碰用户机器上的 ~/.agents/skills 与 omp 扩展，也没有桌面与嵌套 Docker。
 		r.desk = newDesktop(r)
 		if cfg.NestedDocker {
 			r.dockerd = newDockerd(r)
@@ -380,8 +439,13 @@ func New(cfg Config) (*Runtime, error) {
 	return r, nil
 }
 
-// EgressAddr 返回 egress 实际监听地址。
-func (r *Runtime) EgressAddr() string { return r.egressLn.Addr().String() }
+// EgressAddr 返回 egress 实际监听地址；runner 形态不监听，返回空串。
+func (r *Runtime) EgressAddr() string {
+	if r.egressLn == nil {
+		return ""
+	}
+	return r.egressLn.Addr().String()
+}
 
 // AgentVersion 返回 `<agent> --version` 的输出（探测失败为空）。
 func (r *Runtime) AgentVersion() string { return r.agentVersion }
@@ -401,10 +465,14 @@ func detectAgentVersion(bins binResolver, bin string) string {
 // Run 运行到 ctx 结束：恢复已登记线程的 tailer、egress、指标与 link 重连循环。
 // 优雅退出（停 agent、冲刷 tailer）由调用方在取消 ctx 之前调用 Shutdown 完成。
 // 协调宿主模式只起 egress 与 tailer；link 断开（Connect 返回 ErrNoRedial）后即返回。
+// runner 形态不起 egress、orbd.sock 与受管服务的上报；返回时释放实例锁。
 func (r *Runtime) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
 	defer r.cancel()
+	if rs := r.runner; rs != nil {
+		defer rs.unlock()
+	}
 	ctx = r.ctx
 	for id, dir := range r.reg.list() {
 		if st, err := os.Stat(dir); err == nil && st.IsDir() {
@@ -412,11 +480,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 	}
 	var wg sync.WaitGroup
-	wg.Go(func() { r.serveEgress(ctx) })
+	if r.egressLn != nil {
+		wg.Go(func() { r.serveEgress(ctx) })
+	}
 	if !r.cfg.Coordinator {
 		wg.Go(func() { r.metricsLoop(ctx) })
-		wg.Go(func() { r.serveSocket(ctx) })
 		wg.Go(func() { _ = r.localSrv.Serve(r.local) })
+	}
+	if !r.cfg.Coordinator && r.runner == nil {
+		wg.Go(func() { r.serveSocket(ctx) })
 		wg.Go(func() { r.svc.reportLoop(ctx) })
 	}
 	if d := r.desk; d != nil {
@@ -431,7 +503,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.linkLoop(ctx)
 	// 仍存活的服务进程组直接 SIGKILL（优雅停止由 Shutdown 负责）。
 	r.svc.killAll()
-	_ = r.egressLn.Close()
+	if r.egressLn != nil {
+		_ = r.egressLn.Close()
+	}
 	_ = r.localSrv.Close()
 	_ = r.local.Close()
 	wg.Wait()
@@ -602,7 +676,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	r.flushResultsLocked(c)
 	r.resultsMu.Unlock()
 	// 服务与桌面快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
-	if !r.cfg.Coordinator {
+	if !r.cfg.Coordinator && r.runner == nil {
 		r.svc.markDirty()
 	}
 	if r.desk != nil {
@@ -643,6 +717,11 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 		case link.StreamFS:
 			r.local.Push(rollingConn{Conn: st, d: localWriteTimeout})
 		case link.StreamPortal:
+			if r.runner != nil {
+				// runner 没有 portal（也没有受管服务）。
+				_ = st.Close()
+				continue
+			}
 			go r.servePortal(st)
 		case link.StreamDesk:
 			if r.desk == nil {
@@ -669,7 +748,8 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 			threads = append(threads, apigen.LinkCtlHelloThread{ThreadID: id})
 		}
 	}
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume"}
+	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics"}
 	if r.desk != nil {
 		features = append(features, "desktop")
 	}
@@ -679,6 +759,11 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	if r.cfg.Coordinator {
 		features = []string{"coordinator"}
 	}
+	var runnerInfo *apigen.LinkRunnerInfo
+	if r.runner != nil {
+		features = r.runnerFeatures()
+		runnerInfo = r.runnerInfo()
+	}
 	return apigen.LinkCtlHelloParams{
 		OrbdVersion:  r.cfg.Version,
 		AgentVersion: r.agentVersion,
@@ -686,6 +771,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		Arch:         runtime.GOARCH,
 		Threads:      threads,
 		Features:     features,
+		Runner:       runnerInfo,
 	}
 }
 
@@ -711,6 +797,9 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 	ctx := r.ctx
 	if r.cfg.Coordinator && !coordinatorMethods[method] {
 		return nil, link.ErrMethodNotFound
+	}
+	if r.runner != nil && runnerUnsupported[method] {
+		return nil, ctlErr(CodeNotSupported, "%s is not available on a runner", method)
 	}
 	switch method {
 	case "setup.run", "resume.run":
@@ -785,6 +874,24 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 		return r.desk.setProfileMode(p)
 	case string(apigen.MethodSnapshotPrepare):
 		return r.snapshotPrepare(ctx)
+	case string(apigen.MethodWorktreeAdd):
+		if r.runner == nil {
+			return nil, ctlErr(CodeNotSupported, "worktrees are only available on a runner")
+		}
+		p, err := decode[apigen.LinkCtlWorktreeAddParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.worktreeAdd(ctx, p)
+	case string(apigen.MethodWorktreeRemove):
+		if r.runner == nil {
+			return nil, ctlErr(CodeNotSupported, "worktrees are only available on a runner")
+		}
+		p, err := decode[apigen.LinkCtlWorktreeRemoveParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.worktreeRemove(ctx, p)
 	default:
 		return nil, link.ErrMethodNotFound
 	}
@@ -876,16 +983,22 @@ func (r *Runtime) flushTailers(timeout time.Duration) {
 	wg.Wait()
 }
 
-// baseEnv 是 orbd 子进程（agent、setup 脚本、受管服务）的基础环境：继承 orbd 环境但去掉 orb 令牌；
-// 桌面启用时设 DISPLAY=:1。
+// baseEnv 是 orbd 子进程（agent、setup 脚本、受管服务）的基础环境：继承 orbd 环境但去掉 orb / runner 令牌；
+// 桌面启用时设 DISPLAY=:1。runner 形态设 ORYN_RUNNER=1，不设 ORYN_ORB / ORYN_ORB_ID，也不改 HOME。
 func (r *Runtime) baseEnv() map[string]string {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == "ORYN_ORB_TOKEN" {
+		if !ok || k == "ORYN_ORB_TOKEN" || k == "ORYN_RUNNER_TOKEN" {
 			continue
 		}
 		env[k] = v
+	}
+	if r.runner != nil {
+		delete(env, "ORYN_ORB")
+		delete(env, "ORYN_ORB_ID")
+		env["ORYN_RUNNER"] = "1"
+		return env
 	}
 	env["HOME"] = r.home
 	env["ORYN_ORB"] = "1"
@@ -900,6 +1013,9 @@ func (r *Runtime) baseEnv() map[string]string {
 // 保留端口不经 portal 暴露，也不能分配给受管服务（M8 计划 2.11）。
 func (r *Runtime) reservedPort(port int) bool {
 	if port <= 0 {
+		return false
+	}
+	if r.egressLn == nil {
 		return false
 	}
 	if tcp, ok := r.egressLn.Addr().(*net.TCPAddr); ok && port == tcp.Port {

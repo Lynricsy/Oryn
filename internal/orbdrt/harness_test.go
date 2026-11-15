@@ -140,6 +140,7 @@ func newFakeCPWith(t *testing.T, useTLS bool) *fakeCP {
 	cp.token.Store(testToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc(link.Path, cp.handle)
+	mux.HandleFunc("GET /orb/v1/whoami", cp.handleWhoami)
 	if useTLS {
 		cp.srv = httptest.NewTLSServer(mux)
 	} else {
@@ -178,6 +179,24 @@ func (cp *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cp.serve(sess)
+}
+
+// testRunnerOrb 是假控制面给 runner 令牌回的 orb id。
+const testRunnerOrb = "orb-runner"
+
+// handleWhoami 模拟 GET /orb/v1/whoami：令牌须是当前接受的令牌；ort_ 令牌回 runner，其它回 orb。
+func (cp *fakeCP) handleWhoami(w http.ResponseWriter, r *http.Request) {
+	tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if want, _ := cp.token.Load().(string); tok == "" || tok != want {
+		http.Error(w, `{"code":"unauthorized","message":"bad token"}`, http.StatusUnauthorized)
+		return
+	}
+	who := apigen.OrbWhoami{OrbID: "orb-test", Kind: apigen.OrbKindOrb}
+	if strings.HasPrefix(tok, RunnerTokenPrefix) {
+		who = apigen.OrbWhoami{OrbID: testRunnerOrb, Kind: apigen.OrbKindRunner}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(who)
 }
 
 // serve 服务一条已建立的 link 会话（WebSocket 或协调宿主的 socketpair），阻塞到它断开。

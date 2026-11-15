@@ -204,13 +204,14 @@ type repoLoc struct {
 	top               string
 }
 
-// locateRepo 解析 root（缺省当前工作目录）并找到仓库顶层；顶层不在 $HOME 之下时视为不在仓库内。
-func (r *Runtime) locateRepo(ctx context.Context, root string) (repoLoc, error) {
+// locateRepo 解析 root（缺省工作目录 workdir）并找到仓库顶层；root 须在 scopeRoot（见 scope）之下，
+// 顶层不在 scopeRoot 之下时视为不在仓库内。
+func (r *Runtime) locateRepo(ctx context.Context, scopeRoot, workdir, root string) (repoLoc, error) {
 	explicit := root != ""
 	if !explicit {
-		root = r.currentWorkdir()
+		root = workdir
 	}
-	abs, real, err := r.userPath(root, true)
+	abs, real, err := r.userPath(scopeRoot, root, true)
 	if err != nil {
 		return repoLoc{}, err
 	}
@@ -234,15 +235,15 @@ func (r *Runtime) locateRepo(ctx context.Context, root string) (repoLoc, error) 
 	top := strings.TrimSpace(string(res.out))
 	if realTop, err := filepath.EvalSymlinks(top); err != nil {
 		return loc, nil
-	} else if _, ok := r.relHome(realTop); !ok {
+	} else if _, ok := relTo(scopeRoot, realTop); !ok {
 		return loc, nil
 	}
 	loc.top = top
 	return loc, nil
 }
 
-func (r *Runtime) requireRepo(ctx context.Context, root string) (string, error) {
-	loc, err := r.locateRepo(ctx, root)
+func (r *Runtime) requireRepo(ctx context.Context, scopeRoot, workdir, root string) (string, error) {
+	loc, err := r.locateRepo(ctx, scopeRoot, workdir, root)
 	if err != nil {
 		return "", err
 	}
@@ -429,7 +430,12 @@ func (r *Runtime) handleGitStatus(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	ctx := req.Context()
-	loc, err := r.locateRepo(ctx, q.root)
+	scopeRoot, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	loc, err := r.locateRepo(ctx, scopeRoot, wd, q.root)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -715,7 +721,12 @@ func (r *Runtime) handleGitDiff(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	ctx := req.Context()
-	top, err := r.requireRepo(ctx, q.root)
+	scopeRoot, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	top, err := r.requireRepo(ctx, scopeRoot, wd, q.root)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -851,7 +862,12 @@ func (r *Runtime) handleGitCommits(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	ctx := req.Context()
-	top, err := r.requireRepo(ctx, q.Get("root"))
+	scopeRoot, wd, err := r.scope(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	top, err := r.requireRepo(ctx, scopeRoot, wd, q.Get("root"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -923,7 +939,11 @@ func (r *Runtime) readGitPaths(w http.ResponseWriter, req *http.Request) (string
 	if body.Root != nil {
 		root = *body.Root
 	}
-	top, err := r.requireRepo(req.Context(), root)
+	scopeRoot, wd, err := r.scope(req)
+	if err != nil {
+		return "", nil, err
+	}
+	top, err := r.requireRepo(req.Context(), scopeRoot, wd, root)
 	if err != nil {
 		return "", nil, err
 	}

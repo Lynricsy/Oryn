@@ -17,9 +17,12 @@ import (
 // binResolver 在固定的目录表里查找可执行文件。
 type binResolver struct{ dirs []string }
 
-// newBinResolver 由 PATH 值与 $HOME 构造：相对路径项（含空项，即当前目录）与 $HOME 之下的项都被去掉。
+// newBinResolver 由 PATH 值与 $HOME 构造：相对路径项（含空项，即当前目录）与 $HOME 之下的项都被去掉；
+// home 为空时（runner 形态）只去掉相对路径项。
 func newBinResolver(pathEnv, home string) binResolver {
-	home = filepath.Clean(home)
+	if home != "" {
+		home = filepath.Clean(home)
+	}
 	var dirs []string
 	seen := map[string]bool{}
 	for _, d := range filepath.SplitList(pathEnv) {
@@ -27,7 +30,7 @@ func newBinResolver(pathEnv, home string) binResolver {
 			continue
 		}
 		d = filepath.Clean(d)
-		if underDir(d, home) || seen[d] {
+		if (home != "" && underDir(d, home)) || seen[d] {
 			continue
 		}
 		seen[d] = true

@@ -131,7 +131,8 @@ func (r *Runtime) syncPrepare(ctx context.Context, body apigen.OrbSyncPrepareReq
 	if body.Root != nil {
 		root = *body.Root
 	}
-	top, err := r.requireRepo(ctx, root)
+	// sync 只在 orb 形态可用（runner 上 /sync/* 回 404），范围即 $HOME。
+	top, err := r.requireRepo(ctx, r.home, r.currentWorkdir(), root)
 	if err != nil {
 		return st, err
 	}

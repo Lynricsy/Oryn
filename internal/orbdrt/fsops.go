@@ -93,12 +93,18 @@ func (r *Runtime) fsMove(from, to string) (apigen.LinkCtlOkResult, error) {
 	return apigen.LinkCtlOkResult{Ok: true}, nil
 }
 
+// fsPair 校验 fs.copyTree / fs.move 的两端：orb 形态须在 $HOME 之下，runner 形态须在 $HOME/.oryn/threads 之下
+// （控制面只用它们搬会话文件，用户机器上的其它文件不归它动）。
 func (r *Runtime) fsPair(from, to string) (string, string, error) {
-	src, err := r.safePath(from)
+	check := r.safePath
+	if r.runner != nil {
+		check = r.underThreads
+	}
+	src, err := check(from)
 	if err != nil {
 		return "", "", ctlErr(link.CodeInvalidParams, "from: %v", err)
 	}
-	dst, err := r.safePath(to)
+	dst, err := check(to)
 	if err != nil {
 		return "", "", ctlErr(link.CodeInvalidParams, "to: %v", err)
 	}

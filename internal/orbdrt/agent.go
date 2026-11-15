@@ -553,12 +553,25 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		cwd  string
 		env  map[string]string
 	)
-	if r.cfg.Coordinator {
+	switch {
+	case r.cfg.Coordinator:
 		var err error
 		if args, cwd, env, err = r.coordinatorAgentSpec(p, dir); err != nil {
 			return apigen.LinkCtlAgentStartResult{}, err
 		}
-	} else {
+	case r.runner != nil:
+		// runner：cwd 必填且在声明的目录或已登记的 worktree 之内；会话目录只能在 $HOME/.oryn/threads 之下。
+		if p.Cwd == "" {
+			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeDirNotServed, "cwd is required on a runner")
+		}
+		if _, ok := r.allowed(p.Cwd); !ok {
+			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeDirNotServed, "%q is not inside a directory served by this runner", p.Cwd)
+		}
+		cwd = filepath.Clean(p.Cwd)
+		if _, err := r.underThreads(dir); err != nil {
+			return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "sessionDir: %v", err)
+		}
+	default:
 		cwd = r.currentWorkdir()
 		if p.Cwd != "" {
 			cwd = r.resolvePath(p.Cwd)
@@ -596,7 +609,11 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		for k, v := range p.Env {
 			env[k] = v
 		}
-		args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "-e", r.extensionPath()}
+		args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir}
+		if r.runner == nil {
+			// orb 环境说明扩展；runner 不加载（用户机器上的 omp 只用它自己的扩展与技能）。
+			args = append(args, "-e", r.extensionPath())
+		}
 		if r.desk != nil {
 			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
 			args = append(args, "--config", r.desktopOverlayPath())
@@ -612,7 +629,7 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "start agent: %v", err)
 	}
 	// 线程登记之前已启动、因此没拿到 PUBLIC_URL 的 portal 服务，此时重启一次补上。
-	if !r.cfg.Coordinator {
+	if !r.cfg.Coordinator && r.runner == nil {
 		go r.svc.refreshPublicURLs()
 	}
 	return apigen.LinkCtlAgentStartResult{Pid: pid}, nil

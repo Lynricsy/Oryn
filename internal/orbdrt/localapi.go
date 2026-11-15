@@ -77,6 +77,11 @@ func (r *Runtime) localHandler() http.Handler {
 		if h := r.cfg.OnLocalRequest; h != nil {
 			h(req)
 		}
+		// runner 没有 oryn sync 与受管服务。
+		if r.runner != nil && (strings.HasPrefix(req.URL.Path, "/sync/") || strings.HasPrefix(req.URL.Path, "/services/")) {
+			writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "not available on a runner"})
+			return
+		}
 		mux.ServeHTTP(w, req)
 	})
 }
@@ -191,10 +196,11 @@ func boolQuery(req *http.Request, name string, def bool) (bool, error) {
 
 // ---- 路径策略 ----
 
-// userPath 把请求里的路径（`~` / `~/…` / 绝对路径）解析为绝对路径，并要求它跟随符号链接后位于 $HOME 之下
-// （403 outside_home）；allowHome 时允许 $HOME 本身（只读操作），否则 $HOME 本身返回 403 protected_path。
+// userPath 把请求里的路径（`~` / `~/…` / 绝对路径）解析为绝对路径，并要求它跟随符号链接后位于 root
+// （本次请求的范围，见 scope：orb 为 $HOME，runner 为线程工作目录）之下（403 outside_home）；allowHome 时允许
+// root 本身（只读操作），否则 root 本身返回 403 protected_path。
 // 返回的是词法上的绝对路径（不展开符号链接），real 是展开后的路径。
-func (r *Runtime) userPath(p string, allowHome bool) (abs, real string, err error) {
+func (r *Runtime) userPath(root, p string, allowHome bool) (abs, real string, err error) {
 	if strings.TrimSpace(p) == "" {
 		return "", "", badPath("empty path")
 	}
@@ -209,34 +215,38 @@ func (r *Runtime) userPath(p string, allowHome bool) (abs, real string, err erro
 	if err != nil {
 		return "", "", fsError(err)
 	}
-	rel, ok := r.relHome(real)
+	rel, ok := relTo(root, real)
 	if !ok {
-		return "", "", errf(http.StatusForbidden, "outside_home", "path %q is outside $HOME", p)
+		return "", "", errf(http.StatusForbidden, "outside_home", "path %q is outside %s", p, root)
 	}
 	if rel == "." && !allowHome {
-		return "", "", errf(http.StatusForbidden, "protected_path", "$HOME itself cannot be modified")
+		return "", "", errf(http.StatusForbidden, "protected_path", "%s itself cannot be modified", root)
 	}
 	return abs, real, nil
 }
 
-// relHome 返回 real（已展开符号链接）相对 $HOME 的路径；不在 $HOME 之下时 ok=false。
-func (r *Runtime) relHome(real string) (string, bool) {
-	home, err := filepath.EvalSymlinks(r.home)
+// relTo 返回 real（已展开符号链接）相对 root（展开符号链接后）的路径；不在 root 之下时 ok=false。
+func relTo(root, real string) (string, bool) {
+	base, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", false
 	}
-	rel, err := filepath.Rel(home, real)
+	rel, err := filepath.Rel(base, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 		return "", false
 	}
 	return rel, true
 }
 
-// mutablePath 是变更类操作的路径检查：userPath 之外再拒绝 $HOME/.oryn/**（Oryn 自己的状态，只读）。
+// relHome 返回 real（已展开符号链接）相对 $HOME 的路径；不在 $HOME 之下时 ok=false。
+func (r *Runtime) relHome(real string) (string, bool) { return relTo(r.home, real) }
+
+// mutablePath 是变更类操作的路径检查：userPath 之外再拒绝 $HOME/.oryn/**（Oryn 自己的状态，只读；
+// 始终按真实 $HOME 判断，runner 声明的目录就是 $HOME 时同样受保护）。
 // 展开后的目标、词法路径与（父目录展开后的）目录项三者任一落在 .oryn 下即拒绝：delete / rename 作用于
 // 目录项本身，`~/.oryn/foo -> ~/work` 这样的链接按目标判断会被放行。
-func (r *Runtime) mutablePath(p string) (abs, real string, err error) {
-	abs, real, err = r.userPath(p, false)
+func (r *Runtime) mutablePath(root, p string) (abs, real string, err error) {
+	abs, real, err = r.userPath(root, p, false)
 	if err != nil {
 		return "", "", err
 	}
@@ -255,14 +265,14 @@ func (r *Runtime) mutablePath(p string) (abs, real string, err error) {
 	return abs, real, nil
 }
 
-// removablePath 是 delete / rename 源路径的检查：mutablePath 之外再拒绝当前工作目录本身及其上级目录
+// removablePath 是 delete / rename 源路径的检查：mutablePath 之外再拒绝工作目录 workdir 本身及其上级目录
 // （删掉或移走它们等于删掉工作目录）。
-func (r *Runtime) removablePath(p string) (abs, real string, err error) {
-	abs, real, err = r.mutablePath(p)
+func (r *Runtime) removablePath(root, workdir, p string) (abs, real string, err error) {
+	abs, real, err = r.mutablePath(root, p)
 	if err != nil {
 		return "", "", err
 	}
-	wd, werr := filepath.EvalSymlinks(r.currentWorkdir())
+	wd, werr := filepath.EvalSymlinks(workdir)
 	if werr == nil {
 		if rel, rerr := filepath.Rel(real, wd); rerr == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))) {
 			return "", "", errf(http.StatusForbidden, "protected_path", "%q is (or contains) the working directory", p)
