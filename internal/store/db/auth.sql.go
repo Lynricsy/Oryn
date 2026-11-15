@@ -197,7 +197,7 @@ func (q *Queries) DeleteWebSessionsByDevice(ctx context.Context, deviceID *strin
 
 const getOwner = `-- name: GetOwner :one
 
-SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image FROM owner WHERE id = 1
+SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image, new_thread_target FROM owner WHERE id = 1
 `
 
 // Owner, passkeys, recovery codes, web sessions.
@@ -219,6 +219,7 @@ func (q *Queries) GetOwner(ctx context.Context) (Owner, error) {
 		&i.AssistantName,
 		&i.AssistantAvatarIcon,
 		&i.AssistantAvatarImage,
+		&i.NewThreadTarget,
 	)
 	return i, err
 }

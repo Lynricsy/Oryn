@@ -4,6 +4,13 @@
 
 package db
 
+type AgentAvatar struct {
+	Name        string  `json:"name"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+	UpdatedAt   int64   `json:"updatedAt"`
+}
+
 type Attachment struct {
 	ID        string  `json:"id"`
 	ThreadID  *string `json:"threadId"`
@@ -289,6 +296,7 @@ type Owner struct {
 	AssistantName        *string `json:"assistantName"`
 	AssistantAvatarIcon  *string `json:"assistantAvatarIcon"`
 	AssistantAvatarImage *string `json:"assistantAvatarImage"`
+	NewThreadTarget      string  `json:"newThreadTarget"`
 }
 
 type Passkey struct {

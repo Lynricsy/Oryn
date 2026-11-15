@@ -19,9 +19,9 @@ import (
 // M9：spaces、schedules、schedule_runs、thread_reports、coord_actions；
 // M9.6：role_avatars、thread_share_identities；
 // M10：turns、thread_commits、stats_state、budget、budget_alerts，以及 15 分钟汇总 usage_q、tool_q、turn_q；
-// M11a：project_snapshots）。
+// M11a：project_snapshots；M11b：runners；M13：agent_avatars）。
 var m2Tables = []string{
-	"attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
+	"agent_avatars", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "runners", "schedule_runs", "schedules",

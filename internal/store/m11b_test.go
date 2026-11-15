@@ -170,6 +170,9 @@ func TestM11bMigrationDownUp(t *testing.T) {
 
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	assert.EqualValues(t, 24, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	assert.EqualValues(t, 23, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11b).Scan(&n))
 	assert.Zero(t, n, "0023 回滚后表与列都消失")
@@ -229,6 +232,9 @@ func TestM11bMigrationDownRunners(t *testing.T) {
 	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 24, r.Source.Version)
+	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 23, r.Source.Version)
 

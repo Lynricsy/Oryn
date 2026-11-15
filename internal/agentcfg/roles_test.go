@@ -3,6 +3,7 @@ package agentcfg
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -115,4 +116,93 @@ func TestHomeCycleRoles(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), ConfigFile)
 	assert.Equal(t, defaults, got, "解析失败返回缺省 cycleOrder")
+}
+
+func TestParseKnownRoles(t *testing.T) {
+	builtinTail := func(skip ...string) []KnownRole {
+		var out []KnownRole
+		for _, r := range BuiltinRoles {
+			if !slices.Contains(skip, r) {
+				out = append(out, KnownRole{Role: r})
+			}
+		}
+		return out
+	}
+	defaults := append([]KnownRole{
+		{Role: "smol", InCycle: true}, {Role: "default", InCycle: true}, {Role: "slow", InCycle: true},
+	}, builtinTail("smol", "default", "slow")...)
+
+	got, err := ParseKnownRoles(nil)
+	require.NoError(t, err)
+	assert.Equal(t, defaults, got, "空内容：缺省 cycleOrder 在前，其余内置 role 按 BuiltinRoles 顺序")
+
+	// cycleOrder（按序）→ modelRoles 其余键（字典序）→ BuiltinRoles 其余项；三者去重，大小写原样区分。
+	got, err = ParseKnownRoles([]byte(ownerConfig + "  zeta: { name: Z }\n" + `
+  vision: { name: 看 }
+`))
+	require.NoError(t, err)
+	want := []KnownRole{
+		{Role: "Cyrene", Name: "昔涟", Selector: "anthropic/claude-opus-5-5:high", InCycle: true},
+		{Role: "Mare", Name: "Mare the Fair", Selector: "openai/gpt-6.1:high", InCycle: true},
+		{Role: "Hyacinthia", Selector: "google/gemini-4-pro:high", InCycle: true},
+		{Role: "Nahida", Selector: "deepseek/deepseek-v4:high", InCycle: true},
+		{Role: "Kafka", Selector: "openrouter/qwen/qwen3-max:exacto", InCycle: true},
+		{Role: "default", Selector: "@Cyrene"},
+	}
+	want = append(want, KnownRole{Role: "smol"}, KnownRole{Role: "slow"}, KnownRole{Role: "vision", Name: "看"})
+	want = append(want, builtinTail("default", "smol", "slow", "vision")...)
+	assert.Equal(t, want, got, "modelTags 里出现但不在 modelRoles / 内置中的 zeta 不算")
+
+	got, err = ParseKnownRoles([]byte(`
+cycleOrder: [task, Mare]
+modelRoles:
+  Zed: z/z
+  task: t/t
+  Mare: m/m
+  apple: [a/a, b/b]
+  '  ': x/x
+  7: n/n
+  vision: v/v
+`))
+	require.NoError(t, err)
+	want = []KnownRole{
+		{Role: "task", Selector: "t/t", InCycle: true},
+		{Role: "Mare", Selector: "m/m", InCycle: true},
+		{Role: "Zed", Selector: "z/z"},
+		{Role: "apple", Selector: "a/a, b/b"},
+		{Role: "vision", Selector: "v/v"},
+	}
+	want = append(want, builtinTail("task", "vision")...)
+	assert.Equal(t, want, got, "cycleOrder 里的内置 role 只出现一次；非字符串与空白键忽略")
+
+	_, err = ParseKnownRoles([]byte("- a\n"))
+	require.Error(t, err)
+}
+
+func TestHomeKnownRoles(t *testing.T) {
+	h, err := NewHome(t.TempDir())
+	require.NoError(t, err)
+	defaults, err := ParseKnownRoles(nil)
+	require.NoError(t, err)
+
+	got, err := h.KnownRoles()
+	require.NoError(t, err, "文件不存在按缺省")
+	assert.Equal(t, defaults, got)
+
+	write := func(s string) {
+		require.NoError(t, os.WriteFile(filepath.Join(h.Dir(), ConfigFile), []byte(s), 0o600))
+	}
+	write("cycleOrder: [Mare]\nmodelRoles: { Mare: a/b, plan: p/q }\n")
+	got, err = h.KnownRoles()
+	require.NoError(t, err)
+	require.Len(t, got, 1+len(BuiltinRoles))
+	assert.Equal(t, KnownRole{Role: "Mare", Selector: "a/b", InCycle: true}, got[0])
+	assert.Equal(t, KnownRole{Role: "plan", Selector: "p/q"}, got[1], "modelRoles 里的内置 role 排在其余内置 role 之前")
+	assert.Equal(t, "default", got[2].Role)
+
+	write("cycleOrder: [Mare\n")
+	got, err = h.KnownRoles()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ConfigFile)
+	assert.Equal(t, defaults, got, "解析失败返回缺省配置下的已知 role")
 }

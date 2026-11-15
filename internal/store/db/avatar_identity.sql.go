@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteAgentAvatar = `-- name: DeleteAgentAvatar :exec
+DELETE FROM agent_avatars WHERE name = ?1
+`
+
+func (q *Queries) DeleteAgentAvatar(ctx context.Context, name string) error {
+	_, err := q.db.ExecContext(ctx, deleteAgentAvatar, name)
+	return err
+}
+
 const deleteRoleAvatar = `-- name: DeleteRoleAvatar :exec
 DELETE FROM role_avatars WHERE role = ?1
 `
@@ -16,6 +25,23 @@ DELETE FROM role_avatars WHERE role = ?1
 func (q *Queries) DeleteRoleAvatar(ctx context.Context, role string) error {
 	_, err := q.db.ExecContext(ctx, deleteRoleAvatar, role)
 	return err
+}
+
+const getAgentAvatar = `-- name: GetAgentAvatar :one
+SELECT name, avatar_icon, avatar_image FROM agent_avatars WHERE name = ?1
+`
+
+type GetAgentAvatarRow struct {
+	Name        string  `json:"name"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+}
+
+func (q *Queries) GetAgentAvatar(ctx context.Context, name string) (GetAgentAvatarRow, error) {
+	row := q.db.QueryRowContext(ctx, getAgentAvatar, name)
+	var i GetAgentAvatarRow
+	err := row.Scan(&i.Name, &i.AvatarIcon, &i.AvatarImage)
+	return i, err
 }
 
 const getOwnerAgentIdentity = `-- name: GetOwnerAgentIdentity :one
@@ -57,6 +83,19 @@ func (q *Queries) GetOwnerAssistantIdentity(ctx context.Context) (GetOwnerAssist
 	return i, err
 }
 
+const getOwnerNewThreadTarget = `-- name: GetOwnerNewThreadTarget :one
+
+SELECT new_thread_target FROM owner WHERE id = 1
+`
+
+// Composer preference: default target for new threads ('role' | 'assistant').
+func (q *Queries) GetOwnerNewThreadTarget(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getOwnerNewThreadTarget)
+	var new_thread_target string
+	err := row.Scan(&new_thread_target)
+	return new_thread_target, err
+}
+
 const getOwnerUserIdentity = `-- name: GetOwnerUserIdentity :one
 
 SELECT user_avatar_icon, user_avatar_image FROM owner WHERE id = 1
@@ -90,6 +129,41 @@ func (q *Queries) GetRoleAvatar(ctx context.Context, role string) (GetRoleAvatar
 	var i GetRoleAvatarRow
 	err := row.Scan(&i.Role, &i.AvatarIcon, &i.AvatarImage)
 	return i, err
+}
+
+const listAgentAvatars = `-- name: ListAgentAvatars :many
+
+SELECT name, avatar_icon, avatar_image FROM agent_avatars ORDER BY name
+`
+
+type ListAgentAvatarsRow struct {
+	Name        string  `json:"name"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+}
+
+// Agent avatars (omp subagent definitions, keyed by frontmatter name): a row exists iff the agent has an avatar.
+func (q *Queries) ListAgentAvatars(ctx context.Context) ([]ListAgentAvatarsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentAvatars)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentAvatarsRow{}
+	for rows.Next() {
+		var i ListAgentAvatarsRow
+		if err := rows.Scan(&i.Name, &i.AvatarIcon, &i.AvatarImage); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRoleAvatars = `-- name: ListRoleAvatars :many
@@ -166,6 +240,18 @@ func (q *Queries) SetOwnerAssistantIdentity(ctx context.Context, arg SetOwnerAss
 	return result.RowsAffected()
 }
 
+const setOwnerNewThreadTarget = `-- name: SetOwnerNewThreadTarget :execrows
+UPDATE owner SET new_thread_target = ?1 WHERE id = 1
+`
+
+func (q *Queries) SetOwnerNewThreadTarget(ctx context.Context, newThreadTarget string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setOwnerNewThreadTarget, newThreadTarget)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setOwnerUserIdentity = `-- name: SetOwnerUserIdentity :execrows
 UPDATE owner SET user_avatar_icon = ?1, user_avatar_image = ?2 WHERE id = 1
 `
@@ -181,6 +267,30 @@ func (q *Queries) SetOwnerUserIdentity(ctx context.Context, arg SetOwnerUserIden
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertAgentAvatar = `-- name: UpsertAgentAvatar :exec
+INSERT INTO agent_avatars (name, avatar_icon, avatar_image, updated_at)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT (name) DO UPDATE SET avatar_icon = excluded.avatar_icon, avatar_image = excluded.avatar_image,
+    updated_at = excluded.updated_at
+`
+
+type UpsertAgentAvatarParams struct {
+	Name        string  `json:"name"`
+	AvatarIcon  *string `json:"avatarIcon"`
+	AvatarImage *string `json:"avatarImage"`
+	UpdatedAt   int64   `json:"updatedAt"`
+}
+
+func (q *Queries) UpsertAgentAvatar(ctx context.Context, arg UpsertAgentAvatarParams) error {
+	_, err := q.db.ExecContext(ctx, upsertAgentAvatar,
+		arg.Name,
+		arg.AvatarIcon,
+		arg.AvatarImage,
+		arg.UpdatedAt,
+	)
+	return err
 }
 
 const upsertRoleAvatar = `-- name: UpsertRoleAvatar :exec

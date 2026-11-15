@@ -391,6 +391,9 @@ func TestM9MigrationDownUp(t *testing.T) {
 
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	assert.EqualValues(t, 24, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	assert.EqualValues(t, 23, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)

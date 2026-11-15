@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -15,6 +16,10 @@ const ConfigFile = "config.yml"
 // DefaultCycleOrder 是 omp `cycleOrder` 的缺省值。
 var DefaultCycleOrder = []string{"smol", "default", "slow"}
 
+// BuiltinRoles 是 omp 自带的 role（未在 config.yml 中出现也存在）；与前端 web/src/lib/model-roles.ts 的
+// BUILTIN_ROLE_NAMES 保持一致。
+var BuiltinRoles = []string{"default", "smol", "slow", "vision", "plan", "commit", "tiny", "memory", "task", "advisor", "widget"}
+
 // CycleRole 是 cycleOrder 里的一个 role。
 type CycleRole struct {
 	Role string
@@ -25,22 +30,26 @@ type CycleRole struct {
 	Selector string
 }
 
+// KnownRole 是 Oryn 认识的一个 role：cycleOrder、modelRoles 的键与 BuiltinRoles 的并集中的一项。
+type KnownRole struct {
+	Role string
+	// Name 是 `modelTags.<role>.name`；没有为空。
+	Name string
+	// Selector 同 CycleRole.Selector。
+	Selector string
+	// InCycle 表示该 role 在 cycleOrder 里。
+	InCycle bool
+}
+
 // ParseCycleRoles 从 config.yml 的内容解析出 cycleOrder 里的 role（按其顺序）。
 // 内容为空按缺省配置；YAML 不合法或顶层不是映射返回错误。
 func ParseCycleRoles(config []byte) ([]CycleRole, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(config, &doc); err != nil {
-		return nil, fmt.Errorf("%s 不是合法的 YAML: %w", ConfigFile, err)
+	root, err := parseConfigRoot(config)
+	if err != nil {
+		return nil, err
 	}
-	var root *yaml.Node
-	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
-		root = deref(doc.Content[0])
-	}
-	if root == nil || isNull(root) {
+	if root == nil {
 		return defaultCycleRoles(), nil
-	}
-	if root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%s 的顶层须是映射", ConfigFile)
 	}
 	order := cycleOrder(mapGetDeref(root, "cycleOrder"))
 	roles := mapGetDeref(root, "modelRoles")
@@ -52,19 +61,106 @@ func ParseCycleRoles(config []byte) ([]CycleRole, error) {
 	return out, nil
 }
 
+// ParseKnownRoles 从 config.yml 的内容解析出全部已知 role：先是 cycleOrder（按其顺序，InCycle），
+// 再是 modelRoles 里其余的键（按字典序），最后是 BuiltinRoles 里其余的项（按其顺序）。大小写原样区分。
+// 内容为空按缺省配置；YAML 不合法或顶层不是映射返回错误。
+func ParseKnownRoles(config []byte) ([]KnownRole, error) {
+	root, err := parseConfigRoot(config)
+	if err != nil {
+		return nil, err
+	}
+	return knownRoles(root), nil
+}
+
+// knownRoles 按 ParseKnownRoles 的规则合并；root 为 nil 按缺省配置。
+func knownRoles(root *yaml.Node) []KnownRole {
+	roles := mapGetDeref(root, "modelRoles")
+	tags := mapGetDeref(root, "modelTags")
+	order := cycleOrder(mapGetDeref(root, "cycleOrder"))
+	out := make([]KnownRole, 0, len(order)+len(BuiltinRoles))
+	seen := make(map[string]bool, cap(out))
+	add := func(role string, inCycle bool) {
+		if seen[role] {
+			return
+		}
+		seen[role] = true
+		out = append(out, KnownRole{Role: role, Name: tagName(tags, role), Selector: selector(mapGetDeref(roles, role)), InCycle: inCycle})
+	}
+	for _, r := range order {
+		add(r, true)
+	}
+	var extra []string
+	if roles != nil && roles.Kind == yaml.MappingNode {
+		for _, kv := range mapPairs(roles) {
+			if k, ok := str(kv[0]); ok && k != "" && !seen[k] {
+				extra = append(extra, k)
+			}
+		}
+	}
+	slices.Sort(extra)
+	for _, r := range extra {
+		add(r, false)
+	}
+	for _, r := range BuiltinRoles {
+		add(r, false)
+	}
+	return out
+}
+
+// parseConfigRoot 解析 config.yml 的顶层映射；内容为空或为 null 返回 nil。
+func parseConfigRoot(config []byte) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(config, &doc); err != nil {
+		return nil, fmt.Errorf("%s 不是合法的 YAML: %w", ConfigFile, err)
+	}
+	var root *yaml.Node
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) > 0 {
+		root = deref(doc.Content[0])
+	}
+	if root == nil || isNull(root) {
+		return nil, nil
+	}
+	if root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s 的顶层须是映射", ConfigFile)
+	}
+	return root, nil
+}
+
+// readConfig 读 omp-home 的 config.yml；文件不存在返回 nil, nil。
+func (h *Home) readConfig() ([]byte, error) {
+	b, _, err := h.Get(ConfigFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取 %s: %w", ConfigFile, err)
+	}
+	return b, nil
+}
+
 // CycleRoles 读 omp-home 的 config.yml 并解析；文件不存在按缺省配置。
 // 读取或解析失败时返回缺省 cycleOrder（Name / Selector 为空）与该错误。
 func (h *Home) CycleRoles() ([]CycleRole, error) {
-	b, _, err := h.Get(ConfigFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		return defaultCycleRoles(), nil
-	}
+	b, err := h.readConfig()
 	if err != nil {
-		return defaultCycleRoles(), fmt.Errorf("读取 %s: %w", ConfigFile, err)
+		return defaultCycleRoles(), err
 	}
 	roles, err := ParseCycleRoles(b)
 	if err != nil {
 		return defaultCycleRoles(), err
+	}
+	return roles, nil
+}
+
+// KnownRoles 读 omp-home 的 config.yml 并按 ParseKnownRoles 解析；文件不存在按缺省配置。
+// 读取或解析失败时返回缺省配置下的已知 role（缺省 cycleOrder 加 BuiltinRoles，Name / Selector 为空）与该错误。
+func (h *Home) KnownRoles() (roles []KnownRole, configErr error) {
+	b, err := h.readConfig()
+	if err == nil {
+		roles, err = ParseKnownRoles(b)
+	}
+	if err != nil {
+		return knownRoles(nil), err
 	}
 	return roles, nil
 }
