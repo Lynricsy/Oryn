@@ -79,6 +79,36 @@ type ompApplier struct {
 	mu     sync.Mutex
 	timers map[string]*time.Timer // 层（"" = 全局，否则项目 id）→ 防抖定时器
 	subs   []func(ApplyReport)
+	// requested / applied：每层已接受的写入次数与已下发完成时覆盖到的次数；requested > applied 即「待下发」。
+	requested, applied map[string]uint64
+	last               map[string]OmpApplyState // 每层最近一次下发的结果
+}
+
+// OmpApplyState 是一层 omp 配置的下发进度（apply-status 的 push）。
+type OmpApplyState struct {
+	// Pending 为真：有已接受（ScheduleOmpApply）但尚未下发完成的写入。
+	Pending bool
+	// AppliedAt 是最近一次下发完成的时间；零值 = 还没下发过。
+	AppliedAt time.Time
+	// Failed 是最近一次下发里失败的 orb。
+	Failed []OrbApply
+	// Err 是最近一次下发整体失败的原因。
+	Err string
+}
+
+// OmpApplyState 返回一层（projectID 空 = 全局）的下发进度。写入接口在应答前调用 ScheduleOmpApply，
+// 所以写入成功后读到 Pending=false 即表示这次写入已下发、订阅方（会话级分类）也已处理完。
+func (s *Service) OmpApplyState(projectID string) OmpApplyState {
+	a := s.ompApplier()
+	if a == nil {
+		return OmpApplyState{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := a.last[projectID]
+	st.Failed = slices.Clone(st.Failed)
+	st.Pending = a.requested[projectID] > a.applied[projectID]
+	return st
 }
 
 // EnableOmpApply 开启立即下发；须在 API 对外服务之前调用。全局层还没有下发记录时以当前 omp-home 为基线
@@ -87,7 +117,8 @@ func (s *Service) EnableOmpApply(cfg OmpApplyConfig) error {
 	if cfg.Debounce <= 0 {
 		cfg.Debounce = ompApplyDebounce
 	}
-	a := &ompApplier{cfg: cfg, timers: map[string]*time.Timer{}}
+	a := &ompApplier{cfg: cfg, timers: map[string]*time.Timer{},
+		requested: map[string]uint64{}, applied: map[string]uint64{}, last: map[string]OmpApplyState{}}
 	if _, err := os.Stat(filepath.Join(a.layerDir(""), appliedManifest)); errors.Is(err, os.ErrNotExist) {
 		files, err := a.load("")
 		if err != nil {
@@ -126,6 +157,7 @@ func (s *Service) ScheduleOmpApply(projectID string) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.requested[projectID]++
 	if t := a.timers[projectID]; t != nil {
 		t.Stop()
 	}
@@ -173,11 +205,35 @@ func (s *Service) applyLayer(ctx context.Context, projectID string) (ApplyReport
 	if a == nil {
 		return ApplyReport{}, errors.New("orbs: 未开启 omp 配置立即下发")
 	}
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+	// 这次下发读到的配置覆盖此刻之前接受的全部写入：完成（含失败）后把它们记为已下发
+	a.mu.Lock()
+	covers := a.requested[projectID]
+	a.mu.Unlock()
+	rep, err := s.applyLayerLocked(ctx, a, projectID)
+	st := OmpApplyState{AppliedAt: time.Now()}
+	if err != nil {
+		st.Err = err.Error()
+	}
+	for _, o := range rep.Orbs {
+		if !o.OK {
+			st.Failed = append(st.Failed, o)
+		}
+	}
+	a.mu.Lock()
+	a.applied[projectID] = max(a.applied[projectID], covers)
+	a.last[projectID] = st
+	a.mu.Unlock()
+	return rep, err
+}
+
+// applyLayerLocked 是 applyLayer 的主体，调用方持有 runMu。订阅方（会话级分类）在它返回前处理完，
+// 下发进度随后才记为完成，所以读到 Pending=false 时 apply-status 的会话部分已经落定。
+func (s *Service) applyLayerLocked(ctx context.Context, a *ompApplier, projectID string) (ApplyReport, error) {
 	if s.setup == nil {
 		return ApplyReport{}, errors.New("orbs: 没有 setup 来源")
 	}
-	a.runMu.Lock()
-	defer a.runMu.Unlock()
 	files, err := a.load(projectID)
 	if err != nil {
 		return ApplyReport{}, err

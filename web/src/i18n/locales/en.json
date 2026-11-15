@@ -1114,7 +1114,12 @@
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
 		"apply": {
+			"pushing": "Pushing to running orbs…",
 			"pushed": "Pushed. Idle sessions pick it up now; sessions mid-turn pick it up when the turn ends.",
+			"pushFailedTitle_one": "Couldn't push to {{count}} orb",
+			"pushFailedTitle_other": "Couldn't push to {{count}} orbs",
+			"pushError": "Push failed: {{error}}",
+			"pushFailedHint": "These orbs get the latest config the next time they start or resume; saving again also retries.",
 			"restartTitle_one": "{{count}} session needs a restart to apply changes",
 			"restartTitle_other": "{{count}} sessions need a restart to apply changes",
 			"restartHint": "Hooks, extension modules, custom tools, SYSTEM.md and similar changes only apply after a restart. Sessions restart once idle, so running turns aren't interrupted; the next message resumes the same session.",

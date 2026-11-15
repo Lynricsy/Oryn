@@ -129,16 +129,26 @@ func TestApplyOmpHomeRefreshesEgress(t *testing.T) {
 	assert.Equal(t, "https://a.example.com", pol.Routes["p1"].Origin)
 
 	home.put("models.yml", modelsYml("p2", "https://b.example.com/v2"))
+	assert.False(t, h.svc.OmpApplyState("").Pending)
 	done := make(chan ApplyReport, 1)
-	h.svc.OnOmpApplied(func(r ApplyReport) { done <- r })
+	// 订阅方处理时这次写入仍算待下发：读到 Pending=false 时会话级分类一定已落定
+	pendingInSub := make(chan bool, 1)
+	h.svc.OnOmpApplied(func(r ApplyReport) { pendingInSub <- h.svc.OmpApplyState("").Pending; done <- r })
 	h.svc.ScheduleOmpApply("") // 防抖后在后台下发
 	h.svc.ScheduleOmpApply("")
+	assert.True(t, h.svc.OmpApplyState("").Pending, "已接受的写入在下发完成前是待下发")
 	var rep ApplyReport
 	select {
 	case rep = <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("防抖后没有下发")
 	}
+	assert.True(t, <-pendingInSub)
+	require.Eventually(t, func() bool { return !h.svc.OmpApplyState("").Pending }, 5*time.Second, 10*time.Millisecond)
+	st := h.svc.OmpApplyState("")
+	assert.False(t, st.AppliedAt.IsZero())
+	assert.Empty(t, st.Failed)
+	assert.Empty(t, st.Err)
 	assert.Equal(t, []string{"models.yml"}, rep.Changed)
 	require.Len(t, rep.Orbs, 1)
 	assert.True(t, rep.Orbs[0].OK, rep.Orbs[0].Err)

@@ -1,6 +1,6 @@
 /**
  * ApplyStatusBanner：列出需重启的会话与原因，「重启这些会话」POST 后显示已安排；
- * 写入后稍等再取生效状态并提示已下发；没有可报告的内容时不渲染。
+ * 写入后按服务端 push.pending 显示正在下发 / 已下发；有 orb 没下发成功时列出；没有可报告的内容时不渲染。
  */
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -15,7 +15,8 @@ import {
 } from "../../pages/settings/agent/agent-config-mock";
 import { ApplyStatusBanner } from "./ApplyStatusBanner";
 
-const EMPTY: ApplyStatus = { threads: [], pendingReloads: 0 };
+const IDLE_PUSH: ApplyStatus["push"] = { pending: false, failed: [] };
+const EMPTY: ApplyStatus = { threads: [], pendingReloads: 0, push: IDLE_PUSH };
 
 let status: ApplyStatus = EMPTY;
 let restarts = 0;
@@ -29,6 +30,12 @@ const fetchMock = vi.fn(
 		const { pathname } = new URL(req.url, "http://x");
 		if (pathname === "/api/v1/agent-config/apply-status")
 			return Response.json(status);
+		// 服务端在应答写入之前就登记了待下发
+		if (
+			pathname.startsWith("/api/v1/agent-config/files/") &&
+			req.method === "PUT"
+		)
+			status = { ...status, push: { ...status.push, pending: true } };
 		if (pathname === "/api/v1/agent-config/restart-sessions") {
 			expect(req.method).toBe("POST");
 			restarts++;
@@ -75,6 +82,7 @@ it("列出需重启的会话与原因；点「重启这些会话」后 POST 并�
 			},
 		],
 		pendingReloads: 2,
+		push: IDLE_PUSH,
 	};
 	renderPage(<ApplyStatusBanner />);
 
@@ -112,7 +120,7 @@ function Writer() {
 	);
 }
 
-it("写入后等服务端防抖再取生效状态，并提示已下发", async () => {
+it("写入后显示正在下发，服务端下发完毕后提示已下发并带出需重启的会话", async () => {
 	renderPage(
 		<>
 			<Writer />
@@ -120,6 +128,12 @@ it("写入后等服务端防抖再取生效状态，并提示已下发", async (
 		</>,
 	);
 	await waitFor(() => expect(applyStatusCalls()).toBe(1));
+	fireEvent.click(screen.getByRole("button", { name: "写入" }));
+
+	expect(await screen.findByText(/正在下发/)).toBeInTheDocument();
+	expect(screen.queryByText(/^已下发/)).not.toBeInTheDocument();
+
+	// 下发完成：会话级分类随之落定
 	status = {
 		threads: [
 			{
@@ -131,13 +145,28 @@ it("写入后等服务端防抖再取生效状态，并提示已下发", async (
 			},
 		],
 		pendingReloads: 0,
+		push: { pending: false, appliedAt: Date.now(), failed: [] },
 	};
-	fireEvent.click(screen.getByRole("button", { name: "写入" }));
-
 	expect(
 		await screen.findByText(/^已下发/, undefined, { timeout: 3000 }),
 	).toBeInTheDocument();
-	expect(applyStatusCalls()).toBe(2);
+	expect(screen.queryByText(/正在下发/)).not.toBeInTheDocument();
 	expect(screen.getByText("1 个会话需重启后生效")).toBeInTheDocument();
 	expect(screen.getByText("未命名会话")).toBeInTheDocument();
+});
+
+it("最近一次下发有 orb 失败时列出 orb 与原因，不显示已下发", async () => {
+	status = {
+		...EMPTY,
+		push: {
+			pending: false,
+			appliedAt: Date.now(),
+			failed: [{ orbId: "orb-7", error: "orb 未就绪" }],
+		},
+	};
+	renderPage(<ApplyStatusBanner />);
+	expect(await screen.findByText("1 个 orb 没能下发")).toBeInTheDocument();
+	expect(screen.getByText("orb-7")).toBeInTheDocument();
+	expect(screen.getByText("orb 未就绪")).toBeInTheDocument();
+	expect(screen.queryByText(/^已下发/)).not.toBeInTheDocument();
 });

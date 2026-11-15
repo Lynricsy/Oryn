@@ -64,15 +64,31 @@ func (s *Server) ompConfigChanged(projectID string) {
 	}
 }
 
-// GetAgentConfigApplyStatus 返回 omp 配置在会话上的生效状态：需重启的会话与等待 reload 的会话数（M13 6.3）。
+// GetAgentConfigApplyStatus 返回 omp 配置在会话上的生效状态：需重启的会话、等待 reload 的会话数，以及全局层的
+// 下发进度（M13 6.3）。进度在会话分类之前读：读到 pending=false 时，后面读到的会话部分一定已含这次下发的结果。
 func (s *Server) GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.threadsSvc(w)
 	if !ok {
 		return
 	}
+	push := apigen.AgentConfigPushState{Failed: []apigen.AgentConfigPushFailure{}}
+	if s.Orbs != nil && s.Orbs.Service != nil {
+		ps := s.Orbs.Service.OmpApplyState("")
+		push.Pending = ps.Pending
+		if !ps.AppliedAt.IsZero() {
+			at := ps.AppliedAt.UnixMilli()
+			push.AppliedAt = &at
+		}
+		for _, f := range ps.Failed {
+			push.Failed = append(push.Failed, apigen.AgentConfigPushFailure{OrbID: f.OrbID, Error: f.Err})
+		}
+		if ps.Err != "" {
+			push.Error = &ps.Err
+		}
+	}
 	st := svc.ApplyStatus(r.Context())
 	out := apigen.AgentConfigApplyStatus{
-		Threads: make([]apigen.AgentConfigRestartThread, 0, len(st.Restart)), PendingReloads: st.PendingReloads,
+		Threads: make([]apigen.AgentConfigRestartThread, 0, len(st.Restart)), PendingReloads: st.PendingReloads, Push: push,
 	}
 	for _, n := range st.Restart {
 		out.Threads = append(out.Threads, apigen.AgentConfigRestartThread{

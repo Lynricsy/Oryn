@@ -6030,7 +6030,7 @@ components:
     AgentConfigApplyStatus:
       type: object
       description: omp 配置在会话上的生效状态（M13）
-      required: [threads, pendingReloads]
+      required: [threads, pendingReloads, push]
       properties:
         threads:
           type: array
@@ -6039,6 +6039,34 @@ components:
         pendingReloads:
           type: integer
           description: 回合仍在进行、等会话静止才能 `reload_plugins` 的会话数
+        push: { $ref: '#/components/schemas/AgentConfigPushState' }
+    AgentConfigPushState:
+      type: object
+      description: |
+        全局 omp-home 的下发进度。写入接口在应答之前就登记了待下发，所以写入成功之后读到 `pending=false`
+        即表示这次写入已经下发完毕、会话级分类（`threads` / `pendingReloads`）也已落定。
+      required: [pending, failed]
+      properties:
+        pending:
+          type: boolean
+          description: 有已接受但尚未下发完成的写入（防抖中或正在下发）
+        appliedAt:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 最近一次下发完成的时间；从未下发过则省略
+        failed:
+          type: array
+          description: 最近一次下发里失败的 orb（它们在下次 setup / resume 时同步）
+          items: { $ref: '#/components/schemas/AgentConfigPushFailure' }
+        error:
+          type: string
+          description: 最近一次下发整体失败的原因（没能读取配置、列出 orb 等）；成功则省略
+    AgentConfigPushFailure:
+      type: object
+      required: [orbId, error]
+      properties:
+        orbId: { type: string }
+        error: { type: string }
     AgentConfigRestartThread:
       type: object
       required: [threadId, kind, title, reasons, scheduled]

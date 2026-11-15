@@ -2503,6 +2503,10 @@ type AgentConfigApplyStatus struct {
 	// PendingReloads 回合仍在进行、等会话静止才能 `reload_plugins` 的会话数
 	PendingReloads int `json:"pendingReloads"`
 
+	// Push 全局 omp-home 的下发进度。写入接口在应答之前就登记了待下发，所以写入成功之后读到 `pending=false`
+	// 即表示这次写入已经下发完毕、会话级分类（`threads` / `pendingReloads`）也已落定。
+	Push AgentConfigPushState `json:"push"`
+
 	// Threads 需重启才能让配置生效的会话，按线程 id 排序
 	Threads []AgentConfigRestartThread `json:"threads"`
 }
@@ -2531,6 +2535,28 @@ type AgentConfigImportResult struct {
 	ExtractedSecrets []string             `json:"extractedSecrets"`
 	Files            []AgentConfigFile    `json:"files"`
 	Warnings         []AgentConfigWarning `json:"warnings"`
+}
+
+// AgentConfigPushFailure defines model for AgentConfigPushFailure.
+type AgentConfigPushFailure struct {
+	Error string `json:"error"`
+	OrbID string `json:"orbId"`
+}
+
+// AgentConfigPushState 全局 omp-home 的下发进度。写入接口在应答之前就登记了待下发，所以写入成功之后读到 `pending=false`
+// 即表示这次写入已经下发完毕、会话级分类（`threads` / `pendingReloads`）也已落定。
+type AgentConfigPushState struct {
+	// AppliedAt 最近一次下发完成的时间；从未下发过则省略
+	AppliedAt *TimestampMs `json:"appliedAt,omitempty"`
+
+	// Error 最近一次下发整体失败的原因（没能读取配置、列出 orb 等）；成功则省略
+	Error *string `json:"error,omitempty"`
+
+	// Failed 最近一次下发里失败的 orb（它们在下次 setup / resume 时同步）
+	Failed []AgentConfigPushFailure `json:"failed"`
+
+	// Pending 有已接受但尚未下发完成的写入（防抖中或正在下发）
+	Pending bool `json:"pending"`
 }
 
 // AgentConfigRestartResult defines model for AgentConfigRestartResult.

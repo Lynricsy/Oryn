@@ -4443,6 +4443,25 @@ export interface components {
             threads: components["schemas"]["AgentConfigRestartThread"][];
             /** @description 回合仍在进行、等会话静止才能 `reload_plugins` 的会话数 */
             pendingReloads: number;
+            push: components["schemas"]["AgentConfigPushState"];
+        };
+        /**
+         * @description 全局 omp-home 的下发进度。写入接口在应答之前就登记了待下发，所以写入成功之后读到 `pending=false`
+         *     即表示这次写入已经下发完毕、会话级分类（`threads` / `pendingReloads`）也已落定。
+         */
+        AgentConfigPushState: {
+            /** @description 有已接受但尚未下发完成的写入（防抖中或正在下发） */
+            pending: boolean;
+            /** @description 最近一次下发完成的时间；从未下发过则省略 */
+            appliedAt?: components["schemas"]["TimestampMs"];
+            /** @description 最近一次下发里失败的 orb（它们在下次 setup / resume 时同步） */
+            failed: components["schemas"]["AgentConfigPushFailure"][];
+            /** @description 最近一次下发整体失败的原因（没能读取配置、列出 orb 等）；成功则省略 */
+            error?: string;
+        };
+        AgentConfigPushFailure: {
+            orbId: string;
+            error: string;
         };
         AgentConfigRestartThread: {
             threadId: string;

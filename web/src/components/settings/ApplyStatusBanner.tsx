@@ -1,6 +1,7 @@
 /**
- * 设置 → Agent 各子页顶部的生效状态（R29、R30）：保存后提示已下发；有会话要重启才能生效时列出会话与原因，
- * 给「重启这些会话」；回合中的会话说明空闲时自动重新加载。什么都没有时不渲染。
+ * 设置 → Agent 各子页顶部的生效状态（R29、R30）：保存后先显示「正在下发」，服务端下发完毕再提示已下发；
+ * 有 orb 没下发成功时列出来；有会话要重启才能生效时列出会话与原因，给「重启这些会话」；回合中的会话说明
+ * 空闲时自动重新加载。什么都没有时不渲染。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -9,12 +10,12 @@ import {
 	type ApplyStatusThread,
 	restartSessions,
 	useApplyStatus,
-	useLastPush,
+	usePushProgress,
 } from "../../api/agent-config-queries";
 import { Badge, Callout } from "../ui/data";
 import { Button, ErrorText, Spinner } from "../ui/primitives";
 
-/** 「已下发」的显示时长：R29 承诺 10 秒内写到所有 orb。 */
+/** 「已下发」的显示时长。 */
 const PUSHED_VISIBLE_MS = 10_000;
 
 /** `at` 之后 `ms` 毫秒内为 true，到点自动转 false。 */
@@ -33,14 +34,30 @@ function useRecent(at: number | undefined, ms: number): boolean {
 export function ApplyStatusBanner() {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
-	const { data } = useApplyStatus();
-	const pushed = useRecent(useLastPush(), PUSHED_VISIBLE_MS);
+	const status = useApplyStatus();
+	const progress = usePushProgress(status);
+	const pushing = progress.phase === "pushing";
+	const pushed = useRecent(
+		progress.phase === "done" ? progress.doneAt : undefined,
+		PUSHED_VISIBLE_MS,
+	);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 
+	const data = status.data;
 	const threads = data?.threads ?? [];
 	const pendingReloads = data?.pendingReloads ?? 0;
-	if (!pushed && threads.length === 0 && pendingReloads === 0) return null;
+	const failed = data?.push.failed ?? [];
+	const pushError = data?.push.error;
+	const pushFailed = failed.length > 0 || pushError !== undefined;
+	if (
+		!pushing &&
+		!pushed &&
+		!pushFailed &&
+		threads.length === 0 &&
+		pendingReloads === 0
+	)
+		return null;
 	const waiting = threads.some((th) => !th.scheduled);
 
 	const restart = async () => {
@@ -57,6 +74,42 @@ export function ApplyStatusBanner() {
 
 	return (
 		<div className="flex flex-col gap-1.5">
+			{pushing && (
+				<Callout tone="neutral" role="status">
+					<span className="inline-flex items-center gap-1.5">
+						<Spinner size={12} />
+						{t("agentPages.apply.pushing")}
+					</span>
+				</Callout>
+			)}
+			{!pushing && pushFailed && (
+				<Callout
+					tone="warn"
+					role="status"
+					title={
+						pushError !== undefined
+							? t("agentPages.apply.pushError", { error: pushError })
+							: t("agentPages.apply.pushFailedTitle", { count: failed.length })
+					}
+				>
+					<p>{t("agentPages.apply.pushFailedHint")}</p>
+					{failed.length > 0 && (
+						<ul className="mt-1 flex flex-col gap-1">
+							{failed.map((f) => (
+								<li
+									key={f.orbId}
+									className="flex min-w-0 flex-wrap gap-x-2 text-fg"
+								>
+									<code className="font-mono">{f.orbId}</code>
+									<span className="min-w-0 break-all text-muted">
+										{f.error}
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</Callout>
+			)}
 			{threads.length > 0 && (
 				<Callout
 					tone="warn"
@@ -104,7 +157,7 @@ export function ApplyStatusBanner() {
 					{t("agentPages.apply.pendingReloads", { count: pendingReloads })}
 				</Callout>
 			)}
-			{pushed && (
+			{pushed && !pushFailed && (
 				<Callout tone="ok" role="status">
 					{t("agentPages.apply.pushed")}
 				</Callout>

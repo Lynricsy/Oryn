@@ -1114,7 +1114,12 @@
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
 		"apply": {
+			"pushing": "正在下发到运行中的 orb……",
 			"pushed": "已下发：空闲的会话随即生效，正在跑回合的会话在回合结束后生效。",
+			"pushFailedTitle_one": "{{count}} 个 orb 没能下发",
+			"pushFailedTitle_other": "{{count}} 个 orb 没能下发",
+			"pushError": "下发失败：{{error}}",
+			"pushFailedHint": "这些 orb 会在下次启动或恢复时拿到最新配置；再保存一次也会重试。",
 			"restartTitle_one": "{{count}} 个会话需重启后生效",
 			"restartTitle_other": "{{count}} 个会话需重启后生效",
 			"restartHint": "hook、扩展模块、自定义工具、SYSTEM.md 等改动要重启会话才生效。会话空闲时才重启，正在跑的回合不受影响；下次发消息时带着原会话自动拉起。",

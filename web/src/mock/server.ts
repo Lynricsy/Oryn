@@ -567,6 +567,15 @@ export class MockServer {
 		{ reasons: Set<string>; scheduledAt?: number }
 	>();
 	applyReloads = { count: 0, until: 0 };
+	/** 全局 omp-home 的模拟下发：写入后 1 秒（服务端的防抖时长）完成。 */
+	applyPushAt?: number;
+		this.applyPushAt = Date.now() + 1_000;
+		const pushAt = this.applyPushAt;
+			push: {
+				pending: pushAt !== undefined && now < pushAt,
+				...(pushAt !== undefined && now >= pushAt ? { appliedAt: pushAt } : {}),
+				failed: [],
+			},
 
 	/** 全局 omp-home 的一次写入或删除：按 docs/protocol.md「会话级生效与懒重启」的分类记到线程上（`config.yml` 只比较 `disabledExtensions`）。 */
 	private noteOmpHomeChange(path: string, before: string | undefined): void {
