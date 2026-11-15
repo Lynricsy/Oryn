@@ -223,6 +223,8 @@ func (s *stack) dial() *wsClient {
 		}
 	}()
 	s.t.Cleanup(func() { _ = c.CloseNow() })
+	// 握手完成时 hub 可能还没登记本连接，此前的广播会丢；首条 index 在登记之后才发，等到它再返回
+	w.until(10*time.Second, func(m wsMsg) bool { return m.Type == "index" })
 	return w
 }
 
