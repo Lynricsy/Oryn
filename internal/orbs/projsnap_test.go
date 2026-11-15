@@ -545,7 +545,8 @@ func TestProjectSnapshotSkipped(t *testing.T) {
 	assert.Nil(t, none.ConfigHash, "无项目的 orb 没有配置哈希")
 }
 
-// 配额：超过 max_total_gb 时按 LRU 退役其它键的 ready 快照；剩下的都被 orb 引用着时拒绝建立。
+// 配额（LRU 缓存语义）：max_total_gb 只约束 ready 的快照。超过时按 LRU 退役其它键的 ready 快照，同键的不动；
+// 已退役但仍被 orb 引用的镜像属于引用它的 orb，不计入占用。
 func TestReserveSnapshotQuota(t *testing.T) {
 	e := newM11Env(t, nil, false, func(c *Config) { c.Snapshots.MaxTotalGB = 1 })
 	ctx := context.Background()
@@ -567,15 +568,75 @@ func TestReserveSnapshotQuota(t *testing.T) {
 	assert.Equal(t, SnapshotReady, e.snapshot(newer).State)
 	assert.Equal(t, SnapshotReady, e.snapshot(mine).State)
 
-	// 被 orb 引用着的退役快照仍占配额：再也腾不出来 → false
+	// 被 orb 引用着的退役快照（old）不计入占用；引用着的 ready 快照照样可以按 LRU 退役（镜像留给 orb）
 	for _, id := range []string{old, newer} {
 		orbID := ids.Orb()
 		require.NoError(t, e.st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: orbID, ProviderID: e.provID, Type: "small", Image: id, State: StateReady,
 			StateChangedAt: 1, TokenHash: ids.Hash(orbID), SnapshotOf: new(id), CreatedAt: 1}))
 	}
-	big := mk(prjA, "medium", gb, 30)
+	assert.True(t, e.svc.reserveSnapshotQuota(ctx, e.provID, prjB, "small"), "ready 合计 1GiB，不超")
+	assert.Equal(t, SnapshotReady, e.snapshot(newer).State)
+	big := mk(prjA, "medium", gb/2, 30)
+	assert.True(t, e.svc.reserveSnapshotQuota(ctx, e.provID, prjB, "small"))
+	assert.Equal(t, RetireQuota, retireReason(e.snapshot(newer)), "LRU 最旧的其它键先退役，即使仍被引用")
+	assert.Equal(t, SnapshotReady, e.snapshot(big).State)
+	assert.Equal(t, SnapshotReady, e.snapshot(mine).State)
+	assert.Zero(t, e.deleteJobs(newer), "被引用的退役快照不入删除队列")
+
+	// 只剩同键的 ready 快照也超限：腾不出来 → false（同键至多一份 ready：先退役 mine）
+	require.True(t, e.svc.retireSnapshot(ctx, mine, RetireSuperseded))
+	huge := mk(prjB, "small", 2*gb, 40)
 	assert.False(t, e.svc.reserveSnapshotQuota(ctx, e.provID, prjB, "small"))
 	assert.Equal(t, RetireQuota, retireReason(e.snapshot(big)))
+	assert.Equal(t, SnapshotReady, e.snapshot(huge).State)
+}
+
+// X9 回归：快照 A 被 orb 引用；另一个项目发布 B 后合计超限 → A 按 quota 退役（镜像留给引用它的 orb），B 保留。
+// 之后该项目的新 orb 命中 B、不再重拍；引用 A 的 orb 删除后 A 被回收。
+func TestSnapshotQuotaKeepsNewWhenOldPinned(t *testing.T) {
+	e := newM11Env(t, []string{FeatureRepoUpdate}, false, func(c *Config) { c.Snapshots.MaxTotalGB = 1 })
+	ctx := context.Background()
+	e.drv.mu.Lock()
+	e.drv.snapBytes = new(int64(600 << 20))
+	e.drv.mu.Unlock()
+	qa, qb := e.project("qa", nil), e.project("qb", nil)
+
+	e.createReady(CreateParams{ProjectID: qa})
+	rows := e.snapshots(qa)
+	require.Len(t, rows, 1)
+	a := rows[0]
+	pin := e.createReady(CreateParams{ProjectID: qa})
+	require.Equal(t, a.ID, derefStr(pin.SnapshotOf), "A 被 orb 引用")
+	require.Equal(t, 1, e.drv.countOps("snapshot"))
+
+	e.createReady(CreateParams{ProjectID: qb})
+	rows = e.snapshots(qb)
+	require.Len(t, rows, 1)
+	b := rows[0]
+	assert.Equal(t, SnapshotReady, e.snapshot(b.ID).State, "新发布的 B 不因被引用的 A 而退役")
+	assert.Equal(t, SnapshotRetired, e.snapshot(a.ID).State)
+	assert.Equal(t, RetireQuota, retireReason(e.snapshot(a.ID)))
+	e.svc.sweepSnapshots(ctx)
+	assert.Zero(t, e.deleteJobs(a.ID), "A 仍被引用：镜像不入删除队列")
+	assert.Zero(t, e.deleteJobs(b.ID))
+	require.Equal(t, 2, e.drv.countOps("snapshot"))
+
+	// 第二台 qb orb 命中 B，不再新拍
+	b2 := e.createReady(CreateParams{ProjectID: qb})
+	assert.Equal(t, b.ID, derefStr(b2.SnapshotOf))
+	assert.Equal(t, 2, e.drv.countOps("snapshot"))
+	assert.Equal(t, SnapshotReady, e.snapshot(b.ID).State)
+
+	// 删掉引用 A 的 orb 后，A 被回收
+	require.NoError(t, e.svc.Delete(ctx, pin.ID))
+	e.waitState(pin.ID, StateDeleted, 10*time.Second)
+	e.svc.sweepSnapshots(ctx)
+	require.Eventually(t, func() bool {
+		_, err := e.st.Q.GetProjectSnapshot(ctx, a.ID)
+		return err != nil
+	}, 5*time.Second, 20*time.Millisecond)
+	assert.Contains(t, e.deletedSnaps(), a.ID)
+	assert.Equal(t, SnapshotReady, e.snapshot(b.ID).State)
 }
 
 // 回收器：building 残留超过 15 分钟 → 删行并入队清理；退役快照的回收任务失败后 10 分钟内不重复入队。

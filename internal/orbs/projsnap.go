@@ -373,10 +373,8 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 		s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": note, "snapshotId": snapID, "error": err.Error()})
 		return true
 	}
-	// 发布后合计仍超 max_total_gb（腾不出的都被 orb 引用着）：这份新快照不保留
-	if !s.reserveSnapshotQuota(ctx, prov.ID, prj.ID, orb.Type) && s.retireSnapshot(ctx, snapID, RetireQuota) {
-		s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": SnapshotRetired, "snapshotId": snapID, "reason": RetireQuota})
-	}
+	// 发布后合计超出 max_total_gb：按 LRU 淘汰其它键的 ready 快照；刚发布的这份不动（同键跳过）
+	s.reserveSnapshotQuota(ctx, prov.ID, prj.ID, orb.Type)
 	return true
 }
 
@@ -608,38 +606,22 @@ func (s *Service) gcRetired(ctx context.Context, r db.ProjectSnapshot, now int64
 	slog.Info("退役的项目快照已无引用，入队删除", "snapshot", id)
 }
 
-// reserveSnapshotQuota 为 provider 上即将建立的（项目、类型）快照腾出配额：合计占用超过 max_total_gb 时按 LRU 退役
-// 其它键的 ready 快照（quota），直到不超；仍超（剩下的都是被 orb 引用着的退役快照）返回 false。
-// 占用 = ready 的大小 + 仍被 orb 引用的退役快照的大小（未被引用的退役快照马上会被回收器删掉）；大小未上报按 0 计。
+// reserveSnapshotQuota 按 LRU 缓存语义为 provider 上的（项目、类型）快照腾出配额：max_total_gb 约束的是快照缓存，
+// 即 provider 上 ready 快照的大小之和（大小未上报按 0 计）。超过时按 LRU 退役其它键的 ready 快照（quota），同键的不动，
+// 直到不超；返回此时是否不超。退役之后那份大小就不再计入：仍被 orb 引用的退役镜像属于引用它的 orb，
+// 等 orb 删除后由回收器清掉，再退役别的快照也不能让它少占一个字节。超大的单个快照由 max_snapshot_gb 管。
 func (s *Service) reserveSnapshotQuota(ctx context.Context, providerID, projectID, typ string) bool {
 	limit := s.cfg.Snapshots.MaxTotalBytes()
 	if limit <= 0 {
 		return true
 	}
-	total, err := s.st.Q.SumProjectSnapshotBytes(ctx, providerID)
-	if err != nil || total <= limit {
+	used, err := s.st.Q.SumProjectSnapshotBytes(ctx, providerID)
+	if err != nil || used <= limit {
 		return true
-	}
-	pinned := func(id string) bool {
-		n, err := s.st.Q.CountLiveOrbsBySnapshot(ctx, &id)
-		return err != nil || n > 0
 	}
 	ready, err := s.st.Q.ListReadySnapshotsLRU(ctx, providerID)
 	if err != nil {
 		return true
-	}
-	retired, err := s.st.Q.ListProjectSnapshotsByState(ctx, SnapshotRetired)
-	if err != nil {
-		return true
-	}
-	var used int64
-	for _, r := range ready {
-		used += deref64(r.SizeBytes)
-	}
-	for _, r := range retired {
-		if r.ProviderID == providerID && pinned(r.ID) {
-			used += deref64(r.SizeBytes)
-		}
 	}
 	for _, r := range ready {
 		if used <= limit {
@@ -648,7 +630,7 @@ func (s *Service) reserveSnapshotQuota(ctx context.Context, providerID, projectI
 		if derefStr(r.ProjectID) == projectID && r.Type == typ {
 			continue
 		}
-		if s.retireSnapshot(ctx, r.ID, RetireQuota) && !pinned(r.ID) {
+		if s.retireSnapshot(ctx, r.ID, RetireQuota) {
 			used -= deref64(r.SizeBytes)
 		}
 	}

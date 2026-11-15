@@ -70,7 +70,7 @@ func TestM11ProjectSnapshots(t *testing.T) {
 
 	sum, err := q.SumProjectSnapshotBytes(ctx, "prov_1")
 	require.NoError(t, err)
-	assert.EqualValues(t, 400, sum, "ready + retired 都计入配额")
+	assert.EqualValues(t, 300, sum, "只有 ready 计入配额（快照缓存）；退役的不算")
 	lru, err := q.ListReadySnapshotsLRU(ctx, "prov_1")
 	require.NoError(t, err)
 	require.Len(t, lru, 1)

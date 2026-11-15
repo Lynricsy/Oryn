@@ -448,10 +448,11 @@ func (q *Queries) RetireProjectSnapshotsByProvider(ctx context.Context, arg Reti
 
 const sumProjectSnapshotBytes = `-- name: SumProjectSnapshotBytes :one
 SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) FROM project_snapshots
-WHERE provider_id = ?1 AND state IN ('ready', 'retired')
+WHERE provider_id = ?1 AND state = 'ready'
 `
 
-// Bytes a provider's ready + retired snapshots hold beyond the base image (NULL size = 0).
+// Bytes a provider's ready snapshots hold beyond the base image (NULL size = 0): the snapshot cache that
+// max_total_gb bounds. Retired images still used by orbs belong to those orbs and are not counted.
 func (q *Queries) SumProjectSnapshotBytes(ctx context.Context, providerID string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, sumProjectSnapshotBytes, providerID)
 	var column_1 int64

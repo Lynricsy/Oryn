@@ -67,10 +67,11 @@ ORDER BY s.created_at DESC, s.id DESC;
 -- name: ListProjectSnapshotsByState :many
 SELECT * FROM project_snapshots WHERE state = @state ORDER BY created_at, id;
 
--- Bytes a provider's ready + retired snapshots hold beyond the base image (NULL size = 0).
+-- Bytes a provider's ready snapshots hold beyond the base image (NULL size = 0): the snapshot cache that
+-- max_total_gb bounds. Retired images still used by orbs belong to those orbs and are not counted.
 -- name: SumProjectSnapshotBytes :one
 SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) FROM project_snapshots
-WHERE provider_id = @provider_id AND state IN ('ready', 'retired');
+WHERE provider_id = @provider_id AND state = 'ready';
 
 -- name: ListReadySnapshotsLRU :many
 SELECT * FROM project_snapshots
