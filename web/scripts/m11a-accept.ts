@@ -58,6 +58,9 @@ const DIND = "dind";
 const WORKDIR = "/home/user/workspace/repo";
 const SETUP_P = `sleep 15; echo "run $(git rev-parse --short HEAD)" >> ~/setup-runs.txt`;
 const SETUP_Q = `dd if=/dev/zero of="$HOME/.m11a-ballast" bs=1M count=1200 status=none; sleep 2; echo q >> ~/setup-runs.txt`;
+/** X9 用：写 mib MiB 的填充，让快照「相对基础镜像多占的字节」约为 mib MiB。 */
+const ballast = (mib: number) =>
+	`dd if=/dev/zero of="$HOME/.m11a-ballast" bs=1M count=${mib} status=none; sleep 2; echo q >> ~/setup-runs.txt`;
 const SETUP_D = "docker pull alpine:3";
 const SECRET_NAME = "M11_SECRET";
 const GB = 1e9;
@@ -1053,8 +1056,17 @@ async function X8() {
 async function X9() {
 	if (process.env.M11A_NO_RESTART === "1")
 		throw new Skip("M11A_NO_RESTART=1，跳过（需要重启 orynd）");
-	const p = await ensureP();
-	const qp = await ensureQ();
+	// max_total_gb=1 时单快照上限自动也是 1GiB（min(10, max_total_gb)）：总量淘汰用两份各 600MiB 的快照
+	// （各自 < 1GiB、合计 > 1GiB），另用一份 1100MiB 的验证超大单快照被直接作废、不挤占别人。
+	const big = (tag: string, mib: number) =>
+		ensureProject(`m11a-${RUN}-${tag}`, {
+			setupScript: ballast(mib),
+			snapshots: true,
+			warmOrbs: 0,
+		}).then((x) => patchProject(x.id, { setupScript: ballast(mib) }));
+	const qa = await big("qa", 600);
+	const qb = await big("qb", 600);
+	const qo = await big("qo", 1100);
 	const orig = readFileSync(ORYND_YAML, "utf8");
 	writeFileSync(ORYND_BAK, orig);
 	try {
@@ -1063,14 +1075,27 @@ async function X9() {
 			"dev/orynd.yaml 临时写入 snapshots.max_total_gb: 1（原文备份 .dev/orynd.yaml.m11a-bak）",
 		);
 		await restartOrynd("max_total_gb=1 重启 orynd");
-		// 已退役但仍被本脚本早先 orb 引用的快照也计入配额：先删掉这些 orb，让回收器清走
-		for (const pid of [p.id, qp.id]) await clearSnapshots(pid);
+		// 配额按 provider 汇总：本脚本历次运行留下的 m11a-* 项目（不同 RUN 的 P / Q / dind）的快照都占配额，
+		// 一并清掉；已退役但仍被 orb 引用的快照要先删掉这些 orb，回收器才会删镜像。
+		const mine = sql<{ id: string }>(
+			`select id from projects where name like 'm11a-%'`,
+		).map((r) => r.id);
+		for (const x of [qa, qb, qo]) await clearSnapshots(x.id);
+		for (const pid of mine.filter(
+			(id) => id !== qa.id && id !== qb.id && id !== qo.id,
+		))
+			await clearSnapshots(pid).catch((e) =>
+				note(`清理旧项目 ${pid} 的快照失败（忽略）：${e}`),
+			);
+		const inList = mine.map((id) => `'${id}'`).join(",") || "''";
 		const refs = sql<{ id: string }>(
-			`select id from orbs where state not in ('deleting','deleted') and snapshot_of in (select id from project_snapshots where project_id in ('${p.id}','${qp.id}'))`,
+			`select id from orbs where state not in ('deleting','deleted') and snapshot_of in (select id from project_snapshots where project_id in (${inList}))`,
 		);
 		for (const r of refs) await api("DELETE", `/api/v1/orbs/${r.id}`);
 		for (const r of refs) await waitOrbDeleted(r.id);
-		note(`删除引用 P / Q 旧快照的 orb ${refs.length} 台`);
+		note(
+			`清空 ${mine.length} 个 m11a-* 项目的快照，删除引用它们的 orb ${refs.length} 台`,
+		);
 		await waitFor(
 			"配额占用回落到 1GB 以下",
 			() => quotaSum() < GB,
@@ -1080,48 +1105,106 @@ async function X9() {
 		note(`当前配额占用 ${mb(quotaSum())}`);
 		check(quotaSum() < GB, "发布前配额占用 < 1GB");
 
-		await newIdle({ projectId: p.id, tag: "P 发布" });
-		const sp = await waitFor(
-			"P 的 ready 快照",
-			() => readyOf(p.id),
-			120_000,
+		await newIdle({ projectId: qa.id, tag: "A 发布（600MiB）" });
+		const sa = await waitFor(
+			"A 的 ready 快照",
+			() => readyOf(qa.id),
+			300_000,
 			1000,
 		);
-		note(`P 快照 ${fmtSnap(sp)}`);
-		const b = await newIdle({ projectId: p.id, tag: "P 命中（引用者）" });
+		note(`A 快照 ${fmtSnap(sa)}`);
+		const b = await newIdle({ projectId: qa.id, tag: "A 命中（引用者）" });
 		check(
-			(await orbView(b.orb)).snapshotOf === sp.id,
-			`引用者 orb ${b.orb} 的 snapshotOf = ${sp.id}`,
+			(await orbView(b.orb)).snapshotOf === sa.id,
+			`引用者 orb ${b.orb} 的 snapshotOf = ${sa.id}`,
 		);
-		await newIdle({ projectId: qp.id, tag: "Q 发布" });
-		const sq = await waitFor(
-			"Q 的 ready 快照",
-			() => readyOf(qp.id),
-			120_000,
+
+		// 超大单快照：作废（quota），不挤掉 A
+		const o = await newIdle({ projectId: qo.id, tag: "O 发布（1100MiB）" });
+		// 从未 ready 的作废构建会连行带镜像立即清掉：以 orynd.log 的作废记录与 snapshot 任务上报的大小为证
+		const voided = await waitFor(
+			"O 的快照构建作废记录",
+			() =>
+				sh(
+					`grep -E 'msg=项目快照构建已作废 orb=${o.orb} ' ${q(`${ROOT}/.dev/orynd.log`)} | tail -1`,
+				).stdout || undefined,
+			300_000,
 			1000,
 		);
-		note(`Q 快照 ${fmtSnap(sq)}；配额占用 ${mb(quotaSum())}`);
-		const spNow = await waitFor(
-			"P 的快照退役",
+		const soID = voided.match(/snapshot=(\S+)/)?.[1] ?? "";
+		check(
+			soID !== "" && /（quota）/.test(voided),
+			`超大快照 ${soID} 作废原因 quota`,
+		);
+		const job = one<{ result: string | null }>(
+			`select result from jobs where orb_id='${o.orb}' and op='snapshot' order by created_at desc limit 1`,
+		);
+		const res: unknown = JSON.parse(job?.result ?? "{}");
+		const bytes =
+			res &&
+			typeof res === "object" &&
+			"snapshotBytes" in res &&
+			typeof res.snapshotBytes === "number"
+				? res.snapshotBytes
+				: undefined;
+		check(
+			(bytes ?? 0) > 1 << 30,
+			`snapshot 任务上报大小 ${mb(bytes)} > 1GiB（单快照上限 1GiB）`,
+		);
+		check(!(await readyOf(qo.id)), "O 没有 ready 快照");
+		check(
+			!(await snaps(qo.id)).some((x) => x.id === soID),
+			"作废的构建行已清除",
+		);
+		check(
+			(await snapById(qa.id, sa.id))?.state === "ready",
+			"超大快照没有挤掉 A（A 仍 ready）",
+		);
+		await waitFor(
+			"超大快照的镜像被删掉",
+			() => !imageExists(soID),
+			120_000,
+			2000,
+		);
+		check(true, `超大快照镜像 ${soID} 已删除`);
+
+		// 总量淘汰：B 发布后合计 > 1GiB，先发布的 A 退役（quota）
+		await newIdle({ projectId: qb.id, tag: "B 发布（600MiB）" });
+		const sb = await waitFor(
+			"B 的 ready 快照",
+			() => readyOf(qb.id),
+			300_000,
+			1000,
+		);
+		note(`B 快照 ${fmtSnap(sb)}；配额占用 ${mb(quotaSum())}`);
+		const saNow = await waitFor(
+			"A 的快照退役",
 			async () => {
-				const s = await snapById(p.id, sp.id);
+				const s = await snapById(qa.id, sa.id);
 				return s?.state === "retired" ? s : undefined;
 			},
 			120_000,
 			1000,
 		);
 		check(
-			spNow.retireReason === "quota",
-			`先发布的 P 快照 ${spNow.state}/${spNow.retireReason}`,
+			saNow.retireReason === "quota",
+			`先发布的 A 快照 ${saNow.state}/${saNow.retireReason}`,
 		);
-		check(imageExists(sp.id), "仍被 orb 引用时镜像还在");
+		check(
+			(await snapById(qb.id, sb.id))?.state === "ready",
+			"新发布的 B 仍 ready",
+		);
+		check(imageExists(sa.id), "A 仍被 orb 引用时镜像还在");
 		const d = await api("DELETE", `/api/v1/orbs/${b.orb}`);
 		check(d.status === 202, `DELETE orbs/${b.orb} → ${d.status}`);
 		const delMs = await waitOrbDeleted(b.orb);
 		const t0 = Date.now();
 		await waitFor(
-			"快照行与镜像消失",
-			async () => !(await snapById(p.id, sp.id)) && !imageExists(sp.id),
+			"A 的快照行与镜像消失",
+			// 直接看列表：snapById 在行被删后会按 orynd.log 还原退役记录
+			async () =>
+				!(await snaps(qa.id)).some((x) => x.id === sa.id) &&
+				!imageExists(sa.id),
 			60_000,
 			1000,
 		);
