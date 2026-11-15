@@ -36,11 +36,17 @@ export const GENERIC_AGENT_GLYPH = "\u{f167a}";
 
 /** 内置 role 的默认字形；不是内置 role 时返回 undefined。 */
 export function roleDefaultGlyph(role: string): string | undefined {
-	return Object.hasOwn(ROLE_DEFAULT_GLYPHS, role) ? ROLE_DEFAULT_GLYPHS[role as BuiltinRole] : undefined;
+	return Object.hasOwn(ROLE_DEFAULT_GLYPHS, role)
+		? ROLE_DEFAULT_GLYPHS[role as BuiltinRole]
+		: undefined;
 }
 
 /** agent 的默认字形：内置 agent 用各自的字形，其余用通用字形。 */
 export function agentDefaultGlyph(agent: string): string {
 	// hasOwn 挡住 "constructor" 之类的原型属性名
-	return (Object.hasOwn(AGENT_DEFAULT_GLYPHS, agent) && AGENT_DEFAULT_GLYPHS[agent]) || GENERIC_AGENT_GLYPH;
+	return (
+		(Object.hasOwn(AGENT_DEFAULT_GLYPHS, agent) &&
+			AGENT_DEFAULT_GLYPHS[agent]) ||
+		GENERIC_AGENT_GLYPH
+	);
 }
