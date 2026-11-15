@@ -2,6 +2,7 @@ package agentcfg
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
@@ -48,6 +52,8 @@ var (
 	ErrTooLarge = errors.New("超出大小上限")
 	// ErrInvalidContent 表示 tar 包或文件内容无法解析（如 models.yml 不是合法 YAML）。
 	ErrInvalidContent = errors.New("内容无效")
+	// ErrProjectRemoved 表示项目已删除（ProjectHomes.Remove 之后对其配置根的写入）；按「不存在」处理（REST 404）。
+	ErrProjectRemoved = fmt.Errorf("项目已删除：%w", fs.ErrNotExist)
 )
 
 // Home 管理一个 omp 文本配置根：全局为 `<data_dir>/omp-home/`，项目级为 `<data_dir>/omp-projects/<projectId>/`。
@@ -57,9 +63,12 @@ type Home struct {
 	// name 是 dir 的末段（omp-home 或项目 id）。
 	name string
 	dir  string
-	// project 为 true 时启用项目级规则：ProjectExcluded、Project* 配额、config.yml 校验。
+	// project 为 true 时启用项目级规则：ProjectExcluded、Project* 配额。
 	project bool
 	mu      sync.RWMutex
+	// removed 由 ProjectHomes.Remove 在写锁下置位：此后 Put / ImportTar / Delete 持锁后一律返回 ErrProjectRemoved，
+	// 不会经 MkdirAll / rename 把已删项目的目录重新建出来。
+	removed bool
 }
 
 // NewHome 打开（必要时创建，0700）omp-home 目录。
@@ -108,14 +117,48 @@ func (h *Home) clean(p string) (string, error) {
 	return c, nil
 }
 
-// checkContent 校验项目级 config.yml：只接受空文档或顶层映射。
-// omp 对 `--config` 覆盖层解析失败是硬错误，坏文件会让该项目所有 orb 的 agent 起不来。
-func (h *Home) checkContent(rel string, content []byte) error {
-	if !h.project || rel != ConfigFile {
+// checkContent 校验全局与项目层共用的内容规则：
+//   - 必须是文本的路径（mustBeText）只收 UTF-8、不含 NUL 的内容，二进制或伪文件（如 /proc/self/environ）进不来；
+//   - config.yml 只收一个 YAML 文档，且为空、null 或顶层映射（checkConfigYML）。项目层经 `--config` 覆盖层加载，
+//     全局层是 omp 主配置，解析失败都会让 agent 起不来。
+func checkContent(rel string, content []byte) error {
+	if mustBeText(rel) && (bytes.IndexByte(content, 0) >= 0 || !utf8.Valid(content)) {
+		return fmt.Errorf("%w：%s 须是 UTF-8 文本（不能含 NUL 或非 UTF-8 字节）", ErrInvalidContent, rel)
+	}
+	if rel == ConfigFile {
+		if err := checkConfigYML(content); err != nil {
+			return fmt.Errorf("%w：%v", ErrInvalidContent, err)
+		}
+	}
+	return nil
+}
+
+// mustBeText 报告 rel 是否必须是文本：rules/ 下的一切，以及 .md / .yml / .yaml / .json 文件（AGENTS.md、
+// SYSTEM.md、config.yml、mcp.json…）。这些文件会被 omp 当作规则、提示词或配置读入。
+func mustBeText(rel string) bool {
+	if first, _, _ := strings.Cut(rel, "/"); first == "rules" {
+		return true
+	}
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".md", ".yml", ".yaml", ".json":
+		return true
+	}
+	return false
+}
+
+// checkConfigYML 校验 config.yml：空、null 或顶层映射，且只有一个 YAML 文档。Core 用 Bun.YAML.parse 读配置，
+// 多文档（`---` 分隔，哪怕第二个是空文档）会被解析成数组而硬失败；yaml.v3 只看首文档，所以要再 Decode 一次确认已到 EOF。
+func checkConfigYML(content []byte) error {
+	if _, err := parseConfigRoot(content); err != nil {
+		return err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(content))
+	var doc yaml.Node
+	if err := dec.Decode(&doc); errors.Is(err, io.EOF) {
 		return nil
 	}
-	if _, err := parseConfigRoot(content); err != nil {
-		return fmt.Errorf("%w：%v", ErrInvalidContent, err)
+	if err := dec.Decode(&doc); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s 只能有一个 YAML 文档（不能用 --- 分隔多个文档）", ConfigFile)
 	}
 	return nil
 }
@@ -260,7 +303,7 @@ func (h *Home) Put(ctx context.Context, p string, content []byte, mode fs.FileMo
 	if len(content) > fileMax {
 		return WriteResult{}, fmt.Errorf("%w（单文件 %d MiB）", ErrTooLarge, fileMax>>20)
 	}
-	if err := h.checkContent(rel, content); err != nil {
+	if err := checkContent(rel, content); err != nil {
 		return WriteResult{}, err
 	}
 	mode = normalizeMode(mode)
@@ -268,12 +311,24 @@ func (h *Home) Put(ctx context.Context, p string, content []byte, mode fs.FileMo
 	if err != nil {
 		return WriteResult{}, err
 	}
+	deliveryMu.Lock()
+	defer deliveryMu.Unlock()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.removed {
+		return WriteResult{}, ErrProjectRemoved
+	}
 	if h.project {
 		if err := h.checkQuotaLocked(rel, len(out), totalMax, filesMax); err != nil {
 			return WriteResult{}, err
 		}
+	}
+	own, err := layerSize(h.dir, rel)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if err := h.checkDelivery(own + EntrySize(rel, int64(len(out)))); err != nil {
+		return WriteResult{}, err
 	}
 	if err := writeFileAtomic(h.abs(rel), out, mode); err != nil {
 		return WriteResult{}, err
@@ -316,6 +371,9 @@ func (h *Home) Delete(p string) error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.removed {
+		return ErrProjectRemoved
+	}
 	abs := h.abs(rel)
 	st, err := os.Lstat(abs)
 	if err != nil {
@@ -383,7 +441,7 @@ func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault)
 		if err != nil {
 			return res, fmt.Errorf("读取 %s: %w", rel, err)
 		}
-		if err := h.checkContent(rel, b); err != nil {
+		if err := checkContent(rel, b); err != nil {
 			return res, err
 		}
 		files[rel] = entry{content: b, mode: normalizeMode(fs.FileMode(hdr.Mode))}
@@ -404,8 +462,20 @@ func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault)
 		res.Warnings = append(res.Warnings, warns...)
 	}
 
+	var size int64
+	for _, p := range paths {
+		size += EntrySize(p, int64(len(outs[p])))
+	}
+	deliveryMu.Lock()
+	defer deliveryMu.Unlock()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.removed {
+		return res, ErrProjectRemoved
+	}
+	if err := h.checkDelivery(size); err != nil {
+		return res, err
+	}
 	tmp, err := os.MkdirTemp(h.parent, h.name+".import-*")
 	if err != nil {
 		return res, err

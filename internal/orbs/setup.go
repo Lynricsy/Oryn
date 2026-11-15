@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/egress"
+	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -271,7 +273,44 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 		}
 		p.ProjectConfig = &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}
 	}
+	if err := checkDeliverable(p); err != nil {
+		return plan, err
+	}
 	return plan, nil
+}
+
+// ctlEnvelope 是 ctl 请求在 params 之外（id、method、换行）的开销上界。
+const ctlEnvelope = 4 << 10
+
+// checkDeliverable 在参数编码后放不进单行 ctl 消息（link.MaxCtlLineBytes）时返回说明两层大小的错误，代替 ctl 写入时
+// 才报的「line too long」。写入接口已按 agentcfg.DeliveryBudget 限住两层合计，这里拦的是此前存下的超限配置；
+// 两层按 EntrySize 口径粗算不超预算即放行，超了才真正编码一次参数量准确大小。
+func checkDeliverable(p *apigen.LinkCtlSetupRunParams) error {
+	layer := func(files []apigen.LinkCtlOmpHomeFile) int64 {
+		var n int64
+		for _, f := range files {
+			n += int64(len(f.ContentB64)) + agentcfg.EntrySize(f.Path, 0)
+		}
+		return n
+	}
+	global := layer(p.OmpHome)
+	var project int64
+	if p.ProjectConfig != nil {
+		project = layer(p.ProjectConfig.Files)
+	}
+	if global+project <= agentcfg.DeliveryBudget {
+		return nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("编码 setup 参数: %w", err)
+	}
+	if len(b)+ctlEnvelope <= link.MaxCtlLineBytes {
+		return nil
+	}
+	const mib = 1 << 20
+	return fmt.Errorf("agent 配置编码后 %.1f MiB（全局 %.1f MiB、项目 %.1f MiB），超过单次下发上限 %d MiB：请在设置或项目的 agent 配置里删减文件",
+		float64(len(b))/mib, float64(global)/mib, float64(project)/mib, link.MaxCtlLineBytes/mib)
 }
 
 // ompFiles 把配置文件按路径排序生成下发清单（权限缺省 0644，内容 base64）；没有文件时返回空切片而不是 nil。

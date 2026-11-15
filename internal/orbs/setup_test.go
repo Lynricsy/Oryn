@@ -1,19 +1,25 @@
 package orbs
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -151,4 +157,60 @@ func TestPlanProjectConfig(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "读取项目 omp 配置")
 	assert.ErrorIs(t, err, fp.err)
+}
+
+// TestPlanDeliveryBudget：全局层与项目层随同一条 setup.run 下发。写入接口按 agentcfg.DeliveryBudget 接受的最大组合
+// （此前单层就能下发的 64 MiB 全局 + 填到预算为止的项目层）编码成 ctl 帧后不超过 link.MaxCtlLineBytes；绕过写入接口
+// 存下的超限配置（升级前留下的）让 Plan 报出说明两层大小的错误，而不是在 ctl 写入时以 line too long 让 orb failed。
+func TestPlanDeliveryBudget(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(ctx, dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	global, err := agentcfg.NewHome(dataDir)
+	require.NoError(t, err)
+	projects, err := agentcfg.NewProjectHomes(dataDir)
+	require.NoError(t, err)
+	id := ids.New("prj")
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: "big", CreatedAt: 1, UpdatedAt: 1}))
+
+	// 全局 4×16 MiB 直接落盘（省掉写入接口对 64 MiB 的密钥扫描；预算按磁盘计，效果相同）
+	big := bytes.Repeat([]byte("g"), agentcfg.MaxFileSize)
+	gdir := filepath.Join(global.Dir(), "g")
+	require.NoError(t, os.MkdirAll(gdir, 0o700))
+	for i := range 4 {
+		require.NoError(t, os.WriteFile(filepath.Join(gdir, fmt.Sprintf("%d.md", i)), big, 0o644))
+	}
+	// 经写入接口把项目层填到预算为止
+	h, err := projects.For(id)
+	require.NoError(t, err)
+	mb := bytes.Repeat([]byte("p"), agentcfg.ProjectMaxFileSize)
+	n := 0
+	for ; ; n++ {
+		if _, err := h.Put(ctx, fmt.Sprintf("rules/%d.md", n), mb, 0, nil); err != nil {
+			require.ErrorIs(t, err, agentcfg.ErrTooLarge)
+			break
+		}
+	}
+	require.Positive(t, n, "预算内至少放得下一个项目文件")
+
+	d := &DefaultSetup{Store: st, Home: global, Projects: projects}
+	orb := db.Orb{ID: "orb-a", ProjectID: &id}
+	plan, err := d.Plan(ctx, orb)
+	require.NoError(t, err)
+	require.Len(t, plan.Params.OmpHome, 4)
+	require.Len(t, plan.Params.ProjectConfig.Files, n)
+	raw, err := json.Marshal(plan.Params)
+	require.NoError(t, err)
+	envelope, err := json.Marshal(link.CtlMessage{ID: strings.Repeat("9", 64), Method: string(apigen.MethodSetupRun), Params: json.RawMessage("{}")})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(envelope)-2+len(raw)+1, link.MaxCtlLineBytes, "ctl 帧（含换行）放得进单行上限")
+
+	// 升级前存下的超限全局配置：Plan 报出可读的错误
+	require.NoError(t, os.WriteFile(filepath.Join(gdir, "4.md"), big, 0o644))
+	_, err = d.Plan(ctx, orb)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "超过单次下发上限")
+	assert.Contains(t, err.Error(), "全局")
 }

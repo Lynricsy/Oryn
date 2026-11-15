@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +45,12 @@ func (e *h2Env) putConfigYML(c h2Cred, content string) {
 	e.t.Helper()
 	r := e.do("PUT", "/api/v1/agent-config/files/config.yml", c, []byte(content))
 	require.Equal(e.t, 200, r.status, string(r.body))
+}
+
+// seedConfigYML 绕过写入接口直接落盘 omp-home 的 config.yml：写入接口拒收非法 YAML，解析失败只会出现在升级前存下的文件上。
+func (e *h2Env) seedConfigYML(content string) {
+	e.t.Helper()
+	require.NoError(e.t, os.WriteFile(filepath.Join(e.dataDir, agentcfg.HomeDirName, agentcfg.ConfigFile), []byte(content), 0o644))
 }
 
 // roleKeys 把列表压成 role id（不在 cycleOrder 里的加 "(off)"）便于整体比较顺序。
@@ -139,7 +147,7 @@ modelTags:
 	assert.JSONEq(t, `{"role":"default","inCycle":false,"selector":"@Cyrene"}`, string(raw.Roles[3]), "modelRoles 里的其余键带 selector")
 
 	// 非法 YAML：照样 200，带 configError，roles 按缺省配置
-	e.putConfigYML(c, "cycleOrder: [Mare\n")
+	e.seedConfigYML("cycleOrder: [Mare\n")
 	l = e.roleList(c)
 	assert.Equal(t, knownKeys(agentcfg.DefaultCycleOrder), roleKeys(l))
 	require.NotNil(t, l.ConfigError)
@@ -270,7 +278,7 @@ func TestRoleIdentitiesLegacy(t *testing.T) {
 	assert.Equal(t, append(knownKeys([]string{"Cyrene"}), "Alpha(off)", "Zed(off)"), roleKeys(e.roleList(c)))
 
 	// config.yml 解析失败时按缺省配置 + 其余头像行作为遗留项
-	e.putConfigYML(c, "cycleOrder: [\n")
+	e.seedConfigYML("cycleOrder: [\n")
 	l = e.roleList(c)
 	assert.Equal(t, append(knownKeys(agentcfg.DefaultCycleOrder), "Alpha(off)", "Cyrene(off)", "Zed(off)"), roleKeys(l))
 	require.NotNil(t, l.ConfigError)

@@ -51,7 +51,8 @@ func NewProjectHomes(dataDir string) (*ProjectHomes, error) {
 }
 
 // For 返回项目的配置根；id 不合法返回 ErrInvalidPath。不创建目录（首次写入时才建）。
-// 调用方负责确认项目存在。
+// 调用方负责确认项目存在。已 Remove 的项目返回同一个已失效的 *Home（读为空，写返回 ErrProjectRemoved），
+// 所以「确认项目存在 → 项目被删 → For」的交错也不会再建出目录；项目 id 是 ULID 不会复用。
 func (p *ProjectHomes) For(projectID string) (*Home, error) {
 	if !projectIDRe.MatchString(projectID) {
 		return nil, ErrInvalidPath
@@ -94,17 +95,18 @@ func (p *ProjectHomes) Load(projectID string) (map[string][]byte, map[string]os.
 	return files, modes, nil
 }
 
-// Remove 删除项目的配置目录（项目删除时调用）；目录不存在不报错。
+// Remove 删除项目的配置目录（项目删除时调用）；目录不存在不报错。该项目的 *Home 在写锁下标记失效并留在表里：
+// 已借出的引用与之后 For 取到的都是它（同一目录始终只有一把锁），其上的写入一律返回 ErrProjectRemoved。
 func (p *ProjectHomes) Remove(projectID string) error {
 	if !projectIDRe.MatchString(projectID) {
 		return ErrInvalidPath
 	}
-	// 锁序：p.mu → h.mu（Home 的方法从不取 p.mu）。持 p.mu 期间不会有新的 For 拿到将被丢弃的 *Home。
+	// 锁序：p.mu → h.mu（Home 的方法从不取 p.mu）。
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	h := p.homeLocked(projectID)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(p.homes, projectID)
+	h.removed = true
 	return os.RemoveAll(h.dir)
 }

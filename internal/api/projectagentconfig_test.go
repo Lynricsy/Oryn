@@ -3,10 +3,14 @@ package api_test
 import (
 	"archive/tar"
 	"bytes"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,7 +115,7 @@ func TestProjectAgentConfigAPI(t *testing.T) {
 	_, err := os.Stat(filepath.Join(e.dataDir, agentcfg.ProjectsDirName, "nope"))
 	assert.True(t, os.IsNotExist(err), "未知项目不建目录")
 
-	// 400：路径穿越、运行时数据、models.yml、plans/、非映射 config.yml、mode 越界
+	// 400：路径穿越、运行时数据、models.yml、plans/、非映射或多文档 config.yml、文本路径含 NUL / 非 UTF-8、mode 越界
 	for _, bad := range []struct {
 		path string
 		body string
@@ -123,6 +127,10 @@ func TestProjectAgentConfigAPI(t *testing.T) {
 		{"plans%2Fa.md", "x"},
 		{"config.yml", "- a\n"},
 		{"config.yml", "a: [\n"},
+		{"config.yml", "theme: dark\n---\ntheme: light\n"},
+		{"rules%2Fenv.md", "GITHUB_TOKEN=x\x00AWS_SECRET=y\x00"},
+		{"AGENTS.md", "caf\xe9"},
+		{"mcp.json", "{}\x00"},
 		{"x?mode=999", "x"},
 	} {
 		r := e.do("PUT", base+"/files/"+bad.path, c, []byte(bad.body))
@@ -130,6 +138,19 @@ func TestProjectAgentConfigAPI(t *testing.T) {
 		assert.Equal(t, "invalid_request", r.code(t), bad.path)
 	}
 	assert.Equal(t, 400, e.do("GET", base+"/files/models.yml", c, nil).status)
+	for _, bad := range []map[string]string{{"config.yml": "a: 1\n---\n"}, {"rules/env.md": "A=1\x00"}} {
+		r := e.do("POST", base+"/import", c, h2Tar(t, bad))
+		assert.Equal(t, 400, r.status, string(r.body))
+		assert.Equal(t, "invalid_request", r.code(t))
+	}
+	// 全局层同一套内容校验
+	for path, body := range map[string]string{"config.yml": "a: 1\n---\nb: 2\n", "rules%2Fenv.md": "A=1\x00"} {
+		r := e.do("PUT", "/api/v1/agent-config/files/"+path, c, []byte(body))
+		assert.Equal(t, 400, r.status, path+": "+string(r.body))
+		assert.Equal(t, "invalid_request", r.code(t), path)
+	}
+	r = e.do("POST", "/api/v1/agent-config/import", c, h2Tar(t, map[string]string{"rules/g.md": "# g", "AGENTS.md": "\xff"}))
+	assert.Equal(t, 400, r.status, string(r.body))
 	assert.Equal(t, 200, e.do("PUT", base+"/files/config.yml", c, []byte("theme: dark\n")).status)
 
 	// 413：单文件超 1 MiB（PUT 与导入）
@@ -219,4 +240,76 @@ func TestProjectAgentConfigAuth(t *testing.T) {
 	require.Equal(t, 204, e.do("DELETE", base+"/files/rules%2Fa.md", webCSRF, nil).status)
 	require.Equal(t, 200, e.do("PUT", base+"/files/rules%2Fb.md", dev, []byte("b")).status)
 	assert.Equal(t, []string{"rules/b.md"}, h2ListPaths(t, e, dev, base+"/files"))
+}
+
+// gatedBody 是请求体：第一次 Read 时关闭 started，等 release 关闭后才交出内容。
+type gatedBody struct {
+	started, release chan struct{}
+	r                io.Reader
+	once             sync.Once
+}
+
+func (b *gatedBody) Read(p []byte) (int, error) {
+	b.once.Do(func() {
+		close(b.started)
+		<-b.release
+	})
+	return b.r.Read(p)
+}
+
+// 项目删除与在途写入竞争：PUT / 导入已确认项目存在并拿到配置根、正在读请求体时项目被删，之后的写入返回 404，
+// 已删项目的配置目录不会复活。请求带 Expect: 100-continue，客户端要等 handler 开始读请求体才发送它，所以 started
+// 关闭即表示 handler 已越过项目存在检查。
+func TestProjectAgentConfigWriteRacesDelete(t *testing.T) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+	client := &http.Client{Transport: &http.Transport{ExpectContinueTimeout: time.Hour}}
+	t.Cleanup(client.CloseIdleConnections)
+	for _, tc := range []struct {
+		name, method, path, ct string
+		body                   []byte
+	}{
+		{"put", "PUT", "/files/rules%2Fa.md", "application/octet-stream", []byte("# a")},
+		{"import", "POST", "/import", "application/x-tar", h2Tar(t, map[string]string{"rules/a.md": "# a"})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := h2Project(t, e, c, tc.name)
+			body := &gatedBody{started: make(chan struct{}), release: make(chan struct{}), r: bytes.NewReader(tc.body)}
+			req, err := http.NewRequest(tc.method, e.srv.URL+"/api/v1/projects/"+id+"/agent-config"+tc.path, body)
+			require.NoError(t, err)
+			req.ContentLength = int64(len(tc.body))
+			req.Header.Set("Content-Type", tc.ct)
+			req.Header.Set("Expect", "100-continue")
+			req.Header.Set("Authorization", "Bearer "+c.bearer)
+			type result struct {
+				status int
+				body   string
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				resp, err := client.Do(req)
+				if err != nil {
+					done <- result{err: err}
+					return
+				}
+				defer resp.Body.Close()
+				b, err := io.ReadAll(resp.Body)
+				done <- result{status: resp.StatusCode, body: string(b), err: err}
+			}()
+			select {
+			case <-body.started:
+			case r := <-done:
+				t.Fatalf("handler 没读请求体就应答了：%d %s %v", r.status, r.body, r.err)
+			}
+			require.Equal(t, 204, e.do("DELETE", "/api/v1/projects/"+id, c, nil).status)
+			close(body.release)
+			res := <-done
+			require.NoError(t, res.err)
+			assert.Equal(t, 404, res.status, res.body)
+			assert.Contains(t, res.body, "not_found")
+			_, err = os.Lstat(filepath.Join(e.dataDir, agentcfg.ProjectsDirName, id))
+			assert.True(t, os.IsNotExist(err), "已删项目的配置目录不能复活：%v", err)
+		})
+	}
 }

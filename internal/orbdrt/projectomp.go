@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -178,8 +179,9 @@ func (r *Runtime) applyProjectConfig(env map[string]string, args []string) []str
 	return args
 }
 
-// projectConfigUsable 报告 path 是否是可作为 `--config` 覆盖层的 config.yml：存在、是普通文件、非空且顶层为 YAML 映射。
-// 不存在或为空（含只有注释 / null）返回 false, nil；其余不合格返回 false 与原因。
+// projectConfigUsable 报告 path 是否是可作为 `--config` 覆盖层的 config.yml：存在、是普通文件、非空、只有一个 YAML
+// 文档且顶层为映射。不存在或为空（含只有注释 / null）返回 false, nil；其余不合格返回 false 与原因。
+// Core 用 Bun.YAML.parse 读覆盖层，多文档（`---` 分隔，哪怕第二个为空）会被解析成数组而硬失败，所以要求第二次 Decode 即 EOF。
 func projectConfigUsable(path string) (bool, error) {
 	st, err := os.Lstat(path)
 	switch {
@@ -194,12 +196,17 @@ func projectConfigUsable(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if len(bytes.TrimSpace(b)) == 0 {
-		return false, nil
-	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
 	var doc yaml.Node
-	if err := yaml.Unmarshal(b, &doc); err != nil {
+	switch err := dec.Decode(&doc); {
+	case errors.Is(err, io.EOF):
+		return false, nil
+	case err != nil:
 		return false, fmt.Errorf("invalid YAML: %w", err)
+	}
+	var next yaml.Node
+	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
+		return false, errors.New("multiple YAML documents")
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return false, nil

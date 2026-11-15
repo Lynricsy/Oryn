@@ -209,6 +209,12 @@ func TestApplyProjectConfig(t *testing.T) {
 		{name: "list config.yml", setup: mkTree(map[string]string{"config.yml": "- a\n"}), root: true, warnPart: "not a YAML mapping"},
 		{name: "scalar config.yml", setup: mkTree(map[string]string{"config.yml": "hello\n"}), root: true, warnPart: "not a YAML mapping"},
 		{name: "broken config.yml", setup: mkTree(map[string]string{"config.yml": "a: [\n"}), root: true, warnPart: "invalid YAML"},
+		// Core 的 Bun.YAML.parse 把多文档解析成数组：第二个文档（哪怕为空、哪怕首文档是 null）都不能传 --config
+		{name: "multi-doc config.yml", setup: mkTree(map[string]string{"config.yml": "theme: dark\n---\ntheme: light\n"}), root: true, warnPart: "multiple YAML documents"},
+		{name: "trailing empty doc", setup: mkTree(map[string]string{"config.yml": "theme: dark\n---\n"}), root: true, warnPart: "multiple YAML documents"},
+		{name: "null then doc", setup: mkTree(map[string]string{"config.yml": "~\n---\n~\n"}), root: true, warnPart: "multiple YAML documents"},
+		{name: "doc then broken doc", setup: mkTree(map[string]string{"config.yml": "a: 1\n---\nb: [\n"}), root: true, warnPart: "multiple YAML documents"},
+		{name: "explicit start and end", setup: mkTree(map[string]string{"config.yml": "---\ntheme: dark\n...\n"}), root: true, config: true},
 		{name: "config.yml is a dir", setup: mkTree(map[string]string{"config.yml/x": "a: 1\n"}), root: true, warnPart: "not a regular file"},
 		{name: "config.yml is a symlink", setup: func(t *testing.T, base string) {
 			target := filepath.Join(t.TempDir(), "c.yml")

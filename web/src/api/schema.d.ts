@@ -373,8 +373,10 @@ export interface paths {
         get: operations["getProjectAgentConfigFile"];
         /**
          * 写入项目级 omp 配置文件（M12.2）
-         * @description 项目不存在 → 404 `not_found`；路径非法、属于运行时数据、为 `models.yml`（模型与密钥只在全局管理）、首段为 `plans/`，
-         *     或 `config.yml` 不是 YAML 映射 → 400 `invalid_request`；单文件超过 1 MiB、合计超过 16 MiB 或超过 2000 个文件 → 413 `invalid_request`。
+         * @description 项目不存在（含写入期间被删除）→ 404 `not_found`；路径非法、属于运行时数据、为 `models.yml`（模型与密钥只在全局管理）、首段为 `plans/`，
+         *     `config.yml` 不是单个 YAML 映射文档（含 `---` 分隔的多文档），或必须是文本的路径（`rules/` 下的一切与 `.md` / `.yml` / `.yaml` / `.json`）
+         *     含 NUL 或非 UTF-8 字节 → 400 `invalid_request`；单文件超过 1 MiB、合计超过 16 MiB、超过 2000 个文件，
+         *     或与全局配置按下发编码合计超过单次下发上限（88 MiB）→ 413 `invalid_request`。
          *     不做密钥抽取（不支持 `${oryn:secret:…}`），形似密钥的内容只给 `possible_secret` 警告。
          */
         put: operations["putProjectAgentConfigFile"];
@@ -1937,7 +1939,12 @@ export interface paths {
         };
         /** 读取文件原文（`models.yml` 返回的是密钥已替换为 `${oryn:secret:…}` 的模板） */
         get: operations["getAgentConfigFile"];
-        /** 写入文件（`models.yml` 会做 C5 的密钥抽取） */
+        /**
+         * 写入文件（`models.yml` 会做 C5 的密钥抽取）
+         * @description 路径非法或属于运行时数据、`config.yml` 不是单个 YAML 映射文档（含 `---` 分隔的多文档），或必须是文本的路径（`rules/` 下的一切与
+         *     `.md` / `.yml` / `.yaml` / `.json`）含 NUL 或非 UTF-8 字节 → 400 `invalid_request`；单文件超过 16 MiB，或与最大的项目级配置按下发
+         *     编码合计超过单次下发上限（88 MiB）→ 413 `invalid_request`。
+         */
         put: operations["putAgentConfigFile"];
         post?: never;
         /** 删除文件 */
@@ -1958,7 +1965,8 @@ export interface paths {
         put?: never;
         /**
          * 导入 tar 包（`oryn config push` 使用）
-         * @description 包内路径相对 omp-home 根；整体替换现有 omp-home（不在包内的文件被删除）。
+         * @description 包内路径相对 omp-home 根；整体替换现有 omp-home（不在包内的文件被删除）。运行时数据静默跳过；内容校验与下发上限同 `putAgentConfigFile`，
+         *     另有合计 128 MiB、10000 个文件的上限（413 `invalid_request`）。
          */
         post: operations["importAgentConfig"];
         delete?: never;

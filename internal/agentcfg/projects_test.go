@@ -158,7 +158,7 @@ func TestProjectHomeQuota(t *testing.T) {
 	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
 
 	// 16 个 1 MiB 文件恰好到合计上限；第 17 个超限，但覆盖已有文件不算新增
-	full := make([]byte, agentcfg.ProjectMaxFileSize)
+	full := bytes.Repeat([]byte("x"), agentcfg.ProjectMaxFileSize)
 	for i := range agentcfg.ProjectMaxTotalSize / agentcfg.ProjectMaxFileSize {
 		_, err := h.Put(ctx, fmt.Sprintf("f/%02d.md", i), full, 0, nil)
 		require.NoError(t, err, i)
@@ -194,27 +194,66 @@ func TestProjectHomeFileCountQuota(t *testing.T) {
 	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
 }
 
-func TestProjectHomeConfigYAML(t *testing.T) {
+// config.yml 在全局与项目层同一套校验：只收一个 YAML 文档，且为空、null 或顶层映射（PUT 与 tar 导入都管）。
+// 多文档在 Core（Bun.YAML.parse）里是数组，会让 agent 起不来。
+func TestHomeConfigYAML(t *testing.T) {
 	ctx := context.Background()
 	p, dir := newProjectHomes(t)
-	h, err := p.For("prj_A")
+	prj, err := p.For("prj_A")
 	require.NoError(t, err)
-	for _, bad := range []string{"- a\n", "a: [\n", "just a string\n"} {
-		_, err := h.Put(ctx, agentcfg.ConfigFile, []byte(bad), 0, nil)
-		assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, bad)
-		_, err = h.ImportTar(ctx, tarOf(t, map[string]string{agentcfg.ConfigFile: bad}), nil)
-		assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, bad)
-	}
-	assert.Empty(t, paths(t, h))
-	for _, ok := range []string{"theme: dark\n", "", "# 只有注释\n", "~\n"} {
-		_, err := h.Put(ctx, agentcfg.ConfigFile, []byte(ok), 0, nil)
-		assert.NoError(t, err, ok)
-	}
-	// 全局 config.yml 不做该校验（行为不变）
 	global, err := agentcfg.NewHome(dir)
 	require.NoError(t, err)
-	_, err = global.Put(ctx, agentcfg.ConfigFile, []byte("- a\n"), 0, nil)
-	assert.NoError(t, err)
+	bads := []string{
+		"- a\n", "a: [\n", "just a string\n",
+		"theme: dark\n---\ntheme: light\n", "theme: dark\n---\n", "~\n---\n~\n", "a: 1\n...\n---\n", "a: 1\n---\nb: [\n",
+	}
+	for name, h := range map[string]*agentcfg.Home{"project": prj, "global": global} {
+		for _, bad := range bads {
+			_, err := h.Put(ctx, agentcfg.ConfigFile, []byte(bad), 0, nil)
+			assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, "%s %q", name, bad)
+			_, err = h.ImportTar(ctx, tarOf(t, map[string]string{agentcfg.ConfigFile: bad}), nil)
+			assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, "%s %q", name, bad)
+		}
+		assert.Empty(t, paths(t, h), name)
+		for _, ok := range []string{"theme: dark\n", "", "# 只有注释\n", "~\n", "---\ntheme: dark\n...\n"} {
+			_, err := h.Put(ctx, agentcfg.ConfigFile, []byte(ok), 0, nil)
+			assert.NoError(t, err, "%s %q", name, ok)
+		}
+		// 只有根目录的 config.yml 是 omp 配置
+		_, err = h.Put(ctx, "rules/config.yml", []byte("- a\n"), 0, nil)
+		assert.NoError(t, err, name)
+	}
+}
+
+// 必须是文本的路径（rules/**、*.md、*.yml、*.yaml、*.json）拒收含 NUL 或非 UTF-8 的内容，全局与项目层、PUT 与导入都管；
+// 其它路径（扩展脚本、图片等）照收。
+func TestHomeTextOnlyPaths(t *testing.T) {
+	ctx := context.Background()
+	p, dir := newProjectHomes(t)
+	prj, err := p.For("prj_A")
+	require.NoError(t, err)
+	global, err := agentcfg.NewHome(dir)
+	require.NoError(t, err)
+	environ := "GITHUB_TOKEN=ghp_x\x00AWS_SECRET=y\x00"
+	latin1 := "caf\xe9"
+	textPaths := []string{"rules/env.md", "rules/env", "AGENTS.md", "SYSTEM.md", "skills/x/SKILL.MD", "mcp.json", "config.yml", "agents/a.yaml"}
+	for name, h := range map[string]*agentcfg.Home{"project": prj, "global": global} {
+		for _, rel := range textPaths {
+			for _, body := range []string{environ, latin1} {
+				_, err := h.Put(ctx, rel, []byte(body), 0, nil)
+				assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, "%s %s %q", name, rel, body)
+				_, err = h.ImportTar(ctx, tarOf(t, map[string]string{rel: body}), nil)
+				assert.ErrorIs(t, err, agentcfg.ErrInvalidContent, "%s %s %q", name, rel, body)
+			}
+		}
+		assert.Empty(t, paths(t, h), name)
+		for _, rel := range []string{"extensions/a.bin", "skills/x/logo.png", "notes.txt"} {
+			_, err := h.Put(ctx, rel, []byte(environ), 0, nil)
+			assert.NoError(t, err, "%s %s", name, rel)
+		}
+		_, err = h.Put(ctx, "rules/ok.md", []byte("# 中文规则 ✓\n"), 0, nil)
+		assert.NoError(t, err, name)
+	}
 }
 
 // ImportTar 只替换本项目；被排除的路径静默跳过。
@@ -271,4 +310,93 @@ func TestProjectHomesRemove(t *testing.T) {
 	assert.Empty(t, paths(t, a2))
 	assert.Equal(t, []string{"rules/b.md"}, paths(t, b))
 	require.NoError(t, p.Remove("prj_never"), "目录不存在不报错")
+}
+
+// Remove 之后：删除前借出的 *Home 与之后 For 取到的是同一个（同一目录只有一把锁），其上的 Put / ImportTar / Delete
+// 一律 ErrProjectRemoved（按不存在处理），不会把已删项目的目录重新建出来。
+func TestProjectHomesRemoveInvalidatesHome(t *testing.T) {
+	ctx := context.Background()
+	p, dir := newProjectHomes(t)
+	prjDir := filepath.Join(dir, agentcfg.ProjectsDirName, "prj_A")
+	stale, err := p.For("prj_A")
+	require.NoError(t, err)
+	_, err = stale.Put(ctx, "rules/a.md", []byte("a"), 0, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, p.Remove("prj_A"))
+	fresh, err := p.For("prj_A")
+	require.NoError(t, err)
+	assert.Same(t, stale, fresh, "Remove 之后 For 不能另建一个持有别的锁的 *Home")
+
+	for name, h := range map[string]*agentcfg.Home{"stale": stale, "fresh": fresh} {
+		_, err = h.Put(ctx, "rules/b.md", []byte("b"), 0, nil)
+		assert.ErrorIs(t, err, agentcfg.ErrProjectRemoved, name)
+		assert.ErrorIs(t, err, fs.ErrNotExist, name)
+		_, err = h.ImportTar(ctx, tarOf(t, map[string]string{"rules/c.md": "c"}), nil)
+		assert.ErrorIs(t, err, agentcfg.ErrProjectRemoved, name)
+		assert.ErrorIs(t, h.Delete("rules/a.md"), agentcfg.ErrProjectRemoved, name)
+		assert.Empty(t, paths(t, h), name)
+	}
+	_, err = os.Lstat(prjDir)
+	assert.ErrorIs(t, err, fs.ErrNotExist, "已删项目的目录不能复活")
+	files, modes, err := p.Load("prj_A")
+	require.NoError(t, err)
+	assert.Empty(t, files)
+	assert.Empty(t, modes)
+	entries, err := os.ReadDir(filepath.Join(dir, agentcfg.ProjectsDirName))
+	require.NoError(t, err)
+	assert.Empty(t, entries, "导入的临时目录也已清理")
+}
+
+// 全局层与项目层随同一条 ctl 消息下发：写入时两层按下发编码（EntrySize）合计不超过 DeliveryBudget，超了 413
+// （ErrTooLarge）；项目层的检查加全局层，全局层的检查加最大的项目层；删除总是允许。
+func TestDeliveryBudget(t *testing.T) {
+	ctx := context.Background()
+	p, dir := newProjectHomes(t)
+	global, err := agentcfg.NewHome(dir)
+	require.NoError(t, err)
+	prj, err := p.For("prj_A")
+	require.NoError(t, err)
+
+	// 全局 4×16 MiB（编码后约 85.3 MiB，此前单层就能下发）。直接落盘：预算按磁盘计，省掉 64 MiB 的密钥扫描
+	big := bytes.Repeat([]byte("g"), agentcfg.MaxFileSize)
+	for i := range 4 {
+		require.NoError(t, os.MkdirAll(filepath.Join(global.Dir(), "g"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(global.Dir(), "g", fmt.Sprintf("%d.md", i)), big, 0o644))
+	}
+	used := 4 * agentcfg.EntrySize("g/0.md", int64(len(big)))
+	mb := bytes.Repeat([]byte("p"), agentcfg.ProjectMaxFileSize)
+	one := agentcfg.EntrySize("rules/0.md", int64(len(mb)))
+	require.LessOrEqual(t, used+one, int64(agentcfg.DeliveryBudget), "前提：再放一个 1 MiB 项目文件仍在预算内")
+	require.Greater(t, used+2*one, int64(agentcfg.DeliveryBudget), "前提：两个就超")
+
+	_, err = prj.Put(ctx, "rules/0.md", mb, 0, nil)
+	require.NoError(t, err)
+	_, err = prj.Put(ctx, "rules/1.md", mb, 0, nil)
+	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
+	assert.Contains(t, err.Error(), "单次下发上限")
+	_, err = prj.ImportTar(ctx, tarOf(t, map[string]string{"rules/0.md": string(mb), "rules/1.md": string(mb)}), nil)
+	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
+	_, err = prj.Put(ctx, "rules/0.md", mb, 0, nil)
+	assert.NoError(t, err, "覆盖同路径不计旧内容")
+	assert.Equal(t, []string{"rules/0.md"}, paths(t, prj))
+
+	// 全局层的检查加上最大的项目层，报出是哪个项目
+	_, err = global.Put(ctx, "g/extra.md", mb, 0, nil)
+	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
+	assert.Contains(t, err.Error(), "prj_A")
+	// 其它项目同样受全局层约束
+	other, err := p.For("prj_B")
+	require.NoError(t, err)
+	_, err = other.Put(ctx, "rules/x.md", mb, 0, nil)
+	assert.NoError(t, err)
+	_, err = other.Put(ctx, "rules/y.md", mb, 0, nil)
+	assert.ErrorIs(t, err, agentcfg.ErrTooLarge)
+
+	// 删除总是允许；腾出空间后写入恢复
+	require.NoError(t, global.Delete("g/3.md"))
+	_, err = prj.Put(ctx, "rules/1.md", mb, 0, nil)
+	assert.NoError(t, err)
+	_, err = global.Put(ctx, "g/extra.md", mb, 0, nil)
+	assert.NoError(t, err)
 }
