@@ -2112,11 +2112,12 @@ paths:
     get:
       tags: [settings]
       operationId: listRoleIdentities
-      summary: omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+      summary: omp role 的身份与头像（已知 role + 只剩头像的遗留项）
       description: |
-        role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：`cycleOrder`、
-        `modelTags.<role>.name`、`modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省 `cycleOrder`（`smol / default / slow`）；
-        解析失败时照样 200，带 `configError`，roles 按缺省 `cycleOrder` 给出。不唤醒任何 orb。
+        role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：依次为 `cycleOrder`（按序）、
+        `modelRoles` 中其余的键（字典序）、其余内置 role（default / smol / slow / vision / plan / commit / tiny / memory / task /
+        advisor / widget）；名字取 `modelTags.<role>.name`，selector 取 `modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省
+        `cycleOrder`（`smol / default / slow`）；解析失败时照样 200，带 `configError`，roles 按缺省配置给出。不唤醒任何 orb。
       responses:
         '200':
           description: role 列表
@@ -2131,7 +2132,7 @@ paths:
       description: |
         `role` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
         头像校验同 `putAgentIdentity`（两字段同时给 → 400 `invalid_request`；图片超 128KiB → 413 `too_large`）。
-        给不在当前 `cycleOrder` 里的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
+        给不在上述已知 role 之列的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -2147,6 +2148,103 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RoleIdentity' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/settings/agent-avatars:
+    get:
+      tags: [settings]
+      operationId: listAgentAvatars
+      summary: 子 agent 的头像（内置 agent + omp-home `agents/*.md` + 只剩头像的遗留项）
+      description: |
+        内置 agent 为 task / sonic / scout / reviewer / security-reviewer / advisor；自定义 agent 取 `agents/*.md` frontmatter 的
+        `name` 与 `description`（解析失败的文件跳过并列入 `warnings`）。内置 agent 没有自定义头像时省略头像字段，客户端显示各自的
+        默认字形。不唤醒任何 orb。
+      responses:
+        '200':
+          description: agent 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentAvatarList' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putAgentAvatar
+      summary: 设置或清除一个 agent 的头像（两个头像字段都省略 = 清除）
+      description: |
+        `name` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
+        头像校验同 `putAgentIdentity`。给既不是内置 agent、也不在 `agents/*.md` 里的名字**设置**头像 → 400 `invalid_request`；
+        清除总是允许（幂等）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentAvatarInput' }
+      responses:
+        '200':
+          description: 写入后的该 agent（组装方式同列表）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentAvatar' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/settings/composer:
+    get:
+      tags: [settings]
+      operationId: getComposerPrefs
+      summary: 新对话输入框的偏好（首屏默认对象）
+      responses:
+        '200':
+          description: 当前设置（尚未初始化所有者时为缺省值）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComposerPrefs' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putComposerPrefs
+      summary: 设置新对话输入框的偏好（整体替换）
+      description: 尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ComposerPrefs' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComposerPrefs' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/models/catalog:
+    get:
+      tags: [settings]
+      operationId: getModelCatalog
+      summary: 中央模型目录（控制面用钉住的 Oryn Core 运行 `omp models --json --kind all` 得到，不唤醒任何 orb）
+      description: |
+        目录按 omp-home 的 `models.yml` 与 `config.yml` 渲染后的内容与 Core 版本缓存：内容变化后的首次请求会等待重新运行
+        （约数秒）；超过 24 小时或控制面重启后先返回旧结果（`stale: true`）并在后台刷新。只列出有可用凭据（经 egress 代理）或
+        免密钥的 provider 的模型。运行失败且没有任何旧结果 → 503 `catalog_unavailable`。
+      parameters:
+        - name: refresh
+          in: query
+          description: 为真时强制重新运行
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 模型目录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalog' }
         default: { $ref: '#/components/responses/Error' }
 
   /api/v1/settings/user-identity:
@@ -2804,8 +2902,15 @@ paths:
     post:
       tags: [spaces]
       operationId: createAssistantConversation
-      summary: 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
-      description: 需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。
+      summary: 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
+      description: |
+        需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。请求体可省略；给了 `prompt` / `files` /
+        `images` 时新对话以它们作为第一条用户消息（`files` 是文件库里的文件 id，绑定到新对话）。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAssistantConversationRequest' }
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -2816,6 +2921,113 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ThreadEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/files:
+    get:
+      tags: [spaces]
+      operationId: listAssistantFiles
+      summary: 全局助手文件库（新的在前）
+      parameters:
+        - name: threadId
+          in: query
+          description: 只看该助手对话可见的文件（它自己的 + 库内共享的）
+          schema: { $ref: '#/components/schemas/ThreadId' }
+        - name: scope
+          in: query
+          schema: { $ref: '#/components/schemas/AssistantFileScope' }
+      responses:
+        '200':
+          description: 文件列表（不含尚未随消息发送的上传）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantFileList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [spaces]
+      operationId: uploadAssistantFile
+      summary: 上传文件到全局助手文件库（单文件 ≤100MiB；24h 内未随消息发送即被清理）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: 原始文件名（服务端净化后 ≤200 字节）
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+        - name: threadId
+          in: query
+          description: 所属助手对话；缺省 = 随 `createAssistantConversation` 的 `files` 绑定
+          schema: { $ref: '#/components/schemas/ThreadId' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: 已保存
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantFile' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/files/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/AssistantFileIdPath' }
+    patch:
+      tags: [spaces]
+      operationId: patchAssistantFile
+      summary: 切换文件的可见范围（所属对话 / 库内共享）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssistantFilePatch' }
+      responses:
+        '200':
+          description: 修改后的文件
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantFile' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [spaces]
+      operationId: deleteAssistantFile
+      summary: 删除文件库里的文件（已复制给其它线程的附件不受影响）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/files/{id}/content:
+    parameters:
+      - { $ref: '#/components/parameters/AssistantFileIdPath' }
+    get:
+      tags: [spaces]
+      operationId: getAssistantFileContent
+      summary: 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`）
+      parameters:
+        - name: inline
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 文件字节
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        '206':
+          description: Range 请求的部分字节
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
@@ -3437,6 +3649,11 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/AttachmentId' }
+    AssistantFileIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/AssistantFileId' }
     FsPathQuery:
       name: path
       in: query
@@ -3669,6 +3886,10 @@ components:
       type: string
       pattern: '^att_[0-9A-Z]{26}$'
       description: '`att_<ulid>`'
+    AssistantFileId:
+      type: string
+      pattern: '^afl_[0-9A-Z]{26}$'
+      description: '`afl_<ulid>`（全局助手文件库）'
     ShareId:
       type: string
       pattern: '^shr_[0-9A-Z]{26}$'
@@ -4238,6 +4459,155 @@ components:
         role: { type: string, minLength: 1, maxLength: 128 }
         avatarIcon: { type: string, maxLength: 64 }
         avatarImage: { type: string, maxLength: 131072 }
+    AgentAvatar:
+      type: object
+      required: [name, source]
+      properties:
+        name:
+          type: string
+          description: agent 名（原样，区分大小写）
+        source:
+          type: string
+          enum: [bundled, user, orphan]
+          description: '`bundled` 内置；`user` 来自 omp-home `agents/*.md`；`orphan` 只剩头像（agent 文件已删除或改名）'
+        description:
+          type: string
+          description: frontmatter 的 `description`；内置 agent 省略
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
+    AgentAvatarList:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          description: 先内置（固定顺序），再自定义（按名字），最后遗留项（按名字）
+          items: { $ref: '#/components/schemas/AgentAvatar' }
+        warnings:
+          type: array
+          description: 解析失败而跳过的 agent 文件
+          items: { $ref: '#/components/schemas/AgentConfigWarning' }
+    AgentAvatarInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
+    ComposerPrefs:
+      type: object
+      required: [defaultTarget]
+      properties:
+        defaultTarget:
+          type: string
+          enum: [role, assistant]
+          description: 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+    ModelCatalog:
+      type: object
+      required: [models, fetchedAt, stale]
+      properties:
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogModel' }
+        fetchedAt: { $ref: '#/components/schemas/TimestampMs' }
+        stale:
+          type: boolean
+          description: 为真表示这是旧结果（过期、控制面重启后从磁盘读出，或最近一次运行失败）
+        warnings:
+          type: array
+          description: omp 的 stderr 行与运行失败原因
+          items: { type: string }
+    CatalogModel:
+      type: object
+      required: [provider, id, selector, name, kind]
+      properties:
+        provider: { type: string }
+        id: { type: string }
+        selector:
+          type: string
+          description: '`<provider>/<id>`'
+        name: { type: string }
+        kind:
+          type: string
+          description: chat / embedding / image / judge / search / stt / tiny / tts 等
+        contextWindow: { type: integer }
+        maxTokens: { type: integer }
+        reasoning: { type: boolean }
+        thinking:
+          type: array
+          description: 支持的思考档位；不支持调节时省略
+          items: { type: string }
+        input:
+          type: array
+          items: { type: string }
+        cost: { $ref: '#/components/schemas/CatalogCost' }
+        pricingStatus: { type: string }
+    CatalogCost:
+      type: object
+      description: 每百万 token 的价格（美元）
+      properties:
+        input: { type: number }
+        output: { type: number }
+        cacheRead: { type: number }
+        cacheWrite: { type: number }
+    AssistantFileScope:
+      type: string
+      enum: [conversation, shared]
+      description: '`conversation` 只有所属助手对话可见；`shared` 所有助手对话可见'
+    AssistantFile:
+      type: object
+      required: [id, name, mime, size, sha256, scope, source, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/AssistantFileId' }
+        name:
+          type: string
+          description: 净化后的文件名（≤200 字节）
+        mime: { type: string }
+        size:
+          type: integer
+          format: int64
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        scope: { $ref: '#/components/schemas/AssistantFileScope' }
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 所属助手对话；对话已删除或尚未绑定时省略
+        source:
+          type: string
+          enum: [upload, assistant, orb]
+          description: '`upload` 用户上传；`assistant` 助手保存；`orb` orb 内 agent 用 `oryn library put` 存入'
+        sourceThreadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: '`source = orb` 时为存入文件的线程'
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+    AssistantFileList:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/AssistantFile' }
+    AssistantFilePatch:
+      type: object
+      required: [scope]
+      properties:
+        scope: { $ref: '#/components/schemas/AssistantFileScope' }
+    CreateAssistantConversationRequest:
+      type: object
+      description: 新助手对话的第一条用户消息；全部省略 = 空对话
+      properties:
+        prompt: { type: string }
+        files:
+          type: array
+          maxItems: 20
+          description: 文件库里的文件 id（`uploadAssistantFile`）；绑定到新对话
+          items: { $ref: '#/components/schemas/AssistantFileId' }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/ImageContent' }
+        model: { $ref: '#/components/schemas/ModelRef' }
+        thinkingLevel: { type: string }
 
     # ============================================================ provider（客户端视图）
     OrbType:
@@ -4485,6 +4855,12 @@ components:
         executor: { $ref: '#/components/schemas/ThreadExecutor' }
         model: { $ref: '#/components/schemas/ModelRef' }
         thinkingLevel: { type: string }
+        role:
+          type: string
+          maxLength: 128
+          description: |
+            新线程以该 omp 模型 role 开场：首条提示词之前先发 `oryn_select_model{role}`（写入模型来源记录），给了 `thinkingLevel`
+            时随后再设思考档位。与 `model` 同时给出时以 role 为准（`model` 只决定 agent 启动时的初始模型）。
         title: { type: string }
         labels:
           type: array

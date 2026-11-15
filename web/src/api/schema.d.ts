@@ -1794,19 +1794,91 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
-         * @description role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：`cycleOrder`、
-         *     `modelTags.<role>.name`、`modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省 `cycleOrder`（`smol / default / slow`）；
-         *     解析失败时照样 200，带 `configError`，roles 按缺省 `cycleOrder` 给出。不唤醒任何 orb。
+         * omp role 的身份与头像（已知 role + 只剩头像的遗留项）
+         * @description role 列表来自 omp-home 的 `config.yml`（只读全局配置，不读项目级 `.omp/config.yml`）：依次为 `cycleOrder`（按序）、
+         *     `modelRoles` 中其余的键（字典序）、其余内置 role（default / smol / slow / vision / plan / commit / tiny / memory / task /
+         *     advisor / widget）；名字取 `modelTags.<role>.name`，selector 取 `modelRoles.<role>` 的原始值。`config.yml` 不存在按缺省
+         *     `cycleOrder`（`smol / default / slow`）；解析失败时照样 200，带 `configError`，roles 按缺省配置给出。不唤醒任何 orb。
          */
         get: operations["listRoleIdentities"];
         /**
          * 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
          * @description `role` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
          *     头像校验同 `putAgentIdentity`（两字段同时给 → 400 `invalid_request`；图片超 128KiB → 413 `too_large`）。
-         *     给不在当前 `cycleOrder` 里的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
+         *     给不在上述已知 role 之列的 role **设置**头像 → 400 `invalid_request`；清除任何 role 的头像都允许（幂等，没有行也 200）。
          */
         put: operations["putRoleIdentity"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/agent-avatars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 子 agent 的头像（内置 agent + omp-home `agents/*.md` + 只剩头像的遗留项）
+         * @description 内置 agent 为 task / sonic / scout / reviewer / security-reviewer / advisor；自定义 agent 取 `agents/*.md` frontmatter 的
+         *     `name` 与 `description`（解析失败的文件跳过并列入 `warnings`）。内置 agent 没有自定义头像时省略头像字段，客户端显示各自的
+         *     默认字形。不唤醒任何 orb。
+         */
+        get: operations["listAgentAvatars"];
+        /**
+         * 设置或清除一个 agent 的头像（两个头像字段都省略 = 清除）
+         * @description `name` 原样保存（区分大小写）；去首尾空白后为空、超过 128 字节或含控制字符 → 400 `invalid_request`。
+         *     头像校验同 `putAgentIdentity`。给既不是内置 agent、也不在 `agents/*.md` 里的名字**设置**头像 → 400 `invalid_request`；
+         *     清除总是允许（幂等）。
+         */
+        put: operations["putAgentAvatar"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/composer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 新对话输入框的偏好（首屏默认对象） */
+        get: operations["getComposerPrefs"];
+        /**
+         * 设置新对话输入框的偏好（整体替换）
+         * @description 尚未初始化所有者 → 409。
+         */
+        put: operations["putComposerPrefs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/models/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 中央模型目录（控制面用钉住的 Oryn Core 运行 `omp models --json --kind all` 得到，不唤醒任何 orb）
+         * @description 目录按 omp-home 的 `models.yml` 与 `config.yml` 渲染后的内容与 Core 版本缓存：内容变化后的首次请求会等待重新运行
+         *     （约数秒）；超过 24 小时或控制面重启后先返回旧结果（`stale: true`）并在后台刷新。只列出有可用凭据（经 egress 代理）或
+         *     免密钥的 provider 的模型。运行失败且没有任何旧结果 → 503 `catalog_unavailable`。
+         */
+        get: operations["getModelCatalog"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2304,10 +2376,68 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
-         * @description 需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。
+         * 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
+         * @description 需要协调宿主可用：不可用时 409 `coordinator_unavailable`（`message` 为具体原因）。请求体可省略；给了 `prompt` / `files` /
+         *     `images` 时新对话以它们作为第一条用户消息（`files` 是文件库里的文件 id，绑定到新对话）。
          */
         post: operations["createAssistantConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全局助手文件库（新的在前） */
+        get: operations["listAssistantFiles"];
+        put?: never;
+        /** 上传文件到全局助手文件库（单文件 ≤100MiB；24h 内未随消息发送即被清理） */
+        post: operations["uploadAssistantFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除文件库里的文件（已复制给其它线程的附件不受影响） */
+        delete: operations["deleteAssistantFile"];
+        options?: never;
+        head?: never;
+        /** 切换文件的可见范围（所属对话 / 库内共享） */
+        patch: operations["patchAssistantFile"];
+        trace?: never;
+    };
+    "/api/v1/assistant/files/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`） */
+        get: operations["getAssistantFileContent"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2820,6 +2950,8 @@ export interface components {
         SnapshotId: string;
         /** @description `att_<ulid>` */
         AttachmentId: string;
+        /** @description `afl_<ulid>`（全局助手文件库） */
+        AssistantFileId: string;
         /** @description `shr_<ulid>` */
         ShareId: string;
         /** @description 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储） */
@@ -3209,6 +3341,109 @@ export interface components {
             avatarIcon?: string;
             avatarImage?: string;
         };
+        AgentAvatar: {
+            /** @description agent 名（原样，区分大小写） */
+            name: string;
+            /**
+             * @description `bundled` 内置；`user` 来自 omp-home `agents/*.md`；`orphan` 只剩头像（agent 文件已删除或改名）
+             * @enum {string}
+             */
+            source: "bundled" | "user" | "orphan";
+            /** @description frontmatter 的 `description`；内置 agent 省略 */
+            description?: string;
+            avatarIcon?: string;
+            avatarImage?: string;
+        };
+        AgentAvatarList: {
+            /** @description 先内置（固定顺序），再自定义（按名字），最后遗留项（按名字） */
+            agents: components["schemas"]["AgentAvatar"][];
+            /** @description 解析失败而跳过的 agent 文件 */
+            warnings?: components["schemas"]["AgentConfigWarning"][];
+        };
+        AgentAvatarInput: {
+            name: string;
+            avatarIcon?: string;
+            avatarImage?: string;
+        };
+        ComposerPrefs: {
+            /**
+             * @description 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+             * @enum {string}
+             */
+            defaultTarget: "role" | "assistant";
+        };
+        ModelCatalog: {
+            models: components["schemas"]["CatalogModel"][];
+            fetchedAt: components["schemas"]["TimestampMs"];
+            /** @description 为真表示这是旧结果（过期、控制面重启后从磁盘读出，或最近一次运行失败） */
+            stale: boolean;
+            /** @description omp 的 stderr 行与运行失败原因 */
+            warnings?: string[];
+        };
+        CatalogModel: {
+            provider: string;
+            id: string;
+            /** @description `<provider>/<id>` */
+            selector: string;
+            name: string;
+            /** @description chat / embedding / image / judge / search / stt / tiny / tts 等 */
+            kind: string;
+            contextWindow?: number;
+            maxTokens?: number;
+            reasoning?: boolean;
+            /** @description 支持的思考档位；不支持调节时省略 */
+            thinking?: string[];
+            input?: string[];
+            cost?: components["schemas"]["CatalogCost"];
+            pricingStatus?: string;
+        };
+        /** @description 每百万 token 的价格（美元） */
+        CatalogCost: {
+            input?: number;
+            output?: number;
+            cacheRead?: number;
+            cacheWrite?: number;
+        };
+        /**
+         * @description `conversation` 只有所属助手对话可见；`shared` 所有助手对话可见
+         * @enum {string}
+         */
+        AssistantFileScope: "conversation" | "shared";
+        AssistantFile: {
+            id: components["schemas"]["AssistantFileId"];
+            /** @description 净化后的文件名（≤200 字节） */
+            name: string;
+            mime: string;
+            /** Format: int64 */
+            size: number;
+            sha256: components["schemas"]["Sha256"];
+            scope: components["schemas"]["AssistantFileScope"];
+            /** @description 所属助手对话；对话已删除或尚未绑定时省略 */
+            threadId?: components["schemas"]["ThreadId"];
+            /**
+             * @description `upload` 用户上传；`assistant` 助手保存；`orb` orb 内 agent 用 `oryn library put` 存入
+             * @enum {string}
+             */
+            source: "upload" | "assistant" | "orb";
+            /** @description `source = orb` 时为存入文件的线程 */
+            sourceThreadId?: components["schemas"]["ThreadId"];
+            createdAt: components["schemas"]["TimestampMs"];
+        };
+        AssistantFileList: {
+            files: components["schemas"]["AssistantFile"][];
+        };
+        AssistantFilePatch: {
+            scope: components["schemas"]["AssistantFileScope"];
+        };
+        /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
+        CreateAssistantConversationRequest: {
+            prompt?: string;
+            /** @description 文件库里的文件 id（`uploadAssistantFile`）；绑定到新对话 */
+            files?: components["schemas"]["AssistantFileId"][];
+            images?: components["schemas"]["ImageContent"][];
+            model?: components["schemas"]["ModelRef"];
+            thinkingLevel?: string;
+        };
         OrbType: {
             name: string;
             cpus: number;
@@ -3366,6 +3601,11 @@ export interface components {
             executor: components["schemas"]["ThreadExecutor"];
             model?: components["schemas"]["ModelRef"];
             thinkingLevel?: string;
+            /**
+             * @description 新线程以该 omp 模型 role 开场：首条提示词之前先发 `oryn_select_model{role}`（写入模型来源记录），给了 `thinkingLevel`
+             *     时随后再设思考档位。与 `model` 同时给出时以 role 为准（`model` 只决定 agent 启动时的初始模型）。
+             */
+            role?: string;
             title?: string;
             labels?: string[];
             /** @description 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空 */
@@ -6105,6 +6345,7 @@ export interface components {
         ThreadIdPath: components["schemas"]["ThreadId"];
         OrbIdPath: components["schemas"]["OrbId"];
         AttachmentIdPath: components["schemas"]["AttachmentId"];
+        AssistantFileIdPath: components["schemas"]["AssistantFileId"];
         /**
          * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
          *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
@@ -8929,6 +9170,122 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listAgentAvatars: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description agent 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentAvatarList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAgentAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentAvatarInput"];
+            };
+        };
+        responses: {
+            /** @description 写入后的该 agent（组装方式同列表） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentAvatar"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getComposerPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（尚未初始化所有者时为缺省值） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposerPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putComposerPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposerPrefs"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposerPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getModelCatalog: {
+        parameters: {
+            query?: {
+                /** @description 为真时强制重新运行 */
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型目录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalog"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getUserIdentity: {
         parameters: {
             query?: never;
@@ -9829,7 +10186,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateAssistantConversationRequest"];
+            };
+        };
         responses: {
             /** @description 已创建 */
             201: {
@@ -9838,6 +10199,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ThreadEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAssistantFiles: {
+        parameters: {
+            query?: {
+                /** @description 只看该助手对话可见的文件（它自己的 + 库内共享的） */
+                threadId?: components["schemas"]["ThreadId"];
+                scope?: components["schemas"]["AssistantFileScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件列表（不含尚未随消息发送的上传） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantFileList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    uploadAssistantFile: {
+        parameters: {
+            query: {
+                /** @description 原始文件名（服务端净化后 ≤200 字节） */
+                name: string;
+                /** @description 所属助手对话；缺省 = 随 `createAssistantConversation` 的 `files` 绑定 */
+                threadId?: components["schemas"]["ThreadId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 已保存 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteAssistantFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    patchAssistantFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantFilePatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的文件 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAssistantFileContent: {
+        parameters: {
+            query?: {
+                inline?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Range 请求的部分字节 */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
                 };
             };
             default: components["responses"]["Error"];

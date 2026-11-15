@@ -13,6 +13,27 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AgentAvatarSource.
+const (
+	AgentAvatarSourceBundled AgentAvatarSource = "bundled"
+	AgentAvatarSourceOrphan  AgentAvatarSource = "orphan"
+	AgentAvatarSourceUser    AgentAvatarSource = "user"
+)
+
+// Valid indicates whether the value is a known member of the AgentAvatarSource enum.
+func (e AgentAvatarSource) Valid() bool {
+	switch e {
+	case AgentAvatarSourceBundled:
+		return true
+	case AgentAvatarSourceOrphan:
+		return true
+	case AgentAvatarSourceUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentStatus.
 const (
 	AgentStatusExited   AgentStatus = "exited"
@@ -31,6 +52,45 @@ func (e AgentStatus) Valid() bool {
 	case AgentStatusReady:
 		return true
 	case AgentStatusStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssistantFileSource.
+const (
+	AssistantFileSourceAssistant AssistantFileSource = "assistant"
+	AssistantFileSourceOrb       AssistantFileSource = "orb"
+	AssistantFileSourceUpload    AssistantFileSource = "upload"
+)
+
+// Valid indicates whether the value is a known member of the AssistantFileSource enum.
+func (e AssistantFileSource) Valid() bool {
+	switch e {
+	case AssistantFileSourceAssistant:
+		return true
+	case AssistantFileSourceOrb:
+		return true
+	case AssistantFileSourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssistantFileScope.
+const (
+	Conversation AssistantFileScope = "conversation"
+	Shared       AssistantFileScope = "shared"
+)
+
+// Valid indicates whether the value is a known member of the AssistantFileScope enum.
+func (e AssistantFileScope) Valid() bool {
+	switch e {
+	case Conversation:
+		return true
+	case Shared:
 		return true
 	default:
 		return false
@@ -220,6 +280,24 @@ func (e BudgetLevel) Valid() bool {
 	case BudgetLevelOver:
 		return true
 	case BudgetLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ComposerPrefsDefaultTarget.
+const (
+	ComposerPrefsDefaultTargetAssistant ComposerPrefsDefaultTarget = "assistant"
+	ComposerPrefsDefaultTargetRole      ComposerPrefsDefaultTarget = "role"
+)
+
+// Valid indicates whether the value is a known member of the ComposerPrefsDefaultTarget enum.
+func (e ComposerPrefsDefaultTarget) Valid() bool {
+	switch e {
+	case ComposerPrefsDefaultTargetAssistant:
+		return true
+	case ComposerPrefsDefaultTargetRole:
 		return true
 	default:
 		return false
@@ -2359,6 +2437,40 @@ func (e ListThreadsParamsKind) Valid() bool {
 	}
 }
 
+// AgentAvatar defines model for AgentAvatar.
+type AgentAvatar struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+
+	// Description frontmatter 的 `description`；内置 agent 省略
+	Description *string `json:"description,omitempty"`
+
+	// Name agent 名（原样，区分大小写）
+	Name string `json:"name"`
+
+	// Source `bundled` 内置；`user` 来自 omp-home `agents/*.md`；`orphan` 只剩头像（agent 文件已删除或改名）
+	Source AgentAvatarSource `json:"source"`
+}
+
+// AgentAvatarSource `bundled` 内置；`user` 来自 omp-home `agents/*.md`；`orphan` 只剩头像（agent 文件已删除或改名）
+type AgentAvatarSource string
+
+// AgentAvatarInput defines model for AgentAvatarInput.
+type AgentAvatarInput struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+	Name        string  `json:"name"`
+}
+
+// AgentAvatarList defines model for AgentAvatarList.
+type AgentAvatarList struct {
+	// Agents 先内置（固定顺序），再自定义（按名字），最后遗留项（按名字）
+	Agents []AgentAvatar `json:"agents"`
+
+	// Warnings 解析失败而跳过的 agent 文件
+	Warnings []AgentConfigWarning `json:"warnings,omitempty"`
+}
+
 // AgentConfigFile defines model for AgentConfigFile.
 type AgentConfigFile struct {
 	// Mode 文件权限（十进制表示的 Unix 权限位）
@@ -2454,6 +2566,55 @@ type AppSessionCode struct {
 	// Example: 30
 	ExpiresIn int `json:"expiresIn"`
 }
+
+// AssistantFile defines model for AssistantFile.
+type AssistantFile struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ID `afl_<ulid>`（全局助手文件库）
+	ID   AssistantFileID `json:"id"`
+	Mime string          `json:"mime"`
+
+	// Name 净化后的文件名（≤200 字节）
+	Name string `json:"name"`
+
+	// Scope `conversation` 只有所属助手对话可见；`shared` 所有助手对话可见
+	Scope AssistantFileScope `json:"scope"`
+
+	// Sha256 SHA-256 小写十六进制
+	Sha256 Sha256 `json:"sha256"`
+	Size   int64  `json:"size"`
+
+	// Source `upload` 用户上传；`assistant` 助手保存；`orb` orb 内 agent 用 `oryn library put` 存入
+	Source AssistantFileSource `json:"source"`
+
+	// SourceThreadID `source = orb` 时为存入文件的线程
+	SourceThreadID *ThreadID `json:"sourceThreadId,omitempty"`
+
+	// ThreadID 所属助手对话；对话已删除或尚未绑定时省略
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// AssistantFileSource `upload` 用户上传；`assistant` 助手保存；`orb` orb 内 agent 用 `oryn library put` 存入
+type AssistantFileSource string
+
+// AssistantFileID `afl_<ulid>`（全局助手文件库）
+type AssistantFileID = string
+
+// AssistantFileList defines model for AssistantFileList.
+type AssistantFileList struct {
+	Files []AssistantFile `json:"files"`
+}
+
+// AssistantFilePatch defines model for AssistantFilePatch.
+type AssistantFilePatch struct {
+	// Scope `conversation` 只有所属助手对话可见；`shared` 所有助手对话可见
+	Scope AssistantFileScope `json:"scope"`
+}
+
+// AssistantFileScope `conversation` 只有所属助手对话可见；`shared` 所有助手对话可见
+type AssistantFileScope string
 
 // Attachment defines model for Attachment.
 type Attachment struct {
@@ -2741,6 +2902,47 @@ type BudgetStatus struct {
 	Month  BudgetPeriod `json:"month"`
 }
 
+// CatalogCost 每百万 token 的价格（美元）
+type CatalogCost struct {
+	CacheRead  *float32 `json:"cacheRead,omitempty"`
+	CacheWrite *float32 `json:"cacheWrite,omitempty"`
+	Input      *float32 `json:"input,omitempty"`
+	Output     *float32 `json:"output,omitempty"`
+}
+
+// CatalogModel defines model for CatalogModel.
+type CatalogModel struct {
+	ContextWindow *int `json:"contextWindow,omitempty"`
+
+	// Cost 每百万 token 的价格（美元）
+	Cost  *CatalogCost `json:"cost,omitempty"`
+	ID    string       `json:"id"`
+	Input []string     `json:"input,omitempty"`
+
+	// Kind chat / embedding / image / judge / search / stt / tiny / tts 等
+	Kind          string  `json:"kind"`
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
+	Name          string  `json:"name"`
+	PricingStatus *string `json:"pricingStatus,omitempty"`
+	Provider      string  `json:"provider"`
+	Reasoning     *bool   `json:"reasoning,omitempty"`
+
+	// Selector `<provider>/<id>`
+	Selector string `json:"selector"`
+
+	// Thinking 支持的思考档位；不支持调节时省略
+	Thinking []string `json:"thinking,omitempty"`
+}
+
+// ComposerPrefs defines model for ComposerPrefs.
+type ComposerPrefs struct {
+	// DefaultTarget 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+	DefaultTarget ComposerPrefsDefaultTarget `json:"defaultTarget"`
+}
+
+// ComposerPrefsDefaultTarget 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+type ComposerPrefsDefaultTarget string
+
 // CoordinatorSandbox defines model for CoordinatorSandbox.
 type CoordinatorSandbox struct {
 	// IpcScope Landlock ABI ≥ 6 的信号与抽象 unix socket 作用域
@@ -2769,6 +2971,16 @@ type CoordinatorStatus struct {
 	Sandbox *CoordinatorSandbox `json:"sandbox,omitempty"`
 }
 
+// CreateAssistantConversationRequest 新助手对话的第一条用户消息；全部省略 = 空对话
+type CreateAssistantConversationRequest struct {
+	// Files 文件库里的文件 id（`uploadAssistantFile`）；绑定到新对话
+	Files         []AssistantFileID `json:"files,omitempty"`
+	Images        []ImageContent    `json:"images,omitempty"`
+	Model         *ModelRef         `json:"model,omitempty"`
+	Prompt        *string           `json:"prompt,omitempty"`
+	ThinkingLevel *string           `json:"thinkingLevel,omitempty"`
+}
+
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
 	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
@@ -2790,6 +3002,10 @@ type CreateThreadRequest struct {
 	// ProjectID `prj_<ulid>`
 	ProjectID *ProjectID `json:"projectId,omitempty"`
 	Prompt    string     `json:"prompt"`
+
+	// Role 新线程以该 omp 模型 role 开场：首条提示词之前先发 `oryn_select_model{role}`（写入模型来源记录），给了 `thinkingLevel`
+	// 时随后再设思考档位。与 `model` 同时给出时以 role 为准（`model` 只决定 agent 启动时的初始模型）。
+	Role *string `json:"role,omitempty"`
 
 	// SpaceID 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目
 	SpaceID       *SpaceID `json:"spaceId,omitempty"`
@@ -4037,6 +4253,19 @@ type Me struct {
 
 // MeAuthKind defines model for Me.Auth.Kind.
 type MeAuthKind string
+
+// ModelCatalog defines model for ModelCatalog.
+type ModelCatalog struct {
+	// FetchedAt UTC 毫秒时间戳
+	FetchedAt TimestampMs    `json:"fetchedAt"`
+	Models    []CatalogModel `json:"models"`
+
+	// Stale 为真表示这是旧结果（过期、控制面重启后从磁盘读出，或最近一次运行失败）
+	Stale bool `json:"stale"`
+
+	// Warnings omp 的 stderr 行与运行失败原因
+	Warnings []string `json:"warnings,omitempty"`
+}
 
 // ModelRef defines model for ModelRef.
 type ModelRef struct {
@@ -6753,6 +6982,9 @@ type WsTicket struct {
 // AgentConfigPath defines model for AgentConfigPath.
 type AgentConfigPath = string
 
+// AssistantFileIDPath `afl_<ulid>`（全局助手文件库）
+type AssistantFileIDPath = AssistantFileID
+
 // AttachmentIDPath `att_<ulid>`
 type AttachmentIDPath = AttachmentID
 
@@ -6884,6 +7116,27 @@ type PutAgentConfigFileParams struct {
 	Mode *int `form:"mode,omitempty" json:"mode,omitempty"`
 }
 
+// ListAssistantFilesParams defines parameters for ListAssistantFiles.
+type ListAssistantFilesParams struct {
+	// ThreadID 只看该助手对话可见的文件（它自己的 + 库内共享的）
+	ThreadID *ThreadID           `form:"threadId,omitempty" json:"threadId,omitempty"`
+	Scope    *AssistantFileScope `form:"scope,omitempty" json:"scope,omitempty"`
+}
+
+// UploadAssistantFileParams defines parameters for UploadAssistantFile.
+type UploadAssistantFileParams struct {
+	// Name 原始文件名（服务端净化后 ≤200 字节）
+	Name string `form:"name" json:"name"`
+
+	// ThreadID 所属助手对话；缺省 = 随 `createAssistantConversation` 的 `files` 绑定
+	ThreadID *ThreadID `form:"threadId,omitempty" json:"threadId,omitempty"`
+}
+
+// GetAssistantFileContentParams defines parameters for GetAssistantFileContent.
+type GetAssistantFileContentParams struct {
+	Inline *bool `form:"inline,omitempty" json:"inline,omitempty"`
+}
+
 // UploadAttachmentParams defines parameters for UploadAttachment.
 type UploadAttachmentParams struct {
 	// Name 原始文件名（服务端净化后 ≤200 字节）
@@ -6903,6 +7156,12 @@ type ListAutomationActionsParams struct {
 	// Thread 只返回该线程作为发起方或目标的记录
 	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
 	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetModelCatalogParams defines parameters for GetModelCatalog.
+type GetModelCatalogParams struct {
+	// Refresh 为真时强制重新运行
+	Refresh *bool `form:"refresh,omitempty" json:"refresh,omitempty"`
 }
 
 // ListNotificationsParams defines parameters for ListNotifications.
@@ -7384,6 +7643,12 @@ type ListThreadEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// CreateAssistantConversationJSONRequestBody defines body for CreateAssistantConversation for application/json ContentType.
+type CreateAssistantConversationJSONRequestBody = CreateAssistantConversationRequest
+
+// PatchAssistantFileJSONRequestBody defines body for PatchAssistantFile for application/json ContentType.
+type PatchAssistantFileJSONRequestBody = AssistantFilePatch
+
 // AuthLoginFinishJSONRequestBody defines body for AuthLoginFinish for application/json ContentType.
 type AuthLoginFinishJSONRequestBody = AuthLoginFinishRequest
 
@@ -7477,11 +7742,17 @@ type PutScheduleJSONRequestBody = ScheduleInput
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
 
+// PutAgentAvatarJSONRequestBody defines body for PutAgentAvatar for application/json ContentType.
+type PutAgentAvatarJSONRequestBody = AgentAvatarInput
+
 // PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
 type PutAgentIdentityJSONRequestBody = AgentIdentity
 
 // PutAssistantIdentityJSONRequestBody defines body for PutAssistantIdentity for application/json ContentType.
 type PutAssistantIdentityJSONRequestBody = AgentIdentity
+
+// PutComposerPrefsJSONRequestBody defines body for PutComposerPrefs for application/json ContentType.
+type PutComposerPrefsJSONRequestBody = ComposerPrefs
 
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
@@ -9339,9 +9610,24 @@ type ServerInterface interface {
 	// ImportAgentConfig 导入 tar 包（`oryn config push` 使用）
 	// (POST /api/v1/agent-config/import)
 	ImportAgentConfig(w http.ResponseWriter, r *http.Request)
-	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
+	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 	// (POST /api/v1/assistant/conversations)
 	CreateAssistantConversation(w http.ResponseWriter, r *http.Request)
+	// ListAssistantFiles 全局助手文件库（新的在前）
+	// (GET /api/v1/assistant/files)
+	ListAssistantFiles(w http.ResponseWriter, r *http.Request, params ListAssistantFilesParams)
+	// UploadAssistantFile 上传文件到全局助手文件库（单文件 ≤100MiB；24h 内未随消息发送即被清理）
+	// (POST /api/v1/assistant/files)
+	UploadAssistantFile(w http.ResponseWriter, r *http.Request, params UploadAssistantFileParams)
+	// DeleteAssistantFile 删除文件库里的文件（已复制给其它线程的附件不受影响）
+	// (DELETE /api/v1/assistant/files/{id})
+	DeleteAssistantFile(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath)
+	// PatchAssistantFile 切换文件的可见范围（所属对话 / 库内共享）
+	// (PATCH /api/v1/assistant/files/{id})
+	PatchAssistantFile(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath)
+	// GetAssistantFileContent 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`）
+	// (GET /api/v1/assistant/files/{id}/content)
+	GetAssistantFileContent(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath, params GetAssistantFileContentParams)
 	// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
 	// (POST /api/v1/attachments)
 	UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams)
@@ -9417,6 +9703,9 @@ type ServerInterface interface {
 	// GetMe 当前身份
 	// (GET /api/v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// GetModelCatalog 中央模型目录（控制面用钉住的 Oryn Core 运行 `omp models --json --kind all` 得到，不唤醒任何 orb）
+	// (GET /api/v1/models/catalog)
+	GetModelCatalog(w http.ResponseWriter, r *http.Request, params GetModelCatalogParams)
 	// ListNotificationChannels 通知渠道（机密字段只写不读）
 	// (GET /api/v1/notification-channels)
 	ListNotificationChannels(w http.ResponseWriter, r *http.Request)
@@ -9669,6 +9958,12 @@ type ServerInterface interface {
 	// PutSecret 写入密钥
 	// (PUT /api/v1/secrets/{name})
 	PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath)
+	// ListAgentAvatars 子 agent 的头像（内置 agent + omp-home `agents/*.md` + 只剩头像的遗留项）
+	// (GET /api/v1/settings/agent-avatars)
+	ListAgentAvatars(w http.ResponseWriter, r *http.Request)
+	// PutAgentAvatar 设置或清除一个 agent 的头像（两个头像字段都省略 = 清除）
+	// (PUT /api/v1/settings/agent-avatars)
+	PutAgentAvatar(w http.ResponseWriter, r *http.Request)
 	// GetAgentIdentity 全局 agent 身份（名字与头像；助手回合头的回落身份）
 	// (GET /api/v1/settings/agent-identity)
 	GetAgentIdentity(w http.ResponseWriter, r *http.Request)
@@ -9681,6 +9976,12 @@ type ServerInterface interface {
 	// PutAssistantIdentity 设置全局助手身份（整体替换：省略的字段即清除，即改为跟随 agent 身份）
 	// (PUT /api/v1/settings/assistant-identity)
 	PutAssistantIdentity(w http.ResponseWriter, r *http.Request)
+	// GetComposerPrefs 新对话输入框的偏好（首屏默认对象）
+	// (GET /api/v1/settings/composer)
+	GetComposerPrefs(w http.ResponseWriter, r *http.Request)
+	// PutComposerPrefs 设置新对话输入框的偏好（整体替换）
+	// (PUT /api/v1/settings/composer)
+	PutComposerPrefs(w http.ResponseWriter, r *http.Request)
 	// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
 	// (DELETE /api/v1/settings/git-identity)
 	DeleteGitIdentity(w http.ResponseWriter, r *http.Request)
@@ -9690,7 +9991,7 @@ type ServerInterface interface {
 	// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 	// (PUT /api/v1/settings/git-identity)
 	PutGitIdentity(w http.ResponseWriter, r *http.Request)
-	// ListRoleIdentities omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+	// ListRoleIdentities omp role 的身份与头像（已知 role + 只剩头像的遗留项）
 	// (GET /api/v1/settings/role-identities)
 	ListRoleIdentities(w http.ResponseWriter, r *http.Request)
 	// PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
@@ -9849,9 +10150,39 @@ func (_ Unimplemented) ImportAgentConfig(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；无请求体，标题由 agent 自动生成）
+// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 // (POST /api/v1/assistant/conversations)
 func (_ Unimplemented) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListAssistantFiles 全局助手文件库（新的在前）
+// (GET /api/v1/assistant/files)
+func (_ Unimplemented) ListAssistantFiles(w http.ResponseWriter, r *http.Request, params ListAssistantFilesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UploadAssistantFile 上传文件到全局助手文件库（单文件 ≤100MiB；24h 内未随消息发送即被清理）
+// (POST /api/v1/assistant/files)
+func (_ Unimplemented) UploadAssistantFile(w http.ResponseWriter, r *http.Request, params UploadAssistantFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteAssistantFile 删除文件库里的文件（已复制给其它线程的附件不受影响）
+// (DELETE /api/v1/assistant/files/{id})
+func (_ Unimplemented) DeleteAssistantFile(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchAssistantFile 切换文件的可见范围（所属对话 / 库内共享）
+// (PATCH /api/v1/assistant/files/{id})
+func (_ Unimplemented) PatchAssistantFile(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAssistantFileContent 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`）
+// (GET /api/v1/assistant/files/{id}/content)
+func (_ Unimplemented) GetAssistantFileContent(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath, params GetAssistantFileContentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -10002,6 +10333,12 @@ func (_ Unimplemented) RevokeDevice(w http.ResponseWriter, r *http.Request, id D
 // GetMe 当前身份
 // (GET /api/v1/me)
 func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetModelCatalog 中央模型目录（控制面用钉住的 Oryn Core 运行 `omp models --json --kind all` 得到，不唤醒任何 orb）
+// (GET /api/v1/models/catalog)
+func (_ Unimplemented) GetModelCatalog(w http.ResponseWriter, r *http.Request, params GetModelCatalogParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -10509,6 +10846,18 @@ func (_ Unimplemented) PutSecret(w http.ResponseWriter, r *http.Request, name Se
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListAgentAvatars 子 agent 的头像（内置 agent + omp-home `agents/*.md` + 只剩头像的遗留项）
+// (GET /api/v1/settings/agent-avatars)
+func (_ Unimplemented) ListAgentAvatars(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAgentAvatar 设置或清除一个 agent 的头像（两个头像字段都省略 = 清除）
+// (PUT /api/v1/settings/agent-avatars)
+func (_ Unimplemented) PutAgentAvatar(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetAgentIdentity 全局 agent 身份（名字与头像；助手回合头的回落身份）
 // (GET /api/v1/settings/agent-identity)
 func (_ Unimplemented) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
@@ -10533,6 +10882,18 @@ func (_ Unimplemented) PutAssistantIdentity(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetComposerPrefs 新对话输入框的偏好（首屏默认对象）
+// (GET /api/v1/settings/composer)
+func (_ Unimplemented) GetComposerPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutComposerPrefs 设置新对话输入框的偏好（整体替换）
+// (PUT /api/v1/settings/composer)
+func (_ Unimplemented) PutComposerPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
 // (DELETE /api/v1/settings/git-identity)
 func (_ Unimplemented) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
@@ -10551,7 +10912,7 @@ func (_ Unimplemented) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ListRoleIdentities omp role 的头像（cycleOrder 里的 role + 只剩头像的遗留项）
+// ListRoleIdentities omp role 的身份与头像（已知 role + 只剩头像的遗留项）
 // (GET /api/v1/settings/role-identities)
 func (_ Unimplemented) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -10933,6 +11294,192 @@ func (siw *ServerInterfaceWrapper) CreateAssistantConversation(w http.ResponseWr
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateAssistantConversation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAssistantFiles operation middleware
+func (siw *ServerInterfaceWrapper) ListAssistantFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAssistantFilesParams
+
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAssistantFiles(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadAssistantFile operation middleware
+func (siw *ServerInterfaceWrapper) UploadAssistantFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadAssistantFileParams
+
+	// ------------- Required query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "name"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadAssistantFile(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAssistantFile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAssistantFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AssistantFileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAssistantFile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchAssistantFile operation middleware
+func (siw *ServerInterfaceWrapper) PatchAssistantFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AssistantFileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchAssistantFile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssistantFileContent operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantFileContent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AssistantFileIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAssistantFileContentParams
+
+	// ------------- Optional query parameter "inline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "inline", r.URL.Query(), &params.Inline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "inline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "inline", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantFileContent(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11459,6 +12006,39 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetModelCatalog operation middleware
+func (siw *ServerInterfaceWrapper) GetModelCatalog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetModelCatalogParams
+
+	// ------------- Optional query parameter "refresh" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "refresh", r.URL.Query(), &params.Refresh, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "refresh"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "refresh", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetModelCatalog(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -14460,6 +15040,34 @@ func (siw *ServerInterfaceWrapper) PutSecret(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListAgentAvatars operation middleware
+func (siw *ServerInterfaceWrapper) ListAgentAvatars(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAgentAvatars(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAgentAvatar operation middleware
+func (siw *ServerInterfaceWrapper) PutAgentAvatar(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAgentAvatar(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetAgentIdentity operation middleware
 func (siw *ServerInterfaceWrapper) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -14507,6 +15115,34 @@ func (siw *ServerInterfaceWrapper) PutAssistantIdentity(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutAssistantIdentity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetComposerPrefs operation middleware
+func (siw *ServerInterfaceWrapper) GetComposerPrefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetComposerPrefs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutComposerPrefs operation middleware
+func (siw *ServerInterfaceWrapper) PutComposerPrefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutComposerPrefs(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -16549,6 +17185,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/api/v1/settings/role-identities", wrapper.PutRoleIdentity)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/agent-avatars", wrapper.ListAgentAvatars)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/agent-avatars", wrapper.PutAgentAvatar)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/composer", wrapper.GetComposerPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/composer", wrapper.PutComposerPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/models/catalog", wrapper.GetModelCatalog)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/user-identity", wrapper.GetUserIdentity)
 	})
 	r.Group(func(r chi.Router) {
@@ -16652,6 +17303,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/assistant/conversations", wrapper.CreateAssistantConversation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/files", wrapper.ListAssistantFiles)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/files", wrapper.UploadAssistantFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/assistant/files/{id}", wrapper.DeleteAssistantFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/assistant/files/{id}", wrapper.PatchAssistantFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/files/{id}/content", wrapper.GetAssistantFileContent)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)
