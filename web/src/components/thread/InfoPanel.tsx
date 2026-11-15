@@ -15,7 +15,11 @@ import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
-import { subagentFiles } from "../../state/subagent-entries";
+import {
+	subagentFileOf,
+	subagentFiles,
+	subagentLabel,
+} from "../../state/subagent-entries";
 import { uiStore, useUi } from "../../state/ui";
 import { DesktopProfileLine } from "../desktop/profile-status";
 import {
@@ -33,6 +37,7 @@ import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Sparkline } from "../ui/primitives";
 import { CapabilitiesSection } from "./CapabilitiesSection";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
+import { subagentTone } from "./Dialogs";
 import { EnvRuns } from "./EnvBanner";
 import { ServicesSection } from "./ServicesSection";
 import { useOrbOf } from "./ThreadHeader";
@@ -626,24 +631,39 @@ function SubagentSection({ threadId }: { threadId: string }) {
 	const fold = useCardFold("subagents");
 	const live = Object.values(subs).filter((s) => s.id);
 	const ids = new Set(live.map((s) => s.id));
-	const rows = [
+	// 标签与对话框标题同源：实时 description，其次该 id 当前存档的持久化标题（不用完整 task 正文）
+	const rows: {
+		key: string;
+		id: string;
+		file?: string;
+		agent: string;
+		status: string;
+		description?: string;
+	}[] = [
 		...live.map((s) => ({
 			id: s.id ?? "",
 			agent: s.agent ?? "",
 			status: s.status ?? "",
-			description: s.description ?? s.task,
+			description: s.description,
 		})),
 		...snapshots.filter((s) => !ids.has(s.id)),
-	];
-	// 已入库的子 agent 会话（agent 离线时也在）：补上实时与快照里都没有的，状态未知
-	for (const r of rows) ids.add(r.id);
+	].map((s) => ({
+		...s,
+		key: s.id,
+		description: subagentLabel(s.description, subagentFileOf(files, s.id)),
+	}));
+	// 已入库的子 agent 会话（agent 离线时也在）：实时与快照已对应的当前存档之外，每份存档一行，按完整路径区分
+	// （较早主会话的同名存档不是在线的那个），状态未知
+	const claimed = new Set(rows.map((r) => subagentFileOf(files, r.id)?.file));
 	for (const f of files)
-		if (!ids.has(f.id))
+		if (!claimed.has(f.file))
 			rows.push({
+				key: f.file,
 				id: f.id,
+				file: f.file,
 				agent: f.agent ?? f.id,
 				status: "",
-				description: f.task,
+				description: subagentLabel(undefined, f),
 			});
 	const running = rows.filter(
 		(s) => s.status === "started" || s.status === "running",
@@ -658,7 +678,7 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			summary={
 				running > 0 ? (
 					<span className="inline-flex items-center gap-1.5">
-						<StatusDot tone="accent" pulse />
+						<StatusDot tone="neutral" pulse />
 						{t("panel.subagentsRunning", { n: running })}
 					</span>
 				) : (
@@ -667,36 +687,34 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			}
 		>
 			<ul className="-mx-1.5 flex flex-col gap-px">
-				{rows.map((s) => {
-					const running = s.status === "started" || s.status === "running";
-					return (
-						<li key={s.id}>
-							<ListRow
-								leading={
-									<StatusDot
-										tone={
-											running
-												? "accent"
-												: s.status === "failed"
-													? "err"
-													: "neutral"
-										}
-										pulse={running}
-									/>
-								}
-								title={<span className="truncate font-medium">{s.agent}</span>}
-								meta={
-									s.description && (
-										<span className="min-w-0 truncate">{s.description}</span>
+				{rows.map((s) => (
+					<li key={s.key}>
+						<ListRow
+							leading={
+								// 运行中是中性色 + 扩散动画：强调色只给「需要你」的东西
+								<StatusDot
+									tone={subagentTone(s.status)}
+									pulse={s.status === "started" || s.status === "running"}
+								/>
+							}
+							title={<span className="truncate font-medium">{s.agent}</span>}
+							meta={
+								s.description && (
+									<span className="min-w-0 truncate">{s.description}</span>
+								)
+							}
+							onClick={() =>
+								uiStore
+									.getState()
+									.open(
+										s.file
+											? { kind: "subagent", id: s.id, file: s.file }
+											: { kind: "subagent", id: s.id },
 									)
-								}
-								onClick={() =>
-									uiStore.getState().open({ kind: "subagent", id: s.id })
-								}
-							/>
-						</li>
-					);
-				})}
+							}
+						/>
+					</li>
+				))}
 			</ul>
 		</Card>
 	);

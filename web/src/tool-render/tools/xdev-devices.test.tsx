@@ -189,6 +189,35 @@ describe("tts 卡片", () => {
 		expect(body(container)).toHaveTextContent("No available speech model");
 		expect(meta(container)).toBeEmptyDOMElement();
 	});
+
+	it("本地后端把 .mp3 改写为 .wav：输出给实际路径，请求路径另列，正文保留替换说明", () => {
+		const { container } = renderDevice(
+			"tts",
+			{ text: "你好", output_path: "out/done.mp3" },
+			{
+				text: "Saved 96044 bytes to out/done.wav (voice=kokoro/af_heart, codec=wav, backend=local, 24000 Hz). No local MP3 encoder is bundled, so WAV (PCM16) was written instead of the requested container.",
+				inner: {
+					bytes: 96044,
+					voiceId: "kokoro/af_heart",
+					codec: "wav",
+					backend: "local-inference",
+				},
+			},
+			{ open: true },
+		);
+		expect(sum(container)).toHaveTextContent("out/done.wav");
+		expect(sum(container)).not.toHaveTextContent("out/done.mp3");
+		const kvValue = (key: string) =>
+			[...(body(container)?.querySelectorAll(".tv-kv-key") ?? [])].find(
+				(k) => k.textContent === key,
+			)?.nextElementSibling;
+		expect(kvValue("输出")).toHaveTextContent("out/done.wav");
+		expect(kvValue("请求路径")).toHaveTextContent("out/done.mp3");
+		expect(body(container)).toHaveTextContent(
+			"No local MP3 encoder is bundled",
+		);
+		expect(body(container)).toHaveTextContent("24000 Hz");
+	});
 });
 
 describe("xd://github pr_create", () => {

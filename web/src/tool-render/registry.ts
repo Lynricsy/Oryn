@@ -95,8 +95,20 @@ const RENDERERS: Record<string, ToolRenderer> = {
 // Oryn 宿主工具（M9）：只出现在协调对话里，与 omp 自带工具不重名
 for (const name of ORYN_TOOLS) RENDERERS[name] = orynRenderer;
 
+/**
+ * 按名字取查找表里的值，只认自有属性：工具名 / 设备名可能来自模型写的 `xd://<name>`，
+ * `constructor`、`__proto__`、`toString` 之类不能命中 Object 原型上的成员。
+ */
+export function ownLookup<T>(
+	table: Readonly<Record<string, T>>,
+	name: string,
+): T | undefined {
+	return Object.hasOwn(table, name) ? table[name] : undefined;
+}
+
 export function resolveToolRenderer(name: string): ToolRenderer {
 	return (
-		RENDERERS[name] ?? (isMcpToolName(name) ? mcpRenderer : genericRenderer)
+		ownLookup(RENDERERS, name) ??
+		(isMcpToolName(name) ? mcpRenderer : genericRenderer)
 	);
 }

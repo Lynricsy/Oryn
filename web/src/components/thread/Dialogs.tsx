@@ -29,7 +29,12 @@ import { realtime } from "../../realtime/socket";
 import { forkThread, patchThread, renameThread } from "../../state/actions";
 import type { JsonRecord } from "../../state/message-builder";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
-import { subagentFiles, subagentMessages } from "../../state/subagent-entries";
+import {
+	subagentFileOf,
+	subagentFiles,
+	subagentLabel,
+	subagentMessages,
+} from "../../state/subagent-entries";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
 import { RoleList } from "../composer/RolePicker";
@@ -671,9 +676,11 @@ function ModelDialog({
 
 // ---------------------------------------------------------------- 子 agent
 
-/** 子 agent 状态 → 徽标色调：运行中需要关注，失败为错误。 */
-function subagentTone(status: string): Tone {
-	if (status === "started" || status === "running") return "accent";
+/**
+ * 子 agent 状态 → 徽标色调：运行中用中性（强调色只给「需要你」的东西，见 docs/design/web-guidelines.md §2），
+ * 失败为错误、完成为成功；状态文字照常显示。
+ */
+export function subagentTone(status: string): Tone {
 	if (status === "failed" || status === "error" || status === "aborted")
 		return "err";
 	if (status === "completed" || status === "done") return "ok";
@@ -691,30 +698,40 @@ const GOAL_TONE: Record<string, Tone> = {
 /**
  * 子 agent 对话框。控制面已入库的子 agent 会话（`<产物目录>/<id>.jsonl` 的条目）优先：有就直接展示、不再向 agent
  * 拉取，orb 挂起时也能看；没有才用 `get_subagent_messages`。agent 不可查询时控制按钮与引导输入禁用。
+ * `file` 指定存档（列表里的离线行）；只给 id 时取该 id 当前主会话的存档。指定的是较早主会话的同名存档时，
+ * 它与在线的同 id 子 agent 不是同一个：不取实时状态、不发控制命令。
  */
 export function SubagentDialog({
 	threadId,
 	id,
+	file,
 	onClose,
 }: {
 	threadId: string;
 	id: string;
+	file?: string;
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
-	const sub = useThread(threadId, (s) =>
+	const entries = useThread(threadId, (s) => s.entries);
+	const files = useMemo(() => subagentFiles(entries), [entries]);
+	const saved = subagentFileOf(files, id, file);
+	const current =
+		file === undefined || subagentFileOf(files, id)?.file === file;
+	const liveSub = useThread(threadId, (s) =>
 		Object.values(s.subagents).find((x) => x.id === id),
 	);
+	const sub = current ? liveSub : undefined;
 	const queryable = useThread(threadId, agentQueryable);
-	const entries = useThread(threadId, (s) => s.entries);
-	const local = useMemo(() => subagentMessages(entries, id), [entries, id]);
-	const saved = useMemo(
-		() => subagentFiles(entries).find((f) => f.id === id),
-		[entries, id],
+	const controllable = queryable && current;
+	const savedFile = saved?.file;
+	const local = useMemo(
+		() => (savedFile ? subagentMessages(entries, savedFile) : []),
+		[entries, savedFile],
 	);
 	const msgs = useQuery({
 		queryKey: ["rpc", threadId, "subagent-messages", id],
-		enabled: local.length === 0 && queryable,
+		enabled: local.length === 0 && controllable,
 		refetchInterval: sub && sub.status === "started" ? 2000 : false,
 		retry: false,
 		queryFn: () =>
@@ -758,12 +775,12 @@ export function SubagentDialog({
 			open
 			wide
 			onClose={onClose}
-			title={`${agent ?? t("subagent.title")} · ${sub?.description ?? saved?.task ?? id}`}
+			title={`${agent ?? t("subagent.title")} · ${subagentLabel(sub?.description, saved) ?? id}`}
 			footer={
 				<>
 					<Button
 						size="sm"
-						disabled={!queryable}
+						disabled={!controllable}
 						onClick={() =>
 							void act({ type: "cancel_subagent", subagentId: id })
 						}
@@ -773,14 +790,14 @@ export function SubagentDialog({
 					<Button
 						size="sm"
 						variant="danger"
-						disabled={!queryable}
+						disabled={!controllable}
 						onClick={() => void act({ type: "abort_subagent", agentId: id })}
 					>
 						{t("subagent.abort")}
 					</Button>
 					<Button
 						size="sm"
-						disabled={!queryable}
+						disabled={!controllable}
 						onClick={() => void act({ type: "revive_subagent", agentId: id })}
 					>
 						{t("subagent.revive")}
@@ -788,10 +805,10 @@ export function SubagentDialog({
 				</>
 			}
 		>
-			{!queryable && (
+			{(!queryable || !current) && (
 				<div className="mb-3">
 					<Callout tone="neutral" role="status">
-						{t("subagent.offline")}
+						{t(queryable ? "subagent.archived" : "subagent.offline")}
 					</Callout>
 				</div>
 			)}
@@ -822,7 +839,7 @@ export function SubagentDialog({
 				className="mt-3 flex gap-2"
 				onSubmit={(e) => {
 					e.preventDefault();
-					if (!queryable || !steer.trim()) return;
+					if (!controllable || !steer.trim()) return;
 					void act({
 						type: "steer_subagent",
 						subagentId: id,
@@ -833,10 +850,10 @@ export function SubagentDialog({
 				<TextInput
 					placeholder={t("subagent.steer")}
 					value={steer}
-					disabled={!queryable}
+					disabled={!controllable}
 					onChange={(e) => setSteer(e.target.value)}
 				/>
-				<Button type="submit" disabled={!queryable || !steer.trim()}>
+				<Button type="submit" disabled={!controllable || !steer.trim()}>
 					{t("common.send")}
 				</Button>
 			</form>
@@ -1653,7 +1670,12 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 			);
 		case "subagent":
 			return (
-				<SubagentDialog threadId={threadId} id={dialog.id} onClose={close} />
+				<SubagentDialog
+					threadId={threadId}
+					id={dialog.id}
+					file={dialog.file}
+					onClose={close}
+				/>
 			);
 		case "btw":
 			return <BtwDialog threadId={threadId} onClose={close} />;

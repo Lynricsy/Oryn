@@ -683,6 +683,7 @@
 	},
 	"subagent": {
 		"offline": "Agent is not running; showing the saved transcript",
+		"archived": "Saved transcript from an earlier session; the live subagent with this id is a different one",
 		"title": "Subagent",
 		"abort": "Abort",
 		"cancel": "Cancel",
@@ -1180,6 +1181,7 @@
 		},
 		"tts": {
 			"output": "Output",
+			"requested": "Requested",
 			"voice": "Voice",
 			"language": "Language",
 			"format": "Format",

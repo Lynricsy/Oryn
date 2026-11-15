@@ -683,6 +683,7 @@
 	},
 	"subagent": {
 		"offline": "agent 未运行，显示已保存的转录",
+		"archived": "较早会话的已保存转录；在线的同 id 子 agent 不是它",
 		"title": "子 agent",
 		"abort": "终止",
 		"cancel": "取消",
@@ -1180,6 +1181,7 @@
 		},
 		"tts": {
 			"output": "输出",
+			"requested": "请求路径",
 			"voice": "音色",
 			"language": "语言",
 			"format": "格式",

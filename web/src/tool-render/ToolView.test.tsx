@@ -440,3 +440,57 @@ describe("xd:// 设备调用的卡片", () => {
 		);
 	});
 });
+
+describe("从 xd:// URL 推断的设备名不命中 Object 原型（M12 审查 cards#1）", () => {
+	const PROTO_NAMES = [
+		"constructor",
+		"__proto__",
+		"toString",
+		"hasOwnProperty",
+	];
+
+	it.each(PROTO_NAMES)(
+		"运行中的 write xd://%s 用通用卡片渲染，不崩溃",
+		(device) => {
+			const { container } = render(
+				<ToolView
+					name="write"
+					args={{ path: `xd://${device}`, content: "{}" }}
+					running
+					defaultOpen
+				/>,
+			);
+			expect(container.querySelector(".tv-name")).toHaveTextContent(
+				`xd://${device}`,
+			);
+			expect(container.querySelector(".tv-cat--other")).not.toBeNull();
+		},
+	);
+
+	it.each(PROTO_NAMES)(
+		"write xd://%s 的最终错误结果显示 Core 的错误文本",
+		(device) => {
+			const { container } = render(
+				<ToolView
+					name="write"
+					args={{ path: `xd://${device}`, content: "{}" }}
+					result={{
+						content: [{ type: "text", text: `No such tool: ${device}` }],
+						isError: true,
+					}}
+					defaultOpen
+				/>,
+			);
+			expect(container.querySelector(".tv-body")).toHaveTextContent(
+				`No such tool: ${device}`,
+			);
+		},
+	);
+
+	it.each(PROTO_NAMES)("顶层工具名 %s 同样走通用渲染器", (name) => {
+		const { container } = render(
+			<ToolView name={name} args={{}} running defaultOpen />,
+		);
+		expect(container.querySelector(".tv-name")).toHaveTextContent(name);
+	});
+});

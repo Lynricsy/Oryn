@@ -1,16 +1,34 @@
 /**
  * `tts` — 文本转语音，音频写到 `output_path`。结果形状见 oryn-core `tools/tts.ts`：
  * details 为 `{ bytes, voiceId, codec, backend }`；没有可用语音模型或全部候选失败时 isError、无 details。
+ * 实际保存路径只在结果正文里（`Saved <n> bytes to <path> (…)`）：本地后端没有 MP3 编码器，
+ * 会把非 `.wav` 的请求改写成同名 `.wav`，并在正文末尾说明替换原因。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { formatBytes } from "../../lib/format";
 import { InvalidArg, Kv, KvGrid, PathText, ResultText } from "../parts";
-import type { ToolRenderer, ToolRenderProps } from "../types";
-import { detailsRecord, normalizeWs, num, str, truncate } from "../util";
+import type { ToolRenderer, ToolRenderProps, ToolResultLike } from "../types";
+import {
+	detailsRecord,
+	normalizeWs,
+	num,
+	resultTextOf,
+	str,
+	truncate,
+} from "../util";
 
-function Summary({ args }: ToolRenderProps): ReactNode {
-	const path = str(args.output_path);
+/** Core 成功正文的开头：`Saved <bytes> bytes to <displayPath> (model=…` / `(voice=…`。 */
+const SAVED_RE = /^Saved \d+ bytes to (.+?) \((?:model|voice)=/;
+
+/** 成功结果里 Core 实际写入的路径；没有结果、出错或正文不是该形状时为 null。 */
+function savedPath(result: ToolResultLike | undefined): string | null {
+	if (!result || result.isError) return null;
+	return SAVED_RE.exec(resultTextOf(result).trim())?.[1] ?? null;
+}
+
+function Summary({ args, result }: ToolRenderProps): ReactNode {
+	const path = savedPath(result) ?? str(args.output_path);
 	const text = str(args.text);
 	return (
 		<>
@@ -35,6 +53,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
 	const details = detailsRecord(result);
 	const text = str(args.text);
+	const requested = str(args.output_path);
+	const saved = savedPath(result);
+	const output = saved ?? requested;
 	const sampleRate = num(args.sample_rate);
 	const bitRate = num(args.bit_rate);
 	const codec = str(details?.codec);
@@ -44,10 +65,14 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			{text && <div className="tv-prose">{text}</div>}
 			<KvGrid>
 				<Kv k={t("toolRender.tts.output")}>
-					{str(args.output_path) && (
-						<PathText path={str(args.output_path) as string} />
-					)}
+					{output && <PathText path={output} />}
 				</Kv>
+				{/* 实际路径与请求不同（本地后端把 .mp3 改写成 .wav）时，请求路径单独列出 */}
+				{saved && requested && saved !== requested && (
+					<Kv k={t("toolRender.tts.requested")}>
+						<PathText path={requested} />
+					</Kv>
+				)}
 				<Kv k={t("toolRender.tts.voice")}>
 					{str(details?.voiceId) ?? str(args.voice_id)}
 				</Kv>
@@ -63,7 +88,8 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				</Kv>
 				<Kv k={t("toolRender.tts.backend")}>{str(details?.backend)}</Kv>
 			</KvGrid>
-			{result?.isError && <ResultText result={result} maxLines={6} />}
+			{/* 成功正文同样给出：实际路径、本地采样率与格式替换说明只在这里 */}
+			<ResultText result={result} maxLines={6} />
 		</>
 	);
 }

@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
-import { resolveToolRenderer } from "./registry";
+import { ownLookup, resolveToolRenderer } from "./registry";
 import {
 	isMcpToolName,
 	mcpOrigin,
@@ -211,11 +211,14 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				title={intent || undefined}
 			>
 				<span
-					className={`tv-cat tv-cat--${TOOL_CAT[name] ?? "other"}`}
+					className={`tv-cat tv-cat--${ownLookup(TOOL_CAT, name) ?? "other"}`}
 					aria-hidden="true"
 				>
 					<Icon
-						name={TOOL_ICON[name] ?? (isMcpToolName(name) ? "plugs" : "wrench")}
+						name={
+							ownLookup(TOOL_ICON, name) ??
+							(isMcpToolName(name) ? "plugs" : "wrench")
+						}
 						size={13}
 					/>
 				</span>
