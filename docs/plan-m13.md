@@ -99,6 +99,7 @@ Rollback point：每个阶段都能单独上线、单独停下。三次数据库
   - **1.1 结论（2026-11-15）：成立。** `egress.NewHandler` 是普通 `http.Handler`，挂在控制面 `127.0.0.1:0` 监听上即可，Resolver 返回 `Policy{Routes: rendered.Routes, NoGit: true}`，密钥查询用 `*secrets.Vault`。用开发库的 omp-home 实测：`RenderAt` 生成 9 条路由；`build/core/x64/omp models --json --kind all` 耗时约 4.4 秒、退出码 0、stderr 为空；6 个 provider 的发现请求（`/llm/<key>/…/models`）经代理全部 200；共输出 311 个模型，分属 10 个 provider，kind 覆盖 chat、embedding、image、judge、search、stt、tiny、tts。环境变量降级的 provider（如 exa）没有路由，目录运行时不注入其真实密钥。
 - A2. `omp models --json --kind all` 的输出结构（`cli/models-cli.ts:68-86`）在钉住的 Core 版本内稳定。若不成立：步骤 1.2 的解析改为宽松解析。受影响步骤：1.2。
 - A3. 协调宿主的 omp 加 `--tools read,write` 后，内置工具只有 read 和 write，不会自动追加其他工具。若不成立：步骤 4.3 在 overlay 里显式关掉多出来的工具。受影响步骤：4.3。
+  - **结论（2026-11-15）：成立。** 钉住的 Core 以 `--mode rpc-ui --no-tools --tools read,write --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动后，`get_active_tools` 返回恰为 `["read","write"]`。
 - A4. 在 omp 会话空闲时执行 `reload_plugins`，会刷新技能、斜杠命令、MCP，并重建系统提示（含 AGENTS.md 与规则）（`rpc-session-actions.ts:83-125`，`session-tools.ts:2316-2323`）。若不成立：步骤 6.3 把这些改动也归为"需重启"。受影响步骤：6.3。
 
 ## 全局约束
@@ -349,7 +350,7 @@ Accept：`cd web && bun x vitest run src/components/assistant` 通过，断言�
 ### 步骤 5.1：新建线程带 role
 Depends on：无（只依赖现有 `oryn_select_model`）。
 Files：`schema/openapi.yaml`（`CreateThreadRequest.role?: string`）、`internal/threads/threads.go`、`internal/threads/agent.go`（`initFrames`）。
-Do：`role` 有值时，在 `open_session` 之后、首条 `prompt` 之前插入 `oryn_select_model{role}`。若遇到旧 Core 返回 `Unknown command`，按 `lib/model-select.ts` 的同样逻辑，回退为 `set_model` 加 `set_thinking_level`，模型取 `KnownRoles` 的 selector。
+Do：`role` 有值时，把 `oryn_select_model{role}` 放进持久化的首批命令，排在首条 `prompt` 之前（不放进每次启动都发的初始化帧，否则 agent 重启会覆盖用户后来手动切的模型）；同时给了 `thinkingLevel` 时紧接着再发 `set_thinking_level`。不做旧 Core 回退：orb 跑钉住的 Core；runner 若是不认识该命令的旧 omp，命令失败只是不切 role，首条提示词照常执行。（执行记录：threads 部分已在 `9339231` 完成，剩 OpenAPI 字段与 API 透传。）
 Accept：`make check-gen && go test ./internal/threads/...` 通过，用例断言 fakeomp 收到的帧顺序是 `open_session → oryn_select_model → prompt`。
 
 ### 步骤 5.2：新建助手对话带首条消息
@@ -424,7 +425,7 @@ Do：
 Accept：`go test ./internal/threads/...` 通过。用例：
 - 改 `skills/x/SKILL.md` 后空闲线程收到 `reload_plugins`，运行中的线程在 `session_settled` 之后才收到；
 - `config.yml` 只往 `disabledExtensions` 里加 `skill:x`，线程收到 `reload_plugins`，且没有被标为需重启；
-- `config.yml` 只往 `disabledExtensions` 里加 `hook:pre:bash:guard`，apply-status 列出该线程，原因含该条目；
+- `config.yml` 只往 `disabledExtensions` 里加 `hook:pre:bash:bash.ts`（hook 键为 `hook:<pre|post>:<文件名去掉最后一个扩展名>:<完整文件名>`，见 `web/src/lib/omp-config.ts` 的 `hookKeyFromPath`），apply-status 列出该线程，原因含该条目；
 - `config.yml` 只改了一个非 `restartRequired` 的键，线程既不收到 reload 也不被标记；
 - 改 `hooks/pre/x.ts` 后 apply-status 列出该线程；
 - 调用 restart-sessions 后线程在空闲时 stop，且下一条消息自动 start。
