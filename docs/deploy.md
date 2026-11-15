@@ -131,7 +131,9 @@ orb 里的 agent 有 root（镜像给 `user` 配了免密 sudo），应把 orb �
 
 1. 机器不存在：创建并以分离方式启动 `orbd run`，环境里带 `ORYN_URL`、`ORYN_ORB_ID`、`ORYN_ORB_TOKEN`。若机器来自快照，启动 orbd **之前**把 `$HOME/.oryn/orb-token` 覆盖为本次令牌（或删除它），否则 orbd 会读到源 orb 的令牌。
 2. 机器已存在（解冻、开机或已在运行）：恢复运行后，以 orbd 的用户原子写入 `$HOME/.oryn/orb-token`（内容 = `ORYN_ORB_TOKEN`，权限 0600，先写临时文件再 `mv`），然后向 orbd 发 `SIGHUP`。
-3. 脚本退出码 0 = 成功。脚本在独立进程组中运行，任务超时（5 分钟）时整组被 `SIGKILL`；脚本退出后仍有后代进程占着 stdout / stderr 时，provider 至多再等 5 秒就返回（退出码 0 仍算成功），所以后台启动的 orbd 应把输出重定向到日志文件。
+3. 环境变量 `ORYN_ORB_CA_PEM`：orynd 开启 `orb_tls` 时，这里是 link 用的 CA（PEM），没开时为空。新建机器时把它原样传给 orbd 的环境；orbd 只信这一张 CA，不用系统根证书。
+4. 任务带非空的 `ORB_SNAPSHOT_ID` 时，脚本应在输出里单独打一行 `ORYN_SNAPSHOT_USED=1`（机器确实从快照创建）或 `ORYN_SNAPSHOT_USED=0`（退回了基础镜像），以最后一行为准。控制面按这一行判断快照血统，不信 orb 自报。没有这一行时视为「用了快照」，以兼容旧脚本；但脚本若会退回基础镜像，就必须打出 `=0`，否则这台从零 setup 的 orb 会被当作旧快照的后代。
+5. 脚本退出码 0 = 成功。脚本在独立进程组中运行，任务超时（5 分钟）时整组被 `SIGKILL`；脚本退出后仍有后代进程占着 stdout / stderr 时，provider 至多再等 5 秒就返回（退出码 0 仍算成功），所以后台启动的 orbd 应把输出重定向到日志文件。
 
 ### 容器能力
 
@@ -342,16 +344,17 @@ stats:
 
 ```yaml
 # orynd.yaml（以下为默认值）
-snapshots: { enabled: true, max_age: "72h", max_depth: 16, min_setup: "10s", max_total_gb: 40 }
+snapshots: { enabled: true, max_age: "72h", max_depth: 16, min_setup: "10s", max_total_gb: 40, max_snapshot_gb: 10 }
 pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
 ```
 
 ### 项目快照
 
-- **什么时候拍**：项目 orb 第一次 setup 成功、且 setup 用时不少于 `min_setup` 时，orynd 在它进入 ready 之前让 provider 把磁盘存成快照（docker 驱动是 `docker commit`，这期间容器暂停几秒）。只在 agent 从未在这台 orb 上运行过时才拍，所以快照里没有会话、附件、浏览器 Profile，也没有 agent 的改动。
-- **怎么用**：之后同一项目、同一 provider、同一类型的新 orb 从快照启动。orbd 会 `git fetch` 基线：HEAD 没变就跳过 setup，只跑 resume；HEAD 变了就在快照的环境上把 setup 增量重跑一遍，成功后发布新快照。所以 setup 脚本要能重复执行。
-- **什么时候失效**：项目的仓库、分支、setup 脚本、env 模式密钥（只看名字与修改时间）或 provider 的基础镜像有任何一项变化，旧快照就退役，下一个 orb 从基础镜像重来。重建 orb 镜像（`make image`）会让该 provider 上的全部快照失效。同一条血统最多复用 `max_age`（72 小时），最多刷新 `max_depth` 次。
-- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
+- **什么时候拍**：项目 orb 第一次 setup 成功、且 setup 用时不少于 `min_setup` 时，orynd 在它进入 ready 之前让 provider 把磁盘存成快照（docker 驱动是 `docker commit`，这期间容器暂停几秒；sysbox 类型要先停机再拍，见下文）。只在 agent 从未在这台 orb 上运行过时才拍，而且是在 setup 脚本跑完、resume 与受管服务启动**之前**拍。所以快照里只有 setup 的产物，没有会话、附件、浏览器 Profile、agent 的改动，也没有服务运行时写下的东西。认领来的预热 orb 已经跑过服务，不发布快照。
+- **怎么用**：之后同一项目、同一 provider、同一类型的新 orb 从快照启动。orbd 会 `git fetch` 基线：HEAD 没变就跳过 setup，只跑 resume；HEAD 变了就在快照的环境上把 setup 增量重跑一遍，成功后发布新快照。所以 setup 脚本要能重复执行。如果新的基线改动了仓库里的 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 或 `.amp/services.yaml`（内容、可执行位、符号链接目标任一变化都算），或者旧 HEAD 不是新基线的祖先（force push 等情况），旧快照就直接退役，下一个 orb 从基础镜像全新 setup。浅克隆的项目会多 fetch 一次历史来判断祖先关系；仍判断不了的，按「不是快进」处理。
+- **什么时候失效**：项目的仓库、分支、setup 脚本、env 模式密钥与降级模型 key（只看名字与修改时间），或者 provider 的基础镜像，任何一项变化，旧快照就退役，下一个 orb 从基础镜像重来。重建 orb 镜像（`make image`）会让该 provider 上的全部快照失效。同一条血统最多复用 `max_age`（72 小时），最多刷新 `max_depth` 次；orb 是否真的从快照启动，以 provider 的上报为准，orb 内的程序无法让控制面误判、借此续期。
+- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。单个快照超过 `max_snapshot_gb` 就直接作废，不会挤掉别的项目。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
+- **事故处置**：怀疑某次 setup 把不该留的东西（后门、泄露的凭据）拍进了快照时，执行 `oryn project snapshots rm <项目>`。这会把可用的和正在构建的快照一起作废，之后的 orb 从基础镜像全新 setup。快照镜像的配置里不保留 orb 令牌等环境变量。
 - **dispatch 驱动**：基础镜像只按引用名识别（`ref:<镜像>`），镜像内容变了但引用名不变时，要靠 72 小时上限兜底；它也不上报快照大小，所以配额对它不起作用。
 - **管理**：项目设置页的「项目快照」开关与快照表；CLI `oryn project snapshots ls <项目>`，`oryn project snapshots rm <项目> [--type <类型>]`。
 
@@ -363,7 +366,7 @@ pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
 
 agent 在 orb 里有免密 sudo，所以**不支持 `--privileged`**（那等于把宿主 root 交给 agent），也不做 rootless DinD（它要求放宽 seccomp、AppArmor 与 `/proc` 掩码，放宽的部分正好落在 agent 手里）。需要在 orb 里跑 Docker 时，用 [sysbox](https://github.com/nestybox/sysbox)：容器里的 root 映射到宿主上的非特权 uid，不放宽宿主侧的任何防线。
 
-1. **前置条件**：先按第 7 节建隔离网桥。sysbox 类型要保留 `NET_ADMIN` / `NET_RAW`，供内层 dockerd 建网桥、写 iptables；这两项只在容器自己的网络命名空间里生效，但同网桥上的其它 orb 要靠 `enable_icc=false` 隔开。
+1. **前置条件**：先按第 7 节建隔离网桥，并按下面「orb link 的 TLS」开启 TLS。sysbox 类型要保留 `NET_ADMIN` / `NET_RAW`，供内层 dockerd 建网桥、写 iptables。它们只在容器自己的网络命名空间里生效，但足以在共用的网桥上做 ARP 欺骗；`enable_icc=false` 挡不住这一点。所以 orb 与控制面之间的 link 必须走 TLS，否则一台 sysbox orb 可以截获、篡改同网桥上其它 orb 的 link，包括令牌、env 密钥和提示词。
 2. **安装 sysbox**：Ubuntu / Debian 用官方 deb 包；Arch 用 AUR 的 `sysbox-ce-bin`。然后 `systemctl enable --now sysbox`。
 3. **向 Docker 注册 runtime**，合并进 `/etc/docker/daemon.json`：
 
@@ -374,7 +377,12 @@ agent 在 orb 里有免密 sudo，所以**不支持 `--privileged`**（那等于
    }
    ```
 
-   这两项都可以用 `systemctl reload docker` 热加载，不需要重启 Docker。建议先单独加 `live-restore` 并 reload 一次，之后任何需要重启 Docker 的改动都不会停掉正在运行的容器。`--no-kernel-check` 是因为 sysbox 不认识较新的内核版本号。
+   这两项都可以用 `systemctl reload docker` 热加载，不需要重启 Docker。建议先单独加 `live-restore` 并 reload 一次，之后任何需要重启 Docker 的改动都不会停掉正在运行的容器。
+
+   **要明确接受的风险**：
+   - `--no-kernel-check` 关掉了 sysbox 唯一的内核兼容性检查。sysbox 不认识较新的内核版本号，不带它就无法启动；但 sysbox-fs / sysbox-mgr 以 root 运行，在未经验证的内核上是新增的宿主攻击面。条件允许时，把 sysbox 类型放在单独的 provider 宿主（例如一台虚拟机）上，不与 orynd 同机，并用 sysbox 支持矩阵内的内核。
+   - `live-restore` 对宿主上**所有**容器生效：升级 dockerd / containerd / runc 后，正在运行的容器仍沿用旧 shim，安全修复要等容器重建才生效。升级后请重建 orb（停机再恢复即可）。
+   - sysbox 包会写入 `/usr/lib/sysctl.d/99-sysbox-sysctl.conf`，在全宿主范围调高 `kernel.pid_max` 等上限。docker 驱动因此给每个 orb 加 `--pids-limit`（`docker.pids_limit`，默认 4096）。
 4. **只在创建 sysbox 容器失败时**：Docker ≥ 29.5 在某些宿主上需要在 `daemon.json` 里合并 `"features": {"time-namespaces": false}`，这一项必须重启 Docker。在 Docker 29.9.2 加内核 7.3 上实测不需要。
 5. **provider.yaml**：加一个类型。provider 启动时会预检：配置的 runtime 不在 `docker info` 里就拒绝启动。
 
@@ -384,4 +392,23 @@ agent 在 orb 里有免密 sudo，所以**不支持 `--privileged`**（那等于
        dind: { cpus: 4, memory: "8g", runtime: sysbox-runc, nested_docker: true }
    ```
 
-这种类型的 orb 里，dockerd 由 orbd 托管（日志在 `~/.cache/oryn/logs/dockerd.log`）。setup 里拉取的镜像会随项目快照保存（拍快照前，orbd 会停掉内层正在运行的容器）。普通类型的 orb 里也有 `docker` 命令，但连不上守护进程。
+这种类型的 orb 里，dockerd 由 orbd 托管（日志在 `~/.cache/oryn/logs/dockerd.log`），setup 会等它能接受请求后再开始。setup 里拉取的镜像会随项目快照保存（拍快照前，orbd 会停掉内层正在运行的容器）。普通类型的 orb 里也有 `docker` 命令，但连不上守护进程。
+
+**sysbox orb 的快照会让它重启一次。** sysbox 自己挂着容器的 overlay，Docker 在容器运行或暂停时 commit 不到上层内容（`docker info` 里 `Native Overlay Diff: false` 的宿主都是这样），所以 provider 对 sysbox 容器拍快照时，先停机，再 commit，然后重新启动。项目快照发生在 setup 之后、进入 ready 之前，用户感知不到；对 sysbox orb 做「连环境 fork」时，源 orb 会重启一次，里面运行中的进程和内层容器会被中断。
+
+### orb link 的 TLS
+
+orb 与控制面之间的 link 默认是明文 HTTP，跑在宿主网桥上。开启 TLS 后，orynd 会在数据目录 `orb-tls/` 下生成一张自签 CA 和服务端证书，并另开一个 TLS 监听。新建的 orb 在 spawn 时随环境变量 `ORYN_ORB_CA_PEM` 拿到这张 CA，orbd 只信任它，不信任系统根证书。
+
+```yaml
+# orynd.yaml
+orb_tls:
+  listen: ["172.17.0.1:7643"]   # docker0（或专用网桥）的网关地址；证书的 SAN 会自动包含这些 IP
+  hosts: []                      # 额外写进证书的主机名（可选）
+# provider.yaml
+orb_url: "https://172.17.0.1:7643"
+```
+
+- 开启后，**已存在的 orb 仍走原来的明文监听**，直到重建（停机再恢复，或删除重建）才改用 TLS。全部 orb 都换过之后，可以从 `listen` 里去掉面向网桥的明文地址。
+- provider 在另一台主机、经反代用正式证书连 orynd 时，不需要开启它：`orb_url` 写 `https://` 的主域名，orbd 用系统根证书校验。
+- 服务端证书有效期 1 年，到期前 30 天或 `listen` / `hosts` 变化时，orynd 启动时自动重签；CA 不变，已下发 CA 的 orb 不受影响。删除 `orb-tls/` 目录会生成新的 CA，之后要重建所有 orb。

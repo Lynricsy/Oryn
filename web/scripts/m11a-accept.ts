@@ -1669,7 +1669,11 @@ async function X21() {
 	note(`普通类型回复：${(await lastAssistant(n.id)).slice(0, 80)}`);
 	const dp = sh(`docker exec ${n.orb} docker ps`);
 	check(
-		dp.code !== 0 && /Cannot connect to the Docker daemon/i.test(dp.out),
+		// Docker 29 的 CLI 把旧的「Cannot connect to the Docker daemon」改成了「failed to connect to the docker API」
+		dp.code !== 0 &&
+			/Cannot connect to the Docker daemon|failed to connect to the docker API/i.test(
+				dp.out,
+			),
 		`普通 orb 里 docker ps 连不上守护进程（${dp.out.split("\n")[0]}）`,
 	);
 	const cd = JSON.parse(

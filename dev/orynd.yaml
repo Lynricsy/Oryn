@@ -13,3 +13,5 @@ coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinat
 # M11a 验收用：全新 setup 只要跑过 1 秒就发布项目快照（默认 10 秒）；预热池全局最多 2 台（默认也是 2，写明便于 X19 核对）
 snapshots: { min_setup: "1s" }
 pool: { max_total: 2 }
+# orb link 走 TLS（M11a 审查修复）：网桥网关上另开 7643，自签 CA 存在 data_dir/orb-tls，spawn 时下发给 orb
+orb_tls: { listen: ["172.18.0.1:7643"] }

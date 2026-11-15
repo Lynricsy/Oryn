@@ -1203,8 +1203,10 @@ provider 协议（C1）：
 orb link（C2）：
 
 - `LinkCtlSetupRunParams.deferResume?: boolean`：true 时 orbd 只跑 setup（clone、`repo.update`、setup 脚本），不跑 resume 脚本，也不启动受管服务；控制面随后单独调 `resume.run`。控制面只在 hello 含 `setup-defer-resume`、且本次可能发布项目快照时置位，所以快照里只留 setup 的产物。`resume.run` 忽略此字段。
-- `LinkCtlSetupRunResult` 与 `LinkCtlSetupResultParams` 增加 `setupChanged?: boolean`：本次 `repo.update` 前后 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 任一有变化，或者基线不是快进（走了 `reset --hard`），就为 true。为 true 时控制面不以来源快照为父发布，把来源快照退役（原因 `setup_changed`）。
+- `LinkCtlSetupRunResult` 与 `LinkCtlSetupResultParams` 增加 `setupChanged?: boolean`：本次 `repo.update` 前后，`.oryn/setup`、`.agents/setup`、`.oryn/services.yaml`、`.amp/services.yaml` 任一有变化（内容、可执行位或符号链接目标），或者旧 HEAD 不是新基线的祖先（浅克隆会先多 fetch 一次历史再判断，仍判断不了按不是祖先算），就为 true。没有更新、fetch 失败或全新 clone 时为 false。为 true 时控制面不以来源快照为父发布，把来源快照退役（原因 `setup_changed`）。
 - `LinkCtlHelloParams.features` 新增 `setup-defer-resume`：orbd 认识 `deferResume`，结果里会给 `setupChanged`。
+- `JobResult.snapshotUsed` 缺省（未知）时，控制面按「用了快照」处理；只有 orb 的首次 spawn 明确报 false，才清空 `snapshot_of` 并把来源快照记为 `image_missing`。dispatch 脚本的 `ORYN_SNAPSHOT_USED=` 行见 `docs/deploy.md`。
+- 环境变量 `ORYN_ORB_CA_PEM` 为空或只含空白时视为未设置；内容无法解析时 `orbd run` 以退出码 1 退出。设置了 CA 但 `ORYN_URL` 不是 https 时只打 Warn。
 
 配置：
 
