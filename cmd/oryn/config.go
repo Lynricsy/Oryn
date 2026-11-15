@@ -23,15 +23,21 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "omp 文本配置（omp-home）",
+	Short: "omp 文本配置（全局 omp-home 或项目级 Agent 配置）",
 }
 
 var configPushCmd = &cobra.Command{
 	Use:   "push [dir]",
-	Short: "打包上传本机 omp 配置目录（默认 ~/.omp/agent），整体替换控制面上的 omp-home",
-	Long: `排除 sessions/ blobs/ cache/ logs/ natives/ terminal-sessions/ *.db *.db-* auth.json history*。
+	Short: "打包上传本机 omp 配置目录，整体替换控制面上的 omp-home（--project 时替换该项目的 Agent 配置）",
+	Long: `不给 --project 时上传 dir（默认 ~/.omp/agent），整体替换控制面上的全局 omp-home。
+排除 sessions/ blobs/ cache/ logs/ natives/ terminal-sessions/ *.db *.db-* auth.json history*。
 models.yml 中的字面 apiKey 会被控制面抽取进密钥库，磁盘上只留引用；其它文件原样保存，
 其中形似密钥的字符串只给出警告。
+
+--project <名称或 id> 时上传 dir（默认当前目录下的 .omp），整体替换该项目的 Agent 配置；
+目录结构同仓库里的 .omp/（rules/、skills/、mcp.json、config.yml…），在项目的每台 orb 里生效。
+项目级配置另外不收 models.yml（模型与密钥只在全局管理）与 plans/，
+上限为单文件 1 MiB、合计 16 MiB、2000 个文件。
 
 额外排除：--exclude <glob>（可重复），以及 dir/.orynignore 中每行一个 glob（# 开头为注释）。
 glob 按相对路径匹配，匹配到目录即排除整个目录，例如 extensions/omp-notify、omp-notify*。`,
@@ -41,27 +47,38 @@ glob 按相对路径匹配，匹配到目录即排除整个目录，例如 exten
 
 var configPullCmd = &cobra.Command{
 	Use:   "pull [dir]",
-	Short: "把控制面上的 omp-home 下载到本机目录（默认 ~/.omp/agent）",
-	Long: `逐个下载 omp-home 文件并按服务端记录的权限写入 dir，不删除本地多出的文件。
-服务端的 models.yml 是模板（密钥已替换为 ${oryn:secret:…} 引用），默认写成 models.oryn.yml，
-避免覆盖本地带真实密钥的 models.yml；--force 时直接覆盖 models.yml。`,
+	Short: "把控制面上的 omp-home（--project 时为该项目的 Agent 配置）下载到本机目录",
+	Long: `逐个下载文件并按服务端记录的权限写入 dir，不删除本地多出的文件。
+
+不给 --project 时下载全局 omp-home 到 dir（默认 ~/.omp/agent）。服务端的 models.yml 是模板
+（密钥已替换为 ${oryn:secret:…} 引用），默认写成 models.oryn.yml，避免覆盖本地带真实密钥的
+models.yml；--force 时直接覆盖 models.yml。
+
+--project <名称或 id> 时下载该项目的 Agent 配置到 dir（默认当前目录下的 .omp）；
+项目级配置没有 models.yml，--force 不起作用。`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runConfigPull,
 }
 
 var configPushOpts struct {
 	exclude []string
+	project string
 }
 
 var configPullOpts struct {
-	force  bool
-	dryRun bool
+	force   bool
+	dryRun  bool
+	project string
 }
+
+const configProjectFlagUsage = "项目名或 id；给出时操作该项目的 Agent 配置"
 
 func init() {
 	configPushCmd.Flags().StringArrayVar(&configPushOpts.exclude, "exclude", nil, "额外排除的相对路径 glob（可重复）")
+	configPushCmd.Flags().StringVar(&configPushOpts.project, "project", "", configProjectFlagUsage)
 	configPullCmd.Flags().BoolVar(&configPullOpts.force, "force", false, "直接覆盖 models.yml（其中只有密钥引用，没有真实值）")
 	configPullCmd.Flags().BoolVar(&configPullOpts.dryRun, "dry-run", false, "只列出将写入的文件")
+	configPullCmd.Flags().StringVar(&configPullOpts.project, "project", "", configProjectFlagUsage)
 	configCmd.AddCommand(configPushCmd, configPullCmd)
 	root.AddCommand(configCmd)
 }
@@ -69,9 +86,50 @@ func init() {
 // pulledModelsFile 是不带 --force 时 models.yml 模板的落盘名。
 const pulledModelsFile = "models.oryn.yml"
 
-func defaultAgentDir(args []string) (string, error) {
+// configScope 是 push / pull 的配置根：全局 omp-home（project 为空），
+// 或 project（名称或 id）所指项目的 Agent 配置（M12.2）。
+type configScope struct {
+	project string
+}
+
+// isProject 报告是否操作项目级配置。
+func (s configScope) isProject() bool { return s.project != "" }
+
+// excluded 判断相对路径是否不纳入该配置根。
+func (s configScope) excluded(rel string) bool {
+	if s.isProject() {
+		return agentcfg.ProjectExcluded(rel)
+	}
+	return agentcfg.Excluded(rel)
+}
+
+// limits 返回单文件、合计大小与文件数上限（与服务端 agentcfg.Home 的配额一致）。
+func (s configScope) limits() (file, total, files int) {
+	if s.isProject() {
+		return agentcfg.ProjectMaxFileSize, agentcfg.ProjectMaxTotalSize, agentcfg.ProjectMaxFiles
+	}
+	return agentcfg.MaxFileSize, agentcfg.MaxTotalSize, agentcfg.MaxFiles
+}
+
+// apiBase 返回该配置根的 REST 前缀；项目级先把名称或 id 解析为项目 id。
+func (s configScope) apiBase(ctx context.Context, c *apiClient) (string, error) {
+	if !s.isProject() {
+		return "/api/v1/agent-config", nil
+	}
+	id, err := resolveProject(ctx, c, s.project)
+	if err != nil {
+		return "", err
+	}
+	return "/api/v1/projects/" + escapePathParam(id) + "/agent-config", nil
+}
+
+// defaultDir 返回本地目录：给出 dir 时用它，否则全局为 ~/.omp/agent、项目级为当前目录下的 .omp。
+func (s configScope) defaultDir(args []string) (string, error) {
 	if len(args) == 1 {
 		return args[0], nil
+	}
+	if s.isProject() {
+		return ".omp", nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -102,8 +160,8 @@ func pullTarget(dir, rel string, force bool) (dst string, renamed bool, err erro
 }
 
 func runConfigPull(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	dir, err := defaultAgentDir(args)
+	scope := configScope{project: configPullOpts.project}
+	dir, err := scope.defaultDir(args)
 	if err != nil {
 		return err
 	}
@@ -111,8 +169,17 @@ func runConfigPull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	return configPull(cmd.Context(), c, scope, dir, configPullOpts.force, configPullOpts.dryRun, cmd.OutOrStdout(), cmd.ErrOrStderr())
+}
+
+// configPull 把 scope 对应的服务端配置逐个下载到 dir。
+func configPull(ctx context.Context, c *apiClient, scope configScope, dir string, force, dryRun bool, stdout, stderr io.Writer) error {
+	base, err := scope.apiBase(ctx, c)
+	if err != nil {
+		return err
+	}
 	var list apigen.AgentConfigFileList
-	if err := c.do(ctx, http.MethodGet, "/api/v1/agent-config/files", nil, &list); err != nil {
+	if err := c.do(ctx, http.MethodGet, base+"/files", nil, &list); err != nil {
 		return err
 	}
 	type planned struct {
@@ -122,21 +189,26 @@ func runConfigPull(cmd *cobra.Command, args []string) error {
 	}
 	plan := make([]planned, 0, len(list.Files))
 	for _, f := range list.Files {
-		dst, renamed, err := pullTarget(dir, f.Path, configPullOpts.force)
+		// 项目级配置不含 models.yml 等文件（所以也没有 models.oryn.yml 改名）；服务端给出则拒绝
+		if scope.isProject() && agentcfg.ProjectExcluded(f.Path) {
+			return fmt.Errorf("拒绝服务端路径 %q：项目级配置不支持该路径", f.Path)
+		}
+		dst, renamed, err := pullTarget(dir, f.Path, force)
 		if err != nil {
 			return err
 		}
 		plan = append(plan, planned{f: f, dst: dst, renamed: renamed})
 	}
+	maxFile, _, _ := scope.limits()
 	for _, p := range plan {
 		mode := fs.FileMode(p.f.Mode).Perm()
 		if mode == 0 {
 			mode = 0o644
 		}
-		if configPullOpts.dryRun {
-			fmt.Printf("%s\t%d 字节\t%04o\n", p.dst, p.f.Size, mode)
+		if dryRun {
+			fmt.Fprintf(stdout, "%s\t%d 字节\t%04o\n", p.dst, p.f.Size, mode)
 		} else {
-			b, err := getRaw(ctx, c, "/api/v1/agent-config/files/"+escapePathParam(p.f.Path))
+			b, err := getRaw(ctx, c, base+"/files/"+escapePathParam(p.f.Path), maxFile)
 			if err != nil {
 				return fmt.Errorf("下载 %s: %w", p.f.Path, err)
 			}
@@ -146,22 +218,22 @@ func runConfigPull(cmd *cobra.Command, args []string) error {
 		}
 		if p.renamed {
 			verb := "已写为"
-			if configPullOpts.dryRun {
+			if dryRun {
 				verb = "将写为"
 			}
-			fmt.Fprintf(os.Stderr, "注意：服务端 models.yml 只含 ${oryn:secret:…} 引用，%s %s，本地 models.yml 不改动（--force 可直接覆盖）\n", verb, pulledModelsFile)
+			fmt.Fprintf(stderr, "注意：服务端 models.yml 只含 ${oryn:secret:…} 引用，%s %s，本地 models.yml 不改动（--force 可直接覆盖）\n", verb, pulledModelsFile)
 		}
 	}
-	if configPullOpts.dryRun {
-		fmt.Fprintf(os.Stderr, "（dry-run）将写入 %d 个文件到 %s\n", len(plan), dir)
+	if dryRun {
+		fmt.Fprintf(stderr, "（dry-run）将写入 %d 个文件到 %s\n", len(plan), dir)
 	} else {
-		fmt.Fprintf(os.Stderr, "已下载 %d 个文件到 %s\n", len(plan), dir)
+		fmt.Fprintf(stderr, "已下载 %d 个文件到 %s\n", len(plan), dir)
 	}
 	return nil
 }
 
-// getRaw 以 GET 读取原始响应体。
-func getRaw(ctx context.Context, c *apiClient, path string) ([]byte, error) {
+// getRaw 以 GET 读取原始响应体（至多 limit 字节，超出时视为错误）。
+func getRaw(ctx context.Context, c *apiClient, path string, limit int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return nil, err
@@ -174,12 +246,15 @@ func getRaw(ctx context.Context, c *apiClient, path string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, agentcfg.MaxFileSize+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
 		return nil, &apiError{Status: resp.StatusCode, Message: strings.TrimSpace(string(b))}
+	}
+	if len(b) > limit {
+		return nil, fmt.Errorf("超过单文件上限 %d MiB", limit>>20)
 	}
 	return b, nil
 }
@@ -216,20 +291,45 @@ type pushFile struct {
 }
 
 func runConfigPush(cmd *cobra.Command, args []string) error {
-	dir, err := defaultAgentDir(args)
+	scope := configScope{project: configPushOpts.project}
+	dir, err := scope.defaultDir(args)
 	if err != nil {
 		return err
 	}
+	// 先在本地打包与预检，出错时不需要登录凭据，也不发任何请求
+	tarball, err := buildConfigTar(scope, dir, configPushOpts.exclude, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	c, err := newClient()
+	if err != nil {
+		return err
+	}
+	return uploadConfigTar(cmd.Context(), c, scope, tarball, cmd.ErrOrStderr())
+}
+
+// buildConfigTar 收集 dir 中未被排除的文件并打成 tar；超出 scope 的配额时在本地报错。
+func buildConfigTar(scope configScope, dir string, exclude []string, stderr io.Writer) ([]byte, error) {
 	ignore, err := readOrynIgnore(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	files, err := collectPushFiles(dir, append(ignore, configPushOpts.exclude...))
+	exclude = append(ignore, exclude...)
+	if scope.isProject() && !userExcluded(agentcfg.ModelsFile, exclude) {
+		if st, err := os.Stat(filepath.Join(dir, agentcfg.ModelsFile)); err == nil && st.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "项目级配置不支持 %s，已跳过\n", agentcfg.ModelsFile)
+		}
+	}
+	files, err := collectPushFiles(dir, scope.excluded, exclude)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("%s 中没有可上传的文件", dir)
+		return nil, fmt.Errorf("%s 中没有可上传的文件", dir)
+	}
+	maxFile, maxTotal, maxFiles := scope.limits()
+	if len(files) > maxFiles {
+		return nil, fmt.Errorf("文件数 %d 超过上限 %d", len(files), maxFiles)
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -237,47 +337,52 @@ func runConfigPush(cmd *cobra.Command, args []string) error {
 	for _, f := range files {
 		b, err := os.ReadFile(f.abs)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if len(b) > agentcfg.MaxFileSize {
-			return fmt.Errorf("%s 超过单文件上限 %d MiB", f.rel, agentcfg.MaxFileSize>>20)
+		if len(b) > maxFile {
+			return nil, fmt.Errorf("%s 超过单文件上限 %d MiB", f.rel, maxFile>>20)
 		}
 		total += int64(len(b))
-		if total > agentcfg.MaxTotalSize {
-			return fmt.Errorf("合计超过上限 %d MiB", agentcfg.MaxTotalSize>>20)
+		if total > int64(maxTotal) {
+			return nil, fmt.Errorf("合计超过上限 %d MiB", maxTotal>>20)
 		}
 		if f.rel != agentcfg.ModelsFile {
 			if hits := agentcfg.ScanSecretLike(b); len(hits) > 0 && !bytes.Contains(b, []byte{0}) {
-				fmt.Fprintf(os.Stderr, "警告：%s 含形似密钥的字符串（%s），该文件会原样下发到 orb\n", f.rel, strings.Join(hits, ", "))
+				fmt.Fprintf(stderr, "警告：%s 含形似密钥的字符串（%s），该文件会原样下发到 orb\n", f.rel, strings.Join(hits, ", "))
 			}
 		}
 		if err := tw.WriteHeader(&tar.Header{Name: f.rel, Mode: int64(f.mode.Perm()), Size: int64(len(b)), Typeflag: tar.TypeReg}); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tw.Write(b); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	c, err := newClient()
+	return buf.Bytes(), nil
+}
+
+// uploadConfigTar 把 tar 包导入 scope 对应的配置根并打印结果。
+func uploadConfigTar(ctx context.Context, c *apiClient, scope configScope, tarball []byte, stderr io.Writer) error {
+	base, err := scope.apiBase(ctx, c)
 	if err != nil {
 		return err
 	}
 	var res apigen.AgentConfigImportResult
-	if err := c.do(cmd.Context(), http.MethodPost, "/api/v1/agent-config/import", buf.Bytes(), &res); err != nil {
+	if err := c.do(ctx, http.MethodPost, base+"/import", tarball, &res); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "已上传 %d 个文件\n", len(res.Files))
+	fmt.Fprintf(stderr, "已上传 %d 个文件\n", len(res.Files))
 	if len(res.ExtractedSecrets) > 0 {
-		fmt.Fprintf(os.Stderr, "已抽取进密钥库：%s\n", strings.Join(res.ExtractedSecrets, ", "))
+		fmt.Fprintf(stderr, "已抽取进密钥库：%s\n", strings.Join(res.ExtractedSecrets, ", "))
 	}
 	for _, w := range res.Warnings {
 		if w.Kind == agentcfg.WarnPossibleSecret {
 			continue // 本地已提示
 		}
-		fmt.Fprintf(os.Stderr, "警告（%s）：%s: %s\n", w.Kind, w.Path, w.Message)
+		fmt.Fprintf(stderr, "警告（%s）：%s: %s\n", w.Kind, w.Path, w.Message)
 	}
 	return nil
 }
@@ -318,8 +423,9 @@ func userExcluded(rel string, globs []string) bool {
 	return false
 }
 
-// collectPushFiles 遍历目录（跟随符号链接，防环），返回未被排除的普通文件。
-func collectPushFiles(root string, exclude []string) ([]pushFile, error) {
+// collectPushFiles 遍历目录（跟随符号链接，防环），返回未被 excluded（配置根的排除规则）
+// 与用户 glob 排除的普通文件。
+func collectPushFiles(root string, excluded func(rel string) bool, exclude []string) ([]pushFile, error) {
 	var out []pushFile
 	visited := map[string]bool{}
 	var walk func(abs, rel string) error
@@ -341,7 +447,7 @@ func collectPushFiles(root string, exclude []string) ([]pushFile, error) {
 			if rel != "" {
 				childRel = rel + "/" + e.Name()
 			}
-			if agentcfg.Excluded(childRel) || childRel == orynIgnoreFile || userExcluded(childRel, exclude) {
+			if excluded(childRel) || childRel == orynIgnoreFile || userExcluded(childRel, exclude) {
 				continue
 			}
 			childAbs := filepath.Join(abs, e.Name())
