@@ -185,6 +185,8 @@ type lineHead struct {
 		StopReason string `json:"stopReason"`
 		ToolName   string `json:"toolName"`
 		IsError    bool   `json:"isError"`
+		// Details 是工具结果的 details；别的工具可能不是对象，必须保持原始字节，否则整行反序列化失败。
+		Details json.RawMessage `json:"details"`
 		// duration / ttft 在 omp 中是毫秒浮点数
 		Duration *float64   `json:"duration"`
 		TTFT     *float64   `json:"ttft"`
@@ -251,7 +253,14 @@ func ParseLine(line string) (ParsedEntry, error) {
 				p.Usage = u
 			}
 		case "toolResult":
-			p.Tool = &ToolCall{TS: ts, Tool: truncBytes(m.ToolName, maxNameLen), IsError: m.IsError}
+			// 经 write xd://<tool> 派发的调用按真实工具名归属（与 Web ToolView 一致，但失败的派发也归到真实工具）
+			name := m.ToolName
+			if name == "write" {
+				if dispatched := xdevTool(m.Details); dispatched != "" {
+					name = dispatched
+				}
+			}
+			p.Tool = &ToolCall{TS: ts, Tool: truncBytes(name, maxNameLen), IsError: m.IsError}
 		case "user":
 			p.TurnTS = &ts
 		}
@@ -266,6 +275,22 @@ func ParseLine(line string) (ParsedEntry, error) {
 		p.Usage = u
 	}
 	return p, nil
+}
+
+// xdevTool 从工具结果的 details 里取 xdev 派发的真实工具名：
+// 形如 {"xdev":{"tool":"lsp","mode":"execute",…}}，仅 mode 为 execute 且 tool 非空时返回 tool；
+// help 模式、解析失败或缺字段时返回空串。
+func xdevTool(details json.RawMessage) string {
+	var d struct {
+		Xdev *struct {
+			Tool string `json:"tool"`
+			Mode string `json:"mode"`
+		} `json:"xdev"`
+	}
+	if len(details) == 0 || json.Unmarshal(details, &d) != nil || d.Xdev == nil || d.Xdev.Mode != "execute" {
+		return ""
+	}
+	return d.Xdev.Tool
 }
 
 // warnClamped 在一条条目的用量数值越界（已记 0 / NULL）时打一条警告。

@@ -55,3 +55,28 @@ func TestParseLine(t *testing.T) {
 	assert.True(t, IsSubagentFile("2026_x/sub.jsonl"))
 	assert.False(t, IsSubagentFile("2026_x.jsonl"))
 }
+
+// 经 write xd://<tool> 派发的工具结果按 details.xdev.tool 归属；只认 execute 模式，details 形状异常不影响解析。
+func TestParseLineXdevTool(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		want    ToolCall
+	}{
+		{"execute 派发归到真实工具", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute","args":{"op":"hover"},"inner":{"x":1}}}}`, ToolCall{TS: 7, Tool: "lsp"}},
+		{"失败的派发也归到真实工具", `{"role":"toolResult","toolName":"write","isError":true,"timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "lsp", IsError: true}},
+		{"help 模式仍记为 write", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"help"}}}`, ToolCall{TS: 7, Tool: "write"}},
+		{"details 不是对象", `{"role":"toolResult","toolName":"write","timestamp":7,"details":"x"}`, ToolCall{TS: 7, Tool: "write"}},
+		{"xdev.tool 为空", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "write"}},
+		{"非 write 工具不改名", `{"role":"toolResult","toolName":"bash","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "bash"}},
+		{"没有 details", `{"role":"toolResult","toolName":"write","timestamp":7}`, ToolCall{TS: 7, Tool: "write"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := ParseLine(`{"type":"message","id":"t1","parentId":"a","message":` + c.message + `}`)
+			require.NoError(t, err)
+			require.NotNil(t, p.Tool)
+			assert.Equal(t, c.want, *p.Tool)
+		})
+	}
+}

@@ -20,7 +20,8 @@ import (
 
 // FactsVersion 是派生事实行的版本；提高它会让下次启动整体重算。
 // 3：入库钳制数值 / 字符串 / 时间，超长条目 id 在去重键里改为哈希（回填开头先由 sanitizeFacts 改写已有行）。
-const FactsVersion = 3
+// 4：经 write xd://<tool> 派发的工具结果按真实工具名（details.xdev.tool）计入 tool_calls。
+const FactsVersion = 4
 
 // stats_state 的键。
 const (
