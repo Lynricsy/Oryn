@@ -1,6 +1,6 @@
 // orbd 是 orb 内的守护进程（计划 C2 / C4 / H3.3）：连接控制面、监督 omp、复制会话条目。
 //
-//	orbd run         启动守护进程（读取 ORYN_URL、ORYN_ORB_ID、ORYN_ORB_TOKEN；可选 ORYN_AGENT_BIN、ORYN_LOG_LEVEL）
+//	orbd run         启动守护进程（读取 ORYN_URL、ORYN_ORB_ID、ORYN_ORB_TOKEN；可选 ORYN_ORB_CA_PEM、ORYN_AGENT_BIN、ORYN_LOG_LEVEL）
 //	orbd --version   打印版本
 //
 // 信号：SIGTERM / SIGINT 优雅停止全部 agent 后退出 0；SIGHUP 立即丢弃并重建 link。

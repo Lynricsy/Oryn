@@ -51,7 +51,7 @@ func (r *Runtime) gitLong(ctx context.Context, dir string, env map[string]string
 	ctx, cancel := context.WithTimeout(ctx, syncGitTimeout)
 	defer cancel()
 	full := append([]string{"-C", dir, "-c", "core.quotepath=off", "-c", "color.ui=false"}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := r.bins.command(ctx, "git", full...)
 	e := r.baseEnv()
 	e["GIT_OPTIONAL_LOCKS"] = "0"
 	e["GIT_TERMINAL_PROMPT"] = "0"

@@ -142,6 +142,9 @@ func TestRepoUpdate(t *testing.T) {
 			assert.True(t, deref(n.Prepared))
 			assert.True(t, deref(n.RepoUpdated))
 			assert.True(t, n.SetupRan)
+			// 快进且 setup 输入没变（浅克隆要补 shallow-since 才判得出快进）：可以在旧快照上增量刷新。
+			assert.False(t, deref(res.SetupChanged))
+			assert.False(t, deref(n.SetupChanged))
 			assert.Equal(t, c2, deref(n.BaseCommit))
 			assert.Equal(t, c2, gitOut(t, workdir, "rev-parse", "HEAD"))
 			b, err := os.ReadFile(filepath.Join(workdir, "a.txt"))
@@ -186,10 +189,10 @@ func TestRepoUpdateNotRequested(t *testing.T) {
 // ---- 嵌套 Docker（M11a 4.3）----
 
 // fakeDocker 在 PATH 最前面放假的 sudo / dockerd / docker：
-//   - sudo 记录调用；dockerd 换成假 dockerd；pkill 只给假 dockerd 发信号；rm 只记录不执行
-//     （测试进程可能是 root，绝不能碰宿主的 /var/run/docker.pid 或真实的 dockerd）。
+//   - sudo 只接受绝对路径的程序（orbd 必须先解析成绝对路径），记录调用（程序名取 basename）；dockerd 换成假 dockerd；
+//     pkill 只给假 dockerd 发信号；rm 只记录不执行（测试进程可能是 root，绝不能碰宿主的 /var/run/docker.pid 或真实的 dockerd）。
 //   - 假 dockerd 写 pid 文件、在 events.log 记 start，收到 TERM 记 term 后退出。
-//   - 假 docker：ps -q 输出 containers 文件内容，stop 清空它。
+//   - 假 docker：ps -q 输出 containers 文件内容，stop 清空它；info 在 notready 文件存在时像守护进程未就绪那样失败。
 type fakeDocker struct{ dir string }
 
 func newFakeDocker(t *testing.T) *fakeDocker {
@@ -200,10 +203,15 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 	scripts := map[string]string{
 		"sudo": `#!/bin/sh
 [ "$1" = "-n" ] && shift
-echo "sudo $*" >> "$FAKE_DOCKER_DIR/calls.log"
-case "$1" in
-dockerd) shift; exec "$FAKE_DOCKER_DIR/bin/dockerd" "$@" ;;
-pkill) pid=$(cat "$FAKE_DOCKER_DIR/dockerd.pid" 2>/dev/null) || exit 1; kill -s "${2#-}" "$pid" 2>/dev/null; exit 0 ;;
+prog=$1; shift
+case "$prog" in
+/*) ;;
+*) echo "sudo: relative program $prog" >> "$FAKE_DOCKER_DIR/calls.log"; exit 1 ;;
+esac
+echo "sudo ${prog##*/}${*:+ $*}" >> "$FAKE_DOCKER_DIR/calls.log"
+case "${prog##*/}" in
+dockerd) exec "$FAKE_DOCKER_DIR/bin/dockerd" "$@" ;;
+pkill) pid=$(cat "$FAKE_DOCKER_DIR/dockerd.pid" 2>/dev/null) || exit 1; kill -s "${1#-}" "$pid" 2>/dev/null; exit 0 ;;
 rm) exit 0 ;;
 *) exit 1 ;;
 esac
@@ -219,6 +227,12 @@ echo "docker $*" >> "$FAKE_DOCKER_DIR/calls.log"
 case "$1" in
 ps) cat "$FAKE_DOCKER_DIR/containers" 2>/dev/null ;;
 stop) : > "$FAKE_DOCKER_DIR/containers" ;;
+info)
+	if [ -e "$FAKE_DOCKER_DIR/notready" ]; then
+		echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
+		exit 1
+	fi
+	echo 29.0.0 ;;
 esac
 `,
 	}

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -1049,7 +1048,7 @@ func (s *serviceSupervisor) runOnce(sv *svc, run *svcRun) (code int, lived time.
 
 	s.sysLine(name, fmt.Sprintf("starting %s (port %d)", name, spec.Port))
 	lg := s.logFor(name)
-	cmd := exec.Command("bash", "-lc", spec.Command)
+	cmd := s.r.bins.command(context.Background(), "bash", "-lc", spec.Command)
 	cmd.Dir = filepath.Join(s.r.currentWorkdir(), spec.Cwd)
 	cmd.Env = envList(env)
 	cmd.Stdin = nil

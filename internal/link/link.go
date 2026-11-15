@@ -124,11 +124,17 @@ func NewConnSession(conn net.Conn, client bool) (*Session, error) {
 
 // Dial 由 orbd 调用：连接 url（http/https/ws/wss 均可，须含 Path），
 // 携带 `Authorization: Bearer <token>` 与子协议，成功后作为 yamux 客户端。
-// ctx 只约束握手过程。
+// ctx 只约束握手过程。等同于 DialClient(ctx, url, token, nil)。
 func Dial(ctx context.Context, url, token string) (*Session, error) {
+	return DialClient(ctx, url, token, nil)
+}
+
+// DialClient 同 Dial，但握手经 hc 发出（例如只信任某张 CA 的 TLS 客户端）；hc 为 nil 时用 http.DefaultClient。
+func DialClient(ctx context.Context, url, token string, hc *http.Client) (*Session, error) {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
 	ws, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPClient:   hc,
 		HTTPHeader:   h,
 		Subprotocols: []string{Subprotocol},
 	})

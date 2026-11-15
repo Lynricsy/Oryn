@@ -49,6 +49,41 @@ func TestDialUnauthorized(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnauthorized)
 }
 
+// TestDialClientTLS：DialClient 经给定的 client 握手——信任服务端证书的 client 拨 TLS 地址成功，
+// 不带该 CA 的 client（系统根）拨同一地址失败。
+func TestDialClientTLS(t *testing.T) {
+	sessions := make(chan *Session, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc(Path, func(w http.ResponseWriter, r *http.Request) {
+		s, err := Accept(w, r, func(_ *http.Request, token string) error {
+			if token != testToken {
+				return errors.New("bad token")
+			}
+			return nil
+		})
+		if err != nil {
+			return
+		}
+		sessions <- s
+		<-s.CloseChan()
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s, err := DialClient(ctx, URL(srv.URL), testToken, srv.Client())
+	require.NoError(t, err)
+	srvSess := <-sessions
+	_ = s.Close()
+	_ = srvSess.Close()
+
+	_, err = DialClient(ctx, URL(srv.URL), testToken, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "certificate")
+	assert.NotErrorIs(t, err, ErrUnauthorized)
+}
+
 func TestHeaderCodec(t *testing.T) {
 	line, err := EncodeHeader(StreamHeader{T: StreamAgent, ThreadID: "T-1"})
 	require.NoError(t, err)

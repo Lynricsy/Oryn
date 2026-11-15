@@ -31,7 +31,8 @@ var loginShellSkip = map[string]bool{"_": true, "SHLVL": true, "PWD": true, "OLD
 func loginEnv(ctx context.Context, dir string, base map[string]string) map[string]string {
 	ctx, cancel := context.WithTimeout(ctx, loginEnvTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-lc", "env -0")
+	// bash 按 base 的 PATH 在可信目录里解析（不经 $HOME 下的 PATH 项，见 binpath.go）。
+	cmd := newBinResolver(base["PATH"], base["HOME"]).command(ctx, "bash", "-lc", "env -0")
 	cmd.Dir = dir
 	cmd.Env = envList(base)
 	cmd.Stdin = nil

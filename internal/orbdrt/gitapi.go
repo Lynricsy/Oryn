@@ -59,7 +59,7 @@ func (r *Runtime) git(ctx context.Context, dir string, stdin []byte, limit int, 
 		"-c", "core.quotepath=off", "-c", "color.ui=false",
 		"-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
 	}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := r.bins.command(ctx, "git", full...)
 	env := r.baseEnv()
 	env["GIT_OPTIONAL_LOCKS"] = "0"
 	env["GIT_TERMINAL_PROMPT"] = "0"

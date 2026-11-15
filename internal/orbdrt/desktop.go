@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -108,7 +107,7 @@ func newDesktop(r *Runtime) *desktop {
 		return nil
 	}
 	for _, b := range desktopBinaries {
-		if _, err := exec.LookPath(b); err != nil {
+		if _, err := r.bins.look(b); err != nil {
 			r.log.Warn("desktop disabled: executable not found", "bin", b)
 			return nil
 		}
@@ -293,7 +292,7 @@ func (d *desktop) closeLogs() {
 func (d *desktop) spawn(logName, bin string, args []string, env map[string]string) (int, <-chan struct{}, error) {
 	lg := d.logFor(logName)
 	_, _ = fmt.Fprintf(lg, "[orbd] starting %s %s\n", bin, strings.Join(args, " "))
-	cmd := exec.Command(bin, args...)
+	cmd := d.r.bins.command(context.Background(), bin, args...)
 	cmd.Dir = d.r.home
 	cmd.Env = envList(env)
 	cmd.Stdout, cmd.Stderr = lg, lg

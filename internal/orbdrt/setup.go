@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -233,18 +234,18 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			return fail(ctlErr("failed", "%v", err))
 		}
 		// 3b. repo.update：已有检出（快照或池 orb）移动到基线最新提交；HEAD 变了就删掉完成标记，下面增量重跑 setup。
-		repoUpdated := false
+		repoUpdated, setupChanged := false, false
 		if p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && !cloned && hasCheckout(workdir) {
-			repoUpdated = r.updateRepo(ctx, lg, workdir, envList(env), p.Repo)
+			repoUpdated, setupChanged = r.updateRepo(ctx, lg, workdir, envList(env), p.Repo)
 		}
-		res.RepoUpdated = new(repoUpdated)
+		res.RepoUpdated, res.SetupChanged = new(repoUpdated), new(setupChanged)
 
 		// 4. setup 脚本（合计 20 分钟），成功后写标记。
 		sres := apigen.LinkCtlSetupResultParams{
 			Phase: apigen.SetupPhaseSetup, Trigger: apigen.SetupTriggerAuto,
 			StartedAt: phaseStart.UnixMilli(), HasProjectScript: nonEmpty(p.Scripts.Setup),
 			HasRepoScript: repoScript(workdir, "setup") != "",
-			Prepared:      new(prepared), RepoUpdated: new(repoUpdated),
+			Prepared:      new(prepared), RepoUpdated: new(repoUpdated), SetupChanged: new(setupChanged),
 		}
 		if _, err := os.Stat(r.setupMarker()); err != nil {
 			res.SetupRan, sres.SetupRan = true, true
@@ -258,11 +259,18 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		sres.Ok, sres.Error = res.SetupError == nil, res.SetupError
 		sres.DurationMs = time.Since(phaseStart).Milliseconds()
 		if hasCheckout(workdir) {
-			if c := gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
+			if c := r.gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
 				res.BaseCommit, sres.BaseCommit = new(c), new(c)
 			}
 		}
 		r.publishResult(sres)
+		if p.DeferResume != nil && *p.DeferResume {
+			// S-P1-2：控制面要在 resume 与受管服务之前拍快照，随后单独发 resume.run。互斥照常在返回时释放。
+			lg.system(apigen.Resume, "resume and managed services deferred until resume.run")
+			res.Ok = res.SetupError == nil
+			res.DurationMs = time.Since(reqStart).Milliseconds()
+			return res, nil
+		}
 		// 此后的失败属于 resume 阶段。
 		phase, phaseStart = apigen.SetupPhaseResume, time.Now()
 	} else {
@@ -270,7 +278,7 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			return fail(ctlErr("failed", "%v", err))
 		}
 		if hasCheckout(workdir) {
-			if c := gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
+			if c := r.gitRev(ctx, workdir, envList(env), "HEAD"); c != "" {
 				res.BaseCommit = new(c)
 			}
 		}
@@ -290,6 +298,7 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 func (r *Runtime) setupMarker() string { return filepath.Join(r.home, ".oryn", "setup.done") }
 
 // setupScripts 执行 setup 阶段的脚本（合计 20 分钟）；成功后写 setup.done 标记。
+// Docker 类型的 orb 先等 dockerd API 就绪（OW-1），未就绪则以明确的错误失败、不运行脚本。
 func (r *Runtime) setupScripts(ctx context.Context, lg *setupLogger, workdir string, env map[string]string, project *string) error {
 	start := time.Now()
 	sctx, cancel := context.WithTimeout(ctx, setupTimeout)
@@ -298,7 +307,11 @@ func (r *Runtime) setupScripts(ctx context.Context, lg *setupLogger, workdir str
 	if err == nil {
 		if len(cmds) == 0 {
 			lg.system(apigen.Setup, "no setup script (project settings, .oryn/setup or .agents/setup)")
+		} else {
+			err = r.waitDockerd(sctx, lg, apigen.Setup)
 		}
+	}
+	if err == nil {
 		err = runCmds(sctx, lg, apigen.Setup, workdir, env, cmds)
 	}
 	if err == nil {
@@ -324,10 +337,47 @@ func hasCheckout(dir string) bool {
 	return err == nil
 }
 
-// updateRepo 实现 repo.update（M11a 2.3）：fetch 基线（分支名，缺省远端 HEAD），HEAD 不等于 FETCH_HEAD 时
-// 先试 fast-forward（浅克隆或失败则 reset --hard），并删掉 setup 完成标记。返回 HEAD 是否移动。
-// fetch 或移动失败只记日志：沿用当前检出（快照里的提交），不让 orb 失败。
-func (r *Runtime) updateRepo(ctx context.Context, lg *setupLogger, workdir string, env []string, repo *apigen.LinkCtlSetupRepo) bool {
+// setupInputFiles 是决定 setup 产物的仓库内文件（S-P2-1）：它们在 repo.update 前后有任何变化，
+// 旧快照上的增量刷新就不可信，控制面改从基础镜像开新血统。
+var setupInputFiles = []string{".oryn/setup", ".agents/setup", ".oryn/services.yaml", ".amp/services.yaml"}
+
+// setupInputsDigest 摘要工作区里 setupInputFiles 的现状（类型、可执行位、内容或链接目标；缺失也算一种状态）。
+// 看磁盘而不是提交：未提交的改动同样影响上一次 setup 跑的是什么。
+func setupInputsDigest(workdir string) [sha256.Size]byte {
+	h := sha256.New()
+	for _, rel := range setupInputFiles {
+		p := filepath.Join(workdir, rel)
+		fmt.Fprintf(h, "%s\x00", rel)
+		st, err := os.Lstat(p)
+		switch {
+		case err != nil:
+			fmt.Fprint(h, "missing\x00")
+		case st.Mode()&os.ModeSymlink != 0:
+			target, _ := os.Readlink(p)
+			fmt.Fprintf(h, "symlink\x00%s\x00", target)
+		case st.Mode().IsRegular():
+			b, err := os.ReadFile(p)
+			if err != nil {
+				fmt.Fprintf(h, "unreadable\x00%v\x00", err)
+				continue
+			}
+			fmt.Fprintf(h, "file\x00%o\x00%d\x00", st.Mode().Perm()&0o111, len(b))
+			h.Write(b)
+		default:
+			fmt.Fprintf(h, "other\x00%v\x00", st.Mode().Type())
+		}
+	}
+	var out [sha256.Size]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// updateRepo 实现 repo.update（M11a 2.3）：fetch 基线（分支名，缺省远端 HEAD）；HEAD 不等于 fetch 到的提交时，
+// 快进（完整克隆且原 HEAD 是其祖先）用 merge --ff-only，否则 reset --hard，之后以实际 HEAD 核对（OW-2：merge
+// 退出码为 0 也可能没动，例如 HEAD 领先于基线），仍不等就 reset --hard；移动成功后删掉 setup 完成标记。
+// updated 报告 HEAD 是否真的移到了基线；setupChanged（S-P2-1）在基线不是原 HEAD 的快进、或 setupInputFiles
+// 有变化时为真。fetch 或移动失败只记日志：沿用当前检出（快照里的提交），不让 orb 失败。
+func (r *Runtime) updateRepo(ctx context.Context, lg *setupLogger, workdir string, env []string, repo *apigen.LinkCtlSetupRepo) (updated, setupChanged bool) {
 	ref := "HEAD"
 	if repo.Branch != nil && *repo.Branch != "" {
 		ref = *repo.Branch
@@ -342,45 +392,102 @@ func (r *Runtime) updateRepo(ctx context.Context, lg *setupLogger, workdir strin
 	cancel()
 	if err != nil {
 		lg.system(apigen.Git, "repo update: fetch failed; keeping the current checkout: "+err.Error())
-		return false
+		return false, false
 	}
-	head, fetched := gitRev(ctx, workdir, env, "HEAD"), gitRev(ctx, workdir, env, "FETCH_HEAD")
+	head, fetched := r.gitRev(ctx, workdir, env, "HEAD"), r.gitRev(ctx, workdir, env, "FETCH_HEAD")
 	if fetched == "" {
 		lg.system(apigen.Git, "repo update: FETCH_HEAD unreadable; keeping the current checkout")
-		return false
+		return false, false
 	}
 	if head == fetched {
 		lg.system(apigen.Git, "repo update: already at "+shortRev(head))
-		return false
+		return false, false
 	}
-	moved := false
-	if !repo.Shallow {
-		moved = lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "merge", "--ff-only", "FETCH_HEAD") == nil
+	before := setupInputsDigest(workdir)
+	ff := head != "" && r.fastForward(ctx, lg, workdir, env, repo, ref, head, fetched)
+	// 移动一律指向已解析的提交（而不是 FETCH_HEAD：判定快进时可能又 fetch 过一次）。
+	if ff && !repo.Shallow {
+		_ = lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "merge", "--ff-only", fetched)
 	}
-	if !moved {
-		if err := lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "reset", "--hard", "FETCH_HEAD"); err != nil {
+	if now := r.gitRev(ctx, workdir, env, "HEAD"); now != fetched {
+		if err := lg.run(ctx, apigen.Git, workdir, env, "git", "-C", workdir, "reset", "--hard", fetched); err != nil {
 			lg.system(apigen.Git, "repo update: reset failed; keeping the current checkout: "+err.Error())
-			return false
+			return false, false
 		}
+	}
+	if now := r.gitRev(ctx, workdir, env, "HEAD"); now != fetched {
+		lg.system(apigen.Git, fmt.Sprintf("repo update: HEAD is %s, not %s; keeping the current checkout", shortRev(now), shortRev(fetched)))
+		return false, false
 	}
 	if err := os.Remove(r.setupMarker()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		lg.system(apigen.Git, "repo update: remove setup marker: "+err.Error())
 	}
-	lg.system(apigen.Git, fmt.Sprintf("repo update: %s -> %s; setup scripts will rerun", shortRev(head), shortRev(fetched)))
-	return true
+	inputsChanged := setupInputsDigest(workdir) != before
+	setupChanged = !ff || inputsChanged
+	lg.system(apigen.Git, fmt.Sprintf("repo update: %s -> %s (fast-forward: %t, setup inputs changed: %t); setup scripts will rerun",
+		shortRev(head), shortRev(fetched), ff, inputsChanged))
+	return true, setupChanged
 }
 
-// gitRev 解析 rev 为提交的完整哈希；失败返回空串。
-func gitRev(ctx context.Context, dir string, env []string, rev string) string {
+// fastForward 报告 fetched 是否是 head 的后代（基线快进）。浅克隆里祖先关系常被截断：判不出时按 head 的提交时间
+// 补一次 `fetch --shallow-since`（只取 head 之后的历史）再判；仍判不出、或基线在此期间又动了，一律当作非快进。
+func (r *Runtime) fastForward(ctx context.Context, lg *setupLogger, workdir string, env []string, repo *apigen.LinkCtlSetupRepo, ref, head, fetched string) bool {
+	if r.isAncestor(ctx, workdir, env, head, fetched) {
+		return true
+	}
+	if !repo.Shallow {
+		return false
+	}
+	cmd := r.bins.command(ctx, "git", "-C", workdir, "log", "-1", "--format=%ct", head)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	ct, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return false
+	}
+	since := time.Unix(ct-1, 0).UTC().Format(time.RFC3339)
+	cctx, cancel := context.WithTimeout(ctx, setupTimeout)
+	err = lg.run(cctx, apigen.Git, workdir, env, "git", "-C", workdir, "fetch", "--shallow-since="+since, "--", "origin", ref)
+	cancel()
+	if err != nil {
+		lg.system(apigen.Git, "repo update: could not deepen the shallow history; treating the update as not a fast-forward")
+		return false
+	}
+	if again := r.gitRev(ctx, workdir, env, "FETCH_HEAD"); again != fetched {
+		return false
+	}
+	return r.isAncestor(ctx, workdir, env, head, fetched)
+}
+
+// isAncestor 报告 a 是否是 b 的祖先；判不出（对象缺失、浅克隆截断）时为假。
+func (r *Runtime) isAncestor(ctx context.Context, dir string, env []string, a, b string) bool {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	cmd := r.bins.command(cctx, "git", "-C", dir, "merge-base", "--is-ancestor", a, b)
+	cmd.Env = env
+	return cmd.Run() == nil
+}
+
+// commitHashRe 是完整的提交哈希（SHA-1 40 位或 SHA-256 64 位小写十六进制）。
+var commitHashRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// gitRev 解析 rev 为提交的完整哈希；失败或输出不是合法的提交哈希（S-P2-5）时返回空串。
+func (r *Runtime) gitRev(ctx context.Context, dir string, env []string, rev string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := r.bins.command(cctx, "git", "-C", dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	if c := strings.TrimSpace(string(out)); commitHashRe.MatchString(c) {
+		return c
+	}
+	return ""
 }
 
 func shortRev(c string) string {
@@ -536,7 +643,11 @@ func (r *Runtime) runResume(ctx context.Context, setupLg *setupLogger, workdir s
 		// 不受 ctl 请求约束：超过等待时间后在后台继续运行（上限 resumeTimeout）。
 		rctx, cancel := context.WithTimeout(ctx, resumeTimeout)
 		defer cancel()
-		err := runCmds(rctx, lg, apigen.Resume, workdir, env, cmds)
+		// Docker 类型先等 dockerd 就绪（OW-1）；在后台 goroutine 里等，不拖过 ResumeWait。
+		err := r.waitDockerd(rctx, lg, apigen.Resume)
+		if err == nil {
+			err = runCmds(rctx, lg, apigen.Resume, workdir, env, cmds)
+		}
 		if err != nil {
 			lg.system(apigen.Resume, "resume failed: "+err.Error())
 		} else {
@@ -615,7 +726,7 @@ func (w logWriter) Write(p []byte) (int, error) {
 
 // run 执行命令（独立进程组；ctx 结束时杀掉整个组），输出流式记录。
 func (l *setupLogger) run(ctx context.Context, phase apigen.LinkCtlSetupLogParamsPhase, dir string, env []string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := l.r.bins.command(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = nil
@@ -661,7 +772,7 @@ func validGitEntry(e string) bool {
 // clearGitInsteadOf 删除全局 git 配置里所有指向本机 egress 代理的 insteadOf 条目（Oryn 写入的那些）。
 func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) error {
 	re := `^url\.http://` + regexp.QuoteMeta(r.EgressAddr()) + `/git/.*\.insteadof$`
-	cmd := exec.CommandContext(ctx, "git", "config", "--global", "--name-only", "--get-regexp", re)
+	cmd := r.bins.command(ctx, "git", "config", "--global", "--name-only", "--get-regexp", re)
 	cmd.Dir, cmd.Env = r.home, envList(env)
 	out, err := cmd.Output()
 	if err != nil {
@@ -677,7 +788,7 @@ func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) 
 			continue
 		}
 		seen[name] = true
-		rm := exec.CommandContext(ctx, "git", "config", "--global", "--unset-all", name)
+		rm := r.bins.command(ctx, "git", "config", "--global", "--unset-all", name)
 		rm.Dir, rm.Env = r.home, envList(env)
 		if b, err := rm.CombinedOutput(); err != nil {
 			return fmt.Errorf("unset %s: %v: %s", name, err, strings.TrimSpace(string(b)))

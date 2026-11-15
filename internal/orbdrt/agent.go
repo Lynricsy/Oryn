@@ -842,7 +842,7 @@ func (s *supervisor) spawn() (*proc, error) {
 		outW.Close()
 		return nil, err
 	}
-	cmd := exec.Command(t.r.cfg.AgentBin, s.spec.args...)
+	cmd := t.r.bins.command(context.Background(), t.r.cfg.AgentBin, s.spec.args...)
 	cmd.Dir = s.spec.cwd
 	cmd.Env = s.spec.env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW

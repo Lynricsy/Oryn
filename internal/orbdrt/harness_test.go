@@ -123,7 +123,12 @@ type fakeCP struct {
 	extra func(method string, params json.RawMessage) (res any, ok bool, err error)
 }
 
-func newFakeCP(t *testing.T) *fakeCP {
+func newFakeCP(t *testing.T) *fakeCP { return newFakeCPWith(t, false) }
+
+// newFakeCPTLS 同 newFakeCP，但 link 端点是 httptest 的 TLS 服务端（证书见 cp.srv.Certificate()）。
+func newFakeCPTLS(t *testing.T) *fakeCP { return newFakeCPWith(t, true) }
+
+func newFakeCPWith(t *testing.T, useTLS bool) *fakeCP {
 	cp := &fakeCP{
 		t:       t,
 		files:   map[string]map[string]*cpFile{},
@@ -135,7 +140,11 @@ func newFakeCP(t *testing.T) *fakeCP {
 	cp.token.Store(testToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc(link.Path, cp.handle)
-	cp.srv = httptest.NewServer(mux)
+	if useTLS {
+		cp.srv = httptest.NewTLSServer(mux)
+	} else {
+		cp.srv = httptest.NewServer(mux)
+	}
 	egressSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "egress %s %s %s", r.Method, r.URL.Path, r.Header.Get("X-Test"))

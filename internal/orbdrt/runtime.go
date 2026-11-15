@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -105,6 +104,17 @@ type Config struct {
 	// DockerdBackoff 是 dockerd 第 n 次（从 1 起）连续失败后的重启等待（缺省 1s 起翻倍、上限 30s；测试钩子）。
 	NestedDocker   bool
 	DockerdBackoff func(n int) time.Duration
+	// DockerdReadyTimeout 是 setup / resume 等 dockerd API 就绪的上限（缺省 2 分钟）；DockerdProbeInterval 是
+	// `docker info` 探测的起始间隔（缺省 500ms，失败后翻倍、上限 5s）。OnDockerdWait 仅供测试：setup / resume
+	// 开始等待 dockerd 就绪时同步回调（就绪后不等待则不回调）。
+	DockerdReadyTimeout  time.Duration
+	DockerdProbeInterval time.Duration
+	OnDockerdWait        func()
+
+	// OrbCAPEM 是 link 的 TLS CA（PEM，ConfigFromEnv 读 ORYN_ORB_CA_PEM；只含空白视同未给）。非空时对 URL 的
+	// 一切 HTTPS 请求只信任这里的证书（不合并系统根）；为空且 URL 为 https 时用系统根（反代场景）。
+	// 解析失败时 New 返回错误。
+	OrbCAPEM string
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -141,6 +151,7 @@ func ConfigFromEnv(version string) (Config, error) {
 	cfg.DesktopCDPAddr = os.Getenv("ORYN_DESKTOP_CDP_ADDR")
 	cfg.DesktopTmpDir = os.Getenv("ORYN_DESKTOP_X11_TMPDIR")
 	cfg.NestedDocker = os.Getenv("ORYN_NESTED_DOCKER") == "1"
+	cfg.OrbCAPEM = os.Getenv("ORYN_ORB_CA_PEM")
 	return cfg, nil
 }
 
@@ -222,6 +233,11 @@ type Runtime struct {
 
 	// syncMu 串行化 /sync/prepare（共用仓库里的临时 index 与 refs/oryn/sync/*）。
 	syncMu sync.Mutex
+
+	// bins 把 orbd 自己起的子进程解析到可信 PATH 目录里的绝对路径（不经 $HOME 下的 PATH 项）。
+	bins binResolver
+	// httpClient 是对 cfg.URL 的一切请求（目前只有 link 握手）所用的 client；nil = http.DefaultClient（系统根）。
+	httpClient *http.Client
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -296,6 +312,17 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.DesktopUserNS == nil {
 		cfg.DesktopUserNS = userNamespacesUsable
 	}
+	if cfg.DockerdReadyTimeout <= 0 {
+		cfg.DockerdReadyTimeout = defaultDockerdReadyTimeout
+	}
+	if cfg.DockerdProbeInterval <= 0 {
+		cfg.DockerdProbeInterval = defaultDockerdProbeInterval
+	}
+	// 先于任何资源分配：CA 无效直接启动失败。
+	hc, err := orbHTTPClient(cfg.OrbCAPEM)
+	if err != nil {
+		return nil, fmt.Errorf("orbdrt: ORYN_ORB_CA_PEM: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
@@ -324,6 +351,12 @@ func New(cfg Config) (*Runtime, error) {
 		local:              link.NewStreamListener("oryn-fs"),
 		maxFileBytes:       MaxFileBytes,
 		maxAttachmentBytes: MaxAttachmentBytes,
+
+		bins:       newBinResolver(os.Getenv("PATH"), home),
+		httpClient: hc,
+	}
+	if hc != nil && !strings.HasPrefix(cfg.URL, "https://") && !strings.HasPrefix(cfg.URL, "wss://") {
+		r.log.Warn("ORYN_ORB_CA_PEM is set but ORYN_URL is not https; the link stays unencrypted", "url", cfg.URL)
 	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
@@ -343,7 +376,7 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-	r.agentVersion = detectAgentVersion(cfg.AgentBin)
+	r.agentVersion = detectAgentVersion(r.bins, cfg.AgentBin)
 	return r, nil
 }
 
@@ -353,10 +386,10 @@ func (r *Runtime) EgressAddr() string { return r.egressLn.Addr().String() }
 // AgentVersion 返回 `<agent> --version` 的输出（探测失败为空）。
 func (r *Runtime) AgentVersion() string { return r.agentVersion }
 
-func detectAgentVersion(bin string) string {
+func detectAgentVersion(bins binResolver, bin string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "--version").Output()
+	out, err := bins.command(ctx, bin, "--version").Output()
 	if err != nil {
 		slog.Warn("orbd: agent --version failed", "bin", bin, "err", err)
 		return ""
@@ -523,7 +556,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 		sess, err = r.cfg.Connect(dctx)
 	} else {
 		// 令牌文件每次拨号重新读取：控制面每次 spawn 轮换令牌，provider 写文件后发 SIGHUP 触发重拨。
-		sess, err = link.Dial(dctx, link.URL(r.cfg.URL), r.dialToken())
+		sess, err = link.DialClient(dctx, link.URL(r.cfg.URL), r.dialToken(), r.httpClient)
 	}
 	if err != nil {
 		cancel()
@@ -636,7 +669,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 			threads = append(threads, apigen.LinkCtlHelloThread{ThreadID: id})
 		}
 	}
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update"}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume"}
 	if r.desk != nil {
 		features = append(features, "desktop")
 	}
