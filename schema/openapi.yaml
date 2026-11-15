@@ -6846,10 +6846,23 @@ components:
         agent:
           allOf:
             - $ref: '#/components/schemas/AgentIdentity'
-          description: 全局 agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
+          description: 默认 Agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
         roles:
           type: array
           items: { $ref: '#/components/schemas/PublicRoleIdentity' }
+        agents:
+          type: array
+          description: |
+            这段对话里 `task` 工具调用用到、且设了自定义头像的子 agent（按名字明文对应：agent 名本就出现在公开的工具卡片里）。
+            没设头像的 agent 不出现，页面用各自的默认字形。快照分享同样在创建时固化；升级前创建的快照省略本字段。
+          items: { $ref: '#/components/schemas/PublicAgentIdentity' }
+    PublicAgentIdentity:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        avatarIcon: { type: string, maxLength: 64 }
+        avatarImage: { type: string, maxLength: 131072 }
 
     # ============================================================ 通知（M5）
     NotificationKind:

@@ -5357,6 +5357,13 @@ type ProviderList struct {
 	Providers []Provider `json:"providers"`
 }
 
+// PublicAgentIdentity defines model for PublicAgentIdentity.
+type PublicAgentIdentity struct {
+	AvatarIcon  *string `json:"avatarIcon,omitempty"`
+	AvatarImage *string `json:"avatarImage,omitempty"`
+	Name        string  `json:"name"`
+}
+
 // PublicAttachment defines model for PublicAttachment.
 type PublicAttachment struct {
 	// ID `att_<ulid>`
@@ -5430,9 +5437,13 @@ type PublicShare struct {
 
 // PublicShareIdentity 分享页的身份。快照分享 = 创建时固化；实时分享 = 按当前设置现算。只含这段对话里用到且设了头像的 role
 type PublicShareIdentity struct {
-	// Agent 全局 agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
-	Agent *AgentIdentity       `json:"agent,omitempty"`
-	Roles []PublicRoleIdentity `json:"roles"`
+	// Agent 默认 Agent 身份；名字与头像都未设置时省略（页面用默认品牌标）
+	Agent *AgentIdentity `json:"agent,omitempty"`
+
+	// Agents 这段对话里 `task` 工具调用用到、且设了自定义头像的子 agent（按名字明文对应：agent 名本就出现在公开的工具卡片里）。
+	// 没设头像的 agent 不出现，页面用各自的默认字形。快照分享同样在创建时固化；升级前创建的快照省略本字段。
+	Agents []PublicAgentIdentity `json:"agents,omitempty"`
+	Roles  []PublicRoleIdentity  `json:"roles"`
 }
 
 // PublishOrbFileRequest defines model for PublishOrbFileRequest.
