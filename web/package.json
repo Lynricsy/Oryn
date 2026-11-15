@@ -28,6 +28,7 @@
     "accept:m11a": "bun scripts/m11a-accept.ts",
     "accept:m11b": "bun scripts/m11b-accept.ts",
     "accept:m12": "bun scripts/m12-accept.ts",
+    "accept:m122": "bun scripts/m122-accept.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
   },
