@@ -86,7 +86,10 @@ function readDouble(s: string, start: number): [string, number] {
 		if (hex) {
 			const digits = s.slice(i + 2, i + 2 + hex);
 			if (!new RegExp(`^[0-9a-fA-F]{${hex}}$`).test(digits)) fail();
-			out += String.fromCodePoint(Number.parseInt(digits, 16));
+			// 超出 Unicode 范围（> U+10FFFF）或落在代理区的码点不是合法字符：按不支持回落，不让 fromCodePoint 抛 RangeError
+			const cp = Number.parseInt(digits, 16);
+			if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) fail();
+			out += String.fromCodePoint(cp);
 			i += 2 + hex;
 			continue;
 		}

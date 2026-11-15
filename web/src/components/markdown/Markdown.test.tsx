@@ -49,4 +49,12 @@ describe("Markdown", () => {
 		);
 		expect(nested.container.querySelector("dl[data-frontmatter]")).toBeNull();
 	});
+
+	it("frontmatter 里的非法码点转义不打断渲染：整段回落成原文 Markdown", () => {
+		const { container } = render(
+			<Markdown text={'---\nname: "\\U00110000"\n---\n\nbody text'} />,
+		);
+		expect(container.querySelector("dl[data-frontmatter]")).toBeNull();
+		expect(container).toHaveTextContent("body text");
+	});
 });

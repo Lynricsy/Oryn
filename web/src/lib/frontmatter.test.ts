@@ -110,6 +110,21 @@ describe("splitFrontmatter", () => {
 		}
 	});
 
+	it("非法码点的转义（超出 U+10FFFF、代理区）回落，不抛异常", () => {
+		for (const block of [
+			'name: "\\U00110000"',
+			'name: "\\UFFFFFFFF"',
+			'name: "\\uD800"',
+		]) {
+			expect(() => parseFrontmatterBlock(block), block).not.toThrow();
+			expect(parseFrontmatterBlock(block), block).toBeNull();
+		}
+		// 合法的最大码点照常解码
+		expect(parseFrontmatterBlock('name: "\\U0010FFFF"')).toEqual([
+			{ key: "name", value: "\u{10FFFF}" },
+		]);
+	});
+
 	it("CRLF 与 BOM", () => {
 		const doc = splitFrontmatter("\uFEFF---\r\nname: x\r\n---\r\n\r\nbody");
 		expect(doc?.fields).toEqual([{ key: "name", value: "x" }]);
