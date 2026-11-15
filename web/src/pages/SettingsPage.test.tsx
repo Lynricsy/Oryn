@@ -343,11 +343,17 @@ describe("设置页外框与「身份与头像」", () => {
 		expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("设置");
 	});
 
-	it("身份与头像：依次是 Agent 身份、全局助手、角色头像、我的头像四张卡", async () => {
+	it("身份与头像：依次是默认 Agent 身份、全局助手、新对话默认对象、角色头像、我的头像五张卡", async () => {
 		setup("identity");
 		expect(
 			screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
-		).toEqual(["Agent 身份", "全局助手", "角色头像", "我的头像"]);
+		).toEqual([
+			"默认 Agent 身份",
+			"全局助手",
+			"新对话默认对象",
+			"角色头像",
+			"我的头像",
+		]);
 		expect(await screen.findByTestId("identity-roles")).toBeInTheDocument();
 	});
 });
