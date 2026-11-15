@@ -835,8 +835,9 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 		if err != nil {
 			return nil, err
 		}
-		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）。
-		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, p.ProjectConfig != nil); err != nil {
+		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）；协调宿主没有项目层。
+		setProject := p.ProjectConfig != nil && !r.cfg.Coordinator
+		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, setProject); err != nil {
 			return nil, ctlErr("failed", "%v", err)
 		}
 		return apigen.LinkCtlOkResult{Ok: true}, nil

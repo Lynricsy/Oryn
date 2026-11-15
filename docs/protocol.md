@@ -1555,6 +1555,6 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 ### orb link：`omphome.apply`（orynd→orbd 请求）
 
-- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[]}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`），runner 不上报且回 `not_supported`。
-- 语义与 `setup.run` 第 1 步相同：写入 `~/.omp/agent/`，按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件不动。不碰 git、不跑脚本、不动项目层配置（`~/.oryn/project-config/.omp`）。
-- 与 `setup.run` / `resume.run` 的写配置步骤按**到达顺序**生效：每个请求到达时取一个递增编号，写入串行进行，编号小于已写入编号的请求跳过写入（setup 日志记 `skipped: a newer omp config was applied while waiting`）。所以 `omphome.apply` 不必排在 setup 互斥（含转入后台的 resume）之后，排队中的旧 setup 也不会用旧内容覆盖它。
+- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`），runner 不上报且回 `not_supported`。
+- 语义与 `setup.run` 第 1 步相同：写入 `~/.omp/agent/`，按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件不动。带 `projectConfig` 时同时把项目层镜像到 `~/.oryn/project-config/.omp`；缺省时不动项目层（`setup.run` 缺省表示删除项目层，两者不同）。不碰 git、不跑脚本。协调宿主忽略 `projectConfig`。
+- 与 `setup.run` / `resume.run` 的写配置步骤按**到达顺序、按层**生效：每个请求到达时取一个递增编号，写入串行进行；用户层与项目层各记已写入的最大编号，编号更小的请求跳过该层（setup 日志记 `skipped: a newer omp config was applied while waiting (…)`）。所以 `omphome.apply` 不必排在 setup 互斥（含转入后台的 resume）之后，排队中的旧 setup 也不会用旧内容覆盖它；apply 没带的项目层仍由 setup 照常写。
