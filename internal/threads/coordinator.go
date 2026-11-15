@@ -85,7 +85,14 @@ func (s *Service) SetCoordinator(c Coordinator) { s.coord = c }
 // Extra 非空时在插入线程的同一事务里执行（Space 用它写 spaces 行：agent 启动时读系统提示词必须已能读到 Space）。
 type CoordinatorParams struct {
 	Kind, OrbID, Title, SpaceID, Model string
-	Extra                              func(q *db.Queries, threadID string) error
+	// ThinkingLevel 非空时作为对话的思考档位（每次启动随初始化帧下发）。
+	ThinkingLevel string
+	// Prompt、Images、Files 是全局助手新对话的第一条用户消息（M13 计划 5.2；全空 = 空对话）。Files 是文件库 id，
+	// 与线程行同一事务绑定到新对话，消息末尾追加沙箱路径的附件块；首条消息与线程行一起落库为首批命令。
+	Prompt string
+	Images []apigen.ImageContent
+	Files  []string
+	Extra  func(q *db.Queries, threadID string) error
 }
 
 // CreateCoordinator 新建一个协调对话（kind = space | assistant），挂到协调 orb 上并唤醒它。
@@ -95,6 +102,16 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.OrbID == "" {
 		return apigen.Thread{}, errf("invalid", "coordinator orb required")
+	}
+	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
+	if first && p.Kind != KindAssistant {
+		return apigen.Thread{}, errf("invalid", "only assistant conversations accept a first message")
+	}
+	if err := checkIDList("files", p.Files); err != nil {
+		return apigen.Thread{}, err
+	}
+	if len(p.Files) > 0 && s.lib == nil {
+		return apigen.Thread{}, errf("invalid", "library files are not supported")
 	}
 	id := ids.Thread()
 	row := db.CreateThreadParams{
@@ -110,12 +127,34 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	if p.Model != "" {
 		row.Model = &p.Model
 	}
-	var extra func(q *db.Queries) error
-	if p.Extra != nil {
-		extra = func(q *db.Queries) error { return p.Extra(q, id) }
+	if p.ThinkingLevel != "" {
+		row.ThinkingLevel = &p.ThinkingLevel
+	}
+	extra := func(q *db.Queries) error {
+		if p.Extra != nil {
+			if err := p.Extra(q, id); err != nil {
+				return err
+			}
+		}
+		if !first {
+			return nil
+		}
+		prompt := map[string]any{"type": "prompt", "message": p.Prompt}
+		if len(p.Images) > 0 {
+			prompt["images"] = p.Images
+		}
+		frame, _ := json.Marshal(prompt)
+		if len(p.Files) > 0 {
+			var err error
+			if frame, err = s.libraryBlockTx(ctx, q, id, frame, p.Files); err != nil {
+				return err
+			}
+		}
+		// 首条消息与线程行同一事务落库（同工作线程的 Create）：加载线程时按 startup_frames 排队
+		return q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startupFrames(frame), ID: id})
 	}
 	if err := s.insertThread(ctx, row, nil, nil, extra); err != nil {
-		return apigen.Thread{}, err
+		return apigen.Thread{}, asThreadErr(err)
 	}
 	t, err := s.get(ctx, id)
 	if err != nil {

@@ -241,8 +241,9 @@ func (s *Service) DeleteSpace(ctx context.Context, id string) error {
 	return nil
 }
 
-// CreateConversation 新建一个全局助手对话（无标题，由 omp 自动起标题）。
-func (s *Service) CreateConversation(ctx context.Context) (apigen.Thread, error) {
+// CreateConversation 新建一个全局助手对话（无标题，由 omp 自动起标题）。p 只取第一条用户消息与模型、思考档位
+// （Prompt、Images、Files、Model、ThinkingLevel；全空 = 空对话），Kind 与 OrbID 由这里填；Model 为空用默认模型。
+func (s *Service) CreateConversation(ctx context.Context, p threads.CoordinatorParams) (apigen.Thread, error) {
 	if err := s.checkHost(ctx); err != nil {
 		return apigen.Thread{}, err
 	}
@@ -250,7 +251,13 @@ func (s *Service) CreateConversation(ctx context.Context) (apigen.Thread, error)
 	if err != nil {
 		return apigen.Thread{}, err
 	}
-	return s.th.CreateCoordinator(ctx, threads.CoordinatorParams{Kind: threads.KindAssistant, OrbID: orbID, Model: s.cfg.Model})
+	if p.Model == "" {
+		p.Model = s.cfg.Model
+	}
+	return s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
+		Kind: threads.KindAssistant, OrbID: orbID, Model: p.Model, ThinkingLevel: p.ThinkingLevel,
+		Prompt: p.Prompt, Images: p.Images, Files: p.Files,
+	})
 }
 
 // Progress 返回 Space 近 days 天（含今天，按 loc 的自然日）的进度：shipped = 当日标记为已交付；

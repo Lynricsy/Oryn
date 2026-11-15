@@ -19,6 +19,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/desktop"
 	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -68,6 +69,8 @@ type Server struct {
 	Orbs        *orbs.Service
 	Threads     *threads.Service
 	Attachments *attachments.Service
+	// Library 是全局助手文件库（M13）。
+	Library *library.Service
 	// ProjectHomes 是项目级 omp 配置（M12.2）。
 	ProjectHomes *agentcfg.ProjectHomes
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
@@ -165,6 +168,10 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.SetAttachments(s.Attachments)
 	// M12.2：/omfg 保存的规则由控制面读回并写入中央（全局 omp-home 或项目层）
 	s.Threads.SetConfigSync(&cfgsync.Saver{Store: s.Store, Orbs: s.Orbs, Global: s.Home, Projects: s.ProjectHomes, Vault: s.Vault})
+	if s.Library, err = library.New(s.Store, cfg.DataDir, s.Attachments); err != nil {
+		return err
+	}
+	s.Threads.SetLibrary(library.ThreadFiles{S: s.Library})
 	// 浏览器 Profile（M8）：在 orb 服务接受 link 之前注册生命周期钩子
 	if s.Desktop, err = desktop.New(desktop.Config{DataDir: cfg.DataDir, Box: box, Valid: s.Auth}, s.Store, s.Orbs, s.Tickets); err != nil {
 		return err
@@ -223,6 +230,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Orbs.Run(runCtx)
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
+	go s.Library.Run(runCtx)
 	go s.Notify.Run(runCtx)
 	go s.Host.Run(runCtx)
 	go s.Schedules.Run(runCtx)
@@ -268,6 +276,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}
+	s.API.Library = &api.LibraryDeps{Service: s.Library}
 	s.API.Shares = &api.ShareDeps{Service: s.Share}
 	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
 	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}

@@ -264,8 +264,8 @@ func (s *Service) Get(ctx context.Context, id string) (File, error) {
 	return fromRow(r), nil
 }
 
-// Open 打开文件内容；调用方负责关闭。
-func (s *Service) Open(ctx context.Context, id string) (io.ReadCloser, File, error) {
+// Open 打开文件内容（可 seek，供 Range 下载）；调用方负责关闭。
+func (s *Service) Open(ctx context.Context, id string) (*os.File, File, error) {
 	f, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, f, err
@@ -321,33 +321,51 @@ func (s *Service) SetScope(ctx context.Context, id, scope string) error {
 // Bind 在一个事务里把文件绑定到对话（随消息发送）：标记为已绑定，thread_id 为空时填上 threadID。
 // 任一文件不存在 → ErrNotFound；属于别的对话且未共享 → ErrForbidden；出错时全部不绑定。
 func (s *Service) Bind(ctx context.Context, threadID string, list []string) error {
-	if threadID == "" {
-		return fmt.Errorf("%w: thread id is required", ErrInvalid)
-	}
 	return s.st.Tx(ctx, func(q *db.Queries) error {
-		if err := s.checkThread(ctx, q, threadID); err != nil {
-			return err
-		}
-		for _, id := range list {
-			if !ValidID(id) {
-				return fmt.Errorf("%w: %s", ErrNotFound, id)
-			}
-			n, err := q.BindAssistantFile(ctx, db.BindAssistantFileParams{ThreadID: threadID, ID: id})
-			if err != nil {
-				return err
-			}
-			if n > 0 {
-				continue
-			}
-			if _, err := q.GetAssistantFile(ctx, id); errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("%w: %s", ErrNotFound, id)
-			} else if err != nil {
-				return err
-			}
-			return fmt.Errorf("%w: %s", ErrForbidden, id)
-		}
-		return nil
+		_, err := s.BindTx(ctx, q, threadID, list)
+		return err
 	})
+}
+
+// BindTx 是 Bind 的事务内版本（在调用方的事务里执行，例如新建助手对话时与线程行同一事务），
+// 按 list 的顺序返回绑定后的文件。
+func (s *Service) BindTx(ctx context.Context, q *db.Queries, threadID string, list []string) ([]File, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("%w: thread id is required", ErrInvalid)
+	}
+	if err := s.checkThread(ctx, q, threadID); err != nil {
+		return nil, err
+	}
+	out := make([]File, 0, len(list))
+	for _, id := range list {
+		if !ValidID(id) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
+		}
+		n, err := q.BindAssistantFile(ctx, db.BindAssistantFileParams{ThreadID: threadID, ID: id})
+		if err != nil {
+			return nil, err
+		}
+		r, err := q.GetAssistantFile(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
+		} else if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("%w: %s", ErrForbidden, id)
+		}
+		out = append(out, fromRow(r))
+	}
+	return out, nil
+}
+
+// SandboxPath 返回文件在协调宿主沙箱里的路径（助手对话消息里的附件块用它；同步字节时按同一规则落盘）：
+// 共享文件为 ~/library/shared/<id>/<name>，对话文件为 ~/library/threads/<threadId>/<id>/<name>。
+func SandboxPath(f File) string {
+	if f.Scope == ScopeShared {
+		return "~/library/shared/" + f.ID + "/" + f.Name
+	}
+	return "~/library/threads/" + f.ThreadID + "/" + f.ID + "/" + f.Name
 }
 
 // Delete 删除文件的行与字节；由它复制出的附件不受影响。

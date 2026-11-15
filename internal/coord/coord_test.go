@@ -146,7 +146,7 @@ func (e *env) space(name, projectID string) apigen.Space {
 
 func (e *env) assistant() apigen.Thread {
 	e.t.Helper()
-	a, err := e.c.CreateConversation(e.ctx)
+	a, err := e.c.CreateConversation(e.ctx, threads.CoordinatorParams{})
 	require.NoError(e.t, err)
 	return a
 }
@@ -660,7 +660,7 @@ func TestEnsureOrbUnavailable(t *testing.T) {
 	err := e.st.Q.SetOrbState(e.ctx, db.SetOrbStateParams{State: "deleted", StateChangedAt: 2, ID: e.coordOrb})
 	require.NoError(t, err)
 	e.c.host = hostStub{err: errors.New("omp checksum mismatch")}
-	_, err = e.c.CreateConversation(e.ctx)
+	_, err = e.c.CreateConversation(e.ctx, threads.CoordinatorParams{})
 	var ce *Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, CodeCoordinatorUnavailable, ce.Code)

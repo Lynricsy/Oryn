@@ -17,6 +17,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/coord"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -70,6 +71,9 @@ func newCoordEnv(t *testing.T) (*threadsEnv, *coordHost) {
 	host := &coordHost{}
 	c := coord.New(coord.Config{PublicURL: h2PublicURL}, st, svc, nil, host, sched)
 	svc.SetCoordinator(c)
+	lib, err := library.New(st, filepath.Join(dir, "data"), nil)
+	require.NoError(t, err)
+	svc.SetLibrary(library.ThreadFiles{S: lib})
 	_, err = o.Create(ctx, threads.OrbCreate{Coordinator: true})
 	require.NoError(t, err)
 
@@ -78,6 +82,7 @@ func newCoordEnv(t *testing.T) (*threadsEnv, *coordHost) {
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st}}
 	s.Threads = &api.ThreadsDeps{Service: svc}
 	s.Coord = &api.CoordDeps{Service: c, Host: host}
+	s.Library = &api.LibraryDeps{Service: lib}
 	s.Shares = &api.ShareDeps{Service: share.New(share.Config{PublicURL: h2PublicURL}, st, svc, nopShareHub{}, nil, nil, nil)}
 	srv := httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(func() {

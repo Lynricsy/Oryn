@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -141,19 +142,25 @@ func (s *Server) GetAttachmentContent(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	defer f.Close()
+	serveStoredFile(w, r, f, a.Name, a.Mime, time.UnixMilli(a.CreatedAt), params.Inline != nil && *params.Inline)
+}
+
+// serveStoredFile 输出控制面保存的文件（消息附件、助手文件库）：默认附件下载，仅安全栅格图片在 inline 时内联；
+// 支持 Range。
+func serveStoredFile(w http.ResponseWriter, r *http.Request, content io.ReadSeeker, name, mime string, modTime time.Time, inline bool) {
 	h := w.Header()
-	mt, img := share.InlineImage(a.Mime)
-	if params.Inline != nil && *params.Inline && img {
+	mt, img := share.InlineImage(mime)
+	if inline && img {
 		h.Set("Content-Type", mt)
 		h.Set("Content-Disposition", "inline")
 	} else {
 		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Content-Disposition", attachments.Disposition(a.Name))
+		h.Set("Content-Disposition", attachments.Disposition(name))
 	}
 	h.Set("Cache-Control", "private, no-cache")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "sandbox")
-	http.ServeContent(w, r, "", time.UnixMilli(a.CreatedAt), f)
+	http.ServeContent(w, r, "", modTime, content)
 }
 
 // DeleteAttachment 对应 `DELETE attachments/{id}`。

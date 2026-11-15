@@ -990,6 +990,10 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 	if err != nil {
 		return nil, err
 	}
+	files, frame, err := takeIDList(cmdType, frame, orynFilesKey)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.get(ctx, threadID)
 	if err != nil {
 		return nil, err
@@ -1004,6 +1008,14 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		if err := s.ensureCoordOrb(ctx, t); err != nil {
 			return nil, err
 		}
+		if len(files) > 0 {
+			// 助手对话引用文件库：绑定到本对话，消息末尾追加沙箱路径的附件块
+			if frame, err = s.withLibraryFiles(ctx, t, frame, files); err != nil {
+				return nil, err
+			}
+		}
+	} else if len(files) > 0 {
+		return nil, errf("invalid", orynFilesKey+" is only accepted in assistant conversations")
 	}
 	if len(ids) > 0 {
 		return nil, s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
@@ -1088,39 +1100,53 @@ var messageCommands = map[string]bool{"prompt": true, "steer": true, "follow_up"
 
 // takeAttachments 取出并删除帧上的 orynAttachments，返回附件 id 与去掉该字段后的帧；没有该字段时原样返回。
 func takeAttachments(cmdType string, frame json.RawMessage) ([]string, json.RawMessage, error) {
+	return takeIDList(cmdType, frame, orynAttachmentsKey)
+}
+
+// takeIDList 取出并删除帧上的 id 列表扩展字段 key（orynAttachments / orynFiles），返回 id 与去掉该字段后的帧；
+// 没有该字段时原样返回。只有消息命令可以带非空列表，列表须满足 checkIDList。
+func takeIDList(cmdType string, frame json.RawMessage, key string) ([]string, json.RawMessage, error) {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(frame, &m) != nil {
 		return nil, frame, nil // RouteCommand 已校验过帧
 	}
-	raw, has := m[orynAttachmentsKey]
+	raw, has := m[key]
 	if !has {
 		return nil, frame, nil
 	}
-	delete(m, orynAttachmentsKey)
+	delete(m, key)
 	var ids []string
 	if string(raw) != "null" {
 		if err := json.Unmarshal(raw, &ids); err != nil {
-			return nil, nil, errf(RouteInvalidFrame, "orynAttachments must be an array of attachment ids")
+			return nil, nil, errf(RouteInvalidFrame, key+" must be an array of ids")
 		}
 	}
 	if len(ids) > 0 && !messageCommands[cmdType] {
-		return nil, nil, errf(RouteInvalidFrame, cmdType+" does not accept orynAttachments")
+		return nil, nil, errf(RouteInvalidFrame, cmdType+" does not accept "+key)
 	}
-	if len(ids) > maxAttachmentsPerMessage {
-		return nil, nil, errf("invalid", fmt.Sprintf("at most %d attachments per message", maxAttachmentsPerMessage))
-	}
-	seen := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		if id == "" || seen[id] {
-			return nil, nil, errf("invalid", "orynAttachments must be distinct, non-empty attachment ids")
-		}
-		seen[id] = true
+	if err := checkIDList(key, ids); err != nil {
+		return nil, nil, err
 	}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return nil, nil, errf(RouteInvalidFrame, err.Error())
 	}
 	return ids, out, nil
+}
+
+// checkIDList 校验一条消息携带的 id 列表：最多 maxAttachmentsPerMessage 个，互不相同且非空。
+func checkIDList(key string, ids []string) error {
+	if len(ids) > maxAttachmentsPerMessage {
+		return errf("invalid", fmt.Sprintf("at most %d attachments per message", maxAttachmentsPerMessage))
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			return errf("invalid", key+" must be distinct, non-empty ids")
+		}
+		seen[id] = true
+	}
+	return nil
 }
 
 // attachmentBlockHead 是附件块的固定开头（前端据此识别并渲染为附件芯片）。

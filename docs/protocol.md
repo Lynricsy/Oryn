@@ -720,7 +720,7 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 |`POST /api/v1/spaces`|`createSpace`|`SpaceCreate`|`201 Space`；协调宿主不可用 → 409 `coordinator_unavailable`|
 |`GET \| PATCH \| DELETE /api/v1/spaces/{id}`|`getSpace` / `updateSpace` / `deleteSpace`|`SpacePatch`|`Space` / `204`|
 |`GET /api/v1/spaces/{id}/progress?days=&tz=`|`getSpaceProgress`|`days` 1–90（默认 30）、`tz` IANA（默认 UTC）|`SpaceProgress`|
-|`POST /api/v1/assistant/conversations`|`createAssistantConversation`|无|`201 ThreadEnvelope`；不可用 → 409 `coordinator_unavailable`|
+|`POST /api/v1/assistant/conversations`|`createAssistantConversation`|可省略；`CreateAssistantConversationRequest{prompt?, files?(≤20 个 afl_), images?, model?, thinkingLevel?}`（M13）|`201 ThreadEnvelope`；不可用 → 409 `coordinator_unavailable`；`files` 不存在 → 404 `not_found`，属于别的对话且未共享 → 400 `invalid`|
 |`GET /api/v1/coordinator`|`getCoordinator`|—|`CoordinatorStatus`|
 |`GET /api/v1/automation/actions?thread=&limit=`|`listAutomationActions`|`thread`（作为发起方或目标）、`limit` ≤200（默认 50）|`AutomationActionList`（新的在前）|
 |`GET /api/v1/schedules?mode=&project=&space=&thread=`|`listSchedules`|`project` 为 id 或 `none`；`space` = `spaceId` 为它的定时 + 该 Space 线程上的线程内定时|`ScheduleList`（按创建时间）|
@@ -733,6 +733,20 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 |`GET \| PUT \| DELETE /api/v1/threads/{id}/schedule`|`getThreadSchedule` / `putThreadSchedule` / `deleteThreadSchedule`|`ScheduleInput`（隐含 `mode = thread`）|`Schedule` / `204`（线程内定时的别名，至多一个）|
 
 暂停 / 恢复 / 触发 / 运行记录一律走 `/schedules/{id}/…`（`T-` 开头的引用先 `GET threads/{id}/schedule` 取 id）。REST 建的定时 `createdBy = user`。路径参数 `SpaceIdPath`、`ScheduleIdPath`。
+
+#### 全局助手文件库（M13）
+
+文件库与消息附件分开存放（`<data_dir>/assistant-files/<id>`，`AssistantFile{id(afl_…), name, mime, size, sha256, scope: conversation|shared, source: upload|assistant|orb, threadId?, sourceThreadId?, createdAt}`）。上传了但还没随消息发送的文件 24 小时后回收，其余永不自动回收；所属对话删除后 `threadId` 省略，文件仍在库里。
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/assistant/files?threadId=&scope=`|`listAssistantFiles`|`threadId` = 该对话自己的 + 共享的|`AssistantFileList`（新的在前；不含未发送的上传）|
+|`POST /api/v1/assistant/files?name=&threadId=`|`uploadAssistantFile`|原始字节（≤100MiB，超出 413 `too_large`）；`threadId` 须是 `kind = assistant` 的对话（否则 400 `invalid_request`，不存在 404）|`201 AssistantFile`（`scope = conversation`、`source = upload`）|
+|`PATCH /api/v1/assistant/files/{id}`|`patchAssistantFile`|`AssistantFilePatch{scope}`|`AssistantFile`|
+|`DELETE /api/v1/assistant/files/{id}`|`deleteAssistantFile`|—|`204`（已复制成附件的不受影响）|
+|`GET /api/v1/assistant/files/{id}/content?inline=`|`getAssistantFileContent`|支持 `Range`|响应头同 `getAttachmentContent`|
+
+全局助手对话的 WS `cmd` 消息命令（`prompt` / `steer` / `follow_up` / `abort_and_prompt`）可带 Oryn 扩展字段 `orynFiles: string[]`（≤20 个互不相同的 `afl_…`）：控制面从帧里删除该字段，在一个事务里把文件绑定到本对话（标记为已发送，未归属的文件归入本对话；不存在 → `not_found`，属于别的对话且未共享 → `invalid`，任一失败全部不绑定），再在 `message` 末尾追加 `<oryn-attachments>` 块（格式同附件块），列出协调宿主沙箱里的路径：对话文件 `~/library/threads/<threadId>/<id>/<name>`，共享文件 `~/library/shared/<id>/<name>`（`library.SandboxPath`）。Space 聊天带 `orynFiles` → `coordinator_restricted`；工作线程带 → `invalid`；`orynAttachments` 在所有协调对话上仍然 `coordinator_restricted`。`createAssistantConversation` 的 `files` 走同一规则，且与线程行同一事务绑定，首条消息（`prompt` + 附件块 + `images`）随线程行落库为首批命令。
 
 ### link ctl
 

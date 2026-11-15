@@ -99,6 +99,8 @@ type Service struct {
 	attach Attachments
 	// profiles 是浏览器 Profile 服务（M8；nil = 不支持）。
 	profiles Profiles
+	// lib 是全局助手文件库（M13，SetLibrary 在服务对外可用之前设置；nil = 助手对话不接受 orynFiles）。
+	lib LibraryFiles
 	// cfgSync 是 /omfg 回写（M12.2，SetConfigSync 在服务对外可用之前设置；nil = 不回写）；cfgSyncTimeout 是一次回写的上限。
 	cfgSync        ConfigSync
 	cfgSyncTimeout time.Duration

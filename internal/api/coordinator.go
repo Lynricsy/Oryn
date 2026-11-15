@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -94,13 +96,29 @@ func (s *Server) ListAutomationActions(w http.ResponseWriter, r *http.Request, p
 	WriteJSON(w, http.StatusOK, apigen.AutomationActionList{Actions: actions})
 }
 
-// CreateAssistantConversation 对应 `POST assistant/conversations`：新建一个全局助手对话。
+// CreateAssistantConversation 对应 `POST assistant/conversations`：新建一个全局助手对话。请求体可省略；
+// 给了 prompt / files / images 时它们是新对话的第一条用户消息（files 绑定到新对话）。
 func (s *Server) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.coordSvc(w)
 	if !ok {
 		return
 	}
-	t, err := svc.CreateConversation(r.Context())
+	var req apigen.CreateAssistantConversationRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxThreadBody)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
+		return
+	}
+	p := threads.CoordinatorParams{Images: req.Images, Files: req.Files}
+	if req.Prompt != nil {
+		p.Prompt = *req.Prompt
+	}
+	if req.Model != nil && req.Model.Provider != "" && req.Model.ID != "" {
+		p.Model = req.Model.Provider + "/" + req.Model.ID
+	}
+	if req.ThinkingLevel != nil {
+		p.ThinkingLevel = *req.ThinkingLevel
+	}
+	t, err := svc.CreateConversation(r.Context(), p)
 	if err != nil {
 		writeCoordErr(w, r, err)
 		return
