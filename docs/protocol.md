@@ -1333,6 +1333,27 @@ firecracker:
 
 - `FactsVersion` 3 → 5（启动时整体重算一次；v4 只在开发中短暂存在）。`toolResult` 的工具名若为 `write` 且 `details.xdev = {tool, mode: "execute", args}`，按 `tool`（经 `write xd://<tool>` 派发的真实工具）归属；执行失败的派发同样归到真实工具。Core 只在设备解析与参数校验通过后才写 `args`：设备不存在（`No such tool`）或参数非法时 `tool` 只是模型写的 URL 末段，仍记为 `write`。
 
+### 命令路由：会换会话文件的命令
+
+线程绑定的是会话目录 `~/.oryn/threads/<id>`：转录 = 目录里各主会话文件按创建顺序拼接，agent 重启时 `open_session` 续上目录里最新的非空会话。WS `cmd`（含 `oryn thread rpc`）按此判定（`internal/threads/route.go`）：
+
+|命令|换文件|路由|理由|
+|---|---|---|---|
+|`new_session`|本目录新空文件|`managed_by_oryn`|拼接能跟随，但「新对话」在 Oryn 里是新线程（`/new`）|
+|`drop_session`|删除当前文件并新开|`managed_by_oryn`|删掉线程已入库的会话文件|
+|`switch_session`、`open_session`、`collab_join`|切到目录外的文件|`managed_by_oryn`|绑定失效|
+|`move_session`；prompt 正文 `/move`、`/wt`（`/worktree`）|把文件移出目录|`managed_by_oryn`|绑定失效|
+|prompt 正文 `/session delete`|同 `drop_session`|`managed_by_oryn`|同上|
+|`btw_branch`|复制当前路径 + 旁路问答进新文件|`managed_by_oryn`|拼接后历史重复；Oryn 的 fork 表达不了追加的问答，改用 `btw_inject` 并进当前对话|
+|`fork`、`fork_from`、`branch`|复制历史进新文件|`use_oryn_fork`|语义即分叉：`POST threads/{id}/fork`；回到旧消息原地重来用 `navigate_tree`|
+|`plan_approval`（`execute` / `save`）、`set_loop_mode`（`reset` 轮次）|本目录新空文件|透传|拼接跟随，文件之间画「新会话」分隔线|
+|`clear_context`、`fresh`、`handoff`、`compact`、`navigate_tree`、`switch_leaf`|否（原地）|透传|—|
+|`tan`|克隆写在产物子目录|透传|按子 agent 转录处理，不切换|
+|`import_foreign_session`|写到 omp 默认会话目录|透传|不切换|
+
+- prompt 正文的判定与 omp 执行内置斜杠命令的规则逐字一致：只认精确的 `message` 键；以 `/` 开头（不去前导空白）；命令名截到第一个空白（JS `\s`）或 `:`，大小写敏感；`/session` 只在子命令为 `delete`（不分大小写）且无余参时拦。`steer` / `follow_up` / `abort_and_prompt` 不执行内置命令，不拦。被拦的 prompt 回 `managed_by_oryn`，消息为 `/move is managed by Oryn` 这类。
+- 扩展注册的命令可经 omp 的扩展上下文切换会话，路由层看不到。
+
 ### CLI
 
 - `oryn thread rpc <id> <json> [--timeout 5m]`：`<json>` 须是带字符串 `type` 的 JSON 对象，经 WS `cmd` 下发，应答缩进打印；`success: false` 时错误打到 stderr 并以 1 退出。托管命令被拒（`managed_by_oryn` 等）沿用现有错误路径。
