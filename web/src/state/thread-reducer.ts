@@ -119,6 +119,8 @@ export interface SubagentLive {
 	task?: string;
 	status?: string;
 	parentToolCallId?: string;
+	/** 嵌套派发时派出它的子 agent 的 registry id；根上缺失。 */
+	parentSubagentId?: string;
 	sessionFile?: string;
 	progress?: JsonRecord;
 	updatedAt: number;
@@ -491,18 +493,23 @@ function upsertSubagent(
 ): ThreadViewState {
 	if (!isRecord(payload)) return s;
 	const index = num(payload.index) ?? 0;
-	const key = String(index);
+	// 按 id 区分：`index` 只是在所属 task 调用里的序号，嵌套派发的子 agent 会与根上的同号（progress 帧的 id 在 `progress.id`）
+	const id =
+		str(payload.id) ??
+		(isRecord(payload.progress) ? str(payload.progress.id) : undefined);
+	const key = id ?? String(index);
 	const prev = s.subagents[key];
 	const sub: SubagentLive = {
 		key,
 		index,
 		updatedAt: Date.now(),
 		...prev,
-		id: str(payload.id) ?? prev?.id,
+		id: id ?? prev?.id,
 		agent: str(payload.agent) ?? prev?.agent,
 		description: str(payload.description) ?? prev?.description,
 		task: str(payload.task) ?? prev?.task,
 		parentToolCallId: str(payload.parentToolCallId) ?? prev?.parentToolCallId,
+		parentSubagentId: str(payload.parentSubagentId) ?? prev?.parentSubagentId,
 		sessionFile: str(payload.sessionFile) ?? prev?.sessionFile,
 		status:
 			kind === "lifecycle"

@@ -103,6 +103,11 @@ function renderPanel(patch: Partial<ThreadViewState>) {
 	);
 }
 
+/** 发给 agent 的命令类型（对话框会拉 `get_subagents` 快照组派发树）。 */
+function sentTypes(): string[] {
+	return cmd.mock.calls.map(([, f]) => f.type);
+}
+
 beforeEach(() => {
 	i18n.changeLanguage("zh-CN");
 	resetThreadStores();
@@ -129,7 +134,7 @@ describe("SubagentDialog", () => {
 	it("agent 在线但已有入库转录：仍用本地，不拉 get_subagent_messages", async () => {
 		setup({ agentStatus: "ready", entries: ENTRIES });
 		expect(await screen.findByText("子 agent 的回答")).toBeInTheDocument();
-		expect(cmd).not.toHaveBeenCalled();
+		expect(sentTypes()).not.toContain("get_subagent_messages");
 		expect(screen.queryByRole("status")).toBeNull();
 		expect(screen.getByRole("button", { name: "取消" })).toBeEnabled();
 	});
@@ -188,7 +193,7 @@ describe("SubagentDialog", () => {
 		);
 		for (const name of ["取消", "终止", "复活", "发送"])
 			expect(screen.getByRole("button", { name })).toBeDisabled();
-		expect(cmd).not.toHaveBeenCalled();
+		expect(sentTypes()).toEqual(["get_subagents"]);
 	});
 
 	it("只给 id 时取当前（最晚）主会话的存档", async () => {
@@ -276,5 +281,190 @@ describe("信息面板子 agent 列表", () => {
 		expect(within(row).queryByText(TITLE)).not.toBeNull();
 		expect(row.querySelector(".bg-accent")).toBeNull();
 		expect(row.querySelector(".animate-ping")).not.toBeNull();
+	});
+});
+
+describe("子 agent 派发树", () => {
+	/** 嵌套存档：子 agent 的会话在派发者会话去掉 `.jsonl` 的产物目录里。 */
+	const WORKER = `${ART}/0-Scout/0-Scout.0-Worker.jsonl`;
+	const LEAF = `${ART}/0-Scout/0-Scout.0-Worker/0-Scout.0-Worker.0-Leaf.jsonl`;
+	const OTHER = `${ART}/1-Other.jsonl`;
+	const NESTED: Entry[] = [
+		entry(1, SUB, "session_init", { agent: "scout", task: "t" }),
+		entry(2, WORKER, "session_init", { agent: "worker", task: "t" }),
+		entry(3, LEAF, "session_init", { agent: "leaf", task: "t" }),
+		entry(4, OTHER, "session_init", { agent: "other", task: "t" }),
+	];
+	const LIVE: Record<string, SubagentLive> = Object.fromEntries(
+		[
+			["0-Scout", "scout", undefined],
+			["0-Scout.0-Worker", "worker", "0-Scout"],
+			["0-Scout.0-Worker.0-Leaf", "leaf", "0-Scout.0-Worker"],
+			["1-Other", "other", undefined],
+		].map(([id, agent, parentSubagentId], index) => [
+			id,
+			{
+				key: id as string,
+				index,
+				id,
+				agent,
+				parentSubagentId,
+				status: "started",
+				updatedAt: 0,
+			},
+		]),
+	);
+
+	/** 子 agent 卡片里每行：agent 名、嵌套深度，以及有没有连到上级的 L 形引导线。 */
+	function panelRows(): [string, number, boolean][] {
+		// closest 返回 Element；根节点的按钮最近的 <ul> 就是卡片的顶层列表
+		const list = screen
+			.getByRole("button", { name: /^scout/ })
+			.closest("ul") as HTMLElement;
+		return within(list)
+			.getAllByRole("listitem")
+			.map((li) => {
+				let depth = 0;
+				for (let p = li.parentElement; p && p !== list; p = p.parentElement)
+					if (p.tagName === "LI") depth++;
+				// 引导线画在本行（li 的第一个子元素）里
+				const elbow = li.firstElementChild?.querySelector(
+					":scope > [data-guide=elbow]",
+				);
+				return [
+					li.querySelector(".font-medium")?.textContent ?? "",
+					depth,
+					elbow != null,
+				];
+			});
+	}
+
+	function renderDialog(
+		id: string,
+		patch: Partial<ThreadViewState>,
+		file?: string,
+	) {
+		getThreadStore(T).getState().patchLocal(patch);
+		return render(
+			<MemoryRouter>
+				<QueryClientProvider client={new QueryClient()}>
+					<SubagentDialog
+						threadId={T}
+						id={id}
+						file={file}
+						onClose={() => undefined}
+					/>
+				</QueryClientProvider>
+			</MemoryRouter>,
+		);
+	}
+
+	it("orb 冻结只剩存档：按存档路径推出层级，下级以引导线连到上级，摘要计数含所有层级", () => {
+		renderPanel({ agentStatus: "none", entries: NESTED });
+		expect(panelRows()).toEqual([
+			["scout", 0, false],
+			["worker", 1, true],
+			["leaf", 2, true],
+			["other", 0, false],
+		]);
+		expect(screen.getByText("共 4 个")).toBeInTheDocument();
+	});
+
+	it("热态（实时帧的 parentSubagentId）与冷态得到同一棵树", () => {
+		const cold = renderPanel({ agentStatus: "none", entries: NESTED });
+		const coldRows = panelRows();
+		cold.unmount();
+		resetThreadStores();
+		renderPanel({ agentStatus: "none", entries: [], subagents: LIVE });
+		expect(panelRows()).toEqual(coldRows);
+		expect(screen.getByText("4 个运行中")).toBeInTheDocument();
+	});
+
+	it("刷新后（get_subagents 快照）也是同一棵树", async () => {
+		cmd.mockImplementation(async (_t: string, f: { type: string }) =>
+			f.type === "get_subagents"
+				? {
+						subagents: Object.values(LIVE).map(
+							({ id, agent, parentSubagentId }) => ({
+								id,
+								agent,
+								parentSubagentId,
+								index: 0,
+								status: "running",
+								lastUpdate: 0,
+							}),
+						),
+					}
+				: {},
+		);
+		renderPanel({ agentStatus: "ready", entries: [] });
+		await screen.findByText("4 个运行中");
+		expect(panelRows()).toEqual([
+			["scout", 0, false],
+			["worker", 1, true],
+			["leaf", 2, true],
+			["other", 0, false],
+		]);
+	});
+
+	it("孙 agent 对话框显示上级，点开换成上级的对话框；上级列出直接下级，可点开", () => {
+		const leaf = renderDialog("0-Scout.0-Worker.0-Leaf", {
+			agentStatus: "none",
+			entries: NESTED,
+		});
+		const nav = screen.getByRole("navigation", { name: "派发层级" });
+		expect(nav).toHaveTextContent("上级");
+		expect(nav).not.toHaveTextContent("下级");
+		fireEvent.click(within(nav).getByRole("button", { name: /worker/ }));
+		expect(uiStore.getState().dialog).toEqual({
+			kind: "subagent",
+			id: "0-Scout.0-Worker",
+			file: WORKER,
+		});
+		leaf.unmount();
+
+		renderDialog(
+			"0-Scout.0-Worker",
+			{ agentStatus: "none", entries: NESTED },
+			WORKER,
+		);
+		const nav2 = screen.getByRole("navigation", { name: "派发层级" });
+		expect(nav2).toHaveTextContent("下级 1 个");
+		expect(
+			within(nav2)
+				.getAllByRole("button")
+				.map((b) => b.textContent),
+		).toEqual(["scout", "leaf"]);
+		fireEvent.click(within(nav2).getByRole("button", { name: /leaf/ }));
+		expect(uiStore.getState().dialog).toEqual({
+			kind: "subagent",
+			id: "0-Scout.0-Worker.0-Leaf",
+			file: LEAF,
+		});
+		fireEvent.click(within(nav2).getByRole("button", { name: /scout/ }));
+		expect(uiStore.getState().dialog).toEqual({
+			kind: "subagent",
+			id: "0-Scout",
+			file: SUB,
+		});
+	});
+
+	it("在线时上级入口按 id 打开（交给对话框取实时状态与控制）", () => {
+		renderDialog("0-Scout.0-Worker.0-Leaf", {
+			agentStatus: "none",
+			entries: [],
+			subagents: LIVE,
+		});
+		const nav = screen.getByRole("navigation", { name: "派发层级" });
+		fireEvent.click(within(nav).getByRole("button", { name: /worker/ }));
+		expect(uiStore.getState().dialog).toEqual({
+			kind: "subagent",
+			id: "0-Scout.0-Worker",
+		});
+	});
+
+	it("根上、没有下级的子 agent 不显示层级区", () => {
+		renderDialog("1-Other", { agentStatus: "none", entries: NESTED });
+		expect(screen.queryByRole("navigation", { name: "派发层级" })).toBeNull();
 	});
 });

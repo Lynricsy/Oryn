@@ -233,6 +233,56 @@ describe("帧 reducer：工具生命周期", () => {
 		});
 		expect(s.subagents).toEqual({});
 	});
+
+	it("嵌套派发：按 id 区分同 index 的子 agent，lifecycle 与 progress 都合并 parentSubagentId", () => {
+		const s = frames(initialThreadState(TID), [
+			{
+				type: "subagent_lifecycle",
+				payload: { id: "0-Scout", index: 0, agent: "scout", status: "started" },
+			},
+			// 子 agent 自己的 task 调用里同样从 0 编号
+			{
+				type: "subagent_lifecycle",
+				payload: {
+					id: "0-Scout.0-Worker",
+					index: 0,
+					agent: "worker",
+					status: "started",
+					parentSubagentId: "0-Scout",
+				},
+			},
+			{
+				type: "subagent_progress",
+				payload: {
+					index: 0,
+					agent: "leaf",
+					task: "t",
+					parentSubagentId: "0-Scout.0-Worker",
+					progress: { id: "0-Scout.0-Worker.0-Leaf", status: "running" },
+				},
+			},
+			{
+				type: "subagent_progress",
+				payload: {
+					index: 0,
+					agent: "scout",
+					task: "t",
+					progress: { id: "0-Scout", status: "running" },
+				},
+			},
+		]);
+		expect(
+			Object.values(s.subagents).map((x) => [
+				x.id,
+				x.agent,
+				x.parentSubagentId,
+			]),
+		).toEqual([
+			["0-Scout", "scout", undefined],
+			["0-Scout.0-Worker", "worker", "0-Scout"],
+			["0-Scout.0-Worker.0-Leaf", "leaf", "0-Scout.0-Worker"],
+		]);
+	});
 });
 
 describe("live.reset", () => {

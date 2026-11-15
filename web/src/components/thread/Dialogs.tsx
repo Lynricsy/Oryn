@@ -35,6 +35,12 @@ import {
 	subagentLabel,
 	subagentMessages,
 } from "../../state/subagent-entries";
+import {
+	type SubagentNode,
+	subagentNodeOf,
+	subagentRows,
+	subagentTree,
+} from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
 import { RoleList } from "../composer/RolePicker";
@@ -47,7 +53,14 @@ import {
 } from "../transcript/context";
 import { MessageView } from "../transcript/MessageView";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
+import {
+	Badge,
+	Callout,
+	Meter,
+	StatusDot,
+	type Tone,
+	thresholdTone,
+} from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import {
@@ -687,6 +700,63 @@ export function subagentTone(status: string): Tone {
 	return "neutral";
 }
 
+const GET_SUBAGENTS = { type: "get_subagents" } as const;
+
+/**
+ * 子 agent 派发树：实时帧、`get_subagents` 快照与已入库存档合并（`state/subagent-tree.ts`），信息面板与对话框共用，
+ * 两处得到同一棵树。快照只在 agent 可查询时拉取。
+ */
+export function useSubagentTree(threadId: string) {
+	const subs = useThread(threadId, (s) => s.subagents);
+	const ready = useThread(threadId, agentQueryable);
+	const entries = useThread(threadId, (s) => s.entries);
+	const snapshots = useRpc(threadId, GET_SUBAGENTS, ready).data?.subagents;
+	const files = useMemo(() => subagentFiles(entries), [entries]);
+	const nodes = useMemo(
+		() =>
+			subagentTree(
+				subagentRows(
+					Object.values(subs).flatMap((s) =>
+						s.id ? [{ ...s, id: s.id }] : [],
+					),
+					snapshots ?? [],
+					files,
+				),
+			),
+		[subs, snapshots, files],
+	);
+	return { nodes, files };
+}
+
+/** 打开一行的对话框：只有存档的行指定其存档文件（较早主会话可能有同名存档）。 */
+export function openSubagent(row: SubagentNode["row"]) {
+	uiStore
+		.getState()
+		.open(
+			row.file
+				? { kind: "subagent", id: row.id, file: row.file }
+				: { kind: "subagent", id: row.id },
+		);
+}
+
+/** 对话框里的上级 / 下级入口：状态点 + agent 名 + 标签，点开即换成它的对话框。 */
+function SubagentLink({ node }: { node: SubagentNode }) {
+	const { row } = node;
+	return (
+		<button
+			type="button"
+			onClick={() => openSubagent(row)}
+			className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm bg-inset px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
+		>
+			<StatusDot tone={subagentTone(row.status)} />
+			<span className="shrink-0 font-medium">{row.agent || row.id}</span>
+			{row.description && (
+				<span className="min-w-0 truncate text-faint">{row.description}</span>
+			)}
+		</button>
+	);
+}
+
 // goal 的状态色调（未列出的状态用中性）；进行中不用强调色（强调色只给「需要你」的东西）
 const GOAL_TONE: Record<string, Tone> = {
 	active: "neutral",
@@ -714,7 +784,13 @@ export function SubagentDialog({
 }) {
 	const { t } = useTranslation();
 	const entries = useThread(threadId, (s) => s.entries);
-	const files = useMemo(() => subagentFiles(entries), [entries]);
+	const { nodes, files } = useSubagentTree(threadId);
+	// 派发层级：上级与直接下级，点开即换成它们的对话框
+	const self = subagentNodeOf(nodes, files, id, file);
+	const parent = self?.parent
+		? nodes.find((n) => n.row.key === self.parent)
+		: undefined;
+	const children = self ? nodes.filter((n) => n.parent === self.row.key) : [];
 	const saved = subagentFileOf(files, id, file);
 	const current =
 		file === undefined || subagentFileOf(files, id)?.file === file;
@@ -822,6 +898,31 @@ export function SubagentDialog({
 						{id}
 					</span>
 				</div>
+			)}
+			{(parent || children.length > 0) && (
+				<nav
+					aria-label={t("subagent.hierarchy")}
+					className="mb-3 flex flex-col gap-1.5"
+				>
+					{parent && (
+						<div className="flex min-w-0 items-center gap-2">
+							<span className="shrink-0 text-faint text-xs">
+								{t("subagent.parent")}
+							</span>
+							<SubagentLink node={parent} />
+						</div>
+					)}
+					{children.length > 0 && (
+						<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+							<span className="shrink-0 text-faint text-xs">
+								{t("subagent.children", { n: children.length })}
+							</span>
+							{children.map((c) => (
+								<SubagentLink key={c.row.key} node={c} />
+							))}
+						</div>
+					)}
+				</nav>
 			)}
 			<ErrorText error={error ?? msgs.error} />
 			{msgs.isLoading && <Spinner />}

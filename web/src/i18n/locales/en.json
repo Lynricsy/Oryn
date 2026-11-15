@@ -688,7 +688,10 @@
 		"abort": "Abort",
 		"cancel": "Cancel",
 		"revive": "Revive",
-		"steer": "Steer this subagent…"
+		"steer": "Steer this subagent…",
+		"hierarchy": "Spawn hierarchy",
+		"parent": "Spawned by",
+		"children": "Spawned {{n}}"
 	},
 	"btw": {
 		"title": "Side questions",

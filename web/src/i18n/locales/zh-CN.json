@@ -688,7 +688,10 @@
 		"abort": "终止",
 		"cancel": "取消",
 		"revive": "复活",
-		"steer": "引导这个子 agent…"
+		"steer": "引导这个子 agent…",
+		"hierarchy": "派发层级",
+		"parent": "上级",
+		"children": "下级 {{n}} 个"
 	},
 	"btw": {
 		"title": "旁路提问",
