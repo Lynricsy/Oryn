@@ -52,12 +52,23 @@ type CreateParams struct {
 	RunnerID, Dir string
 	Worktree      string
 	ShareDir      bool
+	// Role 非空时新线程以该 omp 模型 role 开场：首批命令在 prompt 之前先发 oryn_select_model{role}（写入模型来源
+	// 记录，回合头据此显示 role 身份）；同时给了 ThinkingLevel 时紧接着再发 set_thinking_level，用户选的思考档位
+	// 压过 role 自带的档位。只作用于首条提示词：之后 agent 重启时不再重选（会话里已有模型来源记录）。
+	Role string
 }
+
+// maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
+const maxRoleLen = 128
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
 func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, error) {
 	if strings.TrimSpace(p.Prompt) == "" && len(p.Images) == 0 && len(p.Attachments) == 0 {
 		return apigen.Thread{}, errf("invalid", "prompt, images or attachments required")
+	}
+	role := strings.TrimSpace(p.Role)
+	if len(role) > maxRoleLen || strings.ContainsFunc(role, unicode.IsControl) {
+		return apigen.Thread{}, errf("invalid", "invalid role")
 	}
 	if len(p.Attachments) > 0 {
 		if s.attach == nil {
@@ -200,7 +211,16 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		prompt[orynTagKey] = p.Tag
 	}
 	frame, _ := json.Marshal(prompt)
-	frames := [][]byte{frame}
+	var frames [][]byte
+	if role != "" {
+		f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "role": role})
+		frames = append(frames, f)
+		if p.ThinkingLevel != "" {
+			f, _ = json.Marshal(map[string]string{"type": "set_thinking_level", "level": p.ThinkingLevel})
+			frames = append(frames, f)
+		}
+	}
+	frames = append(frames, frame)
 	if title != "" {
 		f, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": title})
 		frames = append(frames, f)
