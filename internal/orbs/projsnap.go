@@ -191,6 +191,9 @@ func (s *Service) recordAppliedHash(ctx context.Context, orbID, hash string) {
 
 // wantRepoUpdate 报告这次 setup.run 是否置 repo.update：orbd 支持，且 agent 从未在这台 orb 上运行过——
 // 来自项目快照、从未 ready 的新 orb，或刚被认领的池 orb。旧 orbd（hello 不含 repo-update）一律不置。
+//
+// F3：从项目快照 spawn、provider 却没上报 snapshotUsed 的 orb，snapshot_of 已清（不续血统、禁发布），但磁盘可能
+// 正是快照里的旧检出与完成标记：同样请求 repo.update，否则 orbd 跳过 setup、停在快照的旧 HEAD 上。
 func (s *Service) wantRepoUpdate(ctx context.Context, l *orbLink, orb db.Orb, everReady bool) bool {
 	if !slices.Contains(l.hello.Features, FeatureRepoUpdate) {
 		return false
@@ -198,7 +201,13 @@ func (s *Service) wantRepoUpdate(ctx context.Context, l *orbLink, orb db.Orb, ev
 	if derefStr(orb.PoolState) == PoolClaimed {
 		return true
 	}
-	return !everReady && orb.SnapshotOf != nil && *orb.SnapshotOf != "" && s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf)
+	if everReady {
+		return false
+	}
+	if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
+		return s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf)
+	}
+	return orb.ProjectID != nil && s.snapshotUsageUnknown(ctx, orb.ID)
 }
 
 // noteOrb 给 orb 写一条同状态事件（审计 / 统计用的旁注，如快照发布进展、池认领），并推送 orb 更新。
@@ -237,6 +246,17 @@ func (s *Service) snapshotUsageUnknown(ctx context.Context, orbID string) bool {
 		}
 	}
 	return false
+}
+
+// firstSpawn 报告这台 orb 是否还没有成功 spawn 过（F4）：第一次成功的 spawn 决定它的快照来源。查询失败按「第一次」
+// 处理——最坏只是把已确认的来源再按这次结果判一次（清来源、禁发布），不会凭空保留来源。
+func (s *Service) firstSpawn(ctx context.Context, orbID string) bool {
+	spawned, err := s.st.Q.OrbSpawnedOnce(ctx, orbID)
+	if err != nil {
+		slog.Warn("查询 orb spawn 历史失败，按首次 spawn 处理", "orb", orbID, "err", err)
+		return true
+	}
+	return !spawned
 }
 
 // snapshotSource 读取 orb 参与项目快照所需的项目、provider 与来源快照。来源只看 orb.snapshot_of（S-P1-1：
@@ -278,7 +298,8 @@ func (s *Service) mayPublish(ctx context.Context, orb db.Orb, hash string) bool 
 // afterSetupSnapshot 在 setup.run 成功应答之后、resume 与 BeforeReady 之前按 M11a 2.5 处理项目快照。
 // pristine = agent 从未在这台 orb 上运行过（setting_up）：只有它发布新快照；claimed = 刚被认领的池 orb：
 // 它已跑过几个小时的 resume 与受管服务，不发布刷新快照，但来源快照的退役规则（刷新失败、setup 变化）照旧。
-// hash = 本次 setup 参数对应的配置哈希。返回是否拍了快照（拍快照期间容器可能被暂停或停机，调用方须检查 link 是否还在）。
+// hash = 本次 setup 参数对应的配置哈希。返回是否拍了快照（拍快照期间容器可能被暂停或停机，调用方须检查 link 是否还在；
+// 快照拍成后令牌已轮换，这条 link 一定已断开）。
 func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb, res apigen.LinkCtlSetupRunResult, pristine, claimed bool, hash string) bool {
 	if !pristine && !claimed {
 		return false
@@ -358,6 +379,11 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 		job, err = s.snapshotAs(sctx, cur, snapID)
 		cancel()
 		if err == nil {
+			// S1：snapshotAs 已轮换令牌并入队送达新令牌的 spawn。这条 link 是用快照里那一代令牌建立的：在这里断开
+			// （与 sysbox 停机快照断开 link 同一条路径），返回后 runPhase 退回 connecting，由 orbd 用新令牌重拨的
+			// link 重跑本阶段（完成标记已在，setup 不再执行、也就不再发布）。
+			_ = l.sess.Close()
+			<-l.ctl.Done()
 			err = s.publishSnapshot(ctx, orb, snapID, hash, res, jobs.ResultOf(job).SnapshotBytes)
 		}
 	}

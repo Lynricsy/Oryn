@@ -136,9 +136,10 @@ func TestPoolWarmAndClaimReady(t *testing.T) {
 	seq := e.stateEvents(p.ID)
 	assert.Equal(t, []string{"ready>connecting", "connecting>resuming", "resuming>ready"}, seq[len(seq)-3:])
 	calls := e.setupCalls(p.ID)
-	require.Len(t, calls, 2, "认领后用 setup.run 刷新（而不是 resume.run）")
-	require.NotNil(t, calls[1].Repo.Update)
-	assert.True(t, *calls[1].Repo.Update)
+	// warming：setup.run + 发布后令牌轮换、重连重跑的 setup.run（跳过）；认领：setup.run
+	require.Len(t, calls, 3, "认领后用 setup.run 刷新（而不是 resume.run）")
+	require.NotNil(t, calls[2].Repo.Update)
+	assert.True(t, *calls[2].Repo.Update)
 	assert.NotContains(t, e.drv.orbd(p.ID).methods(), "resume.run")
 	v, err = View(ctx, e.st.Q, mustOrb(t, e, p.ID))
 	require.NoError(t, err)
@@ -186,7 +187,12 @@ func TestPoolClaimWarming(t *testing.T) {
 	close(block)
 	e.waitState(id, StateReady, 10*time.Second)
 	assert.Nil(t, mustOrb(t, e, id).PoolState)
-	assert.Len(t, e.setupCalls(id), 1)
+	// 认领不加刷新：唯一的第二次 setup.run 是发布快照后令牌轮换、重连重跑的那次（跳过，不带 repo.update）
+	calls := e.setupCalls(id)
+	require.Len(t, calls, 2)
+	for _, c := range calls {
+		assert.Nil(t, c.Repo.Update)
+	}
 }
 
 // 认领冻结的池 orb：走 waking，刷新后 ready 并离开池。
@@ -206,8 +212,8 @@ func TestPoolClaimFrozen(t *testing.T) {
 	}, 10*time.Second, 20*time.Millisecond)
 	assert.Contains(t, e.stateEvents(p.ID), "frozen>waking")
 	calls := e.setupCalls(p.ID)
-	require.Len(t, calls, 2)
-	assert.True(t, *calls[1].Repo.Update)
+	require.Len(t, calls, 3, "warming 两次（发布后重连重跑一次）+ 认领刷新一次")
+	assert.True(t, *calls[2].Repo.Update)
 }
 
 // 不走池：请求了浏览器 Profile、指定了快照、没有项目、配置哈希不匹配。

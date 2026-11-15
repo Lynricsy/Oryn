@@ -64,7 +64,8 @@ type m11Env struct {
 	setupChanged atomic.Bool
 
 	mu      sync.Mutex
-	markers map[string]bool // orb → setup.done 标记已在
+	markers map[string]bool   // orb → setup.done 标记已在
+	applied map[string]string // orb → 本 orb 上一次成功 setup.run 时的基线（repo.update 时 HEAD 没变就不重跑）
 	setups  map[string][]apigen.LinkCtlSetupRunParams
 }
 
@@ -78,7 +79,7 @@ func newM11Env(t *testing.T, features []string, run bool, mod func(*Config)) *m1
 	drv.baseImage = "sha256:base-1"
 	drv.features = features
 	drv.snapBytes = new(int64(1000))
-	e := &m11Env{drv: drv, markers: map[string]bool{}, setups: map[string][]apigen.LinkCtlSetupRunParams{}}
+	e := &m11Env{drv: drv, markers: map[string]bool{}, applied: map[string]string{}, setups: map[string][]apigen.LinkCtlSetupRunParams{}}
 	e.mode.Store(modeHit)
 	e.commit.Store("c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1")
 	drv.onSetup = e.onSetup
@@ -97,21 +98,12 @@ func newM11Env(t *testing.T, features []string, run bool, mod func(*Config)) *m1
 	return e
 }
 
-// spawnedFrom 返回 orb 最近一次 spawn 的快照与该快照是否「不存在」。
+// spawnedFrom 返回建这台 orb 机器的那次 spawn 用的快照与该快照当时是否「不存在」（退回了基础镜像）。
 func (e *m11Env) spawnedFrom(orbID string) (string, bool) {
 	e.drv.mu.Lock()
 	defer e.drv.mu.Unlock()
-	for i := len(e.drv.spawns) - 1; i >= 0; i-- {
-		sp := e.drv.spawns[i]
-		if sp.Env.OrynOrbID != orbID {
-			continue
-		}
-		if sp.SnapshotID == nil {
-			return "", false
-		}
-		return *sp.SnapshotID, e.drv.missing[*sp.SnapshotID]
-	}
-	return "", false
+	o := e.drv.origins[orbID]
+	return o.snap, o.missing
 }
 
 // onSetup 模拟 orbd 的 setup / resume：完成标记来自快照（镜像存在时）或本 orb 上一次成功的 setup。
@@ -123,6 +115,7 @@ func (e *m11Env) onSetup(orbID, method string, p apigen.LinkCtlSetupRunParams) a
 	e.mu.Lock()
 	e.setups[orbID] = append(e.setups[orbID], p)
 	prepared := e.markers[orbID] || (snap != "" && !missing && !e.forgeUnprepared.Load())
+	moved := e.applied[orbID] != e.commit.Load().(string)
 	e.mu.Unlock()
 	mode := e.mode.Load().(string)
 	commit := e.commit.Load().(string)
@@ -133,7 +126,7 @@ func (e *m11Env) onSetup(orbID, method string, p apigen.LinkCtlSetupRunParams) a
 	case !prepared:
 		res.SetupRan = true
 		res.Ok = mode != modeFail
-	case p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && (mode == modeRefresh || mode == modeRefreshFail):
+	case p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && moved && (mode == modeRefresh || mode == modeRefreshFail):
 		res.SetupRan, res.RepoUpdated = true, new(true)
 		if e.setupChanged.Load() {
 			res.SetupChanged = new(true)
@@ -143,6 +136,7 @@ func (e *m11Env) onSetup(orbID, method string, p apigen.LinkCtlSetupRunParams) a
 	if res.Ok && method == "setup.run" {
 		e.mu.Lock()
 		e.markers[orbID] = true
+		e.applied[orbID] = commit
 		e.mu.Unlock()
 	}
 	phase := apigen.SetupPhaseSetup
@@ -235,6 +229,20 @@ func (e *m11Env) lastSpawn(orbID string) apigen.JobSpawnParams {
 	return apigen.JobSpawnParams{}
 }
 
+// createSpawn 返回 orb 第一次（建 orb 时入队的）spawn 的参数；之后的 spawn 可能只是送达轮换后的令牌。
+func (e *m11Env) createSpawn(orbID string) apigen.JobSpawnParams {
+	e.t.Helper()
+	e.drv.mu.Lock()
+	defer e.drv.mu.Unlock()
+	for _, sp := range e.drv.spawns {
+		if sp.Env.OrynOrbID == orbID {
+			return sp
+		}
+	}
+	e.t.Fatalf("orb %s 没有 spawn", orbID)
+	return apigen.JobSpawnParams{}
+}
+
 func (e *m11Env) latestSetupRun(orbID string) db.LatestOrbSetupRunRow {
 	e.t.Helper()
 	var row db.LatestOrbSetupRunRow
@@ -259,7 +267,7 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 
 	// 首个项目 orb：全新 setup 后发布 depth=0 的快照
 	a := e.createReady(CreateParams{ProjectID: prj})
-	assert.Nil(t, e.lastSpawn(a.ID).SnapshotID)
+	assert.Nil(t, e.createSpawn(a.ID).SnapshotID)
 	assert.NotEmpty(t, derefStr(a.ConfigHash))
 	require.Nil(t, e.setupCalls(a.ID)[0].Repo.Update, "从基础镜像起的新 orb 不置 repo.update")
 	rows := e.snapshots(prj)
@@ -275,7 +283,7 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 
 	// 第二个 orb：命中快照（snapshotOptional）、repo.update、prepared 且没跑 setup，不再拍快照
 	b := e.createReady(CreateParams{ProjectID: prj})
-	sp := e.lastSpawn(b.ID)
+	sp := e.createSpawn(b.ID)
 	require.NotNil(t, sp.SnapshotID)
 	assert.Equal(t, s1.ID, *sp.SnapshotID)
 	require.NotNil(t, sp.SnapshotOptional)
@@ -338,7 +346,7 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 	// 改项目 setup 脚本 → 下一次 Create 不带快照，旧行 config_changed
 	e.setSetupScript(prj, "make deps && make more")
 	f := e.createReady(CreateParams{ProjectID: prj})
-	assert.Nil(t, e.lastSpawn(f.ID).SnapshotID)
+	assert.Nil(t, e.createSpawn(f.ID).SnapshotID)
 	assert.Equal(t, RetireConfigChanged, retireReason(e.snapshot(s3.ID)))
 	assert.NotEqual(t, derefStr(ev.ConfigHash), derefStr(f.ConfigHash))
 	rows = e.snapshots(prj)
@@ -376,7 +384,7 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 	fork, err := e.svc.Snapshot(ctx, a.ID)
 	require.NoError(t, err)
 	g := e.createReady(CreateParams{SnapshotOf: a.ID, SnapshotID: fork})
-	assert.Nil(t, e.lastSpawn(g.ID).SnapshotOptional)
+	assert.Nil(t, e.createSpawn(g.ID).SnapshotOptional)
 	v, err = View(ctx, e.st.Q, g)
 	require.NoError(t, err)
 	assert.Equal(t, apigen.OrbSnapshotKindFork, *v.SnapshotKind)
@@ -392,7 +400,8 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 // provider 上快照镜像不存在：spawn 退回基础镜像（snapshotOptional）并上报 snapshotUsed=false → orb 的 snapshot_of
 // 清空、快照退役 image_missing，这台 orb 从基础镜像全新 setup，开新血统。
 func TestProjectSnapshotImageMissing(t *testing.T) {
-	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
+	// 不跑 Service.Run：退役且无引用的快照会被周期回收器删行，断言退役原因前不能让它抢先
+	e := newM11Env(t, []string{FeatureRepoUpdate}, false, nil)
 	prj := e.project("app", nil)
 	e.createReady(CreateParams{ProjectID: prj})
 	s1 := e.snapshots(prj)[0]
@@ -400,7 +409,7 @@ func TestProjectSnapshotImageMissing(t *testing.T) {
 	e.drv.missing[s1.ID] = true
 	e.drv.mu.Unlock()
 	b := e.createReady(CreateParams{ProjectID: prj})
-	assert.Equal(t, s1.ID, *e.lastSpawn(b.ID).SnapshotID)
+	assert.Equal(t, s1.ID, *e.createSpawn(b.ID).SnapshotID)
 	assert.Nil(t, b.SnapshotOf, "provider 退回了基础镜像：orb 不再算来自快照")
 	assert.Empty(t, b.Image)
 	assert.Nil(t, e.setupCalls(b.ID)[0].Repo.Update, "全新 orb 不置 repo.update")
@@ -421,9 +430,17 @@ func TestProjectSnapshotForgedPreparedKeepsLineage(t *testing.T) {
 	e.forgeUnprepared.Store(true)
 	b := e.createReady(CreateParams{ProjectID: prj})
 	assert.Equal(t, s1.ID, derefStr(b.SnapshotOf))
-	run := e.latestSetupRun(b.ID)
-	require.False(t, run.Prepared)
-	require.EqualValues(t, 1, run.SetupRan)
+	// 发布后令牌轮换、link 重连，setup.run 重跑一次（完成标记已在，跳过）：看第一次 setup 的上报
+	require.Eventually(t, func() bool {
+		runs, err := e.st.Q.ListOrbSetupRuns(context.Background(), b.ID)
+		require.NoError(t, err)
+		for _, r := range runs {
+			if r.Phase == "setup" && !r.Prepared && r.SetupRan == 1 {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "第一次 setup：prepared=false、全量重跑")
 	assert.Equal(t, RetireSuperseded, retireReason(e.snapshot(s1.ID)), "来源快照不因 prepared=false 退役 image_missing")
 	rows := e.snapshots(prj)
 	require.Len(t, rows, 2)
@@ -446,7 +463,7 @@ func TestProjectSnapshotUnknownUsageNoLineage(t *testing.T) {
 	e.drv.mu.Unlock()
 	e.forgeUnprepared.Store(true)
 	b := e.createReady(CreateParams{ProjectID: prj})
-	assert.Equal(t, s1.ID, *e.lastSpawn(b.ID).SnapshotID)
+	assert.Equal(t, s1.ID, *e.createSpawn(b.ID).SnapshotID)
 	assert.Nil(t, b.SnapshotOf, "来源未知：不保留 snapshot_of")
 	require.EqualValues(t, 1, e.latestSetupRun(b.ID).SetupRan)
 	assert.Equal(t, SnapshotReady, e.snapshot(s1.ID).State, "镜像未被证明缺失：来源快照不退役")

@@ -186,9 +186,10 @@ func TestCP3ClaimDuringFailedFreeze(t *testing.T) {
 	assert.Contains(t, evs, "freezing>connecting")
 	assert.NotContains(t, evs, "freezing>ready")
 	calls := e.setupCalls(o.ID)
-	require.Len(t, calls, 2)
-	require.NotNil(t, calls[1].Repo.Update)
-	assert.True(t, *calls[1].Repo.Update)
+	// warming：setup.run + 发布后令牌轮换、重连重跑的 setup.run（跳过）；认领：setup.run
+	require.Len(t, calls, 3)
+	require.NotNil(t, calls[2].Repo.Update)
+	assert.True(t, *calls[2].Repo.Update)
 }
 
 // CP-3：重启时已认领却停在 ready 的池 orb（刷新被打断）由 recoverPool 补刷新。
@@ -205,7 +206,7 @@ func TestCP3RecoverClaimedReady(t *testing.T) {
 		cur := mustOrb(t, e, o.ID)
 		return cur.State == StateReady && cur.PoolState == nil
 	}, 10*time.Second, 20*time.Millisecond)
-	assert.Len(t, e.setupCalls(o.ID), 2)
+	assert.Len(t, e.setupCalls(o.ID), 3, "warming 两次（发布后重连重跑一次）+ 补刷新一次")
 }
 
 // CP-4：调低 pool.max_total 后，对账跨项目回收超额的池 orb（每个项目都未超过自己的目标）。
@@ -274,8 +275,10 @@ func TestDeferResumeAroundSnapshot(t *testing.T) {
 	assert.True(t, *calls[0].DeferResume)
 	release()
 	e.waitState(a.ID, StateReady, 10*time.Second)
-	assert.Equal(t, []string{"setup.run", "resume.run"}, o.methods())
-	assert.Nil(t, e.setupCalls(a.ID)[1].DeferResume)
+	// 发布后令牌轮换、旧 link 断开：新 link 重跑本阶段（setup 跳过、仍推迟），随后 resume
+	assert.Equal(t, []string{"setup.run", "setup.run", "resume.run"}, o.methods())
+	assert.True(t, *e.setupCalls(a.ID)[1].DeferResume)
+	assert.Nil(t, e.setupCalls(a.ID)[2].DeferResume)
 	require.Len(t, e.snapshots(prj), 1)
 	assert.Equal(t, SnapshotReady, e.snapshots(prj)[0].State)
 
@@ -293,7 +296,7 @@ func TestDeferResumeNotUsed(t *testing.T) {
 	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
 	prj := e.project("app", nil)
 	a := e.createReady(CreateParams{ProjectID: prj})
-	assert.Equal(t, []string{"setup.run"}, e.drv.orbd(a.ID).methods())
+	assert.Equal(t, []string{"setup.run", "setup.run"}, e.drv.orbd(a.ID).methods(), "发布后令牌轮换、重连重跑一次")
 	assert.Nil(t, e.setupCalls(a.ID)[0].DeferResume)
 
 	p := newPoolEnv(t, nil)
@@ -313,9 +316,9 @@ func TestDeferResumeNotUsed(t *testing.T) {
 		return cur.State == StateReady && cur.PoolState == nil
 	}, 10*time.Second, 20*time.Millisecond)
 	calls := p.setupCalls(o.ID)
-	require.Len(t, calls, 3, "warming：setup.run（推迟）+ resume.run；认领：setup.run")
+	require.Len(t, calls, 4, "warming：setup.run（推迟）+ 发布后重连重跑的 setup.run + resume.run；认领：setup.run")
 	assert.True(t, *calls[0].DeferResume, "从未 ready 的池 orb 可能发布，推迟 resume")
-	assert.Nil(t, calls[2].DeferResume, "认领的池 orb 不发布，不推迟 resume")
+	assert.Nil(t, calls[3].DeferResume, "认领的池 orb 不发布，不推迟 resume")
 	assert.Len(t, p.snapshots(wp), before, "认领的池 orb 不发布刷新快照")
 }
 

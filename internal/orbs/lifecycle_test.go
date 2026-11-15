@@ -193,12 +193,20 @@ type fakeDriver struct {
 	missing      map[string]bool
 	// noSnapshotUsed 模拟不上报 snapshotUsed 的 provider（没打 ORYN_SNAPSHOT_USED 标记的 dispatch 脚本）。
 	noSnapshotUsed bool
-	// spawns 记录 spawn 任务的参数。
-	spawns []apigen.JobSpawnParams
+	// failSpawns 是接下来要失败的 spawn 次数（不建机器、不记参数）。
+	failSpawns int
+	// spawns 记录 spawn 任务的参数；origins 记录建机器那次 spawn 实际用的快照（退回基础镜像时 missing）。
+	spawns  []apigen.JobSpawnParams
+	origins map[string]machineOrigin
+}
+
+type machineOrigin struct {
+	snap    string
+	missing bool
 }
 
 func newFakeDriver() *fakeDriver {
-	return &fakeDriver{orbds: map[string]*fakeOrbd{}, missing: map[string]bool{}}
+	return &fakeDriver{orbds: map[string]*fakeOrbd{}, missing: map[string]bool{}, origins: map[string]machineOrigin{}}
 }
 
 func (d *fakeDriver) Info() providerrt.Info {
@@ -234,6 +242,11 @@ func (d *fakeDriver) orbd(id string) *fakeOrbd {
 
 func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*apigen.JobResult, error) {
 	d.mu.Lock()
+	if j.Op == "spawn" && d.failSpawns > 0 {
+		d.failSpawns--
+		d.mu.Unlock()
+		return nil, fmt.Errorf("spawn failed")
+	}
 	d.ops = append(d.ops, j.Op+":"+j.PauseMode)
 	o := d.orbds[j.OrbID]
 	noConnect := d.noConnect
@@ -247,6 +260,7 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 	case "spawn":
 		// 与真实驱动一致：给了快照就上报 snapshotUsed（快照不存在、按 snapshotOptional 退回基础镜像时为 false）。
 		var result *apigen.JobResult
+		var origin machineOrigin
 		if sid := j.Spawn.SnapshotID; sid != nil && *sid != "" {
 			d.mu.Lock()
 			gone := d.missing[*sid]
@@ -257,6 +271,7 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 				}
 				_, _ = fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", *sid)
 			}
+			origin = machineOrigin{snap: *sid, missing: gone}
 			result = &apigen.JobResult{SnapshotUsed: new(!gone)}
 			d.mu.Lock()
 			if d.noSnapshotUsed {
@@ -268,6 +283,7 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall, onSetup: onSetup}
 			d.mu.Lock()
 			d.orbds[j.OrbID] = o
+			d.origins[j.OrbID] = origin
 			d.mu.Unlock()
 		}
 		// 与真实驱动一致：每次 spawn 送达轮换后的令牌（令牌文件 + SIGHUP），orbd 用它重连。

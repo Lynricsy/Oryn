@@ -628,6 +628,19 @@ func (q *Queries) MaxOrbEventID(ctx context.Context, orbID string) (int64, error
 	return column_1, err
 }
 
+const orbSpawnedOnce = `-- name: OrbSpawnedOnce :one
+SELECT CAST(EXISTS (SELECT 1 FROM orb_events WHERE orb_id = ?1 AND to_state = 'connecting' AND from_state IN ('requested', 'spawning', 'waking')) AS BOOLEAN)
+`
+
+// Whether a spawn of the orb ever succeeded (requested / spawning / waking -> connecting): the first successful spawn
+// is where the provider's snapshotUsed decides the orb's snapshot provenance; later spawns reuse that machine.
+func (q *Queries) OrbSpawnedOnce(ctx context.Context, orbID string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, orbSpawnedOnce, orbID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const rotateOrbToken = `-- name: RotateOrbToken :execrows
 UPDATE orbs SET token_gen = token_gen + 1, token_hash = ?1 WHERE id = ?2 AND token_gen = ?3
 `

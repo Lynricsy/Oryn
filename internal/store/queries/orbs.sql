@@ -93,6 +93,11 @@ UPDATE orbs SET config_hash = CAST(@config_hash AS TEXT) WHERE id = @id;
 -- name: ClearOrbSnapshot :execrows
 UPDATE orbs SET snapshot_of = NULL, image = '' WHERE id = @id AND snapshot_of = CAST(@snapshot_of AS TEXT);
 
+-- Whether a spawn of the orb ever succeeded (requested / spawning / waking -> connecting): the first successful spawn
+-- is where the provider's snapshotUsed decides the orb's snapshot provenance; later spawns reuse that machine.
+-- name: OrbSpawnedOnce :one
+SELECT CAST(EXISTS (SELECT 1 FROM orb_events WHERE orb_id = @orb_id AND to_state = 'connecting' AND from_state IN ('requested', 'spawning', 'waking')) AS BOOLEAN);
+
 -- Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
 -- 0 rows = claimed / retired by someone else.
 -- name: ClaimPoolOrb :execrows

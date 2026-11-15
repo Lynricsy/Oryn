@@ -442,18 +442,27 @@ func (s *Service) enqueueIn(t *txn, op string, params any) error {
 	return nil
 }
 
-// spawnIn 在事务内轮换 orb 令牌（token_gen+1）并入队携带新令牌的 spawn 任务。
-func (s *Service) spawnIn(t *txn) error {
+// rotateIn 在事务内轮换 orb 令牌（token_gen+1，比较并交换），返回新令牌；旧令牌随即不能再建立 link。
+func (s *Service) rotateIn(t *txn) (string, error) {
 	gen := t.orb.TokenGen + 1
 	token := orbToken(s.cfg.TokenKey, t.orb.ID, gen)
 	n, err := t.q.RotateOrbToken(t.ctx, db.RotateOrbTokenParams{TokenHash: ids.Hash(token), ID: t.orb.ID, TokenGen: t.orb.TokenGen})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if n == 0 {
-		return fmt.Errorf("orbs: orb %s 的令牌代数已变化", t.orb.ID)
+		return "", fmt.Errorf("orbs: orb %s 的令牌代数已变化", t.orb.ID)
 	}
 	t.orb.TokenGen = gen
+	return token, nil
+}
+
+// spawnIn 在事务内轮换 orb 令牌（token_gen+1）并入队携带新令牌的 spawn 任务。
+func (s *Service) spawnIn(t *txn) error {
+	token, err := s.rotateIn(t)
+	if err != nil {
+		return err
+	}
 	t.kick = true
 	p := apigen.JobSpawnParams{
 		Image: "", Type: t.orb.Type,
@@ -470,6 +479,66 @@ func (s *Service) spawnIn(t *txn) error {
 		}
 	}
 	return s.enqueueIn(t, jobs.OpSpawn, p)
+}
+
+// tokenDeliverable 报告该状态下能否经 spawn 送达轮换后的令牌：机器在跑（或正被拉起）。这些状态下该 orb 排在前面的
+// 任务只可能是 spawn / snapshot（pause 只在 freezing / stopping 入队），送达用的 spawn 不会把已冻结、停机的机器
+// 又拉起来；provider 对已在运行的机器只写令牌文件并 SIGHUP orbd，orbd 随即用新令牌重拨。
+func tokenDeliverable(state string) bool {
+	switch state {
+	case StateRequested, StateSpawning, StateWaking, StateConnecting, StateSettingUp, StateResuming, StateReady:
+		return true
+	}
+	return false
+}
+
+// rotateToken 在 orb 被拍快照之后轮换它的令牌（S1 纵深防御）：快照（项目快照或 fork 快照）里残留的令牌随即作废，
+// 从快照派生的机器即使从磁盘里恢复出旧令牌，也连不上源 orb 的 link。
+//
+// 机器在跑时复用 spawnIn（与认领 ready 池 orb 同一条路径，状态不变）：同一事务入队携带新令牌的 spawn，提交后关闭
+// 持旧令牌的 link（只关事务前看到的那条，不误关 orbd 用新令牌重拨的 link），再唤醒 provider。冻结、停机等状态只轮换：
+// 下次唤醒的 spawn 会再轮换并送达。freezing 期间轮换、冻结又失败回到 ready 的 orb，现有 link 不受影响，但 link 断开后
+// 要等下一次 spawn（如手动停机再唤醒）才能重连。协调 orb（link 不经令牌鉴权）与 runner（令牌归用户保管）不轮换。
+func (s *Service) rotateToken(ctx context.Context, orbID string) {
+	s.mu.Lock()
+	old := s.links[orbID]
+	s.mu.Unlock()
+	var orb db.Orb
+	rotated, delivered := false, false
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		cur, err := q.GetOrb(ctx, orbID)
+		if err != nil {
+			return err
+		}
+		if cur.Coordinator || IsRunner(cur) || cur.State == StateDeleting || cur.State == StateDeleted {
+			return nil
+		}
+		t := &txn{ctx: ctx, q: q, now: s.nowMs(), orb: cur}
+		if tokenDeliverable(cur.State) {
+			err = s.spawnIn(t)
+		} else {
+			_, err = s.rotateIn(t)
+		}
+		if err != nil {
+			return err
+		}
+		orb, rotated, delivered = t.orb, true, t.signal
+		return nil
+	})
+	if err != nil {
+		slog.Warn("快照后轮换 orb 令牌失败", "orb", orbID, "err", err)
+		return
+	}
+	if !rotated {
+		return
+	}
+	slog.Info("快照后已轮换 orb 令牌", "orb", orbID, "state", orb.State, "gen", orb.TokenGen, "delivered", delivered)
+	if delivered {
+		if old != nil {
+			_ = old.sess.Close()
+		}
+		s.jobs.Signal(orb.ProviderID)
+	}
 }
 
 // enqueueIfState 在 orb 仍处于 state 时（同一事务内判断）入队任务；返回是否入队。
@@ -1004,6 +1073,7 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 }
 
 // snapshotAs 为 orb 入队以 snap 为名的 snapshot 任务并等待完成，返回终态任务（其 result 带 snapshotBytes）。
+// 成功后轮换 orb 令牌（见 rotateToken）：快照里那一代令牌在快照交给任何人使用之前就已作废。
 func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.Job, error) {
 	if orb.State == StateDeleting || orb.State == StateDeleted {
 		return db.Job{}, fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orb.ID)
@@ -1023,6 +1093,7 @@ func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.J
 		}
 		return done, fmt.Errorf("快照 orb %s: %s", orb.ID, msg)
 	}
+	s.rotateToken(context.WithoutCancel(ctx), orb.ID)
 	return done, nil
 }
 
@@ -1093,15 +1164,17 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 			if !ok {
 				to = StateFailed
 			}
-			// S-P1-1：是否真的从项目快照起来以 provider 的 snapshotUsed 为准（只看首次 spawn；唤醒时容器早已存在）。
+			// S-P1-1：是否真的从项目快照起来以 provider 的 snapshotUsed 为准。只看这台 orb 第一次成功的 spawn（F4：不看
+			// 当前是否 waking——首次 spawn 失败、Wake 重试的那次成功才第一次确认来源；此后的 spawn 复用已确认的机器）。
 			// 只有明确 true 才保留 snapshot_of（同一事务清除，runPhase 看到的已是新值）：
 			//   - false：退回了基础镜像，快照退役 image_missing，这台 orb 可以开新血统；
 			//   - 缺省（如 dispatch 脚本没打标记）：来源未知，镜像未被证明缺失，快照不退役；
 			//     在 orb 事件里记下来源未知，afterSetupSnapshot 据此禁止它发布任何新快照。
 			var fellBack string
 			var then func(t *txn) error
-			if r := jobs.ResultOf(job); ok && orb.State != StateWaking && (r.SnapshotUsed == nil || !*r.SnapshotUsed) &&
-				orb.SnapshotOf != nil && *orb.SnapshotOf != "" && s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf) {
+			if r := jobs.ResultOf(job); ok && (r.SnapshotUsed == nil || !*r.SnapshotUsed) &&
+				orb.SnapshotOf != nil && *orb.SnapshotOf != "" && s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf) &&
+				s.firstSpawn(ctx, orbID) {
 				src := *orb.SnapshotOf
 				if r.SnapshotUsed == nil {
 					detail[detailSnapshotUnknown] = src
