@@ -20,6 +20,8 @@ const EMPTY: ApplyStatus = { threads: [], pendingReloads: 0, push: IDLE_PUSH };
 
 let status: ApplyStatus = EMPTY;
 let restarts = 0;
+/** 设了它时，下一个 apply-status 请求按发出时的状态作答，但等它兑现后才返回（模拟写入前发出、写入后才到的应答）。 */
+let holdNextStatus: Promise<void> | undefined;
 
 const fetchMock = vi.fn(
 	async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -28,8 +30,13 @@ const fetchMock = vi.fn(
 				? input
 				: new Request(new URL(String(input), "http://x"), init);
 		const { pathname } = new URL(req.url, "http://x");
-		if (pathname === "/api/v1/agent-config/apply-status")
-			return Response.json(status);
+		if (pathname === "/api/v1/agent-config/apply-status") {
+			const snapshot = status;
+			const hold = holdNextStatus;
+			holdNextStatus = undefined;
+			if (hold) await hold;
+			return Response.json(snapshot);
+		}
 		// 服务端在应答写入之前就登记了待下发
 		if (
 			pathname.startsWith("/api/v1/agent-config/files/") &&
@@ -54,6 +61,7 @@ const fetchMock = vi.fn(
 beforeEach(() => {
 	status = EMPTY;
 	restarts = 0;
+	holdNextStatus = undefined;
 	resetHome({});
 	vi.stubGlobal("fetch", fetchMock);
 });
@@ -153,6 +161,36 @@ it("写入后显示正在下发，服务端下发完毕后提示已下发并带�
 	expect(screen.queryByText(/正在下发/)).not.toBeInTheDocument();
 	expect(screen.getByText("1 个会话需重启后生效")).toBeInTheDocument();
 	expect(screen.getByText("未命名会话")).toBeInTheDocument();
+});
+
+it("写入之前发出、写入之后才到的旧应答不算下发完毕", async () => {
+	// 项目 lib 没有 Promise.withResolvers
+	let release = () => {};
+	holdNextStatus = new Promise<void>((r) => {
+		release = r;
+	});
+	renderPage(
+		<>
+			<Writer />
+			<ApplyStatusBanner />
+		</>,
+	);
+	await waitFor(() => expect(applyStatusCalls()).toBe(1));
+	fireEvent.click(screen.getByRole("button", { name: "写入" }));
+	expect(await screen.findByText(/正在下发/)).toBeInTheDocument();
+	// 写入前发出的请求现在才带着 pending=false 返回
+	release();
+	// 之后的轮询（写入之后发出）读到 pending=true
+	await waitFor(() => expect(applyStatusCalls()).toBeGreaterThanOrEqual(2), {
+		timeout: 3000,
+	});
+	expect(screen.getByText(/正在下发/)).toBeInTheDocument();
+	expect(screen.queryByText(/^已下发/)).not.toBeInTheDocument();
+
+	status = { ...status, push: { ...status.push, pending: false } };
+	expect(
+		await screen.findByText(/^已下发/, undefined, { timeout: 3000 }),
+	).toBeInTheDocument();
 });
 
 it("最近一次下发有 orb 失败时列出 orb 与原因，不显示已下发", async () => {

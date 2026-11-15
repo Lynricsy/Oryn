@@ -293,25 +293,36 @@ type PushMark = { writtenAt: number; doneAt?: number };
 
 /**
  * omp-home 写入或删除成功之后调用（`useAgentFileActions` 已自动调用；「高级」的文件浏览器自己调用）。
- * 服务端在应答写入之前就登记了待下发，所以随即重取的生效状态里 `push.pending` 为真，直到这次写入下发完毕。
+ * 服务端在应答写入之前就登记了待下发，所以写入之后才发出的生效状态请求里 `push.pending` 为真，直到这次写入下发完毕。
  */
 export function noteAgentConfigWrite(qc: QueryClient): void {
 	qc.setQueryData<PushMark>(applyStatusKeys.push, { writtenAt: Date.now() });
 	void qc.invalidateQueries({ queryKey: applyStatusKeys.status });
 }
 
-export async function fetchApplyStatus(): Promise<ApplyStatus> {
-	return unwrap(api.GET("/api/v1/agent-config/apply-status"));
+/** 生效状态与这次请求的发出时间（本机时钟）：写入之前发出的请求不能说明这次写入下发了没有。 */
+export type ApplyStatusResult = ApplyStatus & { requestedAt: number };
+
+export async function fetchApplyStatus(): Promise<ApplyStatusResult> {
+	const requestedAt = Date.now();
+	const status = await unwrap(api.GET("/api/v1/agent-config/apply-status"));
+	return { ...status, requestedAt };
 }
 
-/** 生效状态；下发进行中每秒轮询，有会话等重启或等重新加载时每 5 秒轮询。 */
-export function useApplyStatus(): UseQueryResult<ApplyStatus> {
+/**
+ * 生效状态。下发进行中、或最近一次写入还没有写入之后发出的请求作答时每秒轮询（还没有缓存时 invalidate 会复用
+ * 写入之前发出的在途请求，它的结果不算数）；有会话等重启或等重新加载时每 5 秒轮询。
+ */
+export function useApplyStatus(): UseQueryResult<ApplyStatusResult> {
+	const qc = useQueryClient();
 	return useQuery({
 		queryKey: applyStatusKeys.status,
 		queryFn: fetchApplyStatus,
 		refetchInterval: (q) => {
 			const d = q.state.data;
-			if (d?.push.pending) return APPLY_PUSH_POLL_INTERVAL;
+			const mark = qc.getQueryData<PushMark>(applyStatusKeys.push);
+			if (d?.push.pending || (mark && mark.doneAt === undefined))
+				return APPLY_PUSH_POLL_INTERVAL;
 			return d && (d.threads.length > 0 || d.pendingReloads > 0)
 				? APPLY_POLL_INTERVAL
 				: false;
@@ -326,11 +337,11 @@ export type PushProgress =
 	| { phase: "done"; doneAt: number };
 
 /**
- * 由最近一次写入与生效状态推出下发进度：写入之后取到的状态里 `push.pending` 为假即下发完毕
+ * 由最近一次写入与生效状态推出下发进度：写入之后发出的请求里 `push.pending` 为假即下发完毕
  * （服务端在会话级分类落定之后才清掉 pending，此时 `threads` / `pendingReloads` 已含这次写入的结果）。
  */
 export function usePushProgress(
-	status: UseQueryResult<ApplyStatus>,
+	status: UseQueryResult<ApplyStatusResult>,
 ): PushProgress {
 	const qc = useQueryClient();
 	const mark = useQuery<PushMark>({
@@ -342,7 +353,7 @@ export function usePushProgress(
 	const settled =
 		mark !== undefined &&
 		status.data !== undefined &&
-		status.dataUpdatedAt >= mark.writtenAt &&
+		status.data.requestedAt >= mark.writtenAt &&
 		!status.data.push.pending;
 	useEffect(() => {
 		if (!settled || mark.doneAt !== undefined) return;
@@ -366,7 +377,7 @@ export async function restartSessions(qc: QueryClient): Promise<string[]> {
 		api.POST("/api/v1/agent-config/restart-sessions"),
 	);
 	const scheduled = new Set(threadIds);
-	qc.setQueryData<ApplyStatus>(applyStatusKeys.status, (prev) =>
+	qc.setQueryData<ApplyStatusResult>(applyStatusKeys.status, (prev) =>
 		prev
 			? {
 					...prev,
