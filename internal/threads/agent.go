@@ -739,6 +739,11 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		if r.Success && t.live.pendingAsync {
 			s.refreshStateLocked(t)
 		}
+	case "omfg":
+		// M12.2：用户发起的 omfg 保存成功后回写中央配置，回写结果并进应答再交付
+		if s.omfgSaveLocked(t, p, env, frame, r) {
+			return
+		}
 	}
 	if p.after != nil {
 		p.after(t, env, r.Data)
@@ -1524,6 +1529,7 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 		t.live.ResolveUI(id)
 		s.out().UIResolved(t.id, id)
 		s.observer().InputResolved(t.id, id)
+		noteOmfgChoiceLocked(t, frame)
 	}
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)

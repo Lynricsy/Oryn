@@ -13,6 +13,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
+	"github.com/Lynricsy/Oryn/internal/cfgsync"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/coord"
 	"github.com/Lynricsy/Oryn/internal/coordhost"
@@ -161,6 +162,8 @@ func (s *Server) init(ctx context.Context) error {
 		return err
 	}
 	s.Threads.SetAttachments(s.Attachments)
+	// M12.2：/omfg 保存的规则由控制面读回并写入中央（全局 omp-home 或项目层）
+	s.Threads.SetConfigSync(&cfgsync.Saver{Store: s.Store, Orbs: s.Orbs, Global: s.Home, Projects: s.ProjectHomes, Vault: s.Vault})
 	// 浏览器 Profile（M8）：在 orb 服务接受 link 之前注册生命周期钩子
 	if s.Desktop, err = desktop.New(desktop.Config{DataDir: cfg.DataDir, Box: box, Valid: s.Auth}, s.Store, s.Orbs, s.Tickets); err != nil {
 		return err

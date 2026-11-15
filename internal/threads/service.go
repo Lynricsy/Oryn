@@ -99,6 +99,9 @@ type Service struct {
 	attach Attachments
 	// profiles 是浏览器 Profile 服务（M8；nil = 不支持）。
 	profiles Profiles
+	// cfgSync 是 /omfg 回写（M12.2，SetConfigSync 在服务对外可用之前设置；nil = 不回写）；cfgSyncTimeout 是一次回写的上限。
+	cfgSync        ConfigSync
+	cfgSyncTimeout time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -319,6 +322,9 @@ type thread struct {
 	turns     []turnRef
 	steers    []string
 	lastYield *yieldInfo
+	// omfgGlobal 为真表示客户端发起的 omfg 在途时，用户在保存位置对话框里点了全局选项（M12.2，noteOmfgChoiceLocked）；
+	// 每次 omfg 应答时取出并复位。
+	omfgGlobal bool
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
