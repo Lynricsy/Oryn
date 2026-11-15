@@ -65,7 +65,8 @@ export function Button({
 	return (
 		<button
 			type="button"
-			className={`inline-flex select-none items-center justify-center rounded-md font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none ${sz} ${VARIANT[variant]} ${DISABLED[variant]} ${className}`}
+			// 按钮高度固定，文字换行只会溢出；中文在任意两字之间都可断行，不禁止换行时 flex 行里的按钮会被挤成一字一行
+			className={`inline-flex select-none items-center justify-center whitespace-nowrap rounded-md font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none ${sz} ${VARIANT[variant]} ${DISABLED[variant]} ${className}`}
 			{...rest}
 		>
 			{icon && <Icon name={icon} size={size === "sm" ? 13 : 15} />}
