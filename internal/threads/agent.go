@@ -462,6 +462,8 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		return
 	}
 	s.markSessionStartLocked(t)
+	// M13 6.3：先补发挂起的 reload_plugins（例如冻结期间改了配置），再下发排队命令，排队的 prompt 用的就是新配置
+	s.reloadPluginsLocked(t)
 	q := t.queue
 	t.queue = nil
 	for _, f := range q {
@@ -892,6 +894,8 @@ func (s *Service) refreshStateLocked(t *thread) {
 				t.settled = *rs.IsSettled
 			}
 			t.unsynced = false
+			// M13 6.3：重新同步前静止状态未知，挂起的 reload_plugins 在这里补发
+			defer s.reloadPluginsLocked(t)
 			if rs.IsStreaming != nil && !*rs.IsStreaming && rs.IsSettled != nil && *rs.IsSettled {
 				// 断连期间回合已结束、帧已丢：仍在跟踪的投递得不到 prompt_result（规则 7）
 				s.endAllTurnsLocked(t, TurnUnknown, "")

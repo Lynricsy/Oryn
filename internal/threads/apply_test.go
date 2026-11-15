@@ -95,6 +95,40 @@ func TestConfigAppliedDisableSkill(t *testing.T) {
 	assert.Empty(t, restartReasons(f, th.id))
 }
 
+// 空闲 → 冻结 → 改技能 → 解冻：解冻后会话本就静止、不会再有 session_settled，仍要补发 reload_plugins；
+// 解冻时已有排队的 prompt 则 reload_plugins 先于它下发。
+func TestConfigAppliedReloadAfterUnfreeze(t *testing.T) {
+	t.Run("没有排队命令", func(t *testing.T) {
+		f, th, a := applyFixture(t)
+		f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: th.orbID, Kind: OrbEventState, From: "ready", To: "frozen", Seq: 10})
+		f.s.ConfigApplied(f.ctx, report(th.orbID, []string{"skills/x/SKILL.md"}, "", ""))
+		assert.Empty(t, sentTypes(a), "冻结中不发")
+		assert.Equal(t, 1, f.s.ApplyStatus(f.ctx).PendingReloads)
+
+		f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: th.orbID, Kind: OrbEventState, From: "frozen", To: "ready", Seq: 11})
+		assert.Equal(t, []string{"reload_plugins"}, sentTypes(a))
+		assert.Zero(t, f.s.ApplyStatus(f.ctx).PendingReloads)
+	})
+	t.Run("解冻时有排队的 prompt", func(t *testing.T) {
+		f, th, a := applyFixture(t)
+		f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: th.orbID, Kind: OrbEventState, From: "ready", To: "frozen", Seq: 10})
+		f.s.ConfigApplied(f.ctx, report(th.orbID, []string{"skills/x/SKILL.md"}, "", ""))
+		th.mu.Lock()
+		require.NoError(t, f.s.enqueueLocked(th, []byte(`{"type":"prompt","message":"hi"}`), nil))
+		th.mu.Unlock()
+		assert.Empty(t, sentTypes(a), "冻结中排队")
+
+		f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: th.orbID, Kind: OrbEventState, From: "frozen", To: "ready", Seq: 11})
+		var got []string
+		for _, typ := range sentTypes(a) {
+			if typ == "reload_plugins" || typ == "prompt" {
+				got = append(got, typ)
+			}
+		}
+		assert.Equal(t, []string{"reload_plugins", "prompt"}, got)
+	})
+}
+
 // config.yml 只往 disabledExtensions 里加 hook:pre:bash:bash.ts：apply-status 列出该线程，原因含该条目；不发 reload。
 func TestConfigAppliedDisableHook(t *testing.T) {
 	f, th, a := applyFixture(t)

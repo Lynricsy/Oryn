@@ -763,9 +763,14 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		if orbGoingDown(state) && len(t.queue) > 0 {
 			s.dropPassiveLocked(t, "orb "+state)
 		}
-		if !orbSuspended(state) && t.agentReady() && len(t.queue) > 0 {
-			// orb 暂停期间（或缓存滞后时）就绪的 agent 留下的排队命令：现在可以下发
-			s.onReadyLocked(ctx, t)
+		if !orbSuspended(state) && t.agentReady() {
+			if len(t.queue) > 0 {
+				// orb 暂停期间（或缓存滞后时）就绪的 agent 留下的排队命令：现在可以下发（先补发挂起的 reload_plugins）
+				s.onReadyLocked(ctx, t)
+			} else {
+				// M13 6.3：冻结期间改了配置、解冻时会话本就静止，不会再有 session_settled：在这里补发
+				s.reloadPluginsLocked(t)
+			}
 		}
 		if !s.recompute(ctx, t) && failedEdge {
 			s.publish(ctx, t.id)
