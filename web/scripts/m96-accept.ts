@@ -1701,17 +1701,45 @@ async function R21() {
 		`R19 首回合的身份是 role（${r19Identity}；default 须是指向 cycle role 的别名且该 role 有头像，否则与回落无从区分）`,
 	);
 	await withPage(async (page) => {
+		// 首屏对象跟随首屏偏好：等偏好读到再判断当前是不是全局助手
+		const prefs = page.waitForResponse(
+			(r) => new URL(r.url()).pathname === "/api/v1/settings/composer",
+			{ timeout: 15_000 },
+		);
 		await page.goto(`${BASE}/`);
-		const pill = page.getByRole("button", {
-			name: zh.newThread.defaultModel,
-			exact: true,
+		await prefs;
+		// 首屏的 role 胶囊（无障碍名「对象：<名字>」）：首屏偏好是全局助手时先切回 default role，
+		// 再在「指定模型…」里选这个模型（目录里有就点目录行，没有就用自由输入的「使用 …」行）
+		const capsule = page.getByRole("button", {
+			name: new RegExp(`^${zh.roleCapsule.label.split("{{")[0]}`),
 		});
-		await pill.click();
-		await page.getByLabel(zh.newThread.modelPlaceholder).fill(model);
-		await page.keyboard.press("Escape");
-		// 胶囊本身（aria-label = 模型）；弹层里「最近用过」的同名行也叫这个名字，所以按 aria-expanded 区分并等弹层关上
+		const popover = page.getByTestId("role-capsule-popover");
+		if (
+			(await page.locator('.home-tray[data-target="assistant"]').count()) > 0
+		) {
+			await capsule.click();
+			await popover
+				.getByRole("button", {
+					name: new RegExp(`^${zh.roles.names.default}`),
+				})
+				.first()
+				.click();
+			await popover.waitFor({ state: "hidden", timeout: 5_000 });
+		}
+		await capsule.click();
+		await popover
+			.getByRole("button", {
+				name: new RegExp(`^${zh.roleCapsule.pickModel}`),
+			})
+			.click();
+		await popover.getByLabel(zh.roleCapsule.modelInput).fill(model);
+		await popover
+			.locator(`[data-model="${model}"], [data-model-custom="${model}"]`)
+			.first()
+			.click();
+		await popover.waitFor({ state: "hidden", timeout: 5_000 });
 		await page
-			.locator(`button[aria-expanded="false"][aria-label="${model}"]`)
+			.locator('.home-tray[data-target="model"]')
 			.waitFor({ timeout: 5_000 });
 		note(
 			`新建线程框选了模型 ${model}（default 当前解析到的模型，取自 $R 的启动记录）`,
