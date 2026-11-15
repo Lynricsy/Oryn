@@ -3,16 +3,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/server"
@@ -68,7 +64,11 @@ func run(args []string) error {
 	if err := srv.AnnounceSetup(ctx); err != nil {
 		return err
 	}
-	return serve(ctx, cfg, srv.Handler)
+	ls, err := srv.Listen()
+	if err != nil {
+		return err
+	}
+	return srv.Serve(ctx, ls)
 }
 
 // subcommands 是 `orynd --config <file> <子命令> …` 的本机管理命令，由各文件在 init() 中注册。
@@ -78,30 +78,6 @@ func newLogger(level string) *slog.Logger {
 	var lv slog.Level
 	_ = lv.UnmarshalText([]byte(level))
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lv}))
-}
-
-// serve 在全部 listen 地址上启动同一个 http.Server，ctx 取消后优雅关闭。
-func serve(ctx context.Context, cfg config.Orynd, h http.Handler) error {
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 15 * time.Second}
-	errc := make(chan error, len(cfg.Listen))
-	for _, addr := range cfg.Listen {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			return fmt.Errorf("监听 %s: %w", addr, err)
-		}
-		slog.Info("orynd 监听", "addr", ln.Addr().String(), "version", version.Version)
-		go func() { errc <- srv.Serve(ln) }()
-	}
-	select {
-	case <-ctx.Done():
-	case err := <-errc:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
 }
 
 // configPath 是本次运行的 --config（子命令用，例如自检把它列入「必须读不到」）。
