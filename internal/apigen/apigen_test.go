@@ -133,11 +133,17 @@ func TestThreadExecutorDispatch(t *testing.T) {
 type agentCfgStub struct {
 	apigen.Unimplemented
 	gotPath string
+	gotID   string
 }
 
 func (s *agentCfgStub) GetAgentConfigFile(w http.ResponseWriter, _ *http.Request, path apigen.AgentConfigPath) {
 	s.gotPath = path
 	_, _ = w.Write([]byte("hello"))
+}
+
+func (s *agentCfgStub) GetProjectAgentConfigFile(w http.ResponseWriter, _ *http.Request, id apigen.ProjectIDPath, path apigen.AgentConfigPath) {
+	s.gotID, s.gotPath = id, path
+	_, _ = w.Write([]byte("project"))
 }
 
 // 路径参数中编码为 %2F 的 `/` 经 chi 路由后被还原为单个参数；未实现的端点返回 501。
@@ -153,6 +159,16 @@ func TestAgentConfigPathEncodedSlash(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, strings.TrimSpace(string(b)))
 	assert.Equal(t, "hello", string(b))
 	assert.Equal(t, "skills/foo/SKILL.md", stub.gotPath)
+
+	// M12.2：项目级路由同样还原 %2F，项目 id 与路径各为一个参数
+	resp3, err := http.Get(srv.URL + "/api/v1/projects/prj_A/agent-config/files/rules%2Fx.md")
+	require.NoError(t, err)
+	b, _ = io.ReadAll(resp3.Body)
+	resp3.Body.Close()
+	require.Equal(t, http.StatusOK, resp3.StatusCode, strings.TrimSpace(string(b)))
+	assert.Equal(t, "project", string(b))
+	assert.Equal(t, "prj_A", stub.gotID)
+	assert.Equal(t, "rules/x.md", stub.gotPath)
 
 	resp2, err := http.Get(srv.URL + "/api/v1/me")
 	require.NoError(t, err)

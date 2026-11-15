@@ -24,6 +24,8 @@ type AuthDeps struct {
 	Tickets *auth.Tickets
 	Vault   *secrets.Vault
 	Home    *agentcfg.Home
+	// ProjectHomes 是项目级 omp 配置（M12.2）；项目删除时一并删除其目录。
+	ProjectHomes *agentcfg.ProjectHomes
 }
 
 // maxJSONBody 是 JSON 请求体上限。

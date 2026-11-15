@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -311,6 +312,12 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 	if n == 0 {
 		WriteError(w, http.StatusNotFound, "not_found", "项目不存在")
 		return
+	}
+	// 项目级 omp 配置随项目删除（归档不删）；失败只记日志，目录留着无害
+	if s.Auth != nil && s.Auth.ProjectHomes != nil {
+		if err := s.Auth.ProjectHomes.Remove(id); err != nil {
+			slog.Warn("删除项目 omp 配置失败", "project", id, "err", err)
+		}
 	}
 	// 该项目的预热池 orb 由对账回收
 	s.poolKick(id)

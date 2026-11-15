@@ -50,10 +50,15 @@ var (
 	ErrInvalidContent = errors.New("内容无效")
 )
 
-// Home 管理 `<data_dir>/omp-home/`。
+// Home 管理一个 omp 文本配置根：全局为 `<data_dir>/omp-home/`，项目级为 `<data_dir>/omp-projects/<projectId>/`。
 type Home struct {
-	dataDir string
-	dir     string
+	// parent 是 dir 的父目录（导入用的临时目录建在这里，与 dir 同一文件系统才能 rename）。
+	parent string
+	// name 是 dir 的末段（omp-home 或项目 id）。
+	name string
+	dir  string
+	// project 为 true 时启用项目级规则：ProjectExcluded、Project* 配额、config.yml 校验。
+	project bool
 	mu      sync.RWMutex
 }
 
@@ -63,7 +68,56 @@ func NewHome(dataDir string) (*Home, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建 %s: %w", dir, err)
 	}
-	return &Home{dataDir: dataDir, dir: dir}, nil
+	return &Home{parent: dataDir, name: HomeDirName, dir: dir}, nil
+}
+
+// newProjectHome 返回项目级配置根 `<root>/<projectID>`；不创建目录（首次写入时才建）。
+func newProjectHome(root, projectID string) *Home {
+	return &Home{parent: root, name: projectID, dir: filepath.Join(root, projectID), project: true}
+}
+
+// MaxFileSize 返回该配置根的单文件上限（全局 MaxFileSize，项目级 ProjectMaxFileSize）。
+func (h *Home) MaxFileSize() int {
+	f, _, _ := h.limits()
+	return f
+}
+
+// MaxTotalSize 返回该配置根的合计大小上限（全局 MaxTotalSize，项目级 ProjectMaxTotalSize）。
+func (h *Home) MaxTotalSize() int {
+	_, t, _ := h.limits()
+	return t
+}
+
+// limits 返回单文件、合计大小与文件数上限。
+func (h *Home) limits() (file, total, files int) {
+	if h.project {
+		return ProjectMaxFileSize, ProjectMaxTotalSize, ProjectMaxFiles
+	}
+	return MaxFileSize, MaxTotalSize, MaxFiles
+}
+
+// clean 是带该配置根规则的 CleanPath：项目级额外拒绝 ProjectExcluded 的路径。
+func (h *Home) clean(p string) (string, error) {
+	c, err := CleanPath(p)
+	if err != nil {
+		return "", err
+	}
+	if h.project && ProjectExcluded(c) {
+		return "", fmt.Errorf("%w：项目级配置不支持 %s", ErrExcludedPath, c)
+	}
+	return c, nil
+}
+
+// checkContent 校验项目级 config.yml：只接受空文档或顶层映射。
+// omp 对 `--config` 覆盖层解析失败是硬错误，坏文件会让该项目所有 orb 的 agent 起不来。
+func (h *Home) checkContent(rel string, content []byte) error {
+	if !h.project || rel != ConfigFile {
+		return nil
+	}
+	if _, err := parseConfigRoot(content); err != nil {
+		return fmt.Errorf("%w：%v", ErrInvalidContent, err)
+	}
+	return nil
 }
 
 // Dir 返回 omp-home 目录的绝对路径。
@@ -151,8 +205,12 @@ func (h *Home) List() ([]FileInfo, error) {
 	return h.listLocked()
 }
 
+// listLocked 列出全部普通文件；目录不存在（未写过的项目）时返回空列表。
 func (h *Home) listLocked() ([]FileInfo, error) {
 	out := []FileInfo{}
+	if _, err := os.Lstat(h.dir); errors.Is(err, fs.ErrNotExist) {
+		return out, nil
+	}
 	err := filepath.WalkDir(h.dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -177,7 +235,7 @@ func (h *Home) listLocked() ([]FileInfo, error) {
 
 // Get 读取文件；不存在返回 fs.ErrNotExist。
 func (h *Home) Get(p string) ([]byte, FileInfo, error) {
-	rel, err := CleanPath(p)
+	rel, err := h.clean(p)
 	if err != nil {
 		return nil, FileInfo{}, err
 	}
@@ -194,12 +252,16 @@ func (h *Home) Get(p string) ([]byte, FileInfo, error) {
 // Put 写入单个文件。models.yml 先做密钥抽取（字面 apiKey 写入密钥库 mode=proxy，文件中替换为引用）。
 // mode 为 0 时取 0644。
 func (h *Home) Put(ctx context.Context, p string, content []byte, mode fs.FileMode, vault *secrets.Vault) (WriteResult, error) {
-	rel, err := CleanPath(p)
+	rel, err := h.clean(p)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	if len(content) > MaxFileSize {
-		return WriteResult{}, ErrTooLarge
+	fileMax, totalMax, filesMax := h.limits()
+	if len(content) > fileMax {
+		return WriteResult{}, fmt.Errorf("%w（单文件 %d MiB）", ErrTooLarge, fileMax>>20)
+	}
+	if err := h.checkContent(rel, content); err != nil {
+		return WriteResult{}, err
 	}
 	mode = normalizeMode(mode)
 	out, extracted, warns, err := importOne(ctx, rel, content, vault)
@@ -208,6 +270,11 @@ func (h *Home) Put(ctx context.Context, p string, content []byte, mode fs.FileMo
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.project {
+		if err := h.checkQuotaLocked(rel, len(out), totalMax, filesMax); err != nil {
+			return WriteResult{}, err
+		}
+	}
 	if err := writeFileAtomic(h.abs(rel), out, mode); err != nil {
 		return WriteResult{}, err
 	}
@@ -221,9 +288,29 @@ func (h *Home) Put(ctx context.Context, p string, content []byte, mode fs.FileMo
 	return WriteResult{File: fi, ExtractedSecrets: extracted, Warnings: warns}, nil
 }
 
+// checkQuotaLocked 检查写入 rel（size 字节）后项目配置仍在合计大小与文件数上限内（不计 rel 的现有内容）。持写锁调用。
+func (h *Home) checkQuotaLocked(rel string, size, totalMax, filesMax int) error {
+	list, err := h.listLocked()
+	if err != nil {
+		return err
+	}
+	total, n := int64(size), 1
+	for _, f := range list {
+		if f.Path == rel {
+			continue
+		}
+		total += f.Size
+		n++
+	}
+	if total > int64(totalMax) || n > filesMax {
+		return fmt.Errorf("%w（合计 %d MiB、%d 个文件）", ErrTooLarge, totalMax>>20, filesMax)
+	}
+	return nil
+}
+
 // Delete 删除文件；不存在返回 fs.ErrNotExist。
 func (h *Home) Delete(p string) error {
-	rel, err := CleanPath(p)
+	rel, err := h.clean(p)
 	if err != nil {
 		return err
 	}
@@ -249,8 +336,8 @@ func (h *Home) Delete(p string) error {
 	return nil
 }
 
-// ImportTar 用 tar 包整体替换 omp-home（不在包内的文件被删除）。只接受普通文件；
-// 被排除的运行时数据静默跳过；models.yml 做密钥抽取。
+// ImportTar 用 tar 包整体替换该配置根（不在包内的文件被删除）。只接受普通文件；
+// 被排除的路径（运行时数据；项目级还有 models.yml 与 plans/）静默跳过；models.yml 做密钥抽取。
 func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault) (ImportTarResult, error) {
 	res := ImportTarResult{ExtractedSecrets: []string{}, Warnings: []Warning{}}
 	type entry struct {
@@ -259,6 +346,7 @@ func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault)
 	}
 	files := map[string]entry{}
 	var total int64
+	fileMax, totalMax, filesMax := h.limits()
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -277,23 +365,26 @@ func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault)
 			res.Warnings = append(res.Warnings, Warning{Path: name, Kind: WarnSkipped, Message: "不是普通文件，已跳过"})
 			continue
 		}
-		rel, err := CleanPath(name)
+		rel, err := h.clean(name)
 		if errors.Is(err, ErrExcludedPath) {
 			continue
 		}
 		if err != nil {
 			return res, fmt.Errorf("%q: %w", hdr.Name, err)
 		}
-		if hdr.Size > MaxFileSize {
-			return res, fmt.Errorf("%s: %w（单文件 %d MiB）", rel, ErrTooLarge, MaxFileSize>>20)
+		if hdr.Size > int64(fileMax) {
+			return res, fmt.Errorf("%s: %w（单文件 %d MiB）", rel, ErrTooLarge, fileMax>>20)
 		}
 		total += hdr.Size
-		if total > MaxTotalSize || len(files) >= MaxFiles {
-			return res, fmt.Errorf("%w（合计 %d MiB、%d 个文件）", ErrTooLarge, MaxTotalSize>>20, MaxFiles)
+		if total > int64(totalMax) || len(files) >= filesMax {
+			return res, fmt.Errorf("%w（合计 %d MiB、%d 个文件）", ErrTooLarge, totalMax>>20, filesMax)
 		}
-		b, err := io.ReadAll(io.LimitReader(tr, MaxFileSize+1))
+		b, err := io.ReadAll(io.LimitReader(tr, int64(fileMax)+1))
 		if err != nil {
 			return res, fmt.Errorf("读取 %s: %w", rel, err)
+		}
+		if err := h.checkContent(rel, b); err != nil {
+			return res, err
 		}
 		files[rel] = entry{content: b, mode: normalizeMode(fs.FileMode(hdr.Mode))}
 	}
@@ -315,7 +406,7 @@ func (h *Home) ImportTar(ctx context.Context, r io.Reader, vault *secrets.Vault)
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	tmp, err := os.MkdirTemp(h.dataDir, HomeDirName+".import-*")
+	tmp, err := os.MkdirTemp(h.parent, h.name+".import-*")
 	if err != nil {
 		return res, err
 	}

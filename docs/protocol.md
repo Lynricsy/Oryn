@@ -18,7 +18,7 @@
 
 - 时间：UTC 毫秒整数（`TimestampMs`）。错误体：`Error{code, message}`，每个操作以 `default` 响应描述。
 - 鉴权：Cookie `__Host-oryn_session`（变更类请求另需 `X-Oryn-CSRF: 1`，规格中为 `cookieAuth + csrfHeader` 组合）或 `Authorization: Bearer odt_…`；provider 用 `opv_…`，orb 用 `oot_…`，runner 用 `ort_…`（M11b，只用于 `/orb/v1/link` 与 `/orb/v1/whoami`）。
-- 路径参数中的 `/` 编码为 `%2F`：`/api/v1/agent-config/files/{path}`、`/api/v1/secrets/{name}`（chi 按 RawPath 路由，生成代码自动解码，见 `internal/apigen/apigen_test.go`）。
+- 路径参数中的 `/` 编码为 `%2F`：`/api/v1/agent-config/files/{path}`、`/api/v1/projects/{id}/agent-config/files/{path}`、`/api/v1/secrets/{name}`（chi 按 RawPath 路由，生成代码自动解码，见 `internal/apigen/apigen_test.go`）。
 - omp RPC 命令与帧对控制面不透明：`OmpFrame`（任意对象），权威类型在 agent 仓库。
 
 ## 分区
@@ -37,7 +37,7 @@
 - `agent.status` 增加可选 `restartsLeft`；`LinkStreamEgress` 不带 `threadId`（egress 监听按 orb 而非线程）。
 - WebAuthn 仪式：`begin` 返回 `{ceremonyId, options}`，`finish` 回传 `ceremonyId` 与浏览器凭据 JSON。恢复：`auth/recovery` 发放一次性会话后，以该会话调用 `auth/setup/*`（省略 `token`）重新注册 Passkey。
 - `ThreadPatch` / `ProjectPatch`：只改出现的字段；可选字符串传空串清除，`snoozedUntil` 传 0 清除（不使用 nullable 包装类型）。
-- `PUT agent-config/files/{path}` 请求体为原始字节（`application/octet-stream`），权限经查询参数 `mode`；`POST agent-config/import` 为 `application/x-tar`，整体替换 omp-home。
+- `PUT agent-config/files/{path}` 请求体为原始字节（`application/octet-stream`），权限经查询参数 `mode`；`POST agent-config/import` 为 `application/x-tar`，整体替换 omp-home。项目级同形接口见「M12.2」。
 
 ## M3：终端 / 文件 / 改动 / 附件
 
@@ -1388,3 +1388,134 @@ firecracker:
 - 控制面实时缓冲按「方法 + key」（`statusKey` / `widgetKey`）保留最新帧；空的 `statusText` / `widgetLines` 表示移除该 key（与 Web 渲染规则一致）。`thread.snapshot` 的 `agent.displayUi`（`AgentLiveState.displayUi`，可选，按到达顺序）带上当前值。agent 重启、`live.reset`、agent 断档时随实时缓冲一起清空。
 - orbd 的待答重放槽同样按 key 保留这两类帧，在新的 agent 流上与待答请求一起按到达顺序重放（计划提案仍在最前）。于是控制面重启或 agent 断档后，同一进程的展示类 UI 会重建；agent 进程重启时新进程从零开始。
 - Web：`applySnapshot` 依次应用 `displayUi` 里的帧恢复 `statuses` / `widgets`；`live.reset` 时一并清空，断档后由随后重放的帧重建。
+
+## M12.2：项目级中央 agent 配置
+
+控制面按项目保存一层 omp 配置（目录结构同仓库里的 `.omp/`：`rules/`、`skills/`、`mcp.json`、`config.yml`、`agents/`、`prompts/`、`commands/`、`hooks/`、`tools/`、`extensions/`、`AGENTS.md`、`SYSTEM.md`、`RULES.md`），不进仓库，在该项目的每台 orb 里生效。优先级：**Oryn 项目层 > 仓库 `.omp/` > 全局**（`AGENTS.md` 与仓库的叠加而不是替换）。不新增迁移，不新增 link 方法。
+
+### 存储（`internal/agentcfg`）
+
+- `<data_dir>/omp-projects/<projectId>/`（`ProjectsDirName`；根目录 0700，项目目录在首次写入时创建）。与全局 omp-home 共用 `agentcfg.Home`：路径校验、原子写、tar 导入、列表与哈希相同，项目级差异只在三处：
+  - 路径：`ProjectExcluded(rel)` = `Excluded(rel)` ∪ `models.yml` ∪ 首段为 `plans`（模型与密钥只在全局管理；计划是工作产物）。不做密钥抽取，项目层文件不解析 `${oryn:secret:…}`；形似密钥的内容照旧给 `possible_secret` 警告。
+  - 配额（随每次 `setup.run` / `resume.run` 整份下发，所以比全局小）：`ProjectMaxFileSize = 1 MiB`、`ProjectMaxTotalSize = 16 MiB`、`ProjectMaxFiles = 2000`。单文件写入也检查「其余文件合计 + 本次 ≤ 合计上限」「文件数 ≤ 上限」（同路径覆盖不计旧内容）。
+  - `config.yml` 只接受空文档或顶层 YAML 映射（omp 对 `--config` 覆盖层解析失败是硬错误，坏文件会让该项目所有 orb 的 agent 起不来）。
+- Go 接口（跨切片冻结）：
+
+  ```go
+  const ProjectsDirName = "omp-projects"
+  const ( ProjectMaxFileSize = 1 << 20; ProjectMaxTotalSize = 16 << 20; ProjectMaxFiles = 2000 )
+  func ProjectExcluded(rel string) bool
+  func NewProjectHomes(dataDir string) (*ProjectHomes, error)
+  func (p *ProjectHomes) For(projectID string) (*Home, error) // id 须匹配 ^[A-Za-z0-9_-]{1,64}$，否则 ErrInvalidPath；不创建目录；同一项目返回同一 *Home
+  func (p *ProjectHomes) Load(projectID string) (map[string][]byte, map[string]os.FileMode, error) // 没有文件时为空 map
+  func (p *ProjectHomes) Remove(projectID string) error // 目录不存在不报错
+  func (h *Home) MaxFileSize() int
+  func (h *Home) MaxTotalSize() int
+  ```
+
+- 项目删除（`DELETE /api/v1/projects/{id}`）成功后删除其目录（失败只记日志）；项目归档不删。
+
+### REST（C4，tag `projects`）
+
+|方法与路径|operationId|请求 / 响应|
+|---|---|---|
+|`GET /api/v1/projects/{id}/agent-config/files`|`listProjectAgentConfigFiles`|→ `AgentConfigFileList`（未写过为空列表）|
+|`GET /api/v1/projects/{id}/agent-config/files/{path}`|`getProjectAgentConfigFile`|→ `application/octet-stream`|
+|`PUT /api/v1/projects/{id}/agent-config/files/{path}?mode=`|`putProjectAgentConfigFile`|体 `application/octet-stream` → `AgentConfigWriteResult`（`extractedSecrets` 恒为空）|
+|`DELETE /api/v1/projects/{id}/agent-config/files/{path}`|`deleteProjectAgentConfigFile`|→ 204|
+|`POST /api/v1/projects/{id}/agent-config/import`|`importProjectAgentConfig`|体 `application/x-tar` → `AgentConfigImportResult`；整体替换该项目的配置，被排除的路径静默跳过|
+
+- 参数复用 `ProjectIdPath` 与 `AgentConfigPath`（`/` 编码为 `%2F`）。鉴权同全局 `agent-config`：变更类方法要求 Cookie + `X-Oryn-CSRF: 1` 或设备 Bearer。
+- 错误：项目不存在 → 404 `not_found`（五个接口都先确认项目存在，不为不存在的项目建目录）；路径非法 / 被排除 / `models.yml` / `plans/` / `config.yml` 不是 YAML 映射 / `mode` 越界 / tar 无法解析 → 400 `invalid_request`；超配额（单文件、合计或文件数）→ 413 `invalid_request`；文件不存在 → 404 `not_found`。
+- 导入体上限 = 合计上限 + 32 MiB 头部余量（全局与项目同一规则）。
+
+### orb link：`setup.run` / `resume.run`（C3）
+
+- `LinkCtlSetupRunParams.projectConfig`（可选，`LinkCtlProjectConfig{files: LinkCtlOmpHomeFile[]}`；Go 为 `*apigen.LinkCtlProjectConfig`，其 `Files []LinkCtlOmpHomeFile` 的标签是 `json:"files"`、没有 `omitempty`，所以「有项目无文件」须赋空切片，nil 会编成 `null`）。
+  - 出现 = orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` **严格镜像**成 `files`（目录里不在其中的普通文件与符号链接一律删除，空目录自底向上删除；不跟随符号链接）。`files[].path` 相对 `$HOME/.oryn/project-config/.omp/`，内容不经 `agentcfg.Render`。
+  - 缺省 = orb 不属于项目（或协调宿主）：orbd 删除 `$HOME/.oryn/project-config`。
+  - `setup.run` 与 `resume.run` 都写（新建、唤醒、预热与认领、`deferResume` 时 setup 与随后的 resume 各写一次）；不进项目快照的配置哈希。旧 orbd 忽略未知字段，不需要特性开关。
+- `LinkCtlOmpHomeFile.path`：相对所在配置根——`ompHome` 为 `$HOME/.omp/agent/`，`projectConfig.files` 为 `$HOME/.oryn/project-config/.omp/`。
+- 控制面侧接口（`internal/orbs`）：`type ProjectConfigs interface { Load(projectID string) (map[string][]byte, map[string]os.FileMode, error) }`，`DefaultSetup.Projects ProjectConfigs`（nil = 不下发项目层），实现为 `*agentcfg.ProjectHomes`。
+- 全局 omp-home 的现状（本里程碑不改）：每次 `setup.run` / `resume.run` 把中央已有的文件整份重写，orb 内对这些文件的本地改动（`/settings` 改 `config.yml`、`/mcp add` 改 `mcp.json`）在下次唤醒时被覆盖；只存在于 orb 本地、中央没有的文件不会被删，但也到不了别的 orb，orb 删除即丢失；中央删除的文件靠 `~/.oryn/omp-home.manifest.json` 清掉。
+
+### orb 内路径、环境变量与启动参数（C1）
+
+只对 orb 形态（非 runner、非协调宿主）；runner 用用户机器上自己的 omp 配置，协调宿主只收 `models.yml` 与 `config.yml`。
+
+|项|值|
+|---|---|
+|项目层根 `<root>`|`$HOME/.oryn/project-config`（`$HOME/.oryn/**` 对 Web 文件接口只读）|
+|项目层文件|`<root>/.omp/<相对路径>`|
+|`ORYN_CENTRAL_CONFIG`|恒为 `1`|
+|`ORYN_PROJECT_CONFIG_ROOT`|`<root>` 的绝对路径；仅当 `<root>/.omp` 是目录时设置|
+|`--config <root>/.omp/config.yml`|仅当该文件存在、非空、能解析为 YAML 映射时追加；排在桌面覆盖层 `--config` 之前（后者优先）|
+
+判断只看磁盘，orbd 重启后依然正确；两个变量在用户 env 密钥之后设置，不能被覆盖。Core（`oryn-v18.19.0-8` 起）以 provider `oryn-project`（优先级 110，高于 native 100）读取 `ORYN_PROJECT_CONFIG_ROOT`，子 agent 定义另加 `<root>/.omp/agents`。
+
+### `/omfg` 的字面量（C2，`ORYN_CENTRAL_CONFIG=1` 时）
+
+- 标题不变：`Save TTSR rule where?`
+- 选项：`This project (Oryn project config)`、`Global — all projects (Oryn central config)`、`Amend with feedback…`（修改选项不变）。`ORYN_PROJECT_CONFIG_ROOT` 未设置（orb 不属于项目）时只给全局与修改两项。
+- `savedPath`（`shortenPath` 之后）：项目 `~/.oryn/project-config/.omp/rules/<name>.md`；全局 `~/.omp/agent/rules/<name>.md`。`<name>` 字符集 `[a-z0-9_-]`。
+- 旧 Core（未升级的 orb）与 runner 仍发上游字面量 `This project (.omp/rules)` / `Global — all projects (~/.omp/agent/rules)`，项目保存落在 `~/workspace/repo/.omp/rules/<name>.md` 或 `~/workspace/.omp/rules/<name>.md`；这两种项目路径同样写回中央项目配置。
+
+### `omfg` 应答扩展（C5）
+
+控制面在 `threads.onResponse` 看到**用户发起的** `omfg` 命令应答 `state: "saved"` 后，按路径白名单经 `fs` 流把那一个规则文件读回、写入中央，再把结果并进应答的 `data.oryn` 交给客户端（应答最多被多扣 20 秒）。不新增 orb → 控制面的写接口，orbd 不参与回写。
+
+```jsonc
+// 已写入中央
+{"type":"response","command":"omfg","success":true,
+ "data":{"state":"saved","savedPath":"~/.omp/agent/rules/x.md",
+         "oryn":{"synced":true,"scope":"global","path":"rules/x.md"}}}
+// 未写入中央（scope / path 能判定时才带）
+"oryn":{"synced":false,"reason":"no_project","scope":"project","path":"rules/x.md"}
+```
+
+- `scope` 取 `project` 或 `global`；`path` 恒为 `rules/<name>.md`（由控制面用捕获到的 `<name>` 重新拼成）。没有 `oryn` 字段 = 没有尝试同步（runner 线程、非 `saved`、`success: false`），前端保持现有提示。
+- 白名单（全串锚定，`<name>` = `[a-z0-9][a-z0-9_-]{0,127}`）：`~/.omp/agent/rules/<name>.md` → global；`~/.oryn/project-config/.omp/rules/<name>.md` 与 `~/workspace/(repo/)?.omp/rules/<name>.md` → project。项目 id 只取自数据库里的 orb 行。
+- 全局写入另要求控制面在 `UIResponse` 里记录到用户点选了全局选项（新旧两种全局文案都认），否则 `scope_unconfirmed`。
+- 写入成功追加 `orb_events`：`detail = {"event":"agent_config_saved","scope","path","sha256","threadId","projectId"?}`（global 不带 `projectId`），`from_state = to_state = orb 当前状态`。
+
+|`reason`|含义|
+|---|---|
+|`no_project`|orb 不属于项目或项目已删除|
+|`unsupported_path`|保存位置不在白名单（不读 orb）|
+|`scope_unconfirmed`|全局路径，但没有记录到用户点选全局选项|
+|`orb_read_failed`|经 `fs` 流读取 orb 里的文件失败或非 200|
+|`too_large`|超过 256 KiB（`cfgsync.MaxRuleBytes`）或超项目配额|
+|`invalid_content`|空、含 NUL 或不是 UTF-8|
+|`store_failed`|写入中央失败（含读取 orb 行失败）|
+
+Go 接口（跨切片冻结）：
+
+```go
+// internal/threads
+type ConfigSaveParams struct {
+	OrbID, ThreadID, SavedPath string
+	GlobalChosen bool // 用户在保存位置对话框里点的是全局选项
+}
+type ConfigSaveResult struct {
+	Synced bool   `json:"synced"`
+	Scope  string `json:"scope,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+type ConfigSync interface {
+	SaveRule(ctx context.Context, p ConfigSaveParams) ConfigSaveResult
+}
+func (s *Service) SetConfigSync(c ConfigSync) // nil = 不回写
+
+// internal/cfgsync
+const MaxRuleBytes = 256 << 10
+type OrbFS interface { Do(ctx context.Context, orbID string, req *http.Request) (*http.Response, error) } // *orbs.Service
+type GlobalStore interface {
+	Put(ctx context.Context, p string, content []byte, mode fs.FileMode, vault *secrets.Vault) (agentcfg.WriteResult, error)
+} // *agentcfg.Home
+type ProjectStores interface { For(projectID string) (*agentcfg.Home, error) } // *agentcfg.ProjectHomes
+type Saver struct {
+	Store *store.Store; Orbs OrbFS; Global GlobalStore; Projects ProjectStores; Vault *secrets.Vault
+}
+func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) threads.ConfigSaveResult
+```

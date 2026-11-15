@@ -16,7 +16,7 @@ info:
     - 错误体统一为 `Error`（`{code, message}`）。
     - 网页会话 Cookie `__Host-oryn_session`；凡变更类请求（POST/PUT/PATCH/DELETE）使用 Cookie 鉴权时必须带头 `X-Oryn-CSRF: 1`，
       使用设备令牌（`Authorization: Bearer odt_…`）时无需该头。
-    - 路径参数中的 `/` 须编码为 `%2F`（`agent-config/files/{path}`、`secrets/{name}`）。
+    - 路径参数中的 `/` 须编码为 `%2F`（`agent-config/files/{path}`、`projects/{id}/agent-config/files/{path}`、`secrets/{name}`）。
     - omp RPC 的命令与帧对控制面不透明（`OmpFrame`），其权威类型在 agent 仓库（`web/src/omp/rpc-types.d.ts`）。
   license:
     name: Proprietary
@@ -464,6 +464,101 @@ paths:
           schema: { type: string }
       responses:
         '204': { description: 已退役 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/agent-config/files:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    get:
+      tags: [projects]
+      operationId: listProjectAgentConfigFiles
+      summary: 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表）
+      responses:
+        '200':
+          description: 文件列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigFileList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/agent-config/files/{path}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+      - { $ref: '#/components/parameters/AgentConfigPath' }
+    get:
+      tags: [projects]
+      operationId: getProjectAgentConfigFile
+      summary: 读取项目级 omp 配置文件原文（M12.2）
+      responses:
+        '200':
+          description: 文件原文
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [projects]
+      operationId: putProjectAgentConfigFile
+      summary: 写入项目级 omp 配置文件（M12.2）
+      description: |
+        项目不存在 → 404 `not_found`；路径非法、属于运行时数据、为 `models.yml`（模型与密钥只在全局管理）、首段为 `plans/`，
+        或 `config.yml` 不是 YAML 映射 → 400 `invalid_request`；单文件超过 1 MiB、合计超过 16 MiB 或超过 2000 个文件 → 413 `invalid_request`。
+        不做密钥抽取（不支持 `${oryn:secret:…}`），形似密钥的内容只给 `possible_secret` 警告。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: mode
+          in: query
+          description: 文件权限（八进制整数，如 420 = 0644）；缺省 0644
+          schema: { type: integer, minimum: 0, maximum: 511 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 写入结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigWriteResult' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectAgentConfigFile
+      summary: 删除项目级 omp 配置文件（M12.2）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/agent-config/import:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    post:
+      tags: [projects]
+      operationId: importProjectAgentConfig
+      summary: 导入项目级 omp 配置 tar 包（M12.2；`oryn config push --project` 使用）
+      description: |
+        包内路径相对项目配置根（同仓库里的 `.omp/`）；整体替换该项目的配置（不在包内的文件被删除），其它项目与全局不受影响。
+        运行时数据、`models.yml` 与 `plans/` 静默跳过；配额与错误同 `putProjectAgentConfigFile`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 导入结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- providers
@@ -3403,7 +3498,7 @@ components:
       name: path
       in: path
       required: true
-      description: 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..`
+      description: 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..`
       schema: { type: string, minLength: 1, maxLength: 1024 }
     FromQuery:
       name: from
@@ -7762,11 +7857,19 @@ components:
       properties:
         path:
           type: string
-          description: 相对 `$HOME/.omp/agent/` 的路径
+          description: 相对所在配置根：`ompHome` 为 `$HOME/.omp/agent/`，`projectConfig.files` 为 `$HOME/.oryn/project-config/.omp/`
         mode:
           type: integer
           description: Unix 权限位（十进制）
         contentB64: { type: string }
+    LinkCtlProjectConfig:
+      type: object
+      description: 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
+      required: [files]
+      properties:
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/LinkCtlOmpHomeFile' }
     LinkCtlSetupRunParams:
       type: object
       required: [workdir, gitHosts, scripts, ompHome, env]
@@ -7784,6 +7887,9 @@ components:
         env:
           type: object
           additionalProperties: { type: string }
+        projectConfig:
+          $ref: '#/components/schemas/LinkCtlProjectConfig'
+          description: 缺省 = orb 不属于项目（或协调宿主）：orbd 删除 `$HOME/.oryn/project-config`
         gitIdentity:
           $ref: '#/components/schemas/GitIdentity'
           description: 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置

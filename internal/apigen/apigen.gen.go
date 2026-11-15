@@ -3558,7 +3558,7 @@ type LinkCtlOmpHomeFile struct {
 	// Mode Unix 权限位（十进制）
 	Mode int `json:"mode"`
 
-	// Path 相对 `$HOME/.omp/agent/` 的路径
+	// Path 相对所在配置根：`ompHome` 为 `$HOME/.omp/agent/`，`projectConfig.files` 为 `$HOME/.oryn/project-config/.omp/`
 	Path string `json:"path"`
 }
 
@@ -3596,6 +3596,11 @@ type LinkCtlProfileModeParams struct {
 
 	// Reason 只读的原因：`requested`（选用时指定 `readonly`）/ `taken_over`（原本独占持有，被另一台 orb 接管）
 	Reason BrowserProfileReadonlyReason `json:"reason"`
+}
+
+// LinkCtlProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
+type LinkCtlProjectConfig struct {
+	Files []LinkCtlOmpHomeFile `json:"files"`
 }
 
 // LinkCtlProjectScripts 本 orb 所属项目的项目脚本；`project.scripts.get` 的结果与 `project.scripts.set` 的结果
@@ -3761,9 +3766,12 @@ type LinkCtlSetupRunParams struct {
 	// GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
 	GitIdentity *GitIdentity         `json:"gitIdentity,omitempty"`
 	OmpHome     []LinkCtlOmpHomeFile `json:"ompHome"`
-	Repo        *LinkCtlSetupRepo    `json:"repo,omitempty"`
-	Scripts     LinkCtlSetupScripts  `json:"scripts"`
-	Workdir     string               `json:"workdir"`
+
+	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
+	ProjectConfig *LinkCtlProjectConfig `json:"projectConfig,omitempty"`
+	Repo          *LinkCtlSetupRepo     `json:"repo,omitempty"`
+	Scripts       LinkCtlSetupScripts   `json:"scripts"`
+	Workdir       string                `json:"workdir"`
 }
 
 // LinkCtlSetupRunResult defines model for LinkCtlSetupRunResult.
@@ -7143,6 +7151,12 @@ type ListProjectsParams struct {
 	Archived *bool `form:"archived,omitempty" json:"archived,omitempty"`
 }
 
+// PutProjectAgentConfigFileParams defines parameters for PutProjectAgentConfigFile.
+type PutProjectAgentConfigFileParams struct {
+	// Mode 文件权限（八进制整数，如 420 = 0644）；缺省 0644
+	Mode *int `form:"mode,omitempty" json:"mode,omitempty"`
+}
+
 // DeleteProjectSnapshotsParams defines parameters for DeleteProjectSnapshots.
 type DeleteProjectSnapshotsParams struct {
 	// Type 只退役该 orb 类型的快照；缺省 = 全部类型
@@ -9550,6 +9564,21 @@ type ServerInterface interface {
 	// UpdateProject 修改项目
 	// (PATCH /api/v1/projects/{id})
 	UpdateProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// ListProjectAgentConfigFiles 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表）
+	// (GET /api/v1/projects/{id}/agent-config/files)
+	ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// DeleteProjectAgentConfigFile 删除项目级 omp 配置文件（M12.2）
+	// (DELETE /api/v1/projects/{id}/agent-config/files/{path})
+	DeleteProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath)
+	// GetProjectAgentConfigFile 读取项目级 omp 配置文件原文（M12.2）
+	// (GET /api/v1/projects/{id}/agent-config/files/{path})
+	GetProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath)
+	// PutProjectAgentConfigFile 写入项目级 omp 配置文件（M12.2）
+	// (PUT /api/v1/projects/{id}/agent-config/files/{path})
+	PutProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath, params PutProjectAgentConfigFileParams)
+	// ImportProjectAgentConfig 导入项目级 omp 配置 tar 包（M12.2；`oryn config push --project` 使用）
+	// (POST /api/v1/projects/{id}/agent-config/import)
+	ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 	// (DELETE /api/v1/projects/{id}/snapshots)
 	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
@@ -10267,6 +10296,36 @@ func (_ Unimplemented) GetProject(w http.ResponseWriter, r *http.Request, id Pro
 // UpdateProject 修改项目
 // (PATCH /api/v1/projects/{id})
 func (_ Unimplemented) UpdateProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListProjectAgentConfigFiles 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表）
+// (GET /api/v1/projects/{id}/agent-config/files)
+func (_ Unimplemented) ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteProjectAgentConfigFile 删除项目级 omp 配置文件（M12.2）
+// (DELETE /api/v1/projects/{id}/agent-config/files/{path})
+func (_ Unimplemented) DeleteProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectAgentConfigFile 读取项目级 omp 配置文件原文（M12.2）
+// (GET /api/v1/projects/{id}/agent-config/files/{path})
+func (_ Unimplemented) GetProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutProjectAgentConfigFile 写入项目级 omp 配置文件（M12.2）
+// (PUT /api/v1/projects/{id}/agent-config/files/{path})
+func (_ Unimplemented) PutProjectAgentConfigFile(w http.ResponseWriter, r *http.Request, id ProjectIDPath, path AgentConfigPath, params PutProjectAgentConfigFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ImportProjectAgentConfig 导入项目级 omp 配置 tar 包（M12.2；`oryn config push --project` 使用）
+// (POST /api/v1/projects/{id}/agent-config/import)
+func (_ Unimplemented) ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -13452,6 +13511,179 @@ func (siw *ServerInterfaceWrapper) UpdateProject(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjectAgentConfigFiles operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectAgentConfigFiles(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProjectAgentConfigFile operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectAgentConfigFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "path" -------------
+	var path AgentConfigPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "path", chi.URLParam(r, "path"), &path, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectAgentConfigFile(w, r, id, path)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectAgentConfigFile operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectAgentConfigFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "path" -------------
+	var path AgentConfigPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "path", chi.URLParam(r, "path"), &path, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectAgentConfigFile(w, r, id, path)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutProjectAgentConfigFile operation middleware
+func (siw *ServerInterfaceWrapper) PutProjectAgentConfigFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "path" -------------
+	var path AgentConfigPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "path", chi.URLParam(r, "path"), &path, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutProjectAgentConfigFileParams
+
+	// ------------- Optional query parameter "mode" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "mode", r.URL.Query(), &params.Mode, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "mode"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mode", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutProjectAgentConfigFile(w, r, id, path, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportProjectAgentConfig operation middleware
+func (siw *ServerInterfaceWrapper) ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportProjectAgentConfig(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteProjectSnapshots operation middleware
 func (siw *ServerInterfaceWrapper) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request) {
 
@@ -16069,6 +16301,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/snapshots", wrapper.ListProjectSnapshots)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/agent-config/files", wrapper.ListProjectAgentConfigFiles)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/projects/{id}/agent-config/files/{path}", wrapper.DeleteProjectAgentConfigFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/agent-config/files/{path}", wrapper.GetProjectAgentConfigFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/projects/{id}/agent-config/files/{path}", wrapper.PutProjectAgentConfigFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/agent-config/import", wrapper.ImportProjectAgentConfig)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/providers", wrapper.ListProviders)

@@ -339,6 +339,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/agent-config/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表） */
+        get: operations["listProjectAgentConfigFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/agent-config/files/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                path: components["parameters"]["AgentConfigPath"];
+            };
+            cookie?: never;
+        };
+        /** 读取项目级 omp 配置文件原文（M12.2） */
+        get: operations["getProjectAgentConfigFile"];
+        /**
+         * 写入项目级 omp 配置文件（M12.2）
+         * @description 项目不存在 → 404 `not_found`；路径非法、属于运行时数据、为 `models.yml`（模型与密钥只在全局管理）、首段为 `plans/`，
+         *     或 `config.yml` 不是 YAML 映射 → 400 `invalid_request`；单文件超过 1 MiB、合计超过 16 MiB 或超过 2000 个文件 → 413 `invalid_request`。
+         *     不做密钥抽取（不支持 `${oryn:secret:…}`），形似密钥的内容只给 `possible_secret` 警告。
+         */
+        put: operations["putProjectAgentConfigFile"];
+        post?: never;
+        /** 删除项目级 omp 配置文件（M12.2） */
+        delete: operations["deleteProjectAgentConfigFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/agent-config/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 导入项目级 omp 配置 tar 包（M12.2；`oryn config push --project` 使用）
+         * @description 包内路径相对项目配置根（同仓库里的 `.omp/`）；整体替换该项目的配置（不在包内的文件被删除），其它项目与全局不受影响。
+         *     运行时数据、`models.yml` 与 `plans/` 静默跳过；配额与错误同 `putProjectAgentConfigFile`。
+         */
+        post: operations["importProjectAgentConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -1788,7 +1858,7 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
-                /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
                 path: components["parameters"]["AgentConfigPath"];
             };
             cookie?: never;
@@ -5757,11 +5827,15 @@ export interface components {
             resume?: string;
         };
         LinkCtlOmpHomeFile: {
-            /** @description 相对 `$HOME/.omp/agent/` 的路径 */
+            /** @description 相对所在配置根：`ompHome` 为 `$HOME/.omp/agent/`，`projectConfig.files` 为 `$HOME/.oryn/project-config/.omp/` */
             path: string;
             /** @description Unix 权限位（十进制） */
             mode: number;
             contentB64: string;
+        };
+        /** @description 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除 */
+        LinkCtlProjectConfig: {
+            files: components["schemas"]["LinkCtlOmpHomeFile"][];
         };
         LinkCtlSetupRunParams: {
             workdir: string;
@@ -5773,6 +5847,8 @@ export interface components {
             env: {
                 [key: string]: string;
             };
+            /** @description 缺省 = orb 不属于项目（或协调宿主）：orbd 删除 `$HOME/.oryn/project-config` */
+            projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
             /** @description 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置 */
             gitIdentity?: components["schemas"]["GitIdentity"];
             /**
@@ -6055,7 +6131,7 @@ export interface components {
         GitDiffOldPathQuery: string;
         /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
         SecretNamePath: string;
-        /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+        /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
         AgentConfigPath: string;
         /** @description 起始时间（含，UTC 毫秒）；缺省 = 7 天前 */
         FromQuery: components["schemas"]["TimestampMs"];
@@ -6620,6 +6696,136 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectAgentConfigFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigFileList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectAgentConfigFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                path: components["parameters"]["AgentConfigPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件原文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putProjectAgentConfigFile: {
+        parameters: {
+            query?: {
+                /** @description 文件权限（八进制整数，如 420 = 0644）；缺省 0644 */
+                mode?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                path: components["parameters"]["AgentConfigPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 写入结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigWriteResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProjectAgentConfigFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                path: components["parameters"]["AgentConfigPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    importProjectAgentConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-tar": string;
+            };
+        };
+        responses: {
+            /** @description 导入结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigImportResult"];
+                };
             };
             default: components["responses"]["Error"];
         };
@@ -8795,7 +9001,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
                 path: components["parameters"]["AgentConfigPath"];
             };
             cookie?: never;
@@ -8822,7 +9028,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
                 path: components["parameters"]["AgentConfigPath"];
             };
             cookie?: never;
@@ -8850,7 +9056,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description 相对 omp-home 根的路径（如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
+                /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
                 path: components["parameters"]["AgentConfigPath"];
             };
             cookie?: never;

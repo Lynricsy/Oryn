@@ -66,6 +66,8 @@ type Server struct {
 	Orbs        *orbs.Service
 	Threads     *threads.Service
 	Attachments *attachments.Service
+	// ProjectHomes 是项目级 omp 配置（M12.2）。
+	ProjectHomes *agentcfg.ProjectHomes
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
 	Desktop *desktop.Service
 	// Host 是协调宿主（M9，内置 provider @host）；Schedules 是定时；Coord 是 Space / 助手 / 宿主工具。
@@ -124,6 +126,9 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	s.Vault = secrets.NewVault(s.Store, box)
 	if s.Home, err = agentcfg.NewHome(cfg.DataDir); err != nil {
+		return err
+	}
+	if s.ProjectHomes, err = agentcfg.NewProjectHomes(cfg.DataDir); err != nil {
 		return err
 	}
 	if s.Auth, err = auth.NewService(s.Store, cfg.DataDir, cfg.PublicURL); err != nil {
@@ -251,7 +256,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API = &api.Server{Deps: deps}
 	// App 会话兑换（M6）：不在 /api/v1 下，壳以顶层导航到达
 	mounts[api.AppSessionPath] = s.API.AppSessionHandler()
-	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home}
+	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home, ProjectHomes: s.ProjectHomes}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
 	s.API.Attachments = &api.AttachmentsDeps{Service: s.Attachments}

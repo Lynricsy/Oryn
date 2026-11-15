@@ -7,10 +7,11 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 )
 
-// maxImportBody 是 tar 包上限（内容上限 + tar 头部余量）。
-const maxImportBody = agentcfg.MaxTotalSize + 32<<20
+// importHeaderSlack 是 tar 包体在内容合计上限之外允许的头部余量。
+const importHeaderSlack = 32 << 20
 
 func agentFileJSON(f agentcfg.FileInfo) apigen.AgentConfigFile {
 	return apigen.AgentConfigFile{Path: f.Path, Size: f.Size, Mode: int(f.Mode.Perm()), Sha256: f.SHA256, UpdatedAt: f.UpdatedAt}
@@ -26,7 +27,32 @@ func agentWarningsJSON(ws []agentcfg.Warning) []apigen.AgentConfigWarning {
 
 // ListAgentConfigFiles 列出 omp-home 文件。
 func (s *Server) ListAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
-	files, err := s.Auth.Home.List()
+	listAgentFiles(w, r, s.Auth.Home)
+}
+
+// GetAgentConfigFile 返回文件原文（models.yml 为已抽取密钥的模板）。
+func (s *Server) GetAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath) {
+	getAgentFile(w, r, s.Auth.Home, path)
+}
+
+// PutAgentConfigFile 写入文件；models.yml 做密钥抽取。
+func (s *Server) PutAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath, params apigen.PutAgentConfigFileParams) {
+	putAgentFile(w, r, s.Auth.Home, path, params.Mode, s.Auth.Vault)
+}
+
+// DeleteAgentConfigFile 删除文件。
+func (s *Server) DeleteAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath) {
+	deleteAgentFile(w, r, s.Auth.Home, path)
+}
+
+// ImportAgentConfig 用 tar 包整体替换 omp-home。
+func (s *Server) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
+	importAgentFiles(w, r, s.Auth.Home, s.Auth.Vault)
+}
+
+// listAgentFiles 列出配置根 h 的文件。
+func listAgentFiles(w http.ResponseWriter, r *http.Request, h *agentcfg.Home) {
+	files, err := h.List()
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -38,9 +64,9 @@ func (s *Server) ListAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, out)
 }
 
-// GetAgentConfigFile 返回文件原文（models.yml 为已抽取密钥的模板）。
-func (s *Server) GetAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath) {
-	b, _, err := s.Auth.Home.Get(path)
+// getAgentFile 返回配置根 h 里一个文件的原文。
+func getAgentFile(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, path string) {
+	b, _, err := h.Get(path)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -50,22 +76,22 @@ func (s *Server) GetAgentConfigFile(w http.ResponseWriter, r *http.Request, path
 	_, _ = w.Write(b)
 }
 
-// PutAgentConfigFile 写入文件；models.yml 做密钥抽取。
-func (s *Server) PutAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath, params apigen.PutAgentConfigFileParams) {
+// putAgentFile 写入配置根 h 的一个文件；请求体上限为 h 的单文件上限。
+func putAgentFile(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, path string, modeParam *int, vault *secrets.Vault) {
 	var mode fs.FileMode
-	if params.Mode != nil {
-		if *params.Mode < 0 || *params.Mode > 0o777 {
+	if modeParam != nil {
+		if *modeParam < 0 || *modeParam > 0o777 {
 			WriteError(w, http.StatusBadRequest, "invalid_request", "mode 须在 0–511 之间")
 			return
 		}
-		mode = fs.FileMode(*params.Mode)
+		mode = fs.FileMode(*modeParam)
 	}
-	b, err := readBody(r, agentcfg.MaxFileSize)
+	b, err := readBody(r, int64(h.MaxFileSize()))
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	res, err := s.Auth.Home.Put(r.Context(), path, b, mode, s.Auth.Vault)
+	res, err := h.Put(r.Context(), path, b, mode, vault)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -79,18 +105,18 @@ func (s *Server) PutAgentConfigFile(w http.ResponseWriter, r *http.Request, path
 	})
 }
 
-// DeleteAgentConfigFile 删除文件。
-func (s *Server) DeleteAgentConfigFile(w http.ResponseWriter, r *http.Request, path apigen.AgentConfigPath) {
-	if err := s.Auth.Home.Delete(path); err != nil {
+// deleteAgentFile 删除配置根 h 的一个文件。
+func deleteAgentFile(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, path string) {
+	if err := h.Delete(path); err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ImportAgentConfig 用 tar 包整体替换 omp-home。
-func (s *Server) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
-	res, err := s.Auth.Home.ImportTar(r.Context(), io.LimitReader(r.Body, maxImportBody), s.Auth.Vault)
+// importAgentFiles 用 tar 包整体替换配置根 h；包体上限 = h 的合计上限 + 头部余量。
+func importAgentFiles(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, vault *secrets.Vault) {
+	res, err := h.ImportTar(r.Context(), io.LimitReader(r.Body, int64(h.MaxTotalSize())+importHeaderSlack), vault)
 	if err != nil {
 		writeErr(w, r, err)
 		return

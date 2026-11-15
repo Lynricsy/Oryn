@@ -59,13 +59,15 @@ func newH2Env(t *testing.T) *h2Env {
 	require.NoError(t, err)
 	home, err := agentcfg.NewHome(dir)
 	require.NoError(t, err)
+	projectHomes, err := agentcfg.NewProjectHomes(dir)
+	require.NoError(t, err)
 	svc, err := auth.NewService(st, dir, h2PublicURL)
 	require.NoError(t, err)
 	cfg := config.DefaultOrynd()
 	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}
 	e := &h2Env{t: t, st: st, dataDir: dir, vault: secrets.NewVault(st, box), tickets: auth.NewTickets(), svc: svc}
-	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home}
+	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home, ProjectHomes: projectHomes}
 	s.Mounts = map[string]http.Handler{api.AppSessionPath: s.AppSessionHandler()}
 	e.srv = httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(e.srv.Close)
