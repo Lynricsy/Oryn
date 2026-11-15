@@ -278,16 +278,22 @@ func ParseLine(line string) (ParsedEntry, error) {
 }
 
 // xdevTool 从工具结果的 details 里取 xdev 派发的真实工具名：
-// 形如 {"xdev":{"tool":"lsp","mode":"execute",…}}，仅 mode 为 execute 且 tool 非空时返回 tool；
+// 形如 {"xdev":{"tool":"lsp","mode":"execute","args":{…},…}}。Core 只在设备解析、参数校验通过后才写 args，
+// 所以只认带 args 的 execute 派发：执行失败的派发归到真实工具；设备不存在（`No such tool`）或参数非法时
+// tool 只是模型写的 URL 末段，仍记为 write，免得统计里冒出不存在的工具名。
 // help 模式、解析失败或缺字段时返回空串。
 func xdevTool(details json.RawMessage) string {
 	var d struct {
 		Xdev *struct {
-			Tool string `json:"tool"`
-			Mode string `json:"mode"`
+			Tool string          `json:"tool"`
+			Mode string          `json:"mode"`
+			Args json.RawMessage `json:"args"`
 		} `json:"xdev"`
 	}
 	if len(details) == 0 || json.Unmarshal(details, &d) != nil || d.Xdev == nil || d.Xdev.Mode != "execute" {
+		return ""
+	}
+	if a := d.Xdev.Args; len(a) == 0 || string(a) == "null" {
 		return ""
 	}
 	return d.Xdev.Tool

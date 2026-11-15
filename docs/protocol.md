@@ -1329,9 +1329,9 @@ firecracker:
 - `-5` 起：某次请求以 400 失败、错误文本命中 `tool_addition|tool_removal|tool_reference_unresolved`、且此前没有输出任何内容时，同一回合关掉工具变更（声明表直接用当前活动工具，不再带 `mid-conversation-tool-changes` beta 头）重放一次；重放成功后本进程内对该端点（provider + baseUrl + 模型）不再使用工具变更。其它错误照常上抛。
 - 手工开关（不等 Core 发布即可止血）：`models.yml` 里受影响 provider 加 `compat: { supportsMidConversationToolChanges: false }`；orb 经 `oryn config push` 下发，runner 改本机 `~/.omp/agent/models.yml`。
 
-### 派生事实 v4：工具名口径
+### 派生事实 v5：工具名口径
 
-- `FactsVersion` 3 → 4（启动时整体重算一次）。`toolResult` 的工具名若为 `write` 且 `details.xdev = {tool, mode: "execute"}`，按 `tool`（经 `write xd://<tool>` 派发的真实工具）归属；失败的派发同样归到真实工具。规则与 Web 工具卡的 xdev 重派发一致。
+- `FactsVersion` 3 → 5（启动时整体重算一次；v4 只在开发中短暂存在）。`toolResult` 的工具名若为 `write` 且 `details.xdev = {tool, mode: "execute", args}`，按 `tool`（经 `write xd://<tool>` 派发的真实工具）归属；执行失败的派发同样归到真实工具。Core 只在设备解析与参数校验通过后才写 `args`：设备不存在（`No such tool`）或参数非法时 `tool` 只是模型写的 URL 末段，仍记为 `write`。
 
 ### CLI
 

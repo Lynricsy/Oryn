@@ -64,11 +64,12 @@ func TestParseLineXdevTool(t *testing.T) {
 		want    ToolCall
 	}{
 		{"execute 派发归到真实工具", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute","args":{"op":"hover"},"inner":{"x":1}}}}`, ToolCall{TS: 7, Tool: "lsp"}},
-		{"失败的派发也归到真实工具", `{"role":"toolResult","toolName":"write","isError":true,"timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "lsp", IsError: true}},
+		{"失败的派发也归到真实工具", `{"role":"toolResult","toolName":"write","isError":true,"timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute","args":{"op":"hover"}}}}`, ToolCall{TS: 7, Tool: "lsp", IsError: true}},
+		{"设备不存在（无 args）仍记为 write", `{"role":"toolResult","toolName":"write","isError":true,"timestamp":7,"details":{"xdev":{"tool":"ast_grep","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "write", IsError: true}},
 		{"help 模式仍记为 write", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"help"}}}`, ToolCall{TS: 7, Tool: "write"}},
 		{"details 不是对象", `{"role":"toolResult","toolName":"write","timestamp":7,"details":"x"}`, ToolCall{TS: 7, Tool: "write"}},
-		{"xdev.tool 为空", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "write"}},
-		{"非 write 工具不改名", `{"role":"toolResult","toolName":"bash","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute"}}}`, ToolCall{TS: 7, Tool: "bash"}},
+		{"xdev.tool 为空", `{"role":"toolResult","toolName":"write","timestamp":7,"details":{"xdev":{"tool":"","mode":"execute","args":{}}}}`, ToolCall{TS: 7, Tool: "write"}},
+		{"非 write 工具不改名", `{"role":"toolResult","toolName":"bash","timestamp":7,"details":{"xdev":{"tool":"lsp","mode":"execute","args":{}}}}`, ToolCall{TS: 7, Tool: "bash"}},
 		{"没有 details", `{"role":"toolResult","toolName":"write","timestamp":7}`, ToolCall{TS: 7, Tool: "write"}},
 	}
 	for _, c := range cases {
