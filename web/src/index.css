@@ -593,62 +593,32 @@ body {
 		}
 	}
 	/*
-	 * 首页居中托盘背后的光场：一圈很宽、很淡的椭圆主题色光晕从托盘两端底下穿过，两团晕压在托盘两头；
-	 * 托盘玻璃把它模糊成柔光，看得出是玻璃，但看不出环的轮廓。四周与上半截渐隐，不压标题、不出硬边。
-	 * 颜色全取 --brand / --accent-h，随主题色与明暗变。
+	 * 首页居中托盘背后的光：不画环、不画光斑。一块与托盘同形的斜向渐变（左下主题色 → 右上邻近色，主题色相转 40°）
+	 * 垫在托盘正下方，整体模糊：托盘玻璃把它化成一层均匀过渡的底色，看得出是玻璃；托盘外只漏出贴着边缘的一圈柔光，
+	 * 底边略多一点（往下错 10px），像托盘浮在一盏灯上，没有任何轮廓。颜色全取 --brand / --accent-h，随主题色与明暗变。
 	 */
 	.home-field {
-		--halo-in: 44%;
-		--halo-mid: 64%;
-		--halo-out: 84%;
-		--halo-a: 15%;
+		--field-a: 26%;
+		--field-b: 0.2;
 		position: absolute;
-		left: 50%;
-		top: 50%;
+		inset: 10px 3% -10px;
 		z-index: -1;
-		width: 150%;
-		aspect-ratio: 2 / 1;
-		translate: -50% -50%;
+		border-radius: var(--r-2xl);
 		pointer-events: none;
-		background:
-			radial-gradient(
-				closest-side,
-				transparent var(--halo-in),
-				color-mix(in oklab, var(--brand) var(--halo-a), transparent)
-					var(--halo-mid),
-				transparent var(--halo-out)
-			),
-			radial-gradient(
-				22% 40% at 25% 60%,
-				color-mix(in oklab, var(--brand) 14%, transparent),
-				transparent
-			),
-			radial-gradient(
-				20% 36% at 76% 42%,
-				oklch(
-					var(--wp-l) calc(var(--wp-c) * 1.6) calc(var(--accent-h) + 60) /
-					0.5
-				),
-				transparent
-			);
-		-webkit-mask-image:
-			linear-gradient(to bottom, transparent 12%, #000 45%),
-			radial-gradient(closest-side, #000 72%, transparent);
-		-webkit-mask-composite: source-in;
-		mask-image:
-			linear-gradient(to bottom, transparent 12%, #000 45%),
-			radial-gradient(closest-side, #000 72%, transparent);
-		mask-composite: intersect;
+		background: linear-gradient(
+			200deg,
+			oklch(
+					var(--accent-l) var(--accent-c) calc(var(--accent-h) + 40) /
+					var(--field-b)
+				)
+				10%,
+			color-mix(in oklab, var(--brand) var(--field-a), transparent) 90%
+		);
+		filter: blur(28px);
 	}
-	/* 窄屏托盘更高更窄：光晕改成近圆、更宽更淡，只剩一团柔光 */
-	@media (width < 40rem) {
-		.home-field {
-			--halo-in: 10%;
-			--halo-mid: 50%;
-			--halo-out: 95%;
-			--halo-a: 11%;
-			aspect-ratio: 5 / 4;
-		}
+	:root[data-theme="dark"] .home-field {
+		--field-a: 22%;
+		--field-b: 0.16;
 	}
 	@supports not (
 			(backdrop-filter: blur(1px)) or
