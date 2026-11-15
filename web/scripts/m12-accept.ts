@@ -1543,7 +1543,8 @@ async function Y8() {
 		const sec = cardSection(cold, "子 agent");
 		await sec.waitFor({ timeout: 60_000 });
 		await expandCard(sec);
-		await checkOfflineSubagents(cold, sec, "Y8-subagent-offline-cold");
+		// 布局检查放在冷加载页：切到手机宽度会让线程页重新挂载并再发 focus，这一页的 focus 已被过滤，不会唤醒 orb
+		await checkOfflineSubagents(cold, sec, "Y8-subagent-offline-cold", true);
 		note(`冷加载页滤掉 focus 帧 ${focusDropped} 个`);
 		check(focusDropped > 0, "冷加载页确实发过 focus（已被过滤）");
 		check(
@@ -1560,6 +1561,7 @@ async function checkOfflineSubagents(
 	page: Page,
 	sec: Locator,
 	shotName: string,
+	checkLayout = false,
 ): Promise<void> {
 	// 只数 Y7 派发的 task 子 agent：行里显示的是模型自拟的描述（不一定含「sleep 25」），按排除常驻 advisor 计数
 	const rows = sec.locator("ul > li").filter({ hasNotText: /advisor/ });
@@ -1602,6 +1604,53 @@ async function checkOfflineSubagents(
 		);
 	}
 	await shot(page, shotName);
+	if (!checkLayout) return;
+	// 「发送」按钮与引导输入框同在一行 flex 里：桌面宽度与手机宽度下按钮文字都只占一行，且两者都不超出表单；
+	// 跨过手机断点后对话框仍开着（外壳换结构让线程页重新挂载，同一线程不关对话框）
+	const send = dlg.getByRole("button", { name: "发送", exact: true });
+	const desktop = page.viewportSize() ?? { width: 1400, height: 900 };
+	try {
+		for (const vp of [desktop, { width: 390, height: 844 }]) {
+			await page.setViewportSize(vp);
+			const layout = await send.evaluate((btn) => {
+				const range = document.createRange();
+				range.selectNodeContents(btn);
+				const lines = new Set(
+					[...range.getClientRects()]
+						.filter((r) => r.width > 0)
+						.map((r) => Math.round(r.top)),
+				).size;
+				const form = btn.closest("form");
+				if (!form) return { lines, overflow: ["没有 form"] };
+				const box = form.getBoundingClientRect();
+				const overflow = [...form.children]
+					.map((el) => el.getBoundingClientRect())
+					.filter((r) => r.left < box.left - 0.5 || r.right > box.right + 0.5)
+					.map((r) => `${Math.round(r.left)}..${Math.round(r.right)}`);
+				return {
+					lines,
+					overflow:
+						overflow.length > 0
+							? [
+									`表单 ${Math.round(box.left)}..${Math.round(box.right)}`,
+									...overflow,
+								]
+							: [],
+				};
+			});
+			check(
+				layout.lines === 1,
+				`${vp.width}px 宽度下「发送」文字占 ${layout.lines} 行`,
+			);
+			check(
+				layout.overflow.length === 0,
+				`${vp.width}px 宽度下输入框与按钮不超出表单（${layout.overflow.join(" ")}）`,
+			);
+		}
+		await shot(page, `${shotName}-390`);
+	} finally {
+		await page.setViewportSize(desktop);
+	}
 }
 
 async function Y9() {

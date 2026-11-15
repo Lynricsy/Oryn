@@ -156,6 +156,10 @@ function SpaceChatRedirect({ threadId }: { threadId: string }): ReactNode {
 	return <ThreadScreen threadId={threadId} variant="thread" />;
 }
 
+/** 线程页最近一次「进入」的线程与当前挂着的线程页数：区分真正切换线程与布局跨断点引起的重新挂载。 */
+let shownThread: string | null = null;
+let shownCount = 0;
+
 export function ThreadScreen({
 	threadId,
 	variant,
@@ -218,11 +222,23 @@ export function ThreadScreen({
 		};
 	}, [threadId]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 切换线程时关闭上一线程的对话框，窄屏回到对话标签
+	// 切换线程（或从别处进入线程）时关闭上一线程的对话框，窄屏回到对话标签。布局跨断点（如手机 ↔ 平板）时外壳换了
+	// 一套结构，线程页会在同一次提交里卸载再挂载：同一线程不算进入，打开的对话框与当前标签保持不变
 	useEffect(() => {
-		const ui = uiStore.getState();
-		ui.close();
-		ui.setThreadTab("agent");
+		shownCount++;
+		if (shownThread !== threadId) {
+			const ui = uiStore.getState();
+			ui.close();
+			ui.setThreadTab("agent");
+			shownThread = threadId;
+		}
+		return () => {
+			shownCount--;
+			// 卸载与重新挂载的 effect 在同一轮里先后执行；之后仍没有线程页挂着才算离开
+			queueMicrotask(() => {
+				if (shownCount === 0) shownThread = null;
+			});
+		};
 	}, [threadId]);
 
 	const model = useMemo(

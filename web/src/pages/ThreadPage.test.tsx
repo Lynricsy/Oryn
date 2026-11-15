@@ -7,7 +7,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+	MemoryRouter,
+	Route,
+	Routes,
+	useLocation,
+	useNavigate,
+} from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
 import type * as DockPillModule from "../components/composer/DockPill";
@@ -225,6 +231,45 @@ describe("ThreadPage 窄屏同级标签", () => {
 		renderPage(390);
 		expect(uiStore.getState().threadTab).toBe("agent");
 		expect(pane()).not.toHaveAttribute("inert");
+	});
+
+	it("布局跨断点让同一线程重新挂载：打开的对话框与当前标签保持；真的切到别的线程才关闭、回到 agent", async () => {
+		const OTHER = "T-tp-other";
+		getThreadStore(OTHER)
+			.getState()
+			.patchLocal({ thread: { id: OTHER } as Thread, snapshotReceived: true });
+		window.innerWidth = 390;
+		let go: (to: string) => void = () => undefined;
+		function Nav() {
+			const navigate = useNavigate();
+			go = (to) => navigate(to);
+			return null;
+		}
+		// 外壳在手机断点换成另一套结构：这里用不同的包裹元素让线程页卸载再挂载
+		const tree = (Wrap: "div" | "section") => (
+			<MemoryRouter initialEntries={[`/t/${ID}`]}>
+				<Nav />
+				<Wrap>
+					<Routes>
+						<Route path="/t/:threadId" element={<ThreadPage />} />
+					</Routes>
+				</Wrap>
+			</MemoryRouter>
+		);
+		const { rerender } = render(tree("div"));
+		act(() => {
+			uiStore.getState().open({ kind: "tree" });
+			uiStore.setState({ threadTab: "files", panelTab: "files" });
+		});
+		rerender(tree("section"));
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(uiStore.getState().dialog).toEqual({ kind: "tree" });
+		expect(uiStore.getState().threadTab).toBe("files");
+		act(() => go(`/t/${OTHER}`));
+		expect(uiStore.getState().dialog).toBeNull();
+		expect(uiStore.getState().threadTab).toBe("agent");
 	});
 
 	it("compact 下输入坞托盘底角与屏幕圆角同心，medium 不贴边不加", () => {
