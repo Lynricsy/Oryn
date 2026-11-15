@@ -381,20 +381,38 @@ func TestConfigPushInRootLinks(t *testing.T) {
 	require.NoError(t, os.Symlink("../shared/base.md", filepath.Join(real, "rules", "base.md")))     // 根内文件链接
 	require.NoError(t, os.Symlink(filepath.Join(real, "skills", "x"), filepath.Join(real, "alias"))) // 根内目录链接（绝对路径）
 	require.NoError(t, os.Symlink(".", filepath.Join(real, "skills", "loop")))                       // 成环：只走一次
-	// 推送根本身是链接（如 ~/.omp/agent → dotfiles）
+	// 推送根本身是链接（如 ~/.omp/agent → dotfiles）：全局允许
 	root := filepath.Join(base, "agent")
 	require.NoError(t, os.Symlink(real, root))
+	got, _ := pushTar(t, globalScope, root, nil)
+	assert.Equal(t, map[string]string{
+		"shared/base.md":    "# base",
+		"rules/base.md":     "# base",
+		"skills/x/SKILL.md": "skill",
+		"alias/SKILL.md":    "skill",
+	}, got)
+	// --project 时根是链接直接拒绝；直接给真实路径则照常上传
+	assert.Contains(t, pushErr(t, root, nil, projectScope)[0], "推送目录本身是符号链接")
+	got, _ = pushTar(t, projectScope, real, nil)
+	assert.Len(t, got, 4)
+}
 
-	for _, scope := range []configScope{{project: "demo"}, {}} {
-		tarball, err := buildConfigTar(scope, root, nil, io.Discard)
-		require.NoError(t, err)
-		assert.Equal(t, map[string]string{
-			"shared/base.md":    "# base",
-			"rules/base.md":     "# base",
-			"skills/x/SKILL.md": "skill",
-			"alias/SKILL.md":    "skill",
-		}, untar(t, tarball))
-	}
+func TestConfigPushProjectRejectsLinkedRoot(t *testing.T) {
+	// 恶意仓库把整个 .omp 指向假 ~/.ssh（含 id_rsa，ProjectExcluded 不排除它）
+	base := t.TempDir()
+	ssh := filepath.Join(base, "home", ".ssh")
+	writeTree(t, ssh, map[string]string{"id_rsa": "PRIVATE KEY", "config": "Host *"})
+	repo := filepath.Join(base, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	require.NoError(t, os.Symlink(ssh, filepath.Join(repo, ".omp")))
+	t.Chdir(repo)
+
+	dir, err := projectScope.defaultDir(nil) // 缺省 ./.omp
+	require.NoError(t, err)
+	f := projectsAPI(t)
+	_, err = runPush(t, f, projectScope, dir, nil)
+	require.ErrorContains(t, err, "推送目录本身是符号链接")
+	assert.Empty(t, f.requests(), "服务端没收到任何请求")
 }
 
 func TestConfigPushRejectsSpecialFiles(t *testing.T) {
@@ -406,6 +424,30 @@ func TestConfigPushRejectsSpecialFiles(t *testing.T) {
 		assert.Contains(t, msg, "rules/pipe.md（FIFO，不是普通文件）")
 		assert.Contains(t, msg, "rules/via.md（FIFO，不是普通文件）")
 	}
+}
+
+func TestReadOrynIgnoreRejectsNonRegular(t *testing.T) {
+	// 链接到字符设备：只 stat 不打开，不会阻塞
+	dev := t.TempDir()
+	require.NoError(t, os.Symlink("/dev/null", filepath.Join(dev, orynIgnoreFile)))
+	_, err := readOrynIgnore(dev)
+	require.ErrorContains(t, err, "必须是普通文件")
+
+	// 超过上限的普通文件（稀疏文件，不占磁盘）
+	big := t.TempDir()
+	f, err := os.Create(filepath.Join(big, orynIgnoreFile))
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(maxOrynIgnoreBytes+1))
+	require.NoError(t, f.Close())
+	_, err = readOrynIgnore(big)
+	require.ErrorContains(t, err, "超过")
+
+	// 正常文件照常解析
+	ok := t.TempDir()
+	writeTree(t, ok, map[string]string{orynIgnoreFile: "# c\n/skills/x/\n"})
+	got, err := readOrynIgnore(ok)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"skills/x"}, got)
 }
 
 func TestConfigPushTextPaths(t *testing.T) {

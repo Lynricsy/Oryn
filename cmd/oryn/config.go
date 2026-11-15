@@ -466,12 +466,28 @@ func uploadConfigTar(ctx context.Context, c *apiClient, scope configScope, tarba
 // orynIgnoreFile 是推送目录中的额外排除表。
 const orynIgnoreFile = ".orynignore"
 
-// readOrynIgnore 读取 dir/.orynignore（不存在时为空）。
+// maxOrynIgnoreBytes 是 .orynignore 的大小上限：它来自推送目录（可能是不可信仓库），
+// 指向 /dev/zero 或超大文件时不应把 CLI 拖到内存耗尽。
+const maxOrynIgnoreBytes = 1 << 20
+
+// readOrynIgnore 读取 dir/.orynignore（不存在时为空）。它必须是普通文件（跟随链接后判定）且不超过
+// maxOrynIgnoreBytes：FIFO 会让读取永久阻塞，设备文件可能无穷无尽。
 func readOrynIgnore(dir string) ([]string, error) {
-	b, err := os.ReadFile(filepath.Join(dir, orynIgnoreFile))
+	p := filepath.Join(dir, orynIgnoreFile)
+	st, err := os.Stat(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s 必须是普通文件", orynIgnoreFile)
+	}
+	if st.Size() > maxOrynIgnoreBytes {
+		return nil, fmt.Errorf("%s 超过 %d 字节", orynIgnoreFile, maxOrynIgnoreBytes)
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +525,18 @@ func collectPushFiles(root string, excluded func(rel string) bool, exclude []str
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
+	}
+	// --project 的推送根来自可能不可信的仓库（缺省 ./.omp）：根本身是链接（如 .omp -> ~/.ssh）时
+	// 解析后的目标会被当成安全根整体上传，因此直接拒绝。父目录中的链接不在此列；
+	// 全局根是用户自己的 ~/.omp/agent，允许它链接到 dotfiles 仓库。
+	if strict {
+		st, err := os.Lstat(absRoot)
+		if err != nil {
+			return nil, err
+		}
+		if st.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("拒绝上传 %s：--project 的推送目录本身是符号链接，请改用它指向的真实路径", root)
+		}
 	}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
