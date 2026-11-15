@@ -1094,6 +1094,7 @@
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
 		"new": "新建",
+		"reloadLatest": "载入最新内容（放弃我的改动）",
 		"newTitle": "新建条目（{{kind}}）",
 		"edit": "编辑 {{name}}",
 		"delete": "删除 {{name}}",
@@ -1114,6 +1115,7 @@
 			"nameTaken": "已有同名条目。",
 			"required": "必填。",
 			"modified": "文件已在别处修改，已载入最新内容，请重新操作。",
+			"editConflict": "打开后文件已在别处修改，不能直接保存。你的改动还在；载入最新内容后再改。",
 			"configInvalid": "config.yml 不是合法的 YAML（{{reason}}），先在「高级」里修好。"
 		},
 		"fields": {

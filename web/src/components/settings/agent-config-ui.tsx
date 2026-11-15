@@ -26,6 +26,22 @@ export function AgentScopeNote({ children }: { children?: ReactNode }) {
 	);
 }
 
+/**
+ * 编辑对话框的保存冲突：打开后文件在别处被改过。草稿保留，但基线仍是打开时的原文，再点保存还会冲突，
+ * 不会把草稿静默盖到新内容上；只能明确「载入最新内容」（放弃草稿）后重做。
+ */
+export function EditConflict({ onReload }: { onReload(): void }) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			<ErrorText error={new Error(t("agentPages.errors.editConflict"))} />
+			<Button variant="ghost" onClick={onReload}>
+				{t("agentPages.reloadLatest")}
+			</Button>
+		</div>
+	);
+}
+
 /** 错误行：冲突与 config.yml 不合法给出可操作的说明，其余走通用的 `ErrorText`。 */
 export function AgentErrorText({ error }: { error: unknown }) {
 	const { t } = useTranslation();
@@ -144,6 +160,7 @@ export function ConfirmDeleteDialog({
 
 /**
  * 整文件编辑：读当前原文（不存在则从空白开始，保存即创建），保存带冲突检查。
+ * 开始编辑时冻结基线：之后查询刷新（窗口聚焦、冲突后的重取）不会挪动它，保存只在文件仍是基线时写入。
  * `before` 放在编辑器上方（如 SYSTEM.md 的警示）。
  */
 export function TextFileDialog({
@@ -161,10 +178,21 @@ export function TextFileDialog({
 	const q = useAgentText(path);
 	const actions = useAgentFileActions();
 	const [draft, setDraft] = useState<string | null>(null);
+	/** 开始编辑时的原文（null = 文件当时不存在）；未编辑时跟随查询。 */
+	const [pinned, setPinned] = useState<{ text: string | null } | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
-	const base = q.data;
+	const base = pinned ? pinned.text : q.data;
 	const value = draft ?? base ?? "";
+	const edit = (next: string) => {
+		if (!pinned && base !== undefined) setPinned({ text: base });
+		setDraft(next);
+	};
+	const reload = () => {
+		setPinned(null);
+		setDraft(null);
+		setError(null);
+	};
 	const save = async () => {
 		if (base === undefined || busy) return;
 		setBusy(true);
@@ -173,8 +201,6 @@ export function TextFileDialog({
 			await actions.write(path, value, base);
 			onClose();
 		} catch (e) {
-			// 冲突：缓存已换成最新内容，丢掉草稿让编辑器显示它
-			if (isModifiedError(e)) setDraft(null);
 			setError(e);
 			setBusy(false);
 		}
@@ -214,11 +240,15 @@ export function TextFileDialog({
 						tall
 						value={value}
 						path={path}
-						onChange={setDraft}
+						onChange={edit}
 						onSave={() => void save()}
 					/>
 				)}
-				<AgentErrorText error={error} />
+				{isModifiedError(error) ? (
+					<EditConflict onReload={reload} />
+				) : (
+					<AgentErrorText error={error} />
+				)}
 			</div>
 		</Dialog>
 	);

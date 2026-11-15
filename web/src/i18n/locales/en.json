@@ -1094,6 +1094,7 @@
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
 		"new": "New",
+		"reloadLatest": "Load latest (discard my changes)",
 		"newTitle": "New entry in {{kind}}",
 		"edit": "Edit {{name}}",
 		"delete": "Delete {{name}}",
@@ -1114,6 +1115,7 @@
 			"nameTaken": "That name is already taken.",
 			"required": "Required.",
 			"modified": "The file was changed elsewhere. The latest version is loaded; try again.",
+			"editConflict": "The file changed elsewhere after you opened it, so it can't be saved as is. Your edits are kept; load the latest version and redo them.",
 			"configInvalid": "config.yml isn't valid YAML ({{reason}}). Fix it under Advanced first."
 		},
 		"fields": {

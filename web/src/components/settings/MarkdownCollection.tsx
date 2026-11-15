@@ -13,6 +13,7 @@ import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type AgentFile,
+	isModifiedError,
 	useAgentFileActions,
 	useAgentFiles,
 	useAgentTexts,
@@ -38,6 +39,7 @@ import {
 	AgentErrorText,
 	CodeField,
 	ConfirmDeleteDialog,
+	EditConflict,
 } from "./agent-config-ui";
 
 export type FieldKind = "text" | "textarea" | "list" | "bool";
@@ -194,6 +196,8 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 	const paths = useMemo(() => entries.map((e) => e.path), [entries]);
 	const { texts, error: textError } = useAgentTexts(paths);
 	const [editing, setEditing] = useState<Entry | "new" | null>(null);
+	/** 保存冲突后「载入最新内容」：换 key 让编辑框以最新原文重新打开。 */
+	const [editKey, setEditKey] = useState(0);
 	const [deleting, setDeleting] = useState<{
 		entry: Entry;
 		name: string;
@@ -326,10 +330,12 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 			</div>
 			{editing && (
 				<EntryDialog
+					key={editKey}
 					props={props}
 					entry={editing === "new" ? null : editing}
 					text={editing === "new" ? null : (texts.get(editing.path) ?? null)}
 					taken={names}
+					onReload={() => setEditKey((k) => k + 1)}
 					onClose={() => setEditing(null)}
 				/>
 			)}
@@ -391,13 +397,16 @@ function EntryDialog({
 	entry,
 	text,
 	taken,
+	onReload,
 	onClose,
 }: {
 	props: MarkdownCollectionProps;
 	/** null = 新建 */
 	entry: Entry | null;
+	/** 当前原文；只在打开时读一次作基线，之后的刷新不影响表单与保存基线。 */
 	text: string | null;
 	taken: ReadonlySet<string>;
+	onReload(): void;
 	onClose(): void;
 }) {
 	const { dir, layout, fields, requireDescription } = props;
@@ -406,12 +415,14 @@ function EntryDialog({
 	const namePattern = props.namePattern ?? DEFAULT_NAME;
 	const { t } = useTranslation();
 	const actions = useAgentFileActions();
+	// 基线与表单一起冻结：保存只在文件仍是打开时的原文时写入，冲突后再点保存仍会冲突，不会静默覆盖。
+	const [base] = useState(text);
 	const original = useMemo(
 		() =>
-			entry && text !== null
-				? parseEntry(entry, text, layout, nameFromFile)
+			entry && base !== null
+				? parseEntry(entry, base, layout, nameFromFile)
 				: null,
-		[entry, text, layout, nameFromFile],
+		[entry, base, layout, nameFromFile],
 	);
 	const [name, setName] = useState(original?.name ?? "");
 	const [values, setValues] = useState<FormValues>(() =>
@@ -421,7 +432,7 @@ function EntryDialog({
 	);
 	const [body, setBody] = useState(original?.body ?? "");
 	/** frontmatter 坏了：整份原文编辑 */
-	const [raw, setRaw] = useState(original?.error ? (text ?? "") : null);
+	const [raw, setRaw] = useState(original?.error ? (base ?? "") : null);
 	const [showErrors, setShowErrors] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
@@ -468,7 +479,7 @@ function EntryDialog({
 			);
 		}
 		try {
-			await actions.write(path, out, creating ? null : text);
+			await actions.write(path, out, creating ? null : base);
 			onClose();
 		} catch (e) {
 			setError(e);
@@ -598,7 +609,11 @@ function EntryDialog({
 						</div>
 					</>
 				)}
-				<AgentErrorText error={error} />
+				{isModifiedError(error) ? (
+					<EditConflict onReload={onReload} />
+				) : (
+					<AgentErrorText error={error} />
+				)}
 			</form>
 		</Dialog>
 	);

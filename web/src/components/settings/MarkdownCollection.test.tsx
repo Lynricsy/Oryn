@@ -196,6 +196,55 @@ describe("MarkdownCollection（技能）", () => {
 		});
 	});
 
+	it("编辑期间文件被外部修改：首次保存冲突，再点保存仍不覆盖；载入最新内容后才能保存", async () => {
+		mountSkills();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "编辑 code-review" }),
+		);
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.change(within(dialog).getByLabelText("描述"), {
+			target: { value: "我的旧稿" },
+		});
+		const external =
+			"---\nname: code-review\ndescription: 别处改的\n---\n新正文。\n";
+		home.files["skills/review/SKILL.md"] = external;
+
+		const save = () =>
+			fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+		save();
+		expect(
+			await within(dialog).findByText(/打开后文件已在别处修改/),
+		).toBeInTheDocument();
+		// 冲突后查询已刷新到外部内容；草稿仍在，基线仍是打开时的原文
+		expect(within(dialog).getByLabelText("描述")).toHaveValue("我的旧稿");
+		save();
+		await waitFor(() =>
+			expect(
+				within(dialog).getByRole("button", { name: "保存" }),
+			).toBeEnabled(),
+		);
+		expect(home.puts).toHaveLength(0);
+		expect(home.files["skills/review/SKILL.md"]).toBe(external);
+
+		fireEvent.click(
+			within(dialog).getByRole("button", {
+				name: "载入最新内容（放弃我的改动）",
+			}),
+		);
+		const reloaded = await screen.findByRole("dialog");
+		await waitFor(() =>
+			expect(within(reloaded).getByLabelText("描述")).toHaveValue("别处改的"),
+		);
+		fireEvent.change(within(reloaded).getByLabelText("描述"), {
+			target: { value: "合并后" },
+		});
+		fireEvent.click(within(reloaded).getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(home.puts).toHaveLength(1));
+		expect(home.puts[0]?.body).toBe(
+			"---\nname: code-review\ndescription: 合并后\n---\n\n新正文。\n",
+		);
+	});
+
 	it("删除：确认后删掉目录下全部文件，并把停用键从 config.yml 清掉", async () => {
 		home.files["config.yml"] =
 			`disabledExtensions:\n  - ${skillKey("code-review")}\n  - skill:other\n`;
