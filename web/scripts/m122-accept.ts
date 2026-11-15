@@ -766,8 +766,76 @@ async function newPage(): Promise<Page> {
 	return p;
 }
 
-/** 截 1280×900 与 390×844 各亮 / 暗一张（换宽度后把 target 滚进视口），最后回到 1280 亮色。 */
-async function shots(p: Page, name: string, target?: Locator) {
+/** target 已挂载且与视口相交（Playwright 的 isVisible 对视口外的已挂载节点也为真，不能用来判断）。 */
+async function inViewport(p: Page, target: Locator): Promise<boolean> {
+	if ((await target.count()) === 0) return false;
+	const box = await target.boundingBox().catch(() => null);
+	const vp = p.viewportSize();
+	if (!box || !vp) return false;
+	return (
+		box.y < vp.height &&
+		box.y + box.height > 0 &&
+		box.x < vp.width &&
+		box.x + box.width > 0
+	);
+}
+
+/**
+ * 把 target 弄进视口，返回是否做到。转录是虚拟列表：目标被后来的长条目挤出视口后会被卸载。
+ * 这时把转录的滚动容器往上滚：取最后一条提示最近的、高于 300px 的可滚动祖先（长提示自身的 max-h-48 内容框也能滚）。
+ * Transcript 只有在 wheel / 键盘事件里记下「用户在往上翻」后才不会在 onScroll 里弹回底部，所以先派发一次 WheelEvent 再 scrollBy。
+ */
+async function reveal(p: Page, target: Locator): Promise<boolean> {
+	for (let i = 0; i < 20; i++) {
+		const mounted = (await target.count()) > 0;
+		// 每次程序化滚动前都派发一次向上的 wheel，让 Transcript 记下「用户在往上翻」；没挂载时再往上滚 400px
+		const hasNotices = (await notices(p).count()) > 0;
+		const moved =
+			hasNotices &&
+			(await notices(p)
+				.last()
+				.evaluate((el, scrollUp) => {
+					for (let n = el.parentElement; n; n = n.parentElement) {
+						const s = getComputedStyle(n).overflowY;
+						if (
+							(s === "auto" || s === "scroll") &&
+							n.clientHeight > 300 &&
+							n.scrollHeight > n.clientHeight
+						) {
+							n.dispatchEvent(
+								new WheelEvent("wheel", { deltaY: -400, bubbles: true }),
+							);
+							if (!scrollUp) return true;
+							const before = n.scrollTop;
+							n.scrollBy(0, -400);
+							return n.scrollTop !== before;
+						}
+					}
+					return false;
+				}, !mounted)
+				.catch(() => false));
+		if (mounted) {
+			await target.scrollIntoViewIfNeeded({ timeout: 3_000 }).catch(() => {});
+			await sleep(150);
+			if (await inViewport(p, target)) return true;
+		} else if (!moved) break;
+		// 已挂载却滚不进视口：试三次就放弃（调用方抛错）
+		if (mounted && i >= 2) break;
+		await sleep(250);
+	}
+	return inViewport(p, target);
+}
+
+/**
+ * 截 1280×900 与 390×844 各亮 / 暗一张，最后回到 1280 亮色。给了 target 时它必须在画面里，弄不进视口就抛错
+ * （不静默拍错图）。prepare 在每次换宽度后执行，用来打开目标所在的面板（如手机布局下的信息面板）。
+ */
+async function shots(
+	p: Page,
+	name: string,
+	target?: Locator,
+	prepare?: (width: number) => Promise<void>,
+) {
 	for (const [w, h] of [
 		[1280, 900],
 		[390, 844],
@@ -1158,7 +1226,15 @@ async function Z2() {
 			true,
 			`卡片下出现警告：${oneLine((await callout.textContent()) ?? "")}`,
 		);
-		await shots(page, "Z2-agent-config-card", callout);
+		await shots(page, "Z2-agent-config-card", callout, async (w) => {
+			if (w >= 640 || (await callout.count()) > 0) return;
+			const again = await saveMcp(`${Z2_MCP}\n`);
+			check(
+				again.status === 200,
+				`手机布局下重新保存 mcp.json → ${again.status}`,
+			);
+			await callout.waitFor({ timeout: 15_000 });
+		});
 
 		// 删除 rules/z2.md：截图换过宽度后文件浏览器可能停在单栏编辑视图或目录已折叠，重新加载后从树里点
 		await page.reload({ waitUntil: "domcontentloaded" });
