@@ -19,12 +19,15 @@ import (
 )
 
 // fakeRunner 是 runner 形态 orbd 的替身：用 ort_ 令牌拨 link、hello 带 runner 信息，记下收到的 ctl 请求。
+// mod 非 nil 时在发送前改写 hello。
 type fakeRunner struct {
 	url, token string
 	features   []string
+	mod        func(*apigen.LinkCtlHelloParams)
 
 	mu    sync.Mutex
 	sess  *link.Session
+	ctl   *link.Ctl
 	calls []string
 }
 
@@ -44,12 +47,23 @@ func (r *fakeRunner) connect(t *testing.T) {
 	}})
 	r.mu.Lock()
 	r.sess = sess
+	r.ctl = ctl
 	r.mu.Unlock()
-	require.NoError(t, ctl.Notify("hello", apigen.LinkCtlHelloParams{
+	hello := apigen.LinkCtlHelloParams{
 		OrbdVersion: "fake-runner", AgentVersion: "omp/test", Os: "linux", Arch: "arm64", Threads: []apigen.LinkCtlHelloThread{},
 		Features: r.features,
 		Runner:   &apigen.LinkRunnerInfo{Hostname: "box", Dirs: []apigen.RunnerDir{{Path: "/work/app", Name: "app", Git: true}}},
-	}))
+	}
+	if r.mod != nil {
+		r.mod(&hello)
+	}
+	require.NoError(t, ctl.Notify("hello", hello))
+}
+
+func (r *fakeRunner) control() *link.Ctl {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ctl
 }
 
 func (r *fakeRunner) disconnect() {

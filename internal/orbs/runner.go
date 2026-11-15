@@ -44,6 +44,33 @@ var (
 	ErrRunnerUnsupported = errors.New("orbs: operation not supported on a runner")
 )
 
+// CodeRunnerUnsupported 是 runner 的 link 发来不允许的 ctl 请求时回的错误码（同 REST 的 runner_unsupported）。
+const CodeRunnerUnsupported = "runner_unsupported"
+
+// runnerRequests / runnerNotifies 是 runner 的 link 上放行的 orbd→orynd ctl 请求与通知：只有 runner 形态的 orbd
+// 正常流程会发的（转录上报、agent 状态、终端缺口、指标）。thread.* / schedule.* / project.scripts.* 只经 orbd.sock
+// 转发，runner 不监听 orbd.sock；setup / 受管服务 / 桌面的通知 runner 也没有。被攻破的 runner 发其余方法时，
+// 请求回 runner_unsupported，通知丢弃（S2：控制面的密钥与建 orb 的能力不去 runner）。
+var (
+	runnerRequests = map[string]bool{
+		string(apigen.MethodEntriesCursors): true,
+		string(apigen.MethodEntriesAppend):  true,
+	}
+	runnerNotifies = map[string]bool{
+		string(apigen.MethodHello):            true,
+		string(apigen.MethodAgentStatus):      true,
+		string(apigen.MethodAgentGap):         true,
+		string(apigen.MethodTerminalGap):      true,
+		string(apigen.MethodEntriesReset):     true,
+		string(apigen.MethodEntriesResetDone): true,
+		string(apigen.MethodMetricsSample):    true,
+	}
+)
+
+func runnerRequestAllowed(method string) bool { return runnerRequests[method] }
+
+func runnerNotifyAllowed(method string) bool { return runnerNotifies[method] }
+
 // Runner 是一个 runner 的完整信息。
 type Runner struct {
 	// Name 与 CreatedAt 取自其 provider 行。
@@ -371,10 +398,23 @@ func (s *Service) afterFunc(d time.Duration, fn func()) func() bool {
 	return time.AfterFunc(d, fn).Stop
 }
 
-// runnerTimer 是一个 runner 的离线定时器（以指针区分新旧定时器）。
-type runnerTimer struct{ stop func() bool }
+// runnerTimer 是一个 runner 的离线定时器（以指针区分新旧定时器）。firing 受 s.mu 保护：回调确认「仍是当前定时器且
+// 没有 link」之后置真，此时它留在 runnerOffline 里直到提交完离线状态，done 随回调结束关闭。
+type runnerTimer struct {
+	stop   func() bool
+	firing bool
+	done   chan struct{}
+}
+
+// hookRunnerOfflineChecked（仅测试）在离线回调确认仍无 link 之后、提交离线状态之前调用；hookRunnerLinkAwaitsOffline
+// （仅测试）在新发布的 runner link 开始等正在提交的离线回调时调用。
+var hookRunnerOfflineChecked, hookRunnerLinkAwaitsOffline func(orbID string)
 
 // armRunnerOffline 在 runner 的 link 断开时起离线定时器：到期仍无 link → ready / connecting → stopped。
+//
+// 「仍无 link」与离线提交对重连是原子的：回调在 s.mu 下检查 links 并置 firing，attach 在同一把锁下发布 link
+// 并查看定时器——要么回调看到新 link 而放弃，要么新 link 看到 firing、等离线提交完才处理 hello（onHello 再把
+// stopped 拉回 connecting → ready）。离线提交本身不持 s.mu（publish 会再取它）。
 func (s *Service) armRunnerOffline(orbID string) {
 	ts := s.nowMs()
 	if err := s.st.Q.TouchRunner(context.Background(), db.TouchRunnerParams{LastSeenAt: ts, OrbID: orbID}); err != nil {
@@ -388,18 +428,31 @@ func (s *Service) armRunnerOffline(orbID string) {
 	if old := s.runnerOffline[orbID]; old != nil {
 		old.stop()
 	}
-	t := &runnerTimer{}
+	t := &runnerTimer{done: make(chan struct{})}
 	// 回调先取 s.mu：登记（本函数持锁）完成之前它不会读到 runnerOffline
 	t.stop = s.afterFunc(RunnerOfflineGrace, func() {
+		defer close(t.done)
 		s.mu.Lock()
 		mine := s.runnerOffline[orbID] == t
 		_, linked := s.links[orbID]
-		if mine {
+		fire := mine && !linked
+		t.firing = fire
+		if mine && linked {
 			delete(s.runnerOffline, orbID)
 		}
 		s.mu.Unlock()
-		if !mine || linked {
+		if !fire {
 			return
+		}
+		defer func() {
+			s.mu.Lock()
+			if s.runnerOffline[orbID] == t {
+				delete(s.runnerOffline, orbID)
+			}
+			s.mu.Unlock()
+		}()
+		if hookRunnerOfflineChecked != nil {
+			hookRunnerOfflineChecked(orbID)
 		}
 		ctx := context.Background()
 		for _, from := range []string{StateReady, StateConnecting} {
@@ -413,7 +466,22 @@ func (s *Service) armRunnerOffline(orbID string) {
 	s.runnerOffline[orbID] = t
 }
 
-// stopRunnerOffline 取消 runner 的离线定时器（新 link 到来或 runner 删除时）。
+// cancelRunnerOfflineLocked 在新 link 发布时（调用方持 s.mu）取消 runner 的离线定时器。定时器已在提交离线
+// （firing）时不动它、返回它，调用方解锁后等 done 再处理该 link 的消息。
+func (s *Service) cancelRunnerOfflineLocked(orbID string) *runnerTimer {
+	t := s.runnerOffline[orbID]
+	if t == nil {
+		return nil
+	}
+	if t.firing {
+		return t
+	}
+	t.stop()
+	delete(s.runnerOffline, orbID)
+	return nil
+}
+
+// stopRunnerOffline 取消 runner 的离线定时器（runner 删除时）。
 func (s *Service) stopRunnerOffline(orbID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

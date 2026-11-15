@@ -8,8 +8,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -30,6 +34,9 @@ type orbLink struct {
 	prepared chan struct{}
 	// runner 为真时这是 runner 的常驻 orb 的 link（M11b）。
 	runner bool
+	// rejected 为真时发布后的复核没有通过（令牌已吊销 / orb 已删除等）：在关闭 published 之前写入，
+	// ctl 处理器等到 published 之后读它，为真则一律不处理。
+	rejected bool
 }
 
 func (l *orbLink) helloSeen() bool {
@@ -140,15 +147,16 @@ func (s *Service) LinkHandler() http.Handler {
 
 func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 	var orb db.Orb
-	sess, err := link.Accept(w, r, func(r *http.Request, token string) error {
-		o, err := s.orbForToken(r.Context(), token)
+	var token string
+	sess, err := link.Accept(w, r, func(r *http.Request, tok string) error {
+		o, err := s.orbForToken(r.Context(), tok)
 		if err != nil {
 			return err
 		}
 		if !orbLinkAcceptable(o) {
 			return fmt.Errorf("orb %s is %s", o.ID, o.State)
 		}
-		orb = o
+		orb, token = o, tok
 		return nil
 	})
 	if err != nil {
@@ -160,7 +168,23 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		// runner 接入即上线：stopped → connecting，hello 之后 → ready
 		s.runnerConnecting(r.Context(), orb.ID)
 	}
-	s.attach(orb, sess, r.RemoteAddr)
+	s.attach(orb, sess, r.RemoteAddr, func(ctx context.Context) error { return s.recheckToken(ctx, orb.ID, token) })
+}
+
+// recheckToken 是 WebSocket link 发布后的复核：令牌仍映射到同一台 orb（ort_ 的 provider 未停用、令牌未被换掉；
+// oot_ 未被轮换），且 orb 仍接受 link（未删除）。
+func (s *Service) recheckToken(ctx context.Context, orbID, token string) error {
+	o, err := s.orbForToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if o.ID != orbID {
+		return fmt.Errorf("token now belongs to orb %s", o.ID)
+	}
+	if o.DeletedAt != nil || !orbLinkAcceptable(o) {
+		return fmt.Errorf("orb %s is %s", o.ID, o.State)
+	}
+	return nil
 }
 
 // ServeConn 在已建立的字节流上服务协调 orb 的 link（M9 协调宿主分册 H6）：conn 是 orynd 与它拉起的
@@ -186,13 +210,26 @@ func (s *Service) ServeConn(ctx context.Context, orbID string, conn net.Conn) er
 		return err
 	}
 	defer sess.Close()
-	s.attach(orb, sess, "coordinator-host")
+	s.attach(orb, sess, "coordinator-host", func(ctx context.Context) error {
+		o, err := s.Get(ctx, orbID)
+		if err != nil {
+			return err
+		}
+		if !o.Coordinator || !linkAcceptable(o.State) {
+			return fmt.Errorf("orb %s is %s", orbID, o.State)
+		}
+		return nil
+	})
 	return nil
 }
 
 // attach 是 link 建立之后的通用逻辑（WebSocket link 与协调宿主的 socketpair 共用）：等首条 ctl 流、发布 link、
-// 分派后续流，直到会话结束。
-func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
+// 复核准入、分派后续流，直到会话结束。
+//
+// 准入只在升级前鉴权过一次，之后最长 30 秒在等首条 ctl 流，期间吊销 / 删除的 Kick 看不到这条会话。所以先发布
+// （此后 Kick 一定能找到它），再用 recheck 复核令牌与 orb 状态；复核通过之前不分派任何 ctl 消息，不通过则关闭。
+// 吊销事务提交在复核之前，复核就会失败；提交在复核之后，吊销之后的 Kick 就能在 links 里看到它，没有空窗。
+func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck func(context.Context) error) {
 	hctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	first, err := sess.AcceptStream(hctx)
 	cancel()
@@ -200,13 +237,21 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 		slog.Warn("orb link 首条流不是 ctl", "orb", orb.ID, "err", err)
 		return
 	}
-	// ctl 端点先完整构造、link 先发布，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
-	// hello 等回调也不会在发布之前运行。
+	// ctl 端点先完整构造、link 先发布并通过复核，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
+	// hello 等回调也不会在发布与复核之前运行。
 	published := make(chan struct{})
 	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb)}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 			<-published
+			if l.rejected {
+				return nil, &link.CtlError{Code: "unauthorized", Message: "link rejected"}
+			}
+			if l.runner && !runnerRequestAllowed(method) {
+				// runner 不可信：只放行它正常流程会发的请求（控制面的密钥不去 runner）
+				slog.Warn("runner 发来不允许的 ctl 请求", "orb", orb.ID, "method", method)
+				return nil, &link.CtlError{Code: CodeRunnerUnsupported, Message: method + " is not available to a runner"}
+			}
 			s.hmu.RLock()
 			fn := s.reqs[method]
 			s.hmu.RUnlock()
@@ -217,6 +262,13 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 		},
 		OnNotify: func(ctx context.Context, method string, params json.RawMessage) {
 			<-published
+			if l.rejected {
+				return
+			}
+			if l.runner && !runnerNotifyAllowed(method) {
+				slog.Warn("runner 发来不允许的 ctl 通知，忽略", "orb", orb.ID, "method", method)
+				return
+			}
 			s.onNotify(ctx, l, method, params)
 		},
 	})
@@ -225,20 +277,39 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 	l.gen = s.linkGen
 	old := s.links[orb.ID]
 	s.links[orb.ID] = l
+	var firing *runnerTimer
+	if l.runner {
+		// 新 link 到来：取消上一条 link 断开时起的离线定时器。与发布同在 s.mu 下：定时器回调要么看到本 link
+		// 而放弃，要么已在提交离线（firing），本 link 等它提交完再处理 hello（hello 会把 stopped 拉回来）。
+		firing = s.cancelRunnerOfflineLocked(orb.ID)
+	}
 	s.mu.Unlock()
 	if s.hookLinkPublished != nil {
 		s.hookLinkPublished(orb.ID)
 	}
+	if firing != nil {
+		if hookRunnerLinkAwaitsOffline != nil {
+			hookRunnerLinkAwaitsOffline(orb.ID)
+		}
+		<-firing.done
+	}
+	rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := recheck(rctx); err != nil {
+		slog.Warn("orb link 发布后复核未通过，关闭", "orb", orb.ID, "err", err)
+		l.rejected = true
+	}
+	rcancel()
 	close(published)
 	if old != nil {
 		slog.Info("orb link 被新连接替换", "orb", orb.ID)
 		_ = old.sess.Close()
 	}
-	slog.Info("orb link 已连接", "orb", orb.ID, "remote", remote)
-	if l.runner {
-		// 新 link 到来：取消上一条 link 断开时起的离线定时器
-		s.stopRunnerOffline(orb.ID)
+	if l.rejected {
+		_ = sess.Close()
+		s.onLinkDown(l)
+		return
 	}
+	slog.Info("orb link 已连接", "orb", orb.ID, "remote", remote)
 
 	ctx, cancelStreams := context.WithCancel(context.Background())
 	defer cancelStreams()
@@ -298,7 +369,9 @@ func (s *Service) onNotify(ctx context.Context, l *orbLink, method string, param
 			slog.Warn("重复的 hello，忽略", "orb", l.orbID)
 			return
 		}
-		l.hello = h
+		// S4：hello 的字段会落库并推给所有客户端，先按上限收紧（之后各处只用收紧后的值）
+		l.hello = sanitizeHello(h)
+		h = l.hello
 		close(l.helloCh)
 		ov, av := h.OrbdVersion, h.AgentVersion
 		if err := s.st.Q.SetOrbVersions(ctx, db.SetOrbVersionsParams{OrbdVersion: &ov, AgentVersion: &av, ID: l.orbID}); err != nil {
@@ -564,4 +637,73 @@ func (s *Service) onLinkDown(l *orbLink) {
 	if l.runner {
 		s.armRunnerOffline(l.orbID)
 	}
+}
+
+// hello 字段的上限（S4）：这些值会落库（orbs 版本、runners 行）并随 Orb / Runner 视图推给所有客户端，
+// 而 ctl 单行上限有 96 MiB。超限一律截断 / 丢弃而不拒绝 link：诚实的 orbd 远在上限之内，不受影响。
+const (
+	maxHelloFeatures   = 32
+	maxHelloFeatureLen = 64
+	maxHelloDirs       = 64
+	maxHelloPathLen    = 4096
+	maxHelloTextLen    = 255
+)
+
+// sanitizeHello 返回收紧后的 hello：features 只留前 32 个合规项（非空、≤64 B、无控制字符）；runner.dirs 只留前
+// 64 个合规项（path 非空、≤4096 B、绝对路径、无控制字符；name 去控制字符并截到 255 B）；hostname / os / arch /
+// orbdVersion / agentVersion 去控制字符并截到 255 B。
+func sanitizeHello(h apigen.LinkCtlHelloParams) apigen.LinkCtlHelloParams {
+	h.OrbdVersion = clipText(h.OrbdVersion, maxHelloTextLen)
+	h.AgentVersion = clipText(h.AgentVersion, maxHelloTextLen)
+	h.Os = clipText(h.Os, maxHelloTextLen)
+	h.Arch = clipText(h.Arch, maxHelloTextLen)
+	if h.Features != nil {
+		feats := make([]string, 0, min(len(h.Features), maxHelloFeatures))
+		for _, f := range h.Features {
+			if len(feats) == maxHelloFeatures {
+				break
+			}
+			if f != "" && len(f) <= maxHelloFeatureLen && !hasControl(f) {
+				feats = append(feats, f)
+			}
+		}
+		h.Features = feats
+	}
+	if h.Runner != nil {
+		info := apigen.LinkRunnerInfo{Hostname: clipText(h.Runner.Hostname, maxHelloTextLen)}
+		if h.Runner.Dirs != nil {
+			info.Dirs = make([]apigen.RunnerDir, 0, min(len(h.Runner.Dirs), maxHelloDirs))
+			for _, d := range h.Runner.Dirs {
+				if len(info.Dirs) == maxHelloDirs {
+					break
+				}
+				if d.Path == "" || len(d.Path) > maxHelloPathLen || !filepath.IsAbs(d.Path) || hasControl(d.Path) {
+					continue
+				}
+				info.Dirs = append(info.Dirs, apigen.RunnerDir{Path: d.Path, Name: clipText(d.Name, maxHelloTextLen), Git: d.Git})
+			}
+		}
+		h.Runner = &info
+	}
+	return h
+}
+
+func hasControl(s string) bool { return strings.ContainsFunc(s, unicode.IsControl) }
+
+// clipText 去掉 s 里的控制字符，并按 UTF-8 字符边界截到至多 n 字节。
+func clipText(s string, n int) string {
+	if len(s) <= n && !hasControl(s) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			continue
+		}
+		if b.Len()+utf8.RuneLen(r) > n {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
