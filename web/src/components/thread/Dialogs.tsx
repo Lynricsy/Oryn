@@ -23,7 +23,8 @@ import type {
 import { realtime } from "../../realtime/socket";
 import { forkThread, patchThread, renameThread } from "../../state/actions";
 import type { JsonRecord } from "../../state/message-builder";
-import { getThreadStore, useThread } from "../../state/stores";
+import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
+import { subagentFiles, subagentMessages } from "../../state/subagent-entries";
 import { uiStore, useUi } from "../../state/ui";
 import { isRecord } from "../../tool-render/util";
 import { RoleList } from "../composer/RolePicker";
@@ -36,7 +37,7 @@ import {
 } from "../transcript/context";
 import { MessageView } from "../transcript/MessageView";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, Meter, type Tone, thresholdTone } from "../ui/data";
+import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import {
@@ -590,7 +591,11 @@ const GOAL_TONE: Record<string, Tone> = {
 	complete: "ok",
 };
 
-function SubagentDialog({
+/**
+ * 子 agent 对话框。控制面已入库的子 agent 会话（`<产物目录>/<id>.jsonl` 的条目）优先：有就直接展示、不再向 agent
+ * 拉取，orb 挂起时也能看；没有才用 `get_subagent_messages`。agent 不可查询时控制按钮与引导输入禁用。
+ */
+export function SubagentDialog({
 	threadId,
 	id,
 	onClose,
@@ -603,8 +608,16 @@ function SubagentDialog({
 	const sub = useThread(threadId, (s) =>
 		Object.values(s.subagents).find((x) => x.id === id),
 	);
+	const queryable = useThread(threadId, agentQueryable);
+	const entries = useThread(threadId, (s) => s.entries);
+	const local = useMemo(() => subagentMessages(entries, id), [entries, id]);
+	const saved = useMemo(
+		() => subagentFiles(entries).find((f) => f.id === id),
+		[entries, id],
+	);
 	const msgs = useQuery({
 		queryKey: ["rpc", threadId, "subagent-messages", id],
+		enabled: local.length === 0 && queryable,
 		refetchInterval: sub && sub.status === "started" ? 2000 : false,
 		retry: false,
 		queryFn: () =>
@@ -612,7 +625,12 @@ function SubagentDialog({
 	});
 	const [steer, setSteer] = useState("");
 	const [error, setError] = useState<unknown>(null);
-	const messages = (msgs.data?.messages ?? []) as unknown as JsonRecord[];
+	const remote = msgs.data?.messages;
+	const messages = useMemo(
+		() =>
+			local.length > 0 ? local : ((remote ?? []) as unknown as JsonRecord[]),
+		[local, remote],
+	);
 	const ctx: TranscriptContextValue = useMemo(() => {
 		const results = new Map<string, JsonRecord>();
 		for (const m of messages)
@@ -637,16 +655,18 @@ function SubagentDialog({
 			setError(e);
 		}
 	};
+	const agent = sub?.agent ?? saved?.agent;
 	return (
 		<Dialog
 			open
 			wide
 			onClose={onClose}
-			title={`${sub?.agent ?? t("subagent.title")} · ${sub?.description ?? id}`}
+			title={`${agent ?? t("subagent.title")} · ${sub?.description ?? saved?.task ?? id}`}
 			footer={
 				<>
 					<Button
 						size="sm"
+						disabled={!queryable}
 						onClick={() =>
 							void act({ type: "cancel_subagent", subagentId: id })
 						}
@@ -656,12 +676,14 @@ function SubagentDialog({
 					<Button
 						size="sm"
 						variant="danger"
+						disabled={!queryable}
 						onClick={() => void act({ type: "abort_subagent", agentId: id })}
 					>
 						{t("subagent.abort")}
 					</Button>
 					<Button
 						size="sm"
+						disabled={!queryable}
 						onClick={() => void act({ type: "revive_subagent", agentId: id })}
 					>
 						{t("subagent.revive")}
@@ -669,10 +691,17 @@ function SubagentDialog({
 				</>
 			}
 		>
-			{sub && (
+			{!queryable && (
+				<div className="mb-3">
+					<Callout tone="neutral" role="status">
+						{t("subagent.offline")}
+					</Callout>
+				</div>
+			)}
+			{(sub || saved) && (
 				<div className="mb-3 flex flex-wrap items-center gap-1.5">
-					{sub.agent && <Badge icon="robot">{sub.agent}</Badge>}
-					{sub.status && (
+					{agent && <Badge icon="robot">{agent}</Badge>}
+					{sub?.status && (
 						<Badge tone={subagentTone(sub.status)}>{sub.status}</Badge>
 					)}
 					<span className="min-w-0 truncate font-mono text-2xs text-faint">
@@ -681,7 +710,7 @@ function SubagentDialog({
 				</div>
 			)}
 			<ErrorText error={error ?? msgs.error} />
-			{msgs.isPending && <Spinner />}
+			{msgs.isLoading && <Spinner />}
 			<TranscriptContext.Provider value={ctx}>
 				<div className="flex flex-col gap-2">
 					{messages
@@ -696,7 +725,7 @@ function SubagentDialog({
 				className="mt-3 flex gap-2"
 				onSubmit={(e) => {
 					e.preventDefault();
-					if (!steer.trim()) return;
+					if (!queryable || !steer.trim()) return;
 					void act({
 						type: "steer_subagent",
 						subagentId: id,
@@ -707,9 +736,10 @@ function SubagentDialog({
 				<TextInput
 					placeholder={t("subagent.steer")}
 					value={steer}
+					disabled={!queryable}
 					onChange={(e) => setSteer(e.target.value)}
 				/>
-				<Button type="submit" disabled={!steer.trim()}>
+				<Button type="submit" disabled={!queryable || !steer.trim()}>
 					{t("common.send")}
 				</Button>
 			</form>

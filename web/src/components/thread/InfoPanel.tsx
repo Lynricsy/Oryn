@@ -1,10 +1,11 @@
 /**
  * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、浏览器 Profile（M8）、受管服务（M4）、
- * 上下文占用（主动请求上下文报告，分消息 / 工具定义 / 系统提示词三段）、todo（可编辑，`set_todos`）、子 agent 列表，
+ * 上下文占用（主动请求上下文报告，分消息 / 工具定义 / 系统提示词三段）、todo（可编辑，`set_todos`）、子 agent 列表
+ * （含已入库、agent 离线时仍可看的子 agent 会话）、能力（只读，`CapabilitiesSection`），
  * 以及报告 / btw 入口。外观以 D 稿（`.dev/design/explore/d.html` 的右栏）为准。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Orb } from "../../api/client";
 import { useOrbMetrics, useRunnerOfOrb } from "../../api/queries";
@@ -14,6 +15,7 @@ import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
+import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore, useUi } from "../../state/ui";
 import { DesktopProfileLine } from "../desktop/profile-status";
 import {
@@ -29,6 +31,7 @@ import { Icon, type IconName } from "../ui/icons";
 import { DockerBadge } from "../ui/OrbBadges";
 import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Sparkline } from "../ui/primitives";
+import { CapabilitiesSection } from "./CapabilitiesSection";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
 import { EnvRuns } from "./EnvBanner";
 import { ServicesSection } from "./ServicesSection";
@@ -618,6 +621,8 @@ function SubagentSection({ threadId }: { threadId: string }) {
 			() => undefined,
 		);
 	}, [ready, threadId]);
+	const entries = useThread(threadId, (s) => s.entries);
+	const files = useMemo(() => subagentFiles(entries), [entries]);
 	const fold = useCardFold("subagents");
 	const live = Object.values(subs).filter((s) => s.id);
 	const ids = new Set(live.map((s) => s.id));
@@ -630,6 +635,16 @@ function SubagentSection({ threadId }: { threadId: string }) {
 		})),
 		...snapshots.filter((s) => !ids.has(s.id)),
 	];
+	// 已入库的子 agent 会话（agent 离线时也在）：补上实时与快照里都没有的，状态未知
+	for (const r of rows) ids.add(r.id);
+	for (const f of files)
+		if (!ids.has(f.id))
+			rows.push({
+				id: f.id,
+				agent: f.agent ?? f.id,
+				status: "",
+				description: f.task,
+			});
 	const running = rows.filter(
 		(s) => s.status === "started" || s.status === "running",
 	).length;
@@ -898,6 +913,7 @@ export function InfoPanel({ threadId }: { threadId: string }): ReactNode {
 			<ContextSection threadId={threadId} />
 			<TodoSection threadId={threadId} />
 			<SubagentSection threadId={threadId} />
+			<CapabilitiesSection threadId={threadId} />
 			<ToolsSection />
 		</aside>
 	);

@@ -180,7 +180,16 @@ describe("RightPanel", () => {
 		act(() => {
 			const s = getThreadStore(id).getState();
 			s.patchLocal({
-				entries: [...s.entries, {} as ThreadViewState["entries"][number]],
+				entries: [
+					...s.entries,
+					{
+						seq: 999,
+						file: "x.jsonl",
+						entryId: "x",
+						type: "message",
+						payload: {},
+					},
+				],
 			});
 		});
 		expect(
