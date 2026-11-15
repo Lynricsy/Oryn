@@ -187,3 +187,26 @@ describe("buildTranscript 的条目可见性", () => {
 			expect(kindsOf(type), type).toEqual([]);
 	});
 });
+
+describe("mode_change 带上前一条模式", () => {
+	it("同一轨迹上每条 mode_change 拿到前一条（跨会话文件延续），第一条没有", () => {
+		const a = chain("a.jsonl", [
+			["mode_change", { mode: "goal", data: { goal: { objective: "x" } } }],
+			["message", user("hi")],
+		]);
+		const b = chain("b.jsonl", [
+			["mode_change", { mode: "goal_paused" }],
+			["mode_change", { mode: "none" }],
+		]);
+		const metas = build([...a, ...b]).filter((i) => i.kind === "meta");
+		expect(
+			metas.map((i) =>
+				i.kind === "meta" ? [i.entry.mode, i.prevMode?.mode] : [],
+			),
+		).toEqual([
+			["goal", undefined],
+			["goal_paused", "goal"],
+			["none", "goal_paused"],
+		]);
+	});
+});
