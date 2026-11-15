@@ -89,6 +89,9 @@ type pendingCmd struct {
 	origin cmdOrigin
 	// tag 非空时这条消息是带标签的自动化投递，恰好结算一次 TurnEnded（契约 C1）；结算后清空。
 	tag string
+	// omfg 是客户端发起的 omfg 命令在保存位置对话框里的作答记录（M12.2，admitOmfgLocked / noteOmfgChoiceLocked）；
+	// 其它命令为 nil。授权随命令结束（应答、失败、删除）一起消失。
+	omfg *omfgChoice
 }
 
 // responseHead 是应答中本包关心的字段。
@@ -1079,6 +1082,12 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
 		p.leafBefore = copyStr(t.leaf)
 	}
+	if cmdType == "omfg" {
+		if err := admitOmfgLocked(t, p); err != nil {
+			t.mu.Unlock()
+			return nil, err
+		}
+	}
 	if messageCommands[cmdType] && len(t.msgOrder) > 0 {
 		// 前面有仍在投递附件的消息：按受理顺序排在它后面
 		sl, err := s.reserveMsgLocked(t, false)
@@ -1591,10 +1600,11 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 		needWake = !t.agentReady() || orbState != orbStateReady
 	}
 	if isUI {
+		// 先记 omfg 的保存位置选择：要读仍待答的请求帧（标题、选项）
+		noteOmfgChoiceLocked(t, id, frame)
 		t.live.ResolveUI(id)
 		s.out().UIResolved(t.id, id)
 		s.observer().InputResolved(t.id, id)
-		noteOmfgChoiceLocked(t, frame)
 	}
 	s.clearUnreadLocked(ctx, t)
 	s.recompute(ctx, t)

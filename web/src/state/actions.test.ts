@@ -206,6 +206,8 @@ describe("describeSlashResult", () => {
 			"too_large",
 			"invalid_content",
 			"store_failed",
+			"conflict",
+			"content_mismatch",
 		]) {
 			const r = describeSlashResult(
 				{ type: "omfg", complaint: "x" },

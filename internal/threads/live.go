@@ -308,6 +308,30 @@ func (l *Live) HasUI(id string) bool {
 	return ok
 }
 
+// Seq 返回已处理的帧序号：单调递增，Reset 不归零。
+func (l *Live) Seq() int { return l.seq }
+
+// UIRequest 返回仍待答的 UI 请求帧及其到达时的帧序号。
+func (l *Live) UIRequest(id string) (json.RawMessage, int, bool) {
+	s, ok := l.pendingUI[id]
+	return s.frame, s.seq, ok
+}
+
+// WidgetLines 返回 key 当前 setWidget 帧的 widgetLines；没有该 key 或行不全是字符串时 ok=false。
+func (l *Live) WidgetLines(key string) ([]string, bool) {
+	s, ok := l.displays["setWidget\x00"+key]
+	if !ok {
+		return nil, false
+	}
+	var w struct {
+		WidgetLines []string `json:"widgetLines"`
+	}
+	if json.Unmarshal(s.frame, &w) != nil {
+		return nil, false
+	}
+	return w.WidgetLines, true
+}
+
 // ResolveUI 移除一个待答 UI 请求；返回是否存在（用于「先到先得」）。
 func (l *Live) ResolveUI(id string) bool {
 	if _, ok := l.pendingUI[id]; !ok {

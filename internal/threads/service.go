@@ -242,18 +242,19 @@ func (s *Service) Close() {
 
 func (s *Service) now() int64 { return time.Now().UnixMilli() }
 
-// go_ 在服务生命周期内启动后台任务；Close 开始后不再启动。
-func (s *Service) go_(fn func(ctx context.Context)) {
+// go_ 在服务生命周期内启动后台任务；Close 开始后不再启动，返回 false。
+func (s *Service) go_(fn func(ctx context.Context)) bool {
 	s.goMu.Lock()
 	defer s.goMu.Unlock()
 	if s.closing {
-		return
+		return false
 	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		fn(s.ctx)
 	}()
+	return true
 }
 
 // thread 是单个线程的内存状态。
@@ -327,9 +328,9 @@ type thread struct {
 	turns     []turnRef
 	steers    []string
 	lastYield *yieldInfo
-	// omfgGlobal 为真表示客户端发起的 omfg 在途时，用户在保存位置对话框里点了全局选项（M12.2，noteOmfgChoiceLocked）；
-	// 每次 omfg 应答时取出并复位。
-	omfgGlobal bool
+	// cfgSyncs 是 omfg 应答已移交后台、仍在回写中央配置的条数（M12.2，omfgSaveLocked 登记、finishOmfg 撤销）：
+	// 应答已离开 pending，靠它挡住冻结闸门，免得回写读 orb 时 orb 被冻结。
+	cfgSyncs int
 	// reloadPending 为真表示 omp 配置变化后还欠一次 reload_plugins（会话静止时下发）；restartReasons 是需重启才能
 	// 生效的配置变化（M13 6.3，见 apply.go）。agent 退出时都清空。
 	reloadPending  bool
@@ -601,7 +602,7 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 			slog.Debug("threads: 冻结闸门未通过", "orb", orbID, "thread", t.id,
 				"settled", t.settled, "unsynced", t.unsynced, "starting", t.starting,
 				"deliveries", t.deliveries, "msgOrder", len(t.msgOrder), "liveQuiescent", t.live.Quiescent(),
-				"queue", len(t.queue), "pending", len(t.pending))
+				"queue", len(t.queue), "pending", len(t.pending), "cfgSyncs", t.cfgSyncs)
 			return false
 		}
 	}
@@ -618,7 +619,7 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 
 // quiescentLocked 报告线程是否静止（冻结 / 停机的前提）。调用方持有 t.mu。
 func (t *thread) quiescentLocked() bool {
-	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && len(t.msgOrder) == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0
+	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && len(t.msgOrder) == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0 && t.cfgSyncs == 0
 }
 
 // touchAgent 节流地记录 agent 活动（每 orb 至多 5s 一次）。

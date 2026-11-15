@@ -276,9 +276,11 @@
 				"unsupported_path": "这台 orb 的环境版本较旧，无法识别保存位置",
 				"scope_unconfirmed": "没有收到你对「全局」的选择",
 				"orb_read_failed": "读取 orb 里的规则文件失败",
-				"too_large": "规则文件超过大小上限",
-				"invalid_content": "规则文件不是有效的文本",
-				"store_failed": "写入中央配置失败"
+				"too_large": "规则文件超过大小上限，或本项目的 Agent 配置总量 / 文件数已满（清理项目 Agent 配置后重试）",
+				"invalid_content": "规则文件不是有效的文本，或不是 /omfg 生成的 TTSR 规则格式",
+				"store_failed": "写入中央配置失败",
+				"conflict": "中央配置里已有同名但内容不同的规则，没有覆盖；请到项目或全局 Agent 配置里手工合并",
+				"content_mismatch": "orb 里保存的规则与你确认时看到的预览不一致，没有写入；请重新执行 /omfg"
 			},
 			"cleared": "已清空上下文（移除 {{count}} 条消息）",
 			"clearedNoCount": "已清空上下文",
@@ -971,7 +973,8 @@
 		"runner_offline": "runner 不在线：在那台机器上重新运行 orbd run --runner 后再试",
 		"runner_unsupported": "runner 不支持这个操作（冻结、停机、删除、快照、连环境 fork）",
 		"dir_not_served": "这个目录不在 runner 声明的目录之内",
-		"thread_required": "runner 的文件与改动请求需要指明线程"
+		"thread_required": "runner 的文件与改动请求需要指明线程",
+		"omfg_in_progress": "这个线程里已有一个 /omfg 在进行，先完成或取消它再试"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",

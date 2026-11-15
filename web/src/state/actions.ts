@@ -175,6 +175,8 @@ const OMFG_SYNC_WHY: Record<string, ParseKeys> = {
 	too_large: "slash.result.omfgWhy.too_large",
 	invalid_content: "slash.result.omfgWhy.invalid_content",
 	store_failed: "slash.result.omfgWhy.store_failed",
+	conflict: "slash.result.omfgWhy.conflict",
+	content_mismatch: "slash.result.omfgWhy.content_mismatch",
 };
 
 /**

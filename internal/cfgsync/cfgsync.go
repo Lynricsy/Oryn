@@ -1,8 +1,9 @@
 // Package cfgsync 把用户在 orb 里用 /omfg 保存的规则写回 Oryn 中央配置（M12.2 契约 C5、C6）。
 //
 // 回写由控制面发起：threads 在用户发起的 omfg 应答 `saved` 之后调用 Saver.SaveRule。来自 orb 的一切输入
-// （保存位置、文件内容）都不可信：保存位置必须匹配全串锚定的白名单，写入中央的相对路径由捕获到的规则名重新拼出，
-// 内容有大小与文本校验；全局范围还要求控制面自己记录到用户点选了全局选项。
+// （保存位置、文件内容）都不可信：保存位置必须匹配全串锚定的白名单，写入中央的相对路径由捕获到的规则名重新拼出；
+// 内容有大小与文本校验，frontmatter 必须是 /omfg 生成器的形状（有 TTSR 触发条件、没有其它键），且须与用户点选
+// 保存位置时看到的预览一致；全局范围还要求控制面自己记录到用户点选了全局选项。中央已有不同内容的同名规则时不覆盖。
 package cfgsync
 
 import (
@@ -19,6 +20,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -47,6 +50,10 @@ const (
 	ReasonTooLarge         = "too_large"
 	ReasonInvalidContent   = "invalid_content"
 	ReasonStoreFailed      = "store_failed"
+	// ReasonConflict：中央已有内容不同的同名规则，未覆盖（用户到项目 / 全局 Agent 配置里手工合并）。
+	ReasonConflict = "conflict"
+	// ReasonContentMismatch：读回的规则与用户点选保存位置时的预览不一致（或没有记录到预览），未写入。
+	ReasonContentMismatch = "content_mismatch"
 )
 
 // OrbFS 经 fs 流向 orbd 本机 API 发请求（*orbs.Service）。
@@ -54,8 +61,9 @@ type OrbFS interface {
 	Do(ctx context.Context, orbID string, req *http.Request) (*http.Response, error)
 }
 
-// GlobalStore 是全局 omp-home（*agentcfg.Home）。
+// GlobalStore 是全局 omp-home（*agentcfg.Home）；项目层的 *agentcfg.Home 同样满足。
 type GlobalStore interface {
+	Get(p string) ([]byte, agentcfg.FileInfo, error)
 	Put(ctx context.Context, p string, content []byte, mode fs.FileMode, vault *secrets.Vault) (agentcfg.WriteResult, error)
 }
 
@@ -73,6 +81,9 @@ type Saver struct {
 	Vault    *secrets.Vault
 	// Applied 在写入中央成功后调用（M13：按层立即下发到其它 orb；projectID 空 = 全局层）。nil = 不下发。
 	Applied func(projectID string)
+
+	// mu 串行化「读中央同名规则 → 写入」，两条回写不会互相覆盖。
+	mu sync.Mutex
 }
 
 var _ threads.ConfigSync = (*Saver)(nil)
@@ -102,7 +113,8 @@ func classify(savedPath string) (scope, rel string, ok bool) {
 	return "", "", false
 }
 
-// SaveRule 按「路径白名单 → 范围确认 → 读 orb → 写中央 → 审计」把一条 /omfg 规则写回中央配置。
+// SaveRule 按「路径白名单 → 范围确认 → 读 orb → 校验形状 → 比对预览 → 同名冲突检查并写中央 → 审计」把一条 /omfg
+// 规则写回中央配置。
 func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) threads.ConfigSaveResult {
 	lg := slog.With("orb", p.OrbID, "thread", p.ThreadID)
 	scope, rel, ok := classify(p.SavedPath)
@@ -143,14 +155,30 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 		lg.Warn("cfgsync: 读取 orb 里的规则失败", "savedPath", p.SavedPath, "reason", reason)
 		return fail(reason)
 	}
-	if reason := s.put(ctx, scope, projectID, rel, content); reason != "" {
+	rule, ok := parseRule(content)
+	if !ok {
+		lg.Warn("cfgsync: 读回的规则不是 /omfg 生成器的形状（缺 TTSR 触发条件或含其它 frontmatter 键），不回写", "savedPath", p.SavedPath)
+		return fail(ReasonInvalidContent)
+	}
+	// 写进中央的必须是用户点选保存位置时看到的那条规则：规则名要与保存位置一致，要素要与预览一致
+	name := strings.TrimSuffix(strings.TrimPrefix(rel, "rules/"), ".md")
+	if preview, ok := parseRule([]byte(p.Preview)); !ok || preview.Name != name || !preview.equal(rule) {
+		lg.Warn("cfgsync: 读回的规则与用户确认时的预览不一致（或没有预览），不回写", "savedPath", p.SavedPath, "hasPreview", p.Preview != "")
+		return fail(ReasonContentMismatch)
+	}
+	changed, reason := s.put(ctx, scope, projectID, rel, content)
+	if reason != "" {
 		return fail(reason)
+	}
+	res.Synced = true
+	if !changed {
+		lg.Info("cfgsync: 中央已有内容相同的同名规则，无需写入", "scope", scope, "project", projectID, "path", rel)
+		return res
 	}
 	sum := sha256.Sum256(content)
 	sha := hex.EncodeToString(sum[:])
 	s.audit(ctx, orb, scope, projectID, rel, sha, p.ThreadID)
 	lg.Info("cfgsync: omfg 规则已写回中央配置", "scope", scope, "project", projectID, "path", rel, "sha256", sha)
-	res.Synced = true
 	return res
 }
 
@@ -183,17 +211,35 @@ func (s *Saver) readOrb(ctx context.Context, orbID, savedPath string) ([]byte, s
 	return b, ""
 }
 
-// put 写入中央（同名规则直接覆盖：用户已在 orb 内确认过覆盖）；失败时返回 C5 的 reason。
-func (s *Saver) put(ctx context.Context, scope, projectID, rel string, content []byte) string {
-	var err error
-	if scope == ScopeGlobal {
-		_, err = s.Global.Put(ctx, rel, content, 0o644, s.Vault)
-	} else {
-		var h *agentcfg.Home
-		if h, err = s.Projects.For(projectID); err == nil {
-			_, err = h.Put(ctx, rel, content, 0o644, nil)
+// put 写入中央；changed 为假表示中央已有内容相同的同名规则（不写、不下发）。Core 的「是否覆盖」只看 orb 本地文件，
+// 不代表用户见过中央那条：中央已有内容不同的同名规则时不覆盖，返回 conflict。失败时返回 C5 的 reason。
+func (s *Saver) put(ctx context.Context, scope, projectID, rel string, content []byte) (changed bool, reason string) {
+	var (
+		st    GlobalStore = s.Global
+		vault             = s.Vault
+	)
+	if scope == ScopeProject {
+		h, err := s.Projects.For(projectID)
+		if err != nil {
+			slog.Error("cfgsync: 打开项目配置失败", "project", projectID, "err", err)
+			return false, ReasonStoreFailed
 		}
+		st, vault = h, nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, _, err := st.Get(rel)
+	switch {
+	case err == nil && bytes.Equal(old, content):
+		return false, ""
+	case err == nil:
+		slog.Warn("cfgsync: 中央已有内容不同的同名规则，不覆盖", "scope", scope, "project", projectID, "path", rel)
+		return false, ReasonConflict
+	case !errors.Is(err, fs.ErrNotExist):
+		slog.Error("cfgsync: 读取中央同名规则失败", "scope", scope, "project", projectID, "path", rel, "err", err)
+		return false, ReasonStoreFailed
+	}
+	_, err = st.Put(ctx, rel, content, 0o644, vault)
 	switch {
 	case err == nil:
 		if s.Applied != nil {
@@ -202,13 +248,18 @@ func (s *Saver) put(ctx context.Context, scope, projectID, rel string, content [
 			}
 			s.Applied(projectID)
 		}
-		return ""
+		return true, ""
 	case errors.Is(err, agentcfg.ErrTooLarge):
 		slog.Warn("cfgsync: 规则超出中央配置配额", "scope", scope, "project", projectID, "path", rel, "err", err)
-		return ReasonTooLarge
+		return false, ReasonTooLarge
+	case errors.Is(err, agentcfg.ErrProjectRemoved):
+		// 项目在读 orb 与写入之间被删除
+		return false, ReasonNoProject
+	case errors.Is(err, agentcfg.ErrInvalidContent):
+		return false, ReasonInvalidContent
 	default:
 		slog.Error("cfgsync: 写入中央配置失败", "scope", scope, "project", projectID, "path", rel, "err", err)
-		return ReasonStoreFailed
+		return false, ReasonStoreFailed
 	}
 }
 

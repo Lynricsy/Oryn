@@ -1384,6 +1384,28 @@ firecracker:
 
 - prompt 正文的判定与 omp 执行内置斜杠命令的规则逐字一致：只认精确的 `message` 键；以 `/` 开头（不去前导空白）；命令名截到第一个空白（JS `\s`）或 `:`，大小写敏感；`/session` 只在子命令为 `delete`（不分大小写）且无余参时拦。`steer` / `follow_up` / `abort_and_prompt` 不执行内置命令，不拦。被拦的 prompt 回 `managed_by_oryn`，消息为 `/move is managed by Oryn` 这类。
 - 扩展注册的命令可经 omp 的扩展上下文切换会话，路由层看不到。
+- `FactsVersion` 3 → 5（启动时整体重算一次；v4 只在开发中短暂存在）。`toolResult` 的工具名若为 `write` 且 `details.xdev = {tool, mode: "execute", args}`，按 `tool`（经 `write xd://<tool>` 派发的真实工具）归属；执行失败的派发同样归到真实工具。Core 只在设备解析与参数校验通过后才写 `args`：设备不存在（`No such tool`）或参数非法时 `tool` 只是模型写的 URL 末段，仍记为 `write`。
+
+### 命令路由：会换会话文件的命令
+
+线程绑定的是会话目录 `~/.oryn/threads/<id>`：转录 = 目录里各主会话文件按创建顺序拼接，agent 重启时 `open_session` 续上目录里最新的非空会话。WS `cmd`（含 `oryn thread rpc`）按此判定（`internal/threads/route.go`）：
+
+|命令|换文件|路由|理由|
+|---|---|---|---|
+|`new_session`|本目录新空文件|`managed_by_oryn`|拼接能跟随，但「新对话」在 Oryn 里是新线程（`/new`）|
+|`drop_session`|删除当前文件并新开|`managed_by_oryn`|删掉线程已入库的会话文件|
+|`switch_session`、`open_session`、`collab_join`|切到目录外的文件|`managed_by_oryn`|绑定失效|
+|`move_session`；prompt 正文 `/move`、`/wt`（`/worktree`）|把文件移出目录|`managed_by_oryn`|绑定失效|
+|prompt 正文 `/session delete`|同 `drop_session`|`managed_by_oryn`|同上|
+|`btw_branch`|复制当前路径 + 旁路问答进新文件|`managed_by_oryn`|拼接后历史重复；Oryn 的 fork 表达不了追加的问答，改用 `btw_inject` 并进当前对话|
+|`fork`、`fork_from`、`branch`|复制历史进新文件|`use_oryn_fork`|语义即分叉：`POST threads/{id}/fork`；回到旧消息原地重来用 `navigate_tree`|
+|`plan_approval`（`execute` / `save`）、`set_loop_mode`（`reset` 轮次）|本目录新空文件|透传|拼接跟随，文件之间画「新会话」分隔线|
+|`clear_context`、`fresh`、`handoff`、`compact`、`navigate_tree`、`switch_leaf`|否（原地）|透传|—|
+|`tan`|克隆写在产物子目录|透传|按子 agent 转录处理，不切换|
+|`import_foreign_session`|写到 omp 默认会话目录|透传|不切换|
+
+- prompt 正文的判定与 omp 执行内置斜杠命令的规则逐字一致：只认精确的 `message` 键；以 `/` 开头（不去前导空白）；命令名截到第一个空白（JS `\s`）或 `:`，大小写敏感；`/session` 只在子命令为 `delete`（不分大小写）且无余参时拦。`steer` / `follow_up` / `abort_and_prompt` 不执行内置命令，不拦。被拦的 prompt 回 `managed_by_oryn`，消息为 `/move is managed by Oryn` 这类。
+- 扩展注册的命令可经 omp 的扩展上下文切换会话，路由层看不到。
 
 ### CLI
 
@@ -1493,7 +1515,9 @@ firecracker:
 
 ### `omfg` 应答扩展（C5）
 
-控制面在 `threads.onResponse` 看到**用户发起的** `omfg` 命令应答 `state: "saved"` 后，按路径白名单经 `fs` 流把那一个规则文件读回、写入中央，再把结果并进应答的 `data.oryn` 交给客户端（应答最多被多扣 20 秒）。不新增 orb → 控制面的写接口，orbd 不参与回写。
+控制面在 `threads.onResponse` 看到**用户发起的** `omfg` 命令应答 `state: "saved"` 后，按路径白名单经 `fs` 流把那一个规则文件读回、校验后写入中央，再把结果并进应答的 `data.oryn` 交给客户端（应答最多被多扣 20 秒）。不新增 orb → 控制面的写接口，orbd 不参与回写。回写进行中（应答已离开未决命令）线程记一条在途回写，冻结 / 停机闸门在回写结束之前不放行。
+
+同一线程同时只受理一条 `omfg`（含排队中的）：Core 的保存位置对话框与规则预览都不带命令 id，并发的两条无法把用户的选择归属到具体命令。第二条以 WS `error` 拒绝，`code: "omfg_in_progress"`。
 
 ```jsonc
 // 已写入中央
@@ -1506,7 +1530,11 @@ firecracker:
 
 - `scope` 取 `project` 或 `global`；`path` 恒为 `rules/<name>.md`（由控制面用捕获到的 `<name>` 重新拼成）。没有 `oryn` 字段 = 没有尝试同步（runner 线程、非 `saved`、`success: false`），前端保持现有提示。
 - 白名单（全串锚定，`<name>` = `[a-z0-9][a-z0-9_-]{0,127}`）：`~/.omp/agent/rules/<name>.md` → global；`~/.oryn/project-config/.omp/rules/<name>.md` 与 `~/workspace/(repo/)?.omp/rules/<name>.md` → project。项目 id 只取自数据库里的 orb 行。
-- 全局写入另要求控制面在 `UIResponse` 里记录到用户点选了全局选项（新旧两种全局文案都认），否则 `scope_unconfirmed`。
+- 控制面在 `UIResponse` 里只认对**保存位置对话框**的作答：线程上有用户发起的 `omfg` 在途，被回答的请求是控制面在实时缓冲里见过、晚于该命令受理、`method: "select"`、标题为 `Save TTSR rule where?` 的请求，值是请求选项之一。记录挂在那条命令上，随命令结束（应答、agent 退出 / 流断开的合成失败、下发失败、线程删除）一起消失；对该对话框的任何作答（含取消、修改反馈）先作废此前的记录。
+- 全局写入要求记录到用户点选了全局选项（新旧两种全局文案都认），否则 `scope_unconfirmed`。
+- 用户点选保存位置（全局或本项目）时，控制面记下此刻的规则预览（`setWidget` key `omfg`，行为 `["TTSR rule — <校验状态>", "", 规则全文按行]`；Core 写进文件的就是这段规则全文）。读回的规则须与预览按要素一致（`name`、`description`、`condition`、`astCondition`、`question`、`scope` 规范化后相同，正文去首尾空白后相同），且规则名与保存位置的 `<name>` 相同，否则 `content_mismatch`；没有记录到预览（Core < `oryn-v18.19.0-6`）同样 `content_mismatch`。
+- frontmatter 必须是 `/omfg` 生成器的形状：文件以 `---` 开头；元数据每个非空行都是顶格的单行 `键: 值`，键只能是上述 6 个；不得含制表符与 HTML 注释；`condition` / `astCondition` / `scope` 是字符串或字符串数组，`description` / `question` 是字符串；至少有一个非空的 `condition`、`astCondition` 或 `question`（TTSR 触发条件）。`alwaysApply`、`globs`、`agents`、`interruptMode` 等让规则无条件注入或改变作用范围的键一律 `invalid_content`。
+- 中央已有同名规则：内容逐字节相同视为成功（`synced: true`，不重写、不下发、不审计）；不同则不覆盖，`conflict`。Core 的「是否覆盖」只看 orb 本地文件，不代表用户见过中央那条。
 - 写入成功追加 `orb_events`：`detail = {"event":"agent_config_saved","scope","path","sha256","threadId","projectId"?}`（global 不带 `projectId`），`from_state = to_state = orb 当前状态`。
 
 |`reason`|含义|
@@ -1515,8 +1543,10 @@ firecracker:
 |`unsupported_path`|保存位置不在白名单（不读 orb）|
 |`scope_unconfirmed`|全局路径，但没有记录到用户点选全局选项|
 |`orb_read_failed`|经 `fs` 流读取 orb 里的文件失败或非 200|
-|`too_large`|超过 256 KiB（`cfgsync.MaxRuleBytes`）或超项目配额|
-|`invalid_content`|空、含 NUL 或不是 UTF-8|
+|`too_large`|超过 256 KiB（`cfgsync.MaxRuleBytes`），或项目配置的合计大小 / 文件数已满|
+|`invalid_content`|空、含 NUL、不是 UTF-8，或 frontmatter 不是 `/omfg` 生成器的形状（见上）|
+|`content_mismatch`|读回的规则与用户点选保存位置时的预览不一致（或没有记录到预览），未写入|
+|`conflict`|中央已有内容不同的同名规则，未覆盖；到项目 / 全局 Agent 配置里手工合并|
 |`store_failed`|写入中央失败（含读取 orb 行失败）|
 
 Go 接口（跨切片冻结）：
@@ -1525,7 +1555,8 @@ Go 接口（跨切片冻结）：
 // internal/threads
 type ConfigSaveParams struct {
 	OrbID, ThreadID, SavedPath string
-	GlobalChosen bool // 用户在保存位置对话框里点的是全局选项
+	GlobalChosen bool   // 用户在这条 omfg 的保存位置对话框里点的是全局选项
+	Preview      string // 点选保存位置时的规则预览全文；空 = 没有记录到
 }
 type ConfigSaveResult struct {
 	Synced bool   `json:"synced"`
@@ -1542,8 +1573,9 @@ func (s *Service) SetConfigSync(c ConfigSync) // nil = 不回写
 const MaxRuleBytes = 256 << 10
 type OrbFS interface { Do(ctx context.Context, orbID string, req *http.Request) (*http.Response, error) } // *orbs.Service
 type GlobalStore interface {
+	Get(p string) ([]byte, agentcfg.FileInfo, error)
 	Put(ctx context.Context, p string, content []byte, mode fs.FileMode, vault *secrets.Vault) (agentcfg.WriteResult, error)
-} // *agentcfg.Home
+} // *agentcfg.Home（项目层的 *agentcfg.Home 同样满足）
 type ProjectStores interface { For(projectID string) (*agentcfg.Home, error) } // *agentcfg.ProjectHomes
 type Saver struct {
 	Store *store.Store; Orbs OrbFS; Global GlobalStore; Projects ProjectStores; Vault *secrets.Vault

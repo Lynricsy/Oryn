@@ -705,6 +705,8 @@ const FRIENDLY_CODES = [
 	"runner_unsupported",
 	"dir_not_served",
 	"thread_required",
+	// 中央 agent 配置（M12.2）
+	"omfg_in_progress",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];
