@@ -1,0 +1,49 @@
+# Oryn Firecracker guest 内核的配置片段，追加在 Firecracker 的 microvm-kernel-ci-x86_64-6.1.config 之后
+# （同名选项以后出现的为准）。基础部分沿用 AgentLoom 的 kernel.config.fragment，去掉了 initramfs。
+# scripts/build-fc-kernel.sh 会核对下面每个 =y 与 "is not set" 在最终配置里都生效。
+
+# 根盘（只读 ext4）+ 可写盘（ext4）上的 overlay
+CONFIG_OVERLAY_FS=y
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_FS_POSIX_ACL=y
+CONFIG_EXT4_FS_SECURITY=y
+# orbd 作 PID 1 直接从 /dev/vda 启动，不用 initramfs
+# CONFIG_BLK_DEV_INITRD is not set
+
+# Firecracker 网卡与内核 ip= 静态配置
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_IPV6=n
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
+CONFIG_IP_PNP=y
+CONFIG_IP_PNP_DHCP=y
+
+# SendCtrlAltDel 兜底关机（guest-init 把 SIGINT 当作 shutdown）
+CONFIG_INPUT=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_SERIO=y
+CONFIG_SERIO_I8042=y
+CONFIG_KEYBOARD_ATKBD=y
+
+# 块设备与熵设备
+CONFIG_VIRTIO_BLK=y
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+CONFIG_RANDOM_TRUST_CPU=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# Oryn 追加：fcguest 走 vsock；orbd / omp / 桌面栈需要的基础设施
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_INOTIFY_USER=y
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_PIDS=y
+CONFIG_TMPFS=y
+CONFIG_UNIX98_PTYS=y
+CONFIG_FHANDLE=y

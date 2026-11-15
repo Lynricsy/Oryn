@@ -7,7 +7,7 @@ VERSION ?= $(shell git describe --tags --exclude 'desktop-v*' --exclude 'mobile-
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
 BINS    := orynd orbd oryn fakeomp
 
-.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image dev
+.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image fc-artifacts dev
 
 all: build
 
@@ -65,6 +65,14 @@ android:
 
 image:
 	scripts/build-orb-image.sh
+
+## fc-artifacts：Firecracker provider 的产物 build/fc/{firecracker,jailer,vmlinux,rootfs.ext4}（x86_64；
+## 根盘取 FC_IMAGE，默认 oryn-orb:dev，先 make image）。不需要宿主 root；安装见 docs/deploy.md。
+FC_IMAGE ?= oryn-orb:dev
+fc-artifacts:
+	scripts/fetch-firecracker.sh
+	scripts/build-fc-kernel.sh
+	scripts/build-fc-rootfs.sh $(FC_IMAGE)
 
 dev: build
 	./bin/orynd --config dev/orynd.yaml

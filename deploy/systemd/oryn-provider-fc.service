@@ -1,0 +1,19 @@
+[Unit]
+Description=Oryn Firecracker orb provider
+# 宿主网络（oryn-fc 接口与 nft 表）由 oryn-fc-net.service 建立；provider 启动时预检会核对它。
+After=oryn-fc-net.service orynd.service
+Requires=oryn-fc-net.service
+
+[Service]
+Type=simple
+# jailer、tap、cgroup 都需要 root（每台 VM 的 firecracker 由 jailer 降到槽位 uid 运行）。
+User=root
+ExecStart=/usr/local/bin/oryn provider run --config /etc/oryn/provider-fc.yaml
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+# provider 停止或重启不会连带杀掉 VM：jailer 把 firecracker 移进 /sys/fs/cgroup/oryn-fc/<orbId>，
+# 不在本服务的 cgroup 里；重启后驱动按状态目录（state_dir）接管已有 VM。
+
+[Install]
+WantedBy=multi-user.target

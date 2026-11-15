@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "arch": "x86_64",
+  "firecracker": {
+    "version": "v1.18.0",
+    "commit": "eaf83bb718a559d324613d566eaf776b31a62340",
+    "releaseArchive": "https://github.com/firecracker-microvm/firecracker/releases/download/v1.18.0/firecracker-v1.18.0-x86_64.tgz",
+    "releaseArchiveSha256": "1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd",
+    "releaseArchiveSha256Source": "https://github.com/firecracker-microvm/firecracker/releases/download/v1.18.0/firecracker-v1.18.0-x86_64.tgz.sha256.txt",
+    "firecrackerPath": "release-v1.18.0-x86_64/firecracker-v1.18.0-x86_64",
+    "firecrackerSha256": "b33f46cd6d88834cf6a4f8d184f08f219809c636236bffd286d233a60602a2ba",
+    "jailerPath": "release-v1.18.0-x86_64/jailer-v1.18.0-x86_64",
+    "jailerSha256": "ddadbaa15b5c942271a83b7040ca7259c8ccf92a9e08d44cce0b86fa407ba460"
+  },
+  "kernel": {
+    "pinnedFrom": "AgentLoom agentloom-deploy/firecracker/artifact-lock.json @ 7051c0a4",
+    "sourceTag": "microvm-kernel-6.1.177-45.371.amzn2023",
+    "sourceCommit": "f4ea506268dde60590dda6cc371c24feceba77e1",
+    "sourceArchive": "https://github.com/amazonlinux/linux/archive/f4ea506268dde60590dda6cc371c24feceba77e1.tar.gz",
+    "sourceArchiveSha256": "bfce7061e3e07440cd2f80abfec97d8d01871c564656bdd07a465d36766f79c3",
+    "configCommit": "2038188f145fb81b8d098147a10e9d9f392fd22f",
+    "configUrl": "https://raw.githubusercontent.com/firecracker-microvm/firecracker/2038188f145fb81b8d098147a10e9d9f392fd22f/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config",
+    "configSha256": "adbc70ab5e89213ba00594b12d25e09bdf8bb1ed3c252d7449326bb14c22963b",
+    "builder": {
+      "archOciDigest": "sha256:a674898d53cc63b1af4023a468ccddc25ed9d7aecc3996f16171838a57085999",
+      "archSnapshot": "2026/08/01"
+    }
+  },
+  "rootfs": {
+    "builderImage": "debian:13-slim"
+  }
+}

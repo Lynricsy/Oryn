@@ -1,5 +1,5 @@
 // Package providerrt 是 orb provider 的运行时（`oryn provider run`）：向控制面 hello、
-// 长轮询认领任务、交给驱动执行并上报结果（计划 C1）。驱动有 docker / dispatch / process 三种。
+// 长轮询认领任务、交给驱动执行并上报结果（计划 C1）。驱动有 docker / dispatch / process / firecracker 四种。
 package providerrt
 
 import (
@@ -104,6 +104,8 @@ func New(cfg config.Provider) (Driver, error) {
 		return NewDispatch(cfg.Dispatch.Script, cfg.Docker), nil
 	case "process":
 		return NewProcess("", "", cfg.Docker), nil
+	case "firecracker":
+		return NewFirecracker(cfg.Firecracker, cfg.OrbURL), nil
 	}
 	return nil, fmt.Errorf("未知驱动 %q", cfg.Driver)
 }
