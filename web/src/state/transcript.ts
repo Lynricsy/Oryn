@@ -58,19 +58,34 @@ const HIDDEN_ENTRY_TYPES: Record<string, true> = {
 	model_usage: true,
 	credential_pin: true,
 	session_init: true,
-	reset_boundary: true,
 	custom: true,
 	service_tier_change: true,
 };
 
-/** 以元信息行显示的条目类型。 */
+/** 以元信息行显示的条目类型。未归入任何一组的类型也以元信息行显示（标为未知条目）。 */
 const META_ENTRY_TYPES: Record<string, true> = {
 	model_change: true,
 	thinking_level_change: true,
 	mode_change: true,
 	ttsr_injection: true,
 	title_change: true,
+	reset_boundary: true,
 };
+
+/** 有专门渲染项的条目类型（见 `entryItem`）。 */
+const RENDERED_ENTRY_TYPES = [
+	"message",
+	"compaction",
+	"branch_summary",
+	"custom_message",
+] as const;
+
+/** 已归类的条目类型：隐藏、元信息、专门渲染三组之并。omp 新增条目类型时由覆盖测试提醒归类。 */
+export const KNOWN_ENTRY_TYPES: readonly string[] = [
+	...Object.keys(HIDDEN_ENTRY_TYPES),
+	...Object.keys(META_ENTRY_TYPES),
+	...RENDERED_ENTRY_TYPES,
+];
 
 export function isMainFile(file: string): boolean {
 	return !file.includes("/");
@@ -192,9 +207,8 @@ function entryItem(e: Entry): TranscriptItem | null {
 			? null
 			: { kind: "custom_message", key: `e${e.seq}`, seq: e.seq, entry: p };
 	}
-	if (META_ENTRY_TYPES[e.type])
-		return { kind: "meta", key: `e${e.seq}`, seq: e.seq, entry: p };
-	return null;
+	// 已知元信息类型与未归类的新类型都以元信息行显示（后者由 MetaLine 标为未知条目）
+	return { kind: "meta", key: `e${e.seq}`, seq: e.seq, entry: p };
 }
 
 /** 主会话里所有 toolResult 条目，按 toolCallId 索引。 */

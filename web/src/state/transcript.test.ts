@@ -157,3 +157,33 @@ describe("buildTranscript 的来源轨迹", () => {
 		expect(messages(build(entries))[1]?.trail).toBe(EMPTY_TRAIL);
 	});
 });
+
+describe("buildTranscript 的条目可见性", () => {
+	const kindsOf = (type: string) =>
+		build(chain("a.jsonl", [[type, {}]])).map((it) => it.kind);
+
+	it("reset_boundary 以元信息行显示（/clear 的上下文清空分隔）", () => {
+		expect(kindsOf("reset_boundary")).toEqual(["meta"]);
+	});
+
+	it("未归类的新条目类型以元信息行显示，不被静默丢弃", () => {
+		const items = build(chain("a.jsonl", [["future_thing", { x: 1 }]]));
+		expect(items).toHaveLength(1);
+		expect(items[0]).toMatchObject({
+			kind: "meta",
+			entry: { type: "future_thing" },
+		});
+	});
+
+	it("已知的隐藏类型仍不渲染", () => {
+		for (const type of [
+			"model_usage",
+			"label",
+			"credential_pin",
+			"session_init",
+			"custom",
+			"service_tier_change",
+		])
+			expect(kindsOf(type), type).toEqual([]);
+	});
+});

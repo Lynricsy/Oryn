@@ -115,8 +115,11 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 		case "title_change":
 			text = t("transcript.meta.title", { title: String(entry.title ?? "") });
 			break;
+		case "reset_boundary":
+			text = t("transcript.contextCleared");
+			break;
 		default:
-			text = String(entry.type ?? "");
+			text = t("transcript.unknownEntry", { type: String(entry.type ?? "") });
 	}
 	const icon = META_ICON[String(entry.type)] ?? "info";
 	return (
