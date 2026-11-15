@@ -1,7 +1,8 @@
 /**
- * 文件来源抽象：线程 Files 面板（orb 的 `$HOME`）与设置页的 agent 文本配置共用同一个文件浏览器。
+ * 文件来源抽象：线程 Files 面板（orb 的 `$HOME`）、设置页与项目页的 agent 文本配置共用同一个文件浏览器。
  * - orb：`/api/v1/orbs/{id}/fs/*`，路径一律为绝对路径；写入用 XHR 以获得上传进度。
- * - agent 配置：`/api/v1/agent-config/files*`，路径相对 omp-home 根（根为 `""`）；
+ * - agent 配置：全局 `/api/v1/agent-config/files*`（相对 omp-home 根）与项目级
+ *   `/api/v1/projects/{id}/agent-config/files*`（相对项目配置根，同仓库里的 `.omp/`），根为 `""`；
  *   服务端只有扁平的文件列表，目录树在客户端合成，不支持新建文件夹与重命名。
  */
 import {
@@ -406,12 +407,9 @@ export function orbFileSource(orbId: string, threadId: string): FileSource {
 	};
 }
 
-// ---------------------------------------------------------------- agent 配置
+// ---------------------------------------------------------------- agent 配置（全局与项目级）
 
 type AgentFile = Schemas["AgentConfigFile"];
-
-const agentUrl = (path: string) =>
-	`/api/v1/agent-config/files/${encodePathParam(path)}`;
 
 /** 由扁平的文件列表合成 `dir` 下一层的条目（`dir` 为 `""` 表示根）。 */
 export function agentConfigListing(
@@ -457,16 +455,25 @@ function agentFileEntry(f: AgentFile): FileEntry {
 	};
 }
 
-export function agentConfigSource(
+/** 中央配置存储的一个根：全局 omp-home 或某个项目的配置层；两者接口形状相同，只差列表与文件地址。 */
+interface ConfigSpec {
+	id: string;
+	rootLabel: string;
+	listFiles(): Promise<AgentFile[]>;
+	fileUrl(path: string): string;
+}
+
+function configSource(
+	spec: ConfigSpec,
 	onWriteResult?: (r: Schemas["AgentConfigWriteResult"]) => void,
 ): FileSource {
-	const files = async () =>
-		(await unwrap(api.GET("/api/v1/agent-config/files"))).files;
+	const files = spec.listFiles;
+	const agentUrl = spec.fileUrl;
 	return {
-		id: "agent-config",
+		id: spec.id,
 		caps: { mkdir: false, rename: false, upload: true, download: true },
 		async roots() {
-			return [{ label: "files.roots.agentConfig", path: "" }];
+			return [{ label: spec.rootLabel, path: "" }];
 		},
 		async list(path) {
 			return agentConfigListing(await files(), path);
@@ -531,4 +538,44 @@ export function agentConfigSource(
 		},
 		downloadUrl: agentUrl,
 	};
+}
+
+/** 全局 Agent 配置（`<data_dir>/omp-home`，orb 内为 `~/.omp/agent/`）。 */
+export function agentConfigSource(
+	onWriteResult?: (r: Schemas["AgentConfigWriteResult"]) => void,
+): FileSource {
+	return configSource(
+		{
+			id: "agent-config",
+			rootLabel: "files.roots.agentConfig",
+			listFiles: async () =>
+				(await unwrap(api.GET("/api/v1/agent-config/files"))).files,
+			fileUrl: (path) => `/api/v1/agent-config/files/${encodePathParam(path)}`,
+		},
+		onWriteResult,
+	);
+}
+
+/** 项目级 Agent 配置（M12.2；目录结构同仓库里的 `.omp/`，orb 内为 `~/.oryn/project-config/.omp/`）。 */
+export function projectAgentConfigSource(
+	projectId: string,
+	onWriteResult?: (r: Schemas["AgentConfigWriteResult"]) => void,
+): FileSource {
+	return configSource(
+		{
+			id: `project-config:${projectId}`,
+			rootLabel: "files.roots.projectAgentConfig",
+			listFiles: async () =>
+				(
+					await unwrap(
+						api.GET("/api/v1/projects/{id}/agent-config/files", {
+							params: { path: { id: projectId } },
+						}),
+					)
+				).files,
+			fileUrl: (path) =>
+				`/api/v1/projects/${encodePathParam(projectId)}/agent-config/files/${encodePathParam(path)}`,
+		},
+		onWriteResult,
+	);
 }

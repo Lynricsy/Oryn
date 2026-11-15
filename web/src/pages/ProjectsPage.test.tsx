@@ -18,6 +18,25 @@ import { indexStore } from "../state/stores";
 import { uiStore } from "../state/ui";
 import { ProjectPage, ProjectsIndexPage } from "./ProjectsPage";
 
+// 编辑器换成 textarea：这里测 Agent 配置卡片的接线，CodeMirror 本身另有测试
+vi.mock("../components/editor/CodeEditor", () => ({
+	default: ({
+		value,
+		path,
+		onChange,
+	}: {
+		value: string;
+		path: string;
+		onChange?(v: string): void;
+	}) => (
+		<textarea
+			aria-label={`editor:${path}`}
+			value={value}
+			onChange={(e) => onChange?.(e.target.value)}
+		/>
+	),
+}));
+
 interface Write {
 	method: string;
 	path: string;
@@ -81,9 +100,57 @@ let orbList: Orb[];
 let writes: Write[];
 let snapshotList: Schemas["ProjectSnapshot"][];
 
+let projectFiles: Record<string, Record<string, string>>;
+
+/** 项目级 Agent 配置（M12.2）：按项目存扁平文件；PUT 回带一条 possible_secret 警告。 */
+async function projectAgentConfig(
+	req: Request,
+	id: string,
+	rel: string | undefined,
+): Promise<Response> {
+	const files = projectFiles[id] ?? {};
+	projectFiles[id] = files;
+	if (rel === undefined)
+		return Response.json({
+			files: Object.entries(files).map(([path, c]) => ({
+				path,
+				size: c.length,
+				mode: 420,
+				sha256: "0".repeat(64),
+				updatedAt: 1,
+			})),
+		});
+	const path = decodeURIComponent(rel);
+	if (req.method === "PUT") {
+		const body = await req.text();
+		writes.push({ method: "PUT", path: new URL(req.url).pathname, body });
+		files[path] = body;
+		return Response.json({
+			file: {
+				path,
+				size: body.length,
+				mode: 420,
+				sha256: "0".repeat(64),
+				updatedAt: 2,
+			},
+			extractedSecrets: [],
+			warnings: [
+				{ path, line: 2, kind: "possible_secret", message: "looks like a key" },
+			],
+		});
+	}
+	const c = files[path];
+	return c === undefined
+		? Response.json({ code: "not_found", message: path }, { status: 404 })
+		: new Response(c);
+}
+
 async function handle(req: Request): Promise<Response> {
 	const url = new URL(req.url, "http://x");
 	const path = url.pathname;
+	const cfg =
+		/^\/api\/v1\/projects\/([^/]+)\/agent-config\/files(?:\/(.+))?$/.exec(path);
+	if (cfg) return projectAgentConfig(req, cfg[1] ?? "", cfg[2]);
 	const text = req.method === "GET" ? "" : await req.text();
 	const body = text ? JSON.parse(text) : undefined;
 	if (req.method !== "GET") writes.push({ method: req.method, path, body });
@@ -169,6 +236,7 @@ beforeEach(() => {
 	orbList = [];
 	writes = [];
 	snapshotList = [];
+	projectFiles = {};
 	uiStore.getState().setProjectFilter(undefined);
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
 		handle(
@@ -604,5 +672,62 @@ describe("ProjectPage 项目快照与预热（M11a）", () => {
 			i18n.t("accel.pool.pending"),
 		);
 		expect(await screen.findByTestId("snapshots-empty")).toBeInTheDocument();
+	});
+});
+
+describe("ProjectPage Agent 配置（M12.2）", () => {
+	const agentCard = async () =>
+		(
+			await screen.findByRole("heading", {
+				name: i18n.t("projectsPage.agentConfig.title"),
+			})
+		).closest("section") as HTMLElement;
+
+	it("列出该项目的配置；编辑保存走项目接口，写入警告逐条显示在卡片下", async () => {
+		projectFiles = {
+			[ORYN.id]: { "mcp.json": "{}\n", "rules/a.md": "a\n" },
+			[CORE.id]: { "AGENTS.md": "core\n" },
+		};
+		mount(`/projects/${ORYN.id}`);
+		const card = await agentCard();
+		expect(card).toHaveTextContent(i18n.t("projectsPage.agentConfig.hint"));
+		expect(card).toHaveTextContent(
+			i18n.t("projectsPage.agentConfig.secretHint"),
+		);
+		expect(card).toHaveTextContent(i18n.t("projectsPage.agentConfig.pushHint"));
+		const scope = within(card);
+		expect(
+			await scope.findByRole("tab", {
+				name: i18n.t("files.roots.projectAgentConfig"),
+			}),
+		).toBeInTheDocument();
+		expect(await scope.findByText("rules")).toBeInTheDocument();
+		expect(scope.queryByText("AGENTS.md")).toBeNull();
+		fireEvent.click(scope.getByText("mcp.json"));
+		const editor = await scope.findByLabelText("editor:mcp.json");
+		expect(editor).toHaveValue("{}\n");
+		fireEvent.change(editor, {
+			target: { value: '{\n  "token": "Bearer ghp_x"\n}\n' },
+		});
+		fireEvent.click(scope.getByRole("button", { name: "保存" }));
+		expect(
+			await scope.findByText("mcp.json:2 — looks like a key"),
+		).toBeInTheDocument();
+		expect(writesOnly()).toEqual([
+			[
+				"PUT",
+				`/api/v1/projects/${ORYN.id}/agent-config/files/mcp.json`,
+				'{\n  "token": "Bearer ghp_x"\n}\n',
+			],
+		]);
+	});
+
+	it("新建项目页没有 Agent 配置卡片", () => {
+		mount("/projects/new");
+		expect(
+			screen.queryByRole("heading", {
+				name: i18n.t("projectsPage.agentConfig.title"),
+			}),
+		).toBeNull();
 	});
 });

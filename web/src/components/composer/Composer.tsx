@@ -170,7 +170,15 @@ export function Composer({
 
 	const notifyResult = (frame: OmpCommand, data: unknown) => {
 		const r = describeSlashResult(frame, data);
-		if (r) pushLocalNotice(threadId, r.level, t(r.key, r.params ?? {}));
+		if (r)
+			pushLocalNotice(
+				threadId,
+				r.level,
+				t(r.key, {
+					...r.params,
+					why: r.whyKey ? t(r.whyKey) : undefined,
+				}),
+			);
 	};
 
 	const runSlash = async (

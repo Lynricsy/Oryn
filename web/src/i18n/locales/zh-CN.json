@@ -259,6 +259,18 @@
 			"omfgSavedNoPath": "规则已保存",
 			"omfgRejected": "没有覆盖同名规则，这条规则未保存",
 			"omfgAborted": "已取消，规则未保存",
+			"omfgSyncedProject": "规则已保存到本项目的 Agent 配置（{{path}}）。当前线程立即生效，其它线程在新建 orb 或下次唤醒时生效。",
+			"omfgSyncedGlobal": "规则已保存到全局 Agent 配置（{{path}}）。当前线程立即生效，其它 orb 在新建或下次唤醒时生效。",
+			"omfgLocalOnly": "规则只保存在当前 orb（{{path}}），没有写入 Oryn 中央配置：{{why}}。可以重新执行 /omfg，或到 Agent 配置里手动添加。",
+			"omfgWhy": {
+				"no_project": "此线程不属于任何项目",
+				"unsupported_path": "这台 orb 的环境版本较旧，无法识别保存位置",
+				"scope_unconfirmed": "没有收到你对「全局」的选择",
+				"orb_read_failed": "读取 orb 里的规则文件失败",
+				"too_large": "规则文件超过大小上限",
+				"invalid_content": "规则文件不是有效的文本",
+				"store_failed": "写入中央配置失败"
+			},
 			"cleared": "已清空上下文（移除 {{count}} 条消息）",
 			"clearedNoCount": "已清空上下文",
 			"fresh": "已重置模型连接状态，下一轮从新的提供方会话开始",
@@ -1332,7 +1344,8 @@
 		"roots": {
 			"workspace": "工作区",
 			"home": "主目录",
-			"agentConfig": "Agent 配置"
+			"agentConfig": "Agent 配置",
+			"projectAgentConfig": "项目 Agent 配置"
 		},
 		"orbDeleted": "orb 已删除，只能查看 Agent 配置。",
 		"agentConfigSaved": "已保存。Agent 配置对新 orb 与下次唤醒生效。",
@@ -2437,7 +2450,23 @@
 		"services": "服务",
 		"noServices": "这个项目的 orb 里没有受管服务。",
 		"notFound": "项目不存在或已删除。",
-		"empty": "还没有项目。项目把仓库、环境与脚本绑在一起。"
+		"empty": "还没有项目。项目把仓库、环境与脚本绑在一起。",
+		"agentConfig": {
+			"title": "Agent 配置",
+			"hint": "只对本项目的 orb 生效，目录结构与仓库里的 .omp/ 相同（rules/、skills/、mcp.json、config.yml、agents/、prompts/ 等）。同名项优先于仓库自带的 .omp/ 和全局 Agent 配置；对新 orb 与下次唤醒生效。",
+			"secretHint": "不要把令牌直接写进文件：在「密钥」里建一个环境变量模式的密钥，然后在 mcp.json 里写 ${变量名}。",
+			"pushHint": "用 oryn config push --project <项目名> 从本机目录导入。"
+		}
+	},
+	"uiRequest": {
+		"core": {
+			"omfgTitle": "把这条规则保存到哪里？",
+			"omfgProject": "本项目（Oryn 项目配置）",
+			"omfgGlobal": "全局（Oryn 中央配置）",
+			"omfgAmend": "修改反馈…",
+			"omfgProjectRepo": "本项目（仓库 .omp/rules）",
+			"omfgGlobalLocal": "全局（~/.omp/agent/rules）"
+		}
 	},
 	"more": {
 		"overview": "概览"

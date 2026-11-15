@@ -259,6 +259,18 @@
 			"omfgSavedNoPath": "Rule saved",
 			"omfgRejected": "Kept the existing rule; this one wasn't saved",
 			"omfgAborted": "Cancelled; no rule saved",
+			"omfgSyncedProject": "Rule saved to this project's agent config ({{path}}). It applies to this thread now, and to other threads when their orb is created or next wakes.",
+			"omfgSyncedGlobal": "Rule saved to the global agent config ({{path}}). It applies to this thread now, and to other orbs when they're created or next wake.",
+			"omfgLocalOnly": "Rule saved only in this orb ({{path}}), not in Oryn's central config: {{why}}. Run /omfg again, or add it by hand in Agent config.",
+			"omfgWhy": {
+				"no_project": "this thread doesn't belong to a project",
+				"unsupported_path": "this orb's environment is too old to recognize where the rule was saved",
+				"scope_unconfirmed": "your choice of “Global” wasn't received",
+				"orb_read_failed": "reading the rule file from the orb failed",
+				"too_large": "the rule file exceeds the size limit",
+				"invalid_content": "the rule file isn't valid text",
+				"store_failed": "writing to the central config failed"
+			},
 			"cleared": "Context cleared ({{count}} messages removed)",
 			"clearedNoCount": "Context cleared",
 			"fresh": "Provider connection reset; the next turn starts a fresh provider session",
@@ -1332,7 +1344,8 @@
 		"roots": {
 			"workspace": "Workspace",
 			"home": "Home",
-			"agentConfig": "Agent config"
+			"agentConfig": "Agent config",
+			"projectAgentConfig": "Project agent config"
 		},
 		"orbDeleted": "The orb has been deleted; only the agent config is available.",
 		"agentConfigSaved": "Saved. Agent config applies to new orbs and on the next wake.",
@@ -2437,7 +2450,23 @@
 		"services": "Services",
 		"noServices": "No managed services in this project's orbs.",
 		"notFound": "This project doesn't exist or was deleted.",
-		"empty": "No projects yet. A project ties a repo to its environment and scripts."
+		"empty": "No projects yet. A project ties a repo to its environment and scripts.",
+		"agentConfig": {
+			"title": "Agent config",
+			"hint": "Applies only to this project's orbs; the layout matches a repo's .omp/ (rules/, skills/, mcp.json, config.yml, agents/, prompts/, …). Entries here win over the repo's own .omp/ and the global agent config with the same name; changes apply to new orbs and on the next wake.",
+			"secretHint": "Don't put tokens in files directly: create an environment-mode secret under Secrets, then write ${VARIABLE_NAME} in mcp.json.",
+			"pushHint": "Import from a local directory with `oryn config push --project <project name>`."
+		}
+	},
+	"uiRequest": {
+		"core": {
+			"omfgTitle": "Save this rule where?",
+			"omfgProject": "This project (Oryn project config)",
+			"omfgGlobal": "Global — all projects (Oryn central config)",
+			"omfgAmend": "Amend with feedback…",
+			"omfgProjectRepo": "This project (.omp/rules)",
+			"omfgGlobalLocal": "Global — all projects (~/.omp/agent/rules)"
+		}
 	},
 	"more": {
 		"overview": "Overview"

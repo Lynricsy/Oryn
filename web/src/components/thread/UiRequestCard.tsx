@@ -3,8 +3,10 @@
  * 多端镜像：每个订阅者都显示同一请求；任一端作答后控制面广播 `ui.resolved`，其余端自动关闭（先答者生效）。
  * `ask` 超时：回 `{cancelled, timedOut}`，由 omp 取 recommended。
  */
+import type { ParseKeys } from "i18next";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { coreLabelKey, OMFG_SAVE_TITLE } from "../../lib/core-labels";
 import { keyed } from "../../lib/keys";
 import { splitConfirmRule } from "../../lib/omfg-rule";
 import type {
@@ -87,6 +89,12 @@ function SelectBody({
 	req: ExtensionUiRequestOf<"select">;
 	answer: Answer;
 }) {
+	const { t } = useTranslation();
+	// /omfg 的保存位置：Core 的固定英文选项显示为中文，回传的 value 仍是原文
+	const labelOf = (opt: string) => {
+		const key = req.title === OMFG_SAVE_TITLE ? coreLabelKey(opt) : undefined;
+		return key ? t(key) : opt;
+	};
 	return (
 		<div className="flex flex-col gap-1.5">
 			{req.options.map((opt, i) => (
@@ -98,7 +106,7 @@ function SelectBody({
 						answer({ type: "extension_ui_response", id: req.id, value: opt })
 					}
 				>
-					<div>{opt}</div>
+					<div>{labelOf(opt)}</div>
 					{req.optionDetails?.[i]?.description && (
 						<div className="mt-0.5 text-muted text-xs">
 							{req.optionDetails[i]?.description}
@@ -603,11 +611,11 @@ function FormBody({
 	);
 }
 
-function titleOf(
-	req: ExtensionUiRequest,
-	t: (k: "ui.askTitle" | "ui.formTitle") => string,
-): string {
-	if ("title" in req && typeof req.title === "string") return req.title;
+function titleOf(req: ExtensionUiRequest, t: (k: ParseKeys) => string): string {
+	if ("title" in req && typeof req.title === "string") {
+		const key = coreLabelKey(req.title);
+		return key ? t(key) : req.title;
+	}
 	if (req.method === "form") return t("ui.formTitle");
 	return t("ui.askTitle");
 }

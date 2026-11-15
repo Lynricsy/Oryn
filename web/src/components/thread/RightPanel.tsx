@@ -494,6 +494,7 @@ export function RightPanel({
 	const bp = useBreakpoint();
 	const segments = useViewportSegments();
 	const orbId = useThread(threadId, (s) => s.thread?.orbId);
+	const projectId = useThread(threadId, (s) => s.thread?.projectId);
 	const { tabs, settled } = useThreadTabs(threadId, peer);
 	// peer 模式下 threadTab 非 agent 时与 panelTab 同步，这里统一按 panelTab 显示；标签不在时先按信息标签显示
 	const shown: PanelTab = tabs.includes(tab) ? tab : "info";
@@ -600,7 +601,11 @@ export function RightPanel({
 							<ChangesPanel key={threadId} threadId={threadId} orbId={orbId} />
 						)}
 						{shown === "files" && (
-							<FilesPanel threadId={threadId} orbId={orbId} />
+							<FilesPanel
+								threadId={threadId}
+								orbId={orbId}
+								projectId={projectId}
+							/>
 						)}
 						{shown === "terminal" && <TerminalPanel threadId={threadId} />}
 						{shown === "portal" && (

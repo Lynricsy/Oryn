@@ -190,6 +190,29 @@ describe("Composer 斜杠命令", () => {
 		expect(timeoutOf("fresh")).toBeUndefined();
 	});
 
+	it("M12.2：omfg 应答的 data.oryn → 已同步 / 只在 orb（原因填进 {{why}}）", async () => {
+		const answers = [
+			{
+				state: "saved",
+				savedPath: "~/.oryn/project-config/.omp/rules/x.md",
+				oryn: { synced: true, scope: "project", path: "rules/x.md" },
+			},
+			{
+				state: "saved",
+				savedPath: "~/.omp/agent/rules/x.md",
+				oryn: { synced: false, reason: "scope_unconfirmed", scope: "global" },
+			},
+		];
+		reply({ omfg: () => answers.shift() });
+		mount();
+		await send("/omfg 别改测试");
+		await send("/omfg 别改测试");
+		expect(notices()).toEqual([
+			"规则已保存到本项目的 Agent 配置（rules/x.md）。当前线程立即生效，其它线程在新建 orb 或下次唤醒时生效。",
+			"规则只保存在当前 orb（~/.omp/agent/rules/x.md），没有写入 Oryn 中央配置：没有收到你对「全局」的选择。可以重新执行 /omfg，或到 Agent 配置里手动添加。",
+		]);
+	});
+
 	it("M6：不带附件的命令执行后附件留在输入区并提示", async () => {
 		reply({ tan: () => ({ jobId: "bg_2" }) });
 		mount();

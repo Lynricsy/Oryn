@@ -151,12 +151,24 @@ export function commandTimeout(frame: OmpCommand): number | undefined {
 	return LONG_COMMANDS[frame.type] ? LONG_COMMAND_TIMEOUT_MS : undefined;
 }
 
-/** 斜杠命令应答的本地提示：i18n 键（`slash.result.*`）+ 参数。 */
+/** 斜杠命令应答的本地提示：i18n 键（`slash.result.*`）+ 参数；`whyKey` 是填进 `{{why}}` 的原因说明。 */
 export interface SlashResultNotice {
 	level: "info" | "warning";
 	key: ParseKeys;
 	params?: Record<string, string | number>;
+	whyKey?: ParseKeys;
 }
+
+/** 控制面没写入中央配置的原因（C5 `data.oryn.reason`）；不认识的按 `store_failed` 说明。 */
+const OMFG_SYNC_WHY: Record<string, ParseKeys> = {
+	no_project: "slash.result.omfgWhy.no_project",
+	unsupported_path: "slash.result.omfgWhy.unsupported_path",
+	scope_unconfirmed: "slash.result.omfgWhy.scope_unconfirmed",
+	orb_read_failed: "slash.result.omfgWhy.orb_read_failed",
+	too_large: "slash.result.omfgWhy.too_large",
+	invalid_content: "slash.result.omfgWhy.invalid_content",
+	store_failed: "slash.result.omfgWhy.store_failed",
+};
 
 /**
  * 把命令应答变成一句给人看的提示；不需要提示的命令（结果在别处已经可见，如模式开关、压缩卡片）返回 null。
@@ -196,6 +208,29 @@ export function describeSlashResult(
 		case "omfg": {
 			if (d.state === "saved") {
 				const path = str(d.savedPath);
+				// 控制面把规则写回中央配置的结果（M12.2）；没有 `oryn` = 没有尝试同步（runner 线程等），照旧提示
+				if (isObject(d.oryn)) {
+					const o = d.oryn;
+					if (o.synced === true)
+						return {
+							level: "info",
+							key:
+								o.scope === "project"
+									? "slash.result.omfgSyncedProject"
+									: "slash.result.omfgSyncedGlobal",
+							params: { path: str(o.path) ?? path ?? "" },
+						};
+					const reason = str(o.reason);
+					return {
+						level: "warning",
+						key: "slash.result.omfgLocalOnly",
+						params: { path: path ?? "" },
+						whyKey:
+							(reason && Object.hasOwn(OMFG_SYNC_WHY, reason)
+								? OMFG_SYNC_WHY[reason]
+								: undefined) ?? "slash.result.omfgWhy.store_failed",
+					};
+				}
 				return path
 					? { level: "info", key: "slash.result.omfgSaved", params: { path } }
 					: { level: "info", key: "slash.result.omfgSavedNoPath" };

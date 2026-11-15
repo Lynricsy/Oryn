@@ -36,6 +36,18 @@ beforeEach(() => {
 			const url = new URL(req.url);
 			if (url.pathname.endsWith("/fs/list"))
 				listCalls.push(url.searchParams.get("path") ?? "");
+			if (url.pathname === "/api/v1/projects/prj_a/agent-config/files")
+				return Response.json({
+					files: [
+						{
+							path: "rules/p.md",
+							size: 3,
+							mode: 420,
+							sha256: "0".repeat(64),
+							updatedAt: 1,
+						},
+					],
+				});
 			if (url.pathname === "/api/v1/agent-config/files")
 				return Response.json({
 					files: [
@@ -58,11 +70,11 @@ afterEach(() => {
 });
 
 /** 面板里的「发布为公开链接」用到 TanStack Query 的 mutation，需要 QueryClient。 */
-function renderPanel(threadId: string, orbId?: string) {
+function renderPanel(threadId: string, orbId?: string, projectId?: string) {
 	const client = new QueryClient();
 	return render(
 		<QueryClientProvider client={client}>
-			<FilesPanel threadId={threadId} orbId={orbId} />
+			<FilesPanel threadId={threadId} orbId={orbId} projectId={projectId} />
 		</QueryClientProvider>,
 	);
 }
@@ -96,6 +108,26 @@ describe("FilesPanel", () => {
 	it("旧版 orbd：提示新建线程，Agent 配置仍可用", async () => {
 		renderPanel("T-f3", "orb-old00000000000000000000e4");
 		expect(await screen.findByText(t("files.outdated"))).toBeInTheDocument();
+		expect(await tab("files.roots.agentConfig")).toBeInTheDocument();
+	});
+
+	it("线程属于项目：Agent 配置之前多一个项目 Agent 配置根，列的是该项目的配置", async () => {
+		renderPanel("T-f5", ORB, "prj_a");
+		await tab("files.roots.agentConfig");
+		expect(screen.getAllByRole("tab").map((el) => el.textContent)).toEqual([
+			t("files.roots.workspace"),
+			t("files.roots.home"),
+			t("files.roots.projectAgentConfig"),
+			t("files.roots.agentConfig"),
+		]);
+		fireEvent.click(await tab("files.roots.projectAgentConfig"));
+		expect(await screen.findByText("rules")).toBeInTheDocument();
+		expect(screen.queryByText("AGENTS.md")).toBeNull();
+	});
+
+	it("线程属于项目但 orb 已删除：两份 Agent 配置都在", async () => {
+		renderPanel("T-f6", undefined, "prj_a");
+		expect(await tab("files.roots.projectAgentConfig")).toBeInTheDocument();
 		expect(await tab("files.roots.agentConfig")).toBeInTheDocument();
 	});
 

@@ -1,6 +1,7 @@
 /**
  * 项目分区的主区（M9.6）：`/projects` 跳到第一个未归档项目（没有项目时是空状态），`/projects/new` 新建，
- * `/projects/<id>` 是该项目的设置表单、环境配置（最近一次 setup）、服务（只读汇总）与定时任务。
+ * `/projects/<id>` 是该项目的设置表单、Agent 配置（M12.2 项目级中央 omp 配置）、环境配置（最近一次 setup）、
+ * 服务（只读汇总）与定时任务。
  * 页头与设置页同形：可拖动、按需放 ChromeLead / 侧栏开关 / 窗口控件；「查看线程」设侧栏过滤并切回线程分区。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -43,6 +44,7 @@ import { useBreakpoint } from "../lib/viewport";
 import { useIndex } from "../state/stores";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import { AccelCard } from "./projects/ProjectAccel";
+import { ProjectAgentConfigCard } from "./projects/ProjectAgentConfig";
 import {
 	EMPTY_PROJECT,
 	formOf,
@@ -271,6 +273,7 @@ function ProjectDetail({ project }: { project: Project }): ReactNode {
 					onCancel={() => setRev((r) => r + 1)}
 				/>
 			</Card>
+			<ProjectAgentConfigCard project={project} />
 			<EnvironmentCard orb={setupOrb} />
 			<AccelCard project={project} />
 			<ServicesCard orbs={mine} />

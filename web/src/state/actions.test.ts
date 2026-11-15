@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
+import i18n from "../i18n";
 import { describeSlashResult, patchThread, slashPromptFrame } from "./actions";
 import { getThreadStore, indexStore, resetThreadStores } from "./stores";
 
@@ -137,6 +138,85 @@ describe("describeSlashResult", () => {
 		expect(
 			describeSlashResult({ type: "compact" }, { tokensBefore: 1 }),
 		).toBeNull();
+	});
+
+	it("omfg 应答带 data.oryn（M12.2）：已同步 / 只在 orb / 没有 oryn 三种提示", () => {
+		const omfg = { type: "omfg", complaint: "x" } as const;
+		const saved = {
+			state: "saved",
+			savedPath: "~/.oryn/project-config/.omp/rules/x.md",
+		};
+		expect(
+			describeSlashResult(omfg, {
+				...saved,
+				oryn: { synced: true, scope: "project", path: "rules/x.md" },
+			}),
+		).toEqual({
+			level: "info",
+			key: "slash.result.omfgSyncedProject",
+			params: { path: "rules/x.md" },
+		});
+		expect(
+			describeSlashResult(omfg, {
+				state: "saved",
+				savedPath: "~/.omp/agent/rules/x.md",
+				oryn: { synced: true, scope: "global", path: "rules/x.md" },
+			}),
+		).toMatchObject({ key: "slash.result.omfgSyncedGlobal" });
+		expect(
+			describeSlashResult(omfg, {
+				...saved,
+				oryn: { synced: false, reason: "no_project", scope: "project" },
+			}),
+		).toEqual({
+			level: "warning",
+			key: "slash.result.omfgLocalOnly",
+			params: { path: saved.savedPath },
+			whyKey: "slash.result.omfgWhy.no_project",
+		});
+		// 不认识的原因（以及原型链上的名字）按 store_failed 说明
+		for (const reason of ["brand_new", "toString", undefined])
+			expect(
+				describeSlashResult(omfg, {
+					...saved,
+					oryn: { synced: false, reason },
+				}),
+			).toMatchObject({ whyKey: "slash.result.omfgWhy.store_failed" });
+		// 没有 oryn = 没有尝试同步（runner 等）：保持原提示
+		expect(describeSlashResult(omfg, saved)).toEqual({
+			level: "info",
+			key: "slash.result.omfgSaved",
+			params: { path: saved.savedPath },
+		});
+		// 只在 saved 时看 oryn
+		expect(
+			describeSlashResult(omfg, {
+				state: "rejected",
+				oryn: { synced: false, reason: "too_large" },
+			}),
+		).toMatchObject({ key: "slash.result.omfgRejected" });
+	});
+
+	it("omfg 每个 reason 都有中英文案", () => {
+		for (const reason of [
+			"no_project",
+			"unsupported_path",
+			"scope_unconfirmed",
+			"orb_read_failed",
+			"too_large",
+			"invalid_content",
+			"store_failed",
+		]) {
+			const r = describeSlashResult(
+				{ type: "omfg", complaint: "x" },
+				{ state: "saved", savedPath: "p", oryn: { synced: false, reason } },
+			);
+			expect(r?.whyKey).toBe(`slash.result.omfgWhy.${reason}`);
+			for (const lng of ["zh-CN", "en"]) {
+				const text = i18n.t(r?.whyKey ?? "common.save", { lng });
+				expect(text).not.toBe(r?.whyKey);
+			}
+		}
 	});
 });
 

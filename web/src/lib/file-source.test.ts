@@ -5,6 +5,7 @@ import {
 	agentConfigListing,
 	agentConfigSource,
 	orbFileSource,
+	projectAgentConfigSource,
 } from "./file-source";
 
 const f = (path: string, size = 1, updatedAt = 1) => ({
@@ -101,6 +102,103 @@ describe("agentConfigSource", () => {
 	it("不支持 mkdir / rename", () => {
 		const s = agentConfigSource();
 		expect(s.caps).toMatchObject({ mkdir: false, rename: false });
+	});
+});
+
+describe("projectAgentConfigSource（M12.2）", () => {
+	let calls: { method: string; raw: string; body: string }[];
+	let writeResults: unknown[];
+	beforeEach(() => {
+		calls = [];
+		writeResults = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const req =
+					input instanceof Request
+						? input
+						: new Request(new URL(String(input), "http://x"), init);
+				const url = new URL(req.url);
+				calls.push({
+					method: req.method,
+					raw: url.pathname,
+					body: req.method === "PUT" ? await req.text() : "",
+				});
+				if (url.pathname === "/api/v1/projects/prj_A/agent-config/files")
+					return Response.json({ files: [f("rules/a.md"), f("mcp.json")] });
+				if (
+					url.pathname ===
+					"/api/v1/projects/prj_A/agent-config/files/rules%2Fa.md"
+				)
+					return new Response("rule a\n");
+				if (req.method === "PUT")
+					return Response.json({
+						file: f("rules/b.md"),
+						extractedSecrets: [],
+						warnings: [],
+					});
+				return Response.json(
+					{ code: "not_found", message: "项目不存在" },
+					{ status: 404 },
+				);
+			}),
+		);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("id 与根标签独立于全局配置；列表、读写、删除都走项目接口，路径里的 / 编码为 %2F", async () => {
+		const s = projectAgentConfigSource("prj_A", (r) => writeResults.push(r));
+		expect(s.id).toBe("project-config:prj_A");
+		expect(await s.roots()).toEqual([
+			{ label: "files.roots.projectAgentConfig", path: "" },
+		]);
+		expect((await s.list("")).map((e) => e.path)).toEqual([
+			"rules",
+			"mcp.json",
+		]);
+		expect(await s.readText("rules/a.md")).toEqual({
+			text: "rule a\n",
+			truncated: false,
+		});
+		await s.write("rules/b.md", "b\n");
+		await s.remove("rules");
+		expect(s.downloadUrl("rules/a.md")).toBe(
+			"/api/v1/projects/prj_A/agent-config/files/rules%2Fa.md",
+		);
+		expect(calls.filter((c) => c.method !== "GET")).toEqual([
+			{
+				method: "PUT",
+				raw: "/api/v1/projects/prj_A/agent-config/files/rules%2Fb.md",
+				body: "b\n",
+			},
+			{
+				method: "DELETE",
+				raw: "/api/v1/projects/prj_A/agent-config/files/rules%2Fa.md",
+				body: "",
+			},
+		]);
+		expect(writeResults).toHaveLength(1);
+		expect(calls.some((c) => c.raw.startsWith("/api/v1/agent-config"))).toBe(
+			false,
+		);
+	});
+
+	it("overwrite=false 且项目里已存在 → 409 exists，不发 PUT", async () => {
+		await expect(
+			projectAgentConfigSource("prj_A").write("mcp.json", "{}", {
+				overwrite: false,
+			}),
+		).rejects.toMatchObject({ status: 409, code: "exists" });
+		expect(calls.some((c) => c.method === "PUT")).toBe(false);
+	});
+
+	it("项目不存在（列表 404）→ ApiError not_found；不存在的文件 stat → 404", async () => {
+		await expect(
+			projectAgentConfigSource("prj_gone").list(""),
+		).rejects.toMatchObject({ status: 404, code: "not_found" });
+		await expect(
+			projectAgentConfigSource("prj_A").stat("rules/zzz.md"),
+		).rejects.toMatchObject({ status: 404, code: "not_found" });
 	});
 });
 
