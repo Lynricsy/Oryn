@@ -7,6 +7,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/stats"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // ListOrbs 实现 GET /api/v1/orbs。
@@ -22,7 +23,7 @@ func (s *Server) ListOrbs(w http.ResponseWriter, r *http.Request, params apigen.
 		if params.State != nil && o.State != string(*params.State) {
 			continue
 		}
-		v, err := orbs.View(ctx, s.Store.Q, o)
+		v, err := s.orbView(r, o)
 		if err != nil {
 			writeOrbErr(w, err)
 			return
@@ -47,12 +48,26 @@ func (s *Server) writeOrb(w http.ResponseWriter, r *http.Request, id string, sta
 		writeOrbErr(w, err)
 		return
 	}
-	v, err := orbs.View(r.Context(), s.Store.Q, o)
+	v, err := s.orbView(r, o)
 	if err != nil {
 		writeOrbErr(w, err)
 		return
 	}
 	WriteJSON(w, status, v)
+}
+
+// orbView 是 orbs.View 加上活动 link 上报的特性（M11b：Orb.features）。
+func (s *Server) orbView(r *http.Request, o db.Orb) (apigen.Orb, error) {
+	v, err := orbs.View(r.Context(), s.Store.Q, o)
+	if err != nil {
+		return v, err
+	}
+	if s.Orbs != nil && s.Orbs.Service != nil {
+		if f, ok := s.Orbs.Service.LiveFeatures(o.ID); ok {
+			v.Features = f
+		}
+	}
+	return v, nil
 }
 
 // PauseOrb 实现 POST /api/v1/orbs/{id}/pause。
@@ -80,6 +95,11 @@ func (s *Server) PauseOrb(w http.ResponseWriter, r *http.Request, id apigen.OrbI
 func (s *Server) ResumeOrb(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
 	svc, ok := s.orbsSvc(w)
 	if !ok {
+		return
+	}
+	if o, err := svc.Get(r.Context(), id); err == nil && orbs.IsRunner(o) {
+		// runner 只能自己接入，没有可唤醒的环境
+		writeOrbErr(w, orbs.ErrRunnerUnsupported)
 		return
 	}
 	svc.TouchUser(r.Context(), id)

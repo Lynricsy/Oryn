@@ -13,7 +13,8 @@ import (
 )
 
 // View 把 orb 行转换成 API 形态：附 provider 名、挂在其上的线程、失败原因、最近一次 setup / resume 运行，
-// 以及服务镜像与 portal（orb 已删除时省略）。
+// 以及服务镜像与 portal（orb 已删除时省略）。runner 的 orb 带 kind = runner 与最近一次上报的特性；
+// 活动 link 的特性不在这里（本函数只读库），由调用方用 Service.LiveFeatures 覆盖。
 // REST（GET orbs…）与实时推送（WS `orb`、thread.snapshot）共用这一个转换。
 func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	threadIDs, err := q.ListThreadIDsByOrb(ctx, &o.ID)
@@ -33,6 +34,16 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	if o.Coordinator {
 		yes := true
 		v.Coordinator = &yes
+	}
+	if IsRunner(o) {
+		v.Kind = new(apigen.OrbKindRunner)
+		r, err := q.GetRunnerByOrb(ctx, o.ID)
+		switch {
+		case err == nil:
+			v.Features = parseFeatures(r.Features)
+		case !errors.Is(err, sql.ErrNoRows):
+			return apigen.Orb{}, err
+		}
 	}
 	p, err := q.GetProvider(ctx, o.ProviderID)
 	switch {

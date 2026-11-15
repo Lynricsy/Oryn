@@ -2,7 +2,6 @@ package orbs
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
-	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -30,6 +28,8 @@ type orbLink struct {
 	// prepared 在 onHello 完成本 link 的准备工作（portal.configure）之后关闭：任何 setup / resume
 	// （onHello 自己或 spawn 完成后的 advance）都等它，保证受管服务拉起时已有 PUBLIC_URL 模板。
 	prepared chan struct{}
+	// runner 为真时这是 runner 的常驻 orb 的 link（M11b）。
+	runner bool
 }
 
 func (l *orbLink) helloSeen() bool {
@@ -133,7 +133,7 @@ func linkAcceptable(state string) bool {
 	return false
 }
 
-// LinkHandler 返回 GET /orb/v1/link 的处理器（WebSocket + yamux，Bearer oot_…）。
+// LinkHandler 返回 GET /orb/v1/link 的处理器（WebSocket + yamux，Bearer oot_… | ort_…）。
 func (s *Service) LinkHandler() http.Handler {
 	return http.HandlerFunc(s.serveLink)
 }
@@ -141,17 +141,11 @@ func (s *Service) LinkHandler() http.Handler {
 func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 	var orb db.Orb
 	sess, err := link.Accept(w, r, func(r *http.Request, token string) error {
-		if ids.TokenPrefix(token) != "oot" {
-			return errors.New("not an orb token")
-		}
-		o, err := s.st.Q.GetOrbByTokenHash(r.Context(), ids.Hash(token))
-		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("unknown orb token")
-		}
+		o, err := s.orbForToken(r.Context(), token)
 		if err != nil {
 			return err
 		}
-		if !linkAcceptable(o.State) {
+		if !orbLinkAcceptable(o) {
 			return fmt.Errorf("orb %s is %s", o.ID, o.State)
 		}
 		orb = o
@@ -162,6 +156,10 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sess.Close()
+	if IsRunner(orb) {
+		// runner 接入即上线：stopped → connecting，hello 之后 → ready
+		s.runnerConnecting(r.Context(), orb.ID)
+	}
 	s.attach(orb, sess, r.RemoteAddr)
 }
 
@@ -205,7 +203,7 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 	// ctl 端点先完整构造、link 先发布，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
 	// hello 等回调也不会在发布之前运行。
 	published := make(chan struct{})
-	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{})}
+	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb)}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 			<-published
@@ -237,6 +235,10 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 		_ = old.sess.Close()
 	}
 	slog.Info("orb link 已连接", "orb", orb.ID, "remote", remote)
+	if l.runner {
+		// 新 link 到来：取消上一条 link 断开时起的离线定时器
+		s.stopRunnerOffline(orb.ID)
+	}
 
 	ctx, cancelStreams := context.WithCancel(context.Background())
 	defer cancelStreams()
@@ -256,6 +258,11 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string) {
 		}
 		switch st.Header.T {
 		case link.StreamEgress:
+			if l.runner {
+				// runner 不走控制面的 egress 代理（控制面的密钥不去 runner）
+				_ = st.Close()
+				continue
+			}
 			s.serveEgress(orb.ID, st)
 		case link.StreamCtl:
 			slog.Warn("重复的 ctl 流，关闭 link", "orb", orb.ID)
@@ -344,16 +351,27 @@ func (s *Service) onHello(l *orbLink) {
 	}
 	ctx := context.Background()
 	orb, err := s.Get(ctx, l.orbID)
-	if err == nil && linkAcceptable(orb.State) && slices.Contains(l.hello.Features, FeaturePortal) {
+	if err == nil && orbLinkAcceptable(orb) && slices.Contains(l.hello.Features, FeaturePortal) {
 		s.portalConfigure(ctx, l)
 	}
 	close(l.prepared)
 	if err != nil {
 		return
 	}
-	if !linkAcceptable(orb.State) {
+	if !orbLinkAcceptable(orb) {
 		s.Kick(orb.ID, "orb is "+orb.State)
 		return
+	}
+	if l.runner {
+		// 目录与特性先落库，再进入 ready：线程看到 runner 在线时一定能看到它声明的目录
+		s.runnerHello(ctx, l)
+		if orb.State == StateStopped {
+			// 离线定时器恰在本 link 发布之前到期
+			s.runnerConnecting(ctx, orb.ID)
+			if orb, err = s.Get(ctx, l.orbID); err != nil {
+				return
+			}
+		}
 	}
 	if orb.State == StateConnecting {
 		s.runPhase(l)
@@ -396,6 +414,10 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 	}
 	ctx := context.Background()
+	if l.runner {
+		s.runnerReady(ctx, l.orbID)
+		return
+	}
 	everReady, err := s.st.Q.OrbEverReady(ctx, l.orbID)
 	if err != nil {
 		slog.Warn("查询 orb 历史失败", "orb", l.orbID, "err", err)
@@ -539,4 +561,7 @@ func (s *Service) onLinkDown(l *orbLink) {
 		return
 	}
 	s.emitInfo(ctx, EventLinkDown, orb)
+	if l.runner {
+		s.armRunnerOffline(l.orbID)
+	}
 }

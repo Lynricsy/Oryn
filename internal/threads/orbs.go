@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -109,4 +110,10 @@ type Orbs interface {
 	// ClaimPool 认领一台与 p 匹配（项目、provider、类型、配置哈希）的预热池 orb（M11a）；没有可认领的返回 false，
 	// 调用方照常 Create。认领成功的 orb 已离开池（或处于 claimed，刷新后进入 ready）。
 	ClaimPool(ctx context.Context, p OrbCreate) (db.Orb, bool)
+	// RunnerOrb 返回 provider id 对应的在用 runner（其常驻 orb 与最近一次上报的目录 / 特性，M11b）；不是在用的 runner →
+	// orbs.ErrNotFound。
+	RunnerOrb(ctx context.Context, providerID string) (orbs.Runner, error)
+	// Features 返回 orb 的种类（orbs.KindOrb / KindRunner）与已知特性（活动 link 的 hello；没有 link 时 runner 取
+	// 最近一次上报的，普通 orb 为 nil）。M11b：runner 未上报 terminal 时不发 terminal_configure。
+	Features(orbID string) (kind string, features []string)
 }

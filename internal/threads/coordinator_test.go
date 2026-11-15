@@ -134,11 +134,11 @@ func TestCoordinatorInitFrames(t *testing.T) {
 	f := newFixture(t, Config{})
 	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
 	prof := &AgentProfile{Tools: []apigen.OmpFrame{{"name": "list_threads"}}}
-	frames := initFrames(th, prof)
+	frames := initFrames(th, prof, false)
 	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, frameTypes(frames))
 	assert.Equal(t, prof.Tools, frames[2]["tools"])
 	work := f.thread(f.orb("ready"), StateIdle)
-	assert.Contains(t, frameTypes(initFrames(work, nil)), "terminal_configure", "工作线程不变")
+	assert.Contains(t, frameTypes(initFrames(work, nil, true)), "terminal_configure", "工作线程不变")
 }
 
 // 协调线程的 agent.start 带协调档与系统提示词；所在 orb 没有 coordinator 特性时线程进入 error、不发 agent.start。

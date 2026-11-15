@@ -252,6 +252,8 @@ type thread struct {
 	sessionDir string
 	// kind 是线程种类（work / space / assistant，创建后不变）。
 	kind string
+	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
+	cwd string
 
 	mu          sync.Mutex
 	orbID       string
@@ -385,6 +387,9 @@ func newThread(row db.Thread) *thread {
 	}
 	if row.SpaceID != nil {
 		t.spaceID = *row.SpaceID
+	}
+	if row.Cwd != nil {
+		t.cwd = *row.Cwd
 	}
 	if row.OrbID != nil {
 		t.orbID = *row.OrbID

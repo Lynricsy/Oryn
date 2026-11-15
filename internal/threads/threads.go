@@ -47,6 +47,11 @@ type CreateParams struct {
 	ScheduleRun int64
 	// Tag 非空时跟踪首条提示词的终态：恰好得到一次 Observer.TurnEnded（契约 C1）；空 = 不跟踪。
 	Tag string
+	// RunnerID 非空时线程跑在该 runner 上（M11b，与 OrbID / Provider / Type 互斥）：Dir 是工作目录（须在 runner 声明的
+	// 目录之内）；Worktree 非空时先在 Dir 旁边建同名 worktree，线程的工作目录取它；ShareDir 为真时允许与其它线程共用 Dir。
+	RunnerID, Dir string
+	Worktree      string
+	ShareDir      bool
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
@@ -91,9 +96,21 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if p.OrbID != "" && explicitProfile {
 		return apigen.Thread{}, errf("invalid", "browserProfileId cannot be set when attaching to an existing orb")
 	}
+	if p.RunnerID != "" && (p.OrbID != "" || p.Provider != "" || p.Type != "") {
+		return apigen.Thread{}, errf("invalid", "a runner thread cannot also name an orb, provider or type")
+	}
 	var orb db.Orb
 	newOrb := false
-	if p.OrbID != "" {
+	var rt *runnerTarget
+	switch {
+	case p.RunnerID != "":
+		// worktree.add 在建线程行之前：失败时不留下线程
+		t, err := s.prepareRunner(ctx, p)
+		if err != nil {
+			return apigen.Thread{}, err
+		}
+		rt, orb = t, t.orb
+	case p.OrbID != "":
 		o, err := s.st.Q.GetOrb(ctx, p.OrbID)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && (o.DeletedAt != nil || o.State == orbStateDeleted || o.State == "deleting")) {
 			return apigen.Thread{}, errf("not_found", "orb not found")
@@ -109,7 +126,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			// 池 orb 只能经认领进入线程（认领会刷新仓库并让它离开池）；直接挂上去会与对账回收竞争
 			return apigen.Thread{}, errf(CodeOrbIsPooled, "orb belongs to the warm pool")
 		}
-	} else {
+	default:
 		var profileID string
 		switch {
 		case s.profiles != nil:
@@ -143,6 +160,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	row := db.CreateThreadParams{
 		Kind: KindWork, ID: id, OrbID: &orb.ID, TitleSource: "auto", State: StateProvisioning, SessionDir: sessionDirOf(id),
 		Model: modelString(p.Model), ShortCode: shortCode(id),
+	}
+	if rt != nil {
+		// 项目只作归类，不触发 clone
+		row.Cwd, row.Worktree = &rt.cwd, worktreeJSON(rt.worktree)
 	}
 	if p.SpaceID != "" {
 		row.SpaceID = &p.SpaceID
@@ -200,6 +221,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 				slog.Warn("threads: 删除建线程失败后的 orb 失败", "orb", orb.ID, "err", derr)
 			}
 		}
+		if rt != nil && rt.worktree != nil {
+			s.dropWorktree(context.WithoutCancel(ctx), orb.ID, rt.worktree)
+		}
 		return apigen.Thread{}, asThreadErr(err)
 	}
 	// 加载线程时按 startup_frames 排队（见 get / queueStartupLocked）
@@ -217,7 +241,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	s.out().IndexUpsert(out)
-	if p.OrbID != "" {
+	if p.OrbID != "" || rt != nil {
 		s.wake(id, orb.ID)
 	} else if s.orbState(orb.ID) == orbStateReady {
 		s.scheduleStart(id)
@@ -784,11 +808,16 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 		Kind: "work", ID: newID, ProjectID: row.ProjectID, Title: row.Title, TitleSource: "auto", State: StateProvisioning,
 		ParentThreadID: &row.ID, ForkedFromEntryID: &entry, SessionDir: sessionDirOf(newID),
 		Model: row.Model, ThinkingLevel: row.ThinkingLevel, Color: row.Color, ShortCode: shortCode(newID),
+		// runner 线程（M11b）：子线程在同一工作目录里继续，worktree 仍归源线程（不继承）
+		Cwd: row.Cwd,
 	}
 	switch env {
 	case "share":
 		return s.forkShare(ctx, src, child, orbID, entry)
 	case "copy":
+		if o, err := s.st.Q.GetOrb(ctx, orbID); err == nil && orbs.IsRunner(o) {
+			return apigen.Thread{}, errf(CodeRunnerUnsupported, "a runner thread can only be forked with env=share")
+		}
 		// 只有显式给了 entryId 才在副本上再 fork；否则副本即完整会话
 		forkAt := ""
 		if entryID != nil {

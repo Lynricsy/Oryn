@@ -7,6 +7,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,10 @@ func (nopOrbs) Kick(string, string)                                 {}
 func (nopOrbs) HasFeature(string, string) bool                      { return false }
 func (nopOrbs) Delete(context.Context, string) error                { return nil }
 func (nopOrbs) ClaimPool(context.Context, OrbCreate) (db.Orb, bool) { return db.Orb{}, false }
+func (nopOrbs) RunnerOrb(context.Context, string) (orbs.Runner, error) {
+	return orbs.Runner{}, orbs.ErrNotFound
+}
+func (nopOrbs) Features(string) (string, []string) { return orbs.KindOrb, nil }
 
 // fork_from 在途时出现的新主会话文件（其产物）不得作为源线程的新会话入库，也不得移动源线程的叶子；
 // 同期出现的其它新文件在 fork 结束后补入库。

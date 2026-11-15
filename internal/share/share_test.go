@@ -86,6 +86,8 @@ type fakeOrbs struct {
 	dirs      map[string]bool
 	sizes     map[string]int64 // 覆盖 stat 报告的大小
 	ensureErr error
+	// workdirs 记录每个请求的 X-Oryn-Workdir（M11b；没带为空串）。
+	workdirs []string
 }
 
 func (f *fakeOrbs) EnsureUsable(context.Context, string, string, bool, time.Duration) error {
@@ -96,6 +98,7 @@ func (f *fakeOrbs) Do(_ context.Context, _ string, req *http.Request) (*http.Res
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec := httptest.NewRecorder()
+	f.workdirs = append(f.workdirs, req.Header.Get(orbs.HeaderWorkdir))
 	p := req.URL.Query().Get("path")
 	data, isFile := f.files[p]
 	switch {
@@ -713,6 +716,29 @@ func TestPublishOrbFile(t *testing.T) {
 	e.orbs.ensureErr = fmt.Errorf("wrapped: %w", orbs.ErrOrbNotReady)
 	_, err = e.svc.PublishOrbFile(e.ctx, *orbID, tid, "~/workspace/out/report.csv")
 	check(err, http.StatusConflict, "orb_not_ready")
+}
+
+// runner 线程发布文件时，发往 orbd 的请求都带线程的工作目录（X-Oryn-Workdir）；普通 orb 的线程不带，行为不变。
+func TestPublishOrbFileWorkdir(t *testing.T) {
+	e := newEnv(t)
+	orbID := e.orb("orb-01jabcdefghjkmnpqrstvwxyz0")
+	e.thread(tid, "T", orbID)
+	const runnerTid = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ac"
+	cwd := "/home/me/src/app"
+	require.NoError(t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{
+		Kind: "work", ID: runnerTid, OrbID: orbID, Title: "R", TitleSource: "auto", State: "idle", SessionDir: "~/.oryn/threads/" + runnerTid,
+		CreatedAt: 1, UpdatedAt: 1, Cwd: &cwd,
+	}))
+	e.orbs.files["out.txt"] = []byte("hi")
+
+	_, err := e.svc.PublishOrbFile(e.ctx, *orbID, tid, "out.txt")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"", ""}, e.orbs.workdirs, "普通线程：stat 与 file 都不带工作目录")
+
+	e.orbs.workdirs = nil
+	_, err = e.svc.PublishOrbFile(e.ctx, *orbID, runnerTid, "out.txt")
+	require.NoError(t, err)
+	assert.Equal(t, []string{cwd, cwd}, e.orbs.workdirs, "runner 线程：stat 与 file 都带工作目录")
 }
 
 // ---- 工具 ----

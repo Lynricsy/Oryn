@@ -203,6 +203,12 @@ type Service struct {
 	hookTouchWait     func(orbID string)
 	// hookSnapshotBuilding（仅测试）在项目快照登记为 building 之后、入队 snapshot 任务之前调用。
 	hookSnapshotBuilding func(orbID, snapID string)
+	// hookAfterFunc（仅测试）替换 runner 离线定时器的 time.AfterFunc（见 runner.go afterFunc）。
+	hookAfterFunc func(d time.Duration, fn func()) func() bool
+	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
+	runnerOffline map[string]*runnerTimer
+	// closed 在 Close 之后为真（受 mu 保护）。
+	closed bool
 
 	// poolKick 是容量 1 的对账触发通道（PoolKick）；poolBackoff 是各项目池 orb setup 失败后的退避截止时间（受 mu 保护）。
 	poolKick    chan struct{}
@@ -241,6 +247,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 		userTouched: map[string]*userTouch{},
 		poolKick:    make(chan struct{}, 1), poolBackoff: map[string]time.Time{},
+		runnerOffline: map[string]*runnerTimer{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
@@ -404,7 +411,10 @@ func (s *Service) publish(ch *change) {
 	if ch.signal {
 		s.jobs.Signal(ch.orb.ProviderID)
 	}
-	s.armConnectTimer(ch.orb.ID, ch.to, ch.seq)
+	if !IsRunner(ch.orb) {
+		// runner 的 connecting 不计 hello 超时：它没有 provider 去重试，断开由离线定时器处理
+		s.armConnectTimer(ch.orb.ID, ch.to, ch.seq)
+	}
 	s.emit(Event{OrbID: ch.orb.ID, Kind: EventState, From: ch.from, To: ch.to, Orb: ch.orb, Seq: ch.seq})
 }
 
@@ -526,8 +536,9 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 	}
 	if name != "" {
 		p, err := s.st.Q.GetProviderByName(ctx, name)
-		if errors.Is(err, sql.ErrNoRows) {
-			return p, fmt.Errorf("%w: provider %q 不存在", ErrNoProvider, name)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && p.Driver == DriverRunner) {
+			// runner 的 provider 行不经 provider 进程、不能新建 orb：对外与不存在相同
+			return db.Provider{}, fmt.Errorf("%w: provider %q 不存在", ErrNoProvider, name)
 		}
 		if err == nil && p.DisabledAt != nil {
 			return p, fmt.Errorf("%w: provider %q 已停用", ErrNoProvider, name)
@@ -539,6 +550,9 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 		if err == nil && p.Driver == HostDriver {
 			return db.Provider{}, fmt.Errorf("%w: provider %q is reserved", ErrNoProvider, HostProviderName)
 		}
+		if err == nil && p.Driver == DriverRunner {
+			return db.Provider{}, fmt.Errorf("%w: %w", ErrNoProvider, ErrRunnerUnsupported)
+		}
 		return p, err
 	}
 	all, err := s.st.Q.ListProviders(ctx)
@@ -547,7 +561,7 @@ func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Proj
 	}
 	var live []db.Provider
 	for _, p := range all {
-		if p.DisabledAt == nil && p.Driver != HostDriver {
+		if p.DisabledAt == nil && p.Driver != HostDriver && p.Driver != DriverRunner {
 			live = append(live, p)
 		}
 	}
@@ -636,6 +650,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 	}
 	if p.Pool && (p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "") {
 		return db.Orb{}, fmt.Errorf("%w: 预热池 orb 须属于项目，且不能指定快照或浏览器 Profile", ErrInvalidState)
+	}
+	if p.SnapshotOf != "" {
+		if src, err := s.st.Q.GetOrb(ctx, p.SnapshotOf); err == nil && IsRunner(src) {
+			// runner 的目录是用户机器上的，没有可拍的环境
+			return db.Orb{}, ErrRunnerUnsupported
+		}
 	}
 	if p.SnapshotID != "" && p.SnapshotOf != "" {
 		// 快照是专为这次创建拍的：创建失败时没有 orb 会用它，交给源 orb 的 provider 回收。
@@ -767,6 +787,16 @@ func (s *Service) Wake(ctx context.Context, orbID string) error {
 	if err != nil {
 		return err
 	}
+	if IsRunner(orb) {
+		// runner 只能自己接入：stopped = 离线，其余状态无事可做
+		switch orb.State {
+		case StateStopped:
+			return ErrRunnerOffline
+		case StateDeleting, StateDeleted:
+			return fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orbID)
+		}
+		return nil
+	}
 	switch orb.State {
 	case StateFrozen, StateStopped, StateFailed:
 		_, moved, err := s.transitionThen(ctx, orbID, orb.State, StateWaking, nil, s.spawnIn)
@@ -811,6 +841,9 @@ func (s *Service) Pause(ctx context.Context, orbID, mode string) error {
 	orb, err := s.Get(ctx, orbID)
 	if err != nil {
 		return err
+	}
+	if IsRunner(orb) {
+		return ErrRunnerUnsupported
 	}
 	switch {
 	case mode == PauseFreeze && orb.State == StateFrozen, mode == PauseStop && orb.State == StateStopped:
@@ -897,6 +930,10 @@ func (s *Service) Delete(ctx context.Context, orbID string) error {
 		if orb.State == StateDeleted || orb.State == StateDeleting {
 			return nil
 		}
+		if IsRunner(orb) {
+			// runner 的 orb 随 runner 一起删除（DeleteRunner）
+			return ErrRunnerUnsupported
+		}
 		frozen := orb.State == StateFrozen || orb.State == StateFreezing
 		var then func(t *txn) error
 		if frozen {
@@ -955,6 +992,9 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 	orb, err := s.Get(ctx, orbID)
 	if err != nil {
 		return "", err
+	}
+	if IsRunner(orb) {
+		return "", ErrRunnerUnsupported
 	}
 	snap := ids.Snapshot()
 	if _, err := s.snapshotAs(ctx, orb, snap); err != nil {
@@ -1174,6 +1214,14 @@ func (s *Service) recover(ctx context.Context) {
 }
 
 func (s *Service) reconcile(ctx context.Context, orb db.Orb) error {
+	if IsRunner(orb) {
+		// runner 的 link 在重启后必然断了：在线状态回到 stopped，等它重连（不计 connect 超时、没有任务可对账）
+		if orb.State == StateReady || orb.State == StateConnecting {
+			_, _, err := s.transition(ctx, orb.ID, orb.State, StateStopped, map[string]any{"reason": "control plane restarted"})
+			return err
+		}
+		return nil
+	}
 	switch orb.State {
 	case StateSettingUp, StateResuming:
 		_, _, err := s.transition(ctx, orb.ID, orb.State, StateConnecting, map[string]any{"reason": "control plane restarted"})
@@ -1270,6 +1318,10 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			return
 		}
 		for _, orb := range orbs {
+			if IsRunner(orb) {
+				// runner 是常驻的：不冻结、不停机
+				continue
+			}
 			idle := s.idleFrozenTooLong
 			if state == StateReady {
 				idle = s.idleReady
@@ -1332,6 +1384,12 @@ func (s *Service) Close() {
 		t.Stop()
 	}
 	s.timers = map[string]*time.Timer{}
+	// runner 的离线定时器：关闭之后断开的 link 也不再起新的（见 armRunnerOffline）
+	s.closed = true
+	for _, t := range s.runnerOffline {
+		t.stop()
+	}
+	s.runnerOffline = map[string]*runnerTimer{}
 	s.mu.Unlock()
 	for _, l := range links {
 		_ = l.sess.Close()

@@ -101,9 +101,10 @@ type responseHead struct {
 
 // initFrames 按 C4 第 3 步构造 agent 初始化帧；M3 起在 set_subagent_subscription 之后开启终端
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
+// terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
 // 子 agent 订阅与终端。
-func initFrames(t *thread, prof *AgentProfile) []apigen.OmpFrame {
+func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
 		open["provider"], open["modelId"] = m.Provider, m.ID
@@ -125,7 +126,9 @@ func initFrames(t *thread, prof *AgentProfile) []apigen.OmpFrame {
 			{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
 			{"type": "set_ask_dialog", "enabled": true, "form": true},
 			{"type": "set_subagent_subscription", "level": "progress"},
-			{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true},
+		}
+		if terminal {
+			frames = append(frames, apigen.OmpFrame{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true})
 		}
 	}
 	if t.thinking != nil && *t.thinking != "" {
@@ -186,8 +189,11 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		s.markFailed(ctx, t)
 		return
 	}
+	terminal := prof == nil && s.terminalEnabled(orbID)
 	t.mu.Lock()
-	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof)}
+	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
+	// runner 线程（M11b）：agent 在线程的工作目录里启动
+	params.Cwd = t.cwd
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
@@ -1369,7 +1375,10 @@ func (s *Service) wake(threadID, orbID string) {
 			s.startAgent(ctx, threadID)
 			return
 		}
-		if err := s.orbs.Wake(ctx, orbID); err != nil {
+		if err := s.orbs.Wake(ctx, orbID); errors.Is(err, orbs.ErrRunnerOffline) {
+			// runner 离线：命令留在队列里，runner 重新接入（→ ready）时由 orb 事件触发启动并按序下发
+			slog.Debug("threads: runner 离线，命令排队等它重连", "thread", threadID, "orb", orbID)
+		} else if err != nil {
 			slog.Warn("threads: 唤醒 orb 失败", "orb", orbID, "err", err)
 		}
 	})
@@ -1410,7 +1419,12 @@ func (s *Service) Wake(ctx context.Context, threadID string) error {
 		s.scheduleStart(threadID)
 		return nil
 	}
-	return s.orbs.Wake(ctx, orbID)
+	if err := s.orbs.Wake(ctx, orbID); errors.Is(err, orbs.ErrRunnerOffline) {
+		return errf(CodeRunnerOffline, "runner is offline; messages will be delivered when it reconnects")
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ErrUIResolved 表示 UI 请求已被其它客户端作答（先到先得）。

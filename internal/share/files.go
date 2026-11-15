@@ -108,7 +108,8 @@ func (s *Service) PublishOrbFile(ctx context.Context, orbID, threadID, p string)
 	}
 	q := url.Values{"path": {p}}.Encode()
 	var st apigen.FsEntry
-	if err := s.orbJSON(ctx, orbID, "/fs/stat?"+q, &st); err != nil {
+	// runner 线程（M11b）：路径范围是线程的工作目录，经 X-Oryn-Workdir 告诉 orbd
+	if err := s.orbJSON(ctx, orbID, th.Cwd, "/fs/stat?"+q, &st); err != nil {
 		return apigen.PublishedFile{}, err
 	}
 	kind := st.Type
@@ -123,7 +124,7 @@ func (s *Service) PublishOrbFile(ctx context.Context, orbID, threadID, p string)
 	case st.Size > MaxOrbFileBytes:
 		return apigen.PublishedFile{}, errf(http.StatusRequestEntityTooLarge, "too_large", "file exceeds %d bytes", MaxOrbFileBytes)
 	}
-	resp, err := s.orbGet(ctx, orbID, "/fs/file?"+q)
+	resp, err := s.orbGet(ctx, orbID, th.Cwd, "/fs/file?"+q)
 	if err != nil {
 		return apigen.PublishedFile{}, err
 	}
@@ -143,12 +144,13 @@ func (s *Service) PublishOrbFile(ctx context.Context, orbID, threadID, p string)
 	return pf, nil
 }
 
-// orbGet 发 GET 到 orbd；非 2xx 时把 orbd 的 {code,message} 转成 *Error（状态码沿用）。
-func (s *Service) orbGet(ctx context.Context, orbID, target string) (*http.Response, error) {
+// orbGet 发 GET 到 orbd（cwd 非空时带 X-Oryn-Workdir）；非 2xx 时把 orbd 的 {code,message} 转成 *Error（状态码沿用）。
+func (s *Service) orbGet(ctx context.Context, orbID string, cwd *string, target string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://orb"+target, nil)
 	if err != nil {
 		return nil, err
 	}
+	orbs.SetWorkdir(req.Header, cwd)
 	resp, err := s.orbs.Do(ctx, orbID, req)
 	if err != nil {
 		if e := orbError(err); e != err {
@@ -168,8 +170,8 @@ func (s *Service) orbGet(ctx context.Context, orbID, target string) (*http.Respo
 	return nil, errf(http.StatusBadGateway, "orbd_bad_response", "orbd returned %d", resp.StatusCode)
 }
 
-func (s *Service) orbJSON(ctx context.Context, orbID, target string, out any) error {
-	resp, err := s.orbGet(ctx, orbID, target)
+func (s *Service) orbJSON(ctx context.Context, orbID string, cwd *string, target string, out any) error {
+	resp, err := s.orbGet(ctx, orbID, cwd, target)
 	if err != nil {
 		return err
 	}

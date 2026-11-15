@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -64,6 +65,8 @@ type orbProxyOpt struct {
 	filename string
 	// text：成功响应是纯文本（服务日志），Content-Type 置 text/plain; charset=utf-8；其余同 JSON 路由。
 	text bool
+	// workdir 非空时以 X-Oryn-Workdir 转给 orbd（M11b：请求带 thread 且该线程有 cwd；由 proxyOrb 填写）。
+	workdir string
 }
 
 // proxyRequestHeaders 是转发给 orbd 的请求头（其余一律丢弃：Cookie、Authorization、前置代理加的身份头、
@@ -89,6 +92,8 @@ var errOrbBadResponse = errors.New("orbd returned an invalid response")
 var errOrbTimeout = errors.New("orbd did not answer in time")
 
 // proxyOrb 把请求转发到 orb 的 orbd 本机 API 的 upstream 路径（如 `/fs/list`）。
+// fs / git 路由（M11b）：查询参数 thread 须是该 orb 上的线程，线程有 cwd 时以 X-Oryn-Workdir 转给 orbd；
+// runner 的 orb 必须带 thread（否则 400 thread_required）。thread 参数本身不转给 orbd。
 func (s *Server) proxyOrb(w http.ResponseWriter, r *http.Request, orbID, upstream string, opt orbProxyOpt) {
 	svc, ok := s.orbsSvc(w)
 	if !ok {
@@ -96,11 +101,20 @@ func (s *Server) proxyOrb(w http.ResponseWriter, r *http.Request, orbID, upstrea
 	}
 	clientCtx := r.Context()
 	feature := strings.SplitN(strings.TrimPrefix(upstream, "/"), "/", 2)[0]
+	q := r.URL.Query()
+	threadID := q.Get("thread")
+	q.Del("thread")
+	if feature == orbs.FeatureFS || feature == orbs.FeatureGit {
+		wd, ok := s.threadWorkdir(w, r, orbID, threadID)
+		if !ok {
+			return
+		}
+		opt.workdir = wd
+	}
 	if err := svc.EnsureUsable(clientCtx, orbID, feature, !opt.bg, orbWakeWait); err != nil {
 		writeOrbHTTPErr(w, err, opt.bg)
 		return
 	}
-	q := r.URL.Query()
 	q.Del("bg")
 	if opt.injectBase && q.Get("base") == "" {
 		q.Del("base")
@@ -109,6 +123,32 @@ func (s *Server) proxyOrb(w http.ResponseWriter, r *http.Request, orbID, upstrea
 		}
 	}
 	serveOrbProxy(w, r, svc.Transport(), orbID, upstream, q.Encode(), opt)
+}
+
+// threadWorkdir 校验 fs / git 请求的 thread 参数并返回要转给 orbd 的工作目录（空 = 不带 X-Oryn-Workdir）。
+// orb 不存在时交给 EnsureUsable 报 404。失败时已写出响应、返回 false。
+func (s *Server) threadWorkdir(w http.ResponseWriter, r *http.Request, orbID, threadID string) (string, bool) {
+	ctx := r.Context()
+	if threadID == "" {
+		if o, err := s.Store.Q.GetOrb(ctx, orbID); err == nil && orbs.IsRunner(o) {
+			WriteError(w, http.StatusBadRequest, "thread_required", "runner 的文件与改动请求须带 thread")
+			return "", false
+		}
+		return "", true
+	}
+	t, err := s.Store.Q.GetThread(ctx, threadID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (t.OrbID == nil || *t.OrbID != orbID)) {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "thread 不是该 orb 上的线程")
+		return "", false
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return "", false
+	}
+	if t.Cwd == nil {
+		return "", true
+	}
+	return *t.Cwd, true
 }
 
 // serveOrbProxy 经 rt（orb 的 fs 流 Transport）把请求反向代理到 orbd 的 upstream 路径，套上请求 / 响应白名单、
@@ -155,6 +195,7 @@ func serveOrbProxy(w http.ResponseWriter, r *http.Request, rt http.RoundTripper,
 				}
 			}
 			pr.Out.Header = h
+			orbs.SetWorkdir(h, &opt.workdir)
 		},
 		ModifyResponse: func(res *http.Response) error {
 			// 响应头已到：GET fs/file 的下载不再限时

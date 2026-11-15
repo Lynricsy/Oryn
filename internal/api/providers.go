@@ -91,7 +91,8 @@ func (s *Server) CreateProvider(w http.ResponseWriter, r *http.Request) {
 // DeleteProvider 删除 provider；仍被 orb / 任务引用时改为停用（令牌立即失效，名称保留）。
 func (s *Server) DeleteProvider(w http.ResponseWriter, r *http.Request, id apigen.ProviderIDPath) {
 	ctx := r.Context()
-	if p, err := s.Store.Q.GetProvider(ctx, id); errors.Is(err, sql.ErrNoRows) || (err == nil && p.Driver == orbs.HostDriver) {
+	// 内置的 @host 与 runner 的 provider 行（M11b，经 DELETE /runners/{id} 删除）对这里都不存在
+	if p, err := s.Store.Q.GetProvider(ctx, id); errors.Is(err, sql.ErrNoRows) || (err == nil && (p.Driver == orbs.HostDriver || p.Driver == orbs.DriverRunner)) {
 		WriteError(w, http.StatusNotFound, "not_found", "provider 不存在")
 		return
 	} else if err != nil {

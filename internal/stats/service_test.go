@@ -16,6 +16,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -30,6 +31,8 @@ type fakeOrbs struct {
 	commits   string
 	ensures   []string
 	reqs      []string
+	// workdirs 记录每个请求的 X-Oryn-Workdir（M11b；没带为空串）。
+	workdirs []string
 
 	stuckOrb string
 	entered  chan struct{}
@@ -53,6 +56,7 @@ func (o *fakeOrbs) Do(_ context.Context, orbID string, req *http.Request) (*http
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.reqs = append(o.reqs, orbID+" "+req.URL.Path+"?"+req.URL.RawQuery)
+	o.workdirs = append(o.workdirs, req.Header.Get(orbs.HeaderWorkdir))
 	body := o.status
 	if req.URL.Path == "/git/commits" {
 		body = o.commits
@@ -169,6 +173,18 @@ func TestSampleCommitsWithBase(t *testing.T) {
 	assert.Equal(t, []string{sha1A, sha1B}, commitRows(t, f, "W"), "整体替换")
 	assert.Equal(t, []string{"orb-1 git wake=0"}, o.ensures, "不唤醒、不计交互")
 	assert.Equal(t, []string{"orb-1 /git/status?base=main&scope=uncommitted", "orb-1 /git/commits?base=main&limit=200"}, o.requests())
+}
+
+// runner 线程（M11b）：采样提交的 git 请求带线程的工作目录；普通线程不带。
+func TestSampleCommitsWorkdir(t *testing.T) {
+	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON}
+	f, s := commitFixture(t, o, nil)
+	require.NoError(t, s.SampleCommits(f.ctx, "W"))
+	assert.Equal(t, []string{"", ""}, o.workdirs)
+	f.exec(`UPDATE threads SET cwd = '/home/me/app' WHERE id = 'W'`)
+	o.workdirs = nil
+	require.NoError(t, s.SampleCommits(f.ctx, "W"))
+	assert.Equal(t, []string{"/home/me/app", "/home/me/app"}, o.workdirs)
 }
 
 func TestSampleCommitsWithoutBase(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -168,7 +169,8 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 		q.Set("base", base)
 	}
 	var st apigen.GitStatus
-	if err := s.gitGet(ctx, orbID, "/git/status", q, &st); err != nil {
+	// runner 线程（M11b）：git 面板的根是线程的工作目录，经 X-Oryn-Workdir 告诉 orbd
+	if err := s.gitGet(ctx, orbID, t.Cwd, "/git/status", q, &st); err != nil {
 		return err
 	}
 	if !st.Repo || st.Base == nil {
@@ -179,7 +181,7 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 		q.Set("base", base)
 	}
 	var list apigen.GitCommitList
-	if err := s.gitGet(ctx, orbID, "/git/commits", q, &list); err != nil {
+	if err := s.gitGet(ctx, orbID, t.Cwd, "/git/commits", q, &list); err != nil {
 		return err
 	}
 	// orbd 的应答不可信：sha 格式或时间不合法的行丢弃
@@ -209,12 +211,13 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 	})
 }
 
-// gitGet 经 orb 的 fs 流 GET orbd 的 git 接口并解析 JSON 应答。
-func (s *Service) gitGet(ctx context.Context, orbID, path string, q url.Values, out any) error {
+// gitGet 经 orb 的 fs 流 GET orbd 的 git 接口并解析 JSON 应答；cwd 非空时带 X-Oryn-Workdir。
+func (s *Service) gitGet(ctx context.Context, orbID string, cwd *string, path string, q url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://orb"+path+"?"+q.Encode(), nil)
 	if err != nil {
 		return err
 	}
+	orbs.SetWorkdir(req.Header, cwd)
 	resp, err := s.orbs.Do(ctx, orbID, req)
 	if err != nil {
 		return err

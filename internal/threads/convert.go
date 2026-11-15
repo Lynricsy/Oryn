@@ -87,16 +87,23 @@ func ThreadToAPI(t db.Thread, labels []string) apigen.Thread {
 	if t.ScheduleID != nil && t.ScheduleRun != nil {
 		out.ScheduleRun = &apigen.ThreadScheduleRun{ScheduleID: *t.ScheduleID, Run: *t.ScheduleRun}
 	}
+	if t.Cwd != nil && *t.Cwd != "" {
+		out.Cwd = t.Cwd
+	}
+	out.Worktree = parseWorktree(t.Worktree)
 	return out
 }
 
-// orbAPI 把 orb 行转换成 API 形态（orbs.View）；读库失败时记录并返回已有字段。
+// orbAPI 把 orb 行转换成 API 形态（orbs.View），特性取活动 link 的 hello（M11b）；读库失败时记录并返回已有字段。
 func (s *Service) orbAPI(ctx context.Context, o db.Orb) apigen.Orb {
 	v, err := orbs.View(ctx, s.st.Q, o)
 	if err != nil {
 		slog.Warn("threads: 转换 orb 失败", "orb", o.ID, "err", err)
 		return apigen.Orb{ID: o.ID, ProviderID: o.ProviderID, Type: o.Type, Image: o.Image, ProjectID: o.ProjectID,
 			State: apigen.OrbState(o.State), StateChangedAt: o.StateChangedAt, CreatedAt: o.CreatedAt, ThreadIds: []string{}}
+	}
+	if _, f := s.orbs.Features(o.ID); f != nil {
+		v.Features = f
 	}
 	return v
 }

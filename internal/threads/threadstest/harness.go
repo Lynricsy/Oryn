@@ -24,6 +24,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -74,6 +75,10 @@ type Orbs struct {
 	deletes []string
 	// gates 让 fake orbd 收到某个 ctl 方法时先阻塞（GateCall）。
 	gates map[string]*callGate
+	// worktreeErr 非 nil 时 fake orbd 对 worktree.add / worktree.remove 以它作答（M11b）。
+	worktreeErr map[string]*link.CtlError
+	// worktrees 记录 fake orbd 收到的 worktree.add 参数。
+	worktrees []apigen.LinkCtlWorktreeAddParams
 }
 
 // callGate 是一个 ctl 方法的闸门：请求到达时关闭 arrived，等 release 关闭后才处理。
@@ -379,13 +384,19 @@ func (o *Orbs) serveLink(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Wake 让非 ready 的 orb 回到 ready（重建 link）。
+// Wake 让非 ready 的 orb 回到 ready（重建 link）。runner 的 orb 不能被唤醒：stopped 时返回 orbs.ErrRunnerOffline（同真实服务）。
 func (o *Orbs) Wake(_ context.Context, orbID string) error {
 	orb, err := o.st.Q.GetOrb(context.Background(), orbID)
 	if err != nil {
 		return err
 	}
 	if orb.State == "ready" {
+		return nil
+	}
+	if orbs.IsRunner(orb) {
+		if orb.State == orbs.StateStopped {
+			return orbs.ErrRunnerOffline
+		}
 		return nil
 	}
 	o.mu.Lock()
@@ -463,6 +474,102 @@ func (o *Orbs) SetQuiescence(func(string, func() bool) bool) {}
 
 // ClaimPool 实现 threads.Orbs：替身没有预热池，永远不认领。
 func (o *Orbs) ClaimPool(context.Context, threads.OrbCreate) (db.Orb, bool) { return db.Orb{}, false }
+
+// AddRunner 建一个 runner（driver='runner' 的 provider + kind='runner' 的 orb，stopped）并记下其 hello 信息，
+// 返回 provider id 与 orb id。之后用 ConnectRunner 让它上线。
+func (o *Orbs) AddRunner(name string, dirs []apigen.RunnerDir, features []string) (string, string, error) {
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+	provID, orbID := ids.New("prov"), ids.Orb()
+	if err := o.st.Q.CreateRunnerProvider(ctx, db.CreateRunnerProviderParams{ID: provID, Name: name, TokenHash: ids.Hash(ids.RunnerToken()), CreatedAt: now}); err != nil {
+		return "", "", err
+	}
+	if err := o.st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: orbID, ProviderID: provID, Type: orbs.KindRunner, State: orbs.StateStopped,
+		StateChangedAt: now, TokenHash: ids.Hash("oot_" + orbID), CreatedAt: now, Kind: new(orbs.KindRunner)}); err != nil {
+		return "", "", err
+	}
+	if err := o.st.Q.CreateRunner(ctx, db.CreateRunnerParams{ProviderID: provID, OrbID: orbID}); err != nil {
+		return "", "", err
+	}
+	d, _ := json.Marshal(dirs)
+	f, _ := json.Marshal(features)
+	if err := o.st.Q.UpdateRunnerHello(ctx, db.UpdateRunnerHelloParams{Hostname: "box", Os: "linux", Arch: "amd64", Dirs: string(d), Features: string(f), LastSeenAt: now, OrbID: orbID}); err != nil {
+		return "", "", err
+	}
+	return provID, orbID, nil
+}
+
+// ConnectRunner 让 runner 上线：connecting → 拨 link → ready（同 startOrbd，同步完成）。
+func (o *Orbs) ConnectRunner(orbID string) { o.startOrbd(orbID) }
+
+// DisconnectRunner 让 runner 离线：关闭 fake orbd（含其 agent 进程）与 link，orb → stopped。
+func (o *Orbs) DisconnectRunner(orbID string) {
+	o.mu.Lock()
+	d := o.orbds[orbID]
+	delete(o.orbds, orbID)
+	o.mu.Unlock()
+	if d != nil {
+		d.Close()
+	}
+	for {
+		if _, ok := o.Ctl(orbID); !ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	o.setState(orbID, orbs.StateStopped)
+}
+
+// FailWorktree 让 fake orbd 对 method（worktree.add / worktree.remove）以 ctl 错误作答；nil 恢复正常。
+func (o *Orbs) FailWorktree(method string, e *link.CtlError) {
+	o.mu.Lock()
+	if o.worktreeErr == nil {
+		o.worktreeErr = map[string]*link.CtlError{}
+	}
+	o.worktreeErr[method] = e
+	o.mu.Unlock()
+}
+
+// Worktrees 返回 fake orbd 收到的 worktree.add 参数。
+func (o *Orbs) Worktrees() []apigen.LinkCtlWorktreeAddParams {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]apigen.LinkCtlWorktreeAddParams(nil), o.worktrees...)
+}
+
+// RunnerOrb 实现 threads.Orbs（与 orbs.Service.RunnerOrb 同义，直接读库）。
+func (o *Orbs) RunnerOrb(ctx context.Context, providerID string) (orbs.Runner, error) {
+	p, err := o.st.Q.GetProvider(ctx, providerID)
+	if err != nil || p.Driver != orbs.DriverRunner || p.DisabledAt != nil {
+		return orbs.Runner{}, orbs.ErrNotFound
+	}
+	row, err := o.st.Q.GetRunnerByProvider(ctx, providerID)
+	if err != nil {
+		return orbs.Runner{}, orbs.ErrNotFound
+	}
+	orb, err := o.st.Q.GetOrb(ctx, row.OrbID)
+	if err != nil || orb.State == orbs.StateDeleted {
+		return orbs.Runner{}, orbs.ErrNotFound
+	}
+	r := orbs.Runner{Name: p.Name, CreatedAt: p.CreatedAt, Orb: orb, Row: row}
+	_ = json.Unmarshal([]byte(row.Dirs), &r.Dirs)
+	_ = json.Unmarshal([]byte(row.Features), &r.Features)
+	return r, nil
+}
+
+// Features 实现 threads.Orbs：runner 取 runners.features，普通 orb 为 nil（替身的 hello 不带特性）。
+func (o *Orbs) Features(orbID string) (string, []string) {
+	ctx := context.Background()
+	orb, err := o.st.Q.GetOrb(ctx, orbID)
+	if err != nil || !orbs.IsRunner(orb) {
+		return orbs.KindOrb, nil
+	}
+	var f []string
+	if r, err := o.st.Q.GetRunnerByOrb(ctx, orbID); err == nil {
+		_ = json.Unmarshal([]byte(r.Features), &f)
+	}
+	return orbs.KindRunner, f
+}
 
 // SetFeature 设置 HasFeature 对全部 orb 报告的特性。
 func (o *Orbs) SetFeature(feature string, on bool) {
@@ -673,6 +780,25 @@ func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMess
 		return apigen.LinkCtlBlobFetchResult{Found: true}, nil
 	case "shutdown":
 		return apigen.LinkCtlOkResult{Ok: true}, nil
+	case "worktree.add":
+		var p apigen.LinkCtlWorktreeAddParams
+		_ = json.Unmarshal(params, &p)
+		d.o.mu.Lock()
+		d.o.worktrees = append(d.o.worktrees, p)
+		e := d.o.worktreeErr[method]
+		d.o.mu.Unlock()
+		if e != nil {
+			return nil, e
+		}
+		return apigen.LinkCtlWorktreeAddResult{Dir: p.Repo + "-" + p.Name, Branch: p.Name}, nil
+	case "worktree.remove":
+		d.o.mu.Lock()
+		e := d.o.worktreeErr[method]
+		d.o.mu.Unlock()
+		if e != nil {
+			return nil, e
+		}
+		return apigen.LinkCtlWorktreeRemoveResult{Ok: true}, nil
 	}
 	return nil, link.ErrMethodNotFound
 }
@@ -693,7 +819,12 @@ func (d *Orbd) agentStart(p apigen.LinkCtlAgentStartParams) (any, error) {
 		d.mu.Unlock()
 		return nil, err
 	}
-	cmd := exec.Command(d.o.bin, "--mode", "rpc-ui", "--cwd", filepath.Join(d.home, "workspace"), "--session-dir", dir)
+	cwd := filepath.Join(d.home, "workspace")
+	if p.Cwd != "" {
+		// runner 线程：agent 在线程的工作目录里启动
+		cwd = p.Cwd
+	}
+	cmd := exec.Command(d.o.bin, "--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir)
 	cmd.Env = append(os.Environ(), d.o.env...)
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()

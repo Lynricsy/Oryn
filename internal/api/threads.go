@@ -34,6 +34,14 @@ var threadErrStatus = map[string]int{
 	"archived":                        http.StatusConflict,
 	// M11a：把线程挂到预热池里的 orb 上
 	threads.CodeOrbIsPooled: http.StatusConflict,
+	// M11b：runner
+	threads.CodeRunnerOffline:     http.StatusConflict,
+	threads.CodeRunnerUnsupported: http.StatusConflict,
+	threads.CodeDirNotServed:      http.StatusBadRequest,
+	threads.CodeDirInUse:          http.StatusConflict,
+	threads.CodeWorktreeFailed:    http.StatusBadRequest,
+	threads.CodeWorktreeDirty:     http.StatusConflict,
+	"conflict":                    http.StatusConflict,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {
@@ -169,8 +177,19 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 			}
 			p.OrbID = e.OrbID
 		case apigen.ThreadExecutorRunner:
-			writeRunnersNotImplemented(w)
-			return
+			if e.RunnerID == "" || e.Dir == "" {
+				WriteError(w, http.StatusBadRequest, "invalid_request", "executor.runnerId and executor.dir required")
+				return
+			}
+			p.RunnerID, p.Dir = e.RunnerID, e.Dir
+			if e.Worktree != nil {
+				if e.Worktree.Name == "" {
+					WriteError(w, http.StatusBadRequest, "invalid_request", "executor.worktree.name required")
+					return
+				}
+				p.Worktree = e.Worktree.Name
+			}
+			p.ShareDir = e.ShareDir != nil && *e.ShareDir
 		}
 	}
 	t, err := svc.Create(r.Context(), p)

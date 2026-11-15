@@ -225,7 +225,8 @@ func (s *Server) init(ctx context.Context) error {
 			slog.Warn("统计事实行回填失败", "err", err)
 		}
 	}()
-	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), api.WSPath: s.Hub}
+	// orb link 与 whoami（M11b）在同一路由组：明文监听与只放行 /orb/v1/* 的 TLS 监听都可达
+	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), "/orb/v1/whoami": s.Orbs.WhoamiHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))

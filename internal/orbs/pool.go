@@ -311,7 +311,7 @@ func (s *Service) poolReconcile(ctx context.Context) {
 	byProject := map[string][]db.Orb{}
 	total := 0
 	for _, o := range rows {
-		if !poolUsable(o) {
+		if IsRunner(o) || !poolUsable(o) {
 			continue
 		}
 		byProject[derefStr(o.ProjectID)] = append(byProject[derefStr(o.ProjectID)], o)

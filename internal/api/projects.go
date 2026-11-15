@@ -70,7 +70,8 @@ func (s *Server) checkProviderName(ctx context.Context, name *string) error {
 	if *name == orbs.HostProviderName {
 		return errInvalid("provider " + *name + " 是协调宿主保留的内置 provider")
 	}
-	if _, err := s.Store.Q.GetProviderByName(ctx, *name); errors.Is(err, sql.ErrNoRows) {
+	// runner 的 provider 行（M11b）不能新建 orb，不能作项目默认
+	if p, err := s.Store.Q.GetProviderByName(ctx, *name); errors.Is(err, sql.ErrNoRows) || (err == nil && p.Driver == orbs.DriverRunner) {
 		return errInvalid("provider " + *name + " 不存在")
 	} else if err != nil {
 		return err
