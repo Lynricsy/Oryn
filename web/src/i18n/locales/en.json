@@ -281,7 +281,11 @@
 		"prompt_error": "Turn failed",
 		"extension_error": "Extension error",
 		"command_output": "Command output",
-		"rpc_frame_error": "Frame dropped (too large)"
+		"rpc_frame_error": "Frame dropped (too large)",
+		"showAll_one": "Show all ({{count}} line)",
+		"showAll_other": "Show all ({{count}} lines)",
+		"collapse": "Show less",
+		"copy": "Copy {{label}}"
 	},
 	"titleMenu": {
 		"label": "Actions for “{{title}}”",

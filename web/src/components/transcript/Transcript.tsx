@@ -31,9 +31,8 @@ import {
 } from "../../lib/turn-role";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
-import type { Notice } from "../../state/thread-reducer";
 import type { TranscriptItem } from "../../state/transcript";
-import { Badge, Callout, type Tone } from "../ui/data";
+import { Badge } from "../ui/data";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
@@ -54,6 +53,7 @@ import {
 	UserBubble,
 } from "./MessageView";
 import { type KnownModel, modelLabel } from "./model-label";
+import { NoticeLine } from "./NoticeLine";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 import { findRevealHit, registerRevealer } from "./reveal";
 
@@ -147,59 +147,6 @@ function MetaLine({ entry }: { entry: JsonRecord }) {
 				{text}
 			</span>
 		</div>
-	);
-}
-
-const NOTICE_TONE: Record<Notice["level"], Tone> = {
-	info: "neutral",
-	warning: "warn",
-	error: "err",
-};
-
-function NoticeLine({ notice }: { notice: Notice }) {
-	const { t } = useTranslation();
-	const label = t(`notice.${notice.kind}`);
-	const url =
-		notice.kind === "open_url" &&
-		notice.detail &&
-		typeof notice.detail === "object" &&
-		"url" in notice.detail
-			? String(notice.detail.url)
-			: null;
-	const body =
-		notice.text || url ? (
-			<>
-				{notice.text && (
-					<span
-						className={
-							notice.kind === "command_output"
-								? "block whitespace-pre-wrap break-words font-mono"
-								: "break-words"
-						}
-					>
-						{notice.text}
-					</span>
-				)}
-				{url && (
-					<a
-						className="break-all text-accent underline underline-offset-2"
-						href={url}
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						{url}
-					</a>
-				)}
-			</>
-		) : undefined;
-	return (
-		<Callout
-			tone={NOTICE_TONE[notice.level]}
-			icon={notice.level === "info" ? "info" : "alert"}
-			title={label}
-		>
-			{body}
-		</Callout>
 	);
 }
 

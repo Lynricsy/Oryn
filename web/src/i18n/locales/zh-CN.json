@@ -281,7 +281,11 @@
 		"prompt_error": "本轮出错",
 		"extension_error": "扩展出错",
 		"command_output": "命令输出",
-		"rpc_frame_error": "帧过大被丢弃"
+		"rpc_frame_error": "帧过大被丢弃",
+		"showAll_one": "展开全部（{{count}} 行）",
+		"showAll_other": "展开全部（{{count}} 行）",
+		"collapse": "收起",
+		"copy": "复制{{label}}"
 	},
 	"titleMenu": {
 		"label": "「{{title}}」的操作",
