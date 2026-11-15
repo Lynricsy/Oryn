@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -51,7 +53,7 @@ func TestPushExclusions(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".orynignore"), []byte("# 通知插件\nextensions/omp-notify/\n"), 0o644))
 	ignore, err := readOrynIgnore(dir)
 	require.NoError(t, err)
-	files, err := collectPushFiles(dir, agentcfg.Excluded, append(ignore, "omp-notify*"))
+	files, err := collectPushFiles(dir, agentcfg.Excluded, append(ignore, "omp-notify*"), false, io.Discard)
 	require.NoError(t, err)
 	var rels []string
 	for _, f := range files {
@@ -160,13 +162,11 @@ func TestConfigPushProjectNotFound(t *testing.T) {
 }
 
 func TestConfigPushProjectQuota(t *testing.T) {
+	// 用 UTF-8 文本填满（rules/ 下必须是文本，稀疏文件全是 NUL 会被文本校验先拒）
 	sparse := func(t *testing.T, p string, size int64) {
 		t.Helper()
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-		f, err := os.Create(p)
-		require.NoError(t, err)
-		require.NoError(t, f.Truncate(size))
-		require.NoError(t, f.Close())
+		require.NoError(t, os.WriteFile(p, bytes.Repeat([]byte("a"), int(size)), 0o644))
 	}
 	project := configScope{project: "demo"}
 
@@ -205,6 +205,234 @@ func TestConfigPushProjectQuota(t *testing.T) {
 		require.ErrorContains(t, err, "超过单文件上限")
 		assert.Empty(t, f.requests(), "配额在本地先行报错")
 	})
+}
+
+var (
+	projectScope = configScope{project: "demo"}
+	globalScope  = configScope{}
+)
+
+// pushErr 以给定的各 scope 打包 dir，断言都在本地报错且不发请求，返回各次的错误文本。
+func pushErr(t *testing.T, dir string, exclude []string, scopes ...configScope) []string {
+	t.Helper()
+	var out []string
+	for _, scope := range scopes {
+		f := projectsAPI(t)
+		_, err := runPush(t, f, scope, dir, exclude)
+		require.Error(t, err, "scope=%+v", scope)
+		assert.Empty(t, f.requests(), "本地先行报错，不发请求")
+		out = append(out, err.Error())
+	}
+	return out
+}
+
+// pushTar 以 scope 打包 dir，要求成功，返回 tar 内容与 stderr。
+func pushTar(t *testing.T, scope configScope, dir string, exclude []string) (map[string]string, string) {
+	t.Helper()
+	var stderr bytes.Buffer
+	tarball, err := buildConfigTar(scope, dir, exclude, &stderr)
+	require.NoError(t, err, "scope=%+v", scope)
+	return untar(t, tarball), stderr.String()
+}
+
+func TestConfigPushRejectsEscapingLinks(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, ".omp")
+	home := filepath.Join(base, "home")
+	writeTree(t, dir, map[string]string{"rules/a.md": "# rule"})
+	writeTree(t, home, map[string]string{".ssh/id_ed25519": "PRIVATE KEY"})
+	links := map[string]string{
+		"rules/abs.md":  filepath.Join(home, ".ssh", "id_ed25519"), // 绝对路径指向根外
+		"skills/x/ref":  "../../../home/.ssh",                      // 相对路径逃出根目录（目录）
+		"rules/env.md":  "/proc/self/environ",                      // 伪文件系统
+		"rules/gone.md": "missing.md",                              // 悬空链接也不静默跳过
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "skills", "x"), 0o755))
+	for name, target := range links {
+		require.NoError(t, os.Symlink(target, filepath.Join(dir, filepath.FromSlash(name))))
+	}
+
+	for _, msg := range pushErr(t, dir, nil, projectScope) {
+		for name := range links {
+			assert.Contains(t, msg, name)
+		}
+		assert.Contains(t, msg, "符号链接指向目录之外")
+		assert.NotContains(t, msg, "rules/a.md", "合规文件不在拒绝列表里")
+	}
+
+	// 用户显式排除这些链接后照常上传，tar 里没有根外内容
+	f := projectsAPI(t)
+	f.json("POST /api/v1/projects/prj_A/agent-config/import", 200, apigen.AgentConfigImportResult{})
+	_, err := runPush(t, f, configScope{project: "demo"}, dir, slices.Collect(maps.Keys(links)))
+	require.NoError(t, err)
+	reqs := f.requests()
+	require.Len(t, reqs, 2)
+	assert.Equal(t, map[string]string{"rules/a.md": "# rule"}, untar(t, reqs[1].Body))
+}
+
+func TestConfigPushGlobalFollowsOutsideLinks(t *testing.T) {
+	// 模拟用户自己的 ~/.omp/agent：skills 目录与 agents/oracle.md 链接到根外
+	base := t.TempDir()
+	dir := filepath.Join(base, "agent")
+	writeTree(t, dir, map[string]string{"config.yml": "theme: dark\n", "sessions/x.jsonl": "{}"})
+	writeTree(t, base, map[string]string{"agents-src/skills/s1/SKILL.md": "skill one", "chore/oracle.md": "# oracle"})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "agents"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(base, "agents-src", "skills"), filepath.Join(dir, "skills"))) // 绝对路径目录链接
+	require.NoError(t, os.Symlink("../../chore/oracle.md", filepath.Join(dir, "agents", "oracle.md")))        // 相对路径文件链接
+	require.NoError(t, os.Symlink("missing.md", filepath.Join(dir, "gone.md")))                               // 悬空：提示后跳过
+	require.NoError(t, os.Symlink("sessions/x.jsonl", filepath.Join(dir, "s.md")))                            // 指向被排除路径：提示后跳过
+
+	f := newFakeAPI(t)
+	f.json("POST /api/v1/agent-config/import", 200, apigen.AgentConfigImportResult{})
+	stderr, err := runPush(t, f, globalScope, dir, nil)
+	require.NoError(t, err)
+	reqs := f.requests()
+	require.Len(t, reqs, 1)
+	assert.Equal(t, map[string]string{
+		"config.yml":         "theme: dark\n",
+		"skills/s1/SKILL.md": "skill one",
+		"agents/oracle.md":   "# oracle",
+	}, untar(t, reqs[0].Body))
+	assert.Contains(t, stderr, "跳过 gone.md：")
+	assert.Contains(t, stderr, "跳过 s.md：符号链接指向被排除的路径")
+
+	// 同一目录用 --project 推送：根外链接、悬空链接、指向被排除路径的链接一律拒绝
+	msg := pushErr(t, dir, nil, projectScope)[0]
+	for _, name := range []string{"skills", "agents/oracle.md", "gone.md", "s.md"} {
+		assert.Contains(t, msg, name)
+	}
+}
+
+func TestConfigPushRejectsLinkToExcluded(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"rules/a.md": "# rule", "sessions/x.jsonl": "{}", "private/k.md": "k"})
+	require.NoError(t, os.Symlink("../sessions/x.jsonl", filepath.Join(dir, "rules", "s.md")))
+	require.NoError(t, os.Symlink("../private/k.md", filepath.Join(dir, "rules", "k.md")))
+	for _, msg := range pushErr(t, dir, []string{"private"}, projectScope) {
+		assert.Contains(t, msg, "rules/s.md")
+		assert.Contains(t, msg, "rules/k.md")
+		assert.Contains(t, msg, "符号链接指向被排除的路径")
+	}
+	// 全局：跳过并提示，不上传被排除的内容
+	got, stderr := pushTar(t, globalScope, dir, []string{"private"})
+	assert.Equal(t, map[string]string{"rules/a.md": "# rule"}, got)
+	assert.Contains(t, stderr, "跳过 rules/s.md：符号链接指向被排除的路径")
+	assert.Contains(t, stderr, "跳过 rules/k.md：符号链接指向被排除的路径")
+}
+
+func TestConfigPushAliasRespectsRealExclusion(t *testing.T) {
+	// a -> skills：排除真实子路径 skills/private 后，别名 a/private/… 也不能漏出去
+	newTree := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		writeTree(t, dir, map[string]string{
+			"rules/a.md": "# rule", "skills/pub/SKILL.md": "pub", "skills/private/key.md": "KEY",
+		})
+		require.NoError(t, os.Symlink("skills", filepath.Join(dir, "a")))
+		return dir
+	}
+	want := map[string]string{"rules/a.md": "# rule", "skills/pub/SKILL.md": "pub", "a/pub/SKILL.md": "pub"}
+	check := func(t *testing.T, dir string, exclude []string) {
+		t.Helper()
+		got, stderr := pushTar(t, globalScope, dir, exclude)
+		assert.Equal(t, want, got)
+		assert.NotContains(t, got, "a/private/key.md")
+		assert.Contains(t, stderr, "跳过 a/private：经符号链接指向被排除的路径 skills/private")
+
+		msg := pushErr(t, dir, exclude, projectScope)[0]
+		assert.Contains(t, msg, "a/private → skills/private（经符号链接指向被排除的路径）")
+		// 把别名路径也排除后 --project 照常上传，tar 里同样没有 a/private/key.md
+		got, _ = pushTar(t, projectScope, dir, append(slices.Clone(exclude), "a/private"))
+		assert.Equal(t, want, got)
+	}
+	t.Run("--exclude", func(t *testing.T) {
+		check(t, newTree(t), []string{"skills/private"})
+	})
+	t.Run(".orynignore", func(t *testing.T) {
+		dir := newTree(t)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".orynignore"), []byte("skills/private/\n"), 0o644))
+		check(t, dir, nil)
+	})
+}
+
+func TestConfigPushAliasIntoSessions(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"rules/a.md": "# rule", "sessions/x.jsonl": "{}", "sessions/sub/y.jsonl": "{}"})
+	require.NoError(t, os.Symlink("sessions", filepath.Join(dir, "s")))
+	require.NoError(t, os.Symlink("sessions/sub", filepath.Join(dir, "deep")))
+	require.NoError(t, os.Symlink(".", filepath.Join(dir, "all"))) // 根的别名：不会以 all/sessions/… 再走一遍
+
+	got, stderr := pushTar(t, globalScope, dir, nil)
+	assert.Equal(t, map[string]string{"rules/a.md": "# rule"}, got)
+	assert.Contains(t, stderr, "跳过 s：符号链接指向被排除的路径")
+	assert.Contains(t, stderr, "跳过 deep：符号链接指向被排除的路径")
+
+	msg := pushErr(t, dir, nil, projectScope)[0]
+	assert.Contains(t, msg, "s → ")
+	assert.Contains(t, msg, "deep → ")
+	assert.NotContains(t, msg, "all →")
+}
+
+func TestConfigPushInRootLinks(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "dotfiles")
+	writeTree(t, real, map[string]string{"shared/base.md": "# base", "skills/x/SKILL.md": "skill"})
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "rules"), 0o755))
+	require.NoError(t, os.Symlink("../shared/base.md", filepath.Join(real, "rules", "base.md")))     // 根内文件链接
+	require.NoError(t, os.Symlink(filepath.Join(real, "skills", "x"), filepath.Join(real, "alias"))) // 根内目录链接（绝对路径）
+	require.NoError(t, os.Symlink(".", filepath.Join(real, "skills", "loop")))                       // 成环：只走一次
+	// 推送根本身是链接（如 ~/.omp/agent → dotfiles）
+	root := filepath.Join(base, "agent")
+	require.NoError(t, os.Symlink(real, root))
+
+	for _, scope := range []configScope{{project: "demo"}, {}} {
+		tarball, err := buildConfigTar(scope, root, nil, io.Discard)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{
+			"shared/base.md":    "# base",
+			"rules/base.md":     "# base",
+			"skills/x/SKILL.md": "skill",
+			"alias/SKILL.md":    "skill",
+		}, untar(t, tarball))
+	}
+}
+
+func TestConfigPushRejectsSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"rules/a.md": "# rule"})
+	require.NoError(t, syscall.Mkfifo(filepath.Join(dir, "rules", "pipe.md"), 0o644))
+	require.NoError(t, os.Symlink("pipe.md", filepath.Join(dir, "rules", "via.md"))) // 根内链接指向 FIFO 同样拒绝
+	for _, msg := range pushErr(t, dir, nil, projectScope, globalScope) {
+		assert.Contains(t, msg, "rules/pipe.md（FIFO，不是普通文件）")
+		assert.Contains(t, msg, "rules/via.md（FIFO，不是普通文件）")
+	}
+}
+
+func TestConfigPushTextPaths(t *testing.T) {
+	for name, content := range map[string]string{
+		"rules/env.txt": "A=1\x00B=2\x00", // rules/ 下任何文件
+		"rules/a.md":    "# \x00",
+		"AGENTS.md":     "\xff\xfe",
+		"config.yml":    "a: \xc3\x28\n",
+		"x/c.yaml":      "\x00",
+		"mcp.json":      "{\"a\":\"\x80\"}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTree(t, dir, map[string]string{name: content})
+			for _, msg := range pushErr(t, dir, nil, projectScope, globalScope) {
+				assert.Contains(t, msg, name+" 必须是 UTF-8 文本")
+			}
+		})
+	}
+
+	// 非文本路径的二进制内容照常打包；含 NUL 也照样做密钥告警
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"skills/x/blob.bin": "\x00\x01sk-abcdefghijklmnopqrstuvwxyz\x00"})
+	var stderr bytes.Buffer
+	_, err := buildConfigTar(configScope{project: "demo"}, dir, nil, &stderr)
+	require.NoError(t, err)
+	assert.Contains(t, stderr.String(), "警告：skills/x/blob.bin 含形似密钥的字符串")
 }
 
 func TestConfigPullProject(t *testing.T) {
@@ -252,6 +480,63 @@ func TestConfigPullProjectRejectsExcluded(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, entries, "先校验全部路径再写入")
 	}
+}
+
+func TestConfigPullRejectsLinkedParent(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "elsewhere")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	for name, target := range map[string]string{"abs": outside, "rel": "../elsewhere"} {
+		t.Run(name, func(t *testing.T) {
+			f := projectsAPI(t)
+			f.json("GET /api/v1/projects/prj_A/agent-config/files", 200, apigen.AgentConfigFileList{Files: []apigen.AgentConfigFile{
+				{Path: "config.yml"}, {Path: "rules/a.md"},
+			}})
+			dir := filepath.Join(base, ".omp-"+name)
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			// 仓库里提交的 .omp/rules → 别处（相对目标从 dir 解析，同样指向 base/elsewhere）
+			require.NoError(t, os.Symlink(target, filepath.Join(dir, "rules")))
+			err := configPull(context.Background(), f.client(), configScope{project: "demo"}, dir, false, false, io.Discard, io.Discard)
+			require.ErrorContains(t, err, "父目录经符号链接指向目标目录之外")
+			entries, err := os.ReadDir(outside)
+			require.NoError(t, err)
+			assert.Empty(t, entries, "不写到链接指向的目录")
+			_, err = os.Stat(filepath.Join(dir, "config.yml"))
+			assert.True(t, errors.Is(err, os.ErrNotExist), "先校验全部路径再写入")
+			for _, r := range f.requests() {
+				assert.False(t, strings.Contains(r.Path, "/files/"), "不下载任何文件：%s", r.Path)
+			}
+		})
+	}
+}
+
+func TestConfigPullRejectsLinkedTarget(t *testing.T) {
+	base := t.TempDir()
+	victim := filepath.Join(base, "victim.yml")
+	require.NoError(t, os.WriteFile(victim, []byte("orig"), 0o644))
+	dir := filepath.Join(base, ".omp")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Symlink(victim, filepath.Join(dir, "config.yml")))
+
+	f := projectsAPI(t)
+	f.json("GET /api/v1/projects/prj_A/agent-config/files", 200, apigen.AgentConfigFileList{Files: []apigen.AgentConfigFile{{Path: "config.yml"}}})
+	err := configPull(context.Background(), f.client(), configScope{project: "demo"}, dir, false, false, io.Discard, io.Discard)
+	require.ErrorContains(t, err, "目标是符号链接")
+	b, err := os.ReadFile(victim)
+	require.NoError(t, err)
+	assert.Equal(t, "orig", string(b))
+	st, err := os.Lstat(filepath.Join(dir, "config.yml"))
+	require.NoError(t, err)
+	assert.NotZero(t, st.Mode()&os.ModeSymlink, "链接原样保留")
+}
+
+func TestPullTargetInRootLink(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "shared"), 0o755))
+	require.NoError(t, os.Symlink("shared", filepath.Join(dir, "rules")))
+	dst, _, err := pullTarget(dir, "rules/a.md", false)
+	require.NoError(t, err, "父目录链接仍在目标目录内时允许")
+	assert.Equal(t, filepath.Join(dir, "rules", "a.md"), dst)
 }
 
 func TestConfigPullProjectNotFound(t *testing.T) {

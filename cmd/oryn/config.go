@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -40,7 +41,12 @@ models.yml 中的字面 apiKey 会被控制面抽取进密钥库，磁盘上只�
 上限为单文件 1 MiB、合计 16 MiB、2000 个文件。
 
 额外排除：--exclude <glob>（可重复），以及 dir/.orynignore 中每行一个 glob（# 开头为注释）。
-glob 按相对路径匹配，匹配到目录即排除整个目录，例如 extensions/omp-notify、omp-notify*。`,
+glob 按相对路径匹配，匹配到目录即排除整个目录，例如 extensions/omp-notify、omp-notify*。
+
+只上传普通文件：设备、FIFO、socket 会直接报错（可用 --exclude 排除）；rules/ 下的文件与
+*.md *.yml *.yaml *.json 必须是 UTF-8 文本，含 NUL 或非 UTF-8 字节时拒绝上传。
+--project 时符号链接解析后还必须仍在 dir 之内，指向 dir 之外、无法解析或指向被排除路径的链接
+直接报错；全局时照常跟随链接（含指向 dir 之外的目录），悬空链接与指向被排除路径的链接跳过并提示。`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runConfigPush,
 }
@@ -55,7 +61,10 @@ var configPullCmd = &cobra.Command{
 models.yml；--force 时直接覆盖 models.yml。
 
 --project <名称或 id> 时下载该项目的 Agent 配置到 dir（默认当前目录下的 .omp）；
-项目级配置没有 models.yml，--force 不起作用。`,
+项目级配置没有 models.yml，--force 不起作用。
+
+写入前检查本地目录：父目录经符号链接指向 dir 之外、或要写的文件本身是符号链接时拒绝（不覆盖链接，
+请先删除该链接）。`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runConfigPull,
 }
@@ -140,6 +149,8 @@ func (s configScope) defaultDir(args []string) (string, error) {
 
 // pullTarget 计算服务端相对路径在本地的落盘位置；拒绝逃出 dir 的路径。
 // renamed 表示 models.yml 被改写为 models.oryn.yml。
+// 除词法检查外还看本地文件系统：父目录解析符号链接后必须仍在 dir 之内；
+// 目标本身是符号链接时拒绝（不删除也不替换用户的链接，由用户自行处理）。
 func pullTarget(dir, rel string, force bool) (dst string, renamed bool, err error) {
 	clean, err := agentcfg.CleanPath(rel)
 	if err != nil {
@@ -153,10 +164,59 @@ func pullTarget(dir, rel string, force bool) (dst string, renamed bool, err erro
 		return "", false, err
 	}
 	dst = filepath.Join(root, filepath.FromSlash(clean))
-	if r, err := filepath.Rel(root, dst); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+	if !within(root, dst) {
 		return "", false, fmt.Errorf("拒绝服务端路径 %q：逃出目标目录", rel)
 	}
+	realRoot, err := resolveExisting(root)
+	if err != nil {
+		return "", false, err
+	}
+	parent, err := resolveExisting(filepath.Dir(dst))
+	if err != nil {
+		return "", false, fmt.Errorf("拒绝写入 %s: %w", dst, err)
+	}
+	if !within(realRoot, parent) {
+		return "", false, fmt.Errorf("拒绝写入 %s：父目录经符号链接指向目标目录之外（%s）", dst, parent)
+	}
+	st, err := os.Lstat(dst)
+	switch {
+	case err == nil && st.Mode()&fs.ModeSymlink != 0:
+		return "", false, fmt.Errorf("拒绝写入 %s：目标是符号链接，请先删除该链接再拉取", dst)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return "", false, err
+	}
 	return dst, renamed, nil
+}
+
+// within 报告 p 是否为 root 本身或位于 root 之下（纯词法比较，调用方负责先解析符号链接）。
+func within(root, p string) bool {
+	r, err := filepath.Rel(root, p)
+	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator))
+}
+
+// resolveExisting 解析 p 中已存在部分的符号链接，拼回尚不存在的尾部（之后由 MkdirAll 新建为真实目录）。
+// 已存在却无法解析的链接（悬空、成环）报错。
+func resolveExisting(p string) (string, error) {
+	tail := ""
+	for cur := p; ; {
+		_, err := os.Lstat(cur)
+		if err == nil {
+			real, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(real, tail), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p, nil
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
+	}
 }
 
 func runConfigPull(cmd *cobra.Command, args []string) error {
@@ -320,7 +380,7 @@ func buildConfigTar(scope configScope, dir string, exclude []string, stderr io.W
 			fmt.Fprintf(stderr, "项目级配置不支持 %s，已跳过\n", agentcfg.ModelsFile)
 		}
 	}
-	files, err := collectPushFiles(dir, scope.excluded, exclude)
+	files, err := collectPushFiles(dir, scope.excluded, exclude, scope.isProject(), stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -346,8 +406,12 @@ func buildConfigTar(scope configScope, dir string, exclude []string, stderr io.W
 		if total > int64(maxTotal) {
 			return nil, fmt.Errorf("合计超过上限 %d MiB", maxTotal>>20)
 		}
+		if textRequired(f.rel) && (bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b)) {
+			return nil, fmt.Errorf("%s 必须是 UTF-8 文本（含 NUL 或非 UTF-8 字节），拒绝上传", f.rel)
+		}
+		// 二进制内容同样扫描：含 NUL 不再是跳过告警的理由
 		if f.rel != agentcfg.ModelsFile {
-			if hits := agentcfg.ScanSecretLike(b); len(hits) > 0 && !bytes.Contains(b, []byte{0}) {
+			if hits := agentcfg.ScanSecretLike(b); len(hits) > 0 {
 				fmt.Fprintf(stderr, "警告：%s 含形似密钥的字符串（%s），该文件会原样下发到 orb\n", f.rel, strings.Join(hits, ", "))
 			}
 		}
@@ -362,6 +426,18 @@ func buildConfigTar(scope configScope, dir string, exclude []string, stderr io.W
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// textRequired 报告该相对路径是否必须是文本：rules/ 下的一切与 *.md *.yml *.yaml *.json。
+func textRequired(rel string) bool {
+	if strings.HasPrefix(rel, "rules/") {
+		return true
+	}
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".md", ".yml", ".yaml", ".json":
+		return true
+	}
+	return false
 }
 
 // uploadConfigTar 把 tar 包导入 scope 对应的配置根并打印结果。
@@ -423,53 +499,144 @@ func userExcluded(rel string, globs []string) bool {
 	return false
 }
 
-// collectPushFiles 遍历目录（跟随符号链接，防环），返回未被 excluded（配置根的排除规则）
-// 与用户 glob 排除的普通文件。
-func collectPushFiles(root string, excluded func(rel string) bool, exclude []string) ([]pushFile, error) {
+// collectPushFiles 遍历目录，返回未被 excluded（配置根的排除规则）与用户 glob 排除的普通文件。
+// 两种模式都只收普通文件（设备、FIFO、socket 拒绝），且指向目录的链接照常遍历、防环。
+// strict（--project，目录来自可能不可信的仓库）时符号链接解析后必须仍在 root 之内且目标不被排除，
+// 指向 root 之外、无法解析或指向被排除路径的链接一律拒绝，避免把本机文件（如 /proc/self/environ、
+// ~/.ssh）带进上传包；非 strict（全局，用户自己的 ~/.omp/agent）时照常跟随指向 root 之外的链接，
+// 悬空链接与指向被排除路径的链接在 stderr 提示后跳过。被拒绝的路径汇总列出后报错。
+func collectPushFiles(root string, excluded func(rel string) bool, exclude []string, strict bool, stderr io.Writer) ([]pushFile, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	skip := func(rel string) bool {
+		return excluded(rel) || rel == orynIgnoreFile || userExcluded(rel, exclude)
+	}
 	var out []pushFile
+	var rejected []string
+	// visited 记录已遍历过的真实目录。非链接子目录总是遍历（它们构成一棵树，不会成环）；
+	// 目录链接只在目标从未遍历过时展开一次，既截断成环，又避免别名按遍历顺序吞掉原目录，
+	// 还让链接展开的总量有界（每个目标至多展开一次）
 	visited := map[string]bool{}
-	var walk func(abs, rel string) error
-	walk = func(abs, rel string) error {
-		real, err := filepath.EvalSymlinks(abs)
-		if err != nil {
-			return err
-		}
-		if visited[real] {
-			return nil
-		}
-		visited[real] = true
-		entries, err := os.ReadDir(abs)
+	// dir 总是已解析符号链接的真实路径，因此其下非链接条目的路径也是真实路径。
+	// rel 是别名路径（tar 里的名字）；hasReal 时 realRel 是 dir 相对 realRoot 的真实路径。
+	// 经目录链接进入后两者不同，后代要按两者各查一次排除，否则 a -> skills 会让
+	// skills/private、sessions/ 等被排除的内容以 a/private/… 的名字漏出去。
+	// 跟随指向根外的链接（仅全局）后没有真实 rel，只按别名检查。
+	var walk func(dir, rel, realRel string, hasReal bool) error
+	walk = func(dir, rel, realRel string, hasReal bool) error {
+		visited[dir] = true
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return err
 		}
 		for _, e := range entries {
-			childRel := e.Name()
-			if rel != "" {
-				childRel = rel + "/" + e.Name()
-			}
-			if excluded(childRel) || childRel == orynIgnoreFile || userExcluded(childRel, exclude) {
+			childRel := joinRel(rel, e.Name())
+			if skip(childRel) {
 				continue
 			}
-			childAbs := filepath.Join(abs, e.Name())
-			st, err := os.Stat(childAbs) // 跟随符号链接
+			childReal, childHasReal := joinRel(realRel, e.Name()), hasReal
+			if hasReal && skip(childReal) {
+				// 与入口处链接指向被排除路径的处理一致：--project 拒绝，全局提示后跳过
+				if !strict {
+					fmt.Fprintf(stderr, "跳过 %s：经符号链接指向被排除的路径 %s\n", childRel, childReal)
+					continue
+				}
+				rejected = append(rejected, fmt.Sprintf("%s → %s（经符号链接指向被排除的路径）", childRel, childReal))
+				continue
+			}
+			childAbs := filepath.Join(dir, e.Name())
+			st, err := os.Lstat(childAbs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "跳过 %s：%v\n", childRel, err)
-				continue
+				return err
+			}
+			if st.Mode()&fs.ModeSymlink != 0 {
+				target, err := filepath.EvalSymlinks(childAbs)
+				if err != nil {
+					if !strict {
+						fmt.Fprintf(stderr, "跳过 %s：%v\n", childRel, err)
+						continue
+					}
+					rejected = append(rejected, fmt.Sprintf("%s（符号链接无法解析：%v）", childRel, err))
+					continue
+				}
+				inRoot := within(realRoot, target)
+				if !inRoot && strict {
+					rejected = append(rejected, fmt.Sprintf("%s → %s（符号链接指向目录之外）", childRel, target))
+					continue
+				}
+				tr, err := filepath.Rel(realRoot, target)
+				if err != nil {
+					return err
+				}
+				// 链接目标决定后代的真实 rel：根内为目标相对根的路径，根外（仅全局）则没有
+				childReal, childHasReal = filepath.ToSlash(tr), inRoot
+				if tr == "." {
+					childReal = ""
+				}
+				if inRoot && tr != "." && skip(childReal) {
+					if !strict {
+						fmt.Fprintf(stderr, "跳过 %s：符号链接指向被排除的路径 %s\n", childRel, target)
+						continue
+					}
+					rejected = append(rejected, fmt.Sprintf("%s → %s（符号链接指向被排除的路径）", childRel, target))
+					continue
+				}
+				if st, err = os.Stat(target); err != nil {
+					return err
+				}
+				if st.IsDir() && visited[target] {
+					continue // 目录链接的目标已遍历过（含成环）
+				}
+				childAbs = target
 			}
 			switch {
 			case st.IsDir():
-				if err := walk(childAbs, childRel); err != nil {
+				if err := walk(childAbs, childRel, childReal, childHasReal); err != nil {
 					return err
 				}
 			case st.Mode().IsRegular():
 				out = append(out, pushFile{rel: childRel, abs: childAbs, mode: st.Mode()})
+			default:
+				rejected = append(rejected, fmt.Sprintf("%s（%s，不是普通文件）", childRel, fileKind(st.Mode())))
 			}
 		}
 		return nil
 	}
-	if err := walk(root, ""); err != nil {
+	if err := walk(realRoot, "", "", true); err != nil {
 		return nil, err
+	}
+	if len(rejected) > 0 {
+		return nil, fmt.Errorf("拒绝上传 %s 中的以下路径（可用 --exclude 或 .orynignore 排除）：\n  %s",
+			root, strings.Join(rejected, "\n  "))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out, nil
+}
+
+// joinRel 拼接以 / 分隔的相对路径（rel 为空表示根）。
+func joinRel(rel, name string) string {
+	if rel == "" {
+		return name
+	}
+	return rel + "/" + name
+}
+
+// fileKind 用于报错的特殊文件类型名。
+func fileKind(m fs.FileMode) string {
+	switch {
+	case m&fs.ModeNamedPipe != 0:
+		return "FIFO"
+	case m&fs.ModeSocket != 0:
+		return "socket"
+	case m&(fs.ModeDevice|fs.ModeCharDevice) != 0:
+		return "设备文件"
+	default:
+		return "特殊文件"
+	}
 }
