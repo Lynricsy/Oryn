@@ -172,21 +172,22 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.haveParams = true
 	r.envMu.Unlock()
 
-	// 1. omp 文本配置。
-	if skipped, err := r.writeOmpHomeAt(ompSeq, p.OmpHome); err != nil {
+	// 1. omp 文本配置：用户层 ~/.omp/agent，与项目层（M12.2，严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录）。
+	wroteHome, wroteProject, err := r.writeOmpConfigAt(ompSeq, p.OmpHome, p.ProjectConfig, true)
+	if err != nil {
 		lg.system(apigen.OmpHome, "error: "+err.Error())
-		return fail(ctlErr("failed", "omp home: %v", err))
-	} else if skipped {
-		lg.system(apigen.OmpHome, "skipped: a newer omp config was applied while waiting")
-	} else {
+		return fail(ctlErr("failed", "%v", err))
+	}
+	const newer = "skipped: a newer omp config was applied while waiting"
+	if wroteHome {
 		lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
+	} else {
+		lg.system(apigen.OmpHome, newer+" (~/.omp/agent)")
 	}
-	// 1b. 项目级 omp 配置（M12.2）：严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录。
-	if err := r.writeProjectOmp(p.ProjectConfig); err != nil {
-		lg.system(apigen.OmpHome, "error: "+err.Error())
-		return fail(ctlErr("failed", "project omp config: %v", err))
-	}
-	if p.ProjectConfig != nil {
+	switch {
+	case !wroteProject:
+		lg.system(apigen.OmpHome, newer+" (project config)")
+	case p.ProjectConfig != nil:
 		lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d project config file(s) to ~/.oryn/project-config/.omp", len(p.ProjectConfig.Files)))
 	}
 
@@ -517,22 +518,28 @@ func (r *Runtime) nextOmpSeq() uint64 {
 	return r.ompSeq
 }
 
-// writeOmpHomeAt 以编号 seq 写入 omp 文本配置；已有更晚到达的请求写过时不写，返回 skipped=true。
-// 写入全程持有 ompMu，两路写入不会交错，清单（manifest）始终与最后一次写入一致。
-func (r *Runtime) writeOmpHomeAt(seq uint64, files []apigen.LinkCtlOmpHomeFile) (skipped bool, err error) {
+// writeOmpConfigAt 以编号 seq 写入 omp 文本配置：用户层 files，setProject 时连同项目层 project（nil = 删除项目层）。
+// 两层各自记已写入的最大编号，某层已有更晚到达的请求写过时跳过该层；返回两层各自是否写了。
+// 写入全程持有 ompMu，几路写入不会交错，清单（manifest）始终与该层最后一次写入一致。
+func (r *Runtime) writeOmpConfigAt(seq uint64, files []apigen.LinkCtlOmpHomeFile, project *apigen.LinkCtlProjectConfig, setProject bool) (wroteHome, wroteProject bool, err error) {
 	r.ompMu.Lock()
 	defer r.ompMu.Unlock()
-	if seq < r.ompWritten {
-		return true, nil
+	if seq > r.ompWritten {
+		if err := r.writeOmpHome(files); err != nil {
+			return false, false, fmt.Errorf("omp home: %w", err)
+		}
+		r.ompWritten, wroteHome = seq, true
 	}
-	if err := r.writeOmpHome(files); err != nil {
-		return false, err
+	if setProject && seq > r.projWritten {
+		if err := r.writeProjectOmp(project); err != nil {
+			return wroteHome, false, fmt.Errorf("project omp config: %w", err)
+		}
+		r.projWritten, wroteProject = seq, true
 	}
-	r.ompWritten = seq
-	return false, nil
+	return wroteHome, wroteProject, nil
 }
 
-// writeOmpHome 把 files 写进 ~/.omp/agent/ 并清理上次下发、这次已不在清单里的文件。调用方经 writeOmpHomeAt 串行化。
+// writeOmpHome 把 files 写进 ~/.omp/agent/ 并清理上次下发、这次已不在清单里的文件。调用方经 writeOmpConfigAt 串行化。
 func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {
 	base := filepath.Join(r.home, ".omp", "agent")
 	for _, f := range files {

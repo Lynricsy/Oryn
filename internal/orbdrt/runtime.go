@@ -212,11 +212,13 @@ type Runtime struct {
 	autoMu    sync.Mutex
 	autoOp    *autoSetup
 	semHolder *autoSetup
-	// ompSeq 按到达顺序给会写 omp 文本配置的请求（setup.run / resume.run / omphome.apply）编号；ompWritten 是已写入的
-	// 最大编号。写入时编号更小的请求跳过：先到、却因等 setup 互斥而晚写的 setup 不会用旧内容盖掉 omphome.apply 的新内容。
-	ompMu      sync.Mutex
-	ompSeq     uint64
-	ompWritten uint64
+	// ompSeq 按到达顺序给会写 omp 文本配置的请求（setup.run / resume.run / omphome.apply）编号；ompWritten / projWritten
+	// 是用户层 / 项目层已写入的最大编号。写入时编号更小的请求跳过该层：先到、却因等 setup 互斥而晚写的 setup
+	// 不会用旧内容盖掉 omphome.apply 的新内容。
+	ompMu       sync.Mutex
+	ompSeq      uint64
+	ompWritten  uint64
+	projWritten uint64
 	// 以下为最近一次 setup.run / resume.run 的参数（手动重跑用）。
 	envMu       sync.Mutex
 	setupEnv    map[string]string
@@ -833,8 +835,9 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 		if err != nil {
 			return nil, err
 		}
-		if _, err := r.writeOmpHomeAt(r.nextOmpSeq(), p.OmpHome); err != nil {
-			return nil, ctlErr("failed", "omp home: %v", err)
+		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）。
+		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, p.ProjectConfig != nil); err != nil {
+			return nil, ctlErr("failed", "%v", err)
 		}
 		return apigen.LinkCtlOkResult{Ok: true}, nil
 	case "blob.fetch":

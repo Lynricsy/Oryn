@@ -6086,12 +6086,15 @@ export interface components {
             contentB64: string;
         };
         /**
-         * @description M13：只把 omp 文本配置写进 `$HOME/.omp/agent/` 并清理上次下发、这次已不在清单里的文件（与 `setup.run` 的第 1 步相同），
-         *     不碰 git、不跑脚本、不动项目层配置。与 `setup.run` / `resume.run` 写配置的那一步按到达顺序生效：
-         *     先到达的 setup 若在本请求之后才走到写配置，就跳过写入，不会用旧内容覆盖新内容。
+         * @description M13：只写 omp 文本配置，与 `setup.run` 的第 1 步相同：`ompHome` 写进 `$HOME/.omp/agent/` 并清理上次下发、这次已不在清单里的文件；
+         *     带 `projectConfig` 时把项目层镜像到 `$HOME/.oryn/project-config/.omp/`，缺省时不动项目层。不碰 git、不跑脚本。
+         *     与 `setup.run` / `resume.run` 写配置的那一步按到达顺序、按层生效：先到达的 setup 若在本请求之后才走到写配置，
+         *     就跳过本请求已写过的那一层，不会用旧内容覆盖新内容。
          */
         LinkCtlOmpHomeApplyParams: {
             ompHome: components["schemas"]["LinkCtlOmpHomeFile"][];
+            /** @description 缺省 = 不动项目层（与 `setup.run` 不同：那里缺省表示删除项目层） */
+            projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
         };
         /** @description 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除 */
         LinkCtlProjectConfig: {
