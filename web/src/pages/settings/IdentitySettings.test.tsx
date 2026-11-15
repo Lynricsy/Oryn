@@ -301,14 +301,14 @@ describe("全局助手", () => {
 });
 
 describe("默认 Agent 身份与角色头像入口", () => {
-	it("标题是「默认 Agent 身份」；角色头像只剩链接到 Agent 配置的卡片", () => {
+	it("标题是「默认 Agent 身份」；角色头像只剩链接到「Agent › 模型角色」的卡片", () => {
 		mount();
 		expect(screen.getByText("默认 Agent 身份")).toBeInTheDocument();
 		const scope = card("roles");
 		expect(scope.querySelector("li")).toBeNull();
 		expect(
-			within(scope).getByRole("link", { name: "前往 Agent 配置" }),
-		).toHaveAttribute("href", "/settings/agent-config");
+			within(scope).getByRole("link", { name: "前往模型角色" }),
+		).toHaveAttribute("href", "/settings/agent-roles");
 		expect(writes.some((w) => w.path.includes("role-identities"))).toBe(false);
 	});
 });

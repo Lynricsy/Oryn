@@ -55,6 +55,8 @@ const SETTINGS: SettingsSection[] = [
 	"browser-profiles",
 	"git-identity",
 	"agent-skills",
+	"agent-subagents",
+	"agent-roles",
 	"agent-prompts",
 	"agent-commands",
 	"agent-extensions",

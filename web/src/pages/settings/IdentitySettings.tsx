@@ -1,6 +1,6 @@
 /**
  * 设置 → 身份与头像（M9.6 / M13）：默认 Agent 身份（名字 + 头像）、全局助手（名字 + 头像，留空显示「全局助手」与 sparkle，
- * 带底栏预览）、role 头像入口（链接卡，头像改在 Agent 配置里编辑）、新对话默认对象、我的头像。
+ * 带底栏预览）、role 头像入口（链接卡，头像改在「Agent › 模型角色」里编辑）、新对话默认对象、我的头像。
  * 身份接口是整体替换：每次保存都发完整对象——只改名字时带上当前头像，只改头像时带上当前名字（见 `useIdentityWriter`）。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -223,7 +223,7 @@ function AssistantIdentityCard(): ReactNode {
 	);
 }
 
-/** role 头像入口：头像改在「Agent › 模型角色」编辑；那一页上线之前链接到 Agent 配置。 */
+/** role 头像入口：头像改在「Agent › 模型角色」编辑。 */
 function RoleAvatarsLinkCard(): ReactNode {
 	const { t } = useTranslation();
 	return (
@@ -231,7 +231,7 @@ function RoleAvatarsLinkCard(): ReactNode {
 			<div data-testid="identity-roles" className="flex flex-col gap-2">
 				<p className="text-faint text-xs">{t("identity.rolesHint")}</p>
 				<Link
-					to="/settings/agent-config"
+					to="/settings/agent-roles"
 					className="self-start text-accent-ink text-xs underline"
 				>
 					{t("identity.rolesLink")}

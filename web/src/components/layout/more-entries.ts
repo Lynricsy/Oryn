@@ -48,6 +48,20 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/agent-skills",
 	},
 	{
+		key: "agent-subagents",
+		group: "agent",
+		icon: "tree",
+		labelKey: "settings.agent-subagents",
+		to: "/settings/agent-subagents",
+	},
+	{
+		key: "agent-roles",
+		group: "agent",
+		icon: "repeat",
+		labelKey: "settings.agent-roles",
+		to: "/settings/agent-roles",
+	},
+	{
 		key: "agent-prompts",
 		group: "agent",
 		icon: "fileText",

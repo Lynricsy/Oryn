@@ -81,7 +81,9 @@ import AutomationsSettings from "./settings/AutomationsSettings";
 import CollectionsPage from "./settings/agent/CollectionsPage";
 import ExtensionsPage from "./settings/agent/ExtensionsPage";
 import PromptsPage from "./settings/agent/PromptsPage";
+import RolesPage from "./settings/agent/RolesPage";
 import SkillsPage from "./settings/agent/SkillsPage";
+import SubagentsPage from "./settings/agent/SubagentsPage";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
@@ -98,6 +100,8 @@ export type SettingsSection =
 	| "browser-profiles"
 	| "git-identity"
 	| "agent-skills"
+	| "agent-subagents"
+	| "agent-roles"
 	| "agent-prompts"
 	| "agent-commands"
 	| "agent-extensions"
@@ -1240,6 +1244,8 @@ export function SettingsPage({
 					{section === "browser-profiles" && <BrowserProfilesSettings />}
 					{section === "git-identity" && <GitIdentitySettings />}
 					{section === "agent-skills" && <SkillsPage />}
+					{section === "agent-subagents" && <SubagentsPage />}
+					{section === "agent-roles" && <RolesPage />}
 					{section === "agent-prompts" && <PromptsPage />}
 					{section === "agent-commands" && <CollectionsPage />}
 					{section === "agent-extensions" && <ExtensionsPage />}
