@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func raw(s string) json.RawMessage { return json.RawMessage(s) }
@@ -22,7 +23,7 @@ func TestLiveMessageAndToolLifecycle(t *testing.T) {
 	l.ApplyFrame(raw(`{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash"}`))
 	l.ApplyFrame(raw(`{"type":"tool_execution_update","toolCallId":"c1"}`))
 	l.ApplyFrame(raw(`{"type":"tool_execution_update","toolCallId":"c1","n":2}`))
-	l.ApplyFrame(raw(`{"type":"subagent_progress","index":0,"parentToolCallId":"c1"}`))
+	l.ApplyFrame(raw(`{"type":"subagent_progress","payload":{"index":0,"parentToolCallId":"c1","progress":{"index":0,"id":"A"}}}`))
 	frames := l.LiveFrames()
 	assert.Len(t, frames, 4, "2 条消息帧 + 工具 start + 最新 update")
 	assert.JSONEq(t, `{"type":"tool_execution_update","toolCallId":"c1","n":2}`, string(frames[3]))
@@ -89,4 +90,38 @@ func TestRouteCommand(t *testing.T) {
 		got, _ := RouteCommand(raw(frame))
 		assert.Equal(t, want, got, frame)
 	}
+}
+
+// Core 的子 agent 帧把字段放在 payload 里；嵌套派发的子 agent 的 index 也从 0 编号，按 id 存才不会互相覆盖。
+func TestLiveSubagentsKeyedByID(t *testing.T) {
+	l := NewLive()
+	l.ApplyFrame(raw(`{"type":"subagent_lifecycle","payload":{"id":"A","index":0,"status":"started","parentToolCallId":"c1"}}`))
+	l.ApplyFrame(raw(`{"type":"subagent_lifecycle","payload":{"id":"B","index":1,"status":"started","parentToolCallId":"c1"}}`))
+	// A 再派发的子 agent：index 同为 0，task 调用 c9 在 A 的会话里
+	l.ApplyFrame(raw(`{"type":"subagent_lifecycle","payload":{"id":"A.X","index":0,"status":"started","parentToolCallId":"c9","parentSubagentId":"A"}}`))
+	l.ApplyFrame(raw(`{"type":"subagent_progress","payload":{"index":0,"parentToolCallId":"c1","progress":{"index":0,"id":"A","status":"running"}}}`))
+	l.ApplyFrame(raw(`{"type":"subagent_progress","payload":{"index":0,"parentToolCallId":"c9","parentSubagentId":"A","progress":{"index":0,"id":"A.X","status":"running"}}}`))
+	// 不在 payload 里、也没有 id 的帧不入缓冲
+	l.ApplyFrame(raw(`{"type":"subagent_progress","index":0}`))
+
+	subs := l.Subagents()
+	require.Len(t, subs, 3, "嵌套的 A.X 与根上同号的 A 各占一项")
+	ids := make([]string, len(subs))
+	for i, f := range subs {
+		var v struct {
+			Payload struct {
+				ID       string `json:"id"`
+				Progress struct {
+					ID string `json:"id"`
+				} `json:"progress"`
+			} `json:"payload"`
+		}
+		require.NoError(t, json.Unmarshal(f, &v))
+		ids[i] = v.Payload.ID + v.Payload.Progress.ID
+	}
+	assert.Equal(t, []string{"A", "B", "A.X"}, ids, "按首次出现顺序，取各自最新帧")
+
+	// 主会话里 c1 的结果到达：清掉 c1 派发的 A、B，以及 A 再派发的 A.X
+	l.ApplyEntry("message", raw(`{"message":{"role":"toolResult","toolCallId":"c1","timestamp":1}}`))
+	assert.Empty(t, l.Subagents())
 }

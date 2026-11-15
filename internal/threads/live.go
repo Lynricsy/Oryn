@@ -36,6 +36,25 @@ type uiSlot struct {
 	frame json.RawMessage
 }
 
+// subSlot 是一个子 agent 的最新帧。Core 的子 agent 帧把字段放在 `payload` 里：lifecycle 的 id 在
+// `payload.id`，progress 的在 `payload.progress.id`；`index` 只是该 agent 在自己那次 task 调用里的序号，
+// 嵌套派发的子 agent 也从 0 编号，不能当键。
+type subSlot struct {
+	seq        int // 首次出现的顺序，快照按此排序
+	frame      json.RawMessage
+	parentTool string // 派发它的 task 工具调用 id（嵌套时属于上级子 agent 的会话）
+	parentID   string // 嵌套派发时上级子 agent 的 id；根上为空
+}
+
+type subagentPayload struct {
+	ID               string `json:"id"`
+	ParentToolCallID string `json:"parentToolCallId"`
+	ParentSubagentID string `json:"parentSubagentId"`
+	Progress         struct {
+		ID string `json:"id"`
+	} `json:"progress"`
+}
+
 // Live 是单个线程的实时缓冲：只保存尚未被已提交条目覆盖的在途帧，以及推导线程状态所需的标志。
 // 非并发安全，由调用方加锁。
 type Live struct {
@@ -45,8 +64,7 @@ type Live struct {
 	openKey     *msgKey
 
 	tools     map[string]*toolSlot
-	subagents map[int]json.RawMessage
-	subParent map[int]string // 子 agent index → 父 toolCallId
+	subagents map[string]*subSlot // 子 agent id → 最新帧
 	pendingUI map[string]uiSlot
 
 	PlanProposal json.RawMessage
@@ -64,8 +82,7 @@ type Live struct {
 func NewLive() *Live {
 	return &Live{
 		tools:     map[string]*toolSlot{},
-		subagents: map[int]json.RawMessage{},
-		subParent: map[int]string{},
+		subagents: map[string]*subSlot{},
 		pendingUI: map[string]uiSlot{},
 	}
 }
@@ -79,8 +96,7 @@ type frameHead struct {
 	ToolCallID string          `json:"toolCallId"`
 	Status     string          `json:"status"`
 	IsTerminal *bool           `json:"isTerminal"`
-	Index      *int            `json:"index"`
-	ParentTool string          `json:"parentToolCallId"`
+	Payload    json.RawMessage `json:"payload"`
 	Message    json.RawMessage `json:"message"`
 }
 
@@ -153,11 +169,28 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 			t.end = frame
 		}
 	case "subagent_lifecycle", "subagent_progress":
-		if h.Index != nil {
-			l.subagents[*h.Index] = frame
-			if h.ParentTool != "" {
-				l.subParent[*h.Index] = h.ParentTool
-			}
+		var p subagentPayload
+		if json.Unmarshal(h.Payload, &p) != nil {
+			break
+		}
+		id := p.ID
+		if id == "" {
+			id = p.Progress.ID
+		}
+		if id == "" {
+			break
+		}
+		s := l.subagents[id]
+		if s == nil {
+			s = &subSlot{seq: l.seq}
+			l.subagents[id] = s
+		}
+		s.frame = frame
+		if p.ParentToolCallID != "" {
+			s.parentTool = p.ParentToolCallID
+		}
+		if p.ParentSubagentID != "" {
+			s.parentID = p.ParentSubagentID
 		}
 	case "extension_ui_request":
 		switch {
@@ -219,11 +252,25 @@ func (l *Live) ApplyEntry(entryType string, payload json.RawMessage) {
 
 func (l *Live) clearTool(id string) {
 	delete(l.tools, id)
-	for idx, parent := range l.subParent {
-		if parent == id {
-			delete(l.subagents, idx)
-			delete(l.subParent, idx)
+	// 父工具结束时清掉它派发的子 agent，以及这些子 agent 再派发的各级下级（下级的 task 调用在子会话里，
+	// 主会话不会有它们的 toolResult）
+	gone := map[string]bool{}
+	for sid, s := range l.subagents {
+		if s.parentTool == id && s.parentID == "" {
+			gone[sid] = true
 		}
+	}
+	for changed := len(gone) > 0; changed; {
+		changed = false
+		for sid, s := range l.subagents {
+			if !gone[sid] && gone[s.parentID] {
+				gone[sid] = true
+				changed = true
+			}
+		}
+	}
+	for sid := range gone {
+		delete(l.subagents, sid)
 	}
 }
 
@@ -285,8 +332,7 @@ func (l *Live) RestartExhausted() { l.restartExhausted = true; l.working = false
 func (l *Live) Reset() {
 	l.openMessage, l.openKey = nil, nil
 	l.tools = map[string]*toolSlot{}
-	l.subagents = map[int]json.RawMessage{}
-	l.subParent = map[int]string{}
+	l.subagents = map[string]*subSlot{}
 	l.pendingUI = map[string]uiSlot{}
 	l.PlanProposal = nil
 	l.working = false
@@ -324,16 +370,16 @@ func (l *Live) PendingUI() []json.RawMessage {
 	return out
 }
 
-// Subagents 按 index 返回子 agent 最新帧。
+// Subagents 按首次出现顺序返回各子 agent 的最新帧。
 func (l *Live) Subagents() []json.RawMessage {
-	idx := make([]int, 0, len(l.subagents))
-	for i := range l.subagents {
-		idx = append(idx, i)
+	slots := make([]*subSlot, 0, len(l.subagents))
+	for _, s := range l.subagents {
+		slots = append(slots, s)
 	}
-	sort.Ints(idx)
-	out := make([]json.RawMessage, len(idx))
-	for i, k := range idx {
-		out[i] = l.subagents[k]
+	sort.Slice(slots, func(i, j int) bool { return slots[i].seq < slots[j].seq })
+	out := make([]json.RawMessage, len(slots))
+	for i, s := range slots {
+		out[i] = s.frame
 	}
 	return out
 }
