@@ -205,6 +205,8 @@ type Service struct {
 	hookSnapshotBuilding func(orbID, snapID string)
 	// hookRotateToken（仅测试）在快照后轮换令牌的事务里最先调用，返回错误即让该事务失败。
 	hookRotateToken func(orbID string) error
+	// hookRotateBegin（仅测试）在 rotateToken 开头、轮换事务之前调用。
+	hookRotateBegin func(orbID string)
 	// hookAfterFunc（仅测试）替换 runner 离线定时器的 time.AfterFunc（见 runner.go afterFunc）。
 	hookAfterFunc func(d time.Duration, fn func()) func() bool
 	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
@@ -498,15 +500,16 @@ func tokenDeliverable(state string) bool {
 // 从快照派生的机器即使从磁盘里恢复出旧令牌，也连不上源 orb 的 link。
 //
 // 机器在跑时复用 spawnIn（与认领 ready 池 orb 同一条路径，状态不变）：同一事务入队携带新令牌的 spawn，提交后关闭
-// 持旧令牌的 link（只关事务前看到的那条，不误关 orbd 用新令牌重拨的 link），再唤醒 provider。冻结、停机等状态只轮换：
+// 令牌代数旧于新代数的当前 link（orbLink.tokenGen；包括轮换进行中用旧令牌刚建立、已通过复核的 link；不误关 orbd
+// 用新令牌重拨的 link。提交之后才发布的旧令牌 link 复核时令牌已失效，自行关闭），再唤醒 provider。冻结、停机等状态只轮换：
 // 下次唤醒的 spawn 会再轮换并送达。freezing 期间轮换、冻结又失败回到 ready 的 orb，现有 link 不受影响，但 link 断开后
 // 要等下一次 spawn（如手动停机再唤醒）才能重连。协调 orb（link 不经令牌鉴权）与 runner（令牌归用户保管）不轮换。
 //
 // 返回错误表示令牌没能轮换（快照里那一代令牌仍有效）：调用方必须放弃并回收该快照，不得发布或交付。
 func (s *Service) rotateToken(ctx context.Context, orbID string) error {
-	s.mu.Lock()
-	old := s.links[orbID]
-	s.mu.Unlock()
+	if s.hookRotateBegin != nil {
+		s.hookRotateBegin(orbID)
+	}
 	var orb db.Orb
 	rotated, delivered := false, false
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
@@ -542,8 +545,11 @@ func (s *Service) rotateToken(ctx context.Context, orbID string) error {
 	}
 	slog.Info("快照后已轮换 orb 令牌", "orb", orbID, "state", orb.State, "gen", orb.TokenGen, "delivered", delivered)
 	if delivered {
-		if old != nil {
-			_ = old.sess.Close()
+		s.mu.Lock()
+		cur := s.links[orbID]
+		s.mu.Unlock()
+		if cur != nil && cur.tokenGen < orb.TokenGen {
+			_ = cur.sess.Close()
 		}
 		s.jobs.Signal(orb.ProviderID)
 	}

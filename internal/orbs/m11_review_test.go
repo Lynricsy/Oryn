@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/link"
 )
 
 // M11 全量审查 F3 / F4 / S1 的回归测试。
@@ -199,4 +200,53 @@ func TestSnapshotRotateFailureDiscardsSnapshot(t *testing.T) {
 		assert.Empty(t, e.snapshots(prj), "不发布、building 行也已删除")
 		assert.EqualValues(t, 1, mustOrb(t, e, a.ID).TokenGen, "令牌没有轮换")
 	})
+}
+
+// S1：轮换开始之后、提交之前，有人用旧令牌建立 link 并通过复核（成为当前 link）——提交后这条旧代 link 也必须关闭，
+// 不能继续收发 ctl。送达新令牌的 spawn 这里不让 orbd 重连（noConnect），以免重连顶掉旧代 link、掩盖问题。
+func TestRotateClosesOldGenLinkReconnectedMidRotation(t *testing.T) {
+	e := newM11Env(t, nil, true, nil)
+	ctx := context.Background()
+	a := e.createReady(CreateParams{})
+	o := e.drv.orbd(a.ID)
+	oldTok := e.lastSpawn(a.ID).Env.OrynOrbToken
+	e.drv.mu.Lock()
+	e.drv.noConnect = true
+	e.drv.mu.Unlock()
+	var mid *link.Ctl
+	e.svc.hookRotateBegin = func(string) {
+		e.svc.hookRotateBegin = nil
+		rogue := &fakeOrbd{url: o.url, orbID: a.ID, token: oldTok}
+		require.NoError(t, rogue.connect())
+		t.Cleanup(rogue.disconnect)
+		mid = rogue.ctl
+		// 请求得到处理器的应答（方法不存在）而不是 unauthorized：这条 link 已发布并通过复核
+		err := mid.Call(ctx, "no.such.method", map[string]any{}, nil)
+		var ce *link.CtlError
+		require.ErrorAs(t, err, &ce)
+		require.Equal(t, link.CodeMethodNotFound, ce.Code)
+	}
+	_, err := e.svc.Snapshot(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, mid)
+	select {
+	case <-mid.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("轮换进行中用旧令牌建立的 link 没有被关闭")
+	}
+	assert.Error(t, mid.Call(ctx, "no.such.method", map[string]any{}, nil), "旧代 link 不能再发 ctl")
+	_, err = e.svc.orbForToken(ctx, oldTok)
+	assert.Error(t, err, "旧令牌已作废")
+
+	// 送达的新令牌可以建立 link
+	require.Eventually(t, func() bool { return e.drv.countOps("spawn") == 2 }, 10*time.Second, 20*time.Millisecond)
+	e.drv.mu.Lock()
+	e.drv.noConnect = false
+	e.drv.mu.Unlock()
+	o.mu.Lock()
+	require.NotEqual(t, oldTok, o.token)
+	o.mu.Unlock()
+	o.disconnect()
+	require.NoError(t, o.connect())
+	require.Eventually(t, func() bool { return e.svc.Connected(a.ID) }, 10*time.Second, 20*time.Millisecond)
 }

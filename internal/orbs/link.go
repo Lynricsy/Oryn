@@ -37,6 +37,9 @@ type orbLink struct {
 	// rejected 为真时发布后的复核没有通过（令牌已吊销 / orb 已删除等）：在关闭 published 之前写入，
 	// ctl 处理器等到 published 之后读它，为真则一律不处理。
 	rejected bool
+	// tokenGen 是建立这条 link 时令牌所属的代数（鉴权时 orb 行的 token_gen）：快照后轮换令牌时，代数更旧的 link
+	// 一律关闭（见 rotateToken），不论它是在轮换之前还是轮换事务进行中建立的。
+	tokenGen int64
 }
 
 func (l *orbLink) helloSeen() bool {
@@ -240,7 +243,7 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 	// ctl 端点先完整构造、link 先发布并通过复核，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
 	// hello 等回调也不会在发布与复核之前运行。
 	published := make(chan struct{})
-	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb)}
+	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb), tokenGen: orb.TokenGen}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 			<-published
