@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/orbtls"
 	"github.com/Lynricsy/Oryn/internal/portal"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
@@ -79,6 +81,10 @@ type Server struct {
 	Portal  *portal.Service
 	API     *api.Server
 	Handler http.Handler
+	// OrbTLS 是 orb link 专用 TLS 监听的服务端配置（orb_tls.listen 为空时为 nil）；OrbCAPEM 是其 CA 证书，
+	// 经 spawn 参数下发给 orb。
+	OrbTLS   *tls.Config
+	OrbCAPEM []byte
 
 	closers []func()
 }
@@ -130,9 +136,14 @@ func (s *Server) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(cfg.OrbTLS.Listen) > 0 {
+		if s.OrbTLS, s.OrbCAPEM, err = orbtls.Load(cfg.DataDir, cfg.OrbTLS.ListenIPs(), cfg.OrbTLS.Hosts); err != nil {
+			return err
+		}
+	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
-		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool,
+		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
 	}, s.Store, s.Jobs, &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault,
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),

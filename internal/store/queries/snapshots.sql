@@ -34,16 +34,24 @@ WHERE project_snapshots.state = 'ready' AND project_snapshots.id != sqlc.arg(id)
 UPDATE project_snapshots SET state = 'retired', retired_at = CAST(@retired_at AS INTEGER), retire_reason = CAST(@retire_reason AS TEXT)
 WHERE id = @id AND state = 'ready';
 
--- Retires a project's ready snapshots; type NULL = all types.
+-- Retires a project's ready snapshots and cancels its in-flight builds (building -> retired; the builder sees it at
+-- publish and cleans the image up itself); type NULL = all types.
 -- name: RetireProjectSnapshotsByProject :exec
 UPDATE project_snapshots SET state = 'retired', retired_at = CAST(@retired_at AS INTEGER), retire_reason = CAST(@retire_reason AS TEXT)
-WHERE project_id = CAST(@project_id AS TEXT) AND state = 'ready'
+WHERE project_id = CAST(@project_id AS TEXT) AND state IN ('ready', 'building')
   AND (CAST(sqlc.narg(type) AS TEXT) IS NULL OR type = CAST(sqlc.narg(type) AS TEXT));
 
--- Retires every ready snapshot on a provider (provider disabled / deleted).
+-- Retires every ready snapshot on a provider and cancels its in-flight builds (provider disabled / deleted).
 -- name: RetireProjectSnapshotsByProvider :exec
 UPDATE project_snapshots SET state = 'retired', retired_at = CAST(@retired_at AS INTEGER), retire_reason = CAST(@retire_reason AS TEXT)
-WHERE provider_id = @provider_id AND state = 'ready';
+WHERE provider_id = @provider_id AND state IN ('ready', 'building');
+
+-- building -> retired without ever being ready (cancelled at publish, or over max_snapshot_gb); 0 rows = the row
+-- already left 'building'.
+-- name: CancelBuildingProjectSnapshot :execrows
+UPDATE project_snapshots SET state = 'retired', retired_at = CAST(@retired_at AS INTEGER), retire_reason = CAST(@retire_reason AS TEXT),
+    size_bytes = COALESCE(sqlc.narg(size_bytes), size_bytes)
+WHERE id = @id AND state = 'building';
 
 -- 0 rows = the snapshot was retired meanwhile; treat as a miss.
 -- name: TouchProjectSnapshotUse :execrows
@@ -76,5 +84,6 @@ WHERE id = @id;
 -- name: DeleteProjectSnapshot :exec
 DELETE FROM project_snapshots WHERE id = @id;
 
--- name: DeleteBuildingProjectSnapshot :exec
+-- 0 rows = the row already left 'building' (published or cancelled meanwhile): the caller must not delete the image.
+-- name: DeleteBuildingProjectSnapshot :execrows
 DELETE FROM project_snapshots WHERE id = @id AND state = 'building';

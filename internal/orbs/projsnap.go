@@ -2,8 +2,9 @@ package orbs
 
 // 项目快照（M11a 步骤 2）：配置哈希、建 orb 时选快照、setup 之后发布、周期回收与配额。
 //
-// 键 = 项目 + provider + 类型；同键至多一行 building、一行 ready（部分唯一索引）。快照只在「agent 从未在这台 orb
-// 上运行过」时拍（setting_up，或刚被认领的池 orb），且同步拍在 BeforeReady 之前：快照里没有会话、附件与浏览器 Profile。
+// 键 = 项目 + provider + 类型；同键至多一行 building、一行 ready（部分唯一索引）。快照只在 setting_up 的 orb 上拍
+// （agent 从未运行过；认领的池 orb 已跑过受管服务，不拍），且同步拍在 resume（支持推迟时）与 BeforeReady 之前：
+// 快照里没有会话、附件、浏览器 Profile，也没有 resume 与受管服务的副作用。
 
 import (
 	"context"
@@ -14,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -44,6 +46,8 @@ const (
 	RetireManual          = "manual"
 	RetireProjectDeleted  = "project_deleted"
 	RetireProviderRemoved = "provider_removed"
+	// RetireSetupChanged：增量刷新时仓库内 setup / services.yaml 变了或基线不是快进（S-P2-1）。
+	RetireSetupChanged = "setup_changed"
 )
 
 // orbd hello 特性（M11a）。
@@ -52,6 +56,8 @@ const (
 	FeatureRepoUpdate = "repo-update"
 	// FeatureDocker = orb 内的 dockerd 由 orbd 监督（嵌套 Docker）；发布项目快照前先 snapshot.prepare。
 	FeatureDocker = "docker"
+	// FeatureSetupDeferResume = orbd 支持 setup.run 的 deferResume（只跑 setup，resume 由控制面另行调 resume.run）。
+	FeatureSetupDeferResume = "setup-defer-resume"
 )
 
 // EventPool 表示 orb 的预热池状态变化或项目快照发布进展（非状态事件，只需推送 orb 更新）。
@@ -69,14 +75,19 @@ const (
 // snapPick 是建 orb 时对项目快照的选择：hash = 当前配置哈希（有项目时），snapID = 命中的就绪快照（可空）。
 type snapPick struct{ hash, snapID string }
 
-// configHash 是项目 orb 的配置哈希（M11a 2.1）：只含会改变 setup 结果、又不由「HEAD 变了就重跑」覆盖的输入。
-// 不进哈希：resume 脚本（每次启动都跑）、仓库内 .oryn/setup（随基线提交变化）、omp-home（每次下发重写）、git 身份。
-// env 模式密钥只取名字与修改时间，不对值做任何摘要。
+// configHash 是项目 orb 的配置哈希（M11a 2.1），按 provider 当前的基础镜像身份计算（建 orb、池对账与认领、发布复核用）。
 func (s *Service) configHash(ctx context.Context, q *db.Queries, prj db.Project, prov db.Provider, typ string) (string, error) {
-	stamps, err := q.ListEnvSecretStamps(ctx)
+	stamps, err := q.ListConfigSecretStamps(ctx)
 	if err != nil {
-		return "", fmt.Errorf("读取 env 密钥: %w", err)
+		return "", fmt.Errorf("读取密钥修改时间: %w", err)
 	}
+	return projectConfigHash(prj, prov.BaseImageID, typ, stamps), nil
+}
+
+// projectConfigHash 只含会改变 setup 结果、又不由「HEAD 变了就重跑」覆盖的输入。
+// 不进哈希：resume 脚本（每次启动都跑）、仓库内 .oryn/setup（随基线提交变化）、omp-home（每次下发重写）、git 身份。
+// 可能进入 orb 环境的密钥（env 模式密钥、可能被降级为环境变量的模型 key）只取名字与修改时间，不对值做任何摘要。
+func projectConfigHash(prj db.Project, baseImage, typ string, stamps []db.ListConfigSecretStampsRow) string {
 	env := make([][2]string, 0, len(stamps))
 	for _, st := range stamps {
 		env = append(env, [2]string{st.Name, strconv.FormatInt(st.UpdatedAt, 10)})
@@ -92,15 +103,17 @@ func (s *Service) configHash(ctx context.Context, q *db.Queries, prj db.Project,
 		BaseImage string      `json:"baseImage"`
 		Env       [][2]string `json:"env"`
 	}{
-		V: 1, Repo: derefStr(prj.RepoUrl), Branch: derefStr(prj.BaseBranch), Shallow: prj.ShallowClone,
-		Setup: scriptSHA(nonEmpty(prj.SetupScript)), Type: typ, BaseImage: prov.BaseImageID, Env: env,
+		V: 2, Repo: derefStr(prj.RepoUrl), Branch: derefStr(prj.BaseBranch), Shallow: prj.ShallowClone,
+		Setup: scriptSHA(nonEmpty(prj.SetupScript)), Type: typ, BaseImage: baseImage, Env: env,
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
+	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
+}
+
+// sameStamps 报告两次读取的密钥修改时间是否一致（读值前后各读一次，判断值与时间戳出自同一份快照）。
+func sameStamps(a, b []db.ListConfigSecretStampsRow) bool {
+	return slices.Equal(a, b)
 }
 
 // snapshotsOn 报告该项目在该 provider 上是否建立并使用项目快照：全局开关、项目开关，且 provider 上报了基础镜像身份。
@@ -164,29 +177,15 @@ func (s *Service) retireSnapshot(ctx context.Context, id, reason string) bool {
 	return n > 0
 }
 
-// recordConfigHash 为项目 orb 计算这次 setup 实际使用的配置哈希并写入 orbs.config_hash（池匹配与发布都用它）；
-// 无项目、协调 orb 或计算失败时返回空串。
-func (s *Service) recordConfigHash(ctx context.Context, orb db.Orb) string {
-	if orb.ProjectID == nil || orb.Coordinator {
-		return ""
+// recordAppliedHash 在 setup.run 实际跑了 setup 且成功后，把本次参数的配置哈希记为这台 orb 环境已应用的配置
+// （orbs.config_hash，池匹配与对账用）。resume、跳过的 setup（完成标记已在）都不能证明新配置已生效，不更新。
+func (s *Service) recordAppliedHash(ctx context.Context, orbID, hash string) {
+	if hash == "" {
+		return
 	}
-	prj, err := s.st.Q.GetProject(ctx, *orb.ProjectID)
-	if err != nil {
-		return ""
+	if err := s.st.Q.SetOrbConfigHash(ctx, db.SetOrbConfigHashParams{ConfigHash: hash, ID: orbID}); err != nil {
+		slog.Warn("记录 orb 配置哈希失败", "orb", orbID, "err", err)
 	}
-	prov, err := s.st.Q.GetProvider(ctx, orb.ProviderID)
-	if err != nil {
-		return ""
-	}
-	hash, err := s.configHash(ctx, s.st.Q, prj, prov, orb.Type)
-	if err != nil {
-		slog.Warn("计算项目配置哈希失败", "orb", orb.ID, "err", err)
-		return ""
-	}
-	if err := s.st.Q.SetOrbConfigHash(ctx, db.SetOrbConfigHashParams{ConfigHash: hash, ID: orb.ID}); err != nil {
-		slog.Warn("记录 orb 配置哈希失败", "orb", orb.ID, "err", err)
-	}
-	return hash
 }
 
 // wantRepoUpdate 报告这次 setup.run 是否置 repo.update：orbd 支持，且 agent 从未在这台 orb 上运行过——
@@ -217,37 +216,53 @@ func (s *Service) noteOrb(ctx context.Context, orbID string, detail map[string]a
 	s.emitInfo(ctx, EventPool, orb)
 }
 
-// afterSetupSnapshot 在 setup.run 成功应答之后、BeforeReady 之前按 M11a 2.5 发布项目快照。pristine = agent 从未在
-// 这台 orb 上运行过（setting_up，或刚被认领的池 orb）；hash = 本次 setup 参数对应的配置哈希。返回是否拍了快照
-// （拍快照期间容器被暂停，调用方须检查 link 是否还在）。
-func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb, res apigen.LinkCtlSetupRunResult, pristine bool, hash string) bool {
-	if !pristine || orb.ProjectID == nil || orb.Coordinator || hash == "" || !s.cfg.Snapshots.Enabled {
-		return false
+// snapshotSource 读取 orb 参与项目快照所需的项目、provider 与来源快照。来源只看 orb.snapshot_of（S-P1-1：
+// 它只在 provider 确认实际用了快照时保留，见 onJobFinished），不看 orbd 自报的 prepared。ok=false 表示不参与：
+// 无项目、协调 orb、快照未开启，或 orb 来自连环境 fork 的快照（用过快照的 orb 永远不开新血统）。
+func (s *Service) snapshotSource(ctx context.Context, orb db.Orb) (prj db.Project, prov db.Provider, src *db.ProjectSnapshot, ok bool) {
+	if orb.ProjectID == nil || orb.Coordinator || !s.cfg.Snapshots.Enabled {
+		return prj, prov, nil, false
 	}
-	prj, err := s.st.Q.GetProject(ctx, *orb.ProjectID)
-	if err != nil {
-		return false
+	var err error
+	if prj, err = s.st.Q.GetProject(ctx, *orb.ProjectID); err != nil {
+		return prj, prov, nil, false
 	}
-	prov, err := s.st.Q.GetProvider(ctx, orb.ProviderID)
-	if err != nil || !s.snapshotsOn(&prj, prov) {
-		return false
+	if prov, err = s.st.Q.GetProvider(ctx, orb.ProviderID); err != nil || !s.snapshotsOn(&prj, prov) {
+		return prj, prov, nil, false
 	}
-	var src *db.ProjectSnapshot
 	if orb.SnapshotOf != nil && *orb.SnapshotOf != "" {
 		v, err := s.st.Q.GetProjectSnapshot(ctx, *orb.SnapshotOf)
-		if errors.Is(err, sql.ErrNoRows) {
-			return false // 连环境 fork 的快照：不参与项目快照
-		}
 		if err != nil {
-			slog.Warn("查询项目快照失败", "orb", orb.ID, "err", err)
-			return false
+			if !errors.Is(err, sql.ErrNoRows) {
+				slog.Warn("查询项目快照失败", "orb", orb.ID, "err", err)
+			}
+			return prj, prov, nil, false // 连环境 fork 的快照：不参与项目快照
 		}
 		src = &v
 	}
-	if src != nil && (res.Prepared == nil || !*res.Prepared) {
-		// 完成标记不在 = provider 退回了基础镜像（快照镜像已不存在）
-		s.retireSnapshot(ctx, src.ID, RetireImageMissing)
-		src = nil
+	return prj, prov, src, true
+}
+
+// mayPublish 报告 setting_up 的这台 orb 这次 setup.run 之后可能发布项目快照（S-P1-2：据此让支持的 orbd 推迟 resume）。
+func (s *Service) mayPublish(ctx context.Context, orb db.Orb, hash string) bool {
+	if hash == "" {
+		return false
+	}
+	_, _, _, ok := s.snapshotSource(ctx, orb)
+	return ok
+}
+
+// afterSetupSnapshot 在 setup.run 成功应答之后、resume 与 BeforeReady 之前按 M11a 2.5 处理项目快照。
+// pristine = agent 从未在这台 orb 上运行过（setting_up）：只有它发布新快照；claimed = 刚被认领的池 orb：
+// 它已跑过几个小时的 resume 与受管服务，不发布刷新快照，但来源快照的退役规则（刷新失败、setup 变化）照旧。
+// hash = 本次 setup 参数对应的配置哈希。返回是否拍了快照（拍快照期间容器可能被暂停或停机，调用方须检查 link 是否还在）。
+func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb, res apigen.LinkCtlSetupRunResult, pristine, claimed bool, hash string) bool {
+	if !pristine && !claimed {
+		return false
+	}
+	prj, prov, src, ok := s.snapshotSource(ctx, orb)
+	if !ok {
+		return false
 	}
 	if !res.Ok {
 		// 失败的 setup 永不发布；刷新失败则旧快照也不再可信
@@ -256,8 +271,15 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 		}
 		return false
 	}
-	if !res.SetupRan {
-		return false // 命中（HEAD 未变），或没有可保存的东西
+	if src != nil && res.SetupChanged != nil && *res.SetupChanged {
+		// S-P2-1：仓库内 setup / services.yaml 变了或基线不是快进，增量刷新会继承快照里的旧状态：不以 src 为父发布，
+		// 退役它；下一个 orb 从基础镜像开新血统。
+		s.retireSnapshot(ctx, src.ID, RetireSetupChanged)
+		s.noteOrb(ctx, orb.ID, map[string]any{"snapshotSkipped": RetireSetupChanged, "snapshotId": src.ID})
+		return false
+	}
+	if !res.SetupRan || !pristine || hash == "" {
+		return false // 命中（HEAD 未变）、没有可保存的东西，或认领的池 orb
 	}
 	now := s.nowMs()
 	depth, lineage := int64(0), now
@@ -312,41 +334,101 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 		}
 	}
 	if err != nil {
-		slog.Warn("发布项目快照失败", "orb", orb.ID, "snapshot", snapID, "err", err)
 		s.discardBuild(ctx, prov.ID, orb.ID, snapID)
-		s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": "failed", "snapshotId": snapID, "error": err.Error()})
+		note := "failed"
+		if errors.Is(err, errBuildCancelled) {
+			note = "cancelled"
+			slog.Info("项目快照构建已作废", "orb", orb.ID, "snapshot", snapID, "reason", err)
+		} else {
+			slog.Warn("发布项目快照失败", "orb", orb.ID, "snapshot", snapID, "err", err)
+		}
+		s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": note, "snapshotId": snapID, "error": err.Error()})
 		return true
 	}
-	s.reserveSnapshotQuota(ctx, prov.ID, prj.ID, orb.Type)
+	// 发布后合计仍超 max_total_gb（腾不出的都被 orb 引用着）：这份新快照不保留
+	if !s.reserveSnapshotQuota(ctx, prov.ID, prj.ID, orb.Type) && s.retireSnapshot(ctx, snapID, RetireQuota) {
+		s.noteOrb(ctx, orb.ID, map[string]any{"snapshot": SnapshotRetired, "snapshotId": snapID, "reason": RetireQuota})
+	}
 	return true
 }
 
-// errBuildGone 表示 building 行已不在（被回收器当作残留删掉）。
-var errBuildGone = errors.New("orbs: 项目快照的 building 行已不存在")
+var (
+	// errBuildGone 表示 building 行已不在（被回收器当作残留删掉）。
+	errBuildGone = errors.New("orbs: 项目快照的 building 行已不存在")
+	// errBuildCancelled 表示这次构建在发布前被作废（S-P2-2 / S-P2-4），镜像由构建者清理。
+	errBuildCancelled = errors.New("orbs: 项目快照构建已作废")
+)
+
+// commitRe 是 git 提交 id（SHA-1 40 位或 SHA-256 64 位小写十六进制）。
+var commitRe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// validCommit 返回合法的提交 id；orbd 上报的不是十六进制提交（S-P2-5：可被 orb 内的假 git 伪造）时返回空串。
+func validCommit(c *string) string {
+	if c == nil || !commitRe.MatchString(*c) {
+		return ""
+	}
+	return *c
+}
 
 // publishSnapshot 在一个事务里退役同键旧 ready（superseded）、把 building 转为 ready；项目配置在构建期间变了
-// （哈希不等或项目已删除）则发布后立即退役（config_changed）。
+// （哈希不等）则发布后立即退役（config_changed）。构建期间被作废（清除快照、关闭项目快照、删除项目、停用
+// provider），或单个快照超过 max_snapshot_gb 时不发布：building → retired 并返回 errBuildCancelled，不去挤掉
+// 同键的旧快照与其它项目。
 func (s *Service) publishSnapshot(ctx context.Context, orb db.Orb, snapID, hash string, res apigen.LinkCtlSetupRunResult, size *int64) error {
 	var stale bool
+	var cancelled string
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
-		stale = true
-		if orb.ProjectID != nil {
-			prj, perr := q.GetProject(ctx, *orb.ProjectID)
-			prov, verr := q.GetProvider(ctx, orb.ProviderID)
-			if perr == nil && verr == nil {
-				cur, err := s.configHash(ctx, q, prj, prov, orb.Type)
-				if err != nil {
-					return err
-				}
-				stale = cur != hash
-			}
+		row, err := q.GetProjectSnapshot(ctx, snapID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errBuildGone
+		}
+		if err != nil {
+			return err
+		}
+		if row.State != SnapshotBuilding {
+			cancelled = derefStr(row.RetireReason)
+			return nil
 		}
 		now := s.nowMs()
+		var prj db.Project
+		var prov db.Provider
+		var perr, verr error
+		if orb.ProjectID == nil {
+			perr = sql.ErrNoRows
+		} else {
+			prj, perr = q.GetProject(ctx, *orb.ProjectID)
+		}
+		prov, verr = q.GetProvider(ctx, orb.ProviderID)
+		switch {
+		case errors.Is(perr, sql.ErrNoRows):
+			cancelled = RetireProjectDeleted
+		case perr != nil:
+			return perr
+		case errors.Is(verr, sql.ErrNoRows) || (verr == nil && prov.DisabledAt != nil):
+			cancelled = RetireProviderRemoved
+		case verr != nil:
+			return verr
+		case !prj.Snapshots:
+			cancelled = RetireManual
+		case size != nil && s.cfg.Snapshots.MaxSnapshotBytes() > 0 && *size > s.cfg.Snapshots.MaxSnapshotBytes():
+			cancelled = RetireQuota
+		}
+		if cancelled != "" {
+			_, err := q.CancelBuildingProjectSnapshot(ctx, db.CancelBuildingProjectSnapshotParams{
+				RetiredAt: now, RetireReason: cancelled, SizeBytes: size, ID: snapID,
+			})
+			return err
+		}
+		cur, err := s.configHash(ctx, q, prj, prov, orb.Type)
+		if err != nil {
+			return err
+		}
+		stale = cur != hash
 		// 先退役同键旧 ready：ready 的部分唯一索引不允许同键出现第二行 ready
 		if err := q.RetireOtherReadySnapshots(ctx, db.RetireOtherReadySnapshotsParams{RetiredAt: now, RetireReason: RetireSuperseded, ID: snapID}); err != nil {
 			return err
 		}
-		n, err := q.PublishProjectSnapshot(ctx, db.PublishProjectSnapshotParams{ReadyAt: now, SizeBytes: size, BaseCommit: derefStr(res.BaseCommit), ID: snapID})
+		n, err := q.PublishProjectSnapshot(ctx, db.PublishProjectSnapshotParams{ReadyAt: now, SizeBytes: size, BaseCommit: validCommit(res.BaseCommit), ID: snapID})
 		if err != nil {
 			return err
 		}
@@ -361,6 +443,9 @@ func (s *Service) publishSnapshot(ctx context.Context, orb db.Orb, snapID, hash 
 	if err != nil {
 		return err
 	}
+	if cancelled != "" {
+		return fmt.Errorf("%w（%s）", errBuildCancelled, cancelled)
+	}
 	state := SnapshotReady
 	if stale {
 		state = SnapshotRetired
@@ -374,11 +459,32 @@ func (s *Service) publishSnapshot(ctx context.Context, orb db.Orb, snapID, hash 
 	return nil
 }
 
-// discardBuild 删掉 building 行并入队一次 delete_snapshot 清理可能已提交的半成品镜像（幂等）。orbID 非空时任务挂在
-// 该 orb 上，与它的 snapshot 任务串行（不会抢在仍排队的提交之前删除）。
+// discardBuild 放弃一次构建并清理可能已提交的镜像（幂等）。只有赢得 building 行的一方删镜像（CP-2）：
+//   - 删掉了 building 行：入队 delete_snapshot；
+//   - 行已发布（ready，或发布后才退役）：别人的有效快照，什么也不做；
+//   - 行在构建期间被作废（retired 且从未 ready）：镜像无人发布，由这里入队删除并登记到行上（gcRetired 不再重复入队）。
+//
+// orbID 非空时任务挂在该 orb 上，与它的 snapshot 任务串行（不会抢在仍排队的提交之前删除）。
 func (s *Service) discardBuild(ctx context.Context, providerID, orbID, snapID string) {
-	if err := s.st.Q.DeleteBuildingProjectSnapshot(ctx, snapID); err != nil {
+	n, err := s.st.Q.DeleteBuildingProjectSnapshot(ctx, snapID)
+	if err != nil {
 		slog.Warn("删除 building 快照行失败", "snapshot", snapID, "err", err)
+		return
+	}
+	if n == 0 {
+		row, err := s.st.Q.GetProjectSnapshot(ctx, snapID)
+		if err != nil || row.State != SnapshotRetired || row.ReadyAt != nil || row.GcJobID != nil {
+			return
+		}
+		job, err := s.jobs.Enqueue(ctx, providerID, orbID, jobs.OpDeleteSnapshot, apigen.JobDeleteSnapshotParams{SnapshotID: snapID})
+		if err != nil {
+			slog.Warn("入队快照删除失败", "snapshot", snapID, "err", err)
+			return
+		}
+		if err := s.st.Q.MarkProjectSnapshotGC(ctx, db.MarkProjectSnapshotGCParams{GcJobID: job.ID, GcAttemptAt: s.nowMs(), ID: snapID}); err != nil {
+			slog.Warn("记录项目快照回收失败", "snapshot", snapID, "err", err)
+		}
+		return
 	}
 	if _, err := s.jobs.Enqueue(ctx, providerID, orbID, jobs.OpDeleteSnapshot, apigen.JobDeleteSnapshotParams{SnapshotID: snapID}); err != nil {
 		slog.Warn("入队快照删除失败", "snapshot", snapID, "err", err)
@@ -455,6 +561,10 @@ func (s *Service) gcRetired(ctx context.Context, r db.ProjectSnapshot, now int64
 				return
 			}
 		}
+	}
+	if r.ReadyAt == nil && r.GcJobID == nil && now-r.CreatedAt < snapshotBuildStale.Milliseconds() {
+		// 构建期间被作废、尚未发布过：提交可能还在进行，镜像由构建者（discardBuild）挂在源 orb 上串行清理
+		return
 	}
 	if r.GcAttemptAt != nil && now-*r.GcAttemptAt < snapshotGCRetry.Milliseconds() {
 		return

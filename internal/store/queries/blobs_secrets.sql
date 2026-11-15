@@ -26,6 +26,8 @@ SELECT id, name, mode, hosts, created_at, updated_at FROM secrets ORDER BY name;
 -- name: DeleteSecretByName :execrows
 DELETE FROM secrets WHERE name = @name;
 
--- Env-mode secret names with their last change, for the project snapshot config hash (M11a; never the values).
--- name: ListEnvSecretStamps :many
-SELECT name, updated_at FROM secrets WHERE mode = 'env' ORDER BY name;
+-- Names and last change of every secret whose value can reach an orb's environment, for the project snapshot config
+-- hash (M11a; never the values): env-mode secrets, and model keys (omp/models/<key>/apiKey) that the omp-home render
+-- may downgrade to environment variables. Proxy-mode model keys are included too (cannot tell them apart here).
+-- name: ListConfigSecretStamps :many
+SELECT name, updated_at FROM secrets WHERE mode = 'env' OR name LIKE 'omp/models/%/apiKey' ORDER BY name;

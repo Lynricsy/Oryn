@@ -228,8 +228,8 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 			return
 		}
 	}
-	// 重启前可能已建好 orb 但没来得及绑定：复用它，不再建第二台
-	o, err := s.st.Q.FindUnboundSnapshotOrb(ctx, db.FindUnboundSnapshotOrbParams{SnapshotOf: &op.SrcOrb, Image: op.SnapshotID})
+	// 重启前可能已建好 orb 但没来得及绑定：复用它，不再建第二台（新 orb 的 snapshot_of 与 image 都是快照 id）
+	o, err := s.st.Q.FindUnboundSnapshotOrb(ctx, op.SnapshotID)
 	if err != nil {
 		o, err = s.orbs.Create(ctx, OrbCreate{Type: op.Type, ProjectID: op.ProjectID, SnapshotOf: op.SrcOrb, SnapshotID: op.SnapshotID})
 		if err != nil {

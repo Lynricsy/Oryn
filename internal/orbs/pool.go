@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -135,8 +136,8 @@ func (s *Service) claimWarming(ctx context.Context, orbID string) bool {
 	return true
 }
 
-// claimReady 认领就绪的池 orb：ready → connecting（守卫 pool_state = idle，同一事务 idle → claimed），随后由
-// runPhase 以带 repo.update 的 setup.run 刷新、回到 ready 时离开池。
+// claimReady 认领就绪的池 orb：ready → connecting（守卫 pool_state = idle，同一事务 idle → claimed，并轮换令牌、
+// 入队 spawn，S-P2-3），随后由新令牌重连的 link 触发 runPhase，以带 repo.update 的 setup.run 刷新、回到 ready 时离开池。
 func (s *Service) claimReady(ctx context.Context, orbID string) bool {
 	ch, err := s.transitionTx(ctx, orbID, StateReady, StateConnecting, map[string]any{"reason": "pool claim"}, transitionOpts{
 		guard: func(o db.Orb) bool { return derefStr(o.PoolState) == PoolIdle },
@@ -145,14 +146,37 @@ func (s *Service) claimReady(ctx context.Context, orbID string) bool {
 			if err == nil && n == 0 {
 				err = errPoolMoved
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return s.spawnIn(t)
 		},
 	})
 	if err != nil || ch == nil {
 		return false
 	}
 	s.publish(ch)
-	s.advance(orbID)
+	return true
+}
+
+// refreshClaimed 把处于 from 的已认领池 orb（pool_state = claimed）移到 connecting，走与 claimReady 相同的刷新路径
+// （轮换令牌、spawn，重连后 setup.run 带 repo.update）；不是已认领的池 orb 或状态已变时返回 false。
+func (s *Service) refreshClaimed(ctx context.Context, orbID, from string, detail map[string]any) bool {
+	d := map[string]any{"reason": "pool claim refresh"}
+	for k, v := range detail {
+		d[k] = v
+	}
+	ch, err := s.transitionTx(ctx, orbID, from, StateConnecting, d, transitionOpts{
+		guard: func(o db.Orb) bool { return derefStr(o.PoolState) == PoolClaimed },
+		then:  s.spawnIn,
+	})
+	if err != nil {
+		slog.Warn("刷新已认领的池 orb 失败", "orb", orbID, "err", err)
+	}
+	if err != nil || ch == nil {
+		return false
+	}
+	s.publish(ch)
 	return true
 }
 
@@ -199,7 +223,8 @@ func (s *Service) failWarming(ctx context.Context, orb db.Orb) bool {
 	return true
 }
 
-// recoverPool 在启动时为 retiring 但还没进入删除的池 orb 补做删除（回收在 CAS 与 Delete 之间被重启打断）。
+// recoverPool 在启动时补做被重启打断的池操作：retiring 但还没进入删除的补删（回收在 CAS 与 Delete 之间被打断）；
+// 已认领却停在 ready 的补刷新、停在 frozen 的补唤醒（认领后的刷新 / 延迟唤醒只在内存里登记过）。
 func (s *Service) recoverPool(ctx context.Context) {
 	rows, err := s.st.Q.ListPoolOrbs(ctx, nil)
 	if err != nil {
@@ -207,12 +232,26 @@ func (s *Service) recoverPool(ctx context.Context) {
 		return
 	}
 	for _, o := range rows {
-		if derefStr(o.PoolState) != PoolRetiring || o.State == StateDeleting || o.State == StateDeleted {
-			continue
-		}
-		slog.Info("对账：补删回收中的池 orb", "orb", o.ID, "state", o.State)
-		if err := s.Delete(ctx, o.ID); err != nil {
-			slog.Warn("删除池 orb 失败", "orb", o.ID, "err", err)
+		switch derefStr(o.PoolState) {
+		case PoolRetiring:
+			if o.State == StateDeleting || o.State == StateDeleted {
+				continue
+			}
+			slog.Info("对账：补删回收中的池 orb", "orb", o.ID, "state", o.State)
+			if err := s.Delete(ctx, o.ID); err != nil {
+				slog.Warn("删除池 orb 失败", "orb", o.ID, "err", err)
+			}
+		case PoolClaimed:
+			switch o.State {
+			case StateReady:
+				slog.Info("对账：补刷新已认领的池 orb", "orb", o.ID)
+				s.refreshClaimed(ctx, o.ID, StateReady, nil)
+			case StateFrozen:
+				slog.Info("对账：补唤醒已认领的池 orb", "orb", o.ID)
+				if err := s.Wake(ctx, o.ID); err != nil {
+					slog.Warn("唤醒认领的池 orb 失败", "orb", o.ID, "err", err)
+				}
+			}
 		}
 	}
 }
@@ -260,8 +299,9 @@ func (s *Service) planPool(ctx context.Context, prj *db.Project, now time.Time) 
 	return pl
 }
 
-// poolReconcile 是预热池对账（M11a 3.4）：回收过期的池 orb，把每个项目的池补到（或削到）目标台数；全局 warming +
-// idle 总数不超过 pool.max_total，每个项目每轮至多新建一台。只在 Run 的循环里调用（串行）。
+// poolReconcile 是预热池对账（M11a 3.4）：回收过期的池 orb，把每个项目的池削到目标台数；全局 warming + idle 超过
+// pool.max_total（例如上限被调低）时跨项目回收超额的（CP-4）；最后在全局未满时为不足的项目补位，每个项目每轮至多
+// 新建一台。只在 Run 的循环里调用（串行）。
 func (s *Service) poolReconcile(ctx context.Context) {
 	rows, err := s.st.Q.ListPoolOrbs(ctx, nil)
 	if err != nil {
@@ -300,6 +340,26 @@ func (s *Service) poolReconcile(ctx context.Context) {
 	}
 	sort.Strings(order)
 	now := s.now()
+	// leave 回收一台池 orb（带旧 pool_state 的比较并交换）；返回它是否已不在可用池里（回收成功，或期间被认领 / 回收）。
+	leave := func(o db.Orb, reason string) bool {
+		if s.retirePoolOrb(ctx, o.ID, derefStr(o.PoolState), reason) {
+			return true
+		}
+		cur, err := s.st.Q.GetOrb(ctx, o.ID)
+		return err == nil && !poolUsable(cur)
+	}
+	byAge := func(live []db.Orb) {
+		// 先最老的 idle，再最老的 warming
+		sort.SliceStable(live, func(i, j int) bool {
+			ii, jj := derefStr(live[i].PoolState) == PoolIdle, derefStr(live[j].PoolState) == PoolIdle
+			if ii != jj {
+				return ii
+			}
+			return live[i].CreatedAt < live[j].CreatedAt
+		})
+	}
+	lives := map[string][]db.Orb{}
+	wants := map[string]int{}
 	for _, pid := range order {
 		var prj *db.Project
 		if pid != "" {
@@ -325,32 +385,48 @@ func (s *Service) poolReconcile(ctx context.Context) {
 			case derefStr(o.PoolState) == PoolIdle && s.cfg.Pool.MaxAge > 0 && now.UnixMilli()-o.CreatedAt >= s.cfg.Pool.MaxAge.D().Milliseconds():
 				reason = "expired"
 			}
-			if reason != "" {
-				if s.retirePoolOrb(ctx, o.ID, derefStr(o.PoolState), reason) {
-					total--
-				}
-				continue
+			if reason == "" {
+				live = append(live, o)
+			} else if leave(o, reason) {
+				total--
 			}
-			live = append(live, o)
 		}
 		// 2. 多了：先回收最老的 idle，再回收最老的 warming
 		if len(live) > pl.want {
-			sort.SliceStable(live, func(i, j int) bool {
-				ii, jj := derefStr(live[i].PoolState) == PoolIdle, derefStr(live[j].PoolState) == PoolIdle
-				if ii != jj {
-					return ii
-				}
-				return live[i].CreatedAt < live[j].CreatedAt
-			})
+			byAge(live)
 			for _, o := range live[:len(live)-pl.want] {
-				if s.retirePoolOrb(ctx, o.ID, derefStr(o.PoolState), "surplus") {
+				if leave(o, "surplus") {
 					total--
 				}
 			}
-			continue
+			live = live[len(live)-pl.want:]
 		}
-		// 3. 少了：全局未满时每轮至多新建一台
-		if len(live) < pl.want && total < s.cfg.Pool.MaxTotal {
+		lives[pid], wants[pid] = live, pl.want
+	}
+	// 3. 全局超额（pool.max_total 被调低）：跨项目同样先回收最老的 idle、再最老的 warming
+	if limit := max(s.cfg.Pool.MaxTotal, 0); total > limit {
+		var all []db.Orb
+		for _, pid := range order {
+			all = append(all, lives[pid]...)
+		}
+		byAge(all)
+		gone := map[string]bool{}
+		for _, o := range all {
+			if total <= limit {
+				break
+			}
+			if leave(o, "over_cap") {
+				total--
+				gone[o.ID] = true
+			}
+		}
+		for pid, live := range lives {
+			lives[pid] = slices.DeleteFunc(live, func(o db.Orb) bool { return gone[o.ID] })
+		}
+	}
+	// 4. 少了：全局未满时每轮至多新建一台
+	for _, pid := range order {
+		if len(lives[pid]) < wants[pid] && total < s.cfg.Pool.MaxTotal {
 			orb, err := s.Create(ctx, CreateParams{ProjectID: pid, Pool: true})
 			if err != nil {
 				slog.Warn("新建预热池 orb 失败", "project", pid, "err", err)

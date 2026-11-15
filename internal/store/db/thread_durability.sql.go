@@ -48,20 +48,16 @@ func (q *Queries) EntryIDExists(ctx context.Context, arg EntryIDExistsParams) (i
 }
 
 const findUnboundSnapshotOrb = `-- name: FindUnboundSnapshotOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at FROM orbs o
-WHERE o.snapshot_of = ?1 AND o.image = ?2 AND o.deleted_at IS NULL
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id FROM orbs o
+WHERE o.snapshot_of = CAST(?1 AS TEXT) AND o.image = CAST(?1 AS TEXT) AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.orb_id = o.id)
 ORDER BY o.created_at LIMIT 1
 `
 
-type FindUnboundSnapshotOrbParams struct {
-	SnapshotOf *string `json:"snapshotOf"`
-	Image      string  `json:"image"`
-}
-
 // A snapshot-spawned orb not yet bound to any thread (fork copy recovery: reuse instead of creating another).
-func (q *Queries) FindUnboundSnapshotOrb(ctx context.Context, arg FindUnboundSnapshotOrbParams) (Orb, error) {
-	row := q.db.QueryRowContext(ctx, findUnboundSnapshotOrb, arg.SnapshotOf, arg.Image)
+// Created with snapshot_of = image = the snapshot id (orbs.insertOrb), so look it up by that id.
+func (q *Queries) FindUnboundSnapshotOrb(ctx context.Context, snapshotID string) (Orb, error) {
+	row := q.db.QueryRowContext(ctx, findUnboundSnapshotOrb, snapshotID)
 	var i Orb
 	err := row.Scan(
 		&i.ID,
@@ -86,6 +82,7 @@ func (q *Queries) FindUnboundSnapshotOrb(ctx context.Context, arg FindUnboundSna
 		&i.PoolState,
 		&i.ConfigHash,
 		&i.ClaimedAt,
+		&i.BaseImageID,
 	)
 	return i, err
 }

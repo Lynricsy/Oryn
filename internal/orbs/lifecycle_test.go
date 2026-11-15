@@ -243,6 +243,8 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 	d.mu.Unlock()
 	switch j.Op {
 	case "spawn":
+		// 与真实驱动一致：给了快照就上报 snapshotUsed（快照不存在、按 snapshotOptional 退回基础镜像时为 false）。
+		var result *apigen.JobResult
 		if sid := j.Spawn.SnapshotID; sid != nil && *sid != "" {
 			d.mu.Lock()
 			gone := d.missing[*sid]
@@ -253,6 +255,7 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 				}
 				_, _ = fmt.Fprintf(out, "oryn: 快照 %s 不存在，改用基础镜像\n", *sid)
 			}
+			result = &apigen.JobResult{SnapshotUsed: new(!gone)}
 		}
 		if o == nil {
 			o = &fakeOrbd{url: j.Spawn.Env.OrynURL, orbID: j.OrbID, features: features, fs: fs, portal: portal, desk: desk, onCall: onCall, onSetup: onSetup}
@@ -265,14 +268,14 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 		o.token = j.Spawn.Env.OrynOrbToken
 		o.mu.Unlock()
 		if noConnect {
-			return nil, nil
+			return result, nil
 		}
 		o.disconnect()
 		if err := o.connect(); err != nil || afterSpawn == nil {
-			return nil, err
+			return result, err
 		}
 		afterSpawn(j.OrbID)
-		return nil, nil
+		return result, nil
 	case "snapshot":
 		if snapGate != nil {
 			<-snapGate

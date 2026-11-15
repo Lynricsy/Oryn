@@ -25,6 +25,9 @@ type SetupPlan struct {
 	Params apigen.LinkCtlSetupRunParams
 	// Egress 是随之生效的出站策略（模型路由来自 agentcfg.Rendered.Routes，git 仓库限定来自项目 repo_url）。
 	Egress egress.Policy
+	// ConfigHash 是与 Params 出自同一份输入（同一次读到的项目行、与密钥值一致的修改时间、这台 orb 建立时的基础镜像
+	// 身份）的项目配置哈希（CP-1）；无项目或协调 orb 为空。快照发布与「已应用的配置」都只用它，不再另读当前配置。
+	ConfigHash string
 }
 
 // SetupSource 为 orb 生成 setup / resume 参数。
@@ -131,11 +134,52 @@ func (d *DefaultSetup) planCoordinator(orb db.Orb) (SetupPlan, error) {
 	return plan, nil
 }
 
+// planStampRetries 是 Plan 读密钥值前后修改时间不一致时的重读次数上限。
+const planStampRetries = 3
+
 // Plan 实现 SetupSource。workdir 留空，由 orbd 按有无仓库取 $HOME/workspace[/repo]。
 func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 	if orb.Coordinator {
 		return d.planCoordinator(orb)
 	}
+	var prj *db.Project
+	if orb.ProjectID != nil {
+		v, err := d.Store.Q.GetProject(ctx, *orb.ProjectID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return SetupPlan{}, fmt.Errorf("读取项目: %w", err)
+		default:
+			prj = &v
+		}
+	}
+	// 密钥值与配置哈希里的修改时间必须出自同一份快照：读值前后各读一次修改时间，不一致（期间有人改了密钥）就重来。
+	for range planStampRetries {
+		before, err := d.Store.Q.ListConfigSecretStamps(ctx)
+		if err != nil {
+			return SetupPlan{}, fmt.Errorf("读取密钥修改时间: %w", err)
+		}
+		plan, err := d.plan(ctx, prj)
+		if err != nil {
+			return plan, err
+		}
+		after, err := d.Store.Q.ListConfigSecretStamps(ctx)
+		if err != nil {
+			return SetupPlan{}, fmt.Errorf("读取密钥修改时间: %w", err)
+		}
+		if !sameStamps(before, after) {
+			continue
+		}
+		if prj != nil {
+			plan.ConfigHash = projectConfigHash(*prj, orb.BaseImageID, orb.Type, before)
+		}
+		return plan, nil
+	}
+	return SetupPlan{}, errors.New("生成 setup 参数期间密钥反复变化")
+}
+
+// plan 由给定的项目行（可为 nil）与当前密钥生成参数。
+func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, error) {
 	plan := SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
@@ -145,27 +189,20 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 	p := &plan.Params
 	var projectIdentity *apigen.GitIdentity
 	var projectRepo *gitRepo
-	if orb.ProjectID != nil {
-		prj, err := d.Store.Q.GetProject(ctx, *orb.ProjectID)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-		case err != nil:
-			return plan, fmt.Errorf("读取项目: %w", err)
-		default:
-			if prj.RepoUrl != nil && *prj.RepoUrl != "" {
-				repo := &apigen.LinkCtlSetupRepo{URL: *prj.RepoUrl, Shallow: prj.ShallowClone}
-				if prj.BaseBranch != nil && *prj.BaseBranch != "" {
-					repo.Branch = prj.BaseBranch
-				}
-				p.Repo = repo
-				if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
-					projectRepo = &gitRepo{host: host, path: path}
-				}
+	if prj != nil {
+		if prj.RepoUrl != nil && *prj.RepoUrl != "" {
+			repo := &apigen.LinkCtlSetupRepo{URL: *prj.RepoUrl, Shallow: prj.ShallowClone}
+			if prj.BaseBranch != nil && *prj.BaseBranch != "" {
+				repo.Branch = prj.BaseBranch
 			}
-			p.Scripts.Setup = nonEmpty(prj.SetupScript)
-			p.Scripts.Resume = nonEmpty(prj.ResumeScript)
-			projectIdentity = gitIdentity(prj.GitAuthorName, prj.GitAuthorEmail)
+			p.Repo = repo
+			if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
+				projectRepo = &gitRepo{host: host, path: path}
+			}
 		}
+		p.Scripts.Setup = nonEmpty(prj.SetupScript)
+		p.Scripts.Resume = nonEmpty(prj.ResumeScript)
+		projectIdentity = gitIdentity(prj.GitAuthorName, prj.GitAuthorEmail)
 	}
 	// git 提交身份：项目覆盖（两项齐全）> 所有者默认 > 不下发（orb 现有配置不动）。
 	p.GitIdentity = projectIdentity

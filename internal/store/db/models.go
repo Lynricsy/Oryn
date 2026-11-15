@@ -204,6 +204,7 @@ type Orb struct {
 	PoolState             *string `json:"poolState"`
 	ConfigHash            *string `json:"configHash"`
 	ClaimedAt             *int64  `json:"claimedAt"`
+	BaseImageID           string  `json:"baseImageId"`
 }
 
 type OrbDesktop struct {

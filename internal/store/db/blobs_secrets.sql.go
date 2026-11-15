@@ -99,25 +99,27 @@ func (q *Queries) InsertBlob(ctx context.Context, arg InsertBlobParams) error {
 	return err
 }
 
-const listEnvSecretStamps = `-- name: ListEnvSecretStamps :many
-SELECT name, updated_at FROM secrets WHERE mode = 'env' ORDER BY name
+const listConfigSecretStamps = `-- name: ListConfigSecretStamps :many
+SELECT name, updated_at FROM secrets WHERE mode = 'env' OR name LIKE 'omp/models/%/apiKey' ORDER BY name
 `
 
-type ListEnvSecretStampsRow struct {
+type ListConfigSecretStampsRow struct {
 	Name      string `json:"name"`
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
-// Env-mode secret names with their last change, for the project snapshot config hash (M11a; never the values).
-func (q *Queries) ListEnvSecretStamps(ctx context.Context) ([]ListEnvSecretStampsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listEnvSecretStamps)
+// Names and last change of every secret whose value can reach an orb's environment, for the project snapshot config
+// hash (M11a; never the values): env-mode secrets, and model keys (omp/models/<key>/apiKey) that the omp-home render
+// may downgrade to environment variables. Proxy-mode model keys are included too (cannot tell them apart here).
+func (q *Queries) ListConfigSecretStamps(ctx context.Context) ([]ListConfigSecretStampsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listConfigSecretStamps)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListEnvSecretStampsRow{}
+	items := []ListConfigSecretStampsRow{}
 	for rows.Next() {
-		var i ListEnvSecretStampsRow
+		var i ListConfigSecretStampsRow
 		if err := rows.Scan(&i.Name, &i.UpdatedAt); err != nil {
 			return nil, err
 		}

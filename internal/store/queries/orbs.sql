@@ -1,12 +1,13 @@
 -- Orbs, lifecycle events, metric samples.
 
 -- coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
--- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching).
+-- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching);
+-- base_image_id = the provider's base image identity when the orb was created (M11a review fix).
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
-        @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash));
+        @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id);
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -81,8 +82,14 @@ SELECT * FROM orbs
 WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
 ORDER BY created_at DESC LIMIT 1;
 
+-- The setup config hash actually applied to the orb's environment (creation pick, then each setup.run that ran setup).
 -- name: SetOrbConfigHash :exec
 UPDATE orbs SET config_hash = CAST(@config_hash AS TEXT) WHERE id = @id;
+
+-- The provider fell back to the base image (spawn result snapshotUsed = false): the orb no longer comes from the
+-- project snapshot. 0 rows = snapshot_of already moved.
+-- name: ClearOrbSnapshot :execrows
+UPDATE orbs SET snapshot_of = NULL, image = '' WHERE id = @id AND snapshot_of = CAST(@snapshot_of AS TEXT);
 
 -- Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
 -- 0 rows = claimed / retired by someone else.

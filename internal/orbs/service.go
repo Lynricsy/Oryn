@@ -110,6 +110,9 @@ type Config struct {
 	Snapshots config.Snapshots
 	// Pool 是预热池配置（M11a）；MaxTotal 为 0 = 关闭。
 	Pool config.Pool
+	// OrbCAPEM 是 orb link TLS 监听的自签 CA 证书（PEM）；非空时随 spawn 参数 orbCaPem 下发，orbd 只信任这张 CA。
+	// 空 = 未开启 orb TLS 监听（旧的明文 link）。
+	OrbCAPEM string
 }
 
 // CreateParams 是新建 orb 的参数。空 Provider / Type 按 C3 规则取默认。
@@ -446,6 +449,9 @@ func (s *Service) spawnIn(t *txn) error {
 		Image: "", Type: t.orb.Type,
 		Env: apigen.JobSpawnEnv{OrynURL: s.cfg.PublicURL, OrynOrbID: t.orb.ID, OrynOrbToken: token},
 	}
+	if s.cfg.OrbCAPEM != "" {
+		p.OrbCaPem = new(s.cfg.OrbCAPEM)
+	}
 	if t.orb.SnapshotOf != nil && *t.orb.SnapshotOf != "" {
 		p.SnapshotID = t.orb.SnapshotOf
 		// 项目快照可以缺失（provider 上被清理）：退回基础镜像、照常 setup；fork 快照是用户数据，必须存在。
@@ -658,7 +664,7 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 	base := db.CreateOrbParams{
 		ID: orbID, ProviderID: t.prov.ID, Type: t.typ, Image: p.SnapshotID,
 		State: StateRequested, StateChangedAt: now, TokenHash: ids.Hash(orbToken(s.cfg.TokenKey, orbID, 0)), CreatedAt: now,
-		Coordinator: p.Coordinator,
+		Coordinator: p.Coordinator, BaseImageID: t.prov.BaseImageID,
 	}
 	if t.spec != nil {
 		base.Cpus = int64(math.Round(float64(t.spec.Cpus)))
@@ -1047,7 +1053,23 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 			if !ok {
 				to = StateFailed
 			}
-			if _, moved, _ := s.transition(ctx, orbID, orb.State, to, detail); moved && ok {
+			// S-P1-1：是否真的从项目快照起来以 provider 的 snapshotUsed 为准（只看首次 spawn；唤醒时容器早已存在）。
+			// 明确退回了基础镜像：清掉 snapshot_of（同一事务，runPhase 看到的已是新值），快照退役 image_missing。
+			var fellBack string
+			var then func(t *txn) error
+			if r := jobs.ResultOf(job); ok && orb.State != StateWaking && r.SnapshotUsed != nil && !*r.SnapshotUsed &&
+				orb.SnapshotOf != nil && *orb.SnapshotOf != "" && s.isProjectSnapshot(ctx, s.st.Q, *orb.SnapshotOf) {
+				fellBack = *orb.SnapshotOf
+				detail["snapshotUsed"] = false
+				then = func(t *txn) error {
+					_, err := t.q.ClearOrbSnapshot(t.ctx, db.ClearOrbSnapshotParams{ID: orbID, SnapshotOf: fellBack})
+					return err
+				}
+			}
+			if _, moved, _ := s.transitionThen(ctx, orbID, orb.State, to, detail, then); moved && ok {
+				if fellBack != "" {
+					s.retireSnapshot(ctx, fellBack, RetireImageMissing)
+				}
 				s.advance(orbID)
 			}
 		case StateStopping:
@@ -1059,11 +1081,12 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 		}
 	case jobs.OpPause:
 		if jobPauseMode(job) == PauseFreeze {
-			to := StateFrozen
-			if !ok {
-				to = StateReady
+			if ok {
+				_, _, _ = s.transition(ctx, orbID, StateFreezing, StateFrozen, detail)
+			} else if !s.refreshClaimed(ctx, orbID, StateFreezing, detail) {
+				// 冻结失败回到 ready；冻结期间被认领的池 orb（CP-3）改走与认领 ready 相同的刷新路径，不能直接 ready
+				_, _, _ = s.transition(ctx, orbID, StateFreezing, StateReady, detail)
 			}
-			_, _, _ = s.transition(ctx, orbID, StateFreezing, to, detail)
 		} else {
 			to := StateStopped
 			if !ok {

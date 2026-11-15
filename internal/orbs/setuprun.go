@@ -135,8 +135,8 @@ func (s *Service) onSetupResult(ctx context.Context, orbID string, params json.R
 		StartedAt: p.StartedAt, FinishedAt: s.nowMs(), Ok: b2i(p.Ok), SetupRan: b2i(p.SetupRan), Error: p.Error,
 		DurationMs: p.DurationMs, HasRepoScript: b2i(p.HasRepoScript), HasProjectScript: b2i(p.HasProjectScript),
 		LogTail: s.takeSetupLog(orbID, p.Phase),
-		// M11a：开始时完成标记已在（来自项目快照）与结束时检出的提交
-		Prepared: p.Prepared != nil && *p.Prepared, BaseCommit: nonEmpty(p.BaseCommit),
+		// M11a：开始时完成标记已在（来自项目快照）与结束时检出的提交（不是十六进制提交 id 的丢弃，S-P2-5）
+		Prepared: p.Prepared != nil && *p.Prepared, BaseCommit: nonEmpty(new(validCommit(p.BaseCommit))),
 	}
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.InsertOrbSetupRun(ctx, row); err != nil {

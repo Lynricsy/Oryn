@@ -16,18 +16,28 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/jobs"
+	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // ---- M11a 夹具：带仓库的项目 setup、模拟 orbd 完成标记与 repo.update 的假 setup 应答 ----
 
-// projSetup 给项目 orb 下发仓库（repo.update 只在有仓库时出现）。
-type projSetup struct{}
+// projSetup 给项目 orb 下发仓库（repo.update 只在有仓库时出现），并像 DefaultSetup 一样由同一次读到的项目行算配置哈希。
+type projSetup struct{ st *store.Store }
 
-func (projSetup) Plan(_ context.Context, orb db.Orb) (SetupPlan, error) {
+func (ps *projSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 	plan := SetupPlan{Params: apigen.LinkCtlSetupRunParams{Env: map[string]string{}, GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}}}
 	if orb.ProjectID != nil {
 		plan.Params.Repo = &apigen.LinkCtlSetupRepo{URL: "https://example.com/o/r"}
+		prj, err := ps.st.Q.GetProject(ctx, *orb.ProjectID)
+		if err != nil {
+			return plan, err
+		}
+		stamps, err := ps.st.Q.ListConfigSecretStamps(ctx)
+		if err != nil {
+			return plan, err
+		}
+		plan.ConfigHash = projectConfigHash(prj, orb.BaseImageID, orb.Type, stamps)
 	}
 	return plan, nil
 }
@@ -48,6 +58,10 @@ type m11Env struct {
 	commit atomic.Value // string
 	// block 非 nil 时 setup.run 阻塞到它关闭（模拟 setup 进行中）。
 	block atomic.Value // chan struct{}
+	// forgeUnprepared 模拟 orb 内删掉了完成标记：本 orb 第一次 setup 回 prepared=false 并全量重跑（S-P1-1）。
+	forgeUnprepared atomic.Bool
+	// setupChanged 让增量刷新回 setupChanged=true（S-P2-1）。
+	setupChanged atomic.Bool
 
 	mu      sync.Mutex
 	markers map[string]bool // orb → setup.done 标记已在
@@ -68,12 +82,14 @@ func newM11Env(t *testing.T, features []string, run bool, mod func(*Config)) *m1
 	e.mode.Store(modeHit)
 	e.commit.Store("c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1")
 	drv.onSetup = e.onSetup
-	e.harness = newHarnessRun(t, drv, projSetup{}, func(c *Config) {
+	ps := &projSetup{}
+	e.harness = newHarnessRun(t, drv, ps, func(c *Config) {
 		c.Snapshots = defaultSnapCfg()
 		if mod != nil {
 			mod(c)
 		}
 	}, run)
+	ps.st = e.st
 	require.Eventually(t, func() bool {
 		p, err := e.st.Q.GetProvider(context.Background(), e.provID)
 		return err == nil && p.BaseImageID != ""
@@ -106,7 +122,7 @@ func (e *m11Env) onSetup(orbID, method string, p apigen.LinkCtlSetupRunParams) a
 	snap, missing := e.spawnedFrom(orbID)
 	e.mu.Lock()
 	e.setups[orbID] = append(e.setups[orbID], p)
-	prepared := e.markers[orbID] || (snap != "" && !missing)
+	prepared := e.markers[orbID] || (snap != "" && !missing && !e.forgeUnprepared.Load())
 	e.mu.Unlock()
 	mode := e.mode.Load().(string)
 	commit := e.commit.Load().(string)
@@ -119,6 +135,9 @@ func (e *m11Env) onSetup(orbID, method string, p apigen.LinkCtlSetupRunParams) a
 		res.Ok = mode != modeFail
 	case p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && (mode == modeRefresh || mode == modeRefreshFail):
 		res.SetupRan, res.RepoUpdated = true, new(true)
+		if e.setupChanged.Load() {
+			res.SetupChanged = new(true)
+		}
 		res.Ok = mode == modeRefresh
 	}
 	if res.Ok && method == "setup.run" {
@@ -370,7 +389,8 @@ func TestProjectSnapshotLifecycle(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond)
 }
 
-// provider 上快照镜像不存在：spawn 退回基础镜像（snapshotOptional），prepared=false → 退役 image_missing 并重建新血统。
+// provider 上快照镜像不存在：spawn 退回基础镜像（snapshotOptional）并上报 snapshotUsed=false → orb 的 snapshot_of
+// 清空、快照退役 image_missing，这台 orb 从基础镜像全新 setup，开新血统。
 func TestProjectSnapshotImageMissing(t *testing.T) {
 	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
 	prj := e.project("app", nil)
@@ -380,12 +400,37 @@ func TestProjectSnapshotImageMissing(t *testing.T) {
 	e.drv.missing[s1.ID] = true
 	e.drv.mu.Unlock()
 	b := e.createReady(CreateParams{ProjectID: prj})
-	assert.Equal(t, s1.ID, derefStr(b.SnapshotOf))
+	assert.Equal(t, s1.ID, *e.lastSpawn(b.ID).SnapshotID)
+	assert.Nil(t, b.SnapshotOf, "provider 退回了基础镜像：orb 不再算来自快照")
+	assert.Empty(t, b.Image)
+	assert.Nil(t, e.setupCalls(b.ID)[0].Repo.Update, "全新 orb 不置 repo.update")
 	assert.Equal(t, RetireImageMissing, retireReason(e.snapshot(s1.ID)))
 	rows := e.snapshots(prj)
 	require.Len(t, rows, 2)
 	assert.Equal(t, SnapshotReady, rows[1].State)
 	assert.EqualValues(t, 0, rows[1].Depth)
+}
+
+// S-P1-1：provider 确认用了快照（snapshotUsed=true），orb 内却删掉了完成标记（orbd 回 prepared=false、setup 全量重跑）。
+// 来源只看 orb.snapshot_of：快照不退役，新快照以它为父（depth+1、血统起点不变），不能借此开新血统续期。
+func TestProjectSnapshotForgedPreparedKeepsLineage(t *testing.T) {
+	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
+	prj := e.project("app", nil)
+	e.createReady(CreateParams{ProjectID: prj})
+	s1 := e.snapshots(prj)[0]
+	e.forgeUnprepared.Store(true)
+	b := e.createReady(CreateParams{ProjectID: prj})
+	assert.Equal(t, s1.ID, derefStr(b.SnapshotOf))
+	run := e.latestSetupRun(b.ID)
+	require.False(t, run.Prepared)
+	require.EqualValues(t, 1, run.SetupRan)
+	assert.Equal(t, RetireSuperseded, retireReason(e.snapshot(s1.ID)), "来源快照不因 prepared=false 退役 image_missing")
+	rows := e.snapshots(prj)
+	require.Len(t, rows, 2)
+	s2 := rows[1]
+	assert.Equal(t, SnapshotReady, s2.State)
+	assert.EqualValues(t, s1.Depth+1, s2.Depth)
+	assert.Equal(t, s1.LineageAt, s2.LineageAt)
 }
 
 // 旧 orbd（hello 不含 repo-update）：来自项目快照的 orb 不收到 repo.update（X12）。

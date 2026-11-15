@@ -80,7 +80,7 @@ func TestProjectSnapshotsAPI(t *testing.T) {
 	assert.Equal(t, "abc1234def", *list.Snapshots[2].BaseCommit)
 	assert.EqualValues(t, 42, *list.Snapshots[2].SizeBytes)
 
-	// 按类型清除：只退役该类型的 ready（manual）
+	// 按类型清除：退役该类型的 ready，并作废同类型在建的（manual，S-P2-2）
 	require.Equal(t, 204, e.do("DELETE", "/api/v1/projects/"+p.ID+"/snapshots?type=small", c, nil).status)
 	get := func(id string) db.ProjectSnapshot {
 		row, err := e.st.Q.GetProjectSnapshot(ctx, id)
@@ -90,9 +90,19 @@ func TestProjectSnapshotsAPI(t *testing.T) {
 	assert.Equal(t, "retired", get(small).State)
 	assert.Equal(t, "manual", *get(small).RetireReason)
 	assert.Equal(t, "ready", get(large).State)
-	assert.Equal(t, "building", get(building).State)
+	assert.Equal(t, "retired", get(building).State)
+	assert.Equal(t, "manual", *get(building).RetireReason)
 	require.Equal(t, 204, e.do("DELETE", "/api/v1/projects/"+p.ID+"/snapshots", c, nil).status)
 	assert.Equal(t, "retired", get(large).State)
+
+	// 关闭项目快照：就绪的退役、在建的作废（S-P2-2）
+	require.Equal(t, 200, e.do("PATCH", "/api/v1/projects/"+p.ID, c, map[string]any{"snapshots": true}).status)
+	on, onBuilding := mk("small", true, 35), mk("small", false, 36)
+	require.Equal(t, 200, e.do("PATCH", "/api/v1/projects/"+p.ID, c, map[string]any{"snapshots": false}).status)
+	for _, id := range []string{on, onBuilding} {
+		assert.Equal(t, "retired", get(id).State)
+		assert.Equal(t, "manual", *get(id).RetireReason)
+	}
 
 	// provider 删除（仍被快照引用 → 停用）时退役它的快照；项目删除时同样
 	again := mk("medium", true, 40)

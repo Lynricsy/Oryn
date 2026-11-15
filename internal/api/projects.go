@@ -265,6 +265,14 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		} else if err != nil {
 			return err
 		}
+		if req.Snapshots != nil && !*req.Snapshots && p.Snapshots {
+			// 关闭项目快照（S-P2-2）：就绪的退役，在建的同时作废（构建者发布时看到作废会自行清理镜像）
+			if err := q.RetireProjectSnapshotsByProject(ctx, db.RetireProjectSnapshotsByProjectParams{
+				RetiredAt: u.UpdatedAt, RetireReason: orbs.RetireManual, ProjectID: id,
+			}); err != nil {
+				return err
+			}
+		}
 		out, err = q.GetProject(ctx, id)
 		return err
 	})

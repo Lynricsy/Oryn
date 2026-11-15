@@ -56,8 +56,8 @@ func (s *Server) ListProjectSnapshots(w http.ResponseWriter, r *http.Request, id
 	WriteJSON(w, http.StatusOK, out)
 }
 
-// DeleteProjectSnapshots 实现 DELETE /api/v1/projects/{id}/snapshots[?type=]：把匹配的 ready 快照退役（manual）；
-// 镜像由回收器在不再被 orb 引用后异步删除。
+// DeleteProjectSnapshots 实现 DELETE /api/v1/projects/{id}/snapshots[?type=]：把匹配的 ready 快照退役（manual），
+// 在建的同时作废（构建者发布时看到作废会自行清理镜像，S-P2-2）；镜像由回收器在不再被 orb 引用后异步删除。
 func (s *Server) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.DeleteProjectSnapshotsParams) {
 	if !s.projectExists(w, r, id) {
 		return

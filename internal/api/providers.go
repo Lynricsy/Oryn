@@ -98,7 +98,7 @@ func (s *Server) DeleteProvider(w http.ResponseWriter, r *http.Request, id apige
 		writeErr(w, r, err)
 		return
 	}
-	// 先退役它的项目快照（M11a 2.6）：之后新 orb 不再选用；provider 被停用而非删除时行仍在，镜像随宿主处置
+	// 先退役它的项目快照（M11a 2.6）并作废在建的（S-P2-2）：之后新 orb 不再选用；provider 被停用而非删除时行仍在，镜像随宿主处置
 	if err := s.Store.Q.RetireProjectSnapshotsByProvider(ctx, db.RetireProjectSnapshotsByProviderParams{
 		RetiredAt: time.Now().UnixMilli(), RetireReason: orbs.RetireProviderRemoved, ProviderID: id,
 	}); err != nil {

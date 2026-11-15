@@ -34,8 +34,9 @@ SELECT o.state, CAST(COALESCE((SELECT MAX(e.id) FROM orb_events e WHERE e.orb_id
 FROM orbs o WHERE o.id = @id;
 
 -- A snapshot-spawned orb not yet bound to any thread (fork copy recovery: reuse instead of creating another).
+-- Created with snapshot_of = image = the snapshot id (orbs.insertOrb), so look it up by that id.
 -- name: FindUnboundSnapshotOrb :one
 SELECT * FROM orbs o
-WHERE o.snapshot_of = @snapshot_of AND o.image = @image AND o.deleted_at IS NULL
+WHERE o.snapshot_of = CAST(@snapshot_id AS TEXT) AND o.image = CAST(@snapshot_id AS TEXT) AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.orb_id = o.id)
 ORDER BY o.created_at LIMIT 1;

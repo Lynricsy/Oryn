@@ -377,6 +377,11 @@ func (s *Service) advance(orbID string) {
 // M11a：刚被认领的池 orb（pool_state = claimed）即使已 ready 过也用 setup.run（阶段名仍是 resuming）并置
 // repo.update；setup.run 应答之后、BeforeReady 之前按需发布项目快照；setup 失败的 warming 池 orb 不进 ready、直接回收；
 // 进入 ready 时 warming → idle、claimed → 离开池。
+//
+// S-P1-2：这次 setup.run 之后可能发布快照、且 orbd 支持 setup-defer-resume 时，setup.run 只跑 setup（deferResume），
+// 快照拍完（无论发布成败）再单独 resume.run，快照里只留 setup 的产物；resume 的运行记录由 orbd 照常经 setup.result
+// 上报。拍快照或 resume 期间 link 断开（sysbox 快照会停机再启动）则退回 connecting 由新 link 重跑本阶段：完成标记
+// 已在，setup 不再执行、也就不再发布，deferResume 照旧，resume 随后补上。
 func (s *Service) runPhase(l *orbLink) {
 	select {
 	case <-l.prepared:
@@ -423,27 +428,40 @@ func (s *Service) runPhase(l *orbLink) {
 	} else {
 		plan.Params = apigen.LinkCtlSetupRunParams{GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{}}
 	}
-	hash := s.recordConfigHash(ctx, orb)
+	hash := plan.ConfigHash
 	if plan.Params.Repo != nil && s.wantRepoUpdate(ctx, l, orb, everReady) {
 		plan.Params.Repo.Update = new(true)
 	}
+	pristine := phase == StateSettingUp
+	deferResume := pristine && method == apigen.MethodSetupRun && slices.Contains(l.hello.Features, FeatureSetupDeferResume) &&
+		s.mayPublish(ctx, orb, hash)
+	if deferResume {
+		plan.Params.DeferResume = new(true)
+	}
 	s.setPolicy(l.orbID, plan.Egress)
+	// linkLost 处理 ctl 调用因 link 断开失败：退回 connecting（开始 hello 计时），若新 link 已 hello 则立即重来。
+	linkLost := func(during string) {
+		slog.Info(during+"期间 link 断开", "orb", l.orbID, "phase", phase)
+		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
+			s.advance(l.orbID)
+		}
+	}
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.SetupTimeout)
 	defer cancel()
 	var res apigen.LinkCtlSetupRunResult
 	err = l.ctl.Call(cctx, string(method), plan.Params, &res)
 	if err != nil {
 		if errors.Is(err, link.ErrCtlClosed) || l.ctl.Err() != nil {
-			// link 断开：退回 connecting（开始 hello 计时），若新 link 已 hello 则立即重来。
-			slog.Info("setup / resume 期间 link 断开", "orb", l.orbID, "phase", phase)
-			if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
-				s.advance(l.orbID)
-			}
+			linkLost("setup / resume ")
 			return
 		}
 		slog.Warn("setup / resume 失败", "orb", l.orbID, "phase", phase, "err", err)
 		_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
 		return
+	}
+	if method == apigen.MethodSetupRun && res.Ok && res.SetupRan {
+		// CP-5：只有真正跑过并成功的 setup 才改变环境已应用的配置；resume 与跳过的 setup 不算
+		s.recordAppliedHash(ctx, l.orbID, hash)
 	}
 	detail := map[string]any{"ok": res.Ok, "setupRan": res.SetupRan, "durationMs": res.DurationMs}
 	if !res.Ok {
@@ -457,14 +475,28 @@ func (s *Service) runPhase(l *orbLink) {
 			return
 		}
 	}
-	pristine := phase == StateSettingUp || derefStr(orb.PoolState) == PoolClaimed
-	if s.afterSetupSnapshot(ctx, l, orb, res, pristine, hash) && l.ctl.Err() != nil {
-		// 提交快照期间容器被暂停、link 断开：退回 connecting 由新 link 重跑本阶段（完成标记已在，不会再次发布）。
-		slog.Info("快照期间 link 断开", "orb", l.orbID, "phase", phase)
-		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
-			s.advance(l.orbID)
-		}
+	if s.afterSetupSnapshot(ctx, l, orb, res, pristine, claimed, hash) && l.ctl.Err() != nil {
+		// 提交快照期间容器被暂停或停机、link 断开：由新 link 重跑本阶段（完成标记已在，不会再次发布）。
+		linkLost("快照")
 		return
+	}
+	if deferResume {
+		rp := plan.Params
+		rp.DeferResume = nil
+		rctx, rcancel := context.WithTimeout(ctx, s.cfg.SetupTimeout)
+		var rres apigen.LinkCtlSetupRunResult
+		err := l.ctl.Call(rctx, string(apigen.MethodResumeRun), rp, &rres)
+		rcancel()
+		if err != nil {
+			if errors.Is(err, link.ErrCtlClosed) || l.ctl.Err() != nil {
+				linkLost("推迟的 resume ")
+				return
+			}
+			slog.Warn("推迟的 resume 失败", "orb", l.orbID, "phase", phase, "err", err)
+			_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
+			return
+		}
+		detail["resumeOk"] = rres.Ok
 	}
 	if h := s.desktopHooksFor(l); h != nil {
 		// Profile 必须在 agent 启动（ready）之前定下来。期间 link 断开则 Profile 可能没定好：

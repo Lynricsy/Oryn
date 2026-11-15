@@ -9,13 +9,45 @@ import (
 	"context"
 )
 
-const deleteBuildingProjectSnapshot = `-- name: DeleteBuildingProjectSnapshot :exec
+const cancelBuildingProjectSnapshot = `-- name: CancelBuildingProjectSnapshot :execrows
+UPDATE project_snapshots SET state = 'retired', retired_at = CAST(?1 AS INTEGER), retire_reason = CAST(?2 AS TEXT),
+    size_bytes = COALESCE(?3, size_bytes)
+WHERE id = ?4 AND state = 'building'
+`
+
+type CancelBuildingProjectSnapshotParams struct {
+	RetiredAt    int64  `json:"retiredAt"`
+	RetireReason string `json:"retireReason"`
+	SizeBytes    *int64 `json:"sizeBytes"`
+	ID           string `json:"id"`
+}
+
+// building -> retired without ever being ready (cancelled at publish, or over max_snapshot_gb); 0 rows = the row
+// already left 'building'.
+func (q *Queries) CancelBuildingProjectSnapshot(ctx context.Context, arg CancelBuildingProjectSnapshotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelBuildingProjectSnapshot,
+		arg.RetiredAt,
+		arg.RetireReason,
+		arg.SizeBytes,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteBuildingProjectSnapshot = `-- name: DeleteBuildingProjectSnapshot :execrows
 DELETE FROM project_snapshots WHERE id = ?1 AND state = 'building'
 `
 
-func (q *Queries) DeleteBuildingProjectSnapshot(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteBuildingProjectSnapshot, id)
-	return err
+// 0 rows = the row already left 'building' (published or cancelled meanwhile): the caller must not delete the image.
+func (q *Queries) DeleteBuildingProjectSnapshot(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBuildingProjectSnapshot, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteProjectSnapshot = `-- name: DeleteProjectSnapshot :exec
@@ -374,7 +406,7 @@ func (q *Queries) RetireProjectSnapshot(ctx context.Context, arg RetireProjectSn
 
 const retireProjectSnapshotsByProject = `-- name: RetireProjectSnapshotsByProject :exec
 UPDATE project_snapshots SET state = 'retired', retired_at = CAST(?1 AS INTEGER), retire_reason = CAST(?2 AS TEXT)
-WHERE project_id = CAST(?3 AS TEXT) AND state = 'ready'
+WHERE project_id = CAST(?3 AS TEXT) AND state IN ('ready', 'building')
   AND (CAST(?4 AS TEXT) IS NULL OR type = CAST(?4 AS TEXT))
 `
 
@@ -385,7 +417,8 @@ type RetireProjectSnapshotsByProjectParams struct {
 	Type         *string `json:"type"`
 }
 
-// Retires a project's ready snapshots; type NULL = all types.
+// Retires a project's ready snapshots and cancels its in-flight builds (building -> retired; the builder sees it at
+// publish and cleans the image up itself); type NULL = all types.
 func (q *Queries) RetireProjectSnapshotsByProject(ctx context.Context, arg RetireProjectSnapshotsByProjectParams) error {
 	_, err := q.db.ExecContext(ctx, retireProjectSnapshotsByProject,
 		arg.RetiredAt,
@@ -398,7 +431,7 @@ func (q *Queries) RetireProjectSnapshotsByProject(ctx context.Context, arg Retir
 
 const retireProjectSnapshotsByProvider = `-- name: RetireProjectSnapshotsByProvider :exec
 UPDATE project_snapshots SET state = 'retired', retired_at = CAST(?1 AS INTEGER), retire_reason = CAST(?2 AS TEXT)
-WHERE provider_id = ?3 AND state = 'ready'
+WHERE provider_id = ?3 AND state IN ('ready', 'building')
 `
 
 type RetireProjectSnapshotsByProviderParams struct {
@@ -407,7 +440,7 @@ type RetireProjectSnapshotsByProviderParams struct {
 	ProviderID   string `json:"providerId"`
 }
 
-// Retires every ready snapshot on a provider (provider disabled / deleted).
+// Retires every ready snapshot on a provider and cancels its in-flight builds (provider disabled / deleted).
 func (q *Queries) RetireProjectSnapshotsByProvider(ctx context.Context, arg RetireProjectSnapshotsByProviderParams) error {
 	_, err := q.db.ExecContext(ctx, retireProjectSnapshotsByProvider, arg.RetiredAt, arg.RetireReason, arg.ProviderID)
 	return err

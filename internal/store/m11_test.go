@@ -143,7 +143,7 @@ func TestM11PoolOrbs(t *testing.T) {
 	assert.Equal(t, "h2", *o.ConfigHash)
 }
 
-// TestM11MigrationDownUp 回滚 0021 再重新应用：新表、新列与索引消失后复原。
+// TestM11MigrationDownUp 依次回滚 0022、0021 再重新应用：新表、新列与索引消失后复原。
 func TestM11MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -158,11 +158,19 @@ func TestM11MigrationDownUp(t *testing.T) {
 		+ (SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name = 'base_image_id')
 		+ (SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = 'result')
 		+ (SELECT COUNT(*) FROM pragma_table_info('orb_setup_runs') WHERE name IN ('prepared', 'base_commit'))`
-	var n int
+	m11fix := `SELECT COUNT(*) FROM pragma_table_info('orbs') WHERE name = 'base_image_id'`
+	var n, nf int
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11).Scan(&n))
 	assert.Equal(t, 14, n)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m11fix).Scan(&nf))
+	assert.Equal(t, 1, nf)
 
 	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 22, r.Source.Version)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m11fix).Scan(&nf))
+	assert.Zero(t, nf, "0022 回滚后 orbs.base_image_id 消失")
+	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 21, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11).Scan(&n))
@@ -172,4 +180,6 @@ func TestM11MigrationDownUp(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11).Scan(&n))
 	assert.Equal(t, 14, n)
+	require.NoError(t, s.DB.QueryRowContext(ctx, m11fix).Scan(&nf))
+	assert.Equal(t, 1, nf)
 }
