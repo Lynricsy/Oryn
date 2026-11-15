@@ -96,6 +96,7 @@ import { ShippingContainer } from "@phosphor-icons/react/dist/csr/ShippingContai
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Square } from "@phosphor-icons/react/dist/csr/Square";
+import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
@@ -124,6 +125,8 @@ const ICONS = {
 	stop: Stop,
 	settings: GearSix,
 	panel: SidebarSimple,
+	/** 手机线程页右上角的视图菜单（文件 / 终端 / 信息…） */
+	views: SquaresFour,
 	/** 左侧栏开关（不镜像，栏在左） */
 	sidebar: SidebarSimple,
 	chevronDown: CaretDown,

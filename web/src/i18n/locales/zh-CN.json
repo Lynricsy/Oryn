@@ -871,7 +871,9 @@
 		"restore": "还原面板",
 		"resize": "调整面板宽度",
 		"unseenChanges": "有未查看的新改动",
-		"desktopAttention": "浏览器 Profile 需要你处理"
+		"desktopAttention": "浏览器 Profile 需要你处理",
+		"views": "视图",
+		"backToAgent": "返回对话"
 	},
 	"terminal": {
 		"title": "终端",

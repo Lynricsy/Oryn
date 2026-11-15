@@ -1,6 +1,6 @@
 # 移动 App（Android；iOS 预留）
 
-Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-tauri`）。App 本身只带一个很小的「连接页」，配对完成后加载**所连服务器自己的 Web UI**，所以界面总是和服务器同一版本。窄屏下线程页是单栏 + 顶部同级标签（`Agent | Changes | Files | Terminal …`），600–839dp 双栏，≥840dp 三栏；旋转、改窗口大小、折叠 / 展开都不会重建页面，WebView 138 及以上在折叠屏半开时左右分屏。
+Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-tauri`）。App 本身只带一个很小的「连接页」，配对完成后加载**所连服务器自己的 Web UI**，所以界面总是和服务器同一版本。窄屏下线程页是单栏，对话与各面板（`Agent | Changes | Files | Terminal …`）是同级视图，手机宽度（<600dp）由页头右上角的视图菜单切换、不常驻标签条，600–839dp 双栏，≥840dp 三栏；旋转、改窗口大小、折叠 / 展开都不会重建页面，WebView 138 及以上在折叠屏半开时左右分屏。
 
 - 应用标识 `com.lynricsy.oryn`，最低 Android 13（API 33），目标 API 37；深链接协议 `oryn://`（不启用 App Links）。
 - 设备令牌只存在于 App 的 Rust 进程和 Android Keystore 加密的私有存储里，网页代码拿不到它；App 用令牌换一个「属于该设备」的网页会话再打开 Web UI（与桌面相同，见 [protocol.md](protocol.md)「M6：App 会话」）。

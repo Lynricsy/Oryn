@@ -2,7 +2,8 @@
  * 线程页：订阅线程；对话纸面里转录铺满，玻璃页头与玻璃输入坞绝对定位盖在其上（内容从玻璃下方透出），
  * 输入坞高度驱动转录底部留白；右侧面板（Info / Changes / Files / Terminal）是另一张纸面。
  * 三种布局：expanded 三栏（面板列可关、可最大化、可拖宽）；窄屏（compact / medium）转录与面板各标签是同级标签，
- * 页头下方一行标签条，切到面板标签时转录纸面隐藏但保持挂载（滚动位置不丢）；折叠屏双段视口左段转录、右段面板常驻。
+ * medium 在页头下方一行标签条，compact（手机）不占这一行、改由页头右上角的视图菜单切换；切到面板标签时转录纸面
+ * 隐藏但保持挂载（滚动位置不丢）；折叠屏双段视口左段转录、右段面板常驻。
  * 页面主体是 `ThreadScreen`：Space 页与助手页以 `variant="coordinator"` 复用它（没有右面板与面板开关、页头由调用方给、
  * 输入区是协调档）。协调对话（`kind` 为 space / assistant）经 `/t/<id>` 打开时重定向到对应页面（通知与深链接仍指向 `/t/<id>`）。
  */
@@ -39,6 +40,7 @@ import { QueueBar } from "../components/thread/QueueBar";
 import {
 	RightPanel,
 	ThreadTabStrip,
+	ThreadViewMenu,
 	useThreadTabs,
 } from "../components/thread/RightPanel";
 import { RunnerOfflineNotice } from "../components/thread/RunnerOfflineNotice";
@@ -62,7 +64,7 @@ import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
 
 /** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
 const PANEL_ANIM_MS = 260;
-/** 窄屏同级标签条那一行的高度（px）：转录顶部留白与页头纱都加上它。 */
+/** 窄屏同级标签条那一行的高度（px，medium）：转录顶部留白与页头纱都加上它。 */
 export const TAB_ROW = 40;
 /** 贴屏幕边缘表面的同心圆角（`index.css` 的 `.dc-*`）：纸面 / 托盘都是 xl 圆角。 */
 export const DC_SHEET_RIGHT =
@@ -248,7 +250,9 @@ export function ThreadScreen({
 	const peer = !expanded && !dual && !coordinator;
 	const onAgent = !peer || threadTab === "agent";
 	const { tabs: peerTabs } = useThreadTabs(threadId, true);
-	const topInset = peer || subheader ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
+	// 手机不常驻标签条（视图菜单在页头右上角）；medium 仍是页头下方一行标签条
+	const tabRow = peer && bp !== "compact";
+	const topInset = tabRow || subheader ? HEADER_VEIL + TAB_ROW : HEADER_VEIL;
 	const showPanelColumn = expanded && panelOpen && !coordinator;
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	/** 转录被面板标签或最大化面板挡住（保持挂载、仍参与布局，见下面纸面的注释）。 */
@@ -349,6 +353,17 @@ export function ThreadScreen({
 								veil={topInset}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown && !showPanelColumn && !dual}
+								viewMenu={
+									peer &&
+									!tabRow &&
+									onAgent && (
+										<ThreadViewMenu
+											threadId={threadId}
+											tabs={peerTabs}
+											shown="agent"
+										/>
+									)
+								}
 							/>
 						)}
 						{subheader && (
@@ -356,8 +371,9 @@ export function ThreadScreen({
 								{subheader}
 							</div>
 						)}
-						{/* 同级标签条只在看转录时挂载：切到面板标签后由面板自己的标签条接手（改动的后台检查只跑一份） */}
-						{peer && onAgent && (
+						{/* 同级标签条只在看转录时挂载：切到面板标签后由面板自己的标签条接手（改动的后台检查只跑一份）；
+						    手机的视图菜单同理 */}
+						{tabRow && onAgent && (
 							<div className="veil-host relative flex h-10 items-center px-2 sm:px-3">
 								<ThreadTabStrip
 									threadId={threadId}
@@ -370,7 +386,7 @@ export function ThreadScreen({
 					</div>
 					{conn !== "open" && (
 						<div
-							className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3 ${peer ? "top-24" : "top-14"}`}
+							className={`pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3 ${tabRow ? "top-24" : "top-14"}`}
 						>
 							<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
 								<Spinner size={11} />

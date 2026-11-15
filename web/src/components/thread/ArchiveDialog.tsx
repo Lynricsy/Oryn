@@ -93,26 +93,35 @@ function ArchiveDialog({
 				)
 			}
 		>
-			<div data-testid="archive-dialog" className="flex flex-col gap-3">
-				<p className="text-muted text-sm">{t("archive.body")}</p>
+			<div data-testid="archive-dialog" className="flex flex-col gap-4">
+				<p className="text-muted text-sm leading-relaxed">
+					{t("archive.body")}
+				</p>
 				{worktree && (
+					// 选项卡片：勾选时垫一层浅底；worktree 目录是卡片底部一枚等宽字标签（分支名已在说明里）
 					// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Checkbox 组件（内含原生 input）
-					<label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-raised px-3 py-2.5">
+					<label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3.5 transition-colors duration-150 hover:bg-raised has-checked:bg-raised has-disabled:cursor-default">
 						<Checkbox
-							className="mt-0.5"
+							className="mt-px"
 							checked={remove}
 							disabled={busy || archived}
 							onChange={(e) => setRemove(e.target.checked)}
 						/>
-						<span className="min-w-0">
+						<span className="min-w-0 flex-1">
 							<span className="block font-medium text-fg text-sm">
 								{t("archive.removeWorktree")}
 							</span>
-							<span className="mt-0.5 block text-muted text-xs">
+							<span className="mt-1 block text-muted text-xs leading-relaxed">
 								{t("archive.removeWorktreeHint", { branch: worktree.branch })}
 							</span>
-							<code className="mt-1.5 block break-all font-mono text-faint text-xs">
-								{worktree.dir}
+							<code className="mt-3 inline-flex max-w-full items-start gap-1.5 rounded-sm bg-inset px-2 py-1 font-mono text-2xs text-muted">
+								<Icon
+									name="folder"
+									size={12}
+									aria-hidden
+									className="mt-px shrink-0 text-faint"
+								/>
+								<span className="break-all">{worktree.dir}</span>
 							</code>
 						</span>
 					</label>

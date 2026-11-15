@@ -3,7 +3,8 @@
  * 「改动」标签在有未查看的新改动时亮点，切到改动标签即清除；
  * Portal 标签只在 orb 有 portal 时出现（终端之后），portal 消失时退回信息标签；
  * Desktop 标签只在 orb 有桌面时出现（Portal 之后），消失时退回信息标签，Profile 被占用或装载失败时带提醒点；
- * 窄屏 `peer` 面板：同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点。
+ * 窄屏 `peer` 面板：medium 下同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点；
+ * 手机（compact）下没有标签条，页头是「返回对话 + 面板名 + 视图菜单」，菜单列出全部视图并标出当前视图与提醒点。
  * 桌面 App 无系统标题栏：三栏面板顶部多一行可拖动的标题行放右侧窗口按钮；同级面板把按钮放进标签条两端；浏览器里都没有。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -434,10 +435,10 @@ describe("RightPanel Desktop 标签", () => {
 	});
 });
 
-describe("RightPanel peer（窄屏同级标签）", () => {
+describe("RightPanel peer（窄屏同级标签，medium）", () => {
 	const initialWidth = window.innerWidth;
 	beforeEach(() => {
-		window.innerWidth = 390;
+		window.innerWidth = 700;
 		uiStore.setState({ sidebarOpen: false });
 		uiStore.getState().setThreadTab("info");
 	});
@@ -543,6 +544,75 @@ describe("RightPanel peer（窄屏同级标签）", () => {
 		render(withQuery(<RightPanel threadId="T-rpA" />));
 		expect(document.querySelector('[data-panel-tab="agent"]')).toBeNull();
 		expect(screen.getByTestId("thread-tabs")).toBeInTheDocument();
+	});
+});
+
+describe("RightPanel peer（手机视图菜单）", () => {
+	const initialWidth = window.innerWidth;
+	beforeEach(() => {
+		window.innerWidth = 390;
+		uiStore.getState().setThreadTab("files");
+	});
+	afterEach(() => {
+		window.innerWidth = initialWidth;
+		uiStore.setState({ threadTab: "agent" });
+	});
+
+	it("没有标签条：页头是返回、面板名与视图菜单；菜单切换视图，返回回到对话", async () => {
+		render(withQuery(<RightPanel threadId="T-rpA" peer />));
+		expect(screen.queryByTestId("thread-tabs")).toBeNull();
+		expect(screen.getByTestId("peer-panel-title")).toHaveTextContent(
+			i18n.t("rightPanel.tabs.files"),
+		);
+		fireEvent.click(screen.getByTestId("thread-view-menu"));
+		const items = screen.getAllByRole("menuitemradio");
+		expect(items.map((b) => b.getAttribute("data-view"))).toEqual([
+			"agent",
+			"changes",
+			"files",
+			"terminal",
+			"info",
+		]);
+		expect(
+			items.filter((b) => b.getAttribute("aria-checked") === "true"),
+		).toEqual([items[2]]);
+		await act(async () => {
+			fireEvent.click(items[3] as HTMLElement);
+		});
+		expect(uiStore.getState()).toMatchObject({
+			threadTab: "terminal",
+			panelTab: "terminal",
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("rightPanel.backToAgent") }),
+		);
+		expect(uiStore.getState().threadTab).toBe("agent");
+	});
+
+	it("线程等你回答时视图菜单按钮亮点，菜单里对话一项带注意点", () => {
+		const id = "T-rpM";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				thread: { id } as Thread,
+				pendingUi: [],
+				planProposal: null,
+			});
+		render(withQuery(<RightPanel threadId={id} peer />));
+		const trigger = screen.getByTestId("thread-view-menu");
+		expect(screen.queryByTestId("view-menu-dot")).toBeNull();
+		act(() => {
+			getThreadStore(id)
+				.getState()
+				.patchLocal({
+					pendingUi: [{ id: "ui-1" } as ThreadViewState["pendingUi"][number]],
+				});
+		});
+		expect(trigger).toContainElement(screen.getByTestId("view-menu-dot"));
+		fireEvent.click(trigger);
+		expect(document.querySelector('[data-view="agent"]')).toContainElement(
+			screen.getByTestId("agent-attention"),
+		);
 	});
 });
 

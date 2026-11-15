@@ -191,16 +191,19 @@ export function ThreadHeader({
 	veil = HEADER_VEIL,
 	chromeLeft = false,
 	chromeRight = false,
+	viewMenu,
 }: {
 	threadId: string;
 	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
 	sidebarToggle: boolean;
-	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（窄屏的同级标签条）时加上那一行，纱一起盖住 */
+	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（medium 的同级标签条）时加上那一行，纱一起盖住 */
 	veil?: number;
 	/** 页头是窗口最左侧的标题行（侧栏没占着左上角）：左侧窗口控件放这里 */
 	chromeLeft?: boolean;
 	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
 	chromeRight?: boolean;
+	/** 手机上的视图菜单（`ThreadViewMenu`），放在「更多」之前 */
+	viewMenu?: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -619,6 +622,7 @@ export function ThreadHeader({
 					onClick={() => uiStore.getState().setPanel(!panelOpen)}
 				/>
 			)}
+			{viewMenu}
 			<Menu
 				items={items}
 				trigger={(p) => (

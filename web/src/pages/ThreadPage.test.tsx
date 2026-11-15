@@ -1,10 +1,12 @@
 /**
  * 线程页布局（M7 4.2 / 4.3）：窄屏转录与面板各标签是同级标签（没有右抽屉），切走时转录纸面透明、inert 但保持挂载与布局；
+ * medium 页头下一行是标签条，compact（手机）不占这一行、视图菜单在页头里；
  * expanded 三栏不变；折叠屏双段视口左段转录、右段面板常驻；compact 下输入坞托盘底角与屏幕圆角同心。
- * 转录、输入坞各节、页头与面板内容换成桩，只看页面自己的布局；标签条用真的 `ThreadTabStrip`。
+ * 转录、输入坞各节、页头与面板内容换成桩，只看页面自己的布局；标签条与视图菜单用真的。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
@@ -53,15 +55,19 @@ vi.mock("../components/thread/ThreadHeader", async (orig) => ({
 	ThreadHeader: ({
 		sidebarToggle,
 		veil,
+		viewMenu,
 	}: {
 		sidebarToggle: boolean;
 		veil?: number;
+		viewMenu?: ReactNode;
 	}) => (
 		<header
 			data-testid="thread-header"
 			data-sidebar-toggle={String(sidebarToggle)}
 			data-veil={veil}
-		/>
+		>
+			{viewMenu}
+		</header>
 	),
 }));
 vi.mock("../components/thread/RightPanel", async (orig) => ({
@@ -118,8 +124,8 @@ afterEach(() => {
 });
 
 describe("ThreadPage 窄屏同级标签", () => {
-	it("compact：页头下一行标签条依次是 agent / changes / files / terminal / info，转录留白加上这一行", () => {
-		renderPage(390);
+	it("medium：页头下一行标签条依次是 agent / changes / files / terminal / info，转录留白加上这一行", () => {
+		renderPage(700);
 		expect(tabIds()).toEqual(["agent", "changes", "files", "terminal", "info"]);
 		expect(document.querySelector('[data-panel-tab="agent"]')).toHaveAttribute(
 			"aria-selected",
@@ -137,11 +143,17 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(screen.queryByTestId("right-panel")).toBeNull();
 	});
 
-	it("点终端：转录纸面 inert（透明、仍在布局）且保持挂载、面板作为同级页出现、没有抽屉遮罩；切回 agent 后还是同一个转录", () => {
+	it("compact：不占标签条那一行，页头里的视图菜单切到终端；转录纸面 inert（透明、仍在布局）且保持挂载、面板作为同级页出现、没有抽屉遮罩；切回 agent 后还是同一个转录", () => {
 		renderPage(390);
+		expect(screen.queryByTestId("thread-tabs")).toBeNull();
+		expect(screen.getByTestId("transcript")).toHaveAttribute(
+			"data-inset-top",
+			"64",
+		);
 		const transcript = screen.getByTestId("transcript");
+		fireEvent.click(screen.getByTestId("thread-view-menu"));
 		fireEvent.click(
-			document.querySelector('[data-panel-tab="terminal"]') as HTMLElement,
+			document.querySelector('[data-view="terminal"]') as HTMLElement,
 		);
 		expect(uiStore.getState()).toMatchObject({
 			threadTab: "terminal",
@@ -153,14 +165,14 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(panel).toHaveAttribute("data-peer", "true");
 		expect(panel).toHaveAttribute("data-closable", "false");
 		expect(document.querySelector(".fixed.inset-0")).toBeNull();
-		// 面板里的标签条接手，转录页头里那一条卸掉
-		expect(screen.queryByTestId("thread-tabs")).toBeNull();
+		// 面板自己的视图菜单接手，转录页头里那一个卸掉（改动的后台检查只跑一份）
+		expect(screen.queryByTestId("thread-view-menu")).toBeNull();
 
 		act(() => uiStore.getState().setThreadTab("agent"));
 		expect(pane()).not.toHaveAttribute("inert");
 		expect(screen.getByTestId("transcript")).toBe(transcript);
 		expect(screen.queryByTestId("right-panel")).toBeNull();
-		expect(screen.getByTestId("thread-tabs")).toBeInTheDocument();
+		expect(screen.getByTestId("thread-view-menu")).toBeInTheDocument();
 	});
 
 	it("medium 同样是同级标签，打开面板（如终端入口）直接切到该标签", () => {

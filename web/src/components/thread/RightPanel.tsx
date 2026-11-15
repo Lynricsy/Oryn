@@ -4,8 +4,9 @@
  * Info 为原信息面板；其余按需加载。标签条可横向滚动，选中项下有一块滑动底板；放不下全部文字时只有选中项保留文字。
  * Terminal 标签在有终端等待用户（agent 的 `pty:true` 命令、会话要密码）时亮注意点；
  * Changes 标签在有未查看的新改动时亮 accent 小点。
- * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`，
- * 标签条（`ThreadTabStrip`）同时用在转录页头下方；Agent 标签在线程等你回答时亮注意点。
+ * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`。
+ * medium 宽度下标签条（`ThreadTabStrip`）同时用在转录页头下方；手机（compact）不常驻标签条，改由页头右上角的
+ * 视图菜单（`ThreadViewMenu`）切换，面板页头是「返回对话 + 面板名 + 视图菜单」。Agent 标签在线程等你回答时亮注意点。
  * 桌面 App 无系统标题栏（`chrome`）：面板是窗口最右侧（或最大化时最左侧）的纸面时承载窗口控件，都放在标签条这一行：
  * 左侧控件在标签条左端，右侧自绘按钮在标签条右侧并替掉关闭面板的 ×（× 与页头的面板开关重复；关面板仍走页头开关与快捷键）。
  * 这一行此时是拖动区（标签、按钮本身除外）。没有右侧自绘按钮的环境（macOS、浏览器、移动壳、Linux 左侧布局）仍有 ×。
@@ -41,7 +42,13 @@ import {
 	WindowControls,
 } from "../layout/WindowControls";
 import { Icon, type IconName } from "../ui/icons";
-import { IconButton, Spinner, tabClass } from "../ui/primitives";
+import {
+	IconButton,
+	Menu,
+	type MenuItem,
+	Spinner,
+	tabClass,
+} from "../ui/primitives";
 import { InfoPanel } from "./InfoPanel";
 import { useOrbOf } from "./ThreadHeader";
 
@@ -227,8 +234,83 @@ export function useThreadTabs(
 	return { tabs, settled: orb !== undefined || (loaded && !orbId) };
 }
 
+/** 一个标签上的提醒点：色调、是否脉动、悬停提示与测试 id。 */
+interface TabDot {
+	tone: "accent" | "warn";
+	pulse: boolean;
+	title: string;
+	testId: string;
+}
+
 /**
- * 线程标签条（tablist）：滑动底板、放不下时只留选中项文字、终端注意点、改动未看点、Agent 注意点（线程在等你回答）。
+ * 各标签的提醒点：Agent 在线程等你回答（有待回答的扩展 UI 请求或待批准的计划）、终端有等待输入、
+ * 桌面 Profile 被占用或装载失败、改动有未查看的新改动。正在看的标签自己不亮（桌面除外）。
+ * 改动的后台检查在这里发起，所以同一屏只能有一处调用（标签条或视图菜单其一）。
+ */
+function useTabDots(
+	threadId: string,
+	tabs: readonly ThreadTab[],
+	shown: ThreadTab,
+): Partial<Record<ThreadTab, TabDot>> {
+	const { t } = useTranslation();
+	const orbId = useThread(threadId, (s) => s.thread?.orbId);
+	const attention = useTerminals(threadId, (s) => s.attention);
+	const profileStatus = useOrbOf(threadId)?.desktop?.profile?.status;
+	const deskAttention = profileStatus === "in_use" || profileStatus === "error";
+	// 没有「改动」标签（runner 没有 git）时不做后台检查
+	const unseen = useUnseenChanges(
+		threadId,
+		tabs.includes("changes") ? orbId : undefined,
+		shown === "changes",
+	);
+	const awaiting = useThread(
+		threadId,
+		(s) => s.pendingUi.length > 0 || s.planProposal !== null,
+	);
+	const dots: Partial<Record<ThreadTab, TabDot>> = {};
+	if (awaiting && shown !== "agent")
+		dots.agent = {
+			tone: "accent",
+			pulse: true,
+			title: t("rightPanel.agentAttention"),
+			testId: "agent-attention",
+		};
+	if (attention && shown !== "terminal")
+		dots.terminal = {
+			tone: "warn",
+			pulse: true,
+			title: t("rightPanel.attention"),
+			testId: "terminal-attention",
+		};
+	if (deskAttention)
+		dots.desktop = {
+			tone: "warn",
+			pulse: false,
+			title: t("rightPanel.desktopAttention"),
+			testId: "desktop-attention",
+		};
+	if (unseen)
+		dots.changes = {
+			tone: "accent",
+			pulse: false,
+			title: t("rightPanel.unseenChanges"),
+			testId: "changes-unseen",
+		};
+	return dots;
+}
+
+function Dot({ dot, className }: { dot: TabDot; className: string }) {
+	return (
+		<span
+			data-testid={dot.testId}
+			title={dot.title}
+			className={`h-1.5 w-1.5 rounded-full ${dot.tone === "accent" ? "bg-accent" : "bg-warn"} ${dot.pulse ? "animate-pulse" : ""} ${className}`}
+		/>
+	);
+}
+
+/**
+ * 线程标签条（tablist）：滑动底板、放不下时只留选中项文字、各标签提醒点（`useTabDots`）。
  * 只是标签本身（`flex-1`），所在行与两侧按钮由调用方放。
  * `reserve`：见 `useCompactTabs`。
  */
@@ -246,22 +328,7 @@ export function ThreadTabStrip({
 	reserve?: number;
 }): ReactNode {
 	const { t, i18n } = useTranslation();
-	const orbId = useThread(threadId, (s) => s.thread?.orbId);
-	const attention = useTerminals(threadId, (s) => s.attention);
-	// Desktop：Profile 被别的 orb 占用或装载失败，需要你选择或重试
-	const profileStatus = useOrbOf(threadId)?.desktop?.profile?.status;
-	const deskAttention = profileStatus === "in_use" || profileStatus === "error";
-	// 没有「改动」标签（runner 没有 git）时不做后台检查
-	const unseen = useUnseenChanges(
-		threadId,
-		tabs.includes("changes") ? orbId : undefined,
-		shown === "changes",
-	);
-	// 线程进入 awaiting_input：有待回答的扩展 UI 请求或待批准的计划
-	const awaiting = useThread(
-		threadId,
-		(s) => s.pendingUi.length > 0 || s.planProposal !== null,
-	);
+	const dots = useTabDots(threadId, tabs, shown);
 
 	// 滑动底板：读选中标签的 offsetLeft/offsetWidth（相对可滚动的 tablist，随内容一起滚动）。
 	// 首次定位与尺寸变化（窗口缩放、字体加载）直接到位，只有切换标签时滑动。
@@ -329,33 +396,8 @@ export function ThreadTabStrip({
 				>
 					<Icon name={TAB_ICON[id]} size={14} aria-hidden />
 					{(!compact || shown === id) && t(`rightPanel.tabs.${id}`)}
-					{id === "agent" && awaiting && shown !== "agent" && (
-						<span
-							data-testid="agent-attention"
-							title={t("rightPanel.agentAttention")}
-							className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
-						/>
-					)}
-					{id === "terminal" && attention && shown !== "terminal" && (
-						<span
-							data-testid="terminal-attention"
-							title={t("rightPanel.attention")}
-							className="absolute top-1 right-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-warn"
-						/>
-					)}
-					{id === "desktop" && deskAttention && (
-						<span
-							data-testid="desktop-attention"
-							title={t("rightPanel.desktopAttention")}
-							className="absolute top-1 right-0.5 h-1.5 w-1.5 rounded-full bg-warn"
-						/>
-					)}
-					{id === "changes" && unseen && (
-						<span
-							data-testid="changes-unseen"
-							title={t("rightPanel.unseenChanges")}
-							className="absolute top-1 right-0.5 h-1.5 w-1.5 rounded-full bg-accent"
-						/>
+					{dots[id] && (
+						<Dot dot={dots[id]} className="absolute top-1 right-0.5" />
 					)}
 				</button>
 			))}
@@ -364,8 +406,66 @@ export function ThreadTabStrip({
 }
 
 /**
- * `peer`：窄屏线程页里与转录并列的面板（同级标签带 Agent，选 Agent 回到转录）；不能关闭、不能最大化，
- * 标签条左侧放侧栏开关（转录页头此时隐藏）。
+ * 手机线程页的视图菜单（右上角四宫格按钮）：列出对话与各面板，当前视图打勾；任一别的视图有提醒点时按钮上也亮一个。
+ * 取代 compact 下常驻的标签条，把那一行高度还给转录。
+ */
+export function ThreadViewMenu({
+	threadId,
+	tabs,
+	shown,
+}: {
+	threadId: string;
+	tabs: readonly ThreadTab[];
+	shown: ThreadTab;
+}): ReactNode {
+	const { t } = useTranslation();
+	const dots = useTabDots(threadId, tabs, shown);
+	const pending = tabs.find((id) => id !== shown && dots[id]);
+	const items: MenuItem[] = tabs.map((id) => {
+		const dot = dots[id];
+		return {
+			key: id,
+			icon: TAB_ICON[id],
+			checked: id === shown,
+			attrs: { "data-view": id },
+			label: (
+				<span className="inline-flex items-center gap-2">
+					{t(`rightPanel.tabs.${id}`)}
+					{dot && <Dot dot={dot} className="inline-block" />}
+				</span>
+			),
+			onSelect: () => uiStore.getState().setThreadTab(id),
+		};
+	});
+	return (
+		<Menu
+			items={items}
+			trigger={(p) => (
+				<button
+					type="button"
+					aria-label={t("rightPanel.views")}
+					title={t("rightPanel.views")}
+					data-testid="thread-view-menu"
+					className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+					{...p}
+				>
+					<Icon name="views" size={17} />
+					{pending && (
+						<span
+							aria-hidden
+							data-testid="view-menu-dot"
+							className={`absolute top-1 right-1 h-1.5 w-1.5 rounded-full ring-2 ring-[var(--panel)] ${dots[pending]?.tone === "warn" ? "bg-warn" : "bg-accent"}`}
+						/>
+					)}
+				</button>
+			)}
+		/>
+	);
+}
+
+/**
+ * `peer`：窄屏线程页里与转录并列的面板（同级标签带 Agent，选 Agent 回到转录）；不能关闭、不能最大化。
+ * medium 下标签条左侧放侧栏开关（转录页头此时隐藏）；手机（compact）下这一行是「返回对话 + 面板名 + 视图菜单」。
  * 不传 `onClose` 就没有关闭按钮（双段视口的右段常驻）；最大化只在 expanded 三栏里有。
  */
 export function RightPanel({
@@ -393,6 +493,8 @@ export function RightPanel({
 		if (settled && !tabs.includes(tab)) uiStore.getState().setPanelTab("info");
 	}, [tab, tabs, settled]);
 	const canMax = !peer && bp === "expanded" && !segments;
+	// 手机：不常驻标签条，用右上角视图菜单切换
+	const viewMenu = peer && bp === "compact";
 	const sides = useChromeSides();
 	const chromeLeft = !!chrome?.left && sides.left !== null;
 	const chromeRight = !!chrome?.right && sides.right !== null;
@@ -411,25 +513,50 @@ export function RightPanel({
 				className={`flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 ${peer ? "pl-2 sm:pl-3" : "pl-2.5"}`}
 			>
 				{chromeLeft && <ChromeLead />}
-				{peer && (
-					<IconButton
-						icon="menu"
-						label={t("nav.sidebar")}
-						onClick={() => uiStore.getState().toggleSidebar()}
-					/>
+				{viewMenu ? (
+					<>
+						<IconButton
+							icon="back"
+							label={t("rightPanel.backToAgent")}
+							onClick={() => uiStore.getState().setThreadTab("agent")}
+						/>
+						<h2
+							data-testid="peer-panel-title"
+							className="flex min-w-0 flex-1 items-center gap-2 px-1 font-semibold text-sm"
+						>
+							<Icon
+								name={TAB_ICON[shown]}
+								size={15}
+								aria-hidden
+								className="shrink-0 text-muted"
+							/>
+							<span className="truncate">{t(`rightPanel.tabs.${shown}`)}</span>
+						</h2>
+						<ThreadViewMenu threadId={threadId} tabs={tabs} shown={shown} />
+					</>
+				) : (
+					<>
+						{peer && (
+							<IconButton
+								icon="menu"
+								label={t("nav.sidebar")}
+								onClick={() => uiStore.getState().toggleSidebar()}
+							/>
+						)}
+						<ThreadTabStrip
+							threadId={threadId}
+							tabs={tabs}
+							shown={shown}
+							onSelect={(id) =>
+								peer
+									? uiStore.getState().setThreadTab(id)
+									: id !== "agent" && uiStore.getState().setPanelTab(id)
+							}
+							// 信息标签下不显示「最大化」（IconButton 32px + 间距 4px），按它在时的宽度判断
+							reserve={canMax && shown === "info" ? 36 : 0}
+						/>
+					</>
 				)}
-				<ThreadTabStrip
-					threadId={threadId}
-					tabs={tabs}
-					shown={shown}
-					onSelect={(id) =>
-						peer
-							? uiStore.getState().setThreadTab(id)
-							: id !== "agent" && uiStore.getState().setPanelTab(id)
-					}
-					// 信息标签下不显示「最大化」（IconButton 32px + 间距 4px），按它在时的宽度判断
-					reserve={canMax && shown === "info" ? 36 : 0}
-				/>
 				{canMax && shown !== "info" && (
 					<IconButton
 						icon={max ? "minimize" : "maximize"}

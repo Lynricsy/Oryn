@@ -871,7 +871,9 @@
 		"restore": "Restore panel",
 		"resize": "Resize panel",
 		"unseenChanges": "New changes",
-		"desktopAttention": "Browser profile needs your attention"
+		"desktopAttention": "Browser profile needs your attention",
+		"views": "Views",
+		"backToAgent": "Back to conversation"
 	},
 	"terminal": {
 		"title": "Terminals",
