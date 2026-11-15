@@ -12,10 +12,11 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// fakeLibrary 是测试用的 LibraryFiles：按对话目录给出沙箱路径，记录每次绑定；missing 中的 id 返回 not_found。
+// fakeLibrary 是测试用的 LibraryFiles：按对话目录给出沙箱路径，记录每次绑定与同步；missing 中的 id 返回 not_found。
 type fakeLibrary struct {
 	binds   []fakeBind
 	missing map[string]bool
+	syncs   []string
 }
 
 type fakeBind struct {
@@ -35,6 +36,11 @@ func (l *fakeLibrary) BindTx(_ context.Context, q *db.Queries, threadID string, 
 			Path: "~/library/threads/" + threadID + "/" + id + "/a.txt"})
 	}
 	return out, nil
+}
+
+func (l *fakeLibrary) SyncHost(_ context.Context, orbID string) error {
+	l.syncs = append(l.syncs, orbID)
+	return nil
 }
 
 func frameMessage(t *testing.T, frame string) map[string]any {
@@ -63,6 +69,7 @@ func TestAssistantPromptWithLibraryFiles(t *testing.T) {
 		"</oryn-attachments>", m["message"])
 	require.Len(t, lib.binds, 1)
 	assert.Equal(t, fakeBind{threadID: th.id, ids: []string{"afl_1", "afl_2"}, inTx: true}, lib.binds[0])
+	assert.Equal(t, []string{th.orbID}, lib.syncs, "绑定之后、送达 agent 之前把文件同步进协调宿主")
 
 	// steer / follow_up 同样接受；文件不存在 → not_found，不下发
 	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"follow_up","message":"再看","orynFiles":["afl_3"]}`), noReply))

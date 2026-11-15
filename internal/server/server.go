@@ -72,6 +72,8 @@ type Server struct {
 	Attachments *attachments.Service
 	// Library 是全局助手文件库（M13）。
 	Library *library.Service
+	// LibrarySync 把文件库同步进协调宿主，并从 orb 取回文件（M13）。
+	LibrarySync *library.Syncer
 	// ProjectHomes 是项目级 omp 配置（M12.2）。
 	ProjectHomes *agentcfg.ProjectHomes
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
@@ -182,7 +184,9 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Library, err = library.New(s.Store, cfg.DataDir, s.Attachments); err != nil {
 		return err
 	}
-	s.Threads.SetLibrary(library.ThreadFiles{S: s.Library})
+	// 同步器在 orb 服务接受 link 之前注册 library 流的处理器
+	s.LibrarySync = library.NewSyncer(s.Library, s.Orbs)
+	s.Threads.SetLibrary(library.ThreadFiles{S: s.Library, Sync: s.LibrarySync})
 	// 浏览器 Profile（M8）：在 orb 服务接受 link 之前注册生命周期钩子
 	if s.Desktop, err = desktop.New(desktop.Config{DataDir: cfg.DataDir, Box: box, Valid: s.Auth}, s.Store, s.Orbs, s.Tickets); err != nil {
 		return err
@@ -214,6 +218,7 @@ func (s *Server) init(ctx context.Context) error {
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
+	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Threads.SetCoordinator(s.Coord)
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
@@ -242,6 +247,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
 	go s.Library.Run(runCtx)
+	go s.LibrarySync.Run(runCtx)
 	go s.Notify.Run(runCtx)
 	go s.Host.Run(runCtx)
 	go s.Schedules.Run(runCtx)

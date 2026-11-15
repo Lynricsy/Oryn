@@ -66,13 +66,18 @@ func (r *Runtime) handleThreadSock(ctx context.Context, method string, params js
 	return res, true, err
 }
 
-// ctlForward 经当前 link 发一次 ctl 请求；控制面的 *link.CtlError 原样映射为控制口错误。
+// ctlForward 经当前 link 发一次 ctl 请求（上限 ctlForwardTimeout）；控制面的 *link.CtlError 原样映射为控制口错误。
 func (r *Runtime) ctlForward(ctx context.Context, method apigen.LinkCtlMethod, params any) (json.RawMessage, error) {
+	return r.ctlForwardFor(ctx, method, params, ctlForwardTimeout)
+}
+
+// ctlForwardFor 同 ctlForward，上限为 timeout。
+func (r *Runtime) ctlForwardFor(ctx context.Context, method apigen.LinkCtlMethod, params any, timeout time.Duration) (json.RawMessage, error) {
 	c := r.current()
 	if c == nil {
 		return nil, orbsock.Errorf(orbsock.CodeOffline, "orbd is not connected to the control plane")
 	}
-	cctx, cancel := context.WithTimeout(ctx, ctlForwardTimeout)
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var res json.RawMessage
 	if err := c.ctl.Call(cctx, string(method), params, &res); err != nil {

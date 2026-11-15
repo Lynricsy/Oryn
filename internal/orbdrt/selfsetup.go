@@ -154,6 +154,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		return r.projectScripts(ctx, apigen.MethodProjectScriptsSet, p)
 	case orbsock.MethodDesktopStatus, orbsock.MethodDesktopBrowserStart, orbsock.MethodDesktopBrowserStop:
 		return r.handleDesktopSock(ctx, method)
+	case orbsock.MethodLibraryPut:
+		return r.libraryPut(ctx, params)
 	default:
 		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
 			return res, err
@@ -241,7 +243,7 @@ func (r *Runtime) projectScripts(ctx context.Context, method apigen.LinkCtlMetho
 	return res, nil
 }
 
-// ---- agent 环境说明（扩展）与 oryn-setup 技能 ----
+// ---- agent 环境说明（扩展）与 oryn-setup / oryn-library 技能 ----
 
 func (r *Runtime) extensionPath() string {
 	return filepath.Join(r.home, ".oryn", "core", "extensions", "oryn-orb.ts")
@@ -251,10 +253,14 @@ func (r *Runtime) skillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-setup", "SKILL.md")
 }
 
+func (r *Runtime) librarySkillPath() string {
+	return filepath.Join(r.home, ".agents", "skills", "oryn-library", "SKILL.md")
+}
+
 // writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）；桌面启用时另写给 omp 的
 // 设置覆盖层（地址取 CDP 前门的实际地址）与 openbox 配置，未启用时删除残留的覆盖层。
 func (r *Runtime) writeAgentAssets() error {
-	files := map[string][]byte{r.extensionPath(): orbExtension, r.skillPath(): setupSkill}
+	files := map[string][]byte{r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill}
 	if d := r.desk; d != nil {
 		files[r.desktopOverlayPath()] = desktopOverlay(d.cdpAddr())
 		files[d.rcPath()] = openboxRC

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -103,6 +104,15 @@ type Service struct {
 	dir string
 	att *attachments.Service
 	now func() time.Time
+	// onChange 在文件增删或改 scope 之后调用（Syncer 借它把文件库同步进协调宿主）；nil = 不通知。
+	onChange func()
+}
+
+// changed 通知文件库有变化。
+func (s *Service) changed() {
+	if s.onChange != nil {
+		s.onChange()
+	}
 }
 
 // New 创建文件库服务（确保存储目录存在）；att 供 CopyToAttachment 创建附件。
@@ -127,6 +137,21 @@ func fromRow(r db.AssistantFile) File {
 		ThreadID: deref(r.ThreadID), Source: r.Source, SourceThreadID: deref(r.SourceThreadID),
 		Bound: r.Bound != 0, CreatedAt: time.UnixMilli(r.CreatedAt),
 	}
+}
+
+// API 返回 REST / ctl 的 AssistantFile 表示。
+func (f File) API() apigen.AssistantFile {
+	out := apigen.AssistantFile{
+		ID: f.ID, Name: f.Name, Mime: f.Mime, Size: f.Size, Sha256: f.Sha256,
+		Scope: apigen.AssistantFileScope(f.Scope), Source: apigen.AssistantFileSource(f.Source), CreatedAt: f.CreatedAt.UnixMilli(),
+	}
+	if f.ThreadID != "" {
+		out.ThreadID = &f.ThreadID
+	}
+	if f.SourceThreadID != "" {
+		out.SourceThreadID = &f.SourceThreadID
+	}
+	return out
 }
 
 func deref(p *string) string {
@@ -226,6 +251,7 @@ func (s *Service) create(ctx context.Context, row db.InsertAssistantFileParams, 
 		s.removeFile(row.ID)
 		return File{}, err
 	}
+	s.changed()
 	return fromRow(db.AssistantFile(row)), nil
 }
 
@@ -315,6 +341,7 @@ func (s *Service) SetScope(ctx context.Context, id, scope string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
+	s.changed()
 	return nil
 }
 
@@ -381,15 +408,14 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	s.removeFile(id)
+	s.changed()
 	return nil
 }
 
-// CopyToAttachment 把文件复制成一个绑定到 threadID 的新附件（att_ 行与独立的字节），返回附件 id。
+// CopyToAttachment 把文件复制成一个新附件（att_ 行与独立的字节），返回附件 id。threadID 非空时附件绑定到该线程；
+// 为空时附件尚未绑定，由随后的建线程（threads.CreateParams.Attachments）绑定。
 // 是否允许调用方引用该文件（所属对话 / 共享）由调用方判断。
 func (s *Service) CopyToAttachment(ctx context.Context, id, threadID string) (string, error) {
-	if threadID == "" {
-		return "", fmt.Errorf("%w: thread id is required", ErrInvalid)
-	}
 	rc, f, err := s.Open(ctx, id)
 	if err != nil {
 		return "", err
@@ -437,6 +463,7 @@ func (s *Service) GC(ctx context.Context, now time.Time) {
 		}
 		if n > 0 {
 			s.removeFile(f.ID)
+			s.changed()
 		}
 	}
 	entries, err := os.ReadDir(s.dir)

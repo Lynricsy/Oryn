@@ -117,6 +117,8 @@ type fakeCP struct {
 
 	agents chan *link.Stream
 	blobs  chan *link.Stream
+	// libs 收到 orbd 应 library.fetch 打开的 library 流（M13）。
+	libs   chan *link.Stream
 	egress *streamListener
 
 	// extra 先于内置方法处理 orbd 发来的请求（M9 线程 / 定时方法）；ok=false 表示不处理。
@@ -135,6 +137,7 @@ func newFakeCPWith(t *testing.T, useTLS bool) *fakeCP {
 		foreign: map[string]bool{},
 		agents:  make(chan *link.Stream, 16),
 		blobs:   make(chan *link.Stream, 4),
+		libs:    make(chan *link.Stream, 4),
 		egress:  &streamListener{ch: make(chan net.Conn, 16), done: make(chan struct{})},
 	}
 	cp.token.Store(testToken)
@@ -225,6 +228,8 @@ func (cp *fakeCP) serve(sess *link.Session) {
 			cp.agents <- s
 		case link.StreamBlob:
 			cp.blobs <- s
+		case link.StreamLibrary:
+			cp.libs <- s
 		case link.StreamEgress:
 			cp.egress.ch <- s
 		default:

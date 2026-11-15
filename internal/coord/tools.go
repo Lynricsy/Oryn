@@ -28,7 +28,7 @@ type toolCtx struct {
 func (c toolCtx) inSpace() bool { return c.space != nil }
 
 // HostToolCall 实现 threads.Coordinator：执行宿主工具。结果的 Text 是紧凑 JSON；read_thread / list_threads /
-// list_schedules / get_stats 的结果含线程标题、定时名称等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
+// list_schedules / get_stats / list_files 的结果含线程标题、定时名称、文件名等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
 // 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
@@ -71,6 +71,20 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		v, err = s.toolListProjects(ctx)
 	case ToolGetStats:
 		v, err = s.toolGetStats(ctx, tc)
+	case ToolSaveFile, ToolListFiles, ToolShareFile:
+		// 文件库只属于全局助手（Space 协调者没有这些工具）
+		if c.Kind != threads.KindAssistant {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		switch c.Name {
+		case ToolSaveFile:
+			v, err = s.toolSaveFile(ctx, tc)
+		case ToolListFiles:
+			v, err = s.toolListFiles(ctx, tc)
+		default:
+			v, err = s.toolShareFile(ctx, tc)
+		}
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}
@@ -78,7 +92,8 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats:
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles:
+		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
 	return threads.HostToolResult{Text: jsonText(v), Details: v}
@@ -278,6 +293,8 @@ type createThreadArgs struct {
 	Model         string `json:"model"`
 	ThinkingLevel string `json:"thinkingLevel"`
 	OrbType       string `json:"orbType"`
+	// Files 是要带给新线程的文件库 id（M13 4.4，只有全局助手可用）：逐个复制成附件，随首条提示词投递进新线程的 orb。
+	Files []string `json:"files"`
 }
 
 func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) {
@@ -323,6 +340,9 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 	}
 	if !s.lim.allow(c.ThreadID+"|create_thread", s.cfg.Now(), createThreadRules) {
 		err = errf(CodeRateLimited, "create_thread limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
+		return nil, err
+	}
+	if p.Attachments, err = s.threadAttachments(ctx, c, a.Files); err != nil {
 		return nil, err
 	}
 	// 「建线程 + 登记」持 repMu（契约 C3）：首条提示词带登记代号作标签，回报处理看到的必然是写好的登记

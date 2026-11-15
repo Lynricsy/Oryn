@@ -390,7 +390,7 @@ func TestSpawnPauseDelete(t *testing.T) {
 	e := newEnv(t, nil)
 	succeeded(t, e.runJob("spawn", map[string]any{}), e.h)
 	h := e.hello()
-	assert.Equal(t, []string{"coordinator", "omphome-apply"}, h.Features)
+	assert.Equal(t, []string{"coordinator", "omphome-apply", "library"}, h.Features)
 	assert.Equal(t, "omp/0.0.0-fakeomp", h.AgentVersion)
 	c := e.child()
 	require.NotNil(t, c)
@@ -881,6 +881,7 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(raw), &got))
 	assert.Contains(t, got.Args, "--no-tools")
+	assert.Contains(t, got.Args, "--tools")
 	assert.Contains(t, got.Args, "--config")
 	assert.NotContains(t, got.Args, "-e")
 	// L4：argv 里只有提示词文件的路径，没有正文。
@@ -959,7 +960,7 @@ func fakeLLM(t *testing.T, l net.Listener, reply string) *[]string {
 }
 
 // 真 omp（build/core/<arch>/omp）在沙箱里走完一个回合：模型请求经 egress 流到假模型端，不花真实费用；
-// 宿主工具注册后活动工具只有它（--no-tools 下没有任何内置工具）。
+// 活动工具恰为宿主工具加内置的 read / write（M13：--no-tools --tools read,write）。
 func TestRealOmpTurnInSandbox(t *testing.T) { realOmpTurn(t, false, 0) }
 
 // 同上，固定为没有命名空间的端口限制模式（omp 启动时探测本机端口、解析域名、连 443 都被沙箱拒绝，仍须正常工作）。
@@ -1041,10 +1042,7 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 	for _, tl := range last["data"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	assert.Contains(t, names, "create_thread")
-	for _, banned := range []string{"bash", "read", "write", "edit", "grep", "glob", "find", "eval", "task", "web_search", "github", "lsp", "ast_grep", "ast_edit", "debug"} {
-		assert.NotContains(t, names, banned)
-	}
+	assert.ElementsMatch(t, []string{"create_thread", "read", "write"}, names)
 
 	a.send(map[string]any{"id": "p1", "type": "prompt", "message": "Say pong."})
 	frames := a.until("agent_end", typeIs("agent_end"))

@@ -2,8 +2,11 @@ package threads
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +31,9 @@ type ctlOrbs struct {
 	reqCh chan ctlCall
 	// startErr 非 nil 时 orbd 以它应答 agent.start（ctl 错误原样回给控制面）。
 	startErr error
+	// home 非空时 setup.run 把 ompHome 写进 <home>/.omp/agent/（扮演协调宿主的沙箱 HOME）；setupErr 非 nil 时 setup.run 以它应答。
+	home     string
+	setupErr error
 }
 
 type ctlCall struct {
@@ -43,7 +49,7 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 		c := ctlCall{method: method, params: append(json.RawMessage(nil), params...)}
 		o.mu.Lock()
 		o.calls = append(o.calls, c)
-		startErr := o.startErr
+		startErr, home, setupErr := o.startErr, o.home, o.setupErr
 		o.mu.Unlock()
 		o.reqCh <- c
 		switch method {
@@ -54,6 +60,30 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 			return apigen.LinkCtlAgentStartResult{Pid: 1}, nil
 		case "agent.stop":
 			return apigen.LinkCtlAgentStopResult{}, nil
+		case "setup.run":
+			if setupErr != nil {
+				return nil, setupErr
+			}
+			if home != "" {
+				var p apigen.LinkCtlSetupRunParams
+				if err := json.Unmarshal(params, &p); err != nil {
+					return nil, err
+				}
+				for _, f := range p.OmpHome {
+					b, err := base64.StdEncoding.DecodeString(f.ContentB64)
+					if err != nil {
+						return nil, err
+					}
+					dst := filepath.Join(home, ".omp", "agent", f.Path)
+					if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(dst, b, os.FileMode(f.Mode)); err != nil {
+						return nil, err
+					}
+				}
+			}
+			return apigen.LinkCtlSetupRunResult{Ok: true}, nil
 		}
 		return apigen.LinkCtlOkResult{Ok: true}, nil
 	}})

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/schedule"
@@ -93,6 +94,9 @@ type Service struct {
 	host  HostChecker
 	sched Scheduler
 	lim   *limiter
+	// lib / libHost 是全局助手文件库（M13，SetLibrary 设置）；nil 时文件工具与 orb 内 library.put 不可用。
+	lib     *library.Service
+	libHost LibraryHost
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -121,7 +125,7 @@ type Service struct {
 	afterQuotaCheck func()
 }
 
-// New 创建协调服务，并向 orbs 注册 orb 内的七个 ctl 方法。orbs 为 nil 时不注册（单测）。
+// New 创建协调服务，并向 orbs 注册 orb 内的八个 ctl 方法。orbs 为 nil 时不注册（单测）。
 func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host HostChecker, sched Scheduler) *Service {
 	if cfg.Now == nil {
 		cfg.Now = time.Now

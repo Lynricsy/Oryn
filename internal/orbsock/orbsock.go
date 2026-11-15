@@ -58,6 +58,10 @@ const (
 	MethodScheduleSet    = "schedule.set"
 	MethodScheduleDelete = "schedule.delete"
 	MethodScheduleEnable = "schedule.enable"
+
+	// 文件库（M13）：library.put → ctl library.put（LinkCtlLibraryPutParams → AssistantFile），path 为 orb 内文件的绝对路径。
+	// orbd 在转发期间允许控制面经 library.fetch 取回该路径；文件以「库内共享」存入全局助手文件库。
+	MethodLibraryPut = "library.put"
 )
 
 // 消息类型。

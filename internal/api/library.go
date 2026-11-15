@@ -39,20 +39,6 @@ func writeLibraryErr(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func assistantFileAPI(f library.File) apigen.AssistantFile {
-	out := apigen.AssistantFile{
-		ID: f.ID, Name: f.Name, Mime: f.Mime, Size: f.Size, Sha256: f.Sha256,
-		Scope: apigen.AssistantFileScope(f.Scope), Source: apigen.AssistantFileSource(f.Source), CreatedAt: f.CreatedAt.UnixMilli(),
-	}
-	if f.ThreadID != "" {
-		out.ThreadID = &f.ThreadID
-	}
-	if f.SourceThreadID != "" {
-		out.SourceThreadID = &f.SourceThreadID
-	}
-	return out
-}
-
 // ListAssistantFiles 对应 `GET assistant/files?threadId=&scope=`：只列已随消息发送的文件；threadId 只看该对话
 // 可见的（它自己的与共享的）。
 func (s *Server) ListAssistantFiles(w http.ResponseWriter, r *http.Request, params apigen.ListAssistantFilesParams) {
@@ -74,7 +60,7 @@ func (s *Server) ListAssistantFiles(w http.ResponseWriter, r *http.Request, para
 	}
 	out := apigen.AssistantFileList{Files: make([]apigen.AssistantFile, 0, len(list))}
 	for _, f := range list {
-		out.Files = append(out.Files, assistantFileAPI(f))
+		out.Files = append(out.Files, f.API())
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
@@ -112,7 +98,7 @@ func (s *Server) UploadAssistantFile(w http.ResponseWriter, r *http.Request, par
 		writeLibraryErr(w, r, err)
 		return
 	}
-	WriteJSON(w, http.StatusCreated, assistantFileAPI(f))
+	WriteJSON(w, http.StatusCreated, f.API())
 }
 
 // PatchAssistantFile 对应 `PATCH assistant/files/{id}`：切换可见范围。
@@ -134,7 +120,7 @@ func (s *Server) PatchAssistantFile(w http.ResponseWriter, r *http.Request, id a
 		writeLibraryErr(w, r, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, assistantFileAPI(f))
+	WriteJSON(w, http.StatusOK, f.API())
 }
 
 // DeleteAssistantFile 对应 `DELETE assistant/files/{id}`。

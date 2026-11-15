@@ -199,6 +199,9 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
 	}
 	t.mu.Unlock()
+	if prof != nil && !s.prepareCoordinator(ctx, ctl, t, orbID, prof) {
+		return
+	}
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.AgentStartTimeout)
 	defer cancel()
 	if copyFrom != "" {
@@ -232,6 +235,36 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		return
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
+}
+
+// coordinatorSyncTimeout 是协调线程启动前同步文件库的上限（首次同步可能要推送较多文件）。
+const coordinatorSyncTimeout = 2 * time.Minute
+
+// prepareCoordinator 是协调线程每次 agent.start 之前的两步（M13 4.5 / 4.3）：以 prof.Setup 对协调宿主重跑一次
+// setup.run，把受管的 omp 文件（助手可能用 write 改过）还原；再把文件库同步进宿主。setup.run 失败时线程进入
+// failed 并返回 false（不带着可能被改过的配置启动）；同步失败只记日志（附件路径暂时读不到，不影响对话）。
+func (s *Service) prepareCoordinator(ctx context.Context, ctl *link.Ctl, t *thread, orbID string, prof *AgentProfile) bool {
+	if prof.Setup != nil {
+		sctx, cancel := context.WithTimeout(ctx, s.cfg.AgentStartTimeout)
+		err := ctl.Call(sctx, string(apigen.MethodSetupRun), *prof.Setup, nil)
+		cancel()
+		if err != nil {
+			slog.Warn("threads: 协调宿主还原受管文件失败", "thread", t.id, "orb", orbID, "err", err)
+			if !errors.Is(err, link.ErrCtlClosed) && !errors.Is(err, context.Canceled) {
+				s.markFailed(ctx, t, err)
+			}
+			return false
+		}
+	}
+	if s.lib != nil {
+		sctx, cancel := context.WithTimeout(ctx, coordinatorSyncTimeout)
+		err := s.lib.SyncHost(sctx, orbID)
+		cancel()
+		if err != nil {
+			slog.Warn("threads: 同步文件库到协调宿主失败", "thread", t.id, "orb", orbID, "err", err)
+		}
+	}
+	return true
 }
 
 // markFailed 把线程标为 failed（agent 没能启动）并记下原因，供 Thread.error / 状态事件的 agent_failed 使用。

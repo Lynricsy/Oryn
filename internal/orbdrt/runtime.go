@@ -251,6 +251,9 @@ type Runtime struct {
 	// syncMu 串行化 /sync/prepare（共用仓库里的临时 index 与 refs/oryn/sync/*）。
 	syncMu sync.Mutex
 
+	// lib 是全局助手文件库的同步清单与正在存入的路径（M13，见 library.go）。
+	lib libraryState
+
 	// bins 把 orbd 自己起的子进程解析到可信 PATH 目录里的绝对路径（不经 $HOME 下的 PATH 项）。
 	bins binResolver
 	// httpClient 是对 cfg.URL 的一切请求（link 握手与 runner 的 whoami）所用的 client；nil = http.DefaultClient（系统根）。
@@ -704,7 +707,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 }
 
 // acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，`portal` 流对接本机端口，
-// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。协调宿主不接受任何控制面发起的流。
+// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。协调宿主只接受同步文件库的 `library` 流（M13）。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -716,6 +719,10 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 			return
 		}
 		if r.cfg.Coordinator {
+			if st.Header.T == link.StreamLibrary {
+				go r.serveLibraryPush(st)
+				continue
+			}
 			r.log.Warn("coordinator host refuses streams from the control plane", "t", st.Header.T)
 			_ = st.Close()
 			continue
@@ -764,7 +771,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		features = append(features, "docker")
 	}
 	if r.cfg.Coordinator {
-		features = []string{"coordinator", "omphome-apply"}
+		features = []string{"coordinator", "omphome-apply", "library"}
 	}
 	var runnerInfo *apigen.LinkRunnerInfo
 	if r.runner != nil {
@@ -841,6 +848,21 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 			return nil, ctlErr("failed", "%v", err)
 		}
 		return apigen.LinkCtlOkResult{Ok: true}, nil
+	case string(apigen.MethodLibrarySync):
+		if !r.cfg.Coordinator {
+			return nil, link.ErrMethodNotFound
+		}
+		p, err := decode[apigen.LinkCtlLibrarySyncParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.librarySync(p)
+	case string(apigen.MethodLibraryFetch):
+		p, err := decode[apigen.LinkCtlLibraryFetchParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.libraryFetch(ctx, c, p)
 	case "blob.fetch":
 		p, err := decode[apigen.LinkCtlBlobFetchParams](params)
 		if err != nil {

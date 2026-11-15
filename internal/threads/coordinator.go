@@ -67,6 +67,9 @@ type HostToolResult struct {
 type AgentProfile struct {
 	SystemPrompt string
 	Tools        []apigen.OmpFrame
+	// Setup 非 nil 时，每次 agent.start 之前先以它对协调宿主执行一次 setup.run（M13 4.5）：还原受管的 omp 文件
+	// （models.yml、config.yml），助手在上一次运行里用 write 改过的会被覆盖回来。
+	Setup *apigen.LinkCtlSetupRunParams
 }
 
 // Coordinator 由 internal/coord 实现。

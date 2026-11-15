@@ -17,6 +17,8 @@ const (
 	StreamPortal = "portal"
 	StreamFS     = "fs"
 	StreamDesk   = "desk"
+	// StreamLibrary 是全局助手文件库的字节流（M13）：控制面向协调宿主同步文件，或 orbd 应 library.fetch 回传文件。
+	StreamLibrary = "library"
 )
 
 // MaxHeaderBytes 是流头行（含换行）的上限。
@@ -28,9 +30,13 @@ type StreamHeader struct {
 	T string `json:"t"`
 	// ThreadID：agent / egress 流所属线程。
 	ThreadID string `json:"threadId,omitempty"`
-	// SHA256 / Size：blob 流的内容摘要与字节数。
+	// SHA256 / Size：blob 流的内容摘要与字节数；library 流的字节数（同步方向另带摘要）。
 	SHA256 string `json:"sha256,omitempty"`
 	Size   int64  `json:"size,omitempty"`
+	// ID：library 流回带的 library.fetch 请求 id（M13）。
+	ID string `json:"id,omitempty"`
+	// Path：同步方向的 library 流要写入的沙箱路径（M13）。
+	Path string `json:"path,omitempty"`
 	// Port：portal 流要对接的 orb 内本机端口（M4）。
 	Port int `json:"port,omitempty"`
 	// Raw 是解码时读到的完整流头 JSON（编码时若非空则原样发送，忽略上面的字段）。

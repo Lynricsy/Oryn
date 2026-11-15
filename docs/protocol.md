@@ -752,8 +752,8 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 
 |项|规格位置|语义|
 |---|---|---|
-|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。协调宿主把 `systemPrompt` 原子写到 `<home>/.oryn/coordinator/prompts/<threadId>.md`（0600），argv 只带该路径（omp 对不含换行的 `--system-prompt` 值按文件读取），正文不出现在 `/proc/<pid>/cmdline`。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <提示词文件>`，环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND=sidecar ORYN_THREAD_ID`；`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用旁路文件 + OFD 锁，见 Oryn Core 的 ORYN.md）|
-|hello `features`|`LinkCtlHelloParams.features`|普通 orbd 追加 `threads`（orb 内线程与定时方法）。`coordinator` **只由** `orynd coordinator-host` 上报，此时特性表恰为 `["coordinator"]`，`onRequest` 只认 `setup.run / resume.run / agent.start / agent.stop / shutdown`|
+|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。协调宿主把 `systemPrompt` 原子写到 `<home>/.oryn/coordinator/prompts/<threadId>.md`（0600），argv 只带该路径（omp 对不含换行的 `--system-prompt` 值按文件读取），正文不出现在 `/proc/<pid>/cmdline`。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --tools read,write --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <提示词文件>`（`--tools read,write` 自 M13 起，见「M13：全局助手文件库进协调宿主」），环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND=sidecar ORYN_THREAD_ID`；`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用旁路文件 + OFD 锁，见 Oryn Core 的 ORYN.md）|
+|hello `features`|`LinkCtlHelloParams.features`|普通 orbd 追加 `threads`（orb 内线程与定时方法）。`coordinator` **只由** `orynd coordinator-host` 上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`（后两项自 M13），`onRequest` 只认 `setup.run / resume.run / agent.start / agent.stop / shutdown / omphome.apply / library.sync / library.fetch`|
 |`thread.create`|`LinkCtlThreadCreateParams{threadId, prompt, title?, type?}` → `LinkCtlThreadInfo`|orbd→orynd 请求。`threadId` 一律是**调用方**线程（须属于本 orb、`kind = work`、未归档，否则 `forbidden`）。新线程取调用方的项目与 Space，`parentThreadId` = 调用方，新 orb；首条提示词前加来源头行 `[Oryn message from thread "" (<调用方 id>) — sent by an agent, not typed by the owner]`。限额检查与创建在同一把锁下（并发请求不能越过限额）|
 |`thread.send` / `thread.get`|`LinkCtlThreadSendParams{threadId, target, message, steer?}` → `LinkCtlOkResult`；`LinkCtlThreadGetParams{threadId, target}` → `LinkCtlThreadInfo`|`target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。`send` 以自动化身份投递，正文前加 `[Oryn message from thread "" (<id>) — sent by an agent, not typed by the owner]`（名称恒为空串：标题由 agent 控制，不进头行；界面按 id 取当前标题）|
 |`LinkCtlThreadInfo`|`{id, title, state, settled, lastAssistantText?(≤8000), url}`|`settled` = `state ∈ {idle, awaiting_input, error}`|
@@ -1555,7 +1555,7 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 ### orb link：`omphome.apply`（orynd→orbd 请求）
 
-- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`），runner 不上报且回 `not_supported`。
+- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`，文件库上线后为 `["coordinator", "omphome-apply", "library"]`），runner 不上报且回 `not_supported`。
 - 语义与 `setup.run` 第 1 步相同：写入 `~/.omp/agent/`，按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件不动。带 `projectConfig` 时同时把项目层镜像到 `~/.oryn/project-config/.omp`；缺省时不动项目层（`setup.run` 缺省表示删除项目层，两者不同）。不碰 git、不跑脚本。协调宿主忽略 `projectConfig`。
 - 与 `setup.run` / `resume.run` 的写配置步骤按**到达顺序、按层**生效：每个请求到达时取一个递增编号，写入串行进行；用户层与项目层各记已写入的最大编号，编号更小的请求跳过该层（setup 日志记 `skipped: a newer omp config was applied while waiting (…)`）。所以 `omphome.apply` 不必排在 setup 互斥（含转入后台的 resume）之后，排队中的旧 setup 也不会用旧内容覆盖它；apply 没带的项目层仍由 setup 照常写。
 
@@ -1576,3 +1576,47 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 - reload：会话静止（`session_settled`）、运行状态已同步、agent 就绪且 orb 不在挂起状态时向 agent 发内部命令 `reload_plugins`；否则挂起，在下一次 `session_settled` 时补发。已安排重启的线程不发。
 - 需重启：记在线程上，`GET /api/v1/agent-config/apply-status` 返回 `{threads: [{threadId, kind, title, reasons, scheduled}], pendingReloads}`。`POST /api/v1/agent-config/restart-sessions` 对这些线程置刷新标记：静止后控制面发 `agent.stop`（正在跑的回合不受影响），下一条命令经唤醒路径重新 `agent.start`、以 `open_session` 拉起原会话；返回 `{threadIds}`。agent 已不在运行的线程直接清除标记。
 - agent 退出（主动停止、崩溃后由 orbd 重启、orb 停机）时清除该线程的 reload 与需重启标记：新进程读的就是新配置。标记只在内存里，orynd 重启后为空。
+
+## M13：全局助手文件库进协调宿主
+
+计划步骤 4.3–4.6。规格：`LinkStreamLibrary`、`LinkLibraryReply`、`LinkCtlLibrarySync*`、`LinkCtlLibraryFetch*`、`LinkCtlLibraryPutParams`。
+
+### 协调宿主：沙箱布局与 read / write
+
+- 协调档 omp 在 `--no-tools` 之后加 `--tools read,write`：内置工具恰为 `read` 与 `write`（钉住的 Core 实测 `get_active_tools` 为这两个加宿主工具）。hello 的 `features` 恰为 `["coordinator", "omphome-apply", "library"]`；`library` 表示认识 `library.sync`、`library.fetch` 与同步用的 `library` 流，控制面只对声明了它的协调宿主同步（旧版协调宿主一律跳过）。协调宿主仍拒绝其余一切控制面发起的流。
+- 沙箱路径即 `library.SandboxPath`：共享文件 `~/library/shared/<fileId>/<name>`，对话文件 `~/library/threads/<threadId>/<fileId>/<name>`，同步进来的文件权限 0444。`~/library/out/`（0700）是系统提示规定的唯一可写目录（`write` 本身能写 HOME 里任何地方，受管文件靠启动前还原、库文件靠下次同步按摘要纠正）。
+- 系统提示（只给全局助手）写明三点：可读目录（本对话目录与 `shared/`）、唯一可写目录 `~/library/out/`、用 `save_file` 存库；Space 协调者的系统提示写明不要使用 read / write。
+
+### `library.sync`（orynd→协调宿主）与推送
+
+- 参数 `LinkCtlLibrarySyncParams{files: [{path, size, sha256}]}`，结果 `LinkCtlLibrarySyncResult{missing}`。清单是全部共享文件与属于某个对话的文件（含已上传、尚未随消息发送的）；还不属于任何对话的上传不同步。路径形态不对（不是上面两种、`fileId` 不是 `afl_…`、`name` 不是单个路径段）→ 整个请求 `invalid_params`。
+- 协调宿主删除 `~/library/shared/` 与 `~/library/threads/` 下不在清单里或内容不符的一切（含符号链接、特殊文件与空目录；本进程记下写入或校验过的文件的大小、修改时间与摘要，二者未变时不重算摘要），回报缺失的路径（内容不符的文件已删除，也在其中）；`~/library/out/` 不受影响。
+- 对每个缺失路径，控制面开一条 `library` 流 `{t: "library", path, size, sha256}`，流头之后是 `size` 字节；协调宿主只接受最近一次清单里、大小与摘要都对得上的路径（否则 `invalid_path`），字节数或摘要不符 → `mismatch`，原子落盘后回一行 `LinkLibraryReply{ok, code?, message?}` 并关闭。同步串行进行。
+- 触发：文件库增删、改 scope、回收之后（防抖 200ms；协调宿主未连上则跳过）；每次协调线程 `agent.start` 之前（上限 2 分钟，失败只记日志、照常启动）；助手消息带 `orynFiles` 绑定之后、送达 agent 之前。
+
+### `library.fetch`（orynd→orbd）
+
+- 参数 `LinkCtlLibraryFetchParams{id, path}`，结果 `LinkCtlLibraryFetchResult{size}`。orbd 校验通过后先另开 `library` 流 `{t: "library", id, size}` 发送原始字节，再应答；控制面只接受自己向该 orb 发出、仍在等待的 `id`（应答后 30 秒内流未到视为失败），读到的字节不足 `size` 时不留记录。单文件上限 100MiB。
+- 协调宿主只服务 `~/library/out/` 下的普通文件：`path` 可写成 `~/…`、绝对路径或相对 `~/library/out/` 的路径；含 `..` 段、解析符号链接后越出 `~/library/out/` → `invalid_params`；不存在或不是普通文件 → `not_found`。
+- 普通 orbd 只服务本 orb 正经 `library.put` 存入的那个路径（转发期间登记，结束即撤销），其余 → `not_found`。
+
+### 宿主工具（只给全局助手）
+
+|工具|参数|语义|
+|---|---|---|
+|`save_file`|`{path, name?, shared?}`|控制面先预检路径（含 `..` 段、`~` 开头却不在 `~/library/out/` 之下 → `invalid_request`），再经对话所在协调 orb 的 `library.fetch` 取回字节存库：`source = assistant`、属于本对话、`shared` 为真时 `scope = shared`；`name` 缺省取文件名。结果是文件项 `{id, name, mime, size, scope, source, path, sourceThreadId?, createdAt}`，`path` 为沙箱路径|
+|`list_files`|`{scope?: conversation \| shared}`|本对话的文件与共享文件（不含未发送的上传）；结果 `{files: [文件项]}`，套不可信包裹（文件名可能来自 orb 内 agent）|
+|`share_file`|`{id, shared}`|只能操作本对话的或共享的文件（其余 → `not_found`）；别的对话的或不属于任何对话的共享文件不能改成私有（`forbidden`）。结果为改后的文件项（`path` 随 scope 变化）|
+|`create_thread`|新增 `files: string[]`|每个文件须属于本对话或已共享（否则 `not_found`），逐个复制成尚未绑定的附件（`library.CopyToAttachment(id, "")`），作为 `CreateParams.Attachments` 随新线程的首条提示词持久化为 `orynAttachments`，建线程时绑定到新线程|
+
+Space 协调者的工具表里没有这三个工具，也没有 `create_thread.files`；照样调用 → `unknown_tool` / `forbidden`。
+
+### 启动前还原受管文件
+
+协调线程每次 `agent.start` 之前，控制面先以 `AgentProfile.Setup`（`orbs.CoordinatorSetup`：与 setup 同一份 `SetupSource.Plan`，omp-home 只有 `models.yml` 与 `config.yml`，并以同一计划刷新协调 orb 的出站策略）对协调宿主发一次 `setup.run`——协调宿主只写 omp 文本配置并按清单清理，与 `omphome.apply` 共用按到达顺序的写入——再同步文件库，最后 `agent.start`（重写系统提示与覆盖层）。助手在上一次运行里用 `write` 改过的受管文件因此被还原；`setup.run` 失败时线程进入 `error`，不带着可能被改过的配置启动。残余风险：同一次运行内改过的配置一直生效到下次启动。
+
+### orb 内 `oryn library put`
+
+- `oryn library put <文件> [--name <库内文件名>] [--json]`：只在 orb 内可用（`ORYN_ORB=1` 且没有 `ORYN_API_TOKEN`），调用方线程取 `ORYN_THREAD_ID`；相对路径按当前目录解析，目录或不存在 → 退出码 2。经 `orbd.sock` 方法 `library.put`（参数 `LinkCtlLibraryPutParams{threadId, path, name?}`，结果 `AssistantFile`）。
+- orbd 校验普通文件、≤100MiB 后把路径登记为可取回，转发 ctl `library.put`（orbd→orynd，上限 10 分钟）；控制面校验调用方（属于本 orb、`kind = work`、未归档，否则 `forbidden`；`path` 不是绝对路径 → `invalid_params`），对同一 orb 发 `library.fetch` 取回字节，存为 `scope = shared`、`source = orb`、`sourceThreadId` = 调用方、不属于任何对话——所有助手对话都能读。
+- 技能 `oryn-library` 与 `oryn-setup` 一样写到 `~/.agents/skills/oryn-library/SKILL.md`（orbd 每次启动覆盖）。

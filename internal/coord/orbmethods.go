@@ -24,7 +24,7 @@ const (
 	agentThreadWindow = time.Hour
 )
 
-// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` 经 orbd.sock 转来的七个 ctl 请求。
+// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` 经 orbd.sock 转来的八个 ctl 请求。
 func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestFunc)) {
 	handle(string(apigen.MethodThreadCreate), s.onThreadCreate)
 	handle(string(apigen.MethodThreadSend), s.onThreadSend)
@@ -33,6 +33,7 @@ func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestF
 	handle(string(apigen.MethodSchedulePut), s.onSchedulePut)
 	handle(string(apigen.MethodScheduleDelete), s.onScheduleDelete)
 	handle(string(apigen.MethodScheduleEnable), s.onScheduleEnable)
+	handle(string(apigen.MethodLibraryPut), s.onLibraryPut)
 }
 
 func ctlErr(code, msg string) *link.CtlError { return &link.CtlError{Code: code, Message: msg} }

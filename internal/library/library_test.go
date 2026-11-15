@@ -255,8 +255,14 @@ func TestCopyToAttachment(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CopyToAttachment(ctx, g.ID, "T-404")
 	require.ErrorIs(t, err, ErrThreadNotFound)
-	_, err = s.CopyToAttachment(ctx, g.ID, "")
-	require.ErrorIs(t, err, ErrInvalid)
+	// 不给线程：附件尚未绑定，留给随后的建线程绑定（create_thread{files}）
+	unbound, err := s.CopyToAttachment(ctx, g.ID, "")
+	require.NoError(t, err)
+	urc, ua, err := att.Open(ctx, unbound)
+	require.NoError(t, err)
+	_ = urc.Close()
+	assert.Nil(t, ua.ThreadID)
+	assert.Equal(t, g.Sha256, ua.Sha256)
 	_, err = s.CopyToAttachment(ctx, ids.AssistantFile(), "T-2")
 	require.ErrorIs(t, err, ErrNotFound)
 }

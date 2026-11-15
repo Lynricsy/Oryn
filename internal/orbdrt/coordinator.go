@@ -12,7 +12,8 @@ import (
 
 // M9 协调宿主模式（协调宿主分册 H3）：`orynd coordinator-host` 在沙箱里以 Config.Coordinator 运行本包。
 // 与普通 orb 的区别全部集中在这里的判定与专用实现：link 走继承来的 socketpair（不重连）、
-// 只服务五个 ctl 方法、setup 只落 omp 文本配置、agent 以无工具的协调档启动且环境从零构造。
+// 只服务白名单里的 ctl 方法、setup 只落 omp 文本配置、agent 以协调档启动（内置工具只有 read / write，M13）且环境从零构造。
+// M13 起另接受文件库的 library.sync / library.fetch 与同步用的 library 流（见 library.go）。
 
 // ErrNoRedial 由 Config.Connect 返回，表示 link 不能重建：linkLoop 随即返回，Run 结束。
 var ErrNoRedial = errors.New("orbdrt: link cannot be redialed")
@@ -36,6 +37,7 @@ bash: { direnv: "off" }
 var coordinatorMethods = map[string]bool{
 	"setup.run": true, "resume.run": true, "agent.start": true, "agent.stop": true, "shutdown": true,
 	string(apigen.MethodOmpHomeApply): true,
+	string(apigen.MethodLibrarySync):  true, string(apigen.MethodLibraryFetch): true,
 }
 
 func (r *Runtime) coordinatorDir() string { return filepath.Join(r.home, ".oryn", "coordinator") }
@@ -85,9 +87,10 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if err := writeFileAtomic(promptFile, []byte(*p.SystemPrompt), 0o600); err != nil {
 		return nil, "", nil, ctlErr("failed", "write system prompt: %v", err)
 	}
+	// 内置工具只开 read / write（M13：读文件库、写 ~/library/out/）：--no-tools 先关掉全部，--tools 再精确列出。
 	args = []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir,
-		"--no-tools", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}
 	env = map[string]string{

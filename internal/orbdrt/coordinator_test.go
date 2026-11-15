@@ -76,13 +76,13 @@ func ctlCode(err error) string {
 	return ""
 }
 
-// H3：hello 的特性恰为 ["coordinator", "omphome-apply"]；不在白名单里的 ctl 方法回 method_not_found；不写 orb 扩展与技能。
+// H3：hello 的特性恰为 ["coordinator", "omphome-apply", "library"]；不在白名单里的 ctl 方法回 method_not_found；不写 orb 扩展与技能。
 func TestCoordinatorHelloAndRejectedMethods(t *testing.T) {
 	rt, cp, _, _ := startCoordinator(t)
 	_, raw := cp.waitNotif(t, 0, "hello", nil)
 	var hello apigen.LinkCtlHelloParams
 	require.NoError(t, json.Unmarshal(raw, &hello))
-	assert.Equal(t, []string{"coordinator", "omphome-apply"}, hello.Features)
+	assert.Equal(t, []string{"coordinator", "omphome-apply", "library"}, hello.Features)
 	assert.Equal(t, "test-coord", hello.OrbdVersion)
 
 	for _, m := range []string{"blob.fetch", "fs.copyTree", "fs.move", string(apigen.MethodPortalConfigure), string(apigen.MethodProfileMode)} {
@@ -190,7 +190,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	promptFile := filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread+".md")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread),
-		"--no-tools", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}, rec.Args)
 	// L4：argv 只带路径，不含提示词正文；omp 按文件读到的正文与下发的一致。

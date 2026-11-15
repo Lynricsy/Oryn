@@ -378,6 +378,18 @@ func TestHeaderCodecPort(t *testing.T) {
 	assert.Equal(t, `{"t":"fs"}`+"\n", string(line))
 }
 
+// M13：library 流头带 path / sha256 / size（同步）或 id / size（取回）。
+func TestHeaderCodecLibrary(t *testing.T) {
+	line, err := EncodeHeader(StreamHeader{T: StreamLibrary, Path: "~/library/shared/afl_1/a.txt", Size: 3, SHA256: "ab"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"t":"library","sha256":"ab","size":3,"path":"~/library/shared/afl_1/a.txt"}`+"\n", string(line))
+	h, err := DecodeHeader([]byte(`{"t":"library","id":"lfx_1","size":5}`))
+	require.NoError(t, err)
+	assert.Equal(t, StreamLibrary, h.T)
+	assert.Equal(t, "lfx_1", h.ID)
+	assert.Equal(t, int64(5), h.Size)
+}
+
 // TestPortalStreamReplyThenRaw：orynd（服务端）打开带端口的 portal 流，orbd（客户端）回一行应答后
 // 紧跟原始字节写出；服务端 ReadLine 读出应答行后，Read 从其后继续得到完整原始字节。
 func TestPortalStreamReplyThenRaw(t *testing.T) {

@@ -3,6 +3,7 @@ package threads
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -17,6 +18,9 @@ type LibraryFiles interface {
 	// BindTx 在 q 的事务里把文件绑定到助手对话，按 ids 顺序返回附件块要列出的文件（Path 为协调宿主沙箱内的路径）。
 	// 业务错误为 *Error。
 	BindTx(ctx context.Context, q *db.Queries, threadID string, ids []string) ([]DeliveredAttachment, error)
+	// SyncHost 把文件库同步进协调宿主 orbID（M13 4.3）：协调线程每次 agent.start 之前、助手消息引用文件之后调用，
+	// 让 agent 读得到附件块里的路径。宿主不支持文件库时什么也不做。
+	SyncHost(ctx context.Context, orbID string) error
 }
 
 // SetLibrary 设置文件库；须在服务对外可用之前调用。
@@ -51,6 +55,13 @@ func (s *Service) withLibraryFiles(ctx context.Context, t *thread, frame json.Ra
 	})
 	if err != nil {
 		return nil, asThreadErr(err)
+	}
+	// 消息送达 agent 之前把刚绑定的文件同步进协调宿主（失败不阻止消息：agent 下次启动前还会同步）
+	t.mu.Lock()
+	orbID := t.orbID
+	t.mu.Unlock()
+	if err := s.lib.SyncHost(ctx, orbID); err != nil {
+		slog.Warn("threads: 同步文件库到协调宿主失败", "thread", t.id, "orb", orbID, "err", err)
 	}
 	return out, nil
 }

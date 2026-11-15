@@ -7,6 +7,7 @@
 //	--delay <dur>     流式帧之间的间隔（默认 20ms；也可用 FAKEOMP_DELAY_MS）
 //	-e <path>         扩展文件（与 omp 同名参数，接受并忽略）
 //	--no-tools 等     M9 协调档的开关（--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp，接受并忽略）
+//	--tools <list>    M13 协调档的内置工具白名单（接受并忽略）
 //	--system-prompt   系统提示词（不含换行的值按文件路径读，同 omp 的 resolvePromptInput）；首行 `#dump <HOME 内路径>`
 //	                  时把参数、环境、uid、cwd、解析后的提示词写成 JSON 到该路径
 //
