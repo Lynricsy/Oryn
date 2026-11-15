@@ -121,7 +121,7 @@ orb 里的 agent 有 root（镜像给 `user` 配了免密 sudo），应把 orb �
 
 ### orb 令牌
 
-- orb 用令牌 `oot_…` 建立 link。令牌 = `HMAC(orb-token.key, orbID ":" 代数)`，**每次入队 spawn（创建、唤醒、从冻结停机前的解冻）都会轮换**，旧令牌立即失效，现有 link 同时被关闭。
+- orb 用令牌 `oot_…` 建立 link。令牌 = `HMAC(orb-token.key, orbID ":" 代数)`，**每次入队 spawn（创建、唤醒、从冻结停机前的解冻）都会轮换**，旧令牌立即失效，现有 link 同时被关闭。给 orb 拍快照（发布项目快照、连环境 fork）之后也会轮换一次，快照里残留的令牌随即作废：运行中的 orb 经一次只送令牌的 spawn 拿到新令牌并重连（项目快照的发布阶段会在新 link 上再跑一遍，setup 因完成标记直接跳过）；冻结或停机的 orb 只在库里轮换，下次唤醒时送达。
 - 控制面只在 orb 处于 `spawning / connecting / setting_up / resuming / ready / waking / stopping` 时接受 link；`frozen / stopped / failed / deleting / deleted` 一律拒绝。唤醒只能由 provider 执行 spawn 驱动，泄露的令牌无法把一台冻结或停机的 orb 拉起来，也活不过它的下一次唤醒。
 - 新令牌的下发：新建容器经环境变量 `ORYN_ORB_TOKEN`；已存在的机器写入 `$HOME/.oryn/orb-token`（orbd 每次拨号前优先读它）并向 orbd 发 `SIGHUP` 让它立即重连。docker 驱动对 unpause / start / 已在运行的容器执行 `docker exec -i <orb> sh -c 'umask 077; … cat > $HOME/.oryn/orb-token'`（令牌经 stdin，不进 argv 与任务输出），再 `docker exec <orb> pkill -HUP -x orbd`；从快照新建容器时，镜像里带着源 orb 的令牌文件，驱动在 `docker start` 之前用 `docker cp` 把它换成新 orb 的令牌。
 
@@ -420,7 +420,8 @@ runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器�
 ### 安全边界（先读）
 
 - **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
-- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。
+- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。
+- **助手不碰 runner 线程。** 助手（协调者）的 send_message、read_thread、归档、定时等工具对 runner 线程一律回 `runner_unsupported`：普通 orb 里产出的内容不能经助手转成你机器上的指令。runner 线程只能由你自己发消息。
 - **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
 - runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。
 
@@ -479,7 +480,7 @@ sudo install -D -m 755 build/fc/firecracker build/fc/jailer -t /usr/local/bin/
 sudo install -D -m 644 build/fc/vmlinux build/fc/rootfs.ext4 -t /var/lib/oryn-fc/artifacts/
 ```
 
-Firecracker 与内核源码的版本和 sha256 锁定在 `images/fc/artifacts.lock.json`。**更新根盘要用 `install` 换成新文件，不能原地覆盖**：运行中的 VM 的基础盘是它的硬链接，原地写会改坏这些 VM。换了根盘或内核后，provider 上报的基础镜像身份随之变化，旧的项目快照全部失效。
+Firecracker 与内核源码的版本和 sha256、构建用的容器镜像 digest（内核构建的 Arch 镜像、根盘打包的 `debian:13-slim@sha256:…`）都锁定在 `images/fc/artifacts.lock.json`，构建脚本拒绝没带 digest 的镜像引用。**更新根盘要用 `install` 换成新文件，不能原地覆盖**：运行中的 VM 的基础盘是它的硬链接，原地写会改坏这些 VM。换了根盘或内核后，provider 上报的基础镜像身份随之变化，旧的项目快照全部失效。
 
 ### 网络
 
@@ -493,6 +494,7 @@ sudo systemctl enable --now oryn-fc-net
 
 - guest 发往宿主的流量，只放行到 `172.31.255.1` 的 `ORYN_FC_LINK_PORTS` 端口（默认 `7643`）；
 - guest 之间、guest 到私有网段 / 链路本地 / 环回一律丢弃，出网走 masquerade；
+- 反伪造不靠 sysctl：从 `fc-*` 进来、源地址不在网段内或反向路径查不到本接口的包直接丢弃（宿主 `rp_filter` 设成宽松也照样生效）；`fc-*` 的 IPv6 进出一律丢弃（宿主开了 IPv6 转发也不会把 guest 送进内网）。`oryn-fc-net.sh rules | nft -c -f -` 只打印并校验规则，不改宿主。
 - 有 Docker 时在 `DOCKER-USER` 里追加两条放行，否则 Docker 的 FORWARD 默认丢弃会拦掉 guest 出网。
 
 每台 VM 的 tap 由 provider 建（`/30`、严格反向路径过滤），VM 之间没有共享二层。`oryn-fc-net.service` 要在 orynd 之前启动，因为 orynd 要监听 `172.31.255.1`。
@@ -510,6 +512,7 @@ orb_url: "https://172.31.255.1:7643"
 driver: firecracker
 firecracker:
   disk_gb: 40                                  # 每台 VM 的可写盘（稀疏文件，按实际写入占空间）
+  # uid_base: 2000000000                       # 槽位 n 的 jailer uid/gid = uid_base + n；须避开 subuid/subgid 与已有用户
   limits: { max_vms: 8, max_memory_mb: 32768 } # 超出时 spawn 失败，原因 capacity
   types: { small: {cpus: 2, memory: "4g"}, medium: {cpus: 4, memory: "8g"}, large: {cpus: 8, memory: "16g"} }
   default_type: medium
@@ -523,11 +526,13 @@ sudo install -m 644 deploy/systemd/oryn-provider-fc.service /etc/systemd/system/
 sudo systemctl enable --now oryn-provider-fc
 ```
 
-预检会核对：root、KVM、tun、cgroup v2、产物与状态目录同盘、`oryn-fc` 接口与 nft 表存在、`orb_url` 的端口在放行列表里、网段不与宿主其它接口重叠。
+预检会核对：root、KVM、tun、cgroup v2、产物与状态目录同盘、`oryn-fc` 接口与 nft 表存在、`orb_url` 的端口在放行列表里、网段不与宿主其它接口重叠、槽位 uid/gid 区间 `[uid_base, uid_base+16320)` 不与 `/etc/subuid`、`/etc/subgid` 的任何一段及已有用户 / 组重叠（重叠时列出冲突并建议一个空闲的 `uid_base`；持有重叠 subuid 的本机用户能在自己的 user namespace 里变成槽位 uid，向 jail 里的 firecracker 发信号）。
 
 ### 行为差异
 
 - **冻结**只停 vCPU，内存仍留在宿主进程里，和 `docker pause` 一样占内存；`limits.max_memory_mb` 把冻结的 VM 也算在内。
 - **停机**向 guest 发关机请求，30 秒内不退出就强杀；磁盘和槽位保留，下次唤醒重新开机。
 - **项目快照**是可写盘的稀疏复制（文件系统支持时用 reflink），运行中的 VM 拍快照时先在 guest 里冻结文件系统、暂停 VM、复制、再恢复，前后不到几秒。
-- guest 里的 orbd 作为 PID 1 启动，时间、主机名、DNS 和令牌经 vsock 下发；模型与 git 的密钥仍然不进 VM。
+- guest 里的 orbd 作为 PID 1 启动，时间、主机名、DNS 和令牌经 vsock 下发；模型与 git 的密钥仍然不进 VM。令牌只放在 guest 的 tmpfs `/run/oryn/orb-token`（`$HOME/.oryn/orb-token` 是指向它的链接），可写盘和由它复制出的快照里没有令牌；发布快照或 fork 之后，控制面还会给源 orb 换一次令牌。
+- **串口日志**写在每台 VM jail 里的 4 MiB tmpfs 上（`jail/firecracker/<orb>/root/console/console.log`），写满后 Firecracker 丢弃后续字节、guest 照常运行，所以 provider 停机期间 guest 也写不满宿主磁盘；provider 在跑时每 30 秒把超过 2 MiB 的日志裁到最后 512 KiB，失败任务里带的串口尾部取自这里。
+- **拍快照中途出错**：provider 在冻结 guest 文件系统前留一个 `thaw-pending` 标记，VM 恢复（`Resumed` + 解冻）全部成功才删掉；恢复失败时快照任务失败、不发布。下一次对这台 VM 的 spawn / 冻结 / 快照会先把它恢复好。provider 在 VM 已开机、guest 还没收到启动参数时崩溃，重启后的 spawn 会补发完整的启动请求，不会留下一台没有 orbd 的 VM。

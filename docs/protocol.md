@@ -1243,7 +1243,10 @@ docker:    { pids_limit: 4096 }
   - `worktree.remove`：`LinkCtlWorktreeRemoveParams{dir}` → `LinkCtlWorktreeRemoveResult{ok, branchKept?}`。`dir` 须在登记里（否则 `not_found`）；`git worktree remove`（不带 `--force`，有未提交改动 → `worktree_dirty`，`message` 为 git 的 stderr）；随后 `git branch -d`（不带 `-D`，失败则 `branchKept: true`）；从登记里删掉。
 - `LinkCtlAgentStartParams.cwd`：runner 形态必填，且须等于或位于某个 `--dir` 或已登记的 worktree 之下（按 `EvalSymlinks` 判断，否则 `dir_not_served`）；`sessionDir`、`fs.copyTree`、`fs.move` 的路径须在 `$HOME/.oryn/threads/` 之下。
 - runner 形态不处理的方法回 `not_supported`：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`；`portal` / `desk` 流直接关闭。
-- ctl 错误码新增：`not_supported`、`dir_not_served`、`worktree_dirty`。
+- runner 的 link 上控制面只受理允许清单（M11 审查修复）：请求只有 `entries.cursors`、`entries.append`，其余（`thread.*`、`schedule.*`、`project.scripts.*` 等）回 ctl 错误 `runner_unsupported`，不进处理器；通知只有 `hello`、`agent.status`、`agent.gap`、`terminal.gap`、`entries.reset`、`entries.reset_done`、`metrics.sample`，其余记日志后丢弃。
+- link 鉴权通过后先登记（此后 `Kick` 能找到它），再复核令牌（provider 未停用、哈希未换、orb 未删除且仍接受 link），复核通过才处理 ctl；复核失败的 link 对请求回 `unauthorized` 并关闭。runner 离线定时器与 link 登记在同一把锁下判定，已经开始提交 `stopped` 的定时器会让新 link 等它提交完再处理 hello（随后经 hello 回到 ready）。
+- hello 字段收紧（截断，不拒绝 link）：`features` 保留前 32 个合法项（非空、≤64B、无控制字符）；`runner.dirs` 保留前 64 个合法项（绝对路径、≤4096B、无控制字符），`name` 去控制字符、≤255B；`hostname`、`os`、`arch`、`orbdVersion`、`agentVersion` 去控制字符、按 UTF-8 边界截到 ≤255B。落库、视图与 live features 都用收紧后的值。
+- ctl 错误码新增：`not_supported`、`dir_not_served`、`worktree_dirty`、`runner_unsupported`。
 
 ### orbd 本机 API
 
@@ -1272,7 +1275,7 @@ docker:    { pids_limit: 4096 }
 |code|状态|含义|
 |---|---|---|
 |`runner_offline`|409|runner 不在线（其 orb 为 `stopped`）|
-|`runner_unsupported`|409|runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork|
+|`runner_unsupported`|409|runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork；`createThread` 以 `executor.kind = orb` 指向 runner 的 orb 也回此码（须用 `runner` executor 给出目录）。协调者工具以 runner 线程为目标时回同名工具错误|
 |`dir_not_served`|400（经 orb 文件 / 改动代理时为 orbd 的 403）|目录不在 runner 声明的目录之内|
 |`dir_in_use`|409|目录已是其它未归档线程的工作目录，体为 `DirInUseConflict`|
 |`thread_required`|400|runner 的 orb 的文件 / 改动请求没带 `thread`|
@@ -1281,7 +1284,7 @@ docker:    { pids_limit: 4096 }
 
 ### 存储
 
-`0023_runners.sql`：`orbs` 加 `kind`（`NOT NULL DEFAULT 'orb'`）；新表 `runners(provider_id PK → providers, orb_id UNIQUE → orbs, hostname, os, arch, dirs（RunnerDir[] 的 JSON）, features（string[] 的 JSON）, last_seen_at)`；`threads` 加 `cwd`、`worktree`（`{repo, dir, branch}` 的 JSON）。Down 逆序删表与列。
+`0023_runners.sql`：`orbs` 加 `kind`（`NOT NULL DEFAULT 'orb'`）；新表 `runners(provider_id PK → providers, orb_id UNIQUE → orbs, hostname, os, arch, dirs（RunnerDir[] 的 JSON）, features（string[] 的 JSON）, last_seen_at)`；`threads` 加 `cwd`、`worktree`（`{repo, dir, branch}` 的 JSON）。Down 在丢弃 runner 身份之前先让存量 runner 安全失效：runner 线程的 `orb_id` 置空，runner 的 orb 置 `deleted`，runner 的 provider 停用、令牌哈希换成随机值并改名为 `<原名>#runner-<id>`（腾出原名），然后逆序删表与列；再 Up 后不会出现「活着的普通 orb 挂在 runner provider 上」，原名可以重建 runner。
 
 查询（`queries/runners.sql` 与原文件）：`CreateRunnerProvider`（`driver = 'runner'`）、`RevokeRunnerProvider`（`:execrows`，置 `disabled_at` 并换掉 `token_hash`，只命中未停用的 runner 行）、`CreateRunner`、`GetRunnerByProvider`、`GetRunnerByOrb`、`ListRunners`（连 provider 名与 orb 的状态 / 版本，排除已停用）、`UpdateRunnerHello`、`TouchRunner`、`ListThreadsByOrbCwd`（未归档、`cwd` 精确相等）、`SetThreadWorktree`（NULL 清空）；`GetProviderByTokenHash` 复用于 `ort_` 解析。改动：`CreateOrb` 加可空 `kind`（NULL = `orb`）；`CreateThread` 加 `cwd`、`worktree`；`ListProviders` 排除 `driver = 'runner'`。
 
