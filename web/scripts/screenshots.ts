@@ -624,8 +624,9 @@ function m9Screens(): Screen[] {
 			name: "m9-schedule-thread",
 			prepare: async ({ page }) => {
 				await openThread(page, M9_IDS.scheduledThread);
-				await page.getByRole("button", { name: "更多操作" }).first().click();
-				await page.getByRole("menuitem", { name: "定时…" }).click();
+				await openThreadActions(page);
+				// 宽页头是「定时…」；手机标题菜单里已有定时的线程由「定时」状态行打开
+				await page.getByRole("menuitem", { name: /^定时/ }).first().click();
 				await scheduleDialog(page);
 				await settle(page, 400);
 			},
@@ -761,6 +762,14 @@ async function open(page: Page, path: string, ready: string, ms = 800) {
 /** 打开线程页；等转录与懒加载的高亮 / mermaid / KaTeX。 */
 async function openThread(page: Page, id: string) {
 	await open(page, `/t/${id}`, "[data-testid=transcript]", 1800);
+}
+
+/** 打开线程操作菜单：宽页头点「更多操作」，手机（悬浮页头）点标题胶囊打开标题菜单；两边的菜单项同名。 */
+async function openThreadActions(page: Page) {
+	const more = page.getByRole("button", { name: "更多操作" }).first();
+	if (await more.isVisible().catch(() => false)) await more.click();
+	else await page.getByTestId("thread-title").click();
+	await page.getByRole("menu").first().waitFor({ timeout: 10_000 });
 }
 
 /** 把转录滚到 `frac`（0 顶部，1 底部）处。 */
@@ -1057,8 +1066,7 @@ const SCREENS: Screen[] = [
 		name: "thread-menu",
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await page.getByRole("button", { name: "更多操作" }).first().click();
-			await page.getByRole("menu").waitFor({ timeout: 10_000 });
+			await openThreadActions(page);
 			await settle(page, 400);
 		},
 	},
@@ -1192,7 +1200,12 @@ const SCREENS: Screen[] = [
 		name: "dialog-tree",
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await page.getByRole("button", { name: "会话树", exact: true }).click();
+			const tree = page.getByRole("button", { name: "会话树", exact: true });
+			if (await tree.isVisible().catch(() => false)) await tree.click();
+			else {
+				await openThreadActions(page);
+				await page.getByRole("menuitem", { name: "会话树" }).click();
+			}
 			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
 			await settle(page);
 		},
@@ -1201,7 +1214,7 @@ const SCREENS: Screen[] = [
 		name: "dialog-attachments",
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await page.getByRole("button", { name: "更多操作" }).first().click();
+			await openThreadActions(page);
 			await page.getByRole("menuitem", { name: "附件" }).click();
 			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
 			await settle(page);
@@ -1315,6 +1328,18 @@ const SCREENS: Screen[] = [
 		},
 	},
 	{
+		// 手机：往上翻历史，输入坞收成信息胶囊
+		name: "thread-compact-pill",
+		widths: [390],
+		prepare: async ({ page }) => {
+			await openThread(page, MAIN_THREAD);
+			await page.mouse.move(195, 400);
+			await page.mouse.wheel(0, -600);
+			await page.locator("[data-testid=dock-tray][data-dock=mini]").waitFor();
+			await settle(page, 600);
+		},
+	},
+	{
 		name: "thread-compact-terminal",
 		widths: [390],
 		prepare: async ({ page }) => {
@@ -1333,7 +1358,7 @@ const SCREENS: Screen[] = [
 	}),
 	mobileScreen("mobile-corners-dialog", async ({ page }) => {
 		await openThread(page, MAIN_THREAD);
-		await page.getByRole("button", { name: "更多操作" }).first().click();
+		await openThreadActions(page);
 		await page.getByRole("menuitem", { name: "附件" }).click();
 		await page.getByRole("dialog").waitFor({ timeout: 10_000 });
 		await settle(page);
@@ -1782,7 +1807,7 @@ const SCREENS: Screen[] = [
 		name: "m11b-archive",
 		prepare: async ({ page }) => {
 			await openThread(page, M11B_IDS.worktreeThread);
-			await page.getByRole("button", { name: "更多操作" }).first().click();
+			await openThreadActions(page);
 			await page.getByRole("menuitem", { name: "归档", exact: true }).click();
 			await page.locator("[data-testid=archive-dialog]").waitFor();
 			await settle(page, 400);
@@ -1818,7 +1843,7 @@ const SCREENS: Screen[] = [
 
 /** 线程页「更多操作 → 分享…」。 */
 async function openShareDialog(page: Page) {
-	await page.getByRole("button", { name: "更多操作" }).first().click();
+	await openThreadActions(page);
 	await page.getByRole("menuitem", { name: "分享…" }).click();
 	await page.getByRole("dialog").waitFor({ timeout: 10_000 });
 	await settle(page);
