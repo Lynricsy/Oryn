@@ -12,12 +12,12 @@
 |`make check-gen`|`gen` 后要求 `internal/apigen`、`internal/store/db`、`web/src/api` 无 diff|
 |`make lint-spec`|Redocly 推荐规则集校验（跳过 `operation-4xx-response` 与 `no-unused-components`，原因见 Makefile）|
 
-生成配置：`internal/apigen/cfg.yaml`。要点：`skip-prune`（WS / link / 任务参数 schema 不被 HTTP 操作引用也要生成）、`exclude-tags: [websocket]`（`/api/v1/ws` 与 `/orb/v1/link` 由手写处理器服务）、`name-normalizer: ToCamelCaseWithInitialisms`（Go 字段为 `ThreadID`、`OrbID` 等）。
+生成配置：`internal/apigen/cfg.yaml`。要点：`skip-prune`（WS / link / 任务参数 schema 不被 HTTP 操作引用也要生成）、`exclude-tags: [websocket, orb-link]`（`/api/v1/ws`、`/orb/v1/link` 与 `/orb/v1/whoami` 由手写处理器服务）、`name-normalizer: ToCamelCaseWithInitialisms`（Go 字段为 `ThreadID`、`OrbID` 等）。
 
 ## 通用约定
 
 - 时间：UTC 毫秒整数（`TimestampMs`）。错误体：`Error{code, message}`，每个操作以 `default` 响应描述。
-- 鉴权：Cookie `__Host-oryn_session`（变更类请求另需 `X-Oryn-CSRF: 1`，规格中为 `cookieAuth + csrfHeader` 组合）或 `Authorization: Bearer odt_…`；provider 用 `opv_…`，orb 用 `oot_…`。
+- 鉴权：Cookie `__Host-oryn_session`（变更类请求另需 `X-Oryn-CSRF: 1`，规格中为 `cookieAuth + csrfHeader` 组合）或 `Authorization: Bearer odt_…`；provider 用 `opv_…`，orb 用 `oot_…`，runner 用 `ort_…`（M11b，只用于 `/orb/v1/link` 与 `/orb/v1/whoami`）。
 - 路径参数中的 `/` 编码为 `%2F`：`/api/v1/agent-config/files/{path}`、`/api/v1/secrets/{name}`（chi 按 RawPath 路由，生成代码自动解码，见 `internal/apigen/apigen_test.go`）。
 - omp RPC 命令与帧对控制面不透明：`OmpFrame`（任意对象），权威类型在 agent 仓库。
 
@@ -1205,7 +1205,7 @@ orb link（C2）：
 - `LinkCtlSetupRunParams.deferResume?: boolean`：true 时 orbd 只跑 setup（clone、`repo.update`、setup 脚本），不跑 resume 脚本，也不启动受管服务；控制面随后单独调 `resume.run`。控制面只在 hello 含 `setup-defer-resume`、且本次可能发布项目快照时置位，所以快照里只留 setup 的产物。`resume.run` 忽略此字段。
 - `LinkCtlSetupRunResult` 与 `LinkCtlSetupResultParams` 增加 `setupChanged?: boolean`：本次 `repo.update` 前后，`.oryn/setup`、`.agents/setup`、`.oryn/services.yaml`、`.amp/services.yaml` 任一有变化（内容、可执行位或符号链接目标），或者旧 HEAD 不是新基线的祖先（浅克隆会先多 fetch 一次历史再判断，仍判断不了按不是祖先算），就为 true。没有更新、fetch 失败或全新 clone 时为 false。为 true 时控制面不以来源快照为父发布，把来源快照退役（原因 `setup_changed`）。
 - `LinkCtlHelloParams.features` 新增 `setup-defer-resume`：orbd 认识 `deferResume`，结果里会给 `setupChanged`。
-- `JobResult.snapshotUsed` 缺省（未知）时，控制面按「用了快照」处理；只有 orb 的首次 spawn 明确报 false，才清空 `snapshot_of` 并把来源快照记为 `image_missing`。dispatch 脚本的 `ORYN_SNAPSHOT_USED=` 行见 `docs/deploy.md`。
+- `JobResult.snapshotUsed` 只有明确为 true 时，控制面才保留 orb 的 `snapshot_of`。首次 spawn 报 false：清空 `snapshot_of`，来源快照记为 `image_missing`，这台 orb 可以开新血统。缺省（未知）：同样清空 `snapshot_of`，但快照不退役，并在 orb 事件里记 `snapshotUsedUnknown`，这台 orb 不发布任何新快照。dispatch 脚本的 `ORYN_SNAPSHOT_USED=` 行见 `docs/deploy.md`。
 - 环境变量 `ORYN_ORB_CA_PEM` 为空或只含空白时视为未设置；内容无法解析时 `orbd run` 以退出码 1 退出。设置了 CA 但 `ORYN_URL` 不是 https 时只打 Warn。
 
 配置：
@@ -1220,6 +1220,96 @@ docker:    { pids_limit: 4096 }
 
 - `orb_tls.listen`：orb link 专用的 TLS 监听地址，缺省为空（不开）。每项都是 `host:port`，host 必须是 IP，端口在 1–65535 之间。这些 IP 总会写进服务端证书。监听只放行 `/orb/v1/*`。旧 orbd、旧 orb 仍走原来的明文监听，重建 orb 后才受保护。
 - `orb_tls.hosts`：证书里额外的 SAN，每项是 IP 或主机名（不带端口、不带通配）。
-- `snapshots.max_snapshot_gb`：单个快照相对基础镜像的大小上限，缺省 10，校验 1 ≤ 值 ≤ `max_total_gb`。超出时快照直接退役删除（原因 `quota`），不会挤掉别的快照。
+- `snapshots.max_snapshot_gb`：单个快照相对基础镜像的大小上限，缺省取 10 与 `max_total_gb` 中较小的一个；显式值需满足 1 ≤ 值 ≤ `max_total_gb`。超出时快照直接退役删除（原因 `quota`），不会挤掉别的快照。
 - `docker.pids_limit`：所有类型 orb 的 `docker run --pids-limit`，缺省 4096，0 表示不限，负数加载报错。
 - `ProjectSnapshot.retireReason` 新增 `setup_changed`；`quota` 也用于单个快照超出 `max_snapshot_gb`。
+
+## M11b：runner 与 Firecracker
+
+两件事：**runner**（用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，作为一台常驻的执行位置；agent 用那台机器自己的 `~/.omp/agent` 与 git 凭据，控制面的密钥不下发）与 **Firecracker provider**（`driver: firecracker`，每个 orb 一台 microVM；对控制面而言只是一种新的 provider 驱动，任务协议不变）。
+
+### 令牌与 whoami
+
+- runner 令牌前缀 `ort_`（`ids.RunnerToken()`，格式同其它令牌）；库里只存哈希（`providers.token_hash`）。
+- `GET /orb/v1/whoami`（`orbWhoami`，tag `orb-link`，挂在 `/orb/v1/link` 旁，由手写处理器服务，不进 `ServerInterface`）：`Authorization: Bearer oot_… | ort_…` → `200 OrbWhoami{orbId, kind: orb | runner}`；令牌无效、已吊销或其 orb 已删除 → 401 `unauthorized`。runner 形态的 orbd 在拨 link 之前用它得知自己的 orb id。
+- `/orb/v1/link` 同样接受 `ort_…`（安全方案 `runnerBearer`），对应 runner 的常驻 orb；该 orb 的 `egress` 流直接关闭。
+
+### orb link（C2）
+
+- `LinkCtlHelloParams.runner?: LinkRunnerInfo{hostname, dirs: RunnerDir[]}`，只由 runner 形态的 orbd 上报；`RunnerDir{path（解析符号链接后的绝对路径）, name（最后一段）, git（目录本身含 .git）}`。
+- `LinkCtlHelloParams.features` 新增 `terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）与 `metrics`（上报 `metrics.sample`）。runner 上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
+- 新方法（orynd→orbd 请求，只有 runner 形态接受，其它 orbd 回 `not_supported`）：
+  - `worktree.add`：`LinkCtlWorktreeAddParams{repo, name}` → `LinkCtlWorktreeAddResult{dir, branch}`。`repo` 须在声明的目录内（否则 `dir_not_served`）且含 `.git`；`name` 须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`（否则 `invalid_params`）。先 `git -C repo fetch --quiet`（30 秒，失败忽略）；目录 = `<repo 的父目录>/<repo 名>-<name>`，目录或分支已存在则依次试 `-2`、`-3`…；`git worktree add -b <分支> <目录>`，登记到 `$HOME/.oryn/orbd/worktrees.json`。git 失败 → `failed`（`message` 为 stderr）。
+  - `worktree.remove`：`LinkCtlWorktreeRemoveParams{dir}` → `LinkCtlWorktreeRemoveResult{ok, branchKept?}`。`dir` 须在登记里（否则 `not_found`）；`git worktree remove`（不带 `--force`，有未提交改动 → `worktree_dirty`，`message` 为 git 的 stderr）；随后 `git branch -d`（不带 `-D`，失败则 `branchKept: true`）；从登记里删掉。
+- `LinkCtlAgentStartParams.cwd`：runner 形态必填，且须等于或位于某个 `--dir` 或已登记的 worktree 之下（按 `EvalSymlinks` 判断，否则 `dir_not_served`）；`sessionDir`、`fs.copyTree`、`fs.move` 的路径须在 `$HOME/.oryn/threads/` 之下。
+- runner 形态不处理的方法回 `not_supported`：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`；`portal` / `desk` 流直接关闭。
+- ctl 错误码新增：`not_supported`、`dir_not_served`、`worktree_dirty`。
+
+### orbd 本机 API
+
+- 请求头 `X-Oryn-Workdir`：控制面经 `fs` 流转发文件 / 改动请求时，若请求带 `thread` 且该线程有 `cwd`，就以此头把工作目录转给 orbd。runner 形态必填：缺失 → 400 `workdir_required`；不在 `--dir` 或已登记 worktree 之内 → 403 `dir_not_served`；否则路径范围（`userPath` 等）、`/fs/roots` 与 git 面板的缺省根都改为该目录（`..` 与符号链接逃逸被拒）。普通 orb 不变（范围仍是 `$HOME`）。`.oryn` 的写保护仍按真实 `$HOME`。
+- runner 形态：`/sync/*`、`/services/*` 回 404。
+
+### REST（C3）
+
+|方法与路径|operationId|说明|
+|---|---|---|
+|`GET /api/v1/runners`|`listRunners`|`RunnerList{runners}`，按名称排序，不含已删除|
+|`POST /api/v1/runners`|`createRunner`|`RunnerCreate{name}`（与 provider 名共用唯一约束，重名 409 `conflict`）→ 201 `RunnerCreated{runner, token}`；`ort_` 令牌只出现这一次；新 runner 的 orb 为 `stopped`|
+|`DELETE /api/v1/runners/{id}`|`deleteRunner`|204；令牌立即失效、orb 进入 `deleted`，线程保留转录（`orbId` 置空）|
+|`POST /api/v1/threads/{id}/worktree/remove`|`removeThreadWorktree`|204；经 ctl `worktree.remove`，成功后清空线程的 `worktree`。线程没有 worktree → 409 `conflict`；runner 不在线 → 409 `runner_offline`；有未提交改动 → 409 `worktree_dirty`|
+
+- 模型：`Runner{id: ProviderId, name, online（其 orb 为 ready）, orbId, hostname?, os?, arch?, dirs: RunnerDir[], features: string[], orbdVersion?, agentVersion?, createdAt, lastSeenAt?}`。
+- `ThreadExecutor` 的 `oneOf` 与 discriminator 增加 `runner`：`ThreadExecutorRunner{kind: "runner", runnerId: ProviderId, dir, worktree?: ThreadExecutorRunnerWorktree{name}, shareDir?: boolean}`。`createThread` 走 runner 时：runner 不在线 → 409 `runner_offline`；`dir` 须是绝对路径且等于或位于 runner 声明的某个目录之下，否则 400 `dir_not_served`；没要 worktree、没给 `shareDir`、且已有未归档线程以该目录为 `cwd` → 409 `dir_in_use`（体为 `DirInUseConflict{code: "dir_in_use", message, threadIds}`；`createThread` 的 409 体按 `code` 判别为 `ProfileInUseConflict | DirInUseConflict`）；建 worktree 失败 → 400 `worktree_failed`；非空 `browserProfileId` → 400 `invalid`。
+- `Thread.cwd?`（runner 线程的工作目录）、`Thread.worktree?: ThreadWorktree{repo, dir, branch}`（Oryn 建的 worktree；没有或已移除则省略）。
+- `Orb.kind?: OrbKind`（`orb | runner`，省略 = `orb`）、`Orb.features?: string[]`（有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略）。客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 行为。
+- `/api/v1/orbs/{id}/fs/*` 与 `/git/*` 各端点增加可选查询参数 `thread`（`ThreadId`，`OrbThreadQuery`）：须是该 orb 上的线程（否则 400 `invalid_request`）；线程有 `cwd` 时控制面加请求头 `X-Oryn-Workdir`。runner 的 orb 必须带（否则 400 `thread_required`）。`publishOrbFile` 不另设该参数，范围取 `threadId` 线程的工作目录。
+- runner 的 orb 上：`POST orbs/{id}/pause`、`POST orbs/{id}/resume`、`DELETE orbs/{id}` → 409 `runner_unsupported`；`forkThread` 只能 `env: "share"`（子线程继承 `cwd`、不继承 `worktree`），`env: "copy"` → 409 `runner_unsupported`。
+- `ProviderDriver` 增加 `firecracker` 与 `runner`（Go 常量 `Firecracker`、`ProviderDriverRunner`——`Runner` 已是 REST 模型名）。`runner` 是 runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程），不出现在 `listProviders` 中，也不参与「唯一 provider」兜底。
+
+错误码（HTTP 状态）：
+
+|code|状态|含义|
+|---|---|---|
+|`runner_offline`|409|runner 不在线（其 orb 为 `stopped`）|
+|`runner_unsupported`|409|runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork|
+|`dir_not_served`|400（经 orb 文件 / 改动代理时为 orbd 的 403）|目录不在 runner 声明的目录之内|
+|`dir_in_use`|409|目录已是其它未归档线程的工作目录，体为 `DirInUseConflict`|
+|`thread_required`|400|runner 的 orb 的文件 / 改动请求没带 `thread`|
+|`worktree_failed`|400|`worktree.add` 失败|
+|`worktree_dirty`|409|`worktree.remove` 时有未提交改动|
+
+### 存储
+
+`0023_runners.sql`：`orbs` 加 `kind`（`NOT NULL DEFAULT 'orb'`）；新表 `runners(provider_id PK → providers, orb_id UNIQUE → orbs, hostname, os, arch, dirs（RunnerDir[] 的 JSON）, features（string[] 的 JSON）, last_seen_at)`；`threads` 加 `cwd`、`worktree`（`{repo, dir, branch}` 的 JSON）。Down 逆序删表与列。
+
+查询（`queries/runners.sql` 与原文件）：`CreateRunnerProvider`（`driver = 'runner'`）、`RevokeRunnerProvider`（`:execrows`，置 `disabled_at` 并换掉 `token_hash`，只命中未停用的 runner 行）、`CreateRunner`、`GetRunnerByProvider`、`GetRunnerByOrb`、`ListRunners`（连 provider 名与 orb 的状态 / 版本，排除已停用）、`UpdateRunnerHello`、`TouchRunner`、`ListThreadsByOrbCwd`（未归档、`cwd` 精确相等）、`SetThreadWorktree`（NULL 清空）；`GetProviderByTokenHash` 复用于 `ort_` 解析。改动：`CreateOrb` 加可空 `kind`（NULL = `orb`）；`CreateThread` 加 `cwd`、`worktree`；`ListProviders` 排除 `driver = 'runner'`。
+
+### 配置
+
+`provider.yaml` 的 `driver` 增加 `firecracker`；`driver: runner` 加载报错（runner 不经 provider 进程）。键与默认值：
+
+```yaml
+driver: firecracker
+firecracker:
+  bin: "/usr/local/bin/firecracker"
+  jailer: "/usr/local/bin/jailer"
+  kernel: "/var/lib/oryn-fc/artifacts/vmlinux"
+  rootfs: "/var/lib/oryn-fc/artifacts/rootfs.ext4"
+  state_dir: "/var/lib/oryn-fc"
+  disk_gb: 40
+  uid_base: 200000
+  network: { cidr: "172.31.0.0/16", host_addr: "172.31.255.1", dns: ["1.1.1.1", "1.0.0.1"] }
+  limits: { max_vms: 8, max_memory_mb: 32768 }
+  types: { small: {cpus: 2, memory: "4g"}, medium: {cpus: 4, memory: "8g"}, large: {cpus: 8, memory: "16g"} }
+  default_type: medium
+```
+
+只在 `driver: firecracker` 时校验：各路径为非空绝对路径；`disk_gb ≥ 8`；`uid_base ≥ 1`；`network.cidr` 是 IPv4 /16（主机位为 0）；`host_addr` 在其最后一个 /24 内；`dns` 至少一个且都是 IP；`limits.max_vms` 在 1 与槽位数（16320）之间、`limits.max_memory_mb ≥ 1`；`types.<name>.cpus` 为正整数（小数报错）、`memory` 为带 `m / g / t` 单位的正整数；`default_type` 在 `types` 中。写了 `types` 就整表替换默认类型表。
+
+### fcguest（Firecracker 宿主 ↔ guest，`internal/fcguest`）
+
+- guest 内作 PID 1 的 orbd（guest-init）在 vsock 端口 `fcguest.Port = 5005` 上监听。宿主经 Firecracker 的 vsock unix socket（jail 里的 `v.sock`）连入：写 `CONNECT 5005\n`，读到 `OK <n>\n` 后收发（`fcguest.Handshake`；`fcguest.Call` 包含拨号、握手、一问一答，受 ctx 约束）。
+- 一条连接一问一答；每个方向一行 JSON，以 `\n` 结尾，不含换行至多 `MaxLine = 64KiB`（超出读写都报 `ErrLineTooLong`）。
+- `Request{op, url?, orbId?, token?, dns?, nowMs?, graceSeconds?}`，`op`：`start`（对时、`sethostname(orbId)`、写 hosts / resolv.conf / 令牌文件、拉起 `orbd run`；已在运行时等同 `token`）、`token`（对时、重写令牌、SIGHUP orbd）、`sync`、`fsfreeze` / `fsthaw`（对可写盘 `FIFREEZE` / `FITHAW`，冻结后 120 秒内没等到 `fsthaw` 自行解冻）、`shutdown`（SIGTERM orbd，至多等 `graceSeconds`，杀掉其余进程、sync，应答后重启使 Firecracker 退出）、`ping`。
+- `Response{ok, error?}`；`ok=false` 时 `Call` 返回 `*fcguest.RemoteError{Op, Msg}`。

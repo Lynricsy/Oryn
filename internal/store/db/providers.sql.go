@@ -199,9 +199,11 @@ func (q *Queries) GetProviderByTokenHash(ctx context.Context, tokenHash string) 
 }
 
 const listProviders = `-- name: ListProviders :many
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers ORDER BY name
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE driver != 'runner' ORDER BY name
 `
 
+// Runner providers (driver = 'runner', M11b) are listed by ListRunners, not here: this feeds GET /providers and
+// the "only one provider" fallback of resolveProvider.
 func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := q.db.QueryContext(ctx, listProviders)
 	if err != nil {

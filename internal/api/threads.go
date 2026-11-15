@@ -168,6 +168,9 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			p.OrbID = e.OrbID
+		case apigen.ThreadExecutorRunner:
+			writeRunnersNotImplemented(w)
+			return
 		}
 	}
 	t, err := svc.Create(r.Context(), p)

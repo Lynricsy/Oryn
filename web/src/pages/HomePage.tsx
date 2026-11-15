@@ -275,7 +275,7 @@ export function HomePage(): ReactNode {
 	const executorText: PillText =
 		executor.kind === "orb"
 			? { label: existingOrbLabel, main: existingOrbLabel }
-			: executor.provider
+			: executor.kind === "new_orb" && executor.provider
 				? {
 						label: `${executor.provider}${executor.type ? ` · ${executor.type}` : ""}`,
 						main: executor.provider,

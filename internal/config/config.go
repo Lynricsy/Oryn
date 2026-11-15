@@ -118,14 +118,24 @@ type Snapshots struct {
 	// MaxTotalGB 是每个 provider 上项目快照（相对基础镜像）合计占用的上限。
 	MaxTotalGB int `yaml:"max_total_gb"`
 	// MaxSnapshotGB 是单个快照（相对基础镜像）的大小上限；超出即退役删除，不挤占其它快照。
+	// 0 = 未设置：取 min(DefaultMaxSnapshotGB, MaxTotalGB)，见 MaxSnapshotBytes。
 	MaxSnapshotGB int `yaml:"max_snapshot_gb"`
 }
 
 // MaxTotalBytes 返回 max_total_gb 换算的字节数。
 func (s Snapshots) MaxTotalBytes() int64 { return int64(s.MaxTotalGB) << 30 }
 
-// MaxSnapshotBytes 返回 max_snapshot_gb 换算的字节数。
-func (s Snapshots) MaxSnapshotBytes() int64 { return int64(s.MaxSnapshotGB) << 30 }
+// DefaultMaxSnapshotGB 是 max_snapshot_gb 未设置时的单快照上限（再受 max_total_gb 限制）。
+const DefaultMaxSnapshotGB = 10
+
+// MaxSnapshotBytes 返回单快照上限的字节数：max_snapshot_gb 为 0（未设置）时取 min(10, max_total_gb) GiB。
+func (s Snapshots) MaxSnapshotBytes() int64 {
+	g := s.MaxSnapshotGB
+	if g == 0 {
+		g = min(DefaultMaxSnapshotGB, s.MaxTotalGB)
+	}
+	return int64(g) << 30
+}
 
 // OrbTLS 是 orb link 专用的 TLS 监听（M11a 审查修复）；Listen 为空即不开。
 type OrbTLS struct {
@@ -234,12 +244,11 @@ func DefaultOrynd() Orynd {
 			Events:  Duration(8760 * time.Hour),
 		}},
 		Snapshots: Snapshots{
-			Enabled:       true,
-			MaxAge:        Duration(72 * time.Hour),
-			MaxDepth:      16,
-			MinSetup:      Duration(10 * time.Second),
-			MaxTotalGB:    40,
-			MaxSnapshotGB: 10,
+			Enabled:    true,
+			MaxAge:     Duration(72 * time.Hour),
+			MaxDepth:   16,
+			MinSetup:   Duration(10 * time.Second),
+			MaxTotalGB: 40,
 		},
 		Pool: Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
 	}
@@ -339,8 +348,8 @@ func (c Orynd) Validate() error {
 	if c.Snapshots.MaxTotalGB < 1 {
 		errs = append(errs, fmt.Errorf("snapshots.max_total_gb %d 至少为 1", c.Snapshots.MaxTotalGB))
 	}
-	if g := c.Snapshots.MaxSnapshotGB; g < 1 || g > max(c.Snapshots.MaxTotalGB, 1) {
-		errs = append(errs, fmt.Errorf("snapshots.max_snapshot_gb %d 必须在 1 与 snapshots.max_total_gb（%d）之间", g, c.Snapshots.MaxTotalGB))
+	if g := c.Snapshots.MaxSnapshotGB; g < 0 || g > max(c.Snapshots.MaxTotalGB, 1) {
+		errs = append(errs, fmt.Errorf("snapshots.max_snapshot_gb %d 必须在 1 与 snapshots.max_total_gb（%d）之间（0 = 自动）", g, c.Snapshots.MaxTotalGB))
 	}
 	if n := c.Pool.MaxTotal; n < 0 || n > 16 {
 		errs = append(errs, fmt.Errorf("pool.max_total %d 必须在 0–16 之间（0 = 关闭预热池）", n))
@@ -428,12 +437,13 @@ type Dispatch struct {
 
 // Provider 对应 /etc/oryn/provider.yaml。
 type Provider struct {
-	URL       string   `yaml:"url"`
-	TokenFile string   `yaml:"token_file"`
-	OrbURL    string   `yaml:"orb_url"`
-	Driver    string   `yaml:"driver"`
-	Docker    Docker   `yaml:"docker"`
-	Dispatch  Dispatch `yaml:"dispatch"`
+	URL         string      `yaml:"url"`
+	TokenFile   string      `yaml:"token_file"`
+	OrbURL      string      `yaml:"orb_url"`
+	Driver      string      `yaml:"driver"`
+	Docker      Docker      `yaml:"docker"`
+	Dispatch    Dispatch    `yaml:"dispatch"`
+	Firecracker Firecracker `yaml:"firecracker"`
 }
 
 // DefaultDockerTypes 是默认 orb 规格。
@@ -447,12 +457,19 @@ func DefaultDockerTypes() map[string]DockerType {
 
 // LoadProvider 读取 provider 配置并补默认值。
 func LoadProvider(path string) (Provider, error) {
-	c := Provider{Driver: "docker", Docker: Docker{Image: "oryn-orb:dev", DefaultType: "medium", PidsLimit: DefaultPidsLimit}}
+	c := Provider{
+		Driver:      "docker",
+		Docker:      Docker{Image: "oryn-orb:dev", DefaultType: "medium", PidsLimit: DefaultPidsLimit},
+		Firecracker: DefaultFirecracker(),
+	}
 	if err := decodeStrict(path, &c); err != nil {
 		return c, err
 	}
 	if len(c.Docker.Types) == 0 {
 		c.Docker.Types = DefaultDockerTypes()
+	}
+	if len(c.Firecracker.Types) == 0 {
+		c.Firecracker.Types = DefaultFirecrackerTypes()
 	}
 	if c.OrbURL == "" {
 		c.OrbURL = c.URL
@@ -478,6 +495,10 @@ func LoadProvider(path string) (Provider, error) {
 			errs = append(errs, errors.New("driver=dispatch 时 dispatch.script 必填"))
 		}
 	case "process":
+	case "firecracker":
+		errs = append(errs, c.Firecracker.validate()...)
+	case "runner":
+		errs = append(errs, errors.New(`driver "runner" 无效：runner 不经 provider 进程，在那台机器上以 orbd run --runner 接入`))
 	default:
 		errs = append(errs, fmt.Errorf("driver %q 无效", c.Driver))
 	}

@@ -24,7 +24,7 @@ var m2Tables = []string{
 	"attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
-	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "schedule_runs", "schedules",
+	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "runners", "schedule_runs", "schedules",
 	"secrets", "spaces", "stats_state", "thread_commits", "thread_labels", "thread_reports", "thread_share_entries",
 	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",
 }

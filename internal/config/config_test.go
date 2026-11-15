@@ -152,10 +152,13 @@ func TestStatsRetention(t *testing.T) {
 // M11a：snapshots / pool 的默认值、校验与 YAML 读取（未写的键保持默认）。
 func TestSnapshotsAndPool(t *testing.T) {
 	d := DefaultOrynd()
-	assert.Equal(t, Snapshots{Enabled: true, MaxAge: Duration(72 * time.Hour), MaxDepth: 16, MinSetup: Duration(10 * time.Second), MaxTotalGB: 40, MaxSnapshotGB: 10}, d.Snapshots)
+	assert.Equal(t, Snapshots{Enabled: true, MaxAge: Duration(72 * time.Hour), MaxDepth: 16, MinSetup: Duration(10 * time.Second), MaxTotalGB: 40}, d.Snapshots,
+		"max_snapshot_gb 缺省 0 = 未设置")
 	assert.Equal(t, Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)}, d.Pool)
 	assert.Equal(t, int64(40)<<30, d.Snapshots.MaxTotalBytes())
-	assert.Equal(t, int64(10)<<30, d.Snapshots.MaxSnapshotBytes())
+	assert.Equal(t, int64(10)<<30, d.Snapshots.MaxSnapshotBytes(), "未设置时取 min(10, max_total_gb)")
+	assert.Equal(t, int64(3)<<30, Snapshots{MaxTotalGB: 3}.MaxSnapshotBytes(), "max_total_gb 小于 10 时取 max_total_gb")
+	assert.Equal(t, int64(7)<<30, Snapshots{MaxTotalGB: 3, MaxSnapshotGB: 7}.MaxSnapshotBytes(), "显式值原样换算")
 
 	base := func() Orynd {
 		c := DefaultOrynd()
@@ -168,7 +171,6 @@ func TestSnapshotsAndPool(t *testing.T) {
 		"snapshots.max_depth 为 0":               func(c *Orynd) { c.Snapshots.MaxDepth = 0 },
 		"snapshots.max_depth 超 64":              func(c *Orynd) { c.Snapshots.MaxDepth = 65 },
 		"snapshots.max_total_gb 为 0":            func(c *Orynd) { c.Snapshots.MaxTotalGB = 0 },
-		"snapshots.max_snapshot_gb 为 0":         func(c *Orynd) { c.Snapshots.MaxSnapshotGB = 0 },
 		"snapshots.max_snapshot_gb 为负":          func(c *Orynd) { c.Snapshots.MaxSnapshotGB = -1 },
 		"snapshots.max_snapshot_gb 超 max_total": func(c *Orynd) { c.Snapshots.MaxSnapshotGB = 41 },
 		"pool.max_total 为负":                     func(c *Orynd) { c.Pool.MaxTotal = -1 },
@@ -185,6 +187,8 @@ func TestSnapshotsAndPool(t *testing.T) {
 	assert.NoError(t, c.Validate(), "max_depth = 64 与 pool.max_total = 0（关闭预热池）合法")
 	c.Snapshots.MaxDepth, c.Pool.MaxTotal = 1, 16
 	assert.NoError(t, c.Validate(), "边界值合法")
+	c.Snapshots.MaxSnapshotGB = 0
+	assert.NoError(t, c.Validate(), "显式 max_snapshot_gb = 0 视为未设置")
 	c.Snapshots.MaxSnapshotGB = 1
 	assert.NoError(t, c.Validate(), "max_snapshot_gb = 1 合法")
 	c.Snapshots.MaxSnapshotGB = c.Snapshots.MaxTotalGB
@@ -202,13 +206,23 @@ func TestSnapshotsAndPool(t *testing.T) {
 	assert.Equal(t, 16, got.Snapshots.MaxDepth)
 	assert.Equal(t, 0, got.Pool.MaxTotal)
 	assert.Equal(t, 12*time.Hour, got.Pool.MaxAge.D())
-	assert.Equal(t, 10, got.Snapshots.MaxSnapshotGB, "未写的键保持默认")
+	assert.Equal(t, 0, got.Snapshots.MaxSnapshotGB, "未写的键保持默认（0 = 未设置）")
+
+	// X9 回归：只写了小于 10 的 max_total_gb 的旧配置照常加载，单快照上限随之取 max_total_gb。
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\nsnapshots: {max_total_gb: 1}\n"), 0o600))
+	got, err = LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1)<<30, got.Snapshots.MaxSnapshotBytes())
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\nsnapshots: {max_snapshot_gb: 0}\n"), 0o600))
+	got, err = LoadOrynd(path)
+	require.NoError(t, err, "显式 0 视为自动")
+	assert.Equal(t, int64(10)<<30, got.Snapshots.MaxSnapshotBytes())
 
 	for body, want := range map[string]string{
 		"snapshots: {max_depth: 100}\n":                        "snapshots.max_depth",
 		"snapshots: {max_total_gb: 0}\n":                       "snapshots.max_total_gb",
-		"snapshots: {max_snapshot_gb: 0}\n":                    "snapshots.max_snapshot_gb",
-		"snapshots: {max_total_gb: 5}\n":                       "snapshots.max_snapshot_gb", // 默认 10 > 5
+		"snapshots: {max_snapshot_gb: 41}\n":                   "snapshots.max_snapshot_gb", // 大于默认 max_total_gb 40
+		"snapshots: {max_snapshot_gb: -1}\n":                   "snapshots.max_snapshot_gb",
 		"snapshots: {max_total_gb: 20, max_snapshot_gb: 21}\n": "snapshots.max_snapshot_gb",
 		"pool: {max_total: 17}\n":                              "pool.max_total",
 		"pool: {active_window: 0s}\n":                          "pool.active_window",

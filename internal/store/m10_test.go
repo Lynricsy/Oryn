@@ -63,6 +63,9 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 23, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 22, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
@@ -80,7 +83,7 @@ func TestM10NotificationsRebuild(t *testing.T) {
 	// 0017 的结构上造数据（notifications / deliveries 用原生 SQL：生成的查询已带 link 列）。
 	q := s.Q
 	const th = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab"
-	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th, TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
+	insertOldThread(t, s, th, nil, nil)
 	require.NoError(t, q.InsertNotificationChannel(ctx, db.InsertNotificationChannelParams{
 		ID: "nch_a", Kind: "webhook", Name: "all", Enabled: true, Events: `["done","input","error"]`, Locale: "en", ConfigEnc: []byte{1}, State: "{}", CreatedAt: 1, UpdatedAt: 1,
 	}))
@@ -505,6 +508,9 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
+	require.EqualValues(t, 23, r.Source.Version)
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
 	require.EqualValues(t, 22, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
@@ -525,8 +531,7 @@ func TestM10RollupMigration(t *testing.T) {
 		project *string
 		space   *string
 	}{{"T-1", ptr("prj_1"), ptr("spc_1")}, {"T-2", nil, nil}} {
-		require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: th.id, ProjectID: th.project, SpaceID: th.space,
-			TitleSource: "auto", State: "idle", SessionDir: "/a", CreatedAt: 1, UpdatedAt: 1}))
+		insertOldThread(t, s, th.id, th.project, th.space)
 	}
 	// 0018 的结构上直接写事实行（还没有触发器）：q = ts / 900000。
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO usage_records (thread_id, entry_seq, ts, provider, model, purpose, stop_reason, ukey, project_id, space_id,
@@ -578,6 +583,9 @@ func TestM10RollupMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1||prj_1|spc_1|anthropic|opus||1|0|1|1|0|0|1|0|50|1|0|0"}, dumpRows(t, s.DB, usageQ), "减空的行被删掉")
 
+	r, err = p.Down(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 23, r.Source.Version)
 	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 22, r.Source.Version)

@@ -265,6 +265,21 @@ func (e DeviceKind) Valid() bool {
 	}
 }
 
+// Defines values for DirInUseConflictCode.
+const (
+	DirInUseConflictCodeDirInUse DirInUseConflictCode = "dir_in_use"
+)
+
+// Valid indicates whether the value is a known member of the DirInUseConflictCode enum.
+func (e DirInUseConflictCode) Valid() bool {
+	switch e {
+	case DirInUseConflictCodeDirInUse:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ForkThreadRequestEnv.
 const (
 	Copy  ForkThreadRequestEnv = "copy"
@@ -561,6 +576,8 @@ const (
 	MethodThreadCreate      LinkCtlMethod = "thread.create"
 	MethodThreadGet         LinkCtlMethod = "thread.get"
 	MethodThreadSend        LinkCtlMethod = "thread.send"
+	MethodWorktreeAdd       LinkCtlMethod = "worktree.add"
+	MethodWorktreeRemove    LinkCtlMethod = "worktree.remove"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlMethod enum.
@@ -631,6 +648,10 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodThreadGet:
 		return true
 	case MethodThreadSend:
+		return true
+	case MethodWorktreeAdd:
+		return true
+	case MethodWorktreeRemove:
 		return true
 	default:
 		return false
@@ -1009,6 +1030,24 @@ func (e OrbGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for OrbKind.
+const (
+	OrbKindOrb    OrbKind = "orb"
+	OrbKindRunner OrbKind = "runner"
+)
+
+// Valid indicates whether the value is a known member of the OrbKind enum.
+func (e OrbKind) Valid() bool {
+	switch e {
+	case OrbKindOrb:
+		return true
+	case OrbKindRunner:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbPoolState.
 const (
 	OrbPoolStateClaimed OrbPoolState = "claimed"
@@ -1257,9 +1296,11 @@ func (e ProjectSnapshotState) Valid() bool {
 
 // Defines values for ProviderDriver.
 const (
-	Dispatch ProviderDriver = "dispatch"
-	Docker   ProviderDriver = "docker"
-	Process  ProviderDriver = "process"
+	Dispatch             ProviderDriver = "dispatch"
+	Docker               ProviderDriver = "docker"
+	Firecracker          ProviderDriver = "firecracker"
+	Process              ProviderDriver = "process"
+	ProviderDriverRunner ProviderDriver = "runner"
 )
 
 // Valid indicates whether the value is a known member of the ProviderDriver enum.
@@ -1269,7 +1310,11 @@ func (e ProviderDriver) Valid() bool {
 		return true
 	case Docker:
 		return true
+	case Firecracker:
+		return true
 	case Process:
+		return true
+	case ProviderDriverRunner:
 		return true
 	default:
 		return false
@@ -1696,6 +1741,21 @@ const (
 func (e ThreadExecutorOrbKind) Valid() bool {
 	switch e {
 	case ThreadExecutorOrbKindOrb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ThreadExecutorRunnerKind.
+const (
+	ThreadExecutorRunnerKindRunner ThreadExecutorRunnerKind = "runner"
+)
+
+// Valid indicates whether the value is a known member of the ThreadExecutorRunnerKind enum.
+func (e ThreadExecutorRunnerKind) Valid() bool {
+	switch e {
+	case ThreadExecutorRunnerKindRunner:
 		return true
 	default:
 		return false
@@ -2712,7 +2772,7 @@ type CreateThreadRequest struct {
 	// 省略 = 用项目的 `defaultBrowserProfileId`；空串 = 不用；`bpf_…` = 指定（不存在 → 404 `profile_not_found`）。
 	BrowserProfileID *string `json:"browserProfileId,omitempty"`
 
-	// Executor 线程执行位置
+	// Executor 线程执行位置（`runner` 为 M11b）
 	Executor ThreadExecutor `json:"executor"`
 	Images   []ImageContent `json:"images,omitempty"`
 	Labels   []string       `json:"labels,omitempty"`
@@ -2840,6 +2900,17 @@ type DevicePairing struct {
 	UserAgent string `json:"userAgent"`
 }
 
+// DirInUseConflict `createThread` 的 `executor.kind = runner` 未要求 worktree、未给 `shareDir`，而该目录已是其它未归档线程的工作目录时的 409 体（M11b）。
+// 客户端据此让用户在「新建 worktree」与「仍然共用（`shareDir: true`）」之间选择后重发。
+type DirInUseConflict struct {
+	Code      DirInUseConflictCode `json:"code"`
+	Message   string               `json:"message"`
+	ThreadIds []ThreadID           `json:"threadIds"`
+}
+
+// DirInUseConflictCode defines model for DirInUseConflict.Code.
+type DirInUseConflictCode string
+
 // Entry 会话 JSONL 的一行（已复制入库）
 type Entry struct {
 	// EntryID 行内 `id`；无 id 的行为合成 id `__title__` / `__session__`
@@ -2893,6 +2964,9 @@ type Error struct {
 	// M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
 	// agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
 	// M11a（项目快照与预热池）：`orb_is_pooled`（409，把线程挂到预热池里的 orb 上）。
+	// M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
+	// `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
+	// `worktree_failed`（400）、`worktree_dirty`（409）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -3209,6 +3283,7 @@ type LinkCtlAgentGapParams struct {
 
 // LinkCtlAgentStartParams defines model for LinkCtlAgentStartParams.
 type LinkCtlAgentStartParams struct {
+	// Cwd runner 形态（M11b）必填，且须在声明的目录或已登记的 worktree 之内（否则 `dir_not_served`）；`sessionDir` 须在 `$HOME/.oryn/threads/` 之下
 	Cwd string            `json:"cwd"`
 	Env map[string]string `json:"env"`
 
@@ -3375,6 +3450,9 @@ type LinkCtlEntryCursor struct {
 type LinkCtlError struct {
 	// Code `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试。
 	// M9 orb 内方法另有：`forbidden`（非亲属线程、不属于本 orb 的调用方）、`rate_limited`、`invalid_schedule`、`thread_archived`、`schedule_name_taken`。
+	// M11b runner 形态的 orbd 另有：`not_supported`（runner 不处理的方法：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`；
+	// 以及普通 orbd 收到 `worktree.*`）、`dir_not_served`（`agent.start` 的 `cwd` 或 `worktree.add` 的 `repo` 不在声明的目录内）、
+	// `worktree_dirty`（`worktree.remove` 时有未提交改动，`message` 为 git 的 stderr）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -3403,11 +3481,16 @@ type LinkCtlHelloParams struct {
 	// `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
 	// M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
 	// `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
+	// M11b 起：`terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）、
+	// `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
-	Features    []string             `json:"features,omitempty"`
-	OrbdVersion string               `json:"orbdVersion"`
-	Os          string               `json:"os"`
-	Threads     []LinkCtlHelloThread `json:"threads"`
+	Features    []string `json:"features,omitempty"`
+	OrbdVersion string   `json:"orbdVersion"`
+	Os          string   `json:"os"`
+
+	// Runner 只由 runner 形态的 orbd 上报（M11b）
+	Runner  *LinkRunnerInfo      `json:"runner,omitempty"`
+	Threads []LinkCtlHelloThread `json:"threads"`
 }
 
 // LinkCtlHelloThread defines model for LinkCtlHelloThread.
@@ -3430,7 +3513,8 @@ type LinkCtlHelloThread struct {
 // `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 // `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 // （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
-// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
+// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
+// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -3448,7 +3532,8 @@ type LinkCtlNotification struct {
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
-	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
+	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
+	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3540,7 +3625,8 @@ type LinkCtlRequest struct {
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
 	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
-	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
+	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
+	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -3795,6 +3881,37 @@ type LinkCtlThreadSendParams struct {
 	ThreadID ThreadID `json:"threadId"`
 }
 
+// LinkCtlWorktreeAddParams `worktree.add`（orynd→orbd 请求，M11b，只有 runner 形态接受）：在 `repo` 旁新建 worktree 与同名分支；结果 `LinkCtlWorktreeAddResult`。
+// `repo` 须在声明的目录内（否则 `dir_not_served`）且含 `.git`；`name` 须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`（否则 `invalid_params`）。
+// 目录 = `<repo 的父目录>/<repo 名>-<name>`，目录或分支已存在则依次试 `-2`、`-3`…；git 失败 → `failed`（`message` 为 git 的 stderr）。
+type LinkCtlWorktreeAddParams struct {
+	Name string `json:"name"`
+
+	// Repo 原仓库目录（绝对路径）
+	Repo string `json:"repo"`
+}
+
+// LinkCtlWorktreeAddResult defines model for LinkCtlWorktreeAddResult.
+type LinkCtlWorktreeAddResult struct {
+	Branch string `json:"branch"`
+
+	// Dir 新 worktree 的绝对路径
+	Dir string `json:"dir"`
+}
+
+// LinkCtlWorktreeRemoveParams `worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态接受）：`dir` 须是本 orbd 建过的 worktree（否则 `not_found`）；
+// `git worktree remove`（不带 `--force`，有未提交改动 → `worktree_dirty`），随后 `git branch -d`（失败则 `branchKept: true`）。
+type LinkCtlWorktreeRemoveParams struct {
+	Dir string `json:"dir"`
+}
+
+// LinkCtlWorktreeRemoveResult defines model for LinkCtlWorktreeRemoveResult.
+type LinkCtlWorktreeRemoveResult struct {
+	// BranchKept 分支未合并、`git branch -d` 失败而保留了分支
+	BranchKept *bool `json:"branchKept,omitempty"`
+	Ok         bool  `json:"ok"`
+}
+
 // LinkDeskReply orbd 对 `desk` 流的应答行
 type LinkDeskReply struct {
 	// Code `ok=false` 时：`display_unavailable`（显示未就绪）、`failed`（连 Xvnc 的 socket 失败，5s）
@@ -3809,6 +3926,12 @@ type LinkPortalReply struct {
 	Code    *string `json:"code,omitempty"`
 	Message *string `json:"message,omitempty"`
 	Ok      bool    `json:"ok"`
+}
+
+// LinkRunnerInfo runner 形态 orbd 的 hello 附加信息（M11b）
+type LinkRunnerInfo struct {
+	Dirs     []RunnerDir `json:"dirs"`
+	Hostname string      `json:"hostname"`
 }
 
 // LinkStreamAgent agent 启动时由 orbd 开；orbd→orynd 为重组后的 omp 逻辑帧，orynd→orbd 为写入 omp stdin 的命令帧（一行一个 JSON）
@@ -4108,11 +4231,18 @@ type Orb struct {
 	// FailureReason `state=failed` 时导致失败的原因
 	FailureReason *string `json:"failureReason,omitempty"`
 
+	// Features orbd 的特性（同 `LinkCtlHelloParams.features`，M11b）：有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略。
+	// 客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
+	Features []string `json:"features,omitempty"`
+
 	// ID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 	//
 	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 	ID    OrbID  `json:"id"`
 	Image string `json:"image"`
+
+	// Kind 省略 = `orb`（M11b）
+	Kind *OrbKind `json:"kind,omitempty"`
 
 	// LastAgentActivityAt UTC 毫秒时间戳
 	LastAgentActivityAt *TimestampMs `json:"lastAgentActivityAt,omitempty"`
@@ -4265,6 +4395,9 @@ type OrbGroupBy string
 //
 // Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 type OrbID = string
+
+// OrbKind `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
+type OrbKind string
 
 // OrbList defines model for OrbList.
 type OrbList struct {
@@ -4595,6 +4728,17 @@ type OrbType struct {
 	Name     string   `json:"name"`
 }
 
+// OrbWhoami `GET /orb/v1/whoami` 的结果（M11b）
+type OrbWhoami struct {
+	// Kind `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
+	Kind OrbKind `json:"kind"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID OrbID `json:"orbId"`
+}
+
 // OutputGroupBy defines model for OutputGroupBy.
 type OutputGroupBy string
 
@@ -4839,8 +4983,10 @@ type Provider struct {
 	DefaultType *string     `json:"defaultType,omitempty"`
 
 	// DisabledAt UTC 毫秒时间戳
-	DisabledAt *TimestampMs    `json:"disabledAt,omitempty"`
-	Driver     *ProviderDriver `json:"driver,omitempty"`
+	DisabledAt *TimestampMs `json:"disabledAt,omitempty"`
+
+	// Driver `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
+	Driver *ProviderDriver `json:"driver,omitempty"`
 
 	// ID `prov_<ulid>`
 	ID         ProviderID `json:"id"`
@@ -4907,7 +5053,7 @@ type ProviderCreateResponse struct {
 	Token string `json:"token"`
 }
 
-// ProviderDriver defines model for ProviderDriver.
+// ProviderDriver `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
 type ProviderDriver string
 
 // ProviderHelloRequest defines model for ProviderHelloRequest.
@@ -4919,7 +5065,9 @@ type ProviderHelloRequest struct {
 	BaseImageID  *string              `json:"baseImageId,omitempty"`
 	Capabilities ProviderCapabilities `json:"capabilities"`
 	DefaultType  string               `json:"defaultType"`
-	Driver       ProviderDriver       `json:"driver"`
+
+	// Driver `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
+	Driver ProviderDriver `json:"driver"`
 
 	// InstanceID 本进程实例的随机 id
 	InstanceID string    `json:"instanceId"`
@@ -5164,6 +5312,73 @@ type RoleIdentityList struct {
 
 	// Roles 先是 cycleOrder 里的 role（按其顺序），再是遗留项（按 role 升序）
 	Roles []RoleIdentity `json:"roles"`
+}
+
+// Runner runner = 一行 `driver = runner` 的 provider + 一台常驻 orb（`kind = runner`）
+type Runner struct {
+	AgentVersion *string `json:"agentVersion,omitempty"`
+	Arch         *string `json:"arch,omitempty"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Dirs 最近一次 hello 上报的目录；从未接入时为空
+	Dirs []RunnerDir `json:"dirs"`
+
+	// Features 最近一次 hello 上报的特性（同 `LinkCtlHelloParams.features`）
+	Features []string `json:"features"`
+
+	// Hostname 最近一次 hello 上报的主机名；从未接入时省略
+	Hostname *string `json:"hostname,omitempty"`
+
+	// ID `prov_<ulid>`
+	ID ProviderID `json:"id"`
+
+	// LastSeenAt 最近一次 link 在线的时间
+	LastSeenAt *TimestampMs `json:"lastSeenAt,omitempty"`
+	Name       string       `json:"name"`
+
+	// Online 其 orb 处于 `ready`（link 在线）
+	Online bool `json:"online"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID       OrbID   `json:"orbId"`
+	OrbdVersion *string `json:"orbdVersion,omitempty"`
+	Os          *string `json:"os,omitempty"`
+}
+
+// RunnerCreate defines model for RunnerCreate.
+type RunnerCreate struct {
+	// Name 与 provider 名共用唯一约束
+	Name string `json:"name"`
+}
+
+// RunnerCreated defines model for RunnerCreated.
+type RunnerCreated struct {
+	// Runner runner = 一行 `driver = runner` 的 provider + 一台常驻 orb（`kind = runner`）
+	Runner Runner `json:"runner"`
+
+	// Token `ort_…`，只显示这一次
+	Token string `json:"token"`
+}
+
+// RunnerDir runner 声明（`orbd run --runner --dir`）的一个可用目录
+type RunnerDir struct {
+	// Git 该目录本身是 git 仓库（含 `.git`），可在其旁边新建 worktree
+	Git bool `json:"git"`
+
+	// Name 显示名（目录的最后一段）
+	Name string `json:"name"`
+
+	// Path 解析符号链接后的绝对路径
+	Path string `json:"path"`
+}
+
+// RunnerList defines model for RunnerList.
+type RunnerList struct {
+	Runners []Runner `json:"runners"`
 }
 
 // Schedule 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
@@ -5648,6 +5863,9 @@ type Thread struct {
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
 
+	// Cwd 线程的工作目录（M11b，runner 线程的绝对路径）；普通 orb 线程省略
+	Cwd *string `json:"cwd,omitempty"`
+
 	// Error `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试）
 	Error             *ThreadError `json:"error,omitempty"`
 	ForkedFromEntryID *string      `json:"forkedFromEntryId,omitempty"`
@@ -5720,6 +5938,9 @@ type Thread struct {
 
 	// UpdatedAt UTC 毫秒时间戳
 	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Worktree Oryn 为该线程建的 worktree（M11b）；没有或已移除则省略
+	Worktree *ThreadWorktree `json:"worktree,omitempty"`
 }
 
 // ThreadTitleSource defines model for Thread.TitleSource.
@@ -5739,7 +5960,7 @@ type ThreadError struct {
 // ThreadErrorKind defines model for ThreadError.Kind.
 type ThreadErrorKind string
 
-// ThreadExecutor 线程执行位置
+// ThreadExecutor 线程执行位置（`runner` 为 M11b）
 type ThreadExecutor struct {
 	union json.RawMessage
 }
@@ -5770,6 +5991,31 @@ type ThreadExecutorOrb struct {
 
 // ThreadExecutorOrbKind defines model for ThreadExecutorOrb.Kind.
 type ThreadExecutorOrbKind string
+
+// ThreadExecutorRunner 在 runner 上执行（M11b）：工作目录为 `dir`，或在 `dir`（须是 git 仓库）旁新建的 worktree
+type ThreadExecutorRunner struct {
+	// Dir 绝对路径，须等于或位于 runner 声明的某个目录之下
+	Dir  string                   `json:"dir"`
+	Kind ThreadExecutorRunnerKind `json:"kind"`
+
+	// RunnerID `prov_<ulid>`
+	RunnerID ProviderID `json:"runnerId"`
+
+	// ShareDir 为真时允许与其它线程共用同一工作目录（不检查 `dir_in_use`）
+	ShareDir *bool `json:"shareDir,omitempty"`
+
+	// Worktree 给出时先在 runner 上 `worktree.add {repo: dir, name}`，线程的工作目录取新 worktree
+	Worktree *ThreadExecutorRunnerWorktree `json:"worktree,omitempty"`
+}
+
+// ThreadExecutorRunnerKind defines model for ThreadExecutorRunner.Kind.
+type ThreadExecutorRunnerKind string
+
+// ThreadExecutorRunnerWorktree 给出时先在 runner 上 `worktree.add {repo: dir, name}`，线程的工作目录取新 worktree
+type ThreadExecutorRunnerWorktree struct {
+	// Name worktree 与分支的名字（目录 `<repo 的父目录>/<repo 名>-<name>`，重名依次加 `-2`、`-3`…）
+	Name string `json:"name"`
+}
 
 // ThreadID `T-<uuidv7>`
 //
@@ -5862,6 +6108,17 @@ type ThreadShareList struct {
 // `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
 // `idle` 其它。
 type ThreadState string
+
+// ThreadWorktree Oryn 为 runner 线程建的 worktree（M11b）
+type ThreadWorktree struct {
+	Branch string `json:"branch"`
+
+	// Dir worktree 目录（即线程的 `cwd`）
+	Dir string `json:"dir"`
+
+	// Repo 原仓库目录
+	Repo string `json:"repo"`
+}
 
 // TimestampMs UTC 毫秒时间戳
 type TimestampMs = int64
@@ -6521,6 +6778,11 @@ type OrbBackgroundQuery = bool
 // Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 type OrbIDPath = OrbID
 
+// OrbThreadQuery `T-<uuidv7>`
+//
+// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+type OrbThreadQuery = ThreadID
+
 // PortalPortPath defines model for PortalPortPath.
 type PortalPortPath = int
 
@@ -6641,9 +6903,23 @@ type ListOrbsParams struct {
 	IncludeDeleted *bool     `form:"includeDeleted,omitempty" json:"includeDeleted,omitempty"`
 }
 
+// DeleteOrbFsParams defines parameters for DeleteOrbFs.
+type DeleteOrbFsParams struct {
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
 // ReadOrbFileParams defines parameters for ReadOrbFile.
 type ReadOrbFileParams struct {
-	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+	// runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
 	Path FsPathQuery `form:"path" json:"path"`
 
 	// Range 标准 HTTP Range（单区间）
@@ -6655,7 +6931,13 @@ type WriteOrbFileParams struct {
 	// Overwrite 目标已存在时是否覆盖
 	Overwrite *bool `form:"overwrite,omitempty" json:"overwrite,omitempty"`
 
-	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+	// runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
 	Path FsPathQuery `form:"path" json:"path"`
 
 	// IfMatch 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified`
@@ -6664,26 +6946,59 @@ type WriteOrbFileParams struct {
 
 // ListOrbFsParams defines parameters for ListOrbFs.
 type ListOrbFsParams struct {
-	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+	// runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
 	Path FsPathQuery `form:"path" json:"path"`
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
+// MkdirOrbFsParams defines parameters for MkdirOrbFs.
+type MkdirOrbFsParams struct {
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
+// RenameOrbFsParams defines parameters for RenameOrbFs.
+type RenameOrbFsParams struct {
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // GetOrbFsRootsParams defines parameters for GetOrbFsRoots.
 type GetOrbFsRootsParams struct {
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // StatOrbFsParams defines parameters for StatOrbFs.
 type StatOrbFsParams struct {
-	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径
+	// Path orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+	// runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
 	Path FsPathQuery `form:"path" json:"path"`
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // ListOrbGitCommitsParams defines parameters for ListOrbGitCommits.
@@ -6697,6 +7012,11 @@ type ListOrbGitCommitsParams struct {
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // GetOrbGitDiffParams defines parameters for GetOrbGitDiff.
@@ -6719,6 +7039,19 @@ type GetOrbGitDiffParams struct {
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
+// StageOrbGitParams defines parameters for StageOrbGit.
+type StageOrbGitParams struct {
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // GetOrbGitStatusParams defines parameters for GetOrbGitStatus.
@@ -6735,6 +7068,19 @@ type GetOrbGitStatusParams struct {
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
+// UnstageOrbGitParams defines parameters for UnstageOrbGit.
+type UnstageOrbGitParams struct {
+	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+	Thread *OrbThreadQuery `form:"thread,omitempty" json:"thread,omitempty"`
 }
 
 // GetOrbMetricsParams defines parameters for GetOrbMetrics.
@@ -7000,6 +7346,11 @@ type ListThreadsParams struct {
 // ListThreadsParamsKind defines parameters for ListThreads.
 type ListThreadsParamsKind string
 
+// CreateThread409JSONResponseBody defines parameters for CreateThread.
+type CreateThread409JSONResponseBody struct {
+	union json.RawMessage
+}
+
 // ListThreadEntriesParams defines parameters for ListThreadEntries.
 type ListThreadEntriesParams struct {
 	// After 只返回 `seq > after` 的条目
@@ -7084,6 +7435,9 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 
 // CreatePushSubscriptionJSONRequestBody defines body for CreatePushSubscription for application/json ContentType.
 type CreatePushSubscriptionJSONRequestBody = PushSubscriptionInput
+
+// CreateRunnerJSONRequestBody defines body for CreateRunner for application/json ContentType.
+type CreateRunnerJSONRequestBody = RunnerCreate
 
 // CreateScheduleJSONRequestBody defines body for CreateSchedule for application/json ContentType.
 type CreateScheduleJSONRequestBody = ScheduleInput
@@ -7497,6 +7851,40 @@ func (t *ThreadExecutor) MergeThreadExecutorOrb(v ThreadExecutorOrb) error {
 	return err
 }
 
+// AsThreadExecutorRunner returns the union data inside the ThreadExecutor as a ThreadExecutorRunner
+func (t ThreadExecutor) AsThreadExecutorRunner() (ThreadExecutorRunner, error) {
+	var body ThreadExecutorRunner
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromThreadExecutorRunner overwrites any union data inside the ThreadExecutor as the provided ThreadExecutorRunner
+func (t *ThreadExecutor) FromThreadExecutorRunner(v ThreadExecutorRunner) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"runner"}`))
+	t.union = b
+	return err
+}
+
+// MergeThreadExecutorRunner performs a merge with any union data inside the ThreadExecutor, using the provided ThreadExecutorRunner
+func (t *ThreadExecutor) MergeThreadExecutorRunner(v ThreadExecutorRunner) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"runner"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t ThreadExecutor) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"kind"`
@@ -7515,6 +7903,8 @@ func (t ThreadExecutor) ValueByDiscriminator() (interface{}, error) {
 		return t.AsThreadExecutorNewOrb()
 	case "orb":
 		return t.AsThreadExecutorOrb()
+	case "runner":
+		return t.AsThreadExecutorRunner()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -8805,6 +9195,107 @@ func (t *WsServerMessage) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsProfileInUseConflict returns the union data inside the CreateThread409JSONResponseBody as a ProfileInUseConflict
+func (t CreateThread409JSONResponseBody) AsProfileInUseConflict() (ProfileInUseConflict, error) {
+	var body ProfileInUseConflict
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProfileInUseConflict overwrites any union data inside the CreateThread409JSONResponseBody as the provided ProfileInUseConflict
+func (t *CreateThread409JSONResponseBody) FromProfileInUseConflict(v ProfileInUseConflict) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"code":"profile_in_use"}`))
+	t.union = b
+	return err
+}
+
+// MergeProfileInUseConflict performs a merge with any union data inside the CreateThread409JSONResponseBody, using the provided ProfileInUseConflict
+func (t *CreateThread409JSONResponseBody) MergeProfileInUseConflict(v ProfileInUseConflict) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"code":"profile_in_use"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDirInUseConflict returns the union data inside the CreateThread409JSONResponseBody as a DirInUseConflict
+func (t CreateThread409JSONResponseBody) AsDirInUseConflict() (DirInUseConflict, error) {
+	var body DirInUseConflict
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDirInUseConflict overwrites any union data inside the CreateThread409JSONResponseBody as the provided DirInUseConflict
+func (t *CreateThread409JSONResponseBody) FromDirInUseConflict(v DirInUseConflict) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"code":"dir_in_use"}`))
+	t.union = b
+	return err
+}
+
+// MergeDirInUseConflict performs a merge with any union data inside the CreateThread409JSONResponseBody, using the provided DirInUseConflict
+func (t *CreateThread409JSONResponseBody) MergeDirInUseConflict(v DirInUseConflict) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"code":"dir_in_use"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CreateThread409JSONResponseBody) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"code"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t CreateThread409JSONResponseBody) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "dir_in_use":
+		return t.AsDirInUseConflict()
+	case "profile_in_use":
+		return t.AsProfileInUseConflict()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t CreateThread409JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CreateThread409JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// ListAgentConfigFiles omp-home 文件列表
@@ -8947,7 +9438,7 @@ type ServerInterface interface {
 	SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// DeleteOrbFs 删除文件或目录（递归）
 	// (POST /api/v1/orbs/{id}/fs/delete)
-	DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params DeleteOrbFsParams)
 	// ReadOrbFile 下载文件（支持 `Range`）
 	// (GET /api/v1/orbs/{id}/fs/file)
 	ReadOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ReadOrbFileParams)
@@ -8959,13 +9450,13 @@ type ServerInterface interface {
 	ListOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params ListOrbFsParams)
 	// MkdirOrbFs 新建目录（含缺失的上级目录，0755）
 	// (POST /api/v1/orbs/{id}/fs/mkdir)
-	MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params MkdirOrbFsParams)
 	// PublishOrbFile 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
 	// (POST /api/v1/orbs/{id}/fs/publish)
 	PublishOrbFile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// RenameOrbFs 移动 / 重命名
 	// (POST /api/v1/orbs/{id}/fs/rename)
-	RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params RenameOrbFsParams)
 	// GetOrbFsRoots orb 内的文件根（`$HOME` 与当前工作目录）
 	// (GET /api/v1/orbs/{id}/fs/roots)
 	GetOrbFsRoots(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbFsRootsParams)
@@ -8980,13 +9471,13 @@ type ServerInterface interface {
 	GetOrbGitDiff(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitDiffParams)
 	// StageOrbGit 暂存文件（`git add -A -- <paths>`）
 	// (POST /api/v1/orbs/{id}/git/stage)
-	StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath, params StageOrbGitParams)
 	// GetOrbGitStatus 相对基线 / HEAD / 单个 commit 的改动文件列表（≤2000 个）
 	// (GET /api/v1/orbs/{id}/git/status)
 	GetOrbGitStatus(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbGitStatusParams)
 	// UnstageOrbGit 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`）
 	// (POST /api/v1/orbs/{id}/git/unstage)
-	UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath, params UnstageOrbGitParams)
 	// GetOrbMetrics orb 资源采样（按 `step` 降采样，取窗口内均值；网络字节取窗口末值）
 	// (GET /api/v1/orbs/{id}/metrics)
 	GetOrbMetrics(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbMetricsParams)
@@ -9089,6 +9580,15 @@ type ServerInterface interface {
 	// GetVapidKey Web Push 的 VAPID 公钥（`applicationServerKey`）
 	// (GET /api/v1/push/vapid-key)
 	GetVapidKey(w http.ResponseWriter, r *http.Request)
+	// ListRunners runner 列表（不含已删除）
+	// (GET /api/v1/runners)
+	ListRunners(w http.ResponseWriter, r *http.Request)
+	// CreateRunner 新建 runner（令牌只显示一次）
+	// (POST /api/v1/runners)
+	CreateRunner(w http.ResponseWriter, r *http.Request)
+	// DeleteRunner 删除 runner：令牌立即失效、其 orb 进入 `deleted`；线程保留转录（`orbId` 置空，只读）
+	// (DELETE /api/v1/runners/{id})
+	DeleteRunner(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
 	// ListSchedules 定时列表（两种模式；按创建时间）
 	// (GET /api/v1/schedules)
 	ListSchedules(w http.ResponseWriter, r *http.Request, params ListSchedulesParams)
@@ -9251,6 +9751,9 @@ type ServerInterface interface {
 	// WakeThread 唤醒线程所在 orb（异步）
 	// (POST /api/v1/threads/{id}/wake)
 	WakeThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// RemoveThreadWorktree 移除 Oryn 为该 runner 线程建的 worktree（M11b）
+	// (POST /api/v1/threads/{id}/worktree/remove)
+	RemoveThreadWorktree(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// CreateWsTicket 签发 WebSocket 票据（一次性，30 秒有效）
 	// (POST /api/v1/ws-ticket)
 	CreateWsTicket(w http.ResponseWriter, r *http.Request)
@@ -9553,7 +10056,7 @@ func (_ Unimplemented) SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Requ
 
 // DeleteOrbFs 删除文件或目录（递归）
 // (POST /api/v1/orbs/{id}/fs/delete)
-func (_ Unimplemented) DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+func (_ Unimplemented) DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params DeleteOrbFsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9577,7 +10080,7 @@ func (_ Unimplemented) ListOrbFs(w http.ResponseWriter, r *http.Request, id OrbI
 
 // MkdirOrbFs 新建目录（含缺失的上级目录，0755）
 // (POST /api/v1/orbs/{id}/fs/mkdir)
-func (_ Unimplemented) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+func (_ Unimplemented) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params MkdirOrbFsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9589,7 +10092,7 @@ func (_ Unimplemented) PublishOrbFile(w http.ResponseWriter, r *http.Request, id
 
 // RenameOrbFs 移动 / 重命名
 // (POST /api/v1/orbs/{id}/fs/rename)
-func (_ Unimplemented) RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+func (_ Unimplemented) RenameOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params RenameOrbFsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9619,7 +10122,7 @@ func (_ Unimplemented) GetOrbGitDiff(w http.ResponseWriter, r *http.Request, id 
 
 // StageOrbGit 暂存文件（`git add -A -- <paths>`）
 // (POST /api/v1/orbs/{id}/git/stage)
-func (_ Unimplemented) StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+func (_ Unimplemented) StageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath, params StageOrbGitParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9631,7 +10134,7 @@ func (_ Unimplemented) GetOrbGitStatus(w http.ResponseWriter, r *http.Request, i
 
 // UnstageOrbGit 取消暂存（`git reset -q HEAD -- <paths>`；HEAD 未出生时 `git rm -r -q --cached`）
 // (POST /api/v1/orbs/{id}/git/unstage)
-func (_ Unimplemented) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+func (_ Unimplemented) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id OrbIDPath, params UnstageOrbGitParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -9836,6 +10339,24 @@ func (_ Unimplemented) DeletePushSubscription(w http.ResponseWriter, r *http.Req
 // GetVapidKey Web Push 的 VAPID 公钥（`applicationServerKey`）
 // (GET /api/v1/push/vapid-key)
 func (_ Unimplemented) GetVapidKey(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListRunners runner 列表（不含已删除）
+// (GET /api/v1/runners)
+func (_ Unimplemented) ListRunners(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateRunner 新建 runner（令牌只显示一次）
+// (POST /api/v1/runners)
+func (_ Unimplemented) CreateRunner(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteRunner 删除 runner：令牌立即失效、其 orb 进入 `deleted`；线程保留转录（`orbId` 置空，只读）
+// (DELETE /api/v1/runners/{id})
+func (_ Unimplemented) DeleteRunner(w http.ResponseWriter, r *http.Request, id ProviderIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -10160,6 +10681,12 @@ func (_ Unimplemented) CreateThreadShare(w http.ResponseWriter, r *http.Request,
 // WakeThread 唤醒线程所在 orb（异步）
 // (POST /api/v1/threads/{id}/wake)
 func (_ Unimplemented) WakeThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RemoveThreadWorktree 移除 Oryn 为该 runner 线程建的 worktree（M11b）
+// (POST /api/v1/threads/{id}/worktree/remove)
+func (_ Unimplemented) RemoveThreadWorktree(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11292,8 +11819,24 @@ func (siw *ServerInterfaceWrapper) DeleteOrbFs(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteOrbFsParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteOrbFs(w, r, id)
+		siw.Handler.DeleteOrbFs(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11320,6 +11863,19 @@ func (siw *ServerInterfaceWrapper) ReadOrbFile(w http.ResponseWriter, r *http.Re
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ReadOrbFileParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
 
 	// ------------- Required query parameter "path" -------------
 
@@ -11393,6 +11949,19 @@ func (siw *ServerInterfaceWrapper) WriteOrbFile(w http.ResponseWriter, r *http.R
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "overwrite"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "overwrite", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
 		}
 		return
 	}
@@ -11486,6 +12055,19 @@ func (siw *ServerInterfaceWrapper) ListOrbFs(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListOrbFs(w, r, id, params)
 	}))
@@ -11512,8 +12094,24 @@ func (siw *ServerInterfaceWrapper) MkdirOrbFs(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params MkdirOrbFsParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MkdirOrbFs(w, r, id)
+		siw.Handler.MkdirOrbFs(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11564,8 +12162,24 @@ func (siw *ServerInterfaceWrapper) RenameOrbFs(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RenameOrbFsParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenameOrbFs(w, r, id)
+		siw.Handler.RenameOrbFs(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11602,6 +12216,19 @@ func (siw *ServerInterfaceWrapper) GetOrbFsRoots(w http.ResponseWriter, r *http.
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
 		}
 		return
 	}
@@ -11657,6 +12284,19 @@ func (siw *ServerInterfaceWrapper) StatOrbFs(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
 		}
 		return
 	}
@@ -11738,6 +12378,19 @@ func (siw *ServerInterfaceWrapper) ListOrbGitCommits(w http.ResponseWriter, r *h
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
 		}
 		return
 	}
@@ -11862,6 +12515,19 @@ func (siw *ServerInterfaceWrapper) GetOrbGitDiff(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOrbGitDiff(w, r, id, params)
 	}))
@@ -11888,8 +12554,24 @@ func (siw *ServerInterfaceWrapper) StageOrbGit(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StageOrbGitParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StageOrbGit(w, r, id)
+		siw.Handler.StageOrbGit(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -11982,6 +12664,19 @@ func (siw *ServerInterfaceWrapper) GetOrbGitStatus(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOrbGitStatus(w, r, id, params)
 	}))
@@ -12008,8 +12703,24 @@ func (siw *ServerInterfaceWrapper) UnstageOrbGit(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UnstageOrbGitParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UnstageOrbGit(w, r, id)
+		siw.Handler.UnstageOrbGit(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13078,6 +13789,60 @@ func (siw *ServerInterfaceWrapper) GetVapidKey(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetVapidKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRunners operation middleware
+func (siw *ServerInterfaceWrapper) ListRunners(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRunners(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRunner operation middleware
+func (siw *ServerInterfaceWrapper) CreateRunner(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRunner(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRunner operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProviderIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRunner(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -14992,6 +15757,32 @@ func (siw *ServerInterfaceWrapper) WakeThread(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// RemoveThreadWorktree operation middleware
+func (siw *ServerInterfaceWrapper) RemoveThreadWorktree(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveThreadWorktree(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateWsTicket operation middleware
 func (siw *ServerInterfaceWrapper) CreateWsTicket(w http.ResponseWriter, r *http.Request) {
 
@@ -15277,6 +16068,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Delete(options.BaseURL+"/api/v1/providers/{id}", wrapper.DeleteProvider)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/runners", wrapper.ListRunners)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/runners", wrapper.CreateRunner)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/runners/{id}", wrapper.DeleteRunner)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/threads", wrapper.ListThreads)
 	})
 	r.Group(func(r chi.Router) {
@@ -15299,6 +16099,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/threads/{id}/wake", wrapper.WakeThread)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/threads/{id}/worktree/remove", wrapper.RemoveThreadWorktree)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/threads/{id}/attachments", wrapper.ListThreadAttachments)

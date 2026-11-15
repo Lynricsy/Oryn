@@ -17,6 +17,9 @@ func TestFormats(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`^opv_[A-Za-z0-9_-]{43}$`), tok)
 	assert.Equal(t, "opv", TokenPrefix(tok))
 	assert.Len(t, Hash(tok), 64)
+	rt := RunnerToken()
+	assert.Regexp(t, regexp.MustCompile(`^ort_[A-Za-z0-9_-]{43}$`), rt)
+	assert.Equal(t, "ort", TokenPrefix(rt))
 }
 
 func TestULIDMonotonic(t *testing.T) {

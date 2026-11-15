@@ -48,7 +48,7 @@ func (q *Queries) EntryIDExists(ctx context.Context, arg EntryIDExistsParams) (i
 }
 
 const findUnboundSnapshotOrb = `-- name: FindUnboundSnapshotOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id FROM orbs o
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs o
 WHERE o.snapshot_of = CAST(?1 AS TEXT) AND o.image = CAST(?1 AS TEXT) AND o.deleted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM threads t WHERE t.orb_id = o.id)
 ORDER BY o.created_at LIMIT 1
@@ -83,6 +83,7 @@ func (q *Queries) FindUnboundSnapshotOrb(ctx context.Context, snapshotID string)
 		&i.ConfigHash,
 		&i.ClaimedAt,
 		&i.BaseImageID,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -120,7 +121,7 @@ func (q *Queries) LastMainEntryID(ctx context.Context, threadID string) (string,
 }
 
 const listThreadsWithForkOp = `-- name: ListThreadsWithForkOp :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run FROM threads WHERE length(fork_op) > 0 ORDER BY created_at
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree FROM threads WHERE length(fork_op) > 0 ORDER BY created_at
 `
 
 func (q *Queries) ListThreadsWithForkOp(ctx context.Context) ([]Thread, error) {
@@ -164,6 +165,8 @@ func (q *Queries) ListThreadsWithForkOp(ctx context.Context) ([]Thread, error) {
 			&i.ShippedAt,
 			&i.ScheduleID,
 			&i.ScheduleRun,
+			&i.Cwd,
+			&i.Worktree,
 		); err != nil {
 			return nil, err
 		}

@@ -12,8 +12,10 @@ SELECT * FROM providers WHERE name = @name;
 -- name: GetProviderByTokenHash :one
 SELECT * FROM providers WHERE token_hash = @token_hash;
 
+-- Runner providers (driver = 'runner', M11b) are listed by ListRunners, not here: this feeds GET /providers and
+-- the "only one provider" fallback of resolveProvider.
 -- name: ListProviders :many
-SELECT * FROM providers ORDER BY name;
+SELECT * FROM providers WHERE driver != 'runner' ORDER BY name;
 
 -- name: UpdateProviderHello :exec
 UPDATE providers SET driver = @driver, version = @version, capabilities = @capabilities,

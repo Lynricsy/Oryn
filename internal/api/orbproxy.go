@@ -297,17 +297,17 @@ func (s *Server) WriteOrbFile(w http.ResponseWriter, r *http.Request, id apigen.
 }
 
 // MkdirOrbFs 实现 POST /api/v1/orbs/{id}/fs/mkdir。
-func (s *Server) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+func (s *Server) MkdirOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.MkdirOrbFsParams) {
 	s.proxyOrb(w, r, id, "/fs/mkdir", orbProxyOpt{maxBody: maxOrbJSONBody})
 }
 
 // RenameOrbFs 实现 POST /api/v1/orbs/{id}/fs/rename。
-func (s *Server) RenameOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+func (s *Server) RenameOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.RenameOrbFsParams) {
 	s.proxyOrb(w, r, id, "/fs/rename", orbProxyOpt{maxBody: maxOrbJSONBody, timeout: orbMutateTimeout})
 }
 
 // DeleteOrbFs 实现 POST /api/v1/orbs/{id}/fs/delete。
-func (s *Server) DeleteOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+func (s *Server) DeleteOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.DeleteOrbFsParams) {
 	s.proxyOrb(w, r, id, "/fs/delete", orbProxyOpt{maxBody: maxOrbJSONBody, timeout: orbMutateTimeout})
 }
 
@@ -329,12 +329,12 @@ func (s *Server) ListOrbGitCommits(w http.ResponseWriter, r *http.Request, id ap
 }
 
 // StageOrbGit 实现 POST /api/v1/orbs/{id}/git/stage。
-func (s *Server) StageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+func (s *Server) StageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.StageOrbGitParams) {
 	s.proxyOrb(w, r, id, "/git/stage", orbProxyOpt{maxBody: maxOrbJSONBody})
 }
 
 // UnstageOrbGit 实现 POST /api/v1/orbs/{id}/git/unstage。
-func (s *Server) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+func (s *Server) UnstageOrbGit(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, _ apigen.UnstageOrbGitParams) {
 	s.proxyOrb(w, r, id, "/git/unstage", orbProxyOpt{maxBody: maxOrbJSONBody})
 }
 

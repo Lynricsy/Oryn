@@ -50,13 +50,16 @@ func Token(prefix string) string {
 	return prefix + "_" + base64.RawURLEncoding.EncodeToString(b)
 }
 
+// RunnerToken 返回 runner 令牌 ort_…（M11b；库中只存 Hash）。
+func RunnerToken() string { return Token("ort") }
+
 // Hash 返回令牌的 SHA-256 十六进制（库中只存它）。
 func Hash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
 
-// TokenPrefix 返回令牌前缀（"opv"、"oot"、"odt"、"ost"），格式不符时返回空串。
+// TokenPrefix 返回令牌前缀（"opv"、"oot"、"odt"、"ost"、"ort"），格式不符时返回空串。
 func TokenPrefix(token string) string {
 	p, _, ok := strings.Cut(token, "_")
 	if !ok || len(p) != 3 {

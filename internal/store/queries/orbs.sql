@@ -3,11 +3,13 @@
 -- coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
 -- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching);
 -- base_image_id = the provider's base image identity when the orb was created (M11a review fix).
+-- kind: orb | runner (M11b); NULL = 'orb'.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
-        @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id);
+        @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
+        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;

@@ -143,7 +143,7 @@ func TestM11PoolOrbs(t *testing.T) {
 	assert.Equal(t, "h2", *o.ConfigHash)
 }
 
-// TestM11MigrationDownUp 依次回滚 0022、0021 再重新应用：新表、新列与索引消失后复原。
+// TestM11MigrationDownUp 先回滚 0023，再依次回滚 0022、0021 后重新应用：新表、新列与索引消失后复原。
 func TestM11MigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
@@ -166,6 +166,9 @@ func TestM11MigrationDownUp(t *testing.T) {
 	assert.Equal(t, 1, nf)
 
 	r, err := p.Down(ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 23, r.Source.Version)
+	r, err = p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 22, r.Source.Version)
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11fix).Scan(&nf))

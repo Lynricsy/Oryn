@@ -1,13 +1,14 @@
 -- Threads and labels.
 
 -- kind: work | space | assistant (M9); schedule_id / schedule_run: set when a new_thread schedule run created it.
+-- cwd / worktree (M11b): a runner thread's working directory and the {repo, dir, branch} JSON of the worktree Oryn made.
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
         @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code,
-        @kind, @space_id, @schedule_id, @schedule_run);
+        @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree));
 
 -- name: GetThread :one
 SELECT * FROM threads WHERE id = @id;

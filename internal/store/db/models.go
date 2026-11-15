@@ -205,6 +205,7 @@ type Orb struct {
 	ConfigHash            *string `json:"configHash"`
 	ClaimedAt             *int64  `json:"claimedAt"`
 	BaseImageID           string  `json:"baseImageId"`
+	Kind                  string  `json:"kind"`
 }
 
 type OrbDesktop struct {
@@ -411,6 +412,17 @@ type RoleAvatar struct {
 	UpdatedAt   int64   `json:"updatedAt"`
 }
 
+type Runner struct {
+	ProviderID string `json:"providerId"`
+	OrbID      string `json:"orbId"`
+	Hostname   string `json:"hostname"`
+	Os         string `json:"os"`
+	Arch       string `json:"arch"`
+	Dirs       string `json:"dirs"`
+	Features   string `json:"features"`
+	LastSeenAt *int64 `json:"lastSeenAt"`
+}
+
 type Schedule struct {
 	ID            string  `json:"id"`
 	Mode          string  `json:"mode"`
@@ -514,6 +526,8 @@ type Thread struct {
 	ShippedAt         *int64  `json:"shippedAt"`
 	ScheduleID        *string `json:"scheduleId"`
 	ScheduleRun       *int64  `json:"scheduleRun"`
+	Cwd               *string `json:"cwd"`
+	Worktree          *string `json:"worktree"`
 }
 
 type ThreadCommit struct {

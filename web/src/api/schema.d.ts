@@ -376,6 +376,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** runner 列表（不含已删除） */
+        get: operations["listRunners"];
+        put?: never;
+        /**
+         * 新建 runner（令牌只显示一次）
+         * @description 名称与 provider 共用唯一约束（重名 → 409 `conflict`）。新 runner 的 orb 处于 `stopped`，等 `orbd run --runner` 接入。
+         */
+        post: operations["createRunner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除 runner：令牌立即失效、其 orb 进入 `deleted`；线程保留转录（`orbId` 置空，只读） */
+        delete: operations["deleteRunner"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/threads": {
         parameters: {
             query?: never;
@@ -389,6 +429,9 @@ export interface paths {
         /**
          * 新建线程
          * @description 省略 `executor.provider` / `executor.type` 时依次取项目默认、`orb_defaults`、provider 的 `defaultType`。
+         *     `executor.kind = runner`（M11b）：runner 不在线 → 409 `runner_offline`；`dir` 不在 runner 声明的目录之内 → 400 `dir_not_served`；
+         *     未要求 worktree、未给 `shareDir` 且已有未归档线程以同一目录为工作目录 → 409 `dir_in_use`（体为 `DirInUseConflict`）；
+         *     建 worktree 失败 → 400 `worktree_failed`；给了非空 `browserProfileId` → 400 `invalid`。
          */
         post: operations["createThread"];
         delete?: never;
@@ -448,7 +491,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** fork 线程（共用 orb 或连环境分叉） */
+        /**
+         * fork 线程（共用 orb 或连环境分叉）
+         * @description 所在 orb 是 runner（M11b）时只能 `env: "share"`（子线程继承 `cwd`、不继承 `worktree`）；`env: "copy"` → 409 `runner_unsupported`。
+         */
         post: operations["forkThread"];
         delete?: never;
         options?: never;
@@ -469,6 +515,30 @@ export interface paths {
         put?: never;
         /** 唤醒线程所在 orb（异步） */
         post: operations["wakeThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/worktree/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 移除 Oryn 为该 runner 线程建的 worktree（M11b）
+         * @description 经 ctl `worktree.remove` 在 runner 上执行 `git worktree remove <dir>`（不带 `--force`）并尝试 `git branch -d`（分支未合并则保留）；
+         *     成功后清空线程的 `worktree`。线程没有 `worktree` → 409 `conflict`；runner 不在线 → 409 `runner_offline`；
+         *     worktree 有未提交改动 → 409 `worktree_dirty`（`message` 为 git 的报错）。
+         */
+        post: operations["removeThreadWorktree"];
         delete?: never;
         options?: never;
         head?: never;
@@ -552,7 +622,10 @@ export interface paths {
         get: operations["getOrb"];
         put?: never;
         post?: never;
-        /** 删除 orb（先 shutdown 再 delete；其线程保留条目，`orbId` 置空） */
+        /**
+         * 删除 orb（先 shutdown 再 delete；其线程保留条目，`orbId` 置空）
+         * @description runner 的 orb（M11b）→ 409 `runner_unsupported`（改用 `DELETE runners/{id}`）。
+         */
         delete: operations["deleteOrb"];
         options?: never;
         head?: never;
@@ -570,7 +643,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 手动冻结或停机 */
+        /**
+         * 手动冻结或停机
+         * @description runner 的 orb（M11b）→ 409 `runner_unsupported`。
+         */
         post: operations["pauseOrb"];
         delete?: never;
         options?: never;
@@ -589,7 +665,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`） */
+        /**
+         * 唤醒 orb（`frozen` / `stopped` / `failed` → `waking`）
+         * @description runner 的 orb（M11b）→ 409 `runner_unsupported`（runner 由用户机器上的 `orbd run --runner` 主动接入）。
+         */
         post: operations["resumeOrb"];
         delete?: never;
         options?: never;
@@ -657,7 +736,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/roots": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -679,7 +765,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/list": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -698,7 +791,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/stat": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -718,7 +818,16 @@ export interface paths {
     "/api/v1/orbs/{id}/fs/file": {
         parameters: {
             query: {
-                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+                /**
+                 * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+                 *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+                 */
                 path: components["parameters"]["FsPathQuery"];
             };
             header?: never;
@@ -747,7 +856,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/mkdir": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -766,7 +882,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/rename": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -788,7 +911,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/fs/delete": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -823,6 +953,7 @@ export interface paths {
          * 把 orb 内的一个文件发布为公开 URL（发布的是此刻的副本，落成该线程的一个附件）
          * @description 线程须在该 orb 上；必须是普通文件且 ≤100MiB（目录 409 `is_a_directory`，超限 413 `too_large`）。
          *     orb 冻结 / 停机时唤醒并至多等待 25s。之后 orb 里的修改不影响已发布的副本。
+         *     runner 的 orb（M11b）：路径范围为 `threadId` 线程的工作目录（与带 `thread` 的文件接口相同），本接口不另设 `thread` 查询参数。
          */
         post: operations["publishOrbFile"];
         delete?: never;
@@ -833,7 +964,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/git/status": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -855,7 +993,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/git/diff": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -874,7 +1019,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/git/commits": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -893,7 +1045,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/git/stage": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -915,7 +1074,14 @@ export interface paths {
     };
     "/api/v1/orbs/{id}/git/unstage": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -2514,8 +2680,30 @@ export interface paths {
          *     `ctl` 流（orbd 建连后第一条且唯一）为双向 JSON 行：`LinkCtlRequest` / `LinkCtlResponse` / `LinkCtlNotification`；
          *     各方法的 params / result 见 `LinkCtlMethod` 与 `LinkCtl<Method>Params` / `LinkCtl<Method>Result`。
          *     orb 令牌只对本 orb 有效：`threadId` 不属于该 orb 的 `entries.*`、`agent` 流、`egress` 流会导致 link 被关闭。
+         *     M11b：runner 以 `ort_…` 令牌接入同一端点（对应其常驻 orb；该 orb 的 `egress` 流直接关闭）。
          */
         get: operations["orbLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orb/v1/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 令牌对应的 orb（M11b）
+         * @description `Authorization: Bearer oot_… | ort_…`。runner 形态的 orbd 在拨 link 之前用它得知自己的 orb id。
+         *     令牌无效、已吊销或其 orb 已删除 → 401 `unauthorized`。由手写处理器服务（挂在 `/orb/v1/link` 旁），不进入 ServerInterface。
+         */
+        get: operations["orbWhoami"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2611,6 +2799,9 @@ export interface components {
              *     M9.6（身份与角色头像）不新增错误码：名字 / role / 头像非法 → `invalid_request`（400），图片超 128KiB → `too_large`（413），
              *     agent / 助手身份尚无所有者 → `conflict`（409），公开分享身份接口的 slug 不存在或已撤销 → `not_found`（404）。
              *     M11a（项目快照与预热池）：`orb_is_pooled`（409，把线程挂到预热池里的 orb 上）。
+             *     M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
+             *     `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
+             *     `worktree_failed`（400）、`worktree_dirty`（409）。
              */
             code: string;
             message: string;
@@ -2652,8 +2843,11 @@ export interface components {
         JobOp: "spawn" | "pause" | "snapshot" | "delete" | "delete_snapshot";
         /** @enum {string} */
         JobState: "queued" | "claimed" | "succeeded" | "failed";
-        /** @enum {string} */
-        ProviderDriver: "docker" | "dispatch" | "process";
+        /**
+         * @description `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
+         * @enum {string}
+         */
+        ProviderDriver: "docker" | "dispatch" | "process" | "firecracker" | "runner";
         AuthSetupBeginRequest: {
             /** @description `ost_…` 初始化令牌；恢复流程中省略 */
             token?: string;
@@ -2981,6 +3175,61 @@ export interface components {
             /** @description `opv_…`，只显示这一次 */
             token: string;
         };
+        /** @description runner 声明（`orbd run --runner --dir`）的一个可用目录 */
+        RunnerDir: {
+            /** @description 解析符号链接后的绝对路径 */
+            path: string;
+            /** @description 显示名（目录的最后一段） */
+            name: string;
+            /** @description 该目录本身是 git 仓库（含 `.git`），可在其旁边新建 worktree */
+            git: boolean;
+        };
+        /** @description runner = 一行 `driver = runner` 的 provider + 一台常驻 orb（`kind = runner`） */
+        Runner: {
+            id: components["schemas"]["ProviderId"];
+            name: string;
+            /** @description 其 orb 处于 `ready`（link 在线） */
+            online: boolean;
+            orbId: components["schemas"]["OrbId"];
+            /** @description 最近一次 hello 上报的主机名；从未接入时省略 */
+            hostname?: string;
+            os?: string;
+            arch?: string;
+            /** @description 最近一次 hello 上报的目录；从未接入时为空 */
+            dirs: components["schemas"]["RunnerDir"][];
+            /** @description 最近一次 hello 上报的特性（同 `LinkCtlHelloParams.features`） */
+            features: string[];
+            orbdVersion?: string;
+            agentVersion?: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            /** @description 最近一次 link 在线的时间 */
+            lastSeenAt?: components["schemas"]["TimestampMs"];
+        };
+        RunnerList: {
+            runners: components["schemas"]["Runner"][];
+        };
+        RunnerCreate: {
+            /** @description 与 provider 名共用唯一约束 */
+            name: string;
+        };
+        RunnerCreated: {
+            runner: components["schemas"]["Runner"];
+            /** @description `ort_…`，只显示这一次 */
+            token: string;
+        };
+        /**
+         * @description `createThread` 的 `executor.kind = runner` 未要求 worktree、未给 `shareDir`，而该目录已是其它未归档线程的工作目录时的 409 体（M11b）。
+         *     客户端据此让用户在「新建 worktree」与「仍然共用（`shareDir: true`）」之间选择后重发。
+         */
+        DirInUseConflict: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "dir_in_use";
+            message: string;
+            threadIds: components["schemas"]["ThreadId"][];
+        };
         ModelRef: {
             provider: string;
             id: string;
@@ -2992,8 +3241,8 @@ export interface components {
             data: string;
             mimeType: string;
         };
-        /** @description 线程执行位置 */
-        ThreadExecutor: components["schemas"]["ThreadExecutorNewOrb"] | components["schemas"]["ThreadExecutorOrb"];
+        /** @description 线程执行位置（`runner` 为 M11b） */
+        ThreadExecutor: components["schemas"]["ThreadExecutorNewOrb"] | components["schemas"]["ThreadExecutorOrb"] | components["schemas"]["ThreadExecutorRunner"];
         ThreadExecutorNewOrb: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -3012,6 +3261,33 @@ export interface components {
              */
             kind: "orb";
             orbId: components["schemas"]["OrbId"];
+        };
+        /** @description 在 runner 上执行（M11b）：工作目录为 `dir`，或在 `dir`（须是 git 仓库）旁新建的 worktree */
+        ThreadExecutorRunner: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "runner";
+            runnerId: components["schemas"]["ProviderId"];
+            /** @description 绝对路径，须等于或位于 runner 声明的某个目录之下 */
+            dir: string;
+            worktree?: components["schemas"]["ThreadExecutorRunnerWorktree"];
+            /** @description 为真时允许与其它线程共用同一工作目录（不检查 `dir_in_use`） */
+            shareDir?: boolean;
+        };
+        /** @description 给出时先在 runner 上 `worktree.add {repo: dir, name}`，线程的工作目录取新 worktree */
+        ThreadExecutorRunnerWorktree: {
+            /** @description worktree 与分支的名字（目录 `<repo 的父目录>/<repo 名>-<name>`，重名依次加 `-2`、`-3`…） */
+            name: string;
+        };
+        /** @description Oryn 为 runner 线程建的 worktree（M11b） */
+        ThreadWorktree: {
+            /** @description 原仓库目录 */
+            repo: string;
+            /** @description worktree 目录（即线程的 `cwd`） */
+            dir: string;
+            branch: string;
         };
         CreateThreadRequest: {
             projectId?: components["schemas"]["ProjectId"];
@@ -3086,6 +3362,10 @@ export interface components {
             schedule?: components["schemas"]["ThreadScheduleSummary"];
             /** @description 由「新建线程」定时创建时给出（M9） */
             scheduleRun?: components["schemas"]["ThreadScheduleRun"];
+            /** @description 线程的工作目录（M11b，runner 线程的绝对路径）；普通 orb 线程省略 */
+            cwd?: string;
+            /** @description Oryn 为该线程建的 worktree（M11b）；没有或已移除则省略 */
+            worktree?: components["schemas"]["ThreadWorktree"];
         };
         /** @description `state=error` 的原因（目前只有 orb 进入 `failed`；可 `POST threads/{id}/wake` 重试） */
         ThreadError: {
@@ -3189,6 +3469,23 @@ export interface components {
             snapshotKind?: components["schemas"]["OrbSnapshotKind"];
             /** @description 该 orb 的类型声明了 `docker` 特性（M11a，orb 内可用 Docker） */
             nestedDocker?: boolean;
+            /** @description 省略 = `orb`（M11b） */
+            kind?: components["schemas"]["OrbKind"];
+            /**
+             * @description orbd 的特性（同 `LinkCtlHelloParams.features`，M11b）：有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略。
+             *     客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
+             */
+            features?: string[];
+        };
+        /**
+         * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
+         * @enum {string}
+         */
+        OrbKind: "orb" | "runner";
+        /** @description `GET /orb/v1/whoami` 的结果（M11b） */
+        OrbWhoami: {
+            orbId: components["schemas"]["OrbId"];
+            kind: components["schemas"]["OrbKind"];
         };
         OrbSetupRun: {
             id: components["schemas"]["SetupRunId"];
@@ -3387,7 +3684,10 @@ export interface components {
          *     或 `deleteBrowserProfile` 时仍被持有）。客户端据此让用户在「只读使用」与「接管」之间选择后重发。
          */
         ProfileInUseConflict: {
-            /** @enum {string} */
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
             code: "profile_in_use";
             message: string;
             profileId: components["schemas"]["BrowserProfileId"];
@@ -5251,10 +5551,11 @@ export interface components {
          *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
          *     `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
          *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
-         *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）。
+         *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
+         *     `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -5281,6 +5582,9 @@ export interface components {
             /**
              * @description `unknown_method`、`invalid_params`、`not_found`、`failed`、`timeout`、`cursor_mismatch` 等；`busy` = 对端同时在途的请求已达上限（每个 ctl 端点 32 个），本请求未执行，可稍后重试。
              *     M9 orb 内方法另有：`forbidden`（非亲属线程、不属于本 orb 的调用方）、`rate_limited`、`invalid_schedule`、`thread_archived`、`schedule_name_taken`。
+             *     M11b runner 形态的 orbd 另有：`not_supported`（runner 不处理的方法：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`；
+             *     以及普通 orbd 收到 `worktree.*`）、`dir_not_served`（`agent.start` 的 `cwd` 或 `worktree.add` 的 `repo` 不在声明的目录内）、
+             *     `worktree_dirty`（`worktree.remove` 时有未提交改动，`message` 为 git 的 stderr）。
              */
             code: string;
             message: string;
@@ -5302,6 +5606,8 @@ export interface components {
             os: string;
             arch: string;
             threads: components["schemas"]["LinkCtlHelloThread"][];
+            /** @description 只由 runner 形态的 orbd 上报（M11b） */
+            runner?: components["schemas"]["LinkRunnerInfo"];
             /**
              * @description orbd 支持的可选能力（M3 起）：`fs`（`fs` 流上的文件接口）、`git`（`/git/*`）、`attachments`（`/attachments/*`）；
              *     M4 起：`services`（`services.state` 通知与 `/services/*`）、`portal`（`portal` 流与 `portal.configure`）；M5 起：`sync`（`/sync/*`）；
@@ -5310,9 +5616,16 @@ export interface components {
              *     `coordinator`（认识 `agent.start` 的 `profile = coordinator`，**只由** `orynd coordinator-host` 上报，且此时特性表恰为 `["coordinator"]`）。
              *     M11a 起：`repo-update`（认识 `setup.run` 的 `repo.update`）、`docker`（orb 内 dockerd 由 orbd 监督，认识 `snapshot.prepare` 的停容器语义）、
              *     `setup-defer-resume`（认识 `setup.run` 的 `deferResume`，结果带 `setupChanged`）。
+             *     M11b 起：`terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）、
+             *     `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
+        };
+        /** @description runner 形态 orbd 的 hello 附加信息（M11b） */
+        LinkRunnerInfo: {
+            hostname: string;
+            dirs: components["schemas"]["RunnerDir"][];
         };
         LinkCtlEntriesCursorsParams: {
             threadId: components["schemas"]["ThreadId"];
@@ -5488,9 +5801,37 @@ export interface components {
         LinkCtlSnapshotPrepareResult: {
             ok: boolean;
         };
+        /**
+         * @description `worktree.add`（orynd→orbd 请求，M11b，只有 runner 形态接受）：在 `repo` 旁新建 worktree 与同名分支；结果 `LinkCtlWorktreeAddResult`。
+         *     `repo` 须在声明的目录内（否则 `dir_not_served`）且含 `.git`；`name` 须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`（否则 `invalid_params`）。
+         *     目录 = `<repo 的父目录>/<repo 名>-<name>`，目录或分支已存在则依次试 `-2`、`-3`…；git 失败 → `failed`（`message` 为 git 的 stderr）。
+         */
+        LinkCtlWorktreeAddParams: {
+            /** @description 原仓库目录（绝对路径） */
+            repo: string;
+            name: string;
+        };
+        LinkCtlWorktreeAddResult: {
+            /** @description 新 worktree 的绝对路径 */
+            dir: string;
+            branch: string;
+        };
+        /**
+         * @description `worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态接受）：`dir` 须是本 orbd 建过的 worktree（否则 `not_found`）；
+         *     `git worktree remove`（不带 `--force`，有未提交改动 → `worktree_dirty`），随后 `git branch -d`（失败则 `branchKept: true`）。
+         */
+        LinkCtlWorktreeRemoveParams: {
+            dir: string;
+        };
+        LinkCtlWorktreeRemoveResult: {
+            ok: boolean;
+            /** @description 分支未合并、`git branch -d` 失败而保留了分支 */
+            branchKept?: boolean;
+        };
         LinkCtlAgentStartParams: {
             threadId: components["schemas"]["ThreadId"];
             sessionDir: string;
+            /** @description runner 形态（M11b）必填，且须在声明的目录或已登记的 worktree 之内（否则 `dir_not_served`）；`sessionDir` 须在 `$HOME/.oryn/threads/` 之下 */
             cwd: string;
             env: {
                 [key: string]: string;
@@ -5681,10 +6022,19 @@ export interface components {
         ThreadIdPath: components["schemas"]["ThreadId"];
         OrbIdPath: components["schemas"]["OrbId"];
         AttachmentIdPath: components["schemas"]["AttachmentId"];
-        /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+        /**
+         * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+         *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+         */
         FsPathQuery: string;
         /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
         OrbBackgroundQuery: boolean;
+        /**
+         * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+         *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+         *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+         */
+        OrbThreadQuery: components["schemas"]["ThreadId"];
         /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
         GitRootQuery: string;
         GitScopeQuery: components["schemas"]["GitScope"];
@@ -6334,6 +6684,73 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listRunners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description runner 列表（按名称排序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerCreate"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProviderIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listThreads: {
         parameters: {
             query?: {
@@ -6389,13 +6806,16 @@ export interface operations {
                     "application/json": components["schemas"]["ThreadEnvelope"];
                 };
             };
-            /** @description `profile_in_use`：选用的浏览器 Profile 被另一台运行中的 orb 独占持有且 `profileMode` 为 `exclusive`（其它 409 为普通 `Error`） */
+            /**
+             * @description `profile_in_use`：选用的浏览器 Profile 被另一台运行中的 orb 独占持有且 `profileMode` 为 `exclusive`（体为 `ProfileInUseConflict`）；
+             *     `dir_in_use`（M11b）：runner 上的该目录已被其它线程使用（体为 `DirInUseConflict`）。其它 409 为普通 `Error`
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProfileInUseConflict"];
+                    "application/json": components["schemas"]["ProfileInUseConflict"] | components["schemas"]["DirInUseConflict"];
                 };
             };
             default: components["responses"]["Error"];
@@ -6539,6 +6959,27 @@ export interface operations {
         responses: {
             /** @description 已受理 */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeThreadWorktree: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已移除 */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6829,6 +7270,12 @@ export interface operations {
     getOrbFsRoots: {
         parameters: {
             query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
             };
@@ -6855,7 +7302,16 @@ export interface operations {
     listOrbFs: {
         parameters: {
             query: {
-                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+                /**
+                 * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+                 *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+                 */
                 path: components["parameters"]["FsPathQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
@@ -6883,7 +7339,16 @@ export interface operations {
     statOrbFs: {
         parameters: {
             query: {
-                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+                /**
+                 * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+                 *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+                 */
                 path: components["parameters"]["FsPathQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
@@ -6911,7 +7376,16 @@ export interface operations {
     readOrbFile: {
         parameters: {
             query: {
-                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+                /**
+                 * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+                 *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+                 */
                 path: components["parameters"]["FsPathQuery"];
             };
             header?: {
@@ -6954,7 +7428,16 @@ export interface operations {
     writeOrbFile: {
         parameters: {
             query: {
-                /** @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径 */
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+                /**
+                 * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
+                 *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
+                 */
                 path: components["parameters"]["FsPathQuery"];
                 /** @description 目标已存在时是否覆盖 */
                 overwrite?: boolean;
@@ -6988,7 +7471,14 @@ export interface operations {
     };
     mkdirOrbFs: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -7015,7 +7505,14 @@ export interface operations {
     };
     renameOrbFs: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -7042,7 +7539,14 @@ export interface operations {
     };
     deleteOrbFs: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -7095,6 +7599,12 @@ export interface operations {
     getOrbGitStatus: {
         parameters: {
             query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
                 /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
                 root?: components["parameters"]["GitRootQuery"];
                 scope?: components["parameters"]["GitScopeQuery"];
@@ -7128,6 +7638,12 @@ export interface operations {
     getOrbGitDiff: {
         parameters: {
             query: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
                 /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
                 root?: components["parameters"]["GitRootQuery"];
                 scope?: components["parameters"]["GitScopeQuery"];
@@ -7165,6 +7681,12 @@ export interface operations {
     listOrbGitCommits: {
         parameters: {
             query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
                 /** @description 仓库所在目录（同 `FsPathQuery` 的路径规则）；缺省 = orb 当前工作目录 */
                 root?: components["parameters"]["GitRootQuery"];
                 /** @description 基线分支名（如 `main`） */
@@ -7195,7 +7717,14 @@ export interface operations {
     };
     stageOrbGit: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -7220,7 +7749,14 @@ export interface operations {
     };
     unstageOrbGit: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
+                 *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
+                 *     runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
+                 */
+                thread?: components["parameters"]["OrbThreadQuery"];
+            };
             header?: never;
             path: {
                 id: components["parameters"]["OrbIdPath"];
@@ -9760,6 +10296,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    orbWhoami: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 令牌对应的 orb */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbWhoami"];
+                };
             };
             default: components["responses"]["Error"];
         };
