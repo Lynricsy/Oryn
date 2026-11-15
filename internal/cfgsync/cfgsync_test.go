@@ -133,12 +133,15 @@ const rule = "---\ndescription: no marker\n---\nDo not output M122_MARKER.\n"
 // 全局路径 + 用户点了全局：写进全局 Home，结果 synced，有 agent_config_saved 审计事件（不带 projectId）。
 func TestSaveRuleGlobal(t *testing.T) {
 	e := newEnv(t)
+	var applied []string
+	e.s.Applied = func(p string) { applied = append(applied, p) }
 	prj := e.project(t)
 	orb := e.orb(t, prj)
 	e.fs.files["~/.omp/agent/rules/x.md"] = []byte(rule)
 
 	res := e.s.SaveRule(e.ctx, threads.ConfigSaveParams{OrbID: orb, ThreadID: "T-1", SavedPath: "~/.omp/agent/rules/x.md", GlobalChosen: true})
 	assert.Equal(t, threads.ConfigSaveResult{Synced: true, Scope: "global", Path: "rules/x.md"}, res)
+	assert.Equal(t, []string{""}, applied, "写入全局后下发全局层")
 	b, ok := get(e.global, "rules/x.md")
 	require.True(t, ok)
 	assert.Equal(t, rule, string(b))
@@ -161,6 +164,7 @@ func TestSaveRuleGlobal(t *testing.T) {
 // 全局路径但没有记录到用户点选全局：scope_unconfirmed，不读 orb、不写中央。
 func TestSaveRuleGlobalUnconfirmed(t *testing.T) {
 	e := newEnv(t)
+	e.s.Applied = func(string) { t.Fatal("没写入中央不应下发") }
 	orb := e.orb(t, e.project(t))
 	e.fs.files["~/.omp/agent/rules/x.md"] = []byte(rule)
 
@@ -181,12 +185,15 @@ func TestSaveRuleProject(t *testing.T) {
 	} {
 		t.Run(saved, func(t *testing.T) {
 			e := newEnv(t)
+			var applied []string
+			e.s.Applied = func(p string) { applied = append(applied, p) }
 			prj, other := e.project(t), e.project(t)
 			orb := e.orb(t, prj)
 			e.fs.files[saved] = []byte(rule)
 
 			res := e.s.SaveRule(e.ctx, threads.ConfigSaveParams{OrbID: orb, ThreadID: "T-2", SavedPath: saved})
 			assert.Equal(t, threads.ConfigSaveResult{Synced: true, Scope: "project", Path: "rules/my-rule_1.md"}, res)
+			assert.Equal(t, []string{prj}, applied, "写入项目层后只下发该项目")
 			ph, err := e.projects.For(prj)
 			require.NoError(t, err)
 			b, ok := get(ph, "rules/my-rule_1.md")

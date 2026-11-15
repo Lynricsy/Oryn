@@ -1561,7 +1561,7 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 ### 控制面下发器（计划 6.2）
 
-- 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import` 成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
+- 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import` 成功后，以及 `/omfg` 回写（M12.2）写入中央成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
 - 对象：状态为 `ready`、有已 hello 的 link 且 `features` 含 `omphome-apply` 的 orb；项目层只发给 `project_id` 为该项目的 orb。冻结、停机、恢复途中的 orb 跳过，它们在 `resume.run` / `setup.run` 时照常拿到最新配置；runner 与旧 orbd 不发。
 - 参数取自与 setup 同一份 `SetupSource.Plan`：`ompHome` 是渲染后的 omp-home（协调宿主只有 `coordinatorFiles`，即 `models.yml` 与 `config.yml`），`projectConfig` 是该 orb 所属项目的项目层（没有项目则省略，orbd 不动项目层）。各 orb 并发下发，单台应答上限 30 秒；成功后用同一份 Plan 的 `Egress` 替换该 orb 的出站策略（`models.yml` 改了 provider / baseUrl 时路由立即生效）。中央模型目录的缓存键本来就按 `models.yml` 与 `config.yml` 内容计算，不需要额外失效。
 - 基线：每层下发后在 `<data_dir>/omp-home-applied/`（项目层在其下 `projects/<id>/`）记下各文件原文的 sha256（`manifest.json`）与 `config.yml` 原文。下一次以此算出 `Changed`（新增、修改、删除的路径）与 `ConfigBefore`。没有基线时这一层的全部文件都算变化；全局层在 orynd 启动时若没有基线，先以当前 omp-home 建立基线。个别 orb 下发失败不影响基线（它在下次 setup / resume 时同步）。

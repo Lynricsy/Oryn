@@ -167,8 +167,11 @@ func (s *Server) init(ctx context.Context) error {
 		return err
 	}
 	s.Threads.SetAttachments(s.Attachments)
-	// M12.2：/omfg 保存的规则由控制面读回并写入中央（全局 omp-home 或项目层）
-	s.Threads.SetConfigSync(&cfgsync.Saver{Store: s.Store, Orbs: s.Orbs, Global: s.Home, Projects: s.ProjectHomes, Vault: s.Vault})
+	// M12.2：/omfg 保存的规则由控制面读回并写入中央（全局 omp-home 或项目层）；M13：写入后同样立即下发
+	s.Threads.SetConfigSync(&cfgsync.Saver{
+		Store: s.Store, Orbs: s.Orbs, Global: s.Home, Projects: s.ProjectHomes, Vault: s.Vault,
+		Applied: s.Orbs.ScheduleOmpApply,
+	})
 	// M13：agent-config 写入后防抖下发到运行中的 orb，再按变化让会话 reload_plugins 或标为需重启
 	if err := s.Orbs.EnableOmpApply(orbs.OmpApplyConfig{
 		Home: s.Home, Projects: s.ProjectHomes, Dir: filepath.Join(cfg.DataDir, "omp-home-applied"),

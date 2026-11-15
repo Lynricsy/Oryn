@@ -71,6 +71,8 @@ type Saver struct {
 	Global   GlobalStore
 	Projects ProjectStores
 	Vault    *secrets.Vault
+	// Applied 在写入中央成功后调用（M13：按层立即下发到其它 orb；projectID 空 = 全局层）。nil = 不下发。
+	Applied func(projectID string)
 }
 
 var _ threads.ConfigSync = (*Saver)(nil)
@@ -194,6 +196,12 @@ func (s *Saver) put(ctx context.Context, scope, projectID, rel string, content [
 	}
 	switch {
 	case err == nil:
+		if s.Applied != nil {
+			if scope == ScopeGlobal {
+				projectID = ""
+			}
+			s.Applied(projectID)
+		}
 		return ""
 	case errors.Is(err, agentcfg.ErrTooLarge):
 		slog.Warn("cfgsync: 规则超出中央配置配额", "scope", scope, "project", projectID, "path", rel, "err", err)
