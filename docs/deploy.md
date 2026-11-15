@@ -353,7 +353,7 @@ pool:      { max_total: 2, max_age: "12h", active_window: "72h" }
 - **什么时候拍**：项目 orb 第一次 setup 成功、且 setup 用时不少于 `min_setup` 时，orynd 在它进入 ready 之前让 provider 把磁盘存成快照（docker 驱动是 `docker commit`，这期间容器暂停几秒；sysbox 类型要先停机再拍，见下文）。只在 agent 从未在这台 orb 上运行过时才拍，而且是在 setup 脚本跑完、resume 与受管服务启动**之前**拍。所以快照里只有 setup 的产物，没有会话、附件、浏览器 Profile、agent 的改动，也没有服务运行时写下的东西。认领来的预热 orb 已经跑过服务，不发布快照。
 - **怎么用**：之后同一项目、同一 provider、同一类型的新 orb 从快照启动。orbd 会 `git fetch` 基线：HEAD 没变就跳过 setup，只跑 resume；HEAD 变了就在快照的环境上把 setup 增量重跑一遍，成功后发布新快照。所以 setup 脚本要能重复执行。如果新的基线改动了仓库里的 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 或 `.amp/services.yaml`（内容、可执行位、符号链接目标任一变化都算），或者旧 HEAD 不是新基线的祖先（force push 等情况），旧快照就直接退役，下一个 orb 从基础镜像全新 setup。浅克隆的项目会多 fetch 一次历史来判断祖先关系；仍判断不了的，按「不是快进」处理。
 - **什么时候失效**：项目的仓库、分支、setup 脚本、env 模式密钥与降级模型 key（只看名字与修改时间），或者 provider 的基础镜像，任何一项变化，旧快照就退役，下一个 orb 从基础镜像重来。重建 orb 镜像（`make image`）会让该 provider 上的全部快照失效。同一条血统最多复用 `max_age`（72 小时），最多刷新 `max_depth` 次；orb 是否真的从快照启动，以 provider 的上报为准，orb 内的程序无法让控制面误判、借此续期。
-- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。单个快照超过 `max_snapshot_gb` 就直接作废，不会挤掉别的项目（不写时取 10 与 `max_total_gb` 中较小的一个）。每个 provider 按「相对基础镜像多占的字节」累计，超过 `max_total_gb` 时按最近使用时间退役其它项目的快照。退役的快照在不再被任何 orb 使用后，由回收器删除。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
+- **磁盘**：快照是 provider 宿主上的镜像，名字是 `oryn-snap-…`。单个快照超过 `max_snapshot_gb` 就直接作废，不会挤掉别的项目（不写时取 10 与 `max_total_gb` 中较小的一个）。`max_total_gb` 约束的是快照缓存：每个 provider 把可用（ready）快照「相对基础镜像多占的字节」加起来，超过上限时按最近使用时间退役其它项目的快照，新发布的那份总是保留。退役的快照如果还有 orb 在用，它的镜像归那台 orb，不计入上限，等 orb 删掉后由回收器删除；所以宿主上快照镜像的实际占用，可能暂时高于 `max_total_gb`，多出的部分正是这些 orb 引用着的镜像。`docker image prune -a` 删掉未被容器引用的快照也没关系，下一个 orb 会退回基础镜像并重新发布。
 - **事故处置**：怀疑某次 setup 把不该留的东西（后门、泄露的凭据）拍进了快照时，执行 `oryn project snapshots rm <项目>`。这会把可用的和正在构建的快照一起作废，之后的 orb 从基础镜像全新 setup。快照镜像的配置里不保留 orb 令牌等环境变量。
 - **dispatch 驱动**：基础镜像只按引用名识别（`ref:<镜像>`），镜像内容变了但引用名不变时，要靠 72 小时上限兜底；它也不上报快照大小，所以配额对它不起作用。
 - **管理**：项目设置页的「项目快照」开关与快照表；CLI `oryn project snapshots ls <项目>`，`oryn project snapshots rm <项目> [--type <类型>]`。
@@ -412,3 +412,122 @@ orb_url: "https://172.17.0.1:7643"
 - 开启后，**已存在的 orb 仍走原来的明文监听**，直到重建（停机再恢复，或删除重建）才改用 TLS。全部 orb 都换过之后，可以从 `listen` 里去掉面向网桥的明文地址。
 - provider 在另一台主机、经反代用正式证书连 orynd 时，不需要开启它：`orb_url` 写 `https://` 的主域名，orbd 用系统根证书校验。
 - 服务端证书有效期 1 年，到期前 30 天或 `listen` / `hosts` 变化时，orynd 启动时自动重签；CA 不变，已下发 CA 的 orb 不受影响。删除 `orb-tls/` 目录会生成新的 CA，之后要重建所有 orb。
+
+## 11. Runner：在自己的机器上跑线程（M11b）
+
+runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器上以普通用户运行 `orbd run --runner`，它主动连到 orynd；之后新建线程时可以选「这台 runner 的某个目录」，线程里的 agent 就直接在那个目录工作。用的是那台机器自己的 omp 配置（`~/.omp/agent`）和 git 凭据。
+
+### 安全边界（先读）
+
+- **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
+- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。
+- **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
+- runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。
+
+### 建立与启动
+
+1. **建 runner**：「设置 → Runner → 新建」，或 `oryn runner create laptop`（标准输出只有令牌，启动命令打到标准错误）。令牌只显示这一次。
+2. **在那台机器上**放好与 orynd 同版本的 `orbd`（`make build` 产出的 `bin/orbd`），并确保 `omp` 与 `git` 在 PATH 里。然后：
+
+   ```bash
+   install -D -m 600 /dev/stdin ~/.config/oryn/runner.token <<< 'ort_…'   # 或用环境变量 ORYN_RUNNER_TOKEN
+   ORYN_URL=https://oryn.example.com orbd run --runner --dir ~/code/app --dir ~/notes [--terminal]
+   ```
+
+   `--dir` 可以重复，符号链接会先解析成真实路径；同一个系统用户只能跑一个 runner 实例。会话文件放在 `~/.oryn/threads/<线程>`，不会写进项目目录。
+3. **常驻**（systemd user unit 示例）：
+
+   ```ini
+   # ~/.config/systemd/user/oryn-runner.service
+   [Unit]
+   Description=Oryn runner
+   After=network-online.target
+   [Service]
+   Environment=ORYN_URL=https://oryn.example.com
+   ExecStart=%h/.local/bin/orbd run --runner --dir %h/code/app --terminal
+   Restart=always
+   RestartSec=5
+   [Install]
+   WantedBy=default.target
+   ```
+
+   `systemctl --user enable --now oryn-runner`；要在未登录时也运行，执行一次 `loginctl enable-linger <用户>`。
+
+### 使用
+
+- **新建线程**：在执行位置里选 runner 和目录（可以再填子路径）。同一个目录已有未归档的线程在用时，会提示「新建 worktree（推荐）」或「仍然共用」。新 worktree 建在仓库旁边，目录是 `<仓库目录>-<名字>`（重名时加 `-2`、`-3`），分支同名。命令行：`oryn thread new --runner laptop --dir ~/code/app [--worktree fix-login | --share-dir] "…"`。
+- **归档**：线程有 Oryn 建的 worktree 时，归档对话框可以「同时移除 worktree」。它执行 `git worktree remove` 和 `git branch -d`，不带 `--force` / `-D`：有未提交的改动时 git 会拒绝，分支没合并时会保留，报错原样显示，线程照常归档。
+- **Changes 面板**只在线程目录就是仓库根目录时显示改动；线程目录是仓库的子目录时显示「不是 git 仓库」。
+- **离线**：link 断开超过 30 秒，runner 显示为离线。期间发给它的消息排队（每个线程最多 100 条），runner 重新连上后按顺序送达。
+
+## 12. Firecracker provider（M11b）
+
+每个 orb 是一台 Firecracker microVM：独立内核、独立的根文件系统写层、每台 VM 一条 /30 点对点 tap。隔离强于容器，代价是 provider 必须以 root 运行，宿主要有 KVM。
+
+### 前提
+
+- x86_64 宿主，`/dev/kvm` 与 `/dev/net/tun` 可用（虚拟机里跑需要开嵌套虚拟化），cgroup v2，`ip`、`nft`、`mke2fs`、`cp` 在 PATH 里。
+- Firecracker 官方支持的宿主内核是 5.10 / 6.1 / 6.18，其它版本预检只给警告。
+- 状态目录与产物必须在同一个文件系统上（基础盘用硬链接）。
+
+### 产物
+
+```bash
+make image                 # 根盘取自 orb 镜像（FC_IMAGE，默认 oryn-orb:dev）
+make fc-artifacts          # build/fc/{firecracker,jailer,vmlinux,rootfs.ext4}；不需要 root，内核构建约 2 分钟
+sudo install -D -m 755 build/fc/firecracker build/fc/jailer -t /usr/local/bin/
+sudo install -D -m 644 build/fc/vmlinux build/fc/rootfs.ext4 -t /var/lib/oryn-fc/artifacts/
+```
+
+Firecracker 与内核源码的版本和 sha256 锁定在 `images/fc/artifacts.lock.json`。**更新根盘要用 `install` 换成新文件，不能原地覆盖**：运行中的 VM 的基础盘是它的硬链接，原地写会改坏这些 VM。换了根盘或内核后，provider 上报的基础镜像身份随之变化，旧的项目快照全部失效。
+
+### 网络
+
+```bash
+sudo install -D -m 755 deploy/firecracker/oryn-fc-net.sh /usr/local/lib/oryn/oryn-fc-net.sh
+sudo install -m 644 deploy/systemd/oryn-fc-net.service /etc/systemd/system/
+sudo systemctl enable --now oryn-fc-net
+```
+
+它建一个 dummy 接口 `oryn-fc`（地址 `172.31.255.1/32`，orynd 在这个地址上给 guest 提供 link），打开 `ip_forward`，并装两张 nft 表：
+
+- guest 发往宿主的流量，只放行到 `172.31.255.1` 的 `ORYN_FC_LINK_PORTS` 端口（默认 `7643`）；
+- guest 之间、guest 到私有网段 / 链路本地 / 环回一律丢弃，出网走 masquerade；
+- 有 Docker 时在 `DOCKER-USER` 里追加两条放行，否则 Docker 的 FORWARD 默认丢弃会拦掉 guest 出网。
+
+每台 VM 的 tap 由 provider 建（`/30`、严格反向路径过滤），VM 之间没有共享二层。`oryn-fc-net.service` 要在 orynd 之前启动，因为 orynd 要监听 `172.31.255.1`。
+
+### 配置与启动
+
+```yaml
+# orynd.yaml：给 guest 开 TLS 的 link 监听
+orb_tls: { listen: ["172.17.0.1:7643", "172.31.255.1:7643"] }
+
+# /etc/oryn/provider-fc.yaml
+url: "https://oryn.example.com"
+token_file: "/etc/oryn/provider-fc.token"
+orb_url: "https://172.31.255.1:7643"
+driver: firecracker
+firecracker:
+  disk_gb: 40                                  # 每台 VM 的可写盘（稀疏文件，按实际写入占空间）
+  limits: { max_vms: 8, max_memory_mb: 32768 } # 超出时 spawn 失败，原因 capacity
+  types: { small: {cpus: 2, memory: "4g"}, medium: {cpus: 4, memory: "8g"}, large: {cpus: 8, memory: "16g"} }
+  default_type: medium
+```
+
+没开 `orb_tls` 的部署：`orb_url` 写 `http://172.31.255.1:7600`，`listen` 加 `172.31.255.1:7600`，并把 `oryn-fc-net.service` 的 `ORYN_FC_LINK_PORTS` 改成 `7600`。
+
+```bash
+sudo oryn provider preflight --config /etc/oryn/provider-fc.yaml   # 逐项打印检查结果，全过再启动
+sudo install -m 644 deploy/systemd/oryn-provider-fc.service /etc/systemd/system/
+sudo systemctl enable --now oryn-provider-fc
+```
+
+预检会核对：root、KVM、tun、cgroup v2、产物与状态目录同盘、`oryn-fc` 接口与 nft 表存在、`orb_url` 的端口在放行列表里、网段不与宿主其它接口重叠。
+
+### 行为差异
+
+- **冻结**只停 vCPU，内存仍留在宿主进程里，和 `docker pause` 一样占内存；`limits.max_memory_mb` 把冻结的 VM 也算在内。
+- **停机**向 guest 发关机请求，30 秒内不退出就强杀；磁盘和槽位保留，下次唤醒重新开机。
+- **项目快照**是可写盘的稀疏复制（文件系统支持时用 reflink），运行中的 VM 拍快照时先在 guest 里冻结文件系统、暂停 VM、复制、再恢复，前后不到几秒。
+- guest 里的 orbd 作为 PID 1 启动，时间、主机名、DNS 和令牌经 vsock 下发；模型与 git 的密钥仍然不进 VM。

@@ -1,0 +1,14 @@
+url: "http://127.0.0.1:7600"
+token_file: ".dev/provider-fc.token"
+# guest 经 oryn-fc 的 /30 点对点 tap 连宿主：link 走 TLS（orynd 的 orb_tls.listen 要含 172.31.255.1:7643）
+orb_url: "https://172.31.255.1:7643"
+driver: firecracker
+# 产物与运行状态：sudo install -D build/fc/{firecracker,jailer} /usr/local/bin/、
+# sudo install -D build/fc/{vmlinux,rootfs.ext4} /var/lib/oryn-fc/artifacts/（替换 rootfs 要换新文件，不能原地覆盖）
+firecracker:
+  disk_gb: 16
+  limits: { max_vms: 3, max_memory_mb: 12288 }
+  types:
+    small: { cpus: 2, memory: "2g" }
+    medium: { cpus: 2, memory: "4g" }
+  default_type: medium
