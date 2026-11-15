@@ -135,14 +135,10 @@ interface XdevDispatch {
 	inner: unknown;
 }
 
-function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
-	if (
-		props.name !== "write" ||
-		props.result?.isError === true ||
-		!isRecord(props.result?.details)
-	)
-		return null;
-	const xdev = props.result.details.xdev;
+/** 从 write 结果的 details 取 xdev execute 派发（真实工具名、校验后的参数与内层 details）。 */
+function xdevOf(details: unknown): XdevDispatch | null {
+	if (!isRecord(details)) return null;
+	const xdev = details.xdev;
 	if (
 		!isRecord(xdev) ||
 		xdev.mode !== "execute" ||
@@ -156,6 +152,17 @@ function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
 	};
 }
 
+/**
+ * `write xd://<tool>` 的派发：完成后看最终结果（失败的不改名），运行中看部分结果——
+ * Core 的运行中更新同样把真实工具的进度包在 `details.xdev.inner` 里。
+ */
+function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
+	if (props.name !== "write") return null;
+	if (props.result)
+		return props.result.isError === true ? null : xdevOf(props.result.details);
+	return props.running ? xdevOf(props.partialResult?.details) : null;
+}
+
 export function ToolView(props: ToolViewProps): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
@@ -163,20 +170,19 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	const { args, intent: argIntent } = normalizeArgs(props.args);
 	const intent = props.intent?.trim() || argIntent;
 	const name = xdev?.tool ?? props.name;
-	const result = xdev
-		? {
-				content: props.result!.content,
-				details: xdev.inner,
-				isError: props.result!.isError,
-			}
-		: props.result;
+	// 派发时把外层 write 的 details 换成内层工具的 details，交给真实工具的渲染器
+	const unwrap = (r: ToolResultLike | undefined) =>
+		xdev && r
+			? { content: r.content, details: xdev.inner, isError: r.isError }
+			: r;
+	const result = unwrap(props.result);
 	const renderer = resolveToolRenderer(name);
 	const renderProps: ToolRenderProps = {
 		name,
 		args: xdev?.args ?? args,
 		result,
 		running: props.running,
-		partial: props.running && !result ? props.partialResult : undefined,
+		partial: props.running && !result ? unwrap(props.partialResult) : undefined,
 		host: props.host,
 	};
 

@@ -25,6 +25,39 @@ describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 		expect(container.querySelector(".tv-partial")).toBeNull();
 	});
 
+	it("运行中的 write xd://task 解包部分结果的 xdev.inner，用 task 渲染器显示进度", () => {
+		const { container } = render(
+			<ToolView
+				name="write"
+				args={{ path: "xd://task", content: "{}" }}
+				running
+				defaultOpen
+				partial="Running agent Alpha..."
+				partialResult={{
+					content: [{ type: "text", text: "Running agent Alpha..." }],
+					details: {
+						xdev: {
+							tool: "task",
+							mode: "execute",
+							args: {
+								tasks: [{ name: "Alpha", agent: "task", task: "看一眼" }],
+							},
+							inner: {
+								results: [],
+								progress: [{ id: "Alpha", agent: "task", status: "running" }],
+							},
+						},
+					},
+				}}
+			/>,
+		);
+		expect(container.querySelector(".tv-name")).toHaveTextContent("xd://task");
+		expect(screen.getByText("running").closest(".tv-row")).toHaveTextContent(
+			"Alpha",
+		);
+		expect(container.querySelector(".tv-partial")).toBeNull();
+	});
+
 	it("未声明 livePartial 的 bash 仍输出文本尾巴", () => {
 		const { container } = render(
 			<ToolView
