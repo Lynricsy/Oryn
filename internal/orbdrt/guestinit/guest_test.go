@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -26,11 +27,14 @@ type writtenFile struct {
 	uid, gid int
 }
 
-// fakeSys 记录 Guest 产生的每个系统副作用（按调用顺序记在 calls 里）。
+// fakeSys 记录 Guest 产生的每个系统副作用（按调用顺序记在 calls 里）。和真盘一样，冻结期间写可写盘
+// （/run 这个 tmpfs 之外的路径）的 WriteFile / Symlink 一直阻塞到解冻。
 type fakeSys struct {
 	mu       sync.Mutex
+	thawed   *sync.Cond // frozen 变为 false 时广播
 	calls    []string
 	files    map[string]writtenFile
+	links    map[string]string // 路径 → 链接目标
 	clock    time.Time
 	hostname string
 	frozen   bool
@@ -50,6 +54,25 @@ func (f *fakeSys) callList() []string {
 	return slices.Clone(f.calls)
 }
 
+func (f *fakeSys) isFrozen() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.frozen
+}
+
+func (f *fakeSys) pendingTimer() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.timer
+}
+
+// waitDiskLocked 在可写盘冻结期间阻塞（持 f.mu 调用）。
+func (f *fakeSys) waitDiskLocked(path string) {
+	for f.frozen && !strings.HasPrefix(path, "/run/") {
+		f.thawed.Wait()
+	}
+}
+
 func (f *fakeSys) ops() sysOps {
 	return sysOps{
 		SetClock: func(t time.Time) error { f.record("clock"); f.clock = t; return nil },
@@ -65,18 +88,48 @@ func (f *fakeSys) ops() sysOps {
 			f.record("write " + path)
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			f.waitDiskLocked(path)
 			f.files[path] = writtenFile{string(data), mode, uid, gid}
 			return nil
 		},
-		Sync:    func() { f.record("sync") },
-		Freeze:  func(p string) error { f.record("freeze " + p); f.frozen = true; return nil },
-		Thaw:    func(p string) error { f.record("thaw " + p); f.frozen = false; return nil },
+		Symlink: func(target, path string, uid, gid int) error {
+			f.record("link " + path + " -> " + target)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.waitDiskLocked(path)
+			delete(f.files, path)
+			f.links[path] = target
+			return nil
+		},
+		Sync: func() { f.record("sync") },
+		Freeze: func(p string) error {
+			f.record("freeze " + p)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.frozen = true
+			return nil
+		},
+		Thaw: func(p string) error {
+			f.record("thaw " + p)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.frozen = false
+			f.thawed.Broadcast()
+			return nil
+		},
 		KillAll: func() { f.record("killall") },
 		Reboot:  func() { f.record("reboot") },
 		AfterFunc: func(d time.Duration, fn func()) func() bool {
 			f.record("timer " + d.String())
+			f.mu.Lock()
+			defer f.mu.Unlock()
 			f.timer = fn
-			return func() bool { f.timer = nil; return true }
+			return func() bool {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				f.timer = nil
+				return true
+			}
 		},
 	}
 }
@@ -110,7 +163,8 @@ func (o *fakeOrbd) Stop(grace time.Duration) {
 }
 
 func newTestGuest(img imageConfig) (*Guest, *fakeSys, *fakeOrbd) {
-	fs := &fakeSys{files: map[string]writtenFile{}}
+	fs := &fakeSys{files: map[string]writtenFile{}, links: map[string]string{}}
+	fs.thawed = sync.NewCond(&fs.mu)
 	o := &fakeOrbd{sys: fs}
 	return newGuest(fs.ops(), o, img), fs, o
 }
@@ -159,14 +213,15 @@ func TestStart(t *testing.T) {
 
 	assert.Equal(t, time.UnixMilli(1_800_000_000_000), fs.clock)
 	assert.Equal(t, "orb-01jcz8m3w4x5y6z7a8b9c0d1e2", fs.hostname)
-	assert.Equal(t, writtenFile{"oot_first\n", 0o600, 1000, 1000}, fs.files["/home/user/.oryn/orb-token"])
+	assert.Equal(t, writtenFile{"oot_first\n", 0o600, 1000, 1000}, fs.files["/run/oryn/orb-token"])
 	assert.Equal(t, writtenFile{"nameserver 1.1.1.1\nnameserver 1.0.0.1\n", 0o644, 0, 0}, fs.files["/etc/resolv.conf"])
 	hosts := fs.files["/etc/hosts"]
 	assert.Contains(t, hosts.data, "127.0.0.1\tlocalhost\n")
 	assert.Contains(t, hosts.data, "127.0.1.1\torb-01jcz8m3w4x5y6z7a8b9c0d1e2\n")
-	// 令牌先落盘，再启动 orbd（orbd 拨号前读令牌文件）。
+	// 令牌与链接先就位，再启动 orbd（orbd 拨号前读令牌文件）。
 	calls := fs.callList()
-	assert.Less(t, slices.Index(calls, "write /home/user/.oryn/orb-token"), slices.Index(calls, "orbd start"))
+	assert.Less(t, slices.Index(calls, "write /run/oryn/orb-token"), slices.Index(calls, "orbd start"))
+	assert.Less(t, slices.Index(calls, "link /home/user/.oryn/orb-token -> /run/oryn/orb-token"), slices.Index(calls, "orbd start"))
 
 	require.Equal(t, 1, o.starts)
 	assert.Equal(t, "/home/user/workspace", o.dir)
@@ -189,7 +244,7 @@ func TestStart(t *testing.T) {
 	require.True(t, call(t, g, req).OK)
 	assert.Equal(t, 1, o.starts)
 	assert.Equal(t, []syscall.Signal{syscall.SIGHUP}, o.signals)
-	assert.Equal(t, "oot_second\n", fs.files["/home/user/.oryn/orb-token"].data)
+	assert.Equal(t, "oot_second\n", fs.files["/run/oryn/orb-token"].data)
 	assert.Equal(t, time.UnixMilli(1_800_000_060_000), fs.clock)
 }
 
@@ -241,18 +296,168 @@ func TestSyncFreezeThaw(t *testing.T) {
 	g, fs, _ := newTestGuest(imageConfig{})
 	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpSync}).OK)
 	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
-	assert.True(t, fs.frozen)
+	assert.True(t, fs.isFrozen())
 	assert.Equal(t, []string{"sync", "freeze /run/oryn-data", "timer 2m0s"}, fs.callList())
 	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSThaw}).OK)
-	assert.False(t, fs.frozen)
-	assert.Nil(t, fs.timer, "thaw cancels the automatic thaw")
+	assert.False(t, fs.isFrozen())
+	assert.Nil(t, fs.pendingTimer(), "thaw cancels the automatic thaw")
 
 	// 冻结后没等来 fsthaw：定时器到期自行解冻。
 	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
-	require.NotNil(t, fs.timer)
-	fire := fs.timer
+	fire := fs.pendingTimer()
+	require.NotNil(t, fire)
 	fire()
-	assert.False(t, fs.frozen)
+	assert.False(t, fs.isFrozen())
+
+	// 过期的定时器（被后一次 fsfreeze 取代）不解冻新的冻结。
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	stale := fs.pendingTimer()
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	stale()
+	assert.True(t, fs.isFrozen(), "a superseded timer does not thaw")
+	fs.pendingTimer()()
+	assert.False(t, fs.isFrozen())
+}
+
+// S1：令牌只写在 /run（tmpfs）下；$HOME 下（可写盘）只有指向它的符号链接，快照盘里没有令牌。
+func TestTokenOnlyOnTmpfs(t *testing.T) {
+	g, fs, _ := newTestGuest(imageConfig{})
+	require.True(t, call(t, g, startReq()).OK)
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpToken, Token: "oot_rotated"}).OK)
+
+	assert.Equal(t, map[string]string{"/home/user/.oryn/orb-token": "/run/oryn/orb-token"}, fs.links)
+	assert.Equal(t, "oot_rotated\n", fs.files["/run/oryn/orb-token"].data)
+	for p, f := range fs.files {
+		if strings.Contains(f.data, "oot_") {
+			assert.True(t, strings.HasPrefix(p, "/run/") && !strings.HasPrefix(p, dataMount+"/"),
+				"token written to %s, which is not on the tmpfs", p)
+		}
+		assert.False(t, strings.HasPrefix(p, userHome+"/"), "nothing is written under $HOME: %s", p)
+	}
+}
+
+// 真实的 symlinkAs：可写盘上旧版本留下的令牌普通文件被原子替换成链接；已是链接时不动；父目录缺失时创建。
+func TestSymlinkAsReplacesOldTokenFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "run", "orb-token")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, os.WriteFile(target, []byte("oot_new\n"), 0o600))
+	link := filepath.Join(dir, "home", ".oryn", "orb-token")
+	require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
+	require.NoError(t, os.WriteFile(link, []byte("oot_old\n"), 0o600))
+
+	uid, gid := os.Getuid(), os.Getgid()
+	require.NoError(t, symlinkAs(target, link, uid, gid))
+	fi, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.True(t, fi.Mode()&os.ModeSymlink != 0, "the old regular file was replaced by a symlink")
+	b, err := os.ReadFile(link)
+	require.NoError(t, err)
+	assert.Equal(t, "oot_new\n", string(b))
+	require.NoError(t, symlinkAs(target, link, uid, gid), "idempotent")
+	des, err := os.ReadDir(filepath.Dir(link))
+	require.NoError(t, err)
+	assert.Len(t, des, 1, "no temporary link left behind")
+
+	fresh := filepath.Join(dir, "fresh", ".oryn", "orb-token")
+	require.NoError(t, symlinkAs(target, fresh, uid, gid))
+	got, err := os.Readlink(fresh)
+	require.NoError(t, err)
+	assert.Equal(t, target, got)
+}
+
+// waitClosed 等 ch 关闭；超时即判定为死锁。
+func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s is stuck (deadlock)", what)
+	}
+}
+
+// R2：fsfreeze 之后，token 与自动解冻并发，都能结束；自动解冻不依赖请求锁（一个卡在冻结盘上的请求占着它
+// 时照样解冻）；冻结时到达的 start 先解冻再写盘；之后的 shutdown 也能结束。
+func TestAutoThawNotBlockedByFrozenDiskWrites(t *testing.T) {
+	g, fs, o := newTestGuest(imageConfig{})
+	require.True(t, call(t, g, startReq()).OK)
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	fire := fs.pendingTimer()
+	require.NotNil(t, fire)
+
+	tokenDone, fireDone := make(chan struct{}), make(chan struct{})
+	var tokenResp fcguest.Response
+	go func() {
+		defer close(tokenDone)
+		tokenResp, _ = g.Handle(fcguest.Request{Op: fcguest.OpToken, Token: "oot_after_freeze"})
+	}()
+	go func() {
+		defer close(fireDone)
+		fire()
+	}()
+	waitClosed(t, tokenDone, "token")
+	waitClosed(t, fireDone, "automatic thaw")
+	assert.True(t, tokenResp.OK, tokenResp.Error)
+	assert.False(t, fs.isFrozen())
+	assert.Equal(t, "oot_after_freeze\n", fs.files[tokenPath].data)
+
+	// 一个卡在冻结盘上的请求占着 mu：自动解冻照样执行，并让它返回。
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	fire = fs.pendingTimer()
+	held, stuckDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stuckDone)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		close(held)
+		_ = g.sys.WriteFile("/home/user/notes", []byte("x"), 0o644, userUID, userGID)
+	}()
+	<-held
+	fireDone = make(chan struct{})
+	go func() {
+		defer close(fireDone)
+		fire()
+	}()
+	waitClosed(t, fireDone, "automatic thaw while a request holds the lock")
+	waitClosed(t, stuckDone, "the write on the frozen disk")
+
+	// 冻结后到达的 start（尚未拉起 orbd 的 guest）先解冻，再写 /etc/hosts 等。
+	g2, fs2, o2 := newTestGuest(imageConfig{})
+	require.True(t, call(t, g2, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	startDone := make(chan struct{})
+	var startResp fcguest.Response
+	go func() {
+		defer close(startDone)
+		startResp, _ = g2.Handle(startReq())
+	}()
+	waitClosed(t, startDone, "start on a frozen disk")
+	assert.True(t, startResp.OK, startResp.Error)
+	assert.Equal(t, 1, o2.starts)
+	assert.False(t, fs2.isFrozen())
+	assert.Nil(t, fs2.pendingTimer(), "the stale freeze's automatic thaw is cancelled")
+
+	// 冻结中、mu 被一个卡在冻结盘上的请求占着：shutdown 先解冻，请求返回，shutdown 随之完成。
+	require.True(t, call(t, g, fcguest.Request{Op: fcguest.OpFSFreeze}).OK)
+	held, stuckDone = make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stuckDone)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		close(held)
+		_ = g.sys.WriteFile("/home/user/notes", []byte("y"), 0o644, userUID, userGID)
+	}()
+	<-held
+	shutDone := make(chan struct{})
+	var shutResp fcguest.Response
+	go func() {
+		defer close(shutDone)
+		shutResp, _ = g.Handle(fcguest.Request{Op: fcguest.OpShutdown, GraceSeconds: 1})
+	}()
+	waitClosed(t, shutDone, "shutdown")
+	waitClosed(t, stuckDone, "the write on the frozen disk")
+	assert.True(t, shutResp.OK, shutResp.Error)
+	assert.Equal(t, time.Second, o.stopped)
+	assert.False(t, fs.isFrozen())
 }
 
 func TestShutdown(t *testing.T) {

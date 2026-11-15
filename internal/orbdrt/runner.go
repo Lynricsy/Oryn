@@ -283,22 +283,28 @@ func (r *Runtime) allowed(p string) (string, bool) {
 	return "", false
 }
 
-// scope 返回一次本机 API 请求可见的范围：root 是路径范围的根，workdir 是缺省工作目录（git 面板的缺省根、
-// 不可删除的目录）。orb 形态为 ($HOME, 最近一次 setup 的工作目录)；runner 形态取请求头 X-Oryn-Workdir
-// （缺失 400 workdir_required，不在声明的目录或已登记的 worktree 之内 403 dir_not_served），两者都是它。
+// scope 返回一次本机 API 请求可见的范围：root 是路径范围的根（已展开符号链接，本次请求内固定不变，见 relTo），
+// workdir 是缺省工作目录（git 面板的缺省根、不可删除的目录）。orb 形态为 (真实 $HOME, 最近一次 setup 的
+// 工作目录)；runner 形态取请求头 X-Oryn-Workdir（缺失 400 workdir_required，不在声明的目录或已登记的
+// worktree 之内 403 dir_not_served），两者都是 allowed 解析出的真实路径：请求进行中工作目录被换成指向别处
+// 的链接，也不会把范围跟着带过去。
 func (r *Runtime) scope(req *http.Request) (root, workdir string, err error) {
 	if r.runner == nil {
-		return r.home, r.currentWorkdir(), nil
+		home, err := filepath.EvalSymlinks(r.home)
+		if err != nil {
+			return "", "", err
+		}
+		return home, r.currentWorkdir(), nil
 	}
 	wd := req.Header.Get(WorkdirHeader)
 	if wd == "" {
 		return "", "", errf(http.StatusBadRequest, "workdir_required", "%s is required on a runner", WorkdirHeader)
 	}
-	if _, ok := r.allowed(wd); !ok {
+	real, ok := r.allowed(wd)
+	if !ok {
 		return "", "", errf(http.StatusForbidden, CodeDirNotServed, "%q is not inside a directory served by this runner", wd)
 	}
-	wd = filepath.Clean(wd)
-	return wd, wd, nil
+	return real, real, nil
 }
 
 // threadsDir 是会话目录的父目录（$HOME/.oryn/threads）。

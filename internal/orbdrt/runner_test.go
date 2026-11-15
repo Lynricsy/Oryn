@@ -2,6 +2,7 @@ package orbdrt
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -523,4 +525,106 @@ func TestProcMetricsSource(t *testing.T) {
 	assert.IsType(t, cgroupSource{}, newMetricsReader(Config{CgroupDir: cg, ProcStat: stat, MemInfo: mi}).src)
 	assert.IsType(t, procSource{}, newMetricsReader(Config{CgroupDir: cg, ProcStat: stat, MemInfo: mi, Runner: &RunnerConfig{}}).src,
 		"a runner always reads /proc")
+}
+
+// gatedBody 是可阻塞的上传体：第一次 Read（服务端开始收上传体，预检已过）时关闭 reading，等 release 后才给出数据。
+type gatedBody struct {
+	reading, release chan struct{}
+	once             sync.Once
+	data             []byte
+	done             bool
+}
+
+func (g *gatedBody) Read(p []byte) (int, error) {
+	g.once.Do(func() {
+		close(g.reading)
+		<-g.release
+	})
+	if g.done {
+		return 0, io.EOF
+	}
+	g.done = true
+	return copy(p, g.data), io.EOF
+}
+
+// R4：上传期间把线程工作目录换成指向范围外的链接：范围固定为请求开始时 allowed 解析出的真实路径，
+// 收完上传体后的复核按它判定，403 且 outside 里没有新文件。
+func TestRunnerUploadScopePinnedAcrossWorkdirSwap(t *testing.T) {
+	f := newRunnerHome(t)
+	wd := filepath.Join(f.work, "wd")
+	require.NoError(t, os.MkdirAll(wd, 0o755))
+	startRunnerRT(t, f, nil)
+	o := newOrbHTTP(t, f.cp, f.rt)
+	// Expect: 100-continue：客户端等服务端开始读上传体才发送，gatedBody 的第一次 Read 就意味着预检已过。
+	o.c.Transport.(*http.Transport).ExpectContinueTimeout = time.Minute
+
+	body := &gatedBody{reading: make(chan struct{}), release: make(chan struct{}), data: []byte("pwned")}
+	req, err := http.NewRequest(http.MethodPut, "http://orb/fs/file?"+pathQ(filepath.Join(wd, "file.txt")).Encode(), body)
+	require.NoError(t, err)
+	req.Header.Set(WorkdirHeader, wd)
+	req.Header.Set("Expect", "100-continue")
+	type result struct {
+		status int
+		body   []byte
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := o.c.Do(req)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		done <- result{resp.StatusCode, b, err}
+	}()
+	select {
+	case <-body.reading:
+	case r := <-done:
+		t.Fatalf("the upload finished before its body was read: %d %s %v", r.status, r.body, r.err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the server never started reading the upload")
+	}
+	require.NoError(t, os.Rename(wd, wd+".old"))
+	require.NoError(t, os.Symlink(f.outside, wd))
+	close(body.release)
+
+	r := <-done
+	require.NoError(t, r.err)
+	require.Equal(t, http.StatusForbidden, r.status, string(r.body))
+	var e apigen.Error
+	require.NoError(t, json.Unmarshal(r.body, &e))
+	assert.Equal(t, "outside_home", e.Code)
+	assert.NoFileExists(t, filepath.Join(f.outside, "file.txt"))
+	assert.NoFileExists(t, filepath.Join(wd+".old", "file.txt"))
+}
+
+// R4：线程工作目录本身是范围内的符号链接时照常可用：范围是它的真实路径，经链接给出的路径照常读写。
+func TestRunnerSymlinkWorkdirInScope(t *testing.T) {
+	f := newRunnerHome(t)
+	real := filepath.Join(f.work, "wd")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	lnk := filepath.Join(f.work, "lnk")
+	require.NoError(t, os.Symlink(real, lnk))
+	startRunnerRT(t, f, nil)
+	o := newOrbHTTP(t, f.cp, f.rt)
+	hdr := map[string]string{WorkdirHeader: lnk}
+
+	resp, b := o.do(http.MethodGet, "/fs/roots", nil, nil, hdr)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+	var roots apigen.FsRoots
+	require.NoError(t, json.Unmarshal(b, &roots))
+	assert.Equal(t, apigen.FsRoots{Home: real, Workdir: real}, roots)
+
+	resp, b = o.put(filepath.Join(lnk, "new.txt"), []byte("hello"), nil, hdr)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+	got, err := os.ReadFile(filepath.Join(real, "new.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(got))
+	resp, b = o.do(http.MethodGet, "/fs/file", pathQ(filepath.Join(lnk, "new.txt")), nil, hdr)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+	assert.Equal(t, "hello", string(b))
+	resp, b = o.do(http.MethodPost, "/fs/delete", nil, strings.NewReader(`{"path":"`+lnk+`"}`), hdr)
+	assert.Equal(t, "protected_path", o.errCode(resp, b, http.StatusForbidden), "the workdir link itself is not deletable")
 }

@@ -238,6 +238,7 @@ func realSys() sysOps {
 		},
 		SetHostname: func(name string) error { return unix.Sethostname([]byte(name)) },
 		WriteFile:   writeFileAs,
+		Symlink:     symlinkAs,
 		Sync:        unix.Sync,
 		Freeze:      func(path string) error { return freezeIoctl(path, fifreeze, unix.EBUSY) },
 		Thaw:        func(path string) error { return freezeIoctl(path, fithaw, unix.EINVAL) },
@@ -264,16 +265,47 @@ func freezeIoctl(path string, req uint, benign unix.Errno) error {
 	return nil
 }
 
+// ensureDir 在目录不存在时创建它并设属主 uid:gid。
+func ensureDir(dir string, uid, gid int) error {
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.Chown(dir, uid, gid)
+}
+
+// symlinkAs 让 path 成为指向 target 的符号链接：已是时不动，否则在同目录建临时链接再 rename 覆盖（原子替换
+// 原有的普通文件或旧链接），链接属主 uid:gid。
+func symlinkAs(target, path string, uid, gid int) error {
+	if cur, err := os.Readlink(path); err == nil && cur == target {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if err := ensureDir(dir, uid, gid); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, ".guest-init-link")
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	err := os.Lchown(tmp, uid, gid)
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
+}
+
 // writeFileAs 原子写文件并设属主与权限；父目录不存在时创建并设同一属主。
 func writeFileAs(path string, data []byte, mode os.FileMode, uid, gid int) error {
 	dir := filepath.Dir(path)
-	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		if err := os.Chown(dir, uid, gid); err != nil {
-			return err
-		}
+	if err := ensureDir(dir, uid, gid); err != nil {
+		return err
 	}
 	f, err := os.CreateTemp(dir, ".guest-init-*")
 	if err != nil {

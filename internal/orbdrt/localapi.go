@@ -225,21 +225,24 @@ func (r *Runtime) userPath(root, p string, allowHome bool) (abs, real string, er
 	return abs, real, nil
 }
 
-// relTo 返回 real（已展开符号链接）相对 root（展开符号链接后）的路径；不在 root 之下时 ok=false。
+// relTo 返回 real（已展开符号链接）相对 root 的路径；不在 root 之下时 ok=false。root 必须已展开符号链接
+// （scope 的结果）：这里不再重新解析，否则请求进行中把 root 换成链接就能把范围改到别处。
 func relTo(root, real string) (string, bool) {
-	base, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(base, real)
+	rel, err := filepath.Rel(root, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 		return "", false
 	}
 	return rel, true
 }
 
-// relHome 返回 real（已展开符号链接）相对 $HOME 的路径；不在 $HOME 之下时 ok=false。
-func (r *Runtime) relHome(real string) (string, bool) { return relTo(r.home, real) }
+// relHome 返回 real（已展开符号链接）相对真实 $HOME 的路径；不在 $HOME 之下时 ok=false。
+func (r *Runtime) relHome(real string) (string, bool) {
+	home, err := filepath.EvalSymlinks(r.home)
+	if err != nil {
+		return "", false
+	}
+	return relTo(home, real)
+}
 
 // mutablePath 是变更类操作的路径检查：userPath 之外再拒绝 $HOME/.oryn/**（Oryn 自己的状态，只读；
 // 始终按真实 $HOME 判断，runner 声明的目录就是 $HOME 时同样受保护）。

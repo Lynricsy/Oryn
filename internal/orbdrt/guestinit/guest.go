@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,8 +31,11 @@ const (
 	userUID  = 1000
 	userGID  = 1000
 	userHome = "/home/user"
-	// tokenPath 是 orbd 每次拨号前读取的令牌文件（orbdrt.TokenFile）。
-	tokenPath = userHome + "/.oryn/orb-token"
+	// tokenPath 是令牌的真实存放处：/run 是 stage1 挂的 tmpfs，令牌不落可写盘（快照与派生 VM 的
+	// /dev/vdb 里都读不到它）。
+	tokenPath = "/run/oryn/orb-token"
+	// tokenLink 是 orbd 每次拨号前读取的令牌文件（orbdrt.TokenFile），做成指向 tokenPath 的符号链接。
+	tokenLink = userHome + "/.oryn/orb-token"
 	// dataMount 是可写盘在新根里的挂载点（fsfreeze / fsthaw 的对象）。
 	dataMount = "/run/oryn-data"
 	// imageEnvPath 是构建 rootfs 时写入的镜像配置（docker image inspect 的 Config.Env / WorkingDir / User）。
@@ -74,9 +78,12 @@ type sysOps struct {
 	SetHostname func(name string) error
 	// WriteFile 原子写文件（同目录临时文件 + rename），属主 uid:gid、权限 mode；父目录不存在时以同一属主创建。
 	WriteFile func(path string, data []byte, mode os.FileMode, uid, gid int) error
-	Sync      func()
-	Freeze    func(path string) error
-	Thaw      func(path string) error
+	// Symlink 让 path 成为指向 target 的符号链接（已是时不动；否则同目录临时链接 + rename 原子替换原有文件），
+	// 链接属主 uid:gid；父目录不存在时以同一属主创建。
+	Symlink func(target, path string, uid, gid int) error
+	Sync    func()
+	Freeze  func(path string) error
+	Thaw    func(path string) error
 	// KillAll 向除自己以外的全部进程发 SIGKILL（kill(-1, SIGKILL)）。
 	KillAll func()
 	// Reboot 重启 guest（Firecracker 以 reboot=k 启动，guest 复位时退出）；正常不返回。
@@ -97,17 +104,25 @@ type orbdProc interface {
 	Stop(grace time.Duration)
 }
 
-// Guest 处理宿主经 vsock 发来的 fcguest 请求。除 ping 外的请求串行执行。
+// Guest 处理宿主经 vsock 发来的 fcguest 请求。除 ping 外的请求串行执行（mu）。
+//
+// 冻结状态单独由 fmu 保护：fmu 只在 FIFREEZE / FITHAW 与状态读写期间持有，从不跨越可能卡在冻结盘上的
+// I/O，所以自动解冻不会被一个阻塞在冻结盘上、占着 mu 的请求锁死。写可写盘的请求（start）先解冻。
 type Guest struct {
 	sys   sysOps
 	orbd  orbdProc
 	image imageConfig
 	log   *slog.Logger
 
-	mu       sync.Mutex
-	started  bool        // orbd 已经由 start 拉起（之后的 start 等同 token）
-	thawStop func() bool // fsfreeze 的自动解冻定时器
-	down     bool        // 已执行 shutdown
+	mu      sync.Mutex
+	started bool        // orbd 已经由 start 拉起（之后的 start 等同 token）
+	down    bool        // 已执行 shutdown（持 mu 设置）
+	closing atomic.Bool // shutdown 已开始（之后的 shutdown / SIGINT 不再执行）
+
+	fmu       sync.Mutex
+	frozen    bool        // 可写盘处于本 guest 发起的 FIFREEZE 中
+	freezeGen uint64      // 每次 fsfreeze 加一；过期的自动解冻定时器据此作废
+	thawStop  func() bool // fsfreeze 的自动解冻定时器
 }
 
 func newGuest(sys sysOps, orbd orbdProc, image imageConfig) *Guest {
@@ -121,9 +136,22 @@ func fail(format string, args ...any) fcguest.Response {
 var okResp = fcguest.Response{OK: true}
 
 // Handle 执行一个请求，返回应答与「应答写出之后」要执行的动作（shutdown 的重启；其余为 nil）。
+// ping 与 fsthaw 不拿 mu；shutdown 先解冻再拿 mu（mu 可能被一个卡在冻结盘上的请求占着，解冻让它返回）。
 func (g *Guest) Handle(req fcguest.Request) (fcguest.Response, func()) {
-	if req.Op == fcguest.OpPing {
+	switch req.Op {
+	case fcguest.OpPing:
 		return okResp, nil
+	case fcguest.OpFSThaw:
+		return g.thaw(), nil
+	case fcguest.OpShutdown:
+		grace := time.Duration(req.GraceSeconds) * time.Second
+		if grace <= 0 {
+			grace = defaultShutdownGrace
+		}
+		if !g.shutdown(grace) {
+			return fail("guest is shutting down"), nil
+		}
+		return okResp, g.sys.Reboot
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -140,15 +168,6 @@ func (g *Guest) Handle(req fcguest.Request) (fcguest.Response, func()) {
 		return okResp, nil
 	case fcguest.OpFSFreeze:
 		return g.freeze(), nil
-	case fcguest.OpFSThaw:
-		return g.thaw(), nil
-	case fcguest.OpShutdown:
-		grace := time.Duration(req.GraceSeconds) * time.Second
-		if grace <= 0 {
-			grace = defaultShutdownGrace
-		}
-		g.shutdownLocked(grace)
-		return okResp, g.sys.Reboot
 	default:
 		return fail("unknown op %q", req.Op), nil
 	}
@@ -164,8 +183,21 @@ func (g *Guest) setClock(nowMs int64) {
 	}
 }
 
+// writeToken 把令牌写到 tmpfs 上的 tokenPath（不碰可写盘，冻结时也不阻塞）。
 func (g *Guest) writeToken(tok string) error {
 	return g.sys.WriteFile(tokenPath, []byte(tok+"\n"), 0o600, userUID, userGID)
+}
+
+// thawStale 在写可写盘之前解除遗留的 fsfreeze：start / token 只在宿主结束快照之后才会到达（宿主按 orb
+// 串行执行任务），此时仍冻结说明 fsthaw 丢了（宿主在快照中途崩溃、应答丢失），不能等 120 秒的自动解冻。
+func (g *Guest) thawStale() error {
+	g.fmu.Lock()
+	defer g.fmu.Unlock()
+	if !g.frozen {
+		return nil
+	}
+	g.log.Warn("data disk still frozen; thawing before the request")
+	return g.thawFLocked()
 }
 
 // start：对时、hostname、/etc/hosts、/etc/resolv.conf、令牌文件，然后拉起 orbd run；已拉起过时等同 token。
@@ -175,6 +207,9 @@ func (g *Guest) start(req fcguest.Request) fcguest.Response {
 	}
 	if g.started {
 		return g.token(req)
+	}
+	if err := g.thawStale(); err != nil {
+		return fail("fsthaw %s: %v", dataMount, err)
 	}
 	g.setClock(req.NowMs)
 	if err := g.sys.SetHostname(req.OrbID); err != nil {
@@ -196,6 +231,10 @@ func (g *Guest) start(req fcguest.Request) fcguest.Response {
 	if err := g.writeToken(req.Token); err != nil {
 		return fail("write token: %v", err)
 	}
+	// 旧版本把令牌写在可写盘上；原子地换成指向 tmpfs 的链接（orbd 照旧读 $HOME/.oryn/orb-token）。
+	if err := g.sys.Symlink(tokenPath, tokenLink, userUID, userGID); err != nil {
+		return fail("link token: %v", err)
+	}
 	dir := g.image.WorkingDir
 	if dir == "" {
 		dir = userHome
@@ -207,10 +246,13 @@ func (g *Guest) start(req fcguest.Request) fcguest.Response {
 	return okResp
 }
 
-// token：对时、重写令牌文件、SIGHUP orbd（让它用新令牌重拨）。
+// token：解除遗留的冻结、对时、重写令牌文件、SIGHUP orbd（让它用新令牌重拨）。
 func (g *Guest) token(req fcguest.Request) fcguest.Response {
 	if req.Token == "" {
 		return fail("token requires token")
+	}
+	if err := g.thawStale(); err != nil {
+		return fail("fsthaw %s: %v", dataMount, err)
 	}
 	g.setClock(req.NowMs)
 	if err := g.writeToken(req.Token); err != nil {
@@ -225,58 +267,87 @@ func (g *Guest) token(req fcguest.Request) fcguest.Response {
 }
 
 func (g *Guest) freeze() fcguest.Response {
+	g.fmu.Lock()
+	defer g.fmu.Unlock()
 	if err := g.sys.Freeze(dataMount); err != nil {
 		return fail("fsfreeze %s: %v", dataMount, err)
 	}
+	g.frozen = true
+	g.freezeGen++
+	gen := g.freezeGen
 	if g.thawStop != nil {
 		g.thawStop()
 	}
-	g.thawStop = g.sys.AfterFunc(freezeLimit, func() {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		g.log.Warn("no fsthaw within the limit; thawing", "limit", freezeLimit)
-		g.thawLocked()
-	})
+	g.thawStop = g.sys.AfterFunc(freezeLimit, func() { g.autoThaw(gen) })
 	return okResp
 }
 
+// autoThaw 是第 gen 次 fsfreeze 的自动解冻：只拿 fmu，不拿 mu（mu 可能被卡在冻结盘上的请求占着）。
+func (g *Guest) autoThaw(gen uint64) {
+	g.fmu.Lock()
+	defer g.fmu.Unlock()
+	if !g.frozen || g.freezeGen != gen {
+		return // 已解冻，或这是被后一次 fsfreeze 取代的定时器
+	}
+	g.log.Warn("no fsthaw within the limit; thawing", "limit", freezeLimit)
+	if err := g.thawFLocked(); err != nil {
+		g.log.Error("automatic fsthaw failed", "err", err)
+	}
+}
+
 func (g *Guest) thaw() fcguest.Response {
-	if err := g.thawLocked(); err != nil {
+	if err := g.thawFS(); err != nil {
 		return fail("fsthaw %s: %v", dataMount, err)
 	}
 	return okResp
 }
 
-func (g *Guest) thawLocked() error {
+// thawFS 无条件 FITHAW（未冻结时无害）并取消自动解冻。
+func (g *Guest) thawFS() error {
+	g.fmu.Lock()
+	defer g.fmu.Unlock()
+	return g.thawFLocked()
+}
+
+func (g *Guest) thawFLocked() error {
 	if g.thawStop != nil {
 		g.thawStop()
 		g.thawStop = nil
 	}
-	return g.sys.Thaw(dataMount)
+	if err := g.sys.Thaw(dataMount); err != nil {
+		return err
+	}
+	g.frozen = false
+	return nil
 }
 
-// shutdownLocked：解冻（冻结的文件系统上 sync 会卡住）、SIGTERM orbd 并至多等 grace、杀掉其余进程、sync。
-// 重启由调用方在应答之后进行。
-func (g *Guest) shutdownLocked(grace time.Duration) {
+// shutdown：解冻（冻结的文件系统上 sync 会卡住；先于 mu 进行）、SIGTERM orbd 并至多等 grace、杀掉其余进程、
+// sync。只有第一次调用执行并返回 true；重启由调用方进行（shutdown 请求在应答写出之后）。
+func (g *Guest) shutdown(grace time.Duration) bool {
+	if g.closing.Swap(true) {
+		return false
+	}
+	if err := g.thawFS(); err != nil {
+		g.log.Debug("thaw before shutdown", "err", err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.down = true
-	if err := g.thawLocked(); err != nil {
+	// 解冻与拿到 mu 之间可能又插进一次 fsfreeze。
+	if err := g.thawStale(); err != nil {
 		g.log.Debug("thaw before shutdown", "err", err)
 	}
 	g.orbd.Stop(grace)
 	g.sys.KillAll()
 	g.sys.Sync()
+	return true
 }
 
 // shutdownSignal 是 SIGINT（宿主 SendCtrlAltDel 的兜底）的处理：等同 shutdown{30}，随后重启。
 func (g *Guest) shutdownSignal() {
-	g.mu.Lock()
-	if g.down {
-		g.mu.Unlock()
-		return
+	if g.shutdown(defaultShutdownGrace) {
+		g.sys.Reboot()
 	}
-	g.shutdownLocked(defaultShutdownGrace)
-	g.mu.Unlock()
-	g.sys.Reboot()
 }
 
 // serveConn 在一条连接上读一行请求、执行、写一行应答，然后执行应答后的动作。
