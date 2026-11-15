@@ -2,6 +2,7 @@ package orbs
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -160,4 +161,42 @@ func TestForkSnapshotRotatesSourceToken(t *testing.T) {
 	got, err := e.svc.orbForToken(ctx, e.lastSpawn(a.ID).Env.OrynOrbToken)
 	require.NoError(t, err)
 	assert.Equal(t, a.ID, got.ID)
+}
+
+// S1 失败关闭：快照拍成后轮换令牌的事务失败——fork 快照不交给调用方并入队删除，项目快照不发布、building 行回收；
+// 两种情况下源 orb 的令牌都保持原样（快照里的令牌仍有效，所以快照本身不可被消费）。
+func TestSnapshotRotateFailureDiscardsSnapshot(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("rotate tx failed")
+
+	t.Run("fork", func(t *testing.T) {
+		e := newM11Env(t, nil, true, nil)
+		a := e.createReady(CreateParams{})
+		e.svc.hookRotateToken = func(string) error { return boom }
+		snap, err := e.svc.Snapshot(ctx, a.ID)
+		require.ErrorIs(t, err, errTokenRotate)
+		assert.Empty(t, snap, "失败时不返回快照 id")
+		assert.Equal(t, 1, e.drv.countOps("snapshot"))
+		assert.Equal(t, a.TokenGen, mustOrb(t, e, a.ID).TokenGen, "令牌没有轮换")
+		require.Eventually(t, func() bool {
+			e.drv.mu.Lock()
+			defer e.drv.mu.Unlock()
+			return len(e.drv.deletedSnaps) == 1
+		}, 10*time.Second, 20*time.Millisecond, "带着有效令牌的快照被入队删除")
+	})
+
+	t.Run("project", func(t *testing.T) {
+		e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
+		e.svc.hookRotateToken = func(string) error { return boom }
+		prj := e.project("app", nil)
+		a := e.createReady(CreateParams{ProjectID: prj})
+		assert.Equal(t, 1, e.drv.countOps("snapshot"))
+		require.Eventually(t, func() bool {
+			e.drv.mu.Lock()
+			defer e.drv.mu.Unlock()
+			return len(e.drv.deletedSnaps) == 1
+		}, 10*time.Second, 20*time.Millisecond, "快照镜像被回收")
+		assert.Empty(t, e.snapshots(prj), "不发布、building 行也已删除")
+		assert.EqualValues(t, 1, mustOrb(t, e, a.ID).TokenGen, "令牌没有轮换")
+	})
 }

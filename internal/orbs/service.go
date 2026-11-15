@@ -203,6 +203,8 @@ type Service struct {
 	hookTouchWait     func(orbID string)
 	// hookSnapshotBuilding（仅测试）在项目快照登记为 building 之后、入队 snapshot 任务之前调用。
 	hookSnapshotBuilding func(orbID, snapID string)
+	// hookRotateToken（仅测试）在快照后轮换令牌的事务里最先调用，返回错误即让该事务失败。
+	hookRotateToken func(orbID string) error
 	// hookAfterFunc（仅测试）替换 runner 离线定时器的 time.AfterFunc（见 runner.go afterFunc）。
 	hookAfterFunc func(d time.Duration, fn func()) func() bool
 	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
@@ -499,13 +501,20 @@ func tokenDeliverable(state string) bool {
 // 持旧令牌的 link（只关事务前看到的那条，不误关 orbd 用新令牌重拨的 link），再唤醒 provider。冻结、停机等状态只轮换：
 // 下次唤醒的 spawn 会再轮换并送达。freezing 期间轮换、冻结又失败回到 ready 的 orb，现有 link 不受影响，但 link 断开后
 // 要等下一次 spawn（如手动停机再唤醒）才能重连。协调 orb（link 不经令牌鉴权）与 runner（令牌归用户保管）不轮换。
-func (s *Service) rotateToken(ctx context.Context, orbID string) {
+//
+// 返回错误表示令牌没能轮换（快照里那一代令牌仍有效）：调用方必须放弃并回收该快照，不得发布或交付。
+func (s *Service) rotateToken(ctx context.Context, orbID string) error {
 	s.mu.Lock()
 	old := s.links[orbID]
 	s.mu.Unlock()
 	var orb db.Orb
 	rotated, delivered := false, false
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if s.hookRotateToken != nil {
+			if err := s.hookRotateToken(orbID); err != nil {
+				return err
+			}
+		}
 		cur, err := q.GetOrb(ctx, orbID)
 		if err != nil {
 			return err
@@ -526,11 +535,10 @@ func (s *Service) rotateToken(ctx context.Context, orbID string) {
 		return nil
 	})
 	if err != nil {
-		slog.Warn("快照后轮换 orb 令牌失败", "orb", orbID, "err", err)
-		return
+		return fmt.Errorf("%w: %v", errTokenRotate, err)
 	}
 	if !rotated {
-		return
+		return nil
 	}
 	slog.Info("快照后已轮换 orb 令牌", "orb", orbID, "state", orb.State, "gen", orb.TokenGen, "delivered", delivered)
 	if delivered {
@@ -539,7 +547,11 @@ func (s *Service) rotateToken(ctx context.Context, orbID string) {
 		}
 		s.jobs.Signal(orb.ProviderID)
 	}
+	return nil
 }
+
+// errTokenRotate 表示快照已拍成、但随后轮换源 orb 令牌失败：快照里的令牌仍可用，快照必须作废。
+var errTokenRotate = errors.New("orbs: 快照后轮换 orb 令牌失败")
 
 // enqueueIfState 在 orb 仍处于 state 时（同一事务内判断）入队任务；返回是否入队。
 func (s *Service) enqueueIfState(ctx context.Context, orbID, state, op string, params any) (bool, error) {
@@ -1067,13 +1079,20 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 	}
 	snap := ids.Snapshot()
 	if _, err := s.snapshotAs(ctx, orb, snap); err != nil {
+		if errors.Is(err, errTokenRotate) {
+			// 快照已在 provider 上、却带着仍有效的令牌：不交给调用方，入队删除
+			if _, derr := s.jobs.Enqueue(context.WithoutCancel(ctx), orb.ProviderID, orb.ID, jobs.OpDeleteSnapshot, apigen.JobDeleteSnapshotParams{SnapshotID: snap}); derr != nil {
+				slog.Warn("入队快照删除失败", "snapshot", snap, "err", derr)
+			}
+		}
 		return "", err
 	}
 	return snap, nil
 }
 
 // snapshotAs 为 orb 入队以 snap 为名的 snapshot 任务并等待完成，返回终态任务（其 result 带 snapshotBytes）。
-// 成功后轮换 orb 令牌（见 rotateToken）：快照里那一代令牌在快照交给任何人使用之前就已作废。
+// 成功后轮换 orb 令牌（见 rotateToken）：快照里那一代令牌在快照交给任何人使用之前就已作废；轮换失败时返回
+// errTokenRotate，调用方负责回收快照（Snapshot 入队删除；项目快照经 discardBuild 删除 building 行与镜像）。
 func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.Job, error) {
 	if orb.State == StateDeleting || orb.State == StateDeleted {
 		return db.Job{}, fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orb.ID)
@@ -1093,7 +1112,9 @@ func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.J
 		}
 		return done, fmt.Errorf("快照 orb %s: %s", orb.ID, msg)
 	}
-	s.rotateToken(context.WithoutCancel(ctx), orb.ID)
+	if err := s.rotateToken(context.WithoutCancel(ctx), orb.ID); err != nil {
+		return done, err
+	}
 	return done, nil
 }
 
