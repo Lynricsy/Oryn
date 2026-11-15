@@ -127,6 +127,14 @@ function rect(x: number, y: number, width: number, height: number) {
 	return { x, y, left: x, top: y, width, height } as DOMRectReadOnly;
 }
 
+/** 测试里驱动路由跳转：渲染后 `navigateTo` 指向当前路由的 navigate。 */
+let navigateTo: (to: string) => void = () => undefined;
+function Nav() {
+	const navigate = useNavigate();
+	navigateTo = (to) => navigate(to);
+	return null;
+}
+
 function renderPage(width: number) {
 	window.innerWidth = width;
 	return render(
@@ -239,12 +247,6 @@ describe("ThreadPage 窄屏同级标签", () => {
 			.getState()
 			.patchLocal({ thread: { id: OTHER } as Thread, snapshotReceived: true });
 		window.innerWidth = 390;
-		let go: (to: string) => void = () => undefined;
-		function Nav() {
-			const navigate = useNavigate();
-			go = (to) => navigate(to);
-			return null;
-		}
 		// 外壳在手机断点换成另一套结构：这里用不同的包裹元素让线程页卸载再挂载
 		const tree = (Wrap: "div" | "section") => (
 			<MemoryRouter initialEntries={[`/t/${ID}`]}>
@@ -267,7 +269,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 		});
 		expect(uiStore.getState().dialog).toEqual({ kind: "tree" });
 		expect(uiStore.getState().threadTab).toBe("files");
-		act(() => go(`/t/${OTHER}`));
+		act(() => navigateTo(`/t/${OTHER}`));
 		expect(uiStore.getState().dialog).toBeNull();
 		expect(uiStore.getState().threadTab).toBe("agent");
 	});
