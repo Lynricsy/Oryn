@@ -426,7 +426,8 @@ func TestPoolClaimReadyRotatesToken(t *testing.T) {
 
 // S-P2-3：可能被降级为环境变量的模型 key 进配置哈希；git 令牌等不进 orb 环境的密钥不进。
 func TestConfigHashModelKeyStamps(t *testing.T) {
-	e := newM11Env(t, []string{FeatureRepoUpdate}, true, nil)
+	// 不跑 Service.Run：退役且无引用的快照会被周期回收器删行，断言退役原因前不能让它抢先（同 TestProjectSnapshotImageMissing）
+	e := newM11Env(t, []string{FeatureRepoUpdate}, false, nil)
 	prj := e.project("app", nil)
 	e.createReady(CreateParams{ProjectID: prj})
 	s1 := e.snapshots(prj)[0]

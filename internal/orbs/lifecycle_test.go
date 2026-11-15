@@ -552,9 +552,23 @@ func TestStopSnapshotAndConnectTimeout(t *testing.T) {
 	require.NoError(t, err)
 	h.waitState(orb.ID, StateReady, 10*time.Second)
 
+	o := drv.orbd(orb.ID)
+	o.mu.Lock()
+	oldSess := o.sess
+	o.mu.Unlock()
 	snap, err := h.svc.Snapshot(ctx, orb.ID)
 	require.NoError(t, err)
 	assert.Regexp(t, `^oryn-snap-[0-9a-z]{26}$`, snap)
+	// 快照后源 orb 的令牌已轮换、旧 link 已关：等送达新令牌的 spawn 任务结束、orbd 用新令牌重连之后再停机
+	// （否则停机与这次 spawn 交错，shutdown / pause 会因新 link 的到来再发一次）
+	require.Eventually(t, func() bool {
+		o.mu.Lock()
+		sess, tok := o.sess, o.token
+		o.mu.Unlock()
+		got, err := h.svc.orbForToken(ctx, tok)
+		pending, perr := h.st.Q.ListUnfinishedJobsByOrb(ctx, &orb.ID)
+		return sess != oldSess && err == nil && got.ID == orb.ID && h.svc.Connected(orb.ID) && perr == nil && len(pending) == 0
+	}, 10*time.Second, 20*time.Millisecond)
 
 	// 手动停机：shutdown → pause{stop} → stopped；再唤醒走 resume。
 	require.NoError(t, h.svc.Pause(ctx, orb.ID, PauseStop))
