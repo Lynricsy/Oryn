@@ -240,6 +240,9 @@ func TestProjectScriptsSetKeepsOtherColumns(t *testing.T) {
 	p := db.CreateProjectParams{ID: ids.New("prj"), Name: "keep", SetupScript: str("echo old"), Color: str("teal"), Icon: str("🧪"),
 		GitAuthorName: str("Bot"), GitAuthorEmail: str("bot@example.com"), CreatedAt: 1, UpdatedAt: 1}
 	require.NoError(t, h.st.Q.CreateProject(ctx, p))
+	require.NoError(t, h.st.Q.CreateBrowserProfile(ctx, db.CreateBrowserProfileParams{ID: "bp-keep", Name: "work", Now: 1}))
+	_, err := h.st.DB.ExecContext(ctx, `UPDATE projects SET default_browser_profile_id = 'bp-keep' WHERE id = ?`, p.ID)
+	require.NoError(t, err)
 	_, c := h.readyOrb(drv, p.ID)
 	require.NoError(t, c.Call(ctx, "project.scripts.set", map[string]any{"setup": "echo new"}, nil))
 	got, err := h.st.Q.GetProject(ctx, p.ID)
@@ -251,6 +254,9 @@ func TestProjectScriptsSetKeepsOtherColumns(t *testing.T) {
 	require.NotNil(t, got.GitAuthorName)
 	assert.Equal(t, "Bot", *got.GitAuthorName)
 	assert.Equal(t, "bot@example.com", *got.GitAuthorEmail)
+	// 项目的默认浏览器 Profile 不能因为 orb 改写脚本而丢失
+	require.NotNil(t, got.DefaultBrowserProfileID)
+	assert.Equal(t, "bp-keep", *got.DefaultBrowserProfileID)
 }
 
 // failed 的 orb：View 带失败原因；Wake 把它移出 failed。

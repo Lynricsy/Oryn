@@ -250,7 +250,8 @@ func (s *Service) onProjectScriptsSet(ctx context.Context, orbID string, params 
 			DefaultOrbType: prj.DefaultOrbType, SetupScript: prj.SetupScript, ResumeScript: prj.ResumeScript,
 			ShallowClone: prj.ShallowClone, Color: prj.Color, Icon: prj.Icon,
 			GitAuthorName: prj.GitAuthorName, GitAuthorEmail: prj.GitAuthorEmail,
-			ArchivedAt: prj.ArchivedAt, UpdatedAt: prj.UpdatedAt, ID: prj.ID,
+			DefaultBrowserProfileID: prj.DefaultBrowserProfileID,
+			ArchivedAt:              prj.ArchivedAt, UpdatedAt: prj.UpdatedAt, ID: prj.ID,
 		}); err != nil {
 			return err
 		}
