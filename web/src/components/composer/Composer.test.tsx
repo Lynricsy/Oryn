@@ -1,6 +1,7 @@
 /**
  * 输入区回归：等待应答期间的新草稿不被清空（W4）、同一草稿不重复发送、斜杠模式命令对账（W12）、
- * 切换线程时草稿不串（W5）；触屏上工具行有拍照键，拍到的照片作为附件上传到本线程。
+ * 切换线程时草稿各自保留、不串（W5）；跨 compact 断点重新挂载时草稿、错误行、光标保留（M12.1 问题 4）；
+ * 触屏上工具行有拍照键，拍到的照片作为附件上传到本线程。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -11,7 +12,8 @@ import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ThreadPage } from "../../pages/ThreadPage";
-import { resetThreadStores } from "../../state/stores";
+import { resetComposerDrafts } from "../../state/composer-drafts";
+import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { Composer } from "./Composer";
 
 const { cmd, upload } = vi.hoisted(() => ({ cmd: vi.fn(), upload: vi.fn() }));
@@ -87,6 +89,7 @@ describe("Composer", () => {
 	beforeEach(() => {
 		cmd.mockReset();
 		resetThreadStores();
+		resetComposerDrafts();
 	});
 	afterEach(() => {
 		vi.restoreAllMocks();
@@ -143,7 +146,7 @@ describe("Composer", () => {
 		);
 	});
 
-	it("切换线程后草稿不带到另一个线程（W5）", () => {
+	it("切换线程后草稿不带到另一个线程，切回来仍在（W5）", () => {
 		wrap(
 			<>
 				<Nav />
@@ -156,8 +159,115 @@ describe("Composer", () => {
 		type("draft for A");
 		act(() => go(`/t/${B}`));
 		expect(box().value).toBe("");
+		type("draft for B");
 		act(() => go(`/t/${A}`));
-		expect(box().value).toBe("");
+		expect(box().value).toBe("draft for A");
+		act(() => go(`/t/${B}`));
+		expect(box().value).toBe("draft for B");
+	});
+
+	describe("跨 compact 断点重新挂载（M12.1 问题 4）", () => {
+		/** 与 ThreadPage 跨断点一样：同一线程的输入区换一棵子树重新挂载。 */
+		function mountRemountable() {
+			const client = new QueryClient({
+				defaultOptions: { queries: { retry: false } },
+			});
+			const tree = (key: string) => (
+				<QueryClientProvider client={client}>
+					<MemoryRouter>
+						<Composer key={key} threadId={A} />
+					</MemoryRouter>
+				</QueryClientProvider>
+			);
+			const r = render(tree("wide"));
+			let n = 0;
+			return () => {
+				n += 1;
+				r.rerender(tree(`compact-${n}`));
+			};
+		}
+
+		it("文字、光标与焦点恢复", () => {
+			const remount = mountRemountable();
+			type("hello world");
+			const before = box();
+			before.focus();
+			before.setSelectionRange(2, 5);
+			remount();
+			const after = box();
+			expect(after).not.toBe(before);
+			expect(after.value).toBe("hello world");
+			expect(document.activeElement).toBe(after);
+			expect([after.selectionStart, after.selectionEnd]).toEqual([2, 5]);
+		});
+
+		it("没在输入框里时不抢焦点", () => {
+			const remount = mountRemountable();
+			type("/");
+			remount();
+			expect(box().value).toBe("/");
+			expect(document.activeElement).not.toBe(box());
+		});
+
+		it("错误行保留，下一次提交时清掉", async () => {
+			cmd.mockRejectedValueOnce(new Error("orb 正忙"));
+			const remount = mountRemountable();
+			type("hi");
+			await act(async () => enter());
+			expect(screen.getByRole("alert")).toHaveTextContent("orb 正忙");
+			remount();
+			expect(screen.getByRole("alert")).toHaveTextContent("orb 正忙");
+			expect(box().value).toBe("hi");
+			cmd.mockResolvedValueOnce({});
+			await act(async () => enter());
+			expect(screen.queryByRole("alert")).toBeNull();
+			expect(box().value).toBe("");
+		});
+
+		it("发送在途时重新挂载：应答成功后照样清空草稿", async () => {
+			const { promise, resolve } = deferred<unknown>();
+			cmd.mockImplementation(() => promise);
+			const remount = mountRemountable();
+			type("in flight");
+			enter();
+			remount();
+			expect(box().value).toBe("in flight");
+			await act(async () => {
+				resolve({});
+				await promise;
+			});
+			expect(box().value).toBe("");
+		});
+
+		it("发送在途时重新挂载后又改了草稿：应答回来不清掉新草稿", async () => {
+			const { promise, resolve } = deferred<unknown>();
+			cmd.mockImplementation(() => promise);
+			const remount = mountRemountable();
+			type("in flight");
+			enter();
+			remount();
+			type("typed after remount");
+			await act(async () => {
+				resolve({});
+				await promise;
+			});
+			expect(box().value).toBe("typed after remount");
+		});
+
+		it("set_editor_text 只并入一次：重新挂载不再前置一遍", () => {
+			const remount = mountRemountable();
+			type("tail");
+			act(() =>
+				getThreadStore(A)
+					.getState()
+					.patchLocal({
+						editorText: { text: "head ", prepend: true, nonce: 1 },
+					}),
+			);
+			expect(box().value).toBe("head tail");
+			remount();
+			expect(box().value).toBe("head tail");
+		});
 	});
 });
 

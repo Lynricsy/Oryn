@@ -8,6 +8,7 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
+import { resetComposerDrafts } from "../../state/composer-drafts";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { Composer } from "./Composer";
@@ -110,6 +111,7 @@ describe("Composer 斜杠命令", () => {
 		cmd.mockReset();
 		upload.mockReset();
 		resetThreadStores();
+		resetComposerDrafts();
 		uiStore.setState({ dialog: null, planReviewNonce: 0 });
 	});
 
@@ -266,20 +268,26 @@ describe("Composer 斜杠命令", () => {
 	describe("应答晚于切线程：旧线程的命令不动新线程的对话框", () => {
 		const B = "T-0193a1b2-0000-7000-8000-0000000000f2";
 
-		/** 挂上 A，返回「切到 B」：与 ThreadPage 一样按线程给输入区 key，切线程即卸载 A 的输入区。 */
+		/**
+		 * 挂上 A。`switchToB`：与 ThreadPage 一样按线程给输入区 key，切线程即卸载 A 的输入区；
+		 * `remountA`：跨 compact 断点时 A 的输入区换一棵子树重新挂载，仍在 A。
+		 */
 		function mountSwitchable() {
 			const client = new QueryClient({
 				defaultOptions: { queries: { retry: false } },
 			});
-			const tree = (tid: string) => (
+			const tree = (tid: string, key = tid) => (
 				<QueryClientProvider client={client}>
 					<MemoryRouter>
-						<Composer key={tid} threadId={tid} />
+						<Composer key={key} threadId={tid} />
 					</MemoryRouter>
 				</QueryClientProvider>
 			);
 			const r = render(tree(A));
-			return () => r.rerender(tree(B));
+			return {
+				switchToB: () => r.rerender(tree(B)),
+				remountA: () => r.rerender(tree(A, `${A}-compact`)),
+			};
 		}
 
 		/** 指定类型的命令挂起，直到测试手动放行。 */
@@ -294,7 +302,7 @@ describe("Composer 斜杠命令", () => {
 
 		it("/btw <问题>：留在 A 时打开 btw；切到 B 后才应答则不打开、B 的对话框不变", async () => {
 			reply();
-			const switchToB = mountSwitchable();
+			const { switchToB } = mountSwitchable();
 			await send("/btw 第一个问题");
 			expect(uiStore.getState().dialog).toEqual({ kind: "btw" });
 			uiStore.getState().close();
@@ -308,11 +316,20 @@ describe("Composer 斜杠命令", () => {
 			expect(uiStore.getState().dialog).toEqual({ kind: "goal" });
 		});
 
+		it("/btw <问题>：应答到达前输入区跨断点重新挂载，仍在 A，照常打开 btw", async () => {
+			const release = holdReply("btw", {});
+			const { remountA } = mountSwitchable();
+			await send("/btw 问题");
+			remountA();
+			await release();
+			expect(uiStore.getState().dialog).toEqual({ kind: "btw" });
+		});
+
 		it("/model <选择器>：对不上的应答在切到 B 后才到，不在 B 打开模型对话框", async () => {
 			const release = holdReply("get_available_models", {
 				models: [{ provider: "openai", id: "gpt-5", name: "GPT-5" }],
 			});
-			const switchToB = mountSwitchable();
+			const { switchToB } = mountSwitchable();
 			await send("/model llama");
 			switchToB();
 			uiStore.getState().open({ kind: "goal" });
@@ -364,6 +381,24 @@ describe("Composer 斜杠命令", () => {
 			i18n.t("slash.unavailable.workspace", { name: "move" }),
 		);
 		expect(box().value).toBe("/move ../other");
+	});
+
+	it("/session delete 被控制面拦下：错误行点名命令并保留服务端原文", async () => {
+		reply({
+			prompt: () => {
+				throw Object.assign(new Error("/session delete is managed by Oryn"), {
+					code: "managed_by_oryn",
+				});
+			},
+		});
+		mount();
+		await send("/session delete");
+		expect(framesOf("prompt")).toMatchObject([{ message: "/session delete" }]);
+		const alert = screen.getByRole("alert");
+		expect(alert).toHaveTextContent(/^\/session delete 由 Oryn 管理/);
+		expect(alert).toHaveTextContent(
+			"服务端原文：/session delete is managed by Oryn",
+		);
 	});
 
 	it("/fast foo 报用法，不切换", async () => {

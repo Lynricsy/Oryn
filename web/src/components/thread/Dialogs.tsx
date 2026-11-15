@@ -1,6 +1,6 @@
 /** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、附件（含公开发布）、分享、计划提案、调试、setup 日志。 */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { useShareOverview } from "../../api/share-queries";
@@ -973,7 +973,27 @@ type GoalStep =
 	| "set"
 	| "guided";
 
-/** 目标对话框里一步操作失败：哪一步（标题）+ 为什么（错误原文），就近显示在那一步所在的分区里。 */
+/** Core（rpc-modes / goals/runtime）对过时操作给的英文原文 → 中文说明的键；多半是目标已在对话框外变了。 */
+const GOAL_CORE_REASONS: Record<
+	string,
+	| "noActiveToPause"
+	| "noPausedToResume"
+	| "noGoalToDrop"
+	| "noActive"
+	| "alreadyComplete"
+> = {
+	"No active goal to pause.": "noActiveToPause",
+	"No paused goal to resume.": "noPausedToResume",
+	"No paused goal.": "noPausedToResume",
+	"No goal to drop.": "noGoalToDrop",
+	"No active goal.": "noActive",
+	"Goal is already complete.": "alreadyComplete",
+};
+
+/**
+ * 目标对话框里一步操作失败：哪一步（标题）+ 为什么（错误原文），就近显示在那一步所在的分区里。
+ * Core 因目标已变（完成 / 暂停 / 放弃）拒绝时，先给中文说明并告知状态已重读，原文另起一行保留。
+ */
 function GoalFailure({
 	step,
 	error,
@@ -982,11 +1002,42 @@ function GoalFailure({
 	error: unknown;
 }): ReactNode {
 	const { t } = useTranslation();
+	const raw = describeError(error, t);
+	const reason =
+		error instanceof Error
+			? GOAL_CORE_REASONS[error.message.trim()]
+			: undefined;
 	return (
 		<Callout tone="err" role="alert" title={t(`goal.failed.${step}`)}>
-			<span className="break-words">{describeError(error, t)}</span>
+			{reason ? (
+				<>
+					<span className="block break-words">
+						{t(`goal.coreReason.${reason}`)} {t("goal.refreshed")}
+					</span>
+					<span className="mt-0.5 block break-words font-mono opacity-80">
+						{raw}
+					</span>
+				</>
+			) : (
+				<span className="break-words">{raw}</span>
+			)}
 		</Callout>
 	);
+}
+
+/** 目标在对话框外变化的信号：goal_updated 帧（reducer 写进 `state.goal`）里会影响对话框显示的字段。 */
+function goalSignature(g: SessionState["goal"] | undefined): string {
+	if (!g) return "";
+	const { goal } = g;
+	return [
+		g.enabled,
+		g.mode,
+		goal.id,
+		goal.status,
+		goal.objective,
+		goal.tokenBudget ?? "",
+		goal.tokensUsed,
+	].join("|");
 }
 
 /**
@@ -1012,6 +1063,18 @@ function GoalDialog({
 		error: unknown;
 	} | null>(null);
 	const qc = useQueryClient();
+	// 打开时 get_goal 照常重读（数据过期即重拉）；开着的时候目标也可能在对话框外变化（agent 完成、预算耗尽、
+	// 别的端暂停）：Core 的 goal_updated 帧进了线程 store 的 state.goal，另外每个 agent 回合结束时都重读一次
+	const goalSig = useThread(threadId, (s) => goalSignature(s.state?.goal));
+	const settled = useThread(threadId, (s) => !s.running);
+	const seen = useRef({ goalSig, settled });
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由目标信号与回合结束触发
+	useEffect(() => {
+		const prev = seen.current;
+		seen.current = { goalSig, settled };
+		const turnEnded = settled && !prev.settled;
+		if (prev.goalSig !== goalSig || turnEnded) void goal.refetch();
+	}, [goalSig, settled]);
 	const act = async (step: GoalStep, frame: OmpCommand): Promise<boolean> => {
 		setFailure(null);
 		setBusy(step);
@@ -1022,6 +1085,9 @@ function GoalDialog({
 			return true;
 		} catch (error) {
 			setFailure({ step, error });
+			// 失败多半因为显示的状态已过时（如目标已完成时点暂停）：重读目标与会话状态，界面随之更正
+			void qc.invalidateQueries({ queryKey: ["rpc", threadId] });
+			void refreshState(threadId).catch(() => undefined);
 			return false;
 		} finally {
 			setBusy(null);
@@ -1165,7 +1231,11 @@ function GoalDialog({
 								{failed("pause", "resume", "drop")}
 							</ReportCard>
 						) : (
-							<p className="px-0.5 text-muted text-sm">{t("goal.none")}</p>
+							<>
+								<p className="px-0.5 text-muted text-sm">{t("goal.none")}</p>
+								{/* 重读后目标已不在（完成后被清掉、已放弃）：失败说明仍要留在原处 */}
+								{failed("pause", "resume", "drop")}
+							</>
 						)}
 					</ReportSection>
 

@@ -1,14 +1,18 @@
 /**
  * 目标对话框：分区（当前目标 / 预算 / 设定或替换）；只调预算时 `set_goal` 只带 `tokenBudget`；放弃前确认；
  * 有进行中的目标时提示会替换；暂停的目标也显示（可继续）且挡住新目标；失败提示显示在出错的那个分区里。
+ * 目标在对话框外变化（goal_updated、回合结束、重新打开）时重读；Core 因状态过时拒绝时给中文说明并自动刷新（M12.1 问题 6）。
  */
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetThreadStores } from "../../state/stores";
+import type { SessionState } from "../../omp/types";
+import { getThreadStore, resetThreadStores } from "../../state/stores";
+import type { OmpFrame } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
 import {
 	type Frame,
 	openThreadDialog,
+	readCount,
 	sentFrames,
 } from "./reports/test-helpers";
 
@@ -200,6 +204,83 @@ describe("GoalDialog", () => {
 		expect(alert.textContent).toContain("暂停目标失败");
 		expect(alert.textContent).toContain("No active goal to pause.");
 		expect(within(await section("替换目标")).queryByRole("alert")).toBeNull();
+	});
+
+	it("Core 因目标已在别处完成而拒绝暂停：中文说明 + 保留原文，并自动重读为已完成", async () => {
+		failOn = "pause";
+		open();
+		const current = await section("当前目标");
+		const reads = readCount(cmd, "get_goal");
+		// agent 在后台把目标做完了，对话框还显示「进行中」
+		goal = { ...ACTIVE, enabled: false, status: "complete", mode: "exiting" };
+		fireEvent.click(within(current).getByRole("button", { name: "暂停" }));
+		const alert = await within(current).findByRole("alert");
+		expect(alert.textContent).toContain(
+			"没有进行中的目标可以暂停，它可能已完成或已在别处暂停。",
+		);
+		expect(alert.textContent).toContain("已重新读取目标的当前状态。");
+		expect(alert.textContent).toContain("No active goal to pause.");
+		await vi.waitFor(() =>
+			expect(readCount(cmd, "get_goal")).toBeGreaterThan(reads),
+		);
+		expect(await within(current).findByText("已完成")).toBeTruthy();
+		expect(within(current).queryByRole("button", { name: "暂停" })).toBeNull();
+	});
+
+	describe("目标在对话框外变化时重读", () => {
+		it("goal_updated 帧改变了目标状态：重读并显示新状态", async () => {
+			const store = getThreadStore(T).getState();
+			act(() => store.apply([{ type: "state", state: {} as SessionState }]));
+			open();
+			const current = await section("当前目标");
+			expect(within(current).getByText("进行中")).toBeTruthy();
+			const reads = readCount(cmd, "get_goal");
+			goal = { ...ACTIVE, enabled: false, status: "complete", mode: "exiting" };
+			// Core 的 goal_updated 经控制面以 frame 消息到达
+			const frame = {
+				type: "goal_updated",
+				goal: null,
+				state: {
+					enabled: false,
+					mode: "exiting",
+					reason: "completed",
+					goal: {
+						id: "g1",
+						objective: ACTIVE.objective,
+						status: "complete",
+						tokensUsed: ACTIVE.tokensUsed,
+						timeUsedSeconds: 200,
+						createdAt: 1,
+						updatedAt: 2,
+					},
+				},
+			} as OmpFrame;
+			act(() => store.apply([{ type: "frame", frame }]));
+			expect(await within(current).findByText("已完成")).toBeTruthy();
+			expect(readCount(cmd, "get_goal")).toBe(reads + 1);
+		});
+
+		it("agent 回合结束：重读一次；回合进行中不重读", async () => {
+			open();
+			const current = await section("当前目标");
+			const reads = readCount(cmd, "get_goal");
+			act(() => getThreadStore(T).getState().patchLocal({ running: true }));
+			expect(readCount(cmd, "get_goal")).toBe(reads);
+			goal = { ...ACTIVE, enabled: false, status: "paused" };
+			act(() => getThreadStore(T).getState().patchLocal({ running: false }));
+			expect(await within(current).findByText("已暂停")).toBeTruthy();
+			expect(readCount(cmd, "get_goal")).toBe(reads + 1);
+		});
+
+		it("关掉再打开：重读，不沿用上次的缓存", async () => {
+			open();
+			await section("当前目标");
+			act(() => uiStore.getState().close());
+			goal = { ...ACTIVE, enabled: false, status: "paused" };
+			act(() => uiStore.getState().open({ kind: "goal" }));
+			const current = await section("当前目标");
+			expect(await within(current).findByText("已暂停")).toBeTruthy();
+		});
 	});
 
 	it("读取失败可重试", async () => {

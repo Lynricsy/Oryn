@@ -35,6 +35,13 @@ import {
 	type SendMode,
 	slashPromptFrame,
 } from "../../state/actions";
+import {
+	claimComposer,
+	composerMounted,
+	getComposerDraft,
+	patchComposerDraft,
+	useComposerDraft,
+} from "../../state/composer-drafts";
 import { getThreadStore, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
@@ -60,8 +67,13 @@ export function Composer({
 	const busy = useThread(threadId, isThreadBusy);
 	const commands = useThread(threadId, (s) => s.commands);
 	const editorText = useThread(threadId, (s) => s.editorText);
-	const [text, setText] = useState("");
-	const [error, setError] = useState<unknown>(null);
+	// 草稿与错误行存在组件外（按线程）：跨 compact 断点、切线程重新挂载时不丢
+	const text = useComposerDraft(threadId, (d) => d.text);
+	const error = useComposerDraft(threadId, (d) => d.error);
+	const setText = (next: string) =>
+		patchComposerDraft(threadId, { text: next });
+	const setError = (next: unknown) =>
+		patchComposerDraft(threadId, { error: next });
 	const [bashRunning, setBashRunning] = useState(false);
 	const [active, setActive] = useState(0);
 	const [menuDismissed, setMenuDismissed] = useState(false);
@@ -76,14 +88,41 @@ export function Composer({
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];
 
-	// omp 的 set_editor_text / 会话树跳转带回的草稿
+	// omp 的 set_editor_text / 会话树跳转带回的草稿；同一份只并入一次（重新挂载时 store 里仍是它）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由新的 editorText 触发
 	useEffect(() => {
-		if (!editorText) return;
-		setText((prev) =>
-			editorText.prepend ? `${editorText.text}${prev}` : editorText.text,
-		);
+		if (!editorText || getComposerDraft(threadId).editorText === editorText)
+			return;
+		const prev = getComposerDraft(threadId).text;
+		patchComposerDraft(threadId, {
+			editorText,
+			text: editorText.prepend ? `${editorText.text}${prev}` : editorText.text,
+		});
 		ref.current?.focus();
 	}, [editorText]);
+
+	// 重新挂载后尽力恢复卸载时的光标与焦点；卸载时（DOM 还在）记下它们
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		const sel = getComposerDraft(threadId).selection;
+		if (sel) {
+			const idle =
+				document.activeElement === null ||
+				document.activeElement === document.body;
+			if (sel.focused && idle) el.focus();
+			el.setSelectionRange(sel.start, sel.end);
+		}
+		return () => {
+			patchComposerDraft(threadId, {
+				selection: {
+					start: el.selectionStart,
+					end: el.selectionEnd,
+					focused: document.activeElement === el,
+				},
+			});
+		};
+	}, [threadId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 文本变化后按内容高度自适应
 	useLayoutEffect(() => {
@@ -98,19 +137,14 @@ export function Composer({
 		setActive(0);
 	}, [entries.length]);
 
-	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）
+	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）。
+	// 文字以草稿 store 为准：应答可能在输入区重新挂载之后才到
 	const draftRef = useRef({ text, items: att.items });
 	draftRef.current = { text, items: att.items };
 	const inFlight = useRef<typeof draftRef.current | null>(null);
-	// 眼前这个输入区属于哪个线程（卸载后为 null）。异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：
-	// 对话框是全局单值、由当前页面消费，旧线程的应答不得在新线程打开 / 覆盖对话框
-	const ownerRef = useRef<string | null>(threadId);
-	useEffect(() => {
-		ownerRef.current = threadId;
-		return () => {
-			ownerRef.current = null;
-		};
-	}, [threadId]);
+	// 异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：对话框是全局单值、由当前页面消费，
+	// 旧线程的应答不得在新线程打开 / 覆盖对话框。按线程登记而非按实例：跨断点重新挂载仍算留在本线程
+	useEffect(() => claimComposer(threadId), [threadId]);
 
 	const reset = () => {
 		setText("");
@@ -119,13 +153,16 @@ export function Composer({
 	};
 
 	const resetIfUnchanged = (sent: typeof draftRef.current) => {
-		const cur = draftRef.current;
-		if (cur.text === sent.text && cur.items === sent.items) reset();
+		if (
+			getComposerDraft(threadId).text === sent.text &&
+			draftRef.current.items === sent.items
+		)
+			reset();
 	};
 
 	/** 命令没有带走附件：只清掉命令文本，附件留在输入区。 */
 	const clearTextIfUnchanged = (sent: typeof draftRef.current) => {
-		if (draftRef.current.text !== sent.text) return;
+		if (getComposerDraft(threadId).text !== sent.text) return;
 		setText("");
 		setMenuDismissed(false);
 	};
@@ -185,7 +222,7 @@ export function Composer({
 				});
 				const model = matchModelSelector(models, action.selector);
 				if (!model) {
-					if (ownerRef.current === threadId)
+					if (composerMounted(threadId))
 						ui.open({ kind: "model", query: action.selector });
 					return;
 				}
@@ -224,7 +261,7 @@ export function Composer({
 					type: "btw",
 					question: action.question,
 				});
-				if (ownerRef.current === threadId) ui.open({ kind: "btw" });
+				if (composerMounted(threadId)) ui.open({ kind: "btw" });
 				return;
 			case "open_changes":
 				ui.setPanelTab("changes");

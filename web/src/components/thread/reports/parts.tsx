@@ -158,8 +158,11 @@ export function ConfirmStrip({
 	className?: string;
 }): ReactNode {
 	const ref = useRef<HTMLFieldSetElement>(null);
-	// 确认条可能出现在对话框正文的可视区外（例如列表底部的账号行）
-	useEffect(() => ref.current?.scrollIntoView?.({ block: "nearest" }), []);
+	// 确认条可能出现在对话框正文的可视区外（例如列表底部的账号行）。
+	// 必须是块体：较新的 Chromium 里 scrollIntoView 返回 Promise，隐式返回会被 React 当成清理函数，卸载时抛 TypeError
+	useEffect(() => {
+		ref.current?.scrollIntoView?.({ block: "nearest" });
+	}, []);
 	return (
 		<fieldset
 			ref={ref}

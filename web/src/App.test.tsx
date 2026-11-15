@@ -1,4 +1,4 @@
-/** 路由：鉴权跳转；项目分区（M9.6）的路由与 `/settings/projects` 的重定向。 */
+/** 路由：鉴权跳转；项目分区（M9.6）的路由与 `/settings/projects` 的重定向；渲染异常由顶层错误边界接住。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type * as ReactRouter from "react-router";
@@ -23,6 +23,8 @@ vi.mock("./pages/ProjectsPage", async () => {
 		ProjectsIndexPage: () => <p data-testid="page">INDEX</p>,
 		ProjectPage: ({ create }: { create?: boolean }) => {
 			const { projectId } = useParams();
+			// 模拟页面渲染期抛错（M12.1 走查问题 1：确认条卸载时 TypeError 整页白屏）
+			if (projectId === "boom") throw new TypeError("l is not a function");
 			return (
 				<p data-testid="page">{create ? "CREATE" : `PROJECT ${projectId}`}</p>
 			);
@@ -144,5 +146,26 @@ describe("项目分区的路由（M9.6）", () => {
 				"/settings/devices",
 			),
 		);
+	});
+});
+
+describe("顶层错误边界", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	it("页面渲染抛错：不白屏，显示简短说明、错误原文与「重新加载」", async () => {
+		// React 会把被边界接住的错误打到控制台；这里不让它刷屏
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		signedIn();
+		renderAt("/projects/boom");
+		const alert = await screen.findByRole("alert");
+		expect(screen.getByRole("heading", { name: "界面出错了" })).toBeVisible();
+		expect(alert).toHaveTextContent("重新加载即可恢复");
+		expect(alert).toHaveTextContent("l is not a function");
+		expect(
+			screen.getByRole("button", { name: "重新加载" }),
+		).toBeInTheDocument();
 	});
 });

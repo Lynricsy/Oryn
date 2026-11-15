@@ -719,7 +719,13 @@ function friendlyCode(error: unknown): FriendlyCode | null {
 		: null;
 }
 
-/** 错误的用户可读文案：已知错误码走 i18n（429 带上 Retry-After 秒数），其余用原始消息。 */
+/** 控制面拦下受管命令时的原文：`<命令> is managed by Oryn`（命令是 RPC 类型或斜杠命令，如 `/session delete`）。 */
+const MANAGED_RE = /^(.+?) is managed by Oryn\b/;
+
+/**
+ * 错误的用户可读文案：已知错误码走 i18n（429 带上 Retry-After 秒数），其余用原始消息。
+ * managed_by_oryn 点名被拦的命令并保留服务端原文（同一错误码覆盖 /move、/session delete、switch_session 等，笼统一句说不清）。
+ */
 export function describeError(error: unknown, t: TFunction): string {
 	const code = friendlyCode(error);
 	if (
@@ -728,6 +734,13 @@ export function describeError(error: unknown, t: TFunction): string {
 		error.retryAfter
 	) {
 		return t("errors.rate_limited_after", { s: error.retryAfter });
+	}
+	if (code === "managed_by_oryn" && error instanceof Error) {
+		const raw = error.message.trim();
+		const name = MANAGED_RE.exec(raw)?.[1];
+		if (name) return t("errors.managed_by_oryn_named", { name, raw });
+		// 没有原文时 OmpCommandError 的 message 退成错误码本身，不重复显示
+		if (raw && raw !== code) return t("errors.managed_by_oryn_raw", { raw });
 	}
 	if (code) return t(`errors.${code}`);
 	return error instanceof Error ? error.message : String(error);

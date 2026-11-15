@@ -83,6 +83,11 @@
 		"submit": "Submit",
 		"yes": "Yes"
 	},
+	"crash": {
+		"title": "Something went wrong",
+		"body": "The interface hit an unexpected error and can't keep showing this page. Reload to recover; work in your threads isn't affected.",
+		"reload": "Reload"
+	},
 	"window": {
 		"minimize": "Minimize",
 		"maximize": "Maximize",
@@ -769,6 +774,14 @@
 			"set": "Couldn't set the goal",
 			"guided": "Couldn't start guided setup"
 		},
+		"coreReason": {
+			"noActiveToPause": "There's no active goal to pause. It may have finished or been paused elsewhere.",
+			"noPausedToResume": "There's no paused goal to resume. It may have been resumed or dropped elsewhere.",
+			"noGoalToDrop": "There's no goal to drop. It may have finished or already been dropped.",
+			"noActive": "There's no active goal. It may have finished or been paused.",
+			"alreadyComplete": "The goal is already complete."
+		},
+		"refreshed": "The goal's current status has been reloaded.",
 		"status": {
 			"active": "active",
 			"paused": "paused",
@@ -846,6 +859,8 @@
 		"unauthorized": "Your session has expired — please sign in again",
 		"forbidden": "Not allowed",
 		"managed_by_oryn": "This action is managed by Oryn and can't be sent to the agent",
+		"managed_by_oryn_named": "{{name}} is managed by Oryn (it would change the session this thread is bound to), so it can't be sent to the agent. Server said: {{raw}}",
+		"managed_by_oryn_raw": "This action is managed by Oryn and can't be sent to the agent. Server said: {{raw}}",
 		"use_oryn_fork": "Use Oryn's fork instead",
 		"queue_full": "The orb isn't ready and the queue is full — try again shortly",
 		"orb_unavailable": "The orb is unavailable",

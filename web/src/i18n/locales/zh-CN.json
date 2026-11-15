@@ -83,6 +83,11 @@
 		"submit": "提交",
 		"yes": "是"
 	},
+	"crash": {
+		"title": "界面出错了",
+		"body": "界面遇到意外错误，这一页没法继续显示。重新加载即可恢复，线程里的工作不受影响。",
+		"reload": "重新加载"
+	},
 	"window": {
 		"minimize": "最小化",
 		"maximize": "最大化",
@@ -769,6 +774,14 @@
 			"set": "设定目标失败",
 			"guided": "开始引导式设定失败"
 		},
+		"coreReason": {
+			"noActiveToPause": "没有进行中的目标可以暂停，它可能已完成或已在别处暂停。",
+			"noPausedToResume": "没有已暂停的目标可以继续，它可能已在别处继续或被放弃。",
+			"noGoalToDrop": "没有可以放弃的目标，它可能已完成或已被放弃。",
+			"noActive": "没有进行中的目标，它可能已完成或已暂停。",
+			"alreadyComplete": "目标已经完成。"
+		},
+		"refreshed": "已重新读取目标的当前状态。",
 		"status": {
 			"active": "进行中",
 			"paused": "已暂停",
@@ -846,6 +859,8 @@
 		"unauthorized": "登录已失效，请重新登录",
 		"forbidden": "没有权限",
 		"managed_by_oryn": "该操作由 Oryn 管理，不能直接发给 agent",
+		"managed_by_oryn_named": "{{name}} 由 Oryn 管理（会改动线程绑定的会话），不能直接发给 agent。服务端原文：{{raw}}",
+		"managed_by_oryn_raw": "该操作由 Oryn 管理，不能直接发给 agent。服务端原文：{{raw}}",
 		"use_oryn_fork": "请使用 Oryn 的分叉功能",
 		"queue_full": "orb 尚未就绪且排队已满，请稍后再发",
 		"orb_unavailable": "orb 不可用",
