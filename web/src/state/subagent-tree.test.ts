@@ -5,9 +5,11 @@ import {
 	type SubagentNode,
 	type SubagentRow,
 	type SubagentSource,
+	subagentArchiveReason,
 	subagentNodeOf,
 	subagentRows,
 	subagentTree,
+	subagentVisualState,
 } from "./subagent-tree";
 
 const ART = "2026-11-15T00-00-00_abc";
@@ -237,5 +239,117 @@ describe("subagentNodeOf", () => {
 		expect(subagentNodeOf(nodes, files, "0-Scout.0-Worker")?.row.key).toBe(
 			WORKER,
 		);
+	});
+});
+
+describe("行的进度与只剩存档的原因", () => {
+	it("在线行取进度里的 status / modelRole / resolvedModel，忽略其他字段与非字符串值", () => {
+		const rows = subagentRows(
+			[
+				{
+					id: "0-Scout",
+					status: "started",
+					progress: {
+						id: "0-Scout",
+						status: "running",
+						modelRole: "smol",
+						resolvedModel: "anthropic/claude-haiku",
+						toolCount: 3,
+					},
+				},
+			],
+			[{ id: "1-Other", status: "pending", progress: { status: 1 } }],
+			[],
+		);
+		expect(rows.map((r) => r.progress)).toEqual([
+			{
+				status: "running",
+				modelRole: "smol",
+				resolvedModel: "anthropic/claude-haiku",
+			},
+			undefined,
+		]);
+		expect(rows.map((r) => r.archiveReason)).toEqual([undefined, undefined]);
+	});
+
+	it("只有存档的行：该 id 的最新存档为 offline，较早主会话的同名存档为 superseded；在线行没有原因", () => {
+		const files = [file(SCOUT), file(WORKER), file(`${ART2}/0-Scout.jsonl`)];
+		const rows = subagentRows(LIVE.slice(0, 1), [], files);
+		expect(rows.map((r) => [r.key, r.archiveReason])).toEqual([
+			[SCOUT, "superseded"],
+			[WORKER, "offline"],
+			["0-Scout", undefined],
+		]);
+	});
+
+	it("对话框的原因：不可查询为 offline，可查询但不是当前存档为 superseded", () => {
+		expect(subagentArchiveReason(false, true)).toBe("offline");
+		expect(subagentArchiveReason(false, false)).toBe("offline");
+		expect(subagentArchiveReason(true, false)).toBe("superseded");
+		expect(subagentArchiveReason(true, true)).toBeUndefined();
+	});
+});
+
+describe("subagentVisualState", () => {
+	const at = (
+		status: string,
+		extra: Partial<SubagentRow> = {},
+	): SubagentRow => ({ ...row("a"), status, ...extra });
+
+	it.each([
+		["started", "running"],
+		["running", "running"],
+		["pending", "pending"],
+		["completed", "done"],
+		["done", "done"],
+		["failed", "failed"],
+		["error", "failed"],
+		["aborted", "aborted"],
+		["", "unknown"],
+		["idle", "unknown"],
+		["constructor", "unknown"],
+	] as const)("状态 %s → %s", (status, want) => {
+		expect(subagentVisualState(at(status))).toBe(want);
+	});
+
+	it("生命周期 started 时看进度：pending 为排队，running 为运行中", () => {
+		expect(
+			subagentVisualState(at("started", { progress: { status: "pending" } })),
+		).toBe("pending");
+		expect(
+			subagentVisualState(at("started", { progress: { status: "running" } })),
+		).toBe("running");
+		expect(
+			subagentVisualState(at("", { progress: { status: "pending" } })),
+		).toBe("pending");
+	});
+
+	it("行状态已到终态时不被落后的进度覆盖；进度先到终态时以进度为准", () => {
+		expect(
+			subagentVisualState(at("completed", { progress: { status: "running" } })),
+		).toBe("done");
+		expect(
+			subagentVisualState(at("started", { progress: { status: "failed" } })),
+		).toBe("failed");
+	});
+
+	it.each(["offline", "superseded"] as const)(
+		"只剩存档（%s）为 archived，不论状态",
+		(archiveReason) => {
+			expect(subagentVisualState(at("", { archiveReason }))).toBe("archived");
+			expect(subagentVisualState(at("started", { archiveReason }))).toBe(
+				"archived",
+			);
+		},
+	);
+
+	it("存档行与较早主会话的同名存档经 subagentRows 得到 archived", () => {
+		const files = [file(SCOUT), file(`${ART2}/0-Scout.jsonl`), file(OTHER)];
+		const rows = subagentRows(LIVE.slice(0, 1), [], files);
+		expect(rows.map((r) => [r.key, subagentVisualState(r)])).toEqual([
+			[SCOUT, "archived"],
+			["0-Scout", "running"],
+			[OTHER, "archived"],
+		]);
 	});
 });

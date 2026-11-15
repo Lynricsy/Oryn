@@ -1122,6 +1122,34 @@ body {
 	animation: orb-fade 1.6s var(--ease) infinite;
 }
 
+/* 子 agent 状态头像（AgentStatusAvatar）：运行中外圈光弧旋转、排队虚线外圈呼吸。
+ * 减少动效时全局规则让动画停下：呼吸停在基准的全亮，光弧补成整圈实线高亮，外圈仍可见 */
+@keyframes agent-ring-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@keyframes agent-ring-breathe {
+	0%,
+	100% {
+		opacity: 0.35;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.agent-ring-spin {
+	animation: agent-ring-spin 1.1s linear infinite;
+}
+.agent-ring-breathe {
+	animation: agent-ring-breathe 2.4s var(--ease) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.agent-ring-arc {
+		stroke-dasharray: none;
+	}
+}
+
 /* 品牌标「O|」的插入符：像文本光标一样硬切闪烁，周期 1.06s */
 @keyframes caret-blink {
 	50% {
