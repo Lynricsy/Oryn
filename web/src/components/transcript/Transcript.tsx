@@ -28,6 +28,7 @@ import {
 	type RoleFace,
 	resolveTurnRole,
 	type SourceTrail,
+	siteRoleFaces,
 } from "../../lib/turn-role";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
@@ -381,35 +382,32 @@ const DEFAULT_IDENTITIES: TurnIdentities = {
 };
 
 /**
- * 回合头的身份来源：上下文给了就用（分享页）；只读且没给 → 默认；否则读站内设置——
- * 设了头像的 role，回落身份在助手对话里是全局助手的生效身份、其余是全局 agent 身份。只读时一个设置请求都不发。
+ * 回合头的身份来源：上下文给了就用（分享页）；只读且没给 → 默认；否则读站内设置。只读时一个设置请求都不发。
+ * - 助手对话（R4）：身份表为空，每个回合头都是全局助手（名字、头像留空时为「全局助手」与 sparkle）；
+ * - 普通对话（R5）：设了头像的 role、没设头像的内置 role（默认字形），回落为默认 Agent 身份。
  */
 function useTurnIdentities(): TurnIdentities {
+	const { t } = useTranslation();
 	const { threadId, readOnly, identities } = useTranscriptContext();
 	const own = !identities && !readOnly;
 	const assistantKind =
 		useIndex((s) => s.threads[threadId]?.kind) === "assistant";
-	const roles = useRoleIdentities(own).data?.roles;
+	const roles = useRoleIdentities(own && !assistantKind).data?.roles;
 	const assistant = useAssistantIdentity(own && assistantKind);
 	const agent = useIdentity("agent", own && !assistantKind).data;
+	const assistantName = t("tabBar.assistant");
 	const mine = useMemo<TurnIdentities>(() => {
-		const faces = (roles ?? []).flatMap((r) =>
-			r.avatarIcon || r.avatarImage
-				? [
-						{
-							key: r.role,
-							role: r.role,
-							name: r.name,
-							avatarIcon: r.avatarIcon,
-							avatarImage: r.avatarImage,
-						},
-					]
-				: [],
-		);
 		if (assistantKind)
-			return { faces, fallback: assistant, fallbackKind: "assistant" };
+			return {
+				faces: NO_FACES,
+				fallback: {
+					name: assistant.name || assistantName,
+					avatar: assistant.avatar,
+				},
+				fallbackKind: "assistant",
+			};
 		return {
-			faces,
+			faces: siteRoleFaces(roles),
 			fallback: {
 				name: agent?.name?.trim() || undefined,
 				avatar: {
@@ -419,7 +417,7 @@ function useTurnIdentities(): TurnIdentities {
 			},
 			fallbackKind: "agent",
 		};
-	}, [roles, assistantKind, assistant, agent]);
+	}, [roles, assistantKind, assistant, assistantName, agent]);
 	return identities ?? (readOnly ? DEFAULT_IDENTITIES : mine);
 }
 
@@ -468,6 +466,7 @@ function TurnHead({
 				of={face ? "role" : kind === "assistant" ? "assistant" : "agent"}
 				size={28}
 				working={working}
+				glyph={face?.glyph}
 			/>
 			{name && (
 				<span

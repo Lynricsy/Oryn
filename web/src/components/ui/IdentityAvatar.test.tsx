@@ -85,9 +85,30 @@ describe("IdentityAvatar", () => {
 		expect(host().textContent).toBe("🌊");
 		expect(host().querySelector("[data-brand-caret]")).toBeNull();
 	});
+
+	it("给了默认字形：未设置时显示字形，不是品牌标；设了头像时头像优先", () => {
+		const view = inHost(
+			<IdentityAvatar identity={undefined} of="role" glyph="G" working />,
+		);
+		expect(host().getAttribute("data-avatar")).toBe("default");
+		expect(host().textContent).toBe("G");
+		expect(host().querySelector("[data-brand-caret]")).toBeNull();
+		view.unmount();
+		inHost(
+			<IdentityAvatar identity={{ avatarIcon: "🌊" }} of="role" glyph="G" />,
+		);
+		expect(host().textContent).toBe("🌊");
+	});
+
+	it("全局助手未设置时是 sparkle 标记", () => {
+		inHost(<IdentityAvatar identity={undefined} of="assistant" />);
+		expect(host().getAttribute("data-avatar")).toBe("default");
+		expect(host().querySelector("svg")).not.toBeNull();
+		expect(host().querySelector("[data-brand-caret]")).toBeNull();
+	});
 });
 
-describe("AssistantAvatar 回落链", () => {
+describe("AssistantAvatar：不跟随 Agent 身份", () => {
 	function seeded(
 		assistant: Schemas["AgentIdentity"],
 		agent: Schemas["AgentIdentity"],
@@ -108,19 +129,21 @@ describe("AssistantAvatar 回落链", () => {
 		expect(host().className).toContain("rounded-full");
 	});
 
-	it("助手没设头像 → agent 的", () => {
+	it("助手没设头像 → sparkle，不用 agent 的", () => {
 		inHost(
 			<AssistantAvatar />,
 			seeded({ name: "小助手" }, { avatarIcon: "🦊" }),
 		);
-		expect(host().textContent).toBe("🦊");
+		expect(host().getAttribute("data-avatar")).toBe("default");
+		expect(host().textContent).not.toContain("🦊");
+		expect(host().querySelector("svg")).not.toBeNull();
 		expect(host().className).toContain("rounded-md");
 	});
 
-	it("都没设 → 品牌标", () => {
+	it("都没设 → sparkle；缓存新鲜时不请求", () => {
 		inHost(<AssistantAvatar />, seeded({}, {}));
 		expect(host().getAttribute("data-avatar")).toBe("default");
-		expect(host().querySelector("[data-brand-caret]")).not.toBeNull();
-		expect(fetches).toEqual([]); // 缓存新鲜，不重复请求
+		expect(host().querySelector("[data-brand-caret]")).toBeNull();
+		expect(fetches).toEqual([]);
 	});
 });

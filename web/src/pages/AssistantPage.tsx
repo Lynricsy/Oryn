@@ -51,7 +51,7 @@ function Unavailable({ reason }: { reason?: string }): ReactNode {
 	);
 }
 
-/** 页头标题前的小图形：设置了助手（或 agent）头像时是圆形头像，否则是 sparkle 图标。 */
+/** 页头标题前的小图形：设置了助手头像时是圆形头像，否则是 sparkle 图标（不跟随 Agent 身份）。 */
 function AssistantMark({ size }: { size: number }): ReactNode {
 	const { avatar } = useAssistantIdentity();
 	return avatar.avatarIcon || avatar.avatarImage ? (

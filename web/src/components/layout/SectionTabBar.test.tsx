@@ -177,15 +177,15 @@ describe("SectionTabBar", () => {
 		expect(item.querySelector("svg")).not.toBeNull();
 	});
 
-	it("助手项：只设了 agent → agent 的名字与圆形头像", async () => {
+	it("助手项：只设了 agent → 仍是「全局助手」+ sparkle（不跟随 Agent 身份）", async () => {
 		identities.agent = { name: "Oryn", avatarIcon: "🦊" };
 		mount();
 		const item = tab("assistant");
-		await waitFor(() => expect(item).toHaveTextContent("Oryn"));
-		const avatar = item.querySelector("[data-avatar-of]") as HTMLElement;
-		expect(avatar).toHaveTextContent("🦊");
-		expect(avatar.className).toContain("rounded-full");
-		expect(avatar.dataset.avatarShape).toBe("circle");
+		await waitFor(() => expect(fetch).toHaveBeenCalled());
+		expect(item).toHaveTextContent("全局助手");
+		expect(item).not.toHaveTextContent("Oryn");
+		expect(item.querySelector("[data-avatar-of]")).toBeNull();
+		expect(item.querySelector("svg")).not.toBeNull();
 	});
 
 	it("助手项：助手单独设了 → 用助手自己的名字与头像", async () => {

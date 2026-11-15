@@ -5,9 +5,13 @@
  * 点 role 写 `source: "role"`，模型列表手动选写 `manual`，新会话按配置的 default role 启动写 `startup`。
  * `model_change` 只用来让记录失效（`fallback` / `prewalk` 是临时覆盖，只标记「正在回退」），回合自己的模型只用来否决。
  * 这里没有、也不允许有任何「模型 → role」的反推：手动选了某个 role 的同一模型，照样回落。
+ *
+ * 显示哪张脸（M13 R5）：选中的 role 有自定义头像就用它；否则是内置 role 时用它的默认字形；否则回落到默认 Agent 身份。
+ * 助手对话（R4）不走这里，回合头恒为全局助手。
  */
-import type { Entry } from "../api/client";
+import type { Entry, Schemas } from "../api/client";
 import { isRecord } from "../tool-render/util";
+import { ROLE_DEFAULT_GLYPHS, roleDefaultGlyph } from "./avatar-defaults";
 
 export const MODEL_SOURCE_ENTRY = "oryn-model-source";
 
@@ -43,6 +47,33 @@ export interface RoleFace {
 	name?: string;
 	avatarIcon?: string;
 	avatarImage?: string;
+	/** 内置 role 的默认字形：没设自定义头像时显示它。 */
+	glyph?: string;
+}
+
+const hasCustom = (f: RoleFace) => !!(f.avatarIcon || f.avatarImage);
+
+/**
+ * 站内的身份表（R5）：设了头像的 role 带自定义头像；没设头像的内置 role 带默认字形（列表里缺的内置 role 也补上）；
+ * 没设头像的自定义 role 不进表，回合回落到默认 Agent 身份。
+ */
+export function siteRoleFaces(
+	roles: readonly Schemas["RoleIdentity"][] | undefined,
+): RoleFace[] {
+	const out: RoleFace[] = [];
+	const seen = new Set<string>();
+	for (const r of roles ?? []) {
+		seen.add(r.role);
+		const face: RoleFace = { key: r.role, role: r.role, name: r.name };
+		if (r.avatarImage) face.avatarImage = r.avatarImage;
+		else if (r.avatarIcon) face.avatarIcon = r.avatarIcon;
+		const glyph = roleDefaultGlyph(r.role);
+		if (glyph) face.glyph = glyph;
+		if (hasCustom(face) || glyph) out.push(face);
+	}
+	for (const [role, glyph] of Object.entries(ROLE_DEFAULT_GLYPHS))
+		if (!seen.has(role)) out.push({ key: role, role, glyph });
+	return out;
 }
 
 const SOURCES: Record<string, ModelSourceRecord["source"]> = {
@@ -109,7 +140,8 @@ export function trailOf(branches: readonly (readonly Entry[])[]): SourceTrail {
 
 /**
  * §4 的 1–5 步：回合模型 `model`（回合里第一条带模型的助手消息）在轨迹 `trail` 下是否显示某个 role。
- * `faces` 只需含设了头像的项；按 `key` 匹配记录里的 `role` / `alias`。
+ * 按 `key` 匹配记录里的 `role` / `alias`：先找两者中设了自定义头像的，再找带默认字形的（R5）；
+ * 两者都没有可显示的脸 → 回落。`faces` 里既无头像又无字形的项不算。
  */
 export function resolveTurnRole(
 	model: { provider: string; model: string } | undefined,
@@ -122,12 +154,11 @@ export function resolveTurnRole(
 	if (!model?.provider || !model.model) return;
 	const m = `${model.provider}/${model.model}`.toLowerCase();
 	if (m !== record.model.toLowerCase()) return;
-	for (const key of [record.role, record.alias]) {
-		if (!key) continue;
-		const face = faces.find(
-			(f) => f.key === key && !!(f.avatarIcon || f.avatarImage),
-		);
-		if (face) return face;
-	}
+	const keys = [record.role, record.alias].filter((k): k is string => !!k);
+	for (const shows of [hasCustom, (f: RoleFace) => !!f.glyph])
+		for (const key of keys) {
+			const face = faces.find((f) => f.key === key && shows(f));
+			if (face) return face;
+		}
 	return;
 }

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Entry, Thread } from "../../api/client";
 import { identityKeys } from "../../api/identity-queries";
 import { qk } from "../../api/queries";
+import { ROLE_DEFAULT_GLYPHS } from "../../lib/avatar-defaults";
 import {
 	buildM96Transcripts,
 	M96_IDS,
@@ -731,14 +732,26 @@ describe("Oryn 自动化消息（M9）", () => {
 
 describe("回合头身份（M9.6：只认来源记录）", () => {
 	const roleEntries = buildM96Transcripts()[M96_IDS.roleThread] ?? [];
-	const items = buildTranscript({
-		entries: roleEntries,
-		leafEntryId: undefined,
-		liveMessage: null,
-		liveTools: {},
-		liveToolOrder: [],
-		notices: [],
-	}).items;
+	const toItems = (entries: Entry[]) =>
+		buildTranscript({
+			entries,
+			leafEntryId: undefined,
+			liveMessage: null,
+			liveTools: {},
+			liveToolOrder: [],
+			notices: [],
+		}).items;
+	const items = toItems(roleEntries);
+	/** 把来源记录里点的 `from` 换成 `to`（回合 2 原本是点了 Mare）。 */
+	const switchedTo = (from: string, to: string) =>
+		toItems(
+			roleEntries.map((en) => {
+				const p = en.payload as { data?: { role?: string } } | undefined;
+				return en.type === "custom" && p?.data?.role === from
+					? { ...en, payload: { ...p, data: { ...p.data, role: to } } }
+					: en;
+			}),
+		);
 	const T = "T-heads";
 	const roles = {
 		roles: ["Hyacinthia", "Nahida", "Mare", "Cyrene", "Arianna"].map(
@@ -764,6 +777,7 @@ describe("回合头身份（M9.6：只认来源记录）", () => {
 			agent?: Record<string, string>;
 			assistant?: Record<string, string>;
 			roleList?: typeof roles;
+			items?: TranscriptItem[];
 		} = {},
 	) {
 		// jsdom 没有布局：视口给足，每行给一个非零高度（全为 0 时虚拟列表的二分查找会从中间开始渲染）
@@ -800,7 +814,7 @@ describe("回合头身份（M9.6：只认来源记录）", () => {
 				<TranscriptContext.Provider
 					value={{ ...ctx, threadId: T, readOnly: opts.readOnly }}
 				>
-					<Transcript items={items} />
+					<Transcript items={opts.items ?? items} />
 				</TranscriptContext.Provider>
 			</QueryClientProvider>,
 		);
@@ -862,21 +876,71 @@ describe("回合头身份（M9.6：只认来源记录）", () => {
 		expect(heads[1]?.dataset.role).toBeUndefined();
 	});
 
-	it("助手对话：回落为助手的生效身份", () => {
+	it("助手对话（R4）：每个回合头都是全局助手，切到有头像的 role 也不变", () => {
 		const heads = renderHeads({
 			kind: "assistant",
 			agent: { name: "Oryn" },
 			assistant: { name: "小助手", avatarIcon: "✨" },
 		});
-		expect(heads[2]?.dataset.turnIdentity).toBe("assistant");
+		expect(heads.map((h) => h.dataset.turnIdentity)).toEqual(
+			Array(7).fill("assistant"),
+		);
+		// 回合 2 点了设了头像的 Mare：仍是助手
+		expect(heads[1]?.dataset.role).toBeUndefined();
 		expect(
-			heads[2]?.querySelector('[data-testid="turn-name"]')?.textContent,
+			heads[1]?.querySelector('[data-testid="turn-name"]')?.textContent,
 		).toBe("小助手");
 		expect(
-			heads[2]?.querySelector('[data-avatar-of="assistant"]')?.textContent,
+			heads[1]?.querySelector('[data-avatar-of="assistant"]')?.textContent,
 		).toBe("✨");
-		// role 回合不受影响
+		expect(heads[1]?.textContent).not.toContain("🌊");
+		// 助手对话不读 role 头像，也不读 Agent 身份
+		expect(urls.filter((u) => u.includes("/api/v1/settings/"))).toEqual([]);
+	});
+
+	it("助手对话：助手没设名字与头像 → 「全局助手」+ sparkle，不跟随 Agent 身份", () => {
+		const heads = renderHeads({
+			kind: "assistant",
+			agent: { name: "Oryn", avatarIcon: "🦊" },
+		});
+		expect(
+			heads[0]?.querySelector('[data-testid="turn-name"]')?.textContent,
+		).toBe("全局助手");
+		const avatar = heads[0]?.querySelector('[data-avatar-of="assistant"]');
+		expect(avatar?.getAttribute("data-avatar")).toBe("default");
+		expect(avatar?.querySelector("svg")).not.toBeNull();
+		expect(avatar?.querySelector("[data-brand-caret]")).toBeNull();
+		expect(heads[0]?.textContent).not.toContain("Oryn");
+	});
+
+	it("普通对话（R5）：切到没设头像的 smol → smol 的默认字形与本地化名", () => {
+		const heads = renderHeads({
+			agent: { name: "Oryn", avatarIcon: "🦊" },
+			items: switchedTo("Mare", "smol"),
+		});
 		expect(heads[1]?.dataset.turnIdentity).toBe("role");
+		expect(heads[1]?.dataset.role).toBe("smol");
+		const avatar = heads[1]?.querySelector('[data-avatar-of="role"]');
+		expect(avatar?.getAttribute("data-avatar")).toBe("default");
+		expect(avatar?.textContent).toBe(ROLE_DEFAULT_GLYPHS.smol);
+		expect(
+			heads[1]?.querySelector('[data-testid="turn-name"]')?.textContent,
+		).toBe("快速");
+	});
+
+	it("普通对话（R5）：切到没设头像的自定义 role → 默认 Agent 身份", () => {
+		const heads = renderHeads({
+			agent: { name: "Oryn", avatarIcon: "🦊" },
+			items: switchedTo("Mare", "Nahida"),
+		});
+		expect(heads[1]?.dataset.turnIdentity).toBe("agent");
+		expect(heads[1]?.dataset.role).toBeUndefined();
+		expect(
+			heads[1]?.querySelector('[data-avatar-of="agent"]')?.textContent,
+		).toBe("🦊");
+		expect(
+			heads[1]?.querySelector('[data-testid="turn-name"]')?.textContent,
+		).toBe("Oryn");
 	});
 
 	it("只读且没给身份：全部默认品牌标，不发任何 /api/v1/settings/ 请求", async () => {

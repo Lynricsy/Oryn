@@ -1,6 +1,6 @@
 /**
- * 设置 → 身份与头像（M9.6）：Agent 身份（名字 + 头像）、全局助手（名字 + 头像，留空跟随 Agent，带底栏预览）、
- * 角色头像（cycleOrder 里的每个 role，以及只剩头像的遗留项）、我的头像。
+ * 设置 → 身份与头像（M9.6 / M13）：默认 Agent 身份（名字 + 头像）、全局助手（名字 + 头像，留空显示「全局助手」与 sparkle，
+ * 带底栏预览）、role 头像入口（链接卡，头像改在 Agent 配置里编辑）、新对话默认对象、我的头像。
  * 身份接口是整体替换：每次保存都发完整对象——只改名字时带上当前头像，只改头像时带上当前名字（见 `useIdentityWriter`）。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,33 +10,31 @@ import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
 import {
 	identityKeys,
+	saveComposerPrefs,
 	saveIdentity,
-	saveRoleAvatar,
 	useAssistantIdentity,
+	useComposerPrefs,
 	useIdentity,
-	useRoleIdentities,
 } from "../../api/identity-queries";
 import { AvatarEditor } from "../../components/settings/AvatarEditor";
 import { useAsync } from "../../components/settings/useAsync";
-import { AvatarTile } from "../../components/ui/AvatarTile";
-import { Callout, Card, firstGrapheme } from "../../components/ui/data";
+import { Card } from "../../components/ui/data";
 import {
 	AssistantAvatar,
 	IdentityAvatar,
 } from "../../components/ui/IdentityAvatar";
 import {
-	Button,
 	ErrorText,
 	Field,
+	Radio,
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
 import { UserAvatar } from "../../components/ui/UserAvatar";
-import i18n from "../../i18n";
 
 type AgentIdentity = Schemas["AgentIdentity"];
 type AvatarIdentity = Schemas["AvatarIdentity"];
-type RoleIdentity = Schemas["RoleIdentity"];
+type NewThreadTarget = Schemas["ComposerPrefs"]["defaultTarget"];
 
 /** PUT 体：名字去空白后为空则不带；头像图片与字形至多其一。 */
 function identityBody(
@@ -50,9 +48,6 @@ function identityBody(
 	else if (avatar?.avatarIcon) out.avatarIcon = avatar.avatarIcon;
 	return out;
 }
-
-const hasAvatar = (v: AvatarIdentity | undefined) =>
-	Boolean(v?.avatarIcon || v?.avatarImage);
 
 /** 一次身份编辑只是局部意图：改名字或改头像。 */
 type IdentityPatch = { name: string } | { avatar: AvatarIdentity };
@@ -79,13 +74,6 @@ function useIdentityWriter(who: "agent" | "assistant") {
 		return next;
 	};
 	return { busy: save.busy, error: save.error, write };
-}
-
-/** role 的显示名：config.yml 的 `modelTags.<role>.name`，否则内置 role 的本地化名，否则 role id。 */
-function roleDisplayName(r: Pick<RoleIdentity, "role" | "name">): string {
-	if (r.name) return r.name;
-	const key = `roles.names.${r.role}`;
-	return i18n.exists(key) ? i18n.t(key as "roles.names.default") : r.role;
 }
 
 /** 头像种类的一句话：未设置 / 图片 / 字形。 */
@@ -187,7 +175,6 @@ function AgentIdentityCard(): ReactNode {
 function AssistantIdentityCard(): ReactNode {
 	const { t } = useTranslation();
 	const own = useIdentity("assistant");
-	const agent = useIdentity("agent");
 	const effective = useAssistantIdentity();
 	const save = useIdentityWriter("assistant");
 	const cur = own.data;
@@ -198,7 +185,7 @@ function AssistantIdentityCard(): ReactNode {
 					<AssistantAvatar size={40} />
 					<div className="min-w-0 flex-1">
 						<p className="truncate text-sm">
-							<AvatarKind value={cur} unset={t("identity.followAgent")} />
+							<AvatarKind value={cur} unset={t("identity.assistantDefault")} />
 						</p>
 						<p className="text-faint text-xs">{t("identity.assistantHint")}</p>
 					</div>
@@ -220,14 +207,14 @@ function AssistantIdentityCard(): ReactNode {
 				</div>
 				<NameField
 					value={cur?.name}
-					placeholder={agent.data?.name || t("tabBar.assistant")}
+					placeholder={t("tabBar.assistant")}
 					disabled={own.isPending}
 					onCommit={(name) => void save.write({ name })}
 				/>
 				<AvatarEditor
 					value={cur}
 					busy={save.busy || own.isPending}
-					resetLabel={t("identity.followAgent")}
+					resetLabel={t("appearance.avatarReset")}
 					onChange={(avatar) => save.write({ avatar })}
 				/>
 				<ErrorText error={save.error ?? own.error} />
@@ -236,133 +223,72 @@ function AssistantIdentityCard(): ReactNode {
 	);
 }
 
-function RoleAvatar({ role }: { role: RoleIdentity }): ReactNode {
-	return hasAvatar(role) ? (
-		<IdentityAvatar identity={role} of="role" size={32} />
-	) : (
-		<AvatarTile
-			of="role"
-			identity={undefined}
-			size={32}
-			tone="neutral"
-			fallback={
-				<span className="font-semibold text-sm">
-					{firstGrapheme(roleDisplayName(role))}
-				</span>
-			}
-		/>
-	);
-}
-
-function RoleAvatarsCard(): ReactNode {
+/** role 头像入口：头像改在「Agent › 模型角色」编辑；那一页上线之前链接到 Agent 配置。 */
+function RoleAvatarsLinkCard(): ReactNode {
 	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const q = useRoleIdentities();
-	const save = useAsync();
-	const [open, setOpen] = useState<string | null>(null);
-	const roles = q.data?.roles ?? [];
-	const cycle = roles.filter((r) => r.inCycle);
-	const orphans = roles.filter((r) => !r.inCycle);
-	const put = (role: string, avatar: AvatarIdentity) =>
-		save.run(() => saveRoleAvatar(qc, role, avatar));
 	return (
-		<Card
-			title={t("identity.rolesTitle")}
-			icon="robot"
-			action={(save.busy || q.isPending) && <Spinner />}
-		>
-			<div data-testid="identity-roles" className="flex flex-col gap-3">
+		<Card title={t("identity.rolesTitle")} icon="robot">
+			<div data-testid="identity-roles" className="flex flex-col gap-2">
 				<p className="text-faint text-xs">{t("identity.rolesHint")}</p>
-				{q.data?.configError && (
-					<Callout tone="warn" role="status">
-						{t("identity.rolesConfigError", { error: q.data.configError })}
-					</Callout>
-				)}
-				<ul className="-mx-2 flex flex-col">
-					{cycle.map((r) => {
-						const expanded = open === r.role;
-						return (
-							<li key={r.role} data-role={r.role} className="flex flex-col">
-								<div className="flex min-h-12 items-center gap-3 rounded-md px-2 py-1.5">
-									<RoleAvatar role={r} />
-									<div className="min-w-0 flex-1">
-										<p className="truncate font-medium text-sm">
-											{roleDisplayName(r)}
-										</p>
-										<p className="flex min-w-0 items-center gap-2 text-faint text-xs">
-											<span
-												className={`min-w-0 truncate ${r.selector ? "font-mono" : ""}`}
-												title={r.selector}
-											>
-												{r.selector || t("identity.roleNoModel")}
-											</span>
-											{!hasAvatar(r) && (
-												<span className="shrink-0">
-													{t("identity.roleNoAvatar")}
-												</span>
-											)}
-										</p>
-									</div>
-									<Button
-										size="sm"
-										variant={expanded ? "secondary" : "ghost"}
-										aria-expanded={expanded}
-										onClick={() => setOpen(expanded ? null : r.role)}
-									>
-										{t("identity.setAvatar")}
-									</Button>
-								</div>
-								{expanded && (
-									<div className="mx-2 mb-2 rounded-lg border border-border bg-raised p-3">
-										<AvatarEditor
-											value={r}
-											busy={save.busy}
-											resetLabel={t("identity.removeAvatar")}
-											onChange={(avatar) => put(r.role, avatar)}
-										/>
-									</div>
-								)}
-							</li>
-						);
-					})}
-				</ul>
-				{orphans.length > 0 && (
-					<section className="flex flex-col gap-1">
-						<h4 className="font-medium text-muted text-xs">
-							{t("identity.rolesOrphans")}
-						</h4>
-						<ul className="-mx-2 flex flex-col">
-							{orphans.map((r) => (
-								<li
-									key={r.role}
-									data-role={r.role}
-									className="flex min-h-12 items-center gap-3 rounded-md px-2 py-1.5"
-								>
-									<RoleAvatar role={r} />
-									<p className="min-w-0 flex-1 truncate font-medium text-sm">
-										{roleDisplayName(r)}
-									</p>
-									<Button
-										size="sm"
-										variant="ghost"
-										icon="trash"
-										disabled={save.busy}
-										onClick={() => void put(r.role, {})}
-									>
-										{t("identity.removeAvatar")}
-									</Button>
-								</li>
-							))}
-						</ul>
-					</section>
-				)}
-				<ErrorText error={save.error ?? q.error} />
 				<Link
 					to="/settings/agent-config"
 					className="self-start text-accent-ink text-xs underline"
 				>
-					{t("identity.editConfig")}
+					{t("identity.rolesLink")}
 				</Link>
+			</div>
+		</Card>
+	);
+}
+
+const NEW_THREAD_TARGETS: readonly NewThreadTarget[] = ["role", "assistant"];
+
+/** 新对话默认对象（R18）：存在服务端，首屏每次打开都按它预选。 */
+function NewThreadTargetCard(): ReactNode {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const q = useComposerPrefs();
+	const save = useAsync();
+	const cur = q.data?.defaultTarget;
+	return (
+		<Card
+			title={t("identity.newThreadTitle")}
+			icon="chats"
+			action={(save.busy || q.isPending) && <Spinner />}
+		>
+			<div data-testid="identity-new-thread" className="flex flex-col gap-3">
+				<p className="text-faint text-xs">{t("identity.newThreadHint")}</p>
+				<fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
+					<legend className="sr-only">{t("identity.newThreadTitle")}</legend>
+					{NEW_THREAD_TARGETS.map((v) => (
+						// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Radio 组件（内含原生 input）
+						<label
+							key={v}
+							className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors duration-150 ${cur === v ? "border-border-strong bg-hover" : "border-border hover:bg-hover"}`}
+						>
+							<Radio
+								name="new-thread-target"
+								checked={cur === v}
+								disabled={q.isPending || save.busy}
+								onChange={() =>
+									void save.run(() =>
+										saveComposerPrefs(qc, { defaultTarget: v }),
+									)
+								}
+								className="mt-0.5"
+							/>
+							<span className="min-w-0">
+								<span className="block font-medium text-sm">
+									{t(`identity.newThreadTargets.${v}`)}
+								</span>
+								<span className="block text-muted text-xs">
+									{t(`identity.newThreadTargets.${v}Hint`)}
+								</span>
+							</span>
+						</label>
+					))}
+				</fieldset>
+				<ErrorText error={save.error ?? q.error} />
 			</div>
 		</Card>
 	);
@@ -410,7 +336,8 @@ export function IdentitySettings(): ReactNode {
 		<>
 			<AgentIdentityCard />
 			<AssistantIdentityCard />
-			<RoleAvatarsCard />
+			<NewThreadTargetCard />
+			<RoleAvatarsLinkCard />
 			<UserAvatarCard />
 		</>
 	);

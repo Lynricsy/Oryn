@@ -243,13 +243,19 @@ describe("AssistantPage", () => {
 		expect(avatar).toHaveTextContent("🦉");
 	});
 
-	it("落地页标题用助手的生效名字（只设了 agent 名字时跟随 agent）", async () => {
+	it("落地页标题用助手自己的名字；只设了 agent 名字时不跟随", async () => {
 		localStorage.setItem("oryn.mock.coordinator", "down");
 		withoutConversations();
 		identities.agent = { name: "Ling" };
+		const view = mount("/assistant");
+		expect(
+			await screen.findByRole("heading", { level: 1, name: "全局助手" }),
+		).toBeInTheDocument();
+		view.unmount();
+		identities.assistant = { name: "小助" };
 		mount("/assistant");
 		expect(
-			await screen.findByRole("heading", { level: 1, name: "Ling" }),
+			await screen.findByRole("heading", { level: 1, name: "小助" }),
 		).toBeInTheDocument();
 	});
 

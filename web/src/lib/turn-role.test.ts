@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Entry } from "../api/client";
+import { ROLE_DEFAULT_GLYPHS } from "./avatar-defaults";
 import {
 	advanceTrail,
 	EMPTY_TRAIL,
@@ -11,6 +12,7 @@ import {
 	type RoleFace,
 	resolveTurnRole,
 	type SourceTrail,
+	siteRoleFaces,
 	trailOf,
 } from "./turn-role";
 
@@ -301,6 +303,72 @@ describe("resolveTurnRole", () => {
 				{ key: "Mare", role: "Mare", avatarIcon: "🌊" },
 			]),
 		).toBeUndefined();
+	});
+});
+
+describe("R5：内置 role 的默认字形", () => {
+	const faces = siteRoleFaces([
+		{ role: "default", inCycle: true },
+		{ role: "smol", inCycle: true },
+		{ role: "slow", inCycle: true, avatarIcon: "🐢" },
+		{ role: "Mare", inCycle: true, avatarIcon: "🌊" },
+		{ role: "Nahida", inCycle: true },
+		{ role: "Cyrene", inCycle: true, avatarIcon: "🌸" },
+	]);
+	const turn = (data: Record<string, unknown>) =>
+		resolveTurnRole(sol, walk([record({ model: SOL, ...data })]), faces);
+
+	it("siteRoleFaces：设了头像的 role、没设头像的内置 role（含列表里缺的）；没设头像的自定义 role 不进表", () => {
+		const byKey = new Map(faces.map((f) => [f.key, f]));
+		expect(byKey.get("smol")).toEqual({
+			key: "smol",
+			role: "smol",
+			name: undefined,
+			glyph: ROLE_DEFAULT_GLYPHS.smol,
+		});
+		expect(byKey.get("slow")).toMatchObject({
+			avatarIcon: "🐢",
+			glyph: ROLE_DEFAULT_GLYPHS.slow,
+		});
+		expect(byKey.get("Mare")).toMatchObject({ avatarIcon: "🌊" });
+		expect(byKey.get("Mare")?.glyph).toBeUndefined();
+		expect(byKey.has("Nahida")).toBe(false);
+		// 列表里没有的内置 role 也补上默认字形
+		expect(byKey.get("vision")?.glyph).toBe(ROLE_DEFAULT_GLYPHS.vision);
+		expect(Object.keys(ROLE_DEFAULT_GLYPHS).every((r) => byKey.has(r))).toBe(
+			true,
+		);
+	});
+
+	it("没设头像的 smol → smol 的默认字形", () => {
+		const face = turn({ source: "role", role: "smol" });
+		expect(face?.role).toBe("smol");
+		expect(face?.glyph).toBe(ROLE_DEFAULT_GLYPHS.smol);
+		expect(face?.avatarIcon).toBeUndefined();
+	});
+
+	it("内置 role 设了头像 → 自定义头像优先", () => {
+		expect(turn({ source: "role", role: "slow" })?.avatarIcon).toBe("🐢");
+	});
+
+	it("没设头像的自定义 role → 回落（默认 Agent 身份）", () => {
+		expect(turn({ source: "role", role: "Nahida" })).toBeUndefined();
+	});
+
+	it("default 指向设了头像的别名：别名的自定义头像先于 default 的默认字形", () => {
+		expect(
+			turn({ source: "startup", role: "default", alias: "Cyrene" })?.role,
+		).toBe("Cyrene");
+	});
+
+	it("default 指向没设头像的自定义别名：显示 default 的默认字形", () => {
+		const face = turn({ source: "startup", role: "default", alias: "Nahida" });
+		expect(face?.role).toBe("default");
+		expect(face?.glyph).toBe(ROLE_DEFAULT_GLYPHS.default);
+	});
+
+	it("同模型的手动选择仍回落，不因默认字形而显示 role", () => {
+		expect(turn({ source: "manual" })).toBeUndefined();
 	});
 });
 

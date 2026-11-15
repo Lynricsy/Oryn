@@ -7,7 +7,7 @@ import type { LiveTool, SubagentLive } from "../../state/thread-reducer";
 
 /** 回合头的身份来源（M9.6 §7.3）。 */
 export interface TurnIdentities {
-	/** 设了头像的 role（站内 key = role id；分享页 key = 不透明键）。 */
+	/** 能显示的 role：设了头像的，以及站内没设头像的内置 role（默认字形）（站内 key = role id；分享页 key = 不透明键）。 */
 	faces: readonly RoleFace[];
 	/** 回落身份；undefined = 默认品牌标 */
 	fallback?: { name?: string; avatar: Schemas["AvatarIdentity"] };

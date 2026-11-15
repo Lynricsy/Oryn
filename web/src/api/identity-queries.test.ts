@@ -2,14 +2,24 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	AGENT_DEFAULT_GLYPHS,
+	GENERIC_AGENT_GLYPH,
+} from "../lib/avatar-defaults";
 import type { Schemas } from "./client";
 import {
+	agentFace,
 	effectiveAssistant,
 	identityKeys,
+	mergeAgentAvatar,
 	mergeRoleIdentity,
+	saveAgentAvatar,
+	saveComposerPrefs,
 	saveIdentity,
 	saveRoleAvatar,
+	useAgentFace,
 	useAssistantIdentity,
+	useComposerPrefs,
 	useIdentity,
 } from "./identity-queries";
 
@@ -58,31 +68,22 @@ function wrapper(qc: QueryClient) {
 }
 
 describe("effectiveAssistant", () => {
-	const fox = { avatarIcon: "🦊" };
 	const png = { avatarImage: "data:image/png;base64,AA==" };
 	it.each([
-		["都没设", undefined, undefined, { avatar: {} }],
-		["只设 agent", {}, { name: "Oryn", ...fox }, { name: "Oryn", avatar: fox }],
+		["都没设", undefined, { avatar: {} }],
 		[
-			"助手只设名字：头像跟随 agent",
+			"只设名字：头像留空（显示处给 sparkle）",
 			{ name: "小助手" },
-			{ name: "Oryn", ...fox },
-			{ name: "小助手", avatar: fox },
+			{ name: "小助手", avatar: {} },
 		],
-		[
-			"助手只设头像：名字跟随 agent，头像不与 agent 的混合",
-			png,
-			{ name: "Oryn", ...fox },
-			{ name: "Oryn", avatar: png },
-		],
+		["只设头像：名字留空（显示处给「全局助手」）", png, { avatar: png }],
 		[
 			"空白名字与空串字段等同未设置",
 			{ name: "  ", avatarIcon: "", avatarImage: "" },
-			{ name: " Oryn ", ...fox },
-			{ name: "Oryn", avatar: fox },
+			{ avatar: {} },
 		],
-	] as const)("%s", (_, assistant, agent, want) => {
-		expect(effectiveAssistant(assistant, agent)).toEqual(want);
+	] as const)("%s", (_, assistant, want) => {
+		expect(effectiveAssistant(assistant)).toEqual(want);
 	});
 });
 
@@ -204,7 +205,7 @@ describe("saveRoleAvatar", () => {
 });
 
 describe("useAssistantIdentity", () => {
-	it("读助手与 agent 两个身份并按字段回落", async () => {
+	it("只读助手自己的身份，不回落到 Agent 身份", async () => {
 		gets["/api/v1/settings/assistant-identity"] = { avatarIcon: "✨" };
 		gets["/api/v1/settings/agent-identity"] = {
 			name: "Oryn",
@@ -214,11 +215,11 @@ describe("useAssistantIdentity", () => {
 			wrapper: wrapper(newClient()),
 		});
 		await waitFor(() =>
-			expect(result.current).toEqual({
-				name: "Oryn",
-				avatar: { avatarIcon: "✨" },
-			}),
+			expect(result.current).toEqual({ avatar: { avatarIcon: "✨" } }),
 		);
+		expect(calls.map((c) => c.path)).toEqual([
+			"/api/v1/settings/assistant-identity",
+		]);
 	});
 
 	it("enabled=false 时不发请求，返回空身份", () => {
@@ -227,5 +228,131 @@ describe("useAssistantIdentity", () => {
 		});
 		expect(result.current).toEqual({ avatar: {} });
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("agent 头像", () => {
+	const list: Schemas["AgentAvatarList"] = {
+		agents: [
+			{ name: "task", source: "bundled" },
+			{ name: "scout", source: "bundled", avatarIcon: "🔭" },
+			{
+				name: "writer",
+				source: "user",
+				avatarImage: "data:image/png;base64,AA==",
+			},
+			{ name: "gone", source: "orphan", avatarIcon: "👻" },
+		],
+	};
+
+	it.each([
+		[
+			"内置 agent 没设头像 → 自己的默认字形",
+			"task",
+			{ glyph: AGENT_DEFAULT_GLYPHS.task },
+		],
+		[
+			"内置 agent 设了头像 → 自定义头像",
+			"scout",
+			{ face: { avatarIcon: "🔭" }, glyph: AGENT_DEFAULT_GLYPHS.scout },
+		],
+		[
+			"自定义 agent 设了头像",
+			"writer",
+			{
+				face: { avatarImage: "data:image/png;base64,AA==" },
+				glyph: GENERIC_AGENT_GLYPH,
+			},
+		],
+		["未知 agent → 通用字形", "nobody", { glyph: GENERIC_AGENT_GLYPH }],
+		["名字区分大小写", "Task", { glyph: GENERIC_AGENT_GLYPH }],
+		["原型属性名不当成内置", "constructor", { glyph: GENERIC_AGENT_GLYPH }],
+	] as const)("agentFace：%s", (_, name, want) => {
+		expect(agentFace(list, name)).toEqual(want);
+	});
+
+	it("agentFace：列表未加载时只有默认字形", () => {
+		expect(agentFace(undefined, "sonic")).toEqual({
+			glyph: AGENT_DEFAULT_GLYPHS.sonic,
+		});
+	});
+
+	it("mergeAgentAvatar：替换同名项；清除了头像的遗留项删掉；新名字追加", () => {
+		expect(
+			mergeAgentAvatar(list, {
+				name: "task",
+				source: "bundled",
+				avatarIcon: "🛠",
+			}).agents[0],
+		).toEqual({ name: "task", source: "bundled", avatarIcon: "🛠" });
+		expect(
+			mergeAgentAvatar(list, { name: "gone", source: "orphan" }).agents.map(
+				(a) => a.name,
+			),
+		).toEqual(["task", "scout", "writer"]);
+		expect(
+			mergeAgentAvatar(list, { name: "x", source: "user", avatarIcon: "x" })
+				.agents.length,
+		).toBe(5);
+		expect(mergeAgentAvatar(list, { name: "nope", source: "orphan" })).toBe(
+			list,
+		);
+	});
+
+	it("saveAgentAvatar：PUT {name, 头像} 并写回列表缓存；`{}` 只发 name", async () => {
+		const qc = newClient();
+		qc.setQueryData(identityKeys.agents, list);
+		await saveAgentAvatar(qc, "task", { avatarIcon: "🛠", avatarImage: "" });
+		await saveAgentAvatar(qc, "scout", {});
+		expect(calls.map((c) => [c.method, c.path, c.body])).toEqual([
+			[
+				"PUT",
+				"/api/v1/settings/agent-avatars",
+				{ name: "task", avatarIcon: "🛠" },
+			],
+			["PUT", "/api/v1/settings/agent-avatars", { name: "scout" }],
+		]);
+		const cached = qc.getQueryData<Schemas["AgentAvatarList"]>(
+			identityKeys.agents,
+		);
+		expect(cached?.agents[0]).toEqual({ name: "task", avatarIcon: "🛠" });
+		expect(cached?.agents[1]).toEqual({ name: "scout" });
+	});
+
+	it("useAgentFace：读头像列表；enabled=false 时不发请求，只给默认字形", async () => {
+		gets["/api/v1/settings/agent-avatars"] = list;
+		const off = renderHook(() => useAgentFace("scout", false), {
+			wrapper: wrapper(newClient()),
+		});
+		expect(off.result.current).toEqual({ glyph: AGENT_DEFAULT_GLYPHS.scout });
+		expect(calls).toEqual([]);
+		const on = renderHook(() => useAgentFace("scout"), {
+			wrapper: wrapper(newClient()),
+		});
+		await waitFor(() =>
+			expect(on.result.current.face).toEqual({ avatarIcon: "🔭" }),
+		);
+	});
+});
+
+describe("新对话输入框偏好", () => {
+	it("读取并整体写回，缓存换成服务端返回值", async () => {
+		gets["/api/v1/settings/composer"] = { defaultTarget: "role" };
+		const qc = newClient();
+		const { result } = renderHook(() => useComposerPrefs(), {
+			wrapper: wrapper(qc),
+		});
+		await waitFor(() =>
+			expect(result.current.data).toEqual({ defaultTarget: "role" }),
+		);
+		await saveComposerPrefs(qc, { defaultTarget: "assistant" });
+		expect(calls.at(-1)).toEqual({
+			method: "PUT",
+			path: "/api/v1/settings/composer",
+			body: { defaultTarget: "assistant" },
+		});
+		await waitFor(() =>
+			expect(result.current.data).toEqual({ defaultTarget: "assistant" }),
+		);
 	});
 });

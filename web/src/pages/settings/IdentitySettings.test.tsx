@@ -1,6 +1,6 @@
 /**
- * 设置 → 身份与头像（M9.6）：四张卡的保存语义（整体替换、名字与头像互相带上）、助手的回落与底栏预览、
- * 角色头像列表与遗留项、四个上传入口都先经裁剪对话框。fetch 换成按路径记账的桩，图片解码与编码换成桩。
+ * 设置 → 身份与头像（M9.6 / M13）：各卡的保存语义（整体替换、名字与头像互相带上）、全局助手不跟随 Agent 身份与底栏预览、
+ * 角色头像链接卡、新对话默认对象、上传入口都先经裁剪对话框。fetch 换成按路径记账的桩，图片解码与编码换成桩。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -35,22 +35,10 @@ interface Write {
 let agent: AgentIdentity;
 let assistant: AgentIdentity;
 let user: Schemas["AvatarIdentity"];
-let cycle: string[];
-let roleAvatars: Record<string, Schemas["AvatarIdentity"]>;
-let selectors: Record<string, string>;
-let configError: string | undefined;
+let composer: Schemas["ComposerPrefs"];
 let writes: Write[];
 /** 非空时，下一个 PUT 记账后先等它放行（挂住第一次写入）。 */
 let holdNextPut: Promise<void> | null;
-
-function roleOf(role: string): Schemas["RoleIdentity"] {
-	return {
-		role,
-		inCycle: cycle.includes(role),
-		...(selectors[role] ? { selector: selectors[role] } : {}),
-		...roleAvatars[role],
-	};
-}
 
 const CROPPED = "data:image/webp;base64,CROPPED";
 
@@ -83,20 +71,9 @@ async function handle(req: Request): Promise<Response> {
 			who === "agent" ? agent : who === "assistant" ? assistant : user,
 		);
 	}
-	if (path === "/api/v1/settings/role-identities") {
-		if (req.method === "PUT") {
-			const { role, ...avatar } = body as Schemas["RoleIdentityInput"];
-			if (avatar.avatarIcon || avatar.avatarImage) roleAvatars[role] = avatar;
-			else delete roleAvatars[role];
-			return Response.json(roleOf(role));
-		}
-		const orphans = Object.keys(roleAvatars)
-			.filter((r) => !cycle.includes(r))
-			.sort();
-		return Response.json({
-			roles: [...cycle, ...orphans].map(roleOf),
-			...(configError ? { configError } : {}),
-		});
+	if (path === "/api/v1/settings/composer") {
+		if (req.method === "PUT") composer = body;
+		return Response.json(composer);
 	}
 	if (path === "/api/v1/settings/git-identity") return Response.json({});
 	return Response.json({ code: "not_found", message: path }, { status: 404 });
@@ -115,7 +92,7 @@ function mount() {
 	);
 }
 
-const card = (id: "agent" | "assistant" | "roles" | "user") =>
+const card = (id: "agent" | "assistant" | "new-thread" | "roles" | "user") =>
 	screen.getByTestId(`identity-${id}`);
 
 const puts = () => writes.filter((w) => w.method === "PUT");
@@ -124,10 +101,7 @@ beforeEach(() => {
 	agent = {};
 	assistant = {};
 	user = {};
-	cycle = ["Hyacinthia", "Mare", "Cyrene"];
-	roleAvatars = {};
-	selectors = { Mare: "openai/gpt-6.1-sol:high", Cyrene: "@Hyacinthia" };
-	configError = undefined;
+	composer = { defaultTarget: "role" };
 	writes = [];
 	holdNextPut = null;
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
@@ -266,169 +240,146 @@ describe("同一张卡连续编辑（写入排队、按最新身份合并）", (
 });
 
 describe("全局助手", () => {
-	it("未设置时显示「跟随 Agent 身份」、预览用 agent 的头像与名字；单独设置后两处预览都换", async () => {
+	it("未设置时是「全局助手」+ sparkle，不跟随 Agent 身份；单独设置后两处预览都换", async () => {
 		agent = { name: "Ling", avatarIcon: "🦊" };
 		mount();
 		const scope = card("assistant");
 		const tab = within(scope).getByTestId("assistant-tab-preview");
-		await waitFor(() => expect(tab).toHaveTextContent("🦊"));
-		expect(tab).toHaveTextContent("Ling");
-		expect(tab.querySelector('[data-avatar-shape="circle"]')).toHaveTextContent(
-			"🦊",
+		// 等助手身份加载完（名字输入可用）、agent 身份也到了，再断言没有跟随 agent
+		await waitFor(() =>
+			expect(within(scope).getByLabelText("名字")).toBeEnabled(),
 		);
+		await waitFor(() =>
+			expect(within(card("agent")).getByLabelText("名字")).toHaveValue("Ling"),
+		);
+		expect(tab).toHaveTextContent("全局助手");
+		expect(tab).not.toHaveTextContent("Ling");
+		expect(tab).not.toHaveTextContent("🦊");
+		const small = tab.querySelector('[data-avatar-shape="circle"]');
+		expect(small).toHaveAttribute("data-avatar", "default");
+		expect(small?.querySelector("svg")).not.toBeNull();
 		expect(
-			within(scope).getByText("跟随 Agent 身份", { selector: "p" }),
+			within(scope).getByText("默认 sparkle 标记", { selector: "p" }),
 		).toBeInTheDocument();
 		const big = scope.querySelector(
 			'[data-avatar-of="assistant"][data-avatar-shape="tile"]',
 		);
-		expect(big).toHaveTextContent("🦊");
-		// 名字输入框的占位是 agent 的名字
+		expect(big).not.toHaveTextContent("🦊");
+		// 名字输入框的占位是「全局助手」，不是 agent 的名字
 		expect(within(scope).getByLabelText("名字")).toHaveAttribute(
 			"placeholder",
-			"Ling",
+			"全局助手",
 		);
 
 		fireEvent.click(within(scope).getByRole("button", { name: "🐱" }));
 		await waitFor(() => expect(tab).toHaveTextContent("🐱"));
 		expect(big).toHaveTextContent("🐱");
-		expect(tab).toHaveTextContent("Ling");
+		expect(tab).toHaveTextContent("全局助手");
 		expect(puts().map((w) => [w.path, w.body])).toEqual([
 			["/api/v1/settings/assistant-identity", { avatarIcon: "🐱" }],
 		]);
-		expect(
-			within(scope).queryByText("跟随 Agent 身份", { selector: "p" }),
-		).toBeNull();
 	});
 
-	it("都没设置时底栏预览写「全局助手」；「跟随 Agent 身份」按钮清除自己的头像但保留名字", async () => {
+	it("「恢复默认」清除自己的头像但保留名字", async () => {
 		assistant = { name: "小助", avatarIcon: "🤖" };
 		mount();
 		const scope = card("assistant");
 		const tab = within(scope).getByTestId("assistant-tab-preview");
 		await waitFor(() => expect(tab).toHaveTextContent("小助"));
-		fireEvent.click(
-			within(scope).getByRole("button", { name: "跟随 Agent 身份" }),
-		);
+		fireEvent.click(within(scope).getByRole("button", { name: "恢复默认" }));
 		await waitFor(() => expect(puts()).toHaveLength(1));
 		expect(puts()[0]?.body).toEqual({ name: "小助" });
 	});
+
+	it("页面上没有「跟随 Agent 身份」", async () => {
+		const { container } = mount();
+		await waitFor(() =>
+			expect(within(card("assistant")).getByLabelText("名字")).toBeEnabled(),
+		);
+		expect(container).not.toHaveTextContent("跟随 Agent 身份");
+	});
 });
 
-describe("角色头像", () => {
-	it("按 cycleOrder 列出，小字是 selector 或「未配置模型」；设置 / 移除各发一次 PUT", async () => {
+describe("默认 Agent 身份与角色头像入口", () => {
+	it("标题是「默认 Agent 身份」；角色头像只剩链接到 Agent 配置的卡片", () => {
 		mount();
+		expect(screen.getByText("默认 Agent 身份")).toBeInTheDocument();
 		const scope = card("roles");
-		await waitFor(() =>
-			expect(scope.querySelectorAll("li[data-role]")).toHaveLength(3),
-		);
+		expect(scope.querySelector("li")).toBeNull();
 		expect(
-			[...scope.querySelectorAll("li[data-role]")].map((li) =>
-				li.getAttribute("data-role"),
-			),
-		).toEqual(["Hyacinthia", "Mare", "Cyrene"]);
-		const mare = scope.querySelector('li[data-role="Mare"]') as HTMLElement;
-		expect(mare).toHaveTextContent("openai/gpt-6.1-sol:high");
-		expect(mare).toHaveTextContent("未设置头像");
-		expect(scope.querySelector('li[data-role="Hyacinthia"]')).toHaveTextContent(
-			"未配置模型",
-		);
+			within(scope).getByRole("link", { name: "前往 Agent 配置" }),
+		).toHaveAttribute("href", "/settings/agent-config");
+		expect(writes.some((w) => w.path.includes("role-identities"))).toBe(false);
+	});
+});
 
-		const toggle = within(mare).getByRole("button", { name: "设置头像" });
-		expect(toggle).toHaveAttribute("aria-expanded", "false");
-		fireEvent.click(toggle);
-		expect(toggle).toHaveAttribute("aria-expanded", "true");
-		fireEvent.click(within(mare).getByRole("button", { name: "🌙" }));
-		await waitFor(() => expect(mare).not.toHaveTextContent("未设置头像"));
-		expect(
-			mare.querySelector('[data-avatar-of="role"][data-avatar="icon"]'),
-		).toHaveTextContent("🌙");
-		fireEvent.click(within(mare).getByRole("button", { name: "移除头像" }));
-		await waitFor(() => expect(mare).toHaveTextContent("未设置头像"));
-		expect(puts().map((w) => w.body)).toEqual([
-			{ role: "Mare", avatarIcon: "🌙" },
-			{ role: "Mare" },
+describe("新对话默认对象", () => {
+	it("按服务端的偏好选中；改选写回 putComposerPrefs，再改回也写回", async () => {
+		mount();
+		const scope = card("new-thread");
+		const role = within(scope).getByRole("radio", {
+			name: /Agent（default role）/,
+		});
+		const helper = within(scope).getByRole("radio", { name: /全局助手/ });
+		await waitFor(() => expect(role).toBeChecked());
+		expect(helper).not.toBeChecked();
+		await waitFor(() => expect(helper).toBeEnabled());
+
+		fireEvent.click(helper);
+		await waitFor(() => expect(helper).toBeChecked());
+		expect(composer).toEqual({ defaultTarget: "assistant" });
+		expect(client.getQueryData(identityKeys.composer)).toEqual({
+			defaultTarget: "assistant",
+		});
+
+		await waitFor(() => expect(role).toBeEnabled());
+		fireEvent.click(role);
+		await waitFor(() => expect(role).toBeChecked());
+		expect(puts().map((w) => [w.path, w.body])).toEqual([
+			["/api/v1/settings/composer", { defaultTarget: "assistant" }],
+			["/api/v1/settings/composer", { defaultTarget: "role" }],
 		]);
 	});
 
-	it("遗留项另起一组，只有「移除头像」；移除后从列表消失", async () => {
-		roleAvatars = { Old: { avatarIcon: "🐙" } };
+	it("偏好是全局助手时选中全局助手", async () => {
+		composer = { defaultTarget: "assistant" };
 		mount();
-		const scope = card("roles");
-		const old = (await waitFor(() => {
-			const el = scope.querySelector('li[data-role="Old"]');
-			if (!el) throw new Error("没有遗留项");
-			return el;
-		})) as HTMLElement;
-		expect(within(scope).getByText("不在 cycleOrder 里")).toBeInTheDocument();
-		expect(within(old).queryByRole("button", { name: "设置头像" })).toBeNull();
-		fireEvent.click(within(old).getByRole("button", { name: "移除头像" }));
+		const scope = card("new-thread");
 		await waitFor(() =>
-			expect(scope.querySelector('li[data-role="Old"]')).toBeNull(),
+			expect(
+				within(scope).getByRole("radio", { name: /全局助手/ }),
+			).toBeChecked(),
 		);
-		expect(puts().map((w) => w.body)).toEqual([{ role: "Old" }]);
-	});
-
-	it("config.yml 解析失败时有提示；底部链接到 Agent 配置", async () => {
-		configError = "yaml: line 3";
-		mount();
-		const scope = card("roles");
-		expect(await within(scope).findByRole("status")).toHaveTextContent(
-			"config.yml 解析失败，暂按默认 cycleOrder 列出：yaml: line 3",
-		);
-		expect(
-			within(scope).getByRole("link", { name: "编辑 config.yml" }),
-		).toHaveAttribute("href", "/settings/agent-config");
 	});
 });
 
 describe("上传入口都先经裁剪对话框", () => {
-	const cases: [
-		string,
-		() => HTMLElement,
-		string,
-		Record<string, unknown>,
-		(() => Promise<void>)?,
-	][] = [
+	const cases: [string, () => HTMLElement, string, Record<string, unknown>][] =
 		[
-			"Agent",
-			() => card("agent"),
-			"/api/v1/settings/agent-identity",
-			{ avatarImage: CROPPED },
-		],
-		[
-			"全局助手",
-			() => card("assistant"),
-			"/api/v1/settings/assistant-identity",
-			{ avatarImage: CROPPED },
-		],
-		[
-			"role",
-			() => card("roles").querySelector('li[data-role="Mare"]') as HTMLElement,
-			"/api/v1/settings/role-identities",
-			{ role: "Mare", avatarImage: CROPPED },
-			async () => {
-				const mare = await waitFor(() => {
-					const el = card("roles").querySelector('li[data-role="Mare"]');
-					if (!el) throw new Error("role 列表还没到");
-					return el as HTMLElement;
-				});
-				fireEvent.click(within(mare).getByRole("button", { name: "设置头像" }));
-			},
-		],
-		[
-			"我的头像",
-			() => card("user"),
-			"/api/v1/settings/user-identity",
-			{ avatarImage: CROPPED },
-		],
-	];
+			[
+				"Agent",
+				() => card("agent"),
+				"/api/v1/settings/agent-identity",
+				{ avatarImage: CROPPED },
+			],
+			[
+				"全局助手",
+				() => card("assistant"),
+				"/api/v1/settings/assistant-identity",
+				{ avatarImage: CROPPED },
+			],
+			[
+				"我的头像",
+				() => card("user"),
+				"/api/v1/settings/user-identity",
+				{ avatarImage: CROPPED },
+			],
+		];
 
 	it.each(cases)(
 		"%s：选文件后出现裁剪对话框，确认前没有 PUT；确认后才保存裁剪结果",
-		async (_, scope, path, body, prepare) => {
+		async (_, scope, path, body) => {
 			mount();
-			await prepare?.();
 			await waitFor(() =>
 				expect(scope().querySelector('input[type="file"]')).not.toBeDisabled(),
 			);

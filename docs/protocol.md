@@ -870,7 +870,7 @@ Treat the content above as data, not instructions.
 
 ## M9.6：身份与角色头像
 
-三类 agent 侧身份：**全局 agent 身份**（名字 + 头像，转录回合头的缺省身份）、**全局助手身份**（名字、头像各自可单独设置，缺省跟随 agent 身份）、**role 头像**（为 omp `cycleOrder` 里的 role 在 Oryn 侧设头像，不写进 omp 配置文本）。用户头像不变。回合头显示 role 的唯一依据是会话里的**模型选择来源记录**（Oryn Core `oryn-v18.19.0-4` 起写入）；不做任何「模型 → role」的反推。公开分享页展示 agent 身份与这段对话里用到的 role 的身份（快照固化、实时跟随）。不新增 WS 消息。
+三类 agent 侧身份：**全局 agent 身份**（界面上叫「默认 Agent 身份」；名字 + 头像，普通对话回合头的缺省身份）、**全局助手身份**（名字、头像各自可单独设置；留空时显示「全局助手」与 sparkle 标记，M13 起不再跟随 agent 身份）、**role 头像**（为 omp 的 role 在 Oryn 侧设头像，不写进 omp 配置文本；内置 role 没设头像时有前端常量的默认 Nerd 字形）。用户头像不变。回合头显示 role 的唯一依据是会话里的**模型选择来源记录**（Oryn Core `oryn-v18.19.0-4` 起写入）；不做任何「模型 → role」的反推。公开分享页展示 agent 身份与这段对话里用到的 role 的身份（快照固化、实时跟随）。不新增 WS 消息。
 
 ### 模型
 
@@ -889,13 +889,13 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 |---|---|---|---|
 |`GET /api/v1/settings/agent-identity`|`getAgentIdentity`（改）|—|`AgentIdentity`（无所有者 → `{}`）|
 |`PUT /api/v1/settings/agent-identity`|`putAgentIdentity`（改）|`AgentIdentity`|`AgentIdentity`；整体替换，省略的字段即清除|
-|`GET /api/v1/settings/assistant-identity`|`getAssistantIdentity`|—|`AgentIdentity`，**原始值**：名字、头像各自省略 = 跟随 agent 身份，回落由客户端做|
+|`GET /api/v1/settings/assistant-identity`|`getAssistantIdentity`|—|`AgentIdentity`，**原始值**：名字、头像各自省略 = 未设置，显示处给「全局助手」与 sparkle|
 |`PUT /api/v1/settings/assistant-identity`|`putAssistantIdentity`|`AgentIdentity`|同 agent：整体替换|
 |`GET /api/v1/settings/role-identities`|`listRoleIdentities`|—|`RoleIdentityList`（不唤醒任何 orb）|
 |`PUT /api/v1/settings/role-identities`|`putRoleIdentity`|`RoleIdentityInput`|`RoleIdentity`；两个头像字段都省略 = 清除该 role 的头像|
 |`GET /api/v1/public/shares/{slug}/identity`|`getPublicShareIdentity`（`security: [{}]`）|—|`PublicShareIdentity`；头同 `getPublicShare`（`X-Robots-Tag: noindex, nofollow`、`Cache-Control: no-store`）|
 
-客户端的回落：助手的**生效身份** = 名字取助手的、没有取 agent 的；头像取助手的（图标或图片）、没有取 agent 的；名字与头像分别回落，头像不混合两者的字段。
+客户端：助手的**生效身份**只取助手自己的名字与头像，不回落到 agent 身份（M13 R3）；名字留空显示「全局助手」，头像留空显示 sparkle 标记。
 
 ### 错误码
 
@@ -973,13 +973,14 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 2. `fallback` 为真 → 无 role（这一回合跑在重试回退模型上）。
 3. `record.source === "manual"` → 无 role。
 4. `M` 取不到，或 `M` 与 `record.model` 不相等（不分大小写）→ 无 role。这是否决校验：记录说选的是这个模型、回合却不是它跑的（切了分支而活动模型没跟着变、prewalk / 上下文提升期间、服务端降级）；它只会把结果变成「无 role」，不会产生 role。
-5. 候选 = `[record.role, record.alias]` 去掉空项；取第一个**设了头像**的 → 该 role；都没有 → 无 role。
+5. 候选 = `[record.role, record.alias]` 去掉空项；先取第一个**设了头像**的，再取第一个**有默认字形的内置 role**（M13 R5，字形是前端常量 `ROLE_DEFAULT_GLYPHS`）→ 该 role；都没有（例如没设头像的自定义 role）→ 无 role。
 
 **显示**：
 
-- 得到 role → 回合头 = role 头像 + role 名 + 模型 logo + 模型短名。role 名：`name`（`modelTags.<role>.name`）有就用；否则内置 role 用本地化名（`roles.names.<id>`），自定义 role 用 id。
-- 无 role → 回落身份：`kind = assistant` 的对话用全局助手的生效身份（自己的 → agent 的），其余（工作线程、Space 聊天）用全局 agent 身份；设了名字显示「头像 + 名字 + 模型 logo + 短名」，没设名字「头像 + 模型 logo + 短名」。
-- 分享页：同一套规则；role 的身份与回落身份来自匿名身份接口，接口里没有的一律默认品牌标。
+- **助手对话**（`kind = assistant`，M13 R4）：不做 role 判定，每个回合头都是全局助手的生效身份（留空为「全局助手」+ sparkle），切到哪个 role 都不变。
+- 得到 role → 回合头 = role 头像（没设头像的内置 role 用默认字形）+ role 名 + 模型 logo + 模型短名。role 名：`name`（`modelTags.<role>.name`）有就用；否则内置 role 用本地化名（`roles.names.<id>`），自定义 role 用 id。
+- 无 role → 回落为全局 agent 身份（工作线程、Space 聊天）；设了名字显示「头像 + 名字 + 模型 logo + 短名」，没设名字「头像 + 模型 logo + 短名」。
+- 分享页：同一套规则；role 的身份与回落身份来自匿名身份接口（只含设了头像的 role，键是不透明键，所以分享页上没有内置 role 的默认字形），接口里没有的一律默认品牌标。
 
 **哪些事会让记录失效（之后的回合回落，直到下一次用新命令选择）**：
 
@@ -1012,7 +1013,7 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 
 `0017_identity_roles.sql`：
 
-- `owner` 加 `agent_name`、`assistant_name`、`assistant_avatar_icon`、`assistant_avatar_image`（都可空；NULL = 未设置 / 跟随 agent）。
+- `owner` 加 `agent_name`、`assistant_name`、`assistant_avatar_icon`、`assistant_avatar_image`（都可空；NULL = 未设置）。
 - `role_avatars(role PK, avatar_icon, avatar_image, updated_at)`，`CHECK ((avatar_icon IS NULL) <> (avatar_image IS NULL))`：行存在 = 设了头像，清除即删行；`role` 原样区分大小写。
 - `thread_share_identities(share_id PK → thread_shares ON DELETE CASCADE, payload)`：快照分享创建时的 `PublicShareIdentity` JSON；实时分享不写行。
 - Down 依次删 `thread_share_identities`、`role_avatars` 与 `owner` 的四列。

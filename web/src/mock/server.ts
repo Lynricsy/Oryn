@@ -18,6 +18,7 @@
  * 桌面与浏览器 Profile（M8）交给 `./desktop`：新建线程按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
+import { AGENT_DEFAULT_GLYPHS } from "../lib/avatar-defaults";
 import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
@@ -317,6 +318,9 @@ const RESERVED_ROLES: Record<string, true> = {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要匹配控制字符
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
+/** Core 打包的内置 agent（固定顺序，同 orynd `agentcfg.BundledAgents`）；默认字形表正好按这个顺序列出。 */
+const BUNDLED_AGENTS = Object.keys(AGENT_DEFAULT_GLYPHS);
+
 /** 名字：去首尾空白，空 = 未设置；超过 40 个字符或含控制字符 → 错误文案。 */
 function identityName(raw: unknown): { name?: string; error?: string } {
 	const name = typeof raw === "string" ? raw.trim() : "";
@@ -492,7 +496,7 @@ export class MockServer {
 	};
 	/** 全局 agent 身份（名字 + 头像，内存态）；都缺省 = 默认品牌标、不显示名字。 */
 	agentIdentity: Schemas["AgentIdentity"] = {};
-	/** 全局助手身份（原始值；各字段缺省时客户端回落到 agent 的）。 */
+	/** 全局助手身份（原始值；缺省时客户端显示「全局助手」与 sparkle，不跟随 agent）。 */
 	assistantIdentity: Schemas["AgentIdentity"] = {};
 	/** 用户头像（内存态）；默认给一个 emoji，截图里能看到效果。 */
 	userIdentity: Schemas["AvatarIdentity"] = { avatarIcon: "🦊" };
@@ -502,6 +506,10 @@ export class MockServer {
 	roleAvatars: Record<string, Schemas["AvatarIdentity"]> = {
 		...MOCK_ROLE_AVATARS,
 	};
+	/** 子 agent 头像（`agent_avatars`）：行存在 = 设了头像。 */
+	agentAvatars: Record<string, Schemas["AvatarIdentity"]> = {};
+	/** 新对话输入框偏好（`owner.new_thread_target`）。 */
+	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
 	/** config.yml 解析失败的原因（模拟 `configError`）。 */
 	roleConfigError: string | undefined;
 	/** 旧 Core 的线程：不认识 `oryn_*` 命令（应答 `Unknown command`），也不写来源记录。 */
@@ -825,6 +833,48 @@ export class MockServer {
 		return {
 			roles: [...MOCK_CYCLE, ...orphans].map((r) => this.roleIdentity(r)),
 			...(this.roleConfigError ? { configError: this.roleConfigError } : {}),
+		};
+	}
+
+	/** omp-home `agents/*.md` 里的自定义 agent（frontmatter 的 name / description；没有 name 的跳过），按名字排序。 */
+	private userAgents(): { name: string; description?: string }[] {
+		const out: { name: string; description?: string }[] = [];
+		for (const [path, text] of Object.entries(this.files)) {
+			if (!/^agents\/[^/]+\.md$/.test(path)) continue;
+			const fm = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+			const name = /^name:\s*(.+)$/m.exec(fm)?.[1]?.trim();
+			if (!name) continue;
+			const description = /^description:\s*(.+)$/m.exec(fm)?.[1]?.trim();
+			out.push(description ? { name, description } : { name });
+		}
+		return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+	}
+
+	/** 子 agent 头像列表（同 orynd `listAgentAvatars`）：内置（固定顺序）→ 自定义（按名字）→ 只剩头像的遗留项（按名字）。 */
+	agentAvatarList(): Schemas["AgentAvatarList"] {
+		const user = this.userAgents();
+		const known = new Set([...BUNDLED_AGENTS, ...user.map((a) => a.name)]);
+		const orphans = Object.keys(this.agentAvatars)
+			.filter((n) => !known.has(n))
+			.sort();
+		return {
+			agents: [
+				...BUNDLED_AGENTS.map((name) => ({
+					name,
+					source: "bundled" as const,
+					...this.agentAvatars[name],
+				})),
+				...user.map((a) => ({
+					...a,
+					source: "user" as const,
+					...this.agentAvatars[a.name],
+				})),
+				...orphans.map((name) => ({
+					name,
+					source: "orphan" as const,
+					...this.agentAvatars[name],
+				})),
+			],
 		};
 	}
 
@@ -1263,6 +1313,51 @@ export class MockServer {
 				return json(this.roleIdentity(role));
 			}
 			return json(this.roleIdentities());
+		}
+		if (p === "settings/agent-avatars") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["AgentAvatarInput"];
+				const name = typeof b.name === "string" ? b.name : "";
+				if (
+					!name.trim() ||
+					new TextEncoder().encode(name).length > 128 ||
+					CONTROL_CHARS.test(name)
+				)
+					return json({ code: "invalid_request", message: "name 无效" }, 400);
+				const av = avatarFields(b);
+				if ("error" in av) return av.error;
+				if (!av.avatar.avatarIcon && !av.avatar.avatarImage)
+					delete this.agentAvatars[name];
+				else if (
+					!this.agentAvatarList().agents.some(
+						(a) => a.name === name && a.source !== "orphan",
+					)
+				)
+					return json(
+						{ code: "invalid_request", message: "没有这个 agent" },
+						400,
+					);
+				else this.agentAvatars[name] = av.avatar;
+				return json(
+					this.agentAvatarList().agents.find((a) => a.name === name) ?? {
+						name,
+						source: "orphan",
+					},
+				);
+			}
+			return json(this.agentAvatarList());
+		}
+		if (p === "settings/composer") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["ComposerPrefs"];
+				if (b.defaultTarget !== "role" && b.defaultTarget !== "assistant")
+					return json(
+						{ code: "invalid_request", message: "defaultTarget 无效" },
+						400,
+					);
+				this.composerPrefs = { defaultTarget: b.defaultTarget };
+			}
+			return json(this.composerPrefs);
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {
