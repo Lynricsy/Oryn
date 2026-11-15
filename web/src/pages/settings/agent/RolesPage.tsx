@@ -16,6 +16,7 @@ import {
 	saveRoleAvatar,
 	useRoleIdentities,
 } from "../../../api/identity-queries";
+import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import { AvatarEditor } from "../../../components/settings/AvatarEditor";
 import {
 	AgentErrorText,
@@ -460,7 +461,7 @@ export default function RolesPage(): ReactNode {
 
 	return (
 		<>
-			{/* ApplyStatusBanner（R29 / R30）的位置：下发状态与「需重启」提示放在页首 */}
+			<ApplyStatusBanner />
 			<AgentScopeNote />
 			{invalid && (
 				<Callout tone="warn" role="status">
