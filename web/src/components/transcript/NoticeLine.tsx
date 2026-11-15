@@ -62,7 +62,7 @@ export function noticeBodyFormat(text: string): NoticeBodyFormat {
  * 命令输出里的 `<id>`、`<path>` 是用法占位符，不是 HTML：Markdown 不渲染原始 HTML，会把它们整个吞掉
  * （「/jobs kill <id>」显示成「/jobs kill 」）。围栏与行内代码以外的 `<` 转义成字面量。
  */
-function escapeAngles(text: string): string {
+export function escapeAngles(text: string): string {
 	const lines = text.split("\n");
 	const prose = proseLines(lines);
 	return lines

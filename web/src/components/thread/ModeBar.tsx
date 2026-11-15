@@ -17,6 +17,8 @@ import { realtime } from "../../realtime/socket";
 import { runModeCommand } from "../../state/actions";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { Markdown } from "../markdown/Markdown";
+import { escapeAngles, noticeBodyFormat } from "../transcript/NoticeLine";
 import { Badge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { Menu, type MenuItem, Spinner } from "../ui/primitives";
@@ -327,16 +329,30 @@ function Widgets({
 		([, w]) => w.placement === placement,
 	);
 	if (list.length === 0) return null;
+	// 扩展小部件可能是对齐的状态行，也可能是整段 Markdown（如 /omfg 的规则全文）：与命令输出行同一套判定。
+	// 托盘空间有限，超高的部件在自身内部滚动
 	return (
 		<div>
-			{list.map(([key, w]) => (
-				<pre
-					key={key}
-					className="overflow-x-auto px-3 py-1.5 font-mono text-2xs text-muted"
-				>
-					{w.lines.join("\n")}
-				</pre>
-			))}
+			{list.map(([key, w]) => {
+				const text = w.lines.join("\n");
+				return noticeBodyFormat(text) === "markdown" ? (
+					<div
+						key={key}
+						data-widget={key}
+						className="max-h-48 overflow-y-auto px-3 py-1.5 text-muted [&_.md]:text-xs! [&_.md]:leading-5!"
+					>
+						<Markdown text={escapeAngles(text)} />
+					</div>
+				) : (
+					<pre
+						key={key}
+						data-widget={key}
+						className="max-h-48 overflow-auto px-3 py-1.5 font-mono text-2xs text-muted"
+					>
+						{text}
+					</pre>
+				);
+			})}
 		</div>
 	);
 }
