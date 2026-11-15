@@ -126,8 +126,7 @@ Produces：
 - `type Model struct { Provider, ID, Selector, Name, Kind string; ContextWindow, MaxTokens int; Reasoning bool; Thinking []string; Input []string; Cost *Cost }`
 - `type Result struct { Models []Model; FetchedAt time.Time; Stale bool; Warnings []string }`
 - `func New(cfg Config, home *agentcfg.Home, vault *secrets.Vault) *Catalog`
-- `func (c *Catalog) Get(ctx context.Context, force bool) (Result, error)`
-- `func (c *Catalog) Invalidate()`
+- `func (c *Catalog) Get(ctx context.Context, force bool) (Result, error)`：每次调用都重新读取 `models.yml` 与 `config.yml` 计算缓存键，键变了就重跑，所以不需要外部失效通知。
 Do：
 - 渲染 omp-home 中的 `models.yml` 和 `config.yml`（`agentcfg.RenderAt`，egress 地址取 1.1 的监听）到临时 HOME。
 - 运行 `<coordinator.omp_path> models --json --kind all`，环境变量从零构造：`HOME`、`PI_CODING_AGENT_DIR`。
@@ -142,10 +141,10 @@ Accept：`go test ./internal/modelcat/...` 通过，用例覆盖：
 
 ### 步骤 1.3：REST `GET /api/v1/models/catalog`
 Depends on：1.2（`Catalog.Get`）。
-Files：`schema/openapi.yaml`（operationId `getModelCatalog`，query `refresh: boolean`，schema `ModelCatalog`、`CatalogModel`），`internal/api/modelcat.go`，`internal/api/agentconfig.go`。
+Files：`schema/openapi.yaml`（operationId `getModelCatalog`，query `refresh: boolean`，schema `ModelCatalog`、`CatalogModel`），`internal/api/modelcat.go`。不改 `internal/api/agentconfig.go`，原因见「与 M12.2 的协调」。
 Do：
 - 新增 handler。
-- `PutAgentConfigFile`、`DeleteAgentConfigFile`、`ImportAgentConfig` 改动了 `models.yml` 或 `config.yml` 时，调用 `Catalog.Invalidate()`。
+- 缓存失效靠 `Get` 每次比对缓存键（1.2），不在 agent-config 写接口里加钩子。
 - 鉴权与其它 settings 接口一致。
 Accept：`make check-gen && make lint-spec && go test ./internal/api/...` 通过；新用例断言写入 `models.yml` 后下一次 `GET` 触发重新运行。
 
@@ -478,6 +477,26 @@ Accept：`cd web && bun run accept:m13` 退出码为 0，输出中每条 R 编�
 
 ---
 
+## 与 M12.2（项目级中央 agent 配置）的协调
+
+另一个 agent 按 `m122-project-config-plan.md` 实施 M12.2，与本计划在同一个工作树上推进。M12.2 新增控制面按项目保存的配置层（`<data_dir>/omp-projects/<id>/`，下发到 orb 的 `~/.oryn/project-config/.omp/`），并让 `/omfg` 写回中央。重叠点与约束如下。
+
+| 重叠 | M12.2 的做法 | 本计划的约束 |
+|---|---|---|
+| `internal/agentcfg/home.go` | 重构 `Home` 字段（`parent`、`name`、`project`），新增 `clean`、配额方法 | 本计划不改 `home.go`；新能力放新文件（`roles.go`、`agents.go`），只调用 `Home` 的公开方法 |
+| `internal/api/agentconfig.go` | 把 5 个 handler 主体抽成以 `*agentcfg.Home` 为参数的函数 | 1.3 不碰此文件；6.2 的下发触发点在 M12.2 合入后挂到抽出的 `putAgentFile`/`deleteAgentFile`/`importAgentFiles` 上，并同时覆盖项目层写入 |
+| `internal/orbs/setup.go`、`internal/orbdrt/setup.go` | `plan()` 增加 `ProjectConfig`；`runSetupLocked` 写项目层 | 6.1 抽出 `writeOmpHome` 时保留 M12.2 的 `writeProjectOmp` 调用顺序；`omphome.apply` 的参数同时带 `projectConfig`（与 `LinkCtlSetupRunParams.projectConfig` 同一 schema），项目层也能立即应用 |
+| `internal/orbdrt/agent.go` 的 `agentStart` | 追加 `ORYN_PROJECT_CONFIG_ROOT` 与项目层 `--config` | 本计划只改 `coordinator.go` 的协调宿主参数，不改 `agentStart` |
+| `internal/threads/agent.go` 的 `onResponse` | 新增 `case "omfg"` | 6.3 的 reload 调度放进新文件 `internal/threads/apply.go`，`agent.go` 只在 `session_settled` 处加一行钩子调用 |
+| `schema/openapi.yaml` | 在 `projects` 段新增 5 个 path，`LinkCtlSetupRunParams` 加字段 | 本计划的新 path 放在各自 tag 段末尾；改公共 schema 前先看最新内容，与对方已提交的版本叠加 |
+| `web/src/lib/file-source.ts` | 抽出 `configSource(spec)`，新增 `projectAgentConfigSource` | 6.6 的高级入口沿用 `agentConfigSource`，不改它的签名 |
+| 迁移编号 | 不新增迁移 | 本计划使用 `0024`、`0025`，提交前确认编号未被占用 |
+| 6.3 的重载分类 | 项目层同样有技能、hook 等文件 | 分类规则对项目层同样适用：项目层的 `config.yml` 也按键级差分处理 |
+
+执行规则：
+- 每个步骤开始前先看 `git log --oneline -10` 与 `git status`，确认对方是否正在改该步骤要碰的文件；对方有未提交改动时先避开，改做不重叠的步骤。
+- 只提交自己写的行（eval `commit`），不触碰对方未提交的改动。
+
 ## 并行性
 
 - 阶段 1、2、4 互不共享文件，可以并行。
@@ -489,3 +508,4 @@ Accept：`cd web && bun run accept:m13` 退出码为 0，输出中每条 R 编�
 - 协调宿主开了 `write` 后，它能改沙箱 HOME 里的任何文件。缓解：4.5 每次启动前还原受管文件，系统提示写明唯一可写目录。残余风险：同一次运行期间，它改过的配置会一直生效到下次启动。
 - 文件库没有总量上限。磁盘满时，上传返回 507，面板提示清理。
 - 自动下发会在 omp 运行中改写 `config.yml`。omp 的监听做了 keep-last-good，坏的配置不会生效，但下发前不做语义校验。6.6 的表单只产出合法结构，原始文件浏览器（"高级"）不在保护范围内。
+- 与 M12.2 共享文件：按上一节约束推进；M12.2 先合入的改动，本计划在其上叠加。
