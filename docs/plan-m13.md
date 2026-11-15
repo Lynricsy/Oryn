@@ -62,7 +62,7 @@ Rollback point：每个阶段都能单独上线、单独停下。三次数据库
 **Agent 配置 GUI**
 - R26. 设置页新增"Agent"分组，下分六个子页：技能、子 agent、模型角色、提示词与上下文、命令/规则/提示片段、扩展/hook/工具。原始文件浏览器保留为"高级"入口。
 - R27. 每个子页都能新建、编辑、删除对应文件，并能启停条目：技能、命令、规则、提示片段、instruction、hook、扩展模块、自定义工具、单个上下文文件写 `disabledExtensions`，子 agent 写 `task.disabledAgents`。编辑 `config.yml` 后原有注释保留。
-- R28. 内置 agent 在子 agent 页只读展示名字、简介和头像，只有头像可改。
+- R28. 内置 agent 在子 agent 页只读展示名字、简介和头像，只有头像可改。（2026-11-15 主人确认：定义只读；`config.yml` 里的启停 `task.disabledAgents` 与模型覆盖 `task.agentModelOverrides` 对内置 agent 同样可设。）
 - R29. 保存后，配置在 10 秒内写到所有 `ready` 状态的 orb。空闲的会话随即生效：技能、命令、规则、上下文文件、MCP 都能热生效，`config.yml` 由 omp 自带的文件监听生效。正在跑回合的会话，在回合结束后生效。
 - R30. 只有重启才能生效的改动，页面顶部显示"N 个会话需重启后生效"，并给一个"重启这些会话"按钮。这类改动包括：hook、扩展模块、自定义工具、`SYSTEM.md`、`APPEND_SYSTEM.md`、标记为需重启的设置项。点按钮后，各会话空闲时停掉 omp 进程，下次发消息时带着原会话自动拉起；正在跑的回合不受影响。
 - R31. 各子页都标明"不作用于全局助手"。`config.yml` 和 `models.yml` 例外，这两个文件也会下发给全局助手。
