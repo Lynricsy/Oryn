@@ -1301,9 +1301,19 @@ async function X28() {
 
 async function X29() {
 	note("杀掉 runner：35 秒后离线、线程页有提示、发送被接受；重启后应答");
-	const tid = await ensureT25();
+	// 用本场景新建的线程，不复用 X25 的：X26 之后 runner 带 --terminal 重启，X25 的会话从无 terminal 工具变成有，
+	// 下一回合 omp 会发 tool_addition，上游代理以「unknown tool 'terminal'」拒绝（omp / 上游行为，与离线送达无关）。
 	const r0 = await ensureRunnerOnline();
+	const created = await cli(
+		`thread new --runner ${r0.name} --dir ${DIR_A} --share-dir --title ${q(`m11b ${RUN} X29`)} ${q("用 bash 执行 pwd，只回复输出")}`,
+	);
+	if (created.code !== 0)
+		throw new Error(`oryn thread new --runner 失败：${created.out}`);
+	const tid = created.stdout.trim().split("\n").at(-1) ?? "";
 	focus = tid;
+	await leaveProvisioning(tid, 300_000);
+	await waitIdle(tid);
+	note(`X29 线程 ${tid}（runner 带 --terminal=${terminalFlag}）`);
 	await stopRunner();
 	note("已杀掉 runner 进程，等 35 秒");
 	await sleep(35_000);
@@ -1754,9 +1764,38 @@ async function X36() {
 			`models.yml 的 apiKey（前 12 位）：${keys.join(",") || "无"}；占位符 ${kv.PH} 个；环境里的密钥形态变量：${kv.ENVSECRETS || "无"}`,
 		);
 		check(Number(kv.PH) >= 1, "配置 / 环境里有 oryn-ph- 占位符");
+		// 没绑定上游主机（hosts 为空）的 provider key 按设计走环境变量降级（docs/deploy.md「models.yml」一节）：
+		// apiKey 写成 ORYN_MODEL_KEY_<KEY>，真实值在环境里。其余 apiKey 必须是占位符；环境里的密钥形态变量要么值是占位符，
+		// 要么是这些降级变量。
+		const secrets = (
+			await getJson<{ secrets: { name: string; hosts?: string[] }[] }>(
+				"/api/v1/secrets",
+			)
+		).secrets;
+		const fallback = new Set<string>();
+		for (const s of secrets) {
+			const k = s.name.match(/^omp\/models\/([^/]+)\/apiKey$/)?.[1];
+			if (k && (s.hosts ?? []).length === 0)
+				fallback.add(
+					`ORYN_MODEL_KEY_${k.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`,
+				);
+		}
+		note(`环境变量降级的 provider key：${[...fallback].join(",") || "无"}`);
 		check(
-			keys.every((k) => k.startsWith("oryn-ph-")),
-			"models.yml 的 apiKey 都是占位符",
+			keys.every(
+				(k) =>
+					k.startsWith("oryn-ph-") ||
+					[...fallback].some((f) => f.startsWith(k)),
+			),
+			"models.yml 的 apiKey 都是占位符或降级变量名",
+		);
+		const envVars = (kv.ENVSECRETS ?? "").split(",").filter(Boolean);
+		check(
+			envVars.every((x) => {
+				const [n = "", v = ""] = x.split("=");
+				return v.startsWith("oryn-ph-") || fallback.has(n);
+			}),
+			`环境里的密钥形态变量都是占位符或降级变量（${envVars.map((x) => x.split("=")[0]).join(",") || "无"}）`,
 		);
 		const real = modelKeyPrefix();
 		if (real)
