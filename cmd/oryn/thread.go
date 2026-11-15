@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -492,6 +493,140 @@ var threadSendCmd = &cobra.Command{
 	},
 }
 
+var threadRPCOpts struct{ timeout time.Duration }
+
+var threadRPCCmd = &cobra.Command{
+	Use:   "rpc <id> <json>",
+	Short: "向线程的 agent 下发任意 omp RPC 命令并打印应答（如 get_state、set_thinking_level、compact）",
+	Long: "<json> 是带字符串 type 的 omp 命令对象，例如 '{\"type\":\"get_state\"}'。应答以缩进 JSON 打印到标准输出；\n" +
+		"agent 拒绝（success: false）时错误打到标准错误并以 1 退出。会话绑定、凭据等由 Oryn 管理的命令会被拒绝（managed_by_oryn），\n" +
+		"分叉请用 `oryn thread fork`。",
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if inOrb() {
+			return errUnavailableInOrb("thread rpc")
+		}
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), threadRPCOpts.timeout)
+		defer cancel()
+		return threadRPC(ctx, c, args[0], args[1], os.Stdout)
+	},
+}
+
+// threadRPC 校验 raw 是带 type 的 JSON 对象，经 WS 下发并把应答缩进打印到 out；agent 拒绝时返回错误。
+func threadRPC(ctx context.Context, c *apiClient, id, raw string, out io.Writer) error {
+	var head map[string]json.RawMessage
+	var typ string
+	if json.Unmarshal([]byte(raw), &head) != nil || json.Unmarshal(head["type"], &typ) != nil || typ == "" {
+		return usageErr("帧必须是带 type 的 JSON 对象")
+	}
+	resp, err := wsCommand(ctx, c, id, json.RawMessage(raw))
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if json.Indent(&buf, resp, "", "  ") != nil {
+		buf.Reset()
+		buf.Write(resp)
+	}
+	buf.WriteByte('\n')
+	if _, err := out.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return agentRejected(resp)
+}
+
+// agentRejected 在 omp 应答为 success: false 时返回带其 error 的错误。
+func agentRejected(resp json.RawMessage) error {
+	var r struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(resp, &r) != nil || !r.Success {
+		return fmt.Errorf("agent 拒绝了命令: %s", r.Error)
+	}
+	return nil
+}
+
+var threadAbortOpts struct{ timeout time.Duration }
+
+var threadAbortCmd = &cobra.Command{
+	Use:   "abort <id>",
+	Short: "中止线程当前的回合",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if inOrb() {
+			return errUnavailableInOrb("thread abort")
+		}
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), threadAbortOpts.timeout)
+		defer cancel()
+		return threadAbort(ctx, c, args[0])
+	},
+}
+
+// threadAbort 经 WS 下发 `{type: "abort"}`。
+func threadAbort(ctx context.Context, c *apiClient, id string) error {
+	resp, err := wsCommand(ctx, c, id, map[string]any{"type": "abort"})
+	if err != nil {
+		return err
+	}
+	return agentRejected(resp)
+}
+
+var threadForkOpts struct {
+	entry, env string
+	json       bool
+}
+
+var threadForkCmd = &cobra.Command{
+	Use:   "fork <id>",
+	Short: "分叉线程（默认从当前叶子、共用当前 orb；--env copy 连环境快照出副本 orb），打印新线程 id",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if inOrb() {
+			return errUnavailableInOrb("thread fork")
+		}
+		c, err := newClient()
+		if err != nil {
+			return err
+		}
+		o := threadForkOpts
+		t, err := threadFork(cmd.Context(), c, args[0], o.entry, o.env)
+		if err != nil {
+			return err
+		}
+		if o.json {
+			return printJSON(t)
+		}
+		fmt.Println(t.ID)
+		return nil
+	},
+}
+
+// threadFork 调 `POST threads/{id}/fork`；entry 为空表示从当前叶子分叉。
+func threadFork(ctx context.Context, c *apiClient, id, entry, env string) (apigen.Thread, error) {
+	e := apigen.ForkThreadRequestEnv(env)
+	if !e.Valid() {
+		return apigen.Thread{}, usageErr("--env 只能是 share 或 copy")
+	}
+	body := apigen.ForkThreadRequest{Env: e}
+	if entry != "" {
+		body.EntryID = &entry
+	}
+	var out apigen.ThreadEnvelope
+	if err := c.do(ctx, http.MethodPost, "/api/v1/threads/"+url.PathEscape(id)+"/fork", body, &out); err != nil {
+		return apigen.Thread{}, err
+	}
+	return out.Thread, nil
+}
+
 // orbThreadNewRejected 是 orb 内 `thread new` 不接受的参数（只接受 --title、--type、--json）。
 var orbThreadNewRejected = []string{"project", "no-project", "provider", "orb", "label", "browser-profile", "readonly", "takeover", "space", "runner", "dir", "worktree", "share-dir"}
 
@@ -564,8 +699,14 @@ func init() {
 	threadShowCmd.Flags().BoolVar(&threadShowOpts.entries, "entries", false, "按活动分支打印条目")
 	threadSendCmd.Flags().BoolVar(&threadSendOpts.steer, "steer", false, "插入当前回合（steer）")
 	threadSendCmd.Flags().DurationVar(&threadSendOpts.timeout, "timeout", 5*time.Minute, "等待 agent 应答的时长（含唤醒 orb）")
+	threadRPCCmd.Flags().DurationVar(&threadRPCOpts.timeout, "timeout", 5*time.Minute, "等待 agent 应答的时长（含唤醒 orb）")
+	threadAbortCmd.Flags().DurationVar(&threadAbortOpts.timeout, "timeout", time.Minute, "等待 agent 应答的时长")
+	threadForkCmd.Flags().StringVar(&threadForkOpts.entry, "entry", "", "从该条目分叉（缺省取当前叶子）")
+	threadForkCmd.Flags().StringVar(&threadForkOpts.env, "env", string(apigen.Share), "share 共用当前 orb；copy 连环境快照出副本 orb")
+	threadForkCmd.Flags().BoolVar(&threadForkOpts.json, "json", false, "以 JSON 输出新线程")
 	threadWaitCmd.Flags().DurationVar(&threadWaitOpts.timeout, "timeout", defaultWaitTimeout, "最长等待时间（上限 24h）")
 	threadWaitCmd.Flags().BoolVar(&threadWaitOpts.json, "json", false, "以 JSON 输出线程信息")
-	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd, threadArchiveCmd, threadWaitCmd)
+	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd, threadArchiveCmd, threadWaitCmd,
+		threadRPCCmd, threadAbortCmd, threadForkCmd)
 	root.AddCommand(threadCmd)
 }

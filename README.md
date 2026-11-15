@@ -164,7 +164,10 @@ oryn runner create macbook                                   # 注册个人开�
 # ── 线程、流式挂接与本地镜像同步 ──
 oryn thread new --project myproj "排查登录重定向循环并补单测"  # 在指定项目的新 orb 中启动线程
 oryn thread new --runner macbook --dir /home/ada/code/app --worktree fix-auth "修复鉴权中间件"
-oryn thread attach <线程>                                     # 流式查看转录，支持实时输入引导（steer）与审批
+oryn thread attach <线程>                                     # 流式查看转录，支持实时输入引导（steer）、作答与计划审批
+oryn thread rpc <线程> '{"type":"get_state"}'                # 向 agent 下发任意 omp RPC 命令并打印应答
+oryn thread abort <线程>                                      # 中止当前回合
+oryn thread fork <线程> [--entry <条目>] [--env share|copy]   # 分叉线程，打印新线程 id
 oryn sync <线程>                                              # 将 orb 内的改动实时镜像至当前干净检出（--apply 落盘）
 
 # ── Space 协调、定时任务与统计分析 ──

@@ -1339,6 +1339,7 @@ firecracker:
 - `oryn thread abort <id>`：下发 `{type: "abort"}`。
 - `oryn thread fork <id> [--entry <entryId>] [--env share|copy] [--json]`：`POST /api/v1/threads/{id}/fork`，`--env` 缺省 `share`。
 - `oryn thread attach` 支持计划审批：快照里的 `agent.planProposal` 或 `plan_proposal` 帧到达时打印 `[plan] <标题>`、计划原文与编号选项；输入编号或选项名（`execute` / `compact` / `keep_context`）→ `plan_approval{approved: true, option}`；`save <绝对路径>` → `option: "save", savePath`；其它文字 → `approved: false, feedback`。有未决 UI 请求时仍先答它；`plan.resolved` 后输入恢复为普通消息。
+- `oryn thread attach` 的 stdin 是管道时也读取输入，管道结束后继续查看（终端上 EOF 仍退出）；`oryn thread abort` 另有 `--timeout`（缺省 1m）。
 - 以上命令在 orb 内不可用。
 
 ### Web

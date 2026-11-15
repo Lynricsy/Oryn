@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -221,4 +223,124 @@ func TestThreadNewBrowserProfile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "正在线程「T」里使用")
 	assert.Contains(t, err.Error(), "--takeover")
+}
+
+// wsClient 是指向假 WS 服务器的客户端。
+func wsClient(ws *fakeWS) *apiClient {
+	return &apiClient{base: ws.srv.URL, token: "odt_test", http: ws.srv.Client()}
+}
+
+// goErr 在后台执行 fn，返回接收其错误的通道。
+func goErr(fn func() error) chan error {
+	ch := make(chan error, 1)
+	go func() { ch <- fn() }()
+	return ch
+}
+
+func recvErr(t *testing.T, ch chan error) error {
+	t.Helper()
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("命令没有返回")
+		return nil
+	}
+}
+
+// answerCmd 在新连接上读一条 cmd，断言其 threadId 与 frame，回以 reply（只需填 type / response / code 等，id 自动带上）。
+func answerCmd(t *testing.T, ws *fakeWS, thread string, wantFrame map[string]any, reply map[string]any) {
+	t.Helper()
+	conn := ws.accept()
+	m := conn.next()
+	assert.Equal(t, "cmd", m["type"])
+	assert.Equal(t, thread, m["threadId"])
+	assert.Equal(t, wantFrame, m["frame"])
+	reply["id"], reply["threadId"] = m["id"], thread
+	conn.send(reply)
+}
+
+func TestThreadRPC(t *testing.T) {
+	ws := newFakeWS(t)
+	ctx := context.Background()
+
+	// 成功：frame 原样下发，应答缩进打印
+	var out bytes.Buffer
+	done := goErr(func() error {
+		return threadRPC(ctx, wsClient(ws), "T-1", `{"type":"set_thinking_level", "level":"high"}`, &out)
+	})
+	answerCmd(t, ws, "T-1", map[string]any{"type": "set_thinking_level", "level": "high"},
+		map[string]any{"type": "res", "response": map[string]any{"type": "response", "command": "get_state", "success": true, "data": map[string]any{"sessionId": "s1"}}})
+	require.NoError(t, recvErr(t, done))
+	assert.Equal(t, "{\n  \"command\": \"get_state\",\n  \"data\": {\n    \"sessionId\": \"s1\"\n  },\n  \"success\": true,\n  \"type\": \"response\"\n}\n", out.String())
+
+	// success: false：应答照常打印，返回错误（main 打到 stderr、退出码 1）
+	out.Reset()
+	done = goErr(func() error { return threadRPC(ctx, wsClient(ws), "T-1", `{"type":"compact"}`, &out) })
+	answerCmd(t, ws, "T-1", map[string]any{"type": "compact"},
+		map[string]any{"type": "res", "response": map[string]any{"type": "response", "command": "compact", "success": false, "error": "nothing to compact"}})
+	err := recvErr(t, done)
+	require.EqualError(t, err, "agent 拒绝了命令: nothing to compact")
+	var ec *exitCodeError
+	assert.False(t, errors.As(err, &ec), "agent 拒绝走默认退出码 1")
+	assert.Contains(t, out.String(), `"success": false`)
+
+	// 托管命令：控制面以 WS error 拒绝
+	done = goErr(func() error { return threadRPC(ctx, wsClient(ws), "T-1", `{"type":"new_session"}`, &out) })
+	answerCmd(t, ws, "T-1", map[string]any{"type": "new_session"},
+		map[string]any{"type": "error", "code": "managed_by_oryn", "message": "new_session is managed by Oryn"})
+	assert.ErrorContains(t, recvErr(t, done), "managed_by_oryn")
+
+	// 非法帧：不发任何请求，退出码 2
+	f := newFakeAPI(t)
+	for _, raw := range []string{`get_state`, `[]`, `null`, `{}`, `{"type":1}`, `{"type":""}`, `{"type":"x"`} {
+		err := threadRPC(ctx, f.client(), "T-1", raw, &out)
+		require.EqualError(t, err, "帧必须是带 type 的 JSON 对象", raw)
+		require.ErrorAs(t, err, &ec)
+		assert.Equal(t, 2, ec.code)
+	}
+	assert.Empty(t, f.requests(), "非法帧不发请求")
+}
+
+func TestThreadAbort(t *testing.T) {
+	ws := newFakeWS(t)
+	ctx := context.Background()
+
+	done := goErr(func() error { return threadAbort(ctx, wsClient(ws), "T-1") })
+	answerCmd(t, ws, "T-1", map[string]any{"type": "abort"},
+		map[string]any{"type": "res", "response": map[string]any{"type": "response", "command": "abort", "success": true}})
+	require.NoError(t, recvErr(t, done))
+
+	done = goErr(func() error { return threadAbort(ctx, wsClient(ws), "T-1") })
+	answerCmd(t, ws, "T-1", map[string]any{"type": "abort"},
+		map[string]any{"type": "res", "response": map[string]any{"type": "response", "command": "abort", "success": false, "error": "not running"}})
+	assert.EqualError(t, recvErr(t, done), "agent 拒绝了命令: not running")
+}
+
+func TestThreadFork(t *testing.T) {
+	f := newFakeAPI(t)
+	f.json("POST /api/v1/threads/T-1/fork", 201, apigen.ThreadEnvelope{Thread: sampleThread("T-2")})
+	ctx := context.Background()
+
+	// --env 缺省 share，不带 entryId
+	env := threadForkCmd.Flags().Lookup("env").DefValue
+	assert.Equal(t, "share", env)
+	th, err := threadFork(ctx, f.client(), "T-1", "", env)
+	require.NoError(t, err)
+	assert.Equal(t, "T-2", th.ID)
+	_, err = threadFork(ctx, f.client(), "T-1", "e-9", "copy")
+	require.NoError(t, err)
+	_, err = threadFork(ctx, f.client(), "T-1", "", "bogus")
+	var ec *exitCodeError
+	require.ErrorAs(t, err, &ec)
+	assert.Equal(t, 2, ec.code)
+
+	reqs := f.requests()
+	require.Len(t, reqs, 2, "非法 --env 不发请求")
+	for _, r := range reqs {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/threads/T-1/fork", r.Path)
+	}
+	assert.JSONEq(t, `{"env":"share"}`, string(reqs[0].Body))
+	assert.JSONEq(t, `{"env":"copy","entryId":"e-9"}`, string(reqs[1].Body))
 }

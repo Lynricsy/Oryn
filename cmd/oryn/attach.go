@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,8 +45,10 @@ type attachOpts struct {
 	tail       int
 	json       bool
 	exitOnIdle bool
-	// in 非 nil 时逐行读取输入（stdin 是终端且未给 --no-input）。
-	in        io.Reader
+	// in 非 nil 时逐行读取输入（stdin 是终端或管道，且未给 --no-input）。
+	in io.Reader
+	// pipeIn：输入来自管道，EOF 只结束输入、不退出（终端上 EOF 即退出）。
+	pipeIn    bool
 	out, errw io.Writer
 	// tty：stdout 是终端，assistant 文本按增量流式输出；否则只按已提交条目逐条打印。
 	tty     bool
@@ -76,6 +80,9 @@ type attacher struct {
 	pending    map[string]json.RawMessage // 未决的待答请求
 	pendOrder  []string
 	askPrinted map[string]bool
+
+	plan        json.RawMessage // 未决的 plan_proposal 帧（nil = 无）
+	planPrinted bool
 
 	state    string
 	turnSeen bool
@@ -193,6 +200,13 @@ func (a *attacher) session(ctx context.Context, conn *wsConn, lines chan string)
 			return a.exitCode(), true, nil
 		case line, ok := <-lines:
 			if !ok {
+				if a.o.pipeIn {
+					// 管道输入结束：继续查看，不再读输入
+					lines = nil
+					a.endLine()
+					fmt.Fprintln(a.o.errw, "（输入已结束，继续查看；Ctrl-C 退出）")
+					continue
+				}
 				a.endLine()
 				return 0, true, nil
 			}
@@ -221,7 +235,8 @@ type snapshotMsg struct {
 	TranscriptRev int64         `json:"transcriptRev"`
 	FullReplay    bool          `json:"fullReplay"`
 	Agent         struct {
-		PendingUI []json.RawMessage `json:"pendingUi"`
+		PendingUI    []json.RawMessage `json:"pendingUi"`
+		PlanProposal json.RawMessage   `json:"planProposal"`
 	} `json:"agent"`
 }
 
@@ -235,7 +250,7 @@ func (a *attacher) handle(ctx context.Context, conn *wsConn, m wsEnvelope) (int,
 	mine := m.ThreadID == a.o.threadID
 	if a.o.json && mine {
 		switch m.Type {
-		case "thread.snapshot", "entries", "frame", "ui.resolved":
+		case "thread.snapshot", "entries", "frame", "ui.resolved", "plan.resolved":
 			fmt.Fprintf(a.o.out, "%s\n", m.Raw)
 		}
 	}
@@ -279,6 +294,7 @@ func (a *attacher) handle(ctx context.Context, conn *wsConn, m wsEnvelope) (int,
 		for _, f := range s.Agent.PendingUI {
 			a.uiRequest(f)
 		}
+		a.setPlan(s.Agent.PlanProposal)
 		a.setState(string(s.Thread.State))
 		if a.lastSeq >= a.snapSeq {
 			a.finishBackfill()
@@ -299,6 +315,10 @@ func (a *attacher) handle(ctx context.Context, conn *wsConn, m wsEnvelope) (int,
 	case "ui.resolved":
 		if mine {
 			a.resolve(m.RequestID)
+		}
+	case "plan.resolved":
+		if mine {
+			a.setPlan(nil)
 		}
 	case "live.reset":
 		if mine {
@@ -393,6 +413,7 @@ func (a *attacher) finishBackfill() {
 	for _, id := range a.pendOrder {
 		a.printAsk(id)
 	}
+	a.printPlan()
 }
 
 // printEntry 打印一条新到达的主会话条目（每个 entryId 一次）。
@@ -537,6 +558,11 @@ func (a *attacher) frame(raw json.RawMessage) {
 				a.printAsk(f.ID)
 			}
 		}
+	case "plan_proposal":
+		a.setPlan(raw)
+		if a.backfilled {
+			a.printPlan()
+		}
 	}
 }
 
@@ -614,6 +640,79 @@ func (a *attacher) printAsk(id string) {
 	}
 }
 
+// ---- 计划审批 ----
+
+// planProposal 是 plan_proposal 帧中本命令关心的字段（omp RpcPlanProposalFrame）。
+type planProposal struct {
+	Title       string   `json:"title"`
+	PlanContent string   `json:"planContent"`
+	Options     []string `json:"options"`
+}
+
+// approveOptions 是可直接按名字输入的批准选项（save 要带路径，refine 改为直接输入意见）。
+var approveOptions = map[string]bool{"execute": true, "compact": true, "keep_context": true}
+
+// setPlan 记下未决提案（nil / null / 无法解析 = 无）；提案变化时重新打印。
+func (a *attacher) setPlan(raw json.RawMessage) {
+	var p planProposal
+	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil || string(raw) == "null" {
+		raw = nil
+	}
+	if !bytes.Equal(raw, a.plan) {
+		a.planPrinted = false
+	}
+	a.plan = raw
+}
+
+func (a *attacher) printPlan() {
+	if a.plan == nil || a.planPrinted || a.o.json {
+		return
+	}
+	a.planPrinted = true
+	var p planProposal
+	_ = json.Unmarshal(a.plan, &p)
+	a.endLine()
+	fmt.Fprintf(a.o.out, "[plan] %s\n", p.Title)
+	if body := strings.TrimRight(p.PlanContent, "\n"); body != "" {
+		fmt.Fprintln(a.o.out, body)
+	}
+	for i, o := range p.Options {
+		fmt.Fprintf(a.o.out, "  %d) %s\n", i+1, o)
+	}
+	if a.o.in == nil {
+		fmt.Fprintln(a.o.out, "（等待审批）")
+	} else {
+		fmt.Fprintln(a.o.out, `（输入编号；save 需写成 "save <绝对路径>"；其它文字作为修改意见发回）`)
+	}
+}
+
+// planAnswer 把一行输入转成 plan_approval 命令（字段同 Web 的计划对话框）；hint 非空表示不发送、提示用户。
+func planAnswer(p planProposal, line string) (frame map[string]any, hint string) {
+	choice, numbered := line, false
+	if n, err := strconv.Atoi(line); err == nil && len(p.Options) > 0 {
+		if n < 1 || n > len(p.Options) {
+			return nil, fmt.Sprintf("请输入选项编号（1-%d）或修改意见", len(p.Options))
+		}
+		choice, numbered = p.Options[n-1], true
+	}
+	if rest, ok := strings.CutPrefix(choice, "save "); ok && !numbered {
+		dst := strings.TrimSpace(rest)
+		if !path.IsAbs(dst) {
+			return nil, `save 的路径必须是绝对路径（"save <绝对路径>"）`
+		}
+		return map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": dst}, ""
+	}
+	switch {
+	case choice == "refine":
+		return nil, "请直接输入修改意见"
+	case choice == "save":
+		return nil, `save 需写成 "save <绝对路径>"`
+	case numbered || approveOptions[choice]:
+		return map[string]any{"type": "plan_approval", "approved": true, "option": choice}, ""
+	}
+	return map[string]any{"type": "plan_approval", "approved": false, "feedback": line}, ""
+}
+
 func (a *attacher) endLine() {
 	if a.inLine {
 		fmt.Fprintln(a.o.out)
@@ -649,6 +748,16 @@ func (a *attacher) input(ctx context.Context, conn *wsConn, line string) (bool, 
 			return false, nil
 		}
 		return false, conn.send(ctx, map[string]any{"type": "ui.response", "threadId": a.o.threadID, "frame": resp})
+	}
+	if a.plan != nil {
+		var p planProposal
+		_ = json.Unmarshal(a.plan, &p)
+		frame, hint := planAnswer(p, line)
+		if hint != "" {
+			fmt.Fprintln(a.o.errw, hint)
+			return false, nil
+		}
+		return false, a.cmd(ctx, conn, frame)
 	}
 	return false, a.cmd(ctx, conn, map[string]any{"type": "prompt", "message": line, "streamingBehavior": "steer"})
 }
@@ -713,9 +822,11 @@ var threadAttachOpts struct {
 
 var threadAttachCmd = &cobra.Command{
 	Use:   "attach <id>",
-	Short: "挂到线程上：流式打印转录，可输入消息（steer）或作答待答请求；挂着即算正在查看该线程",
+	Short: "挂到线程上：流式打印转录，可输入消息（steer）、作答待答请求或审批计划；挂着即算正在查看该线程",
 	Long: "退出码（--exit-on-idle）：见到一个回合结束后，线程 idle → 0、awaiting_input → 3、error → 4。\n" +
-		"输入：每行一条；有待答请求时作为作答（编号或文字），否则 steer 当前回合。/abort 中断，/quit 或 EOF 退出；Ctrl-C 退出（agent 继续）。",
+		"输入：每行一条；有待答请求时作为作答（编号或文字）；有待审批的计划时输入编号或选项名批准，\n" +
+		"\"save <绝对路径>\" 保存计划，其它文字作为修改意见发回；否则 steer 当前回合。/abort 中断，/quit 退出；\n" +
+		"终端上 EOF 或 Ctrl-C 退出（agent 继续），管道输入结束后继续查看。",
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if inOrb() {
@@ -736,8 +847,13 @@ var threadAttachCmd = &cobra.Command{
 		if o.all {
 			opts.tail = -1
 		}
-		if !o.noInput && isTerminal(os.Stdin) {
-			opts.in = os.Stdin
+		if !o.noInput {
+			switch {
+			case isTerminal(os.Stdin):
+				opts.in = os.Stdin
+			case isPipe(os.Stdin):
+				opts.in, opts.pipeIn = os.Stdin, true
+			}
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -758,12 +874,18 @@ func isTerminal(f *os.File) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
+// isPipe 报告 f 是否是管道（FIFO）。
+func isPipe(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeNamedPipe != 0
+}
+
 func init() {
 	f := threadAttachCmd.Flags()
 	f.IntVar(&threadAttachOpts.tail, "tail", 10, "先打印活动分支上最近 N 条消息（0 = 不打印）")
 	f.BoolVar(&threadAttachOpts.all, "all", false, "先打印全部消息")
 	f.BoolVar(&threadAttachOpts.noInput, "no-input", false, "不读取输入")
-	f.BoolVar(&threadAttachOpts.json, "json", false, "把该线程的 thread.snapshot / entries / frame / ui.resolved 原样逐行输出（NDJSON）")
+	f.BoolVar(&threadAttachOpts.json, "json", false, "把该线程的 thread.snapshot / entries / frame / ui.resolved / plan.resolved 原样逐行输出（NDJSON）")
 	f.BoolVar(&threadAttachOpts.exitOnIdle, "exit-on-idle", false, "回合结束后退出（idle 0 / awaiting_input 3 / error 4）")
 	threadCmd.AddCommand(threadAttachCmd)
 }

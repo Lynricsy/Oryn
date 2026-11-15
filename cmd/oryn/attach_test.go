@@ -425,6 +425,9 @@ func TestAttachJSON(t *testing.T) {
 	c.send(entries(1, msgEntry(1, "u1", "", "user", "hi", 1, nil)))
 	c.send(frame(map[string]any{"type": "agent_start"}))
 	c.send(map[string]any{"type": "ui.resolved", "threadId": attachThread, "requestId": "x"})
+	// --json：计划帧与 plan.resolved 原样输出，不打印 [plan]
+	c.send(frame(planFrame("P", "execute")))
+	c.send(map[string]any{"type": "plan.resolved", "threadId": attachThread})
 	c.send(map[string]any{"type": "frame", "threadId": "T-other", "frame": map[string]any{"type": "agent_start"}})
 	c.send(patch("idle"))
 	code, err := r.wait(t)
@@ -437,5 +440,110 @@ func TestAttachJSON(t *testing.T) {
 		assert.Equal(t, attachThread, m["threadId"])
 		types = append(types, m["type"].(string))
 	}
-	assert.Equal(t, []string{"thread.snapshot", "entries", "frame", "ui.resolved"}, types)
+	assert.Equal(t, []string{"thread.snapshot", "entries", "frame", "ui.resolved", "frame", "plan.resolved"}, types)
+}
+
+// planFrame 构造 plan_proposal 帧（omp RpcPlanProposalFrame）。
+func planFrame(title string, options ...string) map[string]any {
+	opts := make([]any, len(options))
+	for i, o := range options {
+		opts[i] = o
+	}
+	return map[string]any{
+		"type": "plan_proposal", "planFilePath": "/work/.omp/plan.md", "title": title, "suggestedFileName": "plan.md",
+		"planContent": "# Plan\n- step one\n", "options": opts,
+	}
+}
+
+func TestAttachPlanProposal(t *testing.T) {
+	ws := newFakeWS(t)
+	r := startAttach(t, ws, attachOpts{tail: 0}, true)
+	c := ws.accept()
+	c.expectSub()
+	// 快照同时带未决 UI 请求与计划提案
+	c.send(snapshot("awaiting_input", 0, map[string]any{"agent": map[string]any{
+		"status": "ready", "subagents": []any{}, "live": []any{},
+		"pendingUi":    []any{map[string]any{"type": "extension_ui_request", "id": "q1", "method": "select", "title": "Pick", "options": []any{"A", "B"}}},
+		"planProposal": planFrame("Ship it", "execute", "compact", "keep_context", "save", "refine"),
+	}}))
+	r.out.waitFor(t, "其它文字作为修改意见发回")
+	assert.Equal(t, "[ask] Pick\n  1) A\n  2) B\n（输入编号选择）\n"+
+		"[plan] Ship it\n# Plan\n- step one\n  1) execute\n  2) compact\n  3) keep_context\n  4) save\n  5) refine\n"+
+		"（输入编号；save 需写成 \"save <绝对路径>\"；其它文字作为修改意见发回）\n", r.out.String())
+
+	// 有未决 UI 请求时先答它
+	r.line(t, "2")
+	resp := c.next()
+	assert.Equal(t, "ui.response", resp["type"])
+	assert.Equal(t, map[string]any{"type": "extension_ui_response", "id": "q1", "value": "B"}, resp["frame"])
+	c.send(map[string]any{"type": "ui.resolved", "threadId": attachThread, "requestId": "q1"})
+	// 同一连接上按序处理：看到这条条目即说明 ui.resolved 已处理
+	c.send(entries(1, msgEntry(1, "u1", "", "user", "marker one", 10, nil)))
+	r.out.waitFor(t, "[user] marker one")
+
+	planCmd := func(want map[string]any) {
+		t.Helper()
+		m := c.next()
+		assert.Equal(t, "cmd", m["type"])
+		assert.Equal(t, attachThread, m["threadId"])
+		assert.Equal(t, want, m["frame"])
+	}
+	// refine 的编号、单独的 save、相对路径、越界编号：提示且不发送；编号 1 → options[0]
+	for _, l := range []string{"5", "refine", "4", "save plan.md", "9", "1"} {
+		r.line(t, l)
+	}
+	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "execute"})
+	errs := r.errb.String()
+	assert.Equal(t, 2, strings.Count(errs, "请直接输入修改意见\n"), errs)
+	assert.Contains(t, errs, "save 需写成 \"save <绝对路径>\"\n")
+	assert.Contains(t, errs, "save 的路径必须是绝对路径")
+	assert.Contains(t, errs, "请输入选项编号（1-5）或修改意见\n")
+
+	r.line(t, "save /work/plans/ship.md")
+	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": "/work/plans/ship.md"})
+	r.line(t, "keep_context")
+	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "keep_context"})
+	r.line(t, "please split step one")
+	planCmd(map[string]any{"type": "plan_approval", "approved": false, "feedback": "please split step one"})
+
+	// plan.resolved 之后输入恢复为普通消息
+	c.send(map[string]any{"type": "plan.resolved", "threadId": attachThread})
+	c.send(entries(2, msgEntry(2, "u2", "u1", "user", "marker two", 11, nil)))
+	r.out.waitFor(t, "[user] marker two")
+	r.line(t, "hello")
+	planCmd(map[string]any{"type": "prompt", "message": "hello", "streamingBehavior": "steer"})
+	r.line(t, "/quit")
+	_, err := r.wait(t)
+	require.NoError(t, err)
+}
+
+func TestAttachPlanProposalFrame(t *testing.T) {
+	ws := newFakeWS(t)
+	r := startAttach(t, ws, attachOpts{tail: 0, exitOnIdle: true}, false)
+	c := ws.accept()
+	c.expectSub()
+	c.send(snapshot("working", 0, nil))
+	c.send(frame(planFrame("Later", "execute", "refine")))
+	// 同一提案重复到达不重复打印
+	c.send(frame(planFrame("Later", "execute", "refine")))
+	c.send(patch("awaiting_input"))
+	code, err := r.wait(t)
+	require.NoError(t, err)
+	assert.Equal(t, exitAttachAwaiting, code)
+	assert.Equal(t, "[plan] Later\n# Plan\n- step one\n  1) execute\n  2) refine\n（等待审批）\n", r.out.String())
+}
+
+func TestAttachPipeInputEOFKeepsWatching(t *testing.T) {
+	ws := newFakeWS(t)
+	r := startAttach(t, ws, attachOpts{tail: 0, exitOnIdle: true, pipeIn: true}, true)
+	c := ws.accept()
+	c.expectSub()
+	c.send(snapshot("idle", 0, nil))
+	require.NoError(t, r.inW.Close())
+	r.errb.waitFor(t, "（输入已结束，继续查看；Ctrl-C 退出）")
+	c.send(patch("working"))
+	c.send(patch("awaiting_input"))
+	code, err := r.wait(t)
+	require.NoError(t, err)
+	assert.Equal(t, exitAttachAwaiting, code, "管道 EOF 不退出，回合结束后按 --exit-on-idle 退出")
 }
