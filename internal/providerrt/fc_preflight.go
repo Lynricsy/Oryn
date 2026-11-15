@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -19,6 +21,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/Lynricsy/Oryn/internal/config"
 )
 
 // PreflightCheck 是一项预检的结果：Err 非空为失败，Warn 非空为只警告，都空为通过。
@@ -102,6 +106,7 @@ func (d *FirecrackerDriver) PreflightChecks(ctx context.Context) []PreflightChec
 		out = append(out, checkOrbURLPort(d.OrbURL, cfg.Network.HostAddr, nftOut))
 	}
 	add("网段 "+cfg.Network.CIDR+" 不与其它接口重叠", checkCIDROverlap(cfg.Network.Prefix()))
+	add(fmt.Sprintf("槽位 uid/gid [%d, %d) 不与 subuid / subgid / 已有用户和组重叠", cfg.UIDBase, cfg.UIDBase+config.FirecrackerMaxSlots), d.checkSlotIDs())
 	var uts unix.Utsname
 	rel := ""
 	if unix.Uname(&uts) == nil {
@@ -297,4 +302,111 @@ func kernelWarning(release string) string {
 		return ""
 	}
 	return fmt.Sprintf("不在 Firecracker 支持的宿主内核 %v 之列，可以运行但未经上游验证", fcSupportedKernels)
+}
+
+// checkSlotIDs 读 <etc>/{subuid,subgid,passwd,group}（d.etcDir，空 = /etc；文件缺失按空处理）并交给 slotIDConflicts。
+func (d *FirecrackerDriver) checkSlotIDs() error {
+	etc := d.etcDir
+	if etc == "" {
+		etc = "/etc"
+	}
+	files := make(map[string]string, len(slotIDFiles))
+	for _, name := range slotIDFiles {
+		b, err := os.ReadFile(filepath.Join(etc, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		files[name] = string(b)
+	}
+	return slotIDConflicts(d.Cfg.UIDBase, config.FirecrackerMaxSlots, files)
+}
+
+// slotIDFiles 是 slotIDConflicts 核对的文件（相对 /etc）。
+var slotIDFiles = []string{"subuid", "subgid", "passwd", "group"}
+
+// idRange 是 [lo, hi) 的 uid / gid 区间及其来源。
+type idRange struct {
+	lo, hi int
+	src    string
+}
+
+// slotIDConflicts 核对槽位 uid / gid 区间 [base, base+n) 与 subuid / subgid 的各段、passwd 的 uid / gid、group 的 gid
+// 都不重叠（jailer 以 uid = gid = uid_base + 槽位运行 firecracker；槽位按 VM 分配，停机的 VM 也占着，所以按全部槽位算）。
+// 持有重叠 subuid 段的本机用户能在自己的 user namespace 里成为同一个 kuid，向降权后的 firecracker 发信号或 ptrace。
+// 重叠时返回错误，列出冲突并建议一个不重叠的 uid_base。files 的键见 slotIDFiles。
+func slotIDConflicts(base, n int, files map[string]string) error {
+	var ranges []idRange
+	for _, name := range slotIDFiles {
+		for line := range strings.SplitSeq(files[name], "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			f := strings.Split(line, ":")
+			num := func(i int) (int, bool) {
+				if i >= len(f) {
+					return 0, false
+				}
+				v, err := strconv.Atoi(f[i])
+				return v, err == nil && v >= 0
+			}
+			switch name {
+			case "subuid", "subgid": // name:start:count
+				if lo, ok := num(1); ok {
+					if cnt, ok := num(2); ok && cnt > 0 {
+						ranges = append(ranges, idRange{lo, lo + cnt, "/etc/" + name + " 的 " + line})
+					}
+				}
+			case "passwd": // name:x:uid:gid:…
+				for _, i := range []int{2, 3} {
+					if id, ok := num(i); ok {
+						ranges = append(ranges, idRange{id, id + 1, "/etc/passwd 的用户 " + f[0]})
+					}
+				}
+			case "group": // name:x:gid:…
+				if id, ok := num(2); ok {
+					ranges = append(ranges, idRange{id, id + 1, "/etc/group 的组 " + f[0]})
+				}
+			}
+		}
+	}
+	overlapping := func(lo int) []idRange {
+		var out []idRange
+		for _, r := range ranges {
+			if r.lo < lo+n && lo < r.hi {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	conflicts := overlapping(base)
+	if len(conflicts) == 0 {
+		return nil
+	}
+	var msgs []string
+	for i, r := range conflicts {
+		if i == 5 {
+			msgs = append(msgs, fmt.Sprintf("等共 %d 处", len(conflicts)))
+			break
+		}
+		if !slices.Contains(msgs, r.src) {
+			msgs = append(msgs, r.src)
+		}
+	}
+	hint := "把 firecracker.uid_base 改到不重叠的区间"
+	// 建议值：越过所有冲突、按 100000 取整的最小 uid_base。
+	for cand := base; cand <= math.MaxInt32-n; {
+		c := overlapping(cand)
+		if len(c) == 0 {
+			hint = fmt.Sprintf("把 firecracker.uid_base 改到不重叠的区间（例如 %d）", cand)
+			break
+		}
+		end := 0
+		for _, r := range c {
+			end = max(end, r.hi)
+		}
+		cand = (end + 99999) / 100000 * 100000
+	}
+	return fmt.Errorf("槽位 uid/gid [%d, %d) 与 %s 重叠：持有这些 id 的本机用户可以向 firecracker 发信号或 ptrace；%s，或调整 subuid / subgid 分配",
+		base, base+n, strings.Join(msgs, "、"), hint)
 }

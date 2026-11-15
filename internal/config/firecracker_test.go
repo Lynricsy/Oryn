@@ -27,7 +27,7 @@ func TestFirecrackerConfig(t *testing.T) {
 		Rootfs:   "/var/lib/oryn-fc/artifacts/rootfs.ext4",
 		StateDir: "/var/lib/oryn-fc",
 		DiskGB:   40,
-		UIDBase:  200000,
+		UIDBase:  2_000_000_000,
 		Network:  FirecrackerNetwork{CIDR: "172.31.0.0/16", HostAddr: "172.31.255.1", DNS: []string{"1.1.1.1", "1.0.0.1"}},
 		Limits:   FirecrackerLimits{MaxVMs: 8, MaxMemoryMB: 32768},
 		Types: map[string]FirecrackerType{

@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/Lynricsy/Oryn/internal/config"
 )
 
@@ -29,6 +31,8 @@ type osHost struct {
 	cfg        config.Firecracker
 	paths      fcPaths
 	cgroupRoot string // /sys/fs/cgroup
+	// consoleFSBytes 覆盖串口日志 tmpfs 的容量（0 = fcConsoleFSBytes，真机测试缩小）。
+	consoleFSBytes int64
 }
 
 func newOSHost(cfg config.Firecracker) *osHost {
@@ -103,15 +107,12 @@ func (h *osHost) Launch(ctx context.Context, vm vmMeta) error {
 			return fmt.Errorf("硬链接 %s 进 jail: %w", l.src, err)
 		}
 	}
-	console := filepath.Join(root, fcConsoleLog)
-	if err := os.WriteFile(console, nil, 0o600); err != nil {
+	if err := mountConsole(filepath.Join(root, fcConsoleDir), h.consoleBytes(), vm.UID); err != nil {
 		return err
 	}
-	// firecracker 降权后要在 chroot 根里建 api.sock 与 v.sock，并写串口日志。
-	for _, p := range []string{root, console} {
-		if err := os.Chown(p, vm.UID, vm.UID); err != nil {
-			return err
-		}
+	// firecracker 降权后要在 chroot 根里建 api.sock 与 v.sock。
+	if err := os.Chown(root, vm.UID, vm.UID); err != nil {
+		return err
 	}
 	if err := run(ctx, h.cfg.Jailer, jailerArgs(h.cfg, vm)...); err != nil {
 		return err
@@ -133,6 +134,49 @@ func (h *osHost) Launch(ctx context.Context, vm vmMeta) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func (h *osHost) consoleBytes() int64 {
+	if h.consoleFSBytes > 0 {
+		return h.consoleFSBytes
+	}
+	return fcConsoleFSBytes
+}
+
+// mountConsole 在 dir 挂一个容量为 size 的 tmpfs（根目录 root 0755），在里面建归 uid 所有的空 console.log。
+// 串口日志的总量由介质本身限定，不依赖 provider 进程：写满后 firecracker 的串口写返回 ENOSPC，
+// 它记一条错误、丢掉这个字节、照常给 guest 发 THRE 中断（vm-superio 0.8 Serial::write），VM 不受影响。
+func mountConsole(dir string, size int64, uid int) error {
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return err
+	}
+	opts := fmt.Sprintf("size=%d,nr_inodes=8,mode=0755,uid=0,gid=0", size)
+	if err := unix.Mount("tmpfs", dir, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, opts); err != nil {
+		return fmt.Errorf("挂载串口日志 tmpfs %s: %w", dir, err)
+	}
+	console := filepath.Join(dir, fcConsoleLog)
+	f, err := os.OpenFile(console, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chown(console, uid, uid)
+}
+
+// unmountConsole 懒卸载 dir 上的 tmpfs（不跟随符号链接；叠了几层就卸几层）；没挂载或不存在不算错。
+func unmountConsole(dir string) error {
+	for {
+		err := unix.Unmount(dir, unix.MNT_DETACH|unix.UMOUNT_NOFOLLOW)
+		switch {
+		case err == nil:
+		case errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOENT):
+			return nil
+		default:
+			return fmt.Errorf("卸载串口日志 tmpfs %s: %w", dir, err)
 		}
 	}
 }
@@ -162,6 +206,9 @@ func (h *osHost) Kill(orbID string) error {
 		if err := syscall.Rmdir(cg); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("删除 cgroup %s: %w", cg, err)
 		}
+	}
+	if err := unmountConsole(filepath.Join(h.paths.jailRoot(orbID), fcConsoleDir)); err != nil {
+		return err
 	}
 	return os.RemoveAll(h.paths.jailDir(orbID))
 }

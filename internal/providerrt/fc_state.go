@@ -23,6 +23,7 @@ import (
 //
 //	<state_dir>/bases/<rootfs sha256 前 16 位>.ext4   只读基础盘（rootfs 的硬链接）
 //	<state_dir>/vms/<orbId>/{meta.json,disk.ext4}     每台 VM 的元数据与可写盘
+//	<state_dir>/vms/<orbId>/thaw-pending              运行中快照已冻结、尚未确认恢复与解冻（见 copyRunning）
 //	<state_dir>/snapshots/<snapId>.{ext4,json}        快照盘与其元数据
 //	<state_dir>/jail/<bin 的文件名>/<orbId>/root/      jailer 的 chroot（每次启动前整目录重建；jailer 按 exec-file 的文件名分目录）
 //	<state_dir>/slots.json                            槽位表（.slots.lock 上的 flock 保护）
@@ -57,6 +58,9 @@ func (p fcPaths) apiSock(orbID string) string   { return filepath.Join(p.jailRoo
 func (p fcPaths) vsockPath(orbID string) string { return filepath.Join(p.jailRoot(orbID), "v.sock") }
 func (p fcPaths) slots() string                 { return filepath.Join(p.root, "slots.json") }
 func (p fcPaths) slotsLock() string             { return filepath.Join(p.root, ".slots.lock") }
+func (p fcPaths) vmThawPending(orbID string) string {
+	return filepath.Join(p.root, "vms", orbID, "thaw-pending")
+}
 
 // vmMeta 是一台 VM 的元数据（vms/<orbId>/meta.json）。
 type vmMeta struct {
@@ -139,6 +143,14 @@ func writeJSONFile(path string, v any) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// removeIfExists 删除文件；不存在不算错。
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (p fcPaths) loadVM(orbID string) (vmMeta, bool, error) {

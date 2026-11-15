@@ -100,13 +100,11 @@ func TestFCLongSockClients(t *testing.T) {
 
 // 启动失败时把 jail 里串口日志的末尾（至多 4 KiB）带进任务输出。
 func TestFCConsoleTail(t *testing.T) {
-	c := newFCTest(t)
+	c := newFCTest(t, ownConsole)
 	c.d.startTimeout = 10 * time.Millisecond
 	c.f.startNever = true
-	root := c.d.paths.jailRoot(orbA)
-	require.NoError(t, os.MkdirAll(root, 0o700))
 	log := strings.Repeat("x", 10000) + "Kernel panic - not syncing: Attempted to kill init!\n"
-	require.NoError(t, os.WriteFile(filepath.Join(root, fcConsoleLog), []byte(log), 0o600))
+	require.NoError(t, os.WriteFile(c.consoleFile(orbA), []byte(log), 0o600))
 	_, err := c.exec(fcSpawn(orbA))
 	require.Error(t, err)
 	assert.Contains(t, c.out.String(), "guest 串口输出末尾：\n")

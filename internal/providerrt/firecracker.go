@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +49,10 @@ type FirecrackerDriver struct {
 	startTimeout time.Duration
 	shutdownWait time.Duration
 	pollEvery    time.Duration
+	// consoleMax / consoleKeep 覆盖串口日志的占用上限与打孔后保留的末尾（0 = 缺省，测试用）。
+	consoleMax, consoleKeep int64
+	// etcDir 是预检读取 subuid / subgid / passwd / group 的目录（空 = /etc，测试注入）。
+	etcDir string
 
 	digests digestCache
 
@@ -178,13 +181,20 @@ func (d *FirecrackerDriver) spawn(ctx context.Context, j Job, out io.Writer) (*a
 			if err := d.host.Kill(j.OrbID); err != nil {
 				return nil, err
 			}
-		case state == fcStatePaused:
-			if err := d.api.SetState(ctx, j.OrbID, "Resumed"); err != nil {
-				return nil, err
+		case state == fcStatePaused || state == fcStateRunning:
+			if fileExists(d.paths.vmThawPending(j.OrbID)) {
+				// 上次运行中快照没收尾：先恢复 VM 并解冻文件系统（start 要在可写盘上写文件）。
+				if err := d.finishThaw(ctx, j.OrbID); err != nil {
+					return nil, err
+				}
+			} else if state == fcStatePaused {
+				if err := d.api.SetState(ctx, j.OrbID, "Resumed"); err != nil {
+					return nil, err
+				}
 			}
-			fallthrough
-		case state == fcStateRunning:
-			if err := d.guestDo(ctx, j.OrbID, fcguest.Request{Op: fcguest.OpToken, Token: p.Env.OrynOrbToken, NowMs: d.clock().UnixMilli()}); err != nil {
+			// Firecracker 在运行不等于 orbd 已拉起（上次可能在 InstanceStart 之后、guest start 之前中断）：
+			// 发带完整参数的 start，guest 已拉起过时把它当作 token（只换令牌），没拉起过则现在拉起。
+			if err := d.startGuest(ctx, j.OrbID, d.startRequest(vm, p), out); err != nil {
 				return nil, err
 			}
 			return result(vm.Snapshot != "" && vm.Snapshot == snap), nil
@@ -298,7 +308,7 @@ func (d *FirecrackerDriver) ensureBase() (string, error) {
 func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSpawnParams, out io.Writer) (err error) {
 	defer func() {
 		if err != nil {
-			d.consoleTail(vm.OrbID, out)
+			d.consoleTail(vm, out)
 			if kerr := d.host.Kill(vm.OrbID); kerr != nil {
 				fmt.Fprintf(out, "oryn: 清理启动失败的 VM: %v\n", kerr)
 			}
@@ -310,9 +320,18 @@ func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSp
 	if err := d.launch(ctx, vm); err != nil {
 		return err
 	}
+	// 旧进程已被 Launch 清掉，遗留的冻结随之失效。
+	if err := removeIfExists(d.paths.vmThawPending(vm.OrbID)); err != nil {
+		return err
+	}
 	if err := d.api.Boot(ctx, vm); err != nil {
 		return err
 	}
+	return d.startGuest(ctx, vm.OrbID, d.startRequest(vm, p), out)
+}
+
+// startRequest 是 guest 的 start 请求（令牌与 CA 只走 vsock，不进输出）。
+func (d *FirecrackerDriver) startRequest(vm vmMeta, p *apigen.JobSpawnParams) fcguest.Request {
 	req := fcguest.Request{
 		Op: fcguest.OpStart, URL: p.Env.OrynURL, OrbID: vm.OrbID, Token: p.Env.OrynOrbToken,
 		DNS: d.Cfg.Network.DNS, NowMs: d.clock().UnixMilli(),
@@ -320,26 +339,7 @@ func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSp
 	if p.OrbCaPem != nil {
 		req.CAPEM = *p.OrbCaPem
 	}
-	return d.startGuest(ctx, vm.OrbID, req, out)
-}
-
-// fcConsoleTailBytes 是启动失败时带进任务输出的串口日志末尾长度。
-const fcConsoleTailBytes = 4 << 10
-
-// consoleTail 把 jail 里串口日志的末尾写进任务输出（Kill 会删掉 jail，之前调用）；没有日志则不写。
-func (d *FirecrackerDriver) consoleTail(orbID string, out io.Writer) {
-	f, err := os.Open(filepath.Join(d.paths.jailRoot(orbID), fcConsoleLog))
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	if st, err := f.Stat(); err == nil && st.Size() > fcConsoleTailBytes {
-		_, _ = f.Seek(st.Size()-fcConsoleTailBytes, io.SeekStart)
-	}
-	b, _ := io.ReadAll(io.LimitReader(f, fcConsoleTailBytes))
-	if len(b) > 0 {
-		fmt.Fprintf(out, "oryn: guest 串口输出末尾：\n%s\n", strings.ToValidUTF8(string(b), ""))
-	}
+	return req
 }
 
 // launch 在 launchMu 下核对 limits、建 tap 并启动进程（之后的 spawn 才能把它算进容量）。
@@ -430,10 +430,17 @@ func (d *FirecrackerDriver) pause(ctx context.Context, j Job, out io.Writer) err
 	}
 	state, serr := d.vmState(ctx, j.OrbID)
 	if j.PauseMode == "freeze" {
-		switch {
-		case serr != nil:
+		if serr != nil {
 			return serr
-		case state != fcStateRunning:
+		}
+		if state != "" && fileExists(d.paths.vmThawPending(j.OrbID)) {
+			// 上次运行中快照没收尾（VM 可能停在 Paused、文件系统冻结）：先收尾，再按运行中冻结。
+			if err := d.finishThaw(ctx, j.OrbID); err != nil {
+				return err
+			}
+			state = fcStateRunning
+		}
+		if state != fcStateRunning {
 			return nil // 已暂停或不在运行
 		}
 		sctx, cancel := context.WithTimeout(ctx, FCSyncTimeout)
@@ -470,6 +477,10 @@ func (d *FirecrackerDriver) pause(ctx context.Context, j Job, out io.Writer) err
 	if err := d.host.Kill(j.OrbID); err != nil {
 		return err
 	}
+	// 进程已不在，遗留的冻结随之失效。
+	if err := removeIfExists(d.paths.vmThawPending(j.OrbID)); err != nil {
+		return err
+	}
 	return d.host.TapDown(vm)
 }
 
@@ -496,8 +507,14 @@ func (d *FirecrackerDriver) waitExit(ctx context.Context, orbID string) bool {
 }
 
 // snapshot 实现 8.0 的 snapshot：运行中先 fsfreeze → 暂停 → 稀疏复制 → 恢复 → fsthaw；已暂停或已停机直接复制。
-// 快照已存在时直接返回它的大小（幂等）。
+// 快照已存在时直接返回它的大小（幂等）。上次运行中快照没恢复成功（thaw-pending 在）时，先完成源 VM 的恢复：
+// 遗留的 Paused 不是用户要求的冻结，不能当作「已暂停」直接复制，也不能因快照已存在就直接成功。
 func (d *FirecrackerDriver) snapshot(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
+	if fileExists(d.paths.vmThawPending(j.OrbID)) {
+		if err := d.finishThaw(ctx, j.OrbID); err != nil {
+			return nil, err
+		}
+	}
 	var sm snapMeta
 	found, err := readJSONFile(d.paths.snapMeta(j.SnapshotID), &sm)
 	if err != nil {
@@ -524,7 +541,7 @@ func (d *FirecrackerDriver) snapshot(ctx context.Context, j Job, out io.Writer) 
 	_ = os.Remove(tmp)
 	var bytes int64
 	if state == fcStateRunning {
-		bytes, err = d.copyRunning(ctx, j.OrbID, tmp, out)
+		bytes, err = d.copyRunning(ctx, j.OrbID, tmp)
 	} else {
 		bytes, err = d.host.CopySparse(d.paths.vmDisk(j.OrbID), tmp, 0)
 	}
@@ -542,27 +559,48 @@ func (d *FirecrackerDriver) snapshot(ctx context.Context, j Job, out io.Writer) 
 }
 
 // copyRunning 在运行中的 VM 上拍快照：fsfreeze → Paused → 复制 → Resumed → fsthaw。复制失败也恢复并解冻。
-func (d *FirecrackerDriver) copyRunning(ctx context.Context, orbID, dst string, out io.Writer) (int64, error) {
-	if err := d.guestDo(ctx, orbID, fcguest.Request{Op: fcguest.OpFSFreeze}); err != nil {
-		return 0, fmt.Errorf("firecracker: 冻结 guest 文件系统: %w", err)
-	}
-	thaw := func() {
-		// 任务 ctx 超时也要解冻（guest 120 秒后自行解冻只是兜底）。
-		c := context.WithoutCancel(ctx)
-		if err := d.api.SetState(c, orbID, "Resumed"); err != nil {
-			fmt.Fprintf(out, "oryn: 快照后恢复 VM 失败: %v\n", err)
-		}
-		if err := d.guestDo(c, orbID, fcguest.Request{Op: fcguest.OpFSThaw}); err != nil {
-			fmt.Fprintf(out, "oryn: 快照后解冻失败（guest 120 秒后自行解冻）: %v\n", err)
-		}
-	}
-	if err := d.api.SetState(ctx, orbID, "Paused"); err != nil {
-		thaw()
+// 恢复或解冻失败即整个快照失败（不发布）：VM 停在 Paused 时 guest 的 120 秒自动解冻也跑不了。
+// 冻结之前先落下 thaw-pending 标记，直到恢复与解冻都成功才删掉；provider 中途崩溃或恢复失败时，
+// 后续的 snapshot / spawn / pause{freeze} 据此先完成恢复。
+func (d *FirecrackerDriver) copyRunning(ctx context.Context, orbID, dst string) (int64, error) {
+	if err := os.WriteFile(d.paths.vmThawPending(orbID), nil, 0o600); err != nil {
 		return 0, err
 	}
+	// 任务 ctx 超时也要恢复与解冻。
+	thaw := func() error { return d.finishThaw(context.WithoutCancel(ctx), orbID) }
+	if err := d.guestDo(ctx, orbID, fcguest.Request{Op: fcguest.OpFSFreeze}); err != nil {
+		// 传输错误时请求可能已经生效：照样解冻（fsthaw 对未冻结的文件系统是无操作）。
+		return 0, errors.Join(fmt.Errorf("firecracker: 冻结 guest 文件系统: %w", err), thaw())
+	}
+	if err := d.api.SetState(ctx, orbID, "Paused"); err != nil {
+		return 0, errors.Join(err, thaw())
+	}
 	n, err := d.host.CopySparse(d.paths.vmDisk(orbID), dst, 0)
-	thaw()
+	if terr := thaw(); terr != nil {
+		return 0, errors.Join(err, terr)
+	}
 	return n, err
+}
+
+// finishThaw 收尾运行中快照：VM 暂停着就 PATCH Resumed，再 fsthaw；两步都成功才删掉 thaw-pending 标记。
+// VM 已不在运行（停机、未启动）时没有可恢复的冻结，直接删标记。
+func (d *FirecrackerDriver) finishThaw(ctx context.Context, orbID string) error {
+	state, err := d.vmState(ctx, orbID)
+	if err != nil {
+		return fmt.Errorf("firecracker: 快照后查询 VM 状态: %w", err)
+	}
+	switch state {
+	case fcStatePaused:
+		if err := d.api.SetState(ctx, orbID, "Resumed"); err != nil {
+			return fmt.Errorf("firecracker: 快照后恢复 VM: %w", err)
+		}
+		fallthrough
+	case fcStateRunning:
+		if err := d.guestDo(ctx, orbID, fcguest.Request{Op: fcguest.OpFSThaw}); err != nil {
+			return fmt.Errorf("firecracker: 快照后解冻 guest 文件系统: %w", err)
+		}
+	}
+	return removeIfExists(d.paths.vmThawPending(orbID))
 }
 
 // delete 实现 8.0 的 delete：cgroup.kill → 拆 tap → 删 jail 与 VM 目录 → 释放槽位 → 回收基础盘。幂等。

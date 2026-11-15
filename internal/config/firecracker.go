@@ -25,7 +25,8 @@ type Firecracker struct {
 	StateDir string `yaml:"state_dir"`
 	// DiskGB 是每台 VM 可写盘（稀疏文件）的大小。
 	DiskGB int `yaml:"disk_gb"`
-	// UIDBase 是槽位 n 的 jailer uid / gid = UIDBase + n。
+	// UIDBase 是槽位 n 的 jailer uid / gid = UIDBase + n。默认 2000000000：避开 useradd 的 subuid 分配区
+	// （100000 起每段 65536，sysbox 默认 165536 起）和 systemd 的容器区（524288–1879048191）。
 	UIDBase int                `yaml:"uid_base"`
 	Network FirecrackerNetwork `yaml:"network"`
 	Limits  FirecrackerLimits  `yaml:"limits"`
@@ -100,7 +101,7 @@ func DefaultFirecracker() Firecracker {
 		Rootfs:      "/var/lib/oryn-fc/artifacts/rootfs.ext4",
 		StateDir:    "/var/lib/oryn-fc",
 		DiskGB:      40,
-		UIDBase:     200000,
+		UIDBase:     2_000_000_000,
 		Network:     FirecrackerNetwork{CIDR: "172.31.0.0/16", HostAddr: "172.31.255.1", DNS: []string{"1.1.1.1", "1.0.0.1"}},
 		Limits:      FirecrackerLimits{MaxVMs: 8, MaxMemoryMB: 32768},
 		DefaultType: "medium",

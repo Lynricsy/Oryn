@@ -47,10 +47,21 @@ type fakeFC struct {
 	stuck       bool  // shutdown 后进程不退出
 	copyErr     error // CopySparse 失败
 	launchErr   error
+	resumeErr   error // PATCH Resumed 失败（VM 留在 Paused）
+	thawErr     error // fsthaw 失败（文件系统留在冻结）
+
+	// guest 侧：started 是 guest-init 已拉起 orbd（start 之后的 start 等同 token），orbdStarts 计数真正拉起的次数；
+	// frozen 是可写盘处于 fsfreeze。新进程（Launch）与 Kill 清零。
+	started    map[string]bool
+	orbdStarts map[string]int
+	frozen     map[string]bool
 }
 
 func newFakeFC() *fakeFC {
-	return &fakeFC{alive: map[string]bool{}, state: map[string]string{}, taps: map[string]bool{}, apiDown: map[string]bool{}}
+	return &fakeFC{
+		alive: map[string]bool{}, state: map[string]string{}, taps: map[string]bool{}, apiDown: map[string]bool{},
+		started: map[string]bool{}, orbdStarts: map[string]int{}, frozen: map[string]bool{},
+	}
 }
 
 func (f *fakeFC) log(format string, a ...any) { f.calls = append(f.calls, fmt.Sprintf(format, a...)) }
@@ -73,6 +84,8 @@ func (f *fakeFC) Launch(_ context.Context, vm vmMeta) error {
 	}
 	f.alive[vm.OrbID] = true
 	f.state[vm.OrbID] = "Not started"
+	delete(f.started, vm.OrbID)
+	delete(f.frozen, vm.OrbID)
 	return nil
 }
 
@@ -92,6 +105,8 @@ func (f *fakeFC) Kill(orbID string) error {
 	}
 	delete(f.alive, orbID)
 	delete(f.state, orbID)
+	delete(f.started, orbID)
+	delete(f.frozen, orbID)
 	return nil
 }
 
@@ -154,6 +169,9 @@ func (f *fakeFC) SetState(_ context.Context, orbID, state string) error {
 	defer f.mu.Unlock()
 	f.log("SetState %s %s", orbID, state)
 	if state == "Resumed" {
+		if f.resumeErr != nil {
+			return f.resumeErr
+		}
 		state = "Running"
 	}
 	f.state[orbID] = state
@@ -191,6 +209,21 @@ func (f *fakeFC) Do(_ context.Context, orbID string, req fcguest.Request) error 
 			f.startFails--
 			return errors.New("vsock: connection reset")
 		}
+		// 同 guest-init：start 必须带全参数；已拉起过时只换令牌。
+		if req.URL == "" || req.OrbID == "" || req.Token == "" {
+			return &fcguest.RemoteError{Op: req.Op, Msg: "start requires url, orbId and token"}
+		}
+		if !f.started[orbID] {
+			f.started[orbID] = true
+			f.orbdStarts[orbID]++
+		}
+	case fcguest.OpFSFreeze:
+		f.frozen[orbID] = true
+	case fcguest.OpFSThaw:
+		if f.thawErr != nil {
+			return f.thawErr
+		}
+		delete(f.frozen, orbID)
 	case fcguest.OpSync:
 		if f.syncErr {
 			return errors.New("sync timeout")
@@ -313,7 +346,7 @@ func TestFCSpawnNew(t *testing.T) {
 	res := c.must(fcSpawn(orbA, func(p *apigen.JobSpawnParams) { p.OrbCaPem = &ca }))
 	assert.Nil(t, res)
 	assert.Equal(t, []string{
-		"MakeDisk disk.ext4.tmp 40 200000",
+		"MakeDisk disk.ext4.tmp 40 2000000000",
 		"TapUp fc-npqrstvwxyz0",
 		"Launch " + orbA,
 		"Boot " + orbA,
@@ -322,7 +355,7 @@ func TestFCSpawnNew(t *testing.T) {
 
 	m := c.meta(orbA)
 	assert.Equal(t, vmMeta{
-		OrbID: orbA, Base: c.baseID(), Type: "small", CPUs: 2, MemMB: 4096, Slot: 0, UID: 200000,
+		OrbID: orbA, Base: c.baseID(), Type: "small", CPUs: 2, MemMB: 4096, Slot: 0, UID: 2000000000,
 		Tap: "fc-npqrstvwxyz0", HostIP: "172.31.0.1", GuestIP: "172.31.0.2", MAC: "06:00:ac:1f:00:02",
 	}, m)
 	disk, err := os.ReadFile(c.d.paths.vmDisk(orbA))
@@ -345,11 +378,15 @@ func TestFCSpawnNew(t *testing.T) {
 	// start 的 caPem 原样等于 spawn 参数里的 orbCaPem。
 	assert.Equal(t, ca, start.CAPEM)
 
-	// 幂等：再 spawn 一次只轮换令牌。
+	// 幂等：再 spawn 一次发带全参数的 start，guest 已拉起过 orbd，把它当作 token（只换令牌），不再拉起第二个。
 	assert.Nil(t, c.must(fcSpawn(orbA)))
-	assert.Equal(t, []string{"guest token " + orbA}, c.f.take())
-	tok, _ := c.f.lastReq(fcguest.OpToken)
-	assert.Equal(t, fcguest.Request{Op: fcguest.OpToken, Token: "oot_secret_" + orbA, NowMs: fcTestNow.UnixMilli()}, tok)
+	assert.Equal(t, []string{"guest start " + orbA}, c.f.take())
+	assert.Equal(t, 1, c.f.orbdStarts[orbA])
+	again, _ := c.f.lastReq(fcguest.OpStart)
+	assert.Equal(t, fcguest.Request{
+		Op: fcguest.OpStart, URL: "https://172.31.255.1:7643", OrbID: orbA, Token: "oot_secret_" + orbA,
+		DNS: []string{"1.1.1.1", "1.0.0.1"}, NowMs: fcTestNow.UnixMilli(),
+	}, again)
 	assert.Equal(t, m, c.meta(orbA))
 
 	// 令牌与 CA 不进任务输出。
@@ -366,17 +403,57 @@ func TestFCSpawnNoCAUnknownType(t *testing.T) {
 	assert.Equal(t, "small", c.meta(orbA).Type)
 }
 
-// 8.0 表第二行：spawn（已暂停）= PATCH Resumed → vsock token。
+// 8.0 表第二行：spawn（已暂停）= PATCH Resumed → vsock start（guest 已拉起过 orbd 时等同 token）。
 func TestFCSpawnPaused(t *testing.T) {
 	c := newFCTest(t)
 	c.must(fcSpawn(orbA))
 	c.must(Job{Op: "pause", OrbID: orbA, PauseMode: "freeze"})
 	c.f.take()
 	c.must(fcSpawn(orbA))
-	assert.Equal(t, []string{"SetState " + orbA + " Resumed", "guest token " + orbA}, c.f.take())
-	// 幂等：已恢复后再来只发 token。
+	assert.Equal(t, []string{"SetState " + orbA + " Resumed", "guest start " + orbA}, c.f.take())
+	// 幂等：已恢复后再来只发 start。
 	c.must(fcSpawn(orbA))
-	assert.Equal(t, []string{"guest token " + orbA}, c.f.take())
+	assert.Equal(t, []string{"guest start " + orbA}, c.f.take())
+	assert.Equal(t, 1, c.f.orbdStarts[orbA])
+}
+
+// R1：provider 在 InstanceStart 之后、guest start 之前中断：磁盘上有 vmMeta，Firecracker 为 Running，但 guest
+// 从没收到 start（orbd 没拉起）。新 provider 的 spawn 不能只发 token，要发带全参数的 start 拉起 orbd，且只拉起一次。
+func TestFCAdoptRunningWithoutStart(t *testing.T) {
+	c := newFCTest(t)
+	ctx := context.Background()
+	ca := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+	j := fcSpawn(orbA, func(p *apigen.JobSpawnParams) { p.OrbCaPem = &ca })
+	// 第一个 provider 走完启动一段里 guest start 之前的部分（create → launch → InstanceStart），随即退出。
+	vm, err := c.d.create(j, c.out)
+	require.NoError(t, err)
+	require.NoError(t, c.d.launch(ctx, vm))
+	require.NoError(t, c.d.api.Boot(ctx, vm))
+	c.f.take()
+	require.Equal(t, 0, c.f.orbdStarts[orbA])
+
+	// 重启后的 provider：新驱动，同一状态目录与宿主。
+	d2 := NewFirecracker(c.d.Cfg, c.d.OrbURL)
+	d2.host, d2.api, d2.guest = c.f, c.f, c.f
+	d2.now, d2.pollEvery = c.d.now, c.d.pollEvery
+	var out bytes.Buffer
+	_, err = d2.Exec(ctx, j, &out)
+	require.NoError(t, err, out.String())
+	assert.Equal(t, []string{"guest start " + orbA}, c.f.take())
+	assert.Equal(t, 1, c.f.orbdStarts[orbA])
+	start, _ := c.f.lastReq(fcguest.OpStart)
+	assert.Equal(t, fcguest.Request{
+		Op: fcguest.OpStart, URL: "https://172.31.255.1:7643", OrbID: orbA, Token: "oot_secret_" + orbA,
+		DNS: []string{"1.1.1.1", "1.0.0.1"}, NowMs: fcTestNow.UnixMilli(), CAPEM: ca,
+	}, start)
+
+	// 再 spawn：guest 把 start 当作 token，不启动第二个 orbd。
+	_, err = d2.Exec(ctx, j, &out)
+	require.NoError(t, err, out.String())
+	assert.Equal(t, []string{"guest start " + orbA}, c.f.take())
+	assert.Equal(t, 1, c.f.orbdStarts[orbA])
+	assert.True(t, c.f.Alive(orbA))
+	assert.NotContains(t, out.String(), "oot_secret")
 }
 
 // 8.0 表第三行：spawn（已停机）= 重新走启动一段，磁盘原样。
@@ -604,6 +681,122 @@ func TestFCSnapshotCopyFailureThaws(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// R3：运行中快照复制完成后 Resumed 或 fsthaw 失败 = 快照失败，不发布；thaw-pending 留着。同一任务重试时
+// 不能因「VM 已 Paused」直接复制成功：先完成源 VM 的恢复与解冻，再按运行中重拍。
+func TestFCSnapshotResumeFailure(t *testing.T) {
+	running := []string{
+		"guest fsfreeze " + orbA, "SetState " + orbA + " Paused", "CopySparse disk.ext4 " + snapA + ".ext4.tmp 0",
+		"SetState " + orbA + " Resumed", "guest fsthaw " + orbA,
+	}
+	for _, tc := range []struct {
+		name     string
+		set      func(f *fakeFC, err error)
+		errText  string
+		first    []string // 第一次的调用（Resumed 失败时 vCPU 停着，不再发 fsthaw）
+		state    string   // 失败后 VM 的状态
+		failRetr []string // 故障仍在时重试的调用
+		recover  []string // 故障消失后重试时，重拍之前的恢复调用
+	}{
+		{"resume", func(f *fakeFC, err error) { f.resumeErr = err }, "快照后恢复 VM", running[:4], fcStatePaused,
+			[]string{"SetState " + orbA + " Resumed"},
+			[]string{"SetState " + orbA + " Resumed", "guest fsthaw " + orbA}},
+		{"thaw", func(f *fakeFC, err error) { f.thawErr = err }, "快照后解冻", running, fcStateRunning,
+			[]string{"guest fsthaw " + orbA},
+			[]string{"guest fsthaw " + orbA}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newFCTest(t)
+			c.must(fcSpawn(orbA))
+			require.NoError(t, os.WriteFile(c.d.paths.vmDisk(orbA), []byte("disk-data"), 0o600))
+			c.f.take()
+			tc.set(c.f, errors.New("api timeout"))
+			job := Job{Op: "snapshot", OrbID: orbA, SnapshotID: snapA}
+
+			_, err := c.exec(job)
+			require.ErrorContains(t, err, tc.errText)
+			assert.Equal(t, tc.first, c.f.take())
+			assert.NoFileExists(t, c.d.paths.snapDisk(snapA))
+			assert.NoFileExists(t, c.d.paths.snapDisk(snapA)+".tmp")
+			assert.NoFileExists(t, c.d.paths.snapMeta(snapA))
+			assert.FileExists(t, c.d.paths.vmThawPending(orbA))
+			assert.Equal(t, tc.state, c.f.state[orbA])
+			assert.True(t, c.f.frozen[orbA])
+
+			// 故障还在：重试仍失败，不复制、不发布。
+			_, err = c.exec(job)
+			require.ErrorContains(t, err, tc.errText)
+			assert.Equal(t, tc.failRetr, c.f.take())
+			assert.NoFileExists(t, c.d.paths.snapDisk(snapA))
+
+			// 故障消失：先恢复源 VM，再按运行中重拍并发布。
+			tc.set(c.f, nil)
+			res := c.must(job)
+			require.NotNil(t, res.SnapshotBytes)
+			assert.Equal(t, append(tc.recover, running...), c.f.take())
+			assert.FileExists(t, c.d.paths.snapDisk(snapA))
+			assert.NoFileExists(t, c.d.paths.vmThawPending(orbA))
+			assert.Equal(t, fcStateRunning, c.f.state[orbA])
+			assert.False(t, c.f.frozen[orbA])
+		})
+	}
+}
+
+// 快照没收尾（恢复失败，或 provider 在冻结后崩溃）时，spawn 与 pause{freeze} 先恢复并解冻再做自己的事；
+// pause{stop} 之后标记作废；delete 连同 VM 目录删掉。
+func TestFCPendingThawRecovery(t *testing.T) {
+	// failed 让一次运行中快照因 Resumed 失败而留下 Paused + 冻结 + 标记，然后清掉故障。
+	failed := func(t *testing.T) *fcTest {
+		c := newFCTest(t)
+		c.must(fcSpawn(orbA))
+		c.f.resumeErr = errors.New("api timeout")
+		_, err := c.exec(Job{Op: "snapshot", OrbID: orbA, SnapshotID: snapA})
+		require.Error(t, err)
+		c.f.resumeErr = nil
+		c.f.take()
+		return c
+	}
+	t.Run("spawn", func(t *testing.T) {
+		c := failed(t)
+		c.must(fcSpawn(orbA))
+		assert.Equal(t, []string{"SetState " + orbA + " Resumed", "guest fsthaw " + orbA, "guest start " + orbA}, c.f.take())
+		assert.NoFileExists(t, c.d.paths.vmThawPending(orbA))
+		assert.False(t, c.f.frozen[orbA])
+	})
+	t.Run("provider crashed after fsfreeze", func(t *testing.T) {
+		c := newFCTest(t)
+		c.must(fcSpawn(orbA))
+		ctx := context.Background()
+		// 冻结前落下标记、冻结、暂停，然后 provider 退出。
+		require.NoError(t, os.WriteFile(c.d.paths.vmThawPending(orbA), nil, 0o600))
+		require.NoError(t, c.f.Do(ctx, orbA, fcguest.Request{Op: fcguest.OpFSFreeze}))
+		require.NoError(t, c.f.SetState(ctx, orbA, "Paused"))
+		c.f.take()
+		d2 := NewFirecracker(c.d.Cfg, c.d.OrbURL)
+		d2.host, d2.api, d2.guest = c.f, c.f, c.f
+		_, err := d2.Exec(ctx, fcSpawn(orbA), c.out)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"SetState " + orbA + " Resumed", "guest fsthaw " + orbA, "guest start " + orbA}, c.f.take())
+		assert.False(t, c.f.frozen[orbA])
+	})
+	t.Run("freeze", func(t *testing.T) {
+		c := failed(t)
+		c.must(Job{Op: "pause", OrbID: orbA, PauseMode: "freeze"})
+		assert.Equal(t, []string{
+			"SetState " + orbA + " Resumed", "guest fsthaw " + orbA, "guest sync " + orbA, "SetState " + orbA + " Paused",
+		}, c.f.take())
+		assert.NoFileExists(t, c.d.paths.vmThawPending(orbA))
+		assert.False(t, c.f.frozen[orbA])
+	})
+	t.Run("stop", func(t *testing.T) {
+		c := failed(t)
+		c.must(Job{Op: "pause", OrbID: orbA, PauseMode: "stop"})
+		assert.NoFileExists(t, c.d.paths.vmThawPending(orbA))
+		c.f.take()
+		c.must(fcSpawn(orbA))
+		assert.Equal(t, []string{"TapUp " + tapName(orbA), "Launch " + orbA, "Boot " + orbA, "guest start " + orbA}, c.f.take())
+	})
+}
+
 const orbB = "orb-01jbbbbbbbbbbbbbbbbbbbbbbb"
 
 // spawn 带快照的三种分支：快照在 → 复制并 snapshotUsed=true；快照缺失且可选 → 空盘、false；缺失且必需 → 报错且不留痕迹。
@@ -623,7 +816,7 @@ func TestFCSpawnSnapshotBranches(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, new(true), res.SnapshotUsed)
 	calls := c.f.take()
-	assert.Equal(t, "CopySparse "+snapA+".ext4 disk.ext4.tmp 200001", calls[0])
+	assert.Equal(t, "CopySparse "+snapA+".ext4 disk.ext4.tmp 2000000001", calls[0])
 	b, err := os.ReadFile(c.d.paths.vmDisk(orbB))
 	require.NoError(t, err)
 	assert.Equal(t, "from-a", string(b))
@@ -701,7 +894,7 @@ func TestFCSlots(t *testing.T) {
 	}
 	assert.Equal(t, slotTable{orbs[0]: 0, orbs[1]: 1, orbs[2]: 2}, c.slots())
 	m := c.meta(orbB)
-	assert.Equal(t, []any{1, 200001, "172.31.0.5", "172.31.0.6", "06:00:ac:1f:00:06"}, []any{m.Slot, m.UID, m.HostIP, m.GuestIP, m.MAC})
+	assert.Equal(t, []any{1, 2000000001, "172.31.0.5", "172.31.0.6", "06:00:ac:1f:00:06"}, []any{m.Slot, m.UID, m.HostIP, m.GuestIP, m.MAC})
 
 	c.must(Job{Op: "delete", OrbID: orbB})
 	assert.Equal(t, slotTable{orbs[0]: 0, orbs[2]: 2}, c.slots())
@@ -852,7 +1045,7 @@ func TestFCAPIBoot(t *testing.T) {
 		{"PUT", "/drives/data", `{"drive_id":"data","is_read_only":false,"is_root_device":false,"path_on_host":"/disk.ext4"}`},
 		{"PUT", "/network-interfaces/eth0", `{"guest_mac":"06:00:ac:1f:00:0e","host_dev_name":"fc-orb-1","iface_id":"eth0"}`},
 		{"PUT", "/vsock", `{"guest_cid":3,"uds_path":"/v.sock"}`},
-		{"PUT", "/serial", `{"rate_limiter":{"one_time_burst":1048576,"refill_time":1000,"size":16384},"serial_out_path":"/console.log"}`},
+		{"PUT", "/serial", `{"rate_limiter":{"one_time_burst":1048576,"refill_time":1000,"size":16384},"serial_out_path":"/console/console.log"}`},
 		{"PUT", "/entropy", `{}`},
 		{"PUT", "/actions", `{"action_type":"InstanceStart"}`},
 	}, *got)
@@ -921,7 +1114,7 @@ func TestFCJailerArgs(t *testing.T) {
 	vm := newVMMeta(cfg, "orb-1", 2)
 	vm.CPUs, vm.MemMB = 4, 8192
 	assert.Equal(t, []string{
-		"--id", "orb-1", "--exec-file", "/usr/local/bin/firecracker", "--uid", "200002", "--gid", "200002",
+		"--id", "orb-1", "--exec-file", "/usr/local/bin/firecracker", "--uid", "2000000002", "--gid", "2000000002",
 		"--chroot-base-dir", "/var/lib/oryn-fc/jail", "--cgroup-version", "2", "--parent-cgroup", "oryn-fc",
 		"--cgroup", "cpu.max=400000 100000", "--cgroup", "memory.max=9126805504",
 		"--daemonize", "--new-pid-ns", "--", "--api-sock", "/api.sock",

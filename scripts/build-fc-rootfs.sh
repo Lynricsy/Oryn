@@ -4,7 +4,8 @@
 # 按已用空间 ×1.2 + 256MiB 建稀疏文件并 mke2fs -d 填充。
 #
 # 用法：scripts/build-fc-rootfs.sh [镜像]   （默认 oryn-orb:dev，先 make image）
-# 依赖：docker、jq。构建容器镜像取 images/fc/artifacts.lock.json 的 rootfs.builderImage。
+# 依赖：docker、jq。构建容器镜像取 images/fc/artifacts.lock.json 的 rootfs.builderImage，必须锁 digest
+# （name@sha256:…）：docker 按 digest 拉取并校验内容，tag 被替换也换不掉它。
 #
 # image-env.json = {"env": Config.Env, "workingDir": Config.WorkingDir, "user": Config.User}：
 # microVM 里没有镜像配置，PATH、HOME 等只能这样带进去，guest-init 按它启动 orbd。
@@ -19,6 +20,10 @@ done
 
 image="${1:-oryn-orb:dev}"
 builder="$(jq -r .rootfs.builderImage images/fc/artifacts.lock.json)"
+if ! [[ "$builder" =~ ^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$ ]]; then
+	echo "artifacts.lock.json 的 rootfs.builderImage \"$builder\" 没有锁 digest（应为 name@sha256:<64 位十六进制>）" >&2
+	exit 1
+fi
 out_dir="$repo_root/build/fc"
 mkdir -p "$out_dir"
 

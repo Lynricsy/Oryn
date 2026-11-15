@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Oryn Firecracker provider 的一次性宿主网络（docs/deploy.md「Firecracker」）。需要 root；幂等，可重复执行。
 #
-# 用法：oryn-fc-net.sh up|down
+# 用法：oryn-fc-net.sh up|down|rules
 #
 #   up    建 dummy 接口 oryn-fc（地址 ORYN_FC_HOST_ADDR/32）、打开 ip_forward、装 nft 表 inet oryn_fc 与 ip oryn_fc_nat；
 #         有 Docker 的 DOCKER-USER 链时追加两条放行（否则 Docker 的 FORWARD 默认丢弃会拦掉 guest 出网）。
 #   down  删掉上述 nft 表、DOCKER-USER 规则与 oryn-fc 接口（ip_forward 不动）。
+#   rules 只打印 up 要装的 nft 规则，不改动宿主（可用 `oryn-fc-net.sh rules | nft -c -f -` 校验）。
 #
 # 环境变量（与 provider.yaml 的 firecracker.network 保持一致）：
 #   ORYN_FC_CIDR        guest 网段，默认 172.31.0.0/16
@@ -16,6 +17,9 @@
 #                       provider 预检会核对 orb_url 的端口在这里面。
 #
 # 规则全部按接口名通配（fc-*），驱动增删 VM 不需要改 nft。每台 VM 的 tap 与 /30 由驱动建（TapUp）。
+# 反伪造与 IPv6 封堵写在 nft 里，不依赖宿主的 rp_filter / IPv6 forwarding 等 sysctl：
+#   - `fib saddr . iif oif missing`：源地址经入接口反查不到路由（不是这台 VM 的 /30 地址）的包一律丢弃（严格反向路径）；
+#   - fc-* 进出的 IPv6 一律不转发（guest 只有 IPv4）。
 set -euo pipefail
 
 cidr="${ORYN_FC_CIDR:-172.31.0.0/16}"
@@ -24,7 +28,7 @@ link_ports="${ORYN_FC_LINK_PORTS:-7643}"
 iface="oryn-fc"
 
 usage() {
-	sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2
+	sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' >&2
 	exit 2
 }
 
@@ -52,30 +56,27 @@ docker_user_rules=(
 	"-o fc-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
 )
 
-up() {
-	local ports
-	ports="$(nft_ports)"
-	if ! ip link show "$iface" >/dev/null 2>&1; then
-		ip link add "$iface" type dummy
-	fi
-	ip addr replace "$host_addr/32" dev "$iface"
-	ip link set "$iface" up
-	sysctl -qw net.ipv4.ip_forward=1
-
-	# 先建空表再删，保证首次执行时 delete 不报错；整个文件原子生效。
-	# inet oryn_fc 的链优先级比 Docker 的 filter 链靠前，只负责丢弃（放行的包还要经过后面的链）。
-	nft -f - <<EOF
+# ruleset 打印 inet oryn_fc 与 ip oryn_fc_nat 的完整规则（参数为规范化后的端口列表）。
+# 先建空表再删，保证首次执行时 delete 不报错；整个文件交给一次 nft -f，原子生效。
+# inet oryn_fc 的链优先级比 Docker 的 filter 链靠前，只负责丢弃（放行的包还要经过后面的链）。
+ruleset() {
+	cat <<EOF
 table inet oryn_fc
 delete table inet oryn_fc
 table inet oryn_fc {
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
+		iifname "fc-*" fib saddr . iif oif missing drop
 		iifname "fc-*" ct state established,related accept
-		iifname "fc-*" ip daddr $host_addr tcp dport { $ports } accept
+		iifname "fc-*" ip daddr $host_addr tcp dport { $1 } accept
 		iifname "fc-*" drop
 	}
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
+		iifname "fc-*" fib saddr . iif oif missing drop
+		iifname "fc-*" ip saddr != $cidr drop
+		iifname "fc-*" meta nfproto ipv6 drop
+		oifname "fc-*" meta nfproto ipv6 drop
 		iifname "fc-*" oifname "fc-*" drop
 		iifname "fc-*" ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8 } drop
 	}
@@ -89,6 +90,19 @@ table ip oryn_fc_nat {
 	}
 }
 EOF
+}
+
+up() {
+	local ports
+	ports="$(nft_ports)"
+	if ! ip link show "$iface" >/dev/null 2>&1; then
+		ip link add "$iface" type dummy
+	fi
+	ip addr replace "$host_addr/32" dev "$iface"
+	ip link set "$iface" up
+	sysctl -qw net.ipv4.ip_forward=1
+
+	ruleset "$ports" | nft -f -
 
 	if have_docker_user; then
 		local r
@@ -119,5 +133,9 @@ down() {
 case "${1:-}" in
 up) up ;;
 down) down ;;
+rules)
+	ports="$(nft_ports)"
+	ruleset "$ports"
+	;;
 *) usage ;;
 esac

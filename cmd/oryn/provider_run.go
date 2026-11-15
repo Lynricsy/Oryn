@@ -63,6 +63,9 @@ var providerRunCmd = &cobra.Command{
 				return err
 			}
 		}
+		if hk, ok := drv.(providerrt.Housekeeper); ok {
+			go hk.Housekeep(ctx)
+		}
 		r := &providerrt.Runner{
 			URL: cfg.URL, Token: token, OrbURL: cfg.OrbURL, Driver: drv,
 			Version: version.Version, AllowMultiple: allowMultiple,

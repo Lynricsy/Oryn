@@ -123,10 +123,15 @@ func (a unixAPI) do(ctx context.Context, orbID, method, path string, body any, o
 	return nil
 }
 
-// fcConsoleLog 是 jail 里 guest 串口输出的文件（Launch 预先建好并交给槽位 uid）；启动失败时把末尾带进任务输出。
-const fcConsoleLog = "console.log"
+// fcConsoleDir 是 jail 里放串口日志的目录：Launch 在上面挂一个容量固定的 tmpfs（见 mountConsole）；
+// fcConsoleLog 是其中 guest 串口输出的文件（Launch 预先建好并交给槽位 uid）。启动失败时把末尾带进任务输出。
+const (
+	fcConsoleDir = "console"
+	fcConsoleLog = "console.log"
+)
 
-// fcSerialRateLimit 限制串口写文件的速率：开机日志可一次写 1 MiB，之后每秒 16 KiB，guest 不能用它写满宿主磁盘。
+// fcSerialRateLimit 限制串口写文件的速率：开机日志可一次写 1 MiB，之后每秒 16 KiB。限速只能拖慢写入，
+// 总量由 tmpfs 的容量限定（fc_console.go）。
 var fcSerialRateLimit = map[string]any{"size": 16 << 10, "one_time_burst": 1 << 20, "refill_time": 1000}
 
 // Boot 实现 fcAPI：依次 machine-config、boot-source、两块盘、eth0、vsock、串口、entropy（失败忽略）、InstanceStart。
@@ -142,7 +147,7 @@ func (a unixAPI) Boot(ctx context.Context, vm vmMeta) error {
 		{"/drives/data", map[string]any{"drive_id": "data", "path_on_host": "/disk.ext4", "is_root_device": false, "is_read_only": false}},
 		{"/network-interfaces/eth0", map[string]any{"iface_id": "eth0", "host_dev_name": vm.Tap, "guest_mac": vm.MAC}},
 		{"/vsock", map[string]any{"guest_cid": fcVsockCID, "uds_path": "/v.sock"}},
-		{"/serial", map[string]any{"serial_out_path": "/" + fcConsoleLog, "rate_limiter": fcSerialRateLimit}},
+		{"/serial", map[string]any{"serial_out_path": "/" + fcConsoleDir + "/" + fcConsoleLog, "rate_limiter": fcSerialRateLimit}},
 	}
 	for _, s := range steps {
 		if err := a.do(ctx, vm.OrbID, http.MethodPut, s.path, s.body, nil); err != nil {
