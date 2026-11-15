@@ -30,6 +30,9 @@ const (
 	stateBackfillCur   = "backfill_cursor" // "<created_at>:<thread_id>"；空串 = 尚未完成任何线程
 	stateBackfillDone  = "backfill_done"
 	stateBackfillTotal = "backfill_total"
+	// stateBackfillTarget 是这轮回填的目标 FactsVersion：与当前 FactsVersion 不同（或缺失 = 早于本键的旧版本留下的进度）时
+	// 游标作废、从头重算，避免游标之前的线程停留在旧版本口径。
+	stateBackfillTarget = "backfill_target"
 	// stateUkeyScheme 记录库里去重键的编码；不是 ukeyScheme 时 sanitizeFacts 把旧编码的键改写一次。
 	// 独立于 facts_version：admin rebuild-stats 会把版本置 0，但已改写过的键不能再哈希第二次。
 	stateUkeyScheme = "ukey_scheme"
@@ -382,13 +385,13 @@ func getState(ctx context.Context, q *db.Queries, key string) (string, bool, err
 	return v, true, nil
 }
 
-// finishBackfill 写入当前版本号并删除三个进度键。
+// finishBackfill 写入当前版本号并删除全部进度键。
 func finishBackfill(ctx context.Context, st *store.Store) error {
 	return st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.SetStatsState(ctx, db.SetStatsStateParams{Key: stateFactsVersion, Value: strconv.Itoa(FactsVersion)}); err != nil {
 			return err
 		}
-		for _, k := range []string{stateBackfillCur, stateBackfillDone, stateBackfillTotal} {
+		for _, k := range []string{stateBackfillCur, stateBackfillDone, stateBackfillTotal, stateBackfillTarget} {
 			if err := q.DeleteStatsState(ctx, k); err != nil {
 				return err
 			}
@@ -515,9 +518,10 @@ func sanitizeFacts(ctx context.Context, st *store.Store, now int64) error {
 func eqInt(a, b *int64) bool { return a == b || a != nil && b != nil && *a == *b }
 
 // BackfillFacts 在 stats_state.facts_version != FactsVersion 时按 (created_at, id) 升序逐线程 RebuildThreadFacts：
-// 开始时写 backfill_total 与空的 backfill_cursor，每完成一个线程更新 backfill_cursor / backfill_done，
-// 全部完成后写 facts_version 并删除三个进度键。可被 ctx 中断，下次从游标之后继续。库里没有线程时直接写版本号。
-// purge 为真且尚无游标时，先在一个事务里清空全部活线程的事实行（手动全量重算用）。
+// 开始时写 backfill_total、backfill_target（= FactsVersion）与空的 backfill_cursor，每完成一个线程更新 backfill_cursor /
+// backfill_done，全部完成后写 facts_version 并删除进度键。可被 ctx 中断，下次从游标之后继续——仅当 backfill_target
+// 等于当前 FactsVersion；否则那是旧版本中断留下的进度，作废后从头重算。库里没有线程时直接写版本号。
+// purge 为真且不续作时，先在一个事务里清空全部活线程的事实行（手动全量重算用）。
 //
 // 升序重算即可去掉历史上的 fork 重复：源线程先于 fork 线程创建，先拿到 ukey；轮到 fork 线程时它的旧行被清空，
 // 拷贝来的条目因 ukey 已被占用而不再写入。升级前的旧行 ukey 为 NULL，不会挡住源线程。
@@ -542,6 +546,16 @@ func BackfillFacts(ctx context.Context, st *store.Store, now func() int64, purge
 	curRaw, resuming, err := getState(ctx, st.Q, stateBackfillCur)
 	if err != nil {
 		return err
+	}
+	if resuming {
+		target, _, err := getState(ctx, st.Q, stateBackfillTarget)
+		if err != nil {
+			return err
+		}
+		if target != strconv.Itoa(FactsVersion) {
+			slog.Info("threads: 回填进度属于其它事实版本，从头重算", "target", target, "version", FactsVersion)
+			resuming = false
+		}
 	}
 	var cur *backfillPos
 	var done int64
@@ -573,7 +587,8 @@ func BackfillFacts(ctx context.Context, st *store.Store, now func() int64, purge
 					return err
 				}
 			}
-			for k, v := range map[string]string{stateBackfillTotal: strconv.Itoa(len(list)), stateBackfillCur: "", stateBackfillDone: "0"} {
+			for k, v := range map[string]string{stateBackfillTotal: strconv.Itoa(len(list)), stateBackfillCur: "", stateBackfillDone: "0",
+				stateBackfillTarget: strconv.Itoa(FactsVersion)} {
 				if err := q.SetStatsState(ctx, db.SetStatsStateParams{Key: k, Value: v}); err != nil {
 					return err
 				}

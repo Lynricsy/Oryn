@@ -547,3 +547,66 @@ func TestAttachPipeInputEOFKeepsWatching(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, exitAttachAwaiting, code, "管道 EOF 不退出，回合结束后按 --exit-on-idle 退出")
 }
+
+// 快照之前读到的输入行要等快照建立待答请求 / 计划状态后再处理：审批输入不能被当成普通消息（steer）发出。
+func TestAttachInputWaitsForSnapshot(t *testing.T) {
+	agent := func(k string, v any) map[string]any {
+		return map[string]any{"status": "ready", "subagents": []any{}, "live": []any{}, "pendingUi": []any{}, k: v}
+	}
+	cases := map[string]struct {
+		agent    map[string]any
+		line     string
+		wantType string
+		want     map[string]any
+	}{
+		"plan": {agent("planProposal", planFrame("Ship it", "execute", "refine")), "execute",
+			"cmd", map[string]any{"type": "plan_approval", "approved": true, "option": "execute"}},
+		"ask": {agent("pendingUi", []any{map[string]any{"type": "extension_ui_request", "id": "q1", "method": "select", "title": "Pick", "options": []any{"A", "B"}}}), "2",
+			"ui.response", map[string]any{"type": "extension_ui_response", "id": "q1", "value": "B"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ws := newFakeWS(t)
+			r := startAttach(t, ws, attachOpts{tail: 0, pipeIn: true}, true)
+			c := ws.accept()
+			c.expectSub()
+			// 第二行写入返回时，扫描 goroutine 已把第一行交给事件循环（交出之后才会再读管道）
+			r.line(t, tc.line)
+			r.line(t, "")
+			c.send(snapshot("awaiting_input", 0, map[string]any{"agent": tc.agent}))
+			m := c.next()
+			assert.Equal(t, tc.wantType, m["type"])
+			assert.Equal(t, tc.want, m["frame"])
+			r.line(t, "/quit")
+			_, err := r.wait(t)
+			require.NoError(t, err)
+		})
+	}
+}
+
+// 重连后快照里恢复的计划提案在补发完成后打印；后续重连带同一提案不重复打印。
+func TestAttachReconnectPrintsRestoredPlan(t *testing.T) {
+	ws := newFakeWS(t)
+	r := startAttach(t, ws, attachOpts{tail: 0, exitOnIdle: true}, false)
+	c := ws.accept()
+	c.expectSub()
+	c.send(snapshot("idle", 0, nil))
+	c.close()
+
+	withPlan := map[string]any{"agent": map[string]any{"status": "ready", "subagents": []any{}, "live": []any{}, "pendingUi": []any{},
+		"planProposal": planFrame("Offline plan", "execute", "refine")}}
+	c2 := ws.accept()
+	c2.expectSub()
+	c2.send(snapshot("awaiting_input", 0, withPlan))
+	c2.close()
+
+	c3 := ws.accept()
+	c3.expectSub()
+	c3.send(snapshot("awaiting_input", 0, withPlan))
+	c3.send(patch("working"))
+	c3.send(patch("awaiting_input"))
+	code, err := r.wait(t)
+	require.NoError(t, err)
+	assert.Equal(t, exitAttachAwaiting, code)
+	assert.Equal(t, "[plan] Offline plan\n# Plan\n- step one\n  1) execute\n  2) refine\n（等待审批）\n", r.out.String())
+}

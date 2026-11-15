@@ -482,7 +482,7 @@ func TestBackfillFacts(t *testing.T) {
 		v, ok := e.state(stateFactsVersion)
 		assert.True(t, ok)
 		assert.Equal(t, strconv.Itoa(FactsVersion), v)
-		for _, k := range []string{stateBackfillCur, stateBackfillDone, stateBackfillTotal} {
+		for _, k := range []string{stateBackfillCur, stateBackfillDone, stateBackfillTotal, stateBackfillTarget} {
 			_, ok := e.state(k)
 			assert.False(t, ok, k)
 		}
@@ -516,6 +516,8 @@ func TestBackfillFacts(t *testing.T) {
 		assert.Equal(t, "1", done)
 		total, _ := e.state(stateBackfillTotal)
 		assert.Equal(t, "3", total)
+		target, _ := e.state(stateBackfillTarget)
+		assert.Equal(t, strconv.Itoa(FactsVersion), target, "进度记下本轮目标版本")
 		_, ok := e.state(stateFactsVersion)
 		assert.False(t, ok)
 
@@ -526,6 +528,48 @@ func TestBackfillFacts(t *testing.T) {
 		v, _ := e.state(stateFactsVersion)
 		assert.Equal(t, strconv.Itoa(FactsVersion), v)
 	})
+
+	// 旧版本回填中断后升级：游标之前的线程按旧口径算过（xdev 派发记为 write），进度无目标版本或目标是旧版本。
+	// 新版本必须作废旧游标、从头重算，游标之前的线程也改成真实工具名；重复执行结果不变。
+	for _, target := range []string{"", "4"} {
+		t.Run("stale cursor target="+target, func(t *testing.T) {
+			e, _ := backfillWorld(t)
+			xdev := fmt.Sprintf(`{"type":"message","id":"xd","parentId":"xa2","timestamp":%q,"message":{"role":"toolResult","toolCallId":"c-xd","toolName":"write","isError":false,"content":[],"timestamp":%d,"details":{"xdev":{"tool":"lsp","mode":"execute","args":{"op":"hover"}}}}}`,
+				isoMs(factsT0+10), factsT0+10)
+			e.appendLines("T-z-src", "s.jsonl", xdev)
+			want := e.facts()
+			require.Equal(t, 1, len(e.rows(`SELECT 1 FROM tool_calls WHERE thread_id = 'T-z-src' AND tool = 'lsp'`)))
+
+			stale := func() {
+				_, err := e.st.DB.ExecContext(e.ctx, `UPDATE tool_calls SET tool = 'write' WHERE tool = 'lsp'`)
+				require.NoError(t, err)
+				st := map[string]string{stateFactsVersion: "3", stateBackfillCur: "10:T-z-src", stateBackfillDone: "1", stateBackfillTotal: "3"}
+				if target != "" {
+					st[stateBackfillTarget] = target
+				}
+				for k, v := range st {
+					require.NoError(t, e.st.Q.SetStatsState(e.ctx, db.SetStatsStateParams{Key: k, Value: v}))
+				}
+			}
+			var seen []string
+			beforeBackfillThread = func(id string) { seen = append(seen, id) }
+			t.Cleanup(func() { beforeBackfillThread = nil })
+
+			for range 2 {
+				stale()
+				seen = nil
+				require.NoError(t, BackfillFacts(e.ctx, e.st, nil, false))
+				assert.Equal(t, []string{"T-z-src", "T-a-fork", "T-m-other"}, seen, "旧进度作废，从头重算")
+				assert.Equal(t, want, e.facts(), "游标之前的线程也按新版本口径")
+				v, _ := e.state(stateFactsVersion)
+				assert.Equal(t, strconv.Itoa(FactsVersion), v)
+				for _, k := range []string{stateBackfillCur, stateBackfillDone, stateBackfillTotal, stateBackfillTarget} {
+					_, ok := e.state(k)
+					assert.False(t, ok, k)
+				}
+			}
+		})
+	}
 
 	t.Run("purge", func(t *testing.T) {
 		e, want := backfillWorld(t)

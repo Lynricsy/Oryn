@@ -1088,7 +1088,7 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 
 - **不变式**：活线程的事实行 = f(该线程当前的条目)；已删线程的事实行冻结。由此：重发是 upsert（`INSERT OR IGNORE`）；`entries.reset` 重发且内容变了先删该条目旧的事实行再写；`reset_done` 与移除文件（`dropFile`）后在同一事务里删孤儿（`DeleteOrphan*`：`(thread_id, entry_seq)` 已没有条目的行）；删线程在一个事务里先写归属快照（`Tombstone*`：`project_id`、`space_id` = 线程当前值），再删线程行（事实行 `thread_id` 经 `ON DELETE SET NULL` 置空）。
 - **`ukey = <entryId>@<毫秒时间戳>`**：跨线程全局唯一（`usage_records` / `tool_calls` / `turns` 各有唯一约束）。fork 拷贝的条目 id 与时间戳都与源条目相同，所以只记一次——归先入库的线程（即源线程）；被别的线程（含已删线程）占用的 `ukey` 不再写。升级前的旧行 `ukey` 为 NULL（唯一约束允许多个 NULL），由回填补上。合成 id（`__title__` 等）的条目不产生事实行。
-- **回填**：`stats_state.facts_version` 与当前版本不符时，按线程 `(created_at, id)` 升序用与入库同一个函数逐线程重算（每事务 500 条条目），进度键 `backfill_total` / `backfill_done` / `backfill_cursor`（`<created_at>:<thread_id>`），完成后写版本号并删除进度键；可被中断、下次从游标续作。升序重算会去掉历史上的 fork 重复：源线程先拿到 `ukey`。`orynd admin rebuild-stats [--thread <id>]` 手动重算。
+- **回填**：`stats_state.facts_version` 与当前版本不符时，按线程 `(created_at, id)` 升序用与入库同一个函数逐线程重算（每事务 500 条条目），进度键 `backfill_total` / `backfill_done` / `backfill_cursor`（`<created_at>:<thread_id>`）/ `backfill_target`（这次回填的目标版本），完成后写版本号并删除进度键；可被中断、下次从游标续作——只有 `backfill_target` 等于当前版本才续作，旧版本遗留的游标作废、从头重算。升序重算会去掉历史上的 fork 重复：源线程先拿到 `ukey`。`orynd admin rebuild-stats [--thread <id>]` 手动重算。
 - 升级前已删除的线程留下的用量行没有条目可重算：保持原样（没有 `ukey`、没有归属快照），在按项目 / Space 的分组里落在空键。
 
 ### 统计口径
@@ -1115,7 +1115,7 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 - `usage_records` 加 `purpose`（NOT NULL DEFAULT `''`）、`stop_reason`（NOT NULL DEFAULT `''`）、`ukey`、`project_id`、`space_id`，唯一索引 `usage_records_ukey`；`tool_calls` 加 `ukey`、`project_id`、`space_id`，唯一索引 `tool_calls_ukey`。
 - `turns(id, thread_id → threads ON DELETE SET NULL, entry_seq, ts, ukey UNIQUE, project_id, space_id, UNIQUE(thread_id, entry_seq))`，索引 `turns_ts`。
 - `thread_commits(thread_id → threads ON DELETE CASCADE, sha, ts（作者时间）, PK(thread_id, sha))`，索引 `thread_commits_ts`。
-- `stats_state(key PK, value)`：`facts_version`、`backfill_cursor`、`backfill_done`、`backfill_total`。
+- `stats_state(key PK, value)`：`facts_version`、`backfill_cursor`、`backfill_done`、`backfill_total`、`backfill_target`。
 - `budget(id = 1, daily_usd?, monthly_usd?, warn_pct DEFAULT 80, timezone DEFAULT 'UTC', enabled DEFAULT 1, updated_at)`；`budget_alerts(period ∈ day|month, period_key, level ∈ warn|over, spent_usd, limit_usd, created_at, PK(period, period_key, level))`（只做去重与留痕，与 `notifications` 不设外键）。
 - `notifications` 重建：`kind` 的 CHECK 加 `budget`，新增 `link`（没有线程的通知的站内路径；有线程时为 NULL；不加 CHECK，Go 侧对既无线程也无 `link` 的行回落到 `/`）。库以 `foreign_keys = ON` 打开且迁移包在事务里，所以 `notifications` 与 `notification_deliveries` 都先搬进无约束的暂存表、先删子表再删父表、先建父表再建子表、最后搬回（七个索引原样重建）；已有的无线程通知回填 `link = /settings/automations`；`events` 以 `"error"]` 结尾的渠道追加 `"budget"`。
 - Down：先去掉渠道 `events` 里的 `budget`，按同样的暂存方式把两张表重建回 0011 的结构（`kind = budget` 的通知及其投递丢弃），再逆序删五张表、两个 `*_ukey` 索引与八列。

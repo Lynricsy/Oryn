@@ -509,7 +509,7 @@ INSERT OR IGNORE INTO thread_commits (thread_id, sha, ts) VALUES (@thread_id, @s
 
 -- ---------------------------------------------------------------- state and budget
 
--- Keys: facts_version, backfill_cursor ("<created_at>:<thread_id>"), backfill_done, backfill_total.
+-- Keys: facts_version, backfill_cursor ("<created_at>:<thread_id>"), backfill_done, backfill_total, backfill_target (FactsVersion the cursor belongs to).
 -- name: GetStatsState :one
 SELECT value FROM stats_state WHERE key = @key;
 

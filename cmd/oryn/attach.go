@@ -88,6 +88,9 @@ type attacher struct {
 	turnSeen bool
 	cmdSeq   int
 	settleAt time.Time
+
+	// queued 是本连接收到快照之前读到的输入行：待答请求 / 计划状态要等快照才建立，提前处理会把审批词当成普通消息发出。
+	queued []string
 }
 
 func newAttacher(o attachOpts) *attacher {
@@ -210,6 +213,10 @@ func (a *attacher) session(ctx context.Context, conn *wsConn, lines chan string)
 				a.endLine()
 				return 0, true, nil
 			}
+			if !a.subscribed {
+				a.queued = append(a.queued, line)
+				continue
+			}
 			if quit, err := a.input(ctx, conn, line); quit || err != nil {
 				return 0, err == nil, err
 			}
@@ -222,8 +229,23 @@ func (a *attacher) session(ctx context.Context, conn *wsConn, lines chan string)
 				a.endLine()
 				return code, true, err
 			}
+			if quit, err := a.drainQueued(ctx, conn); quit || err != nil {
+				return 0, err == nil, err
+			}
 		}
 	}
+}
+
+// drainQueued 在本连接收到快照后按序处理此前缓存的输入行。
+func (a *attacher) drainQueued(ctx context.Context, conn *wsConn) (bool, error) {
+	for a.subscribed && len(a.queued) > 0 {
+		line := a.queued[0]
+		a.queued = a.queued[1:]
+		if quit, err := a.input(ctx, conn, line); quit || err != nil {
+			return quit, err
+		}
+	}
+	return false, nil
 }
 
 // ---- 服务端消息 ----
@@ -382,14 +404,24 @@ func (a *attacher) addEntries(e entriesMsg) {
 }
 
 // finishBackfill：首次连接打印活动分支的最后 tail 条消息并把其余标为已见；重连时打印补发到的新条目。
+// 两种情况最后都打印快照恢复的待答请求与计划（askPrinted / planPrinted 去重，同一请求或提案只打印一次）。
 func (a *attacher) finishBackfill() {
 	a.backfilled = true
 	if a.tailed {
 		for _, e := range a.entries {
 			a.printEntry(e)
 		}
-		return
+	} else {
+		a.printTail()
 	}
+	for _, id := range a.pendOrder {
+		a.printAsk(id)
+	}
+	a.printPlan()
+}
+
+// printTail 是首次补发的输出：活动分支上最后 tail 条消息，其余条目标为已见。
+func (a *attacher) printTail() {
 	a.tailed = true
 	var show []transcript.Entry
 	for _, e := range transcript.ActiveBranch(a.entries, a.leaf) {
@@ -410,10 +442,6 @@ func (a *attacher) finishBackfill() {
 			}
 		}
 	}
-	for _, id := range a.pendOrder {
-		a.printAsk(id)
-	}
-	a.printPlan()
 }
 
 // printEntry 打印一条新到达的主会话条目（每个 entryId 一次）。
