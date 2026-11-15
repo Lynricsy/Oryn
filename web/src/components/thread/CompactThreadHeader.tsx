@@ -325,14 +325,6 @@ export function CompactThreadHeader({
 							)
 						)}
 						<span className="min-w-0 truncate">{title}</span>
-						{/* 展开提示：标题胶囊是菜单入口，不只是标题牌 */}
-						<Icon
-							name="chevronDown"
-							size={12}
-							weight="bold"
-							aria-hidden
-							className={`shrink-0 text-faint transition-transform duration-150 ${open ? "rotate-180" : ""}`}
-						/>
 					</span>
 					{error ? (
 						<span
