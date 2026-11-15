@@ -569,16 +569,10 @@ export class MockServer {
 	applyReloads = { count: 0, until: 0 };
 	/** 全局 omp-home 的模拟下发：写入后 1 秒（服务端的防抖时长）完成。 */
 	applyPushAt?: number;
-		this.applyPushAt = Date.now() + 1_000;
-		const pushAt = this.applyPushAt;
-			push: {
-				pending: pushAt !== undefined && now < pushAt,
-				...(pushAt !== undefined && now >= pushAt ? { appliedAt: pushAt } : {}),
-				failed: [],
-			},
 
 	/** 全局 omp-home 的一次写入或删除：按 docs/protocol.md「会话级生效与懒重启」的分类记到线程上（`config.yml` 只比较 `disabledExtensions`）。 */
 	private noteOmpHomeChange(path: string, before: string | undefined): void {
+		this.applyPushAt = Date.now() + 1_000;
 		const restart: string[] = [];
 		let reload = false;
 		if (path === "config.yml") {
@@ -654,13 +648,18 @@ export class MockServer {
 				scheduled: entry.scheduledAt !== undefined,
 			});
 		}
+		const pushAt = this.applyPushAt;
 		return {
 			threads,
 			pendingReloads:
 				now < this.applyReloads.until ? this.applyReloads.count : 0,
+			push: {
+				pending: pushAt !== undefined && now < pushAt,
+				...(pushAt !== undefined && now >= pushAt ? { appliedAt: pushAt } : {}),
+				failed: [],
+			},
 		};
 	}
-
 
 	constructor() {
 		// runner 的常驻 orb（M11b）：先放进去，下面按线程补 orb 时跳过
