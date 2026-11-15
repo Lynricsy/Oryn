@@ -239,6 +239,26 @@ describe("Composer", () => {
 			expect(box().value).toBe("");
 		});
 
+		it("发送未应答 → 重新挂载 → 再按 Enter：同一份草稿只发送一次；应答后可再发", async () => {
+			const { promise, resolve } = deferred<unknown>();
+			cmd.mockImplementation(() => promise);
+			const remount = mountRemountable();
+			type("only once");
+			enter();
+			remount();
+			enter();
+			expect(framesOf("prompt")).toHaveLength(1);
+			await act(async () => {
+				resolve({});
+				await promise;
+			});
+			// 在途标记随应答清掉：同样的文字再发是新的一条
+			cmd.mockResolvedValue({});
+			type("only once");
+			await act(async () => enter());
+			expect(framesOf("prompt")).toHaveLength(2);
+		});
+
 		it("发送在途时重新挂载后又改了草稿：应答回来不清掉新草稿", async () => {
 			const { promise, resolve } = deferred<unknown>();
 			cmd.mockImplementation(() => promise);

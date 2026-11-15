@@ -39,6 +39,8 @@ import {
 	claimComposer,
 	composerMounted,
 	getComposerDraft,
+	type InFlightDraft,
+	isInFlightDraft,
 	patchComposerDraft,
 	useComposerDraft,
 } from "../../state/composer-drafts";
@@ -141,7 +143,6 @@ export function Composer({
 	// 文字以草稿 store 为准：应答可能在输入区重新挂载之后才到
 	const draftRef = useRef({ text, items: att.items });
 	draftRef.current = { text, items: att.items };
-	const inFlight = useRef<typeof draftRef.current | null>(null);
 	// 异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：对话框是全局单值、由当前页面消费，
 	// 旧线程的应答不得在新线程打开 / 覆盖对话框。按线程登记而非按实例：跨断点重新挂载仍算留在本线程
 	useEffect(() => claimComposer(threadId), [threadId]);
@@ -329,9 +330,9 @@ export function Composer({
 
 	const submit = async (mode: SendMode) => {
 		const sent = draftRef.current;
-		// 同一份草稿已在发送中：忽略重复提交
-		const pending = inFlight.current;
-		if (pending && pending.text === sent.text && pending.items === sent.items)
+		// 同一份草稿已在发送中（含重新挂载前由旧输入区发出、尚未应答的）：忽略重复提交
+		const keys = sent.items.map((i) => i.key);
+		if (isInFlightDraft(getComposerDraft(threadId).inFlight, sent.text, keys))
 			return;
 		const parsed = parseComposerInput(sent.text);
 		// 协调对话没有工作区：`!` 前缀不是 bash，按原文发送
@@ -345,7 +346,8 @@ export function Composer({
 			setError(new Error(t("attachments.waitUpload")));
 			return;
 		}
-		inFlight.current = sent;
+		const marker: InFlightDraft = { text: sent.text, keys };
+		patchComposerDraft(threadId, { inFlight: marker });
 		try {
 			if (parsed.kind === "empty") {
 				if (att.attachmentIds.length === 0) return;
@@ -401,7 +403,8 @@ export function Composer({
 		} catch (e) {
 			setError(e);
 		} finally {
-			if (inFlight.current === sent) inFlight.current = null;
+			if (getComposerDraft(threadId).inFlight === marker)
+				patchComposerDraft(threadId, { inFlight: null });
 		}
 	};
 

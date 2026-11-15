@@ -14,6 +14,29 @@ export interface ComposerDraft {
 	selection: { start: number; end: number; focused: boolean } | null;
 	/** 已并入草稿的 set_editor_text（按对象身份）：重新挂载时不再并入一遍 */
 	editorText: unknown;
+	/**
+	 * 正在发送、尚未应答的那份草稿（正文 + 附件 key）。跨断点重新挂载后输入区实例换了，但发送仍在途：
+	 * 存在组件外，重新挂载后再按 Enter 不会把同一份草稿再发一遍。按对象身份清除，旧实例的应答也能清掉它
+	 */
+	inFlight: InFlightDraft | null;
+}
+
+export interface InFlightDraft {
+	text: string;
+	keys: readonly string[];
+}
+
+/** 这份草稿是否就是在途的那份：正文相同，附件是在途那批的子集（附件列表在输入区内，重新挂载后会清空）。 */
+export function isInFlightDraft(
+	pending: InFlightDraft | null,
+	text: string,
+	keys: readonly string[],
+): boolean {
+	return (
+		pending !== null &&
+		pending.text === text &&
+		keys.every((k) => pending.keys.includes(k))
+	);
 }
 
 const EMPTY: ComposerDraft = {
@@ -21,6 +44,7 @@ const EMPTY: ComposerDraft = {
 	error: null,
 	selection: null,
 	editorText: null,
+	inFlight: null,
 };
 
 const drafts = createStore<Record<string, ComposerDraft>>(() => ({}));

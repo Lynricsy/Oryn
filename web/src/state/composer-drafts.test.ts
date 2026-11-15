@@ -22,6 +22,7 @@ describe("composer-drafts", () => {
 			error: null,
 			selection: null,
 			editorText: null,
+			inFlight: null,
 		});
 	});
 
