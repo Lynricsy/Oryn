@@ -397,11 +397,11 @@ Accept：`make check-gen && go test ./internal/orbdrt/...` 通过，用例断言
 ### 步骤 6.2：控制面下发器
 Depends on：6.1。
 Files：新建 `internal/orbs/apply.go` 及测试；修改 `internal/api/agentconfig.go`。
-Produces：`func (s *Service) ApplyOmpHome(ctx context.Context) (ApplyReport, error)`，其中 `ApplyReport{Orbs []OrbApply{OrbID string; OK bool; Err string}; Changed []string}`。
+Produces：`func (s *Service) ApplyOmpHome(ctx context.Context) (ApplyReport, error)`，其中 `ApplyReport{Orbs []OrbApply{OrbID string; OK bool; Err string}; Changed []string; ConfigBefore, ConfigAfter []byte}`。`ConfigBefore` 是上一次成功下发的 `config.yml`，`ConfigAfter` 是本次下发的 `config.yml`。
 Do：
 - 对每个 `ready` 且带 `omphome-apply` 能力的 orb：生成 `Plan`，下发 `omphome.apply`，然后 `setPolicy(orbID, plan.Egress)` 刷新模型路由。
 - 协调宿主只下发 `coordinatorFiles`。
-- agent-config 的 Put、Delete、Import 之后防抖 1 秒触发，并计算本次 `Changed` 路径集合。
+- agent-config 的 Put、Delete、Import 之后防抖 1 秒触发，计算本次 `Changed` 路径集合，并带上前后两版 `config.yml`。上一次下发的内容存在 `<data_dir>/omp-home-applied/config.yml`。
 - 冻结或停止的 orb 跳过，它们在 resume 时照常同步。
 Accept：`go test ./internal/orbs/...` 通过。用例：
 - 两个 ready orb 和一个 frozen orb，只有前两个收到 apply；
@@ -411,14 +411,21 @@ Accept：`go test ./internal/orbs/...` 通过。用例：
 Depends on：6.2（`Changed`）、步骤 6.4 的设置 schema。
 Files：`internal/threads/apply.go`（新建）及测试、`internal/threads/coordinator.go`（把 `RefreshAgent` 泛化为 `refreshLocked(reason)`，work 线程也可用）、`schema/openapi.yaml`（`GET /api/v1/agent-config/apply-status`、`POST /api/v1/agent-config/restart-sessions`）。
 Do：
-- 按 `Changed` 分类：
-  - `config.yml` 中只改了不需重启的键：什么都不做，omp 会自己监听生效；
-  - `skills/`、`commands/`、`rules/`、`prompts/`、`instructions/`、`AGENTS.md`、`RULES.md`：会话空闲时发送 `reload_plugins`（A4）；
-  - `agents/`：什么都不做，task 发起前会重新发现；
-  - `hooks/`、`extensions/`、`tools/`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`PERSONALITY.md`、`models.yml`、改动了 `restartRequired` 的键：把线程标为需重启，并记下原因。
+- 分类不能只看改了哪些文件：GUI 里所有启停操作都只改 `config.yml`。所以 `config.yml` 先做键级差分，其余文件再按路径分类，最后取并集：
+  - `config.yml` 的 `disabledExtensions`：比较前后两个集合，得到新增和移除的条目，再按条目前缀分类：
+    - `skill:`、`slash-command:`、`rule:`、`prompt:`、`instruction:`、`context-file:`、`mcp:` 有变化：会话空闲时发送 `reload_plugins`（A4）；
+    - `hook:`、`extension-module:`、`tool:` 有变化：把线程标为需重启，原因记为对应条目。
+  - `config.yml` 的 `task.disabledAgents`、`task.agentModelOverrides` 等 `task.*` 子 agent 键：什么都不做，task 发起前会重新读取。
+  - `config.yml` 的其他键：先按 6.4 的 schema 查是否 `restartRequired`。是则标为需重启，原因记为键名；否则什么都不做，omp 的文件监听会让它生效。
+  - 文件 `skills/`、`commands/`、`rules/`、`prompts/`、`instructions/`、`AGENTS.md`、`RULES.md`：会话空闲时发送 `reload_plugins`。
+  - 文件 `agents/`：什么都不做。
+  - 文件 `hooks/`、`extensions/`、`tools/`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`PERSONALITY.md`、`models.yml`：标为需重启，原因记为路径。
 - `restart-sessions` 对被标记的线程调用 `refreshLocked`：等 settled 后 `agent.stop`，下次命令走 wake 路径并以 `open_session` 拉起。
 Accept：`go test ./internal/threads/...` 通过。用例：
 - 改 `skills/x/SKILL.md` 后空闲线程收到 `reload_plugins`，运行中的线程在 `session_settled` 之后才收到；
+- `config.yml` 只往 `disabledExtensions` 里加 `skill:x`，线程收到 `reload_plugins`，且没有被标为需重启；
+- `config.yml` 只往 `disabledExtensions` 里加 `hook:pre:bash:guard`，apply-status 列出该线程，原因含该条目；
+- `config.yml` 只改了一个非 `restartRequired` 的键，线程既不收到 reload 也不被标记；
 - 改 `hooks/pre/x.ts` 后 apply-status 列出该线程；
 - 调用 restart-sessions 后线程在空闲时 stop，且下一条消息自动 start。
 
