@@ -12,6 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { parseOmfgWidget } from "../../lib/omfg-rule";
 import type { OmpCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { runModeCommand } from "../../state/actions";

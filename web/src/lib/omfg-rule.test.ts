@@ -45,6 +45,9 @@ describe("parseOmfgWidget（Core rpc-omfg.ts 的 setWidget 形状）", () => {
 		expect(parseOmfgWidget("other", [header, "", ...RULE_LINES])).toBeNull();
 		expect(parseOmfgWidget("omfg", [header, ...RULE_LINES])).toBeNull();
 		expect(
+			parseOmfgWidget("omfg", [header, "", "## Never use npm"]),
+		).toBeNull();
+		expect(
 			parseOmfgWidget("omfg", [header, "", "---", "title: x", "---"]),
 		).toBeNull();
 	});
