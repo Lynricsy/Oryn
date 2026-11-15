@@ -150,7 +150,7 @@ func (s *Server) init(ctx context.Context) error {
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
 		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
 	}, s.Store, s.Jobs, &orbs.DefaultSetup{
-		Store: s.Store, Home: s.Home, Vault: s.Vault,
+		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
 	}, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器

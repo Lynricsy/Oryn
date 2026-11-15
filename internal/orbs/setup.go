@@ -52,6 +52,11 @@ type Home interface {
 	Modes() (map[string]os.FileMode, error)
 }
 
+// ProjectConfigs 是项目级 omp 配置存储（*agentcfg.ProjectHomes 实现，M12.2）。
+type ProjectConfigs interface {
+	Load(projectID string) (map[string][]byte, map[string]os.FileMode, error)
+}
+
 // DefaultSetup 是默认的 SetupSource：项目（仓库、分支、浅克隆、脚本）+ omp-home 下发变换 + 密钥。
 type DefaultSetup struct {
 	Store *store.Store
@@ -60,6 +65,8 @@ type DefaultSetup struct {
 	// CoordinatorEgressAddr 是协调宿主内模型代理的监听地址（127.0.0.1:<coordinator.egress_port>）；
 	// 空 = agentcfg.EgressAddr。
 	CoordinatorEgressAddr string
+	// Projects 是项目级 omp 配置；可为 nil（不下发项目级配置）。
+	Projects ProjectConfigs
 }
 
 // coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（mcp.json、extensions/、skills/、
@@ -246,20 +253,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 		if err != nil {
 			return plan, fmt.Errorf("变换 omp-home: %w", err)
 		}
-		paths := make([]string, 0, len(rendered.Files))
-		for path := range rendered.Files {
-			paths = append(paths, path)
-		}
-		sort.Strings(paths)
-		for _, path := range paths {
-			mode := os.FileMode(0o644)
-			if m, ok := modes[path]; ok {
-				mode = m.Perm()
-			}
-			p.OmpHome = append(p.OmpHome, apigen.LinkCtlOmpHomeFile{
-				Path: path, Mode: int(mode), ContentB64: base64.StdEncoding.EncodeToString(rendered.Files[path]),
-			})
-		}
+		p.OmpHome = ompFiles(rendered.Files, modes)
 		// 环境变量降级的模型密钥优先于同名 env 密钥。
 		for k, v := range rendered.Env {
 			p.Env[k] = v
@@ -268,7 +262,36 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 			plan.Egress.Routes[k] = v
 		}
 	}
+	// 项目级 omp 配置（M12.2）：属于项目即下发（没有文件也给空清单，orbd 据此清空镜像）；原样下发，不经
+	// agentcfg.Render（项目层没有 models.yml，也不解析 ${oryn:secret:…}）。
+	if prj != nil && d.Projects != nil {
+		files, modes, err := d.Projects.Load(prj.ID)
+		if err != nil {
+			return plan, fmt.Errorf("读取项目 omp 配置: %w", err)
+		}
+		p.ProjectConfig = &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}
+	}
 	return plan, nil
+}
+
+// ompFiles 把配置文件按路径排序生成下发清单（权限缺省 0644，内容 base64）；没有文件时返回空切片而不是 nil。
+func ompFiles(files map[string][]byte, modes map[string]os.FileMode) []apigen.LinkCtlOmpHomeFile {
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	out := make([]apigen.LinkCtlOmpHomeFile, 0, len(paths))
+	for _, path := range paths {
+		mode := os.FileMode(0o644)
+		if m, ok := modes[path]; ok {
+			mode = m.Perm()
+		}
+		out = append(out, apigen.LinkCtlOmpHomeFile{
+			Path: path, Mode: int(mode), ContentB64: base64.StdEncoding.EncodeToString(files[path]),
+		})
+	}
+	return out
 }
 
 // gitRepo 是项目的 https 仓库：主机（小写）与仓库路径（保留原大小写，去掉 .git 后缀）。

@@ -177,6 +177,14 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		return fail(ctlErr("failed", "omp home: %v", err))
 	}
 	lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d file(s) to ~/.omp/agent", len(p.OmpHome)))
+	// 1b. 项目级 omp 配置（M12.2）：严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录。
+	if err := r.writeProjectOmp(p.ProjectConfig); err != nil {
+		lg.system(apigen.OmpHome, "error: "+err.Error())
+		return fail(ctlErr("failed", "project omp config: %v", err))
+	}
+	if p.ProjectConfig != nil {
+		lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d project config file(s) to ~/.oryn/project-config/.omp", len(p.ProjectConfig.Files)))
+	}
 
 	// 2. git insteadOf：经本机 egress 代理访问 git（控制面注入令牌）。条目为 `host`（整个主机，无项目的 orb 只读）
 	// 或 `host/owner/repo`（只覆盖项目仓库；同主机其它地址照常直连公网、不带令牌）。先清掉以前写过的全部条目，

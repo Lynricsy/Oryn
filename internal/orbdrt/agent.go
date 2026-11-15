@@ -613,6 +613,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		if r.runner == nil {
 			// orb 环境说明扩展；runner 不加载（用户机器上的 omp 只用它自己的扩展与技能）。
 			args = append(args, "-e", r.extensionPath())
+			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在桌面覆盖层之前。
+			args = r.applyProjectConfig(env, args)
 		}
 		if r.desk != nil {
 			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
