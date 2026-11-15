@@ -1183,6 +1183,13 @@ scenario("A8", async () => {
 	check(toasts > 0, `站内 toast 出现 ${toasts} 次`);
 });
 
+/** 手机线程页：经页头右上角的视图菜单切到某个视图（对话 / 改动 / 文件 / 终端 … / 信息）。 */
+async function openView(p: Page, view: string): Promise<void> {
+	await p.click("[data-testid=thread-view-menu]");
+	await p.waitForSelector(`[data-view=${view}]`, { timeout: 10_000 });
+	await p.click(`[data-view=${view}]`);
+}
+
 scenario("A9", async () => {
 	await ensurePaired();
 	const T = await ensureThread();
@@ -1195,15 +1202,21 @@ scenario("A9", async () => {
 		() => p.evaluate(() => document.documentElement.dataset.bp === "compact"),
 		10_000,
 	);
-	const tabs = await p.$$eval(
-		"[data-testid=thread-tabs] [data-panel-tab]",
-		(els) => els.map((e) => e.getAttribute("data-panel-tab")),
+	check(
+		(await p.$$("[data-testid=thread-tabs]")).length === 0,
+		"手机不常驻标签条",
 	);
-	note(`标签 ${tabs.join(", ")}`);
+	await p.click("[data-testid=thread-view-menu]");
+	await p.waitForSelector("[data-view]", { timeout: 10_000 });
+	const tabs = await p.$$eval("[data-view]", (els) =>
+		els.map((e) => e.getAttribute("data-view")),
+	);
+	await p.keyboard.press("Escape");
+	note(`视图菜单 ${tabs.join(", ")}`);
 	check(
 		tabs.slice(0, 4).join(",") === "agent,changes,files,terminal" &&
 			tabs.at(-1) === "info",
-		"标签顺序 agent, changes, files, terminal, …, info",
+		"视图顺序 agent, changes, files, terminal, …, info",
 	);
 	check((await p.$$(".fixed.inset-0.z-40")).length === 0, "没有抽屉遮罩");
 	// 转录进页面后还会陆续渲染、测量（虚拟列表）：高度稳定后再定位，并读回定位后真正的 scrollTop，
@@ -1239,7 +1252,7 @@ scenario("A9", async () => {
 			document.querySelector<HTMLElement>("[data-testid=transcript]")
 				?.scrollTop ?? -1,
 	);
-	await p.click("[data-testid=thread-tabs] [data-panel-tab=terminal]");
+	await openView(p, "terminal");
 	await waitFor(
 		"转录隐藏、终端可见",
 		() =>
@@ -1259,7 +1272,9 @@ scenario("A9", async () => {
 			}),
 		10_000,
 	);
-	await p.click("[data-testid=thread-tabs] [data-panel-tab=agent]");
+	await p.click(
+		'button[aria-label="返回对话"], button[aria-label="Back to conversation"]',
+	);
 	const top1 =
 		(await waitFor(
 			"转录重新可见",
@@ -1510,7 +1525,7 @@ scenario("A13", async () => {
 	await api("POST", `/api/v1/threads/${T}/wake`);
 	await goto(`/t/${T}`);
 	const p = await page();
-	await p.click("[data-testid=thread-tabs] [data-panel-tab=terminal]");
+	await openView(p, "terminal");
 	await p.waitForSelector("[data-testid=terminal-panel]", { timeout: 15_000 });
 	if (!(await p.$("[data-testid=terminal-view]")))
 		await p.click(

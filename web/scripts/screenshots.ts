@@ -779,11 +779,25 @@ async function sendPrompt(page: Page, text: string) {
 	await composer(page).press("Enter");
 }
 
-/** 切到右侧面板的指定标签（窄屏是线程页的同级标签，宽屏先打开面板列）。 */
+/**
+ * 切到右侧面板的指定标签：宽屏先打开面板列再点标签；medium 点线程页的同级标签；
+ * 手机（compact）没有常驻标签条，经页头右上角的视图菜单（`thread-view-menu` → `[data-view]`）切换。
+ */
 async function openPanel(
 	page: Page,
 	tab: "info" | "changes" | "files" | "terminal" | "portal" | "desktop",
 ) {
+	const views = page.locator("[data-testid=thread-view-menu]").first();
+	if (await views.isVisible().catch(() => false)) {
+		await views.click();
+		const item = page.locator(`[data-view=${tab}]`);
+		await item.waitFor({ timeout: 10_000 });
+		if ((await item.getAttribute("aria-checked")) === "true")
+			await page.keyboard.press("Escape");
+		else await item.click();
+		await page.waitForTimeout(400);
+		return;
+	}
 	const btn = page.locator(`[data-panel-tab=${tab}]`);
 	if (!(await btn.isVisible().catch(() => false)))
 		await page.getByRole("button", { name: "信息面板", exact: true }).click();
@@ -1289,13 +1303,14 @@ const SCREENS: Screen[] = [
 		},
 	},
 	...m9Screens(),
-	// M7：窄屏线程页的同级标签（Agent | Changes | Files | Terminal … | Info）
+	// 手机线程页的视图菜单（对话 / 改动 / 文件 / 终端 … / 信息），展开状态
 	{
-		name: "thread-compact-tabs",
+		name: "thread-compact-views",
 		widths: [390],
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
-			await page.locator("[data-testid=thread-tabs]").first().waitFor();
+			await page.locator("[data-testid=thread-view-menu]").first().click();
+			await page.locator("[data-view=agent]").waitFor();
 			await settle(page, 600);
 		},
 	},

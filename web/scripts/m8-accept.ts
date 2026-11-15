@@ -935,14 +935,35 @@ const STAGE = "[data-testid=desktop-stage]";
 const CANVAS = `${STAGE} canvas`;
 
 async function openDesktopTab(page: Page) {
-	await page.locator(DESK_TAB).first().waitFor({ timeout: 60_000 });
-	// compact 是顶部同级标签（thread-tabs），其余是右侧面板的标签条
-	const inTabs = page.locator(`[data-testid=thread-tabs] ${DESK_TAB}`);
-	const tab =
-		(await inTabs.count()) > 0
-			? inTabs.first()
-			: page.locator(DESK_TAB).first();
-	if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+	const views = page.locator("[data-testid=thread-view-menu]").first();
+	await page
+		.locator(`${DESK_TAB}, [data-testid=thread-view-menu]`)
+		.first()
+		.waitFor({ timeout: 60_000 });
+	if (await views.isVisible().catch(() => false)) {
+		// compact 没有常驻标签条：经页头右上角的视图菜单切到桌面；orb 到达前菜单里还没有桌面一项，关上重开
+		const item = page.locator("[data-view=desktop]");
+		const deadline = Date.now() + 60_000;
+		for (;;) {
+			await views.click();
+			if (
+				await item
+					.waitFor({ timeout: 2_000 })
+					.then(() => true)
+					.catch(() => false)
+			)
+				break;
+			await page.keyboard.press("Escape");
+			if (Date.now() > deadline) throw new Error("视图菜单里没有桌面");
+			await page.waitForTimeout(1_000);
+		}
+		if ((await item.getAttribute("aria-checked")) === "true")
+			await page.keyboard.press("Escape");
+		else await item.click();
+	} else {
+		const tab = page.locator(DESK_TAB).first();
+		if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+	}
 	await page
 		.locator("[data-testid=desktop-panel]")
 		.waitFor({ timeout: 30_000 });
