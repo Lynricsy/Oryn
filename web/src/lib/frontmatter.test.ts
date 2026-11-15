@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseFrontmatterBlock, splitFrontmatter } from "./frontmatter";
+import {
+	parseFrontmatter,
+	parseFrontmatterBlock,
+	splitFrontmatter,
+	stringifyFrontmatter,
+} from "./frontmatter";
 
 /** Core `assembleRuleMarkdown` 的真实形状：字符串都经 JSON.stringify。 */
 const RULE = [
@@ -129,5 +134,83 @@ describe("splitFrontmatter", () => {
 		const doc = splitFrontmatter("\uFEFF---\r\nname: x\r\n---\r\n\r\nbody");
 		expect(doc?.fields).toEqual([{ key: "name", value: "x" }]);
 		expect(doc?.body).toBe("body");
+	});
+});
+
+const SKILL = [
+	"---",
+	"name: review",
+	"description: 代码评审：先读 diff，再给结论",
+	"tools:",
+	"  - read",
+	"  - grep",
+	"blocking: true",
+	"---",
+	"",
+	"# 评审",
+	"",
+	"正文",
+	"",
+].join("\n");
+
+describe("parseFrontmatter / stringifyFrontmatter", () => {
+	it("按完整 YAML 取值", () => {
+		expect(parseFrontmatter(SKILL)).toEqual({
+			data: {
+				name: "review",
+				description: "代码评审：先读 diff，再给结论",
+				tools: ["read", "grep"],
+				blocking: true,
+			},
+			body: "# 评审\n\n正文\n",
+		});
+	});
+
+	it("文本 → 解析 → 生成 往返一致", () => {
+		const { data, body } = parseFrontmatter(SKILL);
+		expect(stringifyFrontmatter(data, body)).toBe(SKILL);
+	});
+
+	it("数据 → 生成 → 解析 往返一致：嵌套、多行、特殊字符、长串不折行", () => {
+		const data = {
+			name: "x",
+			description: "a: b # 不是注释 ".repeat(20).trim(),
+			model: ["@smol", "openai/gpt-5-mini:high"],
+			meta: { n: 1, flag: false, note: "第一行\n第二行\n" },
+			empty: "",
+			yes: "true",
+		};
+		const body = "正文\n\n---\n\n分隔线之后";
+		const text = stringifyFrontmatter(data, body);
+		expect(text.split("---\n")[1]).not.toMatch(/\n\s+不是注释/);
+		expect(parseFrontmatter(text)).toEqual({ data, body });
+	});
+
+	it("undefined 的键略去；没有字段时只输出正文", () => {
+		expect(stringifyFrontmatter({ a: "x", b: undefined }, "")).toBe(
+			"---\na: x\n---\n",
+		);
+		expect(stringifyFrontmatter({ a: undefined }, "正文")).toBe("正文");
+		expect(parseFrontmatter("正文")).toEqual({ data: {}, body: "正文" });
+	});
+
+	it("CRLF 与 BOM 统一", () => {
+		expect(parseFrontmatter("\uFEFF---\r\nname: x\r\n---\r\nbody")).toEqual({
+			data: { name: "x" },
+			body: "body",
+		});
+	});
+
+	it("坏 frontmatter 给出 error，正文保留整份原文", () => {
+		for (const text of [
+			"---\nname: x\n",
+			"---\nname: [x\n---\nbody",
+			"---\n- a\n- b\n---\nbody",
+		]) {
+			const parsed = parseFrontmatter(text);
+			expect(parsed.error, text).toBeTruthy();
+			expect(parsed.data).toEqual({});
+			expect(parsed.body).toBe(text);
+		}
 	});
 });

@@ -1,12 +1,18 @@
 /**
- * Markdown 文档开头 YAML frontmatter 的小解析器（只为展示，不求完整 YAML）。
+ * Markdown 文档开头的 YAML frontmatter。
  *
  * 只认文档**首行**是 `---` 的 frontmatter，到下一行独立的 `---`（或 `...`）为止；正文里的 `---` 分隔线不受影响。
- * 支持的子集：顶层 `key: value`；值为纯标量（缩进续行按 YAML 折成一行）、双引号串（YAML 转义）、单引号串（`''`）、
- * 行内数组 `[a, "b", 'c']`、块式数组（`- item`）、块标量（`|` / `>` 及 `-` / `+` 尾随修饰）。
- * 嵌套映射、行内映射、锚点 / 别名 / 标签、多行引号串等一律不支持：整段解析失败，调用方回落到原来的渲染。
- * 标量一律保留原文字符串（`1.10` 不会变成 `1.1`，`true` 原样显示）。
+ *
+ * 两套入口：
+ * - 展示用（`splitFrontmatter` / `parseFrontmatterBlock`）：自带的小解析器，不求完整 YAML。
+ *   支持的子集：顶层 `key: value`；值为纯标量（缩进续行按 YAML 折成一行）、双引号串（YAML 转义）、单引号串（`''`）、
+ *   行内数组 `[a, "b", 'c']`、块式数组（`- item`）、块标量（`|` / `>` 及 `-` / `+` 尾随修饰）。
+ *   嵌套映射、行内映射、锚点 / 别名 / 标签、多行引号串等一律不支持：整段解析失败，调用方回落到原来的渲染。
+ *   标量一律保留原文字符串（`1.10` 不会变成 `1.1`，`true` 原样显示）。
+ * - 编辑用（`parseFrontmatter` / `stringifyFrontmatter`）：完整 YAML（`yaml` 包），供设置页的 frontmatter 表单读写文件。
  */
+
+import { isMap, parseDocument, stringify } from "yaml";
 
 export type FrontmatterValue = string | string[];
 
@@ -313,23 +319,76 @@ export function parseFrontmatterBlock(
 	return fields.length > 0 ? fields : null;
 }
 
-/**
- * 拆出文档开头的 frontmatter；文档首行不是 `---`、没有闭合行、或块里有不支持的结构时返回 null。
- */
-export function splitFrontmatter(text: string): FrontmatterDoc | null {
+type SplitResult =
+	| { kind: "none"; src: string }
+	| { kind: "unclosed"; src: string }
+	| { kind: "ok"; src: string; block: string; body: string };
+
+/** 按首行 `---` 与闭合行拆出 frontmatter 块与正文（正文去掉开头空行）；先去 BOM、统一换行为 `\n`。 */
+function splitBlock(text: string): SplitResult {
 	const src = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
 	const nl = src.indexOf("\n");
-	if (nl < 0 || !OPEN_RE.test(src.slice(0, nl))) return null;
+	if (nl < 0 || !OPEN_RE.test(src.slice(0, nl))) return { kind: "none", src };
 	const lines = src.slice(nl + 1).split("\n");
 	const close = lines.findIndex((l) => CLOSE_RE.test(l));
-	if (close < 0) return null;
-	const fields = parseFrontmatterBlock(lines.slice(0, close).join("\n"));
-	if (!fields) return null;
+	if (close < 0) return { kind: "unclosed", src };
 	const body = lines
 		.slice(close + 1)
 		.join("\n")
 		.replace(/^(?:[ \t]*\n)+/, "");
-	return { fields, body };
+	return { kind: "ok", src, block: lines.slice(0, close).join("\n"), body };
+}
+
+/**
+ * 拆出文档开头的 frontmatter；文档首行不是 `---`、没有闭合行、或块里有不支持的结构时返回 null。
+ */
+export function splitFrontmatter(text: string): FrontmatterDoc | null {
+	const split = splitBlock(text);
+	if (split.kind !== "ok") return null;
+	const fields = parseFrontmatterBlock(split.block);
+	return fields ? { fields, body: split.body } : null;
+}
+
+export interface ParsedFrontmatter {
+	/** frontmatter 映射（完整 YAML 语义：数字、布尔、嵌套结构都按 YAML 取值）；没有 frontmatter 时为空对象。 */
+	data: Record<string, unknown>;
+	/** frontmatter 之后的正文（去掉开头空行）；出错时为整份原文，调用方可回落到原文编辑。 */
+	body: string;
+	/** frontmatter 存在但无法解析时的原因。 */
+	error?: string;
+}
+
+/** 解析编辑用的 frontmatter；首行不是 `---` 时整份文本都是正文。 */
+export function parseFrontmatter(text: string): ParsedFrontmatter {
+	const split = splitBlock(text);
+	if (split.kind === "none") return { data: {}, body: split.src };
+	if (split.kind === "unclosed") {
+		return { data: {}, body: split.src, error: "frontmatter 缺少闭合的 ---" };
+	}
+	const doc = parseDocument(split.block);
+	const err = doc.errors[0];
+	if (err) return { data: {}, body: split.src, error: err.message };
+	if (doc.contents === null) return { data: {}, body: split.body };
+	if (!isMap(doc.contents)) {
+		return { data: {}, body: split.src, error: "frontmatter 不是键值映射" };
+	}
+	return { data: doc.toJS() as Record<string, unknown>, body: split.body };
+}
+
+/**
+ * 生成 `---\n<yaml>---\n\n<正文>`；值为 undefined 的键略去，没有字段时只输出正文。
+ * 与 `parseFrontmatter` 往返一致（正文不以空行开头时）。长字符串不折行（`lineWidth: 0`）。
+ */
+export function stringifyFrontmatter(
+	data: Record<string, unknown>,
+	body: string,
+): string {
+	const fields = Object.fromEntries(
+		Object.entries(data).filter(([, v]) => v !== undefined),
+	);
+	if (Object.keys(fields).length === 0) return body;
+	const head = `---\n${stringify(fields, { lineWidth: 0 })}---\n`;
+	return body === "" ? head : `${head}\n${body}`;
 }
 
 /** 按 key 取字段值。 */
