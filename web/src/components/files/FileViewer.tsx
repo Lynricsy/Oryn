@@ -66,6 +66,8 @@ type Loaded =
 			entry: FileEntry;
 			text: string;
 			etag?: string;
+			/** 只显示了前 `PREVIEW_BYTES`（太大或读取被截断） */
+			truncated: boolean;
 			readOnly: boolean;
 	  }
 	| { kind: "image"; entry: FileEntry; url: string }
@@ -77,6 +79,7 @@ export function FileViewer({
 	onSaved,
 	onBack,
 	onDownload,
+	readOnly = false,
 }: {
 	source: FileSource;
 	path: string;
@@ -84,6 +87,8 @@ export function FileViewer({
 	/** 窄布局下返回列表 */
 	onBack?(): void;
 	onDownload?(path: string): void;
+	/** 只预览不编辑（来源不支持写入，如助手文件库） */
+	readOnly?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -121,12 +126,14 @@ export function FileViewer({
 					path,
 					editable ? MAX_EDIT_BYTES : PREVIEW_BYTES,
 				);
+				const truncated = !editable || r.truncated;
 				return {
 					kind: "text",
 					entry,
 					text: r.text,
 					etag: r.etag ?? entry.etag,
-					readOnly: !editable || r.truncated,
+					truncated,
+					readOnly: readOnly || truncated,
 				} as const;
 			}
 			return { kind: "binary", entry } as const;
@@ -146,7 +153,7 @@ export function FileViewer({
 			cancelled = true;
 			if (url) URL.revokeObjectURL(url);
 		};
-	}, [source, path, reloadKey]);
+	}, [source, path, readOnly, reloadKey]);
 
 	const text = loaded?.kind === "text" ? loaded : null;
 	const dirty = text !== null && !text.readOnly && draft !== undefined;
@@ -308,7 +315,7 @@ export function FileViewer({
 								{t("files.viewer.draftStale")}
 							</p>
 						)}
-						{loaded.readOnly && (
+						{loaded.truncated && (
 							<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
 								<Icon name="info" size={13} className="shrink-0" />
 								{t("files.viewer.previewTruncated", {

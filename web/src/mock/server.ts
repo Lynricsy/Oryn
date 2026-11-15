@@ -56,6 +56,7 @@ import {
 	toolZooLiveFrames,
 	toolZooReplayFrames,
 } from "./fixtures";
+import { MockLibrary } from "./library";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { handleStatsFetch } from "./stats";
@@ -473,6 +474,8 @@ export class MockServer {
 		projects: () => this.projects,
 		threadTitle: (id) => this.threads.get(id)?.title,
 	});
+	/** 全局助手文件库（M13）。 */
+	readonly library = new MockLibrary(this.threads);
 	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
 	readonly automation = new MockAutomation({
 		threads: this.threads,
@@ -1168,6 +1171,8 @@ export class MockServer {
 		};
 		const autoRes = await this.automation.handle(req, p, m, url);
 		if (autoRes) return autoRes;
+		const libRes = await this.library.handle(req, p, m, url);
+		if (libRes) return libRes;
 		const deskRes = await this.desktop.handle(req, p, m);
 		if (deskRes) return deskRes;
 		const statsRes = await handleStatsFetch(req, p, m, url, {
@@ -1895,17 +1900,17 @@ export class MockServer {
 	}
 
 	/**
-	 * 模拟控制面投递：绑定到线程并在消息末尾追加 `<oryn-attachments>` 块（路径形如 orb 内的投递位置）。
-	 * 有附件属于别的线程时返回 null（投递失败）。
+	 * 模拟控制面投递：绑定到线程并在消息末尾追加 `<oryn-attachments>` 块（路径形如 orb 内的投递位置）；
+	 * `extra` 是文件库文件的行（`orynFiles`，见 `MockLibrary.deliver`）。有附件属于别的线程时返回 null（投递失败）。
 	 */
 	private withAttachments(
 		threadId: string,
 		message: string,
 		ids: unknown,
+		extra: string[] = [],
 	): string | null {
-		if (!Array.isArray(ids) || ids.length === 0) return message;
 		const lines: string[] = [];
-		for (const id of ids) {
+		for (const id of Array.isArray(ids) ? ids : []) {
 			const a = this.attachments.get(String(id));
 			if (!a || (a.meta.threadId && a.meta.threadId !== threadId)) return null;
 			a.meta = { ...a.meta, threadId };
@@ -1913,6 +1918,8 @@ export class MockServer {
 				`- /home/user/.oryn/attachments/${threadId}/${a.meta.id}/${a.meta.name} (${a.meta.mime}, ${a.meta.size} bytes)`,
 			);
 		}
+		lines.push(...extra);
+		if (lines.length === 0) return message;
 		const block = `<oryn-attachments>\nThe user attached these files. They are stored outside the repository; read them when relevant and do not copy them into the repository unless asked.\n${lines.join("\n")}\n</oryn-attachments>`;
 		return message ? `${message}\n\n${block}` : block;
 	}
@@ -3210,11 +3217,15 @@ export class MockServer {
 				});
 			case "prompt":
 			case "abort_and_prompt": {
-				const message = this.withAttachments(
-					threadId,
-					String(frame.message ?? ""),
-					frame.orynAttachments,
-				);
+				const files = this.library.deliver(threadId, frame.orynFiles);
+				const message =
+					files &&
+					this.withAttachments(
+						threadId,
+						String(frame.message ?? ""),
+						frame.orynAttachments,
+						files,
+					);
 				if (message === null)
 					return this.respond(
 						socket,

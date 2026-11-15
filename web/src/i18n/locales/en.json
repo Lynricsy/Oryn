@@ -2419,6 +2419,33 @@
 		"conversations": "Conversations",
 		"createFailed": "Couldn't start an assistant conversation"
 	},
+	"library": {
+		"title": "File library",
+		"filter": {
+			"visible": "This conversation + shared",
+			"all": "All"
+		},
+		"empty": "No files in the library yet",
+		"hint": "Attachments sent in assistant conversations, files the assistant saved, and files stored from orbs show up here. Conversation-only files are readable by their own conversation; shared files by every assistant conversation.",
+		"source": {
+			"upload": "Uploaded",
+			"assistant": "Saved by assistant",
+			"orb": "orb"
+		},
+		"scope": {
+			"conversation": "This conversation only",
+			"shared": "Shared"
+		},
+		"conversation": "Conversation",
+		"thisConversation": "This conversation",
+		"sourceThread": "From thread",
+		"preview": "Preview",
+		"download": "Download",
+		"makeShared": "Share across the library",
+		"makeConversation": "Make conversation-only",
+		"delete": "Delete",
+		"deleteConfirm": "Delete “{{name}}”? Copies already attached to other threads are kept."
+	},
 	"coordinator": {
 		"unavailableTitle": "The assistant is unavailable",
 		"seeAbout": "See Settings → About for the coordinator host status",

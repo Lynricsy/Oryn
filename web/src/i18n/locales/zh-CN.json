@@ -2419,6 +2419,33 @@
 		"conversations": "对话",
 		"createFailed": "没能创建助手对话"
 	},
+	"library": {
+		"title": "文件库",
+		"filter": {
+			"visible": "本对话与共享",
+			"all": "全部"
+		},
+		"empty": "文件库里还没有文件",
+		"hint": "在助手对话里发送的附件、助手保存的文件和 orb 存入的文件都在这里。仅此对话的文件只有所属对话能读，库内共享的文件所有助手对话都能读。",
+		"source": {
+			"upload": "上传",
+			"assistant": "助手保存",
+			"orb": "orb"
+		},
+		"scope": {
+			"conversation": "仅此对话",
+			"shared": "库内共享"
+		},
+		"conversation": "所属对话",
+		"thisConversation": "本对话",
+		"sourceThread": "来源线程",
+		"preview": "预览",
+		"download": "下载",
+		"makeShared": "设为库内共享",
+		"makeConversation": "改回仅所属对话",
+		"delete": "删除",
+		"deleteConfirm": "删除「{{name}}」？已复制给其它线程的附件不受影响。"
+	},
 	"coordinator": {
 		"unavailableTitle": "全局助手暂不可用",
 		"seeAbout": "在 设置 → 关于 查看协调宿主状态",

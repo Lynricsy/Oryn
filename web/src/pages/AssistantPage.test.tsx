@@ -291,4 +291,18 @@ describe("AssistantPage", () => {
 		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
 		expect(screen.getByRole("menuitem", { name: "新对话" })).toBeDisabled();
 	});
+
+	it("页头「文件库」打开文件库面板；面板里跳到别的对话后自动收起", async () => {
+		mount(`/assistant/${M9_IDS.assistant}`);
+		await screen.findByTestId("screen");
+		fireEvent.click(screen.getByRole("button", { name: "文件库" }));
+		const dialog = await screen.findByRole("dialog", { name: "文件库" });
+		expect(
+			await within(dialog).findByRole("listitem", {
+				name: "周报-11月第2周.md",
+			}),
+		).toBeVisible();
+		act(() => go("/assistant/T-elsewhere"));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	});
 });

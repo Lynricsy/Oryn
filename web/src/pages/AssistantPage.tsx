@@ -1,7 +1,7 @@
 /**
  * 全局助手页（M9，`Ctrl/Cmd+/`）：`/assistant` 跳到最近一个未归档的助手对话，没有就新建一个；
  * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是助手的圆形小头像 + 对话标题 +
- * 动作菜单（新对话、归档此对话）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
+ * 文件库按钮（M13，对话框里是 `LibraryPanel`）+ 动作菜单（新对话、归档此对话）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
  * `available === false`）时不创建对话：页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；
  * 已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
  */
@@ -11,11 +11,13 @@ import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { useCoordinatorStatus } from "../api/coordinator-queries";
 import { useAssistantIdentity } from "../api/identity-queries";
 import { createAssistantConversation } from "../api/space-queries";
+import { LibraryPanel } from "../components/assistant/LibraryPanel";
 import { CoordinatorHeader } from "../components/thread/CoordinatorHeader";
 import { Callout, Sheet } from "../components/ui/data";
 import { AssistantAvatar } from "../components/ui/IdentityAvatar";
 import { Icon } from "../components/ui/icons";
 import {
+	Dialog,
 	describeError,
 	IconButton,
 	Menu,
@@ -147,6 +149,8 @@ function AssistantHeader({
 	const current = useIndex((s) => s.threads[threadId]);
 	const archive = useArchiveAssistantConversation();
 	const [error, setError] = useState<unknown>(null);
+	// 记下是在哪个对话里打开的：从面板里跳到别的对话后自动收起
+	const [libraryFor, setLibraryFor] = useState<string | null>(null);
 	const title = current
 		? parseTitleCard(current.title).text || t("assistant.untitled")
 		: t("assistant.title");
@@ -193,12 +197,26 @@ function AssistantHeader({
 							{describeError(error, t)}
 						</span>
 					) : null}
+					<IconButton
+						icon="folder"
+						label={t("library.title")}
+						onClick={() => setLibraryFor(threadId)}
+					/>
 					<Menu
 						items={items}
 						trigger={(p) => (
 							<IconButton icon="more" label={t("assistant.actions")} {...p} />
 						)}
 					/>
+					{/* 对话框经 portal 渲染到 body，放在动作槽里只为就近持有状态 */}
+					<Dialog
+						open={libraryFor === threadId}
+						wide
+						onClose={() => setLibraryFor(null)}
+						title={t("library.title")}
+					>
+						<LibraryPanel threadId={threadId} />
+					</Dialog>
 				</>
 			}
 		/>
