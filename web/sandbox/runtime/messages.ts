@@ -9,6 +9,10 @@ import {
 	runeCount,
 	validEditText,
 } from "../../src/lib/artifacts/editable";
+import {
+	type ParamValue,
+	parseParamValues,
+} from "../../src/lib/artifacts/params";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -97,10 +101,13 @@ export type ParentMessage = Envelope &
 		| { kind: "preview-style"; style: Partial<EditableStyle> }
 		| { kind: "preview-text"; text: string }
 		| { kind: "preview-reset" }
+		/** 预览调节参数（不落盘，页面重载后失效）：只含参数名与基本类型的值，是否符合声明由页面运行时再判。 */
+		| { kind: "params"; values: Record<string, ParamValue> }
 	);
 
 /** 页面 → 父页面。 */
 export type PageMessage = Envelope &
+	/** `params` 是页面声明的调节参数（规整后，「参数名 → 定义」）；父页面用 `parseParamsDecl` 再校验一遍。 */
 	(
 		| { kind: "ready"; params: Record<string, unknown> }
 		| { kind: "scroll"; x: number; y: number }
@@ -332,6 +339,10 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
 		case "preview-text":
 		case "preview-reset":
 			return parseSelectRequest(head, m);
+		case "params": {
+			const values = parseParamValues(m.values);
+			return values ? { ...head, kind: m.kind, values } : null;
+		}
 		default:
 			return null;
 	}

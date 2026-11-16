@@ -205,11 +205,13 @@ func (h *Host) publicRoot(r *http.Request, a Artifact, version int, root string)
 }
 
 // publishedHTML 在 InsertionPoint 处插入 `<meta name="robots" content="noindex">` 与内联的访客心跳脚本
-// （心跳发到 `<root>_oryn/beat`；没构建 Web 时只插 meta）。
+// （心跳发到 `<root>_oryn/beat`；没构建 Web 时只插 meta），之后是设调节参数的内联脚本（页面声明了参数时；
+// 发布页没有页面运行时，见 ParamsPrelude）。
 func (h *Host) publishedHTML(src []byte, root string) []byte {
 	at := htmlsrc.InsertionPoint(src)
+	prelude := ParamsPrelude(src)
 	var b bytes.Buffer
-	b.Grow(len(src) + len(h.beaconJS) + len(root) + 96)
+	b.Grow(len(src) + len(h.beaconJS) + len(root) + len(prelude) + 96)
 	b.Write(src[:at])
 	b.WriteString(`<meta name="robots" content="noindex">`)
 	if len(h.beaconJS) > 0 {
@@ -217,6 +219,7 @@ func (h *Host) publishedHTML(src []byte, root string) []byte {
 		b.Write(h.beaconJS)
 		b.WriteString(`</script>`)
 	}
+	b.Write(prelude)
 	b.Write(src[at:])
 	return b.Bytes()
 }

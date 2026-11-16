@@ -518,6 +518,20 @@ export async function editArtifactElement(
 	return { kind: "saved", version: r.version };
 }
 
+/** 把「调节」面板改的值写回页面的参数声明，落成一个用户版本，回新版本号。失败（含 409 冲突）抛 `ApiError`。 */
+export async function setArtifactParams(
+	id: string,
+	body: Schemas["ArtifactParamsSet"],
+): Promise<number> {
+	const r = await unwrap(
+		api.PUT("/api/v1/artifacts/{id}/params", {
+			params: { path: { id } },
+			body,
+		}),
+	);
+	return r.version;
+}
+
 /** 读某个版本里一个文件的原始字节。失败抛 `ApiError`。 */
 export async function fetchArtifactFileBytes(
 	id: string,

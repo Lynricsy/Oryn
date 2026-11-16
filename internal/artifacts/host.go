@@ -191,7 +191,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 		h.fail(w, err)
 		return
 	}
-	if !f.topLevel {
+	if f.topLevel {
+		// 顶层帧没有页面运行时：页面声明的调节参数由服务端算好的内联脚本设到根元素上
+		src = withParamsPrelude(src)
+	} else {
 		src = servedHTML(src, path, root, f.runtime, h.runtimeJS)
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(src)))

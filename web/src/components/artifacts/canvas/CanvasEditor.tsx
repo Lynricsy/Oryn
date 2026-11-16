@@ -103,7 +103,7 @@ import { useHandOff } from "./handoff";
 import { isTypingTarget, keyAction, type Tool, type ZoomTarget } from "./keys";
 import { LayersPanel } from "./LayersPanel";
 import { NotesLayer } from "./notes";
-import { PropsPanel } from "./PropsPanel";
+import { PropsPanel, type PropsTab } from "./PropsPanel";
 import {
 	attachAt,
 	type CanvasItem,
@@ -132,6 +132,7 @@ import {
 	SHAPES,
 	Toolbar,
 } from "./Toolbar";
+import { TweaksPanel, useFrameParams } from "./TweaksPanel";
 import { useCanvasDoc } from "./use-canvas-doc";
 import "./canvas.css";
 
@@ -366,6 +367,9 @@ export function CanvasEditor({
 	// ------------------------------------------------------------ 各文件的版本号
 	const files = detail.data?.files;
 	const head = detail.data?.version ?? 0;
+	// 画框回报的调节参数声明（6.5）与属性面板的当前标签（画框名称行的「调节」直接切过去）
+	const frameParams = useFrameParams(head);
+	const [propsTab, setPropsTab] = useState<PropsTab>("props");
 	const [fv, setFv] = useState<FileVersions | null>(null);
 	let versions = fv;
 	if (files && !pinned && fv?.head !== head) {
@@ -466,10 +470,14 @@ export function CanvasEditor({
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stageShown]);
 
-	const onLink = useCallback((pageId: string, link: FrameLink | null) => {
-		if (link) links.current.set(pageId, link);
-		else links.current.delete(pageId);
-	}, []);
+	const onLink = useCallback(
+		(pageId: string, link: FrameLink | null) => {
+			if (link) links.current.set(pageId, link);
+			else links.current.delete(pageId);
+			frameParams.track(pageId, link);
+		},
+		[frameParams.track],
+	);
 
 	const commit = (ops: CanvasOp[], inverse?: CanvasOp[]): boolean =>
 		!!sync && !readOnly && sync.commit(ops, inverse ? { inverse } : {});
@@ -1443,6 +1451,14 @@ export function CanvasEditor({
 										);
 										stageRef.current?.focus({ preventScroll: true });
 									}}
+									onTweaks={
+										showPanels && !readOnly && frameParams.declared(p.id)
+											? () => {
+													setSelected([p.id]);
+													setPropsTab("tweaks");
+												}
+											: undefined
+									}
 									onDownloadPng={
 										render
 											? () => void downloadFramePng(artifactId, p, version, t)
@@ -1587,6 +1603,17 @@ export function CanvasEditor({
 					overlay={narrow}
 					commit={(ops) => commit(ops)}
 					onSelect={setSelected}
+					tab={propsTab}
+					onTab={setPropsTab}
+					tweaks={(page) => (
+						<TweaksPanel
+							key={page.id}
+							artifactId={artifactId}
+							page={page}
+							frame={frameParams.byPage[page.id]}
+							post={(body) => frameParams.post(page.id, body)}
+						/>
+					)}
 				/>
 			)}
 			{present && (

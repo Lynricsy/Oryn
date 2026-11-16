@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"html"
+	"io"
 	"net/http"
 	"regexp"
 	"slices"
@@ -198,5 +199,15 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 	}
 	defer rc.Close()
 	w.Header().Set("Content-Type", file.Mime)
-	http.ServeContent(w, r, "", time.Time{}, rc)
+	if !IsHTML(path) {
+		http.ServeContent(w, r, "", time.Time{}, rc)
+		return
+	}
+	// 渲染模式没有页面运行时：页面声明的调节参数由服务端算好的内联脚本设到根元素上
+	src, err := io.ReadAll(rc)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(withParamsPrelude(src)))
 }

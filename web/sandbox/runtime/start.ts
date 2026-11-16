@@ -9,6 +9,7 @@ import {
 	PROTOCOL_VERSION,
 	parseParentMessage,
 } from "./messages";
+import { installParams, type PageParams } from "./params";
 import { installSelection } from "./select";
 
 /** 服务端随页面注入的配置：`__orynStart(<配置 JSON>)`。 */
@@ -90,6 +91,10 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 	const scrollTo = win.scrollTo.bind(win);
 	let channel: string | null = null;
 	let domReady = doc.readyState !== "loading";
+	// 调节参数在 DOM 就绪后读声明；旧版本的帧也设（只是显示），但不接受预览
+	let params: PageParams | null = domReady
+		? installParams(doc, natives.parse)
+		: null;
 
 	const send = (body: PageMessageBody) => {
 		if (channel === null) return;
@@ -100,7 +105,8 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 
 	// ready 要等 DOM 就绪且父页面已用 hello 定下通道（hello 在帧的 load 事件之后才到）
 	const sendReady = () => {
-		if (config.runtime && domReady) send({ kind: "ready", params: {} });
+		if (config.runtime && domReady)
+			send({ kind: "ready", params: params?.decl ?? {} });
 	};
 
 	// 选择与评论模式只在跟随最新版本的帧上有；捕获阶段的指针监听要先于下面的链接拦截注册
@@ -132,6 +138,9 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 				case "restore-scroll":
 					scrollTo(msg.x, msg.y);
 					break;
+				case "params":
+					if (config.runtime) params?.preview(msg.values);
+					break;
 				default:
 					selection?.handle(msg);
 					break;
@@ -145,6 +154,7 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 			"DOMContentLoaded",
 			() => {
 				domReady = true;
+				params = installParams(doc, natives.parse);
 				if (channel !== null) sendReady();
 			},
 			{ once: true },

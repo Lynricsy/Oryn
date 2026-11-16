@@ -4,7 +4,8 @@
  * - 单选画框：名字；尺寸预设（桌面、笔记本、平板、手机、自定义）；宽、高、X、Y。锁定的画框不能改位置与尺寸。
  * - 单选标注：颜色、线宽（画笔与形状）、字号（文字）、「已处理」（便签；agent 写的便签处理后显示「{线程} 已处理」）。
  * - 「排列」：对齐（≥ 2 个画框）、等距（≥ 3 个）、复制、锁定 / 解锁、移到最前 / 最后、删除。
- * 「调节」标签的参数列表在 6.5 接入；这里给出它的位置与空态。
+ * 「调节」标签：单选画框时显示调用方给的调节面板（6.5 的 `TweaksPanel`）；没给时是空态。标签可由调用方受控
+ * （画框名称行的「调节」按钮要直接切到这一页）。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -58,9 +59,14 @@ export interface PropsPanelProps {
 	onSelect(ids: string[]): void;
 	/** 窄窗口里覆盖在画布上。 */
 	overlay: boolean;
+	/** 受控的当前标签；不给时面板自己记。 */
+	tab?: PropsTab;
+	onTab?(tab: PropsTab): void;
+	/** 单选画框时「调节」标签的内容。 */
+	tweaks?(page: CanvasPage): ReactNode;
 }
 
-type Tab = "props" | "tweaks";
+export type PropsTab = "props" | "tweaks";
 
 const ALIGN_ICON: Record<AlignEdge, IconName> = {
 	left: "alignLeft",
@@ -82,9 +88,14 @@ export function PropsPanel({
 	commit,
 	onSelect,
 	overlay,
+	tab: tabProp,
+	onTab,
+	tweaks,
 }: PropsPanelProps): ReactNode {
 	const { t } = useTranslation();
-	const [tab, setTab] = useState<Tab>("props");
+	const [ownTab, setOwnTab] = useState<PropsTab>("props");
+	const tab = tabProp ?? ownTab;
+	const setTab = onTab ?? setOwnTab;
 	const [only] = selected;
 	const single = selected.length === 1 && only ? findItem(doc, only) : null;
 	const pages = selectedPages(doc, selected);
@@ -147,11 +158,15 @@ export function PropsPanel({
 			</div>
 			<div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
 				{tab === "tweaks" ? (
-					<p className="px-3 py-4 text-faint text-sm">
-						{single?.type === "page"
-							? t("artifacts.canvas.props.tweaksEmpty")
-							: t("artifacts.canvas.props.tweaksPick")}
-					</p>
+					single?.type === "page" && tweaks ? (
+						tweaks(single.value)
+					) : (
+						<p className="px-3 py-4 text-faint text-sm">
+							{single?.type === "page"
+								? t("artifacts.canvas.props.tweaksEmpty")
+								: t("artifacts.canvas.props.tweaksPick")}
+						</p>
+					)
 				) : (
 					<>
 						{single?.type === "page" ? (

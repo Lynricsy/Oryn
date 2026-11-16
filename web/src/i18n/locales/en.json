@@ -2172,6 +2172,12 @@
 			"escHint": "Esc to exit",
 			"close": "Exit presentation"
 		},
+				"tweaksWaiting": "Tweaks are available once the frame has loaded.",
+				"tweaksSaving": "Saving…",
+				"tweaksSaved": "Saved as v{{n}}; earlier values are in the history",
+				"tweaksFailed": "Tweaks were not saved. {{reason}}",
+				"tweaksInvalid": "This value is not valid and was not applied",
+				"tweaksPicker": "{{label}}: pick a color",
 		"home": {
 			"recent": "Recent artifacts",
 			"all": "All"

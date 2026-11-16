@@ -234,8 +234,8 @@ notes 里是画在画框之上的标注，大多是用户画的。公共字段 {
 
 - 参数名匹配 ^[a-z][a-z0-9-]{0,31}$，最多 %[20]d 个；label 不超过 60 字。
 - color 的值是 #rgb、#rgba、#rrggbb 或 #rrggbbaa；text 不超过 200 字；number 带 min（缺省 0）、max（缺省 100）、step（缺省 1，不小于 0.001）、unit（0–8 个小写字母或 %%），值会夹在范围内；choice 最多 20 个选项，值必须是其中之一。
-- 页面运行时把每个参数设成根元素上的 CSS 变量 --<名字>（数字带单位，文本是带引号的字符串）和属性 data-<名字>。样式里用 var(--accent)、[data-dark="true"] 之类引用它们。
-- 用户在「调节」面板里改的值会写回这段 JSON，成为新版本。
+- Oryn 把每个参数设成根元素 <html> 上的 CSS 变量 --<名字>（数字带单位，文本是带引号的字符串）和属性 data-<名字>（数字不带单位，文本原样）。查看、缩略图、下载 PNG、在浏览器中打开和发布的链接里都会设好，所以样式里直接用 var(--accent)、[data-dark="true"] 之类引用它们，不要在页面里另写一份同样的值。
+- 用户在「调节」面板里改的值会写回这段 JSON（整段按两空格缩进重新排版），成为一个作者是用户的新版本；不合规的项会被略过，读 read_artifact 时以文件里的为准。
 `,
 	canvas.DefaultCanvasID, canvas.MaxCanvases, canvas.MinPageSize, canvas.MaxPageSize,
 	canvas.DefaultPageWidth, canvas.DefaultPageHeight, canvas.PageGap, canvas.MaxPages,

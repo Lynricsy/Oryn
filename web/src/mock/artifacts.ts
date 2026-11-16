@@ -23,6 +23,7 @@ import {
 	stringifyCanvasDoc,
 } from "../lib/artifacts/canvas-doc";
 import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
+import { coerceParamValue, parseParamsDecl } from "../lib/artifacts/params";
 import { MockArtifactActivity } from "./artifact-activity";
 import { MockArtifactPublish } from "./artifact-publish";
 import {
@@ -380,7 +381,15 @@ const SEEDS: Seed[] = [
 		files: {
 			"page-hero.html": page(
 				"首屏",
-				"<h1>把习惯变成日常</h1><p>每天一分钟，记录你的坚持。</p>",
+				`<script type="application/json" data-oryn-params>
+{
+  "accent": {"type": "color", "value": "#2563eb", "label": "强调色"},
+  "title-size": {"type": "number", "value": 28, "min": 16, "max": 64, "step": 2, "unit": "px", "label": "标题字号"},
+  "dark": {"type": "boolean", "value": false, "label": "深色"}
+}
+</script>
+<style>h1 { color: var(--accent); font-size: var(--title-size); } [data-dark="true"] body { background: #18181b; color: #fafafa; }</style>
+<h1>把习惯变成日常</h1><p>每天一分钟，记录你的坚持。</p>`,
 			),
 		},
 	},
@@ -741,6 +750,7 @@ export class MockArtifacts {
 			return this.restoreVersion(a, Number(restore[1]), req);
 		if (rest === "file" && m === "GET") return this.file(a, url);
 		if (rest === "element" && m === "POST") return this.editElement(a, req);
+		if (rest === "params" && m === "PUT") return this.setParams(a, req);
 		if (rest === "export" && m === "GET") return this.exportFiles(a, url);
 		// mock 没有渲染器：缩略图一律未命中（卡片回落到类型示意图），PNG 回 render_unavailable
 		if (rest === "thumbnail" && m === "GET")
@@ -823,6 +833,69 @@ export class MockArtifacts {
 			rest = escaped + rest.slice(raw.length);
 		}
 		const data = encoder.encode(src.slice(0, at) + tag + rest);
+		this.pushVersion(
+			a,
+			new Map(head.files).set(body.path, { data, sha256: pseudoSha(data) }),
+			head.capabilities,
+		);
+		return json({
+			version: a.meta.version,
+		} satisfies Schemas["ArtifactVersionRef"]);
+	}
+
+	/**
+	 * 写回调节参数（同 `PUT …/params`）：校验并合并值（数字夹回范围），整段声明按两空格缩进写回（`</` 写成 `<\/`），
+	 * 文件其余部分不变，落成用户版本。文件在 `baseVersion` 之后变过回 409。
+	 */
+	private async setParams(a: Stored, req: Request): Promise<Response> {
+		if (a.meta.deletedAt !== undefined)
+			return error(410, "deleted", "这个 artifact 已被删除");
+		const body = (await req.json()) as Schemas["ArtifactParamsSet"];
+		const head = a.versions[a.versions.length - 1];
+		const base = a.versions[body.baseVersion - 1];
+		if (!head || !base) return error(400, "invalid", "baseVersion 不存在");
+		const file = head.files.get(body.path);
+		if (!file || base.files.get(body.path)?.sha256 !== file.sha256)
+			return json(
+				{
+					code: "conflict",
+					message: `现在是版本 ${a.meta.version}，${body.path} 被改过。`,
+					state: {
+						version: a.meta.version,
+						deleted: false,
+						changed: [body.path],
+					},
+				},
+				409,
+			);
+		const src = new TextDecoder().decode(file.data);
+		const m =
+			/(<script\b[^>]*\bdata-oryn-params\b[^>]*>)(\s*)([\s\S]*?)(\s*)<\/script>/i.exec(
+				src,
+			);
+		let decl: Record<string, Record<string, unknown>>;
+		try {
+			decl = JSON.parse(m?.[3] ?? "");
+		} catch {
+			return error(400, "invalid", `${body.path} 没有声明调节参数`);
+		}
+		const declared = parseParamsDecl(decl);
+		for (const [name, raw] of Object.entries(body.values)) {
+			const p = declared.find((d) => d.name === name);
+			const v = p ? coerceParamValue(p, raw) : null;
+			const def = decl[name];
+			if (v === null || !def)
+				return error(400, "invalid", `参数 ${name} 的值不合法`);
+			def.value = v;
+		}
+		if (!m) return error(400, "invalid", `${body.path} 没有声明调节参数`);
+		const text = JSON.stringify(decl, null, 2)
+			.replaceAll("</", "<\\/")
+			.replaceAll("<!--", "\\u003c!--");
+		const start = m.index + (m[1]?.length ?? 0) + (m[2]?.length ?? 0);
+		const data = encoder.encode(
+			src.slice(0, start) + text + src.slice(start + (m[3]?.length ?? 0)),
+		);
 		this.pushVersion(
 			a,
 			new Map(head.files).set(body.path, { data, sha256: pseudoSha(data) }),

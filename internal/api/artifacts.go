@@ -306,6 +306,25 @@ func (s *Server) EditArtifactElement(w http.ResponseWriter, r *http.Request, id 
 	WriteJSON(w, http.StatusOK, apigen.ArtifactVersionRef{Version: a.Version})
 }
 
+// SetArtifactParams 对应 `PUT artifacts/{id}/params`：把「调节」面板改的值写回页面的参数声明
+// （`data-oryn-params`），落成一个用户版本，回 {version}。文件在 baseVersion 之后被改过回 409 带 state。
+func (s *Server) SetArtifactParams(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.ArtifactParamsSet
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	a, err := svc.SetParams(r.Context(), id, req.BaseVersion, req.Path, req.Values)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.ArtifactVersionRef{Version: a.Version})
+}
+
 // GetArtifactFile 对应 `GET artifacts/{id}/file?version=&path=`：内容策略同 serveStoredFile——栅格图 inline，
 // 其余一律 application/octet-stream + attachment，带 `Content-Security-Policy: sandbox` 与 nosniff，支持 Range。
 // 主域上永远不把 artifact 的 HTML 当页面渲染（渲染只在独立源的帧里）。

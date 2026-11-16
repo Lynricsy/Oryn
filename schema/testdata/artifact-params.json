@@ -1,0 +1,123 @@
+{
+  "decls": [
+    {
+      "name": "CSS 变量与 data 属性的转换",
+      "decl": {
+        "accent": { "type": "color", "value": "#2563EB" },
+        "quote": { "type": "text", "value": "说 \"hi\"\n</script>\\" },
+        "size": { "type": "number", "value": 2.5, "min": 0, "max": 10, "unit": "rem" },
+        "count": { "type": "number", "value": 7 },
+        "dark": { "type": "boolean", "value": true },
+        "layout": { "type": "choice", "value": "list", "options": ["grid", "list"] }
+      },
+      "want": [
+        { "name": "accent", "type": "color", "label": "", "value": "#2563EB" },
+        { "name": "quote", "type": "text", "label": "", "value": "说 \"hi\"\n</script>\\" },
+        { "name": "size", "type": "number", "label": "", "value": 2.5, "min": 0, "max": 10, "step": 1, "unit": "rem" },
+        { "name": "count", "type": "number", "label": "", "value": 7, "min": 0, "max": 100, "step": 1, "unit": "" },
+        { "name": "dark", "type": "boolean", "label": "", "value": true },
+        { "name": "layout", "type": "choice", "label": "", "value": "list", "options": ["grid", "list"] }
+      ],
+      "css": {
+        "accent": { "variable": "#2563EB", "attribute": "#2563EB" },
+        "quote": { "variable": "\"说 \\\"hi\\\"\\n</script>\\\\\"", "attribute": "说 \"hi\"\n</script>\\" },
+        "size": { "variable": "2.5rem", "attribute": "2.5" },
+        "count": { "variable": "7", "attribute": "7" },
+        "dark": { "variable": "true", "attribute": "true" },
+        "layout": { "variable": "list", "attribute": "list" }
+      }
+    },
+    {
+      "name": "五种类型与缺省值",
+      "decl": {
+        "accent": { "type": "color", "value": "#2563eb", "label": "  强调色  " },
+        "headline": { "type": "text", "value": "欢迎" },
+        "density": { "type": "number", "value": 16, "min": 8, "max": 32, "step": 2, "unit": "px" },
+        "gap": { "type": "number", "value": 4 },
+        "dark": { "type": "boolean", "value": false, "label": 3 },
+        "layout": { "type": "choice", "value": "grid", "options": ["grid", "list"] }
+      },
+      "want": [
+        { "name": "accent", "type": "color", "label": "强调色", "value": "#2563eb" },
+        { "name": "headline", "type": "text", "label": "", "value": "欢迎" },
+        { "name": "density", "type": "number", "label": "", "value": 16, "min": 8, "max": 32, "step": 2, "unit": "px" },
+        { "name": "gap", "type": "number", "label": "", "value": 4, "min": 0, "max": 100, "step": 1, "unit": "" },
+        { "name": "dark", "type": "boolean", "label": "", "value": false },
+        { "name": "layout", "type": "choice", "label": "", "value": "grid", "options": ["grid", "list"] }
+      ]
+    },
+    {
+      "name": "数字夹回范围、step 下限 0.001、百分号单位",
+      "decl": {
+        "big": { "type": "number", "value": 500, "min": 0, "max": 100 },
+        "small": { "type": "number", "value": -3, "min": 1, "max": 9, "step": 0.0001, "unit": "%" }
+      },
+      "want": [
+        { "name": "big", "type": "number", "label": "", "value": 100, "min": 0, "max": 100, "step": 1, "unit": "" },
+        { "name": "small", "type": "number", "label": "", "value": 1, "min": 1, "max": 9, "step": 0.001, "unit": "%" }
+      ]
+    },
+    {
+      "name": "不合规的项被略过，其余照常",
+      "decl": {
+        "Bad": { "type": "color", "value": "#000" },
+        "1st": { "type": "text", "value": "x" },
+        "c1": { "type": "color", "value": "red" },
+        "c2": { "type": "color", "value": "#12345" },
+        "c3": { "type": "color", "value": "#abcd" },
+        "t1": { "type": "text", "value": 3 },
+        "n1": { "type": "number", "value": "3" },
+        "n2": { "type": "number", "value": 3, "min": 5, "max": 1 },
+        "n3": { "type": "number", "value": 3, "unit": "PX" },
+        "n4": { "type": "number", "value": 3, "unit": "abcdefghi" },
+        "n5": { "type": "number", "value": 3, "step": "1" },
+        "b1": { "type": "boolean", "value": "true" },
+        "ch1": { "type": "choice", "value": "c", "options": ["a", "b"] },
+        "ch2": { "type": "choice", "value": "a", "options": [] },
+        "ch3": { "type": "choice", "value": "a", "options": ["a", 1] },
+        "u1": { "type": "range", "value": 1 },
+        "u2": "#fff",
+        "u3": { "value": 1 },
+        "ok": { "type": "boolean", "value": true }
+      },
+      "want": [
+        { "name": "c3", "type": "color", "label": "", "value": "#abcd" },
+        { "name": "ok", "type": "boolean", "label": "", "value": true }
+      ]
+    },
+    {
+      "name": "不是对象的声明没有参数",
+      "decl": ["accent"],
+      "want": []
+    },
+    {
+      "name": "label 截到 60 个字",
+      "decl": {
+        "x": { "type": "text", "value": "", "label": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十多出来" }
+      },
+      "want": [
+        { "name": "x", "type": "text", "label": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十", "value": "" }
+      ]
+    }
+  ],
+  "values": [
+    { "name": "颜色 #rgb", "param": { "type": "color", "value": "#000" }, "value": "#fff", "want": "#fff" },
+    { "name": "颜色 #rrggbbaa", "param": { "type": "color", "value": "#000" }, "value": "#FF000080", "want": "#FF000080" },
+    { "name": "颜色名字被拒", "param": { "type": "color", "value": "#000" }, "value": "red", "reject": true },
+    { "name": "颜色 5 位被拒", "param": { "type": "color", "value": "#000" }, "value": "#12345", "reject": true },
+    { "name": "颜色不是字符串", "param": { "type": "color", "value": "#000" }, "value": 255, "reject": true },
+    { "name": "文本", "param": { "type": "text", "value": "" }, "value": "</script><b>", "want": "</script><b>" },
+    { "name": "文本 200 个码点（emoji 按码点计）", "param": { "type": "text", "value": "" }, "repeat": { "text": "😀", "count": 200 }, "wantSame": true },
+    { "name": "文本 201 个码点被拒", "param": { "type": "text", "value": "" }, "repeat": { "text": "a", "count": 201 }, "reject": true },
+    { "name": "数字在范围内", "param": { "type": "number", "value": 1, "min": 0, "max": 10 }, "value": 2.5, "want": 2.5 },
+    { "name": "数字越上界夹回", "param": { "type": "number", "value": 1, "min": 0, "max": 10 }, "value": 99, "want": 10 },
+    { "name": "数字越下界夹回", "param": { "type": "number", "value": 1, "min": -5, "max": 10 }, "value": -99, "want": -5 },
+    { "name": "数字是字符串被拒", "param": { "type": "number", "value": 1 }, "value": "5", "reject": true },
+    { "name": "开关", "param": { "type": "boolean", "value": false }, "value": true, "want": true },
+    { "name": "开关是字符串被拒", "param": { "type": "boolean", "value": false }, "value": "true", "reject": true },
+    { "name": "选项", "param": { "type": "choice", "value": "a", "options": ["a", "b"] }, "value": "b", "want": "b" },
+    { "name": "不在选项里被拒", "param": { "type": "choice", "value": "a", "options": ["a", "b"] }, "value": "c", "reject": true },
+    { "name": "选项大小写不同被拒", "param": { "type": "choice", "value": "a", "options": ["a", "b"] }, "value": "B", "reject": true },
+    { "name": "null 被拒", "param": { "type": "text", "value": "" }, "value": null, "reject": true }
+  ]
+}
