@@ -300,6 +300,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 					{orb.providerName && (
 						<Spec icon="hardDrives">{orb.providerName}</Spec>
 					)}
+					{orb.githubLogin && <Spec icon="github">@{orb.githubLogin}</Spec>}
 					{orb.nestedDocker && (
 						<span className="inline-flex h-6 items-center">
 							<DockerBadge />

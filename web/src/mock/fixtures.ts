@@ -474,6 +474,8 @@ export const orbEnv: Record<string, Partial<Orb>> = {
 			},
 		},
 		services: MAIN_ORB_SERVICES,
+		// M14：项目已绑定 GitHub，orb 以「我的账号」身份登录
+		githubLogin: "oryn-owner",
 		portals: [
 			{
 				port: PORTAL_PORT,

@@ -112,3 +112,38 @@ describe("InfoPanel 上下文分项", () => {
 		expect(reports()).toBe(2);
 	});
 });
+
+describe("InfoPanel orb 规格（M14）", () => {
+	it("orb 带 githubLogin 时显示 GitHub 账号", async () => {
+		const id = "T-orb-github";
+		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				orb: {
+					id: "orb-github-1",
+					providerId: "prov",
+					providerName: "local",
+					type: "medium",
+					cpus: 4,
+					memoryMB: 8192,
+					image: "oryn-orb:dev",
+					state: "ready",
+					stateChangedAt: 1,
+					createdAt: 1,
+					threadIds: [id],
+					githubLogin: "oryn-owner",
+				} as unknown as ThreadViewState["orb"],
+			});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<InfoPanel threadId={id} />
+			</QueryClientProvider>,
+		);
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		expect(screen.getByText("@oryn-owner")).toBeInTheDocument();
+	});
+});
