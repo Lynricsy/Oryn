@@ -24,9 +24,9 @@ export function detectLocale(preferred: readonly string[]): Locale {
 
 function systemLanguages(): readonly string[] {
 	if (typeof navigator === "undefined") return [];
-	return navigator.languages?.length
-		? navigator.languages
-		: [navigator.language];
+	if (navigator.languages?.length) return navigator.languages;
+	// Bun 的 navigator 没有语言（截图等脚本经 mock 间接导入本模块）
+	return navigator.language ? [navigator.language] : [];
 }
 
 const initialLocale = detectLocale(systemLanguages());

@@ -26,6 +26,7 @@ import {
 	webkit,
 } from "playwright-core";
 import {
+	ARTIFACT_IDS,
 	DESKTOP_THREADS,
 	ENV_THREADS,
 	M9_IDS,
@@ -781,6 +782,150 @@ function m14Screens(): Screen[] {
 	];
 }
 
+/** 打开 artifact 整页查看器并等帧（或画布编辑器）出现；`ready` 换掉等待的选择器（手机上历史占满时帧是隐藏的）。 */
+async function openArtifact(
+	page: Page,
+	id: string,
+	query = "",
+	ready = "[data-testid=artifact-frame-box] iframe, [data-testid=canvas-editor]",
+) {
+	await open(page, `/artifacts/${id}${query}`, ready, 1500);
+}
+
+/**
+ * M14 Artifacts（计划 9.2）：总览页、最近删除、页面查看器、版本历史、评论、右面板、画布、分享弹层（手机上是底部抽屉）。
+ * mock 夹具直达（`ARTIFACT_IDS`）；评论没有夹具，进页面后经 mock 的接口建两条再打开评论面板。
+ */
+function artifactScreens(): Screen[] {
+	return [
+		{
+			name: "artifacts-page",
+			widths: M11A_WIDTHS,
+			prepare: ({ page }) =>
+				open(page, "/artifacts", "[data-testid=artifact-card]", 1500),
+			verify: noHorizontalOverflow("artifacts-scroll"),
+		},
+		{
+			name: "artifacts-trash",
+			prepare: ({ page }) =>
+				open(page, "/artifacts/trash", "[data-testid=artifact-card]", 1200),
+			verify: noHorizontalOverflow("artifacts-scroll"),
+		},
+		{
+			name: "artifact-viewer",
+			widths: M11A_WIDTHS,
+			prepare: ({ page }) => openArtifact(page, ARTIFACT_IDS.web),
+		},
+		{
+			name: "artifact-history",
+			prepare: ({ page }) =>
+				openArtifact(
+					page,
+					ARTIFACT_IDS.web,
+					"?history=1",
+					"[data-testid=artifact-side]",
+				),
+		},
+		{
+			name: "artifact-comments",
+			prepare: async ({ page, width }) => {
+				await openArtifact(page, ARTIFACT_IDS.web);
+				await page.evaluate(async (id) => {
+					const post = (body: unknown) =>
+						fetch(`/api/v1/artifacts/${id}/comments`, {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify(body),
+						});
+					const anchor = {
+						version: 3,
+						path: "index.html",
+						page: null,
+						missing: false,
+					};
+					await post({
+						anchor: {
+							...anchor,
+							offset: null,
+							tag: "h1",
+							text: "本周习惯打卡",
+						},
+						body: "标题再醒目一点，换成品牌色。",
+					});
+					await post({
+						anchor: { ...anchor, offset: null, tag: null, text: "" },
+						body: "整体留白偏少，卡片之间拉开一些。",
+					});
+				}, ARTIFACT_IDS.web);
+				// 版本胶囊打开侧栏（手机顶栏没有「历史」按钮）
+				await page.getByTestId("artifact-version").click();
+				if (width < 600)
+					await page.getByRole("tab", { name: /^评论/ }).first().click();
+				else await page.getByTestId("artifact-side-comments").click();
+				await page
+					.locator("[data-testid=artifact-side]")
+					.getByText("整体留白偏少", { exact: false })
+					.waitFor({ timeout: 10_000 });
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "artifact-panel",
+			prepare: async ({ page }) => {
+				await openThread(page, TOOL_ZOO_THREAD);
+				await openPanel(page, "artifacts");
+				await page
+					.locator("[data-testid=artifact-frame-box] iframe")
+					.first()
+					.waitFor({ timeout: 15_000 });
+				await settle(page, 1200);
+			},
+		},
+		{
+			name: "artifact-canvas",
+			prepare: async ({ page }) => {
+				await openArtifact(page, ARTIFACT_IDS.canvas);
+				await page
+					.locator("[data-testid=canvas-editor] iframe")
+					.first()
+					.waitFor({ timeout: 15_000 });
+				await settle(page, 1500);
+			},
+		},
+		{
+			// 文档夹具以访问码发布：分享弹层是「已发布」形态（地址、访问码、版本、跟随开关）
+			name: "artifact-share",
+			prepare: async ({ page }) => {
+				await openArtifact(page, ARTIFACT_IDS.document);
+				await page.getByTestId("artifact-share").click();
+				await page
+					.getByTestId("share-url")
+					.first()
+					.waitFor({ timeout: 10_000 });
+				await settle(page, 400);
+			},
+		},
+	];
+}
+
+/** 某个滚动容器（`data-testid`）与整页都不得横向溢出。 */
+function noHorizontalOverflow(testId: string) {
+	return async ({ page }: Shot): Promise<string | null> => {
+		const r = await page.evaluate((id) => {
+			const el = document.querySelector<HTMLElement>(`[data-testid=${id}]`);
+			const doc = document.scrollingElement;
+			return {
+				inner: el ? el.scrollWidth - el.clientWidth : -1,
+				doc: doc ? doc.scrollWidth - window.innerWidth : 0,
+			};
+		}, testId);
+		if (r.inner < 0) return `找不到 ${testId}`;
+		if (r.inner > 1) return `内容区横向溢出 ${r.inner}px`;
+		if (r.doc > 0) return `页面横向溢出 ${r.doc}px`;
+		return null;
+	};
+}
+
 const SETTINGS_SECTIONS = [
 	"devices",
 	"providers",
@@ -880,7 +1025,14 @@ async function sendPrompt(page: Page, text: string) {
  */
 async function openPanel(
 	page: Page,
-	tab: "info" | "changes" | "files" | "terminal" | "portal" | "desktop",
+	tab:
+		| "info"
+		| "changes"
+		| "files"
+		| "terminal"
+		| "portal"
+		| "desktop"
+		| "artifacts",
 ) {
 	const views = page.locator("[data-testid=thread-view-menu]").first();
 	if (await views.isVisible().catch(() => false)) {
@@ -1406,6 +1558,7 @@ const SCREENS: Screen[] = [
 	},
 	...m9Screens(),
 	...m14Screens(),
+	...artifactScreens(),
 	// 手机线程页的视图菜单（对话 / 改动 / 文件 / 终端 … / 信息），展开状态
 	{
 		name: "thread-compact-views",
