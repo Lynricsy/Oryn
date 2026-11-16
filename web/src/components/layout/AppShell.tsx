@@ -47,6 +47,7 @@ import { togglePalette } from "../palette/palette-state";
 import { ServerErrors } from "../ServerErrors";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
+import { Toasts } from "../ui/Toasts";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
 import { useSectionTracker, useSwitchSection } from "./useSection";
@@ -305,6 +306,7 @@ export function AppShell(): ReactNode {
 				<SinkLayout sidebar={<Sidebar sink />}>{main}</SinkLayout>
 				<ServerErrors />
 				<NotificationToasts />
+				<Toasts />
 				<PaletteHost />
 			</>
 		);
@@ -362,6 +364,7 @@ export function AppShell(): ReactNode {
 			{main}
 			<ServerErrors />
 			<NotificationToasts />
+			<Toasts />
 			<PaletteHost />
 		</div>
 	);

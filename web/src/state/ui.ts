@@ -92,6 +92,12 @@ export function hasUnseenChanges(sig: ChangesSig | undefined): boolean {
 	return !!sig && sig.current !== "" && sig.current !== sig.seen;
 }
 
+/** 交给首屏输入框的提示：正文与（可选的）项目。 */
+export interface HomeSeed {
+	text: string;
+	projectId?: string;
+}
+
 export const COLLAPSED_CARDS_KEY = "oryn.panel.collapsed";
 
 /** 同步读取（store 创建时），首帧就按存储的收起状态渲染；非法值回落为全部展开。 */
@@ -219,6 +225,12 @@ export interface UiState {
 	artifactsSig: Record<string, ChangesSig>;
 	/** 记录线程 artifact 列表的签名；`seen` 为真或首次记录时同时记为已看。 */
 	noteArtifacts(threadId: string, sig: string, seen: boolean): void;
+	/** 交给首屏输入框的一段提示（Artifacts 空态磁贴、把评论发给「新线程」…）：首页挂载时取走（不持久化）。 */
+	homeSeed: HomeSeed | null;
+	/** 记下要交给首屏的提示；调用方随后导航到 `/`。 */
+	seedHome(seed: HomeSeed): void;
+	/** 首页取走提示（同时清空）。 */
+	takeHomeSeed(): HomeSeed | null;
 	/** Desktop 面板向桌面发送键鼠（默认 true；false = 仅观看）。 */
 	desktopControl: boolean;
 	setDesktopControl(on: boolean): void;
@@ -375,6 +387,13 @@ export const uiStore = createStore<UiState>((set, get) => ({
 				return s;
 			return { artifactsSig: { ...s.artifactsSig, [threadId]: next } };
 		}),
+	homeSeed: null,
+	seedHome: (homeSeed) => set({ homeSeed }),
+	takeHomeSeed: () => {
+		const seed = get().homeSeed;
+		if (seed) set({ homeSeed: null });
+		return seed;
+	},
 	...loadDesktopPrefs(),
 	setDesktopControl: (desktopControl) => {
 		writeKey(DESKTOP_CONTROL_KEY, desktopControl ? "1" : "0");

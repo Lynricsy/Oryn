@@ -31,6 +31,7 @@ import {
 	useProviders,
 } from "../api/queries";
 import { createAssistantConversation } from "../api/space-queries";
+import { RecentArtifacts } from "../components/artifacts/RecentArtifacts";
 import {
 	AttachButton,
 	AttachmentStrip,
@@ -87,7 +88,12 @@ import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { shareIntakeStore, useShareIntake } from "../state/share-intake";
-import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
+import {
+	uiStore,
+	useSidebarShown,
+	useSidebarToggleShown,
+	useUi,
+} from "../state/ui";
 
 type Pill = "executor" | "profile" | "project" | "role";
 
@@ -199,6 +205,22 @@ export function HomePage(): ReactNode {
 		if (share.failed.length > 0)
 			setError(t("mobile.shareFailed", { count: share.failed.length }));
 	}, [pendingShare, addUploaded, t]);
+
+	// 别处交给首屏的提示（Artifacts 空态磁贴、把评论发给新线程）：取走后写进输入框（与项目）并聚焦
+	const homeSeed = useUi((s) => s.homeSeed);
+	useEffect(() => {
+		if (!homeSeed) return;
+		const seed = uiStore.getState().takeHomeSeed();
+		if (!seed) return;
+		setPrompt(seed.text);
+		if (seed.projectId) setProjectId(seed.projectId);
+		requestAnimationFrame(() => {
+			const el = ref.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(seed.text.length, seed.text.length);
+		});
+	}, [homeSeed]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -878,6 +900,7 @@ export function HomePage(): ReactNode {
 							{error ?? (att.error || describeError(refMenu.error, t))}
 						</p>
 					)}
+					<RecentArtifacts />
 				</div>
 			</div>
 			<ProfileConflictDialog

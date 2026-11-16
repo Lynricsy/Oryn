@@ -10,6 +10,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import i18n from "../../i18n";
@@ -42,7 +43,11 @@ let opened: string[];
 
 function wrap(node: ReactNode) {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+	return render(
+		<QueryClientProvider client={qc}>
+			<MemoryRouter>{node}</MemoryRouter>
+		</QueryClientProvider>,
+	);
 }
 
 beforeEach(() => {

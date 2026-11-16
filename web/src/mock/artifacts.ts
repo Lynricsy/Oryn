@@ -93,6 +93,69 @@ function pseudoSha(data: Uint8Array): string {
 	return hex.repeat(4);
 }
 
+let crcTable: Uint32Array | null = null;
+
+function crc32(data: Uint8Array): number {
+	if (!crcTable) {
+		crcTable = new Uint32Array(256);
+		for (let n = 0; n < 256; n++) {
+			let c = n;
+			for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+			crcTable[n] = c >>> 0;
+		}
+	}
+	let crc = 0xffffffff;
+	for (const b of data) crc = (crcTable[(crc ^ b) & 0xff] ?? 0) ^ (crc >>> 8);
+	return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** 不压缩（stored）的 zip，文件名按 UTF-8（通用位 11）：导出 `format=zip` 用。 */
+function storedZip(files: [string, Uint8Array][]): Uint8Array<ArrayBuffer> {
+	const parts: Uint8Array[] = [];
+	const central: Uint8Array[] = [];
+	let offset = 0;
+	for (const [path, data] of files) {
+		const name = encoder.encode(path);
+		const crc = crc32(data);
+		const local = new DataView(new ArrayBuffer(30));
+		local.setUint32(0, 0x04034b50, true);
+		local.setUint16(4, 20, true);
+		local.setUint16(6, 0x0800, true);
+		local.setUint32(14, crc, true);
+		local.setUint32(18, data.byteLength, true);
+		local.setUint32(22, data.byteLength, true);
+		local.setUint16(26, name.byteLength, true);
+		parts.push(new Uint8Array(local.buffer), name, data);
+		const dir = new DataView(new ArrayBuffer(46));
+		dir.setUint32(0, 0x02014b50, true);
+		dir.setUint16(4, 20, true);
+		dir.setUint16(6, 20, true);
+		dir.setUint16(8, 0x0800, true);
+		dir.setUint32(16, crc, true);
+		dir.setUint32(20, data.byteLength, true);
+		dir.setUint32(24, data.byteLength, true);
+		dir.setUint16(28, name.byteLength, true);
+		dir.setUint32(42, offset, true);
+		central.push(new Uint8Array(dir.buffer), name);
+		offset += 30 + name.byteLength + data.byteLength;
+	}
+	const dirSize = central.reduce((n, p) => n + p.byteLength, 0);
+	const end = new DataView(new ArrayBuffer(22));
+	end.setUint32(0, 0x06054b50, true);
+	end.setUint16(8, files.length, true);
+	end.setUint16(10, files.length, true);
+	end.setUint32(12, dirSize, true);
+	end.setUint32(16, offset, true);
+	const all = [...parts, ...central, new Uint8Array(end.buffer)];
+	const out = new Uint8Array(all.reduce((n, p) => n + p.byteLength, 0));
+	let at = 0;
+	for (const p of all) {
+		out.set(p, at);
+		at += p.byteLength;
+	}
+	return out;
+}
+
 /** 路径规则（同 `artifacts.PathProblem`）；返回空串表示合法。 */
 function pathProblem(path: string): string {
 	if (!path || encoder.encode(path).byteLength > 512) return "长度";
@@ -489,6 +552,12 @@ export class MockArtifacts {
 		if (restore && m === "POST")
 			return this.restoreVersion(a, Number(restore[1]), req);
 		if (rest === "file" && m === "GET") return this.file(a, url);
+		if (rest === "export" && m === "GET") return this.exportFiles(a, url);
+		// mock 没有渲染器：缩略图一律未命中（卡片回落到类型示意图），PNG 回 render_unavailable
+		if (rest === "thumbnail" && m === "GET")
+			return error(404, "no_thumbnail", "这个版本还没有缩略图");
+		if (rest === "render.png" && m === "GET")
+			return error(503, "render_unavailable", "mock 模式没有渲染器");
 		if (rest === "frames" && m === "POST") return this.openFrame(a, req, false);
 		if (rest === "open-link" && m === "POST")
 			return this.openFrame(a, req, true);
@@ -661,6 +730,43 @@ export class MockArtifacts {
 				"X-Content-Type-Options": "nosniff",
 			},
 		});
+	}
+
+	/** 导出原始文件：`html` 只在版本恰好一个文件时可用，`zip` 打包全部文件（同 `export.go`）。 */
+	private exportFiles(a: Stored, url: URL): Response {
+		const v = this.version(a, url.searchParams.get("version"));
+		if (v instanceof Response) return v;
+		const format = url.searchParams.get("format");
+		const files = [...v.files];
+		const name = (ext: string) =>
+			`attachment; filename*=UTF-8''${encodeURIComponent(`${a.meta.title}.${ext}`)}`;
+		if (format === "html") {
+			const [only] = files;
+			if (files.length !== 1 || !only)
+				return error(
+					400,
+					"invalid",
+					`版本 ${v.meta.version} 有 ${files.length} 个文件，只能导出为 zip。`,
+				);
+			return new Response(only[1].data, {
+				headers: {
+					"Content-Type": "text/html; charset=utf-8",
+					"Content-Disposition": name("html"),
+				},
+			});
+		}
+		if (format === "zip")
+			return new Response(storedZip(files.map(([p, f]) => [p, f.data])), {
+				headers: {
+					"Content-Type": "application/zip",
+					"Content-Disposition": name("zip"),
+				},
+			});
+		return error(
+			400,
+			"invalid",
+			`artifact ${a.meta.id} 不能导出为 "${format ?? ""}"（页面与画布只能导出为 html 或 zip）。`,
+		);
 	}
 
 	private async openFrame(

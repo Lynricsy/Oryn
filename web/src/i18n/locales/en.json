@@ -98,7 +98,11 @@
 		"infoPanel": "Info panel",
 		"settings": "Settings",
 		"sidebar": "Sidebar",
-		"stats": "Statistics"
+		"stats": "Statistics",
+		"artifacts": "Artifacts"
+	},
+	"toasts": {
+		"region": "Action messages"
 	},
 	"connection": {
 		"idle": "Not connected",
@@ -1689,6 +1693,135 @@
 				"read_artifact_data": "Read page data",
 				"write_artifact_data": "Write page data"
 			}
+		},
+		"page": {
+			"toolbar": "Artifacts toolbar",
+			"kinds": "By type",
+			"all": "All",
+			"filter": "Filter",
+			"filterN": "Filter · {{n}}",
+			"projects": "Projects",
+			"noProject": "No project",
+			"origins": "Source",
+			"origin": {
+				"agent": "Made in threads",
+				"import": "Imported"
+			},
+			"display": "Display",
+			"sortBy": "Sort by",
+			"sort": {
+				"recent": "Recent",
+				"updated": "Last updated",
+				"name": "Name"
+			},
+			"layoutBy": "Layout",
+			"layout": {
+				"none": "Flat",
+				"project-thread": "By project and thread"
+			},
+			"search": "Search titles",
+			"grid": "Artifact list",
+			"imported": "Imported",
+			"deletedThread": "Deleted threads",
+			"unknownThread": "Thread",
+			"failed": "Couldn't load artifacts",
+			"empty": "No artifacts yet",
+			"emptyHint": "Ask an agent for a document, slides, a web page or a canvas. Finished work shows up here.",
+			"seedTile": "Ask an agent: {{kind}}",
+			"seeds": {
+				"document": "Make a document artifact: ",
+				"slides": "Make a slides artifact: ",
+				"web": "Make a web page artifact: ",
+				"canvas": "Make a multi-page canvas artifact: "
+			},
+			"noMatch": "No matching artifacts",
+			"clearFilters": "Clear filters",
+			"trash": "Recently deleted",
+			"trashLink": "Recently deleted {{n}}",
+			"trashHint": "Deleted artifacts stay here for {{days}} days, then they're removed for good.",
+			"trashEmpty": "Nothing deleted recently",
+			"daysLeft_one": "{{count}} day left",
+			"daysLeft_other": "{{count}} days left",
+			"back": "Back to Artifacts"
+		},
+		"menu": {
+			"more": "More",
+			"open": "Open",
+			"export": "Export…",
+			"png": "Download PNG",
+			"pngUnavailable": "The control plane renderer isn't available",
+			"rename": "Rename…",
+			"history": "Version history",
+			"thread": "Open thread",
+			"delete": "Delete",
+			"restore": "Restore",
+			"purge": "Delete permanently…"
+		},
+		"dialogs": {
+			"renameTitle": "Rename artifact",
+			"renameLabel": "Title",
+			"renameSave": "Save",
+			"renameTooLong": "Titles can be at most {{max}} characters; this one has {{n}}.",
+			"purgeTitle": "Delete “{{title}}” permanently?",
+			"purgeBody_one": "Its {{count}} version will be removed. This can't be undone.",
+			"purgeBody_other": "All {{count}} of its versions will be removed. This can't be undone.",
+			"purgeConfirm": "Delete permanently"
+		},
+		"toast": {
+			"deleted": "Moved “{{title}}” to Recently deleted",
+			"undo": "Undo",
+			"restored": "Restored “{{title}}”",
+			"purged": "Deleted “{{title}}” permanently"
+		},
+		"import": {
+			"button": "Import",
+			"file": "HTML file",
+			"folder": "Folder with index.html",
+			"title": "Import artifact",
+			"summary": "“{{name}}”, {{n}} files",
+			"project": "Import into",
+			"submit": "Import",
+			"failed": "Couldn't import: {{reason}}",
+			"done": "Imported “{{title}}”",
+			"errors": {
+				"too_large": "Too large: each file must be under 20 MiB, and all files together under 64 MiB.",
+				"too_many": "Too many files: an artifact can have at most 256 files.",
+				"no_index": "The folder has no index.html or canvas.json, so there's no page to open first.",
+				"bad_canvas": "canvas.json isn't valid, or a frame file it points to isn't in the folder.",
+				"bad_name": "Some file names can't be used (they contain \\ : * ? \" < > |, end with a dot or space, or differ from another only by case).",
+				"not_utf8": "Some HTML files aren't UTF-8. Save them as UTF-8 and import again."
+			}
+		},
+		"export": {
+			"running": "Exporting “{{title}}”…",
+			"done": "Exported “{{title}}”",
+			"failed": "Couldn't export “{{title}}”: {{reason}}",
+			"retry": "Retry"
+		},
+		"png": {
+			"running": "Rendering “{{title}}”…",
+			"done": "Downloaded a PNG of “{{title}}”",
+			"failed": "Couldn't download a PNG of “{{title}}”: {{reason}}"
+		},
+		"history": {
+			"title": "Version history",
+			"close": "Close version history",
+			"segments": "Page and history",
+			"segmentPage": "Page",
+			"you": "You",
+			"deletedThread": "Deleted thread",
+			"latest": "Latest",
+			"byline": "{{author}} · {{when}}",
+			"pinned": "Version {{n}} of {{head}} · {{when}}",
+			"pinnedNote": "Version {{n}} of {{head}} · {{when}} · {{note}}",
+			"backToLatest": "Back to latest",
+			"restore": "Restore this version",
+			"restored": "Restored v{{n}} as v{{version}}",
+			"conflict": "A newer version arrived before the restore. Try again."
+		},
+		"home": {
+			"recent": "Recent artifacts",
+			"all": "All"
 		}
 	},
 	"rightPanel": {

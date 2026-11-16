@@ -98,7 +98,11 @@
 		"infoPanel": "信息面板",
 		"settings": "设置",
 		"sidebar": "侧边栏",
-		"stats": "统计"
+		"stats": "统计",
+		"artifacts": "Artifacts"
+	},
+	"toasts": {
+		"region": "操作提示"
 	},
 	"connection": {
 		"idle": "未连接",
@@ -1689,6 +1693,135 @@
 				"read_artifact_data": "读取页面数据",
 				"write_artifact_data": "写入页面数据"
 			}
+		},
+		"page": {
+			"toolbar": "Artifacts 工具条",
+			"kinds": "按类型",
+			"all": "全部",
+			"filter": "筛选",
+			"filterN": "筛选 · {{n}}",
+			"projects": "项目",
+			"noProject": "无项目",
+			"origins": "来源",
+			"origin": {
+				"agent": "线程产出",
+				"import": "导入的"
+			},
+			"display": "显示",
+			"sortBy": "排序",
+			"sort": {
+				"recent": "最近",
+				"updated": "更新时间",
+				"name": "名称"
+			},
+			"layoutBy": "布局",
+			"layout": {
+				"none": "平铺",
+				"project-thread": "按项目与会话"
+			},
+			"search": "搜索标题",
+			"grid": "Artifact 列表",
+			"imported": "导入的",
+			"deletedThread": "已删除的线程",
+			"unknownThread": "线程",
+			"failed": "读不到 Artifact 列表",
+			"empty": "还没有 Artifact",
+			"emptyHint": "让 Agent 做一份文档、幻灯片、网页或画布，做好的成品会出现在这里。",
+			"seedTile": "让 Agent 做一份{{kind}}",
+			"seeds": {
+				"document": "做一份文档 artifact：",
+				"slides": "做一份幻灯片 artifact：",
+				"web": "做一个网页 artifact：",
+				"canvas": "做一个多页的画布 artifact："
+			},
+			"noMatch": "没有匹配的 Artifact",
+			"clearFilters": "清除筛选",
+			"trash": "最近删除",
+			"trashLink": "最近删除 {{n}}",
+			"trashHint": "删除的 artifact 会在这里保留 {{days}} 天，之后被永久移除。",
+			"trashEmpty": "最近没有删除过 artifact",
+			"daysLeft_one": "剩 {{count}} 天",
+			"daysLeft_other": "剩 {{count}} 天",
+			"back": "返回 Artifacts"
+		},
+		"menu": {
+			"more": "更多",
+			"open": "打开",
+			"export": "导出…",
+			"png": "下载 PNG",
+			"pngUnavailable": "控制面的渲染器不可用",
+			"rename": "重命名…",
+			"history": "版本历史",
+			"thread": "打开线程",
+			"delete": "删除",
+			"restore": "恢复",
+			"purge": "永久删除…"
+		},
+		"dialogs": {
+			"renameTitle": "重命名 artifact",
+			"renameLabel": "标题",
+			"renameSave": "保存",
+			"renameTooLong": "标题最多 {{max}} 个字，现在是 {{n}} 个。",
+			"purgeTitle": "永久删除“{{title}}”？",
+			"purgeBody_one": "它的 {{count}} 个版本将被移除，此操作无法撤销。",
+			"purgeBody_other": "它的 {{count}} 个版本将被移除，此操作无法撤销。",
+			"purgeConfirm": "永久删除"
+		},
+		"toast": {
+			"deleted": "已将“{{title}}”移到最近删除",
+			"undo": "撤销",
+			"restored": "已恢复“{{title}}”",
+			"purged": "已永久删除“{{title}}”"
+		},
+		"import": {
+			"button": "导入",
+			"file": "HTML 文件",
+			"folder": "带 index.html 的文件夹",
+			"title": "导入 artifact",
+			"summary": "“{{name}}”，共 {{n}} 个文件",
+			"project": "导入到",
+			"submit": "导入",
+			"failed": "没能导入：{{reason}}",
+			"done": "已导入“{{title}}”",
+			"errors": {
+				"too_large": "文件太大：单个文件不能超过 20 MiB，全部文件合计不能超过 64 MiB。",
+				"too_many": "文件太多：一个 artifact 最多 256 个文件。",
+				"no_index": "文件夹里没有 index.html 或 canvas.json，不知道从哪一页打开。",
+				"bad_canvas": "canvas.json 的格式不对，或者它引用的画框文件不在文件夹里。",
+				"bad_name": "有的文件名不能用（含有 \\ : * ? \" < > | 等字符、以点或空格结尾，或有只差大小写的同名文件）。",
+				"not_utf8": "有的 HTML 文件不是 UTF-8 编码。另存为 UTF-8 后再导入。"
+			}
+		},
+		"export": {
+			"running": "正在导出“{{title}}”…",
+			"done": "已导出“{{title}}”",
+			"failed": "无法导出“{{title}}”：{{reason}}",
+			"retry": "重试"
+		},
+		"png": {
+			"running": "正在渲染“{{title}}”…",
+			"done": "已下载“{{title}}”的 PNG",
+			"failed": "无法下载“{{title}}”的 PNG：{{reason}}"
+		},
+		"history": {
+			"title": "版本历史",
+			"close": "关闭版本历史",
+			"segments": "页面与历史",
+			"segmentPage": "页面",
+			"you": "你",
+			"deletedThread": "已删除的线程",
+			"latest": "最新",
+			"byline": "{{author}} · {{when}}",
+			"pinned": "版本 {{n}} / {{head}} · {{when}}",
+			"pinnedNote": "版本 {{n}} / {{head}} · {{when}} · {{note}}",
+			"backToLatest": "回到最新",
+			"restore": "恢复这个版本",
+			"restored": "已把 v{{n}} 恢复成 v{{version}}",
+			"conflict": "恢复前来了新版本，请再试一次"
+		},
+		"home": {
+			"recent": "最近的 Artifacts",
+			"all": "全部"
 		}
 	},
 	"rightPanel": {

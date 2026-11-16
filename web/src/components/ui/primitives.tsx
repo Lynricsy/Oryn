@@ -262,6 +262,8 @@ export interface MenuItem {
 	hint?: ReactNode;
 	/** 额外的 `data-*` 属性（测试与验收脚本的选择器，如统计页范围菜单的 `data-range`） */
 	attrs?: Record<`data-${string}`, string>;
+	/** 悬停提示（如置灰的原因）。 */
+	title?: string;
 }
 
 /**
@@ -339,6 +341,7 @@ export function Menu({
 								? { role: "menuitem" }
 								: { role: "menuitemradio", "aria-checked": item.checked })}
 							disabled={item.disabled}
+							title={item.title}
 							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-40 ${item.danger ? "text-err" : "text-fg"} ${item.checked ? "font-medium" : ""}`}
 							onClick={() => {
 								if (item.children) {

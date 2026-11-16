@@ -57,6 +57,7 @@ import { Fire } from "@phosphor-icons/react/dist/csr/Fire";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { FolderPlus } from "@phosphor-icons/react/dist/csr/FolderPlus";
+import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { Gauge } from "@phosphor-icons/react/dist/csr/Gauge";
 import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
@@ -104,6 +105,7 @@ import { Shapes } from "@phosphor-icons/react/dist/csr/Shapes";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
 import { ShippingContainer } from "@phosphor-icons/react/dist/csr/ShippingContainer";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
+import { Sliders } from "@phosphor-icons/react/dist/csr/Sliders";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Square } from "@phosphor-icons/react/dist/csr/Square";
 import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
@@ -285,6 +287,10 @@ const ICONS = {
 	history: ClockCounterClockwise,
 	/** 导出 artifact */
 	export: Export,
+	/** 筛选（Artifacts 总览页） */
+	funnel: Funnel,
+	/** 显示选项（Artifacts 总览页）；画框的「调节」 */
+	sliders: Sliders,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -38,6 +38,9 @@ describe("sectionOf", () => {
 		["/settings/secrets", "more"],
 		["/stats", "more"],
 		["/stats/usage", "more"],
+		["/artifacts", "more"],
+		["/artifacts/trash", "more"],
+		["/artifacts/art_01JDNAWEB0000000000000000A?history=1", "more"],
 		["/settings/secrets?x=1#y", "more"],
 		["/projects?tab=1", "projects"],
 	] as const)("%s → %s", (path, want) => {
@@ -49,6 +52,7 @@ describe("sectionOf", () => {
 		expect(sectionOf("/projectsfoo")).toBe("threads");
 		expect(sectionOf("/settingsx/a")).toBe("threads");
 		expect(sectionOf("/statsx")).toBe("threads");
+		expect(sectionOf("/artifactsx")).toBe("threads");
 	});
 });
 

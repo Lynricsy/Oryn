@@ -39,6 +39,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		labelKey: "nav.stats",
 		to: "/stats",
 	},
+	{
+		// Artifacts（M14）：agent 产出的交付物总览
+		key: "artifacts",
+		group: "overview",
+		icon: "shapes",
+		labelKey: "nav.artifacts",
+		to: "/artifacts",
+	},
 	// Agent（M13）：omp 配置的表单化子页；「高级」是原始文件浏览器，放在组末
 	{
 		key: "agent-skills",

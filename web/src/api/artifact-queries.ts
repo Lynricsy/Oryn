@@ -82,9 +82,9 @@ export function useThreadArtifacts(threadId: string) {
 	return useArtifacts({ threadId });
 }
 
-/** 详情：`version` 缺省 = 最新版本。 */
-export function useArtifact(id: string, version?: number) {
-	return useQuery({
+/** 详情查询（`version` 缺省 = 最新版本）；钩子与命令式的 `qc.fetchQuery` 共用。 */
+export function artifactDetailQuery(id: string, version?: number) {
+	return {
 		queryKey: artifactQk.detail(id, version),
 		queryFn: () =>
 			unwrap(
@@ -95,6 +95,13 @@ export function useArtifact(id: string, version?: number) {
 					},
 				}),
 			),
+	};
+}
+
+/** 详情：`version` 缺省 = 最新版本。 */
+export function useArtifact(id: string, version?: number) {
+	return useQuery({
+		...artifactDetailQuery(id, version),
 		// 404（不在了）不重试：查看器直接显示空态
 		retry: false,
 	});
@@ -301,4 +308,58 @@ export async function openArtifactLink(
 		}),
 	);
 	return r.url;
+}
+
+export type ArtifactExportFormat = Schemas["ArtifactExportFormat"];
+
+/** 下载得到的内容与服务端的 `Content-Disposition`（文件名在里面；没有时为 `null`）。 */
+export interface ArtifactDownload {
+	blob: Blob;
+	disposition: string | null;
+}
+
+/** 导出某个版本（缺省 = 最新版本）。失败抛 `ApiError`。 */
+export async function fetchArtifactExport(
+	id: string,
+	format: ArtifactExportFormat,
+	version?: number,
+): Promise<ArtifactDownload> {
+	const res = await api.GET("/api/v1/artifacts/{id}/export", {
+		params: {
+			path: { id },
+			query: { format, ...(version ? { version } : {}) },
+		},
+		parseAs: "blob",
+	});
+	const blob = await unwrap(Promise.resolve(res));
+	return {
+		blob,
+		disposition: res.response.headers.get("Content-Disposition"),
+	};
+}
+
+/** 在控制面渲染并取回 PNG（缺省入口文件、1280×800）。渲染不可用时抛 `render_unavailable`。 */
+export async function fetchArtifactPng(
+	id: string,
+	opts: {
+		version?: number;
+		path?: string;
+		width?: number;
+		height?: number;
+	} = {},
+): Promise<ArtifactDownload> {
+	const res = await api.GET("/api/v1/artifacts/{id}/render.png", {
+		params: { path: { id }, query: opts },
+		parseAs: "blob",
+	});
+	const blob = await unwrap(Promise.resolve(res));
+	return {
+		blob,
+		disposition: res.response.headers.get("Content-Disposition"),
+	};
+}
+
+/** 卡片缩略图的地址（`<img>` 直接用；没有缩略图时服务端回 404，卡片回落到类型示意图）。 */
+export function artifactThumbnailUrl(id: string, version: number): string {
+	return `/api/v1/artifacts/${encodeURIComponent(id)}/thumbnail?version=${version}`;
 }

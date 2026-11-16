@@ -1,13 +1,22 @@
 /**
- * artifact 卡片（计划 M14 2.4）：两种形态都是单个可聚焦的按钮。
- * - `tile`：上半部 16:10 的预览区（这一步是 `bg-inset` 上居中的大号类型图标；4.2 换成缩略图），下面是标题与
- *   「类型 · v版本 · 相对时间」。
+ * artifact 卡片（计划 M14 2.4、4.2）：两种形态都是单个可聚焦的按钮。
+ * - `tile`：上半部 16:10 的预览区——缩略图（`<img loading="lazy">`，服务端每个版本渲染一张），加载失败（还没有、
+ *   渲染不可用）回落到 `bg-inset` 上居中的大号类型图标；下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）。
  * - `row`：一行：类型图标、标题、`v版本`（转录卡片、首屏最近项）。
  * 不传 `onOpen` 时（只读的分享页）渲染成不可点的静态块。
  */
-import type { ReactNode } from "react";
+import {
+	type KeyboardEvent,
+	type MouseEvent,
+	type ReactNode,
+	type Ref,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import type { Artifact } from "../../api/artifact-queries";
+import {
+	type Artifact,
+	artifactThumbnailUrl,
+} from "../../api/artifact-queries";
 import { kindIcon, kindLabelKey } from "../../lib/artifacts/kinds";
 import { formatRelative } from "../../lib/format";
 import { Icon } from "../ui/icons";
@@ -19,14 +28,51 @@ export type ArtifactCardData = Pick<
 > &
 	Partial<Pick<Artifact, "updatedAt">>;
 
+/** tile 的预览区：缩略图，加载失败回落到类型示意图。版本变了重新尝试。 */
+function Preview({ artifact }: { artifact: ArtifactCardData }): ReactNode {
+	const src = artifactThumbnailUrl(artifact.id, artifact.version);
+	const [failed, setFailed] = useState<string | null>(null);
+	return (
+		<span className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-inset">
+			<Icon name={kindIcon(artifact.kind)} size={36} className="text-faint" />
+			{failed !== src && (
+				<img
+					src={src}
+					alt=""
+					loading="lazy"
+					decoding="async"
+					draggable={false}
+					data-testid="artifact-thumb"
+					className="absolute inset-0 h-full w-full object-cover object-top"
+					onError={() => setFailed(src)}
+				/>
+			)}
+		</span>
+	);
+}
+
 export function ArtifactCard({
 	artifact,
 	form,
 	onOpen,
+	meta,
+	ref,
+	tabIndex,
+	onKeyDown,
+	onContextMenu,
+	onFocus,
 }: {
 	artifact: ArtifactCardData;
 	form: "tile" | "row";
 	onOpen?(id: string): void;
+	/** 换掉 tile 的说明行（回收站里的「剩 N 天」）。 */
+	meta?: ReactNode;
+	ref?: Ref<HTMLButtonElement>;
+	/** 总览页的卡片网格用漫游 tabIndex。 */
+	tabIndex?: number;
+	onKeyDown?(e: KeyboardEvent<HTMLButtonElement>): void;
+	onContextMenu?(e: MouseEvent<HTMLButtonElement>): void;
+	onFocus?(): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const kind = t(kindLabelKey(artifact.kind));
@@ -50,23 +96,18 @@ export function ArtifactCard({
 			</>
 		) : (
 			<>
-				<span className="flex aspect-[16/10] w-full items-center justify-center bg-inset">
-					<Icon
-						name={kindIcon(artifact.kind)}
-						size={36}
-						className="text-faint"
-					/>
-				</span>
+				<Preview artifact={artifact} />
 				<span className="flex min-w-0 flex-col gap-0.5 px-3 py-2.5">
 					<span className="truncate font-medium text-sm">{artifact.title}</span>
 					<span className="truncate text-muted text-xs">
-						{artifact.updatedAt !== undefined
-							? t("artifacts.card.meta", {
-									kind,
-									version: artifact.version,
-									when: formatRelative(artifact.updatedAt),
-								})
-							: `${kind} · ${t("artifacts.viewer.version", { n: artifact.version })}`}
+						{meta ??
+							(artifact.updatedAt !== undefined
+								? t("artifacts.card.meta", {
+										kind,
+										version: artifact.version,
+										when: formatRelative(artifact.updatedAt),
+									})
+								: `${kind} · ${t("artifacts.viewer.version", { n: artifact.version })}`)}
 					</span>
 				</span>
 			</>
@@ -87,13 +128,19 @@ export function ArtifactCard({
 		);
 	return (
 		<button
+			ref={ref}
 			type="button"
 			data-testid="artifact-card"
 			data-form={form}
+			data-artifact-id={artifact.id}
 			aria-label={label}
 			title={label}
+			tabIndex={tabIndex}
 			className={`${shape} ${base}`}
 			onClick={() => onOpen(artifact.id)}
+			onKeyDown={onKeyDown}
+			onContextMenu={onContextMenu}
+			onFocus={onFocus}
 		>
 			{body}
 		</button>

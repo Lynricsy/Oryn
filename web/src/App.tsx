@@ -44,6 +44,9 @@ const ArtifactOpenPage = lazy(() =>
 	import("./pages/ArtifactOpenPage").then((m) => ({
 		default: m.ArtifactOpenPage,
 	})),
+// Artifacts（M14）：总览页与最近删除
+const ArtifactsPage = lazy(() =>
+	import("./pages/ArtifactsPage").then((m) => ({ default: m.ArtifactsPage })),
 );
 
 // 不常用的页面（认证、设置、匿名分享页）按需加载
@@ -120,6 +123,8 @@ export function App(): ReactNode {
 						/>
 						<Route path="stats/:tab" element={<StatsPage />} />
 						<Route path="inbox" element={<InboxPage />} />
+						<Route path="artifacts" element={<ArtifactsPage />} />
+						<Route path="artifacts/trash" element={<ArtifactsPage trash />} />
 						<Route path="artifacts/:artifactId" element={<ArtifactPage />} />
 						<Route path="artifacts/open/:slug" element={<ArtifactOpenPage />} />
 						{/* 项目管理搬到了项目分区（M9.6） */}
