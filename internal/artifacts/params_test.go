@@ -226,7 +226,7 @@ func assertPrelude(t *testing.T, body string) {
 		{"data-accent", "#2563eb"}, {"data-density", "16"}, {"data-title", "</script>欢迎"}, {"data-layout", "grid"},
 	}, attrs)
 	assert.NotContains(t, m[0][:len(m[0])-len("</script>")], "</", "值里的 </script> 截不断脚本")
-	assert.Less(t, strings.Index(body, "data-oryn-params-prelude"), strings.Index(body, "<title>"), "插在页面自己的内容之前")
+	assert.Less(t, strings.Index(body, "data-oryn-params-prelude"), strings.Index(body, "<title"), "插在页面自己的内容之前")
 }
 
 // 声明里带 </script> 字样的文本（原文写成 <\/script>）。
@@ -265,11 +265,16 @@ func TestParamsPreludeTopLevel(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "'unsafe-inline'")
 	assert.Equal(t, page, do(mw, hostReq{host: host, path: "/plain.html"}).Body.String())
 
-	// 跟随最新版本的普通帧由页面运行时设参数，不插这段
+	// 普通帧也插这段（运行时要等 DOMContentLoaded 才读声明，这段让首次绘制就带上参数），且在运行时之后、页面内容之前
 	token, _, err := h.OpenFrame(context.Background(), a.ID, 0, "", "")
 	require.NoError(t, err)
 	rec = do(mw, hostReq{host: "a-" + token + ".localhost:7600", path: "/"})
 	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assertPrelude(t, body)
+	assert.Contains(t, body, "__orynStart")
+	assert.Contains(t, body, `data-oryn-src="`, "源码标记照常")
+	rec = do(mw, hostReq{host: "a-" + token + ".localhost:7600", path: "/plain.html"})
 	assert.NotContains(t, rec.Body.String(), "data-oryn-params-prelude")
 }
 

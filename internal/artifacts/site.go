@@ -49,11 +49,16 @@ func inlineScript(js []byte) []byte {
 	return scriptCloseRe.ReplaceAll(js, []byte(`<\/$1`))
 }
 
-// servedHTML 返回帧里提供的 HTML：给每个起始标签加源码标记，再在 InsertionPoint 处插入内联的页面运行时
-// 与 `__orynStart(<配置>)`。root 是帧根。runtimeJS 为空（没跑过 make web）时只标记、不注入。
+// servedHTML 返回帧里提供的 HTML：给每个起始标签加源码标记，再在 InsertionPoint 处插入设参数的 ParamsPrelude 与
+// 内联的页面运行时、`__orynStart(<配置>)`。root 是帧根。runtimeJS 为空（没跑过 make web）时只标记与设参数、不注入。
+// 运行时要等 DOMContentLoaded 才读参数声明；声明的值由 ParamsPrelude 在首次绘制前设上，页面不会先闪一下未设变量的样子。
 func servedHTML(src []byte, path, root string, runtime bool, runtimeJS []byte) []byte {
 	mark := newMark()
 	out := htmlsrc.MarkSources(src, mark)
+	if pre := ParamsPrelude(src); pre != nil {
+		at := htmlsrc.InsertionPoint(out)
+		out = slices.Concat(out[:at], pre, out[at:])
+	}
 	return injectRuntime(out, runtimeConfig{V: 1, Mark: mark, Path: path, Root: root, Runtime: runtime}, runtimeJS)
 }
 
