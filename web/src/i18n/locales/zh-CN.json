@@ -227,7 +227,9 @@
 		"placeholderBusy": "引导正在进行的回合…",
 		"send": "发送",
 		"steer": "引导",
-		"coordinatorUnavailable": "协调对话里不能用「{{name}}」"
+		"coordinatorUnavailable": "协调对话里不能用「{{name}}」",
+		"quoting": "引用：",
+		"removeQuote": "移除引用"
 	},
 	"slash": {
 		"desc": {
@@ -326,6 +328,8 @@
 		"forkHere": "从这里分叉",
 		"ircFrom": "来自 {{from}}",
 		"jumpToEnd": "回到底部",
+		"quoteReply": "引用回复",
+		"quoteDismiss": "关闭引用回复",
 		"label": "加标签",
 		"messageActions": "消息操作",
 		"meta": {

@@ -16,6 +16,7 @@ import { useNavigate } from "react-router";
 import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import { selectModel } from "../../lib/model-select";
+import { composeQuoted, quoteBlock } from "../../lib/quote";
 import {
 	carriesAttachments,
 	coordinatorAllows,
@@ -74,10 +75,12 @@ export function Composer({
 	// 草稿与错误行存在组件外（按线程）：跨 compact 断点、切线程重新挂载时不丢
 	const text = useComposerDraft(threadId, (d) => d.text);
 	const error = useComposerDraft(threadId, (d) => d.error);
+	const quote = useComposerDraft(threadId, (d) => d.quote);
 	const setText = (next: string) =>
 		patchComposerDraft(threadId, { text: next });
 	const setError = (next: unknown) =>
 		patchComposerDraft(threadId, { error: next });
+	const clearQuote = () => patchComposerDraft(threadId, { quote: null });
 	const [bashRunning, setBashRunning] = useState(false);
 	const [active, setActive] = useState(0);
 	const [menuDismissed, setMenuDismissed] = useState(false);
@@ -106,6 +109,17 @@ export function Composer({
 		});
 		ref.current?.focus();
 	}, [editorText]);
+
+	// 新的引用回复：光标放到回复处（正文末尾）。重新挂载时 store 里仍是同一份引用，不重复抢焦点
+	const quoteSeen = useRef(quote);
+	useEffect(() => {
+		if (!quote || quote === quoteSeen.current) return;
+		quoteSeen.current = quote;
+		const el = ref.current;
+		if (!el) return;
+		el.focus({ preventScroll: true });
+		el.setSelectionRange(el.value.length, el.value.length);
+	}, [quote]);
 
 	// 重新挂载后尽力恢复卸载时的光标与焦点；卸载时（DOM 还在）记下它们
 	useLayoutEffect(() => {
@@ -145,24 +159,28 @@ export function Composer({
 
 	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）。
 	// 文字以草稿 store 为准：应答可能在输入区重新挂载之后才到
-	const draftRef = useRef({ text, items: att.items });
-	draftRef.current = { text, items: att.items };
+	const draftRef = useRef({ text, items: att.items, quote });
+	draftRef.current = { text, items: att.items, quote };
 	// 异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：对话框是全局单值、由当前页面消费，
 	// 旧线程的应答不得在新线程打开 / 覆盖对话框。按线程登记而非按实例：跨断点重新挂载仍算留在本线程
 	useEffect(() => claimComposer(threadId), [threadId]);
 
-	const reset = () => {
+	/** 清空输入区；`withQuote` 为假时引用留着（bash、斜杠命令不带走引用）。 */
+	const reset = (withQuote: boolean) => {
 		setText("");
 		att.clear();
 		setMenuDismissed(false);
+		if (withQuote) clearQuote();
 	};
 
-	const resetIfUnchanged = (sent: typeof draftRef.current) => {
-		if (
-			getComposerDraft(threadId).text === sent.text &&
-			draftRef.current.items === sent.items
-		)
-			reset();
+	const resetIfUnchanged = (
+		sent: typeof draftRef.current,
+		withQuote: boolean,
+	) => {
+		const now = getComposerDraft(threadId);
+		if (now.text === sent.text && draftRef.current.items === sent.items)
+			// 等待期间换了一段引用：新引用留着
+			reset(withQuote && now.quote === sent.quote);
 	};
 
 	/** 命令没有带走附件：只清掉命令文本，附件留在输入区。 */
@@ -346,7 +364,10 @@ export function Composer({
 		const sent = draftRef.current;
 		// 同一份草稿已在发送中（含重新挂载前由旧输入区发出、尚未应答的）：忽略重复提交
 		const keys = sent.items.map((i) => i.key);
-		if (isInFlightDraft(getComposerDraft(threadId).inFlight, sent.text, keys))
+		const markerText = sent.quote
+			? composeQuoted(sent.quote.text, sent.text)
+			: sent.text;
+		if (isInFlightDraft(getComposerDraft(threadId).inFlight, markerText, keys))
 			return;
 		const parsed = parseComposerInput(sent.text);
 		// 协调对话没有工作区：`!` 前缀不是 bash，按原文发送
@@ -360,20 +381,26 @@ export function Composer({
 			setError(new Error(t("attachments.waitUpload")));
 			return;
 		}
-		const marker: InFlightDraft = { text: sent.text, keys };
+		const marker: InFlightDraft = { text: markerText, keys };
 		patchComposerDraft(threadId, { inFlight: marker });
 		try {
 			if (parsed.kind === "empty") {
 				if (!att.hasFiles) return;
 				await realtime.cmd(
 					threadId,
-					promptFrame(mode, "", att.contents, att.attachmentIds, att.fileIds),
+					promptFrame(
+						mode,
+						sent.quote ? quoteBlock(sent.quote.text) : "",
+						att.contents,
+						att.attachmentIds,
+						att.fileIds,
+					),
 				);
-				resetIfUnchanged(sent);
+				resetIfUnchanged(sent, true);
 				return;
 			}
 			if (asText.kind === "bash") {
-				reset();
+				reset(false);
 				setBashRunning(true);
 				try {
 					await realtime.cmd(
@@ -400,21 +427,22 @@ export function Composer({
 					if (sent.items.length > 0 && !carriesAttachments(action)) {
 						clearTextIfUnchanged(sent);
 						setKeptFor(name);
-					} else resetIfUnchanged(sent);
+					} else resetIfUnchanged(sent, false);
 					return;
 				}
 			}
+			const body = asText.kind === "text" ? asText.text : sent.text.trim();
 			await realtime.cmd(
 				threadId,
 				promptFrame(
 					mode,
-					asText.kind === "text" ? asText.text : sent.text.trim(),
+					sent.quote ? composeQuoted(sent.quote.text, body) : body,
 					att.contents,
 					att.attachmentIds,
 					att.fileIds,
 				),
 			);
-			resetIfUnchanged(sent);
+			resetIfUnchanged(sent, true);
 		} catch (e) {
 			setError(e);
 		} finally {
@@ -462,6 +490,17 @@ export function Composer({
 			setMenuDismissed(true);
 			return;
 		}
+		// 空输入框里在开头按退格：先移除引用（与删掉一个字符同一个手势）
+		if (
+			quote &&
+			e.key === "Backspace" &&
+			text === "" &&
+			!e.nativeEvent.isComposing
+		) {
+			e.preventDefault();
+			clearQuote();
+			return;
+		}
 		const decision = composerKeyAction(
 			e.nativeEvent,
 			busy,
@@ -499,6 +538,15 @@ export function Composer({
 					active={active}
 					onPick={pick}
 					hint={entries.length > 0 ? t("composer.menuHint") : undefined}
+				/>
+			)}
+			{quote && (
+				<QuoteStrip
+					text={quote.text}
+					onRemove={() => {
+						clearQuote();
+						ref.current?.focus({ preventScroll: true });
+					}}
 				/>
 			)}
 			{canAttach && <AttachmentStrip items={att.items} onRemove={att.remove} />}
@@ -612,6 +660,45 @@ export function Composer({
 				{!coordinator && <ModeStatus threadId={threadId} />}
 				<span className="flex-1" />
 				<SessionReadout threadId={threadId} />
+			</div>
+		</div>
+	);
+}
+
+/** 输入区上方的引用条：引用原文前两行 + 移除钮；发出时拼成引用块放在正文前面。 */
+function QuoteStrip({
+	text,
+	onRemove,
+}: {
+	text: string;
+	onRemove: () => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<div className="px-3 pt-3" data-testid="composer-quote">
+			<div className="flex items-start gap-2 rounded-lg border border-border bg-panel py-1.5 pr-1.5 pl-3 shadow-xs">
+				<Icon
+					name="quote"
+					size={14}
+					aria-hidden
+					className="mt-[3px] shrink-0 text-faint"
+				/>
+				<p
+					className="line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words text-muted text-xs leading-5"
+					title={text}
+				>
+					<span className="sr-only">{t("composer.quoting")}</span>
+					{text}
+				</p>
+				<button
+					type="button"
+					aria-label={t("composer.removeQuote")}
+					title={t("composer.removeQuote")}
+					className="inline-grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-hover hover:text-fg"
+					onClick={onRemove}
+				>
+					<Icon name="close" size={12} />
+				</button>
 			</div>
 		</div>
 	);

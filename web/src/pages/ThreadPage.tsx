@@ -64,6 +64,7 @@ import { Spinner } from "../components/ui/primitives";
 import { usePresence } from "../lib/presence";
 import { useBreakpoint, useViewportSegments } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
+import { useComposerDraft } from "../state/composer-drafts";
 import { useConnection, useIndex, useThread } from "../state/stores";
 import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
@@ -343,6 +344,11 @@ export function ThreadScreen({
 	useEffect(() => {
 		if (editorText) setMini(false);
 	}, [editorText]);
+	// 引用回复带进输入区时同样展开：引用条与光标都在托盘里
+	const quote = useComposerDraft(threadId, (d) => d.quote);
+	useEffect(() => {
+		if (quote) setMini(false);
+	}, [quote]);
 	useDockCollapse({
 		mini,
 		trayRef,

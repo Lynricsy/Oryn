@@ -227,7 +227,9 @@
 		"placeholderBusy": "Steer the running turn…",
 		"send": "Send",
 		"steer": "Steer",
-		"coordinatorUnavailable": "“{{name}}” isn't available in coordinator chats"
+		"coordinatorUnavailable": "“{{name}}” isn't available in coordinator chats",
+		"quoting": "Quoting: ",
+		"removeQuote": "Remove quote"
 	},
 	"slash": {
 		"desc": {
@@ -326,6 +328,8 @@
 		"forkHere": "Fork from here",
 		"ircFrom": "From {{from}}",
 		"jumpToEnd": "Jump to latest",
+		"quoteReply": "Quote reply",
+		"quoteDismiss": "Dismiss quote reply",
 		"label": "Label",
 		"messageActions": "Message actions",
 		"meta": {

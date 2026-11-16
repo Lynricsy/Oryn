@@ -24,6 +24,7 @@ import {
 	type OrynHeader,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
+import { splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
 import type { JsonRecord } from "../../state/message-builder";
 import { useIndex } from "../../state/stores";
@@ -77,6 +78,10 @@ export function UserBubble({
 /** 用户气泡正文排版。 */
 export const USER_BUBBLE_TEXT =
 	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
+
+/** 用户消息开头的引用块（引用回复）：左侧竖线、弱色，与下面的回复正文分开。 */
+const USER_QUOTE =
+	"whitespace-pre-wrap break-words border-border-strong border-l-2 pl-2.5 text-muted text-sm leading-5";
 
 export function textOfContent(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -419,6 +424,7 @@ function UserMessage({
 			)
 		: "";
 	const shown = oryn ? oryn.body : body;
+	const quoted = splitLeadingQuote(shown);
 	return (
 		<div className="group/msg flex flex-col items-end gap-1">
 			{(irc || synthetic || steer || oryn) && (
@@ -449,7 +455,21 @@ function UserMessage({
 						error={oryn.report.error}
 					/>
 				)}
-				{shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>}
+				{quoted ? (
+					<>
+						<blockquote
+							data-testid="user-quote"
+							className={`${USER_QUOTE} ${quoted.rest ? "mb-1.5" : ""}`}
+						>
+							{quoted.quote}
+						</blockquote>
+						{quoted.rest && (
+							<div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>
+						)}
+					</>
+				) : (
+					shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>
+				)}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
 			</UserBubble>
@@ -812,10 +832,12 @@ function AssistantMessage({
 		);
 	});
 	return (
-		// 有浮动菜单时，外层可被点按聚焦（不进 Tab 顺序），触屏点正文即显出菜单，点别处收起
+		// 有浮动菜单时，外层可被点按聚焦（不进 Tab 顺序），触屏点正文即显出菜单，点别处收起。
+		// data-quote-scope：选区完整落在这一条消息里时可以「引用回复」（见 quote-selection）
 		<div
 			className="group/msg relative outline-none"
 			tabIndex={ownMenu ? -1 : undefined}
+			data-quote-scope=""
 		>
 			{ownMenu && (
 				<MessageMenu

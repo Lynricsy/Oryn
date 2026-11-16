@@ -19,6 +19,15 @@ export interface ComposerDraft {
 	 * 存在组件外，重新挂载后再按 Enter 不会把同一份草稿再发一遍。按对象身份清除，旧实例的应答也能清掉它
 	 */
 	inFlight: InFlightDraft | null;
+	/**
+	 * 引用回复（转录里选中 agent 输出后点「引用回复」）：已规整的引用原文，输入区上方显示成可移除的引用条，
+	 * 发送普通消息时拼成 Markdown 引用块放在正文前面（`lib/quote.ts`）。按对象身份区分每次引用，同一段再引用一次也会重新聚焦
+	 */
+	quote: ComposerQuote | null;
+}
+
+export interface ComposerQuote {
+	text: string;
 }
 
 export interface InFlightDraft {
@@ -45,6 +54,7 @@ const EMPTY: ComposerDraft = {
 	selection: null,
 	editorText: null,
 	inFlight: null,
+	quote: null,
 };
 
 const drafts = createStore<Record<string, ComposerDraft>>(() => ({}));

@@ -30,6 +30,8 @@ import {
 	type SourceTrail,
 	siteRoleFaces,
 } from "../../lib/turn-role";
+import { useBreakpoint, useCoarsePointer } from "../../lib/viewport";
+import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import type { TranscriptItem } from "../../state/transcript";
@@ -57,6 +59,7 @@ import { describeModeChange } from "./mode-change";
 import { type KnownModel, modelLabel } from "./model-label";
 import { NoticeLine } from "./NoticeLine";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
+import { QuoteBar, QuoteChip, useQuoteSelection } from "./quote-selection";
 import { findRevealHit, registerRevealer } from "./reveal";
 
 /** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在翻动（含平滑滚动的余程）。 */
@@ -520,7 +523,7 @@ export function Transcript({
 	trayTop?: number;
 }): ReactNode {
 	const { t } = useTranslation();
-	const { threadId } = useTranscriptContext();
+	const { threadId, readOnly } = useTranscriptContext();
 	const pending = usePendingPrompt(threadId);
 	const hasUser = useMemo(() => items.some(isUserRow), [items]);
 	// 第一条 user 消息到了就丢掉暂存，避免同一句话出现两次
@@ -570,6 +573,29 @@ export function Transcript({
 		if (el) el.scrollTop = el.scrollHeight;
 	}, []);
 
+	// 引用回复：转录里有选区时暂停贴底跟随（stick 不变），选区没了再补一次贴底
+	const hold = useRef(false);
+	const onHold = useCallback(
+		(held: boolean) => {
+			hold.current = held;
+			if (!held && stick.current) scrollToEnd();
+		},
+		[scrollToEnd],
+	);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const selection = useQuoteSelection({
+		rootRef: scrollRef,
+		contentRef,
+		enabled: !readOnly,
+		insetTop,
+		onHold,
+		onQuote: (text) => patchComposerDraft(threadId, { quote: { text } }),
+	});
+	// 手机与触屏：系统选区菜单盖在选区附近，入口改放在输入坞上方
+	const bp = useBreakpoint();
+	const coarse = useCoarsePointer();
+	const quoteBar = selection.quote !== null && (bp === "compact" || coarse);
+
 	const onScroll = useCallback(() => {
 		const el = scrollRef.current;
 		if (!el) return;
@@ -582,7 +608,7 @@ export function Transcript({
 		if (bottom) stick.current = true;
 		else if (now < intentUntil.current || (dragging.current && movedUp))
 			stick.current = false;
-		else if (stick.current) scrollToEnd();
+		else if (stick.current && !hold.current) scrollToEnd();
 		setAtBottom(stick.current || bottom);
 
 		const report = onReadRef.current;
@@ -667,7 +693,7 @@ export function Transcript({
 	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随
 	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 与 insetBottom 变化即需要重新贴底
 	useLayoutEffect(() => {
-		if (stick.current) scrollToEnd();
+		if (stick.current && !hold.current) scrollToEnd();
 	}, [items, total, insetBottom, scrollToEnd]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时定一次起始位置
@@ -826,11 +852,25 @@ export function Transcript({
 				}}
 				data-testid="transcript"
 			>
-				<div className="relative w-full" style={{ height: total }}>
+				<div
+					ref={contentRef}
+					className="relative w-full"
+					style={{ height: total }}
+				>
 					{rendered}
+					{selection.quote && !quoteBar && (
+						<QuoteChip quote={selection.quote} onTake={selection.take} />
+					)}
 				</div>
 			</div>
-			{!atBottom && (
+			{quoteBar && (
+				<QuoteBar
+					bottom={trayTop + 8}
+					onTake={selection.take}
+					onDismiss={selection.dismiss}
+				/>
+			)}
+			{!atBottom && !quoteBar && (
 				// 水平居中、悬在托盘顶边上方留白里的小圆钮
 				<button
 					type="button"

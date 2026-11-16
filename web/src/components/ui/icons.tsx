@@ -91,6 +91,7 @@ import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
 import { QrCode } from "@phosphor-icons/react/dist/csr/QrCode";
 import { Question } from "@phosphor-icons/react/dist/csr/Question";
+import { Quotes } from "@phosphor-icons/react/dist/csr/Quotes";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
@@ -210,6 +211,8 @@ const ICONS = {
 	link: Link,
 	/** 在转录里定位某条消息（分享前的密钥扫描命中） */
 	locate: Crosshair,
+	/** 引用回复（选中 agent 输出的一段再回复） */
+	quote: Quotes,
 	bell: Bell,
 	memory: Memory,
 	hardDrives: HardDrives,
