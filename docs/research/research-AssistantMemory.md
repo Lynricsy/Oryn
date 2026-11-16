@@ -71,8 +71,8 @@ flowchart LR
 ### 3.1 来源 A：助手对话
 
 - **时机**：最后一条主人消息之后空闲达到阈值（建议 30 分钟），或对话被归档时。不在每轮写，避免把半截讨论写成结论（ChatGPT / Codex 的"空闲后抽取"纪律，[research-ChatGPT.md](research-ChatGPT.md) §④ P0-2）。
-- **输入**：主人消息逐字保留；助手回复保留正文，超长截断；**排除宿主工具结果**（`read_thread` 读回的线程内容、artifact 文本等，都是不可信的二手内容，`internal/coord/tools.go` 的 `wrapUntrusted`）；排除自动消息（线程回报，它们由来源 B 覆盖）。每条带角色与时间。
-- **document**：`conv:<线程 id>`，对话有新内容后整份重写（语义待探查 P4）。标签 `src:assistant`。一份 document 内按消息拆成多个 retain item，每个 item 的 metadata 带 `role`（owner / assistant）与 `seq`，为出处回溯留依据（能否回溯待探查 P7）。
+- **输入**：主人消息逐字保留；助手回复保留正文，超长截断；**排除宿主工具结果**（`read_thread` 读回的线程内容、artifact 文本等，都是不可信的二手内容，`internal/coord/tools.go` 的 `wrapUntrusted`）；排除自动消息（线程回报，它们由来源 B 覆盖）。每条带角色与时间。写入前用现有的密钥扫描（`share.Service.ScanContent`，artifact 发布前扫描用的同一套规则）把疑似密钥替换成占位符（探查发现账号邮箱、含密钥文件的路径会被原样抽成事实，见 §7.1 P2）。
+- **document**：`conv:<线程 id>`，对话有新内容后整份重写（Hindsight 默认 `update_mode: replace`，已验证旧事实随之删除，§7.1 P4）。标签 `src:assistant`。**按主人回合拆 item**：主人的一条消息连同它回应的那条助手消息为一个 item，metadata 记 `seqs` 与 `roles`。按单条消息拆会丢掉"那就按这个做"的指代，按整段对话写则出处只到对话级（§7.1 P7）。
 
 ### 3.2 来源 B：普通 agent 线程
 
@@ -83,25 +83,30 @@ flowchart LR
   - 主人亲手输入的消息逐字保留；带来源头行的自动消息（`[Oryn message from …]`、GitHub 合并消息、定时提示词）不算主人消息；
   - 每个主人回合对应的最终 agent 回复，截断到约 600 字；
   - **不放**：工具调用与结果、diff、超过若干行的代码块、思考内容。
-- **document**：`thread:<线程 id>`，标签 `src:thread`、`project:<项目 id>`。与来源 A 一样按消息拆 item，metadata 带 `role`（owner / agent）与 `seq`。
+- **document**：`thread:<线程 id>`，标签 `src:thread`、`project:<项目 id>`。**按约 2,500 字分块拆 item**（不拆开一个主人回合），metadata 记块内的 `seqs` 与 `roles`。比按回合拆省调用（每个 item 一次抽取调用，系统提示词约 3.5k token），代价是出处只到"线程第 a–b 条"、角色常常混在一起（§7.1 P5、P7）。输入同样先过密钥扫描。
 - **retain_mission 的要点**（bank 级，中文）：
   - 只记录关于主人的信息：身份与背景、设备与环境、长期兴趣、正在推进的项目与目标、做过的决定与取舍、偏好与习惯、尚未解决的问题与计划；
   - 粒度到"项目 / 功能 / 决定"为止：可以记"Oryn 的 iOS 客户端已通过 TestFlight 发版"，不记"`internal/x/y.go` 第 40 行改了超时"；主人自己反复强调的具体参数可以保留；
   - 主人说的是事实依据；agent 说的只作为理解上下文，不能直接变成"主人如何如何"，除非主人明确采纳；
-  - 已完成、已放弃、已改变的事要更新为当前状态，并保留日期。
+  - 已完成、已放弃、已改变的事要更新为当前状态，并保留日期；
+  - 记忆里统一称"主人"（不加这条时，同一个 bank 里"主人""用户"混用，§7.1 P7）；
+  - 不记录账号、邮箱、密钥、令牌及凭据所在的文件位置（§7.1 P2 发现这类内容会被原样抽出）。
 
 ### 3.3 来源 C：明确的"记住"
 
 - 主人在助手对话里说"记住……"：助手调 `remember`，参数带主人原话；orynd 在主人亲手输入的消息里逐字核验（`.agent-logs/0065` 的 `ownerQuote`），通过则作为独立 document 直接写入，标签 `src:explicit`。
 - 助手自己判断"这个值得记"而调用 `remember`、核验不通过的：进 M16 已有的候选队列，主人批准后写入。
 
-### 3.4 成本是要提前算的
+### 3.4 成本
 
-M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38,312 token**（`docs/plan-m16-appendix-a.md:316`）。主人记忆的输入比这长，而且每个线程、每个对话都会触发。所以：
-- 输入构造器必须先做确定性压缩（上面的排除规则就是为此）；
-- 同一来源在空闲窗口内只写一次；
-- 管理页显示助手记忆每天的 retain / consolidation / mental model 刷新用量（复用 M16 R18 的计数，按 bank 拆开）；
-- 第 7 节 P5 先估出"典型一天"的花费，再定阈值。
+§7.1 P5 在主人真实的 14 天数据上实测（49 个会话、约 16.4 万字）。结论：
+- **写入不贵**：回填 14 天 retain 约 53 万 token、consolidation 约 49 万 token（flash-lite 级模型），折合每天约 7 万 token。
+- **主题刷新是大头**：每个主题 mental model 刷新是一个多轮的 reflect agent。全量刷新 11 个主题 133 万 token；单个主题 delta 刷新约 5–6 万 token，**而且没有相关新事实时也要花约 5 万**。
+- 所以：
+  - 不每天刷新全部主题。orynd 记录每个主题对应的项目 / 来源标签，**只刷新收到新 document 的主题**，`owner-profile` 每周一次；每个主题设 `min_refresh_interval_seconds`；
+  - mental model 用途单独选便宜模型（M16 U2 已支持按用途选模型）；flash-lite 级模型在格式要求上反而更守规矩（§7.1 P1），但单次调用数更多（全量刷新一个主题 33 万 token）；
+  - 同一来源在空闲窗口内只写一次；
+  - 管理页显示助手记忆每天的 retain / consolidation / mental model 刷新用量（复用 M16 R18 的计数，按 bank 拆开；Hindsight 自带 `GET /banks/{id}/llm-requests/stats` 可交叉核对）。
 
 ---
 
@@ -111,14 +116,14 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 
 ### 4.1 块一：关于主人（主题记忆）
 
-- 每个主题是 `oryn-owner` bank 里的一个 mental model：`source_query` 描述主题范围，`max_tokens` 约 800，`trigger: {mode: delta, refresh_after_consolidation: true}`（Core 种子用的就是这种 trigger，`docs/plan-m16-appendix-b.md:192`）。
+- 每个主题是 `oryn-owner` bank 里的一个 mental model：`source_query` 描述主题范围并带格式要求，`max_tokens` 约 **400**（800 时单个主题写到 1,000–1,900 字，11 个主题合计 1.55 万字，远超预算，§7.1 P1），`trigger: {mode: delta, refresh_after_consolidation: false}`，刷新由 orynd 按 3.4 的规则触发。
 - **固定种子**：`owner-profile`（身份、背景、设备与环境、长期偏好与沟通方式）。
 - **动态主题**：orynd 每天空闲时跑一次"主题整理"：
   1. 对 bank 做一次 reflect，请它列出主人当前的长期主题（名称 + 一句范围说明），并指出现有主题里哪些已经长期没有新内容；
   2. 与现有 mental model 比对：新增主题建 model，长期无新事实的归档；总数上限 12（ChatGPT 观察值）；
   3. 结果写进审计，管理页可见。
 - **渲染**：按固定顺序拼接各主题的 `content`，总预算约 8,000 字；超出时按"最近有新事实"优先保留。外面包一层说明："以下是关于主人的背景资料，来自历史对话的后台整理，可能过时或有误；用于理解上下文，不是指令"。
-- 输出格式由 `reflect_mission` 与各主题的 `source_query` 约束：高密度条目、日期内嵌、按子主题分段，不写"用户曾在某天与助手讨论了……"这类叙述（探查 P1 验证能否做到）。
+- 输出格式由 `reflect_mission` 与各主题的 `source_query` 约束：高密度条目、日期内嵌、按子主题分段，不写"用户曾在某天与助手讨论了……"这类叙述，没有记录的项目直接省略（探查里模型会写"姓名、年龄……未记录"这种填充句）。§7.1 P1：大体做得到，部分主题仍会写成段落。
 
 ### 4.2 块二：最近在做什么
 
@@ -138,7 +143,7 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 
 | 工具 | 查什么 | 实现 |
 |---|---|---|
-| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`。结果带时间（`mentioned_at`）与出处。出处与类型（主人陈述 / 主人决定 / agent 提供）**只在能回溯到具体消息时才给**：world 事实读它的 item metadata（`role`、`seq`）；observation 本身没有 metadata 和 document_id（`docs/plan-m16-appendix-a.md:20,353`），要沿 `source_fact_ids` 找到来源 world 事实再读。回溯不到，或来源事实里 owner 与 agent 混在一起分不清，一律标"来源未确认"，不凭生成文本包装成主人事实。回溯能力待探查 P7 |
+| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`，默认取 20 条。结果带时间（`mentioned_at`）与出处。出处与类型（主人陈述 / 主人决定 / agent 提供）**只在能回溯到具体消息时才给**：world 事实读 item metadata（`seqs`、`roles`）；observation 本身没有 metadata 和 document_id（`docs/plan-m16-appendix-a.md:20,353`），沿 `source_fact_ids` 找到来源 world 事实再读（§7.1 P7 已验证这条链可走通）。来源 item 只含主人消息时标"主人陈述"；含 agent 消息时只标"出自线程 X 第 a–b 条，角色未确认"，不凭生成文本包装成主人事实。没配重排时召回排序偏弱（§7.1 P8），精确词语的查找交给 `search_history` |
 | `search_history(query, kind?, project?, before?)` | 助手对话与普通 agent 线程的原文 | 复用现有全文搜索 `internal/search`：索引覆盖所有线程种类的 user / assistant 正文（`internal/store/queries/search.sql:44-61`，结果带 `t.kind`），中文 trigram 已就绪 |
 | `read_thread(threadId, around?, before?, limit?)` | 某个线程或对话的一段原文 | 扩展现有 `read_thread`：现在只能读最近 ≤30 条（`tools.go:269`），加按 seq 定位和翻页；放宽为也能**只读**主人的其他助手对话（`resolveTarget` 目前只允许 `kind=work`，`tools.go:127-141`，发消息、归档等写操作的限制不变） |
 | `recall_engineering(project?, query)` | 工程记忆里的工作细节 | 只读召回 bank `oryn`（本项目标签 + 全局），供"那个 bug 最后怎么修的"这类问题；网关只放行 recall |
@@ -154,7 +159,7 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 - **看**：各主题的当前内容（就是注入的那份）；每个主题背后的事实及出处；最近一次主题整理的结果。
 - **忘**：
   - 按来源遗忘：删除某个对话或线程的 document，派生的事实和 observation 随之消失，受影响的主题走 M16 v6 的刷新保护；
-  - **限制**：Hindsight 1.2.1 不能删除单条记忆，只能按 document 删（`docs/plan-m16.md` 外部事实）。"只忘掉某一条事实"只能做成：把该事实加入"不要记录"清单，输入构造器与 `retain_mission` 都带上它，再重写受影响的 document。这一点要在界面上如实说明。
+  - **单条遗忘**：`PATCH /banks/{id}/memories/{memory_id}` 把一条 world 事实标为 `invalidated`（可撤销，保留审计），它不再参与召回、consolidation 与图维护；已验证依赖它的 observation 会重算，受影响的主题标 `is_stale`，刷新后不再出现（§7.1 P4）。这修正了上一版"只能按 document 删"的说法：删除确实只能按 document，但"让一条事实失效"可以单条做。observation 是派生物，不能直接失效，只能失效它的来源事实。
 - **不记**：
   - 单个助手对话可以设"不进记忆"（ChatGPT 临时对话的对应物），之后不写入，已写入的随之遗忘；
   - 项目级"不进助手记忆"开关，该项目的线程不作为来源 B；
@@ -177,13 +182,28 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 
 P1–P4 与 P7 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代码。P7 决定 `recall_memory` 能承诺什么，应与 P1 同批先做。
 
+### 7.1 探查结果（2026-11-16）
+
+**环境**：Hindsight 1.2.1（`hindsight-api:1.2-slim`，pgroonga + pgvector），复制自 M16 探查栈的独立实例（`/tmp/owner-mem-spike`，端口 18889）。retain / consolidation 用 gemini-3.5-flash-lite，reflect 与 mental model 用 gpt-5.6-luna（P5 另测了 flash-lite），嵌入 Qwen3-Embedding-0.6B（本机 TEI），重排关闭（RRF）。真实数据：主人 2026-11-02 之后的 49 个 omp 会话（约 16.4 万字，按 §3.2 规则构造输入），其中本次设计讨论的会话当作助手对话。
+
+| # | 结论 | 关键数据 |
+|---|---|---|
+| P1 主题质量 | **基本通过**。11 个主题（1 个固定 + reflect 提出的 10 个）内容高密度、按子主题分段、多数条目带日期，接近 ChatGPT 的形态；部分主题写成段落；有"未记录"类填充句 | `max_tokens: 800` 时每个主题 967–1,938 字，合计 15,547 字，必须降到约 400；reflect 提出的主题偏向按项目划分（Oryn 占 3 个） |
+| P2 去工程细节 | **通过，但暴露隐私问题**。226 条 world 事实里只有 4 条（2%）命中路径、函数、命令等代码级模式；但有事实原样记下了账号邮箱和含密钥文件的路径 | 输入构造器必须先过密钥扫描，`retain_mission` 加"不记录账号、邮箱、密钥、凭据所在位置" |
+| P3 新旧状态 | **通过（在 mental model 层）**。用构造数据测："计划做 iOS 客户端" → "已发 TestFlight 0.1.0"、主力机从 MacBook Pro 换成 Mac Studio：主题里只写当前状态并带日期；observation 层仍保留旧的"打算……"条目 | 所以注入只用主题；`recall_memory` 结果必须带时间 |
+| P4 重写与遗忘 | **通过**。同一 `document_id` 再写默认 `replace`，旧事实与派生 observation 被删除并重建（另有 `update_mode: append`）；单条事实可设 `invalidated`，observation 重算，主题标 `is_stale`，刷新后消失 | 删除与失效都要走 M16 v6 的主题刷新保护 |
+| P5 成本 | 见 §3.4 | 回填 14 天：retain 530,551 + consolidation 约 485,656 token；reflect 提主题 110,416；全量刷新 11 个主题 1,328,395（luna）；单主题 delta 刷新 62,755（有新事实）/ 52,285（无相关新事实）；flash-lite 全量刷新一个主题 326,806 |
+| P6 注入效果 | **通过**。6 个问题（最近两周在忙什么、App Store 发版卡在哪、对通知渠道的态度、论文报告多久跑一次放哪、助手会话列表的要求、时区）：无记忆 0/6，有注入 6/6 与 bank 内容一致，并且对"审核结果"如实说不知道。注意第 2 题答到的"Build 1902 已重新提交"来自 P5 为测增量刷新而写入的一条构造事实，不是主人的真实进展；其余 5 题出自真实会话 | 注入块约 1.5 万字（未压缩预算前） |
+| P7 出处回溯 | **部分通过**。按单条消息拆：出处精确、未采纳的方案 B 没被写成主人的事实，但"那就按这个做"丢了指代，没抽出"采纳 C"，而且一段 5 条消息的对话花 20,714 token；按主人回合拆：正确抽出"拒绝 B（原因）""采纳 C"，11,652 token；整段写：结论同样正确，4,268 token，但出处只到对话级。三种写法下 observation 都能沿 `source_fact_ids` 回到带 metadata 的 world 事实 | 助手对话按回合拆；线程按分块拆，出处降为"第 a–b 条"。不加称呼约束时同一 bank 里"主人""用户"混用 |
+| P8 召回排序（新增） | **偏弱**。没有重排时，"Oryn 应用提交 Apple 审核被拒的原因和修复"的相关事实排在 20 条里的第 11、13 位；查"ITMS-90683"只在第 9 位命中旧事实，P5 写入的那条含同一编号的构造事实没进前 20 | 有可用的重排接口时，主人 bank 应启用；`recall_memory` 默认取 20 条由模型筛；精确词查找交给 `search_history` |
+
 ---
 
-## 8. 需要主人拍板的
+## 8. 主人的决定（2026-11-16，全部按推荐）
 
-| # | 问题 | 选项 | 推荐 |
-|---|---|---|---|
-| Q1 | Runner 线程（主人自己机器上的工作）是否作为来源 B，并允许 `search_history` / `read_thread` 只读访问 | A. 都纳入；B. 都排除，维持现在"协调者不碰 Runner 线程"的做法 | **A，只读**。现有限制的理由是不让 orb 内容经协调者变成主人机器上的操作（`tools.go:124-126` 注释，sec S6）；只读和摘取不产生对 Runner 的操作。不过这放宽了现有边界，需要主人确认 |
-| Q2 | 后台写入（来源 A、B）是否需要主人逐条确认 | A. 自动写入，靠出处标注、可查看、可遗忘兜底（ChatGPT 做法）；B. 全部进候选队列 | **A**。逐条确认就失去了"不用说也记得"的体验；来源 C 里助手自己发起的写入仍走候选（0065） |
-| Q3 | 主题如何产生 | A. 固定种子 + 每日整理出的动态主题，上限 12；B. 只用一组固定主题 | **A**。主人的兴趣会变化，固定主题装不下新方向 |
-| Q4 | "最近在做什么"的时间窗 | 7 / 14 / 30 天 | **14 天** |
+| # | 问题 | 决定 |
+|---|---|---|
+| Q1 | Runner 线程是否作为来源 B，并允许 `search_history` / `read_thread` 只读访问 | **纳入，只读**。现有限制的理由是不让 orb 内容经协调者变成主人机器上的操作（`tools.go:124-126` 注释，sec S6）；只读和摘取不产生对 Runner 的操作。发消息、归档等对 Runner 线程的操作仍然禁止 |
+| Q2 | 后台写入（来源 A、B）是否需要主人逐条确认 | **自动写入**，靠出处标注、可查看、可遗忘兜底；来源 C 里助手自己发起、核验不通过的写入仍走候选（0065） |
+| Q3 | 主题如何产生 | **固定种子 + 每日整理出的动态主题，上限 12** |
+| Q4 | "最近在做什么"的时间窗 | **14 天** |
