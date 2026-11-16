@@ -2914,6 +2914,233 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{id}/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail` */
+        get: operations["getArtifactThumbnail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/render.png": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 在控制面渲染某个页面并下载 PNG（渲染不可用回 503 `render_unavailable`） */
+        get: operations["renderArtifactPng"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/canvas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 画布的实时状态（最新版本 + 尚未落成版本的用户操作） */
+        get: operations["getArtifactCanvas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/canvas/ops": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 提交画布操作（实时广播给观看者；静默 30 秒后落成一个用户版本） */
+        post: operations["applyArtifactCanvasOps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/params": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 写回页面声明的调节参数（`data-oryn-params`），落成一个用户版本 */
+        put: operations["setArtifactParams"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 已授权的 artifact 能力（不含回收站里的） */
+        get: operations["listArtifactConsents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-consents/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `POST` 时是同意请求 id；`DELETE` 时是 artifact id */
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 回答一个同意请求（第一个回答生效；请求已结束时回 404） */
+        post: operations["answerArtifactConsent"];
+        /** 收回一个 artifact 的全部能力授权 */
+        delete: operations["revokeArtifactConsents"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 发布状态 */
+        get: operations["getArtifactPublication"];
+        /** 发布或更新发布（访问级别、版本、是否跟随最新）；`code` / `public` 先做密钥扫描 */
+        put: operations["publishArtifact"];
+        post?: never;
+        /** 取消发布（链接随即失效） */
+        delete: operations["unpublishArtifact"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/publication/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 换一个访问码（旧码与已发出的授权随即失效，并解除锁定） */
+        post: operations["rotateArtifactPublicationCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-publications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部已发布的 artifact */
+        get: operations["listArtifactPublications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-publications/{slug}/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["schemas"]["ArtifactFrameToken"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 所有者直接打开自己的私有或访问码发布页：返回带授权段的地址 */
+        post: operations["grantArtifactPublication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Artifacts 设置 */
+        get: operations["getArtifactPrefs"];
+        /** 修改 Artifacts 设置 */
+        put: operations["putArtifactPrefs"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -4521,8 +4748,11 @@ export interface components {
         ArtifactOpenLink: {
             url: string;
         };
-        /** @enum {string} */
-        ArtifactExportFormat: "html" | "zip";
+        /**
+         * @description `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片
+         * @enum {string}
+         */
+        ArtifactExportFormat: "html" | "zip" | "md" | "pdf";
         ArtifactCapabilities: {
             /**
              * @description `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
@@ -4609,6 +4839,104 @@ export interface components {
         };
         ArtifactVersionRef: {
             version: number;
+        };
+        ArtifactCanvasState: {
+            /** @description 底稿所在的版本 */
+            version: number;
+            /**
+             * Format: int64
+             * @description 实时操作序号
+             */
+            seq: number;
+            /** @description 当前的 `canvas.json`（含尚未落成版本的用户操作） */
+            doc: {
+                [key: string]: unknown;
+            };
+        };
+        ArtifactCanvasOps: {
+            ops: {
+                [key: string]: unknown;
+            }[];
+            /** @description 提交方标签页的随机 id */
+            client: string;
+            /** Format: int64 */
+            clientSeq: number;
+        };
+        ArtifactCanvasSeq: {
+            /** Format: int64 */
+            seq: number;
+        };
+        ArtifactParamsSet: {
+            baseVersion: number;
+            path: string;
+            /** @description 参数名 → 新值 */
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        /** @enum {string} */
+        ArtifactConsentCapability: "files" | "sample";
+        ArtifactConsentAnswer: {
+            allow: boolean;
+        };
+        ArtifactConsent: {
+            artifactId: components["schemas"]["ArtifactId"];
+            title: string;
+            projectId?: components["schemas"]["ProjectId"];
+            capabilities: components["schemas"]["ArtifactConsentCapability"][];
+            /** @description 最近一次授权的时间 */
+            grantedAt: components["schemas"]["TimestampMs"];
+        };
+        ArtifactConsentList: {
+            consents: components["schemas"]["ArtifactConsent"][];
+        };
+        ArtifactPublication: {
+            id: string;
+            url: string;
+            access: components["schemas"]["ArtifactAccess"];
+            /** @description 访问码（只在 `access = code` 时给） */
+            code?: string;
+            /** @description 访问码被输错太多次已锁定（换码才解锁） */
+            codeLocked: boolean;
+            /** @description 发布出去的版本 */
+            version: number;
+            /** @description 自动跟着最新版本更新 */
+            follow: boolean;
+            /** @description 跟随时遇到疑似密钥、等待确认的版本 */
+            pendingVersion?: number;
+            /** @description 正在看的访客数 */
+            visitors: number;
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        ArtifactPublicationState: {
+            /** @description 未发布时为 null */
+            publication: components["schemas"]["ArtifactPublication"] | null;
+            /**
+             * Format: int64
+             * @description 全部已发布版本的大小之和
+             */
+            usageBytes: number;
+        };
+        ArtifactPublishRequest: {
+            access: components["schemas"]["ArtifactAccess"];
+            /** @description 缺省：新建时为最新版本，更新时不变 */
+            version?: number;
+            /** @description 缺省：新建时为 true，更新时不变 */
+            follow?: boolean;
+            /** @description 确认密钥扫描的命中后仍然发布 */
+            acknowledgeFindings?: boolean;
+        };
+        ArtifactPublicationListItem: {
+            artifact: components["schemas"]["Artifact"];
+            publication: components["schemas"]["ArtifactPublication"];
+        };
+        ArtifactPublicationList: {
+            publications: components["schemas"]["ArtifactPublicationListItem"][];
+        };
+        ArtifactPrefs: {
+            /** @description 把新建的 artifact 以私有方式发布，并跟着最新版本更新 */
+            autoPublish: boolean;
         };
         /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
         CreateAssistantConversationRequest: {
@@ -6674,7 +7002,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -6924,6 +7252,51 @@ export interface components {
             type: "artifact.version";
             id: components["schemas"]["ArtifactId"];
             version: number;
+        };
+        /**
+         * @description 画布的实时变化；只发给正在观看它的连接。带 `ops`：一批操作（`client` + `clientSeq` 标明提交方）；
+         *     带 `doc`：整份文档替换（别处产生了新版本，`version` 为新底稿版本）。
+         */
+        WsServerArtifactCanvas: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.canvas";
+            id: components["schemas"]["ArtifactId"];
+            /** Format: int64 */
+            seq: number;
+            ops?: {
+                [key: string]: unknown;
+            }[];
+            doc?: {
+                [key: string]: unknown;
+            };
+            version?: number;
+            client?: string;
+            /** Format: int64 */
+            clientSeq?: number;
+        };
+        /**
+         * @description 页面能力的同意请求（`asked`）与结果（`settled`）；只发给正在观看该 artifact 的连接。
+         *     `settled.reload` 为真表示页面已经不在等，查看器应重载帧。
+         */
+        WsServerArtifactConsent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.consent";
+            /** @enum {string} */
+            kind: "asked" | "settled";
+            requestId: string;
+            artifactId: components["schemas"]["ArtifactId"];
+            title?: string;
+            /** @description 项目名（`files` 用） */
+            project?: string;
+            capability?: components["schemas"]["ArtifactConsentCapability"];
+            allowed?: boolean;
+            reload?: boolean;
         };
         /** @description 某个 artifact 的评论有变化；只发给正在观看它的连接 */
         WsServerArtifactComments: {
@@ -12057,6 +12430,8 @@ export interface operations {
         parameters: {
             query?: {
                 permanent?: boolean;
+                /** @description 同时取消发布（软删除时；永久删除总会连带删除发布记录） */
+                unpublish?: boolean;
             };
             header?: never;
             path: {
@@ -12567,6 +12942,409 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactThumbnail: {
+        parameters: {
+            query?: {
+                /** @description 缺省 = 最新版本 */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JPEG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renderArtifactPng: {
+        parameters: {
+            query?: {
+                version?: number;
+                /** @description 缺省 = 入口文件 */
+                path?: string;
+                width?: number;
+                height?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG（`Content-Disposition` 为 attachment） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactCanvas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCanvasState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyArtifactCanvasOps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactCanvasOps"];
+            };
+        };
+        responses: {
+            /** @description 已应用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCanvasSeq"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setArtifactParams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactParamsSet"];
+            };
+        };
+        responses: {
+            /** @description 新版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactVersionRef"];
+                };
+            };
+            /** @description 文件在 `baseVersion` 之后被改过 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listArtifactConsents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactConsentList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    answerArtifactConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `POST` 时是同意请求 id；`DELETE` 时是 artifact id */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactConsentAnswer"];
+            };
+        };
+        responses: {
+            /** @description 已记录 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeArtifactConsents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `POST` 时是同意请求 id；`DELETE` 时是 artifact id */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已收回 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发布状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPublicationState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    publishArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactPublishRequest"];
+            };
+        };
+        responses: {
+            /** @description 发布状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPublicationState"];
+                };
+            };
+            /** @description `secrets_found`：扫描有命中且未确认 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareScanConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    unpublishArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已取消 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rotateArtifactPublicationCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 发布状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPublicationState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listArtifactPublications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPublicationList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    grantArtifactPublication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["schemas"]["ArtifactFrameToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 地址 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactOpenLink"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putArtifactPrefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactPrefs"];
+            };
+        };
+        responses: {
+            /** @description 修改后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactPrefs"];
                 };
             };
             default: components["responses"]["Error"];

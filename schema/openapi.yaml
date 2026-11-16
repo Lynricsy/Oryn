@@ -3246,6 +3246,10 @@ paths:
         - name: permanent
           in: query
           schema: { type: boolean, default: false }
+        - name: unpublish
+          in: query
+          description: 同时取消发布（软删除时；永久删除总会连带删除发布记录）
+          schema: { type: boolean, default: false }
       responses:
         '204': { description: 已删除 }
         default: { $ref: '#/components/responses/Error' }
@@ -3615,6 +3619,297 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ArtifactConflict' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/thumbnail:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: getArtifactThumbnail
+      summary: 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail`
+      parameters:
+        - name: version
+          in: query
+          description: 缺省 = 最新版本
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/render.png:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: renderArtifactPng
+      summary: 在控制面渲染某个页面并下载 PNG（渲染不可用回 503 `render_unavailable`）
+      parameters:
+        - name: version
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: path
+          in: query
+          description: 缺省 = 入口文件
+          schema: { type: string, maxLength: 512 }
+        - name: width
+          in: query
+          schema: { type: integer, minimum: 64, maximum: 8000, default: 1280 }
+        - name: height
+          in: query
+          schema: { type: integer, minimum: 64, maximum: 8000, default: 800 }
+      responses:
+        '200':
+          description: PNG（`Content-Disposition` 为 attachment）
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/canvas:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: getArtifactCanvas
+      summary: 画布的实时状态（最新版本 + 尚未落成版本的用户操作）
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCanvasState' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/canvas/ops:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: applyArtifactCanvasOps
+      summary: 提交画布操作（实时广播给观看者；静默 30 秒后落成一个用户版本）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactCanvasOps' }
+      responses:
+        '200':
+          description: 已应用
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCanvasSeq' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/params:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    put:
+      tags: [artifacts]
+      operationId: setArtifactParams
+      summary: 写回页面声明的调节参数（`data-oryn-params`），落成一个用户版本
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactParamsSet' }
+      responses:
+        '200':
+          description: 新版本
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactVersionRef' }
+        '409':
+          description: 文件在 `baseVersion` 之后被改过
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactConflict' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-consents:
+    get:
+      tags: [artifacts]
+      operationId: listArtifactConsents
+      summary: 已授权的 artifact 能力（不含回收站里的）
+      responses:
+        '200':
+          description: 授权
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactConsentList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-consents/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: '`POST` 时是同意请求 id；`DELETE` 时是 artifact id'
+        schema: { type: string, maxLength: 64 }
+    post:
+      tags: [artifacts]
+      operationId: answerArtifactConsent
+      summary: 回答一个同意请求（第一个回答生效；请求已结束时回 404）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactConsentAnswer' }
+      responses:
+        '204': { description: 已记录 }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [artifacts]
+      operationId: revokeArtifactConsents
+      summary: 收回一个 artifact 的全部能力授权
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已收回 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/publication:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: getArtifactPublication
+      summary: 发布状态
+      responses:
+        '200':
+          description: 发布状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPublicationState' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [artifacts]
+      operationId: publishArtifact
+      summary: 发布或更新发布（访问级别、版本、是否跟随最新）；`code` / `public` 先做密钥扫描
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactPublishRequest' }
+      responses:
+        '200':
+          description: 发布状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPublicationState' }
+        '409':
+          description: '`secrets_found`：扫描有命中且未确认'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareScanConflict' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [artifacts]
+      operationId: unpublishArtifact
+      summary: 取消发布（链接随即失效）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已取消 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/publication/code:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: rotateArtifactPublicationCode
+      summary: 换一个访问码（旧码与已发出的授权随即失效，并解除锁定）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 发布状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPublicationState' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-publications:
+    get:
+      tags: [artifacts]
+      operationId: listArtifactPublications
+      summary: 全部已发布的 artifact
+      responses:
+        '200':
+          description: 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPublicationList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-publications/{slug}/grant:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/ArtifactFrameToken' }
+    post:
+      tags: [artifacts]
+      operationId: grantArtifactPublication
+      summary: 所有者直接打开自己的私有或访问码发布页：返回带授权段的地址
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactOpenLink' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/settings/artifacts:
+    get:
+      tags: [artifacts]
+      operationId: getArtifactPrefs
+      summary: Artifacts 设置
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPrefs' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [artifacts]
+      operationId: putArtifactPrefs
+      summary: 修改 Artifacts 设置
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactPrefs' }
+      responses:
+        '200':
+          description: 修改后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPrefs' }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
@@ -6013,8 +6308,9 @@ components:
         url: { type: string }
     ArtifactExportFormat:
       type: string
-      enum: [html, zip]
-      x-enum-varnames: [ArtifactExportHTML, ArtifactExportZip]
+      enum: [html, zip, md, pdf]
+      x-enum-varnames: [ArtifactExportHTML, ArtifactExportZip, ArtifactExportMarkdown, ArtifactExportPDF]
+      description: '`html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片'
     ArtifactCapabilities:
       type: object
       required: [frames, render, sample]
@@ -6156,6 +6452,161 @@ components:
       required: [version]
       properties:
         version: { type: integer }
+    ArtifactCanvasState:
+      type: object
+      required: [version, seq, doc]
+      properties:
+        version:
+          type: integer
+          description: 底稿所在的版本
+        seq:
+          type: integer
+          format: int64
+          description: 实时操作序号
+        doc:
+          type: object
+          additionalProperties: true
+          description: 当前的 `canvas.json`（含尚未落成版本的用户操作）
+    ArtifactCanvasOps:
+      type: object
+      required: [ops, client, clientSeq]
+      properties:
+        ops:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items:
+            type: object
+            additionalProperties: true
+            description: '画布操作：`{op: "add", object}`、`{op: "set", id, key, value}`、`{op: "remove", id}`、`{op: "order", id, index}`'
+        client:
+          type: string
+          maxLength: 64
+          description: 提交方标签页的随机 id
+        clientSeq:
+          type: integer
+          format: int64
+    ArtifactCanvasSeq:
+      type: object
+      required: [seq]
+      properties:
+        seq: { type: integer, format: int64 }
+    ArtifactParamsSet:
+      type: object
+      required: [baseVersion, path, values]
+      properties:
+        baseVersion: { type: integer, minimum: 1 }
+        path: { type: string }
+        values:
+          type: object
+          additionalProperties: true
+          description: 参数名 → 新值
+    ArtifactConsentCapability:
+      type: string
+      enum: [files, sample]
+      x-enum-varnames: [ArtifactConsentFiles, ArtifactConsentSample]
+    ArtifactConsentAnswer:
+      type: object
+      required: [allow]
+      properties:
+        allow: { type: boolean }
+    ArtifactConsent:
+      type: object
+      required: [artifactId, title, capabilities, grantedAt]
+      properties:
+        artifactId: { $ref: '#/components/schemas/ArtifactId' }
+        title: { type: string }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactConsentCapability' }
+        grantedAt:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 最近一次授权的时间
+    ArtifactConsentList:
+      type: object
+      required: [consents]
+      properties:
+        consents:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactConsent' }
+    ArtifactPublication:
+      type: object
+      required: [id, url, access, codeLocked, version, follow, visitors, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        url: { type: string }
+        access: { $ref: '#/components/schemas/ArtifactAccess' }
+        code:
+          type: string
+          description: 访问码（只在 `access = code` 时给）
+        codeLocked:
+          type: boolean
+          description: 访问码被输错太多次已锁定（换码才解锁）
+        version:
+          type: integer
+          description: 发布出去的版本
+        follow:
+          type: boolean
+          description: 自动跟着最新版本更新
+        pendingVersion:
+          type: integer
+          description: 跟随时遇到疑似密钥、等待确认的版本
+        visitors:
+          type: integer
+          description: 正在看的访客数
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    ArtifactPublicationState:
+      type: object
+      required: [publication, usageBytes]
+      properties:
+        publication:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ArtifactPublication'
+          description: 未发布时为 null
+        usageBytes:
+          type: integer
+          format: int64
+          description: 全部已发布版本的大小之和
+    ArtifactPublishRequest:
+      type: object
+      required: [access]
+      properties:
+        access: { $ref: '#/components/schemas/ArtifactAccess' }
+        version:
+          type: integer
+          minimum: 1
+          description: 缺省：新建时为最新版本，更新时不变
+        follow:
+          type: boolean
+          description: 缺省：新建时为 true，更新时不变
+        acknowledgeFindings:
+          type: boolean
+          description: 确认密钥扫描的命中后仍然发布
+    ArtifactPublicationListItem:
+      type: object
+      required: [artifact, publication]
+      properties:
+        artifact: { $ref: '#/components/schemas/Artifact' }
+        publication: { $ref: '#/components/schemas/ArtifactPublication' }
+    ArtifactPublicationList:
+      type: object
+      required: [publications]
+      properties:
+        publications:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactPublicationListItem' }
+    ArtifactPrefs:
+      type: object
+      required: [autoPublish]
+      properties:
+        autoPublish:
+          type: boolean
+          description: 把新建的 artifact 以私有方式发布，并跟着最新版本更新
     CreateAssistantConversationRequest:
       type: object
       description: 新助手对话的第一条用户消息；全部省略 = 空对话
@@ -9097,6 +9548,8 @@ components:
         - $ref: '#/components/schemas/WsServerArtifactVersion'
         - $ref: '#/components/schemas/WsServerArtifactActivity'
         - $ref: '#/components/schemas/WsServerArtifactComments'
+        - $ref: '#/components/schemas/WsServerArtifactCanvas'
+        - $ref: '#/components/schemas/WsServerArtifactConsent'
       discriminator:
         propertyName: type
         mapping:
@@ -9123,6 +9576,8 @@ components:
           artifact.version: '#/components/schemas/WsServerArtifactVersion'
           artifact.activity: '#/components/schemas/WsServerArtifactActivity'
           artifact.comments: '#/components/schemas/WsServerArtifactComments'
+          artifact.canvas: '#/components/schemas/WsServerArtifactCanvas'
+          artifact.consent: '#/components/schemas/WsServerArtifactConsent'
     WsServerIndex:
       type: object
       description: 线程摘要全量（连接建立后首条）
@@ -9356,6 +9811,48 @@ components:
         type: { type: string, enum: [artifact.version], x-enum-varnames: [WsServerArtifactVersionTypeArtifactVersion] }
         id: { $ref: '#/components/schemas/ArtifactId' }
         version: { type: integer }
+    WsServerArtifactCanvas:
+      type: object
+      description: |
+        画布的实时变化；只发给正在观看它的连接。带 `ops`：一批操作（`client` + `clientSeq` 标明提交方）；
+        带 `doc`：整份文档替换（别处产生了新版本，`version` 为新底稿版本）。
+      required: [type, id, seq]
+      properties:
+        type: { type: string, enum: [artifact.canvas], x-enum-varnames: [WsServerArtifactCanvasTypeArtifactCanvas] }
+        id: { $ref: '#/components/schemas/ArtifactId' }
+        seq: { type: integer, format: int64 }
+        ops:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        doc:
+          type: object
+          additionalProperties: true
+        version: { type: integer }
+        client: { type: string }
+        clientSeq: { type: integer, format: int64 }
+    WsServerArtifactConsent:
+      type: object
+      description: |
+        页面能力的同意请求（`asked`）与结果（`settled`）；只发给正在观看该 artifact 的连接。
+        `settled.reload` 为真表示页面已经不在等，查看器应重载帧。
+      required: [type, kind, requestId, artifactId]
+      properties:
+        type: { type: string, enum: [artifact.consent], x-enum-varnames: [WsServerArtifactConsentTypeArtifactConsent] }
+        kind:
+          type: string
+          enum: [asked, settled]
+          x-enum-varnames: [ArtifactConsentAsked, ArtifactConsentSettled]
+        requestId: { type: string }
+        artifactId: { $ref: '#/components/schemas/ArtifactId' }
+        title: { type: string }
+        project:
+          type: string
+          description: 项目名（`files` 用）
+        capability: { $ref: '#/components/schemas/ArtifactConsentCapability' }
+        allowed: { type: boolean }
+        reload: { type: boolean }
     WsServerArtifactComments:
       type: object
       description: 某个 artifact 的评论有变化；只发给正在观看它的连接

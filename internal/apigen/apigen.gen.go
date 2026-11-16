@@ -119,16 +119,40 @@ func (e ArtifactCapability) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactConsentCapability.
+const (
+	ArtifactConsentFiles  ArtifactConsentCapability = "files"
+	ArtifactConsentSample ArtifactConsentCapability = "sample"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactConsentCapability enum.
+func (e ArtifactConsentCapability) Valid() bool {
+	switch e {
+	case ArtifactConsentFiles:
+		return true
+	case ArtifactConsentSample:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ArtifactExportFormat.
 const (
-	ArtifactExportHTML ArtifactExportFormat = "html"
-	ArtifactExportZip  ArtifactExportFormat = "zip"
+	ArtifactExportHTML     ArtifactExportFormat = "html"
+	ArtifactExportMarkdown ArtifactExportFormat = "md"
+	ArtifactExportPDF      ArtifactExportFormat = "pdf"
+	ArtifactExportZip      ArtifactExportFormat = "zip"
 )
 
 // Valid indicates whether the value is a known member of the ArtifactExportFormat enum.
 func (e ArtifactExportFormat) Valid() bool {
 	switch e {
 	case ArtifactExportHTML:
+		return true
+	case ArtifactExportMarkdown:
+		return true
+	case ArtifactExportPDF:
 		return true
 	case ArtifactExportZip:
 		return true
@@ -2621,6 +2645,21 @@ func (e WsServerArtifactActivityType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerArtifactCanvasType.
+const (
+	WsServerArtifactCanvasTypeArtifactCanvas WsServerArtifactCanvasType = "artifact.canvas"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactCanvasType enum.
+func (e WsServerArtifactCanvasType) Valid() bool {
+	switch e {
+	case WsServerArtifactCanvasTypeArtifactCanvas:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerArtifactCommentsType.
 const (
 	WsServerArtifactCommentsTypeArtifactComments WsServerArtifactCommentsType = "artifact.comments"
@@ -2630,6 +2669,39 @@ const (
 func (e WsServerArtifactCommentsType) Valid() bool {
 	switch e {
 	case WsServerArtifactCommentsTypeArtifactComments:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerArtifactConsentKind.
+const (
+	ArtifactConsentAsked   WsServerArtifactConsentKind = "asked"
+	ArtifactConsentSettled WsServerArtifactConsentKind = "settled"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactConsentKind enum.
+func (e WsServerArtifactConsentKind) Valid() bool {
+	switch e {
+	case ArtifactConsentAsked:
+		return true
+	case ArtifactConsentSettled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerArtifactConsentType.
+const (
+	WsServerArtifactConsentTypeArtifactConsent WsServerArtifactConsentType = "artifact.consent"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactConsentType enum.
+func (e WsServerArtifactConsentType) Valid() bool {
+	switch e {
+	case WsServerArtifactConsentTypeArtifactConsent:
 		return true
 	default:
 		return false
@@ -3211,6 +3283,31 @@ type Artifact struct {
 // ArtifactAccess 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
 type ArtifactAccess string
 
+// ArtifactCanvasOps defines model for ArtifactCanvasOps.
+type ArtifactCanvasOps struct {
+	// Client 提交方标签页的随机 id
+	Client    string                   `json:"client"`
+	ClientSeq int64                    `json:"clientSeq"`
+	Ops       []map[string]interface{} `json:"ops"`
+}
+
+// ArtifactCanvasSeq defines model for ArtifactCanvasSeq.
+type ArtifactCanvasSeq struct {
+	Seq int64 `json:"seq"`
+}
+
+// ArtifactCanvasState defines model for ArtifactCanvasState.
+type ArtifactCanvasState struct {
+	// Doc 当前的 `canvas.json`（含尚未落成版本的用户操作）
+	Doc map[string]interface{} `json:"doc"`
+
+	// Seq 实时操作序号
+	Seq int64 `json:"seq"`
+
+	// Version 底稿所在的版本
+	Version int `json:"version"`
+}
+
 // ArtifactCapabilities defines model for ArtifactCapabilities.
 type ArtifactCapabilities struct {
 	// Frames `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
@@ -3337,6 +3434,33 @@ type ArtifactConflict struct {
 	State   ArtifactState `json:"state"`
 }
 
+// ArtifactConsent defines model for ArtifactConsent.
+type ArtifactConsent struct {
+	// ArtifactID `art_<ulid>`（M14 artifact）
+	ArtifactID   ArtifactID                  `json:"artifactId"`
+	Capabilities []ArtifactConsentCapability `json:"capabilities"`
+
+	// GrantedAt 最近一次授权的时间
+	GrantedAt TimestampMs `json:"grantedAt"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+	Title     string     `json:"title"`
+}
+
+// ArtifactConsentAnswer defines model for ArtifactConsentAnswer.
+type ArtifactConsentAnswer struct {
+	Allow bool `json:"allow"`
+}
+
+// ArtifactConsentCapability defines model for ArtifactConsentCapability.
+type ArtifactConsentCapability string
+
+// ArtifactConsentList defines model for ArtifactConsentList.
+type ArtifactConsentList struct {
+	Consents []ArtifactConsent `json:"consents"`
+}
+
 // ArtifactDetail defines model for ArtifactDetail.
 type ArtifactDetail struct {
 	Artifact Artifact `json:"artifact"`
@@ -3370,7 +3494,7 @@ type ArtifactElementEdit struct {
 	Text *string `json:"text,omitempty"`
 }
 
-// ArtifactExportFormat defines model for ArtifactExportFormat.
+// ArtifactExportFormat `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片
 type ArtifactExportFormat string
 
 // ArtifactFile defines model for ArtifactFile.
@@ -3423,9 +3547,91 @@ type ArtifactOpenLink struct {
 // ArtifactOrigin defines model for ArtifactOrigin.
 type ArtifactOrigin string
 
+// ArtifactParamsSet defines model for ArtifactParamsSet.
+type ArtifactParamsSet struct {
+	BaseVersion int    `json:"baseVersion"`
+	Path        string `json:"path"`
+
+	// Values 参数名 → 新值
+	Values map[string]interface{} `json:"values"`
+}
+
 // ArtifactPatch defines model for ArtifactPatch.
 type ArtifactPatch struct {
 	Title string `json:"title"`
+}
+
+// ArtifactPrefs defines model for ArtifactPrefs.
+type ArtifactPrefs struct {
+	// AutoPublish 把新建的 artifact 以私有方式发布，并跟着最新版本更新
+	AutoPublish bool `json:"autoPublish"`
+}
+
+// ArtifactPublication defines model for ArtifactPublication.
+type ArtifactPublication struct {
+	// Access 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
+	Access ArtifactAccess `json:"access"`
+
+	// Code 访问码（只在 `access = code` 时给）
+	Code *string `json:"code,omitempty"`
+
+	// CodeLocked 访问码被输错太多次已锁定（换码才解锁）
+	CodeLocked bool `json:"codeLocked"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Follow 自动跟着最新版本更新
+	Follow bool   `json:"follow"`
+	ID     string `json:"id"`
+
+	// PendingVersion 跟随时遇到疑似密钥、等待确认的版本
+	PendingVersion *int `json:"pendingVersion,omitempty"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+	URL       string      `json:"url"`
+
+	// Version 发布出去的版本
+	Version int `json:"version"`
+
+	// Visitors 正在看的访客数
+	Visitors int `json:"visitors"`
+}
+
+// ArtifactPublicationList defines model for ArtifactPublicationList.
+type ArtifactPublicationList struct {
+	Publications []ArtifactPublicationListItem `json:"publications"`
+}
+
+// ArtifactPublicationListItem defines model for ArtifactPublicationListItem.
+type ArtifactPublicationListItem struct {
+	Artifact    Artifact            `json:"artifact"`
+	Publication ArtifactPublication `json:"publication"`
+}
+
+// ArtifactPublicationState defines model for ArtifactPublicationState.
+type ArtifactPublicationState struct {
+	// Publication 未发布时为 null
+	Publication *ArtifactPublication `json:"publication"`
+
+	// UsageBytes 全部已发布版本的大小之和
+	UsageBytes int64 `json:"usageBytes"`
+}
+
+// ArtifactPublishRequest defines model for ArtifactPublishRequest.
+type ArtifactPublishRequest struct {
+	// Access 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
+	Access ArtifactAccess `json:"access"`
+
+	// AcknowledgeFindings 确认密钥扫描的命中后仍然发布
+	AcknowledgeFindings *bool `json:"acknowledgeFindings,omitempty"`
+
+	// Follow 缺省：新建时为 true，更新时不变
+	Follow *bool `json:"follow,omitempty"`
+
+	// Version 缺省：新建时为最新版本，更新时不变
+	Version *int `json:"version,omitempty"`
 }
 
 // ArtifactRestoreVersion defines model for ArtifactRestoreVersion.
@@ -8226,6 +8432,24 @@ type WsServerArtifactActivity struct {
 // WsServerArtifactActivityType defines model for WsServerArtifactActivity.Type.
 type WsServerArtifactActivityType string
 
+// WsServerArtifactCanvas 画布的实时变化；只发给正在观看它的连接。带 `ops`：一批操作（`client` + `clientSeq` 标明提交方）；
+// 带 `doc`：整份文档替换（别处产生了新版本，`version` 为新底稿版本）。
+type WsServerArtifactCanvas struct {
+	Client    *string                `json:"client,omitempty"`
+	ClientSeq *int64                 `json:"clientSeq,omitempty"`
+	Doc       map[string]interface{} `json:"doc,omitempty"`
+
+	// ID `art_<ulid>`（M14 artifact）
+	ID      ArtifactID                 `json:"id"`
+	Ops     []map[string]interface{}   `json:"ops,omitempty"`
+	Seq     int64                      `json:"seq"`
+	Type    WsServerArtifactCanvasType `json:"type"`
+	Version *int                       `json:"version,omitempty"`
+}
+
+// WsServerArtifactCanvasType defines model for WsServerArtifactCanvas.Type.
+type WsServerArtifactCanvasType string
+
 // WsServerArtifactComments 某个 artifact 的评论有变化；只发给正在观看它的连接
 type WsServerArtifactComments struct {
 	// ID `art_<ulid>`（M14 artifact）
@@ -8235,6 +8459,30 @@ type WsServerArtifactComments struct {
 
 // WsServerArtifactCommentsType defines model for WsServerArtifactComments.Type.
 type WsServerArtifactCommentsType string
+
+// WsServerArtifactConsent 页面能力的同意请求（`asked`）与结果（`settled`）；只发给正在观看该 artifact 的连接。
+// `settled.reload` 为真表示页面已经不在等，查看器应重载帧。
+type WsServerArtifactConsent struct {
+	Allowed *bool `json:"allowed,omitempty"`
+
+	// ArtifactID `art_<ulid>`（M14 artifact）
+	ArtifactID ArtifactID                  `json:"artifactId"`
+	Capability *ArtifactConsentCapability  `json:"capability,omitempty"`
+	Kind       WsServerArtifactConsentKind `json:"kind"`
+
+	// Project 项目名（`files` 用）
+	Project   *string                     `json:"project,omitempty"`
+	Reload    *bool                       `json:"reload,omitempty"`
+	RequestID string                      `json:"requestId"`
+	Title     *string                     `json:"title,omitempty"`
+	Type      WsServerArtifactConsentType `json:"type"`
+}
+
+// WsServerArtifactConsentKind defines model for WsServerArtifactConsent.Kind.
+type WsServerArtifactConsentKind string
+
+// WsServerArtifactConsentType defines model for WsServerArtifactConsent.Type.
+type WsServerArtifactConsentType string
 
 // WsServerArtifactVersion 某个 artifact 产生了新版本；只发给正在观看它的连接
 type WsServerArtifactVersion struct {
@@ -8707,6 +8955,9 @@ type ImportArtifactParams struct {
 // DeleteArtifactParams defines parameters for DeleteArtifact.
 type DeleteArtifactParams struct {
 	Permanent *bool `form:"permanent,omitempty" json:"permanent,omitempty"`
+
+	// Unpublish 同时取消发布（软删除时；永久删除总会连带删除发布记录）
+	Unpublish *bool `form:"unpublish,omitempty" json:"unpublish,omitempty"`
 }
 
 // GetArtifactParams defines parameters for GetArtifact.
@@ -8727,6 +8978,22 @@ type GetArtifactFileParams struct {
 	// Version 缺省 = 最新版本
 	Version *int   `form:"version,omitempty" json:"version,omitempty"`
 	Path    string `form:"path" json:"path"`
+}
+
+// RenderArtifactPngParams defines parameters for RenderArtifactPng.
+type RenderArtifactPngParams struct {
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
+
+	// Path 缺省 = 入口文件
+	Path   *string `form:"path,omitempty" json:"path,omitempty"`
+	Width  *int    `form:"width,omitempty" json:"width,omitempty"`
+	Height *int    `form:"height,omitempty" json:"height,omitempty"`
+}
+
+// GetArtifactThumbnailParams defines parameters for GetArtifactThumbnail.
+type GetArtifactThumbnailParams struct {
+	// Version 缺省 = 最新版本
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
 }
 
 // ListAssistantFilesParams defines parameters for ListAssistantFiles.
@@ -9301,11 +9568,17 @@ type ListThreadEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// AnswerArtifactConsentJSONRequestBody defines body for AnswerArtifactConsent for application/json ContentType.
+type AnswerArtifactConsentJSONRequestBody = ArtifactConsentAnswer
+
 // ImportArtifactMultipartRequestBody defines body for ImportArtifact for multipart/form-data ContentType.
 type ImportArtifactMultipartRequestBody ImportArtifactMultipartBody
 
 // PatchArtifactJSONRequestBody defines body for PatchArtifact for application/json ContentType.
 type PatchArtifactJSONRequestBody = ArtifactPatch
+
+// ApplyArtifactCanvasOpsJSONRequestBody defines body for ApplyArtifactCanvasOps for application/json ContentType.
+type ApplyArtifactCanvasOpsJSONRequestBody = ArtifactCanvasOps
 
 // CreateArtifactCommentJSONRequestBody defines body for CreateArtifactComment for application/json ContentType.
 type CreateArtifactCommentJSONRequestBody = ArtifactCommentCreate
@@ -9327,6 +9600,12 @@ type OpenArtifactFrameJSONRequestBody = ArtifactFrameRequest
 
 // OpenArtifactLinkJSONRequestBody defines body for OpenArtifactLink for application/json ContentType.
 type OpenArtifactLinkJSONRequestBody = ArtifactFrameRequest
+
+// SetArtifactParamsJSONRequestBody defines body for SetArtifactParams for application/json ContentType.
+type SetArtifactParamsJSONRequestBody = ArtifactParamsSet
+
+// PublishArtifactJSONRequestBody defines body for PublishArtifact for application/json ContentType.
+type PublishArtifactJSONRequestBody = ArtifactPublishRequest
 
 // RestoreArtifactVersionJSONRequestBody defines body for RestoreArtifactVersion for application/json ContentType.
 type RestoreArtifactVersionJSONRequestBody = ArtifactRestoreVersion
@@ -9456,6 +9735,9 @@ type PutAgentAvatarJSONRequestBody = AgentAvatarInput
 
 // PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
 type PutAgentIdentityJSONRequestBody = AgentIdentity
+
+// PutArtifactPrefsJSONRequestBody defines body for PutArtifactPrefs for application/json ContentType.
+type PutArtifactPrefsJSONRequestBody = ArtifactPrefs
 
 // PutAssistantIdentityJSONRequestBody defines body for PutAssistantIdentity for application/json ContentType.
 type PutAssistantIdentityJSONRequestBody = AgentIdentity
@@ -11417,6 +11699,74 @@ func (t *WsServerMessage) MergeWsServerArtifactComments(v WsServerArtifactCommen
 	return err
 }
 
+// AsWsServerArtifactCanvas returns the union data inside the WsServerMessage as a WsServerArtifactCanvas
+func (t WsServerMessage) AsWsServerArtifactCanvas() (WsServerArtifactCanvas, error) {
+	var body WsServerArtifactCanvas
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactCanvas overwrites any union data inside the WsServerMessage as the provided WsServerArtifactCanvas
+func (t *WsServerMessage) FromWsServerArtifactCanvas(v WsServerArtifactCanvas) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.canvas"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactCanvas performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactCanvas
+func (t *WsServerMessage) MergeWsServerArtifactCanvas(v WsServerArtifactCanvas) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.canvas"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerArtifactConsent returns the union data inside the WsServerMessage as a WsServerArtifactConsent
+func (t WsServerMessage) AsWsServerArtifactConsent() (WsServerArtifactConsent, error) {
+	var body WsServerArtifactConsent
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactConsent overwrites any union data inside the WsServerMessage as the provided WsServerArtifactConsent
+func (t *WsServerMessage) FromWsServerArtifactConsent(v WsServerArtifactConsent) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.consent"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactConsent performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactConsent
+func (t *WsServerMessage) MergeWsServerArtifactConsent(v WsServerArtifactConsent) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.consent"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -11433,8 +11783,12 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "artifact.activity":
 		return t.AsWsServerArtifactActivity()
+	case "artifact.canvas":
+		return t.AsWsServerArtifactCanvas()
 	case "artifact.comments":
 		return t.AsWsServerArtifactComments()
+	case "artifact.consent":
+		return t.AsWsServerArtifactConsent()
 	case "artifact.version":
 		return t.AsWsServerArtifactVersion()
 	case "artifacts.changed":
@@ -11616,9 +11970,24 @@ type ServerInterface interface {
 	// RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
 	// (POST /api/v1/agent-config/restart-sessions)
 	RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request)
+	// ListArtifactConsents 已授权的 artifact 能力（不含回收站里的）
+	// (GET /api/v1/artifact-consents)
+	ListArtifactConsents(w http.ResponseWriter, r *http.Request)
+	// RevokeArtifactConsents 收回一个 artifact 的全部能力授权
+	// (DELETE /api/v1/artifact-consents/{key})
+	RevokeArtifactConsents(w http.ResponseWriter, r *http.Request, key string)
+	// AnswerArtifactConsent 回答一个同意请求（第一个回答生效；请求已结束时回 404）
+	// (POST /api/v1/artifact-consents/{key})
+	AnswerArtifactConsent(w http.ResponseWriter, r *http.Request, key string)
 	// CloseArtifactFrame 关闭渲染帧（查看器卸载时调用；不存在也回 204）
 	// (DELETE /api/v1/artifact-frames/{token})
 	CloseArtifactFrame(w http.ResponseWriter, r *http.Request, token ArtifactFrameToken)
+	// ListArtifactPublications 全部已发布的 artifact
+	// (GET /api/v1/artifact-publications)
+	ListArtifactPublications(w http.ResponseWriter, r *http.Request)
+	// GrantArtifactPublication 所有者直接打开自己的私有或访问码发布页：返回带授权段的地址
+	// (POST /api/v1/artifact-publications/{slug}/grant)
+	GrantArtifactPublication(w http.ResponseWriter, r *http.Request, slug ArtifactFrameToken)
 	// ListArtifacts 列出 artifact（最近更新的在前）
 	// (GET /api/v1/artifacts)
 	ListArtifacts(w http.ResponseWriter, r *http.Request, params ListArtifactsParams)
@@ -11637,6 +12006,12 @@ type ServerInterface interface {
 	// PatchArtifact 重命名（不产生版本；回收站里的不能改）
 	// (PATCH /api/v1/artifacts/{id})
 	PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// GetArtifactCanvas 画布的实时状态（最新版本 + 尚未落成版本的用户操作）
+	// (GET /api/v1/artifacts/{id}/canvas)
+	GetArtifactCanvas(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// ApplyArtifactCanvasOps 提交画布操作（实时广播给观看者；静默 30 秒后落成一个用户版本）
+	// (POST /api/v1/artifacts/{id}/canvas/ops)
+	ApplyArtifactCanvasOps(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
 	// ListArtifactComments 评论串（旧的在前）；返回前把锚点在最新版本上重新定位
 	// (GET /api/v1/artifacts/{id}/comments)
 	ListArtifactComments(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
@@ -11670,9 +12045,30 @@ type ServerInterface interface {
 	// MarkArtifactOpened 记一次「打开」（总览页按最近打开排序、首屏最近项用；存服务端，换设备一致）
 	// (POST /api/v1/artifacts/{id}/opened)
 	MarkArtifactOpened(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// SetArtifactParams 写回页面声明的调节参数（`data-oryn-params`），落成一个用户版本
+	// (PUT /api/v1/artifacts/{id}/params)
+	SetArtifactParams(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// UnpublishArtifact 取消发布（链接随即失效）
+	// (DELETE /api/v1/artifacts/{id}/publication)
+	UnpublishArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// GetArtifactPublication 发布状态
+	// (GET /api/v1/artifacts/{id}/publication)
+	GetArtifactPublication(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// PublishArtifact 发布或更新发布（访问级别、版本、是否跟随最新）；`code` / `public` 先做密钥扫描
+	// (PUT /api/v1/artifacts/{id}/publication)
+	PublishArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// RotateArtifactPublicationCode 换一个访问码（旧码与已发出的授权随即失效，并解除锁定）
+	// (POST /api/v1/artifacts/{id}/publication/code)
+	RotateArtifactPublicationCode(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// RenderArtifactPng 在控制面渲染某个页面并下载 PNG（渲染不可用回 503 `render_unavailable`）
+	// (GET /api/v1/artifacts/{id}/render.png)
+	RenderArtifactPng(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params RenderArtifactPngParams)
 	// UndeleteArtifact 从「最近删除」恢复
 	// (POST /api/v1/artifacts/{id}/restore)
 	UndeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// GetArtifactThumbnail 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail`
+	// (GET /api/v1/artifacts/{id}/thumbnail)
+	GetArtifactThumbnail(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactThumbnailParams)
 	// ListArtifactVersions 版本列表（新的在前）
 	// (GET /api/v1/artifacts/{id}/versions)
 	ListArtifactVersions(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
@@ -12102,6 +12498,12 @@ type ServerInterface interface {
 	// PutAgentIdentity 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
 	// (PUT /api/v1/settings/agent-identity)
 	PutAgentIdentity(w http.ResponseWriter, r *http.Request)
+	// GetArtifactPrefs Artifacts 设置
+	// (GET /api/v1/settings/artifacts)
+	GetArtifactPrefs(w http.ResponseWriter, r *http.Request)
+	// PutArtifactPrefs 修改 Artifacts 设置
+	// (PUT /api/v1/settings/artifacts)
+	PutArtifactPrefs(w http.ResponseWriter, r *http.Request)
 	// GetAssistantIdentity 全局助手身份（原始值）
 	// (GET /api/v1/settings/assistant-identity)
 	GetAssistantIdentity(w http.ResponseWriter, r *http.Request)
@@ -12300,9 +12702,39 @@ func (_ Unimplemented) RestartAgentConfigSessions(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListArtifactConsents 已授权的 artifact 能力（不含回收站里的）
+// (GET /api/v1/artifact-consents)
+func (_ Unimplemented) ListArtifactConsents(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RevokeArtifactConsents 收回一个 artifact 的全部能力授权
+// (DELETE /api/v1/artifact-consents/{key})
+func (_ Unimplemented) RevokeArtifactConsents(w http.ResponseWriter, r *http.Request, key string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AnswerArtifactConsent 回答一个同意请求（第一个回答生效；请求已结束时回 404）
+// (POST /api/v1/artifact-consents/{key})
+func (_ Unimplemented) AnswerArtifactConsent(w http.ResponseWriter, r *http.Request, key string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // CloseArtifactFrame 关闭渲染帧（查看器卸载时调用；不存在也回 204）
 // (DELETE /api/v1/artifact-frames/{token})
 func (_ Unimplemented) CloseArtifactFrame(w http.ResponseWriter, r *http.Request, token ArtifactFrameToken) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListArtifactPublications 全部已发布的 artifact
+// (GET /api/v1/artifact-publications)
+func (_ Unimplemented) ListArtifactPublications(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GrantArtifactPublication 所有者直接打开自己的私有或访问码发布页：返回带授权段的地址
+// (POST /api/v1/artifact-publications/{slug}/grant)
+func (_ Unimplemented) GrantArtifactPublication(w http.ResponseWriter, r *http.Request, slug ArtifactFrameToken) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12339,6 +12771,18 @@ func (_ Unimplemented) GetArtifact(w http.ResponseWriter, r *http.Request, id Ar
 // PatchArtifact 重命名（不产生版本；回收站里的不能改）
 // (PATCH /api/v1/artifacts/{id})
 func (_ Unimplemented) PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifactCanvas 画布的实时状态（最新版本 + 尚未落成版本的用户操作）
+// (GET /api/v1/artifacts/{id}/canvas)
+func (_ Unimplemented) GetArtifactCanvas(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApplyArtifactCanvasOps 提交画布操作（实时广播给观看者；静默 30 秒后落成一个用户版本）
+// (POST /api/v1/artifacts/{id}/canvas/ops)
+func (_ Unimplemented) ApplyArtifactCanvasOps(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12408,9 +12852,51 @@ func (_ Unimplemented) MarkArtifactOpened(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// SetArtifactParams 写回页面声明的调节参数（`data-oryn-params`），落成一个用户版本
+// (PUT /api/v1/artifacts/{id}/params)
+func (_ Unimplemented) SetArtifactParams(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UnpublishArtifact 取消发布（链接随即失效）
+// (DELETE /api/v1/artifacts/{id}/publication)
+func (_ Unimplemented) UnpublishArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifactPublication 发布状态
+// (GET /api/v1/artifacts/{id}/publication)
+func (_ Unimplemented) GetArtifactPublication(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PublishArtifact 发布或更新发布（访问级别、版本、是否跟随最新）；`code` / `public` 先做密钥扫描
+// (PUT /api/v1/artifacts/{id}/publication)
+func (_ Unimplemented) PublishArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RotateArtifactPublicationCode 换一个访问码（旧码与已发出的授权随即失效，并解除锁定）
+// (POST /api/v1/artifacts/{id}/publication/code)
+func (_ Unimplemented) RotateArtifactPublicationCode(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RenderArtifactPng 在控制面渲染某个页面并下载 PNG（渲染不可用回 503 `render_unavailable`）
+// (GET /api/v1/artifacts/{id}/render.png)
+func (_ Unimplemented) RenderArtifactPng(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params RenderArtifactPngParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // UndeleteArtifact 从「最近删除」恢复
 // (POST /api/v1/artifacts/{id}/restore)
 func (_ Unimplemented) UndeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifactThumbnail 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail`
+// (GET /api/v1/artifacts/{id}/thumbnail)
+func (_ Unimplemented) GetArtifactThumbnail(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactThumbnailParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -13272,6 +13758,18 @@ func (_ Unimplemented) PutAgentIdentity(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetArtifactPrefs Artifacts 设置
+// (GET /api/v1/settings/artifacts)
+func (_ Unimplemented) GetArtifactPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutArtifactPrefs 修改 Artifacts 设置
+// (PUT /api/v1/settings/artifacts)
+func (_ Unimplemented) PutArtifactPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetAssistantIdentity 全局助手身份（原始值）
 // (GET /api/v1/settings/assistant-identity)
 func (_ Unimplemented) GetAssistantIdentity(w http.ResponseWriter, r *http.Request) {
@@ -13731,6 +14229,72 @@ func (siw *ServerInterfaceWrapper) RestartAgentConfigSessions(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// ListArtifactConsents operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifactConsents(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifactConsents(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeArtifactConsents operation middleware
+func (siw *ServerInterfaceWrapper) RevokeArtifactConsents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "key" -------------
+	var key string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "key", chi.URLParam(r, "key"), &key, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeArtifactConsents(w, r, key)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AnswerArtifactConsent operation middleware
+func (siw *ServerInterfaceWrapper) AnswerArtifactConsent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "key" -------------
+	var key string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "key", chi.URLParam(r, "key"), &key, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AnswerArtifactConsent(w, r, key)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CloseArtifactFrame operation middleware
 func (siw *ServerInterfaceWrapper) CloseArtifactFrame(w http.ResponseWriter, r *http.Request) {
 
@@ -13748,6 +14312,46 @@ func (siw *ServerInterfaceWrapper) CloseArtifactFrame(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CloseArtifactFrame(w, r, token)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListArtifactPublications operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifactPublications(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifactPublications(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GrantArtifactPublication operation middleware
+func (siw *ServerInterfaceWrapper) GrantArtifactPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ArtifactFrameToken
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GrantArtifactPublication(w, r, slug)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13907,6 +14511,19 @@ func (siw *ServerInterfaceWrapper) DeleteArtifact(w http.ResponseWriter, r *http
 		return
 	}
 
+	// ------------- Optional query parameter "unpublish" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "unpublish", r.URL.Query(), &params.Unpublish, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "unpublish"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "unpublish", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteArtifact(w, r, id, params)
 	}))
@@ -13977,6 +14594,58 @@ func (siw *ServerInterfaceWrapper) PatchArtifact(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PatchArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactCanvas operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactCanvas(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactCanvas(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyArtifactCanvasOps operation middleware
+func (siw *ServerInterfaceWrapper) ApplyArtifactCanvasOps(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyArtifactCanvasOps(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -14348,6 +15017,217 @@ func (siw *ServerInterfaceWrapper) MarkArtifactOpened(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// SetArtifactParams operation middleware
+func (siw *ServerInterfaceWrapper) SetArtifactParams(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetArtifactParams(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnpublishArtifact operation middleware
+func (siw *ServerInterfaceWrapper) UnpublishArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnpublishArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactPublication operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactPublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactPublication(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PublishArtifact operation middleware
+func (siw *ServerInterfaceWrapper) PublishArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PublishArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateArtifactPublicationCode operation middleware
+func (siw *ServerInterfaceWrapper) RotateArtifactPublicationCode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateArtifactPublicationCode(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenderArtifactPng operation middleware
+func (siw *ServerInterfaceWrapper) RenderArtifactPng(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RenderArtifactPngParams
+
+	// ------------- Optional query parameter "version" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "version", r.URL.Query(), &params.Version, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "version"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "width" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "width", r.URL.Query(), &params.Width, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "width"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "width", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "height" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "height", r.URL.Query(), &params.Height, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "height"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "height", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenderArtifactPng(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // UndeleteArtifact operation middleware
 func (siw *ServerInterfaceWrapper) UndeleteArtifact(w http.ResponseWriter, r *http.Request) {
 
@@ -14365,6 +15245,48 @@ func (siw *ServerInterfaceWrapper) UndeleteArtifact(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UndeleteArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactThumbnail operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactThumbnail(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetArtifactThumbnailParams
+
+	// ------------- Optional query parameter "version" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "version", r.URL.Query(), &params.Version, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "version"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactThumbnail(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18841,6 +19763,34 @@ func (siw *ServerInterfaceWrapper) PutAgentIdentity(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetArtifactPrefs operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactPrefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactPrefs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutArtifactPrefs operation middleware
+func (siw *ServerInterfaceWrapper) PutArtifactPrefs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutArtifactPrefs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetAssistantIdentity operation middleware
 func (siw *ServerInterfaceWrapper) GetAssistantIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -21211,6 +22161,54 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/element", wrapper.EditArtifactElement)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/thumbnail", wrapper.GetArtifactThumbnail)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/render.png", wrapper.RenderArtifactPng)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/canvas", wrapper.GetArtifactCanvas)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/canvas/ops", wrapper.ApplyArtifactCanvasOps)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/artifacts/{id}/params", wrapper.SetArtifactParams)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifact-consents", wrapper.ListArtifactConsents)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/artifact-consents/{key}", wrapper.RevokeArtifactConsents)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifact-consents/{key}", wrapper.AnswerArtifactConsent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/artifacts/{id}/publication", wrapper.UnpublishArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/publication", wrapper.GetArtifactPublication)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/artifacts/{id}/publication", wrapper.PublishArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/publication/code", wrapper.RotateArtifactPublicationCode)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifact-publications", wrapper.ListArtifactPublications)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifact-publications/{slug}/grant", wrapper.GrantArtifactPublication)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/artifacts", wrapper.GetArtifactPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/artifacts", wrapper.PutArtifactPrefs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)
