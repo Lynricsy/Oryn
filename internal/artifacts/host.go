@@ -67,7 +67,7 @@ func (h *Host) Handler() http.Handler {
 			http.Redirect(w, r, FramePathPrefix+token+"/", http.StatusFound)
 			return
 		}
-		h.serve(w, r, token, "/"+p)
+		h.serve(w, r, token, FramePathPrefix+token+"/", "/"+p)
 	})
 }
 
@@ -76,7 +76,7 @@ func (h *Host) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if label, ok := h.base.Match(r.Host); ok {
 			if kind, token, ok := portalhost.ParseArtifactLabel(label); ok && kind == 'a' {
-				h.serve(w, r, token, r.URL.Path)
+				h.serve(w, r, token, "/", r.URL.Path)
 				return
 			}
 		}
@@ -84,8 +84,12 @@ func (h *Host) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// serve 处理帧根下的一个请求；p 是帧根之内的路径（以 / 开头）。
-func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, p string) {
+// serve 处理帧根下的一个请求；root 是帧根的路径（以 / 结尾），p 是帧根之内的路径（以 / 开头）。
+//
+// 跟随最新版本的帧：不带 `/_oryn/v/<n>/` 的请求一律 302 到 `<root>_oryn/v/<当前 head>/<p>`，让页面的 URL 先钉在
+// 这一次实际取到的版本上——之后页面里的相对子资源都解析到同一版本，加载途中 head 变了也不会混用两版文件。
+// 热更新由查看器把帧重新导航到帧根完成，那时再落到新的 head。
+func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p string) {
 	ctx := r.Context()
 	f, ok := h.use(token)
 	if !ok {
@@ -102,13 +106,21 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, p string) {
 		frameError(w, http.StatusMethodNotAllowed, "只支持 GET")
 		return
 	}
-	strict, err := h.strict(ctx, token, f)
+	strict, head, err := h.strict(ctx, token, f)
 	if err != nil {
 		setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, true))
 		h.fail(w, err)
 		return
 	}
 	setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, strict))
+	if rel := strings.TrimPrefix(p, "/"); f.version == 0 && !strings.HasPrefix(rel, ReservedPrefix+"/") {
+		loc := root + ReservedPrefix + "/v/" + strconv.Itoa(head) + "/" + rel
+		if r.URL.RawQuery != "" {
+			loc += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, loc, http.StatusFound)
+		return
+	}
 	path, version, ok := framePath(p, f.version)
 	if !ok {
 		frameError(w, http.StatusNotFound, "文件不存在")
@@ -141,18 +153,18 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, p string) {
 }
 
 // strict 判定帧这次响应是否用严格策略：最新版本声明了 files 或 sample 能力，或帧之前已经严格。只升不降。
-// artifact 不存在回 not_found，在回收站里回 deleted。
-func (h *Host) strict(ctx context.Context, token string, f frame) (bool, error) {
+// 同时返回当前 head。artifact 不存在回 not_found，在回收站里回 deleted。
+func (h *Host) strict(ctx context.Context, token string, f frame) (bool, int, error) {
 	a, err := h.s.Get(ctx, f.artifactID)
 	if err != nil {
-		return true, err
+		return true, 0, err
 	}
 	if a.Deleted() {
-		return true, deletedErr(a.ID)
+		return true, 0, deletedErr(a.ID)
 	}
 	head, err := h.s.Version(ctx, a.ID, 0)
 	if err != nil {
-		return true, err
+		return true, 0, err
 	}
 	declared := false
 	for _, c := range head.Capabilities {
@@ -160,7 +172,7 @@ func (h *Host) strict(ctx context.Context, token string, f frame) (bool, error) 
 			declared = true
 		}
 	}
-	return h.escalate(token, declared || f.strict), nil
+	return h.escalate(token, declared || f.strict), head.Version, nil
 }
 
 // framePath 把帧根之内的路径解析成 artifact 里的文件路径与版本：以 / 结尾补 index.html；

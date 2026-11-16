@@ -50,7 +50,18 @@ type hostReq struct {
 	header             map[string]string
 }
 
+// do 发一个请求；跟随最新版本的帧把请求 302 到 `/_oryn/v/<head>/…` 时照着 Location 再取一次（同一主机），
+// 其余状态原样返回。要断言重定向本身用 doRaw。
 func do(h http.Handler, q hostReq) *httptest.ResponseRecorder {
+	rec := doRaw(h, q)
+	if loc := rec.Header().Get("Location"); rec.Code == http.StatusFound && strings.Contains(loc, "/"+ReservedPrefix+"/v/") {
+		q.path = loc
+		return doRaw(h, q)
+	}
+	return rec
+}
+
+func doRaw(h http.Handler, q hostReq) *httptest.ResponseRecorder {
 	if q.method == "" {
 		q.method = http.MethodGet
 	}
@@ -173,6 +184,58 @@ func TestHostVersions(t *testing.T) {
 	assert.Equal(t, http.StatusGone, do(mw, hostReq{host: host, path: "/"}).Code)
 	_, _, err = h.OpenFrame(ctx, a.ID, 0, "")
 	assert.Equal(t, CodeDeleted, code(err))
+}
+
+// 跟随最新版本的帧：导航先 302 到当次 head 的 /_oryn/v/<n>/；取到 HTML 之后 head 升级，页面按相对路径再取的
+// 子资源仍是同一版本；重新导航帧根才落到新 head。两种寻址模式一致。
+func TestHostFollowPinsLoadToOneVersion(t *testing.T) {
+	for _, mode := range []struct {
+		name, domain, host, root string
+		handler                  func(h *Host) http.Handler
+	}{
+		{"wildcard", "localhost", "", "/", func(h *Host) http.Handler { return h.Middleware(http.NotFoundHandler()) }},
+		{"fallback", "", "localhost:7600", "", func(h *Host) http.Handler {
+			mux := http.NewServeMux()
+			mux.Handle(FramePathPrefix, h.Handler())
+			return mux
+		}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			e := newEnv(t)
+			ctx := context.Background()
+			h := newHost(t, e, mode.domain, fakeRuntime)
+			a := mkPage(t, e)
+			token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+			require.NoError(t, err)
+			srv := mode.handler(h)
+			host, root := mode.host, mode.root
+			if mode.domain != "" {
+				host = "a-" + token + ".localhost:7600"
+			} else {
+				root = FramePathPrefix + token + "/"
+			}
+
+			nav := doRaw(srv, hostReq{host: host, path: root + "?x=1"})
+			require.Equal(t, http.StatusFound, nav.Code)
+			loc := nav.Header().Get("Location")
+			assert.Equal(t, root+"_oryn/v/1/?x=1", loc)
+			html := doRaw(srv, hostReq{host: host, path: loc})
+			require.Equal(t, http.StatusOK, html.Code)
+			assert.Contains(t, html.Body.String(), `"runtime":true`, "跟随帧落在钉住的路径上仍带运行时")
+
+			// HTML 已取到，head 升到 v2（样式变了）
+			_, err = e.s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: 1, Files: []FileChange{put("style.css", "h1{color:blue}")}})
+			require.NoError(t, err)
+			// 页面里的 <link href="style.css"> 相对于 Location 解析
+			css := doRaw(srv, hostReq{host: host, path: root + "_oryn/v/1/style.css"})
+			require.Equal(t, http.StatusOK, css.Code)
+			assert.Equal(t, "h1{color:red}", css.Body.String(), "同一次加载仍读 v1")
+
+			// 热更新：重新导航帧根落到 v2
+			assert.Equal(t, root+"_oryn/v/2/", doRaw(srv, hostReq{host: host, path: root}).Header().Get("Location"))
+			assert.Equal(t, "h1{color:blue}", do(srv, hostReq{host: host, path: root + "style.css"}).Body.String())
+		})
+	}
 }
 
 // 主域回退：/_af/<令牌>/ 提供帧，CSP 用路径源而不是 'self'。
