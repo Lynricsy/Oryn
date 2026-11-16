@@ -456,7 +456,7 @@ Sec-Fetch-Site 不存在：
 
 匿名连接不算 focus、不记用户交互、不唤醒 orb；沿用 8MiB 待发预算（超出断开，客户端重连补拉）。
 
-私有 WS 新增：`notification`（`WsServerNotification{notification}`）与 `notifications.read`（`WsServerNotificationsRead{id? | threadId?}`：`id` = 只这一条已读，`threadId` = 该线程的通知已读，都省略 = 全部已读），发给全部私有连接。
+私有 WS 新增：`notification`（`WsServerNotification{notification}`）与 `notifications.read`（`WsServerNotificationsRead{id? | threadId?}`：`id` = 只这一条已读，`threadId` = 该线程的通知已读，都省略 = 全部已读），发给全部私有连接。`notifications.resolved`（`WsServerNotificationsResolved{ids, at}`）：这些 `input` 通知对应的请求已作答 / 取消 / 随 agent 重启消失（`InputResolved` 落库后广播），客户端记 `resolvedAt = at`、去掉 `quickAnswer`，不弹提示。
 
 ### 通知与投递
 
@@ -472,7 +472,7 @@ Sec-Fetch-Site 不存在：
 
 - 可一触作答的 `input`（`uiprompt.SingleChoice`：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`；不含文字输入、密钥、多选、多题、表单与计划审批），选项 2–3 个、每个是不超过 24 字符的单行文字，且**完整问题**（`select` 的多行标题原样保留，工具审批即含 `Allow tool: …` 与命令；`confirm` 为标题 + 说明）不超过 300 字符时，Web Push / FCM 载荷带 `actions: [{i, label, role?}]`，`body` 换成完整问题。问题会被截断时不带按钮，只发普通通知（点按打开线程）：按钮只与完整说明一起出现。`role` 只在 `confirm` 上，为 `yes` / `no`，客户端按界面语言显示「是 / 否」；其余按钮显示 `label` 原文。载荷超过上限时先去掉按钮（`body` 回到普通摘要）再去掉正文。投递时请求已解决的通知不带按钮。
 - 设备点按钮 → `POST /api/v1/notifications/{id}/answer {option}`；与 `ui.response` 同一条先到先得路径（`threads.UIResponse`）。不在载荷里放任何凭据：Web 用会话 Cookie，Android 用设备令牌。
-- 站内作答：`GET notifications` 与 WS `notification` 里，可一触作答且未解决的 `input` 带 `quickAnswer: {question, options: [{i, label, role?}]}`（判定同上，但不受 300 字符上限约束：站内显示完整问题），收件箱在「等你处理」的行内显示问题与选项按钮，同样调 `POST …/answer`。已加载的列表不随请求在别处作答而更新：收件箱只认 `createdAt ≥ thread.stateChangedAt` 的 input 通知，得到 409 `input_resolved` 时提示「已在别处作答」。
+- 站内作答：`GET notifications` 与 WS `notification` 里，可一触作答且未解决的 `input` 带 `quickAnswer: {question, options: [{i, label, role?}]}`（判定同上，但不受 300 字符上限约束：站内显示完整问题），收件箱在「等你处理」的行内按原文纯文本显示问题（不解析反引号等标记，审批看到的就是会执行的命令）与选项按钮，同样调 `POST …/answer`。收件箱取线程最新一条未解决的 input 通知；解决状态由 WS `notifications.resolved` 与本页作答结果维护（成功或 409 `input_resolved` 都记为已解决，409 另弹「已在别处作答」），同一线程还有更早的未决提问时行内换成它。不拿线程的 `stateChangedAt` 比较：agent 断线重放同一请求时状态时间会变，而通知按 `(thread_id, request_id)` 去重、发出时间不变。
 - 撤回：请求作答或取消（`InputResolved`）时，对**带按钮**且投递状态为 `sent` 的推送订阅尽力发一条 `{"v":1,"kind":"withdraw","id","tag"}`（不重试、不落投递行；Web Push 不设 `Topic`，免得在推送服务里顶掉同线程尚未送达的通知；`Urgency: normal`）。推送刚发出时请求恰好被作答（那时投递还没记成 `sent`）由发送方送达后复查补发。Apple 端点（Safari 不显示按钮、且每条推送都必须弹出通知）不发撤回。没有按钮的推送不撤回。设备只撤 `tag` 上仍显示着同一 `id` 的那一条：Android 直接取消；Service Worker 换成静默的「已在别处作答」（推送事件结束时必须留有可见通知，否则 Chrome 会弹「此网站已在后台更新」），已作答的替换版不再改动。
 - 作答结果：Service Worker 以同 tag 的通知替换原通知（已作答 / 已在别处作答 / 失败时原文 + 一行错误并保留按钮），不打开窗口；按钮数超过浏览器的 `Notification.maxActions` 时一个都不显示。Android 见 [mobile.md](mobile.md)「在通知上作答」。
 - 实现：`internal/notify/actions.go`；测试 `internal/notify/actions_test.go`（按钮的判定矩阵、作答的 200 / 409 / 422 / 400 / 404、撤回与发送竞态）、`internal/api/notifications_test.go`（HTTP 映射）、`web/src/lib/sw.test.ts`。

@@ -3200,6 +3200,21 @@ func (e WsServerNotificationsReadType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerNotificationsResolvedType.
+const (
+	WsServerNotificationsResolvedTypeNotificationsResolved WsServerNotificationsResolvedType = "notifications.resolved"
+)
+
+// Valid indicates whether the value is a known member of the WsServerNotificationsResolvedType enum.
+func (e WsServerNotificationsResolvedType) Valid() bool {
+	switch e {
+	case WsServerNotificationsResolvedTypeNotificationsResolved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerOrbType.
 const (
 	WsServerOrbTypeOrb WsServerOrbType = "orb"
@@ -9344,6 +9359,18 @@ type WsServerNotificationsRead struct {
 // WsServerNotificationsReadType defines model for WsServerNotificationsRead.Type.
 type WsServerNotificationsReadType string
 
+// WsServerNotificationsResolved `input` 通知对应的请求已作答 / 取消 / 随 agent 重启消失（发给全部私有连接）：客户端把这些通知记为已解决（`resolvedAt = at`、去掉 `quickAnswer`）。
+// 不弹提示；已加载的列表靠它与线程当前待答的请求对齐。
+type WsServerNotificationsResolved struct {
+	// At UTC 毫秒时间戳
+	At   TimestampMs                       `json:"at"`
+	Ids  []NotificationID                  `json:"ids"`
+	Type WsServerNotificationsResolvedType `json:"type"`
+}
+
+// WsServerNotificationsResolvedType defines model for WsServerNotificationsResolved.Type.
+type WsServerNotificationsResolvedType string
+
 // WsServerOrb defines model for WsServerOrb.
 type WsServerOrb struct {
 	Orb  Orb             `json:"orb"`
@@ -12280,6 +12307,40 @@ func (t *WsServerMessage) MergeWsServerNotificationsRead(v WsServerNotifications
 	return err
 }
 
+// AsWsServerNotificationsResolved returns the union data inside the WsServerMessage as a WsServerNotificationsResolved
+func (t WsServerMessage) AsWsServerNotificationsResolved() (WsServerNotificationsResolved, error) {
+	var body WsServerNotificationsResolved
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerNotificationsResolved overwrites any union data inside the WsServerMessage as the provided WsServerNotificationsResolved
+func (t *WsServerMessage) FromWsServerNotificationsResolved(v WsServerNotificationsResolved) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notifications.resolved"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerNotificationsResolved performs a merge with any union data inside the WsServerMessage, using the provided WsServerNotificationsResolved
+func (t *WsServerMessage) MergeWsServerNotificationsResolved(v WsServerNotificationsResolved) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"notifications.resolved"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerSchedulesChanged returns the union data inside the WsServerMessage as a WsServerSchedulesChanged
 func (t WsServerMessage) AsWsServerSchedulesChanged() (WsServerSchedulesChanged, error) {
 	var body WsServerSchedulesChanged
@@ -12596,6 +12657,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerNotification()
 	case "notifications.read":
 		return t.AsWsServerNotificationsRead()
+	case "notifications.resolved":
+		return t.AsWsServerNotificationsResolved()
 	case "orb":
 		return t.AsWsServerOrb()
 	case "plan.resolved":

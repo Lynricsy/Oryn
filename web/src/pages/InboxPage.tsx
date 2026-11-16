@@ -62,7 +62,11 @@ import { isCoordinatorThread } from "../lib/thread-kind";
 import { parseTitleCard } from "../lib/title";
 import { useBreakpoint } from "../lib/viewport";
 import { patchThread } from "../state/actions";
-import { type AppNotification, useNotifications } from "../state/notifications";
+import {
+	type AppNotification,
+	notificationsStore,
+	useNotifications,
+} from "../state/notifications";
 import { useIndex } from "../state/stores";
 import { showToast } from "../state/toasts";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
@@ -85,6 +89,8 @@ const PANEL =
 const INTRO_MS = 800;
 /** 离开的行收起的时长，与 index.css 的 `.inbox-leave` 一致。 */
 const LEAVE_MS = 180;
+/** 新到的行保留 `.inbox-arrive` 的时长（≥ 动画 220ms）：期间重渲染不会摘掉类名把动画截断。 */
+const ARRIVE_MS = 300;
 
 /** 行的键含状态：同一线程换了分节算旧的离开、新的加入，两处各播各的。 */
 function itemKey(i: InboxItem): string {
@@ -97,39 +103,93 @@ type LiveItem = InboxItem & { leaving?: boolean };
 type Motion = { className: string; style?: CSSProperties };
 
 /**
- * 离开收件箱的条目（标为已读、归档、作答后换了状态）再留 LEAVE_MS，带 `leaving` 播收起动画，留在原来的位置；
- * 同一键又回来了就不再算离开。计时器只在卸载时清：`items` 每分钟随 `now` 重算，不能因此取消收起。
+ * 收件箱条目的进出：离开的条目（标为已读、归档、作答后换了状态）再留 LEAVE_MS，带 `leaving` 播收起动画、留在原位；
+ * 新到的条目（上一次提交里没有这个键）记入 `arrived`，ARRIVE_MS 内带 `.inbox-arrive`。
+ * 离场记录按键唯一：同键回来就撤销离场并取消计时器，再次离开换成新记录与新计时器（旧回调已被清掉，删不到新一轮）。
+ * 计时器只在键回来或卸载时清：`items` 每分钟随 `now` 重算，不能因此取消收起。
+ * 首次挂载不算新到（首次出场由页面的 intro 负责）；切分组 / 筛选不改 `items`，所以不会重播。
  */
-function useLeaving(items: readonly InboxItem[]): LiveItem[] {
-	const prev = useRef(items);
-	const timers = useRef(new Set<number>());
-	const [gone, setGone] = useState<readonly InboxItem[]>([]);
+function useInboxPresence(items: readonly InboxItem[]): {
+	live: LiveItem[];
+	arrived: ReadonlySet<string>;
+} {
+	const prev = useRef<readonly InboxItem[] | null>(null);
+	const timers = useRef(new Map<string, number>());
+	const arrivals = useRef(new Map<string, number>());
+	const [gone, setGone] = useState<ReadonlyMap<string, InboxItem>>(
+		() => new Map(),
+	);
+	// 渲染时就要知道谁是新到的（它的第一帧就得带动效类）；对照的是上一次提交的条目
+	const keys = items.map(itemKey);
+	const t0 = Date.now();
+	if (prev.current) {
+		const before = new Set(prev.current.map(itemKey));
+		for (const k of keys)
+			if (!before.has(k) && !arrivals.current.has(k))
+				arrivals.current.set(k, t0);
+	}
+	const arrived = new Set<string>();
+	for (const [k, at] of arrivals.current)
+		if (t0 - at < ARRIVE_MS) arrived.add(k);
 	useEffect(() => {
 		const keep = new Set(items.map(itemKey));
-		const left = prev.current.filter((i) => !keep.has(itemKey(i)));
+		for (const [k, at] of arrivals.current)
+			if (!keep.has(k) || Date.now() - at >= ARRIVE_MS)
+				arrivals.current.delete(k);
+		for (const [k, t] of timers.current)
+			if (keep.has(k)) {
+				clearTimeout(t);
+				timers.current.delete(k);
+			}
+		const left = (prev.current ?? []).filter((i) => !keep.has(itemKey(i)));
 		prev.current = items;
-		if (left.length === 0) return;
-		setGone((g) => [...g, ...left]);
-		const t = window.setTimeout(() => {
-			timers.current.delete(t);
-			setGone((g) => g.filter((i) => !left.includes(i)));
-		}, LEAVE_MS);
-		timers.current.add(t);
+		setGone((g) => {
+			let next: Map<string, InboxItem> | null = null;
+			for (const k of g.keys())
+				if (keep.has(k)) {
+					next ??= new Map(g);
+					next.delete(k);
+				}
+			for (const i of left) {
+				next ??= new Map(g);
+				next.set(itemKey(i), i);
+			}
+			return next ?? g;
+		});
+		for (const i of left) {
+			const k = itemKey(i);
+			clearTimeout(timers.current.get(k));
+			timers.current.set(
+				k,
+				window.setTimeout(() => {
+					timers.current.delete(k);
+					setGone((g) => {
+						if (!g.has(k)) return g;
+						const next = new Map(g);
+						next.delete(k);
+						return next;
+					});
+				}, LEAVE_MS),
+			);
+		}
 	}, [items]);
 	useEffect(() => {
 		const pending = timers.current;
 		return () => {
-			for (const t of pending) clearTimeout(t);
+			for (const t of pending.values()) clearTimeout(t);
 		};
 	}, []);
-	return useMemo(() => {
+	const live = useMemo(() => {
 		const keep = new Set(items.map(itemKey));
-		const leaving = gone.filter((i) => !keep.has(itemKey(i)));
+		const leaving = [...gone.entries()]
+			.filter(([k]) => !keep.has(k))
+			.map(([, i]) => ({ ...i, leaving: true }));
 		if (leaving.length === 0) return [...items];
-		return [...items, ...leaving.map((i) => ({ ...i, leaving: true }))].sort(
+		return [...items, ...leaving].sort(
 			(a, b) => activityOf(b.thread) - activityOf(a.thread),
 		);
 	}, [items, gone]);
+	return { live, arrived };
 }
 
 /** 每个线程最近的一条未作答 input 通知，以及最近的 done / error 通知正文，作行内预览。 */
@@ -175,18 +235,14 @@ export function InboxPage(): ReactNode {
 		() => inboxItems(Object.values(threads), now),
 		[threads, now],
 	);
-	// 离开收件箱的条目再留一会儿播收起动画（见 useLeaving）；计数与筛选仍按真实条目
-	const live = useLeaving(items);
-	// 首次进入：摘要、分节、行按阅读顺序依次出场，只播一次；之后新出现的行（含换了分节的线程）淡入
+	// 进出：离开的条目再留一会儿播收起动画，新到的条目淡入（见 useInboxPresence）；计数与筛选仍按真实条目
+	const { live, arrived } = useInboxPresence(items);
+	// 首次进入：摘要、分节、行按阅读顺序依次出场，只播一次
 	const [intro, setIntro] = useState(true);
 	useEffect(() => {
 		const t = setTimeout(() => setIntro(false), INTRO_MS);
 		return () => clearTimeout(t);
 	}, []);
-	const seen = useRef(new Set<string>());
-	useEffect(() => {
-		for (const i of live) seen.current.add(itemKey(i));
-	});
 	const previews = useMemo(() => previewsOf(notifications), [notifications]);
 	const counts = useMemo(() => {
 		const c: Record<InboxState, number> = {
@@ -223,7 +279,7 @@ export function InboxPage(): ReactNode {
 			? { className: "inbox-leave" }
 			: intro
 				? enter()
-				: { className: seen.current.has(key) ? "" : "inbox-arrive" };
+				: { className: arrived.has(key) ? "inbox-arrive" : "" };
 		return (
 			<InboxRow
 				key={key}
@@ -388,8 +444,9 @@ export function InboxPage(): ReactNode {
 }
 
 /**
- * 行内预览：每种状态各取它最能说明「要你做什么」的一句。等你处理另给出可一触作答的 input 通知（`ask`）。
- * 通知 store 不随请求在别处作答而更新，所以 input 通知只认本轮等待开始之后发出的（`createdAt >= stateChangedAt`）。
+ * 行内预览：每种状态各取它最能说明「要你做什么」的一句。等你处理另给出可一触作答的 input 通知（`ask`）：
+ * 取该线程最新一条未解决的 input 通知。解决状态靠 WS `notifications.resolved` 与本页作答结果维护（见 notificationsStore.onResolved），
+ * 不拿线程的 stateChangedAt 比：agent 断线重放同一请求时状态时间会变，而通知按请求去重、发出时间不变。
  */
 function previewOf(
 	item: InboxItem,
@@ -398,16 +455,11 @@ function previewOf(
 	const { thread } = item;
 	const n = previews.get(thread.id);
 	switch (item.state) {
-		case "you": {
-			const input =
-				n?.input && n.input.createdAt >= thread.stateChangedAt
-					? n.input
-					: undefined;
+		case "you":
 			return {
-				text: input?.body || undefined,
-				ask: input?.quickAnswer ? input : undefined,
+				text: n?.input?.body || undefined,
+				ask: n?.input?.quickAnswer ? n.input : undefined,
 			};
-		}
 		case "ready":
 			return { text: n?.done };
 		case "stopped":
@@ -679,7 +731,13 @@ function InboxRow({
 					</span>
 				</Link>
 				{ask?.quickAnswer && (
-					<QuickAnswer id={ask.id} quick={ask.quickAnswer} tinted={!card} />
+					// 换成同一线程的另一条提问时重新挂载：按钮的忙碌 / 错误状态属于那一条
+					<QuickAnswer
+						key={ask.id}
+						id={ask.id}
+						quick={ask.quickAnswer}
+						tinted={!card}
+					/>
 				)}
 				{triage && (
 					<span className="absolute top-2 right-2.5 hidden items-center gap-0.5 rounded-md border border-border bg-panel p-0.5 opacity-0 shadow-xs transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100 [@media(hover:hover)]:flex">
@@ -707,8 +765,9 @@ function InboxRow({
 }
 
 /**
- * 行内一触作答：完整问题（不截断：审批要看清命令）+ 选项按钮，走 `POST notifications/{id}/answer`。
- * 作答成功后线程经 index.patch 离开「等你处理」，这一块随行一起消失；409 `input_resolved` 提示已在别处作答。
+ * 行内一触作答：完整问题按原文纯文本显示（不解析反引号等标记：审批要看清真正会执行的命令）+ 选项按钮，
+ * 走 `POST notifications/{id}/answer`。作答成功或得到 409 `input_resolved`（已在别处作答 / 取消）都把这条通知记为已解决，
+ * 这一块随之消失；同一线程若还有更早的未决提问，行内换成它。409 另用 toast 说明。
  */
 function QuickAnswer({
 	id,
@@ -733,14 +792,17 @@ function QuickAnswer({
 					body: { option },
 				}),
 			);
+			notificationsStore.getState().onResolved([id], Date.now());
 		} catch (e) {
-			setError(e);
-		} finally {
 			setBusy(null);
+			if (e instanceof ApiError && e.code === "input_resolved") {
+				showToast({ text: t("inbox.answeredElsewhere") });
+				notificationsStore.getState().onResolved([id], Date.now());
+				return;
+			}
+			setError(e);
 		}
 	};
-	const elsewhere =
-		error instanceof ApiError && error.code === "input_resolved";
 	return (
 		<div
 			data-inbox-quick=""
@@ -753,8 +815,11 @@ function QuickAnswer({
 					aria-hidden
 					className="mt-[3px] shrink-0 text-accent-ink"
 				/>
-				<span className="min-w-0 whitespace-pre-wrap break-words">
-					{withCode(quick.question)}
+				<span
+					data-inbox-question=""
+					className="min-w-0 whitespace-pre-wrap break-words"
+				>
+					{quick.question}
 				</span>
 			</p>
 			{/* biome-ignore lint/a11y/useSemanticElements: 一组作答按钮，不是表单字段集 */}
@@ -777,14 +842,7 @@ function QuickAnswer({
 					</Button>
 				))}
 			</div>
-			{error !== null &&
-				(elsewhere ? (
-					<p role="status" className="text-muted text-xs">
-						{t("inbox.answeredElsewhere")}
-					</p>
-				) : (
-					<ErrorText error={error} />
-				))}
+			<ErrorText error={error} />
 		</div>
 	);
 }
@@ -815,8 +873,9 @@ function Preview({
 					aria-hidden
 					className="mt-[3px] shrink-0 text-accent-ink"
 				/>
-				<span className="line-clamp-3 min-w-0 break-words">
-					{withCode(text)}
+				{/* 提问原文（审批可能含命令）：纯文本，不解析反引号 */}
+				<span className="line-clamp-3 min-w-0 whitespace-pre-wrap break-words">
+					{text}
 				</span>
 			</span>
 		);

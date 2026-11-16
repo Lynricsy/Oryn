@@ -163,7 +163,7 @@ func TestAnswer(t *testing.T) {
 }
 
 // API 列表上的 quickAnswer：可一触作答的未决 input 带完整问题与选项（不受推送正文上限约束）；
-// 已解决、文字输入与非 input 不带。
+// 已解决、文字输入与非 input 不带；请求解决时广播 notifications.resolved（站内作答按钮据此消失）。
 func TestQuickAnswerAPI(t *testing.T) {
 	f := newFixture(t)
 	id := f.thread("t")
@@ -171,9 +171,11 @@ func TestQuickAnswerAPI(t *testing.T) {
 	f.inputNotification(id, "r1", frame(map[string]any{"method": "select", "title": long, "options": []string{"Approve", "Deny"}}))
 	f.inputNotification(id, "r2", frame(map[string]any{"method": "confirm", "title": "Overwrite?", "message": "a.md exists"}))
 	f.inputNotification(id, "r3", frame(map[string]any{"method": "input", "title": "名字？"}))
-	f.inputNotification(id, "r4", uiFrame("r4"))
+	r4 := f.inputNotification(id, "r4", uiFrame("r4"))
+	require.Empty(t, f.out.Resolved())
 	f.s.InputResolved(id, "r4")
 	f.flush()
+	assert.Equal(t, []string{r4.ID}, f.out.Resolved())
 
 	list, err := f.s.List(f.ctx, 50, 0, false)
 	require.NoError(t, err)

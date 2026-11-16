@@ -760,6 +760,9 @@ export class RealtimeClient {
 								: undefined,
 					);
 				return;
+			case "notifications.resolved":
+				notificationsStore.getState().onResolved(msg.ids, msg.at);
+				return;
 			case "error": {
 				if (msg.id) {
 					const p = this.pending.get(msg.id);

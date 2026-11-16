@@ -62,6 +62,11 @@ export interface NotificationsState {
 	load(): Promise<void>;
 	onNotification(n: AppNotification): void;
 	onRead(target?: ReadTarget): void;
+	/**
+	 * input 通知对应的请求已解决（WS `notifications.resolved`，或本页作答成功 / 得到 409）：记 `resolvedAt`、去掉 `quickAnswer`。
+	 * 同样递增 readGeneration：在途的 load() 应答可能早于解决，丢弃后重取。
+	 */
+	onResolved(ids: readonly string[], at: number): void;
 	markRead(target?: ReadTarget): Promise<void>;
 	dismissToast(id: string): void;
 	setPushActive(on: boolean): void;
@@ -181,6 +186,17 @@ export const notificationsStore = createStore<NotificationsState>(
 					!s.pushActive
 				)
 					showSystemNotification(n);
+			},
+			onResolved: (ids, at) => {
+				readGeneration++;
+				const hit = new Set(ids);
+				set({
+					items: get().items.map((n) =>
+						hit.has(n.id) && !n.resolvedAt
+							? { ...n, resolvedAt: at, quickAnswer: undefined }
+							: n,
+					),
+				});
 			},
 			onRead: (target) => {
 				applyRead(target);

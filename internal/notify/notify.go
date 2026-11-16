@@ -44,6 +44,8 @@ type Broadcaster interface {
 	Notification(n apigen.Notification)
 	// NotificationsRead 广播已读：id 非空 = 只这一条；threadID 非空 = 该线程；都为空 = 全部。
 	NotificationsRead(threadID, id string)
+	// NotificationsResolved 广播 input 通知对应的请求已解决（作答 / 取消 / 随 agent 重启消失）。
+	NotificationsResolved(ids []string, at int64)
 }
 
 // Config 是通知服务参数。
@@ -666,6 +668,9 @@ func (s *Service) resolve(ctx context.Context, threadID, requestID string) {
 	if err != nil {
 		slog.Warn("notify: 标记请求已解决失败", "thread", threadID, "err", err)
 		return
+	}
+	if len(nids) > 0 {
+		s.out.NotificationsResolved(nids, s.now())
 	}
 	for _, id := range nids {
 		s.revokeButtons(ctx, id)

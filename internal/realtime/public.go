@@ -386,6 +386,11 @@ func (h *Hub) NotificationsRead(threadID, id string) {
 	h.toAll(m)
 }
 
+// NotificationsResolved 实现 notify.Broadcaster：这些 input 通知对应的请求已解决，客户端据此去掉站内作答按钮。
+func (h *Hub) NotificationsResolved(ids []string, at int64) {
+	h.toAll(apigen.WsServerNotificationsResolved{Type: apigen.WsServerNotificationsResolvedTypeNotificationsResolved, Ids: ids, At: at})
+}
+
 // SchedulesChanged 实现 schedule.Config.Changed：某个定时的定义或运行记录变了，广播给全部私有连接（契约 C7.2）。
 func (h *Hub) SchedulesChanged(scheduleID string) {
 	h.toAll(apigen.WsServerSchedulesChanged{Type: apigen.WsServerSchedulesChangedTypeSchedulesChanged, ScheduleID: scheduleID})

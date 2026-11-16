@@ -177,7 +177,8 @@ func (f *fakeThreads) Commands() []uiCall {
 type recBroadcaster struct {
 	mu    sync.Mutex
 	notes []apigen.Notification
-	reads [][2]string // {threadID, id}
+	reads    [][2]string // {threadID, id}
+	resolved []string
 }
 
 func (r *recBroadcaster) Notification(n apigen.Notification) {
@@ -190,6 +191,18 @@ func (r *recBroadcaster) NotificationsRead(threadID, id string) {
 	r.mu.Lock()
 	r.reads = append(r.reads, [2]string{threadID, id})
 	r.mu.Unlock()
+}
+
+func (r *recBroadcaster) NotificationsResolved(ids []string, _ int64) {
+	r.mu.Lock()
+	r.resolved = append(r.resolved, ids...)
+	r.mu.Unlock()
+}
+
+func (r *recBroadcaster) Resolved() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.resolved...)
 }
 
 func (r *recBroadcaster) Notes() []apigen.Notification {

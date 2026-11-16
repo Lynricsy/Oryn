@@ -10102,6 +10102,7 @@ components:
         - $ref: '#/components/schemas/WsServerTermResized'
         - $ref: '#/components/schemas/WsServerNotification'
         - $ref: '#/components/schemas/WsServerNotificationsRead'
+        - $ref: '#/components/schemas/WsServerNotificationsResolved'
         - $ref: '#/components/schemas/WsServerSchedulesChanged'
         - $ref: '#/components/schemas/WsServerGitHubChanged'
         - $ref: '#/components/schemas/WsServerArtifactsChanged'
@@ -10130,6 +10131,7 @@ components:
           term.resized: '#/components/schemas/WsServerTermResized'
           notification: '#/components/schemas/WsServerNotification'
           notifications.read: '#/components/schemas/WsServerNotificationsRead'
+          notifications.resolved: '#/components/schemas/WsServerNotificationsResolved'
           schedules.changed: '#/components/schemas/WsServerSchedulesChanged'
           github.changed: '#/components/schemas/WsServerGitHubChanged'
           artifacts.changed: '#/components/schemas/WsServerArtifactsChanged'
@@ -10344,6 +10346,18 @@ components:
           allOf:
             - $ref: '#/components/schemas/NotificationId'
           description: 只这一条已读
+    WsServerNotificationsResolved:
+      type: object
+      description: |
+        `input` 通知对应的请求已作答 / 取消 / 随 agent 重启消失（发给全部私有连接）：客户端把这些通知记为已解决（`resolvedAt = at`、去掉 `quickAnswer`）。
+        不弹提示；已加载的列表靠它与线程当前待答的请求对齐。
+      required: [type, ids, at]
+      properties:
+        type: { type: string, enum: [notifications.resolved], x-enum-varnames: [WsServerNotificationsResolvedTypeNotificationsResolved] }
+        ids:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationId' }
+        at: { $ref: '#/components/schemas/TimestampMs' }
     WsServerSchedulesChanged:
       type: object
       description: 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次

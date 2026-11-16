@@ -21,6 +21,7 @@ import {
 	notificationsStore,
 } from "../state/notifications";
 import { indexStore } from "../state/stores";
+import { toastsStore } from "../state/toasts";
 import { InboxPage } from "./InboxPage";
 
 const NOW = Date.now();
@@ -190,7 +191,8 @@ describe("收件箱页", () => {
 		mount();
 		const preview = (id: string) =>
 			document.querySelector(`[data-inbox-row="${id}"] [data-inbox-preview]`);
-		expect(preview("wait")).toHaveTextContent("允许执行 rm -rf dist？");
+		// 提问原文纯文本：反引号不当标记解析
+		expect(preview("wait")).toHaveTextContent("允许执行 `rm -rf dist`？");
 		expect(preview("wait")).not.toHaveTextContent("已经答过");
 		// 认不出原因（没有 cause）：原文；认得出：一句人话 + 抽出的镜像名，原文仍在
 		expect(preview("err")).toHaveTextContent("omp exited with status 1");
@@ -230,27 +232,37 @@ describe("收件箱页", () => {
 		expect(indexStore.getState().threads.wt?.archivedAt).toBeUndefined();
 	});
 
-	it("可一触作答的提问在行内作答；本轮等待之前的旧通知不算；已在别处作答时提示", async () => {
-		// mock 后端里这条通知（Docker 审批）带 quickAnswer：允许 / 拒绝
-		const id = "ntf_01JD0000000000000000000004";
-		const ask = (createdAt: number): AppNotification => ({
+	it("可一触作答：审批原文纯文本显示；作答后按钮消失；409 时提示并换成同线程更早的未决提问；WS 解决事件同样撤掉", async () => {
+		// mock 后端里两条带 quickAnswer 的 input 通知：…04（Docker 审批）与 …05（侧栏折叠）
+		const ask = (
+			id: string,
+			createdAt: number,
+			question: string,
+		): AppNotification => ({
 			id,
 			kind: "input",
 			threadId: "wait",
 			title: "wait",
-			body: "允许执行？",
+			body: question,
 			url: "/t/wait",
 			createdAt,
 			deliveries: [],
 			quickAnswer: {
-				question: "允许执行 `pkill -HUP orbd`？\n让 orbd 重连。",
+				question,
 				options: [
 					{ i: 0, label: "允许" },
 					{ i: 1, label: "拒绝" },
 				],
 			},
 		});
-		notificationsStore.setState({ items: [ask(NOW - 60_000)] });
+		const q2 = "Command: echo `rm -rf /tmp/x`\n允许？";
+		// 线程状态在通知之后才变（agent 断线重放同一请求）：通知仍有效
+		notificationsStore.setState({
+			items: [
+				ask("ntf_01JD0000000000000000000004", NOW - 60_000, q2),
+				ask("ntf_01JD0000000000000000000005", NOW - 120_000, "更早的提问？"),
+			],
+		});
 		indexStore
 			.getState()
 			.setAll(
@@ -258,19 +270,89 @@ describe("收件箱页", () => {
 				1,
 			);
 		mount();
-		expect(document.querySelector("[data-inbox-quick]")).toBeNull();
-
-		act(() => notificationsStore.setState({ items: [ask(NOW)] }));
-		const quick = document.querySelector("[data-inbox-quick]") as HTMLElement;
-		expect(quick).toHaveTextContent("让 orbd 重连。");
-		fireEvent.click(within(quick).getByRole("button", { name: "允许" }));
-		await waitFor(() =>
-			expect(within(quick).getByRole("button", { name: "允许" })).toBeEnabled(),
+		const quick = () =>
+			document.querySelector("[data-inbox-quick]") as HTMLElement | null;
+		// 反引号原样保留：显示的就是会执行的命令
+		expect(quick()?.querySelector("[data-inbox-question]")?.textContent).toBe(
+			q2,
 		);
-		expect(within(quick).queryByText("已在别处作答")).toBeNull();
-		expect(within(quick).queryByRole("alert")).toBeNull();
-		// 同一请求再答一次：后端回 409 input_resolved
-		fireEvent.click(within(quick).getByRole("button", { name: "拒绝" }));
-		expect(await within(quick).findByText("已在别处作答")).toBeVisible();
+		fireEvent.click(
+			within(quick() as HTMLElement).getByRole("button", { name: "允许" }),
+		);
+		// 作答成功：这条记为已解决，换成更早的未决提问
+		await waitFor(() => expect(quick()).toHaveTextContent("更早的提问？"));
+		expect(
+			notificationsStore
+				.getState()
+				.items.find((n) => n.id === "ntf_01JD0000000000000000000004")
+				?.resolvedAt,
+		).toBeDefined();
+
+		// 本地还当它未决、后端已解决：409 → 提示并撤掉，露出下一条
+		act(() =>
+			notificationsStore.setState({
+				items: [
+					ask("ntf_01JD0000000000000000000004", NOW - 60_000, q2),
+					ask("ntf_01JD0000000000000000000005", NOW - 120_000, "更早的提问？"),
+				],
+			}),
+		);
+		fireEvent.click(
+			within(quick() as HTMLElement).getByRole("button", { name: "拒绝" }),
+		);
+		await waitFor(() => expect(quick()).toHaveTextContent("更早的提问？"));
+		expect(toastsStore.getState().toasts.map((x) => x.text)).toContain(
+			"已在别处作答",
+		);
+
+		// WS notifications.resolved：最后一条也撤掉
+		act(() =>
+			notificationsStore
+				.getState()
+				.onResolved(["ntf_01JD0000000000000000000005"], NOW),
+		);
+		expect(quick()).toBeNull();
+	});
+
+	it("进出动效：同一线程回到某节时再次淡入；快速来回切换不留重复的离场行", async () => {
+		const pause = (ms: number) =>
+			act(
+				() =>
+					new Promise<void>((resolve) => {
+						setTimeout(resolve, ms);
+					}),
+			);
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		const set = (state: Thread["state"]) =>
+			act(() => indexStore.getState().upsertThread(th("x", { state })));
+		const rowsIn = (section: string) =>
+			document.querySelectorAll(
+				`[data-inbox-section="${section}"] [data-inbox-row="x"]`,
+			);
+		const li = (section: string) => rowsIn(section)[0]?.closest("li");
+		indexStore.getState().setAll([th("x", { state: "working" })], 1);
+		mount();
+		await pause(850); // 首次出场结束
+
+		set("awaiting_input");
+		expect(li("you")).toHaveClass("inbox-arrive");
+		await pause(400);
+		set("working");
+		await pause(400);
+		// 再次进入「等你处理」：仍是新到的一行
+		set("awaiting_input");
+		expect(li("you")).toHaveClass("inbox-arrive");
+
+		// 180ms 内来回切换：同键只留一条离场记录
+		set("working");
+		set("awaiting_input");
+		set("working");
+		set("awaiting_input");
+		expect(rowsIn("running").length).toBeLessThanOrEqual(1);
+		expect(
+			errors.mock.calls.some((c) => String(c[0]).includes("same key")),
+		).toBe(false);
+		await waitFor(() => expect(rowsIn("running")).toHaveLength(0));
+		errors.mockRestore();
 	});
 });
