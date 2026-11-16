@@ -285,6 +285,27 @@ func (s *Server) RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, 
 	WriteJSON(w, http.StatusOK, a.API())
 }
 
+// EditArtifactElement 对应 `POST artifacts/{id}/element`：直接编辑页面上的一个元素（文字与七个样式属性），
+// 落成一个用户版本，回 {version}。偏移处已不是该标签或文件在 baseVersion 之后被改过回 409 带 state。
+func (s *Server) EditArtifactElement(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.ArtifactElementEdit
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	a, err := svc.EditElement(r.Context(), id, artifacts.EditParams{
+		BaseVersion: req.BaseVersion, Path: req.Path, Offset: req.Offset, Tag: req.Tag, Style: req.Style, Text: req.Text,
+	})
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.ArtifactVersionRef{Version: a.Version})
+}
+
 // GetArtifactFile 对应 `GET artifacts/{id}/file?version=&path=`：内容策略同 serveStoredFile——栅格图 inline，
 // 其余一律 application/octet-stream + attachment，带 `Content-Security-Policy: sandbox` 与 nosniff，支持 Range。
 // 主域上永远不把 artifact 的 HTML 当页面渲染（渲染只在独立源的帧里）。

@@ -461,3 +461,39 @@ export async function fetchArtifactPng(
 export function artifactThumbnailUrl(id: string, version: number): string {
 	return `/api/v1/artifacts/${encodeURIComponent(id)}/thumbnail?version=${version}`;
 }
+
+export type ArtifactElementEdit = Schemas["ArtifactElementEdit"];
+
+/** 元素直接编辑的结果：落成的新版本，或元素所在文件在 `baseVersion` 之后被改过 / 偏移处已不是该标签（409，带服务端状态）。 */
+export type ElementEditResult =
+	| { kind: "saved"; version: number }
+	| { kind: "conflict"; state: ArtifactState };
+
+/** 直接编辑页面上的一个元素（文字与七个样式属性），落成一个用户版本。其它错误抛 `ApiError`。 */
+export async function editArtifactElement(
+	id: string,
+	body: ArtifactElementEdit,
+): Promise<ElementEditResult> {
+	const res = await api.POST("/api/v1/artifacts/{id}/element", {
+		params: { path: { id } },
+		body,
+	});
+	const err = res.error as Partial<Schemas["ArtifactConflict"]> | undefined;
+	if (res.response.status === 409 && err?.state)
+		return { kind: "conflict", state: err.state };
+	const r = await unwrap(Promise.resolve(res));
+	return { kind: "saved", version: r.version };
+}
+
+/** 读某个版本里一个文件的原始字节。失败抛 `ApiError`。 */
+export async function fetchArtifactFileBytes(
+	id: string,
+	version: number,
+	path: string,
+): Promise<Uint8Array> {
+	const res = await api.GET("/api/v1/artifacts/{id}/file", {
+		params: { path: { id }, query: { version, path } },
+		parseAs: "arrayBuffer",
+	});
+	return new Uint8Array(await unwrap(Promise.resolve(res)));
+}

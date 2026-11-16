@@ -204,6 +204,31 @@ func TestArtifactsREST(t *testing.T) {
 	assert.Equal(t, 404, code)
 }
 
+// 元素直接编辑：改样式落成用户版本回 {version}；偏移处不是该标签回 409 带 state；非法值回 400。
+func TestArtifactElementREST(t *testing.T) {
+	e, svc := newArtifactsEnv(t)
+	ctx := t.Context()
+	src := `<h1 style="margin: 4px">标题</h1><p>正文</p>`
+	a, err := svc.Create(ctx, artifacts.CreateParams{Title: "页", Files: artFiles("index.html", src)})
+	require.NoError(t, err)
+	url := "/api/v1/artifacts/" + a.ID + "/element"
+
+	code, body := e.do("POST", url, map[string]any{"baseVersion": 1, "path": "index.html", "offset": 0, "tag": "h1", "style": map[string]string{"color": "#ff0000"}})
+	require.Equal(t, 200, code, string(body))
+	assert.Equal(t, 2, decodeAs[apigen.ArtifactVersionRef](t, body).Version)
+	b, _, err := svc.ReadFile(ctx, a.ID, 2, "index.html")
+	require.NoError(t, err)
+	assert.Equal(t, `<h1 style="margin: 4px; color: #ff0000">标题</h1><p>正文</p>`, string(b))
+
+	code, body = e.do("POST", url, map[string]any{"baseVersion": 2, "path": "index.html", "offset": 0, "tag": "p", "text": "x"})
+	require.Equal(t, 409, code, string(body))
+	conflict := decodeAs[apigen.ArtifactConflict](t, body)
+	assert.Equal(t, 2, conflict.State.Version)
+
+	code, body = e.do("POST", url, map[string]any{"baseVersion": 2, "path": "index.html", "offset": 0, "tag": "h1", "style": map[string]string{"color": "red"}})
+	assert.Equal(t, 400, code, string(body))
+}
+
 // artifact 文件下载：HTML 一律 attachment + sandbox CSP；栅格图 inline；支持 Range 与指定版本。
 func TestArtifactFileREST(t *testing.T) {
 	e, svc := newArtifactsEnv(t)

@@ -1063,3 +1063,81 @@ export class MockArtifacts {
 		return json(meta, 201);
 	}
 }
+
+import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
+		if (rest === "element" && m === "POST") return this.editElement(a, req);
+	/**
+	 * 元素直接编辑（同 `POST …/element`）：只改偏移处起始标签的 `style`（同名替换、其余保留、没有就加）与（可选的）
+	 * 纯文本内容，落成用户版本。文件在 `baseVersion` 之后变过或偏移处不是该标签回 409。
+	 */
+	private async editElement(a: Stored, req: Request): Promise<Response> {
+		if (a.meta.deletedAt !== undefined)
+			return error(410, "deleted", "这个 artifact 已被删除");
+		const body = (await req.json()) as Schemas["ArtifactElementEdit"];
+		const head = a.versions[a.versions.length - 1];
+		const base = a.versions[body.baseVersion - 1];
+		if (!head || !base) return error(400, "invalid", "baseVersion 不存在");
+		const conflict = () =>
+			json(
+				{
+					code: "conflict",
+					message: `现在是版本 ${a.meta.version}，${body.path} 被改过。`,
+					state: {
+						version: a.meta.version,
+						deleted: false,
+						changed: [body.path],
+					},
+				},
+				409,
+			);
+		const file = head.files.get(body.path);
+		if (!file || base.files.get(body.path)?.sha256 !== file.sha256)
+			return conflict();
+		const style = cleanStyle(body.style ?? {});
+		if (Object.keys(style).length !== Object.keys(body.style ?? {}).length)
+			return error(400, "invalid", "样式值不合法");
+		const decoder = new TextDecoder();
+		const src = decoder.decode(file.data);
+		const at = decoder.decode(file.data.subarray(0, body.offset)).length;
+		const open = /^<([a-zA-Z][a-zA-Z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>/.exec(
+			src.slice(at),
+		);
+		if (!open || open[1]?.toLowerCase() !== body.tag) return conflict();
+		let tag = open[0];
+		if (Object.keys(style).length > 0) {
+			const attr = /\sstyle\s*=\s*"([^"]*)"/i.exec(tag);
+			const decls = (attr?.[1] ?? "")
+				.split(";")
+				.map((d) => d.trim())
+				.filter(
+					(d) =>
+						d !== "" &&
+						!Object.hasOwn(style, d.split(":")[0]?.trim().toLowerCase() ?? ""),
+				);
+			for (const [k, v] of Object.entries(style)) decls.push(`${k}: ${v}`);
+			const next = ` style="${decls.join("; ")}"`;
+			tag = attr
+				? tag.replace(attr[0], next)
+				: `<${open[1]}${next}${tag.slice(1 + (open[1]?.length ?? 0))}`;
+		}
+		let rest = src.slice(at + open[0].length);
+		if (body.text !== undefined) {
+			const raw = sourceTextAt(file.data, body.offset, body.tag);
+			if (raw === null)
+				return error(400, "invalid", "只有内容全是文字的元素能直接改文字");
+			const escaped = body.text
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
+			rest = escaped + rest.slice(raw.length);
+		}
+		const data = encoder.encode(src.slice(0, at) + tag + rest);
+		this.pushVersion(
+			a,
+			new Map(head.files).set(body.path, { data, sha256: pseudoSha(data) }),
+			head.capabilities,
+		);
+		return json({
+			version: a.meta.version,
+		} satisfies Schemas["ArtifactVersionRef"]);
+	}
