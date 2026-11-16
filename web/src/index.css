@@ -334,9 +334,10 @@ body {
 /*
  * 内容铺到状态栏下面：页面里有 [data-safe-bleed] 时，应用壳 <main> 不再让出顶部安全区，
  * 由该页自己把页头往下推、转录的顶部留白加上安全区（手机线程页 / 协调对话：对话滚到灵动岛下面，只在那一带渐进模糊）。
- * 叠在原处但 inert 的隐藏面（Space 页切到「线程」时的聊天）里的标记不算。不放进 @layer：要压过 pt-safe 工具类。
+ * main 里叠在原处但 inert 的隐藏面（Space 页切到「线程」时的聊天）里的标记不算；main 外的 inert（下沉侧栏打开时
+ * 包住整个 main 的卡片内容）不影响。不放进 @layer：要压过 pt-safe 工具类。
  */
-main.pt-safe:has([data-safe-bleed]:not([inert] *)) {
+main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	padding-top: 0;
 }
 
