@@ -20,7 +20,7 @@
   - R25 的完成提醒改为只对分类为 `bug`、`documentation` 或尚未分类的线程发送（预设作者发现：`question` 等分类停在 `new` 是正常收尾）。
 - **v4（2026-11-16，执行中修订）**：评审发现 5.3 的发布例外没有接线：`PrepareRequest.Release` 只在测试里置真，`orbdrt/github.go` 的唯一生产调用从不传，orbsock 参数里也没有线程类别，发布线程的 `github_prepare` 必定因「在默认分支上」被拒。类别只能来自控制面的任务状态（orb 内的 orbd 不可信），因此：
   - 6.1 增加 orbd 侧接线：`github.prepare` 先经 ctl 向控制面查询该线程是否为发布任务，再决定 `Release`；查询失败按非发布处理（只会多拒绝，不会多放行）。
-  - 5.4 增加服务端兜底：非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。
+  - 5.4 增加服务端兜底：**推送门禁开启时**，非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。门禁关闭（R19 的默认）或项目没有门禁（含无项目 orb）时不加这条限制，按 R5 以账号权限读写。
 
 ## Context
 
@@ -770,7 +770,7 @@ Do：按下面的覆盖表执行。REST 的前缀 `/repos/{o}/{r}` 与 `/reposit
 | 合并 | `PUT /pulls/{n}/merge` | `mergePullRequest`、`enablePullRequestAutoMerge`、`enqueuePullRequest` | `ReviewOnly` 时拒绝 |
 | review 事件 | `POST /pulls/{n}/reviews`（`event`）、`POST /pulls/{n}/reviews/{id}/events` | `addPullRequestReview`、`submitPullRequestReview` | `CommentOnlyReviews` 时只放行 `COMMENT`，以及没有 event 的待提交 review |
 | Oryn 的 hook | `PATCH\|DELETE /hooks/{id}`、`PATCH /hooks/{id}/config` | 无 | `IsOrynHook` 为真时始终拒绝 |
-| git 推送 | `git-receive-pack` | — | 只检查 `refs/heads/*`；`ReviewOnly` 时在 `info/refs?service=git-receive-pack` 就返回 403；目标是默认分支且 `ReleaseThread()` 为假时拒绝（v4：orbd 的默认分支检查在 orb 内，不可信） |
+| git 推送 | `git-receive-pack` | — | 只检查 `refs/heads/*`；`ReviewOnly` 时在 `info/refs?service=git-receive-pack` 就返回 403；推送门禁开启、目标是默认分支且 `ReleaseThread()` 为假时拒绝（v4：orbd 的默认分支检查在 orb 内，不可信；门禁关闭时不检查默认分支） |
 
 pkt-line 解析规则：
 
@@ -785,7 +785,7 @@ pkt-line 解析规则：
 
 GraphQL 中受管控的 mutation，如果参数无法静态求值，一律拒绝。
 
-Accept：`go build ./... && go test ./internal/egress/... -run Gate` 输出 `ok`，覆盖表中每一行的放行和拒绝、别名或 fragment 绕过、超限请求体、`ng` 响应格式。
+Accept：`go build ./... && go test ./internal/egress/... -run Gate` 输出 `ok`，覆盖表中每一行的放行和拒绝、别名或 fragment 绕过、超限请求体、`ng` 响应格式；以及 v4 默认分支规则的三条用例：推送门禁开启时非发布线程推默认分支被拒、发布线程放行，推送门禁关闭（以及无项目 orb）时普通线程推默认分支放行。
 
 ### 步骤 5.5：问题自动关闭
 Depends on：5.2、3.1。
