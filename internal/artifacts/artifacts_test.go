@@ -363,3 +363,36 @@ func TestEraseGuardedAgainstUndelete(t *testing.T) {
 	_, err = e.s.Get(ctx, a.ID)
 	require.NoError(t, err)
 }
+
+// 旧孤儿内容被一次写入复用（put 已刷新 mtime、引用行还没提交）时，同时进行的内容清理不能把它删掉。
+// 时钟拨到未来，让刷新后的 mtime 仍早于 cutoff：只有「写入持读锁、清理逐个持写锁再查引用」能保住它。
+func TestContentGCDoesNotRemoveReusedOrphan(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, err := e.s.Create(ctx, CreateParams{Title: "x", Files: []FileChange{put("index.html", "reused-orphan")}})
+	require.NoError(t, err)
+	_, err = e.s.Delete(ctx, a.ID)
+	require.NoError(t, err)
+	require.NoError(t, e.s.Erase(ctx, a.ID))
+	require.Equal(t, 1, countContent(t, e.dir), "orphan content still on disk")
+	e.clk.add(48 * time.Hour)
+
+	reached := make(chan struct{})
+	var once sync.Once
+	e.s.gcBeforeLock = func(string) { once.Do(func() { close(reached) }) }
+	gcDone := make(chan struct{})
+	e.s.afterStage = func() {
+		e.s.afterStage = nil
+		go func() {
+			defer close(gcDone)
+			e.s.Purge(ctx)
+		}()
+		<-reached // 清理已选中这个旧孤儿、正要拿写锁；此刻引用行还没提交
+		assert.False(t, e.s.contentMu.TryLock(), "writer must hold the content read lock across stage → commit")
+	}
+	b, err := e.s.Create(ctx, CreateParams{Title: "y", Files: []FileChange{put("index.html", "reused-orphan")}})
+	require.NoError(t, err)
+	<-gcDone
+	assert.Equal(t, "reused-orphan", readFile(t, e.s, b.ID, 1, "index.html"))
+	assert.Equal(t, 1, countContent(t, e.dir))
+}

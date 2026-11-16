@@ -88,7 +88,7 @@ func (e *OpError) Status() int {
 		return http.StatusConflict
 	case CodeEditNotFound:
 		return http.StatusUnprocessableEntity
-	case CodeTooLarge:
+	case CodeTooLarge, CodeTooMany:
 		return http.StatusRequestEntityTooLarge
 	case CodeRateLimited:
 		return http.StatusTooManyRequests

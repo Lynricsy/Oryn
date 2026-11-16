@@ -378,6 +378,11 @@ func (s *Service) rateRecord(a Author) {
 
 // Create 新建 artifact（版本 1）。
 func (s *Service) Create(ctx context.Context, p CreateParams) (Artifact, error) {
+	return s.create(ctx, p, nil)
+}
+
+// create 新建 artifact；pre 非 nil 时文件已经落进内容存储（导入流式写入），不再读 p.Files。
+func (s *Service) create(ctx context.Context, p CreateParams, pre *staged) (Artifact, error) {
 	title, err := CleanTitle(p.Title)
 	if err != nil {
 		return Artifact{}, err
@@ -402,9 +407,19 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Artifact, error) 
 	if err := s.rateCheck(p.Author); err != nil {
 		return Artifact{}, err
 	}
-	st, err := s.stage(p.Files, p.Type)
-	if err != nil {
-		return Artifact{}, err
+	var st staged
+	if pre != nil {
+		// 导入路径：调用方在流式落内容之前已经 holdContent，并持有到这里返回
+		st = *pre
+	} else {
+		release := s.holdContent()
+		defer release()
+		if st, err = s.stage(p.Files, p.Type); err != nil {
+			return Artifact{}, err
+		}
+	}
+	if s.afterStage != nil {
+		s.afterStage()
 	}
 	if len(st.removes) > 0 {
 		return Artifact{}, opErr(CodeInvalid, "新建 artifact 时不能删除文件。")
@@ -465,9 +480,14 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 		return Artifact{}, err
 	}
 	typ := deref(cur.Type)
+	release := s.holdContent()
+	defer release()
 	st, err := s.stage(p.Files, typ)
 	if err != nil {
 		return Artifact{}, err
+	}
+	if s.afterStage != nil {
+		s.afterStage()
 	}
 	var n int64
 	err = s.st.Tx(ctx, func(q *db.Queries) error {

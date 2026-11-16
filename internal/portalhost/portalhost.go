@@ -16,6 +16,9 @@ var (
 	threadIDRe = regexp.MustCompile(`^T-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 	labelRe    = regexp.MustCompile(`^t-([0-9a-f]{12})-p([1-9][0-9]{0,4})$`)
 	domainRe   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+	// artifactLabelRe 是 artifact 主机标签：`a-<帧令牌>`（渲染帧）或 `p-<slug>`（发布页），令牌与 slug 都是
+	// 16 字节的小写无填充 base32。
+	artifactLabelRe = regexp.MustCompile(`^([ap])-([a-z2-7]{26})$`)
 )
 
 // Code 返回线程短码：线程 id 形如 `T-<uuid>`（小写十六进制）时取末 12 位，否则 ok=false。
@@ -42,6 +45,20 @@ func ParseLabel(label string) (code string, port int, ok bool) {
 		return "", 0, false
 	}
 	return m[1], p, true
+}
+
+// ArtifactLabel 返回 artifact 主机的首个标签 `<kind>-<id>`（kind 为 'a' 帧、'p' 发布页）。
+func ArtifactLabel(kind byte, id string) string {
+	return string(kind) + "-" + id
+}
+
+// ParseArtifactLabel 解析 `a-<令牌>` / `p-<slug>`；id 须匹配 `^[a-z2-7]{26}$`。
+func ParseArtifactLabel(label string) (kind byte, id string, ok bool) {
+	m := artifactLabelRe.FindStringSubmatch(label)
+	if m == nil {
+		return 0, "", false
+	}
+	return m[1][0], m[2], true
 }
 
 // Expand 把模板中的 `{code}` 换成短码；port > 0 时再把 `{port}` 换成端口，port = 0 时保留 `{port}`。
@@ -150,4 +167,12 @@ func (b Base) FrameSrc() string {
 		return ""
 	}
 	return b.Scheme + "://*" + b.hostSuffix()
+}
+
+// ArtifactURL 返回 artifact 主机的根地址 `<Scheme>://<kind>-<id>.<Domain>[:Port]/`；未启用时为空串。
+func (b Base) ArtifactURL(kind byte, id string) string {
+	if !b.Enabled() {
+		return ""
+	}
+	return b.Scheme + "://" + ArtifactLabel(kind, id) + b.hostSuffix() + "/"
 }

@@ -38,14 +38,24 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'"
 
 // Handler 提供静态文件；找不到的非 API 路径回退到 index.html（客户端路由）。
-// frameSrc 非空（启用 portal 时为 `<scheme>://*.<portal_domain>[:port]`）时，CSP 的 `frame-src 'none'`
-// 换成 `frame-src <frameSrc>`，让线程页能内嵌 portal；`frame-ancestors 'none'` 与 X-Frame-Options 不变。
+// frameSrc 非空时，CSP 的 `frame-src 'none'` 换成 `frame-src <frameSrc>`：启用 portal 时为
+// `<scheme>://*.<portal_domain>[:port]`（线程页内嵌 portal 与 artifact 帧）；未启用时为 `'self'`（artifact
+// 帧走主域的 /_af/ 回退路径）。`frame-ancestors 'none'` 与 X-Frame-Options 不变。
 func Handler(frameSrc string) http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err)
 	}
 	return handler(sub, frameSrc)
+}
+
+// Asset 返回内嵌构建产物里的一个文件（如 `sandbox/runtime.js`）；不存在（没跑过 make web）时 ok 为假。
+func Asset(name string) ([]byte, bool) {
+	if !fs.ValidPath(name) {
+		return nil, false
+	}
+	b, err := fs.ReadFile(dist, "dist/"+name)
+	return b, err == nil
 }
 
 // withFrameSrc 按 frameSrc 改写 CSP 的 frame-src 指令。

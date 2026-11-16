@@ -5,16 +5,20 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"path"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/attachments"
 )
 
-// ArtifactsDeps 是 M14 Artifacts 的依赖（计划步骤 1.3）。
+// ArtifactsDeps 是 M14 Artifacts 的依赖（计划步骤 1.3、2.1）。
 type ArtifactsDeps struct {
 	Service *artifacts.Service
+	// Host 是渲染帧（独立源里的沙箱页面）。
+	Host *artifacts.Host
 }
 
 func (s *Server) artifactsSvc(w http.ResponseWriter) (*artifacts.Service, bool) {
@@ -298,4 +302,132 @@ func (s *Server) GetArtifactFile(w http.ResponseWriter, r *http.Request, id apig
 	}
 	defer content.Close()
 	serveStoredFile(w, r, content, path.Base(f.Path), f.Mime, v.CreatedAt, true)
+}
+
+func (s *Server) artifactsHost(w http.ResponseWriter) (*artifacts.Host, bool) {
+	if s.Artifacts == nil || s.Artifacts.Host == nil {
+		WriteError(w, http.StatusNotImplemented, "not_implemented", "artifact frames not configured")
+		return nil, false
+	}
+	return s.Artifacts.Host, true
+}
+
+// OpenArtifactFrame 对应 `POST artifacts/{id}/frames`：申请一个渲染帧。请求的 Origin 头成为帧的
+// frame-ancestors（让 vite 开发服务器的页面也能内嵌）；没有时用 public_url 的源。
+func (s *Server) OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	host, ok := s.artifactsHost(w)
+	if !ok {
+		return
+	}
+	var req apigen.ArtifactFrameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	version, ok := artifactVersionParam(w, req.Version)
+	if !ok {
+		return
+	}
+	token, url, err := host.OpenFrame(r.Context(), id, version, r.Header.Get("Origin"))
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, apigen.ArtifactFrame{Token: token, URL: url})
+}
+
+// CloseArtifactFrame 对应 `DELETE artifact-frames/{token}`（不存在也回 204）。
+func (s *Server) CloseArtifactFrame(w http.ResponseWriter, _ *http.Request, token apigen.ArtifactFrameToken) {
+	host, ok := s.artifactsHost(w)
+	if !ok {
+		return
+	}
+	host.CloseFrame(token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// OpenArtifactLink 对应 `POST artifacts/{id}/open-link`：「在浏览器中打开」的顶层帧地址（自带令牌）。
+func (s *Server) OpenArtifactLink(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	host, ok := s.artifactsHost(w)
+	if !ok {
+		return
+	}
+	var req apigen.ArtifactFrameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	version, ok := artifactVersionParam(w, req.Version)
+	if !ok {
+		return
+	}
+	url, err := host.OpenLink(r.Context(), id, version)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.ArtifactOpenLink{URL: url})
+}
+
+// ImportArtifact 对应 `POST artifacts/import?projectId=&name=`：流式读 multipart，每个 part 的字段名是相对路径。
+func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params apigen.ImportArtifactParams) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, artifacts.ImportBodyLimit)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, artifacts.CodeInvalid, "请求体必须是 multipart/form-data")
+		return
+	}
+	var p artifacts.ImportParams
+	if params.ProjectID != nil {
+		p.ProjectID = *params.ProjectID
+	}
+	if params.Name != nil {
+		p.Name = *params.Name
+	}
+	a, err := svc.Import(r.Context(), mr, p)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, a.API())
+}
+
+// ExportArtifact 对应 `GET artifacts/{id}/export?version=&format=`：`html` 回单个文件，`zip` 流式打包。
+// 一律 attachment，带 `Content-Security-Policy: sandbox` 与 nosniff（主域上不把 artifact 当页面渲染）。
+func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.ExportArtifactParams) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	version, ok := artifactVersionParam(w, params.Version)
+	if !ok {
+		return
+	}
+	x, err := svc.Export(r.Context(), id, version, string(params.Format))
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", x.ContentType)
+	h.Set("Content-Disposition", attachments.Disposition(attachments.SafeName(x.Name)))
+	h.Set("Content-Security-Policy", "sandbox")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "private, no-cache")
+	w.WriteHeader(http.StatusOK)
+	if err := x.Write(w); err != nil && !errors.Is(err, context.Canceled) {
+		slog.Warn("api: 导出 artifact 中断", "artifact", id, "err", err)
+	}
+}
+
+// GetArtifactCapabilities 对应 `GET artifacts/capabilities`。控制面渲染（阶段 4）与 sample 能力（步骤 7.5）
+// 还没有接入，固定为 false。
+func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request) {
+	host, ok := s.artifactsHost(w)
+	if !ok {
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.ArtifactCapabilities{Frames: apigen.ArtifactCapabilitiesFrames(host.Mode())})
 }

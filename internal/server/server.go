@@ -296,18 +296,26 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
+	// M14 artifact 渲染帧：配置了 portal_domain 时在 a-<令牌>.<portal_domain>（包在 portal 中间件外层分流），
+	// 否则挂在主域的 /_af/<令牌>/（帧请求不带 cookie，令牌就是凭证），SPA 的 CSP 相应放行 frame-src 'self'
+	frames := artifacts.NewHost(s.Artifacts, artifacts.HostConfig{Base: base})
+	frameSrc := base.FrameSrc()
+	if !base.Enabled() {
+		frameSrc = "'self'"
+		mounts[artifacts.FramePathPrefix+"*"] = frames.Handler()
+	}
 	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
 		AuthMiddleware: auth.Middleware(s.Store),
 		Mounts:         mounts,
-		FrameSrc:       base.FrameSrc(),
+		FrameSrc:       frameSrc,
 	}
 	if base.Enabled() {
 		s.Portal = portal.New(portal.Config{Base: base}, s.Store, s.Orbs)
 		go s.Portal.Run(runCtx)
 		s.Auth.Subscribe(s.Portal.Revoke)
-		deps.Portal = s.Portal.Middleware
+		deps.Portal = func(next http.Handler) http.Handler { return frames.Middleware(s.Portal.Middleware(next)) }
 		mounts["/portal/auth"] = s.Portal.AuthHandler()
 	}
 	s.closers = append(s.closers, func() { cancel(); s.Threads.Close(); s.Orbs.Close() })
@@ -334,7 +342,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
-	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts}
+	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

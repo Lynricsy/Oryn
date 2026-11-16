@@ -107,3 +107,22 @@ func TestRouterPortalFirst(t *testing.T) {
 	assert.Contains(t, csp, "frame-src https://*.portal.test;")
 	assert.Contains(t, csp, "frame-ancestors 'none'")
 }
+
+// SPA 的 CSP 按两种配置各断言一次：配置了 portal_domain 时 frame-src 放行 portal 泛域名（含 artifact 帧
+// a-…），未配置时放行 'self'（artifact 帧走主域 /_af/ 回退路径）。frame-ancestors 两种都是 'none'。
+func TestRouterFrameSrcCSP(t *testing.T) {
+	for frameSrc, want := range map[string]string{
+		"https://*.portal.test": "frame-src https://*.portal.test;",
+		"'self'":                "frame-src 'self';",
+	} {
+		h := NewRouter(&Server{Deps: Deps{FrameSrc: frameSrc}})
+		for _, p := range []string{"/", "/index.html", "/artifacts/x"} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+			csp := rec.Header().Get("Content-Security-Policy")
+			assert.Contains(t, csp, want, p)
+			assert.NotContains(t, csp, "frame-src 'none'", p)
+			assert.Contains(t, csp, "frame-ancestors 'none'", p)
+		}
+	}
+}

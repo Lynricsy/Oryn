@@ -193,3 +193,28 @@ func TestDisabledOutputsEmpty(t *testing.T) {
 	assert.Empty(t, b.FrameSrc())
 	assert.Equal(t, "https://oryn.example.com", b.Origin)
 }
+
+func TestArtifactLabel(t *testing.T) {
+	const id = "abcdefghijklmnopqrstuvwxyz"
+	for _, kind := range []byte{'a', 'p'} {
+		k, got, ok := ParseArtifactLabel(ArtifactLabel(kind, id))
+		require.True(t, ok)
+		assert.Equal(t, kind, k)
+		assert.Equal(t, id, got)
+	}
+	for _, bad := range []string{
+		"t-" + id, "a-" + id[:25], "a-" + id + "a", "a-ABCDEFGHIJKLMNOPQRSTUVWXYZ", "a-abcdefghijklmnopqrstuvwx01", "a" + id, "",
+	} {
+		_, _, ok := ParseArtifactLabel(bad)
+		assert.False(t, ok, bad)
+	}
+	b, err := NewBase("http://localhost:7600", "localhost")
+	require.NoError(t, err)
+	assert.Equal(t, "http://a-"+id+".localhost:7600/", b.ArtifactURL('a', id))
+	label, ok := b.Match("a-" + id + ".localhost:7600")
+	require.True(t, ok)
+	assert.Equal(t, "a-"+id, label)
+	off, err := NewBase("http://localhost:7600", "")
+	require.NoError(t, err)
+	assert.Empty(t, off.ArtifactURL('a', id))
+}
