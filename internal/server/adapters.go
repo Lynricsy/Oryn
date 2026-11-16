@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -59,4 +60,15 @@ func (h artifactViewers) Viewers(id string) []artifacts.Viewer {
 		out[i] = artifacts.Viewer{Conn: w.Conn, Page: w.Page}
 	}
 	return out
+}
+
+// lazyMemory 让线程服务在记忆服务构造之前就能拿到 threads.MemoryStarter：线程服务必须先于 orb link 构造，
+// 记忆服务依赖更晚构造的 orb 与模型路由。agent.start 只发生在 link 建立之后，届时 s.Memory 已就绪。
+type lazyMemory struct{ s *Server }
+
+func (m lazyMemory) AgentMemory(ctx context.Context, threadID string, projectID *string) (*apigen.LinkCtlAgentMemory, error) {
+	if m.s.Memory == nil {
+		return nil, nil
+	}
+	return m.s.Memory.AgentMemory(ctx, threadID, projectID)
 }

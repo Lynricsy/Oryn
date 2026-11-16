@@ -332,12 +332,8 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 		}
 		switch st.Header.T {
 		case link.StreamEgress:
-			if l.runner {
-				// runner 不走控制面的 egress 代理（控制面的密钥不去 runner）
-				_ = st.Close()
-				continue
-			}
-			s.serveEgress(orb.ID, st)
+			// runner 只有记忆专用通道（M16）：控制面的模型与 git 密钥不去 runner，其余出站路径一律 403
+			s.serveEgress(orb.ID, st, l.runner)
 		case link.StreamCtl:
 			slog.Warn("重复的 ctl 流，关闭 link", "orb", orb.ID)
 			_ = st.Close()

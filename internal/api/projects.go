@@ -412,6 +412,12 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 			slog.Warn("删除项目 omp 配置失败", "project", id, "err", err)
 		}
 	}
+	// M16：级联删除项目在 Hindsight 里的记忆（R23）。失败的进入重试队列；记忆未配置或 Hindsight 不可用都不阻塞删除
+	if s.Memory != nil && s.Memory.Service != nil {
+		if err := s.Memory.Service.PurgeProject(context.WithoutCancel(ctx), id); err != nil {
+			slog.Warn("登记项目记忆的级联删除失败", "project", id, "err", err)
+		}
+	}
 	// 该项目的预热池 orb 由对账回收
 	s.poolKick(id)
 	w.WriteHeader(http.StatusNoContent)

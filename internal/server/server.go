@@ -29,6 +29,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/memory"
+	"github.com/Lynricsy/Oryn/internal/memory/relayroute"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -183,7 +184,7 @@ func (s *Server) init(ctx context.Context) error {
 	}, s.Store, s.Jobs, setup, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
-		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate,
+		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
 	}, s.Store, orbsAdapter{s.Orbs})
 	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
 		return err
@@ -273,7 +274,10 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.AddObserver(s.GitHub.TurnObserver())
 	// M16：内置 Hindsight 记忆。Hindsight 的 key 用 Box 加密存库；没有总超时（网关转发的 reflect 可能很慢），
 	// 探测与转发各自用 context 限时
+	// 模型中转按控制面 models.yml 的出站路由解析模型的协议与上游（密钥注入与脱敏沿用 egress）
+	memRoutes := relayroute.New(s.Home, s.Vault)
 	s.Memory = memory.New(memory.Config{
+		Family: memRoutes.Family, Upstream: memRoutes.Upstream, Restart: s.Threads.MarkMemoryRestart,
 		Q: s.Store.Q, Box: box, PublicURL: cfg.PublicURL, HTTP: &http.Client{Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -284,6 +288,8 @@ func (s *Server) init(ctx context.Context) error {
 			ForceAttemptHTTP2:     true,
 		}},
 	})
+	// 记忆网关：orb 出站代理的 /memory/t/<threadId>/… 经它强制 bank、标签与放行清单（步骤 2.2）
+	s.Orbs.SetMemory(memory.NewGateway(s.Memory))
 	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）；M14：采样落库后按提交关联 GitHub PR
 	s.Stats = stats.New(stats.Config{
 		Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval, CommitsSampled: s.GitHub.ThreadCommitsSampled,
@@ -331,6 +337,8 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Coord.Run(runCtx)
 	go s.Stats.Run(runCtx)
 	go s.GitHub.Run(runCtx)
+	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
+	go s.Memory.RunTombstones(runCtx)
 	// 事实行版本不符时在后台回填（可中断，下次启动从游标续作）
 	go func() {
 		if err := threads.BackfillFacts(runCtx, s.Store, nil, false); err != nil && runCtx.Err() == nil {
@@ -350,6 +358,8 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
+	// M16 模型中转：Hindsight 凭中转令牌调用，不经 /api/v1 的鉴权组
+	mounts[memory.RelayPathPrefix+"*"] = s.Memory.RelayHandler()
 	frameSrc := base.FrameSrc()
 	if !base.Enabled() {
 		frameSrc = "'self'"

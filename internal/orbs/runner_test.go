@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -163,15 +164,18 @@ func TestRunnerLifecycle(t *testing.T) {
 	assert.True(t, list[0].Online)
 	assert.Equal(t, "box", *list[0].Hostname)
 
-	// egress 流直接关闭
+	// egress 流只通往记忆网关（M16）：模型路由等其余路径回 403，连接按 Connection: close 正常结束
 	fr.mu.Lock()
 	sess := fr.sess
 	fr.mu.Unlock()
 	est, err := sess.Open(ctx, link.StreamHeader{T: link.StreamEgress})
 	require.NoError(t, err)
-	_ = est.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = io.ReadAll(est)
-	assert.NoError(t, err, "egress 流应被服务端正常关闭（EOF），而不是读超时")
+	_ = est.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = io.WriteString(est, "GET /llm/anthropic/v1/models HTTP/1.1\r\nHost: oryn-egress\r\nConnection: close\r\n\r\n")
+	require.NoError(t, err)
+	raw, err := io.ReadAll(est)
+	require.NoError(t, err, "egress 流应在应答后正常关闭（EOF），而不是读超时")
+	assert.True(t, strings.HasPrefix(string(raw), "HTTP/1.1 403 "), "runner 的非记忆出站请求应被拒绝：%q", raw)
 
 	// 守卫
 	assert.ErrorIs(t, h.svc.Pause(ctx, r.OrbID, PauseFreeze), ErrRunnerUnsupported)

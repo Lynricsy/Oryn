@@ -297,14 +297,19 @@ func (s *Service) setPolicy(orbID string, pol egress.Policy) {
 	s.mu.Unlock()
 }
 
-// serveEgress 把一条 egress 流交给该 orb 的代理服务（按需创建）。
-func (s *Service) serveEgress(orbID string, st *link.Stream) {
+// serveEgress 把一条 egress 流交给该 orb 的代理服务（按需创建）。memoryOnly 为真（runner）时只放行记忆网关
+// `/memory/…`，其余路径一律 403：runner 的通道只为记忆开（M16 步骤 2.4），模型与 git 路由不对 runner 开放。
+func (s *Service) serveEgress(orbID string, st *link.Stream, memoryOnly bool) {
 	s.mu.Lock()
 	es := s.egress[orbID]
 	if es == nil {
+		var h http.Handler = egress.NewHandler(orbID, egressResolver{s: s, orbID: orbID})
+		if memoryOnly {
+			h = memoryOnlyHandler(h)
+		}
 		es = &egressServer{l: link.NewStreamListener("oryn-egress")}
 		es.srv = &http.Server{
-			Handler:           egress.NewHandler(orbID, egressResolver{s: s, orbID: orbID}),
+			Handler:           h,
 			ReadHeaderTimeout: 30 * time.Second,
 			IdleTimeout:       5 * time.Minute,
 		}
@@ -317,6 +322,17 @@ func (s *Service) serveEgress(orbID string, st *link.Stream) {
 	}
 	s.mu.Unlock()
 	es.l.Push(st)
+}
+
+// memoryOnlyHandler 只把 `/memory/` 路径交给 next，其余回 403。
+func memoryOnlyHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/memory/") {
+			memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "oryn egress: runner 只开放记忆通道")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // closeEgress 关闭 orb 的代理服务（orb 删除时）。
