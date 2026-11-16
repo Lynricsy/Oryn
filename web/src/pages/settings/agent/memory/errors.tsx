@@ -21,6 +21,7 @@ export type MemoryStep =
 	| "confirmDeployed"
 	| "loadEndpoints"
 	| "saveEndpoint"
+	| "deleteEndpoint"
 	| "loadUsage"
 	| "loadDocuments"
 	| "deleteDocument"

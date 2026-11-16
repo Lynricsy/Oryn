@@ -125,9 +125,11 @@ export class MockMemory {
 		consolidation: "anthropic",
 		mental_model: "anthropic",
 	};
+	/** `.env` 里已部署的重排模式（v5：配了重排接口为 cohere，否则为 rrf） */
+	private deployedRerank: Schemas["MemoryEndpoints"]["rerankMode"] = "cohere";
 	private endpoints: {
 		embed: Schemas["MemoryEndpoint"];
-		rerank: Schemas["MemoryEndpoint"];
+		rerank?: Schemas["MemoryEndpoint"];
 	} = {
 		embed: {
 			kind: "embed",
@@ -309,12 +311,34 @@ export class MockMemory {
 			`HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=${token}`,
 			"HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=oryn-embed",
 			`HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS=${this.endpoints.embed.dimensions ?? 1024}`,
-			"HINDSIGHT_API_RERANKER_PROVIDER=cohere",
-			"HINDSIGHT_API_RERANKER_COHERE_BASE_URL=http://host.docker.internal:8080/memory-relay/v1/rerank",
+			`HINDSIGHT_API_RERANKER_PROVIDER=${this.rerankMode()}`,
+			`HINDSIGHT_API_RERANKER_COHERE_BASE_URL=${RERANK_RELAY_URL}`,
 			`HINDSIGHT_API_RERANKER_COHERE_API_KEY=${token}`,
 			"HINDSIGHT_API_RERANKER_COHERE_MODEL=oryn-rerank",
 		);
 		return `${lines.join("\n")}\n`;
+	}
+
+	private rerankMode(): Schemas["MemoryEndpoints"]["rerankMode"] {
+		return this.endpoints.rerank ? "cohere" : "rrf";
+	}
+
+	/** 与 orynd 同格式：重排模式与已部署的不同时给出要改的 `.env` 行（切到 cohere 连同三行 cohere 配置）。 */
+	private endpointsView(): Schemas["MemoryEndpoints"] {
+		const rerankMode = this.rerankMode();
+		const needsRestart =
+			this.settings.keysGenerated && rerankMode !== this.deployedRerank;
+		const snippet =
+			rerankMode === "cohere"
+				? `HINDSIGHT_API_RERANKER_PROVIDER=cohere\nHINDSIGHT_API_RERANKER_COHERE_BASE_URL=${RERANK_RELAY_URL}\nHINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>\nHINDSIGHT_API_RERANKER_COHERE_MODEL=oryn-rerank\n`
+				: "HINDSIGHT_API_RERANKER_PROVIDER=rrf\n";
+		return {
+			...this.endpoints,
+			embedLocked: this.memoryCount() > 0,
+			rerankMode,
+			needsRestart,
+			...(needsRestart ? { envSnippet: snippet } : {}),
+		};
 	}
 
 	private withTitle(d: Schemas["MemoryDocument"]): Schemas["MemoryDocument"] {
@@ -381,6 +405,7 @@ export class MockMemory {
 				keysGenerated: true,
 				keysGeneratedAt: generatedAt,
 			};
+			this.deployedRerank = this.rerankMode();
 			return json({ content: this.envFile(), generatedAt });
 		}
 
@@ -429,15 +454,22 @@ export class MockMemory {
 		if (sub === "models/deployed" && m === "POST") {
 			for (const c of this.models().items)
 				if (c.family) this.deployed[c.purpose] = c.family;
+			this.deployedRerank = this.rerankMode();
 			return json(this.models());
 		}
 
-		if (sub === "endpoints" && m === "GET")
-			return json({
-				...this.endpoints,
-				embedLocked: this.memoryCount() > 0,
-			});
+		if (sub === "endpoints" && m === "GET") return json(this.endpointsView());
 		const ep = /^endpoints\/(embed|rerank)$/.exec(sub);
+		if (ep && m === "DELETE") {
+			if (ep[1] === "embed")
+				return err(
+					400,
+					"invalid_request",
+					"the embedding endpoint cannot be deleted",
+				);
+			delete this.endpoints.rerank;
+			return json(this.endpointsView());
+		}
 		if (ep && m === "PUT") {
 			const kind = ep[1] as Schemas["MemoryEndpointKind"];
 			const b = (await body()) as Partial<Schemas["MemoryEndpointUpdate"]>;
@@ -446,8 +478,8 @@ export class MockMemory {
 			const cur = this.endpoints[kind];
 			const locked = kind === "embed" && this.memoryCount() > 0;
 			const changesModel =
-				b.model !== cur.model ||
-				(b.dimensions !== undefined && b.dimensions !== cur.dimensions);
+				b.model !== cur?.model ||
+				(b.dimensions !== undefined && b.dimensions !== cur?.dimensions);
 			if (locked && changesModel && !b.reembed)
 				return err(
 					409,
@@ -466,11 +498,11 @@ export class MockMemory {
 				baseUrl: b.baseUrl,
 				model: b.model,
 				...(kind === "embed"
-					? { dimensions: b.dimensions ?? cur.dimensions }
+					? { dimensions: b.dimensions ?? cur?.dimensions }
 					: {}),
-				hasKey: b.clearKey ? false : b.apiKey ? true : cur.hasKey,
+				hasKey: b.clearKey ? false : b.apiKey ? true : (cur?.hasKey ?? false),
 			};
-			return json({ ...this.endpoints, embedLocked: locked });
+			return json(this.endpointsView());
 		}
 
 		if (sub === "usage" && m === "GET") return json({ items: this.data.usage });
@@ -654,3 +686,7 @@ function envPrefix(purpose: Purpose): string {
 function relayUrl(purpose: Purpose, family: Family | undefined): string {
 	return `http://host.docker.internal:8080/memory-relay/v1/${purpose}/${family ?? "openai"}`;
 }
+
+/** 重排中转地址：Hindsight 的 Cohere 客户端不拼路径，所以是完整端点。 */
+const RERANK_RELAY_URL =
+	"http://host.docker.internal:8080/memory-relay/v1/rerank/v1/rerank";

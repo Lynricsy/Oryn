@@ -4109,6 +4109,22 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MemoryEndpoints' }
         default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [memory]
+      operationId: deleteMemoryEndpoint
+      summary: 删除重排接口（之后 Hindsight 改用 rrf，需按 envSnippet 改 .env 并重启）
+      description: 只允许 `rerank`；`embed` 返回 400 `invalid_request`（嵌入接口不能删除）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 删除后的接口配置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEndpoints' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/memory/usage:
     get:
       tags: [memory]
@@ -7619,11 +7635,20 @@ components:
         hasKey: { type: boolean }
     MemoryEndpoints:
       type: object
-      required: [embedLocked]
+      required: [embedLocked, rerankMode, needsRestart]
       properties:
         embed: { $ref: '#/components/schemas/MemoryEndpoint' }
         rerank: { $ref: '#/components/schemas/MemoryEndpoint' }
         embedLocked: { type: boolean }
+        rerankMode:
+          type: string
+          enum: [cohere, rrf]
+          x-enum-varnames: [MemoryRerankCohere, MemoryRerankRrf]
+          description: 按当前配置应写进 .env 的重排模式：配了重排接口为 cohere，否则为 rrf（v5）
+        needsRestart:
+          type: boolean
+          description: rerankMode 与 .env 里已部署的不同；确认重启沿用 `POST /memory/models/deployed`
+        envSnippet: { type: string, description: needsRestart 时要改进 .env 的那几行 }
     MemoryEndpointUpdate:
       type: object
       required: [baseUrl, model]

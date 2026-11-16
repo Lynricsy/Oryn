@@ -334,7 +334,7 @@ func TestEnvFileRotatesKeys(t *testing.T) {
 	assert.Equal(t, testPublicURL+"/memory-relay/v1/mental_model", envValue(t, first, "HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL"))
 	assert.Equal(t, "oryn-embed", envValue(t, first, "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"))
 	assert.Equal(t, testPublicURL+"/memory-relay/v1/embed", envValue(t, first, "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"))
-	assert.Equal(t, "cohere", envValue(t, first, "HINDSIGHT_API_RERANKER_PROVIDER"))
+	assert.Equal(t, "rrf", envValue(t, first, "HINDSIGHT_API_RERANKER_PROVIDER"), "没配重排接口时用 Hindsight 自带的 rrf")
 	assert.Equal(t, testPublicURL+"/memory-relay/v1/rerank/v1/rerank", envValue(t, first, "HINDSIGHT_API_RERANKER_COHERE_BASE_URL"))
 	assert.Equal(t, testPublicURL+"/memory-relay/v1/gemini", envValue(t, first, "GOOGLE_GEMINI_BASE_URL"), "gemini 地址总是写出，键集稳定")
 	token1 := envValue(t, first, "HINDSIGHT_API_LLM_API_KEY")
@@ -357,7 +357,7 @@ func TestEnvFileRotatesKeys(t *testing.T) {
 	assert.NotContains(t, string(row.HindsightKeyEnc), key1)
 	require.NotNil(t, row.RelayTokenHash)
 	assert.Equal(t, memory.HashRelayToken(token1), *row.RelayTokenHash)
-	assert.JSONEq(t, `{"default":"openai","retain":"openai","reflect":"openai","consolidation":"openai","mental_model":"openai"}`, row.DeployedFamilies)
+	assert.JSONEq(t, `{"default":"openai","retain":"openai","reflect":"openai","consolidation":"openai","mental_model":"openai","rerank":"rrf"}`, row.DeployedFamilies)
 
 	e.now = e.now.Add(time.Hour)
 	second, err := e.svc.GenerateEnvFile(ctx)
@@ -400,6 +400,7 @@ func TestEnvFileFamiliesAndSnippet(t *testing.T) {
 	require.NoError(t, st.Q.UpsertMemoryModel(ctx, db.UpsertMemoryModelParams{Purpose: "consolidation", ProviderKey: "google", ModelID: "gemini-pro", UpdatedAt: 1}))
 	dims := int64(1024)
 	require.NoError(t, st.Q.UpsertMemoryEndpoint(ctx, db.UpsertMemoryEndpointParams{Kind: "embed", BaseUrl: "https://e.test", Model: "qwen", Dimensions: &dims, UpdatedAt: 1}))
+	require.NoError(t, st.Q.UpsertMemoryEndpoint(ctx, db.UpsertMemoryEndpointParams{Kind: "rerank", BaseUrl: "https://r.test", Model: "bge", UpdatedAt: 1}))
 
 	out, err := svc.GenerateEnvFile(ctx)
 	require.NoError(t, err)
@@ -408,6 +409,11 @@ func TestEnvFileFamiliesAndSnippet(t *testing.T) {
 	assert.Equal(t, testPublicURL+"/memory-relay/v1/gemini", envValue(t, out.Content, "GOOGLE_GEMINI_BASE_URL"))
 	assert.Equal(t, "openai", envValue(t, out.Content, "HINDSIGHT_API_RETAIN_LLM_PROVIDER"))
 	assert.Equal(t, "1024", envValue(t, out.Content, "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"))
+	assert.Equal(t, "cohere", envValue(t, out.Content, "HINDSIGHT_API_RERANKER_PROVIDER"), "配了重排接口走 Cohere 中转")
+	assert.Equal(t, testPublicURL+"/memory-relay/v1/rerank/v1/rerank", envValue(t, out.Content, "HINDSIGHT_API_RERANKER_COHERE_BASE_URL"))
+	row, err := st.Q.GetMemorySettings(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, row.DeployedFamilies, `"rerank":"cohere"`)
 
 	snip, err := svc.EnvSnippet(ctx, []apigen.MemoryPurpose{apigen.MemoryPurposeReflect})
 	require.NoError(t, err)

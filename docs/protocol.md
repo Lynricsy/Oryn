@@ -1957,7 +1957,7 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
   - 协议类型与 `.env` 里已部署的不一致时，返回 409 `family_mismatch`；
   - 把请求里的别名（`oryn-retain` 等）替换成真实模型名，gemini 的模型名在 URL 路径里；
   - 按中央模型目录的路由转发，注入 Oryn 加密库里的 provider 密钥，响应里的密钥做脱敏。
-- **嵌入与重排**：按 `memory_endpoints` 转发。
+- **嵌入与重排**：按 `memory_endpoints` 转发。重排可选：没配重排接口时 `.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`，Hindsight 不会调用重排中转；配了写 `cohere`。
 - **用量**：从响应的 usage 字段解析，按小时计进 `memory_usage`。
 
 ### REST（tag `memory`）
@@ -1967,7 +1967,7 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 - 设置与状态：`settings`、`status`、`env-file`
 - 开关：`projects`、`projects/{id}`
 - 模型：`models`、`models/deployed`
-- 嵌入与重排：`endpoints`、`endpoints/{kind}`
+- 嵌入与重排：`endpoints`、`endpoints/{kind}`（PUT 修改；DELETE 只允许 `rerank`）。应答带 `rerankMode`（cohere/rrf）；与 `.env` 里已部署的重排模式（记在 `deployed_families` 的 `rerank` 键，缺省按 cohere）不同时 `needsRestart` 为真并给出 `envSnippet`，确认重启沿用 `models/deployed`。
 - 用量：`usage`
 - 浏览与遗忘：`documents`、`documents/{documentId}`、`search`、`threads/{id}/forget`
 - 候选：`candidates`、`candidates/{candidateId}`、`candidates/{candidateId}/approve`

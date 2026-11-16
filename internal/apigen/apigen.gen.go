@@ -1481,6 +1481,24 @@ func (e MemoryEndpointKind) Valid() bool {
 	}
 }
 
+// Defines values for MemoryEndpointsRerankMode.
+const (
+	MemoryRerankCohere MemoryEndpointsRerankMode = "cohere"
+	MemoryRerankRrf    MemoryEndpointsRerankMode = "rrf"
+)
+
+// Valid indicates whether the value is a known member of the MemoryEndpointsRerankMode enum.
+func (e MemoryEndpointsRerankMode) Valid() bool {
+	switch e {
+	case MemoryRerankCohere:
+		return true
+	case MemoryRerankRrf:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MemoryExportState.
 const (
 	MemoryExportDone    MemoryExportState = "done"
@@ -6606,8 +6624,20 @@ type MemoryEndpointUpdate struct {
 type MemoryEndpoints struct {
 	Embed       *MemoryEndpoint `json:"embed,omitempty"`
 	EmbedLocked bool            `json:"embedLocked"`
-	Rerank      *MemoryEndpoint `json:"rerank,omitempty"`
+
+	// EnvSnippet needsRestart 时要改进 .env 的那几行
+	EnvSnippet *string `json:"envSnippet,omitempty"`
+
+	// NeedsRestart rerankMode 与 .env 里已部署的不同；确认重启沿用 `POST /memory/models/deployed`
+	NeedsRestart bool            `json:"needsRestart"`
+	Rerank       *MemoryEndpoint `json:"rerank,omitempty"`
+
+	// RerankMode 按当前配置应写进 .env 的重排模式：配了重排接口为 cohere，否则为 rrf（v5）
+	RerankMode MemoryEndpointsRerankMode `json:"rerankMode"`
 }
+
+// MemoryEndpointsRerankMode 按当前配置应写进 .env 的重排模式：配了重排接口为 cohere，否则为 rrf（v5）
+type MemoryEndpointsRerankMode string
 
 // MemoryEnvFile defines model for MemoryEnvFile.
 type MemoryEnvFile struct {
@@ -13595,6 +13625,9 @@ type ServerInterface interface {
 	// GetMemoryEndpoints 嵌入与重排的远端接口
 	// (GET /api/v1/memory/endpoints)
 	GetMemoryEndpoints(w http.ResponseWriter, r *http.Request)
+	// DeleteMemoryEndpoint 删除重排接口（之后 Hindsight 改用 rrf，需按 envSnippet 改 .env 并重启）
+	// (DELETE /api/v1/memory/endpoints/{kind})
+	DeleteMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind MemoryEndpointKind)
 	// PutMemoryEndpoint 修改嵌入或重排接口
 	// (PUT /api/v1/memory/endpoints/{kind})
 	PutMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind MemoryEndpointKind)
@@ -14687,6 +14720,12 @@ func (_ Unimplemented) DeleteMemoryDocument(w http.ResponseWriter, r *http.Reque
 // GetMemoryEndpoints 嵌入与重排的远端接口
 // (GET /api/v1/memory/endpoints)
 func (_ Unimplemented) GetMemoryEndpoints(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteMemoryEndpoint 删除重排接口（之后 Hindsight 改用 rrf，需按 envSnippet 改 .env 并重启）
+// (DELETE /api/v1/memory/endpoints/{kind})
+func (_ Unimplemented) DeleteMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind MemoryEndpointKind) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -18271,6 +18310,32 @@ func (siw *ServerInterfaceWrapper) GetMemoryEndpoints(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMemoryEndpoints(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMemoryEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMemoryEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind MemoryEndpointKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMemoryEndpoint(w, r, kind)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24699,6 +24764,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memory/endpoints", wrapper.GetMemoryEndpoints)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/memory/endpoints/{kind}", wrapper.DeleteMemoryEndpoint)
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/memory/endpoints/{kind}", wrapper.PutMemoryEndpoint)

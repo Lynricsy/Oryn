@@ -60,6 +60,15 @@ func (q *Queries) DeleteMemoryDocument(ctx context.Context, documentID string) (
 	return result.RowsAffected()
 }
 
+const deleteMemoryEndpoint = `-- name: DeleteMemoryEndpoint :exec
+DELETE FROM memory_endpoints WHERE kind = ?1
+`
+
+func (q *Queries) DeleteMemoryEndpoint(ctx context.Context, kind string) error {
+	_, err := q.db.ExecContext(ctx, deleteMemoryEndpoint, kind)
+	return err
+}
+
 const deleteMemoryModel = `-- name: DeleteMemoryModel :exec
 DELETE FROM memory_models WHERE purpose = ?1
 `

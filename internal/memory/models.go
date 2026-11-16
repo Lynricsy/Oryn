@@ -5,7 +5,6 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -158,17 +157,21 @@ func (s *Service) PutModels(ctx context.Context, in apigen.MemoryModelsUpdate, c
 	return s.Models(ctx, catalog)
 }
 
-// ConfirmDeployed 在主人按新 `.env` 重启 Hindsight 后，把各用途已部署的协议类型更新为当前选择（R16）。
+// ConfirmDeployed 在主人按新 `.env` 重启 Hindsight 后，把各用途已部署的协议类型与重排模式更新为当前配置（R16、v5）。
 func (s *Service) ConfirmDeployed(ctx context.Context, catalog []CatalogModel) (apigen.MemoryModels, error) {
 	fams, err := s.families(ctx)
 	if err != nil {
 		return apigen.MemoryModels{}, err
 	}
-	raw, err := json.Marshal(fams)
+	_, rerank, err := s.endpointsEnv(ctx)
 	if err != nil {
 		return apigen.MemoryModels{}, err
 	}
-	n, err := s.cfg.Q.SetMemoryDeployedFamilies(ctx, db.SetMemoryDeployedFamiliesParams{DeployedFamilies: string(raw), UpdatedAt: s.cfg.Now().Unix()})
+	deployed, err := deployedJSON(fams, rerank)
+	if err != nil {
+		return apigen.MemoryModels{}, err
+	}
+	n, err := s.cfg.Q.SetMemoryDeployedFamilies(ctx, db.SetMemoryDeployedFamiliesParams{DeployedFamilies: deployed, UpdatedAt: s.cfg.Now().Unix()})
 	if err != nil {
 		return apigen.MemoryModels{}, err
 	}
@@ -187,7 +190,8 @@ func endpointView(e db.MemoryEndpoint) *apigen.MemoryEndpoint {
 	return out
 }
 
-// Endpoints 返回嵌入与重排的远端接口；key 只回报是否已设置。
+// Endpoints 返回嵌入与重排的远端接口（key 只回报是否已设置），以及重排模式：与 `.env` 里已部署的不同时
+// needsRestart 为真，并给出要改的 `.env` 片段（v5）。
 func (s *Service) Endpoints(ctx context.Context) (apigen.MemoryEndpoints, error) {
 	st, err := s.loadSettings(ctx)
 	if err != nil {
@@ -197,7 +201,7 @@ func (s *Service) Endpoints(ctx context.Context) (apigen.MemoryEndpoints, error)
 	if err != nil {
 		return apigen.MemoryEndpoints{}, err
 	}
-	out := apigen.MemoryEndpoints{EmbedLocked: st.EmbedLocked != 0}
+	out := apigen.MemoryEndpoints{EmbedLocked: st.EmbedLocked != 0, RerankMode: rerankModeOf(rows)}
 	for _, e := range rows {
 		switch apigen.MemoryEndpointKind(e.Kind) {
 		case apigen.MemoryEndpointEmbed:
@@ -206,28 +210,59 @@ func (s *Service) Endpoints(ctx context.Context) (apigen.MemoryEndpoints, error)
 			out.Rerank = endpointView(e)
 		}
 	}
+	deployed, generated, err := deployedRerank(st)
+	if err != nil {
+		return apigen.MemoryEndpoints{}, err
+	}
+	if generated && deployed != out.RerankMode {
+		out.NeedsRestart = true
+		snippet := s.rerankSnippet(out.RerankMode)
+		out.EnvSnippet = &snippet
+	}
 	return out, nil
 }
 
-// PutEndpoint 修改嵌入或重排接口（R17）。bank 已有记忆（embedLocked）时修改嵌入的 model 或 dimensions：
-// 不带 reembed → 409 `embed_locked`；带 reembed → 先探测 Hindsight，仍能连上 → 409 `hindsight_running`
+// DeleteEndpoint 删除重排接口（幂等，本来没有也成功），之后 Hindsight 应改用 rrf；嵌入接口不能删除（400）。
+func (s *Service) DeleteEndpoint(ctx context.Context, kind apigen.MemoryEndpointKind) (apigen.MemoryEndpoints, error) {
+	switch kind {
+	case apigen.MemoryEndpointRerank:
+	case apigen.MemoryEndpointEmbed:
+		return apigen.MemoryEndpoints{}, errInvalid("嵌入接口不能删除")
+	default:
+		return apigen.MemoryEndpoints{}, errNotFound("未知的接口类型")
+	}
+	if err := s.cfg.Q.DeleteMemoryEndpoint(ctx, string(kind)); err != nil {
+		return apigen.MemoryEndpoints{}, err
+	}
+	return s.Endpoints(ctx)
+}
+
+// PutEndpoint 修改嵌入或重排接口（R17），返回修改后的全部接口配置。bank 已有记忆（embedLocked）时修改嵌入的
+// model 或 dimensions：不带 reembed → 409 `embed_locked`；带 reembed → 先探测 Hindsight，仍能连上 → 409 `hindsight_running`
 // （对外只有一个别名 oryn-embed，运行中切换会让新旧向量混在一起），连不上（API 已停）才接受。地址与 key 不受限制。
-func (s *Service) PutEndpoint(ctx context.Context, kind apigen.MemoryEndpointKind, in apigen.MemoryEndpointUpdate) (*apigen.MemoryEndpoint, error) {
+func (s *Service) PutEndpoint(ctx context.Context, kind apigen.MemoryEndpointKind, in apigen.MemoryEndpointUpdate) (apigen.MemoryEndpoints, error) {
+	if err := s.putEndpoint(ctx, kind, in); err != nil {
+		return apigen.MemoryEndpoints{}, err
+	}
+	return s.Endpoints(ctx)
+}
+
+func (s *Service) putEndpoint(ctx context.Context, kind apigen.MemoryEndpointKind, in apigen.MemoryEndpointUpdate) error {
 	if !kind.Valid() {
-		return nil, errNotFound("未知的接口类型")
+		return errNotFound("未知的接口类型")
 	}
 	base, err := NormalizeURL(in.BaseURL)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	model := strings.TrimSpace(in.Model)
 	if model == "" {
-		return nil, errInvalid("model 不能为空")
+		return errInvalid("model 不能为空")
 	}
 	var dims *int64
 	if kind == apigen.MemoryEndpointEmbed && in.Dimensions != nil {
 		if *in.Dimensions < 1 {
-			return nil, errInvalid("dimensions 须为正整数")
+			return errInvalid("dimensions 须为正整数")
 		}
 		d := int64(*in.Dimensions)
 		dims = &d
@@ -235,7 +270,7 @@ func (s *Service) PutEndpoint(ctx context.Context, kind apigen.MemoryEndpointKin
 	var cur *db.MemoryEndpoint
 	rows, err := s.cfg.Q.ListMemoryEndpoints(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for i := range rows {
 		if rows[i].Kind == string(kind) {
@@ -244,24 +279,22 @@ func (s *Service) PutEndpoint(ctx context.Context, kind apigen.MemoryEndpointKin
 	}
 	if kind == apigen.MemoryEndpointEmbed && cur != nil && (cur.Model != model || !sameDims(cur.Dimensions, dims)) {
 		if err := s.checkReembed(ctx, in.Reembed != nil && *in.Reembed); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	var keyEnc []byte
 	switch {
 	case in.APIKey != nil && *in.APIKey != "":
 		if keyEnc, err = s.cfg.Box.Seal(endpointAAD(kind), []byte(*in.APIKey)); err != nil {
-			return nil, err
+			return err
 		}
 	case in.ClearKey != nil && *in.ClearKey:
 	case cur != nil:
 		keyEnc = cur.ApiKeyEnc
 	}
-	row := db.UpsertMemoryEndpointParams{Kind: string(kind), BaseUrl: base, Model: model, Dimensions: dims, ApiKeyEnc: keyEnc, UpdatedAt: s.cfg.Now().Unix()}
-	if err := s.cfg.Q.UpsertMemoryEndpoint(ctx, row); err != nil {
-		return nil, err
-	}
-	return endpointView(db.MemoryEndpoint{Kind: row.Kind, BaseUrl: row.BaseUrl, Model: row.Model, Dimensions: row.Dimensions, ApiKeyEnc: row.ApiKeyEnc}), nil
+	return s.cfg.Q.UpsertMemoryEndpoint(ctx, db.UpsertMemoryEndpointParams{
+		Kind: string(kind), BaseUrl: base, Model: model, Dimensions: dims, ApiKeyEnc: keyEnc, UpdatedAt: s.cfg.Now().Unix(),
+	})
 }
 
 func sameDims(a, b *int64) bool {

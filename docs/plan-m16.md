@@ -21,6 +21,8 @@
   - 导出的 zip 下载要带 Bearer key，所以下载只能由 orynd 代理。
   - 4.1 的验收改为先把 `.env.example` 复制为 `.env` 再执行 `config`：`env_file` 必须是必需项，否则漏放 `.env` 的 API 会以无鉴权模式启动。
 - **v4（2026-11-16，执行中修订）**：reembed 改为停机迁移。Hindsight 按 `provider:model:dimension` 识别嵌入模型，而 Oryn 只暴露一个别名 `oryn-embed`。中转在运行中切到新模型，API 就会用新模型读写旧向量；维度相同时写保护也认不出模型已换。为此契约追加 `MemoryEndpointUpdate.reembed`：只有带上它，才能在 `embedLocked` 下改嵌入模型或维度；Hindsight 仍可连上时返回 409 `hindsight_running`。deploy.md「换嵌入模型」改为「停 API → 切模型 → `compose run --rm --no-deps api hindsight-admin reembed` → 启动 → `--finish`」，已在 spike 栈上完整演练（39 行 `swapped`，`finish` 后召回正常）。
+- **v5（2026-11-16，执行中修订，主人决定）**：重排改为可选。本机与 models.yml 里都没有 Cohere 兼容的重排接口，而原来的 `.env` 把重排写死成 cohere，没配接口时每次召回都会因中转返回 409 而失败。改为：管理页没配重排接口时，`.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`（Hindsight 1.2.1 自带，不调用模型，只按 RRF 分融合排序）；配了就走 Cohere 中转。cohere 的三行仍然总是写出，保持键集不变，rrf 模式下 Hindsight 会忽略它们。已部署的重排模式与 LLM 协议一样记入 `deployed_families`；配置变化后页面给出 `.env` 片段并提示重启，确认重启沿用 `POST /memory/models/deployed`。重排接口可以删除，嵌入接口不能删。真机验收（5.2）用 rrf，Hindsight 默认模型用 `claude-pro/claude-haiku-5-5`，验收结束后停掉 Hindsight 并删除数据卷。
+- **v6（2026-11-16，执行中修订，安全修复）**：遗忘必须覆盖 mental model。原实现在删除之后只是「尽力刷新」一次，失败只记日志；而 Hindsight 列表接口的 `is_stale` 不观测删除（`http.py` 的字段说明：Deletions are not observed），Core 只要 `content` 非空就注入，reflect 默认也会读 mental model。结果是已遗忘的内容会通过旧摘要继续进入 agent。改为：在带遗忘语义的操作（删除 document、按线程遗忘、replace 改全局记忆、项目级联删除、墓碑重试）调用 Hindsight 删除之前，先把受影响的模型持久化进 `memory_stale_models`（迁移 0038），baseline 是 Hindsight 自己时钟上的 `last_full_refreshed_at`。后台循环按退避重刷，直到 `last_full_refreshed_at` 不等于 baseline（或模型已 404）才清除记录。在此之前，网关的 mental-model list/get 保留条目但把 `content` 置空，转发 reflect 时把这些模型并入 `exclude_mental_model_ids`；删除待重试列表也会显示「等待 mental model 刷新」。迁移 0038 要等另一个会话的 0037 合入之后才提交，避免 goose 乱序。
 
 ## Context
 
@@ -50,7 +52,7 @@ omp 的 mnemopi、sharpshooter、local 三种记忆后端，都把数据写在 o
 | Q8 | 删除项目时级联删除它的全部记忆；删除或归档线程时记忆不动，管理页提供「按线程遗忘」 |
 | Q9 | 管理页内容：状态与连接、开关、按项目浏览/搜索/遗忘、全局记忆增删改、mental models。不嵌入 Hindsight 自带的控制台 |
 | R1 | Hindsight 的 LLM 请求经 orynd 中转，复用 Oryn 已配置的 provider 密钥 |
-| R2 | 嵌入和重排走远端接口：嵌入用 OpenAI 兼容接口，重排用 Cohere 兼容接口 |
+| R2 | 嵌入和重排走远端接口：嵌入用 OpenAI 兼容接口；重排可选，配了就用 Cohere 兼容接口，没配时用 Hindsight 自带的 `rrf`（v5） |
 | R3 | 带 pgroonga 扩展的外部 Postgres，支持中文分词检索 |
 | R4 | runner 新开一条只放行记忆接口的出站通道；orynd 按线程 ID（校验该线程属于这个 runner）确定项目；在 agent.start 时注入 env 和配置覆盖；README 里关于单向边界的说明同步修改 |
 | R5 | 无项目线程：只召回全局记忆，关闭自动写入，agent 显式写入的内容一律进全局候选队列 |
@@ -115,7 +117,7 @@ omp 的 mnemopi、sharpshooter、local 三种记忆后端，都把数据写在 o
   - 并发：`HINDSIGHT_API_LLM_MAX_CONCURRENT`、`HINDSIGHT_API_WORKER_MAX_SLOTS`。
 - **嵌入与重排**：
   - `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai` 加 `_EMBEDDINGS_OPENAI_{BASE_URL,API_KEY,MODEL,DIMENSIONS}`；
-  - 重排用 Cohere 兼容接口：`HINDSIGHT_API_RERANKER_PROVIDER=cohere` 加 `_RERANKER_COHERE_BASE_URL`；
+  - 重排可选（v5）：配了 Cohere 兼容接口时写 `HINDSIGHT_API_RERANKER_PROVIDER=cohere` 加 `_RERANKER_COHERE_BASE_URL`，没配时写 `rrf`；
   - 换嵌入模型必须执行 `hindsight-admin reembed`，向量维度不一致时服务拒绝启动。
 - **中文检索**：
   - 设置 `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga`；

@@ -3310,7 +3310,11 @@ export interface paths {
          */
         put: operations["putMemoryEndpoint"];
         post?: never;
-        delete?: never;
+        /**
+         * 删除重排接口（之后 Hindsight 改用 rrf，需按 envSnippet 改 .env 并重启）
+         * @description 只允许 `rerank`；`embed` 返回 400 `invalid_request`（嵌入接口不能删除）。
+         */
+        delete: operations["deleteMemoryEndpoint"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5800,6 +5804,15 @@ export interface components {
             embed?: components["schemas"]["MemoryEndpoint"];
             rerank?: components["schemas"]["MemoryEndpoint"];
             embedLocked: boolean;
+            /**
+             * @description 按当前配置应写进 .env 的重排模式：配了重排接口为 cohere，否则为 rrf（v5）
+             * @enum {string}
+             */
+            rerankMode: "cohere" | "rrf";
+            /** @description rerankMode 与 .env 里已部署的不同；确认重启沿用 `POST /memory/models/deployed` */
+            needsRestart: boolean;
+            /** @description needsRestart 时要改进 .env 的那几行 */
+            envSnippet?: string;
         };
         MemoryEndpointUpdate: {
             baseUrl: string;
@@ -14722,6 +14735,29 @@ export interface operations {
         };
         responses: {
             /** @description 修改后的接口 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryEndpoints"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteMemoryEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["MemoryEndpointKind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除后的接口配置 */
             200: {
                 headers: {
                     [name: string]: unknown;

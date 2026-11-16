@@ -389,6 +389,88 @@ describe("EndpointsCard", () => {
 		).toBeInTheDocument();
 		expect(within(embed).queryByRole("alert")).toBeNull();
 	});
+
+	it("删除重排接口：两步确认后改用 rrf，给出 .env 片段与「需要重启 Hindsight」，点「我已重启」后消失", async () => {
+		mount(<EndpointsCard />);
+		const del = await screen.findByRole("button", {
+			name: T("memoryPage.endpoints.rerank.delete"),
+		});
+		expect(screen.queryByText(T("memoryPage.models.needsRestart"))).toBeNull();
+		fireEvent.click(del);
+		expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: T("memoryPage.endpoints.rerank.deleteConfirm"),
+			}),
+		);
+		expect(
+			await screen.findByText(T("memoryPage.models.needsRestart")),
+		).toBeInTheDocument();
+		expect(requests).toContainEqual(
+			expect.objectContaining({
+				method: "DELETE",
+				path: "/api/v1/memory/endpoints/rerank",
+			}),
+		);
+		expect(screen.getByTestId("memory-rerank-env-snippet").textContent).toBe(
+			"HINDSIGHT_API_RERANKER_PROVIDER=rrf\n",
+		);
+		expect(
+			screen.getByText(T("memoryPage.endpoints.rerank.restartHint.rrf")),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(T("memoryPage.endpoints.rerank.unsetHint")),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: T("memoryPage.endpoints.rerank.delete"),
+			}),
+		).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: T("memoryPage.models.restarted") }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByText(T("memoryPage.models.needsRestart")),
+			).toBeNull(),
+		);
+		expect(
+			requests.some(
+				(r) =>
+					r.method === "POST" && r.path === "/api/v1/memory/models/deployed",
+			),
+		).toBe(true);
+
+		// 重新配置重排接口：改回 cohere，片段带三行 cohere 配置，密钥保持原值
+		const rerank = document.querySelector<HTMLElement>(
+			'[data-endpoint="rerank"]',
+		);
+		if (!rerank) throw new Error("rerank form missing");
+		fireEvent.change(
+			within(rerank).getByRole("textbox", {
+				name: T("memoryPage.endpoints.baseUrl"),
+			}),
+			{ target: { value: "https://api.siliconflow.cn/v1/rerank" } },
+		);
+		fireEvent.change(
+			within(rerank).getByRole("textbox", {
+				name: T("memoryPage.endpoints.model"),
+			}),
+			{ target: { value: "BAAI/bge-reranker-v2-m3" } },
+		);
+		fireEvent.click(
+			within(rerank).getByRole("button", { name: T("common.save") }),
+		);
+		expect(
+			await screen.findByText(
+				T("memoryPage.endpoints.rerank.restartHint.cohere"),
+			),
+		).toBeInTheDocument();
+		const snippet =
+			screen.getByTestId("memory-rerank-env-snippet").textContent ?? "";
+		expect(snippet).toMatch(/HINDSIGHT_API_RERANKER_PROVIDER=cohere/);
+		expect(snippet).toMatch(/HINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>/);
+	});
 });
 
 describe("CandidatesCard", () => {

@@ -119,6 +119,8 @@ type envInput struct {
 	relayToken   string
 	families     map[apigen.MemoryPurpose]apigen.MemoryFamily
 	embedDims    *int64
+	// rerank 是重排模式：配了重排接口为 cohere，否则为 rrf（v5）；无效值按 rrf。
+	rerank apigen.MemoryEndpointsRerankMode
 }
 
 // purposeLines 是一种用途的四行 LLM 配置。
@@ -132,6 +134,20 @@ func purposeLines(in envInput, p apigen.MemoryPurpose) []envLine {
 		{Key: prefix + "MODEL", Value: PurposeAlias(p)},
 		{Key: prefix + "BASE_URL", Value: relayURL(in.publicURL, string(p))},
 		{Key: prefix + "API_KEY", Value: in.relayToken, Secret: true},
+	}
+}
+
+// rerankLines 是重排的四行：provider 按模式写；cohere 的三行总是写出（键集不变），rrf 模式下 Hindsight 忽略它们。
+func rerankLines(in envInput) []envLine {
+	mode := in.rerank
+	if !mode.Valid() {
+		mode = apigen.MemoryRerankRrf
+	}
+	return []envLine{
+		{Key: "HINDSIGHT_API_RERANKER_PROVIDER", Value: string(mode)},
+		{Key: "HINDSIGHT_API_RERANKER_COHERE_BASE_URL", Value: relayURL(in.publicURL, RelayRerank)},
+		{Key: "HINDSIGHT_API_RERANKER_COHERE_API_KEY", Value: in.relayToken, Secret: true},
+		{Key: "HINDSIGHT_API_RERANKER_COHERE_MODEL", Value: AliasRerank},
 	}
 }
 
@@ -156,20 +172,19 @@ func envLines(in envInput) []envLine {
 	for _, p := range Purposes {
 		lines = append(lines, purposeLines(in, p)...)
 	}
-	return append(lines,
+	lines = append(lines,
 		envLine{Value: "gemini 协议不读上面的 *_LLM_BASE_URL，只读这一个进程级地址（按别名模型名区分用途）"},
 		envLine{Key: "GOOGLE_GEMINI_BASE_URL", Value: relayURL(in.publicURL, RelayGemini)},
-		envLine{Value: "嵌入（OpenAI 兼容）与重排（Cohere 兼容）同样经 orynd 中转"},
+		envLine{Value: "嵌入（OpenAI 兼容）经 orynd 中转"},
 		envLine{Key: "HINDSIGHT_API_EMBEDDINGS_PROVIDER", Value: "openai"},
 		envLine{Key: "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL", Value: relayURL(in.publicURL, RelayEmbed)},
 		envLine{Key: "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY", Value: in.relayToken, Secret: true},
 		envLine{Key: "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL", Value: AliasEmbed},
 		envLine{Key: "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS", Value: dims},
-		envLine{Key: "HINDSIGHT_API_RERANKER_PROVIDER", Value: "cohere"},
-		envLine{Key: "HINDSIGHT_API_RERANKER_COHERE_BASE_URL", Value: relayURL(in.publicURL, RelayRerank)},
-		envLine{Key: "HINDSIGHT_API_RERANKER_COHERE_API_KEY", Value: in.relayToken, Secret: true},
-		envLine{Key: "HINDSIGHT_API_RERANKER_COHERE_MODEL", Value: AliasRerank},
+		envLine{Value: "重排：管理页配了重排接口时为 cohere（Cohere 兼容，经 orynd 中转）；没配时为 rrf" +
+			"（Hindsight 自带，只按 RRF 分融合排序、不调用模型，下面三行 cohere 配置被忽略）"},
 	)
+	return append(lines, rerankLines(in)...)
 }
 
 // EnvKeys 返回生成的 `.env` 的全部键，顺序与文件一致。
@@ -257,22 +272,75 @@ func (s *Service) families(ctx context.Context) (map[apigen.MemoryPurpose]apigen
 	return out, nil
 }
 
-// embedDimensions 返回已配置的嵌入维度（未配置时为 nil）。
-func (s *Service) embedDimensions(ctx context.Context) (*int64, error) {
+// endpointsEnv 返回 `.env` 里与远端接口相关的值：已配置的嵌入维度（未配置时为 nil）与重排模式。
+func (s *Service) endpointsEnv(ctx context.Context) (*int64, apigen.MemoryEndpointsRerankMode, error) {
 	eps, err := s.cfg.Q.ListMemoryEndpoints(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	var dims *int64
 	for _, e := range eps {
 		if e.Kind == string(apigen.MemoryEndpointEmbed) {
-			return e.Dimensions, nil
+			dims = e.Dimensions
 		}
 	}
-	return nil, nil
+	return dims, rerankModeOf(eps), nil
+}
+
+// rerankModeOf 由接口配置得出重排模式：有重排接口为 cohere，否则为 rrf（v5）。
+func rerankModeOf(eps []db.MemoryEndpoint) apigen.MemoryEndpointsRerankMode {
+	for _, e := range eps {
+		if e.Kind == string(apigen.MemoryEndpointRerank) {
+			return apigen.MemoryRerankCohere
+		}
+	}
+	return apigen.MemoryRerankRrf
+}
+
+// deployedRerankKey 是 deployed_families JSON 里记录已部署重排模式的键，与各用途的协议类型存在一起（无需迁移）。
+const deployedRerankKey = "rerank"
+
+// deployedJSON 是写进 deployed_families 的内容：各用途的协议类型，加上重排模式。
+func deployedJSON(fams map[apigen.MemoryPurpose]apigen.MemoryFamily, rerank apigen.MemoryEndpointsRerankMode) (string, error) {
+	out := make(map[string]string, len(fams)+1)
+	for p, f := range fams {
+		out[string(p)] = string(f)
+	}
+	out[deployedRerankKey] = string(rerank)
+	raw, err := json.Marshal(out)
+	return string(raw), err
+}
+
+// deployedRerank 返回 `.env` 里已部署的重排模式；generated 为假表示还没生成过 `.env`（谈不上重启）。
+// v5 之前的 deployed_families 没有 rerank 键，那时 `.env` 固定写 cohere，按 cohere 处理。
+func deployedRerank(st db.MemorySetting) (mode apigen.MemoryEndpointsRerankMode, generated bool, err error) {
+	if st.RelayTokenHash == nil || *st.RelayTokenHash == "" {
+		return "", false, nil
+	}
+	var dep map[string]string
+	if st.DeployedFamilies != "" {
+		if err := json.Unmarshal([]byte(st.DeployedFamilies), &dep); err != nil {
+			return "", true, err
+		}
+	}
+	if m := apigen.MemoryEndpointsRerankMode(dep[deployedRerankKey]); m.Valid() {
+		return m, true, nil
+	}
+	return apigen.MemoryRerankCohere, true, nil
+}
+
+// rerankSnippet 是重排模式变化、需要重启 Hindsight 时要改进 `.env` 的行：切到 rrf 只改 provider 一行；
+// 切到 cohere 连同三行 cohere 配置一起给出（密钥写成「<保持原值>」）。
+func (s *Service) rerankSnippet(mode apigen.MemoryEndpointsRerankMode) string {
+	lines := rerankLines(envInput{publicURL: s.cfg.PublicURL, rerank: mode})
+	if mode != apigen.MemoryRerankCohere {
+		lines = lines[:1]
+	}
+	return renderEnv(lines, true)
 }
 
 // GenerateEnvFile 轮换 Hindsight API key 与中转令牌（旧值立即失效），返回完整的 `.env`（R3）。
-// 两个密钥只出现在这次的返回值里：库里只存 key 的密文与令牌的哈希。写进文件的各用途协议类型记为已部署。
+// 两个密钥只出现在这次的返回值里：库里只存 key 的密文与令牌的哈希。写进文件的各用途协议类型与重排模式记为已部署。
 func (s *Service) GenerateEnvFile(ctx context.Context) (apigen.MemoryEnvFile, error) {
 	if s.cfg.PublicURL == "" {
 		return apigen.MemoryEnvFile{}, &Error{Status: http.StatusConflict, Code: "public_url_missing", Message: "orynd 未配置 public_url，无法生成中转地址"}
@@ -281,7 +349,7 @@ func (s *Service) GenerateEnvFile(ctx context.Context) (apigen.MemoryEnvFile, er
 	if err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
-	dims, err := s.embedDimensions(ctx)
+	dims, rerank, err := s.endpointsEnv(ctx)
 	if err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
@@ -297,7 +365,7 @@ func (s *Service) GenerateEnvFile(ctx context.Context) (apigen.MemoryEnvFile, er
 	if err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
-	famJSON, err := json.Marshal(fams)
+	deployed, err := deployedJSON(fams, rerank)
 	if err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
@@ -314,11 +382,11 @@ func (s *Service) GenerateEnvFile(ctx context.Context) (apigen.MemoryEnvFile, er
 	if _, err := s.cfg.Q.SetMemoryKeys(ctx, db.SetMemoryKeysParams{HindsightKeyEnc: sealed, RelayTokenHash: &hash, KeysRotatedAt: &now}); err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
-	if _, err := s.cfg.Q.SetMemoryDeployedFamilies(ctx, db.SetMemoryDeployedFamiliesParams{DeployedFamilies: string(famJSON), UpdatedAt: now}); err != nil {
+	if _, err := s.cfg.Q.SetMemoryDeployedFamilies(ctx, db.SetMemoryDeployedFamiliesParams{DeployedFamilies: deployed, UpdatedAt: now}); err != nil {
 		return apigen.MemoryEnvFile{}, err
 	}
 	s.restartIfChanged(ctx, before, s.Enabled(ctx), nil)
-	in := envInput{publicURL: s.cfg.PublicURL, hindsightKey: key, relayToken: token, families: fams, embedDims: dims}
+	in := envInput{publicURL: s.cfg.PublicURL, hindsightKey: key, relayToken: token, families: fams, embedDims: dims, rerank: rerank}
 	header := fmt.Sprintf("# Oryn 生成的 Hindsight 配置（deploy/hindsight/.env）。API key 与中转令牌只显示这一次，\n"+
 		"# 重新生成会让旧值立即失效。生成时间（Unix 秒）：%d\n\n", now)
 	return apigen.MemoryEnvFile{Content: header + renderEnv(envLines(in), false), GeneratedAt: now}, nil

@@ -171,11 +171,15 @@ export function usePutMemoryModels() {
 	});
 }
 
+/** 主人按片段改好 `.env` 并重启 Hindsight 之后调用：各用途的协议类型与重排模式一起记为已部署。 */
 export function useConfirmMemoryModelsDeployed() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: () => unwrap(api.POST("/api/v1/memory/models/deployed")),
-		onSuccess: (data) => qc.setQueryData(memoryQk.models, data),
+		onSuccess: (data) => {
+			qc.setQueryData(memoryQk.models, data);
+			void qc.invalidateQueries({ queryKey: memoryQk.endpoints });
+		},
 	});
 }
 
@@ -200,6 +204,20 @@ export function usePutMemoryEndpoint() {
 				api.PUT("/api/v1/memory/endpoints/{kind}", {
 					params: { path: { kind } },
 					body,
+				}),
+			),
+		onSuccess: (data) => qc.setQueryData(memoryQk.endpoints, data),
+	});
+}
+
+/** 删除重排接口（只有重排可删）：之后 Hindsight 改用 rrf，按应答里的 envSnippet 改 `.env` 并重启。 */
+export function useDeleteMemoryRerank() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: () =>
+			unwrap(
+				api.DELETE("/api/v1/memory/endpoints/{kind}", {
+					params: { path: { kind: "rerank" } },
 				}),
 			),
 		onSuccess: (data) => qc.setQueryData(memoryQk.endpoints, data),

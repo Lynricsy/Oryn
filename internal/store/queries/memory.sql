@@ -48,6 +48,9 @@ ON CONFLICT (kind) DO UPDATE SET
     base_url = excluded.base_url, model = excluded.model, dimensions = excluded.dimensions,
     api_key_enc = excluded.api_key_enc, updated_at = excluded.updated_at;
 
+-- name: DeleteMemoryEndpoint :exec
+DELETE FROM memory_endpoints WHERE kind = @kind;
+
 -- ---------- projects ----------
 
 -- name: ListMemoryProjects :many

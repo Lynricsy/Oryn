@@ -1,16 +1,22 @@
 /**
- * 记忆页「嵌入与重排」卡（T4、T5、R17）：嵌入走 OpenAI 兼容接口、重排走 Cohere 兼容接口，经 orynd 中转。
+ * 记忆页「嵌入与重排」卡（T4、T5、R17、v5）：嵌入走 OpenAI 兼容接口、重排走 Cohere 兼容接口，经 orynd 中转。
  * key 只写不读（回报是否已设置；留空保留原值，可勾选清除）。bank 有记忆之后（`embedLocked`）嵌入模型与维度只读，
- * 要换须按部署文档执行 reembed。
+ * 要换须按部署文档执行 reembed。重排可选：未配置 = 不重排，Hindsight 用自带的 rrf；重排接口可删除（两步确认）。
+ * 重排模式与 `.env` 里已部署的不同时（`needsRestart`），给出 `.env` 片段、「需要重启 Hindsight」与「我已重启」。
  */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type MemoryEndpoint,
 	type MemoryEndpointKind,
+	type MemoryEndpoints,
+	useConfirmMemoryModelsDeployed,
+	useDeleteMemoryRerank,
 	useMemoryEndpoints,
 	usePutMemoryEndpoint,
 } from "../../../../api/memory-queries";
+import { ConfirmButton } from "../../../../components/share/ConfirmButton";
+import { CopyButton } from "../../../../components/ui/CopyButton";
 import { Badge, Callout, Card } from "../../../../components/ui/data";
 import {
 	Button,
@@ -41,9 +47,60 @@ export function EndpointsCard(): ReactNode {
 					/>
 					<div className="border-border border-t" />
 					<EndpointForm kind="rerank" endpoint={d.rerank} locked={false} />
+					{d.needsRestart && <RerankRestart endpoints={d} />}
 				</div>
 			) : null}
 		</Card>
+	);
+}
+
+/** 重排模式变了：要改进 `.env` 的行、「需要重启 Hindsight」与「我已重启」（与模型卡同一套确认接口）。 */
+function RerankRestart({
+	endpoints,
+}: {
+	endpoints: MemoryEndpoints;
+}): ReactNode {
+	const { t } = useTranslation();
+	const confirm = useConfirmMemoryModelsDeployed();
+	return (
+		<Callout
+			tone="warn"
+			role="status"
+			title={t("memoryPage.models.needsRestart")}
+		>
+			<div className="flex flex-col gap-2">
+				<p>
+					{t(`memoryPage.endpoints.rerank.restartHint.${endpoints.rerankMode}`)}
+				</p>
+				{endpoints.envSnippet && (
+					<div className="flex flex-col gap-1 text-fg">
+						<div className="flex justify-end">
+							<CopyButton
+								text={endpoints.envSnippet}
+								label={t("common.copy")}
+							/>
+						</div>
+						<pre
+							data-testid="memory-rerank-env-snippet"
+							className="overflow-auto whitespace-pre rounded-md bg-inset px-3 py-2 font-mono text-xs"
+						>
+							{endpoints.envSnippet}
+						</pre>
+					</div>
+				)}
+				<div>
+					<Button
+						size="sm"
+						variant="primary"
+						disabled={confirm.isPending}
+						onClick={() => confirm.mutate()}
+					>
+						{t("memoryPage.models.restarted")}
+					</Button>
+				</div>
+				<MemoryError step="confirmDeployed" error={confirm.error} />
+			</div>
+		</Callout>
 	);
 }
 
@@ -59,6 +116,7 @@ function EndpointForm({
 }): ReactNode {
 	const { t } = useTranslation();
 	const put = usePutMemoryEndpoint();
+	const del = useDeleteMemoryRerank();
 	const [baseUrl, setBaseUrl] = useState(endpoint?.baseUrl ?? "");
 	const [model, setModel] = useState(endpoint?.model ?? "");
 	const [dims, setDims] = useState(endpoint?.dimensions?.toString() ?? "");
@@ -112,10 +170,20 @@ function EndpointForm({
 					{t(`memoryPage.endpoints.${kind}.title`)}
 				</h4>
 				<Badge>{t(`memoryPage.endpoints.${kind}.protocol`)}</Badge>
+				{kind === "rerank" && (
+					<Badge>{t("memoryPage.endpoints.rerank.optional")}</Badge>
+				)}
 				{locked && (
 					<Badge icon="lock">{t("memoryPage.endpoints.lockedBadge")}</Badge>
 				)}
 			</div>
+			{kind === "rerank" && (
+				<p className="text-faint text-xs">
+					{endpoint
+						? t("memoryPage.endpoints.rerank.configuredHint")
+						: t("memoryPage.endpoints.rerank.unsetHint")}
+				</p>
+			)}
 			{locked && (
 				<Callout tone="neutral" icon="lock">
 					{t("memoryPage.endpoints.lockedHint")}{" "}
@@ -227,7 +295,15 @@ function EndpointForm({
 					{t("memoryPage.endpoints.dimensionsInvalid")}
 				</p>
 			)}
-			<div className="flex justify-end">
+			<div className="flex items-center justify-end gap-2">
+				{kind === "rerank" && endpoint && (
+					<ConfirmButton
+						label={t("memoryPage.endpoints.rerank.delete")}
+						confirmLabel={t("memoryPage.endpoints.rerank.deleteConfirm")}
+						disabled={del.isPending}
+						onConfirm={() => del.mutate()}
+					/>
+				)}
 				<Button
 					type="submit"
 					variant="primary"
@@ -237,6 +313,7 @@ function EndpointForm({
 				</Button>
 			</div>
 			<MemoryError step="saveEndpoint" error={put.error} />
+			<MemoryError step="deleteEndpoint" error={del.error} />
 		</form>
 	);
 }

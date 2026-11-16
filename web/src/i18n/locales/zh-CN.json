@@ -1251,6 +1251,7 @@
 			"confirmDeployed": "确认已重启 Hindsight",
 			"loadEndpoints": "读取嵌入与重排接口",
 			"saveEndpoint": "保存接口设置",
+			"deleteEndpoint": "删除重排接口",
 			"loadUsage": "读取用量",
 			"loadDocuments": "读取记忆列表",
 			"deleteDocument": "删除记忆",
@@ -1460,7 +1461,16 @@
 			"rerank": {
 				"title": "重排",
 				"protocol": "Cohere 兼容",
-				"urlPlaceholder": "https://api.cohere.com/v2"
+				"urlPlaceholder": "https://api.cohere.com/v2",
+				"optional": "可选",
+				"unsetHint": "未配置 = 不重排：Hindsight 用自带的 rrf 按融合分排序，不调用模型。填好接口并保存即可启用重排。",
+				"configuredHint": "已配置：召回结果经 orynd 中转到这个接口重排。删除后改用 rrf（不重排）。",
+				"delete": "删除重排接口",
+				"deleteConfirm": "确认删除（改用 rrf）",
+				"restartHint": {
+					"cohere": "重排改为走 Cohere 兼容接口，与 Hindsight 的 .env 不同。把下面几行改进 .env，重启 Hindsight 后点「我已重启」；在此之前召回仍按 rrf 排序。",
+					"rrf": "重排接口已删除，Hindsight 应改用 rrf。把下面这一行改进 .env，重启 Hindsight 后点「我已重启」；在此之前召回会因重排失败而报错。"
+				}
 			},
 			"lockedBadge": "模型已锁定",
 			"lockedHint": "bank 里已经有记忆，嵌入模型和维度默认只读；地址和 key 仍可修改。换嵌入模型的步骤见",

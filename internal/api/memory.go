@@ -217,6 +217,14 @@ func (s *Server) PutMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind 
 	memoryReply(w, r, http.StatusOK, out, err)
 }
 
+// DeleteMemoryEndpoint 对应 `DELETE /api/v1/memory/endpoints/{kind}`（只允许 rerank）。
+func (s *Server) DeleteMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind apigen.MemoryEndpointKind) {
+	if svc, ok := s.memorySvc(w); ok {
+		out, err := svc.DeleteEndpoint(r.Context(), kind)
+		memoryReply(w, r, http.StatusOK, out, err)
+	}
+}
+
 // GetMemoryUsage 对应 `GET /api/v1/memory/usage`。
 func (s *Server) GetMemoryUsage(w http.ResponseWriter, r *http.Request) {
 	if svc, ok := s.memorySvc(w); ok {

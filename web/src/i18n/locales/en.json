@@ -1251,6 +1251,7 @@
 			"confirmDeployed": "Confirming the Hindsight restart",
 			"loadEndpoints": "Loading embedding and rerank endpoints",
 			"saveEndpoint": "Saving the endpoint",
+			"deleteEndpoint": "Deleting the rerank endpoint",
 			"loadUsage": "Loading usage",
 			"loadDocuments": "Loading memories",
 			"deleteDocument": "Deleting the memory",
@@ -1460,7 +1461,16 @@
 			"rerank": {
 				"title": "Rerank",
 				"protocol": "Cohere-compatible",
-				"urlPlaceholder": "https://api.cohere.com/v2"
+				"urlPlaceholder": "https://api.cohere.com/v2",
+				"optional": "Optional",
+				"unsetHint": "Not set = no reranking: Hindsight uses its built-in rrf (orders by fused score, no model call). Fill in an endpoint and save to enable reranking.",
+				"configuredHint": "Set: recall results are reranked by this endpoint through orynd. Delete it to fall back to rrf (no reranking).",
+				"delete": "Delete rerank endpoint",
+				"deleteConfirm": "Confirm delete (use rrf)",
+				"restartHint": {
+					"cohere": "Reranking now goes to a Cohere-compatible endpoint, which differs from Hindsight's .env. Apply the lines below to .env, restart Hindsight, then click “I've restarted”; until then recall keeps using rrf.",
+					"rrf": "The rerank endpoint was deleted, so Hindsight should use rrf. Apply the line below to .env, restart Hindsight, then click “I've restarted”; until then recall fails because reranking is rejected."
+				}
 			},
 			"lockedBadge": "Model locked",
 			"lockedHint": "The bank already has memories, so the embedding model and dimensions are read-only by default; address and key can still change. Steps for switching embedding models:",

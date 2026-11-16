@@ -771,27 +771,27 @@ func TestMemoryAdminEndpointsReembed(t *testing.T) {
 	key := e.configure(t, f.srv.URL)
 	f.with(func(f *admFake) { f.key = key })
 	dims := 1024
-	ep, err := e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{
+	eps, err := e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{
 		BaseURL: "https://embed.example.com/v1", Model: "qwen3-embed", Dimensions: &dims, APIKey: new("sk-embed"),
 	})
 	require.NoError(t, err)
-	assert.True(t, ep.HasKey)
-	assert.Equal(t, 1024, *ep.Dimensions)
+	assert.True(t, eps.Embed.HasKey)
+	assert.Equal(t, 1024, *eps.Embed.Dimensions)
 	_, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointRerank, apigen.MemoryEndpointUpdate{BaseURL: "http://example.com", Model: "r"})
 	assert.Equal(t, "insecure_url", memErr(t, err).Code)
 
 	cnt := int64(5)
 	require.NoError(t, e.st.Q.SetMemoryHealth(ctx, &cnt)) // bank 有记忆 → embed_locked
-	eps, err := e.svc.Endpoints(ctx)
+	eps, err = e.svc.Endpoints(ctx)
 	require.NoError(t, err)
 	assert.True(t, eps.EmbedLocked)
 	assert.Equal(t, "qwen3-embed", eps.Embed.Model)
 	assert.Nil(t, eps.Rerank)
 
 	// 只改地址与 key 不受限制，key 省略保留原值
-	ep, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{BaseURL: "https://embed2.example.com/v1", Model: "qwen3-embed", Dimensions: &dims})
+	eps, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{BaseURL: "https://embed2.example.com/v1", Model: "qwen3-embed", Dimensions: &dims})
 	require.NoError(t, err)
-	assert.True(t, ep.HasKey)
+	assert.True(t, eps.Embed.HasKey)
 
 	other := 4096
 	change := apigen.MemoryEndpointUpdate{BaseURL: "https://embed2.example.com/v1", Model: "qwen3-embed-8b", Dimensions: &other}
@@ -803,14 +803,90 @@ func TestMemoryAdminEndpointsReembed(t *testing.T) {
 	assert.Equal(t, "hindsight_running", memErr(t, err).Code, "Hindsight 能连上（即使返回错误状态）就拒绝")
 
 	f.srv.Close()
-	ep, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, change)
+	eps, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, change)
 	require.NoError(t, err, "Hindsight 已停：接受")
-	assert.Equal(t, "qwen3-embed-8b", ep.Model)
-	assert.Equal(t, 4096, *ep.Dimensions)
+	assert.Equal(t, "qwen3-embed-8b", eps.Embed.Model)
+	assert.Equal(t, 4096, *eps.Embed.Dimensions)
 	clear := true
-	ep, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{BaseURL: ep.BaseURL, Model: ep.Model, Dimensions: &other, ClearKey: &clear})
+	eps, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointEmbed, apigen.MemoryEndpointUpdate{BaseURL: eps.Embed.BaseURL, Model: eps.Embed.Model, Dimensions: &other, ClearKey: &clear})
 	require.NoError(t, err)
-	assert.False(t, ep.HasKey)
+	assert.False(t, eps.Embed.HasKey)
+}
+
+// v5：重排可选。没配重排接口为 rrf，配了为 cohere；与已部署的不同时 needsRestart 并给出 .env 片段，确认重启后清除。
+// 重排接口可删（幂等），嵌入接口不能删；v5 之前没有 rerank 键的 deployed_families 按 cohere。
+func TestMemoryAdminRerankOptional(t *testing.T) {
+	ctx := context.Background()
+	e := newAdmEnv(t, nil)
+	eps, err := e.svc.Endpoints(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, apigen.MemoryRerankRrf, eps.RerankMode)
+	assert.False(t, eps.NeedsRestart, "还没生成 .env，谈不上重启")
+
+	e.configure(t, "http://127.0.0.1:1")
+	eps, err = e.svc.Endpoints(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, apigen.MemoryRerankRrf, eps.RerankMode)
+	assert.False(t, eps.NeedsRestart, "生成的 .env 已写 rrf")
+	assert.Nil(t, eps.EnvSnippet)
+
+	// 配上重排接口 → cohere，需要重启，片段带三行 cohere 配置（密钥保持原值）
+	eps, err = e.svc.PutEndpoint(ctx, apigen.MemoryEndpointRerank, apigen.MemoryEndpointUpdate{
+		BaseURL: "https://rerank.example.com", Model: "bge-reranker", APIKey: new("sk-rerank"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, eps.Rerank)
+	assert.Equal(t, apigen.MemoryRerankCohere, eps.RerankMode)
+	assert.True(t, eps.NeedsRestart)
+	require.NotNil(t, eps.EnvSnippet)
+	assert.Equal(t, "HINDSIGHT_API_RERANKER_PROVIDER=cohere\n"+
+		"HINDSIGHT_API_RERANKER_COHERE_BASE_URL="+testPublicURL+"/memory-relay/v1/rerank/v1/rerank\n"+
+		"HINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>\n"+
+		"HINDSIGHT_API_RERANKER_COHERE_MODEL=oryn-rerank\n", *eps.EnvSnippet)
+	assert.NotContains(t, *eps.EnvSnippet, "sk-rerank")
+
+	_, err = e.svc.ConfirmDeployed(ctx, nil)
+	require.NoError(t, err)
+	eps, err = e.svc.Endpoints(ctx)
+	require.NoError(t, err)
+	assert.False(t, eps.NeedsRestart, "确认重启后清除")
+	assert.Nil(t, eps.EnvSnippet)
+
+	// 删除重排接口 → rrf，需要重启，片段只有 provider 一行
+	eps, err = e.svc.DeleteEndpoint(ctx, apigen.MemoryEndpointRerank)
+	require.NoError(t, err)
+	assert.Nil(t, eps.Rerank)
+	assert.Equal(t, apigen.MemoryRerankRrf, eps.RerankMode)
+	assert.True(t, eps.NeedsRestart)
+	require.NotNil(t, eps.EnvSnippet)
+	assert.Equal(t, "HINDSIGHT_API_RERANKER_PROVIDER=rrf\n", *eps.EnvSnippet)
+	_, err = e.svc.DeleteEndpoint(ctx, apigen.MemoryEndpointRerank)
+	require.NoError(t, err, "删除幂等")
+	_, err = e.svc.DeleteEndpoint(ctx, apigen.MemoryEndpointEmbed)
+	me := memErr(t, err)
+	assert.Equal(t, http.StatusBadRequest, me.Status)
+	assert.Equal(t, "invalid_request", me.Code)
+	_, err = e.svc.DeleteEndpoint(ctx, apigen.MemoryEndpointKind("bogus"))
+	assert.Equal(t, "not_found", memErr(t, err).Code)
+
+	_, err = e.svc.ConfirmDeployed(ctx, nil)
+	require.NoError(t, err)
+	row, err := e.st.Q.GetMemorySettings(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, row.DeployedFamilies, `"rerank":"rrf"`)
+
+	// v5 之前的 deployed_families 没有 rerank 键：当年 .env 固定写 cohere
+	_, err = e.st.Q.SetMemoryDeployedFamilies(ctx, db.SetMemoryDeployedFamiliesParams{DeployedFamilies: `{"default":"openai"}`, UpdatedAt: 3})
+	require.NoError(t, err)
+	eps, err = e.svc.Endpoints(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, apigen.MemoryRerankRrf, eps.RerankMode)
+	assert.True(t, eps.NeedsRestart, "旧部署按 cohere，与当前 rrf 不同")
+	m, err := e.svc.Models(ctx, nil)
+	require.NoError(t, err)
+	for _, it := range m.Items {
+		assert.False(t, it.NeedsRestart, "rerank 键不影响各用途的协议类型")
+	}
 }
 
 // R16：模型选择、协议不一致时 needsRestart 与 .env 片段，确认重启后清除；不在目录或协议不支持的模型 400。
