@@ -345,3 +345,66 @@ describe("新格式（M9 审查 M1 / M3 / C9）", () => {
 		);
 	});
 });
+
+describe("GitHub 自动消息首行（M14）", () => {
+	const EVENT =
+		"[Oryn GitHub event on acme/widgets#12 — delivered automatically, not typed by the owner]";
+	const TRIGGER =
+		"[Oryn GitHub trigger \"分诊 'bug'\" on acme/my.repo-2#7 — started automatically, not typed by the owner]";
+
+	it("事件回流：解析出仓库与编号", () => {
+		expect(parseOrynHeader(EVENT)).toEqual({
+			kind: "github",
+			source: "event",
+			repo: "acme/widgets",
+			number: 12,
+		});
+	});
+
+	it("触发规则：解析出规则名、仓库与编号", () => {
+		expect(parseOrynHeader(TRIGGER)).toEqual({
+			kind: "github",
+			source: "trigger",
+			name: "分诊 'bug'",
+			repo: "acme/my.repo-2",
+			number: 7,
+		});
+	});
+
+	it.each([
+		`${EVENT} `,
+		`x${EVENT}`,
+		EVENT.replace("#12", "#12a"),
+		`${TRIGGER}.`,
+		TRIGGER.replace("— started", "—  started"),
+	])("多一个字符的首行 → unknown（%s）", (line) => {
+		expect(parseOrynHeader(line)).toEqual({ kind: "unknown" });
+	});
+
+	it("正文首行是 GitHub 事件时整条消息可拆", () => {
+		const m = parseOrynMessage(`${EVENT}\nPull request: Fix (https://x)`);
+		expect(m?.header).toMatchObject({ kind: "github", number: 12 });
+		expect(m?.body).toContain("Pull request: Fix");
+	});
+
+	it("中英文标签", async () => {
+		const msg = (line: string) => ({ line, header: parseOrynHeader(line) });
+		expect(describeOrynHeader(msg(EVENT), t, "zh-CN")).toBe(
+			"GitHub 事件 · acme/widgets#12",
+		);
+		expect(describeOrynHeader(msg(TRIGGER), t, "zh-CN")).toBe(
+			"GitHub 触发「分诊 'bug'」· acme/my.repo-2#7",
+		);
+		await i18n.changeLanguage("en");
+		try {
+			expect(describeOrynHeader(msg(EVENT), t, "en")).toBe(
+				"GitHub event · acme/widgets#12",
+			);
+			expect(describeOrynHeader(msg(TRIGGER), t, "en")).toBe(
+				"GitHub trigger “分诊 'bug'” · acme/my.repo-2#7",
+			);
+		} finally {
+			await i18n.changeLanguage("zh-CN");
+		}
+	});
+});

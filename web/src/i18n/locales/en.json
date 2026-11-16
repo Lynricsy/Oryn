@@ -2778,7 +2778,11 @@
 		},
 		"fromAssistantUntitled": "From the assistant · sent by an agent",
 		"report": "Thread report · automatic",
-		"reportThread": "Open thread “{{name}}” ({{state}})"
+		"reportThread": "Open thread “{{name}}” ({{state}})",
+		"github": {
+			"event": "GitHub event · {{repo}}#{{number}}",
+			"trigger": "GitHub trigger “{{name}}” · {{repo}}#{{number}}"
+		}
 	},
 	"sections": {
 		"tabTitle": "{{label}} ({{keys}})"

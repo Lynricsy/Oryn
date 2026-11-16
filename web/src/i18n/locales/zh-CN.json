@@ -2778,7 +2778,11 @@
 		},
 		"fromAssistantUntitled": "来自全局助手 · 由 agent 发送",
 		"report": "线程报告 · 自动",
-		"reportThread": "打开线程「{{name}}」（{{state}}）"
+		"reportThread": "打开线程「{{name}}」（{{state}}）",
+		"github": {
+			"event": "GitHub 事件 · {{repo}}#{{number}}",
+			"trigger": "GitHub 触发「{{name}}」· {{repo}}#{{number}}"
+		}
 	},
 	"sections": {
 		"tabTitle": "{{label}}（{{keys}}）"

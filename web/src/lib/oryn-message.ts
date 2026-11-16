@@ -10,6 +10,8 @@
  *   [Oryn message from assistant "" (<threadId>) — sent by an agent, not typed by the owner]
  *   [Oryn message from thread "" (<threadId>) — sent by an agent, not typed by the owner]
  *   [Oryn thread report · automatic] <threadId> is now <state>.
+ *   [Oryn GitHub event on <owner>/<repo>#<n> — delivered automatically, not typed by the owner]   PR / issue 事件回流（M14）
+ *   [Oryn GitHub trigger "<name>" on <owner>/<repo>#<n> — started automatically, not typed by the owner]   触发规则建的线程
  *   <untrusted-thread-content thread="<threadId>">
  *   {"title":"…","outcome":"completed|aborted|error|unknown|needs_input","reply":"…","error":"…","question":"…"}
  *   </untrusted-thread-content>
@@ -43,6 +45,14 @@ export type OrynHeader =
 	  }
 	/** `title`：旧格式首行里的标题快照；新格式为空串 */
 	| { kind: "report"; threadId: string; title: string; state: string }
+	/** GitHub 事件回流（`event`）或触发规则（`trigger`，带规则名）（M14） */
+	| {
+			kind: "github";
+			source: "event" | "trigger";
+			repo: string;
+			number: number;
+			name?: string;
+	  }
 	| { kind: "unknown" };
 
 /** 线程报告的包裹内容。 */
@@ -75,6 +85,10 @@ const MESSAGE_RE =
 /** 标题段可选：新格式没有，旧转录有 */
 const REPORT_RE =
 	/^\[Oryn thread report · automatic\] (\S+)(?: "([^"]*)")? is now ([a-z_]+)\.$/;
+const GITHUB_EVENT_RE =
+	/^\[Oryn GitHub event on ([\w.-]+\/[\w.-]+)#(\d+) — delivered automatically, not typed by the owner\]$/;
+const GITHUB_TRIGGER_RE =
+	/^\[Oryn GitHub trigger "([^"]*)" on ([\w.-]+\/[\w.-]+)#(\d+) — started automatically, not typed by the owner\]$/;
 
 const OPEN_RE = /^<untrusted-thread-content thread="([^"]*)">\n/;
 const CLOSE = "\n</untrusted-thread-content>";
@@ -125,6 +139,23 @@ export function parseOrynHeader(line: string): OrynHeader {
 			threadId: r[1] ?? "",
 			title: r[2] ?? "",
 			state: r[3] ?? "",
+		};
+	const ge = GITHUB_EVENT_RE.exec(line);
+	if (ge)
+		return {
+			kind: "github",
+			source: "event",
+			repo: ge[1] ?? "",
+			number: Number(ge[2]),
+		};
+	const gt = GITHUB_TRIGGER_RE.exec(line);
+	if (gt)
+		return {
+			kind: "github",
+			source: "trigger",
+			name: gt[1] ?? "",
+			repo: gt[2] ?? "",
+			number: Number(gt[3]),
 		};
 	return { kind: "unknown" };
 }
@@ -227,6 +258,14 @@ export function describeOrynHeader(
 		}
 		case "report":
 			return t("oryn.report");
+		case "github":
+			return h.source === "event"
+				? t("oryn.github.event", { repo: h.repo, number: h.number })
+				: t("oryn.github.trigger", {
+						name: h.name ?? "",
+						repo: h.repo,
+						number: h.number,
+					});
 		default:
 			return msg.line;
 	}
