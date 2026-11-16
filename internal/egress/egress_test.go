@@ -25,6 +25,7 @@ type fakeR struct {
 	gh      string    // 非空时 GitHubToken 返回它
 	rec     *writeRec // 非 nil 时记录 GitHub 写操作回调
 	gl      *gateFake // 门禁现查的状态（gate_test.go）；nil 时一律不放行
+	mem     *memFake  // 记忆通道（memory_test.go）；nil 时没有记忆通道
 }
 
 func (f fakeR) Policy() Policy { return f.pol }

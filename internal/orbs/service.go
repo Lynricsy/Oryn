@@ -22,6 +22,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -164,6 +165,8 @@ type Service struct {
 	secrets EgressSecrets
 	// github 是 GitHub 集成（M14，SetGitHub 在服务对外可用之前设置；nil = 未启用）。
 	github GitHub
+	// memory 是记忆网关（M16，SetMemory 在服务对外可用之前设置；nil = 没有记忆通道）。
+	memory *memory.Gateway
 	now    func() time.Time
 
 	mu      sync.Mutex

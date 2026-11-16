@@ -240,6 +240,7 @@ func TestModelBaseURLOnOtherHostAuthenticates(t *testing.T) {
 type policyResolver struct {
 	fakeResolver
 	egress.NoGateLookup
+	egress.NoMemory
 	pol egress.Policy
 }
 

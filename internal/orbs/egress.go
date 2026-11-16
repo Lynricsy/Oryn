@@ -13,6 +13,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/memory"
 )
 
 // EgressSecrets 是 egress 代理需要的密钥查询（*secrets.Vault 实现）。
@@ -93,6 +94,55 @@ func (r egressResolver) GitHubWriteEnd(w egress.GitHubWrite, status int, respKey
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	r.s.github.GitHubWriteEnd(ctx, r.orbID, w, status, respKeys)
+}
+
+// SetMemory 设置记忆网关（M16）；须在服务对外可用之前调用。
+func (s *Service) SetMemory(g *memory.Gateway) { s.memory = g }
+
+// Memory 实现 egress.MemoryLookup：返回记忆网关；没有设置时为 nil（/memory/ 一律 403）。
+func (r egressResolver) Memory() http.Handler {
+	if r.s.memory == nil {
+		return nil
+	}
+	return r.s.memory
+}
+
+// errForeignThread 表示记忆请求路径里的线程不属于发出请求的 orb（R14）。
+var errForeignThread = errors.New("orbs: 线程不属于这台 orb")
+
+// Caller 实现 egress.MemoryLookup：按路径里的线程号解析记忆请求的调用方身份。
+func (r egressResolver) Caller(threadID string) (memory.Caller, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return r.s.memoryCaller(ctx, r.orbID, threadID)
+}
+
+// memoryCaller 校验 threads.orb_id 等于这台 orb（否则 errForeignThread），再确定项目：
+// 普通 orb 取 orb 的项目，runner 按线程区分项目，取 threads.project_id。已删除的 orb 与全局助手不接入记忆。
+// 读库失败返回错误（出站代理按拒绝处理）。
+func (s *Service) memoryCaller(ctx context.Context, orbID, threadID string) (memory.Caller, error) {
+	th, err := s.st.Q.GetThread(ctx, threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return memory.Caller{}, errForeignThread
+	}
+	if err != nil {
+		return memory.Caller{}, fmt.Errorf("读取线程 %s：%w", threadID, err)
+	}
+	if th.OrbID == nil || *th.OrbID != orbID {
+		return memory.Caller{}, errForeignThread
+	}
+	orb, err := s.st.Q.GetOrb(ctx, orbID)
+	if err != nil {
+		return memory.Caller{}, fmt.Errorf("读取 orb %s：%w", orbID, err)
+	}
+	if orb.DeletedAt != nil || orb.Coordinator {
+		return memory.Caller{}, errForeignThread
+	}
+	c := memory.Caller{OrbID: orbID, ThreadID: threadID, Runner: IsRunner(orb), ProjectID: orb.ProjectID}
+	if c.Runner {
+		c.ProjectID = th.ProjectID
+	}
+	return c, nil
 }
 
 // errNoGitHub 是 GitHub 集成未启用时门禁现查的错误（门禁据此拒绝）。

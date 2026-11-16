@@ -11,7 +11,9 @@
 //     GitHub 写操作（REST 非 GET、GraphQL mutation、github.com 的 git-receive-pack）转发前交给 Resolver 预登记（可拒绝），
 //     响应后回报状态码与补充键（M15 防回流与审计）；请求体原样转发，不改写；
 //   - 响应头与响应体中出现的真实值会被换回占位符，防止上游回显泄露（101 升级后的字节流只脱敏响应头，
-//     改写升级后的协议帧会破坏其分帧）。
+//     改写升级后的协议帧会破坏其分帧）；
+//   - 记忆路由（/memory/t/<threadId>/…，M16）不走占位符替换，线程归属经 Resolver.Caller 校验后交给记忆网关
+//     （internal/memory/gateway.go），由网关强制 bank、标签与放行清单并注入 Hindsight key。
 package egress
 
 import (
@@ -19,6 +21,7 @@ import (
 	"cmp"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +31,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/Lynricsy/Oryn/internal/memory"
 )
 
 // Route 是一条模型路由：上游前缀与允许在该路由上使用的密钥 id。
@@ -115,6 +120,24 @@ type Resolver interface {
 	GitHubWriteEnd(w GitHubWrite, status int, respKeys []string)
 	// GateLookup 是门禁现查的控制面状态（M15 步骤 5.4）。
 	GateLookup
+	// MemoryLookup 是记忆网关（M16 步骤 2.2）。
+	MemoryLookup
+}
+
+// MemoryLookup 提供 `/memory/t/<threadId>/…` 的处理器与可信调用方身份（M16）。
+type MemoryLookup interface {
+	// Memory 返回记忆网关；nil 表示这个 Resolver 没有记忆通道（/memory/ 一律 403）。
+	Memory() http.Handler
+	// Caller 按路径里的线程号解析调用方身份：线程必须属于这台 orb（runner 同理），否则返回错误（代理回 403，R14）。
+	Caller(threadID string) (memory.Caller, error)
+}
+
+// NoMemory 是没有记忆通道的 Resolver 用的 MemoryLookup。
+type NoMemory struct{}
+
+func (NoMemory) Memory() http.Handler { return nil }
+func (NoMemory) Caller(string) (memory.Caller, error) {
+	return memory.Caller{}, errors.New("egress: 没有记忆通道")
 }
 
 var placeholderRe = regexp.MustCompile(`oryn-ph-([A-Za-z0-9_]+)`)
@@ -163,6 +186,10 @@ type target struct {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/memory/") {
+		h.serveMemory(w, r)
+		return
+	}
 	t, status := h.resolve(r)
 	if status != http.StatusOK {
 		msg := "oryn egress: 未知或不允许的路由"
@@ -236,6 +263,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	p.ServeHTTP(w, r)
+}
+
+// serveMemory 处理 `/memory/t/<threadId>/<Hindsight 路径>`（M16）：线程号只从路径取，经 Resolver.Caller 校验归属
+// 并解析出项目后，把剩余路径与调用方身份交给记忆网关。不做占位符替换：网关自己注入 Hindsight key，
+// 客户端的 Authorization 不会被转发。
+func (h *Handler) serveMemory(w http.ResponseWriter, r *http.Request) {
+	gw := h.R.Memory()
+	if gw == nil {
+		memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "oryn egress: 未知或不允许的路由")
+		return
+	}
+	segs := strings.SplitN(strings.TrimPrefix(r.URL.EscapedPath(), "/memory/"), "/", 3)
+	if len(segs) < 3 || segs[0] != "t" {
+		memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "记忆请求路径必须是 /memory/t/<threadId>/…")
+		return
+	}
+	tid, err := url.PathUnescape(segs[1])
+	if err != nil || tid == "" || strings.ContainsAny(tid, "/\\") {
+		memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "记忆请求路径里的线程号无效")
+		return
+	}
+	c, err := h.R.Caller(tid)
+	if err != nil {
+		slog.Info("记忆请求被拒绝", "orb", h.OrbID, "thread", tid, "err", err)
+		memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "线程不属于发出请求的 orb")
+		return
+	}
+	rawRest := "/" + segs[2]
+	rest, err := url.PathUnescape(rawRest)
+	if err != nil {
+		memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "记忆请求路径无效")
+		return
+	}
+	r2 := r.Clone(memory.WithCaller(r.Context(), c))
+	r2.URL.Path, r2.URL.RawPath = rest, rawRest
+	r2.Header.Del("Authorization")
+	gw.ServeHTTP(w, r2)
 }
 
 // resolve 把 /llm/<key>/…、/git/<host>/… 或 /gh/api.github.com/… 映射为上游；返回 HTTP 状态（200 = 放行）。

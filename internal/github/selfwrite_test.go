@@ -283,6 +283,7 @@ func TestSelfWriteCleanup(t *testing.T) {
 // svcResolver 把出站代理接到 GitHub 服务上（端到端：orb → egress → 假 GitHub，回调进 GitHubWriteBegin / End 与门禁现查）。
 // ga 是策略里的门禁部分（origin 由 Policy 填）。
 type svcResolver struct {
+	egress.NoMemory
 	e     *testEnv
 	orbID string
 	tok   string

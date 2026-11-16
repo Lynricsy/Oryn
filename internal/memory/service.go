@@ -57,6 +57,8 @@ type Config struct {
 	Restart func(ctx context.Context, projectID *string)
 	// Family 按中央模型目录查出模型的协议类型；nil 或该用途没选模型时按 openai 处理。
 	Family func(ctx context.Context, providerKey, modelID string) (apigen.MemoryFamily, error)
+	// Upstream 按中央模型目录查出模型的上游（模型中转用，见 relay.go）；nil 时 LLM 中转返回 503。
+	Upstream func(ctx context.Context, providerKey, modelID string) (ModelUpstream, error)
 }
 
 // Service 是记忆服务。
