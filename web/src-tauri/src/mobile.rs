@@ -235,7 +235,15 @@ pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<(
         plugin
             .tab_bar_set(spec.as_ref())
             .map_err(|e| e.to_string())?;
-        eventlog::log("tabbar.set", json!({"on": spec.is_some()}));
+        // selected / frame：CI 端到端检查据此确认网页的分区切换与胶囊位置（mobile.yml 的 ios-check）
+        eventlog::log(
+            "tabbar.set",
+            json!({
+                "on": spec.is_some(),
+                "selected": spec.as_ref().map(|s| &s.selected),
+                "frame": spec.as_ref().map(|s| &s.frame),
+            }),
+        );
         Ok(())
     }
     #[cfg(not(target_os = "ios"))]
@@ -254,7 +262,14 @@ pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()
     #[cfg(target_os = "ios")]
     {
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
-        plugin.tab_bar_reveal(&reveal).map_err(|e| e.to_string())
+        plugin.tab_bar_reveal(&reveal).map_err(|e| e.to_string())?;
+        // 仅 debug：拖动时每帧一条，供 CI 端到端检查对齐揭示边；发布包不写
+        #[cfg(debug_assertions)]
+        eventlog::log(
+            "tabbar.reveal",
+            json!({"x": reveal.x, "alpha": reveal.alpha, "ms": reveal.ms, "delay": reveal.delay}),
+        );
+        Ok(())
     }
     #[cfg(not(target_os = "ios"))]
     {
@@ -353,10 +368,33 @@ mod ios {
             Err(e) => fail(e.to_string()),
         }
     }
+
+    /// CI 用（仅 debug 构建）：环境变量 `ORYN_E2E_URL=<http(s) 地址>` 时不读令牌、不配对，
+    /// 把它当作已配对服务器的页面打开（[`crate::session::Core::open_unpaired`]：与生产相同的 `open_remote`，
+    /// 远程能力与 `MOBILE_HOST_PERMISSIONS` 照常注入），结果记到事件日志 `e2e.open`。返回是否接管了启动。
+    #[cfg(debug_assertions)]
+    pub async fn e2e_open(d: &crate::host::Desktop) -> bool {
+        let Ok(raw) = std::env::var("ORYN_E2E_URL") else {
+            return false;
+        };
+        let res = match tauri::Url::parse(&raw) {
+            Ok(u) if matches!(u.scheme(), "http" | "https") => {
+                let origin = u.origin().ascii_serialization();
+                d.core.lock().await.open_unpaired(&origin, u.as_str())
+            }
+            _ => Err("ORYN_E2E_URL is not an http(s) URL".to_string()),
+        };
+        let ok = res.is_ok();
+        eventlog::log(
+            "e2e.open",
+            json!({"url": raw, "ok": ok, "error": res.err()}),
+        );
+        true
+    }
 }
 
 #[cfg(all(debug_assertions, target_os = "ios"))]
-pub use ios::tab_bar_demo;
+pub use ios::{e2e_open, tab_bar_demo};
 #[cfg(target_os = "ios")]
 pub use ios::{listen as listen_ios, tab_bar_reset};
 

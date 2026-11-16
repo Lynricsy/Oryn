@@ -673,6 +673,17 @@ impl<A: Api, S: Shell> Core<A, S> {
         }
     }
 
+    /// 调试构建的端到端检查（iOS 的 `ORYN_E2E_URL`，见 `mobile.rs`）：不读令牌、不配对、不换取，
+    /// 把 `url` 当作已配对服务器的页面，经与 [`Self::enter_app`] 相同的 `open_remote`（为 `origin` 开放宿主命令 + 主框架导航）打开。
+    /// 之后页面的 `host_ready` 照常把状态推进到 `Connected`；不起看门狗（没有换取可重试）。
+    #[cfg(any(test, all(debug_assertions, target_os = "ios")))]
+    pub fn open_unpaired(&mut self, origin: &str, url: &str) -> Result<(), String> {
+        self.set_state(LauncherState::Connecting {
+            server_url: origin.to_string(),
+        });
+        self.shell.open_remote(origin, url)
+    }
+
     /// 自动重连计时到点。
     pub async fn retry_fired(&mut self, gen: u64) -> Next {
         if gen != self.gen || self.state.error_code() != Some(codes::UNREACHABLE) {
@@ -2091,6 +2102,25 @@ mod tests {
         // 其余状态不动
         assert_eq!(r.core.resumed(), Next::Idle);
         assert_eq!(fresh().core.resumed(), Next::Idle);
+    }
+
+    #[tokio::test]
+    async fn open_unpaired_opens_remote_without_pairing() {
+        // 调试用的端到端入口：不读令牌、不发任何请求、不改配置，只走 open_remote
+        let mut r = fresh();
+        let origin = "http://localhost:47613";
+        let url = "http://localhost:47613/";
+        r.core.open_unpaired(origin, url).unwrap();
+        assert_eq!(
+            r.shell.calls.lock().unwrap().as_slice(),
+            [Call::Remote(origin.into(), url.into())]
+        );
+        assert_eq!(r.core.config().server_url, None);
+        assert!(r.store.map.lock().unwrap().is_empty());
+        assert!(matches!(
+            r.core.state(),
+            LauncherState::Connecting { server_url } if server_url == origin
+        ));
     }
 
     #[tokio::test]

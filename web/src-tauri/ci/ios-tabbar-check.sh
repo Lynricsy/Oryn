@@ -25,21 +25,9 @@ trap 'rm -rf "$work"' EXIT
 # 先编译比较工具：工具链问题在启动模拟器之前就暴露
 xcrun --sdk macosx swiftc -O "$here/ios-region-diff.swift" -o "$work/region-diff"
 
-# 最新的 iOS 26+ 运行时里第一台非 SE 的 iPhone（SE 没有 Home 指示条，底栏贴底的几何与演示假设不同）
-pick=$(xcrun simctl list devices available -j | jq -c '
-  [.devices | to_entries[]
-    | (.key | capture("SimRuntime\\.iOS-(?<major>[0-9]+)-(?<minor>[0-9]+)")) as $v
-    | ($v.major | tonumber) as $major
-    | select($major >= 26)
-    | .value[]
-    | select((.name | startswith("iPhone")) and (.name | contains("SE") | not))
-    | {udid, name, os: "\($v.major).\($v.minor)", order: ($major * 100 + ($v.minor | tonumber))}]
-  | sort_by(-.order) | .[0] // empty')
-if [[ -z $pick ]]; then
-  echo "::error::没有可用的 iOS 26+ iPhone 模拟器"
-  xcrun simctl list runtimes || true
-  exit 1
-fi
+# shellcheck source=ios-sim.sh source-path=SCRIPTDIR
+source "$here/ios-sim.sh"
+pick=$(pick_iphone)
 udid=$(jq -r .udid <<<"$pick")
 echo "### iOS 原生底栏（模拟器）" >>"$summary"
 echo "模拟器：$(jq -r '"\(.name)（iOS \(.os)）"' <<<"$pick")" | tee -a "$summary"
@@ -70,7 +58,7 @@ run() {
     fi
     sleep 1
   done
-  echo "::error::90 秒内没有 $event（$name）"
+  echo "::error::90 秒内没有 ${event}（${name}）"
   cat "$log" 2>/dev/null || true
   xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'processImagePath CONTAINS "Oryn"' 2>/dev/null |
     tail -200 || true
@@ -82,8 +70,8 @@ for p in 0 0.5 1; do
   run "p$p" tabbar.demo "SIMCTL_CHILD_ORYN_TABBAR_DEMO=$p"
   line=$(grep -F '"event":"tabbar.demo"' "$out/p$p.jsonl" | tail -1)
   if [[ $(jq -r .ok <<<"$line") != true ]]; then
-    echo "::error::原生底栏演示失败（进度 $p）：$line"
-    echo "原生底栏演示失败（进度 $p）：\`$line\`" >>"$summary"
+    echo "::error::原生底栏演示失败（进度 ${p}）：${line}"
+    echo "原生底栏演示失败（进度 ${p}）：\`${line}\`" >>"$summary"
     exit 1
   fi
 done
@@ -100,8 +88,8 @@ failed=0
 check() {
   local label=$1 shot=$2 x=$3 w=$4 want=$5 r ok
   r=$("$work/region-diff" "$out/base.png" "$out/$shot.png" "$(px "$x")" "$(px "$fy")" "$(px "$w")" "$(px "$fh")")
-  echo "$label: $r（期望 $want）"
-  echo "- $label: $r（期望 $want）" >>"$summary"
+  echo "${label}: ${r}（期望 ${want}）"
+  echo "- ${label}: ${r}（期望 ${want}）" >>"$summary"
   if [[ $want == shown ]]; then
     ok=$(awk -v r="$r" 'BEGIN { print (r >= 0.01) }')
     [[ $ok == 1 ]] || echo "::error::$label 应看得到底栏，差异只有 $r"
@@ -118,4 +106,6 @@ check "进度 0：整条隐藏" p0 "$fx" "$fw" hidden
 check "进度 1：整条可见" p1 "$fx" "$fw" shown
 check "进度 0.5：揭示边左侧可见" p0.5 "$fx" "$(calc "$half - 12 - $fx")" shown
 check "进度 0.5：揭示边右侧隐藏" p0.5 "$(calc "$half + 4")" "$(calc "$fx + $fw - $half - 4")" hidden
+# 走到这里才写完成标记：工作流据此确认脚本跑完了全部断言，防止中途异常退出却返回 0
+if ((failed == 0)); then : >"$out/.complete"; fi
 exit "$failed"

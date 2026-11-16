@@ -1,0 +1,44 @@
+# 原生底栏端到端 UI 测试的 Xcode 工程（ios-e2e-check.sh 在 CI 里用 XcodeGen 生成到临时目录，不入库生成物）。
+# 被测的是另行安装的 Oryn.app（XCUIApplication(bundleIdentifier:)）；E2EHost 只是 UI 测试包按惯例要挂的空宿主。
+# 只在模拟器上跑：本地签名（"-"），不需要证书与团队。
+name: OrynE2E
+options:
+  bundleIdPrefix: com.lynricsy.oryn.e2e
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  E2EHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lynricsy.oryn.e2e.host
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  OrynE2E:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: E2EHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lynricsy.oryn.e2e.tests
+        TEST_TARGET_NAME: E2EHost
+schemes:
+  OrynE2E:
+    build:
+      targets:
+        E2EHost: all
+        OrynE2E: [test]
+    test:
+      targets: [OrynE2E]

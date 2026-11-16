@@ -441,6 +441,11 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     tauri::async_runtime::spawn(async move {
         // WebView 建好之前的 navigate 会被丢弃：先等它，再按已存令牌进入应用
         start.webview_up.wait().await;
+        // CI 的端到端检查（仅 debug 构建；没设 ORYN_E2E_URL 时立即返回）：mock Web UI 当作已配对的服务器直接打开
+        #[cfg(all(debug_assertions, target_os = "ios"))]
+        if mobile::e2e_open(&start).await {
+            return;
+        }
         let next = start.core.lock().await.start(None).await;
         host::schedule(start, next);
         // CI 的原生底栏演示（仅 debug 构建；没设 ORYN_TABBAR_DEMO 时立即返回）

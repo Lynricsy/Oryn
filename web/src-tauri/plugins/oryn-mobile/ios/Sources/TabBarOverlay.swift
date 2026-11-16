@@ -15,8 +15,11 @@ final class TabBarClipView: UIView {
 
 @available(iOS 26.0, *)
 final class TabBarOverlay {
-  /// 胶囊四周留给玻璃投影的出血；等于网页里胶囊右缘到卡片左缘的 12px。
+  /// 胶囊左右的出血；等于网页里胶囊右缘到卡片左缘的 12px（右缘出血的外侧就是卡片，契约里的可见宽度按它算）。
   static let bleed: CGFloat = 12
+  /// 胶囊上下的出血：Liquid Glass 的投影 / 光晕会画出胶囊之外，12pt 会在容器上下缘切出一道硬边（模拟器截图可见），
+  /// 上下不受卡片约束，留足让光晕自然衰减。
+  static let vBleed: CGFloat = 40
   /// 网页没给 ease 时的缓动（= `--ease`）。
   static let defaultEase: [Double] = [0.2, 0.8, 0.2, 1]
 
@@ -72,7 +75,7 @@ final class TabBarOverlay {
     guard next != frame else { return }
     frame = next
     hosting.view.frame = CGRect(
-      x: Self.bleed, y: Self.bleed, width: frame.width, height: frame.height)
+      x: Self.bleed, y: Self.vBleed, width: frame.width, height: frame.height)
     // 几何变了：按最近的揭示目标立即重排
     reveal(x: revealX, alpha: revealAlpha, ms: 0, delay: 0, ease: nil)
   }
@@ -83,7 +86,8 @@ final class TabBarOverlay {
     let edge = x + (webview?.frame.origin.x ?? 0)
     let width = min(max(edge - left, 0), frame.width + 2 * Self.bleed)
     return CGRect(
-      x: left, y: frame.minY - Self.bleed, width: width, height: frame.height + 2 * Self.bleed)
+      x: left, y: frame.minY - Self.vBleed, width: width,
+      height: frame.height + 2 * Self.vBleed)
   }
 
   /// 打断在途过渡并停在当前呈现值；`ms == 0` 立即生效，否则等 `delay` 后按 `ease` 过渡 `ms` 毫秒。

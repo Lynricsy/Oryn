@@ -297,7 +297,9 @@ export function AppShell(): ReactNode {
 	}
 
 	const main = (
-		<main className="flex h-full min-w-0 flex-1 flex-col pr-safe">
+		// pt-safe：iOS 的 WKWebView 铺满整屏（Android 由原生容器把 WebView 让到状态栏下面），
+		// 不让出顶部安全区时页头与状态栏重叠（模拟器端到端里点侧栏按钮无效）
+		<main className="flex h-full min-w-0 flex-1 flex-col pt-safe pr-safe">
 			<Outlet />
 		</main>
 	);

@@ -4,6 +4,7 @@ bin/
 web/node_modules/
 web/dist/
 web/dist-launcher/
+web/dist-e2e/
 web/src-tauri/target/
 web/src-tauri/gen/schemas/
 internal/webui/dist/*
