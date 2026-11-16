@@ -107,7 +107,15 @@ afterEach(() => {
 
 describe("RightPanel", () => {
 	it("在线程 A 选了 commit，切到线程 B：B 的请求按自己的默认范围，不带 A 的 commit", async () => {
-		const { rerender } = render(<RightPanel threadId="T-rpA" />);
+		// 改动面板的「推送并开 PR」（M14）读项目列表，需要 QueryClient；rerender 沿用同一个 wrapper
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { rerender } = render(<RightPanel threadId="T-rpA" />, {
+			wrapper: ({ children }) => (
+				<QueryClientProvider client={client}>{children}</QueryClientProvider>
+			),
+		});
 		const picker = await screen.findByRole(
 			"combobox",
 			{ name: i18n.t("changes.scope.label") },
