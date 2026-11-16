@@ -599,6 +599,25 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	return s.Get(ctx, id)
 }
 
+// MarkShipped 把线程标为已交付（at 为毫秒时间戳），不归档；已有 shipped_at 时不改动（M14：关联 PR 合并）。
+func (s *Service) MarkShipped(ctx context.Context, id string, at int64) error {
+	row, err := s.st.Q.GetThread(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if row.ShippedAt != nil {
+		return nil
+	}
+	if err := s.st.Q.SetThreadShipped(ctx, db.SetThreadShippedParams{ShippedAt: &at, UpdatedAt: s.now(), ID: id}); err != nil {
+		return err
+	}
+	s.Publish(ctx, id)
+	return nil
+}
+
 // Delete 删除线程（条目随之删除；orb 保留）。agent 若在运行则先停止。Space 的聊天线程不能直接删除（删 Space）。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	t, err := s.get(ctx, id)
