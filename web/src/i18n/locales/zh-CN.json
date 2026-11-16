@@ -2147,6 +2147,12 @@
 				"png": "下载 PNG",
 				"present": "从这页演示",
 				"focus": "聚焦"
+			},
+			"handOff": {
+				"bar": "交给 Agent（已选 {{n}} 项）",
+				"running": "正在交给 Agent…",
+				"done": "已交给 Agent",
+				"failed": "没能交给 Agent。{{reason}}"
 			}
 		},
 		"home": {

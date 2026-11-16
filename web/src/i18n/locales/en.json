@@ -2147,6 +2147,12 @@
 				"png": "Download PNG",
 				"present": "Present from here",
 				"focus": "Focus"
+			},
+			"handOff": {
+				"bar": "Hand to agent ({{n}} selected)",
+				"running": "Handing to the agent…",
+				"done": "Handed to the agent",
+				"failed": "Couldn’t hand to the agent. {{reason}}"
 			}
 		},
 		"home": {

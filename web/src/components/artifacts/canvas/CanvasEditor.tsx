@@ -94,6 +94,8 @@ import {
 	type PageContent,
 	pageUrl,
 } from "./frames";
+import { HandOffBar } from "./HandOffBar";
+import { useHandOff } from "./handoff";
 import { isTypingTarget, keyAction, type Tool, type ZoomTarget } from "./keys";
 import { LayersPanel } from "./LayersPanel";
 import { NotesLayer } from "./notes";
@@ -1079,6 +1081,12 @@ export function CanvasEditor({
 		setCam,
 		switchCanvas,
 	});
+	// 交给 Agent（6.6）
+	const handOff = useHandOff({
+		artifactId,
+		detail: detail.data,
+		render: caps.data?.render === true,
+	});
 
 	/** 图层面板与名称行：选中并把镜头移到 focus 上。 */
 	const selectAndReveal = (ids: string[], focus: string) => {
@@ -1393,6 +1401,9 @@ export function CanvasEditor({
 											? () => void downloadFramePng(artifactId, p, version, t)
 											: undefined
 									}
+									onHandOff={
+										live ? () => handOff.run(doc, canvasKey, [p.id]) : undefined
+									}
 									onPresent={onPresent ? () => onPresent(p.id) : undefined}
 								/>
 							);
@@ -1461,6 +1472,13 @@ export function CanvasEditor({
 					</div>
 				)}
 				<FollowBar presence={presence} />
+				{live && items.length > 0 && (
+					<HandOffBar
+						count={items.length}
+						busy={handOff.busy}
+						onHandOff={() => handOff.run(doc, canvasKey, selectedIds)}
+					/>
+				)}
 				<Toolbar
 					doc={doc}
 					canvasKey={canvasKey}
