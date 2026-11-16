@@ -182,6 +182,11 @@ export class MockArtifactPublish {
 		this.host.changed();
 	}
 
+	/** 发布页当前的访客数（未发布为 0）；在场消息里的 `visitors` 取它，与 orynd 一致。 */
+	visitors(id: string): number {
+		return this.pubs.get(id)?.visitors ?? 0;
+	}
+
 	/** 新版本：跟随的发布推进到它（访问码 / 公开且有命中时记 `pendingVersion`）。 */
 	onVersion(id: string, version: number) {
 		const cur = this.pubs.get(id);

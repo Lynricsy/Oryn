@@ -69,3 +69,35 @@ describe("mock 页面帧", () => {
 		expect(await load(pinned)).not.toContain("热更新之后");
 	});
 });
+
+describe("mock 在场", () => {
+	it("在场消息的访客数与发布状态一致，不把发布夹具的访客数盖成 0（K41）", async () => {
+		vi.useFakeTimers();
+		try {
+			const s = new MockServer();
+			const got: unknown[] = [];
+			const socket = { deliver: (m: unknown) => got.push(m) };
+			s.artifacts.watch(socket, ARTIFACT_IDS.document);
+			const res = await s.handleFetch(
+				new Request(
+					`http://x/api/v1/artifacts/${ARTIFACT_IDS.document}/publication`,
+				),
+			);
+			if (!res) throw new Error("mock 未处理 publication");
+			const state = (await res.json()) as {
+				publication: { visitors: number } | null;
+			};
+			expect(state.publication?.visitors).toBe(2);
+			expect(got).toContainEqual(
+				expect.objectContaining({
+					type: "artifact.activity",
+					id: ARTIFACT_IDS.document,
+					visitors: 2,
+				}),
+			);
+			s.artifacts.unwatch(socket, ARTIFACT_IDS.document);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});

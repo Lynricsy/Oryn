@@ -468,6 +468,7 @@ export class MockArtifacts {
 	private readonly activity = new MockArtifactActivity({
 		watchers: (id) => this.watchers.get(id) ?? new Set(),
 		targets: (id) => this.activityTargets(id),
+		visitors: (id) => this.publish.visitors(id),
 	});
 
 	constructor(threads: Map<string, Thread>, hub: ArtifactsHub) {
