@@ -1624,6 +1624,13 @@
 	},
 	"artifacts": {
 		"title": "Artifacts",
+		"open": {
+			"loading": "正在打开发布的页面",
+			"gone": "这个页面已不在线上",
+			"goneHint": "它已经取消发布，或者链接有误。",
+			"failed": "暂时无法打开这个页面",
+			"retry": "重试"
+		},
 		"kinds": {
 			"web": "页面",
 			"canvas": "画布",

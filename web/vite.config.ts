@@ -38,6 +38,9 @@ export default defineConfig(({ mode }) => ({
 			"/portal": { target: orynd, changeOrigin: true },
 			"/f/": { target: orynd, changeOrigin: true },
 			"^/s/[0-9a-f]{32}\\.md$": { target: orynd, changeOrigin: true },
+			// 未配置 portal_domain 时 artifact 的帧与发布页挂在主域路径下（M14）
+			"/_af/": { target: orynd, changeOrigin: true },
+			"/p/": { target: orynd, changeOrigin: true },
 		},
 	},
 	test: {

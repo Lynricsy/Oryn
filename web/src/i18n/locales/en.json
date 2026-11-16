@@ -1624,6 +1624,13 @@
 	},
 	"artifacts": {
 		"title": "Artifacts",
+		"open": {
+			"loading": "Opening the published page",
+			"gone": "This page is no longer online",
+			"goneHint": "It was unpublished, or the link is wrong.",
+			"failed": "Couldn't open this page right now",
+			"retry": "Retry"
+		},
 		"kinds": {
 			"web": "Page",
 			"canvas": "Canvas",

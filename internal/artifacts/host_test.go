@@ -142,7 +142,10 @@ func TestHostWildcard(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, do(mw, hostReq{method: http.MethodPost, host: host, path: "/"}).Code)
 	assert.Equal(t, http.StatusNotFound, do(mw, hostReq{host: "a-" + strings.Repeat("a", 26) + ".localhost:7600", path: "/"}).Code)
 	assert.Equal(t, "NEXT", do(mw, hostReq{host: "t-0123456789ab-p3000.localhost:7600", path: "/"}).Body.String())
-	assert.Equal(t, "NEXT", do(mw, hostReq{host: "p-" + token + ".localhost:7600", path: "/"}).Body.String())
+	// p-<slug> 主机是发布页（步骤 8.2），不再交给 next，也不会被当成帧令牌
+	rec = do(mw, hostReq{host: "p-" + token + ".localhost:7600", path: "/"})
+	assert.NotEqual(t, "NEXT", rec.Body.String())
+	assert.NotEqual(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "NEXT", do(mw, hostReq{host: "localhost:7600", path: "/"}).Body.String())
 
 	h.CloseFrame(token)

@@ -278,8 +278,16 @@ func (s *Server) init(ctx context.Context) error {
 		}
 		return names
 	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
-	// M14 发布（步骤 8.1）：授权令牌用 orb 令牌主密钥派生的密钥签名；发布为 code / public 前用分享的密钥扫描规则
-	s.Artifacts.ConfigurePublishing(artifacts.PublishConfig{Base: base, GrantKey: artifacts.DeriveGrantKey(key), Scan: s.Share.ScanContent})
+	// M14 artifact 渲染帧与发布页（步骤 2.1、8.2）：配置了 portal_domain 时在 a-<令牌> / p-<slug>.<portal_domain>
+	// （包在 portal 中间件外层分流），否则挂在主域的 /_af/<令牌>/ 与 /p/<slug>/（帧请求不带 cookie，令牌就是凭证；
+	// 发布页的访问由访问级别与授权段决定），SPA 的 CSP 相应放行 frame-src 'self'
+	frames := artifacts.NewHost(s.Artifacts, artifacts.HostConfig{Base: base})
+	// M14 发布（步骤 8.1）：授权令牌用 orb 令牌主密钥派生的密钥签名；发布为 code / public 前用分享的密钥扫描规则；
+	// 访客数来自发布页的心跳（发布状态与在场推送都用它）
+	s.Artifacts.ConfigurePublishing(artifacts.PublishConfig{
+		Base: base, GrantKey: artifacts.DeriveGrantKey(key), Scan: s.Share.ScanContent, Visitors: frames.Visitors,
+	})
+	s.Artifacts.SetActivityVisitors(frames.ArtifactVisitors)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
@@ -314,13 +322,11 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
-	// M14 artifact 渲染帧：配置了 portal_domain 时在 a-<令牌>.<portal_domain>（包在 portal 中间件外层分流），
-	// 否则挂在主域的 /_af/<令牌>/（帧请求不带 cookie，令牌就是凭证），SPA 的 CSP 相应放行 frame-src 'self'
-	frames := artifacts.NewHost(s.Artifacts, artifacts.HostConfig{Base: base})
 	frameSrc := base.FrameSrc()
 	if !base.Enabled() {
 		frameSrc = "'self'"
 		mounts[artifacts.FramePathPrefix+"*"] = frames.Handler()
+		mounts[artifacts.PublishPathPrefix+"*"] = frames.PublicHandler()
 	}
 	// M14 控制面渲染（步骤 4.1）：headless Chromium 只经一个放行白名单的代理取 artifact 内容；启动时在后台自检一次
 	exe, err := renderExe()

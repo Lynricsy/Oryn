@@ -28,18 +28,23 @@ type HostConfig struct {
 	Asset func(name string) ([]byte, bool)
 }
 
-// Host 在独立源里提供 artifact 的渲染帧：内存里的帧表、帧根下的文件服务与按主机名分流的中间件。
+// Host 在独立源里提供 artifact 的渲染帧与发布页：内存里的帧表、帧根与发布根下的文件服务、按主机名分流的中间件。
 type Host struct {
 	s         *Service
 	base      portalhost.Base
 	now       func() time.Time
 	asset     func(name string) ([]byte, bool)
 	runtimeJS []byte
+	// beaconJS 是发布页的访客心跳脚本（public.go）；没构建 Web 时为空。
+	beaconJS []byte
 	// caps 是页面运行时端点认得的能力（runtime.go）。
 	caps map[string]runtimeCap
 
 	mu     sync.Mutex
 	frames map[string]*frame
+
+	// visitors 是发布页的访客心跳计数（public.go）。
+	visitors visitorSet
 }
 
 // NewHost 创建帧服务。页面运行时在构造时读一次（嵌入的构建产物在进程内不变）。
@@ -54,6 +59,9 @@ func NewHost(s *Service, cfg HostConfig) *Host {
 	}
 	if js, ok := h.asset(runtimeAsset); ok {
 		h.runtimeJS = inlineScript(js)
+	}
+	if js, ok := h.asset(beaconAsset); ok {
+		h.beaconJS = inlineScript(js)
 	}
 	h.caps = h.runtimeCaps()
 	return h
@@ -77,12 +85,17 @@ func (h *Host) Handler() http.Handler {
 	})
 }
 
-// Middleware 把 `a-<令牌>.<portal_domain>` 主机的请求交给帧服务，其余交给 next（portal 的 `t-…` 主机照旧）。
+// Middleware 把 `a-<令牌>.<portal_domain>` 主机的请求交给帧服务、`p-<slug>.<portal_domain>` 交给发布页，
+// 其余交给 next（portal 的 `t-…` 主机照旧）。
 func (h *Host) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if label, ok := h.base.Match(r.Host); ok {
-			if kind, token, ok := portalhost.ParseArtifactLabel(label); ok && kind == 'a' {
-				h.serve(w, r, token, "/", r.URL.Path)
+			if kind, id, ok := portalhost.ParseArtifactLabel(label); ok {
+				if kind == 'p' {
+					h.servePublic(w, r, id, "/", r.URL.Path)
+				} else {
+					h.serve(w, r, id, "/", r.URL.Path)
+				}
 				return
 			}
 		}
