@@ -47,16 +47,25 @@ final class TabBarE2ETests: E2ECase {
     _ = try checkpoint("closed")
 
     // 3. 从左缘（SINK_EDGE 24 以内）起手拖到约一半并按住：脚本在按住期间截图断言揭示边。
-    //    按住 40 秒：CI 的 macOS 机器会整机卡顿十几到几十秒（XCUITest 取快照一次 30-60 秒），
-    //    脚本的停稳判定与截图必须落在按住期间；脚本截完就放行，这里多按的时间只是空等
+    //    按住 40 秒；CI 的 macOS 机器会整机卡顿（XCUITest 取快照一次 30-60 秒、截图曾卡 3 分钟），
+    //    脚本没赶在按住期间截图时回 retry：轻点卡片条收起后重拖（脚本最多给 3 次）。
     //    慢速且过半：松手按位置吸附到打开
     let dx = (sinkW * 0.55).rounded()
     let y = (screen.height / 2).rounded()
-    try post("drag", ["dx": Double(dx)])
-    point(app, 4, y).press(
-      forDuration: 0.1, thenDragTo: point(app, 4 + dx, y),
-      withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
-    _ = try ack("drag")
+    var attempt = 1
+    while true {
+      let step = "drag\(attempt)"
+      try post(step, ["dx": Double(dx)])
+      point(app, 4, y).press(
+        forDuration: 0.1, thenDragTo: point(app, 4 + dx, y),
+        withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
+      let reply = try ack(step, timeout: 600)
+      guard reply["retry"] as? Bool == true else { break }
+      _ = try expectNative(app, capsule, visible: true, "第 \(attempt) 次拖动松手后")
+      point(app, screen.width - 16, screen.height / 2).tap()
+      _ = try expectNative(app, capsule, visible: false, "重拖前收起")
+      attempt += 1
+    }
     let items = try expectNative(app, capsule, visible: true, "拖动松手后")
 
     // 4. 点原生底栏的「项目」（SECTION_ORDER 第 3 项）：网页切分区、侧栏保持打开，选中态经新的 spec 回到原生

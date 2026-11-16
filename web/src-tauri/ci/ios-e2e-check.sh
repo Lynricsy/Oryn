@@ -234,19 +234,44 @@ sleep 0.5
 shot closed1
 ok closed
 
-# 按住共 40 秒（CI 机器会整机卡顿十几到几十秒，8 秒曾经两次没赶上）：停稳判定与截图都要落在按住期间，
-# 截完再确认期间没有新的揭示边（松手会发吸附终点）。
-# 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以第一段等待放宽
-wait_req drag 120
-dx=$(jq -r .dx <<<"$req")
-until_ok drag 60 "拖动：揭示边停在手指位移附近（${dx}）" \
-  settled '.ms == 0 and .x > $w * 0.3 and .x < $w * 0.8 and (.x - $dx | if . < 0 then -. else . end) <= 2'
-n=$(count tabbar.reveal)
-edge=$(last tabbar.reveal | jq -r .x)
-shot drag
-[[ $(count tabbar.reveal) == "$n" ]] || fail drag "截图时手指已经松开（揭示边又动了），按住期间没来得及截图"
-echo "拖动揭示边：${edge}（手指位移 ${dx}）"
-ok drag
+# 按住 40 秒：停稳判定与截图都要落在按住期间，截完再确认期间没有新的揭示边（松手会发吸附终点）。
+# CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
+# 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
+# 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽
+drag_at='.ms == 0 and .x > $w * 0.3 and .x < $w * 0.8 and (.x - $dx | if . < 0 then -. else . end) <= 2'
+for attempt in 1 2 3; do
+  step="drag$attempt"
+  wait_req "$step" 300
+  dx=$(jq -r .dx <<<"$req")
+  state=timeout
+  end=$((SECONDS + 180))
+  while ((SECONDS < end)); do
+    if settled "$drag_at"; then
+      n=$(count tabbar.reveal)
+      edge=$(last tabbar.reveal | jq -r .x)
+      shot drag
+      if [[ $(count tabbar.reveal) == "$n" ]]; then state=held; else state=missed; fi
+      break
+    fi
+    # 已经松手并吸附到打开：这次按住期间没来得及判定
+    if reveal_is '.ms > 0 and .x >= $w - 1'; then
+      state=missed
+      break
+    fi
+    sleep 0.25
+  done
+  case $state in
+  held)
+    echo "拖动揭示边：${edge}（手指位移 ${dx}，第 ${attempt} 次）"
+    ok "$step"
+    break
+    ;;
+  timeout) fail "$step" "180 秒内揭示边没有停在手指位移附近（${dx}），也没有松手吸附" ;;
+  esac
+  ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间截到图（揭示边又动了）"
+  echo "::warning::第 ${attempt} 次拖动没赶在按住期间截图，收起后重拖"
+  ok "$step" '{"retry":true}'
+done
 
 # 原生点击 → Rust 记 tabbar.tap 并转给页面 → 页面切分区（路由）→ 页面按新路由回发 spec（selected = projects）
 wait_req projects 120

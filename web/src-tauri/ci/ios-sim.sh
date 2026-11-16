@@ -66,9 +66,9 @@ run() {
   env SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" "$@" xcrun simctl launch "$udid" "$bundle"
   for _ in $(seq 1 90); do
     if grep -qF "\"event\":\"$event\"" "$log" 2>/dev/null; then
-      # 让页面与原生叠层画完再截
+      # 让页面与原生叠层画完再截：冷启动在卡顿的 CI 机器上 2 秒可能还没画完壁纸（曾截到全白的基线）
       sleep 2
-      xcrun simctl io "$udid" screenshot "$out/$name.png"
+      shot_settled "$out/$name.png" || return 1
       cp "$log" "$out/$name.jsonl"
       return 0
     fi
@@ -78,5 +78,24 @@ run() {
   cat "$log" 2>/dev/null || true
   xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'processImagePath CONTAINS "Oryn"' 2>/dev/null |
     tail -200 || true
+  return 1
+}
+
+# shot_settled <文件>：每秒截一张，直到相邻两张在顶部与底部横条里一致（最多 10 秒）。
+# 中间一段不比：连接页品牌标的插入符在闪；顶部有状态栏时钟，跨分钟时多截一轮即可。
+shot_settled() {
+  local f=$1 prev="$work/settle-prev.png" w h top bottom
+  xcrun simctl io "$udid" screenshot "$prev" >/dev/null 2>&1
+  for _ in $(seq 1 10); do
+    sleep 1
+    xcrun simctl io "$udid" screenshot "$f" >/dev/null 2>&1
+    w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ { print $2 }')
+    h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ { print $2 }')
+    top=$("$work/region-diff" "$prev" "$f" 0 0 "$w" $((h * 15 / 100)))
+    bottom=$("$work/region-diff" "$prev" "$f" 0 $((h * 55 / 100)) "$w" $((h * 45 / 100)))
+    if [[ $top == 0.000000 && $bottom == 0.000000 ]]; then return 0; fi
+    cp "$f" "$prev"
+  done
+  echo "::error::$(basename "$f") 截图 10 秒内没有稳定下来（顶部差异 ${top}，底部差异 ${bottom}）"
   return 1
 }
