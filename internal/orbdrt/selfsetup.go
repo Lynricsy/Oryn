@@ -158,6 +158,10 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		return r.libraryPut(ctx, params)
 	case orbsock.MethodArtifactCall:
 		return r.artifactCall(ctx, params)
+	case orbsock.MethodGithubCall:
+		return r.githubCall(ctx, params)
+	case orbsock.MethodGithubPrepare:
+		return r.githubPrepare(ctx, params)
 	default:
 		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
 			return res, err

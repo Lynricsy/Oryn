@@ -46,20 +46,20 @@ type PrepareRequest struct {
 	Env        []string            // 执行命令的环境；nil = 继承 orbd 的环境
 }
 
-// PrepareResult 是 github_prepare 的结果。
+// PrepareResult 是 github_prepare 的结果（orbd.sock github.prepare 原样以 JSON 回给调用方）。
 type PrepareResult struct {
-	OK      bool
-	SHA     string        // 通过时的 HEAD
-	Skipped bool          // 通过但跳过了命令（SkipChecks）
-	Steps   []PrepareStep // 已执行的步骤，按顺序
-	Failure string        // 首个失败步骤的说明
+	OK      bool          `json:"ok"`
+	SHA     string        `json:"sha,omitempty"`     // 通过时的 HEAD
+	Skipped bool          `json:"skipped,omitempty"` // 通过但跳过了命令（SkipChecks）
+	Steps   []PrepareStep `json:"steps"`             // 已执行的步骤，按顺序
+	Failure string        `json:"failure,omitempty"` // 首个失败步骤的说明
 }
 
 // PrepareStep 是一个已执行步骤：名称、是否通过、输出尾部（≤ 8KiB）。
 type PrepareStep struct {
-	Name   string
-	OK     bool
-	Output string
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Output string `json:"output,omitempty"`
 }
 
 // errStepFailed 让步骤函数提前结束；失败说明已记入结果。

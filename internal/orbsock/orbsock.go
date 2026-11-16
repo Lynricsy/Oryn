@@ -67,6 +67,12 @@ const (
 	// threadId 恒为调用方线程。params.files[*].source 必须是 orb 内文件的绝对路径；orbd 在转发期间允许控制面经
 	// library.fetch 取回这些路径。
 	MethodArtifactCall = "artifact.call"
+
+	// GitHub 工具（M15）：github.call → ctl github.call（LinkCtlGithubCallParams → LinkCtlGithubCallResult），
+	// threadId 恒为调用方线程；github.prepare 由 orbd 在线程工作目录里执行门禁准备（GithubPrepareParams →
+	// orbdrt.PrepareResult），通过后经 ctl github.prepare.report 上报。两者只在 orbd.sock 上，runner.sock 不提供。
+	MethodGithubCall    = "github.call"
+	MethodGithubPrepare = "github.prepare"
 )
 
 // 消息类型。
@@ -202,6 +208,15 @@ type ThreadWaitParams struct {
 	ThreadID       string `json:"threadId"`
 	Target         string `json:"target"`
 	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+}
+
+// GithubPrepareParams 是 github.prepare 的参数（M15）：threadId 恒为调用方线程；level 为 push | pr；
+// skipChecks 时 reason 必填。
+type GithubPrepareParams struct {
+	ThreadID   string `json:"threadId"`
+	Level      string `json:"level"`
+	SkipChecks bool   `json:"skipChecks,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // ---- 服务端 ----

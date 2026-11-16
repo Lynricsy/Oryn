@@ -73,6 +73,12 @@ func (s stubGitHub) OrbSetup(context.Context, db.Orb, db.Project) (GitHubSetup, 
 func (s stubGitHub) OrbToken(context.Context, string) (string, GitHubTokenState) {
 	return s.tok, s.state
 }
+func (s stubGitHub) Call(context.Context, string, string, apigen.LinkCtlGithubCallParams) (apigen.LinkCtlGithubCallResult, error) {
+	return apigen.LinkCtlGithubCallResult{}, nil
+}
+func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubPrepareReportParams) error {
+	return nil
+}
 
 // M14 3.3：项目归 GitHub App 管时，不配 PAT 也给 github.com 项目仓库下发 insteadOf、gh 登录名与 /gh/ 路由。
 func TestPlanGitHub(t *testing.T) {

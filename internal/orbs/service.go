@@ -262,6 +262,9 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
+	// M15：orb 内 GitHub 工具与 github_prepare 的通过上报（runner 的 link 不放行，见 runnerRequests）
+	s.reqs[string(apigen.MethodGithubCall)] = s.onGithubCall
+	s.reqs[string(apigen.MethodGithubPrepareReport)] = s.onGithubPrepareReport
 	q.SetHooks(jobs.Hooks{OnClaimed: s.onJobClaimed, OnFinished: s.onJobFinished})
 	return s
 }
