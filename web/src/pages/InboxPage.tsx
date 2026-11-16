@@ -8,7 +8,14 @@
  * 已完成未读与出错的行悬停时可标为已读 / 归档；无悬停的设备不显示（线程页照样能做）。
  * 页头与项目页、设置页同形：可拖动、按需放 ChromeLead / 侧栏开关 / 窗口控件。
  */
-import { type ReactNode, useMemo, useState } from "react";
+import {
+	type CSSProperties,
+	type ReactNode,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import {
@@ -74,6 +81,57 @@ const SECTION_GLYPH: Record<InboxState, ThreadState> = {
 const PANEL =
 	"flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel";
 
+/** 首次进入的依次出场在这之后不再播（最多 12 档 × 40ms + 260ms，见 index.css 的 `.inbox-intro`）。 */
+const INTRO_MS = 800;
+/** 离开的行收起的时长，与 index.css 的 `.inbox-leave` 一致。 */
+const LEAVE_MS = 180;
+
+/** 行的键含状态：同一线程换了分节算旧的离开、新的加入，两处各播各的。 */
+function itemKey(i: InboxItem): string {
+	return `${i.thread.id}:${i.state}`;
+}
+
+type LiveItem = InboxItem & { leaving?: boolean };
+
+/** 一行的出场 / 离场：动效类名与出场序号（`--i`）。 */
+type Motion = { className: string; style?: CSSProperties };
+
+/**
+ * 离开收件箱的条目（标为已读、归档、作答后换了状态）再留 LEAVE_MS，带 `leaving` 播收起动画，留在原来的位置；
+ * 同一键又回来了就不再算离开。计时器只在卸载时清：`items` 每分钟随 `now` 重算，不能因此取消收起。
+ */
+function useLeaving(items: readonly InboxItem[]): LiveItem[] {
+	const prev = useRef(items);
+	const timers = useRef(new Set<number>());
+	const [gone, setGone] = useState<readonly InboxItem[]>([]);
+	useEffect(() => {
+		const keep = new Set(items.map(itemKey));
+		const left = prev.current.filter((i) => !keep.has(itemKey(i)));
+		prev.current = items;
+		if (left.length === 0) return;
+		setGone((g) => [...g, ...left]);
+		const t = window.setTimeout(() => {
+			timers.current.delete(t);
+			setGone((g) => g.filter((i) => !left.includes(i)));
+		}, LEAVE_MS);
+		timers.current.add(t);
+	}, [items]);
+	useEffect(() => {
+		const pending = timers.current;
+		return () => {
+			for (const t of pending) clearTimeout(t);
+		};
+	}, []);
+	return useMemo(() => {
+		const keep = new Set(items.map(itemKey));
+		const leaving = gone.filter((i) => !keep.has(itemKey(i)));
+		if (leaving.length === 0) return [...items];
+		return [...items, ...leaving.map((i) => ({ ...i, leaving: true }))].sort(
+			(a, b) => activityOf(b.thread) - activityOf(a.thread),
+		);
+	}, [items, gone]);
+}
+
 /** 每个线程最近的一条未作答 input 通知，以及最近的 done / error 通知正文，作行内预览。 */
 type Previews = Map<
 	string,
@@ -117,6 +175,18 @@ export function InboxPage(): ReactNode {
 		() => inboxItems(Object.values(threads), now),
 		[threads, now],
 	);
+	// 离开收件箱的条目再留一会儿播收起动画（见 useLeaving）；计数与筛选仍按真实条目
+	const live = useLeaving(items);
+	// 首次进入：摘要、分节、行按阅读顺序依次出场，只播一次；之后新出现的行（含换了分节的线程）淡入
+	const [intro, setIntro] = useState(true);
+	useEffect(() => {
+		const t = setTimeout(() => setIntro(false), INTRO_MS);
+		return () => clearTimeout(t);
+	}, []);
+	const seen = useRef(new Set<string>());
+	useEffect(() => {
+		for (const i of live) seen.current.add(itemKey(i));
+	});
 	const previews = useMemo(() => previewsOf(notifications), [notifications]);
 	const counts = useMemo(() => {
 		const c: Record<InboxState, number> = {
@@ -130,19 +200,35 @@ export function InboxPage(): ReactNode {
 	}, [items]);
 	// 筛选的那一类清空了（实时变化）就回到全部
 	const only = filter && counts[filter] > 0 ? filter : null;
-	const shown = only ? items.filter((i) => i.state === only) : items;
+	const shown = only ? live.filter((i) => i.state === only) : live;
 	const projectOf = (id: string | null | undefined): Project | undefined =>
 		id ? projects.data?.projects.find((p) => p.id === id) : undefined;
 	const pick = (v: InboxGroupBy) => {
 		setGroupBy(v);
 		saveInboxGroupBy(v);
 	};
-	const row = (item: InboxItem, card = false) => {
+	// 出场序号：摘要是 0，之后分节标题与行按渲染顺序递增
+	let order = 1;
+	const enter = (): { className: string; style?: CSSProperties } =>
+		intro
+			? {
+					className: "inbox-intro",
+					style: { "--i": order++ } as CSSProperties,
+				}
+			: { className: "" };
+	const row = (item: LiveItem, card = false) => {
 		const p = previewOf(item, previews);
+		const key = itemKey(item);
+		const motion = item.leaving
+			? { className: "inbox-leave" }
+			: intro
+				? enter()
+				: { className: seen.current.has(key) ? "" : "inbox-arrive" };
 		return (
 			<InboxRow
-				key={item.thread.id}
+				key={key}
 				item={item}
+				motion={motion}
 				card={card}
 				project={projectOf(item.thread.projectId)}
 				parent={
@@ -199,7 +285,7 @@ export function InboxPage(): ReactNode {
 				<WindowControls side="right" className="-mr-1" />
 			</header>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pt-6 pb-safe sm:px-6 sm:pt-8">
-				{items.length === 0 ? (
+				{live.length === 0 ? (
 					<div data-testid="inbox-empty" className="pt-[12vh]">
 						<EmptyState icon="tray" title={t("inbox.empty")}>
 							{t("inbox.emptyHint")}
@@ -207,12 +293,19 @@ export function InboxPage(): ReactNode {
 					</div>
 				) : (
 					<div className="mx-auto flex max-w-3xl flex-col gap-6 pb-10">
-						<InboxSummary counts={counts} only={only} onFilter={setFilter} />
+						<InboxSummary
+							counts={counts}
+							only={only}
+							onFilter={setFilter}
+							motion={intro ? { className: "inbox-intro" } : { className: "" }}
+							intro={intro}
+						/>
 						{groupBy === "state"
 							? groupByState(shown).map((g) => (
 									<InboxSection
 										key={g.state}
 										id={g.state}
+										motion={enter()}
 										head={
 											<>
 												<ThreadStateIcon
@@ -231,7 +324,10 @@ export function InboxPage(): ReactNode {
 													className="shrink-0 rounded-md px-2 py-1 font-medium text-2xs text-faint transition-colors duration-150 hover:bg-hover hover:text-fg"
 													onClick={() => {
 														for (const i of g.items)
-															void patchThread(i.thread.id, { unread: false });
+															if (!i.leaving)
+																void patchThread(i.thread.id, {
+																	unread: false,
+																});
 													}}
 												>
 													{t("inbox.markAllRead")}
@@ -257,6 +353,7 @@ export function InboxPage(): ReactNode {
 										<InboxSection
 											key={g.projectId ?? "_none"}
 											id={g.projectId ?? "_none"}
+											motion={enter()}
 											head={
 												<>
 													{g.projectId ? (
@@ -330,10 +427,15 @@ function InboxSummary({
 	counts,
 	only,
 	onFilter,
+	motion,
+	intro,
 }: {
 	counts: Record<InboxState, number>;
 	only: InboxState | null;
 	onFilter: (s: InboxState | null) => void;
+	motion: Motion;
+	/** 首次进入：数字不弹（之后换值时轻弹一下，交代「少了一项」） */
+	intro: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const pending = counts.you + counts.ready + counts.stopped;
@@ -341,11 +443,16 @@ function InboxSummary({
 	const chip = (on: boolean) =>
 		`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-medium text-xs transition-colors duration-150 ${on ? "border-transparent bg-ink text-ink-fg" : "border-border bg-panel text-muted hover:bg-hover hover:text-fg"}`;
 	return (
-		<div data-inbox-summary="" className="flex flex-col gap-3 px-1">
+		<div
+			data-inbox-summary=""
+			className={`flex flex-col gap-3 px-1 ${motion.className}`}
+			style={motion.style}
+		>
 			{pending > 0 ? (
 				<p className="flex items-baseline gap-2.5">
 					<span
-						className={`font-semibold text-[2.5rem] leading-none tracking-tight tabular-nums ${counts.you > 0 ? "text-accent-ink" : "text-fg"}`}
+						key={pending}
+						className={`font-semibold text-[2.5rem] leading-none tracking-tight tabular-nums ${counts.you > 0 ? "text-accent-ink" : "text-fg"} ${intro ? "" : "inbox-pop"}`}
 					>
 						{pending}
 					</span>
@@ -397,17 +504,22 @@ function InboxSection({
 	head,
 	count,
 	action,
+	motion,
 	children,
 }: {
 	id: string;
 	head: ReactNode;
 	count: number;
 	action?: ReactNode;
+	motion: Motion;
 	children: ReactNode;
 }): ReactNode {
 	return (
 		<section data-inbox-section={id} className="flex flex-col gap-2.5">
-			<div className="flex h-7 items-center gap-2 px-1">
+			<div
+				className={`flex h-7 items-center gap-2 px-1 ${motion.className}`}
+				style={motion.style}
+			>
 				<h2 className="flex min-w-0 flex-1 items-center gap-2 font-semibold text-muted text-xs">
 					{head}
 					<CountPill n={count} />
@@ -439,6 +551,7 @@ function withCode(text: string): ReactNode {
 
 function InboxRow({
 	item,
+	motion,
 	card,
 	project,
 	parent,
@@ -448,7 +561,9 @@ function InboxRow({
 	now,
 	onArchive,
 }: {
-	item: InboxItem;
+	item: LiveItem;
+	/** 出场 / 离场动效：首次进入依次出场、新出现淡入、离开收起 */
+	motion: Motion;
 	/** 「等你处理」的独立卡片（按状态分组时）；否则是面板列表里的一行 */
 	card: boolean;
 	project: Project | undefined;
@@ -475,105 +590,118 @@ function InboxRow({
 	// 等你处理在两种分组下都带强调底色与「去回复」：它是这页的主动作
 	const reply = state === "you";
 	return (
+		// 动效类在外层 li（离开时它是单行 grid，0fr 收起高度）；卡片外观在里层
 		<li
-			className={`group/row relative ${card ? "rounded-lg border border-accent/35 bg-accent-soft/55 shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-accent/60 hover:shadow-sm" : ""}`}
+			className={motion.className}
+			style={motion.style}
+			inert={item.leaving}
+			aria-hidden={item.leaving}
 		>
-			<Link
-				to={`/t/${thread.id}`}
-				data-inbox-row={thread.id}
-				data-inbox-state={state}
-				className={`flex items-start gap-3 transition-colors duration-150 ${card ? "rounded-lg px-3.5 py-3" : reply ? "bg-accent-soft/45 px-3.5 py-2.5 hover:bg-accent-soft/75" : "px-3.5 py-2.5 hover:bg-hover"}`}
+			<div
+				className={`group/row relative ${card ? "rounded-lg border border-accent/35 bg-accent-soft/55 shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-accent/60 hover:shadow-sm" : ""}`}
 			>
-				<span className="mt-[3px] inline-flex">
-					<ThreadStateIcon state={thread.state} size={14} />
-				</span>
-				<span className="flex min-w-0 flex-1 flex-col gap-1">
-					<span className="flex min-w-0 items-center gap-2">
-						{tcard.icon && <TitleGlyph icon={tcard.icon} seed={title} />}
-						<span
-							className={`min-w-0 flex-1 truncate text-sm ${thread.unread ? "font-semibold text-fg" : "font-medium text-fg"}`}
-						>
-							{title}
-						</span>
-						<span
-							className={`shrink-0 text-2xs text-faint tabular-nums ${triage ? "[@media(hover:hover)]:group-focus-within/row:invisible [@media(hover:hover)]:group-hover/row:invisible" : ""}`}
-						>
-							{formatRelative(activityOf(thread), now)}
-						</span>
-						{thread.unread && (
+				<Link
+					to={`/t/${thread.id}`}
+					data-inbox-row={thread.id}
+					data-inbox-state={state}
+					className={`flex items-start gap-3 transition-colors duration-150 ${card ? "rounded-lg px-3.5 py-3" : reply ? "bg-accent-soft/45 px-3.5 py-2.5 hover:bg-accent-soft/75" : "px-3.5 py-2.5 hover:bg-hover"}`}
+				>
+					<span className="mt-[3px] inline-flex">
+						<ThreadStateIcon state={thread.state} size={14} />
+					</span>
+					<span className="flex min-w-0 flex-1 flex-col gap-1">
+						<span className="flex min-w-0 items-center gap-2">
+							{tcard.icon && <TitleGlyph icon={tcard.icon} seed={title} />}
 							<span
-								role="img"
-								className="h-[7px] w-[7px] shrink-0 rounded-full bg-accent ring-[3px] ring-accent/20"
-								aria-label={t("sidebar.unread")}
+								className={`min-w-0 flex-1 truncate text-sm ${thread.unread ? "font-semibold text-fg" : "font-medium text-fg"}`}
+							>
+								{title}
+							</span>
+							<span
+								className={`shrink-0 text-2xs text-faint tabular-nums ${triage ? "[@media(hover:hover)]:group-focus-within/row:invisible [@media(hover:hover)]:group-hover/row:invisible" : ""}`}
+							>
+								{formatRelative(activityOf(thread), now)}
+							</span>
+							{thread.unread && (
+								<span
+									role="img"
+									className="h-[7px] w-[7px] shrink-0 rounded-full bg-accent ring-[3px] ring-accent/20"
+									aria-label={t("sidebar.unread")}
+								/>
+							)}
+						</span>
+						<span className="flex min-w-0 items-center gap-1.5 text-faint text-xs">
+							{showState ? (
+								<span className="shrink-0">{t(`inbox.sections.${state}`)}</span>
+							) : project ? (
+								<>
+									<ProjectBadge
+										name={project.name}
+										icon={project.icon}
+										size={14}
+									/>
+									<span className="min-w-0 max-w-[50%] shrink-0 truncate">
+										{project.name}
+									</span>
+								</>
+							) : (
+								<span className="shrink-0">{t("sidebar.noProject")}</span>
+							)}
+							{from && (
+								<>
+									<span aria-hidden>·</span>
+									<Icon
+										name="fork"
+										size={11}
+										aria-hidden
+										className="shrink-0"
+									/>
+									<span className="min-w-0 truncate">
+										{t("inbox.forkOf", { title: from })}
+									</span>
+								</>
+							)}
+							{reply && (
+								<span className="ml-auto flex shrink-0 items-center gap-0.5 pl-2 font-medium text-accent-ink">
+									{t("inbox.reply")}
+									<Icon
+										name="chevronRight"
+										size={12}
+										aria-hidden
+										className="transition-transform duration-150 group-hover/row:translate-x-0.5"
+									/>
+								</span>
+							)}
+						</span>
+						{preview && !ask && (
+							<Preview state={state} text={preview} failure={thread.error} />
+						)}
+					</span>
+				</Link>
+				{ask?.quickAnswer && (
+					<QuickAnswer id={ask.id} quick={ask.quickAnswer} tinted={!card} />
+				)}
+				{triage && (
+					<span className="absolute top-2 right-2.5 hidden items-center gap-0.5 rounded-md border border-border bg-panel p-0.5 opacity-0 shadow-xs transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100 [@media(hover:hover)]:flex">
+						{thread.unread && (
+							<IconButton
+								icon="check"
+								size={14}
+								box="xs"
+								label={t("inbox.markRead")}
+								onClick={() => void patchThread(thread.id, { unread: false })}
 							/>
 						)}
-					</span>
-					<span className="flex min-w-0 items-center gap-1.5 text-faint text-xs">
-						{showState ? (
-							<span className="shrink-0">{t(`inbox.sections.${state}`)}</span>
-						) : project ? (
-							<>
-								<ProjectBadge
-									name={project.name}
-									icon={project.icon}
-									size={14}
-								/>
-								<span className="min-w-0 max-w-[50%] shrink-0 truncate">
-									{project.name}
-								</span>
-							</>
-						) : (
-							<span className="shrink-0">{t("sidebar.noProject")}</span>
-						)}
-						{from && (
-							<>
-								<span aria-hidden>·</span>
-								<Icon name="fork" size={11} aria-hidden className="shrink-0" />
-								<span className="min-w-0 truncate">
-									{t("inbox.forkOf", { title: from })}
-								</span>
-							</>
-						)}
-						{reply && (
-							<span className="ml-auto flex shrink-0 items-center gap-0.5 pl-2 font-medium text-accent-ink">
-								{t("inbox.reply")}
-								<Icon
-									name="chevronRight"
-									size={12}
-									aria-hidden
-									className="transition-transform duration-150 group-hover/row:translate-x-0.5"
-								/>
-							</span>
-						)}
-					</span>
-					{preview && !ask && (
-						<Preview state={state} text={preview} failure={thread.error} />
-					)}
-				</span>
-			</Link>
-			{ask?.quickAnswer && (
-				<QuickAnswer id={ask.id} quick={ask.quickAnswer} tinted={!card} />
-			)}
-			{triage && (
-				<span className="absolute top-2 right-2.5 hidden items-center gap-0.5 rounded-md border border-border bg-panel p-0.5 opacity-0 shadow-xs transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100 [@media(hover:hover)]:flex">
-					{thread.unread && (
 						<IconButton
-							icon="check"
+							icon="archive"
 							size={14}
 							box="xs"
-							label={t("inbox.markRead")}
-							onClick={() => void patchThread(thread.id, { unread: false })}
+							label={t("thread.archive")}
+							onClick={() => onArchive(thread)}
 						/>
-					)}
-					<IconButton
-						icon="archive"
-						size={14}
-						box="xs"
-						label={t("thread.archive")}
-						onClick={() => onArchive(thread)}
-					/>
-				</span>
-			)}
+					</span>
+				)}
+			</div>
 		</li>
 	);
 }

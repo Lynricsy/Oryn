@@ -1773,6 +1773,7 @@ export class MockServer {
 					next.archivedAt = b.archived ? Date.now() : undefined;
 				if (typeof b.snoozedUntil === "number")
 					next.snoozedUntil = b.snoozedUntil || undefined;
+				if (typeof b.unread === "boolean") next.unread = b.unread;
 				if (typeof b.spaceId === "string") {
 					if (t.kind && t.kind !== "work")
 						return json(

@@ -144,7 +144,7 @@ describe("收件箱页", () => {
 		expect(sections()).toEqual(["you"]);
 	});
 
-	it("行内预览取该线程未作答的提问与失败原因；状态筛选只留那一类，那一类清空后回到全部", () => {
+	it("行内预览取该线程未作答的提问与失败原因；状态筛选只留那一类，那一类清空后回到全部", async () => {
 		const note = (
 			id: string,
 			threadId: string,
@@ -207,7 +207,8 @@ describe("收件箱页", () => {
 		act(() =>
 			indexStore.getState().upsertThread(th("pull", { state: "idle" })),
 		);
-		expect(sections()).toEqual(["you", "running"]);
+		// 离开的行先播完收起动画（LEAVE_MS）才从原分节里消失
+		await waitFor(() => expect(sections()).toEqual(["you", "running"]));
 	});
 
 	it("行内归档走归档入口：带 worktree 的线程先弹出是否一并移除工作树", () => {

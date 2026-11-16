@@ -1470,3 +1470,64 @@ body {
 		background: color-mix(in oklab, var(--brand) 70%, transparent);
 	}
 }
+
+/*
+ * 收件箱（InboxPage）：
+ * - 首次进入依次出场：摘要先到，分节标题与行按阅读顺序晚 40ms 跟上（最多 12 档，总长 < 0.8s，见 INTRO_MS）；
+ * - 之后新出现的行（含换了分节的线程）淡入上浮；
+ * - 离开的行（标为已读、归档、作答后换节）淡出并把高度收到 0，下面的行顺势补上；离开比进入快、用加速曲线（LEAVE_MS）。
+ *   li 在离开时变成单行 grid，1fr → 0fr 收起里层；里层裁掉溢出。
+ * - 待处理数换值时轻弹一下，交代「少了一项」。
+ * 减少动态效果：都直接到位，离开的行立即消失。
+ */
+.inbox-intro {
+	animation: inbox-in 260ms var(--ease) calc(min(var(--i, 0), 12) * 40ms) both;
+}
+.inbox-arrive {
+	animation: inbox-in 220ms var(--ease) both;
+}
+.inbox-leave {
+	display: grid;
+	pointer-events: none;
+	animation: inbox-leave 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+.inbox-leave > * {
+	min-height: 0;
+	overflow: hidden;
+}
+.inbox-pop {
+	display: inline-block;
+	animation: inbox-pop 260ms var(--ease) both;
+}
+@keyframes inbox-in {
+	from {
+		opacity: 0;
+		translate: 0 6px;
+	}
+}
+@keyframes inbox-leave {
+	from {
+		grid-template-rows: 1fr;
+		opacity: 1;
+	}
+	to {
+		grid-template-rows: 0fr;
+		opacity: 0;
+	}
+}
+@keyframes inbox-pop {
+	from {
+		opacity: 0.4;
+		translate: 0 -5px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.inbox-intro,
+	.inbox-arrive,
+	.inbox-pop {
+		animation: none;
+	}
+	.inbox-leave {
+		display: none;
+	}
+}

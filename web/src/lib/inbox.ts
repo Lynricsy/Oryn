@@ -59,10 +59,10 @@ export function inboxItems(
 	return out.sort((a, b) => activityOf(b.thread) - activityOf(a.thread));
 }
 
-/** 按状态分节：顺序固定为 INBOX_ORDER，空节省略；节内新的在前。 */
-export function groupByState(
-	items: readonly InboxItem[],
-): { state: InboxState; items: InboxItem[] }[] {
+/** 按状态分节：顺序固定为 INBOX_ORDER，空节省略；节内新的在前。条目可带额外字段（页面的离场标记），原样保留。 */
+export function groupByState<T extends InboxItem>(
+	items: readonly T[],
+): { state: InboxState; items: T[] }[] {
 	return INBOX_ORDER.map((state) => ({
 		state,
 		items: items.filter((i) => i.state === state),
@@ -73,10 +73,10 @@ export function groupByState(
  * 按项目分组：组按其中最新的活动排序（无项目与普通项目一样参与排序）；组内先按 INBOX_ORDER 的状态次序，
  * 同一状态新的在前。`items` 须已按活动排好（`inboxItems` 的输出），排序是稳定的。
  */
-export function groupByProject(
-	items: readonly InboxItem[],
-): { projectId: string | null; items: InboxItem[] }[] {
-	const groups = new Map<string | null, InboxItem[]>();
+export function groupByProject<T extends InboxItem>(
+	items: readonly T[],
+): { projectId: string | null; items: T[] }[] {
+	const groups = new Map<string | null, T[]>();
 	for (const item of items) {
 		const key = item.thread.projectId ?? null;
 		const list = groups.get(key) ?? [];
