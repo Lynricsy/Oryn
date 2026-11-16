@@ -36,7 +36,8 @@
       "minSdkVersion": 33
     },
     "iOS": {
-      "minimumSystemVersion": "15.0"
+      "minimumSystemVersion": "15.0",
+      "developmentTeam": "XDPWT9ABRD"
     }
   },
   "plugins": {

@@ -4,10 +4,12 @@ name: mobile
 # - PR / 手动触发：`android` 构建 foss 与 gms 两个 debug APK（x86_64 + arm64）并跑插件单测，`android-smoke` 在模拟器里冒烟，
 #   `ios-check` 在 macOS 上不签名编译模拟器包。不签名、拿不到签名 secret。
 # - 推送 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致）：`release` 建草稿 Release →
-#   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产 → `publish` 发布。
+#   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产，
+#   `ios-release` 签名导出 IPA 并上传 TestFlight → `publish` 发布。
 #   debug APK 只作为 workflow artifact（冒烟与下载调试用），从不上传到 Release：它可调试、允许明文流量，装错会泄露设备令牌。
-# - 签名 secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS）只存在 environment `mobile-release` 里，
-#   该 environment 的部署规则只允许 `mobile-v*` tag；只有声明了它的 `android-release` 能取到这些值，PR / 手动 / 分支运行一律拿不到。
+# - 签名 secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS，IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD /
+#   IOS_MOBILE_PROVISION）只存在 environment `mobile-release` 里，该 environment 的部署规则只允许 `mobile-v*` tag；
+#   只有声明了它的 `android-release` / `ios-release` 能取到这些值，PR / 手动 / 分支运行一律拿不到。
 # flavor 由 gradle 属性 `orynDistribution=foss|gms` 选择（`ORG_GRADLE_PROJECT_orynDistribution`）；gms 需要
 # `app/google-services.json`，由 secret ANDROID_GOOGLE_SERVICES_JSON 在构建前写入（没有该 secret 时跳过 gms）。
 #
@@ -378,7 +380,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
           script: bash "$RUNNER_TEMP/smoke.sh"
 
-  # iOS：只保证不签名编译（附录 A 的签名 / TestFlight 待 ADP）
+  # iOS：PR / 手动 / 发布都跑的不签名编译 + 模拟器截图（签名构建见下方 ios-release）
   ios-check:
     needs: prepare
     runs-on: macos-latest
@@ -461,8 +463,116 @@ jobs:
             !web/src-tauri/gen/apple/build
           if-no-files-found: error
 
+  # tag 发布：以 Apple Distribution 证书 + App Store Connect 描述文件手动签名，导出 app-store-connect 的 IPA 并上传 TestFlight。
+  # IPA 不上传到 Release：它只能经 TestFlight / App Store 安装。签名 secrets（IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD /
+  # IOS_MOBILE_PROVISION）只放在 environment mobile-release；上传用的 App Store Connect API 密钥与 desktop.yml 公证共用
+  # 仓库级 APPLE_API_ISSUER / APPLE_API_KEY / APPLE_API_KEY_P8。Team ID 写在 tauri.conf.json 的 bundle.iOS.developmentTeam。
+  ios-release:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.is_release == 'true'
+    environment: mobile-release
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 只取「有没有」的布尔，不接触 secret 的值
+      - name: 检查签名与上传凭据
+        shell: bash
+        env:
+          HAS_SIGN: ${{ secrets.IOS_CERTIFICATE != '' && secrets.IOS_CERTIFICATE_PASSWORD != '' && secrets.IOS_MOBILE_PROVISION != '' }}
+          HAS_API: ${{ secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_SIGN" != "true" ]]; then
+            echo "::error::发布 iOS 需要 environment mobile-release 里的 IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD / IOS_MOBILE_PROVISION"
+            exit 1
+          fi
+          if [[ "$HAS_API" != "true" ]]; then
+            echo "::error::上传 TestFlight 需要 APPLE_API_ISSUER / APPLE_API_KEY / APPLE_API_KEY_P8"
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: web/package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 分支，2026-10-16
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: "web/src-tauri -> target"
+          key: ios-release
+
+      - name: 安装 web 依赖
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: 生成 iOS 工程（未入库时）
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
+
+      # tauri 从 IOS_* 建临时钥匙串并装描述文件；build number 用 run_number，保证同一版本的每次上传单调递增
+      - name: 签名构建 IPA（app-store-connect）
+        working-directory: web
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+        run: bun run tauri ios build --export-method app-store-connect --build-number ${{ github.run_number }} --ci
+
+      - name: 校验 IPA
+        id: ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+          ipa=$(find web/src-tauri/gen/apple/build -name '*.ipa' | head -1)
+          if [[ -z "$ipa" ]]; then echo "::error::没有找到 IPA"; exit 1; fi
+          work="$RUNNER_TEMP/ipa"
+          rm -rf "$work" && mkdir -p "$work"
+          unzip -q "$ipa" -d "$work"
+          app=$(find "$work/Payload" -maxdepth 1 -name '*.app' | head -1)
+          plist="$app/Info.plist"
+          bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")
+          ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
+          if [[ "$bid" != "com.lynricsy.oryn" ]]; then echo "::error::包名 $bid 不是 com.lynricsy.oryn"; exit 1; fi
+          signer=$(codesign -dvv "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)
+          if [[ "$signer" != Apple\ Distribution:* && "$signer" != iPhone\ Distribution:* ]]; then
+            echo "::error::签名者「$signer」不是分发证书"
+            exit 1
+          fi
+          echo "path=$ipa" >> "$GITHUB_OUTPUT"
+          echo "- iOS：\`$bid\` $ver（build $build），签名者 $signer" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # altool 只从固定目录找 AuthKey_<Key ID>.p8；写入后无论成败都删除
+      - name: 上传 TestFlight
+        shell: bash
+        env:
+          IPA: ${{ steps.ipa.outputs.path }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          keydir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$keydir"
+          trap 'rm -rf "$keydir"' EXIT
+          (umask 077 && printf '%s' "$APPLE_API_KEY_P8" > "$keydir/AuthKey_${APPLE_API_KEY}.p8")
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$APPLE_API_KEY" --apiIssuer "$APPLE_API_ISSUER"
+          echo "- 已上传 TestFlight，App Store Connect 处理完成后（通常 5–30 分钟）内部测试组可安装" >> "$GITHUB_STEP_SUMMARY"
+
   publish:
-    needs: [prepare, android-release, android-smoke, ios-check]
+    needs: [prepare, android-release, android-smoke, ios-check, ios-release]
     if: needs.prepare.outputs.is_release == 'true'
     runs-on: ubuntu-24.04
     permissions:

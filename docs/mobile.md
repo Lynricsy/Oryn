@@ -103,7 +103,7 @@ MIUI / HyperOS、ColorOS、OriginOS、EMUI / HarmonyOS 等会在后台杀掉分�
 - 不启用 App Links：浏览器里的 `https://<服务器>/t/<id>` 不会直接进 App，用 `oryn://` 或通知点击。
 - 系统 WebView 低于 111 时连接页提示「系统 WebView 版本过旧」，请在应用商店更新 Android System WebView。
 - 私有 CA 的服务器证书不受支持（见开头）。
-- iOS 目前只保证在 CI 上不签名编译（附录 A），没有可安装的包。
+- iOS 只经 TestFlight 内部测试分发（附录 A），尚未完成真机验收。
 
 ## 开发
 
@@ -137,7 +137,7 @@ make android DIST=foss                                      # 仓库根目录：
 
 1. 改 `web/src-tauri/Cargo.toml` 的 `version`（只写 `x.y.z`；`versionCode` = `major*1000000 + minor*1000 + patch`，预发布与正式版相同）。
 2. 打 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N` 并推送。
-3. `.github/workflows/mobile.yml`：`prepare` 校验 tag 与版本 → `release` 建草稿 Release → `android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `publish` 发布 Release。
+3. `.github/workflows/mobile.yml`：`prepare` 校验 tag 与版本 → `release` 建草稿 Release → `android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 取 `github.run_number`，校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）→ `publish` 发布 Release。
 4. Release 资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
 
 PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS 编译，拿不到签名密钥；来自 fork 的 PR 没有 `ANDROID_GOOGLE_SERVICES_JSON`，跳过 gms。手动触发可勾选 `export_ios_project`，把 `tauri ios init` 生成的 `gen/apple` 作为产物导出以便入库。
@@ -145,11 +145,11 @@ PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS
 ### 工作流的安全约束
 
 - 第三方 action 一律钉到完整提交 SHA；checkout 不保留凭据；workflow 级权限为空，只有建 / 发 Release 与上传资产的 job 有 `contents: write`。
-- secret 只出现在用到它的那一步的 `env` 里：`ANDROID_GOOGLE_SERVICES_JSON` 只给「写入 google-services.json」，三个签名 secret 只给 tag 发布时的「构建签名的 release APK + AAB」；密钥解码到 `$RUNNER_TEMP` 下的临时目录，`keystore.properties` 与 `.jks` 在该步骤结束时删除。
+- secret 只出现在用到它的那一步的 `env` 里：`ANDROID_GOOGLE_SERVICES_JSON` 只给「写入 google-services.json」，三个签名 secret 只给 tag 发布时的「构建签名的 release APK + AAB」；密钥解码到 `$RUNNER_TEMP` 下的临时目录，`keystore.properties` 与 `.jks` 在该步骤结束时删除。iOS 的三个签名 secret 只给「签名构建 IPA」（tauri 建临时钥匙串），App Store Connect 的 `.p8` 只在「上传 TestFlight」期间写进 `~/.appstoreconnect/private_keys`，步骤结束即删除。
 
 ### Secrets
 
-三个签名 secret 放在受保护的 environment `mobile-release` 里（部署规则只允许 tag `mobile-v*`），不是仓库级 secret；`ANDROID_GOOGLE_SERVICES_JSON` 仍是仓库级（PR 的 gms debug 构建要用，它不是签名材料）。
+Android 与 iOS 的签名 secret 放在受保护的 environment `mobile-release` 里（部署规则只允许 tag `mobile-v*`），不是仓库级 secret；`ANDROID_GOOGLE_SERVICES_JSON` 仍是仓库级（PR 的 gms debug 构建要用，它不是签名材料）；上传 TestFlight 用的 App Store Connect API 密钥与桌面公证共用仓库级 `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_P8`（见 [desktop.md](desktop.md)「Secrets」）。
 
 | 名称 | 内容 |
 |---|---|
@@ -157,6 +157,9 @@ PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS
 | `ANDROID_KEYSTORE_PASSWORD` | 密钥库与密钥的口令（两者相同） |
 | `ANDROID_KEY_ALIAS` | 密钥别名（`oryn`） |
 | `ANDROID_GOOGLE_SERVICES_JSON` | Firebase 控制台下载的 `google-services.json` 全文（须含 `com.lynricsy.oryn` 客户端） |
+| `IOS_CERTIFICATE` | 「Apple Distribution」证书从钥匙串导出的 `.p12`，base64 单行：`base64 -i dist.p12` |
+| `IOS_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设的口令 |
+| `IOS_MOBILE_PROVISION` | `com.lynricsy.oryn` 的「App Store Connect」描述文件（`.mobileprovision`）的 base64 |
 
 FCM 的**服务账号** JSON 不进 CI：它只用于服务端发送，存在控制面的密钥库里。
 
@@ -188,6 +191,10 @@ keytool -list -v -keystore .dev/android-release.jks -storepass "$PW" | grep 'SHA
 3. 在 fork 的仓库里配好上表的 secrets，推送 `mobile-v*` tag 即由 CI 构建发布。
 4. 自签的包与官方包证书不同，不能互相覆盖安装；改应用标识需要同时改 `tauri.conf.json` 的 `identifier`、`gen/android` 的 `applicationId` / `namespace` 与 Firebase 里的包名。
 
-## 附录 A：iOS（待 Apple Developer Program）
+## 附录 A：iOS
 
-当前 `ios-check` 只验证 iOS 目标能在 macOS 上不签名编译。等 ADP 就绪后再做：`bundle.iOS.developmentTeam` 与 TestFlight 上传 job；APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
+Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTeam`。App ID `com.lynricsy.oryn` 应开启 Push Notifications 与 Associated Domains（供下面的 APNs 与 Universal Links 用；之后再开要重新生成描述文件）；App Store Connect 里需先建好同一套装 ID 的 App 记录，`ios-release` 才能上传。
+
+首次上传后，App Store Connect 的 TestFlight 页会要求回答出口合规问题（构建显示「缺少合规证明」）。iOS 包里的 Rust 网络栈用 rustls 自带的 TLS 实现，不只是系统加密，所以 `ITSAppUsesNonExemptEncryption` 没有预先写死，由发布者按实际情况作答。
+
+尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
