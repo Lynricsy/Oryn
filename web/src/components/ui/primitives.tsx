@@ -640,9 +640,11 @@ export function ThreadStateIcon({
 	size?: number;
 }) {
 	const { t } = useTranslation();
+	// 槽宽固定为 size：工作中的转圈比其它字形小 2px，状态切换时后面的标题不能跟着挪动
 	return (
 		<span
-			className="inline-flex shrink-0 items-center"
+			className="inline-flex shrink-0 items-center justify-center"
+			style={{ width: size }}
 			title={t(`threadState.${state}`)}
 		>
 			<ThreadStateGlyph state={state} size={size} />

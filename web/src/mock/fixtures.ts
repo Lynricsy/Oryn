@@ -834,6 +834,13 @@ export const threads: Thread[] = [
 		projectId: projects[0]?.id,
 		parentThreadId: "T-0193a1b2-0000-7000-8000-00000000a003",
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
+		// 孙线程出错：侧栏里父线程与祖父线程的状态图标随之上卷，收件箱「出错」节里单列
+		state: "error",
+		error: {
+			kind: "agent_failed",
+			reason: "agent_start_failed: omp exited with status 1",
+		},
+		unread: true,
 		lastMessageAt: NOW - 2 * MIN,
 	}),
 	thread({
@@ -925,6 +932,8 @@ export const threads: Thread[] = [
 		orbId: M11B_IDS.nasOrb,
 		cwd: "/srv/projects/blog",
 		lastMessageAt: NOW - 3 * HOUR,
+		// 做完了还没看：收件箱「已完成未读」
+		unread: true,
 	}),
 	thread({
 		id: M96_IDS.roleThread,

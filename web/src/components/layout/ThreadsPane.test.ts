@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../../api/client";
-import { filterByProject, groupThreads, stackState } from "./ThreadsPane";
+import {
+	filterByProject,
+	groupThreads,
+	rollupState,
+	stackState,
+} from "./ThreadsPane";
 
 const NOW = 1_800_000_000_000;
 
@@ -156,5 +161,102 @@ describe("侧边栏分区（M9）", () => {
 		]);
 		expect(filterByProject(list, null).map((t) => t.id)).toEqual(["b"]);
 		expect(filterByProject(list, "p2").map((t) => t.id)).toEqual(["c"]);
+	});
+});
+
+describe("「需要你」分组与状态上卷", () => {
+	it("等待输入在前、出错在后，各按活动新的在前；子线程平铺进来，原分组照常保留", () => {
+		const g = groupThreads(
+			[
+				th("idle"),
+				th("errOld", { state: "error", lastMessageAt: NOW - 5000 }),
+				th("waitOld", { state: "awaiting_input", lastMessageAt: NOW - 9000 }),
+				th("parent", { projectId: "p1" }),
+				th("kid", {
+					projectId: "p1",
+					parentThreadId: "parent",
+					state: "awaiting_input",
+				}),
+				th("pinnedErr", { pinned: true, state: "error" }),
+				th("busy", { state: "working" }),
+			],
+			"",
+			NOW,
+		);
+		expect(g.needsYou.map((t) => t.id)).toEqual([
+			"kid",
+			"waitOld",
+			"pinnedErr",
+			"errOld",
+		]);
+		// 子线程仍挂在父线程下，置顶的仍在置顶
+		expect(g.children.get("parent")?.map((t) => t.id)).toEqual(["kid"]);
+		expect(g.pinned.map((t) => t.id)).toEqual(["pinnedErr"]);
+	});
+
+	it("已归档、协调对话不进；稍后提醒到期前不进，到期后进；搜索同样生效", () => {
+		const threads = [
+			th("archived", { state: "awaiting_input", archivedAt: NOW }),
+			th("chat", { kind: "space", state: "awaiting_input" }),
+			th("sleeping", { state: "error", snoozedUntil: NOW + 1000 }),
+			th("woke", { state: "error", snoozedUntil: NOW - 1000 }),
+			th("other", { title: "zzz", state: "awaiting_input" }),
+		];
+		expect(groupThreads(threads, "", NOW).needsYou.map((t) => t.id)).toEqual([
+			"other",
+			"woke",
+		]);
+		expect(groupThreads(threads, "wok", NOW).needsYou.map((t) => t.id)).toEqual(
+			["woke"],
+		);
+	});
+
+	it("子孙的等待输入 / 出错上卷到父行；工作中不上卷；自身更紧要时取自身；数据成环不死循环", () => {
+		const g = groupThreads(
+			[
+				th("root"),
+				th("mid", { parentThreadId: "root", state: "working" }),
+				th("leaf", { parentThreadId: "mid", state: "error" }),
+				th("busyParent"),
+				th("busyKid", { parentThreadId: "busyParent", state: "working" }),
+				th("waiting", { state: "awaiting_input" }),
+				th("errKid", { parentThreadId: "waiting", state: "error" }),
+			],
+			"",
+			NOW,
+		);
+		const byId = (id: string) =>
+			[...g.byProject.flatMap((x) => x.threads), ...g.children.values()]
+				.flat()
+				.find((t) => t.id === id) as Thread;
+		expect(rollupState(byId("root"), g.children)).toBe("error");
+		expect(rollupState(byId("mid"), g.children)).toBe("error");
+		expect(rollupState(byId("busyParent"), g.children)).toBe("idle");
+		expect(rollupState(byId("waiting"), g.children)).toBe("awaiting_input");
+		// 不给 childMap（「需要你」分组的平铺行）只看自身
+		expect(rollupState(byId("root"), undefined)).toBe("idle");
+		const a = th("a");
+		const b = th("b", { parentThreadId: "a", state: "awaiting_input" });
+		const loop = new Map([
+			["a", [b]],
+			["b", [a]],
+		]);
+		expect(rollupState(a, loop)).toBe("awaiting_input");
+	});
+
+	it("折叠行汇总计入运行线程子孙里需要你的状态", () => {
+		const g = groupThreads(
+			[
+				th("run", { scheduleRun: { scheduleId: "s", run: 1 } }),
+				th("kid", { parentThreadId: "run", state: "awaiting_input" }),
+			],
+			"",
+			NOW,
+		);
+		const runs = g.byProject[0]?.stacks[0]?.threads ?? [];
+		expect(stackState(runs)).toBe("idle");
+		expect(
+			stackState(runs.map((r) => ({ state: rollupState(r, g.children) }))),
+		).toBe("awaiting_input");
 	});
 });

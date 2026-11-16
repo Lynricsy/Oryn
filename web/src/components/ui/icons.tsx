@@ -61,6 +61,7 @@ import { GitDiff } from "@phosphor-icons/react/dist/csr/GitDiff";
 import { GitFork } from "@phosphor-icons/react/dist/csr/GitFork";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
+import { HandPalm } from "@phosphor-icons/react/dist/csr/HandPalm";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { Hourglass } from "@phosphor-icons/react/dist/csr/Hourglass";
 import { Image } from "@phosphor-icons/react/dist/csr/Image";
@@ -107,6 +108,7 @@ import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
 import { ThermometerHot } from "@phosphor-icons/react/dist/csr/ThermometerHot";
 import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
+import { Tray } from "@phosphor-icons/react/dist/csr/Tray";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { User } from "@phosphor-icons/react/dist/csr/User";
@@ -257,6 +259,10 @@ const ICONS = {
 	laptop: Laptop,
 	/** runner 离线（M11b） */
 	plugs: Plugs,
+	/** 收件箱（跨线程的待处理列表） */
+	tray: Tray,
+	/** 侧栏「需要你」分组：等待输入或出错的线程 */
+	handPalm: HandPalm,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

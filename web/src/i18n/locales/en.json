@@ -156,7 +156,25 @@
 		"projectSettings": "Settings for “{{name}}”",
 		"projectThreads_one": "{{count}} thread",
 		"projectThreads_other": "{{count}} threads",
-		"profileAppearance": "Profile and appearance"
+		"profileAppearance": "Profile and appearance",
+		"needsYou": "Needs you"
+	},
+	"inbox": {
+		"title": "Inbox",
+		"entryLabel_one": "Inbox, {{count}} item to handle",
+		"entryLabel_other": "Inbox, {{count}} items to handle",
+		"groupBy": "Group by",
+		"byState": "By state",
+		"byProject": "By project",
+		"sections": {
+			"you": "Needs you",
+			"ready": "Done, unread",
+			"stopped": "Errored",
+			"running": "Running"
+		},
+		"forkOf": "From “{{title}}”",
+		"empty": "Nothing needs you",
+		"emptyHint": "Threads that are waiting for input, finished but unread, errored, or running show up here."
 	},
 	"newThread": {
 		"heading": "What should we work on?",

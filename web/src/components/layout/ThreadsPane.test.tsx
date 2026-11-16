@@ -14,10 +14,12 @@ import {
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
+import { inboxBadgeCount } from "../../lib/inbox";
 import { parseTitleCard } from "../../lib/title";
 import {
 	threads as fixtureThreads,
 	M9_IDS,
+	MAIN_THREAD,
 	projects,
 } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
@@ -287,5 +289,42 @@ describe("线程分区（M9 / M9.6）", () => {
 		// 新的请求在当前分区上立即聚焦
 		act(() => uiStore.setState({ searchNonce: 2 }));
 		expect(document.activeElement).toBe(search);
+	});
+
+	it("「需要你」分组在最上、子线程平铺；父行状态图标上卷；收件箱入口角标", () => {
+		mount();
+		const group = screen
+			.getByRole("button", { name: /需要你/ })
+			.closest("div.mb-2") as HTMLElement;
+		const hrefs = within(group)
+			.getAllByRole("link")
+			.map((a) => a.getAttribute("href"));
+		// 等待输入在前（置顶线程与 Space 派生的线程），出错在后（含孙线程）
+		expect(hrefs).toEqual(
+			[
+				M9_IDS.spaceNeedsYou,
+				"T-0193a1b2-0000-7000-8000-00000000a004",
+				"T-0193a1b2-0000-7000-8000-00000000a0f1",
+				"T-0193a1b2-0000-7000-8000-00000000a005",
+			].map((id) => `/t/${id}`),
+		);
+		// 分组排在空间分组之前
+		const scroll = screen.getByTestId("threads-scroll");
+		expect(scroll.firstElementChild).toBe(group);
+		// 孙线程出错 → 主线程（祖父）行在项目分组里显示出错
+		const main = within(scroll)
+			.getAllByRole("link")
+			.find(
+				(a) => a.getAttribute("href") === `/t/${MAIN_THREAD}`,
+			) as HTMLElement;
+		expect(within(main).getByTitle("出错")).toBeVisible();
+		const entry = screen.getByTestId("inbox-entry");
+		expect(entry).toHaveAttribute("href", "/inbox");
+		const n = inboxBadgeCount(
+			fixtureThreads.filter((t) => !t.archivedAt),
+			Date.now(),
+		);
+		expect(n).toBeGreaterThan(0);
+		expect(entry).toHaveAccessibleName(`收件箱，${n} 项待处理`);
 	});
 });

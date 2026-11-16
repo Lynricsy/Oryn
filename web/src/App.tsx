@@ -30,6 +30,11 @@ const StatsPage = lazy(() =>
 	import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })),
 );
 
+// 收件箱：跨线程的「需要你」总览（数据取实时索引）
+const InboxPage = lazy(() =>
+	import("./pages/InboxPage").then((m) => ({ default: m.InboxPage })),
+);
+
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
 	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
@@ -101,6 +106,7 @@ export function App(): ReactNode {
 							element={<Navigate to="/stats/usage" replace />}
 						/>
 						<Route path="stats/:tab" element={<StatsPage />} />
+						<Route path="inbox" element={<InboxPage />} />
 						{/* 项目管理搬到了项目分区（M9.6） */}
 						<Route
 							path="settings/projects"

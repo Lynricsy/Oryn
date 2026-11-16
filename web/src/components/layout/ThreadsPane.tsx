@@ -1,9 +1,10 @@
 /**
- * 「线程」分区侧栏（按最新 Amp 布局）：搜索、项目过滤签；分组 空间 → 已置顶 → 按项目分组的活跃线程 → 72 小时未活动（一键归档）→
- * 稍后提醒 → 已归档。协调对话（Space 聊天、助手对话）不进任何线程分组（助手对话在「助手」分区）。
+ * 「线程」分区侧栏（按最新 Amp 布局）：搜索、项目过滤签、收件箱入口；分组 需要你 → 空间 → 已置顶 → 按项目分组的活跃线程 →
+ * 72 小时未活动（一键归档）→ 稍后提醒 → 已归档。协调对话（Space 聊天、助手对话）不进任何线程分组（助手对话在「助手」分区）。
+ * 「需要你」是置顶的跨项目分组：等待输入或出错的线程（含子线程，平铺）另在这里列一份，原分组里照常保留；空时不显示。
  * 线程行 = 状态图标 + 标题卡图标 + 标题 + 相对时间 / 子线程计数 / 未读点（标题前最多两个标记）；线程色是行左缘的一根细竖条，
- * 有标题卡图标时图标底色也取线程色。fork 出的子线程挂在父线程下，带 L 形引导线；带线程内定时的行标一个时钟。
- * 「每次新建线程」定时建出的线程在项目分组里按定时折叠成一行（防刷屏），点开才是各次运行。
+ * 有标题卡图标时图标底色也取线程色。fork 出的子线程挂在父线程下，带 L 形引导线；子孙在等待输入或出错时，父线程的状态图标随之上卷。
+ * 带线程内定时的行标一个时钟。「每次新建线程」定时建出的线程在项目分组里按定时折叠成一行（防刷屏），点开才是各次运行。
  * 链接的 textContent 必须只等于标题文字：图标字形、时间、计数、活动行一律走 data 属性 + 伪元素（或无文字的图标）。
  */
 
@@ -16,6 +17,7 @@ import { qk, useArchivedThreads, useProjects } from "../../api/queries";
 import { useSchedules } from "../../api/schedule-queries";
 import { type Space, useSpaces } from "../../api/space-queries";
 import { formatRelative } from "../../lib/format";
+import { activityOf, inboxBadgeCount } from "../../lib/inbox";
 import { isCoordinatorThread } from "../../lib/thread-kind";
 import { parseTitleCard } from "../../lib/title";
 import { patchThread } from "../../state/actions";
@@ -46,6 +48,8 @@ export interface ScheduleStackGroup {
 }
 
 export interface SidebarGroups {
+	/** 需要你：等待输入在前、出错在后，各按最后活动新的在前；含子线程（平铺） */
+	needsYou: Thread[];
 	pinned: Thread[];
 	byProject: {
 		projectId: string | null;
@@ -55,10 +59,6 @@ export interface SidebarGroups {
 	inactive: Thread[];
 	snoozed: Thread[];
 	children: Map<string, Thread[]>;
-}
-
-function activityOf(t: Thread): number {
-	return t.lastMessageAt ?? t.updatedAt;
 }
 
 /** 侧栏的项目过滤：`undefined` 不过滤，`null` 只留无项目线程，否则只留该项目的线程。 */
@@ -79,10 +79,35 @@ const STATE_RANK: Record<ThreadState, number> = {
 	idle: 0,
 };
 
-export function stackState(threads: readonly Thread[]): ThreadState {
+function needsYou(state: ThreadState): boolean {
+	return state === "awaiting_input" || state === "error";
+}
+
+export function stackState(
+	threads: readonly Pick<Thread, "state">[],
+): ThreadState {
 	let best: ThreadState = "idle";
 	for (const t of threads)
 		if (STATE_RANK[t.state] > STATE_RANK[best]) best = t.state;
+	return best;
+}
+
+/**
+ * 线程行的状态图标：自身状态；子孙（`childMap`）里有需要你的（等待输入 / 出错）且比自身更紧要时取子孙的。
+ * 子孙只上卷「需要你」的状态：父线程空闲、子线程在工作时，父线程仍显示空闲。`seen` 防数据成环。
+ */
+export function rollupState(
+	thread: Thread,
+	childMap: ReadonlyMap<string, Thread[]> | undefined,
+	seen: Set<string> = new Set(),
+): ThreadState {
+	seen.add(thread.id);
+	let best = thread.state;
+	for (const c of childMap?.get(thread.id) ?? []) {
+		if (seen.has(c.id)) continue;
+		const s = rollupState(c, childMap, seen);
+		if (needsYou(s) && STATE_RANK[s] > STATE_RANK[best]) best = s;
+	}
 	return best;
 }
 
@@ -114,6 +139,15 @@ export function groupThreads(
 		list.sort((a, b) => activityOf(b) - activityOf(a));
 	roots.sort((a, b) => activityOf(b) - activityOf(a));
 	const g: SidebarGroups = {
+		needsYou: visible
+			.filter(
+				(t) => needsYou(t.state) && !(t.snoozedUntil && t.snoozedUntil > now),
+			)
+			.sort(
+				(a, b) =>
+					STATE_RANK[b.state] - STATE_RANK[a.state] ||
+					activityOf(b) - activityOf(a),
+			),
 		pinned: [],
 		byProject: [],
 		inactive: [],
@@ -222,7 +256,10 @@ export function ThreadRow({
 					/>
 				)}
 				<span className="flex h-8 items-center gap-2">
-					<ThreadStateIcon state={thread.state} size={14} />
+					<ThreadStateIcon
+						state={rollupState(thread, childMap, new Set(ancestors))}
+						size={14}
+					/>
 					{card.icon && (
 						<CardGlyph icon={card.icon} hue={hue ?? nameHue(title)} />
 					)}
@@ -361,7 +398,12 @@ function ScheduleStack({
 				>
 					{label}
 				</span>
-				<ThreadStateIcon state={stackState(stack.threads)} size={13} />
+				<ThreadStateIcon
+					state={stackState(
+						stack.threads.map((th) => ({ state: rollupState(th, childMap) })),
+					)}
+					size={13}
+				/>
 				{unread && <UnreadDot />}
 				<CountPill n={stack.threads.length} />
 			</button>
@@ -499,6 +541,28 @@ function ProjectFilterChip({
 }
 
 /**
+ * 收件箱入口（搜索框下的固定行，手机下沉侧栏同样可见）：角标 = 等你处理 + 已完成未读 + 出错的线程数，
+ * 不受项目过滤影响；计数是中性信息，用描边计数签，不用强调色。
+ */
+function InboxEntry({ now }: { now: number }): ReactNode {
+	const { t } = useTranslation();
+	const count = useIndex((s) => inboxBadgeCount(Object.values(s.threads), now));
+	return (
+		<NavLink
+			to="/inbox"
+			data-testid="inbox-entry"
+			aria-label={count ? t("inbox.entryLabel", { count }) : undefined}
+			onClick={closeOnCompact}
+			className={NAV_ROW}
+		>
+			<Icon name="tray" size={14} aria-hidden className="shrink-0 text-muted" />
+			<span className="min-w-0 flex-1 truncate">{t("inbox.title")}</span>
+			{count > 0 && <CountPill n={count} />}
+		</NavLink>
+	);
+}
+
+/**
  * `active`：本分区此刻显示着。搜索框的聚焦请求（`searchNonce`）只在 active 时处理、每个 nonce 只处理一次：
  * 分区刚切过来时 pane 还是 inert，此时聚焦会落空，等它变成 active 再聚焦。
  */
@@ -609,7 +673,21 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 					projects={projects.data?.projects ?? []}
 				/>
 			)}
+			<div className="shrink-0 px-2 pb-1">
+				<InboxEntry now={now} />
+			</div>
 			<div data-testid="threads-scroll" className={PANE_SCROLL}>
+				{groups.needsYou.length > 0 && (
+					<Group
+						title={t("sidebar.needsYou")}
+						icon={<GroupIcon name="handPalm" />}
+						count={groups.needsYou.length}
+					>
+						{groups.needsYou.map((th) => (
+							<ThreadRow key={th.id} thread={th} now={now} />
+						))}
+					</Group>
+				)}
 				<SpacesGroup threads={threads} />
 				{empty && (
 					<p className="px-3 py-4 text-faint text-sm">

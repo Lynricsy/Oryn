@@ -156,7 +156,25 @@
 		"projectSettings": "「{{name}}」的设置",
 		"projectThreads_one": "{{count}} 个线程",
 		"projectThreads_other": "{{count}} 个线程",
-		"profileAppearance": "个人资料与外观"
+		"profileAppearance": "个人资料与外观",
+		"needsYou": "需要你"
+	},
+	"inbox": {
+		"title": "收件箱",
+		"entryLabel_one": "收件箱，{{count}} 项待处理",
+		"entryLabel_other": "收件箱，{{count}} 项待处理",
+		"groupBy": "分组方式",
+		"byState": "按状态",
+		"byProject": "按项目",
+		"sections": {
+			"you": "等你处理",
+			"ready": "已完成未读",
+			"stopped": "出错",
+			"running": "运行中"
+		},
+		"forkOf": "派生自「{{title}}」",
+		"empty": "没有需要你处理的线程",
+		"emptyHint": "等待输入、已完成未读、出错和运行中的线程会出现在这里。"
 	},
 	"newThread": {
 		"heading": "要做点什么？",

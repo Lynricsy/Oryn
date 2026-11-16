@@ -28,6 +28,7 @@ describe("sectionOf", () => {
 		["/", "threads"],
 		["/t/T-work", "threads"],
 		["/space/spc_1", "threads"],
+		["/inbox", "threads"],
 		["/assistant", "assistant"],
 		["/assistant/T-asst", "assistant"],
 		["/projects", "projects"],
