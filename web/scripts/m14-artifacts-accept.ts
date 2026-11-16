@@ -306,10 +306,16 @@ const contexts: BrowserContext[] = [];
 const pageErrors: string[] = [];
 const pageDiag: string[] = [];
 
+/** 浏览器进程命令行里的记号：关闭卡死时按它找到本轮的浏览器进程强制结束（Chromium 忽略不认识的开关）。 */
+const BROWSER_MARK = `--oryn-m14a-run=${RUN}`;
+/** 关闭 context / 浏览器的时限：高负载下见过关闭卡死 800 秒，把整轮拖死。 */
+const CLOSE_TIMEOUT = 30_000;
+
 async function getBrowser(): Promise<Browser> {
 	if (browser) return browser;
-	// 浏览器放进只有回环的网络命名空间（原因见 browser-netns.ts）；同时保证页面访问不到外网
-	netns = await startBrowserNetns({
+	// 浏览器放进只有回环的网络命名空间（原因见 browser-netns.ts）；同时保证页面访问不到外网。
+	// 浏览器被强制结束后重新启动时沿用同一个命名空间。
+	netns ??= await startBrowserNetns({
 		name: `oryn-m14a-${RUN}`,
 		ports: [MOCK_PORT, REAL_UI_PORT, REAL_PORT],
 		chromium: CHROMIUM,
@@ -317,9 +323,43 @@ async function getBrowser(): Promise<Browser> {
 	browser = await chromium.launch({
 		executablePath: netns.executablePath,
 		headless: true,
-		args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader"],
+		args: [
+			"--no-sandbox",
+			"--use-gl=angle",
+			"--use-angle=swiftshader",
+			BROWSER_MARK,
+		],
 	});
 	return browser;
+}
+
+/** 限时等 p 结束（成功或失败都算结束）；超时回 false，p 留在后台，结果不再理会。 */
+async function within(p: Promise<unknown>, ms: number): Promise<boolean> {
+	const timeout = Promise.withResolvers<boolean>();
+	const timer = setTimeout(() => timeout.resolve(false), ms);
+	const done = await Promise.race([
+		p.then(
+			() => true,
+			() => true,
+		),
+		timeout.promise,
+	]);
+	clearTimeout(timer);
+	return done;
+}
+
+/** 强制结束本轮的浏览器进程（子进程随之退出）；下次 openPage 重新启动。 */
+function killBrowser() {
+	for (const pid of readdirSync("/proc")) {
+		if (!/^\d+$/.test(pid)) continue;
+		try {
+			const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+			if (argv.includes(BROWSER_MARK)) process.kill(Number(pid), "SIGKILL");
+		} catch {
+			// 已退出
+		}
+	}
+	browser = undefined;
 }
 
 /** 页面初始化：调试开关与 fetch 记录器（mock 在页面里替换 fetch，Playwright 看不到这些请求）。 */
@@ -395,11 +435,24 @@ async function openPage(o: PageOpts): Promise<Page> {
 	p.on("response", (r) => {
 		if (r.status() >= 500) pageDiag.push(`HTTP ${r.status()} ${r.url()}`);
 	});
+	p.on("requestfailed", (r) =>
+		pageDiag.push(
+			`请求失败 ${r.method()} ${r.url().slice(0, 200)}：${r.failure()?.errorText ?? "?"}`,
+		),
+	);
 	return p;
 }
 
+/** 关闭本条打开的全部 context；超过 CLOSE_TIMEOUT 仍没关上就记一条 note 并强制结束浏览器（不影响本条判定）。 */
 async function closeAll() {
-	for (const c of contexts.splice(0)) await c.close().catch(() => {});
+	for (const c of contexts.splice(0)) {
+		if (await within(c.close(), CLOSE_TIMEOUT)) continue;
+		note(
+			`关闭浏览器 context 超过 ${CLOSE_TIMEOUT / 1000}s，强制结束浏览器，下一条重新启动`,
+		);
+		killBrowser();
+		return;
+	}
 }
 
 async function goto(p: Page, base: string, path: string) {
@@ -5400,25 +5453,22 @@ async function realK35() {
 	note('没声明 db 的页面 use("db") 回 null');
 }
 
-/** 线程的工作目录（files 能力的根）：线程的 cwd，没有就取 orbd 进程的当前目录。 */
+/**
+ * 线程的工作目录（files 能力的根）：与产品同一规则——线程有 cwd 就用它，没有就取 orb 本机 API `/fs/roots`
+ * 的 `workdir`（orbd 最近一次 setup 下发的工作目录，缺省 `$HOME/workspace`；见 internal/artifacts/cap_files.go）。
+ * 不能取 orbd 进程的 cwd：那是 orb 的 HOME，不是 agent 的工作目录。
+ */
 async function threadWorkdir(t: Th): Promise<string> {
 	const th = await getThread(t.id);
 	if (th.cwd) return th.cwd;
-	for (const pid of readdirSync("/proc")) {
-		if (!/^\d+$/.test(pid)) continue;
-		try {
-			const exe = readlinkSync(`/proc/${pid}/exe`);
-			const env = readFileSync(`/proc/${pid}/environ`, "utf8");
-			if (
-				exe.endsWith("/orbd") &&
-				env.split("\0").includes(`HOME=${orbHome(t.orbId)}`)
-			)
-				return readlinkSync(`/proc/${pid}/cwd`);
-		} catch {
-			// 已退出
-		}
-	}
-	throw new Error("找不到线程的工作目录");
+	const roots = await rjson<{ home: string; workdir: string }>(
+		"GET",
+		`/api/v1/orbs/${t.orbId}/fs/roots`,
+	);
+	if (!roots.workdir?.startsWith("/"))
+		throw new Error(`/fs/roots 没给出工作目录：${JSON.stringify(roots)}`);
+	mkdirSync(roots.workdir, { recursive: true });
+	return roots.workdir;
 }
 
 const FILES_PAGE = pageHtml(
@@ -5544,11 +5594,43 @@ async function realK38() {
 		30_000,
 	);
 	expect(s === "null", '拒绝后 use("files") 回 null');
-	const again = await p
+	// 拒绝的回答落定后服务端先放行页面的 use（回 null），对话框要等回答请求返回才收起，两者先后不定；
+	// 所以先等这次的对话框收起，再在同一观看期内让页面重新 use 一次，期间不应再出现同意框。
+	const consentDlg = p
 		.getByRole("dialog")
-		.isVisible()
-		.catch(() => false);
-	expect(!again, "同一观看期内拒绝后不再询问");
+		.filter({ hasText: "允许“K36 文件”读取" });
+	await consentDlg.waitFor({ state: "hidden", timeout: 10_000 });
+	const old = await artifactFrame(p, "#status");
+	await old.evaluate(() => {
+		document.documentElement.dataset.m14old = "1";
+	});
+	await p
+		.getByRole("button", { name: "重新加载", exact: true })
+		.first()
+		.click();
+	let asked = false;
+	const t0 = Date.now();
+	const again = await waitFor(
+		"重新加载后页面再次拿到 null",
+		async () => {
+			asked ||= await consentDlg.isVisible().catch(() => false);
+			const fr = await artifactFrame(p, "#status");
+			const fresh = await fr
+				.evaluate(() => !document.documentElement.dataset.m14old)
+				.catch(() => false);
+			const v = (await fr.locator("#status").textContent()) ?? "";
+			return fresh && v === "null" ? Date.now() - t0 : null;
+		},
+		30_000,
+	);
+	// 再观察 2 秒：问题若被再次打开，对话框会在这段时间里出现
+	const until = Date.now() + 2_000;
+	while (!asked && Date.now() < until) {
+		asked = await consentDlg.isVisible().catch(() => false);
+		await Bun.sleep(100);
+	}
+	note(`重新加载后 ${again}ms 拿到 null`);
+	expect(!asked, "同一观看期内拒绝后不再询问");
 }
 
 /** K37：`sample` 能力——向模型提问、流式返回、首次需同意（需要真实模型；fakeomp 答不出时跳过）。 */
@@ -6310,7 +6392,10 @@ const selected = (k: string) => !ONLY || ONLY.has(k);
 
 async function cleanup() {
 	await closeAll();
-	await browser?.close().catch(() => {});
+	if (browser && !(await within(browser.close(), CLOSE_TIMEOUT))) {
+		console.log(`关闭浏览器超过 ${CLOSE_TIMEOUT / 1000}s，强制结束`);
+		killBrowser();
+	}
 	netns?.stop();
 	if (mockVite && mockVite.exitCode === null) mockVite.kill("SIGTERM");
 	await stopReal();
