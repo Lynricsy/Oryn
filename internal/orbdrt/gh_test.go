@@ -151,7 +151,8 @@ func TestGhCLIUsesSocket(t *testing.T) {
 	assert.Contains(t, auth, "oryn-proxied", "gh 带的是占位令牌，由 egress 替换")
 }
 
-// 仓库改名后 resume.run 把 origin 改到新地址；origin 是无关地址时不变。
+// 仓库改名后 resume.run 把 origin 改到新地址（即使旧地址被 insteadOf 改写成 egress 代理）；旧端口的 insteadOf 被清掉；
+// origin 是无关地址时不变。
 func TestSetupFollowsRenamedOrigin(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
@@ -159,6 +160,10 @@ func TestSetupFollowsRenamedOrigin(t *testing.T) {
 	require.NoError(t, os.MkdirAll(work, 0o755))
 	gitRun(t, work, "init", "-q")
 	gitRun(t, work, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+	gitconfig := filepath.Join(rt.home, ".gitconfig")
+	stale := "url.http://127.0.0.1:1/git/github.com/acme/widgets.insteadof"
+	out, err := exec.Command("git", "config", "--file", gitconfig, stale, "https://github.com/acme/widgets").CombinedOutput()
+	require.NoError(t, err, string(out))
 	params := apigen.LinkCtlSetupRunParams{
 		Workdir:  "~/workspace/repo",
 		Repo:     &apigen.LinkCtlSetupRepo{URL: "https://github.com/acme/gadgets", PreviousUrls: []string{"https://github.com/Acme/Widgets"}},
@@ -168,7 +173,9 @@ func TestSetupFollowsRenamedOrigin(t *testing.T) {
 	}
 	var res apigen.LinkCtlSetupRunResult
 	require.NoError(t, cp.call(t, "resume.run", params, &res))
-	assert.Equal(t, "https://github.com/acme/gadgets", strings.TrimSpace(gitOut(t, work, "remote", "get-url", "origin")))
+	assert.Equal(t, "https://github.com/acme/gadgets", strings.TrimSpace(gitOut(t, work, "config", "--get", "remote.origin.url")))
+	_, err = exec.Command("git", "config", "--file", gitconfig, "--get", stale).Output()
+	assert.Error(t, err, "旧端口的 insteadOf 已清掉")
 
 	gitRun(t, work, "remote", "set-url", "origin", "https://example.com/other.git")
 	require.NoError(t, cp.call(t, "resume.run", params, &res))

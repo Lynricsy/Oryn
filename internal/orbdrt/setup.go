@@ -819,8 +819,10 @@ func validGitEntry(e string) bool {
 }
 
 // clearGitInsteadOf 删除全局 git 配置里所有指向本机 egress 代理的 insteadOf 条目（Oryn 写入的那些）。
+// 除当前 egress 地址外，也删回环地址上其它端口的条目：process 驱动下 orbd 每次启动的 egress 端口不同，
+// 旧端口的条目会让 git 连到已不存在的代理。
 func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) error {
-	re := `^url\.http://` + regexp.QuoteMeta(r.EgressAddr()) + `/git/.*\.insteadof$`
+	re := `^url\.http://(127\.0\.0\.1:[0-9]+|` + regexp.QuoteMeta(r.EgressAddr()) + `)/git/.*\.insteadof$`
 	cmd := r.bins.command(ctx, "git", "config", "--global", "--name-only", "--get-regexp", re)
 	cmd.Dir, cmd.Env = r.home, envList(env)
 	out, err := cmd.Output()

@@ -115,9 +115,10 @@ func (r *Runtime) followOrigin(ctx context.Context, workdir string, repo *apigen
 	if repo == nil || len(repo.PreviousUrls) == 0 || repo.URL == "" || !hasCheckout(workdir) {
 		return
 	}
-	res, err := r.git(ctx, workdir, nil, 64<<10, "remote", "get-url", "origin")
+	// 读配置里的原值：get-url 会套用 insteadOf，返回的是改写成 egress 代理的地址，与旧地址永远不等。
+	res, err := r.git(ctx, workdir, nil, 64<<10, "config", "--get", "remote.origin.url")
 	if err != nil || res.code != 0 {
-		r.log.Warn("origin follow: get-url failed", "err", err, "stderr", res.stderr)
+		r.log.Warn("origin follow: read remote.origin.url failed", "err", err, "stderr", res.stderr)
 		return
 	}
 	cur := normRepoURL(string(res.out))
