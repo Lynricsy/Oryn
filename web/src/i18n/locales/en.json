@@ -956,10 +956,12 @@
 	"palette": {
 		"title": "Command palette",
 		"open": "Search and commands",
-		"placeholder": "Search threads, conversations, settings and actions…",
+		"placeholder": "Search threads, Artifacts, conversations, settings and actions…",
 		"groups": {
 			"recent": "Recent threads",
+			"recentArtifacts": "Recent Artifacts",
 			"threads": "Threads",
+			"artifacts": "Artifacts",
 			"content": "Conversations",
 			"projects": "Projects",
 			"spaces": "Spaces",
@@ -984,6 +986,7 @@
 			"newThread": "New thread",
 			"inbox": "Open inbox",
 			"stats": "Open stats",
+			"artifacts": "Open Artifacts",
 			"settings": "Open settings",
 			"theme": "Toggle light / dark"
 		}

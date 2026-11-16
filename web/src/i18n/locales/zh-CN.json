@@ -956,10 +956,12 @@
 	"palette": {
 		"title": "命令面板",
 		"open": "搜索与命令",
-		"placeholder": "搜索线程、对话内容、设置与操作…",
+		"placeholder": "搜索线程、Artifacts、对话内容、设置与操作…",
 		"groups": {
 			"recent": "最近线程",
+			"recentArtifacts": "最近的 Artifacts",
 			"threads": "线程",
+			"artifacts": "Artifacts",
 			"content": "对话内容",
 			"projects": "项目",
 			"spaces": "空间",
@@ -984,6 +986,7 @@
 			"newThread": "新建线程",
 			"inbox": "打开收件箱",
 			"stats": "打开统计",
+			"artifacts": "打开 Artifacts",
 			"settings": "打开设置",
 			"theme": "切换明暗"
 		}

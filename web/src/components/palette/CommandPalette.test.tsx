@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { artifactQk } from "../../api/artifact-queries";
 import type { Schemas, Thread } from "../../api/client";
 import { indexStore } from "../../state/stores";
 import { revealWhenReady } from "../transcript/reveal";
@@ -40,6 +41,38 @@ const HIT: Schemas["SearchHit"] = {
 	copies: 3,
 };
 
+function art(
+	id: string,
+	title: string,
+	p: Partial<Schemas["Artifact"]> = {},
+): Schemas["Artifact"] {
+	return {
+		id,
+		origin: "agent",
+		kind: "web",
+		title,
+		version: 1,
+		size: 10,
+		pages: 1,
+		createdAt: 1,
+		updatedAt: 1,
+		...p,
+	};
+}
+
+const ARTIFACTS: Schemas["Artifact"][] = [
+	art("art_A", "季度报告", {
+		kind: "document",
+		projectId: "P-1",
+		version: 3,
+		updatedAt: 40,
+	}),
+	art("art_B", "路线图", { kind: "slides", updatedAt: 5, openedAt: 50 }),
+	art("art_C", "落地页", { updatedAt: 30 }),
+	art("art_D", "旧草图", { kind: "canvas", updatedAt: 2 }),
+	art("art_E", "季度报告草稿", { updatedAt: 60, deletedAt: 70 }),
+];
+
 function Where() {
 	const loc = useLocation();
 	return <p data-testid="where">{loc.pathname}</p>;
@@ -49,7 +82,10 @@ function mount() {
 	const qc = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
-	qc.setQueryData(["projects"], { projects: [] });
+	qc.setQueryData(["projects"], {
+		projects: [{ id: "P-1", name: "增长", updatedAt: 1 }],
+	});
+	qc.setQueryData(artifactQk.list({}), { artifacts: ARTIFACTS });
 	act(() => openPalette());
 	return render(
 		<QueryClientProvider client={qc}>
@@ -162,5 +198,56 @@ describe("CommandPalette", () => {
 		expect(screen.getByRole("option", { name: "显示全部 5 项" })).toBeTruthy();
 		fireEvent.keyDown(input(), { key: "Escape" });
 		expect(paletteStore.getState().open).toBe(false);
+	});
+
+	it("Artifacts 组：标题片段命中并高亮，选中打开 /artifacts/<id>；回收站里的不出现", () => {
+		indexStore.getState().setAll([th("T-9", "季度复盘")], 1);
+		mount();
+		type("季度");
+		const groups = screen
+			.getAllByRole("group")
+			.map((g) => g.getAttribute("aria-label"));
+		expect(groups.indexOf("Artifacts")).toBe(groups.indexOf("线程") + 1);
+		const group = screen.getByRole("group", { name: "Artifacts" });
+		const rows = group.querySelectorAll("[role=option]");
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toHaveTextContent("季度报告");
+		expect(rows[0]).toHaveTextContent("增长 · 文档 · v3");
+		expect(group).not.toHaveTextContent("季度报告草稿");
+		expect(
+			[...group.querySelectorAll("mark")].map((m) => m.textContent),
+		).toEqual(["季度"]);
+		fireEvent.click(rows[0] as HTMLElement);
+		expect(where()).toBe("/artifacts/art_A");
+		expect(paletteStore.getState().open).toBe(false);
+	});
+
+	it("类型名与项目名也能匹配，高亮只在标题上", () => {
+		mount();
+		type("幻灯片");
+		let group = screen.getByRole("group", { name: "Artifacts" });
+		expect(group.querySelectorAll("[role=option]")).toHaveLength(1);
+		expect(group).toHaveTextContent("路线图");
+		expect(group.querySelector("mark")).toBeNull();
+		type("增长");
+		group = screen.getByRole("group", { name: "Artifacts" });
+		expect(group.querySelectorAll("[role=option]")).toHaveLength(1);
+		expect(group).toHaveTextContent("季度报告");
+	});
+
+	it("空查询：最近线程之后是最近打开的至多 3 个 artifact，操作里有「打开 Artifacts」", () => {
+		mount();
+		const groups = screen
+			.getAllByRole("group")
+			.map((g) => g.getAttribute("aria-label"));
+		expect(groups).toEqual(["最近线程", "最近的 Artifacts", "操作"]);
+		const recent = screen.getByRole("group", { name: "最近的 Artifacts" });
+		expect(
+			[...recent.querySelectorAll("[role=option]")].map(
+				(o) => o.querySelector(".text-fg")?.textContent,
+			),
+		).toEqual(["路线图", "季度报告", "落地页"]);
+		fireEvent.click(screen.getByRole("option", { name: "打开 Artifacts" }));
+		expect(where()).toBe("/artifacts");
 	});
 });

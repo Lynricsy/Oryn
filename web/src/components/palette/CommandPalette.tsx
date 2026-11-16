@@ -1,7 +1,8 @@
 /**
- * 命令面板（Ctrl/⌘+K，按需加载的独立分块）：一个输入框搜遍线程、对话内容、项目、Space、设置分区与常用操作。
- * - 空查询：最近 6 个线程 + 全部操作；有查询：按组列出，每组 3 项，组尾「显示全部」把这一组展开到 50 项（只看这一组，Esc 退回）。
- * - 本地各组用 `lib/palette-match`（多词 AND、大小写与变音符折叠、高亮落在原文上）；「对话内容」组走服务端全文搜索
+ * 命令面板（Ctrl/⌘+K，按需加载的独立分块）：一个输入框搜遍线程、Artifacts、对话内容、项目、Space、设置分区与常用操作。
+ * - 空查询：最近 6 个线程 + 最近打开的至多 3 个 artifact + 全部操作；有查询：按组列出，每组 3 项，组尾「显示全部」把这一组展开到 50 项（只看这一组，Esc 退回）。
+ * - 本地各组用 `lib/palette-match`（多词 AND、大小写与变音符折叠、高亮落在原文上）；artifact 只匹配标题、项目名与类型名，
+ *   不搜内容；「对话内容」组走服务端全文搜索
  *   （输入停顿 200ms 后发请求，查询变化时取消在途请求），选中后打开线程并定位到那条消息。
  * - 键盘：↑↓ / Home / End 移动，Enter 执行，Esc 先退出展开再关闭；输入法组字期间的 Enter / 方向键一律不处理。
  *   焦点始终在输入框（组合框 + aria-activedescendant），关闭后还原到打开前的元素。
@@ -22,9 +23,11 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { SETTINGS } from "../../App";
+import { useArtifacts } from "../../api/artifact-queries";
 import { api, type Schemas, unwrap } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
+import { kindIcon, kindLabelKey } from "../../lib/artifacts/kinds";
 import { formatRelative } from "../../lib/format";
 import { host } from "../../lib/host";
 import { pushModal, trapTab } from "../../lib/modal";
@@ -42,6 +45,7 @@ import { useBreakpoint } from "../../lib/viewport";
 import { useIndex } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
 import { uiStore } from "../../state/ui";
+import { recentAt } from "../artifacts/artifacts-model";
 import { MORE_ENTRIES } from "../layout/more-entries";
 import { revealWhenReady } from "../transcript/reveal";
 import { ProjectBadge } from "../ui/data";
@@ -60,12 +64,15 @@ const DEBOUNCE_MS = 200;
 /** 有查询时每组显示的条数；展开后的上限 */
 const PER_GROUP = 3;
 const EXPANDED_MAX = 50;
-/** 空查询时的最近线程数 */
+/** 空查询时的最近线程数、最近打开的 artifact 数 */
 const RECENT = 6;
+const RECENT_ARTIFACTS = 3;
 
 type GroupKey =
 	| "recent"
+	| "recentArtifacts"
 	| "threads"
+	| "artifacts"
 	| "content"
 	| "projects"
 	| "spaces"
@@ -188,6 +195,8 @@ export function CommandPalette(): ReactNode {
 	const threads = useIndex((s) => s.threads);
 	const projects = useProjects();
 	const spaces = useSpaces();
+	// 面板只在打开时挂载（PaletteHost），列表也就只在打开时请求；缺省筛选不含回收站
+	const artifacts = useArtifacts({});
 	const mode = useTheme((s) => s.mode);
 	const terms = useMemo(() => queryTerms(q), [q]);
 	const searching = terms.length > 0;
@@ -295,6 +304,48 @@ export function CommandPalette(): ReactNode {
 		[spaces.data, go],
 	);
 
+	const artifactCands = useMemo<Candidate[]>(
+		() =>
+			(artifacts.data ?? [])
+				.filter((a) => a.deletedAt === undefined)
+				.map((a) => {
+					const project = a.projectId
+						? projectName.get(a.projectId)
+						: undefined;
+					const kind = t(kindLabelKey(a.kind));
+					const detail = [
+						project,
+						kind,
+						t("artifacts.viewer.version", { n: a.version }),
+					]
+						.filter(Boolean)
+						.join(" · ");
+					const at = recentAt(a);
+					return {
+						// 只搜标题、项目名与类型名；高亮只画在标题上
+						fields: [fold(a.title), fold(project ?? ""), fold(kind)],
+						recency: at,
+						row: (ranges) => ({
+							kind: "item",
+							key: `artifact:${a.id}`,
+							leading: (
+								<Icon
+									name={kindIcon(a.kind)}
+									size={15}
+									className="text-muted"
+								/>
+							),
+							label: a.title,
+							labelRanges: ranges[0],
+							detail,
+							meta: formatRelative(at),
+							run: () => go(`/artifacts/${a.id}`),
+						}),
+					};
+				}),
+		[artifacts.data, projectName, t, go],
+	);
+
 	const settingCands = useMemo<Candidate[]>(
 		() =>
 			SETTINGS.filter((s) => s !== "desktop" || host.desktop !== null).map(
@@ -349,6 +400,13 @@ export function CommandPalette(): ReactNode {
 			),
 			action("stats", "chart", t("palette.actions.stats"), "stats usage", () =>
 				go("/stats"),
+			),
+			action(
+				"artifacts",
+				"shapes",
+				t("palette.actions.artifacts"),
+				"artifacts",
+				() => go("/artifacts"),
 			),
 			action(
 				"settings",
@@ -429,8 +487,13 @@ export function CommandPalette(): ReactNode {
 				.sort((a, b) => b.recency - a.recency)
 				.slice(0, RECENT)
 				.map((c) => c.row([]));
+			const recentArtifacts = artifactCands
+				.toSorted((a, b) => b.recency - a.recency)
+				.slice(0, RECENT_ARTIFACTS)
+				.map((c) => c.row([]));
 			return [
 				{ key: "recent" as const, rows: recent },
+				{ key: "recentArtifacts" as const, rows: recentArtifacts },
 				{ key: "actions" as const, rows: actionCands.map((c) => c.row([])) },
 			].filter((g) => g.rows.length > 0);
 		}
@@ -442,6 +505,7 @@ export function CommandPalette(): ReactNode {
 			) : undefined;
 		const all: { key: GroupKey; rows: ItemRow[]; more: boolean }[] = [
 			{ key: "threads", rows: rank(threadCands, terms), more: false },
+			{ key: "artifacts", rows: rank(artifactCands, terms), more: false },
 			{
 				key: "content",
 				rows: contentRows,
@@ -484,6 +548,7 @@ export function CommandPalette(): ReactNode {
 		terms,
 		expanded,
 		threadCands,
+		artifactCands,
 		projectCands,
 		spaceCands,
 		settingCands,
