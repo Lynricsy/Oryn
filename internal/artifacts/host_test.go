@@ -149,6 +149,28 @@ func TestHostWildcard(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, do(mw, hostReq{host: host, path: "/"}).Code)
 }
 
+// 普通查看帧：只有帧根（含钉住版本的根）带 frame-ancestors；页面会内嵌的其它文件不带，否则从不透明源的根里内嵌
+// 会被浏览器挡住。
+func TestHostAncestorsOnlyAtRoot(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	h := newHost(t, e, "localhost", fakeRuntime)
+	a := mkPage(t, e, put("index.html", `<iframe src="b.html"></iframe>`), put("b.html", "<p>b</p>"))
+	token, _, err := h.OpenFrame(ctx, a.ID, 1, "", "")
+	require.NoError(t, err)
+	mw := h.Middleware(http.NotFoundHandler())
+	host := "a-" + token + ".localhost:7600"
+	csp := func(p string) string {
+		rec := doRaw(mw, hostReq{host: host, path: p})
+		require.Equal(t, http.StatusOK, rec.Code, p)
+		return rec.Header().Get("Content-Security-Policy")
+	}
+	assert.True(t, strings.HasSuffix(csp("/"), "frame-ancestors http://localhost:7600"))
+	assert.True(t, strings.HasSuffix(csp("/_oryn/v/1/"), "frame-ancestors http://localhost:7600"))
+	assert.NotContains(t, csp("/b.html"), "frame-ancestors")
+	assert.NotContains(t, csp("/_oryn/v/1/b.html"), "frame-ancestors")
+}
+
 // /_oryn/v/<n>/ 钉住版本；钉住旧版本的帧不带运行时；回收站里的回 410。
 func TestHostVersions(t *testing.T) {
 	e := newEnv(t)

@@ -105,11 +105,12 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 	sandbox, ancestors := sandboxFrame, f.ancestors
 	if f.topLevel {
 		sandbox = sandboxTopLevel
-		if !atFrameRoot(p) {
-			// 顶层帧的根（画布的概览页或页面自己的 index.html）会内嵌同一帧里的其它文件。根运行在不透明源里，
-			// 浏览器对不透明源的祖先任何 frame-ancestors 都不放行（Chromium 实测连 * 也不行），所以根之外不发这条指令
-			ancestors = ""
-		}
+	}
+	if !atFrameRoot(p) {
+		// 帧根（查看器 / 顶层窗口直接加载的那一页）会内嵌同一帧里的其它文件（页面自己的 <iframe src="b.html">、
+		// 画布的概览页）。根运行在不透明源里，浏览器对不透明源的祖先任何 frame-ancestors 都不放行（Chromium 实测
+		// 连 * 也不行），所以根之外不发这条指令；这些地址同样要凭帧令牌才能访问。
+		ancestors = ""
 	}
 	rel := strings.TrimPrefix(p, "/")
 	if rel == runtimeEndpoint {
