@@ -501,6 +501,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	if !r.cfg.Coordinator && r.runner == nil {
 		wg.Go(func() { r.serveSocket(ctx) })
+		wg.Go(func() { r.serveGh(ctx) })
 		wg.Go(func() { r.svc.reportLoop(ctx) })
 	}
 	if d := r.desk; d != nil {
@@ -1047,6 +1048,11 @@ func (r *Runtime) baseEnv() map[string]string {
 	env["ORYN_ORB_ID"] = r.cfg.OrbID
 	if r.desk != nil {
 		env["DISPLAY"] = desktopDisplay
+	}
+	// M14：项目连接了 GitHub 时 gh 读 orbd 写的配置（经 gh.sock 代理，令牌由 egress 注入）。
+	// 不导出 GH_TOKEN：其它读这个变量的工具会拿占位值直连 GitHub。
+	if _, err := os.Stat(filepath.Join(r.ghDir(), "config.yml")); err == nil {
+		env["GH_CONFIG_DIR"] = r.ghDir()
 	}
 	return env
 }

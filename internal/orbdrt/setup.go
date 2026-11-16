@@ -162,6 +162,10 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	default:
 		workdir = filepath.Join(r.home, "workspace")
 	}
+	// M14：先写 / 删 gh 配置，本次脚本环境里的 GH_CONFIG_DIR 随之确定。
+	if err := r.applyGh(p.Gh); err != nil {
+		return fail(ctlErr("failed", "gh config: %v", err))
+	}
 	env := r.baseEnv()
 	maps.Copy(env, p.Env)
 	// 记住本次参数，供 orb 内 `oryn orb setup run` 重跑。
@@ -219,6 +223,8 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			}
 		}
 	}
+	// M14：仓库改名 / 转移后把检出的 origin 改到新地址（setup 与 resume 都走）。
+	r.followOrigin(ctx, workdir, p.Repo)
 
 	if full {
 		// 3. clone：仓库存在且工作目录尚无检出。

@@ -22,6 +22,7 @@ orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\
 需要持久的 PATH / 环境变量写进 \`~/.profile\`：agent 在启动时读取登录 shell 环境，所以只对之后启动的 agent 生效。
 仓库内脚本的改动只有合入项目基线分支后才对新 orb 生效。
 git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
+GitHub：~/.oryn/gh/identity.json 存在时，git 与 \`gh\` CLI 已经以该文件里的 GitHub 账号获得本项目仓库的访问权限。不要运行 \`gh auth login\`，也不要向用户要令牌；权限只覆盖这个仓库。
 用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。
 长驻进程（dev server、watcher、队列消费者）用受管服务，不要用 nohup / setsid / & / tmux 保活：
 - 仓库里的服务写进 \`.oryn/services.yaml\`（\`services.<名字>: {command, cwd, port, env, health, portal, portals}\`），用 \`oryn orb service start\` 按文件确保全部运行；临时服务用 \`oryn orb service start <名字> --command '<命令>' --portal\`。
@@ -153,9 +154,15 @@ function serviceLines(): string[] {
 		.map((s) => `当前现状：服务 ${s.name} 启动失败（${s.error ?? "未知错误"}），用 \`oryn orb service logs ${s.name}\` 查看。`);
 }
 
+function githubLine(): string | undefined {
+	const id = readOryn<{ login?: string }>("gh/identity.json");
+	return id?.login ? `GitHub account: @${id.login}` : undefined;
+}
+
 function statusLines(): string[] {
 	const setup = setupLine();
-	return [...(setup ? [setup] : []), ...serviceLines()];
+	const github = githubLine();
+	return [...(github ? [github] : []), ...(setup ? [setup] : []), ...serviceLines()];
 }
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
