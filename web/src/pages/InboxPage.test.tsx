@@ -15,6 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
 import { projects } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
+import {
+	type AppNotification,
+	notificationsStore,
+} from "../state/notifications";
 import { indexStore } from "../state/stores";
 import { InboxPage } from "./InboxPage";
 
@@ -59,6 +63,7 @@ describe("收件箱页", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		indexStore.getState().setAll([], 0);
+		notificationsStore.setState({ items: [] });
 		localStorage.clear();
 	});
 
@@ -135,5 +140,54 @@ describe("收件箱页", () => {
 		);
 		expect(screen.queryByTestId("inbox-empty")).toBeNull();
 		expect(sections()).toEqual(["you"]);
+	});
+
+	it("行内预览取该线程未作答的提问与失败原因；状态筛选只留那一类，那一类清空后回到全部", () => {
+		const note = (
+			id: string,
+			threadId: string,
+			p: Partial<AppNotification>,
+		): AppNotification => ({
+			id,
+			kind: "input",
+			threadId,
+			title: threadId,
+			body: "",
+			url: `/t/${threadId}`,
+			createdAt: NOW,
+			deliveries: [],
+			...p,
+		});
+		// 新的在前：已作答的那条较新，预览要跳过它取未作答的
+		notificationsStore.setState({
+			items: [
+				note("n2", "wait", { body: "已经答过的旧问题", resolvedAt: NOW }),
+				note("n1", "wait", { body: "允许执行 `rm -rf dist`？" }),
+			],
+		});
+		indexStore.getState().setAll(
+			[
+				th("wait", { state: "awaiting_input" }),
+				th("err", {
+					state: "error",
+					error: { kind: "agent_failed", reason: "omp exited with status 1" },
+				}),
+				th("run", { state: "working", activity: "跑测试" }),
+			],
+			1,
+		);
+		mount();
+		const preview = (id: string) =>
+			document.querySelector(`[data-inbox-row="${id}"] [data-inbox-preview]`);
+		expect(preview("wait")).toHaveTextContent("允许执行 rm -rf dist？");
+		expect(preview("wait")).not.toHaveTextContent("已经答过");
+		expect(preview("err")).toHaveTextContent("omp exited with status 1");
+
+		fireEvent.click(
+			document.querySelector("[data-inbox-filter=stopped]") as HTMLElement,
+		);
+		expect(sections()).toEqual(["stopped"]);
+		act(() => indexStore.getState().upsertThread(th("err", { state: "idle" })));
+		expect(sections()).toEqual(["you", "running"]);
 	});
 });

@@ -180,7 +180,15 @@
 		},
 		"forkOf": "派生自「{{title}}」",
 		"empty": "没有需要你处理的线程",
-		"emptyHint": "等待输入、已完成未读、出错和运行中的线程会出现在这里。"
+		"emptyHint": "等待输入、已完成未读、出错和运行中的线程会出现在这里。",
+		"pending_one": "项待你处理",
+		"pending_other": "项待你处理",
+		"allClear": "暂时没有要你处理的",
+		"filter": "按状态筛选",
+		"all": "全部",
+		"reply": "去回复",
+		"markRead": "标为已读",
+		"markAllRead": "全部标为已读"
 	},
 	"newThread": {
 		"heading": "要做点什么？",

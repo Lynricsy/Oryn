@@ -9,11 +9,13 @@ import { isCoordinatorThread } from "./thread-kind";
 
 export type InboxState = "you" | "ready" | "stopped" | "running";
 
-/** 页面上的分节顺序；也是按项目分组时组内的状态次序。 */
+/**
+ * 页面上的分节顺序；也是按项目分组时组内的状态次序。按紧急程度：要你作答 → 出错要你介入 → 做完待看 → 运行中只是告知。
+ */
 export const INBOX_ORDER: readonly InboxState[] = [
 	"you",
-	"ready",
 	"stopped",
+	"ready",
 	"running",
 ];
 

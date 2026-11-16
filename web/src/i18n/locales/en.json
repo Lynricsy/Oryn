@@ -180,7 +180,15 @@
 		},
 		"forkOf": "From “{{title}}”",
 		"empty": "Nothing needs you",
-		"emptyHint": "Threads that are waiting for input, finished but unread, errored, or running show up here."
+		"emptyHint": "Threads that are waiting for input, finished but unread, errored, or running show up here.",
+		"pending_one": "thread needs you",
+		"pending_other": "threads need you",
+		"allClear": "Nothing needs you right now",
+		"filter": "Filter by state",
+		"all": "All",
+		"reply": "Reply",
+		"markRead": "Mark as read",
+		"markAllRead": "Mark all as read"
 	},
 	"newThread": {
 		"heading": "What should we work on?",
