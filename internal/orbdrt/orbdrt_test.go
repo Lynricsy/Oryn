@@ -103,10 +103,13 @@ func TestSetupRun(t *testing.T) {
 	assert.Equal(t, "project-resume\nrepo-resume\n", readFile("resume.txt"))
 	assert.Contains(t, readFile(".cache/oryn/logs/setup.log"), "setup-ran")
 
-	out, err := exec.Command("git", "config", "--file", filepath.Join(home, ".gitconfig"), "--get",
-		"url.http://"+rt.EgressAddr()+"/git/github.com/.insteadOf").Output()
+	gitcfg := filepath.Join(home, ".gitconfig")
+	out, err := exec.Command("git", "config", "--file", gitcfg, "--get", "url.http://github.com/.insteadOf").Output()
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/\n", string(out))
+	out, err = exec.Command("git", "config", "--file", gitcfg, "--get", "http.http://github.com/.proxy").Output()
+	require.NoError(t, err)
+	assert.Equal(t, "http://"+rt.EgressAddr()+"\n", string(out))
 
 	// setup.log 通知流式上报（stdout 与 stderr 分开）。
 	cp.waitNotif(t, 0, "setup.log", func(raw json.RawMessage) bool {

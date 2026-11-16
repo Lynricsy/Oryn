@@ -212,6 +212,110 @@ func TestGitRoute(t *testing.T) {
 	assert.Equal(t, 403, r.StatusCode, "git 路由不接受占位符")
 }
 
+// R5：代理形式的请求（orb 内 git 经 `http.http://<host>/.proxy` 发来，请求行是 `http://<host>/<owner>/<repo>/…`）
+// 与 /git/<host>/… 走同一条 git 路由：同样的仓库限定、只读规则、规范路径检查与 NoGit。
+func TestGitRouteProxyForm(t *testing.T) {
+	req := func(target string) *http.Request { return httptest.NewRequest("GET", target, nil) }
+	toks := map[string]string{"github.com": "tok", "gitlab.com": "t2"}
+
+	proj := NewHandler("orb-x", fakeR{git: toks, pol: Policy{GitRepos: map[string][]string{"github.com": {"Owner/Repo.git"}}}})
+	tg, st := proj.resolve(req("http://GitHub.com/owner/repo.git/info/refs?service=git-upload-pack"))
+	require.Equal(t, http.StatusOK, st)
+	assert.Equal(t, "https://github.com/owner/repo.git/info/refs", tg.url.String())
+	assert.Equal(t, "Basic eC1hY2Nlc3MtdG9rZW46dG9r", tg.auth)
+	for target, want := range map[string]int{
+		"http://github.com/Owner/Repo/git-receive-pack":                       200,
+		"http://github.com/owner/repo/info/refs?service=git-receive-pack":     200,
+		"http://github.com/owner/other.git/info/refs?service=git-upload-pack": 403,
+		"http://github.com/owner/repo-other/git-upload-pack":                  403,
+		"http://gitlab.com/any/thing.git/git-upload-pack":                     403,
+		"http://github.com/owner/repo/settings":                               403,
+		"http://github.com/":                                                  400,
+		// 只认 http 绝对地址，其它 absolute-form 一律 400，不落到 origin-form 的路由；端口是主机键的一部分（同 /git/<host:port>/，
+		// 这里不是项目仓库所在主机，403）。
+		"http://github.com:8080/owner/repo/git-upload-pack": 403,
+		"https://github.com/owner/repo/git-upload-pack":     400,
+		// 代理形式只走 git 路由：路径像 /git/、/llm/、/gh/ 也按 owner/repo 解析，不是 smart-HTTP 端点就 403。
+		"http://github.com/git/github.com/owner/repo/git-upload-pack": 403,
+		"http://x/llm/custom/v1/messages":                             403,
+		"http://github.com/gh/api.github.com/user":                    403,
+	} {
+		_, st := proj.resolve(req(target))
+		assert.Equal(t, want, st, target)
+	}
+
+	ro := NewHandler("orb-x", fakeR{git: toks})
+	for target, want := range map[string]int{
+		"http://gitlab.com/any/thing.git/git-upload-pack":          200,
+		"http://github.com/a/b/git-receive-pack":                   403,
+		"http://github.com/a/b/info/refs?service=git-receive-pack": 403,
+		"http://bitbucket.org/x/y/git-upload-pack":                 404,
+	} {
+		_, st := ro.resolve(req(target))
+		assert.Equal(t, want, st, target)
+	}
+	// 带端口的 PAT 主机：端口是主机键的一部分，上游保留端口。
+	ported := NewHandler("orb-x", fakeR{git: map[string]string{"git.corp.example:8443": "t3"}})
+	tg, st = ported.resolve(req("http://git.corp.example:8443/a/b/git-upload-pack"))
+	require.Equal(t, http.StatusOK, st)
+	assert.Equal(t, "https://git.corp.example:8443/a/b/git-upload-pack", tg.url.String())
+
+	noGit := NewHandler("orb-x", fakeR{git: toks, pol: Policy{NoGit: true}})
+	_, st = noGit.resolve(req("http://github.com/a/b/git-upload-pack"))
+	assert.Equal(t, http.StatusForbidden, st)
+
+	// 端到端：真实的代理形式请求行转发到上游时换成 https 与注入的令牌；点段照样 400；owner 叫 memory 的仓库走 git；
+	// 模型与 /gh/ 路由在 origin-form 下可用，代理形式下一律 403。
+	var gotURL, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL, gotAuth = r.Host+r.URL.RequestURI(), r.Header.Get("Authorization")
+	}))
+	defer up.Close()
+	h := NewHandler("orb-x", fakeR{git: toks, gh: "ghtok", pol: Policy{
+		Routes: map[string]Route{"custom": {Origin: up.URL}},
+		GitHub: &GitHubAccess{GitOrigin: up.URL, APIOrigin: up.URL},
+	}})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	raw := func(target string) int {
+		t.Helper()
+		gotURL, gotAuth = "", ""
+		conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+		require.NoError(t, err)
+		defer conn.Close()
+		fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: github.com\r\nProxy-Connection: Keep-Alive\r\nConnection: close\r\n\r\n", target)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		require.NoError(t, err, target)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	upHost := strings.TrimPrefix(up.URL, "http://")
+	assert.Equal(t, http.StatusOK, raw("http://github.com/acme/widgets/info/refs?service=git-upload-pack"))
+	assert.Equal(t, upHost+"/acme/widgets/info/refs?service=git-upload-pack", gotURL)
+	assert.Equal(t, "Basic eC1hY2Nlc3MtdG9rZW46dG9r", gotAuth)
+	assert.Equal(t, http.StatusOK, raw("http://github.com/memory/repo/info/refs?service=git-upload-pack"), "owner 叫 memory 的仓库走 git 路由")
+	assert.Equal(t, upHost+"/memory/repo/info/refs?service=git-upload-pack", gotURL)
+	assert.Equal(t, "Basic eC1hY2Nlc3MtdG9rZW46dG9r", gotAuth)
+	for _, target := range []string{
+		"http://github.com/acme/widgets/../../victim/private/info/refs?service=git-upload-pack",
+		"http://github.com/acme/widgets/%2e%2e/%2e%2e/victim/private/git-upload-pack",
+		"http://github.com/acme//widgets/git-upload-pack",
+	} {
+		assert.Equal(t, http.StatusBadRequest, raw(target), target)
+	}
+	assert.Equal(t, http.StatusOK, raw("/llm/custom/v1/messages"), "对照：origin-form 的模型路由可用")
+	assert.Equal(t, http.StatusOK, raw("/gh/api.github.com/user"), "对照：origin-form 的 /gh/ 路由可用")
+	for _, target := range []string{
+		"http://x/llm/custom/v1/messages",
+		"http://github.com/gh/api.github.com/user",
+		"http://api.github.com/gh/api.github.com/user",
+		"http://github.com/memory/t/T-1/v1/default/banks",
+	} {
+		assert.Equal(t, http.StatusForbidden, raw(target), target)
+		assert.Empty(t, gotURL, "%s 没有到达上游", target)
+	}
+}
+
 // M9：协调宿主（NoGit）的 git 路由一律 403，模型路由照常。
 func TestNoGitPolicy(t *testing.T) {
 	req := func(path string) *http.Request { return httptest.NewRequest("GET", path, nil) }

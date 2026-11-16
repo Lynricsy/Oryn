@@ -197,13 +197,14 @@ docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`�
 
 ### git 出站策略
 
-orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811/git/<host>/…`）到达控制面，由控制面注入 `git/<host>/token` 密钥后转发到 `https://<host>/…`。令牌从不进入 orb。控制面按 orb 所属项目决定放行范围：
+orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制面，由控制面注入 `git/<host>/token` 密钥后转发到 `https://<host>/…`。令牌从不进入 orb。orbd 在 orb 的 `~/.gitconfig` 里写两类条目：`url.http://<前缀>.insteadOf https://<前缀>`，只把 https 换成 http，主机与 `owner/repo` 路径不变；以及 `http.http://<host>/.proxy http://127.0.0.1:<egress 端口>`，让这台主机的 http 请求以代理形式（请求行 `GET http://<host>/<owner>/<repo>/info/refs…`）发给本机代理。这样 `git remote -v` 显示的仍是 `http://github.com/<owner>/<repo>`，`gh` 不带 `-R` 也能从 remote 推断仓库。需要 git 支持按地址配置 `http.<url>.proxy`（1.8.5 起）。控制面按 orb 所属项目决定放行范围：
 
-- **有项目且项目 `repo_url` 为 `https://` 地址的 orb**：只放行该项目仓库，可读可写（`git-upload-pack` 与 `git-receive-pack`）。仓库路径须与 `repo_url` 完全一致（不区分大小写，忽略 `.git` 后缀）。同一主机上的其它仓库、其它主机一律拒绝（403）。orb 内的 `url.<代理>.insteadOf` 只覆盖项目仓库这一个地址前缀，其它 `https://` git 地址照常直连公网、不带令牌，公开仓库仍可匿名克隆。
+- **有项目且项目 `repo_url` 为 `https://` 地址的 orb**：只放行该项目仓库，可读可写（`git-upload-pack` 与 `git-receive-pack`）。仓库路径须与 `repo_url` 完全一致（不区分大小写，忽略 `.git` 后缀）。同一主机上的其它仓库、其它主机一律拒绝（403）。orb 内的 `insteadOf` 只覆盖项目仓库这一个地址前缀，其它 `https://` git 地址照常直连公网、不带令牌，公开仓库仍可匿名克隆。
 - **无项目的 orb**（以及项目没有 `https://` 仓库地址的 orb）：配置了 `git/<host>/token` 的主机上，任意仓库只读。只放行 `info/refs?service=git-upload-pack` 与 `git-upload-pack`，推送（`git-receive-pack`）一律拒绝（403）。这类 orb 的 `insteadOf` 覆盖整个主机。
 - **github.com（M15）**：上面两条只适用于 PAT 主机。orb 由 GitHub 集成下发凭据时，github.com 改由出站代理注入线程身份槽位的 OAuth 令牌，不按项目仓库限制：orb 能读写哪些仓库取决于该身份账号自身的权限，以及项目开启的门禁。详见第 13 节。
-- **路径与端点**：只放行 git smart-HTTP 端点（`info/refs`、`git-upload-pack`、`git-receive-pack`），其它路径返回 404。路径里出现 `.` 或 `..` 段、空段（`//`），或 `path.Clean` 后与原路径不同，一律返回 400。这包括 `%2e%2e` 这类编码形式，因为校验针对解码后的路径。git 路由不接受任何 `oryn-ph-…` 占位符。
-- orbd 每次执行 setup / resume 时，先删掉自己以前写入的全部 `insteadOf` 条目，再按当前策略重写。项目设置变更后，在下一次唤醒时生效。
+- **路径与端点**：控制面接受两种请求形式，规则相同。一种是 orbd 现在写的代理形式（absolute-form `http://<host>[:<端口>]/<owner>/<repo>/…`）；它只能进 git 路由，`host[:端口]` 就是主机键（同路径形式里的主机段），不是 `http://` 的绝对地址回 400，不是 smart-HTTP 端点回 403。另一种是 `/git/<host>/<owner>/<repo>/…` 路径形式，M15 之前的 orbd 用这种。只放行 git smart-HTTP 端点（`info/refs`、`git-upload-pack`、`git-receive-pack`），其它路径返回 404（代理形式为 403）。路径里出现 `.` 或 `..` 段、空段（`//`），或 `path.Clean` 后与原路径不同，一律返回 400。这包括 `%2e%2e` 这类编码形式，因为校验针对解码后的路径。git 路由不接受任何 `oryn-ph-…` 占位符。
+- **`NO_PROXY` 覆盖的主机不经出站代理（失败关闭）**：改写之后的地址是明文 http。git 一旦按 `NO_PROXY` / `no_proxy` 绕过本机代理，就会直连 `<host>:80`：请求不带令牌，但网络上的中间人能替换 refs 与代码，对象哈希证明不了对端是谁。因此 orbd 在写这些条目之前，先读 setup 的环境（orbd 进程环境加上 setup 下发的 env）里的 `NO_PROXY` 与 `no_proxy`，两种写法都读，任一命中就算。判定取 libcurl（git 用它，curl 8.23 `proxy_check_noproxy`）与 Go httpproxy（git-lfs 用它）两种规则的并集，宁可多判。下面几种都算命中：整串为 `*` 或任一条目为 `*`；条目等于主机名，或是主机名的后缀（`github.com`、`.github.com`）；`*.domain` 命中子域；`host:端口` 的端口与请求端口相同（http 缺省 80）；主机是 IP 时按 IP 或 CIDR 比较。命中的主机不写 https→http 改写，也不写代理。它的 remote 保持 `https://`，经 TLS 直连、不带令牌：公开仓库照常可读，私有仓库与推送会明确失败，gh 仍能从 https remote 推断仓库。setup 日志记一条 `warning: NO_PROXY/no_proxy covers <host> …`，把该主机从 `NO_PROXY` 和 `no_proxy` 里去掉、重新唤醒 orb 就会恢复。orbd 不改 `NO_PROXY` 本身，以免改变其它流量的代理语义。M16 合并记忆的 `NO_PROXY` 时会保留已有条目，所以项目 env 或镜像里的 `NO_PROXY` 会原样生效。这个判定只看 setup 时的环境：agent 在自己的 shell 里临时设置的 `NO_PROXY` 不在防护范围内。agent 本来就不可信，本来也能直连公网下载代码，只是这样拿不到令牌。
+- orbd 每次执行 setup / resume 时，先删掉自己以前写入的全部条目，再按当前策略重写。要删的条目有三类：同址的 https→http `insteadOf`；值为本机回环端口的 `http.http://<host>/.proxy`，包括 orbd 重启前用过的旧端口；M15 之前的 `url.http://127.0.0.1:<端口>/git/<前缀>.insteadOf`。用户自己写的改写与代理设置保留。项目设置变更后，在下一次唤醒时生效。
 
 ### 模型密钥绑定
 

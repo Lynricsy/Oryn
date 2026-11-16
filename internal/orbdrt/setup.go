@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -222,19 +224,51 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		lg.system(apigen.OmpHome, fmt.Sprintf("wrote %d project config file(s) to ~/.oryn/project-config/.omp", len(p.ProjectConfig.Files)))
 	}
 
-	// 2. git insteadOf：经本机 egress 代理访问 git（控制面注入令牌）。条目为 `host`（整个主机，无项目的 orb 只读）
-	// 或 `host/owner/repo`（只覆盖项目仓库；同主机其它地址照常直连公网、不带令牌）。先清掉以前写过的全部条目，
-	// 策略收窄（如 orb 改属项目）后旧的整主机条目不会残留。
+	// 2. git：经本机 egress 代理访问 git（控制面注入令牌）。条目为 `host`（整个主机，无项目的 orb 只读）
+	// 或 `host/owner/repo`（只覆盖项目仓库；同主机其它地址照常直连公网、不带令牌）。
+	// insteadOf 只把 https 换成 http（`https://github.com/acme/widgets` → `http://github.com/acme/widgets`），
+	// `http.http://<host>/.proxy` 再把这个主机的 http 请求以代理形式交给 egress：`git remote -v` 显示的仍是真实主机与
+	// owner/repo，gh 才能从 remote 推断仓库（R5）。先清掉以前写过的全部条目，策略收窄（如 orb 改属项目）后旧条目不会残留。
 	for _, h := range p.GitHosts {
 		if !validGitEntry(h) {
 			return fail(ctlErr(link.CodeInvalidParams, "invalid git host %q", h))
 		}
 	}
-	if err := r.clearGitInsteadOf(ctx, env); err != nil {
+	if err := r.clearGitEgress(ctx, env); err != nil {
 		return fail(ctlErr("failed", "git config cleanup: %v", err))
 	}
+	// NO_PROXY / no_proxy 覆盖的主机失败关闭：git 会绕过代理，把改写出来的 http 地址明文直连公网（中间人可替换 refs 与对象），
+	// 所以这些主机不写改写也不写代理，remote 保持 https 直连（TLS、不带令牌）：公开仓库照常可读，私有仓库与推送明确失败。
+	// 不改 NO_PROXY 本身，以免改变其它流量的代理语义。
+	var hosts []string
+	bypassed := map[string]bool{}
 	for _, h := range p.GitHosts {
-		from, to := "https://"+h, fmt.Sprintf("http://%s/git/%s", r.EgressAddr(), h)
+		host, _, _ := strings.Cut(h, "/")
+		if slices.Contains(hosts, host) || bypassed[host] {
+			continue
+		}
+		if noProxyCovers(host, env["NO_PROXY"], env["no_proxy"]) {
+			bypassed[host] = true
+			msg := fmt.Sprintf("warning: NO_PROXY/no_proxy covers %s, so git would bypass the Oryn egress proxy; "+
+				"git for %s is not routed through egress (remotes stay https without credentials: public repos still fetch, "+
+				"private repos and pushes fail). Remove %s from NO_PROXY and no_proxy to enable it.", host, host, host)
+			lg.system(apigen.Git, msg)
+			r.log.Warn("git host covered by NO_PROXY; not routing it through egress", "host", host)
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	// 先写代理再写 insteadOf：任何时候改写出来的 http 地址都有代理接住。
+	for _, host := range hosts {
+		if err := lg.run(ctx, apigen.Git, r.home, envList(env), "git", "config", "--global", "http.http://"+host+"/.proxy", "http://"+r.EgressAddr()); err != nil {
+			return fail(ctlErr("failed", "git proxy config for %s: %v", host, err))
+		}
+	}
+	for _, h := range p.GitHosts {
+		if host, _, _ := strings.Cut(h, "/"); bypassed[host] {
+			continue
+		}
+		from, to := "https://"+h, "http://"+h
 		if !strings.Contains(h, "/") {
 			from, to = from+"/", to+"/"
 		}
@@ -845,12 +879,68 @@ func validGitEntry(e string) bool {
 	return true
 }
 
-// clearGitInsteadOf 删除全局 git 配置里所有指向本机 egress 代理的 insteadOf 条目（Oryn 写入的那些）。
-// 除当前 egress 地址外，也删回环地址上其它端口的条目：process 驱动下 orbd 每次启动的 egress 端口不同，
-// 旧端口的条目会让 git 连到已不存在的代理。
-func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) error {
-	re := `^url\.http://(127\.0\.0\.1:[0-9]+|` + regexp.QuoteMeta(r.EgressAddr()) + `)/git/.*\.insteadof$`
-	cmd := r.bins.command(ctx, "git", "config", "--global", "--name-only", "--get-regexp", re)
+// noProxyCovers 报告 NO_PROXY / no_proxy 的任一取值是否会让发往 `http://<host>/` 的请求绕过代理（host 可带端口，
+// 缺省端口 80）。取两种客户端判定的并集，宁可多判：多判只会让该主机退回 https 直连。
+//   - libcurl（git 经 CURLOPT_NOPROXY 传入，curl 8.23 lib/proxy.c proxy_check_noproxy）：整串恰为 `*` 时全部命中；
+//     条目以逗号或空白分隔，去掉开头与结尾的 `.` 后等于主机名，或是主机名以 `.` 分界的后缀即命中；条目不认端口，
+//     带端口的条目按字面比较（因此与主机名不会相等）；主机是 IP 时按 IP 或 CIDR 比较。
+//   - Go（git-lfs 经 golang.org/x/net/http/httpproxy）：任一条目为 `*` 时全部命中；`host:port` 只在端口与请求端口相同时命中；
+//     `*.domain` 与 `.domain` 只命中子域。
+func noProxyCovers(host string, values ...string) bool {
+	name, port := host, "80"
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		name, port = h, p
+	}
+	name = strings.TrimSuffix(strings.ToLower(name), ".")
+	ip := net.ParseIP(name)
+	for _, v := range values {
+		if v == "*" {
+			return true
+		}
+		for _, tok := range strings.FieldsFunc(strings.ToLower(v), func(c rune) bool { return c == ',' || c == ' ' || c == '\t' }) {
+			if tok == "*" {
+				return true
+			}
+			if h, p, err := net.SplitHostPort(tok); err == nil {
+				if p != port {
+					continue
+				}
+				tok = h
+			}
+			if ip != nil {
+				if _, cidr, err := net.ParseCIDR(tok); err == nil && cidr.Contains(ip) {
+					return true
+				}
+				if t := net.ParseIP(tok); t != nil && t.Equal(ip) {
+					return true
+				}
+				continue
+			}
+			if sub, ok := strings.CutPrefix(tok, "*."); ok {
+				if strings.HasSuffix(name, "."+sub) {
+					return true
+				}
+				continue
+			}
+			if tok = strings.Trim(tok, "."); tok != "" && (name == tok || strings.HasSuffix(name, "."+tok)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// clearGitEgress 删除全局 git 配置里 Oryn 为 egress 写入的条目，用户自己的 insteadOf 与代理设置不动：
+//   - `url.http://<entry>.insteadOf = https://<entry>`：只把 https 换成 http 的同址改写（setup 第 2 步写的形式）；
+//   - `http.http://<host>/.proxy`，值是回环地址上任一端口或当前 egress 地址；
+//   - M15 之前的 `url.http://127.0.0.1:<port>/git/<entry>.insteadOf`（老 orb 在下一次 setup / resume 时清掉）。
+//
+// 回环地址上的其它端口也算：process 驱动下 orbd 每次启动的 egress 端口不同，旧端口的条目会让 git 连到已不存在的代理。
+func (r *Runtime) clearGitEgress(ctx context.Context, env map[string]string) error {
+	addr := `(127\.0\.0\.1:[0-9]+|` + regexp.QuoteMeta(r.EgressAddr()) + `)`
+	legacy := regexp.MustCompile(`^url\.http://` + addr + `/git/.*\.insteadof$`)
+	proxyVal := regexp.MustCompile(`^http://` + addr + `$`)
+	cmd := r.bins.command(ctx, "git", "config", "--global", "-z", "--get-regexp", `^(url\.http://.*\.insteadof|http\.http://.*\.proxy)$`)
 	cmd.Dir, cmd.Env = r.home, envList(env)
 	out, err := cmd.Output()
 	if err != nil {
@@ -861,12 +951,22 @@ func (r *Runtime) clearGitInsteadOf(ctx context.Context, env map[string]string) 
 		return err
 	}
 	seen := map[string]bool{}
-	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if name == "" || seen[name] {
+	for _, rec := range strings.Split(string(out), "\x00") {
+		name, value, _ := strings.Cut(rec, "\n") // -z：`名\n值`，记录以 NUL 结尾
+		var ours bool
+		switch {
+		case legacy.MatchString(name):
+			ours = true
+		case strings.HasPrefix(name, "url.http://") && strings.HasSuffix(name, ".insteadof"):
+			ours = value == "https://"+strings.TrimSuffix(strings.TrimPrefix(name, "url.http://"), ".insteadof")
+		case strings.HasPrefix(name, "http.http://") && strings.HasSuffix(name, ".proxy"):
+			ours = proxyVal.MatchString(value)
+		}
+		if !ours || seen[rec] {
 			continue
 		}
-		seen[name] = true
-		rm := r.bins.command(ctx, "git", "config", "--global", "--unset-all", name)
+		seen[rec] = true
+		rm := r.bins.command(ctx, "git", "config", "--global", "--unset-all", name, "^"+regexp.QuoteMeta(value)+"$")
 		rm.Dir, rm.Env = r.home, envList(env)
 		if b, err := rm.CombinedOutput(); err != nil {
 			return fmt.Errorf("unset %s: %v: %s", name, err, strings.TrimSpace(string(b)))

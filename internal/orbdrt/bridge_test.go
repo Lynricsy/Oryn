@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -365,30 +366,151 @@ func TestSetupRetryJoinsInflightRun(t *testing.T) {
 	waitResult(t, cp, 0, apigen.SetupPhaseResume)
 }
 
-// M2：GitHosts 条目可限定到仓库；每次 setup 先清掉以前写入的全部 egress insteadOf（含旧的整主机条目）。
+// M2：GitHosts 条目可限定到仓库；每次 setup 先清掉以前写入的全部 egress 条目（含旧的整主机条目、M15 之前的 /git/ 形式
+// 与旧端口的代理），用户自己的 insteadOf 与代理设置保留。
 func TestGitInsteadOfScopedAndReplaced(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
 	gitcfg := filepath.Join(rt.home, ".gitconfig")
-	base := "http://" + rt.EgressAddr() + "/git/"
+	proxy := "http://" + rt.EgressAddr()
 	run := func(hosts ...string) error {
 		return cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{
 			GitHosts: hosts, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
 		}, nil)
 	}
+	addCfg := func(key, value string) {
+		t.Helper()
+		out, err := exec.Command("git", "config", "--file", gitcfg, "--add", key, value).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	entries := func() []string {
+		t.Helper()
+		out, err := exec.Command("git", "config", "--file", gitcfg, "--get-regexp", `^(url|http)\.`).Output()
+		require.NoError(t, err)
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		slices.Sort(lines)
+		return lines
+	}
 	require.NoError(t, run("github.com", "gitlab.com"))
-	require.NoError(t, exec.Command("git", "config", "--file", gitcfg, "user.name", "keep").Run())
-	require.NoError(t, run("github.com/Owner/Repo"))
+	assert.Equal(t, []string{
+		"http.http://github.com/.proxy " + proxy,
+		"http.http://gitlab.com/.proxy " + proxy,
+		"url.http://github.com/.insteadof https://github.com/",
+		"url.http://gitlab.com/.insteadof https://gitlab.com/",
+	}, entries(), "整主机：同址 https→http 改写 + 主机级代理")
 
-	out, err := exec.Command("git", "config", "--file", gitcfg, "--get-regexp", `^url\.`).Output()
-	require.NoError(t, err)
-	assert.Equal(t, "url."+base+"github.com/Owner/Repo.insteadof https://github.com/Owner/Repo\n", string(out),
-		"只剩项目仓库的条目")
+	require.NoError(t, exec.Command("git", "config", "--file", gitcfg, "user.name", "keep").Run())
+	// Oryn 的旧条目：M15 之前的 /git/ 形式、别的端口上的代理（orbd 重启换了端口）。
+	addCfg("url.http://127.0.0.1:1/git/github.com/acme/widgets.insteadOf", "https://github.com/acme/widgets")
+	addCfg("http.http://example.org/.proxy", "http://127.0.0.1:1")
+	// 用户自己的条目：改写到别的地址、指向别的代理。
+	addCfg("url.https://mirror.example/.insteadOf", "https://example.net/")
+	addCfg("url.http://example.net/.insteadOf", "https://example.com/")
+	addCfg("http.http://corp.example/.proxy", "http://proxy.corp.example:3128")
+	require.NoError(t, run("github.com/Owner/Repo"))
+	assert.Equal(t, []string{
+		"http.http://corp.example/.proxy http://proxy.corp.example:3128",
+		"http.http://github.com/.proxy " + proxy,
+		"url.http://example.net/.insteadof https://example.com/",
+		"url.http://github.com/Owner/Repo.insteadof https://github.com/Owner/Repo",
+		"url.https://mirror.example/.insteadof https://example.net/",
+	}, entries(), "只剩项目仓库的条目与用户自己的设置")
 	name, _ := exec.Command("git", "config", "--file", gitcfg, "user.name").Output()
 	assert.Equal(t, "keep\n", string(name), "其它配置不受影响")
 
 	for _, bad := range []string{"github.com/owner", "github.com/../x/y", "github.com/a//b", "git hub.com", "x@github.com", "github.com/a/b\nc"} {
 		assert.Error(t, run(bad), bad)
+	}
+}
+
+// noProxyCovers 取 libcurl 与 Go httpproxy 判定的并集（宁可多判）。
+func TestNoProxyCovers(t *testing.T) {
+	for _, c := range []struct {
+		host, noProxy string
+		want          bool
+	}{
+		{"github.com", "*", true},
+		{"github.com", "localhost, *", true}, // Go：任一条目为 *（curl 只认整串 *）
+		{"github.com", "github.com", true},
+		{"github.com", "GitHub.com.", true},
+		{"github.com", ".github.com", true}, // curl 去掉开头的点
+		{"api.github.com", "github.com", true},
+		{"api.github.com", "*.github.com", true},
+		{"github.com", "localhost github.com", true}, // curl 也按空白分隔
+		{"github.com", "github.com:80", true},        // Go：端口与请求端口（http 缺省 80）相同
+		{"git.corp.example:8443", "git.corp.example:8443", true},
+		{"git.corp.example:8443", "corp.example", true},
+		{"10.0.0.5", "10.0.0.0/8", true},
+		{"10.0.0.5:8080", "10.0.0.5", true},
+		{"github.com", "", false},
+		{"github.com", "localhost,127.0.0.1", false},
+		{"github.com", "github.com:443", false},
+		{"github.com", "notgithub.com,hub.com", false},
+		{"github.com", "api.github.com", false},
+		{"github.com", "*.github.com", false},
+		{"github.com", "10.0.0.0/8", false},
+		{"git.corp.example:8443", "git.corp.example:80", false},
+	} {
+		assert.Equal(t, c.want, noProxyCovers(c.host, c.noProxy), "%s / %q", c.host, c.noProxy)
+	}
+	assert.True(t, noProxyCovers("github.com", "localhost", ".github.com"), "NO_PROXY 与 no_proxy 任一命中即算")
+}
+
+// NO_PROXY / no_proxy 覆盖的 git 主机失败关闭：不写 https→http 改写也不写代理（remote 保持 https），setup 日志有警告；
+// 旧条目照常清理；其它主机正常写入。
+func TestGitEgressSkipsNoProxyHosts(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		env     map[string]string // setup 参数的 env
+		procEnv [2]string         // orbd 进程环境（非空时 t.Setenv）
+		skipped []string
+	}{
+		{name: "star", env: map[string]string{"NO_PROXY": "*"}, skipped: []string{"github.com", "gitlab.com"}},
+		{name: "host", env: map[string]string{"NO_PROXY": "localhost,github.com"}, skipped: []string{"github.com"}},
+		{name: "dot-host", env: map[string]string{"NO_PROXY": ".github.com"}, skipped: []string{"github.com"}},
+		{name: "host-port", env: map[string]string{"NO_PROXY": "github.com:80"}, skipped: []string{"github.com"}},
+		{name: "lowercase", env: map[string]string{"no_proxy": "github.com"}, skipped: []string{"github.com"}},
+		{name: "process-env", procEnv: [2]string{"no_proxy", "github.com"}, skipped: []string{"github.com"}},
+		{name: "loopback-only", env: map[string]string{"NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.procEnv[0] != "" {
+				t.Setenv(c.procEnv[0], c.procEnv[1])
+			}
+			cp := newFakeCP(t)
+			rt := startRuntime(t, cp, nil)
+			gitcfg := filepath.Join(rt.home, ".gitconfig")
+			stale := "url.http://127.0.0.1:1/git/github.com/.insteadOf"
+			require.NoError(t, exec.Command("git", "config", "--file", gitcfg, stale, "https://github.com/").Run())
+			require.NoError(t, cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{
+				GitHosts: []string{"github.com/acme/widgets", "gitlab.com"}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: c.env,
+			}, nil))
+			out, _ := exec.Command("git", "config", "--file", gitcfg, "--get-regexp", `^(url|http)\.`).Output()
+			var want []string
+			if !slices.Contains(c.skipped, "github.com") {
+				want = append(want, "http.http://github.com/.proxy http://"+rt.EgressAddr(),
+					"url.http://github.com/acme/widgets.insteadof https://github.com/acme/widgets")
+			}
+			if !slices.Contains(c.skipped, "gitlab.com") {
+				want = append(want, "http.http://gitlab.com/.proxy http://"+rt.EgressAddr(),
+					"url.http://gitlab.com/.insteadof https://gitlab.com/")
+			}
+			var got []string
+			if s := strings.TrimSpace(string(out)); s != "" {
+				got = strings.Split(s, "\n")
+			}
+			slices.Sort(got)
+			slices.Sort(want)
+			assert.Equal(t, want, got, "命中 NO_PROXY 的主机没有 http 改写与代理；旧条目已清理")
+			for _, host := range c.skipped {
+				cp.waitNotif(t, 0, "setup.log", func(raw json.RawMessage) bool {
+					var p apigen.LinkCtlSetupLogParams
+					_ = json.Unmarshal(raw, &p)
+					return p.Phase == apigen.Git && strings.Contains(p.Data, "warning: NO_PROXY/no_proxy covers "+host) &&
+						strings.Contains(p.Data, "Remove "+host+" from NO_PROXY")
+				})
+			}
+		})
 	}
 }
 

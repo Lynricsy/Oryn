@@ -120,6 +120,8 @@ type fakeCP struct {
 	// libs 收到 orbd 应 library.fetch 打开的 library 流（M13）。
 	libs   chan *link.Stream
 	egress *streamListener
+	// egressH 非 nil（http.Handler）时代替内置的回显处理 egress 流上的请求。
+	egressH atomic.Value
 
 	// extra 先于内置方法处理 orbd 发来的请求（M9 线程 / 定时方法）；ok=false 表示不处理。
 	extra func(method string, params json.RawMessage) (res any, ok bool, err error)
@@ -150,6 +152,10 @@ func newFakeCPWith(t *testing.T, useTLS bool) *fakeCP {
 		cp.srv = httptest.NewServer(mux)
 	}
 	egressSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := cp.egressH.Load().(http.Handler); ok {
+			h.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "egress %s %s %s", r.Method, r.URL.Path, r.Header.Get("X-Test"))
 	})}

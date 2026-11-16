@@ -134,7 +134,7 @@ func ConfigFromEnv(version string) (Config, error) {
 		Token:    os.Getenv("ORYN_ORB_TOKEN"),
 		AgentBin: os.Getenv("ORYN_AGENT_BIN"),
 		// ORYN_EGRESS_ADDR 仅供测试：同一主机上并行多个 process 驱动的 orbd 时设 127.0.0.1:0
-		// （git insteadOf 按实际端口写；控制面下发的 models.yml 仍指向固定的 7811）。
+		// （git 的 `http.<url>.proxy` 按实际端口写；控制面下发的 models.yml 仍指向固定的 7811）。
 		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
 		Version:    version,
 	}
