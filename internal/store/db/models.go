@@ -11,6 +11,45 @@ type AgentAvatar struct {
 	UpdatedAt   int64   `json:"updatedAt"`
 }
 
+type Artifact struct {
+	ID        string  `json:"id"`
+	ProjectID *string `json:"projectId"`
+	ThreadID  *string `json:"threadId"`
+	Origin    string  `json:"origin"`
+	Type      *string `json:"type"`
+	Kind      string  `json:"kind"`
+	Title     string  `json:"title"`
+	Head      int64   `json:"head"`
+	Size      int64   `json:"size"`
+	Pages     int64   `json:"pages"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+	OpenedAt  *int64  `json:"openedAt"`
+	DeletedAt *int64  `json:"deletedAt"`
+}
+
+type ArtifactFile struct {
+	ArtifactID string `json:"artifactId"`
+	N          int64  `json:"n"`
+	Path       string `json:"path"`
+	Sha256     string `json:"sha256"`
+	Size       int64  `json:"size"`
+}
+
+type ArtifactVersion struct {
+	ArtifactID     string  `json:"artifactId"`
+	N              int64   `json:"n"`
+	Size           int64   `json:"size"`
+	Pages          int64   `json:"pages"`
+	AuthorThreadID *string `json:"authorThreadId"`
+	AuthorLabel    string  `json:"authorLabel"`
+	Note           *string `json:"note"`
+	Capabilities   string  `json:"capabilities"`
+	Format         *int64  `json:"format"`
+	FilesKey       string  `json:"filesKey"`
+	CreatedAt      int64   `json:"createdAt"`
+}
+
 type AssistantFile struct {
 	ID             string  `json:"id"`
 	Name           string  `json:"name"`

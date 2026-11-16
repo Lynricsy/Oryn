@@ -22,9 +22,9 @@ import (
 // M11a：project_snapshots；M11b：runners；M13：agent_avatars、assistant_files；
 // 对话内容搜索：search_docs、search_state 与 FTS5 表 search_fts 及其影子表；
 // M14：github_app、github_identities、github_oauth_states、github_installations、github_deliveries、github_pulls、
-// thread_pulls、github_triggers、thread_issues、github_outbox）。
+// thread_pulls、github_triggers、thread_issues、github_outbox；artifacts、artifact_versions、artifact_files）。
 var m2Tables = []string{
-	"agent_avatars", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
+	"agent_avatars", "artifact_files", "artifact_versions", "artifacts", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_app", "github_deliveries", "github_identities", "github_installations", "github_oauth_states",
 	"github_outbox", "github_pulls", "github_triggers", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",

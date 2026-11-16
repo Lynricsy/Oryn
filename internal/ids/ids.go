@@ -28,6 +28,9 @@ func BrowserProfile() string { return New("bpf") }
 // AssistantFile 返回 afl_<ULID>（M13 全局助手文件库）。
 func AssistantFile() string { return New("afl") }
 
+// Artifact 返回 art_<ULID>（M14 artifact）。
+func Artifact() string { return New("art") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 

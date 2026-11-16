@@ -58,6 +58,132 @@ func (e AgentStatus) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactAccess.
+const (
+	ArtifactAccessCode    ArtifactAccess = "code"
+	ArtifactAccessPrivate ArtifactAccess = "private"
+	ArtifactAccessPublic  ArtifactAccess = "public"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactAccess enum.
+func (e ArtifactAccess) Valid() bool {
+	switch e {
+	case ArtifactAccessCode:
+		return true
+	case ArtifactAccessPrivate:
+		return true
+	case ArtifactAccessPublic:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactCapability.
+const (
+	ArtifactCapabilityDB     ArtifactCapability = "db"
+	ArtifactCapabilityFiles  ArtifactCapability = "files"
+	ArtifactCapabilitySample ArtifactCapability = "sample"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactCapability enum.
+func (e ArtifactCapability) Valid() bool {
+	switch e {
+	case ArtifactCapabilityDB:
+		return true
+	case ArtifactCapabilityFiles:
+		return true
+	case ArtifactCapabilitySample:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactKind.
+const (
+	ArtifactKindCanvas   ArtifactKind = "canvas"
+	ArtifactKindDocument ArtifactKind = "document"
+	ArtifactKindSlides   ArtifactKind = "slides"
+	ArtifactKindWeb      ArtifactKind = "web"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactKind enum.
+func (e ArtifactKind) Valid() bool {
+	switch e {
+	case ArtifactKindCanvas:
+		return true
+	case ArtifactKindDocument:
+		return true
+	case ArtifactKindSlides:
+		return true
+	case ArtifactKindWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactOrigin.
+const (
+	ArtifactOriginAgent  ArtifactOrigin = "agent"
+	ArtifactOriginImport ArtifactOrigin = "import"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactOrigin enum.
+func (e ArtifactOrigin) Valid() bool {
+	switch e {
+	case ArtifactOriginAgent:
+		return true
+	case ArtifactOriginImport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactThreadActivityDoing.
+const (
+	ArtifactDoingDraw  ArtifactThreadActivityDoing = "draw"
+	ArtifactDoingMove  ArtifactThreadActivityDoing = "move"
+	ArtifactDoingRead  ArtifactThreadActivityDoing = "read"
+	ArtifactDoingWrite ArtifactThreadActivityDoing = "write"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactThreadActivityDoing enum.
+func (e ArtifactThreadActivityDoing) Valid() bool {
+	switch e {
+	case ArtifactDoingDraw:
+		return true
+	case ArtifactDoingMove:
+		return true
+	case ArtifactDoingRead:
+		return true
+	case ArtifactDoingWrite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactType.
+const (
+	ArtifactTypeDocument ArtifactType = "document"
+	ArtifactTypeSlides   ArtifactType = "slides"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactType enum.
+func (e ArtifactType) Valid() bool {
+	switch e {
+	case ArtifactTypeDocument:
+		return true
+	case ArtifactTypeSlides:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssistantFileSource.
 const (
 	AssistantFileSourceAssistant AssistantFileSource = "assistant"
@@ -739,6 +865,7 @@ const (
 	MethodAgentStart        LinkCtlMethod = "agent.start"
 	MethodAgentStatus       LinkCtlMethod = "agent.status"
 	MethodAgentStop         LinkCtlMethod = "agent.stop"
+	MethodArtifactCall      LinkCtlMethod = "artifact.call"
 	MethodBlobFetch         LinkCtlMethod = "blob.fetch"
 	MethodDesktopState      LinkCtlMethod = "desktop.state"
 	MethodEntriesAppend     LinkCtlMethod = "entries.append"
@@ -786,6 +913,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodAgentStatus:
 		return true
 	case MethodAgentStop:
+		return true
+	case MethodArtifactCall:
 		return true
 	case MethodBlobFetch:
 		return true
@@ -2200,6 +2329,36 @@ func (e UsageGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for WsClientArtifactUnwatchType.
+const (
+	WsClientArtifactUnwatchTypeArtifactUnwatch WsClientArtifactUnwatchType = "artifact.unwatch"
+)
+
+// Valid indicates whether the value is a known member of the WsClientArtifactUnwatchType enum.
+func (e WsClientArtifactUnwatchType) Valid() bool {
+	switch e {
+	case WsClientArtifactUnwatchTypeArtifactUnwatch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsClientArtifactWatchType.
+const (
+	WsClientArtifactWatchTypeArtifactWatch WsClientArtifactWatchType = "artifact.watch"
+)
+
+// Valid indicates whether the value is a known member of the WsClientArtifactWatchType enum.
+func (e WsClientArtifactWatchType) Valid() bool {
+	switch e {
+	case WsClientArtifactWatchTypeArtifactWatch:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsClientCmdType.
 const (
 	Cmd WsClientCmdType = "cmd"
@@ -2404,6 +2563,51 @@ const (
 func (e WsPublicTranscriptResetType) Valid() bool {
 	switch e {
 	case WsPublicTranscriptResetTypeTranscriptReset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerArtifactActivityType.
+const (
+	WsServerArtifactActivityTypeArtifactActivity WsServerArtifactActivityType = "artifact.activity"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactActivityType enum.
+func (e WsServerArtifactActivityType) Valid() bool {
+	switch e {
+	case WsServerArtifactActivityTypeArtifactActivity:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerArtifactVersionType.
+const (
+	WsServerArtifactVersionTypeArtifactVersion WsServerArtifactVersionType = "artifact.version"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactVersionType enum.
+func (e WsServerArtifactVersionType) Valid() bool {
+	switch e {
+	case WsServerArtifactVersionTypeArtifactVersion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerArtifactsChangedType.
+const (
+	WsServerArtifactsChangedTypeArtifactsChanged WsServerArtifactsChangedType = "artifacts.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactsChangedType enum.
+func (e WsServerArtifactsChangedType) Valid() bool {
+	switch e {
+	case WsServerArtifactsChangedTypeArtifactsChanged:
 		return true
 	default:
 		return false
@@ -2903,6 +3107,184 @@ type AppSessionCode struct {
 	//
 	// Example: 30
 	ExpiresIn int `json:"expiresIn"`
+}
+
+// Artifact defines model for Artifact.
+type Artifact struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// DeletedAt 在「最近删除」里时为删除时间
+	DeletedAt *TimestampMs `json:"deletedAt,omitempty"`
+
+	// ID `art_<ulid>`（M14 artifact）
+	ID ArtifactID `json:"id"`
+
+	// Kind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+	Kind ArtifactKind `json:"kind"`
+
+	// OpenedAt UTC 毫秒时间戳
+	OpenedAt *TimestampMs   `json:"openedAt,omitempty"`
+	Origin   ArtifactOrigin `json:"origin"`
+
+	// Pages 最新版本的页数（画布为画框数，幻灯片为张数，其余为 1）
+	Pages int `json:"pages"`
+
+	// ProjectID 所属项目；没有项目时省略
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+
+	// Published 已发布时给出
+	Published *struct {
+		// Access 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
+		Access ArtifactAccess `json:"access"`
+	} `json:"published,omitempty"`
+
+	// Size 最新版本的总字节数
+	Size int64 `json:"size"`
+
+	// ThreadID 创建线程；导入的或线程已删除时省略
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+	Title    string    `json:"title"`
+
+	// Type 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+	Type *ArtifactType `json:"type,omitempty"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Version 最新版本号（从 1 开始）
+	Version int `json:"version"`
+}
+
+// ArtifactAccess 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
+type ArtifactAccess string
+
+// ArtifactCapability 页面运行时能力（`oryn.use(name)`）
+type ArtifactCapability string
+
+// ArtifactConflict `conflict`（409）的响应体：标准错误结构外加 `state`
+type ArtifactConflict struct {
+	Code    string        `json:"code"`
+	Message string        `json:"message"`
+	State   ArtifactState `json:"state"`
+}
+
+// ArtifactDetail defines model for ArtifactDetail.
+type ArtifactDetail struct {
+	Artifact Artifact `json:"artifact"`
+
+	// Canvas 画布 artifact 该版本的 `canvas.json`（解析后的对象）；其它类型省略
+	Canvas       map[string]interface{} `json:"canvas,omitempty"`
+	Capabilities []ArtifactCapability   `json:"capabilities"`
+	Files        []ArtifactFile         `json:"files"`
+
+	// Head 最新版本
+	Head int `json:"head"`
+
+	// Threads 创建线程与写过版本的线程（还存在的），先创建线程后按最近写入
+	Threads []ArtifactThreadRef `json:"threads"`
+
+	// Version 本次返回的版本
+	Version int `json:"version"`
+}
+
+// ArtifactFile defines model for ArtifactFile.
+type ArtifactFile struct {
+	Mime string `json:"mime"`
+	Path string `json:"path"`
+
+	// Sha256 SHA-256 小写十六进制
+	Sha256 Sha256 `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// ArtifactID `art_<ulid>`（M14 artifact）
+type ArtifactID = string
+
+// ArtifactKind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+type ArtifactKind string
+
+// ArtifactList defines model for ArtifactList.
+type ArtifactList struct {
+	Artifacts []Artifact `json:"artifacts"`
+}
+
+// ArtifactOrigin defines model for ArtifactOrigin.
+type ArtifactOrigin string
+
+// ArtifactPatch defines model for ArtifactPatch.
+type ArtifactPatch struct {
+	Title string `json:"title"`
+}
+
+// ArtifactRestoreVersion defines model for ArtifactRestoreVersion.
+type ArtifactRestoreVersion struct {
+	BaseVersion int `json:"baseVersion"`
+}
+
+// ArtifactState defines model for ArtifactState.
+type ArtifactState struct {
+	// Changed 在调用方的 `baseVersion` 之后被改过的路径
+	Changed []string `json:"changed,omitempty"`
+	Deleted bool     `json:"deleted"`
+
+	// Version 当前最新版本
+	Version int `json:"version"`
+}
+
+// ArtifactThreadActivity defines model for ArtifactThreadActivity.
+type ArtifactThreadActivity struct {
+	Doing ArtifactThreadActivityDoing `json:"doing"`
+	Focus *struct {
+		// Page 该文件属于画布的某个画框时为画框 id
+		Page *string `json:"page,omitempty"`
+
+		// Path 正在读或改的文件
+		Path string `json:"path"`
+	} `json:"focus,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// ArtifactThreadActivityDoing defines model for ArtifactThreadActivity.Doing.
+type ArtifactThreadActivityDoing string
+
+// ArtifactThreadRef defines model for ArtifactThreadRef.
+type ArtifactThreadRef struct {
+	Archived bool `json:"archived"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+	Title    string   `json:"title"`
+}
+
+// ArtifactType 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+type ArtifactType string
+
+// ArtifactVersion defines model for ArtifactVersion.
+type ArtifactVersion struct {
+	// AuthorLabel 写入时的线程标题快照（用户写入时为空串）
+	AuthorLabel string `json:"authorLabel"`
+
+	// AuthorThreadID 写入这个版本的线程；省略 = 用户
+	AuthorThreadID *ThreadID `json:"authorThreadId,omitempty"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+	Note      *string     `json:"note,omitempty"`
+	Pages     int         `json:"pages"`
+	Size      int64       `json:"size"`
+	Version   int         `json:"version"`
+}
+
+// ArtifactVersionList defines model for ArtifactVersionList.
+type ArtifactVersionList struct {
+	Versions []ArtifactVersion `json:"versions"`
 }
 
 // AssistantFile defines model for AssistantFile.
@@ -4104,6 +4486,34 @@ type LinkCtlAgentStopResult struct {
 	ExitCode int `json:"exitCode"`
 }
 
+// LinkCtlArtifactCallParams M14（orbd→orynd，由 orb / Runner 内 agent 的 artifact 工具经 `orbd.sock` / `runner.sock` 转来）：执行一个 artifact 操作。
+// 控制面先校验调用方（属于本 orb、`kind = work`、未归档，否则 `forbidden`）；`params.files[*].source` 是 orb 内的绝对路径，
+// 控制面在本次请求里经 `library.fetch` 取回字节（orbd 转发期间把这些路径登记为可取回）。
+type LinkCtlArtifactCallParams struct {
+	// Op 操作名（`create_artifact`、`read_artifact`、`update_artifact` 等，与 agent 工具同名）
+	Op string `json:"op"`
+
+	// Params 操作参数（camelCase，与 agent 工具同形）
+	Params map[string]interface{} `json:"params"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlArtifactCallResult defines model for LinkCtlArtifactCallResult.
+type LinkCtlArtifactCallResult struct {
+	// Details 结构化结果（转录卡片用）
+	Details map[string]interface{} `json:"details,omitempty"`
+	Image   *struct {
+		// Data base64
+		Data     string `json:"data"`
+		MimeType string `json:"mimeType"`
+	} `json:"image,omitempty"`
+
+	// Text 给 agent 的文本结果
+	Text string `json:"text"`
+}
+
 // LinkCtlBlobFetchParams defines model for LinkCtlBlobFetchParams.
 type LinkCtlBlobFetchParams struct {
 	// Sha256 SHA-256 小写十六进制
@@ -4331,7 +4741,8 @@ type LinkCtlLibrarySyncResult struct {
 // `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
 // `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 // `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
-// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
+// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
+// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -4354,7 +4765,8 @@ type LinkCtlNotification struct {
 	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
 	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
-	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
+	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
+	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -4467,7 +4879,8 @@ type LinkCtlRequest struct {
 	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
 	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
-	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
+	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
+	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -7341,6 +7754,29 @@ type WebhookChannelConfig struct {
 	URL    string  `json:"url"`
 }
 
+// WsClientArtifactUnwatch defines model for WsClientArtifactUnwatch.
+type WsClientArtifactUnwatch struct {
+	// ID `art_<ulid>`（M14 artifact）
+	ID   ArtifactID                  `json:"id"`
+	Type WsClientArtifactUnwatchType `json:"type"`
+}
+
+// WsClientArtifactUnwatchType defines model for WsClientArtifactUnwatch.Type.
+type WsClientArtifactUnwatchType string
+
+// WsClientArtifactWatch 开始（或更新）观看一个 artifact；之后本连接收到它的 `artifact.version` / `artifact.activity` 等消息。重复发送用来更新 `page`；连接断开等于全部 unwatch
+type WsClientArtifactWatch struct {
+	// ID `art_<ulid>`（M14 artifact）
+	ID ArtifactID `json:"id"`
+
+	// Page 画布 artifact 当前所在的画布页 id
+	Page *string                   `json:"page,omitempty"`
+	Type WsClientArtifactWatchType `json:"type"`
+}
+
+// WsClientArtifactWatchType defines model for WsClientArtifactWatch.Type.
+type WsClientArtifactWatchType string
+
 // WsClientCmd omp RPC 命令；控制面注入唯一 id 后下发，应答以 `res` 回到本连接
 type WsClientCmd struct {
 	// Frame 不带 `id` 的 omp RPC 命令对象
@@ -7549,6 +7985,49 @@ type WsPublicTranscriptReset struct {
 
 // WsPublicTranscriptResetType defines model for WsPublicTranscriptReset.Type.
 type WsPublicTranscriptResetType string
+
+// WsServerArtifactActivity 某个 artifact 上的在场信息（观看者、agent 正在做什么）；只发给正在观看它的连接
+type WsServerArtifactActivity struct {
+	// Clients 各观看连接所在的画布页
+	Clients []struct {
+		// Client 连接 id（同一连接内稳定）
+		Client string  `json:"client"`
+		Page   *string `json:"page,omitempty"`
+	} `json:"clients"`
+
+	// ID `art_<ulid>`（M14 artifact）
+	ID      ArtifactID                   `json:"id"`
+	Threads []ArtifactThreadActivity     `json:"threads"`
+	Type    WsServerArtifactActivityType `json:"type"`
+
+	// Viewers 正在观看的连接数
+	Viewers int `json:"viewers"`
+
+	// Visitors 正在看发布页的访客数
+	Visitors int `json:"visitors"`
+}
+
+// WsServerArtifactActivityType defines model for WsServerArtifactActivity.Type.
+type WsServerArtifactActivityType string
+
+// WsServerArtifactVersion 某个 artifact 产生了新版本；只发给正在观看它的连接
+type WsServerArtifactVersion struct {
+	// ID `art_<ulid>`（M14 artifact）
+	ID      ArtifactID                  `json:"id"`
+	Type    WsServerArtifactVersionType `json:"type"`
+	Version int                         `json:"version"`
+}
+
+// WsServerArtifactVersionType defines model for WsServerArtifactVersion.Type.
+type WsServerArtifactVersionType string
+
+// WsServerArtifactsChanged artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次
+type WsServerArtifactsChanged struct {
+	Type WsServerArtifactsChangedType `json:"type"`
+}
+
+// WsServerArtifactsChangedType defines model for WsServerArtifactsChanged.Type.
+type WsServerArtifactsChangedType string
 
 // WsServerEntries defines model for WsServerEntries.
 type WsServerEntries struct {
@@ -7823,6 +8302,12 @@ type WsTicket struct {
 // AgentConfigPath defines model for AgentConfigPath.
 type AgentConfigPath = string
 
+// ArtifactIDPath `art_<ulid>`（M14 artifact）
+type ArtifactIDPath = ArtifactID
+
+// ArtifactVersionPath defines model for ArtifactVersionPath.
+type ArtifactVersionPath = int
+
 // AssistantFileIDPath `afl_<ulid>`（全局助手文件库）
 type AssistantFileIDPath = AssistantFileID
 
@@ -7967,6 +8452,34 @@ type ToQuery = TimestampMs
 type PutAgentConfigFileParams struct {
 	// Mode 文件权限（八进制整数，如 420 = 0644）；缺省 0644
 	Mode *int `form:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// ListArtifactsParams defines parameters for ListArtifacts.
+type ListArtifactsParams struct {
+	// Deleted true = 只列「最近删除」里的；缺省只列未删除的
+	Deleted *bool `form:"deleted,omitempty" json:"deleted,omitempty"`
+
+	// ThreadID 只列该线程创建或写过版本的
+	ThreadID  *ThreadID  `form:"threadId,omitempty" json:"threadId,omitempty"`
+	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
+}
+
+// DeleteArtifactParams defines parameters for DeleteArtifact.
+type DeleteArtifactParams struct {
+	Permanent *bool `form:"permanent,omitempty" json:"permanent,omitempty"`
+}
+
+// GetArtifactParams defines parameters for GetArtifact.
+type GetArtifactParams struct {
+	// Version 缺省 = 最新版本
+	Version *int `form:"version,omitempty" json:"version,omitempty"`
+}
+
+// GetArtifactFileParams defines parameters for GetArtifactFile.
+type GetArtifactFileParams struct {
+	// Version 缺省 = 最新版本
+	Version *int   `form:"version,omitempty" json:"version,omitempty"`
+	Path    string `form:"path" json:"path"`
 }
 
 // ListAssistantFilesParams defines parameters for ListAssistantFiles.
@@ -8540,6 +9053,12 @@ type ListThreadEntriesParams struct {
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
+
+// PatchArtifactJSONRequestBody defines body for PatchArtifact for application/json ContentType.
+type PatchArtifactJSONRequestBody = ArtifactPatch
+
+// RestoreArtifactVersionJSONRequestBody defines body for RestoreArtifactVersion for application/json ContentType.
+type RestoreArtifactVersionJSONRequestBody = ArtifactRestoreVersion
 
 // CreateAssistantConversationJSONRequestBody defines body for CreateAssistantConversation for application/json ContentType.
 type CreateAssistantConversationJSONRequestBody = CreateAssistantConversationRequest
@@ -9413,6 +9932,74 @@ func (t *WsClientMessage) MergeWsClientTermWatch(v WsClientTermWatch) error {
 	return err
 }
 
+// AsWsClientArtifactWatch returns the union data inside the WsClientMessage as a WsClientArtifactWatch
+func (t WsClientMessage) AsWsClientArtifactWatch() (WsClientArtifactWatch, error) {
+	var body WsClientArtifactWatch
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsClientArtifactWatch overwrites any union data inside the WsClientMessage as the provided WsClientArtifactWatch
+func (t *WsClientMessage) FromWsClientArtifactWatch(v WsClientArtifactWatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.watch"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsClientArtifactWatch performs a merge with any union data inside the WsClientMessage, using the provided WsClientArtifactWatch
+func (t *WsClientMessage) MergeWsClientArtifactWatch(v WsClientArtifactWatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.watch"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsClientArtifactUnwatch returns the union data inside the WsClientMessage as a WsClientArtifactUnwatch
+func (t WsClientMessage) AsWsClientArtifactUnwatch() (WsClientArtifactUnwatch, error) {
+	var body WsClientArtifactUnwatch
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsClientArtifactUnwatch overwrites any union data inside the WsClientMessage as the provided WsClientArtifactUnwatch
+func (t *WsClientMessage) FromWsClientArtifactUnwatch(v WsClientArtifactUnwatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.unwatch"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsClientArtifactUnwatch performs a merge with any union data inside the WsClientMessage, using the provided WsClientArtifactUnwatch
+func (t *WsClientMessage) MergeWsClientArtifactUnwatch(v WsClientArtifactUnwatch) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.unwatch"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsClientMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -9427,6 +10014,10 @@ func (t WsClientMessage) ValueByDiscriminator() (interface{}, error) {
 		return nil, err
 	}
 	switch discriminator {
+	case "artifact.unwatch":
+		return t.AsWsClientArtifactUnwatch()
+	case "artifact.watch":
+		return t.AsWsClientArtifactWatch()
 	case "cmd":
 		return t.AsWsClientCmd()
 	case "focus":
@@ -10419,6 +11010,108 @@ func (t *WsServerMessage) MergeWsServerGitHubChanged(v WsServerGitHubChanged) er
 	return err
 }
 
+// AsWsServerArtifactsChanged returns the union data inside the WsServerMessage as a WsServerArtifactsChanged
+func (t WsServerMessage) AsWsServerArtifactsChanged() (WsServerArtifactsChanged, error) {
+	var body WsServerArtifactsChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactsChanged overwrites any union data inside the WsServerMessage as the provided WsServerArtifactsChanged
+func (t *WsServerMessage) FromWsServerArtifactsChanged(v WsServerArtifactsChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifacts.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactsChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactsChanged
+func (t *WsServerMessage) MergeWsServerArtifactsChanged(v WsServerArtifactsChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifacts.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerArtifactVersion returns the union data inside the WsServerMessage as a WsServerArtifactVersion
+func (t WsServerMessage) AsWsServerArtifactVersion() (WsServerArtifactVersion, error) {
+	var body WsServerArtifactVersion
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactVersion overwrites any union data inside the WsServerMessage as the provided WsServerArtifactVersion
+func (t *WsServerMessage) FromWsServerArtifactVersion(v WsServerArtifactVersion) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.version"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactVersion performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactVersion
+func (t *WsServerMessage) MergeWsServerArtifactVersion(v WsServerArtifactVersion) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.version"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerArtifactActivity returns the union data inside the WsServerMessage as a WsServerArtifactActivity
+func (t WsServerMessage) AsWsServerArtifactActivity() (WsServerArtifactActivity, error) {
+	var body WsServerArtifactActivity
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactActivity overwrites any union data inside the WsServerMessage as the provided WsServerArtifactActivity
+func (t *WsServerMessage) FromWsServerArtifactActivity(v WsServerArtifactActivity) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.activity"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactActivity performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactActivity
+func (t *WsServerMessage) MergeWsServerArtifactActivity(v WsServerArtifactActivity) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.activity"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -10433,6 +11126,12 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return nil, err
 	}
 	switch discriminator {
+	case "artifact.activity":
+		return t.AsWsServerArtifactActivity()
+	case "artifact.version":
+		return t.AsWsServerArtifactVersion()
+	case "artifacts.changed":
+		return t.AsWsServerArtifactsChanged()
 	case "entries":
 		return t.AsWsServerEntries()
 	case "error":
@@ -10610,6 +11309,33 @@ type ServerInterface interface {
 	// RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
 	// (POST /api/v1/agent-config/restart-sessions)
 	RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request)
+	// ListArtifacts 列出 artifact（最近更新的在前）
+	// (GET /api/v1/artifacts)
+	ListArtifacts(w http.ResponseWriter, r *http.Request, params ListArtifactsParams)
+	// DeleteArtifact 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact
+	// (DELETE /api/v1/artifacts/{id})
+	DeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params DeleteArtifactParams)
+	// GetArtifact artifact 详情（某个版本的文件清单与能力声明）
+	// (GET /api/v1/artifacts/{id})
+	GetArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactParams)
+	// PatchArtifact 重命名（不产生版本；回收站里的不能改）
+	// (PATCH /api/v1/artifacts/{id})
+	PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// GetArtifactFile 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染）
+	// (GET /api/v1/artifacts/{id}/file)
+	GetArtifactFile(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactFileParams)
+	// MarkArtifactOpened 记一次「打开」（总览页按最近打开排序、首屏最近项用；存服务端，换设备一致）
+	// (POST /api/v1/artifacts/{id}/opened)
+	MarkArtifactOpened(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// UndeleteArtifact 从「最近删除」恢复
+	// (POST /api/v1/artifacts/{id}/restore)
+	UndeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// ListArtifactVersions 版本列表（新的在前）
+	// (GET /api/v1/artifacts/{id}/versions)
+	ListArtifactVersions(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// RestoreArtifactVersion 把旧版本复制成新的最新版本（作者是用户）
+	// (POST /api/v1/artifacts/{id}/versions/{n}/restore)
+	RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, n ArtifactVersionPath)
 	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 	// (POST /api/v1/assistant/conversations)
 	CreateAssistantConversation(w http.ResponseWriter, r *http.Request)
@@ -11228,6 +11954,60 @@ func (_ Unimplemented) ImportAgentConfig(w http.ResponseWriter, r *http.Request)
 // RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
 // (POST /api/v1/agent-config/restart-sessions)
 func (_ Unimplemented) RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListArtifacts 列出 artifact（最近更新的在前）
+// (GET /api/v1/artifacts)
+func (_ Unimplemented) ListArtifacts(w http.ResponseWriter, r *http.Request, params ListArtifactsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteArtifact 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact
+// (DELETE /api/v1/artifacts/{id})
+func (_ Unimplemented) DeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params DeleteArtifactParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifact artifact 详情（某个版本的文件清单与能力声明）
+// (GET /api/v1/artifacts/{id})
+func (_ Unimplemented) GetArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchArtifact 重命名（不产生版本；回收站里的不能改）
+// (PATCH /api/v1/artifacts/{id})
+func (_ Unimplemented) PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifactFile 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染）
+// (GET /api/v1/artifacts/{id}/file)
+func (_ Unimplemented) GetArtifactFile(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// MarkArtifactOpened 记一次「打开」（总览页按最近打开排序、首屏最近项用；存服务端，换设备一致）
+// (POST /api/v1/artifacts/{id}/opened)
+func (_ Unimplemented) MarkArtifactOpened(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UndeleteArtifact 从「最近删除」恢复
+// (POST /api/v1/artifacts/{id}/restore)
+func (_ Unimplemented) UndeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListArtifactVersions 版本列表（新的在前）
+// (GET /api/v1/artifacts/{id}/versions)
+func (_ Unimplemented) ListArtifactVersions(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RestoreArtifactVersion 把旧版本复制成新的最新版本（作者是用户）
+// (POST /api/v1/artifacts/{id}/versions/{n}/restore)
+func (_ Unimplemented) RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, n ArtifactVersionPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12527,6 +13307,343 @@ func (siw *ServerInterfaceWrapper) RestartAgentConfigSessions(w http.ResponseWri
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RestartAgentConfigSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListArtifacts operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifacts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListArtifactsParams
+
+	// ------------- Optional query parameter "deleted" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "deleted", r.URL.Query(), &params.Deleted, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deleted"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deleted", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifacts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteArtifact operation middleware
+func (siw *ServerInterfaceWrapper) DeleteArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteArtifactParams
+
+	// ------------- Optional query parameter "permanent" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "permanent", r.URL.Query(), &params.Permanent, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "permanent"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "permanent", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteArtifact(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifact operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetArtifactParams
+
+	// ------------- Optional query parameter "version" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "version", r.URL.Query(), &params.Version, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "version"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifact(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchArtifact operation middleware
+func (siw *ServerInterfaceWrapper) PatchArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactFile operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetArtifactFileParams
+
+	// ------------- Optional query parameter "version" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "version", r.URL.Query(), &params.Version, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "version"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkArtifactOpened operation middleware
+func (siw *ServerInterfaceWrapper) MarkArtifactOpened(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkArtifactOpened(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UndeleteArtifact operation middleware
+func (siw *ServerInterfaceWrapper) UndeleteArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UndeleteArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListArtifactVersions operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifactVersions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifactVersions(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestoreArtifactVersion operation middleware
+func (siw *ServerInterfaceWrapper) RestoreArtifactVersion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "n" -------------
+	var n ArtifactVersionPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "n", chi.URLParam(r, "n"), &n, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "n", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestoreArtifactVersion(w, r, id, n)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19249,6 +20366,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/assistant/files/{id}/content", wrapper.GetAssistantFileContent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts", wrapper.ListArtifacts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/artifacts/{id}", wrapper.DeleteArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}", wrapper.GetArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/artifacts/{id}", wrapper.PatchArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/restore", wrapper.UndeleteArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/opened", wrapper.MarkArtifactOpened)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/versions", wrapper.ListArtifactVersions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/versions/{n}/restore", wrapper.RestoreArtifactVersion)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/file", wrapper.GetArtifactFile)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)

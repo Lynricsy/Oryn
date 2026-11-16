@@ -2572,6 +2572,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出 artifact（最近更新的在前） */
+        get: operations["listArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** artifact 详情（某个版本的文件清单与能力声明） */
+        get: operations["getArtifact"];
+        put?: never;
+        post?: never;
+        /** 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact */
+        delete: operations["deleteArtifact"];
+        options?: never;
+        head?: never;
+        /** 重命名（不产生版本；回收站里的不能改） */
+        patch: operations["patchArtifact"];
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从「最近删除」恢复 */
+        post: operations["undeleteArtifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/opened": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 记一次「打开」（总览页按最近打开排序、首屏最近项用；存服务端，换设备一致） */
+        post: operations["markArtifactOpened"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 版本列表（新的在前） */
+        get: operations["listArtifactVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/versions/{n}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                n: components["parameters"]["ArtifactVersionPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 把旧版本复制成新的最新版本（作者是用户） */
+        post: operations["restoreArtifactVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染） */
+        get: operations["getArtifactFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -3388,6 +3522,8 @@ export interface components {
         AttachmentId: string;
         /** @description `afl_<ulid>`（全局助手文件库） */
         AssistantFileId: string;
+        /** @description `art_<ulid>`（M14 artifact） */
+        ArtifactId: string;
         /** @description `shr_<ulid>` */
         ShareId: string;
         /** @description 公开分享 / 发布文件的能力令牌（16 字节随机的小写十六进制，明文存储） */
@@ -4045,6 +4181,121 @@ export interface components {
         };
         AssistantFilePatch: {
             scope: components["schemas"]["AssistantFileScope"];
+        };
+        /**
+         * @description `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+         * @enum {string}
+         */
+        ArtifactKind: "web" | "canvas" | "document" | "slides";
+        /**
+         * @description 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+         * @enum {string}
+         */
+        ArtifactType: "document" | "slides";
+        /** @enum {string} */
+        ArtifactOrigin: "agent" | "import";
+        /**
+         * @description 页面运行时能力（`oryn.use(name)`）
+         * @enum {string}
+         */
+        ArtifactCapability: "db" | "files" | "sample";
+        /**
+         * @description 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
+         * @enum {string}
+         */
+        ArtifactAccess: "private" | "code" | "public";
+        Artifact: {
+            id: components["schemas"]["ArtifactId"];
+            /** @description 所属项目；没有项目时省略 */
+            projectId?: components["schemas"]["ProjectId"];
+            /** @description 创建线程；导入的或线程已删除时省略 */
+            threadId?: components["schemas"]["ThreadId"];
+            origin: components["schemas"]["ArtifactOrigin"];
+            type?: components["schemas"]["ArtifactType"];
+            kind: components["schemas"]["ArtifactKind"];
+            title: string;
+            /** @description 最新版本号（从 1 开始） */
+            version: number;
+            /**
+             * Format: int64
+             * @description 最新版本的总字节数
+             */
+            size: number;
+            /** @description 最新版本的页数（画布为画框数，幻灯片为张数，其余为 1） */
+            pages: number;
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+            openedAt?: components["schemas"]["TimestampMs"];
+            /** @description 在「最近删除」里时为删除时间 */
+            deletedAt?: components["schemas"]["TimestampMs"];
+            /** @description 已发布时给出 */
+            published?: {
+                access: components["schemas"]["ArtifactAccess"];
+            };
+        };
+        ArtifactList: {
+            artifacts: components["schemas"]["Artifact"][];
+        };
+        ArtifactFile: {
+            path: string;
+            /** Format: int64 */
+            size: number;
+            mime: string;
+            sha256: components["schemas"]["Sha256"];
+        };
+        ArtifactVersion: {
+            version: number;
+            createdAt: components["schemas"]["TimestampMs"];
+            /** @description 写入这个版本的线程；省略 = 用户 */
+            authorThreadId?: components["schemas"]["ThreadId"];
+            /** @description 写入时的线程标题快照（用户写入时为空串） */
+            authorLabel: string;
+            note?: string;
+            /** Format: int64 */
+            size: number;
+            pages: number;
+        };
+        ArtifactVersionList: {
+            versions: components["schemas"]["ArtifactVersion"][];
+        };
+        ArtifactThreadRef: {
+            threadId: components["schemas"]["ThreadId"];
+            title: string;
+            archived: boolean;
+        };
+        ArtifactDetail: {
+            artifact: components["schemas"]["Artifact"];
+            /** @description 本次返回的版本 */
+            version: number;
+            /** @description 最新版本 */
+            head: number;
+            files: components["schemas"]["ArtifactFile"][];
+            capabilities: components["schemas"]["ArtifactCapability"][];
+            /** @description 画布 artifact 该版本的 `canvas.json`（解析后的对象）；其它类型省略 */
+            canvas?: {
+                [key: string]: unknown;
+            };
+            /** @description 创建线程与写过版本的线程（还存在的），先创建线程后按最近写入 */
+            threads: components["schemas"]["ArtifactThreadRef"][];
+        };
+        ArtifactState: {
+            /** @description 当前最新版本 */
+            version: number;
+            deleted: boolean;
+            /** @description 在调用方的 `baseVersion` 之后被改过的路径 */
+            changed?: string[];
+        };
+        /** @description `conflict`（409）的响应体：标准错误结构外加 `state` */
+        ArtifactConflict: {
+            code: string;
+            message: string;
+            state: components["schemas"]["ArtifactState"];
+        };
+        ArtifactPatch: {
+            title: string;
+        };
+        ArtifactRestoreVersion: {
+            baseVersion: number;
         };
         /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
         CreateAssistantConversationRequest: {
@@ -6004,7 +6255,7 @@ export interface components {
             expiresIn: number;
         };
         /** @description 客户端 → 服务端 WS 消息 */
-        WsClientMessage: components["schemas"]["WsClientFocus"] | components["schemas"]["WsClientSub"] | components["schemas"]["WsClientUnsub"] | components["schemas"]["WsClientCmd"] | components["schemas"]["WsClientUiResponse"] | components["schemas"]["WsClientPing"] | components["schemas"]["WsClientTermWatch"];
+        WsClientMessage: components["schemas"]["WsClientFocus"] | components["schemas"]["WsClientSub"] | components["schemas"]["WsClientUnsub"] | components["schemas"]["WsClientCmd"] | components["schemas"]["WsClientUiResponse"] | components["schemas"]["WsClientPing"] | components["schemas"]["WsClientTermWatch"] | components["schemas"]["WsClientArtifactWatch"] | components["schemas"]["WsClientArtifactUnwatch"];
         /** @description 当前正在看的线程（用于未读、通知抑制、唤醒）；记为一次用户交互 */
         WsClientFocus: {
             /**
@@ -6090,8 +6341,27 @@ export interface components {
             threadId: components["schemas"]["ThreadId"];
             on: boolean;
         };
+        /** @description 开始（或更新）观看一个 artifact；之后本连接收到它的 `artifact.version` / `artifact.activity` 等消息。重复发送用来更新 `page`；连接断开等于全部 unwatch */
+        WsClientArtifactWatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.watch";
+            id: components["schemas"]["ArtifactId"];
+            /** @description 画布 artifact 当前所在的画布页 id */
+            page?: string;
+        };
+        WsClientArtifactUnwatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.unwatch";
+            id: components["schemas"]["ArtifactId"];
+        };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -6323,6 +6593,55 @@ export interface components {
              * @enum {string}
              */
             type: "github.changed";
+        };
+        /** @description artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次 */
+        WsServerArtifactsChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifacts.changed";
+        };
+        /** @description 某个 artifact 产生了新版本；只发给正在观看它的连接 */
+        WsServerArtifactVersion: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.version";
+            id: components["schemas"]["ArtifactId"];
+            version: number;
+        };
+        /** @description 某个 artifact 上的在场信息（观看者、agent 正在做什么）；只发给正在观看它的连接 */
+        WsServerArtifactActivity: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.activity";
+            id: components["schemas"]["ArtifactId"];
+            /** @description 正在观看的连接数 */
+            viewers: number;
+            threads: components["schemas"]["ArtifactThreadActivity"][];
+            /** @description 各观看连接所在的画布页 */
+            clients: {
+                /** @description 连接 id（同一连接内稳定） */
+                client: string;
+                page?: string;
+            }[];
+            /** @description 正在看发布页的访客数 */
+            visitors: number;
+        };
+        ArtifactThreadActivity: {
+            threadId: components["schemas"]["ThreadId"];
+            /** @enum {string} */
+            doing: "read" | "write" | "draw" | "move";
+            focus?: {
+                /** @description 正在读或改的文件 */
+                path: string;
+                /** @description 该文件属于画布的某个画框时为画框 id */
+                page?: string;
+            };
         };
         /**
          * @description `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。
@@ -6655,10 +6974,11 @@ export interface components {
          *     `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
          *     `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
          *     `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
-         *     `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）。
+         *     `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
+         *     `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -7043,6 +7363,34 @@ export interface components {
             /** @description 库内文件名；缺省取路径的最后一段 */
             name?: string;
         };
+        /**
+         * @description M14（orbd→orynd，由 orb / Runner 内 agent 的 artifact 工具经 `orbd.sock` / `runner.sock` 转来）：执行一个 artifact 操作。
+         *     控制面先校验调用方（属于本 orb、`kind = work`、未归档，否则 `forbidden`）；`params.files[*].source` 是 orb 内的绝对路径，
+         *     控制面在本次请求里经 `library.fetch` 取回字节（orbd 转发期间把这些路径登记为可取回）。
+         */
+        LinkCtlArtifactCallParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            /** @description 操作名（`create_artifact`、`read_artifact`、`update_artifact` 等，与 agent 工具同名） */
+            op: string;
+            /** @description 操作参数（camelCase，与 agent 工具同形） */
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        LinkCtlArtifactCallResult: {
+            /** @description 给 agent 的文本结果 */
+            text: string;
+            /** @description 结构化结果（转录卡片用） */
+            details?: {
+                [key: string]: unknown;
+            };
+            image?: {
+                mimeType: string;
+                /** @description base64 */
+                data: string;
+            };
+        };
         LinkCtlFsCopyTreeParams: {
             from: string;
             to: string;
@@ -7204,6 +7552,8 @@ export interface components {
         OrbIdPath: components["schemas"]["OrbId"];
         AttachmentIdPath: components["schemas"]["AttachmentId"];
         AssistantFileIdPath: components["schemas"]["AssistantFileId"];
+        ArtifactIdPath: components["schemas"]["ArtifactId"];
+        ArtifactVersionPath: number;
         /**
          * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
          *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
@@ -11301,6 +11651,249 @@ export interface operations {
             header?: never;
             path: {
                 id: components["parameters"]["AssistantFileIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description Range 请求的部分字节 */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listArtifacts: {
+        parameters: {
+            query?: {
+                /** @description true = 只列「最近删除」里的；缺省只列未删除的 */
+                deleted?: boolean;
+                /** @description 只列该线程创建或写过版本的 */
+                threadId?: components["schemas"]["ThreadId"];
+                projectId?: components["schemas"]["ProjectId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifact: {
+        parameters: {
+            query?: {
+                /** @description 缺省 = 最新版本 */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteArtifact: {
+        parameters: {
+            query?: {
+                permanent?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    patchArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的 artifact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    undeleteArtifact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 恢复后的 artifact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    markArtifactOpened: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已记录 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listArtifactVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactVersionList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreArtifactVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                n: components["parameters"]["ArtifactVersionPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactRestoreVersion"];
+            };
+        };
+        responses: {
+            /** @description 恢复后的 artifact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            /** @description `baseVersion` 之后相关文件被改过 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactConflict"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactFile: {
+        parameters: {
+            query: {
+                /** @description 缺省 = 最新版本 */
+                version?: number;
+                path: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
             };
             cookie?: never;
         };
