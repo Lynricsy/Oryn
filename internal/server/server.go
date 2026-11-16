@@ -161,13 +161,14 @@ func (s *Server) init(ctx context.Context) error {
 			return err
 		}
 	}
+	setup := &orbs.DefaultSetup{
+		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
+		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
+	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
 		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
-	}, s.Store, s.Jobs, &orbs.DefaultSetup{
-		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
-		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
-	}, s.Vault)
+	}, s.Store, s.Jobs, setup, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate,
@@ -240,6 +241,9 @@ func (s *Server) init(ctx context.Context) error {
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
+	// orb 的 setup 计划与出站代理：绑定项目的 orb 下发 gh 登录名、按仓库收窄的令牌与提交身份
+	setup.GitHub = s.GitHub
+	s.Orbs.SetGitHub(s.GitHub)
 	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）
 	s.Stats = stats.New(stats.Config{Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval}, s.Store, s.Orbs, s.Notify)
 	s.Threads.AddObserver(s.Stats)
