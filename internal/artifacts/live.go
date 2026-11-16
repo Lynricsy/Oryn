@@ -32,6 +32,9 @@ const BlankPage = "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</
 // canvasFlushTimeout 是计时器、观看者离开与关停时落版本的时限（它们没有请求上下文）。
 const canvasFlushTimeout = 30 * time.Second
 
+// canvasRetryMax 是落版本失败后重试间隔的上限（从 CanvasQuiet 起逐次翻倍）。
+const canvasRetryMax = 10 * time.Minute
+
 // CanvasHub 是实时画布的出口（realtime.Hub 实现）。
 type CanvasHub interface {
 	// ArtifactCanvas 把画布的实时变化发给正在观看 msg.ID 的连接。
@@ -63,6 +66,8 @@ type live struct {
 	copies map[string]string
 	gen    int // 计时器代数：只有最近一次重置的计时器到点才落版本
 	stop   func() bool
+	// retries：连续落版本失败的次数（决定下次重试的间隔）；有新操作或落版本成功时清零。
+	retries int
 }
 
 func (l *live) stopTimer() {
@@ -319,8 +324,21 @@ func addCopies(m map[string]string, pre, post canvas.Doc, ops []canvas.Op) map[s
 	return m
 }
 
-// armQuiet 重置静默计时器。调用方持有该 artifact 的锁。
+// armQuiet 重置静默计时器（有新操作时调用，清零失败重试计数）。调用方持有该 artifact 的锁。
 func (s *Service) armQuiet(id string, l *live) {
+	l.retries = 0
+	s.arm(id, l, CanvasQuiet)
+}
+
+// armRetry 在落版本失败后安排下一次重试：间隔从 CanvasQuiet 起逐次翻倍，最多 canvasRetryMax。
+// 调用方持有该 artifact 的锁。
+func (s *Service) armRetry(id string, l *live) {
+	l.retries++
+	d := CanvasQuiet << min(l.retries, 10)
+	s.arm(id, l, min(d, canvasRetryMax))
+}
+
+func (s *Service) arm(id string, l *live, d time.Duration) {
 	l.stopTimer()
 	l.gen++
 	gen := l.gen
@@ -328,10 +346,10 @@ func (s *Service) armQuiet(id string, l *live) {
 	if after == nil {
 		after = func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }
 	}
-	l.stop = after(CanvasQuiet, func() { s.canvasQuiet(id, gen) })
+	l.stop = after(d, func() { s.canvasQuiet(id, gen) })
 }
 
-// canvasQuiet 是静默计时器到点：落版本；没人在看就回收 live。
+// canvasQuiet 是静默（或重试）计时器到点：落版本；落完且没人在看就回收 live。
 func (s *Service) canvasQuiet(id string, gen int) {
 	unlock := s.live.locks.lock(id)
 	defer unlock()
@@ -342,7 +360,9 @@ func (s *Service) canvasQuiet(id string, gen int) {
 	l.stop = nil
 	ctx, cancel := context.WithTimeout(context.Background(), canvasFlushTimeout)
 	defer cancel()
-	s.flushOrReset(ctx, id, l)
+	if !s.flushOrRetry(ctx, id, l) {
+		return
+	}
 	if l = s.liveOf(id); l != nil && !s.watched(id) {
 		s.dropLive(id, l)
 	}
@@ -375,9 +395,11 @@ func (s *Service) canvasWatchChanged(id string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), canvasFlushTimeout)
 	defer cancel()
-	s.flushOrReset(ctx, id, l)
-	if l = s.liveOf(id); l != nil {
-		s.dropLive(id, l)
+	// 没落成（暂时性错误）时保留 live 与 pending，由重试计时器继续；落成后才回收
+	if s.flushOrRetry(ctx, id, l) {
+		if l = s.liveOf(id); l != nil {
+			s.dropLive(id, l)
+		}
 	}
 }
 
@@ -407,17 +429,24 @@ func (s *Service) FlushCanvases() {
 	}
 }
 
-// flushOrReset 落版本；失败（artifact 已删除等）时记日志并丢弃 pending，回到最新版本。调用方持有锁。
-func (s *Service) flushOrReset(ctx context.Context, id string, l *live) {
+// flushOrRetry 落版本，返回是否已经没有待落的操作。artifact 已被永久删除（not_found）时丢弃 pending 并回收
+// live；其它失败（数据库、磁盘、超时、在回收站里等）一律保留已经接受并广播过的 pending，安排一次重试。
+// 调用方持有锁。
+func (s *Service) flushOrRetry(ctx context.Context, id string, l *live) bool {
 	err := s.flushLive(ctx, id, l)
 	if err == nil {
-		return
+		l.retries = 0
+		return true
 	}
-	slog.Warn("artifacts: 画布操作没能落成版本，已丢弃", "artifact", id, "ops", len(l.pending), "err", err)
-	l.pending, l.copies = nil, nil
-	if err := s.reloadLive(ctx, id, l); err != nil {
+	if oe, ok := AsOpError(err); ok && oe.Code == CodeNotFound {
+		slog.Warn("artifacts: artifact 已不存在，丢弃未落版本的画布操作", "artifact", id, "ops", len(l.pending))
+		l.pending, l.copies = nil, nil
 		s.dropLive(id, l)
+		return false
 	}
+	s.armRetry(id, l)
+	slog.Warn("artifacts: 画布操作没能落成版本，稍后重试", "artifact", id, "ops", len(l.pending), "retries", l.retries, "err", err)
+	return false
 }
 
 // flushLive 把 pending 写成一个用户版本。底稿之后 canvas.json 被别处改过时先重载、重放再写（最多三次）。

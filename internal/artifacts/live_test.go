@@ -482,17 +482,50 @@ func TestLiveFlushOnShutdown(t *testing.T) {
 	assert.Empty(t, ft.armed())
 }
 
-// 回收站里的 artifact 落版本失败：丢弃操作并回收实时状态。
-func TestLiveDeletedDropsPending(t *testing.T) {
+// 落版本暂时失败（这里用「在回收站里」制造）：已接受并广播的操作保留，按退避重新安排；恢复后重试即落成用户版本。
+// 最后一个观看者离开时失败也一样保留，直到落成才回收实时状态。
+func TestLiveFlushFailureKeepsPendingAndRetries(t *testing.T) {
 	e, hub, ft := newLiveEnv(t)
+	ctx := context.Background()
+	a := liveCanvas(t, e)
+	hub.watch(a.ID, "c1")
+	applyOps(t, e, a.ID, "tab-a", 1, sticky("n1", "别丢"))
+	hub.next(t)
+	_, err := e.s.Delete(ctx, a.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, ft.fire())
+	assert.Equal(t, 1, headVersion(t, e, a.ID))
+	require.NotNil(t, e.s.liveOf(a.ID), "实时状态保留")
+	assert.Equal(t, []time.Duration{2 * CanvasQuiet}, ft.armed(), "按退避安排重试")
+
+	hub.watch(a.ID) // 最后一个观看者离开：仍落不成，不回收
+	require.NotNil(t, e.s.liveOf(a.ID))
+	assert.Equal(t, []time.Duration{4 * CanvasQuiet}, ft.armed())
+
+	_, err = e.s.Undelete(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, ft.fire())
+	assert.Equal(t, 2, headVersion(t, e, a.ID))
+	assert.Empty(t, headAuthor(t, e, a.ID))
+	assert.Equal(t, []string{"n1"}, noteIDs(headDoc(t, e, a.ID)))
+	assert.Nil(t, e.s.liveOf(a.ID), "落成后没人在看就回收")
+	assert.Empty(t, ft.armed())
+}
+
+// 只有 artifact 已被永久删除时才丢弃未落版本的操作。
+func TestLiveErasedDropsPending(t *testing.T) {
+	e, hub, ft := newLiveEnv(t)
+	ctx := context.Background()
 	a := liveCanvas(t, e)
 	hub.watch(a.ID, "c1")
 	applyOps(t, e, a.ID, "tab-a", 1, sticky("n1", "x"))
-	_, err := e.s.Delete(context.Background(), a.ID)
+	_, err := e.s.Delete(ctx, a.ID)
 	require.NoError(t, err)
+	require.NoError(t, e.s.Erase(ctx, a.ID))
 	require.Equal(t, 1, ft.fire())
-	assert.Equal(t, 1, headVersion(t, e, a.ID))
 	assert.Nil(t, e.s.liveOf(a.ID))
-	_, err = e.s.CanvasState(context.Background(), a.ID)
-	assert.Equal(t, CodeDeleted, code(err))
+	assert.Empty(t, ft.armed())
+	_, err = e.s.CanvasState(ctx, a.ID)
+	assert.Equal(t, CodeNotFound, code(err))
 }
