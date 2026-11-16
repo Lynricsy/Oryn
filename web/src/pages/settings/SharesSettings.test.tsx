@@ -46,6 +46,11 @@ function renderWith(overview: {
 				deletes.push(u.pathname);
 				return new Response(null, { status: 204 });
 			}
+			// 同页的 Artifacts 两块（ArtifactPublishing 有自己的测试）
+			if (u.pathname === "/api/v1/settings/artifacts")
+				return Response.json({ autoPublish: false });
+			if (u.pathname === "/api/v1/artifact-publications")
+				return Response.json({ publications: [] });
 			return Response.json(overview);
 		}),
 	);

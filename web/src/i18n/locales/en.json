@@ -1886,7 +1886,14 @@
 			},
 			"visitors_one": "{{count}} visitor",
 			"visitors_other": "{{count}} visitors",
-			"visitorsHint": "Viewing the shared link, read-only"
+			"visitorsHint": "Viewing the shared link, read-only",
+			"settings": {
+				"autoTitle": "Artifacts auto-publishing",
+				"autoPublish": "Publish new artifacts privately and keep them on the latest version",
+				"title": "Published Artifacts",
+				"empty": "No published artifacts yet. Publish one from its Share button.",
+				"unpublishConfirm": "Confirm unpublish"
+			}
 		},
 		"history": {
 			"title": "Version history",

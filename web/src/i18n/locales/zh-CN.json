@@ -1886,7 +1886,14 @@
 			},
 			"visitors_one": "{{count}} 位访客",
 			"visitors_other": "{{count}} 位访客",
-			"visitorsHint": "在看分享链接，只读"
+			"visitorsHint": "在看分享链接，只读",
+			"settings": {
+				"autoTitle": "Artifacts 自动发布",
+				"autoPublish": "把新建的 artifact 以私有方式发布，并跟着最新版本更新",
+				"title": "已发布的 Artifacts",
+				"empty": "还没有发布的 artifact。在 artifact 的「分享」里发布。",
+				"unpublishConfirm": "确认取消发布"
+			}
 		},
 		"history": {
 			"title": "版本历史",

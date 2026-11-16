@@ -1,7 +1,7 @@
 /**
- * 设置页「公开分享」总览（M5 计划 5.3，default export，由设置页接入）：
- * 「公开的线程」（标题点进线程、模式、时间、复制、两步撤销）与「公开的文件」（名称、大小、所属线程、复制、两步撤回）。
- * 两类都为空时只显示一个空态。
+ * 设置页「公开分享」总览（M5 计划 5.3、M14 8.4，default export，由设置页接入）：
+ * 「公开的线程」（标题点进线程、模式、时间、复制、两步撤销）与「公开的文件」（名称、大小、所属线程、复制、两步撤回），
+ * 两类都为空时只显示一个空态；其后是 Artifacts 的自动发布开关与「已发布的 Artifacts」（`ArtifactPublishing`）。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,7 @@ import { fileIcon } from "../../lib/file-icon";
 import { formatBytes, formatRelative } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
+import { ArtifactPublishing } from "./ArtifactPublishing";
 
 function LeadIcon({ name }: { name: IconName }) {
 	return (
@@ -142,6 +143,15 @@ function FileRow({ file }: { file: PublishedFile }): ReactNode {
 }
 
 export default function SharesSettings(): ReactNode {
+	return (
+		<>
+			<PublicShares />
+			<ArtifactPublishing />
+		</>
+	);
+}
+
+function PublicShares(): ReactNode {
 	const { t } = useTranslation();
 	const q = useShareOverview();
 	const shares = q.data?.shares ?? [];
