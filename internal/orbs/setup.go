@@ -245,22 +245,25 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			return plan, fmt.Errorf("读取 git 主机: %w", err)
 		}
 	}
-	// GitHub App（M14）：项目仓库在 github.com 且这台 orb 归 App 管时，git 与 gh 都经出站代理用按仓库收窄的令牌，
-	// 不需要 PAT；agent 身份的提交作者固定为 Agent 账号，user 身份只在项目与所有者都没设时用 GitHub 账号推出的身份。
-	if prj != nil && d.GitHub != nil && projectRepo != nil && projectRepo.host == "github.com" {
-		if gs, ok := d.GitHub.OrbSetup(ctx, orb, *prj); ok {
-			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login}
+	// GitHub（M15）：工作 orb 只要身份槽位可用就下发 gh 登录名（含 uploads.github.com）、/gh/ 路由与整个 github.com 主机的
+	// insteadOf，有没有项目、项目在哪个主机都一样；git 与 gh 都经出站代理注入 OAuth 令牌，不需要 PAT。runner 与协调宿主
+	// 不下发。agent 身份的提交作者固定为 Agent 账号，user 身份只在项目与所有者都没设时用 GitHub 账号推出的身份。
+	if d.GitHub != nil && !IsRunner(orb) {
+		if gs, ok := d.GitHub.OrbSetup(ctx, orb); ok {
+			uploads := true
+			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login, Uploads: &uploads}
 			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin}
-			if !slices.ContainsFunc(hosts, func(h string) bool { return strings.EqualFold(h, "github.com") }) {
-				hosts = append(slices.Clip(hosts), "github.com")
-			}
 			if gs.Agent || p.GitIdentity == nil {
 				p.GitIdentity = &gs.GitIdentity
 			}
 		}
 	}
 	p.GitHosts = gitInsteadOf(projectRepo, hosts)
+	if p.Gh != nil {
+		p.GitHosts = withGitHubHost(p.GitHosts)
+	}
 	// git 出站策略（契约 §5）：有 https 项目仓库的 orb 只放行该仓库（读写）；否则任意仓库只读（GitRepos 为空）。
+	// 下发了 GitHub 凭据时 github.com 不受此限（egress 按 Policy.GitHub 放行），其它 PAT 主机照旧。
 	if projectRepo != nil {
 		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
 	}
@@ -372,6 +375,18 @@ func gitInsteadOf(repo *gitRepo, tokenHosts []string) []string {
 		return out
 	}
 	out = append(out, tokenHosts...)
+	sort.Strings(out)
+	return out
+}
+
+// withGitHubHost 把 GitHosts 中 github.com 的条目（整主机或只覆盖项目仓库）换成一条整主机条目（M15：OAuth 令牌不按仓库
+// 收窄，orb 内任意 github.com 仓库都经出站代理），结果按字典序排列。
+func withGitHubHost(entries []string) []string {
+	out := slices.DeleteFunc(entries, func(e string) bool {
+		host, _, _ := strings.Cut(e, "/")
+		return strings.EqualFold(host, "github.com")
+	})
+	out = append(out, "github.com")
 	sort.Strings(out)
 	return out
 }

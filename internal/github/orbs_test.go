@@ -67,22 +67,25 @@ func TestOrbToken(t *testing.T) {
 	assert.Equal(t, want, tok)
 }
 
+// M15 2.1：归管与项目无关，只看 orb 种类与身份槽位。
 func TestOrbTokenStates(t *testing.T) {
 	e := newEnv(t)
 	p := e.boundProject()
 
 	unbound := e.project("https://example.com/a/b")
 	_, st := e.s.OrbToken(e.ctx, e.orb(unbound, "", "").ID)
-	assert.Equal(t, orbs.GitHubTokenUnmanaged, st, "未绑定项目")
+	assert.Equal(t, orbs.GitHubTokenOK, st, "未绑定项目同样下发")
+
+	_, st = e.s.OrbToken(e.ctx, e.orb("", "", "").ID)
+	assert.Equal(t, orbs.GitHubTokenOK, st, "无项目同样下发")
 
 	_, st = e.s.OrbToken(e.ctx, e.orb(p, "agent", "").ID)
 	assert.Equal(t, orbs.GitHubTokenUnavailable, st, "Agent 未连接")
+	_, st = e.s.OrbToken(e.ctx, e.orb("", "agent", "").ID)
+	assert.Equal(t, orbs.GitHubTokenUnavailable, st, "无项目、Agent 未连接")
 
 	_, st = e.s.OrbToken(e.ctx, e.orb(p, "", orbs.KindRunner).ID)
 	assert.Equal(t, orbs.GitHubTokenUnmanaged, st, "runner")
-
-	_, st = e.s.OrbToken(e.ctx, e.orb("", "", "").ID)
-	assert.Equal(t, orbs.GitHubTokenUnmanaged, st, "无项目")
 
 	// 我的账号需要重新授权：不归管（可回落 PAT）。
 	require.NoError(t, e.st.Q.SetGithubIdentityStatus(e.ctx, db.SetGithubIdentityStatusParams{Status: "reauth", UpdatedAt: 1, Slot: "user"}))
@@ -94,9 +97,8 @@ func TestOrbSetup(t *testing.T) {
 	e := newEnv(t)
 	p := e.boundProject()
 	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
-	prj := e.getProject(p)
 
-	gs, ok := e.s.OrbSetup(e.ctx, e.orb(p, "agent", ""), prj)
+	gs, ok := e.s.OrbSetup(e.ctx, e.orb(p, "agent", ""))
 	require.True(t, ok)
 	assert.Equal(t, "oryn-bot", gs.Login)
 	assert.True(t, gs.Agent)
@@ -105,14 +107,24 @@ func TestOrbSetup(t *testing.T) {
 	assert.Equal(t, e.fake.URL(), gs.APIOrigin)
 	assert.Equal(t, e.fake.URL(), gs.GitOrigin)
 
-	gs, ok = e.s.OrbSetup(e.ctx, e.orb(p, "", ""), prj)
+	gs, ok = e.s.OrbSetup(e.ctx, e.orb(p, "", ""))
 	require.True(t, ok)
 	assert.False(t, gs.Agent)
 	assert.Equal(t, "The Owner", gs.GitIdentity.Name)
 	assert.Equal(t, "1+owner@users.noreply.github.com", gs.GitIdentity.Email)
 
+	// 无项目的 orb 按自己的身份槽位下发
+	gs, ok = e.s.OrbSetup(e.ctx, e.orb("", "", ""))
+	require.True(t, ok)
+	assert.Equal(t, "owner", gs.Login)
+	gs, ok = e.s.OrbSetup(e.ctx, e.orb("", "agent", ""))
+	require.True(t, ok)
+	assert.Equal(t, "oryn-bot", gs.Login)
+
 	coord := e.orb(p, "", "")
 	coord.Coordinator = true
-	_, ok = e.s.OrbSetup(e.ctx, coord, prj)
+	_, ok = e.s.OrbSetup(e.ctx, coord)
 	assert.False(t, ok, "协调宿主不下发 GitHub 凭据")
+	_, ok = e.s.OrbSetup(e.ctx, e.orb("", "", orbs.KindRunner))
+	assert.False(t, ok, "runner 不下发 GitHub 凭据")
 }

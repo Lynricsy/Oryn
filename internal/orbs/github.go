@@ -16,7 +16,7 @@ import (
 type GitHubTokenState int
 
 const (
-	GitHubTokenUnmanaged GitHubTokenState = iota // 这台 orb 不由 GitHub 集成下发凭据（项目未绑定，或 user 槽位未连接）：调用方可回落到 PAT
+	GitHubTokenUnmanaged GitHubTokenState = iota // 这台 orb 不由 GitHub 集成下发凭据（runner、协调宿主，或 user 槽位不可用）：调用方可回落到 PAT
 	GitHubTokenOK
 	GitHubTokenUnavailable // 归 GitHub 集成管但拿不到令牌（agent 槽位不可用）：调用方不得回落
 )
@@ -31,7 +31,8 @@ type GitHubSetup struct {
 
 // GitHub 是 GitHub 集成给 setup 计划、出站代理与 orb 内 GitHub 工具提供的能力（M14 / M15）；nil = 未启用。
 type GitHub interface {
-	OrbSetup(ctx context.Context, orb db.Orb, prj db.Project) (GitHubSetup, bool)
+	// OrbSetup 返回工作 orb 的 GitHub 下发参数（M15：与项目无关，只看 orb 种类与身份槽位）；不归管或槽位不可用时 ok 为假。
+	OrbSetup(ctx context.Context, orb db.Orb) (GitHubSetup, bool)
 	OrbToken(ctx context.Context, orbID string) (string, GitHubTokenState)
 	// Call 执行 orb 内 agent 的 GitHub 工具（ctl github.call，M15）；调用方线程已由 orbs 校验。
 	Call(ctx context.Context, orbID, threadID string, p apigen.LinkCtlGithubCallParams) (apigen.LinkCtlGithubCallResult, error)

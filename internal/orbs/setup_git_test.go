@@ -2,6 +2,8 @@ package orbs
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,7 +70,7 @@ type stubGitHub struct {
 	state GitHubTokenState
 }
 
-func (s stubGitHub) OrbSetup(context.Context, db.Orb, db.Project) (GitHubSetup, bool) {
+func (s stubGitHub) OrbSetup(context.Context, db.Orb) (GitHubSetup, bool) {
 	return s.gs, s.ok
 }
 func (s stubGitHub) OrbToken(context.Context, string) (string, GitHubTokenState) {
@@ -83,7 +85,8 @@ func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubP
 func (s stubGitHub) GitHubWriteBegin(context.Context, string, egress.GitHubWrite) string       { return "" }
 func (s stubGitHub) GitHubWriteEnd(context.Context, string, egress.GitHubWrite, int, []string) {}
 
-// M14 3.3：项目归 GitHub App 管时，不配 PAT 也给 github.com 项目仓库下发 insteadOf、gh 登录名与 /gh/ 路由。
+// M15 2.1：身份槽位可用的工作 orb（有没有项目、项目在哪个主机都一样）下发 gh 登录名（含 uploads）、/gh/ 路由与整个
+// github.com 主机的 insteadOf，不需要 PAT；runner 与协调宿主不下发。
 func TestPlanGitHub(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir())
@@ -100,24 +103,61 @@ func TestPlanGitHub(t *testing.T) {
 	}
 	bot := apigen.GitIdentity{Name: "oryn-bot", Email: "7+oryn-bot@users.noreply.github.com"}
 	gh := stubGitHub{ok: true, gs: GitHubSetup{Login: "oryn-bot", GitIdentity: bot, APIOrigin: "https://api.github.com", GitOrigin: "https://github.com"}}
-	plan := func(d *DefaultSetup, projectID *string) SetupPlan {
+	planOrb := func(d *DefaultSetup, orb db.Orb) SetupPlan {
 		t.Helper()
-		p, err := d.Plan(ctx, db.Orb{ID: "orb-x", ProjectID: projectID})
+		p, err := d.Plan(ctx, orb)
 		require.NoError(t, err)
 		return p
+	}
+	plan := func(d *DefaultSetup, projectID *string) SetupPlan {
+		t.Helper()
+		return planOrb(d, db.Orb{ID: "orb-x", ProjectID: projectID})
+	}
+	assertGh := func(p SetupPlan) {
+		t.Helper()
+		require.NotNil(t, p.Params.Gh)
+		assert.Equal(t, "oryn-bot", p.Params.Gh.Login)
+		require.NotNil(t, p.Params.Gh.Uploads)
+		assert.True(t, *p.Params.Gh.Uploads)
+		require.NotNil(t, p.Egress.GitHub)
+		assert.Equal(t, "https://api.github.com", p.Egress.GitHub.APIOrigin)
 	}
 
 	// 没有 Vault（也就没有任何 PAT）
 	d := &DefaultSetup{Store: st, GitHub: gh}
 	p := plan(d, project("https://github.com/Owner/Repo.git", nil))
-	require.NotNil(t, p.Params.Gh)
-	assert.Equal(t, "oryn-bot", p.Params.Gh.Login)
-	assert.Equal(t, []string{"github.com/Owner/Repo"}, p.Params.GitHosts)
-	require.NotNil(t, p.Egress.GitHub)
-	assert.Equal(t, "https://api.github.com", p.Egress.GitHub.APIOrigin)
-	assert.Equal(t, map[string][]string{"github.com": {"owner/repo"}}, p.Egress.GitRepos)
+	assertGh(p)
+	assert.Equal(t, []string{"github.com"}, p.Params.GitHosts, "整个 github.com 主机经出站代理")
+	assert.Equal(t, map[string][]string{"github.com": {"owner/repo"}}, p.Egress.GitRepos, "项目仓库照旧写入")
 	require.NotNil(t, p.Params.GitIdentity)
 	assert.Equal(t, bot, *p.Params.GitIdentity, "项目与所有者都没设身份：用 GitHub 账号推出的身份")
+
+	// 无项目的 orb 同样下发
+	p = plan(d, nil)
+	assertGh(p)
+	assert.Equal(t, []string{"github.com"}, p.Params.GitHosts)
+	assert.Empty(t, p.Egress.GitRepos)
+	assert.Equal(t, bot, *p.Params.GitIdentity)
+
+	// 无项目 + PAT：每个有令牌的主机整主机覆盖，github.com 不重复
+	p = plan(&DefaultSetup{Store: st, GitHub: gh, Vault: gitVault{hosts: []string{"gitlab.com", "GitHub.com"}}}, nil)
+	assertGh(p)
+	assert.Equal(t, []string{"github.com", "gitlab.com"}, p.Params.GitHosts)
+
+	// 非 github.com 项目仓库也下发；项目仓库的条目与 GitRepos 不变
+	vd := &DefaultSetup{Store: st, GitHub: gh, Vault: gitVault{hosts: []string{"gitlab.com"}}}
+	p = plan(vd, project("https://gitlab.com/a/b", nil))
+	assertGh(p)
+	assert.Equal(t, []string{"github.com", "gitlab.com/a/b"}, p.Params.GitHosts)
+	assert.Equal(t, map[string][]string{"gitlab.com": {"a/b"}}, p.Egress.GitRepos)
+
+	// runner 与协调宿主不下发
+	for _, orb := range []db.Orb{{ID: "orb-r", Kind: KindRunner}, {ID: "orb-c", Coordinator: true}} {
+		p = planOrb(d, orb)
+		assert.Nil(t, p.Params.Gh, orb.ID)
+		assert.Nil(t, p.Egress.GitHub, orb.ID)
+		assert.Empty(t, p.Params.GitHosts, orb.ID)
+	}
 
 	// user 身份：项目身份优先
 	name, email := "Proj", "proj@example.com"
@@ -133,16 +173,13 @@ func TestPlanGitHub(t *testing.T) {
 	p = plan(&DefaultSetup{Store: st, GitHub: agent}, withIdent)
 	assert.Equal(t, bot, *p.Params.GitIdentity)
 
-	// 不归 App 管：与没有 GitHub 集成时一致
+	// 不归管：与没有 GitHub 集成时一致
 	p = plan(&DefaultSetup{Store: st, GitHub: stubGitHub{}}, withIdent)
 	assert.Nil(t, p.Params.Gh)
 	assert.Nil(t, p.Egress.GitHub)
 	assert.Empty(t, p.Params.GitHosts)
-
-	// 非 github.com 仓库不问 GitHub 集成
-	p = plan(d, project("https://gitlab.com/a/b", nil))
-	assert.Nil(t, p.Params.Gh)
-	assert.Empty(t, p.Params.GitHosts)
+	p = plan(&DefaultSetup{Store: st, GitHub: stubGitHub{}, Vault: gitVault{hosts: []string{"github.com"}}}, withIdent)
+	assert.Equal(t, []string{"github.com/Owner/Repo"}, p.Params.GitHosts, "回落 PAT 时只覆盖项目仓库")
 
 	// 改名前的地址随 setup 下发
 	moved := project("https://github.com/acme/gadgets", nil)
@@ -154,6 +191,39 @@ func TestPlanGitHub(t *testing.T) {
 	assert.Equal(t, []string{"https://github.com/acme/widgets"}, p.Params.Repo.PreviousUrls)
 	p = plan(d, withIdent)
 	assert.Nil(t, p.Params.Repo.PreviousUrls)
+}
+
+// M15 2.1：有 github.com 项目的 orb 经出站代理可读写任意 github.com 仓库，但不能读其它 PAT 主机上的非项目仓库。
+func TestPlanGitHubEgress(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	up := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(up.Close)
+	repo, id := "https://github.com/Owner/Repo", ids.New("prj")
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: id, Name: id, RepoUrl: &repo, CreatedAt: 1, UpdatedAt: 1}))
+	gh := stubGitHub{ok: true, tok: "oauth", state: GitHubTokenOK,
+		gs: GitHubSetup{Login: "owner", APIOrigin: up.URL, GitOrigin: up.URL}}
+	vault := gitVault{hosts: []string{"gitlab.com", "github.com"}}
+	d := &DefaultSetup{Store: st, GitHub: gh, Vault: vault}
+	plan, err := d.Plan(ctx, db.Orb{ID: "orb-x", ProjectID: &id})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com"}, plan.Params.GitHosts, "其它 PAT 主机不覆盖")
+
+	s := &Service{secrets: vault, github: gh, policies: map[string]egress.Policy{"orb-x": plan.Egress}}
+	srv := httptest.NewServer(egress.NewHandler("orb-x", egressResolver{s: s, orbID: "orb-x"}))
+	t.Cleanup(srv.Close)
+	for path, code := range map[string]int{
+		"/git/github.com/someone/else/info/refs?service=git-upload-pack":  http.StatusOK,
+		"/git/github.com/someone/else/info/refs?service=git-receive-pack": http.StatusOK,
+		"/git/gitlab.com/other/repo/info/refs?service=git-upload-pack":    http.StatusForbidden,
+	} {
+		r, err := http.Get(srv.URL + path)
+		require.NoError(t, err)
+		_ = r.Body.Close()
+		assert.Equal(t, code, r.StatusCode, path)
+	}
 }
 
 // M14 3.3：github.com 的 git 令牌——归 App 管用收窄令牌，不可用时不回落，不归 App 管回落到 PAT。

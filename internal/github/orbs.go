@@ -10,22 +10,11 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// orbManaged 判断 orb 是否由 GitHub 集成下发凭据，并返回其身份槽位行：项目已绑定（记录了 github_repo_id）的工作 orb。
+// orbManaged 判断 orb 是否由 GitHub 集成下发凭据，并返回其身份槽位行（M15）：不是 runner、不是协调宿主、且 orb 的
+// 身份槽位（github_identity 列）为 ok 的工作 orb，有没有项目都一样（OAuth 令牌不按仓库收窄，不再要求项目已绑定）。
 // state 为 GitHubTokenOK 表示归管且槽位可用；Unmanaged 表示不归管（调用方可回落 PAT）；Unavailable 表示归管但槽位不可用。
-func (s *Service) orbManaged(ctx context.Context, orb db.Orb, prj *db.Project) (db.GithubIdentity, orbs.GitHubTokenState) {
-	if orb.ProjectID == nil || orbs.IsRunner(orb) || orb.Coordinator {
-		return db.GithubIdentity{}, orbs.GitHubTokenUnmanaged
-	}
-	var p db.Project
-	if prj != nil {
-		p = *prj
-	} else {
-		var err error
-		if p, err = s.st.Q.GetProject(ctx, *orb.ProjectID); err != nil {
-			return db.GithubIdentity{}, orbs.GitHubTokenUnmanaged
-		}
-	}
-	if p.GithubRepoID == nil {
+func (s *Service) orbManaged(ctx context.Context, orb db.Orb) (db.GithubIdentity, orbs.GitHubTokenState) {
+	if orbs.IsRunner(orb) || orb.Coordinator {
 		return db.GithubIdentity{}, orbs.GitHubTokenUnmanaged
 	}
 	slot := orb.GithubIdentity
@@ -46,8 +35,8 @@ func (s *Service) orbManaged(ctx context.Context, orb db.Orb, prj *db.Project) (
 }
 
 // OrbSetup 返回一台 orb 的 GitHub 下发参数；不归管或身份不可用时 ok 为假。
-func (s *Service) OrbSetup(ctx context.Context, orb db.Orb, prj db.Project) (orbs.GitHubSetup, bool) {
-	id, st := s.orbManaged(ctx, orb, &prj)
+func (s *Service) OrbSetup(ctx context.Context, orb db.Orb) (orbs.GitHubSetup, bool) {
+	id, st := s.orbManaged(ctx, orb)
 	if st != orbs.GitHubTokenOK {
 		return orbs.GitHubSetup{}, false
 	}
@@ -78,7 +67,7 @@ func (s *Service) OrbToken(ctx context.Context, orbID string) (string, orbs.GitH
 	if err != nil {
 		return "", orbs.GitHubTokenUnmanaged
 	}
-	id, st := s.orbManaged(ctx, orb, nil)
+	id, st := s.orbManaged(ctx, orb)
 	if st != orbs.GitHubTokenOK {
 		return "", st
 	}
