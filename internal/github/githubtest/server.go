@@ -99,6 +99,13 @@ type Server struct {
 	DeliveriesUsed  int
 	DeliveriesReset time.Time
 
+	// IssueEvents / Runs 是 issue 时间线事件与 Actions 运行（M15 REST 轮询，见 watch.go）；CoreRemaining 非 0 时
+	// 轮询用到的接口带 X-RateLimit-Remaining（以及 CoreReset 对应的 X-RateLimit-Reset），模拟核心额度。
+	IssueEvents   []*IssueEvent
+	Runs          []*WorkflowRun
+	CoreRemaining int
+	CoreReset     time.Time
+
 	seq         int64
 	codes       map[string]string // 授权码 → login
 	userTokens  map[string]string // 用户访问令牌 → login
@@ -230,6 +237,7 @@ func (s *Server) handler() http.Handler {
 	s.repoHookRoutes(mux)
 	s.issueRoutes(mux)
 	s.hookRoutes(mux)
+	s.watchRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -301,7 +309,7 @@ func (s *Server) baseURL(r *http.Request) string { return "http://" + r.Host }
 func (s *Server) repoJSON(r *http.Request, rp *Repo) map[string]any {
 	owner, name, _ := strings.Cut(rp.FullName, "/")
 	m := map[string]any{
-		"id": rp.ID, "name": name, "full_name": rp.FullName, "private": rp.Private, "default_branch": rp.DefaultBranch,
+		"id": rp.ID, "node_id": RepoNodeID(rp.ID), "name": name, "full_name": rp.FullName, "private": rp.Private, "default_branch": rp.DefaultBranch,
 		"owner":    map[string]any{"login": owner, "id": rp.OwnerID},
 		"html_url": s.baseURL(r) + "/" + rp.FullName, "description": nil, "pushed_at": nil,
 	}

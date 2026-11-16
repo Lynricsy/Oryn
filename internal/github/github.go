@@ -44,6 +44,10 @@ const (
 	selfWriteRetention = 7 * 24 * time.Hour
 	auditRetention     = 30 * 24 * time.Hour
 	selfRecheckDelay   = 5 * time.Second // 槽位登录名的事件还没命中、且该槽位有写操作在途时，延后复查一次
+	// REST 轮询（M15 步骤 3.1）
+	restPollInterval = 60 * time.Second // 仓库级与对象级 watch 的轮询周期
+	rateLimitFloor   = 500              // 槽位的核心额度剩余低于它时，该槽位的轮询间隔加倍
+	watchRetire      = 24 * time.Hour   // 对象进入终态满这么久后 watch 退场
 )
 
 // oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
@@ -141,6 +145,15 @@ type Service struct {
 
 	// selfInflight 是各槽位经出站代理在途（已 Begin 未 End）的 GitHub 写操作数（步骤 2.3，受 mu 保护，惰性初始化）。
 	selfInflight map[string]int
+
+	// REST 轮询（M15 步骤 3.1）：watchMu 串行化轮询轮次，并保护 watchNext（各槽位下次可轮询的时刻）、
+	// watchLow（核心额度低于 rateLimitFloor 的槽位）、watchPause（额度耗尽后各槽位恢复的时刻）与 repoNodes（仓库 id → 仓库的
+	// id / node_id / full_name，合成载荷用）。
+	watchMu    sync.Mutex
+	watchNext  map[string]time.Time
+	watchLow   map[string]bool
+	watchPause map[string]time.Time
+	repoNodes  map[int64]repoPayload
 }
 
 // New 构造服务。

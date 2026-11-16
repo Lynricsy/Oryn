@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -271,4 +272,59 @@ func TestSetPullListeningAndUnlink(t *testing.T) {
 	assert.Equal(t, "not_found", e.s.UnlinkPull(e.ctx, "thr_missing", 12).(*Error).Code)
 	plain := e.workThread(e.project(""))
 	assert.Equal(t, "not_found", e.s.UnlinkPull(e.ctx, plain, 12).(*Error).Code)
+}
+
+// M15 3.2：出站代理创建的跨仓库 PR 被关联（GraphQL createPullRequest 与 REST POST …/pulls 两种形态），并登记对象级 watch。
+func TestPullCreatedViaEgressCrossRepo(t *testing.T) {
+	e := newUpstreamEnv(t)
+	orbID, thr := e.orbWithThread(e.prj, slotUser)
+	e.upstreamPull(orbID, 12)
+	assert.Equal(t, []int64{12}, e.links(thr))
+	var via bool
+	require.NoError(t, e.st.DB.QueryRowContext(e.ctx,
+		`SELECT created_via_egress FROM thread_pulls WHERE thread_id = ? AND repo_id = 42 AND number = 12`, thr).Scan(&via))
+	assert.True(t, via)
+	pull := e.pull(12)
+	assert.Equal(t, "Acme/Widgets", pull.RepoFullName)
+	assert.False(t, pull.SameRepo)
+	assert.Equal(t, shaA, pull.HeadSha)
+	_, ok := e.watchRow("pull", "Acme/Widgets", 12)
+	assert.True(t, ok)
+
+	// REST：响应里的 node_id 指明是哪一个 PR
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 13, Title: "Docs", Author: "owner"}, HeadRef: "docs", HeadSHA: shaB, HeadRepoID: 43})
+	w := egress.GitHubWrite{Method: "POST", Category: egress.CatPRCreate, Op: "POST /repos/{owner}/{repo}/pulls", Repo: "acme/widgets", Target: "/repos/acme/widgets/pulls"}
+	e.s.GitHubWriteBegin(e.ctx, orbID, w)
+	e.s.GitHubWriteEnd(e.ctx, orbID, w, 201, []string{"node:" + githubtest.PullNodeID(42, 13)})
+	e.drain()
+	assert.Equal(t, []int64{12, 13}, e.links(thr))
+
+	// 上游拒绝的创建不关联
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 14, Title: "Other", Author: "owner"}, HeadRef: "o", HeadSHA: shaB, HeadRepoID: 43})
+	e.s.GitHubWriteBegin(e.ctx, orbID, w)
+	e.s.GitHubWriteEnd(e.ctx, orbID, w, 422, []string{"node:" + githubtest.PullNodeID(42, 14)})
+	e.drain()
+	assert.Equal(t, []int64{12, 13}, e.links(thr))
+}
+
+// M15 3.2：按 HEAD 反查到的跨仓库 PR 只在作者是已连接身份之一时关联；陌生人发起、head 相同的 PR 不关联。
+func TestPullSampledCrossRepo(t *testing.T) {
+	e := newUpstreamEnv(t)
+	th := e.thread(e.prj, 0)
+	e.fake.AddRepo(githubtest.Repo{ID: 44, FullName: "mallory/widgets", OwnerID: 31})
+	// 陌生人从自己的 fork 把同一 head 发到项目仓库
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 43, Number: 7, Title: "Copy", Author: "mallory"}, HeadRef: "x", HeadSHA: shaA, HeadRepoID: 44})
+	e.s.ThreadCommitsSampled(th, shaA)
+	e.drain()
+	assert.Empty(t, e.links(th))
+
+	// 我的账号从项目 fork 向上游开的 PR 关联；陌生人拿同一个 fork 分支向上游开的 PR 不关联
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 12, Title: "Fix", Author: "owner"}, HeadRef: "fix", HeadSHA: shaB, HeadRepoID: 43})
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 13, Title: "Fix (copy)", Author: "mallory"}, HeadRef: "fix", HeadSHA: shaB, HeadRepoID: 43})
+	e.s.ThreadCommitsSampled(th, shaB)
+	e.drain()
+	assert.Equal(t, []int64{12}, e.links(th))
+	assert.Equal(t, "Acme/Widgets", e.pull(12).RepoFullName)
+	_, ok := e.watchRow("pull", "Acme/Widgets", 12)
+	assert.True(t, ok, "跨仓库关联登记对象级 watch")
 }

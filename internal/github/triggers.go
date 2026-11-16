@@ -129,6 +129,7 @@ func (s *Service) CreateTrigger(ctx context.Context, projectID string, in apigen
 	}); err != nil {
 		return apigen.GitHubTrigger{}, err
 	}
+	s.syncRepoWatchOf(ctx, projectID)
 	s.changed()
 	return triggerAPI(t), nil
 }
@@ -173,12 +174,20 @@ func (s *Service) UpdateTrigger(ctx context.Context, id string, p apigen.GitHubT
 	}); err != nil {
 		return apigen.GitHubTrigger{}, err
 	}
+	s.syncRepoWatchOf(ctx, t.ProjectID)
 	s.changed()
 	return triggerAPI(t), nil
 }
 
 // DeleteTrigger 删除一条触发规则。
 func (s *Service) DeleteTrigger(ctx context.Context, id string) error {
+	t, err := s.st.Q.GetGithubTrigger(ctx, id)
+	if err != nil {
+		if isNoRows(err) {
+			return errf("not_found", "trigger not found")
+		}
+		return err
+	}
 	n, err := s.st.Q.DeleteGithubTrigger(ctx, id)
 	if err != nil {
 		return err
@@ -186,6 +195,7 @@ func (s *Service) DeleteTrigger(ctx context.Context, id string) error {
 	if n == 0 {
 		return errf("not_found", "trigger not found")
 	}
+	s.syncRepoWatchOf(ctx, t.ProjectID)
 	s.changed()
 	return nil
 }
@@ -390,6 +400,8 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, action string, cand
 	if err := s.st.Q.BumpGithubTrigger(ctx, db.BumpGithubTriggerParams{LastRunAt: &at, ID: trig.ID}); err != nil {
 		return "", err
 	}
+	// 仓库没有 active hook 时轮询这个 issue / PR 本身（M15 步骤 3.1）；同仓库 PR 另由关联登记 PR 级 watch
+	s.registerWatch(ctx, "issue", ev.repoID, ev.repo, number, th.ID)
 	if ev.issue.isPull() {
 		s.linkTriggeredPull(ctx, prj, ev, th.ID)
 	}

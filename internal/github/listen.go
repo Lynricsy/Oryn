@@ -112,20 +112,45 @@ func (s *Service) issueTarget(ctx context.Context, repoID, number int64) (listen
 	return listenTarget{threadID: row.ThreadID, listening: true}, true, nil
 }
 
-// decodeEvent 解析载荷并做公共前置：仓库须有已绑定的项目。
+// decodeEvent 解析载荷并做公共前置：准入见 admitted（编号取载荷里的 PR 或 issue）。
 func (s *Service) decodeEvent(ctx context.Context, body []byte) (hookEvent, string, error) {
 	var ev hookEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return ev, "", err
 	}
-	prjs, err := s.st.Q.ListProjectsByGithubRepo(ctx, &ev.Repository.ID)
+	var number int64
+	switch {
+	case ev.PullRequest != nil:
+		number = ev.PullRequest.Number
+	case ev.Issue != nil:
+		number = ev.Issue.Number
+	}
+	ok, err := s.admitted(ctx, ev.Repository.ID, number)
 	if err != nil {
 		return ev, "", err
 	}
-	if len(prjs) == 0 {
+	if !ok {
 		return ev, "ignored:unbound_repo", nil
 	}
 	return ev, "", nil
+}
+
+// admitted 是事件的准入条件（M15 步骤 3.1）：仓库已绑定（有未归档项目），或 (repoID, number) 有未取消、线程未归档的
+// PR 关联或 issue 关联（如向上游开的 PR、无项目线程的 PR）。
+func (s *Service) admitted(ctx context.Context, repoID, number int64) (bool, error) {
+	prjs, err := s.st.Q.ListProjectsByGithubRepo(ctx, &repoID)
+	if err != nil || len(prjs) > 0 {
+		return err == nil, err
+	}
+	if number == 0 {
+		return false, nil
+	}
+	n, err := s.st.Q.CountLivePullLinks(ctx, db.CountLivePullLinksParams{RepoID: repoID, Number: number})
+	if err != nil || n > 0 {
+		return err == nil, err
+	}
+	_, ok, err := s.issueTarget(ctx, repoID, number)
+	return ok, err
 }
 
 func (s *Service) onReview(ctx context.Context, action string, body []byte) (string, error) {
@@ -220,16 +245,17 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 		}
 		return "", err
 	}
-	if th.ProjectID == nil {
-		return "ignored:no_thread", nil
-	}
-	// 项目取目标线程自己的项目：多个项目绑同一仓库时开关不能取错
-	prj, err := s.st.Q.GetProject(ctx, *th.ProjectID)
-	if err != nil {
-		if isNoRows(err) {
-			return "ignored:no_thread", nil
+	// 项目取目标线程自己的项目：多个项目绑同一仓库时开关不能取错；无项目线程（M15 步骤 3.1）的开关都取默认开启
+	listenComments, listenReviews := true, true
+	if th.ProjectID != nil {
+		prj, err := s.st.Q.GetProject(ctx, *th.ProjectID)
+		if err != nil {
+			if isNoRows(err) {
+				return "ignored:no_thread", nil
+			}
+			return "", err
 		}
-		return "", err
+		listenComments, listenReviews = prj.GithubListenComments, prj.GithubListenReviews
 	}
 	who := senderOf(ev.Sender)
 	if s.isSelfEvent(ctx, listenProbe(ev, kind)) {
@@ -247,9 +273,9 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 	if !ok {
 		return "ignored:" + reason, nil
 	}
-	listen := prj.GithubListenComments
+	listen := listenComments
 	if kind == "review" || kind == "review_comment" {
-		listen = prj.GithubListenReviews
+		listen = listenReviews
 	}
 	if !listen || tgt.pull && !tgt.listening {
 		return "ignored:muted", nil

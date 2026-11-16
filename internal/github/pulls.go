@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -77,6 +79,7 @@ func (s *Service) link(ctx context.Context, threadID string, repoID, number int6
 	case "merged":
 		return true, s.onMerged(ctx, threadID, pull)
 	case "open":
+		s.registerWatch(ctx, "pull", repoID, pull.RepoFullName, number, threadID)
 		s.scheduleRollup(repoID, number, 0, true)
 	}
 	return true, nil
@@ -115,11 +118,11 @@ func (s *Service) onPullRequest(ctx context.Context, action string, body []byte)
 		return "", err
 	}
 	repoID, pr := ev.Repository.ID, ev.PullRequest
-	prjs, err := s.st.Q.ListProjectsByGithubRepo(ctx, &repoID)
+	ok, err := s.admitted(ctx, repoID, pr.Number)
 	if err != nil {
 		return "", err
 	}
-	if len(prjs) == 0 {
+	if !ok {
 		return "ignored:unbound_repo", nil
 	}
 	if err := s.upsertPull(ctx, repoID, ev.Repository.FullName, pr); err != nil {
@@ -204,7 +207,8 @@ func (s *Service) ThreadCommitsSampled(threadID, head string) {
 }
 
 // linkSampled 按线程采到的提交关联库里已知的 PR；一个都没有时按 HEAD 向 GitHub 反查一次
-// （兜住丢失的 PR 事件与连接 App 之前就有的 PR）。
+// （兜住丢失的 PR 事件与连接 App 之前就有的 PR）。反查到的跨仓库 PR（头分支与 base 不在同一仓库，或 base 不是项目仓库，
+// 如从项目 fork 向上游开的 PR）只在作者是已连接身份之一时关联（M15 步骤 3.2：陌生人复制同一 head 的 PR 不关联）。
 func (s *Service) linkSampled(ctx context.Context, threadID, head string) error {
 	rows, err := s.st.Q.PullsForThreadCommits(ctx, threadID)
 	if err != nil {
@@ -256,23 +260,179 @@ func (s *Service) linkSampled(ctx context.Context, threadID, head string) error 
 	s.sampledHeads[threadID] = head
 	s.mu.Unlock()
 	repoID := *prj.GithubRepoID
+	var logins map[string]bool
 	for _, pr := range pulls {
-		if !sameRepoPull(repoID, pr) || pr.Head.SHA != head {
+		if pr.Head.SHA != head {
 			continue
 		}
 		if st := pullState(pr); st != "open" && st != "merged" {
 			continue
 		}
-		name := full
+		baseID, name := repoID, full
+		if pr.Base.Repo != nil && pr.Base.Repo.ID != 0 {
+			baseID = pr.Base.Repo.ID
+		}
 		if pr.Base.Repo != nil && pr.Base.Repo.FullName != "" {
 			name = pr.Base.Repo.FullName
 		}
-		if err := s.upsertPull(ctx, repoID, name, pr); err != nil {
+		if baseID != repoID || !sameRepoPull(baseID, pr) {
+			if logins == nil {
+				if logins, err = s.identityLogins(ctx); err != nil {
+					return err
+				}
+			}
+			if !logins[strings.ToLower(pr.User.Login)] {
+				continue
+			}
+		}
+		if err := s.upsertPull(ctx, baseID, name, pr); err != nil {
 			return err
 		}
-		if _, err := s.link(ctx, threadID, repoID, pr.Number); err != nil {
+		if _, err := s.link(ctx, threadID, baseID, pr.Number); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// identityLogins 返回已连接的身份登录名（小写）。
+func (s *Service) identityLogins(ctx context.Context) (map[string]bool, error) {
+	ids, err := s.st.Q.ListGithubIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id.Login != "" {
+			out[strings.ToLower(id.Login)] = true
+		}
+	}
+	return out, nil
+}
+
+// repoNodeQuery 按 node id 取仓库的 owner/name（GraphQL 的 createPullRequest 只带 repositoryId）。
+const repoNodeQuery = `query($id:ID!){node(id:$id){... on Repository{nameWithOwner}}}`
+
+// pullCreated 由 GitHubWriteEnd 在 orb 经出站代理成功创建 PR 后调用（M15 步骤 3.2）：后台找到这个 PR，关联到 orb 的线程
+// （created_via_egress=1，跨仓库同样关联），并登记对象级 watch。不阻塞出站代理：队列满时放弃（之后靠提交采样兜底）。
+func (s *Service) pullCreated(orbID string, w egress.GitHubWrite, respKeys []string) {
+	if !s.enqueue(func(ctx context.Context) {
+		if err := s.linkCreatedPull(ctx, orbID, w, respKeys); err != nil && ctx.Err() == nil {
+			slog.Warn("github: 关联出站代理创建的 PR 失败", "orb", orbID, "op", w.Op, "err", err)
+		}
+	}) {
+		slog.Warn("github: 任务队列已满，跳过出站代理创建的 PR 关联", "orb", orbID)
+	}
+}
+
+// linkCreatedPull 以 orb 的槽位读出刚创建的 PR：REST 按响应里的 node_id 在仓库最近创建的 PR 里找；GraphQL 先按 repositoryId
+// 查出仓库，再找作者是本槽位、正文哈希相同（无正文时在 selfWriteWindow 内创建）的最近一个。取到 head 后入库并关联。
+func (s *Service) linkCreatedPull(ctx context.Context, orbID string, w egress.GitHubWrite, respKeys []string) error {
+	tid := s.orbThread(ctx, orbID)
+	if tid == nil {
+		return nil
+	}
+	slot := s.orbSlot(ctx, orbID)
+	node := ""
+	for _, k := range respKeys {
+		if v, ok := strings.CutPrefix(k, "node:"); ok {
+			node = v
+			break
+		}
+	}
+	full := w.Repo
+	switch {
+	case w.Op == "createPullRequest":
+		tok, err := s.tokenFor(ctx, slot)
+		if err != nil {
+			return err
+		}
+		var out struct {
+			Node *struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"node"`
+		}
+		if err := s.graphql(ctx, "Bearer "+tok, repoNodeQuery, map[string]any{"id": w.Target}, &out); err != nil {
+			return err
+		}
+		if out.Node == nil || out.Node.NameWithOwner == "" {
+			return fmt.Errorf("github: 仓库 node %s 不存在", w.Target)
+		}
+		full = out.Node.NameWithOwner
+	case strings.HasPrefix(w.Op, http.MethodPost+" ") && full != "" && node != "":
+	default:
+		return nil // 其它形态（如 revertPullRequest）：不是新建 PR 的请求，交给提交采样
+	}
+	login := ""
+	if id, err := s.st.Q.GetGithubIdentity(ctx, slot); err == nil {
+		login = id.Login
+	} else if !isNoRows(err) {
+		return err
+	}
+	var list []json.RawMessage
+	if err := s.callAs(ctx, slot, http.MethodGet, fmt.Sprintf("/repos/%s/pulls?state=all&sort=created&direction=desc&per_page=10", full), nil, &list); err != nil {
+		return err
+	}
+	since := s.now().Add(-selfWriteWindow).UnixMilli()
+	var found *pullPayload
+	for _, raw := range list {
+		var pr pullPayload
+		var extra struct {
+			NodeID    string `json:"node_id"`
+			CreatedAt string `json:"created_at"`
+		}
+		if json.Unmarshal(raw, &pr) != nil || json.Unmarshal(raw, &extra) != nil {
+			continue
+		}
+		match := node != "" && extra.NodeID == node
+		if node == "" && login != "" && strings.EqualFold(pr.User.Login, login) {
+			if w.BodySHA256 != "" {
+				match = egress.BodyHash(deref(pr.Body)) == w.BodySHA256
+			} else {
+				match = githubTimeMs(extra.CreatedAt) >= since
+			}
+		}
+		if match {
+			found = &pr
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("github: 在 %s 最近的 PR 里找不到出站代理创建的 PR", full)
+	}
+	pr := *found
+	repoID, name := int64(0), full
+	if pr.Base.Repo != nil {
+		repoID = pr.Base.Repo.ID
+		if pr.Base.Repo.FullName != "" {
+			name = pr.Base.Repo.FullName
+		}
+	}
+	if repoID == 0 {
+		return fmt.Errorf("github: PR %s#%d 缺少 base 仓库", full, pr.Number)
+	}
+	if err := s.upsertPull(ctx, repoID, name, pr); err != nil {
+		return err
+	}
+	if _, err := s.st.Q.LinkThreadPullViaEgress(ctx, db.LinkThreadPullViaEgressParams{
+		ThreadID: *tid, RepoID: repoID, Number: pr.Number, LinkedAt: s.nowMs(),
+	}); err != nil {
+		return err
+	}
+	if tgt, ok, err := s.pullTarget(ctx, repoID, pr.Number); err != nil || !ok || tgt.threadID != *tid {
+		return err // 用户此前取消过这个关联（墓碑保持取消），或另有更近期的线程
+	}
+	s.th.Publish(ctx, *tid)
+	pull, err := s.st.Q.GetGithubPull(ctx, db.GetGithubPullParams{RepoID: repoID, Number: pr.Number})
+	if err != nil {
+		return err
+	}
+	switch pull.State {
+	case "merged":
+		return s.onMerged(ctx, *tid, pull)
+	case "open":
+		s.registerWatch(ctx, "pull", repoID, name, pr.Number, *tid)
+		s.scheduleRollup(repoID, pr.Number, 0, true)
 	}
 	return nil
 }

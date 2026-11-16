@@ -145,11 +145,21 @@ func (s *Service) doRollup(ctx context.Context, repoID, number int64, fresh bool
 		}
 		return err
 	}
-	prjs, err := s.st.Q.ListProjectsByGithubRepo(ctx, &repoID)
-	if err != nil || len(prjs) == 0 {
+	ok, err := s.admitted(ctx, repoID, number)
+	if err != nil || !ok {
 		return err
 	}
-	tok, err := s.tokenFor(ctx, slotUser)
+	tid := ""
+	if tgt, found, err := s.pullTarget(ctx, repoID, number); err != nil {
+		return err
+	} else if found {
+		tid = tgt.threadID
+	}
+	slot, err := s.repoSlot(ctx, repoID, tid)
+	if err != nil {
+		return err
+	}
+	tok, err := s.tokenFor(ctx, slot)
 	if err != nil {
 		return err
 	}
@@ -233,15 +243,18 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 		return nil
 	}
 	t, err := s.st.Q.GetThread(ctx, tgt.ThreadID)
-	if err != nil || t.ProjectID == nil {
-		return err
-	}
-	prj, err := s.st.Q.GetProject(ctx, *t.ProjectID)
 	if err != nil {
 		return err
 	}
-	if !prj.GithubListenCi {
-		return nil
+	// 无项目线程（M15 步骤 3.1）的 CI 回流开关取默认开启
+	if t.ProjectID != nil {
+		prj, err := s.st.Q.GetProject(ctx, *t.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !prj.GithubListenCi {
+			return nil
+		}
 	}
 	rounds := db.SetThreadPullCIRoundsParams{ThreadID: tgt.ThreadID, RepoID: pull.RepoID, Number: pull.Number}
 	if tgt.CiRounds >= maxCIRounds {
@@ -258,10 +271,11 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 		rounds.CiRounds = maxCIRounds + 1
 		return s.st.Q.SetThreadPullCIRounds(ctx, rounds)
 	}
-	if prj.GithubRepoID == nil {
-		return nil
+	slot, err := s.repoSlot(ctx, pull.RepoID, tgt.ThreadID)
+	if err != nil {
+		return err
 	}
-	tok, err := s.tokenFor(ctx, slotUser)
+	tok, err := s.tokenFor(ctx, slot)
 	if err != nil {
 		return err
 	}

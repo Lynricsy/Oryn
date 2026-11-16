@@ -49,11 +49,14 @@ func (s *Service) GitHubWriteBegin(ctx context.Context, orbID string, w egress.G
 	return ""
 }
 
-// GitHubWriteEnd 实现 orbs.GitHub：记下成功写操作的补充键，并写审计。
+// GitHubWriteEnd 实现 orbs.GitHub：记下成功写操作的补充键，并写审计；成功创建的 PR 交给 pullCreated 关联到 orb 的线程（步骤 3.2）。
 func (s *Service) GitHubWriteEnd(ctx context.Context, orbID string, w egress.GitHubWrite, status int, respKeys []string) {
 	slot := s.orbSlot(ctx, orbID)
 	if status/100 == 2 {
 		s.rememberSelfKeys(ctx, respKeys)
+		if w.Category == egress.CatPRCreate {
+			s.pullCreated(orbID, w, respKeys)
+		}
 	}
 	// 补充键落库之后才算结束在途：正在等待复查的事件因此能看到它们
 	s.trackSelfWrite(slot, -1)

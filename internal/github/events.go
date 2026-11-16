@@ -232,9 +232,10 @@ func clip(v string, n int) string {
 	return string(r[:n])
 }
 
-// Run 运行后台循环直到 ctx 结束：任务队列、恢复待处理投递与轮询 hook 投递日志、每 hookSyncInterval 校正仓库 hook、回流、每小时清理。
+// Run 运行后台循环直到 ctx 结束：任务队列、恢复待处理投递与轮询 hook 投递日志、每 hookSyncInterval 校正仓库 hook 并补登记
+// 对象级 watch、每 restPollInterval 做一轮 REST 轮询、回流、每小时清理。
 func (s *Service) Run(ctx context.Context) {
-	const loops = 5
+	const loops = 6
 	done := make(chan struct{}, loops)
 	loop := func(every time.Duration, now bool, f func(ctx context.Context)) {
 		defer func() { done <- struct{}{} }()
@@ -268,11 +269,12 @@ func (s *Service) Run(ctx context.Context) {
 		s.pollHooks(ctx)
 	})
 	go loop(hookSyncInterval, true, func(ctx context.Context) {
-		// 先按仓库地址重新绑定（跟随改名、重试此前读不到的仓库），再校正 hook
-		if err := errors.Join(s.BindProjects(ctx), s.ResyncHooks(ctx)); err != nil && ctx.Err() == nil {
-			slog.Warn("github: 同步项目绑定与仓库 hook 失败", "err", err)
+		// 先按仓库地址重新绑定（跟随改名、重试此前读不到的仓库），再校正 hook，最后为 hook 不可用的仓库补登记对象级 watch
+		if err := errors.Join(s.BindProjects(ctx), s.ResyncHooks(ctx), s.backfillWatches(ctx)); err != nil && ctx.Err() == nil {
+			slog.Warn("github: 同步项目绑定、仓库 hook 与对象 watch 失败", "err", err)
 		}
 	})
+	go loop(restPollInterval, false, s.pollWatches)
 	go loop(s.cfg.FlushInterval, false, s.flush)
 	go loop(time.Hour, true, s.cleanup)
 	for range loops {

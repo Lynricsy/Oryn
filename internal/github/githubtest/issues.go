@@ -24,6 +24,8 @@ type Issue struct {
 	Author    string
 	Labels    []string
 	UpdatedAt time.Time
+	// CreatedAt 缺省等于 UpdatedAt。
+	CreatedAt time.Time
 }
 
 // Pull 是一个 PR。
@@ -31,6 +33,7 @@ type Pull struct {
 	Issue
 	Draft    bool
 	MergedAt time.Time // 非零 = 已合并
+	MergedBy string    // 合并者登录名；空 = 不出现 merged_by
 	HeadRef  string
 	HeadSHA  string
 	BaseRef  string
@@ -61,6 +64,8 @@ type Review struct {
 	Author string
 	Body   string
 	State  string // PENDING | COMMENTED | APPROVED | CHANGES_REQUESTED
+	// SubmittedAt 是提交时间（M15 REST 轮询）；AddReview 缺省为当前时间。
+	SubmittedAt time.Time
 }
 
 // 假服务的 node id（M15）：仓库 R_<id>，issue I_<仓库 id>_<编号>，PR PR_<仓库 id>_<编号>，会话评论 IC_<id>，
@@ -157,18 +162,21 @@ func fillIssue(is *Issue) {
 	if is.UpdatedAt.IsZero() {
 		is.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 	}
+	if is.CreatedAt.IsZero() {
+		is.CreatedAt = is.UpdatedAt
+	}
 }
 
 // issueRoutes 登记 issue、PR、评论、提交检查、fork 与 GraphQL 端点。
 func (s *Server) issueRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /repos/{owner}/{repo}/issues", s.listIssues)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}", s.getIssue)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}/comments", s.listIssueComments)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}", s.getPull)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}/comments", s.listReviewComments)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/issues", s.etagged(s.listIssues))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}", s.etagged(s.getIssue))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}/comments", s.etagged(s.listIssueComments))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}", s.etagged(s.getPull))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}/comments", s.etagged(s.listReviewComments))
 	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}/pulls", s.commitPulls)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}/check-runs", s.checkRuns)
-	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}/status", s.commitStatus)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}/check-runs", s.etagged(s.checkRuns))
+	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}/status", s.etagged(s.commitStatus))
 	mux.HandleFunc("POST /repos/{owner}/{repo}/forks", s.createFork)
 	mux.HandleFunc("GET /search/issues", s.searchIssues)
 	mux.HandleFunc("POST /graphql", s.graphql)
@@ -225,6 +233,30 @@ func userJSON(login string) map[string]any {
 	return map[string]any{"login": login, "type": "User"}
 }
 
+// IssueID / PullID 是假服务里 issue 与 PR 的数值 id（REST 的 id 字段，M15 REST 轮询的 guid 用）。
+func IssueID(repoID, number int64) int64 { return repoID*1_000_000 + number }
+func PullID(repoID, number int64) int64  { return repoID*1_000_000 + 500_000 + number }
+
+// createdOf 是 issue 的创建时间（没填时取更新时间）。
+func createdOf(is *Issue) time.Time {
+	if is.CreatedAt.IsZero() {
+		return is.UpdatedAt
+	}
+	return is.CreatedAt
+}
+
+// assocOf 是 login 与仓库的 author_association：owner 段同名为 OWNER，有写权限为 COLLABORATOR，否则 NONE。调用方持锁。
+func (s *Server) assocOf(rp *Repo, login string) string {
+	owner, _, _ := strings.Cut(rp.FullName, "/")
+	switch {
+	case strings.EqualFold(owner, login):
+		return "OWNER"
+	case permissionsJSON(s.permOf(rp, login))["push"]:
+		return "COLLABORATOR"
+	}
+	return "NONE"
+}
+
 // issueJSON 是 issue（或 PR 的 issue 视图，pr 非 nil）的 REST 表示。调用方持锁。
 func (s *Server) issueJSON(r *http.Request, rp *Repo, is *Issue, pr *Pull) map[string]any {
 	labels := []map[string]any{}
@@ -232,11 +264,14 @@ func (s *Server) issueJSON(r *http.Request, rp *Repo, is *Issue, pr *Pull) map[s
 		labels = append(labels, map[string]any{"name": l})
 	}
 	m := map[string]any{
-		"number": is.Number, "node_id": IssueNodeID(rp.ID, is.Number), "title": is.Title, "body": nullable(is.Body), "state": is.State,
+		"id": IssueID(rp.ID, is.Number), "number": is.Number, "node_id": IssueNodeID(rp.ID, is.Number), "title": is.Title,
+		"body": nullable(is.Body), "state": is.State,
 		"html_url": fmt.Sprintf("%s/%s/issues/%d", s.baseURL(r), rp.FullName, is.Number),
-		"user":     userJSON(is.Author), "labels": labels, "updated_at": ts(is.UpdatedAt), "created_at": ts(is.UpdatedAt),
+		"user":     userJSON(is.Author), "labels": labels, "updated_at": ts(is.UpdatedAt), "created_at": ts(createdOf(is)),
+		"author_association": s.assocOf(rp, is.Author),
 	}
 	if pr != nil {
+		m["id"] = PullID(rp.ID, is.Number)
 		m["node_id"] = PullNodeID(rp.ID, is.Number)
 		m["html_url"] = fmt.Sprintf("%s/%s/pull/%d", s.baseURL(r), rp.FullName, is.Number)
 		m["pull_request"] = map[string]any{"html_url": m["html_url"], "merged_at": ts(pr.MergedAt)}
@@ -252,24 +287,41 @@ func (s *Server) pullJSON(r *http.Request, rp *Repo, pr *Pull) map[string]any {
 	}
 	head := map[string]any{"id": rp.ID, "full_name": rp.FullName}
 	if pr.HeadRepoID != 0 && pr.HeadRepoID != rp.ID {
-		head = map[string]any{"id": pr.HeadRepoID, "full_name": fmt.Sprintf("fork-%d/%s", pr.HeadRepoID, rp.FullName[strings.Index(rp.FullName, "/")+1:])}
+		name := fmt.Sprintf("fork-%d/%s", pr.HeadRepoID, rp.FullName[strings.Index(rp.FullName, "/")+1:])
+		if hr := s.repoByID(pr.HeadRepoID); hr != nil {
+			name = hr.FullName
+		}
+		head = map[string]any{"id": pr.HeadRepoID, "full_name": name}
 	}
-	return map[string]any{
-		"number": pr.Number, "node_id": PullNodeID(rp.ID, pr.Number), "title": pr.Title, "body": nullable(pr.Body), "state": state, "draft": pr.Draft,
-		"merged": !pr.MergedAt.IsZero(), "merged_at": ts(pr.MergedAt),
+	m := map[string]any{
+		"id": PullID(rp.ID, pr.Number), "number": pr.Number, "node_id": PullNodeID(rp.ID, pr.Number), "title": pr.Title,
+		"body": nullable(pr.Body), "state": state, "draft": pr.Draft,
+		"merged": !pr.MergedAt.IsZero(), "merged_at": ts(pr.MergedAt), "merged_by": nil,
 		"html_url":  fmt.Sprintf("%s/%s/pull/%d", s.baseURL(r), rp.FullName, pr.Number),
 		"user":      userJSON(pr.Author),
 		"head":      map[string]any{"ref": pr.HeadRef, "sha": pr.HeadSHA, "repo": head},
 		"base":      map[string]any{"ref": pr.BaseRef, "repo": map[string]any{"id": rp.ID, "full_name": rp.FullName}},
 		"additions": pr.Additions, "deletions": pr.Deletions, "changed_files": pr.ChangedFiles,
-		"updated_at": ts(pr.UpdatedAt),
+		"updated_at": ts(pr.UpdatedAt), "created_at": ts(createdOf(&pr.Issue)), "author_association": s.assocOf(rp, pr.Author),
 	}
+	if pr.MergedBy != "" {
+		m["merged_by"] = userJSON(pr.MergedBy)
+	}
+	return m
 }
 
-func commentJSON(c *Comment) map[string]any {
-	m := map[string]any{"id": c.ID, "node_id": CommentNodeID(c.ID), "user": userJSON(c.Author), "body": c.Body, "created_at": ts(c.CreatedAt)}
+// commentJSON 是会话评论或行内评审评论的 REST 表示。调用方持锁。
+func (s *Server) commentJSON(r *http.Request, rp *Repo, c *Comment) map[string]any {
+	m := map[string]any{
+		"id": c.ID, "node_id": CommentNodeID(c.ID), "user": userJSON(c.Author), "body": c.Body,
+		"created_at": ts(c.CreatedAt), "updated_at": ts(c.CreatedAt), "author_association": s.assocOf(rp, c.Author),
+		"issue_url": fmt.Sprintf("%s/repos/%s/issues/%d", s.baseURL(r), rp.FullName, c.Number),
+		"html_url":  fmt.Sprintf("%s/%s/issues/%d#issuecomment-%d", s.baseURL(r), rp.FullName, c.Number, c.ID),
+	}
 	if c.Path != "" {
+		delete(m, "issue_url")
 		m["node_id"] = ReviewCommentNodeID(c.ID)
+		m["html_url"] = fmt.Sprintf("%s/%s/pull/%d#discussion_r%d", s.baseURL(r), rp.FullName, c.Number, c.ID)
 		m["path"] = c.Path
 		m["line"] = c.Line
 		m["original_line"] = c.Line
@@ -312,10 +364,15 @@ func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
 	if state == "" {
 		state = "open"
 	}
+	// sort 恒按更新时间（Oryn 只用 sort=updated）；since 过滤更新时间，direction=asc 时正序
+	since := sinceOf(r)
 	all := s.issuesOf(rp)
+	if r.URL.Query().Get("direction") == "asc" {
+		slices.Reverse(all)
+	}
 	var hits []map[string]any
 	for _, e := range all {
-		if state == "all" || e.is.State == state {
+		if (state == "all" || e.is.State == state) && !e.is.UpdatedAt.Before(since) {
 			hits = append(hits, s.issueJSON(r, rp, e.is, e.pr))
 		}
 	}
@@ -373,10 +430,11 @@ func (s *Server) comments(w http.ResponseWriter, r *http.Request, review bool, t
 		fail(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	since := sinceOf(r)
 	var hits []map[string]any
 	for _, c := range s.Comments {
-		if c.RepoID == rp.ID && c.Number == n && (c.Path != "") == review {
-			hits = append(hits, commentJSON(c))
+		if c.RepoID == rp.ID && c.Number == n && (c.Path != "") == review && !c.CreatedAt.Before(since) {
+			hits = append(hits, s.commentJSON(r, rp, c))
 		}
 	}
 	lo, hi := s.paginate(w, r, len(hits))
@@ -393,6 +451,7 @@ func (s *Server) listReviewComments(w http.ResponseWriter, r *http.Request) {
 	s.comments(w, r, true, "/pulls/"+r.PathValue("number")+"/comments")
 }
 
+// commitPulls 列出与提交相关的 PR：base 是该仓库，或头分支在该仓库（如从 fork 向上游开的 PR，与 GitHub 一致）。
 func (s *Server) commitPulls(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -402,8 +461,13 @@ func (s *Server) commitPulls(w http.ResponseWriter, r *http.Request) {
 	}
 	var hits []map[string]any
 	for _, pr := range s.Pulls {
-		if pr.RepoID == rp.ID && pr.HeadSHA == r.PathValue("sha") {
+		if pr.HeadSHA != r.PathValue("sha") {
+			continue
+		}
+		if pr.RepoID == rp.ID {
 			hits = append(hits, s.pullJSON(r, rp, pr))
+		} else if base := s.repoByID(pr.RepoID); base != nil && pr.HeadRepoID == rp.ID {
+			hits = append(hits, s.pullJSON(r, base, pr))
 		}
 	}
 	lo, hi := s.paginate(w, r, len(hits))
@@ -527,6 +591,16 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	if strings.Contains(in.Query, "nameWithOwner") {
+		// node(id) { ... on Repository { nameWithOwner } }：按仓库 node id 取 owner/name
+		id, _ := anyVars["id"].(string)
+		var node any
+		if rp := s.repoByNode(id); rp != nil {
+			node = map[string]any{"nameWithOwner": rp.FullName}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"node": node}})
+		return
 	}
 	if !strings.Contains(in.Query, "statusCheckRollup") {
 		writeJSON(w, http.StatusOK, map[string]any{"errors": []map[string]any{{"message": "unsupported query"}}})
