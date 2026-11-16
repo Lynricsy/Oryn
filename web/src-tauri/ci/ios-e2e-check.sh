@@ -175,7 +175,8 @@ settled() { reveal_quiet && reveal_is "$1"; }
 # web_ready <最低 bridge>：host_ready 过了远程能力的权限校验才会记 web.ready；bridge 4 = 页面认得原生底栏，5 = 原生页头
 web_ready() { ev web.ready | jq -se --arg o "$origin" --argjson b "$1" 'any(.origin == $o and .bridge >= $b)'; }
 
-shot() { xcrun simctl io "$udid" screenshot "$out/e2e-$1.png" >/dev/null 2>&1; }
+# 限时截图（见 ios-sim.sh 的 sim_shot）；普通步骤截不到图直接判失败
+shot() { sim_shot "$out/e2e-$1.png" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"; }
 
 # ok <步骤> [JSON]：放行测试的这一步
 ok() {
@@ -249,8 +250,12 @@ for attempt in 1 2 3; do
     if settled "$drag_at"; then
       n=$(count tabbar.reveal)
       edge=$(last tabbar.reveal | jq -r .x)
-      shot drag
-      if [[ $(count tabbar.reveal) == "$n" ]]; then state=held; else state=missed; fi
+      # 截图限时 40 秒（与按住时长相同）：超时或截完发现已松手都算没赶上，重拖
+      if sim_shot "$out/e2e-drag.png" 40 && [[ $(count tabbar.reveal) == "$n" ]]; then
+        state=held
+      else
+        state=missed
+      fi
       break
     fi
     # 已经松手并吸附到打开：这次按住期间没来得及判定

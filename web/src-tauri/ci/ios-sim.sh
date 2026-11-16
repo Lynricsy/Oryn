@@ -81,21 +81,51 @@ run() {
   return 1
 }
 
-# shot_settled <文件>：每秒截一张，直到相邻两张在顶部与底部横条里一致（最多 10 秒）。
+# sim_shot <文件> <秒>：限时截图。CI 机器卡顿时 simctl 截图曾阻塞 3 分钟以上；超时就终止并回收子进程、
+# 丢掉没写完的图片，返回 1。截图先写到旁边的临时文件，成功才改名，失败时不会留下半张图或旧图冒充。
+sim_shot() {
+  local f=$1 secs=$2 tmp="${1%.png}.part.png" pid i
+  rm -f "$tmp"
+  xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+  pid=$!
+  for ((i = 0; i < secs * 4; i++)); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      if wait "$pid"; then
+        mv "$tmp" "$f"
+        return 0
+      fi
+      rm -f "$tmp"
+      return 1
+    fi
+    sleep 0.25
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -f "$tmp"
+  return 1
+}
+
+# shot_settled <文件>：每秒截一张，直到相邻两张在顶部与底部横条里一致（最多 10 轮，每张限时 30 秒）。
 # 中间一段不比：连接页品牌标的插入符在闪；顶部有状态栏时钟，跨分钟时多截一轮即可。
 shot_settled() {
-  local f=$1 prev="$work/settle-prev.png" w h top bottom
-  xcrun simctl io "$udid" screenshot "$prev" >/dev/null 2>&1
+  local f=$1 prev="$work/settle-prev.png" w h top=- bottom=-
+  rm -f "$prev"
   for _ in $(seq 1 10); do
-    sleep 1
-    xcrun simctl io "$udid" screenshot "$f" >/dev/null 2>&1
-    w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ { print $2 }')
-    h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ { print $2 }')
-    top=$("$work/region-diff" "$prev" "$f" 0 0 "$w" $((h * 15 / 100)))
-    bottom=$("$work/region-diff" "$prev" "$f" 0 $((h * 55 / 100)) "$w" $((h * 45 / 100)))
-    if [[ $top == 0.000000 && $bottom == 0.000000 ]]; then return 0; fi
+    if ! sim_shot "$f" 30; then
+      rm -f "$prev"
+      continue
+    fi
+    if [[ -f $prev ]]; then
+      w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/ { print $2 }')
+      h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ { print $2 }')
+      top=$("$work/region-diff" "$prev" "$f" 0 0 "$w" $((h * 15 / 100)))
+      bottom=$("$work/region-diff" "$prev" "$f" 0 $((h * 55 / 100)) "$w" $((h * 45 / 100)))
+      if [[ $top == 0.000000 && $bottom == 0.000000 ]]; then return 0; fi
+    fi
     cp "$f" "$prev"
+    sleep 1
   done
-  echo "::error::$(basename "$f") 截图 10 秒内没有稳定下来（顶部差异 ${top}，底部差异 ${bottom}）"
+  rm -f "$f"
+  echo "::error::$(basename "$f") 截图 10 轮内没有稳定下来（顶部差异 ${top}，底部差异 ${bottom}）"
   return 1
 }
