@@ -257,8 +257,8 @@ func (s *Service) toolAbortTask(ctx context.Context, orbID, threadID string, par
 	}); err != nil {
 		slog.Warn("github: 记录放弃任务的审计失败", "thread", threadID, "err", err)
 	}
-	// setTask 取消待执行的自动关闭，并排队冻结 orb（在本次工具应答之后）
-	if err := s.setTask(ctx, ti, taskAbandoned, "github_abort_task: "+clip(p.Reason, 200)); err != nil {
+	// 取消待执行的自动关闭；冻结推迟到本线程离开 working（agent 收到这条应答、回合结束）之后
+	if err := s.setTaskFreeze(ctx, ti, taskAbandoned, "github_abort_task: "+clip(p.Reason, 200), true); err != nil {
 		return apigen.LinkCtlGithubCallResult{}, err
 	}
 	return apigen.LinkCtlGithubCallResult{

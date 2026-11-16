@@ -1,9 +1,11 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,6 +14,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // 步骤 5.2：issue 任务工具的控制面处理器。
@@ -112,7 +115,7 @@ func TestToolTaskState(t *testing.T) {
 	assert.Equal(t, "task_finished", codeOf(err))
 }
 
-// github_abort_task：置 abandoned、写审计、取消待执行的自动关闭、在应答之后冻结 orb，不在 GitHub 上发言。
+// github_abort_task：置 abandoned、写审计、取消待执行的自动关闭、线程离开 working 之后才冻结 orb，不在 GitHub 上发言。
 func TestToolAbortTask(t *testing.T) {
 	e := newToolEnv(t, apigen.GitHubTriggerInput{})
 	require.NoError(t, e.st.Q.UpsertGithubAutoclose(e.ctx, db.UpsertGithubAutocloseParams{
@@ -127,6 +130,9 @@ func TestToolAbortTask(t *testing.T) {
 	assert.Equal(t, taskAbandoned, e.threadIssue(7).State)
 	assert.Empty(t, e.orbs.list(), "冻结在应答之后")
 	e.drain()
+	assert.Empty(t, e.orbs.list(), "回合结束之前不冻结")
+	e.s.TurnObserver().StateChanged(threads.StateEvent{ThreadID: e.thread(), Prev: threads.StateWorking, State: threads.StateIdle})
+	e.drain()
 	assert.Equal(t, []string{e.orbOf(e.thread())}, e.orbs.list())
 	var n int
 	require.NoError(t, e.st.DB.QueryRowContext(e.ctx, `SELECT COUNT(*) FROM github_audit WHERE method = 'TASK' AND op LIKE 'github_abort_task: the CI runner%' AND repo = 'acme/widgets'`).Scan(&n))
@@ -139,4 +145,47 @@ func TestToolAbortTask(t *testing.T) {
 	for _, c := range e.fake.Calls {
 		assert.Equal(t, "GET", c.Method, "不在 GitHub 上发言：%s %s", c.Method, c.Path)
 	}
+}
+
+// 真实任务队列在跑（Run 的工作协程随时消费）：github_abort_task 返回后队列里也没有冻结——排一个哨兵任务，它执行时
+// 之前排进队列的任务都已执行完，orb 仍未冻结；别的线程离开 working、本线程 working→working 都不触发；本线程离开
+// working（回合结束）后才冻结，且只冻结一次。
+func TestToolAbortFreezeWaitsForTurnEndWithLiveQueue(t *testing.T) {
+	e := newToolEnv(t, apigen.GitHubTriggerInput{})
+	e.drain()
+	ctx, cancel := context.WithCancel(e.ctx)
+	done := make(chan struct{})
+	go func() { e.s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	// settle 等到队列里此前排进的任务都已被 Run 的工作协程执行完
+	settle := func() {
+		t.Helper()
+		ran := make(chan struct{})
+		require.True(t, e.s.enqueue(func(context.Context) { close(ran) }))
+		select {
+		case <-ran:
+		case <-time.After(5 * time.Second):
+			t.Fatal("任务队列没有在跑")
+		}
+	}
+
+	thr := e.thread()
+	_, err := e.call("github_abort_task", `{"reason":"cannot reproduce on this runner"}`)
+	require.NoError(t, err)
+	settle()
+	assert.Empty(t, e.orbs.list(), "工具应答之后、回合结束之前，队列里没有冻结")
+
+	obs := e.s.TurnObserver()
+	obs.StateChanged(threads.StateEvent{ThreadID: "thr_other", Prev: threads.StateWorking, State: threads.StateIdle})
+	obs.StateChanged(threads.StateEvent{ThreadID: thr, Prev: threads.StateWorking, State: threads.StateWorking})
+	obs.StateChanged(threads.StateEvent{ThreadID: thr, Prev: threads.StateIdle, State: threads.StateWorking})
+	settle()
+	assert.Empty(t, e.orbs.list(), "只有本线程离开 working 才冻结")
+
+	obs.StateChanged(threads.StateEvent{ThreadID: thr, Prev: threads.StateWorking, State: threads.StateIdle})
+	settle()
+	assert.Equal(t, []string{e.orbOf(thr)}, e.orbs.list())
+	obs.StateChanged(threads.StateEvent{ThreadID: thr, Prev: threads.StateWorking, State: threads.StateIdle})
+	settle()
+	assert.Len(t, e.orbs.list(), 1, "登记只消费一次")
 }

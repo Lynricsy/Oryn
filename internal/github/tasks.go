@@ -86,9 +86,15 @@ func (s *Service) CleanupTask(ctx context.Context, repo string, number int) erro
 	return errf("not_found", "no GitHub task for "+repo+"#"+fmt.Sprint(number))
 }
 
-// setTask 写入状态并发布线程。目标是终态时取消该线程待执行的自动关闭（R18），并排队冻结线程的 orb（已冻结时无副作用）：
-// 冻结放进任务队列，调用方可能正是这台 orb 上的工具调用（github_abort_task），冻结不能抢在它的应答之前。
+// setTask 写入状态并发布线程。目标是终态时取消该线程待执行的自动关闭（R18），并排队冻结线程的 orb（已冻结时无副作用）。
 func (s *Service) setTask(ctx context.Context, ti db.ThreadIssue, state, note string) error {
+	return s.setTaskFreeze(ctx, ti, state, note, false)
+}
+
+// setTaskFreeze 同 setTask；afterTurn 为真时（调用方是该线程自己的工具调用，如 github_abort_task）不立即冻结，而是登记到
+// freezeAfterTurn，等线程离开 working 再冻结（见 turnObserver.StateChanged）：工具应答还要经 ctl 响应、orbd 转给 omp，
+// 任务队列里的冻结随时可能先执行，截断这条应答。
+func (s *Service) setTaskFreeze(ctx context.Context, ti db.ThreadIssue, state, note string, afterTurn bool) error {
 	if _, err := s.st.Q.SetThreadIssueState(ctx, db.SetThreadIssueStateParams{State: state, ThreadID: ti.ThreadID}); err != nil {
 		return err
 	}
@@ -97,14 +103,38 @@ func (s *Service) setTask(ctx context.Context, ti db.ThreadIssue, state, note st
 		if _, err := s.st.Q.CancelGithubAutoclosesByThread(ctx, db.CancelGithubAutoclosesByThreadParams{Outcome: &state, ThreadID: ti.ThreadID}); err != nil {
 			slog.Warn("github: 取消自动关闭失败", "thread", ti.ThreadID, "err", err)
 		}
-		threadID := ti.ThreadID
-		if !s.enqueue(func(ctx context.Context) { s.freezeThread(ctx, threadID) }) {
-			slog.Warn("github: 任务队列已满，没有冻结 orb", "thread", threadID)
+		if afterTurn {
+			s.mu.Lock()
+			if s.freezeAfterTurn == nil {
+				s.freezeAfterTurn = map[string]bool{}
+			}
+			s.freezeAfterTurn[ti.ThreadID] = true
+			s.mu.Unlock()
+		} else {
+			s.queueFreeze(ti.ThreadID)
 		}
 	}
 	s.th.Publish(ctx, ti.ThreadID)
 	s.changed()
 	return nil
+}
+
+// queueFreeze 排队冻结线程的 orb；队列满时记日志。
+func (s *Service) queueFreeze(threadID string) {
+	if !s.enqueue(func(ctx context.Context) { s.freezeThread(ctx, threadID) }) {
+		slog.Warn("github: 任务队列已满，没有冻结 orb", "thread", threadID)
+	}
+}
+
+// onThreadLeftWorking 在线程离开 working 时调用：登记过回合结束后冻结的，此时排队冻结。
+func (s *Service) onThreadLeftWorking(threadID string) {
+	s.mu.Lock()
+	due := s.freezeAfterTurn[threadID]
+	delete(s.freezeAfterTurn, threadID)
+	s.mu.Unlock()
+	if due {
+		s.queueFreeze(threadID)
+	}
 }
 
 // finishTask 让 (repoID, number) 的任务因 GitHub 上的变化（issue 关闭、PR 合并或关闭）进入终态；已在终态（如先合并、
@@ -345,7 +375,8 @@ func (s *Service) scanDeadlines(ctx context.Context) {
 	}
 }
 
-// TurnObserver 返回驱动完成提醒的线程观察者：GitHub 投递（标签以 turnTagPrefix 开头）的回合正常结束时调用 OnTurnEnded。
+// TurnObserver 返回 GitHub 集成的线程观察者：GitHub 投递（标签以 turnTagPrefix 开头）的回合正常结束时调用 OnTurnEnded；
+// 线程离开 working 时执行登记过的「回合结束后冻结」。
 func (s *Service) TurnObserver() threads.Observer { return turnObserver{s} }
 
 type turnObserver struct{ s *Service }
@@ -358,7 +389,13 @@ func (o turnObserver) TurnEnded(ev threads.TurnEvent) {
 	}
 }
 
-func (turnObserver) StateChanged(threads.StateEvent)   {}
+// StateChanged 只看「离开 working」：agent 已收到本回合全部工具结果、回合结束（转为 idle、awaiting_input 或 error）。
+func (o turnObserver) StateChanged(ev threads.StateEvent) {
+	if ev.Prev == threads.StateWorking && ev.State != threads.StateWorking {
+		o.s.onThreadLeftWorking(ev.ThreadID)
+	}
+}
+
 func (turnObserver) InputRequested(threads.InputEvent) {}
 func (turnObserver) InputResolved(_, _ string)         {}
 func (turnObserver) Seen(string)                       {}

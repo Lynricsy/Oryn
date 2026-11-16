@@ -156,6 +156,9 @@ type Service struct {
 	// PR 跟踪（步骤 5.1 / 5.2，受 mu 保护，惰性初始化）：线程 → 上次按 HEAD 反查过 PR 的 sha；排队中的 CI 汇总。
 	sampledHeads map[string]string
 	rollups      map[pullKey]*pendingRollup
+	// freezeAfterTurn（M15 4.3，受 mu 保护，惰性初始化）：线程自己的工具（github_abort_task）让任务进入终态时，冻结推迟到
+	// 线程离开 working（agent 已收到工具结果、回合结束）再做。只在内存里：orynd 在此之间重启时这次冻结丢失，与任务队列相同。
+	freezeAfterTurn map[string]bool
 
 	// 事件分发（步骤 4.1）：处理器注册表、任务队列、队列中 / 处理中的投递 guid。
 	handlers map[string]handler
