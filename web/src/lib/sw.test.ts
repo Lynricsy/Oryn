@@ -418,5 +418,19 @@ describe("service worker：通知上的作答按钮", () => {
 		const again = loadWorker({ shown: [answered] });
 		await again.dispatch("push", withdraw);
 		expect(again.self.registration.showNotification).not.toHaveBeenCalled();
+
+		// 作答失败的替换版保留了按钮：别处作答后仍要撤回，换成「已在别处作答」并去掉按钮
+		const failed = {
+			...shownNotification(),
+			data: { ...shownNotification().data, state: "failed" },
+		};
+		const retry = loadWorker({ shown: [failed] });
+		await retry.dispatch("push", withdraw);
+		expect(retry.self.registration.showNotification).toHaveBeenCalledTimes(1);
+		expect(optionsOf(retry.self)).toMatchObject({
+			body: "Already answered elsewhere",
+			data: { id: "ntf_01ABC", actions: [], state: "elsewhere" },
+		});
+		expect(optionsOf(retry.self)).not.toHaveProperty("actions");
 	});
 });

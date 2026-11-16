@@ -93,12 +93,17 @@ function notificationOptions({ body, tag, url, id, actions, state }) {
 	return opts;
 }
 
-/** 撤回：只换掉仍显示着同一 id、尚未作答的那条（同一线程后来的通知 id 不同，不受影响）。 */
+/**
+ * 撤回：只换掉仍显示着同一 id、还带着按钮的那条（同一线程后来的通知 id 不同，不受影响）。
+ * 已作答 / 已在别处作答的替换版不再改动；作答失败的替换版保留了按钮，仍要撤回。
+ */
 async function withdraw(d) {
 	if (typeof d.tag !== "string" || typeof d.id !== "string") return;
 	const shown = await self.registration.getNotifications({ tag: d.tag });
 	for (const n of shown) {
-		if (n.data?.id !== d.id || n.data?.state) continue;
+		const state = n.data?.state;
+		if (n.data?.id !== d.id || state === "answered" || state === "elsewhere")
+			continue;
 		await self.registration.showNotification(
 			n.title,
 			notificationOptions({
