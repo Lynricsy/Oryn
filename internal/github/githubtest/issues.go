@@ -232,11 +232,11 @@ func (s *Server) pullJSON(r *http.Request, rp *Repo, pr *Pull) map[string]any {
 	return map[string]any{
 		"number": pr.Number, "title": pr.Title, "body": nullable(pr.Body), "state": state, "draft": pr.Draft,
 		"merged": !pr.MergedAt.IsZero(), "merged_at": ts(pr.MergedAt),
-		"html_url":   fmt.Sprintf("%s/%s/pull/%d", s.baseURL(r), rp.FullName, pr.Number),
-		"user":       userJSON(pr.Author),
-		"head":       map[string]any{"ref": pr.HeadRef, "sha": pr.HeadSHA, "repo": head},
-		"base":       map[string]any{"ref": pr.BaseRef, "repo": map[string]any{"id": rp.ID, "full_name": rp.FullName}},
-		"additions":  pr.Additions, "deletions": pr.Deletions, "changed_files": pr.ChangedFiles,
+		"html_url":  fmt.Sprintf("%s/%s/pull/%d", s.baseURL(r), rp.FullName, pr.Number),
+		"user":      userJSON(pr.Author),
+		"head":      map[string]any{"ref": pr.HeadRef, "sha": pr.HeadSHA, "repo": head},
+		"base":      map[string]any{"ref": pr.BaseRef, "repo": map[string]any{"id": rp.ID, "full_name": rp.FullName}},
+		"additions": pr.Additions, "deletions": pr.Deletions, "changed_files": pr.ChangedFiles,
 		"updated_at": ts(pr.UpdatedAt),
 	}
 }

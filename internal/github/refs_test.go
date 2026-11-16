@@ -147,7 +147,7 @@ func TestAttachRef(t *testing.T) {
 	e.s.att = att
 	prj := e.boundProject()
 	e.fake.AddPull(githubtest.Pull{
-		Issue: githubtest.Issue{RepoID: 42, Number: 12, Title: "Fix login", Body: "desc", Author: "carol"},
+		Issue:   githubtest.Issue{RepoID: 42, Number: 12, Title: "Fix login", Body: "desc", Author: "carol"},
 		HeadRef: "fix-login", Additions: 3, Deletions: 1, ChangedFiles: 2,
 	})
 	e.fake.AddComment(githubtest.Comment{RepoID: 42, Number: 12, Author: "alice", Body: "c1"})

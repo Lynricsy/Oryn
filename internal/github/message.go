@@ -30,6 +30,8 @@ type failedCheck struct{ Name, Conclusion, URL string }
 const (
 	closingPull  = "The comments above were written by GitHub users with write access to the repository. Address them on the pull request branch and push; reply with `gh pr comment` where a reply helps."
 	closingIssue = "The comments above were written by GitHub users with write access to the repository. Reply with `gh issue comment` where a reply helps."
+	// closingCI 是只含 CI 段的消息的结尾句。
+	closingCI = "Fix the failures on the pull request branch and push. Use `gh run view --log-failed` to read the logs."
 )
 
 // eventHeader 是回流消息的首行。
@@ -53,17 +55,22 @@ func composeEvent(repo string, number int64, items []db.GithubOutbox) string {
 	} else {
 		fmt.Fprintf(&b, "Issue: %s (%s)\n", latest.Title, latest.Url)
 	}
+	onlyCI := true
 	for _, row := range items {
 		var it outboxItem
 		_ = json.Unmarshal([]byte(row.Item), &it)
 		b.WriteByte('\n')
 		b.WriteString(composeSection(row.Kind, it))
 		b.WriteByte('\n')
+		onlyCI = onlyCI && row.Kind == "ci"
 	}
 	b.WriteByte('\n')
-	if latest.IsPull {
+	switch {
+	case onlyCI:
+		b.WriteString(closingCI)
+	case latest.IsPull:
 		b.WriteString(closingPull)
-	} else {
+	default:
 		b.WriteString(closingIssue)
 	}
 	return b.String()
@@ -84,6 +91,12 @@ func composeSection(kind string, it outboxItem) string {
 			loc += ":" + strconv.Itoa(it.Line)
 		}
 		return fmt.Sprintf("@%s commented on %s:\n%s", it.Actor, loc, it.Body)
+	case "ci":
+		lines := []string{fmt.Sprintf("CI failed on %s:", it.SHA)}
+		for _, c := range it.Checks {
+			lines = append(lines, fmt.Sprintf("- %s (%s) %s", c.Name, c.Conclusion, c.URL))
+		}
+		return strings.Join(lines, "\n")
 	default:
 		return fmt.Sprintf("@%s commented:\n%s", it.Actor, it.Body)
 	}
