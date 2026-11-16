@@ -91,6 +91,10 @@ type scoped struct {
 type Server struct {
 	mu sync.Mutex
 	hs *httptest.Server
+	// base 是 NewHandlerOnly 的对外地址（hs 为 nil 时 URL() 取它）。
+	base string
+	// GitRoot 非空时以 git http-backend 服务 smart-HTTP（裸仓库在 <GitRoot>/<owner>/<repo>.git）。
+	GitRoot string
 
 	App           App
 	Users         map[string]*User // login（小写）→ 用户
@@ -120,7 +124,24 @@ var sharedKey = sync.OnceValue(func() *rsa.PrivateKey {
 
 // New 起一个假 GitHub；URL() 同时作为 APIURL 与 WebURL。
 func New() *Server {
-	s := &Server{
+	s := newServer()
+	s.hs = httptest.NewServer(s.handler())
+	return s
+}
+
+// NewHandlerOnly 构造不自带监听的假 GitHub（cmd/fakegithub 用）：base 是对外地址（无结尾斜杠），
+// 由调用方用 Handler() 起 http.Server。
+func NewHandlerOnly(base string) *Server {
+	s := newServer()
+	s.base = strings.TrimRight(base, "/")
+	return s
+}
+
+// Handler 返回假服务的 HTTP 处理器（含请求记录）。
+func (s *Server) Handler() http.Handler { return s.handler() }
+
+func newServer() *Server {
+	return &Server{
 		App: App{
 			ID: 1, Slug: "oryn-test", Name: "Oryn Test", ClientID: "Iv1.test", ClientSecret: "client-secret",
 			WebhookSecret: "webhook-secret", OwnerLogin: "owner", ManifestCode: "manifest-code", Key: sharedKey(),
@@ -134,15 +155,22 @@ func New() *Server {
 		instTokens:    map[string]int64{},
 		scopedTokens:  map[string]scoped{},
 	}
-	s.hs = httptest.NewServer(s.handler())
-	return s
 }
 
 // URL 是假服务的基址（无结尾斜杠）。
-func (s *Server) URL() string { return s.hs.URL }
+func (s *Server) URL() string {
+	if s.hs == nil {
+		return s.base
+	}
+	return s.hs.URL
+}
 
 // Close 关闭假服务。
-func (s *Server) Close() { s.hs.Close() }
+func (s *Server) Close() {
+	if s.hs != nil {
+		s.hs.Close()
+	}
+}
 
 // Lock / Unlock 保护导出的可变状态。
 func (s *Server) Lock()   { s.mu.Lock() }
@@ -152,7 +180,7 @@ func (s *Server) Unlock() { s.mu.Unlock() }
 func (s *Server) AddUser(id int64, login, name string) *User {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	u := &User{ID: id, Login: login, Name: name, AvatarURL: fmt.Sprintf("%s/avatars/%s", s.hs.URL, login)}
+	u := &User{ID: id, Login: login, Name: name, AvatarURL: fmt.Sprintf("%s/avatars/%s", s.URL(), login)}
 	s.Users[strings.ToLower(login)] = u
 	return u
 }
@@ -259,6 +287,9 @@ func (s *Server) handler() http.Handler {
 		s.mu.Lock()
 		s.Calls = append(s.Calls, Call{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), Body: body})
 		s.mu.Unlock()
+		if s.serveExtra(w, r) {
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
