@@ -696,7 +696,7 @@ function m9Screens(): Screen[] {
 	];
 }
 
-/** M14：GitHub 设置页（已连接 / 未连接）、线程页头的 PR 徽标与手机标题菜单的 PR 行、改动面板的「推送并开 PR」、项目页 GitHub 卡片。 */
+/** M14：GitHub 设置页（已连接 / 未连接）、线程页头的 PR 徽标与手机标题菜单的 PR 行、改动面板的「推送并开 PR」、项目页 GitHub 卡片、输入框 `#` 引用。 */
 function m14Screens(): Screen[] {
 	return [
 		{
@@ -745,6 +745,35 @@ function m14Screens(): Screen[] {
 			name: "m14-project-github",
 			prepare: ({ page }) =>
 				open(page, `/projects/${projects[0]?.id}`, "main", 1200),
+		},
+		{
+			// 项目页 GitHub 卡片里新建触发规则的对话框，套用「分诊并修复」预设
+			name: "m14-trigger-dialog",
+			prepare: async ({ page }) => {
+				await open(page, `/projects/${projects[0]?.id}`, "main", 1200);
+				const triggers = page.getByTestId(`github-triggers-${projects[0]?.id}`);
+				await triggers.waitFor({ timeout: 15_000 });
+				await triggers.getByRole("button", { name: "新建" }).click();
+				const dialog = page.getByTestId("github-trigger-dialog");
+				await dialog.waitFor();
+				await dialog.getByRole("textbox", { name: "名称" }).fill("分诊并修复");
+				await dialog
+					.getByRole("combobox", { name: "套用预设" })
+					.selectOption("triage");
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m14-composer-refs",
+			prepare: async ({ page }) => {
+				await openThread(page, MAIN_THREAD);
+				await composer(page).fill("#log");
+				await page
+					.locator("[data-testid=ref-menu] [role=option]")
+					.first()
+					.waitFor({ timeout: 15_000 });
+				await settle(page, 400);
+			},
 		},
 	];
 }

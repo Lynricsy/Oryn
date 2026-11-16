@@ -3234,6 +3234,39 @@
 				"comments": "评论回流",
 				"ci": "CI 失败回流"
 			}
+		},
+		"triggers": {
+			"title": "触发规则",
+			"new": "新建",
+			"empty": "还没有触发规则。规则命中时会新建线程，issue 内容作为数据块附在提示词后面。",
+			"paused": "已停用",
+			"runCount": "已触发 {{n}} 次",
+			"lastRun": "最近 {{when}}",
+			"enable": "启用「{{name}}」",
+			"edit": "编辑「{{name}}」",
+			"delete": "删除「{{name}}」",
+			"deleteConfirm": "删除触发规则「{{name}}」？已建出的线程不受影响。",
+			"newTitle": "新建触发规则",
+			"editTitle": "编辑触发规则",
+			"name": "名称",
+			"eventLabel": "事件",
+			"event": {
+				"issue_opened": "新 issue",
+				"issue_labeled": "打指定标签",
+				"mention": "@Agent 账号",
+				"labeledWith": "打标签"
+			},
+			"label": "标签",
+			"announce": "在 issue 下回帖线程链接",
+			"agentMissing": "Agent 账号还没连接：先在设置页「GitHub」里连接，才能用 @ 触发。",
+			"preset": "套用预设",
+			"presetNone": "不套用",
+			"presets": {
+				"triage": "分诊并修复",
+				"mention": "响应 @"
+			},
+			"prompt": "提示词",
+			"promptHint": "可用变量 {{vars}}；issue 的标题、正文、作者、标签与触发评论会作为数据块附在提示词后面。"
 		}
 	}
 }

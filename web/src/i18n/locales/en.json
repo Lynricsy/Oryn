@@ -3234,6 +3234,39 @@
 				"comments": "Deliver comments",
 				"ci": "Deliver CI failures"
 			}
+		},
+		"triggers": {
+			"title": "Triggers",
+			"new": "New",
+			"empty": "No triggers yet. When a trigger matches, Oryn starts a thread and attaches the issue as a data block after the prompt.",
+			"paused": "Off",
+			"runCount": "Ran {{n}} times",
+			"lastRun": "Last {{when}}",
+			"enable": "Enable \"{{name}}\"",
+			"edit": "Edit \"{{name}}\"",
+			"delete": "Delete \"{{name}}\"",
+			"deleteConfirm": "Delete trigger \"{{name}}\"? Threads it already started are kept.",
+			"newTitle": "New trigger",
+			"editTitle": "Edit trigger",
+			"name": "Name",
+			"eventLabel": "Event",
+			"event": {
+				"issue_opened": "New issue",
+				"issue_labeled": "Label added",
+				"mention": "@Agent account",
+				"labeledWith": "Labeled"
+			},
+			"label": "Label",
+			"announce": "Reply on the issue with the thread link",
+			"agentMissing": "The agent account isn't connected. Connect it under Settings › GitHub to trigger on @ mentions.",
+			"preset": "Apply a preset",
+			"presetNone": "None",
+			"presets": {
+				"triage": "Triage and fix",
+				"mention": "Respond to @"
+			},
+			"prompt": "Prompt",
+			"promptHint": "Variables: {{vars}}. The issue's title, body, author, labels and the triggering comment are attached after the prompt as a data block."
 		}
 	}
 }

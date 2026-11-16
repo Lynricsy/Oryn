@@ -1,7 +1,7 @@
 /**
  * 项目页的「GitHub」卡片（M14）：仓库绑定状态与事件回流开关。
  * 仓库地址不是 GitHub 且从未解析出仓库时不渲染。已绑定（App 可访问该仓库）时给出三个回流开关，改动即 PATCH 项目；
- * 未绑定时提示把 App 安装到这个仓库（还没有 App 时链接到设置页）。
+ * 未绑定时提示把 App 安装到这个仓库（还没有 App 时链接到设置页）。已绑定时开关下方是触发规则列表（`GitHubTriggers`）。
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -13,6 +13,7 @@ import { qk } from "../../api/queries";
 import { Card } from "../../components/ui/data";
 import { Icon } from "../../components/ui/icons";
 import { ErrorText, Toggle } from "../../components/ui/primitives";
+import { GitHubTriggers } from "./GitHubTriggers";
 
 type Listen = Schemas["GitHubListen"];
 
@@ -91,7 +92,12 @@ export function ProjectGitHubCard({
 						)}
 					</p>
 				)}
-				{gh?.bound && <ListenToggles project={project} />}
+				{gh?.bound && (
+					<>
+						<ListenToggles project={project} />
+						<GitHubTriggers project={project} />
+					</>
+				)}
 			</div>
 		</Card>
 	);

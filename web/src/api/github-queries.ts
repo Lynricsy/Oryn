@@ -19,6 +19,9 @@ export type GitHubIdentity = Schemas["GitHubIdentity"];
 export type GitHubIdentitySlot = Schemas["GitHubIdentitySlot"];
 export type GitHubInstallation = Schemas["GitHubInstallation"];
 export type GitHubManifestRequest = Schemas["GitHubManifestRequest"];
+export type GitHubTrigger = Schemas["GitHubTrigger"];
+export type GitHubTriggerInput = Schemas["GitHubTriggerInput"];
+export type GitHubTriggerPatch = Schemas["GitHubTriggerPatch"];
 
 export const githubKeys = {
 	all: ["github"] as const,
@@ -139,6 +142,68 @@ export function useSyncGitHubInstallations() {
 	const invalidate = useInvalidateGitHub();
 	return useMutation({
 		mutationFn: () => unwrap(api.POST("/api/v1/github/installations/sync")),
+		onSuccess: () => invalidate(),
+	});
+}
+
+/** 项目的 GitHub 触发规则。 */
+export function useGitHubTriggers(projectId: string, enabled = true) {
+	return useQuery({
+		queryKey: githubKeys.triggers(projectId),
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/projects/{id}/github/triggers", {
+					params: { path: { id: projectId } },
+				}),
+			),
+		staleTime: 30_000,
+	});
+}
+
+function useInvalidateTriggers(projectId: string) {
+	const qc = useQueryClient();
+	return () =>
+		qc.invalidateQueries({ queryKey: githubKeys.triggers(projectId) });
+}
+
+export function useCreateGitHubTrigger(projectId: string) {
+	const invalidate = useInvalidateTriggers(projectId);
+	return useMutation({
+		mutationFn: (body: GitHubTriggerInput) =>
+			unwrap(
+				api.POST("/api/v1/projects/{id}/github/triggers", {
+					params: { path: { id: projectId } },
+					body,
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useUpdateGitHubTrigger(projectId: string) {
+	const invalidate = useInvalidateTriggers(projectId);
+	return useMutation({
+		mutationFn: ({ id, patch }: { id: string; patch: GitHubTriggerPatch }) =>
+			unwrap(
+				api.PATCH("/api/v1/github/triggers/{id}", {
+					params: { path: { id } },
+					body: patch,
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useDeleteGitHubTrigger(projectId: string) {
+	const invalidate = useInvalidateTriggers(projectId);
+	return useMutation({
+		mutationFn: (id: string) =>
+			unwrap(
+				api.DELETE("/api/v1/github/triggers/{id}", {
+					params: { path: { id } },
+				}),
+			),
 		onSuccess: () => invalidate(),
 	});
 }

@@ -506,6 +506,28 @@ export class MockServer {
 		changed: () => this.broadcast({ type: "github.changed" }),
 		threads: this.threads,
 		upsertThread: (t) => this.upsertThread(t),
+		projects: () => this.projects,
+		addAttachment: (name, mime, text) => {
+			const data = new Blob([text], { type: mime });
+			const meta: Schemas["Attachment"] = {
+				id: `att_${(this.idSeq++).toString(36).toUpperCase().padStart(26, "0")}`,
+				name,
+				mime,
+				size: data.size,
+				sha256: "0".repeat(64),
+				createdAt: Date.now(),
+			};
+			this.attachments.set(meta.id, { meta, data });
+			return meta;
+		},
+		startThread: (t, prompt) => {
+			this.addThread(t);
+			this.appendEntry(t.id, {
+				role: "user",
+				content: prompt,
+				timestamp: Date.now(),
+			});
+		},
 	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
