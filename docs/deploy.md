@@ -424,7 +424,7 @@ runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器�
 ### 安全边界（先读）
 
 - **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
-- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。orbd 在 runner 上只写自己目录下的 `~/.oryn/orbd/extensions/oryn-orb.ts`（只注册 artifact 工具）并以 `-e` 加载，不碰 `~/.agents/skills` 与你自己的 omp 扩展。
+- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，也不改那台机器的 git 配置。唯一的出站通道是记忆（第 14 节）：记忆开着时，runner 在 `127.0.0.1:7811` 上开一个本地端口，orynd 只放行 `/memory/` 网关的路径，其余路径一律 403；Hindsight 的 key 由 orynd 注入，不进 runner。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。orbd 在 runner 上只写自己目录下的 `~/.oryn/orbd/extensions/oryn-orb.ts`（只注册 artifact 工具）与记忆开着时的 `~/.oryn/memory-overlay.yml`，前者以 `-e`、后者以 `--config` 加载，不碰 `~/.agents/skills` 与你自己的 omp 扩展。
 - **助手不碰 runner 线程。** 助手（协调者）的 send_message、read_thread、归档、定时等工具对 runner 线程一律回 `runner_unsupported`：普通 orb 里产出的内容不能经助手转成你机器上的指令。runner 线程只能由你自己发消息。
 - **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
 - runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。
@@ -575,3 +575,62 @@ App 的 webhook 默认指向 `<public_url>/api/v1/public/github/webhook`（按 `
 ### 权限说明
 
 App 申请 `contents`、`pull_requests`、`issues` 写权限与 `checks`、`statuses`、`actions`、`metadata` 读权限，**不申请 `workflows`**：agent 推送改动了 `.github/workflows/` 的分支会被 GitHub 拒绝。确有需要时在 GitHub 的 App 设置里手动加上并在安装页接受——这等于允许能推送的 agent 改 CI 定义。私有 App 只能装在创建者自己的账号下；要装到其它组织、或 Agent 账号授权失败时，创建时勾选「公开 App」。
+
+## 14. Hindsight 记忆服务（M16）
+
+Oryn 的 agent 记忆存放在一个单独部署的 [Hindsight](https://github.com/vectorize-io/hindsight)（MIT）服务里，版本固定为 1.2.x，镜像是 slim 版，不带本地模型。所有项目共用一个 bank `oryn`，靠 `project:<项目 ID>` 标签相互隔离；全局记忆打 `oryn:global` 标签，只有主人在管理页批准的候选才能写入。orb 与 runner 里的 omp 只连 orynd 的记忆网关 `/memory/`，网关替它们填写项目标签，并注入 Hindsight 的 API key。Hindsight 调用模型、嵌入和重排时，也经 orynd 的中转 `<public_url>/memory-relay/v1/`，由 orynd 换上真实的模型与密钥。所以 Hindsight 的 `.env` 里没有任何 provider 密钥，orb 里也看不到 Hindsight 的 key。
+
+### 部署
+
+1. **同机部署**（推荐）：在 orynd 所在的机器上部署。API 只发布在 `127.0.0.1:8888`，Postgres 不发布端口。
+2. **远端部署**：在本目录 `.env` 里加一行 `HINDSIGHT_PUBLISH_ADDR=<内网地址>`，或者在 Hindsight 前面加一层 TLS 反代，只让 orynd 所在的机器能访问。Hindsight 必须能访问 orynd 的 `public_url`，因为模型请求要走中转。
+
+两种方式的步骤相同：
+
+```bash
+# 1. 管理页「更多 → Agent → 记忆」：先选好模型和嵌入接口，再点「生成 .env」，
+#    把内容保存为 deploy/hindsight/.env。API key 和中转令牌只显示这一次；重新生成后旧值立即失效。
+# 2. 启动（首次会构建带 pgvector 的 pgroonga 镜像）
+docker compose -f deploy/hindsight/compose.yaml up -d
+# 3. 管理页「连接」填 Hindsight 地址（同机为 http://127.0.0.1:8888），状态变为「正常」后打开开关
+```
+
+- `.env` 每种用途（default / retain / reflect / consolidation / mental model）只写一个固定的别名模型和协议类型（openai / anthropic / gemini）。在同一协议内换模型立即生效。换了协议类型时，管理页会给出要替换的几行，并提示重启 Hindsight（`docker compose -f deploy/hindsight/compose.yaml up -d api`）；在点「我已重启」之前，该用途的中转一律返回 409。
+- 中文检索依赖 pgroonga（`HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga`）。输出语言固定为简体中文。
+- `HINDSIGHT_DB_PASSWORD` 只在数据卷首次初始化时生效，之后改它会导致 API 连不上库。数据库只在 compose 的内部网络里，所以默认值可以接受；要改就在首次 `up` 之前改。
+- 开关、单项目关闭、生成 `.env` 之后，正在运行的线程会出现在 Agent 页的「需要重启」里，下一个会话（或点「重启」之后）才会生效。
+
+### 备份
+
+`hindsight-admin backup` 在一个 `REPEATABLE READ` 事务里导出整个库（bank、document、事实、实体、mental model），得到一个 zip。备份和恢复都只对 `public` schema 生效，这也是 Oryn 所用租户扩展的默认 schema。cron 示例（每天 3:30，保留 14 份）：
+
+```cron
+30 3 * * * cd /opt/oryn && f=hindsight-$(date +\%F).zip && docker compose -f deploy/hindsight/compose.yaml exec -T api hindsight-admin backup /tmp/$f && docker compose -f deploy/hindsight/compose.yaml cp api:/tmp/$f /var/backups/oryn/ && docker compose -f deploy/hindsight/compose.yaml exec -T api rm -f /tmp/$f && find /var/backups/oryn -name 'hindsight-*.zip' -mtime +14 -delete
+```
+
+也可以直接对库做 `pg_dump`：`docker compose -f deploy/hindsight/compose.yaml exec -T db pg_dump -U hindsight_user -Fc hindsight_db > hindsight.dump`。
+
+恢复（会清空目标库）：先 `docker compose cp` 把 zip 放进容器，然后执行 `hindsight-admin restore /tmp/<文件>.zip --yes`，再执行一次 `hindsight-admin repair-bank --all`。管理页的「导出」是一个只读的 bank 归档（`export-bank`），用来在 Oryn 之外查看或迁移，不能代替备份。
+
+### 升级
+
+compose 里的镜像按 digest 固定。Oryn 只对一个小版本（当前是 1.2）做过测试：Hindsight 报告的版本不在这个小版本内时，管理页状态会显示「版本警告」。
+
+- **补丁升级**（1.2.x → 1.2.y）：先备份，把 `compose.yaml` 里 api 镜像的 digest 换成新补丁的 digest，然后 `docker compose -f deploy/hindsight/compose.yaml pull api && docker compose -f deploy/hindsight/compose.yaml up -d api`。数据库迁移在启动时自动执行；管理页状态回到「正常」即完成。
+- **小版本升级**（1.2 → 1.3），要等 Oryn 把测试过的小版本更新后再做，逐项检查：
+  1. 读新版本的 release notes，重点看环境变量的改名或删除（与 `.env` 的键对照）、HTTP API（`/v1/default/banks/{bank}/memories`、`documents`、`mental-models`、`reflect`）的变化，以及标签过滤的语义；
+  2. 先备份；
+  3. 升级 Postgres 镜像之前，确认 pgroonga 与 pgvector 的版本仍然兼容；
+  4. 换镜像后执行 `docker compose ... exec api hindsight-admin run-db-migration`，再执行 `hindsight-admin repair-bank --all --dry-run`；
+  5. 在管理页确认状态正常，在任一项目线程里执行一次 recall 和 retain，并确认两个项目之间互相看不到对方的记忆。
+
+### 换嵌入模型（reembed）
+
+任何嵌入模型的更换都必须重新嵌入，维度相同也不例外，否则新旧向量混在一起会让召回变差。维度不同时，Hindsight 会直接拒绝启动。步骤：
+
+1. 在管理页把嵌入接口改成新模型，记下维度（中转会立即开始用新模型，所以下面几步要连续做完）；
+2. 用新的维度执行 `docker compose -f deploy/hindsight/compose.yaml exec api env HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS=<新维度> hindsight-admin reembed --all-schemas`。执行期间 recall 与 retain 仍可用，只是更慢；每个 schema 显示 `swapped` 即完成；
+3. 把 `.env` 里的 `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` 改成新维度，然后 `up -d api` 重启；
+4. 执行 `hindsight-admin reembed --all-schemas --finish`，解除写保护。
+
+中途中断时，重跑同一条命令即可从断点继续。

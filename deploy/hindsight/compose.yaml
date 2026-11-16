@@ -1,0 +1,75 @@
+# Oryn 内置记忆（M16）：Hindsight API + pgroonga Postgres。
+#
+# 用法（详见 docs/deploy.md「Hindsight 记忆服务」）：
+#   1. 在 Oryn 管理页「更多 -> Agent -> 记忆」生成 .env，保存为本目录下的 .env（两个密钥只显示这一次）；
+#   2. docker compose -f deploy/hindsight/compose.yaml up -d
+#
+# 基于官方配方 docker/docker-compose/pgroonga（v1.2.1），区别：
+#   - 只用 API 镜像（slim，不带本地模型；模型、嵌入、重排全部经 orynd 中转），不起 Control Plane UI；
+#   - API 默认只发布在 127.0.0.1，Postgres 不发布端口；
+#   - 镜像按 digest 固定，升级流程见 deploy.md。
+#
+# 可选的插值变量（写在本目录 .env 里或 shell 环境里，不由管理页生成）：
+#   HINDSIGHT_PUBLISH_ADDR  API 发布地址，默认 127.0.0.1；远端部署时改成 orynd 能访问到的地址
+#   HINDSIGHT_DB_PASSWORD   Postgres 密码，只在卷首次初始化时生效，之后不要改
+name: oryn-hindsight
+
+services:
+  db:
+    build: { context: ./db, dockerfile: Dockerfile }
+    image: oryn-hindsight-db:pgroonga-4.0.8-pg17-pgvector-0.8.7
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hindsight_user
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+      POSTGRES_DB: hindsight_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [hindsight]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight_user -d hindsight_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # 建扩展（幂等），完成后退出。
+  pgroonga-init:
+    image: oryn-hindsight-db:pgroonga-4.0.8-pg17-pgvector-0.8.7
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGPASSWORD: ${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+    command: >
+      bash -c "psql -h db -U hindsight_user -d hindsight_db -c 'CREATE EXTENSION IF NOT EXISTS vector CASCADE;' &&
+               psql -h db -U hindsight_user -d hindsight_db -c 'CREATE EXTENSION IF NOT EXISTS pgroonga CASCADE;'"
+    restart: "no"
+    networks: [hindsight]
+
+  api:
+    image: ghcr.io/vectorize-io/hindsight-api:1.2-slim@sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c
+    # 官方 start 脚本关停时最多等 60s 让 worker 收尾，这里多留余量。
+    stop_grace_period: 75s
+    restart: unless-stopped
+    depends_on:
+      pgroonga-init: { condition: service_completed_successfully }
+    ports:
+      - "${HINDSIGHT_PUBLISH_ADDR:-127.0.0.1}:8888:8888"
+    # 管理页生成的配置：鉴权、worker ID、中文检索、输出语言、各用途别名模型与中转地址。
+    env_file: [.env]
+    environment:
+      # 指向下面的 Postgres，同时禁用内嵌的 pg0。
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight_user:${HINDSIGHT_DB_PASSWORD:-hindsight_password}@db:5432/hindsight_db
+      HINDSIGHT_API_VECTOR_EXTENSION: pgvector
+      # 启动时不做模型自检：自检每次启动发 5 次计费调用，库不可用导致重启循环时会持续扣费
+      # （附录 A 第 7 项，实测关闭后启动零调用）。模型配置错误由 orynd 中转的错误与管理页状态暴露。
+      HINDSIGHT_API_SKIP_LLM_VERIFICATION: "true"
+    # 同机部署且 Oryn 的 public_url 指向本机时，容器经 host.docker.internal 访问 orynd 的中转入口。
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks: [hindsight]
+
+networks:
+  hindsight: {}
+
+volumes:
+  pg_data: {}

@@ -50,6 +50,7 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
 - **中央模型目录**：控制面用钉定版本的 Oryn Core 一次性运行 `omp models` 生成模型列表（`models.yml` 自定义 provider 与有密钥的内置 provider，附各自的思考档位），设置页、首屏与线程内三处共用，无需打开线程或唤醒 orb；配置变化后自动重算，24 小时过期，也可手动刷新。
 - **头像体系**：默认 Agent 身份、全局助手、每个 role（含内置 role 与不在轮换里的 role）和每个子 Agent 都能设头像，内置 role / Agent 自带默认 Nerd 字形；子 Agent 总览、详情与 task 卡片用头像加光环动效区分运行、排队、完成、失败与仅存转录，公开分享页只带出分享范围内实际用到的 Agent 头像。
 - **GitHub 深度集成**：设置页按 manifest 一键创建属于自己的 GitHub App，连接「我的账号」与可选的「Agent 账号」（GitHub 触发规则与项目级定时可改用 Agent 账号提交与评论）。仓库地址指向 GitHub 且 App 已安装的项目自动按仓库 id 绑定（改名、转移自动跟随），其 orb 里 git 与 `gh` 免登录：出站代理注入只对项目仓库有效的短期令牌，真实令牌不进 orb。线程里推送的提交成为某个 PR 的头提交后，线程页头与列表自动显示该 PR 的状态与 CI 结果；PR 合并即标记已交付。有写权限者的评审、行内评论、会话评论与 CI 失败会在 15 秒窗口内合并成一条自动消息送进线程（agent 自己经 `gh` 发出的内容带不可见标记、不回流）。项目可配置「新 issue / 打标签 / @Agent 账号」触发规则新建线程并给 issue 加 👀；输入框键入 `#` 可把 issue / PR 连同评论作为 Markdown 附件引用。事件以 webhook 为主，GitHub 访问不到实例时每 30 秒拉取 App 投递日志补齐。部署见 [docs/deploy.md](docs/deploy.md) 第 13 节。
+- **内置 Hindsight 记忆，同项目共享、跨项目隔离**：orb 与 Runner 里的 agent 共用一个自托管的 [Hindsight](https://github.com/vectorize-io/hindsight) 记忆库，回合结束自动写入，下一轮自动召回。控制面网关替 agent 填写项目标签：同一项目的各个线程共享记忆，不同项目互不可见。写进全局层的内容（个人偏好、跨项目经验）先进候选队列，主人批准后才对所有项目生效。Hindsight 自己调用的模型、嵌入与重排全部经控制面中转，可在同一协议内随时换模型。「更多 → Agent → 记忆」可以浏览、搜索、按线程遗忘、审核候选、刷新 mental model、查看用量和导出；删除项目时，它的记忆一并删除。部署见 [docs/deploy.md](docs/deploy.md) 第 14 节。
 
 ### 2. Space 多线程协调、定时巡检与全量统计
 
@@ -109,7 +110,7 @@ flowchart LR
 
 1. **出站代理凭据隔离**：默认 `proxy` 模式下，导入的 `models.yml` 明文 API Key 与 `git/*` 令牌存入控制面主密钥加密库，下发至 orb 的配置仅含 `oryn-ph-…` 占位符；请求经 `orbd` 本地端口 `127.0.0.1:7811` 回到 `orynd` 按绑定上游主机注入真实值，并将响应中的凭据回显脱敏回占位符（仅显式设为 `env` 模式的自定义密钥或未绑定上游 `hosts` 的模型 Key 降级路径会以环境变量下发）。
 2. **Git 最小权限放行**：绑定了 `https://` 仓库地址的项目 orb 仅允许对该单一仓库执行读写（`git-upload-pack` / `git-receive-pack`），同主机其它仓库一律 `403`；未绑定项目的 orb 对已配置令牌的 Git 主机仅放行只读克隆，拒绝一切推送。
-3. **动态令牌轮换与单向信任隔离**：Orb 连接令牌 `oot_…` 由 `HMAC(key, orbID : 代数)` 派生，每次创建、唤醒及拍摄快照后立即轮换，快照磁盘内不留有效令牌（Firecracker guest 令牌仅驻留内存 `tmpfs`）；本机 Runner 采用严格单向边界：控制面永不向 Runner 下发模型配置、环境变量密钥或开启出站代理，且协调助手禁止读写或操控任何 Runner 线程。
+3. **动态令牌轮换与单向信任隔离**：Orb 连接令牌 `oot_…` 由 `HMAC(key, orbID : 代数)` 派生，每次创建、唤醒及拍摄快照后立即轮换，快照磁盘内不留有效令牌（Firecracker guest 令牌仅驻留内存 `tmpfs`）；本机 Runner 采用严格单向边界：控制面永不向 Runner 下发模型配置或环境变量密钥，只开一条仅通往记忆网关 `/memory/` 的专用通道（其它出站路径一律 403，Hindsight 的 key 不进 Runner），且协调助手禁止读写或操控任何 Runner 线程。
 
 ## 快速开始
 
@@ -262,7 +263,7 @@ docker run --rm --platform linux/arm64 --network none --entrypoint bash oryn-orb
 
 | 文档 | 内容 |
 |---|---|
-| **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner 与 Firecracker microVM |
+| **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner、Firecracker microVM 与 Hindsight 记忆服务 |
 | **[`docs/desktop.md`](docs/desktop.md)** | Windows / macOS / Linux 桌面客户端安装、Passkey 配对、无边框窗口控件、系统托盘、全局快捷键与签名自动更新 |
 | **[`docs/mobile.md`](docs/mobile.md)** | Android 客户端（`foss` 与 `gms` 双包）安装校验、扫码配对、UnifiedPush / FCM 端到端加密推送与省电策略说明 |
 | **[`docs/protocol.md`](docs/protocol.md)** | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的 C1 Provider、C2 Orb Link、C3 REST/WebSocket 协议索引与状态机说明 |

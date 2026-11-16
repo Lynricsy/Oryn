@@ -1,0 +1,2 @@
+# 管理页生成的 .env 含 Hindsight API key 与中转令牌，不入库。
+.env

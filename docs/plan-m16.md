@@ -11,6 +11,15 @@
   - 判断一次写入是不是全局写入，依据是 `items[].tags` 这个键整体缺失。这只在 `per-project-tagged` 模式下成立，所以 orbd 必须设 `HINDSIGHT_SCOPING=per-project-tagged`。
   - env 增加 `NO_PROXY=127.0.0.1,localhost`：Bun 的 fetch 会读代理变量，不设的话发往 `127.0.0.1:7811` 的记忆请求也会被送进代理。
   - 创建 bank 的 PUT 请求要丢弃 body，不允许任何 orb 改写共享 bank 的 mission。
+- **v3（2026-11-16，执行中修订）**：步骤 0.2 的结论（附录 A，`docs/plan-m16-appendix-a.md`，Hindsight 1.2.1 实测）。A2、A5 成立；A1 只部分成立。据此修改了 2.1、2.2、2.5、2.6、4.1：
+  - A1：`tags_match=any` 会连无标签记忆一起返回，所以网关改为强制 `any_strict`，一次召回就能拿到本项目和全局两类记忆，且不会漏进无标签记忆。`all_strict` 与 `exact` 对两个标签返回空。
+  - gemini 不读各用途的 `*_LLM_BASE_URL`，只认进程级的 `GOOGLE_GEMINI_BASE_URL`，模型名放在 URL 路径里（`/v1beta/models/<别名>:generateContent`）。所以 `.env` 固定多出这一行，中转对 gemini 请求按别名认出用途（`PurposeForAlias`）。重排的 BASE_URL 是完整端点，以 `/rerank/v1/rerank` 结尾。各协议的鉴权头分别是 `Authorization: Bearer`（openai、嵌入、重排）、`x-api-key`（anthropic）、`x-goog-api-key`（gemini）。
+  - 删除 document 后，派生的事实与观察会一起消失，但 mental model 只被标为 `is_stale: true`，不会自动更新。所以 2.6 的遗忘、删除和项目级联删除完成后，orynd 要刷新受影响的 mental model。
+  - `DATABASE_URL` 缺失时 Hindsight 会静默启动一个空的 pg0 并报告健康，1.2.1 没有禁用它的变量。所以 compose 总是写数据库地址；2.1 的健康检查还要求 `GET /banks/oryn/stats` 不为 404。
+  - 每次启动的模型自检会发 5 次计费调用，库不可用导致重启循环时会持续扣费（实测 6 分钟约 150 次）。所以 compose 设 `HINDSIGHT_API_SKIP_LLM_VERIFICATION=true`，已实测启动时零调用。
+  - 异步 retain 返回 200，不是 202，应答体为 `{success, bank_id, items_count, async, operation_id, …}`。候选分流时照这个格式返回。
+  - 导出的 zip 下载要带 Bearer key，所以下载只能由 orynd 代理。
+  - 4.1 的验收改为先把 `.env.example` 复制为 `.env` 再执行 `config`：`env_file` 必须是必需项，否则漏放 `.env` 的 API 会以无鉴权模式启动。
 
 ## Context
 
@@ -367,7 +376,7 @@ Do：
 2. retain：
    - 项目线程：每个 item 的 `tags` 和 `document_tags` 强制改为 `[project:P]`，并把 `document_id → (P, thread)` 记进 `memory_documents`；
    - 不带项目标签的写入和无项目线程的写入：转进 `memory_candidates`，返回附录 A 里记下的成功应答格式（R8）。
-3. recall 和 reflect：项目线程强制 `tags=[project:P, oryn:global]`、`tags_match=any`；无项目线程强制 `tags=[oryn:global]`。
+3. recall 和 reflect：项目线程强制 `tags=[project:P, oryn:global]`、`tags_match=any_strict`（附录 A 第 1 项）；无项目线程强制 `tags=[oryn:global]`、`tags_match=any_strict`。
 4. orb 不能直接读、改、删 document（见第 6 条）。按线程遗忘、删除 document 只能从管理页经 orynd 操作（2.6）。
 5. mental model：
    - 列表和单个读取只返回 P 的模型和 `oryn:global` 模型，并把后者的 `tags` 改写为 `[]`。`user-preferences` 必须留在列表里，Core 看到它已存在就不会去创建；
@@ -526,7 +535,7 @@ Files：
 
 Accept：
 
-- `docker compose -f deploy/hindsight/compose.yaml config` 退出 0；
+- `cp deploy/hindsight/.env.example deploy/hindsight/.env && docker compose -f deploy/hindsight/compose.yaml config` 退出 0（随后删除 `.env`）；
 - `go test ./internal/memory/... -run EnvExample` 输出 `ok`，确认 `.env.example` 的键集与生成器一致；
 - `grep -n 'Hindsight' docs/deploy.md README.md docs/protocol.md` 三个文件都有命中。
 
@@ -562,7 +571,9 @@ Do：
 
 Accept：`cd web && bun run accept:m16` 退出 0，输出逐项记录 R1、R4、R5、R6、R8、R13、R20、R23 的结果。
 
-## 附录 A：Hindsight 探查结论（步骤 0.2 填写）
+## 附录 A：Hindsight 探查结论（步骤 0.2）
+
+完整内容见 `docs/plan-m16-appendix-a.md`。
 
 ## 附录 B：Core 端点与放行清单（步骤 0.3）
 
