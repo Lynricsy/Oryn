@@ -28,6 +28,25 @@ type Artifact struct {
 	DeletedAt *int64  `json:"deletedAt"`
 }
 
+type ArtifactComment struct {
+	ThreadID       string  `json:"threadId"`
+	N              int64   `json:"n"`
+	AuthorThreadID *string `json:"authorThreadId"`
+	AuthorLabel    string  `json:"authorLabel"`
+	Body           string  `json:"body"`
+	CreatedAt      int64   `json:"createdAt"`
+}
+
+type ArtifactCommentThread struct {
+	ID         string  `json:"id"`
+	ArtifactID string  `json:"artifactId"`
+	Anchor     string  `json:"anchor"`
+	CreatedAt  int64   `json:"createdAt"`
+	ResolvedAt *int64  `json:"resolvedAt"`
+	SentAt     *int64  `json:"sentAt"`
+	SentTo     *string `json:"sentTo"`
+}
+
 type ArtifactFile struct {
 	ArtifactID string `json:"artifactId"`
 	N          int64  `json:"n"`

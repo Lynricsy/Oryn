@@ -31,6 +31,9 @@ func AssistantFile() string { return New("afl") }
 // Artifact 返回 art_<ULID>（M14 artifact）。
 func Artifact() string { return New("art") }
 
+// ArtifactCommentThread 返回 act_<ULID>（M14 artifact 评论串）。
+func ArtifactCommentThread() string { return New("act") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 
