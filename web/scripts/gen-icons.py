@@ -324,26 +324,55 @@ def appiconset(
     return imgs
 
 
-# iOS 可替换图标：资源名 → 竖条在浅 / 深外观下的颜色（着色外观仍是灰度，与默认相同）。
-# 资源名与壳里的 id 对应表在 src-tauri/src/mobile_logic.rs 的 APP_ICONS，两边一起改。
+# iOS 可替换图标：资源名 → (页面 id, 竖条在浅 / 深外观下的颜色)；着色外观仍是灰度，与默认相同。
+# 资源名与页面 id 的对应表在壳的 src-tauri/src/mobile_logic.rs 的 APP_ICONS，两边一起改。
+# 竖条颜色固定（默认强调色的色相），不随用户选的主题强调色变：主屏图标是打包时画死的。
 ACCENT_H, ACCENT_C = 205, 0.105
 ALTERNATES = {
-    # 品牌色：浅 / 深两套主题的 --brand
-    "AppIconAccent": {
-        "light": oklch(0.53, ACCENT_C, ACCENT_H),
-        "dark": oklch(0.78, ACCENT_C, ACCENT_H),
-    },
+    "AppIconAccent": (
+        "accent",
+        {
+            "light": oklch(0.53, ACCENT_C, ACCENT_H),
+            "dark": oklch(0.78, ACCENT_C, ACCENT_H),
+        },
+    ),
 }
+PICKER_PALETTE = WEB / "src" / "pages" / "settings" / "app-icon-palette.gen.ts"
 
 
 def ios() -> dict[str, Image.Image]:
-    """默认图标 AppIcon 与各可替换图标；ci/ios-appicon.sh 把整个目录装进工程并让 actool 编入全部图标。"""
+    """默认图标 AppIcon 与各可替换图标；ci/ios-appicon.sh 把整个目录装进工程并让 actool 编入全部图标。
+    同时写出设置页缩略图用的配色（app-icon-palette.gen.ts），缩略图与主屏图标同源。"""
     root = ICONS / "ios"
     if root.exists():
         shutil.rmtree(root)
     imgs = appiconset(root / "AppIcon.appiconset")
-    for name, carets in ALTERNATES.items():
+    for name, (_, carets) in ALTERNATES.items():
         imgs |= appiconset(root / f"{name}.appiconset", carets)
+
+    def scheme(variant: str, caret: tuple[int, int, int] | None) -> str:
+        p = PALETTE[variant]
+        colors = {
+            "top": p["top"],
+            "bottom": p["bottom"],
+            "ink": p["ink"],
+            "caret": caret or p["caret"],
+        }
+        rows = "".join(f'\t\t\t{k}: "{hexc(v)}",\n' for k, v in colors.items())
+        return f"\t\t{variant}: {{\n{rows}\t\t}},\n"
+
+    icons = [("default", {})] + [(id_, c) for id_, c in ALTERNATES.values()]
+    body = "".join(
+        f"\t{id_}: {{\n"
+        + scheme("light", c.get("light"))
+        + scheme("dark", c.get("dark"))
+        + "\t},\n"
+        for id_, c in icons
+    )
+    PICKER_PALETTE.write_text(
+        "// 由 web/scripts/gen-icons.py 生成，勿手改：设置 → 外观里 App 图标缩略图的配色，与主屏图标同源。\n"
+        f"export const APP_ICON_PALETTE = {{\n{body}}} as const;\n"
+    )
     return imgs
 
 
