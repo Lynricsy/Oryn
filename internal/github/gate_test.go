@@ -77,9 +77,9 @@ func TestCanDrive(t *testing.T) {
 func TestIsSelf(t *testing.T) {
 	e := newEnv(t)
 	e.boundProject()
-	assert.False(t, e.s.isSelf(e.ctx, sender{Login: "oryn-bot"}, "hi"))
+	assert.False(t, e.s.isSelf(e.ctx, sender{Login: "oryn-bot"}))
 	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
 	assert.True(t, e.s.isSelf(e.ctx, sender{Login: "Oryn-Bot"}))
-	assert.False(t, e.s.isSelf(e.ctx, sender{Login: "owner"}, "hi", ""))
-	assert.True(t, e.s.isSelf(e.ctx, sender{Login: "owner"}, "", "done\n\n<!-- oryn-agent -->"))
+	assert.False(t, e.s.isSelf(e.ctx, sender{Login: "owner"}))
+	assert.False(t, e.s.isSelf(e.ctx, sender{}))
 }

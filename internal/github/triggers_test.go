@@ -2,7 +2,7 @@ package github
 
 import (
 	"context"
-	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -131,7 +131,14 @@ func TestTriggerLabeled(t *testing.T) {
 	posts := e.fake.CallsTo("POST", "/repos/acme/widgets/issues/7/comments")
 	require.Len(t, posts, 1)
 	assert.Contains(t, string(posts[0].Body), testPublicURL+"/t/"+thr)
-	assert.Contains(t, string(posts[0].Body), `\u003c!-- oryn-agent --\u003e`)
+	assert.NotContains(t, string(posts[0].Body), "oryn-agent", "M15：回帖不再带标记")
+	// 回帖返回的评论 id 记为补充键（防回流）
+	e.fake.Lock()
+	cid := e.fake.Comments[len(e.fake.Comments)-1].ID
+	e.fake.Unlock()
+	hit, err := e.st.Q.GithubSelfKeyExists(e.ctx, []string{"comment:" + strconv.FormatInt(cid, 10)})
+	require.NoError(t, err)
+	assert.True(t, hit)
 	row, err := e.st.Q.GetThreadIssue(e.ctx, db.GetThreadIssueParams{RepoID: 42, Number: 7})
 	require.NoError(t, err)
 	assert.Equal(t, thr, row.ThreadID)
@@ -154,11 +161,6 @@ func TestTriggerLabeled(t *testing.T) {
 	d := e.delivered()
 	require.Len(t, d, 1)
 	assert.True(t, strings.HasPrefix(d[0], thr+"\n[Oryn GitHub event on acme/widgets#7"), d[0])
-	// 回执评论自己的 issue_comment 事件不回流
-	var body struct{ Body string }
-	require.NoError(t, json.Unmarshal(posts[0].Body, &body))
-	g = e.deliver("issue_comment", issueCommentEvent(7, false, "owner", body.Body))
-	assert.Equal(t, "ignored:self", e.delivery(g).Outcome)
 
 	// 无写权限者、Agent 账号打标签
 	g = e.deliver("issues", issuesEvent("labeled", issueJSON(9, "x", "", "carol"), "carol", "oryn"))
@@ -180,9 +182,6 @@ func TestTriggerOpenedAnnounceOffAndRateLimit(t *testing.T) {
 	// 回执用新线程 orb 的身份（agent 槽位的令牌）
 	assert.NotEqual(t, e.userAuth(), react[0].Auth)
 
-	// agent 自己建的 issue
-	g = e.deliver("issues", issuesEvent("opened", issueJSON(2, "a", "x\n\n<!-- oryn-agent -->", "owner"), "owner", ""))
-	assert.Equal(t, "ignored:self", e.delivery(g).Outcome)
 	// 其它动作
 	g = e.deliver("issues", issuesEvent("closed", issueJSON(2, "a", "", "owner"), "owner", ""))
 	assert.Equal(t, "ignored:action", e.delivery(g).Outcome)

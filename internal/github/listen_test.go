@@ -234,9 +234,7 @@ func TestListenAdmission(t *testing.T) {
 	// 所有者本人（user 槽位）照常回流
 	g := e.deliver("issue_comment", issueCommentEvent(12, true, "owner", "please rebase"))
 	assert.Equal(t, "handled", e.delivery(g).Outcome)
-	// agent 标记、Agent 账号 → self
-	g = e.deliver("issue_comment", issueCommentEvent(12, true, "owner", "done\n\n<!-- oryn-agent -->"))
-	assert.Equal(t, "ignored:self", e.delivery(g).Outcome)
+	// Agent 账号 → self
 	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
 	g = e.deliver("issue_comment", issueCommentEvent(12, true, "oryn-bot", "hi"))
 	assert.Equal(t, "ignored:self", e.delivery(g).Outcome)

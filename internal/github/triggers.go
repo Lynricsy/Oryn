@@ -330,16 +330,8 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, action string, cand
 	if len(cands) == 0 {
 		return "ignored:no_trigger", nil
 	}
-	var self bool
-	switch action {
-	case "opened":
-		self = s.isSelf(ctx, ev.sender, ev.issue.body()) // agent 自己建的 issue
-	case "labeled":
-		self = s.isSelf(ctx, ev.sender) // 打标签的是谁才算数
-	default:
-		self = s.isSelf(ctx, ev.sender, ev.comment)
-	}
-	if self {
+	// opened 看建 issue 的人，labeled 看打标签的人，mention 看评论者
+	if s.isSelf(ctx, ev.sender) {
 		return "ignored:self", nil
 	}
 	// 候选按 created_at 排序：取最早的一条（一个 issue 只对应一个线程）
@@ -443,9 +435,12 @@ func (s *Service) announce(ctx context.Context, ev triggerEvent, th apigen.Threa
 	if !post {
 		return
 	}
-	// 控制面直连 GitHub、不经出站代理，自己带上 agent 标记（回帖的事件因此不会回流）
-	body := fmt.Sprintf("Started an Oryn thread for this: %s/t/%s\n\n%s", s.cfg.PublicURL, th.ID, egress.AgentMarker)
-	if err := s.call(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", ev.repo, n), auth, map[string]string{"body": body}, nil); err != nil {
+	// 控制面直连 GitHub、不经出站代理：回帖返回的评论 id 记为补充键，回帖的事件因此不会回流
+	body := fmt.Sprintf("Started an Oryn thread for this: %s/t/%s", s.cfg.PublicURL, th.ID)
+	var resp json.RawMessage
+	if err := s.call(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", ev.repo, n), auth, map[string]string{"body": body}, &resp); err != nil {
 		slog.Warn("github: 触发回执回帖失败", "thread", th.ID, "err", err)
+		return
 	}
+	s.rememberSelfKeys(ctx, egress.RespKeys(resp))
 }

@@ -221,7 +221,7 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 		return "", err
 	}
 	who := senderOf(ev.Sender)
-	if s.isSelf(ctx, who, it.Body) {
+	if s.isSelf(ctx, who) {
 		return "ignored:self", nil
 	}
 	ok, reason, err := s.canDrive(ctx, prj, who)

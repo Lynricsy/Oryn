@@ -2,12 +2,12 @@ package github
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -26,19 +26,23 @@ type permEntry struct {
 	exp time.Time
 }
 
-// isSelf 报告事件是不是 agent 自己造成的：发送者是 Agent 槽位的账号，或任一正文带 egress.AgentMarker。
-func (s *Service) isSelf(ctx context.Context, who sender, bodies ...string) bool {
-	if who.Login != "" {
-		if agent, err := s.st.Q.GetGithubIdentity(ctx, slotAgent); err == nil && strings.EqualFold(agent.Login, who.Login) {
-			return true
+// isSelf 报告事件是不是 agent 自己造成的：发送者是 Agent 槽位的账号（M15 步骤 2.3 补上预登记与补充键的判定）。
+func (s *Service) isSelf(ctx context.Context, who sender) bool {
+	if who.Login == "" {
+		return false
+	}
+	agent, err := s.st.Q.GetGithubIdentity(ctx, slotAgent)
+	return err == nil && strings.EqualFold(agent.Login, who.Login)
+}
+
+// rememberSelfKeys 把控制面自己写入 GitHub 时拿到的补充键（egress.RespKeys 的格式）记入 github_self_keys。失败只记日志。
+func (s *Service) rememberSelfKeys(ctx context.Context, keys []string) {
+	now := s.nowMs()
+	for _, k := range keys {
+		if err := s.st.Q.InsertGithubSelfKey(ctx, db.InsertGithubSelfKeyParams{Key: k, CreatedAt: now}); err != nil {
+			slog.Warn("github: 记录自身写入键失败", "key", k, "err", err)
 		}
 	}
-	for _, b := range bodies {
-		if strings.Contains(b, egress.AgentMarker) {
-			return true
-		}
-	}
-	return false
 }
 
 // canDrive 报告发送者能否驱动 agent：不是 Bot，且对仓库有 write / admin 权限。reason 非空表示拒绝；err 非 nil 表示上游故障（可重试）。
