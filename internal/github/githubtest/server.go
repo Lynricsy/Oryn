@@ -105,6 +105,11 @@ type Server struct {
 	// UserTokenTTL 是用户访问令牌寿命（秒）；0 = 不过期（响应不带 expires_in 与刷新令牌）。
 	UserTokenTTL int64
 	Calls        []Call
+	// Deliveries 是 App 的 webhook 投递日志（见 hooks.go）；Unreachable 为真时 Deliver 不真的发请求，只记 502。
+	Deliveries  []*Delivery
+	Unreachable bool
+	// Fail 注入失败："METHOD /path" → 状态码；命中的请求直接回该状态码（仍记进 Calls）。
+	Fail map[string]int
 
 	seq           int64
 	codes         map[string]string // 授权码 → login
@@ -281,12 +286,18 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.getRepo)
 	mux.HandleFunc("GET /user/installations", s.userInstallations)
 	mux.HandleFunc("GET /user/installations/{id}/repositories", s.userInstallationRepos)
+	s.hookRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		s.mu.Lock()
 		s.Calls = append(s.Calls, Call{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Auth: r.Header.Get("Authorization"), Body: body})
+		code := s.Fail[r.Method+" "+r.URL.Path]
 		s.mu.Unlock()
+		if code != 0 {
+			fail(w, code, "injected failure")
+			return
+		}
 		if s.serveExtra(w, r) {
 			return
 		}

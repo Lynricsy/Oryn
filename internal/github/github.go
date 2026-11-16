@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -121,6 +120,12 @@ type Service struct {
 	instTokens map[int64]cachedToken      // 安装 id → 安装令牌
 	scoped     map[scopedKey]scopedToken  // (槽位, 仓库 id) → 按仓库收窄的令牌（M14 步骤 3.2，惰性初始化）
 	repoLists  map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
+
+	// 事件分发（步骤 4.1）：处理器注册表、任务队列、队列中 / 处理中的投递 guid。
+	handlers map[string]handler
+	jobs     chan func(ctx context.Context)
+	qmu      sync.Mutex
+	inflight map[string]bool
 }
 
 // New 构造服务。
@@ -146,35 +151,19 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 			return func() { t.Stop() }
 		}
 	}
-	return &Service{
+	s := &Service{
 		cfg: cfg, st: st, th: th, n: n, att: att,
 		slotMu:     map[string]*sync.Mutex{slotUser: {}, slotAgent: {}},
 		instTokens: map[int64]cachedToken{},
+		jobs:       make(chan func(ctx context.Context), jobQueueSize),
+		inflight:   map[string]bool{},
 	}
+	s.handlers = s.bindHandlers()
+	return s
 }
 
 // SetSampler 注入提交采样（stats 在 GitHub 服务之后构造）。
 func (s *Service) SetSampler(sm Sampler) { s.sampler = sm }
-
-// Run 运行后台循环直到 ctx 结束：每小时清理过期的一次性 state。
-func (s *Service) Run(ctx context.Context) {
-	t := time.NewTicker(time.Hour)
-	defer t.Stop()
-	for {
-		s.cleanup(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
-}
-
-func (s *Service) cleanup(ctx context.Context) {
-	if err := s.st.Q.DeleteExpiredGithubStates(ctx, s.nowMs()); err != nil && ctx.Err() == nil {
-		slog.Warn("github: 清理过期 state 失败", "err", err)
-	}
-}
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
 func (s *Service) nowMs() int64   { return s.cfg.Now().UnixMilli() }

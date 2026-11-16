@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"unicode/utf8"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/github"
@@ -273,4 +274,26 @@ func (s *Server) FinishGitHubOAuth(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	s.githubSettingsRedirect(w, r, "connected", slot)
+}
+
+// ReceiveGitHubWebhook 对应公开的 `POST /api/v1/public/github/webhook`：校验签名后受理投递，无响应体。
+func (s *Server) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	if r.ContentLength > github.WebhookMaxBody {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		return
+	}
+	body, err := readBody(r, github.WebhookMaxBody)
+	if err != nil {
+		if errors.Is(err, agentcfg.ErrTooLarge) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		return
+	}
+	w.WriteHeader(svc.HandleWebhook(r.Context(), r.Header, body))
 }
