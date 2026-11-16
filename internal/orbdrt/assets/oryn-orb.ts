@@ -1,15 +1,18 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
-// 启用了桌面时另注册 desktop_ask_user 工具。
+// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）。
 import type {
 	AgentToolResult,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	ExtensionAPI,
+	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 
 const GUIDE = `# Oryn orb 环境
 你运行在 Oryn orb 中：一台 Arch Linux 系隔离机器（x64 官方 Arch，ARM64 为 Arch Linux ARM），用户 \`user\`（免密 sudo），仓库默认在 ~/workspace/repo。
@@ -106,6 +109,298 @@ function desktopEnabled(): boolean {
 	return existsSync(join(homedir(), ".oryn", "core", "desktop.yml"));
 }
 
+// ---- Artifacts（M14）：agent 产出的版本化交付物 ----
+// 工具与控制面的操作表同名同参（internal/artifacts/agent.go）；每次调用经 ORYN_ARTIFACT_SOCK（orbd 本地控制口的
+// JSON 行协议，internal/orbsock）发 artifact.call，由 orbd 转给控制面。html 与内联 content 先写进临时文件、
+// 换成绝对路径的 source（请求行有大小上限；控制面经 library.fetch 取回这些字节）。
+
+const ARTIFACT_GUIDE = `Artifacts：要给用户看的成品（报告、原型、设计稿、文档、幻灯片这类）做成 artifact，不要只写进回复或工作区文件。
+- 第一次做之前先调 read_artifact_guide（topic: "files"）读文件规则与限制。
+- 改已有的 artifact 之前先 read_artifact 读到当前内容与版本号，update_artifact 时带上 baseVersion；报 conflict 就重新读取，在新版本上再改。
+- 页面显示在隔离的沙箱里：不能用 localStorage / cookie / IndexedDB，访问不了你所在环境里的服务，外部资源只能来自教程里列出的 CDN。
+- 用户对 artifact 的评论会作为消息发到这个线程里。`;
+
+interface ArtifactFileParam {
+	path: string;
+	content?: string;
+	source?: string;
+	remove?: boolean;
+}
+
+interface ArtifactCallResult {
+	text: string;
+	details?: Record<string, unknown>;
+	image?: { data: string; mimeType: string };
+}
+
+type SockReply = { ok: true; result: ArtifactCallResult } | { ok: false; code: string; message: string };
+
+// artifactSockCall 发一行请求，逐行读到 result 或 error（log 行忽略）；signal 触发时关闭连接（orbd 视为放弃）。
+function artifactSockCall(sock: string, request: unknown, signal: AbortSignal | undefined): Promise<SockReply> {
+	const { promise, resolve: settle, reject } = Promise.withResolvers<SockReply>();
+	if (signal?.aborted) {
+		reject(new Error("调用已取消"));
+		return promise;
+	}
+	const conn = createConnection(sock);
+	let buf = "";
+	let done = false;
+	const finish = (fn: () => void) => {
+		if (done) {
+			return;
+		}
+		done = true;
+		signal?.removeEventListener("abort", onAbort);
+		conn.destroy();
+		fn();
+	};
+	const onAbort = () => finish(() => reject(new Error("调用已取消")));
+	signal?.addEventListener("abort", onAbort, { once: true });
+	conn.setEncoding("utf8");
+	conn.on("connect", () => {
+		conn.write(`${JSON.stringify(request)}\n`);
+	});
+	conn.on("data", (chunk: string) => {
+		buf += chunk;
+		for (let i = buf.indexOf("\n"); i >= 0 && !done; i = buf.indexOf("\n")) {
+			const line = buf.slice(0, i).trim();
+			buf = buf.slice(i + 1);
+			if (!line) {
+				continue;
+			}
+			let msg: { type?: string; result?: ArtifactCallResult; code?: string; message?: string };
+			try {
+				msg = JSON.parse(line);
+			} catch {
+				finish(() => reject(new Error(`orbd 回了无法解析的一行：${line.slice(0, 200)}`)));
+				return;
+			}
+			if (msg.type === "result") {
+				const result = msg.result ?? { text: "" };
+				finish(() => settle({ ok: true, result }));
+			} else if (msg.type === "error") {
+				const code = msg.code ?? "internal";
+				const message = msg.message ?? "";
+				finish(() => settle({ ok: false, code, message }));
+			}
+		}
+	});
+	conn.on("error", (err: Error) => finish(() => reject(err)));
+	conn.on("close", () => finish(() => reject(new Error("orbd 在返回结果之前关闭了连接"))));
+	return promise;
+}
+
+// toSources 把 html 与内联 content 写进临时目录（第一次需要时建在 tmp.dir，0700）并换成绝对路径的 source
+// （html 变成 files 的第一项 index.html，与控制面的处理顺序一致），相对的 source 按 cwd 转成绝对路径。
+async function toSources(params: Record<string, unknown>, cwd: string, tmp: { dir?: string }): Promise<Record<string, unknown>> {
+	const out: Record<string, unknown> = { ...params };
+	const files: ArtifactFileParam[] = Array.isArray(params.files) ? [...(params.files as ArtifactFileParam[])] : [];
+	if (typeof params.html === "string") {
+		files.unshift({ path: "index.html", content: params.html });
+		delete out.html;
+	}
+	if (files.length === 0) {
+		return out;
+	}
+	const converted: ArtifactFileParam[] = [];
+	for (const [i, f] of files.entries()) {
+		if (typeof f.content === "string") {
+			const { content, ...rest } = f;
+			tmp.dir ??= await mkdtemp(join(tmpdir(), "oryn-artifact-"));
+			const file = join(tmp.dir, String(i));
+			await writeFile(file, content, { mode: 0o600 });
+			converted.push({ ...rest, source: file });
+		} else if (typeof f.source === "string" && f.source !== "" && !isAbsolute(f.source)) {
+			converted.push({ ...f, source: resolve(cwd, f.source) });
+		} else {
+			converted.push(f);
+		}
+	}
+	out.files = converted;
+	return out;
+}
+
+async function callArtifact(
+	sock: string,
+	op: string,
+	params: Record<string, unknown>,
+	cwd: string,
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult> {
+	const tmp: { dir?: string } = {};
+	try {
+		const p = await toSources(params, cwd, tmp);
+		const reply = await artifactSockCall(
+			sock,
+			{ method: "artifact.call", params: { threadId: process.env.ORYN_THREAD_ID ?? "", op, params: p } },
+			signal,
+		);
+		if (!reply.ok) {
+			return {
+				content: [{ type: "text", text: `${reply.code}: ${reply.message}` }],
+				isError: true,
+				details: { op, error: { code: reply.code, message: reply.message } },
+			};
+		}
+		const { text, details, image } = reply.result;
+		const content: AgentToolResult["content"] = [{ type: "text", text }];
+		if (image) {
+			content.push({ type: "image", data: image.data, mimeType: image.mimeType });
+		}
+		return { content, details };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			content: [{ type: "text", text: `unavailable: 没能完成 ${op}（${message}）。` }],
+			isError: true,
+			details: { op, error: { code: "unavailable", message } },
+		};
+	} finally {
+		if (tmp.dir) {
+			await rm(tmp.dir, { recursive: true, force: true });
+		}
+	}
+}
+
+// registerArtifacts 注册 artifact 工具；ORYN_ARTIFACT_SOCK 为空时不注册。注册失败（omp 太旧等）只记一行，
+// 不影响 agent 启动；返回是否注册成功（决定是否追加 ARTIFACT_GUIDE）。
+function registerArtifacts(pi: ExtensionAPI): boolean {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock) {
+		return false;
+	}
+	try {
+		const z = pi.zod;
+		const id = z.string().min(1).describe("artifact id（art_…）");
+		const version = z.number().int().min(1);
+		const fileFields = {
+			path: z.string().min(1).describe("artifact 内的相对路径，如 index.html、css/app.css"),
+			content: z.string().optional().describe("文件的文本内容（不超过 5 MiB）；与 source 恰好给一个"),
+			source: z
+				.string()
+				.optional()
+				.describe("你环境里一个文件的路径（相对路径按当前工作目录解析），用于大文件或二进制文件，单文件不超过 20 MiB；与 content 恰好给一个"),
+		};
+		// 参数逐字段对应控制面的解码结构（未知字段会被拒）；capabilities、canvas、type 等后续阶段的参数在接入时再加。
+		const tools: Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "loadMode">[] = [
+			{
+				name: "create_artifact",
+				label: "创建 artifact",
+				description:
+					"新建一个 artifact（给用户看的成品：页面、报告、原型等），产生版本 1。单页给 html 即可；多文件用 files，并包含入口 index.html。返回 {id, version, pages, kind, url}。第一次做之前先读 read_artifact_guide（topic: files）。",
+				parameters: z.object({
+					title: z.string().min(1).max(120).describe("标题（不超过 120 字）"),
+					html: z.string().optional().describe("入口 index.html 的内容；等价于 files 里的一项 {path: \"index.html\", content}"),
+					files: z.array(z.object(fileFields)).optional().describe("文件列表；html 与 files 至少给一个"),
+					note: z.string().max(200).optional().describe("这个版本的备注（不超过 200 字）"),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "read_artifact",
+				label: "读取 artifact",
+				description:
+					"读取 artifact 的元数据与一个文件的文本（缺省读入口文件，按字符分页）。结果第一行是 JSON（含 version、head、files、nextOffset），空一行后是文件文本。改之前先读，拿到 head 作为 update_artifact 的 baseVersion。",
+				parameters: z.object({
+					id,
+					version: version.optional().describe("要读的版本，缺省最新"),
+					path: z.string().optional().describe("要读的文件，缺省入口文件"),
+					offset: z.number().int().min(0).optional().describe("从第几个字符开始读（上次结果的 nextOffset）"),
+					limit: z.number().int().min(1).max(1_000_000).optional().describe("最多读多少字符，缺省 100000"),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "update_artifact",
+				label: "更新 artifact",
+				description:
+					"修改 artifact 并产生一个新版本：整文件写入或删除（files）、对文本做唯一匹配的替换（edits，在 files 之后按顺序应用）。内容改动必须带 baseVersion（read_artifact 读到的版本号）；只给 title 时只改名、不产生版本，且不能与其它改动同时给。整次调用原子，任何一步失败都不落版本。",
+				parameters: z.object({
+					id,
+					baseVersion: version.optional().describe("你读到的版本号；内容改动必填"),
+					title: z.string().min(1).max(120).optional().describe("新标题；只能单独给"),
+					html: z.string().optional().describe("整个替换入口 index.html 的内容"),
+					files: z
+						.array(z.object({ ...fileFields, remove: z.boolean().optional().describe("为 true 时删除这个文件（不再给 content / source）") }))
+						.optional()
+						.describe("要写入或删除的文件"),
+					edits: z
+						.array(
+							z.object({
+								path: z.string().optional().describe("要改的文件，缺省入口文件"),
+								oldText: z.string().min(1).describe("要替换的原文，必须在文件里恰好出现一次"),
+								newText: z.string().describe("替换成的文本"),
+							}),
+						)
+						.max(50)
+						.optional()
+						.describe("文本替换，最多 50 条，按顺序应用"),
+					note: z.string().max(200).optional().describe("这个版本的备注（不超过 200 字）"),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "list_artifacts",
+				label: "列出 artifact",
+				description: "列出你看得到的 artifact（按标题子串筛选），返回 {artifacts: [{id, title, kind, version, pages, updatedAt, thread}]}。",
+				parameters: z.object({
+					query: z.string().optional().describe("标题里包含的文字（不区分大小写）"),
+					limit: z.number().int().min(1).max(200).optional().describe("最多返回几个，缺省 50"),
+				}),
+				loadMode: "discoverable",
+			},
+			{
+				name: "delete_artifact",
+				label: "删除 artifact",
+				description: "把 artifact 移到「最近删除」（保留 30 天，用户可以恢复），返回 {id, purgeAt}。",
+				parameters: z.object({ id }),
+				loadMode: "discoverable",
+			},
+			{
+				name: "list_artifact_versions",
+				label: "列出 artifact 版本",
+				description: "列出 artifact 的全部版本 {versions: [{version, createdAt, author, note, size}]}。",
+				parameters: z.object({ id }),
+				loadMode: "discoverable",
+			},
+			{
+				name: "restore_artifact_version",
+				label: "恢复 artifact 版本",
+				description: "把一个旧版本复制成新的最新版本（旧版本仍保留），返回 {id, version}。baseVersion 传当前最新版本号。",
+				parameters: z.object({
+					id,
+					version: version.describe("要恢复的旧版本"),
+					baseVersion: version.describe("当前最新版本号"),
+				}),
+				loadMode: "discoverable",
+			},
+			{
+				name: "read_artifact_guide",
+				label: "artifact 教程",
+				description:
+					"读取做 artifact 的教程：files（文件规则、上限、可用的 CDN、沙箱限制、并发与冲突处理）。做第一个 artifact 之前先读 files。",
+				parameters: z.object({
+					topic: z.enum(["files", "canvas", "runtime", "document", "slides"]).describe("教程主题"),
+				}),
+				loadMode: "essential",
+			},
+		];
+		for (const tool of tools) {
+			pi.registerTool({
+				...tool,
+				approval: "read",
+				async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+					return callArtifact(sock, tool.name, params as Record<string, unknown>, ctx?.cwd || process.cwd(), signal);
+				},
+			});
+		}
+		return true;
+	} catch (err) {
+		console.error("oryn-orb: register artifact tools failed:", err);
+		return false;
+	}
+}
+
 // 嵌套 Docker（M11a）：只有带 Docker 的 orb 类型由 provider 注入 ORYN_NESTED_DOCKER=1，orbd 据此监督 dockerd。
 const DOCKER_GUIDE = `Docker：这台 orb 有自己的 Docker 守护进程，由 Oryn 托管（不要自己启动或重启 dockerd），日志在 ~/.cache/oryn/logs/dockerd.log；\`docker\` / \`docker compose\` 直接可用（user 在 docker 组，不需要 sudo）。setup 里拉取或构建的镜像会进入项目快照，新 orb 直接可用；setup 结束时不要留下运行中的容器（需要常驻的容器用受管服务启动）。`;
 const NO_DOCKER_GUIDE = `Docker：这台 orb 没有 Docker 守护进程（docker 命令存在但连不上），不要尝试自己安装或启动 dockerd；任务确实需要 Docker 时，请用户改用带 Docker 的 orb 类型新开线程。`;
@@ -166,12 +461,16 @@ function statusLines(): string[] {
 }
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
+	const artifacts = registerArtifacts(pi);
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
 	}
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
 		const docker = process.env.ORYN_NESTED_DOCKER === "1" ? DOCKER_GUIDE : NO_DOCKER_GUIDE;
 		const guide = desktopEnabled() ? [GUIDE, docker, DESKTOP_GUIDE] : [GUIDE, docker];
+		if (artifacts) {
+			guide.push(ARTIFACT_GUIDE);
+		}
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines()].join("\n")] };
 	});
 }

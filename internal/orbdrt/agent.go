@@ -18,6 +18,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
 const (
@@ -609,6 +610,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env["PI_RPC_EMIT_TITLE"] = "1"
 		env["PI_NOTIFICATIONS"] = "off"
 		env["ORYN_THREAD_ID"] = p.ThreadID
+		// artifact 工具（M14，oryn-orb.ts）经这个控制口发 artifact.call。
+		env["ORYN_ARTIFACT_SOCK"] = orbsock.Path(r.home)
 		for k, v := range p.Env {
 			env[k] = v
 		}

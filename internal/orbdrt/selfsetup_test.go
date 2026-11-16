@@ -383,6 +383,29 @@ func TestAgentAssetsAndExtensionArg(t *testing.T) {
 	assert.Equal(t, ext, args[i+1])
 }
 
+// M14：写出的扩展注册 artifact 工具（阶段 1 的 8 个），agent 的环境里有指向 orbd.sock 的 ORYN_ARTIFACT_SOCK。
+func TestArtifactExtensionAndSockEnv(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	b, err := os.ReadFile(filepath.Join(rt.home, ".oryn", "core", "extensions", "oryn-orb.ts"))
+	require.NoError(t, err)
+	ext := string(b)
+	assert.Contains(t, ext, "registerArtifacts(pi)")
+	assert.Contains(t, ext, "ORYN_ARTIFACT_SOCK")
+	for _, name := range []string{
+		"create_artifact", "read_artifact", "update_artifact", "list_artifacts", "delete_artifact",
+		"list_artifact_versions", "restore_artifact_version", "read_artifact_guide",
+	} {
+		assert.Contains(t, ext, `name: "`+name+`"`)
+	}
+
+	pid := startAgent(t, cp, thread1, nil)
+	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
+	require.NoError(t, err)
+	assert.Contains(t, strings.Split(string(raw), "\x00"), "ORYN_ARTIFACT_SOCK="+orbsock.Path(rt.home))
+}
+
 func indexOf(s []string, v string) int {
 	for i, x := range s {
 		if x == v {
