@@ -27,8 +27,13 @@ UPDATE artifacts SET deleted_at = @deleted_at WHERE id = @id;
 -- name: SetArtifactOpened :execrows
 UPDATE artifacts SET opened_at = @opened_at WHERE id = @id;
 
--- name: DeleteArtifact :execrows
-DELETE FROM artifacts WHERE id = @id;
+-- Permanent delete; only while still in the trash (a concurrent undelete wins).
+-- name: EraseArtifact :execrows
+DELETE FROM artifacts WHERE id = @id AND deleted_at IS NOT NULL;
+
+-- Cleanup delete; re-checks the expiry in the same statement (a concurrent undelete wins).
+-- name: PurgeArtifact :execrows
+DELETE FROM artifacts WHERE id = @id AND deleted_at IS NOT NULL AND deleted_at < @ts;
 
 -- Trash entries deleted before @ts (for cleanup).
 -- name: ListArtifactsDeletedBefore :many

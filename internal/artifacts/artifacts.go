@@ -557,8 +557,13 @@ func (s *Service) Erase(ctx context.Context, id string) error {
 	if r.DeletedAt == nil {
 		return opErr(CodeInvalid, "只能永久删除「最近删除」里的 artifact。")
 	}
-	if _, err := s.st.Q.DeleteArtifact(ctx, id); err != nil {
+	// 资格（仍在回收站里）与删除在同一条语句里判定：与 Undelete 交错时恢复胜出
+	n, err := s.st.Q.EraseArtifact(ctx, id)
+	if err != nil {
 		return err
+	}
+	if n == 0 {
+		return opErr(CodeInvalid, "只能永久删除「最近删除」里的 artifact。")
 	}
 	s.changed()
 	return nil
@@ -598,18 +603,29 @@ func (s *Service) Purge(ctx context.Context) {
 		slog.Warn("artifacts: 列出过期的已删除 artifact 失败", "err", err)
 		return
 	}
+	purged := 0
 	for _, a := range stale {
-		if _, err := s.st.Q.DeleteArtifact(ctx, a.ID); err != nil {
-			slog.Warn("artifacts: 清理已删除 artifact 失败", "id", a.ID, "err", err)
+		if s.purgeOne(ctx, a.ID, cutoff) {
+			purged++
 		}
 	}
-	if len(stale) > 0 {
+	if purged > 0 {
 		s.changed()
 	}
 	s.c.gc(ctx, func(ctx context.Context, sha string) (bool, error) {
 		n, err := s.st.Q.CountArtifactFilesBySHA(ctx, sha)
 		return n > 0, err
 	}, now.Add(-orphanGrace))
+}
+
+// purgeOne 删掉一个过期的回收站条目；删除语句里重查 deleted_at < cutoff，列出之后被恢复（或重新删除）的不删。
+func (s *Service) purgeOne(ctx context.Context, id string, cutoff int64) bool {
+	n, err := s.st.Q.PurgeArtifact(ctx, db.PurgeArtifactParams{ID: id, Ts: &cutoff})
+	if err != nil {
+		slog.Warn("artifacts: 清理已删除 artifact 失败", "id", id, "err", err)
+		return false
+	}
+	return n > 0
 }
 
 // keyLocks 是按 key 的互斥锁（同一 artifact 的写入串行；单进程内足够，orynd 只有一个）。

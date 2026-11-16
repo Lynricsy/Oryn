@@ -20,12 +20,13 @@ func (q *Queries) CountArtifactFilesBySHA(ctx context.Context, sha256 string) (i
 	return count, err
 }
 
-const deleteArtifact = `-- name: DeleteArtifact :execrows
-DELETE FROM artifacts WHERE id = ?1
+const eraseArtifact = `-- name: EraseArtifact :execrows
+DELETE FROM artifacts WHERE id = ?1 AND deleted_at IS NOT NULL
 `
 
-func (q *Queries) DeleteArtifact(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteArtifact, id)
+// Permanent delete; only while still in the trash (a concurrent undelete wins).
+func (q *Queries) EraseArtifact(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, eraseArtifact, id)
 	if err != nil {
 		return 0, err
 	}
@@ -415,6 +416,24 @@ func (q *Queries) ListArtifactsDeletedBefore(ctx context.Context, ts *int64) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const purgeArtifact = `-- name: PurgeArtifact :execrows
+DELETE FROM artifacts WHERE id = ?1 AND deleted_at IS NOT NULL AND deleted_at < ?2
+`
+
+type PurgeArtifactParams struct {
+	ID string `json:"id"`
+	Ts *int64 `json:"ts"`
+}
+
+// Cleanup delete; re-checks the expiry in the same statement (a concurrent undelete wins).
+func (q *Queries) PurgeArtifact(ctx context.Context, arg PurgeArtifactParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeArtifact, arg.ID, arg.Ts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renameArtifact = `-- name: RenameArtifact :execrows

@@ -314,3 +314,52 @@ func TestCanvasKindAndPages(t *testing.T) {
 	assert.Equal(t, KindCanvas, a.Kind)
 	assert.Equal(t, 2, a.Pages)
 }
+
+// 清理列出过期项之后、删除之前被恢复（或恢复后重新删除）的 artifact 不能被删掉。
+func TestPurgeLosesToConcurrentUndelete(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, err := e.s.Create(ctx, CreateParams{Title: "x", Files: []FileChange{put("index.html", "x")}})
+	require.NoError(t, err)
+	b, err := e.s.Create(ctx, CreateParams{Title: "y", Files: []FileChange{put("index.html", "y")}})
+	require.NoError(t, err)
+	_, _ = e.s.Delete(ctx, a.ID)
+	_, _ = e.s.Delete(ctx, b.ID)
+	e.clk.add(31 * 24 * time.Hour)
+	cutoff := e.clk.now().Add(-KeepDeleted).UnixMilli()
+	stale, err := e.st.Q.ListArtifactsDeletedBefore(ctx, &cutoff)
+	require.NoError(t, err)
+	require.Len(t, stale, 2)
+
+	// 交错：a 被恢复；b 被恢复后又重新删除（deleted_at 变新，未过期）
+	_, err = e.s.Undelete(ctx, a.ID)
+	require.NoError(t, err)
+	_, _ = e.s.Undelete(ctx, b.ID)
+	_, _ = e.s.Delete(ctx, b.ID)
+
+	assert.False(t, e.s.purgeOne(ctx, a.ID, cutoff))
+	assert.False(t, e.s.purgeOne(ctx, b.ID, cutoff))
+	got, err := e.s.Get(ctx, a.ID)
+	require.NoError(t, err)
+	assert.False(t, got.Deleted())
+	_, err = e.s.Get(ctx, b.ID)
+	require.NoError(t, err)
+	files, err := e.s.Files(ctx, a.ID, 0)
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
+}
+
+// Erase 的删除语句自带「仍在回收站里」的条件：检查之后被恢复的不会被永久删除。
+func TestEraseGuardedAgainstUndelete(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, err := e.s.Create(ctx, CreateParams{Title: "x", Files: []FileChange{put("index.html", "x")}})
+	require.NoError(t, err)
+	_, _ = e.s.Delete(ctx, a.ID)
+	_, _ = e.s.Undelete(ctx, a.ID) // 发生在 Erase 的检查之后
+	n, err := e.st.Q.EraseArtifact(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+	_, err = e.s.Get(ctx, a.ID)
+	require.NoError(t, err)
+}
