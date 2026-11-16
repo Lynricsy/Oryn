@@ -31,7 +31,6 @@ import {
 	useProviders,
 } from "../api/queries";
 import { createAssistantConversation } from "../api/space-queries";
-import { RecentArtifacts } from "../components/artifacts/RecentArtifacts";
 import {
 	AttachButton,
 	AttachmentStrip,
@@ -891,7 +890,6 @@ export function HomePage(): ReactNode {
 							{error ?? (att.error || describeError(refMenu.error, t))}
 						</p>
 					)}
-					<RecentArtifacts />
 				</div>
 			</div>
 			<ProfileConflictDialog

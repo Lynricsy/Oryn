@@ -1,9 +1,10 @@
 /**
- * Artifacts 总览页（计划 M14 2.5）：`/artifacts` 与 `/artifacts/trash`（最近删除）。骨架照统计页（`Sheet` + 标题栏 + 工具条），
- * 筛选全部进 URL 查询串（`artifacts-model.ts` 的 `parseView` / `viewSearch`），刷新后视图不变。
- * - 工具条：类型标签、筛选（项目多选含「无项目」、来源多选）、显示（三种排序、两种布局）、标题搜索（`Mod+F` 聚焦，
- *   `Esc` 在有筛选时清除）、导入（HTML 文件 / 带 index.html 的文件夹）。`compact` 断点下（9.2）类型标签独占一行，
- *   筛选、显示与导入收进一个「筛选与显示」菜单；网格 2 列（360 一档 1 列）。
+ * Artifacts 总览页（计划 M14 2.5）：`/artifacts` 与 `/artifacts/trash`（最近删除）。版式参照 Claude 的 Artifacts 页：
+ * 大标题，下面一行左侧类型标签、右侧图标按钮（搜索 / 筛选 / 显示 / 导入），再下面是大卡片网格（2:1 预览区里露出上半截的
+ * 页面缩略图）。筛选全部进 URL 查询串（`artifacts-model.ts` 的 `parseView` / `viewSearch`），刷新后视图不变。
+ * - 工具条：类型标签、筛选（项目多选含「无项目」、来源多选）、显示（三种排序、两种布局）、标题搜索（点放大镜或 `Mod+F`
+ *   展开并聚焦，有搜索词时保持展开；`Esc` 在有筛选时清除）、导入（HTML 文件 / 带 index.html 的文件夹）。`compact`
+ *   断点下（9.2）类型标签独占一行，筛选、显示与导入收进一个「筛选与显示」菜单，搜索框常驻；网格 2 列（360 一档 1 列）。
  * - 卡片网格是一个 Tab 停靠点：方向键按阅读顺序移动，`Home` / `End` 跳首尾；右键或 `Shift+F10` 打开卡片菜单；
  *   从查看器返回时恢复滚动位置并聚焦刚才那张。
  * - 空态：没有任何 artifact 时四个「让 Agent 做一份」磁贴（把一行提示交给首屏输入框）；筛不出结果时「清除筛选」。
@@ -112,10 +113,11 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 	const navigate = useNavigate();
 	const sidebarToggle = useSidebarToggleShown();
 	const chromeLeft = !useSidebarShown();
+	// 总览页的标题是正文里的大标题，这一条只留窗口控件、侧栏开关（可拖动窗口）；回收站保留面包屑
 	return (
 		<header
 			data-window-drag=""
-			className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3"
+			className={`flex h-12 shrink-0 items-center gap-2 px-3 ${trash ? "border-border border-b" : ""}`}
 		>
 			{chromeLeft && <ChromeLead />}
 			{sidebarToggle && (
@@ -126,16 +128,14 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 				/>
 			)}
 			{trash && (
-				<IconButton
-					icon="back"
-					label={t("artifacts.page.back")}
-					onClick={() => navigate("/artifacts")}
-				/>
-			)}
-			<Icon name="shapes" size={16} className="shrink-0 text-faint" />
-			<h1 className="flex min-w-0 items-center gap-2 font-semibold text-sm">
-				{trash ? (
-					<>
+				<>
+					<IconButton
+						icon="back"
+						label={t("artifacts.page.back")}
+						onClick={() => navigate("/artifacts")}
+					/>
+					<Icon name="shapes" size={16} className="shrink-0 text-faint" />
+					<h1 className="flex min-w-0 items-center gap-2 font-semibold text-sm">
 						<Link to="/artifacts" className="shrink-0 hover:underline">
 							{t("artifacts.title")}
 						</Link>
@@ -143,11 +143,9 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 							/
 						</span>
 						<span className="truncate">{t("artifacts.page.trash")}</span>
-					</>
-				) : (
-					t("artifacts.title")
-				)}
-			</h1>
+					</h1>
+				</>
+			)}
 			<span className="min-w-0 flex-1" />
 			<WindowControls side="right" className="-mr-1" />
 		</header>
@@ -155,24 +153,25 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 }
 
 /**
- * 卡片网格的列数：手机 2 列（视口窄于 380，即 360 一档，1 列），往上 3 / 4 / 5 列。断点按视口宽度（同 `useBreakpoint`）。
+ * 卡片网格的列数：手机 2 列（视口窄于 380，即 360 一档，1 列），平板 2 列，`lg` 起 3 列（卡片要够大，预览才看得清）。
+ * 断点按视口宽度（同 `useBreakpoint`）。
  */
 const GRID_CLASS =
-	"grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5";
+	"grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:gap-5 lg:grid-cols-3";
 
 /** 骨架卡：与 tile 同形的占位（加载中）。 */
 function SkeletonGrid(): ReactNode {
 	return (
 		<div role="status" data-testid="artifacts-loading" className={GRID_CLASS}>
-			{[0, 1, 2, 3].map((i) => (
+			{[0, 1, 2].map((i) => (
 				<div
 					key={i}
-					className="flex animate-pulse flex-col overflow-hidden rounded-lg border border-border bg-panel"
+					className="flex animate-pulse flex-col overflow-hidden rounded-xl border border-border bg-panel"
 				>
-					<span className="aspect-[16/10] w-full bg-inset" />
-					<span className="flex flex-col gap-1.5 px-3 py-2.5">
+					<span className="aspect-[2/1] w-full bg-inset" />
+					<span className="flex flex-col gap-1.5 px-4 pt-3 pb-3.5">
 						<span className="h-3.5 w-3/4 rounded bg-inset" />
-						<span className="h-3 w-1/2 rounded bg-inset" />
+						<span className="h-3 w-1/3 rounded bg-inset" />
 					</span>
 				</div>
 			))}
@@ -228,7 +227,7 @@ function CardCell({
 					openMenu.current?.();
 				}}
 			/>
-			<div className="absolute top-1.5 right-1.5 rounded-md bg-panel/80 opacity-100 backdrop-blur-sm sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/cell:opacity-100 [&:has([aria-expanded=true])]:opacity-100">
+			<div className="absolute top-2 right-2 rounded-md bg-panel/80 opacity-100 backdrop-blur-sm sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/cell:opacity-100 [&:has([aria-expanded=true])]:opacity-100">
 				<ArtifactMenu
 					artifact={artifact}
 					place={trash ? "trash" : "card"}
@@ -471,6 +470,19 @@ function OverviewScreen(): ReactNode {
 	const compact = bp === "compact";
 	const [importing, setImporting] = useState<File[] | null>(null);
 	const [folderPick] = useState(supportsFolderPick);
+	// 宽屏的搜索框平时收成放大镜；有搜索词时保持展开。`focusReq` 每加一就在展开后聚焦并全选一次
+	const [searchOpen, setSearchOpen] = useState(false);
+	const [focusReq, setFocusReq] = useState(0);
+	const searchShown = compact || searchOpen || view.q !== "";
+	const openSearch = () => {
+		setSearchOpen(true);
+		setFocusReq((n) => n + 1);
+	};
+	useEffect(() => {
+		if (focusReq === 0) return;
+		searchRef.current?.focus();
+		searchRef.current?.select();
+	}, [focusReq]);
 
 	const setView = (next: ArtifactsView) =>
 		setSp(new URLSearchParams(viewSearch(next)), { replace: true });
@@ -481,8 +493,8 @@ function OverviewScreen(): ReactNode {
 		const onKey = (e: KeyboardEvent) => {
 			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
 				e.preventDefault();
-				searchRef.current?.focus();
-				searchRef.current?.select();
+				setSearchOpen(true);
+				setFocusReq((n) => n + 1);
 				return;
 			}
 			if (e.key !== "Escape" || escOwnedElsewhere(e)) return;
@@ -675,9 +687,12 @@ function OverviewScreen(): ReactNode {
 			<div
 				ref={scrollRef}
 				data-testid="artifacts-scroll"
-				className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 pb-safe sm:p-5"
+				className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pt-2 pb-safe sm:px-8 sm:pt-6"
 			>
-				<div className="mx-auto flex min-w-0 max-w-7xl flex-col gap-4">
+				<div className="mx-auto flex min-w-0 max-w-6xl flex-col gap-5 pb-6 sm:gap-6">
+					<h1 className="font-semibold text-2xl text-fg tracking-tight sm:text-3xl">
+						{t("artifacts.title")}
+					</h1>
 					<div
 						role="toolbar"
 						aria-label={t("artifacts.page.toolbar")}
@@ -685,7 +700,7 @@ function OverviewScreen(): ReactNode {
 					>
 						<nav
 							aria-label={t("artifacts.page.kinds")}
-							className={`flex min-w-0 items-center gap-0.5 overflow-x-auto ${compact ? "w-full" : ""}`}
+							className={`flex min-w-0 items-center gap-1 overflow-x-auto ${compact ? "w-full" : ""}`}
 						>
 							{KIND_TABS.map((k) => (
 								<button
@@ -693,7 +708,7 @@ function OverviewScreen(): ReactNode {
 									type="button"
 									data-kind={k}
 									aria-pressed={view.kind === k}
-									className={`${tabClass(view.kind === k)} ${view.kind === k ? "bg-hover" : ""}`}
+									className={`${tabClass(view.kind === k)} h-8 rounded-lg px-3 text-sm ${view.kind === k ? "bg-hover" : ""}`}
 									onClick={() => setView({ ...view, kind: k })}
 								>
 									{k === "all" ? t("artifacts.page.all") : t(kindLabelKey(k))}
@@ -745,91 +760,122 @@ function OverviewScreen(): ReactNode {
 								)}
 							</div>
 						) : (
+							<span className="min-w-0 flex-1" />
+						)}
+						{searchShown ? (
+							<label
+								className={`relative flex min-w-0 items-center ${compact ? "flex-1" : "w-60"}`}
+							>
+								<Icon
+									name="search"
+									size={14}
+									className="pointer-events-none absolute left-2.5 text-faint"
+								/>
+								<input
+									ref={searchRef}
+									type="search"
+									value={view.q}
+									aria-label={t("artifacts.page.search")}
+									placeholder={t("artifacts.page.search")}
+									onChange={(e) => setView({ ...view, q: e.target.value })}
+									// 宽屏：没有搜索词时失焦就收回放大镜
+									onBlur={() => setSearchOpen(false)}
+									className="h-8 w-full rounded-lg border border-border bg-inset pr-2.5 pl-8 text-sm text-fg placeholder:text-faint focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20"
+								/>
+							</label>
+						) : (
+							<IconButton
+								icon="search"
+								label={t("artifacts.page.search")}
+								data-testid="artifacts-search"
+								onClick={openSearch}
+							/>
+						)}
+						{!compact && (
 							<>
 								<div className="relative">
-									<Button
-										size="sm"
+									<IconButton
 										icon="funnel"
+										label={
+											filterCount > 0
+												? t("artifacts.page.filterN", { n: filterCount })
+												: t("artifacts.page.filter")
+										}
+										className={
+											pop === "filter" || filterCount > 0
+												? "bg-active text-fg"
+												: ""
+										}
 										aria-expanded={pop === "filter"}
 										data-testid="artifacts-filter"
 										onClick={() => setPop(pop === "filter" ? null : "filter")}
-									>
-										{filterCount > 0
-											? t("artifacts.page.filterN", { n: filterCount })
-											: t("artifacts.page.filter")}
-									</Button>
+									/>
+									{filterCount > 0 && (
+										<span
+											aria-hidden
+											className="pointer-events-none absolute -top-1 -right-1 grid h-4 min-w-4 place-items-center rounded-full bg-fg px-1 font-medium text-2xs text-bg tabular-nums"
+										>
+											{filterCount}
+										</span>
+									)}
 									{pop === "filter" && (
-										<Popover side="bottom" onClose={() => setPop(null)}>
+										<Popover
+											side="bottom"
+											align="end"
+											onClose={() => setPop(null)}
+										>
 											{filterChoices}
 										</Popover>
 									)}
 								</div>
 								<div className="relative">
-									<Button
-										size="sm"
+									<IconButton
 										icon="sliders"
+										label={t("artifacts.page.display")}
+										className={pop === "display" ? "bg-active text-fg" : ""}
 										aria-expanded={pop === "display"}
 										data-testid="artifacts-display"
 										onClick={() => setPop(pop === "display" ? null : "display")}
-									>
-										{t("artifacts.page.display")}
-									</Button>
+									/>
 									{pop === "display" && (
-										<Popover side="bottom" onClose={() => setPop(null)}>
+										<Popover
+											side="bottom"
+											align="end"
+											onClose={() => setPop(null)}
+										>
 											{displayChoices}
 										</Popover>
 									)}
 								</div>
-								<span className="min-w-0 flex-1" />
+								<Menu
+									items={[
+										{
+											key: "file",
+											icon: "fileCode",
+											label: t("artifacts.import.file"),
+											onSelect: () => fileRef.current?.click(),
+										},
+										...(folderPick
+											? [
+													{
+														key: "folder",
+														icon: "folder" as const,
+														label: t("artifacts.import.folder"),
+														onSelect: () => folderRef.current?.click(),
+													},
+												]
+											: []),
+									]}
+									trigger={(p) => (
+										<IconButton
+											icon="plus"
+											label={t("artifacts.import.button")}
+											data-testid="artifacts-import"
+											{...p}
+										/>
+									)}
+								/>
 							</>
-						)}
-						<label className="relative flex min-w-0 flex-1 items-center sm:max-w-64">
-							<Icon
-								name="search"
-								size={14}
-								className="pointer-events-none absolute left-2.5 text-faint"
-							/>
-							<input
-								ref={searchRef}
-								type="search"
-								value={view.q}
-								aria-label={t("artifacts.page.search")}
-								placeholder={t("artifacts.page.search")}
-								onChange={(e) => setView({ ...view, q: e.target.value })}
-								className="h-7 w-full rounded-md border border-border bg-inset pr-2.5 pl-8 text-sm text-fg placeholder:text-faint focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20"
-							/>
-						</label>
-						{!compact && (
-							<Menu
-								items={[
-									{
-										key: "file",
-										icon: "fileCode",
-										label: t("artifacts.import.file"),
-										onSelect: () => fileRef.current?.click(),
-									},
-									...(folderPick
-										? [
-												{
-													key: "folder",
-													icon: "folder" as const,
-													label: t("artifacts.import.folder"),
-													onSelect: () => folderRef.current?.click(),
-												},
-											]
-										: []),
-								]}
-								trigger={(p) => (
-									<Button
-										size="sm"
-										icon="upload"
-										data-testid="artifacts-import"
-										{...p}
-									>
-										{t("artifacts.import.button")}
-									</Button>
-								)}
-							/>
 						)}
 						<input
 							ref={fileRef}
@@ -978,9 +1024,9 @@ function TrashScreen(): ReactNode {
 			<div
 				ref={scrollRef}
 				data-testid="artifacts-scroll"
-				className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 pb-safe sm:p-5"
+				className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 pb-safe sm:px-8 sm:pt-6"
 			>
-				<div className="mx-auto flex min-w-0 max-w-7xl flex-col gap-4">
+				<div className="mx-auto flex min-w-0 max-w-6xl flex-col gap-4 pb-6">
 					<Callout tone="neutral">
 						{t("artifacts.page.trashHint", { days: KEEP_DELETED_DAYS })}
 					</Callout>

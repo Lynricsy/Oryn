@@ -1,8 +1,9 @@
 /**
  * artifact 卡片（计划 M14 2.4、4.2、8.3）：两种形态都是单个可聚焦的按钮。
- * - `tile`：上半部 16:10 的预览区——缩略图（`<img loading="lazy">`，服务端每个版本渲染一张），加载失败（还没有、
- *   渲染不可用）回落到 `bg-inset` 上居中的大号类型图标；下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）。
- * - `row`：一行：类型图标、标题、`v版本`（转录卡片、首屏最近项）。
+ * - `tile`：上半部 2:1 的预览区——`bg-inset` 底上一张 16:10 的「纸」，下沿被裁掉；纸上是缩略图（`<img loading="lazy">`，
+ *   服务端每个版本渲染一张），加载失败（还没有、渲染不可用）时纸上只有居中的类型图标。悬停时纸轻轻上浮。
+ *   下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）。
+ * - `row`：一行：类型图标、标题、`v版本`（转录里的工具卡片）。
  * 发布状态徽标：访问码 `key`、公开 `globe`（私有不显示），tile 在预览区左上角，row 在标题之后；说明并入按钮的无障碍名。
  * 在场（6.7）：这个 artifact 正被观看（右面板或整页开着它）时才有在场信息——在场头像（tile 在预览区右上角，row 在版本号之前），
  * agent 正在写时说明行换成「正在写入…」。卡片自己不登记观看（不然总览页的每张卡都会算一个观看者）。
@@ -60,33 +61,35 @@ function PublishedBadge({
 	);
 }
 
-/** tile 的预览区：缩略图，加载失败回落到类型示意图。版本变了重新尝试。 */
+/** tile 的预览区：inset 底上露出上半截的一张纸，纸上是缩略图，加载失败回落到类型图标。版本变了重新尝试。 */
 function Preview({ artifact }: { artifact: ArtifactCardData }): ReactNode {
 	const access = artifact.published?.access;
 	const src = artifactThumbnailUrl(artifact.id, artifact.version);
 	const [failed, setFailed] = useState<string | null>(null);
 	return (
-		<span className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-inset">
-			<Icon name={kindIcon(artifact.kind)} size={36} className="text-faint" />
-			{failed !== src && (
-				<img
-					src={src}
-					alt=""
-					loading="lazy"
-					decoding="async"
-					draggable={false}
-					data-testid="artifact-thumb"
-					className="absolute inset-0 h-full w-full object-cover object-top"
-					onError={() => setFailed(src)}
-				/>
-			)}
+		<span className="relative block aspect-[2/1] w-full overflow-hidden border-border border-b bg-inset">
+			<span className="absolute inset-x-[12%] top-[11%] flex aspect-[16/10] items-center justify-center overflow-hidden rounded-md border border-border bg-panel shadow-sm transition-transform duration-200 ease-out group-hover:-translate-y-1">
+				<Icon name={kindIcon(artifact.kind)} size={32} className="text-ghost" />
+				{failed !== src && (
+					<img
+						src={src}
+						alt=""
+						loading="lazy"
+						decoding="async"
+						draggable={false}
+						data-testid="artifact-thumb"
+						className="absolute inset-0 h-full w-full object-cover object-top"
+						onError={() => setFailed(src)}
+					/>
+				)}
+			</span>
 			{(access === "code" || access === "public") && (
 				<PublishedBadge
 					access={access}
-					className="absolute top-1.5 left-1.5 inline-grid h-6 w-6 place-items-center rounded-md bg-panel/80 text-muted backdrop-blur-sm"
+					className="absolute top-2 left-2 inline-grid h-6 w-6 place-items-center rounded-md bg-panel/80 text-muted backdrop-blur-sm"
 				/>
 			)}
-			<span className="absolute top-1.5 right-1.5 inline-flex rounded-full bg-panel/80 backdrop-blur-sm empty:hidden">
+			<span className="absolute top-2 right-2 inline-flex rounded-full bg-panel/80 backdrop-blur-sm empty:hidden">
 				<PresenceStack artifactId={artifact.id} />
 			</span>
 		</span>
@@ -157,7 +160,7 @@ export function ArtifactCard({
 		) : (
 			<>
 				<Preview artifact={artifact} />
-				<span className="flex min-w-0 flex-col gap-0.5 px-3 py-2.5">
+				<span className="flex min-w-0 flex-col gap-0.5 px-4 pt-3 pb-3.5">
 					<span className="truncate font-medium text-sm">{artifact.title}</span>
 					<span className="truncate text-muted text-xs">
 						{writing
@@ -177,7 +180,7 @@ export function ArtifactCard({
 	const shape =
 		form === "row"
 			? "flex items-center gap-2 rounded-md border border-border bg-panel px-2.5 py-1.5"
-			: "flex flex-col overflow-hidden rounded-lg border border-border bg-panel";
+			: "flex flex-col overflow-hidden rounded-xl border border-border bg-panel";
 	if (!interactive)
 		return (
 			<div

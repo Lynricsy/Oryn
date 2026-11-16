@@ -10,11 +10,14 @@ export function Popover({
 	children,
 	onClose,
 	side = "top",
+	align = "start",
 }: {
 	children: ReactNode;
 	onClose: () => void;
 	/** 向上（首页托盘下方没有空间）或向下（对话框里）展开 */
 	side?: "top" | "bottom";
+	/** 与打开它的元素左对齐（缺省）或右对齐（贴在工具条右端的按钮） */
+	align?: "start" | "end";
 }): ReactNode {
 	const ref = useRef<HTMLDivElement>(null);
 	// 打开它的元素（首次渲染时的焦点 = 胶囊）；Escape 关闭后焦点回到这里，不掉到 body
@@ -43,7 +46,7 @@ export function Popover({
 	return (
 		<div
 			ref={ref}
-			className={`glass pop-in absolute left-0 z-30 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-1 ${side === "top" ? "bottom-full mb-2" : "top-full mt-1"}`}
+			className={`glass pop-in absolute ${align === "end" ? "right-0" : "left-0"} z-30 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-1 ${side === "top" ? "bottom-full mb-2" : "top-full mt-1"}`}
 		>
 			{children}
 		</div>

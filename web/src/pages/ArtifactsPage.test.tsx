@@ -169,10 +169,16 @@ describe("ArtifactsPage", () => {
 		expect(search().getAll("origin")).toEqual(["import"]);
 		expect(cardTitles()).toEqual([open(C.title)]);
 
-		fireEvent.change(
-			screen.getByRole("searchbox", { name: i18n.t("artifacts.page.search") }),
-			{ target: { value: "没有这个" } },
-		);
+		// 宽屏的搜索平时收成放大镜：点开后聚焦；有搜索词时失焦也不收回
+		expect(screen.queryByRole("searchbox")).toBeNull();
+		fireEvent.click(screen.getByTestId("artifacts-search"));
+		const box = screen.getByRole("searchbox", {
+			name: i18n.t("artifacts.page.search"),
+		});
+		expect(document.activeElement).toBe(box);
+		fireEvent.change(box, { target: { value: "没有这个" } });
+		fireEvent.blur(box);
+		expect(screen.getByRole("searchbox")).toBeVisible();
 		expect(search().get("q")).toBe("没有这个");
 		expect(screen.getByText(i18n.t("artifacts.page.noMatch"))).toBeVisible();
 		fireEvent.click(

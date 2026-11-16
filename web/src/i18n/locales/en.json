@@ -2190,10 +2190,6 @@
 			"position": "{{name}} · {{n}} / {{total}}",
 			"escHint": "Esc to exit",
 			"close": "Exit presentation"
-		},
-		"home": {
-			"recent": "Recent artifacts",
-			"all": "All"
 		}
 	},
 	"rightPanel": {

@@ -2190,10 +2190,6 @@
 			"position": "{{name}} · {{n}} / {{total}}",
 			"escHint": "Esc 退出",
 			"close": "退出演示"
-		},
-		"home": {
-			"recent": "最近的 Artifacts",
-			"all": "全部"
 		}
 	},
 	"rightPanel": {
