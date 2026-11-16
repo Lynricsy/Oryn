@@ -47,13 +47,15 @@ final class TabBarE2ETests: E2ECase {
     _ = try checkpoint("closed")
 
     // 3. 从左缘（SINK_EDGE 24 以内）起手拖到约一半并按住：脚本在按住期间截图断言揭示边。
+    //    按住 40 秒：CI 的 macOS 机器会整机卡顿十几到几十秒（XCUITest 取快照一次 30-60 秒），
+    //    脚本的停稳判定与截图必须落在按住期间；脚本截完就放行，这里多按的时间只是空等
     //    慢速且过半：松手按位置吸附到打开
     let dx = (sinkW * 0.55).rounded()
     let y = (screen.height / 2).rounded()
     try post("drag", ["dx": Double(dx)])
     point(app, 4, y).press(
       forDuration: 0.1, thenDragTo: point(app, 4 + dx, y),
-      withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 8)
+      withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
     _ = try ack("drag")
     let items = try expectNative(app, capsule, visible: true, "拖动松手后")
 

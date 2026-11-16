@@ -234,11 +234,12 @@ sleep 0.5
 shot closed1
 ok closed
 
-# 按住共 8 秒：停稳判定与截图都要落在按住期间，截完再确认期间没有新的揭示边（松手会发吸附终点）。
+# 按住共 40 秒（CI 机器会整机卡顿十几到几十秒，8 秒曾经两次没赶上）：停稳判定与截图都要落在按住期间，
+# 截完再确认期间没有新的揭示边（松手会发吸附终点）。
 # 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以第一段等待放宽
 wait_req drag 120
 dx=$(jq -r .dx <<<"$req")
-until_ok drag 20 "拖动：揭示边停在手指位移附近（${dx}）" \
+until_ok drag 60 "拖动：揭示边停在手指位移附近（${dx}）" \
   settled '.ms == 0 and .x > $w * 0.3 and .x < $w * 0.8 and (.x - $dx | if . < 0 then -. else . end) <= 2'
 n=$(count tabbar.reveal)
 edge=$(last tabbar.reveal | jq -r .x)
