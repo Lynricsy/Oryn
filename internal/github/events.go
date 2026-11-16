@@ -243,7 +243,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录。
+// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录与已投递的回流行。
 func (s *Service) cleanup(ctx context.Context) {
 	now := s.now()
 	if err := s.st.Q.DeleteExpiredGithubStates(ctx, now.UnixMilli()); err != nil && ctx.Err() == nil {
@@ -252,10 +252,11 @@ func (s *Service) cleanup(ctx context.Context) {
 	if err := s.st.Q.DeleteGithubDeliveriesBefore(ctx, now.Add(-deliveryRetention).UnixMilli()); err != nil && ctx.Err() == nil {
 		slog.Warn("github: 清理投递记录失败", "err", err)
 	}
+	before := now.Add(-deliveryRetention).UnixMilli()
+	if err := s.st.Q.DeleteGithubOutboxBefore(ctx, &before); err != nil && ctx.Err() == nil {
+		slog.Warn("github: 清理回流记录失败", "err", err)
+	}
 }
-
-// flush 投递到期的回流消息（步骤 6.1 实现）。
-func (s *Service) flush(context.Context) {}
 
 // ---------- 本步的处理器 ----------
 
