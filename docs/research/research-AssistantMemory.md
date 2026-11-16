@@ -72,7 +72,7 @@ flowchart LR
 
 - **时机**：最后一条主人消息之后空闲达到阈值（建议 30 分钟），或对话被归档时。不在每轮写，避免把半截讨论写成结论（ChatGPT / Codex 的"空闲后抽取"纪律，[research-ChatGPT.md](research-ChatGPT.md) §④ P0-2）。
 - **输入**：主人消息逐字保留；助手回复保留正文，超长截断；**排除宿主工具结果**（`read_thread` 读回的线程内容、artifact 文本等，都是不可信的二手内容，`internal/coord/tools.go` 的 `wrapUntrusted`）；排除自动消息（线程回报，它们由来源 B 覆盖）。每条带角色与时间。
-- **document**：`conv:<线程 id>`，对话有新内容后整份重写（语义待探查 P4）。标签 `src:assistant`。
+- **document**：`conv:<线程 id>`，对话有新内容后整份重写（语义待探查 P4）。标签 `src:assistant`。一份 document 内按消息拆成多个 retain item，每个 item 的 metadata 带 `role`（owner / assistant）与 `seq`，为出处回溯留依据（能否回溯待探查 P7）。
 
 ### 3.2 来源 B：普通 agent 线程
 
@@ -83,7 +83,7 @@ flowchart LR
   - 主人亲手输入的消息逐字保留；带来源头行的自动消息（`[Oryn message from …]`、GitHub 合并消息、定时提示词）不算主人消息；
   - 每个主人回合对应的最终 agent 回复，截断到约 600 字；
   - **不放**：工具调用与结果、diff、超过若干行的代码块、思考内容。
-- **document**：`thread:<线程 id>`，标签 `src:thread`、`project:<项目 id>`。
+- **document**：`thread:<线程 id>`，标签 `src:thread`、`project:<项目 id>`。与来源 A 一样按消息拆 item，metadata 带 `role`（owner / agent）与 `seq`。
 - **retain_mission 的要点**（bank 级，中文）：
   - 只记录关于主人的信息：身份与背景、设备与环境、长期兴趣、正在推进的项目与目标、做过的决定与取舍、偏好与习惯、尚未解决的问题与计划；
   - 粒度到"项目 / 功能 / 决定"为止：可以记"Oryn 的 iOS 客户端已通过 TestFlight 发版"，不记"`internal/x/y.go` 第 40 行改了超时"；主人自己反复强调的具体参数可以保留；
@@ -138,7 +138,7 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 
 | 工具 | 查什么 | 实现 |
 |---|---|---|
-| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`。结果整理成 ChatGPT 式的带类型记录：类型（主人陈述 / 主人决定 / agent 提供）、时间（`mentioned_at`）、出处（对话或线程 id，可接着读原文） |
+| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`。结果带时间（`mentioned_at`）与出处。出处与类型（主人陈述 / 主人决定 / agent 提供）**只在能回溯到具体消息时才给**：world 事实读它的 item metadata（`role`、`seq`）；observation 本身没有 metadata 和 document_id（`docs/plan-m16-appendix-a.md:20,353`），要沿 `source_fact_ids` 找到来源 world 事实再读。回溯不到，或来源事实里 owner 与 agent 混在一起分不清，一律标"来源未确认"，不凭生成文本包装成主人事实。回溯能力待探查 P7 |
 | `search_history(query, kind?, project?, before?)` | 助手对话与普通 agent 线程的原文 | 复用现有全文搜索 `internal/search`：索引覆盖所有线程种类的 user / assistant 正文（`internal/store/queries/search.sql:44-61`，结果带 `t.kind`），中文 trigram 已就绪 |
 | `read_thread(threadId, around?, before?, limit?)` | 某个线程或对话的一段原文 | 扩展现有 `read_thread`：现在只能读最近 ≤30 条（`tools.go:269`），加按 seq 定位和翻页；放宽为也能**只读**主人的其他助手对话（`resolveTarget` 目前只允许 `kind=work`，`tools.go:127-141`，发消息、归档等写操作的限制不变） |
 | `recall_engineering(project?, query)` | 工程记忆里的工作细节 | 只读召回 bank `oryn`（本项目标签 + 全局），供"那个 bug 最后怎么修的"这类问题；网关只放行 recall |
@@ -173,8 +173,9 @@ M16 附录 A 的实测：10 条中文工程约定一次同步 retain 消耗 **38
 | P4 | 同一 `document_id` 重新 retain 是替换还是追加 | 对同一 document 先后写两版，看 world 事实与 observation | 改为"删除旧 document 再写入"，并处理 mental model 刷新 |
 | P5 | 典型一天的 token 花费 | 按主人实际的线程与对话数量回放一天 | 提高空闲阈值、合并来源、换更便宜的 retain 模型 |
 | P6 | 注入后的实际效果 | 准备一组问题（"我最近在折腾什么""上次那个方案定了没有""我的服务器是什么配置"），对比有无注入、有无检索的回答 | 调整主题划分与预算 |
+| P7 | 事实能否回溯到具体消息与角色 | 构造一段对话：主人原话陈述事实 A，助手提出方案 B 而主人未采纳，助手再提出方案 C、主人回"那就按这个做"；按消息拆 item、metadata 带 `role` / `seq` 写入。检查三件事：每条 world 事实与 observation 能否经 `source_fact_ids` → world 事实 → metadata 回溯到消息 seq；B 是否被写成主人的事实；按消息拆 item 后，"那就按这个做"还能否结合上一条助手消息推出"主人采纳了 C" | 拆 item 丢了跨消息语境时，改为按"主人回合"拆（主人消息连同它回应的那条助手消息为一个 item，metadata 记两段 seq 与各自角色），出处粒度降为回合。仍无法回溯时，`recall_memory` 不提供类型，所有结果标"来源未确认"，只给对话或线程 id 与时间范围，由助手用 `search_history` / `read_thread` 核对原文；`retain_mission` 加严，agent 的话只作上下文 |
 
-P1–P4 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代码。
+P1–P4 与 P7 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代码。P7 决定 `recall_memory` 能承诺什么，应与 P1 同批先做。
 
 ---
 
