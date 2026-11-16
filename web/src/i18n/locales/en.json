@@ -2003,7 +2003,8 @@
 			"sentToast_other": "Sent {{count}} comments to {{thread}}",
 			"sendFailed": "Couldn't send the comments: {{reason}}",
 			"sent": "Sent",
-			"sentTo": "Sent to {{thread}}"
+			"sentTo": "Sent to {{thread}}",
+			"focusAnchor": "Focus here: {{label}}"
 		},
 		"prompt": {
 			"comments": "Please handle these comments on artifact {{id}} version {{version}}: reply to each with reply_artifact_comment, and once done mark it resolved with resolve_artifact_comment.",
@@ -2153,7 +2154,23 @@
 				"running": "Handing to the agent…",
 				"done": "Handed to the agent",
 				"failed": "Couldn’t hand to the agent. {{reason}}"
+			},
+			"focus": {
+				"title": "Focused: {{name}}",
+				"back": "Back to canvas",
+				"prev": "Previous page",
+				"next": "Next page",
+				"position": "{{n}} / {{total}}"
 			}
+		},
+		"present": {
+			"button": "Present",
+			"title": "Presenting “{{title}}”",
+			"prev": "Previous page",
+			"next": "Next page",
+			"position": "{{name}} · {{n}} / {{total}}",
+			"escHint": "Esc to exit",
+			"close": "Exit presentation"
 		},
 		"home": {
 			"recent": "Recent artifacts",

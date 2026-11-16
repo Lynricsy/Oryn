@@ -12,6 +12,8 @@
  * 选择与评论（3.3）：页面类型的 artifact 跟随最新版本且不在回收站时才有两个模式，模式经 `select-mode` 下发。评论模式下点页面元素
  * 在点击处弹 `CommentBox`（点空白处是「整个页面」的锚点）；未解决评论的编号图钉只在评论模式或评论面板打开时下发。
  * 右面板里选择模式下选中的元素经 `onSelection` 交给输入区的引用条（3.5）。
+ * 演示（6.8）：页面与画布类型在顶栏有「演示」（`Presenter`；画布的演示器在编辑器里，从画框名称行也能「从这页演示」）；
+ * 画布的评论面板里点锚点会聚焦到它所在的画框。
  */
 import {
 	type ReactNode,
@@ -50,10 +52,11 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { anchorOf, pinsOf } from "./anchors";
 import { CommentBox } from "./CommentBox";
 import { CommentsPanel } from "./CommentsPanel";
-import { CanvasEditor } from "./canvas/CanvasEditor";
+import { CanvasEditor, type PresentRequest } from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
 import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
 import { PresenceFaces } from "./PresenceFaces";
+import { Presenter } from "./Presenter";
 import { ShareControl } from "./SharePopover";
 import { VersionHistory } from "./VersionHistory";
 import {
@@ -195,6 +198,12 @@ export function ArtifactViewer({
 	const [pinned, setPinned] = useState<ArtifactVersion | null>(null);
 	// 类型化 artifact 的查看器在演示：帧容器铺满窗口
 	const [presenting, setPresenting] = useState(false);
+	// 页面与画布的演示（6.8）；评论面板里点锚点聚焦到画框（画布）
+	const [show, setShow] = useState<PresentRequest | null>(null);
+	const [focusFile, setFocusFile] = useState<{
+		path: string;
+		seq: number;
+	} | null>(null);
 	const chromeLeft = !useSidebarShown() && variant === "page";
 	const rootRef = useRef<HTMLDivElement>(null);
 	const width = useWidth(rootRef);
@@ -489,6 +498,9 @@ export function ArtifactViewer({
 				pins={
 					canvasComments ? (path) => pinsOf(commentThreads, path) : undefined
 				}
+				present={show}
+				onPresentChange={setShow}
+				focusFile={focusFile}
 			/>
 		);
 	else
@@ -620,6 +632,16 @@ export function ArtifactViewer({
 									)}
 								</span>
 							</>
+						)}
+						{(artifact.kind === "web" || artifact.kind === "canvas") && (
+							<IconButton
+								icon="play"
+								box="sm"
+								size={15}
+								data-testid="artifact-present"
+								label={t("artifacts.present.button")}
+								onClick={() => setShow({ start: null })}
+							/>
 						)}
 						<IconButton
 							icon="history"
@@ -863,6 +885,17 @@ export function ArtifactViewer({
 									artifactId={artifactId}
 									threads={detail.data?.threads ?? []}
 									canComment={canSelect || canvasComments}
+									onAnchor={
+										artifact?.kind === "canvas"
+											? (a) => {
+													setFocusFile((f) => ({
+														path: a.path,
+														seq: (f?.seq ?? 0) + 1,
+													}));
+													if (compact) setSegment("page");
+												}
+											: undefined
+									}
 								/>
 							) : (
 								<VersionHistory
@@ -880,6 +913,24 @@ export function ArtifactViewer({
 					</aside>
 				)}
 			</div>
+			{show && live && artifact.kind === "web" && (
+				<Presenter
+					title={title}
+					pages={[{ id: artifactId, name: title }]}
+					renderPage={() => (
+						<PageFrame
+							artifactId={artifactId}
+							version={pinnedVersion?.version}
+							title={t("artifacts.viewer.frameTitle", { title })}
+							onBlocked={(url) => {
+								const safe = safeBlockedUrl(url);
+								if (safe) setBlocked(safe);
+							}}
+						/>
+					)}
+					onClose={() => setShow(null)}
+				/>
+			)}
 		</div>
 	);
 }

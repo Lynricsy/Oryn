@@ -22,7 +22,8 @@ export type KeyAction =
 	| { type: "redo" }
 	| { type: "duplicate" }
 	| { type: "escape" }
-	| { type: "zoom"; to: ZoomTarget };
+	| { type: "zoom"; to: ZoomTarget }
+	| { type: "focus" };
 
 /** 工具的单键快捷键。 */
 export const TOOL_KEYS: Record<Tool, string> = {
@@ -82,6 +83,8 @@ export function keyAction(e: KeyInput): KeyAction | null {
 			return { type: "delete" };
 		case "Escape":
 			return { type: "escape" };
+		case "Enter":
+			return { type: "focus" };
 		case "+":
 		case "=":
 			return { type: "zoom", to: "in" };

@@ -9,6 +9,7 @@ import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import {
+	type ArtifactCommentAnchor,
 	type ArtifactCommentThread,
 	type ArtifactDetail,
 	type ArtifactThreadActivity,
@@ -114,12 +115,15 @@ export function CommentsPanel({
 	artifactId,
 	threads,
 	canComment,
+	onAnchor,
 }: {
 	artifactId: string;
 	/** 详情里还在的相关线程（作者显示名用）。 */
 	threads: readonly DetailThread[];
 	/** 能新建评论（跟随最新版本且不在回收站）：空态里给出操作提示。 */
 	canComment: boolean;
+	/** 点评论串的锚点（画布：聚焦到它所在的画框）；不给时锚点只是文字。 */
+	onAnchor?(anchor: ArtifactCommentAnchor): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const comments = useArtifactComments(artifactId);
@@ -176,6 +180,7 @@ export function CommentsPanel({
 							thread={thread}
 							n={n}
 							liveTitle={liveTitle}
+							onAnchor={onAnchor}
 						/>
 					</li>
 				))}
@@ -207,6 +212,7 @@ export function CommentsPanel({
 										artifactId={artifactId}
 										thread={thread}
 										liveTitle={liveTitle}
+										onAnchor={onAnchor}
 									/>
 								</li>
 							))}
@@ -366,12 +372,14 @@ function ThreadCard({
 	thread,
 	n,
 	liveTitle,
+	onAnchor,
 }: {
 	artifactId: string;
 	thread: ArtifactCommentThread;
 	/** 未解决的串的编号；已解决的没有。 */
 	n?: number;
 	liveTitle(threadId: string): string | undefined;
+	onAnchor?(anchor: ArtifactCommentAnchor): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const resolve = useResolveArtifactComment();
@@ -393,12 +401,24 @@ function ThreadCard({
 						{n}
 					</span>
 				)}
-				<span
-					className="min-w-0 flex-1 truncate text-muted text-xs"
-					title={label}
-				>
-					{label}
-				</span>
+				{onAnchor ? (
+					<button
+						type="button"
+						data-testid="comment-anchor"
+						className="min-w-0 flex-1 truncate text-left text-muted text-xs hover:text-fg hover:underline"
+						title={t("artifacts.comments.focusAnchor", { label })}
+						onClick={() => onAnchor(thread.anchor)}
+					>
+						{label}
+					</button>
+				) : (
+					<span
+						className="min-w-0 flex-1 truncate text-muted text-xs"
+						title={label}
+					>
+						{label}
+					</span>
+				)}
 				{thread.anchor.missing && (
 					<Badge tone="warn">{t("artifacts.comments.missing")}</Badge>
 				)}

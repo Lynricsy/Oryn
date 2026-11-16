@@ -2003,7 +2003,8 @@
 			"sentToast_other": "已把 {{count}} 条评论发给 {{thread}}",
 			"sendFailed": "没能发送评论：{{reason}}",
 			"sent": "已发送",
-			"sentTo": "已发给 {{thread}}"
+			"sentTo": "已发给 {{thread}}",
+			"focusAnchor": "聚焦到这处：{{label}}"
 		},
 		"prompt": {
 			"comments": "请处理 artifact {{id}} 版本 {{version}} 上的这些评论：用 reply_artifact_comment 回复每一条，处理完用 resolve_artifact_comment 标为已解决。",
@@ -2153,7 +2154,23 @@
 				"running": "正在交给 Agent…",
 				"done": "已交给 Agent",
 				"failed": "没能交给 Agent。{{reason}}"
+			},
+			"focus": {
+				"title": "聚焦：{{name}}",
+				"back": "返回画布",
+				"prev": "上一页",
+				"next": "下一页",
+				"position": "{{n}} / {{total}}"
 			}
+		},
+		"present": {
+			"button": "演示",
+			"title": "演示「{{title}}」",
+			"prev": "上一页",
+			"next": "下一页",
+			"position": "{{name}} · {{n}} / {{total}}",
+			"escHint": "Esc 退出",
+			"close": "退出演示"
 		},
 		"home": {
 			"recent": "最近的 Artifacts",

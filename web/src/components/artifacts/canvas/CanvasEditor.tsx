@@ -13,6 +13,8 @@
  * - 6.4：工具条（Toolbar.tsx）、图层面板（LayersPanel.tsx）、属性面板（PropsPanel.tsx）、画框名称行（FrameLabel.tsx）。
  *   图层与属性面板只在整页查看器里出现（右面板里隐藏），窗口窄于 900 时覆盖在画布上（同一时间只显示一个）；
  *   只读时不显示编辑类控件。
+ * - 6.6：交给 Agent（handoff.ts）。6.8：聚焦单个画框（`Enter` / 名称行「聚焦」/ 评论面板点锚点，FocusedPage.tsx）与演示
+ *   （状态在查看器里，`present` / `onPresentChange`；演示器 `Presenter` 由这里按阅读顺序渲染）。
  */
 import {
 	type CSSProperties,
@@ -62,6 +64,7 @@ import { realtime, watchArtifact } from "../../../realtime/socket";
 import { showToast } from "../../../state/toasts";
 import { Button, describeError } from "../../ui/primitives";
 import type { FrameLink } from "../frame-link";
+import { Presenter } from "../Presenter";
 import { FrameErrorState, ViewerLoading } from "../viewer-states";
 import { AgentPointers, FollowBar, useAgentPresence } from "./AgentPointer";
 import {
@@ -79,6 +82,7 @@ import {
 	wheelCamera,
 	zoomAt,
 } from "./camera";
+import { FocusedPage, SoloPage } from "./FocusedPage";
 import {
 	downloadFramePng,
 	FrameLabel,
@@ -156,8 +160,17 @@ export interface CanvasEditorProps {
 	onComment?(target: CanvasCommentTarget): void;
 	/** 某个画框文件上要画的评论图钉。 */
 	pins?(path: string): SelectPin[];
-	/** 从某个画框开始演示（6.8，演示器在查看器里）；不给时画框名称行没有「从这页演示」。 */
-	onPresent?(pageId: string): void;
+	/** 演示（6.8，状态在查看器里）：`null` / 不给 = 没在演示。 */
+	present?: PresentRequest | null;
+	/** 开始（从某个画框）或结束（`null`）演示；不给时画框名称行没有「从这页演示」。 */
+	onPresentChange?(next: PresentRequest | null): void;
+	/** 聚焦到文件为 `path` 的画框（评论面板里点锚点）；`seq` 每次请求递增。 */
+	focusFile?: { path: string; seq: number } | null;
+}
+
+/** 演示请求：从 `start` 画框开始（`null` = 当前画布页阅读顺序的第一个），顺序是所在画布页的阅读顺序。 */
+export interface PresentRequest {
+	start: string | null;
 }
 
 /** 拖动途中提交中间态的间隔（别的窗口跟着动）。 */
@@ -266,7 +279,9 @@ export function CanvasEditor({
 	title,
 	onComment,
 	pins,
-	onPresent,
+	present = null,
+	onPresentChange,
+	focusFile = null,
 }: CanvasEditorProps): ReactNode {
 	const { t, i18n } = useTranslation();
 	const compact = useBreakpoint() === "compact";
@@ -377,6 +392,8 @@ export function CanvasEditor({
 	const [accent] = useState(brandColor);
 	const [styles, setStyles] = useState(DEFAULT_STYLES);
 	const [layersOpen, setLayersOpen] = useState(false);
+	// 聚焦的画框（6.8）
+	const [focused, setFocused] = useState<string | null>(null);
 
 	const baseDoc = live ? snapshot.doc : pinnedDoc;
 	const doc = preview?.doc ?? baseDoc;
@@ -473,10 +490,11 @@ export function CanvasEditor({
 	);
 
 	const shownVersion = version ?? head;
-	const contentOf = (p: CanvasPage): PageContent => {
+	/** 画框的内容；`parkable` 为假时不因离视口远而停放（聚焦与演示）。 */
+	const contentOf = (p: CanvasPage, parkable = true): PageContent => {
 		const f = fileMap.get(p.file);
 		if (!f || isBlankPage(f)) return { kind: "empty" };
-		if (!frame || !loaded.has(p.id)) return { kind: "parked" };
+		if (!frame || (parkable && !loaded.has(p.id))) return { kind: "parked" };
 		const n = pinned ? shownVersion : (versions?.n.get(p.file) ?? head);
 		return { kind: "frame", src: pageUrl(frame.url, n, p.file) };
 	};
@@ -1070,6 +1088,18 @@ export function CanvasEditor({
 		setInside(null);
 	};
 
+	// 评论面板里点锚点：聚焦到它所在的画框（文件对得上的第一个）
+	const focusSeq = useRef(focusFile?.seq ?? 0);
+	useEffect(() => {
+		if (!focusFile || focusFile.seq === focusSeq.current || !baseDoc) return;
+		focusSeq.current = focusFile.seq;
+		const p = baseDoc.pages.find((x) => x.file === focusFile.path);
+		if (!p) return;
+		setCanvasSel(p.canvas);
+		setSelected([p.id]);
+		setFocused(p.id);
+	}, [focusFile, baseDoc]);
+
 	// 在场（6.7）：各线程的指针、工作中的画框与「跟随 {线程}」
 	const presence = useAgentPresence({
 		artifactId,
@@ -1146,6 +1176,15 @@ export function CanvasEditor({
 			case "zoom":
 				zoomTo(action.to);
 				break;
+			case "focus": {
+				// Enter 在按钮上是点击；只有画布区获得焦点、单选一个画框时才聚焦
+				const [only] = selected;
+				const it =
+					d && only && selected.length === 1 ? findItem(d, only) : null;
+				if (e.target !== stageRef.current || it?.type !== "page") return;
+				setFocused(it.value.id);
+				break;
+			}
 		}
 		e.preventDefault();
 	};
@@ -1220,6 +1259,14 @@ export function CanvasEditor({
 	);
 	const selectedIds = items.map((it) => it.value.id);
 	const render = caps.data?.render === true;
+	// 聚焦与演示（6.8）：顺序都是所在画布页的阅读顺序
+	const focusedPage = focused
+		? doc.pages.find((p) => p.id === focused)
+		: undefined;
+	const focusOrder = focusedPage ? readingOrder(doc, focusedPage.canvas) : [];
+	const presentSheet =
+		doc.pages.find((p) => p.id === present?.start)?.canvas ?? canvasKey;
+	const presentOrder = present ? readingOrder(doc, presentSheet) : [];
 
 	return (
 		<section
@@ -1404,7 +1451,15 @@ export function CanvasEditor({
 									onHandOff={
 										live ? () => handOff.run(doc, canvasKey, [p.id]) : undefined
 									}
-									onPresent={onPresent ? () => onPresent(p.id) : undefined}
+									onPresent={
+										onPresentChange
+											? () => onPresentChange({ start: p.id })
+											: undefined
+									}
+									onFocus={() => {
+										setSelected([p.id]);
+										setFocused(p.id);
+									}}
 								/>
 							);
 						})}
@@ -1505,6 +1560,24 @@ export function CanvasEditor({
 							: undefined
 					}
 				/>
+				{focusedPage && (
+					<FocusedPage
+						pages={focusOrder}
+						index={focusOrder.findIndex((p) => p.id === focusedPage.id)}
+						contentOf={(p) => contentOf(p, false)}
+						onIndex={(i) => {
+							const next = focusOrder[i];
+							if (next) {
+								setSelected([next.id]);
+								setFocused(next.id);
+							}
+						}}
+						onClose={() => {
+							setFocused(null);
+							stageRef.current?.focus({ preventScroll: true });
+						}}
+					/>
+				)}
 			</div>
 			{showProps && (
 				<PropsPanel
@@ -1514,6 +1587,20 @@ export function CanvasEditor({
 					overlay={narrow}
 					commit={(ops) => commit(ops)}
 					onSelect={setSelected}
+				/>
+			)}
+			{present && (
+				<Presenter
+					title={title}
+					pages={presentOrder}
+					start={Math.max(
+						0,
+						presentOrder.findIndex((p) => p.id === present.start),
+					)}
+					renderPage={(p) => (
+						<SoloPage page={p} content={contentOf(p, false)} />
+					)}
+					onClose={() => onPresentChange?.(null)}
 				/>
 			)}
 		</section>

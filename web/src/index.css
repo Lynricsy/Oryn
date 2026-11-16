@@ -84,7 +84,9 @@
 	color-scheme: light;
 }
 
-:root[data-theme="dark"] {
+/* `.theme-dark`：不随主题切换、固定深色的局部界面（artifact 的演示模式）用同一套深色令牌 */
+:root[data-theme="dark"],
+.theme-dark {
 	--accent-l: 0.78;
 	--accent-fg-l: 0.2;
 	--bg: oklch(0.155 0.01 var(--tint-h));
