@@ -207,6 +207,8 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Artifacts, err = artifacts.New(artifacts.Config{DataDir: cfg.DataDir, PublicURL: cfg.PublicURL}, s.Store, s.Hub); err != nil {
 		return err
 	}
+	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
+	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{
 		PublicURL: cfg.PublicURL, DataDir: cfg.DataDir, Box: box, DoneDelay: notifyDoneDelay, InputDelay: notifyInputDelay,
 		FCM: notify.FCMConfig{Secret: cfg.Push.FCM.ServiceAccountSecret, Secrets: s.Vault},
