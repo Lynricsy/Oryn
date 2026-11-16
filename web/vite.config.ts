@@ -102,10 +102,21 @@ export default defineConfig(({ mode }) => ({
 		// 壳工程的 Rust 构建产物（src-tauri/target）不需要 vite 监视
 		watch: { ignored: ["**/src-tauri/**"] },
 		// mock 模式（`dev:mock`）的 artifact 帧是沙箱里的 blob 页面（不透明源，请求带 `Origin: null`），
-		// 要从开发服务器加载 `sandbox/runtime/main.ts`；只在 mock 模式下额外放行 `null`
-		...(process.env.VITE_MOCK
-			? { cors: { origin: [defaultAllowedOrigins, "null"] } }
-			: {}),
+		// 要从开发服务器加载 `sandbox/runtime/main.ts`：额外放行 `null`。
+		// 真后端模式下帧挂在 `/_af/`（经下面的代理到 orynd），页面运行时的 `POST _oryn/v1` 带 `Origin: null`
+		// 且要预检；vite 的 CORS 中间件排在代理之前，会自己回一个不带 ACAO 的 204 把预检截住。对 `null`
+		// 返回 false 让 CORS 中间件整个跳过：代理路径由 orynd 回自己的 CORS 头，其余路径照旧没有 CORS 头。
+		cors: {
+			origin: (origin, cb) => {
+				const allowed = process.env.VITE_MOCK
+					? [defaultAllowedOrigins, "null"]
+					: origin === "null"
+						? false
+						: defaultAllowedOrigins;
+				// vite 的类型把 err 写成必填；cors 包按 Node 回调约定接受 null
+				cb(null as unknown as Error, allowed);
+			},
+		},
 		proxy: {
 			"/api": { target: orynd, ws: true, changeOrigin: true },
 			"/healthz": { target: orynd, changeOrigin: true },
