@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
@@ -106,9 +107,9 @@ func (s *Service) setTaskFreeze(ctx context.Context, ti db.ThreadIssue, state, n
 		if afterTurn {
 			s.mu.Lock()
 			if s.freezeAfterTurn == nil {
-				s.freezeAfterTurn = map[string]bool{}
+				s.freezeAfterTurn = map[string]time.Time{}
 			}
-			s.freezeAfterTurn[ti.ThreadID] = true
+			s.freezeAfterTurn[ti.ThreadID] = s.now()
 			s.mu.Unlock()
 		} else {
 			s.queueFreeze(ti.ThreadID)
@@ -129,11 +130,33 @@ func (s *Service) queueFreeze(threadID string) {
 // onThreadLeftWorking 在线程离开 working 时调用：登记过回合结束后冻结的，此时排队冻结。
 func (s *Service) onThreadLeftWorking(threadID string) {
 	s.mu.Lock()
-	due := s.freezeAfterTurn[threadID]
+	_, due := s.freezeAfterTurn[threadID]
 	delete(s.freezeAfterTurn, threadID)
 	s.mu.Unlock()
 	if due {
 		s.queueFreeze(threadID)
+	}
+}
+
+// scanFreezeAfterTurn 是「回合结束后冻结」的兜底：登记超过 freezeAfterTurnGrace 仍没离开 working 的线程，中止当前回合
+// 并直接冻结（不再等 StateChanged）。此时工具应答早已送达，冻结不会截断它。
+func (s *Service) scanFreezeAfterTurn(ctx context.Context) {
+	cutoff := s.now().Add(-freezeAfterTurnGrace)
+	var overdue []string
+	s.mu.Lock()
+	for threadID, at := range s.freezeAfterTurn {
+		if !at.After(cutoff) {
+			overdue = append(overdue, threadID)
+			delete(s.freezeAfterTurn, threadID)
+		}
+	}
+	s.mu.Unlock()
+	for _, threadID := range overdue {
+		slog.Warn("github: 放弃任务后回合迟迟未结束，中止并冻结 orb", "thread", threadID, "grace", freezeAfterTurnGrace)
+		if err := s.th.Abort(ctx, threadID); err != nil {
+			slog.Warn("github: 中止回合失败", "thread", threadID, "err", err)
+		}
+		s.freezeThread(ctx, threadID)
 	}
 }
 
@@ -346,6 +369,7 @@ func (s *Service) taskComment(ctx context.Context, ev hookEvent, threadID, kind 
 func (s *Service) scan(ctx context.Context) {
 	s.scanDeadlines(ctx)
 	s.scanAutoclose(ctx)
+	s.scanFreezeAfterTurn(ctx)
 }
 
 // scanDeadlines 处理到点的任务时限：清掉时限（每个只处理一次）、中止当前回合并通知。

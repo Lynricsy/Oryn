@@ -189,3 +189,35 @@ func TestToolAbortFreezeWaitsForTurnEndWithLiveQueue(t *testing.T) {
 	settle()
 	assert.Len(t, e.orbs.list(), 1, "登记只消费一次")
 }
+
+// 兜底：放弃任务后 agent 一直不结束回合（线程始终不离开 working）。任务已是 abandoned，任务时限扫描不会管它；宽限期内
+// scan 不动，过了 freezeAfterTurnGrace 后中止当前回合并冻结，且只做一次（之后的离开 working 不再重复冻结）。
+func TestToolAbortFreezeFallbackAfterGrace(t *testing.T) {
+	e := newToolEnv(t, apigen.GitHubTriggerInput{MaxDurationSec: new(600)})
+	thr := e.thread()
+	_, err := e.call("github_abort_task", `{"reason":"stuck"}`)
+	require.NoError(t, err)
+	aborted := func() []string {
+		e.th.mu.Lock()
+		defer e.th.mu.Unlock()
+		return append([]string(nil), e.th.aborted...)
+	}
+
+	e.clock.Add(freezeAfterTurnGrace - time.Second)
+	e.s.scan(e.ctx)
+	e.drain()
+	assert.Empty(t, e.orbs.list(), "宽限期内不动")
+	assert.Empty(t, aborted())
+
+	e.clock.Add(time.Hour) // 也越过了规则的任务时限：abandoned 不在时限扫描里
+	e.s.scan(e.ctx)
+	e.drain()
+	assert.Equal(t, []string{thr}, aborted(), "中止当前回合")
+	assert.Equal(t, []string{e.orbOf(thr)}, e.orbs.list(), "直接冻结")
+
+	e.s.TurnObserver().StateChanged(threads.StateEvent{ThreadID: thr, Prev: threads.StateWorking, State: threads.StateIdle})
+	e.s.scan(e.ctx)
+	e.drain()
+	assert.Len(t, e.orbs.list(), 1, "兜底之后登记已清除，不重复冻结")
+	assert.Len(t, aborted(), 1)
+}
