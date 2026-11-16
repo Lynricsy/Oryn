@@ -201,6 +201,8 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 	p := &plan.Params
 	var projectIdentity *apigen.GitIdentity
 	var projectRepo *gitRepo
+	// projectGates 只用于本次生成的出站策略；不随 setup 下发（github_prepare 在执行时向控制面现查）。
+	var projectGates *apigen.GitHubGates
 	if prj != nil {
 		if prj.RepoUrl != nil && *prj.RepoUrl != "" {
 			repo := &apigen.LinkCtlSetupRepo{URL: *prj.RepoUrl, Shallow: prj.ShallowClone}
@@ -218,7 +220,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		p.Scripts.Setup = nonEmpty(prj.SetupScript)
 		p.Scripts.Resume = nonEmpty(prj.ResumeScript)
 		projectIdentity = gitIdentity(prj.GitAuthorName, prj.GitAuthorEmail)
-		p.GithubGates = ParseGitHubGates(prj.GithubGates)
+		projectGates = ParseGitHubGates(prj.GithubGates)
 	}
 	// git 提交身份：项目覆盖（两项齐全）> 所有者默认 > 不下发（orb 现有配置不动）。
 	p.GitIdentity = projectIdentity
@@ -252,7 +254,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		if gs, ok := d.GitHub.OrbSetup(ctx, orb); ok {
 			uploads := true
 			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login, Uploads: &uploads}
-			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin, Gates: gateConfig(p.GithubGates)}
+			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin, Gates: gateConfig(projectGates)}
 			if gs.Agent || p.GitIdentity == nil {
 				p.GitIdentity = &gs.GitIdentity
 			}

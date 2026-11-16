@@ -149,10 +149,6 @@ func TestGithubPrepareSock(t *testing.T) {
 	rt := startRuntime(t, cp, nil)
 	cp.waitNotif(t, 0, "hello", nil)
 	setWorkdir(rt, repo.dir)
-	// setup 时下发的旧门禁：不再作为命令来源
-	rt.envMu.Lock()
-	rt.githubGates = &apigen.GitHubGates{Push: true, CheckCmd: new("echo stale-setup")}
-	rt.envMu.Unlock()
 	fg := &fakeGates{}
 	fg.set(apigen.GitHubGates{Push: true, CheckCmd: new("echo checked")}, hashA)
 
@@ -196,7 +192,6 @@ func TestGithubPrepareSock(t *testing.T) {
 	assert.Equal(t, head, res.SHA)
 	assert.False(t, res.Skipped)
 	assert.Contains(t, checkOutput(res), "checked", "运行控制面现查到的检查命令")
-	assert.NotContains(t, checkOutput(res), "stale-setup")
 	require.Equal(t, 1, fg.queryCount())
 	q := fg.lastQuery()
 	assert.Equal(t, libThread, q.ThreadID)
@@ -280,9 +275,6 @@ func TestGithubPrepareGatesQueryFails(t *testing.T) {
 	setWorkdir(rt, repo.dir)
 	marker := filepath.Join(t.TempDir(), "ran")
 	touch := "touch " + marker
-	rt.envMu.Lock()
-	rt.githubGates = &apigen.GitHubGates{Push: true, FixCmd: &touch, CheckCmd: &touch}
-	rt.envMu.Unlock()
 	fg := &fakeGates{}
 	fg.set(apigen.GitHubGates{Push: true, FixCmd: &touch, CheckCmd: &touch}, hashA)
 	var reports atomic.Int32

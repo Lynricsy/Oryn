@@ -12034,10 +12034,6 @@ components:
           description: |
             M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；
             控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
-        githubGates:
-          allOf:
-            - $ref: '#/components/schemas/GitHubGates'
-          description: M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置
     LinkCtlGithubCallParams:
       type: object
       description: M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。

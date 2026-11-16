@@ -6218,10 +6218,7 @@ type LinkCtlSetupRunParams struct {
 	GitHosts []string `json:"gitHosts"`
 
 	// GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
-	GitIdentity *GitIdentity `json:"gitIdentity,omitempty"`
-
-	// GithubGates M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置
-	GithubGates *GitHubGates         `json:"githubGates,omitempty"`
+	GitIdentity *GitIdentity         `json:"gitIdentity,omitempty"`
 	OmpHome     []LinkCtlOmpHomeFile `json:"ompHome"`
 
 	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除

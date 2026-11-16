@@ -50,16 +50,6 @@ func (r *Runtime) currentWorkdir() string {
 	return filepath.Join(r.home, "workspace")
 }
 
-// currentGitHubGates 返回最近一次 setup / resume 下发的项目门禁配置（M15）；未配置时为零值。
-func (r *Runtime) currentGitHubGates() apigen.GitHubGates {
-	r.envMu.Lock()
-	defer r.envMu.Unlock()
-	if r.githubGates == nil {
-		return apigen.GitHubGates{}
-	}
-	return *r.githubGates
-}
-
 // currentGitIdentity 返回最近一次下发的提交身份（M15）；从未下发时为 nil。
 func (r *Runtime) currentGitIdentity() *apigen.GitIdentity {
 	r.envMu.Lock()
@@ -197,7 +187,6 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.workdir = workdir
 	r.lastScripts = cloneScripts(p.Scripts)
 	r.haveParams = true
-	r.githubGates = p.GithubGates
 	// 与写 ~/.gitconfig 的规则一致：缺省时沿用上一次的身份
 	if id := p.GitIdentity; id != nil {
 		cp := *id

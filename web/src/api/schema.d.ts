@@ -8995,8 +8995,6 @@ export interface components {
              *     控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
              */
             deferResume?: boolean;
-            /** @description M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置 */
-            githubGates?: components["schemas"]["GitHubGates"];
         };
         /** @description M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。 */
         LinkCtlGithubCallParams: {
