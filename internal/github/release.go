@@ -53,9 +53,10 @@ const (
 	releaseJobPages   = 3
 	codeNotRelease    = "not_release_thread"
 	releaseThreadHead = "[Oryn release sentinel on %s v%s — started automatically, not typed by the owner]"
-	// releaseAwaitMax 是 awaiting_ci 的版本从最后一次状态变化起至多等多久：awaiting_ci 仍享有推默认分支的例外（v4），
-	// 而 Release 被手动发布、或发布 workflow 卡住时不会再有 workflow_run 唤醒哨兵；超过它由 scanReleases 置为 failed，
-	// 例外随之收回。24 小时足够覆盖排队很久的 runner 与人工补发 Release，又不让例外无限期挂着。
+	// releaseAwaitMax 是进行中的版本从最后一次状态变化起至多停留多久。awaiting_ci 与 fixing 都享有推默认分支的例外（v4）：
+	// awaiting_ci 在 Release 被手动发布、或发布 workflow 卡住时不会再有 workflow_run 唤醒哨兵；fixing 在 agent 一直不推送
+	// 修复时也不会再变。超过它由 scanReleases 置为 failed，例外随之收回。24 小时足够覆盖排队很久的 runner、人工补发 Release
+	// 与一轮正常的修复，又不让例外无限期挂着。
 	releaseAwaitMax = 24 * time.Hour
 	// releaseRetention 是终态（green / failed / superseded）版本行的保留期。比投递保留期（重放窗口）长得多：
 	// 行删掉之后同一版本再出现 run（如有人重跑旧 workflow）会被当作新版本处理，newerRelease 也只认还在的行。
@@ -466,20 +467,30 @@ func (s *Service) startRelease(ctx context.Context, trig db.GithubTrigger, rel d
 	return "handled", nil
 }
 
-// continueRelease 把新一轮的失败报告投递给已有的发布线程；线程已删除或归档时该版本置为 failed。
+// continueRelease 把新一轮的失败报告投递给已有的发布线程。先写 fixing 与新轮数、再投递（同 startRelease 的 InitTx）：
+// 投递会唤醒线程，agent 随即调用的 github_release_status 必须已看到进行中的新一轮，而不是 awaiting_ci（预设把它当作停止条件，
+// 停下之后没有东西再唤醒这一行）。线程已删除或归档时该版本置为 failed；其它投递错误把状态与轮数回滚到调用前，投递重试时
+// 轮数不会算两次。
 func (s *Service) continueRelease(ctx context.Context, rel db.GithubRelease, full string, info releaseInfo) (string, error) {
 	tid := *rel.ThreadID
+	if err := s.st.Q.SetGithubReleaseState(ctx, db.SetGithubReleaseStateParams{
+		State: releaseFixing, Rounds: info.Round, UpdatedAt: s.nowMs(), RepoID: rel.RepoID, Version: rel.Version,
+	}); err != nil {
+		return "", err
+	}
 	_, err := s.th.Deliver(ctx, tid, threads.AutoMessage{Text: releaseFollowup(full, info)}, nil)
 	var te *threads.Error
 	switch {
 	case errors.As(err, &te) && (te.Code == "not_found" || te.Code == "archived"):
 		return "ignored:thread_gone", s.finishRelease(ctx, rel, full, releaseFailed, "error", "the release thread was archived or deleted")
 	case err != nil:
-		return "", err
-	}
-	if err := s.st.Q.SetGithubReleaseState(ctx, db.SetGithubReleaseStateParams{
-		State: releaseFixing, Rounds: info.Round, UpdatedAt: s.nowMs(), RepoID: rel.RepoID, Version: rel.Version,
-	}); err != nil {
+		// 回滚时 updated_at 也还原：awaiting_ci 的等待期（releaseAwaitMax）不因一次失败的投递续长
+		if rerr := s.st.Q.SetGithubReleaseState(ctx, db.SetGithubReleaseStateParams{
+			State: rel.State, Rounds: rel.Rounds, UpdatedAt: rel.UpdatedAt, RepoID: rel.RepoID, Version: rel.Version,
+		}); rerr != nil {
+			slog.Warn("github: 投递失败后回滚发布状态失败", "repo", full, "version", rel.Version, "err", rerr)
+			return "", errors.Join(err, rerr)
+		}
 		return "", err
 	}
 	s.th.Publish(ctx, tid)
@@ -580,9 +591,12 @@ func releaseData(info releaseInfo) string {
 
 // ---------- 扫描 ----------
 
-// scanReleases 是 scan 循环里的一步：用我的账号重新评估每个 awaiting_ci 的版本，不依赖 release 事件（hookEvents 不含
-// release；Release 可能在全部 run 结束之后才被手动发布）。CI 全部通过、tag 仍指向发布提交且有非草稿 Release 时置 green；
-// 否则保持，从最后一次状态变化起超过 releaseAwaitMax 时置 failed 并通知所有者。未到期又没有结论时只读。
+// scanReleases 是 scan 循环里的一步，处理进行中的版本，不依赖 release 事件（hookEvents 不含 release；Release 可能在全部
+// run 结束之后才被手动发布）：
+//   - awaiting_ci：用我的账号重新评估。CI 全部通过、tag 仍指向发布提交且有非草稿 Release 时置 green；否则保持，从最后一次
+//     状态变化起超过 releaseAwaitMax 时置 failed 并通知所有者。未到期又没有结论时只读。
+//   - fixing：agent 正在修，不重新评估 CI，只判超时：自 updated_at 起超过 releaseAwaitMax 置 failed（不发任何请求）。修复
+//     推送移动 tag 之后，新提交的 run 结论会让事件路径把这一行写成 awaiting_ci 并刷新 updated_at，所以正常的修复碰不到它。
 func (s *Service) scanReleases(ctx context.Context) {
 	rows, err := s.st.Q.ListGithubReleases(ctx)
 	if err != nil {
@@ -592,7 +606,7 @@ func (s *Service) scanReleases(ctx context.Context) {
 		return
 	}
 	for _, r := range rows {
-		if r.State == releaseAwaitingCI && ctx.Err() == nil {
+		if (r.State == releaseAwaitingCI || r.State == releaseFixing) && ctx.Err() == nil {
 			s.recheckRelease(ctx, r.RepoID, r.Version)
 		}
 	}
@@ -602,13 +616,26 @@ func (s *Service) scanReleases(ctx context.Context) {
 func (s *Service) recheckRelease(ctx context.Context, repoID int64, ver string) {
 	defer releaseLock(repoID)()
 	rel, err := s.st.Q.GetGithubRelease(ctx, db.GetGithubReleaseParams{RepoID: repoID, Version: ver})
-	if err != nil || rel.State != releaseAwaitingCI {
+	if err != nil || !releaseActiveStates[rel.State] {
 		if err != nil && !isNoRows(err) && ctx.Err() == nil {
 			slog.Warn("github: 读取发布状态失败", "repo", repoID, "version", ver, "err", err)
 		}
 		return
 	}
 	overdue := s.now().Sub(time.UnixMilli(rel.UpdatedAt)) > releaseAwaitMax
+	if rel.State == releaseFixing {
+		if !overdue {
+			return
+		}
+		full, _ := s.repoFullName(ctx, repoID)
+		if full == "" {
+			full = fmt.Sprintf("repository %d", repoID)
+		}
+		if err := s.finishRelease(ctx, rel, full, releaseFailed, "error", "no fix was pushed within 24h"); err != nil {
+			slog.Warn("github: 记录发布结果失败", "repo", full, "version", ver, "err", err)
+		}
+		return
+	}
 	full, green, waiting, err := s.releaseVerdict(ctx, rel)
 	if full == "" {
 		full = fmt.Sprintf("repository %d", repoID)

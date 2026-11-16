@@ -1,6 +1,8 @@
 package github
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -652,4 +654,104 @@ func TestReleaseCleanup(t *testing.T) {
 			assert.True(t, isNoRows(err), r.ver)
 		}
 	}
+}
+
+// hookThreads 在 Deliver 转给内层之前先调用 hook；hook 返回错误时 Deliver 原样返回它。
+type hookThreads struct {
+	Threads
+	hook func(threadID string) error
+}
+
+func (t *hookThreads) Deliver(ctx context.Context, threadID string, m threads.AutoMessage, ack func(error)) (func() bool, error) {
+	if err := t.hook(threadID); err != nil {
+		return nil, err
+	}
+	return t.Threads.Deliver(ctx, threadID, m, ack)
+}
+
+// 续跑一轮：投递（唤醒线程）的那一刻，github_release_status 已看到 fixing 与新一轮的轮数。
+func TestReleaseContinueFixingBeforeDeliver(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure")))
+	var seen []map[string]any
+	e.s.th = &hookThreads{Threads: e.ct, hook: func(threadID string) error {
+		res, err := e.s.toolReleaseStatus(e.ctx, threadID, map[string]any{"brief": true})
+		require.NoError(t, err)
+		seen = append(seen, res.Details)
+		return nil
+	}}
+	e.publish("1.2.3", relSHA(2))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(2), bump+": fix", "completed", "failure")))
+	require.Len(t, seen, 1)
+	assert.Equal(t, releaseFixing, seen[0]["state"])
+	assert.EqualValues(t, 2, seen[0]["round"])
+	assert.Len(t, e.delivered(), 1)
+}
+
+// 投递返回普通错误：状态、轮数与 updated_at 回滚到调用前；重试成功后轮数只加 1。
+func TestReleaseContinueDeliverErrorRollsBack(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure")))
+	fail := errors.New("link down")
+	e.s.th = &hookThreads{Threads: e.ct, hook: func(string) error { return fail }}
+	e.publish("1.2.3", relSHA(2))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(2), bump+": fix", "completed", "success")))
+	run := e.addRun(relSHA(2), bump+": fix", "completed", "failure")
+	before := e.release("1.2.3")
+	require.Equal(t, releaseAwaitingCI, before.State)
+	e.clock.Add(time.Minute)
+	assert.Contains(t, e.fire(run), "link down")
+	assert.Equal(t, before, e.release("1.2.3"), "回滚到调用前")
+	assert.Empty(t, e.delivered())
+
+	fail = nil
+	require.Equal(t, "handled", e.fire(run))
+	r := e.release("1.2.3")
+	assert.Equal(t, releaseFixing, r.State)
+	assert.EqualValues(t, 2, r.Rounds)
+	assert.Len(t, e.delivered(), 1)
+}
+
+// fixing 只判超时：未到期时 scan 不发任何请求；自 updated_at 起越过 releaseAwaitMax 置 failed、通知线程，例外消失。
+func TestReleaseScanFixingTimeout(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure")))
+	thr := e.ct.last()
+	orb := threadOrb(t, e, thr)
+	e.clock.Add(releaseAwaitMax - time.Hour)
+	e.fake.ResetCalls()
+	e.s.scan(e.ctx)
+	e.fake.Lock()
+	assert.Empty(t, e.fake.Calls, "fixing 未到期不发请求")
+	e.fake.Unlock()
+	assert.Equal(t, releaseFixing, e.release("1.2.3").State)
+	assert.True(t, e.s.ReleaseThread(e.ctx, orb))
+
+	e.clock.Add(2 * time.Hour)
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseFailed, e.release("1.2.3").State)
+	assert.False(t, e.s.ReleaseThread(e.ctx, orb))
+	posts := e.posts()
+	require.Len(t, posts, 1)
+	assert.Equal(t, thr+"\nerror\nRelease acme/widgets v1.2.3 is failed: no fix was pushed within 24h.", posts[0])
+}
+
+// 正常的修复推送：新提交的 run 结论把 fixing 写成 awaiting_ci 并刷新 updated_at，fixing 的超时不会触发。
+func TestReleaseFixPushResetsTimeout(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure")))
+	e.clock.Add(releaseAwaitMax - time.Hour)
+	e.publish("1.2.3", relSHA(2))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(2), bump+": fix", "completed", "success")))
+	r := e.release("1.2.3")
+	assert.Equal(t, releaseAwaitingCI, r.State)
+	assert.Equal(t, e.clock.Now().UnixMilli(), r.UpdatedAt)
+	e.clock.Add(2 * time.Hour)
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseAwaitingCI, e.release("1.2.3").State, "等 Release，未到 awaiting_ci 的期限")
+	assert.Empty(t, e.posts())
 }
