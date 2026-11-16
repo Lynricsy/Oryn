@@ -25,7 +25,7 @@
 
 |分区|规格位置|说明|
 |---|---|---|
-|C1 provider 协议|`/provider/v1/{hello,jobs/claim,jobs/{id}/complete,bye}`；`Provider*Request/Response`、`ProviderJob`、`Job{Spawn,Pause,Snapshot,Delete,DeleteSnapshot}Params`、`JobOp`、`JobState`|`ProviderJob.params` 是任意对象，按 `op` 解析为对应 `Job*Params`|
+|C1 provider 协议|`/provider/v1/{hello,jobs/claim,jobs/{id}/complete,bye}`；停机预览的内存中继 `/provider/v1/fs/{claim,{id}/reply}`（见「停机 orb 的只读预览」）；`Provider*Request/Response`、`ProviderJob`、`ProviderFsRequest`、`Job{Spawn,Pause,Snapshot,Delete,DeleteSnapshot}Params`、`JobOp`、`JobState`|`ProviderJob.params` 是任意对象，按 `op` 解析为对应 `Job*Params`|
 |C2 orb link|`/orb/v1/link`；`LinkStreamHeader`（按 `t` 判别：`ctl / agent / egress / blob / fs / portal / desk / library`；`library` 自 M13，见「M13：全局助手文件库进协调宿主」）；`LinkCtlRequest / LinkCtlResponse / LinkCtlNotification`；`LinkCtlMethod`；`LinkCtl<Method>Params / Result`|`fs.copyTree`、`fs.move`、`shutdown`、`portal.configure` 共用 `LinkCtlOkResult`；`resume.run` 的 params / result 与 `setup.run` 相同|
 |C3 REST|`/api/v1/...` 全部端点|列表统一包一层对象（`{threads}`、`{orbs}`…）|
 |C3 WebSocket|`/api/v1/ws?ticket=`；`WsClientMessage`、`WsServerMessage`（按 `type` 判别）；`AgentLiveState`|Go：`msg.ValueByDiscriminator()` 后类型分派；构造用 `FromWsServerXxx` 自动带 `type`|
@@ -178,6 +178,29 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 ### 存储
 
 `0007_attachments.sql`：`attachments(id, thread_id → threads ON DELETE CASCADE, name, mime, size, sha256, created_at)`，索引 `(thread_id, created_at)`；`thread_id` 为 NULL 表示尚未绑定。查询见 `internal/store/queries/attachments.sql`（`BindAttachment` 为 `:execrows`：未绑定或已绑定同一线程时影响 1 行）。附件字节存 `<data_dir>/attachments/<id>`，不与转录 blob 共用 `blobs/`。
+
+### 停机 orb 的只读预览（`offline=1`）
+
+orb 停机（`stopped`）时，文件面板只读浏览文件，不唤醒 orb。控制面接触不到 provider 的宿主，所以由 provider 读取已退出的容器，再经一条内存中继把结果流式交给浏览器。
+
+- **用户端**：`GET fs/{roots,list,stat,file}` 带 `offline=1`。
+  - orb 为 `stopped`：走中继，不计用户交互；其它状态与不带参数完全相同（会唤醒）。
+  - 前置条件：orb 不是 runner，provider hello 声明了 `capabilities.offlineFs`，且 provider 租约未过期。不满足时：不支持回 409 `offline_unsupported`，provider 不在线回 503 `provider_unavailable`。
+  - 响应头规则与在线代理相同：`file` 强制附件、sandbox、nosniff，白名单内的音视频回真实类型；其余为 JSON。
+  - 状态码白名单：200 / 204 / 206 / 400 / 403 / 404 / 409 / 416 / 500 / 503。
+- **中继**：`ProviderFsRequest{id, orbId, op: roots|list|stat|read, path?, range?, workdirs?}` 只在内存中按 provider 排队，不落库、不重试。
+  - provider 以 `POST /provider/v1/fs/claim` 长轮询认领（≤60s，同时续租），以 `POST /provider/v1/fs/{id}/reply` 回应。
+  - 回应的头 `X-Oryn-Status` 为用户状态码，请求体原样成为用户响应体。
+  - 10s 无人认领回 503 `provider_unavailable`；认领后 60s 未回应回 504 `orbd_timeout`。
+  - `roots` 的工作目录候选依次为线程 `cwd`、`/home/user/workspace/repo`、`/home/user/workspace`，取第一个存在的目录，都不存在时为 `$HOME`。
+- **docker provider**：
+  - 只服务 `exited` / `created` 的容器，否则回 409 `orb_not_stopped`。
+  - 首次访问某次停机的容器时，以 `docker cp <orb>:/home/user -` 读一遍 tar 头建立内存索引，内容丢弃。实测 950MB / 2.9 万个文件约 9s。
+  - 缓存键是容器 `Id` + `State.FinishedAt`。同一时间只建一份索引，最多缓存 4 份，每份上限 50 万条，超出时列表一律 `truncated`。
+  - 建索引期间所有操作回 503 `offline_indexing`（`Retry-After: 2`，message 带已扫描条数）。
+  - `$HOME/.oryn` 不进索引，直接访问回 403 `protected_path`。符号链接在索引内解析，越出 `$HOME` 回 403 `outside_home`。
+  - `read` 对单个文件再执行一次 `docker cp`，支持单区间 Range。`stat` 读前 8KiB 判定 `text`。
+- **限制**：只读，Changes / git 接口不提供停机预览。runner、firecracker、dispatch、process 驱动暂不支持。
 
 ## M4：Portal 与受管服务
 
