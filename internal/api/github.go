@@ -204,6 +204,42 @@ func (s *Server) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params 
 	WriteJSON(w, http.StatusOK, apigen.GitHubRepoList{Repos: repos})
 }
 
+// ListGitHubRefs 对应 `GET /api/v1/projects/{id}/github/refs`：输入框 `#` 引用的 issue / PR 候选。
+func (s *Server) ListGitHubRefs(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.ListGitHubRefsParams) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	q := ""
+	if params.Q != nil {
+		q = *params.Q
+	}
+	if utf8.RuneCountInString(q) > 100 {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "q 不得超过 100 个字符")
+		return
+	}
+	refs, err := svc.ListRefs(r.Context(), id, q)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.GitHubRefList{Refs: refs})
+}
+
+// AttachGitHubRef 对应 `POST /api/v1/projects/{id}/github/refs/{number}/attachment`：把 issue / PR 渲染成 Markdown 附件。
+func (s *Server) AttachGitHubRef(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, number apigen.GitHubNumberPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	a, err := svc.AttachRef(r.Context(), id, int64(number))
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, attachmentAPI(a))
+}
+
 // StartGitHubManifest 对应公开的 `GET /api/v1/public/github/manifest/start`：返回提交 manifest 的独立页面。
 func (s *Server) StartGitHubManifest(w http.ResponseWriter, r *http.Request, params apigen.StartGitHubManifestParams) {
 	if !s.rateLimit(w, r, auth.LimitLogin) {

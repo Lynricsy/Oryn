@@ -265,3 +265,21 @@ func TestListGitHubReposAPI(t *testing.T) {
 	assert.Equal(t, "main", list.Repos[0].DefaultBranch)
 	assert.Equal(t, 400, e.do("GET", "/api/v1/github/repos?q="+strings.Repeat("x", 101), dev, nil).status)
 }
+
+func TestGitHubRefsAPINotBound(t *testing.T) {
+	e, fake, gh := newGitHubEnv(t)
+	dev := h2DeviceToken(t, e)
+	createGitHubApp(t, fake, gh)
+	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "plain", "repoUrl": "https://github.com/acme/none"})
+	require.Equal(t, 201, r.status, string(r.body))
+	var p struct{ ID string }
+	r.json(t, &p)
+	r = e.do("GET", "/api/v1/projects/"+p.ID+"/github/refs?q=x", dev, nil)
+	assert.Equal(t, 409, r.status)
+	assert.Equal(t, "github_not_bound", r.code(t))
+	r = e.do("POST", "/api/v1/projects/"+p.ID+"/github/refs/7/attachment", dev, nil)
+	assert.Equal(t, 409, r.status)
+	assert.Equal(t, "github_not_bound", r.code(t))
+	r = e.do("GET", "/api/v1/projects/prj_01HZZZZZZZZZZZZZZZZZZZZZZZ/github/refs", dev, nil)
+	assert.Equal(t, 404, r.status)
+}

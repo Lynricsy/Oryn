@@ -687,3 +687,12 @@ func (s *Server) userInstallationRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"total_count": len(repos), "repositories": out})
 }
+
+	// Issues / Pulls / Comments 是各仓库的 issue、PR 与评论；Rollups、CheckRuns、Statuses 按提交 sha 记 CI 结果（见 issues.go）。
+	Issues    []*Issue
+	Pulls     []*Pull
+	Comments  []*Comment
+	Rollups   map[string]string
+	CheckRuns map[string][]CheckRun
+	Statuses  map[string][]CommitStatus
+	s.issueRoutes(mux)
