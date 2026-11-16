@@ -83,6 +83,7 @@ import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import AutomationsSettings from "./settings/AutomationsSettings";
 import CollectionsPage from "./settings/agent/CollectionsPage";
 import ExtensionsPage from "./settings/agent/ExtensionsPage";
+import MemoryPage from "./settings/agent/MemoryPage";
 import PromptsPage from "./settings/agent/PromptsPage";
 import RolesPage from "./settings/agent/RolesPage";
 import SkillsPage from "./settings/agent/SkillsPage";
@@ -110,6 +111,7 @@ export type SettingsSection =
 	| "agent-prompts"
 	| "agent-commands"
 	| "agent-extensions"
+	| "agent-memory"
 	| "agent-config"
 	| "identity"
 	| "appearance"
@@ -1260,6 +1262,7 @@ export function SettingsPage({
 					{section === "agent-prompts" && <PromptsPage />}
 					{section === "agent-commands" && <CollectionsPage />}
 					{section === "agent-extensions" && <ExtensionsPage />}
+					{section === "agent-memory" && <MemoryPage />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
 					{section === "appearance" && <ThemeSettings />}

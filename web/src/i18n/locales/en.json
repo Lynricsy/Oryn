@@ -1128,6 +1128,7 @@
 		"agent-prompts": "Prompts & context",
 		"agent-commands": "Commands & rules",
 		"agent-extensions": "Extensions & tools",
+		"agent-memory": "Memory",
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
@@ -1233,6 +1234,332 @@
 		"hint": "omp's text config (config.yml, models.yml, AGENTS.md, skills/ …). Literal API keys in models.yml are moved into the secret store on save.",
 		"pushHint": "Import from your machine with `oryn config push`.",
 		"title": "Agent config"
+	},
+	"memoryPage": {
+		"scope": "Applies to orbs and runners, not the global assistant. Threads in the same project share its memory; global memories are recalled in every project; projects never see each other. Switch changes take effect for newly started agents.",
+		"failed": "{{step}} failed",
+		"listSep": ", ",
+		"steps": {
+			"loadSettings": "Loading connection settings",
+			"saveSettings": "Saving connection settings",
+			"loadStatus": "Checking Hindsight status",
+			"generateEnv": "Generating .env",
+			"loadProjects": "Loading projects",
+			"saveProject": "Changing the project switch",
+			"loadModels": "Loading model settings",
+			"saveModels": "Saving model settings",
+			"confirmDeployed": "Confirming the Hindsight restart",
+			"loadEndpoints": "Loading embedding and rerank endpoints",
+			"saveEndpoint": "Saving the endpoint",
+			"loadUsage": "Loading usage",
+			"loadDocuments": "Loading memories",
+			"deleteDocument": "Deleting the memory",
+			"search": "Searching memories",
+			"forget": "Forgetting the thread",
+			"loadPendingDeletes": "Loading the delete retry queue",
+			"loadCandidates": "Loading pending memories",
+			"approve": "Approving the memory",
+			"reject": "Rejecting the memory",
+			"createGlobal": "Creating the global memory",
+			"updateGlobal": "Saving the global memory",
+			"loadMentalModels": "Loading mental models",
+			"refreshMentalModel": "Refreshing the mental model",
+			"createExport": "Starting the export",
+			"loadExport": "Checking export progress"
+		},
+		"errors": {
+			"insecure_url": {
+				"why": "Remote addresses must use https://; only this machine (127.0.0.1, localhost) and private networks may use http://.",
+				"next": "Switch the address to https://, or deploy Hindsight on the same machine as orynd."
+			},
+			"unsupported_model": {
+				"why": "The selected model isn't in the central catalog, or its protocol isn't OpenAI-compatible, Anthropic or Gemini.",
+				"next": "Pick an available (not greyed out) model and save again."
+			},
+			"embed_locked": {
+				"why": "The bank already has memories, so the embedding model and dimensions can't be changed directly.",
+				"next": "The address and key can still change; to switch embedding models, tick “Switch embedding model (reembed)” and save again."
+			},
+			"hindsight_running": {
+				"why": "Hindsight is still running; its API must be stopped before switching embedding models.",
+				"next": "Stop the API first (docker compose stop api), then save."
+			},
+			"family_mismatch": {
+				"why": "The selected model's protocol differs from the one deployed in Hindsight's .env.",
+				"next": "Apply the snippet from the Models card to .env, restart Hindsight, then click “I've restarted”."
+			},
+			"export_not_ready": {
+				"why": "The export hasn't finished yet.",
+				"next": "Download once the progress shows done."
+			},
+			"memory_disabled": {
+				"why": "The memory master switch is off.",
+				"next": "Turn it on in the Connection card and retry."
+			},
+			"not_implemented": {
+				"why": "This orynd doesn't support this memory operation yet.",
+				"next": "Upgrade orynd to a version with memory support and retry."
+			},
+			"not_found": {
+				"why": "The item no longer exists; it may have been deleted.",
+				"next": "Reload the page and try again."
+			},
+			"invalid_request": {
+				"why": "The submitted values aren't valid.",
+				"next": "Check the fields (address format, length, numbers) and retry."
+			},
+			"unauthorized": {
+				"why": "Your session has expired.",
+				"next": "Sign in again and retry."
+			},
+			"forbidden": {
+				"why": "This device isn't allowed to do that.",
+				"next": "Retry from the owner's browser session."
+			},
+			"rate_limited": {
+				"why": "Too many requests; the control plane is rate limiting.",
+				"next": "Wait a moment and retry."
+			},
+			"http": {
+				"why": "The control plane returned an error (HTTP {{status}}).",
+				"next": "Retry later; if it keeps failing, check the orynd logs."
+			},
+			"network": {
+				"why": "Can't reach the Oryn control plane.",
+				"next": "Check your network connection and retry."
+			}
+		},
+		"status": {
+			"title": "Status",
+			"recheck": "Check again",
+			"checkedAt": "checked {{when}}",
+			"detail": "Reason: {{detail}}",
+			"deployDoc": "Open the deploy docs: “Hindsight memory service”",
+			"versionMismatch": "Untested Hindsight version",
+			"versionMismatchHint": "The server runs {{version}}; Oryn has only verified {{tested}}.x. Go through the minor-upgrade checklist in the deploy docs first, or pin the image back to {{tested}}.",
+			"version": "Version",
+			"tested": "verified {{tested}}.x",
+			"memoryCount": "Memories",
+			"candidates": "Pending approval",
+			"pendingDeletes": "Deletes to retry",
+			"pendingHint": "These documents failed to delete; the control plane retries automatically:",
+			"pendingMeta": "{{n}} attempts · next retry {{when}}"
+		},
+		"state": {
+			"unconfigured": {
+				"label": "Not configured",
+				"title": "No Hindsight address yet",
+				"action": "Enter the Hindsight address in the Connection card below, then generate a .env and deploy the service."
+			},
+			"no_keys": {
+				"label": "No .env",
+				"title": "No .env generated yet",
+				"action": "Click “Generate .env”, save it as deploy/hindsight/.env, then run docker compose up -d."
+			},
+			"disabled": {
+				"label": "Off",
+				"title": "Memory is switched off",
+				"action": "Newly started agents run without memory and the gateway rejects all memory requests. After switching it on, sessions that need a restart are listed at the top."
+			},
+			"ok": {
+				"label": "Healthy",
+				"title": "Healthy",
+				"action": "Hindsight is reachable and ready."
+			},
+			"unreachable": {
+				"label": "Unreachable",
+				"title": "Can't reach Hindsight",
+				"action": "Make sure the service is running (docker compose ps), the address and port are right, and the orynd host can reach it."
+			},
+			"unauthorized": {
+				"label": "Wrong key",
+				"title": "Hindsight rejects the API key",
+				"action": "Hindsight's .env doesn't match the key Oryn has: regenerate the .env, replace it and restart Hindsight."
+			},
+			"not_ready": {
+				"label": "Not ready",
+				"title": "Hindsight isn't ready",
+				"action": "/health/ready didn't return 200: it's probably still starting or can't reach Postgres. Check docker compose logs hindsight."
+			},
+			"suspect_empty": {
+				"label": "Count dropped to 0",
+				"title": "Memory count suddenly dropped to 0",
+				"action": "There were memories last time and now there are none: Hindsight has most likely lost its external database and switched to an empty embedded one. Stop writing and check the database connection following the deploy docs."
+			}
+		},
+		"connection": {
+			"title": "Connection",
+			"enabled": "Enable memory (master switch)",
+			"url": "Hindsight address",
+			"urlHint": "Root URL of the Hindsight API. Must be https:// unless it's on this machine or a private network.",
+			"language": "Memory output language: {{language}} (fixed)",
+			"keysAt": ".env generated {{when}}",
+			"noKeys": "No .env generated yet"
+		},
+		"env": {
+			"title": "Generate Hindsight's .env",
+			"generate": "Generate .env",
+			"regenerate": "Regenerate .env",
+			"done": "I've saved it",
+			"intro": "The .env holds Hindsight's API key, the relay token, each purpose's model alias and relay URL, the embedding and rerank relay URLs, output language, concurrency limits and worker ID.",
+			"rotateTitle": "The old keys stop working immediately",
+			"rotateHint": "Regenerating rotates the API key and relay token: memory is unavailable until Hindsight runs with the new .env.",
+			"onceTitle": "Shown only once",
+			"onceHint": "The two secrets appear here only this once and can't be viewed after closing. Copy them now and save as deploy/hindsight/.env.",
+			"next": "Then run docker compose up -d in deploy/hindsight; the Status card turns Healthy."
+		},
+		"projects": {
+			"title": "Projects",
+			"empty": "No projects yet",
+			"hint": "Turning a project off disables memory for its newly started agents; other projects are unaffected.",
+			"followsGlobal": "Follows master switch",
+			"toggle": "Memory for {{name}}"
+		},
+		"models": {
+			"title": "Models",
+			"hint": "Hindsight's model requests are relayed through orynd using Oryn's provider keys. Switching models within a protocol takes effect immediately; switching protocols needs a Hindsight restart.",
+			"needsRestartBadge": "Restart pending",
+			"pick": "Pick a model",
+			"followNamed": "Follow default ({{name}})",
+			"follow": "Follow default",
+			"missing": "{{name}} (no longer in the catalog)",
+			"option": "{{name}} · {{provider}} ({{family}})",
+			"optionUnavailable": "{{name}} · {{provider}} — unavailable: {{reason}}",
+			"unknownReason": "unsupported protocol",
+			"unavailable": "{{n}} models can't be used by Hindsight (greyed out); the reason is in each option.",
+			"needsRestart": "Restart Hindsight",
+			"needsRestartHint": "{{purposes}} changed protocol. Apply the lines below to Hindsight's .env, restart Hindsight, then click “I've restarted”; until then requests for these purposes are rejected.",
+			"restarted": "I've restarted"
+		},
+		"purpose": {
+			"default": "Default",
+			"retain": "Retain",
+			"reflect": "Reflect",
+			"consolidation": "Consolidation",
+			"mental_model": "Mental model refresh"
+		},
+		"purposeHint": {
+			"default": "Used by every purpose without its own model. Required.",
+			"retain": "Extracts facts from conversations into memory.",
+			"reflect": "Synthesizes answers when the agent calls reflect.",
+			"consolidation": "Merges and tidies memories in the background.",
+			"mental_model": "Refreshes mental model content."
+		},
+		"family": {
+			"openai": "OpenAI-compatible",
+			"anthropic": "Anthropic",
+			"gemini": "Gemini"
+		},
+		"endpoints": {
+			"title": "Embedding & rerank",
+			"embed": {
+				"title": "Embedding",
+				"protocol": "OpenAI-compatible",
+				"urlPlaceholder": "https://api.openai.com/v1"
+			},
+			"rerank": {
+				"title": "Rerank",
+				"protocol": "Cohere-compatible",
+				"urlPlaceholder": "https://api.cohere.com/v2"
+			},
+			"lockedBadge": "Model locked",
+			"lockedHint": "The bank already has memories, so the embedding model and dimensions are read-only by default; address and key can still change. Steps for switching embedding models:",
+			"reembedDoc": "docs/deploy.md “Switching the embedding model”",
+			"reembed": "Switch embedding model (reembed)",
+			"reembedHint": "Stop the Hindsight API first (docker compose stop api). After saving, run the migration in deploy.md “Switching the embedding model”; memory is unavailable while it runs.",
+			"baseUrl": "Endpoint URL",
+			"model": "Model",
+			"dimensions": "Dimensions",
+			"apiKey": "API key",
+			"keySet": "Set; leave blank to keep it. Keys are stored encrypted, only relayed by orynd and never shown.",
+			"keyUnset": "Not set. Keys are stored encrypted and only relayed by orynd.",
+			"keyEmpty": "Paste the API key",
+			"clearKey": "Delete the saved key",
+			"dimensionsInvalid": "Dimensions must be a positive integer."
+		},
+		"browse": {
+			"title": "Browse",
+			"project": "Project",
+			"searchPlaceholder": "Recall by keywords (includes global memories)",
+			"search": "Search",
+			"resultsFor": "Recall results for “{{q}}”",
+			"clearSearch": "Clear search",
+			"noHits": "Nothing relevant was recalled.",
+			"global": "Global",
+			"forgotten": "Deleted {{n}} documents.",
+			"forgetPending": "{{n}} more failed and were queued for retry.",
+			"empty": "This project has no memories yet.",
+			"pageEmpty": "Nothing more on this page.",
+			"range": "{{from}}–{{to}}",
+			"prev": "Previous",
+			"next": "Next",
+			"thread": "Source thread",
+			"updated": "updated {{when}}",
+			"forget": "Forget thread",
+			"forgetConfirm": "Delete all of this thread's memories",
+			"deleteConfirm": "Confirm delete"
+		},
+		"global": {
+			"title": "Global memories",
+			"add": "New",
+			"hint": "Recalled in every project and in project-less threads. The global user-preferences model refreshes after each change.",
+			"empty": "No global memories yet.",
+			"newLabel": "Content of the new global memory",
+			"editLabel": "Global memory content"
+		},
+		"candidates": {
+			"title": "Pending approval",
+			"empty": "Nothing waiting for approval.",
+			"hint": "Global memories proposed by agents, and anything written from project-less threads, wait here and don't reach Hindsight. Approving makes them global memories immediately; rejecting deletes them.",
+			"editLabel": "Content to approve",
+			"approve": "Approve",
+			"context": "Context: {{text}}",
+			"proposed": "proposed {{when}}",
+			"edit": "Edit & approve",
+			"reject": "Reject",
+			"rejectConfirm": "Confirm reject"
+		},
+		"mental": {
+			"title": "Mental models",
+			"scope": "Scope",
+			"global": "Global (user-preferences)",
+			"empty": "No mental models in this scope yet.",
+			"refresh": "Refresh",
+			"source": "Distilled from: {{query}}",
+			"noContent": "No content yet.",
+			"refreshedAt": "refreshed {{when}}",
+			"neverRefreshed": "never refreshed",
+			"submitted": "refresh submitted, check back shortly"
+		},
+		"usage": {
+			"title": "Usage",
+			"day": "24 hours",
+			"week": "7 days",
+			"empty": "No relayed requests yet.",
+			"purpose": "Purpose",
+			"calls": "Calls",
+			"input": "Input tokens",
+			"output": "Output tokens"
+		},
+		"usagePurpose": {
+			"default": "Default",
+			"retain": "Retain",
+			"reflect": "Reflect",
+			"consolidation": "Consolidation",
+			"mental_model": "Mental model refresh",
+			"embed": "Embedding",
+			"rerank": "Rerank"
+		},
+		"export": {
+			"title": "Export",
+			"hint": "Export every memory in bank oryn as an archive. For scheduled full backups see the",
+			"backupDoc": "deploy docs",
+			"start": "Export bank",
+			"running": "Exporting…",
+			"download": "Download archive (started {{when}})",
+			"failed": "Export failed",
+			"failedNext": "Make sure Hindsight is healthy and export again; if it keeps failing, check docker compose logs hindsight."
+		}
 	},
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",

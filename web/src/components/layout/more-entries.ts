@@ -91,6 +91,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/agent-extensions",
 	},
 	{
+		key: "agent-memory",
+		group: "agent",
+		icon: "brain",
+		labelKey: "settings.agent-memory",
+		to: "/settings/agent-memory",
+	},
+	{
 		key: "agent-config",
 		group: "agent",
 		icon: "file",

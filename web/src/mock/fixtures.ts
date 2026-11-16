@@ -2976,3 +2976,255 @@ export function buildM11bTranscripts(): Record<string, Entry[]> {
 	]);
 	return { [M11B_IDS.runnerThread]: run };
 }
+
+// ---------------------------------------------------------------- 记忆（M16）
+
+/** 记忆接口的时间戳是 Unix 秒。 */
+const NOW_SEC = Math.floor(NOW / 1000);
+
+/** 记忆 mock 的初始数据（每次调用给一份新的，mock 服务端可以随意改）。格式与 orynd 的 `/api/v1/memory/*` 一致。 */
+export function memoryFixtures(): {
+	documents: Schemas["MemoryDocument"][];
+	candidates: Schemas["MemoryCandidate"][];
+	mentalModels: Schemas["MemoryMentalModel"][];
+	options: Schemas["MemoryModelOption"][];
+	usage: Schemas["MemoryUsage"]["items"];
+	pendingDeletes: Schemas["MemoryPendingDelete"][];
+} {
+	const oryn = projects[0]?.id ?? "";
+	const core = projects[1]?.id ?? "";
+	const ws = threads.find((t) => t.id === MAIN_THREAD);
+	const retry = threads.find(
+		(t) => t.id === "T-0193a1b2-0000-7000-8000-00000000a002",
+	);
+	const sync = threads.find(
+		(t) => t.id === "T-0193a1b2-0000-7000-8000-00000000a005",
+	);
+	const doc = (
+		d: Omit<Schemas["MemoryDocument"], "createdAt" | "updatedAt"> & {
+			ageH: number;
+		},
+	): Schemas["MemoryDocument"] => {
+		const { ageH, ...rest } = d;
+		const at = NOW_SEC - Math.round(ageH * 3600);
+		return { ...rest, createdAt: at - 1800, updatedAt: at };
+	};
+	const documents: Schemas["MemoryDocument"][] = [
+		// 自动写入：document id 是会话 id
+		doc({
+			id: "019a3f2e-7c41-7d2a-9b10-5e3c8a1f4d20",
+			projectId: oryn,
+			threadId: ws?.id,
+			threadTitle: ws?.title,
+			preview:
+				"用户：WS 断线重连后补拉为什么会重复条目？\n助手：afterSeq 用的是客户端最后渲染的 seq，但批量追加时先递增再落库，重连窗口里会把同一批再拉一次。改成以服务端确认的 seq 为准，并在 reducer 里按 seq 去重。",
+			ageH: 2,
+		}),
+		doc({
+			id: "omp-retain-7f3c9a1e2b",
+			projectId: oryn,
+			threadId: ws?.id,
+			threadTitle: ws?.title,
+			preview:
+				"Oryn 的前端只用 bun，不用 npm；改界面后要跑 bun run check 和截图（light/dark，1280/390）。",
+			ageH: 5,
+		}),
+		doc({
+			id: "019a3e11-02bd-7a55-8c3e-0f9d7e6b5a41",
+			projectId: oryn,
+			threadId: retry?.id,
+			threadTitle: retry?.title,
+			preview:
+				"用户：共用 orb 的退避策略试一下指数退避加抖动。\n助手：已改成 base 500ms、上限 30s、full jitter；连续失败 5 次后提示用户检查网络。",
+			ageH: 26,
+		}),
+		doc({
+			id: "omp-retain-2c8d4e6f10",
+			projectId: oryn,
+			threadId: retry?.id,
+			threadTitle: retry?.title,
+			preview: "决定：orynd 的 SQLite 迁移只加不删，Down 只删除本次新增的表。",
+			ageH: 50,
+		}),
+		doc({
+			id: "019a3a77-5d10-7f02-a1c4-3b2e9d8c7f60",
+			projectId: core,
+			threadId: sync?.id,
+			threadTitle: sync?.title,
+			preview:
+				"用户：同步上游 oh-my-pi。\n助手：上游改了 hindsight 客户端的 bank 推导，冲突在 bank.ts；按 ORYN.md 只新增 oryn-* 文件，原文件登记进例外清单。",
+			ageH: 72,
+		}),
+		// 管理页与已批准候选写入的全局记忆：带完整内容
+		doc({
+			id: "oryn-01JD4M2Q7V8X9Y0Z1A2B3C4D5E",
+			preview: "代码注释、文档和提交信息一律用简体中文。",
+			content: "代码注释、文档和提交信息一律用简体中文。",
+			ageH: 120,
+		}),
+		doc({
+			id: "oryn-01JD4M2Q7V8X9Y0Z1A2B3C4D5F",
+			preview: "主人偏好先写会失败的测试再修 bug；截图要亲自看，不只跑断言。",
+			content: "主人偏好先写会失败的测试再修 bug；截图要亲自看，不只跑断言。",
+			ageH: 30,
+		}),
+	];
+	const candidates: Schemas["MemoryCandidate"][] = [
+		{
+			id: "mcd_01JD5A0B1C2D3E4F5G6H7J8K9M",
+			content:
+				"主人习惯在提交信息里带 gitmoji，格式 <type>(<scope>): <gitmoji> <subject>。",
+			context: "从 M15 的提交记录里观察到的约定",
+			sourceThreadId: ws?.id,
+			sourceThreadTitle: ws?.title,
+			sourceProjectId: oryn,
+			createdAt: NOW_SEC - 40 * 60,
+		},
+		{
+			id: "mcd_01JD5A0B1C2D3E4F5G6H7J8K9N",
+			content: "回复时先给结论，再列理由；不要用表情符号。",
+			createdAt: NOW_SEC - 5 * 3600,
+		},
+	];
+	const iso = (ageH: number) => new Date(NOW - ageH * HOUR).toISOString();
+	const mentalModels: Schemas["MemoryMentalModel"][] = [
+		{
+			id: "user-preferences",
+			name: "User preferences",
+			global: true,
+			sourceQuery: "主人的长期偏好、沟通习惯与工作约定",
+			content:
+				"- 注释、文档、提交信息用简体中文\n- 修 bug 先写会失败的测试\n- 界面改动要截图并亲自查看",
+			lastRefreshedAt: iso(30),
+		},
+		...[oryn, core].flatMap((p) => [
+			{
+				id: `project-conventions-${p.toLowerCase()}`,
+				name: "Project conventions",
+				global: false,
+				projectId: p,
+				sourceQuery: "这个项目的代码约定、工具链与验证方式",
+				content:
+					p === oryn
+						? "- 前端用 bun；改界面跑 bun run check 与截图\n- Go 端每步提交前 go build ./... && go vet ./..."
+						: "- 只新增 oryn-* 文件，改动现有文件要登记例外清单\n- 用仓库自带的 oxfmt/oxlint",
+				lastRefreshedAt: iso(p === oryn ? 3 : 70),
+			},
+			{
+				id: `project-decisions-${p.toLowerCase()}`,
+				name: "Project decisions",
+				global: false,
+				projectId: p,
+				sourceQuery: "这个项目做过的关键决定及原因",
+				...(p === oryn
+					? {
+							content:
+								"- 迁移只加不删\n- 记忆隔离由 orynd 网关强制，不靠 Core 打标签",
+							lastRefreshedAt: iso(26),
+						}
+					: {}),
+			},
+		]),
+	];
+	const options: Schemas["MemoryModelOption"][] = [
+		{
+			providerKey: "anthropic",
+			modelId: "claude-haiku-4-5",
+			name: "Claude Haiku 4.5",
+			family: "anthropic",
+		},
+		{
+			providerKey: "anthropic",
+			modelId: "claude-sonnet-5",
+			name: "Claude Sonnet 5",
+			family: "anthropic",
+		},
+		{
+			providerKey: "openrouter",
+			modelId: "deepseek/deepseek-v3.2",
+			name: "DeepSeek V3.2",
+			family: "openai",
+		},
+		{
+			providerKey: "openrouter",
+			modelId: "qwen/qwen3-235b-a22b",
+			name: "Qwen3 235B A22B",
+			family: "openai",
+		},
+		{
+			providerKey: "google",
+			modelId: "gemini-2.5-flash",
+			name: "Gemini 2.5 Flash",
+			family: "gemini",
+		},
+		{
+			providerKey: "openai-codex",
+			modelId: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			reason:
+				"ChatGPT 订阅接口（openai-codex-responses）不是 chat completions，Hindsight 无法调用",
+		},
+		{
+			providerKey: "bedrock",
+			modelId: "anthropic.claude-sonnet-4-5",
+			name: "Claude Sonnet 4.5 (Bedrock)",
+			reason: "协议 bedrock-converse-stream 不受支持",
+		},
+	];
+	const counts = (calls: number, inTok: number, outTok: number) => ({
+		calls,
+		inputTokens: inTok,
+		outputTokens: outTok,
+	});
+	const usage: Schemas["MemoryUsage"]["items"] = [
+		{ purpose: "default", day: counts(0, 0, 0), week: counts(3, 4_210, 620) },
+		{
+			purpose: "retain",
+			day: counts(18, 86_400, 9_120),
+			week: counts(131, 612_300, 64_800),
+		},
+		{
+			purpose: "reflect",
+			day: counts(2, 12_800, 1_940),
+			week: counts(9, 55_100, 8_300),
+		},
+		{
+			purpose: "consolidation",
+			day: counts(6, 31_200, 4_400),
+			week: counts(40, 198_700, 27_500),
+		},
+		{
+			purpose: "mental_model",
+			day: counts(1, 8_900, 1_100),
+			week: counts(7, 60_200, 7_900),
+		},
+		{
+			purpose: "embed",
+			day: counts(44, 22_000, 0),
+			week: counts(310, 158_000, 0),
+		},
+		{
+			purpose: "rerank",
+			day: counts(12, 9_600, 0),
+			week: counts(85, 70_400, 0),
+		},
+	];
+	const pendingDeletes: Schemas["MemoryPendingDelete"][] = [
+		{
+			documentId: "019a2f90-1b3c-7e4d-8f50-6a7b8c9d0e1f",
+			projectId: core,
+			attempts: 3,
+			nextAttemptAt: NOW_SEC + 15 * 60,
+			lastError:
+				"DELETE /v1/default/banks/oryn/documents/019a2f90-1b3c-7e4d-8f50-6a7b8c9d0e1f: 503 Service Unavailable",
+		},
+	];
+	return {
+		documents,
+		candidates,
+		mentalModels,
+		options,
+		usage,
+		pendingDeletes,
+	};
+}

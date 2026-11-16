@@ -792,6 +792,47 @@ async function openArtifact(
 	await open(page, `/artifacts/${id}${query}`, ready, 1500);
 }
 
+/** 记忆管理页的某张卡片滚到视口顶部（设置页只有内容区滚动）。 */
+async function scrollToCard(page: Page, title: string) {
+	await page
+		.getByRole("heading", { name: title, exact: true })
+		.first()
+		.evaluate((el) =>
+			el.closest("section")?.scrollIntoView({ block: "start" }),
+		);
+	await settle(page, 400);
+}
+
+/**
+ * M16 记忆管理页（设置 → Agent → 记忆）：页顶（状态、连接、项目开关）；换了协议待重启的模型卡与嵌入锁定的接口卡
+ * （`oryn.mock.memory = "restart"`）；浏览、全局记忆与待批准三张列表卡。
+ */
+function memoryScreens(): Screen[] {
+	return [
+		{
+			name: "agent-memory",
+			fresh: true,
+			prepare: ({ page }) => open(page, "/settings/agent-memory", "main", 1200),
+		},
+		{
+			name: "agent-memory-models",
+			init: `localStorage.setItem("oryn.mock.memory","restart");`,
+			prepare: async ({ page }) => {
+				await open(page, "/settings/agent-memory", "main", 1200);
+				await scrollToCard(page, "模型");
+			},
+		},
+		{
+			name: "agent-memory-lists",
+			fresh: true,
+			prepare: async ({ page }) => {
+				await open(page, "/settings/agent-memory", "main", 1200);
+				await scrollToCard(page, "浏览");
+			},
+		},
+	];
+}
+
 /**
  * M14 Artifacts（计划 9.2）：总览页、最近删除、页面查看器、版本历史、评论、右面板、画布、分享弹层（手机上是底部抽屉）。
  * mock 夹具直达（`ARTIFACT_IDS`）；评论没有夹具，进页面后经 mock 的接口建两条再打开评论面板。
@@ -1559,6 +1600,7 @@ const SCREENS: Screen[] = [
 	...m9Screens(),
 	...m14Screens(),
 	...artifactScreens(),
+	...memoryScreens(),
 	// 手机线程页的视图菜单（对话 / 改动 / 文件 / 终端 … / 信息），展开状态
 	{
 		name: "thread-compact-views",

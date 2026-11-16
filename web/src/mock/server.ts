@@ -65,6 +65,7 @@ import {
 } from "./fixtures";
 import { MockGitHub } from "./github";
 import { MockLibrary } from "./library";
+import { MockMemory } from "./memory";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { handleSearchFetch } from "./search";
@@ -502,6 +503,11 @@ export class MockServer {
 			});
 		},
 	});
+	/** 内置 Hindsight 记忆（M16）。 */
+	readonly memory = new MockMemory({
+		restart: (reason) => this.noteRestartReason(reason),
+		threadTitle: (id) => this.threads.get(id)?.title,
+	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
 		email: "owner@oryn.example",
@@ -577,6 +583,26 @@ export class MockServer {
 	applyReloads = { count: 0, until: 0 };
 	/** 全局 omp-home 的模拟下发：写入后 1 秒（服务端的防抖时长）完成。 */
 	applyPushAt?: number;
+
+	/** 非 omp-home 的设置改动（如记忆开关）要求重启：同样记到「agent 在跑」的那几个线程上。 */
+	private noteRestartReason(reason: string): void {
+		const live = [...this.threads.values()]
+			.filter(
+				(t) =>
+					!t.archivedAt &&
+					(t.kind ?? "work") === "work" &&
+					t.state !== "error" &&
+					t.state !== "provisioning",
+			)
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, 3);
+		for (const t of live) {
+			const entry = this.applyRestarts.get(t.id) ?? { reasons: new Set() };
+			entry.reasons.add(reason);
+			entry.scheduledAt = undefined;
+			this.applyRestarts.set(t.id, entry);
+		}
+	}
 
 	/** 全局 omp-home 的一次写入或删除：按 docs/protocol.md「会话级生效与懒重启」的分类记到线程上（`config.yml` 只比较 `disabledExtensions`）。 */
 	private noteOmpHomeChange(path: string, before: string | undefined): void {
@@ -1525,6 +1551,8 @@ export class MockServer {
 		}
 		const githubRes = await this.github.handle(p, m, body, url);
 		if (githubRes) return githubRes;
+		const memoryRes = await this.memory.handle(p, m, body, url);
+		if (memoryRes) return memoryRes;
 		const runnerRes = await this.handleRunnerFetch(p, m, body);
 		if (runnerRes) return runnerRes;
 		if (p === "providers" && m === "GET") return json({ providers });

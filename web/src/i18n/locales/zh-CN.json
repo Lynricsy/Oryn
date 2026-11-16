@@ -1128,6 +1128,7 @@
 		"agent-prompts": "提示词与上下文",
 		"agent-commands": "命令与规则",
 		"agent-extensions": "扩展与工具",
+		"agent-memory": "记忆",
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
@@ -1233,6 +1234,332 @@
 		"hint": "omp 的文本配置（config.yml、models.yml、AGENTS.md、skills/ …）。models.yml 里的明文 API key 保存时自动抽进密钥库。",
 		"pushHint": "用 oryn config push 从本机导入。",
 		"title": "agent 配置"
+	},
+	"memoryPage": {
+		"scope": "作用于 orb 与 runner，不作用于全局助手。同一项目的线程共享该项目的记忆，全局记忆所有项目都能召回，项目之间互相看不到。开关改动对新启动的 agent 生效。",
+		"failed": "{{step}}失败",
+		"listSep": "、",
+		"steps": {
+			"loadSettings": "读取连接设置",
+			"saveSettings": "保存连接设置",
+			"loadStatus": "检查 Hindsight 状态",
+			"generateEnv": "生成 .env",
+			"loadProjects": "读取项目列表",
+			"saveProject": "修改项目开关",
+			"loadModels": "读取模型设置",
+			"saveModels": "保存模型设置",
+			"confirmDeployed": "确认已重启 Hindsight",
+			"loadEndpoints": "读取嵌入与重排接口",
+			"saveEndpoint": "保存接口设置",
+			"loadUsage": "读取用量",
+			"loadDocuments": "读取记忆列表",
+			"deleteDocument": "删除记忆",
+			"search": "搜索记忆",
+			"forget": "按线程遗忘",
+			"loadPendingDeletes": "读取删除重试队列",
+			"loadCandidates": "读取待批准的记忆",
+			"approve": "批准记忆",
+			"reject": "拒绝记忆",
+			"createGlobal": "新建全局记忆",
+			"updateGlobal": "保存全局记忆",
+			"loadMentalModels": "读取 mental models",
+			"refreshMentalModel": "刷新 mental model",
+			"createExport": "开始导出",
+			"loadExport": "查询导出进度"
+		},
+		"errors": {
+			"insecure_url": {
+				"why": "远端地址必须用 https://，只有本机（127.0.0.1、localhost）和内网地址可以用 http://。",
+				"next": "把地址改成 https://，或把 Hindsight 部署在 orynd 同一台机器上。"
+			},
+			"unsupported_model": {
+				"why": "选中的模型不在中央模型目录里，或它的协议不是 OpenAI 兼容、Anthropic、Gemini 之一。",
+				"next": "换一个可选（没有置灰）的模型后再保存。"
+			},
+			"embed_locked": {
+				"why": "bank 里已经有记忆，嵌入模型和维度不能直接修改。",
+				"next": "地址和 key 仍可修改；要换嵌入模型，勾选「换嵌入模型（reembed）」后再保存。"
+			},
+			"hindsight_running": {
+				"why": "Hindsight 仍在运行，换嵌入模型前必须先停止它的 API。",
+				"next": "先停止 API（docker compose stop api），再保存。"
+			},
+			"family_mismatch": {
+				"why": "选中模型的协议类型与 Hindsight 的 .env 里部署的不一致。",
+				"next": "按模型卡给出的片段修改 .env，重启 Hindsight 后点「我已重启」。"
+			},
+			"export_not_ready": {
+				"why": "导出还没有完成。",
+				"next": "等进度变成「完成」后再下载。"
+			},
+			"memory_disabled": {
+				"why": "记忆总开关是关闭的。",
+				"next": "在「连接」卡里打开总开关后重试。"
+			},
+			"not_implemented": {
+				"why": "当前的 orynd 还不支持这项记忆操作。",
+				"next": "把 orynd 升级到带记忆功能的版本后重试。"
+			},
+			"not_found": {
+				"why": "要操作的条目已经不存在，可能已被删除。",
+				"next": "刷新页面后再试。"
+			},
+			"invalid_request": {
+				"why": "提交的内容不符合要求。",
+				"next": "检查填写的内容（地址格式、长度、数值）后重试。"
+			},
+			"unauthorized": {
+				"why": "登录已失效。",
+				"next": "重新登录后再试。"
+			},
+			"forbidden": {
+				"why": "这个设备没有权限做这项操作。",
+				"next": "用主人的浏览器会话重试。"
+			},
+			"rate_limited": {
+				"why": "请求太频繁，被控制面限流了。",
+				"next": "稍等片刻再试。"
+			},
+			"http": {
+				"why": "控制面返回了错误（HTTP {{status}}）。",
+				"next": "稍后重试；一直失败请查看 orynd 日志。"
+			},
+			"network": {
+				"why": "连不上 Oryn 控制面。",
+				"next": "检查网络连接后重试。"
+			}
+		},
+		"status": {
+			"title": "状态",
+			"recheck": "重新检查",
+			"checkedAt": "{{when}}检查",
+			"detail": "原因：{{detail}}",
+			"deployDoc": "查看部署文档「Hindsight 记忆服务」",
+			"versionMismatch": "Hindsight 版本未经验证",
+			"versionMismatchHint": "服务端是 {{version}}，Oryn 只验证过 {{tested}}.x。升级前先按部署文档的小版本升级清单检查，或把镜像钉回 {{tested}}。",
+			"version": "版本",
+			"tested": "已验证 {{tested}}.x",
+			"memoryCount": "记忆数",
+			"candidates": "待批准",
+			"pendingDeletes": "删除待重试",
+			"pendingHint": "这些 document 删除失败，控制面会自动重试：",
+			"pendingMeta": "已尝试 {{n}} 次 · 下次重试 {{when}}"
+		},
+		"state": {
+			"unconfigured": {
+				"label": "未配置",
+				"title": "还没有填写 Hindsight 地址",
+				"action": "在下面的「连接」卡填写 Hindsight 地址，然后生成 .env 部署服务。"
+			},
+			"no_keys": {
+				"label": "未生成 .env",
+				"title": "还没有生成 .env",
+				"action": "点「生成 .env」，把内容存为 deploy/hindsight/.env，然后执行 docker compose up -d。"
+			},
+			"disabled": {
+				"label": "已关闭",
+				"title": "记忆总开关已关闭",
+				"action": "新启动的 agent 不带记忆，记忆网关拒绝一切记忆请求。打开总开关后，需要重启的会话会列在页顶。"
+			},
+			"ok": {
+				"label": "正常",
+				"title": "正常",
+				"action": "Hindsight 可达且已就绪。"
+			},
+			"unreachable": {
+				"label": "连不上",
+				"title": "连不上 Hindsight",
+				"action": "确认服务在运行（docker compose ps），地址和端口正确，且 orynd 所在的机器能访问它。"
+			},
+			"unauthorized": {
+				"label": "key 不对",
+				"title": "Hindsight 不接受 API key",
+				"action": "Hindsight 的 .env 与 Oryn 记录的 key 不一致：重新生成 .env，替换后重启 Hindsight。"
+			},
+			"not_ready": {
+				"label": "未就绪",
+				"title": "Hindsight 还没有就绪",
+				"action": "/health/ready 没有返回 200：多半还在启动，或连不上 Postgres。用 docker compose logs hindsight 查看原因。"
+			},
+			"suspect_empty": {
+				"label": "记忆数变成 0",
+				"title": "记忆数突然变成 0",
+				"action": "上次还有记忆，这次是 0：Hindsight 很可能连不上外部数据库，改用了一个空的内嵌库。先停止写入，按部署文档排查数据库连接。"
+			}
+		},
+		"connection": {
+			"title": "连接",
+			"enabled": "启用记忆（总开关）",
+			"url": "Hindsight 地址",
+			"urlHint": "Hindsight API 的根地址。不在本机或内网时必须用 https://。",
+			"language": "记忆输出语言：{{language}}（固定）",
+			"keysAt": "已生成 .env（{{when}}）",
+			"noKeys": "还没有生成 .env"
+		},
+		"env": {
+			"title": "生成 Hindsight 的 .env",
+			"generate": "生成 .env",
+			"regenerate": "重新生成 .env",
+			"done": "我已保存",
+			"intro": ".env 里有 Hindsight 的 API key、中转令牌、各用途的模型别名与中转地址、嵌入与重排的中转地址、输出语言、并发上限和 worker ID。",
+			"rotateTitle": "旧的密钥会立即失效",
+			"rotateHint": "重新生成会轮换 API key 和中转令牌：在 Hindsight 换上新的 .env 并重启之前，记忆功能不可用。",
+			"onceTitle": "只显示这一次",
+			"onceHint": "两个密钥只在这里出现一次，关闭后无法再查看。现在就复制并保存为 deploy/hindsight/.env。",
+			"next": "保存后在 deploy/hindsight 目录执行 docker compose up -d，状态卡变成「正常」即可。"
+		},
+		"projects": {
+			"title": "项目",
+			"empty": "还没有项目",
+			"hint": "关闭后，该项目新启动的 agent 不再启用记忆，其他项目不受影响。",
+			"followsGlobal": "跟随总开关",
+			"toggle": "{{name}} 的记忆"
+		},
+		"models": {
+			"title": "模型",
+			"hint": "Hindsight 的模型请求经 orynd 中转，使用 Oryn 已配置的 provider 密钥。同一协议内换模型立即生效；换协议需要重启 Hindsight。",
+			"needsRestartBadge": "待重启",
+			"pick": "选择模型",
+			"followNamed": "跟随默认（{{name}}）",
+			"follow": "跟随默认",
+			"missing": "{{name}}（已不在模型目录里）",
+			"option": "{{name}} · {{provider}}（{{family}}）",
+			"optionUnavailable": "{{name}} · {{provider}} — 不可用：{{reason}}",
+			"unknownReason": "协议不受支持",
+			"unavailable": "有 {{n}} 个模型不能用于 Hindsight（灰色项），原因写在选项里。",
+			"needsRestart": "需要重启 Hindsight",
+			"needsRestartHint": "{{purposes}}换了协议类型。把下面几行改进 Hindsight 的 .env，重启 Hindsight 后点「我已重启」；在此之前，这些用途的请求会被拒绝。",
+			"restarted": "我已重启"
+		},
+		"purpose": {
+			"default": "默认",
+			"retain": "写入（retain）",
+			"reflect": "反思（reflect）",
+			"consolidation": "整理（consolidation）",
+			"mental_model": "mental model 刷新"
+		},
+		"purposeHint": {
+			"default": "其他用途没有单独指定时都用它，必选。",
+			"retain": "从对话里抽取事实写入记忆。",
+			"reflect": "agent 调用 reflect 时综合回答。",
+			"consolidation": "后台合并、整理已有记忆。",
+			"mental_model": "刷新 mental model 的内容。"
+		},
+		"family": {
+			"openai": "OpenAI 兼容",
+			"anthropic": "Anthropic",
+			"gemini": "Gemini"
+		},
+		"endpoints": {
+			"title": "嵌入与重排",
+			"embed": {
+				"title": "嵌入",
+				"protocol": "OpenAI 兼容",
+				"urlPlaceholder": "https://api.openai.com/v1"
+			},
+			"rerank": {
+				"title": "重排",
+				"protocol": "Cohere 兼容",
+				"urlPlaceholder": "https://api.cohere.com/v2"
+			},
+			"lockedBadge": "模型已锁定",
+			"lockedHint": "bank 里已经有记忆，嵌入模型和维度默认只读；地址和 key 仍可修改。换嵌入模型的步骤见",
+			"reembedDoc": "docs/deploy.md「换嵌入模型」",
+			"reembed": "换嵌入模型（reembed）",
+			"reembedHint": "需先停止 Hindsight API（docker compose stop api），保存后按 deploy.md「换嵌入模型」执行迁移；迁移期间记忆不可用。",
+			"baseUrl": "接口地址",
+			"model": "模型",
+			"dimensions": "维度",
+			"apiKey": "API key",
+			"keySet": "已设置；留空保持不变。key 加密保存，只经 orynd 中转，不会显示。",
+			"keyUnset": "未设置。key 加密保存，只经 orynd 中转。",
+			"keyEmpty": "粘贴 API key",
+			"clearKey": "删除已保存的 key",
+			"dimensionsInvalid": "维度必须是正整数。"
+		},
+		"browse": {
+			"title": "浏览",
+			"project": "项目",
+			"searchPlaceholder": "按关键词召回（含全局记忆）",
+			"search": "搜索",
+			"resultsFor": "「{{q}}」的召回结果",
+			"clearSearch": "清除搜索",
+			"noHits": "没有召回到相关记忆。",
+			"global": "全局",
+			"forgotten": "已删除 {{n}} 个 document。",
+			"forgetPending": "另有 {{n}} 个删除失败，已进入重试队列。",
+			"empty": "这个项目还没有记忆。",
+			"pageEmpty": "这一页没有内容了。",
+			"range": "第 {{from}}–{{to}} 条",
+			"prev": "上一页",
+			"next": "下一页",
+			"thread": "来源线程",
+			"updated": "{{when}}更新",
+			"forget": "按线程遗忘",
+			"forgetConfirm": "确认删除该线程的全部记忆",
+			"deleteConfirm": "确认删除"
+		},
+		"global": {
+			"title": "全局记忆",
+			"add": "新建",
+			"hint": "所有项目和无项目线程都能召回。新建或改写后，全局的 user-preferences 会自动刷新。",
+			"empty": "还没有全局记忆。",
+			"newLabel": "新全局记忆的内容",
+			"editLabel": "全局记忆的内容"
+		},
+		"candidates": {
+			"title": "待批准",
+			"empty": "没有待批准的记忆。",
+			"hint": "agent 提议的全局记忆，以及无项目线程写入的记忆，先放在这里，不进 Hindsight。批准后立即成为全局记忆；拒绝即删除。",
+			"editLabel": "改写后批准的内容",
+			"approve": "批准",
+			"context": "背景：{{text}}",
+			"proposed": "{{when}}提议",
+			"edit": "改写后批准",
+			"reject": "拒绝",
+			"rejectConfirm": "确认拒绝"
+		},
+		"mental": {
+			"title": "Mental models",
+			"scope": "范围",
+			"global": "全局（user-preferences）",
+			"empty": "这个范围还没有 mental model。",
+			"refresh": "刷新",
+			"source": "提炼依据：{{query}}",
+			"noContent": "还没有内容。",
+			"refreshedAt": "{{when}}刷新",
+			"neverRefreshed": "还没有刷新过",
+			"submitted": "已提交刷新，稍后再看"
+		},
+		"usage": {
+			"title": "用量",
+			"day": "24 小时",
+			"week": "7 天",
+			"empty": "还没有中转记录。",
+			"purpose": "用途",
+			"calls": "调用",
+			"input": "输入 token",
+			"output": "输出 token"
+		},
+		"usagePurpose": {
+			"default": "默认",
+			"retain": "写入",
+			"reflect": "反思",
+			"consolidation": "整理",
+			"mental_model": "mental model 刷新",
+			"embed": "嵌入",
+			"rerank": "重排"
+		},
+		"export": {
+			"title": "导出",
+			"hint": "导出 bank oryn 的全部记忆为归档文件。定时整库备份的做法见",
+			"backupDoc": "部署文档",
+			"start": "导出 bank",
+			"running": "正在导出……",
+			"download": "下载归档（{{when}}开始）",
+			"failed": "导出失败",
+			"failedNext": "确认 Hindsight 状态正常后重新导出；一直失败请查看 docker compose logs hindsight。"
+		}
 	},
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
