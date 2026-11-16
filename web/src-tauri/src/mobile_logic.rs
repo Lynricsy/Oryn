@@ -1,4 +1,4 @@
-//! 移动端的纯逻辑：导航判定、推送状态归并与订阅同步、分享接收流程、`MobileInfo`。
+//! 移动端的纯逻辑：导航判定、推送状态归并与订阅同步、分享接收流程、`MobileInfo`、原生底栏入参校验。
 //!
 //! 不带平台 `cfg`、不依赖 Tauri：原生能力经 [`Native`]、网络经 [`Api`]，在主机上即可单测。
 //! 桌面不调用这里（只在单测里覆盖），故整体允许未使用。
@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri_plugin_oryn_mobile::{
-    CornerRadii, Insets, Permission, PushChannel, PushState, ShareIntake,
+    CornerRadii, Insets, Permission, PushChannel, PushState, ShareIntake, TabBarIcon, TabBarReveal,
+    TabBarSpec,
 };
 
 use crate::api::{Api, ApiError, PushSubscription};
@@ -316,6 +317,102 @@ pub struct MobileInfo {
 /// 页面事件 `{type:"insets", cornerRadii, insets}`。
 pub fn insets_event(corner_radii: CornerRadii, insets: Insets) -> Value {
     json!({"type": "insets", "cornerRadii": corner_radii, "insets": insets})
+}
+
+// ---------------------------------------------------------------- 原生底栏
+
+/// 底栏项 id：1–32 字节的 `[a-z0-9_-]`。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub fn valid_tab_id(id: &str) -> bool {
+    (1..=32).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+}
+
+/// 页面事件 `{type:"tabbar", id}`。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub fn tab_bar_event(id: &str) -> Value {
+    json!({"type": "tabbar", "id": id})
+}
+
+fn valid_tab_icon(icon: &TabBarIcon) -> bool {
+    match icon {
+        TabBarIcon::Symbol(s) => {
+            (1..=64).contains(&s.len())
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.')
+        }
+        TabBarIcon::Glyph(g) => (1..=32).contains(&g.len()),
+        TabBarIcon::Image(b64) => {
+            (1..=131_072).contains(&b64.len())
+                && b64
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+        }
+    }
+}
+
+/// `v` 有限且落在 `[lo, hi]` 内（NaN 与无穷都不算）。
+fn within(v: f64, lo: f64, hi: f64) -> bool {
+    v.is_finite() && (lo..=hi).contains(&v)
+}
+
+/// `host_tab_bar_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
+/// items 1..=6、id 互不相同且 `valid_tab_id`；label 1..=64 个字符；
+/// icon：symbol 1..=64 字节 `[a-z0-9.]`，glyph 1..=32 字节，image 1..=131072 字节且全是 base64 字符（`A-Za-z0-9+/=`）；
+/// selected ≤ 32 字节；frame 四项有限，x、y ∈ [-100, 5000]，width ∈ [1, 2000]，height ∈ [1, 400]；
+/// accent 为 None 或 `valid_color`。
+pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
+    let items = &spec.items;
+    let items_ok = (1..=6).contains(&items.len())
+        && items.iter().enumerate().all(|(i, item)| {
+            valid_tab_id(&item.id)
+                && items[..i].iter().all(|prev| prev.id != item.id)
+                && (1..=64).contains(&item.label.chars().count())
+                && valid_tab_icon(&item.icon)
+        });
+    let f = &spec.frame;
+    items_ok
+        && spec.selected.len() <= 32
+        && within(f.x, -100.0, 5000.0)
+        && within(f.y, -100.0, 5000.0)
+        && within(f.width, 1.0, 2000.0)
+        && within(f.height, 1.0, 400.0)
+        && spec.accent.as_deref().is_none_or(valid_color)
+}
+
+/// x 有限且 ∈ [-10000, 10000]；alpha ∈ [0, 1]；ms ≤ 2000；delay ≤ 1000；
+/// ease 为 None，或四项有限、第 0 / 2 项 ∈ [0, 1]、第 1 / 3 项 ∈ [-2, 3]。
+pub fn valid_reveal(r: &TabBarReveal) -> bool {
+    within(r.x, -10_000.0, 10_000.0)
+        && within(r.alpha, 0.0, 1.0)
+        && r.ms <= 2000
+        && r.delay <= 1000
+        && r.ease.is_none_or(|[x1, y1, x2, y2]| {
+            within(x1, 0.0, 1.0)
+                && within(x2, 0.0, 1.0)
+                && within(y1, -2.0, 3.0)
+                && within(y2, -2.0, 3.0)
+        })
+}
+
+/// CI 演示用：夹具 tab-bar-set.json，只把 frame 换成该屏幕下网页会算出的位置。返回 (spec, 侧栏宽度)。
+/// sink_w = min(0.82 * width, 320)；frame = {x: 12, y: height - max(safe_bottom, 8) - 52, width: sink_w - 24, height: 52}
+#[cfg(any(test, all(debug_assertions, target_os = "ios")))]
+pub fn demo_tab_bar(width: f64, height: f64, safe_bottom: f64) -> (TabBarSpec, f64) {
+    let mut spec: TabBarSpec = serde_json::from_str(include_str!(
+        "../plugins/oryn-mobile/fixtures/tab-bar-set.json"
+    ))
+    .expect("tab-bar-set.json 夹具");
+    let sink_w = (0.82 * width).min(320.0);
+    spec.frame = tauri_plugin_oryn_mobile::TabBarFrame {
+        x: 12.0,
+        y: height - safe_bottom.max(8.0) - 52.0,
+        width: sink_w - 24.0,
+        height: 52.0,
+    };
+    (spec, sink_w)
 }
 
 // ---------------------------------------------------------------- 分享
@@ -839,6 +936,157 @@ mod tests {
             "#eef0f4;x",
         ] {
             assert!(!valid_color(bad), "{bad}");
+        }
+    }
+
+    const TAB_BAR_SET: &str = include_str!("../plugins/oryn-mobile/fixtures/tab-bar-set.json");
+    const TAB_BAR_REVEAL: &str =
+        include_str!("../plugins/oryn-mobile/fixtures/tab-bar-reveal.json");
+
+    /// 整数与浮点在 `Value` 里不相等（`12` ≠ `12.0`）：统一成浮点再比。
+    fn norm(v: Value) -> Value {
+        match v {
+            Value::Number(n) => json!(n.as_f64()),
+            Value::Array(a) => Value::Array(a.into_iter().map(norm).collect()),
+            Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k, norm(v))).collect()),
+            other => other,
+        }
+    }
+
+    fn fixture_spec() -> TabBarSpec {
+        serde_json::from_str(TAB_BAR_SET).unwrap()
+    }
+
+    fn fixture_reveal() -> TabBarReveal {
+        serde_json::from_str(TAB_BAR_REVEAL).unwrap()
+    }
+
+    /// 夹具 = TS、Rust、Swift 三方的共同契约：Rust 能原样读回、写出。
+    #[test]
+    fn tab_bar_fixtures_round_trip() {
+        let raw: Value = serde_json::from_str(TAB_BAR_SET).unwrap();
+        assert_eq!(
+            norm(serde_json::to_value(fixture_spec()).unwrap()),
+            norm(raw)
+        );
+        let raw: Value = serde_json::from_str(TAB_BAR_REVEAL).unwrap();
+        assert_eq!(
+            norm(serde_json::to_value(fixture_reveal()).unwrap()),
+            norm(raw)
+        );
+    }
+
+    fn tab_item(id: &str) -> tauri_plugin_oryn_mobile::TabBarItem {
+        tauri_plugin_oryn_mobile::TabBarItem {
+            id: id.into(),
+            label: id.into(),
+            icon: TabBarIcon::Symbol("folder".into()),
+            badge: None,
+        }
+    }
+
+    /// 在夹具上改一处后应被 `valid_tab_bar` 拒绝。
+    fn rejects_spec(name: &str, mutate: impl FnOnce(&mut TabBarSpec)) {
+        let mut s = fixture_spec();
+        mutate(&mut s);
+        assert!(!valid_tab_bar(&s), "{name}");
+    }
+
+    /// 在夹具上改一处后应被 `valid_reveal` 拒绝。
+    fn rejects_reveal(name: &str, mutate: impl FnOnce(&mut TabBarReveal)) {
+        let mut r = fixture_reveal();
+        mutate(&mut r);
+        assert!(!valid_reveal(&r), "{name}");
+    }
+
+    #[test]
+    fn tab_bar_limits() {
+        assert!(valid_tab_bar(&fixture_spec()));
+        rejects_spec("7 项", |s| {
+            s.items = (0..7).map(|i| tab_item(&format!("t{i}"))).collect()
+        });
+        rejects_spec("没有项", |s| s.items.clear());
+        rejects_spec("重复 id", |s| s.items[1].id = "threads".into());
+        rejects_spec("id 含大写", |s| s.items[0].id = "Threads".into());
+        rejects_spec("label 65 字符", |s| s.items[0].label = "字".repeat(65));
+        rejects_spec("label 为空", |s| s.items[0].label.clear());
+        rejects_spec("symbol 含大写", |s| {
+            s.items[0].icon = TabBarIcon::Symbol("Folder".into())
+        });
+        rejects_spec("image 131073 字节", |s| {
+            s.items[0].icon = TabBarIcon::Image("A".repeat(131_073))
+        });
+        rejects_spec("image 非 base64", |s| {
+            s.items[0].icon = TabBarIcon::Image("data:image/png".into())
+        });
+        rejects_spec("glyph 33 字节", |s| {
+            s.items[0].icon = TabBarIcon::Glyph("a".repeat(33))
+        });
+        rejects_spec("selected 33 字节", |s| s.selected = "a".repeat(33));
+        rejects_spec("frame 宽 0", |s| s.frame.width = 0.0);
+        rejects_spec("frame 高 401", |s| s.frame.height = 401.0);
+        rejects_spec("frame y 越界", |s| s.frame.y = 5000.5);
+        rejects_spec("frame x 为 NaN", |s| s.frame.x = f64::NAN);
+        rejects_spec("frame 宽为无穷", |s| s.frame.width = f64::INFINITY);
+        rejects_spec("accent red", |s| s.accent = Some("red".into()));
+        // 边界上的合法值
+        let mut s = fixture_spec();
+        s.items = (0..6).map(|i| tab_item(&format!("t{i}"))).collect();
+        s.items[0].label = "字".repeat(64);
+        s.items[1].icon = TabBarIcon::Image("A".repeat(131_072));
+        s.items[2].icon = TabBarIcon::Glyph("🦊".into());
+        s.accent = None;
+        s.selected = String::new();
+        assert!(valid_tab_bar(&s));
+    }
+
+    #[test]
+    fn reveal_limits() {
+        assert!(valid_reveal(&fixture_reveal()));
+        assert!(valid_reveal(&TabBarReveal {
+            x: 0.0,
+            alpha: 0.0,
+            ms: 0,
+            delay: 0,
+            ease: None,
+        }));
+        rejects_reveal("alpha 1.5", |r| r.alpha = 1.5);
+        rejects_reveal("ms 2001", |r| r.ms = 2001);
+        rejects_reveal("delay 1001", |r| r.delay = 1001);
+        rejects_reveal("ease[0] 1.2", |r| r.ease = Some([1.2, 0.8, 0.2, 1.0]));
+        rejects_reveal("ease[3] 3.5", |r| r.ease = Some([0.2, 0.8, 0.2, 3.5]));
+        rejects_reveal("x 为 NaN", |r| r.x = f64::NAN);
+        rejects_reveal("x 越界", |r| r.x = 10_001.0);
+    }
+
+    #[test]
+    fn tab_bar_demo_and_event() {
+        let (spec, sink_w) = demo_tab_bar(393.0, 852.0, 34.0);
+        assert_eq!(sink_w, 320.0);
+        assert_eq!(
+            spec.frame,
+            tauri_plugin_oryn_mobile::TabBarFrame {
+                x: 12.0,
+                y: 766.0,
+                width: 296.0,
+                height: 52.0,
+            }
+        );
+        // 其余字段照抄夹具，且仍过校验
+        assert_eq!(spec.items, fixture_spec().items);
+        assert!(valid_tab_bar(&spec));
+        // 窄屏：侧栏宽 = 0.82 × 屏宽；没有安全区时离底 8
+        let (spec, sink_w) = demo_tab_bar(300.0, 600.0, 0.0);
+        assert!((sink_w - 246.0).abs() < 1e-9);
+        assert_eq!(spec.frame.y, 540.0);
+        assert_eq!(
+            tab_bar_event("more"),
+            json!({"type": "tabbar", "id": "more"})
+        );
+        assert!(valid_tab_id("more"));
+        assert!(valid_tab_id("a_b-9"));
+        for bad in ["", "More", "a b", "x.y", &"a".repeat(33)] {
+            assert!(!valid_tab_id(bad), "{bad}");
         }
     }
 

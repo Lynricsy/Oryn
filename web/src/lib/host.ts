@@ -15,6 +15,7 @@
  * 另有 `share`（系统分享已上传为附件）、`mobile`（推送状态变了）、`insets`（屏幕圆角与原生 inset 变了）三个事件；
  * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
  * 桌面壳 bridge ≥ 3 去掉了系统标题栏：`__ORYN_HOST__.chrome` 声明按钮布局，窗口操作与 `window` 事件见 `window-chrome.ts`。
+ * 移动壳 bridge ≥ 4 且 platform 为 ios：`mobile.tabBar` 非空（原生底栏，见 `native-tab-bar.ts`），另有 `tabbar` 事件（用户点了原生底栏的一项）。
  */
 
 import type { Attachment } from "./attachments";
@@ -132,6 +133,45 @@ export interface ShareIntake {
 	failed: { name: string; reason: string }[];
 }
 
+/** 原生底栏的一项（iOS 26+，见 `native-tab-bar.ts`）。 */
+export interface NativeTabBarItem {
+	id: string;
+	label: string;
+	/** SF Symbol 名 / 单个字形 / PNG 的 base64（不带 data: 前缀）。 */
+	icon: { symbol: string } | { glyph: string } | { image: string };
+	badge?: "accent" | "warn" | "err";
+}
+
+/** 原生底栏的整份状态；只在内容变了时发。 */
+export interface NativeTabBarSpec {
+	items: NativeTabBarItem[];
+	selected: string;
+	/** 胶囊在布局视口里的矩形（CSS px）。 */
+	frame: { x: number; y: number; width: number; height: number };
+	dark: boolean;
+	/** 选中项颜色 `#rrggbb`；null = 系统强调色。 */
+	accent: string | null;
+}
+
+/** 原生底栏的揭示状态：拖动时逐帧发，吸附时只发端点。 */
+export interface NativeTabBarReveal {
+	/** 揭示边：视口 x 坐标（CSS px），其左侧的底栏可见。 */
+	x: number;
+	alpha: number;
+	/** 过渡时长（整数毫秒）；0 = 立即。 */
+	ms: number;
+	/** 过渡开始前的等待（整数毫秒）。 */
+	delay: number;
+	/** cubic-bezier 控制点。 */
+	ease?: [number, number, number, number];
+}
+
+export interface NativeTabBarHost {
+	/** 拒绝 = 原生底栏不可用，调用方退回网页底栏。 */
+	set(spec: NativeTabBarSpec | null): Promise<void>;
+	reveal(r: NativeTabBarReveal): Promise<void>;
+}
+
 export interface MobileHost {
 	info(): Promise<MobileInfo>;
 	enablePush(): Promise<MobileInfo>;
@@ -141,6 +181,8 @@ export interface MobileHost {
 	setChrome(c: { dark: boolean; color: string }): void;
 	openNotificationSettings(): void;
 	changeServer(): void;
+	/** 原生底栏（iOS 且 bridge ≥ 4）；其它情况为 null，用网页底栏。 */
+	tabBar: NativeTabBarHost | null;
 }
 
 export interface Host {
@@ -163,12 +205,14 @@ export interface Host {
 	onMobile(cb: () => void): () => void;
 	/** 屏幕圆角 / inset 变了（旋转、折叠、软键盘；仅移动壳）。 */
 	onInsets(cb: (g: DeviceGeometry) => void): () => void;
+	/** 用户点了原生底栏的一项（仅 iOS 移动壳；点已选中项同样上报）。 */
+	onTabBar(cb: (id: string) => void): () => void;
 	desktop: DesktopHost | null;
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏）。 */
-export const BRIDGE = 3;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏）。 */
+export const BRIDGE = 4;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -235,6 +279,7 @@ function webHost(win: Window): Host {
 		onShare: () => noop,
 		onMobile: () => noop,
 		onInsets: () => noop,
+		onTabBar: () => noop,
 		desktop: null,
 		mobile: null,
 	};
@@ -339,6 +384,7 @@ function mobileHost(
 		cmd: string,
 		args?: Record<string, unknown>,
 	) => Promise<T | undefined>,
+	nativeTabBar: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
 		void call("host_open_external", { url });
@@ -385,6 +431,13 @@ function mobileHost(
 		changeServer: () => {
 			void call("host_change_server");
 		},
+		// 用 invoke 不用 call：拒绝要交给调用方退回网页底栏
+		tabBar: nativeTabBar
+			? {
+					set: (spec) => invoke<void>("host_tab_bar_set", { spec }),
+					reveal: (reveal) => invoke<void>("host_tab_bar_reveal", { reveal }),
+				}
+			: null,
 	};
 }
 
@@ -400,6 +453,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const share = listeners<[ShareIntake]>();
 	const mobileChanged = listeners<[]>();
 	const insets = listeners<[DeviceGeometry]>();
+	const tabBar = listeners<[string]>();
 	const isMobile =
 		(platform === "android" || platform === "ios") && (meta?.bridge ?? 0) >= 2;
 
@@ -417,6 +471,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			share?: unknown;
 			cornerRadii?: unknown;
 			insets?: unknown;
+			id?: unknown;
 		} | null;
 		if (!d || typeof d !== "object") return;
 		if (d.type === "visibility" && typeof d.visible === "boolean")
@@ -431,7 +486,8 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		else if (isMobile && d.type === "insets") {
 			const g = parseGeometry(d);
 			if (g) insets.emit(g);
-		}
+		} else if (isMobile && d.type === "tabbar" && typeof d.id === "string")
+			tabBar.emit(d.id);
 	});
 
 	/** 发出即忘：拒绝只记日志。 */
@@ -487,7 +543,15 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		onShare: (cb) => share.add(cb),
 		onMobile: (cb) => mobileChanged.add(cb),
 		onInsets: (cb) => insets.add(cb),
-		mobile: isMobile ? mobileHost(win, invoke, call) : null,
+		onTabBar: (cb) => tabBar.add(cb),
+		mobile: isMobile
+			? mobileHost(
+					win,
+					invoke,
+					call,
+					platform === "ios" && (meta?.bridge ?? 0) >= 4,
+				)
+			: null,
 		desktop: isMobile
 			? null
 			: {

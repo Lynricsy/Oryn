@@ -391,6 +391,7 @@ describe("移动壳里（M7）", () => {
 			setChrome: vi.fn(),
 			openNotificationSettings: vi.fn(),
 			changeServer: vi.fn(),
+			tabBar: null,
 		};
 		h.mobile = mobile;
 		vi.spyOn(host, "ready").mockResolvedValue(null);

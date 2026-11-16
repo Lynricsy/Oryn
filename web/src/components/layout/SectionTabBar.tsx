@@ -8,10 +8,28 @@
  * 各分区滚动区底部按 `--tabbar-h`（`tabBarHeight`，由侧栏外壳设置）留白，最后一行能滚到胶囊上方。
  * 胶囊两种场合都是玻璃（`.glass`，自带模糊）：`tone="glass"` 是手机下沉侧栏层，底部让出安全区；`inset` 是列侧栏 / 双段抽屉，
  * `safeBottom` 时再让出底部安全区。外层不接收指针（胶囊两侧露出的列表仍可点）。底栏不带 `data-window-drag`（不能拖动窗口）。
+ * iOS 原生底栏（`lib/native-tab-bar.ts`，只在 `tone="glass"`）：量好胶囊的视口矩形，连同四项、选中项、深浅与强调色、
+ * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生接管时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，
+ * 但仍可命中（遮挡探测靠它）；原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
  */
-import type { ReactNode } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useAssistantIdentity } from "../../api/identity-queries";
+import { host, type NativeTabBarSpec } from "../../lib/host";
+import { toHexColor } from "../../lib/host-chrome";
+import {
+	buildTabBarSpec,
+	nativeTabBar,
+	rasterizeAvatar,
+	useNativeTabBarActive,
+} from "../../lib/native-tab-bar";
 import { SECTION_ORDER, type SectionId } from "../../lib/sections";
 import { useConnection, useIndex } from "../../state/stores";
 import { StatusDot } from "../ui/data";
@@ -46,6 +64,11 @@ export const MAC =
 	typeof navigator !== "undefined" &&
 	/^(Mac|iPhone|iPad|iPod)/.test(navigator.platform);
 
+type Frame = NativeTabBarSpec["frame"];
+
+/** 保留两位小数：亚像素抖动不算矩形变了。 */
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
 export function SectionTabBar({
 	tone,
 	safeBottom = false,
@@ -64,13 +87,161 @@ export function SectionTabBar({
 		),
 	);
 	const index = SECTION_ORDER.indexOf(section);
-	const hasAvatar = Boolean(
-		assistant.avatar.avatarIcon || assistant.avatar.avatarImage,
+	const avatarIcon = assistant.avatar.avatarIcon;
+	const avatarImage = assistant.avatar.avatarImage;
+	const hasAvatar = Boolean(avatarIcon || avatarImage);
+	const connTone = conn === "unauthorized" ? "err" : "warn";
+	const labels = useMemo<Record<SectionId, string>>(
+		() => ({
+			threads: t("tabBar.threads"),
+			assistant: assistant.name ?? t("tabBar.assistant"),
+			projects: t("tabBar.projects"),
+			more: t("tabBar.more"),
+		}),
+		[t, assistant.name],
 	);
-	const outer =
-		tone === "glass"
-			? "px-3 pt-1.5 pb-[max(env(safe-area-inset-bottom),0.5rem)]"
-			: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "pb-2"}`;
+
+	// ── iOS 原生底栏（只在手机下沉侧栏层）：钩子无条件调用，副作用里判断 sink ──
+	const sink = tone === "glass";
+	const active = useNativeTabBarActive();
+	const hidden = sink && active;
+	const slotRef = useRef<HTMLDivElement>(null);
+	const inkRef = useRef<HTMLSpanElement>(null);
+	const [frame, setFrame] = useState<Frame | null>(null);
+	const [paint, setPaint] = useState<{
+		dark: boolean;
+		accent: string | null;
+	} | null>(null);
+	const [raster, setRaster] = useState<{
+		src: string;
+		png: string | null;
+	} | null>(null);
+
+	// 胶囊矩形：侧栏层不随卡片移动，与开合无关；视口或胶囊尺寸变了重量，值没变不 set
+	useLayoutEffect(() => {
+		const el = slotRef.current;
+		if (!sink || !el) return;
+		const measure = () => {
+			const r = el.getBoundingClientRect();
+			const next = {
+				x: round2(r.left),
+				y: round2(r.top),
+				width: round2(r.width),
+				height: round2(r.height),
+			};
+			setFrame((prev) =>
+				prev &&
+				prev.x === next.x &&
+				prev.y === next.y &&
+				prev.width === next.width &&
+				prev.height === next.height
+					? prev
+					: next,
+			);
+		};
+		measure();
+		window.addEventListener("resize", measure);
+		const ro =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(measure);
+		ro?.observe(el);
+		return () => {
+			window.removeEventListener("resize", measure);
+			ro?.disconnect();
+		};
+	}, [sink]);
+
+	// 深浅与强调色：跟随 <html> 的属性（主题、强调色变量）与系统明暗。强调色读不带过渡的隐藏探针，
+	// 不读选中按钮（它有 150ms 颜色过渡，换主题的那一刻读到的是旧色）
+	useLayoutEffect(() => {
+		if (!sink) return;
+		const root = document.documentElement;
+		const read = () => {
+			const dark = root.dataset.theme === "dark";
+			const ink = inkRef.current;
+			const accent = ink ? toHexColor(getComputedStyle(ink).color) : null;
+			setPaint((p) =>
+				p && p.dark === dark && p.accent === accent ? p : { dark, accent },
+			);
+		};
+		read();
+		const mo = new MutationObserver(read);
+		mo.observe(root, { attributes: true });
+		const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+		mq?.addEventListener("change", read);
+		return () => {
+			mo.disconnect();
+			mq?.removeEventListener("change", read);
+		};
+	}, [sink]);
+
+	// 图片头像栅格化成 PNG（异步）；出图前先按字形 / sparkles 发
+	const rasterSrc = sink ? avatarImage : undefined;
+	useEffect(() => {
+		if (!rasterSrc) return;
+		let live = true;
+		void rasterizeAvatar(rasterSrc).then((png) => {
+			if (live) setRaster({ src: rasterSrc, png });
+		});
+		return () => {
+			live = false;
+		};
+	}, [rasterSrc]);
+	const avatarPng = raster && raster.src === rasterSrc ? raster.png : null;
+
+	useEffect(() => {
+		if (!sink || !frame || !paint || frame.width <= 0 || frame.height <= 0)
+			return;
+		nativeTabBar.setSpec(
+			buildTabBarSpec({
+				labels,
+				selected: section,
+				frame,
+				dark: paint.dark,
+				accent: paint.accent,
+				assistant: {
+					image: avatarPng,
+					glyph: avatarIcon || null,
+					unread: assistantUnread,
+				},
+				conn: conn === "open" ? null : connTone,
+			}),
+		);
+	}, [
+		sink,
+		frame,
+		paint,
+		labels,
+		section,
+		avatarPng,
+		avatarIcon,
+		assistantUnread,
+		conn,
+		connTone,
+	]);
+
+	// 离开手机布局、壳的加载 / 错误页：撤掉原生栏
+	useEffect(
+		() => (sink ? () => nativeTabBar.setSpec(null) : undefined),
+		[sink],
+	);
+
+	// 原生点击：与网页按钮同一调用（点已选中项在下沉侧栏里收起）
+	useEffect(
+		() =>
+			sink
+				? host.onTabBar((id) => {
+						const s = SECTION_ORDER.find((k) => k === id);
+						if (s) switchSection(s, { toggleSink: true });
+					})
+				: undefined,
+		[sink, switchSection],
+	);
+
+	const outer = sink
+		? "px-3 pt-1.5 pb-[max(env(safe-area-inset-bottom),0.5rem)]"
+		: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "pb-2"}`;
 	return (
 		<nav
 			aria-label={t("tabBar.label")}
@@ -78,7 +249,13 @@ export function SectionTabBar({
 			data-tone={tone}
 			className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`}
 		>
-			<div className="glass pointer-events-auto h-[52px] rounded-full p-1">
+			{sink && <span ref={inkRef} hidden className="text-accent-ink" />}
+			<div
+				ref={slotRef}
+				data-tabbar-slot
+				aria-hidden={hidden || undefined}
+				className={`${hidden ? "opacity-0" : "glass"} pointer-events-auto h-[52px] rounded-full p-1`}
+			>
 				<div className="relative grid h-full grid-cols-4">
 					<span
 						aria-hidden
@@ -88,16 +265,14 @@ export function SectionTabBar({
 					/>
 					{SECTION_ORDER.map((key, i) => {
 						const on = key === section;
-						const label =
-							key === "assistant"
-								? (assistant.name ?? t("tabBar.assistant"))
-								: t(`tabBar.${key}`);
+						const label = labels[key];
 						const keys = MAC ? `⌘${i + 1}` : `Ctrl+${i + 1}`;
 						return (
 							<button
 								key={key}
 								type="button"
 								data-tab={key}
+								tabIndex={hidden ? -1 : undefined}
 								aria-current={on ? "true" : undefined}
 								title={t("sections.tabTitle", { label, keys })}
 								onClick={() => switchSection(key, { toggleSink: true })}
@@ -128,7 +303,7 @@ export function SectionTabBar({
 											className="absolute -top-0.5 -right-1 inline-flex"
 										>
 											<StatusDot
-												tone={conn === "unauthorized" ? "err" : "warn"}
+												tone={connTone}
 												label={t(`connection.${conn}`)}
 											/>
 										</span>

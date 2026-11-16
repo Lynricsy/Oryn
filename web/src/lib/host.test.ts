@@ -1,6 +1,13 @@
 /** 宿主适配：web / tauri 判定、前台判定、壳事件、invoke 的参数与容错（假 window）。 */
 import { describe, expect, it, type Mock, vi } from "vitest";
-import { BRIDGE, createHost, HOST_EVENT, type Invoke } from "./host";
+import {
+	BRIDGE,
+	createHost,
+	HOST_EVENT,
+	type Invoke,
+	type NativeTabBarReveal,
+	type NativeTabBarSpec,
+} from "./host";
 
 interface FakeWin {
 	win: Window;
@@ -370,5 +377,80 @@ describe("移动壳（M7）", () => {
 			["host_open_notification_settings", undefined],
 			["host_change_server", undefined],
 		]);
+	});
+
+	describe("原生底栏（bridge 4）", () => {
+		const spec: NativeTabBarSpec = {
+			items: [{ id: "threads", label: "线程", icon: { symbol: "folder" } }],
+			selected: "threads",
+			frame: { x: 12, y: 758, width: 296, height: 52 },
+			dark: false,
+			accent: null,
+		};
+		const reveal: NativeTabBarReveal = { x: 160, alpha: 1, ms: 0, delay: 0 };
+
+		it("ios + bridge 4 → tabBar 非空；set / reveal 的参数形状", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 4 });
+			const tb = createHost(f.win).mobile?.tabBar;
+			expect(tb).toBeTruthy();
+			await tb?.set(spec);
+			await tb?.set(null);
+			await tb?.reveal(reveal);
+			expect(f.invoke.mock.calls).toEqual([
+				["host_tab_bar_set", { spec }],
+				["host_tab_bar_set", { spec: null }],
+				["host_tab_bar_reveal", { reveal }],
+			]);
+		});
+
+		it("invoke 拒绝时 set / reveal 的 Promise 拒绝（调用方据此退回网页底栏）", async () => {
+			const f = mobileWindow({
+				platform: "ios",
+				bridge: 4,
+				invoke: () => {
+					throw "unsupported";
+				},
+			});
+			const tb = createHost(f.win).mobile?.tabBar;
+			await expect(tb?.set(spec)).rejects.toBe("unsupported");
+			await expect(tb?.reveal(reveal)).rejects.toBe("unsupported");
+		});
+
+		it("ios + bridge 3、android + bridge 4 → tabBar 为 null", () => {
+			const old = createHost(mobileWindow({ platform: "ios", bridge: 3 }).win);
+			expect(old.mobile).not.toBeNull();
+			expect(old.mobile?.tabBar).toBeNull();
+			const android = createHost(mobileWindow({ bridge: 4 }).win);
+			expect(android.mobile).not.toBeNull();
+			expect(android.mobile?.tabBar).toBeNull();
+		});
+
+		it("tabbar 事件到 onTabBar；id 不是字符串或桌面壳上忽略；可退订", () => {
+			const f = mobileWindow({ platform: "ios", bridge: 4 });
+			const h = createHost(f.win);
+			const cb = vi.fn();
+			const off = h.onTabBar(cb);
+			f.emit({ type: "tabbar", id: "projects" });
+			f.emit({ type: "tabbar", id: 3 });
+			f.emit({ type: "tabbar" });
+			expect(cb.mock.calls).toEqual([["projects"]]);
+			off();
+			f.emit({ type: "tabbar", id: "more" });
+			expect(cb).toHaveBeenCalledTimes(1);
+
+			const d = fakeWindow({ tauri: true });
+			const desk = createHost(d.win);
+			const c2 = vi.fn();
+			desk.onTabBar(c2);
+			d.emit({ type: "tabbar", id: "projects" });
+			expect(c2).not.toHaveBeenCalled();
+		});
+
+		it("web 宿主：onTabBar 返回空函数", () => {
+			const h = createHost(fakeWindow().win);
+			const off = h.onTabBar(vi.fn());
+			expect(typeof off).toBe("function");
+			expect(() => off()).not.toThrow();
+		});
 	});
 });

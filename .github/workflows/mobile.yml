@@ -2,7 +2,8 @@ name: mobile
 
 # 移动 App（同一 Tauri 工程的 Android / iOS 目标）的构建与发布（M7 计划步骤 6；主人决定：UnifiedPush + FCM、仅 GitHub Release）。
 # - PR / 手动触发：`android` 构建 foss 与 gms 两个 debug APK（x86_64 + arm64）并跑插件单测，`android-smoke` 在模拟器里冒烟，
-#   `ios-check` 在 macOS 上不签名编译模拟器包。不签名、拿不到签名 secret。
+#   `ios-check` 在 macOS 上不签名编译模拟器包，并在 iOS 26+ 模拟器里截图断言原生底栏（web/src-tauri/ci/ios-tabbar-check.sh，硬门禁）。
+#   不签名、拿不到签名 secret。
 # - 推送 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致）：`release` 建草稿 Release →
 #   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产，
 #   `ios-release` 签名导出 IPA 并上传 TestFlight → `publish` 发布。
@@ -380,7 +381,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot
           script: bash "$RUNNER_TEMP/smoke.sh"
 
-  # iOS：PR / 手动 / 发布都跑的不签名编译 + 模拟器截图（签名构建见下方 ios-release）
+  # iOS：PR / 手动 / 发布都跑的不签名编译 + 模拟器截图断言（签名构建见下方 ios-release）
   ios-check:
     needs: prepare
     runs-on: macos-latest
@@ -390,6 +391,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass 与 App Store 上传都要求）
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(xcodebuild -version | awk 'NR==1{print $2}')
+          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -430,21 +439,14 @@ jobs:
           echo "产物：$app" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
-      - name: 模拟器启动截图（尽力而为）
-        continue-on-error: true
+      # 硬门禁：debug 包的 ORYN_TABBAR_DEMO 钩子在连接页摆出原生底栏，进度 0 / 0.5 / 1 与基线逐区域比像素，结果写进 Step Summary。
+      # 模拟器偶发起不来时重跑 job。
+      - name: 模拟器：连接页与原生底栏（进度 0 / 0.5 / 1）
+        timeout-minutes: 15
         shell: bash
         env:
           APP: ${{ steps.app.outputs.path }}
-        run: |
-          set -euo pipefail
-          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
-          xcrun simctl install "$udid" "$APP"
-          xcrun simctl launch "$udid" com.lynricsy.oryn
-          sleep 10
-          mkdir -p ios-shot
-          xcrun simctl io "$udid" screenshot ios-shot/launch.png
+        run: bash web/src-tauri/ci/ios-tabbar-check.sh "$APP" ios-shot
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -478,6 +480,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass 与 App Store 上传都要求）
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(xcodebuild -version | awk 'NR==1{print $2}')
+          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
 
       # 只取「有没有」的布尔，不接触 secret 的值
       - name: 检查签名与上传凭据

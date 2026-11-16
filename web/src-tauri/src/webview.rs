@@ -36,7 +36,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-window",
 ];
 
-/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏等七个。
+/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、原生底栏等九个。
 #[cfg_attr(desktop, allow(dead_code))]
 const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-ready",
@@ -52,6 +52,8 @@ const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-share-ack",
     "allow-host-set-chrome",
     "allow-host-open-notification-settings",
+    "allow-host-tab-bar-set",
+    "allow-host-tab-bar-reveal",
 ];
 
 /// 已开放宿主命令、允许主框架导航的服务器 origin（Android 的导航处理与 [`TauriShell`] 共用）。
@@ -124,7 +126,12 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
             match payload.event() {
                 // 主框架开始加载任何页面（回连接页、兑换跳转、用户刷新）都先清掉就绪标志：
                 // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面
-                PageLoadEvent::Started => d.nav().web_ready = false,
+                PageLoadEvent::Started => {
+                    d.nav().web_ready = false;
+                    // 整页导航时旧页面来不及自己撤掉原生底栏
+                    #[cfg(target_os = "ios")]
+                    crate::mobile::tab_bar_reset(&loader);
+                }
                 // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
                 PageLoadEvent::Finished => {
                     #[cfg(desktop)]
@@ -379,7 +386,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":3"));
+        assert!(s.contains("\"bridge\":4"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
@@ -409,7 +416,7 @@ mod tests {
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
         assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
-        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 13);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 15);
     }
 
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、

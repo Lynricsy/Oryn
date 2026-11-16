@@ -1,0 +1,4 @@
+# tauri-plugin 构建 iOS 时把 tauri 的 Swift API 拷到这里（ios/Package.swift 依赖 ../.tauri/tauri-api）
+/.tauri
+/ios/.build
+/ios/Package.resolved

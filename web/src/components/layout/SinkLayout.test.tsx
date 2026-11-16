@@ -1,7 +1,11 @@
-/** 手机下沉式侧栏：开关状态、inert、焦点移入与还原、Esc / 返回键、触摸手势与吸附、同心圆角、减少动效。 */
+/**
+ * 手机下沉式侧栏：开关状态、inert、焦点移入与还原、Esc / 返回键、触摸手势与吸附、同心圆角、减少动效；
+ * iOS 原生底栏的接入（拖动进度、吸附终点、`data-native-bar`、遮挡探测）。
+ */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { concentricRadius } from "../../lib/device-corners";
+import type * as NativeTabBarModule from "../../lib/native-tab-bar";
 import { uiStore } from "../../state/ui";
 import {
 	blocksSwipe,
@@ -10,6 +14,24 @@ import {
 	settleSink,
 	sinkProgress,
 } from "./SinkLayout";
+
+const nb = vi.hoisted(() => ({
+	engaged: false,
+	bar: {
+		drag: vi.fn(),
+		settle: vi.fn(),
+		setCovered: vi.fn(),
+		setSpec: vi.fn(),
+	},
+}));
+
+// 换掉控制器实例与钩子，其余导出（常量、slotCovered）用真的
+vi.mock("../../lib/native-tab-bar", async (importOriginal) => ({
+	...(await importOriginal<typeof NativeTabBarModule>()),
+	nativeTabBar: nb.bar,
+	useNativeTabBarEngaged: () => nb.engaged,
+	useNativeTabBarActive: () => false,
+}));
 
 function mount() {
 	return render(
@@ -75,6 +97,8 @@ function touch(
 beforeEach(() => {
 	uiStore.setState({ sidebarOpen: false });
 	window.history.replaceState(null, "");
+	nb.engaged = false;
+	for (const f of Object.values(nb.bar)) f.mockClear();
 });
 
 afterEach(() => {
@@ -289,5 +313,138 @@ describe("触摸手势", () => {
 		stop.append(inner);
 		expect(blocksSwipe(inner, stop)).toBe(false);
 		expect(blocksSwipe(null, stop)).toBe(false);
+	});
+});
+
+describe("iOS 原生底栏", () => {
+	const ARMED = 260 + 34 + 60;
+	let top: Element | null = null;
+	beforeEach(() => {
+		window.innerWidth = 390;
+		Object.defineProperty(document, "elementFromPoint", {
+			configurable: true,
+			value: () => top,
+		});
+	});
+	afterEach(() => {
+		window.innerWidth = 1024;
+		vi.useRealTimers();
+		Reflect.deleteProperty(document, "elementFromPoint");
+		top = null;
+	});
+
+	it("左缘右滑：drag 逐次收到进度、侧栏宽与速度；松手发吸附终点", () => {
+		mount();
+		nb.bar.settle.mockClear();
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 120, 302, 1400);
+		const [p, w, v] = nb.bar.drag.mock.calls.at(-1) ?? [];
+		expect(p).toBeCloseTo(116 / 390);
+		expect(w).toBe(390);
+		expect(v).toBeGreaterThan(0);
+		touch(card(), "touchMove", 260, 302, 2000);
+		touch(card(), "touchEnd", 260);
+		expect(nb.bar.settle.mock.calls[0]).toEqual([true, 390, false]);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+	});
+
+	it("松手弹回原状态（store 不变）也发吸附终点", () => {
+		mount();
+		nb.bar.settle.mockClear();
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 60, 300, 2000);
+		touch(card(), "touchEnd", 60);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		expect(nb.bar.settle.mock.calls).toEqual([[false, 390, false]]);
+	});
+
+	it("非手势开合（setSidebar）发 settle；减少动效时第三个参数为 true", () => {
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(true, 390, false);
+		act(() => uiStore.getState().setSidebar(false));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(false, 390, false);
+	});
+
+	it("减少动效：settle 立即生效", () => {
+		vi.stubGlobal("matchMedia", (q: string) => ({
+			matches: q === "(prefers-reduced-motion: reduce)",
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		}));
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(true, 390, true);
+	});
+
+	it("视口尺寸变化：按当前开合立即重发", () => {
+		mount();
+		nb.bar.settle.mockClear();
+		act(() => {
+			window.dispatchEvent(new Event("resize"));
+		});
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(false, 390, true);
+	});
+
+	it("接管时卡片带 data-native-bar，未接管不带", () => {
+		const { unmount } = mount();
+		expect(card()).not.toHaveAttribute("data-native-bar");
+		unmount();
+		nb.engaged = true;
+		mount();
+		expect(card()).toHaveAttribute("data-native-bar");
+	});
+
+	it("打开且接管：吸附完才探测，被盖住 setCovered(true)、露出 false，抬手后下一帧补探；关闭时撤掉", () => {
+		vi.useFakeTimers();
+		nb.engaged = true;
+		render(
+			<SinkLayout
+				sidebar={
+					<div data-tabbar-slot data-testid="slot">
+						<span data-testid="slot-inner">底栏</span>
+					</div>
+				}
+			>
+				<p>正文</p>
+			</SinkLayout>,
+		);
+		const slot = screen.getByTestId("slot");
+		vi.spyOn(slot, "getBoundingClientRect").mockReturnValue({
+			left: 12,
+			top: 700,
+			width: 296,
+			height: 52,
+		} as DOMRect);
+		const menu = document.createElement("div");
+		top = menu;
+		act(() => uiStore.getState().setSidebar(true));
+		act(() => vi.advanceTimersByTime(ARMED - 10));
+		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+		act(() => vi.advanceTimersByTime(10));
+		expect(nb.bar.setCovered).toHaveBeenLastCalledWith(true);
+		// 定时探测
+		top = screen.getByTestId("slot-inner");
+		act(() => vi.advanceTimersByTime(250));
+		expect(nb.bar.setCovered).toHaveBeenLastCalledWith(false);
+		// 抬手：下一帧补探，不等下一轮定时
+		top = menu;
+		fireEvent.pointerUp(document.body);
+		act(() => vi.advanceTimersByTime(20));
+		expect(nb.bar.setCovered).toHaveBeenLastCalledWith(true);
+		nb.bar.setCovered.mockClear();
+		act(() => uiStore.getState().setSidebar(false));
+		expect(nb.bar.setCovered).toHaveBeenCalledWith(false);
+		nb.bar.setCovered.mockClear();
+		act(() => vi.advanceTimersByTime(1000));
+		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+	});
+
+	it("未接管时不探测", () => {
+		vi.useFakeTimers();
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		act(() => vi.advanceTimersByTime(2000));
+		expect(nb.bar.setCovered).not.toHaveBeenCalled();
 	});
 });

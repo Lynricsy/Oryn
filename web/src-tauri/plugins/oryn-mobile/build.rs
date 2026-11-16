@@ -3,5 +3,6 @@ fn main() {
     // 往这里加一个名字就等于给远程页面开了口子。
     tauri_plugin::Builder::new(&[])
         .android_path("android")
+        .ios_path("ios")
         .build();
 }

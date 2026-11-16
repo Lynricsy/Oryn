@@ -112,7 +112,7 @@ pub fn run() {
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
     // → notification（Android 不注册）→ opener → updater；
-    // 移动端：deep_link → opener → oryn-mobile（Android）/ notification（iOS）→ barcode-scanner
+    // 移动端：deep_link → opener → oryn-mobile（Android）/ notification → oryn-mobile（iOS）→ barcode-scanner
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -149,7 +149,9 @@ pub fn run() {
         }
         #[cfg(target_os = "ios")]
         {
-            builder = builder.plugin(tauri_plugin_notification::init());
+            builder = builder
+                .plugin(tauri_plugin_notification::init())
+                .plugin(tauri_plugin_oryn_mobile::init());
         }
         builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     }
@@ -193,6 +195,10 @@ pub fn run() {
             mobile::host_set_chrome,
             #[cfg(mobile)]
             mobile::host_open_notification_settings,
+            #[cfg(mobile)]
+            mobile::host_tab_bar_set,
+            #[cfg(mobile)]
+            mobile::host_tab_bar_reveal,
         ])
         .setup(move |app| setup(app, &setup_args, &raw))
         .build(tauri::generate_context!())
@@ -419,19 +425,27 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         mobile::listen(&handle, &native);
     }
     #[cfg(target_os = "ios")]
-    app.manage(Arc::new(mobile::MobileRt::new(
-        mobile::NativeImpl,
-        String::new(),
-    )));
+    {
+        app.manage(Arc::new(mobile::MobileRt::new(
+            mobile::NativeImpl,
+            String::new(),
+        )));
+        mobile::listen_ios(&handle);
+    }
 
     deeplink::setup(&handle, false);
 
     let start = d.clone();
+    #[cfg(all(debug_assertions, target_os = "ios"))]
+    let demo = handle.clone();
     tauri::async_runtime::spawn(async move {
         // WebView 建好之前的 navigate 会被丢弃：先等它，再按已存令牌进入应用
         start.webview_up.wait().await;
         let next = start.core.lock().await.start(None).await;
         host::schedule(start, next);
+        // CI 的原生底栏演示（仅 debug 构建；没设 ORYN_TABBAR_DEMO 时立即返回）
+        #[cfg(all(debug_assertions, target_os = "ios"))]
+        mobile::tab_bar_demo(&demo).await;
     });
     Ok(())
 }

@@ -1085,6 +1085,13 @@ body {
 	.sink-card[data-instant] {
 		transition: none;
 	}
+	/* iOS 原生底栏接管时（lib/native-tab-bar.ts）：关闭过渡晚 34ms 起步，原生那边的裁切先走，底栏不会画到卡片上面。
+	   三个 :not 缺一不可：少了后两个，拖动与减少动效时会变成「延迟 34ms 的瞬移」 */
+	.sink-card[data-native-bar]:not([data-open]):not([data-dragging]):not(
+		[data-instant]
+	) {
+		transition-delay: 34ms;
+	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {
 		background: oklch(0.89 0.075 var(--h));

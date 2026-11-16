@@ -1,6 +1,6 @@
-//! Rust ↔ Kotlin 的数据形状（字段 camelCase，与 `android/` 里的插件实现一一对应）。
+//! Rust ↔ 原生插件的数据形状（字段 camelCase，与 `android/` 的 Kotlin、`ios/` 的 Swift 实现一一对应）。
 //!
-//! 这些类型不依赖平台：壳的推送 / 分享编排在主机上单测时用的是同一组类型。
+//! 这些类型不依赖平台：壳的推送 / 分享编排与原生底栏的校验在主机上单测时用的是同一组类型。
 
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +110,70 @@ pub struct ShareIntake {
     pub rejected: Vec<ShareRejected>,
 }
 
-/// Kotlin → Rust 事件（`trigger("event", {type, …})`）。
+/// 原生底栏一项的图标：SF Symbol 名、单个字形，或 PNG 的 base64（不带 `data:` 前缀）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabBarIcon {
+    Symbol(String),
+    Glyph(String),
+    Image(String),
+}
+
+/// 原生底栏一项右上角的状态点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TabBarBadge {
+    Accent,
+    Warn,
+    Err,
+}
+
+/// 原生底栏的一项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabBarItem {
+    pub id: String,
+    pub label: String,
+    pub icon: TabBarIcon,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<TabBarBadge>,
+}
+
+/// 胶囊在网页布局视口里的矩形（CSS px）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TabBarFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// 原生底栏的整份状态（`tabBarSet` 的 `spec`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabBarSpec {
+    pub items: Vec<TabBarItem>,
+    /// 选中项 id（= 当前路由的分区；原生点击不自己改它）。
+    pub selected: String,
+    pub frame: TabBarFrame,
+    pub dark: bool,
+    /// `#rrggbb`；`None` = 系统强调色。
+    pub accent: Option<String>,
+}
+
+/// 揭示状态（`tabBarReveal` 的载荷）：`x`（视口 x，CSS px）左侧可见；`ms` 为 0 立即生效，
+/// 否则等 `delay` 毫秒后按 `ease`（cubic-bezier 控制点）过渡 `ms` 毫秒。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TabBarReveal {
+    pub x: f64,
+    pub alpha: f64,
+    #[serde(default)]
+    pub ms: u32,
+    #[serde(default)]
+    pub delay: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ease: Option<[f64; 4]>,
+}
+
+/// 原生 → Rust 事件（`trigger("event", {type, …})`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -140,6 +203,10 @@ pub enum Event {
     },
     /// 先前的 Activity 已被系统销毁（不是配置变更），同一进程里又新建了 Activity：Rust 要为它重建主窗口。
     Activity,
+    /// 原生底栏被点了一项（iOS；点已选中项同样上报）。
+    TabBar {
+        id: String,
+    },
 }
 
 /// `notify` 的参数。
@@ -161,4 +228,63 @@ pub struct NotifyResult {
     pub posted: bool,
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    const SET: &str = include_str!("../fixtures/tab-bar-set.json");
+    const REVEAL: &str = include_str!("../fixtures/tab-bar-reveal.json");
+
+    /// JSON 里整数与浮点不相等（`12` ≠ `12.0`），比较前统一成浮点。
+    fn norm(v: Value) -> Value {
+        match v {
+            Value::Number(n) => json!(n.as_f64()),
+            Value::Array(a) => Value::Array(a.into_iter().map(norm).collect()),
+            Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k, norm(v))).collect()),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn tab_bar_set_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(SET).unwrap();
+        let spec: TabBarSpec = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(spec.items.len(), 4);
+        assert_eq!(
+            spec.items[1].icon,
+            TabBarIcon::Glyph("🦊".into()),
+            "图标是外部标记的单键对象"
+        );
+        assert_eq!(spec.items[1].badge, Some(TabBarBadge::Accent));
+        assert_eq!(spec.items[2].badge, None);
+        assert_eq!(norm(serde_json::to_value(&spec).unwrap()), norm(raw));
+        // 撤栏：`{"spec": null}`
+        let none: Option<TabBarSpec> = serde_json::from_value(Value::Null).unwrap();
+        assert_eq!(json!({ "spec": none }), json!({ "spec": null }));
+    }
+
+    #[test]
+    fn tab_bar_reveal_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(REVEAL).unwrap();
+        let reveal: TabBarReveal = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(reveal.ms, 260);
+        assert_eq!(reveal.delay, 34);
+        assert_eq!(norm(serde_json::to_value(reveal).unwrap()), norm(raw));
+        // ms / delay / ease 可省
+        let bare: TabBarReveal = serde_json::from_value(json!({"x": 0, "alpha": 0})).unwrap();
+        assert_eq!((bare.ms, bare.delay, bare.ease), (0, 0, None));
+        assert_eq!(
+            serde_json::to_value(bare).unwrap(),
+            json!({"x": 0.0, "alpha": 0.0, "ms": 0, "delay": 0})
+        );
+    }
+
+    #[test]
+    fn tab_bar_event_parses() {
+        let event: Event = serde_json::from_value(json!({"type": "tabbar", "id": "more"})).unwrap();
+        assert_eq!(event, Event::TabBar { id: "more".into() });
+    }
 }

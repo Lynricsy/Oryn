@@ -1,0 +1,26 @@
+{
+	"items": [
+		{
+			"id": "threads",
+			"label": "线程",
+			"icon": { "symbol": "bubble.left.and.bubble.right" }
+		},
+		{
+			"id": "assistant",
+			"label": "小助手",
+			"icon": { "glyph": "🦊" },
+			"badge": "accent"
+		},
+		{ "id": "projects", "label": "项目", "icon": { "symbol": "folder" } },
+		{
+			"id": "more",
+			"label": "更多",
+			"icon": { "symbol": "ellipsis" },
+			"badge": "warn"
+		}
+	],
+	"selected": "threads",
+	"frame": { "x": 12, "y": 758, "width": 296, "height": 52 },
+	"dark": false,
+	"accent": "#2f6fed"
+}

@@ -26,7 +26,7 @@ thiserror = "2"
 sys-locale = "0.3"
 tokio = { version = "1", features = ["sync", "time", "fs"] } # 计时（配对轮询、看门狗、退避、更新周期）、会话锁、分享上传读文件
 tokio-util = { version = "0.7", features = ["io"] } # 分享上传：文件 → 流式请求体
-# 数据形状全平台共用（推送 / 分享编排在主机上单测）；插件句柄与原生实现只在 Android 上存在
+# 数据形状全平台共用（推送 / 分享编排、底栏校验在主机上单测）；插件句柄与原生实现只在 Android / iOS 上存在
 tauri-plugin-oryn-mobile = { path = "plugins/oryn-mobile" }
 
 # Android 不带通知插件（其清单会带进开机广播与 WAKE_LOCK，通知改由 oryn-mobile 插件发）；

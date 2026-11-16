@@ -29,7 +29,9 @@ function makeInfo(push: MobileInfo["push"]): MobileInfo {
 }
 
 let info: MobileInfo;
-let fake: { [K in keyof MobileHost]: Mock<MobileHost[K]> };
+let fake: {
+	[K in Exclude<keyof MobileHost, "tabBar">]: Mock<MobileHost[K]>;
+} & { tabBar: null };
 let mobileCb: (() => void) | undefined;
 const h = host as { mobile: MobileHost | null };
 
@@ -44,6 +46,7 @@ beforeEach(() => {
 		setChrome: vi.fn(),
 		openNotificationSettings: vi.fn(),
 		changeServer: vi.fn(),
+		tabBar: null,
 	};
 	h.mobile = fake;
 	vi.spyOn(host, "onMobile").mockImplementation((cb) => {

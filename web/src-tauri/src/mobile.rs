@@ -1,4 +1,4 @@
-//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步、分享下发、导航处理与移动端宿主命令。
+//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步、分享下发、导航处理、移动端宿主命令与 iOS 原生底栏。
 //!
 //! 逻辑在 [`crate::mobile_logic`]（主机上单测）；这里只把它接到插件、会话状态机与页面事件上。
 
@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tauri::{AppHandle, Manager, State, Url};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_oryn_mobile::{TabBarReveal, TabBarSpec};
 
 use crate::api::HttpApi;
 use crate::eventlog;
@@ -219,6 +220,146 @@ pub async fn host_open_notification_settings(m: State<'_, Arc<MobileRt>>) -> Res
     Ok(())
 }
 
+/// 原生底栏（iOS 26+）：整份状态；`null` 撤掉。其它平台与更低系统版本返回 `unsupported`，页面继续用网页底栏。
+#[tauri::command]
+pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<()> {
+    if spec
+        .as_ref()
+        .is_some_and(|s| !mobile_logic::valid_tab_bar(s))
+    {
+        return Err("invalid_tab_bar".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .tab_bar_set(spec.as_ref())
+            .map_err(|e| e.to_string())?;
+        eventlog::log("tabbar.set", json!({"on": spec.is_some()}));
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+/// 原生底栏的揭示边与透明度；拖动时每帧至多一次。还没 set 过时 Swift 侧空操作并成功。
+#[tauri::command]
+pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()> {
+    if !mobile_logic::valid_reveal(&reveal) {
+        return Err("invalid_reveal".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin.tab_bar_reveal(&reveal).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+// ---------------------------------------------------------------- iOS 原生插件（目前只有原生底栏）
+
+#[cfg(target_os = "ios")]
+mod ios {
+    use serde_json::json;
+    use tauri::{AppHandle, Manager};
+    use tauri_plugin_oryn_mobile::{Event, OrynMobile};
+
+    use crate::mobile_logic;
+    use crate::{eventlog, host};
+
+    pub fn plugin(app: &AppHandle) -> Option<OrynMobile<tauri::Wry>> {
+        app.try_state::<OrynMobile<tauri::Wry>>()
+            .map(|s| s.inner().clone())
+    }
+
+    /// 插件事件：目前只有底栏点击，转成页面事件 `{type:"tabbar", id}`。
+    pub fn listen(app: &AppHandle) {
+        let Some(p) = plugin(app) else { return };
+        let handle = app.clone();
+        let res = p.on_event(move |event| {
+            if let Event::TabBar { id } = event {
+                if mobile_logic::valid_tab_id(&id) {
+                    eventlog::log("tabbar.tap", json!({"id": id}));
+                    host::emit(&handle, mobile_logic::tab_bar_event(&id));
+                }
+            }
+        });
+        if let Err(e) = res {
+            eventlog::log("mobile.listen_error", json!({"error": e.to_string()}));
+        }
+    }
+
+    /// 主框架开始加载新文档：旧页面的底栏撤掉（页面来不及自己撤）。回调在主线程上，插件调用放进异步任务。
+    pub fn tab_bar_reset(app: &AppHandle) {
+        let Some(p) = plugin(app) else { return };
+        tauri::async_runtime::spawn(async move {
+            let _ = p.tab_bar_set(None);
+        });
+    }
+
+    /// CI 用（仅 debug 构建）：环境变量 `ORYN_TABBAR_DEMO=<0..1>` 时，在连接页上按夹具摆出底栏并把揭示边放到该进度，
+    /// 结果记到事件日志 `tabbar.demo`。经与页面相同的 Rust → Swift 路径。
+    #[cfg(debug_assertions)]
+    pub async fn tab_bar_demo(app: &AppHandle) {
+        let Some(p) = std::env::var("ORYN_TABBAR_DEMO")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+        else {
+            return;
+        };
+        // 等连接页的 PageLoadEvent::Started 那次撤栏先跑完
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let fail =
+            |error: String| eventlog::log("tabbar.demo", json!({"ok": false, "error": error}));
+        let (Some(plugin), Some(w)) = (plugin(app), app.get_webview_window(host::MAIN)) else {
+            return fail("no plugin or window".into());
+        };
+        // tao 在 iOS 上：outer = 屏幕框，inner = 安全区
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let (Ok(outer), Ok(inner), Ok(inner_pos), Ok(outer_pos)) = (
+            w.outer_size(),
+            w.inner_size(),
+            w.inner_position(),
+            w.outer_position(),
+        ) else {
+            return fail("no window size".into());
+        };
+        let (width, height) = (outer.width as f64 / scale, outer.height as f64 / scale);
+        let safe_bottom =
+            height - (inner_pos.y - outer_pos.y) as f64 / scale - inner.height as f64 / scale;
+        let (spec, sink_w) = mobile_logic::demo_tab_bar(width, height, safe_bottom.max(0.0));
+        let reveal = tauri_plugin_oryn_mobile::TabBarReveal {
+            x: sink_w * p.clamp(0.0, 1.0),
+            alpha: 1.0,
+            ms: 0,
+            delay: 0,
+            ease: None,
+        };
+        let res = plugin
+            .tab_bar_set(Some(&spec))
+            .and_then(|()| plugin.tab_bar_reveal(&reveal));
+        match res {
+            Ok(()) => eventlog::log(
+                "tabbar.demo",
+                json!({"ok": true, "p": p, "frame": spec.frame, "sinkW": sink_w, "scale": scale}),
+            ),
+            Err(e) => fail(e.to_string()),
+        }
+    }
+}
+
+#[cfg(all(debug_assertions, target_os = "ios"))]
+pub use ios::tab_bar_demo;
+#[cfg(target_os = "ios")]
+pub use ios::{listen as listen_ios, tab_bar_reset};
+
 // ---------------------------------------------------------------- Android 原生插件
 
 #[cfg(target_os = "android")]
@@ -387,6 +528,8 @@ mod android {
                     recreate_main(&app);
                 }
             }
+            // 原生底栏只在 iOS 上有，Kotlin 不发
+            Event::TabBar { .. } => {}
         }
     }
 

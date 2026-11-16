@@ -29,6 +29,9 @@ fn main() {
             "host_share_ack",
             "host_set_chrome",
             "host_open_notification_settings",
+            // 原生底栏：只有 iOS 26+ 真正实现
+            "host_tab_bar_set",
+            "host_tab_bar_reveal",
         ]),
     ))
     .unwrap();

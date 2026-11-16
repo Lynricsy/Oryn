@@ -14,6 +14,9 @@
  *   在侧栏里点链接导航后标记留在栈里，日后返回落到它上面时自动再退一步。
  * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。
  * - `prefers-reduced-motion`：不做过渡，直接切换。
+ * - iOS 原生底栏（`lib/native-tab-bar.ts`）：拖动时逐帧把进度交给控制器（`drag`），松手与任何非手势开合只发终点
+ *   （`settle`，吸附动画由原生自己插值）。接管后卡片带 `data-native-bar`，关闭过渡晚 34ms 起步（index.css）；
+ *   打开且吸附完成后定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`），盖住时原生让位给网页底栏。
  */
 import {
 	type ReactNode,
@@ -23,6 +26,14 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	COVER_POLL_MS,
+	NATIVE_LAG_MS,
+	nativeTabBar,
+	SINK_MS,
+	slotCovered,
+	useNativeTabBarEngaged,
+} from "../../lib/native-tab-bar";
 import { uiStore, useUi } from "../../state/ui";
 
 /** 左缘起手区宽度（px）。 */
@@ -94,6 +105,14 @@ function marked(): boolean {
 	return !!st && st[MARK] === true;
 }
 
+/** 侧栏宽度（= 打开时卡片左缘的 x）；还没布局时退回视口宽。 */
+function sinkWidth(side: HTMLElement | null): number {
+	return side?.getBoundingClientRect().width || window.innerWidth;
+}
+
+/** 遮挡探测的武装延迟：卡片吸附完（含原生的 34ms 晚起步）再探，此前卡片还没让开。 */
+const ARM_MS = SINK_MS + NATIVE_LAG_MS + 60;
+
 export function SinkLayout({
 	sidebar,
 	children,
@@ -104,11 +123,14 @@ export function SinkLayout({
 	const { t } = useTranslation();
 	const open = useUi((s) => s.sidebarOpen);
 	const reduce = useReducedMotion();
+	const engaged = useNativeTabBarEngaged();
 	const cardRef = useRef<HTMLDivElement>(null);
 	const sideRef = useRef<HTMLDivElement>(null);
 	const restore = useRef<HTMLElement | null>(null);
 	const openRef = useRef(open);
 	openRef.current = open;
+	const reduceRef = useRef(reduce);
+	reduceRef.current = reduce;
 
 	// 历史标记：打开时压入；关闭时若标记仍在栈顶（没有因导航被盖住）就弹掉
 	useEffect(() => {
@@ -163,6 +185,58 @@ export function SinkLayout({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [open]);
 
+	// 原生底栏：非手势开合（按钮、Esc、返回键、选线程）发吸附终点；与手势 end() 的重复由控制器去重
+	useLayoutEffect(() => {
+		nativeTabBar.settle(open, sinkWidth(sideRef.current), reduce);
+	}, [open, reduce]);
+
+	useEffect(() => {
+		const onResize = () =>
+			nativeTabBar.settle(openRef.current, sinkWidth(sideRef.current), true);
+		window.addEventListener("resize", onResize);
+		return () => window.removeEventListener("resize", onResize);
+	}, []);
+
+	// 原生底栏的遮挡探测：只在打开且接管时；吸附完成后武装，定时探测，抬手 / 松键 / 软键盘变化后下一帧补探
+	useEffect(() => {
+		if (!open || !engaged) return;
+		let armed = false;
+		let poll = 0;
+		let frame = 0;
+		const check = () => {
+			const slot = sideRef.current?.querySelector("[data-tabbar-slot]");
+			if (slot) nativeTabBar.setCovered(slotCovered(slot, window));
+		};
+		const soon = () => {
+			if (!armed || frame) return;
+			frame = requestAnimationFrame(() => {
+				frame = 0;
+				check();
+			});
+		};
+		const arm = window.setTimeout(
+			() => {
+				armed = true;
+				check();
+				poll = window.setInterval(check, COVER_POLL_MS);
+			},
+			reduce ? 0 : ARM_MS,
+		);
+		const vv = window.visualViewport;
+		document.addEventListener("pointerup", soon, true);
+		document.addEventListener("keyup", soon, true);
+		vv?.addEventListener("resize", soon);
+		return () => {
+			window.clearTimeout(arm);
+			window.clearInterval(poll);
+			cancelAnimationFrame(frame);
+			document.removeEventListener("pointerup", soon, true);
+			document.removeEventListener("keyup", soon, true);
+			vv?.removeEventListener("resize", soon);
+			nativeTabBar.setCovered(false);
+		};
+	}, [open, engaged, reduce]);
+
 	// 触摸手势：跟手写 --sink-p，松手吸附
 	useEffect(() => {
 		const card = cardRef.current;
@@ -177,8 +251,7 @@ export function SinkLayout({
 		let dragging = false;
 		let last = { x: 0, t: 0, v: 0 };
 		let progress = 0;
-		const width = () =>
-			sideRef.current?.getBoundingClientRect().width || window.innerWidth;
+		const width = () => sinkWidth(sideRef.current);
 		const end = () => {
 			start = null;
 			if (!dragging) return;
@@ -186,6 +259,8 @@ export function SinkLayout({
 			card.removeAttribute("data-dragging");
 			card.style.removeProperty("--sink-p");
 			const next = settleSink(progress, last.v);
+			// 松手弹回原状态时 store 不变，只有这里能通知原生
+			nativeTabBar.settle(next, width(), reduceRef.current);
 			if (next !== openRef.current) uiStore.getState().setSidebar(next);
 		};
 		const onStart = (e: TouchEvent) => {
@@ -238,8 +313,10 @@ export function SinkLayout({
 			const dt = now - last.t;
 			if (dt > 0)
 				last = { x: touch.clientX, t: now, v: (touch.clientX - last.x) / dt };
-			progress = sinkProgress(start.p, dx, width());
+			const w = width();
+			progress = sinkProgress(start.p, dx, w);
 			card.style.setProperty("--sink-p", String(progress));
+			nativeTabBar.drag(progress, w, last.v);
 		};
 		card.addEventListener("touchstart", onStart, { passive: true });
 		card.addEventListener("touchmove", onMove, { passive: false });
@@ -269,6 +346,7 @@ export function SinkLayout({
 				ref={cardRef}
 				data-testid="sink-card"
 				data-open={open ? "" : undefined}
+				data-native-bar={engaged ? "" : undefined}
 				data-instant={reduce ? "" : undefined}
 				className="sink-card absolute inset-0 flex"
 			>
