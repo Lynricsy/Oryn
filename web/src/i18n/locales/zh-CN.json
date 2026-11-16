@@ -2335,6 +2335,26 @@
 		"toWatch": "切换为仅观看（不发送键鼠）",
 		"toControl": "切换为可控制",
 		"watching": "仅观看",
+		"control": {
+			"agentTitle": "Agent 正在操作桌面",
+			"agentHint": "现在只能观看。接管后 agent 的浏览器操作会暂停，直到你交还。",
+			"agentPill": "Agent 正在操作",
+			"take": "接管",
+			"userTitle": "你在操作桌面",
+			"userHint": "Agent 的浏览器操作已暂停，完成后点「交还」。10 分钟没有操作或关闭面板 1 分钟后会自动交还。",
+			"release": "交还",
+			"askTitle": "需要你在桌面上{{kind}}",
+			"askHint": "直接在桌面上输入，不要把密码或验证码发到聊天里。",
+			"done": "完成",
+			"skip": "跳过",
+			"openDesktop": "打开桌面",
+			"kind": {
+				"sign_in": "登录",
+				"code": "输入验证码",
+				"check": "完成人工验证",
+				"other": "操作"
+			}
+		},
 		"stage": "远端桌面",
 		"stageHint": "按 Enter 开始操作桌面；操作中单独按一下 Ctrl+Alt 交还键盘",
 		"saved": "已保存，当前是第 {{revision}} 版",

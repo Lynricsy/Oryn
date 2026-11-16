@@ -1449,6 +1449,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orbs/{id}/desktop/control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 接管或交还桌面控制
+         * @description `take`：由用户持有桌面控制（`desktop.control.userHeld=true`）；已持有时只续期空闲计时（界面在用户有输入时至多每 30s 调一次）。
+         *     持有期间 orbd 挂起 agent 经 CDP 前门发出的浏览器命令（单条至多 45s，之后回 CDP 错误），并在线程工作中时 steer 通知 agent。
+         *     `release`：交还（未持有时无操作）。orbd 另在 10 分钟没有续期、或所有桌面观看者断开满 60s 后自动交还。
+         *     `take` 先唤醒 orb 并至多等 25s；`release` 不唤醒，orb 不可用时回 503 `orb_unavailable`。旧 orbd → 409 `orbd_outdated`。
+         *     状态机与时限见 docs/protocol.md「桌面控制状态」。
+         */
+        post: operations["setOrbDesktopControl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orbs/{id}/desktop/ws": {
         parameters: {
             query?: never;
@@ -4129,6 +4155,41 @@ export interface components {
             browser: components["schemas"]["OrbBrowserStatus"];
             /** @description 选用的 Profile；不用 Profile 时省略 */
             profile?: components["schemas"]["OrbDesktopProfile"];
+            /** @description 桌面控制状态（orbd 权威）；orbd 未上报（旧 orbd）或 orb 不在运行时省略，按 `idle` 处理 */
+            control?: components["schemas"]["OrbDesktopControl"];
+        };
+        /**
+         * @description 桌面控制状态（优先级从高到低）：`ask` 有待答的 `desktop_ask_user` 请求（界面放开输入并显示横幅）；
+         *     `user` 用户已接管；`agent` 本 orb 上有线程正在工作且用户未接管（界面只读观看）；`idle` 其余。
+         * @enum {string}
+         */
+        OrbDesktopControlState: "idle" | "agent" | "user" | "ask";
+        /**
+         * @description `desktop_ask_user` 的事项：`sign_in` 登录、`code` 输入验证码、`check` 人工验证（验证码 / 二次验证等）、`other` 其他
+         * @enum {string}
+         */
+        OrbDesktopAskKind: "sign_in" | "code" | "check" | "other";
+        /** @description 待答的 `desktop_ask_user` 请求；作答即对该线程的 `requestId` 回 `extension_ui_response`（`value` 为「完成」或「跳过」） */
+        OrbDesktopAsk: {
+            threadId: components["schemas"]["ThreadId"];
+            /** @description `extension_ui_request`（`method=select`）的 id */
+            requestId: string;
+            kind: components["schemas"]["OrbDesktopAskKind"];
+            /** @description agent 给出的原因（从请求标题解析，格式见 docs/protocol.md「桌面控制状态」） */
+            reason: string;
+        };
+        OrbDesktopControl: {
+            state: components["schemas"]["OrbDesktopControlState"];
+            /** @description 用户持有控制（`state=ask` 时也可能为真：作答后回到 `user`）；为真时 CDP 前门挂起 agent 的浏览器命令 */
+            userHeld: boolean;
+            /** @description `userHeld` 时：接管的时间 */
+            userSince?: components["schemas"]["TimestampMs"];
+            /** @description `state=ask` 时：最早的那条待答请求 */
+            ask?: components["schemas"]["OrbDesktopAsk"];
+        };
+        OrbDesktopControlRequest: {
+            /** @enum {string} */
+            action: "take" | "release";
         };
         OrbDesktopProfilePut: {
             /** @description `bpf_…`；空串 = 解除（定为不用 Profile） */
@@ -6446,7 +6507,7 @@ export interface components {
             primaryThreadId?: components["schemas"]["ThreadId"];
         };
         /**
-         * @description orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`
+         * @description orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`
          *     任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
          */
         LinkCtlDesktopStateParams: {
@@ -6465,6 +6526,8 @@ export interface components {
             readonlyBy?: string;
             /** @description 自上次装载或关闭式导出以来浏览器启动过（有东西可存）；只读时恒为 false */
             dirty: boolean;
+            /** @description 桌面控制状态（orbd 权威，见 docs/protocol.md「桌面控制状态」）；旧 orbd 省略 */
+            control?: components["schemas"]["OrbDesktopControl"];
         };
         /**
          * @description orynd→orbd 请求（M8；仅对 `features` 含 `desktop` 的 orbd；结果 `LinkCtlOkResult`，10s，失败只记日志）。
@@ -8796,6 +8859,33 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description orb（`desktop.browser` 为 `stopped`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Orb"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOrbDesktopControl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["OrbIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrbDesktopControlRequest"];
+            };
+        };
+        responses: {
+            /** @description orb（`desktop.control` 为 orbd 应答时的控制状态） */
             200: {
                 headers: {
                     [name: string]: unknown;

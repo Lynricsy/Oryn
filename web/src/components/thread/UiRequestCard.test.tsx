@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionUiRequest } from "../../omp/types";
 import { answerUi } from "../../state/actions";
+import { uiStore } from "../../state/ui";
 import { UiRequestCard } from "./UiRequestCard";
 
 vi.mock("../../state/actions", async (importOriginal) => ({
@@ -146,5 +147,46 @@ describe("UiRequestCard：/omfg 保存位置的中文映射（M12.2）", () => {
 		expect(container.querySelector("h3")?.textContent).toBe("Pick an action");
 		expect(container).toHaveTextContent("Amend with feedback…");
 		expect(container).not.toHaveTextContent("修改反馈…");
+	});
+});
+
+describe("UiRequestCard：desktop_ask_user", () => {
+	it("按约定的标题画成桌面卡片：事项进标题、原因进正文，作答回传原文选项；「打开桌面」切到 Desktop 面板", () => {
+		vi.mocked(answerUi).mockClear();
+		const { container } = card({
+			type: "extension_ui_request",
+			id: "d1",
+			method: "select",
+			title: "需要你操作桌面（输入验证码）：输入短信验证码",
+			options: ["完成", "跳过"],
+		});
+		expect(container.querySelector("h3")?.textContent).toBe(
+			"需要你在桌面上输入验证码",
+		);
+		expect(screen.getByTestId("desktop-ask-card")).toHaveTextContent(
+			"输入短信验证码",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "打开桌面" }));
+		expect(uiStore.getState()).toMatchObject({
+			panelTab: "desktop",
+			panelOpen: true,
+		});
+		fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+		expect(answerUi).toHaveBeenCalledWith("T-ui", {
+			type: "extension_ui_response",
+			id: "d1",
+			value: "跳过",
+		});
+	});
+
+	it("选项不符约定时仍是普通 select", () => {
+		card({
+			type: "extension_ui_request",
+			id: "d2",
+			method: "select",
+			title: "需要你操作桌面：确认",
+			options: ["完成", "跳过", "取消"],
+		});
+		expect(screen.queryByTestId("desktop-ask-card")).toBeNull();
 	});
 });

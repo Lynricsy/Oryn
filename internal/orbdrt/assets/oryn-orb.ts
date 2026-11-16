@@ -1,6 +1,12 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
-// 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状。
-import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+// 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
+// 启用了桌面时另注册 desktop_ask_user 工具。
+import type {
+	AgentToolResult,
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+} from "@oh-my-pi/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -34,8 +40,66 @@ const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DI
 - browser 工具默认附着到桌面上的那个 Chromium（用户看得见）；不要传 headed。它第一次使用时才启动，若报 CDP 端点超时，重试一次即可。需要一个与桌面无关的无头浏览器时传 app: "own"。
 - computer 工具与任何 GUI 程序都作用于同一块桌面。
 - 浏览器里可能带着用户的登录态（浏览器 Profile）：不要把 Cookie、令牌或 tab.cookies() / tab.saveState() 的结果写进文件、日志或回复；不要退出用户已登录的账号，除非用户要求。
-- 需要用户登录或过验证码时，请用户在 Desktop 面板里操作，然后继续。
+- 登录、验证码、二次验证、支付确认，以及其它只能由真人在桌面上完成的步骤，用 desktop_ask_user 工具请用户在 Desktop 面板里操作：先把页面停在需要用户操作的位置，工具会等到用户点「完成」或「跳过」才返回。绝不要在聊天里索要密码、验证码或其它凭据，也不要替用户输入它们。
+- 桌面有控制状态（idle / agent / user / ask）：你工作时用户只能观看，用户可以随时接管。用户接管期间 browser 命令会被挂起、最多 45 秒后报错，你会收到「[Oryn] 用户接管了桌面」的消息；此时不要操作桌面（computer 工具不会被拦截，同样不要用），等收到交还消息再继续，交还后先确认页面状态。
 - 查看状态：oryn orb desktop status。`;
+
+// desktop_ask_user 的请求格式：标题「需要你操作桌面（<事项>）：<原因>」（other 不带括号），选项恰为「完成」「跳过」。
+// orbd（internal/orbdrt/deskcontrol.go）与 Web（web/src/lib/desktop-ask.ts）按同一格式识别，改动须三处同步（docs/protocol.md）。
+const ASK_KIND_LABELS = { sign_in: "登录", code: "输入验证码", check: "人工验证", other: "" } as const;
+type AskKind = keyof typeof ASK_KIND_LABELS;
+const ASK_DONE = "完成";
+const ASK_SKIP = "跳过";
+const ASK_REASON_MAX = 300;
+
+function askTitle(kind: AskKind, reason: string): string {
+	const label = ASK_KIND_LABELS[kind];
+	return `需要你操作桌面${label ? `（${label}）` : ""}：${reason}`;
+}
+
+function textResult(text: string): AgentToolResult {
+	return { content: [{ type: "text", text }] };
+}
+
+function registerDesktopAsk(pi: ExtensionAPI) {
+	const z = pi.zod;
+	pi.registerTool({
+		name: "desktop_ask_user",
+		label: "请用户操作桌面",
+		description:
+			"请用户在 Oryn 的 Desktop 面板里亲自完成一步只有真人能做的操作（登录、输入验证码、人工验证、支付确认等），阻塞直到用户点「完成」或「跳过」。" +
+			"调用前先把桌面上的页面停在需要用户操作的位置；reason 写清用户要做什么（一句话，不要包含或索要密码、验证码等凭据）。",
+		parameters: z.object({
+			kind: z
+				.enum(["sign_in", "code", "check", "other"])
+				.describe("sign_in 登录；code 输入验证码；check 人工验证（验证码、二次验证、风控确认）；other 其他"),
+			reason: z.string().min(1).max(ASK_REASON_MAX).describe("给用户看的一句话：要在桌面上做什么"),
+		}),
+		loadMode: "essential",
+		approval: "read",
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const reason = params.reason.replace(/\s+/g, " ").trim().slice(0, ASK_REASON_MAX);
+			if (!reason) {
+				return { ...textResult("reason 不能为空：写清用户要在桌面上做什么。"), isError: true };
+			}
+			const choice = await ctx.ui.select(askTitle(params.kind, reason), [ASK_DONE, ASK_SKIP], { signal });
+			switch (choice) {
+				case ASK_DONE:
+					return textResult(
+						`用户表示已在桌面上完成：${reason}。继续之前先用 browser / computer 工具确认结果（例如页面确实已登录）；没有完成就说明情况后再请求一次。`,
+					);
+				case ASK_SKIP:
+					return textResult(
+						"用户选择跳过，没有在桌面上操作。不要重复请求同一件事：换一种不需要用户操作的做法，或在回复里说明这一步受阻。",
+					);
+				default:
+					return textResult(
+						"请求已取消或超时，用户没有作答。不要假设这一步已完成；必要时在回复里说明需要用户在桌面上做什么。",
+					);
+			}
+		},
+	});
+}
 
 function desktopEnabled(): boolean {
 	return existsSync(join(homedir(), ".oryn", "core", "desktop.yml"));
@@ -95,6 +159,9 @@ function statusLines(): string[] {
 }
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
+	if (desktopEnabled()) {
+		registerDesktopAsk(pi);
+	}
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
 		const docker = process.env.ORYN_NESTED_DOCKER === "1" ? DOCKER_GUIDE : NO_DOCKER_GUIDE;
 		const guide = desktopEnabled() ? [GUIDE, docker, DESKTOP_GUIDE] : [GUIDE, docker];

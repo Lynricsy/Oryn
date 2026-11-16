@@ -91,11 +91,11 @@ ON CONFLICT (orb_id) DO UPDATE SET
 
 -- Mirror of orbd's desktop.state (only the reported fields).
 -- name: UpsertOrbDesktopState :exec
-INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, updated_at)
-VALUES (@orb_id, 1, @display_ready, @browser, @dirty, @now)
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
+VALUES (@orb_id, 1, @display_ready, @browser, @dirty, sqlc.narg(control), @now)
 ON CONFLICT (orb_id) DO UPDATE SET
     reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
-    dirty = excluded.dirty, updated_at = excluded.updated_at;
+    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at;
 
 -- Result of a sync/checkin: local revision, load error, fence held (0 when not holding); clears takeover.
 -- name: SetOrbDesktopLocal :exec

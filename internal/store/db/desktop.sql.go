@@ -198,7 +198,7 @@ func (q *Queries) GetBrowserProfileByName(ctx context.Context, name string) (Bro
 }
 
 const getOrbDesktop = `-- name: GetOrbDesktop :one
-SELECT orb_id, profile_id, profile_mode, takeover, fence, readonly_reason, readonly_by, readonly_by_thread_id, readonly_at, local_rev, profile_error, reported, display_ready, browser, dirty, updated_at FROM orb_desktops WHERE orb_id = ?1
+SELECT orb_id, profile_id, profile_mode, takeover, fence, readonly_reason, readonly_by, readonly_by_thread_id, readonly_at, local_rev, profile_error, reported, display_ready, browser, dirty, updated_at, control FROM orb_desktops WHERE orb_id = ?1
 `
 
 func (q *Queries) GetOrbDesktop(ctx context.Context, orbID string) (OrbDesktop, error) {
@@ -221,6 +221,7 @@ func (q *Queries) GetOrbDesktop(ctx context.Context, orbID string) (OrbDesktop, 
 		&i.Browser,
 		&i.Dirty,
 		&i.UpdatedAt,
+		&i.Control,
 	)
 	return i, err
 }
@@ -560,19 +561,20 @@ func (q *Queries) UpsertOrbDesktopProfile(ctx context.Context, arg UpsertOrbDesk
 }
 
 const upsertOrbDesktopState = `-- name: UpsertOrbDesktopState :exec
-INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, updated_at)
-VALUES (?1, 1, ?2, ?3, ?4, ?5)
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
+VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT (orb_id) DO UPDATE SET
     reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
-    dirty = excluded.dirty, updated_at = excluded.updated_at
+    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at
 `
 
 type UpsertOrbDesktopStateParams struct {
-	OrbID        string `json:"orbId"`
-	DisplayReady int64  `json:"displayReady"`
-	Browser      string `json:"browser"`
-	Dirty        int64  `json:"dirty"`
-	Now          int64  `json:"now"`
+	OrbID        string  `json:"orbId"`
+	DisplayReady int64   `json:"displayReady"`
+	Browser      string  `json:"browser"`
+	Dirty        int64   `json:"dirty"`
+	Control      *string `json:"control"`
+	Now          int64   `json:"now"`
 }
 
 // Mirror of orbd's desktop.state (only the reported fields).
@@ -582,6 +584,7 @@ func (q *Queries) UpsertOrbDesktopState(ctx context.Context, arg UpsertOrbDeskto
 		arg.DisplayReady,
 		arg.Browser,
 		arg.Dirty,
+		arg.Control,
 		arg.Now,
 	)
 	return err

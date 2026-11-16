@@ -585,7 +585,7 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |`desk` 流|`LinkStreamDesk{t}`、`LinkDeskReply`|**由 orynd 打开**，每个桌面观看者一条。orbd 先回一行 `{"ok":true}` 或 `{"ok":false,"code":…,"message":…}` + `\n`；`ok=true` 之后流上是与 Xvnc（unix socket `$HOME/.oryn/vnc.sock`，Xvnc 不监听 TCP）之间的原始 RFB 字节。拒绝码：`display_unavailable`（显示未就绪）、`failed`（连 socket 失败，5s）；控制面另有 `timeout`（开流 + 应答行合计 10s）。拷贝与半关闭规则同 `portal` 流|
 |hello `features`|`LinkCtlHelloParams.features`|M8 的 orbd 在桌面启用时（`ORYN_DESKTOP=1` 且找得到 `Xvnc`、`openbox`、`chromium`）追加 `desktop`。缺 `desktop` → 不发 `profile.mode`、不调生命周期钩子，桌面与 Profile 接口回 409 `orbd_outdated`|
 |测试用环境变量|`ORYN_DESKTOP_X11_TMPDIR`|只给测试用：orbd 启动 Xvnc 前会删除 `<dir>/.X1-lock` 与 `<dir>/.X11-unix/X1`，默认 `/tmp`。在装了 X 显示栈的宿主上跑 e2e 必须设成临时目录，否则会删掉宿主自己 `:1` 显示的锁|
-|`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, dirty}`（`readonlyBy` 已废弃、恒空）|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写。控制面以库为准纠正上报的模式：orbd 报只读而库里它仍是当前修订与代数的持有者 → `PUT …&keep=1&mode=exclusive`；orbd 报独占而库里是只读 → 重发 `profile.mode`|
+|`desktop.state`|`LinkCtlDesktopStateParams{displayReady, browser, profileId?, profileMode?, readonlyReason?, dirty, control?}`（`readonlyBy` 已废弃、恒空；`control` 见「桌面控制状态」，旧 orbd 省略）|orbd→orynd 通知，**全量**。发送时机：任一字段变化、link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写 `orb_desktops` 镜像（`reported=1`；`control` 以 JSON 存 `orb_desktops.control`），经 WS `orb` 消息推送（`Orb.desktop`）；`browser` 不合法丢弃；orb 为 `deleting` / `deleted` 时不写。控制面以库为准纠正上报的模式：orbd 报只读而库里它仍是当前修订与代数的持有者 → `PUT …&keep=1&mode=exclusive`；orbd 报独占而库里是只读 → 重发 `profile.mode`|
 |`profile.mode`|`LinkCtlProfileModeParams{profileId, mode, reason}` → `LinkCtlOkResult`（`by` / `byThreadId` 已废弃，不发送也不采用）|orynd→orbd 请求（10s，失败只记日志）。目前只在接管时发给原持有者：`{mode:"readonly", reason:"taken_over"}`，不带接管方的任何信息（标记文件 orb 内 agent 可读）；界面上的「已被〈线程〉接管」取自控制面库。orbd 只在标记的 `profileId` 相同时生效（否则错误 `profile_mismatch`）：标记改为只读、`dirty=false`、浏览器与标签页不动，之后导出一律 409 `profile_readonly`。`mode=exclusive` → `invalid_params`（独占只能经重新装载取得）。丢失无害：控制面按围栏代数丢弃迟到的保存，下次同步的 `PUT /desktop/profile` 也带 `mode`|
 
 ### Profile 的三种选用方式（`BrowserProfileMode`）
@@ -611,7 +611,7 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 
 ### 模型
 
-- `Orb.desktop?: OrbDesktop{displayReady, browser: OrbBrowserStatus, profile?: OrbDesktopProfile}`；orbd 上报过 `desktop.state` 才有，orb 已删除时省略。
+- `Orb.desktop?: OrbDesktop{displayReady, browser: OrbBrowserStatus, profile?: OrbDesktopProfile, control?: OrbDesktopControl}`；orbd 上报过 `desktop.state` 才有，orb 已删除时省略。`control` 只在 orb 为 `ready` 时给出（冻结 / 停机后镜像停在最后一次上报）。
 - `OrbDesktopProfile{id, name, status, mode, revision, error?, heldBy?, readonlyReason?, takenOverBy?}`；`status`：`attached`（本 orb 独占持有）、`readonly`（只读副本）、`released`（独占方式但没人持有，本 orb 下次运行时自动取回）、`in_use`（独占方式但被别的 orb 持有，本地目录已清空，带 `heldBy`）、`error`（装载失败，`error` 为 orbd 的错误码）。`revision` = 本地目录对应的修订（未装载为 0）。
 - `BrowserProfile{id, name, revision, sizeBytes, savedAt?, saveError?, holder?, readers?, createdAt, updatedAt}`；`revision=0` = 空；`saveError ∈ too_large | export_failed | takeover_unsaved`。
 - `Project.defaultBrowserProfileId`（`ProjectCreate` / `ProjectPatch` 里空串 = 不设 / 清除）；`CreateThreadRequest.browserProfileId`：省略 = 项目默认，空串 = 不用，`bpf_…` = 指定；只对新建 orb 有效（挂到已有 orb 时给非空值 → 400 `invalid`）。连环境分叉出的 orb 不带 Profile。
@@ -631,6 +631,7 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |`POST /api/v1/orbs/{id}/desktop/profile/save`|`saveOrbDesktopProfile`|—|`BrowserProfile`|
 |`POST /api/v1/orbs/{id}/desktop/browser/start`|`startOrbBrowser`|—|`Orb`|
 |`POST /api/v1/orbs/{id}/desktop/browser/stop`|`stopOrbBrowser`|—|`Orb`|
+|`POST /api/v1/orbs/{id}/desktop/control`|`setOrbDesktopControl`|`OrbDesktopControlRequest{action: take\|release}`|`Orb`；`release` 不唤醒，orb 不可用 → 503 `orb_unavailable`；orbd 不认识该路由 → 409 `orbd_outdated`|
 |`GET /api/v1/orbs/{id}/desktop/ws?ticket=`|`orbDesktopSocket`（`websocket` 标签，不进 `ServerInterface`）|—|`101`，二进制消息 = RFB 字节|
 
 路径参数 `BrowserProfileIdPath`（`^bpf_[0-9A-Z]{26}$`）。名字：1–40 个字符，trim 后非空，不含控制字符，全局唯一。
@@ -644,11 +645,42 @@ orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 
 |`GET /desktop/state`|`LinkCtlDesktopStateParams`|
 |`POST /desktop/browser/start`|启动并等到 DevTools 就绪（30s）→ 状态；显示或 Profile 未定 → 409 `not_ready`|
 |`POST /desktop/browser/stop`|经 CDP `Browser.close` 让浏览器自行退出（Cookie 等落盘），10s 后进程组 SIGKILL；拿不到 DevTools 时只对主进程 SIGTERM → 状态|
+|`POST /desktop/control/take`|用户接管（已接管时只续期）→ 状态|
+|`POST /desktop/control/release`|交还（未接管时无操作）→ 状态|
 |`PUT /desktop/profile?id=<bpf_…>&name=<名字>&mode=exclusive\|readonly[&keep=1]`|`keep=1`：标记须为 `{本 orb, id}`，是 → 改写标记的 `mode` 后 204（不动浏览器与目录），否 → 409 `profile_mismatch`。否则：停浏览器，把请求体（tar.gz；`Content-Length: 0` = 空 Profile）还原进目录，写标记 `{orbId, profileId, name, mode}`，`dirty=false`，204。失败：原目录与标记不动，回 400 `invalid_archive` / 413 `too_large` / 507 `no_space`。`mode` 缺省 `exclusive`|
 |`DELETE /desktop/profile`|定为不用 Profile：标记已是 `{本 orb, ""}` → 204 不动浏览器与目录；否则停浏览器、删除 `profile/`、写标记 `{orbId, profileId:""}`、`dirty=false`，204|
 |`GET /desktop/profile/export?mode=live\|closed`|标记没有 `profileId` → 409 `no_profile`；标记为只读 → 409 `profile_readonly`。先按还原上限统计条目数与解包字节，超限 → 413 `too_large`（输出中途再守一次，超限断开）。`closed`：先停浏览器（同上，`Browser.close`），成功后 `dirty=false`；`live`：Chromium 的 Cookie 约 30s 才落盘，所以先经 CDP `Storage.getCookies` 取持久 Cookie 写成 `Default/oryn-cookies.json`（排序后稳定，Cookie 不变则字节不变），再对浏览器进程组 SIGSTOP，归档结束后 SIGCONT，`dirty` 不变；装载后浏览器首次 DevTools 就绪时清空 Cookie 并回灌该快照，然后删除文件。归档不收扩展相关目录（`Extensions`、`Local Extension Settings`、`Extension State/Rules/Scripts`、`Managed/Sync Extension Settings`、`Extension Cookies`），装载旧归档时跳过这些条目。`application/gzip`，头 `X-Oryn-Profile-Id`，流式输出；中途出错直接断开（分块编码没有终止块）|
 
 orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `desktop.browser.stop`（未启用回 `not_supported`），CLI `oryn orb desktop status [--json]`、`oryn orb desktop browser start|stop`。CDP 前门端口与 Chromium 的 DevTools 端口是保留端口：`portal` 流回 `forbidden_port`，声明它们的服务 `failed`。
+
+### 桌面控制状态
+
+orbd 是控制状态的唯一权威（`internal/orbdrt/deskcontrol.go`），随 `desktop.state` 的 `control` 上报，所有观看者、所有设备与 `oryn orb desktop status`（`control <状态>` 一行）看到的是同一份。
+
+`OrbDesktopControl{state, userHeld, userSince?, ask?}`，`state` 按优先级：
+
+|状态|条件|界面|
+|---|---|---|
+|`ask`|有待答的 `desktop_ask_user` 请求（`ask` = 最早的一条 `OrbDesktopAsk{threadId, requestId, kind, reason}`）|放开输入，横幅显示原因与「完成」「跳过」，作答即对该请求回 `extension_ui_response`|
+|`user`|用户已接管（`userHeld=true`）|放开输入，「交还」按钮|
+|`agent`|本 orb 上有线程处于回合中（orbd 从 omp 帧看到 `agent_start`，尚无终结的 `agent_end`，规则同 `threads/live.go`；进程退出即清除）|只读观看，「Agent 正在操作 · 接管」|
+|`idle`|其余|放开输入|
+
+`userHeld` 与 `state` 独立：`ask` 期间用户也可能持有控制，作答后回到 `user`。
+
+- **接管 / 交还**：`POST /api/v1/orbs/{id}/desktop/control`（控制面 → orbd 本机 API `/desktop/control/take|release`）。Web 在用户持有控制且有输入时至多每 30s 再发一次 `take` 续期。
+- **自动交还**：最近一次 `take` 之后 10 分钟没有续期（用户离开；登录、二次验证这类人工步骤通常几分钟内完成），或该 orb 的 `desk` 流全部断开满 60s（覆盖页面刷新、网络抖动、移动端短暂切后台；从接管与最后一个观看者断开两者中较晚的时间算起）。
+- **挂起 agent 的浏览器命令**：`userHeld` 期间 CDP 前门对普通 HTTP 请求在对接前等待，对 WebSocket 上客户端发出的每条数据消息（CDP 命令）在转发前等待，至多 45s；交还即放行。超时：WebSocket 回 `{"id", "sessionId"?, "error":{"code":-32000,"message":"Oryn: 用户已接管桌面…"}}`（命令不送达 Chromium），HTTP 回 503；超时回错误后 1s 内到来的后续命令直接回错误（一次突发至多挂起一个 45s）。前门转发升级请求时去掉 `Sec-WebSocket-Extensions`（不协商压缩，帧可读）；无法整条缓存的消息（分片或 >16MiB）只能等，超时断开连接。
+- **steer**：新接管与交还（含自动交还）时，orbd 向每个工作中线程的 omp 进程写一条 `steer`（id 带 `orbd-` 前缀，应答在 orbd 本地吞掉），文本以 `[Oryn]` 开头说明用户接管 / 交还。`computer` 工具直接作用于 X 显示，无法拦截，steer 与系统提示词里的约定是对它唯一的约束。
+
+**`desktop_ask_user` 工具**（`oryn-orb.ts`，只在启用桌面时注册）：参数 `kind ∈ sign_in | code | check | other`、`reason`（≤300 字，空白折叠为单行）。`execute` 以 `ctx.ui.select(<标题>, ["完成", "跳过"], {signal})` 阻塞，因此它就是一条普通的 select 请求：线程进入 `awaiting_input`，Web、Telegram、推送都能作答。结果：「完成」→ 告诉 agent 先确认结果再继续；「跳过」→ 换不需要用户的做法；取消 / 超时 → 不要假设已完成。标题格式（orbd、Web `web/src/lib/desktop-ask.ts` 与扩展三处一致，改动须同步）：
+
+```text
+需要你操作桌面（<事项>）：<原因>        事项：登录 = sign_in，输入验证码 = code，人工验证 = check
+需要你操作桌面：<原因>                  other（不带括号）
+```
+
+选项必须恰为 `["完成", "跳过"]`，否则 orbd 与 Web 都不把它当作桌面请求（按普通 select 处理）。
 
 ### 控制面同步与保存
 
@@ -673,6 +705,7 @@ orb 内：`orbd.sock` 方法 `desktop.status` / `desktop.browser.start` / `deskt
 |导出 / 装载单次|120s；钩子整体 150s；接管前对原持有者的活体保存 15s|
 |desk 流拨号|开流 + 应答行 10s；orbd 连 socket 5s|
 |桌面 WS|每台 orb ≤8 个观看者；客户端单条消息 ≤1MiB；写超时 30s；唤醒等待 25s|
+|桌面控制|无续期 10 分钟或观看者全部断开 60s 自动交还；CDP 命令挂起 ≤45s；`ask.reason` ≤500 字|
 
 ### 错误码
 

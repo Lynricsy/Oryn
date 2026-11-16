@@ -85,6 +85,9 @@ type desktop struct {
 	dirty        bool
 	marker       *profileMarker // nil = Profile 未定（还没收到控制面的 PUT / DELETE）
 	changed      chan struct{}  // 任何状态变化时关闭并替换
+	ctl          deskControl    // 控制状态（deskcontrol.go）
+
+	ctlT DeskControlTimings
 
 	// emitMu 让 OnDesktopState 回调按状态修改的顺序发生；last 是上一次交出的快照（JSON），相同则不重复交出。
 	emitMu sync.Mutex
@@ -137,6 +140,10 @@ func newDesktop(r *Runtime) *desktop {
 		d.backoff = defaultDesktopBackoff
 	}
 	d.sandbox = r.cfg.DesktopUserNS()
+	d.ctlT = defaultDeskControlTimings
+	if t := r.cfg.DesktopControlTimings; t != nil {
+		d.ctlT = *t
+	}
 	if !d.sandbox {
 		d.log.Warn("user namespaces unavailable; Chromium will run with --no-sandbox")
 	}
@@ -217,7 +224,7 @@ func (d *desktop) snapshot() apigen.LinkCtlDesktopStateParams {
 }
 
 func (d *desktop) snapshotLocked() apigen.LinkCtlDesktopStateParams {
-	st := apigen.LinkCtlDesktopStateParams{DisplayReady: d.displayReady, Browser: d.browser, Dirty: d.dirty}
+	st := apigen.LinkCtlDesktopStateParams{DisplayReady: d.displayReady, Browser: d.browser, Dirty: d.dirty, Control: new(d.controlLocked())}
 	if m := d.marker; m != nil && m.ProfileID != "" {
 		mode := m.access()
 		st.ProfileID = new(m.ProfileID)

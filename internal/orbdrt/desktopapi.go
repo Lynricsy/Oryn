@@ -40,6 +40,14 @@ func (r *Runtime) deskRoutes(mux *http.ServeMux) {
 	route("PUT /desktop/profile", (*desktop).handleProfilePut)
 	route("DELETE /desktop/profile", (*desktop).handleProfileDelete)
 	route("GET /desktop/profile/export", (*desktop).handleProfileExport)
+	route("POST /desktop/control/take", func(d *desktop, w http.ResponseWriter, _ *http.Request) {
+		d.takeControl()
+		writeJSON(w, http.StatusOK, d.snapshot())
+	})
+	route("POST /desktop/control/release", func(d *desktop, w http.ResponseWriter, _ *http.Request) {
+		d.releaseControl(false)
+		writeJSON(w, http.StatusOK, d.snapshot())
+	})
 }
 
 func (d *desktop) handleBrowserStart(w http.ResponseWriter, req *http.Request) {

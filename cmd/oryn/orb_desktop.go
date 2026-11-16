@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
@@ -92,8 +93,24 @@ func desktopStatus(ctx context.Context, asJSON bool, stdout, stderr io.Writer) i
 	if res.ProfileName != "" {
 		profile = res.ProfileName
 	}
-	fmt.Fprintf(stdout, "display %s %s\nbrowser %s\ncdp %s\nprofile %s\n", res.Display, ready, res.State.Browser, res.CDPURL, profile)
+	fmt.Fprintf(stdout, "display %s %s\nbrowser %s\ncdp %s\nprofile %s\ncontrol %s\n", res.Display, ready, res.State.Browser, res.CDPURL, profile, controlLine(res.State.Control))
 	return exitDesktopOK
+}
+
+// controlLine 是桌面控制状态的一行描述：`idle` / `agent` / `user` / `ask <事项>: <原因>`；
+// 用户在 ask 期间同时持有控制时追加 `(user holds control)`。旧 orbd 不上报时按 idle。
+func controlLine(c *apigen.OrbDesktopControl) string {
+	if c == nil {
+		return string(apigen.OrbDesktopControlStateIdle)
+	}
+	s := string(c.State)
+	if c.Ask != nil {
+		s += fmt.Sprintf(" %s: %s", c.Ask.Kind, c.Ask.Reason)
+		if c.UserHeld {
+			s += " (user holds control)"
+		}
+	}
+	return s
 }
 
 func desktopBrowser(ctx context.Context, start bool, stdout, stderr io.Writer) int {

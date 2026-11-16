@@ -904,6 +904,35 @@ func (s *Service) SetBrowser(ctx context.Context, orbID string, run bool) error 
 	return nil
 }
 
+// SetControl 接管（take）或交还（release）orb 的桌面控制，把 orbd 返回的状态写进镜像。take 先唤醒 orb；
+// release 不唤醒（不可用时 orbd 本就无从持有控制）。orbd 不认识该路由（旧 orbd）→ ErrOrbdOutdated。
+func (s *Service) SetControl(ctx context.Context, orbID string, take bool) error {
+	if err := s.o.EnsureUsable(ctx, orbID, orbs.FeatureDesktop, take, wakeWait); err != nil {
+		return err
+	}
+	path := "/desktop/control/release"
+	if take {
+		path = "/desktop/control/take"
+	}
+	cctx, cancel := context.WithTimeout(ctx, browserTimeout)
+	defer cancel()
+	resp, err := s.orbdCall(cctx, orbID, http.MethodPost, path, nil, nil, 0)
+	if err != nil {
+		var oe *orbdError
+		if errors.As(err, &oe) && oe.Status == http.StatusNotFound {
+			return orbs.ErrOrbdOutdated
+		}
+		return err
+	}
+	defer resp.Body.Close()
+	var st apigen.LinkCtlDesktopStateParams
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&st); err != nil {
+		return fmt.Errorf("desktop: orbd 返回的桌面状态无效: %w", err)
+	}
+	s.o.ApplyDesktopState(ctx, orbID, st)
+	return nil
+}
+
 // holds 报告 orb 是否独占持有 Profile。
 func (s *Service) holds(ctx context.Context, orbID, profileID string) bool {
 	p, err := getProfile(ctx, s.st.Q, profileID)

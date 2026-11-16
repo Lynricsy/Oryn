@@ -7,6 +7,11 @@ import type { ParseKeys } from "i18next";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { coreLabelKey, OMFG_SAVE_TITLE } from "../../lib/core-labels";
+import {
+	DESKTOP_ASK_DONE,
+	DESKTOP_ASK_SKIP,
+	parseDesktopAsk,
+} from "../../lib/desktop-ask";
 import { keyed } from "../../lib/keys";
 import { splitConfirmRule } from "../../lib/omfg-rule";
 import type {
@@ -19,6 +24,7 @@ import type {
 	FormSpan,
 } from "../../omp/types";
 import { answerUi } from "../../state/actions";
+import { uiStore } from "../../state/ui";
 import { Markdown } from "../markdown/Markdown";
 import { escapeAngles, noticeBodyFormat } from "../transcript/NoticeLine";
 import { Badge } from "../ui/data";
@@ -114,6 +120,48 @@ function SelectBody({
 					)}
 				</button>
 			))}
+		</div>
+	);
+}
+
+/** agent 的 `desktop_ask_user`：原因、提示与「完成 / 跳过 / 打开桌面」（作答值仍是原文选项）。 */
+function DesktopAskBody({
+	req,
+	reason,
+	answer,
+}: {
+	req: ExtensionUiRequestOf<"select">;
+	reason: string;
+	answer: Answer;
+}) {
+	const { t } = useTranslation();
+	const reply = (value: string) =>
+		answer({ type: "extension_ui_response", id: req.id, value });
+	const openDesktop = () => {
+		const ui = uiStore.getState();
+		ui.setPanelTab("desktop");
+		ui.setPanel(true);
+	};
+	return (
+		<div data-testid="desktop-ask-card" className="flex flex-col gap-2">
+			<p className="whitespace-pre-wrap break-words text-sm">{reason}</p>
+			<p className="text-muted text-xs">{t("deskPanel.control.askHint")}</p>
+			<div className="flex flex-wrap gap-1.5">
+				<Button
+					size="sm"
+					variant="primary"
+					icon="check"
+					onClick={() => reply(DESKTOP_ASK_DONE)}
+				>
+					{t("deskPanel.control.done")}
+				</Button>
+				<Button size="sm" onClick={() => reply(DESKTOP_ASK_SKIP)}>
+					{t("deskPanel.control.skip")}
+				</Button>
+				<Button size="sm" variant="ghost" icon="monitor" onClick={openDesktop}>
+					{t("deskPanel.control.openDesktop")}
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -701,10 +749,16 @@ export function UiRequestCard({
 			timedOut: true,
 		}),
 	);
+	const desk =
+		req.method === "select" ? parseDesktopAsk(req.title, req.options) : null;
 	let body: ReactNode = null;
 	switch (req.method) {
 		case "select":
-			body = <SelectBody req={req} answer={answer} />;
+			body = desk ? (
+				<DesktopAskBody req={req} reason={desk.reason} answer={answer} />
+			) : (
+				<SelectBody req={req} answer={answer} />
+			);
 			break;
 		case "confirm":
 			body = <ConfirmBody req={req} answer={answer} />;
@@ -727,7 +781,13 @@ export function UiRequestCard({
 	}
 	// 标题可能是多行：Core 在 RPC 下没有审批对话框，工具审批走 select，整段提示（`Allow tool: …` + 参数）
 	// 都在 title 里。标题栏只放首行，其余作正文，免得命令 / 路径被截掉、盲批。
-	const [head = "", ...more] = titleOf(req, t).split("\n");
+	const [head = "", ...more] = (
+		desk
+			? t("deskPanel.control.askTitle", {
+					kind: t(`deskPanel.control.kind.${desk.kind}`),
+				})
+			: titleOf(req, t)
+	).split("\n");
 	const detail = more
 		.join("\n")
 		.replace(/^(?:[ \t]*\n)+/, "")
@@ -740,7 +800,7 @@ export function UiRequestCard({
 		>
 			<div className="mb-2.5 flex items-center gap-2">
 				<span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-accent-soft text-accent">
-					<Icon name="message" size={12} weight="fill" />
+					<Icon name={desk ? "monitor" : "message"} size={12} weight="fill" />
 				</span>
 				<h3
 					className="min-w-0 flex-1 truncate font-medium text-sm"

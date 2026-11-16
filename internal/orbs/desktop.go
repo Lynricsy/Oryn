@@ -118,8 +118,13 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 			// 不可信，保留镜像里的 dirty，否则纠正完成之前的冻结 / 停机保存会因「没东西可存」被跳过
 			dirty = 1
 		}
+		var control *string
+		if st.Control != nil {
+			b, _ := json.Marshal(st.Control)
+			control = new(string(b))
+		}
 		return q.UpsertOrbDesktopState(ctx, db.UpsertOrbDesktopStateParams{
-			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Now: s.nowMs(),
+			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Control: control, Now: s.nowMs(),
 		})
 	})
 	if errors.Is(err, errOrbDeletedTx) {
@@ -275,6 +280,12 @@ func DesktopView(ctx context.Context, q *db.Queries, orbID string) (*apigen.OrbD
 		return nil, nil
 	}
 	out := &apigen.OrbDesktop{DisplayReady: d.DisplayReady != 0, Browser: apigen.OrbBrowserStatus(d.Browser)}
+	if d.Control != nil {
+		var c apigen.OrbDesktopControl
+		if json.Unmarshal([]byte(*d.Control), &c) == nil {
+			out.Control = &c
+		}
+	}
 	if d.ProfileID == nil {
 		return out, nil
 	}

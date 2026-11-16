@@ -19,6 +19,11 @@
  */
 import type { Entry, Orb, Project, Schemas, Thread } from "../api/client";
 import { AGENT_DEFAULT_GLYPHS } from "../lib/avatar-defaults";
+import {
+	DESKTOP_ASK_DONE,
+	DESKTOP_ASK_SKIP,
+	desktopAskTitle,
+} from "../lib/desktop-ask";
 import { readConfigDoc } from "../lib/omp-config";
 import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
@@ -3395,6 +3400,7 @@ export class MockServer {
 		if (!t) return;
 		this.upsertThread({ ...t, state: "working", lastMessageAt: Date.now() });
 		this.frame(threadId, { type: "agent_start" });
+		this.desktop.turn(t.orbId, true);
 		const userMsg = { role: "user", content: text, timestamp: Date.now() };
 		this.frame(threadId, {
 			type: "message_start",
@@ -3574,6 +3580,34 @@ export class MockServer {
 			this.refreshThreadState(threadId);
 			await this.waitFor(reqId);
 		}
+		// 提示词含「桌面」：agent 先操作桌面几秒，再用 desktop_ask_user 请用户登录（同真实扩展的 select 形态）
+		if (/桌面|desktop/i.test(text)) {
+			await sleep(4000);
+			const reqId = `ui-${this.idSeq++}`;
+			const reason = "在桌面的浏览器里登录 GitHub 测试号（含二次验证）";
+			const req = {
+				type: "extension_ui_request",
+				id: reqId,
+				method: "select",
+				title: desktopAskTitle("sign_in", reason),
+				options: [DESKTOP_ASK_DONE, DESKTOP_ASK_SKIP],
+			};
+			this.pendingUi.set(threadId, [
+				...(this.pendingUi.get(threadId) ?? []),
+				req,
+			]);
+			this.frame(threadId, req);
+			this.desktop.setAsk(t.orbId, {
+				threadId,
+				requestId: reqId,
+				kind: "sign_in",
+				reason,
+			});
+			this.refreshThreadState(threadId);
+			await this.waitFor(reqId);
+			this.desktop.setAsk(t.orbId, undefined);
+			await sleep(2000);
+		}
 		if (/plan|计划/i.test(text)) {
 			const proposal = {
 				type: "plan_proposal",
@@ -3634,6 +3668,7 @@ export class MockServer {
 			isTerminal: true,
 			yielded: true,
 		});
+		this.desktop.turn(t.orbId, false);
 		this.frame(threadId, {
 			type: "prompt_result",
 			agentInvoked: true,

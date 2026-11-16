@@ -427,6 +427,9 @@ func (t *thread) pumpCommands(s *link.Stream, p *proc) {
 			default:
 			}
 			p.ui.observeIn(line)
+			if d := t.r.desk; d != nil && h.Type == "extension_ui_response" {
+				d.observeAgentCommand(line)
+			}
 			if err := p.w.WriteRaw(line); err != nil {
 				t.r.log.Debug("write omp stdin failed", "thread", t.id, "err", err)
 			}
@@ -802,6 +805,9 @@ func (s *supervisor) run(p *proc) {
 			}
 			<-p.exited
 			code, tail = p.exitCode, p.stderr.String()
+			if d := t.r.desk; d != nil {
+				d.agentExited(t.id)
+			}
 		} else {
 			tail = "orbd: spawn agent: " + spawnErr.Error()
 		}
@@ -1074,6 +1080,9 @@ func (p *proc) readStdout(t *thread, r io.Reader) {
 			continue
 		}
 		p.ui.observeOut(frame)
+		if d := t.r.desk; d != nil {
+			d.observeAgentFrame(t.id, env.Type, frame)
+		}
 		t.out.push(outItem{epoch: p.epoch, data: frame, droppable: isTerminalOutput(frame)})
 		t.wake()
 	}

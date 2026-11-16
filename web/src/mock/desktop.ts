@@ -1,7 +1,8 @@
 /**
  * mock 的浏览器 Profile 与 orb 桌面接口（M8，与控制面同形）：Profile 增删改查、orb 选用 / 切换 / 解除 Profile
  * （独占被占用 → 409 `ProfileInUseConflict`；只读 → 只读副本；接管 → 原持有者降级为只读并推送它的 `orb`）、
- * 立即保存（修订 +1）、浏览器启停；新建线程时按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
+ * 立即保存（修订 +1）、浏览器启停、桌面控制（接管 / 交还；回合与 `desktop_ask_user` 由 server 的脚本经
+ * `turn` / `setAsk` 驱动，状态推导同 orbd）；新建线程时按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
  * 改动经 `setOrb` 写回内存并广播 `orb`。
  */
 import type { Orb, Project, Schemas } from "../api/client";
@@ -32,10 +33,60 @@ const err = (code: string, message: string, status: number) =>
 export class MockDesktop {
 	readonly profiles: Profile[] = structuredClone(browserProfiles);
 	private seq = 0;
+	/** 桌面控制：用户接管时间、回合中的 orb、待答的桌面请求（按 orb）。 */
+	private readonly held = new Map<string, number>();
+	private readonly working = new Set<string>();
+	private readonly asks = new Map<string, Schemas["OrbDesktopAsk"]>();
 	private readonly deps: DesktopDeps;
 
 	constructor(deps: DesktopDeps) {
 		this.deps = deps;
+	}
+
+	private controlOf(orbId: string): Schemas["OrbDesktopControl"] {
+		const since = this.held.get(orbId);
+		const ask = this.asks.get(orbId);
+		const state = ask
+			? "ask"
+			: since !== undefined
+				? "user"
+				: this.working.has(orbId)
+					? "agent"
+					: "idle";
+		return {
+			state,
+			userHeld: since !== undefined,
+			...(since !== undefined ? { userSince: since } : {}),
+			...(ask ? { ask } : {}),
+		};
+	}
+
+	/** 按当前数据重算 orb 的控制状态并推送；返回推送后的 orb。 */
+	private pushControl(orbId: string): Orb | undefined {
+		const orb = this.deps.orbs.get(orbId);
+		if (!orb?.desktop) return orb;
+		const next: Orb = {
+			...orb,
+			desktop: { ...orb.desktop, control: this.controlOf(orbId) },
+		};
+		this.deps.setOrb(next);
+		return next;
+	}
+
+	/** 回合开始 / 结束（对应 orbd 看到的 agent_start / 终结的 agent_end）。 */
+	turn(orbId: string | undefined, working: boolean) {
+		if (!orbId) return;
+		if (working) this.working.add(orbId);
+		else this.working.delete(orbId);
+		this.pushControl(orbId);
+	}
+
+	/** 登记 / 清除待答的 `desktop_ask_user` 请求。 */
+	setAsk(orbId: string | undefined, ask: Schemas["OrbDesktopAsk"] | undefined) {
+		if (!orbId) return;
+		if (ask) this.asks.set(orbId, ask);
+		else this.asks.delete(orbId);
+		this.pushControl(orbId);
 	}
 
 	private holderOf(orb: Orb, now = Date.now()): Holder {
@@ -217,7 +268,7 @@ export class MockDesktop {
 			return null;
 		}
 		const desk =
-			/^orbs\/([^/]+)\/desktop\/(profile|profile\/save|browser\/start|browser\/stop)$/.exec(
+			/^orbs\/([^/]+)\/desktop\/(profile|profile\/save|browser\/start|browser\/stop|control)$/.exec(
 				p,
 			);
 		if (!desk) return null;
@@ -281,6 +332,14 @@ export class MockDesktop {
 			};
 			this.deps.setOrb(next);
 			return json(next);
+		}
+		if (op === "control" && m === "POST") {
+			const b = (await body()) as Schemas["OrbDesktopControlRequest"];
+			if (b.action !== "take" && b.action !== "release")
+				return err("invalid_request", "action", 400);
+			if (b.action === "release") this.held.delete(orb.id);
+			else if (!this.held.has(orb.id)) this.held.set(orb.id, Date.now());
+			return json(this.pushControl(orb.id));
 		}
 		return null;
 	}

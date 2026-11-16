@@ -1078,6 +1078,72 @@ func (e OrbBrowserStatus) Valid() bool {
 	}
 }
 
+// Defines values for OrbDesktopAskKind.
+const (
+	OrbDesktopAskKindCheck  OrbDesktopAskKind = "check"
+	OrbDesktopAskKindCode   OrbDesktopAskKind = "code"
+	OrbDesktopAskKindOther  OrbDesktopAskKind = "other"
+	OrbDesktopAskKindSignIn OrbDesktopAskKind = "sign_in"
+)
+
+// Valid indicates whether the value is a known member of the OrbDesktopAskKind enum.
+func (e OrbDesktopAskKind) Valid() bool {
+	switch e {
+	case OrbDesktopAskKindCheck:
+		return true
+	case OrbDesktopAskKindCode:
+		return true
+	case OrbDesktopAskKindOther:
+		return true
+	case OrbDesktopAskKindSignIn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbDesktopControlRequestAction.
+const (
+	OrbDesktopControlActionRelease OrbDesktopControlRequestAction = "release"
+	OrbDesktopControlActionTake    OrbDesktopControlRequestAction = "take"
+)
+
+// Valid indicates whether the value is a known member of the OrbDesktopControlRequestAction enum.
+func (e OrbDesktopControlRequestAction) Valid() bool {
+	switch e {
+	case OrbDesktopControlActionRelease:
+		return true
+	case OrbDesktopControlActionTake:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbDesktopControlState.
+const (
+	OrbDesktopControlStateAgent OrbDesktopControlState = "agent"
+	OrbDesktopControlStateAsk   OrbDesktopControlState = "ask"
+	OrbDesktopControlStateIdle  OrbDesktopControlState = "idle"
+	OrbDesktopControlStateUser  OrbDesktopControlState = "user"
+)
+
+// Valid indicates whether the value is a known member of the OrbDesktopControlState enum.
+func (e OrbDesktopControlState) Valid() bool {
+	switch e {
+	case OrbDesktopControlStateAgent:
+		return true
+	case OrbDesktopControlStateAsk:
+		return true
+	case OrbDesktopControlStateIdle:
+		return true
+	case OrbDesktopControlStateUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbDesktopProfileStatus.
 const (
 	OrbDesktopProfileStatusAttached OrbDesktopProfileStatus = "attached"
@@ -3664,11 +3730,14 @@ type LinkCtlBlobFetchResult struct {
 	Found bool `json:"found"`
 }
 
-// LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`
+// LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`
 // 任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
 type LinkCtlDesktopStateParams struct {
 	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
 	Browser OrbBrowserStatus `json:"browser"`
+
+	// Control 桌面控制状态（orbd 权威，见 docs/protocol.md「桌面控制状态」）；旧 orbd 省略
+	Control *OrbDesktopControl `json:"control,omitempty"`
 
 	// Dirty 自上次装载或关闭式导出以来浏览器启动过（有东西可存）；只读时恒为 false
 	Dirty        bool `json:"dirty"`
@@ -4770,12 +4839,63 @@ type OrbDesktop struct {
 	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
 	Browser OrbBrowserStatus `json:"browser"`
 
+	// Control 桌面控制状态（orbd 权威）；orbd 未上报（旧 orbd）或 orb 不在运行时省略，按 `idle` 处理
+	Control *OrbDesktopControl `json:"control,omitempty"`
+
 	// DisplayReady X 显示 `:1` 与窗口管理器已就绪
 	DisplayReady bool `json:"displayReady"`
 
 	// Profile 选用的 Profile；不用 Profile 时省略
 	Profile *OrbDesktopProfile `json:"profile,omitempty"`
 }
+
+// OrbDesktopAsk 待答的 `desktop_ask_user` 请求；作答即对该线程的 `requestId` 回 `extension_ui_response`（`value` 为「完成」或「跳过」）
+type OrbDesktopAsk struct {
+	// Kind `desktop_ask_user` 的事项：`sign_in` 登录、`code` 输入验证码、`check` 人工验证（验证码 / 二次验证等）、`other` 其他
+	Kind OrbDesktopAskKind `json:"kind"`
+
+	// Reason agent 给出的原因（从请求标题解析，格式见 docs/protocol.md「桌面控制状态」）
+	Reason string `json:"reason"`
+
+	// RequestID `extension_ui_request`（`method=select`）的 id
+	RequestID string `json:"requestId"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// OrbDesktopAskKind `desktop_ask_user` 的事项：`sign_in` 登录、`code` 输入验证码、`check` 人工验证（验证码 / 二次验证等）、`other` 其他
+type OrbDesktopAskKind string
+
+// OrbDesktopControl defines model for OrbDesktopControl.
+type OrbDesktopControl struct {
+	// Ask `state=ask` 时：最早的那条待答请求
+	Ask *OrbDesktopAsk `json:"ask,omitempty"`
+
+	// State 桌面控制状态（优先级从高到低）：`ask` 有待答的 `desktop_ask_user` 请求（界面放开输入并显示横幅）；
+	// `user` 用户已接管；`agent` 本 orb 上有线程正在工作且用户未接管（界面只读观看）；`idle` 其余。
+	State OrbDesktopControlState `json:"state"`
+
+	// UserHeld 用户持有控制（`state=ask` 时也可能为真：作答后回到 `user`）；为真时 CDP 前门挂起 agent 的浏览器命令
+	UserHeld bool `json:"userHeld"`
+
+	// UserSince `userHeld` 时：接管的时间
+	UserSince *TimestampMs `json:"userSince,omitempty"`
+}
+
+// OrbDesktopControlRequest defines model for OrbDesktopControlRequest.
+type OrbDesktopControlRequest struct {
+	Action OrbDesktopControlRequestAction `json:"action"`
+}
+
+// OrbDesktopControlRequestAction defines model for OrbDesktopControlRequest.Action.
+type OrbDesktopControlRequestAction string
+
+// OrbDesktopControlState 桌面控制状态（优先级从高到低）：`ask` 有待答的 `desktop_ask_user` 请求（界面放开输入并显示横幅）；
+// `user` 用户已接管；`agent` 本 orb 上有线程正在工作且用户未接管（界面只读观看）；`idle` 其余。
+type OrbDesktopControlState string
 
 // OrbDesktopProfile defines model for OrbDesktopProfile.
 type OrbDesktopProfile struct {
@@ -10012,6 +10132,9 @@ type ServerInterface interface {
 	// StopOrbBrowser 关闭桌面上的 Chromium（SIGTERM，10s 后 SIGKILL；已停止则无操作）
 	// (POST /api/v1/orbs/{id}/desktop/browser/stop)
 	StopOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// SetOrbDesktopControl 接管或交还桌面控制
+	// (POST /api/v1/orbs/{id}/desktop/control)
+	SetOrbDesktopControl(w http.ResponseWriter, r *http.Request, id OrbIDPath)
 	// SetOrbDesktopProfile 为 orb 选用、切换或解除浏览器 Profile
 	// (PUT /api/v1/orbs/{id}/desktop/profile)
 	SetOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
@@ -10702,6 +10825,12 @@ func (_ Unimplemented) StartOrbBrowser(w http.ResponseWriter, r *http.Request, i
 // StopOrbBrowser 关闭桌面上的 Chromium（SIGTERM，10s 后 SIGKILL；已停止则无操作）
 // (POST /api/v1/orbs/{id}/desktop/browser/stop)
 func (_ Unimplemented) StopOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetOrbDesktopControl 接管或交还桌面控制
+// (POST /api/v1/orbs/{id}/desktop/control)
+func (_ Unimplemented) SetOrbDesktopControl(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12733,6 +12862,32 @@ func (siw *ServerInterfaceWrapper) StopOrbBrowser(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StopOrbBrowser(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetOrbDesktopControl operation middleware
+func (siw *ServerInterfaceWrapper) SetOrbDesktopControl(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetOrbDesktopControl(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17450,6 +17605,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/browser/stop", wrapper.StopOrbBrowser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/control", wrapper.SetOrbDesktopControl)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/browser-profiles", wrapper.ListBrowserProfiles)

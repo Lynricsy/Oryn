@@ -2335,6 +2335,26 @@
 		"toWatch": "Switch to view only (no keyboard or mouse)",
 		"toControl": "Switch to control",
 		"watching": "View only",
+		"control": {
+			"agentTitle": "The agent is using the desktop",
+			"agentHint": "You can only watch for now. Taking over pauses the agent's browser actions until you hand control back.",
+			"agentPill": "Agent in control",
+			"take": "Take over",
+			"userTitle": "You have control of the desktop",
+			"userHint": "The agent's browser actions are paused. Hand back when you're done. Control returns automatically after 10 minutes without input, or 1 minute after you close the panel.",
+			"release": "Hand back",
+			"askTitle": "Needed on the desktop: {{kind}}",
+			"askHint": "Type it on the desktop. Don't send passwords or codes in chat.",
+			"done": "Done",
+			"skip": "Skip",
+			"openDesktop": "Open desktop",
+			"kind": {
+				"sign_in": "sign in",
+				"code": "enter a code",
+				"check": "complete a verification",
+				"other": "take a step"
+			}
+		},
 		"stage": "Remote desktop",
 		"stageHint": "Press Enter to control the desktop; press Ctrl+Alt on its own to release the keyboard",
 		"saved": "Saved — now at revision {{revision}}",

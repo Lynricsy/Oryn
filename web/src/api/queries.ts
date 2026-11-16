@@ -503,3 +503,18 @@ export function useOrbBrowser(orbId: string) {
 		},
 	});
 }
+
+/** 接管（`take`，已接管时续期）/ 交还（`release`）桌面控制。 */
+export function useOrbDesktopControl(orbId: string) {
+	return useMutation({
+		mutationFn: (action: Schemas["OrbDesktopControlRequest"]["action"]) =>
+			mutateOrb(orbId, () =>
+				unwrap(
+					api.POST("/api/v1/orbs/{id}/desktop/control", {
+						params: { path: { id: orbId } },
+						body: { action },
+					}),
+				),
+			),
+	});
+}

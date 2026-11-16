@@ -3,7 +3,8 @@
  * 意外断开重试三次后出现「重新连接」、4429 不重试、浏览器未运行时的「启动浏览器」、
  * Profile 横幅（被占用 → 冲突对话框 → 接管；装载失败 → 重试；被接管 → 只读，随 orb 推送实时出现）、
  * Profile 菜单（被占用 / 409 → 对话框 → 只读使用；只读副本换另一个被占用的 Profile 仍可只读）、可控制 / 仅观看开关、全屏与回退、
- * 迟到的 REST 应答不盖掉更新的推送、键盘进出舞台、软键盘期间点画面不抢焦点、剪贴板只在显式操作时收发。
+ * 迟到的 REST 应答不盖掉更新的推送、键盘进出舞台、软键盘期间点画面不抢焦点、剪贴板只在显式操作时收发、
+ * 桌面控制状态（agent 强制仅观看并可接管、user 续期与交还、ask 横幅作答同一条请求）。
  * 假会话照 noVNC 1.7 的画布行为：tabIndex=-1、focusOnClick 时 mousedown / touchstart 抢焦点、keydown 全部 preventDefault。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,6 +24,12 @@ import { acceptOrbPush, getThreadStore, indexStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import DesktopPanel, { AWAY_MS, RETRY_MS } from "./DesktopPanel";
 import type { DesktopHandlers } from "./session";
+
+const answerUi = vi.hoisted(() => vi.fn(() => true));
+vi.mock("../../state/actions", async (orig) => ({
+	...(await orig<object>()),
+	answerUi,
+}));
 
 interface FakeSession {
 	target: HTMLElement;
@@ -101,6 +108,7 @@ let putReply: (
 	body: Schemas["OrbDesktopProfilePut"],
 ) => Response | Promise<Response>;
 let startReply: () => Response | Promise<Response>;
+let controlReply: (body: { action: string }) => Response | Promise<Response>;
 let currentOrb: Orb;
 
 function conflictBody(id: string, name: string) {
@@ -181,6 +189,18 @@ beforeEach(() => {
 			...currentOrb,
 			desktop: { ...currentOrb.desktop, browser: "running" },
 		});
+	controlReply = ({ action }) =>
+		Response.json({
+			...currentOrb,
+			desktop: {
+				...currentOrb.desktop,
+				control:
+					action === "take"
+						? { state: "user", userHeld: true, userSince: 1 }
+						: { state: "idle", userHeld: false },
+			},
+		});
+	answerUi.mockClear();
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -217,6 +237,7 @@ beforeEach(() => {
 			if (path.endsWith("/desktop/profile") && req.method === "PUT")
 				return putReply(body);
 			if (path.endsWith("/desktop/browser/start")) return startReply();
+			if (path.endsWith("/desktop/control")) return controlReply(body);
 			if (path.endsWith("/wake"))
 				return Response.json({ ok: true }, { status: 202 });
 			return new Response(null, { status: 404 });
@@ -1011,5 +1032,128 @@ describe("DesktopPanel 全屏与 noVNC 鼠标捕获", () => {
 		expect(seen).toEqual(["mousedown:1", "mouseup:0"]);
 		await realClick(button);
 		expect(req).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("DesktopPanel 控制状态", () => {
+	const controlCalls = () =>
+		requests.filter((r) => r.path.endsWith("/desktop/control"));
+
+	it("agent：强制仅观看、本地开关不可用；接管后放开输入并出现「交还」", async () => {
+		const { threadId, orbId } = setup({
+			...READY,
+			control: { state: "agent", userHeld: false },
+		});
+		mount(threadId);
+		act(() => last().h.onStatus("connected"));
+		expect(last().setViewOnly).toHaveBeenLastCalledWith(true);
+		expect(screen.getByTestId("desktop-control")).toBeDisabled();
+		expect(screen.getByTestId("desktop-watching")).toHaveTextContent(
+			i18n.t("deskPanel.control.agentPill"),
+		);
+		fireEvent.click(screen.getByTestId("desktop-take"));
+		await waitFor(() =>
+			expect(screen.getByTestId("desktop-release")).toBeInTheDocument(),
+		);
+		expect(controlCalls()).toEqual([
+			{
+				method: "POST",
+				path: `/api/v1/orbs/${orbId}/desktop/control`,
+				body: { action: "take" },
+			},
+		]);
+		expect(last().setViewOnly).toHaveBeenLastCalledWith(false);
+		expect(screen.queryByTestId("desktop-watching")).toBeNull();
+	});
+
+	it("本地选了仅观看时接管也切回可控制", async () => {
+		uiStore.setState({ desktopControl: false });
+		const { threadId } = setup({
+			...READY,
+			control: { state: "agent", userHeld: false },
+		});
+		mount(threadId);
+		fireEvent.click(screen.getByTestId("desktop-take"));
+		await waitFor(() =>
+			expect(last().setViewOnly).toHaveBeenLastCalledWith(false),
+		);
+		expect(uiStore.getState().desktopControl).toBe(true);
+	});
+
+	it("user：舞台上的输入续期（30 秒内只发一次）；「交还」发 release", async () => {
+		const { threadId } = setup({
+			...READY,
+			control: { state: "user", userHeld: true, userSince: 1 },
+		});
+		mount(threadId);
+		const stage = screen.getByTestId("desktop-stage");
+		fireEvent.pointerDown(stage);
+		fireEvent.keyDown(stage, { key: "a" });
+		await waitFor(() => expect(controlCalls()).toHaveLength(1));
+		expect(controlCalls()[0]?.body).toEqual({ action: "take" });
+		fireEvent.click(screen.getByTestId("desktop-release"));
+		await waitFor(() => expect(controlCalls()).toHaveLength(2));
+		expect(controlCalls()[1]?.body).toEqual({ action: "release" });
+		await waitFor(() =>
+			expect(screen.queryByTestId("desktop-release")).toBeNull(),
+		);
+	});
+
+	it("idle 时输入不续期", () => {
+		const { threadId } = setup({
+			...READY,
+			control: { state: "idle", userHeld: false },
+		});
+		mount(threadId);
+		fireEvent.pointerDown(screen.getByTestId("desktop-stage"));
+		expect(controlCalls()).toHaveLength(0);
+	});
+
+	it("ask：横幅显示原因，「完成」对同一请求作答后按钮失效；推送清掉请求后横幅消失", () => {
+		const { threadId } = setup({
+			...READY,
+			control: {
+				state: "ask",
+				userHeld: false,
+				ask: {
+					threadId: "T-asker",
+					requestId: "req-7",
+					kind: "code",
+					reason: "输入短信验证码",
+				},
+			},
+		});
+		mount(threadId);
+		const banner = screen.getByTestId("desktop-ask");
+		expect(banner).toHaveTextContent("输入短信验证码");
+		expect(banner).toHaveTextContent(
+			i18n.t("deskPanel.control.askTitle", {
+				kind: i18n.t("deskPanel.control.kind.code"),
+			}),
+		);
+		expect(last().setViewOnly).toHaveBeenLastCalledWith(false);
+		const done = within(banner).getByRole("button", {
+			name: i18n.t("deskPanel.control.done"),
+		});
+		fireEvent.click(done);
+		expect(answerUi).toHaveBeenCalledWith("T-asker", {
+			type: "extension_ui_response",
+			id: "req-7",
+			value: "完成",
+		});
+		expect(done).toBeDisabled();
+		push({
+			desktop: { ...READY, control: { state: "idle", userHeld: false } },
+		});
+		expect(screen.queryByTestId("desktop-ask")).toBeNull();
+	});
+
+	it("orb 不在 ready 时忽略镜像里的控制状态", () => {
+		const { threadId } = setup(
+			{ ...READY, control: { state: "agent", userHeld: false } },
+			"frozen",
+		);
+		mount(threadId);
+		expect(screen.queryByTestId("desktop-take")).toBeNull();
 	});
 });

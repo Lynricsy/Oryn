@@ -17,14 +17,28 @@
  * 触屏：手势由 noVNC 自带（单指点 = 左键、单指拖 = 左键拖、长按 = 右键、双指拖 = 滚动、捏合 = Ctrl+滚轮即页面缩放）；
  * compact 默认「适应」（远端 1280x800 不变、整块桌面等比缩进面板，不需要本地平移）；也可切「跟随面板」让远端分辨率等于面板，
  * 网页按手机宽度排版、1:1 清晰；全屏与横屏能拿到更大的画面。软键盘打开时临时按「适应」缩放，远端分辨率不随键盘高度抖动。
+ *
+ * 控制状态（orbd 权威，`Orb.desktop.control`，见 lib/desktop-ask.ts）：`agent` 时强制仅观看，横幅给「接管」；
+ * `user` 时放开输入，横幅给「交还」，有输入时至多每 30 秒续期一次（orbd 10 分钟无续期自动交还）；
+ * `ask` 时横幅显示 agent 的请求与「完成」「跳过」，作答与转录里的卡片是同一条 select 请求。
  */
 import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Orb } from "../../api/client";
-import { useOrbBrowser, useSaveOrbDesktopProfile } from "../../api/queries";
+import {
+	useOrbBrowser,
+	useOrbDesktopControl,
+	useSaveOrbDesktopProfile,
+} from "../../api/queries";
+import {
+	CONTROL_RENEW_MS,
+	DESKTOP_ASK_DONE,
+	DESKTOP_ASK_SKIP,
+	deriveDesktopControl,
+} from "../../lib/desktop-ask";
 import { useCoarsePointer } from "../../lib/viewport";
-import { wakeThread } from "../../state/actions";
+import { answerUi, wakeThread } from "../../state/actions";
 import { uiStore, useDesktopScale, useUi } from "../../state/ui";
 import { useOrbOf } from "../thread/ThreadHeader";
 import { Callout, StatusDot, type Tone } from "../ui/data";
@@ -230,7 +244,14 @@ function DesktopView({
 	const { t } = useTranslation();
 	const desktop = orb.desktop;
 	const profile = desktop.profile;
-	const control = useUi((s) => s.desktopControl);
+	const controlPref = useUi((s) => s.desktopControl);
+	const ctl = deriveDesktopControl(
+		orb.state === "ready" ? desktop.control : undefined,
+	);
+	// agent 操作期间强制仅观看；其余时候按本地的「可控制 / 仅观看」偏好
+	const control = controlPref && !ctl.locked;
+	const ctlMut = useOrbDesktopControl(orb.id);
+	const [answered, setAnswered] = useState<string | null>(null);
 	const scale = useDesktopScale();
 	const coarse = useCoarsePointer();
 	const away = usePageAway(AWAY_MS);
@@ -263,6 +284,10 @@ function DesktopView({
 	const kbActive = kbOpen && control;
 	const prefs = useRef({ control, scale: effectiveScale, kbActive });
 	prefs.current = { control, scale: effectiveScale, kbActive };
+	// 续期：用户持有控制时，舞台上的输入至多每 CONTROL_RENEW_MS 发一次 take
+	const renew = useRef({ held: ctl.userHeld, at: 0, send: () => {} });
+	renew.current.held = ctl.userHeld;
+	renew.current.send = () => ctlMut.mutate("take");
 
 	// 离开可连接状态后重新计数，下次满足条件时重新给三次重试
 	useEffect(() => {
@@ -326,6 +351,41 @@ function DesktopView({
 	useEffect(() => {
 		sessionRef.current?.setFocusOnClick(!kbActive);
 	}, [kbActive]);
+
+	useEffect(() => {
+		const stage = stageRef.current;
+		if (!stage) return;
+		const onInput = () => {
+			const r = renew.current;
+			const now = Date.now();
+			if (!r.held || now - r.at < CONTROL_RENEW_MS) return;
+			r.at = now;
+			r.send();
+		};
+		const kinds = ["pointerdown", "keydown", "wheel"] as const;
+		for (const k of kinds) stage.addEventListener(k, onInput, true);
+		return () => {
+			for (const k of kinds) stage.removeEventListener(k, onInput, true);
+		};
+	}, []);
+
+	const takeOver = () => {
+		uiStore.getState().setDesktopControl(true);
+		renew.current.at = Date.now();
+		ctlMut.mutate("take");
+	};
+	const answerAsk = (value: string) => {
+		const ask = ctl.ask;
+		if (!ask) return;
+		if (
+			answerUi(ask.threadId, {
+				type: "extension_ui_response",
+				id: ask.requestId,
+				value,
+			})
+		)
+			setAnswered(ask.requestId);
+	};
 
 	// 舞台的键盘：Ctrl/⌘+V 让浏览器照常粘贴（不交给 noVNC），单独按一下 Ctrl+Alt 交还焦点。
 	// 捕获阶段挂在舞台上，先于 noVNC 挂在画布上的按键处理。
@@ -519,6 +579,98 @@ function DesktopView({
 	const showClosed = closed && (gaveUp || fatal);
 	const text = closedText(closeCode, t);
 
+	let controlBanner: ReactNode = null;
+	if (ctl.state === "agent") {
+		controlBanner = (
+			<Callout
+				tone="neutral"
+				icon="robot"
+				title={t("deskPanel.control.agentTitle")}
+				actions={
+					<Button
+						size="sm"
+						variant="primary"
+						icon="cursor"
+						data-testid="desktop-take"
+						disabled={ctlMut.isPending}
+						onClick={takeOver}
+					>
+						{t("deskPanel.control.take")}
+					</Button>
+				}
+			>
+				{t("deskPanel.control.agentHint")}
+			</Callout>
+		);
+	} else if (ctl.state === "user") {
+		controlBanner = (
+			<Callout
+				tone="neutral"
+				icon="cursor"
+				title={t("deskPanel.control.userTitle")}
+				actions={
+					<Button
+						size="sm"
+						data-testid="desktop-release"
+						disabled={ctlMut.isPending}
+						onClick={() => ctlMut.mutate("release")}
+					>
+						{t("deskPanel.control.release")}
+					</Button>
+				}
+			>
+				{t("deskPanel.control.userHint")}
+			</Callout>
+		);
+	} else if (ctl.state === "ask" && ctl.ask) {
+		const done = answered === ctl.ask.requestId;
+		controlBanner = (
+			<div data-testid="desktop-ask">
+				<Callout
+					tone="accent"
+					icon="monitor"
+					role="status"
+					title={t("deskPanel.control.askTitle", {
+						kind: t(`deskPanel.control.kind.${ctl.ask.kind}`),
+					})}
+				>
+					<p className="whitespace-pre-wrap break-words text-fg">
+						{ctl.ask.reason}
+					</p>
+					<p className="mt-0.5">{t("deskPanel.control.askHint")}</p>
+					<div className="mt-2 flex flex-wrap gap-1.5">
+						<Button
+							size="sm"
+							variant="primary"
+							icon="check"
+							disabled={done}
+							onClick={() => answerAsk(DESKTOP_ASK_DONE)}
+						>
+							{t("deskPanel.control.done")}
+						</Button>
+						<Button
+							size="sm"
+							disabled={done}
+							onClick={() => answerAsk(DESKTOP_ASK_SKIP)}
+						>
+							{t("deskPanel.control.skip")}
+						</Button>
+						{ctl.userHeld && (
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={ctlMut.isPending}
+								onClick={() => ctlMut.mutate("release")}
+							>
+								{t("deskPanel.control.release")}
+							</Button>
+						)}
+					</div>
+				</Callout>
+			</div>
+		);
+	}
+
 	let banner: ReactNode = null;
 	if (profile?.status === "in_use") {
 		const heldBy = profile.heldBy;
@@ -638,7 +790,8 @@ function DesktopView({
 					size={15}
 					label={control ? t("deskPanel.toWatch") : t("deskPanel.toControl")}
 					active={!control}
-					onClick={() => uiStore.getState().setDesktopControl(!control)}
+					disabled={ctl.locked}
+					onClick={() => uiStore.getState().setDesktopControl(!controlPref)}
 				/>
 				<ClipboardPopover
 					remoteText={remoteClip}
@@ -678,15 +831,24 @@ function DesktopView({
 					onClick={() => void fullscreen()}
 				/>
 			</div>
-			{(banner || notice || save.error || choice.error || browser.error) && (
+			{(controlBanner ||
+				banner ||
+				notice ||
+				save.error ||
+				choice.error ||
+				browser.error ||
+				ctlMut.error) && (
 				<div className="flex shrink-0 flex-col gap-1.5 border-border border-b px-2 py-2">
+					{controlBanner}
 					{banner}
 					{notice && (
 						<Callout tone="ok" role="status">
 							{notice}
 						</Callout>
 					)}
-					<ErrorText error={save.error ?? choice.error ?? browser.error} />
+					<ErrorText
+						error={save.error ?? choice.error ?? browser.error ?? ctlMut.error}
+					/>
 				</div>
 			)}
 			<div className="min-h-0 flex-1 p-2">
@@ -716,9 +878,14 @@ function DesktopView({
 						</span>
 					)}
 					{!control && shownStatus === "connected" && (
-						<span className="pointer-events-none absolute top-2 left-2 z-10 inline-flex items-center gap-1 rounded-full bg-panel/85 px-2 py-0.5 text-2xs text-muted shadow-xs">
-							<Icon name="eye" size={11} aria-hidden />
-							{t("deskPanel.watching")}
+						<span
+							data-testid="desktop-watching"
+							className="pointer-events-none absolute top-2 left-2 z-10 inline-flex items-center gap-1 rounded-full bg-panel/85 px-2 py-0.5 text-2xs text-muted shadow-xs"
+						>
+							<Icon name={ctl.locked ? "robot" : "eye"} size={11} aria-hidden />
+							{ctl.locked
+								? t("deskPanel.control.agentPill")
+								: t("deskPanel.watching")}
 						</span>
 					)}
 					{orb.state !== "ready" || !desktop.displayReady ? (

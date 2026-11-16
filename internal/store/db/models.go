@@ -246,6 +246,7 @@ type OrbDesktop struct {
 	Browser            string  `json:"browser"`
 	Dirty              int64   `json:"dirty"`
 	UpdatedAt          int64   `json:"updatedAt"`
+	Control            *string `json:"control"`
 }
 
 type OrbEvent struct {

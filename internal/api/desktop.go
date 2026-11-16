@@ -127,6 +127,27 @@ func (s *Server) SetOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id
 	s.writeOrb(w, r, id, http.StatusOK)
 }
 
+// SetOrbDesktopControl 实现 POST /api/v1/orbs/{id}/desktop/control。
+func (s *Server) SetOrbDesktopControl(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
+	svc, ok := s.desktopSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.OrbDesktopControlRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !req.Action.Valid() {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "action must be take or release")
+		return
+	}
+	if err := svc.SetControl(r.Context(), id, req.Action == apigen.OrbDesktopControlActionTake); err != nil {
+		writeDesktopErr(w, r, err)
+		return
+	}
+	s.writeOrb(w, r, id, http.StatusOK)
+}
+
 // SaveOrbDesktopProfile 实现 POST /api/v1/orbs/{id}/desktop/profile/save。
 func (s *Server) SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
 	svc, ok := s.desktopSvc(w)

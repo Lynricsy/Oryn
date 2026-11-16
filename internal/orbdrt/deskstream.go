@@ -36,5 +36,8 @@ func (r *Runtime) serveDesk(st *link.Stream) {
 		_ = st.Close()
 		return
 	}
+	// 观看者计数驱动「观看者全部断开即自动交还控制」（deskcontrol.go）
+	d.viewerJoined()
+	defer d.viewerLeft()
 	pipePortal(st, conn)
 }

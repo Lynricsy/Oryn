@@ -35,17 +35,22 @@ func TestOrbDesktopStatus(t *testing.T) {
 		return reply, nil
 	})
 
-	set(deskResult(apigen.OrbBrowserStatusRunning, true, "工作账号"))
+	running := deskResult(apigen.OrbBrowserStatusRunning, true, "工作账号")
+	running.State.Control = &apigen.OrbDesktopControl{
+		State: apigen.OrbDesktopControlStateAsk, UserHeld: true,
+		Ask: &apigen.OrbDesktopAsk{ThreadID: "T-1", RequestID: "r1", Kind: apigen.OrbDesktopAskKindSignIn, Reason: "登录 GitHub"},
+	}
+	set(running)
 	var out, errb bytes.Buffer
 	assert.Equal(t, exitDesktopOK, desktopStatus(context.Background(), false, &out, &errb))
-	assert.Equal(t, "display :1 ready\nbrowser running\ncdp http://127.0.0.1:7822\nprofile 工作账号\n", out.String())
+	assert.Equal(t, "display :1 ready\nbrowser running\ncdp http://127.0.0.1:7822\nprofile 工作账号\ncontrol ask sign_in: 登录 GitHub (user holds control)\n", out.String())
 	assert.Empty(t, errb.String())
 
 	stopped := deskResult(apigen.OrbBrowserStatusStopped, false, "")
 	set(stopped)
 	out.Reset()
 	assert.Equal(t, exitDesktopOK, desktopStatus(context.Background(), false, &out, &errb))
-	assert.Equal(t, "display :1 not ready\nbrowser stopped\ncdp http://127.0.0.1:7822\nprofile none\n", out.String())
+	assert.Equal(t, "display :1 not ready\nbrowser stopped\ncdp http://127.0.0.1:7822\nprofile none\ncontrol idle\n", out.String())
 
 	out.Reset()
 	assert.Equal(t, exitDesktopOK, desktopStatus(context.Background(), true, &out, &errb))

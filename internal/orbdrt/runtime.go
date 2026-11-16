@@ -91,6 +91,8 @@ type Config struct {
 	// DesktopUserNS 报告能否建立 user namespace（决定 Chromium 是否加 --no-sandbox）；nil = 真实探测
 	// （userNamespacesUsable）。测试用它固定结果。
 	DesktopUserNS func() bool
+	// DesktopControlTimings 覆盖桌面控制的三个时限（测试用；nil = 生产缺省，见 deskcontrol.go）。
+	DesktopControlTimings *DeskControlTimings
 
 	// Coordinator 为真时以协调宿主的受限模式运行（M9，见 coordinator.go）：不要求 URL / Token，
 	// link 只经 Connect 建立且不重连，只服务 setup.run / resume.run / agent.start / agent.stop / shutdown。
