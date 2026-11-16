@@ -10,6 +10,14 @@
   - 补上 OAuth App 的组织访问限制与 SAML SSO、`canDrive` 改用 `author_association`、保留 `GitRepos`、保护 Oryn 自己的 hook、门禁覆盖表、失败即拒绝、修正发布推送命令、仓库级 watch、跨仓库 PR 关联防劫持、0.3 一次列全并写清 Down、投递载荷保留、`uploads.github.com`、审计的三处缺口、R24 的挂载点、hook 细节、robomp 的 `reopened`/`ready_for_review`/评审机器人白名单/`reviewing` 状态、验收命令修正。
   - 新增主人决定：「任何人」档规则和外部 PR 评审在 Agent 账号不可用时不回退到我的账号。
   - 简化：无条件删除刷新链路，GraphQL 不缓冲响应，任务时限用列加扫描实现。
+- **v3（2026-11-16，执行中修订）**：
+  - 0.2 探查得出投递日志接口单独计额、304 不计数，hook 的 `secret` 被打码，据此修改了 1.3 的轮询和 1.2 的同步方式。
+  - 0.4 的 OpenAPI 改为与 0.3 并行起草（只改 `schema/openapi.yaml`，等 0.3 结束再统一 `make gen`）。
+  - 7.3 的提示词文件提前完成（`internal/github/presets/*.md`）。由此带来三处修订：
+    - 触发提示词新增模板变量 `{{autoclose_hours}}`（4.1）；
+    - `github_release_status` 必须返回 `tagOid`（6.1）；
+    - `presets.go` 加载文件时去掉开头的 `<!-- … -->` 出处注释（7.3）。
+  - R25 的完成提醒改为只对分类为 `bug`、`documentation` 或尚未分类的线程发送（预设作者发现：`question` 等分类停在 `new` 是正常收尾）。
 
 ## Context
 
@@ -190,7 +198,7 @@
   - `audit [--thread] [--repo]`。
 - **R25** 任务时限与完成提醒：
   - 规则可配置任务时限，存为 `thread_issues.deadline_at`；到点时中止当前回合并发通知；
-  - 规则开启「完成提醒」后，agent 回合结束而状态仍是 `new`、`reproducing` 或 `fixing` 时，最多补发 2 次提醒。
+  - 规则开启「完成提醒」后，agent 回合结束时，若状态仍是 `new`、`reproducing` 或 `fixing`，且分类为 `bug`、`documentation` 或尚未分类，最多补发 2 次提醒。
 - **R26** 预设：规则编辑器提供「robomp 分诊」「robomp PR 评审」「robomp 发布哨兵」三个预设。提示词移植自 robomp 的 `prompts/`，以 MIT 许可注明出处。行内评审评论使用 `gh api repos/{o}/{r}/pulls/{n}/reviews` 一次提交。
 
 ### 非目标
@@ -636,6 +644,7 @@ Do：
   - 跟进评论按线程来源规则的 `drivers` 判定；
   - `workflow_run` 交给 6.1，本步只做路由。
 - `issue_reopened` 与 `issue_opened` 共用同一个限流预算。
+- `triggerPrompt` 新增模板变量 `{{autoclose_hours}}`，取值为规则的 `autoclose_hours`，未配置时取 `defaultAutocloseHours`。
 
 Accept：`go build ./... && go test ./internal/github/... -run 'Trigger|Gate|Listen'` 输出 `ok`。覆盖：三档 × 发送者类别（OWNER / CONTRIBUTOR / NONE / 作者 / 评审 bot）的矩阵，`anyone` 档第 4 次被拒，Agent 不可用时 `untrusted` 规则被忽略。
 
@@ -660,7 +669,7 @@ Do：
 - 落实 R15、R16、R25；
 - 终态回帖的正文移植自 robomp 的 `finalized_issue_comment.md`；
 - 时限和提醒放在同一个 `scanInterval` 循环里扫描；
-- 提醒只在状态为 `new`、`reproducing`、`fixing` 时发送。
+- 提醒的发送条件：状态为 `new`、`reproducing` 或 `fixing`，且分类为 `bug`、`documentation` 或尚未分类。
 
 Accept：`go build ./... && go test ./internal/github/... -run 'Task|Finalized|ImplAuth|Deadline|Reminder'` 输出 `ok`。
 
@@ -799,7 +808,7 @@ Do：
   - 每个仓库串行处理，串行键为 `<repo>#release`；
   - 失败报告最多 5 个 job，每个附日志最后 120 行，超出部分列入 overflow；
   - 线程身份用 `ResolveAutomationSlot(untrusted=false)`。
-- `github_release_status` 返回 runs、阻塞 job、当前轮数。
+- `github_release_status` 返回：runs、阻塞的 job、当前轮数、`version`、`tagOid`（事件中的 tag 对象 id，供推送命令的 lease 使用）。
 - 发布线程开启门禁时，项目门禁中推送门禁的 `level` 取 `push`。
 
 Accept：`go build ./... && go test ./internal/github/... -run Release && go test ./internal/orbdrt/... -run AgentAssets` 输出 `ok`，覆盖：`stale`、阻塞与非阻塞、green 需要非草稿 Release、轮数上限、默认分支被推进、`superseded`。
@@ -823,7 +832,7 @@ Accept：`go build ./... && go test ./cmd/oryn/... -run Github` 输出 `ok`。
 ### 步骤 7.3：robomp 预设
 Depends on：4.2、4.3、5.2、5.4、6.1。
 Files：新建 `internal/github/presets/`，内含 `triage.md`、`review.md`、`release.md`、`finalized.md`、`autoclose_suffix.md`，每个文件头注明「移植自 can1357/oh-my-pi python/robomp，MIT」；新建 `presets.go`、`presets_test.go`。
-Do：把 robomp 的以下内容改写为使用 Oryn 工具名与 `gh` 的提示词：
+Do：`presets.go` 用 `embed` 加载 `presets/*.md`，加载时去掉开头的 `<!-- … -->` 出处注释（`finalized.md` 的正文会原样发到 GitHub）。提示词文件已提前写好，本步只需核对，并补上加载代码和测试。提示词的内容是：把 robomp 的以下内容改写为使用 Oryn 工具名与 `gh` 的提示词：
 
 - 分类体系、bug 价值门、重复/已修复检查；
 - 四段式 PR 正文；
