@@ -2661,11 +2661,15 @@ async function realR11() {
 		}[];
 	}>("GET", "/api/v1/notifications");
 	const latest = nots.notifications.find((n) => n.threadId === tid);
+	// 线程通知的标题是线程标题（设计如此）：PR 合并为 kind=done，正文 `PR #<n> merged: <PR 标题>`
 	expect(
 		nots.notifications.some(
-			(n) => n.title === `PR #${PR_NUMBER} merged` && n.threadId === tid,
+			(n) =>
+				n.kind === "done" &&
+				n.threadId === tid &&
+				n.body.startsWith(`PR #${PR_NUMBER} merged`),
 		),
-		`通知列表有「PR #${PR_NUMBER} merged」（该线程最新一条：${latest ? `${latest.kind} 「${latest.title}」 ${clip(latest.body, 60)}` : "无"}）`,
+		`通知列表有 kind=done、正文以「PR #${PR_NUMBER} merged」开头的线程通知（该线程最新一条：${latest ? `${latest.kind} 「${latest.title}」 ${clip(latest.body, 60)}` : "无"}）`,
 	);
 	const p = await realPage();
 	await goto(p, REAL_UI, `/t/${tid}`);
@@ -2714,7 +2718,13 @@ async function realR16() {
 		1_000,
 	);
 	expect(true, `新线程「${nt.title}」`);
-	const first = (await userMessages(nt.id))[0] ?? "";
+	// 线程刚建出时 orb 还在准备，首条消息稍后才进转录
+	const first = await waitFor(
+		"触发线程的首条消息",
+		async () => (await userMessages(nt.id))[0],
+		120_000,
+		1_000,
+	).catch(() => "");
 	note(`首条消息：${clip(oneLine(first), 300)}`);
 	expect(
 		first.startsWith(
