@@ -38,6 +38,7 @@ export type PanelTab =
 	| "changes"
 	| "files"
 	| "terminal"
+	| "artifacts"
 	| "portal"
 	| "desktop";
 
@@ -210,6 +211,14 @@ export interface UiState {
 	/** Portal 标签里选中的端口（按线程，不持久化）；缺省 = 第一个 portal。 */
 	portalPort: Record<string, number>;
 	setPortalPort(threadId: string, port: number): void;
+	/** Artifacts 标签里打开的 artifact（按线程，不持久化）；缺省 = 该线程最近更新的一个。 */
+	artifactSel: Record<string, string>;
+	/** 在线程的右面板里打开一个 artifact：记下选择、切到 Artifacts 标签并打开面板。 */
+	openArtifact(threadId: string, artifactId: string): void;
+	/** Artifacts 标签的版本签名（按线程，同 `changesSig`）：有没看过的新版本时标签亮点。 */
+	artifactsSig: Record<string, ChangesSig>;
+	/** 记录线程 artifact 列表的签名；`seen` 为真或首次记录时同时记为已看。 */
+	noteArtifacts(threadId: string, sig: string, seen: boolean): void;
 	/** Desktop 面板向桌面发送键鼠（默认 true；false = 仅观看）。 */
 	desktopControl: boolean;
 	setDesktopControl(on: boolean): void;
@@ -351,6 +360,21 @@ export const uiStore = createStore<UiState>((set, get) => ({
 				? s
 				: { portalPort: { ...s.portalPort, [threadId]: port } },
 		),
+	artifactSel: {},
+	openArtifact: (threadId, artifactId) => {
+		set((s) => ({ artifactSel: { ...s.artifactSel, [threadId]: artifactId } }));
+		get().setPanelTab("artifacts");
+		get().setPanel(true);
+	},
+	artifactsSig: {},
+	noteArtifacts: (threadId, sig, seen) =>
+		set((s) => {
+			const prev = s.artifactsSig[threadId];
+			const next = { current: sig, seen: seen || !prev ? sig : prev.seen };
+			if (prev && prev.current === next.current && prev.seen === next.seen)
+				return s;
+			return { artifactsSig: { ...s.artifactsSig, [threadId]: next } };
+		}),
 	...loadDesktopPrefs(),
 	setDesktopControl: (desktopControl) => {
 		writeKey(DESKTOP_CONTROL_KEY, desktopControl ? "1" : "0");

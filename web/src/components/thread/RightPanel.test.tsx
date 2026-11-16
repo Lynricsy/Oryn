@@ -16,6 +16,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import i18n from "../../i18n";
@@ -63,6 +64,7 @@ beforeEach(() => {
 	statusQueries = [];
 	bgFiles = null;
 	uiStore.setState({ changesSig: {} });
+	uiStore.setState({ artifactSel: {}, artifactsSig: {} });
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -319,6 +321,122 @@ describe("RightPanel", () => {
 		});
 		expect(files).toHaveTextContent(i18n.t("rightPanel.tabs.files"));
 		expect(files).not.toHaveAttribute("title");
+	});
+
+	it("线程有 artifact 时在内容标签之后、Portal 之前出现 Artifacts 标签，点开加载 Artifacts 面板", async () => {
+		const id = "T-rpArt";
+		const orbId = "orb-rp0000000000000000000art";
+		const art = {
+			id: "art_01JDNAWEB0000000000000000A",
+			origin: "agent",
+			kind: "web",
+			title: "本周习惯打卡",
+			version: 2,
+			size: 10,
+			pages: 1,
+			createdAt: 1,
+			updatedAt: 2,
+			threadId: id,
+		};
+		let list = [art];
+		const base = vi.mocked(fetch).getMockImplementation() as typeof fetch;
+		vi.mocked(fetch).mockImplementation(async (input, init) => {
+			const req =
+				input instanceof Request
+					? input
+					: new Request(new URL(String(input), location.origin), init);
+			const url = new URL(req.url);
+			if (url.pathname === "/api/v1/artifacts")
+				return Response.json({
+					artifacts: url.searchParams.get("threadId") === id ? list : [],
+				});
+			return base(input, init);
+		});
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				thread: {
+					id,
+					orbId,
+					portalUrlTemplate: "https://x-p{port}.e/",
+				} as Thread,
+				orb: {
+					id: orbId,
+					state: "frozen",
+					stateChangedAt: 0,
+					threadIds: [id],
+					portals: [
+						{ port: 80, service: "web", links: [{ title: "w", path: "/" }] },
+					],
+				} as unknown as Orb,
+			});
+		uiStore.getState().setPanelTab("info");
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter>
+					<RightPanel threadId={id} />
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		await waitFor(() =>
+			expect(
+				screen.getAllByRole("tab").map((b) => b.getAttribute("data-panel-tab")),
+			).toEqual([
+				"info",
+				"changes",
+				"files",
+				"terminal",
+				"artifacts",
+				"portal",
+			]),
+		);
+		// 首次拿到列表是基线，不亮点；之后出了新版本而标签不在显示时亮 accent 点
+		expect(screen.queryByTestId("artifacts-unseen")).toBeNull();
+		list = [{ ...art, version: 3 }];
+		await act(async () => {
+			await client.invalidateQueries({ queryKey: ["artifacts"] });
+		});
+		expect(await screen.findByTestId("artifacts-unseen")).toBeInTheDocument();
+
+		const tab = screen.getByRole("tab", {
+			name: i18n.t("rightPanel.tabs.artifacts"),
+		});
+		await act(async () => {
+			fireEvent.click(tab);
+		});
+		expect(tab).toHaveAttribute("aria-selected", "true");
+		expect(
+			await screen.findByTestId("artifact-panel", {}, { timeout: 5000 }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByTestId("artifacts-unseen")).toBeNull(),
+		);
+	});
+
+	it("没有 artifact 时没有 Artifacts 标签；从转录卡片打开一个后标签出现并选中", async () => {
+		uiStore.getState().setPanelTab("info");
+		render(
+			withQuery(
+				<MemoryRouter>
+					<RightPanel threadId="T-rpA" />
+				</MemoryRouter>,
+			),
+		);
+		await waitFor(() =>
+			expect(document.querySelector("[data-panel-tab=artifacts]")).toBeNull(),
+		);
+		act(() => {
+			uiStore
+				.getState()
+				.openArtifact("T-rpA", "art_01JDNAWEB0000000000000000A");
+		});
+		expect(
+			screen.getByRole("tab", { name: i18n.t("rightPanel.tabs.artifacts") }),
+		).toHaveAttribute("aria-selected", "true");
+		expect(uiStore.getState().panelOpen).toBe(true);
 	});
 });
 

@@ -3,6 +3,7 @@
  * `mcp__*` tools share the MCP renderer; unknown tools fall back to the generic JSON renderer.
  */
 import { genericRenderer } from "./generic";
+import { ARTIFACT_TOOLS, artifactRenderer } from "./tools/artifact";
 import { askRenderer } from "./tools/ask";
 import { astEditRenderer } from "./tools/ast-edit";
 import { astGrepRenderer } from "./tools/ast-grep";
@@ -94,6 +95,8 @@ const RENDERERS: Record<string, ToolRenderer> = {
 
 // Oryn 宿主工具（M9）：只出现在协调对话里，与 omp 自带工具不重名
 for (const name of ORYN_TOOLS) RENDERERS[name] = orynRenderer;
+// Artifacts 工具（M14）：orb / Runner 的扩展工具与全局助手的宿主工具同名
+for (const name of ARTIFACT_TOOLS) RENDERERS[name] = artifactRenderer;
 
 /**
  * 按名字取查找表里的值，只认自有属性：工具名 / 设备名可能来自模型写的 `xd://<name>`，

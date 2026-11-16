@@ -2312,6 +2312,70 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 			},
 		],
 	},
+	{
+		text: "做成 artifact（M14）：",
+		calls: [
+			{
+				name: "create_artifact",
+				args: {
+					title: "本周习惯打卡",
+					html: "<!doctype html><title>本周习惯打卡</title><h1>本周习惯打卡</h1>",
+					note: "第一版",
+				},
+				text: `{"id":"${ARTIFACT_IDS.web}","version":1,"pages":1,"kind":"web","url":"http://localhost:7600/artifacts/${ARTIFACT_IDS.web}"}`,
+				details: {
+					op: "create_artifact",
+					id: ARTIFACT_IDS.web,
+					title: "本周习惯打卡",
+					kind: "web",
+					version: 1,
+				},
+			},
+			{
+				name: "update_artifact",
+				args: {
+					id: ARTIFACT_IDS.web,
+					baseVersion: 1,
+					edits: [{ oldText: "3 / 7", newText: "4 / 7" }],
+					note: "补上周四的数据",
+				},
+				text: `{"id":"${ARTIFACT_IDS.web}","version":2,"pages":1}`,
+				details: {
+					op: "update_artifact",
+					id: ARTIFACT_IDS.web,
+					title: "本周习惯打卡",
+					kind: "web",
+					version: 2,
+					fromVersion: 1,
+				},
+			},
+			{
+				name: "restore_artifact_version",
+				args: { id: ARTIFACT_IDS.web, version: 1, baseVersion: 2 },
+				text: `{"id":"${ARTIFACT_IDS.web}","version":3}`,
+				details: {
+					op: "restore_artifact_version",
+					id: ARTIFACT_IDS.web,
+					title: "本周习惯打卡",
+					kind: "web",
+					version: 3,
+					fromVersion: 1,
+				},
+			},
+			{
+				name: "delete_artifact",
+				args: { id: ARTIFACT_IDS.trashed },
+				text: `{"id":"${ARTIFACT_IDS.trashed}","purgeAt":${NOW + 27 * 86_400_000}}`,
+				details: {
+					op: "delete_artifact",
+					id: ARTIFACT_IDS.trashed,
+					title: "旧版落地页",
+					kind: "web",
+					version: 1,
+				},
+			},
+		],
+	},
 ];
 
 /** 工具样例线程里仍在运行的工具调用（快照的 `agent.live` 帧与之对应）。 */

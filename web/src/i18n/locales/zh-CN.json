@@ -1651,7 +1651,6 @@
 			"retry": "重试"
 		},
 		"panel": {
-			"toolbar": "Artifacts 工具条",
 			"switch": "切换 artifact",
 			"expand": "放大查看",
 			"empty": "这个线程还没有 artifact"

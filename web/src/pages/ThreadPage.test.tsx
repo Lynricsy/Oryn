@@ -135,6 +135,16 @@ function Nav() {
 	return null;
 }
 
+/** 右面板的 Artifacts 标签（M14）读线程的 artifact 列表，需要 QueryClient；rerender 沿用同一个 wrapper。 */
+function queryWrapper() {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	return ({ children }: { children: ReactNode }) => (
+		<QueryClientProvider client={client}>{children}</QueryClientProvider>
+	);
+}
+
 function renderPage(width: number) {
 	window.innerWidth = width;
 	return render(
@@ -143,6 +153,7 @@ function renderPage(width: number) {
 				<Route path="/t/:threadId" element={<ThreadPage />} />
 			</Routes>
 		</MemoryRouter>,
+		{ wrapper: queryWrapper() },
 	);
 }
 
@@ -258,7 +269,7 @@ describe("ThreadPage 窄屏同级标签", () => {
 				</Wrap>
 			</MemoryRouter>
 		);
-		const { rerender } = render(tree("div"));
+		const { rerender } = render(tree("div"), { wrapper: queryWrapper() });
 		act(() => {
 			uiStore.getState().open({ kind: "tree" });
 			uiStore.setState({ threadTab: "files", panelTab: "files" });

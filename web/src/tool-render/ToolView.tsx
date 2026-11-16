@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
 import { ownLookup, resolveToolRenderer } from "./registry";
+import { ARTIFACT_TOOLS, ARTIFACT_WRITE_TOOLS } from "./tools/artifact";
 import {
 	isMcpToolName,
 	mcpOrigin,
@@ -115,6 +116,12 @@ const TOOL_CAT: Record<string, ToolCat> = {
 	tts: "exec",
 	[XDEV_DOCS_TOOL]: "read",
 };
+
+// Artifacts 工具（M14）一律用 shapes 图标；会写入的归 edit，其余归 read
+for (const name of ARTIFACT_TOOLS) {
+	TOOL_ICON[name] = "shapes";
+	TOOL_CAT[name] = ARTIFACT_WRITE_TOOLS.includes(name) ? "edit" : "read";
+}
 
 /** omp 线路上工具参数里的意图字段名（原为 `@oh-my-pi/pi-wire` 的 INTENT_FIELD）。 */
 const INTENT_FIELD = "i";

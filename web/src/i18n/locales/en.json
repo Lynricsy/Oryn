@@ -1651,7 +1651,6 @@
 			"retry": "Retry"
 		},
 		"panel": {
-			"toolbar": "Artifacts toolbar",
 			"switch": "Switch artifact",
 			"expand": "Open full view",
 			"empty": "This thread has no artifacts yet"

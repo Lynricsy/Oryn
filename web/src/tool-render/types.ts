@@ -48,6 +48,8 @@ export interface ToolRenderHost {
 	hasAgent?(id: string): boolean;
 	/** Open the sub-session/transcript view for an agent id. */
 	openAgent?(id: string): void;
+	/** 在当前线程的右面板里打开一个 artifact（转录里的 artifact 卡片）；只读的分享页不提供。 */
+	openArtifact?(id: string): void;
 	/**
 	 * 渲染一个 agent 的状态头像（站内读 agent 头像设置，分享页读公开身份）。
 	 * 不给时渲染器只用各 agent 的默认字形，不读任何设置。

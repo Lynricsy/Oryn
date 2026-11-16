@@ -585,6 +585,8 @@ export function ToolCard({
 					: {
 							hasAgent: () => true,
 							openAgent: (id) => ctx.openSubagent(id),
+							// artifact 卡片（线程页开右面板，协调对话开整页）；只读的分享页不给，卡片不可点
+							openArtifact: ctx.openArtifact,
 							AgentAvatar,
 						}
 			}

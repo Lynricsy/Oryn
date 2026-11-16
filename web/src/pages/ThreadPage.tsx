@@ -20,7 +20,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Navigate, useParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 import { useSpaces } from "../api/space-queries";
 import { Composer } from "../components/composer/Composer";
 import { DockPill, useDockCollapse } from "../components/composer/DockPill";
@@ -254,6 +254,7 @@ export function ThreadScreen({
 			}),
 		[entries, leaf, liveMessage, liveTools, liveToolOrder, notices],
 	);
+	const navigate = useNavigate();
 	const ctx: TranscriptContextValue = useMemo(
 		() => ({
 			threadId,
@@ -264,8 +265,20 @@ export function ThreadScreen({
 			forkFrom: (entryId) => uiStore.getState().open({ kind: "fork", entryId }),
 			labelEntry: (entryId) =>
 				uiStore.getState().open({ kind: "label", entryId }),
+			// 协调对话没有右面板：artifact 在整页查看器里打开
+			openArtifact: (id) =>
+				coordinator
+					? navigate(`/artifacts/${id}`)
+					: uiStore.getState().openArtifact(threadId, id),
 		}),
-		[threadId, model.toolResults, model.liveTools, subagents],
+		[
+			threadId,
+			model.toolResults,
+			model.liveTools,
+			subagents,
+			coordinator,
+			navigate,
+		],
 	);
 
 	const dual = segments !== null && !coordinator;

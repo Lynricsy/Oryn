@@ -4,6 +4,7 @@
  * Info 为原信息面板；其余按需加载。标签条可横向滚动，选中项下有一块滑动底板；放不下全部文字时只有选中项保留文字。
  * Terminal 标签在有终端等待用户（agent 的 `pty:true` 命令、会话要密码）时亮注意点；
  * Changes 标签在有未查看的新改动时亮 accent 小点。
+ * Artifacts（M14）：线程有 artifact（或从转录卡片点开了一个）时在内容标签之后、Portal 之前出现，有没看过的新版本时亮 accent 小点。
  * 窄屏（M7 4.2）：`peer` 面板与转录是同级标签 `Agent | Changes | Files | Terminal | (Portal) | (Desktop) | Info`。
  * medium 宽度下标签条（`ThreadTabStrip`）同时用在转录页头下方；手机（compact）不常驻标签条，改由页头右上角的
  * 视图菜单（`ThreadViewMenu`）切换，面板页头是「返回对话 + 面板名 + 视图菜单」。Agent 标签在线程等你回答时亮注意点。
@@ -23,6 +24,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { type Artifact, useThreadArtifacts } from "../../api/artifact-queries";
 import { contentTabs } from "../../lib/orb-features";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
@@ -57,6 +59,7 @@ const ChangesPanel = lazy(() => import("../changes/ChangesPanel"));
 const FilesPanel = lazy(() => import("../files/FilesPanel"));
 const TerminalPanel = lazy(() => import("../terminal/TerminalPanel"));
 const PortalPanel = lazy(() => import("../portal/PortalPanel"));
+const ArtifactPanel = lazy(() => import("../artifacts/ArtifactPanel"));
 const DesktopPanel = lazy(() => import("../desktop/DesktopPanel"));
 
 const TAB_ICON: Record<ThreadTab, IconName> = {
@@ -65,6 +68,7 @@ const TAB_ICON: Record<ThreadTab, IconName> = {
 	changes: "diff",
 	files: "folder",
 	terminal: "terminal",
+	artifacts: "shapes",
 	portal: "globe",
 	desktop: "monitor",
 };
@@ -222,17 +226,52 @@ export function useThreadTabs(
 	const hasPortal = live && (orb?.portals?.length ?? 0) > 0;
 	const hasDesktop = live && orb?.desktop !== undefined;
 	const content = contentTabs(live ? orb : undefined).join(",");
+	// Artifacts 标签与 Portal 一样是条件标签：线程有 artifact，或刚从转录卡片点开了一个
+	const artifacts = useThreadArtifacts(threadId);
+	const picked = useUi((s) => s.artifactSel[threadId] !== undefined);
+	const hasArtifacts = (artifacts.data?.length ?? 0) > 0 || picked;
 	const tabs = useMemo(() => {
 		const middle: PanelTab[] = [
 			...(content ? (content.split(",") as PanelTab[]) : []),
+			...(hasArtifacts ? (["artifacts"] as const) : []),
 			...(hasPortal ? (["portal"] as const) : []),
 			...(hasDesktop ? (["desktop"] as const) : []),
 		];
 		return peer
 			? (["agent", ...middle, "info"] as const)
 			: (["info", ...middle] as const);
-	}, [peer, content, hasPortal, hasDesktop]);
-	return { tabs, settled: orb !== undefined || (loaded && !orbId) };
+	}, [peer, content, hasArtifacts, hasPortal, hasDesktop]);
+	// artifact 列表还没回来时也不算「标签消失」
+	return {
+		tabs,
+		settled: (orb !== undefined || (loaded && !orbId)) && !artifacts.isPending,
+	};
+}
+
+/** 线程 artifact 列表的版本签名：任一 artifact 新建、删除或出了新版本都会变。 */
+export function artifactsSignature(list: readonly Artifact[]): string {
+	return list
+		.map((a) => `${a.id}:${a.version}`)
+		.sort()
+		.join(",");
+}
+
+/**
+ * 「Artifacts」标签是否有没看过的新版本：首次拿到列表记为基线；之后签名变了而标签不在显示时为真，
+ * 切到该标签即记为已看。
+ */
+function useUnseenArtifacts(
+	threadId: string,
+	present: boolean,
+	viewing: boolean,
+): boolean {
+	const list = useThreadArtifacts(threadId).data;
+	const sig = list ? artifactsSignature(list) : null;
+	useEffect(() => {
+		if (sig !== null) uiStore.getState().noteArtifacts(threadId, sig, viewing);
+	}, [threadId, sig, viewing]);
+	const unseen = useUi((s) => hasUnseenChanges(s.artifactsSig[threadId]));
+	return present && !viewing && unseen;
 }
 
 /** 一个标签上的提醒点：色调、是否脉动、悬停提示与测试 id。 */
@@ -268,6 +307,11 @@ function useTabDots(
 		threadId,
 		(s) => s.pendingUi.length > 0 || s.planProposal !== null,
 	);
+	const unseenArtifacts = useUnseenArtifacts(
+		threadId,
+		tabs.includes("artifacts"),
+		shown === "artifacts",
+	);
 	const dots: Partial<Record<ThreadTab, TabDot>> = {};
 	if (awaiting && shown !== "agent")
 		dots.agent = {
@@ -296,6 +340,13 @@ function useTabDots(
 			pulse: false,
 			title: t("rightPanel.unseenChanges"),
 			testId: "changes-unseen",
+		};
+	if (unseenArtifacts)
+		dots.artifacts = {
+			tone: "accent",
+			pulse: false,
+			title: t("rightPanel.unseenArtifacts"),
+			testId: "artifacts-unseen",
 		};
 	return dots;
 }
@@ -608,6 +659,7 @@ export function RightPanel({
 							/>
 						)}
 						{shown === "terminal" && <TerminalPanel threadId={threadId} />}
+						{shown === "artifacts" && <ArtifactPanel threadId={threadId} />}
 						{shown === "portal" && (
 							<PortalPanel threadId={threadId} orbId={orbId} />
 						)}

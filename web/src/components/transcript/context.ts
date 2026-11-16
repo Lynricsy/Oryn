@@ -22,6 +22,8 @@ export interface TranscriptContextValue {
 	openSubagent(id: string): void;
 	forkFrom(entryId: string): void;
 	labelEntry(entryId: string): void;
+	/** 打开转录里 artifact 卡片指向的 artifact（线程页：右面板；协调对话没有面板：整页查看器）。不给时卡片不可点。 */
+	openArtifact?(id: string): void;
 	/** 只读（分享页）：消息菜单只留「复制」，task 卡片不提供「查看转录」。 */
 	readOnly?: boolean;
 	/**
