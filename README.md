@@ -216,12 +216,15 @@ oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派�
 
 | 类别 | 预装工具链 |
 |---|---|
-| 语言与构建 | C/C++ (GCC/Clang)、Make、CMake、Ninja、Autotools、Go、Rust (`rustfmt`/`clippy`)、Python (`pip`/`uv`/`pipx`/`ruff`)、Node.js (`npm`/`pnpm`/Bun)、Ruby/Bundler、PHP/Composer、Lua |
-| 代码与协作 | Git、Git LFS、`gh`、OpenSSH、`rsync`、`ripgrep`、`fd`、`jq`、`yq` v4、`patch`/`diff`、ShellCheck、`shfmt`、常见归档解压工具 |
-| 排障与数据 | `ip`/`ss`/`dig`/`nc`/`socat`、`lsof`/`strace`/`ltrace`/`gdb`、SQLite / PostgreSQL / MariaDB / Valkey(Redis) 客户端、Poppler/`qpdf`、ImageMagick、FFmpeg |
+| 语言与构建 | C/C++ (GCC/Clang)、Make、CMake、Ninja、Autotools、Go、Rust (`rustfmt`/`clippy`/`rust-src`)、Python (`pip`/`uv`/`pipx`/`ruff`)、Node.js (`npm`/`pnpm`/Bun)、Ruby/Bundler、PHP/Composer、Lua |
+| 语言服务器 | 按 Oryn Core 内置 LSP 配置预装：`clangd`、`rust-analyzer`、`gopls`、`typescript-language-server`、`pyright`、`ruff`、`ruby-lsp`、`phpactor`、`lua-language-server`、`bash-language-server`、YAML / JSON / HTML / CSS / Dockerfile 语言服务器、`marksman` |
+| 代码与协作 | Git、Git LFS、`gh`、OpenSSH、`rsync`、`ripgrep`、`fd`、`jq`、`yq` v4、`patch`/`diff`、ShellCheck、`shfmt`、常见归档解压工具（含 `unrar`/`cabextract`） |
+| 排障与数据 | `ip`/`ss`/`dig`/`nc`/`socat`/`whois`/`nmap`/`iperf3`、`lsof`/`strace`/`ltrace`/`gdb`、`htop`/`ncdu`、SQLite / PostgreSQL / MariaDB / Valkey(Redis) 客户端、DuckDB、Miller、HTTPie、`aria2`、`yt-dlp` |
+| 文档与媒体 | Pandoc、LibreOffice（`soffice --headless`）、Poppler/`qpdf`/Ghostscript/MuPDF/`img2pdf`、Tesseract OCR（英文、简繁中文）、ImageMagick、librsvg、WebP/AVIF/JPEG XL/HEIF 编解码、`optipng`/`pngquant`/`jpegoptim`/`gifsicle`、ExifTool、Graphviz、`qrencode`/`zbar`、FFmpeg、SoX、MediaInfo |
+| Python 库 | 系统 Python 可直接 `import`：numpy、pandas、scipy、matplotlib、Pillow、requests、BeautifulSoup、lxml、PyYAML、openpyxl、XlsxWriter、python-docx、pypdf、ReportLab |
 | 图形桌面 | TigerVNC (`Xvnc`)、Openbox、受管策略加固的 Chromium、中英文与彩色 Emoji 字体 |
 
-系统软件包记录于 `/usr/local/share/oryn/packages.txt`；在项目 `setup` 脚本中增装系统包时请使用 `sudo pacman -Syu --needed --noconfirm <包名>`。
+系统软件包记录于 `/usr/local/share/oryn/packages.txt`，从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源）的 ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 版本记录于 `/usr/local/share/oryn/upstream-versions.txt`；在项目 `setup` 脚本中增装系统包时请使用 `sudo pacman -Syu --needed --noconfirm <包名>`。
 
 <details>
 <summary><strong>跨架构构建 ARM64 镜像与 QEMU / binfmt 离线冒烟说明</strong></summary>

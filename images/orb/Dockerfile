@@ -25,17 +25,29 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Arch 不支持部分升级；刷新包索引时同时完整升级，不安装 AUR 构建助手。
 # QEMU 用户态模拟不提供 Landlock：只在构建下载时关闭该沙箱，包签名校验仍启用。
 # go-yq 是 Mike Farah yq v4；valkey 提供兼容的 redis-cli，但不启动数据库服务。
+# 语言服务器对应 omp 内置 LSP 配置里镜像已有工具链的语言：clang 提供 clangd，rust-src 供 rust-analyzer 解析标准库；
+# typescript 6 的 tsc 不支持 --lsp，omp 会自动改用 typescript-language-server。Python 只装 pyright 一个类型检查器，避免诊断重复。
+# ruby-lsp 会把 debug gem 写进自己组合的 Gemfile；预装 ruby-debug，离线或项目未 bundle install 时它仍能启动。
+# 非开发工具覆盖文档转换、OCR、音视频、图片优化、下载与数据处理；Python 常用库由 pacman 装入系统环境，可直接 import。
 RUN pacman --disable-sandbox -Syu --noconfirm --needed \
       base-devel ca-certificates curl wget openssl git git-lfs openssh rsync sudo bash dash \
-      coreutils diffutils findutils grep sed gawk patch file tree less vim dos2unix \
-      jq go-yq ripgrep fd zip unzip tar gzip bzip2 zstd xz 7zip bc moreutils \
-      procps-ng psmisc lsof time util-linux tmux glibc tzdata \
-      iproute2 iptables iputils bind openbsd-netcat socat traceroute \
-      cmake ninja autoconf automake libtool bison flex gdb strace ltrace shfmt \
+      coreutils diffutils findutils grep sed gawk patch file tree less vim nano dos2unix \
+      jq go-yq ripgrep fd zip unzip tar gzip bzip2 zstd xz 7zip unrar cabextract bc moreutils parallel pv \
+      procps-ng psmisc lsof time util-linux tmux htop ncdu bat glibc tzdata \
+      iproute2 iptables iputils bind openbsd-netcat socat traceroute whois nmap iperf3 \
+      cmake ninja autoconf automake libtool bison flex gdb strace ltrace shfmt clang \
       libffi sqlite zlib readline python python-pip python-pipx ruff \
-      nodejs npm pnpm bun uv go rust github-cli \
+      nodejs npm pnpm bun uv go rust rust-src github-cli \
       ruby ruby-bundler php php-sqlite composer lua postgresql-libs mariadb-clients valkey \
-      libxml2 libxslt poppler qpdf imagemagick ffmpeg \
+      gopls typescript typescript-language-server pyright bash-language-server lua-language-server ruby-lsp ruby-debug \
+      yaml-language-server vscode-json-languageserver vscode-css-languageserver vscode-html-languageserver \
+      dockerfile-language-server \
+      libxml2 libxslt poppler qpdf ghostscript mupdf-tools img2pdf libreoffice-fresh \
+      tesseract tesseract-data-eng tesseract-data-chi_sim tesseract-data-chi_tra \
+      imagemagick librsvg libwebp-utils libjxl libheif libavif optipng pngquant jpegoptim gifsicle \
+      perl-image-exiftool graphviz qrencode zbar ffmpeg sox mediainfo yt-dlp aria2 httpie miller duckdb \
+      python-numpy python-pandas python-scipy python-matplotlib python-pillow python-requests python-beautifulsoup4 \
+      python-lxml python-yaml python-openpyxl python-xlsxwriter python-docx python-pypdf python-reportlab \
       tigervnc xorg-setxkbmap xkeyboard-config openbox chromium \
       ttf-liberation noto-fonts-cjk noto-fonts-emoji xorg-xdpyinfo xorg-xwininfo xorg-xprop xorg-xauth xclip \
  && printf '%s\n' 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen \
@@ -54,18 +66,28 @@ RUN mkdir -p /etc/chromium/policies/managed \
  && chmod 0644 /etc/chromium/policies/managed/oryn.json && jq -e . /etc/chromium/policies/managed/oryn.json
 ENV ORYN_DESKTOP=1
 
-# ARM 软件仓库没有 ShellCheck；双架构统一使用上游最新静态发行版并校验其摘要。
-RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; *) exit 1 ;; esac \
- && release="$(curl -fsSL https://api.github.com/repos/koalaman/shellcheck/releases/latest)" \
- && version="$(jq -er .tag_name <<< "$release")" \
- && asset="shellcheck-${version}.linux.${a}.tar.xz" \
- && url="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .browser_download_url' <<< "$release")" \
- && sha="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .digest | select(startswith("sha256:")) | ltrimstr("sha256:")' <<< "$release")" \
- && curl -fsSLo /tmp/shellcheck.tar.xz "$url" \
- && echo "$sha  /tmp/shellcheck.tar.xz" | sha256sum -c - \
- && tar -xJf /tmp/shellcheck.tar.xz -C /usr/local/bin --strip-components=1 "shellcheck-${version}/shellcheck" \
- && rm /tmp/shellcheck.tar.xz \
- && shellcheck --version > /usr/local/share/oryn/shellcheck-version.txt
+# ARM 软件仓库缺少下列工具（PHP 的 phpactor 两边都缺）；双架构统一使用上游最新发行版并按 GitHub 发布的摘要校验。
+RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga=arm64 pa=arm64 ;; *) exit 1 ;; esac \
+ && fetch() { \
+      local release asset url sha; \
+      release="$(curl -fsSL "https://api.github.com/repos/$1/releases/latest")"; \
+      asset="${2//@V@/$(jq -er .tag_name <<< "$release")}"; \
+      url="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .browser_download_url' <<< "$release")"; \
+      sha="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .digest | select(startswith("sha256:")) | ltrimstr("sha256:")' <<< "$release")"; \
+      curl -fsSLo "$3" "$url" && echo "$sha  $3" | sha256sum -c -; \
+    } \
+ && fetch koalaman/shellcheck "shellcheck-@V@.linux.${a}.tar.xz" /tmp/shellcheck.tar.xz \
+ && tar -xJf /tmp/shellcheck.tar.xz -C /usr/local/bin --strip-components=1 --wildcards '*/shellcheck' \
+ && fetch jgm/pandoc "pandoc-@V@-linux-${pa}.tar.gz" /tmp/pandoc.tar.gz \
+ && tar -xzf /tmp/pandoc.tar.gz -C /usr/local/bin --strip-components=2 --wildcards '*/bin/pandoc' \
+ && fetch rust-lang/rust-analyzer "rust-analyzer-${a}-unknown-linux-gnu.gz" /tmp/rust-analyzer.gz \
+ && gzip -dc /tmp/rust-analyzer.gz > /usr/local/bin/rust-analyzer \
+ && fetch artempyanykh/marksman "marksman-linux-${ga}" /usr/local/bin/marksman \
+ && fetch phpactor/phpactor phpactor.phar /usr/local/bin/phpactor \
+ && chmod 0755 /usr/local/bin/rust-analyzer /usr/local/bin/marksman /usr/local/bin/phpactor \
+ && rm /tmp/shellcheck.tar.xz /tmp/pandoc.tar.gz /tmp/rust-analyzer.gz \
+ && { shellcheck --version | sed -n 2p; pandoc --version | head -1; rust-analyzer --version; \
+      printf 'marksman %s\n' "$(marksman --version)"; phpactor --version; } > /usr/local/share/oryn/upstream-versions.txt
 
 # Docker（M11a 嵌套 Docker）：Docker 官方静态发行版（download.docker.com，与 Debian trixie apt 源同一版本）
 # 加 buildx / compose 插件，版本与摘要全部钉死。Arch 仓库是滚动版本、无法钉版本，所以不用 pacman 的 docker。
@@ -111,8 +133,9 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash user \
  && git lfs install --system --skip-repo
 
 # 普通进程与登录 shell 都能找到用户安装的工具；不注入 alias、函数或 BASH_ENV。
+# Arch 的 perl 脚本（如 exiftool）装在 /usr/bin/*_perl，原本只由登录 shell 的 perlbin.sh 补进 PATH。
 ENV HOME=/home/user
-ENV PATH=/home/user/.local/bin:/home/user/.cargo/bin:/home/user/go/bin:$PATH
+ENV PATH=/home/user/.local/bin:/home/user/.cargo/bin:/home/user/go/bin:$PATH:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl
 RUN printf '%s\n' 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"' > /etc/profile.d/oryn-toolchains.sh \
  && printf '%s\n' '# 保留标准命令语义，不定义别名、补全或彩色提示。' \
       'case $- in *i*) PS1="\\u@\\h:\\w\\$ " ;; esac' > /home/user/.bashrc \

@@ -11,7 +11,7 @@ description: "配置或修复 Oryn orb 环境：编写 .oryn/setup、.oryn/resum
 
 - Arch Linux 系（x64 官方 Arch，ARM64 为 Arch Linux ARM），用户 `user`，`sudo` 免密；`$HOME=/home/user`。
 - 有仓库的项目检出在 `~/workspace/repo`（setup / resume 的工作目录就是仓库根）；没有仓库时为 `~/workspace`。
-- 基础镜像已带 C/C++、CMake/Ninja、Python/uv/pipx/ruff、Node/npm/pnpm/Bun、Go、Rust（含 rustfmt/clippy）、Ruby/Bundler、PHP/Composer、Lua，以及 Git/LFS/gh、网络诊断、数据库客户端、图像与文档处理工具。版本随镜像构建时的软件仓库更新，清单见 `/usr/local/share/oryn/packages.txt`；先检查再补装。没有 Docker daemon。
+- 基础镜像已带 C/C++（GCC/Clang）、CMake/Ninja、Python/uv/pipx/ruff、Node/npm/pnpm/Bun、Go、Rust（含 rustfmt/clippy/rust-src）、Ruby/Bundler、PHP/Composer、Lua 及它们的语言服务器（clangd、rust-analyzer、gopls、typescript-language-server、pyright、ruby-lsp、phpactor、lua-language-server、bash/YAML/JSON/HTML/CSS/Dockerfile/Markdown），以及 Git/LFS/gh、网络诊断、数据库客户端、文档 / OCR / 图片 / 音视频工具和常用 Python 库（numpy、pandas、matplotlib 等）。版本随镜像构建时的软件仓库更新，清单见 `/usr/local/share/oryn/packages.txt` 与 `/usr/local/share/oryn/upstream-versions.txt`；先检查再补装，setup 里不要重复安装这些。没有 Docker daemon。
 - 访问 git 主机与模型 API 都经 orb 内的代理注入凭据；项目连接了 GitHub 时 `gh` 也已登录（账号见 `~/.oryn/gh/identity.json`），此时 `gh` 一律用这个身份，自设的 `GH_TOKEN` 对它不生效。脚本里**不要**写令牌，也不要 `gh auth login`。
 - git 提交身份（`user.name` / `user.email`）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
 

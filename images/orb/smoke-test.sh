@@ -20,6 +20,13 @@ for cmd in omp orbd oryn node npm npx pnpm bun bunx python python3 pip pipx uv u
 	zip unzip tar gzip bzip2 zstd xz 7z bc sponge timeout flock setsid \
 	ps pgrep pkill killall lsof free ip ss ping dig nc socat traceroute \
 	sqlite3 psql mariadb redis-cli xmllint xsltproc pdftotext pdfinfo qpdf convert ffmpeg ffprobe \
+	clangd rust-analyzer gopls tsc typescript-language-server pyright-langserver bash-language-server \
+	lua-language-server ruby-lsp phpactor yaml-language-server vscode-json-language-server \
+	vscode-css-language-server vscode-html-language-server docker-langserver marksman \
+	nano htop ncdu bat parallel pv unrar cabextract whois nmap iperf3 \
+	pandoc soffice gs mutool img2pdf tesseract magick rsvg-convert cwebp avifenc cjxl heif-enc \
+	optipng pngquant jpegoptim gifsicle exiftool dot qrencode zbarimg sox soxi mediainfo \
+	yt-dlp aria2c http mlr duckdb \
 	chromium Xvnc openbox docker dockerd containerd; do
 	command -v "$cmd" >/dev/null || { echo "缺少工具：$cmd" >&2; exit 1; }
 done
@@ -90,6 +97,94 @@ PHP
 [[ "$(lua -e 'print(6*7)')" == 42 ]]
 printf 'C / C++ / Go / Rust / Ruby / PHP / Lua：通过\n'
 
+# 语言服务器：按 omp 内置 LSP 配置的命令与参数启动，完成 initialize / shutdown 握手才算可用。
+test -d "$(rustc --print sysroot)/lib/rustlib/src/rust/library/std"
+mkdir lsp
+python3 - "$work/lsp" <<'PY'
+import json, os, pathlib, subprocess, sys, threading
+
+root = pathlib.Path(sys.argv[1])
+servers = {
+    "clangd": ["clangd", "--background-index", "--clang-tidy", "--header-insertion=iwyu"],
+    "rust-analyzer": ["rust-analyzer"],
+    "gopls": ["gopls", "serve"],
+    "typescript-language-server": ["typescript-language-server", "--stdio"],
+    "pyright": ["pyright-langserver", "--stdio"],
+    "ruff": ["ruff", "server"],
+    "bashls": ["bash-language-server", "start"],
+    "lua-language-server": ["lua-language-server"],
+    "ruby-lsp": ["ruby-lsp"],
+    "phpactor": ["phpactor", "language-server"],
+    "yamlls": ["yaml-language-server", "--stdio"],
+    "vscode-json-language-server": ["vscode-json-language-server", "--stdio"],
+    "vscode-css-language-server": ["vscode-css-language-server", "--stdio"],
+    "vscode-html-language-server": ["vscode-html-language-server", "--stdio"],
+    "dockerls": ["docker-langserver", "--stdio"],
+    "marksman": ["marksman", "server"],
+}
+
+def send(proc, msg):
+    body = json.dumps(msg).encode()
+    proc.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    proc.stdin.flush()
+
+def receive(proc, want_id):
+    while True:
+        length = None
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                raise RuntimeError(f"进程在响应 {want_id} 前退出")
+            line = line.strip()
+            if not line:
+                break
+            key, _, value = line.decode().partition(":")
+            if key.lower() == "content-length":
+                length = int(value)
+        msg = json.loads(proc.stdout.read(length))
+        if "method" in msg:
+            if "id" in msg:
+                send(proc, {"jsonrpc": "2.0", "id": msg["id"], "result": None})
+            continue
+        if msg.get("id") == want_id:
+            if "error" in msg:
+                raise RuntimeError(f"响应 {want_id} 出错：{msg['error']}")
+            return msg["result"]
+
+failed = []
+for name, cmd in servers.items():
+    proc = subprocess.Popen(cmd, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    timer = threading.Timer(180, proc.kill)
+    timer.start()
+    try:
+        uri = root.as_uri()
+        send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "processId": os.getpid(), "rootUri": uri, "capabilities": {},
+            "workspaceFolders": [{"uri": uri, "name": "lsp"}]}})
+        result = receive(proc, 1)
+        if not isinstance(result, dict) or "capabilities" not in result:
+            raise RuntimeError("initialize 结果缺少 capabilities")
+        send(proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        send(proc, {"jsonrpc": "2.0", "id": 2, "method": "shutdown"})
+        receive(proc, 2)
+        # 可用性以 shutdown 应答为准；lua-language-server 在 initialized 后立即收到 exit 时不会退出，交给 finally 结束进程。
+        send(proc, {"jsonrpc": "2.0", "method": "exit"})
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception as exc:
+        failed.append(f"{name}: {exc}")
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+if failed:
+    sys.exit("LSP 握手失败：\n" + "\n".join(failed))
+print(f"语言服务器 initialize 握手（{len(servers)} 个）：通过")
+PY
+
 [[ "$(printf 'answer: 42\n' | yq -r '.answer')" == 42 ]]
 [[ "$(printf '{"answer":42}\n' | jq -r '.answer')" == 42 ]]
 [[ "$(sqlite3 :memory: 'select 6*7;')" == 42 ]]
@@ -103,6 +198,56 @@ cmp input.txt unpacked/input.txt
 magick -size 2x2 xc:white image.png
 ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 image.png | grep -qx '2,2'
 printf 'YAML / JSON / SQLite / XML / 归档 / 图像：通过\n'
+
+# 文档、OCR、图片、音视频与数据处理：全部离线完成一次真实转换。
+fonts=/usr/share/fonts/liberation/LiberationSans-Regular.ttf
+printf '# 42\n' | pandoc -f markdown -t html | grep -q '>42</h1>'
+printf '42\n' > doc.txt
+soffice --headless --convert-to pdf --outdir . doc.txt >/dev/null
+[[ "$(pdftotext doc.pdf - | tr -d '\f' | sed '/^$/d')" == 42 ]]
+gs -q -dSAFER -dBATCH -dNOPAUSE -sDEVICE=png16m -r50 -o gs.png doc.pdf
+mutool draw -q -o mu.png doc.pdf 1
+magick -size 360x180 xc:white -font "$fonts" -pointsize 120 -fill black -annotate +40+140 42 ocr.png
+[[ "$(tesseract ocr.png - --psm 7 2>/dev/null | tr -d '[:space:]')" == 42 ]]
+[[ "$(magick ocr.png -resize 50% -format '%w' info:)" == 180 ]]
+img2pdf ocr.png -o img.pdf
+pdfinfo img.pdf | grep -q '^Pages: *1$'
+printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>' > image.svg
+rsvg-convert image.svg -o svg.png
+printf 'digraph{a->b}\n' | dot -Tsvg | grep -q '<svg'
+cwebp -quiet ocr.png -o ocr.webp
+avifenc -q 50 ocr.png ocr.avif >/dev/null
+cjxl ocr.png ocr.jxl --quiet
+heif-enc ocr.png -o ocr.heic >/dev/null
+cp ocr.png opt.png
+optipng -quiet opt.png
+pngquant --force --output quant.png ocr.png
+magick ocr.png ocr.jpg
+jpegoptim --quiet ocr.jpg
+magick ocr.png ocr.gif
+gifsicle -O3 ocr.gif -o opt.gif
+[[ "$(exiftool -s3 -ImageWidth ocr.png)" == 360 ]]
+qrencode -o qr.png 42
+[[ "$(zbarimg --quiet --raw qr.png)" == 42 ]]
+sox -n -r 8000 tone.wav synth 0.1 sine 440
+[[ "$(soxi -r tone.wav)" == 8000 ]]
+[[ "$(mediainfo --Inform='Audio;%SamplingRate%' tone.wav)" == 8000 ]]
+[[ "$(duckdb -csv -noheader -c 'select 6*7')" == 42 ]]
+[[ "$(printf 'a\n42\n' | mlr --icsv --onidx cat)" == 42 ]]
+yt-dlp --version >/dev/null
+aria2c --version >/dev/null
+http --version >/dev/null
+[[ "$(python3 - <<'PY'
+import matplotlib
+matplotlib.use("Agg")
+import bs4, docx, lxml, numpy, openpyxl, pandas, PIL, pypdf, reportlab, requests, scipy, xlsxwriter, yaml
+import matplotlib.pyplot as plt
+plt.plot([0, 1], [0, 1])
+plt.savefig("plot.png")
+print(int(pandas.DataFrame({"a": numpy.array([6])}).a.iloc[0] * 7))
+PY
+)" == 42 ]]
+printf '文档 / OCR / 图片 / 音频 / 数据 / Python 库：通过\n'
 
 mkdir repo
 cd repo
