@@ -158,9 +158,21 @@ func identityView(gi db.GithubIdentity) *apigen.GitHubIdentity {
 }
 
 // Disconnect 断开一个身份槽位；断开 Agent 账号时自动化身份退回我的账号。
+// 断开我的账号前先删除 Oryn 建的全部仓库 hook（hook 由我的账号管理，断开后无法再删）。
 func (s *Service) Disconnect(ctx context.Context, slot string) error {
 	if !validSlot(slot) {
 		return errf("invalid_request", "slot must be user or agent")
+	}
+	if slot == slotUser {
+		if _, err := s.st.Q.GetGithubIdentity(ctx, slot); err != nil {
+			if isNoRows(err) {
+				return errf("not_found", "GitHub identity "+slot+" is not connected")
+			}
+			return err
+		}
+		if err := s.dropAllHooks(ctx); err != nil {
+			return err
+		}
 	}
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
 		n, err := q.DeleteGithubIdentity(ctx, slot)

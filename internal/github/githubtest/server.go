@@ -80,6 +80,9 @@ type Repo struct {
 	InstallationID int64
 	// Permissions 是协作者权限表：login → admin | write | read。
 	Permissions map[string]string
+	// Restricted 模拟 OAuth App 的组织限制：org_restricted（403 + 访问限制 message）或 sso_required（403 + X-GitHub-SSO）；
+	// 只作用于用户令牌对仓库与仓库 hook 的请求。空串 = 不限制。
+	Restricted string
 }
 
 // Call 是假服务收到的一次请求。
@@ -130,6 +133,13 @@ type Server struct {
 	Unreachable bool
 	// Fail 注入失败："METHOD /path" → 状态码；命中的请求直接回该状态码（仍记进 Calls）。
 	Fail map[string]int
+
+	// RepoHooks / RepoDeliveries 是仓库 webhook 与它们的投递日志（M15，见 repohooks.go）；
+	// DeliveriesUsed / DeliveriesReset 是投递日志接口的独立额度（上限 500 次/小时，304 不计数）。
+	RepoHooks       []*RepoHook
+	RepoDeliveries  []*RepoDelivery
+	DeliveriesUsed  int
+	DeliveriesReset time.Time
 
 	seq           int64
 	codes         map[string]string // 授权码 → login
@@ -308,6 +318,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /applications/{client}/token/scoped", s.scopedToken)
 	mux.HandleFunc("GET /repos/{owner}/{repo}/installation", s.repoInstallation)
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.getRepo)
+	s.repoHookRoutes(mux)
 	mux.HandleFunc("GET /user/installations", s.userInstallations)
 	mux.HandleFunc("GET /user/installations/{id}/repositories", s.userInstallationRepos)
 	s.issueRoutes(mux)
@@ -686,7 +697,14 @@ func (s *Server) getRepo(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.repoJSON(r, rp))
+	if s.restricted(w, r, rp) {
+		return
+	}
+	out := s.repoJSON(r, rp)
+	if u := s.userOf(bearer(r)); u != nil {
+		out["permissions"] = permissionsJSON(s.permOf(rp, u.Login))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) userInstallations(w http.ResponseWriter, r *http.Request) {

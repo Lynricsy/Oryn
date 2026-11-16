@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,12 +50,72 @@ func init() {
 	on("repository", (*Service).onRepository)
 }
 
-// HandleWebhook 校验签名并受理一次投递；返回 HTTP 状态码。
+// HandleWebhook 校验并受理一次投递；返回 HTTP 状态码（M15 步骤 1.3）。
+//
+// 仓库 hook：按 X-GitHub-Hook-ID（十进制）查 github_hooks 行，用该行的 secret 验 X-Hub-Signature-256，
+// 再要求 X-GitHub-Hook-Installation-Target-ID 等于该行的 repo_id；任一不满足返回 401。验签通过后记 last_webhook_at。
+//
+// 过渡：hook id 查不到 github_hooks 行、且库里还有旧 GitHub App 时，按 App 的 webhook secret 验签（M14 路径，
+// 步骤 1.4 删除 App 代码时一并删除）。其余情况一律 401。
 func (s *Service) HandleWebhook(ctx context.Context, h http.Header, body []byte) int {
+	var repoID int64
+	row, found, err := s.hookOfRequest(ctx, h)
+	switch {
+	case err != nil:
+		slog.Warn("github: 读取仓库 hook 失败", "err", err)
+		return http.StatusInternalServerError
+	case found:
+		secret, err := s.cfg.Box.Open(aadHookSecret(row.RepoID), row.SecretEnc)
+		if err != nil {
+			slog.Warn("github: 解密 hook secret 失败", "repo", row.FullName, "err", err)
+			return http.StatusInternalServerError
+		}
+		if !validSignature(secret, h.Get("X-Hub-Signature-256"), body) ||
+			h.Get("X-GitHub-Hook-Installation-Target-ID") != strconv.FormatInt(row.RepoID, 10) {
+			return http.StatusUnauthorized
+		}
+		repoID = row.RepoID
+	default:
+		if code := s.verifyLegacyApp(ctx, h, body); code != 0 {
+			return code
+		}
+	}
+	guid, event := h.Get("X-GitHub-Delivery"), h.Get("X-GitHub-Event")
+	if guid == "" || event == "" {
+		return http.StatusBadRequest
+	}
+	if repoID != 0 {
+		now := s.nowMs()
+		if err := s.st.Q.TouchGithubHookWebhook(ctx, db.TouchGithubHookWebhookParams{LastWebhookAt: &now, RepoID: repoID}); err != nil {
+			slog.Warn("github: 记录 webhook 到达时间失败", "err", err)
+		}
+	}
+	s.ingest(ctx, guid, event, body, "webhook", repoID)
+	return http.StatusAccepted
+}
+
+// hookOfRequest 按 X-GitHub-Hook-ID 查 Oryn 管理的仓库 hook；头缺失、不是十进制或查不到时 found 为假。
+func (s *Service) hookOfRequest(ctx context.Context, h http.Header) (row db.GithubHook, found bool, err error) {
+	id, perr := strconv.ParseInt(h.Get("X-GitHub-Hook-ID"), 10, 64)
+	if perr != nil || id <= 0 {
+		return row, false, nil
+	}
+	row, err = s.st.Q.GetGithubHookByHookID(ctx, &id)
+	if err != nil {
+		if isNoRows(err) {
+			return row, false, nil
+		}
+		return row, false, err
+	}
+	return row, len(row.SecretEnc) > 0, nil
+}
+
+// verifyLegacyApp 是旧 GitHub App 的验签（过渡，步骤 1.4 删除）：通过时返回 0；没有 App 或签名不符返回 401。
+func (s *Service) verifyLegacyApp(ctx context.Context, h http.Header, body []byte) int {
 	app, err := s.st.Q.GetGithubApp(ctx)
 	if err != nil {
 		if isNoRows(err) {
-			return http.StatusNotFound
+			return http.StatusUnauthorized
 		}
 		slog.Warn("github: 读取 App 失败", "err", err)
 		return http.StatusInternalServerError
@@ -64,29 +125,29 @@ func (s *Service) HandleWebhook(ctx context.Context, h http.Header, body []byte)
 		slog.Warn("github: 解密 webhook secret 失败", "err", err)
 		return http.StatusInternalServerError
 	}
-	sig, ok := strings.CutPrefix(h.Get("X-Hub-Signature-256"), "sha256=")
-	if !ok {
+	if !validSignature(secret, h.Get("X-Hub-Signature-256"), body) {
 		return http.StatusUnauthorized
+	}
+	return 0
+}
+
+// validSignature 校验 `sha256=<hex>` 形式的 HMAC-SHA256 签名。
+func validSignature(secret []byte, header string, body []byte) bool {
+	sig, ok := strings.CutPrefix(header, "sha256=")
+	if !ok {
+		return false
 	}
 	got, err := hex.DecodeString(sig)
 	if err != nil {
-		return http.StatusUnauthorized
+		return false
 	}
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
-	if !hmac.Equal(got, mac.Sum(nil)) {
-		return http.StatusUnauthorized
-	}
-	guid, event := h.Get("X-GitHub-Delivery"), h.Get("X-GitHub-Event")
-	if guid == "" || event == "" {
-		return http.StatusBadRequest
-	}
-	s.ingest(ctx, guid, event, body, "webhook")
-	return http.StatusAccepted
+	return hmac.Equal(got, mac.Sum(nil))
 }
 
-// ingest 是 webhook 与轮询共用的入口：去重、落库、入队。
-func (s *Service) ingest(ctx context.Context, guid, event string, body []byte, src string) {
+// ingest 是 webhook 与轮询共用的入口：按 guid 去重、落库、入队。repoID 非 0 时把最近投递记到该仓库的 hook 行。
+func (s *Service) ingest(ctx context.Context, guid, event string, body []byte, src string, repoID int64) {
 	now := s.nowMs()
 	n, err := s.st.Q.InsertGithubDelivery(ctx, db.InsertGithubDeliveryParams{
 		Guid: guid, Event: event, Source: src, Payload: body, ReceivedAt: now,
@@ -98,8 +159,12 @@ func (s *Service) ingest(ctx context.Context, guid, event string, body []byte, s
 	if n == 0 {
 		return // 重复投递
 	}
-	if err := s.st.Q.TouchGithubDelivery(ctx, db.TouchGithubDeliveryParams{LastDeliveryAt: &now, LastDeliverySrc: &src}); err != nil {
-		slog.Warn("github: 记录最近投递失败", "err", err)
+	if repoID != 0 {
+		if err := s.st.Q.TouchGithubHookDelivery(ctx, db.TouchGithubHookDeliveryParams{
+			LastDeliveryAt: &now, LastDeliverySrc: &src, RepoID: repoID,
+		}); err != nil {
+			slog.Warn("github: 记录最近投递失败", "err", err)
+		}
 	}
 	s.enqueueDelivery(guid, event, body)
 }
@@ -200,9 +265,10 @@ func clip(v string, n int) string {
 	return string(r[:n])
 }
 
-// Run 运行后台循环直到 ctx 结束：任务队列、恢复与轮询、回流、每小时清理。
+// Run 运行后台循环直到 ctx 结束：任务队列、恢复待处理投递与轮询 hook 投递日志、每 hookSyncInterval 校正仓库 hook、回流、每小时清理。
 func (s *Service) Run(ctx context.Context) {
-	done := make(chan struct{}, 4)
+	const loops = 5
+	done := make(chan struct{}, loops)
 	loop := func(every time.Duration, now bool, f func(ctx context.Context)) {
 		defer func() { done <- struct{}{} }()
 		t := time.NewTicker(every)
@@ -232,13 +298,16 @@ func (s *Service) Run(ctx context.Context) {
 	}()
 	go loop(s.cfg.PollInterval, true, func(ctx context.Context) {
 		s.recoverPending(ctx)
-		if err := s.pollOnce(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("github: 拉取投递日志失败", "err", err)
+		s.pollHooks(ctx)
+	})
+	go loop(hookSyncInterval, true, func(ctx context.Context) {
+		if err := s.ResyncHooks(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("github: 同步仓库 hook 失败", "err", err)
 		}
 	})
 	go loop(s.cfg.FlushInterval, false, s.flush)
 	go loop(time.Hour, true, s.cleanup)
-	for range 4 {
+	for range loops {
 		<-done
 	}
 }

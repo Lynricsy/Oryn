@@ -21,7 +21,11 @@ import (
 
 // 时间与上限常量（规格见 docs/plan-m14.md「全局约束」）。
 const (
-	pollInterval        = 30 * time.Second
+	hookPollInterval    = 30 * time.Second // 投递日志轮询周期（docs/plan-m15.md「全局约束」）
+	hookPollRelaxed     = 5 * time.Minute  // 最近 hookRecentWebhook 内收到过 webhook 的 hook 放宽到此间隔
+	hookRecentWebhook   = 10 * time.Minute
+	hookSyncInterval    = 10 * time.Minute // 全量重新校正仓库 hook 的周期
+	deliveriesQuotaMin  = 50               // 投递日志额度剩余低于它时暂停轮询到额度重置
 	flushInterval       = 5 * time.Second
 	debounce            = 15 * time.Second
 	rollupDebounce      = 5 * time.Second
@@ -78,7 +82,7 @@ type Config struct {
 	Box            *secrets.Box
 	HTTP           *http.Client     // 默认 &http.Client{Timeout: 20 * time.Second}
 	Now            func() time.Time // 默认 time.Now
-	PollInterval   time.Duration    // 默认 pollInterval
+	PollInterval   time.Duration    // 默认 hookPollInterval
 	FlushInterval  time.Duration    // 默认 flushInterval
 	Debounce       time.Duration    // 默认 debounce
 	// AfterFunc 默认包一层 time.AfterFunc；CI 汇总的防抖计时器用，测试注入。
@@ -131,6 +135,13 @@ type Service struct {
 	jobs     chan func(ctx context.Context)
 	qmu      sync.Mutex
 	inflight map[string]bool
+
+	// 仓库 hook（M15 步骤 1.2 / 1.3）：hookMu 串行化 hook 的增删改，避免绑定与定时同步并发时重复建 hook；
+	// pollMu 串行化投递日志轮询并保护 hookPolled（各仓库上次轮询的时间）与 hookPause（额度见底后的恢复时刻）。
+	hookMu     sync.Mutex
+	pollMu     sync.Mutex
+	hookPolled map[int64]time.Time
+	hookPause  time.Time
 }
 
 // New 构造服务。
@@ -142,7 +153,7 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 		cfg.Now = time.Now
 	}
 	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = pollInterval
+		cfg.PollInterval = hookPollInterval
 	}
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = flushInterval

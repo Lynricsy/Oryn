@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -40,6 +42,7 @@ func (s *Service) oauthClient(ctx context.Context) (id, secret string, err error
 
 // SetOAuthApp 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（R1）。
 // secret 为空时沿用已存的值（首次保存必填）；webhookBase 为空表示取 public_url。
+// 生效的 webhook 基址变化时（含首次保存）调用 ResyncHooks，全量改写各仓库 hook 的 config.url；同步失败只记日志。
 func (s *Service) SetOAuthApp(ctx context.Context, clientID, secret, webhookBase string) error {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" || strings.ContainsAny(clientID, " \t\r\n/?#&") {
@@ -70,12 +73,21 @@ func (s *Service) SetOAuthApp(ctx context.Context, clientID, secret, webhookBase
 		}
 		secretEnc = cur.ClientSecretEnc
 	}
+	prevBase, _, err := s.webhookBase(ctx)
+	if err != nil {
+		return err
+	}
 	if err := s.st.Q.UpsertGithubOAuthApp(ctx, db.UpsertGithubOAuthAppParams{
 		ClientID: clientID, ClientSecretEnc: secretEnc, WebhookBase: base, CreatedAt: s.nowMs(),
 	}); err != nil {
 		return err
 	}
 	s.changed()
+	if nextBase, _, err := s.webhookBase(ctx); err != nil || nextBase != prevBase {
+		if err := errors.Join(err, s.ResyncHooks(ctx)); err != nil {
+			slog.Warn("github: webhook 基址变更后同步仓库 hook 失败", "err", err)
+		}
+	}
 	return nil
 }
 

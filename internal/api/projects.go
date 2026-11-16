@@ -219,6 +219,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		return
 	}
 	var out db.Project
+	var oldRepoID *int64 // 改仓库、归档后可能不再有项目绑定的 GitHub 仓库
 	repoChanged := false
 	err = s.Store.Tx(ctx, func(q *db.Queries) error {
 		p, err := q.GetProject(ctx, id)
@@ -280,6 +281,9 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 			return err
 		}
 		repoChanged = !sameOptStr(p.RepoUrl, u.RepoUrl)
+		if repoChanged || (u.ArchivedAt != nil && p.ArchivedAt == nil) {
+			oldRepoID = p.GithubRepoID
+		}
 		if repoChanged && s.GitHub != nil {
 			// 旧仓库的事件不得再命中这个项目；新仓库在事务之后重新绑定
 			if err := q.ClearProjectGithub(ctx, id); err != nil {
@@ -318,6 +322,11 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 			return
 		}
 	}
+	if oldRepoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
+		if err := s.GitHub.Service.ReleaseHook(ctx, *oldRepoID); err != nil {
+			slog.Warn("删除 GitHub 仓库 hook 失败", "project", id, "err", err)
+		}
+	}
 	// 预热台数、快照开关、setup 脚本、仓库、分支、默认 provider / 类型或归档变化都会改变预热池的目标或配置哈希
 	if req.WarmOrbs != nil || req.Snapshots != nil || req.SetupScript != nil || req.RepoURL != nil || req.BaseBranch != nil ||
 		req.ShallowClone != nil || req.DefaultProvider != nil || req.DefaultOrbType != nil || req.Archived != nil {
@@ -330,7 +339,13 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
 	ctx := r.Context()
 	var n int64
+	var repoID *int64
 	err := s.Store.Tx(ctx, func(q *db.Queries) error {
+		if p, err := q.GetProject(ctx, id); err == nil {
+			repoID = p.GithubRepoID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		// 先退役项目快照（行随项目删除只把 project_id 置空，镜像交给回收器在无引用后删除）
 		if err := q.RetireProjectSnapshotsByProject(ctx, db.RetireProjectSnapshotsByProjectParams{
 			RetiredAt: time.Now().UnixMilli(), RetireReason: orbs.RetireProjectDeleted, ProjectID: id,
@@ -348,6 +363,12 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 	if n == 0 {
 		WriteError(w, http.StatusNotFound, "not_found", "项目不存在")
 		return
+	}
+	// 最后一个绑定该仓库的项目删除后，删除 Oryn 的仓库 hook
+	if repoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
+		if err := s.GitHub.Service.ReleaseHook(ctx, *repoID); err != nil {
+			slog.Warn("删除 GitHub 仓库 hook 失败", "project", id, "err", err)
+		}
 	}
 	// 项目级 omp 配置随项目删除（归档不删）；失败只记日志，目录留着无害
 	if s.Auth != nil && s.Auth.ProjectHomes != nil {

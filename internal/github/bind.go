@@ -80,7 +80,11 @@ func (s *Service) bind(ctx context.Context, prj db.Project) (changed bool, err e
 		if prj.GithubRepoID == nil && prj.GithubOwnerID == nil && prj.GithubInstallationID == nil {
 			return false, nil
 		}
-		return true, s.st.Q.ClearProjectGithub(ctx, prj.ID)
+		if err := s.st.Q.ClearProjectGithub(ctx, prj.ID); err != nil {
+			return true, err
+		}
+		s.releaseHook(ctx, prj.GithubRepoID)
+		return true, nil
 	}
 	auth, err := s.appAuth(ctx)
 	if err != nil {
@@ -121,17 +125,38 @@ func (s *Service) bind(ctx context.Context, prj db.Project) (changed bool, err e
 			return false, err
 		}
 		changed = true
+		if prj.GithubRepoID != nil && *prj.GithubRepoID != repo.ID {
+			s.releaseHook(ctx, prj.GithubRepoID)
+		}
 	}
+	name := full
 	if repo.FullName != "" && !strings.EqualFold(repo.FullName, full) {
 		// followRename 自己广播
 		if err := s.followRename(ctx, repo.ID, repo.FullName); err != nil {
 			return changed, err
 		}
+		name = repo.FullName
+	}
+	// 新绑定或还没有 hook 记录时建立仓库 hook（M15 步骤 1.2）；失败只记日志，hookSyncInterval 循环会再校正
+	if _, herr := s.st.Q.GetGithubHook(ctx, repo.ID); changed || isNoRows(herr) {
+		if err := s.ensureHook(ctx, repo.ID, name); err != nil {
+			slog.Warn("github: 建立仓库 hook 失败", "repo", name, "err", err)
+		}
 	}
 	return changed, nil
 }
 
-// followRename 把记录了该仓库 id 的项目地址改成新名字（旧地址进 github_prev_urls），并同步 PR 记录里的仓库名。
+// releaseHook 在项目不再绑定 repoID 之后删除没有其他项目绑定的仓库 hook；失败只记日志（同步循环会清理）。
+func (s *Service) releaseHook(ctx context.Context, repoID *int64) {
+	if repoID == nil {
+		return
+	}
+	if err := s.dropHook(ctx, *repoID); err != nil {
+		slog.Warn("github: 删除仓库 hook 失败", "repo_id", *repoID, "err", err)
+	}
+}
+
+// followRename 把记录了该仓库 id 的项目地址改成新名字（旧地址进 github_prev_urls），并同步 PR 记录与仓库 hook 记录里的仓库名。
 func (s *Service) followRename(ctx context.Context, repoID int64, fullName string) error {
 	prjs, err := s.st.Q.ListProjectsByGithubRepoAny(ctx, &repoID)
 	if err != nil {
@@ -166,6 +191,9 @@ func (s *Service) followRename(ctx context.Context, repoID int64, fullName strin
 			}); err != nil {
 				return err
 			}
+		}
+		if err := q.SetGithubHooksRepoName(ctx, db.SetGithubHooksRepoNameParams{FullName: fullName, RepoID: repoID}); err != nil {
+			return err
 		}
 		return q.SetGithubPullsRepoName(ctx, db.SetGithubPullsRepoNameParams{RepoFullName: fullName, RepoID: repoID})
 	})
