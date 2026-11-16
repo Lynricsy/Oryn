@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/cfgsync"
@@ -54,6 +56,10 @@ var (
 
 // coordhostCommand 是拉起协调宿主子进程的命令；零值 = coordhost 默认（{os.Executable(), "coordinator-host"}）。e2e 注入。
 var coordhostCommand []string
+
+// renderExe 返回带 render-exec 子命令的可执行文件（orynd 自己）；返回空串时控制面渲染停用。
+// 测试置空：测试二进制不认 render-exec，被当成 orynd 拉起会把整套测试再跑一遍。
+var renderExe = os.Executable
 
 // statsNow / statsBudgetInterval 是统计服务的时钟与预算评估周期；零值 = stats 默认（真实时钟 / 60s）。e2e 注入。
 var (
@@ -307,6 +313,23 @@ func (s *Server) init(ctx context.Context) error {
 		frameSrc = "'self'"
 		mounts[artifacts.FramePathPrefix+"*"] = frames.Handler()
 	}
+	// M14 控制面渲染（步骤 4.1）：headless Chromium 只经一个放行白名单的代理取 artifact 内容；启动时在后台自检一次
+	exe, err := renderExe()
+	if err != nil {
+		cancel()
+		return fmt.Errorf("render: %w", err)
+	}
+	rc := cfg.Artifacts.Render
+	renderer, err := render.New(render.Config{
+		Chromium: rc.Chromium, User: rc.User, NoSandbox: rc.NoSandbox, Concurrency: rc.Concurrency,
+		Dir: cfg.ArtifactRenderDir(), Exe: exe, CDNs: artifacts.CDNs, Site: frames,
+	})
+	if err != nil {
+		cancel()
+		return err
+	}
+	s.closers = append(s.closers, renderer.Close)
+	go renderer.Preflight(runCtx)
 	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,
@@ -345,7 +368,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
-	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames}
+	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

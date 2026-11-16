@@ -20,6 +20,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "coordinator-host" {
 		os.Exit(coordinatorHost(os.Args[2:]))
 	}
+	// 渲染子进程（M14）：同样在读配置之前分派，见 render_exec.go
+	if len(os.Args) > 1 && os.Args[1] == "render-exec" {
+		os.Exit(renderExec(os.Args[2:]))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "orynd:", err)
 		os.Exit(1)

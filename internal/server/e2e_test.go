@@ -30,6 +30,8 @@ import (
 var binDir string
 
 func TestMain(m *testing.M) {
+	// 控制面渲染（M14 4.1）不在这里测：测试二进制不认 render-exec
+	renderExe = func() (string, error) { return "", nil }
 	dir, err := os.MkdirTemp("", "oryn-e2e-*")
 	if err != nil {
 		panic(err)

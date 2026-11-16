@@ -19,3 +19,6 @@ orb_tls: { listen: ["172.18.0.1:7643", "172.31.255.1:7643"] }
 # dev 同时跑 docker（local）与 Firecracker（fc）两个 provider：未指定 provider 的新 orb（首页、`oryn thread new`、
 # 验收脚本）默认落到 local，否则会因「无法确定默认值」400；要用 fc 时显式指定
 orb_defaults: { provider: local }
+# M14 控制面渲染（缩略图 / PNG / PDF）：本机以 root 运行，Chromium 降权到 nobody 跑；仓库在 /root 下（nobody 进不去），
+# 所以作业目录放在 /var/tmp
+artifacts: { render: { user: "nobody", dir: "/var/tmp/oryn-dev-render" } }

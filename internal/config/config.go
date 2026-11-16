@@ -84,6 +84,26 @@ type Coordinator struct {
 // Verify 报告是否校验 omp 的版本钉（缺省 true）。
 func (c Coordinator) Verify() bool { return c.VerifyOmp == nil || *c.VerifyOmp }
 
+// ArtifactsRender 是控制面渲染 artifact（缩略图、PNG、PDF）用的 headless Chromium（M14 步骤 4.1）。
+type ArtifactsRender struct {
+	// Chromium 是可执行文件路径；空 = 依次在 PATH 里找 chromium、chromium-browser、google-chrome-stable、google-chrome。
+	Chromium string `yaml:"chromium"`
+	// User 是 orynd 以 root 运行时跑 Chromium 的账号（不能是 root）；root 下为空则渲染停用。非 root 时不用。
+	User string `yaml:"user"`
+	// NoSandbox 为真时给 Chromium 传 --no-sandbox：只在 orynd 自己跑在专用容器里、Chromium 的命名空间沙箱起不来时才打开。
+	NoSandbox bool `yaml:"no_sandbox"`
+	// Concurrency 是同时运行的 Chromium 上限；0（缺省）= 2。
+	Concurrency int `yaml:"concurrency"`
+	// Dir 是作业目录的上级目录；空 = <data_dir>/artifacts/render。渲染账号必须能进入它的每一级上级目录
+	// （data_dir 是 root 的 0700 目录时，要设到 /var/tmp/oryn-render 这类位置）。
+	Dir string `yaml:"dir"`
+}
+
+// Artifacts 是 M14 Artifacts 的配置。
+type Artifacts struct {
+	Render ArtifactsRender `yaml:"render"`
+}
+
 // Schedule 是定时调度参数（M9）。
 type Schedule struct {
 	DeliverTimeout Duration `yaml:"deliver_timeout"`
@@ -234,6 +254,7 @@ type Orynd struct {
 	Pool         Pool        `yaml:"pool"`
 	OrbTLS       OrbTLS      `yaml:"orb_tls"`
 	GitHub       GitHub      `yaml:"github"`
+	Artifacts    Artifacts   `yaml:"artifacts"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -246,6 +267,14 @@ func (c Orynd) CoordinatorDir() string {
 
 // ModelCatalogDir 返回中央模型目录的缓存目录（<data_dir>/model-catalog）。
 func (c Orynd) ModelCatalogDir() string { return filepath.Join(c.DataDir, "model-catalog") }
+
+// ArtifactRenderDir 返回 artifact 渲染作业目录的上级（未配置时为 <data_dir>/artifacts/render）。
+func (c Orynd) ArtifactRenderDir() string {
+	if c.Artifacts.Render.Dir != "" {
+		return c.Artifacts.Render.Dir
+	}
+	return filepath.Join(c.DataDir, "artifacts", "render")
+}
 
 // DefaultOrynd 返回带默认值的配置。
 func DefaultOrynd() Orynd {
@@ -298,6 +327,17 @@ func LoadOrynd(path string) (Orynd, error) {
 	}
 	if c.Coordinator.Dir != "" {
 		if c.Coordinator.Dir, err = filepath.Abs(c.Coordinator.Dir); err != nil {
+			return c, err
+		}
+	}
+	if c.Artifacts.Render.Dir != "" {
+		if c.Artifacts.Render.Dir, err = filepath.Abs(c.Artifacts.Render.Dir); err != nil {
+			return c, err
+		}
+	}
+	// chromium 写的是不带斜杠的名字时按 PATH 查找，不转绝对路径
+	if p := c.Artifacts.Render.Chromium; strings.Contains(p, "/") {
+		if c.Artifacts.Render.Chromium, err = filepath.Abs(p); err != nil {
 			return c, err
 		}
 	}
@@ -384,6 +424,12 @@ func (c Orynd) Validate() error {
 		errs = append(errs, errors.New("pool.max_age 与 pool.active_window 必须为正"))
 	}
 	errs = append(errs, c.OrbTLS.validate()...)
+	if n := c.Artifacts.Render.Concurrency; n < 0 || n > 16 {
+		errs = append(errs, fmt.Errorf("artifacts.render.concurrency %d 必须在 0–16 之间（0 = 2）", n))
+	}
+	if c.Artifacts.Render.User == "root" {
+		errs = append(errs, errors.New("artifacts.render.user 不能是 root"))
+	}
 	return errors.Join(errs...)
 }
 

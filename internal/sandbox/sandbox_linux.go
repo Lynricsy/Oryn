@@ -240,6 +240,27 @@ func Apply(p Policy) (Report, error) {
 	return Report{LandlockABI: abi, IPCScope: abi >= 6, UID: os.Getuid(), Seccomp: true}, nil
 }
 
+// RestrictConnect 用 Landlock 把当前进程（全部线程，及之后 exec 的程序与其子进程）的 TCP connect 限制到 port 这一个端口；
+// 只处理 connect 一项权限，不动文件系统、不装 seccomp（Chromium 需要 AF_UNIX 与命名空间，Apply 的 seccomp 黑名单会让它起不来）。
+// 内核的 Landlock ABI < 4（没有 TCP 规则）时什么也不做并返回 applied = false。会顺带设置 no_new_privs。不可逆。
+func RestrictConnect(port uint16) (applied bool, err error) {
+	if port == 0 {
+		return false, errors.New("sandbox: port is required")
+	}
+	abi, err := Probe()
+	if err != nil || abi < 4 {
+		return false, nil
+	}
+	cfg, err := landlock.NewConfig(landlock.AccessNetSet(ll.AccessNetConnectTCP))
+	if err != nil {
+		return false, fmt.Errorf("landlock: %w", err)
+	}
+	if err := cfg.RestrictNet(landlock.ConnectTCP(port)); err != nil {
+		return false, fmt.Errorf("landlock: %w", err)
+	}
+	return true, nil
+}
+
 // landlockPreset 返回不高于 abi 的 go-landlock 预设（BestEffort 再按内核实际能力降级）。
 func landlockPreset(abi int) landlock.Config {
 	presets := []landlock.Config{landlock.V1, landlock.V1, landlock.V2, landlock.V3, landlock.V4, landlock.V5,

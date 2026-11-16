@@ -11,6 +11,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 )
 
@@ -19,6 +20,8 @@ type ArtifactsDeps struct {
 	Service *artifacts.Service
 	// Host 是渲染帧（独立源里的沙箱页面）。
 	Host *artifacts.Host
+	// Render 是控制面的 headless Chromium（步骤 4.1）；nil = 没有渲染。
+	Render *render.Renderer
 }
 
 func (s *Server) artifactsSvc(w http.ResponseWriter) (*artifacts.Service, bool) {
@@ -422,12 +425,19 @@ func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apige
 	}
 }
 
-// GetArtifactCapabilities 对应 `GET artifacts/capabilities`。控制面渲染（阶段 4）与 sample 能力（步骤 7.5）
-// 还没有接入，固定为 false。
+// GetArtifactCapabilities 对应 `GET artifacts/capabilities`。render 反映渲染自检的结果（不可用时带原因）；
+// sample 能力（步骤 7.5）还没有接入，固定为 false。
 func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request) {
 	host, ok := s.artifactsHost(w)
 	if !ok {
 		return
 	}
-	WriteJSON(w, http.StatusOK, apigen.ArtifactCapabilities{Frames: apigen.ArtifactCapabilitiesFrames(host.Mode())})
+	out := apigen.ArtifactCapabilities{Frames: apigen.ArtifactCapabilitiesFrames(host.Mode())}
+	if s.Artifacts.Render != nil {
+		var reason string
+		if out.Render, reason = s.Artifacts.Render.Status(); !out.Render {
+			out.RenderReason = &reason
+		}
+	}
+	WriteJSON(w, http.StatusOK, out)
 }

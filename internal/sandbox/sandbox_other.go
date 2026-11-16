@@ -41,6 +41,9 @@ func DropPrivileges(uid, gid int) error      { return ErrUnsupported }
 func Apply(p Policy) (Report, error)         { return Report{}, ErrUnsupported }
 func ExecPaths(bin string) ([]string, error) { return nil, ErrUnsupported }
 
+// RestrictConnect 在非 Linux 平台上不可用；见 Linux 实现。
+func RestrictConnect(port uint16) (applied bool, err error) { return false, ErrUnsupported }
+
 // Check 是自检的一项结果；见 Linux 实现。
 type Check struct {
 	Name   string `json:"check"`
