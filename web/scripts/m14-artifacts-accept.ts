@@ -692,7 +692,12 @@ async function commentOn(p: Page, f: Frame, selector: string, text: string) {
 
 let mockVite: Subprocess | undefined;
 
-/** 起一个 vite 开发服务器的模块代码（独立 cacheDir：与别的验收脚本与 `bun run dev` 并存时互不抢依赖预构建）。 */
+/**
+ * 起一个 vite 开发服务器的模块代码（独立 cacheDir：与别的验收脚本与 `bun run dev` 并存时互不抢依赖预构建）。
+ * 关掉 HMR 与文件监视：工作区里别的 agent 同时在改 web/src，改动会让 vite 推样式热更新或整页重载，
+ * 正在跑的条目丢掉滚动位置、翻页状态或进行中的流（见过 K10、K25、K37 因此失败）。模块按首次请求时的内容编译后不再变。
+ * `watch: null` 会被 vite 的配置合并忽略，所以用「忽略一切」的 glob。
+ */
 function viteModule(name: string, port: number, proxy?: string): string {
 	const dir = `${WEB}/node_modules/.m14a`;
 	mkdirSync(dir, { recursive: true });
@@ -705,7 +710,7 @@ const s = await createServer({
 	configFile: "vite.config.ts",
 	cacheDir: "node_modules/.vite-m14a-${name}",
 	optimizeDeps: { entries: ["index.html", "src/**/*.{ts,tsx}", "!src/**/*.test.{ts,tsx}"] },
-	server: { port: ${port}, strictPort: true, host: "127.0.0.1", ...(proxy ? { proxy } : {}) },
+	server: { port: ${port}, strictPort: true, host: "127.0.0.1", hmr: false, watch: { ignored: ["**"] }, ...(proxy ? { proxy } : {}) },
 });
 await s.listen();
 console.log("ready");
@@ -4668,7 +4673,15 @@ async function realK25() {
 			/(\d+) \/ 8/,
 		)?.[1];
 	await waitFor("1 / 8", async () => (await counter()) === "1", 15_000);
+	// 帧是不透明源、跑在独立的渲染进程里：点进去之后焦点要过一会儿才转到帧的文档（父页面先把 IFRAME 设为
+	// activeElement，帧的 document.hasFocus() 稍后才为真）。在这之前按键送不到帧里，所以等焦点到了再按。
 	await f.locator("body").click({ position: { x: 5, y: 5 } });
+	await waitFor(
+		"焦点进入幻灯片帧",
+		async () => f.evaluate(() => document.hasFocus()).catch(() => false),
+		5_000,
+		50,
+	);
 	await p.keyboard.press("ArrowRight");
 	await waitFor("2 / 8", async () => (await counter()) === "2", 5_000);
 	await p.keyboard.press("End");
