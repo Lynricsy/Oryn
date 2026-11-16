@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
+	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -99,6 +101,8 @@ type Server struct {
 	Stats *stats.Service
 	// GitHub 是 M14 的 GitHub 集成。
 	GitHub *github.Service
+	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
+	Memory *memory.Service
 	Hub    *realtime.Hub
 	Notify *notify.Service
 	Share  *share.Service
@@ -267,6 +271,19 @@ func (s *Server) init(ctx context.Context) error {
 	// M15 4.3：issue 任务进入终态时冻结 orb；GitHub 投递的回合结束时检查完成提醒
 	s.GitHub.SetOrbs(githubOrbs{s.Orbs})
 	s.Threads.AddObserver(s.GitHub.TurnObserver())
+	// M16：内置 Hindsight 记忆。Hindsight 的 key 用 Box 加密存库；没有总超时（网关转发的 reflect 可能很慢），
+	// 探测与转发各自用 context 限时
+	s.Memory = memory.New(memory.Config{
+		Q: s.Store.Q, Box: box, PublicURL: cfg.PublicURL, HTTP: &http.Client{Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Minute,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConnsPerHost:   8,
+			ForceAttemptHTTP2:     true,
+		}},
+	})
 	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）；M14：采样落库后按提交关联 GitHub PR
 	s.Stats = stats.New(stats.Config{
 		Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval, CommitsSampled: s.GitHub.ThreadCommitsSampled,
@@ -398,6 +415,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
+	s.API.Memory = &api.MemoryDeps{Service: s.Memory}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}

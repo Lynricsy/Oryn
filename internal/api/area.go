@@ -30,6 +30,8 @@ type area struct {
 	GitHub *GitHubDeps
 	// Artifacts 是 M14 的 Artifacts（artifacts.go）；nil 时回 501。
 	Artifacts *ArtifactsDeps
+	// Memory 是 M16 的内置 Hindsight 记忆（memory.go）；nil 时回 501 memory_unavailable。
+	Memory *MemoryDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。
