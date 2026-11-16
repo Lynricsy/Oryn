@@ -30,17 +30,32 @@ export class FrameLink {
 		Set<(msg: PageMessage) => void>
 	>();
 	private readonly loadHandlers = new Set<() => void>();
+	// 帧每次加载后要重发的选择状态：页面重载（新版本、帧重新申请）会丢掉它们
+	private mode: Extract<ParentMessageBody, { kind: "select-mode" }> | null =
+		null;
+	private pins: Extract<ParentMessageBody, { kind: "select-pins" }> | null =
+		null;
+	private source: Extract<ParentMessageBody, { kind: "select-source" }> | null =
+		null;
 
 	private readonly onMessage = (event: MessageEvent) => {
 		const win = this.frame.contentWindow;
 		if (!win || event.source !== win) return;
 		const msg = parsePageMessage(event.data);
 		if (!msg || msg.channel !== this.channel) return;
+		// 用户在页面里点选的元素也算「最近一次的选中」，重载后照样重新选中它
+		if (msg.kind === "select" && !msg.located) {
+			const src = msg.selection?.src ?? null;
+			this.source = src === null ? null : { kind: "select-source", src };
+		}
 		for (const cb of [...(this.handlers.get(msg.kind) ?? [])]) cb(msg);
 	};
 
 	private readonly onLoad = () => {
 		this.post({ kind: "hello" });
+		if (this.mode) this.post(this.mode);
+		if (this.pins) this.post(this.pins);
+		if (this.source) this.post(this.source);
 		for (const cb of [...this.loadHandlers]) cb();
 	};
 
@@ -50,8 +65,21 @@ export class FrameLink {
 		frame.addEventListener("load", this.onLoad);
 	}
 
-	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。 */
+	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。最近一次的 `select-mode`、`select-pins`、`select-source` 在帧每次加载后重发。 */
 	post(body: ParentMessageBody): void {
+		switch (body.kind) {
+			case "select-mode":
+				this.mode = body;
+				// 关掉模式时页面清掉选中，重载后也不再恢复
+				if (body.mode === null) this.source = null;
+				break;
+			case "select-pins":
+				this.pins = body;
+				break;
+			case "select-source":
+				this.source = body.src === null ? null : body;
+				break;
+		}
 		const win = this.frame.contentWindow;
 		if (!win) return;
 		const msg = { v: PROTOCOL_VERSION, channel: this.channel, ...body };

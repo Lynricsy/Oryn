@@ -1,12 +1,14 @@
 // artifact 页面运行时：在页面自己的脚本之前、在不透明源的沙箱里执行。
 // 不 import `src/` 下任何依赖应用状态的模块；能共用的只有 `src/lib/artifacts/` 的纯函数与类型。
 
+import { captureDom } from "./dom";
 import {
 	fitsMessageLimit,
 	type PageMessageBody,
 	PROTOCOL_VERSION,
 	parseParentMessage,
 } from "./messages";
+import { installSelection } from "./select";
 
 /** 服务端随页面注入的配置：`__orynStart(<配置 JSON>)`。 */
 export interface RuntimeConfig {
@@ -79,6 +81,11 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 		if (config.runtime && domReady) send({ kind: "ready", params: {} });
 	};
 
+	// 选择与评论模式只在跟随最新版本的帧上有；捕获阶段的指针监听要先于下面的链接拦截注册
+	const selection = config.runtime
+		? installSelection(captureDom(win), config, send)
+		: null;
+
 	win.addEventListener(
 		"message",
 		(event: MessageEvent) => {
@@ -102,6 +109,9 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 					break;
 				case "restore-scroll":
 					scrollTo(msg.x, msg.y);
+					break;
+				default:
+					selection?.handle(msg);
 					break;
 			}
 		},
