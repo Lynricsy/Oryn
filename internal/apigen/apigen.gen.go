@@ -4673,7 +4673,7 @@ type Error struct {
 	// M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
 	// `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
 	// `worktree_failed`（400）、`worktree_dirty`（409）。
-	// M14（GitHub）：`github_not_connected`（409，尚未创建 App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
+	// M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
 	// `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -4844,17 +4844,6 @@ type GitFileDiff struct {
 // GitFileDiffKind `text` 有 patch；`binary` 二进制（patch 为空）；`large` 未跟踪且 >4MiB（patch 为空）
 type GitFileDiffKind string
 
-// GitHubApp defines model for GitHubApp.
-type GitHubApp struct {
-	AppID      int64  `json:"appId"`
-	HTMLURL    string `json:"htmlUrl"`
-	InstallURL string `json:"installUrl"`
-	Name       string `json:"name"`
-	OwnerLogin string `json:"ownerLogin"`
-	Public     bool   `json:"public"`
-	Slug       string `json:"slug"`
-}
-
 // GitHubAuditEntry defines model for GitHubAuditEntry.
 type GitHubAuditEntry struct {
 	// At UTC 毫秒时间戳
@@ -4957,26 +4946,15 @@ type GitHubIdentity struct {
 	// Scopes 实际授予的 OAuth scope（M15，取自 `X-OAuth-Scopes`）
 	Scopes []string `json:"scopes,omitempty"`
 
-	// Status `reauth` = 刷新令牌失效，需要重新授权
+	// Status `reauth` = 令牌失效（GitHub 返回 401），需要重新授权
 	Status GitHubIdentityStatus `json:"status"`
 }
 
-// GitHubIdentityStatus `reauth` = 刷新令牌失效，需要重新授权
+// GitHubIdentityStatus `reauth` = 令牌失效（GitHub 返回 401），需要重新授权
 type GitHubIdentityStatus string
 
 // GitHubIdentitySlot `user` = 我的账号；`agent` = Agent 账号
 type GitHubIdentitySlot string
-
-// GitHubInstallation defines model for GitHubInstallation.
-type GitHubInstallation struct {
-	AccountLogin string `json:"accountLogin"`
-	AccountType  string `json:"accountType"`
-	ID           int64  `json:"id"`
-
-	// RepositorySelection `all` 或 `selected`
-	RepositorySelection string `json:"repositorySelection"`
-	Suspended           bool   `json:"suspended"`
-}
 
 // GitHubListen defines model for GitHubListen.
 type GitHubListen struct {
@@ -4985,23 +4963,9 @@ type GitHubListen struct {
 	Reviews  bool `json:"reviews"`
 }
 
-// GitHubManifestRequest defines model for GitHubManifestRequest.
-type GitHubManifestRequest struct {
-	// Org 在该组织下创建；缺省 = 当前登录的个人账号
-	Org *string `json:"org,omitempty"`
-
-	// Public 公开 App（允许安装到其它账号）
-	Public bool `json:"public"`
-
-	// WebhookURL 覆盖默认 webhook 地址（须 https）
-	WebhookURL *string `json:"webhookUrl,omitempty"`
-}
-
 // GitHubOAuthApp defines model for GitHubOAuthApp.
 type GitHubOAuthApp struct {
-	// CallbackURL 需要在 GitHub 的 OAuth App 设置里登记的回调地址
-	CallbackURL string `json:"callbackUrl"`
-	ClientID    string `json:"clientId"`
+	ClientID string `json:"clientId"`
 }
 
 // GitHubOAuthAppInput defines model for GitHubOAuthAppInput.
@@ -5088,26 +5052,25 @@ type GitHubSettings struct {
 
 // GitHubStatus defines model for GitHubStatus.
 type GitHubStatus struct {
-	// App 尚未创建 App 时省略
-	App *GitHubApp `json:"app,omitempty"`
-
 	// AutomationIdentity `user` = 我的账号；`agent` = Agent 账号
-	AutomationIdentity GitHubIdentitySlot   `json:"automationIdentity"`
-	Identities         GitHubIdentities     `json:"identities"`
-	Installations      []GitHubInstallation `json:"installations"`
+	AutomationIdentity GitHubIdentitySlot `json:"automationIdentity"`
+
+	// CallbackURL 需要在 GitHub 的 OAuth App 设置里登记的回调地址（`<public_url>/api/v1/public/github/oauth/callback`；未配置 OAuth App 时也给出）
+	CallbackURL string           `json:"callbackUrl"`
+	Identities  GitHubIdentities `json:"identities"`
 
 	// LastDeliveryAt UTC 毫秒时间戳
 	LastDeliveryAt     *TimestampMs                    `json:"lastDeliveryAt,omitempty"`
 	LastDeliverySource *GitHubStatusLastDeliverySource `json:"lastDeliverySource,omitempty"`
 
-	// OauthApp OAuth App 配置（M15）；未配置时省略
+	// OauthApp OAuth App 配置；未配置时省略
 	OauthApp *GitHubOAuthApp `json:"oauthApp,omitempty"`
 
-	// WebhookBase 仓库 webhook 的基址（M15；默认等于 public_url）
-	WebhookBase *string `json:"webhookBase,omitempty"`
+	// WebURL GitHub 网页基址（`github.web_url`，默认 `https://github.com`），用于拼接 GitHub 上的链接
+	WebURL string `json:"webUrl"`
 
-	// WebhookURL App 的 webhook 地址；尚未创建 App 时为默认地址
-	WebhookURL string `json:"webhookUrl"`
+	// WebhookBase 仓库 webhook 的基址（默认等于 public_url）
+	WebhookBase string `json:"webhookBase"`
 }
 
 // GitHubStatusLastDeliverySource defines model for GitHubStatus.LastDeliverySource.
@@ -5206,19 +5169,25 @@ type GitHubTrigger struct {
 	Label    *string               `json:"label,omitempty"`
 
 	// LastRunAt UTC 毫秒时间戳
-	LastRunAt      *TimestampMs `json:"lastRunAt,omitempty"`
-	Maintainers    []string     `json:"maintainers,omitempty"`
-	MaxDurationSec *int         `json:"maxDurationSec,omitempty"`
-	Models         []ModelRef   `json:"models,omitempty"`
-	Name           string       `json:"name"`
+	LastRunAt   *TimestampMs `json:"lastRunAt,omitempty"`
+	Maintainers []string     `json:"maintainers,omitempty"`
+
+	// MaxDurationSec 任务时限（秒）；省略 = 不限时
+	MaxDurationSec *int       `json:"maxDurationSec,omitempty"`
+	Models         []ModelRef `json:"models,omitempty"`
+	Name           string     `json:"name"`
 
 	// ProjectID `prj_<ulid>`
-	ProjectID     ProjectID `json:"projectId"`
-	Prompt        string    `json:"prompt"`
-	ReleasePrefix *string   `json:"releasePrefix,omitempty"`
-	ReviewerBots  []string  `json:"reviewerBots,omitempty"`
-	RunCount      int64     `json:"runCount"`
-	Thinking      *string   `json:"thinking,omitempty"`
+	ProjectID ProjectID `json:"projectId"`
+	Prompt    string    `json:"prompt"`
+
+	// ReleasePrefix 发布哨兵的 head 提交信息前缀（只用于 `workflow_run_completed`）；省略 = `chore: bump version to `
+	ReleasePrefix *string  `json:"releasePrefix,omitempty"`
+	ReviewerBots  []string `json:"reviewerBots,omitempty"`
+	RunCount      int64    `json:"runCount"`
+
+	// Thinking 思考级别（off / low / medium / high / xhigh / max）；省略 = 默认
+	Thinking *string `json:"thinking,omitempty"`
 
 	// UpdatedAt UTC 毫秒时间戳
 	UpdatedAt TimestampMs `json:"updatedAt"`
@@ -5244,15 +5213,21 @@ type GitHubTriggerInput struct {
 	ImplAuth *bool                 `json:"implAuth,omitempty"`
 
 	// Label `issue_labeled` 必填；其它事件忽略
-	Label          *string    `json:"label,omitempty"`
-	Maintainers    []string   `json:"maintainers,omitempty"`
+	Label       *string  `json:"label,omitempty"`
+	Maintainers []string `json:"maintainers,omitempty"`
+
+	// MaxDurationSec 任务时限（秒）；0 = 不限时（存 NULL；PATCH 时用 0 清除）
 	MaxDurationSec *int       `json:"maxDurationSec,omitempty"`
 	Models         []ModelRef `json:"models,omitempty"`
 	Name           string     `json:"name"`
 	Prompt         string     `json:"prompt"`
-	ReleasePrefix  *string    `json:"releasePrefix,omitempty"`
-	ReviewerBots   []string   `json:"reviewerBots,omitempty"`
-	Thinking       *string    `json:"thinking,omitempty"`
+
+	// ReleasePrefix 只用于 `workflow_run_completed`，其它事件忽略；省略 = `chore: bump version to `
+	ReleasePrefix *string  `json:"releasePrefix,omitempty"`
+	ReviewerBots  []string `json:"reviewerBots,omitempty"`
+
+	// Thinking 思考级别；空串 = 默认（存 NULL；PATCH 时用空串清除）
+	Thinking *string `json:"thinking,omitempty"`
 }
 
 // GitHubTriggerList defines model for GitHubTriggerList.
@@ -5268,19 +5243,25 @@ type GitHubTriggerPatch struct {
 	CompletionReminders *bool `json:"completionReminders,omitempty"`
 
 	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
-	Drivers        *GitHubTriggerDrivers `json:"drivers,omitempty"`
-	Enabled        *bool                 `json:"enabled,omitempty"`
-	Event          *GitHubTriggerEvent   `json:"event,omitempty"`
-	ImplAuth       *bool                 `json:"implAuth,omitempty"`
-	Label          *string               `json:"label,omitempty"`
-	Maintainers    []string              `json:"maintainers,omitempty"`
-	MaxDurationSec *int                  `json:"maxDurationSec,omitempty"`
-	Models         []ModelRef            `json:"models,omitempty"`
-	Name           *string               `json:"name,omitempty"`
-	Prompt         *string               `json:"prompt,omitempty"`
-	ReleasePrefix  *string               `json:"releasePrefix,omitempty"`
-	ReviewerBots   []string              `json:"reviewerBots,omitempty"`
-	Thinking       *string               `json:"thinking,omitempty"`
+	Drivers     *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled     *bool                 `json:"enabled,omitempty"`
+	Event       *GitHubTriggerEvent   `json:"event,omitempty"`
+	ImplAuth    *bool                 `json:"implAuth,omitempty"`
+	Label       *string               `json:"label,omitempty"`
+	Maintainers []string              `json:"maintainers,omitempty"`
+
+	// MaxDurationSec 任务时限（秒）；0 = 清除（不限时）
+	MaxDurationSec *int       `json:"maxDurationSec,omitempty"`
+	Models         []ModelRef `json:"models,omitempty"`
+	Name           *string    `json:"name,omitempty"`
+	Prompt         *string    `json:"prompt,omitempty"`
+
+	// ReleasePrefix 只用于 `workflow_run_completed`，其它事件忽略
+	ReleasePrefix *string  `json:"releasePrefix,omitempty"`
+	ReviewerBots  []string `json:"reviewerBots,omitempty"`
+
+	// Thinking 思考级别；空串 = 清除（回到默认）
+	Thinking *string `json:"thinking,omitempty"`
 }
 
 // GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
@@ -7354,7 +7335,7 @@ type ProjectGitHub struct {
 	// BindStatus 未绑定的原因（M15）；已绑定时省略
 	BindStatus *ProjectGitHubBindStatus `json:"bindStatus,omitempty"`
 
-	// Bound App 可访问该仓库（已安装）
+	// Bound 我的账号能读到该仓库（已记录 `github_repo_id`）
 	Bound bool `json:"bound"`
 
 	// FullName `owner/repo`（取自仓库地址）
@@ -10102,17 +10083,6 @@ type DeleteProjectSnapshotsParams struct {
 	Type *string `form:"type,omitempty" json:"type,omitempty"`
 }
 
-// FinishGitHubManifestParams defines parameters for FinishGitHubManifest.
-type FinishGitHubManifestParams struct {
-	Code  string `form:"code" json:"code"`
-	State string `form:"state" json:"state"`
-}
-
-// StartGitHubManifestParams defines parameters for StartGitHubManifest.
-type StartGitHubManifestParams struct {
-	State string `form:"state" json:"state"`
-}
-
 // FinishGitHubOAuthParams defines parameters for FinishGitHubOAuth.
 type FinishGitHubOAuthParams struct {
 	Code  *string `form:"code,omitempty" json:"code,omitempty"`
@@ -10439,9 +10409,6 @@ type DevicePairPollJSONRequestBody = DevicePairPollRequest
 
 // DevicePairStartJSONRequestBody defines body for DevicePairStart for application/json ContentType.
 type DevicePairStartJSONRequestBody = DevicePairStartRequest
-
-// BeginGitHubAppManifestJSONRequestBody defines body for BeginGitHubAppManifest for application/json ContentType.
-type BeginGitHubAppManifestJSONRequestBody = GitHubManifestRequest
 
 // SetGitHubOAuthAppJSONRequestBody defines body for SetGitHubOAuthApp for application/json ContentType.
 type SetGitHubOAuthAppJSONRequestBody = GitHubOAuthAppInput
@@ -13013,15 +12980,9 @@ type ServerInterface interface {
 	// RevokeDevice 吊销设备（之后该令牌请求返回 401）
 	// (DELETE /api/v1/devices/{id})
 	RevokeDevice(w http.ResponseWriter, r *http.Request, id DeviceIDPath)
-	// GetGitHubStatus GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+	// GetGitHubStatus GitHub 集成状态（OAuth App、两个身份槽位、自动化身份、webhook 基址、最近投递）
 	// (GET /api/v1/github)
 	GetGitHubStatus(w http.ResponseWriter, r *http.Request)
-	// DeleteGitHubApp 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
-	// (DELETE /api/v1/github/app)
-	DeleteGitHubApp(w http.ResponseWriter, r *http.Request)
-	// BeginGitHubAppManifest 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
-	// (POST /api/v1/github/app/manifest)
-	BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request)
 	// ListGitHubAudit GitHub 写操作审计（M15；按时间倒序，保留 30 天）
 	// (GET /api/v1/github/audit)
 	ListGitHubAudit(w http.ResponseWriter, r *http.Request, params ListGitHubAuditParams)
@@ -13034,12 +12995,9 @@ type ServerInterface interface {
 	// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
 	// (DELETE /api/v1/github/identities/{slot})
 	DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
-	// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+	// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 OAuth App → 409 `github_not_configured`）
 	// (POST /api/v1/github/identities/{slot}/authorize)
 	AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
-	// SyncGitHubInstallations 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
-	// (POST /api/v1/github/installations/sync)
-	SyncGitHubInstallations(w http.ResponseWriter, r *http.Request)
 	// DeleteGitHubOAuthApp 删除 OAuth App 配置（M15；先删除 Oryn 建的全部仓库 hook，再断开两个身份）
 	// (DELETE /api/v1/github/oauth-app)
 	DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request)
@@ -13049,7 +13007,7 @@ type ServerInterface interface {
 	// ListGitHubPresets 触发规则预设（M15：robomp 分诊 / PR 评审 / 发布哨兵）
 	// (GET /api/v1/github/presets)
 	ListGitHubPresets(w http.ResponseWriter, r *http.Request)
-	// ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+	// ListGitHubRepos 我的账号可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
 	// (GET /api/v1/github/repos)
 	ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams)
 	// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
@@ -13271,16 +13229,10 @@ type ServerInterface interface {
 	// DeleteProvider 删除（停用）provider，其令牌立即失效
 	// (DELETE /api/v1/providers/{id})
 	DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
-	// FinishGitHubManifest GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
-	// (GET /api/v1/public/github/manifest/callback)
-	FinishGitHubManifest(w http.ResponseWriter, r *http.Request, params FinishGitHubManifestParams)
-	// StartGitHubManifest 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
-	// (GET /api/v1/public/github/manifest/start)
-	StartGitHubManifest(w http.ResponseWriter, r *http.Request, params StartGitHubManifestParams)
 	// FinishGitHubOAuth 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`）
 	// (GET /api/v1/public/github/oauth/callback)
 	FinishGitHubOAuth(w http.ResponseWriter, r *http.Request, params FinishGitHubOAuthParams)
-	// ReceiveGitHubWebhook GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+	// ReceiveGitHubWebhook 仓库 webhook 入口（按该仓库 hook 的 secret 校验 `X-Hub-Signature-256`；同一 `X-GitHub-Delivery` 只处理一次）
 	// (POST /api/v1/public/github/webhook)
 	ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request)
 	// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
@@ -13973,21 +13925,9 @@ func (_ Unimplemented) RevokeDevice(w http.ResponseWriter, r *http.Request, id D
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// GetGitHubStatus GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+// GetGitHubStatus GitHub 集成状态（OAuth App、两个身份槽位、自动化身份、webhook 基址、最近投递）
 // (GET /api/v1/github)
 func (_ Unimplemented) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// DeleteGitHubApp 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
-// (DELETE /api/v1/github/app)
-func (_ Unimplemented) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// BeginGitHubAppManifest 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
-// (POST /api/v1/github/app/manifest)
-func (_ Unimplemented) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -14015,15 +13955,9 @@ func (_ Unimplemented) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 OAuth App → 409 `github_not_configured`）
 // (POST /api/v1/github/identities/{slot}/authorize)
 func (_ Unimplemented) AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// SyncGitHubInstallations 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
-// (POST /api/v1/github/installations/sync)
-func (_ Unimplemented) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -14045,7 +13979,7 @@ func (_ Unimplemented) ListGitHubPresets(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+// ListGitHubRepos 我的账号可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
 // (GET /api/v1/github/repos)
 func (_ Unimplemented) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -14489,25 +14423,13 @@ func (_ Unimplemented) DeleteProvider(w http.ResponseWriter, r *http.Request, id
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// FinishGitHubManifest GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
-// (GET /api/v1/public/github/manifest/callback)
-func (_ Unimplemented) FinishGitHubManifest(w http.ResponseWriter, r *http.Request, params FinishGitHubManifestParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// StartGitHubManifest 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
-// (GET /api/v1/public/github/manifest/start)
-func (_ Unimplemented) StartGitHubManifest(w http.ResponseWriter, r *http.Request, params StartGitHubManifestParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
 // FinishGitHubOAuth 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`）
 // (GET /api/v1/public/github/oauth/callback)
 func (_ Unimplemented) FinishGitHubOAuth(w http.ResponseWriter, r *http.Request, params FinishGitHubOAuthParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ReceiveGitHubWebhook GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+// ReceiveGitHubWebhook 仓库 webhook 入口（按该仓库 hook 的 secret 校验 `X-Hub-Signature-256`；同一 `X-GitHub-Delivery` 只处理一次）
 // (POST /api/v1/public/github/webhook)
 func (_ Unimplemented) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -17030,34 +16952,6 @@ func (siw *ServerInterfaceWrapper) GetGitHubStatus(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteGitHubApp operation middleware
-func (siw *ServerInterfaceWrapper) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteGitHubApp(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// BeginGitHubAppManifest operation middleware
-func (siw *ServerInterfaceWrapper) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.BeginGitHubAppManifest(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListGitHubAudit operation middleware
 func (siw *ServerInterfaceWrapper) ListGitHubAudit(w http.ResponseWriter, r *http.Request) {
 
@@ -17213,20 +17107,6 @@ func (siw *ServerInterfaceWrapper) AuthorizeGitHubIdentity(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AuthorizeGitHubIdentity(w, r, slot)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SyncGitHubInstallations operation middleware
-func (siw *ServerInterfaceWrapper) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SyncGitHubInstallations(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20028,85 +19908,6 @@ func (siw *ServerInterfaceWrapper) DeleteProvider(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteProvider(w, r, id)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// FinishGitHubManifest operation middleware
-func (siw *ServerInterfaceWrapper) FinishGitHubManifest(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params FinishGitHubManifestParams
-
-	// ------------- Required query parameter "code" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "state" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.FinishGitHubManifest(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// StartGitHubManifest operation middleware
-func (siw *ServerInterfaceWrapper) StartGitHubManifest(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params StartGitHubManifestParams
-
-	// ------------- Required query parameter "state" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StartGitHubManifest(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23522,12 +23323,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/github", wrapper.GetGitHubStatus)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/github/app/manifest", wrapper.BeginGitHubAppManifest)
-	})
-	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/api/v1/github/app", wrapper.DeleteGitHubApp)
-	})
-	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/github/identities/{slot}/authorize", wrapper.AuthorizeGitHubIdentity)
 	})
 	r.Group(func(r chi.Router) {
@@ -23535,9 +23330,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/github/settings", wrapper.PutGitHubSettings)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/github/installations/sync", wrapper.SyncGitHubInstallations)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/github/repos", wrapper.ListGitHubRepos)
@@ -23595,12 +23387,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/public/github/webhook", wrapper.ReceiveGitHubWebhook)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/public/github/manifest/start", wrapper.StartGitHubManifest)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/public/github/manifest/callback", wrapper.FinishGitHubManifest)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/github/oauth/callback", wrapper.FinishGitHubOAuth)

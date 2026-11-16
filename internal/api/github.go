@@ -36,7 +36,7 @@ func githubStatus(err error) (int, string, string) {
 		return ge.Status, ge.Code, ge.Message
 	}
 	switch ge.Code {
-	case "conflict", "github_identity_required", "github_agent_required", "github_not_connected", "github_not_bound":
+	case "conflict", "github_identity_required", "github_agent_required", "github_not_configured", "github_not_bound":
 		return http.StatusConflict, ge.Code, ge.Message
 	case "invalid_request", "state_invalid":
 		return http.StatusBadRequest, ge.Code, ge.Message
@@ -130,6 +130,76 @@ func (s *Server) DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListGitHubHooks 对应 `GET /api/v1/github/hooks`：Oryn 管理的仓库 hook 及其状态。
+func (s *Server) ListGitHubHooks(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	hooks, err := svc.Hooks(r.Context())
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.GitHubHookList{Hooks: hooks})
+}
+
+// ListGitHubAudit 对应 `GET /api/v1/github/audit`：写操作审计，按线程 / 仓库过滤，以 id 游标 `before` 分页。
+func (s *Server) ListGitHubAudit(w http.ResponseWriter, r *http.Request, params apigen.ListGitHubAuditParams) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	var q github.AuditQuery
+	if params.Thread != nil {
+		q.ThreadID = *params.Thread
+	}
+	if params.Repo != nil {
+		q.Repo = *params.Repo
+	}
+	if params.Before != nil {
+		if *params.Before < 1 {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "before must be positive")
+			return
+		}
+		q.Before = *params.Before
+	}
+	if params.Limit != nil {
+		if *params.Limit < 1 {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "limit must be between 1 and 200")
+			return
+		}
+		q.Limit = *params.Limit
+	}
+	list, err := svc.Audit(r.Context(), q)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, list)
+}
+
+// ReplayGitHubDelivery 对应 `POST /api/v1/github/deliveries/{guid}/replay`：重放 7 天内已结束的投递。
+func (s *Server) ReplayGitHubDelivery(w http.ResponseWriter, r *http.Request, guid string) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.ReplayDelivery(r.Context(), guid); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// ListGitHubPresets 对应 `GET /api/v1/github/presets`：robomp 的三个触发规则预设（随版本固定）。
+func (s *Server) ListGitHubPresets(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.githubSvc(w); !ok {
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.GitHubPresetList{Presets: github.Presets()})
 }
 
 // AuthorizeGitHubIdentity 对应 `POST /api/v1/github/identities/{slot}/authorize`。

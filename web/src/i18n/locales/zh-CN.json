@@ -3830,37 +3830,6 @@
 		"removeFailed": "线程已归档，但 worktree 没有移除："
 	},
 	"github": {
-		"app": {
-			"title": "GitHub App",
-			"intro": "Oryn 通过你自己的 GitHub App 连接 GitHub：在 GitHub 上一键创建，再把它安装到需要的账号或组织。",
-			"org": "组织（可选）",
-			"orgHint": "留空则建在你当前登录的个人账号下",
-			"orgPlaceholder": "my-org",
-			"public": "允许安装到其它账号（公开 App）",
-			"advanced": "高级",
-			"webhook": "Webhook 地址",
-			"webhookHint": "须为 https。GitHub 访问不到时，Oryn 每 30 秒从投递日志补齐事件。",
-			"create": "在 GitHub 上创建 App",
-			"name": "名称",
-			"owner": "所有者",
-			"lastDelivery": "最近投递",
-			"noDelivery": "尚未收到投递",
-			"source": {
-				"webhook": "实时",
-				"poll": "轮询"
-			},
-			"delete": "删除连接",
-			"deleteConfirm": "删除与 GitHub App「{{name}}」的连接？已连接的账号与安装记录会一并清除，GitHub 上的 App 不会被删除。"
-		},
-		"installations": {
-			"title": "安装",
-			"all": "全部仓库",
-			"selected": "部分仓库",
-			"suspended": "已停用",
-			"empty": "App 还没有安装到任何账号。",
-			"install": "安装到账号或组织",
-			"sync": "同步"
-		},
 		"identity": {
 			"title": "账号",
 			"user": "我的账号",
@@ -3887,16 +3856,14 @@
 			"agentMissing": "连接 Agent 账号后才能选择它"
 		},
 		"notice": {
-			"created": "GitHub App 已创建。下一步：把它安装到账号或组织，再连接账号。",
-			"connected": "{{slot}}已连接",
-			"installed": "安装已更新，正在同步"
+			"connected": "{{slot}}已连接"
 		},
 		"error": {
 			"state_invalid": "链接已失效或已用过，请重新开始",
 			"exchange_failed": "GitHub 授权失败，请重试",
 			"same_account": "不能与另一个槽位是同一个账号",
 			"access_denied": "你在 GitHub 上取消了授权",
-			"conflict": "已经连接了一个 GitHub App",
+			"github_not_configured": "OAuth App 配置已被删除，请重新配置后再连接",
 			"unknown": "GitHub 连接没有完成，请重试"
 		},
 		"repoPicker": {
@@ -3907,8 +3874,7 @@
 		},
 		"project": {
 			"bound": "已绑定",
-			"unbound": "App 尚未安装到这个仓库。",
-			"install": "安装 App",
+			"unbound": "还没有配置 GitHub OAuth App。",
 			"connect": "先连接 GitHub",
 			"listen": {
 				"reviews": "评审意见回流",
@@ -4072,7 +4038,13 @@
 			},
 			"requestApproval": "申请组织批准",
 			"authorizeSso": "完成 SSO 授权",
-			"lastDelivery": "最近投递 {{when}} · {{source}}"
+			"lastDelivery": "最近投递 {{when}} · {{source}}",
+			"lastAny": "所有仓库中最近一次投递：{{when}} · {{source}}",
+			"noDelivery": "尚未收到投递",
+			"source": {
+				"webhook": "实时",
+				"poll": "轮询"
+			}
 		},
 		"audit": {
 			"title": "审计",

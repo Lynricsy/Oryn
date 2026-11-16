@@ -1,5 +1,5 @@
 /**
- * 项目表单里的「从 GitHub 选择」（M14）：我的账号经 App 可访问的仓库，可搜索（输入 200ms 防抖后作为 `q`）。
+ * 项目表单里的「从 GitHub 选择」（M14）：我的账号可访问的仓库，可搜索（输入 200ms 防抖后作为 `q`）。
  * 只在「我的账号」已连接且令牌有效时出现。弹层按最近的定位祖先摆放：调用方把输入框与本按钮放进同一个 `relative` 行。
  */
 import { type ReactNode, useEffect, useState } from "react";

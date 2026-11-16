@@ -1,14 +1,13 @@
 /**
- * 设置页「GitHub」（M14 / M15，default export，由设置页接入）：
- * 1. OAuth App（M15）：Client ID、Client Secret（已配置时留空 = 沿用）、需要在 GitHub 登记的回调地址（可复制）、
+ * 设置页「GitHub」（M14 / M15，default export，由设置页接入），四张卡片：
+ * 1. OAuth App：Client ID、Client Secret（已配置时留空 = 沿用）、需要在 GitHub 登记的回调地址（可复制，未配置时也由服务端给出）、
  *    仓库 webhook 基址（默认 = public_url）；可删除配置（服务端先删 Oryn 建的仓库 hook，再断开两个身份）。
- * 2. M14 的 GitHub App 与安装卡片：只在还没配置 OAuth App 时显示（后端在步骤 8.1 删除 App 接口时一并删掉）。
- * 3. 账号：「我的账号」「Agent 账号」两个身份槽位；显示实际授予的 scope，缺 scope 时提示重新授权；
- *    连接时给出授权链接（可在本浏览器继续，也可复制到登录了目标账号的浏览器）。
- * 4. 自动化：GitHub 触发与项目级定时使用的身份。
- * 5. 仓库 webhook（M15）：已绑定仓库的 hook 状态与最近投递；组织限制时给出申请批准的链接。
- * 6. 审计（M15）：agent 经出站代理发起的 GitHub 写操作，按仓库过滤、分页加载。
- * 账号与自动化卡片在 OAuth App 或 App 存在时才出现。GitHub 回调（manifest / OAuth / 安装完成）带着 query 回到本页：这里显示结果并清掉 query。
+ * 2. 身份：「我的账号」「Agent 账号」两个身份槽位；显示实际授予的 scope，缺 scope 时提示重新授权；
+ *    连接时给出授权链接（可在本浏览器继续，也可复制到登录了目标账号的浏览器）。卡片下部选择自动化任务
+ *    （GitHub 触发与项目级定时）使用的身份。
+ * 3. 仓库 webhook：已绑定仓库的 hook 状态与最近投递；组织限制时给出申请批准的链接。
+ * 4. 审计：agent 经出站代理发起的 GitHub 写操作，按仓库过滤、分页加载。
+ * 后三张卡片在配置了 OAuth App 之后才出现。OAuth 回调带着 query 回到本页：这里显示结果并清掉 query。
  */
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,13 +17,10 @@ import {
 	type GitHubHookStatus,
 	type GitHubIdentity,
 	type GitHubIdentitySlot,
-	type GitHubInstallation,
 	type GitHubStatus,
 	githubOrgApprovalUrl,
 	githubSsoUrl,
 	useAuthorizeGitHubIdentity,
-	useBeginGitHubApp,
-	useDeleteGitHubApp,
 	useDeleteGitHubOAuthApp,
 	useDisconnectGitHubIdentity,
 	useGitHubAudit,
@@ -32,14 +28,12 @@ import {
 	useGitHubStatus,
 	useSetGitHubAutomation,
 	useSetGitHubOAuthApp,
-	useSyncGitHubInstallations,
 } from "../../api/github-queries";
 import { CopyButton } from "../../components/ui/CopyButton";
 import {
 	Badge,
 	Callout,
 	Card,
-	KeyValue,
 	ListRow,
 	type Tone,
 } from "../../components/ui/data";
@@ -53,7 +47,6 @@ import {
 	Radio,
 	Spinner,
 	TextInput,
-	Toggle,
 } from "../../components/ui/primitives";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { useIndex } from "../../state/stores";
@@ -64,15 +57,14 @@ const KNOWN_ERRORS = [
 	"exchange_failed",
 	"same_account",
 	"access_denied",
-	"conflict",
+	"github_not_configured",
 ] as const;
 
 type KnownError = (typeof KNOWN_ERRORS)[number];
 
 type Notice =
 	| { tone: "err"; code: KnownError | "unknown" }
-	| { tone: "ok"; kind: "created" | "installed" }
-	| { tone: "ok"; kind: "connected"; slot: GitHubIdentitySlot };
+	| { tone: "ok"; slot: GitHubIdentitySlot };
 
 /** 从回调 query 读出要显示的结果（纯函数）。 */
 export function callbackNotice(params: URLSearchParams): Notice | null {
@@ -84,22 +76,17 @@ export function callbackNotice(params: URLSearchParams): Notice | null {
 				? (error as KnownError)
 				: "unknown",
 		};
-	if (params.get("created") === "1") return { tone: "ok", kind: "created" };
 	const slot = params.get("connected");
-	if (slot === "user" || slot === "agent")
-		return { tone: "ok", kind: "connected", slot };
-	if (params.has("installation_id")) return { tone: "ok", kind: "installed" };
+	if (slot === "user" || slot === "agent") return { tone: "ok", slot };
 	return null;
 }
 
 function NoticeText({ notice }: { notice: Notice }): ReactNode {
 	const { t } = useTranslation();
 	if (notice.tone === "err") return t(`github.error.${notice.code}`);
-	if (notice.kind === "connected")
-		return t("github.notice.connected", {
-			slot: t(`github.identity.${notice.slot}`),
-		});
-	return t(`github.notice.${notice.kind}`);
+	return t("github.notice.connected", {
+		slot: t(`github.identity.${notice.slot}`),
+	});
 }
 
 function LeadIcon({
@@ -135,20 +122,6 @@ function ExternalLink({
 	);
 }
 
-/**
- * 需要在 GitHub 的 OAuth App 里登记的回调地址：保存后取服务端给的值；还没保存时由 webhook 基址
- * （此时等于 public_url）推出，好让用户先把它填到 GitHub 上再回来填 Client ID。
- */
-export function oauthCallbackUrl(status: GitHubStatus): string {
-	if (status.oauthApp) return status.oauthApp.callbackUrl;
-	const base = (
-		status.webhookBase ||
-		globalThis.location?.origin ||
-		""
-	).replace(/\/+$/, "");
-	return `${base}/api/v1/public/github/oauth/callback`;
-}
-
 function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 	const { t } = useTranslation();
 	const save = useSetGitHubOAuthApp();
@@ -156,9 +129,9 @@ function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 	const app = status.oauthApp;
 	const [clientId, setClientId] = useState(app?.clientId ?? "");
 	const [secret, setSecret] = useState("");
-	const [webhookBase, setWebhookBase] = useState(status.webhookBase ?? "");
+	const [webhookBase, setWebhookBase] = useState(status.webhookBase);
 	const [saved, setSaved] = useState(false);
-	const callback = oauthCallbackUrl(status);
+	const callback = status.callbackUrl;
 	// 首次保存必须有 Secret；之后留空 = 沿用已存的值
 	const valid = clientId.trim() !== "" && (!!app || secret.trim() !== "");
 	const busy = save.isPending || del.isPending;
@@ -190,7 +163,9 @@ function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 			>
 				<p className="text-muted text-xs">
 					{t("github.oauth.intro")}{" "}
-					<ExternalLink href="https://github.com/settings/applications/new">
+					<ExternalLink
+						href={`${status.webUrl.replace(/\/+$/, "")}/settings/applications/new`}
+					>
 						{t("github.oauth.register")}
 					</ExternalLink>
 				</p>
@@ -274,228 +249,6 @@ function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 				</div>
 				<ErrorText error={save.error ?? del.error} />
 			</form>
-		</Card>
-	);
-}
-
-function AppCreateForm({ status }: { status: GitHubStatus }): ReactNode {
-	const { t } = useTranslation();
-	const begin = useBeginGitHubApp();
-	const [org, setOrg] = useState("");
-	const [isPublic, setPublic] = useState(false);
-	const [webhook, setWebhook] = useState("");
-	return (
-		<form
-			className="flex flex-col gap-3"
-			data-testid="github-app-create"
-			onSubmit={(e) => {
-				e.preventDefault();
-				begin.mutate(
-					{
-						public: isPublic,
-						org: org.trim() || undefined,
-						webhookUrl: webhook.trim() || undefined,
-					},
-					{ onSuccess: (res) => window.location.assign(res.url) },
-				);
-			}}
-		>
-			<p className="text-muted text-xs">{t("github.app.intro")}</p>
-			<Field label={t("github.app.org")} hint={t("github.app.orgHint")}>
-				<TextInput
-					className="max-w-72"
-					value={org}
-					maxLength={39}
-					pattern="[A-Za-z0-9\-]+"
-					placeholder={t("github.app.orgPlaceholder")}
-					onChange={(e) => setOrg(e.target.value)}
-				/>
-			</Field>
-			<Toggle
-				checked={isPublic}
-				onChange={setPublic}
-				label={t("github.app.public")}
-			/>
-			<details className="text-sm">
-				<summary className="cursor-pointer select-none text-muted text-xs">
-					{t("github.app.advanced")}
-				</summary>
-				<div className="mt-2">
-					<Field
-						label={t("github.app.webhook")}
-						hint={t("github.app.webhookHint")}
-					>
-						<TextInput
-							type="url"
-							value={webhook}
-							placeholder={status.webhookUrl}
-							onChange={(e) => setWebhook(e.target.value)}
-						/>
-					</Field>
-				</div>
-			</details>
-			<div>
-				<Button
-					type="submit"
-					variant="primary"
-					icon="github"
-					disabled={begin.isPending}
-				>
-					{begin.isPending && <Spinner size={13} />}
-					{t("github.app.create")}
-				</Button>
-			</div>
-			<ErrorText error={begin.error} />
-		</form>
-	);
-}
-
-function AppDetails({ status }: { status: GitHubStatus }): ReactNode {
-	const { t } = useTranslation();
-	const del = useDeleteGitHubApp();
-	const app = status.app;
-	if (!app) return null;
-	return (
-		<div className="flex flex-col gap-3" data-testid="github-app">
-			<KeyValue
-				rows={[
-					{
-						key: "name",
-						label: t("github.app.name"),
-						value: (
-							<a
-								href={app.htmlUrl}
-								target="_blank"
-								rel="noopener noreferrer"
-								className="inline-flex items-center gap-1 text-accent hover:underline"
-							>
-								{app.name}
-								<Icon name="external" size={11} aria-hidden />
-							</a>
-						),
-					},
-					{
-						key: "owner",
-						label: t("github.app.owner"),
-						value: `@${app.ownerLogin}`,
-					},
-					{
-						key: "webhook",
-						label: t("github.app.webhook"),
-						value: (
-							<code className="break-all font-mono text-xs">
-								{status.webhookUrl}
-							</code>
-						),
-					},
-					{
-						key: "delivery",
-						label: t("github.app.lastDelivery"),
-						value: status.lastDeliveryAt ? (
-							<span>
-								{formatRelative(status.lastDeliveryAt)}
-								{status.lastDeliverySource && (
-									<span className="text-faint">
-										{" · "}
-										{t(`github.app.source.${status.lastDeliverySource}`)}
-									</span>
-								)}
-							</span>
-						) : (
-							<span className="text-faint">{t("github.app.noDelivery")}</span>
-						),
-					},
-				]}
-			/>
-			<div>
-				<Button
-					size="sm"
-					variant="danger"
-					icon="trash"
-					disabled={del.isPending}
-					onClick={() => {
-						if (
-							window.confirm(t("github.app.deleteConfirm", { name: app.name }))
-						)
-							del.mutate();
-					}}
-				>
-					{t("github.app.delete")}
-				</Button>
-			</div>
-			<ErrorText error={del.error} />
-		</div>
-	);
-}
-
-function InstallationRow({ inst }: { inst: GitHubInstallation }): ReactNode {
-	const { t } = useTranslation();
-	const scope =
-		inst.repositorySelection === "all"
-			? t("github.installations.all")
-			: t("github.installations.selected");
-	return (
-		<li data-testid="github-installation">
-			<ListRow
-				leading={<LeadIcon name="github" />}
-				title={
-					<>
-						<span className="truncate font-medium">{inst.accountLogin}</span>
-						{inst.suspended && (
-							<Badge tone="warn">{t("github.installations.suspended")}</Badge>
-						)}
-					</>
-				}
-				meta={
-					<>
-						<span>{inst.accountType}</span>
-						<span>·</span>
-						<span>{scope}</span>
-					</>
-				}
-			/>
-		</li>
-	);
-}
-
-function InstallationsCard({ status }: { status: GitHubStatus }): ReactNode {
-	const { t } = useTranslation();
-	const sync = useSyncGitHubInstallations();
-	const app = status.app;
-	return (
-		<Card title={t("github.installations.title")} icon="globe">
-			{status.installations.length > 0 ? (
-				<ul className="-mx-2 flex flex-col">
-					{status.installations.map((i) => (
-						<InstallationRow key={i.id} inst={i} />
-					))}
-				</ul>
-			) : (
-				<p className="text-faint text-xs">{t("github.installations.empty")}</p>
-			)}
-			<div className="mt-3 flex flex-wrap gap-2">
-				<Button
-					size="sm"
-					icon="external"
-					disabled={!app}
-					onClick={() =>
-						app && window.open(app.installUrl, "_blank", "noopener")
-					}
-				>
-					{t("github.installations.install")}
-				</Button>
-				<Button
-					size="sm"
-					variant="ghost"
-					icon="refresh"
-					disabled={sync.isPending}
-					onClick={() => sync.mutate()}
-				>
-					{sync.isPending && <Spinner size={12} />}
-					{t("github.installations.sync")}
-				</Button>
-			</div>
-			<ErrorText error={sync.error} />
 		</Card>
 	);
 }
@@ -689,17 +442,25 @@ function IdentitiesCard({ status }: { status: GitHubStatus }): ReactNode {
 					</div>
 				)}
 			</Dialog>
+			<AutomationSection status={status} />
 		</Card>
 	);
 }
 
-function AutomationCard({ status }: { status: GitHubStatus }): ReactNode {
+/** 身份卡片下部：自动化任务（GitHub 触发、项目级定时）使用的 GitHub 身份。 */
+function AutomationSection({ status }: { status: GitHubStatus }): ReactNode {
 	const { t } = useTranslation();
 	const set = useSetGitHubAutomation();
 	const agentReady = !!status.identities.agent;
 	const current = set.isPending ? set.variables : status.automationIdentity;
 	return (
-		<Card title={t("github.automation.title")} icon="bolt">
+		<section
+			className="mt-3 border-border border-t pt-3"
+			data-testid="github-automation"
+		>
+			<h3 className="mb-1 font-medium text-sm">
+				{t("github.automation.title")}
+			</h3>
 			<fieldset
 				className="m-0 flex flex-col gap-2 border-0 p-0"
 				disabled={set.isPending}
@@ -733,7 +494,7 @@ function AutomationCard({ status }: { status: GitHubStatus }): ReactNode {
 				)}
 			</fieldset>
 			<ErrorText error={set.error} />
-		</Card>
+		</section>
 	);
 }
 
@@ -747,10 +508,11 @@ const HOOK_TONE: Record<GitHubHookStatus, Tone> = {
 
 function HookRow({
 	hook,
-	clientId,
+	approvalUrl,
 }: {
 	hook: GitHubHook;
-	clientId: string | undefined;
+	/** 组织批准 OAuth App 的申请页；没有 OAuth App 时为 undefined */
+	approvalUrl: string | undefined;
 }): ReactNode {
 	const { t } = useTranslation();
 	const sso =
@@ -774,9 +536,9 @@ function HookRow({
 						<span className="basis-full">
 							{t(`github.hooks.explain.${hook.status}`)}
 						</span>
-						{hook.status === "org_restricted" && clientId && (
+						{hook.status === "org_restricted" && approvalUrl && (
 							<span>
-								<ExternalLink href={githubOrgApprovalUrl(clientId)}>
+								<ExternalLink href={approvalUrl}>
 									{t("github.hooks.requestApproval")}
 								</ExternalLink>
 							</span>
@@ -798,10 +560,10 @@ function HookRow({
 								? t("github.hooks.lastDelivery", {
 										when: formatRelative(hook.lastDeliveryAt),
 										source: t(
-											`github.app.source.${hook.lastDeliverySource ?? "webhook"}`,
+											`github.hooks.source.${hook.lastDeliverySource ?? "webhook"}`,
 										),
 									})
-								: t("github.app.noDelivery")}
+								: t("github.hooks.noDelivery")}
 						</span>
 					</>
 				}
@@ -814,9 +576,26 @@ function HooksCard({ status }: { status: GitHubStatus }): ReactNode {
 	const { t } = useTranslation();
 	const hooks = useGitHubHooks();
 	const list = hooks.data?.hooks ?? [];
+	const clientId = status.oauthApp?.clientId;
+	const approvalUrl = clientId
+		? githubOrgApprovalUrl(status.webUrl, clientId)
+		: undefined;
 	return (
 		<Card title={t("github.hooks.title")} icon="webhook">
 			<p className="mb-2 text-faint text-xs">{t("github.hooks.intro")}</p>
+			{status.lastDeliveryAt !== undefined && (
+				<p
+					className="mb-2 text-muted text-xs"
+					data-testid="github-last-delivery"
+				>
+					{t("github.hooks.lastAny", {
+						when: formatRelative(status.lastDeliveryAt),
+						source: t(
+							`github.hooks.source.${status.lastDeliverySource ?? "webhook"}`,
+						),
+					})}
+				</p>
+			)}
 			{hooks.isPending && <Spinner size={12} />}
 			<ErrorText error={hooks.error} />
 			{hooks.isSuccess && list.length === 0 && (
@@ -825,11 +604,7 @@ function HooksCard({ status }: { status: GitHubStatus }): ReactNode {
 			{list.length > 0 && (
 				<ul className="-mx-2 flex flex-col">
 					{list.map((h) => (
-						<HookRow
-							key={h.repoId}
-							hook={h}
-							clientId={status.oauthApp?.clientId}
-						/>
+						<HookRow key={h.repoId} hook={h} approvalUrl={approvalUrl} />
 					))}
 				</ul>
 			)}
@@ -977,7 +752,6 @@ function AuditCard(): ReactNode {
 export default function GitHubSettings(): ReactNode {
 	const { t } = useTranslation();
 	const status = useGitHubStatus();
-	const sync = useSyncGitHubInstallations();
 	const [params] = useSearchParams();
 	const navigate = useNavigate();
 	// 回调结果只在进入页面时读一次：随后清掉 query，提示留在本地状态里
@@ -986,13 +760,10 @@ export default function GitHubSettings(): ReactNode {
 	useEffect(() => {
 		if (handled.current) return;
 		handled.current = true;
-		if (params.has("installation_id")) sync.mutate();
 		if ([...params.keys()].length > 0)
 			navigate("/settings/github", { replace: true });
-	}, [params, navigate, sync]);
+	}, [params, navigate]);
 	const data = status.data;
-	// 已配置 OAuth App 时不再显示 M14 的 App 创建 / 安装卡片
-	const legacy = !!data && !data.oauthApp;
 	return (
 		<>
 			{notice && (
@@ -1013,24 +784,9 @@ export default function GitHubSettings(): ReactNode {
 					<ErrorText error={status.error} />
 				</Card>
 			)}
-			{legacy && (
-				<Card title={t("github.app.title")} icon="github">
-					{data.app ? (
-						<AppDetails status={data} />
-					) : (
-						<AppCreateForm status={data} />
-					)}
-				</Card>
-			)}
-			{legacy && data.app && <InstallationsCard status={data} />}
-			{data && (data.oauthApp || data.app) && (
-				<>
-					<IdentitiesCard status={data} />
-					<AutomationCard status={data} />
-				</>
-			)}
 			{data?.oauthApp && (
 				<>
+					<IdentitiesCard status={data} />
 					<HooksCard status={data} />
 					<AuditCard />
 				</>

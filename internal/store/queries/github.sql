@@ -274,13 +274,13 @@ DELETE FROM github_self_keys WHERE created_at < @before;
 INSERT INTO github_audit (at, thread_id, orb_id, slot, method, op, repo, status, gate, body_sha256)
 VALUES (@at, sqlc.narg(thread_id), @orb_id, @slot, @method, @op, @repo, @status, @gate, sqlc.narg(body_sha256));
 
--- thread_id / repo NULL = no filter. Newest first; page with @before (exclusive).
+-- thread_id / repo NULL = no filter. Newest first (ids grow with insertion); page with @before = an id (exclusive).
 -- name: ListGithubAudit :many
 SELECT * FROM github_audit
 WHERE (CAST(sqlc.narg(thread_id) AS TEXT) IS NULL OR thread_id = CAST(sqlc.narg(thread_id) AS TEXT))
   AND (CAST(sqlc.narg(repo) AS TEXT) IS NULL OR repo = CAST(sqlc.narg(repo) AS TEXT))
-  AND at < @before
-ORDER BY at DESC, id DESC
+  AND id < @before
+ORDER BY id DESC
 LIMIT @limit;
 
 -- name: DeleteGithubAuditBefore :exec

@@ -42,9 +42,10 @@ const PROJECT: Project = {
 
 const STATUS: GitHubStatus = {
 	identities: {},
-	installations: [],
 	automationIdentity: "user",
-	webhookUrl: "https://oryn.example/api/v1/public/github/webhook",
+	callbackUrl: "https://oryn.example/api/v1/public/github/oauth/callback",
+	webhookBase: "https://oryn.example",
+	webUrl: "https://github.com",
 };
 
 const TRIGGER: GitHubTrigger = {

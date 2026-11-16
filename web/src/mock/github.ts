@@ -1,10 +1,9 @@
 /**
- * mock 后端的 M14（GitHub 集成）部分：连接状态（App、两个身份槽位、安装、自动化身份），格式与 orynd 一致。
+ * mock 后端的 M14 / M15（GitHub 集成）部分：连接状态（OAuth App、两个身份槽位、自动化身份），格式与 orynd 一致。
  * `MockServer.handleFetch` 在 runner 路由之前调 `handle`，不归这里的请求返回 null。
- * 初始：App 与 OAuth App（M15）都已配置、「我的账号」`@oryn-owner` 已连接、Agent 账号未连接、两个安装、自动化身份 `user`；
- * `localStorage["oryn.mock.github"] = "none"` 时初始为未连接（截图与验收用）。
- * 跳转类接口（创建 App、连接账号）不会真的去 GitHub：创建 App 清掉 `none` 标记并回到 `?created=1`（整页刷新后即为已连接）；
- * 连接账号给出一个 GitHub 授权地址的样子，要在 mock 里连上 Agent 账号用 `connectAgent()`。
+ * 初始：OAuth App 已配置、「我的账号」`@oryn-owner` 已连接、Agent 账号未连接、自动化身份 `user`；
+ * `localStorage["oryn.mock.github"] = "none"` 时初始为未配置（截图与验收用），之后 `PUT github/oauth-app` 即为已配置。
+ * 连接账号不会真的去 GitHub：只给出一个 GitHub 授权地址的样子，要在 mock 里连上 Agent 账号用 `connectAgent()`。
  * 线程 ↔ PR 关联（步骤 5.4）：`PUT / DELETE threads/{id}/github/pulls/{n}` 改线程的 `pulls` 后经 `upsertThread` 广播；
  * `setChecks()` 模拟 CI 汇总变化。
  * 仓库列表（步骤 2.3）：`GET github/repos` 给 6 个仓库（支持 `q`）；`projectGitHub(repoUrl)` 供项目新建 / 编辑时补上绑定字段。
@@ -152,7 +151,7 @@ const REFS: (Omit<Schemas["GitHubRef"], "url" | "updatedAt"> & {
 	},
 ];
 
-/** 我的账号经 App 可访问的仓库（`pushedAt` 相对加载时刻）。 */
+/** 我的账号可访问的仓库（`pushedAt` 相对加载时刻）。 */
 const REPOS: (Omit<Schemas["GitHubRepo"], "pushedAt"> & { ago: number })[] = [
 	{
 		id: 1001,
@@ -254,56 +253,27 @@ function origin(): string {
 }
 
 function oauthApp(clientId: string): Schemas["GitHubOAuthApp"] {
+	return { clientId };
+}
+
+/** 未配置也有的字段：回调地址、webhook 基址（默认 = 本页 origin，相当于 public_url）、GitHub 网页基址。 */
+function baseStatus(): Status {
 	return {
-		clientId,
+		identities: {},
+		automationIdentity: "user",
 		callbackUrl: `${origin()}/api/v1/public/github/oauth/callback`,
+		webhookBase: origin(),
+		webUrl: "https://github.com",
 	};
 }
 
 function connectedStatus(now: number): Status {
 	return {
-		app: {
-			appId: 1_048_576,
-			slug: "oryn-mock",
-			name: "Oryn oryn.example",
-			htmlUrl: "https://github.com/apps/oryn-mock",
-			ownerLogin: "oryn-owner",
-			public: false,
-			installUrl: "https://github.com/apps/oryn-mock/installations/new",
-		},
+		...baseStatus(),
 		identities: { user: ownerIdentity(now) },
-		installations: [
-			{
-				id: 51_000_001,
-				accountLogin: "oryn-owner",
-				accountType: "User",
-				repositorySelection: "all",
-				suspended: false,
-			},
-			{
-				id: 51_000_002,
-				accountLogin: "oryn-demo",
-				accountType: "Organization",
-				repositorySelection: "selected",
-				suspended: false,
-			},
-		],
-		automationIdentity: "user",
-		webhookUrl: `${origin()}/api/v1/public/github/webhook`,
 		lastDeliveryAt: now - 2 * MIN,
 		lastDeliverySource: "webhook",
 		oauthApp: oauthApp("Ov23liMockOryn0000001"),
-		webhookBase: origin(),
-	};
-}
-
-function emptyStatus(): Status {
-	return {
-		identities: {},
-		installations: [],
-		automationIdentity: "user",
-		webhookUrl: `${origin()}/api/v1/public/github/webhook`,
-		webhookBase: origin(),
 	};
 }
 
@@ -443,7 +413,7 @@ export class MockGitHub {
 	constructor(deps: GitHubDeps) {
 		this.deps = deps;
 		this.status = disconnectedMocked()
-			? emptyStatus()
+			? baseStatus()
 			: connectedStatus(Date.now());
 		const projectId = fixtureProjects[0]?.id;
 		const now = Date.now();
@@ -751,24 +721,6 @@ export class MockGitHub {
 		url: URL,
 	): Promise<Response | null> {
 		if (p === "github" && m === "GET") return json(this.status);
-		if (p === "github/app/manifest" && m === "POST") {
-			if (this.status.app)
-				return error(409, "conflict", "a GitHub App is already connected");
-			await body();
-			try {
-				globalThis.localStorage?.removeItem(MOCK_KEY);
-			} catch {
-				// 无 localStorage：刷新后仍按默认（已连接）初始化
-			}
-			return json({
-				url: `${globalThis.location?.origin ?? ""}/settings/github?created=1`,
-			});
-		}
-		if (p === "github/app" && m === "DELETE") {
-			this.status = emptyStatus();
-			this.deps.changed();
-			return new Response(null, { status: 204 });
-		}
 		if (p === "github/oauth-app" && m === "PUT") {
 			const b = (await body()) as Schemas["GitHubOAuthAppInput"];
 			const clientId = String(b.clientId ?? "").trim();
@@ -797,11 +749,9 @@ export class MockGitHub {
 			this.deps.changed();
 			return new Response(null, { status: 204 });
 		}
-		if (p === "github/hooks" && m === "GET") {
-			if (!this.status.oauthApp)
-				return error(409, "github_not_connected", "no OAuth App configured");
-			return json({ hooks: this.hooks() });
-		}
+		// 同 orynd：删除 OAuth App 配置时一并删掉全部 hook 行
+		if (p === "github/hooks" && m === "GET")
+			return json({ hooks: this.status.oauthApp ? this.hooks() : [] });
 		if (p === "github/audit" && m === "GET") return json(this.audit(url));
 		if (p === "github/tasks" && m === "GET")
 			return json({ tasks: this.tasks() });
@@ -848,11 +798,15 @@ export class MockGitHub {
 			return new Response(null, { status: 202 });
 		const auth = /^github\/identities\/(user|agent)\/authorize$/.exec(p);
 		if (auth && m === "POST") {
-			if (!this.status.app && !this.status.oauthApp)
-				return error(409, "github_not_connected", "no GitHub App connected");
+			if (!this.status.oauthApp)
+				return error(
+					409,
+					"github_not_configured",
+					"GitHub OAuth App not configured",
+				);
 			const state = `ogs_mock${Date.now().toString(36)}`;
 			return json({
-				url: `https://github.com/login/oauth/authorize?client_id=Iv1.mock&redirect_uri=${encodeURIComponent(`${globalThis.location?.origin ?? ""}/api/v1/public/github/oauth/callback`)}&state=${state}&prompt=select_account`,
+				url: `${this.status.webUrl}/login/oauth/authorize?client_id=${encodeURIComponent(this.status.oauthApp.clientId)}&redirect_uri=${encodeURIComponent(this.status.callbackUrl)}&state=${state}&prompt=select_account`,
 			});
 		}
 		const ident = /^github\/identities\/(user|agent)$/.exec(p);
@@ -881,12 +835,6 @@ export class MockGitHub {
 					"the agent account is not connected",
 				);
 			this.status = { ...this.status, automationIdentity: slot };
-			this.deps.changed();
-			return json(this.status);
-		}
-		if (p === "github/installations/sync" && m === "POST") {
-			if (!this.status.app)
-				return error(409, "github_not_connected", "no GitHub App connected");
 			this.deps.changed();
 			return json(this.status);
 		}

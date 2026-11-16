@@ -1,6 +1,6 @@
 /**
  * 项目页 GitHub 卡片（M14 / M15）：非 GitHub 仓库不渲染；未绑定不显示开关；切换开关发 PATCH `{ githubListen }`；
- * M15：未绑定原因（读不到 / 组织限制带申请批准链接 / SSO）、OAuth App 下的未绑定提示、已绑定时的 hook 状态徽标。
+ * 未绑定原因（读不到 / 组织限制带申请批准链接 / SSO）、未配置 OAuth App 或我的账号未连接时的提示、已绑定时的 hook 状态徽标。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -13,20 +13,13 @@ import { ProjectGitHubCard } from "./ProjectGitHub";
 
 const T = (k: string) => i18n.t(k as "common.copy");
 
+/** 未配置 OAuth App。 */
 const STATUS: GitHubStatus = {
-	app: {
-		appId: 7,
-		slug: "oryn-test",
-		name: "Oryn test",
-		htmlUrl: "https://github.com/apps/oryn-test",
-		ownerLogin: "octo",
-		public: false,
-		installUrl: "https://github.com/apps/oryn-test/installations/new",
-	},
 	identities: {},
-	installations: [],
 	automationIdentity: "user",
-	webhookUrl: "https://oryn.example/api/v1/public/github/webhook",
+	callbackUrl: "https://oryn.example/api/v1/public/github/oauth/callback",
+	webhookBase: "https://oryn.example",
+	webUrl: "https://github.com",
 };
 
 const BOUND: Project = {
@@ -105,7 +98,7 @@ describe("ProjectGitHubCard", () => {
 		});
 	});
 
-	it("未绑定：不显示三个开关，给出安装 App 的链接", async () => {
+	it("未绑定、还没配置 OAuth App：不显示三个开关，提示并链接到设置页", async () => {
 		renderCard({
 			...BOUND,
 			github: {
@@ -114,15 +107,17 @@ describe("ProjectGitHubCard", () => {
 			},
 		});
 		expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-		expect(screen.getByText(T("github.project.unbound"))).toBeInTheDocument();
 		expect(
-			await screen.findByRole("link", { name: T("github.project.install") }),
-		).toHaveAttribute("href", STATUS.app?.installUrl);
+			await screen.findByText(T("github.project.unbound")),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: T("github.project.connect") }),
+		).toHaveAttribute("href", "/settings/github");
 	});
 
-	it("GitHub 地址但从未解析出仓库、也还没有 App：链接到设置页", async () => {
+	it("GitHub 地址但从未解析出仓库：同样链接到设置页", async () => {
 		const { github: _g, ...plain } = BOUND;
-		renderCard(plain, { ...STATUS, app: undefined });
+		renderCard(plain);
 		expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
 		expect(
 			await screen.findByRole("link", { name: T("github.project.connect") }),
@@ -141,11 +136,7 @@ describe("ProjectGitHubCard", () => {
 	describe("M15", () => {
 		const OAUTH: GitHubStatus = {
 			...STATUS,
-			app: undefined,
-			oauthApp: {
-				clientId: "Ov23liTEST",
-				callbackUrl: "https://oryn.example/api/v1/public/github/oauth/callback",
-			},
+			oauthApp: { clientId: "Ov23liTEST" },
 		};
 		const unbound = (
 			bindStatus?: NonNullable<Project["github"]>["bindStatus"],
@@ -172,6 +163,21 @@ describe("ProjectGitHubCard", () => {
 				"https://github.com/settings/connections/applications/Ov23liTEST",
 			);
 			expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+		});
+
+		it("组织批准链接取 GitHub 网页基址（webUrl）", async () => {
+			renderCard(unbound("org_restricted"), {
+				...OAUTH,
+				webUrl: "https://ghe.example/",
+			});
+			expect(
+				await screen.findByRole("link", {
+					name: T("github.hooks.requestApproval"),
+				}),
+			).toHaveAttribute(
+				"href",
+				"https://ghe.example/settings/connections/applications/Ov23liTEST",
+			);
 		});
 
 		it("读不到 / 需要 SSO：只有原因，没有批准链接", async () => {

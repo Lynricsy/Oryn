@@ -3,7 +3,7 @@
  * 仓库地址不是 GitHub 且从未解析出仓库时不渲染。已绑定（我的账号能读到该仓库）时给出 hook 状态徽标与三个回流开关，改动即 PATCH 项目；
  * 开关下方是触发规则列表（`GitHubTriggers`）。
  * 未绑定时说明原因（M15 `bindStatus`：读不到、组织限制并给出申请批准的链接、需要 SSO 授权）；
- * 还没配置 OAuth App 时沿用 M14 的提示（安装 App / 先连接 GitHub）。
+ * 没有原因时按 OAuth App 与我的账号的连接情况给出下一步（去设置页配置 / 连接，或等待自动绑定）。
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -87,7 +87,7 @@ function ExternalLink({
 	);
 }
 
-/** 未绑定时的说明：有 `bindStatus` 时写原因，否则按 OAuth App / 旧 App 的连接情况给下一步。 */
+/** 未绑定时的说明：有 `bindStatus` 时写原因，否则按 OAuth App / 我的账号的连接情况给下一步。 */
 function UnboundText({
 	gh,
 	status,
@@ -102,7 +102,9 @@ function UnboundText({
 		</Link>
 	);
 	if (gh?.bindStatus) {
-		const clientId = status?.oauthApp?.clientId;
+		const approvalUrl = status?.oauthApp
+			? githubOrgApprovalUrl(status.webUrl, status.oauthApp.clientId)
+			: undefined;
 		return (
 			<p
 				className="text-muted text-sm"
@@ -112,8 +114,8 @@ function UnboundText({
 				{t(`github.project.bindStatus.${gh.bindStatus}`, {
 					repo: gh.fullName,
 				})}{" "}
-				{gh.bindStatus === "org_restricted" && clientId && (
-					<ExternalLink href={githubOrgApprovalUrl(clientId)}>
+				{gh.bindStatus === "org_restricted" && approvalUrl && (
+					<ExternalLink href={approvalUrl}>
 						{t("github.hooks.requestApproval")}
 					</ExternalLink>
 				)}
@@ -132,17 +134,9 @@ function UnboundText({
 				)}
 			</p>
 		);
-	const installUrl = status?.app?.installUrl;
 	return (
 		<p className="text-muted text-sm" data-testid="project-github-unbound">
-			{t("github.project.unbound")}{" "}
-			{installUrl ? (
-				<ExternalLink href={installUrl}>
-					{t("github.project.install")}
-				</ExternalLink>
-			) : (
-				connect
-			)}
+			{t("github.project.unbound")} {connect}
 		</p>
 	);
 }

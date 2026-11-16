@@ -1387,8 +1387,8 @@ const listGithubAudit = `-- name: ListGithubAudit :many
 SELECT id, at, thread_id, orb_id, slot, method, op, repo, status, gate, body_sha256 FROM github_audit
 WHERE (CAST(?1 AS TEXT) IS NULL OR thread_id = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR repo = CAST(?2 AS TEXT))
-  AND at < ?3
-ORDER BY at DESC, id DESC
+  AND id < ?3
+ORDER BY id DESC
 LIMIT ?4
 `
 
@@ -1399,7 +1399,7 @@ type ListGithubAuditParams struct {
 	Limit    int64   `json:"limit"`
 }
 
-// thread_id / repo NULL = no filter. Newest first; page with @before (exclusive).
+// thread_id / repo NULL = no filter. Newest first (ids grow with insertion); page with @before = an id (exclusive).
 func (q *Queries) ListGithubAudit(ctx context.Context, arg ListGithubAuditParams) ([]GithubAudit, error) {
 	rows, err := q.db.QueryContext(ctx, listGithubAudit,
 		arg.ThreadID,

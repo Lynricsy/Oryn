@@ -1,5 +1,5 @@
 /**
- * GitHub 集成（M14 / M15）的查询与写入：连接状态（OAuth App、两个身份槽位、自动化身份、最近投递；M14 的 App 与安装仍在）、
+ * GitHub 集成（M14 / M15）的查询与写入：连接状态（OAuth App、两个身份槽位、自动化身份、回调地址、webhook 基址、最近投递）、
  * 仓库 hook、写操作审计、issue / 发布任务、触发规则预设。
  * 变更成功后让 `githubKeys.all` 失效；别处（回调页、另一台设备、webhook）的变化经 WS `github.changed` 推送，
  * `useRealtimeGitHubSync` 据此（以及每次 WS 重新连上时）让 GitHub 查询与项目列表失效（项目的绑定状态随之变化）。
@@ -19,8 +19,6 @@ import { qk } from "./queries";
 export type GitHubStatus = Schemas["GitHubStatus"];
 export type GitHubIdentity = Schemas["GitHubIdentity"];
 export type GitHubIdentitySlot = Schemas["GitHubIdentitySlot"];
-export type GitHubInstallation = Schemas["GitHubInstallation"];
-export type GitHubManifestRequest = Schemas["GitHubManifestRequest"];
 export type GitHubTrigger = Schemas["GitHubTrigger"];
 export type GitHubTriggerInput = Schemas["GitHubTriggerInput"];
 export type GitHubTriggerPatch = Schemas["GitHubTriggerPatch"];
@@ -81,7 +79,7 @@ export function useGitHubStatus(enabled = true) {
 	});
 }
 
-/** 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个）；`q` 按 `owner/repo` 子串过滤。 */
+/** 我的账号可访问的仓库（按最近推送倒序，至多 50 个）；`q` 按 `owner/repo` 子串过滤。 */
 export function useGitHubRepos(q: string, enabled = true) {
 	return useQuery({
 		queryKey: githubKeys.repos(q),
@@ -101,24 +99,6 @@ export function useGitHubRepos(q: string, enabled = true) {
 function useInvalidateGitHub() {
 	const qc = useQueryClient();
 	return () => qc.invalidateQueries({ queryKey: githubKeys.all });
-}
-
-/** 开始按 manifest 创建 App；返回中转页地址，调用方整页跳转过去。 */
-export function useBeginGitHubApp() {
-	const invalidate = useInvalidateGitHub();
-	return useMutation({
-		mutationFn: (body: GitHubManifestRequest) =>
-			unwrap(api.POST("/api/v1/github/app/manifest", { body })),
-		onSuccess: () => invalidate(),
-	});
-}
-
-export function useDeleteGitHubApp() {
-	const invalidate = useInvalidateGitHub();
-	return useMutation({
-		mutationFn: () => unwrap(api.DELETE("/api/v1/github/app")),
-		onSuccess: () => invalidate(),
-	});
 }
 
 /** 开始连接某个身份槽位；返回 GitHub 授权地址（10 分钟内有效）。 */
@@ -155,14 +135,6 @@ export function useSetGitHubAutomation() {
 			unwrap(
 				api.PUT("/api/v1/github/settings", { body: { automationIdentity } }),
 			),
-		onSuccess: () => invalidate(),
-	});
-}
-
-export function useSyncGitHubInstallations() {
-	const invalidate = useInvalidateGitHub();
-	return useMutation({
-		mutationFn: () => unwrap(api.POST("/api/v1/github/installations/sync")),
 		onSuccess: () => invalidate(),
 	});
 }
@@ -258,9 +230,9 @@ export function useSetProjectGates(projectId: string) {
 	});
 }
 
-/** 组织批准 OAuth App 的申请页（R4）：`<web_url>/settings/connections/applications/<client_id>`。 */
-export function githubOrgApprovalUrl(clientId: string): string {
-	return `https://github.com/settings/connections/applications/${encodeURIComponent(clientId)}`;
+/** 组织批准 OAuth App 的申请页（R4）：`<web_url>/settings/connections/applications/<client_id>`；`webUrl` 取 `GitHubStatus.webUrl`。 */
+export function githubOrgApprovalUrl(webUrl: string, clientId: string): string {
+	return `${webUrl.replace(/\/+$/, "")}/settings/connections/applications/${encodeURIComponent(clientId)}`;
 }
 
 /** `sso_required` 的错误说明里带的 SSO 授权地址（取自 `X-GitHub-SSO: required; url=…`）；没有时为 undefined。 */

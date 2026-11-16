@@ -28,19 +28,12 @@ const OCTO: GitHubIdentity = {
 };
 
 const STATUS: GitHubStatus = {
-	app: {
-		appId: 7,
-		slug: "oryn-test",
-		name: "Oryn test",
-		htmlUrl: "https://github.com/apps/oryn-test",
-		ownerLogin: "octo",
-		public: false,
-		installUrl: "https://github.com/apps/oryn-test/installations/new",
-	},
+	oauthApp: { clientId: "Ov23liTEST" },
 	identities: { user: OCTO },
-	installations: [],
 	automationIdentity: "user",
-	webhookUrl: "https://oryn.example/api/v1/public/github/webhook",
+	callbackUrl: "https://oryn.example/api/v1/public/github/oauth/callback",
+	webhookBase: "https://oryn.example",
+	webUrl: "https://github.com",
 };
 
 const REPOS: GitHubRepo[] = [
@@ -74,6 +67,9 @@ function renderEditor(status: GitHubStatus, initial: ProjectForm) {
 				return Response.json({ providers: [] });
 			if (u.pathname === "/api/v1/browser-profiles")
 				return Response.json({ profiles: [] });
+			// 编辑器的门禁区按 id 在项目列表里找当前项目
+			if (u.pathname === "/api/v1/projects")
+				return Response.json({ projects: [] });
 			return Response.json({});
 		}),
 	);

@@ -3830,37 +3830,6 @@
 		"removeFailed": "The thread is archived, but the worktree wasn't removed:"
 	},
 	"github": {
-		"app": {
-			"title": "GitHub App",
-			"intro": "Oryn connects to GitHub through a GitHub App of your own. Create it on GitHub in one step, then install it on the accounts or organizations you need.",
-			"org": "Organization (optional)",
-			"orgHint": "Leave empty to create it under your personal account",
-			"orgPlaceholder": "my-org",
-			"public": "Allow installing on other accounts (public App)",
-			"advanced": "Advanced",
-			"webhook": "Webhook URL",
-			"webhookHint": "Must be https. If GitHub can't reach it, Oryn catches up from the delivery log every 30 seconds.",
-			"create": "Create App on GitHub",
-			"name": "Name",
-			"owner": "Owner",
-			"lastDelivery": "Last delivery",
-			"noDelivery": "No deliveries yet",
-			"source": {
-				"webhook": "Live",
-				"poll": "Polled"
-			},
-			"delete": "Remove connection",
-			"deleteConfirm": "Remove the connection to GitHub App \"{{name}}\"? Connected accounts and installation records are cleared too. The App itself stays on GitHub."
-		},
-		"installations": {
-			"title": "Installations",
-			"all": "All repositories",
-			"selected": "Selected repositories",
-			"suspended": "Suspended",
-			"empty": "The App isn't installed on any account yet.",
-			"install": "Install on an account or organization",
-			"sync": "Sync"
-		},
 		"identity": {
 			"title": "Accounts",
 			"user": "My account",
@@ -3887,16 +3856,14 @@
 			"agentMissing": "Connect the agent account to choose it"
 		},
 		"notice": {
-			"created": "GitHub App created. Next, install it on an account or organization, then connect your accounts.",
-			"connected": "{{slot}} connected",
-			"installed": "Installation updated, syncing"
+			"connected": "{{slot}} connected"
 		},
 		"error": {
 			"state_invalid": "The link expired or was already used. Start again.",
 			"exchange_failed": "GitHub authorization failed. Try again.",
 			"same_account": "Can't be the same account as the other slot",
 			"access_denied": "Authorization was declined on GitHub",
-			"conflict": "A GitHub App is already connected",
+			"github_not_configured": "The OAuth App configuration was removed. Set it up again, then connect.",
 			"unknown": "The GitHub connection didn't complete. Try again."
 		},
 		"repoPicker": {
@@ -3907,8 +3874,7 @@
 		},
 		"project": {
 			"bound": "Linked to",
-			"unbound": "The App isn't installed on this repository yet.",
-			"install": "Install the App",
+			"unbound": "No GitHub OAuth App is configured yet.",
 			"connect": "Connect GitHub first",
 			"listen": {
 				"reviews": "Deliver review feedback",
@@ -4072,7 +4038,13 @@
 			},
 			"requestApproval": "Request organization approval",
 			"authorizeSso": "Authorize SSO",
-			"lastDelivery": "Last delivery {{when}} · {{source}}"
+			"lastDelivery": "Last delivery {{when}} · {{source}}",
+			"lastAny": "Latest delivery across repositories: {{when}} · {{source}}",
+			"noDelivery": "No deliveries yet",
+			"source": {
+				"webhook": "Live",
+				"poll": "Polled"
+			}
 		},
 		"audit": {
 			"title": "Audit",

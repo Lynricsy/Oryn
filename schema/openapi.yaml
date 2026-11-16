@@ -4191,7 +4191,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubStatus
-      summary: GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+      summary: GitHub 集成状态（OAuth App、两个身份槽位、自动化身份、webhook 基址、最近投递）
       responses:
         '200':
           description: 当前状态
@@ -4199,46 +4199,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubStatus' }
         default: { $ref: '#/components/responses/Error' }
-  /api/v1/github/app/manifest:
-    post:
-      tags: [github]
-      operationId: beginGitHubAppManifest
-      summary: 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
-      security:
-        - cookieAuth: []
-          csrfHeader: []
-        - deviceBearer: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitHubManifestRequest' }
-      responses:
-        '200':
-          description: 浏览器应跳转到的地址
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitHubRedirect' }
-        default: { $ref: '#/components/responses/Error' }
-  /api/v1/github/app:
-    delete:
-      tags: [github]
-      operationId: deleteGitHubApp
-      summary: 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
-      security:
-        - cookieAuth: []
-          csrfHeader: []
-        - deviceBearer: []
-      responses:
-        '204': { description: 已删除 }
-        default: { $ref: '#/components/responses/Error' }
   /api/v1/github/identities/{slot}/authorize:
     parameters:
       - { $ref: '#/components/parameters/GitHubIdentitySlotPath' }
     post:
       tags: [github]
       operationId: authorizeGitHubIdentity
-      summary: 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+      summary: 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 OAuth App → 409 `github_not_configured`）
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -4285,27 +4252,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubStatus' }
         default: { $ref: '#/components/responses/Error' }
-  /api/v1/github/installations/sync:
-    post:
-      tags: [github]
-      operationId: syncGitHubInstallations
-      summary: 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
-      security:
-        - cookieAuth: []
-          csrfHeader: []
-        - deviceBearer: []
-      responses:
-        '200':
-          description: 同步后的状态
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitHubStatus' }
-        default: { $ref: '#/components/responses/Error' }
   /api/v1/github/repos:
     get:
       tags: [github]
       operationId: listGitHubRepos
-      summary: 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+      summary: 我的账号可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
       parameters:
         - name: q
           in: query
@@ -4621,7 +4572,7 @@ paths:
     post:
       tags: [public]
       operationId: receiveGitHubWebhook
-      summary: GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+      summary: 仓库 webhook 入口（按该仓库 hook 的 secret 校验 `X-Hub-Signature-256`；同一 `X-GitHub-Delivery` 只处理一次）
       security: [{}]
       requestBody:
         required: true
@@ -4630,46 +4581,6 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '202': { description: 已受理 }
-        default: { $ref: '#/components/responses/Error' }
-  /api/v1/public/github/manifest/start:
-    get:
-      tags: [public]
-      operationId: startGitHubManifest
-      summary: 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
-      security: [{}]
-      parameters:
-        - name: state
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: 含提交表单的页面
-          content:
-            text/html:
-              schema: { type: string }
-        default: { $ref: '#/components/responses/Error' }
-  /api/v1/public/github/manifest/callback:
-    get:
-      tags: [public]
-      operationId: finishGitHubManifest
-      summary: GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
-      security: [{}]
-      parameters:
-        - name: code
-          in: query
-          required: true
-          schema: { type: string }
-        - name: state
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        '302':
-          description: 回到设置页
-          headers:
-            Location:
-              schema: { type: string }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/public/github/oauth/callback:
     get:
@@ -5483,7 +5394,7 @@ components:
             M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
             `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
             `worktree_failed`（400）、`worktree_dirty`（409）。
-            M14（GitHub）：`github_not_connected`（409，尚未创建 App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
+            M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
             `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
         message:
           type: string
@@ -5943,7 +5854,7 @@ components:
         avatarUrl: { type: string }
         status:
           type: string
-          description: '`reauth` = 刷新令牌失效，需要重新授权'
+          description: '`reauth` = 令牌失效（GitHub 返回 401），需要重新授权'
           enum: [ok, reauth]
         connectedAt: { $ref: '#/components/schemas/TimestampMs' }
         scopes:
@@ -5954,28 +5865,6 @@ components:
           type: array
           description: 相对所需 scope 缺少的项（M15）；非空时需要重新授权
           items: { type: string }
-    GitHubApp:
-      type: object
-      required: [appId, slug, name, htmlUrl, ownerLogin, public, installUrl]
-      properties:
-        appId: { type: integer, format: int64 }
-        slug: { type: string }
-        name: { type: string }
-        htmlUrl: { type: string }
-        ownerLogin: { type: string }
-        public: { type: boolean }
-        installUrl: { type: string }
-    GitHubInstallation:
-      type: object
-      required: [id, accountLogin, accountType, repositorySelection, suspended]
-      properties:
-        id: { type: integer, format: int64 }
-        accountLogin: { type: string }
-        accountType: { type: string }
-        repositorySelection:
-          type: string
-          description: '`all` 或 `selected`'
-        suspended: { type: boolean }
     GitHubIdentities:
       type: object
       properties:
@@ -5983,48 +5872,27 @@ components:
         agent: { $ref: '#/components/schemas/GitHubIdentity' }
     GitHubStatus:
       type: object
-      required: [identities, installations, automationIdentity, webhookUrl]
+      required: [identities, automationIdentity, callbackUrl, webhookBase, webUrl]
       properties:
-        app:
+        oauthApp:
           allOf:
-            - $ref: '#/components/schemas/GitHubApp'
-          description: 尚未创建 App 时省略
+            - $ref: '#/components/schemas/GitHubOAuthApp'
+          description: OAuth App 配置；未配置时省略
         identities: { $ref: '#/components/schemas/GitHubIdentities' }
-        installations:
-          type: array
-          items: { $ref: '#/components/schemas/GitHubInstallation' }
         automationIdentity: { $ref: '#/components/schemas/GitHubIdentitySlot' }
-        webhookUrl:
+        callbackUrl:
           type: string
-          description: App 的 webhook 地址；尚未创建 App 时为默认地址
+          description: 需要在 GitHub 的 OAuth App 设置里登记的回调地址（`<public_url>/api/v1/public/github/oauth/callback`；未配置 OAuth App 时也给出）
+        webhookBase:
+          type: string
+          description: 仓库 webhook 的基址（默认等于 public_url）
+        webUrl:
+          type: string
+          description: GitHub 网页基址（`github.web_url`，默认 `https://github.com`），用于拼接 GitHub 上的链接
         lastDeliveryAt: { $ref: '#/components/schemas/TimestampMs' }
         lastDeliverySource:
           type: string
           enum: [webhook, poll]
-        oauthApp:
-          allOf:
-            - $ref: '#/components/schemas/GitHubOAuthApp'
-          description: OAuth App 配置（M15）；未配置时省略
-        webhookBase:
-          type: string
-          description: 仓库 webhook 的基址（M15；默认等于 public_url）
-    GitHubManifestRequest:
-      type: object
-      required: [public]
-      properties:
-        public:
-          type: boolean
-          description: 公开 App（允许安装到其它账号）
-        org:
-          type: string
-          minLength: 1
-          maxLength: 39
-          pattern: '^[A-Za-z0-9-]+$'
-          description: 在该组织下创建；缺省 = 当前登录的个人账号
-        webhookUrl:
-          type: string
-          format: uri
-          description: 覆盖默认 webhook 地址（须 https）
     GitHubRedirect:
       type: object
       required: [url]
@@ -6069,7 +5937,7 @@ components:
           description: '`owner/repo`（取自仓库地址）'
         bound:
           type: boolean
-          description: App 可访问该仓库（已安装）
+          description: 我的账号能读到该仓库（已记录 `github_repo_id`）
         listen: { $ref: '#/components/schemas/GitHubListen' }
         bindStatus:
           type: string
@@ -6136,13 +6004,20 @@ components:
         models:
           type: array
           items: { $ref: '#/components/schemas/ModelRef' }
-        thinking: { type: string }
+        thinking:
+          type: string
+          description: 思考级别（off / low / medium / high / xhigh / max）；省略 = 默认
         implAuth: { type: boolean }
         commentOnlyReviews: { type: boolean }
         autocloseHours: { type: integer, minimum: 1, maximum: 720 }
-        maxDurationSec: { type: integer, minimum: 0 }
+        maxDurationSec:
+          type: integer
+          minimum: 0
+          description: 任务时限（秒）；省略 = 不限时
         completionReminders: { type: boolean }
-        releasePrefix: { type: string }
+        releasePrefix:
+          type: string
+          description: '发布哨兵的 head 提交信息前缀（只用于 `workflow_run_completed`）；省略 = `chore: bump version to `'
     GitHubTriggerInput:
       type: object
       required: [name, event, prompt]
@@ -6170,13 +6045,24 @@ components:
           type: array
           maxItems: 20
           items: { $ref: '#/components/schemas/ModelRef' }
-        thinking: { type: string, maxLength: 16 }
+        thinking:
+          type: string
+          maxLength: 16
+          description: 思考级别；空串 = 默认（存 NULL；PATCH 时用空串清除）
         implAuth: { type: boolean }
         commentOnlyReviews: { type: boolean }
         autocloseHours: { type: integer, minimum: 1, maximum: 720 }
-        maxDurationSec: { type: integer, minimum: 0, maximum: 604800 }
+        maxDurationSec:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: 任务时限（秒）；0 = 不限时（存 NULL；PATCH 时用 0 清除）
         completionReminders: { type: boolean }
-        releasePrefix: { type: string, minLength: 1, maxLength: 200 }
+        releasePrefix:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: '只用于 `workflow_run_completed`，其它事件忽略；省略 = `chore: bump version to `'
     GitHubTriggerPatch:
       type: object
       properties:
@@ -6199,13 +6085,24 @@ components:
           type: array
           maxItems: 20
           items: { $ref: '#/components/schemas/ModelRef' }
-        thinking: { type: string, maxLength: 16 }
+        thinking:
+          type: string
+          maxLength: 16
+          description: 思考级别；空串 = 清除（回到默认）
         implAuth: { type: boolean }
         commentOnlyReviews: { type: boolean }
         autocloseHours: { type: integer, minimum: 1, maximum: 720 }
-        maxDurationSec: { type: integer, minimum: 0, maximum: 604800 }
+        maxDurationSec:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: 任务时限（秒）；0 = 清除（不限时）
         completionReminders: { type: boolean }
-        releasePrefix: { type: string, minLength: 1, maxLength: 200 }
+        releasePrefix:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 只用于 `workflow_run_completed`，其它事件忽略
     GitHubTriggerDrivers:
       type: string
       description: '谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）'
@@ -6231,12 +6128,9 @@ components:
           description: PR 正文须含 `Fixes|Closes|Resolves #N`
     GitHubOAuthApp:
       type: object
-      required: [clientId, callbackUrl]
+      required: [clientId]
       properties:
         clientId: { type: string }
-        callbackUrl:
-          type: string
-          description: 需要在 GitHub 的 OAuth App 设置里登记的回调地址
     GitHubOAuthAppInput:
       type: object
       required: [clientId]

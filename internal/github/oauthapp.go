@@ -37,17 +37,16 @@ func (s *Service) oauthClient(ctx context.Context) (id, secret string, err error
 	return row.ClientID, string(b), err
 }
 
-// Status 汇总 GitHub 集成的当前状态（`GET /api/v1/github`）。旧 App 的 app / installations 字段恒为空（8.1 删除契约）；
-// 最近一次投递取各仓库 hook 里最新的一条。
+// Status 汇总 GitHub 集成的当前状态（`GET /api/v1/github`）。最近一次投递取各仓库 hook 里最新的一条。
 func (s *Service) Status(ctx context.Context) (apigen.GitHubStatus, error) {
 	out := apigen.GitHubStatus{
 		AutomationIdentity: apigen.GitHubIdentitySlot(slotAgent),
-		Installations:      []apigen.GitHubInstallation{},
+		CallbackURL:        s.cfg.PublicURL + oauthCallbackPath,
+		WebURL:             s.cfg.WebURL,
 	}
 	if err := s.fillOAuthStatus(ctx, &out); err != nil {
 		return out, err
 	}
-	out.WebhookURL = *out.WebhookBase + webhookPath
 	idents, err := s.st.Q.ListGithubIdentities(ctx)
 	if err != nil {
 		return out, err
@@ -155,14 +154,14 @@ func (s *Service) fillOAuthStatus(ctx context.Context, out *apigen.GitHubStatus)
 	row, err := s.st.Q.GetGithubOAuthApp(ctx)
 	switch {
 	case err == nil:
-		out.OauthApp = &apigen.GitHubOAuthApp{ClientID: row.ClientID, CallbackURL: s.cfg.PublicURL + oauthCallbackPath}
+		out.OauthApp = &apigen.GitHubOAuthApp{ClientID: row.ClientID}
 		if row.WebhookBase != nil {
 			base = *row.WebhookBase
 		}
 	case !isNoRows(err):
 		return err
 	}
-	out.WebhookBase = &base
+	out.WebhookBase = base
 	return nil
 }
 

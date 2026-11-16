@@ -40,8 +40,9 @@ func TestSetOAuthApp(t *testing.T) {
 	st, err := e.s.Status(e.ctx)
 	require.NoError(t, err)
 	assert.Nil(t, st.OauthApp)
-	require.NotNil(t, st.WebhookBase)
-	assert.Equal(t, testPublicURL, *st.WebhookBase)
+	assert.Equal(t, testPublicURL, st.WebhookBase)
+	// 未配置时也给出回调地址（设置页先让用户去 GitHub 登记）
+	assert.Equal(t, testPublicURL+"/api/v1/public/github/oauth/callback", st.CallbackURL)
 
 	_, _, err = e.s.oauthClient(e.ctx)
 	var ge *Error
@@ -60,8 +61,8 @@ func TestSetOAuthApp(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st.OauthApp)
 	assert.Equal(t, "Ov23.test", st.OauthApp.ClientID)
-	assert.Equal(t, testPublicURL+"/api/v1/public/github/oauth/callback", st.OauthApp.CallbackURL)
-	assert.Equal(t, testPublicURL, *st.WebhookBase)
+	assert.Equal(t, testPublicURL+"/api/v1/public/github/oauth/callback", st.CallbackURL)
+	assert.Equal(t, testPublicURL, st.WebhookBase)
 	row, err := e.st.Q.GetGithubOAuthApp(e.ctx)
 	require.NoError(t, err)
 	assert.NotContains(t, string(row.ClientSecretEnc), "oauth-secret")
@@ -77,7 +78,7 @@ func TestSetOAuthApp(t *testing.T) {
 	assert.Equal(t, "oauth-secret", secret)
 	st, err = e.s.Status(e.ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "https://hooks.example.com", *st.WebhookBase)
+	assert.Equal(t, "https://hooks.example.com", st.WebhookBase)
 }
 
 func TestOAuthClient(t *testing.T) {
