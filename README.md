@@ -272,8 +272,8 @@ docker run --rm --platform linux/arm64 --network none --entrypoint bash oryn-orb
 | 文档 | 内容 |
 |---|---|
 | **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner、Firecracker microVM 与 Hindsight 记忆服务 |
-| **[`docs/desktop.md`](docs/desktop.md)** | Windows / macOS / Linux 桌面客户端安装、Passkey 配对、无边框窗口控件、系统托盘、全局快捷键与签名自动更新 |
-| **[`docs/mobile.md`](docs/mobile.md)** | Android 客户端（`foss` 与 `gms` 双包）安装校验、扫码配对、UnifiedPush / FCM 端到端加密推送与省电策略说明 |
+| **[`docs/desktop.md`](docs/desktop.md)** | Windows / macOS / Linux 桌面客户端安装、Passkey 配对、无边框窗口控件、系统托盘、全局快捷键、签名自动更新，以及各端 [App 图标](docs/desktop.md#app-图标)（黑白，macOS 26 随浅色 / 深色 / 着色切换）的生成与打包 |
+| **[`docs/mobile.md`](docs/mobile.md)** | Android 客户端（`foss` 与 `gms` 双包）安装校验、扫码配对、UnifiedPush / FCM 端到端加密推送与省电策略；iOS 经 TestFlight 分发（[附录 A](docs/mobile.md#附录-aios)），App 图标随系统浅色 / 深色 / 着色切换，可在「设置 → 外观 → App 图标」换成品牌色版本 |
 | **[`docs/protocol.md`](docs/protocol.md)** | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的 C1 Provider、C2 Orb Link、C3 REST/WebSocket 协议索引与状态机说明 |
 | **[`docs/design/ui-redesign.md`](docs/design/ui-redesign.md)** | Web 界面设计说明：D 稿「晴·手作」视觉方向、四层材质、色彩令牌与超椭圆几何规范 |
 | **[`docs/design/web-guidelines.md`](docs/design/web-guidelines.md)** | 前端开发守则：不可回退的视觉约束、响应式断点、无障碍对比度与截图回归验证流程 |
