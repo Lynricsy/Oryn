@@ -118,36 +118,56 @@ func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// lstat 取目录项的 Lstat；带 confine 时经 os.Root 相对已打开的目录解析，列表进行中把目录换成链接也读不到范围外
+	lstat := func(name string) (fs.FileInfo, error) { return os.Lstat(filepath.Join(abs, name)) }
+	var (
+		des []fs.DirEntry
+		c   *confinedFile
+	)
 	if confine != "" {
 		if !confined(real, confine) {
 			writeErr(w, outsideConfine(abs))
 			return
 		}
 		w.Header().Set(ConfinedHeader, "1")
-	}
-	st, err := os.Stat(real)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if !st.IsDir() {
-		writeErr(w, errf(http.StatusConflict, "not_a_directory", "%s is not a directory", abs))
-		return
-	}
-	des, err := os.ReadDir(real)
-	if err != nil {
-		writeErr(w, err)
-		return
+		if c, err = openConfined(confine, abs, real); err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer c.Close()
+		if !c.st.IsDir() {
+			writeErr(w, errf(http.StatusConflict, "not_a_directory", "%s is not a directory", abs))
+			return
+		}
+		if des, err = c.f.ReadDir(-1); err != nil {
+			writeErr(w, err)
+			return
+		}
+		lstat = func(name string) (fs.FileInfo, error) { return c.root.Lstat(filepath.Join(c.rel, name)) }
+	} else {
+		st, err := os.Stat(real)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !st.IsDir() {
+			writeErr(w, errf(http.StatusConflict, "not_a_directory", "%s is not a directory", abs))
+			return
+		}
+		if des, err = os.ReadDir(real); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	entries := make([]apigen.FsEntry, 0, min(len(des), maxListEntries))
 	for _, de := range des {
 		p := filepath.Join(abs, de.Name())
-		fi, err := os.Lstat(p)
+		fi, err := lstat(de.Name())
 		if err != nil {
 			continue // 列目录与 Lstat 之间被删除
 		}
 		e := r.entryFor(root, p, fi)
-		if confine != "" && !confineEntry(&e, filepath.Join(real, de.Name()), fi, confine) {
+		if c != nil && !c.keepEntry(&e, filepath.Join(real, de.Name()), fi, confine) {
 			continue
 		}
 		entries = append(entries, e)
@@ -256,6 +276,14 @@ func (r *Runtime) handleFsRead(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		w.Header().Set(ConfinedHeader, "1")
+		c, err := openConfined(confine, abs, real)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer c.Close()
+		serveRead(w, req, abs, c.f, c.st)
+		return
 	}
 	st, err := os.Stat(real)
 	if err != nil {
@@ -280,6 +308,19 @@ func (r *Runtime) handleFsRead(w http.ResponseWriter, req *http.Request) {
 	st, err = f.Stat()
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	serveRead(w, req, abs, f, st)
+}
+
+// serveRead 提供已打开的文件 f（st 是它的 Stat）：目录回 409、不是普通文件回 400，其余按 Range / ETag 提供。
+func serveRead(w http.ResponseWriter, req *http.Request, abs string, f *os.File, st fs.FileInfo) {
+	if st.IsDir() {
+		writeErr(w, errf(http.StatusConflict, "is_a_directory", "%s is a directory", abs))
+		return
+	}
+	if !st.Mode().IsRegular() {
+		writeErr(w, badPath("%s is not a regular file", abs))
 		return
 	}
 	w.Header().Set("ETag", etagFor(st))
@@ -573,9 +614,9 @@ func confined(real, confine string) bool {
 	return true
 }
 
-// confineEntry 判定 confine 下目录列表里的一项是否保留：real 是它在已展开的父目录下的路径（目录项本身不展开）。
-// 符号链接须指向范围之内（悬空的不保留），指向文件时 size 改为目标文件的大小。
-func confineEntry(e *apigen.FsEntry, real string, fi fs.FileInfo, confine string) bool {
+// keepEntry 判定 confine 下目录列表里的一项是否保留：real 是它在已展开的父目录下的路径（目录项本身不展开）。
+// 符号链接须指向范围之内（悬空的不保留），指向文件时 size 改为目标文件的大小（经 os.Root 取，不会取到范围外）。
+func (c *confinedFile) keepEntry(e *apigen.FsEntry, real string, fi fs.FileInfo, confine string) bool {
 	if !confined(real, confine) {
 		return false
 	}
@@ -586,7 +627,7 @@ func confineEntry(e *apigen.FsEntry, real string, fi fs.FileInfo, confine string
 	if err != nil || !confined(target, confine) {
 		return false
 	}
-	st, err := os.Stat(target)
+	st, err := c.root.Stat(filepath.Join(c.rel, filepath.Base(real)))
 	if err != nil {
 		return false
 	}
@@ -599,6 +640,64 @@ func confineEntry(e *apigen.FsEntry, real string, fi fs.FileInfo, confine string
 // outsideConfine 是 confine 范围之外的路径的应答：与不存在一样回 404。
 func outsideConfine(abs string) *apiError {
 	return errf(http.StatusNotFound, "not_found", "%s: no such file or directory", abs)
+}
+
+// confinedFile 是在 confine 之内打开的文件或目录。
+type confinedFile struct {
+	root *os.Root
+	rel  string // 相对 confine 的路径
+	f    *os.File
+	st   fs.FileInfo
+}
+
+func (c *confinedFile) Close() {
+	_ = c.f.Close()
+	_ = c.root.Close()
+}
+
+// confineOpenHook 在 openConfined 打开之前调用（测试用：在「检查」与「打开」之间换掉目录项）。
+var confineOpenHook func()
+
+// openConfined 打开已检查过的真实路径 real（confined(real, confine) 为真），堵住「检查之后、打开之前把路径上的
+// 目录项换成符号链接」的竞态：
+//   - 经 os.Root 以 confine 的目录句柄逐段解析 real 相对 confine 的路径，换成指向范围外的链接时打不开；
+//   - 以 O_NONBLOCK 打开（换成 FIFO 也不会卡住），文件类型由调用方按句柄的 Stat 判断；
+//   - 打开之后按原路径 abs 重新求真实路径，要求仍在范围内（含 .git 规则）且与打开的是同一个文件，挡住换成指向
+//     范围内 .git 的链接。
+//
+// 不符时与不存在一样回 404。
+func openConfined(confine, abs, real string) (*confinedFile, error) {
+	rel, err := filepath.Rel(confine, real)
+	if err != nil {
+		return nil, outsideConfine(abs)
+	}
+	root, err := os.OpenRoot(confine)
+	if err != nil {
+		return nil, fsError(err)
+	}
+	if confineOpenHook != nil {
+		confineOpenHook()
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		_ = root.Close()
+		return nil, outsideConfine(abs)
+	}
+	c := &confinedFile{root: root, rel: rel, f: f}
+	if c.st, err = f.Stat(); err != nil {
+		c.Close()
+		return nil, fsError(err)
+	}
+	again, err := filepath.EvalSymlinks(abs)
+	if err != nil || !confined(again, confine) {
+		c.Close()
+		return nil, outsideConfine(abs)
+	}
+	if st, err := os.Stat(again); err != nil || !os.SameFile(st, c.st) {
+		c.Close()
+		return nil, outsideConfine(abs)
+	}
+	return c, nil
 }
 
 func (r *Runtime) handleFsMkdir(w http.ResponseWriter, req *http.Request) {
