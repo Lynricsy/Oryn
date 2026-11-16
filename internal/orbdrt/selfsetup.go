@@ -251,6 +251,11 @@ func (r *Runtime) extensionPath() string {
 	return filepath.Join(r.home, ".oryn", "core", "extensions", "oryn-orb.ts")
 }
 
+// runnerExtensionPath 是 runner 形态写出同一份扩展的位置（orbd 自己的目录；扩展按 ORYN_RUNNER=1 只注册 artifact 工具）。
+func runnerExtensionPath(home string) string {
+	return filepath.Join(home, ".oryn", "orbd", "extensions", "oryn-orb.ts")
+}
+
 func (r *Runtime) skillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-setup", "SKILL.md")
 }

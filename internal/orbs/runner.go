@@ -48,13 +48,15 @@ var (
 const CodeRunnerUnsupported = "runner_unsupported"
 
 // runnerRequests / runnerNotifies 是 runner 的 link 上放行的 orbd→orynd ctl 请求与通知：只有 runner 形态的 orbd
-// 正常流程会发的（转录上报、agent 状态、终端缺口、指标）。thread.* / schedule.* / project.scripts.* 只经 orbd.sock
-// 转发，runner 不监听 orbd.sock；setup / 受管服务 / 桌面的通知 runner 也没有。被攻破的 runner 发其余方法时，
+// 正常流程会发的（转录上报、agent 状态、终端缺口、指标，以及 runner.sock 转来的 artifact.call——处理器按线程校验
+// 调用方，runner 线程只看得到自己的 artifact）。thread.* / schedule.* / project.scripts.* 只经 orbd.sock 转发，
+// runner 不监听 orbd.sock；setup / 受管服务 / 桌面的通知 runner 也没有。被攻破的 runner 发其余方法时，
 // 请求回 runner_unsupported，通知丢弃（S2：控制面的密钥与建 orb 的能力不去 runner）。
 var (
 	runnerRequests = map[string]bool{
 		string(apigen.MethodEntriesCursors): true,
 		string(apigen.MethodEntriesAppend):  true,
+		string(apigen.MethodArtifactCall):   true,
 	}
 	runnerNotifies = map[string]bool{
 		string(apigen.MethodHello):            true,

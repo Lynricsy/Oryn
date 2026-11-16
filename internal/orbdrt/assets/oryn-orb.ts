@@ -1,6 +1,7 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
 // 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）。
+// Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具与它的指引。
 import type {
 	AgentToolResult,
 	BeforeAgentStartEvent,
@@ -462,6 +463,15 @@ function statusLines(): string[] {
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	const artifacts = registerArtifacts(pi);
+	if (process.env.ORYN_RUNNER === "1") {
+		// Runner（用户自己的机器，M14 步骤 1.7）：只有 artifact 工具与它的指引，没有 orb 环境、Docker 与桌面段落。
+		if (artifacts) {
+			pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
+				return { systemPrompt: [...event.systemPrompt, ARTIFACT_GUIDE] };
+			});
+		}
+		return;
+	}
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
 	}

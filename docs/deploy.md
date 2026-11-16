@@ -420,7 +420,7 @@ runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器�
 ### 安全边界（先读）
 
 - **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
-- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。
+- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，不开 egress 代理，也不改那台机器的 git 配置。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。orbd 在 runner 上只写自己目录下的 `~/.oryn/orbd/extensions/oryn-orb.ts`（只注册 artifact 工具）并以 `-e` 加载，不碰 `~/.agents/skills` 与你自己的 omp 扩展。
 - **助手不碰 runner 线程。** 助手（协调者）的 send_message、read_thread、归档、定时等工具对 runner 线程一律回 `runner_unsupported`：普通 orb 里产出的内容不能经助手转成你机器上的指令。runner 线程只能由你自己发消息。
 - **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
 - runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。

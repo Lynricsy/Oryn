@@ -610,17 +610,24 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env["PI_RPC_EMIT_TITLE"] = "1"
 		env["PI_NOTIFICATIONS"] = "off"
 		env["ORYN_THREAD_ID"] = p.ThreadID
-		// artifact 工具（M14，oryn-orb.ts）经这个控制口发 artifact.call。
-		env["ORYN_ARTIFACT_SOCK"] = orbsock.Path(r.home)
+		// artifact 工具（M14，oryn-orb.ts）经这个控制口发 artifact.call：orb 是 orbd.sock，runner 是只认这一个方法的 runner.sock。
+		sock := orbsock.Path(r.home)
+		if r.runner != nil {
+			sock = orbsock.RunnerPath(r.home)
+		}
+		env["ORYN_ARTIFACT_SOCK"] = sock
 		for k, v := range p.Env {
 			env[k] = v
 		}
 		args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir}
 		if r.runner == nil {
-			// orb 环境说明扩展；runner 不加载（用户机器上的 omp 只用它自己的扩展与技能）。
+			// orb 环境说明扩展。
 			args = append(args, "-e", r.extensionPath())
 			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在桌面覆盖层之前。
 			args = r.applyProjectConfig(env, args)
+		} else {
+			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact 工具），其余扩展与技能用那台机器自己的。
+			args = append(args, "-e", runnerExtensionPath(r.home))
 		}
 		if r.desk != nil {
 			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。

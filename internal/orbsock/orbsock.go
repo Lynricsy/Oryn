@@ -108,6 +108,10 @@ const maxRequestBytes = 4 << 20
 // Path 返回 $HOME 下的控制口路径。
 func Path(home string) string { return filepath.Join(home, ".oryn", "orbd.sock") }
 
+// RunnerPath 返回 runner 形态的 artifact 控制口路径（M14）：只服务 artifact.call，不与同一 HOME 下 orb 形态的
+// orbd.sock 相撞，也不把 thread.* / schedule.* / setup.* 暴露给 runner 上的 agent。
+func RunnerPath(home string) string { return filepath.Join(home, ".oryn", "orbd", "runner.sock") }
+
 // Request 是客户端发出的唯一一行。
 type Request struct {
 	Method string          `json:"method"`

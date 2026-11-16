@@ -18,11 +18,13 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
 // runner 形态（M11b 计划 7.2）：用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，线程直接跑在
 // 声明的目录里。runner 完全信任控制面（能以本用户身份执行任意命令），但控制面的密钥不来这里：不开 egress、
-// 不写 omp 扩展与技能、不改 git 配置；本机 API 只看得到线程的工作目录（X-Oryn-Workdir）。
+// 不写技能与 ~/.oryn/core、不改 git 配置；只在 orbd 自己的目录写自带的扩展（只注册 artifact 工具，M14）并监听
+// 只认 artifact.call 的 runner.sock；本机 API 只看得到线程的工作目录（X-Oryn-Workdir）。
 
 // RunnerTokenPrefix 是 runner 令牌的前缀。
 const RunnerTokenPrefix = "ort_"
@@ -353,4 +355,22 @@ func (r *Runtime) runnerInfo() *apigen.LinkRunnerInfo {
 		dirs = append(dirs, apigen.RunnerDir{Path: d, Name: filepath.Base(d), Git: err == nil})
 	}
 	return &apigen.LinkRunnerInfo{Hostname: host, Dirs: dirs}
+}
+
+// serveRunnerSocket 在 runner.sock（0600）上服务到 ctx 结束，只认 artifact.call（M14，runner 上 agent 的 artifact
+// 工具经它转给控制面），其余方法回 method_not_found；监听失败只记日志（不影响 runner 其它功能）。
+func (r *Runtime) serveRunnerSocket(ctx context.Context) {
+	path := orbsock.RunnerPath(r.home)
+	ln, err := orbsock.Listen(path)
+	if err != nil {
+		r.log.Warn("runner artifact socket unavailable", "path", path, "err", err)
+		return
+	}
+	orbsock.Serve(ctx, ln, func(ctx context.Context, method string, params json.RawMessage, _ *orbsock.Responder) (any, error) {
+		if method != orbsock.MethodArtifactCall {
+			return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "unknown method %q", method)
+		}
+		return r.artifactCall(ctx, params)
+	})
+	_ = os.Remove(path)
 }

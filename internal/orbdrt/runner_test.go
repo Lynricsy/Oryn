@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,8 +97,8 @@ func helloOf(t *testing.T, cp *fakeCP) apigen.LinkCtlHelloParams {
 	return h
 }
 
-// --runner：经 whoami 取得 orb id；不监听 egress、不建 orbd.sock；不写 ~/.agents/skills 与 omp 扩展，
-// 不碰 git 全局配置。
+// --runner：经 whoami 取得 orb id；不监听 egress、不建 orbd.sock；不写 ~/.agents/skills 与 ~/.oryn/core，
+// 不碰 git 全局配置；只在 orbd 自己的目录写自带的扩展并监听 runner.sock（M14）。
 func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 	f := newRunnerHome(t)
 	f.initRepo(t)
@@ -124,6 +126,12 @@ func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 		_, err := os.Lstat(p)
 		assert.ErrorIs(t, err, os.ErrNotExist, "%s must not be created on a runner", p)
 	}
+	for _, p := range []string{orbsock.RunnerPath(f.home), runnerExtensionPath(f.home)} {
+		require.Eventually(t, func() bool { _, err := os.Lstat(p); return err == nil }, 5*time.Second, 10*time.Millisecond, "%s exists on a runner", p)
+	}
+	fi, err := os.Lstat(orbsock.RunnerPath(f.home))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 	require.NotNil(t, h.Runner)
 	host, _ := os.Hostname()
 	assert.Equal(t, host, h.Runner.Hostname)
@@ -270,7 +278,8 @@ type agentDump struct {
 }
 
 // agent.start：cwd 必填且在声明的目录之内（符号链接逃逸被拒）；会话目录只能在 ~/.oryn/threads 下；
-// 合法时 omp 以该目录为 cwd、不带 -e、环境有 ORYN_RUNNER=1 而没有 ORYN_ORB / 令牌。
+// 合法时 omp 以该目录为 cwd、`-e` 恰是 runner 自带的扩展、环境有 ORYN_RUNNER=1 与指向 runner.sock 的
+// ORYN_ARTIFACT_SOCK，而没有 ORYN_ORB / 令牌。
 func TestRunnerAgentStartCwd(t *testing.T) {
 	f := newRunnerHome(t)
 	t.Setenv("ORYN_RUNNER_TOKEN", testRunnerToken) // 进程环境里的令牌不得进入 agent
@@ -302,11 +311,58 @@ func TestRunnerAgentStartCwd(t *testing.T) {
 		return err == nil && json.Unmarshal(b, &rec) == nil
 	}, 10*time.Second, 20*time.Millisecond)
 	assert.Equal(t, f.work, rec.Cwd)
-	assert.NotContains(t, rec.Args, "-e")
+	i := slices.Index(rec.Args, "-e")
+	require.GreaterOrEqual(t, i, 0, "argv %v", rec.Args)
+	require.Less(t, i+1, len(rec.Args))
+	assert.Equal(t, runnerExtensionPath(f.home), rec.Args[i+1])
+	assert.Equal(t, 1, strings.Count(strings.Join(rec.Args, "\x00"), "\x00-e\x00"), "只加载一个扩展")
+	assert.Equal(t, orbsock.RunnerPath(f.home), rec.Env["ORYN_ARTIFACT_SOCK"])
 	assert.Equal(t, "1", rec.Env["ORYN_RUNNER"])
 	assert.Equal(t, f.home, rec.Env["HOME"])
 	for _, k := range []string{"ORYN_ORB", "ORYN_ORB_ID", "ORYN_RUNNER_TOKEN", "ORYN_ORB_TOKEN"} {
 		assert.NotContains(t, rec.Env, k)
+	}
+}
+
+// M14 1.7：runner.sock 只认 artifact.call（原样转成 ctl artifact.call），thread.* / setup.* 等回 method_not_found。
+func TestRunnerArtifactSocket(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	f.cp.waitNotif(t, 0, "hello", nil)
+	forwarded := make(chan apigen.LinkCtlArtifactCallParams, 1)
+	f.cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
+		if method != string(apigen.MethodArtifactCall) {
+			return nil, false, nil
+		}
+		var p apigen.LinkCtlArtifactCallParams
+		_ = json.Unmarshal(params, &p)
+		forwarded <- p
+		return apigen.LinkCtlArtifactCallResult{Text: "ok"}, true, nil
+	}
+	sock := orbsock.RunnerPath(f.home)
+	waitSock(t, sock)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, m := range []string{orbsock.MethodThreadNew, orbsock.MethodScheduleSet, orbsock.MethodSetupRerun, orbsock.MethodLibraryPut} {
+		_, err := orbsock.Call(ctx, sock, m, map[string]any{"prompt": "x"}, nil)
+		var se *orbsock.Error
+		require.ErrorAs(t, err, &se, m)
+		assert.Equal(t, orbsock.CodeMethodNotFound, se.Code, m)
+	}
+
+	raw, err := orbsock.Call(ctx, sock, orbsock.MethodArtifactCall, apigen.LinkCtlArtifactCallParams{
+		ThreadID: thread1, Op: "list_artifacts", Params: map[string]any{"query": "报告"},
+	}, nil)
+	require.NoError(t, err)
+	var res apigen.LinkCtlArtifactCallResult
+	require.NoError(t, json.Unmarshal(raw, &res))
+	assert.Equal(t, "ok", res.Text)
+	select {
+	case p := <-forwarded:
+		assert.Equal(t, apigen.LinkCtlArtifactCallParams{ThreadID: thread1, Op: "list_artifacts", Params: map[string]any{"query": "报告"}}, p)
+	default:
+		t.Fatal("artifact.call 没有转到控制面")
 	}
 }
 

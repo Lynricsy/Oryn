@@ -387,6 +387,12 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
+	// runner 只写 orbd 自带的扩展（只注册 artifact 工具）到 orbd 自己的目录，仍不碰 ~/.agents/skills 与 ~/.oryn/core。
+	if rs != nil {
+		if err := writeFileAtomic(runnerExtensionPath(home), orbExtension, 0o644); err != nil {
+			return nil, fmt.Errorf("orbdrt: write %s: %w", runnerExtensionPath(home), err)
+		}
+	}
 	// runner 不开 egress：控制面的密钥不去用户机器（agent 用那台机器自己的模型配置与 git 凭据）。
 	var ln net.Listener
 	if cfg.Runner == nil {
@@ -432,7 +438,7 @@ func New(cfg Config) (_ *Runtime, err error) {
 	r.svc = newServiceSupervisor(r)
 	if !cfg.Coordinator && rs == nil {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
-		// runner 同样不碰用户机器上的 ~/.agents/skills 与 omp 扩展，也没有桌面与嵌套 Docker。
+		// runner 同样不碰用户机器上的 ~/.agents/skills 与 ~/.oryn/core（它只写自带的扩展，见上），也没有桌面与嵌套 Docker。
 		r.desk = newDesktop(r)
 		if cfg.NestedDocker {
 			r.dockerd = newDockerd(r)
@@ -477,7 +483,7 @@ func detectAgentVersion(bins binResolver, bin string) string {
 // Run 运行到 ctx 结束：恢复已登记线程的 tailer、egress、指标与 link 重连循环。
 // 优雅退出（停 agent、冲刷 tailer）由调用方在取消 ctx 之前调用 Shutdown 完成。
 // 协调宿主模式只起 egress 与 tailer；link 断开（Connect 返回 ErrNoRedial）后即返回。
-// runner 形态不起 egress、orbd.sock 与受管服务的上报；返回时释放实例锁。
+// runner 形态不起 egress、orbd.sock 与受管服务的上报，另起只认 artifact.call 的 runner.sock；返回时释放实例锁。
 func (r *Runtime) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
@@ -503,6 +509,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 		wg.Go(func() { r.serveSocket(ctx) })
 		wg.Go(func() { r.serveGh(ctx) })
 		wg.Go(func() { r.svc.reportLoop(ctx) })
+	}
+	if r.runner != nil {
+		wg.Go(func() { r.serveRunnerSocket(ctx) })
 	}
 	if d := r.desk; d != nil {
 		// 显示栈常驻；ctx 结束时三者的进程组都被 SIGKILL（优雅停浏览器由 Shutdown 负责）。

@@ -152,8 +152,8 @@ func TestRunnerRevokedBeforeFirstCtl(t *testing.T) {
 	assert.Nil(t, o.OrbdVersion, "hello 未被处理")
 }
 
-// S2：runner 的 link 只放行 entries.cursors / entries.append 与 runner 会发的通知；thread.* / schedule.* 等回
-// runner_unsupported，不触达处理器、不建线程 / 日程 / 任务。
+// S2：runner 的 link 只放行 entries.cursors / entries.append / artifact.call 与 runner 会发的通知；thread.* / schedule.*
+// 等回 runner_unsupported，不触达处理器、不建线程 / 日程 / 任务。
 func TestRunnerCtlAllowlist(t *testing.T) {
 	h := newHarnessRun(t, newFakeDriver(), fakeSetup{}, nil, false)
 	captureTimers(h.svc)
@@ -166,7 +166,7 @@ func TestRunnerCtlAllowlist(t *testing.T) {
 		string(apigen.MethodSchedulePut), string(apigen.MethodScheduleGet), string(apigen.MethodScheduleDelete),
 		string(apigen.MethodScheduleEnable), string(apigen.MethodProjectScriptsGet), string(apigen.MethodProjectScriptsSet),
 	}
-	var forbidden, cursors, servicesState atomic.Int32
+	var forbidden, cursors, artifactCalls, servicesState atomic.Int32
 	for _, m := range blocked {
 		h.svc.HandleRequest(m, func(context.Context, string, json.RawMessage) (any, error) {
 			forbidden.Add(1)
@@ -176,6 +176,10 @@ func TestRunnerCtlAllowlist(t *testing.T) {
 	h.svc.HandleRequest(string(apigen.MethodEntriesCursors), func(context.Context, string, json.RawMessage) (any, error) {
 		cursors.Add(1)
 		return map[string]any{}, nil
+	})
+	h.svc.HandleRequest(string(apigen.MethodArtifactCall), func(context.Context, string, json.RawMessage) (any, error) {
+		artifactCalls.Add(1)
+		return map[string]any{"text": "ok"}, nil
 	})
 	h.svc.HandleNotify(string(apigen.MethodServicesState), func(context.Context, string, json.RawMessage) { servicesState.Add(1) })
 	statusSeen := make(chan struct{}, 1)
@@ -201,6 +205,8 @@ func TestRunnerCtlAllowlist(t *testing.T) {
 	}
 	assert.Zero(t, forbidden.Load(), "不允许的方法不得触达处理器")
 	require.NoError(t, ctl.Call(cctx, string(apigen.MethodEntriesCursors), map[string]any{"threadId": "thr_x"}, nil))
+	require.NoError(t, ctl.Call(cctx, string(apigen.MethodArtifactCall), map[string]any{"threadId": "thr_x", "op": "list_artifacts", "params": map[string]any{}}, nil))
+	assert.EqualValues(t, 1, artifactCalls.Load(), "artifact.call 到达处理器（M14）")
 	assert.EqualValues(t, 1, cursors.Load(), "entries.cursors 照常放行")
 
 	// 通知按到达顺序同步处理：agent.status 到了，之前的 services.state 一定已被丢弃
