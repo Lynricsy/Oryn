@@ -94,11 +94,20 @@ function notificationOptions({ body, tag, url, id, actions, state }) {
 }
 
 /**
+ * 本 worker 生命周期内收到过撤回的通知 id：作答请求在途时撤回先到、网络失败后到，据此不复活按钮。
+ * worker 被回收后清空（撤回与在途作答都在同一个事件的 waitUntil 里，足够覆盖这段窗口）。
+ */
+const withdrawn = new Set();
+const WITHDRAWN_MAX = 200;
+
+/**
  * 撤回：只换掉仍显示着同一 id、还带着按钮的那条（同一线程后来的通知 id 不同，不受影响）。
  * 已作答 / 已在别处作答的替换版不再改动；作答失败的替换版保留了按钮，仍要撤回。
  */
 async function withdraw(d) {
 	if (typeof d.tag !== "string" || typeof d.id !== "string") return;
+	if (withdrawn.size >= WITHDRAWN_MAX) withdrawn.clear();
+	withdrawn.add(d.id);
 	const shown = await self.registration.getNotifications({ tag: d.tag });
 	for (const n of shown) {
 		const state = n.data?.state;
@@ -118,7 +127,11 @@ async function withdraw(d) {
 	}
 }
 
-/** 点了操作按钮：带 Cookie 作答，再用同 tag 的通知替换原通知显示结果；不打开窗口。 */
+/**
+ * 点了操作按钮：带 Cookie 作答，再用同 tag 的通知替换原通知显示结果；不打开窗口。
+ * 结果是异步回来的，重绘前按 tag 与通知 id 复核：同一线程的新通知（id 不同）已替换它时丢弃结果，
+ * 不覆盖新通知；撤回已先到时失败结果也丢弃，不复活按钮。原通知被平台点掉、tag 上什么都没有时照常显示结果。
+ */
 async function answer(n, action) {
 	const data = n.data ?? {};
 	const option = Number(action);
@@ -138,6 +151,11 @@ async function answer(n, action) {
 		}
 	}
 	const failed = result === "failed";
+	const shown = await self.registration.getNotifications({ tag: n.tag });
+	const same = shown.find((x) => x.data?.id === data.id);
+	if (!same && shown.length > 0) return;
+	if (failed && (withdrawn.has(data.id) || same?.data?.state === "elsewhere"))
+		return;
 	await self.registration.showNotification(
 		n.title,
 		notificationOptions({

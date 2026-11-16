@@ -24,8 +24,12 @@ function loadWorker({
 	maxActions = 2,
 	shown = [] as unknown[],
 	fetchStatus = 200 as number | Error,
+	fetchImpl = undefined as (() => Promise<unknown>) | undefined,
+	live = false,
 } = {}) {
 	const handlers = new Map<string, Handler>();
+	// live：通知中心按 tag 保存最近一条（同 tag 后到的替换先到的），getNotifications 读它
+	const center = new Map<string, Record<string, unknown>>();
 	const self = {
 		location: { origin: "https://oryn.test" },
 		navigator: { userAgent, language },
@@ -38,10 +42,17 @@ function loadWorker({
 			openWindow: vi.fn(async () => null),
 		},
 		registration: {
-			showNotification: vi.fn(async () => {}),
-			getNotifications: vi.fn(async () => shown),
+			showNotification: vi.fn(
+				async (title: string, opts: Record<string, unknown>) => {
+					if (live) center.set(String(opts.tag), { title, ...opts });
+				},
+			),
+			getNotifications: vi.fn(async ({ tag }: { tag: string }) =>
+				live ? [...center.values()].filter((n) => n.tag === tag) : shown,
+			),
 		},
 		fetch: vi.fn(async () => {
+			if (fetchImpl) return fetchImpl();
 			if (fetchStatus instanceof Error) throw fetchStatus;
 			return { ok: fetchStatus < 300, status: fetchStatus };
 		}),
@@ -58,7 +69,7 @@ function loadWorker({
 		});
 		await pending;
 	};
-	return { self, dispatch };
+	return { self, dispatch, center };
 }
 
 /**
@@ -432,5 +443,98 @@ describe("service worker：通知上的作答按钮", () => {
 			data: { id: "ntf_01ABC", actions: [], state: "elsewhere" },
 		});
 		expect(optionsOf(retry.self)).not.toHaveProperty("actions");
+	});
+
+	describe("作答结果迟到：按 tag + 通知 id 复核", () => {
+		/** 可延迟的作答请求：`settle` 决定何时以什么结果返回。 */
+		function deferred() {
+			const { promise, resolve, reject } = Promise.withResolvers<{
+				ok: boolean;
+				status: number;
+			}>();
+			return {
+				fetchImpl: () => promise,
+				settle: (v: { ok: boolean; status: number } | Error) =>
+					v instanceof Error ? reject(v) : resolve(v),
+			};
+		}
+		const click = (n: Record<string, unknown>) => ({
+			notification: {
+				...n,
+				close: vi.fn(),
+				data: n.data,
+			},
+			action: "0",
+		});
+		const withdrawN1 = {
+			data: {
+				json: () => ({
+					v: 1,
+					kind: "withdraw",
+					id: "ntf_01ABC",
+					tag: "oryn-1",
+				}),
+			},
+		};
+		const pushN2 = {
+			data: {
+				json: () => ({
+					v: 1,
+					id: "ntf_02NEW",
+					kind: "done",
+					title: "线程",
+					body: "完成了",
+					url: "/t/T-1",
+					tag: "oryn-1",
+				}),
+			},
+		};
+
+		it("请求在途时同线程来了新通知：N1 的迟到结果不覆盖 N2", async () => {
+			const d = deferred();
+			const w = loadWorker({ live: true, fetchImpl: d.fetchImpl });
+			await w.dispatch("push", input(two));
+			const n1 = w.center.get("oryn-1") as Record<string, unknown>;
+			const answering = w.dispatch("notificationclick", click(n1));
+			await w.dispatch("push", pushN2);
+			d.settle({ ok: true, status: 200 });
+			await answering;
+			expect(w.center.get("oryn-1")).toMatchObject({
+				body: "完成了",
+				data: { id: "ntf_02NEW" },
+			});
+		});
+
+		it("撤回先到、网络失败后到：不复活旧按钮", async () => {
+			const d = deferred();
+			const w = loadWorker({ live: true, fetchImpl: d.fetchImpl });
+			await w.dispatch("push", input(two));
+			const n1 = w.center.get("oryn-1") as Record<string, unknown>;
+			const answering = w.dispatch("notificationclick", click(n1));
+			await w.dispatch("push", withdrawN1);
+			d.settle(new TypeError("offline"));
+			await answering;
+			const now = w.center.get("oryn-1");
+			expect(now).toMatchObject({
+				body: "Already answered elsewhere",
+				data: { id: "ntf_01ABC", state: "elsewhere", actions: [] },
+			});
+			expect(now).not.toHaveProperty("actions");
+		});
+
+		it("撤回先到、本次作答成功后到：显示「已作答」（撤回正是这次作答引起的）", async () => {
+			const d = deferred();
+			const w = loadWorker({ live: true, fetchImpl: d.fetchImpl });
+			await w.dispatch("push", input(two));
+			const n1 = w.center.get("oryn-1") as Record<string, unknown>;
+			const answering = w.dispatch("notificationclick", click(n1));
+			await w.dispatch("push", withdrawN1);
+			d.settle({ ok: true, status: 200 });
+			await answering;
+			expect(w.center.get("oryn-1")).toMatchObject({
+				body: "Answered",
+				data: { id: "ntf_01ABC", state: "answered" },
+			});
+		});
 	});
 });

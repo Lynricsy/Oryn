@@ -98,10 +98,26 @@ object Notifier {
     return null
   }
 
-  /** 作答后按状态重绘同一条通知（同 tag 替换，不再响铃）。 */
-  fun update(context: Context, model: PushPayload.Model, state: State, lang: String? = null) {
-    if (!PushStore.notificationsAllowed(context)) return
-    show(context, model, lang, state)
+  /**
+   * 作答后按状态重绘同一条通知（同 tag 替换，不再响铃）。只在 tag 上仍显示着同一 id 的通知时重绘：
+   * 作答请求在途期间同线程的新通知（id 不同）已替换它，或撤回已把它撤掉时，迟到的结果直接丢弃，
+   * 不覆盖新通知、也不复活已撤回的按钮。返回是否重绘了。
+   */
+  fun update(context: Context, model: PushPayload.Model, state: State, lang: String? = null): Boolean {
+    if (!PushStore.notificationsAllowed(context)) return false
+    if (shownId(context, model.tag) != model.id) {
+      EventLog.log(context, "notify.stale_answer", mapOf("id" to model.id, "state" to state.name))
+      return false
+    }
+    return show(context, model, lang, state)
+  }
+
+  /** `tag` 上当前显示着的通知的 id；没有显示或不是我们发的为 null。 */
+  private fun shownId(context: Context, tag: String): String? {
+    val nm = context.getSystemService(NotificationManager::class.java) ?: return null
+    return nm.activeNotifications
+      .firstOrNull { it.tag == tag && it.id == NOTIFY_ID }
+      ?.notification?.extras?.getString(EXTRA_ID)
   }
 
   /**
