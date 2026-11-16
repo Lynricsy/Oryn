@@ -105,6 +105,13 @@ type Server struct {
 	// UserTokenTTL 是用户访问令牌寿命（秒）；0 = 不过期（响应不带 expires_in 与刷新令牌）。
 	UserTokenTTL int64
 	Calls        []Call
+	// Issues / Pulls / Comments 是各仓库的 issue、PR 与评论；Rollups、CheckRuns、Statuses 按提交 sha 记 CI 结果（见 issues.go）。
+	Issues    []*Issue
+	Pulls     []*Pull
+	Comments  []*Comment
+	Rollups   map[string]string
+	CheckRuns map[string][]CheckRun
+	Statuses  map[string][]CommitStatus
 	// Deliveries 是 App 的 webhook 投递日志（见 hooks.go）；Unreachable 为真时 Deliver 不真的发请求，只记 502。
 	Deliveries  []*Delivery
 	Unreachable bool
@@ -286,6 +293,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /repos/{owner}/{repo}", s.getRepo)
 	mux.HandleFunc("GET /user/installations", s.userInstallations)
 	mux.HandleFunc("GET /user/installations/{id}/repositories", s.userInstallationRepos)
+	s.issueRoutes(mux)
 	s.hookRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -687,12 +695,3 @@ func (s *Server) userInstallationRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"total_count": len(repos), "repositories": out})
 }
-
-	// Issues / Pulls / Comments 是各仓库的 issue、PR 与评论；Rollups、CheckRuns、Statuses 按提交 sha 记 CI 结果（见 issues.go）。
-	Issues    []*Issue
-	Pulls     []*Pull
-	Comments  []*Comment
-	Rollups   map[string]string
-	CheckRuns map[string][]CheckRun
-	Statuses  map[string][]CommitStatus
-	s.issueRoutes(mux)
