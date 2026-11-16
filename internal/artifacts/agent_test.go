@@ -320,7 +320,12 @@ func TestAgentGuide(t *testing.T) {
 	r := mustCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"files"}`)
 	assert.Contains(t, r.Text, "https://cdnjs.cloudflare.com")
 	assert.Contains(t, r.Text, "baseVersion")
-	_, err := agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"canvas"}`)
+	r = mustCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"canvas"}`)
+	assert.Contains(t, r.Text, "canvas.json")
+	assert.Contains(t, r.Text, "data-oryn-params")
+	assert.Contains(t, r.Text, "copyOf")
+	assert.NotContains(t, r.Text, "%!") // Sprintf 的参数与占位符对得上
+	_, err := agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"runtime"}`)
 	assert.Equal(t, CodeInvalid, code(err))
 	assert.Contains(t, err.Error(), "这个主题在当前版本不可用")
 	_, err = agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"nope"}`)

@@ -83,6 +83,15 @@ func TestImport(t *testing.T) {
 	assert.Equal(t, CodeNotUTF8, code(err))
 	_, err = e.s.Import(ctx, multipartOf(t, "index.html", "x"), ImportParams{ProjectID: "P-none"})
 	assert.Equal(t, CodeInvalid, code(err))
+	// 画布：canvas.json 严格解析，画框文件必须一起导入
+	a, err = e.s.Import(ctx, multipartOf(t, "canvas.json", `{"pages":[{"id":"p1","name":"A","file":"a.html"}]}`, "a.html", "<p>a</p>"), ImportParams{})
+	require.NoError(t, err)
+	assert.Equal(t, KindCanvas, a.Kind)
+	assert.Equal(t, 1, a.Pages)
+	for _, bad := range []string{`{"pages":[{"id":"p1","name":"A","file":"gone.html"}]}`, `{"pages":[],"x":1}`, `{`} {
+		_, err = e.s.Import(ctx, multipartOf(t, "canvas.json", bad, "a.html", "<p>a</p>"), ImportParams{})
+		assert.Equal(t, CodeBadCanvas, code(err), bad)
+	}
 
 	kv := []string{"index.html", "<p>x</p>"}
 	for i := range MaxVersionFiles {

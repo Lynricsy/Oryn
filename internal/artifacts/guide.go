@@ -1,7 +1,10 @@
 package artifacts
 
 import (
+	"fmt"
 	"strings"
+
+	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 )
 
 // 教程主题（read_artifact_guide 的 topic）。
@@ -18,7 +21,8 @@ var guideTopics = []string{GuideFiles, GuideCanvas, GuideRuntime, GuideDocument,
 
 // guides 是已写好的教程；合法但不在这里的主题在当前版本不可用。
 var guides = map[string]string{
-	GuideFiles: guideFiles,
+	GuideFiles:  guideFiles,
+	GuideCanvas: guideCanvas,
 }
 
 // guideFiles 是 files 主题：artifact 的文件、上限、沙箱与改动流程。
@@ -62,6 +66,82 @@ create_artifact 与 update_artifact 的 files 里，每个文件给 content 或 
 4. 如果收到 conflict：说明你要改的文件在 baseVersion 之后被别人（用户或其它线程）改过。重新 read_artifact，在最新版本上重新做你的改动，不要直接覆盖。
 5. 改错了可以用 list_artifact_versions 查看历史，再用 restore_artifact_version 把旧版本恢复成新的最新版本。
 `
+
+// guideCanvas 是 canvas 主题：canvas.json 的格式、改布局的方式、用户的标注与画框的调节参数。
+var guideCanvas = fmt.Sprintf(`# 画布 artifact
+
+画布适合一次给用户看多张并排的设计：多个屏幕的原型、同一页面的几种方案、一套组件。用户能在画布上平移缩放、拖动画框、画标注、贴便签，再把它们交给你改。
+
+## 结构
+
+画布 = 每个画框一个 HTML 文件 + 入口文件 canvas.json（有 canvas.json 的 artifact 就是画布，不需要 index.html）。界面上把 canvases 的元素叫「页面」，pages 的元素叫「画框」。
+
+开始之前先规划：要几个页面（canvases）、每个页面放哪些画框、各叫什么名字。画框之间共用的样式和脚本放进共享文件（例如 shared.css），每个画框的 HTML 用相对路径引用；图标直接内联成 <svg>。
+
+	{
+	  "format": 1,
+	  "canvases": [{"id": "home", "name": "首页"}],
+	  "pages": [
+	    {"id": "desktop", "canvas": "home", "name": "桌面", "file": "home-desktop.html", "width": 1440, "height": 900},
+	    {"id": "mobile", "canvas": "home", "name": "手机", "file": "home-mobile.html", "width": 390, "height": 844}
+	  ],
+	  "notes": []
+	}
+
+- canvases：{id, name}。省略时有一个缺省页面 %[1]q。最多 %[2]d 个。
+- pages：{id, canvas, name, file, x, y, width, height, locked}。file 必须是这个版本里的 .html / .htm 文件；width、height 在 %[3]d–%[4]d 之间，缺省 %[5]d×%[6]d；x、y 要么都给，要么都省略——省略时自动接在同一页面已有画框的右边（间距 %[7]d）。最多 %[8]d 个画框。
+- 只有一个页面时，画框和标注可以省略 canvas。
+- id 是 1–64 个字母、数字、- 或 _，整个文档里不能重复；名字不超过 %[9]d 字；坐标的绝对值不超过 %[10]d，保留两位小数。
+- 数组顺序就是绘制顺序，后面的画在上面。
+- 解析是严格的：未知字段、指向不存在对象的引用、缺少的画框文件都会让写入失败，报错里会写出位置（如 pages[2].canvas）。
+
+## 标注（notes）
+
+notes 里是画在画框之上的标注，大多是用户画的。公共字段 {id, canvas, kind, color, locked, by}：color 只能是 %[11]s；by 是画它的线程，用户画的是 null。按 kind 各有字段：
+
+- text：{x, y, text, size}，size 缺省 %[12]d。
+- sticky（便签）：{x, y, width, text, done}，width 缺省 %[13]d，颜色缺省 yellow。
+- pen（画笔）：{points, width, marker}，points 是 x、y、压力（0–1）三个一组的数字，一笔最多 %[14]d 个数；marker 为 true 是荧光笔。
+- rect、ellipse、line、arrow：{x1, y1, x2, y2, width, from, to}；from / to 是吸附的画框 id（只能是同一页面上的画框）或 null，吸附的一端跟着画框移动。
+
+线宽在 %[15]v–%[16]v 之间，缺省 %[17]d。标注最多 %[18]d 个，整个 canvas.json 不超过 %[19]d MiB。
+
+用户的标注能在 read_artifact 读到的 canvas.json 里看到：便签和文字通常是修改意见，箭头、圈和画笔指出位置（看它们的坐标落在哪个画框里）。处理完一张便签就把它的 done 设为 true。
+
+## 修改画布
+
+- 改某个画框的内容：用 update_artifact 的 files 或 edits 改它的 HTML 文件，不用动 canvas.json。
+- 改布局（加删页面与画框、挪位置、改尺寸、改名、处理便签）：用 update_artifact 的 canvas 参数传一组操作，按顺序应用，任何一条不合法整批不生效：
+  - {"op": "add", "object": {"type": "canvas" | "page" | "note", …字段}}：新画框可以省略 file（取 page-<id>.html，由你随后写入内容），省略 x、y 时自动排位；加 "copyOf": "<画框 id>" 表示新画框的 HTML 复制自那个画框。
+  - {"op": "set", "id": "…", "key": "…", "value": …}：改一个字段。页面能改 name；画框能改 name、file、x、y、width、height、locked；标注能改除 id、canvas、kind、by 之外的字段。
+  - {"op": "remove", "id": "…"}：删页面会连带删掉它上面的画框和标注；删画框会把吸附它的 from / to 置空。
+  - {"op": "order", "id": "…", "index": n}：调整在列表里的位置（绘制顺序）。
+- 也可以用 files 整个重写 canvas.json，但这会和用户同时进行的拖动、标注冲突；能用 canvas 操作时优先用它。
+
+## 画框的调节参数
+
+画框可以声明一组让用户直接调节的参数（主题色、文案、密度这类）。在画框 HTML 的 <head> 里写：
+
+	<script type="application/json" data-oryn-params>
+	{
+	  "accent": {"type": "color", "value": "#2563eb", "label": "强调色"},
+	  "headline": {"type": "text", "value": "欢迎", "label": "标题"},
+	  "density": {"type": "number", "value": 16, "min": 8, "max": 32, "step": 2, "unit": "px"},
+	  "dark": {"type": "boolean", "value": false},
+	  "layout": {"type": "choice", "value": "grid", "options": ["grid", "list"]}
+	}
+	</script>
+
+- 参数名匹配 ^[a-z][a-z0-9-]{0,31}$，最多 %[20]d 个；label 不超过 60 字。
+- color 的值是 #rgb、#rgba、#rrggbb 或 #rrggbbaa；text 不超过 200 字；number 带 min（缺省 0）、max（缺省 100）、step（缺省 1，不小于 0.001）、unit（0–8 个小写字母或 %%），值会夹在范围内；choice 最多 20 个选项，值必须是其中之一。
+- 页面运行时把每个参数设成根元素上的 CSS 变量 --<名字>（数字带单位，文本是带引号的字符串）和属性 data-<名字>。样式里用 var(--accent)、[data-dark="true"] 之类引用它们。
+- 用户在「调节」面板里改的值会写回这段 JSON，成为新版本。
+`,
+	canvas.DefaultCanvasID, canvas.MaxCanvases, canvas.MinPageSize, canvas.MaxPageSize,
+	canvas.DefaultPageWidth, canvas.DefaultPageHeight, canvas.PageGap, canvas.MaxPages,
+	canvas.MaxNameRunes, canvas.MaxCoord, strings.Join(canvas.Colors, "、"), canvas.DefaultTextSize,
+	canvas.DefaultStickyWidth, canvas.MaxPenNumbers, canvas.MinStroke, canvas.MaxStroke, canvas.DefaultStroke,
+	canvas.MaxNotes, canvas.MaxJSONBytes>>20, MaxParams)
 
 // guideText 返回主题的教程文本。
 func guideText(topic string) (string, error) {

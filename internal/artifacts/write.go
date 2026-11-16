@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -259,18 +260,24 @@ func (s *Service) validate(typ string, m manifest, st staged) (shape, error) {
 	if err != nil {
 		return shape{}, err
 	}
-	return shape{kind: KindCanvas, pages: canvasPages(b)}, nil
+	pages, problem := canvasProblem(b, func(p string) bool { _, ok := m[p]; return ok })
+	if problem != "" {
+		return shape{}, opErr(CodeInvalid, "%s修正后再写；canvas.json 的格式见 read_artifact_guide 的 canvas 主题。", problem)
+	}
+	return shape{kind: KindCanvas, pages: pages}, nil
 }
 
-// canvasPages 宽松地数 canvas.json 里的画框（解析失败按 0）。
-func canvasPages(b []byte) int {
-	var doc struct {
-		Pages []json.RawMessage `json:"pages"`
+// canvasProblem 严格解析 canvas.json 并检查每个画框的文件都在版本里（has 报告文件是否存在）；
+// 合法时返回画框数，否则返回问题说明（中文，带位置）。导入把它映射成 bad_canvas。
+func canvasProblem(b []byte, has func(string) bool) (int, string) {
+	doc, err := canvas.Parse(b)
+	if err != nil {
+		return 0, fmt.Sprintf("canvas.json 不合法：%v。", err)
 	}
-	if json.Unmarshal(b, &doc) != nil {
-		return 0
+	if missing := canvas.MissingPageFiles(doc, has); len(missing) > 0 {
+		return 0, fmt.Sprintf("canvas.json 的画框引用了这个版本里没有的文件：%s。把这些 HTML 文件一起写进来，或改画框的 file。", strings.Join(missing, "、"))
 	}
-	return len(doc.Pages)
+	return len(doc.Pages), ""
 }
 
 // loadManifest 读一个版本的清单。

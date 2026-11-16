@@ -16,10 +16,11 @@ import (
 
 // 导入特有的错误码（REST：too_many 413，其余 400）。
 const (
-	CodeTooMany = "too_many"
-	CodeNoIndex = "no_index"
-	CodeBadName = "bad_name"
-	CodeNotUTF8 = "not_utf8"
+	CodeTooMany   = "too_many"
+	CodeNoIndex   = "no_index"
+	CodeBadCanvas = "bad_canvas"
+	CodeBadName   = "bad_name"
+	CodeNotUTF8   = "not_utf8"
 )
 
 // ImportBodyLimit 是导入请求体的上限：一个版本的总字节，外加 multipart 头与被跳过的隐藏文件的余量。
@@ -95,6 +96,15 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 	_, hasCanvas := st.writes[EntryCanvas]
 	if !hasHTML && !hasCanvas {
 		return Artifact{}, opErr(CodeNoIndex, "没有找到 index.html（画布则是 canvas.json）。")
+	}
+	if hasCanvas {
+		b, err := s.c.read(st.writes[EntryCanvas].sha)
+		if err != nil {
+			return Artifact{}, err
+		}
+		if _, problem := canvasProblem(b, func(p string) bool { _, ok := st.writes[p]; return ok }); problem != "" {
+			return Artifact{}, opErr(CodeBadCanvas, "%s", problem)
+		}
 	}
 	return s.create(ctx, CreateParams{
 		Title: importTitle(index, p.Name), ProjectID: p.ProjectID, Origin: OriginImport,

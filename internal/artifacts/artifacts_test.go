@@ -307,12 +307,37 @@ func TestRateLimitCountsOnlySuccess(t *testing.T) {
 
 func TestCanvasKindAndPages(t *testing.T) {
 	e := newEnv(t)
-	a, err := e.s.Create(context.Background(), CreateParams{Title: "c", Files: []FileChange{
-		put("canvas.json", `{"pages":[{"id":"a"},{"id":"b"}]}`), put("a.html", "a"), put("b.html", "b"),
+	ctx := context.Background()
+	doc := `{"format":1,"canvases":[{"id":"c1","name":"首页"}],"pages":[` +
+		`{"id":"a","name":"A","file":"a.html"},{"id":"b","name":"B","file":"b.html"}]}`
+	a, err := e.s.Create(ctx, CreateParams{Title: "c", Files: []FileChange{
+		put("canvas.json", doc), put("a.html", "a"), put("b.html", "b"),
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, KindCanvas, a.Kind)
 	assert.Equal(t, 2, a.Pages)
+
+	// 严格解析：未知字段、悬空引用、画框文件不在版本里都回 invalid，不落版本
+	for _, bad := range []struct{ doc, want string }{
+		{`{"pages":[{"id":"a"}]}`, "pages[0].name"},
+		{`{"pages":[{"id":"a","name":"A","file":"a.html","color":"red"}]}`, "pages[0].color"},
+		{`{"pages":[{"id":"a","canvas":"c9","name":"A","file":"a.html"}]}`, "pages[0].canvas"},
+		{`{"pages":[{"id":"a","name":"A","file":"gone.html"}]}`, "gone.html"},
+	} {
+		_, err := e.s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: 1, Files: []FileChange{put("canvas.json", bad.doc)}})
+		assert.Equal(t, CodeInvalid, code(err), bad.doc)
+		assert.Contains(t, err.Error(), bad.want)
+	}
+	got, err := e.s.Get(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.Version)
+
+	// 删掉一个画框连同它的文件，页数跟着变
+	b, err := e.s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: 1, Files: []FileChange{
+		put("canvas.json", `{"pages":[{"id":"a","name":"A","file":"a.html"}]}`), {Path: "b.html", Remove: true},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, b.Pages)
 }
 
 // 清理列出过期项之后、删除之前被恢复（或恢复后重新删除）的 artifact 不能被删掉。
