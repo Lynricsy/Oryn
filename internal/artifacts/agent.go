@@ -33,6 +33,7 @@ const (
 	OpReadComments    = "read_artifact_comments"
 	OpReplyComment    = "reply_artifact_comment"
 	OpResolveComment  = "resolve_artifact_comment"
+	OpScreenshot      = "screenshot_artifact"
 	listDefaultLimit  = 50
 	listMaxLimit      = 200
 	deletedThreadName = "已删除的线程"
@@ -102,10 +103,12 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentReplyComment(ctx, c, params)
 	case OpResolveComment:
 		return s.agentResolveComment(ctx, c, params)
+	case OpScreenshot:
+		return s.agentScreenshot(ctx, c, params)
 	default:
 		return Result{}, opErr(CodeInvalid, "没有操作 %q。可用的操作：%s。", op,
 			strings.Join([]string{OpCreate, OpRead, OpUpdate, OpList, OpDelete, OpListVersions, OpRestoreVersion, OpReadGuide,
-				OpReadComments, OpReplyComment, OpResolveComment}, "、"))
+				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot}, "、"))
 	}
 }
 

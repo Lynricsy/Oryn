@@ -441,6 +441,19 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				}),
 				loadMode: "discoverable",
 			},
+			{
+				name: "screenshot_artifact",
+				label: "artifact 截图",
+				description:
+					"在控制面把 artifact 最新版本的一个页面渲染成 PNG 图片给你看，用来检查实际显示效果。缺省渲染入口；画布的某个画框传它的 HTML 文件。返回一行说明和一张图片。回 render_unavailable 时不要重试。",
+				parameters: z.object({
+					id,
+					path: z.string().optional().describe("要渲染的文件（read_artifact 返回的 files 里的路径），缺省入口"),
+					width: z.number().int().min(64).max(1600).optional().describe("窗口宽度（CSS 像素），缺省 1280"),
+					height: z.number().int().min(64).max(4000).optional().describe("窗口高度（CSS 像素），缺省 800"),
+				}),
+				loadMode: "discoverable",
+			},
 		];
 		for (const tool of tools) {
 			pi.registerTool({

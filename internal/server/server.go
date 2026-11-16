@@ -335,6 +335,8 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	s.closers = append(s.closers, renderer.Close)
 	go renderer.Preflight(runCtx)
+	// 缩略图（新版本后延迟入队）、render.png 与 screenshot_artifact 都经 Service 用这个渲染器
+	s.Artifacts.UseRenderer(runCtx, renderer)
 	deps := api.Deps{
 		Config:         cfg,
 		Store:          s.Store,

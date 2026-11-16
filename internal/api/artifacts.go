@@ -7,7 +7,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
@@ -442,4 +445,91 @@ func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request)
 		}
 	}
 	WriteJSON(w, http.StatusOK, out)
+}
+
+// GetArtifactThumbnail 对应 `GET artifacts/{id}/thumbnail?version=`（步骤 4.2）：720×450 的 JPEG。请求的版本还没有时
+// 回最近一个有缩略图的更早版本（并把请求的版本补入队），都没有回 404 no_thumbnail。只有「明确请求了某个版本且
+// 正好命中」的响应带 immutable 长缓存：回落的图与不带版本的请求之后会变，不能被浏览器钉住。
+func (s *Server) GetArtifactThumbnail(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.GetArtifactThumbnailParams) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	version, ok := artifactVersionParam(w, params.Version)
+	if !ok {
+		return
+	}
+	p, served, err := svc.Thumbnail(r.Context(), id, version)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		// 刚被淘汰：按未命中处理
+		WriteError(w, http.StatusNotFound, artifacts.CodeNoThumbnail, "缩略图暂时不可用")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "image/jpeg")
+	h.Set("X-Content-Type-Options", "nosniff")
+	if version != 0 && served == version {
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "private, no-cache")
+	}
+	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+// RenderArtifactPng 对应 `GET artifacts/{id}/render.png?version=&path=&width=&height=`（步骤 4.3）：以倍率 1 渲染一个页面
+// （path 缺省 = 入口，宽高各 64–8000，缺省 1280×800），作为 `<标题>.png` 下载。渲染不可用回 503 render_unavailable。
+func (s *Server) RenderArtifactPng(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.RenderArtifactPngParams) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	version, ok := artifactVersionParam(w, params.Version)
+	if !ok {
+		return
+	}
+	width, height := 1280, 800
+	if params.Width != nil {
+		width = *params.Width
+	}
+	if params.Height != nil {
+		height = *params.Height
+	}
+	if width < 64 || width > 8000 || height < 64 || height > 8000 {
+		WriteError(w, http.StatusBadRequest, artifacts.CodeInvalid, "width 与 height 都必须在 64–8000 之间")
+		return
+	}
+	var p string
+	if params.Path != nil {
+		p = *params.Path
+	}
+	ctx := r.Context()
+	a, err := svc.Get(ctx, id)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	out, _, err := svc.RenderPNG(ctx, a.ID, version, p, width, height)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "image/png")
+	h.Set("Content-Disposition", attachments.Disposition(attachments.SafeName(strings.ReplaceAll(a.Title, "/", "_")+".png")))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "private, no-cache")
+	h.Set("Content-Length", strconv.Itoa(len(out)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
 }

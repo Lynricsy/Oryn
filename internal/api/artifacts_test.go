@@ -1,11 +1,15 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -246,4 +251,79 @@ func TestArtifactFileREST(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 	resp, _ = get("/api/v1/artifacts/"+a.ID+"/file?path=index.html&version=7", nil)
 	assert.Equal(t, 404, resp.StatusCode)
+}
+
+// fakePNGRenderer 回一张按窗口尺寸的白色 PNG。
+type fakePNGRenderer struct{}
+
+func (fakePNGRenderer) Status() (bool, string) { return true, "" }
+func (fakePNGRenderer) Run(_ context.Context, j render.Job) ([]byte, error) {
+	var buf bytes.Buffer
+	err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, j.Width, j.Height)))
+	return buf.Bytes(), err
+}
+
+// 缩略图（命中、回落、未命中）与 render.png（不可用 503、尺寸与路径校验、下载头）。
+func TestArtifactThumbnailRenderREST(t *testing.T) {
+	e, svc := newArtifactsEnv(t)
+	ctx := t.Context()
+	a, err := svc.Create(ctx, artifacts.CreateParams{Title: "周/报", Files: artFiles("index.html", "<h1>v1</h1>")})
+	require.NoError(t, err)
+
+	get := func(path string) (*http.Response, string) {
+		t.Helper()
+		resp, err := http.Get(e.srv.URL + path)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	base := "/api/v1/artifacts/" + a.ID
+	resp, body := get(base + "/thumbnail")
+	require.Equal(t, 404, resp.StatusCode, body)
+	assert.Equal(t, artifacts.CodeNoThumbnail, decodeAs[apigen.Error](t, []byte(body)).Code)
+
+	v1, err := svc.Version(ctx, a.ID, 1)
+	require.NoError(t, err)
+	dir := filepath.Join(e.dir, "data", "artifacts", "thumbs")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, v1.FilesKey+".jpg"), []byte("jpeg-v1"), 0o600))
+	_, err = svc.Write(ctx, artifacts.WriteParams{ID: a.ID, BaseVersion: 1, Files: artFiles("index.html", "<h1>v2</h1>")})
+	require.NoError(t, err)
+
+	resp, body = get(base + "/thumbnail?version=1")
+	require.Equal(t, 200, resp.StatusCode, body)
+	assert.Equal(t, "jpeg-v1", body)
+	assert.Equal(t, "image/jpeg", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "private, max-age=31536000, immutable", resp.Header.Get("Cache-Control"))
+	for _, q := range []string{"", "?version=2"} {
+		resp, body = get(base + "/thumbnail" + q)
+		require.Equal(t, 200, resp.StatusCode, body)
+		assert.Equal(t, "jpeg-v1", body, "v2 没有图时回 v1 的")
+		assert.Equal(t, "private, no-cache", resp.Header.Get("Cache-Control"))
+	}
+	resp, _ = get(base + "/thumbnail?version=9")
+	assert.Equal(t, 404, resp.StatusCode)
+
+	resp, body = get(base + "/render.png")
+	require.Equal(t, 503, resp.StatusCode, body)
+	assert.Equal(t, artifacts.CodeRenderUnavailable, decodeAs[apigen.Error](t, []byte(body)).Code)
+
+	svc.UseRenderer(ctx, fakePNGRenderer{})
+	resp, body = get(base + "/render.png?width=320&height=200")
+	require.Equal(t, 200, resp.StatusCode, body)
+	assert.Equal(t, "image/png", resp.Header.Get("Content-Type"))
+	assert.Contains(t, resp.Header.Get("Content-Disposition"), "attachment")
+	assert.Contains(t, resp.Header.Get("Content-Disposition"), ".png")
+	img, err := png.Decode(strings.NewReader(body))
+	require.NoError(t, err)
+	assert.Equal(t, image.Rect(0, 0, 320, 200), img.Bounds())
+	resp, _ = get(base + "/render.png?width=63")
+	assert.Equal(t, 400, resp.StatusCode)
+	resp, _ = get(base + "/render.png?height=8001")
+	assert.Equal(t, 400, resp.StatusCode)
+	resp, _ = get(base + "/render.png?path=missing.html")
+	assert.Equal(t, 400, resp.StatusCode)
+	resp, _ = get(base + "/render.png?version=1&path=index.html")
+	assert.Equal(t, 200, resp.StatusCode)
 }

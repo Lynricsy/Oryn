@@ -80,7 +80,7 @@ func (e *OpError) Error() string { return e.Code + ": " + e.Message }
 // Status 返回错误码对应的 HTTP 状态。
 func (e *OpError) Status() int {
 	switch e.Code {
-	case CodeNotFound:
+	case CodeNotFound, CodeNoThumbnail:
 		return http.StatusNotFound
 	case CodeDeleted:
 		return http.StatusGone
@@ -257,6 +257,11 @@ type Service struct {
 	pub *PublishConfig
 	// live 是实时画布（live.go）。
 	live liveSet
+	// thumbs 是缩略图队列与渲染器（thumbs.go）。
+	thumbs thumbs
+	// versionHooks 是新版本监听者（OnVersion）。
+	versionMu    sync.Mutex
+	versionHooks []func(id string, n int)
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
@@ -288,8 +293,22 @@ func (s *Service) changed() {
 	}
 }
 
+// OnVersion 登记一个新版本监听者：每个新版本（创建、写入、恢复）在事务提交之后调用 fn(id, n)。
+// fn 在写入方的调用栈里同步执行（写入方可能还持有该 artifact 的锁），不能阻塞，也不能回头写这个 artifact。
+func (s *Service) OnVersion(fn func(id string, n int)) {
+	s.versionMu.Lock()
+	s.versionHooks = append(s.versionHooks, fn)
+	s.versionMu.Unlock()
+}
+
 func (s *Service) versioned(id string, n int) {
 	s.liveVersioned(id, n)
+	s.versionMu.Lock()
+	hooks := s.versionHooks
+	s.versionMu.Unlock()
+	for _, fn := range hooks {
+		fn(id, n)
+	}
 	if s.hub != nil {
 		s.hub.ArtifactVersion(id, n)
 		s.hub.ArtifactsChanged()

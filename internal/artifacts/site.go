@@ -145,6 +145,7 @@ func (h *Host) RenderTarget(ctx context.Context, id string, version int) (int, b
 
 // ServeRender 实现 render.Site：以「渲染模式」提供作业根之内的路径 p——版本里的文件原样提供（不注入运行时、
 // 不标源码），响应头同帧，但 'self' 换成作业根的 URL、没有 frame-ancestors（渲染时页面就是顶层文档）。
+// 类型化 artifact 的根是查看器页（同帧，但没有运行时：查看器只读显示），`_oryn/viewer/<名字>` 提供查看器资源。
 func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Target, p string) {
 	csp, _, _ := strings.Cut(framePolicy(sandboxFrame, t.Self, "'none'", t.Strict), "; frame-ancestors ")
 	setFrameHeaders(w, r, csp)
@@ -153,12 +154,35 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 		frameError(w, http.StatusMethodNotAllowed, "只支持 GET")
 		return
 	}
+	if name, ok := strings.CutPrefix(strings.TrimPrefix(p, "/"), viewerPrefix); ok {
+		h.serveViewerAsset(w, r, name)
+		return
+	}
 	path, version, ok := framePath(p, t.Version)
 	if !ok {
 		frameError(w, http.StatusNotFound, "文件不存在")
 		return
 	}
-	rc, file, err := h.s.Open(r.Context(), t.ArtifactID, version, path)
+	ctx := r.Context()
+	if atFrameRoot(p) {
+		a, err := h.s.Get(ctx, t.ArtifactID)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if a.Type != "" {
+			v, err := h.s.Version(ctx, a.ID, version)
+			if err != nil {
+				h.fail(w, err)
+				return
+			}
+			page := viewerPage(viewerConfig{Type: a.Type, Format: v.Format, Version: v.Version, Head: a.Version, Entry: a.Entry(), Root: t.Self})
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(page))
+			return
+		}
+	}
+	rc, file, err := h.s.Open(ctx, t.ArtifactID, version, path)
 	if err != nil {
 		h.fail(w, err)
 		return
