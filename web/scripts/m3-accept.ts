@@ -1430,7 +1430,8 @@ async function T12() {
 		await shot(page, "T12-settings-editor");
 		await page.goto(`${BASE}/t/${THREAD}`);
 		await openTab(page, "files");
-		await page.getByRole("tab", { name: "Agent 配置" }).click();
+		// M12.2 起 Files 面板另有「项目 Agent 配置」标签，按全名精确匹配
+		await page.getByRole("tab", { name: "Agent 配置", exact: true }).click();
 		const item2 = page.locator('[role=treeitem][data-path="AGENTS.md"]');
 		await item2.waitFor({ timeout: 30_000 });
 		await item2.click();
