@@ -16,5 +16,5 @@ When the issue is classified `question` and your answer comment on #{{number}} i
    Otherwise I'll auto-close in {{autoclose_hours}} hours.
    ```
 
-3. Immediately after posting, before any other comment on the issue, call `github_autoclose(number={{number}})`. Do NOT pass `hours`: Oryn applies the rule's configured window, which is the one stated in the suffix. It schedules the close against your most recent comment on the issue, so it must be the answer you just posted.
-4. The close is cancelled by a 👎 from the issue author (other users' reactions do not count), by any new comment, or by an external close. Do not close the issue yourself.
+3. Immediately after posting, before any other comment on the issue, call `github_autoclose(number={{number}})`. Do NOT pass `hours`: Oryn applies the rule's configured window, which is the one stated in the suffix. It schedules the close against your most recent comment on the issue, so it must be the answer you just posted; it fails if the issue is already closed or you have not commented on it yet.
+4. When the window ends, only a 👎 from the issue author on that answer comment keeps the issue open (other users' reactions do not count); otherwise it is closed as completed. The close is cancelled earlier by any new comment from someone other than you, by an external close, or when the task ends. Do not close the issue yourself.
