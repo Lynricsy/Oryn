@@ -539,20 +539,11 @@ export function HomePage(): ReactNode {
 				>
 					{chromeLeft && <ChromeLead />}
 					{sidebarToggle && (
-						<>
-							<IconButton
-								icon={bp === "expanded" ? "sidebar" : "menu"}
-								label={t("nav.sidebar")}
-								onClick={() => uiStore.getState().toggleSidebar()}
-							/>
-							{/* 与桌面侧栏顶部同一套品牌：品牌标 + 衬线字标，按 48px 顶栏缩到 20px */}
-							<span className="flex items-center gap-1.5">
-								<BrandMark size={20} />
-								<span className="wordmark text-[20px] text-fg leading-none">
-									{t("app.name")}
-								</span>
-							</span>
-						</>
+						<IconButton
+							icon={bp === "expanded" ? "sidebar" : "menu"}
+							label={t("nav.sidebar")}
+							onClick={() => uiStore.getState().toggleSidebar()}
+						/>
 					)}
 					<span className="min-w-0 flex-1" />
 					<WindowControls side="right" />
