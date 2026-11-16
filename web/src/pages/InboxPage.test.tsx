@@ -190,4 +190,23 @@ describe("收件箱页", () => {
 		act(() => indexStore.getState().upsertThread(th("err", { state: "idle" })));
 		expect(sections()).toEqual(["you", "running"]);
 	});
+
+	it("行内归档走归档入口：带 worktree 的线程先弹出是否一并移除工作树", () => {
+		indexStore.getState().setAll(
+			[
+				th("wt", {
+					state: "error",
+					worktree: { repo: "/r", dir: "/r/.wt/x", branch: "oryn/x" },
+				}),
+			],
+			1,
+		);
+		mount();
+		const row = document.querySelector('[data-inbox-row="wt"]')
+			?.parentElement as HTMLElement;
+		fireEvent.click(within(row).getByRole("button", { name: "归档" }));
+		expect(screen.getByTestId("archive-dialog")).toHaveTextContent("/r/.wt/x");
+		// 对话框确认前不归档
+		expect(indexStore.getState().threads.wt?.archivedAt).toBeUndefined();
+	});
 });

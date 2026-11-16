@@ -21,6 +21,7 @@ import {
 import { ProjectBadge, Sheet, TitleGlyph } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import {
+	describeError,
 	EmptyState,
 	IconButton,
 	ThreadStateIcon,
@@ -45,6 +46,7 @@ import { useBreakpoint } from "../lib/viewport";
 import { patchThread } from "../state/actions";
 import { type AppNotification, useNotifications } from "../state/notifications";
 import { useIndex } from "../state/stores";
+import { showToast } from "../state/toasts";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 
 const GROUP_OPTIONS: readonly InboxGroupBy[] = ["state", "project"];
@@ -88,6 +90,12 @@ export function InboxPage(): ReactNode {
 	const now = useNow();
 	const [groupBy, setGroupBy] = useState<InboxGroupBy>(loadInboxGroupBy);
 	const [filter, setFilter] = useState<InboxState | null>(null);
+	// 归档走与线程页同一个入口：带 worktree 的线程先问是否一并移除工作树
+	const { archive, dialog: archiveDialog } = useArchiveThread();
+	const onArchive = (thread: Thread) =>
+		void archive(thread).catch((e: unknown) =>
+			showToast({ text: describeError(e, t), tone: "err" }),
+		);
 	const items = useMemo(
 		() => inboxItems(Object.values(threads), now),
 		[threads, now],
@@ -126,6 +134,7 @@ export function InboxPage(): ReactNode {
 			preview={previewOf(item, previews)}
 			showState={groupBy === "project"}
 			now={now}
+			onArchive={onArchive}
 		/>
 	);
 	return (
@@ -255,6 +264,7 @@ export function InboxPage(): ReactNode {
 					</div>
 				)}
 			</div>
+			{archiveDialog}
 		</Sheet>
 	);
 }
@@ -398,6 +408,7 @@ function InboxRow({
 	preview,
 	showState,
 	now,
+	onArchive,
 }: {
 	item: InboxItem;
 	/** 「等你处理」的独立卡片（按状态分组时）；否则是面板列表里的一行 */
@@ -409,6 +420,7 @@ function InboxRow({
 	/** 按项目分组时第二行写收件箱分节名（项目已是组标题） */
 	showState: boolean;
 	now: number;
+	onArchive: (thread: Thread) => void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { thread, state } = item;
@@ -513,7 +525,7 @@ function InboxRow({
 						size={14}
 						box="xs"
 						label={t("thread.archive")}
-						onClick={() => void patchThread(thread.id, { archived: true })}
+						onClick={() => onArchive(thread)}
 					/>
 				</span>
 			)}
