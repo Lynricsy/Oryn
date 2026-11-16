@@ -255,6 +255,8 @@ type Service struct {
 	gcBeforeLock func(sha string)
 	// pub 是发布配置（ConfigurePublishing）；nil = 发布未配置。
 	pub *PublishConfig
+	// follow 是跟随发布的后台推进（publish.go）。
+	follow follows
 	// live 是实时画布（live.go）。
 	live liveSet
 	// thumbs 是缩略图队列与渲染器（thumbs.go）。

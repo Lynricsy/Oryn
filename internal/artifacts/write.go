@@ -480,6 +480,7 @@ func (s *Service) create(ctx context.Context, p CreateParams, pre *staged) (Arti
 	}
 	s.rateRecord(p.Author)
 	s.versioned(id, 1)
+	s.autoPublish(ctx, id)
 	return s.Get(ctx, id)
 }
 

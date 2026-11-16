@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -66,8 +68,11 @@ type PublishConfig struct {
 	Visitors func(slug string) int
 }
 
-// ConfigurePublishing 打开发布功能；须在服务对外提供之前调用。
-func (s *Service) ConfigurePublishing(cfg PublishConfig) { s.pub = &cfg }
+// ConfigurePublishing 打开发布功能，并开始让跟随的发布记录随新版本推进（步骤 8.4）；须在服务对外提供之前调用，只调用一次。
+func (s *Service) ConfigurePublishing(cfg PublishConfig) {
+	s.pub = &cfg
+	s.OnVersion(s.followVersion)
+}
 
 func (s *Service) publishing() (*PublishConfig, error) {
 	if s.pub == nil || len(s.pub.GrantKey) == 0 {
@@ -494,4 +499,171 @@ func (s *Service) UnlockCode(ctx context.Context, slug, code string) (string, er
 		return "", ErrCodeLocked
 	}
 	return "", ErrCodeWrong
+}
+
+// followTimeout 是一轮跟随推进（含密钥扫描）的上限。
+const followTimeout = 2 * time.Minute
+
+// follows 是跟随发布的后台推进状态；零值可用。同一 artifact 至多一个 worker，处理期间到来的新版本
+// 只记一个「再来一轮」，worker 每轮都取当时的最新版本，所以中间的版本自然被跳过。
+type follows struct {
+	mu    sync.Mutex
+	busy  map[string]bool
+	again map[string]bool
+	wg    sync.WaitGroup
+	// afterScan 只给测试用：扫描完、落库之前调用。
+	afterScan func()
+}
+
+// followVersion 是新版本监听者：在写入方的调用栈里只登记，扫描与落库交给后台 worker。
+func (s *Service) followVersion(id string, _ int) {
+	f := &s.follow
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.busy[id] {
+		if f.again == nil {
+			f.again = map[string]bool{}
+		}
+		f.again[id] = true
+		return
+	}
+	if f.busy == nil {
+		f.busy = map[string]bool{}
+	}
+	f.busy[id] = true
+	f.wg.Add(1)
+	go s.followLoop(id)
+}
+
+func (s *Service) followLoop(id string) {
+	f := &s.follow
+	defer f.wg.Done()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), followTimeout)
+		if err := s.advanceFollow(ctx, id); err != nil {
+			slog.Warn("artifacts: 跟随发布推进失败", "artifact", id, "err", err)
+		}
+		cancel()
+		f.mu.Lock()
+		if f.again[id] {
+			delete(f.again, id)
+			f.mu.Unlock()
+			continue
+		}
+		delete(f.busy, id)
+		f.mu.Unlock()
+		return
+	}
+}
+
+// waitFollow 等到当前没有跟随推进在进行（测试用）。
+func (s *Service) waitFollow() { s.follow.wg.Wait() }
+
+// advanceFollow 把跟随的发布记录推到最新版本。private 直接推进；code / public 先扫描最新版本：
+// 有命中则不推进、把 pending_version 记为它（等用户确认），无命中则推进并清掉 pending_version。
+// 扫描在锁外进行，落库前在 pubLock 下重读记录：期间被取消发布、关了跟随、手动换到不更旧的版本时都不动它，
+// version 永不倒退；访问级别从 private 被改成 code / public（这轮没扫描）时重来一轮。
+func (s *Service) advanceFollow(ctx context.Context, id string) error {
+	cfg, err := s.publishing()
+	if err != nil {
+		return nil
+	}
+	for {
+		row, err := s.st.Q.GetArtifactPublication(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		a, err := s.st.Q.GetArtifact(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		head := a.Head
+		if row.Follow == 0 || row.Version >= head {
+			return nil
+		}
+		scanned := row.Access != AccessPrivate
+		flagged := false
+		if scanned {
+			if row.PendingVersion != nil && *row.PendingVersion == head {
+				flagged = true // 这个版本已经扫过并在等确认
+			} else if cfg.Scan != nil {
+				files, err := s.scanFiles(ctx, id, int(head))
+				if err != nil {
+					return err
+				}
+				flagged = len(cfg.Scan(ctx, files).Findings) > 0
+			}
+		}
+		if s.follow.afterScan != nil {
+			s.follow.afterScan()
+		}
+		retry, err := s.applyFollow(ctx, id, head, scanned, flagged)
+		if err != nil || !retry {
+			return err
+		}
+	}
+}
+
+// applyFollow 在 pubLock 下重读发布记录并落下这一轮的结果；retry 为真表示需要重新扫描再来。
+func (s *Service) applyFollow(ctx context.Context, id string, head int64, scanned, flagged bool) (retry bool, err error) {
+	defer s.pubLock(id)()
+	cur, err := s.st.Q.GetArtifactPublication(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if cur.Follow == 0 || cur.Version >= head {
+		return false, nil
+	}
+	private := cur.Access == AccessPrivate
+	if !private && !scanned {
+		return true, nil
+	}
+	upd := db.UpdateArtifactPublicationParams{
+		ArtifactID: id, Access: cur.Access, Code: cur.Code, CodeGen: cur.CodeGen, CodeFailures: cur.CodeFailures,
+		CodeLocked: cur.CodeLocked, Version: cur.Version, Follow: cur.Follow, PendingVersion: cur.PendingVersion,
+		UpdatedAt: s.now().UnixMilli(),
+	}
+	if !private && flagged {
+		if cur.PendingVersion != nil && *cur.PendingVersion == head {
+			return false, nil
+		}
+		upd.PendingVersion = &head
+	} else {
+		upd.Version, upd.PendingVersion = head, nil
+	}
+	if err := s.st.Q.UpdateArtifactPublication(ctx, upd); err != nil {
+		return false, err
+	}
+	s.changed()
+	return false, nil
+}
+
+// autoPublish 在 owner.auto_publish_artifacts 打开时把新建的 artifact 以 private、跟随最新版本发布。
+// 失败只记日志，不影响创建。
+func (s *Service) autoPublish(ctx context.Context, id string) {
+	if s.pub == nil {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	on, err := s.st.Q.GetArtifactAutoPublish(ctx)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && on != 1 {
+		return // 还没有所有者（尚未完成首次设置）或没打开
+	}
+	if err != nil {
+		slog.Warn("artifacts: 读取自动发布设置失败", "artifact", id, "err", err)
+		return
+	}
+	follow := true
+	if _, err := s.Publish(ctx, id, PublishParams{Access: AccessPrivate, Follow: &follow}); err != nil {
+		slog.Warn("artifacts: 自动发布失败", "artifact", id, "err", err)
+	}
 }
