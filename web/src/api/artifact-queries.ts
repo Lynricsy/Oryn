@@ -347,6 +347,27 @@ export function useResolveArtifactComment() {
 	);
 }
 
+/** 记下这些评论串已发给线程 `sentTo`（发给新线程时不记）。 */
+export function useMarkArtifactCommentsSent() {
+	return useCommentMutation(
+		({
+			id,
+			threadIds,
+			sentTo,
+		}: {
+			id: string;
+			threadIds: string[];
+			sentTo: string;
+		}) =>
+			unwrap(
+				api.POST("/api/v1/artifacts/{id}/comments/sent", {
+					params: { path: { id } },
+					body: { threadIds, sentTo },
+				}),
+			),
+	);
+}
+
 /**
  * 导入：每个文件以相对路径为字段名放进 `FormData`。`name` 是上传时的文件名或文件夹名（页面没有 `<title>` 时作标题）。
  * 错误码（`too_large`、`too_many`、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`）在抛出的 `ApiError.code` 上。

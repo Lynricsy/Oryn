@@ -1,21 +1,41 @@
 /**
- * 评论面板（计划 M14 3.3）：查看器侧栏列的「评论」分段。未解决的串在前并编号（编号与页面上的图钉一致），
+ * 评论面板（计划 M14 3.3、3.4）：查看器侧栏列的「评论」分段。未解决的串在前并编号（编号与页面上的图钉一致），
  * 已解决的折叠成「显示 N 条已解决」。每张卡：编号、锚点标签（元素已不在时加标记）、各条评论的作者（「你」或线程标题）
  * 与时间、回复框（`Mod+Enter`，只对未解决的串）、「标为已解决 / 重新打开」。
+ * 底部「把 N 条未处理的评论发给 [线程] [发送]」：未处理 = 未解决且还没发出；发给已有线程后记下已发送，
+ * 发给「新线程」只把消息交给首屏输入框（不记已发送，那时还没有线程）。
  */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 import {
 	type ArtifactCommentThread,
 	type ArtifactDetail,
+	type ArtifactThreadActivity,
+	type ArtifactVersion,
+	useArtifact,
 	useArtifactComments,
+	useArtifactVersions,
+	useMarkArtifactCommentsSent,
 	useReplyArtifactComment,
 	useResolveArtifactComment,
 } from "../../api/artifact-queries";
+import type { Thread } from "../../api/client";
+import { commentsPrompt } from "../../lib/artifacts/prompt";
 import { formatRelative } from "../../lib/format";
+import { sendGeneratedPrompt } from "../../state/actions";
 import { useIndex } from "../../state/stores";
+import { showToast } from "../../state/toasts";
+import { uiStore } from "../../state/ui";
 import { Badge } from "../ui/data";
-import { Button, describeError, EmptyState, Spinner } from "../ui/primitives";
+import { Icon } from "../ui/icons";
+import {
+	Button,
+	describeError,
+	EmptyState,
+	Select,
+	Spinner,
+} from "../ui/primitives";
 import { anchorLabel, orderThreads } from "./anchors";
 import {
 	COMMENT_FIELD,
@@ -23,9 +43,72 @@ import {
 	commentSubmittable,
 	isSubmitKey,
 } from "./CommentBox";
+import { useArtifactActivity } from "./use-activity";
 import { authorName } from "./VersionHistory";
 
 type DetailThread = ArtifactDetail["threads"][number];
+
+/** 下拉里「新线程」一项的值（线程 id 不会是空串）。 */
+const NEW_THREAD = "";
+
+export interface SendTarget {
+	threadId: string;
+	title: string;
+}
+
+/**
+ * 评论可以发给的线程：详情里未归档的相关线程（创建者与写过版本的），加上同项目里未归档、没有父线程的工作线程。
+ * 排序：正在改这个 artifact 的（在场信息里 `doing` 不是 `read`）→ 最近写过版本的 → 最近活动的。
+ */
+export function sendTargets({
+	detailThreads,
+	index,
+	projectId,
+	activity,
+	versions,
+}: {
+	detailThreads: readonly DetailThread[];
+	index: Readonly<Record<string, Thread>>;
+	projectId?: string;
+	activity: readonly ArtifactThreadActivity[];
+	versions: readonly ArtifactVersion[];
+}): SendTarget[] {
+	const titles = new Map<string, string>();
+	for (const d of detailThreads)
+		if (!d.archived && !index[d.threadId]?.archivedAt)
+			titles.set(d.threadId, index[d.threadId]?.title ?? d.title);
+	if (projectId)
+		for (const th of Object.values(index))
+			if (
+				th.projectId === projectId &&
+				!th.archivedAt &&
+				!th.parentThreadId &&
+				(th.kind ?? "work") === "work"
+			)
+				titles.set(th.id, th.title);
+	const working = new Set(
+		activity.filter((a) => a.doing !== "read").map((a) => a.threadId),
+	);
+	const wrote = new Map<string, number>();
+	for (const v of versions)
+		if (v.authorThreadId)
+			wrote.set(
+				v.authorThreadId,
+				Math.max(wrote.get(v.authorThreadId) ?? 0, v.createdAt),
+			);
+	const recent = (id: string) => {
+		const th = index[id];
+		return th ? (th.lastMessageAt ?? th.updatedAt) : 0;
+	};
+	return [...titles]
+		.map(([threadId, title]) => ({ threadId, title }))
+		.toSorted(
+			(a, b) =>
+				Number(working.has(b.threadId)) - Number(working.has(a.threadId)) ||
+				(wrote.get(b.threadId) ?? 0) - (wrote.get(a.threadId) ?? 0) ||
+				recent(b.threadId) - recent(a.threadId),
+		);
+}
 
 export function CommentsPanel({
 	artifactId,
@@ -73,7 +156,10 @@ export function CommentsPanel({
 			</EmptyState>
 		);
 	return (
-		<div data-testid="comments-panel" className="flex flex-col gap-2 p-2">
+		<div
+			data-testid="comments-panel"
+			className="flex min-h-full flex-col gap-2 p-2"
+		>
 			{open.length === 0 && (
 				<p className="px-1 py-2 text-center text-muted text-sm">
 					{t("artifacts.comments.allResolved")}
@@ -128,6 +214,149 @@ export function CommentsPanel({
 					)}
 				</>
 			)}
+			{open.length > 0 && (
+				<SendBar
+					artifactId={artifactId}
+					version={comments.data?.version ?? 0}
+					open={open.map((x) => x.thread)}
+					detailThreads={threads}
+				/>
+			)}
+		</div>
+	);
+}
+
+/** 「把 N 条未处理的评论发给 [线程] [发送]」。 */
+function SendBar({
+	artifactId,
+	version,
+	open,
+	detailThreads,
+}: {
+	artifactId: string;
+	/** 评论列表对应的最新版本。 */
+	version: number;
+	/** 未解决的串（编号顺序）。 */
+	open: readonly ArtifactCommentThread[];
+	detailThreads: readonly DetailThread[];
+}): ReactNode {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const selectId = useId();
+	const artifact = useArtifact(artifactId).data?.artifact;
+	const versions = useArtifactVersions(artifactId).data;
+	const activity = useArtifactActivity(artifactId);
+	const index = useIndex((s) => s.threads);
+	const markSent = useMarkArtifactCommentsSent();
+	const [choice, setChoice] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false);
+
+	const unsent = open.filter((th) => th.sentAt === undefined);
+	const targets = sendTargets({
+		detailThreads,
+		index,
+		projectId: artifact?.projectId,
+		activity: activity?.threads ?? [],
+		versions: versions ?? [],
+	});
+	// 选过的线程不在候选里了（归档、删除）就回到排在最前的那个
+	const target =
+		choice !== null &&
+		(choice === NEW_THREAD || targets.some((x) => x.threadId === choice))
+			? choice
+			: (targets[0]?.threadId ?? NEW_THREAD);
+	const titleOf = (x: SendTarget) => x.title || t("thread.untitled");
+	const disabled = unsent.length === 0 || busy || !artifact;
+
+	const send = async () => {
+		if (disabled || !artifact) return;
+		const text = commentsPrompt(
+			{ id: artifactId, title: artifact.title },
+			version,
+			unsent,
+			t,
+		);
+		if (target === NEW_THREAD) {
+			uiStore
+				.getState()
+				.seedHome(
+					artifact.projectId
+						? { text, projectId: artifact.projectId }
+						: { text },
+				);
+			navigate("/");
+			return;
+		}
+		const to = targets.find((x) => x.threadId === target);
+		setBusy(true);
+		try {
+			await sendGeneratedPrompt(target, text);
+			await markSent.mutateAsync({
+				id: artifactId,
+				threadIds: unsent.map((th) => th.id),
+				sentTo: target,
+			});
+			showToast({
+				text: t("artifacts.comments.sentToast", {
+					count: unsent.length,
+					thread: to ? titleOf(to) : target,
+				}),
+			});
+		} catch (err) {
+			showToast({
+				tone: "err",
+				text: t("artifacts.comments.sendFailed", {
+					reason: describeError(err, t),
+				}),
+			});
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<div
+			data-testid="comments-send"
+			className="sticky bottom-0 -mx-2 -mb-2 mt-auto flex flex-col gap-1.5 border-border border-t bg-panel p-2"
+		>
+			{unsent.length === 0 ? (
+				<p className="flex items-center gap-1.5 text-muted text-xs">
+					<Icon name="check" size={12} />
+					{t("artifacts.comments.allSent")}
+				</p>
+			) : (
+				<label htmlFor={selectId} className="text-muted text-xs">
+					{t("artifacts.comments.sendLead", { count: unsent.length })}
+				</label>
+			)}
+			<div className="flex items-center gap-1.5">
+				<Select
+					id={selectId}
+					wrapperClassName="min-w-0 flex-1"
+					aria-label={t("artifacts.comments.sendTarget")}
+					value={target}
+					disabled={disabled}
+					onChange={(e) => setChoice(e.target.value)}
+				>
+					{targets.map((x) => (
+						<option key={x.threadId} value={x.threadId}>
+							{titleOf(x)}
+						</option>
+					))}
+					<option value={NEW_THREAD}>
+						{t("artifacts.comments.sendNewThread")}
+					</option>
+				</Select>
+				<Button
+					variant="primary"
+					icon={busy ? undefined : "send"}
+					disabled={disabled}
+					onClick={() => void send()}
+				>
+					{busy ? <Spinner size={12} /> : null}
+					{t("artifacts.comments.send")}
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -172,6 +401,19 @@ function ThreadCard({
 				</span>
 				{thread.anchor.missing && (
 					<Badge tone="warn">{t("artifacts.comments.missing")}</Badge>
+				)}
+				{thread.sentAt !== undefined && !isResolved && (
+					<span
+						title={
+							thread.sentTo
+								? t("artifacts.comments.sentTo", {
+										thread: liveTitle(thread.sentTo) ?? t("thread.untitled"),
+									})
+								: undefined
+						}
+					>
+						<Badge>{t("artifacts.comments.sent")}</Badge>
+					</span>
 				)}
 			</header>
 			<ol className="flex flex-col gap-2">

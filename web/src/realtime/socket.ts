@@ -66,6 +66,12 @@ export type ArtifactEvent = Extract<
 	}
 >;
 
+/** 某个 artifact 的在场信息（观看者、各线程在读 / 改什么）。 */
+export type ArtifactActivityEvent = Extract<
+	WsServerMessage,
+	{ type: "artifact.activity" }
+>;
+
 /** 页面能力的同意请求与结果（M14 步骤 7.3）。 */
 export type ArtifactConsentEvent = Extract<
 	WsServerMessage,
@@ -175,6 +181,13 @@ export class RealtimeClient {
 	>();
 	/** 观看集合变化（开始或停止观看某个 artifact）的监听者。 */
 	private readonly watchListeners = new Set<() => void>();
+	/** 每个正在观看的 artifact 最近一条 `artifact.activity`；停止观看时清掉。 */
+	private readonly artifactActivity = new Map<string, ArtifactActivityEvent>();
+
+	/** 正在观看的 artifact 最近一条在场信息；还没收到或没在观看时为 `undefined`。 */
+	lastArtifactActivity(id: string): ArtifactActivityEvent | undefined {
+		return this.artifactActivity.get(id);
+	}
 
 	/** 订阅 `artifact.consent`。返回取消订阅。 */
 	onArtifactConsent(cb: (msg: ArtifactConsentEvent) => void): () => void {
@@ -253,6 +266,7 @@ export class RealtimeClient {
 				this.artifactWatches.set(id, { ...w, count: w.count - 1 });
 			else {
 				this.artifactWatches.delete(id);
+				this.artifactActivity.delete(id);
 				this.send({ type: "artifact.unwatch", id });
 				this.emitWatchesChanged();
 			}
@@ -713,6 +727,8 @@ export class RealtimeClient {
 			case "artifact.activity":
 			case "artifact.canvas":
 			case "artifact.comments":
+				if (msg.type === "artifact.activity")
+					this.artifactActivity.set(msg.id, msg);
 				for (const cb of [...(this.artifactListeners.get(msg.id) ?? [])])
 					cb(msg);
 				return;
