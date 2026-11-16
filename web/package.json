@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "VITE_MOCK=1 vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build -c vite.sandbox.config.ts",
     "build:launcher": "tsc -b && vite build --mode launcher",
     "preview": "vite preview",
     "check": "biome check . && tsc --noEmit",
