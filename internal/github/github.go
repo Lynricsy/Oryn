@@ -118,7 +118,9 @@ type Service struct {
 	slotMu map[string]*sync.Mutex // 按槽位串行化刷新：GitHub 的刷新令牌用一次即废
 
 	mu         sync.Mutex
-	instTokens map[int64]cachedToken // 安装 id → 安装令牌
+	instTokens map[int64]cachedToken     // 安装 id → 安装令牌
+	scoped     map[scopedKey]scopedToken // (槽位, 仓库 id) → 按仓库收窄的令牌（M14 步骤 3.2，惰性初始化）
+	repoLists  map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
 }
 
 // New 构造服务。
