@@ -541,40 +541,221 @@ sudo systemctl enable --now oryn-provider-fc
 - **串口日志**写在每台 VM jail 里的 4 MiB tmpfs 上（`jail/firecracker/<orb>/root/console/console.log`），写满后 Firecracker 丢弃后续字节、guest 照常运行，所以 provider 停机期间 guest 也写不满宿主磁盘；provider 在跑时每 30 秒把超过 2 MiB 的日志裁到最后 512 KiB，失败任务里带的串口尾部取自这里。
 - **拍快照中途出错**：provider 在冻结 guest 文件系统前留一个 `thaw-pending` 标记，VM 恢复（`Resumed` + 解冻）全部成功才删掉；恢复失败时快照任务失败、不发布。下一次对这台 VM 的 spawn / 冻结 / 快照会先把它恢复好。provider 在 VM 已开机、guest 还没收到启动参数时崩溃，重启后的 spawn 会补发完整的启动请求，不会留下一台没有 orbd 的 VM。
 
-## 13. GitHub 集成（M14）
+## 13. GitHub 集成（M15）
 
-连接方式是一个属于你自己的 GitHub App。设置页「GitHub」按 manifest 一键创建 App（可填组织、可设为公开 App、可在「高级」里改 webhook 地址），完成后把 App 安装到需要的账号或组织，再连接两个 GitHub 用户：
+Oryn 通过你自己注册的 **GitHub OAuth App** 连接 GitHub，用它连接两个 GitHub 用户：
 
-- **我的账号**：交互式线程、首屏新建线程、项目表单里的仓库列表都用它。
-- **Agent 账号**（可选）：专门给 agent 用的第二个真实 GitHub 账号，须对仓库有写权限。设置项「自动化任务的 GitHub 身份」选它之后，GitHub 触发规则与项目级定时创建的线程用它提交、推送、开 PR 与评论；agent 在 orb 内派生的子线程沿用父线程的身份。两个槽位不能是同一个账号。
+- **我的账号**：交互式线程、首屏新建线程、项目表单里的仓库列表、仓库绑定、仓库 webhook 的管理、仓库级轮询与发布哨兵的读请求都用它。
+- **Agent 账号**（可选，但全自动线程默认用它）：专门给 agent 用的第二个真实 GitHub 账号。两个槽位不能是同一个账号。
 
-App、client secret、webhook secret 与两个账号的令牌都用控制面主密钥加密后存在数据库里，不出现在「密钥」设置页。
+OAuth App 的 Client Secret、两个账号的令牌、每个仓库 webhook 的 secret 都用控制面主密钥加密后存在数据库里（AAD 分别为 `github/oauth/client-secret`、`github/identity/<slot>/access`、`github/hook/<repo_id>/secret`），不出现在「密钥」设置页，也不进 orb。
 
 ```yaml
 # orynd.yaml（以下为默认值；只有测试与验收脚本会改）
 github: { api_url: "https://api.github.com", web_url: "https://github.com" }
 ```
 
+### 注册 OAuth App
+
+1. 打开设置页「GitHub」→「OAuth App」卡片，点「在 GitHub 上新建 OAuth App」（`<web_url>/settings/applications/new`）。Homepage URL 随意填写。
+2. **Authorization callback URL** 填卡片上显示的回调地址 `<public_url>/api/v1/public/github/oauth/callback`（旁边有「复制回调地址」）。没保存过配置时，这个地址也会显示。
+3. 在 GitHub 上生成 Client secret，把 **Client ID** 和 **Client Secret** 填回卡片并保存（`PUT /api/v1/github/oauth-app`）。之后再改 Client ID 或 webhook 基址时，Secret 留空表示沿用已保存的值。
+4. **Webhook 基址**默认等于 `public_url`，仓库 webhook 的投递地址是 `<webhook 基址>/api/v1/public/github/webhook`。改动基址后，Oryn 会立刻重写所有仓库 webhook 的 `config.url`，失败只记日志，之后每 10 分钟的同步还会再重写一遍。
+5. 在「账号」卡片里分别「连接」我的账号与 Agent 账号。授权链接 10 分钟内有效，带 `prompt=select_account`；可以「复制链接」到已登录目标账号的另一个浏览器里打开。回调完成后 302 回到 `<public_url>/settings/github?connected=<slot>`，失败时是 `?error=<code>`（`state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`github_not_configured`）。
+6. 「删除配置」先删除 Oryn 在各仓库建的 webhook，再断开两个账号，最后删掉配置行。GitHub 上的 OAuth App 本身不会被删除。单独断开「我的账号」时，同样先删除全部仓库 webhook，因为这些 webhook 由我的账号管理。
+
+没有 OAuth App 配置时，连接账号返回 409 `github_not_configured`。
+
+### Scope
+
+授权请求的 `scope` 恰好是 `repo workflow read:org admin:repo_hook gist write:packages user:email`（`internal/github` 的 `oauthScopes`）。实际授予的 scope 取自 `GET /user` 的 `X-OAuth-Scopes`，「账号」卡片会列出来。缺项时卡片显示「缺少权限」和缺少的 scope，这时需要重新连接。判断是否缺项时，`write:org`、`admin:org` 视为包含 `read:org`，`user` 视为包含 `user:email`。
+
+|scope|用途|
+|---|---|
+|`repo`|公开与私有仓库的读写：git 克隆与推送、issue、PR、评审、评论、标签、Release、合并，以及控制面的仓库绑定、权限查询、CI 汇总与轮询|
+|`workflow`|推送改动了 `.github/workflows/` 的提交。没有它，GitHub 会拒绝这类推送，发布哨兵修 CI 时尤其需要|
+|`read:org`|读组织与团队的成员关系，例如 `gh` 按团队请求评审、列出组织仓库|
+|`admin:repo_hook`|创建、校正、删除仓库 webhook，读取投递日志。实测只有 `repo` 也能做到，单列出来是为了不依赖这一隐含行为|
+|`gist`|`gh gist` 经 API 创建和编辑 gist。经 git 克隆 gist（`gist.github.com`）不在本期范围|
+|`write:packages`|只用于经 `gh api` 调用的 Packages REST API，见下文「不在本期范围」|
+|`user:email`|读取账号邮箱（`GET /user/emails`）|
+
+控制面绑定仓库、管理 hook、查询写权限、执行门禁现查、轮询投递日志或 REST 轮询时，如果某个槽位的令牌收到 401，就把这个槽位标为「需要重新授权」（`reauth`）。OAuth App 的令牌不过期，也没有刷新令牌，所以重新授权只能重新连接。
+
+### 组织批准与 SAML SSO
+
+新建的组织默认开启「OAuth App 访问限制」。没被组织批准的 OAuth App 读不到该组织的私有资源，对公开资源也不能做 privileged 的创建、更新、删除，私有仓库的 webhook 也收不到投递。开启 SAML SSO 的组织另外要求为令牌做 SSO 授权。
+
+Oryn 按 403 响应区分这两种情况：
+
+|状态|判定|出现的位置|界面给出的操作|
+|---|---|---|---|
+|`org_restricted`|403，message 含 `OAuth App access restrictions`|项目的未绑定原因（`bindStatus`）、仓库 webhook 状态|「申请组织批准」：`<web_url>/settings/connections/applications/<client_id>`|
+|`sso_required`|403，且带 `X-GitHub-SSO` 响应头|同上|「完成 SSO 授权」：响应头 `X-GitHub-SSO: required; url=…` 里的地址，记在该 hook 的 `error` 中|
+
+项目未绑定的第三种原因是 `not_found`，表示仓库不存在，或我的账号读不到它。组织批准或完成 SSO 授权之后，下一轮同步（每 10 分钟，依次重新绑定项目、校正仓库 webhook）会自动恢复。也可以重新连接我的账号，连接完成后会立即重新绑定全部项目。
+
+以下行为未实测：开启访问限制的组织里，非成员在公开仓库发评论、开 PR 是否受影响。
+
 ### 仓库绑定与 orb 内凭据
 
-仓库地址是 `https://github.com/<owner>/<repo>` 且 App 已安装到该仓库的项目自动绑定（按仓库 id 跟踪，改名 / 转移后自动更新仓库地址，已有 orb 下次 setup / 唤醒时把 `origin` 改到新地址）。绑定项目的 orb：
+项目的仓库地址是 `https://github.com/<owner>/<repo>`，并且我的账号能读到这个仓库时，项目自动绑定，记录 `github_repo_id`。仓库改名或转移后，Oryn 自动更新仓库地址，已有的 orb 在下次 setup 或唤醒时把 `origin` 改到新地址。我的账号是仓库 admin 时，Oryn 还会在仓库上建一个 webhook（见「事件来源与额度」）。最后一个绑定该仓库的项目解绑、归档或删除后，这个 webhook 也随之删除。
 
-- git 不需要 `git/github.com/token` 密钥：出站代理为该 orb 向 GitHub 申请一个只对项目仓库有效、约 50 分钟过期的令牌并注入；同主机其它仓库的 smart-HTTP 请求仍是 403。
-- `gh` 免登录：orbd 写 `~/.oryn/gh/`（`hosts.yml` 里只有占位令牌 `oryn-proxied`），`gh` 经 `~/.oryn/gh.sock` 发出的 API 请求由出站代理换上同一个按仓库收窄的令牌。orb 的环境变量与磁盘上没有任何真实 GitHub 令牌。
-- 提交作者：Agent 身份的 orb 是 Agent 账号（`<id>+<login>@users.noreply.github.com`）；我的账号身份维持「项目覆盖 > 所有者默认」，两者都没设时用我的 GitHub 账号推出的同格式身份。
-- agent 经 `gh` 发往 GitHub 的 JSON 正文（评论、评审、issue、GraphQL `input.body`）末尾会被追加不可见标记 `<!-- oryn-agent -->`，回流时据此识别 agent 自己的发言。
+orb 内的凭据**与项目是否绑定无关**。只要线程身份对应的槽位可用，任何工作 orb（有没有项目都一样）都得到以下配置：
 
-Runner 线程与协调宿主不下发任何 GitHub 凭据。项目未绑定时仍走原来的 `git/<host>/token`。
+- **git**：`insteadOf` 覆盖整个 `github.com` 主机，出站代理注入 `Basic x-access-token:<OAuth 令牌>`。github.com 上不按仓库限制，能做什么由账号本身的权限决定。其它 git 主机（PAT）的规则不变，见第 7 节「git 出站策略」。
+- **gh**：orbd 写 `~/.oryn/gh/`，其中 `hosts.yml` 里只有占位令牌 `oryn-proxied`。`gh` 经 `~/.oryn/gh.sock` 发往 `api.github.com` 与 `uploads.github.com` 的请求（后者用于 `gh release upload`）由出站代理换上真实令牌，响应里的令牌换成 `oryn-redacted`。orb 的环境变量、磁盘、出站代理的响应里都没有真实令牌。
+- **提交作者**：Agent 身份的 orb 固定用 Agent 账号（`<id>+<login>@users.noreply.github.com`）。我的账号身份按「项目覆盖 > 所有者默认 > 我的 GitHub 账号推出的同格式身份」取。
 
-### 事件：webhook 与轮询
+runner 线程与协调宿主不下发任何 GitHub 凭据。我的账号未连接或需要重新授权时，我的账号身份的 orb 回落到原来的 `git/github.com/token`。Agent 身份的 orb 在 Agent 账号不可用时不回落，git 与 gh 都不可用。
 
-App 的 webhook 默认指向 `<public_url>/api/v1/public/github/webhook`（按 `X-Hub-Signature-256` 校验）。GitHub 访问不到这个地址时不需要额外配置：控制面每 30 秒拉一次 App 的投递日志补齐，同一投递只处理一次，orynd 停机期间的事件在 GitHub 保留投递日志的窗口内重启后补处理。设置页「最近投递」显示来源是「实时」还是「轮询」。`public_url` 是 localhost 或内网地址时 GitHub 可能拒绝创建 App，在「高级」里填一个语法合法的公网地址即可（投递会失败，但会进投递日志，轮询照常取回）。
+### 身份规则
 
-事件只在发送者对仓库有 `write` / `admin` 权限时驱动 agent；Bot、Agent 账号与带 agent 标记的发言不回流。单个 PR 关联每小时最多回流 20 条（超限暂停该关联），CI 失败自动回流最多 5 轮。
+|线程|身份|
+|---|---|
+|交互式线程、首屏新建的线程|我的账号|
+|全自动线程：GitHub 触发规则、项目级定时、发布哨兵|设置项「自动化任务的 GitHub 身份」，默认 `agent`|
+|agent 在 orb 内派生的子线程|沿用父线程|
 
-### 权限说明
+全自动线程的身份按以下规则决定（Q6）：
 
-App 申请 `contents`、`pull_requests`、`issues` 写权限与 `checks`、`statuses`、`actions`、`metadata` 读权限，**不申请 `workflows`**：agent 推送改动了 `.github/workflows/` 的分支会被 GitHub 拒绝。确有需要时在 GitHub 的 App 设置里手动加上并在安装页接受——这等于允许能推送的 agent 改 CI 定义。私有 App 只能装在创建者自己的账号下；要装到其它组织、或 Agent 账号授权失败时，创建时勾选「公开 App」。
+- **不可信入口**：「任何人」档（`drivers=anyone`）的规则，以及外部 PR 评审规则（`pull_request_opened`），只用 Agent 账号。Agent 账号未连接或需要重新授权时**不回退**：不建线程，事件记为 `ignored:agent_required`，同时给你发一条通知（「GitHub trigger skipped」）。
+- **其余全自动线程**：设置为 `agent` 且 Agent 账号可用时用它，否则回退到我的账号，并在首条提示词末尾追加一行 `[Oryn: the Agent GitHub account is unavailable, so this automated thread uses the owner's GitHub account instead.]`。设置为 `user` 时一律用我的账号。
+- 断开 Agent 账号**不会**把设置改回 `user`，Agent 账号未连接时也可以选 `agent`。`mention` 规则只能在 Agent 账号已连接时创建（否则 409 `github_agent_required`）。
+
+触发规则的「驱动者」档位决定谁的发言能驱动 agent。档位同样作用于已关联线程的跟进评论：
+
+|档位|放行|
+|---|---|
+|`writers`|我的账号、规则维护者、`author_association` 为 OWNER / MEMBER / COLLABORATOR，或经 `collaborators/{login}/permission` 查到 write / admin 权限（只在我的账号对仓库有 push 权限时才查这个接口，结果缓存 5 分钟）|
+|`writers_and_author`（默认）|在上一档之外，再加 issue 或 PR 的作者|
+|`anyone`|任何人，但按发送者限流：上一档的人不限，CONTRIBUTOR 每小时 10 次，其余每小时 3 次，超限记为 `ignored:sender_rate_limited`|
+
+Bot 一律不驱动，除非它在规则的「评审机器人」列表里，这时它的发言视为维护者指令，不需要 @。`issues.labeled` 只看打标签的人，与档位无关：我的账号、仓库 owner、规则维护者，或查到写权限的人。每条规则每小时至多建 10 个线程，`issue_opened` 与 `issue_reopened` 共用同一份额度。不论档位，issue 与评论的内容都只放进首条提示词末尾的 `<untrusted-github-content>` 数据块，不作为指令。
+
+### 事件来源与额度
+
+三种来源合成同一种内部事件，后续处理完全相同。同一个投递 guid 只处理一次，投递记录与载荷保留 7 天，期间可以用 `oryn github replay <guid>` 重放已经处理完的投递。
+
+|来源（`source`）|何时使用|做法|额度|
+|---|---|---|---|
+|`webhook`|已绑定的仓库，且我的账号是该仓库 admin|Oryn 建一个仓库 webhook（`name=web`、`content_type=json`、每个 hook 独立的 secret），订阅 `issues`、`issue_comment`、`pull_request`、`pull_request_review`、`pull_request_review_comment`、`check_suite`、`status`、`workflow_run`、`repository`。入口按 `X-GitHub-Hook-ID` 找到这个 hook 的 secret，用它校验 `X-Hub-Signature-256`，并要求 `X-GitHub-Hook-Installation-Target-ID` 等于仓库 id，任一项不符都回 401。请求体上限 25 MiB，超过回 413。每 10 分钟全量校正一次，同 URL 的已有 hook 会被接管|不占 API 额度|
+|`poll`|有 `active` webhook 的仓库|每 30 秒读一次 `GET /repos/{o}/{r}/hooks/{id}/deliveries`；最近 10 分钟收到过实时投递时放宽到 5 分钟。第一次只建立基线，之后为游标之后的新投递补取详情。GitHub 访问不到 webhook 地址时，投递照样记进日志，靠这条路补齐|单独计额：资源 `webhook_deliveries`，500 次/小时，列表与详情各计 1 次。带 `If-None-Match` 返回 304 时不计数。剩余低于 50 时暂停到 `X-RateLimit-Reset`|
+|`rest`|没有 `active` webhook 的情况（`no_admin`、`org_restricted` 等）|**仓库级**：已绑定、有启用规则的仓库，每 60 秒用我的账号读 `issues?since=`（新 PR 也从这里发现）、`issues/comments?since=`、`actions/runs?event=push&status=completed`。**对象级**：线程关联的 issue 与 PR（包括向上游开的 PR），每 60 秒用线程 orb 的槽位读本体、评论、评审、行内评论、head 的 `check-runs` 与 `status`。请求都带 ETag，304 不产生事件。对象进入终态满 24 小时后不再轮询|按槽位记核心额度：`X-RateLimit-Remaining` 低于 500（`rateLimitFloor`）时该槽位的轮询间隔加倍，耗尽时暂停到 `X-RateLimit-Reset`|
+
+设置页「仓库 webhook」卡片按仓库列出状态（`active` / `no_admin` / `org_restricted` / `sso_required` / `error`）和最近一次投递，来源显示为「实时」或「轮询」。GitHub 拒绝创建或改写 webhook 时，状态为 `error`，GitHub 的报错显示在列表里，下一轮同步会重试。如果是 GitHub 不接受 webhook 地址，就在「Webhook 基址」里改填一个语法合法的公网地址：投递即使失败也会进日志，轮询照常取回。
+
+回流的规则与 M14 相同：评审、行内评审评论、会话评论在 15 秒窗口内合成一条自动消息；CI 转为失败立即投递，最多 5 轮；单个 PR 关联每小时最多回流 20 条，超限暂停这个关联。PR 合并后线程标记为已交付。和 PR 不在同一仓库的关联只在两种情况下建立：出站代理观察到本线程创建了这个 PR；或者 PR 的头提交是本线程推送的，并且作者是已连接的两个账号之一。
+
+### 门禁
+
+门禁是项目级配置（项目编辑器的「推送 / 开 PR 门禁」，`Project.githubGates`），默认关闭，由出站代理强制执行：
+
+|字段|含义|
+|---|---|
+|`push`|推送门禁：经出站代理推送到 github.com 的每个 `refs/heads/*` 新 SHA，都必须有本 orb 的 `push` 级以上 `github_prepare` 通过记录|
+|`pr`|PR 门禁：创建 PR 时，head SHA 必须有 `pr` 级通过记录，正文还要满足下面两项|
+|`prHeadings`|PR 正文必需的二级标题（不含 `## `）|
+|`requireClosingRef`|PR 正文必须含 `Fixes\|Closes\|Resolves #N`|
+|`fixCmd` / `checkCmd` / `testCmd`|`github_prepare` 执行的修复、检查、测试命令（时限依次为 600、600、3600 秒）|
+
+`github_prepare` 在线程工作目录里按顺序检查：HEAD 不是 detached；当前分支不是默认分支（发布线程例外）；`origin/<默认分支>..HEAD` 非空；把提交信息里的字面量 `\n` 改写为真换行（只改信息，tree 不变）；运行修复命令，产生的改动并入 HEAD；工作树干净；区间内每个提交的作者等于线程身份的提交身份；运行检查命令；`level=pr` 时再运行测试命令。全部通过后，orbd 经 ctl `github.prepare.report` 登记这个 SHA。`pr` 级记录同时满足 `push` 级。`skip_checks=true` 只跳过三条命令，必须带 `reason`，产生的记录带 `skipped` 标记，同样放行，并计入审计。
+
+此外还有三项**线程限制**，由建立任务的触发规则决定。出站代理每处理一个写请求都向控制面现查一次（包括推送协商阶段 `info/refs?service=git-receive-pack`），不缓存在 setup 时生成的策略里。现查失败时三项都按开启处理：
+
+|限制|来源|效果|
+|---|---|---|
+|只读评审（`ReviewOnly`）|`pull_request_opened` 规则建的线程|拒绝推送（推送协商阶段就回 403）、创建 PR、合并、一切改 ref 的 API|
+|只发 COMMENT（`CommentOnlyReviews`）|规则选项「评审只发 COMMENT」|review 只放行 `COMMENT` 和没带 event 的待提交 review，`APPROVE` / `REQUEST_CHANGES` 被拒|
+|实现需授权（`ImplAuth`）|规则选项「实现需授权」|创建 PR 前必须已获实现授权（见下文「issue 任务」）|
+
+覆盖范围（REST 前缀 `/repos/{o}/{r}` 与 `/repositories/{id}` 等价）：
+
+|类别|REST|GraphQL mutation|处理|
+|---|---|---|---|
+|创建 PR|`POST /pulls`|`createPullRequest`|只读评审时拒绝；实现需授权时检查授权；PR 门禁开启时检查 head SHA 与正文|
+|改 ref（SHA 可知）|`POST /git/refs`、`PATCH\|DELETE /git/refs/*`|`createRef`、`updateRef`、`updateRefs`、`deleteRef`|只读评审时拒绝；推送门禁开启时按分支检查通过记录与默认分支规则|
+|改 ref（SHA 不可知）|`PUT\|DELETE /contents/*`、`POST /merges`、`POST /merge-upstream`、`PUT /pulls/{n}/update-branch`、`POST /branches/{b}/rename`|`createCommitOnBranch`、`mergeBranch`、`updatePullRequestBranch`|只读评审或推送门禁开启时拒绝|
+|合并|`PUT /pulls/{n}/merge`|`mergePullRequest`、`enablePullRequestAutoMerge`、`enqueuePullRequest`|只读评审时拒绝|
+|review 事件|`POST /pulls/{n}/reviews`、`POST /pulls/{n}/reviews/{id}/events`|`addPullRequestReview`、`submitPullRequestReview`|只发 COMMENT 时检查 event|
+|Oryn 的 webhook|`PATCH\|DELETE /hooks/{id}`、`PATCH /hooks/{id}/config`|—|不论门禁开关，始终拒绝|
+|git 推送|`git-receive-pack`|—|只检查 `refs/heads/*`；删除分支不需要通过记录|
+
+- **默认分支**：推送门禁开启时，只有进行中的发布任务（`awaiting_ci` / `fixing`）能推送或改写默认分支，其余线程一律被拒。这一条在出站代理执行，不依赖 orb 内 orbd 的检查。推送门禁关闭（默认）、或项目没有门禁（包括无项目的 orb）时不检查默认分支。
+- **失败即拒绝**：推送门禁、PR 门禁或任一项线程限制开启时，写请求体超过 1 MiB、带压缩编码、无法解析，或受管控的 GraphQL 参数无法静态求值，一律拒绝。
+- **拒绝的形式**：推送被拒时，git 显示 `! [remote rejected] HEAD -> <分支> (oryn: <原因>)`；REST / GraphQL 请求回 403，正文为 `oryn: <原因>`。被拒的请求不转发，但照样记一行审计。
+
+robomp 预设会带上门禁配置：「robomp 分诊」打开推送门禁与 PR 门禁，必需标题为 `Repro`、`Cause`、`Fix`、`Verification`，并要求关闭引用；「robomp 发布哨兵」只打开推送门禁。套用预设时，规则编辑器会提示是否把这份门禁应用到本项目。
+
+### 发布哨兵
+
+`workflow_run_completed` 规则（默认不建，「robomp 发布哨兵」预设）只处理 `status=completed`、head 提交信息以规则前缀开头的 run（默认前缀 `chore: bump version to `），前缀之后的部分就是版本号。每个仓库的每个版本对应一行状态，同一仓库的事件与扫描串行处理：
+
+|状态|含义|
+|---|---|
+|`awaiting_ci`|等待发布提交上的 CI 与 Release|
+|`fixing`|发现阻塞结论，修复线程正在修|
+|`green`|全部 run 完成、没有阻塞结论，且 tag `v<version>` 有非草稿 Release|
+|`failed`|修复轮数用尽、默认分支被别人推进、发布线程被删除或归档、agent 调用 `github_abort_task`，或超时（见下）|
+|`superseded`|同一仓库出现了更新的版本。被取代的版本会中止其线程正在进行的回合|
+
+- **阻塞结论**：`failure`、`timed_out`、`startup_failure`、`action_required`。远端 tag `v<version>` 已不指向这个 run 的 SHA 时，这个 run 记为 `ignored:stale`。
+- **修复轮数**：遇到阻塞结论时开启（第一轮）或续跑同一个线程，每轮加 1，**至多 5 轮**；第 5 轮之后仍阻塞就置为 `failed`。修复推送使用 `git push --atomic --force-with-lease=refs/tags/v<version>:<tagOid> origin HEAD:refs/heads/<默认分支> refs/tags/v<version>`：分支只能快进，tag 只有仍指向旧值时才移动。`tagOid` 由 `github_release_status` 给出。修复推送把 tag 移到新提交后，状态回到 `awaiting_ci`，等新提交的 CI。
+- **推默认分支的例外**：只有 `awaiting_ci` 与 `fixing` 两个状态享有推送门禁下推默认分支的例外，`github_prepare` 也只在这两个状态下跳过「不在默认分支」一项。进入终态后，例外随即收回。
+- **扫描**：每 60 秒扫一次进行中的版本。`awaiting_ci` 每次都用我的账号重新评估：tag 仍指向发布提交、CI 全部通过、有非草稿 Release 时置为 `green`（Release 可能在全部 run 结束之后才手动发布，`release` 事件不在订阅里）；自最后一次状态变化起超过 24 小时（`releaseAwaitMax`）仍不是 green，就置为 `failed` 并通知你。`fixing` 不重新评估 CI，但适用同样的 24 小时期限：从进入 `fixing` 起 24 小时内没有推送修复，就置为 `failed`（「no fix was pushed within 24h」）。
+- **列表翻页**：发布提交上的 run 列表与每个阻塞 run 的 job 列表都分页读取，每页 100 条，各至多 3 页。run 列表读到上限仍有下一页时**不判 green**，保持 `awaiting_ci`，最终由 24 小时期限兜底；失败报告里会注明列表被截断。失败报告至多给 5 个阻塞 job 附失败步骤和日志最后 120 行，其余列入 overflow。
+- **发言与通知**：终态不在 GitHub 上发言，只通知你。有线程时发线程通知；没有线程的版本只在 `failed` 时发一条系统通知。发布线程的 orb 不冻结。
+- **保留**：`green`、`failed`、`superseded` 的版本行保留 30 天，之后删除。
+- 修复线程的身份按「身份规则」中的非不可信规则决定，首条消息首行为 `[Oryn release sentinel on <owner>/<repo> v<version> — started automatically, not typed by the owner]`，失败报告放在 `<untrusted-github-content>` 数据块里。
+
+### issue 任务
+
+触发规则建立的 issue / PR 线程带一个任务，线程页头可以看到它的状态：
+
+|状态|谁设置|
+|---|---|
+|`new`|建立任务时；终态任务被维护者重开时|
+|`reproducing`、`fixing`、`reviewing`、`opened`、`needs_info`|agent 调用 `github_task_state`；`needs_info` 时还会加 `needs-info` 标签|
+|`closed`|issue 在 GitHub 上被关闭（包括被自动关闭）|
+|`merged`|关联的 PR 合并|
+|`abandoned`|agent 调用 `github_abort_task`，或你执行 `oryn github cleanup <owner>/<repo>#<n>`|
+
+- **终态**：`closed`、`merged`、`abandoned`。进入终态时，Oryn 取消待执行的自动关闭并冻结线程的 orb，线程本身保留。之后的非指令评论不再回流；会话评论在 issue / PR 下收到一条固定回帖（正文移植自 robomp），事件记为 `ignored:finalized`。维护者（我的账号、OWNER / MEMBER / COLLABORATOR、规则维护者）在评论里 @Agent 账号时，任务回到 `new`，评论照常回流并唤醒线程。
+- **回合结束后冻结**：`github_abort_task` 由线程自己调用，工具应答还要经 ctl、orbd 才能送达 omp，所以 Oryn 不立即冻结，而是等线程离开 `working` 再冻结。登记后 5 分钟仍未离开 `working` 时，中止当前回合并直接冻结。其余进入终态的途径都立即排队冻结。
+- **实现授权**（规则开启「实现需授权」时）：满足以下任一条件，出站代理才放行本线程开 PR，否则拒绝并说明原因：
+  - 分类（`github_classify_issue`）是 `bug` 或 `documentation`；
+  - 有能授权的人在任务 issue 上打了 `accepted` 标签，或在评论里写了 `go ahead`（不区分大小写）。能授权的人是：仓库 owner 本人、我的账号、规则维护者；评论还接受 `author_association` 为 OWNER 的作者（标签事件不带 `author_association`）。
+- **任务时限**：规则的「任务时限」写入 `thread_issues.deadline_at`。每 60 秒扫描一次，到点时清除时限（每个只处理一次）、中止当前回合，并发一条线程通知。
+- **完成提醒**：规则开启「完成提醒」后，GitHub 投递的回合正常结束时，如果任务状态仍是 `new`、`reproducing` 或 `fixing`，并且分类为 `bug`、`documentation` 或尚未分类，Oryn 就投递一条提醒，每个任务至多 2 次。
+- **自动关闭**：agent 回答问题后调用 `github_autoclose`，Oryn 记下线程身份在该 issue 上的最近一条评论。N 小时后（默认 4，规则可配，工具参数可覆盖，范围 1–720），只检查 **issue 作者**在**这条评论**上的 👎：有就取消，没有就以 `state_reason=completed` 关闭 issue。别人的 👎 不算。等待期间有人发新评论、issue 被外部关闭、任务进入终态，排期都同步取消。到期项经原子认领，每条只执行一次；关闭请求返回 404 时记为 `already_closed`。
+
+### 审计
+
+出站代理为每个 orb 的 GitHub 写操作记一行审计：非 GET 的 REST 请求、解析出的 GraphQL mutation（query 不记），以及 `git-receive-pack`（每个 ref 一行）。被门禁拒绝的请求也记，`gate` 列是拒绝原因。agent 调用 `github_abort_task` 时额外记一行 `method=TASK`。审计保留 30 天，可以在设置页「审计」卡片、`GET /api/v1/github/audit` 和 `oryn github audit [--thread] [--repo]` 中按线程或仓库查询。
+
+agent 的发言不追加任何标记。Oryn 在请求侧预登记自己的写操作来识别它们，所以这些写操作产生的事件不回流，也不触发规则，详见 `docs/protocol.md`「M15」一节的「防回流」。
+
+### CLI
+
+`oryn github` 的子命令都输出表格，支持 `--json`：`triage <owner>/<repo>#<n> [--rule]`（合成 `issues.opened` 交给触发规则，打印线程 id）、`replay <guid>`、`status`（issue 任务、发布状态、仓库 webhook 状态）、`cleanup <owner>/<repo>#<n>`、`audit`。
+
+### 风险说明
+
+OAuth App 的令牌**不能按仓库收窄**，对账号能看到的全部仓库都有效；出站代理也不按仓库拦截 github.com。线程能做什么，只取决于它所用账号的权限。因此：
+
+- 全自动线程应使用 Agent 账号，并且这个账号只被邀请到确实需要的仓库，权限给到够用即可；
+- 不要把有大量组织权限的个人账号设为 Agent 账号；
+- 「任何人」档规则与外部 PR 评审由不可信输入驱动，它们只用 Agent 账号，Agent 账号不可用时宁可不跑，也不退回到我的账号。
+
+### 不在本期范围
+
+- **包仓库推送**：ghcr.io、npm.pkg.github.com 等包仓库要求以真实主机名做 TLS，经占位令牌注入的推送不在本期范围。`write:packages` 只服务于经 `gh api` 调用的 Packages REST API。
+- 经 git 克隆 gist（`gist.github.com`）；`gh gist` 走 API，可以用。
+- GitHub Enterprise Server 的专门验收、回写 Check run、`delete_repo` 与 `admin:org` scope。
+
+### M14 历史
+
+M14 用的是 GitHub App：设置页按 manifest 创建 App，安装到账号或组织后才能绑定仓库，orb 拿到的是按项目仓库收窄、约 50 分钟过期的 installation 令牌，agent 的发言末尾带不可见标记 `<!-- oryn-agent -->`。升级到 M15 时，迁移 `0034_github_drop_app.sql` 删除旧 App 与安装记录，并清空两个身份槽位：升级后要先按上文注册 OAuth App，再重新连接两个账号。项目的 `github_repo_id`、触发规则、PR 关联与 issue 线程都会保留。GitHub 上的旧 App 不会被自动删除，需要时去 GitHub 的 App 设置里手动卸载、删除。
 
 ## 14. Hindsight 记忆服务（M16）
 

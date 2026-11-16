@@ -49,7 +49,15 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
   - `/omfg` 写回中央的规则必须与确认时的预览一致；中央已有同名但内容不同的规则时不覆盖，需要到 Agent 配置里手工合并。
 - **中央模型目录**：控制面用钉定版本的 Oryn Core 一次性运行 `omp models` 生成模型列表（`models.yml` 自定义 provider 与有密钥的内置 provider，附各自的思考档位），设置页、首屏与线程内三处共用，无需打开线程或唤醒 orb；配置变化后自动重算，24 小时过期，也可手动刷新。
 - **头像体系**：默认 Agent 身份、全局助手、每个 role（含内置 role 与不在轮换里的 role）和每个子 Agent 都能设头像，内置 role / Agent 自带默认 Nerd 字形；子 Agent 总览、详情与 task 卡片用头像加光环动效区分运行、排队、完成、失败与仅存转录，公开分享页只带出分享范围内实际用到的 Agent 头像。
-- **GitHub 深度集成**：设置页按 manifest 一键创建属于自己的 GitHub App，连接「我的账号」与可选的「Agent 账号」（GitHub 触发规则与项目级定时可改用 Agent 账号提交与评论）。仓库地址指向 GitHub 且 App 已安装的项目自动按仓库 id 绑定（改名、转移自动跟随），其 orb 里 git 与 `gh` 免登录：出站代理注入只对项目仓库有效的短期令牌，真实令牌不进 orb。线程里推送的提交成为某个 PR 的头提交后，线程页头与列表自动显示该 PR 的状态与 CI 结果；PR 合并即标记已交付。有写权限者的评审、行内评论、会话评论与 CI 失败会在 15 秒窗口内合并成一条自动消息送进线程（agent 自己经 `gh` 发出的内容带不可见标记、不回流）。项目可配置「新 issue / 打标签 / @Agent 账号」触发规则新建线程并给 issue 加 👀；输入框键入 `#` 可把 issue / PR 连同评论作为 Markdown 附件引用。事件以 webhook 为主，GitHub 访问不到实例时每 30 秒拉取 App 投递日志补齐。部署见 [docs/deploy.md](docs/deploy.md) 第 13 节。
+- **GitHub 深度集成**（部署见 [docs/deploy.md](docs/deploy.md) 第 13 节）：
+  - **OAuth App 授权**：在设置页填入自己注册的 GitHub OAuth App，连接「我的账号」与「Agent 账号」。触发规则、项目级定时与发布哨兵建的全自动线程默认用 Agent 账号。
+  - **orb 内免登录**：账号连接后，任何工作 orb 里的 git 与 `gh` 都可以直接使用（runner 与协调宿主除外）。真实令牌由出站代理注入，不进 orb。
+  - **PR 与回流**：项目按仓库地址自动绑定。线程推送的提交成为 PR 的头提交后，线程页头显示 PR 状态与 CI 结果，合并即标记已交付。评审、评论与 CI 失败会回流进线程，agent 自己的写操作不会回流。
+  - **事件来源**：有 admin 权限的仓库走仓库 webhook，并轮询投递日志补漏；其余仓库走 REST 轮询。
+  - **robomp 预设**：「分诊」「PR 评审」「发布哨兵」三个触发规则预设。分诊会登记 issue 状态，并支持实现授权、任务时限、完成提醒与问题自动关闭；PR 评审只发 COMMENT。
+  - **门禁**：项目级的推送 / 开 PR 门禁由出站代理强制执行，推送或开 PR 前须先用 `github_prepare` 跑过检查。
+  - **发布哨兵**：发布提交的 CI 被阻塞时开线程修复，至多 5 轮，直到版本变为 green 或 failed。
+  - **审计**：agent 的每个 GitHub 写操作都记审计，保留 30 天。输入框键入 `#` 可以把 issue / PR 连同评论作为附件引用。
 - **内置 Hindsight 记忆，同项目共享、跨项目隔离**：orb 与 Runner 里的 agent 共用一个自托管的 [Hindsight](https://github.com/vectorize-io/hindsight) 记忆库，回合结束自动写入，下一轮自动召回。控制面网关替 agent 填写项目标签：同一项目的各个线程共享记忆，不同项目互不可见。写进全局层的内容（个人偏好、跨项目经验）先进候选队列，主人批准后才对所有项目生效。Hindsight 自己调用的模型、嵌入与重排全部经控制面中转，可在同一协议内随时换模型。「更多 → Agent → 记忆」可以浏览、搜索、按线程遗忘、审核候选、刷新 mental model、查看用量和导出；删除项目时，它的记忆一并删除。部署见 [docs/deploy.md](docs/deploy.md) 第 14 节。
 
 ### 2. Space 多线程协调、定时巡检与全量统计
