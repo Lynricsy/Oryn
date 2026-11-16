@@ -238,6 +238,30 @@ func TestHostFollowPinsLoadToOneVersion(t *testing.T) {
 	}
 }
 
+// 钉版本的重定向重新编码已解码的路径：文件名里的 #、%、空格不能变成片段或改变转义含义。
+func TestHostFollowRedirectEncodesPath(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	h := newHost(t, e, "localhost", fakeRuntime)
+	a := mkPage(t, e, put("index.html", page), put("a#b.html", "hash"), put("100%.html", "percent"), put("x y/z.css", "space"))
+	token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	require.NoError(t, err)
+	mw := h.Middleware(http.NotFoundHandler())
+	host := "a-" + token + ".localhost:7600"
+	for _, c := range []struct{ req, loc, body string }{
+		{"/a%23b.html", "/_oryn/v/1/a%23b.html", "hash"},
+		{"/100%25.html", "/_oryn/v/1/100%25.html", "percent"},
+		{"/x%20y/z.css?q=%23", "/_oryn/v/1/x%20y/z.css?q=%23", "space"},
+	} {
+		rec := doRaw(mw, hostReq{host: host, path: c.req})
+		require.Equal(t, http.StatusFound, rec.Code, c.req)
+		assert.Equal(t, c.loc, rec.Header().Get("Location"), c.req)
+		got := doRaw(mw, hostReq{host: host, path: rec.Header().Get("Location")})
+		require.Equal(t, http.StatusOK, got.Code, c.req)
+		assert.Contains(t, got.Body.String(), c.body, c.req)
+	}
+}
+
 // 主域回退：/_af/<令牌>/ 提供帧，CSP 用路径源而不是 'self'。
 func TestHostFallbackPath(t *testing.T) {
 	e := newEnv(t)

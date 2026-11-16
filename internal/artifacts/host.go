@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,10 +115,8 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 	}
 	setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, strict))
 	if rel := strings.TrimPrefix(p, "/"); f.version == 0 && !strings.HasPrefix(rel, ReservedPrefix+"/") {
-		loc := root + ReservedPrefix + "/v/" + strconv.Itoa(head) + "/" + rel
-		if r.URL.RawQuery != "" {
-			loc += "?" + r.URL.RawQuery
-		}
+		// p 是已解码的路径：经 url.URL 重新编码，文件名里的 #、%、? 与空格才不会变成片段、查询或别的转义
+		loc := (&url.URL{Path: root + ReservedPrefix + "/v/" + strconv.Itoa(head) + "/" + rel, RawQuery: r.URL.RawQuery}).String()
 		http.Redirect(w, r, loc, http.StatusFound)
 		return
 	}
