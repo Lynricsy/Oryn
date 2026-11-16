@@ -2214,6 +2214,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 以一个选项作答 input 通知对应的待答请求（推送通知上的操作按钮）
+         * @description 只接受可一触作答的请求：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`，2–3 个不超过 24 字符的单行选项；
+         *     与推送载荷里 `actions` 的判定相同（载荷另要求完整问题不超过 300 字符）。作答走与 `ui.response` 相同的先到先得路径。
+         *     通知不存在 → 404 `not_found`；不是可一触作答的 input（done / error / 计划审批 / 文字输入 / 表单 / 多选等）→ 422 `not_answerable`；
+         *     `option` 越界 → 400 `invalid_option`；已在别处作答或已取消 → 409 `input_resolved`。
+         */
+        post: operations["answerNotification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notification-channels": {
         parameters: {
             query?: never;
@@ -5178,6 +5203,14 @@ export interface components {
             /** @description 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204 */
             id?: components["schemas"]["NotificationId"];
         };
+        NotificationAnswerRequest: {
+            /** @description 选项序号（从 0 起），即推送载荷 `actions[].i` */
+            option: number;
+        };
+        NotificationAnswerResult: {
+            /** @description 被作答请求所在的线程 */
+            threadId: components["schemas"]["ThreadId"];
+        };
         /** @enum {string} */
         NotificationChannelKind: "telegram" | "webhook" | "ntfy" | "bark";
         /**
@@ -6605,6 +6638,7 @@ export interface components {
         ShareSlugPath: components["schemas"]["ShareSlug"];
         PublishedFileIdPath: components["schemas"]["PublishedFileId"];
         NotificationChannelIdPath: components["schemas"]["NotificationChannelId"];
+        NotificationIdPath: components["schemas"]["NotificationId"];
         PushSubscriptionIdPath: components["schemas"]["PushSubscriptionId"];
         BrowserProfileIdPath: components["schemas"]["BrowserProfileId"];
         SpaceIdPath: components["schemas"]["SpaceId"];
@@ -10041,6 +10075,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    answerNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["NotificationIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationAnswerRequest"];
+            };
+        };
+        responses: {
+            /** @description 已作答 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationAnswerResult"];
+                };
             };
             default: components["responses"]["Error"];
         };

@@ -2,7 +2,7 @@ package notify
 
 // FCM 发送器（M7 附录 B）：Android `gms` 包在没有 UnifiedPush 分发器时登记 FCM 注册令牌与 RFC 8291 接收端密钥，
 // 服务端以服务账号做 RS256 JWT 换 OAuth access token（缓存 55 分钟），经 FCM HTTP v1 `messages:send`
-// 发 data-only 高优先级消息。data 只有 `{v:"2", id, e}`：`e` 是与 Web Push 完全相同的 aes128gcm 密文（base64url），
+// 发 data-only 高优先级消息（撤回消息为普通优先级）。data 只有 `{v:"2", id, e}`：`e` 是与 Web Push 完全相同的 aes128gcm 密文（base64url），
 // Google 只见密文；不设 collapse key（见 fcmSender.Send）。FCM 回 UNREGISTERED 即删除订阅；没有密钥的旧订阅不再投递、直接删除。
 // 服务账号 JSON 存在密钥库里（须为 proxy 模式：env 模式的密钥会注入每台 orb），配置只引用密钥名。
 
@@ -247,7 +247,12 @@ func (f fcmSender) Send(ctx context.Context, m Message) Result {
 	if err != nil {
 		return Result{Err: err}
 	}
-	android := map[string]any{"priority": "HIGH", "ttl": fmt.Sprintf("%ds", pushTTL)}
+	// 撤回不弹通知：用普通优先级（高优先级却不显示通知的消息会被 FCM 降级）
+	priority := "HIGH"
+	if m.Withdraw {
+		priority = "NORMAL"
+	}
+	android := map[string]any{"priority": priority, "ttl": fmt.Sprintf("%ds", pushTTL)}
 	body, err := json.Marshal(map[string]any{"message": map[string]any{"token": f.token, "data": data, "android": android}})
 	if err != nil {
 		return Result{Err: err}

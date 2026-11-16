@@ -2663,6 +2663,34 @@ paths:
       responses:
         '204': { description: 成功 }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/notifications/{id}/answer:
+    parameters:
+      - { $ref: '#/components/parameters/NotificationIdPath' }
+    post:
+      tags: [notifications]
+      operationId: answerNotification
+      summary: 以一个选项作答 input 通知对应的待答请求（推送通知上的操作按钮）
+      description: |
+        只接受可一触作答的请求：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`，2–3 个不超过 24 字符的单行选项；
+        与推送载荷里 `actions` 的判定相同（载荷另要求完整问题不超过 300 字符）。作答走与 `ui.response` 相同的先到先得路径。
+        通知不存在 → 404 `not_found`；不是可一触作答的 input（done / error / 计划审批 / 文字输入 / 表单 / 多选等）→ 422 `not_answerable`；
+        `option` 越界 → 400 `invalid_option`；已在别处作答或已取消 → 409 `input_resolved`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationAnswerRequest' }
+      responses:
+        '200':
+          description: 已作答
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationAnswerResult' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/notification-channels:
     get:
       tags: [notifications]
@@ -3855,6 +3883,11 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/NotificationChannelId' }
+    NotificationIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/NotificationId' }
     PushSubscriptionIdPath:
       name: id
       in: path
@@ -7046,6 +7079,23 @@ components:
           allOf:
             - $ref: '#/components/schemas/NotificationId'
           description: 只标这一条（没有线程的通知按 id 已读）；不存在或已读同样回 204
+    NotificationAnswerRequest:
+      type: object
+      required: [option]
+      properties:
+        option:
+          type: integer
+          minimum: 0
+          maximum: 2
+          description: 选项序号（从 0 起），即推送载荷 `actions[].i`
+    NotificationAnswerResult:
+      type: object
+      required: [threadId]
+      properties:
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 被作答请求所在的线程
     NotificationChannelKind:
       type: string
       enum: [telegram, webhook, ntfy, bark]

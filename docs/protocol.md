@@ -375,6 +375,7 @@ Sec-Fetch-Site 不存在：
 |`DELETE /api/v1/published-files/{id}`|`revokePublishedFile`|—|`204`|
 |`GET /api/v1/notifications`|`listNotifications`|`limit?`（默认 50，≤100）、`before?`（ms）|`NotificationList{notifications, unread}`|
 |`POST /api/v1/notifications/read`|`markNotificationsRead`|`NotificationsReadRequest{id? \| threadId?}`（都省略 = 全部；都给 → 400 `invalid_request`）|`204`；随后广播 `notifications.read`|
+|`POST /api/v1/notifications/{id}/answer`|`answerNotification`|`NotificationAnswerRequest{option}`（选项序号，即推送载荷 `actions[].i`；缺省 → 400 `invalid_request`）|`200 NotificationAnswerResult{threadId}`；404 `not_found`；422 `not_answerable`（不是可一触作答的 input）；400 `invalid_option`（越界）；409 `input_resolved`（已在别处作答或已取消）。鉴权同其它 `/api/v1`（Cookie + `X-Oryn-CSRF` 或设备 Bearer）。见下文「推送上的作答按钮」|
 |`GET /api/v1/notification-channels`|`listNotificationChannels`|—|`NotificationChannelList{channels}`|
 |`POST /api/v1/notification-channels`|`createNotificationChannel`|`NotificationChannelInput`|`201 NotificationChannel`|
 |`PATCH /api/v1/notification-channels/{id}`|`updateNotificationChannel`|`NotificationChannelPatch`|`NotificationChannel`|
@@ -435,9 +436,17 @@ Sec-Fetch-Site 不存在：
 - 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`fcm` 订阅只在服务器启用 FCM 时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、FCM `UNREGISTERED` 删除订阅。`budget` 与无线程的 `error` 由 `PostSystem` / `Post` 立即生成，不去抖、不看 focus。
 - Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: <event>`、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。`event` 取 `thread.<kind>`、`budget.alert`（预算告警）或 `test`（测试）。有线程时体为 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`；没有线程时**不出现 `thread` 键**，改带顶层 `"url"`（绝对地址）。消费方应忽略不认识的 `event`。
 - ntfy：`POST <server>` JSON 发布 `{"topic","title","message","click","tags","priority"}`（`input` priority 4，其余 3）；有 `token` 时 `Authorization: Bearer`。Bark：`POST <server>/push` `{"device_key","title","body","url","group":"Oryn","level"}`，HTTP 200 且 `code == 200` 才算成功。
-- Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url","tag"}`：`url` 为该通知的站内路径（有线程为 `/t/<threadId>`），`tag` 有线程为 `oryn-<threadId 末 12 位>`、没有线程为 `oryn-budget`（`budget`）或 `oryn-automations`（其余）；`Topic` 由线程 id（没有线程时由 tag）求得。`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
-- FCM（M7，见下文「M7：移动推送」）：HTTP v1 `messages:send`，data-only 高优先级，载荷与 Web Push 相同、同样以 RFC 8291 加密，`data` 只有 `{v:"2", id, e:<密文>}`。
+- Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url","tag"}`（可一触作答的 `input` 另带 `actions`，撤回消息另有格式，见下文「推送上的作答按钮与撤回」）：`url` 为该通知的站内路径（有线程为 `/t/<threadId>`），`tag` 有线程为 `oryn-<threadId 末 12 位>`、没有线程为 `oryn-budget`（`budget`）或 `oryn-automations`（其余）；`Topic` 由线程 id（没有线程时由 tag）求得。`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
+- FCM（M7，见下文「M7：移动推送」）：HTTP v1 `messages:send`，data-only 高优先级（撤回消息为普通优先级），载荷与 Web Push 相同、同样以 RFC 8291 加密，`data` 只有 `{v:"2", id, e:<密文>}`。
 - Telegram：`getUpdates` 长轮询（不需要公网入站）；至多一个渠道、只接受绑定的那一个私聊（`/start <码>` 绑定，码 8 位、10 分钟）。`input` 且有选项时带 inline 按钮（`callback_data = "o:<deliveryID>:<序号>"`）；点按钮或回复通知作答待答请求，回复其它通知即发给该线程：线程 `working` 时发 `steer`，否则发 `prompt`（开启新回合，与 Web 输入区一致）；请求在别处被作答后撤回按钮。
+
+#### 推送上的作答按钮与撤回
+
+- 可一触作答的 `input`（`uiprompt.SingleChoice`：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`；不含文字输入、密钥、多选、多题、表单与计划审批），选项 2–3 个、每个是不超过 24 字符的单行文字，且**完整问题**（`select` 的多行标题原样保留，工具审批即含 `Allow tool: …` 与命令；`confirm` 为标题 + 说明）不超过 300 字符时，Web Push / FCM 载荷带 `actions: [{i, label, role?}]`，`body` 换成完整问题。问题会被截断时不带按钮，只发普通通知（点按打开线程）：按钮只与完整说明一起出现。`role` 只在 `confirm` 上，为 `yes` / `no`，客户端按界面语言显示「是 / 否」；其余按钮显示 `label` 原文。载荷超过上限时先去掉按钮（`body` 回到普通摘要）再去掉正文。投递时请求已解决的通知不带按钮。
+- 设备点按钮 → `POST /api/v1/notifications/{id}/answer {option}`；与 `ui.response` 同一条先到先得路径（`threads.UIResponse`）。不在载荷里放任何凭据：Web 用会话 Cookie，Android 用设备令牌。
+- 撤回：请求作答或取消（`InputResolved`）时，对**带按钮**且投递状态为 `sent` 的推送订阅尽力发一条 `{"v":1,"kind":"withdraw","id","tag"}`（不重试、不落投递行；Web Push 不设 `Topic`，免得在推送服务里顶掉同线程尚未送达的通知；`Urgency: normal`）。推送刚发出时请求恰好被作答（那时投递还没记成 `sent`）由发送方送达后复查补发。Apple 端点（Safari 不显示按钮、且每条推送都必须弹出通知）不发撤回。没有按钮的推送不撤回。设备只撤 `tag` 上仍显示着同一 `id` 的那一条：Android 直接取消；Service Worker 换成静默的「已在别处作答」（推送事件结束时必须留有可见通知，否则 Chrome 会弹「此网站已在后台更新」），已作答的替换版不再改动。
+- 作答结果：Service Worker 以同 tag 的通知替换原通知（已作答 / 已在别处作答 / 失败时原文 + 一行错误并保留按钮），不打开窗口；按钮数超过浏览器的 `Notification.maxActions` 时一个都不显示。Android 见 [mobile.md](mobile.md)「在通知上作答」。
+- 实现：`internal/notify/actions.go`；测试 `internal/notify/actions_test.go`（按钮的判定矩阵、作答的 200 / 409 / 422 / 400 / 404、撤回与发送竞态）、`internal/api/notifications_test.go`（HTTP 映射）、`web/src/lib/sw.test.ts`。
 
 ### orbd 本机 API（`sync` 特性，`fs` 流上）
 

@@ -335,7 +335,7 @@ func (s *Service) InputRequested(ev threads.InputEvent) {
 	s.armLocked(ev.ThreadID, timerKey{kind: KindInput, request: ev.RequestID}, s.cfg.InputDelay, &pendingTimer{frame: frame, plan: ev.Plan})
 }
 
-// InputResolved 实现 threads.Observer：取消对应定时器，并在后台把已发出的通知标为已解决、撤回 Telegram 按钮。
+// InputResolved 实现 threads.Observer：取消对应定时器，并在后台把已发出的通知标为已解决、撤回 Telegram 按钮与推送按钮。
 func (s *Service) InputResolved(threadID, requestID string) {
 	s.mu.Lock()
 	s.cancelLocked(threadID, timerKey{kind: KindInput, request: requestID})
@@ -651,7 +651,7 @@ func (s *Service) lastAssistantText(ctx context.Context, threadID string) string
 	return ""
 }
 
-// resolve 把该请求的未决通知标为已解决，并撤回它们在 Telegram 里的按钮。
+// resolve 把该请求的未决通知标为已解决，撤回它们在 Telegram 里的按钮与推送通知上的操作按钮。
 func (s *Service) resolve(ctx context.Context, threadID, requestID string) {
 	nids, err := s.st.Q.ResolveNotificationRequest(ctx, db.ResolveNotificationRequestParams{Now: s.now(), ThreadID: threadID, RequestID: requestID})
 	if err != nil {
@@ -660,6 +660,7 @@ func (s *Service) resolve(ctx context.Context, threadID, requestID string) {
 	}
 	for _, id := range nids {
 		s.revokeButtons(ctx, id)
+		s.withdraw(ctx, id)
 	}
 }
 

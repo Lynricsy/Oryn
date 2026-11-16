@@ -7,7 +7,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 推送服务在没有 Rust 时自己发的少量请求（后台登记订阅、FCM 补拉通知）：Bearer 设备令牌，不跟随重定向，15 秒超时。
+ * 推送服务在没有 Rust 时自己发的少量请求（后台登记订阅、FCM 补拉通知、通知上的作答按钮）：Bearer 设备令牌，
+ * 不跟随重定向，连接与读取各 15 秒超时（调用方可缩短）。
  * 地址只来自 [PushStore.server]（Rust 登记成功时记下的已配对服务器）。
  */
 internal object OrynHttp {
@@ -17,12 +18,19 @@ internal object OrynHttp {
   private const val MAX_BODY = 1 shl 20
 
   @Throws(IOException::class)
-  fun call(context: Context, method: String, url: String, token: String, body: JSONObject? = null): Response {
+  fun call(
+    context: Context,
+    method: String,
+    url: String,
+    token: String,
+    body: JSONObject? = null,
+    timeoutMs: Int = TIMEOUT_MS,
+  ): Response {
     val conn = URL(url).openConnection() as HttpURLConnection
     try {
       conn.instanceFollowRedirects = false
-      conn.connectTimeout = TIMEOUT_MS
-      conn.readTimeout = TIMEOUT_MS
+      conn.connectTimeout = timeoutMs
+      conn.readTimeout = timeoutMs
       conn.requestMethod = method
       conn.setRequestProperty("Authorization", "Bearer $token")
       conn.setRequestProperty("Accept", "application/json")

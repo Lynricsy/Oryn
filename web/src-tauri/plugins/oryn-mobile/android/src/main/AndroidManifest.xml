@@ -16,5 +16,9 @@
                 <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
             </intent-filter>
         </service>
+        <!-- 通知上的作答按钮：只收本应用 PendingIntent 发来的显式广播 -->
+        <receiver
+            android:name=".AnswerReceiver"
+            android:exported="false" />
     </application>
 </manifest>

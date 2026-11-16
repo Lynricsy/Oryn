@@ -330,12 +330,12 @@ func TestFCMSender(t *testing.T) {
 	assert.Equal(t, "reg-token-1", msg["token"])
 	assert.NotContains(t, msg, "notification", "data-only")
 	// 请求体里没有任何明文：标题、正文、线程 id（url / tag 都含它）、明文字段名都不出现
-	for _, leak := range []string{"推送测试", "选 A 还是 B", `\u63a8`, id, id[len(id)-12:], `"title"`, `"body"`, `"url"`, `"tag"`, `"kind"`} {
+	for _, leak := range []string{"推送测试", "选 A 还是 B", `\u63a8`, id, id[len(id)-12:], `"title"`, `"body"`, `"url"`, `"tag"`, `"kind"`, `"actions"`} {
 		assert.NotContains(t, s0.raw, leak, "FCM 请求体泄露明文 %q", leak)
 	}
 	tag := "oryn-" + id[len(id)-12:]
 	assert.Equal(t, map[string]any{"v": float64(1), "id": n.ID, "kind": "input", "title": "推送测试", "body": "选 A 还是 B？",
-		"url": "/t/" + id, "tag": tag}, fcmPlain(t, c, s0))
+		"url": "/t/" + id, "tag": tag, "actions": []any{map[string]any{"i": float64(0), "label": "A"}, map[string]any{"i": float64(1), "label": "B"}}}, fcmPlain(t, c, s0))
 	// 不用 collapse key：每条都是非折叠消息，离线时不会被 FCM 的「最多 4 个 collapse key」规则静默淘汰
 	assert.Equal(t, map[string]any{"priority": "HIGH", "ttl": "86400s"}, msg["android"])
 	assert.Equal(t, statusSent, f.delivery(ds[0].ID).Status)

@@ -4491,6 +4491,18 @@ type Notification struct {
 	URL string `json:"url"`
 }
 
+// NotificationAnswerRequest defines model for NotificationAnswerRequest.
+type NotificationAnswerRequest struct {
+	// Option 选项序号（从 0 起），即推送载荷 `actions[].i`
+	Option int `json:"option"`
+}
+
+// NotificationAnswerResult defines model for NotificationAnswerResult.
+type NotificationAnswerResult struct {
+	// ThreadID 被作答请求所在的线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
 // NotificationChannel 机密字段（token、secret、topic、deviceKey、URL 全文）只写不读
 type NotificationChannel struct {
 	// CreatedAt UTC 毫秒时间戳
@@ -7223,6 +7235,9 @@ type GitScopeQuery = GitScope
 // NotificationChannelIDPath `nch_<ulid>`
 type NotificationChannelIDPath = NotificationChannelID
 
+// NotificationIDPath `ntf_<ulid>`
+type NotificationIDPath = NotificationID
+
 // OrbBackgroundQuery defines model for OrbBackgroundQuery.
 type OrbBackgroundQuery = bool
 
@@ -7885,6 +7900,12 @@ type UpdateNotificationChannelJSONRequestBody = NotificationChannelPatch
 
 // MarkNotificationsReadJSONRequestBody defines body for MarkNotificationsRead for application/json ContentType.
 type MarkNotificationsReadJSONRequestBody = NotificationsReadRequest
+
+// AnswerNotificationJSONRequestBody defines body for AnswerNotification for application/json ContentType.
+type AnswerNotificationJSONRequestBody = NotificationAnswerRequest
+
+// SetOrbDesktopControlJSONRequestBody defines body for SetOrbDesktopControl for application/json ContentType.
+type SetOrbDesktopControlJSONRequestBody = OrbDesktopControlRequest
 
 // SetOrbDesktopProfileJSONRequestBody defines body for SetOrbDesktopProfile for application/json ContentType.
 type SetOrbDesktopProfileJSONRequestBody = OrbDesktopProfilePut
@@ -9973,6 +9994,9 @@ type ServerInterface interface {
 	// MarkNotificationsRead 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read`
 	// (POST /api/v1/notifications/read)
 	MarkNotificationsRead(w http.ResponseWriter, r *http.Request)
+	// AnswerNotification 以一个选项作答 input 通知对应的待答请求（推送通知上的操作按钮）
+	// (POST /api/v1/notifications/{id}/answer)
+	AnswerNotification(w http.ResponseWriter, r *http.Request, id NotificationIDPath)
 	// ListOrbs orb 列表
 	// (GET /api/v1/orbs)
 	ListOrbs(w http.ResponseWriter, r *http.Request, params ListOrbsParams)
@@ -10642,6 +10666,12 @@ func (_ Unimplemented) ListNotifications(w http.ResponseWriter, r *http.Request,
 // MarkNotificationsRead 标记已读（`id` 只标一条、`threadId` 只标该线程、都省略 = 全部）；随后向所有连接广播 `notifications.read`
 // (POST /api/v1/notifications/read)
 func (_ Unimplemented) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AnswerNotification 以一个选项作答 input 通知对应的待答请求（推送通知上的操作按钮）
+// (POST /api/v1/notifications/{id}/answer)
+func (_ Unimplemented) AnswerNotification(w http.ResponseWriter, r *http.Request, id NotificationIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12527,6 +12557,32 @@ func (siw *ServerInterfaceWrapper) MarkNotificationsRead(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MarkNotificationsRead(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AnswerNotification operation middleware
+func (siw *ServerInterfaceWrapper) AnswerNotification(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id NotificationIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AnswerNotification(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17541,6 +17597,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/notifications/read", wrapper.MarkNotificationsRead)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/notifications/{id}/answer", wrapper.AnswerNotification)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/notification-channels", wrapper.ListNotificationChannels)

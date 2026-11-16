@@ -31,6 +31,10 @@ type Message struct {
 	Locale string
 	// CreatedAt 是通知创建时间（毫秒）。
 	CreatedAt int64
+	// Resolved 表示 input 的请求已作答 / 取消：推送不再带操作按钮。
+	Resolved bool
+	// Withdraw 表示这是撤回消息（推送订阅专用，见 withdrawPayload）：只撤掉设备上仍显示的该条通知。
+	Withdraw bool
 }
 
 // Result 是一次发送的结果。
@@ -170,13 +174,17 @@ func (s *Service) DeliverDue(ctx context.Context) int {
 		default:
 			continue
 		}
-		s.applyResult(ctx, d, sender.Send(ctx, m))
+		r := sender.Send(ctx, m)
+		s.applyResult(ctx, d, r)
+		if r.Err == nil && d.SubscriptionID != nil {
+			s.withdrawIfResolved(ctx, sender, m)
+		}
 	}
 	return len(due)
 }
 
 func (s *Service) message(n db.Notification, d db.NotificationDelivery) Message {
-	m := Message{NotificationID: n.ID, DeliveryID: d.ID, Kind: n.Kind, Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt}
+	m := Message{NotificationID: n.ID, DeliveryID: d.ID, Kind: n.Kind, Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt, Resolved: n.ResolvedAt != nil}
 	if n.ThreadID != nil {
 		m.ThreadID = *n.ThreadID
 		m.URL = s.threadURL(m.ThreadID)

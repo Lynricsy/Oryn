@@ -9,6 +9,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/notify"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // NotifyDeps 是通知、通知渠道与推送订阅接口的依赖（M5 步骤 3.6）。
@@ -91,6 +92,36 @@ func (s *Server) MarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// AnswerNotification 对应 `POST notifications/{id}/answer`：推送通知上的操作按钮以一个选项作答待答请求。
+// 缺 `option` → 400（不能把空请求体当成选第一个选项，例如「批准」）。
+func (s *Server) AnswerNotification(w http.ResponseWriter, r *http.Request, id apigen.NotificationIDPath) {
+	svc, ok := s.notifySvc(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		Option *int `json:"option"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody)).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
+		return
+	}
+	if req.Option == nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "缺少 option")
+		return
+	}
+	threadID, err := svc.Answer(r.Context(), id, *req.Option)
+	var te *threads.Error
+	switch {
+	case err == nil:
+		WriteJSON(w, http.StatusOK, apigen.NotificationAnswerResult{ThreadID: threadID})
+	case errors.As(err, &te):
+		writeThreadErr(w, err)
+	default:
+		writeNotifyErr(w, r, err)
+	}
 }
 
 // ListNotificationChannels 对应 `GET notification-channels`。

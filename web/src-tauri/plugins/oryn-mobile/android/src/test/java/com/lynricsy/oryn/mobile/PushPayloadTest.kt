@@ -14,7 +14,53 @@ class PushPayloadTest {
     val m = parse(
       """{"v":1,"id":"n1","kind":"idle","title":"线程完成","body":"done","url":"/t/$thread","tag":"oryn-23456789abcd"}""",
     )
-    assertEquals(PushPayload.Model("n1", "线程完成", "done", "/t/$thread", "oryn-23456789abcd"), m)
+    assertEquals(PushPayload.Model("n1", "线程完成", "done", "/t/$thread", "oryn-23456789abcd", kind = "idle"), m)
+  }
+
+  @Test
+  fun parsesInputActions() {
+    val m = parse(
+      """{"v":1,"id":"ntf_1","kind":"input","title":"t","body":"Allow tool: bash\nCommand: ls","url":"/t/$thread",""" +
+        """"tag":"oryn-23456789abcd","actions":[{"i":0,"label":"Yes","role":"yes"},{"i":1,"label":"No","role":"no"},{"i":2,"label":"Later","role":"x"}]}""",
+    )
+    assertEquals(
+      listOf(
+        PushPayload.Action(0, "Yes", "yes"),
+        PushPayload.Action(1, "No", "no"),
+        PushPayload.Action(2, "Later", null),
+      ),
+      m?.actions,
+    )
+    // 序列化回去再解析，按钮与正文原样保留（作答后据此重绘通知）
+    assertEquals(m, PushPayload.parse(PushPayload.encode(m!!).toByteArray(Charsets.UTF_8)))
+  }
+
+  @Test
+  fun invalidActionsAreDroppedAsAGroup() {
+    fun acts(actions: String, kind: String = "input", id: String = "ntf_1") =
+      parse("""{"id":"$id","kind":"$kind","title":"t","url":"/t/$thread","actions":$actions}""")?.actions
+    val two = """[{"i":0,"label":"A"},{"i":1,"label":"B"}]"""
+    assertEquals(2, acts(two)?.size)
+    assertEquals(emptyList<PushPayload.Action>(), acts(two, kind = "done"))
+    assertEquals(emptyList<PushPayload.Action>(), acts(two, id = ""))
+    assertEquals(emptyList<PushPayload.Action>(), acts("""[{"i":0,"label":"A"}]"""))
+    assertEquals(emptyList<PushPayload.Action>(), acts("""[{"i":0,"label":"A"},{"i":1,"label":"B"},{"i":2,"label":"C"},{"i":3,"label":"D"}]"""))
+    assertEquals(emptyList<PushPayload.Action>(), acts("""[{"i":0,"label":"A"},{"i":"1","label":"B"}]"""))
+    assertEquals(emptyList<PushPayload.Action>(), acts("""[{"i":0,"label":"A"},{"i":-1,"label":"B"}]"""))
+    assertEquals(emptyList<PushPayload.Action>(), acts("""[{"i":0,"label":"A"},{"i":1,"label":""}]"""))
+    assertEquals(emptyList<PushPayload.Action>(), acts(""""nope""""))
+  }
+
+  @Test
+  fun parsesWithdrawal() {
+    fun w(json: String) = PushPayload.withdrawal(json.toByteArray(Charsets.UTF_8))
+    assertEquals(PushPayload.Withdrawal("ntf_1", "oryn-1"), w("""{"v":1,"kind":"withdraw","id":"ntf_1","tag":"oryn-1"}"""))
+    assertNull(w("""{"v":1,"kind":"withdraw","id":"ntf_1"}"""))
+    assertNull(w("""{"v":1,"kind":"withdraw","tag":"oryn-1"}"""))
+    assertNull(w("""{"v":1,"kind":"input","id":"ntf_1","title":"t","url":"/t/$thread","tag":"oryn-1"}"""))
+    assertNull(w("not json"))
+    // 撤回消息没有标题，不会被当成通知显示
+    assertNull(parse("""{"v":1,"kind":"withdraw","id":"ntf_1","tag":"oryn-1"}"""))
   }
 
   @Test

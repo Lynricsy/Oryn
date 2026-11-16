@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,10 +18,12 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/webpush/webpushtest"
 )
 
@@ -37,7 +40,9 @@ type notifyEnv struct {
 	devID string
 }
 
-func newNotifyEnv(t *testing.T) *notifyEnv {
+func newNotifyEnv(t *testing.T) *notifyEnv { return newNotifyEnvWith(t, nil) }
+
+func newNotifyEnvWith(t *testing.T, th notify.Threads) *notifyEnv {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -46,7 +51,7 @@ func newNotifyEnv(t *testing.T) *notifyEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	box, err := secrets.LoadOrCreate(dir)
 	require.NoError(t, err)
-	svc, err := notify.New(notify.Config{PublicURL: h2PublicURL, DataDir: dir, Box: box}, st, nil, nopBroadcaster{})
+	svc, err := notify.New(notify.Config{PublicURL: h2PublicURL, DataDir: dir, Box: box}, st, th, nopBroadcaster{})
 	require.NoError(t, err)
 	cfg := config.DefaultOrynd()
 	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
@@ -279,4 +284,96 @@ func TestNotificationsBudgetAndReadByID(t *testing.T) {
 	}
 	st, _ = e.do("POST", "/api/v1/notifications/read", map[string]string{"id": "ntf_missing"})
 	assert.Equal(t, 204, st, "不存在的 id 同样 204")
+}
+
+// answerThreads 是作答接口用到的线程服务替身：记录 UIResponse，err 非空时返回它。
+type answerThreads struct {
+	mu     sync.Mutex
+	frames []string
+	err    error
+}
+
+func (a *answerThreads) Get(context.Context, string) (apigen.Thread, error) {
+	return apigen.Thread{}, nil
+}
+
+func (a *answerThreads) Command(context.Context, string, json.RawMessage, func(json.RawMessage)) error {
+	return nil
+}
+
+func (a *answerThreads) UIResponse(_ context.Context, _ string, frame json.RawMessage) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.err != nil {
+		return a.err
+	}
+	a.frames = append(a.frames, string(frame))
+	return nil
+}
+
+func TestAnswerNotificationAPI(t *testing.T) {
+	th := &answerThreads{}
+	e := newNotifyEnvWith(t, th)
+	ctx := context.Background()
+	tid := ids.Thread()
+	require.NoError(t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: tid, Title: "t", TitleSource: "auto", State: "idle",
+		SessionDir: "~/.oryn/threads/" + tid, CreatedAt: 1, UpdatedAt: 1}))
+	insert := func(kind, reqID, frame string) string {
+		id := ids.New("ntf")
+		p := db.InsertNotificationParams{ID: id, ThreadID: &tid, Kind: kind, Title: "t", CreatedAt: 1}
+		if frame != "" {
+			p.RequestID, p.Request = &reqID, &frame
+		}
+		_, err := e.st.Q.InsertNotification(ctx, p)
+		require.NoError(t, err)
+		return id
+	}
+	sel := `{"type":"extension_ui_request","id":"r1","method":"select","title":"Allow tool: bash\nCommand: ls","options":["Approve","Deny"]}`
+	n := insert("input", "r1", sel)
+	answer := func(id string, body any) (int, string, []byte) {
+		st, b := e.do("POST", "/api/v1/notifications/"+id+"/answer", body)
+		return st, errCode(b), b
+	}
+
+	st, _, b := answer(n, map[string]int{"option": 1})
+	require.Equal(t, 200, st, string(b))
+	assert.JSONEq(t, `{"threadId":"`+tid+`"}`, string(b))
+	require.Equal(t, []string{`{"type":"extension_ui_response","id":"r1","value":"Deny"}`}, th.frames)
+
+	st, code, _ := answer(n, map[string]any{})
+	assert.Equal(t, 400, st, "缺 option 不能当成选第一个")
+	assert.Equal(t, "invalid_request", code)
+	st, code, _ = answer(n, map[string]int{"option": 2})
+	assert.Equal(t, 400, st)
+	assert.Equal(t, "invalid_option", code)
+
+	th.mu.Lock()
+	th.err = threads.ErrUIResolved
+	th.mu.Unlock()
+	st, code, _ = answer(n, map[string]int{"option": 0})
+	assert.Equal(t, 409, st)
+	assert.Equal(t, "input_resolved", code)
+	th.mu.Lock()
+	th.err = nil
+	th.mu.Unlock()
+
+	_, err := e.st.Q.ResolveNotificationRequest(ctx, db.ResolveNotificationRequestParams{Now: 2, ThreadID: tid, RequestID: "r1"})
+	require.NoError(t, err)
+	st, code, _ = answer(n, map[string]int{"option": 0})
+	assert.Equal(t, 409, st)
+	assert.Equal(t, "input_resolved", code)
+
+	for _, id := range []string{
+		insert("done", "", ""),
+		insert("input", "r2", `{"type":"extension_ui_request","id":"r2","method":"input","title":"名字？"}`),
+		insert("input", "r3", `{"type":"plan_proposal","title":"计划"}`),
+	} {
+		st, code, _ = answer(id, map[string]int{"option": 0})
+		assert.Equal(t, 422, st)
+		assert.Equal(t, "not_answerable", code)
+	}
+	st, code, _ = answer(ids.New("ntf"), map[string]int{"option": 0})
+	assert.Equal(t, 404, st)
+	assert.Equal(t, "not_found", code)
+	assert.Len(t, th.frames, 1)
 }

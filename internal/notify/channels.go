@@ -47,6 +47,7 @@ func (s *Service) webpushSender(sub db.PushSubscription) Sender {
 }
 
 // pushPayload 是 service worker 收到的 JSON（≤3000 字节：正文截到 300 字符、标题截到 200 字符，仍超出时去掉正文）。
+// 可一触作答的 input 另带 `actions`（见 pushActions）；撤回消息见 withdrawPayload。
 func pushPayload(m Message) ([]byte, error) { return pushPayloadLimit(m, maxPushPayload) }
 
 // systemTag 是没有线程的通知的推送合并标签（同类后到的盖掉先到的）。
@@ -57,51 +58,78 @@ func systemTag(kind string) string {
 	return "automations"
 }
 
-// pushPayloadLimit 同 pushPayload，但序列化后超过 limit 字节时去掉正文（FCM 的密文要经 base64 放进 4096 字节的 data，上限更小）。
+// pushPayloadLimit 同 pushPayload，但序列化后超过 limit 字节时先去掉按钮（正文回到普通摘要）、再去掉正文
+// （FCM 的密文要经 base64 放进 4096 字节的 data，上限更小）。按钮只与完整的问题一起出现，绝不配截断的正文。
 func pushPayloadLimit(m Message, limit int) ([]byte, error) {
-	tag, path := m.ThreadID, "/t/"+m.ThreadID
-	if len(tag) > 12 {
-		tag = tag[len(tag)-12:]
-	}
-	if m.ThreadID == "" {
-		// 没有线程的通知（预算告警 / 定时失败 / 自动暂停）：按种类合并，落点取该行的 link
-		tag, path = systemTag(m.Kind), m.Link
-		if path == "" {
-			path = "/"
-		}
+	tag, path := pushTag(m)
+	if m.Withdraw {
+		return withdrawPayload(m.NotificationID, tag)
 	}
 	v := map[string]any{
 		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(m.Title, 200), "body": truncate(m.Body, maxPushBody),
-		"url": path, "tag": "oryn-" + tag,
+		"url": path, "tag": tag,
+	}
+	if acts, body, ok := pushActions(m); ok {
+		v["body"], v["actions"] = body, acts
 	}
 	b, err := json.Marshal(v)
 	if err != nil || len(b) <= limit {
 		return b, err
 	}
+	if _, ok := v["actions"]; ok {
+		delete(v, "actions")
+		v["body"] = truncate(m.Body, maxPushBody)
+		if b, err = json.Marshal(v); err != nil || len(b) <= limit {
+			return b, err
+		}
+	}
 	v["body"] = ""
 	return json.Marshal(v)
+}
+
+// pushTag 返回推送的本地通知 tag 与站内落点：有线程按线程合并（tag 取线程 id 末 12 位），
+// 没有线程的通知（预算告警 / 定时失败 / 自动暂停）按种类合并、落点取该行的 link。
+func pushTag(m Message) (tag, path string) {
+	if m.ThreadID == "" {
+		path = m.Link
+		if path == "" {
+			path = "/"
+		}
+		return "oryn-" + systemTag(m.Kind), path
+	}
+	tag = m.ThreadID
+	if len(tag) > 12 {
+		tag = tag[len(tag)-12:]
+	}
+	return "oryn-" + tag, "/t/" + m.ThreadID
 }
 
 func utf8Len(s string) int { return len([]rune(s)) }
 
 func (w webpushSender) Send(ctx context.Context, m Message) Result {
+	if m.Withdraw && applePush(w.sub.Endpoint) {
+		// Safari 要求每条推送都弹出通知，静默的撤回会让订阅被吊销；Safari 也不显示操作按钮，无需撤回
+		return Result{}
+	}
 	payload, err := pushPayload(m)
 	if err != nil {
 		return Result{Err: err}
 	}
-	// Topic：有线程按线程合并；没有线程按系统标签合并（预算与定时失败互不顶掉）
-	topic := m.ThreadID
-	if topic == "" {
-		topic = "oryn-" + systemTag(m.Kind)
+	opts := webpush.Options{TTL: pushTTL, Urgency: "normal", Subject: w.s.vapidSubject()}
+	if !m.Withdraw {
+		// Topic：有线程按线程合并；没有线程按系统标签合并（预算与定时失败互不顶掉）。撤回不设 Topic：
+		// 否则会在推送服务里顶掉同一线程尚未送达的另一条通知
+		topic := m.ThreadID
+		if topic == "" {
+			topic = "oryn-" + systemTag(m.Kind)
+		}
+		sum := sha256.Sum256([]byte(topic))
+		opts.Topic = base64.RawURLEncoding.EncodeToString(sum[:])[:32]
+		if m.Kind == KindInput {
+			opts.Urgency = "high"
+		}
 	}
-	sum := sha256.Sum256([]byte(topic))
-	urgency := "normal"
-	if m.Kind == KindInput {
-		urgency = "high"
-	}
-	status, err := w.s.keys.Send(ctx, w.s.cfg.HTTP, w.sub, payload, webpush.Options{
-		TTL: pushTTL, Urgency: urgency, Topic: base64.RawURLEncoding.EncodeToString(sum[:])[:32], Subject: w.s.vapidSubject(),
-	})
+	status, err := w.s.keys.Send(ctx, w.s.cfg.HTTP, w.sub, payload, opts)
 	switch {
 	case err != nil:
 		// 订阅密钥已在创建时校验：这里的错误是请求没有得到响应（网络 / 超时）

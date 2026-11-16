@@ -10,6 +10,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -256,6 +257,44 @@ func formPlan(pl *plan) {
 // Describe 返回请求帧的纯文本呈现；无法解析或不支持的请求 Supported=false（Title 尽量取帧的 `title`）。
 func Describe(frame json.RawMessage, l Labels) Prompt {
 	return parse(frame, l).prompt
+}
+
+// Choice 是只需点一个选项即可作答的请求：Text 是完整的问题（保留多行标题；confirm 附上说明），
+// Options 是选项文字（与 AnswerOption 的序号一一对应）；Confirm 为真时 Options 是 Labels 的「是 / 否」。
+type Choice struct {
+	Text    string
+	Options []string
+	Confirm bool
+}
+
+// SingleChoice 判断请求能否一触作答，能则返回其完整问题与选项。只认 select、confirm 与单个单选题的
+// ask / askDialog；文字输入、密钥、多选、多题、表单与 plan_proposal 一律为 false。
+func SingleChoice(frame json.RawMessage, l Labels) (Choice, bool) {
+	pl := parse(frame, l)
+	if !pl.prompt.Supported || pl.answer == nil || len(pl.prompt.Options) == 0 {
+		return Choice{}, false
+	}
+	var text string
+	switch pl.req.Method {
+	case "select":
+		text = trimLines(pl.req.Title)
+	case "confirm":
+		text = strings.TrimSpace(trimLines(pl.req.Title) + "\n" + trimLines(pl.req.Message))
+	case "ask", "askDialog":
+		text = trimLines(pl.req.Questions[0].Question)
+	default:
+		return Choice{}, false
+	}
+	return Choice{Text: text, Options: pl.prompt.Options, Confirm: pl.confirm}, true
+}
+
+// trimLines 去掉每行行尾空白与首尾空行，保留行内与行首缩进（命令、路径等参数原样）。
+func trimLines(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRightFunc(ln, unicode.IsSpace)
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n")
 }
 
 // AnswerOption 以第 i 个选项（从 0 起）作答，返回应答帧。

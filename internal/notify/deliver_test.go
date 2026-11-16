@@ -437,7 +437,7 @@ func TestWebPushSender(t *testing.T) {
 	require.NoError(t, json.Unmarshal(plain, &p))
 	n := f.notifications()[0]
 	assert.Equal(t, map[string]any{"v": float64(1), "id": n.ID, "kind": "input", "title": "推送测试", "body": "选 A 还是 B？",
-		"url": "/t/" + id, "tag": "oryn-" + id[len(id)-12:]}, p)
+		"url": "/t/" + id, "tag": "oryn-" + id[len(id)-12:], "actions": []any{map[string]any{"i": float64(0), "label": "A"}, map[string]any{"i": float64(1), "label": "B"}}}, p)
 	subs, err := f.s.ListPushSubscriptions(f.ctx)
 	require.NoError(t, err)
 	require.Len(t, subs, 1)
