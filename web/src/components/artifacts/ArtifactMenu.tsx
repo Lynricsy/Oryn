@@ -1,10 +1,11 @@
 /**
- * artifact 的更多菜单（计划 M14 2.5、2.7、4.3、5.4）：卡片的「更多」按钮、卡片右键、查看器顶栏的「更多」共用同一份条目。
- * - 打开（卡片）、重新加载（仅查看器）、在浏览器中打开、导出…（页面与画布导出原始文件；文档的子菜单是 Word、Markdown；
- *   幻灯片的子菜单是 PowerPoint、PDF，渲染不可用时 PDF 置灰并给出原因）、下载 PNG（仅页面类型；渲染不可用时置灰并给出原因）、
- *   重命名…、版本历史、打开线程（有创建线程且当前不在它里面）、删除。
+ * artifact 的更多菜单（计划 M14 2.5、2.7、4.3、5.4、8.3）：卡片的「更多」按钮、卡片右键、查看器顶栏的「更多」共用同一份条目。
+ * - 打开（卡片）、分享…（卡片；查看器顶栏有自己的「分享」按钮）、重新加载（仅查看器）、在浏览器中打开、导出…（页面与画布导出原始文件；
+ *   文档的子菜单是 Word、Markdown；幻灯片的子菜单是 PowerPoint、PDF，渲染不可用时 PDF 置灰并给出原因）、下载 PNG（仅页面类型；
+ *   渲染不可用时置灰并给出原因）、重命名…、版本历史、打开线程（有创建线程且当前不在它里面）、删除。
  * - 回收站里的条目只有恢复与永久删除…。
- * - 删除不弹框：移到「最近删除」，toast 带「撤销」。导出与下载 PNG 用 toast 报告进度、结果与失败（可重试）。
+ * - 删除未发布的 artifact 不弹框：移到「最近删除」，toast 带「撤销」；已发布的先弹确认框（默认勾选「同时取消发布」）。
+ *   导出与下载 PNG 用 toast 报告进度、结果与失败（可重试）。
  */
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
@@ -33,14 +34,16 @@ import {
 	Menu,
 	type MenuItem,
 } from "../ui/primitives";
-import { PurgeDialog, RenameDialog } from "./ArtifactDialogs";
+import { DeleteDialog, PurgeDialog, RenameDialog } from "./ArtifactDialogs";
+import { ArtifactShareDialog } from "./SharePopover";
 
 export type ArtifactMenuPlace = "card" | "viewer" | "trash";
 
 export type MenuArtifact = Pick<
 	Artifact,
 	"id" | "title" | "kind" | "version" | "threadId" | "type" | "deletedAt"
->;
+> &
+	Partial<Pick<Artifact, "published">>;
 
 /**
  * 导出原始文件（plain artifact）：版本只有一个文件时请求 `format=html`（直接回那个文件），否则 `format=zip`。
@@ -224,7 +227,9 @@ export function ArtifactMenu({
 	const caps = useArtifactCapabilities();
 	const remove = useDeleteArtifact();
 	const undelete = useUndeleteArtifact();
-	const [dialog, setDialog] = useState<"rename" | "purge" | null>(null);
+	const [dialog, setDialog] = useState<
+		"rename" | "purge" | "share" | "delete" | null
+	>(null);
 
 	const restore = async () => {
 		try {
@@ -235,16 +240,19 @@ export function ArtifactMenu({
 		}
 	};
 
+	const deletedToast = () =>
+		showToast({
+			text: t("artifacts.toast.deleted", { title: a.title }),
+			action: {
+				label: t("artifacts.toast.undo"),
+				run: () => void restore(),
+			},
+		});
+
 	const del = async () => {
 		try {
-			await remove.mutateAsync(a.id);
-			showToast({
-				text: t("artifacts.toast.deleted", { title: a.title }),
-				action: {
-					label: t("artifacts.toast.undo"),
-					run: () => void restore(),
-				},
-			});
+			await remove.mutateAsync({ id: a.id });
+			deletedToast();
 		} catch (e) {
 			showToast({ tone: "err", text: describeError(e, t) });
 		}
@@ -290,6 +298,12 @@ export function ArtifactMenu({
 									icon: "shapes" as const,
 									label: t("artifacts.menu.open"),
 									onSelect: () => navigate(`/artifacts/${a.id}`),
+								},
+								{
+									key: "share",
+									icon: "share" as const,
+									label: t("artifacts.share.menu"),
+									onSelect: () => setDialog("share"),
 								},
 							]
 						: []),
@@ -412,7 +426,7 @@ export function ArtifactMenu({
 						icon: "trash",
 						danger: true,
 						label: t("artifacts.menu.delete"),
-						onSelect: () => void del(),
+						onSelect: () => (a.published ? setDialog("delete") : void del()),
 					},
 				];
 
@@ -441,6 +455,16 @@ export function ArtifactMenu({
 			)}
 			{dialog === "purge" && (
 				<PurgeDialog artifact={a} onClose={() => setDialog(null)} />
+			)}
+			{dialog === "share" && (
+				<ArtifactShareDialog artifact={a} onClose={() => setDialog(null)} />
+			)}
+			{dialog === "delete" && (
+				<DeleteDialog
+					artifact={a}
+					onClose={() => setDialog(null)}
+					onDeleted={deletedToast}
+				/>
 			)}
 		</>
 	);

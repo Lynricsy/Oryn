@@ -1,11 +1,13 @@
 /**
- * artifact 的对话框（计划 M14 2.5）：重命名（标题按码点计不超过 120）、永久删除确认、导入（选项目）。
- * 普通删除不弹框：直接移到「最近删除」，toast 带「撤销」（见 `ArtifactMenu`）。
+ * artifact 的对话框（计划 M14 2.5、8.3）：重命名（标题按码点计不超过 120）、永久删除确认、删除已发布的 artifact
+ * （默认勾选「同时取消发布」）、导入（选项目）。
+ * 未发布的 artifact 删除不弹框：直接移到「最近删除」，toast 带「撤销」（见 `ArtifactMenu`）。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type Artifact,
+	useDeleteArtifact,
 	useImportArtifact,
 	usePurgeArtifact,
 	useRenameArtifact,
@@ -15,6 +17,7 @@ import { useProjects } from "../../api/queries";
 import { showToast } from "../../state/toasts";
 import {
 	Button,
+	Checkbox,
 	Dialog,
 	describeError,
 	ErrorText,
@@ -151,6 +154,67 @@ export function PurgeDialog({
 			<div className="flex flex-col gap-3 text-muted text-sm">
 				<p>{t("artifacts.dialogs.purgeBody", { count: artifact.version })}</p>
 				<ErrorText error={purge.error} />
+			</div>
+		</Dialog>
+	);
+}
+
+/** 删除已发布的 artifact：确认框，默认同时取消发布（`DELETE …?unpublish=true`）。 */
+export function DeleteDialog({
+	artifact,
+	onClose,
+	onDeleted,
+}: {
+	artifact: Pick<Artifact, "id" | "title">;
+	onClose(): void;
+	/** 删除成功（菜单据此弹「已移到最近删除」与撤销）。 */
+	onDeleted(): void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const remove = useDeleteArtifact();
+	const [unpublish, setUnpublish] = useState(true);
+	const submit = async () => {
+		try {
+			await remove.mutateAsync({ id: artifact.id, unpublish });
+			onClose();
+			onDeleted();
+		} catch {
+			// 错误显示在对话框里
+		}
+	};
+	return (
+		<Dialog
+			open
+			onClose={onClose}
+			title={t("artifacts.dialogs.deleteTitle", { title: artifact.title })}
+			footer={
+				<>
+					<Button variant="ghost" onClick={onClose}>
+						{t("common.cancel")}
+					</Button>
+					<Button
+						variant="danger"
+						data-testid="artifact-delete-confirm"
+						disabled={remove.isPending}
+						onClick={() => void submit()}
+					>
+						{t("artifacts.dialogs.deleteConfirm")}
+					</Button>
+				</>
+			}
+		>
+			<div className="flex flex-col gap-3 text-sm">
+				<p className="text-muted">{t("artifacts.dialogs.deleteBody")}</p>
+				{/* biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Checkbox 组件（内含原生 input） */}
+				<label className="flex cursor-pointer items-center gap-2">
+					<Checkbox
+						checked={unpublish}
+						data-testid="artifact-delete-unpublish"
+						onChange={(e) => setUnpublish(e.target.checked)}
+					/>
+					{t("artifacts.dialogs.deleteUnpublish")}
+				</label>
+				<ErrorText error={remove.error} />
 			</div>
 		</Dialog>
 	);

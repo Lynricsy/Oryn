@@ -8,9 +8,22 @@
  * - 观看者（`artifact.watch`）按连接登记；`write` 产生新版本并推 `artifact.version` 与 `artifacts.changed`。
  * - 页面帧给每个起始标签加 `data-oryn-src="<mark>:<字节偏移>"`（同 `htmlsrc.MarkSources`），评论与选择拿得到源码偏移。
  * - 评论（`…/comments*`）存在内存里，变化时推 `artifact.comments`；不在新版本上重新定位锚点。
+ * - 画布（`…/canvas`、`…/canvas/ops`）：操作广播 `artifact.canvas`，静默 30 秒落成用户版本；画布帧的地址是
+ *   `<origin>/__mock_af/<令牌>/`，画框文件（`_oryn/v/<n>/<路径>`）由安装时拦截 iframe `src` 的 `resolveFrameUrl` 换成 blob。
  * `MockServer.handleFetch` 调 `handle`，不归这里的请求返回 null。
  */
 import type { Schemas, Thread } from "../api/client";
+import { BLANK_PAGE } from "../components/artifacts/canvas/frames";
+import {
+	applyCanvasOps,
+	type CanvasDoc,
+	type CanvasOp,
+	parseCanvasDoc,
+	parseCanvasOps,
+	stringifyCanvasDoc,
+} from "../lib/artifacts/canvas-doc";
+import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
+import { MockArtifactPublish } from "./artifact-publish";
 import {
 	ARTIFACT_IDS,
 	threads as fixtureThreads,
@@ -24,6 +37,17 @@ import type { MockSocket } from "./server";
 type Artifact = Schemas["Artifact"];
 type ArtifactKind = Schemas["ArtifactKind"];
 type ArtifactCapability = Schemas["ArtifactCapability"];
+
+/** 用户画布操作静默多久后落成版本（同 `artifacts.CanvasQuiet`）。 */
+const CANVAS_QUIET_MS = 30_000;
+
+/** 一个画布的实时状态：底稿版本、当前文档、待复制的画框文件（新文件 → 来源文件）。 */
+interface MockCanvasLive {
+	version: number;
+	doc: CanvasDoc;
+	copies: Map<string, string>;
+	timer: ReturnType<typeof setTimeout> | undefined;
+}
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -198,6 +222,8 @@ interface Seed {
 	path: string;
 	/** 各版本的内容（从 v1 起）与备注。 */
 	versions: { text: string; note?: string; author?: string; at: number }[];
+	/** 每个版本都带的其它文件（路径 → 内容）。 */
+	files?: Record<string, string>;
 	openedAt?: number;
 	deletedAt?: number;
 }
@@ -321,8 +347,28 @@ const SEEDS: Seed[] = [
 					{
 						format: 1,
 						canvases: [{ id: "c1", name: "首页" }],
-						pages: [],
-						notes: [],
+						pages: [
+							{
+								id: "hero",
+								canvas: "c1",
+								name: "首屏",
+								file: "page-hero.html",
+								x: 0,
+								y: 0,
+								width: 1280,
+								height: 800,
+							},
+						],
+						notes: [
+							{
+								id: "n1",
+								canvas: "c1",
+								kind: "sticky",
+								x: 1340,
+								y: 40,
+								text: "标题再大一点",
+							},
+						],
 					},
 					null,
 					2,
@@ -330,6 +376,12 @@ const SEEDS: Seed[] = [
 				at: NOW - 2 * DAY,
 			},
 		],
+		files: {
+			"page-hero.html": page(
+				"首屏",
+				"<h1>把习惯变成日常</h1><p>每天一分钟，记录你的坚持。</p>",
+			),
+		},
 	},
 	{
 		id: ARTIFACT_IDS.trashed,
@@ -395,11 +447,33 @@ export class MockArtifacts {
 	private readonly threads: Map<string, Thread>;
 	private readonly hub: ArtifactsHub;
 	private seq = 0;
+	/** 发布（8.1、8.4 的 mock）。 */
+	private readonly publish: MockArtifactPublish;
 
 	constructor(threads: Map<string, Thread>, hub: ArtifactsHub) {
 		this.threads = threads;
 		this.hub = hub;
 		for (const s of SEEDS) this.items.set(s.id, this.fromSeed(s));
+		const versionOf = (id: string, n: number) =>
+			this.items.get(id)?.versions[n - 1];
+		this.publish = new MockArtifactPublish({
+			meta: (id) => this.items.get(id)?.meta,
+			setPublished: (id, published) => {
+				const a = this.items.get(id);
+				if (!a) return;
+				const { published: _, ...meta } = a.meta;
+				a.meta = published ? { ...meta, published } : meta;
+			},
+			texts: (id, n) =>
+				[...(versionOf(id, n)?.files ?? [])]
+					.filter(([path]) =>
+						/\.(html?|css|m?js|json|svg|md|txt|csv|xml)$/i.test(path),
+					)
+					.map(([path, f]) => [path, new TextDecoder().decode(f.data)]),
+			size: (id, n) => versionOf(id, n)?.meta.size ?? 0,
+			changed: () => this.hub.changed(),
+		});
+		this.publish.seed();
 	}
 
 	/** 写入时的线程标题快照（构造时 MockServer 还没登记线程，退到夹具列表）。 */
@@ -425,7 +499,15 @@ export class MockArtifacts {
 					size: data.byteLength,
 					pages: 1,
 				},
-				files: new Map([[s.path, { data, sha256: pseudoSha(data) }]]),
+				files: new Map([
+					[s.path, { data, sha256: pseudoSha(data) }],
+					...Object.entries(s.files ?? {}).map(
+						([path, text]): [string, StoredFile] => {
+							const bytes = encoder.encode(text);
+							return [path, { data: bytes, sha256: pseudoSha(bytes) }];
+						},
+					),
+				]),
 				capabilities: [],
 			};
 		});
@@ -531,10 +613,42 @@ export class MockArtifacts {
 			id: a.meta.id,
 			version,
 		});
+		this.publish.onVersion(a.meta.id, version);
 		this.hub.changed();
 	}
 
 	// ------------------------------------------------------------ REST
+
+	/** 页面能力授权（步骤 7.3）：artifact id → 能力 → 授权时间。首次列出时给第一个 artifact 种一条，设置页才有内容。 */
+	private readonly consents = new Map<string, Map<string, number>>();
+	private consentsSeeded = false;
+
+	private listConsents(): Response {
+		if (!this.consentsSeeded) {
+			this.consentsSeeded = true;
+			const first = [...this.items.values()].find(
+				(x) => x.meta.deletedAt === undefined,
+			);
+			if (first)
+				this.consents.set(first.meta.id, new Map([["files", Date.now()]]));
+		}
+		const consents: Schemas["ArtifactConsent"][] = [];
+		for (const [id, caps] of this.consents) {
+			const a = this.items.get(id);
+			if (!a || a.meta.deletedAt !== undefined || caps.size === 0) continue;
+			consents.push({
+				artifactId: id,
+				title: a.meta.title,
+				...(a.meta.projectId ? { projectId: a.meta.projectId } : {}),
+				capabilities: [
+					...caps.keys(),
+				].sort() as Schemas["ArtifactConsentCapability"][],
+				grantedAt: Math.max(...caps.values()),
+			});
+		}
+		consents.sort((x, y) => y.grantedAt - x.grantedAt);
+		return json({ consents } satisfies Schemas["ArtifactConsentList"]);
+	}
 
 	async handle(
 		req: Request,
@@ -542,6 +656,8 @@ export class MockArtifacts {
 		m: string,
 		url: URL,
 	): Promise<Response | null> {
+		const pubRes = await this.publish.handle(req, p, m);
+		if (pubRes) return pubRes;
 		if (p === "artifacts" && m === "GET") return this.list(url);
 		if (p === "artifacts/capabilities" && m === "GET")
 			return json({
@@ -559,6 +675,15 @@ export class MockArtifacts {
 			this.frames.delete(frame[1] ?? "");
 			return new Response(null, { status: 204 });
 		}
+		if (p === "artifact-consents" && m === "GET") return this.listConsents();
+		const consent = /^artifact-consents\/([^/]+)$/.exec(p);
+		if (consent && m === "DELETE") {
+			this.consents.delete(consent[1] ?? "");
+			return new Response(null, { status: 204 });
+		}
+		// mock 不会发出同意请求，所以没有打开着的请求可回答
+		if (consent && m === "POST")
+			return error(404, "not_found", "这个同意请求已经结束。");
 		const hit = /^artifacts\/(art_[0-9A-Z]{26})(?:\/(.+))?$/.exec(p);
 		if (!hit) return null;
 		const a = this.items.get(hit[1] ?? "");
@@ -590,6 +715,7 @@ export class MockArtifacts {
 		if (restore && m === "POST")
 			return this.restoreVersion(a, Number(restore[1]), req);
 		if (rest === "file" && m === "GET") return this.file(a, url);
+		if (rest === "element" && m === "POST") return this.editElement(a, req);
 		if (rest === "export" && m === "GET") return this.exportFiles(a, url);
 		// mock 没有渲染器：缩略图一律未命中（卡片回落到类型示意图），PNG 回 render_unavailable
 		if (rest === "thumbnail" && m === "GET")
@@ -598,10 +724,88 @@ export class MockArtifacts {
 			return error(503, "render_unavailable", "mock 模式没有渲染器");
 		if (rest === "comments" || rest.startsWith("comments/"))
 			return this.handleComments(a, rest.slice("comments".length), m, req);
+		if (rest === "canvas" && m === "GET") return this.canvasState(a);
+		if (rest === "canvas/ops" && m === "POST") return this.canvasOps(a, req);
 		if (rest === "frames" && m === "POST") return this.openFrame(a, req, false);
 		if (rest === "open-link" && m === "POST")
 			return this.openFrame(a, req, true);
 		return null;
+	}
+
+	/**
+	 * 元素直接编辑（同 `POST …/element`）：只改偏移处起始标签的 `style`（同名替换、其余保留、没有就加）与（可选的）
+	 * 纯文本内容，落成用户版本。文件在 `baseVersion` 之后变过或偏移处不是该标签回 409。
+	 */
+	private async editElement(a: Stored, req: Request): Promise<Response> {
+		if (a.meta.deletedAt !== undefined)
+			return error(410, "deleted", "这个 artifact 已被删除");
+		const body = (await req.json()) as Schemas["ArtifactElementEdit"];
+		const head = a.versions[a.versions.length - 1];
+		const base = a.versions[body.baseVersion - 1];
+		if (!head || !base) return error(400, "invalid", "baseVersion 不存在");
+		const conflict = () =>
+			json(
+				{
+					code: "conflict",
+					message: `现在是版本 ${a.meta.version}，${body.path} 被改过。`,
+					state: {
+						version: a.meta.version,
+						deleted: false,
+						changed: [body.path],
+					},
+				},
+				409,
+			);
+		const file = head.files.get(body.path);
+		if (!file || base.files.get(body.path)?.sha256 !== file.sha256)
+			return conflict();
+		const style = cleanStyle(body.style ?? {});
+		if (Object.keys(style).length !== Object.keys(body.style ?? {}).length)
+			return error(400, "invalid", "样式值不合法");
+		const decoder = new TextDecoder();
+		const src = decoder.decode(file.data);
+		const at = decoder.decode(file.data.subarray(0, body.offset)).length;
+		const open = /^<([a-zA-Z][a-zA-Z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>/.exec(
+			src.slice(at),
+		);
+		if (!open || open[1]?.toLowerCase() !== body.tag) return conflict();
+		let tag = open[0];
+		if (Object.keys(style).length > 0) {
+			const attr = /\sstyle\s*=\s*"([^"]*)"/i.exec(tag);
+			const decls = (attr?.[1] ?? "")
+				.split(";")
+				.map((d) => d.trim())
+				.filter(
+					(d) =>
+						d !== "" &&
+						!Object.hasOwn(style, d.split(":")[0]?.trim().toLowerCase() ?? ""),
+				);
+			for (const [k, v] of Object.entries(style)) decls.push(`${k}: ${v}`);
+			const next = ` style="${decls.join("; ")}"`;
+			tag = attr
+				? tag.replace(attr[0], next)
+				: `<${open[1]}${next}${tag.slice(1 + (open[1]?.length ?? 0))}`;
+		}
+		let rest = src.slice(at + open[0].length);
+		if (body.text !== undefined) {
+			const raw = sourceTextAt(file.data, body.offset, body.tag);
+			if (raw === null)
+				return error(400, "invalid", "只有内容全是文字的元素能直接改文字");
+			const escaped = body.text
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
+			rest = escaped + rest.slice(raw.length);
+		}
+		const data = encoder.encode(src.slice(0, at) + tag + rest);
+		this.pushVersion(
+			a,
+			new Map(head.files).set(body.path, { data, sha256: pseudoSha(data) }),
+			head.capabilities,
+		);
+		return json({
+			version: a.meta.version,
+		} satisfies Schemas["ArtifactVersionRef"]);
 	}
 
 	private list(url: URL): Response {
@@ -699,10 +903,13 @@ export class MockArtifacts {
 		if (url.searchParams.get("permanent") === "true") {
 			if (a.meta.deletedAt === undefined)
 				return error(400, "invalid", "只能永久删除「最近删除」里的 artifact。");
+			this.publish.drop(a.meta.id);
 			this.items.delete(a.meta.id);
 		} else {
 			if (a.meta.deletedAt !== undefined)
 				return error(410, "deleted", "这个 artifact 已在「最近删除」里。");
+			if (url.searchParams.get("unpublish") === "true")
+				this.publish.drop(a.meta.id);
 			a.meta = { ...a.meta, deletedAt: Date.now() };
 		}
 		this.hub.changed();
@@ -821,6 +1028,13 @@ export class MockArtifacts {
 		if (v instanceof Response) return v;
 		// 跟随最新版本的帧带页面运行时；钉住旧版本与顶层帧不带
 		const follow = raw === undefined && !topLevel;
+		if (a.meta.kind === "canvas" && !topLevel) {
+			const token = this.newToken();
+			this.canvasFrames.set(token, { id: a.meta.id, runtime: follow });
+			this.frames.set(token, []);
+			const url = `${location.origin}/__mock_af/${token}/`;
+			return json({ url, token } satisfies Schemas["ArtifactFrame"], 201);
+		}
 		const content = this.framePage(a, v, follow, topLevel);
 		const token = this.newToken();
 		const urls = [
@@ -1059,85 +1273,172 @@ export class MockArtifacts {
 				},
 			],
 		});
+		this.publish.onCreated(id);
 		this.hub.changed();
 		return json(meta, 201);
 	}
-}
 
-import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
-		if (rest === "element" && m === "POST") return this.editElement(a, req);
-	/**
-	 * 元素直接编辑（同 `POST …/element`）：只改偏移处起始标签的 `style`（同名替换、其余保留、没有就加）与（可选的）
-	 * 纯文本内容，落成用户版本。文件在 `baseVersion` 之后变过或偏移处不是该标签回 409。
-	 */
-	private async editElement(a: Stored, req: Request): Promise<Response> {
+	// ------------------------------------------------------------ 实时画布（计划 6.2 的 mock）
+
+	/** 画布帧：令牌 → artifact 与是否带运行时。帧地址是 `<origin>/__mock_af/<令牌>/`，画框文件经 `resolveFrameUrl` 换成 blob。 */
+	private readonly canvasFrames = new Map<
+		string,
+		{ id: string; runtime: boolean }
+	>();
+	private readonly canvasLive = new Map<string, MockCanvasLive>();
+	private readonly canvasSeq = new Map<string, number>();
+	private readonly frameBlobs = new Map<string, string>();
+
+	private liveCanvas(a: Stored): MockCanvasLive | Response {
+		const cur = this.canvasLive.get(a.meta.id);
+		if (cur) return cur;
+		if (a.meta.kind !== "canvas")
+			return error(400, "invalid", `${a.meta.id} 不是画布 artifact。`);
 		if (a.meta.deletedAt !== undefined)
-			return error(410, "deleted", "这个 artifact 已被删除");
-		const body = (await req.json()) as Schemas["ArtifactElementEdit"];
+			return error(410, "deleted", "这个 artifact 在「最近删除」里。");
 		const head = a.versions[a.versions.length - 1];
-		const base = a.versions[body.baseVersion - 1];
-		if (!head || !base) return error(400, "invalid", "baseVersion 不存在");
-		const conflict = () =>
-			json(
-				{
-					code: "conflict",
-					message: `现在是版本 ${a.meta.version}，${body.path} 被改过。`,
-					state: {
-						version: a.meta.version,
-						deleted: false,
-						changed: [body.path],
-					},
-				},
-				409,
-			);
-		const file = head.files.get(body.path);
-		if (!file || base.files.get(body.path)?.sha256 !== file.sha256)
-			return conflict();
-		const style = cleanStyle(body.style ?? {});
-		if (Object.keys(style).length !== Object.keys(body.style ?? {}).length)
-			return error(400, "invalid", "样式值不合法");
-		const decoder = new TextDecoder();
-		const src = decoder.decode(file.data);
-		const at = decoder.decode(file.data.subarray(0, body.offset)).length;
-		const open = /^<([a-zA-Z][a-zA-Z0-9-]*)(?:"[^"]*"|'[^']*'|[^'">])*>/.exec(
-			src.slice(at),
-		);
-		if (!open || open[1]?.toLowerCase() !== body.tag) return conflict();
-		let tag = open[0];
-		if (Object.keys(style).length > 0) {
-			const attr = /\sstyle\s*=\s*"([^"]*)"/i.exec(tag);
-			const decls = (attr?.[1] ?? "")
-				.split(";")
-				.map((d) => d.trim())
-				.filter(
-					(d) =>
-						d !== "" &&
-						!Object.hasOwn(style, d.split(":")[0]?.trim().toLowerCase() ?? ""),
-				);
-			for (const [k, v] of Object.entries(style)) decls.push(`${k}: ${v}`);
-			const next = ` style="${decls.join("; ")}"`;
-			tag = attr
-				? tag.replace(attr[0], next)
-				: `<${open[1]}${next}${tag.slice(1 + (open[1]?.length ?? 0))}`;
-		}
-		let rest = src.slice(at + open[0].length);
-		if (body.text !== undefined) {
-			const raw = sourceTextAt(file.data, body.offset, body.tag);
-			if (raw === null)
-				return error(400, "invalid", "只有内容全是文字的元素能直接改文字");
-			const escaped = body.text
-				.replaceAll("&", "&amp;")
-				.replaceAll("<", "&lt;")
-				.replaceAll(">", "&gt;");
-			rest = escaped + rest.slice(raw.length);
-		}
-		const data = encoder.encode(src.slice(0, at) + tag + rest);
-		this.pushVersion(
-			a,
-			new Map(head.files).set(body.path, { data, sha256: pseudoSha(data) }),
-			head.capabilities,
-		);
-		return json({
-			version: a.meta.version,
-		} satisfies Schemas["ArtifactVersionRef"]);
+		const raw = head?.files.get("canvas.json");
+		if (!head || !raw) return error(404, "not_found", "没有 canvas.json");
+		const live: MockCanvasLive = {
+			version: head.meta.version,
+			doc: parseCanvasDoc(new TextDecoder().decode(raw.data)),
+			copies: new Map(),
+			timer: undefined,
+		};
+		this.canvasLive.set(a.meta.id, live);
+		return live;
 	}
+
+	private canvasState(a: Stored): Response {
+		const live = this.liveCanvas(a);
+		if (live instanceof Response) return live;
+		return json({
+			version: live.version,
+			seq: this.canvasSeq.get(a.meta.id) ?? 0,
+			doc: live.doc as unknown as Record<string, unknown>,
+		} satisfies Schemas["ArtifactCanvasState"]);
+	}
+
+	/** 应用一批用户操作：广播给观看者，静默 30 秒后落成一个用户版本（同 `internal/artifacts/live.go`）。 */
+	private async canvasOps(a: Stored, req: Request): Promise<Response> {
+		const live = this.liveCanvas(a);
+		if (live instanceof Response) return live;
+		let body: Schemas["ArtifactCanvasOps"];
+		try {
+			body = (await req.json()) as Schemas["ArtifactCanvasOps"];
+		} catch {
+			return error(400, "invalid", "请求体不是 JSON");
+		}
+		let ops: CanvasOp[];
+		let doc: CanvasDoc;
+		try {
+			ops = parseCanvasOps(body.ops);
+			if (ops.length === 0) throw new Error("没有操作");
+			for (const op of ops)
+				if (op.op === "add" && op.object.type === "note")
+					op.object = { ...op.object, by: null };
+			doc = applyCanvasOps(live.doc, ops);
+		} catch (e) {
+			return error(400, "invalid", `画布操作不合法：${(e as Error).message}`);
+		}
+		// 新增的对象换成应用后的完整形态（补上缺省的位置、文件），各端重放得到同一个结果
+		const settled = ops.map((op): CanvasOp => {
+			if (op.op !== "add") return op;
+			const key = op.object.id;
+			const found =
+				doc.canvases.find((c) => c.id === key) ??
+				doc.pages.find((p) => p.id === key) ??
+				doc.notes.find((n) => n.id === key);
+			if (op.copyOf !== undefined && op.object.type === "page") {
+				const from = live.doc.pages.find((p) => p.id === op.copyOf);
+				const page = doc.pages.find((p) => p.id === key);
+				if (from && page) live.copies.set(page.file, from.file);
+			}
+			return found ? { ...op, object: { ...found, type: op.object.type } } : op;
+		});
+		live.doc = doc;
+		const seq = (this.canvasSeq.get(a.meta.id) ?? 0) + 1;
+		this.canvasSeq.set(a.meta.id, seq);
+		this.toWatchers(a.meta.id, {
+			type: "artifact.canvas",
+			id: a.meta.id,
+			seq,
+			ops: settled,
+			client: body.client,
+			clientSeq: body.clientSeq,
+		});
+		clearTimeout(live.timer);
+		live.timer = setTimeout(() => this.flushCanvas(a), CANVAS_QUIET_MS);
+		return json({ seq } satisfies Schemas["ArtifactCanvasSeq"]);
+	}
+
+	/** 把累计的画布写成一个用户版本：新画框没有文件时补空白页，带 copyOf 的复制来源画框的文件。 */
+	private flushCanvas(a: Stored) {
+		const live = this.canvasLive.get(a.meta.id);
+		const prev = a.versions[a.versions.length - 1];
+		if (!live || !prev || a.meta.deletedAt !== undefined) return;
+		const files = new Map(prev.files);
+		const doc = encoder.encode(stringifyCanvasDoc(live.doc));
+		files.set("canvas.json", { data: doc, sha256: pseudoSha(doc) });
+		for (const p of live.doc.pages) {
+			if (files.has(p.file)) continue;
+			const source = live.copies.get(p.file);
+			const copied = source ? files.get(source) : undefined;
+			const data = copied?.data ?? encoder.encode(BLANK_PAGE);
+			files.set(p.file, { data, sha256: pseudoSha(data) });
+		}
+		live.copies.clear();
+		this.pushVersion(a, files, prev.capabilities);
+		live.version = a.meta.version;
+	}
+
+	/**
+	 * 画布帧里画框文件的地址（`<origin>/__mock_af/<令牌>/_oryn/v/<n>/<路径>`）→ 该版本文件的 blob（HTML 注入页面运行时）。
+	 * 不是画布帧的地址返回 null。mock 安装时拦截 iframe 的 `src` 来调它。
+	 */
+	resolveFrameUrl(raw: string): string | null {
+		let url: URL;
+		try {
+			url = new URL(raw, location.href);
+		} catch {
+			return null;
+		}
+		const hit = /^\/__mock_af\/([a-z2-7]+)\/_oryn\/v\/(\d+)\/(.+)$/.exec(
+			url.pathname,
+		);
+		const frame = hit ? this.canvasFrames.get(hit[1] ?? "") : undefined;
+		if (!hit || !frame) return null;
+		const key = `${hit[1]}|${hit[2]}|${hit[3]}`;
+		const cached = this.frameBlobs.get(key);
+		if (cached) return cached;
+		const path = (hit[3] ?? "").split("/").map(decodeURIComponent).join("/");
+		const file = this.items
+			.get(frame.id)
+			?.versions[Number(hit[2]) - 1]?.files.get(path);
+		let html = file
+			? new TextDecoder().decode(file.data)
+			: "<!doctype html><title>404</title><p>没有这个文件</p>";
+		if (file && /\.html?$/i.test(path)) {
+			const mark = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+			const config = JSON.stringify({
+				v: 1,
+				mark,
+				path,
+				runtime: frame.runtime,
+			});
+			const inject = `<script type="module" src="${location.origin}/sandbox/runtime/main.ts"></script><script type="module">window.__orynStart(${config});</script>`;
+			const head = /<head[^>]*>/i.exec(html);
+			html = head
+				? html.slice(0, head.index + head[0].length) +
+					inject +
+					html.slice(head.index + head[0].length)
+				: inject + html;
+		}
+		const blob = URL.createObjectURL(
+			new Blob([html], { type: file ? mimeOf(path) : "text/html" }),
+		);
+		this.frameBlobs.set(key, blob);
+		this.frames.get(hit[1] ?? "")?.push(blob);
+		return blob;
+	}
+}

@@ -2,6 +2,7 @@
  * artifact 查看器（计划 M14 2.3、2.5、2.6、3.3）：整页（`page`）与右面板（`panel`）共用。
  * 挂载时 `watchArtifact`（收 `artifact.version` 等观看者消息），卸载时取消。
  * 顶栏：返回（仅整页，`Esc`）、类型图标、标题、版本胶囊 `v{n}`（点开版本历史）、更多菜单（`ArtifactMenu`）；
+ * 右侧选择（V）/ 评论（C）两个模式按钮、版本历史、重新加载、在浏览器中打开、访客数与「分享」（8.3）。右面板里由 `ArtifactPanel` 用 `lead` 换掉图标与标题
  * （换成 artifact 切换菜单）、用 `actions` 追加「放大查看」，两者合成一行工具条。页面试图跳走时帧上方出一条提示：「此页面试图打开 <主机>」。
  *
  * 侧栏列（宽 300）有「历史 / 评论」两段（右面板只有历史）：查看器窄于 900 时覆盖在内容上，`compact` 断点下占满并在顶部给
@@ -50,6 +51,7 @@ import { CommentsPanel } from "./CommentsPanel";
 import { CanvasEditor } from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
 import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
+import { ShareControl } from "./SharePopover";
 import { VersionHistory } from "./VersionHistory";
 import {
 	FrameErrorState,
@@ -592,6 +594,7 @@ export function ArtifactViewer({
 							label={t("artifacts.viewer.openInBrowser")}
 							onClick={() => openInBrowser()}
 						/>
+						<ShareControl artifact={artifact} />
 					</>
 				)}
 				{actions}

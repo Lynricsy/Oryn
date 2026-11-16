@@ -40,6 +40,9 @@ export const artifactQk = {
 	capabilities: ["artifacts", "capabilities"] as const,
 	comments: (id: string) => ["artifacts", "comments", id] as const,
 	consents: ["artifacts", "consents"] as const,
+	publication: (id: string) => ["artifacts", "publication", id] as const,
+	publications: ["artifacts", "publications"] as const,
+	prefs: ["artifacts", "prefs"] as const,
 };
 
 function invalidateArtifacts(qc: QueryClient) {
@@ -147,13 +150,21 @@ export function useRenameArtifact() {
 	});
 }
 
-/** 移到「最近删除」。 */
+/** 移到「最近删除」；`unpublish` 时同时取消发布（同一事务）。 */
 export function useDeleteArtifact() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: async (id: string) => {
+		mutationFn: async ({
+			id,
+			unpublish,
+		}: {
+			id: string;
+			unpublish?: boolean;
+		}) => {
 			await unwrap(
-				api.DELETE("/api/v1/artifacts/{id}", { params: { path: { id } } }),
+				api.DELETE("/api/v1/artifacts/{id}", {
+					params: { path: { id }, query: unpublish ? { unpublish: true } : {} },
+				}),
 			);
 		},
 		onSuccess: () => invalidateArtifacts(qc),
@@ -537,4 +548,171 @@ export async function answerArtifactConsent(
 			body: { allow },
 		}),
 	);
+}
+
+export type ArtifactAccess = Schemas["ArtifactAccess"];
+export type ArtifactPublication = Schemas["ArtifactPublication"];
+export type ArtifactPublicationState = Schemas["ArtifactPublicationState"];
+export type ArtifactPublishRequest = Schemas["ArtifactPublishRequest"];
+export type ArtifactPublicationListItem =
+	Schemas["ArtifactPublicationListItem"];
+
+/**
+ * 发布状态（未发布时 `publication` 为 null）。键在 `["artifacts", …]` 下，`artifacts.changed` 到达时随整组失效；
+ * 正在看这个 artifact 时，`artifact.activity` 里的访客数直接写进缓存（不重取）。
+ */
+export function useArtifactPublication(
+	id: string,
+	enabled = true,
+	client: Pick<RealtimeClient, "onArtifact"> = realtime,
+) {
+	const qc = useQueryClient();
+	useEffect(() => {
+		if (!enabled) return;
+		return client.onArtifact(id, (msg) => {
+			if (msg.type !== "artifact.activity") return;
+			qc.setQueryData<ArtifactPublicationState>(
+				artifactQk.publication(id),
+				(old) =>
+					old?.publication
+						? {
+								...old,
+								publication: { ...old.publication, visitors: msg.visitors },
+							}
+						: old,
+			);
+		});
+	}, [client, qc, id, enabled]);
+	return useQuery({
+		queryKey: artifactQk.publication(id),
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/artifacts/{id}/publication", {
+					params: { path: { id } },
+				}),
+			),
+	});
+}
+
+/** 发布或更新发布的结果：成功，或扫描到疑似密钥（409 `secrets_found`，确认后带 `acknowledgeFindings` 重发）。 */
+export type PublishArtifactResult =
+	| { kind: "published"; state: ArtifactPublicationState }
+	| { kind: "findings"; scan: Schemas["ShareScan"] };
+
+function settlePublication(
+	qc: QueryClient,
+	id: string,
+	state: ArtifactPublicationState,
+) {
+	qc.setQueryData(artifactQk.publication(id), state);
+	invalidateArtifacts(qc);
+}
+
+/** `PUT …/publication`：不存在则创建，存在则更新给出的字段。 */
+export function usePublishArtifact(id: string) {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (
+			body: ArtifactPublishRequest,
+		): Promise<PublishArtifactResult> => {
+			const res = await api.PUT("/api/v1/artifacts/{id}/publication", {
+				params: { path: { id } },
+				body,
+			});
+			const err = res.error as
+				| Partial<Schemas["ShareScanConflict"]>
+				| undefined;
+			if (
+				res.response.status === 409 &&
+				err?.code === "secrets_found" &&
+				err.scan
+			)
+				return { kind: "findings", scan: err.scan };
+			return {
+				kind: "published",
+				state: await unwrap(Promise.resolve(res)),
+			};
+		},
+		onSuccess: (r) => {
+			if (r.kind === "published") settlePublication(qc, id, r.state);
+		},
+	});
+}
+
+/** 换一个访问码（旧码与已发出的授权随即失效，并解除锁定）。 */
+export function useRotateArtifactCode(id: string) {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: () =>
+			unwrap(
+				api.POST("/api/v1/artifacts/{id}/publication/code", {
+					params: { path: { id } },
+				}),
+			),
+		onSuccess: (state) => settlePublication(qc, id, state),
+	});
+}
+
+/** 取消发布（链接随即失效）。 */
+export function useUnpublishArtifact() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (id: string) => {
+			await unwrap(
+				api.DELETE("/api/v1/artifacts/{id}/publication", {
+					params: { path: { id } },
+				}),
+			);
+		},
+		onSuccess: (_, id) => {
+			qc.setQueryData<ArtifactPublicationState>(
+				artifactQk.publication(id),
+				(old) => (old ? { ...old, publication: null } : old),
+			);
+			invalidateArtifacts(qc);
+		},
+	});
+}
+
+/** 发布地址里的 slug：泛域名 `p-<slug>.<域>` 或主域 `/p/<slug>/`。 */
+export function publicationSlug(url: string): string | null {
+	const m = /\/\/p-([a-z2-7]{26})\.|\/p\/([a-z2-7]{26})(?:\/|$)/.exec(url);
+	return m?.[1] ?? m?.[2] ?? null;
+}
+
+/** 所有者直接打开自己的私有或访问码发布页：带授权段的地址。 */
+export async function grantArtifactPublication(slug: string): Promise<string> {
+	const r = await unwrap(
+		api.POST("/api/v1/artifact-publications/{slug}/grant", {
+			params: { path: { slug } },
+		}),
+	);
+	return r.url;
+}
+
+/** 全部已发布的 artifact（设置 › 分享）。 */
+export function useArtifactPublications() {
+	return useQuery({
+		queryKey: artifactQk.publications,
+		queryFn: () => unwrap(api.GET("/api/v1/artifact-publications")),
+		select: (r) => r.publications,
+	});
+}
+
+/** Artifacts 设置（自动发布）。 */
+export function useArtifactPrefs() {
+	return useQuery({
+		queryKey: artifactQk.prefs,
+		queryFn: () => unwrap(api.GET("/api/v1/settings/artifacts")),
+	});
+}
+
+export function useSetArtifactPrefs() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: Schemas["ArtifactPrefs"]) =>
+			unwrap(api.PUT("/api/v1/settings/artifacts", { body })),
+		onSuccess: (prefs) => qc.setQueryData(artifactQk.prefs, prefs),
+	});
 }

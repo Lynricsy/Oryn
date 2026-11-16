@@ -1791,7 +1791,11 @@
 			"purgeTitle": "永久删除“{{title}}”？",
 			"purgeBody_one": "它的 {{count}} 个版本将被移除，此操作无法撤销。",
 			"purgeBody_other": "它的 {{count}} 个版本将被移除，此操作无法撤销。",
-			"purgeConfirm": "永久删除"
+			"purgeConfirm": "永久删除",
+			"deleteTitle": "删除“{{title}}”？",
+			"deleteBody": "它会移到最近删除，在那里保留 30 天。它现在已发布成链接。",
+			"deleteUnpublish": "同时取消发布",
+			"deleteConfirm": "删除"
 		},
 		"toast": {
 			"deleted": "已将“{{title}}”移到最近删除",
@@ -1833,6 +1837,56 @@
 			"running": "正在渲染“{{title}}”…",
 			"done": "已下载“{{title}}”的 PNG",
 			"failed": "无法下载“{{title}}”的 PNG：{{reason}}"
+		},
+		"share": {
+			"button": "分享",
+			"buttonShared": "已分享",
+			"menu": "分享…",
+			"title": "分享“{{title}}”",
+			"intro": "将此 artifact 发布为链接，并选择谁能打开。",
+			"accessLabel": "谁能打开",
+			"access": {
+				"private": "私有",
+				"code": "访问码",
+				"public": "公开"
+			},
+			"accessHint": {
+				"private": "只有你登录后能打开。",
+				"code": "拿到链接和访问码的人能打开。",
+				"public": "任何拿到链接的人都能打开。"
+			},
+			"firstPublish": "已发布的页面是静态快照：页面的数据、读文件与提问能力不可用；它会从公共 CDN 加载脚本和字体。",
+			"publish": "发布",
+			"publishAnyway": "仍然发布",
+			"findingsHint": "这些内容会随链接公开。确认可以公开再继续；否则先让 Agent 去掉它们，再重新发布。",
+			"urlLabel": "链接",
+			"copyLink": "复制链接",
+			"copied": "已复制",
+			"copyFailed": "无法写入剪贴板，请手动复制。",
+			"codeLine": "访问码：{{code}}",
+			"codeLabel": "访问码",
+			"copyCode": "复制访问码",
+			"rotate": "换一个",
+			"rotateHint": "换一个之后旧的随即失效，输过旧码的人也要重新输入。",
+			"locked": "访问码被输错太多次，已锁定。换一个访问码后才能再输入。",
+			"published": "版本 {{version}}，发布于{{when}}",
+			"follow": "自动跟着最新版本更新",
+			"update": "更新到版本 {{head}}",
+			"pending": "版本 {{version}} 里有疑似密钥，没有自动发布",
+			"review": "查看并发布",
+			"open": "打开",
+			"openFailed": "无法打开发布页：{{reason}}",
+			"unpublish": "取消发布…",
+			"unpublishBody": "拿到链接的人将无法再打开它。这个 artifact 仍会保留在这里。",
+			"unpublishConfirm": "取消发布",
+			"unpublished": "已取消发布“{{title}}”",
+			"badge": {
+				"code": "已发布，凭访问码打开",
+				"public": "已发布，有链接的人都能打开"
+			},
+			"visitors_one": "{{count}} 位访客",
+			"visitors_other": "{{count}} 位访客",
+			"visitorsHint": "在看分享链接，只读"
 		},
 		"history": {
 			"title": "版本历史",

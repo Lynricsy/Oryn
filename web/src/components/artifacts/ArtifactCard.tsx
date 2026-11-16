@@ -1,8 +1,9 @@
 /**
- * artifact 卡片（计划 M14 2.4、4.2）：两种形态都是单个可聚焦的按钮。
+ * artifact 卡片（计划 M14 2.4、4.2、8.3）：两种形态都是单个可聚焦的按钮。
  * - `tile`：上半部 16:10 的预览区——缩略图（`<img loading="lazy">`，服务端每个版本渲染一张），加载失败（还没有、
  *   渲染不可用）回落到 `bg-inset` 上居中的大号类型图标；下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）。
  * - `row`：一行：类型图标、标题、`v版本`（转录卡片、首屏最近项）。
+ * 发布状态徽标：访问码 `key`、公开 `globe`（私有不显示），tile 在预览区左上角，row 在标题之后；说明并入按钮的无障碍名。
  * 不传 `onOpen` 时（只读的分享页）渲染成不可点的静态块。
  */
 import {
@@ -26,10 +27,38 @@ export type ArtifactCardData = Pick<
 	Artifact,
 	"id" | "title" | "kind" | "version"
 > &
-	Partial<Pick<Artifact, "updatedAt">>;
+	Partial<Pick<Artifact, "updatedAt" | "published">>;
+
+/** 发布状态徽标的图标与说明键（私有不显示）。 */
+const PUBLISHED_BADGE = {
+	code: { icon: "key", key: "artifacts.share.badge.code" },
+	public: { icon: "globe", key: "artifacts.share.badge.public" },
+} as const;
+
+function PublishedBadge({
+	access,
+	className,
+}: {
+	access: keyof typeof PUBLISHED_BADGE;
+	className: string;
+}): ReactNode {
+	const { t } = useTranslation();
+	const b = PUBLISHED_BADGE[access];
+	return (
+		<span
+			data-testid="artifact-published"
+			data-access={access}
+			title={t(b.key)}
+			className={className}
+		>
+			<Icon name={b.icon} size={12} aria-hidden />
+		</span>
+	);
+}
 
 /** tile 的预览区：缩略图，加载失败回落到类型示意图。版本变了重新尝试。 */
 function Preview({ artifact }: { artifact: ArtifactCardData }): ReactNode {
+	const access = artifact.published?.access;
 	const src = artifactThumbnailUrl(artifact.id, artifact.version);
 	const [failed, setFailed] = useState<string | null>(null);
 	return (
@@ -45,6 +74,12 @@ function Preview({ artifact }: { artifact: ArtifactCardData }): ReactNode {
 					data-testid="artifact-thumb"
 					className="absolute inset-0 h-full w-full object-cover object-top"
 					onError={() => setFailed(src)}
+				/>
+			)}
+			{(access === "code" || access === "public") && (
+				<PublishedBadge
+					access={access}
+					className="absolute top-1.5 left-1.5 inline-grid h-6 w-6 place-items-center rounded-md bg-panel/80 text-muted backdrop-blur-sm"
 				/>
 			)}
 		</span>
@@ -76,7 +111,10 @@ export function ArtifactCard({
 }): ReactNode {
 	const { t } = useTranslation();
 	const kind = t(kindLabelKey(artifact.kind));
-	const label = t("artifacts.card.open", { title: artifact.title });
+	const access = artifact.published?.access;
+	const shared = access === "code" || access === "public" ? access : null;
+	const open = t("artifacts.card.open", { title: artifact.title });
+	const label = shared ? `${open} · ${t(PUBLISHED_BADGE[shared].key)}` : open;
 	const interactive = onOpen !== undefined;
 	const base = `group w-full min-w-0 text-left transition-[background-color,border-color,box-shadow] duration-150 ${interactive ? "cursor-pointer hover:border-border-strong hover:bg-hover" : ""}`;
 	const body =
@@ -90,6 +128,9 @@ export function ArtifactCard({
 				<span className="min-w-0 flex-1 truncate font-medium text-sm">
 					{artifact.title}
 				</span>
+				{shared && (
+					<PublishedBadge access={shared} className="shrink-0 text-faint" />
+				)}
 				<span className="shrink-0 font-mono text-2xs text-muted tabular-nums">
 					{t("artifacts.viewer.version", { n: artifact.version })}
 				</span>

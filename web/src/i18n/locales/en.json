@@ -1791,7 +1791,11 @@
 			"purgeTitle": "Delete “{{title}}” permanently?",
 			"purgeBody_one": "Its {{count}} version will be removed. This can't be undone.",
 			"purgeBody_other": "All {{count}} of its versions will be removed. This can't be undone.",
-			"purgeConfirm": "Delete permanently"
+			"purgeConfirm": "Delete permanently",
+			"deleteTitle": "Delete “{{title}}”?",
+			"deleteBody": "It moves to Recently deleted and stays there for 30 days. It is currently published as a link.",
+			"deleteUnpublish": "Also unpublish it",
+			"deleteConfirm": "Delete"
 		},
 		"toast": {
 			"deleted": "Moved “{{title}}” to Recently deleted",
@@ -1833,6 +1837,56 @@
 			"running": "Rendering “{{title}}”…",
 			"done": "Downloaded a PNG of “{{title}}”",
 			"failed": "Couldn't download a PNG of “{{title}}”: {{reason}}"
+		},
+		"share": {
+			"button": "Share",
+			"buttonShared": "Shared",
+			"menu": "Share…",
+			"title": "Share “{{title}}”",
+			"intro": "Publish this artifact as a link and choose who can open it.",
+			"accessLabel": "Who can open it",
+			"access": {
+				"private": "Private",
+				"code": "Access code",
+				"public": "Public"
+			},
+			"accessHint": {
+				"private": "Only you, when signed in.",
+				"code": "Anyone with the link and the access code.",
+				"public": "Anyone with the link."
+			},
+			"firstPublish": "Published pages are static snapshots: the page's data, file reading, and asking the model aren't available, and it loads scripts and fonts from public CDNs.",
+			"publish": "Publish",
+			"publishAnyway": "Publish anyway",
+			"findingsHint": "These would become public with the link. Continue only if that's fine; otherwise ask the agent to remove them and publish again.",
+			"urlLabel": "Link",
+			"copyLink": "Copy link",
+			"copied": "Copied",
+			"copyFailed": "Couldn't write to the clipboard. Copy it manually.",
+			"codeLine": "Access code: {{code}}",
+			"codeLabel": "Access code",
+			"copyCode": "Copy access code",
+			"rotate": "New code",
+			"rotateHint": "The old code stops working right away; people who entered it will have to enter the new one.",
+			"locked": "The access code was entered wrong too many times and is locked. Make a new code to allow entry again.",
+			"published": "Version {{version}}, published {{when}}",
+			"follow": "Keep up with the latest version",
+			"update": "Update to version {{head}}",
+			"pending": "Version {{version}} may contain secrets, so it wasn't published automatically",
+			"review": "Review and publish",
+			"open": "Open",
+			"openFailed": "Couldn't open the published page: {{reason}}",
+			"unpublish": "Unpublish…",
+			"unpublishBody": "People with the link won't be able to open it anymore. The artifact stays here.",
+			"unpublishConfirm": "Unpublish",
+			"unpublished": "Unpublished “{{title}}”",
+			"badge": {
+				"code": "Published; opens with an access code",
+				"public": "Published; anyone with the link can open it"
+			},
+			"visitors_one": "{{count}} visitor",
+			"visitors_other": "{{count}} visitors",
+			"visitorsHint": "Viewing the shared link, read-only"
 		},
 		"history": {
 			"title": "Version history",

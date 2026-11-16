@@ -39,14 +39,15 @@ const InboxPage = lazy(() =>
 const ArtifactPage = lazy(() =>
 	import("./pages/ArtifactPage").then((m) => ({ default: m.ArtifactPage })),
 );
+// Artifacts（M14）：总览页与最近删除
+const ArtifactsPage = lazy(() =>
+	import("./pages/ArtifactsPage").then((m) => ({ default: m.ArtifactsPage })),
+);
 // Artifacts（M14）：私有发布页的登录中转（换授权后跳回发布页）
 const ArtifactOpenPage = lazy(() =>
 	import("./pages/ArtifactOpenPage").then((m) => ({
 		default: m.ArtifactOpenPage,
 	})),
-// Artifacts（M14）：总览页与最近删除
-const ArtifactsPage = lazy(() =>
-	import("./pages/ArtifactsPage").then((m) => ({ default: m.ArtifactsPage })),
 );
 
 // 不常用的页面（认证、设置、匿名分享页）按需加载

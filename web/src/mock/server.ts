@@ -68,6 +68,7 @@ import { MockLibrary } from "./library";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { handleSearchFetch } from "./search";
+import { redact, SHARE_RULES } from "./share-scan";
 import { handleStatsFetch } from "./stats";
 
 type Json = Record<string, unknown>;
@@ -101,39 +102,6 @@ const PUBLIC_FRAMES: Record<string, true> = {
 	subagent_lifecycle: true,
 	subagent_progress: true,
 };
-
-/** 分享前的密钥扫描规则（同 orynd `internal/share/scan.go`；mock 没有密钥库明文，不做 `vault_secret`）。 */
-const SHARE_RULES: { rule: Schemas["ShareFindingRule"]; re: RegExp }[] = [
-	{ rule: "private_key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
-	{ rule: "api_key_sk", re: /sk-[A-Za-z0-9_-]{20,}/g },
-	{
-		rule: "github_token",
-		re: /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{22,}/g,
-	},
-	{ rule: "aws_access_key", re: /AKIA[0-9A-Z]{16}/g },
-	{ rule: "google_api_key", re: /AIza[0-9A-Za-z_-]{35}/g },
-	{ rule: "slack_token", re: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
-	{
-		rule: "jwt",
-		re: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-	},
-	{ rule: "oryn_token", re: /(?:opv|oot|odt|ost|ows|owt)_[A-Za-z0-9_-]{43}/g },
-	{
-		rule: "bearer_header",
-		re: /authorization["':\s]+bearer\s+[A-Za-z0-9._~+/-]{20,}/gi,
-	},
-	{
-		rule: "url_credentials",
-		re: /[a-z][a-z0-9+.-]{1,15}:\/\/[^/\s:@"]+:[^/\s:@"]{6,}@/g,
-	},
-];
-
-/** 脱敏预览：前 4 字符 + `…` + 后 2 字符；短于 12 字符只留前 2。 */
-function redact(s: string): string {
-	return s.length < 12
-		? `${s.slice(0, 2)}…`
-		: `${s.slice(0, 4)}…${s.slice(-2)}`;
-}
 
 /** 16 字节随机 → 32 位小写十六进制（同 orynd 的 slug）。 */
 function newSlug(): string {
