@@ -266,6 +266,10 @@ type Service struct {
 	versionHooks []func(id string, n int)
 	// act 是在场信息（activity.go）。
 	act activitySet
+	// rt 是页面运行时调度器的限速、并发与取消状态（dispatch.go）。
+	rt runtimeGates
+	// data 是数据的监听者与 agent 写数据的限速（data.go）。
+	data dataSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，

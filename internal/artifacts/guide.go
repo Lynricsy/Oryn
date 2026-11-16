@@ -19,10 +19,11 @@ const (
 // guideTopics 是全部合法的主题（按说明顺序）。
 var guideTopics = []string{GuideFiles, GuideCanvas, GuideRuntime, GuideDocument, GuideSlides}
 
-// guides 是已写好的教程；合法但不在这里的主题在当前版本不可用。
+// guides 是各主题的教程（guideTopics 的每个主题都有一篇）。
 var guides = map[string]string{
 	GuideFiles:    guideFiles,
 	GuideCanvas:   guideCanvas,
+	GuideRuntime:  guideRuntime,
 	GuideDocument: guideDocument,
 	GuideSlides:   guideSlides,
 }
@@ -54,7 +55,7 @@ create_artifact 与 update_artifact 的 files 里，每个文件给 content 或 
 
 - 不能用 localStorage、sessionStorage、IndexedDB 和 cookie。
 - Worker 只能用 blob: 脚本创建。
-- 访问不了你所在环境里的服务（localhost 上的开发服务器、数据库等都连不上），也访问不了 Oryn 的接口。数据要写进 artifact 的文件里。
+- 访问不了你所在环境里的服务（localhost 上的开发服务器、数据库等都连不上），也访问不了 Oryn 的接口。静态数据写进 artifact 的文件里；用户在页面里产生、要保存下来的数据用 oryn.use("db")（见 read_artifact_guide 的 runtime 主题）。
 - 不能用摄像头、麦克风、定位，不能弹窗，不能跳转到别的网站；外部链接会被拦下，由用户决定是否在浏览器里打开。
 - 除了 artifact 自己的文件，只能从下面这些公共 CDN 加载脚本、样式和字体：
 ` + "  " + strings.Join(CDNs, "\n  ") + `
@@ -76,6 +77,82 @@ create_artifact 与 update_artifact 的 files 里，每个文件给 content 或 
 
 做完页面可以用 screenshot_artifact 看一眼实际渲染效果（orb 与 Runner 线程里可用）。
 `
+
+// guideRuntime 是 runtime 主题：页面运行时 window.oryn、能力声明与三个能力。
+var guideRuntime = fmt.Sprintf(`# 页面运行时：oryn.use
+
+页面里有一个全局对象 window.oryn（冻结的 {version: 1, use}）。页面要保存数据、读项目文件或向用户的模型提问时，用 await oryn.use(能力名) 取得这个能力的对象，再调用它的方法。
+
+## 必须处理 null
+
+oryn.use(name) 在能力不可用时返回 null，而且不说明原因。下面这些情况都是 null：发布出去的页面、查看旧版本、在浏览器中单独打开、artifact 没有声明这个能力、用户没有同意、当前环境不支持。页面拿到 null 时要照常显示，换成只读或给出说明，不能报错或白屏：
+
+  const db = await oryn.use("db");
+  if (!db) { showReadOnly(); return; }
+
+## 声明能力
+
+create_artifact 与 update_artifact 的 capabilities 参数声明页面要用的能力，取值只能是 db、files、sample。改声明会产生一个新版本；恢复旧版本时声明跟着回来。判定一律看最新版本的声明。
+
+声明了 files 或 sample 的页面不再从任何 CDN 加载东西（脚本、样式、字体都不行），要用的库全部作为 artifact 自己的文件带上。
+
+## 调用与错误
+
+能力对象的方法都返回 Promise。失败时抛出带 code 的错误，code 是下面之一：
+
+- not_declared：最新版本没有声明这个能力。
+- not_allowed：用户没有同意，或者这个页面（旧版本、单独打开）不能用运行时。
+- unsupported：没有这个能力或操作，或者当前不可用。
+- invalid：参数不对，message 说明哪里不对。
+- too_large：超过大小上限。
+- rate_limited：调用太频繁（每个 artifact 平均每秒 %d 次，最多连续 %d 次；同时最多 %d 个调用、%d 个监听）。稍后再试。
+- conflict：并发冲突，重新读取后再写。
+- not_found：artifact 已不在或已被删除；或者要合并字段的文档不存在。
+- failed：其它失败，可以稍后重试。
+
+## db：页面的数据
+
+db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组织，不需要用户同意。数据不属于任何版本：改页面、恢复旧版本都不会动数据。你也能用 read_artifact_data 与 write_artifact_data 读写同一份数据。
+
+  const db = await oryn.use("db");
+  await db.set("todos", "t1", {text: "买牛奶", done: false});
+  const doc = await db.get("todos", "t1");          // {collection, id, value, version, updatedAt} 或 null
+  await db.update("todos", "t1", {done: true}, {baseVersion: doc.version});
+  const stop = db.watch(["todos"], (change) => render(change));
+
+方法（参数按位置传）：
+
+- get(collection, id)：读一个文档，不存在时是 null。
+- set(collection, id, value, {baseVersion}?)：整体写入，返回 {id, version}。value 可以是任何 JSON 值。
+- update(collection, id, patch, {baseVersion}?)：把 patch 对象的字段浅合并进已有的对象文档，返回 {id, version}；文档不存在时报 not_found。
+- delete(collection, id, {baseVersion}?)：删除，返回 {deleted}（文档本来就不在时为 false）。
+- list(collection, {after, limit}?)：按 id 顺序列出，返回 {docs, next}；next 不为 null 时把它作为下一次的 after。
+- query(collection, {where, orderBy, limit}?)：返回符合条件的文档数组。where 最多 %d 个条件，每个是 {field, op, value}：field 是字段名或点路径（如 owner.name，最多 %d 段），op 是 == != < <= > >= 之一，value 只能是字符串、数字、布尔或 null（null 只能配 == 与 !=）；缺少的字段按 null 比较，类型不同的值大小比较一律不成立。orderBy 是 {field, direction: "asc" | "desc"}。
+- collections()：返回 [{name, count, bytes}]。
+- watch(collections, onChange)：监听变化，collections 是集合名、集合名数组或 null（全部集合）；onChange 收到 {type: "set", collection, id, value, version} 或 {type: "delete", collection, id}。返回取消函数。页面自己的写入、别的窗口与 agent 的写入都会推送过来。
+
+乐观并发：写入时带 {baseVersion: 读到的 version}，文档在那之后被别处改过就报 conflict，重新读取再写；baseVersion: 0 表示「文档必须还不存在」，用来防止覆盖。不带 baseVersion 就直接覆盖。每次写入后文档的 version 都会变大（同一 artifact 里不会重复）。
+
+规则与上限：集合名 1–64 个字母、数字或 _ . -，以字母、数字或 _ 开头；文档 id 1–200 个字母、数字或 _ . : @ + -，以字母、数字或 _ 开头；单个文档写成 JSON 不超过 %d MiB、嵌套不超过 %d 层；每个 artifact 的数据合计不超过 %d MiB；list 与 query 的 limit 缺省 %d、最大 %d。
+
+## files：读项目文件（需要用户同意）
+
+只读地列出与读取创建这个 artifact 的线程的工作目录。第一次使用时 Oryn 会问用户是否同意；没同意之前 oryn.use("files") 是 null。
+
+- list(path?)：返回 [{name, path, type: "file" | "folder", size}]，文件夹在前。
+- read(path, {as: "bytes"}?)：文本文件返回字符串；as: "bytes" 时返回 Uint8Array。
+
+路径是相对工作目录的路径；不能含 .. 或 .git；单个文件不超过 20 MiB。
+
+## sample：向用户的模型提问（需要用户同意）
+
+把一个问题交给用户自己的模型，在一个没有任何工具的一次性会话里回答。第一次使用时 Oryn 会问用户是否同意。
+
+- ask(prompt, {format: "text" | "json", images, onText, signal}?)：返回 {text, json?}。format: "json" 时要求模型只回一个 JSON 值并解析好放在 json 里；images 最多 4 张 data:image/... 的 base64 图片；onText 逐段收到回答；signal 可以取消。
+
+同一个 artifact 同时最多 2 个问题、每分钟最多 10 个；prompt 不超过 100000 个字符。
+`, runtimeRate, runtimeBurst, maxRuntimeCalls, maxRuntimeStreams, MaxDataFilters, maxFieldSegments,
+	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax)
 
 // guideCanvas 是 canvas 主题：canvas.json 的格式、改布局的方式、用户的标注与画框的调节参数。
 var guideCanvas = fmt.Sprintf(`# 画布 artifact
@@ -158,20 +235,5 @@ func guideText(topic string) (string, error) {
 	if text, ok := guides[topic]; ok {
 		return text, nil
 	}
-	for _, t := range guideTopics {
-		if t == topic {
-			return "", opErr(CodeInvalid, "这个主题在当前版本不可用。可用的主题：%s。", strings.Join(availableGuides(), "、"))
-		}
-	}
 	return "", opErr(CodeInvalid, "没有主题 %q。topic 只能是 %s 之一。", topic, strings.Join(guideTopics, "、"))
-}
-
-func availableGuides() []string {
-	var out []string
-	for _, t := range guideTopics {
-		if _, ok := guides[t]; ok {
-			out = append(out, t)
-		}
-	}
-	return out
 }

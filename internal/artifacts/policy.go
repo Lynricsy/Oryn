@@ -29,6 +29,9 @@ const (
 const permissionsPolicy = "camera=(), microphone=(), geolocation=(), display-capture=(), usb=(), serial=(), hid=(), " +
 	"bluetooth=(), midi=(), payment=(), clipboard-read=(), clipboard-write=(), fullscreen=()"
 
+// strictCapability 报告能力是否要求严格策略：最新版本声明了它、或帧调用过它，帧就不再放行任何 CDN。
+func strictCapability(c string) bool { return c == "files" || c == "sample" }
+
 // framePolicy 返回帧响应的 CSP。self 是页面自己的文件所在的源（泛域名模式 `'self'`，主域回退模式
 // `<public_url 源>/_af/<令牌>/`）；strict 时不放行任何 CDN；ancestors 是 frame-ancestors 的值，为空时不发这条指令
 // （渲染模式的页面就是顶层文档；顶层帧里被根内嵌的文件，见 Host.serve）。

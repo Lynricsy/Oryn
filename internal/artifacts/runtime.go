@@ -10,21 +10,21 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
 
 // 页面运行时端点：帧根下的 `POST /_oryn/v1`。页面里的 `oryn.use(cap)` 与能力调用都经它到达控制面。
 //
-// 请求体是一条消息 `{v: 1, id, kind, cap, op?, args?}`：
-//   - kind "use"：问能力是否可用。可用回 `{ok: true, value: {ops: [...]}}`；任何拒绝（不是可用运行时的帧、
-//     artifact 不在、能力未知或当前不可用）都回 `{ok: true, value: null}`，页面分不出是哪一种。
+// 请求体是一条消息 `{v: 1, id, kind, cap?, op?, args?}`：
+//   - kind "use"：问能力是否可用。可用回 `{ok: true, value: {ops: [...], streams?: [...]}}`；任何拒绝都回
+//     `{ok: true, value: null}`，页面分不出是哪一种。
 //   - kind "call"：调用能力的操作 op；args 是位置参数的 JSON 数组（缺省为 []）。成功回 `{ok: true, value}`，
 //     失败回 `{ok: false, error: {code, message}}`。
+//   - kind "stream"：调用流式操作，应答是 NDJSON（见 dispatch.go）。
+//   - kind "cancel"：取消这一帧上同 id 的进行中调用，回 `{ok: true, value: {cancelled}}`；不带 cap、op、args。
 //
-// 应答一律带 `{v: 1, id}`。消息形状不对时回 400 与 invalid。阶段 7 在这张能力表上扩充（db、files、sample、
-// 流式调用、限速与同意）。
+// 应答一律带 `{v: 1, id}`。消息形状不对时回 400 与 invalid。校验顺序与限额见 dispatch.go。
 const (
 	runtimeEndpoint   = ReservedPrefix + "/v1"
 	maxRuntimeMessage = 8 << 20
@@ -68,24 +68,18 @@ type runtimeOp func(ctx context.Context, rc *runtimeCall) (any, error)
 
 // runtimeCap 是一个页面能力。
 type runtimeCap struct {
-	// available 报告这个能力对这次调用是否可用；不可用时 use 回 null、call 回 unsupported。
+	// declared：只有 artifact 的最新版本在 capabilities 里声明了它才能用（content 不需要声明）。
+	declared bool
+	// available 报告这个能力对这次调用是否可用（nil = 总是可用）；不可用时 use 回 null、call 回 unsupported。
 	available func(ctx context.Context, rc *runtimeCall) bool
-	ops       map[string]runtimeOp
-}
-
-// opNames 返回能力的操作名（排序）。
-func (c runtimeCap) opNames() []string {
-	out := make([]string, 0, len(c.ops))
-	for n := range c.ops {
-		out = append(out, n)
-	}
-	slices.Sort(out)
-	return out
+	// ops 是 call 的操作，streams 是 stream 的操作。
+	ops     map[string]runtimeOp
+	streams map[string]streamOp
 }
 
 // runtimeCaps 是运行时端点认得的能力表。
 func (h *Host) runtimeCaps() map[string]runtimeCap {
-	return map[string]runtimeCap{"content": h.contentCap()}
+	return map[string]runtimeCap{"content": h.contentCap(), "db": h.dbCap()}
 }
 
 // frameOrigin 返回帧自己的源（scheme://host[:port]）。
@@ -140,8 +134,15 @@ func (h *Host) serveRuntime(w http.ResponseWriter, r *http.Request, token string
 		writeRuntime(w, http.StatusBadRequest, id, nil, opErr(CodeInvalid, "%s", problem))
 		return
 	}
-	value, err := h.dispatch(r.Context(), token, f, m)
-	writeRuntime(w, http.StatusOK, m.ID, value, err)
+	switch m.Kind {
+	case "cancel":
+		writeRuntime(w, http.StatusOK, m.ID, map[string]any{"cancelled": h.s.rt.cancel(token, m.ID)}, nil)
+	case "stream":
+		h.serveStream(w, r, token, f, m)
+	default:
+		value, err := h.dispatch(r.Context(), token, f, m)
+		writeRuntime(w, http.StatusOK, m.ID, value, err)
+	}
 }
 
 // problem 检查消息形状，返回问题说明（空 = 合法）。
@@ -151,11 +152,16 @@ func (m runtimeMsg) problem() string {
 		return "v 必须是 1。"
 	case !runtimeIDRe.MatchString(m.ID):
 		return "id 不合法。"
-	case m.Kind != "use" && m.Kind != "call":
-		return "kind 只能是 use 或 call。"
+	case m.Kind == "cancel":
+		if m.Cap != "" || m.Op != "" || len(m.Args) > 0 {
+			return "cancel 不带 cap、op 与 args。"
+		}
+		return ""
+	case m.Kind != "use" && m.Kind != "call" && m.Kind != "stream":
+		return "kind 只能是 use、call、stream 或 cancel。"
 	case !runtimeCapRe.MatchString(m.Cap):
 		return "cap 不合法。"
-	case m.Kind == "call" && !runtimeOpRe.MatchString(m.Op):
+	case m.Kind != "use" && !runtimeOpRe.MatchString(m.Op):
 		return "op 不合法。"
 	case m.Kind == "use" && (m.Op != "" || len(m.Args) > 0):
 		return "use 不带 op 与 args。"
@@ -163,63 +169,28 @@ func (m runtimeMsg) problem() string {
 	return ""
 }
 
-// dispatch 按「帧的运行时位 → artifact 存在且不在回收站 → 能力已注册 → 能力可用 → 操作存在」的顺序校验并执行。
-// use 的任何拒绝都回 (nil, nil)。
-func (h *Host) dispatch(ctx context.Context, token string, f frame, m runtimeMsg) (any, error) {
-	reject := func(err *OpError) (any, error) {
-		if m.Kind == "use" {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if !f.runtime {
-		return reject(opErr(codeNotAllowed, "这个页面不能使用运行时能力（旧版本或在浏览器中单独打开）。"))
-	}
-	a, err := h.s.Get(ctx, f.artifactID)
-	if err != nil {
-		if _, ok := AsOpError(err); ok {
-			return reject(opErr(CodeNotFound, "artifact 已不在。"))
-		}
-		return nil, err
-	}
-	if a.Deleted() {
-		return reject(opErr(CodeNotFound, "artifact 已被删除。"))
-	}
-	c, ok := h.caps[m.Cap]
-	if !ok {
-		return reject(opErr(codeUnsupported, "没有能力 %s。", m.Cap))
-	}
-	rc := &runtimeCall{token: token, frame: f, art: a, args: m.Args}
-	if !c.available(ctx, rc) {
-		return reject(opErr(codeUnsupported, "能力 %s 在这个页面上不可用。", m.Cap))
-	}
-	if m.Kind == "use" {
-		return map[string]any{"ops": c.opNames()}, nil
-	}
-	op, ok := c.ops[m.Op]
-	if !ok {
-		return nil, opErr(codeUnsupported, "能力 %s 没有操作 %s。", m.Cap, m.Op)
-	}
-	return op(ctx, rc)
-}
-
-// writeRuntime 写一条应答：err 为 nil 时 `{v, id, ok: true, value}`，否则 `{v, id, ok: false, error}`。
+// runtimeReply 是一条应答：err 为 nil 时 `{v, id, ok: true, value}`，否则 `{v, id, ok: false, error}`。
 // 不是 *OpError 的错误记日志，对页面只报 failed。
-func writeRuntime(w http.ResponseWriter, status int, id string, value any, err error) {
+func runtimeReply(id string, value any, err error) map[string]any {
 	reply := map[string]any{"v": 1, "id": id, "ok": err == nil}
 	if err == nil {
 		reply["value"] = value
-	} else {
-		oe, ok := AsOpError(err)
-		if !ok {
-			if !errors.Is(err, context.Canceled) {
-				slog.Warn("artifacts: 运行时调用失败", "err", err)
-			}
-			oe = opErr(codeFailed, "暂时无法完成，请稍后再试。")
-		}
-		reply["error"] = map[string]string{"code": oe.Code, "message": oe.Message}
+		return reply
 	}
-	b, _ := json.Marshal(reply)
+	oe, ok := AsOpError(err)
+	if !ok {
+		if !errors.Is(err, context.Canceled) {
+			slog.Warn("artifacts: 运行时调用失败", "err", err)
+		}
+		oe = opErr(codeFailed, "暂时无法完成，请稍后再试。")
+	}
+	reply["error"] = map[string]string{"code": oe.Code, "message": oe.Message}
+	return reply
+}
+
+// writeRuntime 写一条 JSON 应答（runtimeReply）。
+func writeRuntime(w http.ResponseWriter, status int, id string, value any, err error) {
+	b, _ := json.Marshal(runtimeReply(id, value, err))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(b)

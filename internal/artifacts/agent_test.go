@@ -102,8 +102,8 @@ func TestAgentCreateRead(t *testing.T) {
 	big, _ := json.Marshal(strings.Repeat("a", MaxInlineBytes+1))
 	_, err = agentCall(t, e.s, c, OpCreate, `{"title":"x","html":`+string(big)+`}`)
 	assert.Equal(t, CodeTooLarge, code(err))
-	// capabilities 这一步不支持；只有 ScopeAll 能指定 projectId。
-	_, err = agentCall(t, e.s, c, OpCreate, `{"title":"x","html":"a","capabilities":["db"]}`)
+	// 能力只能是 db、files、sample；只有 ScopeAll 能指定 projectId。
+	_, err = agentCall(t, e.s, c, OpCreate, `{"title":"x","html":"a","capabilities":["net"]}`)
 	assert.Equal(t, CodeInvalid, code(err))
 	_, err = agentCall(t, e.s, c, OpCreate, `{"title":"x","html":"a","projectId":"prj_x"}`)
 	assert.Equal(t, CodeInvalid, code(err))
@@ -154,7 +154,7 @@ func TestAgentUpdateEdits(t *testing.T) {
 	assert.Equal(t, "h1{color:blue}", readFile(t, e.s, id, 0, "style.css"))
 	assert.Equal(t, "<h1>Hi all</h1><p>1 two two</p>", readFile(t, e.s, id, 0, "index.html"))
 
-	// 删除文件；edits 不能改被删的文件；没有 baseVersion、空改动、capabilities、canvas 都被拒。
+	// 删除文件；edits 不能改被删的文件；没有 baseVersion、空改动、未知能力、canvas 都被拒。
 	_, err = agentCall(t, e.s, c, OpUpdate, `{"id":"`+id+`","baseVersion":3,"files":[{"path":"style.css","remove":true}],"edits":[{"path":"style.css","oldText":"blue","newText":"x"}]}`)
 	assert.Equal(t, CodeInvalid, code(err))
 	mustCall(t, e.s, c, OpUpdate, `{"id":"`+id+`","baseVersion":3,"files":[{"path":"style.css","remove":true}]}`)
@@ -164,7 +164,7 @@ func TestAgentUpdateEdits(t *testing.T) {
 	for _, p := range []string{
 		`{"id":"` + id + `","html":"x"}`,
 		`{"id":"` + id + `","baseVersion":4}`,
-		`{"id":"` + id + `","baseVersion":4,"capabilities":["db"]}`,
+		`{"id":"` + id + `","baseVersion":4,"capabilities":["net"]}`,
 		`{"id":"` + id + `","baseVersion":4,"canvas":[]}`,
 		`{"id":"` + id + `","baseVersion":9,"html":"x"}`,
 	} {
@@ -325,10 +325,11 @@ func TestAgentGuide(t *testing.T) {
 	assert.Contains(t, r.Text, "data-oryn-params")
 	assert.Contains(t, r.Text, "copyOf")
 	assert.NotContains(t, r.Text, "%!") // Sprintf 的参数与占位符对得上
-	_, err := agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"runtime"}`)
-	assert.Equal(t, CodeInvalid, code(err))
-	assert.Contains(t, err.Error(), "这个主题在当前版本不可用")
-	_, err = agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"nope"}`)
+	r = mustCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"runtime"}`)
+	assert.Contains(t, r.Text, "必须处理 null")
+	assert.Contains(t, r.Text, "baseVersion: 0")
+	assert.NotContains(t, r.Text, "%!")
+	_, err := agentCall(t, e.s, Caller{Scope: ScopeAll}, OpReadGuide, `{"topic":"nope"}`)
 	assert.Equal(t, CodeInvalid, code(err))
 }
 

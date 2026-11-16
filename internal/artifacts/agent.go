@@ -34,6 +34,8 @@ const (
 	OpReplyComment    = "reply_artifact_comment"
 	OpResolveComment  = "resolve_artifact_comment"
 	OpScreenshot      = "screenshot_artifact"
+	OpReadData        = "read_artifact_data"
+	OpWriteData       = "write_artifact_data"
 	listDefaultLimit  = 50
 	listMaxLimit      = 200
 	deletedThreadName = "已删除的线程"
@@ -110,10 +112,14 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentResolveComment(ctx, c, params)
 	case OpScreenshot:
 		return s.agentScreenshot(ctx, c, params)
+	case OpReadData:
+		return s.agentReadData(ctx, c, params)
+	case OpWriteData:
+		return s.agentWriteData(ctx, c, params)
 	default:
 		return Result{}, opErr(CodeInvalid, "没有操作 %q。可用的操作：%s。", op,
 			strings.Join([]string{OpCreate, OpRead, OpUpdate, OpList, OpDelete, OpListVersions, OpRestoreVersion, OpReadGuide,
-				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot}, "、"))
+				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData}, "、"))
 	}
 }
 
@@ -392,21 +398,18 @@ func changes(ctx context.Context, c Caller, ps []*pending) ([]FileChange, func()
 
 type createArgs struct {
 	htmlArgs
-	Title        string          `json:"title"`
-	Type         string          `json:"type"`
-	Files        []fileParam     `json:"files"`
-	Capabilities json.RawMessage `json:"capabilities"`
-	Note         string          `json:"note"`
-	ProjectID    *string         `json:"projectId"`
+	Title        string      `json:"title"`
+	Type         string      `json:"type"`
+	Files        []fileParam `json:"files"`
+	Capabilities []string    `json:"capabilities"`
+	Note         string      `json:"note"`
+	ProjectID    *string     `json:"projectId"`
 }
 
 func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
 	var p createArgs
 	if err := decodeParams(params, &p); err != nil {
 		return Result{}, err
-	}
-	if len(p.Capabilities) > 0 {
-		return Result{}, opErr(CodeInvalid, "当前版本还不支持 capabilities（页面能力声明）。去掉这个参数再试。")
 	}
 	if p.Type != "" && TypeEntry(p.Type) != "" && p.given() {
 		return Result{}, typedHTMLErr(p.Type)
@@ -436,7 +439,7 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 	defer closeAll()
 	a, err := s.Create(ctx, CreateParams{
 		Title: p.Title, Type: p.Type, ProjectID: deref(project), ThreadID: c.ThreadID, Origin: OriginAgent,
-		Author: c.author(), Note: p.Note, Files: files,
+		Author: c.author(), Note: p.Note, Files: files, Capabilities: p.Capabilities,
 	})
 	if err != nil {
 		return Result{}, err
@@ -574,7 +577,7 @@ type updateArgs struct {
 	Title        *string         `json:"title"`
 	Files        []fileParam     `json:"files"`
 	Edits        []editArg       `json:"edits"`
-	Capabilities json.RawMessage `json:"capabilities"`
+	Capabilities *[]string       `json:"capabilities"`
 	Canvas       json.RawMessage `json:"canvas"`
 	Note         *string         `json:"note"`
 }
@@ -588,7 +591,7 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if err != nil {
 		return Result{}, err
 	}
-	hasCaps, hasCanvas := len(p.Capabilities) > 0, len(p.Canvas) > 0
+	hasCaps, hasCanvas := p.Capabilities != nil, len(p.Canvas) > 0
 	content := p.given() || len(p.Files) > 0 || len(p.Edits) > 0 || hasCaps || hasCanvas
 	if p.Title != nil {
 		if content || p.Note != nil {
@@ -601,10 +604,10 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 		return cardResult(OpUpdate, obj{"id": r.ID, "version": r.Version, "pages": r.Pages}, r, 0), nil
 	}
 	if !content {
-		return Result{}, opErr(CodeInvalid, "没有任何改动。给 html、files 或 edits；只改标题时给 title。")
+		return Result{}, opErr(CodeInvalid, "没有任何改动。给 html、files、edits 或 capabilities；只改标题时给 title。")
 	}
-	if hasCaps {
-		return Result{}, opErr(CodeInvalid, "当前版本还不支持 capabilities（页面能力声明）。去掉这个参数再试。")
+	if hasCaps && hasCanvas {
+		return Result{}, opErr(CodeInvalid, "capabilities 不能和 canvas 操作一起给。先用 canvas 改布局，再另调一次 update_artifact 改能力声明。")
 	}
 	if hasCanvas && a.Kind != KindCanvas {
 		return Result{}, opErr(CodeInvalid, "%s 不是画布 artifact，不能用 canvas 操作。改它的文件请用 files 或 edits。", a.ID)
@@ -639,7 +642,7 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if hasCanvas {
 		r, err = s.agentCanvas(ctx, c, a.ID, base, p.Canvas, files, deref(p.Note))
 	} else {
-		r, err = s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Note: deref(p.Note), Files: files})
+		r, err = s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Note: deref(p.Note), Files: files, Capabilities: p.Capabilities})
 	}
 	if err != nil {
 		return Result{}, err

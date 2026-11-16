@@ -123,7 +123,7 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		return out
 	}
 	all := []string{ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
-		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide}
+		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide, ToolReadArtifactData, ToolWriteArtifactData}
 	asst, space := names(false), names(true)
 	for _, n := range all {
 		assert.True(t, asst[n], n)
