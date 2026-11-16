@@ -18,11 +18,14 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// creatingThreads 的 Create 真的建出线程行（带一台 identity 身份的 orb），SetModel 记下调用，其余同 stubThreads。
+// creatingThreads 的 Create 真的建出线程行（带一台 identity 身份的 orb），与 p.InitTx 同一事务（同 threads.Create）；
+// 事务提交之后、返回之前调用 onStart（相当于 threads 在此刻 wake / scheduleStart）。InitTx 失败时返回错误、不记录。
+// SetModel 记下调用，其余同 stubThreads。
 type creatingThreads struct {
 	*stubThreads
 	e        *testEnv
 	identity string
+	onStart  func(threadID string)
 	mu       sync.Mutex
 	ids      []string
 	models   []string // "线程 provider/id thinking"
@@ -45,16 +48,27 @@ func (t *creatingThreads) setModels() []string {
 }
 
 func (t *creatingThreads) Create(ctx context.Context, p threads.CreateParams) (apigen.Thread, error) {
-	if _, err := t.stubThreads.Create(ctx, p); err != nil {
-		return apigen.Thread{}, err
-	}
 	o := t.e.orb(p.ProjectID, t.identity, "")
 	id := ids.New("thr")
 	now := t.e.clock.Now().UnixMilli()
-	if err := t.e.st.Q.CreateThread(ctx, db.CreateThreadParams{
-		ID: id, ProjectID: &p.ProjectID, OrbID: &o.ID, Title: p.Title, TitleSource: "user", State: "idle", StateChangedAt: now,
-		SessionDir: "d", CreatedAt: now, UpdatedAt: now, Kind: "work",
+	if err := t.e.st.Tx(ctx, func(q *db.Queries) error {
+		if err := q.CreateThread(ctx, db.CreateThreadParams{
+			ID: id, ProjectID: &p.ProjectID, OrbID: &o.ID, Title: p.Title, TitleSource: "user", State: "idle", StateChangedAt: now,
+			SessionDir: "d", CreatedAt: now, UpdatedAt: now, Kind: "work",
+		}); err != nil {
+			return err
+		}
+		if p.InitTx != nil {
+			return p.InitTx(ctx, q, id)
+		}
+		return nil
 	}); err != nil {
+		return apigen.Thread{}, err
+	}
+	if t.onStart != nil {
+		t.onStart(id)
+	}
+	if _, err := t.stubThreads.Create(ctx, p); err != nil {
 		return apigen.Thread{}, err
 	}
 	t.mu.Lock()

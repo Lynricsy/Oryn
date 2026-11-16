@@ -3500,7 +3500,9 @@ const upsertThreadIssue = `-- name: UpsertThreadIssue :exec
 INSERT INTO thread_issues (repo_id, number, thread_id, trigger_id, created_at)
 VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT (repo_id, number) DO UPDATE SET
-    thread_id = excluded.thread_id, trigger_id = excluded.trigger_id, created_at = excluded.created_at
+    thread_id = excluded.thread_id, trigger_id = excluded.trigger_id, created_at = excluded.created_at,
+    state = 'new', classification = NULL, impl_authorized = 0, review_only = 0, rule_id = NULL, deadline_at = NULL,
+    reminders = 0
 `
 
 type UpsertThreadIssueParams struct {
@@ -3511,6 +3513,7 @@ type UpsertThreadIssueParams struct {
 	CreatedAt int64   `json:"createdAt"`
 }
 
+// A re-triggered issue starts a fresh task: the previous thread's state, classification and flags are reset.
 func (q *Queries) UpsertThreadIssue(ctx context.Context, arg UpsertThreadIssueParams) error {
 	_, err := q.db.ExecContext(ctx, upsertThreadIssue,
 		arg.RepoID,

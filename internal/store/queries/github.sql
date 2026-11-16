@@ -540,11 +540,14 @@ SELECT ti.repo_id, ti.number, ti.thread_id, ti.trigger_id, ti.created_at, ti.sta
 FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id
 WHERE ti.repo_id = @repo_id AND ti.number = @number;
 
+-- A re-triggered issue starts a fresh task: the previous thread's state, classification and flags are reset.
 -- name: UpsertThreadIssue :exec
 INSERT INTO thread_issues (repo_id, number, thread_id, trigger_id, created_at)
 VALUES (@repo_id, @number, @thread_id, sqlc.narg(trigger_id), @created_at)
 ON CONFLICT (repo_id, number) DO UPDATE SET
-    thread_id = excluded.thread_id, trigger_id = excluded.trigger_id, created_at = excluded.created_at;
+    thread_id = excluded.thread_id, trigger_id = excluded.trigger_id, created_at = excluded.created_at,
+    state = 'new', classification = NULL, impl_authorized = 0, review_only = 0, rule_id = NULL, deadline_at = NULL,
+    reminders = 0;
 
 -- Latest issue task of a thread.
 -- name: GetThreadIssueByThread :one

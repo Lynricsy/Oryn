@@ -350,3 +350,51 @@ func TestTriggerPragmaOverride(t *testing.T) {
 	require.Equal(t, "handled", e.delivery(g).Outcome)
 	assert.Equal(t, []string{thr + " / xhigh"}, e.ct.setModels())
 }
+
+// 安全不变式：PR 评审线程「启动」的那一刻（InitTx 已提交、Create 返回之前），thread_issues 里 review_only 与 rule_id
+// 已经在——出站代理按线程任务现查门禁，没有零限制的窗口。
+func TestTriggerTaskWrittenBeforeStart(t *testing.T) {
+	e := newTriggerEnv(t)
+	tr := e.trigger(apigen.GitHubTriggerInput{Name: "review", Event: apigen.PullRequestOpened, Prompt: "p", Drivers: new(apigen.GitHubDriversAnyone), Announce: new(false)})
+	var seen []db.ThreadIssue
+	e.ct.onStart = func(threadID string) {
+		ti, err := e.st.Q.GetThreadIssueByThread(e.ctx, threadID)
+		require.NoError(t, err)
+		seen = append(seen, ti)
+	}
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 50, Title: "x", Author: "carol"}, HeadRef: "f", HeadSHA: "s50", HeadRepoID: 999})
+	g := e.deliver("pull_request", pullOpenedEvent("opened", 50, "carol", "NONE", "carol", false))
+	require.Equal(t, "handled", e.delivery(g).Outcome)
+	require.Len(t, seen, 1)
+	assert.True(t, seen[0].ReviewOnly)
+	require.NotNil(t, seen[0].RuleID)
+	assert.Equal(t, tr.ID, *seen[0].RuleID)
+	assert.Equal(t, "new", seen[0].State)
+}
+
+// 重新触发的 issue（旧线程已归档）开始新任务：状态、分类、实现授权、提醒次数重置。
+func TestTriggerRetriggerResetsTask(t *testing.T) {
+	e := newTriggerEnv(t)
+	e.trigger(apigen.GitHubTriggerInput{Name: "open", Event: apigen.IssueReopened, Prompt: "p", Announce: new(false)})
+	old := e.workThread(e.prj)
+	require.NoError(t, e.st.Q.UpsertThreadIssue(e.ctx, db.UpsertThreadIssueParams{RepoID: 42, Number: 7, ThreadID: old, CreatedAt: 1}))
+	_, err := e.st.Q.SetThreadIssueState(e.ctx, db.SetThreadIssueStateParams{State: "closed", ThreadID: old})
+	require.NoError(t, err)
+	_, err = e.st.Q.SetThreadIssueClassification(e.ctx, db.SetThreadIssueClassificationParams{Classification: new("bug"), ThreadID: old})
+	require.NoError(t, err)
+	_, err = e.st.Q.SetThreadIssueImplAuthorized(e.ctx, db.SetThreadIssueImplAuthorizedParams{ImplAuthorized: true, RepoID: 42, Number: 7})
+	require.NoError(t, err)
+	_, err = e.st.Q.BumpThreadIssueReminders(e.ctx, old)
+	require.NoError(t, err)
+	_, err = e.st.Q.UpdateThreadMeta(e.ctx, db.UpdateThreadMetaParams{Title: "t", TitleSource: "auto", ArchivedAt: new(int64(1)), UpdatedAt: 1, ID: old})
+	require.NoError(t, err)
+
+	g := e.deliver("issues", issuesEvent("reopened", assocIssue(7, "alice", "MEMBER", "b"), "alice", ""))
+	require.Equal(t, "handled", e.delivery(g).Outcome)
+	row := e.threadIssue(7)
+	assert.Equal(t, e.ct.last(), row.ThreadID)
+	assert.Equal(t, "new", row.State)
+	assert.Nil(t, row.Classification)
+	assert.False(t, row.ImplAuthorized)
+	assert.Zero(t, row.Reminders)
+}

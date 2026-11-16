@@ -711,29 +711,31 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, cands []db.GithubTr
 			thinking = lv
 		}
 	}
+	at := s.nowMs()
+	var deadline *int64
+	if trig.MaxDurationSec != nil {
+		deadline = new(at + *trig.MaxDurationSec*1000)
+	}
+	// 任务（review_only、规则、时限）与线程行同一事务写入：首条提示词开始执行之前，出站代理按线程任务现查的门禁
+	// 必已看到它（threads.CreateParams.InitTx 的不变式）。重新触发的 issue 由 UpsertThreadIssue 重置旧任务的状态与标志。
 	th, err := s.th.Create(ctx, threads.CreateParams{
 		ProjectID: prj.ID, Prompt: triggerPrompt(trig, ev), Title: fmt.Sprintf("#%d %s", number, ev.issue.Title),
 		Model: model, ThinkingLevel: thinking, Automation: true, Untrusted: untrusted,
+		InitTx: func(ctx context.Context, q *db.Queries, threadID string) error {
+			if err := q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{
+				RepoID: ev.repoID, Number: number, ThreadID: threadID, TriggerID: &trig.ID, CreatedAt: at,
+			}); err != nil {
+				return err
+			}
+			return q.SetThreadIssueTask(ctx, db.SetThreadIssueTaskParams{
+				RuleID: &trig.ID, ReviewOnly: trig.Event == evPullOpened, DeadlineAt: deadline, RepoID: ev.repoID, Number: number,
+			})
+		},
 	})
 	if err != nil {
 		if errors.Is(err, errAgentRequired) {
 			return s.agentRequired(ctx, trig, ev, err)
 		}
-		return "", err
-	}
-	at := s.nowMs()
-	if err := s.st.Q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{
-		RepoID: ev.repoID, Number: number, ThreadID: th.ID, TriggerID: &trig.ID, CreatedAt: at,
-	}); err != nil {
-		return "", err
-	}
-	var deadline *int64
-	if trig.MaxDurationSec != nil {
-		deadline = new(at + *trig.MaxDurationSec*1000)
-	}
-	if err := s.st.Q.SetThreadIssueTask(ctx, db.SetThreadIssueTaskParams{
-		RuleID: &trig.ID, ReviewOnly: trig.Event == evPullOpened, DeadlineAt: deadline, RepoID: ev.repoID, Number: number,
-	}); err != nil {
 		return "", err
 	}
 	if d.limit > 0 {

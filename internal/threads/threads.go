@@ -62,6 +62,10 @@ type CreateParams struct {
 	// Untrusted 与 Automation 同用：入口由不可信输入驱动（「任何人」档规则、外部 PR 评审，M15 Q6）。身份只用 Agent 账号，
 	// Agent 槽位不可用时 Create 原样返回 GitHub.ResolveAutomationSlot 的错误，不回退、不建线程。
 	Untrusted bool
+	// InitTx 非 nil 时在写线程行与首批命令的同一事务里执行（SetThreadStartupFrames 之后），threadID 是新线程的 id：
+	// 调用方据此写入与线程同生共死的初始化（如 GitHub 任务的 review_only，M15）。返回错误时整个 Create 失败，
+	// 按建线程失败清理（删本次新建的 orb、worktree），不下发任何帧。
+	InitTx func(ctx context.Context, q *db.Queries, threadID string) error
 }
 
 // maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
@@ -273,7 +277,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			return err
 		}
 		if len(p.Attachments) > 0 {
-			return s.attach.BindTx(ctx, q, id, p.Attachments)
+			if err := s.attach.BindTx(ctx, q, id, p.Attachments); err != nil {
+				return err
+			}
+		}
+		if p.InitTx != nil {
+			return p.InitTx(ctx, q, id)
 		}
 		return nil
 	}); err != nil {
@@ -303,6 +312,8 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	s.out().IndexUpsert(out)
+	// 不变式：wake / scheduleStart（首条提示词因此可能开始执行）只在上面的事务提交之后发生，InitTx 写入的行此时
+	// 必已可读——出站代理按线程任务现查的门禁（review_only 等）没有「线程已在跑、任务还没写」的窗口
 	if p.OrbID != "" || rt != nil {
 		s.wake(id, orb.ID)
 	} else if s.orbState(orb.ID) == orbStateReady {

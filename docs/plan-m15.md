@@ -23,6 +23,7 @@
   - 5.4 增加服务端兜底：**推送门禁开启时**，非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。门禁关闭（R19 的默认）或项目没有门禁（含无项目 orb）时不加这条限制，按 R5 以账号权限读写。
 - **v5（2026-11-16，执行中修订）**：评审发现 3.1 会静默漏事件：仓库级每轮 20 次时间线查询用完后跳过其余项，却照样保存 ETag、把 since 推到全列表的最大时间；列表翻满 5 页仍有下一页时也照常提交。改为可续跑（规则见附录 C「续跑」）：没处理完的列表不提交 ETag，游标不越过第一个没处理的项；PR 改由 issue 列表发现（`pulls` 列表没有 `since`、倒序读不到续点），迁移 `0035` 删掉 `github_repo_watches.etag_pulls`。
 - **v6（2026-11-16，执行中修订）**：5.4 的线程限制（`ReviewOnly`、`CommentOnlyReviews`、`ImplAuth`）原定在 setup 时写进策略，但规则在建线程之后才写入 `thread_issues`，池中 orb 被认领时 setup 可能先算出策略，于是首个会话里只读评审线程能推送、开 PR。改为出站代理每次写请求经 `GateLookup.ThreadGates()` 现查（含 `info/refs` 阶段的 403），查询失败按最严处理（三项都视为开启）；策略里只保留项目的 `Gates`。
+- **v7（2026-11-16，执行中修订）**：只靠 v6 的现查仍有窗口：`threads.Create` 返回前已唤醒线程、排队首条提示词，而 `fire` 在它返回后才写 `thread_issues` 与任务，其间现查得到「没有任务」= 零限制。改为任务与线程同事务落库：`threads.CreateParams` 新增 `InitTx(ctx, q, threadID)`，在写线程行与首批命令的同一事务里执行，事务提交后才唤醒线程；`fire` 的 `UpsertThreadIssue`、`SetThreadIssueTask`（以及 4.3 重新触发时的字段重置）都放进 `InitTx`。6.1 的发布线程建线程时要写的任务或发布行同样走 `InitTx`。由此「没有任务 = 零限制」只会出现在确实不是任务线程的 orb 上。
 
 ## Context
 
