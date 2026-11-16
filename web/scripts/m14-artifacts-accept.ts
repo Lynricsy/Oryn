@@ -612,6 +612,43 @@ async function clickLinkInFrame(f: Frame, selector: string) {
 	throw new Error(`点 ${selector} 两次都没有送达帧里的页面`);
 }
 
+/**
+ * 点进帧并确认帧的文档拿到了焦点（之后的按键才会送到帧里）。帧是独立渲染进程的不透明源：子帧的输入路由
+ * 还没就绪时点击送不进去（同 clickLinkInFrame），焦点也就停在父页面的 IFRAME 上；没拿到就再点。
+ */
+async function focusFrame(f: Frame) {
+	for (let i = 0; i < 3; i++) {
+		await f.evaluate(() => {
+			const w = window as unknown as { __m14click?: boolean };
+			w.__m14click = false;
+			window.addEventListener(
+				"click",
+				() => {
+					w.__m14click = true;
+				},
+				{ capture: true, once: true },
+			);
+		});
+		await f.locator("body").click({ position: { x: 5, y: 5 } });
+		const focused = await waitFor(
+			"焦点进入帧",
+			() => f.evaluate(() => document.hasFocus()),
+			3_000,
+			50,
+		).catch(() => false);
+		if (focused) return;
+		const clicked = await f
+			.evaluate(
+				() => (window as unknown as { __m14click?: boolean }).__m14click,
+			)
+			.catch(() => false);
+		note(
+			`点进帧后帧没有拿到焦点（点击${clicked ? "已" : "没有"}送达帧里的页面），再点一次`,
+		);
+	}
+	throw new Error("点了三次，帧的文档都没有拿到焦点");
+}
+
 /** 切到右面板的指定标签：宽屏先打开面板列再点标签；手机经视图菜单。 */
 async function openPanel(p: Page, tab: string) {
 	const views = p.locator("[data-testid=thread-view-menu]").first();
@@ -4673,15 +4710,8 @@ async function realK25() {
 			/(\d+) \/ 8/,
 		)?.[1];
 	await waitFor("1 / 8", async () => (await counter()) === "1", 15_000);
-	// 帧是不透明源、跑在独立的渲染进程里：点进去之后焦点要过一会儿才转到帧的文档（父页面先把 IFRAME 设为
-	// activeElement，帧的 document.hasFocus() 稍后才为真）。在这之前按键送不到帧里，所以等焦点到了再按。
-	await f.locator("body").click({ position: { x: 5, y: 5 } });
-	await waitFor(
-		"焦点进入幻灯片帧",
-		async () => f.evaluate(() => document.hasFocus()).catch(() => false),
-		5_000,
-		50,
-	);
+	// 按键只会送到拿到焦点的文档：先确认点击把焦点给了帧（帧在独立进程里，第一下可能送不进去）
+	await focusFrame(f);
 	await p.keyboard.press("ArrowRight");
 	await waitFor("2 / 8", async () => (await counter()) === "2", 5_000);
 	await p.keyboard.press("End");
