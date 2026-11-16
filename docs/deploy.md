@@ -536,3 +536,38 @@ sudo systemctl enable --now oryn-provider-fc
 - guest 里的 orbd 作为 PID 1 启动，时间、主机名、DNS 和令牌经 vsock 下发；模型与 git 的密钥仍然不进 VM。令牌只放在 guest 的 tmpfs `/run/oryn/orb-token`（`$HOME/.oryn/orb-token` 是指向它的链接），可写盘和由它复制出的快照里没有令牌；发布快照或 fork 之后，控制面还会给源 orb 换一次令牌。
 - **串口日志**写在每台 VM jail 里的 4 MiB tmpfs 上（`jail/firecracker/<orb>/root/console/console.log`），写满后 Firecracker 丢弃后续字节、guest 照常运行，所以 provider 停机期间 guest 也写不满宿主磁盘；provider 在跑时每 30 秒把超过 2 MiB 的日志裁到最后 512 KiB，失败任务里带的串口尾部取自这里。
 - **拍快照中途出错**：provider 在冻结 guest 文件系统前留一个 `thaw-pending` 标记，VM 恢复（`Resumed` + 解冻）全部成功才删掉；恢复失败时快照任务失败、不发布。下一次对这台 VM 的 spawn / 冻结 / 快照会先把它恢复好。provider 在 VM 已开机、guest 还没收到启动参数时崩溃，重启后的 spawn 会补发完整的启动请求，不会留下一台没有 orbd 的 VM。
+
+## 13. GitHub 集成（M14）
+
+连接方式是一个属于你自己的 GitHub App。设置页「GitHub」按 manifest 一键创建 App（可填组织、可设为公开 App、可在「高级」里改 webhook 地址），完成后把 App 安装到需要的账号或组织，再连接两个 GitHub 用户：
+
+- **我的账号**：交互式线程、首屏新建线程、项目表单里的仓库列表都用它。
+- **Agent 账号**（可选）：专门给 agent 用的第二个真实 GitHub 账号，须对仓库有写权限。设置项「自动化任务的 GitHub 身份」选它之后，GitHub 触发规则与项目级定时创建的线程用它提交、推送、开 PR 与评论；agent 在 orb 内派生的子线程沿用父线程的身份。两个槽位不能是同一个账号。
+
+App、client secret、webhook secret 与两个账号的令牌都用控制面主密钥加密后存在数据库里，不出现在「密钥」设置页。
+
+```yaml
+# orynd.yaml（以下为默认值；只有测试与验收脚本会改）
+github: { api_url: "https://api.github.com", web_url: "https://github.com" }
+```
+
+### 仓库绑定与 orb 内凭据
+
+仓库地址是 `https://github.com/<owner>/<repo>` 且 App 已安装到该仓库的项目自动绑定（按仓库 id 跟踪，改名 / 转移后自动更新仓库地址，已有 orb 下次 setup / 唤醒时把 `origin` 改到新地址）。绑定项目的 orb：
+
+- git 不需要 `git/github.com/token` 密钥：出站代理为该 orb 向 GitHub 申请一个只对项目仓库有效、约 50 分钟过期的令牌并注入；同主机其它仓库的 smart-HTTP 请求仍是 403。
+- `gh` 免登录：orbd 写 `~/.oryn/gh/`（`hosts.yml` 里只有占位令牌 `oryn-proxied`），`gh` 经 `~/.oryn/gh.sock` 发出的 API 请求由出站代理换上同一个按仓库收窄的令牌。orb 的环境变量与磁盘上没有任何真实 GitHub 令牌。
+- 提交作者：Agent 身份的 orb 是 Agent 账号（`<id>+<login>@users.noreply.github.com`）；我的账号身份维持「项目覆盖 > 所有者默认」，两者都没设时用我的 GitHub 账号推出的同格式身份。
+- agent 经 `gh` 发往 GitHub 的 JSON 正文（评论、评审、issue、GraphQL `input.body`）末尾会被追加不可见标记 `<!-- oryn-agent -->`，回流时据此识别 agent 自己的发言。
+
+Runner 线程与协调宿主不下发任何 GitHub 凭据。项目未绑定时仍走原来的 `git/<host>/token`。
+
+### 事件：webhook 与轮询
+
+App 的 webhook 默认指向 `<public_url>/api/v1/public/github/webhook`（按 `X-Hub-Signature-256` 校验）。GitHub 访问不到这个地址时不需要额外配置：控制面每 30 秒拉一次 App 的投递日志补齐，同一投递只处理一次，orynd 停机期间的事件在 GitHub 保留投递日志的窗口内重启后补处理。设置页「最近投递」显示来源是「实时」还是「轮询」。`public_url` 是 localhost 或内网地址时 GitHub 可能拒绝创建 App，在「高级」里填一个语法合法的公网地址即可（投递会失败，但会进投递日志，轮询照常取回）。
+
+事件只在发送者对仓库有 `write` / `admin` 权限时驱动 agent；Bot、Agent 账号与带 agent 标记的发言不回流。单个 PR 关联每小时最多回流 20 条（超限暂停该关联），CI 失败自动回流最多 5 轮。
+
+### 权限说明
+
+App 申请 `contents`、`pull_requests`、`issues` 写权限与 `checks`、`statuses`、`actions`、`metadata` 读权限，**不申请 `workflows`**：agent 推送改动了 `.github/workflows/` 的分支会被 GitHub 拒绝。确有需要时在 GitHub 的 App 设置里手动加上并在安装页接受——这等于允许能推送的 agent 改 CI 定义。私有 App 只能装在创建者自己的账号下；要装到其它组织、或 Agent 账号授权失败时，创建时勾选「公开 App」。

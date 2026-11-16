@@ -1717,3 +1717,49 @@ Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规
 
 - 命令面板（`web/src/components/palette`，独立分块按需加载）：Ctrl/⌘+K 在 AppShell 内任何位置开关（输入框里同样生效），侧栏顶部的搜索按钮是所有宽度下（含手机）的入口。数据源：线程索引（标题、项目名、标签、worktree 分支；协调对话不列）、项目、Space、设置分区、操作（新建线程、收件箱、统计、设置、切换明暗）与本接口。本地匹配 `lib/palette-match.ts`：多词 AND、大小写与变音符折叠，折叠串逐码元记下原文来源区间，高亮落回原文。
 - 内容搜索在输入停顿 200ms 后请求（每组 3 条时 `limit = 4` 用来判断「更多」；展开后 `limit = 50`），查询变化时经 `AbortSignal` 取消在途请求。选中命中：跳到 `/t/<threadId>`（协调对话照常重定向到 Space / 助手页），再由 `transcript/reveal.ts` 的 `revealWhenReady` 每 120ms 重试定位，直到转录挂载、条目到齐并找到该条目（10 秒后放弃）。
+
+## M14：GitHub 深度集成
+
+计划见 `docs/plan-m14.md`；部署与权限说明见 `docs/deploy.md` 第 13 节。实现在 `internal/github`（包名 `github`，依赖方向 `github → threads → orbs`，`orbs` / `threads` / `stats` 不导入它）。
+
+### REST（tag `github`）
+
+|方法与路径|说明|
+|---|---|
+|`GET /api/v1/github`|`GitHubStatus`：App、`identities.{user,agent}`、安装、`automationIdentity`、`webhookUrl`、最近投递时间与来源|
+|`POST /api/v1/github/app/manifest`|返回 `<public_url>/api/v1/public/github/manifest/start?state=…`；已有 App → 409 `conflict`|
+|`DELETE /api/v1/github/app`|删 App、两个身份、安装记录并清掉项目的安装 id，自动化身份回到 `user`；不删 PR 记录、关联与触发规则|
+|`POST /api/v1/github/identities/{slot}/authorize`|返回 GitHub 授权地址（`prompt=select_account`，state 10 分钟有效）|
+|`DELETE /api/v1/github/identities/{slot}`|断开；断开 Agent 且自动化身份为 `agent` 时同时改回 `user`|
+|`PUT /api/v1/github/settings`|`{automationIdentity}`；选 `agent` 而 Agent 未连接 → 409 `github_agent_required`|
+|`POST /api/v1/github/installations/sync`|重拉安装列表并重新绑定项目|
+|`GET /api/v1/github/repos?q=`|我的账号经 App 可访问的仓库，按 `pushed_at` 倒序至多 50 个，按令牌缓存 60 秒|
+|`GET`、`POST /api/v1/projects/{id}/github/triggers`；`PATCH`、`DELETE /api/v1/github/triggers/{id}`|触发规则；项目未绑定 → 409 `github_not_bound`|
+|`GET /api/v1/projects/{id}/github/refs?q=`|`#` 候选：空 = 最近更新的打开项；纯数字 = 按编号；其它 = `search/issues`|
+|`POST /api/v1/projects/{id}/github/refs/{number}/attachment`|把 issue / PR 连同评论渲染成 Markdown 附件（未绑定线程），201 `Attachment`|
+|`PUT`、`DELETE /api/v1/threads/{id}/github/pulls/{number}`|暂停 / 恢复回流（恢复时 CI 轮数清零）；取消关联（留墓碑，不再自动重连）；都返回 `Thread`|
+
+公开端点（tag `public`，免鉴权，限流同登录）：`POST /api/v1/public/github/webhook`（`X-Hub-Signature-256` 校验，错 → 401，缺 `X-GitHub-Delivery` / `X-GitHub-Event` → 400，体上限 25 MiB，受理 → 202）、`GET …/manifest/start?state=`（无脚本的自动提交表单页，CSP `form-action <web_url>`）、`GET …/manifest/callback`、`GET …/oauth/callback`（都 302 回 `/settings/github?created=1|connected=<slot>|error=<code>`）。
+
+错误码：`github_not_connected`、`github_identity_required`、`github_agent_required`、`github_not_bound`（均 409）、`github_upstream`（502）；回调页的 `error` 另有 `state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`conflict`。
+
+模型字段：`Project.github{repoId, fullName, bound, listen{reviews,comments,ci}}`（「已绑定」= `github_repo_id` 与 `github_installation_id` 都非空）、`ProjectPatch.githubListen`、`Thread.pulls[]{repo, number, title, state, draft, url, checks?, listening}`、`Orb.githubLogin`（runner 与协调 orb 不给）。WS：`github.changed`（无载荷，客户端让 GitHub 查询与项目列表失效；连接建立时也失效一次）。
+
+### orb 内凭据
+
+- **setup 参数**：`LinkCtlSetupRunParams.gh{login}`（项目已绑定且 orb 身份槽位可用时给出；缺省 = orbd 删除 `~/.oryn/gh`）；`LinkCtlSetupRepo.previousUrls`（改名前的地址，origin 等于其一时 `remote set-url` 到新地址，setup 与 resume 都做，失败只记日志）。绑定项目的 orb 即使没有 `git/github.com/token` 也得到 `github.com/<owner>/<repo>` 的 insteadOf 条目；提交身份：Agent 身份的 orb 用 Agent 账号（`<name 或 login>` / `<id>+<login>@users.noreply.github.com`，覆盖项目与所有者设置），我的账号身份按「项目覆盖 > 所有者默认 > 我的账号推出的同格式身份」。
+- **gh**：orbd 写 `~/.oryn/gh/{config.yml,hosts.yml,identity.json}`（`oauth_token: oryn-proxied`、`http_unix_socket: ~/.oryn/gh.sock`），存在时子进程环境带 `GH_CONFIG_DIR`，不导出 `GH_TOKEN`。`gh.sock` 上的反向代理把 `Host: api.github.com` 的请求转成 `http://<egress>/gh/api.github.com/<原始编码路径>`，其它主机按 https 原样直连。
+- **出站代理**：`/gh/api.github.com/…` 只在 `Policy.GitHub` 非 nil 时放行（否则 403；其它主机 404；拿不到令牌 502），保留 `RawPath`，注入 `Bearer <收窄令牌>`，响应里令牌换成 `oryn-redacted`。JSON 写请求（POST / PATCH / PUT、≤1 MiB）的顶层 `body`、`comments[].body`、`variables.input.body` 末尾追加 `\n\n<!-- oryn-agent -->`（已含则不重复）。`/git/github.com/…` 在归 App 管时用同一个收窄令牌（`Basic x-access-token:<令牌>`）。
+- **令牌**：`POST /applications/{client_id}/token/scoped`（`target_id` = 仓库所有者 id，`repository_ids` = 项目仓库），按 `(槽位, 仓库)` 缓存约 50 分钟，基础令牌刷新后自动重签。不归 App 管（项目未绑定、我的账号未连接或需重新授权、runner、协调宿主）时回落到原来的 PAT；Agent 身份不可用时不回落（git 403 / gh 502）。
+
+### 事件
+
+- 入口：webhook 与轮询（每 30 秒 `GET /app/hook/deliveries`，首次只建立游标基线，按 `id` 升序补取详情、跳过 `redelivery` 与已处理的 guid）共用 `ingest`：`github_deliveries` 按 `X-GitHub-Delivery` 去重，载荷在处理完前保留，处理失败且可重试（网络、5xx、429）至多 3 次；orynd 重启后补处理 `pending` 行。投递记录保留 7 天。
+- 准入：Bot 不驱动；发送者是 Agent 账号或任一正文带 agent 标记 → `ignored:self`；我的账号直接放行，其他人查 `collaborators/{login}/permission`（`write` / `admin`，按 `(仓库, 登录名)` 缓存 5 分钟）。
+- PR 关联：`pull_request` 事件按 `(仓库 id, head sha)` 找最近活跃的、采到该提交的线程（同仓库、打开的 PR），找不到时立即对 24 小时内活跃的候选线程采样提交再关联；采样落库后也会按线程的提交反查 PR（兜住事件丢失与连接前已有的 PR）。一个 PR 只关联一个线程。CI 汇总用 GraphQL `statusCheckRollup`（5 秒防抖）。合并 → `shippedAt = merged_at`（不归档）并发一条线程通知（`notify.PostThread`：标题是线程标题，kind `done`，正文 `PR #<n> merged: <PR 标题>`）。
+- 回流：评审、行内评审评论、会话评论写进 `github_outbox`，同一 `(线程, 仓库, 编号)` 15 秒窗口内合成一条自动消息（首行 `[Oryn GitHub event on <owner>/<repo>#<n> — delivered automatically, not typed by the owner]`）；CI 转为失败立即投递、最多 5 轮，第 5 轮后发一条 kind `error` 的通知（正文以 `CI still failing: ` 开头）。项目三个开关与单个关联的 `listening` 控制；单个关联每小时最多 20 条，超限暂停并发 kind `error` 的通知（正文以 `GitHub events paused: ` 开头）。PR 上的会话评论找不到 PR 关联时再查 `thread_issues`（fork PR 上触发规则建的线程也能收到后续评论）。
+- 触发规则：`issue_opened`、`issue_labeled`（标签忽略大小写）、`mention`（评论 @Agent 账号）。候选规则里只取 `created_at` 最早的一条（多个项目绑同一仓库时也只取一条：一个 issue 只对应一个线程），每条规则每小时至多 10 次；新线程首条消息首行 `[Oryn GitHub trigger "<name>" on <owner>/<repo>#<n> — started automatically, not typed by the owner]`，issue 内容只放进 `<untrusted-github-content>` JSON 数据块；按 orb 身份给 issue / 评论加 👀，`announce` 时回帖线程链接（自带 agent 标记）。之后该 issue 的会话评论回流到同一线程。
+
+### 存储
+
+`0028_github.sql`：`github_app`（单行）、`github_identities`、`github_oauth_states`、`github_installations`、`github_deliveries`、`github_pulls`、`thread_pulls`、`github_triggers`、`thread_issues`、`github_outbox`；`owner.github_automation_identity`、`orbs.github_identity`、`projects.github_*`（仓库 / 所有者 / 安装 id、改名前地址、三个回流开关）；`thread_commits (sha)` 索引。敏感值经 `secrets.Box` 加密存本表列（AAD `github/app/*`、`github/identity/<slot>/{access,refresh}`），不进 `secrets` 表。
