@@ -129,7 +129,7 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 - list(collection, {after, limit}?)：按 id 顺序列出，返回 {docs, next}；next 不为 null 时把它作为下一次的 after。
 - query(collection, {where, orderBy, limit}?)：返回符合条件的文档数组。where 最多 %d 个条件，每个是 {field, op, value}：field 是字段名或点路径（如 owner.name，最多 %d 段），op 是 == != < <= > >= 之一，value 只能是字符串、数字、布尔或 null（null 只能配 == 与 !=）；缺少的字段按 null 比较，类型不同的值大小比较一律不成立。orderBy 是 {field, direction: "asc" | "desc"}。
 - collections()：返回 [{name, count, bytes}]。
-- watch(collections, onChange)：监听变化，collections 是集合名、集合名数组或 null（全部集合）；onChange 收到 {type: "set", collection, id, value, version} 或 {type: "delete", collection, id}。返回取消函数。页面自己的写入、别的窗口与 agent 的写入都会推送过来。
+- watch(collections, onChange, onError?)：监听变化，collections 是集合名、集合名数组或 null（全部集合）；onChange 收到 {type: "set", collection, id, value, version} 或 {type: "delete", collection, id}。返回取消函数。页面自己的写入、别的窗口与 agent 的写入都会推送过来。监听意外结束时（例如变化太快跟不上，错误码 failed）onError 收到带 code 的错误，这时重新 watch 并重新读取数据。
 
 乐观并发：写入时带 {baseVersion: 读到的 version}，文档在那之后被别处改过就报 conflict，重新读取再写；baseVersion: 0 表示「文档必须还不存在」，用来防止覆盖。不带 baseVersion 就直接覆盖。每次写入后文档的 version 都会变大（同一 artifact 里不会重复）。
 

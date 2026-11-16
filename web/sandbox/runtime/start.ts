@@ -1,6 +1,7 @@
 // artifact 页面运行时：在页面自己的脚本之前、在不透明源的沙箱里执行。
 // 不 import `src/` 下任何依赖应用状态的模块；能共用的只有 `src/lib/artifacts/` 的纯函数与类型。
 
+import { createUse } from "./capabilities";
 import { captureDom } from "./dom";
 import {
 	fitsMessageLimit,
@@ -9,7 +10,6 @@ import {
 	parseParentMessage,
 } from "./messages";
 import { installSelection } from "./select";
-import { createUse } from "./transport";
 
 /** 服务端随页面注入的配置：`__orynStart(<配置 JSON>)`。 */
 export interface RuntimeConfig {
@@ -26,7 +26,7 @@ export interface RuntimeConfig {
 
 /**
  * 页面加载前缓存的原生引用：页面脚本之后改写这些全局不影响运行时。
- * `parse`、`fetch`、计时器与 `AbortController` 给能力调用的传输层用。
+ * `parse`、`fetch`、计时器、`AbortController` 与 `TextDecoder` 给能力调用的传输层用。
  */
 export const natives = Object.freeze({
 	freeze: Object.freeze,
@@ -39,6 +39,7 @@ export const natives = Object.freeze({
 	setTimeout: window.setTimeout.bind(window),
 	clearTimeout: window.clearTimeout.bind(window),
 	AbortController,
+	TextDecoder,
 	Error,
 });
 
