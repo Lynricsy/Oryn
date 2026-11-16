@@ -482,7 +482,11 @@ async function pimport(
 	);
 }
 
-/** 查看器里的 artifact 帧（等它加载出 `ready` 选择器）。 */
+/**
+ * 等 scope 里第一个 artifact 帧显示出 ready 选择器且已加载完：页面运行时已装上（`window.oryn` 已定义，帧的
+ * `load` 已发生、父页面已发 `hello`）。只等元素可见不够：HTML 先于运行时解析出来（mock 里运行时是 vite 按需编译的
+ * module 脚本，负载高时要好几秒），这时点链接、发选择消息都没人接。
+ */
 async function artifactFrame(
 	p: Page,
 	ready = "body",
@@ -494,11 +498,17 @@ async function artifactFrame(
 			const el = await p.locator(scope).first().elementHandle();
 			const f = await el?.contentFrame();
 			if (!f) return null;
-			const ok = await f
-				.locator(ready)
-				.first()
-				.isVisible()
-				.catch(() => false);
+			const ok =
+				(await f
+					.locator(ready)
+					.first()
+					.isVisible()
+					.catch(() => false)) &&
+				(await f
+					.evaluate(
+						() => document.readyState === "complete" && "oryn" in window,
+					)
+					.catch(() => false));
 			return ok ? f : null;
 		},
 		60_000,
@@ -511,6 +521,42 @@ async function clickInFrame(f: Frame, selector: string) {
 	const loc = f.locator(selector).first();
 	await loc.scrollIntoViewIfNeeded();
 	await loc.click();
+}
+
+/**
+ * 点帧里的外链（没有选择 / 评论模式时）并确认这次点击真的送进了页面。跨进程的 artifact 子帧在机器很忙时可能还没把命中
+ * 测试数据交给合成器，鼠标事件落不进帧，而 Playwright 的 click 照样返回成功——之后等提示条只会超时，看不出原因。
+ * 所以先在帧里挂一个捕获阶段的一次性 click 监听；没送达就明说并重点一次（页面根本没收到第一次，不会被点两次）。
+ */
+async function clickLinkInFrame(f: Frame, selector: string) {
+	const loc = f.locator(selector).first();
+	await loc.scrollIntoViewIfNeeded();
+	for (let i = 0; i < 2; i++) {
+		await f.evaluate(() => {
+			const w = window as unknown as { __m14click?: boolean };
+			w.__m14click = false;
+			window.addEventListener(
+				"click",
+				() => {
+					w.__m14click = true;
+				},
+				{ capture: true, once: true },
+			);
+		});
+		await loc.click();
+		const got = await waitFor(
+			"点击送达帧",
+			() =>
+				f.evaluate(
+					() => (window as unknown as { __m14click?: boolean }).__m14click,
+				),
+			3_000,
+			100,
+		).catch(() => false);
+		if (got) return;
+		note("点击没有送达帧里的页面（子帧的输入路由还没就绪），再点一次");
+	}
+	throw new Error(`点 ${selector} 两次都没有送达帧里的页面`);
 }
 
 /** 切到右面板的指定标签：宽屏先打开面板列再点标签；手机经视图菜单。 */
@@ -982,7 +1028,12 @@ async function mockK8() {
 	note("转录里有「页面 · 已创建 · v1」");
 	for (const s of ["已更新 · v", "已恢复 · v", "已删除"])
 		expect((await p.getByText(s).count()) > 0, `转录里有「${s}…」卡片`);
-	await card.scrollIntoViewIfNeeded();
+	// 工具卡缺省收起，正文（artifact 行卡片）在展开后才渲染：点卡头展开
+	const head = p
+		.locator("button.tv-head", { hasText: "页面 · 已创建 · v1" })
+		.first();
+	await head.scrollIntoViewIfNeeded();
+	await head.click();
 	const row = p.locator("[data-testid=artifact-card][data-form=row]").first();
 	await row.waitFor({ timeout: 10_000 });
 	await row.click();
@@ -1025,7 +1076,7 @@ async function mockK9() {
 	expect(probe.origin === "null", `页面的源是 ${probe.origin}`);
 	expect(probe.ls === "blocked", `localStorage：${probe.ls}`);
 	expect(probe.oryn === "object", `window.oryn：${probe.oryn}`);
-	await clickInFrame(f, 'a[href^="https://example.com"]');
+	await clickLinkInFrame(f, 'a[href^="https://example.com"]');
 	const bar = p.locator("[data-testid=artifact-blocked]");
 	await bar.waitFor({ timeout: 10_000 });
 	expect(
@@ -1096,6 +1147,13 @@ async function mockK11() {
 	check(pop.url().startsWith("blob:"), "打开的是 open-link 给的地址");
 }
 
+/** 总览页按标题搜索：宽屏上搜索平时收成放大镜按钮，点开才有输入框；compact 下输入框一直在。 */
+async function searchTitle(p: Page, text: string) {
+	const open = p.locator("[data-testid=artifacts-search]");
+	if (await open.isVisible().catch(() => false)) await open.click();
+	await p.getByRole("searchbox", { name: "搜索标题" }).fill(text);
+}
+
 /** K12：总览页——类型标签、搜索、排序与分组进 URL、键盘导航、空态里的「让 Agent 做一份」。 */
 async function mockK12() {
 	const p = await mockPage("/artifacts");
@@ -1111,7 +1169,7 @@ async function mockK12() {
 		`类型进 URL：${p.url().replace(MOCK_BASE, "")}`,
 	);
 	await p.locator("button[data-kind=all]").click();
-	await p.getByLabel("搜索标题").fill("习惯");
+	await searchTitle(p, "习惯");
 	await waitFor("标题搜索", async () => (await cards.count()) === 1, 5_000);
 	expect(p.url().includes("q="), "搜索词进 URL");
 	await goto(p, MOCK_BASE, "/artifacts?sort=name&layout=project-thread");
@@ -1372,8 +1430,17 @@ async function mockK20() {
 	await composer(p).fill("这个标题能更醒目吗");
 	await composer(p).press("Enter");
 	await chip.waitFor({ state: "detached", timeout: 10_000 });
-	const t =
-		(await p.locator("[data-testid=transcript]").first().textContent()) ?? "";
+	// 引用条在发送成功时就清掉，用户消息稍后才渲染进转录：等它出现再断言
+	const t = await waitFor(
+		"转录里出现发出的消息",
+		async () => {
+			const s =
+				(await p.locator("[data-testid=transcript]").first().textContent()) ??
+				"";
+			return s.includes("这个标题能更醒目吗") ? s : null;
+		},
+		10_000,
+	);
 	expect(
 		t.includes("这个标题能更醒目吗") && t.includes("at offset"),
 		"发出的消息带用户原文与锚点说明",
@@ -1510,17 +1577,18 @@ async function mockK27() {
 
 /** 画布：在覆盖层的空白处 (x, y) 放一张便签并写字。 */
 async function addSticky(p: Page, text: string, x = 900, y = 600) {
-	// 覆盖层随状态重渲染，用鼠标坐标点，不等元素「稳定」
+	// 覆盖层随状态重渲染，用鼠标坐标点，不等元素「稳定」。不按 Esc 来「复位」：画布没有可清的状态时，
+	// 整页查看器把 Esc 当作「返回」，页面会离开画布；S 键在任何工具下都直接切到便签。
 	const box = await p.locator("[data-testid=canvas-overlay]").boundingBox();
 	if (!box) throw new Error("画布覆盖层不可见");
 	await p.mouse.click(box.x + 10, box.y + 10);
-	await p.keyboard.press("Escape");
 	await p.keyboard.press("s");
 	await p.mouse.click(box.x + x, box.y + y);
-	await sleep(300);
-	await p.keyboard.type(text);
-	await p.keyboard.press("Escape");
-	await sleep(300);
+	const edit = p.locator("textarea.canvas-edit");
+	await edit.waitFor({ timeout: 5_000 });
+	await edit.fill(text);
+	await edit.press("Escape");
+	await edit.waitFor({ state: "detached", timeout: 5_000 });
 }
 
 /** K28（mock）：画布上的用户操作先在本地出现并以操作流发出（多端同步与 30 秒落版本见真机）。 */
@@ -1536,13 +1604,18 @@ async function mockK28() {
 		async () => (await p.locator("[data-note]").count()) === 2,
 		5_000,
 	);
-	const posted = (await reqs(p)).filter(
-		(r) => r.method === "POST" && r.url.endsWith("/canvas/ops"),
+	// 请求体在页面里异步取（clone().text()），操作批次也是一批在途、确认后再发下一批：等记录里出现带 sticky 的那次
+	const posted = await waitFor(
+		"POST canvas/ops 带 sticky",
+		async () => {
+			const ps = (await reqs(p)).filter(
+				(r) => r.method === "POST" && r.url.endsWith("/canvas/ops"),
+			);
+			return ps.some((r) => (r.body ?? "").includes("sticky")) ? ps : null;
+		},
+		5_000,
 	);
-	expect(
-		posted.some((r) => (r.body ?? "").includes("sticky")),
-		`POST canvas/ops ${posted.length} 次，带 sticky`,
-	);
+	note(`POST canvas/ops ${posted.length} 次，带 sticky`);
 }
 
 /** K29：画布工具条（8 个工具）、页面管理、尺寸预设、锁定。 */
@@ -1733,16 +1806,24 @@ async function mockK34() {
 /** K38（mock）：设置 › Artifacts 列出已授权的 artifact，可以收回。 */
 async function mockK38() {
 	const p = await mockPage("/settings/artifacts");
-	const sec = p.locator("[data-testid=artifacts-section]");
-	await sec.waitFor({ timeout: 20_000 });
-	const btn = sec.getByRole("button", { name: "收回" }).first();
-	await btn.waitFor({ timeout: 10_000 });
-	note(`授权列表：${clip(oneLine((await sec.textContent()) ?? ""), 120)}`);
+	// 授权列表每个 artifact 一行（标题链到它的查看器）；行尾「收回」要再点一次「确认收回」（ConfirmButton）
+	const rows = p
+		.locator("li")
+		.filter({ has: p.locator('a[href^="/artifacts/art_"]') });
+	const btn = rows.getByRole("button", { name: "收回", exact: true }).first();
+	await btn.waitFor({ timeout: 20_000 });
+	note(
+		`授权列表：${clip(oneLine((await rows.first().textContent()) ?? ""), 120)}`,
+	);
 	await shot(p, "mock-k38-settings");
 	await btn.click();
+	await rows
+		.getByRole("button", { name: "确认收回", exact: true })
+		.first()
+		.click();
 	await waitFor(
 		"收回后列表为空",
-		async () => (await sec.getByRole("button", { name: "收回" }).count()) === 0,
+		async () => (await rows.count()) === 0,
 		10_000,
 	);
 	const list = await pjson<{ consents: unknown[] }>(
@@ -2192,12 +2273,25 @@ const proxy = Object.fromEntries(${JSON.stringify(proxyTargets)}.map((k) => [k, 
 		60_000,
 		300,
 	);
-	const caps = await rjson<{
+	type Caps = {
 		frames: string;
 		render: boolean;
 		renderReason?: string;
 		sample: boolean;
-	}>("GET", "/api/v1/artifacts/capabilities");
+	};
+	// 渲染自检在 orynd 启动后异步跑（起一次 Chromium 截图），完成前 render 为假。等它有结论再定哪些条目跳过，
+	// 否则依赖渲染的条目会因为启动早晚被误判成「渲染不可用」。
+	let caps = await rjson<Caps>("GET", "/api/v1/artifacts/capabilities");
+	caps = await waitFor(
+		"渲染自检完成",
+		async () => {
+			const c = await rjson<Caps>("GET", "/api/v1/artifacts/capabilities");
+			caps = c;
+			return c.render ? c : null;
+		},
+		60_000,
+		500,
+	).catch(() => caps);
 	renderOk = caps.render;
 	renderReason = caps.renderReason ?? "";
 	console.log(
@@ -2329,17 +2423,26 @@ function msgText(e: EntryRow): string {
 }
 const msgRole = (e: EntryRow) =>
 	isRecord(e.payload.message) ? String(e.payload.message.role ?? "") : "";
+/**
+ * 用户消息与它带的图片数。上传的附件不会以图片内容块进转录：控制面把文件投递进 orb，在消息末尾追加
+ * `<oryn-attachments>` 块逐行列出「- 路径 (MIME, N bytes)」（internal/threads/agent.go），所以数块里的图片行。
+ */
 async function userMessages(
 	id: string,
 ): Promise<{ text: string; images: number }[]> {
 	return (await entries(id))
 		.filter((e) => e.type === "message" && msgRole(e) === "user")
 		.map((e) => {
-			const m = e.payload.message;
-			const c = isRecord(m) && Array.isArray(m.content) ? m.content : [];
+			const text = msgText(e);
+			const block =
+				/<oryn-attachments>\n([\s\S]*?)<\/oryn-attachments>\s*$/.exec(
+					text,
+				)?.[1];
 			return {
-				text: msgText(e),
-				images: c.filter((x) => isRecord(x) && x.type === "image").length,
+				text,
+				images: (
+					block?.match(/^- .+ \(image\/[a-z]+, [1-9]\d* bytes\)$/gm) ?? []
+				).length,
 			};
 		});
 }
@@ -3469,7 +3572,7 @@ async function realK10() {
 	).catch(() => -1);
 	expect(y >= 800, `热更新后 scrollY = ${y}（之前 900）`);
 	await f2.evaluate(() => window.scrollTo(0, 0));
-	await clickInFrame(f2, 'a[href^="https://example.com"]');
+	await clickLinkInFrame(f2, 'a[href^="https://example.com"]');
 	const bar = p.locator("[data-testid=artifact-blocked]");
 	await bar.waitFor({ timeout: 10_000 });
 	expect(
@@ -3570,7 +3673,7 @@ async function realK12() {
 		15_000,
 	);
 	note(`${all.length} 张卡片`);
-	await p.getByLabel("搜索标题").fill(tag.toLowerCase());
+	await searchTitle(p, tag.toLowerCase());
 	await waitFor(
 		"标题搜索（大小写不敏感）",
 		async () => (await cards.count()) === 3,
@@ -4465,7 +4568,11 @@ async function realK24() {
 	expect(iw === 1, `images/dot.png 显示出来（naturalWidth ${iw}）`);
 	await shot(p, "real-k24-document");
 	await f.getByRole("button", { name: "编辑", exact: true }).click();
-	await f.getByText("第一段文字。").click();
+	// 编辑态下每块盖着一个透明的「修改这一块」按钮（块里可能有表格、标题，不能整块放进 <button>）
+	await f
+		.locator(".oryn-block", { hasText: "第一段文字。" })
+		.getByRole("button", { name: "修改这一块", exact: true })
+		.click();
 	const ta = f.locator("textarea");
 	await ta.waitFor({ timeout: 10_000 });
 	await ta.fill("改过的第一段。");
@@ -5406,10 +5513,14 @@ async function realK38() {
 	await closeAll();
 	const p = await realPage();
 	await goto(p, REAL_UI, "/settings/artifacts");
-	const sec = p.locator("[data-testid=artifacts-section]");
-	await sec.getByText("K36 文件").waitFor({ timeout: 20_000 });
+	// 授权列表里这一行（标题链到它的查看器）；「收回」要再点一次「确认收回」（ConfirmButton）
+	const row = p
+		.locator("li")
+		.filter({ has: p.locator(`a[href="/artifacts/${filesArtifact}"]`) });
+	await row.getByText("K36 文件").waitFor({ timeout: 20_000 });
 	await shot(p, "real-k38-settings");
-	await sec.getByRole("button", { name: "收回" }).first().click();
+	await row.getByRole("button", { name: "收回", exact: true }).click();
+	await row.getByRole("button", { name: "确认收回", exact: true }).click();
 	await waitFor(
 		"收回",
 		async () =>
@@ -5954,14 +6065,23 @@ async function realK43() {
 	const { p, f } = await realViewer(c.id, "h1", { width: 390 });
 	await commentOn(p, f, "h1", "手机上的评论");
 	expect((await comments(c.id)).threads.length === 1, "手机上能评论");
-	await p.locator("[data-testid=artifact-history-toggle]").click();
-	const tabs = (await p.getByRole("tab").allTextContents()).map(oneLine);
+	// 9.2：窄屏顶栏收起，历史只能经版本胶囊或 ⋯ 菜单打开；侧栏占满整页，顶部是「页面 / 历史 / 评论」分段
 	expect(
-		tabs.includes("页面") && tabs.includes("历史"),
+		(await p.locator("[data-testid=artifact-history-toggle]").count()) === 0,
+		"窄屏顶栏不单独放历史按钮",
+	);
+	await p.locator("[data-testid=artifact-version]").click();
+	const tablist = p.getByRole("tablist", { name: "页面与侧栏" });
+	await tablist.waitFor({ timeout: 10_000 });
+	const tabs = (await tablist.getByRole("tab").allTextContents()).map(oneLine);
+	expect(
+		tabs.includes("页面") &&
+			tabs.includes("历史") &&
+			tabs.some((s) => s.startsWith("评论")),
 		`窄屏侧栏分段：${tabs.join(" / ")}`,
 	);
 	await shot(p, "real-k43-side");
-	await p.getByRole("tab", { name: "页面" }).click();
+	await tablist.getByRole("tab", { name: "页面", exact: true }).click();
 	const dl = await download(p, () => viewerMenu(p, "导出…"));
 	expect(dl.name === "K43 手机.html", `手机上能导出：${dl.name}`);
 	await goto(p, REAL_UI, "/artifacts");
