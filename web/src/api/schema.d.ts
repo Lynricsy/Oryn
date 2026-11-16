@@ -3304,6 +3304,9 @@ export interface paths {
         /**
          * 修改嵌入或重排接口
          * @description bank 已有记忆（`embedLocked`）时，修改嵌入的 `model` 或 `dimensions` 返回 409 `embed_locked`；地址与 key 仍可改。
+         *     换嵌入模型（reembed）时带 `reembed: true`：orynd 先探测 Hindsight，仍可连上时返回 409 `hindsight_running`
+         *     （对外只有一个别名 `oryn-embed`，Hindsight 认不出模型已换，运行中切换会让它用新模型读写旧向量），
+         *     不可达（API 已停）时才接受。流程见 deploy.md「换嵌入模型」。
          */
         put: operations["putMemoryEndpoint"];
         post?: never;
@@ -5801,6 +5804,8 @@ export interface components {
             apiKey?: string;
             /** @description 为真时删除已存的 key */
             clearKey?: boolean;
+            /** @description 为真时允许在 embedLocked 下改嵌入的 model / dimensions；只在 Hindsight 不可达时接受，否则 409 `hindsight_running` */
+            reembed?: boolean;
         };
         MemoryUsageCounts: {
             /** Format: int64 */

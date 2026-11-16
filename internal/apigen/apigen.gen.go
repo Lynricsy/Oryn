@@ -6595,6 +6595,9 @@ type MemoryEndpointUpdate struct {
 	ClearKey   *bool  `json:"clearKey,omitempty"`
 	Dimensions *int   `json:"dimensions,omitempty"`
 	Model      string `json:"model"`
+
+	// Reembed 为真时允许在 embedLocked 下改嵌入的 model / dimensions；只在 Hindsight 不可达时接受，否则 409 `hindsight_running`
+	Reembed *bool `json:"reembed,omitempty"`
 }
 
 // MemoryEndpoints defines model for MemoryEndpoints.

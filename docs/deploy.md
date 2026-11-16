@@ -626,11 +626,18 @@ compose 里的镜像按 digest 固定。Oryn 只对一个小版本（当前是 1
 
 ### 换嵌入模型（reembed）
 
-任何嵌入模型的更换都必须重新嵌入，维度相同也不例外，否则新旧向量混在一起会让召回变差。维度不同时，Hindsight 会直接拒绝启动。步骤：
+任何嵌入模型的更换都必须重新嵌入，维度相同也不例外，否则新旧向量混在一起会让召回变差。嵌入「接口地址」换到另一个服务，即便模型名相同，也按换模型处理。
 
-1. 在管理页把嵌入接口改成新模型，记下维度（中转会立即开始用新模型，所以下面几步要连续做完）；
-2. 用新的维度执行 `docker compose -f deploy/hindsight/compose.yaml exec api env HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS=<新维度> hindsight-admin reembed --all-schemas`。执行期间 recall 与 retain 仍可用，只是更慢；每个 schema 显示 `swapped` 即完成；
-3. 把 `.env` 里的 `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` 改成新维度，然后 `up -d api` 重启；
-4. 执行 `hindsight-admin reembed --all-schemas --finish`，解除写保护。
+**必须停机迁移。** Hindsight 按 `provider:model:dimension` 识别嵌入模型（`embeddings.py` 的 `embedding_model_id`），而 Oryn 对它只暴露一个别名 `oryn-embed`，所有请求都经同一个中转。中转一旦切到新模型，仍在运行的 API 和 worker 会立即用新模型生成查询向量与写入向量，与库里的旧向量混在一起。维度相同时 Hindsight 的写保护也认不出模型已换，所以官方文档里那种「边运行边迁移」的流程在这里不成立。迁移期间记忆不可用：agent 的 recall 会失败并给出提示，自动写入留在各 orb 的 Core outbox 里，Hindsight 恢复后补发（outbox 最多保留 7 天）。
 
-中途中断时，重跑同一条命令即可从断点继续。
+bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选「换嵌入模型（reembed）」的保存才会被接受，而且 orynd 会先探测 Hindsight：还能连上时返回 409 `hindsight_running`，保证第 3 步发生在停机之后。步骤（下文 `dc` 代表 `docker compose -f deploy/hindsight/compose.yaml`）：
+
+1. 先备份（见上文「备份」）；
+2. 停 API（worker 跑在同一个容器里，会一起停）：`dc stop api`。Postgres 保持运行；
+3. 在管理页把嵌入接口改成新模型和新维度，并勾选「换嵌入模型」后保存；
+4. 维度有变化时，把 `.env` 里的 `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` 改成新维度；
+5. 用一次性容器执行迁移，它读的是同一份 `.env` 与数据库地址，不发布端口：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas`。每个 schema 显示 `swapped` 即完成。中途中断时重跑同一条命令，会从断点继续；在它完成之前不要启动 API；
+6. 启动 API：`dc up -d api`。等管理页状态回到「正常」；
+7. 解除写保护：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas --finish`。
+
+迁移失败、想退回旧模型时：保持 API 停止，把备份目录挂进一次性容器执行恢复：`dc run --rm --no-deps -v /var/backups/oryn:/backups:ro api hindsight-admin restore /backups/<文件>.zip --yes`。然后把管理页的嵌入改回旧模型（同样要勾选「换嵌入模型」），`.env` 的维度也改回旧值，再启动。

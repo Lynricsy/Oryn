@@ -20,6 +20,7 @@
   - 异步 retain 返回 200，不是 202，应答体为 `{success, bank_id, items_count, async, operation_id, …}`。候选分流时照这个格式返回。
   - 导出的 zip 下载要带 Bearer key，所以下载只能由 orynd 代理。
   - 4.1 的验收改为先把 `.env.example` 复制为 `.env` 再执行 `config`：`env_file` 必须是必需项，否则漏放 `.env` 的 API 会以无鉴权模式启动。
+- **v4（2026-11-16，执行中修订）**：reembed 改为停机迁移。Hindsight 按 `provider:model:dimension` 识别嵌入模型，而 Oryn 只暴露一个别名 `oryn-embed`。中转在运行中切到新模型，API 就会用新模型读写旧向量；维度相同时写保护也认不出模型已换。为此契约追加 `MemoryEndpointUpdate.reembed`：只有带上它，才能在 `embedLocked` 下改嵌入模型或维度；Hindsight 仍可连上时返回 409 `hindsight_running`。deploy.md「换嵌入模型」改为「停 API → 切模型 → `compose run --rm --no-deps api hindsight-admin reembed` → 启动 → `--finish`」，已在 spike 栈上完整演练（39 行 `swapped`，`finish` 后召回正常）。
 
 ## Context
 
