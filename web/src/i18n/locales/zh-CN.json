@@ -2105,6 +2105,12 @@
 				},
 				"tweaksEmpty": "这一页的画框还没有可调节的参数。可以让 Agent 加上，比如主题、强调色或密度。",
 				"tweaksPick": "选中一个画框来调节它的参数。",
+				"tweaksWaiting": "画框加载好之后才能调节它的参数。",
+				"tweaksSaving": "正在保存…",
+				"tweaksSaved": "已保存为 v{{n}}，历史里能恢复之前的",
+				"tweaksFailed": "调节没有保存。{{reason}}",
+				"tweaksInvalid": "这个值不合规，没有套用",
+				"tweaksPicker": "{{label}}：取色",
 				"selected_one": "已选 {{count}} 项",
 				"selected_other": "已选 {{count}} 项",
 				"name": "名字",
@@ -2172,12 +2178,6 @@
 			"escHint": "Esc 退出",
 			"close": "退出演示"
 		},
-				"tweaksWaiting": "画框加载好之后才能调节它的参数。",
-				"tweaksSaving": "正在保存…",
-				"tweaksSaved": "已保存为 v{{n}}，历史里能恢复之前的",
-				"tweaksFailed": "调节没有保存。{{reason}}",
-				"tweaksInvalid": "这个值不合规，没有套用",
-				"tweaksPicker": "{{label}}：取色",
 		"home": {
 			"recent": "最近的 Artifacts",
 			"all": "全部"

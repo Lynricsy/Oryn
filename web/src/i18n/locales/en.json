@@ -2105,6 +2105,12 @@
 				},
 				"tweaksEmpty": "Frames on this page have no tweakable parameters yet. Ask the agent to add some, like a theme, accent color, or density.",
 				"tweaksPick": "Select a frame to tweak its parameters.",
+				"tweaksWaiting": "Tweaks are available once the frame has loaded.",
+				"tweaksSaving": "Saving…",
+				"tweaksSaved": "Saved as v{{n}}; earlier values are in the history",
+				"tweaksFailed": "Tweaks were not saved. {{reason}}",
+				"tweaksInvalid": "This value is not valid and was not applied",
+				"tweaksPicker": "{{label}}: pick a color",
 				"selected_one": "{{count}} item selected",
 				"selected_other": "{{count}} items selected",
 				"name": "Name",
@@ -2172,12 +2178,6 @@
 			"escHint": "Esc to exit",
 			"close": "Exit presentation"
 		},
-				"tweaksWaiting": "Tweaks are available once the frame has loaded.",
-				"tweaksSaving": "Saving…",
-				"tweaksSaved": "Saved as v{{n}}; earlier values are in the history",
-				"tweaksFailed": "Tweaks were not saved. {{reason}}",
-				"tweaksInvalid": "This value is not valid and was not applied",
-				"tweaksPicker": "{{label}}: pick a color",
 		"home": {
 			"recent": "Recent artifacts",
 			"all": "All"
