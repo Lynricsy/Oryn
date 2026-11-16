@@ -190,7 +190,19 @@
 		"markRead": "Mark as read",
 		"markAllRead": "Mark all as read",
 		"answer": "Answer",
-		"answeredElsewhere": "Already answered elsewhere"
+		"answeredElsewhere": "Already answered elsewhere",
+		"exitCode": "exit code {{code}}",
+		"cause": {
+			"image_pull_denied": "Pulling the environment image was denied: it doesn't exist or access is missing",
+			"image_missing": "The environment image or snapshot wasn't found",
+			"provider_command": "A container runtime command failed",
+			"orb_connect_timeout": "The environment started but never connected back",
+			"fork_failed": "Copying the environment for the fork failed",
+			"dir_not_served": "The working directory isn't served by this runner",
+			"invalid_params": "The agent was started with invalid parameters",
+			"agent_start_timeout": "The agent timed out while starting",
+			"agent_start_failed": "The agent couldn't start"
+		}
 	},
 	"newThread": {
 		"heading": "What should we work on?",

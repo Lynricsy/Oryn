@@ -546,7 +546,9 @@ function InboxRow({
 							</span>
 						)}
 					</span>
-					{preview && !ask && <Preview state={state} text={preview} />}
+					{preview && !ask && (
+						<Preview state={state} text={preview} failure={thread.error} />
+					)}
 				</span>
 			</Link>
 			{ask?.quickAnswer && (
@@ -659,14 +661,20 @@ function QuickAnswer({
 	);
 }
 
-/** 行内预览块：等你处理是问题原文（引用块），出错是失败原因（等宽），其余是一两行说明。 */
+/**
+ * 行内预览块：等你处理是问题原文（引用块），其余是一两行说明。出错时后端认得出原因（`error.cause`）就先写一句人话
+ * （带抽出的镜像名 / 退出码 / 目录），原文降为一行等宽小字（悬停看全文）；认不出时原文照旧放在错误色块里。
+ */
 function Preview({
 	state,
 	text,
+	failure,
 }: {
 	state: InboxState;
 	text: string;
+	failure?: Thread["error"];
 }): ReactNode {
+	const { t } = useTranslation();
 	if (state === "you")
 		return (
 			<span
@@ -681,6 +689,34 @@ function Preview({
 				/>
 				<span className="line-clamp-3 min-w-0 break-words">
 					{withCode(text)}
+				</span>
+			</span>
+		);
+	if (state === "stopped" && failure?.cause && failure.cause !== "unknown")
+		return (
+			<span
+				data-inbox-preview=""
+				data-inbox-cause={failure.cause}
+				className="mt-1 flex min-w-0 flex-col gap-1 rounded-md bg-err/8 px-2.5 py-1.5"
+			>
+				<span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-err text-sm">
+					<Icon name="alert" size={13} aria-hidden className="shrink-0" />
+					<span className="font-medium">
+						{t(`inbox.cause.${failure.cause}`)}
+					</span>
+					{failure.detail && (
+						<code className="min-w-0 truncate rounded-xs bg-err/10 px-1.5 font-mono text-xs">
+							{failure.cause === "provider_command"
+								? t("inbox.exitCode", { code: failure.detail })
+								: failure.detail}
+						</code>
+					)}
+				</span>
+				<span
+					title={text}
+					className="min-w-0 truncate font-mono text-[11px] text-err/70 leading-4"
+				>
+					{text}
 				</span>
 			</span>
 		);

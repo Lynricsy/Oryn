@@ -5565,6 +5565,16 @@ export interface components {
             /** @enum {string} */
             kind: "orb_failed" | "agent_failed";
             reason: string;
+            /**
+             * @description 由 reason 原文归类（转 API 时计算，规则改了历史行也跟着变）：客户端据此显示一句人话，原文仍在 reason。
+             *     `image_pull_denied` 拉取镜像被拒（不存在或无权限）；`image_missing` 找不到镜像或快照；`provider_command` 容器运行时命令非零退出；
+             *     `orb_connect_timeout` orb 启动后没有连上控制面；`fork_failed` fork 复制环境失败；`dir_not_served` 工作目录不在 runner 服务的目录内；
+             *     `invalid_params` agent 启动参数无效；`agent_start_timeout` agent 启动超时；`agent_start_failed` 其余 agent 启动失败；`unknown` 认不出。
+             * @enum {string}
+             */
+            cause?: "image_pull_denied" | "image_missing" | "provider_command" | "orb_connect_timeout" | "fork_failed" | "dir_not_served" | "invalid_params" | "agent_start_timeout" | "agent_start_failed" | "unknown";
+            /** @description 归类时抽出的参数：`image_*` 为镜像名，`provider_command` 为退出码，`dir_not_served` 为目录；没有时省略 */
+            detail?: string;
         };
         ThreadEnvelope: {
             thread: components["schemas"]["Thread"];

@@ -2480,6 +2480,48 @@ func (e ThreadTitleSource) Valid() bool {
 	}
 }
 
+// Defines values for ThreadErrorCause.
+const (
+	AgentStartFailed  ThreadErrorCause = "agent_start_failed"
+	AgentStartTimeout ThreadErrorCause = "agent_start_timeout"
+	DirNotServed      ThreadErrorCause = "dir_not_served"
+	ForkFailed        ThreadErrorCause = "fork_failed"
+	ImageMissing      ThreadErrorCause = "image_missing"
+	ImagePullDenied   ThreadErrorCause = "image_pull_denied"
+	InvalidParams     ThreadErrorCause = "invalid_params"
+	OrbConnectTimeout ThreadErrorCause = "orb_connect_timeout"
+	ProviderCommand   ThreadErrorCause = "provider_command"
+	Unknown           ThreadErrorCause = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ThreadErrorCause enum.
+func (e ThreadErrorCause) Valid() bool {
+	switch e {
+	case AgentStartFailed:
+		return true
+	case AgentStartTimeout:
+		return true
+	case DirNotServed:
+		return true
+	case ForkFailed:
+		return true
+	case ImageMissing:
+		return true
+	case ImagePullDenied:
+		return true
+	case InvalidParams:
+		return true
+	case OrbConnectTimeout:
+		return true
+	case ProviderCommand:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ThreadErrorKind.
 const (
 	AgentFailed ThreadErrorKind = "agent_failed"
@@ -8508,9 +8550,23 @@ type ThreadEnvelope struct {
 //   - `agent_failed`：orb 未失败，但 agent 在 orb 里没能启动，reason 为 orbd 返回的 ctl 错误 `code: message`
 //     （例如 runner 拒绝不在其服务目录内的 cwd：`dir_not_served: …`）；只在控制面内存中维护。
 type ThreadError struct {
+	// Cause 由 reason 原文归类（转 API 时计算，规则改了历史行也跟着变）：客户端据此显示一句人话，原文仍在 reason。
+	// `image_pull_denied` 拉取镜像被拒（不存在或无权限）；`image_missing` 找不到镜像或快照；`provider_command` 容器运行时命令非零退出；
+	// `orb_connect_timeout` orb 启动后没有连上控制面；`fork_failed` fork 复制环境失败；`dir_not_served` 工作目录不在 runner 服务的目录内；
+	// `invalid_params` agent 启动参数无效；`agent_start_timeout` agent 启动超时；`agent_start_failed` 其余 agent 启动失败；`unknown` 认不出。
+	Cause *ThreadErrorCause `json:"cause,omitempty"`
+
+	// Detail 归类时抽出的参数：`image_*` 为镜像名，`provider_command` 为退出码，`dir_not_served` 为目录；没有时省略
+	Detail *string         `json:"detail,omitempty"`
 	Kind   ThreadErrorKind `json:"kind"`
 	Reason string          `json:"reason"`
 }
+
+// ThreadErrorCause 由 reason 原文归类（转 API 时计算，规则改了历史行也跟着变）：客户端据此显示一句人话，原文仍在 reason。
+// `image_pull_denied` 拉取镜像被拒（不存在或无权限）；`image_missing` 找不到镜像或快照；`provider_command` 容器运行时命令非零退出；
+// `orb_connect_timeout` orb 启动后没有连上控制面；`fork_failed` fork 复制环境失败；`dir_not_served` 工作目录不在 runner 服务的目录内；
+// `invalid_params` agent 启动参数无效；`agent_start_timeout` agent 启动超时；`agent_start_failed` 其余 agent 启动失败；`unknown` 认不出。
+type ThreadErrorCause string
 
 // ThreadErrorKind defines model for ThreadError.Kind.
 type ThreadErrorKind string

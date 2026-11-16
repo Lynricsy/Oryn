@@ -138,7 +138,7 @@ func (s *Service) threadError(ctx context.Context, t db.Thread, reasons map[stri
 		return e
 	}
 	if reason, ok := s.agentFailReason(t.ID); ok {
-		return &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: reason}
+		return newThreadError(apigen.AgentFailed, reason)
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func (s *Service) orbError(ctx context.Context, orbID *string, reasons map[strin
 		if err != nil {
 			slog.Warn("threads: 读取 orb 失败原因失败", "orb", o.ID, "err", err)
 		}
-		out = &apigen.ThreadError{Kind: apigen.OrbFailed, Reason: reason}
+		out = newThreadError(apigen.OrbFailed, reason)
 	}
 	reasons[*orbID] = out
 	return out

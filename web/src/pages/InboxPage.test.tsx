@@ -174,6 +174,15 @@ describe("收件箱页", () => {
 					state: "error",
 					error: { kind: "agent_failed", reason: "omp exited with status 1" },
 				}),
+				th("pull", {
+					state: "error",
+					error: {
+						kind: "orb_failed",
+						reason: "docker run: exit status 125: pull access denied for x:1",
+						cause: "image_pull_denied",
+						detail: "x:1",
+					},
+				}),
 				th("run", { state: "working", activity: "跑测试" }),
 			],
 			1,
@@ -183,13 +192,21 @@ describe("收件箱页", () => {
 			document.querySelector(`[data-inbox-row="${id}"] [data-inbox-preview]`);
 		expect(preview("wait")).toHaveTextContent("允许执行 rm -rf dist？");
 		expect(preview("wait")).not.toHaveTextContent("已经答过");
+		// 认不出原因（没有 cause）：原文；认得出：一句人话 + 抽出的镜像名，原文仍在
 		expect(preview("err")).toHaveTextContent("omp exited with status 1");
+		expect(preview("pull")).toHaveTextContent(
+			"拉取环境镜像被拒绝：镜像不存在或没有权限x:1docker run",
+		);
 
 		fireEvent.click(
 			document.querySelector("[data-inbox-filter=stopped]") as HTMLElement,
 		);
 		expect(sections()).toEqual(["stopped"]);
 		act(() => indexStore.getState().upsertThread(th("err", { state: "idle" })));
+		expect(sections()).toEqual(["stopped"]);
+		act(() =>
+			indexStore.getState().upsertThread(th("pull", { state: "idle" })),
+		);
 		expect(sections()).toEqual(["you", "running"]);
 	});
 

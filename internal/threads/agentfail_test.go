@@ -52,7 +52,8 @@ func TestAgentStartFailureReason(t *testing.T) {
 	o.startErr = &link.CtlError{Code: "dir_not_served", Message: `"/tmp/m11-a/esc" is not inside a directory served by this runner`}
 	o.mu.Unlock()
 	f.s.startAgent(f.ctx, th.id)
-	want := &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: `dir_not_served: "/tmp/m11-a/esc" is not inside a directory served by this runner`}
+	want := &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: `dir_not_served: "/tmp/m11-a/esc" is not inside a directory served by this runner`,
+		Cause: new(apigen.DirNotServed), Detail: new("/tmp/m11-a/esc")}
 
 	got, err := f.s.Get(f.ctx, th.id)
 	require.NoError(t, err)
@@ -76,7 +77,7 @@ func TestAgentStartFailureReason(t *testing.T) {
 	nStates := len(obs.snapshot().states)
 	f.s.startAgent(f.ctx, th.id)
 	ups = sink.snapshot()
-	assert.Equal(t, &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: "dir_not_served: still not served"}, ups[len(ups)-1].Error)
+	assert.Equal(t, &apigen.ThreadError{Kind: apigen.AgentFailed, Reason: "dir_not_served: still not served", Cause: new(apigen.DirNotServed)}, ups[len(ups)-1].Error)
 	assert.Len(t, obs.snapshot().states, nStates)
 
 	// 重试成功：agent 就绪后线程离开 error，原因消失

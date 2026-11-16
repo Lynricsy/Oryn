@@ -190,7 +190,19 @@
 		"markRead": "标为已读",
 		"markAllRead": "全部标为已读",
 		"answer": "作答",
-		"answeredElsewhere": "已在别处作答"
+		"answeredElsewhere": "已在别处作答",
+		"exitCode": "退出码 {{code}}",
+		"cause": {
+			"image_pull_denied": "拉取环境镜像被拒绝：镜像不存在或没有权限",
+			"image_missing": "找不到环境镜像或快照",
+			"provider_command": "容器运行时命令执行失败",
+			"orb_connect_timeout": "环境已启动，但一直没有连上控制面",
+			"fork_failed": "fork 时复制环境失败",
+			"dir_not_served": "工作目录不在这台 runner 允许的范围内",
+			"invalid_params": "agent 启动参数无效",
+			"agent_start_timeout": "agent 启动超时",
+			"agent_start_failed": "agent 没能启动"
+		}
 	},
 	"newThread": {
 		"heading": "要做点什么？",

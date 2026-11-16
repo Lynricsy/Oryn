@@ -884,9 +884,13 @@ export const threads: Thread[] = [
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
 		// 孙线程出错：侧栏里父线程与祖父线程的状态图标随之上卷，收件箱「出错」节里单列
 		state: "error",
+		// 与 orynd 同形：orbd 的 ctl 错误 `code: message` 原样透传，cause / detail 由转 API 时的归类给出
 		error: {
 			kind: "agent_failed",
-			reason: "agent_start_failed: omp exited with status 1",
+			reason:
+				'dir_not_served: "/home/lyn/oryn-wt/snap-retry" is not inside a directory served by this runner',
+			cause: "dir_not_served",
+			detail: "/home/lyn/oryn-wt/snap-retry",
 		},
 		unread: true,
 		lastMessageAt: NOW - 2 * MIN,
@@ -908,7 +912,12 @@ export const threads: Thread[] = [
 		// 用户标的线程色；不用红色，免得和出错状态的红色图标叠成同一个信号
 		color: "purple",
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e5",
-		error: { kind: "orb_failed", reason: ORB_FAILED_REASON },
+		error: {
+			kind: "orb_failed",
+			reason: ORB_FAILED_REASON,
+			cause: "image_pull_denied",
+			detail: "oryn-orb:dev",
+		},
 	}),
 	thread({
 		id: ENV_THREADS.setupFailed,
