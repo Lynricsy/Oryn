@@ -146,7 +146,7 @@ flowchart LR
 
 | 工具 | 查什么 | 实现 |
 |---|---|---|
-| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`，默认取 20 条。结果带时间（`mentioned_at`）与出处。出处与类型（主人陈述 / 主人决定 / agent 提供）**只在能回溯到具体消息时才给**：world 事实读 item metadata（`seqs`、`roles`）；observation 本身没有 metadata 和 document_id（`docs/plan-m16-appendix-a.md:20,353`），沿 `source_fact_ids` 找到来源 world 事实再读（§7.1 P7 已验证这条链可走通）。来源 item 只含主人消息时标"主人陈述"；含 agent 消息时只标"出自线程 X 第 a–b 条，角色未确认"，不凭生成文本包装成主人事实。没配重排时召回排序偏弱（§7.1 P8），精确词语的查找交给 `search_history` |
+| `recall_memory(query)` | 主人记忆里的事实 | Hindsight recall，bank `oryn-owner`，默认取 20 条，**启用重排**（Voyage `rerank-3`，§7.1 P8）。结果带时间（`mentioned_at`）与出处。出处与类型（主人陈述 / 主人决定 / agent 提供）**只在能回溯到具体消息时才给**：world 事实读 item metadata（`seqs`、`roles`）；observation 本身没有 metadata 和 document_id（`docs/plan-m16-appendix-a.md:20,353`），沿 `source_fact_ids` 找到来源 world 事实再读（§7.1 P7 已验证这条链可走通）。来源 item 只含主人消息时标"主人陈述"；含 agent 消息时只标"出自线程 X 第 a–b 条，角色未确认"，不凭生成文本包装成主人事实。没配重排时（只用 RRF 融合）召回排序明显偏弱；精确词语的查找仍交给 `search_history` |
 | `search_history(query, kind?, project?, before?)` | 助手对话与普通 agent 线程的原文 | 复用现有全文搜索 `internal/search`：索引覆盖所有线程种类的 user / assistant 正文（`internal/store/queries/search.sql:44-61`，结果带 `t.kind`），中文 trigram 已就绪 |
 | `read_thread(threadId, around?, before?, limit?)` | 某个线程或对话的一段原文 | 扩展现有 `read_thread`：现在只能读最近 ≤30 条（`tools.go:269`），加按 seq 定位和翻页；放宽为也能**只读**主人的其他助手对话（`resolveTarget` 目前只允许 `kind=work`，`tools.go:127-141`，发消息、归档等写操作的限制不变） |
 | `recall_engineering(project?, query)` | 工程记忆里的工作细节 | 只读召回 bank `oryn`（本项目标签 + 全局），供"那个 bug 最后怎么修的"这类问题；网关只放行 recall |
@@ -187,7 +187,7 @@ P1–P4 与 P7 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代�
 
 ### 7.1 探查结果（2026-11-16）
 
-**环境**：Hindsight 1.2.1（`hindsight-api:1.2-slim`，pgroonga + pgvector），复制自 M16 探查栈的独立实例（`/tmp/owner-mem-spike`，端口 18889）。retain / consolidation 用 gemini-3.5-flash-lite，reflect 与 mental model 用 gpt-5.6-luna（P5 另测了 flash-lite），嵌入 Qwen3-Embedding-0.6B（本机 TEI），重排关闭（RRF）。真实数据：主人 2026-11-02 之后的 49 个 omp 会话（约 16.4 万字，按 §3.2 规则构造输入），其中本次设计讨论的会话当作助手对话。
+**环境**：Hindsight 1.2.1（`hindsight-api:1.2-slim`，pgroonga + pgvector），复制自 M16 探查栈的独立实例（`/tmp/owner-mem-spike`，端口 18889）。retain / consolidation 用 gemini-3.5-flash-lite，reflect 与 mental model 用 gpt-5.6-luna（P5 另测了 flash-lite），嵌入 Qwen3-Embedding-0.6B（本机 TEI），重排首测关闭（RRF），P8 补测用 Voyage `rerank-3`（经探查中转，Cohere 格式转 Voyage 格式）。用 Qwen3 嵌入余弦相似度"模拟"重排这一组没有测：它和召回里的语义检索用的是同一个模型，信息量不增加，而且本机 CPU 上 TEI 嵌入 50 个候选要 30 秒，超过了 Hindsight 的超时。真实数据：主人 2026-11-02 之后的 49 个 omp 会话（约 16.4 万字，按 §3.2 规则构造输入），其中本次设计讨论的会话当作助手对话。
 
 | # | 结论 | 关键数据 |
 |---|---|---|
@@ -198,7 +198,7 @@ P1–P4 与 P7 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代�
 | P5 成本 | 见 §3.4 | 回填 14 天：retain 530,551 + consolidation 约 485,656 token；reflect 提主题 110,416；全量刷新 11 个主题 1,328,395（luna）；单主题 delta 刷新 62,755（有新事实）/ 52,285（无相关新事实）；flash-lite 全量刷新一个主题 326,806 |
 | P6 注入效果 | **首测不通过，修正后复测通过**。首测 6 题中 5 题出自真实会话：4 题答对，"我在哪个时区"答成"新加坡时区"，是错的（见下方负例 1）；第 2 题（App Store 发版）依据的是 P5 写入的构造事实，只能说明回答与 bank 内容一致，不算真实核对。修正后复测 7 题（加了"HR 面考完了吗"）：6 题真实题全部正确，时区答"不知道"，HR 面答"截至 10-23 准备中，没有考完的记录"；无记忆时 0/7 | 只修主题、不改注入说明时，时区仍答成新加坡；两处都改才对 |
 | P7 出处回溯 | **部分通过**。按单条消息拆：出处精确、未采纳的方案 B 没被写成主人的事实，但"那就按这个做"丢了指代，没抽出"采纳 C"，而且一段 5 条消息的对话花 20,714 token；按主人回合拆：正确抽出"拒绝 B（原因）""采纳 C"，11,652 token；整段写：结论同样正确，4,268 token，但出处只到对话级。三种写法下 observation 都能沿 `source_fact_ids` 回到带 metadata 的 world 事实 | 助手对话按回合拆；线程按分块拆，出处降为"第 a–b 条"。不加称呼约束时同一 bank 里"主人""用户"混用 |
-| P8 召回排序（新增） | **偏弱**。没有重排时，"Oryn 应用提交 Apple 审核被拒的原因和修复"的相关事实排在 20 条里的第 11、13 位；查"ITMS-90683"只在第 9 位命中旧事实，P5 写入的那条含同一编号的构造事实没进前 20 | 有可用的重排接口时，主人 bank 应启用；`recall_memory` 默认取 20 条由模型筛；精确词查找交给 `search_history` |
+| P8 召回排序（新增，2026-11-17 补测重排） | **关重排偏弱，开 Voyage `rerank-3` 后通过**。首测时 bank 的 `enable_reranking` 是关的，排序只是 RRF 融合（Hindsight 日志里显示 `rrf-passthrough`）："Oryn 应用提交 Apple 审核被拒的原因和修复"的相关事实排在第 11、13 位；查"ITMS-90683"只在第 9 位命中。补测用 10 个真实问题对比（相关与否按关键词判定）：**RRF 首个相关结果排第 1 的只有 2 题，MRR 0.43；`rerank-3` 10 题全部排第 1，MRR 1.00**；前 5 名里的相关结果合计从 14 条升到 30 条。ITMS-90683 从第 14 位升到第 1 位。每次召回多 0.1–0.4 秒 | 主人 bank 默认启用重排；`recall_memory` 默认取 20 条。重排只判断相关性，**不判断归属**：问"我在哪个时区"时，它把"该任务时间基准改用新加坡时间"排在第 1（RRF 时排第 3），归属错误只能在写入阶段防住（负例 5）。**成本与限额**：候选 50 个时每次召回约 5,400–7,200 token；Hindsight 默认最多 300 个候选，一次约 2 万 token。Voyage 未绑定支付方式时限额 3 RPM / 10K TPM，默认配置一次就超限（实测 429，Hindsight 自带重试后仍报 500），补测把 `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` 压到 50 才跑通。正式使用要么绑卡（免费额度 2 亿 token 仍然有效），要么把候选上限设到 50–100 |
 
 **真实负例**（用主人真实数据发现，复测时作为回归用例保留）：
 
@@ -206,8 +206,9 @@ P1–P4 与 P7 都能在 M16 已有的 spike 栈上做，不需要写 Oryn 代�
 2. **完成状态被推断：技术面通过 + 准备 HR 面 → "技术面及 HR 面都已完成"**。原始事实是"技术面已通过，让 agent 整理 HR 面准备网页"（10-23），之后没有 HR 面结果。flash-lite 写的画像变成"准备并通过技术面及 HR 面试（已完成）"。修正：主题约束加完成状态规则后，复测写成"技术面已通过，正准备参加 HR 面试（截至 2026-10-23）"。
 3. **作用域泛化（复测时新发现）**：画像"沟通方式与工作习惯"里出现"要求对外发言不需要人工确认"。原始事实属于 GitHub 授权讨论（agent 在 GitHub 上发评论不需要人工确认），被泛化成了全局习惯。修正：约束再加一条"上下文"规则（主人在具体场景里的决定只在那个场景成立，写进主题时必须带上场景）。复测后画像写成"GitHub 交互改用 OAuth App 且 agent 发评论免人工确认"，场景保住了。**但同时出现格式回退**：这次画像不再给条目标日期，"正准备 HR 面试"也没写"截至某日"。约束越叠越多，flash-lite 遵守得越差。后续可试 mental model trigger 的 `response_schema`（Hindsight 支持）用结构化输出强制"条目 + 日期 + 状态"，再由 orynd 渲染成文本。
 4. **实体拆分（待主人确认）**：论文任务的事实里出现了"Ling（学生）"，与"主人"是两个实体。如果 Ling 就是主人，说明需要在身份设置里提供主人的名字与别名，写入时用 Hindsight 的 `entities` 参数指定，避免同一个人被拆成两个。
+5. **事实缺少主语（P8 补测发现）**：负例 1 的根源在写入阶段。抽出的事实写的是"主人明确指示**该任务**时间基准……改用新加坡时间"，"该任务"指的是哪个任务没写进事实，只能靠同一篇文档的上下文推断；元数据里的 `Where: 新加坡时区` 更进一步把它变成了一个地点属性。召回和重排都只看单条事实，重排还会把它排到第 1。修正方向：`retain_mission` 要求每条事实自成一体，指代词（"该任务""这个项目""它"）必须换成具体名称。
 
-这些负例说明：合成案例（P3、P7）通过不能代替真实语义核对。实施时要建一组来自真实数据的回归用例（上面 4 条起步），每次改抽取规则、主题约束或换模型后重跑。
+这些负例说明：合成案例（P3、P7）通过不能代替真实语义核对。实施时要建一组来自真实数据的回归用例（上面 5 条起步，加上 P8 的 10 个召回问题），每次改抽取规则、主题约束、换模型或换重排后重跑。
 
 ---
 
