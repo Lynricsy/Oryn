@@ -32,7 +32,7 @@ import (
 // 真实 orynd（newStack：process 驱动的 orbd + fakeomp）对接进程内假 GitHub（githubtest；GitRoot 下的裸仓库经
 // git http-backend 提供 smart-HTTP，API 与网页同一基址）。agent 在 orb 里的 GitHub 操作按附录 A 的请求形态直接发给
 // orb 的出站代理（orbd 的 egress 监听 → link → 控制面 egress handler → 假 GitHub），git 用真实 git 客户端经 orb 的
-// insteadOf 走同一条路；orb 内工具（github_prepare、github_autoclose）经 orbd.sock 调用，与扩展工具同一入口。
+// http.<github>.proxy 走同一条路；orb 内工具（github_prepare、github_autoclose）经 orbd.sock 调用，与扩展工具同一入口。
 // GitHub 侧的事件由假 GitHub 以仓库 hook 身份签名投递到 orynd 的 webhook 端点；上游仓库没有 Oryn 的 hook，靠对象级轮询。
 //
 // 子用例按顺序共享一套环境，前一步失败时后续步骤跳过。整套不访问外网；唯一要等定时器的是对象级轮询与任务扫描
@@ -731,19 +731,24 @@ func (e *m15Env) waitM15Thread(t *testing.T, id string, timeout time.Duration, c
 	}
 }
 
-// orbOf 从 orb 的全局 git 配置里读出出站代理地址（setup 写的 github.com insteadOf）。
+// orbOf 从 orb 的全局 git 配置里读出出站代理地址：setup 写的 `http.http://github.com/.proxy`；
+// 读不到时回落到老 orbd 写的 `url.http://127.0.0.1:<port>/git/github.com/.insteadOf`。
 func (e *m15Env) orbOf(t *testing.T, th m15Thread) orbCtx {
 	t.Helper()
 	o := orbCtx{thread: th.ID, orb: th.OrbID, home: e.drv.HomeDir(th.OrbID)}
-	out := e.orbGit(t, o, o.home, "config", "--global", "--get-regexp", `^url\.`)
-	for line := range strings.SplitSeq(out, "\n") {
-		key, val, _ := strings.Cut(line, " ")
-		if val == "https://github.com/" {
-			from := strings.TrimSuffix(strings.TrimPrefix(key, "url."), ".insteadof")
-			o.egress, _, _ = strings.Cut(from, "/git/")
+	if out, err := orbGitCmd(o, o.home, "config", "--global", "--get", "http.http://github.com/.proxy").Output(); err == nil {
+		o.egress = strings.TrimSpace(string(out))
+	}
+	if o.egress == "" {
+		out, _ := orbGitCmd(o, o.home, "config", "--global", "--get-regexp", `^url\.`).Output()
+		for line := range strings.SplitSeq(string(out), "\n") {
+			key, val, _ := strings.Cut(line, " ")
+			if val == "https://github.com/" && strings.Contains(key, "/git/") {
+				o.egress, _, _ = strings.Cut(strings.TrimPrefix(key, "url."), "/git/")
+			}
 		}
 	}
-	require.NotEmpty(t, o.egress, "orb 的 git 配置里没有 github.com 的 insteadOf：%s", out)
+	require.NotEmpty(t, o.egress, "orb 的 git 配置里既没有 http.http://github.com/.proxy，也没有老的 /git/ insteadOf")
 	return o
 }
 

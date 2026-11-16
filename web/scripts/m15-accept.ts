@@ -585,7 +585,7 @@ async function ghPrCreate() {
 		`假 GitHub 的裸仓库收到 ${branch}（${head.slice(0, 12)}）`,
 	);
 
-	// 不带 -R：gh 按 `git remote -v` 推断仓库（orb 的 origin 经 insteadOf 改写成出站代理地址，已报告为产品问题）
+	// 不带 -R：gh 按 `git remote -v` 推断仓库（origin 保持 github.com 形式，出站代理经 http.<github>.proxy 走）
 	const plain = orbSh(orbId, `gh pr view ${branch} --json number 2>&1`);
 	expect(
 		!plain.out.includes(

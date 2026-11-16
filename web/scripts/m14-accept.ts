@@ -35,7 +35,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
  *     （`reachable: false` 只记投递日志，由 orynd 轮询补齐），经 `/__fake/oauth` 登记授权码，经 `/__fake/calls` 读它收到的请求。
  *   - orynd（127.0.0.1:7640，data_dir 全新）；provider `local`（driver process，orbd = $M14_BIN/orbd，agent = fakeomp）：
  *     orb 的 HOME 是 `<tmp>/orbs/orbs/<orb id>/home`，检出在 `$HOME/workspace/repo`，出站代理地址是随机端口
- *     （用 `HOME=<orb home> git config --global --get-regexp '^url\.'` 读出）。
+ *     （用 `HOME=<orb home> git config --global --get http.http://github.com/.proxy` 读出）。
  *   - 第二个 vite（127.0.0.1:5192，非 mock，/api 等代理到这套 orynd）给浏览器用；public_url 与浏览器都用 localhost:5192。
  *   - 浏览器跑在只有回环的独立网络命名空间里（同 m13），访问不到假 GitHub：OAuth 的「去 GitHub」一步由脚本
  *     直接请求回调地址代替（假 GitHub 的授权码事先登记好）。
@@ -1591,9 +1591,10 @@ const orbSh = (orbId: string, cmd: string, extraEnv = "") =>
 	sh(
 		`cd ${q(existsSync(orbRepo(orbId)) ? orbRepo(orbId) : orbHome(orbId))} && env -i PATH=${ORB_PATH} HOME=${q(orbHome(orbId))} ${extraEnv} bash -c ${q(cmd)}`,
 	);
-/** orb 的出站代理地址（从 git 的 insteadOf 读出）。 */
+/** orb 的出站代理地址：setup 写的 `http.http://github.com/.proxy`；读不到时回落到老 orbd 的 `/git/` insteadOf。 */
 function orbEgress(orbId: string): string {
-	const r = orbSh(orbId, "git config --global --get-regexp '^url\\.'");
+	let r = orbSh(orbId, "git config --global --get http.http://github.com/.proxy");
+	if (!r.stdout) r = orbSh(orbId, "git config --global --get-regexp '^url\\.'");
 	const m = /http:\/\/127\.0\.0\.1:\d+/.exec(r.stdout);
 	if (!m) throw new Error(`读不出 orb ${orbId} 的出站代理地址：${clip(r.out)}`);
 	return m[0];
