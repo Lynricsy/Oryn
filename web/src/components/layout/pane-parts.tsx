@@ -69,6 +69,8 @@ export function useNow(): number {
 /**
  * 分组：标题行可折叠。主分组（置顶、项目）的箭头悬停才显现；
  * `fold` 分组（未活动、稍后提醒、已归档）箭头常驻在最左、默认收起。
+ * 计数签贴行尾、右缘距侧栏内容边 8px，与导航行（`NAV_ROW` 的 pr-2）和线程行行尾对齐；
+ * 主分组的箭头因此放在计数签左侧，不占行尾。
  */
 export function Group({
 	title,
@@ -106,7 +108,7 @@ export function Group({
 			>
 				<button
 					type="button"
-					className={`flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left font-semibold text-muted text-xs hover:text-fg ${fold ? "h-8" : "h-[30px]"}`}
+					className={`flex min-w-0 flex-1 items-center gap-2 pr-1 pl-2.5 text-left font-semibold text-muted text-xs hover:text-fg ${fold ? "h-8" : "h-[30px]"}`}
 					onClick={toggle}
 					aria-expanded={open}
 				>
@@ -120,7 +122,6 @@ export function Group({
 					)}
 					{icon}
 					<span className="min-w-0 flex-1 truncate">{title}</span>
-					{count !== undefined && <CountPill n={count} />}
 					{!fold && (
 						<Icon
 							name={caret}
@@ -129,6 +130,7 @@ export function Group({
 							className={`shrink-0 text-ghost transition-opacity duration-150 ${open ? "opacity-0 group-focus-within/head:opacity-100 group-hover/head:opacity-100" : ""}`}
 						/>
 					)}
+					{count !== undefined && <CountPill n={count} />}
 				</button>
 				{action}
 			</div>
