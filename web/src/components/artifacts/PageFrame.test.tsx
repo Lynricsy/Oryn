@@ -186,4 +186,36 @@ describe("PageFrame", () => {
 		fromPage(frame, { channel, kind: "blocked", url: "https://example.com/a" });
 		expect(onBlocked).toHaveBeenCalledWith("https://example.com/a");
 	});
+
+	it("查看器的 present 交给 onPresent；帧重新加载按退出处理", async () => {
+		const onPresent = vi.fn();
+		render(
+			<PageFrame
+				artifactId={ID}
+				title="帧"
+				onBlocked={vi.fn()}
+				onPresent={onPresent}
+			/>,
+		);
+		const frame = (await screen.findByTestId(
+			"artifact-frame",
+		)) as HTMLIFrameElement;
+		const win = frame.contentWindow;
+		if (!win) throw new Error("iframe 没有窗口");
+		const post = vi.fn();
+		vi.spyOn(win, "postMessage").mockImplementation(post);
+		act(() => {
+			frame.dispatchEvent(new Event("load"));
+		});
+		expect(onPresent).toHaveBeenLastCalledWith(false);
+		const channel = String(
+			posted(post).find((m) => m.kind === "hello")?.channel,
+		);
+		fromPage(frame, { channel, kind: "present", on: true });
+		expect(onPresent).toHaveBeenLastCalledWith(true);
+		act(() => {
+			frame.dispatchEvent(new Event("load"));
+		});
+		expect(onPresent).toHaveBeenLastCalledWith(false);
+	});
 });

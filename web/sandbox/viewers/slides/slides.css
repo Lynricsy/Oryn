@@ -1,0 +1,417 @@
+/* 幻灯片查看器：画板内的颜色只取调色板（--s-*，由 SlideView 按主题设置）；外围界面跟随系统明暗。 */
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+.oryn-slides {
+	position: relative;
+	height: 100vh;
+	overflow: hidden;
+	background: var(--oryn-surface);
+}
+
+.oryn-slides-presenting {
+	background: #000000;
+}
+
+.oryn-s-stage {
+	position: absolute;
+	inset: 16px 16px 72px;
+	overflow: hidden;
+}
+
+.oryn-slides-presenting .oryn-s-stage {
+	inset: 0;
+}
+
+.oryn-s-thumbnail {
+	position: fixed;
+	inset: 0;
+}
+
+.oryn-s-scaled {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform-origin: center;
+}
+
+.oryn-slides:not(.oryn-slides-presenting) .oryn-s-scaled {
+	box-shadow: var(--oryn-shadow);
+}
+
+.oryn-s-edit {
+	position: fixed;
+	top: 12px;
+	right: 12px;
+	z-index: 10;
+	box-shadow: var(--oryn-shadow);
+}
+
+.oryn-s-nav {
+	position: fixed;
+	left: 50%;
+	bottom: 14px;
+	z-index: 15;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px;
+	border: 1px solid var(--oryn-line);
+	border-radius: 12px;
+	background: var(--oryn-raised);
+	box-shadow: var(--oryn-shadow);
+}
+
+.oryn-s-nav-btn {
+	width: 30px;
+	padding: 0;
+	font-size: 18px;
+}
+
+.oryn-s-counter {
+	min-width: 64px;
+	color: var(--oryn-muted);
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.oryn-slides .oryn-editbar {
+	bottom: 68px;
+}
+
+.oryn-s-exit-hint {
+	position: fixed;
+	left: 50%;
+	bottom: 16px;
+	margin: 0;
+	transform: translateX(-50%);
+	color: rgb(255 255 255 / 0.6);
+	font-size: 13px;
+	animation: oryn-s-hint 3s ease-out forwards;
+}
+
+@keyframes oryn-s-hint {
+	0%,
+	70% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.oryn-s-exit-hint {
+		animation: none;
+	}
+}
+
+.oryn-s-problems {
+	text-align: left;
+	max-width: 40rem;
+	margin: 0 auto;
+}
+
+.oryn-s-problems li {
+	font-family: var(--oryn-mono);
+	font-size: 13px;
+}
+
+/* 打印视图：每张一页，无缩放 */
+
+.oryn-s-print {
+	background: #ffffff;
+}
+
+.oryn-s-print-page {
+	break-after: page;
+	overflow: hidden;
+}
+
+.oryn-s-print-page:last-child {
+	break-after: auto;
+}
+
+/* 画板与版式 */
+
+.oryn-slide {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 32px;
+	overflow: hidden;
+	padding: 72px 88px;
+	background: var(--s-bg);
+	color: var(--s-text);
+	font-family:
+		ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+		"Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+	font-size: 28px;
+	line-height: 1.4;
+	overflow-wrap: break-word;
+	white-space: pre-wrap;
+}
+
+.oryn-slide h1,
+.oryn-slide h2,
+.oryn-slide h3,
+.oryn-slide p,
+.oryn-slide ul,
+.oryn-slide blockquote,
+.oryn-slide figure {
+	margin: 0;
+}
+
+.oryn-s-heading {
+	flex: none;
+	font-size: 46px;
+	font-weight: 700;
+	line-height: 1.2;
+	letter-spacing: -0.01em;
+}
+
+.oryn-s-cover {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	justify-content: center;
+	gap: 24px;
+}
+
+.oryn-slide-title .oryn-s-cover {
+	align-items: center;
+	text-align: center;
+}
+
+.oryn-slide-section {
+	background: var(--s-surface);
+}
+
+.oryn-s-rule {
+	width: 72px;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--s-accent);
+}
+
+.oryn-s-title {
+	font-size: 68px;
+	font-weight: 750;
+	line-height: 1.12;
+	letter-spacing: -0.02em;
+}
+
+.oryn-slide-section .oryn-s-title {
+	font-size: 58px;
+}
+
+.oryn-s-subtitle {
+	color: var(--s-muted);
+	font-size: 30px;
+}
+
+.oryn-s-split {
+	display: flex;
+	flex: 1;
+	gap: 48px;
+	min-height: 0;
+}
+
+.oryn-s-has-image > * {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.oryn-s-side-image {
+	max-height: 100%;
+	object-fit: contain;
+	border-radius: 12px;
+}
+
+.oryn-s-bullets {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding-left: 1.1em;
+	list-style: none;
+}
+.oryn-s-split > .oryn-s-bullets {
+	flex: 1;
+}
+
+.oryn-s-bullets > li {
+	position: relative;
+}
+
+.oryn-s-bullets > li::before {
+	content: "";
+	position: absolute;
+	top: 0.55em;
+	left: -1em;
+	width: 0.32em;
+	height: 0.32em;
+	border-radius: 50%;
+	background: var(--s-accent);
+}
+
+.oryn-s-bullets .oryn-s-bullets {
+	gap: 8px;
+	margin-top: 10px;
+	color: var(--s-muted);
+	font-size: 0.85em;
+}
+
+.oryn-s-bullets .oryn-s-bullets > li::before {
+	background: var(--s-muted);
+}
+
+.oryn-s-columns {
+	display: grid;
+	flex: 1;
+	grid-template-columns: 1fr 1fr;
+	gap: 40px;
+	min-height: 0;
+}
+
+.oryn-s-column {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 32px;
+	border: 2px solid var(--s-line);
+	border-radius: 16px;
+	background: var(--s-surface);
+	font-size: 24px;
+}
+
+.oryn-s-column h3 {
+	color: var(--s-accent);
+	font-size: 32px;
+	font-weight: 700;
+}
+
+.oryn-s-figure {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
+	min-height: 0;
+}
+
+.oryn-s-figure img {
+	flex: 1;
+	min-height: 0;
+	max-width: 100%;
+	object-fit: contain;
+	border-radius: 12px;
+}
+
+.oryn-s-figure figcaption {
+	color: var(--s-muted);
+	font-size: 22px;
+}
+
+.oryn-s-quote {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	justify-content: center;
+	gap: 28px;
+	padding: 0 48px;
+}
+
+.oryn-s-quote-mark {
+	height: 0.6em;
+	color: var(--s-accent);
+	font-size: 140px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.oryn-s-quote blockquote {
+	font-size: 46px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.oryn-s-attribution {
+	color: var(--s-muted);
+	font-size: 26px;
+}
+
+.oryn-s-stats {
+	display: grid;
+	flex: 1;
+	grid-template-columns: repeat(var(--oryn-s-count, 1), minmax(0, 1fr));
+	align-items: center;
+	gap: 32px;
+}
+
+.oryn-s-stat {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 36px 28px;
+	border-radius: 16px;
+	background: var(--s-surface);
+	text-align: center;
+}
+
+.oryn-s-stat-value {
+	color: var(--s-accent);
+	font-size: 76px;
+	font-weight: 750;
+	line-height: 1.05;
+	letter-spacing: -0.02em;
+}
+
+.oryn-s-stat-label {
+	color: var(--s-muted);
+	font-size: 24px;
+}
+
+.oryn-s-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 22px;
+}
+
+.oryn-s-table th,
+.oryn-s-table td {
+	padding: 12px 16px;
+	border-bottom: 2px solid var(--s-line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.oryn-s-table th {
+	color: var(--s-muted);
+	font-size: 18px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+/* 编辑态的文字区 */
+
+.oryn-editable {
+	border-radius: 6px;
+	outline: 2px dashed transparent;
+	outline-offset: 4px;
+	cursor: text;
+}
+
+.oryn-editable:hover {
+	outline-color: var(--s-line);
+}
+
+.oryn-editable:focus {
+	outline: 2px solid var(--s-accent);
+}

@@ -105,6 +105,8 @@ export type PageMessage = Envelope &
 		| { kind: "ready"; params: Record<string, unknown> }
 		| { kind: "scroll"; x: number; y: number }
 		| { kind: "blocked"; url: string }
+		/** 类型化 artifact 的查看器进入 / 退出演示：父页面把帧铺满窗口或还原。 */
+		| { kind: "present"; on: boolean }
 		/** 选中变化或回应 `select-source` / `select-locate`；`at` 是点击处的视口坐标。 */
 		| {
 				kind: "select";
@@ -352,6 +354,10 @@ export function parsePageMessage(data: unknown): PageMessage | null {
 		case "blocked":
 			return typeof m.url === "string"
 				? { ...head, kind: m.kind, url: m.url }
+				: null;
+		case "present":
+			return typeof m.on === "boolean"
+				? { ...head, kind: m.kind, on: m.on }
 				: null;
 		case "select":
 			return parseSelect(head, m);

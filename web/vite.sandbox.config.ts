@@ -22,7 +22,35 @@ const iife: Record<string, { entry: string; name: string; file: string }> = {
 	},
 };
 
+// 类型化 artifact 的查看器：ES module，自带 React，输出 `sandbox/viewers/<名字>.{js,css}`（orynd 只认这四个名字）。
+// 每个查看器单独构建一次（`--mode viewer-document` / `--mode viewer-slides`）：多入口同构建会把 React
+// 拆进带哈希的公共分块，服务端不提供它。
+const viewers: Record<string, string> = {
+	"viewer-document": "document",
+	"viewer-slides": "slides",
+};
+
 export default defineConfig(({ mode }) => {
+	const viewer = viewers[mode];
+	if (viewer)
+		return {
+			publicDir: false,
+			// 库模式不替换 process.env；React 要按生产版本打包
+			define: { "process.env.NODE_ENV": JSON.stringify("production") },
+			build: {
+				outDir: "dist",
+				emptyOutDir: false,
+				copyPublicDir: false,
+				// ES 库模式缺省不压缩空白；查看器是直接给页面加载的成品，且必须是单个文件
+				rolldownOptions: { output: { minify: true, codeSplitting: false } },
+				lib: {
+					entry: `sandbox/viewers/${viewer}/main.tsx`,
+					formats: ["es"],
+					fileName: () => `sandbox/viewers/${viewer}.js`,
+					cssFileName: `sandbox/viewers/${viewer}`,
+				},
+			},
+		};
 	const target = iife[mode];
 	if (!target) throw new Error(`未知的沙箱构建入口：${mode}`);
 	return {

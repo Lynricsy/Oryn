@@ -7,7 +7,7 @@ import {
 	utf8Length,
 } from "./messages";
 import "./main";
-import { install } from "./start";
+import { install, readConfig } from "./start";
 
 const CHANNEL = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
@@ -207,6 +207,46 @@ describe("页面运行时", () => {
 		expect("__orynStart" in window).toBe(false);
 		expect(w.oryn).toBeDefined();
 	});
+
+	it("查看器页（无源码标记）请父页面进入演示", () => {
+		const { page, posted, deliver } = setup({
+			v: 1,
+			mark: "",
+			path: "slides.json",
+			root: "/",
+			runtime: true,
+		});
+		deliver({ v: 1, channel: CHANNEL, kind: "hello" });
+		posted.mockClear();
+		const w = page as unknown as { __orynPresent?: (on: boolean) => void };
+		expect(Object.keys(page)).not.toContain("__orynPresent");
+		w.__orynPresent?.(true);
+		w.__orynPresent?.(false);
+		expect(sent(posted)).toEqual([
+			{ v: 1, channel: CHANNEL, kind: "present", on: true },
+			{ v: 1, channel: CHANNEL, kind: "present", on: false },
+		]);
+	});
+
+	it("readConfig 接受空标记与帧根，帧根不以 / 结尾时丢弃", () => {
+		expect(
+			readConfig({
+				v: 1,
+				mark: "",
+				path: "document.md",
+				root: "/_af/x/",
+				runtime: true,
+			}),
+		).toEqual({
+			v: 1,
+			mark: "",
+			path: "document.md",
+			root: "/_af/x/",
+			runtime: true,
+		});
+		expect(readConfig({ ...CONFIG, root: "/_af/x" }).root).toBe("");
+		expect(readConfig({ ...CONFIG, mark: "BAD" }).runtime).toBe(false);
+	});
 });
 
 describe("消息协议", () => {
@@ -233,6 +273,9 @@ describe("消息协议", () => {
 		expect(
 			parsePageMessage({ v: 1, channel: CHANNEL, kind: "blocked", url: "x" }),
 		).toEqual({ v: 1, channel: CHANNEL, kind: "blocked", url: "x" });
+		expect(
+			parsePageMessage({ v: 1, channel: CHANNEL, kind: "present", on: "yes" }),
+		).toBe(null);
 	});
 
 	it("超过 64 KiB 的消息被丢弃", () => {

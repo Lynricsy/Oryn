@@ -9,21 +9,24 @@ import {
 	parseParentMessage,
 } from "./messages";
 import { installSelection } from "./select";
+import { createUse } from "./transport";
 
 /** 服务端随页面注入的配置：`__orynStart(<配置 JSON>)`。 */
 export interface RuntimeConfig {
 	v: typeof PROTOCOL_VERSION;
-	/** 本次响应给 `data-oryn-src` 用的 8 位标记。 */
+	/** 本次响应给 `data-oryn-src` 用的 8 位标记；查看器页不标源码，为空串。 */
 	mark: string;
 	/** 页面在 artifact 版本里的路径。 */
 	path: string;
+	/** 帧根（以 `/` 结尾）：运行时端点是 `<root>_oryn/v1`。缺省为空串，这时能力一律不可用。 */
+	root: string;
 	/** 跟随最新版本的帧为真；钉住旧版本时为假，只保留滚动与链接拦截。 */
 	runtime: boolean;
 }
 
 /**
  * 页面加载前缓存的原生引用：页面脚本之后改写这些全局不影响运行时。
- * `parse` 与 `fetch` 留给能力调用的传输层用。
+ * `parse`、`fetch`、计时器与 `AbortController` 给能力调用的传输层用。
  */
 export const natives = Object.freeze({
 	freeze: Object.freeze,
@@ -33,6 +36,10 @@ export const natives = Object.freeze({
 	resolve: Promise.resolve.bind(Promise),
 	URL,
 	fetch: typeof fetch === "function" ? fetch.bind(globalThis) : undefined,
+	setTimeout: window.setTimeout.bind(window),
+	clearTimeout: window.clearTimeout.bind(window),
+	AbortController,
+	Error,
 });
 
 const MARK_PATTERN = /^[a-z0-9]{8}$/;
@@ -45,18 +52,29 @@ export function readConfig(raw: unknown): RuntimeConfig {
 	const valid =
 		c.v === PROTOCOL_VERSION &&
 		typeof c.mark === "string" &&
-		MARK_PATTERN.test(c.mark) &&
+		(c.mark === "" || MARK_PATTERN.test(c.mark)) &&
 		typeof c.path === "string";
 	return {
 		v: PROTOCOL_VERSION,
 		mark: valid ? (c.mark as string) : "",
 		path: valid ? (c.path as string) : "",
+		root:
+			valid && typeof c.root === "string" && c.root.endsWith("/") ? c.root : "",
 		runtime: valid && c.runtime === true,
 	};
 }
 
-/** `window.oryn.use` 的返回：能力的命名空间；没有声明、未获同意或不可用时为 `null`。 */
-export type Capability = Readonly<Record<string, unknown>>;
+/** 运行时端点的绝对地址；旧版本的帧或配置里没有帧根时为 `null`（能力一律不可用）。 */
+function endpointOf(config: RuntimeConfig, base: string): string | null {
+	if (!config.runtime || config.root === "") return null;
+	try {
+		return new natives.URL(`${config.root}_oryn/v1`, base).href;
+	} catch {
+		return null;
+	}
+}
+
+export type { Capability } from "./transport";
 
 /**
  * 在页面窗口 `win` 上安装运行时；`parent` 是页面加载前缓存的 `window.parent`。
@@ -151,9 +169,15 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 		true,
 	);
 
-	// 能力在后续阶段接入；现在任何能力都不可用。旧版本的帧也定义它，页面按「不可用」处理而不是报错
-	const use = (_name: string): Promise<Capability | null> =>
-		natives.resolve(null);
+	// 旧版本的帧也定义它，页面按「不可用」处理而不是报错
+	const use = createUse(endpointOf(config, win.location.href), natives);
+	// 类型化 artifact 的查看器（与运行时同页）请父页面把帧铺满窗口或还原；不可枚举，不算对页面的公开接口
+	natives.defineProperty(win, "__orynPresent", {
+		value: (on: unknown) => send({ kind: "present", on: on === true }),
+		writable: false,
+		configurable: false,
+		enumerable: false,
+	});
 	natives.defineProperty(win, "oryn", {
 		value: natives.freeze({ version: 1, use }),
 		writable: false,

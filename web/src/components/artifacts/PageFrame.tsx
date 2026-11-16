@@ -44,6 +44,8 @@ export interface PageFrameProps {
 	title: string;
 	/** 页面试图跳到别的源：`url` 是完整地址（运行时报告）或只有源（CSP 报告）。 */
 	onBlocked(url: string): void;
+	/** 类型化 artifact 的查看器请求进入 / 退出演示（运行时的 `present`）；缺省 = 不认这条消息。帧每次重新加载都按退出处理。 */
+	onPresent?(on: boolean): void;
 }
 
 export function PageFrame({
@@ -52,6 +54,7 @@ export function PageFrame({
 	reloadNonce = 0,
 	title,
 	onBlocked,
+	onPresent,
 }: PageFrameProps): ReactNode {
 	// 帧被判定失效时递增，重新申请
 	const [attempt, setAttempt] = useState(0);
@@ -64,6 +67,7 @@ export function PageFrame({
 			version={version}
 			title={title}
 			onBlocked={onBlocked}
+			onPresent={onPresent}
 			onReady={() => {
 				retried.current = false;
 			}}
@@ -88,6 +92,7 @@ function FrameSession({
 	version,
 	title,
 	onBlocked,
+	onPresent,
 	onReady,
 	onStale,
 	onRetry,
@@ -96,6 +101,7 @@ function FrameSession({
 	version?: number;
 	title: string;
 	onBlocked(url: string): void;
+	onPresent?(on: boolean): void;
 	onReady(): void;
 	onStale(): void;
 	onRetry(): void;
@@ -137,6 +143,7 @@ function FrameSession({
 					url={acq.frame.url}
 					title={title}
 					onBlocked={onBlocked}
+					onPresent={onPresent}
 					onReady={onReady}
 					onStale={onStale}
 				/>
@@ -180,6 +187,7 @@ function LiveFrame({
 	url,
 	title,
 	onBlocked,
+	onPresent,
 	onReady,
 	onStale,
 }: {
@@ -188,14 +196,15 @@ function LiveFrame({
 	url: string;
 	title: string;
 	onBlocked(url: string): void;
+	onPresent?(on: boolean): void;
 	onReady(): void;
 	onStale(): void;
 }): ReactNode {
 	const ref = useRef<HTMLIFrameElement>(null);
 	const [visible, setVisible] = useState(false);
 	// 回调可能每次渲染都换；监听只装一次
-	const cb = useRef({ onBlocked, onReady, onStale });
-	cb.current = { onBlocked, onReady, onStale };
+	const cb = useRef({ onBlocked, onPresent, onReady, onStale });
+	cb.current = { onBlocked, onPresent, onReady, onStale };
 
 	useEffect(() => {
 		const timer = setTimeout(() => setVisible(true), REVEAL_AFTER_MS);
@@ -218,6 +227,7 @@ function LiveFrame({
 		};
 		const offs = [
 			link.on("blocked", (m) => cb.current.onBlocked(m.url)),
+			link.on("present", (m) => cb.current.onPresent?.(m.on)),
 			link.on("ready", () => {
 				ready = true;
 				clearTimeout(readyTimer);
@@ -232,6 +242,8 @@ function LiveFrame({
 			}),
 			link.onLoaded(() => {
 				setVisible(true);
+				// 新加载的页面不在演示态
+				cb.current.onPresent?.(false);
 				if (restore) {
 					link.post({ kind: "restore-scroll", ...restore });
 					restore = null;
