@@ -147,8 +147,7 @@ func (h *Host) RenderTarget(ctx context.Context, id string, version int) (int, b
 // 不标源码），响应头同帧，但 'self' 换成作业根的 URL、没有 frame-ancestors（渲染时页面就是顶层文档）。
 // 类型化 artifact 的根是查看器页（同帧，但没有运行时：查看器只读显示），`_oryn/viewer/<名字>` 提供查看器资源。
 func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Target, p string) {
-	csp, _, _ := strings.Cut(framePolicy(sandboxFrame, t.Self, "'none'", t.Strict), "; frame-ancestors ")
-	setFrameHeaders(w, r, csp)
+	setFrameHeaders(w, r, framePolicy(sandboxFrame, t.Self, "", t.Strict))
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		frameError(w, http.StatusMethodNotAllowed, "只支持 GET")
@@ -179,6 +178,16 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 			page := viewerPage(viewerConfig{Type: a.Type, Format: v.Format, Version: v.Version, Head: a.Version, Entry: a.Entry(), Root: t.Self})
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(page))
+			return
+		}
+		// 没有自己的 index.html 的画布：根是生成的概览页（缩略图带 ?view=thumbnail，由概览脚本自己读取）
+		page, ok, err := h.s.overviewFor(ctx, a, version, "")
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if ok {
+			writePage(w, r, page)
 			return
 		}
 	}

@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -63,8 +64,16 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 			return Artifact{}, importBodyErr(err)
 		}
 		name := part.FormName()
-		if hiddenPath(name) {
-			_, err := io.Copy(io.Discard, part)
+		var body io.Reader = part
+		skip := hiddenPath(name)
+		if !skip && name == EntryHTML {
+			// 导出画布时补上的概览页（以 overviewMarker 开头）：查看时会重新生成，不作为 artifact 的文件
+			br := bufio.NewReader(part)
+			head, _ := br.Peek(len(overviewMarker) + 3)
+			skip, body = isOverviewPage(head), br
+		}
+		if skip {
+			_, err := io.Copy(io.Discard, body)
 			_ = part.Close()
 			if err != nil {
 				return Artifact{}, importBodyErr(err)
@@ -74,7 +83,7 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 		if len(paths) == MaxVersionFiles {
 			return Artifact{}, opErr(CodeTooMany, "一个 artifact 最多 %d 个文件。", MaxVersionFiles)
 		}
-		f, err := s.importPart(part, name, &st)
+		f, err := s.importPart(body, name, &st)
 		_ = part.Close()
 		if err != nil {
 			return Artifact{}, err

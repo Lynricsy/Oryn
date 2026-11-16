@@ -30,13 +30,14 @@ const permissionsPolicy = "camera=(), microphone=(), geolocation=(), display-cap
 	"bluetooth=(), midi=(), payment=(), clipboard-read=(), clipboard-write=(), fullscreen=()"
 
 // framePolicy 返回帧响应的 CSP。self 是页面自己的文件所在的源（泛域名模式 `'self'`，主域回退模式
-// `<public_url 源>/_af/<令牌>/`）；strict 时不放行任何 CDN；ancestors 是 frame-ancestors 的值。
+// `<public_url 源>/_af/<令牌>/`）；strict 时不放行任何 CDN；ancestors 是 frame-ancestors 的值，为空时不发这条指令
+// （渲染模式的页面就是顶层文档；顶层帧里被根内嵌的文件，见 Host.serve）。
 func framePolicy(sandbox, self, ancestors string, strict bool) string {
 	cdn := ""
 	if !strict {
 		cdn = " " + strings.Join(CDNs, " ")
 	}
-	return sandbox + "; " +
+	csp := sandbox + "; " +
 		"default-src 'none'; " +
 		"script-src " + self + " 'unsafe-inline' 'unsafe-eval' blob:" + cdn + "; " +
 		"style-src " + self + " 'unsafe-inline'" + cdn + "; " +
@@ -48,8 +49,11 @@ func framePolicy(sandbox, self, ancestors string, strict bool) string {
 		"frame-src " + self + "; " +
 		"form-action 'none'; " +
 		"base-uri " + self + "; " +
-		"webrtc 'block'; " +
-		"frame-ancestors " + ancestors
+		"webrtc 'block'"
+	if ancestors != "" {
+		csp += "; frame-ancestors " + ancestors
+	}
+	return csp
 }
 
 // setFrameHeaders 写出帧响应的安全头。请求带 `Origin: null`（不透明源的页面读自己的文件、加载 module 脚本

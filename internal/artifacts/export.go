@@ -56,10 +56,24 @@ func (s *Service) Export(ctx context.Context, id string, version int, format str
 			return err
 		}}, nil
 	case ExportZip:
+		// 没有自己的 index.html 的画布补一个生成的概览页，解开后直接打开 index.html 就能看；再导入时会被去掉
+		overview, _, err := s.overviewFor(ctx, a, v.Version, "")
+		if err != nil {
+			return Export{}, err
+		}
 		return Export{Name: base + ".zip", ContentType: "application/zip", write: func(w io.Writer) error {
 			zw := zip.NewWriter(w)
 			for _, f := range files {
 				if err := s.zipFile(zw, f, v); err != nil {
+					return err
+				}
+			}
+			if overview != nil {
+				iw, err := zw.CreateHeader(&zip.FileHeader{Name: EntryHTML, Method: zip.Deflate, Modified: v.CreatedAt})
+				if err != nil {
+					return err
+				}
+				if _, err := iw.Write(overview); err != nil {
 					return err
 				}
 			}

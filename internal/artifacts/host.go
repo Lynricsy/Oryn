@@ -102,9 +102,14 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 		frameError(w, http.StatusNotFound, "帧不存在或已过期")
 		return
 	}
-	sandbox := sandboxFrame
+	sandbox, ancestors := sandboxFrame, f.ancestors
 	if f.topLevel {
 		sandbox = sandboxTopLevel
+		if !atFrameRoot(p) {
+			// 顶层帧的根（画布的概览页或页面自己的 index.html）会内嵌同一帧里的其它文件。根运行在不透明源里，
+			// 浏览器对不透明源的祖先任何 frame-ancestors 都不放行（Chromium 实测连 * 也不行），所以根之外不发这条指令
+			ancestors = ""
+		}
 	}
 	rel := strings.TrimPrefix(p, "/")
 	if rel == runtimeEndpoint {
@@ -112,18 +117,18 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, true))
+		setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), ancestors, true))
 		w.Header().Set("Allow", "GET, HEAD")
 		frameError(w, http.StatusMethodNotAllowed, "只支持 GET")
 		return
 	}
 	strict, a, head, err := h.strict(ctx, token, f)
 	if err != nil {
-		setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, true))
+		setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), ancestors, true))
 		h.fail(w, err)
 		return
 	}
-	setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), f.ancestors, strict))
+	setFrameHeaders(w, r, framePolicy(sandbox, h.frameSelf(token), ancestors, strict))
 	if name, ok := strings.CutPrefix(rel, viewerPrefix); ok {
 		h.serveViewerAsset(w, r, name)
 		return
@@ -138,6 +143,18 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 	if !ok {
 		frameError(w, http.StatusNotFound, "文件不存在")
 		return
+	}
+	if f.topLevel && atFrameRoot(p) {
+		// 「在浏览器中打开」没有自己的 index.html 的画布时，根是生成的只读概览页（画框按相对路径落在同一版本）
+		page, ok, err := h.s.overviewFor(ctx, a, version, f.locale)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if ok {
+			writePage(w, r, page)
+			return
+		}
 	}
 	if a.Type != "" && atFrameRoot(p) {
 		// 类型化 artifact 的根是查看器页；入口文件与 images/ 由查看器按页面地址相对读取，落在同一版本
