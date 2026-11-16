@@ -75,6 +75,13 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
 - **精细的平台交互适配**：桌面端采用无系统标题栏同源设计（macOS 融合原生红绿灯，Windows / Linux 自绘窗口按钮并遵循 GTK 标题栏布局），支持系统托盘、全局唤醒快捷键与 `oryn://` 深链接；移动端针对 `<600dp` 窄屏提供屏幕圆角同心的下沉式侧栏、右上角快捷视图菜单、系统分享接收以及 RFC 8291 端到端加密的 **UnifiedPush（零 Google 依赖）** 与加密 **FCM** 双通道后台推送。工具审批、确认这类可一触作答的提问直接在通知上带「允许 / 拒绝」等按钮（Android 需解锁后点按，浏览器 Web Push 同样支持），后台作答不拉起界面；请求在别处作答后旧按钮自动撤回。
 - **终端流式挂接与本地实时镜像**：偏爱本地 IDE 与编辑器的开发者可使用 `oryn thread attach` 在终端内流式交互，或运行 `oryn sync <线程>` 将远端 orb 内的提交与未提交改动实时镜像至本机干净检出（`Ctrl-C` 自动还原，`--apply` 一次性落盘）。
 
+### 4. Artifacts：可版本化的交付物
+
+- **Agent 产出成品**：orb 线程、Runner 线程与全局助手的 Agent 都能用 `create_artifact` / `update_artifact` 等工具做出页面、画布、文档（Markdown）与幻灯片。每次写入生成一个新版本，冲突按文件粒度检查；可以恢复旧版本，删除的进「最近删除」保留 30 天。
+- **隔离渲染**：每个 artifact 在不透明源的沙箱帧里显示（配置了 `portal_domain` 时用 `a-<令牌>` 泛域名，否则用主域的 `/_af/` 路径），只能加载自身文件与白名单 CDN。控制面主机上带沙箱的 headless Chromium 负责渲染缩略图、PNG 与 PDF。
+- **入口**：「更多」分区的 `/artifacts` 总览页（类型、筛选、搜索、导入、回收站）；线程右面板的 Artifacts 标签；转录里的 artifact 卡片；命令面板。整页查看器 `/artifacts/<id>` 提供版本历史、评论（可发给线程）、元素直接编辑、画布编辑器、演示、导出（HTML / zip、Word、Markdown、PowerPoint、PDF）和分享。
+- **页面能力与发布**：页面可通过 `oryn.use("db" | "files" | "sample")` 存数据、只读项目文件、向用户的模型提问，后两项首次使用需要用户同意，可在 设置 › Artifacts 收回。可以发布成私有、访问码或公开的链接；发布访问码与公开链接前会做密钥扫描。
+
 ## 系统架构与安全边界
 
 | 组件 | 路径 | 职责说明 |
@@ -273,6 +280,16 @@ make desktop        # 构建当前平台 Tauri 2 桌面安装包
 make android        # 构建 Android APK（DIST=foss 或 DIST=gms）
 make fc-artifacts   # 构建锁定摘要的 Firecracker 二进制、vmlinux 内核与 ext4 根盘
 ```
+
+### Artifacts 端到端验收
+
+```bash
+# 需要 root、git、curl、sqlite3、/usr/bin/chromium；先 make web && make build（或用 M14A_BIN 指向含四个二进制的目录）
+cd web && bun run accept:m14-artifacts                    # mock 与真机两部分，逐条打印 K1–K43 的 PASS / FAIL / SKIP
+bun run accept:m14-artifacts -- --part real --only K24,K25 # 只跑指定部分与条目
+```
+
+真机部分自建一套隔离的 orynd、vite 与 fakeomp。K37（`sample` 能力）要真实模型回答，fakeomp 下打印 SKIP；控制面渲染器不可用时，K22、K23、K26 的 PDF 与 K31 的附图同样 SKIP。截图与结果默认写到 `.dev/m14-artifacts/`。
 
 ## 内核与第三方组件
 
