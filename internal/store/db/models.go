@@ -141,6 +141,119 @@ type EntryCursor struct {
 	ByteOffset int64  `json:"byteOffset"`
 }
 
+type GithubApp struct {
+	ID               int64   `json:"id"`
+	AppID            int64   `json:"appId"`
+	Slug             string  `json:"slug"`
+	Name             string  `json:"name"`
+	ClientID         string  `json:"clientId"`
+	OwnerLogin       string  `json:"ownerLogin"`
+	HtmlUrl          string  `json:"htmlUrl"`
+	Public           bool    `json:"public"`
+	WebhookUrl       string  `json:"webhookUrl"`
+	PrivateKeyEnc    []byte  `json:"privateKeyEnc"`
+	ClientSecretEnc  []byte  `json:"clientSecretEnc"`
+	WebhookSecretEnc []byte  `json:"webhookSecretEnc"`
+	HookCursor       int64   `json:"hookCursor"`
+	LastDeliveryAt   *int64  `json:"lastDeliveryAt"`
+	LastDeliverySrc  *string `json:"lastDeliverySrc"`
+	CreatedAt        int64   `json:"createdAt"`
+}
+
+type GithubDelivery struct {
+	Guid       string `json:"guid"`
+	Event      string `json:"event"`
+	Source     string `json:"source"`
+	Payload    []byte `json:"payload"`
+	Outcome    string `json:"outcome"`
+	Attempts   int64  `json:"attempts"`
+	ReceivedAt int64  `json:"receivedAt"`
+}
+
+type GithubIdentity struct {
+	Slot             string  `json:"slot"`
+	GithubID         int64   `json:"githubId"`
+	Login            string  `json:"login"`
+	Name             *string `json:"name"`
+	AvatarUrl        string  `json:"avatarUrl"`
+	AccessTokenEnc   []byte  `json:"accessTokenEnc"`
+	AccessExpiresAt  *int64  `json:"accessExpiresAt"`
+	RefreshTokenEnc  []byte  `json:"refreshTokenEnc"`
+	RefreshExpiresAt *int64  `json:"refreshExpiresAt"`
+	Status           string  `json:"status"`
+	ConnectedAt      int64   `json:"connectedAt"`
+	UpdatedAt        int64   `json:"updatedAt"`
+}
+
+type GithubInstallation struct {
+	ID                  int64  `json:"id"`
+	AccountLogin        string `json:"accountLogin"`
+	AccountType         string `json:"accountType"`
+	RepositorySelection string `json:"repositorySelection"`
+	Suspended           bool   `json:"suspended"`
+	UpdatedAt           int64  `json:"updatedAt"`
+}
+
+type GithubOauthState struct {
+	StateHash  string  `json:"stateHash"`
+	Kind       string  `json:"kind"`
+	Slot       *string `json:"slot"`
+	Manifest   *string `json:"manifest"`
+	ActionUrl  *string `json:"actionUrl"`
+	Public     bool    `json:"public"`
+	WebhookUrl *string `json:"webhookUrl"`
+	ExpiresAt  int64   `json:"expiresAt"`
+}
+
+type GithubOutbox struct {
+	ID           string `json:"id"`
+	ThreadID     string `json:"threadId"`
+	RepoID       int64  `json:"repoId"`
+	Number       int64  `json:"number"`
+	IsPull       bool   `json:"isPull"`
+	Title        string `json:"title"`
+	Url          string `json:"url"`
+	Kind         string `json:"kind"`
+	Item         string `json:"item"`
+	CreatedAt    int64  `json:"createdAt"`
+	DeliverAfter int64  `json:"deliverAfter"`
+	DeliveredAt  *int64 `json:"deliveredAt"`
+}
+
+type GithubPull struct {
+	RepoID       int64   `json:"repoId"`
+	Number       int64   `json:"number"`
+	RepoFullName string  `json:"repoFullName"`
+	Title        string  `json:"title"`
+	State        string  `json:"state"`
+	Draft        bool    `json:"draft"`
+	SameRepo     bool    `json:"sameRepo"`
+	HeadRef      string  `json:"headRef"`
+	HeadSha      string  `json:"headSha"`
+	BaseRef      string  `json:"baseRef"`
+	AuthorLogin  string  `json:"authorLogin"`
+	HtmlUrl      string  `json:"htmlUrl"`
+	Checks       *string `json:"checks"`
+	ChecksSha    *string `json:"checksSha"`
+	MergedAt     *int64  `json:"mergedAt"`
+	UpdatedAt    int64   `json:"updatedAt"`
+}
+
+type GithubTrigger struct {
+	ID        string  `json:"id"`
+	ProjectID string  `json:"projectId"`
+	Name      string  `json:"name"`
+	Event     string  `json:"event"`
+	Label     *string `json:"label"`
+	Prompt    string  `json:"prompt"`
+	Enabled   bool    `json:"enabled"`
+	Announce  bool    `json:"announce"`
+	RunCount  int64   `json:"runCount"`
+	LastRunAt *int64  `json:"lastRunAt"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
 type Job struct {
 	ID         string  `json:"id"`
 	ProviderID string  `json:"providerId"`
@@ -227,6 +340,7 @@ type Orb struct {
 	ClaimedAt             *int64  `json:"claimedAt"`
 	BaseImageID           string  `json:"baseImageId"`
 	Kind                  string  `json:"kind"`
+	GithubIdentity        string  `json:"githubIdentity"`
 }
 
 type OrbDesktop struct {
@@ -297,21 +411,22 @@ type OrbSetupRun struct {
 }
 
 type Owner struct {
-	ID                   int64   `json:"id"`
-	DisplayName          string  `json:"displayName"`
-	UserHandle           []byte  `json:"userHandle"`
-	CreatedAt            int64   `json:"createdAt"`
-	GitName              *string `json:"gitName"`
-	GitEmail             *string `json:"gitEmail"`
-	AgentAvatarIcon      *string `json:"agentAvatarIcon"`
-	AgentAvatarImage     *string `json:"agentAvatarImage"`
-	UserAvatarIcon       *string `json:"userAvatarIcon"`
-	UserAvatarImage      *string `json:"userAvatarImage"`
-	AgentName            *string `json:"agentName"`
-	AssistantName        *string `json:"assistantName"`
-	AssistantAvatarIcon  *string `json:"assistantAvatarIcon"`
-	AssistantAvatarImage *string `json:"assistantAvatarImage"`
-	NewThreadTarget      string  `json:"newThreadTarget"`
+	ID                       int64   `json:"id"`
+	DisplayName              string  `json:"displayName"`
+	UserHandle               []byte  `json:"userHandle"`
+	CreatedAt                int64   `json:"createdAt"`
+	GitName                  *string `json:"gitName"`
+	GitEmail                 *string `json:"gitEmail"`
+	AgentAvatarIcon          *string `json:"agentAvatarIcon"`
+	AgentAvatarImage         *string `json:"agentAvatarImage"`
+	UserAvatarIcon           *string `json:"userAvatarIcon"`
+	UserAvatarImage          *string `json:"userAvatarImage"`
+	AgentName                *string `json:"agentName"`
+	AssistantName            *string `json:"assistantName"`
+	AssistantAvatarIcon      *string `json:"assistantAvatarIcon"`
+	AssistantAvatarImage     *string `json:"assistantAvatarImage"`
+	NewThreadTarget          string  `json:"newThreadTarget"`
+	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
 }
 
 type Passkey struct {
@@ -360,6 +475,13 @@ type Project struct {
 	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId"`
 	Snapshots               bool    `json:"snapshots"`
 	WarmOrbs                int64   `json:"warmOrbs"`
+	GithubRepoID            *int64  `json:"githubRepoId"`
+	GithubOwnerID           *int64  `json:"githubOwnerId"`
+	GithubInstallationID    *int64  `json:"githubInstallationId"`
+	GithubPrevUrls          string  `json:"githubPrevUrls"`
+	GithubListenReviews     bool    `json:"githubListenReviews"`
+	GithubListenComments    bool    `json:"githubListenComments"`
+	GithubListenCi          bool    `json:"githubListenCi"`
 }
 
 type ProjectSnapshot struct {
@@ -586,9 +708,27 @@ type ThreadCommit struct {
 	Ts       int64  `json:"ts"`
 }
 
+type ThreadIssue struct {
+	RepoID    int64   `json:"repoId"`
+	Number    int64   `json:"number"`
+	ThreadID  string  `json:"threadId"`
+	TriggerID *string `json:"triggerId"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
 type ThreadLabel struct {
 	ThreadID string `json:"threadId"`
 	Label    string `json:"label"`
+}
+
+type ThreadPull struct {
+	ThreadID  string `json:"threadId"`
+	RepoID    int64  `json:"repoId"`
+	Number    int64  `json:"number"`
+	Listening bool   `json:"listening"`
+	Unlinked  bool   `json:"unlinked"`
+	CiRounds  int64  `json:"ciRounds"`
+	LinkedAt  int64  `json:"linkedAt"`
 }
 
 type ThreadReport struct {

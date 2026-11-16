@@ -6,10 +6,10 @@
 -- kind: orb | runner (M11b); NULL = 'orb'.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
         @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
-        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'));
+        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -101,7 +101,8 @@ SELECT CAST(EXISTS (SELECT 1 FROM orb_events WHERE orb_id = @orb_id AND to_state
 -- Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
 -- 0 rows = claimed / retired by someone else.
 -- name: ClaimPoolOrb :execrows
-UPDATE orbs SET pool_state = sqlc.narg(pool_state), claimed_at = CAST(@claimed_at AS INTEGER)
+UPDATE orbs SET pool_state = sqlc.narg(pool_state), claimed_at = CAST(@claimed_at AS INTEGER),
+                github_identity = COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), github_identity)
 WHERE id = @id AND pool_state = CAST(@seen AS TEXT);
 
 -- Warm-pool state CAS (warming -> idle, claimed -> NULL, -> retiring); 0 rows = the state moved elsewhere.

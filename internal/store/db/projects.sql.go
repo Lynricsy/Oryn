@@ -100,7 +100,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) (int64, error) {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs FROM projects WHERE id = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects WHERE id = ?1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -126,12 +126,19 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.DefaultBrowserProfileID,
 		&i.Snapshots,
 		&i.WarmOrbs,
+		&i.GithubRepoID,
+		&i.GithubOwnerID,
+		&i.GithubInstallationID,
+		&i.GithubPrevUrls,
+		&i.GithubListenReviews,
+		&i.GithubListenComments,
+		&i.GithubListenCi,
 	)
 	return i, err
 }
 
 const getProjectByName = `-- name: GetProjectByName :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs FROM projects WHERE name = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects WHERE name = ?1
 `
 
 func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, error) {
@@ -157,12 +164,19 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 		&i.DefaultBrowserProfileID,
 		&i.Snapshots,
 		&i.WarmOrbs,
+		&i.GithubRepoID,
+		&i.GithubOwnerID,
+		&i.GithubInstallationID,
+		&i.GithubPrevUrls,
+		&i.GithubListenReviews,
+		&i.GithubListenComments,
+		&i.GithubListenCi,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects
 WHERE (CAST(?1 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?1 AS BOOLEAN))
 ORDER BY name
 `
@@ -196,6 +210,13 @@ func (q *Queries) ListProjects(ctx context.Context, archived *bool) ([]Project, 
 			&i.DefaultBrowserProfileID,
 			&i.Snapshots,
 			&i.WarmOrbs,
+			&i.GithubRepoID,
+			&i.GithubOwnerID,
+			&i.GithubInstallationID,
+			&i.GithubPrevUrls,
+			&i.GithubListenReviews,
+			&i.GithubListenComments,
+			&i.GithubListenCi,
 		); err != nil {
 			return nil, err
 		}

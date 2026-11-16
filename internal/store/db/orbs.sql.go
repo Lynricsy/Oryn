@@ -10,15 +10,17 @@ import (
 )
 
 const claimPoolOrb = `-- name: ClaimPoolOrb :execrows
-UPDATE orbs SET pool_state = ?1, claimed_at = CAST(?2 AS INTEGER)
-WHERE id = ?3 AND pool_state = CAST(?4 AS TEXT)
+UPDATE orbs SET pool_state = ?1, claimed_at = CAST(?2 AS INTEGER),
+                github_identity = COALESCE(CAST(?3 AS TEXT), github_identity)
+WHERE id = ?4 AND pool_state = CAST(?5 AS TEXT)
 `
 
 type ClaimPoolOrbParams struct {
-	PoolState *string `json:"poolState"`
-	ClaimedAt int64   `json:"claimedAt"`
-	ID        string  `json:"id"`
-	Seen      string  `json:"seen"`
+	PoolState      *string `json:"poolState"`
+	ClaimedAt      int64   `json:"claimedAt"`
+	GithubIdentity *string `json:"githubIdentity"`
+	ID             string  `json:"id"`
+	Seen           string  `json:"seen"`
 }
 
 // Warm-pool claim (M11a): CAS on the pool state seen by the caller; pool_state NULL = leaves the pool.
@@ -27,6 +29,7 @@ func (q *Queries) ClaimPoolOrb(ctx context.Context, arg ClaimPoolOrbParams) (int
 	result, err := q.db.ExecContext(ctx, claimPoolOrb,
 		arg.PoolState,
 		arg.ClaimedAt,
+		arg.GithubIdentity,
 		arg.ID,
 		arg.Seen,
 	)
@@ -69,10 +72,10 @@ func (q *Queries) CountLiveOrbsBySnapshot(ctx context.Context, snapshotOf *strin
 const createOrb = `-- name: CreateOrb :exec
 
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
         ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-        COALESCE(CAST(?17 AS TEXT), 'orb'))
+        COALESCE(CAST(?17 AS TEXT), 'orb'), COALESCE(CAST(?18 AS TEXT), 'user'))
 `
 
 type CreateOrbParams struct {
@@ -93,6 +96,7 @@ type CreateOrbParams struct {
 	ConfigHash     *string `json:"configHash"`
 	BaseImageID    string  `json:"baseImageId"`
 	Kind           *string `json:"kind"`
+	GithubIdentity *string `json:"githubIdentity"`
 }
 
 // Orbs, lifecycle events, metric samples.
@@ -119,6 +123,7 @@ func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 		arg.ConfigHash,
 		arg.BaseImageID,
 		arg.Kind,
+		arg.GithubIdentity,
 	)
 	return err
 }
@@ -136,7 +141,7 @@ func (q *Queries) DeleteOrbSamplesBefore(ctx context.Context, before int64) (int
 }
 
 const getCoordinatorOrb = `-- name: GetCoordinatorOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs
 WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
 ORDER BY created_at DESC LIMIT 1
 `
@@ -170,12 +175,13 @@ func (q *Queries) GetCoordinatorOrb(ctx context.Context) (Orb, error) {
 		&i.ClaimedAt,
 		&i.BaseImageID,
 		&i.Kind,
+		&i.GithubIdentity,
 	)
 	return i, err
 }
 
 const getOrb = `-- name: GetOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs WHERE id = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs WHERE id = ?1
 `
 
 func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
@@ -206,12 +212,13 @@ func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
 		&i.ClaimedAt,
 		&i.BaseImageID,
 		&i.Kind,
+		&i.GithubIdentity,
 	)
 	return i, err
 }
 
 const getOrbByTokenHash = `-- name: GetOrbByTokenHash :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs WHERE token_hash = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs WHERE token_hash = ?1
 `
 
 func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb, error) {
@@ -242,6 +249,7 @@ func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb,
 		&i.ClaimedAt,
 		&i.BaseImageID,
 		&i.Kind,
+		&i.GithubIdentity,
 	)
 	return i, err
 }
@@ -442,7 +450,7 @@ func (q *Queries) ListOrbSamples(ctx context.Context, arg ListOrbSamplesParams) 
 }
 
 const listOrbs = `-- name: ListOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs
 WHERE (CAST(?1 AS BOOLEAN) = 1 OR deleted_at IS NULL)
 ORDER BY created_at DESC
 `
@@ -481,6 +489,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 			&i.ClaimedAt,
 			&i.BaseImageID,
 			&i.Kind,
+			&i.GithubIdentity,
 		); err != nil {
 			return nil, err
 		}
@@ -496,7 +505,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 }
 
 const listOrbsByState = `-- name: ListOrbsByState :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs WHERE state = ?1 ORDER BY created_at
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs WHERE state = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, error) {
@@ -533,6 +542,7 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 			&i.ClaimedAt,
 			&i.BaseImageID,
 			&i.Kind,
+			&i.GithubIdentity,
 		); err != nil {
 			return nil, err
 		}
@@ -548,7 +558,7 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 }
 
 const listPoolOrbs = `-- name: ListPoolOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs
 WHERE pool_state IS NOT NULL AND deleted_at IS NULL
   AND (CAST(?1 AS TEXT) IS NULL OR project_id = CAST(?1 AS TEXT))
 ORDER BY created_at, id
@@ -589,6 +599,7 @@ func (q *Queries) ListPoolOrbs(ctx context.Context, projectID *string) ([]Orb, e
 			&i.ClaimedAt,
 			&i.BaseImageID,
 			&i.Kind,
+			&i.GithubIdentity,
 		); err != nil {
 			return nil, err
 		}
