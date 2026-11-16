@@ -193,4 +193,6 @@ func (s *Service) clearTokenCaches() {
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 // isUnique 判断 SQLite 唯一约束冲突。
-func isUnique(err error) bool { return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") }
+func isUnique(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
