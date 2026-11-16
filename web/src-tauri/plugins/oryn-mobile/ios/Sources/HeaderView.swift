@@ -296,10 +296,14 @@ struct TitleCapsule: View {
       ForEach(Array(title.meta.enumerated()), id: \.offset) { index, seg in
         if index > 0 { Text("·").foregroundStyle(.tertiary) }
         let env = seg.icon?.orb != nil
-        SegView(seg: seg, palette: palette, box: 11)
-          // 运行环境那一段不让挤（文字最多 96pt），其余各段可以被挤窄
-          .frame(maxWidth: env ? 96 + 13 : nil)
-          .layoutPriority(env ? 1 : 0)
+        if env {
+          // 运行环境那一段不让挤（文字最多 96pt），按内容宽度占位；
+          // 不能用 .frame(maxWidth:)：它会撑满到上限，把其余各段挤成「…」
+          CapWidth(max: 96 + 13) { SegView(seg: seg, palette: palette, box: 11) }
+            .layoutPriority(1)
+        } else {
+          SegView(seg: seg, palette: palette, box: 11)
+        }
       }
       if !title.marks.isEmpty {
         if !title.meta.isEmpty { Text("·").foregroundStyle(.tertiary) }
@@ -317,6 +321,23 @@ struct TitleCapsule: View {
     .font(.system(size: 11.5))
     .foregroundStyle(.secondary)
     .frame(height: 16)
+  }
+}
+
+/// 只封顶不撑开的宽度：向子视图提议 min(提议, max)，自身取子视图的实际尺寸。
+struct CapWidth: Layout {
+  let max: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let child = subviews.first else { return .zero }
+    let width = proposal.width.map { Swift.min($0, max) } ?? max
+    return child.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+  }
+
+  func placeSubviews(
+    in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+  ) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
   }
 }
 
