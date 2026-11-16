@@ -214,6 +214,8 @@ func TestPullMergedMarksShipped(t *testing.T) {
 	require.True(t, shipped)
 	assert.Equal(t, githubTimeMs(merged), at)
 	assert.Equal(t, []string{"PR #12 merged"}, n.titles())
+	assert.Equal(t, []string{"done"}, n.kinds())
+	assert.Contains(t, n.posts[0], "PR #12 merged: ")
 	assert.Equal(t, "merged", e.pull(12).State)
 
 	// 未合并的关闭不标记

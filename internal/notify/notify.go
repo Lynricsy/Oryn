@@ -577,13 +577,22 @@ func (s *Service) PostSystem(ctx context.Context, kind, title, body, link string
 }
 
 // Post 立即生成一条 kind = error 的通知（M9 定时补「线程状态机看不到」的失败，不去抖）。
-// threadID 非空时标题取线程标题（忽略 title），线程不存在或已归档则不发；threadID 为空时等同
+// threadID 非空时等同 PostThread(ctx, threadID, KindError, body)（标题取线程标题，忽略 title）；threadID 为空时等同
 // PostSystem(ctx, KindError, title, body, AutomationsPath)。
 func (s *Service) Post(ctx context.Context, threadID, title, body string) error {
 	if threadID == "" {
 		return s.PostSystem(ctx, KindError, title, body, AutomationsPath)
 	}
-	p := db.InsertNotificationParams{ID: ids.New("ntf"), Kind: KindError, Title: title, Body: body}
+	return s.PostThread(ctx, threadID, KindError, body)
+}
+
+// PostThread 立即为线程生成一条通知（不去抖）：标题取线程标题，正文为 body；kind 只能是 done / input / error。
+// 线程不存在或已归档则不发。M14 的 GitHub 事件（PR 合并、回流暂停、CI 仍失败）经它送达。
+func (s *Service) PostThread(ctx context.Context, threadID, kind, body string) error {
+	if kind != KindDone && kind != KindInput && kind != KindError {
+		return fmt.Errorf("notify: thread notification kind %q is invalid", kind)
+	}
+	p := db.InsertNotificationParams{ID: ids.New("ntf"), Kind: kind, Body: body}
 	th, err := s.th.Get(ctx, threadID)
 	if err != nil {
 		if errors.Is(err, threads.ErrNotFound) {

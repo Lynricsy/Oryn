@@ -95,7 +95,7 @@ func (s *Service) onMerged(ctx context.Context, threadID string, pull db.GithubP
 		return err
 	}
 	if s.n != nil {
-		if err := s.n.Post(ctx, threadID, fmt.Sprintf("PR #%d merged", pull.Number), pull.Title); err != nil {
+		if err := s.n.PostThread(ctx, threadID, "done", fmt.Sprintf("PR #%d merged: %s", pull.Number, pull.Title)); err != nil {
 			slog.Warn("github: 发送 PR 合并通知失败", "thread", threadID, "err", err)
 		}
 	}

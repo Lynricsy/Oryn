@@ -54,9 +54,9 @@ type Threads interface {
 	MarkShipped(ctx context.Context, threadID string, at int64) error
 }
 
-// Notifier 发一条线程通知（*notify.Service 实现）。
+// Notifier 发一条线程通知（*notify.Service 实现）：标题是线程标题，kind 为 done / error，正文写明 GitHub 事件。
 type Notifier interface {
-	Post(ctx context.Context, threadID, title, body string) error
+	PostThread(ctx context.Context, threadID, kind, body string) error
 }
 
 // Attachments 上传一个附件（*attachments.Service 实现）。

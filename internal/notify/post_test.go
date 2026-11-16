@@ -49,6 +49,25 @@ func TestPostForThread(t *testing.T) {
 	assert.Len(t, f.notifications(), 1)
 }
 
+// PostThread 保留调用方给的 kind（M14：PR 合并是 done），按 kind 过滤的渠道只收订阅的那种；非法 kind 报错。
+func TestPostThreadKind(t *testing.T) {
+	f := newFixture(t)
+	h := newHook(t)
+	f.webhookChannel(h.srv.URL+"/in", "", apigen.NotificationKindDone)
+	id := f.thread("修登录")
+
+	require.NoError(t, f.s.PostThread(f.ctx, id, KindDone, "PR #12 merged: Fix login"))
+	ns := f.notifications()
+	require.Len(t, ns, 1)
+	assert.Equal(t, KindDone, ns[0].Kind)
+	assert.Equal(t, "修登录", ns[0].Title)
+	assert.Equal(t, "PR #12 merged: Fix login", ns[0].Body)
+	require.Len(t, f.deliveries(ns[0].ID), 1, "done 渠道收到")
+
+	require.Error(t, f.s.PostThread(f.ctx, id, KindBudget, "x"))
+	assert.Len(t, f.notifications(), 1)
+}
+
 func TestPostWithoutThread(t *testing.T) {
 	f := newFixture(t)
 	h := newHook(t)

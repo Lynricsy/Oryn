@@ -278,7 +278,7 @@ func (s *Service) pauseLink(ctx context.Context, threadID, repo string, repoID, 
 	}
 	if s.n != nil {
 		body := fmt.Sprintf("Too many events on %s#%d in the last hour; event delivery for this pull request is paused. Resume it from the pull request chip.", repo, number)
-		if err := s.n.Post(ctx, threadID, "GitHub events paused", body); err != nil {
+		if err := s.n.PostThread(ctx, threadID, "error", "GitHub events paused: "+body); err != nil {
 			slog.Warn("github: 发送暂停通知失败", "thread", threadID, "err", err)
 		}
 	}

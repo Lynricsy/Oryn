@@ -251,7 +251,7 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 		if s.n != nil {
 			body := fmt.Sprintf("%s#%d is still failing after %d automatic rounds; automatic CI delivery stopped for this pull request.",
 				pull.RepoFullName, pull.Number, maxCIRounds)
-			if err := s.n.Post(ctx, tgt.ThreadID, "CI still failing", body); err != nil {
+			if err := s.n.PostThread(ctx, tgt.ThreadID, "error", "CI still failing: "+body); err != nil {
 				slog.Warn("github: 发送 CI 停止回流通知失败", "thread", tgt.ThreadID, "err", err)
 			}
 		}

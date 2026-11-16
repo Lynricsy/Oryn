@@ -207,6 +207,7 @@ func TestCIRoundsLimitAndReset(t *testing.T) {
 	e.ciRound(sha(6), "FAILURE")
 	assert.Len(t, e.delivered(), 5)
 	assert.Equal(t, []string{"CI still failing"}, n.titles())
+	assert.Equal(t, []string{"error"}, n.kinds())
 	assert.Contains(t, n.posts[0], "Acme/Widgets#12 is still failing after 5 automatic rounds; automatic CI delivery stopped for this pull request.")
 
 	// 中途变成功：计数清零，之后的失败重新回流
