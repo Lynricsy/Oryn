@@ -38,12 +38,13 @@ func TestSPAHeaders(t *testing.T) {
 			t.Fatalf("%s: nosniff = %q", p, got)
 		}
 	}
-	for _, d := range []string{"frame-ancestors 'none'", "script-src 'self';", "object-src 'none'", "base-uri 'none'"} {
+	for _, d := range []string{"frame-ancestors 'none'", "script-src 'self' 'wasm-unsafe-eval';", "object-src 'none'", "base-uri 'none'"} {
 		if !strings.Contains(ContentSecurityPolicy, d) {
 			t.Fatalf("CSP 缺少 %q", d)
 		}
 	}
-	if strings.Contains(ContentSecurityPolicy, "unsafe-eval") || strings.Contains(strings.SplitN(strings.SplitN(ContentSecurityPolicy, "script-src", 2)[1], ";", 2)[0], "unsafe-inline") {
+	// script-src 只许同源脚本与 WASM 编译：不得放行内联脚本或 eval（'wasm-unsafe-eval' 不放行 eval）
+	if strings.Contains(strings.ReplaceAll(ContentSecurityPolicy, "'wasm-unsafe-eval'", ""), "unsafe-eval") || strings.Contains(strings.SplitN(strings.SplitN(ContentSecurityPolicy, "script-src", 2)[1], ";", 2)[0], "unsafe-inline") {
 		t.Fatal("script-src 不得放行内联或 eval")
 	}
 }

@@ -91,6 +91,24 @@ var errOrbBadResponse = errors.New("orbd returned an invalid response")
 // errOrbTimeout 表示 orbd 在截止时间内没有答复。
 var errOrbTimeout = errors.New("orbd did not answer in time")
 
+// rawMediaTypes 是 GET fs/file 按真实类型回 Content-Type 的音视频扩展名：文件面板直接把下载地址给 <video> / <audio>
+// 流式播放，WebKit 按 Content-Type 选媒体管线，octet-stream 会拒播。浏览器从不把这些类型当文档或脚本执行，
+// 且响应仍带 attachment、`Content-Security-Policy: sandbox` 与 nosniff。
+var rawMediaTypes = map[string]string{
+	".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+	".ogv": "video/ogg", ".mkv": "video/x-matroska",
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+	".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac", ".weba": "audio/webm",
+}
+
+// rawContentType 是文件下载响应的 Content-Type：白名单内的音视频按扩展名，其余一律 application/octet-stream。
+func rawContentType(filename string) string {
+	if t, ok := rawMediaTypes[strings.ToLower(path.Ext(filename))]; ok {
+		return t
+	}
+	return "application/octet-stream"
+}
+
 // proxyOrb 把请求转发到 orb 的 orbd 本机 API 的 upstream 路径（如 `/fs/list`）。
 // fs / git 路由（M11b）：查询参数 thread 须是该 orb 上的线程，线程有 cwd 时以 X-Oryn-Workdir 转给 orbd；
 // runner 的 orb 必须带 thread（否则 400 thread_required）。thread 参数本身不转给 orbd。
@@ -214,7 +232,7 @@ func serveOrbProxy(w http.ResponseWriter, r *http.Request, rt http.RoundTripper,
 			hdr.Set("Cache-Control", "no-store")
 			ok := res.StatusCode >= 200 && res.StatusCode < 300
 			if opt.raw && ok {
-				hdr.Set("Content-Type", "application/octet-stream")
+				hdr.Set("Content-Type", rawContentType(opt.filename))
 				hdr.Set("Content-Disposition", attachments.Disposition(opt.filename))
 				hdr.Set("Content-Security-Policy", "sandbox")
 			} else if opt.text && ok {

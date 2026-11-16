@@ -213,6 +213,25 @@ func TestOrbProxyDeadlines(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", res.Header.Get("Content-Type"))
 }
 
+// GET fs/file：白名单内的音视频按扩展名回真实类型（WebKit 拒播 octet-stream），其余仍是 octet-stream；都带 attachment 与 sandbox。
+func TestOrbProxyRawMediaType(t *testing.T) {
+	o := newRawOrbd(t, func(c net.Conn) {
+		writeRaw(c, "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 2\n\nok")
+	})
+	for name, want := range map[string]string{
+		"clip.MP4":  "video/mp4",
+		"song.flac": "audio/flac",
+		"page.html": "application/octet-stream",
+		"x.svg":     "application/octet-stream",
+	} {
+		srv := proxyServer(t, o, "/fs/file", orbProxyOpt{raw: true, filename: name})
+		res, _ := doGet(t, srv.URL+"/x", nil)
+		assert.Equal(t, want, res.Header.Get("Content-Type"), name)
+		assert.Contains(t, res.Header.Get("Content-Disposition"), "attachment", name)
+		assert.Equal(t, "sandbox", res.Header.Get("Content-Security-Policy"), name)
+	}
+}
+
 // 声明长度超过上限的 JSON 响应：不转发、502 orbd_bad_response。
 func TestOrbProxyJSONResponseCap(t *testing.T) {
 	o := newRawOrbd(t, func(c net.Conn) {

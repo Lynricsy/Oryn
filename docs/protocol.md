@@ -82,7 +82,7 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 |`DELETE /api/v1/attachments/{id}`|`deleteAttachment`|—|`204`|
 
 - `bg=1`：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互（Changes 面板的 10s 轮询用）。缺省：记一次用户交互并唤醒，至多等 25s。
-- 代理只向 orbd 转发白名单内的请求头（`Content-Type`、`Content-Length`、`Range`、`If-Range`、`If-Match`、`If-None-Match`、`If-Modified-Since`、`Accept`），`Cookie`、`Authorization`、`X-Oryn-CSRF`、`X-Forwarded-*`、前置代理加的身份头与浏览器指纹头一律丢弃；orbd 响应只放行 `Content-Type`、`Content-Length`、`Content-Range`、`Accept-Ranges`、`Etag`、`Last-Modified`（`Set-Cookie` 等一律删除）；`fs/file` 的 GET 强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`，其余强制 `Content-Type: application/json`。
+- 代理只向 orbd 转发白名单内的请求头（`Content-Type`、`Content-Length`、`Range`、`If-Range`、`If-Match`、`If-None-Match`、`If-Modified-Since`、`Accept`），`Cookie`、`Authorization`、`X-Oryn-CSRF`、`X-Forwarded-*`、前置代理加的身份头与浏览器指纹头一律丢弃；orbd 响应只放行 `Content-Type`、`Content-Length`、`Content-Range`、`Accept-Ranges`、`Etag`、`Last-Modified`（`Set-Cookie` 等一律删除）；`fs/file` 的 GET 强制 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`，`Content-Type` 为 `application/octet-stream`，唯独白名单内的音视频扩展名（mp4 / m4v / webm / mov / ogv / mkv / mp3 / wav / ogg / oga / opus / flac / m4a / aac / weba）按扩展名回真实类型，供文件面板直接以下载地址流式播放（WebKit 按 Content-Type 选媒体管线，拒播 octet-stream）；其余强制 `Content-Type: application/json`。
 - orbd 一律视为不可信：只接受 orbd 本机 API 会返回的状态码（200、204、206、304、400、403、404、409、412、413、416、422、500、507），其余（1xx / 101、3xx、401 等）回 502 `orbd_bad_response`；1xx 中间响应不转发；JSON 响应体上限 32MiB（声明长度超限回 502 `orbd_bad_response`，未声明长度的读到上限即中止响应）。
 - 截止时间：JSON 路由一次 orbd 调用（含响应体）45s，`fs/rename` / `fs/delete` 5min；`fs/file` 的 GET 等响应头 30s，之后下载不限时；`fs/file` 的 PUT（上传）不设截止时间，由客户端取消。超时回 504 `orbd_timeout`。
 - `git/*` 的 `base` 缺省时控制面以 orb 所属项目的 `baseBranch` 补上。
@@ -95,6 +95,9 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 |---|---|
 |Files 单文件写入 / 上传|512MiB（`MaxFileBytes = 512<<20`，控制面与 orbd 各校验一次）|
 |文本编辑器可打开|`text=true` 且 ≤2MiB；更大只读预览前 256KiB|
+|整份读入的预览（图片解码、PDF、Office、字体、压缩包目录、3D 模型；源码截断时的渲染视图）|≤64MiB（`MAX_PREVIEW_BLOB_BYTES`）；更大只显示信息与下载；音视频不受此限（直链流式）|
+|表格视图（CSV / TSV / 电子表格）|每表前 10000 行、前 200 列|
+|压缩包目录|前 5000 项|
 |目录列表|≤5000 条|
 |diff patch|单文件 ≤1MiB（按行截断，`truncated`）；status ≤2000 个文件；commits ≤200|
 |附件|单文件 100MiB；每条消息 ≤20 个；文件名净化后 ≤200 字节|
