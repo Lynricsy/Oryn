@@ -34,6 +34,9 @@ func Artifact() string { return New("art") }
 // ArtifactCommentThread 返回 act_<ULID>（M14 artifact 评论串）。
 func ArtifactCommentThread() string { return New("act") }
 
+// ArtifactPublication 返回 apb_<ULID>（M14 artifact 发布记录）。
+func ArtifactPublication() string { return New("apb") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 

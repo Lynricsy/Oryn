@@ -47,12 +47,50 @@ type ArtifactCommentThread struct {
 	SentTo     *string `json:"sentTo"`
 }
 
+type ArtifactConsent struct {
+	ArtifactID string `json:"artifactId"`
+	Capability string `json:"capability"`
+	GrantedAt  int64  `json:"grantedAt"`
+}
+
+type ArtifactDataTotal struct {
+	ArtifactID string `json:"artifactId"`
+	Bytes      int64  `json:"bytes"`
+	Seq        int64  `json:"seq"`
+}
+
+type ArtifactDatum struct {
+	ArtifactID string `json:"artifactId"`
+	Collection string `json:"collection"`
+	DocID      string `json:"docId"`
+	Json       string `json:"json"`
+	Size       int64  `json:"size"`
+	Version    int64  `json:"version"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
 type ArtifactFile struct {
 	ArtifactID string `json:"artifactId"`
 	N          int64  `json:"n"`
 	Path       string `json:"path"`
 	Sha256     string `json:"sha256"`
 	Size       int64  `json:"size"`
+}
+
+type ArtifactPublication struct {
+	ID             string  `json:"id"`
+	ArtifactID     string  `json:"artifactId"`
+	Slug           string  `json:"slug"`
+	Access         string  `json:"access"`
+	Code           *string `json:"code"`
+	CodeGen        int64   `json:"codeGen"`
+	CodeFailures   int64   `json:"codeFailures"`
+	CodeLocked     int64   `json:"codeLocked"`
+	Version        int64   `json:"version"`
+	Follow         int64   `json:"follow"`
+	PendingVersion *int64  `json:"pendingVersion"`
+	CreatedAt      int64   `json:"createdAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
 }
 
 type ArtifactVersion struct {
@@ -485,6 +523,7 @@ type Owner struct {
 	AssistantAvatarImage     *string `json:"assistantAvatarImage"`
 	NewThreadTarget          string  `json:"newThreadTarget"`
 	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
+	AutoPublishArtifacts     int64   `json:"autoPublishArtifacts"`
 }
 
 type Passkey struct {
