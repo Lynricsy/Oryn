@@ -28,7 +28,8 @@ type toolCtx struct {
 func (c toolCtx) inSpace() bool { return c.space != nil }
 
 // HostToolCall 实现 threads.Coordinator：执行宿主工具。结果的 Text 是紧凑 JSON；read_thread / list_threads /
-// list_schedules / get_stats / list_files 的结果含线程标题、定时名称、文件名等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
+// list_schedules / get_stats / list_files / read_artifact / list_artifacts / list_artifact_versions 的结果含线程标题、
+// 定时名称、文件名、artifact 内容等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
 // 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
@@ -85,6 +86,10 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		default:
 			v, err = s.toolShareFile(ctx, tc)
 		}
+	case ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
+		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide:
+		// artifact 工具只属于全局助手；工具名就是 artifacts 的操作名
+		return s.toolArtifact(ctx, tc, c.Name)
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}
@@ -723,6 +728,7 @@ func (s *Service) toolListSchedules(ctx context.Context, c toolCtx) (any, error)
 }
 
 type projectItem struct {
+	ID              string  `json:"id"`
 	Name            string  `json:"name"`
 	RepoURL         *string `json:"repoUrl,omitempty"`
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
@@ -737,7 +743,7 @@ func (s *Service) toolListProjects(ctx context.Context) (any, error) {
 	}
 	items := make([]projectItem, 0, len(rows))
 	for _, p := range rows {
-		items = append(items, projectItem{Name: p.Name, RepoURL: p.RepoUrl, DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType})
+		items = append(items, projectItem{ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType})
 	}
 	return map[string]any{"projects": items}, nil
 }

@@ -232,6 +232,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
+	s.Coord.SetArtifacts(s.Artifacts)
 	s.Threads.SetCoordinator(s.Coord)
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)

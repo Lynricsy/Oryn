@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"path"
 	"slices"
 	"strings"
@@ -17,9 +18,10 @@ import (
 // 全局助手文件库的宿主工具与 orb 内 library.put（M13 计划 4.4 / 4.6）。助手在协调宿主沙箱里用 omp 的 read 读
 // ~/library/{shared,threads/<本对话>}/，用 write 写 ~/library/out/；save_file 经 library.fetch 把 out/ 下的文件取回存库。
 
-// LibraryHost 从 orb 取回一个文件并存入文件库（*library.Syncer 实现）。
+// LibraryHost 从 orb 取回文件（*library.Syncer 实现）：PutFrom 存入文件库，Fetch 只取回字节（artifact 的 source）。
 type LibraryHost interface {
 	PutFrom(ctx context.Context, orbID, path string, p library.PutParams) (library.File, error)
+	Fetch(ctx context.Context, orbID, path string) (io.ReadCloser, int64, error)
 }
 
 // SetLibrary 设置全局助手文件库；须在服务对外可用之前调用。未设置时文件工具与 orb 内 library.put 回 coordinator_unavailable。

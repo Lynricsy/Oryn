@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// fakeLibHost 扮演 *library.Syncer：PutFrom 从 files（orb 内路径 → 内容）取字节存进真实的文件库。
+// fakeLibHost 扮演 *library.Syncer：PutFrom 从 files（orb 内路径 → 内容）取字节存进真实的文件库，Fetch 只回字节。
 type fakeLibHost struct {
 	lib   *library.Service
 	mu    sync.Mutex
@@ -28,15 +29,23 @@ type fakeLibHost struct {
 }
 
 func (h *fakeLibHost) PutFrom(ctx context.Context, orbID, path string, p library.PutParams) (library.File, error) {
+	rc, _, err := h.Fetch(ctx, orbID, path)
+	if err != nil {
+		return library.File{}, err
+	}
+	p.R = rc
+	return h.lib.Put(ctx, p)
+}
+
+func (h *fakeLibHost) Fetch(_ context.Context, orbID, path string) (io.ReadCloser, int64, error) {
 	h.mu.Lock()
 	h.calls = append(h.calls, orbID+" "+path)
 	b, ok := h.files[path]
 	h.mu.Unlock()
 	if !ok {
-		return library.File{}, &link.CtlError{Code: "not_found", Message: path + " does not exist"}
+		return nil, 0, &link.CtlError{Code: "not_found", Message: path + " does not exist"}
 	}
-	p.R = bytes.NewReader(b)
-	return h.lib.Put(ctx, p)
+	return io.NopCloser(bytes.NewReader(b)), int64(len(b)), nil
 }
 
 // withLibrary 给 env 接上真实的文件库与附件服务（建线程时绑定 create_thread{files} 复制出的附件）。

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -97,6 +98,8 @@ type Service struct {
 	// lib / libHost 是全局助手文件库（M13，SetLibrary 设置）；nil 时文件工具与 orb 内 library.put 不可用。
 	lib     *library.Service
 	libHost LibraryHost
+	// artifacts 是 M14 的 artifact 服务（SetArtifacts 设置）；nil 时 artifact 工具不可用。
+	artifacts *artifacts.Service
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
