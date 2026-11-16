@@ -151,6 +151,37 @@ export function installViewportTracking(): () => void {
 	};
 }
 
+/** iOS / iPadOS 的 WebKit（Safari 与 WKWebView；iPadOS 桌面版 UA 报 MacIntel，按触点数认）。 */
+function isIosWebKit(
+	nav: Pick<Navigator, "userAgent" | "platform" | "maxTouchPoints">,
+): boolean {
+	return (
+		/iP(hone|ad|od)/.test(nav.userAgent) ||
+		(nav.platform === "MacIntel" && nav.maxTouchPoints > 1)
+	);
+}
+
+/** viewport 内容追加 `maximum-scale=1`（已有 maximum-scale 时原样返回）。 */
+function withoutFocusZoom(content: string): string {
+	return /maximum-scale/i.test(content)
+		? content
+		: `${content}, maximum-scale=1`;
+}
+
+/**
+ * 安装一次：iOS 上聚焦字号小于 16px 的输入框会自动放大页面，收起键盘后常常不缩回，
+ * 整页停在放大 + 平移的状态（对话框被推出屏、原生页头因视口缩放判定被遮挡而一直让位）。
+ * viewport 加 `maximum-scale=1` 关掉这种自动放大；iOS 10 起 Safari 仍允许用户双指缩放。其它平台不动（Android 上它会禁掉缩放）。
+ */
+export function installNoFocusZoom(
+	doc: Document = document,
+	nav: Pick<Navigator, "userAgent" | "platform" | "maxTouchPoints"> = navigator,
+): void {
+	if (!isIosWebKit(nav)) return;
+	const meta = doc.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+	if (meta) meta.content = withoutFocusZoom(meta.content);
+}
+
 const COARSE = "(pointer: coarse)";
 
 function subscribeCoarse(cb: () => void) {

@@ -5,6 +5,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	installNoFocusZoom,
 	installViewportTracking,
 	readSegments,
 	useViewportSegments,
@@ -122,5 +123,69 @@ describe("useViewportSegments", () => {
 			window.dispatchEvent(new Event("resize"));
 		});
 		expect(result.current).toBeNull();
+	});
+});
+
+describe("installNoFocusZoom", () => {
+	const BASE = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+	function docWith(content: string): Document {
+		const doc = document.implementation.createHTMLDocument("");
+		const meta = doc.createElement("meta");
+		meta.name = "viewport";
+		meta.content = content;
+		doc.head.appendChild(meta);
+		return doc;
+	}
+	const content = (doc: Document) =>
+		doc.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content;
+
+	it("iPhone 与报 MacIntel 的 iPadOS 加 maximum-scale=1；Android 与桌面 Mac 不动", () => {
+		const cases = [
+			{
+				ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)",
+				platform: "iPhone",
+				touch: 5,
+				zoom: true,
+			},
+			{
+				ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+				platform: "MacIntel",
+				touch: 5,
+				zoom: true,
+			},
+			{
+				ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+				platform: "MacIntel",
+				touch: 0,
+				zoom: false,
+			},
+			{
+				ua: "Mozilla/5.0 (Linux; Android 15)",
+				platform: "Linux armv8l",
+				touch: 5,
+				zoom: false,
+			},
+		];
+		for (const c of cases) {
+			const doc = docWith(BASE);
+			installNoFocusZoom(doc, {
+				userAgent: c.ua,
+				platform: c.platform,
+				maxTouchPoints: c.touch,
+			});
+			expect(content(doc), c.ua).toBe(
+				c.zoom ? `${BASE}, maximum-scale=1` : BASE,
+			);
+		}
+	});
+
+	it("已有 maximum-scale 时不重复追加", () => {
+		const doc = docWith(`${BASE}, maximum-scale=2`);
+		installNoFocusZoom(doc, {
+			userAgent: "iPhone",
+			platform: "iPhone",
+			maxTouchPoints: 5,
+		});
+		expect(content(doc)).toBe(`${BASE}, maximum-scale=2`);
 	});
 });

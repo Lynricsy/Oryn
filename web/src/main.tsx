@@ -13,7 +13,7 @@ import "./index.css";
 import { installDeviceCorners } from "./lib/device-corners";
 import { host } from "./lib/host";
 import { installSquircle } from "./lib/squircle";
-import { installViewportTracking } from "./lib/viewport";
+import { installNoFocusZoom, installViewportTracking } from "./lib/viewport";
 import { installTheme } from "./state/theme";
 
 async function boot() {
@@ -27,6 +27,8 @@ async function boot() {
 		installMock();
 	}
 	installViewportTracking();
+	// iOS：聚焦小字号输入框不自动放大整页（放大后常不缩回，页面停在平移状态）
+	installNoFocusZoom();
 	// 移动壳：贴边浮层的圆角与屏幕圆角同心（其它宿主无操作）
 	installDeviceCorners(host, document.documentElement);
 	installTheme();

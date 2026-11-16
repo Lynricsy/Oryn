@@ -6,12 +6,15 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../i18n";
 import "../index.css";
+import { installNoFocusZoom } from "../lib/viewport";
 import { installTheme } from "../state/theme";
 import { Launcher } from "./Launcher";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("缺少 #root 挂载点");
 installTheme();
+// iOS 移动壳的连接页也有地址输入框：聚焦时不自动放大整页
+installNoFocusZoom();
 createRoot(root).render(
 	<StrictMode>
 		<Launcher />
