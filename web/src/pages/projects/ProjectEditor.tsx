@@ -1,12 +1,19 @@
 /**
  * 项目表单：名称、仓库、图标、基线分支、默认 provider / orb 类型 / 浏览器 Profile、浅克隆、setup / resume 脚本、
- * 「仓库内脚本：有 / 无」、git 提交身份覆盖。新建发 POST，编辑发 PATCH（空串 = 清除）；响应体就是保存后的项目。
+ * 「仓库内脚本：有 / 无」、git 提交身份覆盖；编辑 GitHub 项目时还有推送 / 开 PR 门禁区（M15，`ProjectGates`）。
+ * 新建发 POST，编辑发 PATCH（空串 = 清除；门禁只在改过时随 `githubGates` 发出）；响应体就是保存后的项目。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Project, type Schemas, unwrap } from "../../api/client";
-import { qk, useBrowserProfiles, useProviders } from "../../api/queries";
+import type { GitHubGates } from "../../api/github-queries";
+import {
+	qk,
+	useBrowserProfiles,
+	useProjects,
+	useProviders,
+} from "../../api/queries";
 import { GlyphGrid } from "../../components/settings/GlyphGrid";
 import { useAsync } from "../../components/settings/useAsync";
 import { ProjectBadge } from "../../components/ui/data";
@@ -23,6 +30,7 @@ import {
 import type { SetupRun } from "../../lib/env-banner";
 import { PROJECT_GLYPHS } from "../../lib/glyphs";
 import { SnapshotsToggle, WarmOrbsStepper } from "./ProjectAccel";
+import { DEFAULT_GATES, normalizeGates, ProjectGates } from "./ProjectGates";
 import { RepoPicker } from "./RepoPicker";
 
 export type ProjectForm = Schemas["ProjectCreate"];
@@ -134,6 +142,9 @@ export function ProjectEditor({
 	const save = useAsync();
 	const set = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) =>
 		setF((prev) => ({ ...prev, [k]: v }));
+	// 门禁只对已存在的 GitHub 项目开放；null = 没改过，保存时不发 `githubGates`
+	const project = useProjects().data?.projects.find((p) => p.id === id);
+	const [gates, setGates] = useState<GitHubGates | null>(null);
 	const provider = providers.data?.providers.find(
 		(p) => p.name === f.defaultProvider,
 	);
@@ -162,6 +173,7 @@ export function ProjectEditor({
 							gitAuthorEmail: f.gitAuthorEmail ?? "",
 							// 空串 = 清除默认 Profile
 							defaultBrowserProfileId: f.defaultBrowserProfileId ?? "",
+							...(gates ? { githubGates: normalizeGates(gates) } : {}),
 						};
 						saved = await unwrap(
 							api.PATCH("/api/v1/projects/{id}", {
@@ -321,6 +333,14 @@ export function ProjectEditor({
 			>
 				{gitPairOk ? t("projects.gitHint") : t("projects.gitPairError")}
 			</p>
+			{id && project?.github && (
+				<div className="border-border border-t pt-3 sm:col-span-2">
+					<ProjectGates
+						value={gates ?? project.githubGates ?? DEFAULT_GATES}
+						onChange={setGates}
+					/>
+				</div>
+			)}
 			<div className="flex gap-2 sm:col-span-2">
 				<Button
 					type="submit"

@@ -1,4 +1,7 @@
-/** 项目页 GitHub 卡片（M14）：非 GitHub 仓库不渲染；未绑定不显示开关；切换开关发 PATCH `{ githubListen }`。 */
+/**
+ * 项目页 GitHub 卡片（M14 / M15）：非 GitHub 仓库不渲染；未绑定不显示开关；切换开关发 PATCH `{ githubListen }`；
+ * M15：未绑定原因（读不到 / 组织限制带申请批准链接 / SSO）、OAuth App 下的未绑定提示、已绑定时的 hook 状态徽标。
+ */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -133,5 +136,102 @@ describe("ProjectGitHubCard", () => {
 			repoUrl: "https://gitlab.com/acme/widgets",
 		});
 		expect(container).toBeEmptyDOMElement();
+	});
+
+	describe("M15", () => {
+		const OAUTH: GitHubStatus = {
+			...STATUS,
+			app: undefined,
+			oauthApp: {
+				clientId: "Ov23liTEST",
+				callbackUrl: "https://oryn.example/api/v1/public/github/oauth/callback",
+			},
+		};
+		const unbound = (
+			bindStatus?: NonNullable<Project["github"]>["bindStatus"],
+		): Project => ({
+			...BOUND,
+			github: {
+				...(BOUND.github as NonNullable<Project["github"]>),
+				bound: false,
+				...(bindStatus ? { bindStatus } : {}),
+			},
+		});
+
+		it("组织限制：写明原因，并链接到 OAuth App 的组织批准页", async () => {
+			renderCard(unbound("org_restricted"), OAUTH);
+			const box = screen.getByTestId("project-github-unbound");
+			expect(box).toHaveAttribute("data-reason", "org_restricted");
+			expect(box).toHaveTextContent("acme/widgets");
+			expect(
+				await screen.findByRole("link", {
+					name: T("github.hooks.requestApproval"),
+				}),
+			).toHaveAttribute(
+				"href",
+				"https://github.com/settings/connections/applications/Ov23liTEST",
+			);
+			expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+		});
+
+		it("读不到 / 需要 SSO：只有原因，没有批准链接", async () => {
+			renderCard(unbound("not_found"), OAUTH);
+			expect(screen.getByTestId("project-github-unbound")).toHaveTextContent(
+				T("github.project.bindStatus.not_found").replace(
+					"{{repo}}",
+					"acme/widgets",
+				),
+			);
+			await screen.findByTestId("project-github");
+			expect(screen.queryByRole("link")).toBeNull();
+		});
+
+		it("SSO：原因文案", () => {
+			renderCard(unbound("sso_required"), OAUTH);
+			expect(screen.getByTestId("project-github-unbound")).toHaveAttribute(
+				"data-reason",
+				"sso_required",
+			);
+		});
+
+		it("配置了 OAuth App、我的账号未连接：提示连接并链接到设置页", async () => {
+			renderCard(unbound(), OAUTH);
+			expect(
+				await screen.findByText(T("github.project.unboundNoUser")),
+			).toBeInTheDocument();
+			expect(
+				screen.getByRole("link", { name: T("github.project.connect") }),
+			).toHaveAttribute("href", "/settings/github");
+		});
+
+		it("已绑定：显示 hook 状态徽标；不是 active 时附说明", () => {
+			renderCard({
+				...BOUND,
+				github: {
+					...(BOUND.github as NonNullable<Project["github"]>),
+					hookStatus: "no_admin",
+				},
+			});
+			const hook = screen.getByTestId("project-github-hook");
+			expect(hook).toHaveAttribute("data-status", "no_admin");
+			expect(hook).toHaveTextContent(T("github.hooks.status.no_admin"));
+			expect(
+				screen.getByText(T("github.hooks.explain.no_admin")),
+			).toBeInTheDocument();
+		});
+
+		it("已绑定、hook 正常：只有徽标，没有额外说明", () => {
+			renderCard({
+				...BOUND,
+				github: {
+					...(BOUND.github as NonNullable<Project["github"]>),
+					hookStatus: "active",
+				},
+			});
+			expect(screen.getByTestId("project-github-hook")).toHaveTextContent(
+				T("github.hooks.status.active"),
+			);
+			expect(screen.queryByText(T("github.hooks.explain.active"))).toBeNull();
+		});
 	});
 });

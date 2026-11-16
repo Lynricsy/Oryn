@@ -3875,7 +3875,10 @@
 			"dialogTitle": "连接{{slot}}",
 			"continueHere": "在此浏览器继续",
 			"copyLink": "复制链接",
-			"copyHint": "在登录了目标 GitHub 账号的浏览器里打开，10 分钟内有效"
+			"copyHint": "在登录了目标 GitHub 账号的浏览器里打开，10 分钟内有效",
+			"scopes": "已授予：",
+			"scopesMissing": "缺少权限",
+			"missingHint": "授权缺少以下 scope，部分操作会失败，请重新连接："
 		},
 		"automation": {
 			"title": "自动化",
@@ -3910,7 +3913,14 @@
 				"reviews": "评审意见回流",
 				"comments": "评论回流",
 				"ci": "CI 失败回流"
-			}
+			},
+			"bindStatus": {
+				"not_found": "我的账号读不到 {{repo}}：仓库不存在，或这个账号没有访问权限。",
+				"org_restricted": "{{repo}} 所在组织限制了 OAuth App 访问，需要组织管理员批准 Oryn 的 OAuth App。",
+				"sso_required": "{{repo}} 所在组织启用了 SAML SSO：请在 GitHub 上为 Oryn 的授权完成 SSO 授权，再重新连接我的账号。"
+			},
+			"unboundPending": "还没有绑定：我的账号能读到这个仓库后会自动绑定。",
+			"unboundNoUser": "连接「我的账号」后会自动绑定这个仓库。"
 		},
 		"triggers": {
 			"title": "触发规则",
@@ -3946,7 +3956,141 @@
 				"mention": "响应 @"
 			},
 			"prompt": "提示词",
-			"promptHint": "可用变量 {{vars}}；issue 的标题、正文、作者、标签与触发评论会作为数据块附在提示词后面。"
+			"promptHint": "可用变量 {{vars}}；issue 的标题、正文、作者、标签与触发评论会作为数据块附在提示词后面。",
+			"startFrom": "从预设开始",
+			"presetGates": "这个预设附带推送 / 开 PR 门禁配置，应用后会替换本项目当前的门禁。",
+			"presetGatesApply": "把门禁应用到本项目",
+			"presetGatesApplied": "门禁已应用",
+			"sectionDrivers": "谁能驱动",
+			"drivers": {
+				"label": "驱动者",
+				"writers": "仅有写权限的人",
+				"writersHint": "仓库 OWNER、MEMBER、COLLABORATOR，或在仓库有 write / admin 权限的人。",
+				"writers_and_author": "有写权限的人和作者",
+				"writers_and_authorHint": "在上一档之外，再加上 issue 或 PR 的作者本人。",
+				"anyone": "任何人",
+				"anyoneHint": "任何人都能驱动，按人限流：CONTRIBUTOR 每小时 10 次，其他人每小时 3 次。需要 Agent 账号。"
+			},
+			"maintainers": "维护者",
+			"maintainersHint": "GitHub 登录名，逗号分隔。可以用 /model、/thinking 指令，并能授权实现。",
+			"reviewerBots": "评审机器人",
+			"reviewerBotsHint": "这些 bot 的评论视为维护者指令，不需要 @。",
+			"sectionModel": "模型",
+			"models": "模型池",
+			"modelsDefault": "未指定：使用项目或全局默认模型。",
+			"modelsHint": "每次触发从池里随机取一个。",
+			"addModel": "添加模型",
+			"removeModel": "移除 {{model}}",
+			"thinking": "思考级别",
+			"thinkingDefault": "跟随默认",
+			"sectionTask": "任务",
+			"implAuth": "实现需授权",
+			"implAuthHint": "只有分类为 bug / documentation，或维护者打上 accepted 标签、评论 go ahead 后，才允许为这个仓库开 PR。",
+			"commentOnlyReviews": "评审只发 COMMENT",
+			"commentOnlyReviewsHint": "拒绝 APPROVE 与 REQUEST_CHANGES 两种 review。",
+			"completionReminders": "完成提醒",
+			"completionRemindersHint": "回合结束时任务还没推进到下一阶段，就提醒 agent 继续（最多 2 次）。",
+			"autocloseHours": "自动关闭等待（小时）",
+			"autocloseHoursHint": "agent 发起自动关闭后，等这么久没有作者的 👎 就关闭 issue。",
+			"maxDuration": "任务时限（分钟）",
+			"maxDurationHint": "到点中止当前回合并通知你；留空表示不限时。",
+			"maxDurationNone": "不限时",
+			"releasePrefix": "版本提交前缀",
+			"releasePrefixHint": "只处理 head 提交信息以它开头的 workflow run。"
+		},
+		"gates": {
+			"title": "推送 / 开 PR 门禁",
+			"intro": "由出站代理强制执行：推送或开 PR 前，agent 必须先用 github_prepare 跑完下面的命令并通过。",
+			"push": "推送门禁",
+			"pr": "PR 门禁",
+			"fixCmd": "修复命令",
+			"fixCmdHint": "比如格式化；产生的改动会并入 HEAD 提交。",
+			"checkCmd": "检查命令",
+			"checkCmdHint": "推送前运行，限时 600 秒。",
+			"testCmd": "测试命令",
+			"testCmdHint": "开 PR 前再运行，限时 3600 秒。",
+			"prHeadings": "PR 正文必需的二级标题",
+			"prHeadingsHint": "每行一个，不含 ##。",
+			"requireClosingRef": "PR 正文须含 Fixes / Closes / Resolves #N"
+		},
+		"task": {
+			"issue": {
+				"new": "新建",
+				"reproducing": "复现中",
+				"fixing": "修复中",
+				"reviewing": "评审中",
+				"opened": "已开 PR",
+				"needs_info": "待补充信息",
+				"merged": "已合并",
+				"closed": "已关闭",
+				"abandoned": "已放弃"
+			},
+			"release": {
+				"awaiting_ci": "等待 CI",
+				"fixing": "修复中",
+				"green": "已通过",
+				"failed": "失败",
+				"superseded": "已被新版本取代"
+			},
+			"issueLabel": "GitHub issue {{repo}}{{subject}}：{{state}}",
+			"releaseLabel": "发布 {{repo}} {{subject}}：{{state}}"
+		},
+		"oauth": {
+			"title": "OAuth App",
+			"intro": "Oryn 通过你自己注册的 GitHub OAuth App 连接 GitHub。先在 GitHub 上新建 OAuth App，把下面的回调地址填进去，再把 Client ID 和 Client Secret 填到这里。",
+			"register": "在 GitHub 上新建 OAuth App",
+			"callback": "回调地址",
+			"callbackHint": "填到 OAuth App 的 Authorization callback URL。",
+			"copyCallback": "复制回调地址",
+			"clientId": "Client ID",
+			"clientSecret": "Client Secret",
+			"secretKeep": "留空表示沿用已保存的 Secret。",
+			"webhookBase": "Webhook 基址",
+			"webhookBaseHint": "Oryn 在仓库上建 webhook 时用的地址前缀，默认等于 public_url。GitHub 访问不到时，Oryn 轮询投递日志补齐事件。",
+			"saved": "已保存",
+			"delete": "删除配置",
+			"deleteConfirm": "删除 OAuth App 配置？Oryn 会先删掉它在各仓库建的 webhook，再断开「我的账号」和「Agent 账号」。GitHub 上的 OAuth App 本身不会被删除。"
+		},
+		"hooks": {
+			"title": "仓库 webhook",
+			"intro": "Oryn 在已绑定、且我的账号是 admin 的仓库上自动建一个 webhook；没有可用 webhook 的仓库改为轮询。",
+			"empty": "还没有已绑定的仓库。",
+			"status": {
+				"active": "正常",
+				"no_admin": "无 admin 权限",
+				"org_restricted": "组织限制",
+				"sso_required": "需要 SSO 授权",
+				"error": "出错"
+			},
+			"explain": {
+				"active": "webhook 正常，事件实时送达；收不到时从投递日志补齐。",
+				"no_admin": "我的账号不是仓库 admin，建不了 webhook，改为每 60 秒轮询。",
+				"org_restricted": "组织限制了 OAuth App 访问，需要组织管理员批准后才能建 webhook。",
+				"sso_required": "组织启用了 SAML SSO，需要为这次授权完成 SSO 授权。",
+				"error": "创建或校正 webhook 失败，Oryn 会定期重试。"
+			},
+			"requestApproval": "申请组织批准",
+			"authorizeSso": "完成 SSO 授权",
+			"lastDelivery": "最近投递 {{when}} · {{source}}"
+		},
+		"audit": {
+			"title": "审计",
+			"intro": "agent 经出站代理发起的 GitHub 写操作，保留 30 天。",
+			"repoFilter": "按仓库筛选",
+			"filter": "筛选",
+			"clearFilter": "清除筛选",
+			"empty": "没有记录。",
+			"more": "加载更多",
+			"col": {
+				"time": "时间",
+				"thread": "线程",
+				"slot": "身份",
+				"method": "方法",
+				"op": "操作",
+				"repo": "仓库",
+				"status": "状态码",
+				"gate": "门禁"
+			}
 		}
 	}
 }

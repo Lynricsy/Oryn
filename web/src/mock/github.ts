@@ -1,7 +1,7 @@
 /**
  * mock 后端的 M14（GitHub 集成）部分：连接状态（App、两个身份槽位、安装、自动化身份），格式与 orynd 一致。
  * `MockServer.handleFetch` 在 runner 路由之前调 `handle`，不归这里的请求返回 null。
- * 初始：App 已连接（slug `oryn-mock`）、「我的账号」`@oryn-owner` 已连接、Agent 账号未连接、两个安装、自动化身份 `user`；
+ * 初始：App 与 OAuth App（M15）都已配置、「我的账号」`@oryn-owner` 已连接、Agent 账号未连接、两个安装、自动化身份 `user`；
  * `localStorage["oryn.mock.github"] = "none"` 时初始为未连接（截图与验收用）。
  * 跳转类接口（创建 App、连接账号）不会真的去 GitHub：创建 App 清掉 `none` 标记并回到 `?created=1`（整页刷新后即为已连接）；
  * 连接账号给出一个 GitHub 授权地址的样子，要在 mock 里连上 Agent 账号用 `connectAgent()`。
@@ -11,7 +11,11 @@
  * 输入框 `#` 引用（步骤 8.2）：`GET projects/{id}/github/refs` 给 8 条固定的 issue / PR（`q` 按标题过滤，纯数字按编号）；
  * `POST …/refs/{n}/attachment` 把它渲染成 `text/markdown` 附件放进 `MockServer.attachments`，201 返回元数据。
  * 触发规则（步骤 7.2）：项目的规则增删改查（初始给第一个项目一条「打标签 oryn」规则）；`fireTrigger()` 模拟一次命中：
- * 新建线程（首条用户消息以触发首行开头，issue 作为不可信数据块附在后面）并广播。
+ * 新建线程（首条用户消息以触发首行开头，issue 作为不可信数据块附在后面，线程带 `githubTask`）并广播。
+ * M15：`PUT / DELETE github/oauth-app`、`GET github/hooks`（项目绑定的仓库 + 几个演示仓库，覆盖各种 hook 状态）、
+ * `GET github/audit`（130 条样例，支持 thread / repo / before / limit）、`GET github/tasks`、`GET github/presets`（三个 robomp 预设）、
+ * `POST github/triage`（按规则调 `fireTrigger()`）、`POST github/tasks/cleanup`、`POST github/deliveries/{guid}/replay`（202）；
+ * 规则的 M15 字段原样存取；`setTask()` 改线程的 GitHub 任务状态。Agent 账号缺两个 scope（演示「需要重新授权」）。
  */
 import type { Schemas, Thread } from "../api/client";
 import { TRIGGER_PRESETS } from "../lib/trigger-presets";
@@ -206,6 +210,17 @@ function githubPath(repoUrl: string): string | undefined {
 	return m?.[1]?.toLowerCase();
 }
 
+/** OAuth 授权请求的 scope（同 orynd 的 `oauthScopes`）。 */
+const OAUTH_SCOPES = [
+	"repo",
+	"workflow",
+	"read:org",
+	"admin:repo_hook",
+	"gist",
+	"write:packages",
+	"user:email",
+];
+
 function ownerIdentity(now: number): Identity {
 	return {
 		login: "oryn-owner",
@@ -214,10 +229,14 @@ function ownerIdentity(now: number): Identity {
 		avatarUrl: avatar("O", 210),
 		status: "ok",
 		connectedAt: now - 9 * 24 * 60 * MIN,
+		scopes: OAUTH_SCOPES,
+		missingScopes: [],
 	};
 }
 
+/** Agent 账号：授权时少勾了两项（演示「需要重新授权」）。 */
 function agentIdentity(now: number): Identity {
+	const missing = ["gist", "write:packages"];
 	return {
 		login: "oryn-bot",
 		githubId: 5_120_007,
@@ -225,6 +244,19 @@ function agentIdentity(now: number): Identity {
 		avatarUrl: avatar("B", 150),
 		status: "ok",
 		connectedAt: now,
+		scopes: OAUTH_SCOPES.filter((s) => !missing.includes(s)),
+		missingScopes: missing,
+	};
+}
+
+function origin(): string {
+	return globalThis.location?.origin ?? "https://oryn.example";
+}
+
+function oauthApp(clientId: string): Schemas["GitHubOAuthApp"] {
+	return {
+		clientId,
+		callbackUrl: `${origin()}/api/v1/public/github/oauth/callback`,
 	};
 }
 
@@ -257,9 +289,11 @@ function connectedStatus(now: number): Status {
 			},
 		],
 		automationIdentity: "user",
-		webhookUrl: `${globalThis.location?.origin ?? "https://oryn.example"}/api/v1/public/github/webhook`,
+		webhookUrl: `${origin()}/api/v1/public/github/webhook`,
 		lastDeliveryAt: now - 2 * MIN,
 		lastDeliverySource: "webhook",
+		oauthApp: oauthApp("Ov23liMockOryn0000001"),
+		webhookBase: origin(),
 	};
 }
 
@@ -268,8 +302,136 @@ function emptyStatus(): Status {
 		identities: {},
 		installations: [],
 		automationIdentity: "user",
-		webhookUrl: `${globalThis.location?.origin ?? "https://oryn.example"}/api/v1/public/github/webhook`,
+		webhookUrl: `${origin()}/api/v1/public/github/webhook`,
+		webhookBase: origin(),
 	};
+}
+
+/** 各仓库的 webhook 状态（M15）：没列出的已绑定仓库为 `active`。 */
+const HOOK_STATES: Record<
+	number,
+	{ status: Schemas["GitHubHookStatus"]; error?: string }
+> = {
+	1002: { status: "org_restricted" },
+	1003: { status: "no_admin" },
+	1004: {
+		status: "sso_required",
+		error:
+			"Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization. https://github.com/orgs/oryn-demo/sso?authorization_request=A3MOCK",
+	},
+	1005: {
+		status: "error",
+		error:
+			"POST /repos/oryn-owner/raytracer-in-a-weekend/hooks: 422 Validation Failed",
+	},
+};
+
+/** 我的账号读不到的仓库（M15 `bindStatus`）。 */
+const UNBOUND: Record<number, Schemas["ProjectGitHub"]["bindStatus"]> = {
+	1006: "org_restricted",
+};
+
+/** 设置页 hook 列表里除已绑定项目之外的演示仓库（模拟别的项目绑定的仓库）。 */
+const DEMO_HOOK_REPOS = [1002, 1003, 1004];
+
+/** 写操作审计的样例操作（`[method, op]`），按时间倒序循环取用。 */
+const AUDIT_OPS: [string, string, number, string?][] = [
+	["POST", "/repos/{owner}/{repo}/issues/{issue_number}/comments", 201],
+	["mutation", "addPullRequestReview", 200],
+	["POST", "git-receive-pack refs/heads/fix/login-loop", 200, "pr"],
+	["POST", "createPullRequest", 200, "pr"],
+	["PATCH", "/repos/{owner}/{repo}/issues/{issue_number}", 200],
+	[
+		"POST",
+		"git-receive-pack refs/heads/main",
+		403,
+		"denied: no github_prepare record for 3f9c2a1",
+	],
+	["POST", "/repos/{owner}/{repo}/issues/{issue_number}/labels", 200],
+	["DELETE", "/repos/{owner}/{repo}/hooks/{hook_id}", 403, "denied: Oryn hook"],
+];
+
+const AUDIT_TOTAL = 130;
+
+/** robomp 预设（M15，`GET github/presets`）：提示词正文由 orynd 内嵌，这里只给开头一段。 */
+function presets(): Schemas["GitHubPreset"][] {
+	return [
+		{
+			id: "robomp_triage",
+			name: "robomp 分诊",
+			trigger: {
+				name: "robomp 分诊",
+				event: "issue_opened",
+				prompt:
+					"<!-- ported from can1357/oh-my-pi python/robomp, MIT -->\nTriage {{kind}} {{repo}}#{{number}} ({{url}}). Classify it with github_classify_issue first…",
+				announce: false,
+				drivers: "writers_and_author",
+				implAuth: true,
+				autocloseHours: 4,
+				maxDurationSec: 2 * 60 * 60,
+				completionReminders: true,
+				thinking: "high",
+			},
+			gates: {
+				push: true,
+				pr: true,
+				checkCmd: "make check",
+				testCmd: "make test",
+				prHeadings: ["Repro", "Cause", "Fix", "Verification"],
+				requireClosingRef: true,
+			},
+		},
+		{
+			id: "robomp_review",
+			name: "robomp PR 评审",
+			trigger: {
+				name: "robomp PR 评审",
+				event: "pull_request_opened",
+				prompt:
+					"Review pull request {{repo}}#{{number}} ({{url}}). Post one review with gh api …/reviews; COMMENT only…",
+				announce: false,
+				drivers: "anyone",
+				commentOnlyReviews: true,
+				thinking: "high",
+			},
+		},
+		{
+			id: "robomp_release",
+			name: "robomp 发布哨兵",
+			trigger: {
+				name: "robomp 发布哨兵",
+				event: "workflow_run_completed",
+				prompt:
+					"The release workflow for {{repo}} failed. Fix it and push with git push --atomic --force-with-lease…",
+				announce: false,
+				enabled: false,
+				drivers: "writers",
+				releasePrefix: "chore: bump version to ",
+			},
+		},
+	];
+}
+
+/** 触发规则的 M15 字段：请求体里出现的原样带上。 */
+function m15Fields(
+	b: Schemas["GitHubTriggerPatch"],
+): Partial<Schemas["GitHubTrigger"]> {
+	const keys = [
+		"drivers",
+		"maintainers",
+		"reviewerBots",
+		"models",
+		"thinking",
+		"implAuth",
+		"commentOnlyReviews",
+		"autocloseHours",
+		"maxDurationSec",
+		"completionReminders",
+		"releasePrefix",
+	] as const;
+	const out: Record<string, unknown> = {};
+	for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
+	return out as Partial<Schemas["GitHubTrigger"]>;
 }
 
 export class MockGitHub {
@@ -296,6 +458,14 @@ export class MockGitHub {
 					prompt: TRIGGER_PRESETS[0].prompt,
 					enabled: true,
 					announce: true,
+					drivers: "writers_and_author",
+					maintainers: ["oryn-owner"],
+					models: [{ provider: "anthropic", id: "claude-sonnet-4-5" }],
+					thinking: "high",
+					implAuth: true,
+					autocloseHours: 4,
+					maxDurationSec: 90 * 60,
+					completionReminders: true,
 					runCount: 3,
 					lastRunAt: now - 5 * 60 * MIN,
 					createdAt: now - 6 * DAY,
@@ -336,6 +506,16 @@ export class MockGitHub {
 			return error(400, "invalid_request", "prompt 须为 1–20000 字符");
 		if (tr.event === "issue_labeled" && !tr.label?.trim())
 			return error(400, "invalid_request", "issue_labeled 规则须填 label");
+		if (tr.event === "workflow_run_completed" && !tr.releasePrefix?.trim())
+			return error(
+				400,
+				"invalid_request",
+				"workflow_run_completed 规则须填 releasePrefix",
+			);
+		if (tr.autocloseHours !== undefined && !(tr.autocloseHours > 0))
+			return error(400, "invalid_request", "autocloseHours 须大于 0");
+		if (tr.maxDurationSec !== undefined && tr.maxDurationSec < 0)
+			return error(400, "invalid_request", "maxDurationSec 不能为负");
 		if (tr.event === "mention" && !this.status.identities.agent)
 			return error(
 				409,
@@ -396,6 +576,7 @@ export class MockGitHub {
 			updatedAt: now,
 			lastMessageAt: now,
 			projectId: prj.id,
+			githubTask: { kind: "issue", repo, number, state: "new" },
 		};
 		this.deps.startThread(t, prompt);
 		this.replaceTrigger({ ...tr, runCount: tr.runCount + 1, lastRunAt: now });
@@ -403,19 +584,138 @@ export class MockGitHub {
 		return t.id;
 	}
 
-	/** 项目仓库地址对应的绑定（App 可访问的 mock 仓库才有）；回流开关默认全开。 */
+	/**
+	 * 项目仓库地址对应的绑定（mock 仓库才有）；回流开关默认全开。
+	 * 我的账号读不到的仓库给出 `bindStatus`，已绑定的给出 hook 状态。
+	 */
 	projectGitHub(
 		repoUrl: string | undefined,
 	): Schemas["ProjectGitHub"] | undefined {
 		const path = repoUrl ? githubPath(repoUrl) : undefined;
 		const repo = REPOS.find((r) => r.fullName.toLowerCase() === path);
 		if (!repo) return undefined;
+		const listen = { reviews: true, comments: true, ci: true };
+		const bindStatus = UNBOUND[repo.id];
+		if (bindStatus)
+			return {
+				repoId: repo.id,
+				fullName: repo.fullName,
+				bound: false,
+				listen,
+				bindStatus,
+			};
 		return {
 			repoId: repo.id,
 			fullName: repo.fullName,
 			bound: true,
-			listen: { reviews: true, comments: true, ci: true },
+			listen,
+			hookStatus: HOOK_STATES[repo.id]?.status ?? "active",
 		};
+	}
+
+	/** 把线程的 GitHub 任务状态改成 `task`（截图与验收用）；省略表示去掉。 */
+	setTask(threadId: string, task?: Schemas["GitHubThreadTask"]): void {
+		const t = this.deps.threads.get(threadId);
+		if (!t) return;
+		const { githubTask: _old, ...rest } = t;
+		this.deps.upsertThread(task ? { ...rest, githubTask: task } : rest);
+	}
+
+	/** 已绑定仓库的 webhook（项目绑定的仓库 + 演示仓库）。 */
+	private hooks(): Schemas["GitHubHook"][] {
+		const ids = new Set<number>();
+		for (const prj of this.deps.projects())
+			if (prj.github?.bound) ids.add(prj.github.repoId);
+		for (const id of DEMO_HOOK_REPOS) ids.add(id);
+		const now = Date.now();
+		return [...ids].flatMap((id) => {
+			const repo = REPOS.find((r) => r.id === id);
+			if (!repo) return [];
+			const st = HOOK_STATES[id] ?? { status: "active" as const };
+			return [
+				{
+					repoId: id,
+					fullName: repo.fullName,
+					...(st.status === "active" ? { hookId: 480_000_000 + id } : {}),
+					status: st.status,
+					...(st.error ? { error: st.error } : {}),
+					...(st.status === "active" || st.status === "no_admin"
+						? {
+								lastDeliveryAt: now - (id % 7) * 3 * MIN - MIN,
+								lastDeliverySource:
+									st.status === "active"
+										? ("webhook" as const)
+										: ("poll" as const),
+							}
+						: {}),
+					updatedAt: now - 10 * MIN,
+				},
+			];
+		});
+	}
+
+	/** 审计样例：`AUDIT_TOTAL` 条，id 越大越新，线程取线程表里的前几个。 */
+	private audit(url: URL): Schemas["GitHubAuditList"] {
+		const threadIds = [...this.deps.threads.keys()].slice(0, 4);
+		const repos = this.hooks().map((h) => h.fullName);
+		const now = Date.now();
+		const all: Schemas["GitHubAuditEntry"][] = [];
+		for (let id = AUDIT_TOTAL; id >= 1; id--) {
+			const row = AUDIT_OPS[id % AUDIT_OPS.length];
+			if (!row) continue;
+			const [method, op, status, gate] = row;
+			const threadId = threadIds[id % Math.max(threadIds.length, 1)];
+			all.push({
+				id,
+				at: now - (AUDIT_TOTAL - id) * 17 * MIN - MIN,
+				...(threadId ? { threadId } : {}),
+				slot: id % 3 === 0 ? "user" : "agent",
+				method,
+				op,
+				repo: repos[id % Math.max(repos.length, 1)] ?? "oryn-demo/webapp",
+				status,
+				...(gate ? { gate } : {}),
+				bodySha256: `${id.toString(16).padStart(8, "0")}${"0".repeat(56)}`,
+			});
+		}
+		const thread = url.searchParams.get("thread");
+		const repo = url.searchParams.get("repo")?.toLowerCase();
+		const before = Number(url.searchParams.get("before") ?? Infinity);
+		const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
+		const hits = all.filter(
+			(e) =>
+				e.id < before &&
+				(!thread || e.threadId === thread) &&
+				(!repo || e.repo?.toLowerCase() === repo),
+		);
+		const page = hits.slice(0, limit);
+		const last = page.at(-1);
+		return {
+			entries: page,
+			...(hits.length > limit && last ? { nextBefore: last.id } : {}),
+		};
+	}
+
+	/** issue 线程与发布哨兵的任务：线程表里带 `githubTask` 的，加一条发布样例。 */
+	private tasks(): Schemas["GitHubTask"][] {
+		const now = Date.now();
+		const out: Schemas["GitHubTask"][] = [];
+		for (const t of this.deps.threads.values())
+			if (t.githubTask)
+				out.push({
+					...t.githubTask,
+					threadId: t.id,
+					updatedAt: t.updatedAt,
+				});
+		out.push({
+			kind: "release",
+			repo: "oryn-demo/webapp",
+			version: "1.8.2",
+			state: "awaiting_ci",
+			rounds: 0,
+			updatedAt: now - 6 * MIN,
+		});
+		return out;
 	}
 
 	/** 连上 Agent 账号 `@oryn-bot`（测试与截图用）。 */
@@ -469,9 +769,86 @@ export class MockGitHub {
 			this.deps.changed();
 			return new Response(null, { status: 204 });
 		}
+		if (p === "github/oauth-app" && m === "PUT") {
+			const b = (await body()) as Schemas["GitHubOAuthAppInput"];
+			const clientId = String(b.clientId ?? "").trim();
+			if (!clientId) return error(400, "invalid_request", "clientId 不能为空");
+			if (!this.status.oauthApp && !b.clientSecret?.trim())
+				return error(400, "invalid_request", "首次保存须填 clientSecret");
+			if (b.webhookBase && !/^https?:\/\//.test(b.webhookBase))
+				return error(400, "invalid_request", "webhookBase 须为 http(s) 地址");
+			this.status = {
+				...this.status,
+				oauthApp: oauthApp(clientId),
+				webhookBase: b.webhookBase?.replace(/\/+$/, "") || origin(),
+			};
+			this.deps.changed();
+			return json(this.status);
+		}
+		if (p === "github/oauth-app" && m === "DELETE") {
+			// 同 orynd：先删仓库 hook，再断开两个身份
+			const { oauthApp: _app, ...rest } = this.status;
+			this.status = {
+				...rest,
+				identities: {},
+				automationIdentity: "user",
+				webhookBase: origin(),
+			};
+			this.deps.changed();
+			return new Response(null, { status: 204 });
+		}
+		if (p === "github/hooks" && m === "GET") {
+			if (!this.status.oauthApp)
+				return error(409, "github_not_connected", "no OAuth App configured");
+			return json({ hooks: this.hooks() });
+		}
+		if (p === "github/audit" && m === "GET") return json(this.audit(url));
+		if (p === "github/tasks" && m === "GET")
+			return json({ tasks: this.tasks() });
+		if (p === "github/presets" && m === "GET")
+			return json({ presets: presets() });
+		if (p === "github/tasks/cleanup" && m === "POST") {
+			const b = (await body()) as Schemas["GitHubTaskRef"];
+			const t = [...this.deps.threads.values()].find(
+				(x) =>
+					x.githubTask?.kind === "issue" &&
+					x.githubTask.repo === b.repo &&
+					x.githubTask.number === b.number,
+			);
+			if (!t?.githubTask) return error(404, "not_found", "task not found");
+			const task = { ...t.githubTask, state: "abandoned" };
+			this.setTask(t.id, task);
+			return json({ ...task, threadId: t.id, updatedAt: Date.now() });
+		}
+		if (p === "github/triage" && m === "POST") {
+			const b = (await body()) as Schemas["GitHubTriageRequest"];
+			const prj = this.deps
+				.projects()
+				.find(
+					(x) =>
+						x.github?.bound &&
+						x.github.fullName.toLowerCase() === b.repo.toLowerCase(),
+				);
+			const rule =
+				(b.ruleId
+					? this.findTrigger(b.ruleId)
+					: prj && this.triggers.get(prj.id)?.[0]) ?? undefined;
+			if (!prj || !rule)
+				return error(409, "github_not_bound", "no trigger rule for this repo");
+			const threadId = this.fireTrigger(
+				rule.id,
+				b.number,
+				`issue #${b.number}`,
+			);
+			return threadId
+				? json({ threadId })
+				: error(409, "github_not_bound", "no trigger rule for this repo");
+		}
+		if (/^github\/deliveries\/[^/]+\/replay$/.test(p) && m === "POST")
+			return new Response(null, { status: 202 });
 		const auth = /^github\/identities\/(user|agent)\/authorize$/.exec(p);
 		if (auth && m === "POST") {
-			if (!this.status.app)
+			if (!this.status.app && !this.status.oauthApp)
 				return error(409, "github_not_connected", "no GitHub App connected");
 			const state = `ogs_mock${Date.now().toString(36)}`;
 			return json({
@@ -603,6 +980,9 @@ export class MockGitHub {
 				prompt: String(b.prompt ?? ""),
 				enabled: b.enabled ?? true,
 				announce: b.announce ?? true,
+				drivers: "writers_and_author",
+				autocloseHours: 4,
+				...m15Fields(b),
 				runCount: 0,
 				createdAt: now,
 				updatedAt: now,
@@ -641,6 +1021,7 @@ export class MockGitHub {
 				...(b.prompt !== undefined ? { prompt: b.prompt } : {}),
 				...(b.enabled !== undefined ? { enabled: b.enabled } : {}),
 				...(b.announce !== undefined ? { announce: b.announce } : {}),
+				...m15Fields(b),
 				updatedAt: Date.now(),
 			};
 			const bad = this.badTrigger(next);

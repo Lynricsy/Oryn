@@ -4,13 +4,14 @@
  * 桌面 App 无系统标题栏：整条页头是拖动区（按钮、标题等可交互元素除外）；`chromeLeft` / `chromeRight` 时两端放窗口控件。
  * 定时（M9）：线程内定时显示 `ScheduleChip`，「每次新建线程」定时建出的线程显示 `ScheduleRunChip`，More Actions 有「定时…」；
  * GitHub（M14）：线程关联的 PR 显示 `PrChip`（最多两枚），在定时胶囊之后、orb 胶囊之前；
+ * M15：触发规则建立的 issue 任务或发布哨兵的状态显示 `GitHubTaskChip`（`thread.githubTask`），紧跟在 PR 胶囊之后；
  * 归档旁有「归档为已交付」（Space 进度图的 Shipped）。
  */
 import type { TFunction } from "i18next";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
-import type { Orb } from "../../api/client";
+import type { Orb, Schemas } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
 import { isDark, markHex } from "../../lib/native-header";
@@ -155,6 +156,106 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 export function shortPath(p: string): string {
 	const parts = p.split("/").filter(Boolean);
 	return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : p;
+}
+
+type GitHubThreadTask = Schemas["GitHubThreadTask"];
+
+const ISSUE_STATES = [
+	"new",
+	"reproducing",
+	"fixing",
+	"reviewing",
+	"opened",
+	"needs_info",
+	"merged",
+	"closed",
+	"abandoned",
+] as const satisfies readonly Schemas["GitHubTaskState"][];
+
+const RELEASE_STATES = [
+	"awaiting_ci",
+	"fixing",
+	"green",
+	"failed",
+	"superseded",
+] as const satisfies readonly Schemas["GitHubReleaseState"][];
+
+/** 任务状态的语义色：只有成功、等待处理与失败上色，其余中性（不显示状态点）。 */
+const TASK_TONE: Record<string, "ok" | "warn" | "err"> = {
+	merged: "ok",
+	green: "ok",
+	needs_info: "warn",
+	awaiting_ci: "warn",
+	failed: "err",
+};
+
+/** GitHub 任务的对象（`#12` 或 `v1.2.0`）与状态文案；服务端出现新状态值时原样显示。 */
+export function githubTaskText(
+	task: GitHubThreadTask,
+	t: TFunction,
+): { subject: string; state: string } {
+	if (task.kind === "release") {
+		const s = RELEASE_STATES.find((x) => x === task.state);
+		return {
+			subject: `v${task.version ?? ""}`,
+			state: s ? t(`github.task.release.${s}`) : task.state,
+		};
+	}
+	const s = ISSUE_STATES.find((x) => x === task.state);
+	return {
+		subject: `#${task.number ?? ""}`,
+		state: s ? t(`github.task.issue.${s}`) : task.state,
+	};
+}
+
+/** 任务在 GitHub 上的页面：issue 页或 `v<版本>` 的 Release 页。 */
+export function githubTaskUrl(task: GitHubThreadTask): string {
+	return task.kind === "release"
+		? `https://github.com/${task.repo}/releases/tag/v${task.version ?? ""}`
+		: `https://github.com/${task.repo}/issues/${task.number ?? ""}`;
+}
+
+export function githubTaskIcon(task: GitHubThreadTask): "rocket" | "github" {
+	return task.kind === "release" ? "rocket" : "github";
+}
+
+/** 线程页头的 GitHub 任务胶囊（M15）：图标 +（页头够宽时）`#12 · 修复中`，有语义色时带状态点；点开 GitHub 页面。 */
+export function GitHubTaskChip({
+	task,
+}: {
+	task: GitHubThreadTask;
+}): ReactNode {
+	const { t } = useTranslation();
+	const { subject, state } = githubTaskText(task, t);
+	const tone = TASK_TONE[task.state];
+	const label = t(
+		task.kind === "release"
+			? "github.task.releaseLabel"
+			: "github.task.issueLabel",
+		{ repo: task.repo, subject, state },
+	);
+	return (
+		<a
+			href={githubTaskUrl(task)}
+			target="_blank"
+			rel="noopener noreferrer"
+			data-testid="github-task-chip"
+			data-state={task.state}
+			aria-label={label}
+			title={label}
+			className="inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover"
+		>
+			<Icon name={githubTaskIcon(task)} size={12} aria-hidden />
+			<span aria-hidden className="hidden tabular-nums @md/header:inline">
+				{`${subject} · ${state}`}
+			</span>
+			{tone && (
+				<span className="inline-flex">
+					<StatusDot tone={tone} />
+				</span>
+			)}
+		</a>
+	);
 }
 
 /**
@@ -671,6 +772,9 @@ export function ThreadHeader({
 				thread?.pulls
 					?.slice(0, 2)
 					.map((p) => <PrChip key={p.number} threadId={threadId} pull={p} />)}
+			{editing === null && thread?.githubTask && (
+				<GitHubTaskChip task={thread.githubTask} />
+			)}
 			{editing === null &&
 				orb &&
 				(isRunner ? (

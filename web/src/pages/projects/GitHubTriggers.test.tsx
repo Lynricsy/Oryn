@@ -1,9 +1,22 @@
-/** 项目的 GitHub 触发规则（M14）：列表、对话框的标签输入框 / 预设 / Agent 未连接时禁用保存 / POST 内容。 */
+/**
+ * 项目的 GitHub 触发规则（M14 / M15）：列表、对话框的标签输入框 / 预设 / Agent 未连接时禁用保存 / POST 内容；
+ * M15 的新事件与按事件出现的字段、驱动者与维护者、思考级别、时限换算、预设按钮（含应用预设门禁）、编辑时的模型池。
+ */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "../../api/client";
-import type { GitHubStatus, GitHubTrigger } from "../../api/github-queries";
+import type {
+	GitHubPreset,
+	GitHubStatus,
+	GitHubTrigger,
+} from "../../api/github-queries";
 import i18n from "../../i18n";
 import { TRIGGER_PRESETS } from "../../lib/trigger-presets";
 import { GitHubTriggers } from "./GitHubTriggers";
@@ -49,6 +62,51 @@ const TRIGGER: GitHubTrigger = {
 	updatedAt: 1,
 };
 
+const PRESETS: GitHubPreset[] = [
+	{
+		id: "robomp_triage",
+		name: "robomp 分诊",
+		trigger: {
+			name: "robomp 分诊",
+			event: "issue_opened",
+			prompt: "Triage {{repo}}#{{number}}",
+			drivers: "writers_and_author",
+			implAuth: true,
+			maxDurationSec: 7200,
+			thinking: "high",
+		},
+		gates: { push: true, pr: true, checkCmd: "make check" },
+	},
+	{
+		id: "robomp_release",
+		name: "robomp 发布哨兵",
+		trigger: {
+			name: "robomp 发布哨兵",
+			event: "workflow_run_completed",
+			prompt: "Fix the release",
+			releasePrefix: "chore: release ",
+		},
+	},
+];
+
+/** 新建规则不改任何 M15 字段时的请求体默认部分。 */
+const DEFAULTS = {
+	announce: true,
+	drivers: "writers_and_author",
+	maintainers: [],
+	reviewerBots: [],
+	models: [],
+	thinking: "",
+	implAuth: false,
+	commentOnlyReviews: false,
+	autocloseHours: 4,
+	maxDurationSec: 0,
+	completionReminders: false,
+};
+
+/** 无障碍名以某个文案开头（Field 的名字里还带着说明）。 */
+const starts = (k: string) => (name: string) => name.startsWith(T(k));
+
 let sent: { method: string; path: string; body: unknown }[];
 
 function renderList(triggers: GitHubTrigger[], status = STATUS) {
@@ -65,6 +123,8 @@ function renderList(triggers: GitHubTrigger[], status = STATUS) {
 					: Response.json({ ...TRIGGER, ...(body as object) }, { status: 201 });
 			}
 			if (u.pathname === "/api/v1/github") return Response.json(status);
+			if (u.pathname === "/api/v1/github/presets")
+				return Response.json({ presets: PRESETS });
 			if (u.pathname === `/api/v1/projects/${PROJECT.id}/github/triggers`)
 				return Response.json({ triggers });
 			return Response.json({});
@@ -194,7 +254,7 @@ describe("GitHubTriggers", () => {
 		expect(screen.queryByText(T("github.triggers.agentMissing"))).toBeNull();
 	});
 
-	it("保存：POST body 含 name、event、label、prompt、announce", async () => {
+	it("保存：POST body 含 name、event、label、prompt、announce 与 M15 默认值", async () => {
 		renderList([]);
 		await openNew();
 		fireEvent.change(
@@ -220,6 +280,7 @@ describe("GitHubTriggers", () => {
 			method: "POST",
 			path: `/api/v1/projects/${PROJECT.id}/github/triggers`,
 			body: {
+				...DEFAULTS,
 				name: "分诊",
 				event: "issue_labeled",
 				label: "oryn",
@@ -230,6 +291,225 @@ describe("GitHubTriggers", () => {
 		await waitFor(() =>
 			expect(screen.queryByTestId("github-trigger-dialog")).toBeNull(),
 		);
+	});
+
+	it("事件下拉含 M15 新事件；「只发 COMMENT」只在外部 PR、发布前缀只在发布哨兵出现", async () => {
+		renderList([]);
+		await openNew();
+		const values = within(eventSelect())
+			.getAllByRole("option")
+			.map((o) => (o as HTMLOptionElement).value);
+		expect(values).toEqual([
+			"issue_opened",
+			"issue_reopened",
+			"issue_labeled",
+			"mention",
+			"pull_request_opened",
+			"workflow_run_completed",
+		]);
+		const commentOnly = () =>
+			screen.queryByRole("checkbox", {
+				name: T("github.triggers.commentOnlyReviews"),
+			});
+		const prefix = () =>
+			screen.queryByRole("textbox", {
+				name: starts("github.triggers.releasePrefix"),
+			});
+		expect(commentOnly()).toBeNull();
+		expect(prefix()).toBeNull();
+		fireEvent.change(eventSelect(), {
+			target: { value: "pull_request_opened" },
+		});
+		expect(commentOnly()).toBeInTheDocument();
+		expect(prefix()).toBeNull();
+		fireEvent.change(eventSelect(), {
+			target: { value: "workflow_run_completed" },
+		});
+		expect(commentOnly()).toBeNull();
+		expect(prefix()).toHaveValue("chore: bump version to ");
+		// 驱动者默认「有写权限的人和作者」
+		expect(
+			screen.getByRole("radio", {
+				name: starts("github.triggers.drivers.writers_and_author"),
+			}),
+		).toBeChecked();
+	});
+
+	it("保存 M15 字段：驱动者、维护者（去 @ 去重）、评审机器人、思考级别、时限分钟换算秒、发布前缀", async () => {
+		renderList([]);
+		await openNew();
+		fireEvent.change(
+			screen.getByRole("textbox", { name: T("github.triggers.name") }),
+			{ target: { value: "发布" } },
+		);
+		fireEvent.change(
+			screen.getByRole("textbox", {
+				name: new RegExp(T("github.triggers.prompt")),
+			}),
+			{ target: { value: "Fix it" } },
+		);
+		fireEvent.change(eventSelect(), {
+			target: { value: "workflow_run_completed" },
+		});
+		fireEvent.click(
+			screen.getByRole("radio", {
+				name: starts("github.triggers.drivers.anyone"),
+			}),
+		);
+		fireEvent.change(
+			screen.getByRole("textbox", {
+				name: starts("github.triggers.maintainers"),
+			}),
+			{ target: { value: "@alice, bob alice" } },
+		);
+		fireEvent.change(
+			screen.getByRole("textbox", {
+				name: starts("github.triggers.reviewerBots"),
+			}),
+			{ target: { value: "coderabbitai[bot]" } },
+		);
+		fireEvent.change(
+			screen.getByRole("combobox", { name: T("github.triggers.thinking") }),
+			{ target: { value: "xhigh" } },
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", { name: T("github.triggers.implAuth") }),
+		);
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: T("github.triggers.completionReminders"),
+			}),
+		);
+		fireEvent.change(
+			screen.getByRole("spinbutton", {
+				name: starts("github.triggers.autocloseHours"),
+			}),
+			{ target: { value: "6" } },
+		);
+		const duration = screen.getByRole("spinbutton", {
+			name: starts("github.triggers.maxDuration"),
+		});
+		fireEvent.change(duration, { target: { value: "-5" } });
+		expect(saveButton()).toBeDisabled();
+		fireEvent.change(duration, { target: { value: "90" } });
+		fireEvent.change(
+			screen.getByRole("textbox", {
+				name: starts("github.triggers.releasePrefix"),
+			}),
+			{ target: { value: "release: v" } },
+		);
+		fireEvent.click(saveButton());
+		await waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]?.body).toEqual({
+			...DEFAULTS,
+			name: "发布",
+			event: "workflow_run_completed",
+			prompt: "Fix it",
+			drivers: "anyone",
+			maintainers: ["alice", "bob"],
+			reviewerBots: ["coderabbitai[bot]"],
+			thinking: "xhigh",
+			implAuth: true,
+			completionReminders: true,
+			autocloseHours: 6,
+			maxDurationSec: 5400,
+			releasePrefix: "release: v",
+		});
+	});
+
+	it("预设：点按钮填满表单；带门禁的预设可应用到本项目（PATCH githubGates）", async () => {
+		renderList([]);
+		await openNew();
+		fireEvent.click(await screen.findByRole("button", { name: "robomp 分诊" }));
+		expect(
+			screen.getByRole("textbox", { name: T("github.triggers.name") }),
+		).toHaveValue("robomp 分诊");
+		expect(eventSelect()).toHaveValue("issue_opened");
+		expect(
+			screen.getByRole("textbox", {
+				name: new RegExp(T("github.triggers.prompt")),
+			}),
+		).toHaveValue("Triage {{repo}}#{{number}}");
+		expect(
+			screen.getByRole("checkbox", { name: T("github.triggers.implAuth") }),
+		).toBeChecked();
+		expect(
+			screen.getByRole("spinbutton", {
+				name: starts("github.triggers.maxDuration"),
+			}),
+		).toHaveValue(120);
+		expect(
+			screen.getByRole("combobox", { name: T("github.triggers.thinking") }),
+		).toHaveValue("high");
+		expect(screen.getByText(T("github.triggers.presetGates"))).toBeVisible();
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: T("github.triggers.presetGatesApply"),
+			}),
+		);
+		await waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toEqual({
+			method: "PATCH",
+			path: `/api/v1/projects/${PROJECT.id}`,
+			body: { githubGates: { push: true, pr: true, checkCmd: "make check" } },
+		});
+		expect(
+			await screen.findByText(T("github.triggers.presetGatesApplied")),
+		).toBeInTheDocument();
+		// 不带门禁的预设：提示消失
+		fireEvent.click(screen.getByRole("button", { name: "robomp 发布哨兵" }));
+		expect(screen.queryByText(T("github.triggers.presetGates"))).toBeNull();
+		expect(
+			screen.getByRole("textbox", {
+				name: starts("github.triggers.releasePrefix"),
+			}),
+		).toHaveValue("chore: release ");
+	});
+
+	it("编辑：回填 M15 字段；移除模型后 PATCH 带上剩下的模型池", async () => {
+		renderList([
+			{
+				...TRIGGER,
+				models: [
+					{ provider: "anthropic", id: "claude-sonnet-4-5" },
+					{ provider: "openai", id: "gpt-5" },
+				],
+				maxDurationSec: 1800,
+				maintainers: ["alice"],
+			},
+		]);
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: T("github.triggers.edit").replace("{{name}}", TRIGGER.name),
+			}),
+		);
+		const dialog = await screen.findByTestId("github-trigger-dialog");
+		// 编辑时不显示预设按钮
+		expect(within(dialog).queryByTestId("trigger-presets")).toBeNull();
+		expect(within(dialog).getAllByTestId("trigger-model")).toHaveLength(2);
+		expect(
+			screen.getByRole("textbox", {
+				name: starts("github.triggers.maintainers"),
+			}),
+		).toHaveValue("alice");
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: T("github.triggers.removeModel").replace(
+					"{{model}}",
+					"openai/gpt-5",
+				),
+			}),
+		);
+		expect(within(dialog).getAllByTestId("trigger-model")).toHaveLength(1);
+		fireEvent.click(saveButton());
+		await waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]?.method).toBe("PATCH");
+		expect(sent[0]?.body).toMatchObject({
+			models: [{ provider: "anthropic", id: "claude-sonnet-4-5" }],
+			maxDurationSec: 1800,
+			maintainers: ["alice"],
+			label: "oryn",
+		});
 	});
 
 	it("启停开关发 PATCH { enabled }", async () => {

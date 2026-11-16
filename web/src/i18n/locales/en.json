@@ -3875,7 +3875,10 @@
 			"dialogTitle": "Connect {{slot}}",
 			"continueHere": "Continue in this browser",
 			"copyLink": "Copy link",
-			"copyHint": "Open it in a browser signed in to the target GitHub account. Valid for 10 minutes."
+			"copyHint": "Open it in a browser signed in to the target GitHub account. Valid for 10 minutes.",
+			"scopes": "Granted:",
+			"scopesMissing": "Missing scopes",
+			"missingHint": "The authorization is missing these scopes and some actions will fail. Reconnect to grant them:"
 		},
 		"automation": {
 			"title": "Automation",
@@ -3910,7 +3913,14 @@
 				"reviews": "Deliver review feedback",
 				"comments": "Deliver comments",
 				"ci": "Deliver CI failures"
-			}
+			},
+			"bindStatus": {
+				"not_found": "My account can't read {{repo}}: it doesn't exist, or this account has no access to it.",
+				"org_restricted": "The organization that owns {{repo}} restricts OAuth App access. An organization admin needs to approve Oryn's OAuth App.",
+				"sso_required": "The organization that owns {{repo}} enforces SAML SSO. Authorize Oryn's grant for SSO on GitHub, then reconnect my account."
+			},
+			"unboundPending": "Not linked yet. It links automatically once my account can read this repository.",
+			"unboundNoUser": "Connect My account and this repository links automatically."
 		},
 		"triggers": {
 			"title": "Triggers",
@@ -3946,7 +3956,141 @@
 				"mention": "Respond to @"
 			},
 			"prompt": "Prompt",
-			"promptHint": "Variables: {{vars}}. The issue's title, body, author, labels and the triggering comment are attached after the prompt as a data block."
+			"promptHint": "Variables: {{vars}}. The issue's title, body, author, labels and the triggering comment are attached after the prompt as a data block.",
+			"startFrom": "Start from a preset",
+			"presetGates": "This preset comes with push and pull request gates. Applying them replaces this project's current gates.",
+			"presetGatesApply": "Apply the gates to this project",
+			"presetGatesApplied": "Gates applied",
+			"sectionDrivers": "Who can drive it",
+			"drivers": {
+				"label": "Drivers",
+				"writers": "People with write access",
+				"writersHint": "OWNER, MEMBER or COLLABORATOR of the repository, or anyone with write or admin permission on it.",
+				"writers_and_author": "Write access and the author",
+				"writers_and_authorHint": "Everyone above, plus the author of the issue or pull request.",
+				"anyone": "Anyone",
+				"anyoneHint": "Anyone can drive it, rate limited per person: CONTRIBUTOR 10 times an hour, everyone else 3. Needs the agent account."
+			},
+			"maintainers": "Maintainers",
+			"maintainersHint": "GitHub logins, comma separated. They can use /model and /thinking and can authorize implementation.",
+			"reviewerBots": "Reviewer bots",
+			"reviewerBotsHint": "Comments from these bots count as maintainer instructions without an @ mention.",
+			"sectionModel": "Model",
+			"models": "Model pool",
+			"modelsDefault": "None picked: the project or global default model is used.",
+			"modelsHint": "Each run picks one at random.",
+			"addModel": "Add model",
+			"removeModel": "Remove {{model}}",
+			"thinking": "Thinking level",
+			"thinkingDefault": "Default",
+			"sectionTask": "Task",
+			"implAuth": "Require authorization to implement",
+			"implAuthHint": "Opening a pull request on this repository is allowed only for bug or documentation issues, or after a maintainer adds the accepted label or comments go ahead.",
+			"commentOnlyReviews": "Reviews post COMMENT only",
+			"commentOnlyReviewsHint": "APPROVE and REQUEST_CHANGES reviews are refused.",
+			"completionReminders": "Completion reminders",
+			"completionRemindersHint": "If the task hasn't moved on when a turn ends, remind the agent to continue (at most twice).",
+			"autocloseHours": "Auto-close wait (hours)",
+			"autocloseHoursHint": "After the agent schedules an auto-close, the issue closes if its author hasn't reacted 👎 by then.",
+			"maxDuration": "Time limit (minutes)",
+			"maxDurationHint": "When it runs out, the current turn is aborted and you're notified. Leave empty for no limit.",
+			"maxDurationNone": "No limit",
+			"releasePrefix": "Version commit prefix",
+			"releasePrefixHint": "Only workflow runs whose head commit message starts with this are handled."
+		},
+		"gates": {
+			"title": "Push and pull request gates",
+			"intro": "Enforced by the egress proxy: before pushing or opening a pull request, the agent must pass the commands below with github_prepare.",
+			"push": "Push gate",
+			"pr": "Pull request gate",
+			"fixCmd": "Fix command",
+			"fixCmdHint": "For example a formatter. Its changes are folded into the HEAD commit.",
+			"checkCmd": "Check command",
+			"checkCmdHint": "Runs before a push, 600 second limit.",
+			"testCmd": "Test command",
+			"testCmdHint": "Also runs before a pull request, 3600 second limit.",
+			"prHeadings": "Required pull request headings",
+			"prHeadingsHint": "One per line, without ##.",
+			"requireClosingRef": "Pull request body must contain Fixes, Closes or Resolves #N"
+		},
+		"task": {
+			"issue": {
+				"new": "New",
+				"reproducing": "Reproducing",
+				"fixing": "Fixing",
+				"reviewing": "Reviewing",
+				"opened": "PR opened",
+				"needs_info": "Needs info",
+				"merged": "Merged",
+				"closed": "Closed",
+				"abandoned": "Abandoned"
+			},
+			"release": {
+				"awaiting_ci": "Awaiting CI",
+				"fixing": "Fixing",
+				"green": "Green",
+				"failed": "Failed",
+				"superseded": "Superseded"
+			},
+			"issueLabel": "GitHub issue {{repo}}{{subject}}: {{state}}",
+			"releaseLabel": "Release {{repo}} {{subject}}: {{state}}"
+		},
+		"oauth": {
+			"title": "OAuth App",
+			"intro": "Oryn connects to GitHub through an OAuth App you register yourself. Create one on GitHub with the callback URL below, then paste its Client ID and Client Secret here.",
+			"register": "Register an OAuth App on GitHub",
+			"callback": "Callback URL",
+			"callbackHint": "Use it as the OAuth App's Authorization callback URL.",
+			"copyCallback": "Copy callback URL",
+			"clientId": "Client ID",
+			"clientSecret": "Client Secret",
+			"secretKeep": "Leave empty to keep the saved secret.",
+			"webhookBase": "Webhook base URL",
+			"webhookBaseHint": "Prefix for the webhooks Oryn creates on repositories; defaults to public_url. When GitHub can't reach it, Oryn polls the delivery log instead.",
+			"saved": "Saved",
+			"delete": "Delete configuration",
+			"deleteConfirm": "Delete the OAuth App configuration? Oryn first removes the webhooks it created on repositories, then disconnects My account and the Agent account. The OAuth App itself stays on GitHub."
+		},
+		"hooks": {
+			"title": "Repository webhooks",
+			"intro": "Oryn creates one webhook on each linked repository where my account is an admin. Repositories without a working webhook are polled.",
+			"empty": "No linked repositories yet.",
+			"status": {
+				"active": "Active",
+				"no_admin": "No admin access",
+				"org_restricted": "Org restricted",
+				"sso_required": "SSO required",
+				"error": "Error"
+			},
+			"explain": {
+				"active": "The webhook works and events arrive live; missed ones are filled in from the delivery log.",
+				"no_admin": "My account isn't an admin of this repository, so no webhook. Polled every 60 seconds instead.",
+				"org_restricted": "The organization restricts OAuth App access. An admin must approve the app before a webhook can be created.",
+				"sso_required": "The organization enforces SAML SSO. Authorize this grant for SSO.",
+				"error": "Creating or repairing the webhook failed. Oryn retries periodically."
+			},
+			"requestApproval": "Request organization approval",
+			"authorizeSso": "Authorize SSO",
+			"lastDelivery": "Last delivery {{when}} · {{source}}"
+		},
+		"audit": {
+			"title": "Audit",
+			"intro": "GitHub writes the agent made through the egress proxy, kept for 30 days.",
+			"repoFilter": "Filter by repository",
+			"filter": "Filter",
+			"clearFilter": "Clear filter",
+			"empty": "No entries.",
+			"more": "Load more",
+			"col": {
+				"time": "Time",
+				"thread": "Thread",
+				"slot": "Identity",
+				"method": "Method",
+				"op": "Operation",
+				"repo": "Repository",
+				"status": "Status",
+				"gate": "Gate"
+			}
 		}
 	}
 }

@@ -3,7 +3,8 @@
  * 标题胶囊两行：标题（标题卡图标 / 线程色）+ 一行状态（Space、项目、orb / runner、定时、公开）。线程的状态再多也只挤在这一行，
  * 页头的按钮不随功能增多；全部操作都在点标题打开的标题菜单里。
  *
- * 标题菜单：顶部三个常用操作（归档、分享、会话树）；然后是带说明的状态行（运行环境、定时、公开链接、关联的 GitHub PR），只在线程真有这些状态时出现；
+ * 标题菜单：顶部三个常用操作（归档、分享、会话树）；然后是带说明的状态行（运行环境、定时、公开链接、关联的 GitHub PR、
+ * GitHub 任务状态），只在线程真有这些状态时出现；
  * 最后是其余操作，按「整理 / 派生 / 危险」分组。带子菜单的项在菜单里原地换页（顶部「返回」）。
  * 打开时页头下方铺一层遮罩，标题胶囊留在遮罩之上；点遮罩、按 Esc 或选中一项后关闭，焦点回到标题胶囊。
  *
@@ -47,6 +48,9 @@ import { Icon } from "../ui/icons";
 import { OrbBead, orbVisual } from "../ui/OrbBead";
 import type { MenuItem } from "../ui/primitives";
 import {
+	githubTaskIcon,
+	githubTaskText,
+	githubTaskUrl,
 	hueVar,
 	orbStatus,
 	shortPath,
@@ -229,6 +233,17 @@ export function CompactThreadHeader({
 			sub: prStatusText(p, t),
 			onSelect: () => openPull(p),
 		});
+	const task = thread?.githubTask;
+	if (task) {
+		const { subject, state } = githubTaskText(task, t);
+		status.push({
+			key: "githubTask",
+			icon: githubTaskIcon(task),
+			label: `${task.repo} ${subject}`,
+			sub: state,
+			onSelect: () => window.open(githubTaskUrl(task), "_blank", "noopener"),
+		});
+	}
 	// 原生菜单的说明行：网页说明是字符串的原样给原生（运行环境行上面自己给了带状态珠的那份）
 	for (const row of status)
 		if (typeof row.sub === "string")
