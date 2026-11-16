@@ -402,7 +402,8 @@ func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params a
 	WriteJSON(w, http.StatusCreated, a.API())
 }
 
-// ExportArtifact 对应 `GET artifacts/{id}/export?version=&format=`：`html` 回单个文件，`zip` 流式打包。
+// ExportArtifact 对应 `GET artifacts/{id}/export?version=&format=`：`html` 回单个文件，`zip` 流式打包，`md` 回文档
+// （有图片时为 zip），`pdf` 回控制面渲染的幻灯片（渲染在写响应头之前完成，不可用时回 503 render_unavailable）。
 // 一律 attachment，带 `Content-Security-Policy: sandbox` 与 nosniff（主域上不把 artifact 当页面渲染）。
 func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.ExportArtifactParams) {
 	svc, ok := s.artifactsSvc(w)

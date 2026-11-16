@@ -1,6 +1,7 @@
 /**
- * artifact 的更多菜单（计划 M14 2.5、2.7、4.3）：卡片的「更多」按钮、卡片右键、查看器顶栏的「更多」共用同一份条目。
- * - 打开（卡片）、重新加载（仅查看器）、在浏览器中打开、导出…、下载 PNG（仅页面类型；渲染不可用时置灰并给出原因）、
+ * artifact 的更多菜单（计划 M14 2.5、2.7、4.3、5.4）：卡片的「更多」按钮、卡片右键、查看器顶栏的「更多」共用同一份条目。
+ * - 打开（卡片）、重新加载（仅查看器）、在浏览器中打开、导出…（页面与画布导出原始文件；文档的子菜单是 Word、Markdown；
+ *   幻灯片的子菜单是 PowerPoint、PDF，渲染不可用时 PDF 置灰并给出原因）、下载 PNG（仅页面类型；渲染不可用时置灰并给出原因）、
  *   重命名…、版本历史、打开线程（有创建线程且当前不在它里面）、删除。
  * - 回收站里的条目只有恢复与永久删除…。
  * - 删除不弹框：移到「最近删除」，toast 带「撤销」。导出与下载 PNG 用 toast 报告进度、结果与失败（可重试）。
@@ -20,7 +21,10 @@ import {
 	useDeleteArtifact,
 	useUndeleteArtifact,
 } from "../../api/artifact-queries";
+import { api, unwrap } from "../../api/client";
 import { dispositionName, downloadBlob } from "../../lib/artifacts/download";
+import { exportDocx } from "../../lib/artifacts/export-docx";
+import { exportPptx } from "../../lib/artifacts/export-pptx";
 import { showToast } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
 import {
@@ -73,6 +77,85 @@ export async function exportRaw(
 			action: {
 				label: t("artifacts.export.retry"),
 				run: () => void exportRaw(qc, a, t),
+			},
+		});
+	}
+}
+
+/** 文档与幻灯片的导出格式：`md`、`pdf` 由服务端生成，`docx`、`pptx` 在浏览器里生成。 */
+export type TypedExportFormat = "docx" | "md" | "pptx" | "pdf";
+
+/** 读版本里的一个文件的字节。 */
+async function fetchArtifactFile(
+	id: string,
+	version: number,
+	path: string,
+): Promise<Uint8Array> {
+	const res = await api.GET("/api/v1/artifacts/{id}/file", {
+		params: { path: { id }, query: { version, path } },
+		parseAs: "arrayBuffer",
+	});
+	return new Uint8Array(await unwrap(Promise.resolve(res)));
+}
+
+/**
+ * 导出文档（Word、Markdown）或幻灯片（PowerPoint、PDF）：取卡片上的最新版本，入口与图片都从这个版本读。
+ * 图片转不了时用占位代替，完成的 toast 里说明有几张。
+ */
+export async function exportTyped(
+	a: Pick<Artifact, "id" | "title" | "version">,
+	format: TypedExportFormat,
+	t: TFunction,
+): Promise<void> {
+	const id = `artifact-export:${a.id}`;
+	showToast({
+		id,
+		busy: true,
+		text: t("artifacts.export.running", { title: a.title }),
+	});
+	try {
+		let missing = 0;
+		if (format === "md" || format === "pdf") {
+			const { blob, disposition } = await fetchArtifactExport(
+				a.id,
+				format,
+				a.version,
+			);
+			downloadBlob(
+				blob,
+				dispositionName(disposition) ?? `${a.title}.${format}`,
+			);
+		} else {
+			const readFile = (path: string) =>
+				fetchArtifactFile(a.id, a.version, path);
+			const entry = new TextDecoder().decode(
+				await readFile(format === "docx" ? "document.md" : "slides.json"),
+			);
+			const out =
+				format === "docx"
+					? await exportDocx({ title: a.title, markdown: entry, readFile })
+					: await exportPptx({ title: a.title, deckText: entry, readFile });
+			// 标题里的 / 会被当成目录分隔（同服务端）
+			downloadBlob(out.blob, `${a.title.replaceAll("/", "_")}.${format}`);
+			missing = out.missing.length;
+		}
+		showToast({
+			id,
+			text: missing
+				? t("artifacts.export.doneMissing", { title: a.title, count: missing })
+				: t("artifacts.export.done", { title: a.title }),
+		});
+	} catch (e) {
+		showToast({
+			id,
+			tone: "err",
+			text: t("artifacts.export.failed", {
+				title: a.title,
+				reason: describeError(e, t),
+			}),
+			action: {
+				label: t("artifacts.export.retry"),
+				run: () => void exportTyped(a, format, t),
 			},
 		});
 	}
@@ -236,7 +319,48 @@ export function ArtifactMenu({
 									onSelect: () => void exportRaw(qc, a, t),
 								},
 							]
-						: []),
+						: [
+								{
+									key: "export",
+									icon: "export" as const,
+									label: t("artifacts.menu.export"),
+									attrs: { "data-menu": "export" } as const,
+									children:
+										a.type === "document"
+											? [
+													{
+														key: "docx",
+														label: t("artifacts.export.docx"),
+														onSelect: () => void exportTyped(a, "docx", t),
+													},
+													{
+														key: "md",
+														label: t("artifacts.export.md"),
+														onSelect: () => void exportTyped(a, "md", t),
+													},
+												]
+											: [
+													{
+														key: "pptx",
+														label: t("artifacts.export.pptx"),
+														onSelect: () => void exportTyped(a, "pptx", t),
+													},
+													{
+														key: "pdf",
+														label: t("artifacts.export.pdf"),
+														disabled: !render,
+														...(!render
+															? {
+																	title:
+																		renderReason ??
+																		t("artifacts.menu.pngUnavailable"),
+																}
+															: {}),
+														onSelect: () => void exportTyped(a, "pdf", t),
+													},
+												],
+								},
+							]),
 					...(a.kind === "web"
 						? [
 								{

@@ -1,4 +1,4 @@
-// 测试夹具：覆盖八种版式的一份幻灯片（查看器与导出的测试共用）。
+// 测试夹具：覆盖八种版式的一份幻灯片（查看器与导出的测试共用），以及导出测试用的最小 PNG。
 
 import type { Deck } from "./slides";
 
@@ -57,3 +57,15 @@ export const EIGHT_LAYOUT_DECK: Deck = {
 		},
 	],
 };
+
+/** 只有文件头的 PNG（IHDR 里写宽高）：够读尺寸与嵌入 Word / PowerPoint，导出的测试用。 */
+export function tinyPng(width: number, height: number): Uint8Array {
+	const b = new Uint8Array(33);
+	b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+	b.set([0x49, 0x48, 0x44, 0x52], 12);
+	const dv = new DataView(b.buffer);
+	dv.setUint32(16, width);
+	dv.setUint32(20, height);
+	b.set([8, 6, 0, 0, 0], 24);
+	return b;
+}

@@ -1796,7 +1796,12 @@
 			"running": "正在导出“{{title}}”…",
 			"done": "已导出“{{title}}”",
 			"failed": "无法导出“{{title}}”：{{reason}}",
-			"retry": "重试"
+			"retry": "重试",
+			"doneMissing": "已导出“{{title}}”，有 {{count}} 张图片无法转换，用占位框代替",
+			"docx": "Word 文档（.docx）",
+			"md": "Markdown",
+			"pptx": "PowerPoint（.pptx）",
+			"pdf": "PDF"
 		},
 		"png": {
 			"running": "正在渲染“{{title}}”…",

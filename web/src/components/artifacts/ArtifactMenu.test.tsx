@@ -1,6 +1,6 @@
 /**
- * ArtifactMenu：导出原始文件（单文件 `format=html`、多文件 `format=zip`）、下载 PNG 在渲染不可用时置灰并给出原因、
- * 删除后 toast 带撤销、回收站里只有恢复与永久删除。
+ * ArtifactMenu：导出原始文件（单文件 `format=html`、多文件 `format=zip`）、文档与幻灯片的导出子菜单、下载 PNG 与 PDF
+ * 在渲染不可用时置灰并给出原因、删除后 toast 带撤销、回收站里只有恢复与永久删除。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -14,6 +14,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import i18n from "../../i18n";
+import { EIGHT_LAYOUT_DECK } from "../../lib/artifacts/slides-fixture";
 import { dismissToast, toastsStore } from "../../state/toasts";
 import { ArtifactMenu, type ArtifactMenuPlace } from "./ArtifactMenu";
 
@@ -36,12 +37,15 @@ let files: string[];
 let requests: { method: string; url: URL }[];
 let downloads: string[];
 
-function mount(place: ArtifactMenuPlace = "card") {
+function mount(
+	place: ArtifactMenuPlace = "card",
+	over: Partial<Schemas["Artifact"]> = {},
+) {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={qc}>
 			<MemoryRouter>
-				<ArtifactMenu artifact={ARTIFACT} place={place} />
+				<ArtifactMenu artifact={{ ...ARTIFACT, ...over }} place={place} />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -79,13 +83,20 @@ beforeEach(() => {
 					threads: [],
 				});
 			if (url.pathname === `/api/v1/artifacts/${ID}/export`) {
-				const zip = url.searchParams.get("format") === "zip";
-				return new Response(zip ? "PK" : "<h1>hi</h1>", {
+				const format = url.searchParams.get("format") ?? "";
+				return new Response(format === "zip" ? "PK" : "<h1>hi</h1>", {
 					headers: {
-						"Content-Type": zip ? "application/zip" : "text/html",
-						"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`本周习惯打卡.${zip ? "zip" : "html"}`)}`,
+						"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`本周习惯打卡.${format}`)}`,
 					},
 				});
+			}
+			if (url.pathname === `/api/v1/artifacts/${ID}/file`) {
+				if (url.searchParams.get("path") === "slides.json")
+					return new Response(JSON.stringify(EIGHT_LAYOUT_DECK));
+				return Response.json(
+					{ code: "not_found", message: "没有这个文件" },
+					{ status: 404 },
+				);
 			}
 			if (url.pathname === "/api/v1/artifacts/capabilities")
 				return Response.json({
@@ -215,6 +226,49 @@ describe("ArtifactMenu", () => {
 		expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
 			i18n.t("artifacts.menu.restore"),
 			i18n.t("artifacts.menu.purge"),
+		]);
+	});
+
+	it("文档：导出子菜单是 Word 与 Markdown，Markdown 由服务端按卡片上的版本生成", async () => {
+		mount("card", { type: "document", kind: "document" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		fireEvent.click(item(i18n.t("artifacts.menu.export")));
+		expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
+			i18n.t("artifacts.export.docx"),
+			i18n.t("artifacts.export.md"),
+		]);
+		fireEvent.click(item(i18n.t("artifacts.export.md")));
+		await waitFor(() => expect(downloads).toEqual(["本周习惯打卡.md"]));
+		const req = requests.find((r) => r.url.pathname.endsWith("/export"));
+		expect(req?.url.searchParams.get("format")).toBe("md");
+		expect(req?.url.searchParams.get("version")).toBe("2");
+	});
+
+	it("幻灯片：渲染不可用时 PDF 置灰并给出原因；PowerPoint 在浏览器里生成，取不到的图片在 toast 里说明", async () => {
+		mount("card", { type: "slides", kind: "slides" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		fireEvent.click(item(i18n.t("artifacts.menu.export")));
+		await waitFor(() =>
+			expect(item(i18n.t("artifacts.export.pdf"))).toHaveAttribute(
+				"title",
+				"找不到 Chromium",
+			),
+		);
+		expect(item(i18n.t("artifacts.export.pdf"))).toBeDisabled();
+		fireEvent.click(item(i18n.t("artifacts.export.pptx")));
+		await waitFor(() => expect(downloads).toEqual(["本周习惯打卡.pptx"]));
+		expect(exportRequests()).toEqual([]);
+		expect(
+			requests
+				.filter((r) => r.url.pathname.endsWith("/file"))
+				.map((r) => r.url.searchParams.get("path"))
+				.toSorted(),
+		).toEqual(["images/chart.png", "images/launch.png", "slides.json"]);
+		expect(toastsStore.getState().toasts.map((t) => t.text)).toEqual([
+			i18n.t("artifacts.export.doneMissing", {
+				title: ARTIFACT.title,
+				count: 2,
+			}),
 		]);
 	});
 });

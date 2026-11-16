@@ -1796,7 +1796,12 @@
 			"running": "Exporting “{{title}}”…",
 			"done": "Exported “{{title}}”",
 			"failed": "Couldn't export “{{title}}”: {{reason}}",
-			"retry": "Retry"
+			"retry": "Retry",
+			"doneMissing": "Exported “{{title}}”; images that couldn't be converted: {{count}} (shown as placeholders)",
+			"docx": "Word document (.docx)",
+			"md": "Markdown",
+			"pptx": "PowerPoint (.pptx)",
+			"pdf": "PDF"
 		},
 		"png": {
 			"running": "Rendering “{{title}}”…",
