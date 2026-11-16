@@ -688,7 +688,7 @@ func (q *Queries) GetGithubReleaseByThread(ctx context.Context, threadID *string
 }
 
 const getGithubRepoWatch = `-- name: GetGithubRepoWatch :one
-SELECT repo_id, full_name, etag_issues, etag_comments, etag_pulls, etag_runs, since_at, updated_at FROM github_repo_watches WHERE repo_id = ?1
+SELECT repo_id, full_name, etag_issues, etag_comments, etag_runs, since_at, updated_at FROM github_repo_watches WHERE repo_id = ?1
 `
 
 func (q *Queries) GetGithubRepoWatch(ctx context.Context, repoID int64) (GithubRepoWatch, error) {
@@ -699,7 +699,6 @@ func (q *Queries) GetGithubRepoWatch(ctx context.Context, repoID int64) (GithubR
 		&i.FullName,
 		&i.EtagIssues,
 		&i.EtagComments,
-		&i.EtagPulls,
 		&i.EtagRuns,
 		&i.SinceAt,
 		&i.UpdatedAt,
@@ -1681,7 +1680,7 @@ func (q *Queries) ListGithubReleasesByRepo(ctx context.Context, repoID int64) ([
 }
 
 const listGithubRepoWatches = `-- name: ListGithubRepoWatches :many
-SELECT repo_id, full_name, etag_issues, etag_comments, etag_pulls, etag_runs, since_at, updated_at FROM github_repo_watches ORDER BY repo_id
+SELECT repo_id, full_name, etag_issues, etag_comments, etag_runs, since_at, updated_at FROM github_repo_watches ORDER BY repo_id
 `
 
 func (q *Queries) ListGithubRepoWatches(ctx context.Context) ([]GithubRepoWatch, error) {
@@ -1698,7 +1697,6 @@ func (q *Queries) ListGithubRepoWatches(ctx context.Context) ([]GithubRepoWatch,
 			&i.FullName,
 			&i.EtagIssues,
 			&i.EtagComments,
-			&i.EtagPulls,
 			&i.EtagRuns,
 			&i.SinceAt,
 			&i.UpdatedAt,
@@ -2686,15 +2684,14 @@ func (q *Queries) SetGithubReleaseThread(ctx context.Context, arg SetGithubRelea
 
 const setGithubRepoWatchState = `-- name: SetGithubRepoWatchState :exec
 UPDATE github_repo_watches
-SET etag_issues = ?1, etag_comments = ?2, etag_pulls = ?3,
-    etag_runs = ?4, since_at = ?5, updated_at = ?6
-WHERE repo_id = ?7
+SET etag_issues = ?1, etag_comments = ?2,
+    etag_runs = ?3, since_at = ?4, updated_at = ?5
+WHERE repo_id = ?6
 `
 
 type SetGithubRepoWatchStateParams struct {
 	EtagIssues   *string `json:"etagIssues"`
 	EtagComments *string `json:"etagComments"`
-	EtagPulls    *string `json:"etagPulls"`
 	EtagRuns     *string `json:"etagRuns"`
 	SinceAt      *int64  `json:"sinceAt"`
 	UpdatedAt    int64   `json:"updatedAt"`
@@ -2705,7 +2702,6 @@ func (q *Queries) SetGithubRepoWatchState(ctx context.Context, arg SetGithubRepo
 	_, err := q.db.ExecContext(ctx, setGithubRepoWatchState,
 		arg.EtagIssues,
 		arg.EtagComments,
-		arg.EtagPulls,
 		arg.EtagRuns,
 		arg.SinceAt,
 		arg.UpdatedAt,

@@ -327,3 +327,75 @@ func TestWatchRepoLevel(t *testing.T) {
 	_, err = e.st.Q.GetGithubRepoWatch(e.ctx, 42)
 	assert.True(t, isNoRows(err), "规则停用后注销")
 }
+
+// 逐项查询额度用完时进度可以续跑：21 个早就存在的 issue 在同一秒被打上标签，第一轮只查得了 20 条时间线，游标停在第 21 项；
+// 第二轮补上最后一个。打标签事件恰好各处理一次；模拟重启（已查集合丢失）后再轮询也不重复，也不漏。
+func TestWatchRepoLookupBudgetResumes(t *testing.T) {
+	e := newTriggerEnv(t)
+	e.s.cfg.AfterFunc = (&fakeAfter{}).AfterFunc
+	e.trigger(apigen.GitHubTriggerInput{Name: "triage", Event: apigen.IssueOpened, Prompt: "look"})
+	e.tick() // 基线
+
+	old := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	at := time.Now().UTC().Add(2 * time.Second).Truncate(time.Second)
+	n := maxEventLookups + 1
+	for i := range n {
+		num := int64(100 + i)
+		e.fake.AddIssue(githubtest.Issue{RepoID: 42, Number: num, Title: "old", Author: "alice", CreatedAt: old, UpdatedAt: at})
+		e.fake.AddIssueEvent(githubtest.IssueEvent{RepoID: 42, Number: num, Event: "labeled", Actor: "alice", Label: "bug", CreatedAt: at})
+	}
+	labeled := func() int { return len(e.restOutcomes("rest:issues.labeled:acme/widgets:")) }
+
+	e.tick()
+	assert.Equal(t, maxEventLookups, labeled(), "第一轮受额度限制")
+	w, err := e.st.Q.GetGithubRepoWatch(e.ctx, 42)
+	require.NoError(t, err)
+	assert.Equal(t, at.UnixMilli(), *w.SinceAt, "游标停在没查的那一项")
+	assert.Nil(t, w.EtagIssues, "没读完的列表不保存 ETag")
+
+	e.tick()
+	assert.Equal(t, n, labeled(), "第二轮补上剩下的一项")
+
+	e.s.watchMu.Lock()
+	e.s.watchLooked = nil // 重启：已查集合丢失
+	e.s.watchMu.Unlock()
+	e.tick()
+	e.tick()
+	assert.Equal(t, n, labeled(), "重启后再轮询：不重复")
+}
+
+// 列表超过单轮页数上限时进度可以续跑：轮询间隔里新增了 550 条评论（每页 100 条，单轮最多 5 页），第一轮处理前 500 条，
+// 游标停在读到的最后一条；第二轮处理剩下的。每条评论恰好处理一次。
+func TestWatchRepoPagesResume(t *testing.T) {
+	e := newTriggerEnv(t)
+	e.s.cfg.AfterFunc = (&fakeAfter{}).AfterFunc
+	e.trigger(apigen.GitHubTriggerInput{Name: "triage", Event: apigen.IssueOpened, Prompt: "look"})
+	e.tick() // 基线
+
+	is := e.fake.AddIssue(githubtest.Issue{RepoID: 42, Number: 5, Title: "busy", Author: "alice",
+		CreatedAt: time.Now().UTC().Add(-time.Hour).Truncate(time.Second)})
+	base := time.Now().UTC().Add(2 * time.Second).Truncate(time.Second)
+	const total = maxWatchPages*100 + 50
+	const perSec = 30
+	for i := range total {
+		// 每秒 30 条：翻满 5 页时停在第 16 秒中间
+		e.fake.AddComment(githubtest.Comment{RepoID: 42, Number: is.Number, Author: "alice", Body: "c" + itoa(int64(i)),
+			CreatedAt: base.Add(time.Duration(i/perSec) * time.Second)})
+	}
+	// 与 GitHub 一样，评论会刷新 issue 的 updated_at：issue 列表看到的时间晚于评论列表的续点，游标不能越过续点
+	e.fake.Lock()
+	is.UpdatedAt = base.Add(time.Duration((total-1)/perSec) * time.Second)
+	e.fake.Unlock()
+	comments := func() int { return len(e.restOutcomes("rest:issue_comment.created:acme/widgets:")) }
+
+	e.tick()
+	assert.Equal(t, maxWatchPages*100, comments(), "第一轮翻满页数")
+	w, err := e.st.Q.GetGithubRepoWatch(e.ctx, 42)
+	require.NoError(t, err)
+	assert.Nil(t, w.EtagComments, "没读完的列表不保存 ETag")
+
+	e.tick()
+	assert.Equal(t, total, comments(), "第二轮读完剩下的")
+	e.tick()
+	assert.Equal(t, total, comments(), "之后不再重复")
+}

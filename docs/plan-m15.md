@@ -21,6 +21,7 @@
 - **v4（2026-11-16，执行中修订）**：评审发现 5.3 的发布例外没有接线：`PrepareRequest.Release` 只在测试里置真，`orbdrt/github.go` 的唯一生产调用从不传，orbsock 参数里也没有线程类别，发布线程的 `github_prepare` 必定因「在默认分支上」被拒。类别只能来自控制面的任务状态（orb 内的 orbd 不可信），因此：
   - 6.1 增加 orbd 侧接线：`github.prepare` 先经 ctl 向控制面查询该线程是否为发布任务，再决定 `Release`；查询失败按非发布处理（只会多拒绝，不会多放行）。
   - 5.4 增加服务端兜底：**推送门禁开启时**，非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。门禁关闭（R19 的默认）或项目没有门禁（含无项目 orb）时不加这条限制，按 R5 以账号权限读写。
+- **v5（2026-11-16，执行中修订）**：评审发现 3.1 会静默漏事件：仓库级每轮 20 次时间线查询用完后跳过其余项，却照样保存 ETag、把 since 推到全列表的最大时间；列表翻满 5 页仍有下一页时也照常提交。改为可续跑（规则见附录 C「续跑」）：没处理完的列表不提交 ETag，游标不越过第一个没处理的项；PR 改由 issue 列表发现（`pulls` 列表没有 `since`、倒序读不到续点），迁移 `0035` 删掉 `github_repo_watches.etag_pulls`。
 
 ## Context
 
@@ -602,7 +603,7 @@ Do：
 - **仓库级 watch**：已绑定、hook 不是 `active`、且有启用规则的仓库，按 `restPollInterval` 轮询：
   - `issues?since=&state=all&sort=updated`
   - `issues/comments?since=`
-  - `pulls?state=open&sort=updated&direction=desc`
+  - ~~`pulls?state=open&sort=updated&direction=desc`~~（v5：改由上面的 issue 列表发现 PR，见附录 C）
   - `actions/runs?event=push&status=completed`
 - **对象级 watch**：线程关联的对象，所在仓库 hook 不是 `active` 时，轮询：
   - 本体
@@ -970,22 +971,28 @@ gh 版本固定为 `v2.102.1`（本机版本；orb 镜像的 Arch `github-cli` �
 - **入口**：合成事件经 `ingest(…, "rest", 0)` 进入与 webhook 相同的处理器（`repoID` 记 0：`rest` 不是 hook 的投递来源）。
 - **guid**：`rest:<事件>.<action>:<owner/repo 小写>:<对象 id>:<时间>`。时间取 GitHub 返回的原文：创建类事件取 `created_at`（评审取 `submitted_at`），其余取 `updated_at` 或时间线事件的 `created_at`。仓库级与对象级对同一变化合成的 guid 相同，重叠时只处理一次。
 - **repository**：每个合成事件都带 `repository{id, node_id, full_name}`。`node_id` 与规范的 `full_name` 取自 `GET /repos/{full}`，按仓库 id 缓存在内存。
-- **游标**：仓库级的 `since_at` 推进到本轮看到的最大 `updated_at`，只在四个列表都成功时推进；对象级的 `last_seen_at` 推进到看到的最大创建、提交或时间线时间。`since` 含端点，端点上的重复项靠 guid 去重。新 watch 的游标从当前时间（取整到秒）起算，不回放历史。
-- **ETag**：每个接口的 ETag 单独存，304 不产生事件。两种请求不带 ETag：一是时间线 `issues/{n}/events`，只在本体有变化（或仓库级列表里有更新）时才读；二是补读的本体。
+- **游标**：仓库级的 `since_at` 推进到本轮看到的最大 `updated_at`，只在全部列表都成功时推进；对象级的 `last_seen_at` 推进到看到的最大创建、提交或时间线时间。`since` 含端点，端点上的重复项靠 guid 去重。新 watch 的游标从当前时间（取整到秒）起算，不回放历史。
+- **续跑**（v5，修复评审发现的静默漏事件）：
+  - 带 `since` 的正序列表（仓库级 issue 与评论，对象级评论与行内评论）翻满 `maxWatchPages` 页仍有下一页时，游标最多推进到读到的最后一项的时间，该列表的 ETag 清空（否则下一轮同样的请求会 304 而跳过剩余项）。
+  - 仓库级的逐项查询（时间线、PR 本体）每轮至多 `maxEventLookups` 次。额度用完时停在第一个没查的项，游标最多推进到它的 `updated_at`。停下的项与 `since` 同一秒时不受额度限制，保证同一秒内的大批变化也能推进；已查过的 `(仓库, 编号, updated_at)` 记在内存里，下一轮不再重复查询（重启后丢失只多花额度）。
+  - 多个列表取续点的最小值，任何一个列表没读完，游标都不会越过它。
+  - 没有 `since` 的正序列表（时间线、评审）从尾部读：按 `Link` 的 `last` / `prev` 往前读到早于游标的项或与第一页接上；读不到时返回 `errWatchTruncated`，本轮不提交游标。
+  - 倒序的 workflow run 列表翻到早于游标的项为止；超过页数上限时记警告（一个轮询间隔里完成 500 个以上的 push 触发 run）。
+- **ETag**：每个接口的 ETag 单独存，304 不产生事件。两种请求不带 ETag：一是时间线 `issues/{n}/events`，只在本体有变化（或仓库级列表里有更新）时才读；二是补读的本体。评审列表多于一页时不存 ETag。
 - **防回流**：sender 与对象的 id、node_id、正文都原样带上，`isSelfEvent` 的三种判定（Agent 登录名、补充键、预登记）对合成事件同样生效。
 
 | 事件.action | 来源（watch：接口与条件） | 载荷 | 处理器读取的字段 | sender 来源 | guid 的对象 id : 时间 |
 |---|---|---|---|---|---|
 | `issues.opened` | 仓库级：`issues?since=&state=all&sort=updated&direction=asc`。条件：不是 PR，且 `created_at ≥ since` | `issue`（REST 原样） | `onIssues`：issue 的 `number`、`node_id`、`title`、`body`、`html_url`、`user`、`labels`、`author_association`；`issueProbe` 用 `repository.node_id` | `issue.user` | issue `id` : `created_at` |
-| `issues.labeled` / `unlabeled` / `closed` / `reopened` | 仓库级：上面列表里有更新的非 PR issue（每轮至多 20 次）。对象级 issue watch：本体 ETag 变化时（PR 的 issue 视图跳过）。两者都读 `issues/{n}/events` 中 `since` 之后的同名事件 | `issue`，以及 labeled / unlabeled 时的 `label` | `onIssues`：`label.name`；`issueProbe` 用 issue 的 `node_id`、`number` | 时间线事件的 `actor` | 事件 `id` : 事件 `created_at` |
+| `issues.labeled` / `unlabeled` / `closed` / `reopened` | 仓库级：上面列表里有更新的非 PR issue（与 PR 共用每轮 `maxEventLookups` 次逐项查询，额度用完时续跑）。对象级 issue watch：本体 ETag 变化时（PR 的 issue 视图跳过）。两者都读 `issues/{n}/events` 中 `since` 之后的同名事件 | `issue`，以及 labeled / unlabeled 时的 `label` | `onIssues`：`label.name`；`issueProbe` 用 issue 的 `node_id`、`number` | 时间线事件的 `actor` | 事件 `id` : 事件 `created_at` |
 | `issue_comment.created` | 仓库级：`issues/comments?since=&sort=updated&direction=asc`。对象级：`issues/{n}/comments?since=`。条件都是 `created_at ≥ since`，编辑不回流 | `comment`（REST 原样）与 `issue`。仓库级取 issue 列表里的项，没有时补读 `issues/{n}`；对象级 PR 用本体，补上 `pull_request` 标记 | `onIssueComment` / `listen` / 提及规则：issue 的 `number`、`node_id`、`title`、`html_url`、`user`、`pull_request`；comment 的 `id`、`node_id`、`body`、`author_association`；`commentProbe` | `comment.user` | comment `id` : `created_at` |
-| `pull_request.opened` | 仓库级：`pulls?state=open&sort=updated&direction=desc`。条件：`created_at ≥ since` | `pull_request`（REST 原样）与 `number` | `onPullRequest`：`number`、`title`、`state`、`draft`、`merged`、`merged_at`、`html_url`、`user`、`head{ref,sha,repo}`、`base{ref,repo}`。4.1 的防回流用 `pull_request.node_id`、`body` 与 `repository.node_id` | `pull_request.user` | PR `id` : `created_at` |
-| `pull_request.reopened` / `ready_for_review` / `converted_to_draft` / `closed` | 仓库级：上面列表里有更新、不是新建的 PR（与 issue 共用每轮 20 次），读时间线上 `since` 之后的 `reopened`、`ready_for_review`、`convert_to_draft`、`closed` | `pull_request`（列表项）与 `number` | 同上 | 时间线事件的 `actor` | 事件 `id` : 事件 `created_at` |
+| `pull_request.opened` | 仓库级：issue 列表里的 PR 项（v5：不再读 `pulls` 列表，它没有 `since`，倒序读不到续点；`0035` 删掉了 `etag_pulls`）。条件：`created_at ≥ since`，补读 `pulls/{n}` 本体（计 1 次逐项查询） | `pull_request`（本体）与 `number` | `onPullRequest`：`number`、`title`、`state`、`draft`、`merged`、`merged_at`、`html_url`、`user`、`head{ref,sha,repo}`、`base{ref,repo}`。4.1 的防回流用 `pull_request.node_id`、`body` 与 `repository.node_id` | `pull_request.user` | PR `id` : `created_at` |
+| `pull_request.reopened` / `ready_for_review` / `converted_to_draft` / `closed` | 仓库级：issue 列表里有更新、不是新建、仍打开的 PR，补读本体并读时间线（计 2 次），取 `since` 之后的 `reopened`、`ready_for_review`、`convert_to_draft`、`closed` | `pull_request`（本体）与 `number` | 同上 | 时间线事件的 `actor` | 事件 `id` : 事件 `created_at` |
 | `pull_request.closed` / `reopened` / `synchronize` / `converted_to_draft` / `ready_for_review` / `edited` | 对象级 PR watch：`pulls/{n}` 的 ETag 变化。action 由与库里 `github_pulls` 的比较决定：转入终态（含合并）为 closed，离开终态为 reopened，head 变化为 synchronize，草稿切换，标题或 base 变化为 edited。库里没有这一行时，open 记 edited，否则记 closed | `pull_request`（本体）与 `number` | `onPullRequest`：入库；已合并时设 `shippedAt` | 合并取 `merged_by`；closed / reopened / 草稿切换取时间线上最近的同名事件的 `actor`；其余取 `pull_request.user` | PR `id` : `updated_at` |
 | `pull_request_review.submitted` | 对象级 PR watch：`pulls/{n}/reviews`。条件：`submitted_at ≥ since`，跳过 PENDING | `review`（`id`、`node_id`、`body`、`state` 大写、`author_association`、`user`、`submitted_at`）与 `pull_request`（本体） | `onReview`：review 的 `body`、`state`（转小写）、`author_association`；`reviewProbe` 用 review 的 `id`、`node_id` 与 PR 的 `node_id`、`number` | `review.user` | review `id` : `submitted_at` |
 | `pull_request_review_comment.created` | 对象级 PR watch：`pulls/{n}/comments?since=`。条件：`created_at ≥ since` | `comment`（`id`、`node_id`、`body`、`path`、`line`、`original_line`、`author_association`、`in_reply_to_id`、`pull_request_review_id`）与 `pull_request` | `onReviewComment`；`reviewCommentProbe` | `comment.user` | comment `id` : `created_at` |
 | `check_suite.completed` | 对象级 PR watch，只看打开的 PR 的 head：`commits/{sha}/check-runs?filter=latest` 与 `commits/{sha}/status`，任一 ETag 变化即触发（两个 ETag 以换行拼接存进 `etag_checks`） | `check_suite{head_sha}` | `onCheckSuite`：防抖后汇总 CI，失败时回流 | 无 | head sha : 两个新 ETag 的摘要 |
-| `workflow_run.completed` | 仓库级：`actions/runs?event=push&status=completed`。条件：`updated_at ≥ since`；仓库没开 Actions（404 / 403）按没有处理 | `workflow_run`（REST 原样：`id`、`name`、`event`、`status`、`conclusion`、`head_sha`、`head_branch`、`head_commit.message`、`html_url`） | 由 6.1 的处理器读取；在此之前记 `ignored:event` | `triggering_actor`，没有时取 `actor` | run `id` : `updated_at` |
+| `workflow_run.completed` | 仓库级：`actions/runs?event=push&status=completed`（倒序，翻到早于 `since` 的为止）。条件：`updated_at ≥ since`；仓库没开 Actions（404 / 403）按没有处理 | `workflow_run`（REST 原样：`id`、`name`、`event`、`status`、`conclusion`、`head_sha`、`head_branch`、`head_commit.message`、`html_url`） | 由 6.1 的处理器读取；在此之前记 `ignored:event` | `triggering_actor`，没有时取 `actor` | run `id` : `updated_at` |
 
 登记与退场：
 

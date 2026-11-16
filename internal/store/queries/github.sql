@@ -197,7 +197,7 @@ SELECT * FROM github_repo_watches ORDER BY repo_id;
 
 -- name: SetGithubRepoWatchState :exec
 UPDATE github_repo_watches
-SET etag_issues = sqlc.narg(etag_issues), etag_comments = sqlc.narg(etag_comments), etag_pulls = sqlc.narg(etag_pulls),
+SET etag_issues = sqlc.narg(etag_issues), etag_comments = sqlc.narg(etag_comments),
     etag_runs = sqlc.narg(etag_runs), since_at = sqlc.narg(since_at), updated_at = @updated_at
 WHERE repo_id = @repo_id;
 

@@ -322,7 +322,7 @@ func (s *Server) repoJSON(r *http.Request, rp *Repo) map[string]any {
 	return m
 }
 
-// paginate 按 per_page / page 截取 [lo, hi)，还有下一页时写 Link 头。
+// paginate 按 per_page / page 截取 [lo, hi)，写 Link 头：与 GitHub 一样，有下一页时给 next 与 last，不是第一页时给 prev 与 first。
 func (s *Server) paginate(w http.ResponseWriter, r *http.Request, n int) (lo, hi int) {
 	per, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
 	if per <= 0 || per > 100 {
@@ -334,11 +334,22 @@ func (s *Server) paginate(w http.ResponseWriter, r *http.Request, n int) (lo, hi
 	}
 	lo = min((page-1)*per, n)
 	hi = min(lo+per, n)
-	if hi < n {
+	pages := max((n+per-1)/per, 1)
+	link := func(p int, rel string) string {
 		q := r.URL.Query()
-		q.Set("page", strconv.Itoa(page+1))
+		q.Set("page", strconv.Itoa(p))
 		q.Set("per_page", strconv.Itoa(per))
-		w.Header().Set("Link", fmt.Sprintf(`<%s%s?%s>; rel="next"`, s.baseURL(r), r.URL.Path, q.Encode()))
+		return fmt.Sprintf(`<%s%s?%s>; rel="%s"`, s.baseURL(r), r.URL.Path, q.Encode(), rel)
+	}
+	var rels []string
+	if page > 1 {
+		rels = append(rels, link(page-1, "prev"), link(1, "first"))
+	}
+	if hi < n {
+		rels = append(rels, link(page+1, "next"), link(pages, "last"))
+	}
+	if len(rels) > 0 {
+		w.Header().Set("Link", strings.Join(rels, ", "))
 	}
 	return lo, hi
 }

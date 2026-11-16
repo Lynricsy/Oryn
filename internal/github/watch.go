@@ -19,19 +19,29 @@ import (
 )
 
 // REST 轮询（M15 步骤 3.1，R10）。仓库没有 active 的仓库 hook 时，事件靠轮询补全：
-//   - 仓库级 watch（github_repo_watches）：已绑定、hook 不是 active、且有启用规则的仓库，轮询新 issue、新评论、
-//     打开的 PR 与 push 触发的 workflow run；以我的账号的令牌轮询。
+//   - 仓库级 watch（github_repo_watches）：已绑定、hook 不是 active、且有启用规则的仓库，轮询 issue 列表（含 PR：新建、
+//     打标签、关闭、重开等）、新评论与 push 触发的 workflow run；以我的账号的令牌轮询。
 //   - 对象级 watch（github_watches）：线程关联的 issue / PR（含向上游开的 PR），所在仓库 hook 不是 active 时轮询对象本身、
 //     评论、评审、行内评审评论与 head 的 CI；令牌取线程 orb 的槽位。
 //
 // 请求都带 If-None-Match（304 不产生事件、不计额度）。变化合成与 webhook 载荷同形的内部事件，guid 为
 // rest:<事件>.<action>:<owner/repo 小写>:<对象 id>:<时间>，经 ingest(…, "rest") 交给与 webhook 相同的处理器；
-// 仓库级与对象级对同一变化合成的 guid 相同，重叠时只处理一次。事件表见 docs/plan-m15.md 附录 C。
+// 仓库级与对象级对同一变化合成的 guid 相同，重叠时只处理一次。单轮读不完时进度可以续跑（见 pollRepo）。事件表见
+// docs/plan-m15.md 附录 C。
 
 const (
 	maxWatchPages   = 5  // 一个列表接口一轮最多翻的页数
-	maxEventLookups = 20 // 仓库级 watch 一轮最多查的 issues/{n}/events 次数
+	maxEventLookups = 20 // 仓库级 watch 一轮最多发的逐项查询（时间线、PR 本体）次数
 )
+
+// errWatchTruncated 表示一个只能从头或从尾读的列表（时间线、评审）在 maxWatchPages 页内没能读到游标处：本轮不提交游标，
+// 下一轮重读。只在一个对象在一个轮询间隔里新增几百条记录时出现。
+var errWatchTruncated = errors.New("github: 列表超过单轮页数上限，游标之后还有未读的页")
+
+// watchLookKey 标识仓库级 watch 已经逐项查询过的一个 (仓库, 编号, updated_at)。
+type watchLookKey struct {
+	repoID, number, updatedAt int64
+}
 
 // timelineEvents 是按 issues/{n}/events 合成的事件：时间线事件名 → (webhook 事件, action)。issue 与 PR 分开。
 var (
@@ -406,27 +416,94 @@ func (s *Service) noteWatchQuota(slot string, h http.Header) {
 	}
 }
 
-// watchList 拉取一个列表接口：第一页带 If-None-Match（304 时 notModified 为真），其后按 Link 翻页（至多 maxWatchPages 页）。
-// 返回第一页的 ETag。调用方持 watchMu。
-func (s *Service) watchList(ctx context.Context, slot, path, etag string) (items []json.RawMessage, newEtag string, notModified bool, err error) {
+// watchList 拉取一个按时间正序、带 since 的列表：第一页带 If-None-Match（304 时 notModified 为真），其后按 Link 翻页
+// （至多 maxWatchPages 页）。返回第一页的 ETag；more 为真表示翻满页数后仍有下一页：本轮没读完，调用方要从读到的最后
+// 一项续上，不能提交 ETag 与越过它的游标。调用方持 watchMu。
+func (s *Service) watchList(ctx context.Context, slot, path, etag string) (items []json.RawMessage, newEtag string, more, notModified bool, err error) {
 	var page []json.RawMessage
 	h, nm, err := s.watchGet(ctx, slot, path, etag, &page)
 	if err != nil || nm {
-		return nil, etag, nm, err
+		return nil, etag, false, nm, err
 	}
 	newEtag, items = h.Get("ETag"), page
-	for i := 1; i < maxWatchPages; i++ {
-		next := nextLink(h)
-		if next == "" {
-			break
-		}
+	next := nextLink(h)
+	for i := 1; i < maxWatchPages && next != ""; i++ {
 		page = nil
 		if h, _, err = s.watchGet(ctx, slot, next, "", &page); err != nil {
-			return nil, etag, false, err
+			return nil, etag, false, false, err
 		}
 		items = append(items, page...)
+		next = nextLink(h)
 	}
-	return items, newEtag, false, nil
+	return items, newEtag, next != "", false, nil
+}
+
+// watchListTail 读一个按时间正序、没有 since 参数的列表（时间线、评审）里游标之后的部分：第一页之后还有页时，按 Link 的
+// last / prev 从最后一页往前读（连同第一页至多 maxWatchPages 页），直到读到早于 since 的项或与第一页接上。at 取一项的
+// 时间（0 表示不参与判断）。complete 为假表示中间还有没读到、可能晚于 since 的页。只有整个列表就一页时才返回 ETag
+// （多页时第一页的 ETag 反映不了末尾的变化）。调用方持 watchMu。
+func (s *Service) watchListTail(ctx context.Context, slot, path, etag string, since int64, at func(restItem) int64) (items []json.RawMessage, newEtag string, notModified, complete bool, err error) {
+	var first []json.RawMessage
+	h, nm, err := s.watchGet(ctx, slot, path, etag, &first)
+	if err != nil || nm {
+		return nil, etag, nm, err == nil, err
+	}
+	if nextLink(h) == "" {
+		return first, h.Get("ETag"), false, true, nil
+	}
+	var tail [][]json.RawMessage
+	cur := linkRel(h, "last")
+	for i := 1; i < maxWatchPages && cur != ""; i++ {
+		var page []json.RawMessage
+		ph, _, err := s.watchGet(ctx, slot, cur, "", &page)
+		if err != nil {
+			return nil, "", false, false, err
+		}
+		tail = append(tail, page)
+		prev := linkRel(ph, "prev")
+		if prev == "" || pageOf(prev) <= 1 {
+			complete = true // 与第一页接上
+			break
+		}
+		if len(page) > 0 {
+			if it, _, derr := decodeRest(page[0]); derr == nil && at(it) != 0 && at(it) < since {
+				complete = true // 这一页之前的都早于游标
+				break
+			}
+		}
+		cur = prev
+	}
+	items = first
+	for i := len(tail) - 1; i >= 0; i-- {
+		items = append(items, tail[i]...)
+	}
+	return items, "", false, complete, nil
+}
+
+// linkRel 取 Link 头里给定 rel 的地址；没有返回空串。
+func linkRel(h http.Header, rel string) string {
+	for _, v := range h.Values("Link") {
+		for _, part := range strings.Split(v, ",") {
+			u, params, ok := strings.Cut(strings.TrimSpace(part), ";")
+			if ok && strings.Contains(params, `rel="`+rel+`"`) {
+				return strings.Trim(strings.TrimSpace(u), "<>")
+			}
+		}
+	}
+	return ""
+}
+
+// pageOf 取分页地址里的 page 参数；没有或无法解析时为 1。
+func pageOf(u string) int {
+	pu, err := url.Parse(u)
+	if err != nil {
+		return 1
+	}
+	n, err := strconv.Atoi(pu.Query().Get("page"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
 }
 
 // watchRepoOf 返回合成载荷里的 repository（id、node_id、full_name）：按仓库 id 缓存 GET /repos/{full} 的结果，
@@ -449,11 +526,13 @@ func (s *Service) watchRepoOf(ctx context.Context, slot string, id int64, full s
 }
 
 // emitTimeline 读 issues/{n}/events，把 since 之后、在 table 里的时间线事件合成为 event 事件（issues 或 pull_request），
-// sender 取事件的 actor。subjKey 是载荷里 subject 的键（issue / pull_request）。调用方持 watchMu。
+// sender 取事件的 actor。subjKey 是载荷里 subject 的键（issue / pull_request）。时间线读不到游标处时返回
+// errWatchTruncated（已读到的仍会合成，靠 guid 去重）。调用方持 watchMu。
 func (s *Service) emitTimeline(ctx context.Context, slot string, repo map[string]any, full string, number, since int64,
 	event, subjKey string, subject map[string]any, table map[string]string,
 ) (latest int64, err error) {
-	items, _, _, err := s.watchList(ctx, slot, fmt.Sprintf("/repos/%s/issues/%d/events?per_page=100", full, number), "")
+	items, _, _, complete, err := s.watchListTail(ctx, slot, fmt.Sprintf("/repos/%s/issues/%d/events?per_page=100", full, number), "", since,
+		func(it restItem) int64 { return githubTimeMs(it.CreatedAt) })
 	if err != nil {
 		return 0, err
 	}
@@ -477,17 +556,75 @@ func (s *Service) emitTimeline(ctx context.Context, slot string, repo map[string
 		}
 		s.emitRest(ctx, restGUID(event, action, full, it.ID, it.CreatedAt), event, payload)
 	}
+	if !complete {
+		return latest, fmt.Errorf("%w: %s#%d 的时间线", errWatchTruncated, full, number)
+	}
 	return latest, nil
 }
 
 // ---------- 仓库级 ----------
 
-// pollRepo 轮询一个仓库级 watch。首轮只建立 since 基线。各列表各自保存 ETag；全部成功才推进 since（推进到看到的最大
-// updated_at；since 含端点，重复项靠 guid 去重）。调用方持 watchMu。
+// repoItemCost 是仓库级 issue 列表里一项要发的逐项查询数：新 issue 0；新 PR 读本体 1；有更新的旧 issue 查时间线 1；
+// 有更新的打开的旧 PR 读本体加查时间线 2；已关闭的旧 PR 0（状态变化由对象级 watch 合成）。
+func repoItemCost(it restItem, since int64) int {
+	created := githubTimeMs(it.CreatedAt) >= since
+	switch {
+	case !it.isPull() && created:
+		return 0
+	case !it.isPull(), created:
+		return 1
+	case it.State == "open":
+		return 2
+	}
+	return 0
+}
+
+// pollRepoItem 处理仓库级 issue 列表里的一项（issue 或 PR），合成 opened 或时间线事件。调用方持 watchMu。
+func (s *Service) pollRepoItem(ctx context.Context, repo map[string]any, full string, since int64, it restItem, obj map[string]any) error {
+	created := githubTimeMs(it.CreatedAt) >= since
+	if !it.isPull() {
+		if created {
+			s.emitRest(ctx, restGUID("issues", "opened", full, it.ID, it.CreatedAt), "issues",
+				map[string]any{"action": "opened", "issue": obj, "repository": repo, "sender": obj["user"]})
+			return nil
+		}
+		_, err := s.emitTimeline(ctx, slotUser, repo, full, it.Number, since, "issues", "issue", obj, issueTimeline)
+		return err
+	}
+	if !created && it.State != "open" {
+		return nil
+	}
+	var raw json.RawMessage
+	if _, _, err := s.watchGet(ctx, slotUser, fmt.Sprintf("/repos/%s/pulls/%d", full, it.Number), "", &raw); err != nil {
+		return err
+	}
+	var pr restItem
+	if err := json.Unmarshal(raw, &pr); err != nil {
+		return err
+	}
+	prObj, err := decodeObj(raw)
+	if err != nil {
+		return err
+	}
+	if created {
+		s.emitRest(ctx, restGUID("pull_request", "opened", full, pr.ID, pr.CreatedAt), "pull_request",
+			map[string]any{"action": "opened", "number": it.Number, "pull_request": prObj, "repository": repo, "sender": prObj["user"]})
+		return nil
+	}
+	_, err = s.emitTimeline(ctx, slotUser, repo, full, it.Number, since, "pull_request", "pull_request", prObj, pullTimeline)
+	return err
+}
+
+// pollRepo 轮询一个仓库级 watch。首轮只建立 since 基线。
+//
+// 进度可以续跑：issue 列表（含 PR）与评论列表都按更新时间正序读，逐项查询的额度（maxEventLookups）用完、或列表翻满
+// maxWatchPages 页还有下一页时，本轮停在第一个没处理的项，since 只推进到它的 updated_at，该列表的 ETag 清空（否则下一轮
+// 同样的请求会得到 304 而跳过剩余项）。since 含端点，重复处理的项靠 guid 去重；停下的项与 since 同一秒时不受额度限制，
+// 保证同一秒内的大批变化也能推进。任一请求出错时不推进 since。调用方持 watchMu。
 func (s *Service) pollRepo(ctx context.Context, w db.GithubRepoWatch) error {
 	now := s.nowMs()
 	st := db.SetGithubRepoWatchStateParams{
-		EtagIssues: w.EtagIssues, EtagComments: w.EtagComments, EtagPulls: w.EtagPulls, EtagRuns: w.EtagRuns,
+		EtagIssues: w.EtagIssues, EtagComments: w.EtagComments, EtagRuns: w.EtagRuns,
 		SinceAt: w.SinceAt, UpdatedAt: now, RepoID: w.RepoID,
 	}
 	if w.SinceAt == nil {
@@ -502,51 +639,79 @@ func (s *Service) pollRepo(ctx context.Context, w db.GithubRepoWatch) error {
 	since, full := *w.SinceAt, w.FullName
 	q := "since=" + url.QueryEscape(restTime(since))
 	next := since
-	seen := func(at string) { next = max(next, githubTimeMs(at)) }
+	seen := func(at int64) { next = max(next, at) }
+	hold := int64(-1) // 没读完的列表的续点（取最小）；-1 表示都读完了
+	holdAt := func(at int64) {
+		if hold < 0 || at < hold {
+			hold = at
+		}
+	}
 	lookups := 0
 	subjects := map[int64]map[string]any{}
 	var errs []error
 
-	// issue：新建的合成 opened；其余有更新的查时间线（打标签、关闭、重开）
-	items, etag, nm, err := s.watchList(ctx, slotUser, fmt.Sprintf("/repos/%s/issues?state=all&sort=updated&direction=asc&per_page=100&%s", full, q), deref(w.EtagIssues))
-	ok := err == nil
+	// issue 与 PR：新建的合成 opened；其余有更新的查时间线（打标签、关闭、重开；PR 的重开、转为可评审、转为草稿）
+	items, etag, more, nm, err := s.watchList(ctx, slotUser, fmt.Sprintf("/repos/%s/issues?state=all&sort=updated&direction=asc&per_page=100&%s", full, q), deref(w.EtagIssues))
+	stopped, listMax := false, int64(-1)
 	for _, raw := range items {
 		it, obj, derr := decodeRest(raw)
 		if derr != nil {
 			continue
 		}
-		seen(it.UpdatedAt)
+		at := githubTimeMs(it.UpdatedAt)
+		if at < since {
+			continue
+		}
 		subjects[it.Number] = obj
-		if it.isPull() {
-			continue // PR 走 pulls 列表
+		cost := repoItemCost(it, since)
+		key := watchLookKey{repoID: w.RepoID, number: it.Number, updatedAt: at}
+		if _, done := s.watchLooked[key]; done {
+			cost = 0 // 上一轮（游标停在同一秒）已查过
+		} else if cost > 0 && lookups+cost > maxEventLookups && at > since {
+			holdAt(at) // 额度用完：下一轮从这一项续上
+			stopped = true
+			break
 		}
-		if githubTimeMs(it.CreatedAt) >= since {
-			s.emitRest(ctx, restGUID("issues", "opened", full, it.ID, it.CreatedAt), "issues",
-				map[string]any{"action": "opened", "issue": obj, "repository": repo, "sender": obj["user"]})
-			continue
+		if cost > 0 {
+			lookups += cost
+			if perr := s.pollRepoItem(ctx, repo, full, since, it, obj); perr != nil {
+				err = errors.Join(err, perr)
+			} else {
+				if s.watchLooked == nil {
+					s.watchLooked = map[watchLookKey]struct{}{}
+				}
+				s.watchLooked[key] = struct{}{}
+			}
+		} else if _, done := s.watchLooked[key]; !done {
+			_ = s.pollRepoItem(ctx, repo, full, since, it, obj) // 不发请求：新 issue 合成 opened
 		}
-		if githubTimeMs(it.UpdatedAt) < since || lookups >= maxEventLookups {
-			continue
-		}
-		lookups++
-		if _, terr := s.emitTimeline(ctx, slotUser, repo, full, it.Number, since, "issues", "issue", obj, issueTimeline); terr != nil {
-			ok, err = false, terr
-		}
+		seen(at)
+		listMax = max(listMax, at)
 	}
-	if ok && !nm {
+	if more && !stopped && listMax >= 0 {
+		holdAt(listMax) // 翻满页数：下一轮从读到的最后一项续上
+	}
+	more = more || stopped
+
+	switch {
+	case more:
+		st.EtagIssues = nil
+	case err == nil && !nm:
 		st.EtagIssues = strPtr(etag)
 	}
 	errs = append(errs, err)
 
 	// 评论：只合成新建的（编辑不回流）
-	items, etag, nm, err = s.watchList(ctx, slotUser, fmt.Sprintf("/repos/%s/issues/comments?sort=updated&direction=asc&per_page=100&%s", full, q), deref(w.EtagComments))
-	ok = err == nil
+	items, etag, more, nm, err = s.watchList(ctx, slotUser, fmt.Sprintf("/repos/%s/issues/comments?sort=updated&direction=asc&per_page=100&%s", full, q), deref(w.EtagComments))
+	listMax = -1
 	for _, raw := range items {
 		it, obj, derr := decodeRest(raw)
 		if derr != nil {
 			continue
 		}
-		seen(it.UpdatedAt)
+		at := githubTimeMs(it.UpdatedAt)
+		seen(at)
+		listMax = max(listMax, at)
 		if githubTimeMs(it.CreatedAt) < since {
 			continue
 		}
@@ -555,7 +720,7 @@ func (s *Service) pollRepo(ctx context.Context, w db.GithubRepoWatch) error {
 		if !have {
 			var body json.RawMessage
 			if _, _, gerr := s.watchGet(ctx, slotUser, fmt.Sprintf("/repos/%s/issues/%d", full, number), "", &body); gerr != nil {
-				ok, err = false, gerr
+				err = errors.Join(err, gerr)
 				continue
 			}
 			if subj, derr = decodeObj(body); derr != nil {
@@ -566,68 +731,81 @@ func (s *Service) pollRepo(ctx context.Context, w db.GithubRepoWatch) error {
 		s.emitRest(ctx, restGUID("issue_comment", "created", full, it.ID, it.CreatedAt), "issue_comment",
 			map[string]any{"action": "created", "issue": subj, "comment": obj, "repository": repo, "sender": obj["user"]})
 	}
-	if ok && !nm {
+	if more && listMax >= 0 {
+		holdAt(listMax)
+	}
+	switch {
+	case more:
+		st.EtagComments = nil
+	case err == nil && !nm:
 		st.EtagComments = strPtr(etag)
 	}
 	errs = append(errs, err)
 
-	// 打开的 PR：新建的合成 opened；其余有更新的查时间线（重开、转为可评审、转为草稿）
-	items, etag, nm, err = s.watchList(ctx, slotUser, fmt.Sprintf("/repos/%s/pulls?state=open&sort=updated&direction=desc&per_page=100", full), deref(w.EtagPulls))
-	ok = err == nil
-	for _, raw := range items {
-		it, obj, derr := decodeRest(raw)
-		if derr != nil || githubTimeMs(it.UpdatedAt) < since {
-			continue
+	// push 触发、已完成的 workflow run（按更新时间倒序，翻到早于 since 的为止）；仓库没开 Actions（404 / 403）按没有处理
+	path := fmt.Sprintf("/repos/%s/actions/runs?event=push&status=completed&per_page=100", full)
+	for page := 0; page < maxWatchPages && path != ""; page++ {
+		var runs struct {
+			WorkflowRuns []json.RawMessage `json:"workflow_runs"`
 		}
-		seen(it.UpdatedAt)
-		if githubTimeMs(it.CreatedAt) >= since {
-			s.emitRest(ctx, restGUID("pull_request", "opened", full, it.ID, it.CreatedAt), "pull_request",
-				map[string]any{"action": "opened", "number": it.Number, "pull_request": obj, "repository": repo, "sender": obj["user"]})
-			continue
+		etagIn := ""
+		if page == 0 {
+			etagIn = deref(w.EtagRuns)
 		}
-		if lookups >= maxEventLookups {
-			continue
+		h, nm, err := s.watchGet(ctx, slotUser, path, etagIn, &runs)
+		if errKind(err) == kindNotFound || isStatus(err, http.StatusForbidden) {
+			path = ""
+			break
 		}
-		lookups++
-		if _, terr := s.emitTimeline(ctx, slotUser, repo, full, it.Number, since, "pull_request", "pull_request", obj, pullTimeline); terr != nil {
-			ok, err = false, terr
+		if err != nil {
+			errs = append(errs, err)
+			path = ""
+			break
+		}
+		if nm {
+			path = ""
+			break
+		}
+		if page == 0 {
+			st.EtagRuns = strPtr(h.Get("ETag"))
+		}
+		path = nextLink(h)
+		for _, raw := range runs.WorkflowRuns {
+			it, obj, derr := decodeRest(raw)
+			if derr != nil {
+				continue
+			}
+			if githubTimeMs(it.UpdatedAt) < since {
+				path = "" // 之后的页都更早
+				continue
+			}
+			seen(githubTimeMs(it.UpdatedAt))
+			who := obj["triggering_actor"]
+			if who == nil {
+				who = obj["actor"]
+			}
+			s.emitRest(ctx, restGUID("workflow_run", "completed", full, it.ID, it.UpdatedAt), "workflow_run",
+				map[string]any{"action": "completed", "workflow_run": obj, "repository": repo, "sender": who})
 		}
 	}
-	if ok && !nm {
-		st.EtagPulls = strPtr(etag)
+	if path != "" {
+		// 一个轮询间隔里完成了超过 maxWatchPages 页的 run：倒序列表续不上，更早的那部分不再合成
+		st.EtagRuns = nil
+		slog.Warn("github: 轮询期间完成的 workflow run 超过单轮页数上限，较早的 run 未合成事件", "repo", full)
 	}
-	errs = append(errs, err)
-
-	// push 触发、已完成的 workflow run；仓库没开 Actions（404 / 403）按没有处理
-	var runs struct {
-		WorkflowRuns []json.RawMessage `json:"workflow_runs"`
-	}
-	h, nm, err := s.watchGet(ctx, slotUser, fmt.Sprintf("/repos/%s/actions/runs?event=push&status=completed&per_page=30", full), deref(w.EtagRuns), &runs)
-	if errKind(err) == kindNotFound || isStatus(err, http.StatusForbidden) {
-		err = nil
-	}
-	for _, raw := range runs.WorkflowRuns {
-		it, obj, derr := decodeRest(raw)
-		if derr != nil || githubTimeMs(it.UpdatedAt) < since {
-			continue
-		}
-		seen(it.UpdatedAt)
-		who := obj["triggering_actor"]
-		if who == nil {
-			who = obj["actor"]
-		}
-		s.emitRest(ctx, restGUID("workflow_run", "completed", full, it.ID, it.UpdatedAt), "workflow_run",
-			map[string]any{"action": "completed", "workflow_run": obj, "repository": repo, "sender": who})
-	}
-	if err == nil && !nm && h != nil {
-		st.EtagRuns = strPtr(h.Get("ETag"))
-	}
-	errs = append(errs, err)
 
 	if joined := errors.Join(errs...); joined != nil {
 		return errors.Join(joined, s.st.Q.SetGithubRepoWatchState(ctx, st))
 	}
+	if hold >= 0 {
+		next = min(next, hold)
+	}
 	st.SinceAt = &next
+	for k := range s.watchLooked {
+		if k.repoID == w.RepoID && k.updatedAt < next {
+			delete(s.watchLooked, k) // 游标已越过：不会再列出
+		}
+	}
 	return s.st.Q.SetGithubRepoWatchState(ctx, st)
 }
 
@@ -646,9 +824,17 @@ type objectPoll struct {
 	repo  map[string]any
 	since int64 // 本轮的游标（评论类接口的 since）
 	next  int64 // 下一轮的游标：看到的最大时间
+	hold  int64 // 没读完的列表的续点（取最小，-1 表示都读完了）：游标最多推进到这里
 	st    db.SetGithubWatchStateParams
 	subj  map[string]any // issue / PR 本体（按需读取）
 	pr    *pullPayload   // 本轮读到的 PR 本体（仅 pull；304 时为 nil）
+}
+
+// holdAt 记下一个没读完的列表的续点。
+func (p *objectPoll) holdAt(at int64) {
+	if p.hold < 0 || at < p.hold {
+		p.hold = at
+	}
 }
 
 // pollObject 轮询一个对象级 watch：线程已归档或关联已取消时注销；首轮（没有游标）只建立基线。调用方持 watchMu。
@@ -681,7 +867,7 @@ func (s *Service) pollObject(ctx context.Context, w db.GithubWatch) error {
 	if p.repo, err = s.watchRepoOf(ctx, w.Slot, w.RepoID, w.FullName); err != nil {
 		return err
 	}
-	p.since, p.next = *w.LastSeenAt, *w.LastSeenAt
+	p.since, p.next, p.hold = *w.LastSeenAt, *w.LastSeenAt, -1
 	var errs []error
 	if w.Kind == "pull" {
 		errs = append(errs, s.pollPullBody(ctx, p), s.pollComments(ctx, p), s.pollReviews(ctx, p), s.pollReviewComments(ctx, p), s.pollChecks(ctx, p))
@@ -690,6 +876,9 @@ func (s *Service) pollObject(ctx context.Context, w db.GithubWatch) error {
 	}
 	if joined := errors.Join(errs...); joined != nil {
 		return errors.Join(joined, s.st.Q.SetGithubWatchState(ctx, p.st))
+	}
+	if p.hold >= 0 {
+		p.next = min(p.next, p.hold)
 	}
 	p.st.LastSeenAt = &p.next
 	return s.st.Q.SetGithubWatchState(ctx, p.st)
@@ -828,7 +1017,9 @@ func (s *Service) lastActor(ctx context.Context, p *objectPoll, action string) (
 	if action == "converted_to_draft" {
 		name = "convert_to_draft"
 	}
-	items, _, _, err := s.watchList(ctx, p.w.Slot, fmt.Sprintf("/repos/%s/issues/%d/events?per_page=100", p.w.FullName, p.w.Number), "")
+	// 最近的事件在列表末尾：从尾部读
+	items, _, _, _, err := s.watchListTail(ctx, p.w.Slot, fmt.Sprintf("/repos/%s/issues/%d/events?per_page=100", p.w.FullName, p.w.Number), "", 0,
+		func(restItem) int64 { return 0 })
 	if err != nil {
 		return nil, err
 	}
@@ -876,30 +1067,55 @@ func (s *Service) pollIssueBody(ctx context.Context, p *objectPoll) error {
 // pollComments 读游标之后新建的会话评论，合成 issue_comment.created。
 func (s *Service) pollComments(ctx context.Context, p *objectPoll) error {
 	path := fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=100&since=%s", p.w.FullName, p.w.Number, url.QueryEscape(restTime(p.since)))
-	items, etag, nm, err := s.watchList(ctx, p.w.Slot, path, deref(p.w.EtagComments))
+	items, etag, more, nm, err := s.watchList(ctx, p.w.Slot, path, deref(p.w.EtagComments))
 	if err != nil || nm {
 		return err
 	}
+	return s.emitCommentList(ctx, p, items, more, &p.st.EtagComments, etag, func(it restItem, obj, subj map[string]any) {
+		s.emitRest(ctx, restGUID("issue_comment", "created", p.w.FullName, it.ID, it.CreatedAt), "issue_comment",
+			map[string]any{"action": "created", "issue": issueView(p.w.Kind, subj), "comment": obj, "repository": p.repo, "sender": obj["user"]})
+	})
+}
+
+// emitCommentList 把带 since 的评论列表（按创建时间正序）里游标之后新建的项交给 emit；列表没读完（more）时从读到的最后
+// 一项续上，并清空该列表的 ETag（否则下一轮同样的请求会 304 而跳过剩余项）。
+func (s *Service) emitCommentList(ctx context.Context, p *objectPoll, items []json.RawMessage, more bool, etagField **string, etag string,
+	emit func(it restItem, obj, subj map[string]any),
+) error {
+	last := int64(-1)
 	for _, raw := range items {
 		it, obj, err := decodeRest(raw)
-		if err != nil || githubTimeMs(it.CreatedAt) < p.since {
+		if err != nil {
+			continue
+		}
+		at := githubTimeMs(it.CreatedAt)
+		last = max(last, at)
+		if at < p.since {
 			continue
 		}
 		subj, err := s.subject(ctx, p)
 		if err != nil {
 			return err
 		}
-		p.next = max(p.next, githubTimeMs(it.CreatedAt))
-		s.emitRest(ctx, restGUID("issue_comment", "created", p.w.FullName, it.ID, it.CreatedAt), "issue_comment",
-			map[string]any{"action": "created", "issue": issueView(p.w.Kind, subj), "comment": obj, "repository": p.repo, "sender": obj["user"]})
+		p.next = max(p.next, at)
+		emit(it, obj, subj)
 	}
-	p.st.EtagComments = strPtr(etag)
+	if more {
+		if last >= 0 {
+			p.holdAt(last)
+		}
+		*etagField = nil
+		return nil
+	}
+	*etagField = strPtr(etag)
 	return nil
 }
 
 // pollReviews 读游标之后提交的评审（待提交的跳过），合成 pull_request_review.submitted。
 func (s *Service) pollReviews(ctx context.Context, p *objectPoll) error {
-	items, etag, nm, err := s.watchList(ctx, p.w.Slot, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100", p.w.FullName, p.w.Number), deref(p.w.EtagReviews))
+	// 评审没有 since 参数、按提交顺序排列：从尾部读到游标处
+	items, etag, nm, complete, err := s.watchListTail(ctx, p.w.Slot, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100", p.w.FullName, p.w.Number), deref(p.w.EtagReviews), p.since,
+		func(it restItem) int64 { return githubTimeMs(it.SubmittedAt) })
 	if err != nil || nm {
 		return err
 	}
@@ -917,32 +1133,27 @@ func (s *Service) pollReviews(ctx context.Context, p *objectPoll) error {
 		s.emitRest(ctx, restGUID("pull_request_review", "submitted", p.w.FullName, it.ID, it.SubmittedAt), "pull_request_review",
 			map[string]any{"action": "submitted", "review": obj, "pull_request": subj, "repository": p.repo, "sender": obj["user"]})
 	}
-	p.st.EtagReviews = strPtr(etag)
+	if !complete {
+		return fmt.Errorf("%w: %s#%d 的评审", errWatchTruncated, p.w.FullName, p.w.Number)
+	}
+	p.st.EtagReviews = nil // 多页时没有可用的 ETag
+	if etag != "" {
+		p.st.EtagReviews = strPtr(etag)
+	}
 	return nil
 }
 
 // pollReviewComments 读游标之后新建的行内评审评论，合成 pull_request_review_comment.created。
 func (s *Service) pollReviewComments(ctx context.Context, p *objectPoll) error {
 	path := fmt.Sprintf("/repos/%s/pulls/%d/comments?per_page=100&since=%s", p.w.FullName, p.w.Number, url.QueryEscape(restTime(p.since)))
-	items, etag, nm, err := s.watchList(ctx, p.w.Slot, path, deref(p.w.EtagReviewComments))
+	items, etag, more, nm, err := s.watchList(ctx, p.w.Slot, path, deref(p.w.EtagReviewComments))
 	if err != nil || nm {
 		return err
 	}
-	for _, raw := range items {
-		it, obj, err := decodeRest(raw)
-		if err != nil || githubTimeMs(it.CreatedAt) < p.since {
-			continue
-		}
-		subj, err := s.subject(ctx, p)
-		if err != nil {
-			return err
-		}
-		p.next = max(p.next, githubTimeMs(it.CreatedAt))
+	return s.emitCommentList(ctx, p, items, more, &p.st.EtagReviewComments, etag, func(it restItem, obj, subj map[string]any) {
 		s.emitRest(ctx, restGUID("pull_request_review_comment", "created", p.w.FullName, it.ID, it.CreatedAt), "pull_request_review_comment",
 			map[string]any{"action": "created", "comment": obj, "pull_request": subj, "repository": p.repo, "sender": obj["user"]})
-	}
-	p.st.EtagReviewComments = strPtr(etag)
-	return nil
+	})
 }
 
 // pollChecks 读打开的 PR 的 head 上的 check-runs 与 status（ETag 以换行拼接存一列）；任一有变化时合成 check_suite.completed，

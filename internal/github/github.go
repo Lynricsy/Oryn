@@ -147,13 +147,15 @@ type Service struct {
 	selfInflight map[string]int
 
 	// REST 轮询（M15 步骤 3.1）：watchMu 串行化轮询轮次，并保护 watchNext（各槽位下次可轮询的时刻）、
-	// watchLow（核心额度低于 rateLimitFloor 的槽位）、watchPause（额度耗尽后各槽位恢复的时刻）与 repoNodes（仓库 id → 仓库的
-	// id / node_id / full_name，合成载荷用）。
-	watchMu    sync.Mutex
-	watchNext  map[string]time.Time
-	watchLow   map[string]bool
-	watchPause map[string]time.Time
-	repoNodes  map[int64]repoPayload
+	// watchLow（核心额度低于 rateLimitFloor 的槽位）、watchPause（额度耗尽后各槽位恢复的时刻）、repoNodes（仓库 id → 仓库的
+	// id / node_id / full_name，合成载荷用）与 watchLooked（仓库级 watch 已查过的 (仓库, 编号, updated_at)，游标停在同一秒时
+	// 不重复查询；只是省额度，重启后丢失无妨）。
+	watchMu     sync.Mutex
+	watchNext   map[string]time.Time
+	watchLow    map[string]bool
+	watchPause  map[string]time.Time
+	repoNodes   map[int64]repoPayload
+	watchLooked map[watchLookKey]struct{}
 }
 
 // New 构造服务。

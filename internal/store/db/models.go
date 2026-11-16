@@ -374,7 +374,6 @@ type GithubRepoWatch struct {
 	FullName     string  `json:"fullName"`
 	EtagIssues   *string `json:"etagIssues"`
 	EtagComments *string `json:"etagComments"`
-	EtagPulls    *string `json:"etagPulls"`
 	EtagRuns     *string `json:"etagRuns"`
 	SinceAt      *int64  `json:"sinceAt"`
 	UpdatedAt    int64   `json:"updatedAt"`
