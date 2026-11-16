@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -110,7 +111,11 @@ func (c *contents) read(sha string) ([]byte, error) {
 }
 
 // gc 删除早于 cutoff 且没有任何行引用的内容文件，以及早于 cutoff 的临时文件。
-func (c *contents) gc(ctx context.Context, referenced func(ctx context.Context, sha string) (bool, error), cutoff time.Time) {
+//
+// 写入方从「落内容（含复用同哈希的旧孤儿文件）」到「事务提交引用行」全程持有 lock 的读锁；这里对每个候选文件
+// 持写锁完成「重查 mtime → 查引用 → 删除」，所以不会在某次写入已复用该内容、还没提交引用时把它删掉。
+// beforeLock 只给测试用（在拿写锁之前回调），生产为 nil。
+func (c *contents) gc(ctx context.Context, lock sync.Locker, referenced func(ctx context.Context, sha string) (bool, error), cutoff time.Time, beforeLock func(sha string)) {
 	root := filepath.Join(c.dir, "content")
 	shards, err := os.ReadDir(root)
 	if err != nil {
@@ -129,16 +134,10 @@ func (c *contents) gc(ctx context.Context, referenced func(ctx context.Context, 
 			if err != nil || !fi.ModTime().Before(cutoff) {
 				continue
 			}
-			used, err := referenced(ctx, e.Name())
-			if err != nil {
-				slog.Warn("artifacts: 检查内容引用失败", "sha256", e.Name(), "err", err)
-				continue
+			if beforeLock != nil {
+				beforeLock(e.Name())
 			}
-			if !used {
-				if err := os.Remove(filepath.Join(root, sh.Name(), e.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
-					slog.Warn("artifacts: 删除内容文件失败", "sha256", e.Name(), "err", err)
-				}
-			}
+			c.collect(ctx, lock, filepath.Join(root, sh.Name(), e.Name()), e.Name(), referenced, cutoff)
 		}
 	}
 	tmpDir := filepath.Join(c.dir, ".tmp")
@@ -150,5 +149,26 @@ func (c *contents) gc(ctx context.Context, referenced func(ctx context.Context, 
 		if fi, err := e.Info(); err == nil && fi.ModTime().Before(cutoff) {
 			_ = os.Remove(filepath.Join(tmpDir, e.Name()))
 		}
+	}
+}
+
+// collect 在写锁内重查一个候选内容文件，仍然过期且无人引用才删除。
+func (c *contents) collect(ctx context.Context, lock sync.Locker, path, sha string, referenced func(ctx context.Context, sha string) (bool, error), cutoff time.Time) {
+	lock.Lock()
+	defer lock.Unlock()
+	fi, err := os.Stat(path)
+	if err != nil || !fi.ModTime().Before(cutoff) {
+		return
+	}
+	used, err := referenced(ctx, sha)
+	if err != nil {
+		slog.Warn("artifacts: 检查内容引用失败", "sha256", sha, "err", err)
+		return
+	}
+	if used {
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("artifacts: 删除内容文件失败", "sha256", sha, "err", err)
 	}
 }

@@ -238,6 +238,19 @@ type Service struct {
 	now   func() time.Time
 	locks keyLocks
 	lim   *limiter
+	// contentMu：写入方从落内容到提交引用行持读锁（holdContent），内容清理逐个候选持写锁，
+	// 防止清理删掉「刚被复用、引用行还没提交」的旧孤儿内容。
+	contentMu sync.RWMutex
+	// 只给测试用的交错钩子；生产为 nil。
+	afterStage   func()
+	gcBeforeLock func(sha string)
+}
+
+// holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
+// 都必须从落内容之前一直持有到事务提交之后。
+func (s *Service) holdContent() func() {
+	s.contentMu.RLock()
+	return s.contentMu.RUnlock
 }
 
 // New 创建服务（确保 <data_dir>/artifacts 存在）。hub 可为 nil（不发实时通知）。
@@ -612,10 +625,10 @@ func (s *Service) Purge(ctx context.Context) {
 	if purged > 0 {
 		s.changed()
 	}
-	s.c.gc(ctx, func(ctx context.Context, sha string) (bool, error) {
+	s.c.gc(ctx, &s.contentMu, func(ctx context.Context, sha string) (bool, error) {
 		n, err := s.st.Q.CountArtifactFilesBySHA(ctx, sha)
 		return n > 0, err
-	}, now.Add(-orphanGrace))
+	}, now.Add(-orphanGrace), s.gcBeforeLock)
 }
 
 // purgeOne 删掉一个过期的回收站条目；删除语句里重查 deleted_at < cutoff，列出之后被恢复（或重新删除）的不删。
