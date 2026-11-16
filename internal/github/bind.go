@@ -188,7 +188,11 @@ func (s *Service) followRename(ctx context.Context, repoID int64, fullName strin
 		if err := q.SetGithubHooksRepoName(ctx, db.SetGithubHooksRepoNameParams{FullName: fullName, RepoID: repoID}); err != nil {
 			return err
 		}
-		return q.SetGithubPullsRepoName(ctx, db.SetGithubPullsRepoNameParams{RepoFullName: fullName, RepoID: repoID})
+		if err := q.SetGithubPullsRepoName(ctx, db.SetGithubPullsRepoNameParams{RepoFullName: fullName, RepoID: repoID}); err != nil {
+			return err
+		}
+		// watch 的键含 full_name：改名后不跟着改会在新旧名字下各轮询一份
+		return q.SetGithubWatchesRepoName(ctx, db.SetGithubWatchesRepoNameParams{FullName: fullName, RepoID: repoID})
 	})
 	if err != nil {
 		return fmt.Errorf("github: 跟随仓库改名: %w", err)

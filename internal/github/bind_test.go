@@ -125,6 +125,10 @@ func TestBindProjectFollowsRename(t *testing.T) {
 		RepoID: 42, Number: 1, RepoFullName: "Acme/Widgets", Title: "t", State: "open", HeadRef: "h", HeadSha: "s",
 		BaseRef: "main", AuthorLogin: "a", HtmlUrl: "u", UpdatedAt: 1,
 	}))
+	th := e.thread(p, 0)
+	require.NoError(t, e.st.Q.UpsertGithubWatch(e.ctx, db.UpsertGithubWatchParams{
+		Kind: "pull", RepoID: 42, FullName: "Acme/Widgets", Number: 1, ThreadID: th, Slot: "user",
+	}))
 
 	e.fake.Rename("Acme/Widgets", "acme/gadgets")
 	require.NoError(t, e.s.BindProject(e.ctx, p))
@@ -138,6 +142,10 @@ func TestBindProjectFollowsRename(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "acme/gadgets", pull.RepoFullName)
 
+	// 对象级 watch 的键跟着改名（否则新旧名字下各轮询一份）
+	w, err := e.st.Q.GetGithubWatch(e.ctx, db.GetGithubWatchParams{Kind: "pull", FullName: "acme/gadgets", Number: 1})
+	require.NoError(t, err)
+	assert.Equal(t, th, w.ThreadID)
 	// 已是新名：不再写
 	require.NoError(t, e.s.BindProject(e.ctx, p))
 	assert.Equal(t, row.GithubPrevUrls, e.getProject(p).GithubPrevUrls)
