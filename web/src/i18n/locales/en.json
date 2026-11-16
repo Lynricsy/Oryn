@@ -56,7 +56,14 @@
 		"wallpaperReplace": "Replace image",
 		"wallpaperRemove": "Remove image",
 		"wallpaperHint": "Appearance and the wallpaper image are saved in this browser only; the image is automatically blurred.",
-		"wallpaperError": "Couldn't use this image: it failed to load or browser storage is full. Wallpaper unchanged."
+		"wallpaperError": "Couldn't use this image: it failed to load or browser storage is full. Wallpaper unchanged.",
+		"appIcon": "App icon",
+		"appIcons": {
+			"default": "Mono",
+			"accent": "Brand color"
+		},
+		"appIconHint": "The home screen icon; it follows the system's light, dark and tinted appearance. iOS shows a system alert after switching.",
+		"appIconError": "The icon wasn't changed: {{message}}"
 	},
 	"stat": {
 		"input": "Input",

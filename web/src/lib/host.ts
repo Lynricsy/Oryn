@@ -318,6 +318,21 @@ export interface NativeHeaderHost {
 	menu(menu: NativeHeaderMenu): Promise<void>;
 }
 
+/** 可替换图标的 id：`default` 与壳带的其它图标（见壳的 `mobile_logic::APP_ICONS`）。 */
+export interface AppIconState {
+	/** 系统是否允许换图标（iOS 总是 true，留给以后的平台）。 */
+	supported: boolean;
+	current: string;
+	/** 本壳带的全部 id，默认在前；页面只显示自己认识的。 */
+	options: string[];
+}
+
+export interface AppIconHost {
+	get(): Promise<AppIconState>;
+	/** 系统改完（并弹出系统提示）才应答；拒绝时图标没变。 */
+	set(id: string): Promise<void>;
+}
+
 export interface MobileHost {
 	info(): Promise<MobileInfo>;
 	enablePush(): Promise<MobileInfo>;
@@ -331,6 +346,8 @@ export interface MobileHost {
 	tabBar: NativeTabBarHost | null;
 	/** 原生页头（iOS 且 bridge ≥ 5）；其它情况为 null，用网页页头。 */
 	header: NativeHeaderHost | null;
+	/** 可替换图标（iOS 且 bridge ≥ 6）；其它情况为 null，设置里不显示这一项。 */
+	appIcon: AppIconHost | null;
 }
 
 export interface Host {
@@ -361,8 +378,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头）。 */
-export const BRIDGE = 5;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标）。 */
+export const BRIDGE = 6;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -558,6 +575,7 @@ function mobileHost(
 	) => Promise<T | undefined>,
 	nativeTabBar: boolean,
 	nativeHeader: boolean,
+	appIcon: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
 		void call("host_open_external", { url });
@@ -616,6 +634,12 @@ function mobileHost(
 					set: (spec) => invoke<void>("host_header_set", { spec }),
 					show: (show) => invoke<void>("host_header_show", { show }),
 					menu: (menu) => invoke<void>("host_header_menu", { menu }),
+				}
+			: null,
+		appIcon: appIcon
+			? {
+					get: () => invoke<AppIconState>("host_app_icon_get"),
+					set: (id) => invoke<void>("host_app_icon_set", { id }),
 				}
 			: null,
 	};
@@ -737,6 +761,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 					call,
 					platform === "ios" && (meta?.bridge ?? 0) >= 4,
 					platform === "ios" && (meta?.bridge ?? 0) >= 5,
+					platform === "ios" && (meta?.bridge ?? 0) >= 6,
 				)
 			: null,
 		desktop: isMobile

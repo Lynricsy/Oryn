@@ -23,8 +23,9 @@ use crate::webview::{self, TauriShell};
 /// 主窗口标签。
 pub const MAIN: &str = "main";
 /// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令，3 = 桌面自绘标题栏 `host_window` 与 `chrome`，
-/// 4 = iOS 原生底栏 `host_tab_bar_*` 与 `tabbar` 事件，5 = iOS 原生页头 `host_header_*` 与 `header` 事件）。
-pub const BRIDGE: u32 = 5;
+/// 4 = iOS 原生底栏 `host_tab_bar_*` 与 `tabbar` 事件，5 = iOS 原生页头 `host_header_*` 与 `header` 事件，
+/// 6 = iOS 可替换图标 `host_app_icon_*`）。
+pub const BRIDGE: u32 = 6;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 

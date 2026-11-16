@@ -1,5 +1,5 @@
 //! Oryn 移动端原生能力的 Rust 侧：Android 上是 Keystore 保险库、系统通知、UnifiedPush / FCM、分享接收、系统栏颜色；
-//! iOS 上是下沉侧栏的原生底栏与线程页的原生页头（iOS 26+，Swift 实现在 `ios/`）。
+//! iOS 上是下沉侧栏的原生底栏与线程页的原生页头（iOS 26+）以及可替换图标（Swift 实现在 `ios/`）。
 //!
 //! 命令表为空（见 `build.rs`）：远程页面拿不到任何原生命令；这里的方法只给壳的 Rust 代码调用。
 //! 数据形状在 [`models`]，不依赖平台；插件句柄与注册只在 Android / iOS 上存在。
@@ -244,6 +244,19 @@ mod native {
         /// 调试（CI 演示）：屏幕中心与三件控件中心的触摸是否被原生层截住。Swift 在主线程上取样后应答。
         pub async fn header_probe(&self) -> Result<HeaderProbe> {
             Ok(self.0.run_mobile_plugin_async("headerProbe", ()).await?)
+        }
+
+        /// 可替换图标：是否支持、当前资源名。Swift 在主线程读取后应答。
+        pub async fn app_icon_get(&self) -> Result<AppIconState> {
+            Ok(self.0.run_mobile_plugin_async("appIconGet", ()).await?)
+        }
+
+        /// 换成资源名为 `name` 的可替换图标（`None` = 默认图标）。系统改完才应答（期间弹出系统提示），只能在异步任务里调用。
+        pub async fn app_icon_set(&self, name: Option<&str>) -> Result<()> {
+            self.0
+                .run_mobile_plugin_async::<IgnoredAny>("appIconSet", json!({ "name": name }))
+                .await?;
+            Ok(())
         }
     }
 }

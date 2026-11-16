@@ -36,7 +36,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-window",
 ];
 
-/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、原生底栏、原生页头等十二个。
+/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、原生底栏、原生页头、可替换图标等十四个。
 #[cfg_attr(desktop, allow(dead_code))]
 const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-ready",
@@ -57,6 +57,8 @@ const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-header-set",
     "allow-host-header-show",
     "allow-host-header-menu",
+    "allow-host-app-icon-get",
+    "allow-host-app-icon-set",
 ];
 
 /// 已开放宿主命令、允许主框架导航的服务器 origin（Android 的导航处理与 [`TauriShell`] 共用）。
@@ -391,7 +393,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":5"));
+        assert!(s.contains("\"bridge\":6"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
@@ -421,7 +423,7 @@ mod tests {
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
         assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
-        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 18);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 20);
     }
 
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、

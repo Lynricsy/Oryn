@@ -362,6 +362,46 @@ pub async fn host_header_menu(app: AppHandle, menu: HeaderMenuCmd) -> Res<()> {
     }
 }
 
+/// 可替换图标（只有 iOS）：`{supported, current, options}`，id 见 `mobile_logic::APP_ICONS`。其它平台返回 `unsupported`。
+#[tauri::command]
+pub async fn host_app_icon_get(app: AppHandle) -> Res<mobile_logic::AppIconInfo> {
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        let s = plugin.app_icon_get().await.map_err(|e| e.to_string())?;
+        Ok(mobile_logic::app_icon_info(
+            s.supported,
+            s.current.as_deref(),
+        ))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+/// 换成 id 对应的图标；系统改完（并弹出系统提示）才返回。不认识的 id 返回 `invalid_app_icon`。
+#[tauri::command]
+pub async fn host_app_icon_set(app: AppHandle, id: String) -> Res<()> {
+    let asset = mobile_logic::app_icon_asset(&id).ok_or("invalid_app_icon")?;
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .app_icon_set(asset)
+            .await
+            .map_err(|e| e.to_string())?;
+        eventlog::log("appicon.set", json!({"id": id}));
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, asset);
+        Err("unsupported".into())
+    }
+}
+
 // ---------------------------------------------------------------- iOS 原生插件（原生底栏与页头）
 
 #[cfg(target_os = "ios")]

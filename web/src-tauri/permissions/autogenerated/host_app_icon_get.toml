@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-app-icon-get"
+description = "Enables the host_app_icon_get command without any pre-configured scope."
+commands.allow = ["host_app_icon_get"]
+
+[[permission]]
+identifier = "deny-host-app-icon-get"
+description = "Denies the host_app_icon_get command without any pre-configured scope."
+commands.deny = ["host_app_icon_get"]

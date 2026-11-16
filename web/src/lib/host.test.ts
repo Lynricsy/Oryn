@@ -469,8 +469,8 @@ describe("移动壳（M7）", () => {
 		};
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 5", () => {
-			expect(BRIDGE).toBe(5);
+		it("本页宿主协议版本为 6", () => {
+			expect(BRIDGE).toBe(6);
 		});
 
 		it("ios + bridge 5 → header 非空；set / show / menu 的参数形状", async () => {
@@ -514,6 +514,37 @@ describe("移动壳（M7）", () => {
 			const android = createHost(mobileWindow({ bridge: 5 }).win);
 			expect(android.mobile).not.toBeNull();
 			expect(android.mobile?.header).toBeNull();
+		});
+
+		it("可替换图标只给 ios + bridge 6：get / set 的命令与参数；拒绝原样交给调用方", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 6 });
+			const icon = createHost(f.win).mobile?.appIcon;
+			expect(icon).toBeTruthy();
+			await icon?.get();
+			await icon?.set("accent");
+			expect(f.invoke.mock.calls).toEqual([
+				["host_app_icon_get"],
+				["host_app_icon_set", { id: "accent" }],
+			]);
+
+			expect(
+				createHost(mobileWindow({ platform: "ios", bridge: 5 }).win).mobile
+					?.appIcon,
+			).toBeNull();
+			expect(
+				createHost(mobileWindow({ bridge: 6 }).win).mobile?.appIcon,
+			).toBeNull();
+
+			const denied = createHost(
+				mobileWindow({
+					platform: "ios",
+					bridge: 6,
+					invoke: () => {
+						throw "unsupported";
+					},
+				}).win,
+			).mobile?.appIcon;
+			await expect(denied?.set("accent")).rejects.toBe("unsupported");
 		});
 
 		it("三种 header 事件到 onHeader；key 缺失、select 缺 id / 菜单种类、桌面壳上忽略；可退订", () => {

@@ -479,7 +479,7 @@ jobs:
           if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$plist" > /dev/null \
             || { echo "::error::Info.plist 缺 NSCameraUsageDescription（见 web/src-tauri/Info.ios.plist）"; exit 1; }
-          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS 模拟器包"
+          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS 模拟器包" "$plist"
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
@@ -656,7 +656,7 @@ jobs:
             echo "::error::签名者「${signer}」不是分发证书"
             exit 1
           fi
-          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS IPA"
+          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS IPA" "$plist"
           echo "path=$ipa" >> "$GITHUB_OUTPUT"
           echo "- iOS：\`${bid}\` ${ver}（build ${build}），签名者 ${signer}" | tee -a "$GITHUB_STEP_SUMMARY"
 

@@ -409,6 +409,47 @@ pub fn valid_reveal(r: &TabBarReveal) -> bool {
         && valid_ease(r.ease)
 }
 
+// ---------------------------------------------------------------- 可替换图标（iOS）
+
+/// 默认图标在页面上的 id（系统里对应 `alternateIconName == nil`）。
+pub const APP_ICON_DEFAULT: &str = "default";
+
+/// 可替换图标：页面用的 id 与 iOS 资源名（`web/scripts/gen-icons.py` 生成的 `<资源名>.appiconset`）。
+pub const APP_ICONS: &[(&str, &str)] = &[("accent", "AppIconAccent")];
+
+/// 页面给的 id → 资源名：默认图标 → `Some(None)`；不认识的 id → `None`（拒绝）。
+pub fn app_icon_asset(id: &str) -> Option<Option<&'static str>> {
+    if id == APP_ICON_DEFAULT {
+        return Some(None);
+    }
+    APP_ICONS
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, asset)| Some(*asset))
+}
+
+/// `host_app_icon_get` 的返回：当前 id 与本壳带的全部 id（默认在前）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AppIconInfo {
+    pub supported: bool,
+    pub current: &'static str,
+    pub options: Vec<&'static str>,
+}
+
+/// 系统报告的资源名 → 页面状态；不认识的资源名（例如以后删掉的图标）按默认处理。
+pub fn app_icon_info(supported: bool, asset: Option<&str>) -> AppIconInfo {
+    let current = asset
+        .and_then(|a| APP_ICONS.iter().find(|(_, x)| *x == a))
+        .map_or(APP_ICON_DEFAULT, |(id, _)| *id);
+    AppIconInfo {
+        supported,
+        current,
+        options: std::iter::once(APP_ICON_DEFAULT)
+            .chain(APP_ICONS.iter().map(|(id, _)| *id))
+            .collect(),
+    }
+}
+
 /// CI 演示用：夹具 tab-bar-set.json，只把 frame 换成该屏幕下网页会算出的位置。返回 (spec, 侧栏宽度)。
 /// sink_w = min(0.82 * width, 320)；frame = {x: 12, y: height - max(safe_bottom, 8) - 52, width: sink_w - 24, height: 52}
 #[cfg(any(test, all(debug_assertions, target_os = "ios")))]
@@ -2239,5 +2280,22 @@ mod tests {
         let info = ios.info("0.1.0", TokenStoreKind::Keychain, "");
         assert_eq!(info.push.state, PushViewState::Unsupported);
         assert_eq!(info.platform, "ios");
+    }
+
+    #[test]
+    fn app_icon_ids_round_trip_and_reject_unknown() {
+        assert_eq!(app_icon_asset("default"), Some(None));
+        assert_eq!(app_icon_asset("accent"), Some(Some("AppIconAccent")));
+        // 页面不能拿任意资源名去换图标
+        assert_eq!(app_icon_asset("AppIconAccent"), None);
+        assert_eq!(app_icon_asset(""), None);
+
+        let info = app_icon_info(true, Some("AppIconAccent"));
+        assert_eq!(info.current, "accent");
+        assert_eq!(info.options, vec!["default", "accent"]);
+        assert_eq!(app_icon_info(true, None).current, "default");
+        // 系统里还留着已删掉的资源名时按默认显示，不会选中一个不存在的选项
+        assert_eq!(app_icon_info(true, Some("AppIconGone")).current, "default");
+        assert!(!app_icon_info(false, None).supported);
     }
 }

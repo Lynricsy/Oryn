@@ -205,6 +205,10 @@ pub fn run() {
             mobile::host_header_show,
             #[cfg(mobile)]
             mobile::host_header_menu,
+            #[cfg(mobile)]
+            mobile::host_app_icon_get,
+            #[cfg(mobile)]
+            mobile::host_app_icon_set,
         ])
         .setup(move |app| setup(app, &setup_args, &raw))
         .build(tauri::generate_context!())

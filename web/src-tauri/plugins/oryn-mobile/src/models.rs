@@ -411,6 +411,14 @@ pub struct HeaderProbe {
     pub trail: bool,
 }
 
+/// `appIconGet` 的返回：系统是否支持可替换图标，当前用的资源名（`None` = 默认图标）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppIconState {
+    pub supported: bool,
+    #[serde(default)]
+    pub current: Option<String>,
+}
+
 /// 原生 → Rust 事件（`trigger("event", {type, …})`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(

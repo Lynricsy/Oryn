@@ -80,6 +80,7 @@ import {
 	WALLPAPERS,
 } from "../state/theme";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
+import { AppIconPicker } from "./settings/AppIconPicker";
 import AutomationsSettings from "./settings/AutomationsSettings";
 import CollectionsPage from "./settings/agent/CollectionsPage";
 import ExtensionsPage from "./settings/agent/ExtensionsPage";
@@ -921,6 +922,7 @@ function ThemeSettings() {
 					</div>
 				</div>
 				<WallpaperPicker />
+				<AppIconPicker />
 			</div>
 		</Card>
 	);

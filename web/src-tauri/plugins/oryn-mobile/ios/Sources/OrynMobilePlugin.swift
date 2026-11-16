@@ -3,6 +3,7 @@
 // 用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
 // 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷即呈现状态、
 // headerMenu 载荷 {open, page?}、headerProbe（调试）；交互经 trigger("event", {type: "header", op, key, menu?, id?}) 回到 Rust。
+// 可替换图标：appIconGet 应答 {supported, current}（current = 资源名或 null 表示默认），appIconSet 载荷 {name: <资源名|null>}。
 import Tauri
 import UIKit
 import WebKit
@@ -17,6 +18,15 @@ struct TabBarRevealArgs: Decodable {
   let ms: Double?
   let delay: Double?
   let ease: [Double]?
+}
+
+struct AppIconSetArgs: Decodable {
+  let name: String?
+}
+
+struct AppIconOut: Encodable {
+  let supported: Bool
+  let current: String?
 }
 
 class OrynMobilePlugin: Plugin {
@@ -132,6 +142,33 @@ class OrynMobilePlugin: Plugin {
         invoke.resolve(bar.probe())
       } else {
         invoke.resolve(HeaderProbeOut(center: false, lead: false, title: false, trail: false))
+      }
+    }
+  }
+
+  /// 可替换图标的当前状态；UIApplication 只能在主线程读。
+  @objc public func appIconGet(_ invoke: Invoke) {
+    DispatchQueue.main.async {
+      let app = UIApplication.shared
+      invoke.resolve(AppIconOut(supported: app.supportsAlternateIcons, current: app.alternateIconName))
+    }
+  }
+
+  /// 换图标：系统改完（并弹出「已更改图标」提示）后在完成回调里应答；Rust 侧异步等待，不占线程。
+  @objc public func appIconSet(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(AppIconSetArgs.self)
+    DispatchQueue.main.async {
+      let app = UIApplication.shared
+      guard app.supportsAlternateIcons else {
+        invoke.reject("unsupported")
+        return
+      }
+      if app.alternateIconName == args.name {
+        invoke.resolve()
+        return
+      }
+      app.setAlternateIconName(args.name) { error in
+        if let error { invoke.reject(error.localizedDescription) } else { invoke.resolve() }
       }
     }
   }

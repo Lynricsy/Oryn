@@ -56,7 +56,14 @@
 		"wallpaperReplace": "更换图片",
 		"wallpaperRemove": "移除图片",
 		"wallpaperHint": "外观设置与壁纸图片只保存在这台设备的浏览器里，图片会自动做强模糊处理。",
-		"wallpaperError": "无法使用这张图片：读取失败，或浏览器存储空间不足。壁纸保持不变。"
+		"wallpaperError": "无法使用这张图片：读取失败，或浏览器存储空间不足。壁纸保持不变。",
+		"appIcon": "App 图标",
+		"appIcons": {
+			"default": "黑白",
+			"accent": "品牌色"
+		},
+		"appIconHint": "主屏上的图标，跟随系统的浅色、深色与着色外观。切换后 iOS 会弹出一条系统提示。",
+		"appIconError": "图标没有换成：{{message}}"
 	},
 	"stat": {
 		"input": "输入",

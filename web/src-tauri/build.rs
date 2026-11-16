@@ -36,6 +36,9 @@ fn main() {
             "host_header_set",
             "host_header_show",
             "host_header_menu",
+            // 可替换图标：只有 iOS 真正实现
+            "host_app_icon_get",
+            "host_app_icon_set",
         ]),
     ))
     .unwrap();
