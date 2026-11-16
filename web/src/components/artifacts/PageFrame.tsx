@@ -9,9 +9,14 @@
  * - 帧失效（orynd 重启、空闲过期）时帧地址回 404，跨源读不到状态码；跟随最新版本的帧在 `hello` 之后 1 秒内
  *   收不到运行时的 `ready` 就当作失效，重新申请一次帧（收到过 `ready` 才会再给下一次机会，运行时缺失时不会反复申请）。
  * - 被拦截的跳转：运行时的 `blocked`（完整 URL），或父页面上 `frame-src` 的 `securitypolicyviolation`（只有源，之后重载帧）。
+ * - 选择与评论（3.1、3.3）：`onLink` 交出向帧发消息的函数（帧每次重建先交 `null` 再交新的），页面的 `select` 经 `onSelect` 报出。
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type {
+	PageMessage,
+	ParentMessageBody,
+} from "../../../sandbox/runtime/messages";
 import {
 	type ArtifactFrame,
 	closeArtifactFrame,
@@ -34,6 +39,11 @@ export const REVEAL_AFTER_MS = 3000;
 /** `hello` 之后等运行时 `ready` 的上限；超时视为帧已失效。 */
 export const READY_WAIT_MS = 1000;
 
+/** 向帧里的页面发一条消息（`select-mode`、`select-pins` 等；最近一次的选择状态在帧每次加载后自动重发）。 */
+export type FramePost = (body: ParentMessageBody) => void;
+/** 页面报来的选中变化或定位应答。 */
+export type PageSelectMessage = Extract<PageMessage, { kind: "select" }>;
+
 export interface PageFrameProps {
 	artifactId: string;
 	/** 钉住某个版本（只读）；缺省 = 跟随最新版本。 */
@@ -46,6 +56,10 @@ export interface PageFrameProps {
 	onBlocked(url: string): void;
 	/** 类型化 artifact 的查看器请求进入 / 退出演示（运行时的 `present`）；缺省 = 不认这条消息。帧每次重新加载都按退出处理。 */
 	onPresent?(on: boolean): void;
+	/** 帧（重新）建立时交出发消息的函数，拆掉时交 `null`。 */
+	onLink?(post: FramePost | null): void;
+	/** 页面的 `select` 消息。 */
+	onSelect?(msg: PageSelectMessage): void;
 }
 
 export function PageFrame({
@@ -55,6 +69,8 @@ export function PageFrame({
 	title,
 	onBlocked,
 	onPresent,
+	onLink,
+	onSelect,
 }: PageFrameProps): ReactNode {
 	// 帧被判定失效时递增，重新申请
 	const [attempt, setAttempt] = useState(0);
@@ -68,6 +84,8 @@ export function PageFrame({
 			title={title}
 			onBlocked={onBlocked}
 			onPresent={onPresent}
+			onLink={onLink}
+			onSelect={onSelect}
 			onReady={() => {
 				retried.current = false;
 			}}
@@ -93,6 +111,8 @@ function FrameSession({
 	title,
 	onBlocked,
 	onPresent,
+	onLink,
+	onSelect,
 	onReady,
 	onStale,
 	onRetry,
@@ -102,6 +122,8 @@ function FrameSession({
 	title: string;
 	onBlocked(url: string): void;
 	onPresent?(on: boolean): void;
+	onLink?(post: FramePost | null): void;
+	onSelect?(msg: PageSelectMessage): void;
 	onReady(): void;
 	onStale(): void;
 	onRetry(): void;
@@ -144,6 +166,8 @@ function FrameSession({
 					title={title}
 					onBlocked={onBlocked}
 					onPresent={onPresent}
+					onLink={onLink}
+					onSelect={onSelect}
 					onReady={onReady}
 					onStale={onStale}
 				/>
@@ -188,6 +212,8 @@ function LiveFrame({
 	title,
 	onBlocked,
 	onPresent,
+	onLink,
+	onSelect,
 	onReady,
 	onStale,
 }: {
@@ -197,14 +223,23 @@ function LiveFrame({
 	title: string;
 	onBlocked(url: string): void;
 	onPresent?(on: boolean): void;
+	onLink?(post: FramePost | null): void;
+	onSelect?(msg: PageSelectMessage): void;
 	onReady(): void;
 	onStale(): void;
 }): ReactNode {
 	const ref = useRef<HTMLIFrameElement>(null);
 	const [visible, setVisible] = useState(false);
 	// 回调可能每次渲染都换；监听只装一次
-	const cb = useRef({ onBlocked, onPresent, onReady, onStale });
-	cb.current = { onBlocked, onPresent, onReady, onStale };
+	const cb = useRef({
+		onBlocked,
+		onPresent,
+		onLink,
+		onSelect,
+		onReady,
+		onStale,
+	});
+	cb.current = { onBlocked, onPresent, onLink, onSelect, onReady, onStale };
 
 	useEffect(() => {
 		const timer = setTimeout(() => setVisible(true), REVEAL_AFTER_MS);
@@ -228,6 +263,7 @@ function LiveFrame({
 		const offs = [
 			link.on("blocked", (m) => cb.current.onBlocked(m.url)),
 			link.on("present", (m) => cb.current.onPresent?.(m.on)),
+			link.on("select", (m) => cb.current.onSelect?.(m)),
 			link.on("ready", () => {
 				ready = true;
 				clearTimeout(readyTimer);
@@ -278,6 +314,7 @@ function LiveFrame({
 			reload();
 		};
 		document.addEventListener("securitypolicyviolation", onViolation);
+		cb.current.onLink?.((body) => link.post(body));
 
 		return () => {
 			for (const off of offs) off();
@@ -285,6 +322,7 @@ function LiveFrame({
 			clearTimeout(readyTimer);
 			clearTimeout(scrollTimer);
 			document.removeEventListener("securitypolicyviolation", onViolation);
+			cb.current.onLink?.(null);
 			link.dispose();
 		};
 	}, [artifactId, follow, url]);

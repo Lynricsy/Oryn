@@ -12,7 +12,7 @@
  * 移动壳（M7 计划 4.9）：转入后台 30 秒后挂起连接（关掉 socket、取消重连，状态 `idle`），不让 WebView 在后台保活网络；
  * 回到前台立即重连（退避计数归零），重连后照常按 `afterSeq` 补齐。
  * Artifacts（M14）：`artifacts.changed` 与每次连接建立都通知 `onArtifactsChanged` 的监听者；`artifact.version` /
- * `artifact.activity` 按 artifact id 分发给 `onArtifact` 的订阅者。`watchArtifact` 按引用计数登记观看，重连后重发 `artifact.watch`。
+ * `artifact.activity` / `artifact.canvas` / `artifact.comments` 按 artifact id 分发给 `onArtifact` 的订阅者。`watchArtifact` 按引用计数登记观看，重连后重发 `artifact.watch`。
  */
 
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
@@ -57,7 +57,13 @@ type Timer = ReturnType<typeof setTimeout>;
 /** 只发给观看者的 artifact 消息。 */
 export type ArtifactEvent = Extract<
 	WsServerMessage,
-	{ type: "artifact.version" | "artifact.activity" }
+	{
+		type:
+			| "artifact.version"
+			| "artifact.activity"
+			| "artifact.canvas"
+			| "artifact.comments";
+	}
 >;
 
 interface PendingCmd {
@@ -666,6 +672,7 @@ export class RealtimeClient {
 				return;
 			case "artifact.version":
 			case "artifact.activity":
+			case "artifact.comments":
 				for (const cb of [...(this.artifactListeners.get(msg.id) ?? [])])
 					cb(msg);
 				return;

@@ -4,6 +4,7 @@
  * 下面是 `ArtifactViewer variant="panel"`。工具条与查看器顶栏合成一行（切换菜单换掉查看器的图标与标题），
  * 查看器的更多菜单里「打开线程」不指向本线程。
  * 选中项（`artifactSel`）不在该线程的列表里时取最近更新的一个。
+ * 评论（3.3）：面板里的查看器有选择 / 评论两个模式按钮、新建评论与页面上的图钉，但不放评论面板；看完整评论串去整页。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";

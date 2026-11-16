@@ -6,6 +6,8 @@
  *   新版本到来时帧会照常重载，但要点「重新加载」（重新申请帧）才看得到新内容。
  * - 「在浏览器中打开」回一个外壳页的 `blob:` 地址，外壳里用沙箱 iframe 装内容，不让 artifact 的脚本跑在应用的源上。
  * - 观看者（`artifact.watch`）按连接登记；`write` 产生新版本并推 `artifact.version` 与 `artifacts.changed`。
+ * - 页面帧给每个起始标签加 `data-oryn-src="<mark>:<字节偏移>"`（同 `htmlsrc.MarkSources`），评论与选择拿得到源码偏移。
+ * - 评论（`…/comments*`）存在内存里，变化时推 `artifact.comments`；不在新版本上重新定位锚点。
  * `MockServer.handleFetch` 调 `handle`，不归这里的请求返回 null。
  */
 import type { Schemas, Thread } from "../api/client";
@@ -345,6 +347,40 @@ const SEEDS: Seed[] = [
 	},
 ];
 
+/** 正文里不算元素的原文：其中的 `<` 不是起始标签。 */
+const RAW_TEXT: Record<string, true> = {
+	script: true,
+	style: true,
+	textarea: true,
+	title: true,
+};
+
+/** 给每个起始标签加源码标记，偏移是该标签 `<` 在原文里的 UTF-8 字节偏移（同 `htmlsrc.MarkSources` 的口径）。 */
+function markSources(html: string, mark: string): string {
+	const re = /<!--[\s\S]*?-->|<![^>]*>|<\/[^>]*>|<([a-zA-Z][a-zA-Z0-9-]*)/g;
+	let out = "";
+	let cursor = 0;
+	let byte = 0;
+	let counted = 0;
+	for (let m = re.exec(html); m; m = re.exec(html)) {
+		const name = m[1]?.toLowerCase();
+		if (!name) continue;
+		byte += encoder.encode(html.slice(counted, m.index)).byteLength;
+		counted = m.index;
+		const end = m.index + m[0].length;
+		out += `${html.slice(cursor, end)} data-oryn-src="${mark}:${byte}"`;
+		cursor = end;
+		if (RAW_TEXT[name]) {
+			const close = html.toLowerCase().indexOf(`</${name}`, end);
+			re.lastIndex = close < 0 ? html.length : close;
+		}
+	}
+	return out + html.slice(cursor);
+}
+
+type CommentThread = Schemas["ArtifactCommentThread"];
+const MAX_COMMENT_RUNES = 4000;
+
 /** 观看者消息（`artifact.version` 等）与 `artifacts.changed` 的出口。 */
 export interface ArtifactsHub {
 	changed(): void;
@@ -354,6 +390,8 @@ export class MockArtifacts {
 	private readonly items = new Map<string, Stored>();
 	private readonly frames = new Map<string, string[]>();
 	private readonly watchers = new Map<string, Set<MockSocket>>();
+	/** artifact id → 评论串（旧 → 新）。 */
+	private readonly comments = new Map<string, CommentThread[]>();
 	private readonly threads: Map<string, Thread>;
 	private readonly hub: ArtifactsHub;
 	private seq = 0;
@@ -558,6 +596,8 @@ export class MockArtifacts {
 			return error(404, "no_thumbnail", "这个版本还没有缩略图");
 		if (rest === "render.png" && m === "GET")
 			return error(503, "render_unavailable", "mock 模式没有渲染器");
+		if (rest === "comments" || rest.startsWith("comments/"))
+			return this.handleComments(a, rest.slice("comments".length), m, req);
 		if (rest === "frames" && m === "POST") return this.openFrame(a, req, false);
 		if (rest === "open-link" && m === "POST")
 			return this.openFrame(a, req, true);
@@ -824,15 +864,120 @@ export class MockArtifacts {
 				: `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>body{font:13px/1.6 ui-monospace,monospace;margin:0;padding:24px;white-space:pre-wrap;color:#18181b;background:#fafafa}@media (prefers-color-scheme: dark){body{color:#fafafa;background:#0f0f11}}</style></head><body>${escapeHtml(text)}</body></html>`;
 		if (topLevel) return html;
 		const mark = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+		// 只有页面类型标源码（旧版本的帧不带运行时，标了也无妨）
+		const marked = a.meta.kind === "web" ? markSources(html, mark) : html;
 		const config = JSON.stringify({ v: 1, mark, path, runtime });
 		const origin = location.origin;
 		const inject = `<script type="module" src="${origin}/sandbox/runtime/main.ts"></script><script type="module">window.__orynStart(${config});</script>`;
-		const head = /<head[^>]*>/i.exec(html);
+		const head = /<head[^>]*>/i.exec(marked);
 		return head
-			? html.slice(0, head.index + head[0].length) +
+			? marked.slice(0, head.index + head[0].length) +
 					inject +
-					html.slice(head.index + head[0].length)
-			: inject + html;
+					marked.slice(head.index + head[0].length)
+			: inject + marked;
+	}
+
+	// ------------------------------------------------------------ 评论
+
+	private async handleComments(
+		a: Stored,
+		sub: string,
+		m: string,
+		req: Request,
+	): Promise<Response | null> {
+		const id = a.meta.id;
+		const list = this.comments.get(id) ?? [];
+		if (sub === "" && m === "GET")
+			return json({
+				version: a.meta.version,
+				threads: list,
+			} satisfies Schemas["ArtifactCommentThreadList"]);
+		if (a.meta.deletedAt !== undefined)
+			return error(410, "deleted", "这个 artifact 在「最近删除」里。");
+		// 请求体只能读一次
+		let payload: Record<string, unknown> = {};
+		try {
+			const raw: unknown = await req.json();
+			if (raw && typeof raw === "object")
+				payload = raw as Record<string, unknown>;
+		} catch {
+			// 没有体（或不是 JSON）：字段一律缺省
+		}
+		const text = typeof payload.body === "string" ? payload.body.trim() : "";
+		const bodyError =
+			text && [...text].length <= MAX_COMMENT_RUNES
+				? null
+				: error(
+						400,
+						"invalid",
+						`评论不能为空，且不超过 ${MAX_COMMENT_RUNES} 个字。`,
+					);
+		const now = Date.now();
+		if (sub === "" && m === "POST") {
+			const anchor = payload.anchor as CommentThread["anchor"] | undefined;
+			if (typeof anchor?.path !== "string")
+				return error(400, "invalid", "anchor 不合法");
+			if (bodyError) return bodyError;
+			this.seq++;
+			const t: CommentThread = {
+				id: `act_01JDNACMT${String(this.seq).padStart(17, "0")}`,
+				anchor: { ...anchor, missing: false },
+				createdAt: now,
+				comments: [{ n: 1, authorLabel: "", body: text, createdAt: now }],
+			};
+			this.comments.set(id, [...list, t]);
+			this.commentsChanged(id);
+			return json(t, 201);
+		}
+		if (sub === "/sent" && m === "POST") {
+			const ids = payload.threadIds as string[] | undefined;
+			const sentTo = String(payload.sentTo ?? "");
+			this.comments.set(
+				id,
+				list.map((t) =>
+					ids?.includes(t.id) ? { ...t, sentAt: now, sentTo } : t,
+				),
+			);
+			this.commentsChanged(id);
+			return new Response(null, { status: 204 });
+		}
+		const hit = /^\/(act_[0-9A-Z]{26})(\/replies)?$/.exec(sub);
+		const cur = list.find((t) => t.id === hit?.[1]);
+		if (!hit || !cur) return error(404, "not_found", "评论串不存在");
+		let next: CommentThread;
+		if (hit[2] && m === "POST") {
+			if (cur.resolvedAt !== undefined)
+				return error(400, "invalid", "已解决的评论不能回复，先重新打开。");
+			if (bodyError) return bodyError;
+			// 用户回复清掉「已发送」
+			const { sentAt: _a, sentTo: _b, ...rest } = cur;
+			next = {
+				...rest,
+				comments: [
+					...cur.comments,
+					{
+						n: cur.comments.length + 1,
+						authorLabel: "",
+						body: text,
+						createdAt: now,
+					},
+				],
+			};
+		} else if (!hit[2] && m === "PATCH") {
+			const resolved = payload.resolved === true;
+			const { resolvedAt: _, ...rest } = cur;
+			next = resolved ? { ...rest, resolvedAt: now } : rest;
+		} else return null;
+		this.comments.set(
+			id,
+			list.map((t) => (t.id === cur.id ? next : t)),
+		);
+		this.commentsChanged(id);
+		return json(next);
+	}
+
+	private commentsChanged(id: string) {
+		this.toWatchers(id, { type: "artifact.comments", id });
 	}
 
 	private async importFiles(req: Request, url: URL): Promise<Response> {

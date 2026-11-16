@@ -20,6 +20,8 @@ export type ArtifactFrame = Schemas["ArtifactFrame"];
 export type ArtifactCapabilities = Schemas["ArtifactCapabilities"];
 export type ArtifactState = Schemas["ArtifactState"];
 export type ArtifactThreadActivity = Schemas["ArtifactThreadActivity"];
+export type ArtifactCommentThread = Schemas["ArtifactCommentThread"];
+export type ArtifactCommentAnchor = Schemas["ArtifactCommentAnchor"];
 
 /** 列表筛选（与 `GET /api/v1/artifacts` 的 query 同名）；缺省 = 不筛。 */
 export interface ArtifactFilter {
@@ -36,6 +38,7 @@ export const artifactQk = {
 		["artifacts", "detail", id, version ?? 0] as const,
 	versions: (id: string) => ["artifacts", "versions", id] as const,
 	capabilities: ["artifacts", "capabilities"] as const,
+	comments: (id: string) => ["artifacts", "comments", id] as const,
 };
 
 function invalidateArtifacts(qc: QueryClient) {
@@ -235,6 +238,101 @@ export function useMarkArtifactOpened() {
 		onSuccess: () =>
 			void qc.invalidateQueries({ queryKey: ["artifacts", "list"] }),
 	});
+}
+
+/**
+ * 评论串（旧 → 新）与最新版本号。观看者收到 `artifact.comments`（评论变了）或 `artifact.version`
+ * （服务端会在新版本上重新定位锚点）时失效重取；观看登记由查看器负责。
+ */
+export function useArtifactComments(
+	id: string,
+	enabled = true,
+	client: Pick<RealtimeClient, "onArtifact"> = realtime,
+) {
+	const qc = useQueryClient();
+	useEffect(() => {
+		if (!enabled) return;
+		return client.onArtifact(id, (msg) => {
+			if (msg.type === "artifact.comments" || msg.type === "artifact.version")
+				void qc.invalidateQueries({ queryKey: artifactQk.comments(id) });
+		});
+	}, [client, qc, id, enabled]);
+	return useQuery({
+		queryKey: artifactQk.comments(id),
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/artifacts/{id}/comments", {
+					params: { path: { id } },
+				}),
+			),
+	});
+}
+
+function useCommentMutation<V extends { id: string }, R>(
+	fn: (v: V) => Promise<R>,
+) {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: fn,
+		onSuccess: (_r, v) =>
+			void qc.invalidateQueries({ queryKey: artifactQk.comments(v.id) }),
+	});
+}
+
+/** 新建一串评论（作者是用户）。 */
+export function useCreateArtifactComment() {
+	return useCommentMutation(
+		({
+			id,
+			anchor,
+			body,
+		}: {
+			id: string;
+			anchor: ArtifactCommentAnchor;
+			body: string;
+		}) =>
+			unwrap(
+				api.POST("/api/v1/artifacts/{id}/comments", {
+					params: { path: { id } },
+					body: { anchor, body },
+				}),
+			),
+	);
+}
+
+/** 用户回复一串评论（服务端同时清掉它的「已发送」）。 */
+export function useReplyArtifactComment() {
+	return useCommentMutation(
+		({ id, threadId, body }: { id: string; threadId: string; body: string }) =>
+			unwrap(
+				api.POST("/api/v1/artifacts/{id}/comments/{threadId}/replies", {
+					params: { path: { id, threadId } },
+					body: { body },
+				}),
+			),
+	);
+}
+
+/** 标为已解决 / 重新打开。 */
+export function useResolveArtifactComment() {
+	return useCommentMutation(
+		({
+			id,
+			threadId,
+			resolved,
+		}: {
+			id: string;
+			threadId: string;
+			resolved: boolean;
+		}) =>
+			unwrap(
+				api.PATCH("/api/v1/artifacts/{id}/comments/{threadId}", {
+					params: { path: { id, threadId } },
+					body: { resolved },
+				}),
+			),
+	);
 }
 
 /**
