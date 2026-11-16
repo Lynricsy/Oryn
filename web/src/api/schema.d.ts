@@ -5757,6 +5757,19 @@ export interface components {
             items: components["schemas"]["MemoryModelChoice"][];
             /** @description 有用途需要重启时，要改进 .env 的那几行 */
             envSnippet?: string;
+            /**
+             * @description 可选模型：中央模型目录里 kind 为 chat 的全部模型，由控制面按 omp-home `models.yml` 的 provider `api`（及内置 provider 表）
+             *     判定协议类型。`family` 缺省表示不能用于 Hindsight，`reason` 说明原因（如 ChatGPT 订阅接口、协议未知）。
+             */
+            options: components["schemas"]["MemoryModelOption"][];
+        };
+        MemoryModelOption: {
+            providerKey: string;
+            modelId: string;
+            name: string;
+            family?: components["schemas"]["MemoryFamily"];
+            /** @description 不可选时给人看的原因 */
+            reason?: string;
         };
         MemoryModelsUpdate: {
             items: {

@@ -6671,11 +6671,27 @@ type MemoryModelChoice struct {
 	Purpose MemoryPurpose `json:"purpose"`
 }
 
+// MemoryModelOption defines model for MemoryModelOption.
+type MemoryModelOption struct {
+	// Family 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+	Family      *MemoryFamily `json:"family,omitempty"`
+	ModelID     string        `json:"modelId"`
+	Name        string        `json:"name"`
+	ProviderKey string        `json:"providerKey"`
+
+	// Reason 不可选时给人看的原因
+	Reason *string `json:"reason,omitempty"`
+}
+
 // MemoryModels defines model for MemoryModels.
 type MemoryModels struct {
 	// EnvSnippet 有用途需要重启时，要改进 .env 的那几行
 	EnvSnippet *string             `json:"envSnippet,omitempty"`
 	Items      []MemoryModelChoice `json:"items"`
+
+	// Options 可选模型：中央模型目录里 kind 为 chat 的全部模型，由控制面按 omp-home `models.yml` 的 provider `api`（及内置 provider 表）
+	// 判定协议类型。`family` 缺省表示不能用于 Hindsight，`reason` 说明原因（如 ChatGPT 订阅接口、协议未知）。
+	Options []MemoryModelOption `json:"options"`
 }
 
 // MemoryModelsUpdate defines model for MemoryModelsUpdate.

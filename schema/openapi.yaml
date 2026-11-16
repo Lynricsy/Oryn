@@ -7566,12 +7566,27 @@ components:
         needsRestart: { type: boolean, description: 生效协议与 .env 里已部署的不同；确认重启前该用途的中转返回 409 `family_mismatch` }
     MemoryModels:
       type: object
-      required: [items]
+      required: [items, options]
       properties:
         items:
           type: array
           items: { $ref: '#/components/schemas/MemoryModelChoice' }
         envSnippet: { type: string, description: 有用途需要重启时，要改进 .env 的那几行 }
+        options:
+          type: array
+          description: |
+            可选模型：中央模型目录里 kind 为 chat 的全部模型，由控制面按 omp-home `models.yml` 的 provider `api`（及内置 provider 表）
+            判定协议类型。`family` 缺省表示不能用于 Hindsight，`reason` 说明原因（如 ChatGPT 订阅接口、协议未知）。
+          items: { $ref: '#/components/schemas/MemoryModelOption' }
+    MemoryModelOption:
+      type: object
+      required: [providerKey, modelId, name]
+      properties:
+        providerKey: { type: string }
+        modelId: { type: string }
+        name: { type: string }
+        family: { $ref: '#/components/schemas/MemoryFamily' }
+        reason: { type: string, description: 不可选时给人看的原因 }
     MemoryModelsUpdate:
       type: object
       required: [items]

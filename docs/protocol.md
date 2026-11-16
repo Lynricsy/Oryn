@@ -1802,3 +1802,79 @@ Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规
 ### 存储
 
 `0028_github.sql`：`github_app`（单行）、`github_identities`、`github_oauth_states`、`github_installations`、`github_deliveries`、`github_pulls`、`thread_pulls`、`github_triggers`、`thread_issues`、`github_outbox`；`owner.github_automation_identity`、`orbs.github_identity`、`projects.github_*`（仓库 / 所有者 / 安装 id、改名前地址、三个回流开关）；`thread_commits (sha)` 索引。敏感值经 `secrets.Box` 加密存本表列（AAD `github/app/*`、`github/identity/<slot>/{access,refresh}`），不进 `secrets` 表。
+
+## M16：内置 Hindsight 记忆
+
+记忆存放在一个独立部署的 Hindsight 服务里（`deploy/hindsight/`，部署与升级见 deploy.md「Hindsight 记忆服务」）。orb 和 runner 里的 omp 只能通过 orynd 的记忆网关访问它；Hindsight 调用模型时，也通过 orynd 的模型中转。Hindsight 的 API key 和中转令牌都只保存在控制面。
+
+### agent.start：`memory`
+
+- **参数**：`LinkCtlAgentStartParams.memory: LinkCtlAgentMemory{project?, autoRetain}`，缺省表示本次不启用记忆。只有 hello 的 `features` 含 `memory` 的 orbd 会收到。普通 orbd 和 runner 上报这个特性，协调宿主不上报，收到时返回 `invalid_params`。
+- **控制面判定**：同时满足以下条件才下发：全局开关打开、该项目没有被单独关掉、已生成过 `.env`、线程不是协调对话。`project` 是项目 ID 转小写；无项目线程不带 `project`，并设 `autoRetain=false`。
+- **orbd 的处理**：
+  - 写 `~/.oryn/memory-overlay.yml`，内容为 `memory.backend: hindsight`、`hindsight.globalScope: true`；
+  - 用 `--config` 传入这个文件，位置在项目层 `--config` 之后、桌面覆盖层之前；
+  - 在 `p.Env` 之后设置下列环境变量，env 模式的密钥覆盖不了它们：
+    - `HINDSIGHT_API_URL=http://<egress>/memory/t/<threadId>`
+    - `HINDSIGHT_BANK_ID=oryn`
+    - `HINDSIGHT_SCOPING=per-project-tagged`（判断全局写入依赖这个模式）
+    - 有项目时 `ORYN_HINDSIGHT_PROJECT=<project>`（Core `oryn-v18.19.0-10` 起据此生成项目标签）
+    - `autoRetain` 为假时 `HINDSIGHT_AUTO_RETAIN=false`
+    - `NO_PROXY` 和 `no_proxy` 追加 `127.0.0.1,localhost`（Bun 的 fetch 会读代理变量）
+  - 删除继承来的 `HINDSIGHT_API_TOKEN`。
+- **开关变化**：运行中的线程会被标为需重启，原因为 `memory`，列在 `apply-status` 里，由 `restart-sessions` 安排重启。
+
+### 记忆网关：出站路径 `/memory/t/<threadId>/…`
+
+- **通道**：orb 沿用 `127.0.0.1:7811` 的出站通道。runner 平时不监听出站端口；第一个带 `memory` 的 agent.start 到来时，runner 在同一地址开一条只走记忆的通道（`ORYN_EGRESS_ADDR` 可以改地址）。orynd 对 runner 的 `StreamEgress` 流只接 `/memory/` 前缀，其余路径一律 403。
+- **身份**：调用方身份由 orynd 确定：orb 来自 link 令牌，线程号来自路径，且必须满足 `threads.orb_id` 等于当前 orb，否则 403。项目归属：普通 orb 取 `orb.ProjectID`，runner 取该线程的 `project_id`。
+- **放行清单**：只放行 Core 实际调用的端点（附录 B，`docs/plan-m16-appendix-b.md`），其余一律 403。路径里的 bank 一律改写为 `oryn`，丢弃请求里的 `Authorization`，转发时注入 Hindsight key，响应里出现的 key 替换为 `oryn-redacted`。
+  - `PUT` bank 根：丢弃请求体，直接返回 200 `{}`，不转发。
+  - `POST …/memories`：
+    - 项目线程：每个 item 的 `tags` 强制为 `[project:<P>]`，并把 `document_id` 和线程登记进 `memory_documents`。
+    - 不带 `tags` 的写入（Core 的 `scope:"global"`），以及无项目线程的所有写入：存进候选队列 `memory_candidates`，不转发，返回 2xx。Core 收到非 2xx 时会持续重试，所以必须返回 2xx。
+  - `POST …/memories/recall`、`POST …/reflect`：项目线程强制 `tags=[project:<P>, oryn:global]`，无项目线程强制 `tags=[oryn:global]`，两者的 `tags_match` 都按附录 A 的结论设置。
+  - mental model：
+    - 列表和单个读取只返回本项目的模型和 `oryn:global` 模型，并把后者的 `tags` 改写为 `[]`，否则 Core 不渲染它；
+    - 创建只允许 `project-conventions-<P>`、`project-decisions-<P>` 两个 id，且标签必须恰好是 `[project:<P>]`；
+    - 刷新只允许本项目的模型；
+    - DELETE 一律 403；
+    - `detail=full` 降级为 `content`。
+  - `/documents*`、`/memories/list`：一律 403，Core 没有调用点。
+- **未启用时**：返回 503，code 为 `memory_disabled`。
+
+### 模型中转：`<public_url>/memory-relay/v1/<purpose>/…`
+
+- **调用方**：Hindsight 是这个入口的唯一调用方，用中转令牌鉴权（放在 `.env` 的各 `*_API_KEY` 里）。这个入口不在 `/api/v1` 鉴权组里。
+- **用途**：`purpose` 取 `default`、`retain`、`reflect`、`consolidation`、`mental_model`、`embed`、`rerank` 之一。
+- **LLM 请求**：
+  - 查出该用途选定的模型，没有单独选择时跟随 `default`；
+  - 协议类型与 `.env` 里已部署的不一致时，返回 409 `family_mismatch`；
+  - 把请求里的别名（`oryn-retain` 等）替换成真实模型名，gemini 的模型名在 URL 路径里；
+  - 按中央模型目录的路由转发，注入 Oryn 加密库里的 provider 密钥，响应里的密钥做脱敏。
+- **嵌入与重排**：按 `memory_endpoints` 转发。
+- **用量**：从响应的 usage 字段解析，按小时计进 `memory_usage`。
+
+### REST（tag `memory`）
+
+`/api/v1/memory/` 下的接口：
+
+- 设置与状态：`settings`、`status`、`env-file`
+- 开关：`projects`、`projects/{id}`
+- 模型：`models`、`models/deployed`
+- 嵌入与重排：`endpoints`、`endpoints/{kind}`
+- 用量：`usage`
+- 浏览与遗忘：`documents`、`documents/{documentId}`、`search`、`threads/{id}/forget`
+- 候选：`candidates`、`candidates/{candidateId}`、`candidates/{candidateId}/approve`
+- 全局记忆：`global`、`global/{documentId}`
+- mental model：`mental-models`、`mental-models/{modelId}/refresh`
+- 删除重试：`pending-deletes`
+- 导出：`exports`、`exports/{exportId}`、`exports/{exportId}/download`
+
+字段见 OpenAPI。删除项目后，orynd 按 `memory_documents` 逐个删除该项目的 document，并删除它的 mental models；失败的条目进 `memory_tombstones`，后台重试。
+
+### 存储
+
+`0036_memory.sql` 新增以下表：`memory_settings`（单行）、`memory_models`、`memory_endpoints`、`memory_projects`、`memory_candidates`、`memory_documents`、`memory_usage`、`memory_tombstones`。
+
+敏感值经 `secrets.Box` 加密后存在本表列里，AAD 分别是 `memory/hindsight-key` 和 `memory/endpoint/<kind>/api-key`。中转令牌只存 SHA-256。
