@@ -221,6 +221,17 @@
 		"abort": "中断",
 		"abortBash": "中止 bash",
 		"commands": "命令",
+		"refs": {
+			"label": "GitHub issue 与 PR",
+			"hint": "↑↓ 选择 · Enter 作为附件加入 · Esc 关闭",
+			"loading": "正在搜索…",
+			"empty": "没有匹配的 issue 或 PR",
+			"state": {
+				"open": "打开",
+				"closed": "已关闭",
+				"merged": "已合并"
+			}
+		},
 		"label": "消息",
 		"menuHint": "↑↓ 选择 · Tab 补全 · Esc 关闭",
 		"noCommands": "没有匹配的命令",

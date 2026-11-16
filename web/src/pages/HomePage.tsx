@@ -10,6 +10,7 @@
  * 执行位置的「Runners」分组（M11b）：选 runner 的目录（可带子路径、可新建 worktree）；目录已被别的线程占用
  * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
  * 托盘背后是一层光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
+ * 所选项目已绑定 GitHub 时（M14），键入 `#` 弹出该仓库的 issue / PR 候选，选中即作为 Markdown 附件加入（全局助手时不启用）。
  */
 import {
 	type CSSProperties,
@@ -37,6 +38,7 @@ import {
 } from "../components/composer/attachments";
 import { morphToThread } from "../components/composer/DockTray";
 import { PillButton, type PillText } from "../components/composer/PillButton";
+import { RefMenu, useRefMenu } from "../components/composer/RefMenu";
 import {
 	RoleCapsule,
 	type Target,
@@ -76,7 +78,11 @@ import { Icon } from "../components/ui/icons";
 import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
 import { OrbBead } from "../components/ui/OrbBead";
 import { Option, Popover, PopoverLabel } from "../components/ui/PickerPopover";
-import { IconButton, Spinner } from "../components/ui/primitives";
+import {
+	describeError,
+	IconButton,
+	Spinner,
+} from "../components/ui/primitives";
 import { formatMemoryMB } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { createThread } from "../state/actions";
@@ -155,6 +161,22 @@ export function HomePage(): ReactNode {
 	} | null>(null);
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const trayRef = useRef<HTMLDivElement>(null);
+	const [caret, setCaret] = useState(0);
+	const refMenu = useRefMenu({
+		projectId:
+			!assistantTarget &&
+			projects.data?.projects.find((p) => p.id === projectId)?.github?.bound
+				? projectId
+				: undefined,
+		text: prompt,
+		caret,
+		setText: (next, c) => {
+			setPrompt(next);
+			setCaret(c);
+			requestAnimationFrame(() => ref.current?.setSelectionRange(c, c));
+		},
+		onAttached: (a) => att.addUploaded([a]),
+	});
 	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
 	const [intro] = useState(() => !introPlayed);
 
@@ -537,6 +559,14 @@ export function HomePage(): ReactNode {
 						 * 加旋转流光描边（.home-tray::after），普通 role 是该 role 色相的静态光晕
 						 */}
 						<div aria-hidden className="home-field" />
+						{refMenu.open && (
+							<RefMenu
+								entries={refMenu.entries}
+								active={refMenu.active}
+								pending={refMenu.pending}
+								onPick={refMenu.pick}
+							/>
+						)}
 						<div ref={trayRef} className="glass glass-dock rounded-2xl">
 							<AttachmentStrip items={att.items} onRemove={att.remove} />
 							<textarea
@@ -556,7 +586,12 @@ export function HomePage(): ReactNode {
 								placeholder={t("newThread.placeholder")}
 								// 托盘是 36px 大圆角：文字离边 20px，才不显得贴着弧线
 								className="block w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
-								onChange={(e) => setPrompt(e.target.value)}
+								onChange={(e) => {
+									setPrompt(e.target.value);
+									setCaret(e.target.selectionStart);
+								}}
+								onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+								onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
 								onPaste={(e) => {
 									const files = [...e.clipboardData.files];
 									if (files.length > 0) {
@@ -565,6 +600,7 @@ export function HomePage(): ReactNode {
 									}
 								}}
 								onKeyDown={(e) => {
+									if (refMenu.onKeyDown(e)) return;
 									if (
 										e.key === "Enter" &&
 										!e.shiftKey &&
@@ -833,13 +869,13 @@ export function HomePage(): ReactNode {
 							</div>
 						</div>
 					</div>
-					{(error || att.error) && (
+					{(error || att.error || refMenu.error != null) && (
 						<p
 							role="alert"
 							className="mt-2 flex items-center justify-center gap-1.5 text-err text-sm"
 						>
 							<Icon name="alert" size={13} className="shrink-0" />
-							{error ?? att.error}
+							{error ?? (att.error || describeError(refMenu.error, t))}
 						</p>
 					)}
 				</div>

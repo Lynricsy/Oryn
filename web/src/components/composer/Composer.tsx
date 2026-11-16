@@ -3,6 +3,8 @@
  * 是输入坞玻璃托盘里的一节（透明、无边框）：输入框、工具行（附件、模式、模型、发送）、页脚行（模式状态；上下文、成本、速度读数）。
  * `coordinator`（协调对话，M9）：没有模式条；`!` 前缀按普通文本发送；命令菜单与斜杠命令按服务端白名单过滤。
  * 协调对话里只有全局助手对话（M13）有附件：文件传进助手文件库，以 `orynFiles` 携带；Space 聊天没有附件。
+ * 线程的项目已绑定 GitHub 时（M14），键入 `#` 弹出该仓库的 issue / PR 候选（`RefMenu`），选中即作为 Markdown 附件加入；
+ * `/` 命令菜单打开时（整段以 `/` 开头）与协调对话里不启用。
  */
 import {
 	type ReactNode,
@@ -51,11 +53,13 @@ import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
+import { useThreadProject } from "../thread/ThreadHeader";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, Spinner } from "../ui/primitives";
 import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
 import { ModelChip, SessionReadout } from "./ComposerMeta";
+import { RefMenu, useRefMenu } from "./RefMenu";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
 export function Composer({
@@ -96,6 +100,24 @@ export function Composer({
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];
+	const project = useThreadProject(
+		useIndex((s) => s.threads[threadId]?.projectId),
+	);
+	const [caret, setCaret] = useState(0);
+	const refMenu = useRefMenu({
+		projectId:
+			!coordinator && project?.github?.bound && !text.startsWith("/")
+				? project.id
+				: undefined,
+		text,
+		caret,
+		setText: (next, c) => {
+			setText(next);
+			setCaret(c);
+			requestAnimationFrame(() => ref.current?.setSelectionRange(c, c));
+		},
+		onAttached: (a) => att.addUploaded([a]),
+	});
 
 	// omp 的 set_editor_text / 会话树跳转带回的草稿；同一份只并入一次（重新挂载时 store 里仍是它）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由新的 editorText 触发
@@ -461,6 +483,7 @@ export function Composer({
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (refMenu.onKeyDown(e)) return;
 		if (menuOpen && entries.length > 0) {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
@@ -540,6 +563,14 @@ export function Composer({
 					hint={entries.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
+			{refMenu.open && (
+				<RefMenu
+					entries={refMenu.entries}
+					active={refMenu.active}
+					pending={refMenu.pending}
+					onPick={refMenu.pick}
+				/>
+			)}
 			{quote && (
 				<QuoteStrip
 					text={quote.text}
@@ -572,8 +603,11 @@ export function Composer({
 				className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
 				onChange={(e) => {
 					setText(e.target.value);
+					setCaret(e.target.selectionStart);
 					setMenuDismissed(false);
 				}}
+				onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+				onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
 				onKeyDown={onKeyDown}
 				onPaste={(e) => {
 					const files = canAttach ? [...e.clipboardData.files] : [];
@@ -642,9 +676,11 @@ export function Composer({
 					<Icon name="send" size={16} weight="bold" />
 				</button>
 			</div>
-			{(error || att.error) && (
+			{(error || att.error || refMenu.error != null) && (
 				<p role="alert" className="px-5 pb-2 text-err text-xs">
-					{error ? describeError(error, t) : att.error}
+					{error
+						? describeError(error, t)
+						: att.error || describeError(refMenu.error, t)}
 				</p>
 			)}
 			{keptFor && att.items.length > 0 && !error && (

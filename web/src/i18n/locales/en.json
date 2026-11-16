@@ -221,6 +221,17 @@
 		"abort": "Interrupt",
 		"abortBash": "Abort bash",
 		"commands": "Commands",
+		"refs": {
+			"label": "GitHub issues and pull requests",
+			"hint": "↑↓ select · Enter attach · Esc close",
+			"loading": "Searching…",
+			"empty": "No matching issues or pull requests",
+			"state": {
+				"open": "Open",
+				"closed": "Closed",
+				"merged": "Merged"
+			}
+		},
 		"label": "Message",
 		"menuHint": "↑↓ select · Tab complete · Esc close",
 		"noCommands": "No matching commands",
