@@ -241,8 +241,9 @@ func (s *Service) syncRepoWatches(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// backfillWatches 为还没有对象级 watch 的线程 PR 关联补登记（升级前建立的关联、hook 从 active 变为不可用的仓库）：
-// 线程未归档、PR 未进入终态。issue 关联只来自触发规则，所在仓库有规则就有仓库级 watch，不补。随 hookSyncInterval 运行。
+// backfillWatches 为还没有对象级 watch 的线程关联补登记（升级前建立的关联、hook 从 active 变为不可用的仓库）：
+// 线程未归档，PR 未进入终态、issue 任务不在终态。issue 关联也要补：仓库级 watch 只在仓库还有启用规则时存在，规则停用后
+// 已有 issue 线程的回流只能靠对象级 watch。随 hookSyncInterval 运行。
 func (s *Service) backfillWatches(ctx context.Context) error {
 	rows, err := s.st.Q.ListThreadPullSummaries(ctx)
 	if err != nil {
@@ -257,13 +258,86 @@ func (s *Service) backfillWatches(ctx context.Context) error {
 		} else if !isNoRows(err) {
 			return err
 		}
-		t, err := s.st.Q.GetThread(ctx, r.ThreadID)
-		if err != nil || t.ArchivedAt != nil {
+		if live, err := s.threadLive(ctx, r.ThreadID); err != nil {
+			return err
+		} else if live {
+			s.registerWatch(ctx, "pull", r.RepoID, r.RepoFullName, r.Number, r.ThreadID)
+		}
+	}
+	issues, err := s.st.Q.ListThreadIssues(ctx)
+	if err != nil {
+		return err
+	}
+	// 已有的 issue watch 按仓库 id 查：规则建的 watch 用载荷里的 full_name，与 repo_url 的大小写可能不同
+	type repoInfo struct {
+		full    string
+		watched map[int64]bool
+	}
+	repos := map[int64]*repoInfo{}
+	for _, ti := range issues {
+		if issueTaskTerminal(ti.State) {
 			continue
 		}
-		s.registerWatch(ctx, "pull", r.RepoID, r.RepoFullName, r.Number, r.ThreadID)
+		ri := repos[ti.RepoID]
+		if ri == nil {
+			full, err := s.repoFullName(ctx, ti.RepoID)
+			if err != nil {
+				return err
+			}
+			ws, err := s.st.Q.ListGithubWatchesByRepo(ctx, ti.RepoID)
+			if err != nil {
+				return err
+			}
+			ri = &repoInfo{full: full, watched: map[int64]bool{}}
+			for _, w := range ws {
+				if w.Kind == "issue" {
+					ri.watched[w.Number] = true
+				}
+			}
+			repos[ti.RepoID] = ri
+		}
+		if ri.full == "" || ri.watched[ti.Number] {
+			continue // 仓库已没有绑定的项目（读不到名字，也无从轮询），或已有 watch
+		}
+		if live, err := s.threadLive(ctx, ti.ThreadID); err != nil {
+			return err
+		} else if live {
+			s.registerWatch(ctx, "issue", ti.RepoID, ri.full, ti.Number, ti.ThreadID)
+		}
 	}
 	return nil
+}
+
+// threadLive 报告线程是否存在且未归档。
+func (s *Service) threadLive(ctx context.Context, threadID string) (bool, error) {
+	t, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		if isNoRows(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return t.ArchivedAt == nil, nil
+}
+
+// issueTaskTerminal 报告 issue 任务是否已在终态（不再需要回流）。issue 关闭后由 4.3 的状态机置为 closed，
+// 已退场的 watch 因此不会被补登记复活。
+func issueTaskTerminal(state string) bool {
+	return state == "closed" || state == "merged" || state == "abandoned"
+}
+
+// repoFullName 取仓库的 owner/repo：任一绑定了它的项目（含已归档）的 repo_url；都没有时返回空串。
+func (s *Service) repoFullName(ctx context.Context, repoID int64) (string, error) {
+	prjs, err := s.st.Q.ListProjectsByGithubRepoAny(ctx, &repoID)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range prjs {
+		if full, ok := githubRepoPath(p.RepoUrl); ok {
+			return full, nil
+		}
+	}
+	return "", nil
 }
 
 // ---------- 轮询 ----------

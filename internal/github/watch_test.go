@@ -328,6 +328,58 @@ func TestWatchRepoLevel(t *testing.T) {
 	assert.True(t, isNoRows(err), "规则停用后注销")
 }
 
+// 已有 issue 线程的回流不依赖仍有启用规则：规则停用（仓库级 watch 注销）、hook 变为 active（对象级 watch 注销）、
+// hook 再失效后，补登记恢复 issue 的对象级 watch，新评论照常回流。
+func TestWatchIssueBackfillAfterRuleOff(t *testing.T) {
+	e := newTriggerEnv(t)
+	e.s.cfg.AfterFunc = (&fakeAfter{}).AfterFunc
+	tr := e.trigger(apigen.GitHubTriggerInput{Name: "triage", Event: apigen.IssueOpened, Prompt: "look"})
+	e.tick() // 基线
+	e.fake.AddIssue(githubtest.Issue{RepoID: 42, Number: 3, Title: "Crash on start", Author: "alice"})
+	e.tick()
+	require.Len(t, e.ct.created(), 1)
+
+	off := false
+	_, err := e.s.UpdateTrigger(e.ctx, tr.ID, apigen.GitHubTriggerPatch{Enabled: &off})
+	require.NoError(t, err)
+	setHook := func(status string) {
+		hookID := int64(555)
+		require.NoError(t, e.st.Q.UpsertGithubHook(e.ctx, db.UpsertGithubHookParams{
+			RepoID: 42, FullName: "Acme/Widgets", HookID: &hookID, SecretEnc: []byte("x"), Status: status, UpdatedAt: 1,
+		}))
+	}
+	setHook("active")
+	e.tick()
+	_, ok := e.watchRow("issue", "Acme/Widgets", 3)
+	require.False(t, ok, "hook active：对象级 watch 注销")
+
+	setHook("error")
+	require.NoError(t, e.s.backfillWatches(e.ctx))
+	_, err = e.st.Q.GetGithubRepoWatch(e.ctx, 42)
+	require.True(t, isNoRows(err), "规则仍停用：没有仓库级 watch")
+	issueWatches := func() []db.GithubWatch {
+		ws, err := e.st.Q.ListGithubWatchesByRepo(e.ctx, 42)
+		require.NoError(t, err)
+		var out []db.GithubWatch
+		for _, w := range ws {
+			if w.Kind == "issue" {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	ws := issueWatches()
+	require.Len(t, ws, 1, "补登记恢复 issue 的对象级 watch")
+	assert.Equal(t, int64(3), ws[0].Number)
+	require.NoError(t, e.s.backfillWatches(e.ctx))
+	assert.Len(t, issueWatches(), 1, "再次补登记不重复")
+
+	e.tick()
+	c := e.fake.AddComment(githubtest.Comment{RepoID: 42, Number: 3, Author: "alice", Body: "still crashes"})
+	e.tick()
+	assert.Equal(t, []string{"handled"}, e.restOutcomes("rest:issue_comment.created:acme/widgets:"+itoa(c.ID)+":"))
+}
+
 // 逐项查询额度用完时进度可以续跑：21 个早就存在的 issue 在同一秒被打上标签，第一轮只查得了 20 条时间线，游标停在第 21 项；
 // 第二轮补上最后一个。打标签事件恰好各处理一次；模拟重启（已查集合丢失）后再轮询也不重复，也不漏。
 func TestWatchRepoLookupBudgetResumes(t *testing.T) {

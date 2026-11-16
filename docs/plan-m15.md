@@ -999,7 +999,7 @@ gh 版本固定为 `v2.102.1`（本机版本；orb 镜像的 Arch `github-cli` �
 - **仓库级 watch**：已绑定、hook 不是 active、且至少有一条启用规则的仓库登记，否则注销。规则的增删改会立即同步，每轮轮询前全量再同步一次。
 - **对象级 watch 的登记**：
   - 线程关联 PR 时（`link`、出站代理创建的 PR）登记，规则建 issue 线程时也登记；
-  - 每 `hookSyncInterval` 为未进入终态的 PR 关联补登记；
+  - 每 `hookSyncInterval` 为未归档线程的关联补登记：未进入终态的 PR，以及任务状态不在终态（`closed` / `merged` / `abandoned`）的 issue。issue 也要补：仓库级 watch 只在仓库仍有启用规则时存在，规则停用后已有 issue 线程的回流只能靠对象级 watch，不依赖规则；
   - 所在仓库 hook 为 active 时不登记，已有的直接注销。
 - **对象级 watch 的退场**：线程归档、关联取消时注销；对象进入终态满 24 小时后退场。
 - **令牌与额度**：仓库级用我的账号，对象级用线程 orb 的槽位。按槽位记 `X-RateLimit-Remaining`：低于 `rateLimitFloor` 时该槽位的间隔加倍；额度耗尽时暂停到 `X-RateLimit-Reset`。
