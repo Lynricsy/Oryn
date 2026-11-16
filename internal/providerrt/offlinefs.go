@@ -24,9 +24,10 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
-// 停机 orb 只读预览（offline fs）：provider 长轮询 `/provider/v1/fs/claim` 取得请求，由驱动读取停机容器的文件，
+// 停机 orb 只读预览（offline fs）：provider 长轮询 `/provider/v1/fs/claim` 取得请求，由驱动读取停机 orb 的文件，
 // 再把用户响应体流式 POST 到 `/provider/v1/fs/{id}/reply`（状态码经 X-Oryn-Status 给出）。
-// 本文件含协议、runner 侧 worker，以及与 docker 无关的索引 / 路径 / 列表 / Range 逻辑（便于单测）。
+// 本文件含协议、runner 侧 worker，以及与驱动无关的索引 / 路径 / 列表 / Range 逻辑（便于单测）；
+// 驱动只负责建索引与读文件（offlineBackend），docker 见 offlinefs_docker.go，firecracker 见 offlinefs_fc.go。
 
 // OfflineFS 是驱动可选实现的停机 orb 只读文件访问；实现它的驱动应在 Info 中声明 Capabilities.OfflineFs。
 type OfflineFS interface {
@@ -119,6 +120,88 @@ type fsNode struct {
 	target string
 	// children 只对目录非空。
 	children map[string]*fsNode
+	// ref 是驱动读取该文件所需的引用（firecracker：fcFileRef；docker 按路径读取，不用）。
+	ref any
+}
+
+// offlineBackend 是停机预览中与驱动相关的两步：读取文件前缀（stat 补 mime / text）与流式读取文件（单区间 Range）。
+// real 是解析符号链接后的绝对路径，n 是它在索引里的条目（普通文件）。
+type offlineBackend interface {
+	sniff(ctx context.Context, real string, n *fsNode) (mime string, text bool, err error)
+	read(ctx context.Context, real string, n *fsNode, rangeHdr string) FsReply
+}
+
+// indexErrReply 把取索引的失败转为应答；索引仍在建（503 offline_indexing）时带 Retry-After。
+func indexErrReply(err error) FsReply {
+	rep := errReply(err)
+	if rep.Status == http.StatusServiceUnavailable {
+		rep.Header.Set("Retry-After", offlineRetryAfter)
+	}
+	return rep
+}
+
+// serveOffline 用已建好的索引回答一个请求：roots / list 只查索引，stat 必要时经 b 嗅探前缀，read 经 b 读取。
+func serveOffline(ctx context.Context, ix *fsIndex, req apigen.ProviderFsRequest, b offlineBackend) FsReply {
+	p := ""
+	if req.Path != nil {
+		p = *req.Path
+	}
+	switch req.Op {
+	case apigen.Roots:
+		return jsonReply(http.StatusOK, ix.roots(req.Workdirs))
+	case apigen.List:
+		res, err := ix.list(p)
+		if err != nil {
+			return errReply(err)
+		}
+		return jsonReply(http.StatusOK, res)
+	case apigen.Stat:
+		e, sniff, err := ix.stat(p)
+		if err != nil {
+			return errReply(err)
+		}
+		if sniff != "" {
+			n, _ := ix.lookup(sniff)
+			if m, text, err := b.sniff(ctx, sniff, n); err == nil {
+				e.Mime, e.Text = &m, &text
+			}
+		}
+		return jsonReply(http.StatusOK, e)
+	case apigen.Read:
+		_, real, err := ix.readTarget(p)
+		if err != nil {
+			return errReply(err)
+		}
+		n, _ := ix.lookup(real)
+		rng := ""
+		if req.Range != nil {
+			rng = *req.Range
+		}
+		return b.read(ctx, real, n, rng)
+	default:
+		return errReply(fsErrf(http.StatusBadRequest, "invalid_request", "unknown op %q", req.Op))
+	}
+}
+
+// rangeReply 按 Range 头构造 read 的应答头；Range 不合法时返回 416 应答与 ok=false。etag 与 entry 的 Etag 一致。
+func rangeReply(rangeHdr string, size int64, mtime time.Time) (rep FsReply, start, length int64, ok bool) {
+	start, length, partial, ok := parseRange(rangeHdr, size)
+	if !ok {
+		rep = errReply(fsErrf(http.StatusRequestedRangeNotSatisfiable, "range_not_satisfiable", "invalid range %q for %d bytes", rangeHdr, size))
+		rep.Header.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+		return rep, 0, 0, false
+	}
+	h := http.Header{}
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Accept-Ranges", "bytes")
+	h.Set("ETag", fmt.Sprintf(`"%d-%d"`, mtime.UnixNano(), size))
+	h.Set("Content-Length", strconv.FormatInt(length, 10))
+	status := http.StatusOK
+	if partial {
+		status = http.StatusPartialContent
+		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, size))
+	}
+	return FsReply{Status: status, Header: h, Length: length}, start, length, true
 }
 
 // fsIndex 是 OrbHome 子树（不含 .oryn）的只读快照。

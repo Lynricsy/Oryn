@@ -60,6 +60,9 @@ type FirecrackerDriver struct {
 	launchMu sync.Mutex
 	// orbMu 让同一台 VM 的任务串行执行。
 	orbMu sync.Map // orbID → *sync.Mutex
+
+	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_fc.go）。
+	offline indexCache
 }
 
 // NewFirecracker 创建 firecracker 驱动（真实现：jailer / ip / mke2fs、api.sock、v.sock）。
@@ -99,7 +102,7 @@ func (d *FirecrackerDriver) Info() Info {
 	}
 	return Info{
 		Driver:       apigen.Firecracker,
-		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
+		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)},
 		Types:        types,
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),

@@ -965,7 +965,7 @@ func TestFCInfo(t *testing.T) {
 	c := newFCTest(t)
 	info := c.d.Info()
 	assert.Equal(t, apigen.Firecracker, info.Driver)
-	assert.Equal(t, apigen.ProviderCapabilities{Freeze: true, Snapshot: true}, info.Capabilities)
+	assert.Equal(t, apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)}, info.Capabilities)
 	assert.Equal(t, []apigen.OrbType{{Name: "medium", Cpus: 4, MemoryMB: 8192}, {Name: "small", Cpus: 2, MemoryMB: 4096}}, info.Types)
 	assert.Equal(t, "small", info.DefaultType)
 	k := sha256.Sum256([]byte("kernel-v1"))

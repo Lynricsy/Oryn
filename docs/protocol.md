@@ -193,14 +193,22 @@ orb 停机（`stopped`）时，文件面板只读浏览文件，不唤醒 orb。
   - 回应的头 `X-Oryn-Status` 为用户状态码，请求体原样成为用户响应体。
   - 10s 无人认领回 503 `provider_unavailable`；认领后 60s 未回应回 504 `orbd_timeout`。
   - `roots` 的工作目录候选依次为线程 `cwd`、`/home/user/workspace/repo`、`/home/user/workspace`，取第一个存在的目录，都不存在时为 `$HOME`。
-- **docker provider**：
-  - 只服务 `exited` / `created` 的容器，否则回 409 `orb_not_stopped`。
-  - 首次访问某次停机的容器时，以 `docker cp <orb>:/home/user -` 读一遍 tar 头建立内存索引，内容丢弃。实测 950MB / 2.9 万个文件约 9s。
-  - 缓存键是容器 `Id` + `State.FinishedAt`。同一时间只建一份索引，最多缓存 4 份，每份上限 50 万条，超出时列表一律 `truncated`。
+- **provider 侧的共同规则**（docker 与 firecracker 驱动）：
+  - 首次访问某次停机的 orb 时建立 `$HOME` 的内存索引。同一时间只建一份，最多缓存 4 份，每份上限 50 万条，超出时列表一律 `truncated`。
   - 建索引期间所有操作回 503 `offline_indexing`（`Retry-After: 2`，message 带已扫描条数）。
   - `$HOME/.oryn` 不进索引，直接访问回 403 `protected_path`。符号链接在索引内解析，越出 `$HOME` 回 403 `outside_home`。
-  - `read` 对单个文件再执行一次 `docker cp`，支持单区间 Range。`stat` 读前 8KiB 判定 `text`。
-- **限制**：只读，Changes / git 接口不提供停机预览。runner、firecracker、dispatch、process 驱动暂不支持。
+  - `read` 支持单区间 Range。`stat` 读前 8KiB 判定 `text`。
+- **docker provider**：
+  - 只服务 `exited` / `created` 的容器，否则回 409 `orb_not_stopped`。缓存键是容器 `Id` + `State.FinishedAt`。
+  - 以 `docker cp <orb>:/home/user -` 读一遍 tar 头建立索引，内容丢弃。实测 950MB / 2.9 万个文件约 9s。
+  - `read` 对单个文件再执行一次 `docker cp`。
+- **firecracker provider**：
+  - firecracker 进程仍在（运行或冻结）时回 409 `orb_not_stopped`。缓存键是基础盘 id + 可写盘 `disk.ext4` 的大小与修改时间。
+  - VM 的根是 overlay：lower 为只读基础盘 `bases/<id>.ext4`，upper 为可写盘里的 `/upper`。provider 用 `internal/ext4ro` 在用户态解析两块镜像，按 overlay 规则合并出 `$HOME`：whiteout（字符设备 0:0）删除 lower 的同名条目，`trusted.overlay.opaque=y` 的目录遮住 lower，`trusted.overlay.redirect` 指向 lower 的另一目录。
+  - 不挂载镜像：镜像内容由 guest 写入，不可信，不交给宿主内核解析。解析器内存安全、有界（extent 深度、目录大小、extent 数都有上限），单个损坏的条目只跳过它自己。
+  - 日志不重放：VM 非正常退出（被 `cgroup.kill`）后，最后几秒的写入可能看不到。
+  - `read` 按索引里记下的镜像与 inode 直接读数据块。
+- **限制**：只读，Changes / git 接口不提供停机预览。runner、dispatch、process 驱动暂不支持。
 
 ## M4：Portal 与受管服务
 

@@ -109,7 +109,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now oryn-provider
 
 provider 放在另一台主机时，`url` 与 `orb_url` 都写主域名（`https://oryn.example.com`），orb 经反代建立 link。
 
-停机 orb 的只读预览：docker provider 会在 hello 里声明 `offlineFs`，文件面板在 orb 停机时就不再唤醒它，而是由 provider 用 `docker cp` 读取已退出的容器。要用上这个功能，控制面与 provider 都要升级到同一版本；旧版 provider 不声明 `offlineFs`，文件面板会提示「唤醒后可浏览」。provider 回传文件时用的是 `POST /provider/v1/fs/{id}/reply`，请求体可能很大。provider 经反代连控制面时，这个路径不能缓冲请求体，也不能限制请求体大小，第 3 节示例里的 `proxy_request_buffering off` 与 `client_max_body_size 600m` 已满足；超过 600MiB 的文件无法在停机时预览。
+停机 orb 的只读预览：docker 与 firecracker provider 会在 hello 里声明 `offlineFs`，文件面板在 orb 停机时就不再唤醒它，而是由 provider 读取停机 orb 的磁盘：docker 用 `docker cp` 读已退出的容器，firecracker 在用户态解析 VM 的基础盘与可写盘（不挂载）。要用上这个功能，控制面与 provider 都要升级到同一版本；旧版 provider 不声明 `offlineFs`，文件面板会提示「唤醒后可浏览」。provider 回传文件时用的是 `POST /provider/v1/fs/{id}/reply`，请求体可能很大。provider 经反代连控制面时，这个路径不能缓冲请求体，也不能限制请求体大小，第 3 节示例里的 `proxy_request_buffering off` 与 `client_max_body_size 600m` 已满足；超过 600MiB 的文件无法在停机时预览。
 
 ## 6. omp 配置
 

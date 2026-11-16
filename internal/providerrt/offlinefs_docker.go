@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,49 +42,23 @@ func (d *Docker) OfflineFS(ctx, life context.Context, req apigen.ProviderFsReque
 		return d.indexHome(bctx, orbID, scanned)
 	})
 	if err != nil {
-		rep := errReply(err)
-		if rep.Status == http.StatusServiceUnavailable {
-			rep.Header.Set("Retry-After", offlineRetryAfter)
-		}
-		return rep
+		return indexErrReply(err)
 	}
-	p := ""
-	if req.Path != nil {
-		p = *req.Path
-	}
-	switch req.Op {
-	case apigen.Roots:
-		return jsonReply(http.StatusOK, ix.roots(req.Workdirs))
-	case apigen.List:
-		res, err := ix.list(p)
-		if err != nil {
-			return errReply(err)
-		}
-		return jsonReply(http.StatusOK, res)
-	case apigen.Stat:
-		e, sniff, err := ix.stat(p)
-		if err != nil {
-			return errReply(err)
-		}
-		if sniff != "" {
-			if m, text, err := d.offlineSniff(ctx, orbID, sniff); err == nil {
-				e.Mime, e.Text = &m, &text
-			}
-		}
-		return jsonReply(http.StatusOK, e)
-	case apigen.Read:
-		_, real, err := ix.readTarget(p)
-		if err != nil {
-			return errReply(err)
-		}
-		rng := ""
-		if req.Range != nil {
-			rng = *req.Range
-		}
-		return d.offlineRead(ctx, orbID, real, rng)
-	default:
-		return errReply(fsErrf(http.StatusBadRequest, "invalid_request", "unknown op %q", req.Op))
-	}
+	return serveOffline(ctx, ix, req, dockerOffline{d: d, orbID: orbID})
+}
+
+// dockerOffline 是 docker 的 offlineBackend：按路径经 `docker cp` 读取（停机容器无法 exec）。
+type dockerOffline struct {
+	d     *Docker
+	orbID string
+}
+
+func (o dockerOffline) sniff(ctx context.Context, real string, _ *fsNode) (string, bool, error) {
+	return o.d.offlineSniff(ctx, o.orbID, real)
+}
+
+func (o dockerOffline) read(ctx context.Context, real string, _ *fsNode, rangeHdr string) FsReply {
+	return o.d.offlineRead(ctx, o.orbID, real, rangeHdr)
 }
 
 // offlineKey 读取容器状态并返回索引缓存键（Id + FinishedAt + Status）。只服务已停机（exited / created）的容器。
@@ -192,25 +165,13 @@ func (d *Docker) offlineRead(ctx context.Context, orbID, real, rangeHdr string) 
 	if err != nil {
 		return errReply(err)
 	}
-	size := hdr.Size
-	start, length, partial, ok := parseRange(rangeHdr, size)
+	rep, start, length, ok := rangeReply(rangeHdr, hdr.Size, hdr.ModTime)
 	if !ok {
 		_ = s.Close()
-		rep := errReply(fsErrf(http.StatusRequestedRangeNotSatisfiable, "range_not_satisfiable", "invalid range %q for %d bytes", rangeHdr, size))
-		rep.Header.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		return rep
 	}
-	h := http.Header{}
-	h.Set("Content-Type", "application/octet-stream")
-	h.Set("Accept-Ranges", "bytes")
-	h.Set("ETag", fmt.Sprintf(`"%d-%d"`, hdr.ModTime.UnixNano(), size))
-	h.Set("Content-Length", strconv.FormatInt(length, 10))
-	status := http.StatusOK
-	if partial {
-		status = http.StatusPartialContent
-		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, size))
-	}
-	return FsReply{Status: status, Header: h, Length: length, Body: &offlineBody{s: s, r: tr, skip: start, left: length}}
+	rep.Body = &offlineBody{s: s, r: tr, skip: start, left: length}
+	return rep
 }
 
 // offlineBody 是 read 的应答体：先跳过 skip 字节（首次读取时），再给出 left 字节；Close 结束 docker 进程。
