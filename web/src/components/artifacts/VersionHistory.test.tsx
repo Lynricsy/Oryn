@@ -163,7 +163,6 @@ describe("VersionHistory", () => {
 				threads={[{ threadId: "T-live", title: "现在的标题", archived: false }]}
 				selected={3}
 				onSelect={onSelect}
-				onClose={vi.fn()}
 			/>,
 		);
 		const list = await screen.findByTestId("version-list");

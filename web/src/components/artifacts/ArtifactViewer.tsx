@@ -1,13 +1,15 @@
 /**
- * artifact 查看器（计划 M14 2.3、2.5、2.6）：整页（`page`）与右面板（`panel`）共用。
+ * artifact 查看器（计划 M14 2.3、2.5、2.6、3.3）：整页（`page`）与右面板（`panel`）共用。
  * 挂载时 `watchArtifact`（收 `artifact.version` 等观看者消息），卸载时取消。
  * 顶栏：返回（仅整页，`Esc`）、类型图标、标题、版本胶囊 `v{n}`（点开版本历史）、更多菜单（`ArtifactMenu`）；
- * 右侧版本历史、重新加载、在浏览器中打开。右面板里由 `ArtifactPanel` 用 `lead` 换掉图标与标题（换成 artifact 切换菜单）、
- * 用 `actions` 追加「放大查看」，两者合成一行工具条。页面试图跳走时帧上方出一条提示：「此页面试图打开 <主机>」。
+ * （换成 artifact 切换菜单）、用 `actions` 追加「放大查看」，两者合成一行工具条。页面试图跳走时帧上方出一条提示：「此页面试图打开 <主机>」。
  *
- * 版本历史（2.6）是可开关的侧栏列（宽 300）：查看器窄于 900 时覆盖在内容上，`compact` 断点下占满并在顶部给
- * 「页面 / 历史」分段切换。选一个旧版本：帧以该版本重新申请（服务端不注入运行时，只读），帧上方出状态条
+ * 侧栏列（宽 300）有「历史 / 评论」两段（右面板只有历史）：查看器窄于 900 时覆盖在内容上，`compact` 断点下占满并在顶部给
+ * 「页面 / 历史 / 评论」分段切换。选一个旧版本：帧以该版本重新申请（服务端不注入运行时，只读），帧上方出状态条
  * 「版本 n / head · 时间 · 备注」与「恢复这个版本」；恢复以当前 head 为 `baseVersion`，409 时提示重试。
+ *
+ * 选择与评论（3.3）：页面类型的 artifact 跟随最新版本且不在回收站时才有两个模式，模式经 `select-mode` 下发。评论模式下点页面元素
+ * 在点击处弹 `CommentBox`（点空白处是「整个页面」的锚点）；未解决评论的编号图钉只在评论模式或评论面板打开时下发。
  */
 import {
 	type ReactNode,
@@ -18,9 +20,16 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	MAX_ACCENT_CHARS,
+	type PageSelection,
+	type SelectMode,
+} from "../../../sandbox/runtime/messages";
+import {
+	type ArtifactCommentAnchor,
 	type ArtifactVersion,
 	openArtifactLink,
 	useArtifact,
+	useArtifactComments,
 	useRestoreArtifactVersion,
 	useUndeleteArtifact,
 } from "../../api/artifact-queries";
@@ -35,7 +44,12 @@ import { ChromeLead } from "../layout/WindowControls";
 import { Icon } from "../ui/icons";
 import { Button, describeError, IconButton, tabClass } from "../ui/primitives";
 import { ArtifactMenu } from "./ArtifactMenu";
-import { PageFrame } from "./PageFrame";
+import { anchorOf, pinsOf } from "./anchors";
+import { CommentBox } from "./CommentBox";
+import { CommentsPanel } from "./CommentsPanel";
+import { CanvasEditor } from "./canvas/CanvasEditor";
+import { EditPanel } from "./EditPanel";
+import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
 import { VersionHistory } from "./VersionHistory";
 import {
 	FrameErrorState,
@@ -49,6 +63,27 @@ export type ViewerVariant = "page" | "panel";
 /** 侧栏列固定宽度与「并排放得下」的查看器宽度（更窄时侧栏覆盖在内容上）。 */
 export const SIDE_WIDTH = 300;
 export const SIDE_INLINE_MIN = 900;
+
+/** 侧栏列的分段。 */
+type SideTab = "history" | "comments";
+
+/** 页面 artifact 的入口文件：评论锚点在没有选中元素时落在这个页面上。 */
+const ENTRY_PAGE = "index.html";
+
+/** 下发给页面覆盖层的强调色（主题色的计算值）；取不到或超长时由运行时用缺省色。 */
+function overlayAccent(): string {
+	const v = getComputedStyle(document.documentElement)
+		.getPropertyValue("--brand")
+		.trim();
+	return v.length <= MAX_ACCENT_CHARS ? v : "";
+}
+
+/** 正在写的新评论：锚点与浮框位置（帧容器坐标）。 */
+interface CommentDraft {
+	anchor: ArtifactCommentAnchor;
+	at: { x: number; y: number };
+	bounds: { width: number; height: number };
+}
 
 export interface ArtifactViewerProps {
 	artifactId: string;
@@ -127,9 +162,21 @@ export function ArtifactViewer({
 	const [reloadNonce, setReloadNonce] = useState(0);
 	const [blocked, setBlocked] = useState<string | null>(null);
 	const [openError, setOpenError] = useState<unknown>(null);
-	const [history, setHistory] = useState(initialHistory);
-	// compact 下侧栏打开时的分段：页面 / 历史
-	const [segment, setSegment] = useState<"page" | "history">("history");
+	const [side, setSide] = useState<SideTab | null>(
+		initialHistory ? "history" : null,
+	);
+	// compact 下侧栏打开时显示页面还是侧栏
+	const [segment, setSegment] = useState<"page" | "side">("side");
+	// 选择 / 评论模式（只在 `canSelect` 时生效）
+	const [mode, setMode] = useState<SelectMode>(null);
+	// 向帧发消息；帧重建期间为 null
+	const [post, setPost] = useState<FramePost | null>(null);
+	// 页面最近一次报来的路径（帧内跳到别的页面后，整页锚点与图钉跟着它）
+	const [pagePath, setPagePath] = useState(ENTRY_PAGE);
+	const [draft, setDraft] = useState<CommentDraft | null>(null);
+	// 页面最近一次报来的选中元素（选择模式下在侧栏直接编辑它）
+	const [selection, setSelection] = useState<PageSelection | null>(null);
+	const frameBoxRef = useRef<HTMLDivElement>(null);
 	// 正在看的旧版本；null = 跟随最新
 	const [pinned, setPinned] = useState<ArtifactVersion | null>(null);
 	// 类型化 artifact 的查看器在演示：帧容器铺满窗口
@@ -142,15 +189,77 @@ export function ArtifactViewer({
 
 	useEffect(() => watchArtifact(artifactId), [artifactId]);
 
-	// Esc 依次：回到最新版本 → 关掉历史 → 返回（整页）
+	const artifact = detail.data?.artifact;
+	const live = artifact && artifact.deletedAt === undefined;
+	const typed = artifact?.type !== undefined;
+	const head = artifact?.version ?? 0;
+	// 选中的是最新版本就回到跟随
+	const pinnedVersion = pinned && pinned.version !== head ? pinned : null;
+	// 选择与评论只对跟随最新版本、不在回收站的页面 artifact（画布有自己的编辑器）
+	const canSelect = !!live && !pinnedVersion && artifact?.kind === "web";
+	const activeMode = canSelect ? mode : null;
+	// 评论面板只在整页里有
+	const commentsTab = variant === "page" && !!live;
+	const comments = useArtifactComments(artifactId, !!live);
+	const commentThreads = comments.data?.threads ?? [];
+	const unresolved = commentThreads.filter(
+		(x) => x.resolvedAt === undefined,
+	).length;
+	const showSide =
+		side !== null && !!live && (side === "history" || commentsTab);
+	const sideOnly = showSide && compact && segment === "side";
+	const pinsShown =
+		canSelect &&
+		(activeMode === "comment" || (showSide && side === "comments"));
+	// 内容不变就不重发（JSON 作依赖键）
+	const pinsKey = JSON.stringify(
+		pinsShown ? pinsOf(commentThreads, pagePath) : [],
+	);
+	// 画布的评论工具在编辑器里，跟随最新且不在回收站时可以评论
+	const canvasComments =
+		!!live && !pinnedVersion && artifact?.kind === "canvas";
+	const shownDraft = activeMode === "comment" || canvasComments ? draft : null;
+	// 元素直接编辑（3.6）：整页里选择模式下有选中元素时显示
+	const editing =
+		variant === "page" && activeMode === "select" ? selection : null;
+	// 编辑面板在宽屏下占用侧栏列（历史 / 评论让位）；compact 下停靠在帧下方
+	const sideVisible =
+		showSide && !(editing && !compact) && (!compact || segment === "side");
+
+	useEffect(() => {
+		post?.({ kind: "select-mode", mode: activeMode, accent: overlayAccent() });
+	}, [post, activeMode]);
+	useEffect(() => {
+		post?.({ kind: "select-pins", pins: JSON.parse(pinsKey) });
+	}, [post, pinsKey]);
+
+	function toggleMode(m: Exclude<SelectMode, null>) {
+		const entering = activeMode !== m;
+		setMode(entering ? m : null);
+		setDraft(null);
+		setSelection(null);
+		// 整页（非 compact）进入评论模式时顺手打开评论面板
+		if (entering && m === "comment" && commentsTab && !compact) {
+			setSide("comments");
+			setSegment("side");
+		}
+	}
+
+	// Esc 依次：回到最新版本 → 退出选择 / 评论模式 → 关掉侧栏 → 返回（整页）
 	const escRef = useRef<() => boolean>(() => false);
 	escRef.current = () => {
 		if (pinned) {
 			setPinned(null);
 			return true;
 		}
-		if (history) {
-			setHistory(false);
+		if (activeMode) {
+			setMode(null);
+			setDraft(null);
+			setSelection(null);
+			return true;
+		}
+		if (showSide) {
+			setSide(null);
 			return true;
 		}
 		if (variant === "page" && onBack) {
@@ -159,22 +268,88 @@ export function ArtifactViewer({
 		}
 		return false;
 	};
+	// V / C：无修饰键、焦点不在输入框、没有对话框或菜单时切换模式
+	const modeKeyRef = useRef<(m: Exclude<SelectMode, null>) => boolean>(
+		() => false,
+	);
+	modeKeyRef.current = (m) => {
+		if (!canSelect) return false;
+		toggleMode(m);
+		return true;
+	};
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key !== "Escape" || e.defaultPrevented || escOwnedElsewhere(e))
+			if (e.defaultPrevented || escOwnedElsewhere(e)) return;
+			if (e.key === "Escape") {
+				if (escRef.current()) e.preventDefault();
 				return;
-			if (escRef.current()) e.preventDefault();
+			}
+			if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+			const m =
+				e.key === "v" || e.key === "V"
+					? "select"
+					: e.key === "c" || e.key === "C"
+						? "comment"
+						: null;
+			if (m && modeKeyRef.current(m)) e.preventDefault();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
 
-	const artifact = detail.data?.artifact;
-	const live = artifact && artifact.deletedAt === undefined;
-	const typed = artifact?.type !== undefined;
-	const head = artifact?.version ?? 0;
-	// 选中的是最新版本就回到跟随
-	const pinnedVersion = pinned && pinned.version !== head ? pinned : null;
+	/** 在帧容器里点击处（视口坐标）开一个新评论。 */
+	const startComment = (
+		anchor: ArtifactCommentAnchor,
+		client: { x: number; y: number },
+	) => {
+		const box = frameBoxRef.current?.getBoundingClientRect();
+		if (!box) return;
+		setDraft({
+			anchor,
+			at: { x: client.x - box.left, y: client.y - box.top },
+			bounds: { width: box.width, height: box.height },
+		});
+	};
+
+	const onPageSelect = (msg: PageSelectMessage) => {
+		// 定位应答不是新的选择
+		if (msg.located) return;
+		setSelection(msg.selection);
+		const path = msg.selection?.path || pagePath;
+		if (msg.selection) setPagePath(path);
+		if (activeMode !== "comment" || !msg.at) return;
+		const frame = frameBoxRef.current
+			?.querySelector("iframe")
+			?.getBoundingClientRect();
+		if (!frame) return;
+		startComment(anchorOf(msg.selection, { version: head, path }), {
+			x: frame.left + msg.at.x,
+			y: frame.top + msg.at.y,
+		});
+	};
+
+	const closeDraft = () => {
+		setDraft(null);
+		// 页面上的选中框随之清掉
+		post?.({ kind: "select-source", src: null });
+	};
+
+	// 关掉编辑面板或保存冲突：页面与这里一起清掉选中
+	const clearSelection = () => {
+		setSelection(null);
+		post?.({ kind: "select-source", src: null });
+	};
+	const editPanel = (sel: PageSelection) => (
+		<EditPanel
+			artifactId={artifactId}
+			selection={sel}
+			version={head}
+			block={pinnedVersion ? "old-version" : live ? null : "deleted"}
+			post={post}
+			onConflict={clearSelection}
+			onClose={clearSelection}
+		/>
+	);
 
 	const openInBrowser = (url?: string) => {
 		setOpenError(null);
@@ -189,8 +364,8 @@ export function ArtifactViewer({
 	};
 
 	const toggleHistory = () => {
-		setSegment("history");
-		setHistory((h) => !h);
+		setSegment("side");
+		setSide((s) => (s === "history" && showSide ? null : "history"));
 	};
 
 	const restorePinned = async () => {
@@ -239,6 +414,33 @@ export function ArtifactViewer({
 				onRestore={() => undelete.mutate(artifactId)}
 			/>
 		);
+	else if (artifact?.kind === "canvas")
+		body = (
+			<CanvasEditor
+				key={reloadNonce}
+				artifactId={artifactId}
+				version={pinnedVersion?.version}
+				variant={variant}
+				title={title}
+				onComment={
+					canvasComments
+						? (target) => {
+								const root = frameBoxRef.current
+									?.querySelector("[data-testid=canvas-editor]")
+									?.getBoundingClientRect();
+								if (!root) return;
+								startComment(anchorOf(target.selection, target.shown), {
+									x: root.left + target.at.x,
+									y: root.top + target.at.y,
+								});
+							}
+						: undefined
+				}
+				pins={
+					canvasComments ? (path) => pinsOf(commentThreads, path) : undefined
+				}
+			/>
+		);
 	else
 		body = (
 			<PageFrame
@@ -251,11 +453,19 @@ export function ArtifactViewer({
 					if (safe) setBlocked(safe);
 				}}
 				onPresent={typed ? setPresenting : undefined}
+				onLink={(p) => {
+					setPost(() => p);
+					// 帧重建后页面里没有选中
+					if (!p) setSelection(null);
+				}}
+				onSelect={onPageSelect}
 			/>
 		);
 
-	const showSide = history && !!live;
-	const sideOnly = showSide && compact && segment === "history";
+	const sideTitle =
+		side === "comments"
+			? t("artifacts.comments.title")
+			: t("artifacts.history.title");
 
 	return (
 		<div
@@ -297,7 +507,7 @@ export function ArtifactViewer({
 						type="button"
 						data-testid="artifact-version"
 						title={t("artifacts.viewer.versionTitle", { n: artifact.version })}
-						aria-pressed={showSide}
+						aria-pressed={showSide && side === "history"}
 						disabled={!live}
 						onClick={toggleHistory}
 						className="shrink-0 rounded-full border border-border px-1.5 font-mono text-2xs text-muted tabular-nums leading-5 transition-colors duration-150 enabled:hover:border-border-strong enabled:hover:text-fg"
@@ -316,19 +526,51 @@ export function ArtifactViewer({
 							setReloadNonce((n) => n + 1);
 						}}
 						onHistory={() => {
-							setSegment("history");
-							setHistory(true);
+							setSegment("side");
+							setSide("history");
 						}}
 					/>
 				)}
 				<span className="flex-1" />
 				{live && (
 					<>
+						{canSelect && (
+							<>
+								<IconButton
+									icon="cursor"
+									box="sm"
+									size={15}
+									active={activeMode === "select"}
+									data-testid="artifact-mode-select"
+									label={t("artifacts.comments.selectMode")}
+									onClick={() => toggleMode("select")}
+								/>
+								<span className="relative inline-flex shrink-0">
+									<IconButton
+										icon="message"
+										box="sm"
+										size={15}
+										active={activeMode === "comment"}
+										data-testid="artifact-mode-comment"
+										label={t("artifacts.comments.commentMode")}
+										onClick={() => toggleMode("comment")}
+									/>
+									{unresolved > 0 && (
+										<span
+											aria-hidden
+											className="pointer-events-none absolute -top-0.5 -right-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 font-semibold text-[9px] text-accent-fg tabular-nums leading-none"
+										>
+											{unresolved > 99 ? "99+" : unresolved}
+										</span>
+									)}
+								</span>
+							</>
+						)}
 						<IconButton
 							icon="history"
 							box="sm"
 							size={15}
-							active={showSide}
+							active={showSide && side === "history"}
 							data-testid="artifact-history-toggle"
 							label={t("artifacts.history.title")}
 							onClick={toggleHistory}
@@ -395,20 +637,38 @@ export function ArtifactViewer({
 					aria-label={t("artifacts.history.segments")}
 					className="flex shrink-0 items-center gap-0.5 border-border border-b px-2 py-1"
 				>
-					{(["page", "history"] as const).map((s) => (
-						<button
-							key={s}
-							type="button"
-							role="tab"
-							aria-selected={segment === s}
-							className={`${tabClass(segment === s)} ${segment === s ? "bg-hover" : ""}`}
-							onClick={() => setSegment(s)}
-						>
-							{s === "page"
-								? t("artifacts.history.segmentPage")
-								: t("artifacts.history.title")}
-						</button>
-					))}
+					{(commentsTab
+						? (["page", "history", "comments"] as const)
+						: (["page", "history"] as const)
+					).map((s) => {
+						const selected =
+							s === "page"
+								? segment === "page"
+								: segment === "side" && side === s;
+						return (
+							<button
+								key={s}
+								type="button"
+								role="tab"
+								aria-selected={selected}
+								className={`${tabClass(selected)} ${selected ? "bg-hover" : ""}`}
+								onClick={() => {
+									if (s === "page") setSegment("page");
+									else {
+										setSide(s);
+										setSegment("side");
+									}
+								}}
+							>
+								{s === "page"
+									? t("artifacts.history.segmentPage")
+									: s === "history"
+										? t("artifacts.comments.tabHistory")
+										: t("artifacts.comments.tabComments")}
+								{s === "comments" && <UnresolvedCount n={unresolved} />}
+							</button>
+						);
+					})}
 				</div>
 			)}
 			<div className="relative flex min-h-0 flex-1">
@@ -450,21 +710,51 @@ export function ArtifactViewer({
 						</div>
 					)}
 					<div
+						ref={frameBoxRef}
 						data-testid="artifact-frame-box"
 						className={
 							presenting && typed && live
 								? "fixed inset-0 z-50"
-								: `min-h-0 flex-1 ${panel ? "p-2" : "p-2 sm:p-3"}`
+								: `relative min-h-0 flex-1 ${panel ? "p-2" : "p-2 sm:p-3"}`
 						}
 					>
 						{body}
+						{shownDraft && (
+							<CommentBox
+								artifactId={artifactId}
+								anchor={shownDraft.anchor}
+								at={shownDraft.at}
+								bounds={shownDraft.bounds}
+								onDone={closeDraft}
+								onCancel={closeDraft}
+							/>
+						)}
 					</div>
+					{editing && compact && (
+						<div className="flex max-h-[50%] min-h-0 shrink-0 flex-col border-border border-t bg-panel">
+							{editPanel(editing)}
+						</div>
+					)}
 				</div>
-				{showSide && (!compact || segment === "history") && (
+				{editing && !compact && (
+					<aside
+						data-testid="artifact-edit-side"
+						aria-label={t("artifacts.edit.title")}
+						style={{ width: SIDE_WIDTH }}
+						className={
+							inline
+								? "flex min-h-0 shrink-0 flex-col border-border border-l bg-panel"
+								: "absolute inset-y-0 right-0 z-10 flex max-w-full min-h-0 flex-col border-border border-l bg-panel shadow-xl"
+						}
+					>
+						{editPanel(editing)}
+					</aside>
+				)}
+				{sideVisible && (
 					<aside
 						data-testid="artifact-side"
 						data-inline={inline ? "" : undefined}
-						aria-label={t("artifacts.history.title")}
+						aria-label={sideTitle}
 						style={compact ? undefined : { width: SIDE_WIDTH }}
 						className={
 							compact
@@ -474,20 +764,79 @@ export function ArtifactViewer({
 									: "absolute inset-y-0 right-0 z-10 flex max-w-full min-h-0 flex-col border-border border-l bg-panel shadow-xl"
 						}
 					>
-						<VersionHistory
-							artifactId={artifactId}
-							head={head}
-							threads={detail.data?.threads ?? []}
-							selected={pinnedVersion?.version ?? head}
-							onSelect={(v) => {
-								setPinned(v.version === head ? null : v);
-								if (compact) setSegment("page");
-							}}
-							onClose={() => setHistory(false)}
-						/>
+						<div className="flex h-10 shrink-0 items-center gap-1 border-border border-b pr-1.5 pl-2">
+							{commentsTab && !compact ? (
+								<div
+									role="tablist"
+									aria-label={t("artifacts.comments.sideTabs")}
+									className="flex min-w-0 flex-1 items-center gap-0.5"
+								>
+									{(["history", "comments"] as const).map((s) => (
+										<button
+											key={s}
+											type="button"
+											role="tab"
+											data-testid={`artifact-side-${s}`}
+											aria-selected={side === s}
+											className={`${tabClass(side === s)} ${side === s ? "bg-hover" : ""}`}
+											onClick={() => setSide(s)}
+										>
+											{s === "history"
+												? t("artifacts.comments.tabHistory")
+												: t("artifacts.comments.tabComments")}
+											{s === "comments" && <UnresolvedCount n={unresolved} />}
+										</button>
+									))}
+								</div>
+							) : (
+								<h2 className="min-w-0 flex-1 truncate pl-1 font-semibold text-sm">
+									{sideTitle}
+								</h2>
+							)}
+							<IconButton
+								icon="close"
+								box="sm"
+								size={14}
+								label={t("artifacts.comments.closeSide")}
+								onClick={() => setSide(null)}
+							/>
+						</div>
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							{side === "comments" ? (
+								<CommentsPanel
+									artifactId={artifactId}
+									threads={detail.data?.threads ?? []}
+									canComment={canSelect || canvasComments}
+								/>
+							) : (
+								<VersionHistory
+									artifactId={artifactId}
+									head={head}
+									threads={detail.data?.threads ?? []}
+									selected={pinnedVersion?.version ?? head}
+									onSelect={(v) => {
+										setPinned(v.version === head ? null : v);
+										if (compact) setSegment("page");
+									}}
+								/>
+							)}
+						</div>
 					</aside>
 				)}
 			</div>
 		</div>
+	);
+}
+
+/** 未解决评论数的徽标（强调色）；没有时不显示。 */
+function UnresolvedCount({ n }: { n: number }): ReactNode {
+	if (n === 0) return null;
+	return (
+		<span
+			data-testid="comments-unresolved"
+			className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-semibold text-[10px] text-accent-fg tabular-nums"
+		>
+			{n > 99 ? "99+" : n}
+		</span>
 	);
 }

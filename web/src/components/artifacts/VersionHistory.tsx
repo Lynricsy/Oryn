@@ -1,6 +1,7 @@
 /**
  * 版本历史（计划 M14 2.6）：查看器侧栏列里的版本列表，从新到旧。每行：`v{n}`、主标题（有备注用备注，否则用作者名）、
- * 小字（作者 + 相对时间），最新一行带「最新」标签；选中的一行高亮。点一行 → `onSelect`（查看器以该版本只读显示）。
+ * 小字（作者 + 相对时间），最新一行带「最新」标签；选中的一行高亮。点一行 → `onSelect`（查看器以该版本只读显示）。标题与关闭按钮
+ * 在查看器侧栏的页头（与评论面板共用），这里只有列表。
  * 作者名：没有作者线程 = 「你」；线程还在显示它当前的标题；不在了显示写入时的标题快照，再没有显示「已删除的线程」。
  */
 import type { TFunction } from "i18next";
@@ -14,7 +15,7 @@ import {
 import { formatRelative } from "../../lib/format";
 import { useIndex } from "../../state/stores";
 import { Badge } from "../ui/data";
-import { Button, describeError, IconButton, Spinner } from "../ui/primitives";
+import { Button, describeError, Spinner } from "../ui/primitives";
 
 type DetailThread = ArtifactDetail["threads"][number];
 
@@ -38,7 +39,6 @@ export function VersionHistory({
 	threads,
 	selected,
 	onSelect,
-	onClose,
 }: {
 	artifactId: string;
 	head: number;
@@ -47,7 +47,6 @@ export function VersionHistory({
 	/** 正在看的版本号（跟随最新时 = head）。 */
 	selected: number;
 	onSelect(v: ArtifactVersion): void;
-	onClose(): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const versions = useArtifactVersions(artifactId);
@@ -124,21 +123,5 @@ export function VersionHistory({
 			</ol>
 		);
 
-	return (
-		<div data-testid="version-history" className="flex min-h-0 flex-1 flex-col">
-			<div className="flex h-10 shrink-0 items-center gap-2 border-border border-b pr-1.5 pl-3">
-				<h2 className="min-w-0 flex-1 truncate font-semibold text-sm">
-					{t("artifacts.history.title")}
-				</h2>
-				<IconButton
-					icon="close"
-					box="sm"
-					size={14}
-					label={t("artifacts.history.close")}
-					onClick={onClose}
-				/>
-			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
-		</div>
-	);
+	return <div data-testid="version-history">{body}</div>;
 }

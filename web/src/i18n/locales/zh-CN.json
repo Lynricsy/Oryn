@@ -1836,8 +1836,7 @@
 		},
 		"history": {
 			"title": "版本历史",
-			"close": "关闭版本历史",
-			"segments": "页面与历史",
+			"segments": "页面与侧栏",
 			"segmentPage": "页面",
 			"you": "你",
 			"deletedThread": "已删除的线程",
