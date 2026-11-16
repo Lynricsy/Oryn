@@ -448,13 +448,17 @@ describe("service worker：通知上的作答按钮", () => {
 	describe("作答结果迟到：按 tag + 通知 id 复核", () => {
 		/** 可延迟的作答请求：`settle` 决定何时以什么结果返回。 */
 		function deferred() {
-			const { promise, resolve, reject } = Promise.withResolvers<{
-				ok: boolean;
-				status: number;
-			}>();
+			type Res = { ok: boolean; status: number };
+			// tsconfig 的 lib 是 ES2023，没有 Promise.withResolvers，手写等价的三件套
+			let resolve!: (v: Res) => void;
+			let reject!: (e: Error) => void;
+			const promise = new Promise<Res>((res, rej) => {
+				resolve = res;
+				reject = rej;
+			});
 			return {
 				fetchImpl: () => promise,
-				settle: (v: { ok: boolean; status: number } | Error) =>
+				settle: (v: Res | Error) =>
 					v instanceof Error ? reject(v) : resolve(v),
 			};
 		}
