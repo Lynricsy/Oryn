@@ -1,25 +1,5 @@
 -- M14: GitHub integration.
 
--- ---------- App ----------
-
--- name: GetGithubApp :one
-SELECT * FROM github_app WHERE id = 1;
-
--- name: InsertGithubApp :exec
-INSERT INTO github_app (id, app_id, slug, name, client_id, owner_login, html_url, public, webhook_url,
-                        private_key_enc, client_secret_enc, webhook_secret_enc, created_at)
-VALUES (1, @app_id, @slug, @name, @client_id, @owner_login, @html_url, @public, @webhook_url,
-        @private_key_enc, @client_secret_enc, @webhook_secret_enc, @created_at);
-
--- name: DeleteGithubApp :exec
-DELETE FROM github_app WHERE id = 1;
-
--- name: SetGithubHookCursor :exec
-UPDATE github_app SET hook_cursor = @hook_cursor WHERE id = 1;
-
--- name: TouchGithubDelivery :exec
-UPDATE github_app SET last_delivery_at = @last_delivery_at, last_delivery_src = @last_delivery_src WHERE id = 1;
-
 -- ---------- identities ----------
 
 -- name: GetGithubIdentity :one
@@ -29,22 +9,12 @@ SELECT * FROM github_identities WHERE slot = @slot;
 SELECT * FROM github_identities ORDER BY slot;
 
 -- name: UpsertGithubIdentity :exec
-INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at,
-                               refresh_token_enc, refresh_expires_at, status, connected_at, updated_at)
-VALUES (@slot, @github_id, @login, sqlc.narg(name), @avatar_url, @access_token_enc, sqlc.narg(access_expires_at),
-        sqlc.narg(refresh_token_enc), sqlc.narg(refresh_expires_at), 'ok', @connected_at, @updated_at)
+INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at)
+VALUES (@slot, @github_id, @login, sqlc.narg(name), @avatar_url, @access_token_enc, 'ok', @connected_at, @updated_at)
 ON CONFLICT (slot) DO UPDATE SET
     github_id = excluded.github_id, login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
-    access_token_enc = excluded.access_token_enc, access_expires_at = excluded.access_expires_at,
-    refresh_token_enc = excluded.refresh_token_enc, refresh_expires_at = excluded.refresh_expires_at,
-    status = 'ok', connected_at = excluded.connected_at, updated_at = excluded.updated_at;
-
--- name: SetGithubIdentityTokens :exec
-UPDATE github_identities
-SET access_token_enc = @access_token_enc, access_expires_at = sqlc.narg(access_expires_at),
-    refresh_token_enc = sqlc.narg(refresh_token_enc), refresh_expires_at = sqlc.narg(refresh_expires_at),
-    status = 'ok', updated_at = @updated_at
-WHERE slot = @slot;
+    access_token_enc = excluded.access_token_enc, status = 'ok', connected_at = excluded.connected_at,
+    updated_at = excluded.updated_at;
 
 -- name: SetGithubIdentityStatus :exec
 UPDATE github_identities SET status = @status, updated_at = @updated_at WHERE slot = @slot;
@@ -81,8 +51,8 @@ DELETE FROM github_oauth_app WHERE id = 1;
 -- ---------- one-shot states ----------
 
 -- name: InsertGithubState :exec
-INSERT INTO github_oauth_states (state_hash, kind, slot, manifest, action_url, public, webhook_url, expires_at)
-VALUES (@state_hash, @kind, sqlc.narg(slot), sqlc.narg(manifest), sqlc.narg(action_url), @public, sqlc.narg(webhook_url), @expires_at);
+INSERT INTO github_oauth_states (state_hash, kind, slot, expires_at)
+VALUES (@state_hash, @kind, @slot, @expires_at);
 
 -- name: GetGithubState :one
 SELECT * FROM github_oauth_states WHERE state_hash = @state_hash;
@@ -93,39 +63,13 @@ DELETE FROM github_oauth_states WHERE state_hash = @state_hash;
 -- name: DeleteExpiredGithubStates :exec
 DELETE FROM github_oauth_states WHERE expires_at < @now;
 
--- ---------- installations ----------
-
--- name: ListGithubInstallations :many
-SELECT * FROM github_installations ORDER BY account_login, id;
-
--- name: UpsertGithubInstallation :exec
-INSERT INTO github_installations (id, account_login, account_type, repository_selection, suspended, updated_at)
-VALUES (@id, @account_login, @account_type, @repository_selection, @suspended, @updated_at)
-ON CONFLICT (id) DO UPDATE SET
-    account_login = excluded.account_login, account_type = excluded.account_type,
-    repository_selection = excluded.repository_selection, suspended = excluded.suspended, updated_at = excluded.updated_at;
-
--- name: DeleteGithubInstallationsExcept :exec
-DELETE FROM github_installations WHERE id NOT IN (sqlc.slice('ids'));
-
--- name: DeleteGithubInstallations :exec
-DELETE FROM github_installations;
-
 -- ---------- project binding ----------
 
 -- name: SetProjectGithub :exec
-UPDATE projects SET github_repo_id = @github_repo_id, github_owner_id = @github_owner_id,
-                    github_installation_id = @github_installation_id
-WHERE id = @id;
+UPDATE projects SET github_repo_id = @github_repo_id, github_bind_status = NULL WHERE id = @id;
 
 -- name: ClearProjectGithub :exec
-UPDATE projects SET github_repo_id = NULL, github_owner_id = NULL, github_installation_id = NULL WHERE id = @id;
-
--- name: ClearProjectGithubInstallation :exec
-UPDATE projects SET github_installation_id = NULL WHERE id = @id;
-
--- name: ClearAllProjectGithubInstallations :exec
-UPDATE projects SET github_installation_id = NULL WHERE github_installation_id IS NOT NULL;
+UPDATE projects SET github_repo_id = NULL, github_bind_status = NULL WHERE id = @id;
 
 -- name: SetProjectRepoURL :exec
 UPDATE projects SET repo_url = @repo_url, github_prev_urls = @github_prev_urls, updated_at = @updated_at WHERE id = @id;
@@ -141,10 +85,10 @@ UPDATE projects SET github_bind_status = sqlc.narg(github_bind_status) WHERE id 
 -- name: SetProjectGithubGates :exec
 UPDATE projects SET github_gates = sqlc.narg(github_gates), updated_at = @updated_at WHERE id = @id;
 
--- Bound (installation reachable), unarchived projects.
+-- Bound, unarchived projects.
 -- name: ListProjectsByGithubRepo :many
 SELECT * FROM projects
-WHERE github_repo_id = @repo_id AND github_installation_id IS NOT NULL AND archived_at IS NULL
+WHERE github_repo_id = @repo_id AND archived_at IS NULL
 ORDER BY created_at;
 
 -- Every project that ever recorded this repo id (rename following).
@@ -161,7 +105,7 @@ SELECT * FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://gith
 SELECT gi.login FROM orbs o
 JOIN projects p ON p.id = o.project_id
 JOIN github_identities gi ON gi.slot = o.github_identity
-WHERE o.id = @id AND p.github_repo_id IS NOT NULL AND p.github_installation_id IS NOT NULL;
+WHERE o.id = @id AND p.github_repo_id IS NOT NULL;
 
 -- ---------- deliveries ----------
 
@@ -542,7 +486,7 @@ WHERE tc.thread_id = @thread_id AND gp.state IN ('open','merged') AND gp.same_re
 
 -- name: ListSamplingCandidates :many
 SELECT t.id FROM threads t JOIN projects p ON p.id = t.project_id
-WHERE p.github_repo_id = @repo_id AND p.github_installation_id IS NOT NULL
+WHERE p.github_repo_id = @repo_id
   AND t.kind = 'work' AND t.archived_at IS NULL AND t.orb_id IS NOT NULL
   AND COALESCE(t.last_message_at, t.created_at) >= @since
 ORDER BY COALESCE(t.last_message_at, t.created_at) DESC LIMIT 10;
@@ -554,7 +498,7 @@ SELECT * FROM github_triggers WHERE project_id = @project_id ORDER BY created_at
 
 -- name: ListEnabledGithubTriggersByRepo :many
 SELECT gt.* FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
-WHERE p.github_repo_id = @repo_id AND p.github_installation_id IS NOT NULL AND p.archived_at IS NULL
+WHERE p.github_repo_id = @repo_id AND p.archived_at IS NULL
   AND gt.enabled = 1 AND gt.event = @event
 ORDER BY gt.created_at, gt.id;
 

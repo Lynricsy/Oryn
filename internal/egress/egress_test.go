@@ -2,12 +2,15 @@ package egress
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +22,8 @@ type fakeR struct {
 	pol     Policy
 	secrets map[string][2]string // id → 值, 允许主机（逗号分隔）
 	git     map[string]string
-	gh      string // 非空时 GitHubToken 返回它
+	gh      string    // 非空时 GitHubToken 返回它
+	rec     *writeRec // 非 nil 时记录 GitHub 写操作回调
 }
 
 func (f fakeR) Policy() Policy { return f.pol }
@@ -36,6 +40,47 @@ func (f fakeR) SecretByID(id string) (string, []string, bool) {
 }
 func (f fakeR) GitToken(h string) (string, bool) { v, ok := f.git[h]; return v, ok }
 func (f fakeR) GitHubToken() (string, bool)      { return f.gh, f.gh != "" }
+
+func (f fakeR) GitHubWriteBegin(w GitHubWrite) string {
+	if f.rec == nil {
+		return ""
+	}
+	f.rec.mu.Lock()
+	defer f.rec.mu.Unlock()
+	f.rec.begins = append(f.rec.begins, w)
+	return f.rec.gate
+}
+
+func (f fakeR) GitHubWriteEnd(w GitHubWrite, status int, keys []string) {
+	if f.rec == nil {
+		return
+	}
+	f.rec.mu.Lock()
+	defer f.rec.mu.Unlock()
+	f.rec.ends = append(f.rec.ends, writeEnd{w: w, status: status, keys: keys})
+}
+
+// writeRec 记录 GitHubWriteBegin / GitHubWriteEnd；gate 非空时 Begin 一律拒绝。
+type writeRec struct {
+	mu     sync.Mutex
+	gate   string
+	begins []GitHubWrite
+	ends   []writeEnd
+}
+
+type writeEnd struct {
+	w      GitHubWrite
+	status int
+	keys   []string
+}
+
+func (r *writeRec) take() ([]GitHubWrite, []writeEnd) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, e := r.begins, r.ends
+	r.begins, r.ends = nil, nil
+	return b, e
+}
 
 func do(t *testing.T, method, url string, hdr map[string]string) *http.Response {
 	t.Helper()
@@ -380,4 +425,259 @@ func TestGitHubGitOpen(t *testing.T) {
 		r.Body.Close()
 		assert.Equal(t, code, r.StatusCode, path)
 	}
+}
+
+// ghProxy 起一个开放 GitHub 的代理（API 与 git 上游都是 up），返回代理地址与写操作记录。
+func ghProxy(t *testing.T, up string) (string, *writeRec) {
+	t.Helper()
+	rec := &writeRec{}
+	pol := Policy{GitHub: &GitHubAccess{APIOrigin: up, GitOrigin: up, UploadsOrigin: up}}
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{gh: "T0KEN", git: map[string]string{"github.com": "tok"}, pol: pol, rec: rec}))
+	t.Cleanup(srv.Close)
+	return srv.URL, rec
+}
+
+func post(t *testing.T, url string, body []byte, hdr map[string]string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(b)
+}
+
+// M15 2.3：REST 评论在转发前预登记（类别、规范化路径、正文哈希），请求体原样转发；响应的 id / node_id 作为补充键；
+// /repositories/{id} 形态的仓库取自响应；GET 不算写操作。
+func TestGitHubWriteREST(t *testing.T) {
+	var gotBody []byte
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":555,"node_id":"IC_555","url":"https://api.github.com/repos/Acme/Widgets/issues/comments/555",`+
+			`"html_url":"https://github.com/acme/widgets/issues/5#issuecomment-555","body":"x","token":"T0KEN"}`)
+	}))
+	defer up.Close()
+	px, rec := ghProxy(t, up.URL)
+
+	body := []byte(`{"body":"  hi\r\nthere  "}`)
+	resp, out := post(t, px+"/gh/api.github.com/repos/Acme/Widgets/issues/5/comments", body, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, body, gotBody, "请求体原样转发")
+	assert.Contains(t, out, `"token":"oryn-redacted"`, "读过的响应体仍然脱敏")
+	begins, ends := rec.take()
+	require.Len(t, begins, 1)
+	assert.Equal(t, GitHubWrite{
+		Method: "POST", Category: CatCommentCreate, Target: "/repos/acme/widgets/issues/5/comments",
+		Op: "POST /repos/{owner}/{repo}/issues/{number}/comments", Repo: "acme/widgets", BodySHA256: BodyHash("hi\nthere"),
+	}, begins[0])
+	require.Len(t, ends, 1)
+	assert.Equal(t, http.StatusCreated, ends[0].status)
+	assert.ElementsMatch(t, []string{"node:IC_555", "comment:555"}, ends[0].keys)
+
+	resp, _ = post(t, px+"/gh/api.github.com/repositories/42/issues/5/comments", body, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	begins, ends = rec.take()
+	require.Len(t, begins, 1)
+	assert.Empty(t, begins[0].Repo)
+	require.Len(t, ends, 1)
+	assert.Equal(t, "acme/widgets", ends[0].w.Repo, "R23：路径里没有仓库时取响应的 url")
+
+	r := do(t, "GET", px+"/gh/api.github.com/repos/acme/widgets/issues/5/comments", nil)
+	r.Body.Close()
+	begins, ends = rec.take()
+	assert.Empty(t, begins)
+	assert.Empty(t, ends)
+}
+
+// M15 2.3：GraphQL 按 operationName 选 operation，展开 fragment，别名不影响 mutation 名；每个根字段一个写操作；
+// query 不审计；GraphQL 的响应不读（没有补充键）。
+func TestGitHubWriteGraphQL(t *testing.T) {
+	var gotBody []byte
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"c":{"commentEdge":{"node":{"url":"https://github.com/a/b/issues/1#issuecomment-9"}}}}}`)
+	}))
+	defer up.Close()
+	px, rec := ghProxy(t, up.URL)
+	url := px + "/gh/api.github.com/graphql"
+
+	doc := `query Viewer { viewer { login } }
+mutation CommentCreate($input: AddCommentInput!) { ...Root }
+fragment Root on Mutation { c: addComment(input: $input) { commentEdge { node { url } } } }`
+	body := gqlBody(t, doc, map[string]any{"input": map[string]any{"subjectId": "I_kwDOA", "body": "LGTM\r\n"}}, "CommentCreate")
+	resp, _ := post(t, url, body, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, body, gotBody)
+	begins, ends := rec.take()
+	require.Len(t, begins, 1)
+	assert.Equal(t, GitHubWrite{Method: "POST", Category: CatCommentCreate, Target: "I_kwDOA", Op: "addComment", BodySHA256: BodyHash("LGTM")}, begins[0])
+	require.Len(t, ends, 1)
+	assert.Equal(t, http.StatusOK, ends[0].status)
+	assert.Empty(t, ends[0].keys, "GraphQL 的响应不读")
+
+	// 同一文档里的 query 不审计
+	resp, _ = post(t, url, gqlBody(t, doc, nil, "Viewer"), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	begins, ends = rec.take()
+	assert.Empty(t, begins)
+	assert.Empty(t, ends)
+
+	// gh pr create + gh pr review 的形态：一个文档两个根字段
+	two := `mutation { pr: createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", headRefName: "me:fix", title: "t", body: "b"}) { pullRequest { id url } }
+rv: addPullRequestReview(input: {pullRequestId: "PR_1", event: COMMENT, body: "nice"}) { clientMutationId } }`
+	resp, _ = post(t, url, gqlBody(t, two, nil, ""), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	begins, ends = rec.take()
+	require.Len(t, begins, 2)
+	assert.Equal(t, CatPRCreate, begins[0].Category)
+	assert.Equal(t, "createPullRequest", begins[0].Op)
+	assert.Equal(t, "R_1", begins[0].Target)
+	assert.Equal(t, BodyHash("b"), begins[0].BodySHA256)
+	assert.Equal(t, CatReview, begins[1].Category)
+	assert.Equal(t, "addPullRequestReview", begins[1].Op)
+	assert.Equal(t, "PR_1", begins[1].Target)
+	assert.Len(t, ends, 2)
+}
+
+// M15 2.3：上游返回 gzip 时（客户端的 Accept-Encoding 已去掉，由 Transport 协商并解压）照样取到补充键，orb 收到明文。
+func TestGitHubWriteGzipUpstream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		js := `{"id":777,"node_id":"PRRC_777","html_url":"https://github.com/a/b/pull/3#discussion_r777"}`
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, js)
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusCreated)
+		zw := gzip.NewWriter(w)
+		fmt.Fprint(zw, js)
+		_ = zw.Close()
+	}))
+	defer up.Close()
+	px, rec := ghProxy(t, up.URL)
+	resp, out := post(t, px+"/gh/api.github.com/repos/a/b/pulls/3/comments", []byte(`{"body":"nit","path":"x.go","line":1}`),
+		map[string]string{"Accept-Encoding": "gzip"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("Content-Encoding"))
+	assert.Contains(t, out, "#discussion_r777")
+	begins, ends := rec.take()
+	require.Len(t, begins, 1)
+	assert.Equal(t, CatReviewComment, begins[0].Category)
+	require.Len(t, ends, 1)
+	assert.ElementsMatch(t, []string{"node:PRRC_777", "review_comment:777"}, ends[0].keys)
+}
+
+// M15 2.3：超过 ghWriteBodyMax 或带压缩编码的请求体只按路径审计（Unparsed），门禁关闭时完整转发；
+// GitHubWriteBegin 拒绝时回 403 `oryn: <原因>`，不触达上游，审计记 403 与门禁结论。
+func TestGitHubWriteOversize(t *testing.T) {
+	var calls int
+	var gotLen int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		b, _ := io.ReadAll(r.Body)
+		gotLen = len(b)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer up.Close()
+	px, rec := ghProxy(t, up.URL)
+	big := []byte(`{"body":"` + strings.Repeat("a", ghWriteBodyMax) + `"}`)
+	url := px + "/gh/api.github.com/repos/a/b/issues/5/comments"
+
+	resp, _ := post(t, url, big, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	assert.Equal(t, len(big), gotLen, "超限请求体完整转发")
+	begins, ends := rec.take()
+	require.Len(t, begins, 1)
+	assert.True(t, begins[0].Unparsed)
+	assert.Equal(t, CatCommentCreate, begins[0].Category)
+	assert.Equal(t, "POST /repos/{owner}/{repo}/issues/{number}/comments", begins[0].Op)
+	assert.Empty(t, begins[0].BodySHA256)
+	require.Len(t, ends, 1)
+	assert.Equal(t, http.StatusCreated, ends[0].status)
+
+	resp, _ = post(t, url, []byte("\x1f\x8b junk"), map[string]string{"Content-Encoding": "gzip"})
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	begins, _ = rec.take()
+	require.Len(t, begins, 1)
+	assert.True(t, begins[0].Unparsed, "压缩编码的请求体不解析")
+
+	rec.gate = "请求体超过上限"
+	calls = 0
+	resp, out := post(t, url, big, nil)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Contains(t, out, "oryn: 请求体超过上限")
+	assert.Zero(t, calls)
+	_, ends = rec.take()
+	require.Len(t, ends, 1)
+	assert.Equal(t, http.StatusForbidden, ends[0].status)
+	assert.Equal(t, "请求体超过上限", ends[0].w.Gate)
+}
+
+// M15 2.3：github.com 的 git-receive-pack 解析命令段（每个 ref 一条），请求体原样转发；Begin 拒绝时读完请求体，
+// 按协商的 side-band 回 `ng <ref> oryn: <原因>`；其它主机的推送不经 GitHub 写操作回调。
+func TestReceivePackWrites(t *testing.T) {
+	var gotBody []byte
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
+	}))
+	defer up.Close()
+	px, rec := ghProxy(t, up.URL)
+	body := append(pkt(oidA+" "+oidB+" refs/heads/feat\x00report-status side-band-64k agent=git/2", oidZ+" "+oidA+" refs/tags/v1", "0000"),
+		"PACK\x00\x00\x00\x02rest"...)
+	url := px + "/git/github.com/Acme/Widgets.git/git-receive-pack"
+
+	resp, _ := post(t, url, body, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, body, gotBody, "请求体原样转发")
+	begins, ends := rec.take()
+	require.Len(t, begins, 1)
+	assert.Equal(t, GitHubWrite{
+		Method: MethodPush, Op: "git-receive-pack", Repo: "acme/widgets",
+		Refs: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/feat"}, {Old: oidZ, New: oidA, Ref: "refs/tags/v1"}},
+	}, begins[0])
+	require.Len(t, ends, 1)
+	assert.Equal(t, http.StatusOK, ends[0].status)
+
+	// 命令段解析不了（push-cert）：只审计
+	resp, _ = post(t, url, pkt("push-cert\x00report-status", "0000"), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	begins, _ = rec.take()
+	require.Len(t, begins, 1)
+	assert.True(t, begins[0].Unparsed)
+
+	rec.gate = "没有 github_prepare 通过记录"
+	calls = 0
+	resp, out := post(t, url, body, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/x-git-receive-pack-result", resp.Header.Get("Content-Type"))
+	assert.Equal(t, string(ReportStatusNG([]string{"refs/heads/feat", "refs/tags/v1"}, "oryn: 没有 github_prepare 通过记录", true)), out)
+	assert.Zero(t, calls)
+	_, ends = rec.take()
+	require.Len(t, ends, 1)
+	assert.Equal(t, "没有 github_prepare 通过记录", ends[0].w.Gate)
+	rec.gate = ""
+
+	// 其它主机（PAT）的推送不回调
+	other := httptest.NewServer(NewHandler("orb-x", fakeR{
+		git: map[string]string{"gitlab.example.com": "tok"}, rec: rec,
+		pol: Policy{GitRepos: map[string][]string{"gitlab.example.com": {"a/b"}}},
+	}))
+	defer other.Close()
+	post(t, other.URL+"/git/gitlab.example.com/a/b/git-receive-pack", body, nil)
+	begins, ends = rec.take()
+	assert.Empty(t, begins)
+	assert.Empty(t, ends)
 }

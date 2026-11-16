@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,15 +30,20 @@ func githubRepoPath(repoURL *string) (string, bool) {
 	return path, true
 }
 
-// ProjectGitHubAPI 是项目的 GitHub 绑定摘要：github_repo_id 为 NULL 时返回 nil。
+// ProjectGitHubAPI 是项目的 GitHub 绑定摘要：已绑定（github_repo_id 非 NULL）时 bound 为真；未绑定但记录了原因
+// （not_found / org_restricted / sso_required，R8）时带 bindStatus；两者都没有返回 nil。
 func ProjectGitHubAPI(p db.Project) *apigen.ProjectGitHub {
-	if p.GithubRepoID == nil {
+	if p.GithubRepoID == nil && p.GithubBindStatus == nil {
 		return nil
 	}
 	out := &apigen.ProjectGitHub{
-		RepoID: *p.GithubRepoID,
-		Bound:  p.GithubInstallationID != nil,
 		Listen: apigen.GitHubListen{Reviews: p.GithubListenReviews, Comments: p.GithubListenComments, Ci: p.GithubListenCi},
+	}
+	if p.GithubRepoID != nil {
+		out.RepoID, out.Bound = *p.GithubRepoID, true
+	} else {
+		st := apigen.ProjectGitHubBindStatus(*p.GithubBindStatus)
+		out.BindStatus = &st
 	}
 	if p.RepoUrl != nil {
 		if _, path, ok := orbs.HTTPSRepo(*p.RepoUrl); ok {
@@ -47,21 +53,8 @@ func ProjectGitHubAPI(p db.Project) *apigen.ProjectGitHub {
 	return out
 }
 
-// sameBinding 报告两行项目的三列绑定是否一致。
-func sameBinding(a, b db.Project) bool {
-	eq := func(x, y *int64) bool { return (x == nil) == (y == nil) && (x == nil || *x == *y) }
-	return eq(a.GithubRepoID, b.GithubRepoID) && eq(a.GithubOwnerID, b.GithubOwnerID) &&
-		eq(a.GithubInstallationID, b.GithubInstallationID)
-}
-
-// BindProject 按项目的仓库地址绑定 GitHub 仓库（记录仓库 id、所有者 id 与安装 id）；仓库改名时跟随。
+// BindProject 按项目的仓库地址绑定 GitHub 仓库（记录仓库 id）；仓库改名时跟随。我的账号未连接或待重新授权时不做任何事。
 func (s *Service) BindProject(ctx context.Context, projectID string) error {
-	if _, err := s.st.Q.GetGithubApp(ctx); err != nil {
-		if isNoRows(err) {
-			return nil
-		}
-		return err
-	}
 	prj, err := s.st.Q.GetProject(ctx, projectID)
 	if err != nil {
 		return err
@@ -74,10 +67,12 @@ func (s *Service) BindProject(ctx context.Context, projectID string) error {
 }
 
 // bind 是 BindProject 的主体；changed 报告库里的绑定或仓库地址是否变了。
+//   - 以我的账号 GET /repos/{full} 成功：写入 github_repo_id 并清空 github_bind_status，随后建立或校正仓库 hook；
+//   - 返回 404 或 R4 的 403（org_restricted / sso_required）：清空 repo id，并把原因写进 github_bind_status（R8）。
 func (s *Service) bind(ctx context.Context, prj db.Project) (changed bool, err error) {
 	full, ok := githubRepoPath(prj.RepoUrl)
 	if !ok {
-		if prj.GithubRepoID == nil && prj.GithubOwnerID == nil && prj.GithubInstallationID == nil {
+		if prj.GithubRepoID == nil && prj.GithubBindStatus == nil {
 			return false, nil
 		}
 		if err := s.st.Q.ClearProjectGithub(ctx, prj.ID); err != nil {
@@ -86,42 +81,22 @@ func (s *Service) bind(ctx context.Context, prj db.Project) (changed bool, err e
 		s.releaseHook(ctx, prj.GithubRepoID)
 		return true, nil
 	}
-	auth, err := s.appAuth(ctx)
-	if err != nil {
-		return false, err
-	}
-	var inst struct {
-		ID int64 `json:"id"`
-	}
-	if err := s.call(ctx, http.MethodGet, "/repos/"+full+"/installation", auth, nil, &inst); err != nil {
-		if isStatus(err, http.StatusNotFound) {
-			if prj.GithubInstallationID == nil {
-				return false, nil
-			}
-			return true, s.st.Q.ClearProjectGithubInstallation(ctx, prj.ID)
-		}
-		return false, err
-	}
-	tok, err := s.installToken(ctx, inst.ID)
-	if err != nil {
-		return false, err
-	}
 	var repo struct {
 		ID       int64  `json:"id"`
 		FullName string `json:"full_name"`
-		Owner    struct {
-			ID int64 `json:"id"`
-		} `json:"owner"`
 	}
-	if err := s.call(ctx, http.MethodGet, "/repos/"+full, "Bearer "+tok, nil, &repo); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full, nil, &repo); err != nil {
+		var ge *Error
+		switch kind := errKind(err); {
+		case errors.As(err, &ge) && ge.Code == "github_identity_required":
+			return false, nil // 连接我的账号后 FinishAuthorize 会重新绑定
+		case kind == kindNotFound || kind == kindOrgRestricted || kind == kindSSORequired:
+			return s.unbind(ctx, prj, kind)
+		}
 		return false, err
 	}
-	next := prj
-	next.GithubRepoID, next.GithubOwnerID, next.GithubInstallationID = &repo.ID, &repo.Owner.ID, &inst.ID
-	if !sameBinding(prj, next) {
-		if err := s.st.Q.SetProjectGithub(ctx, db.SetProjectGithubParams{
-			GithubRepoID: &repo.ID, GithubOwnerID: &repo.Owner.ID, GithubInstallationID: &inst.ID, ID: prj.ID,
-		}); err != nil {
+	if prj.GithubRepoID == nil || *prj.GithubRepoID != repo.ID || prj.GithubBindStatus != nil {
+		if err := s.st.Q.SetProjectGithub(ctx, db.SetProjectGithubParams{GithubRepoID: &repo.ID, ID: prj.ID}); err != nil {
 			return false, err
 		}
 		changed = true
@@ -144,6 +119,24 @@ func (s *Service) bind(ctx context.Context, prj db.Project) (changed bool, err e
 		}
 	}
 	return changed, nil
+}
+
+// unbind 把读不到仓库的项目置为未绑定并记下原因 status；原先绑定的仓库按需删除 hook。
+func (s *Service) unbind(ctx context.Context, prj db.Project, status string) (bool, error) {
+	if prj.GithubRepoID == nil && prj.GithubBindStatus != nil && *prj.GithubBindStatus == status {
+		return false, nil
+	}
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := q.ClearProjectGithub(ctx, prj.ID); err != nil {
+			return err
+		}
+		return q.SetProjectGithubBindStatus(ctx, db.SetProjectGithubBindStatusParams{GithubBindStatus: &status, ID: prj.ID})
+	})
+	if err != nil {
+		return false, err
+	}
+	s.releaseHook(ctx, prj.GithubRepoID)
+	return true, nil
 }
 
 // releaseHook 在项目不再绑定 repoID 之后删除没有其他项目绑定的仓库 hook；失败只记日志（同步循环会清理）。

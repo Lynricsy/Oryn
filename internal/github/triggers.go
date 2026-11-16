@@ -51,7 +51,7 @@ func (s *Service) triggerProject(ctx context.Context, projectID string) (db.Proj
 		}
 		return prj, err
 	}
-	if prj.GithubRepoID == nil || prj.GithubInstallationID == nil {
+	if prj.GithubRepoID == nil {
 		return prj, errf("github_not_bound", "project is not bound to a GitHub repository")
 	}
 	return prj, nil
@@ -199,9 +199,13 @@ type triggerEvent struct {
 	repo    string // owner/repo
 	issue   hookIssue
 	sender  sender
+	// assoc 是 sender 这条内容的 author_association：opened 取 issue 的、mention 取评论的；labeled 取不到，为空。
+	assoc string
 	// commentID / comment 是提及所在的评论（仅提及事件）。
 	commentID int64
 	comment   string
+	// self 是防回流判定用的探针（isSelfEvent）。
+	self selfProbe
 }
 
 func (ev triggerEvent) kind() string {
@@ -297,9 +301,14 @@ func (s *Service) onIssues(ctx context.Context, action string, body []byte) (str
 		}
 		cands = kept
 	}
-	return s.fire(ctx, triggerEvent{
+	tev := triggerEvent{
 		repoID: ev.Repository.ID, repo: ev.Repository.FullName, issue: *ev.Issue, sender: senderOf(ev.Sender),
-	}, action, cands)
+		self: issueProbe(ev, action),
+	}
+	if action == "opened" {
+		tev.assoc = ev.Issue.AuthorAssociation
+	}
+	return s.fire(ctx, tev, action, cands)
 }
 
 // onUntargetedComment 处理没有目标线程的评论：@Agent 账号时匹配提及规则。
@@ -321,7 +330,7 @@ func (s *Service) onUntargetedComment(ctx context.Context, ev hookEvent) (string
 	}
 	return s.fire(ctx, triggerEvent{
 		mention: true, repoID: ev.Repository.ID, repo: ev.Repository.FullName, issue: *ev.Issue, sender: senderOf(ev.Sender),
-		commentID: ev.Comment.ID, comment: ev.Comment.Body,
+		assoc: ev.Comment.AuthorAssociation, commentID: ev.Comment.ID, comment: ev.Comment.Body, self: commentProbe(ev),
 	}, "mention", cands)
 }
 
@@ -330,8 +339,10 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, action string, cand
 	if len(cands) == 0 {
 		return "ignored:no_trigger", nil
 	}
-	// opened 看建 issue 的人，labeled 看打标签的人，mention 看评论者
-	if s.isSelf(ctx, ev.sender) {
+	// opened 看建 issue 的人，labeled 看打标签的人，mention 看评论者；探针的发送者恒取事件发送者（合成事件没有探针时仍按 Agent 登录名判）
+	probe := ev.self
+	probe.sender = ev.sender
+	if s.isSelfEvent(ctx, probe) {
 		return "ignored:self", nil
 	}
 	// 候选按 created_at 排序：取最早的一条（一个 issue 只对应一个线程）
@@ -340,7 +351,7 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, action string, cand
 	if err != nil {
 		return "", err
 	}
-	ok, reason, err := s.canDrive(ctx, prj, ev.sender)
+	ok, reason, err := s.canDrive(ctx, ev.repo, ev.sender, ev.issue.User.Login, ev.assoc, driversWriters)
 	if err != nil {
 		return "", err
 	}

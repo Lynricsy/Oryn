@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -30,7 +31,7 @@ func (s *Service) BeginAuthorize(ctx context.Context, slot string) (string, erro
 	}
 	state := ids.Token("ogs")
 	if err := s.st.Q.InsertGithubState(ctx, db.InsertGithubStateParams{
-		StateHash: ids.Hash(state), Kind: "identity", Slot: &slot, ExpiresAt: s.now().Add(stateTTL).UnixMilli(),
+		StateHash: ids.Hash(state), Kind: "identity", Slot: slot, ExpiresAt: s.now().Add(stateTTL).UnixMilli(),
 	}); err != nil {
 		return "", err
 	}
@@ -43,22 +44,36 @@ func (s *Service) BeginAuthorize(ctx context.Context, slot string) (string, erro
 	return s.cfg.WebURL + "/login/oauth/authorize?" + q.Encode(), nil
 }
 
-// clientSecret 解出 App 的 client secret。
-func (s *Service) clientSecret(app db.GithubApp) (string, error) {
-	b, err := s.cfg.Box.Open(aadClientSecret, app.ClientSecretEnc)
-	return string(b), err
+// consumeState 读并消费一条身份授权 state：已被消费或已过期 → state_invalid。
+func (s *Service) consumeState(ctx context.Context, state string) (db.GithubOauthState, error) {
+	row, err := s.st.Q.GetGithubState(ctx, ids.Hash(state))
+	if err != nil {
+		if isNoRows(err) {
+			return row, errf("state_invalid", "state not found")
+		}
+		return row, err
+	}
+	n, err := s.st.Q.DeleteGithubState(ctx, row.StateHash)
+	if err != nil {
+		return row, err
+	}
+	if n == 0 || row.ExpiresAt < s.nowMs() {
+		return row, errf("state_invalid", "state expired or already used")
+	}
+	return row, nil
 }
 
 // FinishAuthorize 处理 OAuth 回调：消费 state，兑换用户令牌，查出账号与实际授予的 scope 并写进槽位。
+// 连接我的账号后在后台重新绑定全部项目（未连接时绑定无从进行）。
 func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (string, error) {
-	row, err := s.consumeState(ctx, state, "identity")
+	row, err := s.consumeState(ctx, state)
 	if err != nil {
 		return "", err
 	}
-	if row.Slot == nil || !validSlot(*row.Slot) {
+	if !validSlot(row.Slot) {
 		return "", errf("state_invalid", "state has no slot")
 	}
-	slot := *row.Slot
+	slot := row.Slot
 	clientID, secret, err := s.oauthClient(ctx)
 	if err != nil {
 		return "", err
@@ -116,6 +131,13 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 		return "", err
 	}
 	s.changed()
+	if slot == slotUser && !s.enqueue(func(ctx context.Context) {
+		if err := s.BindProjects(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("github: 连接我的账号后绑定项目失败", "err", err)
+		}
+	}) {
+		slog.Warn("github: 任务队列已满，项目绑定留待 hook 同步周期")
+	}
 	return slot, nil
 }
 
@@ -157,7 +179,7 @@ func identityView(gi db.GithubIdentity) *apigen.GitHubIdentity {
 	}
 }
 
-// Disconnect 断开一个身份槽位；断开 Agent 账号时自动化身份退回我的账号。
+// Disconnect 断开一个身份槽位；不改动「自动化任务的 GitHub 身份」设置（R6：断开 Agent 账号后自动化线程按 Q6 回退）。
 // 断开我的账号前先删除 Oryn 建的全部仓库 hook（hook 由我的账号管理，断开后无法再删）。
 func (s *Service) Disconnect(ctx context.Context, slot string) error {
 	if !validSlot(slot) {
@@ -174,48 +196,22 @@ func (s *Service) Disconnect(ctx context.Context, slot string) error {
 			return err
 		}
 	}
-	err := s.st.Tx(ctx, func(q *db.Queries) error {
-		n, err := q.DeleteGithubIdentity(ctx, slot)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return errf("not_found", "GitHub identity "+slot+" is not connected")
-		}
-		if slot != slotAgent {
-			return nil
-		}
-		cur, err := q.GetOwnerGithubAutomation(ctx)
-		if err != nil {
-			if isNoRows(err) {
-				return nil
-			}
-			return err
-		}
-		if cur == slotAgent {
-			_, err = q.SetOwnerGithubAutomation(ctx, slotUser)
-		}
-		return err
-	})
+	n, err := s.st.Q.DeleteGithubIdentity(ctx, slot)
 	if err != nil {
 		return err
+	}
+	if n == 0 {
+		return errf("not_found", "GitHub identity "+slot+" is not connected")
 	}
 	s.changed()
 	return nil
 }
 
-// SetAutomationIdentity 设置自动化任务（GitHub 触发、项目级定时）使用的身份槽位。
+// SetAutomationIdentity 设置自动化任务（GitHub 触发、项目级定时、发布哨兵）使用的身份槽位。Agent 账号未连接时也可设为
+// agent：实际使用时由 ResolveAutomationSlot 按 Q6 回退。
 func (s *Service) SetAutomationIdentity(ctx context.Context, slot string) error {
 	if !validSlot(slot) {
 		return errf("invalid_request", "automationIdentity must be user or agent")
-	}
-	if slot == slotAgent {
-		if _, err := s.st.Q.GetGithubIdentity(ctx, slotAgent); err != nil {
-			if isNoRows(err) {
-				return errf("github_agent_required", "connect the Agent account first")
-			}
-			return err
-		}
 	}
 	n, err := s.st.Q.SetOwnerGithubAutomation(ctx, slot)
 	if err != nil {
@@ -228,15 +224,43 @@ func (s *Service) SetAutomationIdentity(ctx context.Context, slot string) error 
 	return nil
 }
 
-// AutomationIdentity 返回自动化线程实际使用的槽位：设置为 agent 且 Agent 账号可用时为 agent，其余为 user。
-func (s *Service) AutomationIdentity(ctx context.Context) string {
-	v, err := s.st.Q.GetOwnerGithubAutomation(ctx)
-	if err != nil || v != slotAgent {
-		return slotUser
-	}
+// errAgentRequired 是不可信输入驱动的自动化（「任何人」档规则、外部 PR 评审）在 Agent 账号不可用时的错误（Q6）。
+var errAgentRequired = &Error{Code: "github_agent_required", Message: "this automation requires the Agent account to be connected"}
+
+// agentFallbackNote 是全自动线程因 Agent 账号不可用而回退到我的账号时，追加在首条提示词末尾的提示（Q6）。
+const agentFallbackNote = "[Oryn: the Agent GitHub account is unavailable, so this automated thread uses the owner's GitHub account instead.]"
+
+// ResolveAutomationSlot 决定全自动线程使用的身份槽位（R6 / Q6）：
+//   - untrusted 为真时只用 Agent 账号，Agent 槽位不是 ok 则返回 errAgentRequired，不回退；
+//   - 否则按「自动化任务的 GitHub 身份」设置（缺省 agent）：设为 user 时用 user；设为 agent 且 Agent 槽位是 ok 时用 agent，
+//     不可用时回退到 user，并返回回退提示 note（调用方写进线程）。
+func (s *Service) ResolveAutomationSlot(ctx context.Context, untrusted bool) (slot, note string, err error) {
+	agentOK := false
 	row, err := s.st.Q.GetGithubIdentity(ctx, slotAgent)
-	if err != nil || row.Status != "ok" {
-		return slotUser
+	switch {
+	case err == nil:
+		agentOK = row.Status == "ok"
+	case !isNoRows(err):
+		return "", "", err
 	}
-	return slotAgent
+	if untrusted {
+		if !agentOK {
+			return "", "", errAgentRequired
+		}
+		return slotAgent, "", nil
+	}
+	setting, err := s.st.Q.GetOwnerGithubAutomation(ctx)
+	switch {
+	case isNoRows(err):
+		setting = slotAgent
+	case err != nil:
+		return "", "", err
+	}
+	switch {
+	case setting != slotAgent:
+		return slotUser, "", nil
+	case agentOK:
+		return slotAgent, "", nil
+	}
+	return slotUser, agentFallbackNote, nil
 }

@@ -1,5 +1,5 @@
-// Package github 是 Oryn 与 GitHub 的深度集成（M14）：GitHub App 的创建与安装、两个 GitHub 身份（我的账号 /
-// Agent 账号）、仓库绑定、orb 内凭据、事件回流与触发规则。REST / GraphQL 用 net/http 手写，不引入第三方 SDK。
+// Package github 是 Oryn 与 GitHub 的深度集成（M14 / M15）：OAuth App 授权的两个 GitHub 身份（我的账号 / Agent 账号）、
+// 仓库绑定与仓库 hook、orb 内凭据、事件回流与触发规则。REST / GraphQL 用 net/http 手写，不引入第三方 SDK。
 package github
 
 import (
@@ -32,8 +32,6 @@ const (
 	permTTL             = 5 * time.Minute
 	repoListTTL         = 60 * time.Second
 	stateTTL            = 10 * time.Minute
-	installTokenTTL     = 50 * time.Minute
-	scopedTokenTTL      = 50 * time.Minute
 	maxPerLinkPerHour   = 20
 	maxCIRounds         = 5
 	triggerMaxPerHour   = 10
@@ -41,6 +39,11 @@ const (
 	deliveryRetention   = 7 * 24 * time.Hour
 	outboxMaxAge        = 24 * time.Hour
 	webhookMaxBody      = 25 << 20
+	// 防回流与审计（M15 步骤 2.3，docs/plan-m15.md「全局约束」）
+	selfWriteWindow    = 120 * time.Second // 无正文的动作与预登记的匹配时间窗
+	selfWriteRetention = 7 * 24 * time.Hour
+	auditRetention     = 30 * 24 * time.Hour
+	selfRecheckDelay   = 5 * time.Second // 槽位登录名的事件还没命中、且该槽位有写操作在途时，延后复查一次
 )
 
 // oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
@@ -106,11 +109,6 @@ func (e *Error) Error() string {
 
 func errf(code, msg string) *Error { return &Error{Code: code, Message: msg} }
 
-type cachedToken struct {
-	token string
-	exp   time.Time
-}
-
 // Service 是 GitHub 集成的控制面服务。
 type Service struct {
 	cfg     Config
@@ -120,11 +118,9 @@ type Service struct {
 	att     Attachments
 	sampler Sampler
 
-	mu         sync.Mutex
-	instTokens map[int64]cachedToken      // 安装 id → 安装令牌
-	scoped     map[scopedKey]scopedToken  // (槽位, 仓库 id) → 按仓库收窄的令牌（M14 步骤 3.2，惰性初始化）
-	repoLists  map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
-	perms      map[permKey]permEntry      // (仓库 id, 登录名) → 是否有写权限（步骤 4.3，惰性初始化）
+	mu        sync.Mutex
+	repoLists map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
+	perms     map[permKey]permEntry      // (仓库, 登录名) → 驱动判定的权限结果（惰性初始化）
 
 	// PR 跟踪（步骤 5.1 / 5.2，受 mu 保护，惰性初始化）：线程 → 上次按 HEAD 反查过 PR 的 sha；排队中的 CI 汇总。
 	sampledHeads map[string]string
@@ -142,6 +138,9 @@ type Service struct {
 	pollMu     sync.Mutex
 	hookPolled map[int64]time.Time
 	hookPause  time.Time
+
+	// selfInflight 是各槽位经出站代理在途（已 Begin 未 End）的 GitHub 写操作数（步骤 2.3，受 mu 保护，惰性初始化）。
+	selfInflight map[string]int
 }
 
 // New 构造服务。
@@ -169,9 +168,8 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, n: n, att: att,
-		instTokens: map[int64]cachedToken{},
-		jobs:       make(chan func(ctx context.Context), jobQueueSize),
-		inflight:   map[string]bool{},
+		jobs:     make(chan func(ctx context.Context), jobQueueSize),
+		inflight: map[string]bool{},
 	}
 	s.handlers = s.bindHandlers()
 	return s
@@ -187,13 +185,6 @@ func (s *Service) changed() {
 	if s.cfg.Changed != nil {
 		s.cfg.Changed()
 	}
-}
-
-// clearTokenCaches 丢弃内存里的全部令牌缓存（App 删除、安装变化后）。
-func (s *Service) clearTokenCaches() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	clear(s.instTokens)
 }
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }

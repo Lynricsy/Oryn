@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	// githubTables 统计 GitHub 相关的表：0028 建 10 张，0033 再建 11 张。
+	// githubTables 统计 GitHub 相关的表：0028 建 10 张，0033 再建 11 张，0034 删掉 2 张。
 	githubTables = `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND (name LIKE 'github_%' OR name IN ('thread_pulls', 'thread_issues'))`
-	// projectGithubCols 统计 projects 上的 github_* 列：0028 加 7 列，0033 再加 2 列。
+	// projectGithubCols 统计 projects 上的 github_* 列：0028 加 7 列，0033 再加 2 列，0034 删掉 2 列。
 	projectGithubCols = `SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name LIKE 'github_%'`
 )
 
@@ -48,8 +48,8 @@ func TestGitHubMigrationDownUp(t *testing.T) {
 	ctx := context.Background()
 	s := openTemp(t, t.TempDir())
 	p := githubProvider(t, s)
-	assert.Equal(t, 21, queryInt(ctx, t, s, githubTables))
-	assert.Equal(t, 9, queryInt(ctx, t, s, projectGithubCols))
+	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 7, queryInt(ctx, t, s, projectGithubCols))
 
 	_, err := p.DownTo(ctx, 27)
 	require.NoError(t, err)
@@ -58,8 +58,8 @@ func TestGitHubMigrationDownUp(t *testing.T) {
 
 	_, err = p.Up(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 21, queryInt(ctx, t, s, githubTables))
-	assert.Equal(t, 9, queryInt(ctx, t, s, projectGithubCols))
+	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 7, queryInt(ctx, t, s, projectGithubCols))
 	assert.Equal(t, "'user'", columnDefault(ctx, t, s, "orbs", "github_identity"))
 	assert.Equal(t, "'agent'", columnDefault(ctx, t, s, "owner", "github_automation_identity"))
 }
@@ -78,8 +78,8 @@ func TestGitHubOAuthMigrationDownUp(t *testing.T) {
 		return err
 	}
 
-	assert.Equal(t, 21, queryInt(ctx, t, s, githubTables))
-	assert.Equal(t, 9, queryInt(ctx, t, s, projectGithubCols))
+	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 7, queryInt(ctx, t, s, projectGithubCols))
 	assert.Equal(t, 12, cols("thread_issues"))
 	assert.Equal(t, 8, cols("thread_pulls"))
 	assert.Equal(t, 23, cols("github_triggers"))
@@ -127,7 +127,7 @@ func TestGitHubOAuthMigrationDownUp(t *testing.T) {
 
 	_, err = p.Up(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 21, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
 	assert.Equal(t, 23, cols("github_triggers"))
 	assert.Equal(t, 2, queryInt(ctx, t, s, rebuiltIndexes))
 	ident, err = s.Q.GetOwnerGithubAutomation(ctx)
@@ -139,4 +139,55 @@ func TestGitHubOAuthMigrationDownUp(t *testing.T) {
 	assert.Equal(t, "writers_and_author", tr.Drivers)
 	assert.Equal(t, "[]", tr.Maintainers)
 	require.NoError(t, exec(`INSERT INTO github_deliveries (guid, event, source, received_at) VALUES ('d-x', 'issues', 'rest', 3)`))
+}
+
+// TestGitHubDropAppMigration 覆盖 0034：删掉 App 的表与列、清空身份、github_oauth_states 只剩 identity；
+// 项目的 github_repo_id 保留。Down 只恢复结构（数据不可恢复），再 Up 仍成立。
+func TestGitHubDropAppMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	p := githubProvider(t, s)
+	cols := func(table string) int {
+		return queryInt(ctx, t, s, `SELECT COUNT(*) FROM pragma_table_info(?)`, table)
+	}
+	exec := func(q string, args ...any) error {
+		_, err := s.DB.ExecContext(ctx, q, args...)
+		return err
+	}
+	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('github_app', 'github_installations')`))
+	assert.Equal(t, 10, cols("github_identities"))
+	assert.Equal(t, 4, cols("github_oauth_states"))
+	require.Error(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, slot, expires_at) VALUES ('m', 'manifest', 'user', 1)`))
+	require.Error(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, expires_at) VALUES ('n', 'identity', 1)`), "slot 必填")
+
+	// 回到 0033：结构恢复，写入 App 时代的数据
+	_, err := p.DownTo(ctx, 33)
+	require.NoError(t, err)
+	assert.Equal(t, 21, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 9, queryInt(ctx, t, s, projectGithubCols))
+	assert.Equal(t, 13, cols("github_identities"))
+	assert.Equal(t, 8, cols("github_oauth_states"))
+	require.NoError(t, exec(`INSERT INTO projects (id, name, shallow_clone, created_at, updated_at, github_repo_id, github_owner_id, github_installation_id)
+		VALUES ('prj_1', 'p1', 1, 1, 1, 42, 900, 10)`))
+	require.NoError(t, exec(`INSERT INTO github_identities (slot, github_id, login, access_token_enc, refresh_token_enc, connected_at, updated_at)
+		VALUES ('user', 1, 'owner', x'00', x'01', 1, 1)`))
+	require.NoError(t, exec(`INSERT INTO github_installations (id, account_login, account_type, repository_selection, updated_at) VALUES (10, 'acme', 'User', 'all', 1)`))
+	require.NoError(t, exec(`INSERT INTO github_app (app_id, slug, name, client_id, owner_login, html_url, webhook_url, private_key_enc,
+		client_secret_enc, webhook_secret_enc, created_at) VALUES (1, 's', 'n', 'c', 'o', 'h', 'w', x'00', x'00', x'00', 1)`))
+	require.NoError(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, slot, expires_at) VALUES ('st-id', 'identity', 'agent', 9)`))
+	require.NoError(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, manifest, expires_at) VALUES ('st-m', 'manifest', '{}', 9)`))
+
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
+	assert.Equal(t, 7, queryInt(ctx, t, s, projectGithubCols))
+	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM github_identities`), "两个槽位都要重新连接（R3）")
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM projects WHERE id = 'prj_1' AND github_repo_id = 42`))
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM github_oauth_states WHERE state_hash = 'st-id' AND slot = 'agent'`))
+	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM github_oauth_states WHERE state_hash = 'st-m'`))
+	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%\_keep' ESCAPE '\'`), "暂存表已删除")
+	prj, err := s.Q.GetProject(ctx, "prj_1")
+	require.NoError(t, err)
+	require.NotNil(t, prj.GithubRepoID)
+	assert.EqualValues(t, 42, *prj.GithubRepoID)
 }

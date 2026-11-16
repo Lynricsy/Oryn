@@ -237,25 +237,6 @@ type EntryCursor struct {
 	ByteOffset int64  `json:"byteOffset"`
 }
 
-type GithubApp struct {
-	ID               int64   `json:"id"`
-	AppID            int64   `json:"appId"`
-	Slug             string  `json:"slug"`
-	Name             string  `json:"name"`
-	ClientID         string  `json:"clientId"`
-	OwnerLogin       string  `json:"ownerLogin"`
-	HtmlUrl          string  `json:"htmlUrl"`
-	Public           bool    `json:"public"`
-	WebhookUrl       string  `json:"webhookUrl"`
-	PrivateKeyEnc    []byte  `json:"privateKeyEnc"`
-	ClientSecretEnc  []byte  `json:"clientSecretEnc"`
-	WebhookSecretEnc []byte  `json:"webhookSecretEnc"`
-	HookCursor       int64   `json:"hookCursor"`
-	LastDeliveryAt   *int64  `json:"lastDeliveryAt"`
-	LastDeliverySrc  *string `json:"lastDeliverySrc"`
-	CreatedAt        int64   `json:"createdAt"`
-}
-
 type GithubAudit struct {
 	ID         int64   `json:"id"`
 	At         int64   `json:"at"`
@@ -307,28 +288,16 @@ type GithubHook struct {
 }
 
 type GithubIdentity struct {
-	Slot             string  `json:"slot"`
-	GithubID         int64   `json:"githubId"`
-	Login            string  `json:"login"`
-	Name             *string `json:"name"`
-	AvatarUrl        string  `json:"avatarUrl"`
-	AccessTokenEnc   []byte  `json:"accessTokenEnc"`
-	AccessExpiresAt  *int64  `json:"accessExpiresAt"`
-	RefreshTokenEnc  []byte  `json:"refreshTokenEnc"`
-	RefreshExpiresAt *int64  `json:"refreshExpiresAt"`
-	Status           string  `json:"status"`
-	ConnectedAt      int64   `json:"connectedAt"`
-	UpdatedAt        int64   `json:"updatedAt"`
-	Scopes           string  `json:"scopes"`
-}
-
-type GithubInstallation struct {
-	ID                  int64  `json:"id"`
-	AccountLogin        string `json:"accountLogin"`
-	AccountType         string `json:"accountType"`
-	RepositorySelection string `json:"repositorySelection"`
-	Suspended           bool   `json:"suspended"`
-	UpdatedAt           int64  `json:"updatedAt"`
+	Slot           string  `json:"slot"`
+	GithubID       int64   `json:"githubId"`
+	Login          string  `json:"login"`
+	Name           *string `json:"name"`
+	AvatarUrl      string  `json:"avatarUrl"`
+	AccessTokenEnc []byte  `json:"accessTokenEnc"`
+	Status         string  `json:"status"`
+	ConnectedAt    int64   `json:"connectedAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
+	Scopes         string  `json:"scopes"`
 }
 
 type GithubOauthApp struct {
@@ -340,14 +309,10 @@ type GithubOauthApp struct {
 }
 
 type GithubOauthState struct {
-	StateHash  string  `json:"stateHash"`
-	Kind       string  `json:"kind"`
-	Slot       *string `json:"slot"`
-	Manifest   *string `json:"manifest"`
-	ActionUrl  *string `json:"actionUrl"`
-	Public     bool    `json:"public"`
-	WebhookUrl *string `json:"webhookUrl"`
-	ExpiresAt  int64   `json:"expiresAt"`
+	StateHash string `json:"stateHash"`
+	Kind      string `json:"kind"`
+	Slot      string `json:"slot"`
+	ExpiresAt int64  `json:"expiresAt"`
 }
 
 type GithubOutbox struct {
@@ -700,8 +665,6 @@ type Project struct {
 	Snapshots               bool    `json:"snapshots"`
 	WarmOrbs                int64   `json:"warmOrbs"`
 	GithubRepoID            *int64  `json:"githubRepoId"`
-	GithubOwnerID           *int64  `json:"githubOwnerId"`
-	GithubInstallationID    *int64  `json:"githubInstallationId"`
 	GithubPrevUrls          string  `json:"githubPrevUrls"`
 	GithubListenReviews     bool    `json:"githubListenReviews"`
 	GithubListenComments    bool    `json:"githubListenComments"`

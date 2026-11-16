@@ -13,31 +13,71 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// errNotConfigured 是既没有 OAuth App、也没有旧 App 时的错误。
+// 公开回调路由（固定字面量）。
+const (
+	webhookPath       = "/api/v1/public/github/webhook"
+	oauthCallbackPath = "/api/v1/public/github/oauth/callback"
+)
+
+// errNotConfigured 是没有 OAuth App 配置时的错误。
 func errNotConfigured() *Error {
 	return &Error{Status: http.StatusConflict, Code: "github_not_configured", Message: "GitHub OAuth App not configured"}
 }
 
-// oauthClient 返回 OAuth 授权流用的 client 凭据：优先取 github_oauth_app；
-// 没有时退回旧 App 的 client 凭据（M14 过渡，步骤 1.4 删除）。都没有时返回 github_not_configured（409）。
+// oauthClient 返回 OAuth 授权流用的 client 凭据；没有配置时返回 github_not_configured（409）。
 func (s *Service) oauthClient(ctx context.Context) (id, secret string, err error) {
 	row, err := s.st.Q.GetGithubOAuthApp(ctx)
-	switch {
-	case err == nil:
-		b, err := s.cfg.Box.Open(aadOAuthSecret, row.ClientSecretEnc)
-		return row.ClientID, string(b), err
-	case !isNoRows(err):
-		return "", "", err
-	}
-	app, err := s.st.Q.GetGithubApp(ctx)
 	if err != nil {
 		if isNoRows(err) {
 			return "", "", errNotConfigured()
 		}
 		return "", "", err
 	}
-	secret, err = s.clientSecret(app)
-	return app.ClientID, secret, err
+	b, err := s.cfg.Box.Open(aadOAuthSecret, row.ClientSecretEnc)
+	return row.ClientID, string(b), err
+}
+
+// Status 汇总 GitHub 集成的当前状态（`GET /api/v1/github`）。旧 App 的 app / installations 字段恒为空（8.1 删除契约）；
+// 最近一次投递取各仓库 hook 里最新的一条。
+func (s *Service) Status(ctx context.Context) (apigen.GitHubStatus, error) {
+	out := apigen.GitHubStatus{
+		AutomationIdentity: apigen.GitHubIdentitySlot(slotAgent),
+		Installations:      []apigen.GitHubInstallation{},
+	}
+	if err := s.fillOAuthStatus(ctx, &out); err != nil {
+		return out, err
+	}
+	out.WebhookURL = *out.WebhookBase + webhookPath
+	idents, err := s.st.Q.ListGithubIdentities(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, gi := range idents {
+		v := identityView(gi)
+		switch gi.Slot {
+		case slotUser:
+			out.Identities.User = v
+		case slotAgent:
+			out.Identities.Agent = v
+		}
+	}
+	hooks, err := s.st.Q.ListGithubHooks(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, h := range hooks {
+		if h.LastDeliveryAt == nil || h.LastDeliverySrc == nil || out.LastDeliveryAt != nil && *out.LastDeliveryAt >= *h.LastDeliveryAt {
+			continue
+		}
+		src := apigen.GitHubStatusLastDeliverySource(*h.LastDeliverySrc)
+		out.LastDeliveryAt, out.LastDeliverySource = h.LastDeliveryAt, &src
+	}
+	if v, err := s.st.Q.GetOwnerGithubAutomation(ctx); err == nil {
+		out.AutomationIdentity = apigen.GitHubIdentitySlot(v)
+	} else if !isNoRows(err) {
+		return out, err
+	}
+	return out, nil
 }
 
 // SetOAuthApp 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（R1）。
@@ -105,7 +145,6 @@ func (s *Service) DeleteOAuthApp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.clearTokenCaches()
 	s.changed()
 	return nil
 }

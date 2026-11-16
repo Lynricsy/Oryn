@@ -48,14 +48,12 @@ func TestGitHubWebhookEndpoint(t *testing.T) {
 	}
 	sig := func(v string) http.Header { return http.Header{"X-Hub-Signature-256": {v}} }
 	body := []byte(`{"zen":"hi"}`)
-	// 既没有仓库 hook 也没有旧 App → 401；公开路由不需要会话
-	assert.Equal(t, http.StatusUnauthorized, post(body, sig(fake.Sign(body))))
+	// 没有仓库 hook → 401；公开路由不需要会话
+	assert.Equal(t, http.StatusUnauthorized, post(body, sig("sha256=00")))
 
-	// 绑定（步骤 1.4 前仍经旧 App）后自动建仓库 hook
-	createGitHubApp(t, fake, gh)
+	// 绑定后自动建仓库 hook
 	connectGitHubUser(t, e, fake, gh, "owner")
-	fake.AddInstallation(10, "Acme")
-	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10, Permissions: map[string]string{"owner": "admin"}})
+	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, Permissions: map[string]string{"owner": "admin"}})
 	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "w", "repoUrl": "https://github.com/acme/widgets"})
 	require.Equal(t, 201, r.status, string(r.body))
 	h, ok := fake.HookOf("Acme/Widgets", hook)
@@ -75,22 +73,18 @@ func TestGitHubWebhookEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, post(body, signed(h.ID, 43)), "target id 不符")
 	assert.Equal(t, http.StatusAccepted, post(body, signed(h.ID, 42)))
 
-	// 过渡：旧 App 的投递（没有匹配的 hook 行）仍可验签
+	// 没有 X-GitHub-Hook-ID（例如旧 App 的投递）一律 401
 	assert.Equal(t, http.StatusUnauthorized, post([]byte(`{"zen":"x"}`), sig("sha256=00")))
-	status, _ = fake.Deliver(hook, "ping", map[string]any{"zen": "x"})
-	assert.Equal(t, http.StatusAccepted, status)
 
 	big := make([]byte, 26<<20)
-	assert.Equal(t, http.StatusRequestEntityTooLarge, post(big, sig(fake.Sign(big))))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, post(big, signed(h.ID, 42)))
 }
 
 func TestGitHubProjectHookLifecycle(t *testing.T) {
 	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
-	createGitHubApp(t, fake, gh)
 	connectGitHubUser(t, e, fake, gh, "owner")
-	fake.AddInstallation(10, "Acme")
-	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10, Permissions: map[string]string{"owner": "admin"}})
+	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, Permissions: map[string]string{"owner": "admin"}})
 	create := func(name string) string {
 		r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": name, "repoUrl": "https://github.com/acme/widgets"})
 		require.Equal(t, 201, r.status, string(r.body))
@@ -121,9 +115,8 @@ func TestGitHubProjectHookLifecycle(t *testing.T) {
 func TestGitHubTriggersAPI(t *testing.T) {
 	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
-	createGitHubApp(t, fake, gh)
-	fake.AddInstallation(10, "Acme")
-	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10})
+	connectGitHubUser(t, e, fake, gh, "owner")
+	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900})
 	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "w", "repoUrl": "https://github.com/acme/widgets"})
 	require.Equal(t, 201, r.status, string(r.body))
 	var p struct{ ID string }

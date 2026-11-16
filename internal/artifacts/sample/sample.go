@@ -214,3 +214,7 @@ func (p policyResolver) Policy() egress.Policy { return egress.Policy{Routes: p.
 func (policyResolver) GitToken(string) (string, bool) { return "", false }
 
 func (policyResolver) GitHubToken() (string, bool) { return "", false }
+
+// 一次运行没有 GitHub 路由，不会出现 GitHub 写操作。
+func (policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
+func (policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}

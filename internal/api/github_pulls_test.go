@@ -49,8 +49,8 @@ func TestThreadPullAPI(t *testing.T) {
 	prj := ids.New("prj")
 	repoURL := "https://github.com/acme/widgets"
 	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: prj, Name: "w", RepoUrl: &repoURL, CreatedAt: 1, UpdatedAt: 1}))
-	repoID, ownerID, instID := int64(42), int64(900), int64(10)
-	require.NoError(t, st.Q.SetProjectGithub(ctx, db.SetProjectGithubParams{GithubRepoID: &repoID, GithubOwnerID: &ownerID, GithubInstallationID: &instID, ID: prj}))
+	repoID := int64(42)
+	require.NoError(t, st.Q.SetProjectGithub(ctx, db.SetProjectGithubParams{GithubRepoID: &repoID, ID: prj}))
 	th := ids.Thread()
 	require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{
 		ID: th, ProjectID: &prj, Title: "t", TitleSource: "auto", State: "idle", StateChangedAt: 1, SessionDir: "d", CreatedAt: 1, UpdatedAt: 1, Kind: "work",

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestGitSmartHTTP(t *testing.T) {
 	s := New()
 	t.Cleanup(s.Close)
 	s.GitRoot = t.TempDir()
-	post(t, s.URL()+"/__fake/seed", `{"repos":[{"id":42,"fullName":"Acme/Widgets","ownerId":900,"installationId":10}],"installations":[{"id":10,"accountLogin":"Acme"}]}`)
+	post(t, s.URL()+"/__fake/seed", `{"repos":[{"id":42,"fullName":"Acme/Widgets","ownerId":900}]}`)
 
 	work := filepath.Join(t.TempDir(), "w")
 	gitCmd(t, filepath.Dir(work), "clone", "-q", s.URL()+"/acme/widgets.git", work)
@@ -72,7 +73,7 @@ func TestGitSmartHTTP(t *testing.T) {
 	}
 }
 
-// seed 的 PR / 评论 / rollup 字段按小驼峰键解析；不可达的投递只进投递日志，可达的真实 POST 并带签名，guid 可重放。
+// seed 的 PR / 评论 / rollup 字段按小驼峰键解析；/__fake/deliver 以仓库 hook 身份投递：不可达的只进投递日志，可达的真实 POST 并带签名，guid 可重放。
 func TestSeedAndDeliverControl(t *testing.T) {
 	s := New()
 	t.Cleanup(s.Close)
@@ -91,19 +92,20 @@ func TestSeedAndDeliverControl(t *testing.T) {
 
 	var got []string
 	hook := httptestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		got = append(got, r.Header.Get("X-GitHub-Event")+" "+r.Header.Get("X-GitHub-Delivery")+" "+r.Header.Get("X-Hub-Signature-256"))
+		got = append(got, r.Header.Get("X-GitHub-Event")+" "+r.Header.Get("X-GitHub-Delivery")+" "+r.Header.Get("X-GitHub-Hook-ID")+" "+r.Header.Get("X-Hub-Signature-256"))
 		w.WriteHeader(http.StatusAccepted)
 	})
-	post(t, s.URL()+"/__fake/deliver", `{"target":"`+hook+`","event":"ping","payload":{"zen":"x"},"reachable":false,"guid":"g-1"}`)
-	post(t, s.URL()+"/__fake/deliver", `{"target":"`+hook+`","event":"ping","payload":{"zen":"x"},"reachable":true,"guid":"g-1"}`)
+	id := s.AddRepoHook("Acme/Widgets", RepoHook{URL: hook, Secret: "s", Active: true, Events: []string{"issues"}})
+	post(t, s.URL()+"/__fake/deliver", `{"repo":"acme/widgets","event":"ping","payload":{"zen":"x"},"reachable":false,"guid":"g-1"}`)
+	post(t, s.URL()+"/__fake/deliver", `{"repo":"acme/widgets","event":"ping","payload":{"zen":"x"},"reachable":true,"guid":"g-1"}`)
 	s.Lock()
-	n := len(s.Deliveries)
-	first := s.Deliveries[0].StatusCode
+	n := len(s.RepoDeliveries)
+	first := s.RepoDeliveries[0].StatusCode
 	s.Unlock()
 	if n != 2 || first != http.StatusBadGateway {
 		t.Fatalf("投递日志：%d 条，第一条状态 %d", n, first)
 	}
-	if len(got) != 1 || !strings.HasPrefix(got[0], "ping g-1 sha256=") {
+	if want := "ping g-1 " + strconv.FormatInt(id, 10) + " sha256="; len(got) != 1 || !strings.HasPrefix(got[0], want) {
 		t.Fatalf("可达投递：%v", got)
 	}
 }

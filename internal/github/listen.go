@@ -23,11 +23,14 @@ func init() {
 // hookIssue 是事件载荷里的 issue 或 pull_request（本包用到的字段）。
 type hookIssue struct {
 	Number  int64         `json:"number"`
+	NodeID  string        `json:"node_id"`
 	Title   string        `json:"title"`
 	Body    *string       `json:"body"`
 	HTMLURL string        `json:"html_url"`
 	User    senderPayload `json:"user"`
-	Labels  []struct {
+	// AuthorAssociation 是作者与仓库的关系（OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR / NONE …）。
+	AuthorAssociation string `json:"author_association"`
+	Labels            []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 	// PullRequest 只在 issue 视图出现：非空表示这个 issue 是 PR。
@@ -52,15 +55,23 @@ type hookEvent struct {
 	PullRequest *hookIssue    `json:"pull_request"`
 	Issue       *hookIssue    `json:"issue"`
 	Review      struct {
-		Body  *string `json:"body"`
-		State string  `json:"state"`
+		ID                int64   `json:"id"`
+		NodeID            string  `json:"node_id"`
+		Body              *string `json:"body"`
+		State             string  `json:"state"`
+		AuthorAssociation string  `json:"author_association"`
 	} `json:"review"`
 	Comment struct {
-		ID           int64  `json:"id"`
-		Body         string `json:"body"`
-		Path         string `json:"path"`
-		Line         *int   `json:"line"`
-		OriginalLine *int   `json:"original_line"`
+		ID                int64  `json:"id"`
+		NodeID            string `json:"node_id"`
+		Body              string `json:"body"`
+		Path              string `json:"path"`
+		Line              *int   `json:"line"`
+		OriginalLine      *int   `json:"original_line"`
+		AuthorAssociation string `json:"author_association"`
+		// InReplyTo / ReviewID 只在行内评审评论出现（防回流用）。
+		InReplyTo int64 `json:"in_reply_to_id"`
+		ReviewID  int64 `json:"pull_request_review_id"`
 	} `json:"comment"`
 	Label *struct {
 		Name string `json:"name"`
@@ -221,10 +232,15 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 		return "", err
 	}
 	who := senderOf(ev.Sender)
-	if s.isSelf(ctx, who) {
+	if s.isSelfEvent(ctx, listenProbe(ev, kind)) {
 		return "ignored:self", nil
 	}
-	ok, reason, err := s.canDrive(ctx, prj, who)
+	// 评审取 review 的 author_association，评论取 comment 的
+	assoc := ev.Comment.AuthorAssociation
+	if kind == "review" {
+		assoc = ev.Review.AuthorAssociation
+	}
+	ok, reason, err := s.canDrive(ctx, ev.Repository.FullName, who, subject.User.Login, assoc, driversWriters)
 	if err != nil {
 		return "", err
 	}

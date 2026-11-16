@@ -29,8 +29,8 @@ import (
 
 type nopBroadcaster struct{}
 
-func (nopBroadcaster) Notification(apigen.Notification) {}
-func (nopBroadcaster) NotificationsRead(string, string) {}
+func (nopBroadcaster) Notification(apigen.Notification)      {}
+func (nopBroadcaster) NotificationsRead(string, string)      {}
 func (nopBroadcaster) NotificationsResolved([]string, int64) {}
 
 type notifyEnv struct {

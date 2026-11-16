@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -79,6 +80,8 @@ func (s stubGitHub) Call(context.Context, string, string, apigen.LinkCtlGithubCa
 func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubPrepareReportParams) error {
 	return nil
 }
+func (s stubGitHub) GitHubWriteBegin(context.Context, string, egress.GitHubWrite) string       { return "" }
+func (s stubGitHub) GitHubWriteEnd(context.Context, string, egress.GitHubWrite, int, []string) {}
 
 // M14 3.3：项目归 GitHub App 管时，不配 PAT 也给 github.com 项目仓库下发 insteadOf、gh 登录名与 /gh/ 路由。
 func TestPlanGitHub(t *testing.T) {

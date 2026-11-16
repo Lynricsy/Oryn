@@ -231,9 +231,10 @@ func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
 // 在这里同步执行完整的 DeleteSpace，契约 C4）。须在服务对外可用之前调用。
 func (s *Service) SetAfterSpacePrecheck(fn func()) { s.afterSpacePrecheck = fn }
 
-// GitHub 给线程服务解析自动化身份（M14）。
+// GitHub 给线程服务解析全自动线程的 GitHub 身份（M14 / M15）。
 type GitHub interface {
-	AutomationIdentity(ctx context.Context) string
+	// ResolveAutomationSlot 返回身份槽位；note 非空时是 Agent 账号不可用、回退到我的账号的提示（Q6）。
+	ResolveAutomationSlot(ctx context.Context, untrusted bool) (slot, note string, err error)
 }
 
 // SetGitHub 设置 GitHub 集成（M14）；须在服务对外可用之前调用。

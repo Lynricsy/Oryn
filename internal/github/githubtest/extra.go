@@ -117,22 +117,19 @@ func (s *Server) initBare(fullName string) error {
 // SeedState 是 /__fake/seed 的请求体：整体替换可变状态。
 type SeedState struct {
 	Users []struct {
-		ID          int64  `json:"id"`
-		Login       string `json:"login"`
-		Name        string `json:"name"`
-		Type        string `json:"type"`
-		FailRefresh bool   `json:"failRefresh"`
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+		Name  string `json:"name"`
+		Type  string `json:"type"`
 	} `json:"users"`
-	Installations []Installation `json:"installations"`
-	Repos         []struct {
-		ID             int64             `json:"id"`
-		FullName       string            `json:"fullName"`
-		OwnerID        int64             `json:"ownerId"`
-		DefaultBranch  string            `json:"defaultBranch"`
-		Private        bool              `json:"private"`
-		Description    string            `json:"description"`
-		InstallationID int64             `json:"installationId"`
-		Permissions    map[string]string `json:"permissions"`
+	Repos []struct {
+		ID            int64             `json:"id"`
+		FullName      string            `json:"fullName"`
+		OwnerID       int64             `json:"ownerId"`
+		DefaultBranch string            `json:"defaultBranch"`
+		Private       bool              `json:"private"`
+		Description   string            `json:"description"`
+		Permissions   map[string]string `json:"permissions"`
 	} `json:"repos"`
 	// Issues / Pulls / Comments 整体替换（JSON 键按字段名、不区分大小写，如 repoId、headSha、mergedAt）。
 	Issues   []Issue   `json:"issues"`
@@ -147,9 +144,9 @@ type SeedState struct {
 	} `json:"checks"`
 }
 
-// DeliverRequest 是 /__fake/deliver 的请求体。
+// DeliverRequest 是 /__fake/deliver 的请求体：以仓库 repo（owner/name）上的 Oryn hook 身份投递（见 DeliverHookGUID）。
 type DeliverRequest struct {
-	Target    string          `json:"target"`
+	Repo      string          `json:"repo"`
 	Event     string          `json:"event"`
 	Payload   json.RawMessage `json:"payload"`
 	Reachable bool            `json:"reachable"`
@@ -185,10 +182,8 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case "POST /__fake/oauth":
 		var in struct {
-			Code        string `json:"code"`
-			Login       string `json:"login"`
-			ExpiresIn   *int64 `json:"expiresIn"`
-			FailRefresh bool   `json:"failRefresh"`
+			Code  string `json:"code"`
+			Login string `json:"login"`
 			// Scopes 覆盖此后 OAuth App 令牌授予的 scope（`a, b, c`）；缺省不变。
 			Scopes *string `json:"scopes"`
 		}
@@ -197,15 +192,9 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
-		u, ok := s.Users[strings.ToLower(in.Login)]
-		if ok {
-			u.FailRefresh = in.FailRefresh
-			if in.ExpiresIn != nil {
-				s.UserTokenTTL = *in.ExpiresIn
-			}
-			if in.Scopes != nil {
-				s.Scopes = *in.Scopes
-			}
+		_, ok := s.Users[strings.ToLower(in.Login)]
+		if ok && in.Scopes != nil {
+			s.Scopes = *in.Scopes
 		}
 		s.mu.Unlock()
 		if !ok {
@@ -230,17 +219,13 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case "GET /__fake/app":
 		s.mu.Lock()
-		app, oa := s.App, s.OAuthApp
+		oa := s.OAuthApp
 		s.mu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id": app.ID, "slug": app.Slug, "clientId": app.ClientID, "clientSecret": app.ClientSecret,
-			"webhookSecret": app.WebhookSecret, "manifestCode": app.ManifestCode,
-			"oauthClientId": oa.ClientID, "oauthClientSecret": oa.ClientSecret,
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"oauthClientId": oa.ClientID, "oauthClientSecret": oa.ClientSecret})
 	case "POST /__fake/deliver":
 		var in DeliverRequest
-		if err := json.Unmarshal(body, &in); err != nil || in.Event == "" || len(in.Payload) == 0 || (in.Reachable && in.Target == "") {
-			fail(w, http.StatusBadRequest, "event and payload are required (target when reachable)")
+		if err := json.Unmarshal(body, &in); err != nil || in.Repo == "" || in.Event == "" || len(in.Payload) == 0 {
+			fail(w, http.StatusBadRequest, "repo, event and payload are required")
 			return
 		}
 		status, guid := s.deliverReach(in)
@@ -250,7 +235,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// deliverReach 按 reachable 投递一次：不可达时只记投递日志（status_code 502）。
+// deliverReach 按 reachable 投递一次：不可达时只记投递日志（status_code 502）；仓库上没有 hook 时 guid 为空。
 func (s *Server) deliverReach(in DeliverRequest) (int, string) {
 	s.mu.Lock()
 	prev := s.Unreachable
@@ -261,27 +246,16 @@ func (s *Server) deliverReach(in DeliverRequest) (int, string) {
 		s.Unreachable = prev
 		s.mu.Unlock()
 	}()
-	return s.DeliverGUID(in.Target, in.Event, in.Payload, in.GUID)
+	return s.DeliverHookGUID(in.Repo, in.Event, in.Payload, in.GUID)
 }
 
-// seed 整体替换用户、安装、仓库、issue / PR / 评论与 CI 状态（改名记录保留）；GitRoot 非空时为每个仓库建裸仓库。
+// seed 整体替换用户、仓库、issue / PR / 评论与 CI 状态（改名记录保留）；GitRoot 非空时为每个仓库建裸仓库。
 func (s *Server) seed(in SeedState) error {
 	s.mu.Lock()
 	s.Users = map[string]*User{}
 	for _, u := range in.Users {
-		s.Users[strings.ToLower(u.Login)] = &User{ID: u.ID, Login: u.Login, Name: u.Name, Type: u.Type, FailRefresh: u.FailRefresh,
+		s.Users[strings.ToLower(u.Login)] = &User{ID: u.ID, Login: u.Login, Name: u.Name, Type: u.Type,
 			AvatarURL: fmt.Sprintf("%s/avatars/%s", s.URL(), u.Login)}
-	}
-	s.Installations = nil
-	for _, in := range in.Installations {
-		v := in
-		if v.AccountType == "" {
-			v.AccountType = "User"
-		}
-		if v.RepositorySelection == "" {
-			v.RepositorySelection = "all"
-		}
-		s.Installations = append(s.Installations, &v)
 	}
 	s.Repos = nil
 	for i := range in.Issues {
@@ -326,7 +300,7 @@ func (s *Server) seed(in SeedState) error {
 			br = "main"
 		}
 		s.Repos = append(s.Repos, &Repo{ID: rp.ID, FullName: rp.FullName, OwnerID: rp.OwnerID, DefaultBranch: br, Private: rp.Private,
-			Description: rp.Description, InstallationID: rp.InstallationID, Permissions: rp.Permissions,
+			Description: rp.Description, Permissions: rp.Permissions,
 			PushedAt: now.Add(-time.Duration(i) * time.Minute)})
 	}
 	s.mu.Unlock()

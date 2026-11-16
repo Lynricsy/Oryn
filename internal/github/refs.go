@@ -89,7 +89,7 @@ func githubTimeMs(v string) int64 {
 	return t.UnixMilli()
 }
 
-// boundRepo 读已绑定的项目，返回其 `owner/repo` 与安装令牌的 Authorization 头；未绑定 → github_not_bound。
+// boundRepo 读已绑定的项目，返回其 `owner/repo` 与我的账号令牌的 Authorization 头；未绑定 → github_not_bound。
 func (s *Service) boundRepo(ctx context.Context, projectID string) (string, string, error) {
 	prj, err := s.st.Q.GetProject(ctx, projectID)
 	if err != nil {
@@ -101,13 +101,14 @@ func (s *Service) boundRepo(ctx context.Context, projectID string) (string, stri
 	return s.projectAuth(ctx, prj)
 }
 
-// projectAuth 返回已绑定项目的 `owner/repo` 与安装令牌的 Authorization 头；未绑定 → github_not_bound。
+// projectAuth 返回已绑定项目的 `owner/repo` 与我的账号令牌的 Authorization 头（交互路径一律用我的账号）；
+// 未绑定 → github_not_bound；我的账号不可用 → github_identity_required。
 func (s *Service) projectAuth(ctx context.Context, prj db.Project) (string, string, error) {
 	full, ok := githubRepoPath(prj.RepoUrl)
-	if !ok || prj.GithubRepoID == nil || prj.GithubInstallationID == nil {
+	if !ok || prj.GithubRepoID == nil {
 		return "", "", errf("github_not_bound", "project is not bound to a GitHub repository")
 	}
-	tok, err := s.installToken(ctx, *prj.GithubInstallationID)
+	tok, err := s.tokenFor(ctx, slotUser)
 	if err != nil {
 		return "", "", err
 	}

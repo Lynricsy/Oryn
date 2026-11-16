@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -23,6 +22,7 @@ type repoListEntry struct {
 
 type repoPayload struct {
 	ID            int64   `json:"id"`
+	NodeID        string  `json:"node_id"`
 	FullName      string  `json:"full_name"`
 	Private       bool    `json:"private"`
 	DefaultBranch string  `json:"default_branch"`
@@ -30,7 +30,7 @@ type repoPayload struct {
 	PushedAt      *string `json:"pushed_at"`
 }
 
-// ListRepos 列出「我的账号」经 App 可访问的仓库：按 full_name 子串（忽略大小写）过滤，按最近推送倒序，至多 50 个。
+// ListRepos 列出「我的账号」可访问的仓库（自有、协作、所在组织）：按 full_name 子串（忽略大小写）过滤，按最近推送倒序，至多 50 个。
 func (s *Service) ListRepos(ctx context.Context, q string) ([]apigen.GitHubRepo, error) {
 	tok, err := s.tokenFor(ctx, slotUser)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *Service) ListRepos(ctx context.Context, q string) ([]apigen.GitHubRepo,
 	return out, nil
 }
 
-// userRepos 取用户令牌经各安装可访问的全部仓库（去重），按令牌的 sha256 缓存 repoListTTL。
+// userRepos 取用户令牌可访问的全部仓库（GET /user/repos，自有、协作与所在组织，按最近推送排序），按令牌的 sha256 缓存 repoListTTL。
 func (s *Service) userRepos(ctx context.Context, tok string) ([]apigen.GitHubRepo, error) {
 	key := sha256.Sum256([]byte(tok))
 	now := s.now()
@@ -74,48 +74,25 @@ func (s *Service) userRepos(ctx context.Context, tok string) ([]apigen.GitHubRep
 	}
 	s.mu.Unlock()
 
-	auth := "Bearer " + tok
-	var instIDs []int64
-	err := s.paged(ctx, "/user/installations?per_page=100", auth, 10, func(raw json.RawMessage) error {
-		var page struct {
-			Installations []struct {
-				ID int64 `json:"id"`
-			} `json:"installations"`
-		}
+	const path = "/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100"
+	seen := map[int64]bool{}
+	var repos []apigen.GitHubRepo
+	err := s.paged(ctx, path, "Bearer "+tok, 10, func(raw json.RawMessage) error {
+		var page []repoPayload
 		if err := json.Unmarshal(raw, &page); err != nil {
 			return err
 		}
-		for _, in := range page.Installations {
-			instIDs = append(instIDs, in.ID)
+		for _, r := range page {
+			if seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+			repos = append(repos, repoAPI(r))
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	seen := map[int64]bool{}
-	var repos []apigen.GitHubRepo
-	for _, id := range instIDs {
-		path := fmt.Sprintf("/user/installations/%d/repositories?per_page=100", id)
-		err := s.paged(ctx, path, auth, 10, func(raw json.RawMessage) error {
-			var page struct {
-				Repositories []repoPayload `json:"repositories"`
-			}
-			if err := json.Unmarshal(raw, &page); err != nil {
-				return err
-			}
-			for _, r := range page.Repositories {
-				if seen[r.ID] {
-					continue
-				}
-				seen[r.ID] = true
-				repos = append(repos, repoAPI(r))
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
 	}
 	s.mu.Lock()
 	if s.repoLists == nil {

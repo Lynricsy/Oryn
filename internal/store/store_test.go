@@ -28,7 +28,7 @@ import (
 // github_prepare、github_autoclose、github_releases、github_sender_runs）。
 var m2Tables = []string{
 	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
-	"devices", "entries", "entry_cursors", "github_app", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities", "github_installations",
+	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
 	"github_oauth_app", "github_oauth_states", "github_outbox", "github_prepare", "github_pulls", "github_releases", "github_repo_watches", "github_self_keys",
 	"github_self_writes", "github_sender_runs", "github_triggers", "github_watches", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",

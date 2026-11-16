@@ -43,6 +43,10 @@ func (policyResolver) GitToken(string) (string, bool) { return "", false }
 
 func (policyResolver) GitHubToken() (string, bool) { return "", false }
 
+// 目录运行没有 GitHub 路由，不会出现 GitHub 写操作。
+func (policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
+func (policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
+
 // serveEgress 在 ln 上提供 egress 代理；调用方负责 Close 返回的 server（同时关闭 ln）。
 func serveEgress(ln net.Listener, r vaultResolver, routes map[string]egress.Route) *http.Server {
 	srv := &http.Server{

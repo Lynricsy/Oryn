@@ -95,37 +95,6 @@ func (s *Server) writeGitHubStatus(w http.ResponseWriter, r *http.Request, svc *
 	WriteJSON(w, http.StatusOK, st)
 }
 
-// BeginGitHubAppManifest 对应 `POST /api/v1/github/app/manifest`。
-func (s *Server) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
-	svc, ok := s.githubSvc(w)
-	if !ok {
-		return
-	}
-	var req apigen.GitHubManifestRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	u, err := svc.BeginManifest(r.Context(), req)
-	if err != nil {
-		writeGitHubErr(w, r, err)
-		return
-	}
-	WriteJSON(w, http.StatusOK, apigen.GitHubRedirect{URL: u})
-}
-
-// DeleteGitHubApp 对应 `DELETE /api/v1/github/app`。
-func (s *Server) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
-	svc, ok := s.githubSvc(w)
-	if !ok {
-		return
-	}
-	if err := svc.DeleteApp(r.Context()); err != nil {
-		writeGitHubErr(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // SetGitHubOAuthApp 对应 `PUT /api/v1/github/oauth-app`。
 func (s *Server) SetGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.githubSvc(w)
@@ -207,20 +176,7 @@ func (s *Server) PutGitHubSettings(w http.ResponseWriter, r *http.Request) {
 	s.writeGitHubStatus(w, r, svc)
 }
 
-// SyncGitHubInstallations 对应 `POST /api/v1/github/installations/sync`。
-func (s *Server) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
-	svc, ok := s.githubSvc(w)
-	if !ok {
-		return
-	}
-	if err := svc.SyncInstallations(r.Context()); err != nil {
-		writeGitHubErr(w, r, err)
-		return
-	}
-	s.writeGitHubStatus(w, r, svc)
-}
-
-// ListGitHubRepos 对应 `GET /api/v1/github/repos`：「我的账号」经 App 可访问的仓库。
+// ListGitHubRepos 对应 `GET /api/v1/github/repos`：「我的账号」可访问的仓库。
 func (s *Server) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params apigen.ListGitHubReposParams) {
 	svc, ok := s.githubSvc(w)
 	if !ok {
@@ -326,48 +282,9 @@ func (s *Server) writeThread(w http.ResponseWriter, r *http.Request, th *threads
 	WriteJSON(w, http.StatusOK, t)
 }
 
-// StartGitHubManifest 对应公开的 `GET /api/v1/public/github/manifest/start`：返回提交 manifest 的独立页面。
-func (s *Server) StartGitHubManifest(w http.ResponseWriter, r *http.Request, params apigen.StartGitHubManifestParams) {
-	if !s.rateLimit(w, r, auth.LimitLogin) {
-		return
-	}
-	svc, ok := s.githubSvc(w)
-	if !ok {
-		return
-	}
-	page, err := svc.ManifestStartPage(r.Context(), params.State)
-	if err != nil {
-		writeGitHubErr(w, r, err)
-		return
-	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action "+s.Config.GitHub.WebURL+
-		"; base-uri 'none'; frame-ancestors 'none'")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(page))
-}
-
 // githubSettingsRedirect 302 回设置页的 GitHub 分区，query 为 key=value。
 func (s *Server) githubSettingsRedirect(w http.ResponseWriter, r *http.Request, key, value string) {
 	http.Redirect(w, r, s.Config.PublicURL+"/settings/github?"+url.Values{key: {value}}.Encode(), http.StatusFound)
-}
-
-// FinishGitHubManifest 对应公开的 `GET /api/v1/public/github/manifest/callback`。
-func (s *Server) FinishGitHubManifest(w http.ResponseWriter, r *http.Request, params apigen.FinishGitHubManifestParams) {
-	if !s.rateLimit(w, r, auth.LimitLogin) {
-		return
-	}
-	svc, ok := s.githubSvc(w)
-	if !ok {
-		return
-	}
-	if err := svc.FinishManifest(r.Context(), params.Code, params.State); err != nil {
-		s.githubSettingsRedirect(w, r, "error", githubErrCode(err))
-		return
-	}
-	s.githubSettingsRedirect(w, r, "created", "1")
 }
 
 // FinishGitHubOAuth 对应公开的 `GET /api/v1/public/github/oauth/callback`。

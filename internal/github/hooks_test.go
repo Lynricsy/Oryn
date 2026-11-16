@@ -12,13 +12,12 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// hookEnv 配好 OAuth App（webhook 基址指向把请求交给 HandleWebhook 的测试端点）、旧 App（绑定仍走 App，步骤 1.4 前）、
+// hookEnv 配好 OAuth App（webhook 基址指向把请求交给 HandleWebhook 的测试端点）、
 // 连接我的账号 owner，并在假服务上建 Acme/Widgets（id 42，owner 是 admin）。返回 webhook 基址。
 func (e *testEnv) hookEnv() string {
 	e.t.Helper()
 	base := e.hookURL()
 	require.NoError(e.t, e.s.SetOAuthApp(e.ctx, e.fake.OAuthApp.ClientID, e.fake.OAuthApp.ClientSecret, base))
-	e.installApp()
 	e.widgets()
 	e.setPerm("owner", "admin")
 	e.fake.AddUser(1, "owner", "The Owner")
@@ -150,10 +149,14 @@ func TestHookNoAdmin(t *testing.T) {
 func TestHookOrgRestricted(t *testing.T) {
 	e := newEnv(t)
 	e.hookEnv()
+	// 先以非 admin 绑定（只记 no_admin，不建 hook），再模拟组织限制：绑定本身遇到限制时项目会解绑（见 TestBindProject）
+	e.setPerm("owner", "read")
+	e.bindWidgets()
+	e.setPerm("owner", "admin")
 	e.fake.Lock()
 	e.fake.Repos[0].Restricted = "org_restricted"
 	e.fake.Unlock()
-	e.bindWidgets()
+	require.NoError(t, e.s.ensureHook(e.ctx, 42, "acme/widgets"))
 	row := e.hookRow(42)
 	assert.Equal(t, kindOrgRestricted, row.Status)
 	require.NotNil(t, row.Error)
@@ -226,7 +229,7 @@ func TestHookSyncDropsUnbound(t *testing.T) {
 func TestDeleteOAuthAppDropsHooks(t *testing.T) {
 	e := newEnv(t)
 	e.hookEnv()
-	e.fake.AddRepo(githubtest.Repo{ID: 43, FullName: "Acme/Gadgets", OwnerID: 900, InstallationID: 10, Permissions: map[string]string{"owner": "admin"}})
+	e.fake.AddRepo(githubtest.Repo{ID: 43, FullName: "Acme/Gadgets", OwnerID: 900, Permissions: map[string]string{"owner": "admin"}})
 	e.bindWidgets()
 	g := e.project("https://github.com/acme/gadgets")
 	require.NoError(t, e.s.BindProject(e.ctx, g))
@@ -291,12 +294,14 @@ func TestHookWebhookBaseChange(t *testing.T) {
 
 func TestHookNotManagedWithoutOAuthApp(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.oauthApp()
 	e.widgets()
 	e.setPerm("owner", "admin")
 	e.fake.AddUser(1, "owner", "")
 	require.NoError(t, e.connect(slotUser, "c1", "owner"))
+	require.NoError(t, e.st.Q.DeleteGithubOAuthApp(e.ctx))
 	e.bindWidgets()
+	assert.NotNil(t, e.getProject(e.bindWidgets()).GithubRepoID, "绑定不依赖 OAuth 配置行")
 	assert.Empty(t, e.fakeHooks())
 	require.NoError(t, e.s.ResyncHooks(e.ctx))
 	assert.Empty(t, e.fakeHooks())

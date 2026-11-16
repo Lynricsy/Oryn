@@ -88,6 +88,8 @@ func newListenEnv(t *testing.T) *listenEnv {
 	for i, login := range []string{"alice", "bob", "carol"} {
 		e.fake.AddUser(int64(30+i), login, "")
 	}
+	// 我的账号要有 push 权限，canDrive 才会调权限接口（M15：权限接口要求调用者有 push 权限）
+	e.setPerm("owner", "admin")
 	e.setPerm("alice", "write")
 	e.setPerm("bob", "admin")
 	e.setPerm("carol", "read")

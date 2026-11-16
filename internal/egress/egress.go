@@ -8,6 +8,8 @@
 //   - git 路由只放行 smart-HTTP 端点；有项目仓库时只放行该仓库（读写），否则任意仓库只读；
 //     路径含 `.`、`..`、空段或不是规范形式的一律 400；
 //   - GitHub API 路由（/gh/api.github.com/…、/gh/uploads.github.com/…）只在策略开放时可用，注入 OAuth 用户令牌；
+//     GitHub 写操作（REST 非 GET、GraphQL mutation、github.com 的 git-receive-pack）转发前交给 Resolver 预登记（可拒绝），
+//     响应后回报状态码与补充键（M15 防回流与审计）；请求体原样转发，不改写；
 //   - 响应头与响应体中出现的真实值会被换回占位符，防止上游回显泄露（101 升级后的字节流只脱敏响应头，
 //     改写升级后的协议帧会破坏其分帧）。
 package egress
@@ -16,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -61,6 +64,32 @@ type GitHubAccess struct {
 // defaultUploadsOrigin 是 GitHub 上传 API（release 附件）的上游。
 const defaultUploadsOrigin = "https://uploads.github.com"
 
+// GitHub 写请求的读取上限（docs/plan-m15.md「全局约束」）：REST / GraphQL 请求体与 git-receive-pack 的命令段。
+const (
+	ghWriteBodyMax     = 1 << 20
+	receivePackHeadMax = 64 << 10
+)
+
+// MethodPush 是 git-receive-pack 推送在 GitHubWrite.Method 与审计里的方法名。
+const MethodPush = "PUSH"
+
+// GitHubWrite 是出站代理观察到的一次 GitHub 写操作（M15）：一个非 GET 的 REST 请求、GraphQL mutation 文档里的
+// 一个根字段，或一次 github.com 的 git-receive-pack。GraphQL query 不算写操作。
+type GitHubWrite struct {
+	Method     string // HTTP 方法（大写）；git 推送为 MethodPush
+	Category   string // Cat*；只有路径级信息且路径不认识时为空
+	Target     string // 防回流预登记目标（GitHubOp.Target）：REST 为规范化路径，GraphQL 为 input 里的 node id
+	Op         string // REST 路径模板、mutation 字段名，或 "git-receive-pack"
+	Repo       string // owner/repo：取自路径，REST 路径里没有时取自响应；都取不到为空
+	BodySHA256 string // BodyHash(正文)；没有正文为空
+	Refs       []RefUpdate
+	// Unparsed 为真表示请求体超过上限、带压缩编码或无法解析，只有路径级信息。门禁关闭时只审计，
+	// 门禁开启时 GitHubWriteBegin 应拒绝（R19「失败即拒绝」，步骤 5.4）。
+	Unparsed bool
+	// Gate 是门禁结论：GitHubWriteBegin 拒绝时为其返回值，随 GitHubWriteEnd 记进审计。
+	Gate string
+}
+
 // Resolver 提供策略与密钥查询。
 type Resolver interface {
 	// Policy 返回该 orb 当前的出站策略。
@@ -71,6 +100,12 @@ type Resolver interface {
 	GitToken(host string) (token string, ok bool)
 	// GitHubToken 返回这台 orb 的 GitHub API 令牌（M14；按仓库收窄）；不归 GitHub App 管或拿不到时 ok 为假。
 	GitHubToken() (token string, ok bool)
+	// GitHubWriteBegin 在转发 GitHub 写操作之前调用（预登记防回流记录）。返回非空表示拒绝，内容是给 agent 看的原因
+	// （代理回 `oryn: <原因>`；推送按 receive-pack 的 ng 行回）。一个请求含多个写操作时逐个调用，遇到拒绝即停。
+	GitHubWriteBegin(w GitHubWrite) (gate string)
+	// GitHubWriteEnd 对每个已 Begin 的写操作恰好调用一次：status 是回给 orb 的状态码（上游不可达为 502），
+	// respKeys 是 REST 写操作 JSON 响应里的补充键（RespKeys；GraphQL 与推送为空）。
+	GitHubWriteEnd(w GitHubWrite, status int, respKeys []string)
 }
 
 var placeholderRe = regexp.MustCompile(`oryn-ph-([A-Za-z0-9_]+)`)
@@ -103,6 +138,13 @@ type target struct {
 	stripEncoding bool
 	own           []string // 路由自己的 apiKey 密钥 id
 	hostBound     []string // 须 hosts 匹配的其它密钥 id
+	// GitHub 写操作识别（M15）：gh 为真时是 /gh/ 路由，ghPath / ghRawPath 是上游路径（不含 /gh/<host> 与 APIOrigin 的路径前缀），
+	// ghUpload 为真时是上传主机（请求体是二进制附件，不读）；receivePack 为真时是 github.com 的推送，repo 是 owner/repo。
+	gh                bool
+	ghUpload          bool
+	ghPath, ghRawPath string
+	receivePack       bool
+	repo              string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +163,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	used, ok := h.substitute(r, t)
 	if !ok {
 		http.Error(w, "oryn egress: 占位符位置无效或不允许用于该路由", http.StatusForbidden)
+		return
+	}
+	aud, responded := h.beginGitHubWrites(w, r, t)
+	if responded {
 		return
 	}
 	secretsUsed := make([][2]string, 0, len(used)+len(t.redact)) // 真实值 → 占位符，用于响应脱敏
@@ -147,6 +193,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			aud.response(resp)
 			if len(secretsUsed) == 0 {
 				return nil
 			}
@@ -167,6 +214,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			slog.Warn("egress 上游错误", "orb", h.OrbID, "host", t.url.Host, "err", err)
+			aud.end(http.StatusBadGateway, nil)
 			http.Error(w, "oryn egress: 上游不可达", http.StatusBadGateway)
 		},
 	}
@@ -235,17 +283,20 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			}
 			up.Scheme, up.Host = o.Scheme, o.Host
 		}
-		return target{url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok}}, http.StatusOK
+		return target{
+			url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok},
+			receivePack: githubOpen && strings.HasSuffix(rest, "/git-receive-pack"), repo: repo,
+		}, http.StatusOK
 	case "gh":
 		// GitHub API（M14/M15）：令牌由出站代理注入，这里不做路径白名单；保留原始转义（如 contents 路径里的 %2F）。
 		if pol.GitHub == nil {
 			return target{}, http.StatusForbidden
 		}
-		origin := pol.GitHub.APIOrigin
+		origin, upload := pol.GitHub.APIOrigin, false
 		switch strings.ToLower(parts[1]) {
 		case "api.github.com":
 		case "uploads.github.com":
-			origin = cmp.Or(pol.GitHub.UploadsOrigin, defaultUploadsOrigin)
+			origin, upload = cmp.Or(pol.GitHub.UploadsOrigin, defaultUploadsOrigin), true
 		default:
 			return target{}, http.StatusNotFound
 		}
@@ -257,13 +308,17 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if !ok {
 			return target{}, http.StatusBadGateway
 		}
+		rawRest := strings.TrimPrefix(r.URL.EscapedPath(), "/gh/"+parts[1])
 		up := &url.URL{
 			Scheme:  o.Scheme,
 			Host:    o.Host,
 			Path:    o.Path + rest,
-			RawPath: o.Path + strings.TrimPrefix(r.URL.EscapedPath(), "/gh/"+parts[1]),
+			RawPath: o.Path + rawRest,
 		}
-		return target{url: up, auth: "Bearer " + tok, redact: []string{tok}, stripEncoding: true}, http.StatusOK
+		return target{
+			url: up, auth: "Bearer " + tok, redact: []string{tok}, stripEncoding: true,
+			gh: true, ghUpload: upload, ghPath: rest, ghRawPath: rawRest,
+		}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
 }
@@ -459,3 +514,184 @@ func (r *redactReader) holdback() int {
 }
 
 func (r *redactReader) Close() error { return r.src.Close() }
+
+// ---- GitHub 写操作：识别、预登记与审计（M15 步骤 2.3） ----
+
+// ghAudit 跟踪一个请求里已 Begin 的 GitHub 写操作，保证每个恰好 End 一次。
+type ghAudit struct {
+	r      Resolver
+	writes []GitHubWrite
+	// readResp 为真时（REST 写操作）从 2xx JSON 响应里取补充键与仓库；GraphQL 的响应不读。
+	readResp bool
+	done     bool
+}
+
+// end 以 status 结束全部写操作；nil 或已结束时什么都不做。
+func (a *ghAudit) end(status int, keys []string) {
+	if a == nil || a.done {
+		return
+	}
+	a.done = true
+	for _, w := range a.writes {
+		a.r.GitHubWriteEnd(w, status, keys)
+	}
+}
+
+// response 在响应交回 orb 之前结束写操作：REST 的 2xx JSON 响应读入（上限 ghWriteBodyMax）取补充键与仓库，读后复原响应体。
+func (a *ghAudit) response(resp *http.Response) {
+	if a == nil || a.done {
+		return
+	}
+	var keys []string
+	if a.readResp && resp.StatusCode/100 == 2 && strings.Contains(resp.Header.Get("Content-Type"), "json") {
+		buf, err := io.ReadAll(io.LimitReader(resp.Body, ghWriteBodyMax+1))
+		resp.Body = readCloser{io.MultiReader(bytes.NewReader(buf), resp.Body), resp.Body}
+		if err == nil && len(buf) <= ghWriteBodyMax {
+			keys = RespKeys(buf)
+			if repo := respRepo(buf); repo != "" {
+				for i := range a.writes {
+					if a.writes[i].Repo == "" {
+						a.writes[i].Repo = repo
+					}
+				}
+			}
+		}
+	}
+	a.end(resp.StatusCode, keys)
+}
+
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// beginGitHubWrites 识别请求里的 GitHub 写操作并逐个调用 GitHubWriteBegin。被拒绝时已写出响应并结束审计，
+// responded 为真；不是写操作时 aud 为 nil。
+func (h *Handler) beginGitHubWrites(rw http.ResponseWriter, r *http.Request, t target) (aud *ghAudit, responded bool) {
+	sideband := false
+	switch {
+	case t.receivePack && r.Method == http.MethodPost:
+		var w GitHubWrite
+		w, sideband = receivePackWrite(r, t.repo)
+		aud = &ghAudit{r: h.R, writes: []GitHubWrite{w}}
+	case t.gh && r.Method != http.MethodGet && r.Method != http.MethodHead:
+		writes, rest := ghRequestWrites(r, t)
+		if len(writes) == 0 {
+			return nil, false
+		}
+		aud = &ghAudit{r: h.R, writes: writes, readResp: rest}
+	default:
+		return nil, false
+	}
+	for i := range aud.writes {
+		gate := h.R.GitHubWriteBegin(aud.writes[i])
+		if gate == "" {
+			continue
+		}
+		aud.writes = aud.writes[:i+1]
+		aud.writes[i].Gate = gate
+		aud.end(denyGitHubWrite(rw, r, aud.writes, "oryn: "+gate, sideband), nil)
+		return nil, true
+	}
+	return aud, false
+}
+
+// denyGitHubWrite 写出拒绝响应并返回状态码：解析出命令的推送读完并丢弃请求体后回 200 + 每个 ref 的 `ng`
+// （附录 B-7：git 显示 `! [remote rejected] … (oryn: <原因>)`），其余回 403。
+func denyGitHubWrite(rw http.ResponseWriter, r *http.Request, writes []GitHubWrite, msg string, sideband bool) int {
+	if w := writes[0]; w.Method == MethodPush && !w.Unparsed && len(w.Refs) > 0 {
+		_, _ = io.Copy(io.Discard, r.Body)
+		refs := make([]string, len(w.Refs))
+		for i, u := range w.Refs {
+			refs[i] = u.Ref
+		}
+		rw.Header().Set("Content-Type", "application/x-git-receive-pack-result")
+		rw.Header().Set("Cache-Control", "no-cache")
+		rw.WriteHeader(http.StatusOK)
+		_, _ = rw.Write(ReportStatusNG(refs, msg, sideband))
+		return http.StatusOK
+	}
+	http.Error(rw, msg, http.StatusForbidden)
+	return http.StatusForbidden
+}
+
+// receivePackWrite 读取推送请求开头的命令段（上限 receivePackHeadMax）并还原请求体；sideband 报告客户端是否协商了 side-band-64k。
+// 带压缩编码、超限或格式不认识时 Unparsed 为真。
+func receivePackWrite(r *http.Request, repo string) (w GitHubWrite, sideband bool) {
+	w = GitHubWrite{Method: MethodPush, Op: "git-receive-pack", Repo: repo, Unparsed: true}
+	if !identityEncoding(r.Header) {
+		return w, false
+	}
+	cmds, caps, prefix, err := ParseReceivePack(r.Body, receivePackHeadMax)
+	r.Body = readCloser{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
+	if err != nil {
+		return w, false
+	}
+	w.Refs, w.Unparsed = cmds, false
+	return w, slices.Contains(caps, "side-band-64k")
+}
+
+// ghRequestWrites 识别 /gh/ 上的一个非 GET 请求：REST 得到一个写操作，GraphQL mutation 每个根字段一个，GraphQL query 为空。
+// 请求体读入后用 bytes.Reader 复原；上传主机的二进制附件不读，只按路径识别。rest 报告是否为 REST（GraphQL 的响应不读）。
+func ghRequestWrites(r *http.Request, t target) (writes []GitHubWrite, rest bool) {
+	method := strings.ToUpper(r.Method)
+	p := strings.ToLower(strings.Trim(t.ghPath, "/"))
+	rest = p != "graphql" && p != "graphql.json"
+	var body []byte
+	parsed := true
+	if !t.ghUpload {
+		if !identityEncoding(r.Header) {
+			parsed = false
+		} else {
+			buf, err := io.ReadAll(io.LimitReader(r.Body, ghWriteBodyMax+1))
+			if err == nil && len(buf) <= ghWriteBodyMax {
+				r.Body = readCloser{bytes.NewReader(buf), r.Body}
+				body = buf
+			} else {
+				r.Body = readCloser{io.MultiReader(bytes.NewReader(buf), r.Body), r.Body}
+				parsed = false
+			}
+		}
+	}
+	if parsed {
+		if req, err := ParseGitHubRequest(method, t.ghPath, t.ghRawPath, body); err == nil {
+			for _, op := range req.Ops {
+				writes = append(writes, GitHubWrite{
+					Method: method, Category: op.Category, Target: op.Target, Op: op.Op, Repo: op.Repo, BodySHA256: BodyHash(op.Body),
+				})
+			}
+			return writes, rest
+		}
+	}
+	// 只有路径级信息：门禁关闭时只审计（R19 的「失败即拒绝」由 GitHubWriteBegin 在门禁开启时执行）
+	w := GitHubWrite{Method: method, Op: method + " " + t.ghPath, Unparsed: true}
+	if req, err := ParseGitHubRequest(method, t.ghPath, t.ghRawPath, nil); err == nil && len(req.Ops) == 1 {
+		w.Category, w.Op, w.Repo = req.Ops[0].Category, req.Ops[0].Op, req.Ops[0].Repo
+	}
+	return []GitHubWrite{w}, rest
+}
+
+// identityEncoding 报告请求体没有压缩编码。
+func identityEncoding(h http.Header) bool {
+	e := strings.TrimSpace(h.Get("Content-Encoding"))
+	return e == "" || strings.EqualFold(e, "identity")
+}
+
+// respRepo 从 REST 响应顶层的 repository_url / url 里取 owner/repo（R23：路径里取不到仓库时用，如 /repositories/{id}/…）。
+func respRepo(body []byte) string {
+	var m map[string]any
+	if json.Unmarshal(body, &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"repository_url", "url"} {
+		s, _ := m[k].(string)
+		_, after, ok := strings.Cut(s, "/repos/")
+		if !ok {
+			continue
+		}
+		if seg := strings.SplitN(after, "/", 3); len(seg) >= 2 && seg[0] != "" && seg[1] != "" {
+			return strings.ToLower(seg[0] + "/" + seg[1])
+		}
+	}
+	return ""
+}

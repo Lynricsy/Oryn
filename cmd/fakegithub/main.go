@@ -1,4 +1,4 @@
-// Command fakegithub 是验收脚本用的假 GitHub（M14 步骤 9.1）：REST / GraphQL / OAuth / App 端点、
+// Command fakegithub 是验收脚本用的假 GitHub（M14 步骤 9.1）：REST / GraphQL / OAuth App / 仓库 hook 端点、
 // git smart-HTTP（git http-backend），以及 /__fake/ 控制端点。同一地址同时作为 API 与网页基址。
 package main
 

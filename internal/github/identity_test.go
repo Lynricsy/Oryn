@@ -37,7 +37,7 @@ func TestAuthorizeAndSameAccount(t *testing.T) {
 	_, err := e.s.BeginAuthorize(e.ctx, "user")
 	assert.Equal(t, "github_not_configured", codeOf(err))
 
-	e.installApp()
+	e.oauthApp()
 	e.fake.AddUser(1, "owner", "The Owner")
 	e.fake.AddUser(7, "oryn-bot", "")
 
@@ -46,7 +46,7 @@ func TestAuthorizeAndSameAccount(t *testing.T) {
 	u, err := url.Parse(raw)
 	require.NoError(t, err)
 	assert.Equal(t, e.fake.URL()+"/login/oauth/authorize", u.Scheme+"://"+u.Host+u.Path)
-	assert.Equal(t, "Iv1.test", u.Query().Get("client_id"))
+	assert.Equal(t, "Ov23.test", u.Query().Get("client_id"))
 	assert.Equal(t, testPublicURL+"/api/v1/public/github/oauth/callback", u.Query().Get("redirect_uri"))
 	assert.Equal(t, "select_account", u.Query().Get("prompt"))
 
@@ -66,13 +66,11 @@ func TestAuthorizeAndSameAccount(t *testing.T) {
 
 	row, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
 	require.NoError(t, err)
-	assert.NotContains(t, string(row.AccessTokenEnc), "ghu_")
-	assert.Nil(t, row.AccessExpiresAt, "不再记录过期时间")
-	assert.Nil(t, row.RefreshTokenEnc, "不再保存刷新令牌")
+	assert.NotContains(t, string(row.AccessTokenEnc), "gho_")
 
 	// 授权码兑换失败
 	e.fake.Lock()
-	e.fake.App.ClientSecret = "rotated"
+	e.fake.OAuthApp.ClientSecret = "rotated"
 	e.fake.Unlock()
 	raw, err = e.s.BeginAuthorize(e.ctx, "user")
 	require.NoError(t, err)
@@ -82,25 +80,18 @@ func TestAuthorizeAndSameAccount(t *testing.T) {
 
 func TestFinishAuthorizeStateKinds(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.oauthApp()
 	e.fake.AddUser(1, "owner", "")
 	e.fake.GrantCode("c1", "owner")
 
-	// manifest 种类的 state 不能用于身份回调，且不被消费
-	mstate := ids.Token("ogs")
-	require.NoError(t, e.st.Q.InsertGithubState(e.ctx, db.InsertGithubStateParams{
-		StateHash: ids.Hash(mstate), Kind: "manifest", ExpiresAt: e.clock.Now().Add(stateTTL).UnixMilli(),
-	}))
-	_, err := e.s.FinishAuthorize(e.ctx, "c1", mstate)
+	// 不存在的 state
+	_, err := e.s.FinishAuthorize(e.ctx, "c1", ids.Token("ogs"))
 	assert.Equal(t, "state_invalid", codeOf(err))
-	_, err = e.st.Q.GetGithubState(e.ctx, ids.Hash(mstate))
-	require.NoError(t, err)
 
-	// 身份 state 先被 FinishManifest 拒绝，之后仍可用于身份回调
+	// 身份 state 只能用一次
 	raw, err := e.s.BeginAuthorize(e.ctx, "user")
 	require.NoError(t, err)
 	state := stateOf(t, raw)
-	assert.Equal(t, "state_invalid", codeOf(e.s.FinishManifest(e.ctx, "manifest-code", state)))
 	slot, err := e.s.FinishAuthorize(e.ctx, "c1", state)
 	require.NoError(t, err)
 	assert.Equal(t, "user", slot)
@@ -136,7 +127,6 @@ func TestAuthorizeScopes(t *testing.T) {
 	row, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
 	require.NoError(t, err)
 	assert.Equal(t, oauthScopes, row.Scopes)
-	assert.Nil(t, row.AccessExpiresAt)
 	tok, err := e.s.tokenFor(e.ctx, "user")
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(tok, "gho_"), tok)
@@ -165,9 +155,12 @@ func TestTokenForAndReauth(t *testing.T) {
 	require.NoError(t, e.connect("user", "c1", "owner"))
 	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
 	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "agent"))
-	assert.Equal(t, "agent", e.s.AutomationIdentity(e.ctx))
+	slot, note, err := e.s.ResolveAutomationSlot(e.ctx, false)
+	require.NoError(t, err)
+	assert.Equal(t, "agent", slot)
+	assert.Empty(t, note)
 
-	_, err := e.s.tokenFor(e.ctx, "bogus")
+	_, err = e.s.tokenFor(e.ctx, "bogus")
 	assert.Equal(t, "invalid_request", codeOf(err))
 	// 令牌不过期：拨很久的时钟仍直接解密，不请求令牌端点
 	n := len(e.fake.CallsTo("POST", "/login/oauth/access_token"))
@@ -181,7 +174,7 @@ func TestTokenForAndReauth(t *testing.T) {
 	require.NoError(t, e.s.callAs(e.ctx, "agent", http.MethodGet, "/user", nil, &me))
 	assert.Equal(t, "oryn-bot", me.Login)
 
-	// 401 → 槽位 reauth，自动化身份退回我的账号
+	// 401 → 槽位 reauth，自动化身份回退到我的账号（带回退提示）
 	e.fake.Lock()
 	e.fake.Fail = map[string]int{"GET /user": http.StatusUnauthorized}
 	e.fake.Unlock()
@@ -191,7 +184,10 @@ func TestTokenForAndReauth(t *testing.T) {
 	row, err := e.st.Q.GetGithubIdentity(e.ctx, "agent")
 	require.NoError(t, err)
 	assert.Equal(t, "reauth", row.Status)
-	assert.Equal(t, "user", e.s.AutomationIdentity(e.ctx))
+	slot, note, err = e.s.ResolveAutomationSlot(e.ctx, false)
+	require.NoError(t, err)
+	assert.Equal(t, "user", slot)
+	assert.Equal(t, agentFallbackNote, note)
 	st, err := e.s.Status(e.ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, "reauth", st.Identities.Agent.Status)
@@ -217,23 +213,51 @@ func TestTokenForAndReauth(t *testing.T) {
 	assert.Equal(t, "github_identity_required", codeOf(err))
 }
 
+// 1.6：断开 Agent 账号不改设置；Agent 不可用时可信自动化回退到我的账号并带提示，不可信的拒绝；设置为 user 时不回退也不提示。
 func TestDisconnectAndAutomation(t *testing.T) {
 	e := newEnv(t)
 	e.owner()
-	e.installApp()
-	assert.Equal(t, "github_agent_required", codeOf(e.s.SetAutomationIdentity(e.ctx, "agent")))
-	assert.Equal(t, "invalid_request", codeOf(e.s.SetAutomationIdentity(e.ctx, "bogus")))
-	e.fake.AddUser(7, "oryn-bot", "")
-	require.NoError(t, e.connect("agent", "c1", "oryn-bot"))
-	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "agent"))
+	e.oauthApp()
 	st, err := e.s.Status(e.ctx)
 	require.NoError(t, err)
-	assert.EqualValues(t, "agent", st.AutomationIdentity)
+	assert.EqualValues(t, "agent", st.AutomationIdentity, "默认 agent")
+	assert.Equal(t, "invalid_request", codeOf(e.s.SetAutomationIdentity(e.ctx, "bogus")))
+	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "agent"), "Agent 未连接也可设为 agent")
 
+	// Agent 未连接：回退与拒绝
+	slot, note, err := e.s.ResolveAutomationSlot(e.ctx, false)
+	require.NoError(t, err)
+	assert.Equal(t, "user", slot)
+	assert.Equal(t, agentFallbackNote, note)
+	_, _, err = e.s.ResolveAutomationSlot(e.ctx, true)
+	assert.ErrorIs(t, err, errAgentRequired)
+	assert.Equal(t, "github_agent_required", codeOf(err))
+
+	e.fake.AddUser(7, "oryn-bot", "")
+	require.NoError(t, e.connect("agent", "c1", "oryn-bot"))
+	slot, note, err = e.s.ResolveAutomationSlot(e.ctx, true)
+	require.NoError(t, err)
+	assert.Equal(t, "agent", slot)
+	assert.Empty(t, note)
+
+	// 设为 user：可信自动化用 user、无提示；不可信的仍只用 Agent
+	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "user"))
+	slot, note, err = e.s.ResolveAutomationSlot(e.ctx, false)
+	require.NoError(t, err)
+	assert.Equal(t, "user", slot)
+	assert.Empty(t, note)
+	slot, _, err = e.s.ResolveAutomationSlot(e.ctx, true)
+	require.NoError(t, err)
+	assert.Equal(t, "agent", slot)
+
+	// 断开 Agent 后设置值不变
+	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "agent"))
 	require.NoError(t, e.s.Disconnect(e.ctx, "agent"))
 	st, err = e.s.Status(e.ctx)
 	require.NoError(t, err)
-	assert.EqualValues(t, "user", st.AutomationIdentity)
+	assert.EqualValues(t, "agent", st.AutomationIdentity)
 	assert.Nil(t, st.Identities.Agent)
 	assert.Equal(t, "not_found", codeOf(e.s.Disconnect(e.ctx, "agent")))
+	_, _, err = e.s.ResolveAutomationSlot(e.ctx, true)
+	assert.ErrorIs(t, err, errAgentRequired)
 }

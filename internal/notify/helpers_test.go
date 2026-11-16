@@ -175,8 +175,8 @@ func (f *fakeThreads) Commands() []uiCall {
 }
 
 type recBroadcaster struct {
-	mu    sync.Mutex
-	notes []apigen.Notification
+	mu       sync.Mutex
+	notes    []apigen.Notification
 	reads    [][2]string // {threadID, id}
 	resolved []string
 }

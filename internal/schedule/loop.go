@@ -448,11 +448,12 @@ func (s *Service) deliveryFailed(ctx context.Context, sc db.Schedule, threadID, 
 // createThread 以运行 id 为标签新建线程（契约 C1.5）：首条提示词的终态由 TurnEnded 结算。
 func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Location, text string) {
 	sc := fp.sc
+	// 项目级定时是全自动线程（R6），按自动化身份取 GitHub 身份；不属于项目的定时与手动建的线程一样用我的账号
 	p := threads.CreateParams{
 		ProjectID: deref(sc.ProjectID), Prompt: text, Provider: deref(sc.Provider), Type: deref(sc.OrbType),
 		Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
 		Title:      sc.Name + " · " + time.UnixMilli(fp.scheduledFor).In(loc).Format("01-02 15:04"),
-		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: true,
+		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: sc.ProjectID != nil,
 	}
 	s.mu.Lock()
 	s.creating++

@@ -56,29 +56,30 @@ type CreateParams struct {
 	// 记录，回合头据此显示 role 身份）；同时给了 ThinkingLevel 时紧接着再发 set_thinking_level，用户选的思考档位
 	// 压过 role 自带的档位。只作用于首条提示词：之后 agent 重启时不再重选（会话里已有模型来源记录）。
 	Role string
-	// Automation 为真表示由自动化入口创建——GitHub 触发、项目级定时（M14）：新 orb 按自动化身份取 GitHub 身份。
+	// Automation 为真表示由全自动入口创建——GitHub 触发、项目级定时、发布哨兵（M14 / M15）：新 orb 的 GitHub 身份由
+	// GitHub.ResolveAutomationSlot 决定（R6），回退到我的账号时把回退提示追加到首条提示词末尾（Q6）。
 	Automation bool
 }
 
 // maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
 const maxRoleLen = 128
 
-// githubIdentity 决定新 orb 的 GitHub 身份槽位（M14）：orb 内派生的子线程沿用父线程 orb 的身份；自动化入口按
-// 自动化身份；其余一律 user。
-func (s *Service) githubIdentity(ctx context.Context, p CreateParams) string {
+// githubIdentity 决定新 orb 的 GitHub 身份槽位（M14 / M15 R6）：orb 内派生的子线程沿用父线程 orb 的身份；全自动入口按
+// GitHub.ResolveAutomationSlot；其余一律 user。note 非空时是要写进线程的回退提示。
+func (s *Service) githubIdentity(ctx context.Context, p CreateParams) (slot, note string, err error) {
 	if p.ParentThreadID != "" {
 		parent, err := s.st.Q.GetThread(ctx, p.ParentThreadID)
 		if err == nil && parent.OrbID != nil {
 			if o, err := s.st.Q.GetOrb(ctx, *parent.OrbID); err == nil && o.GithubIdentity != "" {
-				return o.GithubIdentity
+				return o.GithubIdentity, "", nil
 			}
 		}
-		return "user"
+		return "user", "", nil
 	}
 	if p.Automation && s.gh != nil {
-		return s.gh.AutomationIdentity(ctx)
+		return s.gh.ResolveAutomationSlot(ctx, false)
 	}
-	return "user"
+	return "user", "", nil
 }
 
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
@@ -173,9 +174,16 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		case explicitProfile:
 			return apigen.Thread{}, errf("invalid", "browser profiles are not supported")
 		}
+		slot, note, err := s.githubIdentity(ctx, p)
+		if err != nil {
+			return apigen.Thread{}, err
+		}
+		if note != "" {
+			p.Prompt += "\n\n" + note
+		}
 		req := OrbCreate{
 			Provider: p.Provider, Type: p.Type, ProjectID: p.ProjectID, BrowserProfileID: profileID, ProfileMode: string(p.ProfileMode),
-			GithubIdentity: s.githubIdentity(ctx, p),
+			GithubIdentity: slot,
 		}
 		// 预热池（M11a）：只给有项目、不选浏览器 Profile 的线程认领（Profile 须在 ready 之前装载，池 orb 早已过了那一步）
 		var claimed bool

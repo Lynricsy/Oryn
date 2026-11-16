@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -44,9 +45,6 @@ func (s *Service) bindHandlers() map[string]handler {
 
 func init() {
 	on("ping", func(*Service, context.Context, string, []byte) (string, error) { return "ignored:ping", nil })
-	on("installation", (*Service).onInstallation)
-	on("installation_repositories", (*Service).onInstallation)
-	on("github_app_authorization", (*Service).onAppAuthorization)
 	on("repository", (*Service).onRepository)
 }
 
@@ -54,43 +52,33 @@ func init() {
 //
 // 仓库 hook：按 X-GitHub-Hook-ID（十进制）查 github_hooks 行，用该行的 secret 验 X-Hub-Signature-256，
 // 再要求 X-GitHub-Hook-Installation-Target-ID 等于该行的 repo_id；任一不满足返回 401。验签通过后记 last_webhook_at。
-//
-// 过渡：hook id 查不到 github_hooks 行、且库里还有旧 GitHub App 时，按 App 的 webhook secret 验签（M14 路径，
-// 步骤 1.4 删除 App 代码时一并删除）。其余情况一律 401。
 func (s *Service) HandleWebhook(ctx context.Context, h http.Header, body []byte) int {
-	var repoID int64
 	row, found, err := s.hookOfRequest(ctx, h)
 	switch {
 	case err != nil:
 		slog.Warn("github: 读取仓库 hook 失败", "err", err)
 		return http.StatusInternalServerError
-	case found:
-		secret, err := s.cfg.Box.Open(aadHookSecret(row.RepoID), row.SecretEnc)
-		if err != nil {
-			slog.Warn("github: 解密 hook secret 失败", "repo", row.FullName, "err", err)
-			return http.StatusInternalServerError
-		}
-		if !validSignature(secret, h.Get("X-Hub-Signature-256"), body) ||
-			h.Get("X-GitHub-Hook-Installation-Target-ID") != strconv.FormatInt(row.RepoID, 10) {
-			return http.StatusUnauthorized
-		}
-		repoID = row.RepoID
-	default:
-		if code := s.verifyLegacyApp(ctx, h, body); code != 0 {
-			return code
-		}
+	case !found:
+		return http.StatusUnauthorized
+	}
+	secret, err := s.cfg.Box.Open(aadHookSecret(row.RepoID), row.SecretEnc)
+	if err != nil {
+		slog.Warn("github: 解密 hook secret 失败", "repo", row.FullName, "err", err)
+		return http.StatusInternalServerError
+	}
+	if !validSignature(secret, h.Get("X-Hub-Signature-256"), body) ||
+		h.Get("X-GitHub-Hook-Installation-Target-ID") != strconv.FormatInt(row.RepoID, 10) {
+		return http.StatusUnauthorized
 	}
 	guid, event := h.Get("X-GitHub-Delivery"), h.Get("X-GitHub-Event")
 	if guid == "" || event == "" {
 		return http.StatusBadRequest
 	}
-	if repoID != 0 {
-		now := s.nowMs()
-		if err := s.st.Q.TouchGithubHookWebhook(ctx, db.TouchGithubHookWebhookParams{LastWebhookAt: &now, RepoID: repoID}); err != nil {
-			slog.Warn("github: 记录 webhook 到达时间失败", "err", err)
-		}
+	now := s.nowMs()
+	if err := s.st.Q.TouchGithubHookWebhook(ctx, db.TouchGithubHookWebhookParams{LastWebhookAt: &now, RepoID: row.RepoID}); err != nil {
+		slog.Warn("github: 记录 webhook 到达时间失败", "err", err)
 	}
-	s.ingest(ctx, guid, event, body, "webhook", repoID)
+	s.ingest(ctx, guid, event, body, "webhook", row.RepoID)
 	return http.StatusAccepted
 }
 
@@ -108,27 +96,6 @@ func (s *Service) hookOfRequest(ctx context.Context, h http.Header) (row db.Gith
 		return row, false, err
 	}
 	return row, len(row.SecretEnc) > 0, nil
-}
-
-// verifyLegacyApp 是旧 GitHub App 的验签（过渡，步骤 1.4 删除）：通过时返回 0；没有 App 或签名不符返回 401。
-func (s *Service) verifyLegacyApp(ctx context.Context, h http.Header, body []byte) int {
-	app, err := s.st.Q.GetGithubApp(ctx)
-	if err != nil {
-		if isNoRows(err) {
-			return http.StatusUnauthorized
-		}
-		slog.Warn("github: 读取 App 失败", "err", err)
-		return http.StatusInternalServerError
-	}
-	secret, err := s.cfg.Box.Open(aadWebhookSecret, app.WebhookSecretEnc)
-	if err != nil {
-		slog.Warn("github: 解密 webhook secret 失败", "err", err)
-		return http.StatusInternalServerError
-	}
-	if !validSignature(secret, h.Get("X-Hub-Signature-256"), body) {
-		return http.StatusUnauthorized
-	}
-	return 0
 }
 
 // validSignature 校验 `sha256=<hex>` 形式的 HMAC-SHA256 签名。
@@ -301,8 +268,9 @@ func (s *Service) Run(ctx context.Context) {
 		s.pollHooks(ctx)
 	})
 	go loop(hookSyncInterval, true, func(ctx context.Context) {
-		if err := s.ResyncHooks(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("github: 同步仓库 hook 失败", "err", err)
+		// 先按仓库地址重新绑定（跟随改名、重试此前读不到的仓库），再校正 hook
+		if err := errors.Join(s.BindProjects(ctx), s.ResyncHooks(ctx)); err != nil && ctx.Err() == nil {
+			slog.Warn("github: 同步项目绑定与仓库 hook 失败", "err", err)
 		}
 	})
 	go loop(s.cfg.FlushInterval, false, s.flush)
@@ -312,7 +280,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录与已投递的回流行。
+// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录、已投递的回流行、自身写入记录与审计。
 func (s *Service) cleanup(ctx context.Context) {
 	now := s.now()
 	if err := s.st.Q.DeleteExpiredGithubStates(ctx, now.UnixMilli()); err != nil && ctx.Err() == nil {
@@ -325,6 +293,7 @@ func (s *Service) cleanup(ctx context.Context) {
 	if err := s.st.Q.DeleteGithubOutboxBefore(ctx, &before); err != nil && ctx.Err() == nil {
 		slog.Warn("github: 清理回流记录失败", "err", err)
 	}
+	s.cleanupSelfWrites(ctx, now)
 }
 
 // ---------- 本步的处理器 ----------
@@ -332,44 +301,6 @@ func (s *Service) cleanup(ctx context.Context) {
 type senderPayload struct {
 	Login string `json:"login"`
 	Type  string `json:"type"`
-}
-
-func (s *Service) onInstallation(ctx context.Context, _ string, _ []byte) (string, error) {
-	if err := s.SyncInstallations(ctx); err != nil {
-		return "", err
-	}
-	return "handled", nil
-}
-
-func (s *Service) onAppAuthorization(ctx context.Context, action string, body []byte) (string, error) {
-	if action != "revoked" {
-		return "ignored:action", nil
-	}
-	var p struct {
-		Sender senderPayload `json:"sender"`
-	}
-	if err := json.Unmarshal(body, &p); err != nil {
-		return "", err
-	}
-	rows, err := s.st.Q.ListGithubIdentities(ctx)
-	if err != nil {
-		return "", err
-	}
-	hit := false
-	for _, id := range rows {
-		if !strings.EqualFold(id.Login, p.Sender.Login) {
-			continue
-		}
-		if err := s.st.Q.SetGithubIdentityStatus(ctx, db.SetGithubIdentityStatusParams{Status: "reauth", UpdatedAt: s.nowMs(), Slot: id.Slot}); err != nil {
-			return "", err
-		}
-		hit = true
-	}
-	if !hit {
-		return "ignored:unknown_user", nil
-	}
-	s.changed()
-	return "handled", nil
 }
 
 func (s *Service) onRepository(ctx context.Context, action string, body []byte) (string, error) {

@@ -3,11 +3,9 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -16,13 +14,13 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
-	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // newGitHubEnv 同 newH2Env，另挂以假 GitHub 为上游的 GitHub 服务。
@@ -67,68 +65,47 @@ func getNoRedirect(t *testing.T, raw string) *http.Response {
 }
 
 func TestGitHubAPI(t *testing.T) {
-	e, fake, _ := newGitHubEnv(t)
+	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
 
 	assert.Equal(t, 401, e.do("GET", "/api/v1/github", h2Cred{}, nil).status)
-	r := e.do("POST", "/api/v1/github/app/manifest", h2Cred{cookie: e.webSession()}, map[string]any{"public": false})
-	assert.Equal(t, 403, r.status, string(r.body))
-
-	r = e.do("GET", "/api/v1/github", dev, nil)
+	r := e.do("GET", "/api/v1/github", dev, nil)
 	require.Equal(t, 200, r.status, string(r.body))
 	var st struct {
-		App        *struct{ Slug, InstallURL string }
-		WebhookURL string
+		App                *struct{ Slug string }
+		Installations      []struct{ ID int64 }
+		WebhookURL         string
+		AutomationIdentity string
 	}
 	r.json(t, &st)
 	assert.Nil(t, st.App)
+	assert.Empty(t, st.Installations)
 	assert.Equal(t, h2PublicURL+"/api/v1/public/github/webhook", st.WebhookURL)
 
-	// 未创建 App 时连接身份 → 409
+	// 未配置 OAuth App 时连接身份 → 409
 	r = e.do("POST", "/api/v1/github/identities/user/authorize", dev, nil)
 	assert.Equal(t, 409, r.status)
 	assert.Equal(t, "github_not_configured", r.code(t))
 
-	r = e.do("POST", "/api/v1/github/app/manifest", h2Cred{cookie: e.webSession(), csrf: true}, map[string]any{"public": false})
-	require.Equal(t, 200, r.status, string(r.body))
-	var red struct{ URL string }
-	r.json(t, &red)
-	u, err := url.Parse(red.URL)
-	require.NoError(t, err)
-	assert.Equal(t, "/api/v1/public/github/manifest/start", u.Path)
-	state := u.Query().Get("state")
+	// M15 1.4：旧 App 的操作不再实现（8.1 删除契约前由 apigen.Unimplemented 回 501）
+	assert.Equal(t, 501, e.do("POST", "/api/v1/github/app/manifest", dev, map[string]any{"public": false}).status)
+	assert.Equal(t, 501, e.do("DELETE", "/api/v1/github/app", dev, nil).status)
+	assert.Equal(t, 501, e.do("POST", "/api/v1/github/installations/sync", dev, nil).status)
+	assert.Equal(t, 501, getNoRedirect(t, e.srv.URL+"/api/v1/public/github/manifest/start?state=x").StatusCode)
+	assert.Equal(t, 501, getNoRedirect(t, e.srv.URL+"/api/v1/public/github/manifest/callback?code=x&state=x").StatusCode)
 
-	// 独立跳转页：公开、带 CSP、表单指向假 GitHub
-	resp := getNoRedirect(t, e.srv.URL+u.Path+"?"+u.RawQuery)
-	require.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
-	assert.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
-	assert.Equal(t, "default-src 'none'; style-src 'unsafe-inline'; form-action "+fake.URL()+"; base-uri 'none'; frame-ancestors 'none'",
-		resp.Header.Get("Content-Security-Policy"))
-	page, _ := io.ReadAll(resp.Body)
-	assert.Regexp(t, regexp.MustCompile(`action="`+regexp.QuoteMeta(fake.URL())+`/settings/apps/new\?state=`), string(page))
-
-	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/manifest/callback?code="+fake.App.ManifestCode+"&state="+url.QueryEscape(state))
-	assert.Equal(t, 302, resp.StatusCode)
-	assert.Equal(t, h2PublicURL+"/settings/github?created=1", resp.Header.Get("Location"))
-	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/manifest/callback?code="+fake.App.ManifestCode+"&state="+url.QueryEscape(state))
-	assert.Equal(t, h2PublicURL+"/settings/github?error=state_invalid", resp.Header.Get("Location"))
-
-	r = e.do("GET", "/api/v1/github", dev, nil)
-	require.Equal(t, 200, r.status)
-	r.json(t, &st)
-	require.NotNil(t, st.App)
-	assert.Equal(t, "oryn-test", st.App.Slug)
+	require.NoError(t, gh.SetOAuthApp(context.Background(), fake.OAuthApp.ClientID, fake.OAuthApp.ClientSecret, ""))
 
 	// 身份：授权地址 → 回调
 	fake.AddUser(1, "owner", "")
 	fake.GrantCode("u1", "owner")
 	r = e.do("POST", "/api/v1/github/identities/user/authorize", dev, nil)
 	require.Equal(t, 200, r.status, string(r.body))
+	var red struct{ URL string }
 	r.json(t, &red)
-	u, err = url.Parse(red.URL)
+	u, err := url.Parse(red.URL)
 	require.NoError(t, err)
-	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?code=u1&state="+url.QueryEscape(u.Query().Get("state")))
+	resp := getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?code=u1&state="+url.QueryEscape(u.Query().Get("state")))
 	assert.Equal(t, h2PublicURL+"/settings/github?connected=user", resp.Header.Get("Location"))
 
 	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?state=bogus&code=x")
@@ -137,27 +114,19 @@ func TestGitHubAPI(t *testing.T) {
 	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?error=access_denied&state=x")
 	assert.Equal(t, h2PublicURL+"/settings/github?error=access_denied", resp.Header.Get("Location"))
 
-	// 设置与安装同步
-	r = e.do("PUT", "/api/v1/github/settings", dev, map[string]any{"automationIdentity": "agent"})
-	assert.Equal(t, 409, r.status)
-	assert.Equal(t, "github_agent_required", r.code(t))
-	fake.AddInstallation(10, "acme")
-	r = e.do("POST", "/api/v1/github/installations/sync", dev, nil)
+	// 设置：Agent 账号未连接也可设为 agent（R6，使用时按 Q6 回退）
+	require.NoError(t, e.st.Q.CreateOwner(context.Background(), db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
+	r = e.do("PUT", "/api/v1/github/settings", dev, map[string]any{"automationIdentity": "user"})
 	require.Equal(t, 200, r.status, string(r.body))
-	var synced struct {
-		Installations []struct{ AccountLogin string }
-	}
-	r.json(t, &synced)
-	require.Len(t, synced.Installations, 1)
-	assert.Equal(t, "acme", synced.Installations[0].AccountLogin)
+	r.json(t, &st)
+	assert.Equal(t, "user", st.AutomationIdentity)
+	r = e.do("PUT", "/api/v1/github/settings", dev, map[string]any{"automationIdentity": "agent"})
+	require.Equal(t, 200, r.status, string(r.body))
+	r.json(t, &st)
+	assert.Equal(t, "agent", st.AutomationIdentity)
 
 	assert.Equal(t, 204, e.do("DELETE", "/api/v1/github/identities/user", dev, nil).status)
 	assert.Equal(t, 404, e.do("DELETE", "/api/v1/github/identities/user", dev, nil).status)
-	assert.Equal(t, 204, e.do("DELETE", "/api/v1/github/app", dev, nil).status)
-	r = e.do("GET", "/api/v1/github", dev, nil)
-	st.App = nil
-	r.json(t, &st)
-	assert.Nil(t, st.App)
 }
 
 func TestGitHubOAuthAppAPI(t *testing.T) {
@@ -237,31 +206,26 @@ func TestGitHubAPINotConfigured(t *testing.T) {
 	assert.Equal(t, 501, e.do("GET", "/api/v1/github", h2DeviceToken(t, e), nil).status)
 }
 
-// createGitHubApp 经服务走一遍 manifest 流程。
-func createGitHubApp(t *testing.T, fake *githubtest.Server, gh *github.Service) {
+// setupOAuthApp 经服务配好假 GitHub 的 OAuth App（不连接身份）。
+func setupOAuthApp(t *testing.T, fake *githubtest.Server, gh *github.Service) {
 	t.Helper()
-	ctx := context.Background()
-	raw, err := gh.BeginManifest(ctx, apigen.GitHubManifestRequest{})
-	require.NoError(t, err)
-	u, err := url.Parse(raw)
-	require.NoError(t, err)
-	require.NoError(t, gh.FinishManifest(ctx, fake.App.ManifestCode, u.Query().Get("state")))
+	require.NoError(t, gh.SetOAuthApp(context.Background(), fake.OAuthApp.ClientID, fake.OAuthApp.ClientSecret, ""))
 }
 
 func TestProjectGitHubBinding(t *testing.T) {
 	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
-	createGitHubApp(t, fake, gh)
-	fake.AddInstallation(10, "Acme")
-	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10})
+	connectGitHubUser(t, e, fake, gh, "owner")
+	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900})
 
 	type project struct {
 		ID     string
 		Github *struct {
-			RepoID   int64
-			FullName string
-			Bound    bool
-			Listen   struct{ Reviews, Comments, Ci bool }
+			RepoID     int64
+			FullName   string
+			Bound      bool
+			BindStatus *string
+			Listen     struct{ Reviews, Comments, Ci bool }
 		}
 	}
 	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "w", "repoUrl": "https://github.com/acme/widgets.git"})
@@ -282,17 +246,18 @@ func TestProjectGitHubBinding(t *testing.T) {
 	assert.False(t, p.Github.Listen.Reviews)
 	assert.True(t, p.Github.Listen.Ci)
 
-	// 改成另一个未安装 App 的仓库：三列全清
+	// 改成我的账号读不到的仓库：清空仓库 id，显示「未绑定」及原因 not_found（R8）
 	r = e.do("PATCH", "/api/v1/projects/"+p.ID, dev, map[string]any{"repoUrl": "https://github.com/acme/other"})
 	require.Equal(t, 200, r.status, string(r.body))
 	p = project{}
 	r.json(t, &p)
-	assert.Nil(t, p.Github)
+	require.NotNil(t, p.Github)
+	assert.False(t, p.Github.Bound)
+	require.NotNil(t, p.Github.BindStatus)
+	assert.Equal(t, "not_found", *p.Github.BindStatus)
 	row, err := e.st.Q.GetProject(context.Background(), p.ID)
 	require.NoError(t, err)
 	assert.Nil(t, row.GithubRepoID)
-	assert.Nil(t, row.GithubOwnerID)
-	assert.Nil(t, row.GithubInstallationID)
 
 	// 非 GitHub 项目没有 github 字段
 	r = e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "plain"})
@@ -305,7 +270,7 @@ func TestProjectGitHubBinding(t *testing.T) {
 func TestListGitHubReposAPI(t *testing.T) {
 	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
-	createGitHubApp(t, fake, gh)
+	setupOAuthApp(t, fake, gh)
 	r := e.do("GET", "/api/v1/github/repos", dev, nil)
 	assert.Equal(t, 409, r.status)
 	assert.Equal(t, "github_identity_required", r.code(t))
@@ -318,9 +283,8 @@ func TestListGitHubReposAPI(t *testing.T) {
 	require.NoError(t, err)
 	_, err = gh.FinishAuthorize(context.Background(), "u1", u.Query().Get("state"))
 	require.NoError(t, err)
-	fake.AddInstallation(10, "acme")
-	fake.AddRepo(githubtest.Repo{ID: 1, FullName: "acme/widgets", InstallationID: 10})
-	fake.AddRepo(githubtest.Repo{ID: 2, FullName: "acme/gadgets", InstallationID: 10})
+	fake.AddRepo(githubtest.Repo{ID: 1, FullName: "acme/widgets", Permissions: map[string]string{"owner": "write"}})
+	fake.AddRepo(githubtest.Repo{ID: 2, FullName: "acme/gadgets", Permissions: map[string]string{"owner": "write"}})
 
 	r = e.do("GET", "/api/v1/github/repos?q=wid", dev, nil)
 	require.Equal(t, 200, r.status, string(r.body))
@@ -341,7 +305,7 @@ func TestListGitHubReposAPI(t *testing.T) {
 func TestGitHubRefsAPINotBound(t *testing.T) {
 	e, fake, gh := newGitHubEnv(t)
 	dev := h2DeviceToken(t, e)
-	createGitHubApp(t, fake, gh)
+	setupOAuthApp(t, fake, gh)
 	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "plain", "repoUrl": "https://github.com/acme/none"})
 	require.Equal(t, 201, r.status, string(r.body))
 	var p struct{ ID string }

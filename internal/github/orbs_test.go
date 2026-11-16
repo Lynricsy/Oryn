@@ -1,9 +1,7 @@
 package github
 
 import (
-	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +37,7 @@ func (e *testEnv) orb(projectID, identity, kind string) db.Orb {
 // boundProject 建一个绑定到 Acme/Widgets 的项目，并连接我的账号。
 func (e *testEnv) boundProject() string {
 	e.t.Helper()
-	e.installApp()
+	e.oauthApp()
 	e.widgets()
 	e.fake.AddUser(1, "owner", "The Owner")
 	e.fake.AddUser(7, "oryn-bot", "")
@@ -49,35 +47,24 @@ func (e *testEnv) boundProject() string {
 	return p
 }
 
-func TestOrbTokenScoped(t *testing.T) {
+// OAuth App 的令牌不能收窄：orb 令牌就是身份槽位的令牌（只由出站代理注入）。
+func TestOrbToken(t *testing.T) {
 	e := newEnv(t)
 	p := e.boundProject()
 	o := e.orb(p, "", "")
 
 	tok, st := e.s.OrbToken(e.ctx, o.ID)
 	require.Equal(t, orbs.GitHubTokenOK, st)
-	assert.NotEmpty(t, tok)
-	calls := e.fake.CallsTo("POST", "/applications/Iv1.test/token/scoped")
-	require.Len(t, calls, 1)
-	var body struct {
-		TargetID      int64   `json:"target_id"`
-		RepositoryIDs []int64 `json:"repository_ids"`
-	}
-	require.NoError(t, json.Unmarshal(calls[0].Body, &body))
-	assert.EqualValues(t, 900, body.TargetID)
-	assert.Equal(t, []int64{42}, body.RepositoryIDs)
+	want, err := e.s.tokenFor(e.ctx, slotUser)
+	require.NoError(t, err)
+	assert.Equal(t, want, tok)
 
-	again, st := e.s.OrbToken(e.ctx, o.ID)
+	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
+	tok, st = e.s.OrbToken(e.ctx, e.orb(p, "agent", "").ID)
 	require.Equal(t, orbs.GitHubTokenOK, st)
-	assert.Equal(t, tok, again, "第二次命中缓存")
-	assert.Len(t, e.fake.CallsTo("POST", "/applications/Iv1.test/token/scoped"), 1)
-
-	// 收窄令牌到期后重新签发（基础令牌不再刷新）。
-	e.clock.Add(scopedTokenTTL + time.Minute)
-	fresh, st := e.s.OrbToken(e.ctx, o.ID)
-	require.Equal(t, orbs.GitHubTokenOK, st)
-	assert.NotEqual(t, tok, fresh)
-	assert.Len(t, e.fake.CallsTo("POST", "/applications/Iv1.test/token/scoped"), 2)
+	want, err = e.s.tokenFor(e.ctx, slotAgent)
+	require.NoError(t, err)
+	assert.Equal(t, want, tok)
 }
 
 func TestOrbTokenStates(t *testing.T) {

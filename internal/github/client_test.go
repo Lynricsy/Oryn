@@ -3,8 +3,6 @@ package github
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -18,7 +16,6 @@ import (
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
-	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
@@ -110,70 +107,6 @@ func newEnv(t *testing.T) *testEnv {
 		Changed: func() { e.chMu.Lock(); e.changes++; e.chMu.Unlock() },
 	}, st, e.th, nil, nil)
 	return e
-}
-
-// installApp 直接把假 App 写进库（绕过 manifest 流程）。
-func (e *testEnv) installApp() {
-	e.t.Helper()
-	box := e.s.cfg.Box
-	seal := func(name, v string) []byte {
-		b, err := box.Seal(name, []byte(v))
-		require.NoError(e.t, err)
-		return b
-	}
-	app := e.fake.App
-	require.NoError(e.t, e.st.Q.InsertGithubApp(e.ctx, db.InsertGithubAppParams{
-		AppID: app.ID, Slug: app.Slug, Name: app.Name, ClientID: app.ClientID, OwnerLogin: app.OwnerLogin,
-		HtmlUrl: e.fake.URL() + "/apps/" + app.Slug, WebhookUrl: testPublicURL + "/api/v1/public/github/webhook",
-		PrivateKeyEnc: seal(aadPrivateKey, e.fake.PrivateKeyPEM()), ClientSecretEnc: seal(aadClientSecret, app.ClientSecret),
-		WebhookSecretEnc: seal(aadWebhookSecret, app.WebhookSecret), CreatedAt: 1,
-	}))
-}
-
-func TestAppJWTAccepted(t *testing.T) {
-	e := newEnv(t)
-	e.installApp()
-	auth, err := e.s.appAuth(e.ctx)
-	require.NoError(t, err)
-	var out []map[string]any
-	require.NoError(t, e.s.call(e.ctx, http.MethodGet, "/app/installations", auth, nil, &out))
-	calls := e.fake.CallsTo("GET", "/app/installations")
-	require.Len(t, calls, 1)
-	assert.Equal(t, auth, calls[0].Auth)
-}
-
-func TestParseRSAKeyPKCS8(t *testing.T) {
-	e := newEnv(t)
-	der, err := x509.MarshalPKCS8PrivateKey(e.fake.App.Key)
-	require.NoError(t, err)
-	k, err := parseRSAKey(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-	require.NoError(t, err)
-	assert.True(t, k.Equal(e.fake.App.Key))
-	k, err = parseRSAKey([]byte(e.fake.PrivateKeyPEM()))
-	require.NoError(t, err)
-	assert.True(t, k.Equal(e.fake.App.Key))
-}
-
-func TestInstallTokenCached(t *testing.T) {
-	e := newEnv(t)
-	e.installApp()
-	e.fake.AddInstallation(10, "acme")
-	a, err := e.s.installToken(e.ctx, 10)
-	require.NoError(t, err)
-	b, err := e.s.installToken(e.ctx, 10)
-	require.NoError(t, err)
-	assert.Equal(t, a, b)
-	assert.Len(t, e.fake.CallsTo("POST", "/app/installations/10/access_tokens"), 1)
-
-	// 过期后重新签发（假服务按真实时钟验 JWT，所以只把缓存条目拨到过期）
-	e.s.mu.Lock()
-	c := e.s.instTokens[10]
-	c.exp = e.clock.Now().Add(-time.Second)
-	e.s.instTokens[10] = c
-	e.s.mu.Unlock()
-	_, err = e.s.installToken(e.ctx, 10)
-	require.NoError(t, err)
-	assert.Len(t, e.fake.CallsTo("POST", "/app/installations/10/access_tokens"), 2)
 }
 
 func TestCallUpstreamError(t *testing.T) {

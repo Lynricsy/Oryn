@@ -242,6 +242,8 @@ type policyResolver struct {
 	pol egress.Policy
 }
 
-func (p policyResolver) Policy() egress.Policy          { return p.pol }
-func (p policyResolver) GitToken(string) (string, bool) { return "", false }
-func (p policyResolver) GitHubToken() (string, bool)    { return "", false }
+func (p policyResolver) Policy() egress.Policy                            { return p.pol }
+func (p policyResolver) GitToken(string) (string, bool)                   { return "", false }
+func (p policyResolver) GitHubToken() (string, bool)                      { return "", false }
+func (p policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
+func (p policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}

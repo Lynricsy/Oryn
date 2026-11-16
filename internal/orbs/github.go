@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -15,9 +16,9 @@ import (
 type GitHubTokenState int
 
 const (
-	GitHubTokenUnmanaged GitHubTokenState = iota // 这台 orb 不归 GitHub App 管（项目未绑定，或 user 槽位未连接）：调用方可回落到 PAT
+	GitHubTokenUnmanaged GitHubTokenState = iota // 这台 orb 不由 GitHub 集成下发凭据（项目未绑定，或 user 槽位未连接）：调用方可回落到 PAT
 	GitHubTokenOK
-	GitHubTokenUnavailable // 归 App 管但拿不到令牌（agent 槽位不可用、签发失败）：调用方不得回落
+	GitHubTokenUnavailable // 归 GitHub 集成管但拿不到令牌（agent 槽位不可用）：调用方不得回落
 )
 
 // GitHubSetup 是一台 orb 的 GitHub 下发参数。
@@ -36,6 +37,10 @@ type GitHub interface {
 	Call(ctx context.Context, orbID, threadID string, p apigen.LinkCtlGithubCallParams) (apigen.LinkCtlGithubCallResult, error)
 	// PrepareReport 登记 github_prepare 的通过记录（ctl github.prepare.report，M15）；调用方线程已由 orbs 校验。
 	PrepareReport(ctx context.Context, orbID string, p apigen.LinkCtlGithubPrepareReportParams) error
+	// GitHubWriteBegin / GitHubWriteEnd 承接出站代理的同名回调（egress.Resolver，M15 防回流与审计）：
+	// Begin 预登记并返回门禁结论（非空 = 拒绝原因），End 记补充键与审计。
+	GitHubWriteBegin(ctx context.Context, orbID string, w egress.GitHubWrite) (gate string)
+	GitHubWriteEnd(ctx context.Context, orbID string, w egress.GitHubWrite, status int, respKeys []string)
 }
 
 // CtlCoded 由带错误码的领域错误实现（如 github.Error）：ctl 请求按其错误码与文案回给 orbd。

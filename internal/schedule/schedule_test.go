@@ -996,6 +996,7 @@ func TestNewThreadOverlap(t *testing.T) {
 	f.state(first, apigen.ThreadStateWorking)
 	f.advanceTick(time.Minute)
 	assert.Len(t, f.th.Creates(), 1, "上一线程仍在工作：跳过")
+	assert.False(t, f.th.Creates()[0].Automation, "不属于项目的定时不是全自动线程，用我的账号（M15 R6）")
 	assert.Equal(t, "overlap", *f.runs(s.ID)[0].Error)
 	_, err := f.s.RunNow(f.ctx, s.ID)
 	requireCode(t, err, CodeScheduleBusy)

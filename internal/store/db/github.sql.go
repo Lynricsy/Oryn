@@ -102,30 +102,12 @@ func (q *Queries) ClaimDueGithubAutocloses(ctx context.Context, now int64) ([]Gi
 	return items, nil
 }
 
-const clearAllProjectGithubInstallations = `-- name: ClearAllProjectGithubInstallations :exec
-UPDATE projects SET github_installation_id = NULL WHERE github_installation_id IS NOT NULL
-`
-
-func (q *Queries) ClearAllProjectGithubInstallations(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, clearAllProjectGithubInstallations)
-	return err
-}
-
 const clearProjectGithub = `-- name: ClearProjectGithub :exec
-UPDATE projects SET github_repo_id = NULL, github_owner_id = NULL, github_installation_id = NULL WHERE id = ?1
+UPDATE projects SET github_repo_id = NULL, github_bind_status = NULL WHERE id = ?1
 `
 
 func (q *Queries) ClearProjectGithub(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, clearProjectGithub, id)
-	return err
-}
-
-const clearProjectGithubInstallation = `-- name: ClearProjectGithubInstallation :exec
-UPDATE projects SET github_installation_id = NULL WHERE id = ?1
-`
-
-func (q *Queries) ClearProjectGithubInstallation(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, clearProjectGithubInstallation, id)
 	return err
 }
 
@@ -212,15 +194,6 @@ func (q *Queries) DeleteExpiredGithubStates(ctx context.Context, now int64) erro
 	return err
 }
 
-const deleteGithubApp = `-- name: DeleteGithubApp :exec
-DELETE FROM github_app WHERE id = 1
-`
-
-func (q *Queries) DeleteGithubApp(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteGithubApp)
-	return err
-}
-
 const deleteGithubAuditBefore = `-- name: DeleteGithubAuditBefore :exec
 DELETE FROM github_audit WHERE at < ?1
 `
@@ -288,34 +261,6 @@ func (q *Queries) DeleteGithubIdentity(ctx context.Context, slot string) (int64,
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const deleteGithubInstallations = `-- name: DeleteGithubInstallations :exec
-DELETE FROM github_installations
-`
-
-func (q *Queries) DeleteGithubInstallations(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteGithubInstallations)
-	return err
-}
-
-const deleteGithubInstallationsExcept = `-- name: DeleteGithubInstallationsExcept :exec
-DELETE FROM github_installations WHERE id NOT IN (/*SLICE:ids*/?)
-`
-
-func (q *Queries) DeleteGithubInstallationsExcept(ctx context.Context, ids []int64) error {
-	query := deleteGithubInstallationsExcept
-	var queryParams []interface{}
-	if len(ids) > 0 {
-		for _, v := range ids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
-	}
-	_, err := q.db.ExecContext(ctx, query, queryParams...)
-	return err
 }
 
 const deleteGithubOAuthApp = `-- name: DeleteGithubOAuthApp :exec
@@ -523,38 +468,6 @@ func (q *Queries) FinishGithubDelivery(ctx context.Context, arg FinishGithubDeli
 	return err
 }
 
-const getGithubApp = `-- name: GetGithubApp :one
-
-
-SELECT id, app_id, slug, name, client_id, owner_login, html_url, public, webhook_url, private_key_enc, client_secret_enc, webhook_secret_enc, hook_cursor, last_delivery_at, last_delivery_src, created_at FROM github_app WHERE id = 1
-`
-
-// M14: GitHub integration.
-// ---------- App ----------
-func (q *Queries) GetGithubApp(ctx context.Context) (GithubApp, error) {
-	row := q.db.QueryRowContext(ctx, getGithubApp)
-	var i GithubApp
-	err := row.Scan(
-		&i.ID,
-		&i.AppID,
-		&i.Slug,
-		&i.Name,
-		&i.ClientID,
-		&i.OwnerLogin,
-		&i.HtmlUrl,
-		&i.Public,
-		&i.WebhookUrl,
-		&i.PrivateKeyEnc,
-		&i.ClientSecretEnc,
-		&i.WebhookSecretEnc,
-		&i.HookCursor,
-		&i.LastDeliveryAt,
-		&i.LastDeliverySrc,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getGithubAutoclose = `-- name: GetGithubAutoclose :one
 SELECT repo_id, number, thread_id, comment_id, author, due_at, state, outcome FROM github_autoclose WHERE repo_id = ?1 AND number = ?2
 `
@@ -651,9 +564,11 @@ func (q *Queries) GetGithubHookByHookID(ctx context.Context, hookID *int64) (Git
 
 const getGithubIdentity = `-- name: GetGithubIdentity :one
 
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at, scopes FROM github_identities WHERE slot = ?1
+
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes FROM github_identities WHERE slot = ?1
 `
 
+// M14: GitHub integration.
 // ---------- identities ----------
 func (q *Queries) GetGithubIdentity(ctx context.Context, slot string) (GithubIdentity, error) {
 	row := q.db.QueryRowContext(ctx, getGithubIdentity, slot)
@@ -665,9 +580,6 @@ func (q *Queries) GetGithubIdentity(ctx context.Context, slot string) (GithubIde
 		&i.Name,
 		&i.AvatarUrl,
 		&i.AccessTokenEnc,
-		&i.AccessExpiresAt,
-		&i.RefreshTokenEnc,
-		&i.RefreshExpiresAt,
 		&i.Status,
 		&i.ConnectedAt,
 		&i.UpdatedAt,
@@ -796,7 +708,7 @@ func (q *Queries) GetGithubRepoWatch(ctx context.Context, repoID int64) (GithubR
 }
 
 const getGithubState = `-- name: GetGithubState :one
-SELECT state_hash, kind, slot, manifest, action_url, public, webhook_url, expires_at FROM github_oauth_states WHERE state_hash = ?1
+SELECT state_hash, kind, slot, expires_at FROM github_oauth_states WHERE state_hash = ?1
 `
 
 func (q *Queries) GetGithubState(ctx context.Context, stateHash string) (GithubOauthState, error) {
@@ -806,10 +718,6 @@ func (q *Queries) GetGithubState(ctx context.Context, stateHash string) (GithubO
 		&i.StateHash,
 		&i.Kind,
 		&i.Slot,
-		&i.Manifest,
-		&i.ActionUrl,
-		&i.Public,
-		&i.WebhookUrl,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -886,7 +794,7 @@ const getOrbGithubLogin = `-- name: GetOrbGithubLogin :one
 SELECT gi.login FROM orbs o
 JOIN projects p ON p.id = o.project_id
 JOIN github_identities gi ON gi.slot = o.github_identity
-WHERE o.id = ?1 AND p.github_repo_id IS NOT NULL AND p.github_installation_id IS NOT NULL
+WHERE o.id = ?1 AND p.github_repo_id IS NOT NULL
 `
 
 // ---------- orb ----------
@@ -1017,46 +925,6 @@ func (q *Queries) GithubSelfKeyExists(ctx context.Context, keys []string) (bool,
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const insertGithubApp = `-- name: InsertGithubApp :exec
-INSERT INTO github_app (id, app_id, slug, name, client_id, owner_login, html_url, public, webhook_url,
-                        private_key_enc, client_secret_enc, webhook_secret_enc, created_at)
-VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-        ?9, ?10, ?11, ?12)
-`
-
-type InsertGithubAppParams struct {
-	AppID            int64  `json:"appId"`
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	ClientID         string `json:"clientId"`
-	OwnerLogin       string `json:"ownerLogin"`
-	HtmlUrl          string `json:"htmlUrl"`
-	Public           bool   `json:"public"`
-	WebhookUrl       string `json:"webhookUrl"`
-	PrivateKeyEnc    []byte `json:"privateKeyEnc"`
-	ClientSecretEnc  []byte `json:"clientSecretEnc"`
-	WebhookSecretEnc []byte `json:"webhookSecretEnc"`
-	CreatedAt        int64  `json:"createdAt"`
-}
-
-func (q *Queries) InsertGithubApp(ctx context.Context, arg InsertGithubAppParams) error {
-	_, err := q.db.ExecContext(ctx, insertGithubApp,
-		arg.AppID,
-		arg.Slug,
-		arg.Name,
-		arg.ClientID,
-		arg.OwnerLogin,
-		arg.HtmlUrl,
-		arg.Public,
-		arg.WebhookUrl,
-		arg.PrivateKeyEnc,
-		arg.ClientSecretEnc,
-		arg.WebhookSecretEnc,
-		arg.CreatedAt,
-	)
-	return err
 }
 
 const insertGithubAudit = `-- name: InsertGithubAudit :exec
@@ -1221,19 +1089,15 @@ func (q *Queries) InsertGithubSenderRun(ctx context.Context, arg InsertGithubSen
 
 const insertGithubState = `-- name: InsertGithubState :exec
 
-INSERT INTO github_oauth_states (state_hash, kind, slot, manifest, action_url, public, webhook_url, expires_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+INSERT INTO github_oauth_states (state_hash, kind, slot, expires_at)
+VALUES (?1, ?2, ?3, ?4)
 `
 
 type InsertGithubStateParams struct {
-	StateHash  string  `json:"stateHash"`
-	Kind       string  `json:"kind"`
-	Slot       *string `json:"slot"`
-	Manifest   *string `json:"manifest"`
-	ActionUrl  *string `json:"actionUrl"`
-	Public     bool    `json:"public"`
-	WebhookUrl *string `json:"webhookUrl"`
-	ExpiresAt  int64   `json:"expiresAt"`
+	StateHash string `json:"stateHash"`
+	Kind      string `json:"kind"`
+	Slot      string `json:"slot"`
+	ExpiresAt int64  `json:"expiresAt"`
 }
 
 // ---------- one-shot states ----------
@@ -1242,10 +1106,6 @@ func (q *Queries) InsertGithubState(ctx context.Context, arg InsertGithubStatePa
 		arg.StateHash,
 		arg.Kind,
 		arg.Slot,
-		arg.Manifest,
-		arg.ActionUrl,
-		arg.Public,
-		arg.WebhookUrl,
 		arg.ExpiresAt,
 	)
 	return err
@@ -1466,7 +1326,7 @@ func (q *Queries) ListDueThreadIssueDeadlines(ctx context.Context, now *int64) (
 
 const listEnabledGithubTriggersByRepo = `-- name: ListEnabledGithubTriggersByRepo :many
 SELECT gt.id, gt.project_id, gt.name, gt.event, gt.label, gt.prompt, gt.enabled, gt.announce, gt.run_count, gt.last_run_at, gt.created_at, gt.updated_at, gt.drivers, gt.maintainers, gt.reviewer_bots, gt.models, gt.thinking, gt.impl_auth, gt.comment_only_reviews, gt.autoclose_hours, gt.max_duration_sec, gt.completion_reminders, gt.release_prefix FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
-WHERE p.github_repo_id = ?1 AND p.github_installation_id IS NOT NULL AND p.archived_at IS NULL
+WHERE p.github_repo_id = ?1 AND p.archived_at IS NULL
   AND gt.enabled = 1 AND gt.event = ?2
 ORDER BY gt.created_at, gt.id
 `
@@ -1617,7 +1477,7 @@ func (q *Queries) ListGithubAutoclosesByThread(ctx context.Context, threadID str
 }
 
 const listGithubCandidateProjects = `-- name: ListGithubCandidateProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
 `
 
 func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, error) {
@@ -1650,8 +1510,6 @@ func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, e
 			&i.Snapshots,
 			&i.WarmOrbs,
 			&i.GithubRepoID,
-			&i.GithubOwnerID,
-			&i.GithubInstallationID,
 			&i.GithubPrevUrls,
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
@@ -1713,7 +1571,7 @@ func (q *Queries) ListGithubHooks(ctx context.Context) ([]GithubHook, error) {
 }
 
 const listGithubIdentities = `-- name: ListGithubIdentities :many
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at, scopes FROM github_identities ORDER BY slot
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes FROM github_identities ORDER BY slot
 `
 
 func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, error) {
@@ -1732,49 +1590,10 @@ func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, e
 			&i.Name,
 			&i.AvatarUrl,
 			&i.AccessTokenEnc,
-			&i.AccessExpiresAt,
-			&i.RefreshTokenEnc,
-			&i.RefreshExpiresAt,
 			&i.Status,
 			&i.ConnectedAt,
 			&i.UpdatedAt,
 			&i.Scopes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listGithubInstallations = `-- name: ListGithubInstallations :many
-
-SELECT id, account_login, account_type, repository_selection, suspended, updated_at FROM github_installations ORDER BY account_login, id
-`
-
-// ---------- installations ----------
-func (q *Queries) ListGithubInstallations(ctx context.Context) ([]GithubInstallation, error) {
-	rows, err := q.db.QueryContext(ctx, listGithubInstallations)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GithubInstallation{}
-	for rows.Next() {
-		var i GithubInstallation
-		if err := rows.Scan(
-			&i.ID,
-			&i.AccountLogin,
-			&i.AccountType,
-			&i.RepositorySelection,
-			&i.Suspended,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2287,12 +2106,12 @@ func (q *Queries) ListPendingGithubOutboxByKey(ctx context.Context, arg ListPend
 }
 
 const listProjectsByGithubRepo = `-- name: ListProjectsByGithubRepo :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects
-WHERE github_repo_id = ?1 AND github_installation_id IS NOT NULL AND archived_at IS NULL
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects
+WHERE github_repo_id = ?1 AND archived_at IS NULL
 ORDER BY created_at
 `
 
-// Bound (installation reachable), unarchived projects.
+// Bound, unarchived projects.
 func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) ([]Project, error) {
 	rows, err := q.db.QueryContext(ctx, listProjectsByGithubRepo, repoID)
 	if err != nil {
@@ -2323,8 +2142,6 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 			&i.Snapshots,
 			&i.WarmOrbs,
 			&i.GithubRepoID,
-			&i.GithubOwnerID,
-			&i.GithubInstallationID,
 			&i.GithubPrevUrls,
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
@@ -2346,7 +2163,7 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 }
 
 const listProjectsByGithubRepoAny = `-- name: ListProjectsByGithubRepoAny :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
 `
 
 // Every project that ever recorded this repo id (rename following).
@@ -2380,8 +2197,6 @@ func (q *Queries) ListProjectsByGithubRepoAny(ctx context.Context, repoID *int64
 			&i.Snapshots,
 			&i.WarmOrbs,
 			&i.GithubRepoID,
-			&i.GithubOwnerID,
-			&i.GithubInstallationID,
 			&i.GithubPrevUrls,
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
@@ -2404,7 +2219,7 @@ func (q *Queries) ListProjectsByGithubRepoAny(ctx context.Context, repoID *int64
 
 const listSamplingCandidates = `-- name: ListSamplingCandidates :many
 SELECT t.id FROM threads t JOIN projects p ON p.id = t.project_id
-WHERE p.github_repo_id = ?1 AND p.github_installation_id IS NOT NULL
+WHERE p.github_repo_id = ?1
   AND t.kind = 'work' AND t.archived_at IS NULL AND t.orb_id IS NOT NULL
   AND COALESCE(t.last_message_at, t.created_at) >= ?2
 ORDER BY COALESCE(t.last_message_at, t.created_at) DESC LIMIT 10
@@ -2706,15 +2521,6 @@ func (q *Queries) ResetGithubPullCIRounds(ctx context.Context, arg ResetGithubPu
 	return err
 }
 
-const setGithubHookCursor = `-- name: SetGithubHookCursor :exec
-UPDATE github_app SET hook_cursor = ?1 WHERE id = 1
-`
-
-func (q *Queries) SetGithubHookCursor(ctx context.Context, hookCursor int64) error {
-	_, err := q.db.ExecContext(ctx, setGithubHookCursor, hookCursor)
-	return err
-}
-
 const setGithubHookDeliveryCursor = `-- name: SetGithubHookDeliveryCursor :exec
 UPDATE github_hooks SET delivery_cursor = ?1, deliveries_etag = ?2
 WHERE repo_id = ?3
@@ -2793,35 +2599,6 @@ type SetGithubIdentityStatusParams struct {
 
 func (q *Queries) SetGithubIdentityStatus(ctx context.Context, arg SetGithubIdentityStatusParams) error {
 	_, err := q.db.ExecContext(ctx, setGithubIdentityStatus, arg.Status, arg.UpdatedAt, arg.Slot)
-	return err
-}
-
-const setGithubIdentityTokens = `-- name: SetGithubIdentityTokens :exec
-UPDATE github_identities
-SET access_token_enc = ?1, access_expires_at = ?2,
-    refresh_token_enc = ?3, refresh_expires_at = ?4,
-    status = 'ok', updated_at = ?5
-WHERE slot = ?6
-`
-
-type SetGithubIdentityTokensParams struct {
-	AccessTokenEnc   []byte `json:"accessTokenEnc"`
-	AccessExpiresAt  *int64 `json:"accessExpiresAt"`
-	RefreshTokenEnc  []byte `json:"refreshTokenEnc"`
-	RefreshExpiresAt *int64 `json:"refreshExpiresAt"`
-	UpdatedAt        int64  `json:"updatedAt"`
-	Slot             string `json:"slot"`
-}
-
-func (q *Queries) SetGithubIdentityTokens(ctx context.Context, arg SetGithubIdentityTokensParams) error {
-	_, err := q.db.ExecContext(ctx, setGithubIdentityTokens,
-		arg.AccessTokenEnc,
-		arg.AccessExpiresAt,
-		arg.RefreshTokenEnc,
-		arg.RefreshExpiresAt,
-		arg.UpdatedAt,
-		arg.Slot,
-	)
 	return err
 }
 
@@ -3065,26 +2842,17 @@ func (q *Queries) SetOwnerGithubAutomation(ctx context.Context, githubAutomation
 
 const setProjectGithub = `-- name: SetProjectGithub :exec
 
-UPDATE projects SET github_repo_id = ?1, github_owner_id = ?2,
-                    github_installation_id = ?3
-WHERE id = ?4
+UPDATE projects SET github_repo_id = ?1, github_bind_status = NULL WHERE id = ?2
 `
 
 type SetProjectGithubParams struct {
-	GithubRepoID         *int64 `json:"githubRepoId"`
-	GithubOwnerID        *int64 `json:"githubOwnerId"`
-	GithubInstallationID *int64 `json:"githubInstallationId"`
-	ID                   string `json:"id"`
+	GithubRepoID *int64 `json:"githubRepoId"`
+	ID           string `json:"id"`
 }
 
 // ---------- project binding ----------
 func (q *Queries) SetProjectGithub(ctx context.Context, arg SetProjectGithubParams) error {
-	_, err := q.db.ExecContext(ctx, setProjectGithub,
-		arg.GithubRepoID,
-		arg.GithubOwnerID,
-		arg.GithubInstallationID,
-		arg.ID,
-	)
+	_, err := q.db.ExecContext(ctx, setProjectGithub, arg.GithubRepoID, arg.ID)
 	return err
 }
 
@@ -3368,20 +3136,6 @@ func (q *Queries) ThreadByCommit(ctx context.Context, arg ThreadByCommitParams) 
 	return thread_id, err
 }
 
-const touchGithubDelivery = `-- name: TouchGithubDelivery :exec
-UPDATE github_app SET last_delivery_at = ?1, last_delivery_src = ?2 WHERE id = 1
-`
-
-type TouchGithubDeliveryParams struct {
-	LastDeliveryAt  *int64  `json:"lastDeliveryAt"`
-	LastDeliverySrc *string `json:"lastDeliverySrc"`
-}
-
-func (q *Queries) TouchGithubDelivery(ctx context.Context, arg TouchGithubDeliveryParams) error {
-	_, err := q.db.ExecContext(ctx, touchGithubDelivery, arg.LastDeliveryAt, arg.LastDeliverySrc)
-	return err
-}
-
 const touchGithubHookDelivery = `-- name: TouchGithubHookDelivery :exec
 UPDATE github_hooks SET last_delivery_at = ?1, last_delivery_src = ?2 WHERE repo_id = ?3
 `
@@ -3529,29 +3283,23 @@ func (q *Queries) UpsertGithubHook(ctx context.Context, arg UpsertGithubHookPara
 }
 
 const upsertGithubIdentity = `-- name: UpsertGithubIdentity :exec
-INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at,
-                               refresh_token_enc, refresh_expires_at, status, connected_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-        ?8, ?9, 'ok', ?10, ?11)
+INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ok', ?7, ?8)
 ON CONFLICT (slot) DO UPDATE SET
     github_id = excluded.github_id, login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
-    access_token_enc = excluded.access_token_enc, access_expires_at = excluded.access_expires_at,
-    refresh_token_enc = excluded.refresh_token_enc, refresh_expires_at = excluded.refresh_expires_at,
-    status = 'ok', connected_at = excluded.connected_at, updated_at = excluded.updated_at
+    access_token_enc = excluded.access_token_enc, status = 'ok', connected_at = excluded.connected_at,
+    updated_at = excluded.updated_at
 `
 
 type UpsertGithubIdentityParams struct {
-	Slot             string  `json:"slot"`
-	GithubID         int64   `json:"githubId"`
-	Login            string  `json:"login"`
-	Name             *string `json:"name"`
-	AvatarUrl        string  `json:"avatarUrl"`
-	AccessTokenEnc   []byte  `json:"accessTokenEnc"`
-	AccessExpiresAt  *int64  `json:"accessExpiresAt"`
-	RefreshTokenEnc  []byte  `json:"refreshTokenEnc"`
-	RefreshExpiresAt *int64  `json:"refreshExpiresAt"`
-	ConnectedAt      int64   `json:"connectedAt"`
-	UpdatedAt        int64   `json:"updatedAt"`
+	Slot           string  `json:"slot"`
+	GithubID       int64   `json:"githubId"`
+	Login          string  `json:"login"`
+	Name           *string `json:"name"`
+	AvatarUrl      string  `json:"avatarUrl"`
+	AccessTokenEnc []byte  `json:"accessTokenEnc"`
+	ConnectedAt    int64   `json:"connectedAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
 }
 
 func (q *Queries) UpsertGithubIdentity(ctx context.Context, arg UpsertGithubIdentityParams) error {
@@ -3562,39 +3310,7 @@ func (q *Queries) UpsertGithubIdentity(ctx context.Context, arg UpsertGithubIden
 		arg.Name,
 		arg.AvatarUrl,
 		arg.AccessTokenEnc,
-		arg.AccessExpiresAt,
-		arg.RefreshTokenEnc,
-		arg.RefreshExpiresAt,
 		arg.ConnectedAt,
-		arg.UpdatedAt,
-	)
-	return err
-}
-
-const upsertGithubInstallation = `-- name: UpsertGithubInstallation :exec
-INSERT INTO github_installations (id, account_login, account_type, repository_selection, suspended, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-ON CONFLICT (id) DO UPDATE SET
-    account_login = excluded.account_login, account_type = excluded.account_type,
-    repository_selection = excluded.repository_selection, suspended = excluded.suspended, updated_at = excluded.updated_at
-`
-
-type UpsertGithubInstallationParams struct {
-	ID                  int64  `json:"id"`
-	AccountLogin        string `json:"accountLogin"`
-	AccountType         string `json:"accountType"`
-	RepositorySelection string `json:"repositorySelection"`
-	Suspended           bool   `json:"suspended"`
-	UpdatedAt           int64  `json:"updatedAt"`
-}
-
-func (q *Queries) UpsertGithubInstallation(ctx context.Context, arg UpsertGithubInstallationParams) error {
-	_, err := q.db.ExecContext(ctx, upsertGithubInstallation,
-		arg.ID,
-		arg.AccountLogin,
-		arg.AccountType,
-		arg.RepositorySelection,
-		arg.Suspended,
 		arg.UpdatedAt,
 	)
 	return err

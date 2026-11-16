@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -41,11 +43,13 @@ func (e *testEnv) hookURL() string {
 	return srv.URL
 }
 
-// deliver 经假服务签名投递一次事件并处理队列，返回 guid。
+// deliver 绕过验签把一次事件交给 ingest（webhook 来源）并处理队列，返回 guid。验签由 TestWebhookHookSignature 覆盖。
 func (e *testEnv) deliver(event string, payload any) string {
 	e.t.Helper()
-	status, guid := e.fake.Deliver(e.hookURL(), event, payload)
-	require.Equal(e.t, http.StatusAccepted, status)
+	body, err := json.Marshal(payload)
+	require.NoError(e.t, err)
+	guid := ids.New("dlv")
+	e.s.ingest(e.ctx, guid, event, body, "webhook", 0)
 	e.drain()
 	return guid
 }
@@ -72,7 +76,7 @@ func hookHeaders(guid, event string, hookID, targetID int64, secret string, body
 func TestWebhookHookSignature(t *testing.T) {
 	e := newEnv(t)
 	body := []byte(`{"zen":"x"}`)
-	// 既没有 hook 行也没有旧 App
+	// 没有 hook 行
 	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, hookHeaders("g0", "ping", 1, 42, "s", body), body))
 
 	e.hookEnv()
@@ -81,16 +85,14 @@ func TestWebhookHookSignature(t *testing.T) {
 	hookID, secret := *row.HookID, e.hookSecret(row)
 	ok := hookHeaders("g1", "ping", hookID, 42, secret, body)
 
-	// hook id 不对（查不到行，且旧 App 的 secret 也验不过）
+	// hook id 不对（查不到行）
 	bad := ok.Clone()
 	bad.Set("X-GitHub-Hook-ID", strconv.FormatInt(hookID+1, 10))
 	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
 	bad.Set("X-GitHub-Hook-ID", "0x"+strconv.FormatInt(hookID, 16))
 	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
-	// 签名不对：别的 secret、旧 App 的 secret、缺前缀
+	// 签名不对：别的 secret、缺前缀
 	bad = hookHeaders("g1", "ping", hookID, 42, "other", body)
-	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
-	bad.Set("X-Hub-Signature-256", e.fake.Sign(body))
 	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
 	bad.Set("X-Hub-Signature-256", "sha1=00")
 	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
@@ -126,50 +128,32 @@ func TestWebhookHookSignature(t *testing.T) {
 	assert.Equal(t, "webhook", e.delivery(guid).Source)
 }
 
-// 过渡：没有匹配的 hook 行、且库里还有旧 App 时，按 App 的 webhook secret 验签（步骤 1.4 删除）。
-func TestWebhookLegacyApp(t *testing.T) {
-	e := newEnv(t)
-	body := []byte(`{"zen":"x"}`)
-	h := http.Header{}
-	h.Set("X-GitHub-Delivery", "g1")
-	h.Set("X-GitHub-Event", "ping")
-	h.Set("X-Hub-Signature-256", e.fake.Sign(body))
-	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, h, body))
-
-	e.installApp()
-	bad := h.Clone()
-	bad.Set("X-Hub-Signature-256", e.fake.Sign([]byte(`{"zen":"y"}`)))
-	assert.Equal(t, http.StatusUnauthorized, e.s.HandleWebhook(e.ctx, bad, body))
-	assert.Equal(t, http.StatusAccepted, e.s.HandleWebhook(e.ctx, h, body))
-	e.drain()
-	assert.Equal(t, "webhook", e.delivery("g1").Source)
-}
-
 func TestWebhookDedupAndUnknown(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
 	var calls atomic.Int32
 	e.s.handlers["test_event"] = func(context.Context, string, []byte) (string, error) {
 		calls.Add(1)
 		return "handled", nil
 	}
-	hook := e.hookURL()
-	_, guid := e.fake.Deliver(hook, "test_event", map[string]any{"action": "x"})
-	status, _ := e.fake.DeliverGUID(hook, "test_event", map[string]any{"action": "x"}, guid)
-	assert.Equal(t, http.StatusAccepted, status)
+	body := []byte(`{"action":"x"}`)
+	e.s.ingest(e.ctx, "g-dup", "test_event", body, "webhook", 0)
+	e.s.ingest(e.ctx, "g-dup", "test_event", body, "poll", 0)
 	e.drain()
-	_, _ = e.fake.DeliverGUID(hook, "test_event", map[string]any{"action": "x"}, guid)
+	e.s.ingest(e.ctx, "g-dup", "test_event", body, "webhook", 0)
 	e.drain()
 	assert.EqualValues(t, 1, calls.Load())
-	assert.Equal(t, "handled", e.delivery(guid).Outcome)
+	assert.Equal(t, "handled", e.delivery("g-dup").Outcome)
+	assert.Equal(t, "webhook", e.delivery("g-dup").Source)
 
 	g := e.deliver("no_such_event", map[string]any{})
 	assert.Equal(t, "ignored:event", e.delivery(g).Outcome)
+	g = e.deliver("installation", map[string]any{"action": "created"})
+	assert.Equal(t, "ignored:event", e.delivery(g).Outcome, "App 的安装事件不再处理")
 }
 
 func TestRepositoryRenamedEvent(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.userEnv()
 	e.widgets()
 	p := e.project("https://github.com/acme/widgets")
 	require.NoError(t, e.s.BindProject(e.ctx, p))
@@ -184,21 +168,9 @@ func TestRepositoryRenamedEvent(t *testing.T) {
 	assert.Equal(t, "ignored:action", e.delivery(g).Outcome)
 }
 
-func TestAppAuthorizationRevoked(t *testing.T) {
-	e := newEnv(t)
-	e.installApp()
-	e.fake.AddUser(7, "owner", "")
-	require.NoError(t, e.connect(slotUser, "c1", "owner"))
-	g := e.deliver("github_app_authorization", map[string]any{"action": "revoked", "sender": map[string]any{"login": "Owner"}})
-	assert.Equal(t, "handled", e.delivery(g).Outcome)
-	row, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
-	require.NoError(t, err)
-	assert.Equal(t, "reauth", row.Status)
-}
-
 func TestRunRecoversPending(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.oauthApp()
 	e.s.cfg.PollInterval = 20 * time.Millisecond
 	_, err := e.st.Q.InsertGithubDelivery(e.ctx, db.InsertGithubDeliveryParams{
 		Guid: "pending-1", Event: "ping", Source: "webhook", Payload: []byte(`{}`), ReceivedAt: e.clock.Now().UnixMilli(),
@@ -217,7 +189,7 @@ func TestRunRecoversPending(t *testing.T) {
 
 func TestDeliveryRetry(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.oauthApp()
 	var n atomic.Int32
 	fails := int32(2)
 	e.s.handlers["flaky"] = func(context.Context, string, []byte) (string, error) {

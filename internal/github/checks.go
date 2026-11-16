@@ -149,7 +149,7 @@ func (s *Service) doRollup(ctx context.Context, repoID, number int64, fresh bool
 	if err != nil || len(prjs) == 0 {
 		return err
 	}
-	tok, err := s.installToken(ctx, *prjs[0].GithubInstallationID)
+	tok, err := s.tokenFor(ctx, slotUser)
 	if err != nil {
 		return err
 	}
@@ -258,10 +258,10 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 		rounds.CiRounds = maxCIRounds + 1
 		return s.st.Q.SetThreadPullCIRounds(ctx, rounds)
 	}
-	if prj.GithubInstallationID == nil {
+	if prj.GithubRepoID == nil {
 		return nil
 	}
-	tok, err := s.installToken(ctx, *prj.GithubInstallationID)
+	tok, err := s.tokenFor(ctx, slotUser)
 	if err != nil {
 		return err
 	}

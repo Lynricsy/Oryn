@@ -238,7 +238,7 @@ func (s *Service) linkSampled(ctx context.Context, threadID, head string) error 
 	if err != nil {
 		return err
 	}
-	if prj.GithubRepoID == nil || prj.GithubInstallationID == nil {
+	if prj.GithubRepoID == nil {
 		return nil
 	}
 	full, auth, err := s.projectAuth(ctx, prj)

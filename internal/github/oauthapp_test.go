@@ -4,11 +4,30 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// codeOf 取 *Error 的码；不是 *Error 返回空串。
+func codeOf(err error) string {
+	var ge *Error
+	if errors.As(err, &ge) {
+		return ge.Code
+	}
+	return ""
+}
+
+func stateOf(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	st := u.Query().Get("state")
+	require.NotEmpty(t, st)
+	return st
+}
 
 // oauthApp 用假服务的 OAuth App 凭据完成配置。
 func (e *testEnv) oauthApp() {
@@ -61,16 +80,13 @@ func TestSetOAuthApp(t *testing.T) {
 	assert.Equal(t, "https://hooks.example.com", *st.WebhookBase)
 }
 
-func TestOAuthClientPrefersOAuthApp(t *testing.T) {
+func TestOAuthClient(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
-	id, secret, err := e.s.oauthClient(e.ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "Iv1.test", id, "没有 OAuth App 时退回旧 App")
-	assert.Equal(t, "client-secret", secret)
+	_, _, err := e.s.oauthClient(e.ctx)
+	assert.Equal(t, "github_not_configured", codeOf(err))
 
 	e.oauthApp()
-	id, secret, err = e.s.oauthClient(e.ctx)
+	id, secret, err := e.s.oauthClient(e.ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "Ov23.test", id)
 	assert.Equal(t, "oauth-secret", secret)

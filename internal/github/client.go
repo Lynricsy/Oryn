@@ -3,14 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -18,21 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
 
 // AAD 名称（secrets.Box 的密文绑定名）。
-const (
-	aadPrivateKey    = "github/app/private-key"
-	aadClientSecret  = "github/app/client-secret"
-	aadWebhookSecret = "github/app/webhook-secret"
-	aadOAuthSecret   = "github/oauth/client-secret"
-)
+const aadOAuthSecret = "github/oauth/client-secret"
 
 func aadAccess(slot string) string { return "github/identity/" + slot + "/access" }
 
@@ -252,107 +237,6 @@ func (s *Service) paged(ctx context.Context, path, auth string, maxPages int, pa
 		path = nextLink(h)
 	}
 	return nil
-}
-
-// app 读 App 行；没有 App → github_not_connected。
-func (s *Service) app(ctx context.Context) (db.GithubApp, error) {
-	app, err := s.st.Q.GetGithubApp(ctx)
-	if err != nil {
-		if isNoRows(err) {
-			return app, errf("github_not_connected", "GitHub App not created")
-		}
-		return app, err
-	}
-	return app, nil
-}
-
-// appJWT 签发 App JWT（RS256，iat = now − 60s，exp = now + 9m）。
-func (s *Service) appJWT(app db.GithubApp) (string, error) {
-	keyPEM, err := s.cfg.Box.Open(aadPrivateKey, app.PrivateKeyEnc)
-	if err != nil {
-		return "", err
-	}
-	key, err := parseRSAKey(keyPEM)
-	if err != nil {
-		return "", err
-	}
-	now := s.now()
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	claims, err := json.Marshal(map[string]any{
-		"iat": now.Add(-60 * time.Second).Unix(),
-		"exp": now.Add(9 * time.Minute).Unix(),
-		"iss": strconv.FormatInt(app.AppID, 10),
-	})
-	if err != nil {
-		return "", err
-	}
-	signing := header + "." + base64.RawURLEncoding.EncodeToString(claims)
-	sum := sha256.Sum256([]byte(signing))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
-	if err != nil {
-		return "", err
-	}
-	return signing + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-// parseRSAKey 解析 PEM 私钥（PKCS#1 或 PKCS#8）。
-func parseRSAKey(b []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(b)
-	if block == nil {
-		return nil, errors.New("github: App 私钥不是 PEM")
-	}
-	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return k, nil
-	}
-	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("github: 解析 App 私钥: %w", err)
-	}
-	rk, ok := k.(*rsa.PrivateKey)
-	if !ok {
-		return nil, errors.New("github: App 私钥不是 RSA")
-	}
-	return rk, nil
-}
-
-// appAuth 返回 App JWT 的 Authorization 头。
-func (s *Service) appAuth(ctx context.Context) (string, error) {
-	app, err := s.app(ctx)
-	if err != nil {
-		return "", err
-	}
-	jwt, err := s.appJWT(app)
-	if err != nil {
-		return "", err
-	}
-	return "Bearer " + jwt, nil
-}
-
-// installToken 取安装令牌，内存缓存 installTokenTTL。
-func (s *Service) installToken(ctx context.Context, installationID int64) (string, error) {
-	s.mu.Lock()
-	c, ok := s.instTokens[installationID]
-	s.mu.Unlock()
-	if ok && s.now().Before(c.exp) {
-		return c.token, nil
-	}
-	auth, err := s.appAuth(ctx)
-	if err != nil {
-		return "", err
-	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	if err := s.call(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", installationID), auth, nil, &out); err != nil {
-		return "", err
-	}
-	if out.Token == "" {
-		return "", errors.New("github: 安装令牌响应缺少 token")
-	}
-	s.mu.Lock()
-	s.instTokens[installationID] = cachedToken{token: out.Token, exp: s.now().Add(installTokenTTL)}
-	s.mu.Unlock()
-	return out.Token, nil
 }
 
 // graphql 发一条 GraphQL 查询；响应带 errors 时返回错误。

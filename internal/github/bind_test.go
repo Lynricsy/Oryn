@@ -31,61 +31,93 @@ func (e *testEnv) getProject(id string) db.Project {
 	return p
 }
 
-// widgets 在假服务上建 Acme/Widgets（id 42）并安装 App（安装 10）。
+// widgets 在假服务上建 Acme/Widgets（id 42）。
 func (e *testEnv) widgets() *githubtest.Repo {
 	e.t.Helper()
-	e.fake.AddInstallation(10, "Acme")
-	return e.fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10})
+	return e.fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900})
+}
+
+// userEnv 配好 OAuth App 并连接我的账号 owner。
+func (e *testEnv) userEnv() {
+	e.t.Helper()
+	e.oauthApp()
+	e.fake.AddUser(1, "owner", "The Owner")
+	require.NoError(e.t, e.connect(slotUser, "c-owner", "owner"))
 }
 
 func TestBindProject(t *testing.T) {
 	e := newEnv(t)
-	// 没有 App：什么都不做
+	e.widgets()
+	// 我的账号未连接：什么都不做
 	p := e.project("https://github.com/acme/widgets.git")
 	require.NoError(t, e.s.BindProject(e.ctx, p))
 	assert.Nil(t, ProjectGitHubAPI(e.getProject(p)))
 
-	e.installApp()
-	e.widgets()
+	e.userEnv()
 	require.NoError(t, e.s.BindProject(e.ctx, p))
 	row := e.getProject(p)
 	require.NotNil(t, row.GithubRepoID)
 	assert.EqualValues(t, 42, *row.GithubRepoID)
-	assert.EqualValues(t, 900, *row.GithubOwnerID)
-	assert.EqualValues(t, 10, *row.GithubInstallationID)
+	assert.Nil(t, row.GithubBindStatus)
 	api := ProjectGitHubAPI(row)
 	require.NotNil(t, api)
 	assert.Equal(t, "acme/widgets", api.FullName)
 	assert.True(t, api.Bound)
+	assert.Nil(t, api.BindStatus)
 	assert.True(t, api.Listen.Reviews && api.Listen.Comments && api.Listen.Ci)
 	repoID := int64(42)
 	bound, err := e.st.Q.ListProjectsByGithubRepo(e.ctx, &repoID)
 	require.NoError(t, err)
 	assert.Len(t, bound, 1)
 
-	// App 也没装的仓库、非 github.com、路径不是两段
-	other := e.project("https://github.com/acme/other")
+	// 非 github.com、路径不是两段：不绑定、也没有原因
 	gitlab := e.project("https://gitlab.com/acme/widgets")
 	deep := e.project("https://github.com/acme/widgets/extra")
-	for _, id := range []string{other, gitlab, deep} {
+	for _, id := range []string{gitlab, deep} {
 		require.NoError(t, e.s.BindProject(e.ctx, id))
 		assert.Nil(t, ProjectGitHubAPI(e.getProject(id)), id)
 	}
 
-	// 卸载 App 后：仓库 id 仍在，但不再算绑定
-	e.fake.RemoveInstallation(10)
-	require.NoError(t, e.s.BindProject(e.ctx, p))
-	api = ProjectGitHubAPI(e.getProject(p))
+	// 读不到的仓库：未绑定，原因 not_found
+	other := e.project("https://github.com/acme/other")
+	require.NoError(t, e.s.BindProject(e.ctx, other))
+	api = ProjectGitHubAPI(e.getProject(other))
 	require.NotNil(t, api)
 	assert.False(t, api.Bound)
-	bound, err = e.st.Q.ListProjectsByGithubRepo(e.ctx, &repoID)
-	require.NoError(t, err)
-	assert.Empty(t, bound)
+	require.NotNil(t, api.BindStatus)
+	assert.EqualValues(t, "not_found", *api.BindStatus)
+
+	// 组织限制 / SSO：清空仓库 id 并记原因（R8）；恢复后重新绑定并清空原因
+	for _, kind := range []string{"org_restricted", "sso_required"} {
+		e.fake.Lock()
+		e.fake.Repos[0].Restricted = kind
+		e.fake.Unlock()
+		require.NoError(t, e.s.BindProject(e.ctx, p))
+		row = e.getProject(p)
+		assert.Nil(t, row.GithubRepoID, kind)
+		require.NotNil(t, row.GithubBindStatus, kind)
+		assert.Equal(t, kind, *row.GithubBindStatus)
+		bound, err = e.st.Q.ListProjectsByGithubRepo(e.ctx, &repoID)
+		require.NoError(t, err)
+		assert.Empty(t, bound, kind)
+	}
+	e.fake.Lock()
+	e.fake.Repos[0].Restricted = ""
+	e.fake.Unlock()
+	require.NoError(t, e.s.BindProject(e.ctx, p))
+	row = e.getProject(p)
+	require.NotNil(t, row.GithubRepoID)
+	assert.Nil(t, row.GithubBindStatus)
+
+	// 仓库地址改成非 GitHub：清空绑定
+	require.NoError(t, e.st.Q.SetProjectRepoURL(e.ctx, db.SetProjectRepoURLParams{RepoUrl: new("https://gitlab.com/x/y"), GithubPrevUrls: "[]", UpdatedAt: 2, ID: p}))
+	require.NoError(t, e.s.BindProject(e.ctx, p))
+	assert.Nil(t, ProjectGitHubAPI(e.getProject(p)))
 }
 
 func TestBindProjectFollowsRename(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.userEnv()
 	e.widgets()
 	p := e.project("https://github.com/acme/widgets.git")
 	require.NoError(t, e.s.BindProject(e.ctx, p))
@@ -114,8 +146,8 @@ func TestBindProjectFollowsRename(t *testing.T) {
 func TestFollowRenameKeepsFivePrevURLs(t *testing.T) {
 	e := newEnv(t)
 	p := e.project("https://github.com/acme/n0")
-	repoID, owner, inst := int64(42), int64(1), int64(10)
-	require.NoError(t, e.st.Q.SetProjectGithub(e.ctx, db.SetProjectGithubParams{GithubRepoID: &repoID, GithubOwnerID: &owner, GithubInstallationID: &inst, ID: p}))
+	repoID := int64(42)
+	require.NoError(t, e.st.Q.SetProjectGithub(e.ctx, db.SetProjectGithubParams{GithubRepoID: &repoID, ID: p}))
 	for _, n := range []string{"n1", "n2", "n3", "n4", "n5", "n6", "n1"} {
 		require.NoError(t, e.s.followRename(e.ctx, 42, "acme/"+n))
 	}
@@ -128,13 +160,15 @@ func TestFollowRenameKeepsFivePrevURLs(t *testing.T) {
 	assert.Equal(t, "https://github.com/acme/n1", *e.getProject(p).RepoUrl)
 }
 
-func TestBindProjectsOnSync(t *testing.T) {
+// 连接我的账号后在后台重新绑定全部项目。
+func TestBindProjectsOnConnect(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
 	e.widgets()
 	p := e.project("https://github.com/Acme/Widgets")
-	require.NoError(t, e.s.SyncInstallations(e.ctx))
+	e.userEnv()
+	assert.Nil(t, e.getProject(p).GithubRepoID, "绑定在任务队列里")
+	e.drain()
 	row := e.getProject(p)
-	require.NotNil(t, row.GithubInstallationID)
-	assert.EqualValues(t, 10, *row.GithubInstallationID)
+	require.NotNil(t, row.GithubRepoID)
+	assert.EqualValues(t, 42, *row.GithubRepoID)
 }
