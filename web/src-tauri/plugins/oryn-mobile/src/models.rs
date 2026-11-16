@@ -1,6 +1,6 @@
 //! Rust ↔ 原生插件的数据形状（字段 camelCase，与 `android/` 的 Kotlin、`ios/` 的 Swift 实现一一对应）。
 //!
-//! 这些类型不依赖平台：壳的推送 / 分享编排与原生底栏的校验在主机上单测时用的是同一组类型。
+//! 这些类型不依赖平台：壳的推送 / 分享编排与原生底栏、原生页头的校验在主机上单测时用的是同一组类型。
 
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +173,244 @@ pub struct TabBarReveal {
     pub ease: Option<[f64; 4]>,
 }
 
+/// 原生页头里各控件的矩形（CSS px）；与底栏同形。
+pub type HeaderFrame = TabBarFrame;
+
+/// orb 状态珠的画法（网页 `OrbBead` 的各档 + `err` = 7pt 错误色圆点）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderOrb {
+    Booting,
+    Ready,
+    Working,
+    Freezing,
+    Frozen,
+    Stopped,
+    Deleted,
+    Failed,
+    Err,
+}
+
+/// 四选一：`symbol` / `glyph`（可带 `bg`、`fg`）/ `dot` / `orb`（校验在壳的 `mobile_logic::valid_header`）。颜色一律 `#rrggbb`。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderIcon {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orb: Option<HeaderOrb>,
+}
+
+/// 说明行的语气（目前只有错误色）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderTone {
+    Err,
+}
+
+/// 视图钮 / 菜单项文字后的提醒点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderDot {
+    Accent,
+    Warn,
+}
+
+/// 一段「图形 + 文字」：标题胶囊第二行的一段、菜单行的说明行。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderSeg {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HeaderIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone: Option<HeaderTone>,
+}
+
+/// 标题胶囊第二行末尾的标记图标（定时、公开、PR…）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderMark {
+    pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dim: Option<bool>,
+}
+
+/// 菜单的一项：`id` 在菜单内唯一，子项是 `<父 id>/<key>`；原生点击原样回传。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderItem {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HeaderIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub: Option<HeaderSeg>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dot: Option<HeaderDot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pulse: Option<bool>,
+    /// 给出即单选项；`true` 时右侧打勾。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub danger: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    /// 选中时原生把这段文字写进剪贴板。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<String>,
+    /// 一级子页（子项不能再有 children）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<HeaderItem>,
+}
+
+/// 一个弹出菜单：顶部宫格、浅底状态块、其余分组（组间一条细线）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderMenu {
+    /// 读屏用的菜单名。
+    pub label: String,
+    /// 打开时是否压暗页面（标题菜单 true，视图菜单 false）。
+    pub dim: bool,
+    #[serde(default)]
+    pub quick: Vec<HeaderItem>,
+    #[serde(default)]
+    pub status: Vec<HeaderItem>,
+    pub groups: Vec<Vec<HeaderItem>>,
+}
+
+/// 网页给的调色板（`#rrggbb`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderPalette {
+    pub accent: String,
+    pub brand: String,
+    pub err: String,
+    pub warn: String,
+    pub good: String,
+    pub frost: String,
+}
+
+/// 可调参数（0–1）：遮罩不透明度、面板底色着色强度。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HeaderTune {
+    pub scrim: f64,
+    pub tint: f64,
+}
+
+/// 读屏文案：子页的返回行、关闭区。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderText {
+    pub back: String,
+    pub close: String,
+}
+
+/// 侧栏圆钮。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeaderLead {
+    pub frame: HeaderFrame,
+    pub symbol: String,
+    pub label: String,
+}
+
+/// 两行标题胶囊与它的菜单。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeaderTitle {
+    pub frame: HeaderFrame,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HeaderIcon>,
+    /// 有值时第二行只显示它（错误色）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub meta: Vec<HeaderSeg>,
+    pub marks: Vec<HeaderMark>,
+    /// 读屏读的整句。
+    pub label: String,
+    pub menu: HeaderMenu,
+}
+
+/// 视图圆钮与它的菜单。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeaderTrail {
+    pub frame: HeaderFrame,
+    pub symbol: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dot: Option<HeaderDot>,
+    pub menu: HeaderMenu,
+}
+
+/// 原生页头的整份状态（`headerSet` 的 `spec`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeaderSpec {
+    /// 线程 id：变了原生收起菜单；事件原样带回。
+    pub key: String,
+    pub dark: bool,
+    pub palette: HeaderPalette,
+    pub tune: HeaderTune,
+    pub text: HeaderText,
+    pub lead: HeaderLead,
+    pub title: HeaderTitle,
+    /// 没有视图钮时为 `null`（不省略）。
+    pub trail: Option<HeaderTrail>,
+}
+
+/// 控件层的呈现状态（`headerShow` 的载荷）：`dx` 整层水平位移（CSS px），`passive` 只显示不接触摸；
+/// `ms` 为 0 立即生效，否则等 `delay` 毫秒后按 `ease` 过渡 `ms` 毫秒。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HeaderShow {
+    pub alpha: f64,
+    pub dx: f64,
+    pub passive: bool,
+    #[serde(default)]
+    pub ms: u32,
+    #[serde(default)]
+    pub delay: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ease: Option<[f64; 4]>,
+}
+
+/// 两个菜单。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderMenuKind {
+    Title,
+    Trail,
+}
+
+/// `headerMenu` 的载荷：`open` 为空 = 收起（不省略）；`page` = 直接停在某个子页（父项 id）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderMenuCmd {
+    pub open: Option<HeaderMenuKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+}
+
+/// 原生页头事件的种类：`lead` 点了侧栏钮；`menu` 用户打开 / 关闭了菜单；`select` 选了一项。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderOp {
+    Lead,
+    Menu,
+    Select,
+}
+
+/// `headerProbe` 的返回（调试）：屏幕中心与三件控件中心的触摸是否被原生层截住。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderProbe {
+    pub center: bool,
+    pub lead: bool,
+    pub title: bool,
+    #[serde(default)]
+    pub trail: bool,
+}
+
 /// 原生 → Rust 事件（`trigger("event", {type, …})`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -207,6 +445,15 @@ pub enum Event {
     TabBar {
         id: String,
     },
+    /// 原生页头的交互（iOS）：`lead` 点了侧栏钮；`menu` 用户打开 / 关闭了菜单（`menu` 缺省 = 关闭）；`select` 选了一项。
+    Header {
+        op: HeaderOp,
+        key: String,
+        #[serde(default)]
+        menu: Option<HeaderMenuKind>,
+        #[serde(default)]
+        id: Option<String>,
+    },
 }
 
 /// `notify` 的参数。
@@ -237,6 +484,9 @@ mod tests {
 
     const SET: &str = include_str!("../fixtures/tab-bar-set.json");
     const REVEAL: &str = include_str!("../fixtures/tab-bar-reveal.json");
+    const HEADER_SET: &str = include_str!("../fixtures/header-set.json");
+    const HEADER_SHOW: &str = include_str!("../fixtures/header-show.json");
+    const HEADER_MENU: &str = include_str!("../fixtures/header-menu.json");
 
     /// JSON 里整数与浮点不相等（`12` ≠ `12.0`），比较前统一成浮点。
     fn norm(v: Value) -> Value {
@@ -286,5 +536,121 @@ mod tests {
     fn tab_bar_event_parses() {
         let event: Event = serde_json::from_value(json!({"type": "tabbar", "id": "more"})).unwrap();
         assert_eq!(event, Event::TabBar { id: "more".into() });
+    }
+
+    #[test]
+    fn header_set_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(HEADER_SET).unwrap();
+        let spec: HeaderSpec = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(norm(serde_json::to_value(&spec).unwrap()), norm(raw));
+        let menu = &spec.title.menu;
+        assert_eq!(menu.quick.len(), 3);
+        assert_eq!(menu.status[0].children.len(), 4);
+        assert_eq!(
+            menu.status[0]
+                .sub
+                .as_ref()
+                .and_then(|s| s.icon.as_ref())
+                .and_then(|i| i.orb),
+            Some(HeaderOrb::Working)
+        );
+        assert_eq!(
+            menu.status[2].sub.as_ref().and_then(|s| s.tone),
+            Some(HeaderTone::Err)
+        );
+        assert!(menu.groups[1][1].copy.is_some());
+        let trail = spec.trail.as_ref().unwrap();
+        assert_eq!(trail.dot, Some(HeaderDot::Warn));
+        assert_eq!(
+            trail.menu.groups[0][1].checked,
+            Some(false),
+            "单选项未选中时 checked 显式为 false"
+        );
+        // 没有视图钮：`trail` 序列化为 null（不省略）
+        let bare = HeaderSpec {
+            trail: None,
+            ..spec
+        };
+        assert_eq!(serde_json::to_value(&bare).unwrap()["trail"], Value::Null);
+        // 撤掉：`{"spec": null}`
+        let none: Option<HeaderSpec> = serde_json::from_value(Value::Null).unwrap();
+        assert_eq!(json!({ "spec": none }), json!({ "spec": null }));
+    }
+
+    #[test]
+    fn header_show_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(HEADER_SHOW).unwrap();
+        let show: HeaderShow = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            (show.alpha, show.ms, show.delay, show.passive),
+            (1.0, 120, 0, false)
+        );
+        assert_eq!(norm(serde_json::to_value(show).unwrap()), norm(raw));
+        let bare: HeaderShow =
+            serde_json::from_value(json!({"alpha": 0, "dx": 0, "passive": true})).unwrap();
+        assert_eq!((bare.ms, bare.delay, bare.ease), (0, 0, None));
+    }
+
+    #[test]
+    fn header_menu_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(HEADER_MENU).unwrap();
+        let menu: HeaderMenuCmd = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            menu,
+            HeaderMenuCmd {
+                open: Some(HeaderMenuKind::Title),
+                page: Some("env".into())
+            }
+        );
+        assert_eq!(serde_json::to_value(&menu).unwrap(), raw);
+        // 收起：`open` 为 null 且不省略
+        let close = HeaderMenuCmd {
+            open: None,
+            page: None,
+        };
+        assert_eq!(serde_json::to_value(&close).unwrap(), json!({"open": null}));
+    }
+
+    #[test]
+    fn header_event_parses() {
+        let select: Event = serde_json::from_value(
+            json!({"type": "header", "op": "select", "key": "k", "menu": "title", "id": "env/freeze"}),
+        )
+        .unwrap();
+        assert_eq!(
+            select,
+            Event::Header {
+                op: HeaderOp::Select,
+                key: "k".into(),
+                menu: Some(HeaderMenuKind::Title),
+                id: Some("env/freeze".into()),
+            }
+        );
+        let close: Event =
+            serde_json::from_value(json!({"type": "header", "op": "menu", "key": "k"})).unwrap();
+        assert_eq!(
+            close,
+            Event::Header {
+                op: HeaderOp::Menu,
+                key: "k".into(),
+                menu: None,
+                id: None
+            }
+        );
+    }
+
+    #[test]
+    fn header_probe_parses() {
+        let probe: HeaderProbe =
+            serde_json::from_value(json!({"center": false, "lead": true, "title": true})).unwrap();
+        assert_eq!(
+            probe,
+            HeaderProbe {
+                center: false,
+                lead: true,
+                title: true,
+                trail: false
+            }
+        );
     }
 }

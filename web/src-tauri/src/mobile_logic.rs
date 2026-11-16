@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri_plugin_oryn_mobile::{
-    CornerRadii, Insets, Permission, PushChannel, PushState, ShareIntake, TabBarIcon, TabBarReveal,
-    TabBarSpec,
+    CornerRadii, HeaderIcon, HeaderItem, HeaderMenu, HeaderMenuCmd, HeaderMenuKind, HeaderOp,
+    HeaderSeg, HeaderShow, HeaderSpec, Insets, Permission, PushChannel, PushState, ShareIntake,
+    TabBarFrame, TabBarIcon, TabBarReveal, TabBarSpec,
 };
 
 use crate::api::{Api, ApiError, PushSubscription};
@@ -336,13 +337,16 @@ pub fn tab_bar_event(id: &str) -> Value {
     json!({"type": "tabbar", "id": id})
 }
 
+/// SF Symbol 名：1..=64 字节 `[a-z0-9.]`。
+fn valid_symbol(s: &str) -> bool {
+    (1..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.')
+}
+
 fn valid_tab_icon(icon: &TabBarIcon) -> bool {
     match icon {
-        TabBarIcon::Symbol(s) => {
-            (1..=64).contains(&s.len())
-                && s.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.')
-        }
+        TabBarIcon::Symbol(s) => valid_symbol(s),
         TabBarIcon::Glyph(g) => (1..=32).contains(&g.len()),
         TabBarIcon::Image(b64) => {
             (1..=131_072).contains(&b64.len())
@@ -356,6 +360,24 @@ fn valid_tab_icon(icon: &TabBarIcon) -> bool {
 /// `v` 有限且落在 `[lo, hi]` 内（NaN 与无穷都不算）。
 fn within(v: f64, lo: f64, hi: f64) -> bool {
     v.is_finite() && (lo..=hi).contains(&v)
+}
+
+/// 原生叠层的矩形：四项有限，x、y ∈ [-100, 5000]，width ∈ [1, 2000]，height ∈ [1, 400]。
+fn valid_frame(f: &TabBarFrame) -> bool {
+    within(f.x, -100.0, 5000.0)
+        && within(f.y, -100.0, 5000.0)
+        && within(f.width, 1.0, 2000.0)
+        && within(f.height, 1.0, 400.0)
+}
+
+/// 缓动：None，或四项有限、第 0 / 2 项 ∈ [0, 1]、第 1 / 3 项 ∈ [-2, 3]。
+fn valid_ease(e: Option<[f64; 4]>) -> bool {
+    e.is_none_or(|[x1, y1, x2, y2]| {
+        within(x1, 0.0, 1.0)
+            && within(x2, 0.0, 1.0)
+            && within(y1, -2.0, 3.0)
+            && within(y2, -2.0, 3.0)
+    })
 }
 
 /// `host_tab_bar_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
@@ -372,29 +394,19 @@ pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
                 && (1..=64).contains(&item.label.chars().count())
                 && valid_tab_icon(&item.icon)
         });
-    let f = &spec.frame;
     items_ok
         && spec.selected.len() <= 32
-        && within(f.x, -100.0, 5000.0)
-        && within(f.y, -100.0, 5000.0)
-        && within(f.width, 1.0, 2000.0)
-        && within(f.height, 1.0, 400.0)
+        && valid_frame(&spec.frame)
         && spec.accent.as_deref().is_none_or(valid_color)
 }
 
-/// x 有限且 ∈ [-10000, 10000]；alpha ∈ [0, 1]；ms ≤ 2000；delay ≤ 1000；
-/// ease 为 None，或四项有限、第 0 / 2 项 ∈ [0, 1]、第 1 / 3 项 ∈ [-2, 3]。
+/// x 有限且 ∈ [-10000, 10000]；alpha ∈ [0, 1]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`。
 pub fn valid_reveal(r: &TabBarReveal) -> bool {
     within(r.x, -10_000.0, 10_000.0)
         && within(r.alpha, 0.0, 1.0)
         && r.ms <= 2000
         && r.delay <= 1000
-        && r.ease.is_none_or(|[x1, y1, x2, y2]| {
-            within(x1, 0.0, 1.0)
-                && within(x2, 0.0, 1.0)
-                && within(y1, -2.0, 3.0)
-                && within(y2, -2.0, 3.0)
-        })
+        && valid_ease(r.ease)
 }
 
 /// CI 演示用：夹具 tab-bar-set.json，只把 frame 换成该屏幕下网页会算出的位置。返回 (spec, 侧栏宽度)。
@@ -413,6 +425,195 @@ pub fn demo_tab_bar(width: f64, height: f64, safe_bottom: f64) -> (TabBarSpec, f
         height: 52.0,
     };
     (spec, sink_w)
+}
+
+// ---------------------------------------------------------------- 原生页头
+
+/// 字符数（不是字节数）落在 `lo..=hi`。
+fn chars_in(s: &str, lo: usize, hi: usize) -> bool {
+    (lo..=hi).contains(&s.chars().count())
+}
+
+/// 线程 id：1..=96 字节，`[A-Za-z0-9_.:-]`。
+pub fn valid_header_key(key: &str) -> bool {
+    (1..=96).contains(&key.len())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-'))
+}
+
+/// 菜单项 id（含子项的 `父/子`）：1..=96 字节，`[A-Za-z0-9_.:/#-]`。
+pub fn valid_item_id(id: &str) -> bool {
+    (1..=96).contains(&id.len())
+        && id.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'/' | b'#' | b'-')
+        })
+}
+
+/// 图标四选一：symbol / glyph（1..=32 字节，可带 `bg`、`fg`）/ dot / orb；颜色一律 `valid_color`。
+fn valid_header_icon(i: &HeaderIcon) -> bool {
+    let kinds = [
+        i.symbol.is_some(),
+        i.glyph.is_some(),
+        i.dot.is_some(),
+        i.orb.is_some(),
+    ];
+    kinds.iter().filter(|k| **k).count() == 1
+        && i.symbol.as_deref().is_none_or(valid_symbol)
+        && i.glyph
+            .as_deref()
+            .is_none_or(|g| (1..=32).contains(&g.len()))
+        && i.dot.as_deref().is_none_or(valid_color)
+        && (i.glyph.is_some() || (i.bg.is_none() && i.fg.is_none()))
+        && i.bg.as_deref().is_none_or(valid_color)
+        && i.fg.as_deref().is_none_or(valid_color)
+}
+
+fn valid_seg(s: &HeaderSeg) -> bool {
+    chars_in(&s.text, 1, 120) && s.icon.as_ref().is_none_or(valid_header_icon)
+}
+
+/// `top`：顶层项才能带子项（子页只有一级）。
+fn valid_item(item: &HeaderItem, top: bool) -> bool {
+    valid_item_id(&item.id)
+        && chars_in(&item.label, 1, 200)
+        && item.icon.as_ref().is_none_or(valid_header_icon)
+        && item.sub.as_ref().is_none_or(valid_seg)
+        && item.hint.as_deref().is_none_or(|h| chars_in(h, 1, 32))
+        && item
+            .copy
+            .as_deref()
+            .is_none_or(|c| (1..=2048).contains(&c.len()))
+        && item.children.len() <= 24
+        && (top || item.children.is_empty())
+        && item.children.iter().all(|c| valid_item(c, false))
+}
+
+fn valid_menu(m: &HeaderMenu) -> bool {
+    let tops = || {
+        m.quick
+            .iter()
+            .chain(&m.status)
+            .chain(m.groups.iter().flatten())
+    };
+    let mut ids: Vec<&str> = tops()
+        .flat_map(|i| std::iter::once(i).chain(&i.children))
+        .map(|i| i.id.as_str())
+        .collect();
+    let total = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    chars_in(&m.label, 1, 400)
+        && m.quick.len() <= 4
+        && m.status.len() <= 32
+        && m.groups.len() <= 8
+        && m.groups.iter().all(|g| (1..=24).contains(&g.len()))
+        && total <= 160
+        && ids.len() == total
+        && tops().all(|i| valid_item(i, true))
+}
+
+/// `host_header_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
+/// key `valid_header_key`；六个调色板颜色 `valid_color`；tune 两项 ∈ [0, 1]；text 两项 1..=32 个字符；
+/// lead / trail：frame 同底栏（`valid_frame`）、symbol `valid_symbol`、label 1..=64 个字符；
+/// title：text 1..=300、label 1..=600、error（有的话）1..=300 个字符，meta ≤ 6 段、marks ≤ 6 个；
+/// 菜单：label 1..=400，quick ≤ 4、status ≤ 32、groups ≤ 8 组且每组 1..=24 项、子项 ≤ 24 且不再嵌套、
+/// 全菜单 ≤ 160 项且 id 互不相同；项：label 1..=200、hint 1..=32、说明行 1..=120 个字符、copy 1..=2048 字节；
+/// 图标四选一，`bg` / `fg` 只配 `glyph`。
+pub fn valid_header(spec: &HeaderSpec) -> bool {
+    let p = &spec.palette;
+    let t = &spec.title;
+    valid_header_key(&spec.key)
+        && [&p.accent, &p.brand, &p.err, &p.warn, &p.good, &p.frost]
+            .iter()
+            .all(|c| valid_color(c))
+        && within(spec.tune.scrim, 0.0, 1.0)
+        && within(spec.tune.tint, 0.0, 1.0)
+        && chars_in(&spec.text.back, 1, 32)
+        && chars_in(&spec.text.close, 1, 32)
+        && valid_frame(&spec.lead.frame)
+        && valid_symbol(&spec.lead.symbol)
+        && chars_in(&spec.lead.label, 1, 64)
+        && valid_frame(&t.frame)
+        && chars_in(&t.text, 1, 300)
+        && chars_in(&t.label, 1, 600)
+        && t.icon.as_ref().is_none_or(valid_header_icon)
+        && t.error.as_deref().is_none_or(|e| chars_in(e, 1, 300))
+        && t.meta.len() <= 6
+        && t.meta.iter().all(valid_seg)
+        && t.marks.len() <= 6
+        && t.marks.iter().all(|m| valid_symbol(&m.symbol))
+        && valid_menu(&t.menu)
+        && spec.trail.as_ref().is_none_or(|r| {
+            valid_frame(&r.frame)
+                && valid_symbol(&r.symbol)
+                && chars_in(&r.label, 1, 64)
+                && valid_menu(&r.menu)
+        })
+}
+
+/// alpha ∈ [0, 1]；dx 有限且 ∈ [-10000, 10000]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`。
+pub fn valid_header_show(s: &HeaderShow) -> bool {
+    within(s.alpha, 0.0, 1.0)
+        && within(s.dx, -10_000.0, 10_000.0)
+        && s.ms <= 2000
+        && s.delay <= 1000
+        && valid_ease(s.ease)
+}
+
+/// `page`（有的话）是合法的菜单项 id。
+pub fn valid_header_menu(m: &HeaderMenuCmd) -> bool {
+    m.page.as_deref().is_none_or(valid_item_id)
+}
+
+/// 插件事件 → 页面事件 `{type:"header", op, key, …}`；形状不对或越界的丢弃。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub fn header_event(
+    op: HeaderOp,
+    key: &str,
+    menu: Option<HeaderMenuKind>,
+    id: Option<&str>,
+) -> Option<Value> {
+    if !valid_header_key(key) {
+        return None;
+    }
+    match (op, menu, id) {
+        (HeaderOp::Lead, None, None) => Some(json!({"type": "header", "op": "lead", "key": key})),
+        (HeaderOp::Menu, menu, None) => {
+            Some(json!({"type": "header", "op": "menu", "key": key, "menu": menu}))
+        }
+        (HeaderOp::Select, Some(menu), Some(id)) if valid_item_id(id) => {
+            Some(json!({"type": "header", "op": "select", "key": key, "menu": menu, "id": id}))
+        }
+        _ => None,
+    }
+}
+
+/// CI 演示用：夹具 header-set.json，只把三个 frame 换成该屏幕下网页会量出的位置（页头 `px-3 py-2`、圆钮 44、胶囊高 46、间距 8）：
+/// lead = {12, safe_top + 9, 44, 44}；title = {64, safe_top + 8, width − 128, 46}；trail = {width − 56, safe_top + 9, 44, 44}。
+#[cfg(any(test, all(debug_assertions, target_os = "ios")))]
+pub fn demo_header(width: f64, safe_top: f64) -> HeaderSpec {
+    let mut spec: HeaderSpec = serde_json::from_str(include_str!(
+        "../plugins/oryn-mobile/fixtures/header-set.json"
+    ))
+    .expect("header-set.json 夹具");
+    let round = |x: f64| TabBarFrame {
+        x,
+        y: safe_top + 9.0,
+        width: 44.0,
+        height: 44.0,
+    };
+    spec.lead.frame = round(12.0);
+    spec.title.frame = TabBarFrame {
+        x: 64.0,
+        y: safe_top + 8.0,
+        width: width - 128.0,
+        height: 46.0,
+    };
+    if let Some(trail) = spec.trail.as_mut() {
+        trail.frame = round(width - 56.0);
+    }
+    spec
 }
 
 // ---------------------------------------------------------------- 分享
@@ -1088,6 +1289,321 @@ mod tests {
         for bad in ["", "More", "a b", "x.y", &"a".repeat(33)] {
             assert!(!valid_tab_id(bad), "{bad}");
         }
+    }
+
+    const HEADER_SET: &str = include_str!("../plugins/oryn-mobile/fixtures/header-set.json");
+    const HEADER_SHOW: &str = include_str!("../plugins/oryn-mobile/fixtures/header-show.json");
+    const HEADER_MENU: &str = include_str!("../plugins/oryn-mobile/fixtures/header-menu.json");
+
+    fn fixture_header() -> HeaderSpec {
+        serde_json::from_str(HEADER_SET).unwrap()
+    }
+
+    fn fixture_show() -> HeaderShow {
+        serde_json::from_str(HEADER_SHOW).unwrap()
+    }
+
+    fn header_item(id: &str) -> HeaderItem {
+        serde_json::from_value(json!({"id": id, "label": id})).unwrap()
+    }
+
+    /// 页头的三个夹具同样是 TS、Rust、Swift 三方的共同契约。
+    #[test]
+    fn header_fixtures_round_trip() {
+        for (raw, back) in [
+            (HEADER_SET, serde_json::to_value(fixture_header()).unwrap()),
+            (HEADER_SHOW, serde_json::to_value(fixture_show()).unwrap()),
+            (
+                HEADER_MENU,
+                serde_json::to_value(serde_json::from_str::<HeaderMenuCmd>(HEADER_MENU).unwrap())
+                    .unwrap(),
+            ),
+        ] {
+            assert_eq!(norm(back), norm(serde_json::from_str(raw).unwrap()));
+        }
+        assert!(valid_header(&fixture_header()));
+        assert!(valid_header_show(&fixture_show()));
+        assert!(valid_header_menu(
+            &serde_json::from_str(HEADER_MENU).unwrap()
+        ));
+    }
+
+    /// 在夹具上改一处后应被 `valid_header` 拒绝。
+    fn rejects_header(name: &str, mutate: impl FnOnce(&mut HeaderSpec)) {
+        let mut s = fixture_header();
+        mutate(&mut s);
+        assert!(!valid_header(&s), "{name}");
+    }
+
+    #[test]
+    fn header_limits() {
+        rejects_header("key 含空格", |s| s.key = "T 1".into());
+        rejects_header("key 97 字节", |s| s.key = "a".repeat(97));
+        rejects_header("key 为空", |s| s.key.clear());
+        rejects_header("palette.err red", |s| s.palette.err = "red".into());
+        rejects_header("tune.scrim 1.5", |s| s.tune.scrim = 1.5);
+        rejects_header("tune.tint NaN", |s| s.tune.tint = f64::NAN);
+        rejects_header("text.back 为空", |s| s.text.back.clear());
+        rejects_header("lead.symbol 含大写", |s| {
+            s.lead.symbol = "Sidebar.left".into()
+        });
+        rejects_header("lead.label 65 字符", |s| s.lead.label = "字".repeat(65));
+        rejects_header("title.text 为空", |s| s.title.text.clear());
+        rejects_header("title.text 301 字符", |s| s.title.text = "字".repeat(301));
+        rejects_header("title.label 601 字符", |s| {
+            s.title.label = "字".repeat(601)
+        });
+        rejects_header("title.error 为空", |s| {
+            s.title.error = Some(String::new())
+        });
+        rejects_header("meta 7 段", |s| {
+            let seg = s.title.meta[0].clone();
+            s.title.meta = vec![seg; 7];
+        });
+        rejects_header("meta 文字 121 字符", |s| {
+            s.title.meta[0].text = "字".repeat(121)
+        });
+        rejects_header("marks 7 个", |s| {
+            let m = s.title.marks[0].clone();
+            s.title.marks = vec![m; 7];
+        });
+        rejects_header("mark symbol 含空格", |s| {
+            s.title.marks[0].symbol = "a b".into()
+        });
+        rejects_header("图标同时有 symbol 与 dot", |s| {
+            s.title.menu.quick[0].icon = Some(HeaderIcon {
+                symbol: Some("pin".into()),
+                dot: Some("#123456".into()),
+                ..Default::default()
+            })
+        });
+        rejects_header("图标一项都没有", |s| {
+            s.title.menu.quick[0].icon = Some(HeaderIcon::default())
+        });
+        rejects_header("bg 配在 symbol 上", |s| {
+            s.title.menu.quick[0].icon = Some(HeaderIcon {
+                symbol: Some("pin".into()),
+                bg: Some("#123456".into()),
+                ..Default::default()
+            })
+        });
+        rejects_header("glyph 的 fg 不是颜色", |s| {
+            s.title.icon.as_mut().unwrap().fg = Some("black".into())
+        });
+        rejects_header("glyph 33 字节", |s| {
+            s.title.icon.as_mut().unwrap().glyph = Some("a".repeat(33))
+        });
+        rejects_header("dot 不是颜色", |s| {
+            s.title.menu.quick[0].icon = Some(HeaderIcon {
+                dot: Some("red".into()),
+                ..Default::default()
+            })
+        });
+        rejects_header("quick 5 项", |s| {
+            s.title.menu.quick = (0..5).map(|i| header_item(&format!("q{i}"))).collect()
+        });
+        rejects_header("status 33 项", |s| {
+            s.title.menu.status = (0..33).map(|i| header_item(&format!("s{i}"))).collect()
+        });
+        rejects_header("9 组", |s| {
+            s.title.menu.groups = (0..9)
+                .map(|i| vec![header_item(&format!("g{i}"))])
+                .collect()
+        });
+        rejects_header("某组为空", |s| s.title.menu.groups.push(vec![]));
+        rejects_header("某组 25 项", |s| {
+            s.title.menu.groups[0] = (0..25).map(|i| header_item(&format!("g{i}"))).collect()
+        });
+        rejects_header("全菜单 161 项", |s| {
+            let m = &mut s.title.menu;
+            m.quick.clear();
+            m.status.clear();
+            m.groups = (0..7)
+                .map(|g| (0..23).map(|i| header_item(&format!("g{g}-{i}"))).collect())
+                .collect();
+        });
+        rejects_header("子项 25 个", |s| {
+            s.title.menu.status[0].children =
+                (0..25).map(|i| header_item(&format!("env/{i}"))).collect()
+        });
+        rejects_header("子项再带 children", |s| {
+            s.title.menu.status[0].children[0].children = vec![header_item("env/info/x")]
+        });
+        rejects_header("两项同 id", |s| {
+            s.title.menu.groups[0][1].children.push(header_item("env"))
+        });
+        rejects_header("项 id 含空格", |s| {
+            s.title.menu.quick[0].id = "a b".into()
+        });
+        rejects_header("项 id 97 字节", |s| {
+            s.title.menu.quick[0].id = "a".repeat(97)
+        });
+        rejects_header("item.label 201 字符", |s| {
+            s.title.menu.quick[0].label = "字".repeat(201)
+        });
+        rejects_header("item.label 为空", |s| s.title.menu.quick[0].label.clear());
+        rejects_header("hint 33 字符", |s| {
+            s.title.menu.groups[1][0].hint = Some("字".repeat(33))
+        });
+        rejects_header("说明行为空", |s| {
+            s.title.menu.status[1].sub.as_mut().unwrap().text.clear()
+        });
+        rejects_header("copy 2049 字节", |s| {
+            s.title.menu.groups[1][1].copy = Some("a".repeat(2049))
+        });
+        rejects_header("菜单 label 为空", |s| s.title.menu.label.clear());
+        rejects_header("trail 菜单 label 为空", |s| {
+            s.trail.as_mut().unwrap().menu.label.clear()
+        });
+        rejects_header("trail.frame 宽 0", |s| {
+            s.trail.as_mut().unwrap().frame.width = 0.0
+        });
+        rejects_header("trail.symbol 为空", |s| {
+            s.trail.as_mut().unwrap().symbol.clear()
+        });
+        rejects_header("title.frame x 为 NaN", |s| s.title.frame.x = f64::NAN);
+        rejects_header("lead.frame 高 401", |s| s.lead.frame.height = 401.0);
+        // 边界上的合法值
+        let mut s = fixture_header();
+        s.trail = None;
+        s.title.error = Some("x".into());
+        s.title.menu.status = (0..32).map(|i| header_item(&format!("s{i}"))).collect();
+        s.title.menu.groups = vec![(0..24).map(|i| header_item(&format!("g{i}"))).collect()];
+        s.title.menu.groups[0][0].label = "字".repeat(200);
+        s.title.menu.groups[0][1].hint = Some("字".repeat(32));
+        s.title.menu.groups[0][2].copy = Some("a".repeat(2048));
+        s.title.menu.groups[0][3].children =
+            (0..24).map(|i| header_item(&format!("g3/{i}"))).collect();
+        s.title.text = "字".repeat(300);
+        s.key = "a".repeat(96);
+        assert!(valid_header(&s));
+        // 菜单项 id 允许 `/` 与 `#`，线程 id 不允许
+        assert!(valid_item_id("pr-#12/open"));
+        assert!(!valid_header_key("T/1"));
+    }
+
+    #[test]
+    fn header_show_and_menu_limits() {
+        let ok = HeaderShow {
+            alpha: 0.0,
+            dx: 0.0,
+            passive: true,
+            ms: 0,
+            delay: 0,
+            ease: None,
+        };
+        assert!(valid_header_show(&ok));
+        assert!(valid_header_show(&HeaderShow {
+            dx: -10_000.0,
+            ms: 2000,
+            delay: 1000,
+            ease: Some([0.2, 0.8, 0.2, 1.0]),
+            ..ok
+        }));
+        for (name, bad) in [
+            ("alpha 1.5", HeaderShow { alpha: 1.5, ..ok }),
+            ("alpha 为负", HeaderShow { alpha: -0.1, ..ok }),
+            ("dx 为 NaN", HeaderShow { dx: f64::NAN, ..ok }),
+            ("dx 10001", HeaderShow { dx: 10_001.0, ..ok }),
+            ("ms 2001", HeaderShow { ms: 2001, ..ok }),
+            ("delay 1001", HeaderShow { delay: 1001, ..ok }),
+            (
+                "ease[0] 1.2",
+                HeaderShow {
+                    ease: Some([1.2, 0.8, 0.2, 1.0]),
+                    ..ok
+                },
+            ),
+        ] {
+            assert!(!valid_header_show(&bad), "{name}");
+        }
+        assert!(valid_header_menu(&HeaderMenuCmd {
+            open: None,
+            page: None,
+        }));
+        assert!(valid_header_menu(&HeaderMenuCmd {
+            open: Some(HeaderMenuKind::Title),
+            page: Some("env".into()),
+        }));
+        assert!(!valid_header_menu(&HeaderMenuCmd {
+            open: Some(HeaderMenuKind::Title),
+            page: Some("a b".into()),
+        }));
+        assert!(!valid_header_menu(&HeaderMenuCmd {
+            open: Some(HeaderMenuKind::Title),
+            page: Some(String::new()),
+        }));
+    }
+
+    #[test]
+    fn header_events() {
+        use HeaderMenuKind::{Title, Trail};
+        assert_eq!(
+            header_event(HeaderOp::Lead, "T-1", None, None),
+            Some(json!({"type": "header", "op": "lead", "key": "T-1"}))
+        );
+        assert_eq!(
+            header_event(HeaderOp::Menu, "T-1", None, None),
+            Some(json!({"type": "header", "op": "menu", "key": "T-1", "menu": null}))
+        );
+        assert_eq!(
+            header_event(HeaderOp::Menu, "T-1", Some(Trail), None),
+            Some(json!({"type": "header", "op": "menu", "key": "T-1", "menu": "trail"}))
+        );
+        assert_eq!(
+            header_event(HeaderOp::Select, "T-1", Some(Title), Some("env/freeze")),
+            Some(json!({
+                "type": "header", "op": "select", "key": "T-1", "menu": "title", "id": "env/freeze"
+            }))
+        );
+        for (name, e) in [
+            (
+                "select 没有 menu",
+                header_event(HeaderOp::Select, "T-1", None, Some("x")),
+            ),
+            (
+                "select 没有 id",
+                header_event(HeaderOp::Select, "T-1", Some(Title), None),
+            ),
+            (
+                "select 的 id 含空格",
+                header_event(HeaderOp::Select, "T-1", Some(Title), Some("a b")),
+            ),
+            (
+                "key 含空格",
+                header_event(HeaderOp::Lead, "bad key", None, None),
+            ),
+            (
+                "lead 带 menu",
+                header_event(HeaderOp::Lead, "T-1", Some(Title), None),
+            ),
+            (
+                "menu 带 id",
+                header_event(HeaderOp::Menu, "T-1", Some(Title), Some("x")),
+            ),
+        ] {
+            assert_eq!(e, None, "{name}");
+        }
+    }
+
+    /// 演示用 spec：393pt 宽、顶部安全区 59pt 时正好是夹具（三个 frame 就是按这块屏幕写的）。
+    #[test]
+    fn header_demo_spec() {
+        let spec = demo_header(393.0, 59.0);
+        assert_eq!(spec, fixture_header());
+        assert!(valid_header(&spec));
+        let spec = demo_header(320.0, 20.0);
+        assert_eq!(
+            spec.title.frame,
+            TabBarFrame {
+                x: 64.0,
+                y: 28.0,
+                width: 192.0,
+                height: 46.0,
+            }
+        );
+        assert_eq!(spec.lead.frame.y, 29.0);
+        assert_eq!(spec.trail.unwrap().frame.x, 264.0);
     }
 
     fn up_state() -> PushState {

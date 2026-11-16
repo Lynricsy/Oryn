@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-header-show"
+description = "Enables the host_header_show command without any pre-configured scope."
+commands.allow = ["host_header_show"]
+
+[[permission]]
+identifier = "deny-host-header-show"
+description = "Denies the host_header_show command without any pre-configured scope."
+commands.deny = ["host_header_show"]

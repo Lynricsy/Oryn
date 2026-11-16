@@ -3,17 +3,20 @@
  * 有标题卡图标用它，没有时退到项目徽标，两者都没有就不放。
  * jsdom 不算容器查询，这里只核对渲染了哪种图标、是否带窄屏才显示的类。
  * 信息面板开关只在 expanded 三栏里有（窄屏面板是同级标签，双段视口右段常驻）。
+ * iOS 原生菜单：useThreadActions 的菜单项都能序列化成原生菜单项（一项不丢、图标都有对照）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
+import { nativeItems } from "../../lib/native-header";
 import { getThreadStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
-import { ThreadHeader } from "./ThreadHeader";
+import { ThreadHeader, useThreadActions } from "./ThreadHeader";
 
 const PROJECT = { id: "P-hdr", name: "oryn", icon: "" };
 
@@ -198,6 +201,44 @@ describe("ThreadHeader More Actions", () => {
 		fireEvent.click(screen.getByRole("menuitem", { name: "成本与用量" }));
 		expect(screen.getByTestId("where")).toHaveTextContent(
 			`/stats/usage?thread=${id}&range=all`,
+		);
+	});
+});
+
+describe("useThreadActions 与 iOS 原生菜单", () => {
+	it("nativeItems 不丢项（label 不是字符串的颜色子项走 native.label），也没有图标落到兜底的 circle", () => {
+		const id = "T-hdr-native";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({ thread: { id, title: "原生菜单" } as Thread });
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		const { result } = renderHook(() => useThreadActions(id), {
+			wrapper: ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={client}>
+					<MemoryRouter>{children}</MemoryRouter>
+				</QueryClientProvider>
+			),
+		});
+		const { items } = result.current;
+		const native = nativeItems(items);
+		expect(native.map((i) => i.id)).toEqual(items.map((i) => i.key));
+		for (const [i, src] of items.entries())
+			expect(native[i]?.children?.length ?? 0).toBe(src.children?.length ?? 0);
+		expect(
+			native
+				.flatMap((i) => [i, ...(i.children ?? [])])
+				.filter((i) => i.icon?.symbol === "circle")
+				.map((i) => i.id),
+		).toEqual([]);
+		const color = native.find((i) => i.id === "color");
+		expect(color?.children?.find((c) => c.id === "color/red")).toMatchObject({
+			label: i18n.t("color.red"),
+			icon: { dot: expect.stringMatching(/^#[0-9a-f]{6}$/) },
+		});
+		expect(native.find((i) => i.id === "link")?.copy).toBe(
+			`${location.origin}/t/${id}`,
 		);
 	});
 });

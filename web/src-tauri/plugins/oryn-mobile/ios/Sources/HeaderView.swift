@@ -1,0 +1,377 @@
+// 原生页头的 SwiftUI 部分：两枚 44pt 圆形玻璃钮 + 46pt 两行标题胶囊；位置全部用网页量好的矩形。
+// 菜单开着哪一个、停在哪个子页是这里的本地状态（点了立刻有反应），打开 / 关闭 / 选中再上报给网页。
+import SwiftUI
+import UIKit
+
+final class HeaderModel: ObservableObject {
+  @Published var spec: HeaderSpec?
+  /// 开着的菜单："title" / "trail"。
+  @Published var open: String?
+  /// 子页：父项 id。只存 id，每次从最新的 spec 里取（线程状态变了子页内容跟着变）。
+  @Published var page: String?
+  var onEvent: (_ op: String, _ key: String, _ menu: String?, _ id: String?) -> Void = { _, _, _, _ in }
+  /// 菜单从无到有 / 从有到无（宿主据此整屏接管、读屏模态）。
+  var onModal: (Bool) -> Void = { _ in }
+
+  /// 面板与关闭区的出现 / 消失（= 网页 MENU_MS 160ms ease-out）；减弱动态效果时只淡入淡出。
+  static var motion: Animation {
+    UIAccessibility.isReduceMotionEnabled ? .linear(duration: 0.1) : .easeOut(duration: 0.16)
+  }
+
+  func menu(_ kind: String?, in spec: HeaderSpec?) -> HeaderMenuSpec? {
+    kind == "title" ? spec?.title.menu : kind == "trail" ? spec?.trail?.menu : nil
+  }
+
+  var openMenu: HeaderMenuSpec? { menu(open, in: spec) }
+
+  /// 当前子页的父项；不存在（项没了、不再有子项）时为 nil = 主页。
+  var pageItem: HeaderItemSpec? {
+    guard let page = page else { return nil }
+    return openMenu?.tops.first { $0.id == page && !($0.children ?? []).isEmpty }
+  }
+
+  func update(_ next: HeaderSpec) {
+    guard next != spec else { return }
+    // 换了线程、或开着的菜单没了：收起（网页自己知道，不上报）
+    if open != nil && (spec?.key != next.key || menu(open, in: next) == nil) {
+      open = nil
+      page = nil
+      onModal(false)
+    }
+    spec = next
+    // 开着的子页的父项不在了（或不再有子项）：回主页
+    if page != nil && pageItem == nil { page = nil }
+  }
+
+  func emit(_ op: String, menu: String? = nil, id: String? = nil) {
+    guard let key = spec?.key else { return }
+    onEvent(op, key, menu, id)
+  }
+
+  func setOpen(_ kind: String?, page next: String?, report: Bool) {
+    let kind = menu(kind, in: spec) == nil ? nil : kind
+    let next = kind == nil ? nil : next
+    guard kind != open || next != page else { return }
+    let was = open
+    withAnimation(Self.motion) {
+      open = kind
+      page = next
+    }
+    if (was != nil) != (kind != nil) { onModal(kind != nil) }
+    if report && was != kind { emit("menu", menu: kind) }
+  }
+
+  func toggle(_ kind: String) {
+    setOpen(open == kind ? nil : kind, page: nil, report: true)
+  }
+
+  func choose(_ item: HeaderItemSpec) {
+    guard item.disabled != true, let kind = open else { return }
+    if let kids = item.children, !kids.isEmpty {
+      // 原地换页
+      withAnimation(Self.motion) { page = item.id }
+      UIAccessibility.post(notification: .layoutChanged, argument: nil)
+      return
+    }
+    // 经事件回到网页时已没有用户手势，剪贴板只能在这里写
+    if let text = item.copy { UIPasteboard.general.string = text }
+    UISelectionFeedbackGenerator().selectionChanged()
+    // 选中即收起；网页收到 select 就知道菜单关了，不再另发 menu
+    setOpen(nil, page: nil, report: false)
+    emit("select", menu: kind, id: item.id)
+  }
+
+  /// 子页 → 主页；主页 → 收起（上报）。没有菜单开着返回 false。
+  func back() -> Bool {
+    guard open != nil else { return false }
+    if page != nil {
+      withAnimation(Self.motion) { page = nil }
+      UIAccessibility.post(notification: .layoutChanged, argument: nil)
+    } else {
+      setOpen(nil, page: nil, report: true)
+    }
+    return true
+  }
+}
+
+/// 网页给的调色板；格式不对时退回系统色。
+struct HeaderPalette {
+  let accent: Color
+  let brand: Color
+  let err: Color
+  let warn: Color
+  let good: Color
+  let frost: Color
+
+  init(_ s: HeaderPaletteSpec) {
+    accent = hexColor(s.accent) ?? .accentColor
+    brand = hexColor(s.brand) ?? .accentColor
+    err = hexColor(s.err) ?? .red
+    warn = hexColor(s.warn) ?? .orange
+    good = hexColor(s.good) ?? .green
+    frost = hexColor(s.frost) ?? .blue
+  }
+
+  func dot(_ kind: String?) -> Color? {
+    kind == "warn" ? warn : kind == "accent" ? accent : nil
+  }
+}
+
+extension View {
+  /// 按网页给的矩形摆放（父容器是与屏幕等大的 ZStack）。
+  func place(_ f: HeaderFrameSpec) -> some View {
+    frame(width: CGFloat(f.width), height: CGFloat(f.height))
+      .position(x: CGFloat(f.x + f.width / 2), y: CGFloat(f.y + f.height / 2))
+  }
+}
+
+/// SF Symbol 名不存在时退回 circle（网页的映射表写错不至于空白）。
+func safeSymbol(_ name: String?) -> String {
+  guard let name = name, UIImage(systemName: name) != nil else { return "circle" }
+  return name
+}
+
+@available(iOS 26.0, *)
+struct HeaderRootView: View {
+  @ObservedObject var model: HeaderModel
+  @Environment(\.accessibilityReduceMotion) private var reduce
+
+  var body: some View {
+    GeometryReader { geo in
+      if let spec = model.spec {
+        root(spec, size: geo.size)
+      }
+    }
+    .ignoresSafeArea()
+  }
+
+  private func root(_ spec: HeaderSpec, size: CGSize) -> some View {
+    let palette = HeaderPalette(spec.palette)
+    let maxHeight: CGFloat = max(120, min(480, size.height - 128))
+    // 面板出现：缩放 0.95 → 1（锚点在上缘）+ 淡入；减弱动态效果时只淡入
+    let titleIn: AnyTransition =
+      reduce ? .opacity : .scale(scale: 0.95, anchor: .top).combined(with: .opacity)
+    let trailIn: AnyTransition =
+      reduce ? .opacity : .scale(scale: 0.95, anchor: .topTrailing).combined(with: .opacity)
+    return ZStack(alignment: .topLeading) {
+      // 1. 两枚圆钮：标题菜单开着时在关闭区之下（被压暗，读屏不可达）
+      GlassEffectContainer(spacing: 0) {
+        ZStack(alignment: .topLeading) {
+          RoundGlassButton(symbol: spec.lead.symbol, label: spec.lead.label, dot: nil) {
+            model.emit("lead")
+          }
+          .place(spec.lead.frame)
+          if let trail = spec.trail, model.open != "trail" {
+            RoundGlassButton(symbol: trail.symbol, label: trail.label, dot: palette.dot(trail.dot)) {
+              model.toggle("trail")
+            }
+            .place(trail.frame)
+          }
+        }
+      }
+      .accessibilityHidden(model.open != nil)
+      // 2. 关闭区：标题菜单压暗，视图菜单透明；点一下收起并上报
+      if let menu = model.openMenu {
+        Color.black.opacity(menu.dim ? spec.tune.scrim : 0.001)
+          .contentShape(Rectangle())
+          .onTapGesture { model.setOpen(nil, page: nil, report: true) }
+          .accessibilityElement()
+          .accessibilityLabel(Text(spec.text.close))
+          .accessibilityAddTraits(.isButton)
+          .transition(.opacity)
+      }
+      // 3. 关闭区之上：标题胶囊；视图菜单开着时视图钮也在上面（再点一次收起）
+      GlassEffectContainer(spacing: 0) {
+        ZStack(alignment: .topLeading) {
+          TitleCapsule(title: spec.title, palette: palette) { model.toggle("title") }
+            .place(spec.title.frame)
+          if let trail = spec.trail, model.open == "trail" {
+            RoundGlassButton(symbol: trail.symbol, label: trail.label, dot: palette.dot(trail.dot)) {
+              model.toggle("trail")
+            }
+            .place(trail.frame)
+          }
+        }
+      }
+      // 4. 面板：标题菜单挂在胶囊正下方、与它等宽；视图菜单挂在视图钮下方、右缘对齐
+      if model.open == "title" {
+        MenuPanel(
+          model: model, menu: spec.title.menu, wide: true, spec: spec, palette: palette,
+          maxHeight: maxHeight
+        )
+        .frame(width: CGFloat(spec.title.frame.width))
+        .padding(.leading, CGFloat(spec.title.frame.x))
+        .padding(.top, CGFloat(spec.title.frame.y + spec.title.frame.height + 6))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .transition(titleIn)
+      }
+      if model.open == "trail", let trail = spec.trail {
+        MenuPanel(
+          model: model, menu: trail.menu, wide: false, spec: spec, palette: palette,
+          maxHeight: maxHeight
+        )
+        .frame(minWidth: 208, maxWidth: 288)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, max(0, size.width - CGFloat(trail.frame.x + trail.frame.width)))
+        .padding(.top, CGFloat(trail.frame.y + trail.frame.height + 4))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .transition(trailIn)
+      }
+    }
+    .frame(width: size.width, height: size.height, alignment: .topLeading)
+  }
+}
+
+/// 44pt 圆形玻璃钮：19pt 图标，右上角可带 8pt 提醒点（距上、右各 8）。
+@available(iOS 26.0, *)
+struct RoundGlassButton: View {
+  let symbol: String
+  let label: String
+  let dot: Color?
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: safeSymbol(symbol))
+        .font(.system(size: 19))
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+          if let dot = dot {
+            Circle().fill(dot).frame(width: 8, height: 8).padding(8)
+          }
+        }
+        .contentShape(Circle())
+        .glassEffect(.regular.interactive(), in: Circle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(Text(label))
+  }
+}
+
+/// 标题胶囊：第一行标题（15pt 半粗，左侧标题卡图标 / 线程色点），第二行状态（11.5pt，各段以「·」隔开）或错误。
+@available(iOS 26.0, *)
+struct TitleCapsule: View {
+  let title: HeaderTitleSpec
+  let palette: HeaderPalette
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(spacing: 0) {
+        HStack(spacing: 6) {
+          if let icon = title.icon { HeaderIconView(icon: icon, box: 16, palette: palette) }
+          Text(title.text)
+            .font(.system(size: 15, weight: .semibold))
+            .tracking(-0.375)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        .frame(height: 20)
+        if let error = title.error {
+          Text(error).font(.system(size: 11.5)).foregroundStyle(palette.err).lineLimit(1)
+            .frame(height: 16)
+        } else if !title.meta.isEmpty || !title.marks.isEmpty {
+          metaRow
+        }
+      }
+      .padding(.horizontal, 16)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .contentShape(Capsule())
+      .glassEffect(.regular.interactive(), in: Capsule())
+    }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(Text(title.error.map { "\(title.label), \($0)" } ?? title.label))
+    .accessibilityHint(Text(title.menu.label))
+    .accessibilityAddTraits(.isButton)
+    .onChange(of: title.error) { _, error in
+      // 没有对话框的操作失败时错误显示在胶囊第二行：读屏也播报
+      if let error = error { UIAccessibility.post(notification: .announcement, argument: error) }
+    }
+  }
+
+  private var metaRow: some View {
+    HStack(spacing: 6) {
+      ForEach(Array(title.meta.enumerated()), id: \.offset) { index, seg in
+        if index > 0 { Text("·").foregroundStyle(.tertiary) }
+        let env = seg.icon?.orb != nil
+        SegView(seg: seg, palette: palette, box: 11)
+          // 运行环境那一段不让挤（文字最多 96pt），其余各段可以被挤窄
+          .frame(maxWidth: env ? 96 + 13 : nil)
+          .layoutPriority(env ? 1 : 0)
+      }
+      if !title.marks.isEmpty {
+        if !title.meta.isEmpty { Text("·").foregroundStyle(.tertiary) }
+        HStack(spacing: 4) {
+          ForEach(Array(title.marks.enumerated()), id: \.offset) { _, mark in
+            Image(systemName: safeSymbol(mark.symbol))
+              .font(.system(size: 11))
+              .opacity(mark.dim == true ? 0.45 : 1)
+          }
+        }
+        .layoutPriority(1)
+        .accessibilityHidden(true)
+      }
+    }
+    .font(.system(size: 11.5))
+    .foregroundStyle(.secondary)
+    .frame(height: 16)
+  }
+}
+
+/// 一段「图形 + 文字」：图形与文字间距 4；字形徽标比其它图形大 2pt（网页的项目徽标 13 / Space 图标 11）。
+@available(iOS 26.0, *)
+struct SegView: View {
+  let seg: HeaderSegSpec
+  let palette: HeaderPalette
+  let box: CGFloat
+
+  var body: some View {
+    HStack(spacing: 4) {
+      if let icon = seg.icon {
+        HeaderIconView(icon: icon, box: icon.glyph != nil ? box + 2 : box, palette: palette)
+      }
+      Text(seg.text).lineLimit(1).truncationMode(.tail)
+    }
+    .foregroundStyle(
+      seg.tone == "err"
+        ? AnyShapeStyle(palette.err) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+  }
+}
+
+/// 图标四选一；`box` 是它占的方格边长。
+@available(iOS 26.0, *)
+struct HeaderIconView: View {
+  let icon: HeaderIconSpec
+  let box: CGFloat
+  let palette: HeaderPalette
+
+  var body: some View {
+    if let orb = icon.orb {
+      OrbBeadView(state: orb, palette: palette)
+        .frame(width: max(9, box * 0.8), height: max(9, box * 0.8))
+        .frame(width: max(9, box), height: max(9, box))
+    } else if let dot = icon.dot {
+      Circle().fill(hexColor(dot) ?? Color.secondary)
+        .frame(width: box * 0.5, height: box * 0.5)
+        .frame(width: box, height: box)
+        .accessibilityHidden(true)
+    } else if let glyph = icon.glyph {
+      Text(glyph)
+        .font(.system(size: box * 0.68, weight: .semibold))
+        .foregroundStyle(hexColor(icon.fg) ?? Color.primary)
+        .frame(width: box, height: box)
+        .background(
+          hexColor(icon.bg) ?? Color.primary.opacity(0.08),
+          in: RoundedRectangle(cornerRadius: box * 0.375, style: .continuous)
+        )
+        .accessibilityHidden(true)
+    } else {
+      Image(systemName: safeSymbol(icon.symbol))
+        .font(.system(size: box * 0.9))
+        .frame(width: box, height: box)
+        .accessibilityHidden(true)
+    }
+  }
+}

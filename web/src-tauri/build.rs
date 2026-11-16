@@ -32,6 +32,10 @@ fn main() {
             // 原生底栏：只有 iOS 26+ 真正实现
             "host_tab_bar_set",
             "host_tab_bar_reveal",
+            // 原生页头：只有 iOS 26+ 真正实现
+            "host_header_set",
+            "host_header_show",
+            "host_header_menu",
         ]),
     ))
     .unwrap();

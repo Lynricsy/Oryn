@@ -68,6 +68,7 @@
 	},
 	"common": {
 		"none": "None",
+		"back": "Back",
 		"cancel": "Cancel",
 		"clear": "Clear",
 		"close": "Close",

@@ -1,5 +1,5 @@
 //! Oryn 移动端原生能力的 Rust 侧：Android 上是 Keystore 保险库、系统通知、UnifiedPush / FCM、分享接收、系统栏颜色；
-//! iOS 上是下沉侧栏的原生底栏（iOS 26+，Swift 实现在 `ios/`）。
+//! iOS 上是下沉侧栏的原生底栏与线程页的原生页头（iOS 26+，Swift 实现在 `ios/`）。
 //!
 //! 命令表为空（见 `build.rs`）：远程页面拿不到任何原生命令；这里的方法只给壳的 Rust 代码调用。
 //! 数据形状在 [`models`]，不依赖平台；插件句柄与注册只在 Android / iOS 上存在。
@@ -208,7 +208,8 @@ mod native {
         }
     }
 
-    /// 原生底栏（Swift 在 iOS 26+ 才真正实现）。Swift 只把界面操作派到主线程就应答，不等它画完。
+    /// 原生底栏与原生页头（Swift 在 iOS 26+ 才真正实现）。除 `header_set` / `header_probe` 外，
+    /// Swift 只把界面操作派到主线程就应答，不等它画完。
     #[cfg(target_os = "ios")]
     impl<R: Runtime> OrynMobile<R> {
         /// 整份状态；`None` = 撤掉原生底栏（任何系统版本都成功）。iOS < 26 且 `spec` 非空时 Swift 以 `unsupported` 拒绝。
@@ -219,6 +220,30 @@ mod native {
         /// 揭示边与透明度；还没 set 过时是空操作。
         pub fn tab_bar_reveal(&self, reveal: &TabBarReveal) -> Result<()> {
             self.call("tabBarReveal", reveal)
+        }
+
+        /// 整份页头；`None` 撤掉（任何系统版本都成功）。Swift 在主线程把视图挂到窗口上之后才应答
+        /// （iOS < 26、或没挂上时以 `unsupported` 拒绝），所以异步等待、不占线程。只能在异步任务里调用。
+        pub async fn header_set(&self, spec: Option<&HeaderSpec>) -> Result<()> {
+            self.0
+                .run_mobile_plugin_async::<IgnoredAny>("headerSet", json!({ "spec": spec }))
+                .await?;
+            Ok(())
+        }
+
+        /// 控件层的透明度 / 位移 / 是否接触摸；还没 set 过时是空操作。
+        pub fn header_show(&self, show: &HeaderShow) -> Result<()> {
+            self.call("headerShow", show)
+        }
+
+        /// 打开 / 收起菜单（不产生 `menu` 事件）；还没 set 过、或没有那个菜单时是空操作。
+        pub fn header_menu(&self, menu: &HeaderMenuCmd) -> Result<()> {
+            self.call("headerMenu", menu)
+        }
+
+        /// 调试（CI 演示）：屏幕中心与三件控件中心的触摸是否被原生层截住。Swift 在主线程上取样后应答。
+        pub async fn header_probe(&self) -> Result<HeaderProbe> {
+            Ok(self.0.run_mobile_plugin_async("headerProbe", ()).await?)
         }
     }
 }

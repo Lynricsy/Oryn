@@ -6,6 +6,7 @@
  * 窄屏 `peer` 面板：medium 下同级标签 agent … info、侧栏开关、不能关闭 / 最大化，Agent 标签在线程等你回答时亮注意点；
  * 手机（compact）下没有标签条，页头是「返回对话 + 面板名 + 视图菜单」，菜单列出全部视图并标出当前视图与提醒点。
  * 桌面 App 无系统标题栏：三栏面板顶部多一行可拖动的标题行放右侧窗口按钮；同级面板把按钮放进标签条两端；浏览器里都没有。
+ * iOS 原生页头：转录页头里的视图菜单（`round`）登记 `trail` 部件，面板标签行里那个不登记。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -20,18 +21,49 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Thread } from "../../api/client";
 import i18n from "../../i18n";
+import type * as NativeHeaderModule from "../../lib/native-header";
+import type { HeaderParts } from "../../lib/native-header";
 import { setWindowChrome, type WindowChrome } from "../../lib/window-chrome";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
 import type { ThreadViewState } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
 import type { GitFileChange } from "../changes/git";
-import { RightPanel } from "./RightPanel";
+import { RightPanel, ThreadViewMenu } from "./RightPanel";
 
+const term = vi.hoisted(() => ({ attention: false }));
 vi.mock("../../state/terminals", () => ({
 	terminalHub: { onExit: vi.fn(() => () => {}) },
-	useTerminals: () => false,
+	useTerminals: () => term.attention,
 }));
+
+const nh = vi.hoisted(() => ({
+	active: false,
+	setPart: vi.fn(),
+	frame: { x: 337, y: 68, width: 44, height: 44 },
+}));
+// 换掉控制器实例与钩子（矩形固定），其余导出（nativeItems）用真的
+vi.mock("../../lib/native-header", async (orig) => {
+	// vi.mock 的工厂被提升到所有 import 之前，只能在这里取 React
+	const { useEffect } = await import("react");
+	return {
+		...(await orig<typeof NativeHeaderModule>()),
+		nativeHeader: { setPart: nh.setPart },
+		useNativeHeaderActive: () => nh.active,
+		useNativeHeaderEngaged: () => nh.active,
+		useNativeHeaderMenu: () => null,
+		useNativeHeaderPart: (part: string, value: unknown, on = true) => {
+			useEffect(() => {
+				if (on) nh.setPart(part, value);
+			});
+			useEffect(
+				() => (on ? () => nh.setPart(part, null) : undefined),
+				[part, on],
+			);
+		},
+		useSlotFrame: (_ref: unknown, on = true) => (on ? nh.frame : null),
+	};
+});
 
 const ORB_A = "orb-rp00000000000000000000a1";
 const ORB_B = "orb-rp00000000000000000000b2";
@@ -748,6 +780,83 @@ describe("RightPanel peer（手机视图菜单）", () => {
 		expect(document.querySelector('[data-view="agent"]')).toContainElement(
 			screen.getByTestId("agent-attention"),
 		);
+	});
+});
+
+describe("ThreadViewMenu iOS 原生页头", () => {
+	const TABS = ["agent", "changes", "files", "terminal", "info"] as const;
+	const trail = () => {
+		const call = nh.setPart.mock.calls.filter((c) => c[0] === "trail").at(-1);
+		if (!call?.[1]) throw new Error("没有登记 trail");
+		return call[1] as HeaderParts["trail"];
+	};
+	beforeEach(() => {
+		nh.setPart.mockClear();
+		nh.active = false;
+		term.attention = false;
+		getThreadStore("T-rpN")
+			.getState()
+			.patchLocal({ thread: { id: "T-rpN" } as Thread });
+	});
+	afterEach(() => {
+		nh.active = false;
+		term.attention = false;
+		uiStore.setState({ threadTab: "agent" });
+	});
+
+	it("round：登记 trail，当前视图打勾；终端等待输入时该项与按钮都带橙点；选中终端切到终端", () => {
+		term.attention = true;
+		render(
+			withQuery(
+				<ThreadViewMenu threadId="T-rpN" tabs={TABS} shown="agent" round />,
+			),
+		);
+		const t = trail();
+		expect(t.frame).toEqual(nh.frame);
+		expect(t.label).toBe(i18n.t("rightPanel.views"));
+		expect(t.dot).toBe("warn");
+		expect(t.menu.dim).toBe(false);
+		const items = t.menu.groups[0] ?? [];
+		expect(items.map((i) => i.id)).toEqual(TABS);
+		expect(items.find((i) => i.checked)?.id).toBe("agent");
+		expect(items.filter((i) => i.checked === false)).toHaveLength(4);
+		expect(items.find((i) => i.id === "terminal")).toMatchObject({
+			label: i18n.t("rightPanel.tabs.terminal"),
+			dot: "warn",
+			pulse: true,
+		});
+		act(() => t.onSelect("terminal"));
+		expect(uiStore.getState().threadTab).toBe("terminal");
+		// 不是视图的 id 什么也不做
+		act(() => t.onSelect("nope"));
+		expect(uiStore.getState().threadTab).toBe("terminal");
+	});
+
+	it("原生显示稳了：round 按钮透明、对读屏隐藏，仍带 data-native-slot", () => {
+		nh.active = true;
+		render(
+			withQuery(
+				<ThreadViewMenu threadId="T-rpN" tabs={TABS} shown="agent" round />,
+			),
+		);
+		const btn = screen.getByTestId("thread-view-menu");
+		expect(btn).toHaveAttribute("data-native-slot", "trail");
+		expect(btn.className).toMatch(/(^|\s)opacity-0(\s|$)/);
+		expect(btn.className).not.toMatch(/(^|\s)glass(\s|$)/);
+		expect(btn).toHaveAttribute("aria-hidden", "true");
+		expect(btn).toHaveAttribute("tabindex", "-1");
+	});
+
+	it("不带 round（面板标签行里的那个）：从不登记，也不受原生接管影响", () => {
+		nh.active = true;
+		const { unmount } = render(
+			withQuery(<ThreadViewMenu threadId="T-rpN" tabs={TABS} shown="files" />),
+		);
+		const btn = screen.getByTestId("thread-view-menu");
+		expect(btn).not.toHaveAttribute("data-native-slot");
+		expect(btn).not.toHaveAttribute("aria-hidden");
+		unmount();
+		expect(nh.setPart).not.toHaveBeenCalled();
 	});
 });
 

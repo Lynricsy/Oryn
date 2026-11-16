@@ -25,6 +25,12 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { type Artifact, useThreadArtifacts } from "../../api/artifact-queries";
+import {
+	nativeItems,
+	useNativeHeaderActive,
+	useNativeHeaderPart,
+	useSlotFrame,
+} from "../../lib/native-header";
 import { contentTabs } from "../../lib/orb-features";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
@@ -51,7 +57,7 @@ import {
 	Spinner,
 	tabClass,
 } from "../ui/primitives";
-import { ROUND_GLASS } from "./CompactThreadHeader";
+import { ROUND_GLASS, ROUND_GLASS_HIDDEN } from "./CompactThreadHeader";
 import { InfoPanel } from "./InfoPanel";
 import { useOrbOf } from "./ThreadHeader";
 
@@ -460,7 +466,8 @@ export function ThreadTabStrip({
 /**
  * 手机线程页的视图菜单（右上角四宫格按钮）：列出对话与各面板，当前视图打勾；任一别的视图有提醒点时按钮上也亮一个。
  * 取代 compact 下常驻的标签条，把那一行高度还给转录。`round`：转录页头的 44px 圆形玻璃钮（与侧栏开关、标题胶囊一组）；
- * 不带时是面板标签行里的普通图标钮。
+ * 不带时是面板标签行里的普通图标钮。`round` 时它也是 iOS 原生页头的右钮（lib/native-header.ts）：登记 `trail` 部件，
+ * 原生显示稳了就把自己换成透明（仍可命中）；不带 `round` 的那个什么都不登记。
  */
 export function ThreadViewMenu({
 	threadId,
@@ -475,6 +482,9 @@ export function ThreadViewMenu({
 }): ReactNode {
 	const { t } = useTranslation();
 	const dots = useTabDots(threadId, tabs, shown);
+	const slotRef = useRef<HTMLButtonElement>(null);
+	const frame = useSlotFrame(slotRef, round);
+	const native = useNativeHeaderActive() && round;
 	const pending = tabs.find((id) => id !== shown && dots[id]);
 	const items: MenuItem[] = tabs.map((id) => {
 		const dot = dots[id];
@@ -490,21 +500,53 @@ export function ThreadViewMenu({
 				</span>
 			),
 			onSelect: () => uiStore.getState().setThreadTab(id),
+			native: {
+				label: t(`rightPanel.tabs.${id}`),
+				...(dot && { dot: dot.tone, ...(dot.pulse && { pulse: true }) }),
+			},
 		};
 	});
+	useNativeHeaderPart(
+		"trail",
+		frame
+			? {
+					frame,
+					label: t("rightPanel.views"),
+					...(pending && { dot: dots[pending]?.tone }),
+					menu: {
+						label: t("rightPanel.views"),
+						dim: false,
+						quick: [],
+						status: [],
+						groups: [nativeItems(items)],
+					},
+					onSelect: (id) => {
+						const tab = tabs.find((x) => x === id);
+						if (tab) uiStore.getState().setThreadTab(tab);
+					},
+				}
+			: null,
+		round,
+	);
 	return (
 		<Menu
 			items={items}
 			trigger={(p) => (
 				<button
+					ref={slotRef}
 					type="button"
 					aria-label={t("rightPanel.views")}
 					title={t("rightPanel.views")}
 					data-testid="thread-view-menu"
+					data-native-slot={round ? "trail" : undefined}
+					aria-hidden={native || undefined}
+					tabIndex={native ? -1 : undefined}
 					className={
-						round
-							? ROUND_GLASS
-							: "relative inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+						native
+							? ROUND_GLASS_HIDDEN
+							: round
+								? ROUND_GLASS
+								: "relative inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
 					}
 					{...p}
 				>

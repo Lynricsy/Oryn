@@ -88,6 +88,9 @@ export function revealEdge(
 	);
 }
 
+/** 调试构建（开发服务器与 mock 构建）：遮挡判定记下命中的元素，便于排查误判；生产构建不记。 */
+const DEBUG_COVER = import.meta.env.DEV || import.meta.env.VITE_MOCK === "1";
+
 /** 胶囊位置上最上面的元素不是胶囊自己（菜单、弹层、错误提示盖住了它），或软键盘弹出。 */
 export function slotCovered(slot: Element, win: Window): boolean {
 	const vv = win.visualViewport;
@@ -97,8 +100,13 @@ export function slotCovered(slot: Element, win: Window): boolean {
 	if (r.width <= 0 || r.height <= 0) return true;
 	const y = r.top + r.height / 2;
 	for (const f of [0.15, 0.5, 0.85]) {
-		const hit = win.document.elementFromPoint(r.left + r.width * f, y);
-		if (!hit || !slot.contains(hit)) return true;
+		const x = r.left + r.width * f;
+		const hit = win.document.elementFromPoint(x, y);
+		if (!hit || !slot.contains(hit)) {
+			if (DEBUG_COVER)
+				console.debug("[host] native tab bar covered", { x, y, hit });
+			return true;
+		}
 	}
 	return false;
 }
@@ -148,7 +156,13 @@ export interface NativeTabBar {
 	subscribe(cb: () => void): () => void;
 	setSpec(spec: NativeTabBarSpec | null): void;
 	drag(progress: number, sinkWidth: number, velocity: number): void;
-	settle(open: boolean, sinkWidth: number, instant: boolean): void;
+	/** 吸附终点。`lag`：打开时原生再多晚起步的毫秒数（原生页头接管时卡片的非手势打开晚 NATIVE_LAG_MS 起步，底栏要跟着晚）。 */
+	settle(
+		open: boolean,
+		sinkWidth: number,
+		instant: boolean,
+		lag?: number,
+	): void;
 	setCovered(covered: boolean): void;
 }
 
@@ -158,8 +172,11 @@ export interface FrameScheduler {
 	cancel(id: number): void;
 }
 
-/** 最新值覆盖、同时至多一个在途：桥慢的时候不排队。 */
-function latest<T>(send: (v: T) => Promise<unknown>): (v: T) => void {
+/** 最新值覆盖、同时至多一个在途：桥慢的时候不排队。拒绝只记日志（`tag` 标明是哪个原生部件）。 */
+export function latest<T>(
+	send: (v: T) => Promise<unknown>,
+	tag: string,
+): (v: T) => void {
 	let busy = false;
 	let next: { v: T } | null = null;
 	const pump = () => {
@@ -170,7 +187,7 @@ function latest<T>(send: (v: T) => Promise<unknown>): (v: T) => void {
 		void send(v)
 			.then(
 				() => undefined,
-				(e) => console.warn("[host] native tab bar", e),
+				(e) => console.warn(`[host] ${tag}`, e),
 			)
 			.finally(() => {
 				busy = false;
@@ -205,8 +222,9 @@ export function createNativeTabBar(
 		for (const cb of [...subs]) cb();
 	};
 	const alpha = () => (covered ? 0 : 1);
-	const sendReveal = latest<NativeTabBarReveal>((r) =>
-		(tabBar as NativeTabBarHost).reveal(r),
+	const sendReveal = latest<NativeTabBarReveal>(
+		(r) => (tabBar as NativeTabBarHost).reveal(r),
+		"native tab bar",
 	);
 	const reveal = (r: NativeTabBarReveal) => {
 		lastX = r.x;
@@ -231,7 +249,7 @@ export function createNativeTabBar(
 		notify();
 		// 接管那一刻把当前开合状态补给原生（此前的 settle 都没发）
 		reveal({ x: target ? width : 0, alpha: alpha(), ms: 0, delay: 0 });
-	});
+	}, "native tab bar");
 	return {
 		active: () => engaged && !covered,
 		engaged: () => engaged,
@@ -265,7 +283,7 @@ export function createNativeTabBar(
 				dragX = null;
 			});
 		},
-		settle(open, sinkWidth, instant) {
+		settle(open, sinkWidth, instant, lag) {
 			if (!dragging && target === open && width === sinkWidth) return;
 			dragging = false;
 			target = open;
@@ -278,7 +296,7 @@ export function createNativeTabBar(
 				x: open ? sinkWidth : 0,
 				alpha: alpha(),
 				ms: instant ? 0 : SINK_MS,
-				delay: open && !instant ? NATIVE_LAG_MS : 0,
+				delay: open && !instant ? NATIVE_LAG_MS + (lag ?? 0) : 0,
 				ease: [...SINK_EASE],
 			});
 		},

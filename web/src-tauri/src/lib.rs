@@ -199,6 +199,12 @@ pub fn run() {
             mobile::host_tab_bar_set,
             #[cfg(mobile)]
             mobile::host_tab_bar_reveal,
+            #[cfg(mobile)]
+            mobile::host_header_set,
+            #[cfg(mobile)]
+            mobile::host_header_show,
+            #[cfg(mobile)]
+            mobile::host_header_menu,
         ])
         .setup(move |app| setup(app, &setup_args, &raw))
         .build(tauri::generate_context!())
@@ -448,9 +454,11 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         }
         let next = start.core.lock().await.start(None).await;
         host::schedule(start, next);
-        // CI 的原生底栏演示（仅 debug 构建；没设 ORYN_TABBAR_DEMO 时立即返回）
+        // CI 的原生底栏 / 页头演示（仅 debug 构建；没设 ORYN_TABBAR_DEMO / ORYN_HEADER_DEMO 时立即返回）
         #[cfg(all(debug_assertions, target_os = "ios"))]
         mobile::tab_bar_demo(&demo).await;
+        #[cfg(all(debug_assertions, target_os = "ios"))]
+        mobile::header_demo(&demo).await;
     });
     Ok(())
 }

@@ -1094,6 +1094,13 @@ body {
 	) {
 		transition-delay: 34ms;
 	}
+	/* iOS 原生页头接管时（lib/native-header.ts）：原生页头不随卡片移动，非手势打开晚 34ms 起步，等它先撤走。
+	   松手吸附（data-released）不延迟：拖动一开始原生页头就已经撤了 */
+	.sink-card[data-native-head][data-open]:not([data-dragging]):not(
+		[data-instant]
+	):not([data-released]) {
+		transition-delay: 34ms;
+	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {
 		background: oklch(0.89 0.075 var(--h));

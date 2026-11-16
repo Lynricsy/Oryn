@@ -217,6 +217,26 @@ describe("控制器", () => {
 		]);
 	});
 
+	it("吸附的第四个参数 lag：打开时原生再晚 lag 毫秒（原生页头接管）；不传时仍等于 reveal 夹具；关闭与减少动效不受影响", async () => {
+		const { h, bar } = await engagedBar();
+		bar.settle(true, 320, false, 34);
+		await flush();
+		expect(reveals(h).map((r) => r.delay)).toEqual([68]);
+		bar.settle(false, 320, false, 34);
+		await flush();
+		expect(reveals(h).at(-1)?.delay).toBe(0);
+		h.reveal.mockClear();
+		bar.settle(true, 320, false);
+		await flush();
+		expect(reveals(h)).toEqual([
+			JSON.parse(readFile(`${FIXTURES}/tab-bar-reveal.json`)),
+		]);
+		bar.settle(false, 320, true);
+		bar.settle(true, 320, true, 34);
+		await flush();
+		expect(reveals(h).at(-1)?.delay).toBe(0);
+	});
+
 	it("同一帧三次 drag 只发最后一次", async () => {
 		const { h, frames, bar } = await engagedBar();
 		bar.drag(0.1, 320, 0.5);
@@ -396,6 +416,23 @@ describe("slotCovered", () => {
 		const empty = setup();
 		empty.rect.width = 0;
 		expect(slotCovered(empty.slot, empty.win)).toBe(true);
+	});
+
+	it("判定为遮挡时（调试构建）记下命中的元素与取点", () => {
+		const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+		const { slot, hit, win } = setup();
+		const other = document.createElement("div");
+		hit.mockReturnValue(other);
+		expect(slotCovered(slot, win)).toBe(true);
+		expect(debug).toHaveBeenCalledWith("[host] native tab bar covered", {
+			x: expect.closeTo(56.4, 1),
+			y: 784,
+			hit: other,
+		});
+		debug.mockClear();
+		hit.mockImplementation(() => slot);
+		expect(slotCovered(slot, win)).toBe(false);
+		expect(debug).not.toHaveBeenCalled();
 	});
 });
 

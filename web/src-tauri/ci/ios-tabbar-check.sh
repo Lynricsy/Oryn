@@ -13,57 +13,11 @@ if (($# != 2)); then
   echo "用法：$0 <Oryn.app> <输出目录>" >&2
   exit 2
 fi
-app=$1
-out=$2
-bundle=com.lynricsy.oryn
 here=$(cd "$(dirname "$0")" && pwd)
-summary=${GITHUB_STEP_SUMMARY:-/dev/null}
-mkdir -p "$out"
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-
-# 先编译比较工具：工具链问题在启动模拟器之前就暴露
-xcrun --sdk macosx swiftc -O "$here/ios-region-diff.swift" -o "$work/region-diff"
-
+# 模拟器准备（编译比较工具、选机、启动、安装）与 run 都在公共部分
 # shellcheck source=ios-sim.sh source-path=SCRIPTDIR
 source "$here/ios-sim.sh"
-pick=$(pick_iphone)
-udid=$(jq -r .udid <<<"$pick")
-echo "### iOS 原生底栏（模拟器）" >>"$summary"
-echo "模拟器：$(jq -r '"\(.name)（iOS \(.os)）"' <<<"$pick")" | tee -a "$summary"
-echo >>"$summary"
-
-xcrun simctl boot "$udid" 2>/dev/null || true
-xcrun simctl bootstatus "$udid" -b
-xcrun simctl install "$udid" "$app"
-data=$(xcrun simctl get_app_container "$udid" "$bundle" data)
-log="$data/tmp/events.jsonl"
-mkdir -p "$data/tmp"
-
-# run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
-# 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
-run() {
-  local name=$1 event=$2
-  shift 2
-  xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
-  rm -f "$log"
-  env SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" "$@" xcrun simctl launch "$udid" "$bundle"
-  for _ in $(seq 1 90); do
-    if grep -qF "\"event\":\"$event\"" "$log" 2>/dev/null; then
-      # 让页面与原生叠层画完再截
-      sleep 2
-      xcrun simctl io "$udid" screenshot "$out/$name.png"
-      cp "$log" "$out/$name.jsonl"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "::error::90 秒内没有 ${event}（${name}）"
-  cat "$log" 2>/dev/null || true
-  xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'processImagePath CONTAINS "Oryn"' 2>/dev/null |
-    tail -200 || true
-  return 1
-}
+sim_setup "$1" "$2" "iOS 原生底栏（模拟器）"
 
 run base launcher.ready
 for p in 0 0.5 1; do

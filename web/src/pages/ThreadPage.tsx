@@ -446,6 +446,7 @@ export function ThreadScreen({
 								veil={topInset}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown}
+								visible={!away}
 								viewMenu={
 									peer &&
 									onAgent && (

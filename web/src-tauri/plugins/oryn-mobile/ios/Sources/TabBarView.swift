@@ -52,22 +52,12 @@ final class TabBarModel: ObservableObject {
     }
     items = spec.items
     selected = spec.selected
-    accent = spec.accent.flatMap(Self.color) ?? .accentColor
+    accent = hexColor(spec.accent) ?? .accentColor
   }
 
   func image(_ item: TabBarItemSpec) -> UIImage? {
     guard let b64 = item.icon.image, let hit = decoded[item.id], hit.0 == b64 else { return nil }
     return hit.1
-  }
-
-  /// `#rrggbb` → Color。
-  static func color(_ hex: String) -> Color? {
-    guard hex.count == 7, hex.hasPrefix("#"), let n = UInt32(hex.dropFirst(), radix: 16) else {
-      return nil
-    }
-    return Color(
-      red: Double((n >> 16) & 255) / 255, green: Double((n >> 8) & 255) / 255,
-      blue: Double(n & 255) / 255)
   }
 }
 

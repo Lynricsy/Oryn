@@ -16,7 +16,12 @@
  * - `prefers-reduced-motion`：不做过渡，直接切换。
  * - iOS 原生底栏（`lib/native-tab-bar.ts`）：拖动时逐帧把进度交给控制器（`drag`），松手与任何非手势开合只发终点
  *   （`settle`，吸附动画由原生自己插值）。接管后卡片带 `data-native-bar`，关闭过渡晚 34ms 起步（index.css）；
- *   打开且吸附完成后定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`），盖住时原生让位给网页底栏。
+ *   打开且吸附完成后定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`），盖住时原生让位给网页底栏；
+ *   卡片还在过渡或被拖动时不判定（主线程忙时过渡会拖过武装时间，卡片仍压在槽位上，不是被盖住）。
+ * - iOS 原生页头（`lib/native-header.ts`）不随卡片移动：卡片一动（拖动开始 `cardDrag`、吸附到打开 `cardSettle`）它就让位，
+ *   卡片关闭且静止后才回来。接管后卡片带 `data-native-head`：非手势打开晚 34ms 起步（index.css），等原生页头先撤走，
+ *   底栏的揭示也随之再晚 34ms；拖动时卡片晚 `cardDrag()` 返回的毫秒数才开始跟手。松手吸附期间卡片带 `data-released`
+ *   （吸附不延迟：拖动一开始原生页头就已经撤了），吸附完（SINK_MS + 100）去掉。
  */
 import {
 	type ReactNode,
@@ -26,6 +31,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { nativeHeader, useNativeHeaderEngaged } from "../../lib/native-header";
 import {
 	COVER_POLL_MS,
 	NATIVE_LAG_MS,
@@ -124,6 +130,7 @@ export function SinkLayout({
 	const open = useUi((s) => s.sidebarOpen);
 	const reduce = useReducedMotion();
 	const engaged = useNativeTabBarEngaged();
+	const headEngaged = useNativeHeaderEngaged();
 	const cardRef = useRef<HTMLDivElement>(null);
 	const sideRef = useRef<HTMLDivElement>(null);
 	const restore = useRef<HTMLElement | null>(null);
@@ -185,9 +192,14 @@ export function SinkLayout({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [open]);
 
-	// 原生底栏：非手势开合（按钮、Esc、返回键、选线程）发吸附终点；与手势 end() 的重复由控制器去重
+	// 原生底栏与页头：非手势开合（按钮、Esc、返回键、选线程）发吸附终点；与手势 end() 的重复由控制器去重。
+	// 原生页头接管时卡片的非手势打开晚 34ms 起步，底栏揭示跟着再晚 34ms，否则底栏会先于卡片露出、画到卡片上面
 	useLayoutEffect(() => {
-		nativeTabBar.settle(open, sinkWidth(sideRef.current), reduce);
+		const w = sinkWidth(sideRef.current);
+		if (open && nativeHeader.engaged())
+			nativeTabBar.settle(open, w, reduce, NATIVE_LAG_MS);
+		else nativeTabBar.settle(open, w, reduce);
+		nativeHeader.cardSettle(open, reduce);
 	}, [open, reduce]);
 
 	useEffect(() => {
@@ -197,13 +209,21 @@ export function SinkLayout({
 		return () => window.removeEventListener("resize", onResize);
 	}, []);
 
-	// 原生底栏的遮挡探测：只在打开且接管时；吸附完成后武装，定时探测，抬手 / 松键 / 软键盘变化后下一帧补探
+	// 原生底栏的遮挡探测：只在打开且接管时；吸附完成后武装，定时探测，抬手 / 松键 / 软键盘变化 / 卡片过渡结束后下一帧补探。
+	// 任何一路探测都只在武装后、且卡片不在过渡或拖动中时判定
 	useEffect(() => {
 		if (!open || !engaged) return;
+		const card = cardRef.current;
 		let armed = false;
 		let poll = 0;
 		let frame = 0;
 		const check = () => {
+			// 主线程忙时卡片过渡会比武装时间晚结束：此刻卡片可能还压在槽位上，命中卡片不是被弹层盖住；不判定，等过渡结束补探
+			if (
+				card?.hasAttribute("data-dragging") ||
+				card?.getAnimations?.().some((a) => a.playState === "running")
+			)
+				return;
 			const slot = sideRef.current?.querySelector("[data-tabbar-slot]");
 			if (slot) nativeTabBar.setCovered(slotCovered(slot, window));
 		};
@@ -222,10 +242,14 @@ export function SinkLayout({
 			},
 			reduce ? 0 : ARM_MS,
 		);
+		const onTransitionEnd = (e: TransitionEvent) => {
+			if (e.target === card) soon();
+		};
 		const vv = window.visualViewport;
 		document.addEventListener("pointerup", soon, true);
 		document.addEventListener("keyup", soon, true);
 		vv?.addEventListener("resize", soon);
+		card?.addEventListener("transitionend", onTransitionEnd);
 		return () => {
 			window.clearTimeout(arm);
 			window.clearInterval(poll);
@@ -233,6 +257,7 @@ export function SinkLayout({
 			document.removeEventListener("pointerup", soon, true);
 			document.removeEventListener("keyup", soon, true);
 			vv?.removeEventListener("resize", soon);
+			card?.removeEventListener("transitionend", onTransitionEnd);
 			nativeTabBar.setCovered(false);
 		};
 	}, [open, engaged, reduce]);
@@ -251,16 +276,26 @@ export function SinkLayout({
 		let dragging = false;
 		let last = { x: 0, t: 0, v: 0 };
 		let progress = 0;
+		// 原生页头撤走前卡片不跟手的截止时刻；松手吸附标记的定时器
+		let holdUntil = 0;
+		let released = 0;
+		const unrelease = () => {
+			window.clearTimeout(released);
+			card.removeAttribute("data-released");
+		};
 		const width = () => sinkWidth(sideRef.current);
 		const end = () => {
 			start = null;
 			if (!dragging) return;
 			dragging = false;
 			card.removeAttribute("data-dragging");
+			card.setAttribute("data-released", "");
+			released = window.setTimeout(unrelease, SINK_MS + 100);
 			card.style.removeProperty("--sink-p");
 			const next = settleSink(progress, last.v);
 			// 松手弹回原状态时 store 不变，只有这里能通知原生
 			nativeTabBar.settle(next, width(), reduceRef.current);
+			nativeHeader.cardSettle(next, reduceRef.current);
 			if (next !== openRef.current) uiStore.getState().setSidebar(next);
 		};
 		const onStart = (e: TouchEvent) => {
@@ -294,6 +329,7 @@ export function SinkLayout({
 			if (!start || !touch) return;
 			const dx = touch.clientX - start.x;
 			const dy = touch.clientY - start.y;
+			const now = e.timeStamp || performance.now();
 			if (!dragging) {
 				if (Math.abs(dx) < SLOP && Math.abs(dy) < SLOP) return;
 				// 竖向为主：交给滚动；关闭时卡片中部起手还要求横向明显占优且向右
@@ -307,22 +343,27 @@ export function SinkLayout({
 				}
 				dragging = true;
 				card.setAttribute("data-dragging", "");
+				unrelease();
+				// 原生页头在显示时先让它撤走（NATIVE_LAG_MS），这段时间卡片不动
+				holdUntil = now + nativeHeader.cardDrag();
 			}
 			e.preventDefault();
-			const now = e.timeStamp || performance.now();
 			const dt = now - last.t;
 			if (dt > 0)
 				last = { x: touch.clientX, t: now, v: (touch.clientX - last.x) / dt };
 			const w = width();
 			progress = sinkProgress(start.p, dx, w);
-			card.style.setProperty("--sink-p", String(progress));
-			nativeTabBar.drag(progress, w, last.v);
+			if (now >= holdUntil) {
+				card.style.setProperty("--sink-p", String(progress));
+				nativeTabBar.drag(progress, w, last.v);
+			}
 		};
 		card.addEventListener("touchstart", onStart, { passive: true });
 		card.addEventListener("touchmove", onMove, { passive: false });
 		card.addEventListener("touchend", end);
 		card.addEventListener("touchcancel", end);
 		return () => {
+			unrelease();
 			card.removeEventListener("touchstart", onStart);
 			card.removeEventListener("touchmove", onMove);
 			card.removeEventListener("touchend", end);
@@ -347,6 +388,7 @@ export function SinkLayout({
 				data-testid="sink-card"
 				data-open={open ? "" : undefined}
 				data-native-bar={engaged ? "" : undefined}
+				data-native-head={headEngaged ? "" : undefined}
 				data-instant={reduce ? "" : undefined}
 				className="sink-card absolute inset-0 flex"
 			>

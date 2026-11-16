@@ -1,4 +1,4 @@
-//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步、分享下发、导航处理、移动端宿主命令与 iOS 原生底栏。
+//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步、分享下发、导航处理、移动端宿主命令与 iOS 原生底栏 / 页头。
 //!
 //! 逻辑在 [`crate::mobile_logic`]（主机上单测）；这里只把它接到插件、会话状态机与页面事件上。
 
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tauri::{AppHandle, Manager, State, Url};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_oryn_mobile::{TabBarReveal, TabBarSpec};
+use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarReveal, TabBarSpec};
 
 use crate::api::HttpApi;
 use crate::eventlog;
@@ -278,7 +278,91 @@ pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()
     }
 }
 
-// ---------------------------------------------------------------- iOS 原生插件（目前只有原生底栏）
+/// 原生页头（iOS 26+，线程页的侧栏钮 / 标题胶囊 / 视图钮与两个菜单）：整份状态；`null` 撤掉。
+/// 应答 = 原生已把它挂到窗口上。其它平台与更低系统版本返回 `unsupported`，页面继续用网页页头。
+#[tauri::command]
+pub async fn host_header_set(app: AppHandle, spec: Option<HeaderSpec>) -> Res<()> {
+    if spec
+        .as_ref()
+        .is_some_and(|s| !mobile_logic::valid_header(s))
+    {
+        return Err("invalid_header".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .header_set(spec.as_ref())
+            .await
+            .map_err(|e| e.to_string())?;
+        // key / 三件矩形：CI 端到端检查据此确认网页接管了页头与量出的位置（mobile.yml 的 ios-check）
+        eventlog::log(
+            "header.set",
+            json!({
+                "on": spec.is_some(),
+                "key": spec.as_ref().map(|s| &s.key),
+                "lead": spec.as_ref().map(|s| &s.lead.frame),
+                "title": spec.as_ref().map(|s| &s.title.frame),
+                "trail": spec.as_ref().and_then(|s| s.trail.as_ref()).map(|t| &t.frame),
+            }),
+        );
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+/// 原生页头控件层的透明度 / 位移 / 是否接触摸。还没 set 过时 Swift 侧空操作并成功。
+#[tauri::command]
+pub async fn host_header_show(app: AppHandle, show: HeaderShow) -> Res<()> {
+    if !mobile_logic::valid_header_show(&show) {
+        return Err("invalid_show".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin.header_show(&show).map_err(|e| e.to_string())?;
+        // 仅 debug：供 CI 端到端检查断言让位 / 出现；发布包不写
+        #[cfg(debug_assertions)]
+        eventlog::log(
+            "header.show",
+            json!({"alpha": show.alpha, "dx": show.dx, "passive": show.passive, "ms": show.ms, "delay": show.delay}),
+        );
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+/// 打开 / 收起原生页头的菜单（网页强制收起：软键盘弹出、Esc）。不产生 `menu` 事件。
+#[tauri::command]
+pub async fn host_header_menu(app: AppHandle, menu: HeaderMenuCmd) -> Res<()> {
+    if !mobile_logic::valid_header_menu(&menu) {
+        return Err("invalid_menu".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin.header_menu(&menu).map_err(|e| e.to_string())?;
+        // 仅 debug：供 CI 端到端检查断言网页的强制收起；发布包不写
+        #[cfg(debug_assertions)]
+        eventlog::log("header.menu", json!({"open": menu.open, "page": menu.page}));
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
+// ---------------------------------------------------------------- iOS 原生插件（原生底栏与页头）
 
 #[cfg(target_os = "ios")]
 mod ios {
@@ -294,17 +378,28 @@ mod ios {
             .map(|s| s.inner().clone())
     }
 
-    /// 插件事件：目前只有底栏点击，转成页面事件 `{type:"tabbar", id}`。
+    /// 插件事件：底栏点击转成页面事件 `{type:"tabbar", id}`，页头交互转成 `{type:"header", op, key, …}`。
     pub fn listen(app: &AppHandle) {
         let Some(p) = plugin(app) else { return };
         let handle = app.clone();
-        let res = p.on_event(move |event| {
-            if let Event::TabBar { id } = event {
+        let res = p.on_event(move |event| match event {
+            Event::TabBar { id } => {
                 if mobile_logic::valid_tab_id(&id) {
                     eventlog::log("tabbar.tap", json!({"id": id}));
                     host::emit(&handle, mobile_logic::tab_bar_event(&id));
                 }
             }
+            Event::Header { op, key, menu, id } => {
+                if let Some(detail) = mobile_logic::header_event(op, &key, menu, id.as_deref()) {
+                    // CI 端到端检查据此断言真实触摸的落点（select 的 menu / id）
+                    eventlog::log(
+                        "header.event",
+                        json!({"op": op, "key": key, "menu": menu, "id": id}),
+                    );
+                    host::emit(&handle, detail);
+                }
+            }
+            _ => {}
         });
         if let Err(e) = res {
             eventlog::log("mobile.listen_error", json!({"error": e.to_string()}));
@@ -316,6 +411,15 @@ mod ios {
         let Some(p) = plugin(app) else { return };
         tauri::async_runtime::spawn(async move {
             let _ = p.tab_bar_set(None);
+        });
+    }
+
+    /// 主框架开始加载新文档：旧页面的原生页头撤掉。回调在主线程上，插件调用放进异步任务
+    /// （`header_set` 要等 Swift 在主线程挂好 / 撤掉才应答，绝不能在主线程上等）。
+    pub fn header_reset(app: &AppHandle) {
+        let Some(p) = plugin(app) else { return };
+        tauri::async_runtime::spawn(async move {
+            let _ = p.header_set(None).await;
         });
     }
 
@@ -369,6 +473,67 @@ mod ios {
         }
     }
 
+    /// CI 用（仅 debug 构建）：环境变量 `ORYN_HEADER_DEMO` = `hidden` / `bar` / `title` / `title:<子页 id>` / `trail` 时，
+    /// 在连接页上按夹具摆出页头（`hidden` 之外都显示），按模式打开菜单，再取触摸探测结果，记到事件日志 `header.demo`。
+    /// 经与页面相同的 Rust → Swift 路径。
+    #[cfg(debug_assertions)]
+    pub async fn header_demo(app: &AppHandle) {
+        use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderMenuKind, HeaderShow};
+        let Ok(mode) = std::env::var("ORYN_HEADER_DEMO") else {
+            return;
+        };
+        // 等连接页的 PageLoadEvent::Started 那次撤除先跑完
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let fail =
+            |error: String| eventlog::log("header.demo", json!({"ok": false, "error": error}));
+        let (Some(plugin), Some(w)) = (plugin(app), app.get_webview_window(host::MAIN)) else {
+            return fail("no plugin or window".into());
+        };
+        // tao 在 iOS 上：outer = 屏幕框，inner = 安全区
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let (Ok(outer), Ok(inner_pos), Ok(outer_pos)) =
+            (w.outer_size(), w.inner_position(), w.outer_position())
+        else {
+            return fail("no window size".into());
+        };
+        let (width, height) = (outer.width as f64 / scale, outer.height as f64 / scale);
+        let safe_top = ((inner_pos.y - outer_pos.y) as f64 / scale).max(0.0);
+        let spec = mobile_logic::demo_header(width, safe_top);
+        let (open, page) = match mode.split_once(':') {
+            Some(("title", page)) => (Some(HeaderMenuKind::Title), Some(page.to_string())),
+            None if mode == "title" => (Some(HeaderMenuKind::Title), None),
+            None if mode == "trail" => (Some(HeaderMenuKind::Trail), None),
+            None if mode == "bar" || mode == "hidden" => (None, None),
+            _ => return fail(format!("unknown mode {mode}")),
+        };
+        let show = HeaderShow {
+            alpha: if mode == "hidden" { 0.0 } else { 1.0 },
+            dx: 0.0,
+            passive: false,
+            ms: 0,
+            delay: 0,
+            ease: None,
+        };
+        let res = async {
+            plugin.header_set(Some(&spec)).await?;
+            plugin.header_show(&show)?;
+            plugin.header_menu(&HeaderMenuCmd { open, page })?;
+            // 菜单的出现动画走完再探测
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            plugin.header_probe().await
+        }
+        .await;
+        match res {
+            Ok(probe) => eventlog::log(
+                "header.demo",
+                json!({"ok": true, "mode": mode, "lead": spec.lead.frame, "title": spec.title.frame,
+                       "trail": spec.trail.as_ref().map(|t| t.frame), "width": width, "height": height,
+                       "scale": scale, "probe": probe}),
+            ),
+            Err(e) => fail(e.to_string()),
+        }
+    }
+
     /// CI 用（仅 debug 构建）：环境变量 `ORYN_E2E_URL=<http(s) 地址>` 时不读令牌、不配对，
     /// 把它当作已配对服务器的页面打开（[`crate::session::Core::open_unpaired`]：与生产相同的 `open_remote`，
     /// 远程能力与 `MOBILE_HOST_PERMISSIONS` 照常注入），结果记到事件日志 `e2e.open`。返回是否接管了启动。
@@ -394,9 +559,9 @@ mod ios {
 }
 
 #[cfg(all(debug_assertions, target_os = "ios"))]
-pub use ios::{e2e_open, tab_bar_demo};
+pub use ios::{e2e_open, header_demo, tab_bar_demo};
 #[cfg(target_os = "ios")]
-pub use ios::{listen as listen_ios, tab_bar_reset};
+pub use ios::{header_reset, listen as listen_ios, tab_bar_reset};
 
 // ---------------------------------------------------------------- Android 原生插件
 
@@ -566,8 +731,8 @@ mod android {
                     recreate_main(&app);
                 }
             }
-            // 原生底栏只在 iOS 上有，Kotlin 不发
-            Event::TabBar { .. } => {}
+            // 原生底栏与页头只在 iOS 上有，Kotlin 不发
+            Event::TabBar { .. } | Event::Header { .. } => {}
         }
     }
 

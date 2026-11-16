@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ApiError, type ThreadState } from "../../api/client";
 import { focusablesIn, isTopModal, pushModal, trapTab } from "../../lib/modal";
+import type { NativeHint } from "../../lib/native-header";
 import { Icon, type IconName } from "./icons";
 import { OrbBead } from "./OrbBead";
 
@@ -264,6 +265,8 @@ export interface MenuItem {
 	attrs?: Record<`data-${string}`, string>;
 	/** 悬停提示（如置灰的原因）。 */
 	title?: string;
+	/** iOS 原生页头菜单用的补充（lib/native-header.ts）：label 不是字符串时必须给 native.label */
+	native?: NativeHint;
 }
 
 /**

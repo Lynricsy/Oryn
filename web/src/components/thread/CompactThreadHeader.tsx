@@ -6,6 +6,11 @@
  * 标题菜单：顶部三个常用操作（归档、分享、会话树）；然后是带说明的状态行（运行环境、定时、公开链接、关联的 GitHub PR），只在线程真有这些状态时出现；
  * 最后是其余操作，按「整理 / 派生 / 危险」分组。带子菜单的项在菜单里原地换页（顶部「返回」）。
  * 打开时页头下方铺一层遮罩，标题胶囊留在遮罩之上；点遮罩、按 Esc 或选中一项后关闭，焦点回到标题胶囊。
+ *
+ * iOS 26+ 的 App 里这三件与两个菜单由原生 Liquid Glass 接管（lib/native-header.ts）：每次渲染把三件的矩形、内容与两棵菜单树
+ * 登记成声明式 spec（菜单项 id 是路径，如 `env/freeze`），原生点击回传 id，这里在**最新**的菜单项里找回调执行。
+ * 原生显示稳了（`useNativeHeaderActive`）网页三件换成透明（仍可命中：遮挡探测靠它们）；卡片在动、网页遮罩盖住页头、
+ * 切到面板标签（`visible` 为假）时原生让位，网页三件当帧回来。网页标题菜单原样保留，让位期间点到的就是它。
  */
 import {
 	type KeyboardEvent,
@@ -17,6 +22,19 @@ import {
 import { useTranslation } from "react-i18next";
 import { useSchedule } from "../../api/schedule-queries";
 import { formatCost, formatRelative } from "../../lib/format";
+import type { NativeIcon, NativeMark, NativeSeg } from "../../lib/host";
+import {
+	avatarHex,
+	findMenuItem,
+	isDark,
+	markHex,
+	nativeItems,
+	useHeaderCover,
+	useHeaderTheme,
+	useNativeHeaderActive,
+	useNativeHeaderPart,
+	useSlotFrame,
+} from "../../lib/native-header";
 import { usePresence } from "../../lib/presence";
 import { parseTitleCard } from "../../lib/title";
 import { useThread } from "../../state/stores";
@@ -24,9 +42,9 @@ import { uiStore } from "../../state/ui";
 import { useSessionCost } from "../composer/ComposerMeta";
 import { openPull, prIcon, prStatusText } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
-import { nameHue, ProjectBadge, StatusDot } from "../ui/data";
+import { firstGrapheme, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { OrbBead } from "../ui/OrbBead";
+import { OrbBead, orbVisual } from "../ui/OrbBead";
 import type { MenuItem } from "../ui/primitives";
 import {
 	hueVar,
@@ -42,6 +60,8 @@ import {
 /** 页头两侧的圆形玻璃钮（侧栏开关、视图菜单），44px 触控尺寸。 */
 export const ROUND_GLASS =
 	"glass relative inline-grid h-11 w-11 shrink-0 place-items-center rounded-full text-fg transition-[scale] duration-150 active:scale-95";
+/** `ROUND_GLASS` 的原生接管版：去掉玻璃、整件透明（原生在同一位置画），仍占位、仍可命中。 */
+export const ROUND_GLASS_HIDDEN = `${ROUND_GLASS.replace(/^glass /, "")} opacity-0`;
 
 const MENU_MS = 160;
 
@@ -54,6 +74,7 @@ export function CompactThreadHeader({
 	chromeLeft = false,
 	chromeRight = false,
 	viewMenu,
+	visible = true,
 }: {
 	threadId: string;
 	/** 渐进模糊纱的高度（px） */
@@ -63,6 +84,8 @@ export function CompactThreadHeader({
 	chromeRight?: boolean;
 	/** 右上角的视图菜单（`ThreadViewMenu round`） */
 	viewMenu?: ReactNode;
+	/** 转录纸面是否看得见；切到面板标签时为假，原生页头当帧让位 */
+	visible?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const thread = useThread(threadId, (s) => s.thread);
@@ -81,6 +104,15 @@ export function CompactThreadHeader({
 	}
 	const menu = usePresence(open, MENU_MS);
 	const capsuleRef = useRef<HTMLButtonElement>(null);
+	const headerRef = useRef<HTMLElement>(null);
+	const leadRef = useRef<HTMLButtonElement>(null);
+	const probeRef = useRef<HTMLSpanElement>(null);
+	const native = useNativeHeaderActive();
+	const theme = useHeaderTheme(probeRef);
+	const dark = theme?.dark ?? isDark();
+	const leadFrame = useSlotFrame(leadRef);
+	const titleFrame = useSlotFrame(capsuleRef);
+	useHeaderCover(headerRef, visible);
 
 	const card = parseTitleCard(thread?.title ?? "");
 	const hue = threadHue(thread?.color);
@@ -115,6 +147,14 @@ export function CompactThreadHeader({
 	const status: Row[] = [];
 	if (orb && env) {
 		const orbItem = byKey.get("orb");
+		// 说明行文字：网页与原生共用同一串
+		const envText = `${
+			runner
+				? orb.state === "ready"
+					? t("runner.online")
+					: t("runner.offline")
+				: env.label
+		}${runner && thread?.cwd ? ` · ${shortPath(thread.cwd)}` : ""}`;
 		status.push({
 			key: "env",
 			icon: runner ? "device" : "box",
@@ -129,15 +169,17 @@ export function CompactThreadHeader({
 						<OrbBead state={orb.state} active={working} size={9} />
 					)}
 					<span className={`truncate ${env.failed ? "text-err" : ""}`}>
-						{runner
-							? orb.state === "ready"
-								? t("runner.online")
-								: t("runner.offline")
-							: env.label}
-						{runner && thread?.cwd ? ` · ${shortPath(thread.cwd)}` : ""}
+						{envText}
 					</span>
 				</span>
 			),
+			native: {
+				sub: {
+					text: envText,
+					icon: { orb: env.failed ? "err" : orbVisual(orb.state, working) },
+					...(env.failed && { tone: "err" as const }),
+				},
+			},
 			children: [
 				{
 					key: "info",
@@ -187,6 +229,10 @@ export function CompactThreadHeader({
 			sub: prStatusText(p, t),
 			onSelect: () => openPull(p),
 		});
+	// 原生菜单的说明行：网页说明是字符串的原样给原生（运行环境行上面自己给了带状态珠的那份）
+	for (const row of status)
+		if (typeof row.sub === "string")
+			row.native = { ...row.native, sub: { text: row.sub } };
 
 	const costItem = byKey.get("costUsage");
 	const groups: MenuItem[][] = [
@@ -266,6 +312,87 @@ export function CompactThreadHeader({
 			</span>,
 		);
 
+	// 原生页头的胶囊第二行：与上面的 meta / marks 一一对应
+	const nativeMeta: NativeSeg[] = [];
+	if (space) nativeMeta.push({ text: space.name, icon: { symbol: "target" } });
+	if (project)
+		nativeMeta.push({
+			text: project.name,
+			icon: {
+				glyph: project.icon || firstGrapheme(project.name),
+				...avatarHex(nameHue(project.name), dark),
+			},
+		});
+	if (orb && env)
+		nativeMeta.push({
+			text: runner ? runnerName : env.label,
+			icon: { orb: env.failed ? "err" : orbVisual(orb.state, working) },
+			...(env.failed && { tone: "err" as const }),
+		});
+	const nativeMarks: NativeMark[] = [];
+	if (schedule)
+		nativeMarks.push({
+			symbol: "clock",
+			...(scheduleLive ? {} : { dim: true }),
+		});
+	if (scheduleRun) nativeMarks.push({ symbol: "clock.arrow.2.circlepath" });
+	if (shares > 0) nativeMarks.push({ symbol: "globe" });
+	if ((thread?.pulls?.length ?? 0) > 0)
+		nativeMarks.push({ symbol: "arrow.triangle.pull" });
+	const titleIcon: NativeIcon | undefined = card.icon
+		? { glyph: card.icon, ...avatarHex(hue ?? nameHue(card.text), dark) }
+		: hue !== undefined
+			? { dot: markHex(hue, dark) }
+			: undefined;
+
+	// 原生回传的 id 在本次渲染的菜单项里按路径找（渲染期更新）：不缓存旧闭包，上一个线程的回调不会被执行
+	const latestMenu = useRef({ quick, status, groups });
+	latestMenu.current = { quick, status, groups };
+	const onNativeSelect = (id: string) => {
+		const m = latestMenu.current;
+		const all: MenuItem[] = [...m.quick, ...m.status, ...m.groups.flat()];
+		const item = findMenuItem(all, id);
+		if (!item || item.disabled || item.children) return;
+		// 带 copy 的项由原生直接写了剪贴板
+		if (item.native?.copy === undefined) item.onSelect?.();
+	};
+	useNativeHeaderPart(
+		"theme",
+		theme && {
+			...theme,
+			text: { back: t("common.back"), close: t("common.close") },
+		},
+	);
+	useNativeHeaderPart(
+		"lead",
+		leadFrame && {
+			frame: leadFrame,
+			label: t("nav.sidebar"),
+			onTap: () => uiStore.getState().toggleSidebar(),
+		},
+	);
+	useNativeHeaderPart(
+		"title",
+		titleFrame && {
+			frame: titleFrame,
+			key: threadId,
+			text: title,
+			icon: titleIcon,
+			error: error ?? undefined,
+			meta: nativeMeta,
+			marks: nativeMarks,
+			label: [title, ...nativeMeta.map((s) => s.text)].join(", "),
+			menu: {
+				label: t("titleMenu.label", { title }),
+				dim: true,
+				quick: nativeItems(quick),
+				status: nativeItems(status),
+				groups: groups.filter((g) => g.length > 0).map((g) => nativeItems(g)),
+			},
+			onSelect: onNativeSelect,
+		},
+	);
+
 	const close = (refocus: boolean) => {
 		setOpen(false);
 		if (refocus) capsuleRef.current?.focus({ preventScroll: true });
@@ -273,6 +400,7 @@ export function CompactThreadHeader({
 
 	return (
 		<header
+			ref={headerRef}
 			data-window-drag=""
 			data-testid="compact-thread-header"
 			className="veil-host relative isolate flex shrink-0 items-center gap-2 px-3 py-2"
@@ -285,12 +413,25 @@ export function CompactThreadHeader({
 				<i />
 				<i />
 			</div>
+			{/* 原生页头的调色板：读这几个元素的计算颜色（useHeaderTheme） */}
+			<span ref={probeRef} hidden>
+				<i data-k="accent" className="text-accent-ink" />
+				<i data-k="brand" style={{ color: "var(--brand)" }} />
+				<i data-k="err" className="text-err" />
+				<i data-k="warn" className="text-warn" />
+				<i data-k="good" style={{ color: "var(--good)" }} />
+				<i data-k="frost" style={{ color: "var(--frost)" }} />
+			</span>
 			{chromeLeft && <ChromeLead />}
 			<button
+				ref={leadRef}
 				type="button"
+				data-native-slot="lead"
 				aria-label={t("nav.sidebar")}
 				title={t("nav.sidebar")}
-				className={ROUND_GLASS}
+				aria-hidden={native || undefined}
+				tabIndex={native ? -1 : undefined}
+				className={native ? ROUND_GLASS_HIDDEN : ROUND_GLASS}
 				onClick={() => uiStore.getState().toggleSidebar()}
 			>
 				<Icon name="sidebar" size={19} />
@@ -311,11 +452,14 @@ export function CompactThreadHeader({
 					ref={capsuleRef}
 					type="button"
 					data-testid="thread-title"
+					data-native-slot="title"
 					aria-haspopup="menu"
 					aria-expanded={open}
+					aria-hidden={native || undefined}
+					tabIndex={native ? -1 : undefined}
 					title={title}
 					onClick={() => setOpen((v) => !v)}
-					className="glass relative flex h-[46px] w-full flex-col items-center justify-center rounded-full px-4 transition-[scale] duration-150 active:scale-[0.98]"
+					className={`${native ? "opacity-0" : "glass"} relative flex h-[46px] w-full flex-col items-center justify-center rounded-full px-4 transition-[scale] duration-150 active:scale-[0.98]`}
 				>
 					<span className="flex max-w-full items-center gap-1.5 font-semibold text-[15px] leading-5 tracking-tight">
 						{card.icon ? (

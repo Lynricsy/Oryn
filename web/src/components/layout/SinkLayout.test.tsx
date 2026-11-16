@@ -1,10 +1,12 @@
 /**
  * 手机下沉式侧栏：开关状态、inert、焦点移入与还原、Esc / 返回键、触摸手势与吸附、同心圆角、减少动效；
- * iOS 原生底栏的接入（拖动进度、吸附终点、`data-native-bar`、遮挡探测）。
+ * iOS 原生底栏的接入（拖动进度、吸附终点、`data-native-bar`、遮挡探测）；
+ * iOS 原生页头的接入（`cardDrag` / `cardSettle`、跟手延迟、`data-released`、`data-native-head`、底栏打开延迟）。
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { concentricRadius } from "../../lib/device-corners";
+import type * as NativeHeaderModule from "../../lib/native-header";
 import type * as NativeTabBarModule from "../../lib/native-tab-bar";
 import { uiStore } from "../../state/ui";
 import {
@@ -31,6 +33,26 @@ vi.mock("../../lib/native-tab-bar", async (importOriginal) => ({
 	nativeTabBar: nb.bar,
 	useNativeTabBarEngaged: () => nb.engaged,
 	useNativeTabBarActive: () => false,
+}));
+
+const nh = vi.hoisted(() => {
+	const s = {
+		engaged: false,
+		lag: 0,
+		header: {
+			engaged: () => s.engaged,
+			cardDrag: vi.fn(() => s.lag),
+			cardSettle: vi.fn(),
+		},
+	};
+	return s;
+});
+
+// 同上：只换原生页头的控制器实例与钩子
+vi.mock("../../lib/native-header", async (importOriginal) => ({
+	...(await importOriginal<typeof NativeHeaderModule>()),
+	nativeHeader: nh.header,
+	useNativeHeaderEngaged: () => nh.engaged,
 }));
 
 function mount() {
@@ -99,6 +121,10 @@ beforeEach(() => {
 	window.history.replaceState(null, "");
 	nb.engaged = false;
 	for (const f of Object.values(nb.bar)) f.mockClear();
+	nh.engaged = false;
+	nh.lag = 0;
+	nh.header.cardDrag.mockClear();
+	nh.header.cardSettle.mockClear();
 });
 
 afterEach(() => {
@@ -446,5 +472,167 @@ describe("iOS 原生底栏", () => {
 		act(() => uiStore.getState().setSidebar(true));
 		act(() => vi.advanceTimersByTime(2000));
 		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+	});
+
+	/** 接管且侧栏里有底栏槽位；`top` 决定 elementFromPoint 命中谁。 */
+	function mountSlot() {
+		vi.useFakeTimers();
+		nb.engaged = true;
+		render(
+			<SinkLayout
+				sidebar={
+					<div data-tabbar-slot data-testid="slot">
+						<span data-testid="slot-inner">底栏</span>
+					</div>
+				}
+			>
+				<button
+					type="button"
+					onClick={() => uiStore.getState().setSidebar(true)}
+				>
+					侧栏
+				</button>
+			</SinkLayout>,
+		);
+		vi.spyOn(
+			screen.getByTestId("slot"),
+			"getBoundingClientRect",
+		).mockReturnValue({
+			left: 12,
+			top: 700,
+			width: 296,
+			height: 52,
+		} as DOMRect);
+	}
+
+	it("点按打开：抬手发生在武装前（卡片还盖着槽位），不判定为遮挡", () => {
+		mountSlot();
+		top = card();
+		const btn = screen.getByRole("button", { name: "侧栏" });
+		fireEvent.pointerDown(btn);
+		fireEvent.click(btn);
+		fireEvent.pointerUp(btn);
+		act(() => vi.advanceTimersByTime(20));
+		fireEvent.keyUp(document.body, { key: "Enter" });
+		act(() => vi.advanceTimersByTime(20));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(nb.bar.setCovered).not.toHaveBeenCalledWith(true);
+	});
+
+	it("武装时卡片过渡还没走完（主线程忙）：不判定，轮询也不判定；过渡结束后补探", () => {
+		mountSlot();
+		let running = true;
+		Object.defineProperty(card(), "getAnimations", {
+			configurable: true,
+			value: () => (running ? [{ playState: "running" }] : []),
+		});
+		top = card();
+		act(() => uiStore.getState().setSidebar(true));
+		act(() => vi.advanceTimersByTime(ARMED + 250 * 3));
+		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+		running = false;
+		top = screen.getByTestId("slot-inner");
+		fireEvent.transitionEnd(card());
+		act(() => vi.advanceTimersByTime(20));
+		expect(nb.bar.setCovered).toHaveBeenLastCalledWith(false);
+		expect(nb.bar.setCovered).not.toHaveBeenCalledWith(true);
+	});
+
+	it("拖动中不判定遮挡", () => {
+		mountSlot();
+		act(() => uiStore.getState().setSidebar(true));
+		top = card();
+		card().setAttribute("data-dragging", "");
+		act(() => vi.advanceTimersByTime(ARMED + 250));
+		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+	});
+});
+
+describe("iOS 原生页头", () => {
+	beforeEach(() => {
+		window.innerWidth = 390;
+	});
+	afterEach(() => {
+		window.innerWidth = 1024;
+		vi.useRealTimers();
+	});
+
+	it("非手势开合通知 cardSettle；页头接管时底栏的打开再晚 34ms（第四个参数），未接管时不带", () => {
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(true, false);
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(true, 390, false);
+		act(() => uiStore.getState().setSidebar(false));
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(false, false);
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(false, 390, false);
+
+		nh.engaged = true;
+		act(() => uiStore.getState().setSidebar(true));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(true, 390, false, 34);
+		act(() => uiStore.getState().setSidebar(false));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(false, 390, false);
+	});
+
+	it("左缘右滑过阈值时调用一次 cardDrag；没过阈值不调", () => {
+		mount();
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 8, 300, 1010);
+		expect(nh.header.cardDrag).not.toHaveBeenCalled();
+		touch(card(), "touchMove", 60, 300, 1100);
+		touch(card(), "touchMove", 120, 300, 1200);
+		expect(nh.header.cardDrag).toHaveBeenCalledTimes(1);
+		touch(card(), "touchEnd", 120);
+	});
+
+	it("cardDrag 返回 34：34ms 内的 touchMove 不写 --sink-p、不调 drag，之后照常跟手", () => {
+		nh.lag = 34;
+		mount();
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 60, 300, 1010);
+		touch(card(), "touchMove", 80, 300, 1043);
+		expect(card().style.getPropertyValue("--sink-p")).toBe("");
+		expect(nb.bar.drag).not.toHaveBeenCalled();
+		touch(card(), "touchMove", 100, 300, 1044);
+		expect(Number(card().style.getPropertyValue("--sink-p"))).toBeCloseTo(
+			96 / 390,
+		);
+		expect(nb.bar.drag).toHaveBeenCalledTimes(1);
+		touch(card(), "touchEnd", 100);
+	});
+
+	it("松手：卡片带 data-released 并通知 cardSettle（弹回原状态也通知），SINK_MS + 100 后去掉；再拖立刻去掉", () => {
+		vi.useFakeTimers();
+		mount();
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 60, 300, 2000);
+		touch(card(), "touchEnd", 60);
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		expect(card()).toHaveAttribute("data-released");
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(false, false);
+		act(() => vi.advanceTimersByTime(260 + 99));
+		expect(card()).toHaveAttribute("data-released");
+		act(() => vi.advanceTimersByTime(1));
+		expect(card()).not.toHaveAttribute("data-released");
+
+		touch(card(), "touchStart", 4, 300, 3000);
+		touch(card(), "touchMove", 300, 300, 3100);
+		touch(card(), "touchEnd", 300);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(nh.header.cardSettle).toHaveBeenCalledWith(true, false);
+		expect(card()).toHaveAttribute("data-released");
+		const strip = screen.getByTestId("sink-close");
+		touch(strip, "touchStart", 340, 300, 4000);
+		touch(strip, "touchMove", 300, 300, 4010);
+		expect(card()).not.toHaveAttribute("data-released");
+		touch(strip, "touchEnd", 300);
+	});
+
+	it("页头接管时卡片带 data-native-head，未接管不带", () => {
+		const { unmount } = mount();
+		expect(card()).not.toHaveAttribute("data-native-head");
+		unmount();
+		nh.engaged = true;
+		mount();
+		expect(card()).toHaveAttribute("data-native-head");
 	});
 });

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-header-set"
+description = "Enables the host_header_set command without any pre-configured scope."
+commands.allow = ["host_header_set"]
+
+[[permission]]
+identifier = "deny-host-header-set"
+description = "Denies the host_header_set command without any pre-configured scope."
+commands.deny = ["host_header_set"]

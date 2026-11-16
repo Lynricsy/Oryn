@@ -1,0 +1,117 @@
+{
+	"key": "T-0193a1b2-0000-7000-8000-0000000000a1",
+	"dark": false,
+	"palette": {
+		"accent": "#2f6fed",
+		"brand": "#3b82f6",
+		"err": "#c8372d",
+		"warn": "#b7791f",
+		"good": "#2f9e5b",
+		"frost": "#5b93c9"
+	},
+	"tune": { "scrim": 0.35, "tint": 0.55 },
+	"text": { "back": "返回", "close": "关闭" },
+	"lead": {
+		"frame": { "x": 12, "y": 68, "width": 44, "height": 44 },
+		"symbol": "sidebar.left",
+		"label": "侧边栏"
+	},
+	"title": {
+		"frame": { "x": 64, "y": 67, "width": 265, "height": 46 },
+		"text": "修复登录回调",
+		"icon": { "glyph": "🔧", "bg": "#f6dcc6", "fg": "#7a3b00" },
+		"meta": [
+			{ "text": "发布准备", "icon": { "symbol": "target" } },
+			{ "text": "oryn", "icon": { "glyph": "O", "bg": "#d5e4fb", "fg": "#1f3f7a" } },
+			{ "text": "就绪", "icon": { "orb": "working" } }
+		],
+		"marks": [{ "symbol": "clock", "dim": true }, { "symbol": "globe" }],
+		"label": "修复登录回调, 发布准备, oryn, 就绪",
+		"menu": {
+			"label": "「修复登录回调」的操作",
+			"dim": true,
+			"quick": [
+				{ "id": "archive", "label": "归档", "icon": { "symbol": "archivebox" } },
+				{ "id": "share", "label": "分享", "icon": { "symbol": "square.and.arrow.up" } },
+				{ "id": "tree", "label": "会话树", "icon": { "symbol": "point.3.connected.trianglepath.dotted" } }
+			],
+			"status": [
+				{
+					"id": "env",
+					"label": "Orb",
+					"icon": { "symbol": "cube" },
+					"sub": { "text": "就绪", "icon": { "orb": "working" } },
+					"children": [
+						{ "id": "env/info", "label": "查看环境信息", "icon": { "symbol": "info.circle" } },
+						{ "id": "env/freeze", "label": "冻结", "icon": { "symbol": "pause" } },
+						{ "id": "env/wake", "label": "唤醒", "icon": { "symbol": "play" }, "disabled": true },
+						{ "id": "env/delete", "label": "删除 orb", "icon": { "symbol": "trash" }, "danger": true }
+					]
+				},
+				{
+					"id": "public",
+					"label": "已公开",
+					"icon": { "symbol": "globe" },
+					"sub": { "text": "1 个公开链接有效" }
+				},
+				{
+					"id": "pr-12",
+					"label": "#12 修复回调",
+					"icon": { "symbol": "arrow.triangle.pull" },
+					"sub": { "text": "打开 · CI 失败", "tone": "err" }
+				}
+			],
+			"groups": [
+				[
+					{ "id": "rename", "label": "重命名", "icon": { "symbol": "pencil" } },
+					{
+						"id": "color",
+						"label": "颜色",
+						"icon": { "symbol": "target" },
+						"children": [
+							{ "id": "color/red", "label": "红", "icon": { "dot": "#d9534f" } },
+							{ "id": "color/none", "label": "无" }
+						]
+					},
+					{ "id": "pin", "label": "置顶", "icon": { "symbol": "pin" } }
+				],
+				[
+					{ "id": "costUsage", "label": "成本与用量", "icon": { "symbol": "chart.bar" }, "hint": "$1.24" },
+					{
+						"id": "link",
+						"label": "复制链接",
+						"icon": { "symbol": "doc.on.doc" },
+						"copy": "https://oryn.example.com/t/T-0193a1b2-0000-7000-8000-0000000000a1"
+					}
+				],
+				[{ "id": "delete", "label": "删除线程", "icon": { "symbol": "trash" }, "danger": true }]
+			]
+		}
+	},
+	"trail": {
+		"frame": { "x": 337, "y": 68, "width": 44, "height": 44 },
+		"symbol": "square.grid.2x2",
+		"label": "视图",
+		"dot": "warn",
+		"menu": {
+			"label": "视图",
+			"dim": false,
+			"quick": [],
+			"status": [],
+			"groups": [
+				[
+					{ "id": "agent", "label": "对话", "icon": { "symbol": "bubble.left" }, "checked": true },
+					{
+						"id": "terminal",
+						"label": "终端",
+						"icon": { "symbol": "terminal" },
+						"dot": "warn",
+						"pulse": true,
+						"checked": false
+					},
+					{ "id": "info", "label": "信息", "icon": { "symbol": "info.circle" }, "checked": false }
+				]
+			]
+		}
+	}
+}

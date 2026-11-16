@@ -532,6 +532,7 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 			openNotificationSettings: vi.fn(),
 			changeServer: vi.fn(),
 			tabBar: null,
+			header: null,
 		};
 	}
 	beforeEach(() => {

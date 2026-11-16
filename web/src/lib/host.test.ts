@@ -5,8 +5,12 @@ import {
 	createHost,
 	HOST_EVENT,
 	type Invoke,
+	type NativeHeaderMenu,
+	type NativeHeaderShow,
+	type NativeHeaderSpec,
 	type NativeTabBarReveal,
 	type NativeTabBarSpec,
+	parseHeaderEvent,
 } from "./host";
 
 interface FakeWin {
@@ -449,6 +453,125 @@ describe("移动壳（M7）", () => {
 		it("web 宿主：onTabBar 返回空函数", () => {
 			const h = createHost(fakeWindow().win);
 			const off = h.onTabBar(vi.fn());
+			expect(typeof off).toBe("function");
+			expect(() => off()).not.toThrow();
+		});
+	});
+
+	describe("原生页头（bridge 5）", () => {
+		const spec = { key: "T-1" } as NativeHeaderSpec;
+		const show: NativeHeaderShow = {
+			alpha: 1,
+			dx: 0,
+			passive: false,
+			ms: 120,
+			delay: 0,
+		};
+		const menu: NativeHeaderMenu = { open: "title", page: "env" };
+
+		it("本页宿主协议版本为 5", () => {
+			expect(BRIDGE).toBe(5);
+		});
+
+		it("ios + bridge 5 → header 非空；set / show / menu 的参数形状", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 5 });
+			const m = createHost(f.win).mobile;
+			expect(m?.tabBar).toBeTruthy();
+			const hd = m?.header;
+			expect(hd).toBeTruthy();
+			await hd?.set(spec);
+			await hd?.set(null);
+			await hd?.show(show);
+			await hd?.menu(menu);
+			await hd?.menu({ open: null });
+			expect(f.invoke.mock.calls).toEqual([
+				["host_header_set", { spec }],
+				["host_header_set", { spec: null }],
+				["host_header_show", { show }],
+				["host_header_menu", { menu }],
+				["host_header_menu", { menu: { open: null } }],
+			]);
+		});
+
+		it("invoke 拒绝时 set / show / menu 的 Promise 拒绝（调用方据此退回网页页头）", async () => {
+			const f = mobileWindow({
+				platform: "ios",
+				bridge: 5,
+				invoke: () => {
+					throw "unsupported";
+				},
+			});
+			const hd = createHost(f.win).mobile?.header;
+			await expect(hd?.set(spec)).rejects.toBe("unsupported");
+			await expect(hd?.show(show)).rejects.toBe("unsupported");
+			await expect(hd?.menu(menu)).rejects.toBe("unsupported");
+		});
+
+		it("ios + bridge 4 → header 为 null 而 tabBar 非空；android + bridge 5 → header 为 null", () => {
+			const old = createHost(mobileWindow({ platform: "ios", bridge: 4 }).win);
+			expect(old.mobile?.header).toBeNull();
+			expect(old.mobile?.tabBar).toBeTruthy();
+			const android = createHost(mobileWindow({ bridge: 5 }).win);
+			expect(android.mobile).not.toBeNull();
+			expect(android.mobile?.header).toBeNull();
+		});
+
+		it("三种 header 事件到 onHeader；key 缺失、select 缺 id / 菜单种类、桌面壳上忽略；可退订", () => {
+			const f = mobileWindow({ platform: "ios", bridge: 5 });
+			const h = createHost(f.win);
+			const cb = vi.fn();
+			const off = h.onHeader(cb);
+			f.emit({ type: "header", op: "lead", key: "T-1" });
+			f.emit({ type: "header", op: "menu", key: "T-1", menu: "title" });
+			f.emit({ type: "header", op: "menu", key: "T-1", menu: null });
+			f.emit({
+				type: "header",
+				op: "select",
+				key: "T-1",
+				menu: "trail",
+				id: "terminal",
+			});
+			f.emit({ type: "header", op: "lead" });
+			f.emit({ type: "header", op: "select", key: "T-1", menu: "title" });
+			f.emit({ type: "header", op: "select", key: "T-1", id: "x" });
+			f.emit({ type: "header", op: "nope", key: "T-1" });
+			expect(cb.mock.calls).toEqual([
+				[{ op: "lead", key: "T-1" }],
+				[{ op: "menu", key: "T-1", menu: "title" }],
+				[{ op: "menu", key: "T-1", menu: null }],
+				[{ op: "select", key: "T-1", menu: "trail", id: "terminal" }],
+			]);
+			off();
+			f.emit({ type: "header", op: "lead", key: "T-1" });
+			expect(cb).toHaveBeenCalledTimes(4);
+
+			const d = fakeWindow({ tauri: true });
+			const desk = createHost(d.win);
+			const c2 = vi.fn();
+			desk.onHeader(c2);
+			d.emit({ type: "header", op: "lead", key: "T-1" });
+			expect(c2).not.toHaveBeenCalled();
+		});
+
+		it("parseHeaderEvent：menu 不是 title / trail（含缺省）一律为 null；非对象为 null", () => {
+			expect(parseHeaderEvent({ op: "menu", key: "K", menu: "x" })).toEqual({
+				op: "menu",
+				key: "K",
+				menu: null,
+			});
+			expect(parseHeaderEvent({ op: "menu", key: "K" })).toEqual({
+				op: "menu",
+				key: "K",
+				menu: null,
+			});
+			expect(parseHeaderEvent({ op: "lead", key: 3 })).toBeNull();
+			expect(parseHeaderEvent(null)).toBeNull();
+			expect(parseHeaderEvent("lead")).toBeNull();
+		});
+
+		it("web 宿主：onHeader 返回空函数", () => {
+			const h = createHost(fakeWindow().win);
+			const off = h.onHeader(vi.fn());
 			expect(typeof off).toBe("function");
 			expect(() => off()).not.toThrow();
 		});

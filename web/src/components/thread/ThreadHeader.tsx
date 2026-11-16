@@ -13,6 +13,7 @@ import { Link, useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
+import { isDark, markHex } from "../../lib/native-header";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import {
@@ -331,6 +332,10 @@ export function useThreadActions(threadId: string): {
 						</span>
 					),
 					onSelect: act(() => patchThread(threadId, { color: c })),
+					native: {
+						label: t(`color.${c}`),
+						icon: { dot: markHex(THREAD_HUE[c] ?? 0, isDark()) },
+					},
 				})),
 				{
 					key: "none",
@@ -345,6 +350,8 @@ export function useThreadActions(threadId: string): {
 			label: t("thread.copyLink"),
 			onSelect: () =>
 				void navigator.clipboard?.writeText(`${location.origin}/t/${threadId}`),
+			// 原生菜单选中时由原生直接写剪贴板（经事件回到网页时已没有用户手势）
+			native: { copy: `${location.origin}/t/${threadId}` },
 		},
 		{
 			key: "costUsage",

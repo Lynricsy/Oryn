@@ -68,6 +68,7 @@
 	},
 	"common": {
 		"none": "无",
+		"back": "返回",
 		"cancel": "取消",
 		"clear": "清除",
 		"close": "关闭",

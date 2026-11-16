@@ -16,6 +16,7 @@
  * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
  * 桌面壳 bridge ≥ 3 去掉了系统标题栏：`__ORYN_HOST__.chrome` 声明按钮布局，窗口操作与 `window` 事件见 `window-chrome.ts`。
  * 移动壳 bridge ≥ 4 且 platform 为 ios：`mobile.tabBar` 非空（原生底栏，见 `native-tab-bar.ts`），另有 `tabbar` 事件（用户点了原生底栏的一项）。
+ * 移动壳 bridge ≥ 5 且 platform 为 ios：`mobile.header` 非空（原生页头，见 `native-header.ts`），另有 `header` 事件。
  */
 
 import type { Attachment } from "./attachments";
@@ -172,6 +173,151 @@ export interface NativeTabBarHost {
 	reveal(r: NativeTabBarReveal): Promise<void>;
 }
 
+/** orb 状态珠的画法（`OrbBead` 的各档 + `err` = 7px 错误色圆点）。 */
+export type NativeOrb =
+	| "booting"
+	| "ready"
+	| "working"
+	| "freezing"
+	| "frozen"
+	| "stopped"
+	| "deleted"
+	| "failed"
+	| "err";
+
+/** 四选一：SF Symbol / 字形方块（`bg`、`fg` 只配 `glyph`）/ 纯色圆点 / orb 状态珠。颜色一律 `#rrggbb`。 */
+export interface NativeIcon {
+	symbol?: string;
+	glyph?: string;
+	bg?: string;
+	fg?: string;
+	dot?: string;
+	orb?: NativeOrb;
+}
+
+/** 一段「图形 + 文字」：标题胶囊第二行的一段、菜单行的说明行。 */
+export interface NativeSeg {
+	text: string;
+	icon?: NativeIcon;
+	tone?: "err";
+}
+
+export interface NativeMark {
+	symbol: string;
+	dim?: boolean;
+}
+
+export interface NativeMenuItem {
+	/** 菜单内唯一；子项是 `<父 id>/<key>`。原生点击原样回传。 */
+	id: string;
+	label: string;
+	icon?: NativeIcon;
+	sub?: NativeSeg;
+	hint?: string;
+	/** 文字后的提醒点（视图菜单）。 */
+	dot?: "accent" | "warn";
+	pulse?: boolean;
+	/** 给出即单选项；true 时右侧打勾。 */
+	checked?: boolean;
+	danger?: boolean;
+	disabled?: boolean;
+	/** 选中时原生把这段文字写进剪贴板（网页不再执行该项的 onSelect）。 */
+	copy?: string;
+	/** 一级子页（子项不能再有 children）。 */
+	children?: NativeMenuItem[];
+}
+
+export interface NativeMenu {
+	/** 读屏用的菜单名。 */
+	label: string;
+	/** 打开时是否压暗页面（标题菜单 true，视图菜单 false）。 */
+	dim: boolean;
+	/** 顶部宫格（常用操作）。 */
+	quick: NativeMenuItem[];
+	/** 浅底状态块。 */
+	status: NativeMenuItem[];
+	/** 其余分组，组间一条细线。 */
+	groups: NativeMenuItem[][];
+}
+
+export interface NativeFrame {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/** 原生页头的整份内容（iOS 26+，见 `native-header.ts`）；只在内容变了时发。 */
+export interface NativeHeaderSpec {
+	/** 线程 id：变了原生收起菜单；事件原样带回。 */
+	key: string;
+	dark: boolean;
+	palette: {
+		accent: string;
+		brand: string;
+		err: string;
+		warn: string;
+		good: string;
+		frost: string;
+	};
+	/** 可调参数放在网页（改它不用发版）：遮罩不透明度、面板底色着色强度，均 0–1。 */
+	tune: { scrim: number; tint: number };
+	/** 读屏文案：子页的返回行、关闭区。 */
+	text: { back: string; close: string };
+	lead: { frame: NativeFrame; symbol: string; label: string };
+	title: {
+		frame: NativeFrame;
+		text: string;
+		icon?: NativeIcon;
+		/** 有值时第二行只显示它（错误色）。 */
+		error?: string;
+		meta: NativeSeg[];
+		marks: NativeMark[];
+		/** 读屏读的整句。 */
+		label: string;
+		menu: NativeMenu;
+	};
+	trail: {
+		frame: NativeFrame;
+		symbol: string;
+		label: string;
+		dot?: "accent" | "warn";
+		menu: NativeMenu;
+	} | null;
+}
+
+/** 页头控件层的呈现状态。v1 网页恒发 `dx: 0, passive: false`（两个字段留给以后改策略）。 */
+export interface NativeHeaderShow {
+	alpha: number;
+	/** 整层水平位移（CSS px）。 */
+	dx: number;
+	/** true = 只显示不接触摸（触摸落到网页）。 */
+	passive: boolean;
+	ms: number;
+	delay: number;
+	ease?: [number, number, number, number];
+}
+
+export type NativeMenuKind = "title" | "trail";
+
+export interface NativeHeaderMenu {
+	open: NativeMenuKind | null;
+	/** 直接停在某个子页（父项 id）。 */
+	page?: string;
+}
+
+export type NativeHeaderEvent =
+	| { op: "lead"; key: string }
+	| { op: "menu"; key: string; menu: NativeMenuKind | null }
+	| { op: "select"; key: string; menu: NativeMenuKind; id: string };
+
+export interface NativeHeaderHost {
+	/** 应答 = 原生页头已经挂到窗口上；拒绝 = 不可用，调用方继续用网页页头。 */
+	set(spec: NativeHeaderSpec | null): Promise<void>;
+	show(show: NativeHeaderShow): Promise<void>;
+	menu(menu: NativeHeaderMenu): Promise<void>;
+}
+
 export interface MobileHost {
 	info(): Promise<MobileInfo>;
 	enablePush(): Promise<MobileInfo>;
@@ -183,6 +329,8 @@ export interface MobileHost {
 	changeServer(): void;
 	/** 原生底栏（iOS 且 bridge ≥ 4）；其它情况为 null，用网页底栏。 */
 	tabBar: NativeTabBarHost | null;
+	/** 原生页头（iOS 且 bridge ≥ 5）；其它情况为 null，用网页页头。 */
+	header: NativeHeaderHost | null;
 }
 
 export interface Host {
@@ -207,12 +355,14 @@ export interface Host {
 	onInsets(cb: (g: DeviceGeometry) => void): () => void;
 	/** 用户点了原生底栏的一项（仅 iOS 移动壳；点已选中项同样上报）。 */
 	onTabBar(cb: (id: string) => void): () => void;
+	/** 原生页头上的点击（仅 iOS 移动壳；见 `native-header.ts`）。 */
+	onHeader(cb: (e: NativeHeaderEvent) => void): () => void;
 	desktop: DesktopHost | null;
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏）。 */
-export const BRIDGE = 4;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头）。 */
+export const BRIDGE = 5;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -280,6 +430,7 @@ function webHost(win: Window): Host {
 		onMobile: () => noop,
 		onInsets: () => noop,
 		onTabBar: () => noop,
+		onHeader: () => noop,
 		desktop: null,
 		mobile: null,
 	};
@@ -331,6 +482,27 @@ export function parseGeometry(v: unknown): DeviceGeometry | null {
 			left: num(i?.left),
 		},
 	};
+}
+
+function menuKind(v: unknown): NativeMenuKind | null {
+	return v === "title" || v === "trail" ? v : null;
+}
+
+/** 解析 `header` 事件：`key` 必须是字符串；`select` 要有菜单种类与字符串 `id`，否则整条丢弃。 */
+export function parseHeaderEvent(v: unknown): NativeHeaderEvent | null {
+	if (!v || typeof v !== "object") return null;
+	const o = v as Record<string, unknown>;
+	const key = o.key;
+	if (typeof key !== "string") return null;
+	if (o.op === "lead") return { op: "lead", key };
+	if (o.op === "menu") return { op: "menu", key, menu: menuKind(o.menu) };
+	if (o.op === "select") {
+		const menu = menuKind(o.menu);
+		return menu && typeof o.id === "string"
+			? { op: "select", key, menu, id: o.id }
+			: null;
+	}
+	return null;
 }
 
 function parseShare(v: unknown): ShareIntake | null {
@@ -385,6 +557,7 @@ function mobileHost(
 		args?: Record<string, unknown>,
 	) => Promise<T | undefined>,
 	nativeTabBar: boolean,
+	nativeHeader: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
 		void call("host_open_external", { url });
@@ -431,11 +604,18 @@ function mobileHost(
 		changeServer: () => {
 			void call("host_change_server");
 		},
-		// 用 invoke 不用 call：拒绝要交给调用方退回网页底栏
+		// 用 invoke 不用 call：拒绝要交给调用方退回网页底栏 / 页头
 		tabBar: nativeTabBar
 			? {
 					set: (spec) => invoke<void>("host_tab_bar_set", { spec }),
 					reveal: (reveal) => invoke<void>("host_tab_bar_reveal", { reveal }),
+				}
+			: null,
+		header: nativeHeader
+			? {
+					set: (spec) => invoke<void>("host_header_set", { spec }),
+					show: (show) => invoke<void>("host_header_show", { show }),
+					menu: (menu) => invoke<void>("host_header_menu", { menu }),
 				}
 			: null,
 	};
@@ -454,6 +634,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const mobileChanged = listeners<[]>();
 	const insets = listeners<[DeviceGeometry]>();
 	const tabBar = listeners<[string]>();
+	const header = listeners<[NativeHeaderEvent]>();
 	const isMobile =
 		(platform === "android" || platform === "ios") && (meta?.bridge ?? 0) >= 2;
 
@@ -488,6 +669,10 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			if (g) insets.emit(g);
 		} else if (isMobile && d.type === "tabbar" && typeof d.id === "string")
 			tabBar.emit(d.id);
+		else if (isMobile && d.type === "header") {
+			const e = parseHeaderEvent(d);
+			if (e) header.emit(e);
+		}
 	});
 
 	/** 发出即忘：拒绝只记日志。 */
@@ -544,12 +729,14 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		onMobile: (cb) => mobileChanged.add(cb),
 		onInsets: (cb) => insets.add(cb),
 		onTabBar: (cb) => tabBar.add(cb),
+		onHeader: (cb) => header.add(cb),
 		mobile: isMobile
 			? mobileHost(
 					win,
 					invoke,
 					call,
 					platform === "ios" && (meta?.bridge ?? 0) >= 4,
+					platform === "ios" && (meta?.bridge ?? 0) >= 5,
 				)
 			: null,
 		desktop: isMobile

@@ -479,6 +479,7 @@ describe("NotificationsSettings 此设备（移动壳，M7）", () => {
 			openNotificationSettings: vi.fn(),
 			changeServer: vi.fn(),
 			tabBar: null,
+			header: null,
 		};
 		mount();
 		expect(await screen.findByTestId("mobile-push-enable")).toBeInTheDocument();

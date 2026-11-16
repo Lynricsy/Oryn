@@ -88,11 +88,18 @@ vi.mock("../components/thread/CompactThreadHeader", async (orig) => ({
 	CompactThreadHeader: ({
 		veil,
 		viewMenu,
+		visible,
 	}: {
 		veil: number;
 		viewMenu?: ReactNode;
+		visible?: boolean;
 	}) => (
-		<header data-testid="thread-header" data-compact="" data-veil={veil}>
+		<header
+			data-testid="thread-header"
+			data-compact=""
+			data-veil={veil}
+			data-visible={String(visible)}
+		>
 			{viewMenu}
 		</header>
 	),
@@ -231,6 +238,16 @@ describe("ThreadPage 窄屏同级标签", () => {
 		expect(screen.getByTestId("transcript")).toBe(transcript);
 		expect(screen.queryByTestId("right-panel")).toBeNull();
 		expect(screen.getByTestId("thread-view-menu")).toBeInTheDocument();
+	});
+
+	it("compact：切到面板标签时转录页头收到 visible=false（iOS 原生页头当帧让位），切回对话恢复", () => {
+		renderPage(390);
+		const header = () => screen.getByTestId("thread-header");
+		expect(header()).toHaveAttribute("data-visible", "true");
+		act(() => uiStore.getState().setThreadTab("terminal"));
+		expect(header()).toHaveAttribute("data-visible", "false");
+		act(() => uiStore.getState().setThreadTab("agent"));
+		expect(header()).toHaveAttribute("data-visible", "true");
 	});
 
 	it("medium 同样是同级标签，打开面板（如终端入口）直接切到该标签", () => {
