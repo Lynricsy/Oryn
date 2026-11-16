@@ -527,6 +527,19 @@ jobs:
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
 
+      # 硬门禁：经与页面相同的 host_app_icon_* 命令把图标换成品牌色再换回默认，每步回读系统的 alternateIconName。
+      # 放在其它模拟器检查之后：换图标时系统弹出的提示框不会挡到它们的截图与触摸
+      - name: 模拟器：可替换图标切换
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 10
+        shell: bash
+        env:
+          APP: ${{ steps.app.outputs.path }}
+        run: |
+          rm -f ios-shot/appicon/.complete
+          bash web/src-tauri/ci/ios-appicon-check.sh "$APP" ios-shot/appicon
+          [[ -f ios-shot/appicon/.complete ]] || { echo "::error::可替换图标检查没有跑完全部断言"; exit 1; }
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         continue-on-error: true
