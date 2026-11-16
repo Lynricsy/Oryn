@@ -325,6 +325,7 @@ struct TitleCapsule: View {
 }
 
 /// 只封顶不撑开的宽度：向子视图提议 min(提议, max)，自身取子视图的实际尺寸。
+@available(iOS 26.0, *)
 struct CapWidth: Layout {
   let max: CGFloat
 
