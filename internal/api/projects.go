@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,7 +19,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-func projectJSON(p db.Project) apigen.Project {
+// projectJSON 把项目行转成 API 视图；hook 是项目所绑仓库的 github_hooks 行（没有为 nil）。
+func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	out := apigen.Project{
 		ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
@@ -29,8 +31,23 @@ func projectJSON(p db.Project) apigen.Project {
 	if id := gitIdentityJSON(p.GitAuthorName, p.GitAuthorEmail); id != nil {
 		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
 	}
-	out.Github = github.ProjectGitHubAPI(p)
+	out.Github = github.ProjectGitHubAPI(p, hook)
 	return out
+}
+
+// writeProject 以 status 写出单个项目的 API 视图：已绑定时至多查一次所绑仓库的 hook 行。
+func (s *Server) writeProject(w http.ResponseWriter, r *http.Request, status int, p db.Project) {
+	var hook *db.GithubHook
+	if p.GithubRepoID != nil {
+		h, err := s.Store.Q.GetGithubHook(r.Context(), *p.GithubRepoID)
+		if err == nil {
+			hook = &h
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	WriteJSON(w, status, projectJSON(p, hook))
 }
 
 func sameOptStr(a, b *string) bool {
@@ -97,9 +114,28 @@ func (s *Server) ListProjects(w http.ResponseWriter, r *http.Request, params api
 		writeErr(w, r, err)
 		return
 	}
+	// hook 行一次读全再按仓库 id 查，不逐项目查询
+	var hooks map[int64]db.GithubHook
+	if slices.ContainsFunc(rows, func(p db.Project) bool { return p.GithubRepoID != nil }) {
+		all, err := s.Store.Q.ListGithubHooks(r.Context())
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		hooks = make(map[int64]db.GithubHook, len(all))
+		for _, h := range all {
+			hooks[h.RepoID] = h
+		}
+	}
 	out := apigen.ProjectList{Projects: make([]apigen.Project, 0, len(rows))}
 	for _, p := range rows {
-		out.Projects = append(out.Projects, projectJSON(p))
+		var hook *db.GithubHook
+		if p.GithubRepoID != nil {
+			if h, ok := hooks[*p.GithubRepoID]; ok {
+				hook = &h
+			}
+		}
+		out.Projects = append(out.Projects, projectJSON(p, hook))
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
@@ -169,7 +205,7 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if row.WarmOrbs > 0 {
 		s.poolKick(row.ID)
 	}
-	WriteJSON(w, http.StatusCreated, projectJSON(row))
+	s.writeProject(w, r, http.StatusCreated, row)
 }
 
 // GetProject 返回项目详情。
@@ -182,7 +218,7 @@ func (s *Server) GetProject(w http.ResponseWriter, r *http.Request, id apigen.Pr
 		writeErr(w, r, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, projectJSON(p))
+	s.writeProject(w, r, http.StatusOK, p)
 }
 
 // UpdateProject 只修改出现的字段；可选字符串传空串清除。
@@ -332,7 +368,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		req.ShallowClone != nil || req.DefaultProvider != nil || req.DefaultOrbType != nil || req.Archived != nil {
 		s.poolKick(id)
 	}
-	WriteJSON(w, http.StatusOK, projectJSON(out))
+	s.writeProject(w, r, http.StatusOK, out)
 }
 
 // DeleteProject 删除项目（线程保留，project_id 置空）。

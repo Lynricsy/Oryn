@@ -32,7 +32,9 @@ func githubRepoPath(repoURL *string) (string, bool) {
 
 // ProjectGitHubAPI 是项目的 GitHub 绑定摘要：已绑定（github_repo_id 非 NULL）时 bound 为真；未绑定但记录了原因
 // （not_found / org_restricted / sso_required，R8）时带 bindStatus；两者都没有返回 nil。
-func ProjectGitHubAPI(p db.Project) *apigen.ProjectGitHub {
+// hook 是所绑仓库在 github_hooks 里的行（没有传 nil）：已绑定且仓库 id 一致时据此填 hookStatus，
+// 映射与 `GET /api/v1/github/hooks`（Hooks）相同，两个接口看到的状态一致。
+func ProjectGitHubAPI(p db.Project, hook *db.GithubHook) *apigen.ProjectGitHub {
 	if p.GithubRepoID == nil && p.GithubBindStatus == nil {
 		return nil
 	}
@@ -41,6 +43,10 @@ func ProjectGitHubAPI(p db.Project) *apigen.ProjectGitHub {
 	}
 	if p.GithubRepoID != nil {
 		out.RepoID, out.Bound = *p.GithubRepoID, true
+		if hook != nil && hook.RepoID == *p.GithubRepoID {
+			st := apigen.GitHubHookStatus(hook.Status)
+			out.HookStatus = &st
+		}
 	} else {
 		st := apigen.ProjectGitHubBindStatus(*p.GithubBindStatus)
 		out.BindStatus = &st

@@ -51,7 +51,7 @@ func TestBindProject(t *testing.T) {
 	// 我的账号未连接：什么都不做
 	p := e.project("https://github.com/acme/widgets.git")
 	require.NoError(t, e.s.BindProject(e.ctx, p))
-	assert.Nil(t, ProjectGitHubAPI(e.getProject(p)))
+	assert.Nil(t, ProjectGitHubAPI(e.getProject(p), nil))
 
 	e.userEnv()
 	require.NoError(t, e.s.BindProject(e.ctx, p))
@@ -59,7 +59,7 @@ func TestBindProject(t *testing.T) {
 	require.NotNil(t, row.GithubRepoID)
 	assert.EqualValues(t, 42, *row.GithubRepoID)
 	assert.Nil(t, row.GithubBindStatus)
-	api := ProjectGitHubAPI(row)
+	api := ProjectGitHubAPI(row, nil)
 	require.NotNil(t, api)
 	assert.Equal(t, "acme/widgets", api.FullName)
 	assert.True(t, api.Bound)
@@ -75,13 +75,13 @@ func TestBindProject(t *testing.T) {
 	deep := e.project("https://github.com/acme/widgets/extra")
 	for _, id := range []string{gitlab, deep} {
 		require.NoError(t, e.s.BindProject(e.ctx, id))
-		assert.Nil(t, ProjectGitHubAPI(e.getProject(id)), id)
+		assert.Nil(t, ProjectGitHubAPI(e.getProject(id), nil), id)
 	}
 
 	// 读不到的仓库：未绑定，原因 not_found
 	other := e.project("https://github.com/acme/other")
 	require.NoError(t, e.s.BindProject(e.ctx, other))
-	api = ProjectGitHubAPI(e.getProject(other))
+	api = ProjectGitHubAPI(e.getProject(other), nil)
 	require.NotNil(t, api)
 	assert.False(t, api.Bound)
 	require.NotNil(t, api.BindStatus)
@@ -112,7 +112,33 @@ func TestBindProject(t *testing.T) {
 	// 仓库地址改成非 GitHub：清空绑定
 	require.NoError(t, e.st.Q.SetProjectRepoURL(e.ctx, db.SetProjectRepoURLParams{RepoUrl: new("https://gitlab.com/x/y"), GithubPrevUrls: "[]", UpdatedAt: 2, ID: p}))
 	require.NoError(t, e.s.BindProject(e.ctx, p))
-	assert.Nil(t, ProjectGitHubAPI(e.getProject(p)))
+	assert.Nil(t, ProjectGitHubAPI(e.getProject(p), nil))
+}
+
+func TestProjectGitHubAPIHookStatus(t *testing.T) {
+	repoID, url, reason := int64(42), "https://github.com/acme/widgets", "not_found"
+	bound := db.Project{RepoUrl: &url, GithubRepoID: &repoID}
+	hook := func(id int64, status string) *db.GithubHook {
+		return &db.GithubHook{RepoID: id, FullName: "acme/widgets", Status: status}
+	}
+
+	// 已绑定、没有 hook 行：省略 hookStatus
+	api := ProjectGitHubAPI(bound, nil)
+	require.NotNil(t, api)
+	assert.Nil(t, api.HookStatus)
+	// 每个状态都按原值映射（与 Hooks 一致）
+	for _, st := range []string{"active", "no_admin", "org_restricted", "sso_required", "error"} {
+		api = ProjectGitHubAPI(bound, hook(42, st))
+		require.NotNil(t, api.HookStatus, st)
+		assert.EqualValues(t, st, *api.HookStatus)
+		assert.True(t, api.HookStatus.Valid(), st)
+	}
+	// 别的仓库的 hook 行不算
+	assert.Nil(t, ProjectGitHubAPI(bound, hook(7, "active")).HookStatus)
+	// 未绑定（只有原因）：不带 hookStatus
+	api = ProjectGitHubAPI(db.Project{RepoUrl: &url, GithubBindStatus: &reason}, hook(42, "active"))
+	require.NotNil(t, api)
+	assert.Nil(t, api.HookStatus)
 }
 
 func TestBindProjectFollowsRename(t *testing.T) {
@@ -137,7 +163,7 @@ func TestBindProjectFollowsRename(t *testing.T) {
 	var prev []string
 	require.NoError(t, json.Unmarshal([]byte(row.GithubPrevUrls), &prev))
 	assert.Equal(t, []string{"https://github.com/acme/widgets.git"}, prev)
-	assert.Equal(t, "acme/gadgets", ProjectGitHubAPI(row).FullName)
+	assert.Equal(t, "acme/gadgets", ProjectGitHubAPI(row, nil).FullName)
 	pull, err := e.st.Q.GetGithubPull(e.ctx, db.GetGithubPullParams{RepoID: 42, Number: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "acme/gadgets", pull.RepoFullName)
