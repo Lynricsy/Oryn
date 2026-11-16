@@ -123,6 +123,7 @@ type Server struct {
 	codes       map[string]string // 授权码 → login
 	userTokens  map[string]string // 用户访问令牌 → login
 	tokenScopes map[string]string // 用户访问令牌 → 授予的 scope
+	forkParent  map[int64]int64   // fork 的仓库 id → 上游仓库 id（GraphQL 的 parent，见 gqlquery.go）
 }
 
 // New 起一个假 GitHub；URL() 同时作为 APIURL 与 WebURL。

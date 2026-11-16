@@ -32,6 +32,7 @@
     "accept:m13": "bun scripts/m13-accept.ts",
     "accept:m14": "bun scripts/m14-accept.ts",
     "accept:m14-artifacts": "bun scripts/m14-artifacts-accept.ts",
+    "accept:m15": "bun scripts/m15-accept.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
   },

@@ -13,7 +13,8 @@ func (s *Server) refRoutes(mux *http.ServeMux) {
 }
 
 // getRef 按 Repo.Refs（键为 heads/<分支>、tags/<tag>）回 `{ref, object{sha, type}}`：tag 的值是 TagObjects 里的附注 tag
-// 对象时 type 为 tag（再经 GET …/git/tags/{sha} 剥到提交），否则为 commit（轻量 tag 与分支）。
+// 对象时 type 为 tag（再经 GET …/git/tags/{sha} 剥到提交），否则为 commit（轻量 tag 与分支）。Repo.Refs 没有该 ref 时读
+// GitRoot 下的裸仓库（M15 9.2：经 git smart-HTTP 推送的分支与 tag）。
 func (s *Server) getRef(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -28,13 +29,14 @@ func (s *Server) getRef(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := r.PathValue("ref")
 	sha, ok := rp.Refs[ref]
-	if !ok {
+	typ := "commit"
+	if ok {
+		if _, annotated := s.TagObjects[sha]; annotated && strings.HasPrefix(ref, "tags/") {
+			typ = "tag"
+		}
+	} else if sha, typ, ok = s.bareRef(rp.FullName, ref); !ok {
 		fail(w, http.StatusNotFound, "Not Found")
 		return
-	}
-	typ := "commit"
-	if _, annotated := s.TagObjects[sha]; annotated && strings.HasPrefix(ref, "tags/") {
-		typ = "tag"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ref": "refs/" + ref, "node_id": "REF_" + ref,

@@ -591,6 +591,14 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// gh 的只读查询（RepositoryInfo、RepositoryNetwork、PullRequestForBranch 等，见 gqlquery.go）
+		if op := doc.Operations.ForName(in.OperationName); op != nil && !strings.Contains(in.Query, "statusCheckRollup") && gqlGeneric(op, doc.Fragments) {
+			if anyVars == nil {
+				anyVars = map[string]any{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"data": gqlExec(s.gqlRoot(r, s.userOf(tok)), op.SelectionSet, doc.Fragments, anyVars)})
+			return
+		}
 	}
 	if strings.Contains(in.Query, "nameWithOwner") {
 		// node(id) { ... on Repository { nameWithOwner } }：按仓库 node id 取 owner/name
@@ -688,14 +696,14 @@ func (s *Server) mutate(r *http.Request, u *User, name string, in map[string]any
 		for _, is := range s.issuesOf(rp) {
 			n = max(n, is.is.Number)
 		}
-		_, head, ok := strings.Cut(str("headRefName"), ":")
-		if !ok {
-			head = str("headRefName")
-		}
+		headRepoID, head, headSHA := s.pullHead(rp, str("headRepositoryId"), str("headRefName"))
 		draft, _ := in["draft"].(bool)
 		pr := &Pull{
 			Issue:   Issue{RepoID: rp.ID, Number: n + 1, Title: str("title"), Body: str("body"), State: "open", Author: u.Login, UpdatedAt: now},
-			HeadRef: head, BaseRef: str("baseRefName"), Draft: draft,
+			HeadRef: head, HeadSHA: headSHA, BaseRef: str("baseRefName"), Draft: draft,
+		}
+		if headRepoID != rp.ID {
+			pr.HeadRepoID = headRepoID
 		}
 		s.Pulls = append(s.Pulls, pr)
 		return map[string]any{"pullRequest": s.pullGQL(r, rp, pr)}, nil
@@ -899,6 +907,14 @@ func (s *Server) createFork(w http.ResponseWriter, r *http.Request) {
 		s.seq++
 		fork = &Repo{ID: 5000 + s.seq, FullName: owner + "/" + name, OwnerID: u.ID, DefaultBranch: rp.DefaultBranch, Private: rp.Private}
 		s.Repos = append(s.Repos, fork)
+		if s.forkParent == nil {
+			s.forkParent = map[int64]int64{}
+		}
+		s.forkParent[fork.ID] = rp.ID
+	}
+	if err := s.forkBare(rp.FullName, fork.FullName); err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	m := s.repoJSON(r, fork)
 	m["node_id"] = RepoNodeID(fork.ID)

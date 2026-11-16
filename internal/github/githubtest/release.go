@@ -154,14 +154,18 @@ func (s *Server) findJob(repoID int64, id string) *WorkflowJob {
 	return nil
 }
 
-// getTagObject 回附注 tag 对象（只给出指向的提交）。
+// getTagObject 回附注 tag 对象（只给出指向的提交）：先查 TagObjects，再查仓库的裸仓库（GitRoot 非空时）。
 func (s *Server) getTagObject(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if rp := s.readableRepo(w, r, "/git/tags/"+r.PathValue("sha")); rp == nil {
+	rp := s.readableRepo(w, r, "/git/tags/"+r.PathValue("sha"))
+	if rp == nil {
 		return
 	}
 	commit, ok := s.TagObjects[r.PathValue("sha")]
+	if !ok {
+		commit, ok = s.bareTagCommit(rp.FullName, r.PathValue("sha"))
+	}
 	if !ok {
 		fail(w, http.StatusNotFound, "Not Found")
 		return

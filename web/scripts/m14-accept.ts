@@ -17,6 +17,12 @@ import { connect, createServer, type Server, type Socket } from "node:net";
  * 截图存进 `.dev/m14/`，每条打印 `R<n> [mock|real] PASS|FAIL|SKIP`，最后按 R 编号汇总（任一部分 FAIL → FAIL；
  * 有部分没跑或跳过 → SKIP；其余 PASS）。全部 PASS 时退出码 0。
  *
+ * M15 把 GitHub App 换成了 OAuth App（docs/plan-m15.md），本脚本的真机部分随之改为：R1 在设置页保存 OAuth App
+ * 配置（原 manifest 建 App）；R2（App 安装同步）已删除；R3 的「需要重新授权」改由缺少 scope 触发（OAuth 令牌不过期、
+ * 没有刷新）；R5 / R6 / R14 断言令牌是槽位的 OAuth 令牌（不再按仓库收窄），github.com 的其它仓库不再 403；R14 的
+ * 评论不再带标记、靠预登记认出自身写入；webhook 改由仓库 hook 投递，R17 补齐的是 hook 的投递日志。M15 的其余验收见
+ * `bun run accept:m15` 与 `go test ./internal/server/... -run E2EM15`。
+ *
  * 用法（web/ 目录）：bun run accept:m14 [-- --part mock|real] [-- --only R1,R10] [-- --help]
  *
  * 一、mock 部分（`--part mock`）：脚本起 `VITE_MOCK=1` 的 vite（127.0.0.1:5191），浏览器内 MockServer 应答一切
@@ -24,14 +30,14 @@ import { connect, createServer, type Server, type Socket } from "node:net";
  *
  * 二、真机部分（`--part real`）：自建一套隔离环境（全部在 /var/tmp/oryn-m14-<run>/ 下，结束时删除；M14_KEEP=1 保留）：
  *   - 假 GitHub：`go build ./cmd/fakegithub` 后以 `--listen 127.0.0.1:7630 --git-root <tmp>/git` 启动；同一地址同时是
- *     API 与网页基址（orynd.yaml 的 `github: { api_url, web_url }` 指向它）。脚本经 `/__fake/seed` 整体种下用户、安装、
- *     仓库、issue、PR、rollup 与提交检查（改状态就重新 seed 全量），经 `/__fake/deliver` 签名投递 webhook（`reachable:
- *     false` 只记投递日志，由 orynd 轮询补齐），经 `/__fake/oauth` 登记授权码，经 `/__fake/calls` 读它收到的请求。
+ *     API 与网页基址（orynd.yaml 的 `github: { api_url, web_url }` 指向它）。脚本经 `/__fake/seed` 整体种下用户、仓库、
+ *     issue、PR、rollup 与提交检查（改状态就重新 seed 全量），经 `/__fake/deliver` 以仓库 hook 的身份签名投递 webhook
+ *     （`reachable: false` 只记投递日志，由 orynd 轮询补齐），经 `/__fake/oauth` 登记授权码，经 `/__fake/calls` 读它收到的请求。
  *   - orynd（127.0.0.1:7640，data_dir 全新）；provider `local`（driver process，orbd = $M14_BIN/orbd，agent = fakeomp）：
  *     orb 的 HOME 是 `<tmp>/orbs/orbs/<orb id>/home`，检出在 `$HOME/workspace/repo`，出站代理地址是随机端口
  *     （用 `HOME=<orb home> git config --global --get-regexp '^url\.'` 读出）。
  *   - 第二个 vite（127.0.0.1:5192，非 mock，/api 等代理到这套 orynd）给浏览器用；public_url 与浏览器都用 localhost:5192。
- *   - 浏览器跑在只有回环的独立网络命名空间里（同 m13），访问不到假 GitHub：manifest / OAuth 的「去 GitHub」一步由脚本
+ *   - 浏览器跑在只有回环的独立网络命名空间里（同 m13），访问不到假 GitHub：OAuth 的「去 GitHub」一步由脚本
  *     直接请求回调地址代替（假 GitHub 的授权码事先登记好）。
  *   - 协调宿主：omp_path 指向 fakeomp（不验证），目录固定为 $M14_COORD_DIR（root 运行时宿主账号按目录派生）。
  *   - R19 的 runner：`oryn runner create` 后以 root 起 `orbd run --runner --allow-root`（HOME 在临时目录下）。
@@ -40,9 +46,9 @@ import { connect, createServer, type Server, type Socket } from "node:net";
  *
  * 环境变量：M14_SHOTS（缺省 <仓库>/.dev/m14）、CHROMIUM、M14_BIN、M14_COORD_DIR、M14_KEEP。
  *
- * 真机场景按依赖排序（见 REAL_ORDER）：先建 App、安装、两个身份、绑定项目，再建线程看凭据，再投事件看 PR 跟踪 / 回流 /
- * 准入 / 触发，最后停机补投（R17）与改名（R9）。用 `--only` 单跑某条时，缺的前置（App、身份、项目、主线程）会由
- * `ensure*` 经 API 补齐。
+ * 真机场景按依赖排序（见 REAL_ORDER）：先配 OAuth App、两个身份、绑定项目（Oryn 建仓库 hook），再建线程看凭据，再投事件看
+ * PR 跟踪 / 回流 / 准入 / 触发，最后停机补投（R17）与改名（R9）。用 `--only` 单跑某条时，缺的前置（OAuth App、身份、项目、
+ * 主线程）会由 `ensure*` 经 API 补齐。
  */
 import type { Subprocess } from "bun";
 import {
@@ -106,7 +112,6 @@ const REAL_UI = `http://localhost:${REAL_UI_PORT}`;
 const TMP = `/var/tmp/oryn-m14-${RUN}`;
 const FAKE_PORT = 7630;
 const FAKE = `http://127.0.0.1:${FAKE_PORT}`;
-const WEBHOOK = `${REAL_API}/api/v1/public/github/webhook`;
 const DB = `${TMP}/data/oryn.db`;
 
 // mock 固定数据（web/src/mock/fixtures.ts / github.ts）
@@ -119,11 +124,8 @@ const MOCK_PROJECT = "prj_01JCZ0000000000000000ORYN";
 const REPO = "acme/widgets";
 const REPO_ID = 42;
 const OWNER_ORG_ID = 1000;
-const INST_ACME = 9001;
-const INST_OWNER = 9002;
 const PR_NUMBER = 12;
 const ISSUE_NUMBER = 7;
-const AGENT_MARKER = "<!-- oryn-agent -->";
 const GH_USERS = {
 	owner: { id: 101, login: "owner", name: "Owner", type: "User" },
 	bot: { id: 202, login: "oryn-bot", name: "", type: "User" },
@@ -983,7 +985,7 @@ interface FakeChecks {
 }
 
 /**
- * `/__fake/seed` 的请求体（internal/github/githubtest/extra.go）：整体替换用户、安装、仓库、issue、PR、评论、rollup 与
+ * `/__fake/seed` 的请求体（internal/github/githubtest/extra.go）：整体替换用户、仓库、issue、PR、评论、rollup 与
  * 提交检查；改名记录、投递日志、Calls 与令牌在 seed 之间保留。要改状态就改这个对象后重新 seed 全量。
  */
 const seedState = {
@@ -993,20 +995,6 @@ const seedState = {
 		name: u.name,
 		type: u.type,
 	})),
-	installations: [
-		{
-			id: INST_ACME,
-			accountLogin: "acme",
-			accountType: "Organization",
-			repositorySelection: "selected",
-		},
-		{
-			id: INST_OWNER,
-			accountLogin: "owner",
-			accountType: "User",
-			repositorySelection: "all",
-		},
-	],
 	repos: [
 		{
 			id: REPO_ID,
@@ -1015,7 +1003,6 @@ const seedState = {
 			defaultBranch: "main",
 			private: true,
 			description: "M14 验收仓库",
-			installationId: INST_ACME,
 			permissions: {
 				owner: "admin",
 				"oryn-bot": "write",
@@ -1029,8 +1016,7 @@ const seedState = {
 			ownerId: OWNER_ORG_ID,
 			defaultBranch: "main",
 			private: true,
-			description: "同主机的另一个仓库（R5 的 403）",
-			installationId: INST_ACME,
+			description: "同主机的另一个仓库（M15：github.com 不按仓库收窄）",
 			permissions: { owner: "admin" } as Record<string, string>,
 		},
 		{
@@ -1040,7 +1026,6 @@ const seedState = {
 			defaultBranch: "master",
 			private: false,
 			description: "",
-			installationId: INST_OWNER,
 			permissions: { owner: "admin" } as Record<string, string>,
 		},
 	],
@@ -1071,27 +1056,19 @@ interface FakeCall {
 }
 const fakeCalls = () => fakeJson<FakeCall[]>("GET", "/__fake/calls");
 
-async function fakeOauth(o: {
-	code: string;
-	login: string;
-	expiresIn?: number;
-	failRefresh?: boolean;
-}) {
-	await fakeJson("POST", "/__fake/oauth", {
-		expiresIn: 28800,
-		failRefresh: false,
-		...o,
-	});
+/** 登记一个 OAuth 授权码；scopes 覆盖此后签发的令牌所带的 scope（`a, b, c`）。 */
+async function fakeOauth(o: { code: string; login: string; scopes?: string }) {
+	await fakeJson("POST", "/__fake/oauth", o);
 }
 
-/** 经假 GitHub 签名投递一次 webhook；`reachable: false` 只记进投递日志（由 orynd 轮询补齐）。 */
+/** 经假 GitHub 以 acme/widgets 的仓库 hook 身份签名投递一次 webhook；`reachable: false` 只记进投递日志（由 orynd 轮询补齐）。 */
 async function deliver(
 	event: string,
 	payload: Record<string, unknown>,
 	o: { reachable?: boolean; guid?: string } = {},
 ): Promise<{ guid: string; status: number }> {
 	const r = await fake("POST", "/__fake/deliver", {
-		target: WEBHOOK,
+		repo: REPO,
 		event,
 		payload,
 		reachable: o.reachable ?? true,
@@ -1169,7 +1146,6 @@ const userP = (u: GhUser) => ({
 const envelope = (sender: GhUser) => ({
 	repository: repoP(),
 	sender: userP(sender),
-	installation: { id: INST_ACME },
 });
 const iso = (ms = Date.now()) =>
 	new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
@@ -1531,12 +1507,12 @@ const getProject = (id: string) =>
 	rjson<ProjectView>("GET", `/api/v1/projects/${id}`);
 
 interface GitHubStatusView {
-	app?: { slug: string; name: string; installUrl: string };
+	oauthApp?: { clientId: string };
+	callbackUrl: string;
 	identities: {
 		user?: { login: string; status: string };
 		agent?: { login: string; status: string };
 	};
-	installations: { id: number }[];
 	automationIdentity: string;
 	lastDeliveryAt?: number;
 	lastDeliverySource?: string;
@@ -1625,28 +1601,18 @@ function orbEgress(orbId: string): string {
 
 // ---- 前置（--only 单跑时由这些补齐）
 
-/** 经 API 走一遍 manifest：begin → 直接请求回调（假 GitHub 接受固定的 manifest code）。 */
-async function createAppApi() {
-	const begin = await rjson<{ url: string }>(
-		"POST",
-		"/api/v1/github/app/manifest",
-		{ public: false },
-	);
-	const state = new URL(begin.url).searchParams.get("state") ?? "";
-	const app = await fakeJson<{ manifestCode: string }>("GET", "/__fake/app");
-	const cb = await rapi(
-		"GET",
-		`/api/v1/public/github/manifest/callback?code=${encodeURIComponent(app.manifestCode)}&state=${encodeURIComponent(state)}`,
-	);
-	if (cb.status !== 302 || !cb.location.includes("created=1"))
-		throw new Error(`manifest 回调 → ${cb.status} ${cb.location}`);
-}
-
-async function ensureApp() {
-	const st = await ghStatus();
-	if (!st.app) await createAppApi();
-	if ((await ghStatus()).installations.length < 2)
-		await rjson("POST", "/api/v1/github/installations/sync");
+/** 经 API 保存 OAuth App（凭据取自假 GitHub；webhook 基址指向这套 orynd，假 GitHub 由此投递仓库 hook）。 */
+async function ensureOAuthApp() {
+	if ((await ghStatus()).oauthApp) return;
+	const app = await fakeJson<{
+		oauthClientId: string;
+		oauthClientSecret: string;
+	}>("GET", "/__fake/app");
+	await rjson("PUT", "/api/v1/github/oauth-app", {
+		clientId: app.oauthClientId,
+		clientSecret: app.oauthClientSecret,
+		webhookBase: REAL_API,
+	});
 }
 
 let codeSeq = 0;
@@ -1654,7 +1620,7 @@ let codeSeq = 0;
 async function connectApi(
 	slot: "user" | "agent",
 	login: string,
-	o: { expiresIn?: number; failRefresh?: boolean } = {},
+	o: { scopes?: string } = {},
 ) {
 	const code = `api${++codeSeq}`;
 	await fakeOauth({ code, login, ...o });
@@ -1671,7 +1637,7 @@ async function connectApi(
 }
 
 async function ensureIdentities() {
-	await ensureApp();
+	await ensureOAuthApp();
 	const st = await ghStatus();
 	if (
 		st.identities.user?.status !== "ok" ||
@@ -1773,7 +1739,7 @@ async function ensureAgentThread(): Promise<ThreadView> {
 	return th;
 }
 
-const scopedOf = (authz: string) => {
+const tokenOf = (authz: string) => {
 	if (authz.startsWith("Bearer ")) return authz.slice(7);
 	if (authz.startsWith("Basic ")) {
 		const [user = "", pass = ""] = Buffer.from(authz.slice(6), "base64")
@@ -1786,111 +1752,60 @@ const scopedOf = (authz: string) => {
 
 // ---- 真机场景
 
-/** R1：设置页按 manifest 创建 App（跳到 start 页、表单指向假 GitHub；回调后显示名称与安装链接），能删除。 */
+/** R1（M15）：设置页保存 OAuth App 的 Client ID / Secret 与 webhook 基址，显示回调地址；能删除。 */
 async function realR1() {
 	const p = await realPage();
 	await goto(p, REAL_UI, "/settings/github");
-	const form = p.getByTestId("github-app-create");
+	const form = p.getByTestId("github-oauth-app");
 	await form.waitFor({ timeout: 60_000 });
+	const callback = oneLine(
+		(await p.getByTestId("github-oauth-callback").textContent()) ?? "",
+	);
+	expect(
+		callback.includes(`${REAL_UI}/api/v1/public/github/oauth/callback`),
+		`设置页显示回调地址（${clip(callback, 120)}）`,
+	);
 	await shot(p, "real-r1-empty");
-	await form.getByRole("button", { name: "在 GitHub 上创建 App" }).click();
+	const app = await fakeJson<{
+		oauthClientId: string;
+		oauthClientSecret: string;
+	}>("GET", "/__fake/app");
+	await form
+		.getByRole("textbox", { name: "Client ID" })
+		.fill(app.oauthClientId);
+	await form.locator('input[type="password"]').fill(app.oauthClientSecret);
+	await form.getByRole("textbox", { name: "Webhook 基址" }).fill(REAL_API);
+	await form.getByRole("button", { name: "保存" }).click();
 	await waitFor(
-		"跳到 manifest/start",
-		() => p.url().includes("/api/v1/public/github/manifest/start"),
-		15_000,
-	);
-	const state = new URL(p.url()).searchParams.get("state") ?? "";
-	check(
-		!!state,
-		`跳到 /api/v1/public/github/manifest/start（state=${clip(state, 20)}）`,
-	);
-	const action = (await p.locator("form").first().getAttribute("action")) ?? "";
-	expect(
-		action.startsWith(`${FAKE}/settings/apps/new?state=`),
-		`start 页的表单指向假 GitHub（${action}）`,
-	);
-	const manifestRaw =
-		(await p
-			.locator('form input[name="manifest"]')
-			.first()
-			.getAttribute("value")) ?? "{}";
-	let manifest: Record<string, unknown> = {};
-	try {
-		manifest = JSON.parse(manifestRaw) as Record<string, unknown>;
-	} catch {
-		// 留空
-	}
-	const hook = isRecord(manifest.hook_attributes)
-		? String(manifest.hook_attributes.url ?? "")
-		: "";
-	expect(
-		hook.endsWith("/api/v1/public/github/webhook") &&
-			Array.isArray(manifest.default_events),
-		`manifest 带 webhook 地址与事件（${hook}）`,
-	);
-	await shot(p, "real-r1-start");
-	const app = await fakeJson<{ manifestCode: string; name?: string }>(
-		"GET",
-		"/__fake/app",
-	);
-	await goto(
-		p,
-		REAL_UI,
-		`/api/v1/public/github/manifest/callback?code=${encodeURIComponent(app.manifestCode)}&state=${encodeURIComponent(state)}`,
-	);
-	const details = p.getByTestId("github-app");
-	await details.waitFor({ timeout: 30_000 });
-	const text = (await details.textContent()) ?? "";
-	const st = await ghStatus();
-	expect(
-		!!st.app && text.includes(st.app.name),
-		`回到设置页显示 App 名称（${st.app?.name ?? "无"}）`,
-	);
-	const install = p.getByRole("button", { name: "安装到账号或组织" });
-	expect(
-		(await install.count()) > 0 && !!st.app?.installUrl,
-		`有安装链接（${st.app?.installUrl ?? "无"}）`,
-	);
-	await shot(p, "real-r1-created");
-	p.once("dialog", (d) => void d.accept());
-	await details.getByRole("button", { name: "删除连接" }).click();
-	await form.waitFor({ timeout: 15_000 }).then(
-		() => expect(true, "删除后回到创建表单"),
-		() => expect(false, "删除后没有回到创建表单"),
-	);
-	expect(!(await ghStatus()).app, "GET /api/v1/github 不再有 app");
-	// 后续场景需要 App：经 API 再建一次
-	await createAppApi();
-	note("经 API 重新创建 App（供后续场景使用）");
-}
-
-/** R2：假 GitHub 有 2 个安装 → 点「同步」后列表 2 行。 */
-async function realR2() {
-	if (!(await ghStatus()).app) await createAppApi();
-	const p = await realPage();
-	await goto(p, REAL_UI, "/settings/github");
-	await p.getByTestId("github-app").waitFor({ timeout: 30_000 });
-	await p.getByRole("button", { name: "同步", exact: true }).click();
-	await waitFor(
-		"安装列表 2 行",
-		async () => (await p.getByTestId("github-installation").count()) === 2,
+		"OAuth App 已保存",
+		async () => (await ghStatus()).oauthApp?.clientId === app.oauthClientId,
 		15_000,
 	).then(
-		() => expect(true, "同步后安装列表 2 行"),
-		async () =>
+		() =>
 			expect(
-				false,
-				`同步后安装列表 ${await p.getByTestId("github-installation").count()} 行`,
+				true,
+				`保存后 GET /api/v1/github 有 oauthApp（${app.oauthClientId}）`,
 			),
-	);
-	const text = oneLine(
-		(await p.getByTestId("github-installation").allTextContents()).join(" ｜ "),
+		() => expect(false, "保存后 GET /api/v1/github 没有 oauthApp"),
 	);
 	expect(
-		text.includes("acme") && text.includes("owner"),
-		`列出账号（${clip(text, 160)}）`,
+		!(await rapi("GET", "/api/v1/github")).text.includes(app.oauthClientSecret),
+		"状态不回显 Client Secret",
 	);
-	await shot(p, "real-r2-installations");
+	await shot(p, "real-r1-saved");
+	p.once("dialog", (d) => void d.accept());
+	await form.getByRole("button", { name: "删除配置" }).click();
+	await waitFor(
+		"OAuth App 已删除",
+		async () => !(await ghStatus()).oauthApp,
+		15_000,
+	).then(
+		() => expect(true, "删除后 GET /api/v1/github 不再有 oauthApp"),
+		() => expect(false, "删除配置没有生效"),
+	);
+	// 后续场景需要 OAuth App：经 API 再存一次
+	await ensureOAuthApp();
+	note("经 API 重新保存 OAuth App（供后续场景使用）");
 }
 
 /** 在设置页某个身份行点「连接 / 重新连接」，取 authorize 地址里的 state。 */
@@ -1936,7 +1851,7 @@ async function oauthCallback(p: Page, code: string, state: string) {
 
 /** R3：两个身份槽位的连接、同账号拒绝、令牌失效后「需要重新授权」。 */
 async function realR3() {
-	await ensureApp();
+	await ensureOAuthApp();
 	for (const s of ["user", "agent"])
 		await rapi("DELETE", `/api/v1/github/identities/${s}`);
 	const p = await realPage();
@@ -1977,29 +1892,28 @@ async function realR3() {
 		"换账号后 Agent 行显示 @oryn-bot",
 	);
 	await shot(p, "real-r3-connected");
-	// 令牌失效：以 1 秒寿命、刷新必败的授权码重连我的账号，再触发一次刷新
-	const loc = await connectApi("user", "owner", {
-		expiresIn: 1,
-		failRefresh: true,
-	});
-	note(`以 expiresIn=1、failRefresh 重连我的账号 → ${loc}`);
-	await sleep(1_500);
-	const repos = await rapi("GET", "/api/v1/github/repos");
-	note(
-		`GET /api/v1/github/repos（触发刷新）→ ${repos.status} ${clip(repos.text, 120)}`,
-	);
+	// 缺少 scope（M15 R2）：以只带 repo 的授权码重连我的账号 → 行内显示「缺少权限」
+	const loc = await connectApi("user", "owner", { scopes: "repo" });
+	note(`以 scopes=repo 重连我的账号 → ${loc}`);
 	await goto(p, REAL_UI, "/settings/github");
 	await userRow.waitFor({ timeout: 30_000 });
 	await waitFor(
-		"我的账号显示需要重新授权",
-		async () => ((await userRow.textContent()) ?? "").includes("需要重新授权"),
+		"我的账号显示缺少权限",
+		async () => ((await userRow.textContent()) ?? "").includes("缺少权限"),
 		15_000,
 	).then(
-		() => expect(true, "刷新失败后「我的账号」行显示「需要重新授权」"),
-		() => expect(false, "刷新失败后「我的账号」行没有显示「需要重新授权」"),
+		() =>
+			expect(true, "缺少 scope 时「我的账号」行显示「缺少权限」并要求重新连接"),
+		() => expect(false, "缺少 scope 时「我的账号」行没有显示「缺少权限」"),
 	);
 	await shot(p, "real-r3-reauth");
-	// 恢复（后续场景要用）：重新连接，令牌寿命恢复 8 小时
+	// 恢复（后续场景要用）：以完整 scope 重新连接
+	await fakeJson("POST", "/__fake/oauth", {
+		code: "u4",
+		login: "owner",
+		scopes:
+			"repo, workflow, read:org, admin:repo_hook, gist, write:packages, user:email",
+	});
 	await fakeOauth({ code: "u5", login: "owner" });
 	await oauthCallback(p, "u5", await clickConnect(p, "user"));
 	expect(
@@ -2181,39 +2095,20 @@ async function realR5() {
 		"没有配置 github.com 的 PAT",
 	);
 	const calls = await fakeCalls();
-	const scopedReq = calls.filter(
-		(c) =>
-			c.method === "POST" &&
-			/^\/applications\/[^/]+\/token\/scoped$/.test(c.path),
-	);
-	const bodies = scopedReq.map((c) => {
-		try {
-			return JSON.parse(c.body) as {
-				repository_ids?: number[];
-				target_id?: number;
-			};
-		} catch {
-			return {};
-		}
-	});
 	expect(
-		bodies.some(
-			(b) =>
-				JSON.stringify(b.repository_ids) === JSON.stringify([REPO_ID]) &&
-				b.target_id === OWNER_ORG_ID,
-		),
-		`假 GitHub 收到 scoped 令牌请求，repository_ids = [${REPO_ID}]（共 ${scopedReq.length} 次）`,
+		!calls.some((c) => /^\/applications\/[^/]+\/token\/scoped$/.test(c.path)),
+		"M15 不再请求收窄令牌（OAuth App 令牌不能按仓库收窄）",
 	);
 	const refs = calls.filter(
 		(c) => /^\/acme\/widgets(\.git)?\/info\/refs$/.test(c.path) && c.auth,
 	);
-	const toks = [...new Set(refs.map((c) => scopedOf(c.auth)).filter(Boolean))];
+	const toks = [...new Set(refs.map((c) => tokenOf(c.auth)).filter(Boolean))];
 	expect(
 		refs.length > 0 &&
 			refs.every((c) => c.auth.startsWith("Basic ")) &&
-			toks.length > 0 &&
-			toks.every((t) => t.startsWith("ghu_scoped")),
-		`/acme/widgets.git/info/refs 的 Authorization 是 Basic x-access-token:<scoped 令牌>（${toks.join(", ") || "无"}）`,
+			toks.length === 1 &&
+			toks[0]?.startsWith("gho_") === true,
+		`/acme/widgets.git/info/refs 的 Authorization 是 Basic x-access-token:<我的账号的 OAuth 令牌>（${toks.join(", ") || "无"}）`,
 	);
 	const home = orbHome(orbId);
 	for (const t of toks) {
@@ -2234,8 +2129,8 @@ async function realR5() {
 		`curl -s -o /dev/null -w '%{http_code}' ${q(`${egress}/git/github.com/acme/other/info/refs?service=git-upload-pack`)}`,
 	);
 	expect(
-		other.stdout === "403",
-		`经出站代理请求 acme/other 的 info/refs → ${other.stdout}（期望 403）`,
+		other.stdout !== "403",
+		`经出站代理请求 acme/other 的 info/refs → ${other.stdout}（M15：github.com 不按仓库拦截，能做什么取决于账号权限）`,
 	);
 	const own = sh(
 		`curl -s -o /dev/null -w '%{http_code}' ${q(`${egress}/git/github.com/${REPO}/info/refs?service=git-upload-pack`)}`,
@@ -2266,8 +2161,8 @@ async function realR6() {
 	const after = (await fakeCalls()).slice(t0);
 	const user = after.find((c) => c.method === "GET" && c.path === "/user");
 	expect(
-		!!user && user.auth.startsWith("Bearer ghu_scoped"),
-		`假 GitHub 收到的 GET /user 用 Bearer <scoped 令牌>（${user?.auth ?? "无请求"}）`,
+		!!user && user.auth.startsWith("Bearer gho_"),
+		`假 GitHub 收到的 GET /user 用 Bearer <我的账号的 OAuth 令牌>（${user?.auth ?? "无请求"}）`,
 	);
 	const pr = orbSh(
 		orbId,
@@ -2525,7 +2420,7 @@ async function realR13() {
 	});
 }
 
-/** R14：agent 经 gh.sock 发的评论带标记且不回流；Agent 账号发出的事件不回流。 */
+/** R14：agent 经 gh.sock 发的评论原样转发（M15 不再带标记）且不回流；Agent 账号发出的事件不回流。 */
 async function realR14() {
 	const tid = await ensurePrThread();
 	const th = await getThread(tid);
@@ -2553,22 +2448,22 @@ async function realR14() {
 		// 留空
 	}
 	expect(
-		sent.startsWith("done") && sent.endsWith(AGENT_MARKER),
-		`假 GitHub 收到的正文以 ${AGENT_MARKER} 结尾（${JSON.stringify(sent)}）`,
+		sent === "done",
+		`假 GitHub 收到的正文原样是 done，不带任何标记（${JSON.stringify(sent)}）`,
 	);
 	expect(
-		!!call?.auth.startsWith("Bearer ghu_scoped"),
-		`评论请求用收窄令牌（${call?.auth ?? "无"}）`,
+		!!call?.auth.startsWith("Bearer gho_"),
+		`评论请求用我的账号的 OAuth 令牌（${call?.auth ?? "无"}）`,
 	);
 	const before = (await eventMessages(tid, PR_NUMBER)).length;
 	const g1 = await deliver(
 		"issue_comment",
-		issueCommentP("owner", sent || `done\n\n${AGENT_MARKER}`, prIssueP()),
+		issueCommentP("owner", sent || "done", prIssueP()),
 	);
 	const r1 = await waitOutcome(g1.guid).catch(() => undefined);
 	expect(
 		r1?.outcome === "ignored:self",
-		`带标记的评论投回 → outcome = ${r1?.outcome ?? "未处理"}`,
+		`agent 以我的账号发的评论投回（按预登记的目标与正文哈希认出）→ outcome = ${r1?.outcome ?? "未处理"}`,
 	);
 	const g2 = await deliver(
 		"issue_comment",
@@ -2949,7 +2844,7 @@ async function realR19() {
 
 /** R17：webhook 不可达时轮询补齐；同一投递只处理一次；停机期间的事件重启后补处理。 */
 async function realR17() {
-	await ensureApp();
+	await ensureProject(); // 仓库 hook 随项目绑定建立：投递日志在 hook 上
 	const total0 = Number(dbq("SELECT COUNT(*) FROM github_deliveries") || "0");
 	const g1 = await deliver(
 		"ping",
@@ -2971,7 +2866,7 @@ async function realR17() {
 	}
 	const p = await realPage();
 	await goto(p, REAL_UI, "/settings/github");
-	const app = p.getByTestId("github-app");
+	const app = p.getByTestId("github-last-delivery");
 	await app.waitFor({ timeout: 30_000 });
 	await waitFor(
 		"最近投递显示轮询",
@@ -3037,7 +2932,6 @@ async function realR9() {
 		changes: { repository: { name: { from: "widgets" } } },
 		repository: repoP(NEW),
 		sender: userP("owner"),
-		installation: { id: INST_ACME },
 	});
 	const url = await waitFor(
 		"项目 repoUrl 更新",
@@ -3105,7 +2999,6 @@ interface Plan {
 }
 const PLAN: Record<string, Plan> = {
 	R1: { real: realR1 },
-	R2: { real: realR2 },
 	R3: { real: realR3 },
 	R4: { real: realR4 },
 	R5: { real: realR5 },
@@ -3127,7 +3020,6 @@ const PLAN: Record<string, Plan> = {
 /** 真机场景的执行顺序：先连接与绑定，再看凭据，再投事件；停机（R17）与改名（R9）放最后。 */
 const REAL_ORDER = [
 	"R1",
-	"R2",
 	"R3",
 	"R8",
 	"R4",
