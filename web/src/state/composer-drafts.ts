@@ -3,8 +3,10 @@
  * 文字、错误行、光标位置不能跟着组件 state 一起丢；各线程各自保留，发送成功后由输入区清空。
  * 另记哪些线程的输入区正挂着：异步命令应答落地时据此判断用户是否还在这个线程（重新挂载不算离开）。
  */
+
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import type { ArtifactSelectionRef } from "../lib/artifacts/prompt";
 
 export interface ComposerDraft {
 	text: string;
@@ -24,6 +26,11 @@ export interface ComposerDraft {
 	 * 发送普通消息时拼成 Markdown 引用块放在正文前面（`lib/quote.ts`）。按对象身份区分每次引用，同一段再引用一次也会重新聚焦
 	 */
 	quote: ComposerQuote | null;
+	/**
+	 * 右面板查看器在选择模式下选中的 artifact 元素（M14 3.5）：输入区上方显示成可移除的引用条，发送普通消息时用
+	 * `selectionPrompt` 把它接在正文后面。清除选中、切走 artifact、关掉面板时由面板置空；按对象身份区分每次选中
+	 */
+	artifactSelection: ArtifactSelectionRef | null;
 }
 
 export interface ComposerQuote {
@@ -55,6 +62,7 @@ const EMPTY: ComposerDraft = {
 	editorText: null,
 	inFlight: null,
 	quote: null,
+	artifactSelection: null,
 };
 
 const drafts = createStore<Record<string, ComposerDraft>>(() => ({}));

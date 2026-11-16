@@ -11,6 +11,7 @@
  *
  * 选择与评论（3.3）：页面类型的 artifact 跟随最新版本且不在回收站时才有两个模式，模式经 `select-mode` 下发。评论模式下点页面元素
  * 在点击处弹 `CommentBox`（点空白处是「整个页面」的锚点）；未解决评论的编号图钉只在评论模式或评论面板打开时下发。
+ * 右面板里选择模式下选中的元素经 `onSelection` 交给输入区的引用条（3.5）。
  */
 import {
 	type ReactNode,
@@ -36,6 +37,7 @@ import {
 } from "../../api/artifact-queries";
 import { ApiError } from "../../api/client";
 import { kindIcon } from "../../lib/artifacts/kinds";
+import type { ArtifactSelectionRef } from "../../lib/artifacts/prompt";
 import { formatRelative } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
 import { watchArtifact } from "../../realtime/socket";
@@ -100,6 +102,13 @@ export interface ArtifactViewerProps {
 	initialHistory?: boolean;
 	/** 整页的返回（按钮与 `Esc`）。 */
 	onBack?(): void;
+	/**
+	 * 右面板（3.5）：选择模式下选中的元素交出去（写进输入区草稿）；`null` = 没有选中了（清除选中、退出模式、
+	 * 帧重建、卸载）。只在交出过非空的选中之后才会报 `null`。
+	 */
+	onSelection?(selection: ArtifactSelectionRef | null): void;
+	/** 交出去的选中仍被拿着（输入区的引用条还在）；由真变假（移除或已发出）时清掉页面上的选中。 */
+	selectionHeld?: boolean;
 }
 
 /**
@@ -155,6 +164,8 @@ export function ArtifactViewer({
 	threadId,
 	initialHistory = false,
 	onBack,
+	onSelection,
+	selectionHeld = false,
 }: ArtifactViewerProps): ReactNode {
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
@@ -341,6 +352,42 @@ export function ArtifactViewer({
 		setSelection(null);
 		post?.({ kind: "select-source", src: null });
 	};
+
+	// 右面板（3.5）：选择模式下选中的元素交给输入区；内容不变就不重报（JSON 作键）
+	const selectedKey =
+		onSelection && activeMode === "select" && selection && artifact
+			? JSON.stringify({
+					artifactId,
+					title: artifact.title,
+					version: head,
+					anchor: anchorOf(selection, { version: head, path: pagePath }),
+				} satisfies ArtifactSelectionRef)
+			: "";
+	const onSelectionRef = useRef(onSelection);
+	onSelectionRef.current = onSelection;
+	const reportedRef = useRef("");
+	useEffect(() => {
+		if (selectedKey === reportedRef.current) return;
+		reportedRef.current = selectedKey;
+		onSelectionRef.current?.(
+			selectedKey ? (JSON.parse(selectedKey) as ArtifactSelectionRef) : null,
+		);
+	}, [selectedKey]);
+	useEffect(
+		() => () => {
+			if (reportedRef.current) onSelectionRef.current?.(null);
+		},
+		[],
+	);
+	// 输入区不再拿着交出的选中（移除了引用条或已发出）：页面上的选中一起清掉
+	const heldRef = useRef(selectionHeld);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由 selectionHeld 由真变假触发
+	useEffect(() => {
+		const was = heldRef.current;
+		heldRef.current = selectionHeld;
+		if (was && !selectionHeld && selection) clearSelection();
+	}, [selectionHeld]);
+
 	const editPanel = (sel: PageSelection) => (
 		<EditPanel
 			artifactId={artifactId}

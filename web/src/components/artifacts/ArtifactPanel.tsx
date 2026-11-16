@@ -5,12 +5,18 @@
  * 查看器的更多菜单里「打开线程」不指向本线程。
  * 选中项（`artifactSel`）不在该线程的列表里时取最近更新的一个。
  * 评论（3.3）：面板里的查看器有选择 / 评论两个模式按钮、新建评论与页面上的图钉，但不放评论面板；看完整评论串去整页。
+ * 选中元素（3.5）：选择模式下选中的元素写进本线程的输入区草稿（`artifactSelection`），输入区上方出引用条；
+ * 清除选中、切走 artifact（查看器按 artifact 重建）、关掉面板（卸载）时置空。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { useThreadArtifacts } from "../../api/artifact-queries";
 import { kindIcon } from "../../lib/artifacts/kinds";
+import {
+	patchComposerDraft,
+	useComposerDraft,
+} from "../../state/composer-drafts";
 import { uiStore, useUi } from "../../state/ui";
 import { Icon } from "../ui/icons";
 import { EmptyState, IconButton, Menu, Spinner } from "../ui/primitives";
@@ -29,6 +35,10 @@ export default function ArtifactPanel({
 	// 选中项不在列表里时取最近更新的一个（列表按更新时间倒序）；列表还没回来或为空时仍按选中项显示，
 	// 查看器自己给出加载、已删除或不在了的状态
 	const currentId = items.find((a) => a.id === sel)?.id ?? items[0]?.id ?? sel;
+	const selectionHeld = useComposerDraft(
+		threadId,
+		(d) => !!currentId && d.artifactSelection?.artifactId === currentId,
+	);
 
 	if (!currentId) {
 		if (list.isPending)
@@ -81,6 +91,10 @@ export default function ArtifactPanel({
 				variant="panel"
 				lead={lead}
 				threadId={threadId}
+				onSelection={(s) =>
+					patchComposerDraft(threadId, { artifactSelection: s })
+				}
+				selectionHeld={selectionHeld}
 				actions={
 					<IconButton
 						icon="maximize"

@@ -16,9 +16,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
+import { selectionPrompt } from "../../lib/artifacts/prompt";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import { selectModel } from "../../lib/model-select";
-import { composeQuoted, quoteBlock } from "../../lib/quote";
+import { composeQuoted } from "../../lib/quote";
 import {
 	carriesAttachments,
 	coordinatorAllows,
@@ -52,6 +53,7 @@ import {
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
+import { SelectionChip } from "../artifacts/SelectionChip";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { useThreadProject } from "../thread/ThreadHeader";
 import { Icon } from "../ui/icons";
@@ -85,6 +87,12 @@ export function Composer({
 	const setError = (next: unknown) =>
 		patchComposerDraft(threadId, { error: next });
 	const clearQuote = () => patchComposerDraft(threadId, { quote: null });
+	const artifactSelection = useComposerDraft(
+		threadId,
+		(d) => d.artifactSelection,
+	);
+	const clearSelection = () =>
+		patchComposerDraft(threadId, { artifactSelection: null });
 	const [bashRunning, setBashRunning] = useState(false);
 	const [active, setActive] = useState(0);
 	const [menuDismissed, setMenuDismissed] = useState(false);
@@ -181,28 +189,57 @@ export function Composer({
 
 	// 提交时的草稿快照：应答回来时只有草稿仍是那一份才清空（等待期间的新输入保留）。
 	// 文字以草稿 store 为准：应答可能在输入区重新挂载之后才到
-	const draftRef = useRef({ text, items: att.items, quote });
-	draftRef.current = { text, items: att.items, quote };
+	const draftRef = useRef({
+		text,
+		items: att.items,
+		quote,
+		artifactSelection,
+	});
+	draftRef.current = { text, items: att.items, quote, artifactSelection };
 	// 异步命令应答落地时用户可能已切到别的线程（切线程会卸载本输入区）：对话框是全局单值、由当前页面消费，
 	// 旧线程的应答不得在新线程打开 / 覆盖对话框。按线程登记而非按实例：跨断点重新挂载仍算留在本线程
 	useEffect(() => claimComposer(threadId), [threadId]);
 
-	/** 清空输入区；`withQuote` 为假时引用留着（bash、斜杠命令不带走引用）。 */
-	const reset = (withQuote: boolean) => {
+	/**
+	 * 发出的正文：用户原文后接选中的元素（`selectionPrompt`），引用回复的引用块放在最前。
+	 * 原文为空（只发附件）时不留开头的空行。
+	 */
+	const outgoing = (body: string, sent: typeof draftRef.current) => {
+		const sel = sent.artifactSelection;
+		const withSel = sel
+			? body
+				? selectionPrompt(body, sel, t)
+				: selectionPrompt("", sel, t).trimStart()
+			: body;
+		return sent.quote ? composeQuoted(sent.quote.text, withSel) : withSel;
+	};
+
+	/**
+	 * 清空输入区；给了 `sent`（发出的那份草稿）时一并清掉随它发出的引用与选中的元素——等待期间换了一段引用
+	 * 或另选了元素的，新的留着。不给时两者都留着（bash、斜杠命令不带走它们）。
+	 */
+	const reset = (sent?: typeof draftRef.current) => {
 		setText("");
 		att.clear();
 		setMenuDismissed(false);
-		if (withQuote) clearQuote();
+		if (!sent) return;
+		const now = getComposerDraft(threadId);
+		patchComposerDraft(threadId, {
+			quote: now.quote === sent.quote ? null : now.quote,
+			artifactSelection:
+				now.artifactSelection === sent.artifactSelection
+					? null
+					: now.artifactSelection,
+		});
 	};
 
 	const resetIfUnchanged = (
 		sent: typeof draftRef.current,
-		withQuote: boolean,
+		withRefs: boolean,
 	) => {
 		const now = getComposerDraft(threadId);
 		if (now.text === sent.text && draftRef.current.items === sent.items)
-			// 等待期间换了一段引用：新引用留着
-			reset(withQuote && now.quote === sent.quote);
+			reset(withRefs ? sent : undefined);
 	};
 
 	/** 命令没有带走附件：只清掉命令文本，附件留在输入区。 */
@@ -386,9 +423,13 @@ export function Composer({
 		const sent = draftRef.current;
 		// 同一份草稿已在发送中（含重新挂载前由旧输入区发出、尚未应答的）：忽略重复提交
 		const keys = sent.items.map((i) => i.key);
-		const markerText = sent.quote
-			? composeQuoted(sent.quote.text, sent.text)
-			: sent.text;
+		// 选中的元素按内容计入（发出的正文里的边界是随机的，不能拿来比）
+		const markerText = [
+			sent.quote ? composeQuoted(sent.quote.text, sent.text) : sent.text,
+			...(sent.artifactSelection
+				? [JSON.stringify(sent.artifactSelection)]
+				: []),
+		].join("\n");
 		if (isInFlightDraft(getComposerDraft(threadId).inFlight, markerText, keys))
 			return;
 		const parsed = parseComposerInput(sent.text);
@@ -412,7 +453,7 @@ export function Composer({
 					threadId,
 					promptFrame(
 						mode,
-						sent.quote ? quoteBlock(sent.quote.text) : "",
+						outgoing("", sent),
 						att.contents,
 						att.attachmentIds,
 						att.fileIds,
@@ -422,7 +463,7 @@ export function Composer({
 				return;
 			}
 			if (asText.kind === "bash") {
-				reset(false);
+				reset();
 				setBashRunning(true);
 				try {
 					await realtime.cmd(
@@ -458,7 +499,7 @@ export function Composer({
 				threadId,
 				promptFrame(
 					mode,
-					sent.quote ? composeQuoted(sent.quote.text, body) : body,
+					outgoing(body, sent),
 					att.contents,
 					att.attachmentIds,
 					att.fileIds,
@@ -513,15 +554,16 @@ export function Composer({
 			setMenuDismissed(true);
 			return;
 		}
-		// 空输入框里在开头按退格：先移除引用（与删掉一个字符同一个手势）
+		// 空输入框里在开头按退格：先移除引用，其次是选中的元素（与删掉一个字符同一个手势）
 		if (
-			quote &&
+			(quote || artifactSelection) &&
 			e.key === "Backspace" &&
 			text === "" &&
 			!e.nativeEvent.isComposing
 		) {
 			e.preventDefault();
-			clearQuote();
+			if (quote) clearQuote();
+			else clearSelection();
 			return;
 		}
 		const decision = composerKeyAction(
@@ -576,6 +618,15 @@ export function Composer({
 					text={quote.text}
 					onRemove={() => {
 						clearQuote();
+						ref.current?.focus({ preventScroll: true });
+					}}
+				/>
+			)}
+			{artifactSelection && (
+				<SelectionChip
+					selection={artifactSelection}
+					onRemove={() => {
+						clearSelection();
 						ref.current?.focus({ preventScroll: true });
 					}}
 				/>
